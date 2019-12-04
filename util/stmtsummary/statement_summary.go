@@ -17,7 +17,6 @@ import (
 	"bytes"
 	"container/list"
 	"fmt"
-	"math"
 	"sort"
 	"strconv"
 	"strings"
@@ -431,25 +430,23 @@ func (ssMap *stmtSummaryByDigestMap) SetHistorySize(value string, inSession bool
 	ssMap.sysVars.Unlock()
 
 	// Calculate the cached `historySize`.
-	var size int
+	size := -1
 	var err error
 	if ssMap.isSet(sessionHistorySize) {
 		size, err = strconv.Atoi(sessionHistorySize)
 		if err != nil {
-			size = 0
+			size = -1
 		}
 	}
-	if size <= 0 {
+	if size < 0 {
 		size, err = strconv.Atoi(globalHistorySize)
 		if err != nil {
-			size = 0
+			size = -1
 		}
 	}
 	// Users may set invalid values in configuration file.
-	if size <= 0 {
-		size = 1
-	} else if size > math.MaxInt8 {
-		size = math.MaxInt8
+	if size < 0 {
+		size = 0
 	}
 	atomic.StoreInt32(&ssMap.sysVars.historySize, int32(size))
 }
@@ -514,6 +511,9 @@ func (ssbd *stmtSummaryByDigest) add(sei *StmtExecInfo, beginTime int64, history
 		}
 
 		// `historySize` might be modified, so check expiration every time.
+		if historySize == 0 {
+			historySize = 1
+		}
 		for ssbd.history.Len() > historySize {
 			ssbd.history.Remove(ssbd.history.Front())
 		}

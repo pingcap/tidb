@@ -639,7 +639,7 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		if value == "" {
 			return "", nil
 		}
-		return checkUInt64SystemVar(name, value, 1, math.MaxInt8, vars)
+		return checkUInt64SystemVar(name, value, 0, math.MaxInt8, vars)
 	case TiDBIsolationReadEngines:
 		engines := strings.Split(value, ",")
 		var formatVal string

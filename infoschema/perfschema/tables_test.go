@@ -214,6 +214,7 @@ func (s *testTableSuite) TestStmtSummaryHistoryTable(c *C) {
 
 	tk.MustExec("set global tidb_enable_stmt_summary = 1")
 	tk.MustQuery("select @@global.tidb_enable_stmt_summary").Check(testkit.Rows("1"))
+	defer tk.MustExec("set global tidb_enable_stmt_summary = false")
 
 	// Invalidate the cache manually so that tidb_enable_stmt_summary works immediately.
 	s.dom.GetGlobalVarsCache().Disable()
@@ -236,7 +237,12 @@ func (s *testTableSuite) TestStmtSummaryHistoryTable(c *C) {
 		where digest_text like 'insert into t%'`,
 	).Check(testkit.Rows("insert test test.t <nil> 4 0 0 0 0 0 2 2 1 1 1 /**/insert into t values(4, 'd')"))
 
-	tk.MustExec("set global tidb_enable_stmt_summary = false")
+	tk.MustExec("set global tidb_stmt_summary_history_size = 0")
+	tk.MustQuery(`select stmt_type, schema_name, table_names, index_names, exec_count, cop_task_num, avg_total_keys, 
+		max_total_keys, avg_processed_keys, max_processed_keys, avg_write_keys, max_write_keys, avg_prewrite_regions, 
+		max_prewrite_regions, avg_affected_rows, query_sample_text 
+		from performance_schema.events_statements_summary_by_digest_history`,
+	).Check(testkit.Rows())
 }
 
 func currentSourceDir() string {
