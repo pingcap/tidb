@@ -15,7 +15,6 @@ package tikv
 
 import (
 	"bytes"
-	"encoding/binary"
 	"fmt"
 	"time"
 
@@ -25,24 +24,28 @@ import (
 	"github.com/pingcap/tidb/config"
 )
 
-type CoprCache struct {
+type coprCache struct {
 	cache                   *ristretto.Cache
 	admissionMaxSize        int
 	admissionMinProcessTime time.Duration
 }
 
-type CoprCacheValue struct {
+type coprCacheValue struct {
 	Data              []byte
 	TimeStamp         uint64
-	RegionId          uint64
+	RegionID          uint64
 	RegionDataVersion uint64
 }
 
-func (v *CoprCacheValue) String() string {
-	return fmt.Sprintf("{ Ts = %d, RegionId = %d, RegionDataVersion = %d, len(Data) = %d }", v.TimeStamp, v.RegionId, v.RegionDataVersion, len(v.Data))
+func (v *coprCacheValue) String() string {
+	return fmt.Sprintf("{ Ts = %d, RegionID = %d, RegionDataVersion = %d, len(Data) = %d }",
+		v.TimeStamp,
+		v.RegionID,
+		v.RegionDataVersion,
+		len(v.Data))
 }
 
-func newCoprCache(config *config.CoprocessorCache) (*CoprCache, error) {
+func newCoprCache(config *config.CoprocessorCache) (*coprCache, error) {
 	if config == nil || !config.Enabled {
 		return nil, nil
 	}
@@ -56,7 +59,7 @@ func newCoprCache(config *config.CoprocessorCache) (*CoprCache, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	c := CoprCache{
+	c := coprCache{
 		cache:                   cache,
 		admissionMaxSize:        int(config.AdmissionMaxResultBytes),
 		admissionMinProcessTime: time.Duration(config.AdmissionMinProcessMs) * time.Millisecond,
@@ -65,36 +68,35 @@ func newCoprCache(config *config.CoprocessorCache) (*CoprCache, error) {
 }
 
 func coprCacheBuildKey(copReq *coprocessor.Request) []byte {
-	l := len(copReq.Data) + 1 + 8 + 1
+	l := len(copReq.Data) + 1
 	for _, r := range copReq.Ranges {
 		l = l + len(r.Start) + 1 + len(r.End) + 1
 	}
 
 	key := bytes.NewBuffer(make([]byte, 0, l))
-	_, _ = key.Write(copReq.Data)
-	_ = key.WriteByte(0)
-	_ = binary.Write(key, binary.LittleEndian, copReq.Tp)
-	for _, r2 := range copReq.Ranges {
-		_, _ = key.Write(r2.Start)
-		_ = key.WriteByte(0)
-		_, _ = key.Write(r2.End)
-		_ = key.WriteByte(0)
+	key.Write(copReq.Data)
+	key.WriteByte(0)
+	for _, r := range copReq.Ranges {
+		key.Write(r.Start)
+		key.WriteByte(0)
+		key.Write(r.End)
+		key.WriteByte(0)
 	}
 
 	return key.Bytes()
 }
 
 // Get gets a cache item according to cache key.
-func (c *CoprCache) Get(key []byte) *CoprCacheValue {
+func (c *coprCache) Get(key []byte) *coprCacheValue {
 	value, hit := c.cache.Get(key)
 	if !hit {
 		return nil
 	}
-	return value.(*CoprCacheValue)
+	return value.(*coprCacheValue)
 }
 
 // CheckAdmission checks whether an item is worth caching.
-func (c *CoprCache) CheckAdmission(dataSize int, processTime time.Duration) bool {
+func (c *coprCache) CheckAdmission(dataSize int, processTime time.Duration) bool {
 	if c == nil {
 		return false
 	}
@@ -109,7 +111,7 @@ func (c *CoprCache) CheckAdmission(dataSize int, processTime time.Duration) bool
 
 // Set inserts an item to the cache.
 // It is recommended to call `CheckAdmission` before inserting the item to the cache.
-func (c *CoprCache) Set(key []byte, value *CoprCacheValue) bool {
+func (c *coprCache) Set(key []byte, value *coprCacheValue) bool {
 	if c == nil {
 		return false
 	}

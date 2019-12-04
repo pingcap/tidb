@@ -135,7 +135,7 @@ type tikvStore struct {
 	client       Client
 	pdClient     pd.Client
 	regionCache  *RegionCache
-	coprCache    *CoprCache
+	coprCache    *coprCache
 	lockResolver *LockResolver
 	txnLatches   *latch.LatchesScheduler
 	gcWorker     GCHandler

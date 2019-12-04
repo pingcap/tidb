@@ -695,7 +695,7 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 	}
 
 	var cacheKey []byte = nil
-	var cacheValue *CoprCacheValue = nil
+	var cacheValue *coprCacheValue = nil
 
 	// If there are many ranges, it is very likely to be a TableLookupRequest. They are not worth to cache since
 	// computing is not the main cost. Ignore such requests directly to avoid slowly building the cache key.
@@ -703,7 +703,7 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 		copReq.IsCacheEnabled = true
 		cacheKey = coprCacheBuildKey(&copReq)
 		cacheValue = worker.store.coprCache.Get(cacheKey)
-		if cacheValue != nil && cacheValue.RegionId == task.region.id && cacheValue.TimeStamp <= worker.req.StartTs {
+		if cacheValue != nil && cacheValue.RegionID == task.region.id && cacheValue.TimeStamp <= worker.req.StartTs {
 			// Append cache version to the request to skip Coprocessor computation if possible
 			// when request result is cached
 			copReq.CacheIfMatchVersion = cacheValue.RegionDataVersion
@@ -898,7 +898,7 @@ func (worker *copIteratorWorker) handleCopStreamResult(bo *Backoffer, rpcCtx *RP
 // returns more tasks when that happens, or handles the response if no error.
 // if we're handling streaming coprocessor response, lastRange is the range of last
 // successful response, otherwise it's nil.
-func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *RPCContext, resp *copResponse, cacheKey []byte, cacheValue *CoprCacheValue, task *copTask, ch chan<- *copResponse, lastRange *coprocessor.KeyRange, costTime time.Duration) ([]*copTask, error) {
+func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *RPCContext, resp *copResponse, cacheKey []byte, cacheValue *coprCacheValue, task *copTask, ch chan<- *copResponse, lastRange *coprocessor.KeyRange, costTime time.Duration) ([]*copTask, error) {
 	if regionErr := resp.pbResp.GetRegionError(); regionErr != nil {
 		if err := bo.Backoff(BoRegionMiss, errors.New(regionErr.String())); err != nil {
 			return nil, errors.Trace(err)
@@ -968,11 +968,11 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *RPCCon
 		// Cache not hit or cache hit but not valid: update the cache if the response can be cached.
 		if cacheKey != nil && resp.pbResp.CacheLastVersion > 0 {
 			if worker.store.coprCache.CheckAdmission(resp.pbResp.Data.Size(), resp.detail.ProcessTime) {
-				newCacheValue := CoprCacheValue{
+				newCacheValue := coprCacheValue{
 					// TODO: Verify that using the data buffer directly is still safe.
 					Data:              resp.pbResp.Data,
 					TimeStamp:         worker.req.StartTs,
-					RegionId:          task.region.id,
+					RegionID:          task.region.id,
 					RegionDataVersion: resp.pbResp.CacheLastVersion,
 				}
 				worker.store.coprCache.Set(cacheKey, &newCacheValue)
