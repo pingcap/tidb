@@ -594,9 +594,6 @@ func (p *DataSource) ExplainInfo() string {
 			fmt.Fprintf(buffer, ", partition:%s", partitionName)
 		}
 	}
-	if p.handleCol != nil {
-		fmt.Fprintf(buffer, ", pk col:%s", p.handleCol.ExplainInfo())
-	}
 	return buffer.String()
 }
 
@@ -657,10 +654,41 @@ func (p *LogicalLimit) ExplainInfo() string {
 }
 
 // ExplainInfo implements Plan interface.
-func (p *TableScan) ExplainInfo() string {
+func (p *LogicalTableScan) ExplainInfo() string {
 	buffer := bytes.NewBufferString(p.Source.ExplainInfo())
+	if p.Source.handleCol != nil {
+		fmt.Fprintf(buffer, ", pk col:%s", p.Source.handleCol.ExplainInfo())
+	}
 	if len(p.AccessConds) > 0 {
 		fmt.Fprintf(buffer, ", cond:%v", p.AccessConds)
+	}
+	return buffer.String()
+}
+
+// ExplainInfo implements Plan interface.
+func (p *LogicalIndexScan) ExplainInfo() string {
+	buffer := bytes.NewBufferString(p.Source.ExplainInfo())
+	index := p.Index
+	if len(index.Columns) > 0 {
+		buffer.WriteString(", index:")
+		for i, idxCol := range index.Columns {
+			buffer.WriteString(idxCol.Name.O)
+			if i+1 < len(index.Columns) {
+				buffer.WriteString(", ")
+			}
+		}
+	}
+	if len(p.AccessConds) > 0 {
+		fmt.Fprintf(buffer, ", cond:%v", p.AccessConds)
+	}
+	return buffer.String()
+}
+
+// ExplainInfo implements Plan interface.
+func (p *TiKVSingleGather) ExplainInfo() string {
+	buffer := bytes.NewBufferString(p.Source.ExplainInfo())
+	if p.IsIndexGather {
+		buffer.WriteString(", index:" + p.Index.Name.String())
 	}
 	return buffer.String()
 }

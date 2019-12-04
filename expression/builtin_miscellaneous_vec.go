@@ -536,9 +536,18 @@ func (b *builtinNameConstRealSig) vecEvalReal(input *chunk.Chunk, result *chunk.
 }
 
 func (b *builtinReleaseLockSig) vectorized() bool {
-	return false
+	return true
 }
 
+// See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_release-lock
+// The release lock function will do nothing.
+// Warning: release_lock() function is parsed but ignored.
 func (b *builtinReleaseLockSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	result.ResizeInt64(n, false)
+	i64s := result.Int64s()
+	for i := range i64s {
+		i64s[i] = 1
+	}
+	return nil
 }
