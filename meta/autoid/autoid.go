@@ -262,7 +262,7 @@ func NewAllocator(store kv.Storage, dbID int64, isUnsigned bool) Allocator {
 	}
 }
 
-//codeInvalidTableID is the code of autoid error.
+// codeInvalidTableID is the code of autoid error.
 const codeInvalidTableID terror.ErrCode = 1
 
 // Alloc implements autoid.Allocator Alloc interface.
