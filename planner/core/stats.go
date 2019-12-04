@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/statistics"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/ranger"
 	"go.uber.org/zap"
@@ -136,7 +137,7 @@ func (ds *DataSource) getColumnNDV(colID int64) (ndv float64) {
 	return ndv
 }
 
-func (ds *DataSource) deriveStatsByFilter(conds expression.CNFExprs) {
+func (ds *DataSource) deriveStatsByFilter(conds expression.CNFExprs) *property.StatsInfo {
 	if ds.tableStats == nil {
 		tableStats := &property.StatsInfo{
 			RowCount:     float64(ds.statisticTable.Count),
@@ -158,19 +159,20 @@ func (ds *DataSource) deriveStatsByFilter(conds expression.CNFExprs) {
 		logutil.BgLogger().Debug("something wrong happened, use the default selectivity", zap.Error(err))
 		selectivity = selectionFactor
 	}
-	ds.stats = ds.tableStats.Scale(selectivity)
+	stats := ds.tableStats.Scale(selectivity)
 	if ds.ctx.GetSessionVars().OptimizerSelectivityLevel >= 1 {
-		ds.stats.HistColl = ds.stats.HistColl.NewHistCollBySelectivity(ds.ctx.GetSessionVars().StmtCtx, nodes)
+		stats.HistColl = stats.HistColl.NewHistCollBySelectivity(ds.ctx.GetSessionVars().StmtCtx, nodes)
 	}
+	return stats
 }
 
 // DeriveStats implement LogicalPlan DeriveStats interface.
 func (ds *DataSource) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema) (*property.StatsInfo, error) {
 	// PushDownNot here can convert query 'not (a != 1)' to 'a = 1'.
 	for i, expr := range ds.pushedDownConds {
-		ds.pushedDownConds[i] = expression.PushDownNot(nil, expr)
+		ds.pushedDownConds[i] = expression.PushDownNot(ds.ctx, expr)
 	}
-	ds.deriveStatsByFilter(ds.pushedDownConds)
+	ds.stats = ds.deriveStatsByFilter(ds.pushedDownConds)
 	for _, path := range ds.possibleAccessPaths {
 		if path.isTablePath {
 			noIntervalRanges, err := ds.deriveTablePathStats(path, ds.pushedDownConds, false)
@@ -233,15 +235,15 @@ func (ds *DataSource) generateAndPruneIndexMergePath() {
 	ds.possibleAccessPaths = ds.possibleAccessPaths[regularPathCount:]
 }
 
-// DeriveStats implement LogicalPlan DeriveStats interface.
-func (ts *TableScan) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema) (_ *property.StatsInfo, err error) {
+// DeriveStats implements LogicalPlan DeriveStats interface.
+func (ts *LogicalTableScan) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema) (_ *property.StatsInfo, err error) {
 	// PushDownNot here can convert query 'not (a != 1)' to 'a = 1'.
 	for i, expr := range ts.AccessConds {
 		// TODO The expressions may be shared by TableScan and several IndexScans, there would be redundant
 		// `PushDownNot` function call in multiple `DeriveStats` then.
-		ts.AccessConds[i] = expression.PushDownNot(nil, expr)
+		ts.AccessConds[i] = expression.PushDownNot(ts.ctx, expr)
 	}
-	ts.Source.deriveStatsByFilter(ts.AccessConds)
+	ts.stats = ts.Source.deriveStatsByFilter(ts.AccessConds)
 	sc := ts.SCtx().GetSessionVars().StmtCtx
 	// ts.Handle could be nil if PK is Handle, and PK column has been pruned.
 	if ts.Handle != nil {
@@ -258,7 +260,30 @@ func (ts *TableScan) DeriveStats(childStats []*property.StatsInfo, selfSchema *e
 	if err != nil {
 		return nil, err
 	}
-	return ts.Source.stats, nil
+	return ts.stats, nil
+}
+
+// DeriveStats implements LogicalPlan DeriveStats interface.
+func (is *LogicalIndexScan) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema) (*property.StatsInfo, error) {
+	for i, expr := range is.AccessConds {
+		is.AccessConds[i] = expression.PushDownNot(is.ctx, expr)
+	}
+	is.stats = is.Source.deriveStatsByFilter(is.AccessConds)
+	if len(is.AccessConds) == 0 {
+		is.Ranges = ranger.FullRange()
+	}
+	// TODO: If the AccessConds is not empty, we have set the range when push down the selection.
+
+	is.idxCols, is.idxColLens = expression.IndexInfo2PrefixCols(is.Columns, is.schema.Columns, is.Index)
+	is.fullIdxCols, is.fullIdxColLens = expression.IndexInfo2Cols(is.Columns, is.schema.Columns, is.Index)
+	if !is.Index.Unique && !is.Index.Primary && len(is.Index.Columns) == len(is.idxCols) {
+		handleCol := is.getPKIsHandleCol()
+		if handleCol != nil && !mysql.HasUnsignedFlag(handleCol.RetType.Flag) {
+			is.idxCols = append(is.idxCols, handleCol)
+			is.idxColLens = append(is.idxColLens, types.UnspecifiedLength)
+		}
+	}
+	return is.stats, nil
 }
 
 // getIndexMergeOrPath generates all possible IndexMergeOrPaths.
