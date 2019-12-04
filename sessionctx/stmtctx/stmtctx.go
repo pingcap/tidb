@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/memory"
 	"go.uber.org/zap"
@@ -126,6 +127,7 @@ type StatementContext struct {
 	Priority         mysql.PriorityEnum
 	NotFillCache     bool
 	MemTracker       *memory.Tracker
+	DiskTracker      *disk.Tracker
 	RuntimeStatsColl *execdetails.RuntimeStatsColl
 	TableIDs         []int64
 	IndexNames       []string
@@ -500,7 +502,15 @@ func (sc *StatementContext) CopTasksDetails() *CopTasksDetails {
 	sc.mu.Lock()
 	defer sc.mu.Unlock()
 	n := len(sc.mu.allExecDetails)
-	d := &CopTasksDetails{NumCopTasks: n}
+	d := &CopTasksDetails{
+		NumCopTasks:       n,
+		MaxBackoffTime:    make(map[string]time.Duration),
+		AvgBackoffTime:    make(map[string]time.Duration),
+		P90BackoffTime:    make(map[string]time.Duration),
+		TotBackoffTime:    make(map[string]time.Duration),
+		TotBackoffTimes:   make(map[string]int),
+		MaxBackoffAddress: make(map[string]string),
+	}
 	if n == 0 {
 		return d
 	}
@@ -520,6 +530,45 @@ func (sc *StatementContext) CopTasksDetails() *CopTasksDetails {
 	d.P90WaitTime = sc.mu.allExecDetails[n*9/10].WaitTime
 	d.MaxWaitTime = sc.mu.allExecDetails[n-1].WaitTime
 	d.MaxWaitAddress = sc.mu.allExecDetails[n-1].CalleeAddress
+
+	// calculate backoff details
+	type backoffItem struct {
+		callee    string
+		sleepTime time.Duration
+		times     int
+	}
+	backoffInfo := make(map[string][]backoffItem)
+	for _, ed := range sc.mu.allExecDetails {
+		for backoff := range ed.BackoffTimes {
+			backoffInfo[backoff] = append(backoffInfo[backoff], backoffItem{
+				callee:    ed.CalleeAddress,
+				sleepTime: ed.BackoffSleep[backoff],
+				times:     ed.BackoffTimes[backoff],
+			})
+		}
+	}
+	for backoff, items := range backoffInfo {
+		if len(items) == 0 {
+			continue
+		}
+		sort.Slice(items, func(i, j int) bool {
+			return items[i].sleepTime < items[j].sleepTime
+		})
+		n := len(items)
+		d.MaxBackoffAddress[backoff] = items[n-1].callee
+		d.MaxBackoffTime[backoff] = items[n-1].sleepTime
+		d.P90BackoffTime[backoff] = items[n*9/10].sleepTime
+
+		var totalTime time.Duration
+		totalTimes := 0
+		for _, it := range items {
+			totalTime += it.sleepTime
+			totalTimes += it.times
+		}
+		d.AvgBackoffTime[backoff] = totalTime / time.Duration(n)
+		d.TotBackoffTime[backoff] = totalTime
+		d.TotBackoffTimes[backoff] = totalTimes
+	}
 	return d
 }
 
@@ -536,6 +585,13 @@ type CopTasksDetails struct {
 	P90WaitTime    time.Duration
 	MaxWaitAddress string
 	MaxWaitTime    time.Duration
+
+	MaxBackoffTime    map[string]time.Duration
+	MaxBackoffAddress map[string]string
+	AvgBackoffTime    map[string]time.Duration
+	P90BackoffTime    map[string]time.Duration
+	TotBackoffTime    map[string]time.Duration
+	TotBackoffTimes   map[string]int
 }
 
 // ToZapFields wraps the CopTasksDetails as zap.Fileds.
