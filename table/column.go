@@ -232,18 +232,6 @@ type ColDesc struct {
 
 const defaultPrivileges = "select,insert,update,references"
 
-// GetTypeDesc gets the description for column type.
-func (c *Column) GetTypeDesc() string {
-	desc := c.FieldType.CompactStr()
-	if mysql.HasUnsignedFlag(c.Flag) && c.Tp != mysql.TypeBit && c.Tp != mysql.TypeYear {
-		desc += " unsigned"
-	}
-	if mysql.HasZerofillFlag(c.Flag) && c.Tp != mysql.TypeYear {
-		desc += " zerofill"
-	}
-	return desc
-}
-
 // NewColDesc returns a new ColDesc for a column.
 func NewColDesc(col *Column) *ColDesc {
 	// TODO: if we have no primary key and a unique index which's columns are all not null
