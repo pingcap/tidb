@@ -20,6 +20,7 @@ import (
 	"testing"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/parser/mysql"
 )
 
 var _ = Suite(&testConfigSuite{})
@@ -62,6 +63,9 @@ unrecognized-option-test = true
 	_, err = f.WriteString(`
 token-limit = 0
 split-region-max-num=10000
+enable-batch-dml = true
+server-version = "test_version"
+repair-mode = true
 [performance]
 txn-entry-count-limit=2000
 txn-total-size-limit=2000
@@ -74,6 +78,8 @@ commit-timeout="41s"
 
 	c.Assert(conf.Load(configFile), IsNil)
 
+	c.Assert(conf.ServerVersion, Equals, "test_version")
+	c.Assert(mysql.ServerVersion, Equals, conf.ServerVersion)
 	// Test that the original value will not be clear by load the config file that does not contain the option.
 	c.Assert(conf.Binlog.Enable, Equals, true)
 	c.Assert(conf.Binlog.BinlogSocket, Equals, "/tmp/socket")
