@@ -74,6 +74,13 @@ split-region-max-num = 1000
 # In order to support "drop primary key" operation , this flag must be true and the table does not have the pkIsHandle flag.
 alter-primary-key = false
 
+# repair mode is used to repair the broken table meta in TiKV in extreme cases.
+repair-mode = false
+
+# Repair table list is used to list the tables in repair mode with the format like ["db.table",].
+# In repair mode, repairing table which is not in repair list will get wrong database or wrong table error.
+repair-table-list = []
+
 [log]
 # Log level: debug, info, warn, error, fatal.
 level = "info"
@@ -201,7 +208,7 @@ bind-info-lease = "3s"
 # If using TiKV as the storage, the entry represents a key/value pair.
 # WARNING: Do not set the value too large, otherwise it will make a very large impact on the TiKV cluster.
 # Please adjust this configuration carefully.
-txn-total-size-limit = 104857600
+txn-total-size-limit = 1073741824
 
 [proxy-protocol]
 # PROXY protocol acceptable client networks.
