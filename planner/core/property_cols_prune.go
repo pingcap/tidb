@@ -52,6 +52,44 @@ func (ds *DataSource) PreparePossibleProperties(schema *expression.Schema, child
 	return result
 }
 
+func (ts *LogicalTableScan) PreparePossibleProperties(schema *expression.Schema, childrenProperties ...[][]*expression.Column) [][]*expression.Column {
+	if ts.Handle != nil {
+		return [][]*expression.Column{{ts.Handle}}
+	}
+	return nil
+}
+
+func (is *LogicalIndexScan) PreparePossibleProperties(schema *expression.Schema, childrenProperties ...[][]*expression.Column) [][]*expression.Column {
+	if len(is.idxCols) == 0 {
+		return nil
+	}
+	result := make([][]*expression.Column, 0, is.EqCondCount+1)
+	for i := 0; i <= is.EqCondCount; i++ {
+		result = append(result, make([]*expression.Column, len(is.idxCols)-i))
+		copy(result[i], is.idxCols[i:])
+	}
+	return result
+}
+
+func (p *TiKVSingleGather) PreparePossibleProperties(schema *expression.Schema, childrenProperties ...[][]*expression.Column) [][]*expression.Column {
+	return childrenProperties[0]
+}
+
+func (p *LogicalSelection) PreparePossibleProperties(schema *expression.Schema, childrenProperties ...[][]*expression.Column) [][]*expression.Column {
+	return childrenProperties[0]
+}
+
+func (p *LogicalWindow) PreparePossibleProperties(schema *expression.Schema, childrenProperties ...[][]*expression.Column) [][]*expression.Column {
+	result := make([]*expression.Column, 0, len(p.PartitionBy)+len(p.OrderBy))
+	for i, _ := range p.PartitionBy {
+		result = append(result, p.PartitionBy[i].Col)
+	}
+	for i, _ := range p.OrderBy {
+		result = append(result, p.OrderBy[i].Col)
+	}
+	return [][]*expression.Column{result}
+}
+
 func (p *LogicalSort) PreparePossibleProperties(schema *expression.Schema, childrenProperties ...[][]*expression.Column) [][]*expression.Column {
 	propCols := getPossiblePropertyFromByItems(p.ByItems)
 	if len(propCols) == 0 {
@@ -142,8 +180,15 @@ func (la *LogicalAggregation) PreparePossibleProperties(schema *expression.Schem
 	// when its group-by item is empty.
 	if len(la.GroupByItems) == 0 {
 		la.possibleProperties = [][]*expression.Column{nil}
-	} else {
-		la.possibleProperties = childProps
+		return nil
 	}
-	return nil
+	resultProperties := make([][]*expression.Column, 0, len(childProps))
+	for _, possibleChildProperty := range childProps {
+		sortColOffsets := getMaxSortPrefix(possibleChildProperty, la.groupByCols)
+		if len(sortColOffsets) == len(la.groupByCols) {
+			resultProperties = append(resultProperties, possibleChildProperty[:len(la.groupByCols)])
+		}
+	}
+	la.possibleProperties = resultProperties
+	return la.possibleProperties
 }

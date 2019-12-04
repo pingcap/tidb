@@ -15,6 +15,7 @@ package cascades
 
 import (
 	"context"
+	"github.com/pingcap/tidb/expression"
 	"math"
 	"testing"
 
@@ -96,4 +97,103 @@ func (s *testCascadesSuite) TestFillGroupStats(c *C) {
 	err = s.optimizer.fillGroupStats(rootGroup)
 	c.Assert(err, IsNil)
 	c.Assert(rootGroup.Prop.Stats, NotNil)
+}
+
+//func (s *testCascadesSuite) recursivelyCheckProperties(g *memo.Group, columnF, columnG *expression.Column, c *C) {
+//	// The result group looks like this:
+//	// Group#0 Schema:[test.t.f,Column#13]
+//	//   Projection_3 input:[Group#1], test.t.f, Column#13
+//	// Group#1 Schema:[Column#13,test.t.f]
+//	//   Aggregation_2 input:[Group#2], funcs:sum(test.t.a), firstrow(test.t.f)
+//	// Group#2 Schema:[test.t.a,test.t.f]
+//	//   TiKVSingleGather_5 input:[Group#3], table:t
+//	//   TiKVSingleGather_9 input:[Group#4], table:t, index:f_g
+//	//   TiKVSingleGather_7 input:[Group#5], table:t, index:f
+//	// Group#3 Schema:[test.t.a,test.t.f]
+//	//   TableScan_4 table:t, pk col:test.t.a
+//	// Group#4 Schema:[test.t.a,test.t.f]
+//	//   IndexScan_8 table:t, index:f, g
+//	// Group#5 Schema:[test.t.a,test.t.f]
+//	//   IndexScan_6 table:t, index:f
+//
+//	// Here, we only check if the LogicalAggregation can get the properties.
+//	for iter := g.Equivalents.Front(); iter != nil; iter = iter.Next() {
+//		expr := iter.Value.(*memo.GroupExpr)
+//		for _, childGroup := range expr.Children {
+//			s.recursivelyCheckProperties(childGroup, columnF, columnG, c)
+//		}
+//		switch expr.ExprNode.(type) {
+//		case *plannercore.LogicalAggregation:
+//			prop := preparePossibleProperties(g, make(map[*memo.Group][][]*expression.Column))
+//			// We only have one prop: f
+//			c.Assert(len(prop), Equals, 1)
+//			c.Assert(prop[0][0].Equal(nil, columnF), IsTrue)
+//		}
+//	}
+//
+//}
+
+func (s *testCascadesSuite) TestPreparePossibleProperties(c *C) {
+	s.optimizer.ResetTransformationRules(map[memo.Operand][]Transformation{
+		memo.OperandDataSource: {
+			NewRuleEnumeratePaths(),
+		},
+	})
+	defer func() {
+		s.optimizer.ResetTransformationRules(defaultTransformationMap)
+	}()
+	stmt, err := s.ParseOneStmt("select f, sum(a) from t group by f", "", "")
+	c.Assert(err, IsNil)
+	p, _, err := plannercore.BuildLogicalPlan(context.Background(), s.sctx, stmt, s.is)
+	c.Assert(err, IsNil)
+	logic, ok := p.(plannercore.LogicalPlan)
+	c.Assert(ok, IsTrue)
+	logic, err = s.optimizer.onPhasePreprocessing(s.sctx, logic)
+	c.Assert(err, IsNil)
+	// collect the target column: f, g, a
+	ds, ok := logic.Children()[0].Children()[0].(*plannercore.DataSource)
+	c.Assert(ok, IsTrue)
+	var columnF, columnA *expression.Column
+	for i, col := range ds.Columns {
+		if col.Name.L == "f" {
+			columnF = ds.Schema().Columns[i]
+		} else if col.Name.L == "a" {
+			columnA = ds.Schema().Columns[i]
+		}
+	}
+	c.Assert(columnF, NotNil)
+	c.Assert(columnA, NotNil)
+
+	agg, ok := logic.Children()[0].(*plannercore.LogicalAggregation)
+	c.Assert(ok, IsTrue)
+	group := memo.Convert2Group(agg)
+	err = s.optimizer.onPhaseExploration(s.sctx, group)
+	c.Assert(err, IsNil)
+	// Group#0 Schema:[Column#13,test.t.f]
+	//   Aggregation_2 input:[Group#1], group by:test.t.f, funcs:sum(test.t.a), firstrow(test.t.f)
+	// Group#1 Schema:[test.t.a,test.t.f]
+	//   TiKVSingleGather_5 input:[Group#2], table:t
+	//   TiKVSingleGather_9 input:[Group#3], table:t, index:f_g
+	//   TiKVSingleGather_7 input:[Group#4], table:t, index:f
+	// Group#2 Schema:[test.t.a,test.t.f]
+	//   TableScan_4 table:t, pk col:test.t.a
+	// Group#3 Schema:[test.t.a,test.t.f]
+	//   IndexScan_8 table:t, index:f, g
+	// Group#4 Schema:[test.t.a,test.t.f]
+	//   IndexScan_6 table:t, index:f
+	propMap := make(map[*memo.Group][][]*expression.Column)
+	aggProp := preparePossibleProperties(group, propMap)
+	// We only have one prop for Group0 : f
+	c.Assert(len(aggProp), Equals, 1)
+	c.Assert(aggProp[0][0].Equal(nil, columnF), IsTrue)
+
+	gatherGroup := group.Equivalents.Front().Value.(*memo.GroupExpr).Children[0]
+	gatherProp, ok := propMap[gatherGroup]
+	c.Assert(ok, IsTrue)
+	// We have 2 props for Group1: [f], [a]
+	c.Assert(len(gatherProp), Equals, 2)
+	for _, prop := range gatherProp {
+		c.Assert(len(prop), Equals, 1)
+		c.Assert(prop[0].Equal(nil, columnA) || prop[0].Equal(nil, columnF), IsTrue)
+	}
 }

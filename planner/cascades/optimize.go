@@ -246,6 +246,7 @@ func (opt *Optimizer) onPhaseImplementation(sctx sessionctx.Context, g *memo.Gro
 	prop := &property.PhysicalProperty{
 		ExpectedCnt: math.MaxFloat64,
 	}
+	preparePossibleProperties(g, make(map[*memo.Group][][]*expression.Column))
 	// TODO replace MaxFloat64 costLimit by variable from sctx, or other sources.
 	impl, err := opt.implGroup(g, prop, math.MaxFloat64)
 	if err != nil {
@@ -359,24 +360,21 @@ func (opt *Optimizer) implGroupExpr(cur *memo.GroupExpr, reqPhysProp *property.P
 // preparePossibleProperties recursively calls LogicalPlan PreparePossibleProperties
 // interface. It will fulfill the the possible properties fields of LogicalAggregation
 // and LogicalJoin.
-// TODO: When we have implemented IndexPaths, add tests for this function.
 func preparePossibleProperties(g *memo.Group, propertyMap map[*memo.Group][][]*expression.Column) [][]*expression.Column {
-	if property, ok := propertyMap[g]; ok {
-		return property
+	if prop, ok := propertyMap[g]; ok {
+		return prop
 	}
 	groupProperties := make([][]*expression.Column, 0)
 	for elem := g.Equivalents.Front(); elem != nil; elem = elem.Next() {
 		expr := elem.Value.(*memo.GroupExpr)
-		childrenProperties := make([][][]*expression.Column, 0, len(expr.Children))
-		for _, child := range expr.Children {
-			// TODO: use a memory here.
-			childrenProperties = append(childrenProperties, preparePossibleProperties(child, propertyMap))
+		childrenProperties := make([][][]*expression.Column, len(expr.Children))
+		for i, child := range expr.Children {
+			childrenProperties[i] = preparePossibleProperties(child, propertyMap)
 		}
 		exprProperties := expr.ExprNode.PreparePossibleProperties(expr.Schema(), childrenProperties...)
 		for _, newProp := range exprProperties {
 			// Check if the prop has already been in `groupProperties`.
-			// Maybe use a `map[]` to do so.
-			duplicated := true
+			duplicate := false
 			for _, existedProp := range groupProperties {
 				if len(newProp) != len(existedProp) {
 					continue
@@ -388,12 +386,12 @@ func preparePossibleProperties(g *memo.Group, propertyMap map[*memo.Group][][]*e
 						break
 					}
 				}
-				if !isSameProp {
-					duplicated = false
+				if isSameProp {
+					duplicate = true
 					break
 				}
 			}
-			if !duplicated {
+			if !duplicate {
 				groupProperties = append(groupProperties, newProp)
 			}
 		}
