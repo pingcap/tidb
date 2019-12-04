@@ -27,6 +27,7 @@ func preparePossibleProperties(lp LogicalPlan) [][]*expression.Column {
 	return lp.PreparePossibleProperties(lp.Schema(), childrenProperties...)
 }
 
+// PreparePossibleProperties implements LogicalPlan PreparePossibleProperties interface.
 func (ds *DataSource) PreparePossibleProperties(schema *expression.Schema, childrenProperties ...[][]*expression.Column) [][]*expression.Column {
 	result := make([][]*expression.Column, 0, len(ds.possibleAccessPaths))
 
@@ -52,6 +53,7 @@ func (ds *DataSource) PreparePossibleProperties(schema *expression.Schema, child
 	return result
 }
 
+// PreparePossibleProperties implements LogicalPlan PreparePossibleProperties interface.
 func (ts *LogicalTableScan) PreparePossibleProperties(schema *expression.Schema, childrenProperties ...[][]*expression.Column) [][]*expression.Column {
 	if ts.Handle != nil {
 		return [][]*expression.Column{{ts.Handle}}
@@ -59,6 +61,7 @@ func (ts *LogicalTableScan) PreparePossibleProperties(schema *expression.Schema,
 	return nil
 }
 
+// PreparePossibleProperties implements LogicalPlan PreparePossibleProperties interface.
 func (is *LogicalIndexScan) PreparePossibleProperties(schema *expression.Schema, childrenProperties ...[][]*expression.Column) [][]*expression.Column {
 	if len(is.idxCols) == 0 {
 		return nil
@@ -71,14 +74,17 @@ func (is *LogicalIndexScan) PreparePossibleProperties(schema *expression.Schema,
 	return result
 }
 
+// PreparePossibleProperties implements LogicalPlan PreparePossibleProperties interface.
 func (p *TiKVSingleGather) PreparePossibleProperties(schema *expression.Schema, childrenProperties ...[][]*expression.Column) [][]*expression.Column {
 	return childrenProperties[0]
 }
 
+// PreparePossibleProperties implements LogicalPlan PreparePossibleProperties interface.
 func (p *LogicalSelection) PreparePossibleProperties(schema *expression.Schema, childrenProperties ...[][]*expression.Column) [][]*expression.Column {
 	return childrenProperties[0]
 }
 
+// PreparePossibleProperties implements LogicalPlan PreparePossibleProperties interface.
 func (p *LogicalWindow) PreparePossibleProperties(schema *expression.Schema, childrenProperties ...[][]*expression.Column) [][]*expression.Column {
 	result := make([]*expression.Column, 0, len(p.PartitionBy)+len(p.OrderBy))
 	for i := range p.PartitionBy {
@@ -90,6 +96,7 @@ func (p *LogicalWindow) PreparePossibleProperties(schema *expression.Schema, chi
 	return [][]*expression.Column{result}
 }
 
+// PreparePossibleProperties implements LogicalPlan PreparePossibleProperties interface.
 func (p *LogicalSort) PreparePossibleProperties(schema *expression.Schema, childrenProperties ...[][]*expression.Column) [][]*expression.Column {
 	propCols := getPossiblePropertyFromByItems(p.ByItems)
 	if len(propCols) == 0 {
@@ -98,6 +105,7 @@ func (p *LogicalSort) PreparePossibleProperties(schema *expression.Schema, child
 	return [][]*expression.Column{propCols}
 }
 
+// PreparePossibleProperties implements LogicalPlan PreparePossibleProperties interface.
 func (p *LogicalTopN) PreparePossibleProperties(schema *expression.Schema, childrenProperties ...[][]*expression.Column) [][]*expression.Column {
 	propCols := getPossiblePropertyFromByItems(p.ByItems)
 	if len(propCols) == 0 {
@@ -118,10 +126,12 @@ func getPossiblePropertyFromByItems(items []*ByItems) []*expression.Column {
 	return cols
 }
 
+// PreparePossibleProperties implements LogicalPlan PreparePossibleProperties interface.
 func (p *baseLogicalPlan) PreparePossibleProperties(schema *expression.Schema, childrenProperties ...[][]*expression.Column) [][]*expression.Column {
 	return nil
 }
 
+// PreparePossibleProperties implements LogicalPlan PreparePossibleProperties interface.
 func (p *LogicalProjection) PreparePossibleProperties(schema *expression.Schema, childrenProperties ...[][]*expression.Column) [][]*expression.Column {
 	childProperties := childrenProperties[0]
 	oldCols := make([]*expression.Column, 0, p.schema.Len())
@@ -150,6 +160,7 @@ func (p *LogicalProjection) PreparePossibleProperties(schema *expression.Schema,
 	return childProperties
 }
 
+// PreparePossibleProperties implements LogicalPlan PreparePossibleProperties interface.
 func (p *LogicalJoin) PreparePossibleProperties(schema *expression.Schema, childrenProperties ...[][]*expression.Column) [][]*expression.Column {
 	leftProperties := childrenProperties[0]
 	rightProperties := childrenProperties[1]
@@ -174,6 +185,7 @@ func (p *LogicalJoin) PreparePossibleProperties(schema *expression.Schema, child
 	return resultProperties
 }
 
+// PreparePossibleProperties implements LogicalPlan PreparePossibleProperties interface.
 func (la *LogicalAggregation) PreparePossibleProperties(schema *expression.Schema, childrenProperties ...[][]*expression.Column) [][]*expression.Column {
 	childProps := childrenProperties[0]
 	// If there's no group-by item, the stream aggregation could have no order property. So we can add an empty property
