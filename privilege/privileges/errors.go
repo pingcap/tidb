@@ -20,19 +20,17 @@ import (
 
 // privilege error codes.
 const (
-	codeInvalidPrivilegeType  terror.ErrCode = 1
-	codeInvalidUserNameFormat                = 2
-	codeErrNonexistingGrant                  = mysql.ErrNonexistingGrant
+	codeInvalidPrivilegeType terror.ErrCode = 1
 )
 
 var (
 	errInvalidPrivilegeType = terror.ClassPrivilege.New(codeInvalidPrivilegeType, "unknown privilege type %s")
-	errNonexistingGrant     = terror.ClassPrivilege.New(codeErrNonexistingGrant, mysql.MySQLErrName[mysql.ErrNonexistingGrant])
+	errNonexistingGrant     = terror.ClassPrivilege.New(mysql.ErrNonexistingGrant, mysql.MySQLErrName[mysql.ErrNonexistingGrant])
 )
 
 func init() {
 	privilegeMySQLErrCodes := map[terror.ErrCode]uint16{
-		codeErrNonexistingGrant: mysql.ErrNonexistingGrant,
+		mysql.ErrNonexistingGrant: mysql.ErrNonexistingGrant,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassPrivilege] = privilegeMySQLErrCodes
 }
