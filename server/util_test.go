@@ -14,7 +14,6 @@
 package server
 
 import (
-	"github.com/pingcap/tidb/util/mock"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -27,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
 )
 
@@ -166,8 +166,9 @@ func (s *testUtilSuite) TestDumpTextValue(c *C) {
 
 	sc := mock.NewContext().GetSessionVars().StmtCtx
 	sc.IgnoreZeroInDate = true
-	losAngelesTz, _ := time.LoadLocation("America/Los_Angeles")
+	losAngelesTz, err := time.LoadLocation("America/Los_Angeles")
 	sc.TimeZone = losAngelesTz
+	c.Assert(err, IsNil)
 
 	time, err := types.ParseTime(sc, "2017-01-05 23:59:59.575601", mysql.TypeDatetime, 0)
 	c.Assert(err, IsNil)

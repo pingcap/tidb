@@ -825,7 +825,7 @@ func parseDatetime(sc *stmtctx.StatementContext, str string, fsp int8, isFloat b
 	if overflow {
 		if sc != nil {
 			// Convert to Go time and add 1 second, to handle input like 2017-01-05 08:40:59.575601
-			t1, err := tmp.GoTime(sc.TimeZone)
+			t1, err := tmp.GoTime(gotime.Local)
 			if err != nil {
 				return ZeroDatetime, errors.Trace(err)
 			}
