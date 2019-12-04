@@ -30,9 +30,9 @@ import (
 type WindowExec struct {
 	baseExecutor
 
-	groupChecker *groupChecker
-	// inputIter is the iterator of child chunks
-	inputIter *chunk.Iterator4Chunk
+	groupChecker *vecGroupChecker
+	// childResult stores the child chunk
+	childResult *chunk.Chunk
 	// executed indicates the child executor is drained or something unexpected happened.
 	executed bool
 	// resultChunks stores the chunks to return
@@ -74,8 +74,8 @@ func (e *WindowExec) preparedChunkAvailable() bool {
 
 func (e *WindowExec) consumeOneGroup(ctx context.Context) error {
 	var groupRows []chunk.Row
-	for {
-		eof, err := e.fetchChildIfNecessary(ctx)
+	if e.groupChecker.isExhausted() {
+		eof, err := e.fetchChild(ctx)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -83,17 +83,41 @@ func (e *WindowExec) consumeOneGroup(ctx context.Context) error {
 			e.executed = true
 			return e.consumeGroupRows(groupRows)
 		}
-		for inputRow := e.inputIter.Current(); inputRow != e.inputIter.End(); inputRow = e.inputIter.Next() {
-			meetNewGroup, err := e.groupChecker.meetNewGroup(inputRow)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			if meetNewGroup {
-				return e.consumeGroupRows(groupRows)
-			}
-			groupRows = append(groupRows, inputRow)
+		_, err = e.groupChecker.splitIntoGroups(e.childResult)
+		if err != nil {
+			return errors.Trace(err)
 		}
 	}
+	begin, end := e.groupChecker.getNextGroup()
+	for i := begin; i < end; i++ {
+		groupRows = append(groupRows, e.childResult.GetRow(i))
+	}
+
+	for meetLastGroup := end == e.childResult.NumRows(); meetLastGroup; {
+		meetLastGroup = false
+		eof, err := e.fetchChild(ctx)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if eof {
+			e.executed = true
+			return e.consumeGroupRows(groupRows)
+		}
+
+		isFirstGroupSameAsPrev, err := e.groupChecker.splitIntoGroups(e.childResult)
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		if isFirstGroupSameAsPrev {
+			begin, end = e.groupChecker.getNextGroup()
+			for i := begin; i < end; i++ {
+				groupRows = append(groupRows, e.childResult.GetRow(i))
+			}
+			meetLastGroup = end == e.childResult.NumRows()
+		}
+	}
+	return e.consumeGroupRows(groupRows)
 }
 
 func (e *WindowExec) consumeGroupRows(groupRows []chunk.Row) (err error) {
@@ -125,11 +149,7 @@ func (e *WindowExec) consumeGroupRows(groupRows []chunk.Row) (err error) {
 	return nil
 }
 
-func (e *WindowExec) fetchChildIfNecessary(ctx context.Context) (EOF bool, err error) {
-	if e.inputIter != nil && e.inputIter.Current() != e.inputIter.End() {
-		return false, nil
-	}
-
+func (e *WindowExec) fetchChild(ctx context.Context) (EOF bool, err error) {
 	childResult := newFirstChunk(e.children[0])
 	err = Next(ctx, e.children[0], childResult)
 	if err != nil {
@@ -149,8 +169,7 @@ func (e *WindowExec) fetchChildIfNecessary(ctx context.Context) (EOF bool, err e
 	e.resultChunks = append(e.resultChunks, resultChk)
 	e.remainingRowsInChunk = append(e.remainingRowsInChunk, numRows)
 
-	e.inputIter = chunk.NewIterator4Chunk(childResult)
-	e.inputIter.Begin()
+	e.childResult = childResult
 	return false, nil
 }
 
