@@ -16,6 +16,7 @@ package handle_test
 import (
 	"fmt"
 	"math"
+	"os"
 	"strings"
 	"time"
 
@@ -63,7 +64,7 @@ func (s *testStatsSuite) TearDownSuite(c *C) {
 }
 
 func (s *testStatsSuite) registerHook() {
-	conf := &log.Config{Level: "info", File: log.FileLogConfig{}}
+	conf := &log.Config{Level: os.Getenv("log_level"), File: log.FileLogConfig{}}
 	_, r, _ := log.InitLogger(conf)
 	s.hook = &logHook{r.Core, ""}
 	lg := zap.New(s.hook)
@@ -1244,11 +1245,11 @@ func (s *testStatsSuite) TestNeedAnalyzeTable(c *C) {
 		},
 	}
 	for _, test := range tests {
-		start, err := time.ParseInLocation(variable.AnalyzeFullTimeFormat, test.start, time.UTC)
+		start, err := time.ParseInLocation(variable.FullDayTimeFormat, test.start, time.UTC)
 		c.Assert(err, IsNil)
-		end, err := time.ParseInLocation(variable.AnalyzeFullTimeFormat, test.end, time.UTC)
+		end, err := time.ParseInLocation(variable.FullDayTimeFormat, test.end, time.UTC)
 		c.Assert(err, IsNil)
-		now, err := time.ParseInLocation(variable.AnalyzeFullTimeFormat, test.now, time.UTC)
+		now, err := time.ParseInLocation(variable.FullDayTimeFormat, test.now, time.UTC)
 		c.Assert(err, IsNil)
 		needAnalyze, reason := handle.NeedAnalyzeTable(test.tbl, test.limit, test.ratio, start, end, now)
 		c.Assert(needAnalyze, Equals, test.result)

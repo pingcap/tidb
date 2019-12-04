@@ -14,7 +14,9 @@
 package expression
 
 import (
+	"bytes"
 	"encoding/binary"
+	"fmt"
 	"math"
 	"net"
 	"strings"
@@ -158,11 +160,11 @@ func (b *builtinNameConstStringSig) vecEvalString(input *chunk.Chunk, result *ch
 }
 
 func (b *builtinDecimalAnyValueSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinDecimalAnyValueSig) vecEvalDecimal(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	return b.args[0].VecEvalDecimal(b.ctx, input, result)
 }
 
 func (b *builtinUUIDSig) vectorized() bool {
@@ -193,11 +195,20 @@ func (b *builtinNameConstDurationSig) vecEvalDuration(input *chunk.Chunk, result
 }
 
 func (b *builtinLockSig) vectorized() bool {
-	return false
+	return true
 }
 
+// See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_get-lock
+// The lock function will do nothing.
+// Warning: get_lock() function is parsed but ignored.
 func (b *builtinLockSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	result.ResizeInt64(n, false)
+	i64s := result.Int64s()
+	for i := range i64s {
+		i64s[i] = 1
+	}
+	return nil
 }
 
 func (b *builtinDurationAnyValueSig) vectorized() bool {
@@ -217,19 +228,48 @@ func (b *builtinIntAnyValueSig) vecEvalInt(input *chunk.Chunk, result *chunk.Col
 }
 
 func (b *builtinIsIPv4CompatSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinIsIPv4CompatSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
+		return err
+	}
+	result.ResizeInt64(n, false)
+	i64s := result.Int64s()
+	prefixCompat := []byte{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}
+	for i := 0; i < n; i++ {
+		if buf.IsNull(i) {
+			i64s[i] = 0
+		} else {
+			// Note that the input should be IP address in byte format.
+			// For IPv4, it should be byte slice with 4 bytes.
+			// For IPv6, it should be byte slice with 16 bytes.
+			// See example https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_is-ipv4-compat
+			ipAddress := buf.GetBytes(i)
+			if len(ipAddress) != net.IPv6len || !bytes.HasPrefix(ipAddress, prefixCompat) {
+				//Not an IPv6 address, return false
+				i64s[i] = 0
+			} else {
+				i64s[i] = 1
+			}
+		}
+	}
+	return nil
 }
 
 func (b *builtinNameConstIntSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinNameConstIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	return b.args[1].VecEvalInt(b.ctx, input, result)
 }
 
 func (b *builtinNameConstTimeSig) vectorized() bool {
@@ -249,27 +289,56 @@ func (b *builtinSleepSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) e
 }
 
 func (b *builtinIsIPv4MappedSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinIsIPv4MappedSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
+		return err
+	}
+	result.ResizeInt64(n, false)
+	i64s := result.Int64s()
+	prefixMapped := []byte{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff}
+	for i := 0; i < n; i++ {
+		if buf.IsNull(i) {
+			i64s[i] = 0
+		} else {
+			// Note that the input should be IP address in byte format.
+			// For IPv4, it should be byte slice with 4 bytes.
+			// For IPv6, it should be byte slice with 16 bytes.
+			// See example https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_is-ipv4-mapped
+			ipAddress := buf.GetBytes(i)
+			if len(ipAddress) != net.IPv6len || !bytes.HasPrefix(ipAddress, prefixMapped) {
+				//Not an IPv6 address, return false
+				i64s[i] = 0
+			} else {
+				i64s[i] = 1
+			}
+		}
+	}
+	return nil
 }
 
 func (b *builtinNameConstDecimalSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinNameConstDecimalSig) vecEvalDecimal(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	return b.args[1].VecEvalDecimal(b.ctx, input, result)
 }
 
 func (b *builtinNameConstJSONSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinNameConstJSONSig) vecEvalJSON(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	return b.args[1].VecEvalJSON(b.ctx, input, result)
 }
 
 func (b *builtinInet6AtonSig) vectorized() bool {
@@ -352,19 +421,110 @@ func (b *builtinTimeAnyValueSig) vecEvalTime(input *chunk.Chunk, result *chunk.C
 }
 
 func (b *builtinInetAtonSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinInetAtonSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
+		return err
+	}
+	var (
+		byteResult, res uint64
+		dotCount        int
+	)
+	result.ResizeInt64(n, false)
+	i64s := result.Int64s()
+	result.MergeNulls(buf)
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		ipAddr := buf.GetString(i)
+		if len(ipAddr) == 0 || ipAddr[len(ipAddr)-1] == '.' {
+			// ip address should not end with '.'.
+			result.SetNull(i, true)
+			continue
+		}
+		//reset
+		byteResult = 0
+		res = 0
+		dotCount = 0
+		for _, c := range ipAddr {
+			if c >= '0' && c <= '9' {
+				digit := uint64(c - '0')
+				byteResult = byteResult*10 + digit
+				if byteResult > 255 {
+					result.SetNull(i, true)
+					break
+				}
+			} else if c == '.' {
+				dotCount++
+				if dotCount > 3 {
+					result.SetNull(i, true)
+					break
+				}
+				res = (res << 8) + byteResult
+				byteResult = 0
+			} else {
+				result.SetNull(i, true)
+				break // illegal char (not number or .)
+			}
+		}
+		// 127 		-> 0.0.0.127
+		// 127.255 	-> 127.0.0.255
+		// 127.256	-> NULL
+		// 127.2.1	-> 127.2.0.1
+		if !result.IsNull(i) {
+			if dotCount == 1 {
+				res <<= 16
+			}
+			if dotCount == 2 {
+				res <<= 8
+			}
+			i64s[i] = int64((res << 8) + byteResult)
+		}
+	}
+	return nil
 }
 
 func (b *builtinInet6NtoaSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinInet6NtoaSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	val, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(val)
+	if err := b.args[0].VecEvalString(b.ctx, input, val); err != nil {
+		return err
+	}
+	result.ReserveString(n)
+	for i := 0; i < n; i++ {
+		if val.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
+		valI := val.GetString(i)
+		ip := net.IP([]byte(valI)).String()
+		if len(valI) == net.IPv6len && !strings.Contains(ip, ":") {
+			ip = fmt.Sprintf("::ffff:%s", ip)
+		}
+		if net.ParseIP(ip) == nil {
+			result.AppendNull()
+			continue
+		}
+		result.AppendString(ip)
+	}
+	return nil
 }
 
 func (b *builtinNameConstRealSig) vectorized() bool {
@@ -376,9 +536,18 @@ func (b *builtinNameConstRealSig) vecEvalReal(input *chunk.Chunk, result *chunk.
 }
 
 func (b *builtinReleaseLockSig) vectorized() bool {
-	return false
+	return true
 }
 
+// See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_release-lock
+// The release lock function will do nothing.
+// Warning: release_lock() function is parsed but ignored.
 func (b *builtinReleaseLockSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	result.ResizeInt64(n, false)
+	i64s := result.Int64s()
+	for i := range i64s {
+		i64s[i] = 1
+	}
+	return nil
 }

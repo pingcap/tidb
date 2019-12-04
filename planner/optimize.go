@@ -15,11 +15,14 @@ package planner
 
 import (
 	"context"
+	"fmt"
+	"math"
 	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/format"
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
@@ -29,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
+	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
@@ -46,28 +50,65 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 
 	sctx.PrepareTxnFuture(ctx)
 
-	var oriHint *bindinfo.HintsSet
-	if sctx.GetSessionVars().UsePlanBaselines {
-		if stmtNode, ok := node.(ast.StmtNode); ok {
-			oriHint = addHint(sctx, stmtNode)
-		}
+	bestPlan, names, _, err := optimize(ctx, sctx, node, is)
+	if err != nil {
+		return nil, nil, err
 	}
-	plan, names, err := optimize(ctx, sctx, node, is)
-	// Restore the original hint in case of prepare stmt.
-	if oriHint != nil {
-		node = bindinfo.BindHint(node.(ast.StmtNode), oriHint)
+	if !(sctx.GetSessionVars().UsePlanBaselines || sctx.GetSessionVars().EvolvePlanBaselines) {
+		return bestPlan, names, nil
+	}
+	stmtNode, ok := node.(ast.StmtNode)
+	if !ok {
+		return bestPlan, names, nil
+	}
+	bindRecord, scope := getBindRecord(sctx, stmtNode)
+	if bindRecord == nil {
+		return bestPlan, names, nil
+	}
+	bestPlanHint := plannercore.GenHintsFromPhysicalPlan(bestPlan)
+	binding := bindRecord.FindBinding(bestPlanHint)
+	// If the best bestPlan is in baselines, just use it.
+	if binding != nil && binding.Status == bindinfo.Using {
+		return bestPlan, names, nil
+	}
+	bestCostAmongHints := math.MaxFloat64
+	var bestPlanAmongHints plannercore.Plan
+	originHints := bindinfo.CollectHint(stmtNode)
+	// Try to find the best binding.
+	for _, binding := range bindRecord.Bindings {
+		if binding.Status != bindinfo.Using {
+			continue
+		}
+		metrics.BindUsageCounter.WithLabelValues(scope).Inc()
+		bindinfo.BindHint(stmtNode, binding.Hint)
+		plan, _, cost, err := optimize(ctx, sctx, node, is)
 		if err != nil {
-			handleInvalidBindRecord(ctx, sctx, node.(ast.StmtNode))
+			binding.Status = bindinfo.Invalid
+			handleInvalidBindRecord(ctx, sctx, scope, bindinfo.BindRecord{
+				OriginalSQL: bindRecord.OriginalSQL,
+				Db:          bindRecord.Db,
+				Bindings:    []bindinfo.Binding{binding},
+			})
+			continue
+		}
+		if cost < bestCostAmongHints {
+			bestCostAmongHints = cost
+			bestPlanAmongHints = plan
 		}
 	}
-	if err == nil || oriHint == nil {
-		return plan, names, err
+	// If there is already a evolution task, we do not need to handle it again.
+	if sctx.GetSessionVars().EvolvePlanBaselines && binding == nil {
+		handleEvolveTasks(ctx, sctx, bindRecord, stmtNode, bestPlanHint)
 	}
-	// Reoptimize after restore the original hint.
-	return optimize(ctx, sctx, node, is)
+	// Restore the hint to avoid changing the stmt node.
+	bindinfo.BindHint(stmtNode, originHints)
+	if sctx.GetSessionVars().UsePlanBaselines && bestPlanAmongHints != nil {
+		return bestPlanAmongHints, names, nil
+	}
+	return bestPlan, names, nil
 }
 
-func optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (plannercore.Plan, types.NameSlice, error) {
+func optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (plannercore.Plan, types.NameSlice, float64, error) {
 	// build logical plan
 	sctx.GetSessionVars().PlanID = 0
 	sctx.GetSessionVars().PlanColumnID = 0
@@ -76,7 +117,7 @@ func optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	builder := plannercore.NewPlanBuilder(sctx, is, hintProcessor)
 	p, err := builder.Build(ctx, node)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, 0, err
 	}
 
 	sctx.GetSessionVars().StmtCtx.Tables = builder.GetDBTableInfo()
@@ -86,18 +127,18 @@ func optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	// into the visitInfo in the logical plan builder.
 	if pm := privilege.GetPrivilegeManager(sctx); pm != nil {
 		if err := plannercore.CheckPrivilege(activeRoles, pm, builder.GetVisitInfo()); err != nil {
-			return nil, nil, err
+			return nil, nil, 0, err
 		}
 	}
 
 	if err := plannercore.CheckTableLock(sctx, is, builder.GetVisitInfo()); err != nil {
-		return nil, nil, err
+		return nil, nil, 0, err
 	}
 
 	// Handle the execute statement.
 	if execPlan, ok := p.(*plannercore.Execute); ok {
 		err := execPlan.OptimizePreparedPlan(ctx, sctx, is)
-		return p, p.OutputNames(), err
+		return p, p.OutputNames(), 0, err
 	}
 
 	names := p.OutputNames()
@@ -105,16 +146,16 @@ func optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	// Handle the non-logical plan statement.
 	logic, isLogicalPlan := p.(plannercore.LogicalPlan)
 	if !isLogicalPlan {
-		return p, names, nil
+		return p, names, 0, nil
 	}
 
 	// Handle the logical plan statement, use cascades planner if enabled.
 	if sctx.GetSessionVars().EnableCascadesPlanner {
-		finalPlan, err := cascades.DefaultOptimizer.FindBestPlan(sctx, logic)
-		return finalPlan, names, err
+		finalPlan, cost, err := cascades.DefaultOptimizer.FindBestPlan(sctx, logic)
+		return finalPlan, names, cost, err
 	}
-	finalPlan, err := plannercore.DoOptimize(ctx, builder.GetOptFlag(), logic)
-	return finalPlan, names, err
+	finalPlan, cost, err := plannercore.DoOptimize(ctx, builder.GetOptFlag(), logic)
+	return finalPlan, names, cost, err
 }
 
 func extractSelectAndNormalizeDigest(stmtNode ast.StmtNode) (*ast.SelectStmt, string, string) {
@@ -135,84 +176,93 @@ func extractSelectAndNormalizeDigest(stmtNode ast.StmtNode) (*ast.SelectStmt, st
 	return nil, "", ""
 }
 
-func addHint(ctx sessionctx.Context, stmtNode ast.StmtNode) *bindinfo.HintsSet {
+func getBindRecord(ctx sessionctx.Context, stmt ast.StmtNode) (*bindinfo.BindRecord, string) {
 	// When the domain is initializing, the bind will be nil.
 	if ctx.Value(bindinfo.SessionBindInfoKeyType) == nil {
-		return nil
+		return nil, ""
 	}
-	selectStmt, normalizedSQL, hash := extractSelectAndNormalizeDigest(stmtNode)
+	selectStmt, normalizedSQL, hash := extractSelectAndNormalizeDigest(stmt)
 	if selectStmt == nil {
-		return nil
+		return nil, ""
 	}
-	return addHintForSelect(ctx, selectStmt, normalizedSQL, hash)
-}
-
-func addHintForSelect(ctx sessionctx.Context, stmt ast.StmtNode, normdOrigSQL, hash string) *bindinfo.HintsSet {
 	sessionHandle := ctx.Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
-	bindRecord := sessionHandle.GetBindRecord(normdOrigSQL, ctx.GetSessionVars().CurrentDB)
+	bindRecord := sessionHandle.GetBindRecord(normalizedSQL, ctx.GetSessionVars().CurrentDB)
 	if bindRecord != nil {
-		binding := bindRecord.FirstUsingBinding()
-		if binding == nil {
-			return nil
+		if bindRecord.HasUsingBinding() {
+			return bindRecord, metrics.ScopeSession
 		}
-		metrics.BindUsageCounter.WithLabelValues(metrics.ScopeSession).Inc()
-		oriHint := bindinfo.CollectHint(stmt)
-		bindinfo.BindHint(stmt, binding.Hint)
-		return oriHint
+		return nil, ""
 	}
 	globalHandle := domain.GetDomain(ctx).BindHandle()
-	bindRecord = globalHandle.GetBindRecord(hash, normdOrigSQL, ctx.GetSessionVars().CurrentDB)
+	bindRecord = globalHandle.GetBindRecord(hash, normalizedSQL, ctx.GetSessionVars().CurrentDB)
 	if bindRecord == nil {
-		bindRecord = globalHandle.GetBindRecord(hash, normdOrigSQL, "")
+		bindRecord = globalHandle.GetBindRecord(hash, normalizedSQL, "")
 	}
-	if bindRecord != nil {
-		metrics.BindUsageCounter.WithLabelValues(metrics.ScopeGlobal).Inc()
-		oriHint := bindinfo.CollectHint(stmt)
-		bindinfo.BindHint(stmt, bindRecord.FirstUsingBinding().Hint)
-		return oriHint
-	}
-	return nil
+	return bindRecord, metrics.ScopeGlobal
 }
 
-func handleInvalidBindRecord(ctx context.Context, sctx sessionctx.Context, stmtNode ast.StmtNode) {
-	selectStmt, normdOrigSQL, hash := extractSelectAndNormalizeDigest(stmtNode)
-	if selectStmt == nil {
-		return
-	}
+func handleInvalidBindRecord(ctx context.Context, sctx sessionctx.Context, level string, bindRecord bindinfo.BindRecord) {
 	sessionHandle := sctx.Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
-	bindRecord := sessionHandle.GetBindRecord(normdOrigSQL, sctx.GetSessionVars().CurrentDB)
-	if bindRecord != nil {
-		bindRecord.FirstUsingBinding().Status = bindinfo.Invalid
+	// The first two parameters are only used to generate hints, but since we already have the hints,
+	// we do not need to pass real values and the error won't happen too.
+	err := sessionHandle.DropBindRecord(nil, nil, &bindRecord)
+	if err != nil {
+		logutil.Logger(ctx).Info("drop session bindings failed")
+	}
+	if level == metrics.ScopeSession {
 		return
 	}
 
 	globalHandle := domain.GetDomain(sctx).BindHandle()
-	bindRecord = globalHandle.GetBindRecord(hash, normdOrigSQL, sctx.GetSessionVars().CurrentDB)
-	if bindRecord == nil {
-		bindRecord = globalHandle.GetBindRecord(hash, normdOrigSQL, "")
-	}
-	if bindRecord != nil {
-		binding := *bindRecord.FirstUsingBinding()
-		binding.Status = bindinfo.Invalid
-		record := &bindinfo.BindRecord{
-			OriginalSQL: bindRecord.OriginalSQL,
-			Db:          sctx.GetSessionVars().CurrentDB,
-			Bindings:    []bindinfo.Binding{binding},
-		}
+	globalHandle.AddDropInvalidBindTask(&bindRecord)
+}
 
-		err := sessionHandle.AddBindRecord(nil, nil, record)
-		if err != nil {
-			logutil.Logger(ctx).Warn("handleInvalidBindRecord failed", zap.Error(err))
-		}
-
-		globalHandle := domain.GetDomain(sctx).BindHandle()
-		dropBindRecord := &bindinfo.BindRecord{
-			OriginalSQL: bindRecord.OriginalSQL,
-			Db:          bindRecord.Db,
-			Bindings:    []bindinfo.Binding{binding},
-		}
-		globalHandle.AddDropInvalidBindTask(dropBindRecord)
+func handleEvolveTasks(ctx context.Context, sctx sessionctx.Context, br *bindinfo.BindRecord, stmtNode ast.StmtNode, planHint string) {
+	// If would be nil for very simple cases such as point get, we do not need to evolve for them.
+	if planHint == "" {
+		return
 	}
+	paramChecker := &paramMarkerChecker{}
+	stmtNode.Accept(paramChecker)
+	// We need to evolve on current sql, but we cannot restore values for paramMarkers yet,
+	// so just ignore them now.
+	if paramChecker.hasParamMarker {
+		return
+	}
+	// We need to evolve plan based on the current sql, not the original sql which may have different parameters.
+	// So here we would remove the hint and inject the current best plan hint.
+	bindinfo.BindHint(stmtNode, &bindinfo.HintsSet{})
+	var sb strings.Builder
+	restoreCtx := format.NewRestoreCtx(format.DefaultRestoreFlags, &sb)
+	err := stmtNode.Restore(restoreCtx)
+	if err != nil {
+		logutil.Logger(ctx).Info("Restore SQL failed", zap.Error(err))
+	}
+	bindSQL := sb.String()
+	selectIdx := strings.Index(bindSQL, "SELECT")
+	// Remove possible `explain` prefix.
+	bindSQL = bindSQL[selectIdx:]
+	bindsql := strings.Replace(bindSQL, "SELECT", fmt.Sprintf("SELECT /*+ %s*/", planHint), 1)
+	globalHandle := domain.GetDomain(sctx).BindHandle()
+	charset, collation := sctx.GetSessionVars().GetCharsetInfo()
+	binding := bindinfo.Binding{BindSQL: bindsql, Status: bindinfo.PendingVerify, Charset: charset, Collation: collation}
+	globalHandle.AddEvolvePlanTask(br.OriginalSQL, br.Db, binding, planHint)
+}
+
+type paramMarkerChecker struct {
+	hasParamMarker bool
+}
+
+func (e *paramMarkerChecker) Enter(in ast.Node) (ast.Node, bool) {
+	if _, ok := in.(*driver.ParamMarkerExpr); ok {
+		e.hasParamMarker = true
+		return in, true
+	}
+	return in, false
+}
+
+func (e *paramMarkerChecker) Leave(in ast.Node) (ast.Node, bool) {
+	return in, true
 }
 
 // isPointGetWithoutDoubleRead returns true when meets following conditions:

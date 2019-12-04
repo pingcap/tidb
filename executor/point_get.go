@@ -50,14 +50,15 @@ func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) Executor {
 type PointGetExecutor struct {
 	baseExecutor
 
-	tblInfo  *model.TableInfo
-	handle   int64
-	idxInfo  *model.IndexInfo
-	idxVals  []types.Datum
-	startTS  uint64
-	snapshot kv.Snapshot
-	done     bool
-	lock     bool
+	tblInfo      *model.TableInfo
+	handle       int64
+	idxInfo      *model.IndexInfo
+	idxVals      []types.Datum
+	startTS      uint64
+	snapshot     kv.Snapshot
+	done         bool
+	lock         bool
+	lockWaitTime int64
 }
 
 // Init set fields needed for PointGetExecutor reuse, this does NOT change baseExecutor field
@@ -69,6 +70,7 @@ func (e *PointGetExecutor) Init(p *plannercore.PointGetPlan, startTs uint64) {
 	e.startTS = startTs
 	e.done = false
 	e.lock = p.Lock
+	e.lockWaitTime = p.LockWaitTime
 }
 
 // Open implements the Executor interface.
@@ -154,7 +156,7 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 
 func (e *PointGetExecutor) lockKeyIfNeeded(ctx context.Context, key []byte) error {
 	if e.lock {
-		return doLockKeys(ctx, e.ctx, key)
+		return doLockKeys(ctx, e.ctx, e.lockWaitTime, key)
 	}
 	return nil
 }

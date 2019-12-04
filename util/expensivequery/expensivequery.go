@@ -17,7 +17,6 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -31,7 +30,6 @@ import (
 
 // Handle is the handler for expensive query.
 type Handle struct {
-	mu     sync.RWMutex
 	exitCh chan struct{}
 	sm     util.SessionManager
 }

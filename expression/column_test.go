@@ -183,6 +183,16 @@ func (s *testEvaluatorSuite) TestColHybird(c *C) {
 		c.Assert(v, Equals, result.GetInt64(i))
 	}
 
+	// use a container which has the different field type with bit
+	result, err = newBuffer(types.ETString, 1024)
+	c.Assert(err, IsNil)
+	c.Assert(col.VecEvalInt(ctx, input, result), IsNil)
+	for row, i := it.Begin(), 0; row != it.End(); row, i = it.Next(), i+1 {
+		v, _, err := col.EvalInt(ctx, row)
+		c.Assert(err, IsNil)
+		c.Assert(v, Equals, result.GetInt64(i))
+	}
+
 	// enum
 	ft = types.NewFieldType(mysql.TypeEnum)
 	col.RetType = ft

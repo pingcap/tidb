@@ -15,12 +15,13 @@ package tikv
 
 import (
 	"context"
+	"strconv"
 	"sync/atomic"
 	"time"
 
 	"go.uber.org/zap"
-	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -30,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/storeutil"
 )
 
 // ShuttingDown is a flag to indicate tidb-server is exiting (Ctrl+C signal
@@ -111,12 +113,17 @@ func (s *RegionRequestSender) SendReqCtx(
 	} else {
 		replicaRead = kv.ReplicaReadLeader
 	}
+	seed := req.ReplicaReadSeed
 	for {
 		switch sType {
 		case kv.TiKV:
-			rpcCtx, err = s.regionCache.GetTiKVRPCContext(bo, regionID, replicaRead, req.ReplicaReadSeed)
+			rpcCtx, err = s.regionCache.GetTiKVRPCContext(bo, regionID, replicaRead, seed)
 		case kv.TiFlash:
 			rpcCtx, err = s.regionCache.GetTiFlashRPCContext(bo, regionID)
+		case kv.TiDB:
+			rpcCtx = &RPCContext{
+				Addr: s.storeAddr,
+			}
 		default:
 			err = errors.Errorf("unsupported storage type: %v", sType)
 		}
@@ -151,7 +158,7 @@ func (s *RegionRequestSender) SendReqCtx(
 			return nil, nil, errors.Trace(err)
 		}
 		if regionErr != nil {
-			retry, err = s.onRegionError(bo, rpcCtx, regionErr)
+			retry, err = s.onRegionError(bo, rpcCtx, &seed, regionErr)
 			if err != nil {
 				return nil, nil, errors.Trace(err)
 			}
@@ -167,6 +174,13 @@ func (s *RegionRequestSender) sendReqToRegion(bo *Backoffer, ctx *RPCContext, re
 	if e := tikvrpc.SetContext(req, ctx.Meta, ctx.Peer); e != nil {
 		return nil, false, errors.Trace(e)
 	}
+	// judge the store limit switch.
+	if limit := storeutil.StoreLimit.Load(); limit > 0 {
+		if err := s.getStoreToken(ctx.Store, limit); err != nil {
+			return nil, false, err
+		}
+		defer s.releaseStoreToken(ctx.Store)
+	}
 	resp, err = s.client.SendRequest(bo.ctx, ctx.Addr, req, timeout)
 	if err != nil {
 		s.rpcError = err
@@ -178,6 +192,29 @@ func (s *RegionRequestSender) sendReqToRegion(bo *Backoffer, ctx *RPCContext, re
 	return
 }
 
+func (s *RegionRequestSender) getStoreToken(st *Store, limit int64) error {
+	// Checking limit is not thread safe, preferring this for avoiding load in loop.
+	count := st.tokenCount.Load()
+	if count < limit {
+		// Adding tokenCount is no thread safe, preferring this for avoiding check in loop.
+		st.tokenCount.Add(1)
+		return nil
+	}
+	metrics.GetStoreLimitErrorCounter.WithLabelValues(st.addr, strconv.FormatUint(st.storeID, 10)).Inc()
+	return ErrTokenLimit.GenWithStackByArgs(st.storeID)
+
+}
+
+func (s *RegionRequestSender) releaseStoreToken(st *Store) {
+	count := st.tokenCount.Load()
+	// Decreasing tokenCount is no thread safe, preferring this for avoiding check in loop.
+	if count > 0 {
+		st.tokenCount.Sub(1)
+		return
+	}
+	logutil.BgLogger().Warn("release store token failed, count equals to 0")
+}
+
 func (s *RegionRequestSender) onSendFail(bo *Backoffer, ctx *RPCContext, err error) error {
 	// If it failed because the context is cancelled by ourself, don't retry.
 	if errors.Cause(err) == context.Canceled {
@@ -185,7 +222,7 @@ func (s *RegionRequestSender) onSendFail(bo *Backoffer, ctx *RPCContext, err err
 	} else if atomic.LoadUint32(&ShuttingDown) > 0 {
 		return errTiDBShuttingDown
 	}
-	if grpc.Code(errors.Cause(err)) == codes.Canceled {
+	if status.Code(errors.Cause(err)) == codes.Canceled {
 		select {
 		case <-bo.ctx.Done():
 			return errors.Trace(err)
@@ -197,7 +234,9 @@ func (s *RegionRequestSender) onSendFail(bo *Backoffer, ctx *RPCContext, err err
 		}
 	}
 
-	s.regionCache.OnSendFail(bo, ctx, s.needReloadRegion(ctx), err)
+	if ctx.Meta != nil {
+		s.regionCache.OnSendFail(bo, ctx, s.needReloadRegion(ctx), err)
+	}
 
 	// Retry on send request failure when it's not canceled.
 	// When a store is not available, the leader of related region should be elected quickly.
@@ -239,7 +278,7 @@ func regionErrorToLabel(e *errorpb.Error) string {
 	return "unknown"
 }
 
-func (s *RegionRequestSender) onRegionError(bo *Backoffer, ctx *RPCContext, regionErr *errorpb.Error) (retry bool, err error) {
+func (s *RegionRequestSender) onRegionError(bo *Backoffer, ctx *RPCContext, seed *uint32, regionErr *errorpb.Error) (retry bool, err error) {
 	metrics.TiKVRegionErrorCounter.WithLabelValues(regionErrorToLabel(regionErr)).Inc()
 	if notLeader := regionErr.GetNotLeader(); notLeader != nil {
 		// Retry if error is `NotLeader`.
@@ -275,6 +314,9 @@ func (s *RegionRequestSender) onRegionError(bo *Backoffer, ctx *RPCContext, regi
 		logutil.BgLogger().Debug("tikv reports `EpochNotMatch` retry later",
 			zap.Stringer("EpochNotMatch", epochNotMatch),
 			zap.Stringer("ctx", ctx))
+		if seed != nil {
+			*seed = *seed + 1
+		}
 		err = s.regionCache.OnRegionEpochNotMatch(bo, ctx, epochNotMatch.CurrentRegions)
 		return false, errors.Trace(err)
 	}
@@ -301,7 +343,11 @@ func (s *RegionRequestSender) onRegionError(bo *Backoffer, ctx *RPCContext, regi
 	logutil.BgLogger().Debug("tikv reports region failed",
 		zap.Stringer("regionErr", regionErr),
 		zap.Stringer("ctx", ctx))
-	s.regionCache.InvalidateCachedRegion(ctx.Region)
+	// When the request is sent to TiDB, there is no region in the request, so the region id will be 0.
+	// So when region id is 0, there is no business with region cache.
+	if ctx.Region.id != 0 {
+		s.regionCache.InvalidateCachedRegion(ctx.Region)
+	}
 	return false, nil
 }
 

@@ -68,8 +68,8 @@ func (s *testMainSuite) TearDownSuite(c *C) {
 
 func (s *testMainSuite) TestSysSessionPoolGoroutineLeak(c *C) {
 	store, dom := newStoreWithBootstrap(c, s.dbName+"goroutine_leak")
-	defer dom.Close()
 	defer store.Close()
+	defer dom.Close()
 	se, err := createSession(store)
 	c.Assert(err, IsNil)
 

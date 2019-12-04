@@ -225,3 +225,13 @@ func (s *testUpdateSuite) TestUpdateSchemaChange(c *C) {
 	tk.MustQuery(`select * from t;`).Check(testkit.Rows(
 		`1 2`))
 }
+
+func (s *testUpdateSuite) TestUpdateMultiDatabaseTable(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop database if exists test2")
+	tk.MustExec("create database test2")
+	tk.MustExec("create table t(a int, b int generated always  as (a+1) virtual)")
+	tk.MustExec("create table test2.t(a int, b int generated always  as (a+1) virtual)")
+	tk.MustExec("update t, test2.t set test.t.a=1")
+}

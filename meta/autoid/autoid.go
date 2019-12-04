@@ -17,7 +17,6 @@ import (
 	"context"
 	"math"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/cznic/mathutil"
@@ -29,6 +28,19 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
+)
+
+// Attention:
+// For reading cluster TiDB memory tables, the system schema/table should be same.
+// Once the system schema/table id been allocated, it can't be changed any more.
+// Change the system schema/table id may have the compatibility problem.
+const (
+	// SystemSchemaIDFlag is the system schema/table id flag, uses the highest bit position as system schema ID flag, it's exports for test.
+	SystemSchemaIDFlag = 1 << 62
+	// InformationSchemaDBID is the information_schema schema id, it's exports for test.
+	InformationSchemaDBID int64 = SystemSchemaIDFlag | 1
+	// PerformanceSchemaDBID is the performance_schema schema id, it's exports for test.
+	PerformanceSchemaDBID int64 = SystemSchemaIDFlag | 10000
 )
 
 const (
@@ -250,15 +262,8 @@ func NewAllocator(store kv.Storage, dbID int64, isUnsigned bool) Allocator {
 	}
 }
 
-//codeInvalidTableID is the code of autoid error.
+// codeInvalidTableID is the code of autoid error.
 const codeInvalidTableID terror.ErrCode = 1
-
-var localSchemaID = int64(math.MaxInt64)
-
-// GenLocalSchemaID generates a local schema ID.
-func GenLocalSchemaID() int64 {
-	return atomic.AddInt64(&localSchemaID, -1)
-}
 
 // Alloc implements autoid.Allocator Alloc interface.
 func (alloc *allocator) Alloc(tableID int64, n uint64) (int64, int64, error) {

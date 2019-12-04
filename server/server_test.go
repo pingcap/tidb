@@ -790,25 +790,25 @@ func runTestErrorCode(c *C) {
 		checkErrorCode(c, err, tmysql.ErrNoSuchTable)
 		_, err = txn2.Exec("create database test;")
 		// Make tests stable. Some times the error may be the ErrInfoSchemaChanged.
-		checkErrorCode(c, err, tmysql.ErrDBCreateExists, tmysql.ErrUnknown)
+		checkErrorCode(c, err, tmysql.ErrDBCreateExists, tmysql.ErrInfoSchemaChanged)
 		_, err = txn2.Exec("create database aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa;")
-		checkErrorCode(c, err, tmysql.ErrTooLongIdent, tmysql.ErrUnknown)
+		checkErrorCode(c, err, tmysql.ErrTooLongIdent, tmysql.ErrInfoSchemaChanged)
 		_, err = txn2.Exec("create table test (c int);")
-		checkErrorCode(c, err, tmysql.ErrTableExists, tmysql.ErrUnknown)
+		checkErrorCode(c, err, tmysql.ErrTableExists, tmysql.ErrInfoSchemaChanged)
 		_, err = txn2.Exec("drop table unknown_table;")
-		checkErrorCode(c, err, tmysql.ErrBadTable, tmysql.ErrUnknown)
+		checkErrorCode(c, err, tmysql.ErrBadTable, tmysql.ErrInfoSchemaChanged)
 		_, err = txn2.Exec("drop database unknown_db;")
-		checkErrorCode(c, err, tmysql.ErrDBDropExists, tmysql.ErrUnknown)
+		checkErrorCode(c, err, tmysql.ErrDBDropExists, tmysql.ErrInfoSchemaChanged)
 		_, err = txn2.Exec("create table aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa (a int);")
-		checkErrorCode(c, err, tmysql.ErrTooLongIdent, tmysql.ErrUnknown)
+		checkErrorCode(c, err, tmysql.ErrTooLongIdent, tmysql.ErrInfoSchemaChanged)
 		_, err = txn2.Exec("create table long_column_table (aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa int);")
-		checkErrorCode(c, err, tmysql.ErrTooLongIdent, tmysql.ErrUnknown)
+		checkErrorCode(c, err, tmysql.ErrTooLongIdent, tmysql.ErrInfoSchemaChanged)
 		_, err = txn2.Exec("alter table test add aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa int;")
-		checkErrorCode(c, err, tmysql.ErrTooLongIdent, tmysql.ErrUnknown)
+		checkErrorCode(c, err, tmysql.ErrTooLongIdent, tmysql.ErrInfoSchemaChanged)
 
 		// Optimizer errors
 		_, err = txn2.Exec("select *, * from test;")
-		checkErrorCode(c, err, tmysql.ErrParse)
+		checkErrorCode(c, err, tmysql.ErrInvalidWildCard)
 		_, err = txn2.Exec("select row(1, 2) > 1;")
 		checkErrorCode(c, err, tmysql.ErrOperandColumns)
 		_, err = txn2.Exec("select * from test order by row(c, c);")
@@ -840,29 +840,6 @@ func checkErrorCode(c *C, e error, codes ...uint16) {
 		}
 	}
 	c.Assert(isMatchCode, IsTrue, Commentf("got err %v, expected err codes %v", me, codes))
-}
-
-func runTestShowProcessList(c *C) {
-	runTests(c, nil, func(dbt *DBTest) {
-		fullSQL := "show                                                                                        full processlist"
-		simpSQL := "show                                                                                        processlist"
-		rows := dbt.mustQuery(fullSQL)
-		c.Assert(rows.Next(), IsTrue)
-		var outA, outB, outC, outD, outE, outF, outG, outH, outI string
-		err := rows.Scan(&outA, &outB, &outC, &outD, &outE, &outF, &outG, &outH, &outI)
-		c.Assert(err, IsNil)
-		c.Assert(outE, Equals, "Query")
-		c.Assert(outF, Equals, "0")
-		c.Assert(outG, Equals, "2")
-		c.Assert(outH, Equals, fullSQL)
-		rows = dbt.mustQuery(simpSQL)
-		err = rows.Scan(&outA, &outB, &outC, &outD, &outE, &outF, &outG, &outH, &outI)
-		c.Assert(err, IsNil)
-		c.Assert(outE, Equals, "Query")
-		c.Assert(outF, Equals, "0")
-		c.Assert(outG, Equals, "2")
-		c.Assert(outH, Equals, simpSQL[:100])
-	})
 }
 
 func runTestAuth(c *C) {

@@ -30,7 +30,7 @@ type Enforcer interface {
 	// required physical property.
 	OnEnforce(reqProp *property.PhysicalProperty, child memo.Implementation) (impl memo.Implementation)
 	// GetEnforceCost calculates cost of enforcing required physical property.
-	GetEnforceCost(g *memo.Group, inputCount float64) float64
+	GetEnforceCost(g *memo.Group) float64
 }
 
 // GetEnforcerRules gets all candidate enforcer rules based
@@ -54,7 +54,7 @@ var orderEnforcer = &OrderEnforcer{}
 // NewProperty removes order property from required physical property.
 func (e *OrderEnforcer) NewProperty(prop *property.PhysicalProperty) (newProp *property.PhysicalProperty) {
 	// Order property cannot be empty now.
-	newProp = &property.PhysicalProperty{ExpectedCnt: prop.ExpectedCnt}
+	newProp = &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64}
 	return
 }
 
@@ -76,10 +76,10 @@ func (e *OrderEnforcer) OnEnforce(reqProp *property.PhysicalProperty, child memo
 }
 
 // GetEnforceCost calculates cost of sort operator.
-func (e *OrderEnforcer) GetEnforceCost(g *memo.Group, inputCount float64) float64 {
+func (e *OrderEnforcer) GetEnforceCost(g *memo.Group) float64 {
 	// We need a SessionCtx to calculate the cost of a sort.
 	sctx := g.Equivalents.Front().Value.(*memo.GroupExpr).ExprNode.SCtx()
 	sort := plannercore.PhysicalSort{}.Init(sctx, nil, 0, nil)
-	cost := sort.GetCost(inputCount)
+	cost := sort.GetCost(g.Prop.Stats.RowCount)
 	return cost
 }

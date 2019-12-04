@@ -16,10 +16,10 @@ package ddl
 import (
 	"time"
 
-	"github.com/coreos/etcd/clientv3"
 	"github.com/ngaut/pools"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
+	"go.etcd.io/etcd/clientv3"
 )
 
 // Option represents an option to initialize the DDL module

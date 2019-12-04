@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mock"
@@ -209,7 +208,7 @@ func (s *testSuite4) TestInsert(c *C) {
 	tk.MustExec("CREATE TABLE t(a DECIMAL(4,2));")
 	tk.MustExec("INSERT INTO t VALUES (1.000001);")
 	r = tk.MustQuery("SHOW WARNINGS;")
-	r.Check(testkit.Rows("Warning 1265 Data Truncated"))
+	r.Check(testkit.Rows("Warning 1292 Truncated incorrect DECIMAL value: '1.000001'"))
 	tk.MustExec("INSERT INTO t VALUES (1.000000);")
 	r = tk.MustQuery("SHOW WARNINGS;")
 	r.Check(testkit.Rows())
@@ -268,7 +267,7 @@ func (s *testSuite4) TestInsert(c *C) {
 	tk.MustExec("insert into t value(20070219173709.055870), (20070219173709.055), (20070219173709.055870123)")
 	tk.MustQuery("select * from t").Check(testkit.Rows("17:37:09.055870", "17:37:09.055000", "17:37:09.055870"))
 	_, err = tk.Exec("insert into t value(-20070219173709.055870)")
-	c.Assert(err.Error(), Equals, "[types:1292]Incorrect time value: '-20070219173709.055870'")
+	c.Assert(err.Error(), Equals, "[types:1525]Incorrect time value: '-20070219173709.055870'")
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("set @@sql_mode=''")
@@ -496,13 +495,13 @@ func (s *testSuite4) TestInsertIgnore(c *C) {
 	c.Assert(err, IsNil)
 	tk.CheckLastMessage("Records: 1  Duplicates: 0  Warnings: 1")
 	r = tk.MustQuery("SHOW WARNINGS")
-	r.Check(testkit.Rows("Warning 1265 Data Truncated"))
+	r.Check(testkit.Rows("Warning 1292 Truncated incorrect FLOAT value: '1a'"))
 	testSQL = "insert ignore into t values ('1a')"
 	_, err = tk.Exec(testSQL)
 	c.Assert(err, IsNil)
 	tk.CheckLastMessage("")
 	r = tk.MustQuery("SHOW WARNINGS")
-	r.Check(testkit.Rows("Warning 1265 Data Truncated"))
+	r.Check(testkit.Rows("Warning 1292 Truncated incorrect FLOAT value: '1a'"))
 
 	// for duplicates with warning
 	testSQL = `drop table if exists t;
@@ -749,6 +748,88 @@ func (s *testSuite4) TestInsertIgnoreOnDup(c *C) {
 	r.Check(testkit.Rows("1 1", "2 2"))
 }
 
+func (s *testSuite4) TestInsertSetWithDefault(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	// Assign `DEFAULT` in `INSERT ... SET ...` statement
+	tk.MustExec("drop table if exists t1, t2;")
+	tk.MustExec("create table t1 (a int default 10, b int default 20);")
+	tk.MustExec("insert into t1 set a=default;")
+	tk.MustQuery("select * from t1;").Check(testkit.Rows("10 20"))
+	tk.MustExec("delete from t1;")
+	tk.MustExec("insert into t1 set b=default;")
+	tk.MustQuery("select * from t1;").Check(testkit.Rows("10 20"))
+	tk.MustExec("delete from t1;")
+	tk.MustExec("insert into t1 set b=default, a=1;")
+	tk.MustQuery("select * from t1;").Check(testkit.Rows("1 20"))
+	tk.MustExec("delete from t1;")
+	tk.MustExec("insert into t1 set a=default(a);")
+	tk.MustQuery("select * from t1;").Check(testkit.Rows("10 20"))
+	tk.MustExec("delete from t1;")
+	tk.MustExec("insert into t1 set a=default(b), b=default(a)")
+	tk.MustQuery("select * from t1;").Check(testkit.Rows("20 10"))
+	tk.MustExec("delete from t1;")
+	tk.MustExec("insert into t1 set a=default(b)+default(a);")
+	tk.MustQuery("select * from t1;").Check(testkit.Rows("30 20"))
+	// With generated columns
+	tk.MustExec("create table t2 (a int default 10, b int generated always as (-a) virtual, c int generated always as (-a) stored);")
+	tk.MustExec("insert into t2 set a=default;")
+	tk.MustQuery("select * from t2;").Check(testkit.Rows("10 -10 -10"))
+	tk.MustExec("delete from t2;")
+	tk.MustExec("insert into t2 set a=2, b=default;")
+	tk.MustQuery("select * from t2;").Check(testkit.Rows("2 -2 -2"))
+	tk.MustExec("delete from t2;")
+	tk.MustExec("insert into t2 set c=default, a=3;")
+	tk.MustQuery("select * from t2;").Check(testkit.Rows("3 -3 -3"))
+	tk.MustExec("delete from t2;")
+	tk.MustExec("insert into t2 set a=default, b=default, c=default;")
+	tk.MustQuery("select * from t2;").Check(testkit.Rows("10 -10 -10"))
+	tk.MustExec("delete from t2;")
+	tk.MustExec("insert into t2 set a=default(a), b=default, c=default;")
+	tk.MustQuery("select * from t2;").Check(testkit.Rows("10 -10 -10"))
+	tk.MustExec("delete from t2;")
+	tk.MustGetErrCode("insert into t2 set b=default(a);", mysql.ErrBadGeneratedColumn)
+	tk.MustGetErrCode("insert into t2 set a=default(b), b=default(b);", mysql.ErrBadGeneratedColumn)
+	tk.MustGetErrCode("insert into t2 set a=default(a), c=default(c);", mysql.ErrBadGeneratedColumn)
+	tk.MustGetErrCode("insert into t2 set a=default(a), c=default(a);", mysql.ErrBadGeneratedColumn)
+	tk.MustExec("drop table t1, t2")
+}
+
+func (s *testSuite4) TestInsertOnDupUpdateDefault(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	// Assign `DEFAULT` in `INSERT ... ON DUPLICATE KEY UPDATE ...` statement
+	tk.MustExec("drop table if exists t1, t2;")
+	tk.MustExec("create table t1 (a int unique, b int default 20, c int default 30);")
+	tk.MustExec("insert into t1 values (1,default,default);")
+	tk.MustExec("insert into t1 values (1,default,default) on duplicate key update b=default;")
+	tk.MustQuery("select * from t1;").Check(testkit.Rows("1 20 30"))
+	tk.MustExec("insert into t1 values (1,default,default) on duplicate key update c=default, b=default;")
+	tk.MustQuery("select * from t1;").Check(testkit.Rows("1 20 30"))
+	tk.MustExec("insert into t1 values (1,default,default) on duplicate key update c=default, a=2")
+	tk.MustQuery("select * from t1;").Check(testkit.Rows("2 20 30"))
+	tk.MustExec("insert into t1 values (2,default,default) on duplicate key update c=default(b)")
+	tk.MustQuery("select * from t1;").Check(testkit.Rows("2 20 20"))
+	tk.MustExec("insert into t1 values (2,default,default) on duplicate key update a=default(b)+default(c)")
+	tk.MustQuery("select * from t1;").Check(testkit.Rows("50 20 20"))
+	// With generated columns
+	tk.MustExec("create table t2 (a int unique, b int generated always as (-a) virtual, c int generated always as (-a) stored);")
+	tk.MustExec("insert into t2 values (1,default,default);")
+	tk.MustExec("insert into t2 values (1,default,default) on duplicate key update a=2, b=default;")
+	tk.MustQuery("select * from t2").Check(testkit.Rows("2 -2 -2"))
+	tk.MustExec("insert into t2 values (2,default,default) on duplicate key update a=3, c=default;")
+	tk.MustQuery("select * from t2").Check(testkit.Rows("3 -3 -3"))
+	tk.MustExec("insert into t2 values (3,default,default) on duplicate key update c=default, b=default, a=4;")
+	tk.MustQuery("select * from t2").Check(testkit.Rows("4 -4 -4"))
+	tk.MustExec("insert into t2 values (10,default,default) on duplicate key update b=default, a=20, c=default;")
+	tk.MustQuery("select * from t2").Check(testkit.Rows("4 -4 -4", "10 -10 -10"))
+	tk.MustGetErrCode("insert into t2 values (4,default,default) on duplicate key update b=default(a);", mysql.ErrBadGeneratedColumn)
+	tk.MustGetErrCode("insert into t2 values (4,default,default) on duplicate key update a=default(b), b=default(b);", mysql.ErrBadGeneratedColumn)
+	tk.MustGetErrCode("insert into t2 values (4,default,default) on duplicate key update a=default(a), c=default(c);", mysql.ErrBadGeneratedColumn)
+	tk.MustGetErrCode("insert into t2 values (4,default,default) on duplicate key update a=default(a), c=default(a);", mysql.ErrBadGeneratedColumn)
+	tk.MustExec("drop table t1, t2")
+}
+
 func (s *testSuite4) TestReplace(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -898,6 +979,36 @@ func (s *testSuite4) TestReplace(c *C) {
 	tk.MustExec(`replace into t1 select * from (select 1, 2) as tmp;`)
 	c.Assert(int64(tk.Se.AffectedRows()), Equals, int64(2))
 	tk.CheckLastMessage("Records: 1  Duplicates: 1  Warnings: 0")
+
+	// Assign `DEFAULT` in `REPLACE` statement
+	tk.MustExec("drop table if exists t1, t2;")
+	tk.MustExec("create table t1 (a int primary key, b int default 20, c int default 30);")
+	tk.MustExec("insert into t1 value (1, 2, 3);")
+	tk.MustExec("replace t1 set a=1, b=default;")
+	tk.MustQuery("select * from t1;").Check(testkit.Rows("1 20 30"))
+	tk.MustExec("replace t1 set a=2, b=default, c=default")
+	tk.MustQuery("select * from t1;").Check(testkit.Rows("1 20 30", "2 20 30"))
+	tk.MustExec("replace t1 set a=2, b=default(c), c=default(b);")
+	tk.MustQuery("select * from t1;").Check(testkit.Rows("1 20 30", "2 30 20"))
+	tk.MustExec("replace t1 set a=default(b)+default(c)")
+	tk.MustQuery("select * from t1;").Check(testkit.Rows("1 20 30", "2 30 20", "50 20 30"))
+	// With generated columns
+	tk.MustExec("create table t2 (pk int primary key, a int default 1, b int generated always as (-a) virtual, c int generated always as (-a) stored);")
+	tk.MustExec("replace t2 set pk=1, b=default;")
+	tk.MustQuery("select * from t2;").Check(testkit.Rows("1 1 -1 -1"))
+	tk.MustExec("replace t2 set pk=2, a=10, b=default;")
+	tk.MustQuery("select * from t2;").Check(testkit.Rows("1 1 -1 -1", "2 10 -10 -10"))
+	tk.MustExec("replace t2 set pk=2, c=default, a=20;")
+	tk.MustQuery("select * from t2;").Check(testkit.Rows("1 1 -1 -1", "2 20 -20 -20"))
+	tk.MustExec("replace t2 set pk=2, a=default, b=default, c=default;")
+	tk.MustQuery("select * from t2;").Check(testkit.Rows("1 1 -1 -1", "2 1 -1 -1"))
+	tk.MustExec("replace t2 set pk=3, a=default(a), b=default, c=default;")
+	tk.MustQuery("select * from t2;").Check(testkit.Rows("1 1 -1 -1", "2 1 -1 -1", "3 1 -1 -1"))
+	tk.MustGetErrCode("replace t2 set b=default(a);", mysql.ErrBadGeneratedColumn)
+	tk.MustGetErrCode("replace t2 set a=default(b), b=default(b);", mysql.ErrBadGeneratedColumn)
+	tk.MustGetErrCode("replace t2 set a=default(a), c=default(c);", mysql.ErrBadGeneratedColumn)
+	tk.MustGetErrCode("replace t2 set a=default(a), c=default(a);", mysql.ErrBadGeneratedColumn)
+	tk.MustExec("drop table t1, t2")
 }
 
 func (s *testSuite2) TestGeneratedColumnForInsert(c *C) {
@@ -1278,7 +1389,7 @@ func (s *testSuite8) TestUpdate(c *C) {
 	_, err = tk.Exec("update ignore t set a = 1 where a = (select '2a')")
 	c.Assert(err, IsNil)
 	r = tk.MustQuery("SHOW WARNINGS;")
-	r.Check(testkit.Rows("Warning 1265 Data Truncated", "Warning 1265 Data Truncated", "Warning 1062 Duplicate entry '1' for key 'PRIMARY'"))
+	r.Check(testkit.Rows("Warning 1292 Truncated incorrect FLOAT value: '2a'", "Warning 1292 Truncated incorrect FLOAT value: '2a'", "Warning 1062 Duplicate entry '1' for key 'PRIMARY'"))
 
 	tk.MustExec("update ignore t set a = 42 where a = 2;")
 	tk.MustQuery("select * from t").Check(testkit.Rows("1", "42"))
@@ -1341,7 +1452,7 @@ func (s *testSuite8) TestUpdate(c *C) {
 	// A warning rather than data truncated error.
 	tk.MustExec("update decimals set a = a + 1.23;")
 	tk.CheckLastMessage("Rows matched: 1  Changed: 1  Warnings: 1")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1265 Data Truncated"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1292 Truncated incorrect DECIMAL value: '202.23'"))
 	r = tk.MustQuery("select * from decimals")
 	r.Check(testkit.Rows("202"))
 
@@ -1398,6 +1509,45 @@ func (s *testSuite8) TestUpdate(c *C) {
 	_, err = tk.Exec("update v set a = '2000-11-11'")
 	c.Assert(err.Error(), Equals, core.ErrViewInvalid.GenWithStackByArgs("test", "v").Error())
 	tk.MustExec("drop view v")
+
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1(a int, b int, c int, d int, e int, index idx(a))")
+	tk.MustExec("create table t2(a int, b int, c int)")
+	tk.MustExec("update t1 join t2 on t1.a=t2.a set t1.a=1 where t2.b=1 and t2.c=2")
+
+	// Assign `DEFAULT` in `UPDATE` statement
+	tk.MustExec("drop table if exists t1, t2;")
+	tk.MustExec("create table t1 (a int default 1, b int default 2);")
+	tk.MustExec("insert into t1 values (10, 10), (20, 20);")
+	tk.MustExec("update t1 set a=default where b=10;")
+	tk.MustQuery("select * from t1;").Check(testkit.Rows("1 10", "20 20"))
+	tk.MustExec("update t1 set a=30, b=default where a=20;")
+	tk.MustQuery("select * from t1;").Check(testkit.Rows("1 10", "30 2"))
+	tk.MustExec("update t1 set a=default, b=default where a=30;")
+	tk.MustQuery("select * from t1;").Check(testkit.Rows("1 10", "1 2"))
+	tk.MustExec("insert into t1 values (40, 40)")
+	tk.MustExec("update t1 set a=default, b=default")
+	tk.MustQuery("select * from t1;").Check(testkit.Rows("1 2", "1 2", "1 2"))
+	tk.MustExec("update t1 set a=default(b), b=default(a)")
+	tk.MustQuery("select * from t1;").Check(testkit.Rows("2 1", "2 1", "2 1"))
+	// With generated columns
+	tk.MustExec("create table t2 (a int default 1, b int generated always as (-a) virtual, c int generated always as (-a) stored);")
+	tk.MustExec("insert into t2 values (10, default, default), (20, default, default)")
+	tk.MustExec("update t2 set b=default;")
+	tk.MustQuery("select * from t2;").Check(testkit.Rows("10 -10 -10", "20 -20 -20"))
+	tk.MustExec("update t2 set a=30, b=default where a=10;")
+	tk.MustQuery("select * from t2;").Check(testkit.Rows("30 -30 -30", "20 -20 -20"))
+	tk.MustExec("update t2 set c=default, a=40 where c=-20;")
+	tk.MustQuery("select * from t2;").Check(testkit.Rows("30 -30 -30", "40 -40 -40"))
+	tk.MustExec("update t2 set a=default, b=default, c=default where b=-30;")
+	tk.MustQuery("select * from t2;").Check(testkit.Rows("1 -1 -1", "40 -40 -40"))
+	tk.MustExec("update t2 set a=default(a), b=default, c=default;")
+	tk.MustQuery("select * from t2;").Check(testkit.Rows("1 -1 -1", "1 -1 -1"))
+	tk.MustGetErrCode("update t2 set b=default(a);", mysql.ErrBadGeneratedColumn)
+	tk.MustGetErrCode("update t2 set a=default(b), b=default(b);", mysql.ErrBadGeneratedColumn)
+	tk.MustGetErrCode("update t2 set a=default(a), c=default(c);", mysql.ErrBadGeneratedColumn)
+	tk.MustGetErrCode("update t2 set a=default(a), c=default(a);", mysql.ErrBadGeneratedColumn)
+	tk.MustExec("drop table t1, t2")
 }
 
 func (s *testSuite4) TestPartitionedTableUpdate(c *C) {
@@ -1489,7 +1639,7 @@ func (s *testSuite4) TestPartitionedTableUpdate(c *C) {
 	_, err = tk.Exec("update ignore t set a = 1 where a = (select '2a')")
 	c.Assert(err, IsNil)
 	r = tk.MustQuery("SHOW WARNINGS;")
-	r.Check(testkit.Rows("Warning 1265 Data Truncated", "Warning 1265 Data Truncated"))
+	r.Check(testkit.Rows("Warning 1292 Truncated incorrect FLOAT value: '2a'", "Warning 1292 Truncated incorrect FLOAT value: '2a'"))
 
 	// test update ignore for unique key
 	tk.MustExec("drop table if exists t;")
@@ -1651,7 +1801,7 @@ func (s *testSuite) TestDelete(c *C) {
 	c.Assert(err, IsNil)
 	tk.CheckExecResult(1, 0)
 	r := tk.MustQuery("SHOW WARNINGS;")
-	r.Check(testkit.Rows("Warning 1265 Data Truncated", "Warning 1265 Data Truncated"))
+	r.Check(testkit.Rows("Warning 1292 Truncated incorrect FLOAT value: '2a'", "Warning 1292 Truncated incorrect FLOAT value: '2a'"))
 
 	tk.MustExec(`delete from delete_test ;`)
 	tk.CheckExecResult(1, 0)
@@ -1697,7 +1847,7 @@ func (s *testSuite4) TestPartitionedTableDelete(c *C) {
 	c.Assert(err, IsNil)
 	tk.CheckExecResult(1, 0)
 	r := tk.MustQuery("SHOW WARNINGS;")
-	r.Check(testkit.Rows("Warning 1265 Data Truncated", "Warning 1265 Data Truncated"))
+	r.Check(testkit.Rows("Warning 1292 Truncated incorrect FLOAT value: '2a'", "Warning 1292 Truncated incorrect FLOAT value: '2a'"))
 
 	// Test delete without using index, involve multiple partitions.
 	tk.MustExec("delete from t ignore index(id) where id >= 13 and id <= 17")
@@ -2401,7 +2551,7 @@ func (s *testSuite7) TestReplaceLog(c *C) {
 
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
-	_, err = indexOpr.Create(s.ctx, txn, types.MakeDatums(1), 1, table.WithAssertion(txn))
+	_, err = indexOpr.Create(s.ctx, txn, types.MakeDatums(1), 1)
 	c.Assert(err, IsNil)
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)

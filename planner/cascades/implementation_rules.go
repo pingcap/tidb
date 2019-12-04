@@ -16,6 +16,7 @@ package cascades
 import (
 	"math"
 
+	"github.com/pingcap/tidb/expression"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	impl "github.com/pingcap/tidb/planner/implementation"
 	"github.com/pingcap/tidb/planner/memo"
@@ -41,8 +42,11 @@ var defaultImplementationMap = map[memo.Operand][]ImplementationRule{
 	memo.OperandTableScan: {
 		&ImplTableScan{},
 	},
-	memo.OperandTableGather: {
-		&ImplTableGather{},
+	memo.OperandIndexScan: {
+		&ImplIndexScan{},
+	},
+	memo.OperandTiKVSingleGather: {
+		&ImplTiKVSingleReadGather{},
 	},
 	memo.OperandShow: {
 		&ImplShow{},
@@ -55,6 +59,20 @@ var defaultImplementationMap = map[memo.Operand][]ImplementationRule{
 	},
 	memo.OperandAggregation: {
 		&ImplHashAgg{},
+	},
+	memo.OperandLimit: {
+		&ImplLimit{},
+	},
+	memo.OperandTopN: {
+		&ImplTopN{},
+		&ImplTopNAsLimit{},
+	},
+	memo.OperandJoin: {
+		&ImplHashJoinBuildLeft{},
+		&ImplHashJoinBuildRight{},
+	},
+	memo.OperandUnionAll: {
+		&ImplUnionAll{},
 	},
 }
 
@@ -105,21 +123,26 @@ func (r *ImplProjection) OnImplement(expr *memo.GroupExpr, reqProp *property.Phy
 	return impl.NewProjectionImpl(proj), nil
 }
 
-// ImplTableGather implements TableGather as PhysicalTableReader.
-type ImplTableGather struct {
+// ImplTiKVSingleReadGather implements TiKVSingleGather
+// as PhysicalTableReader or PhysicalIndexReader.
+type ImplTiKVSingleReadGather struct {
 }
 
 // Match implements ImplementationRule Match interface.
-func (r *ImplTableGather) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) (matched bool) {
+func (r *ImplTiKVSingleReadGather) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) (matched bool) {
 	return true
 }
 
 // OnImplement implements ImplementationRule OnImplement interface.
-func (r *ImplTableGather) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) (memo.Implementation, error) {
+func (r *ImplTiKVSingleReadGather) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) (memo.Implementation, error) {
 	logicProp := expr.Group.Prop
-	tg := expr.ExprNode.(*plannercore.TableGather)
-	reader := tg.GetPhysicalReader(logicProp.Schema, logicProp.Stats.ScaleByExpectCnt(reqProp.ExpectedCnt), reqProp)
-	return impl.NewTableReaderImpl(reader, tg.Source.TblColHists), nil
+	sg := expr.ExprNode.(*plannercore.TiKVSingleGather)
+	if sg.IsIndexGather {
+		reader := sg.GetPhysicalIndexReader(logicProp.Schema, logicProp.Stats.ScaleByExpectCnt(reqProp.ExpectedCnt), reqProp)
+		return impl.NewIndexReaderImpl(reader, sg.Source.TblColHists), nil
+	}
+	reader := sg.GetPhysicalTableReader(logicProp.Schema, logicProp.Stats.ScaleByExpectCnt(reqProp.ExpectedCnt), reqProp)
+	return impl.NewTableReaderImpl(reader, sg.Source.TblColHists), nil
 }
 
 // ImplTableScan implements TableScan as PhysicalTableScan.
@@ -128,14 +151,14 @@ type ImplTableScan struct {
 
 // Match implements ImplementationRule Match interface.
 func (r *ImplTableScan) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) (matched bool) {
-	ts := expr.ExprNode.(*plannercore.TableScan)
+	ts := expr.ExprNode.(*plannercore.LogicalTableScan)
 	return prop.IsEmpty() || (len(prop.Items) == 1 && ts.Handle != nil && prop.Items[0].Col.Equal(nil, ts.Handle))
 }
 
 // OnImplement implements ImplementationRule OnImplement interface.
 func (r *ImplTableScan) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) (memo.Implementation, error) {
 	logicProp := expr.Group.Prop
-	logicalScan := expr.ExprNode.(*plannercore.TableScan)
+	logicalScan := expr.ExprNode.(*plannercore.LogicalTableScan)
 	ts := logicalScan.GetPhysicalScan(logicProp.Schema, logicProp.Stats.ScaleByExpectCnt(reqProp.ExpectedCnt))
 	if !reqProp.IsEmpty() {
 		ts.KeepOrder = true
@@ -143,6 +166,29 @@ func (r *ImplTableScan) OnImplement(expr *memo.GroupExpr, reqProp *property.Phys
 	}
 	tblCols, tblColHists := logicalScan.Source.TblCols, logicalScan.Source.TblColHists
 	return impl.NewTableScanImpl(ts, tblCols, tblColHists), nil
+}
+
+// ImplIndexScan implements IndexScan as PhysicalIndexScan.
+type ImplIndexScan struct {
+}
+
+// Match implements ImplementationRule Match interface.
+func (r *ImplIndexScan) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) (matched bool) {
+	is := expr.ExprNode.(*plannercore.LogicalIndexScan)
+	return is.MatchIndexProp(prop)
+}
+
+// OnImplement implements ImplementationRule OnImplement interface.
+func (r *ImplIndexScan) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) (memo.Implementation, error) {
+	logicalScan := expr.ExprNode.(*plannercore.LogicalIndexScan)
+	is := logicalScan.GetPhysicalIndexScan(expr.Group.Prop.Schema, expr.Group.Prop.Stats.ScaleByExpectCnt(reqProp.ExpectedCnt))
+	if !reqProp.IsEmpty() {
+		is.KeepOrder = true
+		if reqProp.Items[0].Desc {
+			is.Desc = true
+		}
+	}
+	return impl.NewIndexScanImpl(is, logicalScan.Source.TblColHists), nil
 }
 
 // ImplShow is the implementation rule which implements LogicalShow to
@@ -245,6 +291,179 @@ func (r *ImplHashAgg) OnImplement(expr *memo.GroupExpr, reqProp *property.Physic
 		&property.PhysicalProperty{ExpectedCnt: math.MaxFloat64},
 	)
 	hashAgg.SetSchema(expr.Group.Prop.Schema.Clone())
-	// TODO: Implement TiKVHashAgg
-	return impl.NewTiDBHashAggImpl(hashAgg), nil
+	switch expr.Group.EngineType {
+	case memo.EngineTiDB:
+		return impl.NewTiDBHashAggImpl(hashAgg), nil
+	case memo.EngineTiKV:
+		return impl.NewTiKVHashAggImpl(hashAgg), nil
+	default:
+		return nil, plannercore.ErrInternal.GenWithStack("Unsupported EngineType '%s' for HashAggregation.", expr.Group.EngineType.String())
+	}
+}
+
+// ImplLimit is the implementation rule which implements LogicalLimit
+// to PhysicalLimit.
+type ImplLimit struct {
+}
+
+// Match implements ImplementationRule Match interface.
+func (r *ImplLimit) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) (matched bool) {
+	return prop.IsEmpty()
+}
+
+// OnImplement implements ImplementationRule OnImplement interface.
+func (r *ImplLimit) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) (memo.Implementation, error) {
+	logicalLimit := expr.ExprNode.(*plannercore.LogicalLimit)
+	newProp := &property.PhysicalProperty{ExpectedCnt: float64(logicalLimit.Count + logicalLimit.Offset)}
+	physicalLimit := plannercore.PhysicalLimit{
+		Offset: logicalLimit.Offset,
+		Count:  logicalLimit.Count,
+	}.Init(logicalLimit.SCtx(), expr.Group.Prop.Stats, logicalLimit.SelectBlockOffset(), newProp)
+	return impl.NewLimitImpl(physicalLimit), nil
+}
+
+// ImplTopN is the implementation rule which implements LogicalTopN
+// to PhysicalTopN.
+type ImplTopN struct {
+}
+
+// Match implements ImplementationRule Match interface.
+func (r *ImplTopN) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) (matched bool) {
+	topN := expr.ExprNode.(*plannercore.LogicalTopN)
+	return plannercore.MatchItems(prop, topN.ByItems)
+}
+
+// OnImplement implements ImplementationRule OnImplement interface.
+func (r *ImplTopN) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) (memo.Implementation, error) {
+	lt := expr.ExprNode.(*plannercore.LogicalTopN)
+	resultProp := &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64}
+	topN := plannercore.PhysicalTopN{
+		ByItems: lt.ByItems,
+		Count:   lt.Count,
+		Offset:  lt.Offset,
+	}.Init(lt.SCtx(), expr.Group.Prop.Stats, lt.SelectBlockOffset(), resultProp)
+	switch expr.Group.EngineType {
+	case memo.EngineTiDB:
+		return impl.NewTiDBTopNImpl(topN), nil
+	default:
+		// TODO: return TiKVTopNImpl after we have implemented push topN down gather.
+		return nil, plannercore.ErrInternal.GenWithStack("Unsupported EngineType '%s' for TopN.", expr.Group.EngineType.String())
+	}
+}
+
+// ImplTopNAsLimit is the implementation rule which implements LogicalTopN
+// as PhysicalLimit with required order property.
+type ImplTopNAsLimit struct {
+}
+
+// Match implements ImplementationRule Match interface.
+func (r *ImplTopNAsLimit) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) (matched bool) {
+	topN := expr.ExprNode.(*plannercore.LogicalTopN)
+	_, canUseLimit := plannercore.GetPropByOrderByItems(topN.ByItems)
+	return canUseLimit && plannercore.MatchItems(prop, topN.ByItems)
+}
+
+// OnImplement implements ImplementationRule OnImplement interface.
+func (r *ImplTopNAsLimit) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) (memo.Implementation, error) {
+	lt := expr.ExprNode.(*plannercore.LogicalTopN)
+	newProp := &property.PhysicalProperty{ExpectedCnt: float64(lt.Count + lt.Offset)}
+	newProp.Items = make([]property.Item, len(lt.ByItems))
+	for i, item := range lt.ByItems {
+		newProp.Items[i].Col = item.Expr.(*expression.Column)
+		newProp.Items[i].Desc = item.Desc
+	}
+	physicalLimit := plannercore.PhysicalLimit{
+		Offset: lt.Offset,
+		Count:  lt.Count,
+	}.Init(lt.SCtx(), expr.Group.Prop.Stats, lt.SelectBlockOffset(), newProp)
+	return impl.NewLimitImpl(physicalLimit), nil
+}
+
+func getImplForHashJoin(expr *memo.GroupExpr, prop *property.PhysicalProperty, innerIdx int, useOuterToBuild bool) memo.Implementation {
+	join := expr.ExprNode.(*plannercore.LogicalJoin)
+	chReqProps := make([]*property.PhysicalProperty, 2)
+	chReqProps[0] = &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64}
+	chReqProps[1] = &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64}
+	stats := expr.Group.Prop.Stats
+	if prop.ExpectedCnt < stats.RowCount {
+		expCntScale := prop.ExpectedCnt / stats.RowCount
+		chReqProps[1-innerIdx].ExpectedCnt = expr.Children[1-innerIdx].Prop.Stats.RowCount * expCntScale
+	}
+	hashJoin := plannercore.NewPhysicalHashJoin(join, innerIdx, useOuterToBuild, stats.ScaleByExpectCnt(prop.ExpectedCnt), chReqProps...)
+	hashJoin.SetSchema(expr.Group.Prop.Schema)
+	return impl.NewHashJoinImpl(hashJoin)
+}
+
+// ImplHashJoinBuildLeft implements LogicalJoin to PhysicalHashJoin which uses the left child to build hash table.
+type ImplHashJoinBuildLeft struct {
+}
+
+// Match implements ImplementationRule Match interface.
+func (r *ImplHashJoinBuildLeft) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) (matched bool) {
+	join := expr.ExprNode.(*plannercore.LogicalJoin)
+	switch join.JoinType {
+	case plannercore.SemiJoin, plannercore.AntiSemiJoin, plannercore.LeftOuterSemiJoin, plannercore.AntiLeftOuterSemiJoin:
+		return false
+	default:
+		return prop.IsEmpty()
+	}
+}
+
+// OnImplement implements ImplementationRule OnImplement interface.
+func (r *ImplHashJoinBuildLeft) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) (memo.Implementation, error) {
+	join := expr.ExprNode.(*plannercore.LogicalJoin)
+	switch join.JoinType {
+	case plannercore.InnerJoin:
+		return getImplForHashJoin(expr, reqProp, 0, false), nil
+	default:
+		// TODO: deal with other join type.
+		return nil, nil
+	}
+}
+
+// ImplHashJoinBuildRight implements LogicalJoin to PhysicalHashJoin which uses the right child to build hash table.
+type ImplHashJoinBuildRight struct {
+}
+
+// Match implements ImplementationRule Match interface.
+func (r *ImplHashJoinBuildRight) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) (matched bool) {
+	return prop.IsEmpty()
+}
+
+// OnImplement implements ImplementationRule OnImplement interface.
+func (r *ImplHashJoinBuildRight) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) (memo.Implementation, error) {
+	join := expr.ExprNode.(*plannercore.LogicalJoin)
+	switch join.JoinType {
+	case plannercore.InnerJoin:
+		return getImplForHashJoin(expr, reqProp, 1, false), nil
+	default:
+		// TODO: deal with other join type.
+		return nil, nil
+	}
+}
+
+// ImplUnionAll implements LogicalUnionAll to PhysicalUnionAll.
+type ImplUnionAll struct {
+}
+
+// Match implements ImplementationRule Match interface.
+func (r *ImplUnionAll) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) (matched bool) {
+	return prop.IsEmpty()
+}
+
+// OnImplement implements ImplementationRule OnImplement interface.
+func (r *ImplUnionAll) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) (memo.Implementation, error) {
+	logicalUnion := expr.ExprNode.(*plannercore.LogicalUnionAll)
+	chReqProps := make([]*property.PhysicalProperty, len(expr.Children))
+	for i := range expr.Children {
+		chReqProps[i] = &property.PhysicalProperty{ExpectedCnt: reqProp.ExpectedCnt}
+	}
+	physicalUnion := plannercore.PhysicalUnionAll{}.Init(
+		logicalUnion.SCtx(),
+		expr.Group.Prop.Stats.ScaleByExpectCnt(reqProp.ExpectedCnt),
+		logicalUnion.SelectBlockOffset(),
+		chReqProps...,
+	)
+	physicalUnion.SetSchema(expr.Group.Prop.Schema)
+	return impl.NewUnionAllImpl(physicalUnion), nil
 }

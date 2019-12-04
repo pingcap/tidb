@@ -97,8 +97,10 @@ func (c *regexpFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 	var sig builtinFunc
 	if types.IsBinaryStr(args[0].GetType()) || types.IsBinaryStr(args[1].GetType()) {
 		sig = newBuiltinRegexpBinarySig(bf)
+		sig.setPbCode(tipb.ScalarFuncSig_RegexpBinarySig)
 	} else {
 		sig = newBuiltinRegexpSig(bf)
+		sig.setPbCode(tipb.ScalarFuncSig_RegexpSig)
 	}
 	return sig, nil
 }

@@ -36,7 +36,7 @@ func addSelection(p LogicalPlan, child LogicalPlan, conditions []expression.Expr
 	}
 	conditions = expression.PropagateConstant(p.SCtx(), conditions)
 	// Return table dual when filter is constant false or null.
-	dual := conds2TableDual(child, conditions)
+	dual := Conds2TableDual(child, conditions)
 	if dual != nil {
 		p.Children()[chIdx] = dual
 		return
@@ -78,7 +78,7 @@ func (p *LogicalSelection) PredicatePushDown(predicates []expression.Expression)
 	if len(retConditions) > 0 {
 		p.Conditions = expression.PropagateConstant(p.ctx, retConditions)
 		// Return table dual when filter is constant false or null.
-		dual := conds2TableDual(p, p.Conditions)
+		dual := Conds2TableDual(p, p.Conditions)
 		if dual != nil {
 			return nil, dual
 		}
@@ -120,7 +120,7 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret
 	switch p.JoinType {
 	case LeftOuterJoin, LeftOuterSemiJoin, AntiLeftOuterSemiJoin:
 		predicates = p.outerJoinPropConst(predicates)
-		dual := conds2TableDual(p, predicates)
+		dual := Conds2TableDual(p, predicates)
 		if dual != nil {
 			return ret, dual
 		}
@@ -137,7 +137,7 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret
 		ret = append(ret, rightPushCond...)
 	case RightOuterJoin:
 		predicates = p.outerJoinPropConst(predicates)
-		dual := conds2TableDual(p, predicates)
+		dual := Conds2TableDual(p, predicates)
 		if dual != nil {
 			return ret, dual
 		}
@@ -162,7 +162,7 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret
 		tempCond = expression.ExtractFiltersFromDNFs(p.ctx, tempCond)
 		tempCond = expression.PropagateConstant(p.ctx, tempCond)
 		// Return table dual when filter is constant false or null.
-		dual := conds2TableDual(p, tempCond)
+		dual := Conds2TableDual(p, tempCond)
 		if dual != nil {
 			return ret, dual
 		}
@@ -176,7 +176,7 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret
 	case AntiSemiJoin:
 		predicates = expression.PropagateConstant(p.ctx, predicates)
 		// Return table dual when filter is constant false or null.
-		dual := conds2TableDual(p, predicates)
+		dual := Conds2TableDual(p, predicates)
 		if dual != nil {
 			return ret, dual
 		}
@@ -204,7 +204,7 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret
 		p.RightJoinKeys = append(p.RightJoinKeys, eqCond.GetArgs()[1].(*expression.Column))
 	}
 	p.mergeSchema()
-	p.BuildKeyInfo()
+	buildKeyInfo(p)
 	return ret, p.self
 }
 
@@ -390,11 +390,6 @@ func (p *LogicalUnionAll) PredicatePushDown(predicates []expression.Expression) 
 	return nil, p
 }
 
-// getGbyColIndex gets the column's index in the group-by columns.
-func (la *LogicalAggregation) getGbyColIndex(col *expression.Column) int {
-	return expression.NewSchema(la.groupByCols...).ColumnIndex(col)
-}
-
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
 func (la *LogicalAggregation) PredicatePushDown(predicates []expression.Expression) (ret []expression.Expression, retPlan LogicalPlan) {
 	var condsToPush []expression.Expression
@@ -402,6 +397,7 @@ func (la *LogicalAggregation) PredicatePushDown(predicates []expression.Expressi
 	for _, fun := range la.AggFuncs {
 		exprsOriginal = append(exprsOriginal, fun.Args[0])
 	}
+	groupByColumns := expression.NewSchema(la.groupByCols...)
 	for _, cond := range predicates {
 		switch cond.(type) {
 		case *expression.Constant:
@@ -414,7 +410,7 @@ func (la *LogicalAggregation) PredicatePushDown(predicates []expression.Expressi
 			extractedCols := expression.ExtractColumns(cond)
 			ok := true
 			for _, col := range extractedCols {
-				if la.getGbyColIndex(col) == -1 {
+				if !groupByColumns.Contains(col) {
 					ok = false
 					break
 				}
@@ -512,8 +508,8 @@ func deriveNotNullExpr(expr expression.Expression, schema *expression.Schema) ex
 	return nil
 }
 
-// conds2TableDual builds a LogicalTableDual if cond is constant false or null.
-func conds2TableDual(p LogicalPlan, conds []expression.Expression) LogicalPlan {
+// Conds2TableDual builds a LogicalTableDual if cond is constant false or null.
+func Conds2TableDual(p LogicalPlan, conds []expression.Expression) LogicalPlan {
 	if len(conds) != 1 {
 		return nil
 	}
@@ -580,6 +576,14 @@ func (p *LogicalWindow) PredicatePushDown(predicates []expression.Expression) ([
 	}
 	p.baseLogicalPlan.PredicatePushDown(canBePushed)
 	return canNotBePushed, p
+}
+
+// PredicatePushDown implements LogicalPlan PredicatePushDown interface.
+func (p *LogicalMemTable) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, LogicalPlan) {
+	if p.Extractor != nil {
+		predicates = p.Extractor.Extract(p.schema, p.names, predicates)
+	}
+	return predicates, p.self
 }
 
 func (*ppdSolver) name() string {

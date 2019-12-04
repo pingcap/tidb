@@ -436,11 +436,6 @@ func isIntersectingKeyRange(x withKeyRange, startKey, endKey string) bool {
 	return !isBeforeKeyRange(x, startKey, endKey) && !isBehindKeyRange(x, startKey, endKey)
 }
 
-// IsBefore returns true is x is before y
-func inBefore(x, y withKeyRange) bool {
-	return isBeforeKeyRange(x, y.getStartKey(), y.getEndKey())
-}
-
 // isBehind returns true is x is behind y
 func isBehind(x, y withKeyRange) bool {
 	return isBehindKeyRange(x, y.getStartKey(), y.getEndKey())
@@ -570,10 +565,6 @@ func bytesKeyToHex(key []byte) string {
 	return strings.ToUpper(hex.EncodeToString(key))
 }
 
-func hexKeyToBytes(key string) ([]byte, error) {
-	return hex.DecodeString(key)
-}
-
 // GetRegionsInfo gets the region information of current store by using PD's api.
 func (h *Helper) GetRegionsInfo() (*RegionsInfo, error) {
 	var regionsInfo RegionsInfo
@@ -638,12 +629,14 @@ type StoreStat struct {
 
 // StoreBaseStat stores the basic information of one store.
 type StoreBaseStat struct {
-	ID        int64        `json:"id"`
-	Address   string       `json:"address"`
-	State     int64        `json:"state"`
-	StateName string       `json:"state_name"`
-	Version   string       `json:"version"`
-	Labels    []StoreLabel `json:"labels"`
+	ID            int64        `json:"id"`
+	Address       string       `json:"address"`
+	State         int64        `json:"state"`
+	StateName     string       `json:"state_name"`
+	Version       string       `json:"version"`
+	Labels        []StoreLabel `json:"labels"`
+	StatusAddress string       `json:"status_address"`
+	GitHash       string       `json:"git_hash"`
 }
 
 // StoreLabel stores the information of one store label.

@@ -30,6 +30,8 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/parser_driver"
+	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/domainutil"
 )
 
 // PreprocessOpt presents optional parameters to `Preprocess` method.
@@ -66,6 +68,8 @@ const (
 	inCreateOrDropTable
 	// parentIsJoin is set when visiting node's parent is join.
 	parentIsJoin
+	// inRepairTable is set when visiting a repair table statement.
+	inRepairTable
 )
 
 // preprocessor is an ast.Visitor that preprocess
@@ -116,21 +120,29 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 	case *ast.Join:
 		p.checkNonUniqTableAlias(node)
 	case *ast.CreateBindingStmt:
-		p.checkBindGrammar(node)
-	case *ast.RecoverTableStmt:
+		p.checkBindGrammar(node.OriginSel, node.HintedSel)
+	case *ast.DropBindingStmt:
+		if node.HintedSel != nil {
+			p.checkBindGrammar(node.OriginSel, node.HintedSel)
+		}
+	case *ast.RecoverTableStmt, *ast.FlashBackTableStmt:
 		// The specified table in recover table statement maybe already been dropped.
 		// So skip check table name here, otherwise, recover table [table_name] syntax will return
 		// table not exists error. But recover table statement is use to recover the dropped table. So skip children here.
 		return in, true
+	case *ast.RepairTableStmt:
+		// The RepairTable should consist of the logic for creating tables and renaming tables.
+		p.flag |= inRepairTable
+		p.checkRepairTableGrammar(node)
 	default:
 		p.flag &= ^parentIsJoin
 	}
 	return in, p.err != nil
 }
 
-func (p *preprocessor) checkBindGrammar(createBindingStmt *ast.CreateBindingStmt) {
-	originSQL := parser.Normalize(createBindingStmt.OriginSel.(*ast.SelectStmt).Text())
-	hintedSQL := parser.Normalize(createBindingStmt.HintedSel.(*ast.SelectStmt).Text())
+func (p *preprocessor) checkBindGrammar(originSel, hintedSel ast.StmtNode) {
+	originSQL := parser.Normalize(originSel.(*ast.SelectStmt).Text())
+	hintedSQL := parser.Normalize(hintedSel.(*ast.SelectStmt).Text())
 
 	if originSQL != hintedSQL {
 		p.err = errors.Errorf("hinted sql and origin sql don't match when hinted sql erase the hint info, after erase hint info, originSQL:%s, hintedSQL:%s", originSQL, hintedSQL)
@@ -199,6 +211,8 @@ func (p *preprocessor) Leave(in ast.Node) (out ast.Node, ok bool) {
 				x.Args[0] = ast.NewValueExpr(0)
 			}
 		}
+	case *ast.RepairTableStmt:
+		p.flag &= ^inRepairTable
 	}
 
 	return in, p.err == nil
@@ -493,6 +507,10 @@ func (p *preprocessor) checkRenameTableGrammar(stmt *ast.RenameTableStmt) {
 	oldTable := stmt.OldTable.Name.String()
 	newTable := stmt.NewTable.Name.String()
 
+	p.checkRenameTable(oldTable, newTable)
+}
+
+func (p *preprocessor) checkRenameTable(oldTable, newTable string) {
 	if isIncorrectName(oldTable) {
 		p.err = ddl.ErrWrongTableName.GenWithStackByArgs(oldTable)
 		return
@@ -502,6 +520,23 @@ func (p *preprocessor) checkRenameTableGrammar(stmt *ast.RenameTableStmt) {
 		p.err = ddl.ErrWrongTableName.GenWithStackByArgs(newTable)
 		return
 	}
+}
+
+func (p *preprocessor) checkRepairTableGrammar(stmt *ast.RepairTableStmt) {
+	// Check create table stmt whether it's is in REPAIR MODE.
+	if !domainutil.RepairInfo.InRepairMode() {
+		p.err = ddl.ErrRepairTableFail.GenWithStackByArgs("TiDB is not in REPAIR MODE")
+		return
+	}
+	if len(domainutil.RepairInfo.GetRepairTableList()) == 0 {
+		p.err = ddl.ErrRepairTableFail.GenWithStackByArgs("repair list is empty")
+		return
+	}
+
+	// Check rename action as the rename statement does.
+	oldTable := stmt.Table.Name.String()
+	newTable := stmt.CreateStmt.Table.Name.String()
+	p.checkRenameTable(oldTable, newTable)
 }
 
 func (p *preprocessor) checkAlterTableGrammar(stmt *ast.AlterTableStmt) {
@@ -528,7 +563,7 @@ func (p *preprocessor) checkAlterTableGrammar(stmt *ast.AlterTableStmt) {
 		case ast.AlterTableAddConstraint:
 			switch spec.Constraint.Tp {
 			case ast.ConstraintKey, ast.ConstraintIndex, ast.ConstraintUniq, ast.ConstraintUniqIndex,
-				ast.ConstraintUniqKey:
+				ast.ConstraintUniqKey, ast.ConstraintPrimaryKey:
 				p.err = checkIndexInfo(spec.Constraint.Name, spec.Constraint.Keys)
 				if p.err != nil {
 					return
@@ -711,9 +746,23 @@ func (p *preprocessor) handleTableName(tn *ast.TableName) {
 	}
 	if p.flag&inCreateOrDropTable > 0 {
 		// The table may not exist in create table or drop table statement.
-		// Skip resolving the table to avoid error.
+		if p.flag&inRepairTable > 0 {
+			// Create stmt is in repair stmt, skip resolving the table to avoid error.
+			return
+		}
+		// Create stmt is not in repair stmt, check the table not in repair list.
+		if domainutil.RepairInfo.InRepairMode() {
+			p.checkNotInRepair(tn)
+		}
 		return
 	}
+	// repairStmt: admin repair table A create table B ...
+	// repairStmt's tableName is whether `inCreateOrDropTable` or `inRepairTable` flag.
+	if p.flag&inRepairTable > 0 {
+		p.handleRepairName(tn)
+		return
+	}
+
 	table, err := p.is.TableByName(tn.Schema, tn.Name)
 	if err != nil {
 		p.err = err
@@ -722,6 +771,36 @@ func (p *preprocessor) handleTableName(tn *ast.TableName) {
 	tn.TableInfo = table.Meta()
 	dbInfo, _ := p.is.SchemaByName(tn.Schema)
 	tn.DBInfo = dbInfo
+}
+
+func (p *preprocessor) checkNotInRepair(tn *ast.TableName) {
+	tableInfo, dbInfo := domainutil.RepairInfo.GetRepairedTableInfoByTableName(tn.Schema.L, tn.Name.L)
+	if dbInfo == nil {
+		return
+	}
+	if tableInfo != nil {
+		p.err = ddl.ErrWrongTableName.GenWithStackByArgs(tn.Name.L, "this table is in repair")
+	}
+}
+
+func (p *preprocessor) handleRepairName(tn *ast.TableName) {
+	// Check the whether the repaired table is system table.
+	if util.IsMemOrSysDB(tn.Schema.L) {
+		p.err = ddl.ErrRepairTableFail.GenWithStackByArgs("memory or system database is not for repair")
+		return
+	}
+	tableInfo, dbInfo := domainutil.RepairInfo.GetRepairedTableInfoByTableName(tn.Schema.L, tn.Name.L)
+	// tableName here only has the schema rather than DBInfo.
+	if dbInfo == nil {
+		p.err = ddl.ErrRepairTableFail.GenWithStackByArgs("database " + tn.Schema.L + " is not in repair")
+		return
+	}
+	if tableInfo == nil {
+		p.err = ddl.ErrRepairTableFail.GenWithStackByArgs("table " + tn.Name.L + " is not in repair")
+		return
+	}
+	p.ctx.SetValue(domainutil.RepairedTable, tableInfo)
+	p.ctx.SetValue(domainutil.RepairedDatabase, dbInfo)
 }
 
 func (p *preprocessor) resolveShowStmt(node *ast.ShowStmt) {
