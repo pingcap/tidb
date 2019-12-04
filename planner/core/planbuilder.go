@@ -605,9 +605,14 @@ func isPrimaryIndex(indexName model.CIStr) bool {
 	return indexName.L == "primary"
 }
 
-func (b *PlanBuilder) getPossibleAccessPaths(indexHints []*ast.IndexHint, tblInfo *model.TableInfo, dbName, tblName model.CIStr) ([]*accessPath, error) {
+func (b *PlanBuilder) getPossibleAccessPaths(indexHints []*ast.IndexHint, tbl table.Table, dbName, tblName model.CIStr) ([]*accessPath, error) {
+	tblInfo := tbl.Meta()
 	publicPaths := make([]*accessPath, 0, len(tblInfo.Indices)+2)
-	publicPaths = append(publicPaths, &accessPath{isTablePath: true, storeType: kv.TiKV})
+	tp := kv.TiKV
+	if tbl.Type().IsClusterTable() {
+		tp = kv.TiDB
+	}
+	publicPaths = append(publicPaths, &accessPath{isTablePath: true, storeType: tp})
 	if tblInfo.TiFlashReplica != nil && tblInfo.TiFlashReplica.Available {
 		publicPaths = append(publicPaths, &accessPath{isTablePath: true, storeType: kv.TiFlash})
 	}
