@@ -2505,7 +2505,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	}
 	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, dbName.L, tableInfo.Name.L, "", authErr)
 
-	if tbl.Type() == table.VirtualTable {
+	if tbl.Type().IsVirtualTable() {
 		return b.buildMemTable(ctx, dbName, tableInfo)
 	}
 
@@ -2530,7 +2530,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	if tblName.L == "" {
 		tblName = tn.Name
 	}
-	possiblePaths, err := b.getPossibleAccessPaths(tn.IndexHints, tableInfo, dbName, tblName)
+	possiblePaths, err := b.getPossibleAccessPaths(tn.IndexHints, tbl, dbName, tblName)
 	if err != nil {
 		return nil, err
 	}

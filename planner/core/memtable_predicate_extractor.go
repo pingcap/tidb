@@ -27,7 +27,7 @@ import (
 // and push the predicates down to the data retrieving on reading memory table stage.
 //
 // e.g:
-// SELECT * FROM tidb_cluster_config WHERE type='tikv' AND address='192.168.1.9:2379'
+// SELECT * FROM cluster_config WHERE type='tikv' AND address='192.168.1.9:2379'
 // We must request all components in the cluster via HTTP API for retrieving
 // configurations and filter them by `type/address` columns.
 //
@@ -118,7 +118,7 @@ func (helper extractHelper) intersection(lhs set.StringSet, datums []types.Datum
 	return tmpNodeTypes
 }
 
-// ClusterConfigTableExtractor is used to extract some predicates of `TIDB_CLUSTER_CONFIG`
+// ClusterConfigTableExtractor is used to extract some predicates of `cluster_config`
 type ClusterConfigTableExtractor struct {
 	extractHelper
 
@@ -127,21 +127,21 @@ type ClusterConfigTableExtractor struct {
 
 	// NodeTypes represents all components types we should send request to.
 	// e.g:
-	// 1. SELECT * FROM tidb_cluster_config WHERE type='tikv'
-	// 2. SELECT * FROM tidb_cluster_config WHERE type in ('tikv', 'tidb')
+	// 1. SELECT * FROM cluster_config WHERE type='tikv'
+	// 2. SELECT * FROM cluster_config WHERE type in ('tikv', 'tidb')
 	NodeTypes set.StringSet
 
 	// Addresses represents all components addresses we should send request to.
 	// e.g:
-	// 1. SELECT * FROM tidb_cluster_config WHERE address='192.168.1.7:2379'
-	// 2. SELECT * FROM tidb_cluster_config WHERE type in ('192.168.1.7:2379', '192.168.1.9:2379')
+	// 1. SELECT * FROM cluster_config WHERE address='192.168.1.7:2379'
+	// 2. SELECT * FROM cluster_config WHERE type in ('192.168.1.7:2379', '192.168.1.9:2379')
 	Addresses set.StringSet
 }
 
 // Extract implements the MemTablePredicateExtractor Extract interface
 func (e *ClusterConfigTableExtractor) Extract(schema *expression.Schema, names []*types.FieldName, predicates []expression.Expression) []expression.Expression {
 	remained := make([]expression.Expression, 0, len(predicates))
-	// All columns can be pushed down to the memory table `TIDB_CLUSTER_CONFIG`
+	// All columns can be pushed down to the memory table `cluster_config`
 	const (
 		ColNameType    = "type"
 		ColNameAddress = "address"
