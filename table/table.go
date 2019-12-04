@@ -181,7 +181,7 @@ type Table interface {
 	// AllocHandle allocates a handle for a new row.
 	AllocHandle(ctx sessionctx.Context) (int64, error)
 
-	// AllocHandleIds allocates multiple handle for rows.
+	// AllocHandleIDs allocates multiple handle for rows.
 	AllocHandleIDs(ctx sessionctx.Context, n uint64) (int64, int64, error)
 
 	// Allocator returns Allocator.
