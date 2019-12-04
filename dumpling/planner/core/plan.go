@@ -95,7 +95,10 @@ type LogicalPlan interface {
 	findBestTask(prop *property.PhysicalProperty) (task, error)
 
 	// BuildKeyInfo will collect the information of unique keys into schema.
-	BuildKeyInfo()
+	// Because this method is also used in cascades planner, we cannot use
+	// things like `p.schema` or `p.children` inside it. We should use the `selfSchema`
+	// and `childSchema` instead.
+	BuildKeyInfo(selfSchema *expression.Schema, childSchema []*expression.Schema)
 
 	// pushDownTopN will push down the topN or limit operator during logical optimization.
 	pushDownTopN(topN *LogicalTopN) LogicalPlan
@@ -218,17 +221,44 @@ func (p *baseLogicalPlan) storeTask(prop *property.PhysicalProperty, task task) 
 	p.taskMap[string(key)] = task
 }
 
-// BuildKeyInfo implements LogicalPlan BuildKeyInfo interface.
-func (p *baseLogicalPlan) BuildKeyInfo() {
-	for _, child := range p.children {
-		child.BuildKeyInfo()
+// HasMaxOneRow returns if the LogicalPlan will output at most one row.
+func HasMaxOneRow(p LogicalPlan, childMaxOneRow []bool) bool {
+	if len(childMaxOneRow) == 0 {
+		// The reason why we use this check is that, this function
+		// is used both in planner/core and planner/cascades.
+		// In cascades planner, LogicalPlan may have no `children`.
+		return false
 	}
-	switch p.self.(type) {
-	case *LogicalLock, *LogicalLimit, *LogicalSort, *LogicalSelection, *LogicalApply, *LogicalProjection:
-		p.maxOneRow = p.children[0].MaxOneRow()
+	switch x := p.(type) {
+	case *LogicalLock, *LogicalLimit, *LogicalSort, *LogicalSelection,
+		*LogicalApply, *LogicalProjection, *LogicalWindow, *LogicalAggregation:
+		return childMaxOneRow[0]
 	case *LogicalMaxOneRow:
-		p.maxOneRow = true
+		return true
+	case *LogicalJoin:
+		switch x.JoinType {
+		case SemiJoin, AntiSemiJoin, LeftOuterSemiJoin, AntiLeftOuterSemiJoin:
+			return childMaxOneRow[0]
+		default:
+			return childMaxOneRow[0] && childMaxOneRow[1]
+		}
 	}
+	return false
+}
+
+// BuildKeyInfo implements LogicalPlan BuildKeyInfo interface.
+func (p *baseLogicalPlan) BuildKeyInfo(selfSchema *expression.Schema, childSchema []*expression.Schema) {
+	childMaxOneRow := make([]bool, len(p.children))
+	for i := range p.children {
+		childMaxOneRow[i] = p.children[i].MaxOneRow()
+	}
+	p.maxOneRow = HasMaxOneRow(p.self, childMaxOneRow)
+}
+
+// BuildKeyInfo implements LogicalPlan BuildKeyInfo interface.
+func (p *logicalSchemaProducer) BuildKeyInfo(selfSchema *expression.Schema, childSchema []*expression.Schema) {
+	selfSchema.Keys = nil
+	p.baseLogicalPlan.BuildKeyInfo(selfSchema, childSchema)
 }
 
 func newBasePlan(ctx sessionctx.Context, tp string, offset int) basePlan {
