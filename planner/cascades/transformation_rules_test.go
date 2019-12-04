@@ -161,7 +161,7 @@ func (s *testTransformationRuleSuite) TestTopNRules(c *C) {
 func (s *testTransformationRuleSuite) TestProjectionElimination(c *C) {
 	s.optimizer.ResetTransformationRules(map[memo.Operand][]Transformation{
 		memo.OperandProjection: {
-			NewRuleSameProjectionElimination(),
+			NewRuleEliminateProjection(),
 		},
 		memo.OperandDataSource: {
 			NewRuleEnumeratePaths(),

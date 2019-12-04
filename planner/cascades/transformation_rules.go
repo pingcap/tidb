@@ -61,7 +61,7 @@ var defaultTransformationMap = map[memo.Operand][]Transformation{
 		NewRuleTransformLimitToTopN(),
 	},
 	memo.OperandProjection: {
-		NewRuleSameProjectionElimination(),
+		NewRuleEliminateProjection(),
 	},
 }
 
@@ -595,15 +595,15 @@ func (r *PushSelDownJoin) OnTransform(old *memo.ExprIter) (newExprs []*memo.Grou
 	return []*memo.GroupExpr{newJoinExpr}, true, false, nil
 }
 
-// SameProjectionElimination eliminate the projection.
-type SameProjectionElimination struct {
+// EliminateProjection eliminates the projection.
+type EliminateProjection struct {
 	baseRule
 }
 
-// NewRuleSameProjectionElimination creates a new Transformation SameProjectionElimination.
+// NewRuleEliminateProjection creates a new Transformation EliminateProjection.
 // The pattern of this rule is `Projection -> Any`.
-func NewRuleSameProjectionElimination() Transformation {
-	rule := &SameProjectionElimination{}
+func NewRuleEliminateProjection() Transformation {
+	rule := &EliminateProjection{}
 	rule.pattern = memo.BuildPattern(
 		memo.OperandProjection,
 		memo.EngineTiDBOnly,
@@ -614,7 +614,7 @@ func NewRuleSameProjectionElimination() Transformation {
 
 // OnTransform implements Transformation interface.
 // This rule tries to eliminate the projection whose output columns are the same with its child.
-func (r *SameProjectionElimination) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
+func (r *EliminateProjection) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
 	child := old.Children[0]
 	if child.Group.Prop.Schema.Len() != old.GetExpr().Group.Prop.Schema.Len() {
 		return nil, false, false, nil
