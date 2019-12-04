@@ -97,5 +97,5 @@ func appendHostInfoToRows(rows [][]types.Datum) ([][]types.Datum, error) {
 	for i := range rows {
 		rows[i] = append(rows[i], types.NewStringDatum(addr))
 	}
-	return rows,nil
+	return rows, nil
 }
