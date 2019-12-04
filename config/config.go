@@ -394,9 +394,9 @@ type CoprocessorCache struct {
 	// reuses the result when corresponding data in TiKV is unchanged, on a region basis.
 	Enabled bool `toml:"enabled" json:"enabled"`
 	// The capacity in MB of the cache.
-	CapacityMb float64 `toml:"capacity-mb" json:"capacity-mb"`
+	CapacityMB float64 `toml:"capacity-mb" json:"capacity-mb"`
 	// Only cache requests whose result set is small.
-	AdmissionMaxResultBytes uint64 `toml:"admission-max-result-bytes" json:"admission-max-result-bytes"`
+	AdmissionMaxResultMB float64 `toml:"admission-max-result-mb" json:"admission-max-result-mb"`
 	// Only cache requests takes notable time to process.
 	AdmissionMinProcessMs uint64 `toml:"admission-min-process-ms" json:"admission-min-process-ms"`
 }
@@ -534,10 +534,10 @@ var defaultConf = Config{
 		StoreLimit:     0,
 
 		CoprCache: CoprocessorCache{
-			Enabled:                 true,
-			CapacityMb:              10000,
-			AdmissionMaxResultBytes: 10000000,
-			AdmissionMinProcessMs:   20,
+			Enabled:               true,
+			CapacityMB:            10000,
+			AdmissionMaxResultMB:  10,
+			AdmissionMinProcessMs: 20,
 		},
 	},
 	Binlog: Binlog{

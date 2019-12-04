@@ -49,11 +49,11 @@ func newCoprCache(config *config.CoprocessorCache) (*coprCache, error) {
 	if config == nil || !config.Enabled {
 		return nil, nil
 	}
-	capacityInBytes := int64(config.CapacityMb * 1024.0 * 1024.0)
-	estimatedEntities := capacityInBytes / int64(config.AdmissionMaxResultBytes) * 2
+	capacityInBytes := int64(config.CapacityMB * 1024.0 * 1024.0)
+	estimatedEntities := capacityInBytes / int64(config.AdmissionMaxResultMB) * 2
 	cache, err := ristretto.NewCache(&ristretto.Config{
 		NumCounters: estimatedEntities * 10,
-		MaxCost:     int64(config.CapacityMb * 1024.0 * 1024.0),
+		MaxCost:     int64(config.CapacityMB * 1024.0 * 1024.0),
 		BufferItems: 64,
 	})
 	if err != nil {
@@ -61,7 +61,7 @@ func newCoprCache(config *config.CoprocessorCache) (*coprCache, error) {
 	}
 	c := coprCache{
 		cache:                   cache,
-		admissionMaxSize:        int(config.AdmissionMaxResultBytes),
+		admissionMaxSize:        int(config.AdmissionMaxResultMB * 1024.0 * 1024.0),
 		admissionMinProcessTime: time.Duration(config.AdmissionMinProcessMs) * time.Millisecond,
 	}
 	return &c, nil
