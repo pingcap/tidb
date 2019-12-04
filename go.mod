@@ -78,5 +78,3 @@ require (
 go 1.13
 
 replace github.com/pingcap/check => github.com/tiancaiamao/check v0.0.0-20191119042138-8e73d07b629d
-
-replace github.com/pingcap/tipb => github.com/pingcap/tipb v0.0.0-20191129094129-04ea15eb054e
