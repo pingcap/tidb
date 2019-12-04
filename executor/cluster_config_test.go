@@ -153,6 +153,10 @@ func (s *testClusterConfigSuite) TestTiDBClusterConfig(c *C) {
 			reqCount: 3,
 		},
 		{
+			sql:      "select * from information_schema.cluster_config where 'tidb'=type",
+			reqCount: 3,
+		},
+		{
 			sql:      "select * from information_schema.cluster_config where type in ('tidb', 'tikv')",
 			reqCount: 6,
 		},
@@ -198,7 +202,7 @@ func (s *testClusterConfigSuite) TestTiDBClusterConfig(c *C) {
 		{
 			sql: fmt.Sprintf(`select * from information_schema.cluster_config where type in ('tidb', 'tikv') and address in ('%s', '%s') and address='%s'`,
 				testServers[0].address, testServers[1].address, testServers[0].address),
-			reqCount: 4,
+			reqCount: 2,
 		},
 	}
 
