@@ -609,7 +609,7 @@ func (b *PlanBuilder) getPossibleAccessPaths(indexHints []*ast.IndexHint, tbl ta
 	tblInfo := tbl.Meta()
 	publicPaths := make([]*accessPath, 0, len(tblInfo.Indices)+2)
 	tp := kv.TiKV
-	if infoschema.IsClusterTable(tbl.Type()) {
+	if tbl.Type().IsClusterTable() {
 		tp = kv.TiDB
 	}
 	publicPaths = append(publicPaths, &accessPath{isTablePath: true, storeType: tp})

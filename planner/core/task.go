@@ -142,6 +142,20 @@ func (t *copTask) finishIndexPlan() {
 	t.cst += cnt * rowSize * sessVars.ScanFactor
 }
 
+func (t *copTask) getStoreType() kv.StoreType {
+	if t.tablePlan == nil {
+		return kv.TiKV
+	}
+	tp := t.tablePlan
+	for len(tp.Children()) > 0 {
+		tp = tp.Children()[0]
+	}
+	if ts, ok := tp.(*PhysicalTableScan); ok {
+		return ts.StoreType
+	}
+	return kv.TiKV
+}
+
 func (p *basePhysicalPlan) attach2Task(tasks ...task) task {
 	t := finishCopTask(p.ctx, tasks[0].copy())
 	return attachPlan2Task(p.self, t)
@@ -1107,7 +1121,7 @@ func (p *PhysicalStreamAgg) attach2Task(tasks ...task) task {
 		// The `extraHandleCol` is added if the double read needs to keep order. So we just use it to decided
 		// whether the following plan is double read with order reserved.
 		if cop.extraHandleCol == nil {
-			copTaskType := getCopTaskType(cop)
+			copTaskType := cop.getStoreType()
 			partialAgg, finalAgg := p.newPartialAggregate(copTaskType)
 			if partialAgg != nil {
 				if cop.tablePlan != nil {
@@ -1168,25 +1182,11 @@ func (p *PhysicalHashAgg) cpuCostDivisor(hasDistinct bool) (float64, float64) {
 	return math.Min(float64(finalCon), float64(partialCon)), float64(finalCon + partialCon)
 }
 
-func getCopTaskType(cop *copTask) kv.StoreType {
-	if cop.tablePlan == nil {
-		return kv.TiKV
-	}
-	tp := cop.tablePlan
-	for len(tp.Children()) > 0 {
-		tp = tp.Children()[0]
-	}
-	if ts, ok := tp.(*PhysicalTableScan); ok {
-		return ts.StoreType
-	}
-	return kv.TiKV
-}
-
 func (p *PhysicalHashAgg) attach2Task(tasks ...task) task {
 	t := tasks[0].copy()
 	inputRows := t.count()
 	if cop, ok := t.(*copTask); ok {
-		copTaskType := getCopTaskType(cop)
+		copTaskType := cop.getStoreType()
 		partialAgg, finalAgg := p.newPartialAggregate(copTaskType)
 		if partialAgg != nil {
 			if cop.tablePlan != nil {

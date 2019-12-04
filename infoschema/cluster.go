@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 )
@@ -71,11 +70,6 @@ func isClusterTableByName(dbName, tableName string) bool {
 		}
 	}
 	return false
-}
-
-// IsClusterTable used to check whether the table is a cluster memory table.
-func IsClusterTable(tp table.Type) bool {
-	return tp == table.ClusterTable
 }
 
 func getClusterMemTableRows(ctx sessionctx.Context, tableName string) (rows [][]types.Datum, err error) {

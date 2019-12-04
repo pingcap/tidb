@@ -723,6 +723,7 @@ func (c *RPCClient) checkArgs(ctx context.Context, addr string) (*rpcHandler, er
 }
 
 // TiDBRPCServerCoprocessorHandler is the TiDB rpc server coprocessor handler.
+// TODO: remove this global variable.
 var TiDBRPCServerCoprocessorHandler func(context.Context, *coprocessor.Request) *coprocessor.Response
 
 // SendRequest sends a request to mock cluster.
