@@ -1798,7 +1798,7 @@ func (c *truncateFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 		sig.setPbCode(tipb.ScalarFuncSig_TruncateDecimal)
 	default:
 		return nil, errIncorrectArgs.GenWithStackByArgs("truncate")
-  }
+	}
 
 	return sig, nil
 }
