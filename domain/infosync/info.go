@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strconv"
+	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -82,17 +83,30 @@ type ServerVersionInfo struct {
 	GitHash string `json:"git_hash"`
 }
 
-var globalInfoSyncer *InfoSyncer
+var globalInfoSyncer atomic.Value
+
+func getGlobalInfoSyncer() (*InfoSyncer, error) {
+	v := globalInfoSyncer.Load()
+	if v == nil {
+		return nil, errors.New("infoSyncer is not initialized")
+	}
+	return v.(*InfoSyncer), nil
+}
+
+func setGlobalInfoSyncer(is *InfoSyncer) {
+	globalInfoSyncer.Store(is)
+}
 
 // GlobalInfoSyncerInit return a new InfoSyncer. It is exported for testing.
 func GlobalInfoSyncerInit(ctx context.Context, id string, etcdCli *clientv3.Client) (*InfoSyncer, error) {
-	globalInfoSyncer = &InfoSyncer{
+	is := &InfoSyncer{
 		etcdCli:        etcdCli,
 		info:           getServerInfo(id),
 		serverInfoPath: fmt.Sprintf("%s/%s", ServerInformationPath, id),
 		minStartTSPath: fmt.Sprintf("%s/%s", ServerMinStartTSPath, id),
 	}
-	return globalInfoSyncer, globalInfoSyncer.init(ctx)
+	setGlobalInfoSyncer(is)
+	return is, is.init(ctx)
 }
 
 // Init creates a new etcd session and stores server info to etcd.
@@ -107,18 +121,20 @@ func (is *InfoSyncer) SetSessionManager(manager util2.SessionManager) {
 
 // GetServerInfo gets self server static information.
 func GetServerInfo() *ServerInfo {
-	if globalInfoSyncer == nil {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
 		return nil
 	}
-	return globalInfoSyncer.info
+	return is.info
 }
 
 // GetServerInfoByID gets specified server static information from etcd.
 func GetServerInfoByID(ctx context.Context, id string) (*ServerInfo, error) {
-	if globalInfoSyncer == nil {
-		return nil, errors.New("infoSyncer is not initialized")
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return nil, err
 	}
-	return globalInfoSyncer.getServerInfoByID(ctx, id)
+	return is.getServerInfoByID(ctx, id)
 }
 
 func (is *InfoSyncer) getServerInfoByID(ctx context.Context, id string) (*ServerInfo, error) {
@@ -139,10 +155,11 @@ func (is *InfoSyncer) getServerInfoByID(ctx context.Context, id string) (*Server
 
 // GetAllServerInfo gets all servers static information from etcd.
 func GetAllServerInfo(ctx context.Context) (map[string]*ServerInfo, error) {
-	if globalInfoSyncer == nil {
-		return nil, errors.New("infoSyncer is not initialized")
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return nil, err
 	}
-	return globalInfoSyncer.getAllServerInfo(ctx)
+	return is.getAllServerInfo(ctx)
 }
 
 func (is *InfoSyncer) getAllServerInfo(ctx context.Context) (map[string]*ServerInfo, error) {
