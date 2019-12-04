@@ -163,9 +163,6 @@ func (s *testTransformationRuleSuite) TestProjectionElimination(c *C) {
 		memo.OperandProjection: {
 			NewRuleEliminateProjection(),
 		},
-		memo.OperandDataSource: {
-			NewRuleEnumeratePaths(),
-		},
 	})
 	defer func() {
 		s.optimizer.ResetTransformationRules(defaultTransformationMap)
