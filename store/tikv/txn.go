@@ -17,6 +17,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/dgryski/go-farm"
@@ -109,21 +110,6 @@ type assertionPair struct {
 
 func (a assertionPair) String() string {
 	return fmt.Sprintf("key: %s, assertion type: %d", a.key, a.assertion)
-}
-
-// SetAssertion sets a assertion for the key operation.
-func (txn *tikvTxn) SetAssertion(key kv.Key, assertion kv.AssertionType) {
-	// Deep copy the key since it's memory is referenced from union store and overwrite change later.
-	key1 := append([]byte{}, key...)
-	txn.assertions = append(txn.assertions, assertionPair{key1, assertion})
-}
-
-func (txn *tikvTxn) ConfirmAssertions(succ bool) {
-	if succ {
-		txn.confirmed = len(txn.assertions)
-	} else {
-		txn.assertions = txn.assertions[:txn.confirmed]
-	}
 }
 
 func (txn *tikvTxn) SetVars(vars *kv.Variables) {
@@ -324,7 +310,7 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 	// latches disabled
 	// pessimistic transaction should also bypass latch.
 	if txn.store.txnLatches == nil || txn.IsPessimistic() {
-		err = committer.executeAndWriteFinishBinlog(ctx)
+		err = committer.execute(ctx)
 		logutil.Logger(ctx).Debug("[kv] txnLatches disabled, 2pc directly", zap.Error(err))
 		return errors.Trace(err)
 	}
@@ -342,7 +328,7 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 	if lock.IsStale() {
 		return kv.ErrWriteConflictInTiDB.FastGenByArgs(txn.startTS)
 	}
-	err = committer.executeAndWriteFinishBinlog(ctx)
+	err = committer.execute(ctx)
 	if err == nil {
 		lock.SetCommitTS(committer.commitTS)
 	}
@@ -380,7 +366,8 @@ func (txn *tikvTxn) rollbackPessimisticLocks() error {
 	return txn.committer.pessimisticRollbackKeys(NewBackoffer(context.Background(), cleanupMaxBackoff), txn.lockKeys)
 }
 
-func (txn *tikvTxn) LockKeys(ctx context.Context, forUpdateTS uint64, keysInput ...kv.Key) error {
+// lockWaitTime in ms, except that kv.LockAlwaysWait(0) means always wait lock, kv.LockNowait(-1) means nowait lock
+func (txn *tikvTxn) LockKeys(ctx context.Context, killed *uint32, forUpdateTS uint64, lockWaitTime int64, keysInput ...kv.Key) error {
 	// Exclude keys that are already locked.
 	keys := make([][]byte, 0, len(keysInput))
 	txn.mu.Lock()
@@ -408,11 +395,6 @@ func (txn *tikvTxn) LockKeys(ctx context.Context, forUpdateTS uint64, keysInput 
 				return err
 			}
 		}
-		if txn.committer.pessimisticTTL == 0 {
-			// add elapsed time to pessimistic TTL on the first LockKeys request.
-			elapsed := uint64(time.Since(txn.startTime) / time.Millisecond)
-			txn.committer.pessimisticTTL = PessimisticLockTTL + elapsed
-		}
 		var assignedPrimaryKey bool
 		if txn.committer.primaryKey == nil {
 			txn.committer.primaryKey = keys[0]
@@ -424,7 +406,13 @@ func (txn *tikvTxn) LockKeys(ctx context.Context, forUpdateTS uint64, keysInput 
 		// If the number of keys greater than 1, it can be on different region,
 		// concurrently execute on multiple regions may lead to deadlock.
 		txn.committer.isFirstLock = len(txn.lockKeys) == 0 && len(keys) == 1
-		err := txn.committer.pessimisticLockKeys(bo, keys)
+		err := txn.committer.pessimisticLockKeys(bo, killed, lockWaitTime, keys)
+		if killed != nil {
+			// If the kill signal is received during waiting for pessimisticLock,
+			// pessimisticLockKeys would handle the error but it doesn't reset the flag.
+			// We need to reset the killed flag here.
+			atomic.CompareAndSwapUint32(killed, 1, 0)
+		}
 		if err != nil {
 			for _, key := range keys {
 				txn.us.DeleteKeyExistErrInfo(key)
@@ -448,7 +436,7 @@ func (txn *tikvTxn) LockKeys(ctx context.Context, forUpdateTS uint64, keysInput 
 			return err
 		}
 		if assignedPrimaryKey {
-			txn.committer.ttlManager.run(txn.committer)
+			txn.committer.ttlManager.run(txn.committer, killed)
 		}
 	}
 	txn.mu.Lock()
@@ -473,6 +461,9 @@ func (txn *tikvTxn) asyncPessimisticRollback(ctx context.Context, keys [][]byte)
 	wg := new(sync.WaitGroup)
 	wg.Add(1)
 	go func() {
+		failpoint.Inject("AsyncRollBackSleep", func() {
+			time.Sleep(100 * time.Millisecond)
+		})
 		err := committer.pessimisticRollbackKeys(NewBackoffer(ctx, pessimisticRollbackMaxBackoff), keys)
 		if err != nil {
 			logutil.Logger(ctx).Warn("[kv] pessimisticRollback failed.", zap.Error(err))

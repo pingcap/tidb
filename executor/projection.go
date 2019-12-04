@@ -77,7 +77,10 @@ func (e *ProjectionExec) Open(ctx context.Context) error {
 	if err := e.baseExecutor.Open(ctx); err != nil {
 		return err
 	}
+	return e.open(ctx)
+}
 
+func (e *ProjectionExec) open(ctx context.Context) error {
 	e.prepared = false
 	e.parentReqRows = int64(e.maxChunkSize)
 
@@ -255,6 +258,13 @@ func (e *ProjectionExec) Close() error {
 		for range e.outputCh {
 		}
 		e.outputCh = nil
+	}
+	if e.runtimeStats != nil {
+		if e.isUnparallelExec() {
+			e.runtimeStats.SetConcurrencyInfo("Concurrency", 0)
+		} else {
+			e.runtimeStats.SetConcurrencyInfo("Concurrency", int(e.numWorkers))
+		}
 	}
 	return e.baseExecutor.Close()
 }

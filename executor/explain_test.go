@@ -114,9 +114,11 @@ func (s *testSuite1) TestExplainAnalyzeMemory(c *C) {
 
 	s.checkMemoryInfo(c, tk, "explain analyze select * from t order by v")
 	s.checkMemoryInfo(c, tk, "explain analyze select * from t order by v limit 5")
-	s.checkMemoryInfo(c, tk, "explain analyze select /*+ TIDB_HJ(t1, t2) */ t1.k from t t1, t t2 where t1.v = t2.v+1")
-	s.checkMemoryInfo(c, tk, "explain analyze select /*+ TIDB_SMJ(t1, t2) */ t1.k from t t1, t t2 where t1.k = t2.k+1")
-	s.checkMemoryInfo(c, tk, "explain analyze select /*+ TIDB_INLJ(t1, t2) */ t1.k from t t1, t t2 where t1.k = t2.k and t1.v=1")
+	s.checkMemoryInfo(c, tk, "explain analyze select /*+ HASH_JOIN(t1, t2) */ t1.k from t t1, t t2 where t1.v = t2.v+1")
+	s.checkMemoryInfo(c, tk, "explain analyze select /*+ SM_JOIN(t1, t2) */ t1.k from t t1, t t2 where t1.k = t2.k+1")
+	s.checkMemoryInfo(c, tk, "explain analyze select /*+ INL_JOIN(t1, t2) */ t1.k from t t1, t t2 where t1.k = t2.k and t1.v=1")
+	s.checkMemoryInfo(c, tk, "explain analyze select /*+ INL_HASH_JOIN(t1, t2) */ t1.k from t t1, t t2 where t1.k = t2.k and t1.v=1")
+	s.checkMemoryInfo(c, tk, "explain analyze select /*+ INL_MERGE_JOIN(t1, t2) */ t1.k from t t1, t t2 where t1.k = t2.k and t1.v=1")
 	s.checkMemoryInfo(c, tk, "explain analyze select sum(k) from t group by v")
 	s.checkMemoryInfo(c, tk, "explain analyze select sum(v) from t group by k")
 	s.checkMemoryInfo(c, tk, "explain analyze select * from t")
@@ -153,7 +155,7 @@ func (s *testSuite1) checkMemoryInfo(c *C, tk *testkit.TestKit, sql string) {
 	}
 }
 
-func (s *testSuite1) TestExplainAnalyzeExecutionInfo(c *C) {
+func (s *testSuite2) TestExplainAnalyzeExecutionInfo(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (v int, k int, key(k))")
@@ -161,9 +163,11 @@ func (s *testSuite1) TestExplainAnalyzeExecutionInfo(c *C) {
 
 	s.checkExecutionInfo(c, tk, "explain analyze select * from t order by v")
 	s.checkExecutionInfo(c, tk, "explain analyze select * from t order by v limit 5")
-	s.checkExecutionInfo(c, tk, "explain analyze select /*+ TIDB_HJ(t1, t2) */ t1.k from t t1, t t2 where t1.v = t2.v+1")
-	s.checkExecutionInfo(c, tk, "explain analyze select /*+ TIDB_SMJ(t1, t2) */ t1.k from t t1, t t2 where t1.k = t2.k+1")
-	s.checkExecutionInfo(c, tk, "explain analyze select /*+ TIDB_INLJ(t1, t2) */ t1.k from t t1, t t2 where t1.k = t2.k and t1.v=1")
+	s.checkExecutionInfo(c, tk, "explain analyze select /*+ HASH_JOIN(t1, t2) */ t1.k from t t1, t t2 where t1.v = t2.v+1")
+	s.checkExecutionInfo(c, tk, "explain analyze select /*+ SM_JOIN(t1, t2) */ t1.k from t t1, t t2 where t1.k = t2.k+1")
+	s.checkExecutionInfo(c, tk, "explain analyze select /*+ INL_JOIN(t1, t2) */ t1.k from t t1, t t2 where t1.k = t2.k and t1.v=1")
+	s.checkExecutionInfo(c, tk, "explain analyze select /*+ INL_HASH_JOIN(t1, t2) */ t1.k from t t1, t t2 where t1.k = t2.k and t1.v=1")
+	s.checkExecutionInfo(c, tk, "explain analyze select /*+ INL_MERGE_JOIN(t1, t2) */ t1.k from t t1, t t2 where t1.k = t2.k and t1.v=1")
 	s.checkExecutionInfo(c, tk, "explain analyze select sum(k) from t group by v")
 	s.checkExecutionInfo(c, tk, "explain analyze select sum(v) from t group by k")
 	s.checkExecutionInfo(c, tk, "explain analyze select * from t")
@@ -187,7 +191,7 @@ func (s *testSuite1) TestExplainAnalyzeExecutionInfo(c *C) {
 	tk.MustExec("drop table if exists lineitem")
 }
 
-func (s *testSuite1) checkExecutionInfo(c *C, tk *testkit.TestKit, sql string) {
+func (s *testSuite2) checkExecutionInfo(c *C, tk *testkit.TestKit, sql string) {
 	executionInfoCol := 4
 	rows := tk.MustQuery(sql).Rows()
 	for _, row := range rows {

@@ -24,11 +24,11 @@ import (
 	"github.com/pingcap/tidb/types"
 )
 
-func (s *testUnitTestSuit) rewriteSimpleExpr(str string, schema *expression.Schema) ([]expression.Expression, error) {
+func (s *testUnitTestSuit) rewriteSimpleExpr(str string, schema *expression.Schema, names types.NameSlice) ([]expression.Expression, error) {
 	if str == "" {
 		return nil, nil
 	}
-	filters, err := expression.ParseSimpleExprsWithSchema(s.ctx, str, schema)
+	filters, err := expression.ParseSimpleExprsWithNames(s.ctx, str, schema, names)
 	if err != nil {
 		return nil, err
 	}
@@ -43,69 +43,88 @@ func (s *testUnitTestSuit) TestIndexJoinAnalyzeLookUpFilters(c *C) {
 	joinNode := LogicalJoin{}.Init(s.ctx, 0)
 	dataSourceNode := DataSource{}.Init(s.ctx, 0)
 	dsSchema := expression.NewSchema()
+	var dsNames types.NameSlice
 	dsSchema.Append(&expression.Column{
 		UniqueID: s.ctx.GetSessionVars().AllocPlanColumnID(),
-		ColName:  model.NewCIStr("a"),
-		TblName:  model.NewCIStr("t"),
-		DBName:   model.NewCIStr("test"),
 		RetType:  types.NewFieldType(mysql.TypeLonglong),
+	})
+	dsNames = append(dsNames, &types.FieldName{
+		ColName: model.NewCIStr("a"),
+		TblName: model.NewCIStr("t"),
+		DBName:  model.NewCIStr("test"),
 	})
 	dsSchema.Append(&expression.Column{
 		UniqueID: s.ctx.GetSessionVars().AllocPlanColumnID(),
-		ColName:  model.NewCIStr("b"),
-		TblName:  model.NewCIStr("t"),
-		DBName:   model.NewCIStr("test"),
 		RetType:  types.NewFieldType(mysql.TypeLonglong),
+	})
+	dsNames = append(dsNames, &types.FieldName{
+		ColName: model.NewCIStr("b"),
+		TblName: model.NewCIStr("t"),
+		DBName:  model.NewCIStr("test"),
 	})
 	dsSchema.Append(&expression.Column{
 		UniqueID: s.ctx.GetSessionVars().AllocPlanColumnID(),
-		ColName:  model.NewCIStr("c"),
-		TblName:  model.NewCIStr("t"),
-		DBName:   model.NewCIStr("test"),
 		RetType:  types.NewFieldType(mysql.TypeVarchar),
 	})
+	dsNames = append(dsNames, &types.FieldName{
+		ColName: model.NewCIStr("c"),
+		TblName: model.NewCIStr("t"),
+		DBName:  model.NewCIStr("test"),
+	})
 	dsSchema.Append(&expression.Column{
 		UniqueID: s.ctx.GetSessionVars().AllocPlanColumnID(),
-		ColName:  model.NewCIStr("d"),
-		TblName:  model.NewCIStr("t"),
-		DBName:   model.NewCIStr("test"),
 		RetType:  types.NewFieldType(mysql.TypeLonglong),
+	})
+	dsNames = append(dsNames, &types.FieldName{
+		ColName: model.NewCIStr("d"),
+		TblName: model.NewCIStr("t"),
+		DBName:  model.NewCIStr("test"),
 	})
 	dataSourceNode.schema = dsSchema
 	outerChildSchema := expression.NewSchema()
+	var outerChildNames types.NameSlice
 	outerChildSchema.Append(&expression.Column{
 		UniqueID: s.ctx.GetSessionVars().AllocPlanColumnID(),
-		ColName:  model.NewCIStr("e"),
-		TblName:  model.NewCIStr("t1"),
-		DBName:   model.NewCIStr("test"),
 		RetType:  types.NewFieldType(mysql.TypeLonglong),
+	})
+	outerChildNames = append(outerChildNames, &types.FieldName{
+		ColName: model.NewCIStr("e"),
+		TblName: model.NewCIStr("t1"),
+		DBName:  model.NewCIStr("test"),
 	})
 	outerChildSchema.Append(&expression.Column{
 		UniqueID: s.ctx.GetSessionVars().AllocPlanColumnID(),
-		ColName:  model.NewCIStr("f"),
-		TblName:  model.NewCIStr("t1"),
-		DBName:   model.NewCIStr("test"),
 		RetType:  types.NewFieldType(mysql.TypeLonglong),
+	})
+	outerChildNames = append(outerChildNames, &types.FieldName{
+		ColName: model.NewCIStr("f"),
+		TblName: model.NewCIStr("t1"),
+		DBName:  model.NewCIStr("test"),
 	})
 	outerChildSchema.Append(&expression.Column{
 		UniqueID: s.ctx.GetSessionVars().AllocPlanColumnID(),
-		ColName:  model.NewCIStr("g"),
-		TblName:  model.NewCIStr("t1"),
-		DBName:   model.NewCIStr("test"),
 		RetType:  types.NewFieldType(mysql.TypeVarchar),
 	})
+	outerChildNames = append(outerChildNames, &types.FieldName{
+		ColName: model.NewCIStr("g"),
+		TblName: model.NewCIStr("t1"),
+		DBName:  model.NewCIStr("test"),
+	})
 	outerChildSchema.Append(&expression.Column{
 		UniqueID: s.ctx.GetSessionVars().AllocPlanColumnID(),
-		ColName:  model.NewCIStr("h"),
-		TblName:  model.NewCIStr("t1"),
-		DBName:   model.NewCIStr("test"),
 		RetType:  types.NewFieldType(mysql.TypeLonglong),
+	})
+	outerChildNames = append(outerChildNames, &types.FieldName{
+		ColName: model.NewCIStr("h"),
+		TblName: model.NewCIStr("t1"),
+		DBName:  model.NewCIStr("test"),
 	})
 	joinNode.SetSchema(expression.MergeSchema(dsSchema, outerChildSchema))
 	path := &accessPath{
 		idxCols:    append(make([]*expression.Column, 0, 4), dsSchema.Columns...),
 		idxColLens: []int{types.UnspecifiedLength, types.UnspecifiedLength, 2, types.UnspecifiedLength},
 	}
+	joinColNames := append(dsNames.Shallow(), outerChildNames...)
 
 	tests := []struct {
 		innerKeys       []*expression.Column
@@ -218,10 +237,10 @@ func (s *testUnitTestSuit) TestIndexJoinAnalyzeLookUpFilters(c *C) {
 		},
 	}
 	for i, tt := range tests {
-		pushed, err := s.rewriteSimpleExpr(tt.pushedDownConds, dsSchema)
+		pushed, err := s.rewriteSimpleExpr(tt.pushedDownConds, dsSchema, dsNames)
 		c.Assert(err, IsNil)
 		dataSourceNode.pushedDownConds = pushed
-		others, err := s.rewriteSimpleExpr(tt.otherConds, joinNode.schema)
+		others, err := s.rewriteSimpleExpr(tt.otherConds, joinNode.schema, joinColNames)
 		c.Assert(err, IsNil)
 		joinNode.OtherConditions = others
 		helper := &indexJoinBuildHelper{join: joinNode, lastColManager: nil}

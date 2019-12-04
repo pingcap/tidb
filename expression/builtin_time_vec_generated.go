@@ -609,3 +609,401 @@ func (b *builtinAddTimeDurationNullSig) vecEvalDuration(input *chunk.Chunk, resu
 func (b *builtinAddTimeDurationNullSig) vectorized() bool {
 	return true
 }
+
+func (b *builtinNullTimeDiffSig) vecEvalDuration(input *chunk.Chunk, result *chunk.Column) error {
+	n := input.NumRows()
+	result.ResizeGoDuration(n, true)
+	return nil
+}
+
+func (b *builtinNullTimeDiffSig) vectorized() bool {
+	return true
+}
+
+func (b *builtinTimeStringTimeDiffSig) vecEvalDuration(input *chunk.Chunk, result *chunk.Column) error {
+	n := input.NumRows()
+	result.ResizeGoDuration(n, false)
+	r64s := result.GoDurations()
+	buf0, err := b.bufAllocator.get(types.ETDatetime, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf0)
+
+	buf1, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf1)
+
+	if err := b.args[0].VecEvalTime(b.ctx, input, buf0); err != nil {
+		return err
+	}
+	if err := b.args[1].VecEvalString(b.ctx, input, buf1); err != nil {
+		return err
+	}
+
+	result.MergeNulls(buf0, buf1)
+	arg0 := buf0.Times()
+	stmtCtx := b.ctx.GetSessionVars().StmtCtx
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		lhsTime := arg0[i]
+		_, rhsTime, rhsIsDuration, err := convertStringToDuration(stmtCtx, buf1.GetString(i), int8(b.tp.Decimal))
+		if err != nil {
+			return err
+		}
+		if rhsIsDuration {
+			result.SetNull(i, true)
+			continue
+		}
+		d, isNull, err := calculateTimeDiff(stmtCtx, lhsTime, rhsTime)
+		if err != nil {
+			return err
+		}
+		if isNull {
+			result.SetNull(i, true)
+			continue
+		}
+		r64s[i] = d.Duration
+	}
+	return nil
+}
+
+func (b *builtinTimeStringTimeDiffSig) vectorized() bool {
+	return true
+}
+
+func (b *builtinDurationStringTimeDiffSig) vecEvalDuration(input *chunk.Chunk, result *chunk.Column) error {
+	n := input.NumRows()
+	result.ResizeGoDuration(n, false)
+	r64s := result.GoDurations()
+	buf0 := result
+	buf1, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf1)
+
+	if err := b.args[0].VecEvalDuration(b.ctx, input, buf0); err != nil {
+		return err
+	}
+	if err := b.args[1].VecEvalString(b.ctx, input, buf1); err != nil {
+		return err
+	}
+
+	result.MergeNulls(buf1)
+	arg0 := buf0.GoDurations()
+	var (
+		lhs types.Duration
+		rhs types.Duration
+	)
+	stmtCtx := b.ctx.GetSessionVars().StmtCtx
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		lhs.Duration = arg0[i]
+		rhsDur, _, rhsIsDuration, err := convertStringToDuration(stmtCtx, buf1.GetString(i), int8(b.tp.Decimal))
+		if err != nil {
+			return err
+		}
+		if !rhsIsDuration {
+			result.SetNull(i, true)
+			continue
+		}
+		rhs = rhsDur
+		d, isNull, err := calculateDurationTimeDiff(b.ctx, lhs, rhs)
+		if err != nil {
+			return err
+		}
+		if isNull {
+			result.SetNull(i, true)
+			continue
+		}
+		r64s[i] = d.Duration
+	}
+	return nil
+}
+
+func (b *builtinDurationStringTimeDiffSig) vectorized() bool {
+	return true
+}
+
+func (b *builtinDurationDurationTimeDiffSig) vecEvalDuration(input *chunk.Chunk, result *chunk.Column) error {
+	n := input.NumRows()
+	result.ResizeGoDuration(n, false)
+	r64s := result.GoDurations()
+	buf0 := result
+	buf1, err := b.bufAllocator.get(types.ETDuration, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf1)
+
+	if err := b.args[0].VecEvalDuration(b.ctx, input, buf0); err != nil {
+		return err
+	}
+	if err := b.args[1].VecEvalDuration(b.ctx, input, buf1); err != nil {
+		return err
+	}
+
+	result.MergeNulls(buf1)
+	arg0 := buf0.GoDurations()
+	arg1 := buf1.GoDurations()
+	var (
+		lhs types.Duration
+		rhs types.Duration
+	)
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		lhs.Duration = arg0[i]
+		rhs.Duration = arg1[i]
+		d, isNull, err := calculateDurationTimeDiff(b.ctx, lhs, rhs)
+		if err != nil {
+			return err
+		}
+		if isNull {
+			result.SetNull(i, true)
+			continue
+		}
+		r64s[i] = d.Duration
+	}
+	return nil
+}
+
+func (b *builtinDurationDurationTimeDiffSig) vectorized() bool {
+	return true
+}
+
+func (b *builtinStringTimeTimeDiffSig) vecEvalDuration(input *chunk.Chunk, result *chunk.Column) error {
+	n := input.NumRows()
+	result.ResizeGoDuration(n, false)
+	r64s := result.GoDurations()
+	buf0, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf0)
+
+	buf1, err := b.bufAllocator.get(types.ETDatetime, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf1)
+
+	if err := b.args[0].VecEvalString(b.ctx, input, buf0); err != nil {
+		return err
+	}
+	if err := b.args[1].VecEvalTime(b.ctx, input, buf1); err != nil {
+		return err
+	}
+
+	result.MergeNulls(buf0, buf1)
+	arg1 := buf1.Times()
+	stmtCtx := b.ctx.GetSessionVars().StmtCtx
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		_, lhsTime, lhsIsDuration, err := convertStringToDuration(stmtCtx, buf0.GetString(i), int8(b.tp.Decimal))
+		if err != nil {
+			return err
+		}
+		if lhsIsDuration {
+			result.SetNull(i, true)
+			continue
+		}
+		rhsTime := arg1[i]
+		d, isNull, err := calculateTimeDiff(stmtCtx, lhsTime, rhsTime)
+		if err != nil {
+			return err
+		}
+		if isNull {
+			result.SetNull(i, true)
+			continue
+		}
+		r64s[i] = d.Duration
+	}
+	return nil
+}
+
+func (b *builtinStringTimeTimeDiffSig) vectorized() bool {
+	return true
+}
+
+func (b *builtinStringDurationTimeDiffSig) vecEvalDuration(input *chunk.Chunk, result *chunk.Column) error {
+	n := input.NumRows()
+	result.ResizeGoDuration(n, false)
+	r64s := result.GoDurations()
+	buf1 := result
+	buf0, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf0)
+
+	if err := b.args[0].VecEvalString(b.ctx, input, buf0); err != nil {
+		return err
+	}
+	if err := b.args[1].VecEvalDuration(b.ctx, input, buf1); err != nil {
+		return err
+	}
+
+	result.MergeNulls(buf0)
+	arg1 := buf1.GoDurations()
+	var (
+		lhs types.Duration
+		rhs types.Duration
+	)
+	stmtCtx := b.ctx.GetSessionVars().StmtCtx
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		lhsDur, _, lhsIsDuration, err := convertStringToDuration(stmtCtx, buf0.GetString(i), int8(b.tp.Decimal))
+		if err != nil {
+			return err
+		}
+		if !lhsIsDuration {
+			result.SetNull(i, true)
+			continue
+		}
+		lhs = lhsDur
+		rhs.Duration = arg1[i]
+		d, isNull, err := calculateDurationTimeDiff(b.ctx, lhs, rhs)
+		if err != nil {
+			return err
+		}
+		if isNull {
+			result.SetNull(i, true)
+			continue
+		}
+		r64s[i] = d.Duration
+	}
+	return nil
+}
+
+func (b *builtinStringDurationTimeDiffSig) vectorized() bool {
+	return true
+}
+
+func (b *builtinStringStringTimeDiffSig) vecEvalDuration(input *chunk.Chunk, result *chunk.Column) error {
+	n := input.NumRows()
+	result.ResizeGoDuration(n, false)
+	r64s := result.GoDurations()
+	buf0, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf0)
+
+	buf1, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf1)
+
+	if err := b.args[0].VecEvalString(b.ctx, input, buf0); err != nil {
+		return err
+	}
+	if err := b.args[1].VecEvalString(b.ctx, input, buf1); err != nil {
+		return err
+	}
+
+	result.MergeNulls(buf0, buf1)
+	stmtCtx := b.ctx.GetSessionVars().StmtCtx
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		lhsDur, lhsTime, lhsIsDuration, err := convertStringToDuration(stmtCtx, buf0.GetString(i), int8(b.tp.Decimal))
+		if err != nil {
+			return err
+		}
+		rhsDur, rhsTime, rhsIsDuration, err := convertStringToDuration(stmtCtx, buf1.GetString(i), int8(b.tp.Decimal))
+		if err != nil {
+			return err
+		}
+		if lhsIsDuration != rhsIsDuration {
+			result.SetNull(i, true)
+			continue
+		}
+		var (
+			d      types.Duration
+			isNull bool
+		)
+		if lhsIsDuration {
+			d, isNull, err = calculateDurationTimeDiff(b.ctx, lhsDur, rhsDur)
+		} else {
+			d, isNull, err = calculateTimeDiff(stmtCtx, lhsTime, rhsTime)
+		}
+		if err != nil {
+			return err
+		}
+		if isNull {
+			result.SetNull(i, true)
+			continue
+		}
+		r64s[i] = d.Duration
+	}
+	return nil
+}
+
+func (b *builtinStringStringTimeDiffSig) vectorized() bool {
+	return true
+}
+
+func (b *builtinTimeTimeTimeDiffSig) vecEvalDuration(input *chunk.Chunk, result *chunk.Column) error {
+	n := input.NumRows()
+	result.ResizeGoDuration(n, false)
+	r64s := result.GoDurations()
+	buf0, err := b.bufAllocator.get(types.ETDatetime, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf0)
+
+	buf1, err := b.bufAllocator.get(types.ETDatetime, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf1)
+
+	if err := b.args[0].VecEvalTime(b.ctx, input, buf0); err != nil {
+		return err
+	}
+	if err := b.args[1].VecEvalTime(b.ctx, input, buf1); err != nil {
+		return err
+	}
+
+	result.MergeNulls(buf0, buf1)
+	arg0 := buf0.Times()
+	arg1 := buf1.Times()
+	stmtCtx := b.ctx.GetSessionVars().StmtCtx
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		lhsTime := arg0[i]
+		rhsTime := arg1[i]
+		d, isNull, err := calculateTimeDiff(stmtCtx, lhsTime, rhsTime)
+		if err != nil {
+			return err
+		}
+		if isNull {
+			result.SetNull(i, true)
+			continue
+		}
+		r64s[i] = d.Duration
+	}
+	return nil
+}
+
+func (b *builtinTimeTimeTimeDiffSig) vectorized() bool {
+	return true
+}

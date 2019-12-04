@@ -57,9 +57,9 @@ func canProjectionBeEliminatedStrict(p *PhysicalProjection) bool {
 func resolveColumnAndReplace(origin *expression.Column, replace map[string]*expression.Column) {
 	dst := replace[string(origin.HashCode(nil))]
 	if dst != nil {
-		colName, retType, inOperand := origin.ColName, origin.RetType, origin.InOperand
+		retType, inOperand := origin.RetType, origin.InOperand
 		*origin = *dst
-		origin.ColName, origin.RetType, origin.InOperand = colName, retType, inOperand
+		origin.RetType, origin.InOperand = retType, inOperand
 	}
 }
 
@@ -97,6 +97,9 @@ func eliminatePhysicalProjection(p PhysicalPlan) PhysicalPlan {
 	newCols := newRoot.Schema().Columns
 	for i, oldCol := range oldSchema.Columns {
 		oldCol.Index = newCols[i].Index
+		oldCol.ID = newCols[i].ID
+		oldCol.UniqueID = newCols[i].UniqueID
+		oldCol.VirtualExpr = newCols[i].VirtualExpr
 		newRoot.Schema().Columns[i] = oldCol
 	}
 	return newRoot

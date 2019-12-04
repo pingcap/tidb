@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/infoschema"
 	plannercore "github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/planner/memo"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/testleak"
@@ -57,11 +58,11 @@ func (s *testCascadesSuite) TearDownSuite(c *C) {
 func (s *testCascadesSuite) TestImplGroupZeroCost(c *C) {
 	stmt, err := s.ParseOneStmt("select t1.a, t2.a from t as t1 left join t as t2 on t1.a = t2.a where t1.a < 1.0", "", "")
 	c.Assert(err, IsNil)
-	p, err := plannercore.BuildLogicalPlan(context.Background(), s.sctx, stmt, s.is)
+	p, _, err := plannercore.BuildLogicalPlan(context.Background(), s.sctx, stmt, s.is)
 	c.Assert(err, IsNil)
 	logic, ok := p.(plannercore.LogicalPlan)
 	c.Assert(ok, IsTrue)
-	rootGroup := convert2Group(logic)
+	rootGroup := memo.Convert2Group(logic)
 	prop := &property.PhysicalProperty{
 		ExpectedCnt: math.MaxFloat64,
 	}
@@ -73,11 +74,11 @@ func (s *testCascadesSuite) TestImplGroupZeroCost(c *C) {
 func (s *testCascadesSuite) TestInitGroupSchema(c *C) {
 	stmt, err := s.ParseOneStmt("select a from t", "", "")
 	c.Assert(err, IsNil)
-	p, err := plannercore.BuildLogicalPlan(context.Background(), s.sctx, stmt, s.is)
+	p, _, err := plannercore.BuildLogicalPlan(context.Background(), s.sctx, stmt, s.is)
 	c.Assert(err, IsNil)
 	logic, ok := p.(plannercore.LogicalPlan)
 	c.Assert(ok, IsTrue)
-	g := convert2Group(logic)
+	g := memo.Convert2Group(logic)
 	c.Assert(g, NotNil)
 	c.Assert(g.Prop, NotNil)
 	c.Assert(g.Prop.Schema.Len(), Equals, 1)
@@ -87,11 +88,11 @@ func (s *testCascadesSuite) TestInitGroupSchema(c *C) {
 func (s *testCascadesSuite) TestFillGroupStats(c *C) {
 	stmt, err := s.ParseOneStmt("select * from t t1 join t t2 on t1.a = t2.a", "", "")
 	c.Assert(err, IsNil)
-	p, err := plannercore.BuildLogicalPlan(context.Background(), s.sctx, stmt, s.is)
+	p, _, err := plannercore.BuildLogicalPlan(context.Background(), s.sctx, stmt, s.is)
 	c.Assert(err, IsNil)
 	logic, ok := p.(plannercore.LogicalPlan)
 	c.Assert(ok, IsTrue)
-	rootGroup := convert2Group(logic)
+	rootGroup := memo.Convert2Group(logic)
 	err = s.optimizer.fillGroupStats(rootGroup)
 	c.Assert(err, IsNil)
 	c.Assert(rootGroup.Prop.Stats, NotNil)

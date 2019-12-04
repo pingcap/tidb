@@ -55,7 +55,7 @@ select * from t;`)
 		}
 		recordString += str
 	}
-	expectRecordString := "2019-04-28 15:24:04.309074,405888132465033227,,,0,0.216905,0.021,0,0,1,637,0,,,1,42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772,t1:1,t2:2,0.1,0.2,0.03,127.0.0.1:20160,0.05,0.6,0.8,0.0.0.0:20160,70724,0,,update t set i = 1;,select * from t;"
+	expectRecordString := "2019-04-28 15:24:04.309074,405888132465033227,,,0,0.216905,0,0,0,0,0,0,,0,0,0,0,0,0,0.021,0,0,1,637,0,,,1,42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772,t1:1,t2:2,0.1,0.2,0.03,127.0.0.1:20160,0.05,0.6,0.8,0.0.0.0:20160,70724,0,,update t set i = 1;,select * from t;"
 	c.Assert(expectRecordString, Equals, recordString)
 
 	// fix sql contain '# ' bug
@@ -123,7 +123,7 @@ select * from t;
 	reader = bufio.NewReader(slowLog)
 	_, err = infoschema.ParseSlowLog(loc, reader)
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "parse slow log failed `Succ` error: strconv.ParseBool: parsing \"abc\": invalid syntax")
+	c.Assert(err.Error(), Equals, "Parse slow log at line 2 failed. Field: `Succ`, error: strconv.ParseBool: parsing \"abc\": invalid syntax")
 }
 
 func (s *testSuite) TestSlowLogParseTime(c *C) {
@@ -172,4 +172,16 @@ select * from t;`)
 	c.Assert(err, IsNil)
 	_, err = infoschema.ParseSlowLog(loc, scanner)
 	c.Assert(err, IsNil)
+
+	// Test parser error.
+	slowLog = bytes.NewBufferString(
+		`# Time: 2019-05-12-11:23:29.614327491 +0800
+# Txn_start_ts: 405888132465033227#
+`)
+
+	scanner = bufio.NewReader(slowLog)
+	_, err = infoschema.ParseSlowLog(loc, scanner)
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "Parse slow log at line 2 failed. Field: `Txn_start_ts`, error: strconv.ParseUint: parsing \"405888132465033227#\": invalid syntax")
+
 }

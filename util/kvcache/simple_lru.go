@@ -48,7 +48,7 @@ type SimpleLRUCache struct {
 // NewSimpleLRUCache creates a SimpleLRUCache object, whose capacity is "capacity".
 // NOTE: "capacity" should be a positive value.
 func NewSimpleLRUCache(capacity uint, guard float64, quota uint64) *SimpleLRUCache {
-	if capacity <= 0 {
+	if capacity == 0 {
 		panic("capacity of LRU Cache should be positive.")
 	}
 	return &SimpleLRUCache{
@@ -90,7 +90,7 @@ func (l *SimpleLRUCache) Put(key Key, value Value) {
 	l.size++
 
 	// Getting used memory is expensive and can be avoided by setting quota to 0.
-	if l.quota <= 0 {
+	if l.quota == 0 {
 		if l.size > l.capacity {
 			lru := l.cache.Back()
 			l.cache.Remove(lru)

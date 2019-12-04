@@ -105,6 +105,8 @@ const (
 	LblReachMax    = "reach_max"
 	LblOK          = "ok"
 	LblError       = "error"
+	LblCommit      = "commit"
+	LblAbort       = "abort"
 	LblRollback    = "rollback"
 	LblComRol      = "com_rol"
 	LblType        = "type"

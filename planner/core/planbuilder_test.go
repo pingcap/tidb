@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/types"
 )
 
 var _ = Suite(&testPlanBuilderSuite{})
@@ -57,7 +58,7 @@ func (s *testPlanBuilderSuite) TestShow(c *C) {
 	}
 	for _, tp := range tps {
 		node.Tp = tp
-		schema := buildShowSchema(node, false)
+		schema, _ := buildShowSchema(node, false)
 		for _, col := range schema.Columns {
 			c.Assert(col.RetType.Flen, Greater, 0)
 		}
@@ -108,6 +109,7 @@ func (s *testPlanBuilderSuite) TestRewriterPool(c *C) {
 	dirtyRewriter.insertPlan = &Insert{}
 	dirtyRewriter.disableFoldCounter = 1
 	dirtyRewriter.ctxStack = make([]expression.Expression, 2)
+	dirtyRewriter.ctxNameStk = make([]*types.FieldName, 2)
 	builder.rewriterCounter--
 	// Then, pick again and check if it's cleaned up.
 	builder.rewriterCounter++

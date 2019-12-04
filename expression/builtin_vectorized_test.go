@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/mock"
-	"github.com/pingcap/tidb/util/testleak"
 )
 
 type mockVecPlusIntBuiltinFunc struct {
@@ -517,7 +516,6 @@ func vecEvalType(f builtinFunc, eType types.EvalType, input *chunk.Chunk, result
 }
 
 func (s *testEvaluatorSuite) TestDoubleRow2Vec(c *C) {
-	defer testleak.AfterTest(c)()
 	eTypes := []types.EvalType{types.ETInt, types.ETReal, types.ETDecimal, types.ETDuration, types.ETString, types.ETDatetime, types.ETJson}
 	for _, eType := range eTypes {
 		rowDouble, input, result, err := genMockRowDouble(eType, false)
@@ -542,11 +540,10 @@ func (s *testEvaluatorSuite) TestDoubleRow2Vec(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestDoubleVec2Row(c *C) {
-	defer testleak.AfterTest(c)()
 	eTypes := []types.EvalType{types.ETInt, types.ETReal, types.ETDecimal, types.ETDuration, types.ETString, types.ETDatetime, types.ETJson}
 	for _, eType := range eTypes {
 		rowDouble, input, result, err := genMockRowDouble(eType, true)
-		result.Reset()
+		result.Reset(eType)
 		c.Assert(err, IsNil)
 		it := chunk.NewIterator4Chunk(input)
 		for row := it.Begin(); row != it.End(); row = it.Next() {
@@ -589,7 +586,7 @@ func evalRows(b *testing.B, it *chunk.Iterator4Chunk, eType types.EvalType, resu
 	switch eType {
 	case types.ETInt:
 		for i := 0; i < b.N; i++ {
-			result.Reset()
+			result.Reset(eType)
 			for r := it.Begin(); r != it.End(); r = it.Next() {
 				v, isNull, err := rowDouble.evalInt(r)
 				if err != nil {
@@ -604,7 +601,7 @@ func evalRows(b *testing.B, it *chunk.Iterator4Chunk, eType types.EvalType, resu
 		}
 	case types.ETReal:
 		for i := 0; i < b.N; i++ {
-			result.Reset()
+			result.Reset(eType)
 			for r := it.Begin(); r != it.End(); r = it.Next() {
 				v, isNull, err := rowDouble.evalReal(r)
 				if err != nil {
@@ -619,7 +616,7 @@ func evalRows(b *testing.B, it *chunk.Iterator4Chunk, eType types.EvalType, resu
 		}
 	case types.ETDecimal:
 		for i := 0; i < b.N; i++ {
-			result.Reset()
+			result.Reset(eType)
 			for r := it.Begin(); r != it.End(); r = it.Next() {
 				v, isNull, err := rowDouble.evalDecimal(r)
 				if err != nil {
@@ -634,7 +631,7 @@ func evalRows(b *testing.B, it *chunk.Iterator4Chunk, eType types.EvalType, resu
 		}
 	case types.ETDuration:
 		for i := 0; i < b.N; i++ {
-			result.Reset()
+			result.Reset(eType)
 			for r := it.Begin(); r != it.End(); r = it.Next() {
 				v, isNull, err := rowDouble.evalDuration(r)
 				if err != nil {
@@ -649,7 +646,7 @@ func evalRows(b *testing.B, it *chunk.Iterator4Chunk, eType types.EvalType, resu
 		}
 	case types.ETString:
 		for i := 0; i < b.N; i++ {
-			result.Reset()
+			result.Reset(eType)
 			for r := it.Begin(); r != it.End(); r = it.Next() {
 				v, isNull, err := rowDouble.evalString(r)
 				if err != nil {
@@ -664,7 +661,7 @@ func evalRows(b *testing.B, it *chunk.Iterator4Chunk, eType types.EvalType, resu
 		}
 	case types.ETDatetime:
 		for i := 0; i < b.N; i++ {
-			result.Reset()
+			result.Reset(eType)
 			for r := it.Begin(); r != it.End(); r = it.Next() {
 				v, isNull, err := rowDouble.evalTime(r)
 				if err != nil {
@@ -679,7 +676,7 @@ func evalRows(b *testing.B, it *chunk.Iterator4Chunk, eType types.EvalType, resu
 		}
 	case types.ETJson:
 		for i := 0; i < b.N; i++ {
-			result.Reset()
+			result.Reset(eType)
 			for r := it.Begin(); r != it.End(); r = it.Next() {
 				v, isNull, err := rowDouble.evalJSON(r)
 				if err != nil {

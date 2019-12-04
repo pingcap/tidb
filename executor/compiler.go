@@ -18,6 +18,7 @@ import (
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/metrics"
@@ -59,13 +60,16 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (*ExecStm
 		return nil, err
 	}
 
-	finalPlan, err := planner.Optimize(ctx, c.Ctx, stmtNode, infoSchema)
+	finalPlan, names, err := planner.Optimize(ctx, c.Ctx, stmtNode, infoSchema)
 	if err != nil {
 		return nil, err
 	}
 
 	CountStmtNode(stmtNode, c.Ctx.GetSessionVars().InRestrictedSQL)
-	lowerPriority := needLowerPriority(finalPlan)
+	var lowerPriority bool
+	if c.Ctx.GetSessionVars().StmtCtx.Priority == mysql.NoPriority {
+		lowerPriority = needLowerPriority(finalPlan)
+	}
 	return &ExecStmt{
 		InfoSchema:    infoSchema,
 		Plan:          finalPlan,
@@ -74,7 +78,7 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (*ExecStm
 		Text:          stmtNode.Text(),
 		StmtNode:      stmtNode,
 		Ctx:           c.Ctx,
-		OutputNames:   finalPlan.OutputNames(),
+		OutputNames:   names,
 	}, nil
 }
 

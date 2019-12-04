@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"crypto/tls"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -27,7 +28,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/auth"
-	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	pumpcli "github.com/pingcap/tidb-tools/tidb-binlog/pump_client"
@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/storeutil"
 	"github.com/pingcap/tidb/util/timeutil"
 )
 
@@ -300,12 +301,16 @@ type SessionVars struct {
 	CopCPUFactor float64
 	// NetworkFactor is the network cost of transferring 1 byte data.
 	NetworkFactor float64
-	// ScanFactor is the IO cost of scanning 1 byte data on TiKV.
+	// ScanFactor is the IO cost of scanning 1 byte data on TiKV and TiFlash.
 	ScanFactor float64
-	// DescScanFactor is the IO cost of scanning 1 byte data on TiKV in desc order.
+	// DescScanFactor is the IO cost of scanning 1 byte data on TiKV and TiFlash in desc order.
 	DescScanFactor float64
+	// SeekFactor is the IO cost of seeking the start value of a range in TiKV or TiFlash.
+	SeekFactor float64
 	// MemoryFactor is the memory cost of storing one tuple.
 	MemoryFactor float64
+	// DiskFactor is the IO cost of reading/writing one byte to temporary disk.
+	DiskFactor float64
 	// ConcurrencyFactor is the CPU cost of additional one goroutine.
 	ConcurrencyFactor float64
 
@@ -365,8 +370,8 @@ type SessionVars struct {
 	// TODO: remove this after tidb-server configuration "enable-streaming' removed.
 	EnableStreaming bool
 
-	// EnableArrow indicates whether the coprocessor request can use arrow API.
-	EnableArrow bool
+	// EnableChunkRPC indicates whether the coprocessor request can use chunk API.
+	EnableChunkRPC bool
 
 	writeStmtBufs WriteStmtBufs
 
@@ -431,6 +436,9 @@ type SessionVars struct {
 	// UsePlanBaselines indicates whether we will use plan baselines to adjust plan.
 	UsePlanBaselines bool
 
+	// EvolvePlanBaselines indicates whether we will evolve the plan baselines.
+	EvolvePlanBaselines bool
+
 	// Unexported fields should be accessed and set through interfaces like GetReplicaRead() and SetReplicaRead().
 
 	// allowInSubqToJoinAndAgg can be set to false to forbid rewriting the semi join to inner join with agg.
@@ -442,7 +450,14 @@ type SessionVars struct {
 	// replicaRead is used for reading data from replicas, only follower is supported at this time.
 	replicaRead kv.ReplicaReadType
 
-	PlannerSelectBlockAsName []model.CIStr
+	// isolationReadEngines is used to isolation read, tidb only read from the stores whose engine type is in the engines.
+	isolationReadEngines map[kv.StoreType]struct{}
+
+	PlannerSelectBlockAsName []ast.HintTable
+
+	// LockWaitTimeout is the duration waiting for pessimistic lock in milliseconds
+	// negative value means nowait, 0 means default behavior, others means actual wait time
+	LockWaitTimeout int64
 }
 
 // PreparedParams contains the parameters of the current prepared statement when executing it.
@@ -503,7 +518,9 @@ func NewSessionVars() *SessionVars {
 		NetworkFactor:               DefOptNetworkFactor,
 		ScanFactor:                  DefOptScanFactor,
 		DescScanFactor:              DefOptDescScanFactor,
+		SeekFactor:                  DefOptSeekFactor,
 		MemoryFactor:                DefOptMemoryFactor,
+		DiskFactor:                  DefOptDiskFactor,
 		ConcurrencyFactor:           DefOptConcurrencyFactor,
 		EnableRadixJoin:             false,
 		EnableVectorizedExpression:  DefEnableVectorizedExpression,
@@ -518,6 +535,9 @@ func NewSessionVars() *SessionVars {
 		replicaRead:                 kv.ReplicaReadLeader,
 		AllowRemoveAutoInc:          DefTiDBAllowRemoveAutoInc,
 		UsePlanBaselines:            DefTiDBUsePlanBaselines,
+		EvolvePlanBaselines:         DefTiDBEvolvePlanBaselines,
+		isolationReadEngines:        map[kv.StoreType]struct{}{kv.TiKV: {}, kv.TiFlash: {}},
+		LockWaitTimeout:             DefInnodbLockWaitTimeout * 1000,
 	}
 	vars.Concurrency = Concurrency{
 		IndexLookupConcurrency:     DefIndexLookupConcurrency,
@@ -555,13 +575,13 @@ func NewSessionVars() *SessionVars {
 	}
 	terror.Log(vars.SetSystemVar(TiDBEnableStreaming, enableStreaming))
 
-	var enableArrow string
-	if config.GetGlobalConfig().TiKVClient.EnableArrow {
-		enableArrow = "1"
+	var enableChunkRPC string
+	if config.GetGlobalConfig().TiKVClient.EnableChunkRPC {
+		enableChunkRPC = "1"
 	} else {
-		enableArrow = "0"
+		enableChunkRPC = "0"
 	}
-	terror.Log(vars.SetSystemVar(TiDBEnableArrow, enableArrow))
+	terror.Log(vars.SetSystemVar(TiDBEnableChunkRPC, enableChunkRPC))
 	return vars
 }
 
@@ -578,11 +598,8 @@ func (s *SessionVars) SetAllowInSubqToJoinAndAgg(val bool) {
 	s.allowInSubqToJoinAndAgg = val
 }
 
-// GetEnableIndexMerge get EnableIndexMerge from sql hints and SessionVars.enableIndexMerge.
+// GetEnableIndexMerge get EnableIndexMerge from SessionVars.enableIndexMerge.
 func (s *SessionVars) GetEnableIndexMerge() bool {
-	if s.StmtCtx.HasEnableIndexMergeHint {
-		return s.StmtCtx.EnableIndexMerge
-	}
 	return s.enableIndexMerge
 }
 
@@ -612,6 +629,11 @@ func (s *SessionVars) GetWriteStmtBufs() *WriteStmtBufs {
 // GetSplitRegionTimeout gets split region timeout.
 func (s *SessionVars) GetSplitRegionTimeout() time.Duration {
 	return time.Duration(s.WaitSplitRegionTimeout) * time.Second
+}
+
+// GetIsolationReadEngines gets isolation read engines.
+func (s *SessionVars) GetIsolationReadEngines() map[kv.StoreType]struct{} {
+	return s.isolationReadEngines
 }
 
 // CleanBuffers cleans the temporary bufs
@@ -801,6 +823,9 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 	case MaxExecutionTime:
 		timeoutMS := tidbOptPositiveInt32(val, 0)
 		s.MaxExecutionTime = uint64(timeoutMS)
+	case InnodbLockWaitTimeout:
+		lockWaitSec := tidbOptInt64(val, DefInnodbLockWaitTimeout)
+		s.LockWaitTimeout = int64(lockWaitSec * 1000)
 	case TiDBSkipUTF8Check:
 		s.SkipUTF8Check = TiDBOptOn(val)
 	case TiDBOptAggPushDown:
@@ -823,8 +848,12 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.ScanFactor = tidbOptFloat64(val, DefOptScanFactor)
 	case TiDBOptDescScanFactor:
 		s.DescScanFactor = tidbOptFloat64(val, DefOptDescScanFactor)
+	case TiDBOptSeekFactor:
+		s.SeekFactor = tidbOptFloat64(val, DefOptSeekFactor)
 	case TiDBOptMemoryFactor:
 		s.MemoryFactor = tidbOptFloat64(val, DefOptMemoryFactor)
+	case TiDBOptDiskFactor:
+		s.DiskFactor = tidbOptFloat64(val, DefOptDiskFactor)
 	case TiDBOptConcurrencyFactor:
 		s.ConcurrencyFactor = tidbOptFloat64(val, DefOptConcurrencyFactor)
 	case TiDBIndexLookupConcurrency:
@@ -899,8 +928,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.DisableTxnAutoRetry = TiDBOptOn(val)
 	case TiDBEnableStreaming:
 		s.EnableStreaming = TiDBOptOn(val)
-	case TiDBEnableArrow:
-		s.EnableArrow = TiDBOptOn(val)
+	case TiDBEnableChunkRPC:
+		s.EnableChunkRPC = TiDBOptOn(val)
 	case TiDBEnableCascadesPlanner:
 		s.EnableCascadesPlanner = TiDBOptOn(val)
 	case TiDBOptimizerSelectivityLevel:
@@ -952,6 +981,20 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		SetMaxDeltaSchemaCount(tidbOptInt64(val, DefTiDBMaxDeltaSchemaCount))
 	case TiDBUsePlanBaselines:
 		s.UsePlanBaselines = TiDBOptOn(val)
+	case TiDBEvolvePlanBaselines:
+		s.EvolvePlanBaselines = TiDBOptOn(val)
+	case TiDBIsolationReadEngines:
+		s.isolationReadEngines = make(map[kv.StoreType]struct{})
+		for _, engine := range strings.Split(val, ",") {
+			switch engine {
+			case kv.TiKV.Name():
+				s.isolationReadEngines[kv.TiKV] = struct{}{}
+			case kv.TiFlash.Name():
+				s.isolationReadEngines[kv.TiFlash] = struct{}{}
+			}
+		}
+	case TiDBStoreLimit:
+		storeutil.StoreLimit.Store(tidbOptInt64(val, DefTiDBStoreLimit))
 	}
 	s.systems[name] = val
 	return nil
@@ -1144,6 +1187,8 @@ const (
 	SlowLogCopWaitMax = "Cop_wait_max"
 	// SlowLogCopWaitAddr is the address of TiKV where the cop-task which cost wait process time run.
 	SlowLogCopWaitAddr = "Cop_wait_addr"
+	// SlowLogCopBackoffPrefix contains backoff information.
+	SlowLogCopBackoffPrefix = "Cop_backoff_"
 	// SlowLogMemMax is the max number bytes of memory used in this statement.
 	SlowLogMemMax = "Mem_max"
 	// SlowLogPrepared is used to indicate whether this sql execute in prepare.
@@ -1257,6 +1302,13 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 	if logItems.CopTasks != nil {
 		writeSlowLogItem(&buf, SlowLogNumCopTasksStr, strconv.FormatInt(int64(logItems.CopTasks.NumCopTasks), 10))
 		if logItems.CopTasks.NumCopTasks > 0 {
+			// make the result stable
+			backoffs := make([]string, 0, 3)
+			for backoff := range logItems.CopTasks.TotBackoffTimes {
+				backoffs = append(backoffs, backoff)
+			}
+			sort.Strings(backoffs)
+
 			if logItems.CopTasks.NumCopTasks == 1 {
 				buf.WriteString(SlowLogRowPrefixStr + fmt.Sprintf("%v%v%v %v%v%v",
 					SlowLogCopProcAvg, SlowLogSpaceMarkStr, logItems.CopTasks.AvgProcessTime.Seconds(),
@@ -1264,7 +1316,13 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 				buf.WriteString(SlowLogRowPrefixStr + fmt.Sprintf("%v%v%v %v%v%v",
 					SlowLogCopWaitAvg, SlowLogSpaceMarkStr, logItems.CopTasks.AvgWaitTime.Seconds(),
 					SlowLogCopWaitAddr, SlowLogSpaceMarkStr, logItems.CopTasks.MaxWaitAddress) + "\n")
-
+				for _, backoff := range backoffs {
+					backoffPrefix := SlowLogCopBackoffPrefix + backoff + "_"
+					buf.WriteString(SlowLogRowPrefixStr + fmt.Sprintf("%v%v%v %v%v%v\n",
+						backoffPrefix+"total_times", SlowLogSpaceMarkStr, logItems.CopTasks.TotBackoffTimes[backoff],
+						backoffPrefix+"total_time", SlowLogSpaceMarkStr, logItems.CopTasks.TotBackoffTime[backoff].Seconds(),
+					))
+				}
 			} else {
 				buf.WriteString(SlowLogRowPrefixStr + fmt.Sprintf("%v%v%v %v%v%v %v%v%v %v%v%v",
 					SlowLogCopProcAvg, SlowLogSpaceMarkStr, logItems.CopTasks.AvgProcessTime.Seconds(),
@@ -1276,6 +1334,17 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 					SlowLogCopWaitP90, SlowLogSpaceMarkStr, logItems.CopTasks.P90WaitTime.Seconds(),
 					SlowLogCopWaitMax, SlowLogSpaceMarkStr, logItems.CopTasks.MaxWaitTime.Seconds(),
 					SlowLogCopWaitAddr, SlowLogSpaceMarkStr, logItems.CopTasks.MaxWaitAddress) + "\n")
+				for _, backoff := range backoffs {
+					backoffPrefix := SlowLogCopBackoffPrefix + backoff + "_"
+					buf.WriteString(SlowLogRowPrefixStr + fmt.Sprintf("%v%v%v %v%v%v %v%v%v %v%v%v %v%v%v %v%v%v\n",
+						backoffPrefix+"total_times", SlowLogSpaceMarkStr, logItems.CopTasks.TotBackoffTimes[backoff],
+						backoffPrefix+"total_time", SlowLogSpaceMarkStr, logItems.CopTasks.TotBackoffTime[backoff].Seconds(),
+						backoffPrefix+"max_time", SlowLogSpaceMarkStr, logItems.CopTasks.MaxBackoffTime[backoff].Seconds(),
+						backoffPrefix+"max_addr", SlowLogSpaceMarkStr, logItems.CopTasks.MaxBackoffAddress[backoff],
+						backoffPrefix+"avg_time", SlowLogSpaceMarkStr, logItems.CopTasks.AvgBackoffTime[backoff].Seconds(),
+						backoffPrefix+"p90_time", SlowLogSpaceMarkStr, logItems.CopTasks.P90BackoffTime[backoff].Seconds(),
+					))
+				}
 			}
 		}
 	}

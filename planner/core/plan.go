@@ -18,8 +18,6 @@ import (
 	"math"
 	"strconv"
 
-	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/sessionctx"
@@ -56,7 +54,10 @@ type Plan interface {
 	statsInfo() *property.StatsInfo
 
 	// OutputNames returns the outputting names of each column.
-	OutputNames() []*types.FieldName
+	OutputNames() types.NameSlice
+
+	// SetOutputNames sets the outputting name by the given slice.
+	SetOutputNames(names types.NameSlice)
 
 	SelectBlockOffset() int
 }
@@ -94,7 +95,10 @@ type LogicalPlan interface {
 	findBestTask(prop *property.PhysicalProperty) (task, error)
 
 	// BuildKeyInfo will collect the information of unique keys into schema.
-	BuildKeyInfo()
+	// Because this method is also used in cascades planner, we cannot use
+	// things like `p.schema` or `p.children` inside it. We should use the `selfSchema`
+	// and `childSchema` instead.
+	BuildKeyInfo(selfSchema *expression.Schema, childSchema []*expression.Schema)
 
 	// pushDownTopN will push down the topN or limit operator during logical optimization.
 	pushDownTopN(topN *LogicalTopN) LogicalPlan
@@ -103,7 +107,9 @@ type LogicalPlan interface {
 	recursiveDeriveStats() (*property.StatsInfo, error)
 
 	// DeriveStats derives statistic info for current plan node given child stats.
-	DeriveStats(childStats []*property.StatsInfo) (*property.StatsInfo, error)
+	// We need selfSchema, childSchema here because it makes this method can be used in
+	// cascades planner, where LogicalPlan might not record its children or schema.
+	DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema) (*property.StatsInfo, error)
 
 	// PreparePossibleProperties is only used for join and aggregation. Like group by a,b,c, all permutation of (a,b,c) is
 	// valid, but the ordered indices in leaf plan is limited. So we can get all possible order properties by a pre-walking.
@@ -116,10 +122,6 @@ type LogicalPlan interface {
 
 	// MaxOneRow means whether this operator only returns max one row.
 	MaxOneRow() bool
-
-	// findColumn finds the column in basePlan's schema.
-	// If the column is not in the schema, returns an error.
-	findColumn(*ast.ColumnName) (*expression.Column, int, error)
 
 	// Get all the children.
 	Children() []LogicalPlan
@@ -162,6 +164,9 @@ type PhysicalPlan interface {
 
 	// Stats returns the StatsInfo of the plan.
 	Stats() *property.StatsInfo
+
+	// ExplainNormalizedInfo returns operator normalized information for generating digest.
+	ExplainNormalizedInfo() string
 }
 
 type baseLogicalPlan struct {
@@ -195,6 +200,11 @@ func (p *basePhysicalPlan) ExplainInfo() string {
 	return ""
 }
 
+// ExplainInfo implements Plan interface.
+func (p *basePhysicalPlan) ExplainNormalizedInfo() string {
+	return ""
+}
+
 func (p *basePhysicalPlan) GetChildReqProps(idx int) *property.PhysicalProperty {
 	return p.childrenReqProps[idx]
 }
@@ -209,17 +219,44 @@ func (p *baseLogicalPlan) storeTask(prop *property.PhysicalProperty, task task) 
 	p.taskMap[string(key)] = task
 }
 
-// BuildKeyInfo implements LogicalPlan BuildKeyInfo interface.
-func (p *baseLogicalPlan) BuildKeyInfo() {
-	for _, child := range p.children {
-		child.BuildKeyInfo()
+// HasMaxOneRow returns if the LogicalPlan will output at most one row.
+func HasMaxOneRow(p LogicalPlan, childMaxOneRow []bool) bool {
+	if len(childMaxOneRow) == 0 {
+		// The reason why we use this check is that, this function
+		// is used both in planner/core and planner/cascades.
+		// In cascades planner, LogicalPlan may have no `children`.
+		return false
 	}
-	switch p.self.(type) {
-	case *LogicalLock, *LogicalLimit, *LogicalSort, *LogicalSelection, *LogicalApply, *LogicalProjection:
-		p.maxOneRow = p.children[0].MaxOneRow()
+	switch x := p.(type) {
+	case *LogicalLock, *LogicalLimit, *LogicalSort, *LogicalSelection,
+		*LogicalApply, *LogicalProjection, *LogicalWindow, *LogicalAggregation:
+		return childMaxOneRow[0]
 	case *LogicalMaxOneRow:
-		p.maxOneRow = true
+		return true
+	case *LogicalJoin:
+		switch x.JoinType {
+		case SemiJoin, AntiSemiJoin, LeftOuterSemiJoin, AntiLeftOuterSemiJoin:
+			return childMaxOneRow[0]
+		default:
+			return childMaxOneRow[0] && childMaxOneRow[1]
+		}
 	}
+	return false
+}
+
+// BuildKeyInfo implements LogicalPlan BuildKeyInfo interface.
+func (p *baseLogicalPlan) BuildKeyInfo(selfSchema *expression.Schema, childSchema []*expression.Schema) {
+	childMaxOneRow := make([]bool, len(p.children))
+	for i := range p.children {
+		childMaxOneRow[i] = p.children[i].MaxOneRow()
+	}
+	p.maxOneRow = HasMaxOneRow(p.self, childMaxOneRow)
+}
+
+// BuildKeyInfo implements LogicalPlan BuildKeyInfo interface.
+func (p *logicalSchemaProducer) BuildKeyInfo(selfSchema *expression.Schema, childSchema []*expression.Schema) {
+	selfSchema.Keys = nil
+	p.baseLogicalPlan.BuildKeyInfo(selfSchema, childSchema)
 }
 
 func newBasePlan(ctx sessionctx.Context, tp string, offset int) basePlan {
@@ -275,8 +312,11 @@ type basePlan struct {
 }
 
 // OutputNames returns the outputting names of each column.
-func (p *basePlan) OutputNames() []*types.FieldName {
+func (p *basePlan) OutputNames() types.NameSlice {
 	return nil
+}
+
+func (p *basePlan) SetOutputNames(names types.NameSlice) {
 }
 
 func (p *basePlan) replaceExprColumns(replace map[string]*expression.Column) {
@@ -322,6 +362,14 @@ func (p *baseLogicalPlan) Schema() *expression.Schema {
 	return p.children[0].Schema()
 }
 
+func (p *baseLogicalPlan) OutputNames() types.NameSlice {
+	return p.children[0].OutputNames()
+}
+
+func (p *baseLogicalPlan) SetOutputNames(names types.NameSlice) {
+	p.children[0].SetOutputNames(names)
+}
+
 // Schema implements Plan Schema interface.
 func (p *basePhysicalPlan) Schema() *expression.Schema {
 	return p.children[0].Schema()
@@ -360,12 +408,4 @@ func (p *basePhysicalPlan) SetChild(i int, child PhysicalPlan) {
 // Context implements Plan Context interface.
 func (p *basePlan) SCtx() sessionctx.Context {
 	return p.ctx
-}
-
-func (p *baseLogicalPlan) findColumn(column *ast.ColumnName) (*expression.Column, int, error) {
-	col, idx, err := p.self.Schema().FindColumnAndIndex(column)
-	if err == nil && col == nil {
-		err = errors.Errorf("column %s not found", column.Name.O)
-	}
-	return col, idx, err
 }

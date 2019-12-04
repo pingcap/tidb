@@ -20,7 +20,7 @@ import (
 	"io"
 	"io/ioutil"
 	"os"
-	"path"
+	"path/filepath"
 	"sync"
 
 	"github.com/pingcap/log"
@@ -44,7 +44,7 @@ var bufReaderPool = sync.Pool{
 	New: func() interface{} { return bufio.NewReaderSize(nil, readBufSize) },
 }
 
-var tmpDir = path.Join(os.TempDir(), "tidb-server-"+path.Base(os.Args[0]))
+var tmpDir = filepath.Join(os.TempDir(), "tidb-server-"+filepath.Base(os.Args[0]))
 
 func init() {
 	err := os.RemoveAll(tmpDir) // clean the uncleared temp file during the last run.
@@ -131,6 +131,11 @@ func (l *ListInDisk) GetRow(ptr RowPtr) (row Row, err error) {
 	}
 	row = format.toMutRow(l.fieldTypes).ToRow()
 	return row, err
+}
+
+// NumRowsOfChunk returns the number of rows of a chunk in the ListInDisk.
+func (l *ListInDisk) NumRowsOfChunk(chkID int) int {
+	return len(l.offsets[chkID])
 }
 
 // NumChunks returns the number of chunks in the ListInDisk.

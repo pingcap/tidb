@@ -188,8 +188,6 @@ func CompilePattern(pattern string, escape byte) (patChars, patTypes []byte) {
 	return
 }
 
-const caseDiff = 'a' - 'A'
-
 // NOTE: Currently tikv's like function is case sensitive, so we keep its behavior here.
 func matchByteCI(a, b byte) bool {
 	return a == b
@@ -206,35 +204,45 @@ func matchByteCI(a, b byte) bool {
 }
 
 // DoMatch matches the string with patChars and patTypes.
+// The algorithm has linear time complexity.
+// https://research.swtch.com/glob
 func DoMatch(str string, patChars, patTypes []byte) bool {
-	var sIdx int
-	for i := 0; i < len(patChars); i++ {
-		switch patTypes[i] {
-		case patMatch:
-			if sIdx >= len(str) || !matchByteCI(str[sIdx], patChars[i]) {
-				return false
-			}
-			sIdx++
-		case patOne:
-			sIdx++
-			if sIdx > len(str) {
-				return false
-			}
-		case patAny:
-			i++
-			if i == len(patChars) {
-				return true
-			}
-			for sIdx < len(str) {
-				if matchByteCI(patChars[i], str[sIdx]) && DoMatch(str[sIdx:], patChars[i:], patTypes[i:]) {
-					return true
+	var sIdx, pIdx, nextSIdx, nextPIdx int
+	for pIdx < len(patChars) || sIdx < len(str) {
+		if pIdx < len(patChars) {
+			switch patTypes[pIdx] {
+			case patMatch:
+				if sIdx < len(str) && matchByteCI(str[sIdx], patChars[pIdx]) {
+					pIdx++
+					sIdx++
+					continue
 				}
-				sIdx++
+			case patOne:
+				if sIdx < len(str) {
+					pIdx++
+					sIdx++
+					continue
+				}
+			case patAny:
+				// Try to match at sIdx.
+				// If that doesn't work out,
+				// restart at sIdx+1 next.
+				nextPIdx = pIdx
+				nextSIdx = sIdx + 1
+				pIdx++
+				continue
 			}
-			return false
 		}
+		// Mismatch. Maybe restart.
+		if 0 < nextSIdx && nextSIdx <= len(str) {
+			pIdx = nextPIdx
+			sIdx = nextSIdx
+			continue
+		}
+		return false
 	}
-	return sIdx == len(str)
+	// Matched all of pattern to all of name. Success.
+	return true
 }
 
 // IsExactMatch return true if no wildcard character

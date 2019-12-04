@@ -72,7 +72,7 @@ func (s *testSuite1) TestStatementContext(c *C) {
 	tk.MustExec(strictModeSQL)
 	_, err = tk.Exec("insert sc2 values (unhex('4040ffff'))")
 	c.Assert(err, NotNil)
-	c.Assert(terror.ErrorEqual(err, table.ErrTruncateWrongValue), IsTrue, Commentf("err %v", err))
+	c.Assert(terror.ErrorEqual(err, table.ErrTruncatedWrongValueForField), IsTrue, Commentf("err %v", err))
 
 	tk.MustExec("set @@tidb_skip_utf8_check = '1'")
 	_, err = tk.Exec("insert sc2 values (unhex('4040ffff'))")
@@ -98,13 +98,18 @@ func (s *testSuite1) TestStatementContext(c *C) {
 	tk.MustExec(strictModeSQL)
 	_, err = tk.Exec("insert t1 values (unhex('f09f8c80'))")
 	c.Assert(err, NotNil)
-	c.Assert(terror.ErrorEqual(err, table.ErrTruncateWrongValue), IsTrue, Commentf("err %v", err))
+	c.Assert(terror.ErrorEqual(err, table.ErrTruncatedWrongValueForField), IsTrue, Commentf("err %v", err))
 	_, err = tk.Exec("insert t1 values (unhex('F0A48BAE'))")
 	c.Assert(err, NotNil)
-	c.Assert(terror.ErrorEqual(err, table.ErrTruncateWrongValue), IsTrue, Commentf("err %v", err))
-	config.GetGlobalConfig().CheckMb4ValueInUTF8 = false
+	c.Assert(terror.ErrorEqual(err, table.ErrTruncatedWrongValueForField), IsTrue, Commentf("err %v", err))
+	old := config.GetGlobalConfig()
+	conf := *old
+	conf.CheckMb4ValueInUTF8 = false
+	config.StoreGlobalConfig(&conf)
 	tk.MustExec("insert t1 values (unhex('f09f8c80'))")
-	config.GetGlobalConfig().CheckMb4ValueInUTF8 = true
+	conf2 := *old
+	conf2.CheckMb4ValueInUTF8 = true
+	config.StoreGlobalConfig(&conf2)
 	_, err = tk.Exec("insert t1 values (unhex('F0A48BAE'))")
 	c.Assert(err, NotNil)
 }

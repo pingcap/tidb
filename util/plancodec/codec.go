@@ -22,23 +22,7 @@ import (
 
 	"github.com/golang/snappy"
 	"github.com/pingcap/errors"
-)
-
-const (
-	// TreeBody indicates the current operator sub-tree is not finished, still
-	// has child operators to be attached on.
-	TreeBody = '│'
-	// TreeMiddleNode indicates this operator is not the last child of the
-	// current sub-tree rooted by its parent.
-	TreeMiddleNode = '├'
-	// TreeLastNode indicates this operator is the last child of the current
-	// sub-tree rooted by its parent.
-	TreeLastNode = '└'
-	// TreeGap is used to represent the gap between the branches of the tree.
-	TreeGap = ' '
-	// TreeNodeIdentifier is used to replace the TreeGap once we need to attach
-	// a node to a sub-tree.
-	TreeNodeIdentifier = '─'
+	"github.com/pingcap/tidb/util/texttree"
 )
 
 const (
@@ -71,6 +55,17 @@ func DecodePlan(planString string) (string, error) {
 	return pd.decode(planString)
 }
 
+// DecodeNormalizedPlan decodes the string to plan tree.
+func DecodeNormalizedPlan(planString string) (string, error) {
+	if len(planString) == 0 {
+		return "", nil
+	}
+	pd := decoderPool.Get().(*planDecoder)
+	defer decoderPool.Put(pd)
+	pd.buf.Reset()
+	return pd.buildPlanTree(planString)
+}
+
 type planDecoder struct {
 	buf       bytes.Buffer
 	depths    []int
@@ -88,8 +83,11 @@ func (pd *planDecoder) decode(planString string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	return pd.buildPlanTree(str)
+}
 
-	nodes := strings.Split(str, lineBreakerStr)
+func (pd *planDecoder) buildPlanTree(planString string) (string, error) {
+	nodes := strings.Split(planString, lineBreakerStr)
 	if len(pd.depths) < len(nodes) {
 		pd.depths = make([]int, 0, len(nodes))
 		pd.planInfos = make([]*planInfo, 0, len(nodes))
@@ -147,8 +145,8 @@ func (pd *planDecoder) initPlanTreeIndents() {
 		for i := 0; i < len(indent)-2; i++ {
 			indent[i] = ' '
 		}
-		indent[len(indent)-2] = TreeLastNode
-		indent[len(indent)-1] = TreeNodeIdentifier
+		indent[len(indent)-2] = texttree.TreeLastNode
+		indent[len(indent)-1] = texttree.TreeNodeIdentifier
 	}
 }
 
@@ -167,11 +165,11 @@ func (pd *planDecoder) fillIndent(parentIndex, childIndex int) {
 	}
 	idx := depth*2 - 2
 	for i := childIndex - 1; i > parentIndex; i-- {
-		if pd.indents[i][idx] == TreeLastNode {
-			pd.indents[i][idx] = TreeMiddleNode
+		if pd.indents[i][idx] == texttree.TreeLastNode {
+			pd.indents[i][idx] = texttree.TreeMiddleNode
 			break
 		}
-		pd.indents[i][idx] = TreeBody
+		pd.indents[i][idx] = texttree.TreeBody
 	}
 }
 
@@ -236,7 +234,7 @@ func decodePlanInfo(str string) (*planInfo, error) {
 				return nil, errors.Errorf("decode plan: %v error, invalid plan id: %v", str, v)
 			}
 			planID, err := strconv.Atoi(ids[0])
-			if err != err {
+			if err != nil {
 				return nil, errors.Errorf("decode plan: %v, plan id: %v, error: %v", str, v, err)
 			}
 			p.fields = append(p.fields, PhysicalIDToTypeString(planID)+idSeparator+ids[1])
@@ -267,6 +265,22 @@ func EncodePlanNode(depth, pid int, planType string, isRoot bool, rowCount float
 	}
 	buf.WriteByte(separator)
 	buf.WriteString(strconv.FormatFloat(rowCount, 'f', -1, 64))
+	buf.WriteByte(separator)
+	buf.WriteString(explainInfo)
+	buf.WriteByte(lineBreaker)
+}
+
+// NormalizePlanNode is used to normalize the plan to a string.
+func NormalizePlanNode(depth, pid int, planType string, isRoot bool, explainInfo string, buf *bytes.Buffer) {
+	buf.WriteString(strconv.Itoa(depth))
+	buf.WriteByte(separator)
+	buf.WriteString(encodeID(planType, pid))
+	buf.WriteByte(separator)
+	if isRoot {
+		buf.WriteString(rootTaskType)
+	} else {
+		buf.WriteString(copTaskType)
+	}
 	buf.WriteByte(separator)
 	buf.WriteString(explainInfo)
 	buf.WriteByte(lineBreaker)

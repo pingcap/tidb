@@ -19,15 +19,13 @@ import (
 )
 
 var (
-	errInvalidPluginID            = createPluginError(mysql.ErrInvalidPluginID)
-	errInvalidPluginManifest      = createPluginError(mysql.ErrInvalidPluginManifest)
-	errInvalidPluginName          = createPluginError(mysql.ErrInvalidPluginName)
-	errInvalidPluginVersion       = createPluginError(mysql.ErrInvalidPluginVersion)
-	errDuplicatePlugin            = createPluginError(mysql.ErrDuplicatePlugin)
-	errInvalidPluginSysVarName    = createPluginError(mysql.ErrInvalidPluginSysVarName)
-	errRequireVersionCheckFail    = createPluginError(mysql.ErrRequireVersionCheckFail)
-	errUnsupportedReloadPlugin    = createPluginError(mysql.ErrUnsupportedReloadPlugin)
-	errUnsupportedReloadPluginVar = createPluginError(mysql.ErrUnsupportedReloadPluginVar)
+	errInvalidPluginID         = createPluginError(mysql.ErrInvalidPluginID)
+	errInvalidPluginManifest   = createPluginError(mysql.ErrInvalidPluginManifest)
+	errInvalidPluginName       = createPluginError(mysql.ErrInvalidPluginName)
+	errInvalidPluginVersion    = createPluginError(mysql.ErrInvalidPluginVersion)
+	errDuplicatePlugin         = createPluginError(mysql.ErrDuplicatePlugin)
+	errInvalidPluginSysVarName = createPluginError(mysql.ErrInvalidPluginSysVarName)
+	errRequireVersionCheckFail = createPluginError(mysql.ErrRequireVersionCheckFail)
 )
 
 func createPluginError(code terror.ErrCode) *terror.Error {

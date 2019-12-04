@@ -23,6 +23,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
@@ -37,19 +38,26 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util/admin"
+	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/testkit"
 	"go.uber.org/zap"
 )
 
 var _ = Suite(&testStateChangeSuite{})
+var _ = SerialSuites(&serialTestStateChangeSuite{})
+
+type serialTestStateChangeSuite struct {
+	testStateChangeSuite
+}
 
 type testStateChangeSuite struct {
-	lease time.Duration
-	store kv.Storage
-	dom   *domain.Domain
-	se    session.Session
-	p     *parser.Parser
+	lease  time.Duration
+	store  kv.Storage
+	dom    *domain.Domain
+	se     session.Session
+	p      *parser.Parser
+	preSQL string
 }
 
 func (s *testStateChangeSuite) SetUpSuite(c *C) {
@@ -82,6 +90,11 @@ func (s *testStateChangeSuite) TestShowCreateTable(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (id int)")
+	tk.MustExec("create table t2 (a int, b varchar(10)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci")
+	// tkInternal is used to execute additional sql (here show create table) in ddl change callback.
+	// Using same `tk` in different goroutines may lead to data race.
+	tkInternal := testkit.NewTestKit(c, s.store)
+	tkInternal.MustExec("use test")
 
 	var checkErr error
 	testCases := []struct {
@@ -94,6 +107,10 @@ func (s *testStateChangeSuite) TestShowCreateTable(c *C) {
 			"CREATE TABLE `t` (\n  `id` int(11) DEFAULT NULL,\n  KEY `idx` (`id`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"},
 		{"alter table t add column c int",
 			"CREATE TABLE `t` (\n  `id` int(11) DEFAULT NULL,\n  KEY `idx` (`id`),\n  KEY `idx1` (`id`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"},
+		{"alter table t2 add column c varchar(1)",
+			"CREATE TABLE `t2` (\n  `a` int(11) DEFAULT NULL,\n  `b` varchar(10) COLLATE utf8mb4_general_ci DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"},
+		{"alter table t2 add column d varchar(1)",
+			"CREATE TABLE `t2` (\n  `a` int(11) DEFAULT NULL,\n  `b` varchar(10) COLLATE utf8mb4_general_ci DEFAULT NULL,\n  `c` varchar(1) COLLATE utf8mb4_general_ci DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"},
 	}
 	prevState := model.StateNone
 	callback := &ddl.TestDDLCallback{}
@@ -106,8 +123,26 @@ func (s *testStateChangeSuite) TestShowCreateTable(c *C) {
 			currTestCaseOffset++
 		}
 		if job.SchemaState != model.StatePublic {
-			result := tk.MustQuery("show create table t")
-			got := result.Rows()[0][1]
+			var result sqlexec.RecordSet
+			tbl2 := testGetTableByName(c, tkInternal.Se, "test", "t2")
+			if job.TableID == tbl2.Meta().ID {
+				// Try to do not use mustQuery in hook func, cause assert fail in mustQuery will cause ddl job hung.
+				result, checkErr = tkInternal.Exec("show create table t2")
+				if checkErr != nil {
+					return
+				}
+			} else {
+				result, checkErr = tkInternal.Exec("show create table t")
+				if checkErr != nil {
+					return
+				}
+			}
+			req := result.NewChunk()
+			checkErr = result.Next(context.Background(), req)
+			if checkErr != nil {
+				return
+			}
+			got := req.GetRow(0).GetString(1)
 			expected := testCases[currTestCaseOffset].expectedRet
 			if got != expected {
 				checkErr = errors.Errorf("got %s, expected %s", got, expected)
@@ -439,10 +474,10 @@ func (s *testStateChangeSuite) TestAppendEnum(c *C) {
 	c.Assert(err.Error(), Equals, "[table:1366]Incorrect enum value: 'A' for column 'c2' at row 1")
 	failAlterTableSQL1 := "alter table t change c2 c2 enum('N') DEFAULT 'N'"
 	_, err = s.se.Execute(context.Background(), failAlterTableSQL1)
-	c.Assert(err.Error(), Equals, "[ddl:203]unsupported modify column the number of enum column's elements is less than the original: 2")
+	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported modify column: the number of enum column's elements is less than the original: 2")
 	failAlterTableSQL2 := "alter table t change c2 c2 int default 0"
 	_, err = s.se.Execute(context.Background(), failAlterTableSQL2)
-	c.Assert(err.Error(), Equals, "[ddl:210]unsupported modify charset from utf8 to binary")
+	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported modify column: cannot modify enum type column's to type int(11)")
 	alterTableSQL := "alter table t change c2 c2 enum('N','Y','A') DEFAULT 'A'"
 	_, err = s.se.Execute(context.Background(), alterTableSQL)
 	c.Assert(err, IsNil)
@@ -734,6 +769,16 @@ func (s *testStateChangeSuite) TestParallelAlterAddIndex(c *C) {
 	s.testControlParallelExecSQL(c, sql1, sql2, f)
 }
 
+func (s *testStateChangeSuite) TestParallelAddPrimaryKey(c *C) {
+	sql1 := "ALTER TABLE t add primary key index_b(b);"
+	sql2 := "ALTER TABLE t add primary key index_b(c);"
+	f := func(c *C, err1, err2 error) {
+		c.Assert(err1, IsNil)
+		c.Assert(err2.Error(), Equals, "[schema:1068]Multiple primary key defined")
+	}
+	s.testControlParallelExecSQL(c, sql1, sql2, f)
+}
+
 func (s *testStateChangeSuite) TestParallelAlterAddPartition(c *C) {
 	sql1 := `alter table t_part add partition (
     partition p2 values less than (30)
@@ -764,6 +809,20 @@ func (s *testStateChangeSuite) TestParallelDropIndex(c *C) {
 	s.testControlParallelExecSQL(c, sql1, sql2, f)
 }
 
+func (s *testStateChangeSuite) TestParallelDropPrimaryKey(c *C) {
+	s.preSQL = "ALTER TABLE t add primary key index_b(c);"
+	defer func() {
+		s.preSQL = ""
+	}()
+	sql1 := "alter table t drop primary key;"
+	sql2 := "alter table t drop primary key;"
+	f := func(c *C, err1, err2 error) {
+		c.Assert(err1, IsNil)
+		c.Assert(err2.Error(), Equals, "[ddl:1091]index PRIMARY doesn't exist")
+	}
+	s.testControlParallelExecSQL(c, sql1, sql2, f)
+}
+
 func (s *testStateChangeSuite) TestParallelCreateAndRename(c *C) {
 	sql1 := "create table t_exists(c int);"
 	sql2 := "alter table t rename to t_exists;"
@@ -782,6 +841,10 @@ func (s *testStateChangeSuite) testControlParallelExecSQL(c *C, sql1, sql2 strin
 	c.Assert(err, IsNil)
 	_, err = s.se.Execute(context.Background(), "create table t(a int, b int, c int, d int auto_increment,e int, index idx1(d), index idx2(d,e))")
 	c.Assert(err, IsNil)
+	if len(s.preSQL) != 0 {
+		_, err := s.se.Execute(context.Background(), s.preSQL)
+		c.Assert(err, IsNil)
+	}
 	defer s.se.Execute(context.Background(), "drop table t")
 
 	_, err = s.se.Execute(context.Background(), "drop database if exists t_part")
@@ -1076,8 +1139,64 @@ func (s *testStateChangeSuite) TestParallelTruncateTableAndAddColumn(c *C) {
 	f := func(c *C, err1, err2 error) {
 		c.Assert(err1, IsNil)
 		c.Assert(err2, NotNil)
-		c.Assert(err2.Error(), Equals, "[domain:2]Information schema is changed. [try again later]")
-
+		c.Assert(err2.Error(), Equals, "[domain:8028]Information schema is changed during the execution of the statement(for example, table definition may be updated by other DDL ran in parallel). If you see this error often, try increasing `tidb_max_delta_schema_count`. [try again later]")
 	}
 	s.testControlParallelExecSQL(c, sql1, sql2, f)
+}
+
+// TestParallelFlashbackTable tests parallel flashback table.
+func (s *serialTestStateChangeSuite) TestParallelFlashbackTable(c *C) {
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange", `return(true)`), IsNil)
+	defer func(originGC bool) {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange"), IsNil)
+		if originGC {
+			ddl.EmulatorGCEnable()
+		} else {
+			ddl.EmulatorGCDisable()
+		}
+	}(ddl.IsEmulatorGCEnable())
+
+	// disable emulator GC.
+	// Disable emulator GC, otherwise, emulator GC will delete table record as soon as possible after executing drop table DDL.
+	ddl.EmulatorGCDisable()
+	gcTimeFormat := "20060102-15:04:05 -0700 MST"
+	timeBeforeDrop := time.Now().Add(0 - time.Duration(48*60*60*time.Second)).Format(gcTimeFormat)
+	safePointSQL := `INSERT HIGH_PRIORITY INTO mysql.tidb VALUES ('tikv_gc_safe_point', '%[1]s', '')
+			       ON DUPLICATE KEY
+			       UPDATE variable_value = '%[1]s'`
+	tk := testkit.NewTestKit(c, s.store)
+	// clear GC variables first.
+	tk.MustExec("delete from mysql.tidb where variable_name in ( 'tikv_gc_safe_point','tikv_gc_enable' )")
+	// set GC safe point
+	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
+	// set GC enable.
+	err := gcutil.EnableGC(tk.Se)
+	c.Assert(err, IsNil)
+
+	// prepare dropped table.
+	tk.MustExec("use test_db_state")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int);")
+	tk.MustExec("drop table if exists t")
+	// Test parallel flashback table.
+	ts := getDDLJobStartTime(tk, "test_db_state", "t")
+	sql1 := fmt.Sprintf("flashback table t until timestamp '%v' to t_flashback", ts)
+	f := func(c *C, err1, err2 error) {
+		c.Assert(err1, IsNil)
+		c.Assert(err2, NotNil)
+		c.Assert(err2.Error(), Equals, "[schema:1050]Table 't_flashback' already exists")
+
+	}
+	s.testControlParallelExecSQL(c, sql1, sql1, f)
+}
+
+func getDDLJobStartTime(tk *testkit.TestKit, dbName, tblName string) string {
+	re := tk.MustQuery("admin show ddl jobs 100")
+	rows := re.Rows()
+	for _, row := range rows {
+		if row[1] == dbName && row[2] == tblName && (row[3] == "drop table" || row[3] == "truncate table") {
+			return row[8].(string)
+		}
+	}
+	return ""
 }

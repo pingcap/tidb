@@ -36,7 +36,6 @@ import (
 
 const (
 	partitionMaxValue = "MAXVALUE"
-	primarykey        = "PRIMARY KEY"
 )
 
 // buildTablePartitionInfo builds partition info and checks for some errors.
@@ -139,7 +138,7 @@ func buildHashPartitionDefinitions(ctx sessionctx.Context, d *ddl, s *ast.Create
 func buildRangePartitionDefinitions(ctx sessionctx.Context, d *ddl, s *ast.CreateTableStmt, pi *model.PartitionInfo) error {
 	genIDs, err := d.genGlobalIDs(len(s.Partition.Definitions))
 	if err != nil {
-		return err
+		return errors.Trace(err)
 	}
 	for ith, def := range s.Partition.Definitions {
 		comment, _ := def.Comment()
@@ -189,6 +188,56 @@ func checkAddPartitionNameUnique(tbInfo *model.TableInfo, pi *model.PartitionInf
 		partNames[newPar.Name.L] = struct{}{}
 	}
 	return nil
+}
+
+func checkAndOverridePartitionID(newTableInfo, oldTableInfo *model.TableInfo) error {
+	// If any old partitionInfo has lost, that means the partition ID lost too, so did the data, repair failed.
+	if newTableInfo.Partition == nil {
+		return nil
+	}
+	if oldTableInfo.Partition == nil {
+		return ErrRepairTableFail.GenWithStackByArgs("Old table doesn't have partitions")
+	}
+	if newTableInfo.Partition.Type != oldTableInfo.Partition.Type {
+		return ErrRepairTableFail.GenWithStackByArgs("Partition type should be the same")
+	}
+	// Check whether partitionType is hash partition.
+	if newTableInfo.Partition.Type == model.PartitionTypeHash {
+		if newTableInfo.Partition.Num != oldTableInfo.Partition.Num {
+			return ErrRepairTableFail.GenWithStackByArgs("Hash partition num should be the same")
+		}
+	}
+	for i, newOne := range newTableInfo.Partition.Definitions {
+		found := false
+		for _, oldOne := range oldTableInfo.Partition.Definitions {
+			if newOne.Name.L == oldOne.Name.L && stringSliceEqual(newOne.LessThan, oldOne.LessThan) {
+				newTableInfo.Partition.Definitions[i].ID = oldOne.ID
+				found = true
+				break
+			}
+		}
+		if !found {
+			return ErrRepairTableFail.GenWithStackByArgs("Partition " + newOne.Name.L + " has lost")
+		}
+	}
+	return nil
+}
+
+func stringSliceEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	if len(a) == 0 {
+		return true
+	}
+	// Accelerate the compare by eliminate index bound check.
+	b = b[:len(a)]
+	for i, v := range a {
+		if v != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // See https://github.com/mysql/mysql-server/blob/5.7/sql/item_func.h#L387
@@ -638,7 +687,7 @@ func checkRangePartitioningKeysConstraints(sctx sessionctx.Context, s *ast.Creat
 	return nil
 }
 
-func checkPartitionKeysConstraint(pi *model.PartitionInfo, idxColNames []*ast.IndexColName, tblInfo *model.TableInfo) error {
+func checkPartitionKeysConstraint(pi *model.PartitionInfo, idxColNames []*ast.IndexColName, tblInfo *model.TableInfo, isPK bool) error {
 	var (
 		partCols []*model.ColumnInfo
 		err      error
@@ -662,9 +711,13 @@ func checkPartitionKeysConstraint(pi *model.PartitionInfo, idxColNames []*ast.In
 		}
 	}
 
-	// Every unique key on the table must use every column in the table's partitioning expression.
+	// Every unique key on the table must use every column in the table's partitioning expression.(This
+	// also includes the table's primary key.)
 	// See https://dev.mysql.com/doc/refman/5.7/en/partitioning-limitations-partitioning-keys-unique-keys.html
 	if !checkUniqueKeyIncludePartKey(columnInfoSlice(partCols), idxColNames) {
+		if isPK {
+			return ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs("PRIMARY")
+		}
 		return ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs("UNIQUE INDEX")
 	}
 	return nil

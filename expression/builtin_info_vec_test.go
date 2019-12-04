@@ -14,23 +14,80 @@
 package expression
 
 import (
+	"encoding/hex"
+	"math/rand"
 	"testing"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/types"
 )
 
+type tidbKeyGener struct {
+	inner *defaultGener
+}
+
+func (g *tidbKeyGener) gen() interface{} {
+	tableID := g.inner.gen().(int64)
+	var result []byte
+	if rand.Intn(2) == 1 {
+		// Generate a record key
+		handle := g.inner.gen().(int64)
+		result = tablecodec.EncodeRowKeyWithHandle(tableID, handle)
+	} else {
+		// Generate an index key
+		idx := g.inner.gen().(int64)
+		result = tablecodec.EncodeTableIndexPrefix(tableID, idx)
+	}
+	return hex.EncodeToString(result)
+}
+
 var vecBuiltinInfoCases = map[string][]vecExprBenchCase{
-	ast.TiDBVersion:    {},
-	ast.CurrentUser:    {},
-	ast.FoundRows:      {},
-	ast.Database:       {},
-	ast.User:           {},
-	ast.TiDBDecodeKey:  {},
-	ast.RowCount:       {},
-	ast.CurrentRole:    {},
-	ast.TiDBIsDDLOwner: {},
-	ast.ConnectionID:   {},
+	ast.Version: {
+		{retEvalType: types.ETString, childrenTypes: []types.EvalType{}},
+	},
+	ast.TiDBVersion: {
+		{retEvalType: types.ETString, childrenTypes: []types.EvalType{}},
+	},
+	ast.CurrentUser: {
+		{retEvalType: types.ETString, childrenTypes: []types.EvalType{}},
+	},
+	ast.FoundRows: {},
+	ast.Database: {
+		{retEvalType: types.ETString, childrenTypes: []types.EvalType{}},
+	},
+	ast.User: {
+		{retEvalType: types.ETString, childrenTypes: []types.EvalType{}},
+	},
+	ast.TiDBDecodeKey: {
+		{
+			retEvalType:   types.ETString,
+			childrenTypes: []types.EvalType{types.ETString},
+			geners: []dataGenerator{&tidbKeyGener{
+				inner: &defaultGener{
+					nullRation: 0,
+					eType:      types.ETInt,
+				},
+			}},
+		},
+	},
+	ast.RowCount: {
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{}},
+	},
+	ast.CurrentRole: {
+		{retEvalType: types.ETString, childrenTypes: []types.EvalType{}},
+	},
+	ast.TiDBIsDDLOwner: {
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{}},
+	},
+	ast.ConnectionID: {
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{}},
+	},
+	ast.LastInsertId: {
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{}},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt}},
+	},
 }
 
 func (s *testEvaluatorSuite) TestVectorizedBuiltinInfoFunc(c *C) {

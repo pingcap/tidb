@@ -77,7 +77,7 @@ func (e *existErrInfo) GetValue() string {
 
 // Err generates the error for existErrInfo
 func (e *existErrInfo) Err() error {
-	return ErrKeyExists.FastGen("Duplicate entry '%s' for key '%s'", e.value, e.idxName)
+	return ErrKeyExists.FastGenByArgs(e.value, e.idxName)
 }
 
 // unionStore is an in-memory Store which contains a buffer for write and a
