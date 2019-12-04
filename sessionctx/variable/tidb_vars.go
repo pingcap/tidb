@@ -435,8 +435,6 @@ const (
 	DefWaitSplitRegionTimeout          = 300 // 300s
 	DefTiDBEnableNoopFuncs             = false
 	DefTiDBAllowRemoveAutoInc          = false
-	DefTiDBStmtSummaryRefreshInterval  = 1800 // 1800s
-	DefTiDBStmtSummaryHistorySize      = 24
 	DefTiDBUsePlanBaselines            = true
 	DefTiDBEvolvePlanBaselines         = false
 	DefTiDBEvolvePlanTaskMaxTime       = 600 // 600s

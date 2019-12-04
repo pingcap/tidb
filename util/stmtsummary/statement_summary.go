@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"container/list"
 	"fmt"
+	"math"
 	"sort"
 	"strconv"
 	"strings"
@@ -225,7 +226,7 @@ func (ssMap *stmtSummaryByDigestMap) AddStatement(sei *StmtExecInfo) {
 			return nil, 0, false
 		}
 
-		if intervalSeconds > 0 && ssMap.beginTimeForCurInterval+intervalSeconds <= now {
+		if ssMap.beginTimeForCurInterval+intervalSeconds <= now {
 			// `beginTimeForCurInterval` is a multiple of intervalSeconds, so that when the interval is a multiple
 			// of 60 (or 600, 1800, 3600, etc), begin time shows 'XX:XX:00', not 'XX:XX:01'~'XX:XX:59'.
 			ssMap.beginTimeForCurInterval = now / intervalSeconds * intervalSeconds
@@ -405,9 +406,11 @@ func (ssMap *stmtSummaryByDigestMap) SetRefreshInterval(value string, inSession 
 			interval = 0
 		}
 	}
-	if interval > 0 {
-		atomic.StoreInt64(&ssMap.sysVars.refreshInterval, int64(interval))
+	// Users may set invalid values in configuration file.
+	if interval <= 0 {
+		interval = 1
 	}
+	atomic.StoreInt64(&ssMap.sysVars.refreshInterval, int64(interval))
 }
 
 // refreshInterval gets the refresh interval for summaries.
@@ -442,18 +445,18 @@ func (ssMap *stmtSummaryByDigestMap) SetHistorySize(value string, inSession bool
 			size = 0
 		}
 	}
-	if size > 0 {
-		atomic.StoreInt32(&ssMap.sysVars.historySize, int32(size))
+	// Users may set invalid values in configuration file.
+	if size <= 0 {
+		size = 1
+	} else if size > math.MaxInt8 {
+		size = math.MaxInt8
 	}
+	atomic.StoreInt32(&ssMap.sysVars.historySize, int32(size))
 }
 
 // historySize gets the history size for summaries.
 func (ssMap *stmtSummaryByDigestMap) historySize() int {
-	size := int(atomic.LoadInt32(&ssMap.sysVars.historySize))
-	if size <= 0 {
-		size = 1
-	}
-	return size
+	return int(atomic.LoadInt32(&ssMap.sysVars.historySize))
 }
 
 // newStmtSummaryByDigest creates a stmtSummaryByDigest from StmtExecInfo.
