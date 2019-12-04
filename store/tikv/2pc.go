@@ -708,6 +708,8 @@ func (tm *ttlManager) keepAlive(c *twoPhaseCommitter) {
 			}
 
 			newTTL := uptime + PessimisticLockTTL
+			logutil.Logger(context.Background()).Info("send TxnHeartBeat",
+				zap.Uint64("startTS", c.startTS), zap.Uint64("newTTL", newTTL))
 			startTime := time.Now()
 			_, err = sendTxnHeartBeat(bo, c.store, c.primary(), c.startTS, newTTL)
 			if err != nil {
@@ -736,8 +738,7 @@ func (action actionPessimisticLock) handleSingleBatch(c *twoPhaseCommitter, bo *
 		mutations[i] = mut
 	}
 
-	t0 := oracle.GetTimeFromTS(c.forUpdateTS)
-	elapsed := uint64(time.Since(t0) / time.Millisecond)
+	elapsed := uint64(time.Since(c.txn.startTime) / time.Millisecond)
 	req := &tikvrpc.Request{
 		Type: tikvrpc.CmdPessimisticLock,
 		PessimisticLock: &pb.PessimisticLockRequest{
