@@ -520,7 +520,15 @@ func (sc *StatementContext) CopTasksDetails() *CopTasksDetails {
 	sc.mu.Lock()
 	defer sc.mu.Unlock()
 	n := len(sc.mu.allExecDetails)
-	d := &CopTasksDetails{NumCopTasks: n}
+	d := &CopTasksDetails{
+		NumCopTasks:       n,
+		MaxBackoffTime:    make(map[string]time.Duration),
+		AvgBackoffTime:    make(map[string]time.Duration),
+		P90BackoffTime:    make(map[string]time.Duration),
+		TotBackoffTime:    make(map[string]time.Duration),
+		TotBackoffTimes:   make(map[string]int),
+		MaxBackoffAddress: make(map[string]string),
+	}
 	if n == 0 {
 		return d
 	}
@@ -540,7 +548,58 @@ func (sc *StatementContext) CopTasksDetails() *CopTasksDetails {
 	d.P90WaitTime = sc.mu.allExecDetails[n*9/10].WaitTime
 	d.MaxWaitTime = sc.mu.allExecDetails[n-1].WaitTime
 	d.MaxWaitAddress = sc.mu.allExecDetails[n-1].CalleeAddress
+
+	// calculate backoff details
+	type backoffItem struct {
+		callee    string
+		sleepTime time.Duration
+		times     int
+	}
+	backoffInfo := make(map[string][]backoffItem)
+	for _, ed := range sc.mu.allExecDetails {
+		for backoff := range ed.BackoffTimes {
+			backoffInfo[backoff] = append(backoffInfo[backoff], backoffItem{
+				callee:    ed.CalleeAddress,
+				sleepTime: ed.BackoffSleep[backoff],
+				times:     ed.BackoffTimes[backoff],
+			})
+		}
+	}
+	for backoff, items := range backoffInfo {
+		if len(items) == 0 {
+			continue
+		}
+		sort.Slice(items, func(i, j int) bool {
+			return items[i].sleepTime < items[j].sleepTime
+		})
+		n := len(items)
+		d.MaxBackoffAddress[backoff] = items[n-1].callee
+		d.MaxBackoffTime[backoff] = items[n-1].sleepTime
+		d.P90BackoffTime[backoff] = items[n*9/10].sleepTime
+
+		var totalTime time.Duration
+		totalTimes := 0
+		for _, it := range items {
+			totalTime += it.sleepTime
+			totalTimes += it.times
+		}
+		d.AvgBackoffTime[backoff] = totalTime / time.Duration(n)
+		d.TotBackoffTime[backoff] = totalTime
+		d.TotBackoffTimes[backoff] = totalTimes
+	}
 	return d
+}
+
+// SetFlagsFromPBFlag set the flag of StatementContext from a `tipb.SelectRequest.Flags`.
+func (sc *StatementContext) SetFlagsFromPBFlag(flags uint64) {
+	sc.IgnoreTruncate = (flags & model.FlagIgnoreTruncate) > 0
+	sc.TruncateAsWarning = (flags & model.FlagTruncateAsWarning) > 0
+	sc.PadCharToFullLength = (flags & model.FlagPadCharToFullLength) > 0
+	sc.InInsertStmt = (flags & model.FlagInInsertStmt) > 0
+	sc.InSelectStmt = (flags & model.FlagInSelectStmt) > 0
+	sc.OverflowAsWarning = (flags & model.FlagOverflowAsWarning) > 0
+	sc.IgnoreZeroInDate = (flags & model.FlagIgnoreZeroInDate) > 0
+	sc.DividedByZeroAsWarning = (flags & model.FlagDividedByZeroAsWarning) > 0
 }
 
 //CopTasksDetails collects some useful information of cop-tasks during execution.
@@ -556,6 +615,13 @@ type CopTasksDetails struct {
 	P90WaitTime    time.Duration
 	MaxWaitAddress string
 	MaxWaitTime    time.Duration
+
+	MaxBackoffTime    map[string]time.Duration
+	MaxBackoffAddress map[string]string
+	AvgBackoffTime    map[string]time.Duration
+	P90BackoffTime    map[string]time.Duration
+	TotBackoffTime    map[string]time.Duration
+	TotBackoffTimes   map[string]int
 }
 
 // ToZapFields wraps the CopTasksDetails as zap.Fileds.
