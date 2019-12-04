@@ -50,6 +50,7 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/gcworker"
+	"github.com/pingcap/tidb/util/domainutil"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/printer"
@@ -91,6 +92,8 @@ const (
 	nmTokenLimit       = "token-limit"
 	nmPluginDir        = "plugin-dir"
 	nmPluginLoad       = "plugin-load"
+	nmRepairMode       = "repair-mode"
+	nmRepairList       = "repair-list"
 
 	nmProxyProtocolNetworks      = "proxy-protocol-networks"
 	nmProxyProtocolHeaderTimeout = "proxy-protocol-header-timeout"
@@ -118,6 +121,8 @@ var (
 	pluginDir        = flag.String(nmPluginDir, "/data/deploy/plugin", "the folder that hold plugin")
 	pluginLoad       = flag.String(nmPluginLoad, "", "wait load plugin name(separated by comma)")
 	affinityCPU      = flag.String(nmAffinityCPU, "", "affinity cpu (cpu-no. separated by comma, e.g. 1,2,3)")
+	repairMode       = flagBoolean(nmRepairMode, false, "enable admin repair mode")
+	repairList       = flag.String(nmRepairList, "", "admin repair table list")
 
 	// Log
 	logLevel     = flag.String(nmLogLevel, "info", "log level: info, debug, warn, error, fatal")
@@ -470,6 +475,14 @@ func overrideConfig() {
 	if actualFlags[nmPluginDir] {
 		cfg.Plugin.Dir = *pluginDir
 	}
+	if actualFlags[nmRepairMode] {
+		cfg.RepairMode = *repairMode
+	}
+	if actualFlags[nmRepairList] {
+		if cfg.RepairMode {
+			cfg.RepairTableList = stringToList(*repairList)
+		}
+	}
 
 	// Log
 	if actualFlags[nmLogLevel] {
@@ -561,6 +574,8 @@ func setGlobalVars() {
 
 	tikv.CommitMaxBackoff = int(parseDuration(cfg.TiKVClient.CommitTimeout).Seconds() * 1000)
 	tikv.RegionCacheTTLSec = int64(cfg.TiKVClient.RegionCacheTTL)
+	domainutil.RepairInfo.SetRepairMode(cfg.RepairMode)
+	domainutil.RepairInfo.SetRepairTableList(cfg.RepairTableList)
 }
 
 func setupLog() {
@@ -659,4 +674,16 @@ func cleanup() {
 	}
 	plugin.Shutdown(context.Background())
 	closeDomainAndStorage()
+}
+
+func stringToList(repairString string) []string {
+	if len(repairString) <= 0 {
+		return []string{}
+	}
+	if repairString[0] == '[' && repairString[len(repairString)-1] == ']' {
+		repairString = repairString[1 : len(repairString)-1]
+	}
+	return strings.FieldsFunc(repairString, func(r rune) bool {
+		return r == ',' || r == ' ' || r == '"'
+	})
 }
