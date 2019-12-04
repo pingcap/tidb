@@ -67,12 +67,9 @@ unrecognized-option-test = true
 token-limit = 0
 alter-primary-key = true
 split-region-max-num=10000
-<<<<<<< HEAD
-=======
 enable-batch-dml = true
 server-version = "test_version"
 repair-mode = true
->>>>>>> d4d14dbde... config: add configuration entry make TiDB version string configurable (#13775)
 [performance]
 txn-entry-count-limit=2000
 txn-total-size-limit=2000
