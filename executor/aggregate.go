@@ -90,8 +90,9 @@ type HashAggFinalWorker struct {
 
 // AfFinalResult indicates aggregation functions final result.
 type AfFinalResult struct {
-	chk *chunk.Chunk
-	err error
+	chk        *chunk.Chunk
+	err        error
+	giveBackCh chan *chunk.Chunk
 }
 
 // HashAggExec deals with all the aggregate functions.
@@ -150,7 +151,6 @@ type HashAggExec struct {
 
 	finishCh         chan struct{}
 	finalOutputCh    chan *AfFinalResult
-	finalInputCh     chan *chunk.Chunk
 	partialOutputChs []chan *HashAggIntermData
 	inputCh          chan *HashAggInput
 	partialInputChs  []chan *chunk.Chunk
@@ -271,10 +271,6 @@ func (e *HashAggExec) initForParallelExec(ctx sessionctx.Context) {
 	partialConcurrency := sessionVars.HashAggPartialConcurrency
 	e.isChildReturnEmpty = true
 	e.finalOutputCh = make(chan *AfFinalResult, finalConcurrency)
-	e.finalInputCh = make(chan *chunk.Chunk, finalConcurrency)
-	for i := 0; i < finalConcurrency; i++ {
-		e.finalInputCh <- newFirstChunk(e)
-	}
 	e.inputCh = make(chan *HashAggInput, partialConcurrency)
 	e.finishCh = make(chan struct{}, 1)
 
@@ -319,11 +315,12 @@ func (e *HashAggExec) initForParallelExec(ctx sessionctx.Context) {
 			groupSet:            set.NewStringSet(),
 			inputCh:             e.partialOutputChs[i],
 			outputCh:            e.finalOutputCh,
-			finalResultHolderCh: e.finalInputCh,
+			finalResultHolderCh: make(chan *chunk.Chunk, 1),
 			rowBuffer:           make([]types.Datum, 0, e.Schema().Len()),
 			mutableRow:          chunk.MutRowFromTypes(retTypes(e)),
 			groupKeys:           make([][]byte, 0, 8),
 		}
+		e.finalWorkers[i].finalResultHolderCh <- newFirstChunk(e)
 	}
 }
 
@@ -550,7 +547,7 @@ func (w *HashAggFinalWorker) getFinalResult(sctx sessionctx.Context) {
 			}
 		}
 	}
-	w.outputCh <- &AfFinalResult{chk: result}
+	w.outputCh <- &AfFinalResult{chk: result, giveBackCh: w.finalResultHolderCh}
 }
 
 func (w *HashAggFinalWorker) receiveFinalResultHolder() (*chunk.Chunk, bool) {
@@ -683,13 +680,11 @@ func (e *HashAggExec) parallelExec(ctx context.Context, chk *chunk.Chunk) error 
 		if result.err != nil {
 			return result.err
 		}
-		chk.Append(result.chk, 0, result.chk.NumRows())
+		chk.SwapColumns(result.chk)
 		result.chk.Reset()
-		e.finalInputCh <- result.chk
+		result.giveBackCh <- result.chk
 		if chk.NumRows() > 0 {
 			e.isChildReturnEmpty = false
-		}
-		if chk.IsFull() {
 			return nil
 		}
 	}
