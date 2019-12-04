@@ -655,7 +655,7 @@ func NewRuleMergeAdjacentProjection() Transformation {
 
 // OnTransform implements Transformation interface.
 // It will transform `proj->proj->x` to `proj->x`
-// or just keep the selection unchanged.
+// or just keep the adjacent projections unchanged.
 func (r *MergeAdjacentProjection) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
 	proj := old.GetExpr().ExprNode.(*plannercore.LogicalProjection)
 	childGroup := old.Children[0].Group
@@ -671,8 +671,7 @@ func (r *MergeAdjacentProjection) OnTransform(old *memo.ExprIter) (newExprs []*m
 		}
 	}
 
-	newProj := plannercore.LogicalProjection{Exprs: make([]expression.Expression, len(proj.Exprs))}.Init(proj.SCtx(), proj.SelectBlockOffset())
-	copy(newProj.Exprs, proj.Exprs)
+	newProj := plannercore.LogicalProjection{Exprs: proj.Exprs}.Init(proj.SCtx(), proj.SelectBlockOffset())
 	newProj.SetSchema(old.GetExpr().Group.Prop.Schema.Clone())
 	for i, expr := range newProj.Exprs {
 		plannercore.ResolveExprAndReplace(expr, replace)

@@ -63,7 +63,7 @@ func resolveColumnAndReplace(origin *expression.Column, replace map[string]*expr
 	}
 }
 
-// ResolveExprAndReplace replaces columns fields of expressions by children logical plans
+// ResolveExprAndReplace replaces columns fields of expressions by children logical plans.
 func ResolveExprAndReplace(origin expression.Expression, replace map[string]*expression.Column) {
 	switch expr := origin.(type) {
 	case *expression.Column:
@@ -160,7 +160,7 @@ func (pe *projectionEliminator) eliminate(p LogicalPlan, replace map[string]*exp
 	return p.Children()[0]
 }
 
-// ReplaceColumnOfExpr replaces column of expression by another LogicalProjection
+// ReplaceColumnOfExpr replaces column of expression by another LogicalProjection.
 func ReplaceColumnOfExpr(expr expression.Expression, proj *LogicalProjection, schema *expression.Schema) expression.Expression {
 	switch v := expr.(type) {
 	case *expression.Column:
