@@ -370,6 +370,7 @@ type LogicalTableDual struct {
 type LogicalMemTable struct {
 	logicalSchemaProducer
 
+	Extractor MemTablePredicateExtractor
 	dbName    model.CIStr
 	tableInfo *model.TableInfo
 }
