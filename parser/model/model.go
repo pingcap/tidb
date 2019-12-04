@@ -143,6 +143,18 @@ func (c *ColumnInfo) GetDefaultValue() interface{} {
 	return c.DefaultValue
 }
 
+// GetTypeDesc gets the description for column type.
+func (c *ColumnInfo) GetTypeDesc() string {
+	desc := c.FieldType.CompactStr()
+	if mysql.HasUnsignedFlag(c.Flag) && c.Tp != mysql.TypeBit && c.Tp != mysql.TypeYear {
+		desc += " unsigned"
+	}
+	if mysql.HasZerofillFlag(c.Flag) && c.Tp != mysql.TypeYear {
+		desc += " zerofill"
+	}
+	return desc
+}
+
 // FindColumnInfo finds ColumnInfo in cols by name.
 func FindColumnInfo(cols []*ColumnInfo, name string) *ColumnInfo {
 	name = strings.ToLower(name)
