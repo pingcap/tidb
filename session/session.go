@@ -596,7 +596,7 @@ func (s *session) String() string {
 const sqlLogMaxLen = 1024
 
 // SchemaChangedWithoutRetry is used for testing.
-var SchemaChangedWithoutRetry bool
+var SchemaChangedWithoutRetry uint32
 
 func (s *session) getSQLLabel() string {
 	if s.sessionVars.InRestrictedSQL {
@@ -610,7 +610,7 @@ func (s *session) isInternal() bool {
 }
 
 func (s *session) isTxnRetryableError(err error) bool {
-	if SchemaChangedWithoutRetry {
+	if atomic.LoadUint32(&SchemaChangedWithoutRetry) == 1 {
 		return kv.IsTxnRetryableError(err)
 	}
 	return kv.IsTxnRetryableError(err) || domain.ErrInfoSchemaChanged.Equal(err)
@@ -863,7 +863,7 @@ func createSessionFunc(store kv.Storage) pools.Factory {
 
 func createSessionWithDomainFunc(store kv.Storage) func(*domain.Domain) (pools.Resource, error) {
 	return func(dom *domain.Domain) (pools.Resource, error) {
-		se, err := createSessionWithDomain(store, dom)
+		se, err := CreateSessionWithDomain(store, dom)
 		if err != nil {
 			return nil, err
 		}
@@ -1710,11 +1710,11 @@ func createSession(store kv.Storage) (*session, error) {
 	return s, nil
 }
 
-// createSessionWithDomain creates a new Session and binds it with a Domain.
+// CreateSessionWithDomain creates a new Session and binds it with a Domain.
 // We need this because when we start DDL in Domain, the DDL need a session
 // to change some system tables. But at that time, we have been already in
 // a lock context, which cause we can't call createSesion directly.
-func createSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, error) {
+func CreateSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, error) {
 	s := &session{
 		store:       store,
 		parser:      parser.New(),
@@ -1736,7 +1736,7 @@ func createSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 
 const (
 	notBootstrapped         = 0
-	currentBootstrapVersion = version36
+	currentBootstrapVersion = version37
 )
 
 func getStoreBootstrapVersion(store kv.Storage) int64 {
@@ -1836,6 +1836,7 @@ var builtinGlobalVariable = []string{
 	variable.TiDBOptScanFactor,
 	variable.TiDBOptDescScanFactor,
 	variable.TiDBOptMemoryFactor,
+	variable.TiDBOptDiskFactor,
 	variable.TiDBOptConcurrencyFactor,
 	variable.TiDBDistSQLScanConcurrency,
 	variable.TiDBInitChunkSize,
