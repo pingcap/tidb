@@ -99,8 +99,8 @@ func (s *testSuite) TearDownTest(c *C) {
 }
 
 func (s *testSuite) cleanBindingEnv(tk *testkit.TestKit) {
-	tk.MustExec("drop table if exists mysql.bind_info")
-	tk.MustExec(session.CreateBindInfoTable)
+	tk.MustExec("truncate table mysql.bind_info")
+	s.domain.BindHandle().Clear()
 }
 
 func (s *testSuite) TestBindParse(c *C) {
@@ -464,4 +464,22 @@ func (s *testSuite) TestErrorBind(c *C) {
 	err = rs.Next(context.TODO(), chk)
 	c.Check(err, IsNil)
 	c.Check(chk.NumRows(), Equals, 0)
+}
+
+func (s *testSuite) TestBindingCache(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	s.cleanBindingEnv(tk)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, index idx(a))")
+	tk.MustExec("create global binding for select * from t using select * from t use index(idx)")
+	tk.MustExec("create database tmp")
+	tk.MustExec("use tmp")
+	tk.MustExec("create table t(a int, b int, index idx(a))")
+	tk.MustExec("create global binding for select * from t using select * from t use index(idx)")
+
+	c.Assert(s.domain.BindHandle().Update(false), IsNil)
+	c.Assert(s.domain.BindHandle().Update(false), IsNil)
+	res := tk.MustQuery("show global bindings")
+	c.Assert(len(res.Rows()), Equals, 2)
 }
