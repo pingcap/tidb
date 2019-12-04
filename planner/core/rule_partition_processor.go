@@ -18,6 +18,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
@@ -164,7 +165,7 @@ func (s *partitionProcessor) prune(ds *DataSource) (LogicalPlan, error) {
 		newDataSource.baseLogicalPlan = newBaseLogicalPlan(ds.SCtx(), plancodec.TypeTableScan, &newDataSource, ds.blockOffset)
 		newDataSource.isPartition = true
 		newDataSource.physicalTableID = pi.Definitions[i].ID
-		newDataSource.possibleAccessPaths = make([]*accessPath, len(ds.possibleAccessPaths))
+		newDataSource.possibleAccessPaths = make([]*util.AccessPath, len(ds.possibleAccessPaths))
 		for i := range ds.possibleAccessPaths {
 			newPath := *ds.possibleAccessPaths[i]
 			newDataSource.possibleAccessPaths[i] = &newPath

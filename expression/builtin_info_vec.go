@@ -191,11 +191,22 @@ func (b *builtinTiDBIsDDLOwnerSig) vecEvalInt(input *chunk.Chunk, result *chunk.
 }
 
 func (b *builtinFoundRowsSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinFoundRowsSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	data := b.ctx.GetSessionVars()
+	if data == nil {
+		return errors.Errorf("Missing session variable when eval builtin")
+	}
+	lastFoundRows := int64(data.LastFoundRows)
+	n := input.NumRows()
+	result.ResizeInt64(n, false)
+	i64s := result.Int64s()
+	for i := range i64s {
+		i64s[i] = lastFoundRows
+	}
+	return nil
 }
 
 func (b *builtinBenchmarkSig) vectorized() bool {
