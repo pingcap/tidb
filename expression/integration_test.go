@@ -58,7 +58,6 @@ type testIntegrationSuite2 struct {
 	testIntegrationSuite
 }
 
-
 func (s *testIntegrationSuite) cleanEnv(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
