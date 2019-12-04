@@ -47,7 +47,6 @@ import (
 
 var _ = Suite(&testIntegrationSuite{})
 var _ = Suite(&testIntegrationSuite2{})
-var _ = Suite(&testIntegrationSuiteHidden{})
 
 type testIntegrationSuite struct {
 	store kv.Storage
@@ -59,9 +58,6 @@ type testIntegrationSuite2 struct {
 	testIntegrationSuite
 }
 
-type testIntegrationSuiteHidden struct {
-	testIntegrationSuite
-}
 
 func (s *testIntegrationSuite) cleanEnv(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
@@ -5154,7 +5150,7 @@ func (s *testIntegrationSuite) TestDecodetoChunkReuse(c *C) {
 	rs.Close()
 }
 
-func (s *testIntegrationSuiteHidden) TestHiddenColumn(c *C) {
+func (s *testIntegrationSuite) TestHiddenColumn(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("CREATE DATABASE test_hidden;")
 	tk.MustExec("USE test_hidden;")
@@ -5234,7 +5230,6 @@ func (s *testIntegrationSuiteHidden) TestHiddenColumn(c *C) {
 	_, err = tk.Exec("ALTER TABLE hidden DROP COLUMN d")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[ddl:1091]column d doesn't exist")
-	//tk.MustExec("ALTER TABLE hidden DROP COLUMN e")
 
 	// Test show create table
 	tk.MustQuery("show create table hidden;").Check(testkit.Rows(
