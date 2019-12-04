@@ -536,7 +536,7 @@ func NewSessionVars() *SessionVars {
 		AllowRemoveAutoInc:          DefTiDBAllowRemoveAutoInc,
 		UsePlanBaselines:            DefTiDBUsePlanBaselines,
 		EvolvePlanBaselines:         DefTiDBEvolvePlanBaselines,
-		isolationReadEngines:        map[kv.StoreType]struct{}{kv.TiKV: {}, kv.TiFlash: {}},
+		isolationReadEngines:        map[kv.StoreType]struct{}{kv.TiKV: {}, kv.TiFlash: {}, kv.TiDB: {}},
 		LockWaitTimeout:             DefInnodbLockWaitTimeout * 1000,
 	}
 	vars.Concurrency = Concurrency{
@@ -991,6 +991,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 				s.isolationReadEngines[kv.TiKV] = struct{}{}
 			case kv.TiFlash.Name():
 				s.isolationReadEngines[kv.TiFlash] = struct{}{}
+			case kv.TiDB.Name():
+				s.isolationReadEngines[kv.TiDB] = struct{}{}
 			}
 		}
 	case TiDBStoreLimit:
