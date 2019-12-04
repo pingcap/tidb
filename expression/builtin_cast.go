@@ -462,9 +462,13 @@ func (b *builtinCastIntAsRealSig) evalReal(row chunk.Row) (res float64, isNull b
 	if isNull || err != nil {
 		return res, isNull, errors.Trace(err)
 	}
-	if !mysql.HasUnsignedFlag(b.tp.Flag) {
+	if unsignedArgs0 := mysql.HasUnsignedFlag(b.args[0].GetType().Flag); !mysql.HasUnsignedFlag(b.tp.Flag) && !unsignedArgs0 {
 		res = float64(val)
-	} else if b.inUnion && val < 0 {
+	} else if b.inUnion && !unsignedArgs0 && val < 0 {
+		// Round up to 0 if the value is negative but the expression eval type is unsigned in `UNION` statement
+		// NOTE: the following expressions are equal (so choose the more efficient one):
+		// `b.inUnion && mysql.HasUnsignedFlag(b.tp.Flag) && !unsignedArgs0 && val < 0`
+		// `b.inUnion && !unsignedArgs0 && val < 0`
 		res = 0
 	} else {
 		// recall that, int to float is different from uint to float
@@ -488,9 +492,14 @@ func (b *builtinCastIntAsDecimalSig) evalDecimal(row chunk.Row) (res *types.MyDe
 	if isNull || err != nil {
 		return res, isNull, errors.Trace(err)
 	}
-	if !mysql.HasUnsignedFlag(b.tp.Flag) && !mysql.HasUnsignedFlag(b.args[0].GetType().Flag) {
+
+	if unsignedArgs0 := mysql.HasUnsignedFlag(b.args[0].GetType().Flag); !mysql.HasUnsignedFlag(b.tp.Flag) && !unsignedArgs0 {
 		res = types.NewDecFromInt(val)
-	} else if b.inUnion && val < 0 {
+		// Round up to 0 if the value is negative but the expression eval type is unsigned in `UNION` statement
+		// NOTE: the following expressions are equal (so choose the more efficient one):
+		// `b.inUnion && mysql.HasUnsignedFlag(b.tp.Flag) && !unsignedArgs0 && val < 0`
+		// `b.inUnion && !unsignedArgs0 && val < 0`
+	} else if b.inUnion && !unsignedArgs0 && val < 0 {
 		res = &types.MyDecimal{}
 	} else {
 		res = types.NewDecFromUint(uint64(val))
