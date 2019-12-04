@@ -41,8 +41,9 @@ var (
 	_ LogicalPlan = &LogicalMaxOneRow{}
 	_ LogicalPlan = &LogicalTableDual{}
 	_ LogicalPlan = &DataSource{}
-	_ LogicalPlan = &TableGather{}
-	_ LogicalPlan = &TableScan{}
+	_ LogicalPlan = &TiKVSingleGather{}
+	_ LogicalPlan = &LogicalTableScan{}
+	_ LogicalPlan = &LogicalIndexScan{}
 	_ LogicalPlan = &LogicalUnionAll{}
 	_ LogicalPlan = &LogicalSort{}
 	_ LogicalPlan = &LogicalLock{}
@@ -427,20 +428,62 @@ type DataSource struct {
 	preferStoreType int
 }
 
-// TableGather is a leaf logical operator of TiDB layer to gather
+// TiKVSingleGather is a leaf logical operator of TiDB layer to gather
 // tuples from TiKV regions.
-type TableGather struct {
+type TiKVSingleGather struct {
 	logicalSchemaProducer
 	Source *DataSource
+	// IsIndexGather marks if this TiKVSingleGather gathers tuples from an IndexScan.
+	// in implementation phase, we need this flag to determine whether to generate
+	// PhysicalTableReader or PhysicalIndexReader.
+	IsIndexGather bool
+	Index         *model.IndexInfo
 }
 
-// TableScan is the logical table scan operator for TiKV.
-type TableScan struct {
+// LogicalTableScan is the logical table scan operator for TiKV.
+type LogicalTableScan struct {
 	logicalSchemaProducer
 	Source      *DataSource
 	Handle      *expression.Column
 	AccessConds expression.CNFExprs
 	Ranges      []*ranger.Range
+}
+
+// LogicalIndexScan is the logical index scan operator for TiKV.
+type LogicalIndexScan struct {
+	logicalSchemaProducer
+	// DataSource should be read-only here.
+	Source       *DataSource
+	IsDoubleRead bool
+
+	EqCondCount int
+	AccessConds expression.CNFExprs
+	Ranges      []*ranger.Range
+
+	Index          *model.IndexInfo
+	Columns        []*model.ColumnInfo
+	fullIdxCols    []*expression.Column
+	fullIdxColLens []int
+	idxCols        []*expression.Column
+	idxColLens     []int
+}
+
+// MatchIndexProp checks if the indexScan can match the required property.
+func (p *LogicalIndexScan) MatchIndexProp(prop *property.PhysicalProperty) (match bool) {
+	if prop.IsEmpty() {
+		return true
+	}
+	if all, _ := prop.AllSameOrder(); !all {
+		return false
+	}
+	for i, col := range p.idxCols {
+		if col.Equal(nil, prop.Items[0].Col) {
+			return matchIndicesProp(p.idxCols[i:], p.idxColLens[i:], prop.Items)
+		} else if i >= p.EqCondCount {
+			break
+		}
+	}
+	return false
 }
 
 // accessPath indicates the way we access a table: by using single index, or by using multiple indexes,
@@ -481,21 +524,47 @@ func getTablePath(paths []*accessPath) *accessPath {
 }
 
 func (ds *DataSource) buildTableGather() LogicalPlan {
-	ts := TableScan{Source: ds, Handle: ds.getHandleCol()}.Init(ds.ctx, ds.blockOffset)
+	ts := LogicalTableScan{Source: ds, Handle: ds.getHandleCol()}.Init(ds.ctx, ds.blockOffset)
 	ts.SetSchema(ds.Schema())
-	tg := TableGather{Source: ds}.Init(ds.ctx, ds.blockOffset)
-	tg.SetSchema(ds.Schema())
-	tg.SetChildren(ts)
-	return tg
+	sg := TiKVSingleGather{Source: ds, IsIndexGather: false}.Init(ds.ctx, ds.blockOffset)
+	sg.SetSchema(ds.Schema())
+	sg.SetChildren(ts)
+	return sg
 }
 
-// Convert2Gathers builds logical TableGather and IndexGather(to be implemented) from DataSource.
+func (ds *DataSource) buildIndexGather(path *accessPath) LogicalPlan {
+	is := LogicalIndexScan{
+		Source:       ds,
+		IsDoubleRead: false,
+		Index:        path.index,
+	}.Init(ds.ctx, ds.blockOffset)
+
+	is.Columns = make([]*model.ColumnInfo, len(ds.Columns))
+	copy(is.Columns, ds.Columns)
+	is.SetSchema(ds.Schema())
+
+	sg := TiKVSingleGather{
+		Source:        ds,
+		IsIndexGather: true,
+		Index:         path.index,
+	}.Init(ds.ctx, ds.blockOffset)
+	sg.SetSchema(ds.Schema())
+	sg.SetChildren(is)
+	return sg
+}
+
+// Convert2Gathers builds logical TiKVSingleGathers from DataSource.
 func (ds *DataSource) Convert2Gathers() (gathers []LogicalPlan) {
 	tg := ds.buildTableGather()
 	gathers = append(gathers, tg)
 	for _, path := range ds.possibleAccessPaths {
 		if !path.isTablePath {
-			// TODO: add IndexGather
+			path.fullIdxCols, path.fullIdxColLens = expression.IndexInfo2Cols(ds.Columns, ds.schema.Columns, path.index)
+			// If index columns can cover all of the needed columns, we can use a IndexGather + IndexScan.
+			if isCoveringIndex(ds.schema.Columns, path.fullIdxCols, path.fullIdxColLens, ds.tableInfo.PKIsHandle) {
+				gathers = append(gathers, ds.buildIndexGather(path))
+			}
+			// TODO: If index columns can not cover the schema, use IndexLookUpGather.
 		}
 	}
 	return gathers
@@ -745,22 +814,33 @@ func isColEqCorColOrConstant(filter expression.Expression, col *expression.Colum
 	return false
 }
 
-func (ds *DataSource) getPKIsHandleCol() *expression.Column {
-	if !ds.tableInfo.PKIsHandle {
+func getPKIsHandleColFromSchema(cols []*model.ColumnInfo, schema *expression.Schema, pkIsHandle bool) *expression.Column {
+	if !pkIsHandle {
 		// If the PKIsHandle is false, return the ExtraHandleColumn.
-		for i, col := range ds.Columns {
+		for i, col := range cols {
 			if col.ID == model.ExtraHandleID {
-				return ds.schema.Columns[i]
+				return schema.Columns[i]
 			}
 		}
 		return nil
 	}
-	for i, col := range ds.Columns {
+	for i, col := range cols {
 		if mysql.HasPriKeyFlag(col.Flag) {
-			return ds.schema.Columns[i]
+			return schema.Columns[i]
 		}
 	}
 	return nil
+}
+
+func (ds *DataSource) getPKIsHandleCol() *expression.Column {
+	return getPKIsHandleColFromSchema(ds.Columns, ds.schema, ds.tableInfo.PKIsHandle)
+}
+
+func (p *LogicalIndexScan) getPKIsHandleCol() *expression.Column {
+	// We cannot use p.Source.getPKIsHandleCol() here,
+	// Because we may re-prune p.Columns and p.schema during the transformation.
+	// That will make p.Columns different from p.Source.Columns.
+	return getPKIsHandleColFromSchema(p.Columns, p.schema, p.Source.tableInfo.PKIsHandle)
 }
 
 func (ds *DataSource) getHandleCol() *expression.Column {
