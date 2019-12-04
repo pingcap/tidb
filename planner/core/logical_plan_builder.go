@@ -574,7 +574,7 @@ func (b *PlanBuilder) buildJoin(ctx context.Context, joinNode *ast.Join) (Logica
 			return nil, errors.New("ON condition doesn't support subqueries yet")
 		}
 		onCondition := expression.SplitCNFItems(onExpr)
-		joinPlan.attachOnConds(onCondition)
+		joinPlan.AttachOnConds(onCondition)
 	} else if joinPlan.JoinType == InnerJoin {
 		// If a inner join without "ON" or "USING" clause, it's a cartesian
 		// product over the join tables.
@@ -2857,7 +2857,7 @@ func (b *PlanBuilder) buildSemiJoin(outerPlan, innerPlan LogicalPlan, onConditio
 		onCondition[i] = expr.Decorrelate(outerPlan.Schema())
 	}
 	joinPlan.SetChildren(outerPlan, innerPlan)
-	joinPlan.attachOnConds(onCondition)
+	joinPlan.AttachOnConds(onCondition)
 	joinPlan.names = make([]*types.FieldName, outerPlan.Schema().Len(), outerPlan.Schema().Len()+innerPlan.Schema().Len()+1)
 	copy(joinPlan.names, outerPlan.OutputNames())
 	if asScalar {
