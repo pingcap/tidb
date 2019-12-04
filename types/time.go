@@ -911,7 +911,7 @@ type Duration struct {
 
 //Add adds d to d, returns a duration value.
 func (d Duration) Add(v Duration) (Duration, error) {
-	if &v == nil {
+	if v == (Duration{}) {
 		return d, nil
 	}
 	dsum, err := AddInt64(int64(d.Duration), int64(v.Duration))
@@ -926,7 +926,7 @@ func (d Duration) Add(v Duration) (Duration, error) {
 
 // Sub subtracts d to d, returns a duration value.
 func (d Duration) Sub(v Duration) (Duration, error) {
-	if &v == nil {
+	if v == (Duration{}) {
 		return d, nil
 	}
 	dsum, err := SubInt64(int64(d.Duration), int64(v.Duration))
