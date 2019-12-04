@@ -587,41 +587,6 @@ func (s *testSessionSuite) TestReadOnlyNotInHistory(c *C) {
 	c.Assert(history.Count(), Equals, 0)
 }
 
-func (s *testSessionSuite) TestNoHistoryWhenDisableRetry(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
-	tk.MustExec("create table history (a int)")
-	tk.MustExec("set @@autocommit = 0")
-
-	// retry_limit = 0 will not add history.
-	tk.MustExec("set @@tidb_retry_limit = 0")
-	tk.MustExec("insert history values (1)")
-	c.Assert(session.GetHistory(tk.Se).Count(), Equals, 0)
-
-	// Disable auto_retry will add history for auto committed only
-	tk.MustExec("set @@autocommit = 1")
-	tk.MustExec("set @@tidb_retry_limit = 10")
-	tk.MustExec("set @@tidb_disable_txn_auto_retry = 1")
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/session/keepHistory", `1*return(true)->return(false)`), IsNil)
-	tk.MustExec("insert history values (1)")
-	c.Assert(session.GetHistory(tk.Se).Count(), Equals, 1)
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/session/keepHistory"), IsNil)
-	tk.MustExec("begin")
-	tk.MustExec("insert history values (1)")
-	c.Assert(session.GetHistory(tk.Se).Count(), Equals, 0)
-	tk.MustExec("commit")
-
-	// Enable auto_retry will add history for both.
-	tk.MustExec("set @@tidb_disable_txn_auto_retry = 0")
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/session/keepHistory", `1*return(true)->return(false)`), IsNil)
-	tk.MustExec("insert history values (1)")
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/session/keepHistory"), IsNil)
-	c.Assert(session.GetHistory(tk.Se).Count(), Equals, 1)
-	tk.MustExec("begin")
-	tk.MustExec("insert history values (1)")
-	c.Assert(session.GetHistory(tk.Se).Count(), Equals, 2)
-	tk.MustExec("commit")
-}
-
 func (s *testSessionSuite) TestNoRetryForCurrentTxn(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk1 := testkit.NewTestKitWithInit(c, s.store)
