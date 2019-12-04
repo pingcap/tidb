@@ -37,12 +37,12 @@ import (
 // 3. Passing the extractor to the `ClusterConfigReaderExec` executor
 // 4. Executor sends requests to the target components instead of all of the components
 type MemTablePredicateExtractor interface {
-	// extractCols from predicats and returns the remained predicates
+	// Extracts predicates which can be pushed down and returns the remained predicates
 	Extract(*expression.Schema, []*types.FieldName, []expression.Expression) (remained []expression.Expression)
 }
 
 // extractHelper contains some common utililty functions for all extractor.
-// define a individual struct instead of a bunch of unexported functions
+// define an individual struct instead of a bunch of un-exported functions
 // to avoid polluting the global scope of current package.
 type extractHelper struct{}
 
@@ -152,10 +152,11 @@ func (e *ClusterConfigTableExtractor) Extract(schema *expression.Schema, names [
 			extractCols[schema.Columns[i].UniqueID] = name
 		}
 	}
-	// We don't support change the schema of memory table, so something must
-	// be wrong if the `type/address` columns cannot be found in the schema.
-	// The purpose of the following assert is used to make test failure because
-	// it will never happen if our release passing all test cases.
+	// We use the column name literal (local constant) to find the column in `names`
+	// instead of using a global constant. So the assumption (named `type/address`)
+	// maybe not satisfied if the column name has been changed in the future.
+	// The purpose of the following assert is used to make sure our assumption doesn't
+	// be broken (or hint the author who refactors this part to change here too).
 	if len(extractCols) != 2 {
 		panic(fmt.Sprintf("push down columns `type/address` not found in schema, got: %+v", extractCols))
 	}

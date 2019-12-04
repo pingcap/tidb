@@ -2712,7 +2712,7 @@ func (b *PlanBuilder) buildMemTable(ctx context.Context, dbName model.CIStr, tab
 	p.SetSchema(schema)
 	p.names = names
 
-	// Somes memory tables can receive some predicates
+	// Some memory tables can receive some predicates
 	switch tableInfo.Name.L {
 	case strings.ToLower(infoschema.TableTiDBClusterConfig):
 		p.Extractor = &ClusterConfigTableExtractor{}
