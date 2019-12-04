@@ -253,6 +253,7 @@
         "SQL": "select a from (select floor(a) as a from t) as t2",
         "Result": [
           "Group#0 Schema:[Column#13]",
+          "    Projection_4 input:[Group#1], floor(test.t.a)->Column#13",
           "    Projection_2 input:[Group#1], floor(test.t.a)->Column#13",
           "Group#1 Schema:[test.t.a]",
           "    TableScan_1 table:t"
@@ -261,10 +262,8 @@
       {
         "SQL": "select a from (select a, b from (select a, b, c from t) as t2) as t3",
         "Result": [
-          "Group#0 Schema:[test.t.a], UniqueKey:[test.t.a]",
-          "    Projection_6 input:[Group#1], test.t.a",
-          "Group#1 Schema:[test.t.a], UniqueKey:[test.t.a]",
-          "    TableScan_1 table:t, pk col:test.t.a"
+          "Group#0 Schema:[test.t.a]",
+          "    TableScan_1 table:t"
         ]
       },
       {
@@ -272,8 +271,8 @@
         "Result": [
           "Group#0 Schema:[Column#14]",
           "    Projection_4 input:[Group#1], plus(floor(test.t.a), test.t.c)->Column#14",
-          "Group#1 Schema:[test.t.a,test.t.c], UniqueKey:[test.t.a]",
-          "    TableScan_1 table:t, pk col:test.t.a"
+          "Group#1 Schema:[test.t.a,test.t.c]",
+          "    TableScan_1 table:t"
         ]
       }
     ]
