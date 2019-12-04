@@ -668,6 +668,9 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 		if exists {
 			user := fmt.Sprintf(`'%s'@'%s'`, spec.User.Username, spec.User.Hostname)
 			if !s.IfNotExists {
+				if s.IsCreateRole {
+					return ErrCannotUser.GenWithStackByArgs("CREATE ROLE", user)
+				}
 				return ErrCannotUser.GenWithStackByArgs("CREATE USER", user)
 			}
 			err := infoschema.ErrUserAlreadyExists.GenWithStackByArgs(user)
