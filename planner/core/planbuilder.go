@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/planner/property"
+	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -584,14 +585,14 @@ func (b *PlanBuilder) detectSelectWindow(sel *ast.SelectStmt) bool {
 	return false
 }
 
-func getPathByIndexName(paths []*accessPath, idxName model.CIStr, tblInfo *model.TableInfo) *accessPath {
-	var tablePath *accessPath
+func getPathByIndexName(paths []*util.AccessPath, idxName model.CIStr, tblInfo *model.TableInfo) *util.AccessPath {
+	var tablePath *util.AccessPath
 	for _, path := range paths {
-		if path.isTablePath {
+		if path.IsTablePath {
 			tablePath = path
 			continue
 		}
-		if path.index.Name.L == idxName.L {
+		if path.Index.Name.L == idxName.L {
 			return path
 		}
 	}
@@ -605,26 +606,26 @@ func isPrimaryIndex(indexName model.CIStr) bool {
 	return indexName.L == "primary"
 }
 
-func (b *PlanBuilder) getPossibleAccessPaths(indexHints []*ast.IndexHint, tbl table.Table, dbName, tblName model.CIStr) ([]*accessPath, error) {
+func (b *PlanBuilder) getPossibleAccessPaths(indexHints []*ast.IndexHint, tbl table.Table, dbName, tblName model.CIStr) ([]*util.AccessPath, error) {
 	tblInfo := tbl.Meta()
-	publicPaths := make([]*accessPath, 0, len(tblInfo.Indices)+2)
+	publicPaths := make([]*util.AccessPath, 0, len(tblInfo.Indices)+2)
 	tp := kv.TiKV
 	if tbl.Type().IsClusterTable() {
 		tp = kv.TiDB
 	}
-	publicPaths = append(publicPaths, &accessPath{isTablePath: true, storeType: tp})
+	publicPaths = append(publicPaths, &util.AccessPath{IsTablePath: true, StoreType: tp})
 	if tblInfo.TiFlashReplica != nil && tblInfo.TiFlashReplica.Available {
-		publicPaths = append(publicPaths, &accessPath{isTablePath: true, storeType: kv.TiFlash})
+		publicPaths = append(publicPaths, &util.AccessPath{IsTablePath: true, StoreType: kv.TiFlash})
 	}
 	for _, index := range tblInfo.Indices {
 		if index.State == model.StatePublic {
-			publicPaths = append(publicPaths, &accessPath{index: index})
+			publicPaths = append(publicPaths, &util.AccessPath{Index: index})
 		}
 	}
 
 	hasScanHint, hasUseOrForce := false, false
-	available := make([]*accessPath, 0, len(publicPaths))
-	ignored := make([]*accessPath, 0, len(publicPaths))
+	available := make([]*util.AccessPath, 0, len(publicPaths))
+	ignored := make([]*util.AccessPath, 0, len(publicPaths))
 
 	// Extract comment-style index hint like /*+ INDEX(t, idx1, idx2) */.
 	indexHintsLen := len(indexHints)
@@ -649,7 +650,7 @@ func (b *PlanBuilder) getPossibleAccessPaths(indexHints []*ast.IndexHint, tbl ta
 		if hint.IndexNames == nil && hint.HintType != ast.HintIgnore {
 			if path := getTablePath(publicPaths); path != nil {
 				hasUseOrForce = true
-				path.forced = true
+				path.Forced = true
 				available = append(available, path)
 			}
 		}
@@ -672,7 +673,7 @@ func (b *PlanBuilder) getPossibleAccessPaths(indexHints []*ast.IndexHint, tbl ta
 			// Currently we don't distinguish between "FORCE" and "USE" because
 			// our cost estimation is not reliable.
 			hasUseOrForce = true
-			path.forced = true
+			path.Forced = true
 			available = append(available, path)
 		}
 	}
@@ -686,25 +687,25 @@ func (b *PlanBuilder) getPossibleAccessPaths(indexHints []*ast.IndexHint, tbl ta
 	// If we have got "FORCE" or "USE" index hint but got no available index,
 	// we have to use table scan.
 	if len(available) == 0 {
-		available = append(available, &accessPath{isTablePath: true})
+		available = append(available, &util.AccessPath{IsTablePath: true})
 	}
 	return available, nil
 }
 
-func (b *PlanBuilder) filterPathByIsolationRead(paths []*accessPath) ([]*accessPath, error) {
+func (b *PlanBuilder) filterPathByIsolationRead(paths []*util.AccessPath) ([]*util.AccessPath, error) {
 	// TODO: filter paths with isolation read locations.
 	isolationReadEngines := b.ctx.GetSessionVars().GetIsolationReadEngines()
 	availableEngine := map[kv.StoreType]struct{}{}
 	var availableEngineStr string
 	for i := len(paths) - 1; i >= 0; i-- {
-		if _, ok := availableEngine[paths[i].storeType]; !ok {
-			availableEngine[paths[i].storeType] = struct{}{}
+		if _, ok := availableEngine[paths[i].StoreType]; !ok {
+			availableEngine[paths[i].StoreType] = struct{}{}
 			if availableEngineStr != "" {
 				availableEngineStr += ", "
 			}
-			availableEngineStr += paths[i].storeType.Name()
+			availableEngineStr += paths[i].StoreType.Name()
 		}
-		if _, ok := isolationReadEngines[paths[i].storeType]; !ok {
+		if _, ok := isolationReadEngines[paths[i].StoreType]; !ok {
 			paths = append(paths[:i], paths[i+1:]...)
 		}
 	}
@@ -717,13 +718,13 @@ func (b *PlanBuilder) filterPathByIsolationRead(paths []*accessPath) ([]*accessP
 	return paths, err
 }
 
-func removeIgnoredPaths(paths, ignoredPaths []*accessPath, tblInfo *model.TableInfo) []*accessPath {
+func removeIgnoredPaths(paths, ignoredPaths []*util.AccessPath, tblInfo *model.TableInfo) []*util.AccessPath {
 	if len(ignoredPaths) == 0 {
 		return paths
 	}
-	remainedPaths := make([]*accessPath, 0, len(paths))
+	remainedPaths := make([]*util.AccessPath, 0, len(paths))
 	for _, path := range paths {
-		if path.isTablePath || getPathByIndexName(ignoredPaths, path.index.Name, tblInfo) == nil {
+		if path.IsTablePath || getPathByIndexName(ignoredPaths, path.Index.Name, tblInfo) == nil {
 			remainedPaths = append(remainedPaths, path)
 		}
 	}
