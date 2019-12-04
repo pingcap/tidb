@@ -301,6 +301,91 @@
         "Result": [
           "3"
         ]
+      },
+      {
+        "SQL": "select * from ((select a as aa from t t1) union all (select b as aa from t t2)) as t3 order by aa",
+        "Plan": [
+          "Projection_15 20000.00 root Column#5",
+          "└─Sort_26 20000.00 root Column#5:asc",
+          "  └─Union_17 20000.00 root ",
+          "    ├─Projection_18 10000.00 root test.t.a",
+          "    │ └─Projection_19 10000.00 root test.t.a",
+          "    │   └─TableReader_20 10000.00 root data:TableScan_21",
+          "    │     └─TableScan_21 10000.00 cop[tikv] table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
+          "    └─Projection_22 10000.00 root test.t.b",
+          "      └─Projection_23 10000.00 root test.t.b",
+          "        └─TableReader_24 10000.00 root data:TableScan_25",
+          "          └─TableScan_25 10000.00 cop[tikv] table:t2, range:[-inf,+inf], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1",
+          "2",
+          "3",
+          "4",
+          "11",
+          "22",
+          "33",
+          "44"
+        ]
+      }
+    ]
+  },
+  {
+    "Name": "TestIndexScan",
+    "Cases": [
+      {
+        "SQL": "select b from t",
+        "Plan": [
+          "Projection_9 10000.00 root test.t.b",
+          "└─IndexReader_14 10000.00 root index:IndexScan_15",
+          "  └─IndexScan_15 10000.00 cop[tikv] table:t, index:b, range:[NULL,+inf], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "2",
+          "5",
+          "8"
+        ]
+      },
+      {
+        "SQL": "select a from t order by b",
+        "Plan": [
+          "Projection_11 10000.00 root test.t.a",
+          "└─Projection_13 10000.00 root test.t.a, test.t.b",
+          "  └─IndexReader_16 10000.00 root index:IndexScan_17",
+          "    └─IndexScan_17 10000.00 cop[tikv] table:t, index:b, range:[NULL,+inf], keep order:true, stats:pseudo"
+        ],
+        "Result": [
+          "1",
+          "4",
+          "7"
+        ]
+      },
+      {
+        "SQL": "select c from t",
+        "Plan": [
+          "Projection_7 10000.00 root test.t.c",
+          "└─IndexReader_10 10000.00 root index:IndexScan_11",
+          "  └─IndexScan_11 10000.00 cop[tikv] table:t, index:c, b, range:[NULL,+inf], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "3",
+          "6",
+          "9"
+        ]
+      },
+      {
+        "SQL": "select a from t order by c",
+        "Plan": [
+          "Projection_9 10000.00 root test.t.a",
+          "└─Projection_11 10000.00 root test.t.a, test.t.c",
+          "  └─IndexReader_13 10000.00 root index:IndexScan_14",
+          "    └─IndexScan_14 10000.00 cop[tikv] table:t, index:c, b, range:[NULL,+inf], keep order:true, stats:pseudo"
+        ],
+        "Result": [
+          "1",
+          "4",
+          "7"
+        ]
       }
     ]
   },
