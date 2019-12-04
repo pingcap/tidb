@@ -113,7 +113,7 @@ type LogicalPlan interface {
 
 	// PreparePossibleProperties is only used for join and aggregation. Like group by a,b,c, all permutation of (a,b,c) is
 	// valid, but the ordered indices in leaf plan is limited. So we can get all possible order properties by a pre-walking.
-	PreparePossibleProperties(childrenProperties ...[][]*expression.Column) [][]*expression.Column
+	PreparePossibleProperties(schema *expression.Schema, childrenProperties ...[][]*expression.Column) [][]*expression.Column
 
 	// exhaustPhysicalPlans generates all possible plans that can match the required property.
 	exhaustPhysicalPlans(*property.PhysicalProperty) []PhysicalPlan

@@ -24,10 +24,10 @@ func preparePossibleProperties(lp LogicalPlan) [][]*expression.Column {
 	for _, child := range lp.Children() {
 		childrenProperties = append(childrenProperties, preparePossibleProperties(child))
 	}
-	return lp.PreparePossibleProperties(childrenProperties...)
+	return lp.PreparePossibleProperties(lp.Schema(), childrenProperties...)
 }
 
-func (ds *DataSource) PreparePossibleProperties(childrenProperties ...[][]*expression.Column) [][]*expression.Column {
+func (ds *DataSource) PreparePossibleProperties(schema *expression.Schema, childrenProperties ...[][]*expression.Column) [][]*expression.Column {
 	result := make([][]*expression.Column, 0, len(ds.possibleAccessPaths))
 
 	for _, path := range ds.possibleAccessPaths {
@@ -52,7 +52,7 @@ func (ds *DataSource) PreparePossibleProperties(childrenProperties ...[][]*expre
 	return result
 }
 
-func (p *LogicalSort) PreparePossibleProperties(childrenProperties ...[][]*expression.Column) [][]*expression.Column {
+func (p *LogicalSort) PreparePossibleProperties(schema *expression.Schema, childrenProperties ...[][]*expression.Column) [][]*expression.Column {
 	propCols := getPossiblePropertyFromByItems(p.ByItems)
 	if len(propCols) == 0 {
 		return nil
@@ -60,7 +60,7 @@ func (p *LogicalSort) PreparePossibleProperties(childrenProperties ...[][]*expre
 	return [][]*expression.Column{propCols}
 }
 
-func (p *LogicalTopN) PreparePossibleProperties(childrenProperties ...[][]*expression.Column) [][]*expression.Column {
+func (p *LogicalTopN) PreparePossibleProperties(schema *expression.Schema, childrenProperties ...[][]*expression.Column) [][]*expression.Column {
 	propCols := getPossiblePropertyFromByItems(p.ByItems)
 	if len(propCols) == 0 {
 		return nil
@@ -80,11 +80,11 @@ func getPossiblePropertyFromByItems(items []*ByItems) []*expression.Column {
 	return cols
 }
 
-func (p *baseLogicalPlan) PreparePossibleProperties(childrenProperties ...[][]*expression.Column) [][]*expression.Column {
+func (p *baseLogicalPlan) PreparePossibleProperties(schema *expression.Schema, childrenProperties ...[][]*expression.Column) [][]*expression.Column {
 	return nil
 }
 
-func (p *LogicalProjection) PreparePossibleProperties(childrenProperties ...[][]*expression.Column) [][]*expression.Column {
+func (p *LogicalProjection) PreparePossibleProperties(schema *expression.Schema, childrenProperties ...[][]*expression.Column) [][]*expression.Column {
 	childProperties := childrenProperties[0]
 	oldCols := make([]*expression.Column, 0, p.schema.Len())
 	newCols := make([]*expression.Column, 0, p.schema.Len())
@@ -112,7 +112,7 @@ func (p *LogicalProjection) PreparePossibleProperties(childrenProperties ...[][]
 	return childProperties
 }
 
-func (p *LogicalJoin) PreparePossibleProperties(childrenProperties ...[][]*expression.Column) [][]*expression.Column {
+func (p *LogicalJoin) PreparePossibleProperties(schema *expression.Schema, childrenProperties ...[][]*expression.Column) [][]*expression.Column {
 	leftProperties := childrenProperties[0]
 	rightProperties := childrenProperties[1]
 	// TODO: We should consider properties propagation.
@@ -136,7 +136,7 @@ func (p *LogicalJoin) PreparePossibleProperties(childrenProperties ...[][]*expre
 	return resultProperties
 }
 
-func (la *LogicalAggregation) PreparePossibleProperties(childrenProperties ...[][]*expression.Column) [][]*expression.Column {
+func (la *LogicalAggregation) PreparePossibleProperties(schema *expression.Schema, childrenProperties ...[][]*expression.Column) [][]*expression.Column {
 	childProps := childrenProperties[0]
 	// If there's no group-by item, the stream aggregation could have no order property. So we can add an empty property
 	// when its group-by item is empty.
