@@ -83,7 +83,7 @@ func (path *AccessPath) SplitCorColAccessCondFromFilters(eqOrInCount int) (acces
 	return access, remained
 }
 
-// getEqOrInColOffset checks if the expression is a eq function that one side is constant or correlated column
+// isColEqCorColOrConstant checks if the expression is a eq function that one side is constant or correlated column
 // and another is column.
 func isColEqCorColOrConstant(filter expression.Expression, col *expression.Column) bool {
 	f, ok := filter.(*expression.ScalarFunction)
