@@ -14,6 +14,7 @@
 package perfschema
 
 import (
+	"fmt"
 	"sync"
 
 	"github.com/pingcap/parser"
@@ -39,8 +40,7 @@ func Init() {
 	initOnce := func() {
 		p := parser.New()
 		tbls := make([]*model.TableInfo, 0)
-		dbID := autoid.GenLocalSchemaID()
-
+		dbID := autoid.PerformanceSchemaDBID
 		for _, sql := range perfSchemaTables {
 			stmt, err := p.ParseOneStmt(sql, "", "")
 			if err != nil {
@@ -51,9 +51,13 @@ func Init() {
 				panic(err)
 			}
 			tbls = append(tbls, meta)
-			meta.ID = autoid.GenLocalSchemaID()
-			for _, c := range meta.Columns {
-				c.ID = autoid.GenLocalSchemaID()
+			var ok bool
+			meta.ID, ok = tableIDMap[meta.Name.O]
+			if !ok {
+				panic(fmt.Sprintf("get performance_schema table id failed, unknown system table `%v`", meta.Name.O))
+			}
+			for i, c := range meta.Columns {
+				c.ID = int64(i) + 1
 			}
 		}
 		dbInfo := &model.DBInfo{

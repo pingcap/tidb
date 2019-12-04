@@ -167,9 +167,9 @@ func InjectProjBelowSort(p PhysicalPlan, orderByItems []*ByItems) PhysicalPlan {
 	childPlan := p.Children()[0]
 	bottomProjSchemaCols := make([]*expression.Column, 0, len(childPlan.Schema().Columns)+numOrderByItems)
 	bottomProjExprs := make([]expression.Expression, 0, len(childPlan.Schema().Columns)+numOrderByItems)
-	for i, col := range childPlan.Schema().Columns {
+	for _, col := range childPlan.Schema().Columns {
 		newCol := col.Clone().(*expression.Column)
-		newCol.Index = i
+		newCol.Index = childPlan.Schema().ColumnIndex(newCol)
 		bottomProjSchemaCols = append(bottomProjSchemaCols, newCol)
 		bottomProjExprs = append(bottomProjExprs, newCol)
 	}

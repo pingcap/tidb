@@ -52,6 +52,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/plugin"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -59,6 +60,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sys/linux"
 	"go.uber.org/zap"
+	"google.golang.org/grpc"
 )
 
 var (
@@ -83,13 +85,11 @@ func init() {
 }
 
 var (
-	errUnknownFieldType    = terror.ClassServer.New(codeUnknownFieldType, "unknown field type")
-	errInvalidPayloadLen   = terror.ClassServer.New(codeInvalidPayloadLen, "invalid payload length")
-	errInvalidSequence     = terror.ClassServer.New(codeInvalidSequence, "invalid sequence")
-	errInvalidType         = terror.ClassServer.New(codeInvalidType, "invalid type")
-	errNotAllowedCommand   = terror.ClassServer.New(codeNotAllowedCommand, "the used command is not allowed with this TiDB version")
-	errAccessDenied        = terror.ClassServer.New(codeAccessDenied, mysql.MySQLErrName[mysql.ErrAccessDenied])
-	errMaxExecTimeExceeded = terror.ClassServer.New(codeMaxExecTimeExceeded, mysql.MySQLErrName[mysql.ErrMaxExecTimeExceeded])
+	errUnknownFieldType  = terror.ClassServer.New(codeUnknownFieldType, "unknown field type")
+	errInvalidSequence   = terror.ClassServer.New(codeInvalidSequence, "invalid sequence")
+	errInvalidType       = terror.ClassServer.New(codeInvalidType, "invalid type")
+	errNotAllowedCommand = terror.ClassServer.New(mysql.ErrNotAllowedCommand, mysql.MySQLErrName[mysql.ErrNotAllowedCommand])
+	errAccessDenied      = terror.ClassServer.New(mysql.ErrAccessDenied, mysql.MySQLErrName[mysql.ErrAccessDenied])
 )
 
 // DefaultCapability is the capability of the server when it is created using the default configuration.
@@ -111,12 +111,14 @@ type Server struct {
 	concurrentLimiter *TokenLimiter
 	clients           map[uint32]*clientConn
 	capability        uint32
+	dom               *domain.Domain
 
 	// stopListenerCh is used when a critical error occurred, we don't want to exit the process, because there may be
 	// a supervisor automatically restart it, then new client connection will be created, but we can't server it.
 	// So we just stop the listener and store to force clients to chose other TiDB servers.
 	stopListenerCh chan struct{}
 	statusServer   *http.Server
+	grpcServer     *grpc.Server
 }
 
 // ConnectionCount gets current connection count.
@@ -137,6 +139,11 @@ func (s *Server) getToken() *Token {
 
 func (s *Server) releaseToken(token *Token) {
 	s.concurrentLimiter.Put(token)
+}
+
+// SetDomain use to set the server domain.
+func (s *Server) SetDomain(dom *domain.Domain) {
+	s.dom = dom
 }
 
 // newConn creates a new *clientConn from a net.Conn.
@@ -393,6 +400,10 @@ func (s *Server) Close() {
 		terror.Log(errors.Trace(err))
 		s.statusServer = nil
 	}
+	if s.grpcServer != nil {
+		s.grpcServer.Stop()
+		s.grpcServer = nil
+	}
 	metrics.ServerEventCounter.WithLabelValues(metrics.EventClose).Inc()
 }
 
@@ -613,21 +624,15 @@ func (s *Server) kickIdleConnection() {
 
 // Server error codes.
 const (
-	codeUnknownFieldType  = 1
-	codeInvalidPayloadLen = 2
-	codeInvalidSequence   = 3
-	codeInvalidType       = 4
-
-	codeNotAllowedCommand   = 1148
-	codeAccessDenied        = mysql.ErrAccessDenied
-	codeMaxExecTimeExceeded = mysql.ErrMaxExecTimeExceeded
+	codeUnknownFieldType = 1
+	codeInvalidSequence  = 3
+	codeInvalidType      = 4
 )
 
 func init() {
 	serverMySQLErrCodes := map[terror.ErrCode]uint16{
-		codeNotAllowedCommand:   mysql.ErrNotAllowedCommand,
-		codeAccessDenied:        mysql.ErrAccessDenied,
-		codeMaxExecTimeExceeded: mysql.ErrMaxExecTimeExceeded,
+		mysql.ErrNotAllowedCommand: mysql.ErrNotAllowedCommand,
+		mysql.ErrAccessDenied:      mysql.ErrAccessDenied,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassServer] = serverMySQLErrCodes
 }

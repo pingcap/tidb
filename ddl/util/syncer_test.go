@@ -20,6 +20,7 @@ import (
 	"testing"
 	"time"
 
+	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/terror"
 	. "github.com/pingcap/tidb/ddl"
@@ -34,6 +35,10 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 )
+
+func TestT(t *testing.T) {
+	TestingT(t)
+}
 
 const minInterval = 10 * time.Nanosecond // It's used to test timeout.
 

@@ -199,6 +199,8 @@ type Column struct {
 	InOperand bool
 	// VirtualExpr is used to save expression for virtual column
 	VirtualExpr Expression
+
+	OrigName string
 }
 
 // Equal implements Expression interface.
@@ -314,6 +316,9 @@ const columnPrefix = "Column#"
 
 // String implements Stringer interface.
 func (col *Column) String() string {
+	if col.OrigName != "" {
+		return col.OrigName
+	}
 	var builder strings.Builder
 	fmt.Fprintf(&builder, "%s%d", columnPrefix, col.UniqueID)
 	return builder.String()

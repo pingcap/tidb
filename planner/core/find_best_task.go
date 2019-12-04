@@ -20,7 +20,6 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -183,33 +182,16 @@ func (p *baseLogicalPlan) findBestTask(prop *property.PhysicalProperty) (bestTas
 	return bestTask, nil
 }
 
-// tryToGetMemTask will check if this table is a mem table. If it is, it will produce a task.
-func (ds *DataSource) tryToGetMemTask(prop *property.PhysicalProperty) (task task, err error) {
+func (p *LogicalMemTable) findBestTask(prop *property.PhysicalProperty) (t task, err error) {
 	if !prop.IsEmpty() {
-		return nil, nil
+		return invalidTask, nil
 	}
-	if !infoschema.IsMemoryDB(ds.DBName.L) {
-		return nil, nil
-	}
-
 	memTable := PhysicalMemTable{
-		DBName:      ds.DBName,
-		Table:       ds.tableInfo,
-		Columns:     ds.Columns,
-		TableAsName: ds.TableAsName,
-	}.Init(ds.ctx, ds.stats, ds.blockOffset)
-	memTable.SetSchema(ds.schema)
-
-	// Stop to push down these conditions.
-	var retPlan PhysicalPlan = memTable
-	if len(ds.pushedDownConds) > 0 {
-		sel := PhysicalSelection{
-			Conditions: ds.pushedDownConds,
-		}.Init(ds.ctx, ds.stats, ds.blockOffset)
-		sel.SetChildren(memTable)
-		retPlan = sel
-	}
-	return &rootTask{p: retPlan}, nil
+		Table:   p.tableInfo,
+		Columns: p.tableInfo.Columns,
+	}.Init(p.ctx, p.stats, p.blockOffset)
+	memTable.SetSchema(p.schema)
+	return &rootTask{p: memTable}, nil
 }
 
 // tryToGetDualTask will check if the push down predicate has false constant. If so, it will return table dual.
@@ -296,7 +278,12 @@ func compareCandidates(lhs, rhs *candidatePath) int {
 func (ds *DataSource) getTableCandidate(path *accessPath, prop *property.PhysicalProperty) *candidatePath {
 	candidate := &candidatePath{path: path}
 	pkCol := ds.getPKIsHandleCol()
-	candidate.isMatchProp = len(prop.Items) == 1 && pkCol != nil && prop.Items[0].Col.Equal(nil, pkCol)
+	if len(prop.Items) == 1 && pkCol != nil {
+		candidate.isMatchProp = prop.Items[0].Col.Equal(nil, pkCol)
+		if path.storeType == kv.TiFlash {
+			candidate.isMatchProp = candidate.isMatchProp && !prop.Items[0].Desc
+		}
+	}
 	candidate.columnSet = expression.ExtractColumnSet(path.accessConds)
 	candidate.isSingleScan = true
 	return candidate
@@ -423,13 +410,10 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty) (t task, err
 	if err != nil || t != nil {
 		return t, err
 	}
-	t, err = ds.tryToGetMemTask(prop)
-	if err != nil || t != nil {
-		return t, err
-	}
 
 	t = invalidTask
 	candidates := ds.skylinePruning(prop)
+
 	for _, candidate := range candidates {
 		path := candidate.path
 		if path.partialIndexPaths != nil {
@@ -451,6 +435,12 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty) (t task, err
 			}, nil
 		}
 		if path.isTablePath {
+			if ds.preferStoreType&preferTiFlash != 0 && path.storeType == kv.TiKV {
+				continue
+			}
+			if ds.preferStoreType&preferTiKV != 0 && path.storeType == kv.TiFlash {
+				continue
+			}
 			tblTask, err := ds.convertToTableScan(prop, candidate)
 			if err != nil {
 				return nil, err
@@ -472,6 +462,7 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty) (t task, err
 			t = idxTask
 		}
 	}
+
 	return
 }
 
@@ -749,7 +740,11 @@ func (is *PhysicalIndexScan) initSchema(idx *model.IndexInfo, idxExprCols []*exp
 	// If it's double read case, the first index must return handle. So we should add extra handle column
 	// if there isn't a handle column.
 	if isDoubleRead && !setHandle {
-		indexCols = append(indexCols, &expression.Column{ID: model.ExtraHandleID, UniqueID: is.ctx.GetSessionVars().AllocPlanColumnID()})
+		indexCols = append(indexCols, &expression.Column{
+			RetType:  types.NewFieldType(mysql.TypeLonglong),
+			ID:       model.ExtraHandleID,
+			UniqueID: is.ctx.GetSessionVars().AllocPlanColumnID(),
+		})
 	}
 	is.SetSchema(expression.NewSchema(indexCols...))
 }
@@ -969,8 +964,8 @@ func (ds *DataSource) crossEstimateRowCount(path *accessPath, expectedCnt float6
 	return scanCount, true, 0
 }
 
-// GetPhysicalScan returns PhysicalTableScan for the logical TableScan.
-func (s *TableScan) GetPhysicalScan(schema *expression.Schema, stats *property.StatsInfo) *PhysicalTableScan {
+// GetPhysicalScan returns PhysicalTableScan for the LogicalTableScan.
+func (s *LogicalTableScan) GetPhysicalScan(schema *expression.Schema, stats *property.StatsInfo) *PhysicalTableScan {
 	ds := s.Source
 	ts := PhysicalTableScan{
 		Table:           ds.tableInfo,
@@ -992,6 +987,28 @@ func (s *TableScan) GetPhysicalScan(schema *expression.Schema, stats *property.S
 		}
 	}
 	return ts
+}
+
+// GetPhysicalIndexScan returns PhysicalIndexScan for the logical IndexScan.
+func (s *LogicalIndexScan) GetPhysicalIndexScan(schema *expression.Schema, stats *property.StatsInfo) *PhysicalIndexScan {
+	ds := s.Source
+	is := PhysicalIndexScan{
+		Table:            ds.tableInfo,
+		TableAsName:      ds.TableAsName,
+		DBName:           ds.DBName,
+		Columns:          s.Columns,
+		Index:            s.Index,
+		IdxCols:          s.idxCols,
+		IdxColLens:       s.idxColLens,
+		AccessCondition:  s.AccessConds,
+		Ranges:           s.Ranges,
+		dataSourceSchema: ds.schema,
+		isPartition:      ds.isPartition,
+		physicalTableID:  ds.physicalTableID,
+	}.Init(ds.ctx, ds.blockOffset)
+	is.stats = stats
+	is.initSchema(s.Index, s.fullIdxCols, s.IsDoubleRead)
+	return is
 }
 
 // convertToTableScan converts the DataSource to table scan.
@@ -1049,12 +1066,6 @@ func (ds *DataSource) getOriginalPhysicalTableScan(prop *property.PhysicalProper
 		filterCondition: path.tableFilters,
 		StoreType:       path.storeType,
 	}.Init(ds.ctx, ds.blockOffset)
-	if ds.preferStoreType&preferTiFlash != 0 {
-		ts.StoreType = kv.TiFlash
-	}
-	if ds.preferStoreType&preferTiKV != 0 {
-		ts.StoreType = kv.TiKV
-	}
 	if ts.StoreType == kv.TiFlash {
 		// Append the AccessCondition to filterCondition because TiFlash only support full range scan for each
 		// region, do not reset ts.Ranges as it will help prune regions during `buildCopTasks`

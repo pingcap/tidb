@@ -180,7 +180,7 @@ func (e *tableScanExec) Next(ctx context.Context) (value [][]byte, err error) {
 }
 
 func (e *tableScanExec) getRowFromPoint(ran kv.KeyRange) ([][]byte, error) {
-	val, err := e.mvccStore.Get(ran.StartKey, e.startTS, e.isolationLevel)
+	val, err := e.mvccStore.Get(ran.StartKey, e.startTS, e.isolationLevel, e.resolvedLocks)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -361,7 +361,7 @@ func (e *indexScanExec) Next(ctx context.Context) (value [][]byte, err error) {
 
 // getRowFromPoint is only used for unique key.
 func (e *indexScanExec) getRowFromPoint(ran kv.KeyRange) ([][]byte, error) {
-	val, err := e.mvccStore.Get(ran.StartKey, e.startTS, e.isolationLevel)
+	val, err := e.mvccStore.Get(ran.StartKey, e.startTS, e.isolationLevel, e.resolvedLocks)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

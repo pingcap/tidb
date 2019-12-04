@@ -30,7 +30,7 @@ var DefaultOptimizer = NewOptimizer()
 
 // Optimizer is the struct for cascades optimizer.
 type Optimizer struct {
-	transformationRuleMap map[memo.Operand][]TransformationID
+	transformationRuleMap map[memo.Operand][]Transformation
 	implementationRuleMap map[memo.Operand][]ImplementationRule
 }
 
@@ -44,7 +44,7 @@ func NewOptimizer() *Optimizer {
 }
 
 // ResetTransformationRules resets the transformationRuleMap of the optimizer, and returns the optimizer.
-func (opt *Optimizer) ResetTransformationRules(rules map[memo.Operand][]TransformationID) *Optimizer {
+func (opt *Optimizer) ResetTransformationRules(rules map[memo.Operand][]Transformation) *Optimizer {
 	opt.transformationRuleMap = rules
 	return opt
 }
@@ -55,9 +55,9 @@ func (opt *Optimizer) ResetImplementationRules(rules map[memo.Operand][]Implemen
 	return opt
 }
 
-// GetTransformationIDs gets the all the candidate TransformationIDs of the optimizer
+// GetTransformationRules gets the all the candidate Transformation rules of the optimizer
 // based on the logical plan node.
-func (opt *Optimizer) GetTransformationIDs(node plannercore.LogicalPlan) []TransformationID {
+func (opt *Optimizer) GetTransformationRules(node plannercore.LogicalPlan) []Transformation {
 	return opt.transformationRuleMap[memo.GetOperand(node)]
 }
 
@@ -107,7 +107,7 @@ func (opt *Optimizer) FindBestPlan(sctx sessionctx.Context, logical plannercore.
 	if err != nil {
 		return nil, 0, err
 	}
-	rootGroup := convert2Group(logical)
+	rootGroup := memo.Convert2Group(logical)
 	err = opt.onPhaseExploration(sctx, rootGroup)
 	if err != nil {
 		return nil, 0, err
@@ -120,32 +120,11 @@ func (opt *Optimizer) FindBestPlan(sctx sessionctx.Context, logical plannercore.
 	return p, cost, err
 }
 
-// convert2GroupExpr converts a logical plan to a GroupExpr.
-func convert2GroupExpr(node plannercore.LogicalPlan) *memo.GroupExpr {
-	e := memo.NewGroupExpr(node)
-	e.Children = make([]*memo.Group, 0, len(node.Children()))
-	for _, child := range node.Children() {
-		childGroup := convert2Group(child)
-		e.Children = append(e.Children, childGroup)
-	}
-	return e
-}
-
-// convert2Group converts a logical plan to a Group.
-func convert2Group(node plannercore.LogicalPlan) *memo.Group {
-	e := convert2GroupExpr(node)
-	g := memo.NewGroupWithSchema(e, node.Schema())
-	// Stats property for `Group` would be computed after exploration phase.
-	return g
-}
-
 func (opt *Optimizer) onPhasePreprocessing(sctx sessionctx.Context, plan plannercore.LogicalPlan) (plannercore.LogicalPlan, error) {
 	err := plan.PruneColumns(plan.Schema().Columns)
 	if err != nil {
 		return nil, err
 	}
-	// TODO: Build key info when convert LogicalPlan to GroupExpr.
-	plan.BuildKeyInfo()
 	return plan, nil
 }
 
@@ -195,9 +174,8 @@ func (opt *Optimizer) exploreGroup(g *memo.Group) error {
 // findMoreEquiv finds and applies the matched transformation rules.
 func (opt *Optimizer) findMoreEquiv(g *memo.Group, elem *list.Element) (eraseCur bool, err error) {
 	expr := elem.Value.(*memo.GroupExpr)
-	for _, ruleID := range opt.GetTransformationIDs(expr.ExprNode) {
-		rule := GetTransformationRule(ruleID)
-		pattern := GetPattern(ruleID)
+	for _, rule := range opt.GetTransformationRules(expr.ExprNode) {
+		pattern := rule.GetPattern()
 		if !pattern.Operand.Match(memo.GetOperand(expr.ExprNode)) {
 			continue
 		}
@@ -209,12 +187,22 @@ func (opt *Optimizer) findMoreEquiv(g *memo.Group, elem *list.Element) (eraseCur
 				continue
 			}
 
-			newExprs, erase, _, err := rule.OnTransform(iter)
+			newExprs, eraseOld, eraseAll, err := rule.OnTransform(iter)
 			if err != nil {
 				return false, err
 			}
 
-			eraseCur = eraseCur || erase
+			if eraseAll {
+				g.DeleteAll()
+				for _, e := range newExprs {
+					g.Insert(e)
+				}
+				// If we delete all of the other GroupExprs, we can break the search.
+				g.Explored = true
+				return false, nil
+			}
+
+			eraseCur = eraseCur || eraseOld
 			for _, e := range newExprs {
 				if !g.Insert(e) {
 					continue

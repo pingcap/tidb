@@ -31,7 +31,6 @@ type Encoder struct {
 	row
 	tempColIDs []int64
 	values     []types.Datum
-	tempData   []byte
 	sc         *stmtctx.StatementContext
 }
 

@@ -18,6 +18,7 @@ import (
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/metrics"
@@ -65,7 +66,10 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (*ExecStm
 	}
 
 	CountStmtNode(stmtNode, c.Ctx.GetSessionVars().InRestrictedSQL)
-	lowerPriority := needLowerPriority(finalPlan)
+	var lowerPriority bool
+	if c.Ctx.GetSessionVars().StmtCtx.Priority == mysql.NoPriority {
+		lowerPriority = needLowerPriority(finalPlan)
+	}
 	return &ExecStmt{
 		InfoSchema:    infoSchema,
 		Plan:          finalPlan,
