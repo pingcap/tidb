@@ -1788,7 +1788,6 @@ type testSchemaSuiteBase struct {
 	store     kv.Storage
 	lease     time.Duration
 	dom       *domain.Domain
-	checkLeak func()
 }
 
 type testSchemaSuite struct {
@@ -1902,9 +1901,9 @@ func (s *testSchemaSerialSuite) TestSchemaCheckerSQL(c *C) {
 	tk.MustExec(`commit;`)
 
 	// The schema version is out of date in the first transaction, and the SQL can't be retried.
-	session.SchemaChangedWithoutRetry = true
+	atomic.StoreUint32(&session.SchemaChangedWithoutRetry, 1)
 	defer func() {
-		session.SchemaChangedWithoutRetry = false
+		atomic.StoreUint32(&session.SchemaChangedWithoutRetry, 0)
 	}()
 	tk.MustExec(`begin;`)
 	tk1.MustExec(`alter table t modify column c bigint;`)
@@ -2858,7 +2857,7 @@ func (s *testSessionSuite2) TestIsolationRead(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.Se, err = session.CreateSession4Test(s.store)
 	c.Assert(err, IsNil)
-	c.Assert(len(tk.Se.GetSessionVars().GetIsolationReadEngines()), Equals, 2)
+	c.Assert(len(tk.Se.GetSessionVars().GetIsolationReadEngines()), Equals, 3)
 	tk.MustExec("set @@tidb_isolation_read_engines = 'tiflash';")
 	engines := tk.Se.GetSessionVars().GetIsolationReadEngines()
 	c.Assert(len(engines), Equals, 1)

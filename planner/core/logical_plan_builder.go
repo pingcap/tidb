@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/privilege"
@@ -436,10 +437,10 @@ func (ds *DataSource) setPreferredStoreType(hintInfo *tableHintInfo) {
 	} else {
 		alias = &hintTableInfo{dbName: ds.DBName, tblName: ds.tableInfo.Name, selectOffset: ds.SelectBlockOffset()}
 	}
-	if hintInfo.ifPreferTiFlash(alias) {
-		ds.preferStoreType |= preferTiFlash
-	}
 	if hintInfo.ifPreferTiKV(alias) {
+		ds.preferStoreType |= preferTiKV
+	}
+	if hintInfo.ifPreferTiFlash(alias) {
 		if ds.preferStoreType != 0 {
 			errMsg := fmt.Sprintf("Storage hints are conflict, you can only specify one storage type of table %s.%s",
 				alias.dbName.L, alias.tblName.L)
@@ -448,7 +449,19 @@ func (ds *DataSource) setPreferredStoreType(hintInfo *tableHintInfo) {
 			ds.preferStoreType = 0
 			return
 		}
-		ds.preferStoreType |= preferTiKV
+		ds.preferStoreType |= preferTiFlash
+		hasTiFlashPath := false
+		for _, path := range ds.possibleAccessPaths {
+			if path.storeType == kv.TiFlash {
+				hasTiFlashPath = true
+				break
+			}
+		}
+		// TODO: For now, if there is a TiFlash hint for a table, we enforce a TiFlash path. But hint is just a suggestion
+		//       for the planner. We can keep it since we need it to debug with PD and TiFlash. In future, this should be removed.
+		if !hasTiFlashPath {
+			ds.possibleAccessPaths = append(ds.possibleAccessPaths, &accessPath{isTablePath: true, storeType: kv.TiFlash})
+		}
 	}
 }
 
@@ -2492,7 +2505,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	}
 	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, dbName.L, tableInfo.Name.L, "", authErr)
 
-	if tbl.Type() == table.VirtualTable {
+	if tbl.Type().IsVirtualTable() {
 		return b.buildMemTable(ctx, dbName, tableInfo)
 	}
 
@@ -2517,7 +2530,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	if tblName.L == "" {
 		tblName = tn.Name
 	}
-	possiblePaths, err := b.getPossibleAccessPaths(tn.IndexHints, tableInfo, dbName, tblName)
+	possiblePaths, err := b.getPossibleAccessPaths(tn.IndexHints, tbl, dbName, tblName)
 	if err != nil {
 		return nil, err
 	}

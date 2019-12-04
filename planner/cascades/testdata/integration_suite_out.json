@@ -301,6 +301,32 @@
         "Result": [
           "3"
         ]
+      },
+      {
+        "SQL": "select * from ((select a as aa from t t1) union all (select b as aa from t t2)) as t3 order by aa",
+        "Plan": [
+          "Projection_15 20000.00 root Column#5",
+          "└─Sort_26 20000.00 root Column#5:asc",
+          "  └─Union_17 20000.00 root ",
+          "    ├─Projection_18 10000.00 root test.t.a",
+          "    │ └─Projection_19 10000.00 root test.t.a",
+          "    │   └─TableReader_20 10000.00 root data:TableScan_21",
+          "    │     └─TableScan_21 10000.00 cop[tikv] table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
+          "    └─Projection_22 10000.00 root test.t.b",
+          "      └─Projection_23 10000.00 root test.t.b",
+          "        └─TableReader_24 10000.00 root data:TableScan_25",
+          "          └─TableScan_25 10000.00 cop[tikv] table:t2, range:[-inf,+inf], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1",
+          "2",
+          "3",
+          "4",
+          "11",
+          "22",
+          "33",
+          "44"
+        ]
       }
     ]
   },
