@@ -81,10 +81,10 @@ func (p *LogicalSelection) PreparePossibleProperties(schema *expression.Schema, 
 
 func (p *LogicalWindow) PreparePossibleProperties(schema *expression.Schema, childrenProperties ...[][]*expression.Column) [][]*expression.Column {
 	result := make([]*expression.Column, 0, len(p.PartitionBy)+len(p.OrderBy))
-	for i, _ := range p.PartitionBy {
+	for i := range p.PartitionBy {
 		result = append(result, p.PartitionBy[i].Col)
 	}
-	for i, _ := range p.OrderBy {
+	for i := range p.OrderBy {
 		result = append(result, p.OrderBy[i].Col)
 	}
 	return [][]*expression.Column{result}
