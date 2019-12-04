@@ -100,6 +100,9 @@ type Config struct {
 	DelayCleanTableLock uint64      `toml:"delay-clean-table-lock" json:"delay-clean-table-lock"`
 	SplitRegionMaxNum   uint64      `toml:"split-region-max-num" json:"split-region-max-num"`
 	StmtSummary         StmtSummary `toml:"stmt-summary" json:"stmt-summary"`
+	// RepairMode indicates that the TiDB is in the repair mode for table meta.
+	RepairMode      bool     `toml:"repair-mode" json:"repair-mode"`
+	RepairTableList []string `toml:"repair-table-list" json:"repair-table-list"`
 }
 
 // nullableBool defaults unset bool options to unset instead of false, which enables us to know if the user has set 2
@@ -440,6 +443,8 @@ var defaultConf = Config{
 	EnableTableLock:              false,
 	DelayCleanTableLock:          0,
 	SplitRegionMaxNum:            1000,
+	RepairMode:                   false,
+	RepairTableList:              []string{},
 	TxnLocalLatches: TxnLocalLatches{
 		Enabled:  false,
 		Capacity: 2048000,
