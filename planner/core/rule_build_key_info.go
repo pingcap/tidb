@@ -15,8 +15,8 @@ package core
 
 import (
 	"context"
-
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 )
@@ -191,6 +191,38 @@ func (p *LogicalJoin) BuildKeyInfo(selfSchema *expression.Schema, childSchema []
 	}
 }
 
+// checkIndexCanBeKey checks whether an Index can be a Key in schema.
+func checkIndexCanBeKey(idx *model.IndexInfo, columns []*model.ColumnInfo, schema *expression.Schema) expression.KeyInfo {
+	if !idx.Unique {
+		return nil
+	}
+	newKey := make([]*expression.Column, 0, len(idx.Columns))
+	ok := true
+	for _, idxCol := range idx.Columns {
+		// The columns of this index should all occur in column schema.
+		// Since null value could be duplicate in unique key. So we check NotNull flag of every column.
+		find := false
+		for i, col := range columns {
+			if idxCol.Name.L == col.Name.L {
+				if !mysql.HasNotNullFlag(col.Flag) {
+					break
+				}
+				newKey = append(newKey, schema.Columns[i])
+				find = true
+				break
+			}
+		}
+		if !find {
+			ok = false
+			break
+		}
+	}
+	if ok {
+		return newKey
+	}
+	return nil
+}
+
 // BuildKeyInfo implements LogicalPlan BuildKeyInfo interface.
 func (ds *DataSource) BuildKeyInfo(selfSchema *expression.Schema, childSchema []*expression.Schema) {
 	selfSchema.Keys = nil
@@ -198,32 +230,7 @@ func (ds *DataSource) BuildKeyInfo(selfSchema *expression.Schema, childSchema []
 		if path.isTablePath {
 			continue
 		}
-		idx := path.index
-		if !idx.Unique {
-			continue
-		}
-		newKey := make([]*expression.Column, 0, len(idx.Columns))
-		ok := true
-		for _, idxCol := range idx.Columns {
-			// The columns of this index should all occur in column schema.
-			// Since null value could be duplicate in unique key. So we check NotNull flag of every column.
-			find := false
-			for i, col := range ds.Columns {
-				if idxCol.Name.L == col.Name.L {
-					if !mysql.HasNotNullFlag(ds.Columns[i].Flag) {
-						break
-					}
-					newKey = append(newKey, selfSchema.Columns[i])
-					find = true
-					break
-				}
-			}
-			if !find {
-				ok = false
-				break
-			}
-		}
-		if ok {
+		if newKey := checkIndexCanBeKey(path.index, ds.Columns, selfSchema); newKey != nil {
 			selfSchema.Keys = append(selfSchema.Keys, newKey)
 		}
 	}
@@ -238,13 +245,29 @@ func (ds *DataSource) BuildKeyInfo(selfSchema *expression.Schema, childSchema []
 }
 
 // BuildKeyInfo implements LogicalPlan BuildKeyInfo interface.
-func (ts *TableScan) BuildKeyInfo(selfSchema *expression.Schema, childSchema []*expression.Schema) {
+func (ts *LogicalTableScan) BuildKeyInfo(selfSchema *expression.Schema, childSchema []*expression.Schema) {
 	ts.Source.BuildKeyInfo(selfSchema, childSchema)
-	return
 }
 
 // BuildKeyInfo implements LogicalPlan BuildKeyInfo interface.
-func (tg *TableGather) BuildKeyInfo(selfSchema *expression.Schema, childSchema []*expression.Schema) {
+func (is *LogicalIndexScan) BuildKeyInfo(selfSchema *expression.Schema, childSchema []*expression.Schema) {
+	selfSchema.Keys = nil
+	for _, path := range is.Source.possibleAccessPaths {
+		if path.isTablePath {
+			continue
+		}
+		if newKey := checkIndexCanBeKey(path.index, is.Columns, selfSchema); newKey != nil {
+			selfSchema.Keys = append(selfSchema.Keys, newKey)
+		}
+	}
+	handle := is.getPKIsHandleCol()
+	if handle != nil {
+		selfSchema.Keys = append(selfSchema.Keys, []*expression.Column{handle})
+	}
+}
+
+// BuildKeyInfo implements LogicalPlan BuildKeyInfo interface.
+func (tg *TiKVSingleGather) BuildKeyInfo(selfSchema *expression.Schema, childSchema []*expression.Schema) {
 	selfSchema.Keys = childSchema[0].Keys
 }
 
