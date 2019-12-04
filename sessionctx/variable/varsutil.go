@@ -503,6 +503,7 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		TiDBOptDescScanFactor,
 		TiDBOptSeekFactor,
 		TiDBOptMemoryFactor,
+		TiDBOptDiskFactor,
 		TiDBOptConcurrencyFactor:
 		v, err := strconv.ParseFloat(value, 64)
 		if err != nil {
@@ -647,6 +648,8 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 				formatVal += kv.TiKV.Name()
 			case strings.EqualFold(engine, kv.TiFlash.Name()):
 				formatVal += kv.TiFlash.Name()
+			case strings.EqualFold(engine, kv.TiDB.Name()):
+				formatVal += kv.TiDB.Name()
 			default:
 				return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
 			}

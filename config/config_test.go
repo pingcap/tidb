@@ -23,6 +23,7 @@ import (
 	"github.com/BurntSushi/toml"
 	. "github.com/pingcap/check"
 	zaplog "github.com/pingcap/log"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/util/logutil"
 	tracing "github.com/uber/jaeger-client-go/config"
 )
@@ -179,6 +180,8 @@ alter-primary-key = true
 delay-clean-table-lock = 5
 split-region-max-num=10000
 enable-batch-dml = true
+server-version = "test_version"
+repair-mode = true
 [performance]
 txn-total-size-limit=2000
 [tikv-client]
@@ -196,6 +199,8 @@ max-sql-length=1024
 
 	c.Assert(conf.Load(configFile), IsNil)
 
+	c.Assert(conf.ServerVersion, Equals, "test_version")
+	c.Assert(mysql.ServerVersion, Equals, conf.ServerVersion)
 	// Test that the original value will not be clear by load the config file that does not contain the option.
 	c.Assert(conf.Binlog.Enable, Equals, true)
 	c.Assert(conf.Binlog.Strategy, Equals, "hash")
@@ -215,6 +220,7 @@ max-sql-length=1024
 	c.Assert(conf.StmtSummary.MaxStmtCount, Equals, uint(1000))
 	c.Assert(conf.StmtSummary.MaxSQLLength, Equals, uint(1024))
 	c.Assert(conf.EnableBatchDML, Equals, true)
+	c.Assert(conf.RepairMode, Equals, true)
 	c.Assert(f.Close(), IsNil)
 	c.Assert(os.Remove(configFile), IsNil)
 
@@ -347,5 +353,22 @@ func (s *testConfigSuite) TestOOMActionValid(c *C) {
 	for _, tt := range tests {
 		c1.OOMAction = tt.oomAction
 		c.Assert(c1.Valid() == nil, Equals, tt.valid)
+	}
+}
+
+func (s *testConfigSuite) TestTxnTotalSizeLimitValid(c *C) {
+	conf := NewConfig()
+	tests := []struct {
+		limit uint64
+		valid bool
+	}{
+		{4 << 10, true},
+		{10 << 30, true},
+		{10<<30 + 1, false},
+	}
+
+	for _, tt := range tests {
+		conf.Performance.TxnTotalSizeLimit = tt.limit
+		c.Assert(conf.Valid() == nil, Equals, tt.valid)
 	}
 }
