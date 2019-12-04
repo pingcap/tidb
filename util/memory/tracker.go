@@ -78,6 +78,12 @@ func (t *Tracker) SetBytesLimit(bytesLimit int64) {
 	t.bytesLimit = bytesLimit
 }
 
+// GetBytesLimit gets the bytes limit for this tracker.
+// "bytesLimit <= 0" means no limit.
+func (t *Tracker) GetBytesLimit() int64 {
+	return t.bytesLimit
+}
+
 // SetActionOnExceed sets the action when memory usage exceeds bytesLimit.
 func (t *Tracker) SetActionOnExceed(a ActionOnExceed) {
 	t.actionMu.Lock()
