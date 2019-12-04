@@ -124,10 +124,10 @@ type Table interface {
 	// Row returns a row for all columns.
 	Row(ctx sessionctx.Context, h int64) ([]types.Datum, error)
 
-	// Cols returns the columns of the table which is used in select.
+	// Cols returns the columns of the table which is used in select, excluding hidden columns.
 	Cols() []*Column
 
-	// WritableCols returns columns of the table in writable states.
+	// WritableCols returns columns of the table in writable states, excluding hidden columns.
 	// Writable states includes Public, WriteOnly, WriteOnlyReorganization.
 	WritableCols() []*Column
 
