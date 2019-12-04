@@ -351,6 +351,12 @@ const (
 
 	// TiDBStoreLimit indicates the limit of sending request to a store, 0 means without limit.
 	TiDBStoreLimit = "tidb_store_limit"
+
+	// TiDBMetricSchemaStep indicates the step when query metric schema.
+	TiDBMetricSchemaStep = "tidb_metric_schema_step"
+
+	// TiDBMetricSchemaRangeDuration indicates the range duration when query metric schema.
+	TiDBMetricSchemaRangeDuration = "tidb_metric_schema_range_duration"
 )
 
 // Default TiDB system variable values.
@@ -433,6 +439,9 @@ const (
 	DefTiDBEvolvePlanTaskEndTime       = "23:59 +0000"
 	DefInnodbLockWaitTimeout           = 50 // 50s
 	DefTiDBStoreLimit                  = 0
+	DefTiDBMetricSchemaStep            = 60 // 60s
+	DefTiDBMetricSchemaRangeDuration   = 60 // 60s
+
 )
 
 // Process global variables.

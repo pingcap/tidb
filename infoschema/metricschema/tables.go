@@ -1,4 +1,4 @@
-package metrictable
+package metricschema
 
 import (
 	"time"
@@ -72,8 +72,8 @@ func (vt *metricSchemaTable) getRows(ctx sessionctx.Context, cols []*table.Colum
 		return nil, err
 	}
 	// TODO: Get query range from plan instead of use default range.
-	queryRange := getDefaultQueryRange()
-	queryValue, err := queryMetric(metricAddr, tblDef, queryRange)
+	queryRange := getDefaultQueryRange(ctx)
+	queryValue, err := queryMetric(ctx, metricAddr, tblDef, queryRange)
 	if err != nil {
 		return nil, err
 	}
@@ -93,8 +93,8 @@ func (vt *metricSchemaTable) getRows(ctx sessionctx.Context, cols []*table.Colum
 	return rows, nil
 }
 
-func getDefaultQueryRange() promQLQueryRange {
-	return promQLQueryRange{Start: time.Now(), End: time.Now(), Step: time.Minute}
+func getDefaultQueryRange(ctx sessionctx.Context) promQLQueryRange {
+	return promQLQueryRange{Start: time.Now(), End: time.Now(), Step: time.Second * time.Duration(ctx.GetSessionVars().MetricSchemaStep)}
 }
 
 // IterRecords implements table.Table IterRecords interface.

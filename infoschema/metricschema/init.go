@@ -1,4 +1,4 @@
-package metrictable
+package metricschema
 
 import (
 	"sync"

@@ -1,4 +1,4 @@
-package metrictable
+package metricschema
 
 import (
 	"context"
@@ -17,7 +17,7 @@ import (
 
 const promReadTimeout = time.Second * 10
 
-func queryMetric(addr string, def metricTableDef, queryRange v1.Range) (pmodel.Value, error) {
+func queryMetric(sctx sessionctx.Context, addr string, def metricTableDef, queryRange v1.Range) (pmodel.Value, error) {
 	queryClient, err := newQueryClient(addr)
 	if err != nil {
 		return nil, err
@@ -27,7 +27,7 @@ func queryMetric(addr string, def metricTableDef, queryRange v1.Range) (pmodel.V
 	ctx, cancel := context.WithTimeout(context.Background(), promReadTimeout)
 	defer cancel()
 
-	promQL := def.genPromQL(nil)
+	promQL := def.genPromQL(sctx,nil)
 	return queryRangePromQL(ctx, promQLAPI, promQL, queryRange)
 }
 

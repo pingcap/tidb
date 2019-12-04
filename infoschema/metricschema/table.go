@@ -1,6 +1,7 @@
-package metrictable
+package metricschema
 
 import (
+	"github.com/pingcap/tidb/sessionctx"
 	"strconv"
 	"strings"
 	"time"
@@ -16,36 +17,30 @@ const (
 	promQRangeDurationKey   = "$RANGE_DURATION"
 )
 
-const metricDBName = "METRIC"
+const metricDBName = "METRIC_SCHEMA"
 
 type metricTableDef struct {
-	promQL        string
-	labels        []string
-	quantile      float64
-	rangeDuration int64 // unit is second.
+	promQL   string
+	labels   []string
+	quantile float64
 }
 
 var metricTableMap = map[string]metricTableDef{
 	"query_duration": {
-		promQL:        `histogram_quantile($QUANTILE, sum(rate(tidb_server_handle_query_duration_seconds_bucket{$LABEL_CONDITION}[$RANGE_DURATION])) by (le))`,
-		labels:        []string{"sql_type"},
-		quantile:      0.90,
-		rangeDuration: 60,
+		promQL:   `histogram_quantile($QUANTILE, sum(rate(tidb_server_handle_query_duration_seconds_bucket{$LABEL_CONDITION}[$RANGE_DURATION])) by (le))`,
+		labels:   []string{"instance", "sql_type"},
+		quantile: 0.90,
 	},
 	"up": {
-		promQL: `up`,
+		promQL: `up{$LABEL_CONDITION}`,
 		labels: []string{"instance", "job"},
 	},
 }
 
 func (def *metricTableDef) genColumnInfos() []columnInfo {
 	cols := []columnInfo{
-		{"time", mysql.TypeDatetime, 19, 0, nil, nil},
-		{"metric", mysql.TypeVarchar, 100, 0, nil, nil},
+		{"time", mysql.TypeDatetime, 19, 0, "CURRENT_TIMESTAMP", nil},
 		{"value", mysql.TypeDouble, 22, 0, nil, nil},
-		{"start_time", mysql.TypeDatetime, 19, 0, "CURRENT_TIMESTAMP", nil},
-		{"end_time", mysql.TypeDatetime, 19, 0, "CURRENT_TIMESTAMP", nil},
-		{"step", mysql.TypeLonglong, 21, 0, strconv.FormatInt(int64(getDefaultQueryRange().Step/time.Second), 10), nil},
 	}
 	for _, label := range def.labels {
 		cols = append(cols, columnInfo{label, mysql.TypeVarchar, 512, 0, nil, nil})
@@ -54,13 +49,10 @@ func (def *metricTableDef) genColumnInfos() []columnInfo {
 		defaultValue := strconv.FormatFloat(def.quantile, 'f', -1, 64)
 		cols = append(cols, columnInfo{"quantile", mysql.TypeDouble, 22, 0, defaultValue, nil})
 	}
-	if def.rangeDuration > 0 {
-		cols = append(cols, columnInfo{"range_duration", mysql.TypeLonglong, 21, 0, nil, nil})
-	}
 	return cols
 }
 
-func (def *metricTableDef) genPromQL(labels []string) string {
+func (def *metricTableDef) genPromQL(sctx sessionctx.Context, labels []string) string {
 	promQL := def.promQL
 	if strings.Contains(promQL, promQLQuantileKey) {
 		promQL = strings.Replace(promQL, promQLQuantileKey, strconv.FormatFloat(def.quantile, 'f', -1, 64), -1)
@@ -72,7 +64,7 @@ func (def *metricTableDef) genPromQL(labels []string) string {
 	}
 
 	if strings.Contains(promQL, promQRangeDurationKey) {
-		promQL = strings.Replace(promQL, promQRangeDurationKey, strconv.FormatInt(def.rangeDuration, 10)+"s", -1)
+		promQL = strings.Replace(promQL, promQRangeDurationKey, strconv.FormatInt(sctx.GetSessionVars().MetricSchemaRangeDuration, 10)+"s", -1)
 	}
 	return promQL
 }
@@ -100,24 +92,7 @@ func (def *metricTableDef) genRecord(metric pmodel.Metric, pair pmodel.SamplePai
 		Type: mysql.TypeDatetime,
 		Fsp:  types.MaxFsp,
 	}))
-	if metric != nil {
-		record = append(record, types.NewStringDatum(metric.String()))
-	} else {
-		record = append(record, types.NewStringDatum(""))
-	}
 	record = append(record, types.NewFloat64Datum(float64(pair.Value)))
-	record = append(record, types.NewTimeDatum(types.Time{
-		Time: types.FromGoTime(r.Start),
-		Type: mysql.TypeDatetime,
-		Fsp:  types.MaxFsp,
-	}))
-	record = append(record, types.NewTimeDatum(types.Time{
-		Time: types.FromGoTime(r.End),
-		Type: mysql.TypeDatetime,
-		Fsp:  types.MaxFsp,
-	}))
-
-	record = append(record, types.NewIntDatum(int64(r.Step/time.Second)))
 	for _, label := range def.labels {
 		v := ""
 		if metric != nil {
@@ -127,9 +102,6 @@ func (def *metricTableDef) genRecord(metric pmodel.Metric, pair pmodel.SamplePai
 	}
 	if def.quantile > 0 {
 		record = append(record, types.NewFloat64Datum(def.quantile))
-	}
-	if def.rangeDuration > 0 {
-		record = append(record, types.NewIntDatum(def.rangeDuration))
 	}
 	return record
 }
