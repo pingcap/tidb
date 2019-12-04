@@ -23,6 +23,7 @@ import (
 	"github.com/BurntSushi/toml"
 	. "github.com/pingcap/check"
 	zaplog "github.com/pingcap/log"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/util/logutil"
 	tracing "github.com/uber/jaeger-client-go/config"
 )
@@ -179,6 +180,7 @@ alter-primary-key = true
 delay-clean-table-lock = 5
 split-region-max-num=10000
 enable-batch-dml = true
+server-version = "test_version"
 repair-mode = true
 [performance]
 txn-total-size-limit=2000
@@ -197,6 +199,8 @@ max-sql-length=1024
 
 	c.Assert(conf.Load(configFile), IsNil)
 
+	c.Assert(conf.ServerVersion, Equals, "test_version")
+	c.Assert(mysql.ServerVersion, Equals, conf.ServerVersion)
 	// Test that the original value will not be clear by load the config file that does not contain the option.
 	c.Assert(conf.Binlog.Enable, Equals, true)
 	c.Assert(conf.Binlog.Strategy, Equals, "hash")
