@@ -56,5 +56,12 @@
       "select t1.a, t1.b from t1, t2 where t1.a = t2.a and t1.a > 2",
       "select t1.a, t1.b from t1, t2 where t1.a > t2.a and t2.b > 200"
     ]
+  },
+  {
+    "name": "TestDoubleRead",
+    "cases": [
+      "select * from t order by t.a",
+      "select * from t order by t.b"
+    ]
   }
 ]

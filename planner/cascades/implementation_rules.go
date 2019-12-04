@@ -48,6 +48,9 @@ var defaultImplementationMap = map[memo.Operand][]ImplementationRule{
 	memo.OperandTiKVSingleGather: {
 		&ImplTiKVSingleReadGather{},
 	},
+	memo.OperandTiKVDoubleGather: {
+		&ImplTiKVDoubleReadGather{},
+	},
 	memo.OperandShow: {
 		&ImplShow{},
 	},
@@ -145,6 +148,44 @@ func (r *ImplTiKVSingleReadGather) OnImplement(expr *memo.GroupExpr, reqProp *pr
 	return impl.NewTableReaderImpl(reader, sg.Source.TblColHists), nil
 }
 
+// ImplTiKVDoubleReadGather implements TiKVDoubleGather as PhysicalIndexLookUpReader.
+type ImplTiKVDoubleReadGather struct {
+}
+
+// Match implements ImplementationRule Match interface.
+func (r *ImplTiKVDoubleReadGather) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) (matched bool) {
+	if prop.IsEmpty() {
+		return true
+	}
+	reader := expr.ExprNode.(*plannercore.TiKVDoubleGather)
+	if all, _ := prop.AllSameOrder(); all {
+		for i, col := range reader.IndexCols {
+			if col.Equal(nil, prop.Items[0].Col) {
+				return plannercore.MatchIndicesProp(reader.IndexCols[i:], reader.IndexColLens[i:], prop.Items)
+			}
+		}
+	}
+	return false
+}
+
+// OnImplement implements ImplementationRule OnImplement interface.
+func (r *ImplTiKVDoubleReadGather) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) (memo.Implementation, error) {
+	logicProp := expr.Group.Prop
+	sg := expr.ExprNode.(*plannercore.TiKVDoubleGather)
+	var reader plannercore.PhysicalPlan
+	reader = sg.GetPhysicalIndexLookUpReader(logicProp.Schema, logicProp.Stats.ScaleByExpectCnt(reqProp.ExpectedCnt), reqProp, reqProp)
+	if sg.Source.HandleCol == nil && !reqProp.IsEmpty() {
+		proj := plannercore.PhysicalProjection{Exprs: expression.Column2Exprs(logicProp.Schema.Columns)}.Init(sg.SCtx(), logicProp.Stats, sg.SelectBlockOffset(), nil)
+		proj.SetSchema(logicProp.Schema)
+		proj.SetChildren(reader)
+		reader = proj
+	}
+	indexLookUp := impl.NewIndexLookUpReaderImpl(reader, sg.Source.TblColHists)
+	indexLookUp.KeepOrder = !reqProp.IsEmpty()
+	return indexLookUp, nil
+}
+
+
 // ImplTableScan implements TableScan as PhysicalTableScan.
 type ImplTableScan struct {
 }
@@ -152,7 +193,7 @@ type ImplTableScan struct {
 // Match implements ImplementationRule Match interface.
 func (r *ImplTableScan) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) (matched bool) {
 	ts := expr.ExprNode.(*plannercore.LogicalTableScan)
-	return prop.IsEmpty() || (len(prop.Items) == 1 && ts.Handle != nil && prop.Items[0].Col.Equal(nil, ts.Handle))
+	return prop.IsEmpty() || ts.IsDoubleRead || (len(prop.Items) == 1 && ts.Handle != nil && prop.Items[0].Col.Equal(nil, ts.Handle))
 }
 
 // OnImplement implements ImplementationRule OnImplement interface.
@@ -160,7 +201,11 @@ func (r *ImplTableScan) OnImplement(expr *memo.GroupExpr, reqProp *property.Phys
 	logicProp := expr.Group.Prop
 	logicalScan := expr.ExprNode.(*plannercore.LogicalTableScan)
 	ts := logicalScan.GetPhysicalScan(logicProp.Schema, logicProp.Stats.ScaleByExpectCnt(reqProp.ExpectedCnt))
-	if !reqProp.IsEmpty() {
+	if logicalScan.IsDoubleRead {
+		if !reqProp.IsEmpty() {
+			ts.AppendExtraHandleCol(logicalScan.Source)
+		}
+	} else if !reqProp.IsEmpty() {
 		ts.KeepOrder = true
 		ts.Desc = reqProp.Items[0].Desc
 	}

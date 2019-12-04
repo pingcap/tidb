@@ -171,3 +171,87 @@ func NewIndexScanImpl(scan *plannercore.PhysicalIndexScan, tblColHists *statisti
 		tblColHists: tblColHists,
 	}
 }
+
+// IndexLookUpReaderImpl is the Implementation of PhysicalIndexLookUpReader.
+type IndexLookUpReaderImpl struct {
+	baseImpl
+
+	KeepOrder          bool
+	DoubleReadNeedProj bool
+	tblColHists        *statistics.HistColl
+}
+
+// NewIndexLookUpReaderImpl creates a new table reader Implementation.
+func NewIndexLookUpReaderImpl(reader plannercore.PhysicalPlan, hists *statistics.HistColl) *IndexLookUpReaderImpl {
+	base := baseImpl{plan: reader}
+	impl := &IndexLookUpReaderImpl{
+		baseImpl:    base,
+		tblColHists: hists,
+	}
+	return impl
+}
+
+// CalcCost calculates the cost of the table reader Implementation.
+func (impl *IndexLookUpReaderImpl) CalcCost(outCount float64, children ...memo.Implementation) float64 {
+	var reader *plannercore.PhysicalIndexLookUpReader
+	if proj, isProj := impl.plan.(*plannercore.PhysicalProjection); isProj {
+		reader = proj.Children()[0].(*plannercore.PhysicalIndexLookUpReader)
+		impl.cost += proj.GetCost(proj.Stats().RowCount)
+	} else {
+		reader = impl.plan.(*plannercore.PhysicalIndexLookUpReader)
+	}
+	reader.IndexPlan, reader.TablePlan = children[0].GetPlan(), children[1].GetPlan()
+	reader.TablePlans = plannercore.FlattenPushDownPlan(reader.TablePlan)
+	reader.IndexPlans = plannercore.FlattenPushDownPlan(reader.IndexPlan)
+	// Add cost of building table reader executors. Handles are extracted in batch style,
+	// each handle is a range, the CPU cost of building copTasks should be:
+	// (indexRows / batchSize) * batchSize * CPUFactor
+	// Since we don't know the number of copTasks built, ignore these network cost now.
+	sessVars := reader.SCtx().GetSessionVars()
+	// Add children cost.
+	impl.cost += (children[0].GetCost() + children[1].GetCost()) / float64(sessVars.DistSQLScanConcurrency)
+	indexRows := reader.IndexPlan.Stats().RowCount
+	impl.cost += indexRows * sessVars.CPUFactor
+	// Add cost of worker goroutines in index lookup.
+	numTblWorkers := float64(sessVars.IndexLookupConcurrency)
+	impl.cost += (numTblWorkers + 1) * sessVars.ConcurrencyFactor
+	// When building table reader executor for each batch, we would sort the handles. CPU
+	// cost of sort is:
+	// CPUFactor * batchSize * Log2(batchSize) * (indexRows / batchSize)
+	indexLookupSize := float64(sessVars.IndexLookupSize)
+	batchSize := math.Min(indexLookupSize, indexRows)
+	if batchSize > 2 {
+		sortCPUCost := (indexRows * math.Log2(batchSize) * sessVars.CPUFactor) / numTblWorkers
+		impl.cost += sortCPUCost
+	}
+	// Also, we need to sort the retrieved rows if index lookup reader is expected to return
+	// ordered results. Note that row count of these two sorts can be different, if there are
+	// operators above table scan.
+	tableRows := reader.TablePlan.Stats().RowCount
+	selectivity := tableRows / indexRows
+	batchSize = math.Min(indexLookupSize*selectivity, tableRows)
+	if impl.KeepOrder && batchSize > 2 {
+		sortCPUCost := (tableRows * math.Log2(batchSize) * sessVars.CPUFactor) / numTblWorkers
+		impl.cost += sortCPUCost
+	}
+	if impl.DoubleReadNeedProj {
+
+	}
+	return impl.cost
+}
+
+// ScaleCostLimit implements Implementation interface.
+func (impl *IndexLookUpReaderImpl) ScaleCostLimit(costLimit float64) float64 {
+	reader := impl.plan.(*plannercore.PhysicalIndexLookUpReader)
+	sessVars := reader.SCtx().GetSessionVars()
+	copIterWorkers := float64(sessVars.DistSQLScanConcurrency)
+	if math.MaxFloat64/copIterWorkers < costLimit {
+		return math.MaxFloat64
+	}
+	return costLimit * copIterWorkers
+}
+
+// AttachChildren implements Implementation AttachChildren interface.
+func (impl *IndexLookUpReaderImpl) AttachChildren(children ...memo.Implementation) memo.Implementation {
+	return impl
+}

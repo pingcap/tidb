@@ -276,20 +276,20 @@ func (p *PhysicalIndexReader) ResolveIndices() (err error) {
 
 // ResolveIndices implements Plan interface.
 func (p *PhysicalIndexLookUpReader) ResolveIndices() (err error) {
-	err = resolveIndicesForVirtualColumn(p.tablePlan.Schema().Columns, p.schema)
+	err = resolveIndicesForVirtualColumn(p.TablePlan.Schema().Columns, p.schema)
 	if err != nil {
 		return err
 	}
-	err = p.tablePlan.ResolveIndices()
+	err = p.TablePlan.ResolveIndices()
 	if err != nil {
 		return err
 	}
-	err = p.indexPlan.ResolveIndices()
+	err = p.IndexPlan.ResolveIndices()
 	if err != nil {
 		return err
 	}
 	if p.ExtraHandleCol != nil {
-		newCol, err := p.ExtraHandleCol.ResolveIndices(p.tablePlan.Schema())
+		newCol, err := p.ExtraHandleCol.ResolveIndices(p.TablePlan.Schema())
 		if err != nil {
 			return err
 		}

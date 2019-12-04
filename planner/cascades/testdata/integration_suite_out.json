@@ -424,5 +424,40 @@
         ]
       }
     ]
+  },
+  {
+    "Name": "TestDoubleRead",
+    "Cases": [
+      {
+        "SQL": "select * from t order by t.a",
+        "Plan": [
+          "Projection_10 10000.00 root test.t.a, test.t.b",
+          "└─IndexLookUp_12 10000.00 root ",
+          "  ├─IndexScan_13 10000.00 cop[tikv] table:t, index:a, range:[NULL,+inf], keep order:true, stats:pseudo",
+          "  └─TableScan_14 10000.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 11",
+          "3 33",
+          "4 44",
+          "2 22"
+        ]
+      },
+      {
+        "SQL": "select * from t order by t.b",
+        "Plan": [
+          "Projection_10 10000.00 root test.t.a, test.t.b",
+          "└─Sort_18 10000.00 root test.t.b:asc",
+          "  └─TableReader_13 10000.00 root data:TableScan_14",
+          "    └─TableScan_14 10000.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 11",
+          "2 22",
+          "3 33",
+          "4 44"
+        ]
+      }
+    ]
   }
 ]

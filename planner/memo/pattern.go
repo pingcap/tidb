@@ -57,6 +57,8 @@ const (
 	OperandLimit
 	// OperandTiKVSingleGather is the operand for TiKVSingleGather.
 	OperandTiKVSingleGather
+	// OperandTiKVDoubleGather is the operand for TiKVDoubleGather.
+	OperandTiKVDoubleGather
 	// OperandTableScan is the operand for TableScan.
 	OperandTableScan
 	// OperandIndexScan is the operand for IndexScan.
@@ -100,6 +102,8 @@ func GetOperand(p plannercore.LogicalPlan) Operand {
 		return OperandLimit
 	case *plannercore.TiKVSingleGather:
 		return OperandTiKVSingleGather
+	case *plannercore.TiKVDoubleGather:
+		return OperandTiKVDoubleGather
 	case *plannercore.LogicalTableScan:
 		return OperandTableScan
 	case *plannercore.LogicalIndexScan:

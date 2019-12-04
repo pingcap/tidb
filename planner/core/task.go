@@ -627,8 +627,8 @@ func finishCopTask(ctx sessionctx.Context, task task) task {
 	}
 	if t.indexPlan != nil && t.tablePlan != nil {
 		p := PhysicalIndexLookUpReader{
-			tablePlan:      t.tablePlan,
-			indexPlan:      t.indexPlan,
+			TablePlan:      t.tablePlan,
+			IndexPlan:      t.indexPlan,
 			ExtraHandleCol: t.extraHandleCol,
 		}.Init(ctx, t.tablePlan.SelectBlockOffset())
 		p.stats = t.tablePlan.statsInfo()
@@ -765,8 +765,8 @@ func (p *PhysicalLimit) sinkIntoIndexLookUp(t task) bool {
 			return false
 		}
 	}
-	// We can sink Limit into IndexLookUpReader only if tablePlan contains no Selection.
-	ts, isTableScan := reader.tablePlan.(*PhysicalTableScan)
+	// We can sink Limit into IndexLookUpReader only if TablePlan contains no Selection.
+	ts, isTableScan := reader.TablePlan.(*PhysicalTableScan)
 	if !isTableScan {
 		return false
 	}
