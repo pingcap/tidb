@@ -99,9 +99,7 @@ func GetSessionSystemVar(s *SessionVars, key string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if err = s.SetSystemVarWithoutCheck(key, gVal); err != nil {
-		return "", err
-	}
+	s.systems[key] = gVal
 	return gVal, nil
 }
 

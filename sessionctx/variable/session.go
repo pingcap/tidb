@@ -774,46 +774,8 @@ func (s *SessionVars) WithdrawAllPreparedStmt() {
 	metrics.PreparedStmtGauge.Set(float64(afterMinus))
 }
 
-func (s *SessionVars) trySetWarningCountOrErrorCount(name string, val string) (bool, error) {
-	if name == WarningCount {
-		valNum, err := strconv.Atoi(val)
-		if err != nil {
-			return false, err
-		}
-		s.SysWarningCount = valNum
-		return true, nil
-	} else if name == ErrorCount {
-		valNum, err := strconv.Atoi(val)
-		if err != nil {
-			return false, err
-		}
-		s.SysErrorCount = uint16(valNum)
-		return true, nil
-	}
-	return false, nil
-}
-
-// SetSystemVarWithoutCheck sets the value of a system variable without check.
-func (s *SessionVars) SetSystemVarWithoutCheck(name string, val string) error {
-	done, err := s.trySetWarningCountOrErrorCount(name, val)
-	if err != nil {
-		return err
-	}
-	if !done {
-		s.systems[name] = val
-	}
-	return nil
-}
-
 // SetSystemVar sets the value of a system variable.
 func (s *SessionVars) SetSystemVar(name string, val string) error {
-	done, err := s.trySetWarningCountOrErrorCount(name, val)
-	if err != nil {
-		return err
-	}
-	if done {
-		return nil
-	}
 	switch name {
 	case TxnIsolationOneShot:
 		switch val {
