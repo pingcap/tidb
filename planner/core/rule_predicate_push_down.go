@@ -204,7 +204,7 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret
 		p.RightJoinKeys = append(p.RightJoinKeys, eqCond.GetArgs()[1].(*expression.Column))
 	}
 	p.mergeSchema()
-	p.BuildKeyInfo()
+	buildKeyInfo(p)
 	return ret, p.self
 }
 

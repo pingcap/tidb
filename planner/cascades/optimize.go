@@ -107,7 +107,7 @@ func (opt *Optimizer) FindBestPlan(sctx sessionctx.Context, logical plannercore.
 	if err != nil {
 		return nil, 0, err
 	}
-	rootGroup := convert2Group(logical)
+	rootGroup := memo.Convert2Group(logical)
 	err = opt.onPhaseExploration(sctx, rootGroup)
 	if err != nil {
 		return nil, 0, err
@@ -120,32 +120,11 @@ func (opt *Optimizer) FindBestPlan(sctx sessionctx.Context, logical plannercore.
 	return p, cost, err
 }
 
-// convert2GroupExpr converts a logical plan to a GroupExpr.
-func convert2GroupExpr(node plannercore.LogicalPlan) *memo.GroupExpr {
-	e := memo.NewGroupExpr(node)
-	e.Children = make([]*memo.Group, 0, len(node.Children()))
-	for _, child := range node.Children() {
-		childGroup := convert2Group(child)
-		e.Children = append(e.Children, childGroup)
-	}
-	return e
-}
-
-// convert2Group converts a logical plan to a Group.
-func convert2Group(node plannercore.LogicalPlan) *memo.Group {
-	e := convert2GroupExpr(node)
-	g := memo.NewGroupWithSchema(e, node.Schema())
-	// Stats property for `Group` would be computed after exploration phase.
-	return g
-}
-
 func (opt *Optimizer) onPhasePreprocessing(sctx sessionctx.Context, plan plannercore.LogicalPlan) (plannercore.LogicalPlan, error) {
 	err := plan.PruneColumns(plan.Schema().Columns)
 	if err != nil {
 		return nil, err
 	}
-	// TODO: Build key info when convert LogicalPlan to GroupExpr.
-	plan.BuildKeyInfo()
 	return plan, nil
 }
 
