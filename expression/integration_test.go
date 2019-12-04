@@ -5239,9 +5239,9 @@ func (s *testIntegrationSuiteHidden) TestHiddenColumn(c *C) {
 	// Test show create table
 	tk.MustQuery("show create table hidden;").Check(testkit.Rows(
 		"hidden CREATE TABLE `hidden` (\n" +
-		"  `a` int(11) NOT NULL,\n" +
-		"  `c` int(11) DEFAULT NULL,\n" +
-		"  `e` int(11) DEFAULT NULL,\n" +
-		"  PRIMARY KEY (`a`)\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+			"  `a` int(11) NOT NULL,\n" +
+			"  `c` int(11) DEFAULT NULL,\n" +
+			"  `e` int(11) DEFAULT NULL,\n" +
+			"  PRIMARY KEY (`a`)\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 }
