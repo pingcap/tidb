@@ -45,8 +45,17 @@ import (
 )
 
 var _ = Suite(&testStateChangeSuite{})
+var _ = SerialSuites(&serialTestStateChangeSuite{})
+
+type serialTestStateChangeSuite struct {
+	testStateChangeSuiteBase
+}
 
 type testStateChangeSuite struct {
+	testStateChangeSuiteBase
+}
+
+type testStateChangeSuiteBase struct {
 	lease  time.Duration
 	store  kv.Storage
 	dom    *domain.Domain
@@ -55,7 +64,7 @@ type testStateChangeSuite struct {
 	preSQL string
 }
 
-func (s *testStateChangeSuite) SetUpSuite(c *C) {
+func (s *testStateChangeSuiteBase) SetUpSuite(c *C) {
 	s.lease = 200 * time.Millisecond
 	ddl.WaitTimeWhenErrorOccured = 1 * time.Microsecond
 	var err error
@@ -73,7 +82,7 @@ func (s *testStateChangeSuite) SetUpSuite(c *C) {
 	s.p = parser.New()
 }
 
-func (s *testStateChangeSuite) TearDownSuite(c *C) {
+func (s *testStateChangeSuiteBase) TearDownSuite(c *C) {
 	s.se.Execute(context.Background(), "drop database if exists test_db_state")
 	s.se.Close()
 	s.dom.Close()
@@ -536,7 +545,7 @@ func (s *testStateChangeSuite) TestDeleteOnly(c *C) {
 	s.runTestInSchemaState(c, model.StateDeleteOnly, "", dropColumnSQL, sqls, nil)
 }
 
-func (s *testStateChangeSuite) runTestInSchemaState(c *C, state model.SchemaState, tableName, alterTableSQL string,
+func (s *testStateChangeSuiteBase) runTestInSchemaState(c *C, state model.SchemaState, tableName, alterTableSQL string,
 	sqlWithErrs []sqlWithErr, expectQuery *expectQuery) {
 	_, err := s.se.Execute(context.Background(), `create table t (
 		c1 varchar(64),
@@ -594,7 +603,7 @@ func (s *testStateChangeSuite) runTestInSchemaState(c *C, state model.SchemaStat
 	}
 }
 
-func (s *testStateChangeSuite) execQuery(tk *testkit.TestKit, sql string, args ...interface{}) (*testkit.Result, error) {
+func (s *testStateChangeSuiteBase) execQuery(tk *testkit.TestKit, sql string, args ...interface{}) (*testkit.Result, error) {
 	comment := Commentf("sql:%s, args:%v", sql, args)
 	rs, err := tk.Exec(sql, args...)
 	if err != nil {
@@ -613,7 +622,7 @@ func checkResult(result *testkit.Result, expected [][]interface{}) error {
 	return nil
 }
 
-func (s *testStateChangeSuite) CheckResult(tk *testkit.TestKit, sql string, args ...interface{}) (*testkit.Result, error) {
+func (s *testStateChangeSuiteBase) CheckResult(tk *testkit.TestKit, sql string, args ...interface{}) (*testkit.Result, error) {
 	comment := Commentf("sql:%s, args:%v", sql, args)
 	rs, err := tk.Exec(sql, args...)
 	if err != nil {
@@ -831,7 +840,7 @@ func (s *testStateChangeSuite) TestParallelCreateAndRename(c *C) {
 
 type checkRet func(c *C, err1, err2 error)
 
-func (s *testStateChangeSuite) testControlParallelExecSQL(c *C, sql1, sql2 string, f checkRet) {
+func (s *testStateChangeSuiteBase) testControlParallelExecSQL(c *C, sql1, sql2 string, f checkRet) {
 	_, err := s.se.Execute(context.Background(), "use test_db_state")
 	c.Assert(err, IsNil)
 	_, err = s.se.Execute(context.Background(), "create table t(a int, b int, c int, d int auto_increment,e int, index idx1(d), index idx2(d,e))")
@@ -1140,7 +1149,7 @@ func (s *testStateChangeSuite) TestParallelTruncateTableAndAddColumn(c *C) {
 }
 
 // TestParallelFlashbackTable tests parallel flashback table.
-func (s *testStateChangeSuite) TestParallelFlashbackTable(c *C) {
+func (s *serialTestStateChangeSuite) TestParallelFlashbackTable(c *C) {
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange", `return(true)`), IsNil)
 	defer func(originGC bool) {
 		c.Assert(failpoint.Disable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange"), IsNil)
