@@ -964,8 +964,8 @@ func (ds *DataSource) crossEstimateRowCount(path *accessPath, expectedCnt float6
 	return scanCount, true, 0
 }
 
-// GetPhysicalScan returns PhysicalTableScan for the logical TableScan.
-func (s *TableScan) GetPhysicalScan(schema *expression.Schema, stats *property.StatsInfo) *PhysicalTableScan {
+// GetPhysicalScan returns PhysicalTableScan for the LogicalTableScan.
+func (s *LogicalTableScan) GetPhysicalScan(schema *expression.Schema, stats *property.StatsInfo) *PhysicalTableScan {
 	ds := s.Source
 	ts := PhysicalTableScan{
 		Table:           ds.tableInfo,
@@ -987,6 +987,28 @@ func (s *TableScan) GetPhysicalScan(schema *expression.Schema, stats *property.S
 		}
 	}
 	return ts
+}
+
+// GetPhysicalIndexScan returns PhysicalIndexScan for the logical IndexScan.
+func (s *LogicalIndexScan) GetPhysicalIndexScan(schema *expression.Schema, stats *property.StatsInfo) *PhysicalIndexScan {
+	ds := s.Source
+	is := PhysicalIndexScan{
+		Table:            ds.tableInfo,
+		TableAsName:      ds.TableAsName,
+		DBName:           ds.DBName,
+		Columns:          s.Columns,
+		Index:            s.Index,
+		IdxCols:          s.idxCols,
+		IdxColLens:       s.idxColLens,
+		AccessCondition:  s.AccessConds,
+		Ranges:           s.Ranges,
+		dataSourceSchema: ds.schema,
+		isPartition:      ds.isPartition,
+		physicalTableID:  ds.physicalTableID,
+	}.Init(ds.ctx, ds.blockOffset)
+	is.stats = stats
+	is.initSchema(s.Index, s.fullIdxCols, s.IsDoubleRead)
+	return is
 }
 
 // convertToTableScan converts the DataSource to table scan.
