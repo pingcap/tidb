@@ -38,7 +38,24 @@ const (
 	NormalTable Type = iota
 	// VirtualTable , store no data, just extract data from the memory struct.
 	VirtualTable
+	// ClusterTable , contain the `VirtualTable` in the all cluster tidb nodes.
+	ClusterTable
 )
+
+// IsNormalTable checks whether the table is a normal table type.
+func (tp Type) IsNormalTable() bool {
+	return tp == NormalTable
+}
+
+// IsVirtualTable checks whether the table is a virtual table type.
+func (tp Type) IsVirtualTable() bool {
+	return tp == VirtualTable
+}
+
+// IsClusterTable checks whether the table is a cluster table type.
+func (tp Type) IsClusterTable() bool {
+	return tp == ClusterTable
+}
 
 const (
 	// DirtyTableAddRow is the constant for dirty table operation type.
