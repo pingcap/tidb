@@ -273,7 +273,6 @@ func (opt *Optimizer) implGroup(g *memo.Group, reqPhysProp *property.PhysicalPro
 		return nil, nil
 	}
 	// Handle implementation rules for each equivalent GroupExpr.
-	var cumCost float64
 	var childImpls []memo.Implementation
 	err := opt.fillGroupStats(g)
 	if err != nil {
@@ -287,10 +286,9 @@ func (opt *Optimizer) implGroup(g *memo.Group, reqPhysProp *property.PhysicalPro
 			return nil, err
 		}
 		for _, impl := range impls {
-			cumCost = 0.0
 			childImpls = childImpls[:0]
 			for i, childGroup := range curExpr.Children {
-				childImpl, err := opt.implGroup(childGroup, impl.GetPlan().GetChildReqProps(i), impl.ScaleCostLimit(costLimit)-cumCost)
+				childImpl, err := opt.implGroup(childGroup, impl.GetPlan().GetChildReqProps(i), impl.GetCostLimit(costLimit, childImpls...))
 				if err != nil {
 					return nil, err
 				}
@@ -298,19 +296,18 @@ func (opt *Optimizer) implGroup(g *memo.Group, reqPhysProp *property.PhysicalPro
 					impl.SetCost(math.MaxFloat64)
 					break
 				}
-				cumCost += childImpl.GetCost()
 				childImpls = append(childImpls, childImpl)
 			}
 			if impl.GetCost() == math.MaxFloat64 {
 				continue
 			}
-			cumCost = impl.CalcCost(outCount, childImpls...)
-			if cumCost > costLimit {
+			implCost := impl.CalcCost(outCount, childImpls...)
+			if implCost > costLimit {
 				continue
 			}
-			if groupImpl == nil || groupImpl.GetCost() > cumCost {
+			if groupImpl == nil || groupImpl.GetCost() > implCost {
 				groupImpl = impl.AttachChildren(childImpls...)
-				costLimit = cumCost
+				costLimit = implCost
 			}
 		}
 	}
@@ -326,11 +323,11 @@ func (opt *Optimizer) implGroup(g *memo.Group, reqPhysProp *property.PhysicalPro
 			continue
 		}
 		impl := rule.OnEnforce(reqPhysProp, childImpl)
-		cumCost = enforceCost + childImpl.GetCost()
-		impl.SetCost(cumCost)
-		if groupImpl == nil || groupImpl.GetCost() > cumCost {
+		implCost := enforceCost + childImpl.GetCost()
+		impl.SetCost(implCost)
+		if groupImpl == nil || groupImpl.GetCost() > implCost {
 			groupImpl = impl
-			costLimit = cumCost
+			costLimit = implCost
 		}
 	}
 	if groupImpl == nil || groupImpl.GetCost() == math.MaxFloat64 {
