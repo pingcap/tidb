@@ -187,8 +187,8 @@ func (p *LogicalMemTable) findBestTask(prop *property.PhysicalProperty) (t task,
 		return invalidTask, nil
 	}
 	memTable := PhysicalMemTable{
-		DBName: p.dbName,
-		Table:  p.tableInfo,
+		Table:   p.tableInfo,
+		Columns: p.tableInfo.Columns,
 	}.Init(p.ctx, p.stats, p.blockOffset)
 	memTable.SetSchema(p.schema)
 	return &rootTask{p: memTable}, nil
@@ -740,7 +740,11 @@ func (is *PhysicalIndexScan) initSchema(idx *model.IndexInfo, idxExprCols []*exp
 	// If it's double read case, the first index must return handle. So we should add extra handle column
 	// if there isn't a handle column.
 	if isDoubleRead && !setHandle {
-		indexCols = append(indexCols, &expression.Column{ID: model.ExtraHandleID, UniqueID: is.ctx.GetSessionVars().AllocPlanColumnID()})
+		indexCols = append(indexCols, &expression.Column{
+			RetType:  types.NewFieldType(mysql.TypeLonglong),
+			ID:       model.ExtraHandleID,
+			UniqueID: is.ctx.GetSessionVars().AllocPlanColumnID(),
+		})
 	}
 	is.SetSchema(expression.NewSchema(indexCols...))
 }

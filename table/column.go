@@ -154,7 +154,7 @@ func CastValues(ctx sessionctx.Context, rec []types.Datum, cols []*Column) (err 
 
 func handleWrongUtf8Value(ctx sessionctx.Context, col *model.ColumnInfo, casted *types.Datum, str string, i int) (types.Datum, error) {
 	sc := ctx.GetSessionVars().StmtCtx
-	err := ErrTruncateWrongValue.FastGen("incorrect utf8 value %x(%s) for column %s", casted.GetBytes(), str, col.Name)
+	err := ErrTruncatedWrongValueForField.FastGen("incorrect utf8 value %x(%s) for column %s", casted.GetBytes(), str, col.Name)
 	logutil.BgLogger().Error("incorrect UTF-8 value", zap.Uint64("conn", ctx.GetSessionVars().ConnectionID), zap.Error(err))
 	// Truncate to valid utf8 string.
 	truncateVal := types.NewStringDatum(str[:i])
@@ -324,7 +324,7 @@ func CheckOnce(cols []*Column) error {
 		name := col.Name
 		_, ok := m[name.L]
 		if ok {
-			return errDuplicateColumn.GenWithStack("column specified twice - %s", name)
+			return errDuplicateColumn.GenWithStackByArgs(name)
 		}
 
 		m[name.L] = struct{}{}
@@ -416,8 +416,7 @@ func getColDefaultValue(ctx sessionctx.Context, col *model.ColumnInfo, defaultVa
 	}
 	value, err := expression.GetTimeValue(ctx, defaultVal, col.Tp, int8(col.Decimal))
 	if err != nil {
-		return types.Datum{}, errGetDefaultFailed.GenWithStack("Field '%s' get default value fail - %s",
-			col.Name, err)
+		return types.Datum{}, errGetDefaultFailed.GenWithStackByArgs(col.Name)
 	}
 	// If the column's default value is not ZeroDatetimeStr or CurrentTimestamp, convert the default value to the current session time zone.
 	if needChangeTimeZone {

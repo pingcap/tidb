@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/infoschema"
 	plannercore "github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/planner/memo"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/testleak"
@@ -61,7 +62,7 @@ func (s *testCascadesSuite) TestImplGroupZeroCost(c *C) {
 	c.Assert(err, IsNil)
 	logic, ok := p.(plannercore.LogicalPlan)
 	c.Assert(ok, IsTrue)
-	rootGroup := convert2Group(logic)
+	rootGroup := memo.Convert2Group(logic)
 	prop := &property.PhysicalProperty{
 		ExpectedCnt: math.MaxFloat64,
 	}
@@ -77,7 +78,7 @@ func (s *testCascadesSuite) TestInitGroupSchema(c *C) {
 	c.Assert(err, IsNil)
 	logic, ok := p.(plannercore.LogicalPlan)
 	c.Assert(ok, IsTrue)
-	g := convert2Group(logic)
+	g := memo.Convert2Group(logic)
 	c.Assert(g, NotNil)
 	c.Assert(g.Prop, NotNil)
 	c.Assert(g.Prop.Schema.Len(), Equals, 1)
@@ -91,7 +92,7 @@ func (s *testCascadesSuite) TestFillGroupStats(c *C) {
 	c.Assert(err, IsNil)
 	logic, ok := p.(plannercore.LogicalPlan)
 	c.Assert(ok, IsTrue)
-	rootGroup := convert2Group(logic)
+	rootGroup := memo.Convert2Group(logic)
 	err = s.optimizer.fillGroupStats(rootGroup)
 	c.Assert(err, IsNil)
 	c.Assert(rootGroup.Prop.Stats, NotNil)
