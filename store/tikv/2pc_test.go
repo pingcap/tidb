@@ -39,7 +39,7 @@ type testCommitterSuite struct {
 var _ = Suite(&testCommitterSuite{})
 
 func (s *testCommitterSuite) SetUpSuite(c *C) {
-	PessimisticLockTTL = 3000 // 3s
+	ManagedLockTTL = 3000 // 3s
 	s.OneByOneSuite.SetUpSuite(c)
 }
 
@@ -611,12 +611,27 @@ func (s *testCommitterSuite) TestPessimisticTTL(c *C) {
 			expire := oracle.ExtractPhysical(txn.startTS) + int64(lockInfoNew.LockTtl)
 			now := oracle.ExtractPhysical(currentTS)
 			c.Assert(expire > now, IsTrue)
-			c.Assert(uint64(expire-now) <= PessimisticLockTTL, IsTrue)
+			c.Assert(uint64(expire-now) <= ManagedLockTTL, IsTrue)
 			return
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
 	c.Assert(false, IsTrue, Commentf("update pessimistic ttl fail"))
+}
+
+// TestElapsedTTL tests that elapsed time is correct even if ts physical time is greater than local time.
+func (s *testCommitterSuite) TestElapsedTTL(c *C) {
+	key := kv.Key("key")
+	txn := s.begin(c)
+	txn.startTS = oracle.ComposeTS(oracle.GetPhysical(time.Now().Add(time.Second*10)), 1)
+	txn.SetOption(kv.Pessimistic, true)
+	time.Sleep(time.Millisecond * 100)
+	forUpdateTS := oracle.ComposeTS(oracle.ExtractPhysical(txn.startTS)+100, 1)
+	err := txn.LockKeys(context.Background(), nil, forUpdateTS, kv.LockAlwaysWait, key)
+	c.Assert(err, IsNil)
+	lockInfo := s.getLockInfo(c, key)
+	c.Assert(lockInfo.LockTtl-ManagedLockTTL, GreaterEqual, uint64(100))
+	c.Assert(lockInfo.LockTtl-ManagedLockTTL, Less, uint64(150))
 }
 
 func (s *testCommitterSuite) getLockInfo(c *C, key []byte) *kvrpcpb.LockInfo {
