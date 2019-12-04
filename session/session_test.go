@@ -2857,7 +2857,7 @@ func (s *testSessionSuite2) TestIsolationRead(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.Se, err = session.CreateSession4Test(s.store)
 	c.Assert(err, IsNil)
-	c.Assert(len(tk.Se.GetSessionVars().GetIsolationReadEngines()), Equals, 2)
+	c.Assert(len(tk.Se.GetSessionVars().GetIsolationReadEngines()), Equals, 3)
 	tk.MustExec("set @@tidb_isolation_read_engines = 'tiflash';")
 	engines := tk.Se.GetSessionVars().GetIsolationReadEngines()
 	c.Assert(len(engines), Equals, 1)
