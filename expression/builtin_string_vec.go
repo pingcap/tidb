@@ -593,11 +593,74 @@ func (b *builtinInsertBinarySig) vecEvalString(input *chunk.Chunk, result *chunk
 }
 
 func (b *builtinConcatWSSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinConcatWSSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf0, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf0)
+	if err = b.args[0].VecEvalString(b.ctx, input, buf0); err != nil {
+		return err
+	}
+
+	strs := make([][]string, n)
+	isNulls := make([]bool, n)
+	lens := make([]int, n)
+	buf := make([]*chunk.Column, len(b.args)-1)
+	for j := 1; j < len(b.args); j++ {
+		buf[j-1], err = b.bufAllocator.get(types.ETString, n)
+		if err != nil {
+			return nil
+		}
+		defer b.bufAllocator.put(buf[j-1])
+
+		if err := b.args[j].VecEvalString(b.ctx, input, buf[j-1]); err != nil {
+			return err
+		}
+		for i := 0; i < n; i++ {
+			if isNulls[i] {
+				continue
+			}
+			if buf0.IsNull(i) {
+				// If the separator is NULL, the result is NULL.
+				isNulls[i] = true
+				continue
+			}
+			if buf[j-1].IsNull(i) {
+				// CONCAT_WS() does not skip empty strings. However,
+				// it does skip any NULL values after the separator argument.
+				continue
+			}
+
+			val := buf[j-1].GetString(i)
+			lens[i] += len(val)
+			if j > 1 {
+				lens[i] += len(buf0.GetString(i))
+			}
+			if uint64(lens[i]) > b.maxAllowedPacket {
+				b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnAllowedPacketOverflowed.GenWithStackByArgs("concat_ws", b.maxAllowedPacket))
+				isNulls[i] = true
+				continue
+			}
+
+			strs[i] = append(strs[i], val)
+		}
+	}
+
+	result.ReserveString(n)
+	for i := 0; i < n; i++ {
+		if isNulls[i] {
+			result.AppendNull()
+		} else {
+			// TODO: check whether the length of result is larger than Flen
+			result.AppendString(strings.Join(strs[i], buf0.GetString(i)))
+		}
+	}
+	return nil
 }
 
 func (b *builtinConvertSig) vectorized() bool {
