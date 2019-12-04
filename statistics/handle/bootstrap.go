@@ -62,7 +62,7 @@ func (h *Handle) initStatsMeta(is infoschema.InfoSchema) (statsCache, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	sql := "select HIGH_PRIORITY version, table_id, modify_count, count from mysql.stats_meta"
-	rc, err := h.mu.ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sql)
+	rc, err := h.ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sql)
 	if len(rc) > 0 {
 		defer terror.Call(rc[0].Close)
 	}
@@ -142,7 +142,7 @@ func (h *Handle) initStatsHistograms(is infoschema.InfoSchema, cache *statsCache
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	sql := "select HIGH_PRIORITY table_id, is_index, hist_id, distinct_count, version, null_count, cm_sketch, tot_col_size, stats_ver, correlation, flag, last_analyze_pos from mysql.stats_histograms"
-	rc, err := h.mu.ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sql)
+	rc, err := h.ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sql)
 	if len(rc) > 0 {
 		defer terror.Call(rc[0].Close)
 	}
@@ -214,7 +214,7 @@ func (h *Handle) initStatsBuckets(cache *statsCache) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	sql := "select HIGH_PRIORITY table_id, is_index, hist_id, count, repeats, lower_bound, upper_bound from mysql.stats_buckets order by table_id, is_index, hist_id, bucket_id"
-	rc, err := h.mu.ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sql)
+	rc, err := h.ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sql)
 	if len(rc) > 0 {
 		defer terror.Call(rc[0].Close)
 	}
@@ -231,7 +231,7 @@ func (h *Handle) initStatsBuckets(cache *statsCache) error {
 		if req.NumRows() == 0 {
 			break
 		}
-		initStatsBuckets4Chunk(h.mu.ctx, cache, iter)
+		initStatsBuckets4Chunk(h.ctx, cache, iter)
 	}
 	lastVersion := uint64(0)
 	for _, table := range cache.tables {

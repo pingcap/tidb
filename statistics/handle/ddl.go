@@ -60,7 +60,7 @@ func getPhysicalIDs(tblInfo *model.TableInfo) []int64 {
 }
 
 // DDLEventCh returns ddl events channel in handle.
-func (h *Handle) DDLEventCh() chan *util.Event {
+func (h *HandleShare) DDLEventCh() chan *util.Event {
 	return h.ddlEventCh
 }
 
@@ -69,7 +69,7 @@ func (h *Handle) DDLEventCh() chan *util.Event {
 func (h *Handle) insertTableStats2KV(info *model.TableInfo, physicalID int64) (err error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	exec := h.mu.ctx.(sqlexec.SQLExecutor)
+	exec := h.ctx.(sqlexec.SQLExecutor)
 	_, err = exec.Execute(context.Background(), "begin")
 	if err != nil {
 		return errors.Trace(err)
@@ -77,7 +77,7 @@ func (h *Handle) insertTableStats2KV(info *model.TableInfo, physicalID int64) (e
 	defer func() {
 		err = finishTransaction(context.Background(), exec, err)
 	}()
-	txn, err := h.mu.ctx.Txn(true)
+	txn, err := h.ctx.Txn(true)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -99,7 +99,7 @@ func (h *Handle) insertColStats2KV(physicalID int64, colInfo *model.ColumnInfo) 
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
-	exec := h.mu.ctx.(sqlexec.SQLExecutor)
+	exec := h.ctx.(sqlexec.SQLExecutor)
 	_, err = exec.Execute(context.Background(), "begin")
 	if err != nil {
 		return errors.Trace(err)
@@ -107,7 +107,7 @@ func (h *Handle) insertColStats2KV(physicalID int64, colInfo *model.ColumnInfo) 
 	defer func() {
 		err = finishTransaction(context.Background(), exec, err)
 	}()
-	txn, err := h.mu.ctx.Txn(true)
+	txn, err := h.ctx.Txn(true)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -119,7 +119,7 @@ func (h *Handle) insertColStats2KV(physicalID int64, colInfo *model.ColumnInfo) 
 	}
 	ctx := context.TODO()
 	// If we didn't update anything by last SQL, it means the stats of this table does not exist.
-	if h.mu.ctx.GetSessionVars().StmtCtx.AffectedRows() > 0 {
+	if h.ctx.GetSessionVars().StmtCtx.AffectedRows() > 0 {
 		// By this step we can get the count of this table, then we can sure the count and repeats of bucket.
 		var rs []sqlexec.RecordSet
 		rs, err = exec.Execute(ctx, fmt.Sprintf("select count from mysql.stats_meta where table_id = %d", physicalID))
@@ -136,7 +136,7 @@ func (h *Handle) insertColStats2KV(physicalID int64, colInfo *model.ColumnInfo) 
 		}
 		count := req.GetRow(0).GetInt64(0)
 		value := types.NewDatum(colInfo.OriginDefaultValue)
-		value, err = value.ConvertTo(h.mu.ctx.GetSessionVars().StmtCtx, &colInfo.FieldType)
+		value, err = value.ConvertTo(h.ctx.GetSessionVars().StmtCtx, &colInfo.FieldType)
 		if err != nil {
 			return
 		}
@@ -147,7 +147,7 @@ func (h *Handle) insertColStats2KV(physicalID int64, colInfo *model.ColumnInfo) 
 		} else {
 			// If this stats exists, we insert histogram meta first, the distinct_count will always be one.
 			sqls = append(sqls, fmt.Sprintf("insert into mysql.stats_histograms (version, table_id, is_index, hist_id, distinct_count, tot_col_size) values (%d, %d, 0, %d, 1, %d)", startTS, physicalID, colInfo.ID, int64(len(value.GetBytes()))*count))
-			value, err = value.ConvertTo(h.mu.ctx.GetSessionVars().StmtCtx, types.NewFieldType(mysql.TypeBlob))
+			value, err = value.ConvertTo(h.ctx.GetSessionVars().StmtCtx, types.NewFieldType(mysql.TypeBlob))
 			if err != nil {
 				return
 			}

@@ -317,7 +317,7 @@ func (h *Handle) dumpTableStatCountToKV(id int64, delta variable.TableDelta) (up
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	ctx := context.TODO()
-	exec := h.mu.ctx.(sqlexec.SQLExecutor)
+	exec := h.ctx.(sqlexec.SQLExecutor)
 	_, err = exec.Execute(ctx, "begin")
 	if err != nil {
 		return false, errors.Trace(err)
@@ -326,7 +326,7 @@ func (h *Handle) dumpTableStatCountToKV(id int64, delta variable.TableDelta) (up
 		err = finishTransaction(context.Background(), exec, err)
 	}()
 
-	txn, err := h.mu.ctx.Txn(true)
+	txn, err := h.ctx.Txn(true)
 	if err != nil {
 		return false, errors.Trace(err)
 	}
@@ -338,7 +338,7 @@ func (h *Handle) dumpTableStatCountToKV(id int64, delta variable.TableDelta) (up
 		sql = fmt.Sprintf("update mysql.stats_meta set version = %d, count = count + %d, modify_count = modify_count + %d where table_id = %d", startTS, delta.Delta, delta.Count, id)
 	}
 	err = execSQLs(context.Background(), exec, []string{sql})
-	updated = h.mu.ctx.GetSessionVars().StmtCtx.AffectedRows() > 0
+	updated = h.ctx.GetSessionVars().StmtCtx.AffectedRows() > 0
 	return
 }
 
@@ -398,7 +398,7 @@ func (h *Handle) DumpFeedbackToKV(fb *statistics.QueryFeedback) error {
 	sql := fmt.Sprintf("insert into mysql.stats_feedback (table_id, hist_id, is_index, feedback) values "+
 		"(%d, %d, %d, X'%X')", fb.PhysicalID, fb.Hist.ID, isIndex, vals)
 	h.mu.Lock()
-	_, err = h.mu.ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sql)
+	_, err = h.ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sql)
 	h.mu.Unlock()
 	if err != nil {
 		metrics.DumpFeedbackCounter.WithLabelValues(metrics.LblError).Inc()
@@ -573,11 +573,11 @@ func (h *Handle) deleteOutdatedFeedback(tableID, histID, isIndex int64) error {
 	hasData := true
 	for hasData {
 		sql := fmt.Sprintf("delete from mysql.stats_feedback where table_id = %d and hist_id = %d and is_index = %d limit 10000", tableID, histID, isIndex)
-		_, err := h.mu.ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sql)
+		_, err := h.ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sql)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		hasData = h.mu.ctx.GetSessionVars().StmtCtx.AffectedRows() > 0
+		hasData = h.ctx.GetSessionVars().StmtCtx.AffectedRows() > 0
 	}
 	return nil
 }

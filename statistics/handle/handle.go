@@ -48,9 +48,15 @@ type statsCache struct {
 
 // Handle can update stats info periodically.
 type Handle struct {
+	ctx            sessionctx.Context
+	restrictedExec sqlexec.RestrictedSQLExecutor
+	*HandleShare
+}
+
+// HandleShare is shared by domain.
+type HandleShare struct {
 	mu struct {
 		sync.Mutex
-		ctx sessionctx.Context
 		// rateMap contains the error rate delta from feedback.
 		rateMap errorRateDeltaMap
 		// pid2tid is the map from partition ID to table ID.
@@ -65,8 +71,6 @@ type Handle struct {
 		sync.Mutex
 		atomic.Value
 	}
-
-	restrictedExec sqlexec.RestrictedSQLExecutor
 
 	// ddlEventCh is a channel to notify a ddl operation has happened.
 	// It is sent only by owner or the drop stats executor, and read by stats handle.
@@ -89,10 +93,10 @@ func (h *Handle) Clear() {
 		<-h.ddlEventCh
 	}
 	h.feedback = h.feedback[:0]
-	h.mu.ctx.GetSessionVars().InitChunkSize = 1
-	h.mu.ctx.GetSessionVars().MaxChunkSize = 1
-	h.mu.ctx.GetSessionVars().EnableChunkRPC = false
-	h.mu.ctx.GetSessionVars().ProjectionConcurrency = 0
+	h.ctx.GetSessionVars().InitChunkSize = 1
+	h.ctx.GetSessionVars().MaxChunkSize = 1
+	h.ctx.GetSessionVars().EnableChunkRPC = false
+	h.ctx.GetSessionVars().ProjectionConcurrency = 0
 	h.listHead = &SessionStatsCollector{mapper: make(tableDeltaMap), rateMap: make(errorRateDeltaMap)}
 	h.globalMap = make(tableDeltaMap)
 	h.mu.rateMap = make(errorRateDeltaMap)
@@ -104,21 +108,28 @@ var MaxQueryFeedbackCount = atomic2.NewInt64(1 << 10)
 
 // NewHandle creates a Handle for update stats.
 func NewHandle(ctx sessionctx.Context, lease time.Duration) *Handle {
-	handle := &Handle{
+	handle := &HandleShare{
 		ddlEventCh: make(chan *util.Event, 100),
 		listHead:   &SessionStatsCollector{mapper: make(tableDeltaMap), rateMap: make(errorRateDeltaMap)},
 		globalMap:  make(tableDeltaMap),
 		feedback:   make([]*statistics.QueryFeedback, 0, MaxQueryFeedbackCount.Load()),
 	}
 	handle.lease.Store(lease)
-	// It is safe to use it concurrently because the exec won't touch the ctx.
-	if exec, ok := ctx.(sqlexec.RestrictedSQLExecutor); ok {
-		handle.restrictedExec = exec
-	}
-	handle.mu.ctx = ctx
 	handle.mu.rateMap = make(errorRateDeltaMap)
 	handle.statsCache.Store(statsCache{tables: make(map[int64]*statistics.Table)})
-	return handle
+	return handle.Instance(ctx)
+}
+
+func (h *HandleShare) Instance(ctx sessionctx.Context) *Handle {
+	var exec sqlexec.RestrictedSQLExecutor
+	if raw, ok := ctx.(sqlexec.RestrictedSQLExecutor); ok {
+		exec = raw
+	}
+	return &Handle{
+		ctx:            ctx,
+		restrictedExec: exec,
+		HandleShare:    h,
+	}
 }
 
 // Lease returns the stats lease.
@@ -231,12 +242,12 @@ func buildPartitionID2TableID(is infoschema.InfoSchema) map[int64]int64 {
 }
 
 // GetTableStats retrieves the statistics table from cache, and the cache will be updated by a goroutine.
-func (h *Handle) GetTableStats(tblInfo *model.TableInfo) *statistics.Table {
+func (h *HandleShare) GetTableStats(tblInfo *model.TableInfo) *statistics.Table {
 	return h.GetPartitionStats(tblInfo, tblInfo.ID)
 }
 
 // GetPartitionStats retrieves the partition stats from cache.
-func (h *Handle) GetPartitionStats(tblInfo *model.TableInfo, pid int64) *statistics.Table {
+func (h *HandleShare) GetPartitionStats(tblInfo *model.TableInfo, pid int64) *statistics.Table {
 	statsCache := h.statsCache.Load().(statsCache)
 	tbl, ok := statsCache.tables[pid]
 	if !ok {
@@ -248,7 +259,7 @@ func (h *Handle) GetPartitionStats(tblInfo *model.TableInfo, pid int64) *statist
 	return tbl
 }
 
-func (h *Handle) updateStatsCache(newCache statsCache) {
+func (h *HandleShare) updateStatsCache(newCache statsCache) {
 	h.statsCache.Lock()
 	oldCache := h.statsCache.Load().(statsCache)
 	if oldCache.version <= newCache.version {
@@ -537,7 +548,7 @@ func (h *Handle) SaveStatsToStorage(tableID int64, count int64, isIndex int, hg 
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	ctx := context.TODO()
-	exec := h.mu.ctx.(sqlexec.SQLExecutor)
+	exec := h.ctx.(sqlexec.SQLExecutor)
 	_, err = exec.Execute(ctx, "begin")
 	if err != nil {
 		return errors.Trace(err)
@@ -545,7 +556,7 @@ func (h *Handle) SaveStatsToStorage(tableID int64, count int64, isIndex int, hg 
 	defer func() {
 		err = finishTransaction(context.Background(), exec, err)
 	}()
-	txn, err := h.mu.ctx.Txn(true)
+	txn, err := h.ctx.Txn(true)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -574,7 +585,7 @@ func (h *Handle) SaveStatsToStorage(tableID int64, count int64, isIndex int, hg 
 	sqls = append(sqls, fmt.Sprintf("replace into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, version, null_count, cm_sketch, tot_col_size, stats_ver, flag, correlation) values (%d, %d, %d, %d, %d, %d, X'%X', %d, %d, %d, %f)",
 		tableID, isIndex, hg.ID, hg.NDV, version, hg.NullCount, data, hg.TotColSize, statistics.CurStatsVersion, flag, hg.Correlation))
 	sqls = append(sqls, fmt.Sprintf("delete from mysql.stats_buckets where table_id = %d and is_index = %d and hist_id = %d", tableID, isIndex, hg.ID))
-	sc := h.mu.ctx.GetSessionVars().StmtCtx
+	sc := h.ctx.GetSessionVars().StmtCtx
 	var lastAnalyzePos []byte
 	for i := range hg.Buckets {
 		count := hg.Buckets[i].Count
@@ -607,7 +618,7 @@ func (h *Handle) SaveMetaToStorage(tableID, count, modifyCount int64) (err error
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	ctx := context.TODO()
-	exec := h.mu.ctx.(sqlexec.SQLExecutor)
+	exec := h.ctx.(sqlexec.SQLExecutor)
 	_, err = exec.Execute(ctx, "begin")
 	if err != nil {
 		return errors.Trace(err)
@@ -615,7 +626,7 @@ func (h *Handle) SaveMetaToStorage(tableID, count, modifyCount int64) (err error
 	defer func() {
 		err = finishTransaction(ctx, exec, err)
 	}()
-	txn, err := h.mu.ctx.Txn(true)
+	txn, err := h.ctx.Txn(true)
 	if err != nil {
 		return errors.Trace(err)
 	}

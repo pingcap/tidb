@@ -99,7 +99,7 @@ func (h *Handle) deleteHistStatsFromKV(physicalID int64, histID int64, isIndex i
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
-	exec := h.mu.ctx.(sqlexec.SQLExecutor)
+	exec := h.ctx.(sqlexec.SQLExecutor)
 	_, err = exec.Execute(context.Background(), "begin")
 	if err != nil {
 		return errors.Trace(err)
@@ -107,7 +107,7 @@ func (h *Handle) deleteHistStatsFromKV(physicalID int64, histID int64, isIndex i
 	defer func() {
 		err = finishTransaction(context.Background(), exec, err)
 	}()
-	txn, err := h.mu.ctx.Txn(true)
+	txn, err := h.ctx.Txn(true)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -128,7 +128,7 @@ func (h *Handle) deleteHistStatsFromKV(physicalID int64, histID int64, isIndex i
 func (h *Handle) DeleteTableStatsFromKV(physicalID int64) (err error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	exec := h.mu.ctx.(sqlexec.SQLExecutor)
+	exec := h.ctx.(sqlexec.SQLExecutor)
 	_, err = exec.Execute(context.Background(), "begin")
 	if err != nil {
 		return errors.Trace(err)
@@ -136,7 +136,7 @@ func (h *Handle) DeleteTableStatsFromKV(physicalID int64) (err error) {
 	defer func() {
 		err = finishTransaction(context.Background(), exec, err)
 	}()
-	txn, err := h.mu.ctx.Txn(true)
+	txn, err := h.ctx.Txn(true)
 	if err != nil {
 		return errors.Trace(err)
 	}

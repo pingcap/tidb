@@ -978,9 +978,15 @@ func (do *Domain) loadStatsWorker() {
 	}
 	loadTicker := time.NewTicker(lease)
 	defer loadTicker.Stop()
-	statsHandle := do.StatsHandle()
+	originHandle := do.StatsHandle()
+	sctx, err := do.SysSessionPool().Get()
+	if err != nil {
+		logutil.BgLogger().Error(err.Error())
+		return
+	}
+	statsHandle := originHandle.Instance(sctx.(sessionctx.Context))
 	t := time.Now()
-	err := statsHandle.InitStats(do.InfoSchema())
+	err = statsHandle.InitStats(do.InfoSchema())
 	if err != nil {
 		logutil.BgLogger().Debug("init stats info failed", zap.Error(err))
 	} else {
@@ -1014,11 +1020,19 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 	defer dumpFeedbackTicker.Stop()
 	loadFeedbackTicker := time.NewTicker(5 * lease)
 	defer loadFeedbackTicker.Stop()
-	statsHandle := do.StatsHandle()
+	originHandle := do.StatsHandle()
+	sctx, err := do.SysSessionPool().Get()
+	if err != nil {
+		logutil.BgLogger().Error(err.Error())
+		return
+	}
+	statsHandle := originHandle.Instance(sctx.(sessionctx.Context))
 	defer func() {
 		do.SetStatsUpdating(false)
 		do.wg.Done()
 	}()
+
+	lastTime := time.Now()
 	for {
 		select {
 		case <-do.exit:
@@ -1059,17 +1073,35 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 				logutil.BgLogger().Debug("GC stats failed", zap.Error(err))
 			}
 		}
+
+		// Release the session periodically to avoid memory leak in the internal sessions.
+		now := time.Now()
+		if now.Sub(lastTime) > 3*time.Minute {
+			lastTime = now
+			sctx.Close()
+			sctx, err = do.SysSessionPool().Get()
+			if err != nil {
+				return
+			}
+			statsHandle = originHandle.Instance(sctx.(sessionctx.Context))
+		}
 	}
 }
 
 func (do *Domain) autoAnalyzeWorker(owner owner.Manager) {
 	defer recoverInDomain("autoAnalyzeWorker", false)
-	statsHandle := do.StatsHandle()
+	originHandle := do.StatsHandle()
 	analyzeTicker := time.NewTicker(do.statsLease)
 	defer func() {
 		analyzeTicker.Stop()
 		do.wg.Done()
 	}()
+	sctx, err := do.SysSessionPool().Get()
+	if err != nil {
+		logutil.BgLogger().Error(err.Error())
+		return
+	}
+	statsHandle := originHandle.Instance(sctx.(sessionctx.Context))
 	for {
 		select {
 		case <-analyzeTicker.C:
