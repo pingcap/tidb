@@ -227,10 +227,10 @@ func checkIndexCanBeKey(idx *model.IndexInfo, columns []*model.ColumnInfo, schem
 func (ds *DataSource) BuildKeyInfo(selfSchema *expression.Schema, childSchema []*expression.Schema) {
 	selfSchema.Keys = nil
 	for _, path := range ds.possibleAccessPaths {
-		if path.isTablePath {
+		if path.IsTablePath {
 			continue
 		}
-		if newKey := checkIndexCanBeKey(path.index, ds.Columns, selfSchema); newKey != nil {
+		if newKey := checkIndexCanBeKey(path.Index, ds.Columns, selfSchema); newKey != nil {
 			selfSchema.Keys = append(selfSchema.Keys, newKey)
 		}
 	}
@@ -253,10 +253,10 @@ func (ts *LogicalTableScan) BuildKeyInfo(selfSchema *expression.Schema, childSch
 func (is *LogicalIndexScan) BuildKeyInfo(selfSchema *expression.Schema, childSchema []*expression.Schema) {
 	selfSchema.Keys = nil
 	for _, path := range is.Source.possibleAccessPaths {
-		if path.isTablePath {
+		if path.IsTablePath {
 			continue
 		}
-		if newKey := checkIndexCanBeKey(path.index, is.Columns, selfSchema); newKey != nil {
+		if newKey := checkIndexCanBeKey(path.Index, is.Columns, selfSchema); newKey != nil {
 			selfSchema.Keys = append(selfSchema.Keys, newKey)
 		}
 	}

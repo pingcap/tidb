@@ -185,7 +185,6 @@ func (r *ImplTiKVDoubleReadGather) OnImplement(expr *memo.GroupExpr, reqProp *pr
 	return indexLookUp, nil
 }
 
-
 // ImplTableScan implements TableScan as PhysicalTableScan.
 type ImplTableScan struct {
 }
