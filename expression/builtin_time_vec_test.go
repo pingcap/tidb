@@ -161,14 +161,12 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 			geners:        []dataGenerator{&unitStrGener{}, nil, nil}},
 	},
 	ast.TimestampLiteral: {
-		{
-			retEvalType: types.ETTimestamp,
-			childrenTypes: []types.EvalType{types.ETString},
+		{retEvalType: types.ETTimestamp, childrenTypes: []types.EvalType{types.ETString},
 			constants: []*Constant{{Value: types.NewStringDatum("2019-12-04 00:00:00"), RetType: types.NewFieldType(mysql.TypeString)}},
 		},
 	},
-	ast.SubDate:          {},
-	ast.AddDate:          {},
+	ast.SubDate: {},
+	ast.AddDate: {},
 	ast.SubTime: {
 		{
 			retEvalType:   types.ETString,
