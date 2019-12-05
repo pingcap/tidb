@@ -26,12 +26,14 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
@@ -446,6 +448,24 @@ func (b *builtinCastIntAsIntSig) evalInt(row chunk.Row) (res int64, isNull bool,
 	return
 }
 
+func (b *builtinCastIntAsIntSig) supportReverseEval() bool {
+	return true
+}
+
+func (b *builtinCastIntAsIntSig) reverseEval(sc *stmtctx.StatementContext, res types.Datum, rType types.RoundingType) (val types.Datum, err error) {
+	resVal := res.GetInt64()
+	switch x := b.args[0].(type) {
+	case *Column:
+		return types.NewIntDatum(resVal), nil
+	case *Constant:
+		return types.Datum{}, errors.Errorf("invalid args for reverse evaluation, " +
+			"the expression should have exactly one column")
+	case *ScalarFunction:
+		return x.ReverseEval(sc, res, rType)
+	}
+	return types.Datum{}, errors.Errorf("unknown arg type for expression reverse evaluation")
+}
+
 type builtinCastIntAsRealSig struct {
 	baseBuiltinCastFunc
 }
@@ -474,6 +494,25 @@ func (b *builtinCastIntAsRealSig) evalReal(row chunk.Row) (res float64, isNull b
 		res = float64(uint64(val))
 	}
 	return res, false, err
+}
+
+func (b *builtinCastIntAsRealSig) supportReverseEval() bool {
+	return true
+}
+
+func (b *builtinCastIntAsRealSig) reverseEval(sc *stmtctx.StatementContext, res types.Datum, rType types.RoundingType) (val types.Datum, err error) {
+	switch x := b.args[0].(type) {
+	case *Column, *ScalarFunction:
+		val, err = types.ChangeReverseResultByUpperLowerBound(sc, x.GetType(), res, rType)
+		if err != nil {
+			return val, err
+		}
+		return x.ReverseEval(sc, val, rType)
+	case *Constant:
+		return types.Datum{}, errors.Errorf("invalid args for reverse evaluation, " +
+			"the expression should have exactly one column")
+	}
+	return types.Datum{}, errors.Errorf("unknown arg type for expression reverse evaluation")
 }
 
 type builtinCastIntAsDecimalSig struct {
@@ -505,6 +544,25 @@ func (b *builtinCastIntAsDecimalSig) evalDecimal(row chunk.Row) (res *types.MyDe
 	}
 	res, err = types.ProduceDecWithSpecifiedTp(res, b.tp, b.ctx.GetSessionVars().StmtCtx)
 	return res, isNull, err
+}
+
+func (b *builtinCastIntAsDecimalSig) supportReverseEval() bool {
+	return true
+}
+
+func (b *builtinCastIntAsDecimalSig) reverseEval(sc *stmtctx.StatementContext, res types.Datum, rType types.RoundingType) (val types.Datum, err error) {
+	switch x := b.args[0].(type) {
+	case *Column, *ScalarFunction:
+		val, err = types.ChangeReverseResultByUpperLowerBound(sc, x.GetType(), res, rType)
+		if err != nil {
+			return val, err
+		}
+		return x.ReverseEval(sc, val, rType)
+	case *Constant:
+		return types.Datum{}, errors.Errorf("invalid args for reverse evaluation, " +
+			"the expression should have exactly one column")
+	}
+	return types.Datum{}, errors.Errorf("unknown arg type for expression reverse evaluation")
 }
 
 type builtinCastIntAsStringSig struct {
