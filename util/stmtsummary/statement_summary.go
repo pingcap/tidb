@@ -492,37 +492,36 @@ func newStmtSummaryByDigest(sei *StmtExecInfo, beginTime int64, historySize int)
 
 func (ssbd *stmtSummaryByDigest) add(sei *StmtExecInfo, beginTime int64, historySize int) {
 	// Enclose this block in a function to ensure the lock will always be released.
-	ssElement, ok := func() (*stmtSummaryByDigestElement, bool) {
+	ssElement, isElementNew := func() (*stmtSummaryByDigestElement, bool) {
 		ssbd.Lock()
 		defer ssbd.Unlock()
 
 		var ssElement *stmtSummaryByDigestElement
-		ok := false
+		isElementNew := true
 		if ssbd.history.Len() > 0 {
 			lastElement := ssbd.history.Back().Value.(*stmtSummaryByDigestElement)
 			if lastElement.beginTime >= beginTime {
 				ssElement = lastElement
-				ok = true
+				isElementNew = false
 			}
 		}
-		if !ok {
+		if isElementNew {
+			// If the element is new created, `ssElement.add(sei)` should be done inside the lock of `ssbd`.
 			ssElement = newStmtSummaryByDigestElement(sei, beginTime)
 			ssbd.history.PushBack(ssElement)
 		}
 
-		// `historySize` might be modified, so check expiration every time.
-		if historySize == 0 {
-			historySize = 1
-		}
-		for ssbd.history.Len() > historySize {
+		// `historySize` might be modified anytime, so check expiration every time.
+		// Even if history is set to 0, current summary is still needed.
+		for ssbd.history.Len() > historySize && ssbd.history.Len() > 1 {
 			ssbd.history.Remove(ssbd.history.Front())
 		}
 
-		return ssElement, ok
+		return ssElement, isElementNew
 	}()
 
 	// Lock a single entry, not the whole `ssbd`.
-	if ok {
+	if !isElementNew {
 		ssElement.add(sei)
 	}
 }
