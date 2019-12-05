@@ -45,7 +45,7 @@ func (sg TiKVSingleGather) Init(ctx sessionctx.Context, offset int) *TiKVSingleG
 	return &sg
 }
 
-// Init initializes TiKVSingleGather.
+// Init initializes TiKVDoubleGather.
 func (dg TiKVDoubleGather) Init(ctx sessionctx.Context, offset int) *TiKVDoubleGather {
 	dg.baseLogicalPlan = newBaseLogicalPlan(ctx, plancodec.TypeTiKVDoubleGather, &dg, offset)
 	return &dg
