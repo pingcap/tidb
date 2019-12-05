@@ -769,6 +769,9 @@ type vecExprBenchCase struct {
 	aesModes string
 	// constants are used to generate constant data for children[i].
 	constants []*Constant
+	// chunkSize is used to specify the chunk size of children, the maximum is 1024.
+	// This field is optional, 1024 by default.
+	chunkSize int
 }
 
 type vecExprBenchCases map[string][]vecExprBenchCase
@@ -782,7 +785,7 @@ func fillColumn(eType types.EvalType, chk *chunk.Chunk, colIdx int, testCase vec
 }
 
 func fillColumnWithGener(eType types.EvalType, chk *chunk.Chunk, colIdx int, gen dataGenerator) {
-	batchSize := 1024
+	batchSize := chk.Capacity()
 	if gen == nil {
 		gen = &defaultGener{0.2, eType}
 	}
@@ -860,8 +863,12 @@ func genVecExprBenchCase(ctx sessionctx.Context, funcName string, testCase vecEx
 			fts[i] = eType2FieldType(testCase.childrenTypes[i])
 		}
 	}
+	if testCase.chunkSize <= 0 || testCase.chunkSize > 1024 {
+		testCase.chunkSize = 1024
+	}
 	cols := make([]Expression, len(testCase.childrenTypes))
-	input = chunk.New(fts, 1024, 1024)
+	input = chunk.New(fts, testCase.chunkSize, testCase.chunkSize)
+	input.NumRows()
 	for i, eType := range testCase.childrenTypes {
 		fillColumn(eType, input, i, testCase)
 		if i < len(testCase.constants) && testCase.constants[i] != nil {
@@ -876,7 +883,7 @@ func genVecExprBenchCase(ctx sessionctx.Context, funcName string, testCase vecEx
 		panic(err)
 	}
 
-	output = chunk.New([]*types.FieldType{eType2FieldType(expr.GetType().EvalType())}, 1024, 1024)
+	output = chunk.New([]*types.FieldType{eType2FieldType(expr.GetType().EvalType())}, testCase.chunkSize, testCase.chunkSize)
 	return expr, fts, input, output
 }
 
@@ -997,7 +1004,10 @@ func genVecBuiltinFuncBenchCase(ctx sessionctx.Context, funcName string, testCas
 		}
 	}
 	cols := make([]Expression, childrenNumber)
-	input = chunk.New(fts, 1024, 1024)
+	if testCase.chunkSize <= 0 || testCase.chunkSize > 1024 {
+		testCase.chunkSize = 1024
+	}
+	input = chunk.New(fts, testCase.chunkSize, testCase.chunkSize)
 	for i, eType := range testCase.childrenTypes {
 		fillColumn(eType, input, i, testCase)
 		if i < len(testCase.constants) && testCase.constants[i] != nil {
@@ -1007,7 +1017,7 @@ func genVecBuiltinFuncBenchCase(ctx sessionctx.Context, funcName string, testCas
 		}
 	}
 	if len(cols) == 0 {
-		input.SetNumVirtualRows(1024)
+		input.SetNumVirtualRows(testCase.chunkSize)
 	}
 
 	var err error
@@ -1037,7 +1047,7 @@ func genVecBuiltinFuncBenchCase(ctx sessionctx.Context, funcName string, testCas
 	if err != nil {
 		panic(err)
 	}
-	result = chunk.NewColumn(eType2FieldType(testCase.retEvalType), 1024)
+	result = chunk.NewColumn(eType2FieldType(testCase.retEvalType), testCase.chunkSize)
 	// Mess up the output to make sure vecEvalXXX to call ResizeXXX/ReserveXXX itself.
 	result.AppendNull()
 	return baseFunc, fts, input, result

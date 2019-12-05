@@ -606,6 +606,7 @@ func (g gener) gen() interface{} {
 					{{- end }}
 				},
 				constants: []*Constant{nil, nil, {Value: types.NewStringDatum("{{$unit}}"), RetType: types.NewFieldType(mysql.TypeString)}},
+				chunkSize: 128,
 			},
 		{{- end }}
 	{{- end }}
