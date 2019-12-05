@@ -204,7 +204,7 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret
 		p.RightJoinKeys = append(p.RightJoinKeys, eqCond.GetArgs()[1].(*expression.Column))
 	}
 	p.mergeSchema()
-	p.BuildKeyInfo()
+	buildKeyInfo(p)
 	return ret, p.self
 }
 
@@ -576,6 +576,14 @@ func (p *LogicalWindow) PredicatePushDown(predicates []expression.Expression) ([
 	}
 	p.baseLogicalPlan.PredicatePushDown(canBePushed)
 	return canNotBePushed, p
+}
+
+// PredicatePushDown implements LogicalPlan PredicatePushDown interface.
+func (p *LogicalMemTable) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, LogicalPlan) {
+	if p.Extractor != nil {
+		predicates = p.Extractor.Extract(p.schema, p.names, predicates)
+	}
+	return predicates, p.self
 }
 
 func (*ppdSolver) name() string {

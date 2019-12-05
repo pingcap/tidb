@@ -1,4 +1,4 @@
-// Copyright 2018 PingCAP, Inc.
+// Copyright 2019 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -11,17 +11,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package property
+package core
 
-import (
-	"github.com/pingcap/tidb/expression"
-)
-
-// LogicalProperty stands for logical properties such as schema of expression,
-// or statistics of columns in schema for output of Group.
-// All group expressions in a group share same logical property.
-type LogicalProperty struct {
-	Stats     *StatsInfo
-	Schema    *expression.Schema
-	MaxOneRow bool
-}
+// LogicalOptimize exports the `logicalOptimize` function for test packages and
+// doesn't affect the normal package and access control of Golang (tricky ^_^)
+var LogicalOptimize = logicalOptimize
