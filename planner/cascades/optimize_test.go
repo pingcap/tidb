@@ -116,7 +116,7 @@ func (s *testCascadesSuite) TestPreparePossibleProperties(c *C) {
 	c.Assert(ok, IsTrue)
 	logic, err = s.optimizer.onPhasePreprocessing(s.sctx, logic)
 	c.Assert(err, IsNil)
-	// collect the target column: f, g, a
+	// collect the target columns: f, a
 	ds, ok := logic.Children()[0].Children()[0].(*plannercore.DataSource)
 	c.Assert(ok, IsTrue)
 	var columnF, columnA *expression.Column
