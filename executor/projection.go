@@ -270,7 +270,7 @@ func (e *ProjectionExec) Close() error {
 	if e.isUnparallelExec() {
 		e.childResult = nil
 	}
-	if e.outputCh != nil {
+	if e.prepared {
 		close(e.finishCh)
 		// Wait for "projectionInputFetcher" to finish and exit.
 		for range e.outputCh {
