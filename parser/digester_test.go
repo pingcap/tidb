@@ -53,8 +53,13 @@ func (s *testSQLDigestSuite) TestNormalize(c *C) {
 		{"select * from 🥳", "select * from"},
 	}
 	for _, test := range tests {
-		actual := parser.Normalize(test.input)
-		c.Assert(actual, Equals, test.expect)
+		normalized := parser.Normalize(test.input)
+		digest := parser.DigestNormalized(normalized)
+		c.Assert(normalized, Equals, test.expect)
+
+		normalized2, digest2 := parser.NormalizeDigest(test.input)
+		c.Assert(normalized2, Equals, normalized)
+		c.Assert(digest2, Equals, digest, Commentf("%+v", test))
 	}
 }
 
@@ -68,6 +73,11 @@ func (s *testSQLDigestSuite) TestNormalizeDigest(c *C) {
 	}
 	for _, test := range tests {
 		normalized, digest := parser.NormalizeDigest(test.sql)
+		c.Assert(normalized, Equals, test.normalized)
+		c.Assert(digest, Equals, test.digest)
+
+		normalized = parser.Normalize(test.sql)
+		digest = parser.DigestNormalized(normalized)
 		c.Assert(normalized, Equals, test.normalized)
 		c.Assert(digest, Equals, test.digest)
 	}
