@@ -83,6 +83,9 @@ type ServerVersionInfo struct {
 	GitHash string `json:"git_hash"`
 }
 
+// globalInfoSyncer stores the global infoSyncer.
+// Use a global variable for simply the code, use the domain.infoSyncer will have circle import problem in some pkg.
+// Use atomic.Value to avoid data race in the test.
 var globalInfoSyncer atomic.Value
 
 func getGlobalInfoSyncer() (*InfoSyncer, error) {
@@ -105,8 +108,9 @@ func GlobalInfoSyncerInit(ctx context.Context, id string, etcdCli *clientv3.Clie
 		serverInfoPath: fmt.Sprintf("%s/%s", ServerInformationPath, id),
 		minStartTSPath: fmt.Sprintf("%s/%s", ServerMinStartTSPath, id),
 	}
+	err := is.init(ctx)
 	setGlobalInfoSyncer(is)
-	return is, is.init(ctx)
+	return is, err
 }
 
 // Init creates a new etcd session and stores server info to etcd.
