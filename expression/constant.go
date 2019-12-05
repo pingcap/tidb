@@ -448,3 +448,16 @@ func (c *Constant) Vectorized() bool {
 	}
 	return true
 }
+
+// SupportReverseEval checks whether the builtinFunc support reverse evaluation.
+func (c *Constant) SupportReverseEval() bool {
+	if c.DeferredExpr != nil {
+		return c.DeferredExpr.SupportReverseEval()
+	}
+	return true
+}
+
+// ReverseEval evaluates the only one column value with given function result.
+func (c *Constant) ReverseEval(sc *stmtctx.StatementContext, res types.Datum, rType types.RoundingType) (val types.Datum, err error) {
+	return c.Value, nil
+}
