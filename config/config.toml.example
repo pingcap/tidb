@@ -60,6 +60,12 @@ treat-old-version-utf8-as-utf8mb4 = true
 # Maximum number of the splitting region, which is used by the split region statement.
 split-region-max-num = 1000
 
+# server-version is used to change the version string of TiDB in the following scenarios:
+# 1. the server version returned by builtin-function `VERSION()`.
+# 2. the server version filled in handshake packets of MySQL Connection Protocol, see https://dev.mysql.com/doc/internals/en/connection-phase-packets.html#packet-Protocol::Handshake for more details.
+# if server-version = "", the default value(original TiDB version string) is used.
+server-version = ""
+
 [log]
 # Log level: debug, info, warn, error, fatal.
 level = "info"

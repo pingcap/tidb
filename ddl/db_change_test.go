@@ -470,7 +470,7 @@ func (s *testStateChangeSuite) TestAppendEnum(c *C) {
 	c.Assert(err.Error(), Equals, "[ddl:203]unsupported modify column the number of enum column's elements is less than the original: 2")
 	failAlterTableSQL2 := "alter table t change c2 c2 int default 0"
 	_, err = s.se.Execute(context.Background(), failAlterTableSQL2)
-	c.Assert(err.Error(), Equals, "[ddl:210]unsupported modify charset from utf8 to binary")
+	c.Assert(err.Error(), Equals, "[ddl:203]unsupported modify column cannot modify enum type column's to type int(11)")
 	alterTableSQL := "alter table t change c2 c2 enum('N','Y','A') DEFAULT 'A'"
 	_, err = s.se.Execute(context.Background(), alterTableSQL)
 	c.Assert(err, IsNil)
