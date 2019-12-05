@@ -300,7 +300,7 @@ func (s *testSessionSuite) TestRowLock(c *C) {
 
 	tk.MustExec("drop table if exists t")
 	txn, err := tk.Se.Txn(true)
-	c.Assert(err, IsNil)
+	c.Assert(kv.ErrInvalidTxn.Equal(err), IsTrue)
 	c.Assert(txn.Valid(), IsFalse)
 	tk.MustExec("create table t (c1 int, c2 int, c3 int)")
 	tk.MustExec("insert t values (11, 2, 3)")
@@ -721,7 +721,7 @@ func (s *testSessionSuite) TestRetryPreparedStmt(c *C) {
 
 	tk.MustExec("drop table if exists t")
 	txn, err := tk.Se.Txn(true)
-	c.Assert(err, IsNil)
+	c.Assert(kv.ErrInvalidTxn.Equal(err), IsTrue)
 	c.Assert(txn.Valid(), IsFalse)
 	tk.MustExec("create table t (c1 int, c2 int, c3 int)")
 	tk.MustExec("insert t values (11, 2, 3)")

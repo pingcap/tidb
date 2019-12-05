@@ -625,17 +625,14 @@ func (e *SimpleExec) executeRollback(s *ast.RollbackStmt) error {
 	if err != nil {
 		return err
 	}
-	if txn.Valid() {
-		duration := time.Since(sessVars.TxnCtx.CreateTime).Seconds()
-		if sessVars.InRestrictedSQL {
-			transactionDurationInternalRollback.Observe(duration)
-		} else {
-			transactionDurationGeneralRollback.Observe(duration)
-		}
-		sessVars.TxnCtx.ClearDelta()
-		return txn.Rollback()
+	duration := time.Since(sessVars.TxnCtx.CreateTime).Seconds()
+	if sessVars.InRestrictedSQL {
+		transactionDurationInternalRollback.Observe(duration)
+	} else {
+		transactionDurationGeneralRollback.Observe(duration)
 	}
-	return nil
+	sessVars.TxnCtx.ClearDelta()
+	return txn.Rollback()
 }
 
 func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStmt) error {
