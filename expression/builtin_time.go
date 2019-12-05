@@ -2966,6 +2966,20 @@ func (du *baseDateArithmitical) vecGetIntervalFromString(b *baseBuiltinFunc, inp
 		return err
 	}
 
+	amendInterval := func(val string) string {
+		return val
+	}
+	if unitLower := strings.ToLower(unit); unitLower == "day" || unitLower == "hour" {
+		amendInterval = func(val string) string {
+			if intervalLower := strings.ToLower(val); intervalLower == "true" {
+				return "1"
+			} else if intervalLower == "false" {
+				return "0"
+			}
+			return du.intervalRegexp.FindString(val)
+		}
+	}
+
 	result.ReserveString(n)
 	for i := 0; i < n; i++ {
 		if buf.IsNull(i) {
@@ -2973,17 +2987,7 @@ func (du *baseDateArithmitical) vecGetIntervalFromString(b *baseBuiltinFunc, inp
 			continue
 		}
 
-		interval := buf.GetString(i)
-		if unitLower := strings.ToLower(unit); unitLower == "day" || unitLower == "hour" {
-			if intervalLower := strings.ToLower(interval); intervalLower == "true" {
-				interval = "1"
-			} else if intervalLower == "false" {
-				interval = "0"
-			} else {
-				interval = du.intervalRegexp.FindString(interval)
-			}
-		}
-		result.AppendString(interval)
+		result.AppendString(amendInterval(buf.GetString(i)))
 	}
 	return nil
 }

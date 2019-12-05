@@ -440,26 +440,6 @@ func (b *{{.SigName}}) vecEvalTime(input *chunk.Chunk, result *chunk.Column) err
 		return nil
 	}
 
-	{{ if eq .TypeA.TypeName "Duration" }}
-		durationBuf, err := b.bufAllocator.get(types.ETDuration, n)
-		if err != nil {
-			return err
-		}
-		defer b.bufAllocator.put(durationBuf)
-		if err := b.args[0].VecEvalDuration(b.ctx, input, durationBuf); err != nil {
-			return err
-		}
-	{{ else }}
-		dateBuf, err := b.bufAllocator.get(types.ETDatetime, n)
-		if err != nil {
-			return err
-		}
-		defer b.bufAllocator.put(dateBuf)
-		if err := b.vecGetDateFrom{{.TypeA.ETName}}(&b.baseBuiltinFunc, input, unit, dateBuf); err != nil {
-			return err
-		}
-	{{ end }}
-
 	intervalBuf, err := b.bufAllocator.get(types.ETString, n)
 	if err != nil {
 		return err
@@ -471,11 +451,31 @@ func (b *{{.SigName}}) vecEvalTime(input *chunk.Chunk, result *chunk.Column) err
 
 	{{ if eq .TypeA.TypeName "Duration" }}
 		result.ResizeGoDuration(n, false)
-		result.MergeNulls(durationBuf, intervalBuf)
-		oriDurations := durationBuf.GoDurations()
+		if err := b.args[0].VecEvalDuration(b.ctx, input, result); err != nil {
+			return err
+		}
+
+		result.MergeNulls(intervalBuf)
 		resDurations := result.GoDurations()
 		iterDuration := types.Duration{Fsp: types.MaxFsp}
+	{{ else if eq .TypeA.TypeName "Time" }}
+		result.ResizeTime(n, false)
+		if err := b.vecGetDateFromDatetime(&b.baseBuiltinFunc, input, unit, result); err != nil {
+			return err
+		}
+
+		result.MergeNulls(intervalBuf)
+		resDates := result.Times()
 	{{ else }}
+		dateBuf, err := b.bufAllocator.get(types.ETDatetime, n)
+		if err != nil {
+			return err
+		}
+		defer b.bufAllocator.put(dateBuf)
+		if err := b.vecGetDateFrom{{.TypeA.ETName}}(&b.baseBuiltinFunc, input, unit, dateBuf); err != nil {
+			return err
+		}
+
 		result.ResizeTime(n, false)
 		result.MergeNulls(dateBuf, intervalBuf)
 		oriDates := dateBuf.Times()
@@ -488,11 +488,17 @@ func (b *{{.SigName}}) vecEvalTime(input *chunk.Chunk, result *chunk.Column) err
 		}
 
 		{{- if eq .TypeA.TypeName "Duration" }}
-			iterDuration.Duration = oriDurations[i]
+			iterDuration.Duration = resDurations[i]
 			{{- if eq $.FuncName "AddDate" }}
 				resDuration, isNull, err := b.addDuration(b.ctx, iterDuration, intervalBuf.GetString(i), unit)
 			{{- else }}
 				resDuration, isNull, err := b.subDuration(b.ctx, iterDuration, intervalBuf.GetString(i), unit)
+			{{- end }}
+		{{- else if eq .TypeA.TypeName "Time" }}
+			{{- if eq $.FuncName "AddDate" }}
+				resDate, isNull, err := b.add(b.ctx, resDates[i], intervalBuf.GetString(i), unit)
+			{{- else }}
+				resDate, isNull, err := b.sub(b.ctx, resDates[i], intervalBuf.GetString(i), unit)
 			{{- end }}
 		{{- else }}
 			{{- if eq $.FuncName "AddDate" }}
@@ -523,7 +529,35 @@ func (b *{{.SigName}}) vectorized() bool {
 {{ end }}{{/* range */}}
 `))
 
-var testFile = template.Must(template.New("").Parse(`// Copyright 2019 PingCAP, Inc.
+var testFileFuncs = template.FuncMap{
+	"getIntervalUnitList": func() []string {
+		return []string{
+			"MICROSECOND",
+			"SECOND",
+			"MINUTE",
+			"HOUR",
+			"DAY",
+			"WEEK",
+			"MONTH",
+			"QUARTER",
+			"YEAR",
+			"SECOND_MICROSECOND",
+			"MINUTE_MICROSECOND",
+			"MINUTE_SECOND",
+			"HOUR_MICROSECOND",
+			"HOUR_SECOND",
+			"HOUR_MINUTE",
+			"DAY_MICROSECOND",
+			"DAY_SECOND",
+			"DAY_MINUTE",
+			"DAY_HOUR",
+			"YEAR_MONTH",
+		}
+	},
+}
+
+var testFile = template.Must(template.New("").Funcs(testFileFuncs).Parse(`
+// Copyright 2019 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -569,44 +603,32 @@ func (g gener) gen() interface{} {
 	return result
 }
 
-{{ define "datetimeGener" }}
-	{{- if eq .TypeA.ETName "String"}}
-		&dateStrGener{NullRation: 0.2},
-	{{- else if eq .TypeA.ETName "Int"}}
-		&dateTimeIntGener{nullRation: 0.2},
-	{{- else }}
-		&defaultGener{eType: types.ET{{.TypeA.ETName}}, nullRation: 0.2},
-	{{- end }}
-{{ end }}
-
-{{ define "intervalGener" }}
-	{{- if eq .TypeB.ETName "String" -}}
-		&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
-	{{- else -}}
-		&defaultGener{eType: types.ET{{.TypeB.ETName}}, nullRation: 0.2},
-	{{- end }}
-{{ end }}
-
 {{ define "addOrSubDateCases" }}
-	{{ range .Sigs }} // {{ .SigName }}
-		{
-			retEvalType: types.ET{{ .Output.ETName }},
-			{{- if eq .TestTypeA "" }}
-			childrenTypes: []types.EvalType{types.ET{{ .TypeA.ETName }}, types.ET{{ .TypeB.ETName }}, types.ETString},
-			{{- else }}
-			childrenTypes: []types.EvalType{types.ET{{ .TestTypeA }}, types.ET{{ .TestTypeB }}, types.ETString},
-			{{- end }}
-			{{- if ne .FieldTypeA "" }}
-			childrenFieldTypes: []*types.FieldType{types.NewFieldType(mysql.Type{{.FieldTypeA}}), types.NewFieldType(mysql.Type{{.FieldTypeB}})},
-			{{- end }}
-			geners: []dataGenerator{
-				{{- template "datetimeGener" . -}}
-				{{- template "intervalGener" . -}}
-				nil,
+	{{- $unitList := getIntervalUnitList -}}
+	{{- range $sig := .Sigs }}
+		// {{ $sig.SigName }}
+		{{- range $unit := $unitList }}
+			{
+				retEvalType: types.ET{{ $sig.Output.ETName }},
+				childrenTypes: []types.EvalType{types.ET{{ $sig.TypeA.ETName }}, types.ET{{ $sig.TypeB.ETName }}, types.ETString},
+				geners: []dataGenerator{
+					{{- if eq $sig.TypeA.ETName "String"}}
+						&dateStrGener{NullRation: 0.2},
+					{{- else if eq $sig.TypeA.ETName "Int"}}
+						&dateTimeIntGener{nullRation: 0.2},
+					{{- else }}
+						&defaultGener{eType: types.ET{{$sig.TypeA.ETName}}, nullRation: 0.2},
+					{{- end }}
+					{{- if eq $sig.TypeB.ETName "String" }}
+						&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+					{{- else }}
+						&defaultGener{eType: types.ET{{$sig.TypeB.ETName}}, nullRation: 0.2},
+					{{- end }}
+				},
+				constants: []*Constant{nil, nil, {Value: types.NewStringDatum("{{$unit}}"), RetType: types.NewFieldType(mysql.TypeString)}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum((&intervalUnitStrGener{}).gen().(string)), RetType: types.NewFieldType(mysql.TypeString)}},
-		},
-	{{ end }}
+		{{- end }}
+	{{- end }}
 {{ end }}
 
 {{/* Add more test cases here if we have more functions in this file */}}

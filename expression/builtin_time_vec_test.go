@@ -72,41 +72,6 @@ func (g *dateTimeUnitStrGener) gen() interface{} {
 	return dateTimes[n]
 }
 
-type intervalUnitStrGener struct {
-	nullRation float64
-}
-
-func (g *intervalUnitStrGener) gen() interface{} {
-	if rand.Float64() < g.nullRation {
-		return nil
-	}
-	unitList := []string{
-		"MICROSECOND",
-		"SECOND",
-		"MINUTE",
-		"HOUR",
-		"DAY",
-		"WEEK",
-		"MONTH",
-		"QUARTER",
-		"YEAR",
-		"SECOND_MICROSECOND",
-		"MINUTE_MICROSECOND",
-		"MINUTE_SECOND",
-		"HOUR_MICROSECOND",
-		"HOUR_SECOND",
-		"HOUR_MINUTE",
-		"DAY_MICROSECOND",
-		"DAY_SECOND",
-		"DAY_MINUTE",
-		"DAY_HOUR",
-		"YEAR_MONTH",
-	}
-
-	n := rand.Int() % len(unitList)
-	return unitList[n]
-}
-
 var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 	ast.DateLiteral: {
 		{retEvalType: types.ETDatetime, childrenTypes: []types.EvalType{types.ETDatetime},
