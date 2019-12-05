@@ -1118,7 +1118,7 @@ func ParseDuration(sc *stmtctx.StatementContext, str string, fsp int8) (Duration
 			var dur Duration
 			dur, err1 = t.ConvertToDuration()
 			if err1 != nil {
-				return ZeroDuration, errors.Trace(err)
+				return ZeroDuration, ErrTruncatedWrongVal.GenWithStackByArgs("time", origStr)
 			}
 			return dur.RoundFrac(fsp)
 		}

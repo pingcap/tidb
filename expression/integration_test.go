@@ -1623,7 +1623,7 @@ func (s *testIntegrationSuite2) TestTimeBuiltin(c *C) {
 	result = tk.MustQuery("SELECT TIME_FORMAT('150:02:28', '%H:%i:%s %p');")
 	result.Check(testkit.Rows("150:02:28 AM"))
 	result = tk.MustQuery("SELECT TIME_FORMAT('bad string', '%H:%i:%s %p');")
-	result.Check(testkit.Rows("00:00:00 AM"))
+	result.Check(testkit.Rows("<nil>"))
 	result = tk.MustQuery("SELECT TIME_FORMAT(null, '%H:%i:%s %p');")
 	result.Check(testkit.Rows("<nil>"))
 	result = tk.MustQuery("SELECT TIME_FORMAT(123, '%H:%i:%s %p');")
@@ -1768,7 +1768,7 @@ func (s *testIntegrationSuite2) TestTimeBuiltin(c *C) {
 	result.Check(testkit.Rows("2147483647.999999"))
 
 	result = tk.MustQuery("SELECT TIME_FORMAT('bad string', '%H:%i:%s %p');")
-	result.Check(testkit.Rows("00:00:00 AM"))
+	result.Check(testkit.Rows("<nil>"))
 	result = tk.MustQuery("SELECT TIME_FORMAT(null, '%H:%i:%s %p');")
 	result.Check(testkit.Rows("<nil>"))
 	result = tk.MustQuery("SELECT TIME_FORMAT(123, '%H:%i:%s %p');")
@@ -4663,9 +4663,9 @@ from
     (select * from t1) a
 left join
     (select bussid,date(from_unixtime(ct)) date8 from t2) b
-on 
+on
     a.period_id = b.bussid
-where 
+where
     datediff(b.date8, date(from_unixtime(a.starttime))) >= 0`
 	tk.MustQuery(q)
 }
