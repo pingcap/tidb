@@ -1027,9 +1027,9 @@ func (s *session) executeStatement(ctx context.Context, connID uint64, stmtNode 
 	} else {
 		s.ClearValue(sessionctx.LastExecuteDDL)
 	}
-	logStmt(stmtNode, s.sessionVars)
 	startTime := time.Now()
 	recordSet, err := runStmt(ctx, s, stmt)
+	logStmt(stmtNode, s.sessionVars)
 	if err != nil {
 		if !kv.ErrKeyExists.Equal(err) {
 			logutil.Logger(ctx).Warn("run statement failed",
