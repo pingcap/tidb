@@ -178,9 +178,9 @@ func (e *ProjectionExec) isUnparallelExec() bool {
 func (e *ProjectionExec) unParallelExecute(ctx context.Context, chk *chunk.Chunk) error {
 	// transmit the requiredRows
 	e.childResult.SetRequiredRows(chk.RequiredRows(), e.maxChunkSize)
-	e.memTracker.Consume(-e.childResult.MemoryUsage())
+	mSize := e.childResult.MemoryUsage()
 	err := Next(ctx, e.children[0], e.childResult)
-	e.memTracker.Consume(e.childResult.MemoryUsage())
+	e.memTracker.Consume(e.childResult.MemoryUsage() - mSize)
 	if err != nil {
 		return err
 	}
@@ -208,9 +208,9 @@ func (e *ProjectionExec) parallelExecute(ctx context.Context, chk *chunk.Chunk) 
 		return err
 	}
 
-	e.memTracker.Consume(-output.chk.MemoryUsage())
+	mSize := output.chk.MemoryUsage()
 	chk.SwapColumns(output.chk)
-	e.memTracker.Consume(output.chk.MemoryUsage())
+	e.memTracker.Consume(output.chk.MemoryUsage() - mSize)
 	e.fetcher.outputCh <- output
 	return nil
 }
@@ -333,9 +333,9 @@ func (f *projectionInputFetcher) run(ctx context.Context) {
 
 		requiredRows := atomic.LoadInt64(&f.proj.parentReqRows)
 		input.chk.SetRequiredRows(int(requiredRows), f.proj.maxChunkSize)
-		f.memTracker.Consume(-input.chk.MemoryUsage())
+		mSize := input.chk.MemoryUsage()
 		err := Next(ctx, f.child, input.chk)
-		f.memTracker.Consume(input.chk.MemoryUsage())
+		f.memTracker.Consume(input.chk.MemoryUsage() - mSize)
 		if err != nil || input.chk.NumRows() == 0 {
 			output.done <- err
 			return
@@ -388,9 +388,9 @@ func (w *projectionWorker) run(ctx context.Context) {
 			return
 		}
 
-		w.memTracker.Consume(-output.chk.MemoryUsage())
+		mSize := output.chk.MemoryUsage()
 		err := w.evaluatorSuit.Run(w.sctx, input.chk, output.chk)
-		w.memTracker.Consume(output.chk.MemoryUsage())
+		w.memTracker.Consume(output.chk.MemoryUsage() - mSize)
 		output.done <- err
 
 		if err != nil {
