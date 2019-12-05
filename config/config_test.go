@@ -20,7 +20,6 @@ import (
 	"testing"
 
 	. "github.com/pingcap/check"
-	zaplog "github.com/pingcap/log"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/util/logutil"
 	tracing "github.com/uber/jaeger-client-go/config"
@@ -67,9 +66,7 @@ unrecognized-option-test = true
 token-limit = 0
 alter-primary-key = true
 split-region-max-num=10000
-enable-batch-dml = true
 server-version = "test_version"
-repair-mode = true
 [performance]
 txn-entry-count-limit=2000
 txn-total-size-limit=2000
