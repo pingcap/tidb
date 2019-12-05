@@ -395,6 +395,7 @@ func (ts *testSuite) TestTableFromMeta(c *C) {
 
 func (ts *testSuite) TestHiddenColumn(c *C) {
 	tk := testkit.NewTestKit(c, ts.store)
+	tk.MustExec("DROP DATABASE IF EXIST test_hidden;")
 	tk.MustExec("CREATE DATABASE test_hidden;")
 	tk.MustExec("USE test_hidden;")
 	tk.MustExec("CREATE TABLE hidden (a int primary key, b int, c int, d int, e int);")
