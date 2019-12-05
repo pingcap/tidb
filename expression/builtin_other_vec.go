@@ -79,11 +79,23 @@ func (b *builtinValuesJSONSig) vecEvalJSON(input *chunk.Chunk, result *chunk.Col
 }
 
 func (b *builtinBitCountSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinBitCountSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	if err := b.args[0].VecEvalInt(b.ctx, input, result); err != nil {
+		return err
+	}
+	i64s := result.Int64s()
+	for i := range i64s {
+		var count int64
+		n := i64s[i]
+		for ; n != 0; n = (n - 1) & n {
+			count++
+		}
+		i64s[i] = count
+	}
+	return nil
 }
 
 func (b *builtinGetParamStringSig) vectorized() bool {
