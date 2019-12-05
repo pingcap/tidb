@@ -43,11 +43,16 @@ func TestT(t *testing.T) {
 }
 
 var _ = Suite(&testSuite{})
+var _ = SerialSuites(&testSuite2{})
 
 type testSuite struct {
 	store kv.Storage
 	dom   *domain.Domain
 	se    session.Session
+}
+
+type testSuite2 struct {
+	testSuite
 }
 
 func (ts *testSuite) SetUpSuite(c *C) {
@@ -393,7 +398,7 @@ func (ts *testSuite) TestTableFromMeta(c *C) {
 	c.Assert(err, NotNil)
 }
 
-func (ts *testSuite) TestHiddenColumn(c *C) {
+func (ts *testSuite2) TestHiddenColumn(c *C) {
 	tk := testkit.NewTestKit(c, ts.store)
 	tk.MustExec("DROP DATABASE IF EXISTS test_hidden;")
 	tk.MustExec("CREATE DATABASE test_hidden;")
