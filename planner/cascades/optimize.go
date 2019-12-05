@@ -364,7 +364,7 @@ func preparePossibleProperties(g *memo.Group, propertyMap map[*memo.Group][][]*e
 	if prop, ok := propertyMap[g]; ok {
 		return prop
 	}
-	groupProperties := make([][]*expression.Column, 0)
+	groupPropertyMap := make(map[string][]*expression.Column)
 	for elem := g.Equivalents.Front(); elem != nil; elem = elem.Next() {
 		expr := elem.Value.(*memo.GroupExpr)
 		childrenProperties := make([][][]*expression.Column, len(expr.Children))
@@ -372,30 +372,19 @@ func preparePossibleProperties(g *memo.Group, propertyMap map[*memo.Group][][]*e
 			childrenProperties[i] = preparePossibleProperties(child, propertyMap)
 		}
 		exprProperties := expr.ExprNode.PreparePossibleProperties(expr.Schema(), childrenProperties...)
-		for _, newProp := range exprProperties {
-			// Check if the prop has already been in `groupProperties`.
-			duplicate := false
-			for _, existedProp := range groupProperties {
-				if len(newProp) != len(existedProp) {
-					continue
-				}
-				isSameProp := true
-				for i := range newProp {
-					if !newProp[i].Equal(nil, existedProp[i]) {
-						isSameProp = false
-						break
-					}
-				}
-				if isSameProp {
-					duplicate = true
-					break
-				}
-			}
-			if !duplicate {
-				groupProperties = append(groupProperties, newProp)
+		for _, newPropCols := range exprProperties {
+			// Check if the prop has already been in `groupPropertyMap`.
+			newProp := property.PhysicalProperty{Items: property.ItemsFromCols(newPropCols, true)}
+			key := newProp.HashCode()
+			if _, ok := groupPropertyMap[string(key)]; !ok {
+				groupPropertyMap[string(key)] = newPropCols
 			}
 		}
 	}
-	propertyMap[g] = groupProperties
-	return groupProperties
+	resultProps := make([][]*expression.Column, 0, len(groupPropertyMap))
+	for _, prop := range groupPropertyMap {
+		resultProps = append(resultProps, prop)
+	}
+	propertyMap[g] = resultProps
+	return resultProps
 }
