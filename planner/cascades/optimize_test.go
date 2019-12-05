@@ -15,13 +15,13 @@ package cascades
 
 import (
 	"context"
-	"github.com/pingcap/tidb/expression"
 	"math"
 	"testing"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/model"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/planner/memo"
@@ -99,40 +99,6 @@ func (s *testCascadesSuite) TestFillGroupStats(c *C) {
 	c.Assert(rootGroup.Prop.Stats, NotNil)
 }
 
-//func (s *testCascadesSuite) recursivelyCheckProperties(g *memo.Group, columnF, columnG *expression.Column, c *C) {
-//	// The result group looks like this:
-//	// Group#0 Schema:[test.t.f,Column#13]
-//	//   Projection_3 input:[Group#1], test.t.f, Column#13
-//	// Group#1 Schema:[Column#13,test.t.f]
-//	//   Aggregation_2 input:[Group#2], funcs:sum(test.t.a), firstrow(test.t.f)
-//	// Group#2 Schema:[test.t.a,test.t.f]
-//	//   TiKVSingleGather_5 input:[Group#3], table:t
-//	//   TiKVSingleGather_9 input:[Group#4], table:t, index:f_g
-//	//   TiKVSingleGather_7 input:[Group#5], table:t, index:f
-//	// Group#3 Schema:[test.t.a,test.t.f]
-//	//   TableScan_4 table:t, pk col:test.t.a
-//	// Group#4 Schema:[test.t.a,test.t.f]
-//	//   IndexScan_8 table:t, index:f, g
-//	// Group#5 Schema:[test.t.a,test.t.f]
-//	//   IndexScan_6 table:t, index:f
-//
-//	// Here, we only check if the LogicalAggregation can get the properties.
-//	for iter := g.Equivalents.Front(); iter != nil; iter = iter.Next() {
-//		expr := iter.Value.(*memo.GroupExpr)
-//		for _, childGroup := range expr.Children {
-//			s.recursivelyCheckProperties(childGroup, columnF, columnG, c)
-//		}
-//		switch expr.ExprNode.(type) {
-//		case *plannercore.LogicalAggregation:
-//			prop := preparePossibleProperties(g, make(map[*memo.Group][][]*expression.Column))
-//			// We only have one prop: f
-//			c.Assert(len(prop), Equals, 1)
-//			c.Assert(prop[0][0].Equal(nil, columnF), IsTrue)
-//		}
-//	}
-//
-//}
-
 func (s *testCascadesSuite) TestPreparePossibleProperties(c *C) {
 	s.optimizer.ResetTransformationRules(map[memo.Operand][]Transformation{
 		memo.OperandDataSource: {
@@ -169,6 +135,7 @@ func (s *testCascadesSuite) TestPreparePossibleProperties(c *C) {
 	group := memo.Convert2Group(agg)
 	err = s.optimizer.onPhaseExploration(s.sctx, group)
 	c.Assert(err, IsNil)
+	// The memo looks like this:
 	// Group#0 Schema:[Column#13,test.t.f]
 	//   Aggregation_2 input:[Group#1], group by:test.t.f, funcs:sum(test.t.a), firstrow(test.t.f)
 	// Group#1 Schema:[test.t.a,test.t.f]
