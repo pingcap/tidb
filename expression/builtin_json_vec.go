@@ -14,6 +14,8 @@
 package expression
 
 import (
+	"strconv"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/sessionctx"
@@ -299,12 +301,12 @@ func (b *builtinJSONQuoteSig) vectorized() bool {
 
 func (b *builtinJSONQuoteSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get(types.ETJson, n)
+	buf, err := b.bufAllocator.get(types.ETString, n)
 	if err != nil {
 		return err
 	}
 	defer b.bufAllocator.put(buf)
-	if err := b.args[0].VecEvalJSON(b.ctx, input, buf); err != nil {
+	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
 		return err
 	}
 
@@ -314,7 +316,7 @@ func (b *builtinJSONQuoteSig) vecEvalString(input *chunk.Chunk, result *chunk.Co
 			result.AppendNull()
 			continue
 		}
-		result.AppendString(buf.GetJSON(i).Quote())
+		result.AppendString(strconv.Quote(buf.GetString(i)))
 	}
 	return nil
 }
@@ -811,12 +813,12 @@ func (b *builtinJSONUnquoteSig) vectorized() bool {
 
 func (b *builtinJSONUnquoteSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get(types.ETJson, n)
+	buf, err := b.bufAllocator.get(types.ETString, n)
 	if err != nil {
 		return err
 	}
 	defer b.bufAllocator.put(buf)
-	if err := b.args[0].VecEvalJSON(b.ctx, input, buf); err != nil {
+	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
 		return err
 	}
 
@@ -826,11 +828,11 @@ func (b *builtinJSONUnquoteSig) vecEvalString(input *chunk.Chunk, result *chunk.
 			result.AppendNull()
 			continue
 		}
-		res, err := buf.GetJSON(i).Unquote()
+		str, err := json.UnquoteString(buf.GetString(i))
 		if err != nil {
 			return err
 		}
-		result.AppendString(res)
+		result.AppendString(str)
 	}
 	return nil
 }

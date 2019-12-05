@@ -21,7 +21,7 @@ func (ds *DataSource) preparePossibleProperties() [][]*expression.Column {
 	result := make([][]*expression.Column, 0, len(ds.possibleAccessPaths))
 
 	for _, path := range ds.possibleAccessPaths {
-		if path.isTablePath {
+		if path.IsTablePath {
 			col := ds.getPKIsHandleCol()
 			if col != nil {
 				result = append(result, []*expression.Column{col})
@@ -29,14 +29,14 @@ func (ds *DataSource) preparePossibleProperties() [][]*expression.Column {
 			continue
 		}
 
-		if len(path.idxCols) == 0 {
+		if len(path.IdxCols) == 0 {
 			continue
 		}
-		result = append(result, make([]*expression.Column, len(path.idxCols)))
-		copy(result[len(result)-1], path.idxCols)
-		for i := 0; i < path.eqCondCount && i+1 < len(path.idxCols); i++ {
-			result = append(result, make([]*expression.Column, len(path.idxCols)-i-1))
-			copy(result[len(result)-1], path.idxCols[i+1:])
+		result = append(result, make([]*expression.Column, len(path.IdxCols)))
+		copy(result[len(result)-1], path.IdxCols)
+		for i := 0; i < path.EqCondCount && i+1 < len(path.IdxCols); i++ {
+			result = append(result, make([]*expression.Column, len(path.IdxCols)-i-1))
+			copy(result[len(result)-1], path.IdxCols[i+1:])
 		}
 	}
 	return result
