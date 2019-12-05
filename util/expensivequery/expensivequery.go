@@ -52,6 +52,7 @@ func (eqh *Handle) Run() {
 	// use 100ms as tickInterval temply, may use given interval or use defined variable later
 	tickInterval := time.Millisecond * time.Duration(100)
 	ticker := time.NewTicker(tickInterval)
+	defer ticker.Stop()
 	for {
 		select {
 		case <-ticker.C:
