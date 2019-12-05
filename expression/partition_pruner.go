@@ -83,6 +83,9 @@ func (p *hashPartitionPruner) reduceConstantEQ() bool {
 		if col != nil {
 			id := p.getColID(col)
 			if p.constantMap[id] != nil {
+				if p.constantMap[id].Equal(p.ctx, cond) {
+					continue
+				}
 				return true
 			}
 			p.constantMap[id] = cond
