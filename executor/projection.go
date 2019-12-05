@@ -268,12 +268,14 @@ func (e *ProjectionExec) prepare(ctx context.Context) {
 // Close implements the Executor Close interface.
 func (e *ProjectionExec) Close() error {
 	if e.isUnparallelExec() {
+		e.memTracker.Consume(-e.childResult.MemoryUsage())
 		e.childResult = nil
 	}
 	if e.prepared {
 		close(e.finishCh)
 		// Wait for "projectionInputFetcher" to finish and exit.
-		for range e.outputCh {
+		for po := range e.outputCh {
+			e.memTracker.Consume(-po.chk.MemoryUsage())
 		}
 		e.outputCh = nil
 	}
