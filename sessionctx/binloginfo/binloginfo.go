@@ -112,10 +112,81 @@ var statusListener = func(_ BinlogStatus) error {
 	return nil
 }
 
+// EnableSkipBinlogFlag enables the skipBinlog flag.
+// NOTE: it is used *ONLY* for test.
+func EnableSkipBinlogFlag() {
+	atomic.StoreUint32(&skipBinlog, 1)
+	logutil.BgLogger().Warn("[binloginfo] enable the skipBinlog flag")
+}
+
 // DisableSkipBinlogFlag disable the skipBinlog flag.
 func DisableSkipBinlogFlag() {
 	atomic.StoreUint32(&skipBinlog, 0)
 	logutil.BgLogger().Warn("[binloginfo] disable the skipBinlog flag")
+}
+
+// IsBinlogSkipped gets the skipBinlog flag.
+func IsBinlogSkipped() bool {
+	return atomic.LoadUint32(&skipBinlog) > 0
+}
+
+// BinlogRecoverStatus is used for display the binlog recovered status after some operations.
+type BinlogRecoverStatus struct {
+	Skipped                 bool
+	SkippedCommitterCounter int32
+}
+
+// GetBinlogStatus returns the binlog recovered status.
+func GetBinlogStatus() *BinlogRecoverStatus {
+	return &BinlogRecoverStatus{
+		Skipped:                 IsBinlogSkipped(),
+		SkippedCommitterCounter: SkippedCommitterCount(),
+	}
+}
+
+var skippedCommitterCounter int32
+
+// WaitBinlogRecover returns when all committing transaction finished.
+func WaitBinlogRecover(timeout time.Duration) error {
+	logutil.BgLogger().Warn("[binloginfo] start waiting for binlog recovering")
+	ticker := time.NewTicker(500 * time.Millisecond)
+	defer ticker.Stop()
+	start := time.Now()
+	for {
+		select {
+		case <-ticker.C:
+			if atomic.LoadInt32(&skippedCommitterCounter) == 0 {
+				logutil.BgLogger().Warn("[binloginfo] binlog recovered")
+				return nil
+			}
+			if time.Since(start) > timeout {
+				logutil.BgLogger().Warn("[binloginfo] waiting for binlog recovering timed out",
+					zap.Duration("duration", timeout))
+				return errors.New("timeout")
+			}
+		}
+	}
+}
+
+// SkippedCommitterCount returns the number of alive committers whick skipped the binlog writing.
+func SkippedCommitterCount() int32 {
+	return atomic.LoadInt32(&skippedCommitterCounter)
+}
+
+// ResetSkippedCommitterCounter is used to reset the skippedCommitterCounter.
+func ResetSkippedCommitterCounter() {
+	atomic.StoreInt32(&skippedCommitterCounter, 0)
+	logutil.BgLogger().Warn("[binloginfo] skippedCommitterCounter is reset to 0")
+}
+
+// AddOneSkippedCommitter adds one committer to skippedCommitterCounter.
+func AddOneSkippedCommitter() {
+	atomic.AddInt32(&skippedCommitterCounter, 1)
+}
+
+// RemoveOneSkippedCommitter removes one committer from skippedCommitterCounter.
+func RemoveOneSkippedCommitter() {
+	atomic.AddInt32(&skippedCommitterCounter, -1)
 }
 
 // SetIgnoreError sets the ignoreError flag, this function called when TiDB start
@@ -146,16 +217,32 @@ func RegisterStatusListener(listener func(BinlogStatus) error) {
 	statusListener = listener
 }
 
+// WriteResult is used for the returned chan of WriteBinlog.
+type WriteResult struct {
+	skipped bool
+	err     error
+}
+
+// Skipped if true stands for the binlog writing is skipped.
+func (wr *WriteResult) Skipped() bool {
+	return wr.skipped
+}
+
+// GetError gets the error of WriteBinlog.
+func (wr *WriteResult) GetError() error {
+	return wr.err
+}
+
 // WriteBinlog writes a binlog to Pump.
-func (info *BinlogInfo) WriteBinlog(clusterID uint64) error {
+func (info *BinlogInfo) WriteBinlog(clusterID uint64) *WriteResult {
 	skip := atomic.LoadUint32(&skipBinlog)
 	if skip > 0 {
 		metrics.CriticalErrorCounter.Add(1)
-		return nil
+		return &WriteResult{true, nil}
 	}
 
 	if info.Client == nil {
-		return errors.New("pumps client is nil")
+		return &WriteResult{false, errors.New("pumps client is nil")}
 	}
 
 	// it will retry in PumpsClient if write binlog fail.
@@ -176,22 +263,22 @@ func (info *BinlogInfo) WriteBinlog(clusterID uint64) error {
 					logutil.BgLogger().Warn("update binlog status failed", zap.Error(err))
 				}
 			}
-			return nil
+			return &WriteResult{true, nil}
 		}
 
 		if strings.Contains(err.Error(), "received message larger than max") {
 			// This kind of error is not critical, return directly.
-			return errors.Errorf("binlog data is too large (%s)", err.Error())
+			return &WriteResult{false, errors.Errorf("binlog data is too large (%s)", err.Error())}
 		}
 
-		return terror.ErrCritical.GenWithStackByArgs(err)
+		return &WriteResult{false, terror.ErrCritical.GenWithStackByArgs(err)}
 	}
 
-	return nil
+	return &WriteResult{false, nil}
 }
 
 // SetDDLBinlog sets DDL binlog in the kv.Transaction.
-func SetDDLBinlog(client *pumpcli.PumpsClient, txn kv.Transaction, jobID int64, ddlQuery string) {
+func SetDDLBinlog(client *pumpcli.PumpsClient, txn kv.Transaction, jobID int64, ddlSchemaState int32, ddlQuery string) {
 	if client == nil {
 		return
 	}
@@ -199,9 +286,10 @@ func SetDDLBinlog(client *pumpcli.PumpsClient, txn kv.Transaction, jobID int64, 
 	ddlQuery = AddSpecialComment(ddlQuery)
 	info := &BinlogInfo{
 		Data: &binlog.Binlog{
-			Tp:       binlog.BinlogType_Prewrite,
-			DdlJobId: jobID,
-			DdlQuery: []byte(ddlQuery),
+			Tp:             binlog.BinlogType_Prewrite,
+			DdlJobId:       jobID,
+			DdlSchemaState: ddlSchemaState,
+			DdlQuery:       []byte(ddlQuery),
 		},
 		Client: client,
 	}

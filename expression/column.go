@@ -199,6 +199,8 @@ type Column struct {
 	InOperand bool
 	// VirtualExpr is used to save expression for virtual column
 	VirtualExpr Expression
+
+	OrigName string
 }
 
 // Equal implements Expression interface.
@@ -314,6 +316,9 @@ const columnPrefix = "Column#"
 
 // String implements Stringer interface.
 func (col *Column) String() string {
+	if col.OrigName != "" {
+		return col.OrigName
+	}
 	var builder strings.Builder
 	fmt.Fprintf(&builder, "%s%d", columnPrefix, col.UniqueID)
 	return builder.String()
@@ -575,4 +580,19 @@ idLoop:
 // EvalVirtualColumn evals the virtual column
 func (col *Column) EvalVirtualColumn(row chunk.Row) (types.Datum, error) {
 	return col.VirtualExpr.Eval(row)
+}
+
+// SupportReverseEval checks whether the builtinFunc support reverse evaluation.
+func (col *Column) SupportReverseEval() bool {
+	switch col.RetType.Tp {
+	case mysql.TypeShort, mysql.TypeLong, mysql.TypeLonglong,
+		mysql.TypeFloat, mysql.TypeDouble, mysql.TypeNewDecimal:
+		return true
+	}
+	return false
+}
+
+// ReverseEval evaluates the only one column value with given function result.
+func (col *Column) ReverseEval(sc *stmtctx.StatementContext, res types.Datum, rType types.RoundingType) (val types.Datum, err error) {
+	return types.ChangeReverseResultByUpperLowerBound(sc, col.RetType, res, rType)
 }

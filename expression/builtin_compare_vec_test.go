@@ -79,7 +79,9 @@ var vecBuiltinCompareCases = map[string][]vecExprBenchCase{
 		},
 	},
 	ast.Coalesce: {},
-	ast.NullEQ:   {},
+	ast.NullEQ: {
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt}},
+	},
 	ast.GT: {
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt}},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt},
@@ -132,6 +134,7 @@ var vecBuiltinCompareCases = map[string][]vecExprBenchCase{
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt, types.ETInt}},
 		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETReal, types.ETReal, types.ETReal}},
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString, types.ETString}},
+		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETDatetime, types.ETDatetime, types.ETDatetime}},
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString, types.ETString, types.ETString}},
 	},
 	ast.Interval: {

@@ -14,6 +14,7 @@
 package infoschema
 
 import (
+	"fmt"
 	"sort"
 	"sync/atomic"
 
@@ -22,55 +23,60 @@ import (
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 )
 
 var (
-	// ErrDatabaseDropExists returns for dropping a non-existent database.
-	ErrDatabaseDropExists = terror.ClassSchema.New(codeDBDropExists, "Can't drop database '%s'; database doesn't exist")
-	// ErrDatabaseNotExists returns for database not exists.
-	ErrDatabaseNotExists = terror.ClassSchema.New(codeDatabaseNotExists, "Unknown database '%s'")
-	// ErrTableNotExists returns for table not exists.
-	ErrTableNotExists = terror.ClassSchema.New(codeTableNotExists, "Table '%s.%s' doesn't exist")
-	// ErrColumnNotExists returns for column not exists.
-	ErrColumnNotExists = terror.ClassSchema.New(codeColumnNotExists, "Unknown column '%s' in '%s'")
-	// ErrForeignKeyNotMatch returns for foreign key not match.
-	ErrForeignKeyNotMatch = terror.ClassSchema.New(codeWrongFkDef, "Incorrect foreign key definition for '%s': Key reference and table reference don't match")
-	// ErrCannotAddForeign returns for foreign key exists.
-	ErrCannotAddForeign = terror.ClassSchema.New(codeCannotAddForeign, "Cannot add foreign key constraint")
-	// ErrForeignKeyNotExists returns for foreign key not exists.
-	ErrForeignKeyNotExists = terror.ClassSchema.New(codeForeignKeyNotExists, "Can't DROP '%s'; check that column/key exists")
 	// ErrDatabaseExists returns for database already exists.
-	ErrDatabaseExists = terror.ClassSchema.New(codeDatabaseExists, "Can't create database '%s'; database exists")
-	// ErrTableExists returns for table already exists.
-	ErrTableExists = terror.ClassSchema.New(codeTableExists, "Table '%s' already exists")
-	// ErrTableDropExists returns for dropping a non-existent table.
-	ErrTableDropExists = terror.ClassSchema.New(codeBadTable, "Unknown table '%s'")
-	// ErrUserDropExists returns for dropping a non-existent user.
-	ErrUserDropExists = terror.ClassSchema.New(codeBadUser, "User %s does not exist.")
-	// ErrColumnExists returns for column already exists.
-	ErrColumnExists = terror.ClassSchema.New(codeColumnExists, "Duplicate column name '%s'")
-	// ErrIndexExists returns for index already exists.
-	ErrIndexExists = terror.ClassSchema.New(codeIndexExists, "Duplicate Index")
-	// ErrKeyNameDuplicate returns for index duplicate when rename index.
-	ErrKeyNameDuplicate = terror.ClassSchema.New(codeKeyNameDuplicate, "Duplicate key name '%s'")
-	// ErrKeyNotExists returns for index not exists.
-	ErrKeyNotExists = terror.ClassSchema.New(codeKeyNotExists, "Key '%s' doesn't exist in table '%s'")
-	// ErrMultiplePriKey returns for multiple primary keys.
-	ErrMultiplePriKey = terror.ClassSchema.New(codeMultiplePriKey, "Multiple primary key defined")
-	// ErrTooManyKeyParts returns for too many key parts.
-	ErrTooManyKeyParts = terror.ClassSchema.New(codeTooManyKeyParts, "Too many key parts specified; max %d parts allowed")
-	// ErrTableNotLockedForWrite returns for write tables when only hold the table read lock.
-	ErrTableNotLockedForWrite = terror.ClassSchema.New(codeErrTableNotLockedForWrite, mysql.MySQLErrName[mysql.ErrTableNotLockedForWrite])
-	// ErrTableNotLocked returns when session has explicitly lock tables, then visit unlocked table will return this error.
-	ErrTableNotLocked = terror.ClassSchema.New(codeErrTableNotLocked, mysql.MySQLErrName[mysql.ErrTableNotLocked])
-	// ErrNonuniqTable returns when none unique tables errors.
-	ErrNonuniqTable = terror.ClassSchema.New(codeErrTableNotLocked, mysql.MySQLErrName[mysql.ErrNonuniqTable])
-	// ErrTableLocked returns when the table was locked by other session.
-	ErrTableLocked = terror.ClassSchema.New(codeTableLocked, mysql.MySQLErrName[mysql.ErrTableLocked])
+	ErrDatabaseExists = terror.ClassSchema.New(mysql.ErrDBCreateExists, mysql.MySQLErrName[mysql.ErrDBCreateExists])
+	// ErrDatabaseDropExists returns for dropping a non-existent database.
+	ErrDatabaseDropExists = terror.ClassSchema.New(mysql.ErrDBDropExists, mysql.MySQLErrName[mysql.ErrDBDropExists])
 	// ErrAccessDenied return when the user doesn't have the permission to access the table.
-	ErrAccessDenied = terror.ClassSchema.New(codeErrAccessDenied, mysql.MySQLErrName[mysql.ErrAccessDenied])
+	ErrAccessDenied = terror.ClassSchema.New(mysql.ErrAccessDenied, mysql.MySQLErrName[mysql.ErrAccessDenied])
+	// ErrDatabaseNotExists returns for database not exists.
+	ErrDatabaseNotExists = terror.ClassSchema.New(mysql.ErrBadDB, mysql.MySQLErrName[mysql.ErrBadDB])
+	// ErrTableExists returns for table already exists.
+	ErrTableExists = terror.ClassSchema.New(mysql.ErrTableExists, mysql.MySQLErrName[mysql.ErrTableExists])
+	// ErrTableDropExists returns for dropping a non-existent table.
+	ErrTableDropExists = terror.ClassSchema.New(mysql.ErrBadTable, mysql.MySQLErrName[mysql.ErrBadTable])
+	// ErrColumnNotExists returns for column not exists.
+	ErrColumnNotExists = terror.ClassSchema.New(mysql.ErrBadField, mysql.MySQLErrName[mysql.ErrBadField])
+	// ErrColumnExists returns for column already exists.
+	ErrColumnExists = terror.ClassSchema.New(mysql.ErrDupFieldName, mysql.MySQLErrName[mysql.ErrDupFieldName])
+	// ErrKeyNameDuplicate returns for index duplicate when rename index.
+	ErrKeyNameDuplicate = terror.ClassSchema.New(mysql.ErrDupKeyName, mysql.MySQLErrName[mysql.ErrDupKeyName])
+	// ErrNonuniqTable returns when none unique tables errors.
+	ErrNonuniqTable = terror.ClassSchema.New(mysql.ErrNonuniqTable, mysql.MySQLErrName[mysql.ErrNonuniqTable])
+	// ErrMultiplePriKey returns for multiple primary keys.
+	ErrMultiplePriKey = terror.ClassSchema.New(mysql.ErrMultiplePriKey, mysql.MySQLErrName[mysql.ErrMultiplePriKey])
+	// ErrTooManyKeyParts returns for too many key parts.
+	ErrTooManyKeyParts = terror.ClassSchema.New(mysql.ErrTooManyKeyParts, mysql.MySQLErrName[mysql.ErrTooManyKeyParts])
+	// ErrForeignKeyNotExists returns for foreign key not exists.
+	ErrForeignKeyNotExists = terror.ClassSchema.New(mysql.ErrCantDropFieldOrKey, mysql.MySQLErrName[mysql.ErrCantDropFieldOrKey])
+	// ErrTableNotLockedForWrite returns for write tables when only hold the table read lock.
+	ErrTableNotLockedForWrite = terror.ClassSchema.New(mysql.ErrTableNotLockedForWrite, mysql.MySQLErrName[mysql.ErrTableNotLockedForWrite])
+	// ErrTableNotLocked returns when session has explicitly lock tables, then visit unlocked table will return this error.
+	ErrTableNotLocked = terror.ClassSchema.New(mysql.ErrTableNotLocked, mysql.MySQLErrName[mysql.ErrTableNotLocked])
+	// ErrTableNotExists returns for table not exists.
+	ErrTableNotExists = terror.ClassSchema.New(mysql.ErrNoSuchTable, mysql.MySQLErrName[mysql.ErrNoSuchTable])
+	// ErrKeyNotExists returns for index not exists.
+	ErrKeyNotExists = terror.ClassSchema.New(mysql.ErrKeyDoesNotExist, mysql.MySQLErrName[mysql.ErrKeyDoesNotExist])
+	// ErrCannotAddForeign returns for foreign key exists.
+	ErrCannotAddForeign = terror.ClassSchema.New(mysql.ErrCannotAddForeign, mysql.MySQLErrName[mysql.ErrCannotAddForeign])
+	// ErrForeignKeyNotMatch returns for foreign key not match.
+	ErrForeignKeyNotMatch = terror.ClassSchema.New(mysql.ErrWrongFkDef, mysql.MySQLErrName[mysql.ErrWrongFkDef])
+	// ErrIndexExists returns for index already exists.
+	ErrIndexExists = terror.ClassSchema.New(mysql.ErrDupIndex, mysql.MySQLErrName[mysql.ErrDupIndex])
+	// ErrUserDropExists returns for dropping a non-existent user.
+	ErrUserDropExists = terror.ClassSchema.New(mysql.ErrBadUser, mysql.MySQLErrName[mysql.ErrBadUser])
+	// ErrUserAlreadyExists return for creating a existent user.
+	ErrUserAlreadyExists = terror.ClassSchema.New(mysql.ErrUserAlreadyExists, mysql.MySQLErrName[mysql.ErrUserAlreadyExists])
+	// ErrTableLocked returns when the table was locked by other session.
+	ErrTableLocked = terror.ClassSchema.New(mysql.ErrTableLocked, mysql.MySQLErrName[mysql.ErrTableLocked])
 )
 
 // InfoSchema is the interface used to retrieve the schema information.
@@ -317,93 +323,61 @@ func (h *Handle) EmptyClone() *Handle {
 	return newHandle
 }
 
-// Schema error codes.
-const (
-	codeDBDropExists      terror.ErrCode = 1008
-	codeDatabaseNotExists                = 1049
-	codeTableNotExists                   = 1146
-	codeColumnNotExists                  = 1054
-
-	codeCannotAddForeign    = 1215
-	codeForeignKeyNotExists = 1091
-	codeWrongFkDef          = 1239
-
-	codeDatabaseExists   = 1007
-	codeTableExists      = 1050
-	codeBadTable         = 1051
-	codeBadUser          = 3162
-	codeColumnExists     = 1060
-	codeIndexExists      = 1831
-	codeMultiplePriKey   = 1068
-	codeTooManyKeyParts  = 1070
-	codeKeyNameDuplicate = 1061
-	codeKeyNotExists     = 1176
-
-	codeErrTableNotLockedForWrite = mysql.ErrTableNotLockedForWrite
-	codeErrTableNotLocked         = mysql.ErrTableNotLocked
-	codeErrNonuniqTable           = mysql.ErrNonuniqTable
-	codeErrAccessDenied           = mysql.ErrAccessDenied
-	codeTableLocked               = mysql.ErrTableLocked
-)
-
 func init() {
 	schemaMySQLErrCodes := map[terror.ErrCode]uint16{
-		codeDBDropExists:              mysql.ErrDBDropExists,
-		codeDatabaseNotExists:         mysql.ErrBadDB,
-		codeTableNotExists:            mysql.ErrNoSuchTable,
-		codeColumnNotExists:           mysql.ErrBadField,
-		codeCannotAddForeign:          mysql.ErrCannotAddForeign,
-		codeWrongFkDef:                mysql.ErrWrongFkDef,
-		codeForeignKeyNotExists:       mysql.ErrCantDropFieldOrKey,
-		codeDatabaseExists:            mysql.ErrDBCreateExists,
-		codeTableExists:               mysql.ErrTableExists,
-		codeBadTable:                  mysql.ErrBadTable,
-		codeBadUser:                   mysql.ErrBadUser,
-		codeColumnExists:              mysql.ErrDupFieldName,
-		codeIndexExists:               mysql.ErrDupIndex,
-		codeMultiplePriKey:            mysql.ErrMultiplePriKey,
-		codeTooManyKeyParts:           mysql.ErrTooManyKeyParts,
-		codeKeyNameDuplicate:          mysql.ErrDupKeyName,
-		codeKeyNotExists:              mysql.ErrKeyDoesNotExist,
-		codeErrTableNotLockedForWrite: mysql.ErrTableNotLockedForWrite,
-		codeErrTableNotLocked:         mysql.ErrTableNotLocked,
-		codeErrNonuniqTable:           mysql.ErrNonuniqTable,
-		mysql.ErrAccessDenied:         mysql.ErrAccessDenied,
-		codeTableLocked:               mysql.ErrTableLocked,
+		mysql.ErrDBCreateExists:         mysql.ErrDBCreateExists,
+		mysql.ErrDBDropExists:           mysql.ErrDBDropExists,
+		mysql.ErrAccessDenied:           mysql.ErrAccessDenied,
+		mysql.ErrBadDB:                  mysql.ErrBadDB,
+		mysql.ErrTableExists:            mysql.ErrTableExists,
+		mysql.ErrBadTable:               mysql.ErrBadTable,
+		mysql.ErrBadField:               mysql.ErrBadField,
+		mysql.ErrDupFieldName:           mysql.ErrDupFieldName,
+		mysql.ErrDupKeyName:             mysql.ErrDupKeyName,
+		mysql.ErrNonuniqTable:           mysql.ErrNonuniqTable,
+		mysql.ErrMultiplePriKey:         mysql.ErrMultiplePriKey,
+		mysql.ErrTooManyKeyParts:        mysql.ErrTooManyKeyParts,
+		mysql.ErrCantDropFieldOrKey:     mysql.ErrCantDropFieldOrKey,
+		mysql.ErrTableNotLockedForWrite: mysql.ErrTableNotLockedForWrite,
+		mysql.ErrTableNotLocked:         mysql.ErrTableNotLocked,
+		mysql.ErrNoSuchTable:            mysql.ErrNoSuchTable,
+		mysql.ErrKeyDoesNotExist:        mysql.ErrKeyDoesNotExist,
+		mysql.ErrCannotAddForeign:       mysql.ErrCannotAddForeign,
+		mysql.ErrWrongFkDef:             mysql.ErrWrongFkDef,
+		mysql.ErrDupIndex:               mysql.ErrDupIndex,
+		mysql.ErrBadUser:                mysql.ErrBadUser,
+		mysql.ErrUserAlreadyExists:      mysql.ErrUserAlreadyExists,
+		mysql.ErrTableLocked:            mysql.ErrTableLocked,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassSchema] = schemaMySQLErrCodes
-	initInfoSchemaDB()
-}
 
-var (
-	infoSchemaDB *model.DBInfo
-)
-
-func initInfoSchemaDB() {
-	dbID := autoid.GenLocalSchemaID()
+	// Initialize the information shema database and register the driver to `drivers`
+	dbID := autoid.InformationSchemaDBID
 	infoSchemaTables := make([]*model.TableInfo, 0, len(tableNameToColumns))
 	for name, cols := range tableNameToColumns {
 		tableInfo := buildTableMeta(name, cols)
 		infoSchemaTables = append(infoSchemaTables, tableInfo)
-		tableInfo.ID = autoid.GenLocalSchemaID()
-		for _, c := range tableInfo.Columns {
-			c.ID = autoid.GenLocalSchemaID()
+		var ok bool
+		tableInfo.ID, ok = tableIDMap[tableInfo.Name.O]
+		if !ok {
+			panic(fmt.Sprintf("get information_schema table id failed, unknown system table `%v`", tableInfo.Name.O))
+		}
+		for i, c := range tableInfo.Columns {
+			c.ID = int64(i) + 1
 		}
 	}
-	infoSchemaDB = &model.DBInfo{
+	infoSchemaDB := &model.DBInfo{
 		ID:      dbID,
 		Name:    model.NewCIStr(Name),
 		Charset: mysql.DefaultCharset,
 		Collate: mysql.DefaultCollationName,
 		Tables:  infoSchemaTables,
 	}
+	RegisterVirtualTable(infoSchemaDB, createInfoSchemaTable)
 }
 
 // IsMemoryDB checks if the db is in memory.
 func IsMemoryDB(dbName string) bool {
-	if dbName == "information_schema" {
-		return true
-	}
 	for _, driver := range drivers {
 		if driver.DBInfo.Name.L == dbName {
 			return true
@@ -420,4 +394,18 @@ func HasAutoIncrementColumn(tbInfo *model.TableInfo) (bool, string) {
 		}
 	}
 	return false, ""
+}
+
+// GetInfoSchema gets TxnCtx InfoSchema if snapshot schema is not set,
+// Otherwise, snapshot schema is returned.
+func GetInfoSchema(ctx sessionctx.Context) InfoSchema {
+	sessVar := ctx.GetSessionVars()
+	var is InfoSchema
+	if snap := sessVar.SnapshotInfoschema; snap != nil {
+		is = snap.(InfoSchema)
+		logutil.BgLogger().Info("use snapshot schema", zap.Uint64("conn", sessVar.ConnectionID), zap.Int64("schemaVersion", is.SchemaMetaVersion()))
+	} else {
+		is = sessVar.TxnCtx.InfoSchema.(InfoSchema)
+	}
+	return is
 }
