@@ -142,7 +142,7 @@ func GetSessionOnlySysVars(s *SessionVars, key string) (string, bool, error) {
 	case TiDBCheckMb4ValueInUTF8:
 		return BoolToIntStr(config.GetGlobalConfig().CheckMb4ValueInUTF8), true, nil
 	}
-	sVal, ok := s.systems[key]
+	sVal, ok := s.GetSystemVar(key)
 	if ok {
 		return sVal, true, nil
 	}
@@ -648,6 +648,8 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 				formatVal += kv.TiKV.Name()
 			case strings.EqualFold(engine, kv.TiFlash.Name()):
 				formatVal += kv.TiFlash.Name()
+			case strings.EqualFold(engine, kv.TiDB.Name()):
+				formatVal += kv.TiDB.Name()
 			default:
 				return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
 			}
