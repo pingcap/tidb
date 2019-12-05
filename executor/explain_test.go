@@ -124,11 +124,12 @@ func (s *testSuite1) TestExplainAnalyzeMemory(c *C) {
 	s.checkMemoryInfo(c, tk, "explain analyze select * from t")
 	s.checkMemoryInfo(c, tk, "explain analyze select k from t use index(k)")
 	s.checkMemoryInfo(c, tk, "explain analyze select * from t use index(k)")
+	s.checkMemoryInfo(c, tk, "explain analyze select v+k from t")
 }
 
 func (s *testSuite1) checkMemoryInfo(c *C, tk *testkit.TestKit, sql string) {
 	memCol := 5
-	ops := []string{"Join", "Reader", "Top", "Sort", "LookUp"}
+	ops := []string{"Join", "Reader", "Top", "Sort", "LookUp", "Projection"}
 	rows := tk.MustQuery(sql).Rows()
 	for _, row := range rows {
 		strs := make([]string, len(row))

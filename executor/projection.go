@@ -16,6 +16,7 @@ package executor
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/util/memory"
 	"sync/atomic"
 
 	"github.com/pingcap/errors"
@@ -64,6 +65,8 @@ type ProjectionExec struct {
 	workers     []*projectionWorker
 	childResult *chunk.Chunk
 
+	memTracker *memory.Tracker
+
 	// parentReqRows indicates how many rows the parent executor is
 	// requiring. It is set when parallelExecute() is called and used by the
 	// concurrent projectionInputFetcher.
@@ -84,6 +87,9 @@ func (e *ProjectionExec) open(ctx context.Context) error {
 	e.prepared = false
 	e.parentReqRows = int64(e.maxChunkSize)
 
+	e.memTracker = memory.NewTracker(e.id, -1)
+	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
+
 	// For now a Projection can not be executed vectorially only because it
 	// contains "SetVar" or "GetVar" functions, in this scenario this
 	// Projection can not be executed parallelly.
@@ -93,6 +99,7 @@ func (e *ProjectionExec) open(ctx context.Context) error {
 
 	if e.isUnparallelExec() {
 		e.childResult = newFirstChunk(e.children[0])
+		e.memTracker.Consume(e.childResult.MemoryUsage())
 	}
 
 	return nil
@@ -171,7 +178,9 @@ func (e *ProjectionExec) isUnparallelExec() bool {
 func (e *ProjectionExec) unParallelExecute(ctx context.Context, chk *chunk.Chunk) error {
 	// transmit the requiredRows
 	e.childResult.SetRequiredRows(chk.RequiredRows(), e.maxChunkSize)
+	e.memTracker.Consume(-e.childResult.MemoryUsage())
 	err := Next(ctx, e.children[0], e.childResult)
+	e.memTracker.Consume(e.childResult.MemoryUsage())
 	if err != nil {
 		return err
 	}
@@ -199,7 +208,9 @@ func (e *ProjectionExec) parallelExecute(ctx context.Context, chk *chunk.Chunk) 
 		return err
 	}
 
+	e.memTracker.Consume(-output.chk.MemoryUsage())
 	chk.SwapColumns(output.chk)
+	e.memTracker.Consume(output.chk.MemoryUsage())
 	e.fetcher.outputCh <- output
 	return nil
 }
@@ -216,6 +227,7 @@ func (e *ProjectionExec) prepare(ctx context.Context) {
 		globalOutputCh: e.outputCh,
 		inputCh:        make(chan *projectionInput, e.numWorkers),
 		outputCh:       make(chan *projectionOutput, e.numWorkers),
+		memTracker:     e.memTracker,
 	}
 
 	// Initialize projectionWorker.
@@ -228,14 +240,20 @@ func (e *ProjectionExec) prepare(ctx context.Context) {
 			inputGiveBackCh: e.fetcher.inputCh,
 			inputCh:         make(chan *projectionInput, 1),
 			outputCh:        make(chan *projectionOutput, 1),
+			memTracker:      e.memTracker,
 		})
 
+		inputChk := newFirstChunk(e.children[0])
+		e.memTracker.Consume(inputChk.MemoryUsage())
 		e.fetcher.inputCh <- &projectionInput{
-			chk:          newFirstChunk(e.children[0]),
+			chk:          inputChk,
 			targetWorker: e.workers[i],
 		}
+
+		outputChk := newFirstChunk(e)
+		e.memTracker.Consume(outputChk.MemoryUsage())
 		e.fetcher.outputCh <- &projectionOutput{
-			chk:  newFirstChunk(e),
+			chk:  outputChk,
 			done: make(chan error, 1),
 		}
 	}
@@ -274,6 +292,7 @@ type projectionInputFetcher struct {
 	child          Executor
 	globalFinishCh <-chan struct{}
 	globalOutputCh chan<- *projectionOutput
+	memTracker     *memory.Tracker
 
 	inputCh  chan *projectionInput
 	outputCh chan *projectionOutput
@@ -314,7 +333,9 @@ func (f *projectionInputFetcher) run(ctx context.Context) {
 
 		requiredRows := atomic.LoadInt64(&f.proj.parentReqRows)
 		input.chk.SetRequiredRows(int(requiredRows), f.proj.maxChunkSize)
+		f.memTracker.Consume(-input.chk.MemoryUsage())
 		err := Next(ctx, f.child, input.chk)
+		f.memTracker.Consume(input.chk.MemoryUsage())
 		if err != nil || input.chk.NumRows() == 0 {
 			output.done <- err
 			return
@@ -330,6 +351,7 @@ type projectionWorker struct {
 	evaluatorSuit   *expression.EvaluatorSuite
 	globalFinishCh  <-chan struct{}
 	inputGiveBackCh chan<- *projectionInput
+	memTracker      *memory.Tracker
 
 	// channel "input" and "output" is :
 	// a. initialized by "ProjectionExec.prepare"
@@ -366,7 +388,9 @@ func (w *projectionWorker) run(ctx context.Context) {
 			return
 		}
 
+		w.memTracker.Consume(-output.chk.MemoryUsage())
 		err := w.evaluatorSuit.Run(w.sctx, input.chk, output.chk)
+		w.memTracker.Consume(output.chk.MemoryUsage())
 		output.done <- err
 
 		if err != nil {
