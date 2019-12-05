@@ -458,27 +458,12 @@ func (b *{{.SigName}}) vecEvalTime(input *chunk.Chunk, result *chunk.Column) err
 		result.MergeNulls(intervalBuf)
 		resDurations := result.GoDurations()
 		iterDuration := types.Duration{Fsp: types.MaxFsp}
-	{{ else if eq .TypeA.TypeName "Time" }}
-		result.ResizeTime(n, false)
-		if err := b.vecGetDateFromDatetime(&b.baseBuiltinFunc, input, unit, result); err != nil {
+	{{ else }}
+		if err := b.vecGetDateFrom{{.TypeA.ETName}}(&b.baseBuiltinFunc, input, unit, result); err != nil {
 			return err
 		}
 
 		result.MergeNulls(intervalBuf)
-		resDates := result.Times()
-	{{ else }}
-		dateBuf, err := b.bufAllocator.get(types.ETDatetime, n)
-		if err != nil {
-			return err
-		}
-		defer b.bufAllocator.put(dateBuf)
-		if err := b.vecGetDateFrom{{.TypeA.ETName}}(&b.baseBuiltinFunc, input, unit, dateBuf); err != nil {
-			return err
-		}
-
-		result.ResizeTime(n, false)
-		result.MergeNulls(dateBuf, intervalBuf)
-		oriDates := dateBuf.Times()
 		resDates := result.Times()
 	{{ end -}}
 
@@ -494,17 +479,11 @@ func (b *{{.SigName}}) vecEvalTime(input *chunk.Chunk, result *chunk.Column) err
 			{{- else }}
 				resDuration, isNull, err := b.subDuration(b.ctx, iterDuration, intervalBuf.GetString(i), unit)
 			{{- end }}
-		{{- else if eq .TypeA.TypeName "Time" }}
+		{{- else }}
 			{{- if eq $.FuncName "AddDate" }}
 				resDate, isNull, err := b.add(b.ctx, resDates[i], intervalBuf.GetString(i), unit)
 			{{- else }}
 				resDate, isNull, err := b.sub(b.ctx, resDates[i], intervalBuf.GetString(i), unit)
-			{{- end }}
-		{{- else }}
-			{{- if eq $.FuncName "AddDate" }}
-				resDate, isNull, err := b.add(b.ctx, oriDates[i], intervalBuf.GetString(i), unit)
-			{{- else }}
-				resDate, isNull, err := b.sub(b.ctx, oriDates[i], intervalBuf.GetString(i), unit)
 			{{- end }}
 		{{- end }}
 		if err != nil {
@@ -619,6 +598,7 @@ func (g gener) gen() interface{} {
 					{{- else }}
 						&defaultGener{eType: types.ET{{$sig.TypeA.ETName}}, nullRation: 0.2},
 					{{- end }}
+
 					{{- if eq $sig.TypeB.ETName "String" }}
 						&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
 					{{- else }}
