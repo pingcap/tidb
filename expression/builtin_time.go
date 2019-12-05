@@ -2935,6 +2935,7 @@ func (du *baseDateArithmitical) vecGetDateFromString(b *baseBuiltinFunc, input *
 
 func (du *baseDateArithmitical) vecGetDateFromDatetime(b *baseBuiltinFunc, input *chunk.Chunk, unit string, result *chunk.Column) error {
 	n := input.NumRows()
+	result.ResizeTime(n, false)
 	if err := b.args[0].VecEvalTime(b.ctx, input, result); err != nil {
 		return err
 	}
