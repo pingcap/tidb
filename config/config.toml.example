@@ -71,13 +71,6 @@ alter-primary-key = false
 # if server-version = "", the default value(original TiDB version string) is used.
 server-version = ""
 
-# repair mode is used to repair the broken table meta in TiKV in extreme cases.
-repair-mode = false
-
-# Repair table list is used to list the tables in repair mode with the format like ["db.table",].
-# In repair mode, repairing table which is not in repair list will get wrong database or wrong table error.
-repair-table-list = []
-
 [log]
 # Log level: debug, info, warn, error, fatal.
 level = "info"
