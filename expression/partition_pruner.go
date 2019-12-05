@@ -94,39 +94,42 @@ func (p *hashPartitionPruner) reduceConstantEQ() bool {
 	return false
 }
 
-func (p *hashPartitionPruner) tryEvalPartitionExpr(piExpr Expression) (int64, bool) {
+func (p *hashPartitionPruner) tryEvalPartitionExpr(piExpr Expression) (int64, bool, bool) {
 	switch pi := piExpr.(type) {
 	case *ScalarFunction:
 		if pi.FuncName.L == ast.Plus || pi.FuncName.L == ast.Minus || pi.FuncName.L == ast.Mul || pi.FuncName.L == ast.Div {
 			left, right := pi.GetArgs()[0], pi.GetArgs()[1]
-			leftVal, ok := p.tryEvalPartitionExpr(left)
+			leftVal, ok, isNil := p.tryEvalPartitionExpr(left)
 			if !ok {
-				return 0, false
+				return 0, ok, isNil
 			}
-			rightVal, ok := p.tryEvalPartitionExpr(right)
+			rightVal, ok, isNil := p.tryEvalPartitionExpr(right)
 			if !ok {
-				return 0, false
+				return 0, ok, isNil
 			}
 			switch pi.FuncName.L {
 			case ast.Plus:
-				return rightVal + leftVal, true
+				return rightVal + leftVal, true, false
 			case ast.Minus:
-				return rightVal - leftVal, true
+				return rightVal - leftVal, true, false
 			case ast.Mul:
-				return rightVal * leftVal, true
+				return rightVal * leftVal, true, false
 			case ast.Div:
-				return rightVal / leftVal, true
+				return rightVal / leftVal, true, false
 			}
 		}
 	case *Constant:
 		val, err := pi.Eval(chunk.Row{})
 		if err != nil {
-			return 0, false
+			return 0, false, false
+		}
+		if val.IsNull() {
+			return 0, false, true
 		}
 		if val.Kind() == types.KindInt64 {
-			return val.GetInt64(), true
+			return val.GetInt64(), true, false
 		} else if val.Kind() == types.KindUint64 {
-			return int64(val.GetUint64()), true
+			return int64(val.GetUint64()), true, false
 		}
 	case *Column:
 		// Look up map
@@ -135,9 +138,9 @@ func (p *hashPartitionPruner) tryEvalPartitionExpr(piExpr Expression) (int64, bo
 		if val != nil {
 			return p.tryEvalPartitionExpr(val)
 		}
-		return 0, false
+		return 0, false, false
 	}
-	return 0, false
+	return 0, false, false
 }
 
 func newHashPartitionPruner() *hashPartitionPruner {
@@ -167,8 +170,8 @@ func (p *hashPartitionPruner) solve(ctx sessionctx.Context, conds []Expression, 
 	if conflict {
 		return 0, false, conflict
 	}
-	res, ok := p.tryEvalPartitionExpr(piExpr)
-	return res, ok, false
+	res, ok, isNil := p.tryEvalPartitionExpr(piExpr)
+	return res, ok, isNil
 }
 
 // FastLocateHashPartition is used to get hash partition quickly.
