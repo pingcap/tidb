@@ -63,9 +63,7 @@ unrecognized-option-test = true
 	_, err = f.WriteString(`
 token-limit = 0
 split-region-max-num=10000
-enable-batch-dml = true
 server-version = "test_version"
-repair-mode = true
 [performance]
 txn-entry-count-limit=2000
 txn-total-size-limit=2000
