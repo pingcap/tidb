@@ -117,6 +117,9 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 		{retEvalType: types.ETDuration},
 		{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETInt}, geners: []dataGenerator{&rangeInt64Gener{0, 7}}}, // fsp must be in the range 0 to 6.
 	},
+	ast.Time: {
+		{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{new(dateTimeStrGener)}},
+	},
 	ast.CurrentDate: {
 		{retEvalType: types.ETDatetime},
 	},
@@ -144,13 +147,15 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 	ast.SecToTime: {
 		{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETReal}},
 	},
-	ast.TimestampAdd: {
-		{
-			retEvalType:   types.ETString,
-			childrenTypes: []types.EvalType{types.ETString, types.ETInt, types.ETDatetime},
-			geners:        []dataGenerator{&unitStrGener{}, nil, nil},
-		},
-	},
+	// This test case may fail due to the issue: https://github.com/pingcap/tidb/issues/13638.
+	// We remove this case to stabilize CI, and will reopen this when we fix the issue above.
+	//ast.TimestampAdd: {
+	//	{
+	//		retEvalType:   types.ETString,
+	//		childrenTypes: []types.EvalType{types.ETString, types.ETInt, types.ETDatetime},
+	//		geners:        []dataGenerator{&unitStrGener{}, nil, nil},
+	//	},
+	//},
 	ast.TimestampDiff: {
 		{
 			retEvalType:   types.ETInt,
@@ -287,6 +292,19 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 			geners:        []dataGenerator{&timeStrGener{}, nil},
 			// "%y%m%d" is wrong format, STR_TO_DATE should be failed for all rows
 			constants: []*Constant{nil, {Value: types.NewDatum("%y%m%d"), RetType: types.NewFieldType(mysql.TypeString)}},
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETString, types.ETString},
+			geners:        []dataGenerator{&dateStrGener{nullRation: 0.3}, nil},
+			constants:     []*Constant{nil, {Value: types.NewDatum("%H:%i:%s"), RetType: types.NewFieldType(mysql.TypeString)}},
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETString, types.ETString},
+			geners:        []dataGenerator{&dateStrGener{nullRation: 0.3}, nil},
+			// "%H%i%s" is wrong format, STR_TO_DATE should be failed for all rows
+			constants: []*Constant{nil, {Value: types.NewDatum("%H%i%s"), RetType: types.NewFieldType(mysql.TypeString)}},
 		},
 	},
 	ast.GetFormat: {

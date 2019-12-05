@@ -32,10 +32,7 @@ import (
 )
 
 func equalRegionStartKey(key, regionStartKey []byte) bool {
-	if bytes.Equal(key, regionStartKey) {
-		return true
-	}
-	return false
+	return bytes.Equal(key, regionStartKey)
 }
 
 func (s *tikvStore) splitBatchRegionsReq(bo *Backoffer, keys [][]byte, scatter bool) (*tikvrpc.Response, error) {
@@ -235,7 +232,7 @@ func (s *tikvStore) scatterRegion(regionID uint64) error {
 	return nil
 }
 
-// WaitScatterRegionFinish implements SplitableStore interface.
+// WaitScatterRegionFinish implements SplittableStore interface.
 // backOff is the back off time of the wait scatter region.(Milliseconds)
 // if backOff <= 0, the default wait scatter back off time will be used.
 func (s *tikvStore) WaitScatterRegionFinish(regionID uint64, backOff int) error {
