@@ -39,9 +39,11 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/meta/autoid"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/plugin"
 	"github.com/pingcap/tidb/privilege"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/tikv"
@@ -632,53 +634,45 @@ func escape(cis model.CIStr, sqlMode mysql.SQLMode) string {
 	return quote + strings.Replace(cis.O, quote, quote+quote, -1) + quote
 }
 
-func (e *ShowExec) fetchShowCreateTable() error {
-	tb, err := e.getTable()
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	sqlMode := e.ctx.GetSessionVars().SQLMode
-
-	// TODO: let the result more like MySQL.
-	var buf bytes.Buffer
-	if tb.Meta().IsView() {
-		e.fetchShowCreateTable4View(tb.Meta(), &buf)
-		e.appendRow([]interface{}{tb.Meta().Name.O, buf.String(), tb.Meta().Charset, tb.Meta().Collate})
+// ConstructResultOfShowCreateTable constructs the result for show create table.
+func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.TableInfo, allocator autoid.Allocator, buf *bytes.Buffer) (err error) {
+	if tableInfo.IsView() {
+		fetchShowCreateTable4View(ctx, tableInfo, buf)
 		return nil
 	}
 
-	tblCharset := tb.Meta().Charset
+	tblCharset := tableInfo.Charset
 	if len(tblCharset) == 0 {
 		tblCharset = mysql.DefaultCharset
 	}
-	tblCollate := tb.Meta().Collate
+	tblCollate := tableInfo.Collate
 	// Set default collate if collate is not specified.
 	if len(tblCollate) == 0 {
 		tblCollate = getDefaultCollate(tblCharset)
 	}
 
-	fmt.Fprintf(&buf, "CREATE TABLE %s (\n", escape(tb.Meta().Name, sqlMode))
-	var pkCol *table.Column
+	sqlMode := ctx.GetSessionVars().SQLMode
+	fmt.Fprintf(buf, "CREATE TABLE %s (\n", escape(tableInfo.Name, sqlMode))
+	var pkCol *model.ColumnInfo
 	var hasAutoIncID bool
-	for i, col := range tb.Cols() {
-		fmt.Fprintf(&buf, "  %s %s", escape(col.Name, sqlMode), col.GetTypeDesc())
+	for i, col := range tableInfo.Cols() {
+		fmt.Fprintf(buf, "  %s %s", escape(col.Name, sqlMode), col.GetTypeDesc())
 		if col.Charset != "binary" {
 			if col.Charset != tblCharset {
-				fmt.Fprintf(&buf, " CHARACTER SET %s", col.Charset)
+				fmt.Fprintf(buf, " CHARACTER SET %s", col.Charset)
 			}
 			if col.Collate != tblCollate {
-				fmt.Fprintf(&buf, " COLLATE %s", col.Collate)
+				fmt.Fprintf(buf, " COLLATE %s", col.Collate)
 			} else {
 				defcol, err := charset.GetDefaultCollation(col.Charset)
 				if err == nil && defcol != col.Collate {
-					fmt.Fprintf(&buf, " COLLATE %s", col.Collate)
+					fmt.Fprintf(buf, " COLLATE %s", col.Collate)
 				}
 			}
 		}
 		if col.IsGenerated() {
 			// It's a generated column.
-			fmt.Fprintf(&buf, " GENERATED ALWAYS AS (%s)", col.GeneratedExprString)
+			fmt.Fprintf(buf, " GENERATED ALWAYS AS (%s)", col.GeneratedExprString)
 			if col.GeneratedStored {
 				buf.WriteString(" STORED")
 			} else {
@@ -712,7 +706,7 @@ func (e *ShowExec) fetchShowCreateTable() error {
 					defaultValStr := fmt.Sprintf("%v", defaultValue)
 					// If column is timestamp, and default value is not current_timestamp, should convert the default value to the current session time zone.
 					if col.Tp == mysql.TypeTimestamp && defaultValStr != types.ZeroDatetimeStr {
-						timeValue, err := table.GetColDefaultValue(e.ctx, col.ToInfo())
+						timeValue, err := table.GetColDefaultValue(ctx, col)
 						if err != nil {
 							return errors.Trace(err)
 						}
@@ -721,9 +715,9 @@ func (e *ShowExec) fetchShowCreateTable() error {
 
 					if col.Tp == mysql.TypeBit {
 						defaultValBinaryLiteral := types.BinaryLiteral(defaultValStr)
-						fmt.Fprintf(&buf, " DEFAULT %s", defaultValBinaryLiteral.ToBitLiteralString(true))
+						fmt.Fprintf(buf, " DEFAULT %s", defaultValBinaryLiteral.ToBitLiteralString(true))
 					} else {
-						fmt.Fprintf(&buf, " DEFAULT '%s'", format.OutputFormat(defaultValStr))
+						fmt.Fprintf(buf, " DEFAULT '%s'", format.OutputFormat(defaultValStr))
 					}
 				}
 			}
@@ -733,12 +727,12 @@ func (e *ShowExec) fetchShowCreateTable() error {
 			}
 		}
 		if len(col.Comment) > 0 {
-			fmt.Fprintf(&buf, " COMMENT '%s'", format.OutputFormat(col.Comment))
+			fmt.Fprintf(buf, " COMMENT '%s'", format.OutputFormat(col.Comment))
 		}
-		if i != len(tb.Cols())-1 {
+		if i != len(tableInfo.Cols())-1 {
 			buf.WriteString(",\n")
 		}
-		if tb.Meta().PKIsHandle && mysql.HasPriKeyFlag(col.Flag) {
+		if tableInfo.PKIsHandle && mysql.HasPriKeyFlag(col.Flag) {
 			pkCol = col
 		}
 	}
@@ -746,12 +740,12 @@ func (e *ShowExec) fetchShowCreateTable() error {
 	if pkCol != nil {
 		// If PKIsHanle, pk info is not in tb.Indices(). We should handle it here.
 		buf.WriteString(",\n")
-		fmt.Fprintf(&buf, "  PRIMARY KEY (%s)", escape(pkCol.Name, sqlMode))
+		fmt.Fprintf(buf, "  PRIMARY KEY (%s)", escape(pkCol.Name, sqlMode))
 	}
 
-	publicIndices := make([]table.Index, 0, len(tb.Indices()))
-	for _, idx := range tb.Indices() {
-		if idx.Meta().State == model.StatePublic {
+	publicIndices := make([]*model.IndexInfo, 0, len(tableInfo.Indices))
+	for _, idx := range tableInfo.Indices {
+		if idx.State == model.StatePublic {
 			publicIndices = append(publicIndices, idx)
 		}
 	}
@@ -759,14 +753,13 @@ func (e *ShowExec) fetchShowCreateTable() error {
 		buf.WriteString(",\n")
 	}
 
-	for i, idx := range publicIndices {
-		idxInfo := idx.Meta()
+	for i, idxInfo := range publicIndices {
 		if idxInfo.Primary {
 			buf.WriteString("  PRIMARY KEY ")
 		} else if idxInfo.Unique {
-			fmt.Fprintf(&buf, "  UNIQUE KEY %s ", escape(idxInfo.Name, sqlMode))
+			fmt.Fprintf(buf, "  UNIQUE KEY %s ", escape(idxInfo.Name, sqlMode))
 		} else {
-			fmt.Fprintf(&buf, "  KEY %s ", escape(idxInfo.Name, sqlMode))
+			fmt.Fprintf(buf, "  KEY %s ", escape(idxInfo.Name, sqlMode))
 		}
 
 		cols := make([]string, 0, len(idxInfo.Columns))
@@ -777,7 +770,7 @@ func (e *ShowExec) fetchShowCreateTable() error {
 			}
 			cols = append(cols, colInfo)
 		}
-		fmt.Fprintf(&buf, "(%s)", strings.Join(cols, ","))
+		fmt.Fprintf(buf, "(%s)", strings.Join(cols, ","))
 		if i != len(publicIndices)-1 {
 			buf.WriteString(",\n")
 		}
@@ -791,40 +784,60 @@ func (e *ShowExec) fetchShowCreateTable() error {
 	if len(tblCollate) == 0 {
 		// If we can not find default collate for the given charset,
 		// do not show the collate part.
-		fmt.Fprintf(&buf, " DEFAULT CHARSET=%s", tblCharset)
+		fmt.Fprintf(buf, " DEFAULT CHARSET=%s", tblCharset)
 	} else {
-		fmt.Fprintf(&buf, " DEFAULT CHARSET=%s COLLATE=%s", tblCharset, tblCollate)
+		fmt.Fprintf(buf, " DEFAULT CHARSET=%s COLLATE=%s", tblCharset, tblCollate)
 	}
 
 	// Displayed if the compression typed is set.
-	if len(tb.Meta().Compression) != 0 {
-		fmt.Fprintf(&buf, " COMPRESSION='%s'", tb.Meta().Compression)
+	if len(tableInfo.Compression) != 0 {
+		fmt.Fprintf(buf, " COMPRESSION='%s'", tableInfo.Compression)
 	}
 
 	if hasAutoIncID {
-		autoIncID, err := tb.Allocator(e.ctx).NextGlobalAutoID(tb.Meta().ID)
+		autoIncID, err := allocator.NextGlobalAutoID(tableInfo.ID)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		// It's campatible with MySQL.
+		// It's compatible with MySQL.
 		if autoIncID > 1 {
-			fmt.Fprintf(&buf, " AUTO_INCREMENT=%d", autoIncID)
+			fmt.Fprintf(buf, " AUTO_INCREMENT=%d", autoIncID)
 		}
 	}
 
-	if tb.Meta().ShardRowIDBits > 0 {
-		fmt.Fprintf(&buf, "/*!90000 SHARD_ROW_ID_BITS=%d ", tb.Meta().ShardRowIDBits)
-		if tb.Meta().PreSplitRegions > 0 {
-			fmt.Fprintf(&buf, "PRE_SPLIT_REGIONS=%d ", tb.Meta().PreSplitRegions)
+	if tableInfo.ShardRowIDBits > 0 {
+		fmt.Fprintf(buf, "/*!90000 SHARD_ROW_ID_BITS=%d ", tableInfo.ShardRowIDBits)
+		if tableInfo.PreSplitRegions > 0 {
+			fmt.Fprintf(buf, "PRE_SPLIT_REGIONS=%d ", tableInfo.PreSplitRegions)
 		}
 		buf.WriteString("*/")
 	}
 
-	if len(tb.Meta().Comment) > 0 {
-		fmt.Fprintf(&buf, " COMMENT='%s'", format.OutputFormat(tb.Meta().Comment))
+	if len(tableInfo.Comment) > 0 {
+		fmt.Fprintf(buf, " COMMENT='%s'", format.OutputFormat(tableInfo.Comment))
 	}
 	// add partition info here.
-	appendPartitionInfo(tb.Meta().Partition, &buf)
+	appendPartitionInfo(tableInfo.Partition, buf)
+	return nil
+}
+
+func (e *ShowExec) fetchShowCreateTable() error {
+	tb, err := e.getTable()
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	tableInfo := tb.Meta()
+	allocator := tb.Allocator(e.ctx)
+	var buf bytes.Buffer
+	// TODO: let the result more like MySQL.
+	if err = ConstructResultOfShowCreateTable(e.ctx, tb.Meta(), allocator, &buf); err != nil {
+		return err
+	}
+	if tableInfo.IsView() {
+		e.appendRow([]interface{}{tableInfo.Name.O, buf.String(), tableInfo.Charset, tableInfo.Collate})
+		return nil
+	}
 
 	e.appendRow([]interface{}{tb.Meta().Name.O, buf.String()})
 	return nil
@@ -846,13 +859,13 @@ func (e *ShowExec) fetchShowCreateView() error {
 	}
 
 	var buf bytes.Buffer
-	e.fetchShowCreateTable4View(tb.Meta(), &buf)
+	fetchShowCreateTable4View(e.ctx, tb.Meta(), &buf)
 	e.appendRow([]interface{}{tb.Meta().Name.O, buf.String(), tb.Meta().Charset, tb.Meta().Collate})
 	return nil
 }
 
-func (e *ShowExec) fetchShowCreateTable4View(tb *model.TableInfo, buf *bytes.Buffer) {
-	sqlMode := e.ctx.GetSessionVars().SQLMode
+func fetchShowCreateTable4View(ctx sessionctx.Context, tb *model.TableInfo, buf *bytes.Buffer) {
+	sqlMode := ctx.GetSessionVars().SQLMode
 
 	fmt.Fprintf(buf, "CREATE ALGORITHM=%s ", tb.View.Algorithm.String())
 	fmt.Fprintf(buf, "DEFINER=%s@%s ", escape(model.NewCIStr(tb.View.Definer.Username), sqlMode), escape(model.NewCIStr(tb.View.Definer.Hostname), sqlMode))
@@ -901,6 +914,20 @@ func appendPartitionInfo(partitionInfo *model.PartitionInfo, buf *bytes.Buffer) 
 	buf.WriteString(")")
 }
 
+// ConstructResultOfShowCreateDatabase constructs the result for show create database.
+func ConstructResultOfShowCreateDatabase(ctx sessionctx.Context, dbInfo *model.DBInfo, ifNotExists bool, buf *bytes.Buffer) (err error) {
+	sqlMode := ctx.GetSessionVars().SQLMode
+	var ifNotExistsStr string
+	if ifNotExists {
+		ifNotExistsStr = "/*!32312 IF NOT EXISTS*/ "
+	}
+	fmt.Fprintf(buf, "CREATE DATABASE %s%s", ifNotExistsStr, escape(dbInfo.Name, sqlMode))
+	if s := dbInfo.Charset; len(s) > 0 {
+		fmt.Fprintf(buf, " /*!40100 DEFAULT CHARACTER SET %s */", s)
+	}
+	return nil
+}
+
 // fetchShowCreateDatabase composes show create database result.
 func (e *ShowExec) fetchShowCreateDatabase() error {
 	checker := privilege.GetPrivilegeManager(e.ctx)
@@ -909,24 +936,17 @@ func (e *ShowExec) fetchShowCreateDatabase() error {
 			return e.dbAccessDenied()
 		}
 	}
-	db, ok := e.is.SchemaByName(e.DBName)
+	dbInfo, ok := e.is.SchemaByName(e.DBName)
 	if !ok {
 		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(e.DBName.O)
 	}
 
-	sqlMode := e.ctx.GetSessionVars().SQLMode
-
 	var buf bytes.Buffer
-	var ifNotExists string
-	if e.IfNotExists {
-		ifNotExists = "/*!32312 IF NOT EXISTS*/ "
+	err := ConstructResultOfShowCreateDatabase(e.ctx, dbInfo, e.IfNotExists, &buf)
+	if err != nil {
+		return err
 	}
-	fmt.Fprintf(&buf, "CREATE DATABASE %s%s", ifNotExists, escape(db.Name, sqlMode))
-	if s := db.Charset; len(s) > 0 {
-		fmt.Fprintf(&buf, " /*!40100 DEFAULT CHARACTER SET %s */", s)
-	}
-
-	e.appendRow([]interface{}{db.Name.O, buf.String()})
+	e.appendRow([]interface{}{dbInfo.Name.O, buf.String()})
 	return nil
 }
 
