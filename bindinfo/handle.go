@@ -126,7 +126,7 @@ func (h *BindHandle) Update(fullLoad bool) (err error) {
 
 	sql := "select original_sql, bind_sql, default_db, status, create_time, update_time, charset, collation from mysql.bind_info"
 	if !fullLoad {
-		sql += " where update_time >= \"" + lastUpdateTime.String() + "\""
+		sql += " where update_time > \"" + lastUpdateTime.String() + "\""
 	}
 	// We need to apply the updates by order, wrong apply order of same original sql may cause inconsistent state.
 	sql += " order by update_time"
@@ -154,7 +154,7 @@ func (h *BindHandle) Update(fullLoad bool) (err error) {
 			lastUpdateTime = meta.Bindings[0].UpdateTime
 		}
 		if err != nil {
-			logutil.BgLogger().Error("update bindinfo failed", zap.Error(err))
+			logutil.BgLogger().Info("update bindinfo failed", zap.Error(err))
 			continue
 		}
 
@@ -163,7 +163,7 @@ func (h *BindHandle) Update(fullLoad bool) (err error) {
 		if len(newRecord.Bindings) > 0 {
 			newCache.setBindRecord(hash, newRecord)
 		} else {
-			newCache.removeDeletedBindRecord(hash, oldRecord)
+			newCache.removeDeletedBindRecord(hash, newRecord)
 		}
 		updateMetrics(metrics.ScopeGlobal, oldRecord, newCache.getBindRecord(hash, meta.OriginalSQL, meta.Db), true)
 	}
@@ -459,6 +459,7 @@ func (c cache) removeDeletedBindRecord(hash string, meta *BindRecord) {
 			}
 		}
 	}
+	c[hash] = metas
 }
 
 func (c cache) setBindRecord(hash string, meta *BindRecord) {
