@@ -451,6 +451,9 @@ func (c *Constant) Vectorized() bool {
 
 // SupportReverseEval checks whether the builtinFunc support reverse evaluation.
 func (c *Constant) SupportReverseEval() bool {
+	if c.DeferredExpr != nil {
+		return c.DeferredExpr.SupportReverseEval()
+	}
 	return true
 }
 
