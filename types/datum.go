@@ -1659,23 +1659,6 @@ func invalidConv(d *Datum, tp byte) (Datum, error) {
 	return Datum{}, errors.Errorf("cannot convert datum from %s to type %s.", KindStr(d.Kind()), TypeStr(tp))
 }
 
-func (d *Datum) convergeType(hasUint, hasDecimal, hasFloat *bool) (x Datum) {
-	x = *d
-	switch d.Kind() {
-	case KindUint64:
-		*hasUint = true
-	case KindFloat32:
-		f := d.GetFloat32()
-		x.SetFloat64(float64(f))
-		*hasFloat = true
-	case KindFloat64:
-		*hasFloat = true
-	case KindMysqlDecimal:
-		*hasDecimal = true
-	}
-	return x
-}
-
 // NewDatum creates a new Datum from an interface{}.
 func NewDatum(in interface{}) (d Datum) {
 	switch x := in.(type) {

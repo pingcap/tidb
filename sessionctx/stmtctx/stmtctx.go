@@ -313,30 +313,12 @@ func (sc *StatementContext) WarningCount() uint16 {
 	return wc
 }
 
-const zero = "0"
-
 // NumErrorWarnings gets warning and error count.
-func (sc *StatementContext) NumErrorWarnings() (ec, wc string) {
-	var (
-		ecNum uint16
-		wcNum int
-	)
+func (sc *StatementContext) NumErrorWarnings() (ec uint16, wc int) {
 	sc.mu.Lock()
-	ecNum = sc.mu.errorCount
-	wcNum = len(sc.mu.warnings)
+	ec = sc.mu.errorCount
+	wc = len(sc.mu.warnings)
 	sc.mu.Unlock()
-
-	if ecNum == 0 {
-		ec = zero
-	} else {
-		ec = strconv.Itoa(int(ecNum))
-	}
-
-	if wcNum == 0 {
-		wc = zero
-	} else {
-		wc = strconv.Itoa(wcNum)
-	}
 	return
 }
 
@@ -588,6 +570,18 @@ func (sc *StatementContext) CopTasksDetails() *CopTasksDetails {
 		d.TotBackoffTimes[backoff] = totalTimes
 	}
 	return d
+}
+
+// SetFlagsFromPBFlag set the flag of StatementContext from a `tipb.SelectRequest.Flags`.
+func (sc *StatementContext) SetFlagsFromPBFlag(flags uint64) {
+	sc.IgnoreTruncate = (flags & model.FlagIgnoreTruncate) > 0
+	sc.TruncateAsWarning = (flags & model.FlagTruncateAsWarning) > 0
+	sc.PadCharToFullLength = (flags & model.FlagPadCharToFullLength) > 0
+	sc.InInsertStmt = (flags & model.FlagInInsertStmt) > 0
+	sc.InSelectStmt = (flags & model.FlagInSelectStmt) > 0
+	sc.OverflowAsWarning = (flags & model.FlagOverflowAsWarning) > 0
+	sc.IgnoreZeroInDate = (flags & model.FlagIgnoreZeroInDate) > 0
+	sc.DividedByZeroAsWarning = (flags & model.FlagDividedByZeroAsWarning) > 0
 }
 
 //CopTasksDetails collects some useful information of cop-tasks during execution.

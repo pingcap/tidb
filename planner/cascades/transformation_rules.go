@@ -45,7 +45,7 @@ type Transformation interface {
 var defaultTransformationMap = map[memo.Operand][]Transformation{
 	memo.OperandSelection: {
 		NewRulePushSelDownTableScan(),
-		NewRulePushSelDownTableGather(),
+		NewRulePushSelDownTiKVSingleGather(),
 		NewRulePushSelDownSort(),
 		NewRulePushSelDownProjection(),
 		NewRulePushSelDownAggregation(),
@@ -59,6 +59,9 @@ var defaultTransformationMap = map[memo.Operand][]Transformation{
 	},
 	memo.OperandLimit: {
 		NewRuleTransformLimitToTopN(),
+	},
+	memo.OperandProjection: {
+		NewRuleEliminateProjection(),
 	},
 }
 
@@ -101,7 +104,7 @@ func NewRulePushSelDownTableScan() Transformation {
 // the key ranges of the `ts` operator.
 func (r *PushSelDownTableScan) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
 	sel := old.GetExpr().ExprNode.(*plannercore.LogicalSelection)
-	ts := old.Children[0].GetExpr().ExprNode.(*plannercore.TableScan)
+	ts := old.Children[0].GetExpr().ExprNode.(*plannercore.LogicalTableScan)
 	if ts.Handle == nil {
 		return nil, false, false, nil
 	}
@@ -109,7 +112,7 @@ func (r *PushSelDownTableScan) OnTransform(old *memo.ExprIter) (newExprs []*memo
 	if accesses == nil {
 		return nil, false, false, nil
 	}
-	newTblScan := plannercore.TableScan{
+	newTblScan := plannercore.LogicalTableScan{
 		Source:      ts.Source,
 		Handle:      ts.Handle,
 		AccessConds: ts.AccessConds.Shallow(),
@@ -129,19 +132,19 @@ func (r *PushSelDownTableScan) OnTransform(old *memo.ExprIter) (newExprs []*memo
 	return []*memo.GroupExpr{selExpr}, true, false, nil
 }
 
-// PushSelDownTableGather pushes the selection down to child of TableGather.
-type PushSelDownTableGather struct {
+// PushSelDownTiKVSingleGather pushes the selection down to child of TiKVSingleGather.
+type PushSelDownTiKVSingleGather struct {
 	baseRule
 }
 
-// NewRulePushSelDownTableGather creates a new Transformation PushSelDownTableGather.
-// The pattern of this rule is `Selection -> TableGather -> Any`.
-func NewRulePushSelDownTableGather() Transformation {
+// NewRulePushSelDownTiKVSingleGather creates a new Transformation PushSelDownTiKVSingleGather.
+// The pattern of this rule is `Selection -> TiKVSingleGather -> Any`.
+func NewRulePushSelDownTiKVSingleGather() Transformation {
 	any := memo.NewPattern(memo.OperandAny, memo.EngineTiKVOrTiFlash)
-	tg := memo.BuildPattern(memo.OperandTableGather, memo.EngineTiDBOnly, any)
+	tg := memo.BuildPattern(memo.OperandTiKVSingleGather, memo.EngineTiDBOnly, any)
 	p := memo.BuildPattern(memo.OperandSelection, memo.EngineTiDBOnly, tg)
 
-	rule := &PushSelDownTableGather{}
+	rule := &PushSelDownTiKVSingleGather{}
 	rule.pattern = p
 	return rule
 }
@@ -151,12 +154,12 @@ func NewRulePushSelDownTableGather() Transformation {
 // It transforms `oldSel -> oldTg -> any` to one of the following new exprs:
 // 1. `newTg -> pushedSel -> any`
 // 2. `remainedSel -> newTg -> pushedSel -> any`
-func (r *PushSelDownTableGather) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
+func (r *PushSelDownTiKVSingleGather) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
 	sel := old.GetExpr().ExprNode.(*plannercore.LogicalSelection)
-	tg := old.Children[0].GetExpr().ExprNode.(*plannercore.TableGather)
+	sg := old.Children[0].GetExpr().ExprNode.(*plannercore.TiKVSingleGather)
 	childGroup := old.Children[0].Children[0].Group
 	var pushed, remained []expression.Expression
-	sctx := tg.SCtx()
+	sctx := sg.SCtx()
 	_, pushed, remained = expression.ExpressionsToPB(sctx.GetSessionVars().StmtCtx, sel.Conditions, sctx.GetClient())
 	if len(pushed) == 0 {
 		return nil, false, false, nil
@@ -165,12 +168,12 @@ func (r *PushSelDownTableGather) OnTransform(old *memo.ExprIter) (newExprs []*me
 	pushedSelExpr := memo.NewGroupExpr(pushedSel)
 	pushedSelExpr.Children = append(pushedSelExpr.Children, childGroup)
 	pushedSelGroup := memo.NewGroupWithSchema(pushedSelExpr, childGroup.Prop.Schema).SetEngineType(childGroup.EngineType)
-	// The field content of TableGather would not be modified currently, so we
+	// The field content of TiKVSingleGather would not be modified currently, so we
 	// just reference the same tg instead of making a copy of it.
 	//
-	// TODO: if we save pushed filters later in TableGather, in order to do partition
-	//       pruning or skyline pruning, we need to make a copy of the TableGather here.
-	tblGatherExpr := memo.NewGroupExpr(tg)
+	// TODO: if we save pushed filters later in TiKVSingleGather, in order to do partition
+	//       pruning or skyline pruning, we need to make a copy of the TiKVSingleGather here.
+	tblGatherExpr := memo.NewGroupExpr(sg)
 	tblGatherExpr.Children = append(tblGatherExpr.Children, pushedSelGroup)
 	if len(remained) == 0 {
 		// `oldSel -> oldTg -> any` is transformed to `newTg -> pushedSel -> any`.
@@ -210,19 +213,19 @@ func (r *EnumeratePaths) OnTransform(old *memo.ExprIter) (newExprs []*memo.Group
 }
 
 // PushAggDownGather splits Aggregation to two stages, final and partial1,
-// and pushed the partial Aggregation down to the child of TableGather.
+// and pushed the partial Aggregation down to the child of TiKVSingleGather.
 type PushAggDownGather struct {
 	baseRule
 }
 
 // NewRulePushAggDownGather creates a new Transformation PushAggDownGather.
-// The pattern of this rule is: `Aggregation -> TableGather`.
+// The pattern of this rule is: `Aggregation -> TiKVSingleGather`.
 func NewRulePushAggDownGather() Transformation {
 	rule := &PushAggDownGather{}
 	rule.pattern = memo.BuildPattern(
 		memo.OperandAggregation,
 		memo.EngineTiDBOnly,
-		memo.NewPattern(memo.OperandTableGather, memo.EngineTiDBOnly),
+		memo.NewPattern(memo.OperandTiKVSingleGather, memo.EngineTiDBOnly),
 	)
 	return rule
 }
@@ -248,7 +251,7 @@ func (r *PushAggDownGather) Match(expr *memo.ExprIter) bool {
 func (r *PushAggDownGather) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
 	agg := old.GetExpr().ExprNode.(*plannercore.LogicalAggregation)
 	aggSchema := old.GetExpr().Group.Prop.Schema
-	gather := old.Children[0].GetExpr().ExprNode.(*plannercore.TableGather)
+	gather := old.Children[0].GetExpr().ExprNode.(*plannercore.TiKVSingleGather)
 	childGroup := old.Children[0].GetExpr().Children[0]
 	// The old Aggregation should stay unchanged for other transformation.
 	// So we build a new LogicalAggregation for the partialAgg.
@@ -590,4 +593,44 @@ func (r *PushSelDownJoin) OnTransform(old *memo.ExprIter) (newExprs []*memo.Grou
 	newJoinExpr := memo.NewGroupExpr(join)
 	newJoinExpr.SetChildren(leftGroup, rightGroup)
 	return []*memo.GroupExpr{newJoinExpr}, true, false, nil
+}
+
+// EliminateProjection eliminates the projection.
+type EliminateProjection struct {
+	baseRule
+}
+
+// NewRuleEliminateProjection creates a new Transformation EliminateProjection.
+// The pattern of this rule is `Projection -> Any`.
+func NewRuleEliminateProjection() Transformation {
+	rule := &EliminateProjection{}
+	rule.pattern = memo.BuildPattern(
+		memo.OperandProjection,
+		memo.EngineTiDBOnly,
+		memo.NewPattern(memo.OperandAny, memo.EngineTiDBOnly),
+	)
+	return rule
+}
+
+// OnTransform implements Transformation interface.
+// This rule tries to eliminate the projection whose output columns are the same with its child.
+func (r *EliminateProjection) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
+	child := old.Children[0]
+	if child.Group.Prop.Schema.Len() != old.GetExpr().Group.Prop.Schema.Len() {
+		return nil, false, false, nil
+	}
+
+	oldCols := old.GetExpr().Group.Prop.Schema.Columns
+	for i, col := range child.Group.Prop.Schema.Columns {
+		if !col.Equal(nil, oldCols[i]) {
+			return nil, false, false, nil
+		}
+	}
+
+	// Promote the children group's expression.
+	finalGroupExprs := make([]*memo.GroupExpr, 0, child.Group.Equivalents.Len())
+	for elem := child.Group.Equivalents.Front(); elem != nil; elem = elem.Next() {
+		finalGroupExprs = append(finalGroupExprs, elem.Value.(*memo.GroupExpr))
+	}
+	return finalGroupExprs, true, false, nil
 }

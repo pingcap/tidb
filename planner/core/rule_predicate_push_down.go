@@ -578,6 +578,14 @@ func (p *LogicalWindow) PredicatePushDown(predicates []expression.Expression) ([
 	return canNotBePushed, p
 }
 
+// PredicatePushDown implements LogicalPlan PredicatePushDown interface.
+func (p *LogicalMemTable) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, LogicalPlan) {
+	if p.Extractor != nil {
+		predicates = p.Extractor.Extract(p.schema, p.names, predicates)
+	}
+	return predicates, p.self
+}
+
 func (*ppdSolver) name() string {
 	return "predicate_push_down"
 }

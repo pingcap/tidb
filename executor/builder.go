@@ -1245,9 +1245,9 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 	e := &TableScanExec{
 		baseExecutor:   newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
 		t:              tb,
-		columns:        v.Table.Columns,
+		columns:        v.Columns,
 		seekHandle:     math.MinInt64,
-		isVirtualTable: tb.Type() == table.VirtualTable,
+		isVirtualTable: !tb.Type().IsNormalTable(),
 	}
 	return e
 }
@@ -2398,7 +2398,7 @@ func (b *executorBuilder) buildWindow(v *plannercore.PhysicalWindow) *WindowExec
 	}
 	return &WindowExec{baseExecutor: base,
 		processor:      processor,
-		groupChecker:   newGroupChecker(b.ctx.GetSessionVars().StmtCtx, groupByItems),
+		groupChecker:   newVecGroupChecker(b.ctx, groupByItems),
 		numWindowFuncs: len(v.WindowFuncDescs),
 	}
 }

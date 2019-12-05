@@ -800,7 +800,7 @@ func (s *testColumnSuite) TestAddColumn(c *C) {
 			hookErr = errors.Trace(err1)
 			return
 		}
-		newCol := table.FindCol(t.(*tables.Table).Columns, newColName)
+		newCol := table.FindCol(t.(*tables.TableCommon).Columns, newColName)
 		if newCol == nil {
 			return
 		}
@@ -891,7 +891,7 @@ func (s *testColumnSuite) TestDropColumn(c *C) {
 			hookErr = errors.Trace(err1)
 			return
 		}
-		col := table.FindCol(t.(*tables.Table).Columns, colName)
+		col := table.FindCol(t.(*tables.TableCommon).Columns, colName)
 		if col == nil {
 			checkOK = true
 			return
