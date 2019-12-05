@@ -1043,6 +1043,7 @@ func (s *testIntegrationSuite5) TestBackwardCompatibility(c *C) {
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 	ticker := time.NewTicker(s.lease)
+	defer ticker.Stop()
 	for range ticker.C {
 		historyJob, err := s.getHistoryDDLJob(job.ID)
 		c.Assert(err, IsNil)
