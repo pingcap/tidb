@@ -24,9 +24,11 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"golang.org/x/text/transform"
 )
 
 func (b *builtinLowerSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
@@ -599,11 +601,41 @@ func (b *builtinConcatWSSig) vecEvalString(input *chunk.Chunk, result *chunk.Col
 }
 
 func (b *builtinConvertSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinConvertSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	expr, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(expr)
+	if err := b.args[0].VecEvalString(b.ctx, input, expr); err != nil {
+		return err
+	}
+	// Since charset is already validated and set from getFunction(), there's no
+	// need to get charset from args again.
+	encoding, _ := charset.Lookup(b.tp.Charset)
+	// However, if `b.tp.Charset` is abnormally set to a wrong charset, we still
+	// return with error.
+	if encoding == nil {
+		return errUnknownCharacterSet.GenWithStackByArgs(b.tp.Charset)
+	}
+	result.ReserveString(n)
+	for i := 0; i < n; i++ {
+		if expr.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
+		exprI := expr.GetString(i)
+		target, _, err := transform.String(encoding.NewDecoder(), exprI)
+		if err != nil {
+			return err
+		}
+		result.AppendString(target)
+	}
+	return nil
 }
 
 func (b *builtinSubstringIndexSig) vectorized() bool {
@@ -1143,11 +1175,62 @@ func (b *builtinLocateBinary2ArgsSig) vecEvalInt(input *chunk.Chunk, result *chu
 }
 
 func (b *builtinLocateBinary3ArgsSig) vectorized() bool {
-	return false
+	return true
 }
 
+// vecEvalInt evals LOCATE(substr,str,pos), case-sensitive.
+// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_locate
 func (b *builtinLocateBinary3ArgsSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf0, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf0)
+	if err := b.args[0].VecEvalString(b.ctx, input, buf0); err != nil {
+		return err
+	}
+	buf1, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf1)
+	if err := b.args[1].VecEvalString(b.ctx, input, buf1); err != nil {
+		return err
+	}
+	// store positions in result
+	if err := b.args[2].VecEvalInt(b.ctx, input, result); err != nil {
+		return err
+	}
+
+	result.MergeNulls(buf0, buf1)
+	i64s := result.Int64s()
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		pos := i64s[i]
+		// Transfer the argument which starts from 1 to real index which starts from 0.
+		pos--
+		subStr := buf0.GetString(i)
+		str := buf1.GetString(i)
+		subStrLen := len(subStr)
+		if pos < 0 || pos > int64(len(str)-subStrLen) {
+			i64s[i] = 0
+			continue
+		} else if subStrLen == 0 {
+			i64s[i] = pos + 1
+			continue
+		}
+		slice := str[pos:]
+		idx := strings.Index(slice, subStr)
+		if idx != -1 {
+			i64s[i] = pos + int64(idx) + 1
+			continue
+		}
+		i64s[i] = 0
+	}
+	return nil
 }
 
 func (b *builtinExportSet4ArgSig) vectorized() bool {

@@ -144,3 +144,28 @@ func (impl *TiDBTopNImpl) CalcCost(outCount float64, children ...memo.Implementa
 func NewTiDBTopNImpl(topN *plannercore.PhysicalTopN) *TiDBTopNImpl {
 	return &TiDBTopNImpl{baseImpl{plan: topN}}
 }
+
+// UnionAllImpl is the implementation of PhysicalUnionAll.
+type UnionAllImpl struct {
+	baseImpl
+}
+
+// CalcCost implements Implementation CalcCost interface.
+func (impl *UnionAllImpl) CalcCost(outCount float64, children ...memo.Implementation) float64 {
+	var childMaxCost float64
+	for _, child := range children {
+		childCost := child.GetCost()
+		if childCost > childMaxCost {
+			childMaxCost = childCost
+		}
+	}
+	selfCost := float64(1+len(children)) * impl.plan.SCtx().GetSessionVars().ConcurrencyFactor
+	// Children of UnionAll are executed in parallel.
+	impl.cost = selfCost + childMaxCost
+	return selfCost
+}
+
+// NewUnionAllImpl creates a new UnionAllImpl.
+func NewUnionAllImpl(union *plannercore.PhysicalUnionAll) *UnionAllImpl {
+	return &UnionAllImpl{baseImpl{plan: union}}
+}

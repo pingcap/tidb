@@ -31,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	dto "github.com/prometheus/client_model/go"
@@ -53,7 +52,6 @@ type testSuite struct {
 	store     kv.Storage
 	domain    *domain.Domain
 	*parser.Parser
-	ctx *mock.Context
 }
 
 var mockTikv = flag.Bool("mockTikv", true, "use mock tikv store in bind test")
@@ -529,4 +527,26 @@ func (s *testSuite) TestAddEvolveTasks(c *C) {
 	c.Assert(rows[1][1], Equals, "SELECT /*+ USE_INDEX(@`sel_1` `test`.`t` )*/ * FROM `test`.`t` WHERE `a`>=4 AND `b`>=1 AND `c`=0")
 	status := rows[1][3].(string)
 	c.Assert(status == "using" || status == "rejected", IsTrue)
+}
+
+func (s *testSuite) TestBindingCache(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	s.cleanBindingEnv(tk)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, index idx(a))")
+	tk.MustExec("create global binding for select * from t using select * from t use index(idx)")
+	tk.MustExec("create database tmp")
+	tk.MustExec("use tmp")
+	tk.MustExec("create table t(a int, b int, index idx(a))")
+	tk.MustExec("create global binding for select * from t using select * from t use index(idx)")
+
+	c.Assert(s.domain.BindHandle().Update(false), IsNil)
+	c.Assert(s.domain.BindHandle().Update(false), IsNil)
+	res := tk.MustQuery("show global bindings")
+	c.Assert(len(res.Rows()), Equals, 2)
+
+	tk.MustExec("drop global binding for select * from t")
+	c.Assert(s.domain.BindHandle().Update(false), IsNil)
+	c.Assert(len(s.domain.BindHandle().GetAllBindRecord()), Equals, 1)
 }

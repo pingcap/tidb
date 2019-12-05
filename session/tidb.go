@@ -118,6 +118,20 @@ var (
 	statsLease = int64(3 * time.Second)
 )
 
+func setStoreBootstrapped(storeUUID string) {
+	storeBootstrappedLock.Lock()
+	defer storeBootstrappedLock.Unlock()
+	storeBootstrapped[storeUUID] = true
+}
+
+// unsetStoreBootstrapped delete store uuid from stored bootstrapped map.
+// currently this function only used for test.
+func unsetStoreBootstrapped(storeUUID string) {
+	storeBootstrappedLock.Lock()
+	defer storeBootstrappedLock.Unlock()
+	delete(storeBootstrapped, storeUUID)
+}
+
 // SetSchemaLease changes the default schema lease time for DDL.
 // This function is very dangerous, don't use it if you really know what you do.
 // SetSchemaLease only affects not local storage after bootstrapped.
@@ -353,17 +367,12 @@ func ResultSetToStringSlice(ctx context.Context, s Session, rs sqlexec.RecordSet
 
 // Session errors.
 var (
-	ErrForUpdateCantRetry = terror.ClassSession.New(codeForUpdateCantRetry,
-		mysql.MySQLErrName[mysql.ErrForUpdateCantRetry])
-)
-
-const (
-	codeForUpdateCantRetry terror.ErrCode = mysql.ErrForUpdateCantRetry
+	ErrForUpdateCantRetry = terror.ClassSession.New(mysql.ErrForUpdateCantRetry, mysql.MySQLErrName[mysql.ErrForUpdateCantRetry])
 )
 
 func init() {
 	sessionMySQLErrCodes := map[terror.ErrCode]uint16{
-		codeForUpdateCantRetry: mysql.ErrForUpdateCantRetry,
+		mysql.ErrForUpdateCantRetry: mysql.ErrForUpdateCantRetry,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassSession] = sessionMySQLErrCodes
 }

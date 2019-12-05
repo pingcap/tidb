@@ -260,6 +260,7 @@ func (e *AnalyzeIndexExec) fetchAnalyzeResult(ranges []*ranger.Range, isNullRang
 	var builder distsql.RequestBuilder
 	kvReq, err := builder.SetIndexRanges(e.ctx.GetSessionVars().StmtCtx, e.physicalTableID, e.idxInfo.ID, ranges).
 		SetAnalyzeRequest(e.analyzePB).
+		SetStartTS(math.MaxUint64).
 		SetKeepOrder(true).
 		SetConcurrency(e.concurrency).
 		Build()
@@ -430,6 +431,7 @@ func (e *AnalyzeColumnsExec) buildResp(ranges []*ranger.Range) (distsql.SelectRe
 	// correct `correlation` of columns.
 	kvReq, err := builder.SetTableRanges(e.physicalTableID, ranges, nil).
 		SetAnalyzeRequest(e.analyzePB).
+		SetStartTS(math.MaxUint64).
 		SetKeepOrder(true).
 		SetConcurrency(e.concurrency).
 		Build()

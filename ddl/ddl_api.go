@@ -47,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/domainutil"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/set"
@@ -463,7 +464,7 @@ func convertTimestampDefaultValToUTC(ctx sessionctx.Context, defaultVal interfac
 		return defaultVal, nil
 	}
 	if vv, ok := defaultVal.(string); ok {
-		if vv != types.ZeroDatetimeStr && strings.ToUpper(vv) != strings.ToUpper(ast.CurrentTimestamp) {
+		if vv != types.ZeroDatetimeStr && !strings.EqualFold(vv, ast.CurrentTimestamp) {
 			t, err := types.ParseTime(ctx.GetSessionVars().StmtCtx, vv, col.Tp, int8(col.Decimal))
 			if err != nil {
 				return defaultVal, errors.Trace(err)
@@ -1412,7 +1413,7 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 	err = d.doDDLJob(ctx, job)
 	if err == nil {
 		// do pre-split and scatter.
-		sp, ok := d.store.(kv.SplitableStore)
+		sp, ok := d.store.(kv.SplittableStore)
 		if ok && atomic.LoadUint32(&EnableSplitTableRegion) != 0 {
 			var (
 				preSplit      func()
@@ -2754,7 +2755,7 @@ func checkColumnWithIndexConstraint(tbInfo *model.TableInfo, originalCol, newCol
 				break
 			}
 		}
-		if containColumn == false {
+		if !containColumn {
 			continue
 		}
 		if columns == nil {
@@ -3919,7 +3920,7 @@ type lockTablesArg struct {
 // extractCollateFromOption take collates(may multiple) in option into consideration
 // when handle charset and collate of a column, rather than handling it separately.
 func extractCollateFromOption(def *ast.ColumnDef) []string {
-	specifiedCollates := make([]string, 0, 0)
+	var specifiedCollates []string
 	for i := 0; i < len(def.Options); i++ {
 		op := def.Options[i]
 		if op.Tp == ast.ColumnOptionCollate {
@@ -3930,4 +3931,81 @@ func extractCollateFromOption(def *ast.ColumnDef) []string {
 		}
 	}
 	return specifiedCollates
+}
+
+func (d *ddl) RepairTable(ctx sessionctx.Context, table *ast.TableName, createStmt *ast.CreateTableStmt) error {
+	// Existence of DB and table has been checked in the preprocessor.
+	oldTableInfo, ok := (ctx.Value(domainutil.RepairedTable)).(*model.TableInfo)
+	if !ok || oldTableInfo == nil {
+		return ErrRepairTableFail.GenWithStack("Failed to get the repaired table")
+	}
+	oldDBInfo, ok := (ctx.Value(domainutil.RepairedDatabase)).(*model.DBInfo)
+	if !ok || oldDBInfo == nil {
+		return ErrRepairTableFail.GenWithStack("Failed to get the repaired database")
+	}
+	// By now only support same DB repair.
+	if createStmt.Table.Schema.L != oldDBInfo.Name.L {
+		return ErrRepairTableFail.GenWithStack("Repaired table should in same database with the old one")
+	}
+	// It is necessary to specify the table.ID and partition.ID manually.
+	newTableInfo, err := buildTableInfoWithCheck(ctx, d, createStmt, oldTableInfo.Charset, oldTableInfo.Collate)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	// Override newTableInfo with oldTableInfo's element necessary.
+	// TODO: There may be more element assignments here, and the new TableInfo should be verified with the actual data.
+	newTableInfo.ID = oldTableInfo.ID
+	if err = checkAndOverridePartitionID(newTableInfo, oldTableInfo); err != nil {
+		return err
+	}
+	newTableInfo.AutoIncID = oldTableInfo.AutoIncID
+	// If any old columnInfo has lost, that means the old column ID lost too, repair failed.
+	for i, newOne := range newTableInfo.Columns {
+		old := getColumnInfoByName(oldTableInfo, newOne.Name.L)
+		if old == nil {
+			return ErrRepairTableFail.GenWithStackByArgs("Column " + newOne.Name.L + " has lost")
+		}
+		if newOne.Tp != old.Tp {
+			return ErrRepairTableFail.GenWithStackByArgs("Column " + newOne.Name.L + " type should be the same")
+		}
+		if newOne.Flen != old.Flen {
+			logutil.BgLogger().Warn("[ddl] admin repair table : Column " + newOne.Name.L + " flen is not equal to the old one")
+		}
+		newTableInfo.Columns[i].ID = old.ID
+	}
+	// If any old indexInfo has lost, that means the index ID lost too, so did the data, repair failed.
+	for i, newOne := range newTableInfo.Indices {
+		old := getIndexInfoByNameAndColumn(oldTableInfo, newOne)
+		if old == nil {
+			return ErrRepairTableFail.GenWithStackByArgs("Index " + newOne.Name.L + " has lost")
+		}
+		if newOne.Tp != old.Tp {
+			return ErrRepairTableFail.GenWithStackByArgs("Index " + newOne.Name.L + " type should be the same")
+		}
+		newTableInfo.Indices[i].ID = old.ID
+	}
+
+	newTableInfo.State = model.StatePublic
+	err = checkTableInfoValid(newTableInfo)
+	if err != nil {
+		return err
+	}
+	newTableInfo.State = model.StateNone
+
+	job := &model.Job{
+		SchemaID:   oldDBInfo.ID,
+		TableID:    newTableInfo.ID,
+		SchemaName: oldDBInfo.Name.L,
+		Type:       model.ActionRepairTable,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{newTableInfo},
+	}
+	err = d.doDDLJob(ctx, job)
+	if err == nil {
+		// Remove the old TableInfo from repairInfo before domain reload.
+		domainutil.RepairInfo.RemoveFromRepairInfo(oldDBInfo.Name.L, oldTableInfo.Name.L)
+	}
+	err = d.callHookOnChanged(err)
+	return errors.Trace(err)
 }

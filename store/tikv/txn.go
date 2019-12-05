@@ -112,21 +112,6 @@ func (a assertionPair) String() string {
 	return fmt.Sprintf("key: %s, assertion type: %d", a.key, a.assertion)
 }
 
-// SetAssertion sets a assertion for the key operation.
-func (txn *tikvTxn) SetAssertion(key kv.Key, assertion kv.AssertionType) {
-	// Deep copy the key since it's memory is referenced from union store and overwrite change later.
-	key1 := append([]byte{}, key...)
-	txn.assertions = append(txn.assertions, assertionPair{key1, assertion})
-}
-
-func (txn *tikvTxn) ConfirmAssertions(succ bool) {
-	if succ {
-		txn.confirmed = len(txn.assertions)
-	} else {
-		txn.assertions = txn.assertions[:txn.confirmed]
-	}
-}
-
 func (txn *tikvTxn) SetVars(vars *kv.Variables) {
 	txn.vars = vars
 	txn.snapshot.vars = vars
@@ -325,7 +310,7 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 	// latches disabled
 	// pessimistic transaction should also bypass latch.
 	if txn.store.txnLatches == nil || txn.IsPessimistic() {
-		err = committer.executeAndWriteFinishBinlog(ctx)
+		err = committer.execute(ctx)
 		logutil.Logger(ctx).Debug("[kv] txnLatches disabled, 2pc directly", zap.Error(err))
 		return errors.Trace(err)
 	}
@@ -343,7 +328,7 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 	if lock.IsStale() {
 		return kv.ErrWriteConflictInTiDB.FastGenByArgs(txn.startTS)
 	}
-	err = committer.executeAndWriteFinishBinlog(ctx)
+	err = committer.execute(ctx)
 	if err == nil {
 		lock.SetCommitTS(committer.commitTS)
 	}

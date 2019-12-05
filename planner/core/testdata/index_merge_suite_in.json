@@ -1,0 +1,13 @@
+[
+  {
+    "name": "TestIndexMergePathGeneration",
+    "cases": [
+      "select * from t",
+      "select * from t where c < 1",
+      "select * from t where c < 1 or f > 2",
+      "select * from t where (c < 1 or f > 2) and (c > 5 or f < 7)",
+      "select * from t where (c < 1 or f > 2) and (c > 5 or f < 7) and (c < 1 or g > 2)",
+      "select * from t where (c < 1 or f > 2) and (c > 5 or f < 7) and (e < 1 or f > 2)"
+    ]
+  }
+]

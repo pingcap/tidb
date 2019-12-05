@@ -187,11 +187,13 @@ func (s *testFastAnalyze) TestAnalyzeFastSample(c *C) {
 		mockstore.WithCluster(cluster),
 	)
 	c.Assert(err, IsNil)
+	defer store.Close()
 	var dom *domain.Domain
 	session.DisableStats4Test()
 	session.SetSchemaLease(0)
 	dom, err = session.BootstrapSession(store)
 	c.Assert(err, IsNil)
+	defer dom.Close()
 	tk := testkit.NewTestKit(c, store)
 	executor.RandSeed = 123
 
@@ -280,11 +282,13 @@ func (s *testFastAnalyze) TestFastAnalyze(c *C) {
 		mockstore.WithCluster(cluster),
 	)
 	c.Assert(err, IsNil)
+	defer store.Close()
 	var dom *domain.Domain
 	session.DisableStats4Test()
 	session.SetSchemaLease(0)
 	dom, err = session.BootstrapSession(store)
 	c.Assert(err, IsNil)
+	defer dom.Close()
 	tk := testkit.NewTestKit(c, store)
 	executor.RandSeed = 123
 
@@ -454,8 +458,10 @@ func (s *testFastAnalyze) TestFastAnalyzeRetryRowCount(c *C) {
 		mockstore.WithMVCCStore(mvccStore),
 	)
 	c.Assert(err, IsNil)
+	defer store.Close()
 	dom, err := session.BootstrapSession(store)
 	c.Assert(err, IsNil)
+	defer dom.Close()
 
 	tk := testkit.NewTestKit(c, store)
 	tk.MustExec("use test")
