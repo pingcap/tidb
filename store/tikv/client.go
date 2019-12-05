@@ -53,6 +53,7 @@ var (
 	ReadTimeoutLong           = 150 * time.Second // For requests that may need scan region multiple times.
 	GCTimeout                 = 5 * time.Minute
 	UnsafeDestroyRangeTimeout = 5 * time.Minute
+	AccessLockObserverTimeout = 10 * time.Second
 )
 
 const (
