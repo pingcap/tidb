@@ -27,5 +27,13 @@
       "select b from t order by a limit 2",
       "select a+b from t order by a limit 1 offset 2"
     ]
+  },
+  {
+    "name": "TestProjectionElimination",
+    "cases": [
+      "select a, b from (select a, b from t) as t2",
+      "select a+b from (select a, b from t) as t2",
+      "select a from (select floor(a) as a from t) as t2"
+    ]
   }
 ]
