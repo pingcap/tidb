@@ -109,8 +109,11 @@ func GlobalInfoSyncerInit(ctx context.Context, id string, etcdCli *clientv3.Clie
 		minStartTSPath: fmt.Sprintf("%s/%s", ServerMinStartTSPath, id),
 	}
 	err := is.init(ctx)
+	if err != nil {
+		return nil, err
+	}
 	setGlobalInfoSyncer(is)
-	return is, err
+	return is, nil
 }
 
 // Init creates a new etcd session and stores server info to etcd.
