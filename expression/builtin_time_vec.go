@@ -1890,10 +1890,10 @@ func (b *builtinHourSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) er
 		i64s := result.Int64s()
 		for i := 0; i < n; i++ {
 			res, isNull, err := b.evalInt(input.GetRow(i))
-			if isNull || err != nil {
-				result.SetNull(i, true)
-				continue
+			if err != nil {
+				return nil
 			}
+			result.SetNull(i, isNull)
 			i64s[i] = res
 		}
 		return nil
