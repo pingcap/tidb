@@ -748,7 +748,7 @@ func (s *testSessionSuite) TestSessionAuth(c *C) {
 	c.Assert(tk.Se.Auth(&auth.UserIdentity{Username: "Any not exist username with zero password!", Hostname: "anyhost"}, []byte(""), []byte("")), IsFalse)
 }
 
-func (s *testSessionSuite) TestSkipWithGrant(c *C) {
+func (s *testSessionSerialSuite) TestSkipWithGrant(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	save2 := privileges.SkipWithGrant
 
