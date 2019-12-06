@@ -723,6 +723,13 @@ func (c *Config) Valid() error {
 	if c.Performance.TxnTotalSizeLimit > (10 << 30) {
 		return fmt.Errorf("txn-total-size-limit should be less than %d", 10<<30)
 	}
+
+	if c.StmtSummary.HistorySize < 0 {
+		return fmt.Errorf("history-size in [stmt-summary] should be greater than or equal to 0")
+	}
+	if c.StmtSummary.RefreshInterval <= 0 {
+		return fmt.Errorf("refresh-interval in [stmt-summary] should be greater than 0")
+	}
 	return nil
 }
 

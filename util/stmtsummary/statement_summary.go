@@ -405,9 +405,9 @@ func (ssMap *stmtSummaryByDigestMap) SetRefreshInterval(value string, inSession 
 			interval = 0
 		}
 	}
-	// Users may set invalid values in configuration file.
+	// If session and global variables are both '', use the value in config.
 	if interval <= 0 {
-		interval = 1
+		interval = config.GetGlobalConfig().StmtSummary.RefreshInterval
 	}
 	atomic.StoreInt64(&ssMap.sysVars.refreshInterval, int64(interval))
 }
@@ -444,9 +444,9 @@ func (ssMap *stmtSummaryByDigestMap) SetHistorySize(value string, inSession bool
 			size = -1
 		}
 	}
-	// Users may set invalid values in configuration file.
+	// If session and global variables are both '', use the value in config.
 	if size < 0 {
-		size = 0
+		size = config.GetGlobalConfig().StmtSummary.HistorySize
 	}
 	atomic.StoreInt32(&ssMap.sysVars.historySize, int32(size))
 }
