@@ -39,6 +39,19 @@ var vecBuiltinArithmeticCases = map[string][]vecExprBenchCase{
 	ast.IntDiv: {
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDecimal, types.ETDecimal}},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDecimal, types.ETDecimal}, geners: []dataGenerator{nil, &rangeDecimalGener{0, 0, 0.2}}},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDecimal, types.ETDecimal},
+			childrenFieldTypes: []*types.FieldType{{Tp: mysql.TypeNewDecimal, Flag: mysql.UnsignedFlag}, nil},
+			geners:             []dataGenerator{&rangeDecimalGener{0, 10000, 0.2}, &rangeDecimalGener{0, 10000, 0.2}},
+		},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDecimal, types.ETDecimal},
+			childrenFieldTypes: []*types.FieldType{nil, {Tp: mysql.TypeNewDecimal, Flag: mysql.UnsignedFlag}},
+			geners:             []dataGenerator{&rangeDecimalGener{0, 10000, 0.2}, &rangeDecimalGener{0, 10000, 0.2}},
+		},
+		// when the final result is at (-1, 0], it should be return 0 instead of the error
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDecimal, types.ETDecimal},
+			childrenFieldTypes: []*types.FieldType{nil, {Tp: mysql.TypeNewDecimal, Flag: mysql.UnsignedFlag}},
+			geners:             []dataGenerator{&rangeDecimalGener{-100, -1, 0.2}, &rangeDecimalGener{1000, 2000, 0.2}},
+		},
 	},
 	ast.Mod: {
 		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETReal, types.ETReal}},
