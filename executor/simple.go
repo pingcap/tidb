@@ -621,18 +621,21 @@ func (e *SimpleExec) executeRollback(s *ast.RollbackStmt) error {
 	sessVars := e.ctx.GetSessionVars()
 	logutil.BgLogger().Debug("execute rollback statement", zap.Uint64("conn", sessVars.ConnectionID))
 	sessVars.SetStatusFlag(mysql.ServerStatusInTrans, false)
-	txn, err := e.ctx.Txn(true)
+	txn, err := e.ctx.Txn(false)
 	if err != nil {
 		return err
 	}
-	duration := time.Since(sessVars.TxnCtx.CreateTime).Seconds()
-	if sessVars.InRestrictedSQL {
-		transactionDurationInternalRollback.Observe(duration)
-	} else {
-		transactionDurationGeneralRollback.Observe(duration)
+	if txn.Valid() {
+		duration := time.Since(sessVars.TxnCtx.CreateTime).Seconds()
+		if sessVars.InRestrictedSQL {
+			transactionDurationInternalRollback.Observe(duration)
+		} else {
+			transactionDurationGeneralRollback.Observe(duration)
+		}
+		sessVars.TxnCtx.ClearDelta()
+		return txn.Rollback()
 	}
-	sessVars.TxnCtx.ClearDelta()
-	return txn.Rollback()
+	return nil
 }
 
 func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStmt) error {
