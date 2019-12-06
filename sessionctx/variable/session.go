@@ -203,6 +203,10 @@ type SessionVars struct {
 	Users map[string]string
 	// systems variables, don't modify it directly, use GetSystemVar/SetSystemVar method.
 	systems map[string]string
+	// SysWarningCount is the system variable "warning_count", because it is on the hot path, so we extract it from the systems
+	SysWarningCount int
+	// SysErrorCount is the system variable "error_count", because it is on the hot path, so we extract it from the systems
+	SysErrorCount uint16
 	// PreparedStmts stores prepared statement.
 	PreparedStmts        map[uint32]interface{}
 	PreparedStmtNameToID map[string]uint32
@@ -711,6 +715,11 @@ func (s *SessionVars) Location() *time.Location {
 
 // GetSystemVar gets the string value of a system variable.
 func (s *SessionVars) GetSystemVar(name string) (string, bool) {
+	if name == WarningCount {
+		return strconv.Itoa(s.SysWarningCount), true
+	} else if name == ErrorCount {
+		return strconv.Itoa(int(s.SysErrorCount)), true
+	}
 	val, ok := s.systems[name]
 	return val, ok
 }
