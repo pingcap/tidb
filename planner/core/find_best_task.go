@@ -632,6 +632,10 @@ func isCoveringIndex(columns, indexColumns []*expression.Column, idxColLens []in
 func (ts *PhysicalTableScan) AppendExtraHandleCol(ds *DataSource) (*expression.Column, bool) {
 	handleCol := ds.HandleCol
 	if handleCol != nil {
+		if handleCol.ID == model.ExtraHandleID {
+			ts.schema.Append(handleCol)
+			ts.Columns = append(ts.Columns, model.NewExtraHandleColInfo())
+		}
 		return handleCol, false
 	}
 	handleCol = ds.newExtraHandleSchemaCol()

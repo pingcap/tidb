@@ -14,6 +14,7 @@
 package cascades
 
 import (
+	"github.com/pingcap/parser/model"
 	"math"
 
 	"github.com/pingcap/tidb/expression"
@@ -174,8 +175,10 @@ func (r *ImplTiKVDoubleReadGather) OnImplement(expr *memo.GroupExpr, reqProp *pr
 	sg := expr.ExprNode.(*plannercore.TiKVDoubleGather)
 	var reader plannercore.PhysicalPlan
 	reader = sg.GetPhysicalIndexLookUpReader(logicProp.Schema, logicProp.Stats.ScaleByExpectCnt(reqProp.ExpectedCnt), reqProp, reqProp)
-	if sg.Source.HandleCol == nil && !reqProp.IsEmpty() {
-		proj := plannercore.PhysicalProjection{Exprs: expression.Column2Exprs(logicProp.Schema.Columns)}.Init(sg.SCtx(), logicProp.Stats, sg.SelectBlockOffset(), nil)
+	if sg.Source.HandleCol.ID == model.ExtraHandleID && !reqProp.IsEmpty() {
+		reader.Schema().Append(sg.Source.HandleCol)
+		reader.(*plannercore.PhysicalIndexLookUpReader).ExtraHandleCol = sg.Source.HandleCol
+		proj := plannercore.PhysicalProjection{Exprs: expression.Column2Exprs(logicProp.Schema.Columns)}.Init(sg.SCtx(), logicProp.Stats, sg.SelectBlockOffset(), reqProp, reqProp)
 		proj.SetSchema(logicProp.Schema)
 		proj.SetChildren(reader)
 		reader = proj
@@ -202,10 +205,10 @@ func (r *ImplTableScan) OnImplement(expr *memo.GroupExpr, reqProp *property.Phys
 	ts := logicalScan.GetPhysicalScan(logicProp.Schema, logicProp.Stats.ScaleByExpectCnt(reqProp.ExpectedCnt))
 	if logicalScan.IsDoubleRead {
 		if !reqProp.IsEmpty() {
+			ts.KeepOrder = true
 			ts.AppendExtraHandleCol(logicalScan.Source)
 		}
 	} else if !reqProp.IsEmpty() {
-		ts.KeepOrder = true
 		ts.Desc = reqProp.Items[0].Desc
 	}
 	tblCols, tblColHists := logicalScan.Source.TblCols, logicalScan.Source.TblColHists

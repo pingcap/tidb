@@ -177,7 +177,6 @@ type IndexLookUpReaderImpl struct {
 	baseImpl
 
 	KeepOrder          bool
-	DoubleReadNeedProj bool
 	tblColHists        *statistics.HistColl
 }
 
@@ -234,16 +233,12 @@ func (impl *IndexLookUpReaderImpl) CalcCost(outCount float64, children ...memo.I
 		sortCPUCost := (tableRows * math.Log2(batchSize) * sessVars.CPUFactor) / numTblWorkers
 		impl.cost += sortCPUCost
 	}
-	if impl.DoubleReadNeedProj {
-
-	}
 	return impl.cost
 }
 
 // ScaleCostLimit implements Implementation interface.
 func (impl *IndexLookUpReaderImpl) ScaleCostLimit(costLimit float64) float64 {
-	reader := impl.plan.(*plannercore.PhysicalIndexLookUpReader)
-	sessVars := reader.SCtx().GetSessionVars()
+	sessVars := impl.plan.SCtx().GetSessionVars()
 	copIterWorkers := float64(sessVars.DistSQLScanConcurrency)
 	if math.MaxFloat64/copIterWorkers < costLimit {
 		return math.MaxFloat64

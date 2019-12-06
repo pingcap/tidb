@@ -70,7 +70,7 @@
         "SQL": "select a from t order by a",
         "Plan": [
           "TableReader_7 10000.00 root data:TableScan_8",
-          "└─TableScan_8 10000.00 cop[tikv] table:t, range:[-inf,+inf], keep order:true, stats:pseudo"
+          "└─TableScan_8 10000.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false, stats:pseudo"
         ],
         "Result": [
           "1",
@@ -285,7 +285,7 @@
         "Plan": [
           "Limit_9 1.00 root offset:2, count:1",
           "└─TableReader_12 3.00 root data:TableScan_13",
-          "  └─TableScan_13 3.00 cop[tikv] table:t, range:[-inf,+inf], keep order:true, stats:pseudo"
+          "  └─TableScan_13 3.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false, stats:pseudo"
         ],
         "Result": [
           "3"
@@ -411,21 +411,22 @@
     "Name": "TestDoubleRead",
     "Cases": [
       {
-        "SQL": "select * from t order by t.a",
+        "SQL": "select a, b from t order by t.a",
         "Plan": [
-          "IndexLookUp_11 10000.00 root ",
-          "├─IndexScan_12 10000.00 cop[tikv] table:t, index:a, range:[NULL,+inf], keep order:true, stats:pseudo",
-          "└─TableScan_13 10000.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false, stats:pseudo"
+          "Projection_12 10000.00 root test.t.a, test.t.b",
+          "└─IndexLookUp_11 10000.00 root ",
+          "  ├─IndexScan_13 10000.00 cop[tikv] table:t, index:a, range:[NULL,+inf], keep order:true, stats:pseudo",
+          "  └─TableScan_14 10000.00 cop[tikv] table:t, range:[-inf,+inf], keep order:true, stats:pseudo"
         ],
         "Result": [
           "1 11",
+          "2 22",
           "3 33",
-          "4 44",
-          "2 22"
+          "4 44"
         ]
       },
       {
-        "SQL": "select * from t order by t.b",
+        "SQL": "select a, b from t order by t.b",
         "Plan": [
           "Sort_17 10000.00 root test.t.b:asc",
           "└─TableReader_12 10000.00 root data:TableScan_13",
@@ -436,6 +437,36 @@
           "2 22",
           "3 33",
           "4 44"
+        ]
+      },
+      {
+        "SQL": "select a, b, c from t order by t.b, t.c",
+        "Plan": [
+          "Projection_18 10000.00 root test.t.a, test.t.b, test.t.c",
+          "└─IndexLookUp_17 10000.00 root ",
+          "  ├─IndexScan_19 10000.00 cop[tikv] table:t, index:b, c, range:[NULL,+inf], keep order:true, stats:pseudo",
+          "  └─TableScan_20 10000.00 cop[tikv] table:t, range:[-inf,+inf], keep order:true, stats:pseudo"
+        ],
+        "Result": [
+          "1 11 4",
+          "2 22 3",
+          "3 33 2",
+          "4 44 1"
+        ]
+      },
+      {
+        "SQL": "select a, b, c from t order by t.c, t.b",
+        "Plan": [
+          "Projection_18 10000.00 root test.t.a, test.t.b, test.t.c",
+          "└─IndexLookUp_17 10000.00 root ",
+          "  ├─IndexScan_19 10000.00 cop[tikv] table:t, index:c, b, range:[NULL,+inf], keep order:true, stats:pseudo",
+          "  └─TableScan_20 10000.00 cop[tikv] table:t, range:[-inf,+inf], keep order:true, stats:pseudo"
+        ],
+        "Result": [
+          "4 44 1",
+          "3 33 2",
+          "2 22 3",
+          "1 11 4"
         ]
       }
     ]

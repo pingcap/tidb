@@ -23,7 +23,7 @@
       // Union ALL.
       "select avg(a) from t union all select avg(b) from t",
       // Index Lookup Read.
-      "select * from t where t.b = 2 and t.a = 1 order by t.b"
+      "select b, f, g from t where t.b = 2 and t.f = 1 order by t.f, t.g"
     ]
   }
 ]

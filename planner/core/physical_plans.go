@@ -91,7 +91,7 @@ func (dg *TiKVDoubleGather) GetPhysicalIndexLookUpReader(schema *expression.Sche
 	reader := PhysicalIndexLookUpReader{}
 	reader.basePhysicalPlan = newBasePhysicalPlan(dg.ctx, plancodec.TypeIndexLookUp, &reader, dg.blockOffset)
 	reader.stats = stats
-	reader.SetSchema(schema)
+	reader.SetSchema(schema.Clone())
 	reader.childrenReqProps = props
 	return &reader
 }

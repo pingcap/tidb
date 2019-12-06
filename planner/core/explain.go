@@ -696,6 +696,6 @@ func (sg *TiKVSingleGather) ExplainInfo() string {
 // ExplainInfo implements Plan interface.
 func (dg *TiKVDoubleGather) ExplainInfo() string {
 	buffer := bytes.NewBufferString(dg.Source.ExplainInfo())
-	buffer.WriteString(", index:" + dg.indexName.String())
+	buffer.WriteString(", index:" + dg.index.Name.String())
 	return buffer.String()
 }

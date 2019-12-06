@@ -443,14 +443,14 @@ type TiKVSingleGather struct {
 }
 
 // TiKVDoubleGather is a leaf logical operator of TiDB layer to gather
-// tuples from TiKV regions
+// tuples from TiKV regions. It for index lookup read.
 type TiKVDoubleGather struct {
 	logicalSchemaProducer
 
 	Source       *DataSource
 	IndexCols    []*expression.Column
 	IndexColLens []int
-	indexName    model.CIStr
+	index        *model.IndexInfo
 }
 
 // LogicalTableScan is the logical table scan operator for TiKV.
@@ -546,16 +546,9 @@ func (ds *DataSource) buildIndexLookupGather(path *util.AccessPath, idxCols []*e
 		IsDoubleRead: true,
 		Index:        path.Index,
 	}.Init(ds.ctx, ds.blockOffset)
-	is.Columns = make([]*model.ColumnInfo, 0, len(path.FullIdxCols))
-	for _, col := range path.FullIdxCols {
-		for _, dsCol := range ds.Columns {
-			if dsCol.ID == col.ID {
-				is.Columns = append(is.Columns, dsCol)
-				break
-			}
-		}
-	}
-	is.SetSchema(expression.NewSchema(idxCols...))
+	is.Columns = make([]*model.ColumnInfo, len(ds.Columns))
+	copy(is.Columns, ds.Columns)
+	is.SetSchema(ds.schema)
 
 	ts := LogicalTableScan{Source: ds, Handle: ds.getHandleCol(), IsDoubleRead: true}.Init(ds.ctx, ds.blockOffset)
 	ts.SetSchema(ds.Schema())
@@ -564,7 +557,7 @@ func (ds *DataSource) buildIndexLookupGather(path *util.AccessPath, idxCols []*e
 		Source:       ds,
 		IndexCols:    idxCols,
 		IndexColLens: idxColLens,
-		indexName:    path.Index.Name,
+		index:        path.Index,
 	}.Init(ds.ctx, ds.blockOffset)
 	dg.SetSchema(ds.Schema())
 	dg.SetChildren(is, ts)
