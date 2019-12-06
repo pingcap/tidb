@@ -1117,8 +1117,10 @@ func (e *vecGroupChecker) evalGroupItemsAndResolveGroups(item expression.Express
 			}
 			previousIsNull = isNull
 		}
-		firstRowDatum.SetMysqlDecimal(&vals[0])
-		lastRowDatum.SetMysqlDecimal(&vals[numRows-1])
+		// make a copy to avoid DATA RACE
+		firstDatum, lastDatum := vals[0], vals[numRows-1]
+		firstRowDatum.SetMysqlDecimal(&firstDatum)
+		lastRowDatum.SetMysqlDecimal(&lastDatum)
 	case types.ETDatetime, types.ETTimestamp:
 		vals := col.Times()
 		for i := 1; i < numRows; i++ {
@@ -1164,8 +1166,9 @@ func (e *vecGroupChecker) evalGroupItemsAndResolveGroups(item expression.Express
 			previousKey = key
 			previousIsNull = isNull
 		}
-		firstRowDatum.SetMysqlJSON(col.GetJSON(0))
-		lastRowDatum.SetMysqlJSON(col.GetJSON(numRows - 1))
+		// make a copy to avoid DATA RACE
+		firstRowDatum.SetMysqlJSON(col.GetJSON(0).Copy())
+		lastRowDatum.SetMysqlJSON(col.GetJSON(numRows - 1).Copy())
 	case types.ETString:
 		previousKey := col.GetString(0)
 		for i := 1; i < numRows; i++ {
@@ -1179,8 +1182,9 @@ func (e *vecGroupChecker) evalGroupItemsAndResolveGroups(item expression.Express
 			previousKey = key
 			previousIsNull = isNull
 		}
-		firstRowDatum.SetString(col.GetString(0))
-		lastRowDatum.SetString(col.GetString(numRows - 1))
+		// don't use col.GetString since it will cause DATA RACE
+		firstRowDatum.SetString(string(col.GetBytes(0)))
+		lastRowDatum.SetString(string(col.GetBytes(numRows - 1)))
 	default:
 		err = errors.New(fmt.Sprintf("invalid eval type %v", eType))
 	}
