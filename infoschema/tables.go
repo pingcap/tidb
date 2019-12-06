@@ -1611,10 +1611,15 @@ func dataForColumnsInTable(schema *model.DBInfo, tbl *model.TableInfo) [][]types
 	return rows
 }
 
-func dataForStatistics(schemas []*model.DBInfo) [][]types.Datum {
+func dataForStatistics(ctx sessionctx.Context, schemas []*model.DBInfo) [][]types.Datum {
+	checker := privilege.GetPrivilegeManager(ctx)
 	var rows [][]types.Datum
 	for _, schema := range schemas {
 		for _, table := range schema.Tables {
+			if checker != nil && !checker.RequestVerification(ctx.GetSessionVars().ActiveRoles, schema.Name.L, table.Name.L, "", mysql.AllPrivMask) {
+				continue
+			}
+
 			rs := dataForStatisticsInTable(schema, table)
 			rows = append(rows, rs...)
 		}
@@ -2314,7 +2319,7 @@ func (s schemasSorter) Less(i, j int) bool {
 }
 
 func (it *infoschemaTable) getRows(ctx sessionctx.Context, cols []*table.Column) (fullRows [][]types.Datum, err error) {
-	is := ctx.GetSessionVars().TxnCtx.InfoSchema.(InfoSchema)
+	is := GetInfoSchema(ctx)
 	dbs := is.AllSchemas()
 	sort.Sort(schemasSorter(dbs))
 	switch it.meta.Name.O {
@@ -2327,7 +2332,7 @@ func (it *infoschemaTable) getRows(ctx sessionctx.Context, cols []*table.Column)
 	case tableColumns:
 		fullRows = dataForColumns(ctx, dbs)
 	case tableStatistics:
-		fullRows = dataForStatistics(dbs)
+		fullRows = dataForStatistics(ctx, dbs)
 	case tableCharacterSets:
 		fullRows = dataForCharacterSets()
 	case tableCollations:

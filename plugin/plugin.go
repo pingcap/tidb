@@ -59,9 +59,7 @@ func (p *plugins) clone() *plugins {
 	for key, value := range p.versions {
 		np.versions[key] = value
 	}
-	for key, value := range p.dyingPlugins {
-		np.dyingPlugins[key] = value
-	}
+	copy(np.dyingPlugins, p.dyingPlugins)
 	return np
 }
 

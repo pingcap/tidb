@@ -90,8 +90,9 @@ type HashAggFinalWorker struct {
 
 // AfFinalResult indicates aggregation functions final result.
 type AfFinalResult struct {
-	chk *chunk.Chunk
-	err error
+	chk        *chunk.Chunk
+	err        error
+	giveBackCh chan *chunk.Chunk
 }
 
 // HashAggExec deals with all the aggregate functions.
@@ -150,7 +151,6 @@ type HashAggExec struct {
 
 	finishCh         chan struct{}
 	finalOutputCh    chan *AfFinalResult
-	finalInputCh     chan *chunk.Chunk
 	partialOutputChs []chan *HashAggIntermData
 	inputCh          chan *HashAggInput
 	partialInputChs  []chan *chunk.Chunk
@@ -271,7 +271,6 @@ func (e *HashAggExec) initForParallelExec(ctx sessionctx.Context) {
 	partialConcurrency := sessionVars.HashAggPartialConcurrency
 	e.isChildReturnEmpty = true
 	e.finalOutputCh = make(chan *AfFinalResult, finalConcurrency)
-	e.finalInputCh = make(chan *chunk.Chunk, finalConcurrency)
 	e.inputCh = make(chan *HashAggInput, partialConcurrency)
 	e.finishCh = make(chan struct{}, 1)
 
@@ -316,11 +315,12 @@ func (e *HashAggExec) initForParallelExec(ctx sessionctx.Context) {
 			groupSet:            set.NewStringSet(),
 			inputCh:             e.partialOutputChs[i],
 			outputCh:            e.finalOutputCh,
-			finalResultHolderCh: e.finalInputCh,
+			finalResultHolderCh: make(chan *chunk.Chunk, 1),
 			rowBuffer:           make([]types.Datum, 0, e.Schema().Len()),
 			mutableRow:          chunk.MutRowFromTypes(retTypes(e)),
 			groupKeys:           make([][]byte, 0, 8),
 		}
+		e.finalWorkers[i].finalResultHolderCh <- newFirstChunk(e)
 	}
 }
 
@@ -540,14 +540,14 @@ func (w *HashAggFinalWorker) getFinalResult(sctx sessionctx.Context) {
 			result.SetNumVirtualRows(result.NumRows() + 1)
 		}
 		if result.IsFull() {
-			w.outputCh <- &AfFinalResult{chk: result}
+			w.outputCh <- &AfFinalResult{chk: result, giveBackCh: w.finalResultHolderCh}
 			result, finished = w.receiveFinalResultHolder()
 			if finished {
 				return
 			}
 		}
 	}
-	w.outputCh <- &AfFinalResult{chk: result}
+	w.outputCh <- &AfFinalResult{chk: result, giveBackCh: w.finalResultHolderCh}
 }
 
 func (w *HashAggFinalWorker) receiveFinalResultHolder() (*chunk.Chunk, bool) {
@@ -668,28 +668,26 @@ func (e *HashAggExec) parallelExec(ctx context.Context, chk *chunk.Chunk) error 
 	if e.executed {
 		return nil
 	}
-	for !chk.IsFull() {
-		e.finalInputCh <- chk
+	for {
 		result, ok := <-e.finalOutputCh
-		if !ok { // all finalWorkers exited
+		if !ok {
 			e.executed = true
-			if chk.NumRows() > 0 { // but there are some data left
-				return nil
-			}
 			if e.isChildReturnEmpty && e.defaultVal != nil {
 				chk.Append(e.defaultVal, 0, 1)
 			}
-			e.isChildReturnEmpty = false
 			return nil
 		}
 		if result.err != nil {
 			return result.err
 		}
+		chk.SwapColumns(result.chk)
+		result.chk.Reset()
+		result.giveBackCh <- result.chk
 		if chk.NumRows() > 0 {
 			e.isChildReturnEmpty = false
+			return nil
 		}
 	}
-	return nil
 }
 
 // unparallelExec executes hash aggregation algorithm in single thread.
@@ -949,64 +947,6 @@ func (e *StreamAggExec) appendResult2Chunk(chk *chunk.Chunk) error {
 	return nil
 }
 
-type groupChecker struct {
-	StmtCtx      *stmtctx.StatementContext
-	GroupByItems []expression.Expression
-	curGroupKey  []types.Datum
-	tmpGroupKey  []types.Datum
-}
-
-func newGroupChecker(stmtCtx *stmtctx.StatementContext, items []expression.Expression) *groupChecker {
-	return &groupChecker{
-		StmtCtx:      stmtCtx,
-		GroupByItems: items,
-	}
-}
-
-// meetNewGroup returns a value that represents if the new group is different from last group.
-// TODO: Since all the group by items are only a column reference, guaranteed by building projection below aggregation, we can directly compare data in a chunk.
-func (e *groupChecker) meetNewGroup(row chunk.Row) (bool, error) {
-	if len(e.GroupByItems) == 0 {
-		return false, nil
-	}
-	e.tmpGroupKey = e.tmpGroupKey[:0]
-	matched, firstGroup := true, false
-	if len(e.curGroupKey) == 0 {
-		matched, firstGroup = false, true
-	}
-	for i, item := range e.GroupByItems {
-		v, err := item.Eval(row)
-		if err != nil {
-			return false, err
-		}
-		if matched {
-			c, err := v.CompareDatum(e.StmtCtx, &e.curGroupKey[i])
-			if err != nil {
-				return false, err
-			}
-			matched = c == 0
-		}
-		e.tmpGroupKey = append(e.tmpGroupKey, v)
-	}
-	if matched {
-		return false, nil
-	}
-	e.curGroupKey = e.curGroupKey[:0]
-	for _, v := range e.tmpGroupKey {
-		e.curGroupKey = append(e.curGroupKey, *((&v).Copy()))
-	}
-	return !firstGroup, nil
-}
-
-func (e *groupChecker) reset() {
-	if e.curGroupKey != nil {
-		e.curGroupKey = e.curGroupKey[:0]
-	}
-	if e.tmpGroupKey != nil {
-		e.tmpGroupKey = e.tmpGroupKey[:0]
-	}
-}
-
 // vecGroupChecker is used to split a given chunk according to the `group by` expression in a vectorized manner
 // It is usually used for streamAgg
 type vecGroupChecker struct {
@@ -1036,7 +976,6 @@ type vecGroupChecker struct {
 }
 
 func newVecGroupChecker(ctx sessionctx.Context, items []expression.Expression) *vecGroupChecker {
-
 	return &vecGroupChecker{
 		ctx:          ctx,
 		GroupByItems: items,
