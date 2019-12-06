@@ -206,7 +206,12 @@ func (r *ImplTableScan) OnImplement(expr *memo.GroupExpr, reqProp *property.Phys
 	if logicalScan.IsDoubleRead {
 		if !reqProp.IsEmpty() {
 			ts.KeepOrder = true
-			ts.AppendExtraHandleCol(logicalScan.Source)
+			if logicalScan.Source.HandleCol == nil {
+				ts.AppendExtraHandleCol(logicalScan.Source)
+			} else if logicalScan.Source.HandleCol.ID == model.ExtraHandleID {
+				ts.Schema().Append(logicalScan.Source.HandleCol)
+				ts.Columns = append(ts.Columns, model.NewExtraHandleColInfo())
+			}
 		}
 	} else if !reqProp.IsEmpty() {
 		ts.Desc = reqProp.Items[0].Desc
