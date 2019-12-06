@@ -2551,7 +2551,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		// If we use tbl.Cols() here, the update statement, will ignore the col `c`, and the data `3` will lost.
 		columns = tbl.WritableCols()
 	} else {
-		columns = tbl.Cols()
+		columns = tbl.VisibleCols()
 	}
 	var statisticTable *statistics.Table
 	if _, ok := tbl.(table.PartitionedTable); !ok {

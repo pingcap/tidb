@@ -50,7 +50,7 @@ type TableCommon struct {
 	physicalTableID int64
 	Columns         []*table.Column
 	PublicColumns   []*table.Column
-	HiddenColumns   []*table.Column
+	VisibleColumns	[]*table.Column
 	WritableColumns []*table.Column
 	writableIndices []table.Index
 	indices         []table.Index
@@ -139,6 +139,7 @@ func initTableCommon(t *TableCommon, tblInfo *model.TableInfo, physicalTableID i
 	t.meta = tblInfo
 	t.Columns = cols
 	t.PublicColumns = t.Cols()
+	t.VisibleColumns = t.VisibleCols()
 	t.WritableColumns = t.WritableCols()
 	t.writableIndices = t.WritableIndices()
 	t.recordPrefix = tablecodec.GenTableRecordPrefix(physicalTableID)
@@ -205,8 +206,9 @@ type getColsMode int64
 
 const (
 	_ getColsMode = iota
-	normal
+	visible
 	hidden
+	full
 )
 
 func (t *TableCommon) getCols(mode getColsMode) []*table.Column {
@@ -215,7 +217,7 @@ func (t *TableCommon) getCols(mode getColsMode) []*table.Column {
 		if col.State != model.StatePublic {
 			continue
 		}
-		if (mode == normal && col.Hidden) || (mode == hidden && !col.Hidden) {
+		if (mode == visible && col.Hidden) || (mode == hidden && !col.Hidden) {
 			continue
 		}
 		Columns = append(Columns, col)
@@ -228,14 +230,19 @@ func (t *TableCommon) Cols() []*table.Column {
 	if len(t.PublicColumns) > 0 {
 		return t.PublicColumns
 	}
-	return t.getCols(normal)
+	return t.getCols(full)
+}
+
+// VisibleCols implements table.Table VisibleCols interface.
+func (t *TableCommon) VisibleCols() []*table.Column {
+	if len(t.VisibleColumns) > 0 {
+		return t.VisibleColumns
+	}
+	return t.getCols(visible)
 }
 
 // HiddenCols returns the hidden columns of the table.
 func (t *TableCommon) HiddenCols() []*table.Column {
-	if len(t.HiddenColumns) > 0 {
-		return t.HiddenColumns
-	}
 	return t.getCols(hidden)
 }
 

@@ -37,7 +37,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -5201,93 +5200,3 @@ func (s *testIntegrationSuite) TestDecodetoChunkReuse(c *C) {
 	rs.Close()
 }
 
-func (s *testIntegrationSuite) TestHiddenColumn(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("CREATE DATABASE test_hidden;")
-	tk.MustExec("USE test_hidden;")
-	tk.MustExec("CREATE TABLE hidden (a int primary key, b int, c int, d int, e int);")
-	tk.MustExec("insert into hidden values (1, 2, 3, 4, 5);")
-	tb, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test_hidden"), model.NewCIStr("hidden"))
-	c.Assert(err, IsNil)
-	colInfo := tb.Meta().Columns
-	// Set column b, d to hidden
-	colInfo[1].Hidden = true
-	colInfo[3].Hidden = true
-	tc := tb.(*tables.TableCommon)
-	// Reset related caches
-	tc.PublicColumns = nil
-	tc.WritableColumns = nil
-
-	// Basic test
-	cols := tb.Cols()
-	c.Assert(table.FindCol(cols, "a"), NotNil)
-	c.Assert(table.FindCol(cols, "b"), IsNil)
-	c.Assert(table.FindCol(cols, "c"), NotNil)
-	c.Assert(table.FindCol(cols, "d"), IsNil)
-	c.Assert(table.FindCol(cols, "e"), NotNil)
-	hiddenCols := tc.HiddenCols()
-	c.Assert(table.FindCol(hiddenCols, "a"), IsNil)
-	c.Assert(table.FindCol(hiddenCols, "b"), NotNil)
-	c.Assert(table.FindCol(hiddenCols, "c"), IsNil)
-	c.Assert(table.FindCol(hiddenCols, "d"), NotNil)
-	c.Assert(table.FindCol(hiddenCols, "e"), IsNil)
-
-	// Can't select with b and d
-	tk.MustQuery("select * from hidden;").Check(testkit.Rows("1 3 5"))
-	_, err = tk.Exec("select b from hidden;")
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[planner:1054]Unknown column 'b' in 'field list'")
-	_, err = tk.Exec("select d from hidden;")
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[planner:1054]Unknown column 'd' in 'field list'")
-	err = tk.QueryToErr("select a, c, e from hidden;")
-	c.Assert(err, IsNil)
-	_, err = tk.Exec("select d from hidden;")
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[planner:1054]Unknown column 'd' in 'field list'")
-	_, err = tk.Exec("select * from hidden where b>1;")
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[planner:1054]Unknown column 'b' in 'where clause'")
-	_, err = tk.Exec("select * from hidden order by b;")
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[planner:1054]Unknown column 'b' in 'order clause'")
-	_, err = tk.Exec("select * from hidden group by b;")
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[planner:1054]Unknown column 'b' in 'group statement'")
-
-	// Can't update with b and d
-	_, err = tk.Exec("update hidden set d=1;")
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[planner:1054]Unknown column 'd' in 'field_list'")
-	_, err = tk.Exec("update hidden set a=1 where b=1;")
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[planner:1054]Unknown column 'b' in 'where clause'")
-	_, err = tk.Exec("update hidden set a=1 where c=2 order by b;")
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[planner:1054]Unknown column 'b' in 'order clause'")
-
-	// Can't delete with b and d
-	_, err = tk.Exec("delete from hidden where b=1;")
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[planner:1054]Unknown column 'b' in 'where clause'")
-	_, err = tk.Exec("delete from hidden order by d;")
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[planner:1054]Unknown column 'd' in 'order clause'")
-
-	// Can't drop column b and d
-	_, err = tk.Exec("ALTER TABLE hidden DROP COLUMN b")
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[ddl:1091]column b doesn't exist")
-	_, err = tk.Exec("ALTER TABLE hidden DROP COLUMN d")
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[ddl:1091]column d doesn't exist")
-
-	// Test show create table
-	tk.MustQuery("show create table hidden;").Check(testkit.Rows(
-		"hidden CREATE TABLE `hidden` (\n" +
-			"  `a` int(11) NOT NULL,\n" +
-			"  `c` int(11) DEFAULT NULL,\n" +
-			"  `e` int(11) DEFAULT NULL,\n" +
-			"  PRIMARY KEY (`a`)\n" +
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
-}

@@ -145,6 +145,11 @@ func (vt *perfSchemaTable) Cols() []*table.Column {
 	return vt.cols
 }
 
+// VisibleCols implements table.Table VisibleCols interface.
+func (vt *perfSchemaTable) VisibleCols() []*table.Column {
+	return vt.cols
+}
+
 // WritableCols implements table.Table Type interface.
 func (vt *perfSchemaTable) WritableCols() []*table.Column {
 	return vt.cols

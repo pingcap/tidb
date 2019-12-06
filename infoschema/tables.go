@@ -2552,6 +2552,11 @@ func (it *infoschemaTable) Cols() []*table.Column {
 	return it.cols
 }
 
+// VisibleCols implements table.Table VisibleCols interface.
+func (it *infoschemaTable) VisibleCols() []*table.Column {
+	return it.cols
+}
+
 // WritableCols implements table.Table WritableCols interface.
 func (it *infoschemaTable) WritableCols() []*table.Column {
 	return it.cols
@@ -2671,6 +2676,11 @@ func (vt *VirtualTable) Row(ctx sessionctx.Context, h int64) ([]types.Datum, err
 
 // Cols implements table.Table Cols interface.
 func (vt *VirtualTable) Cols() []*table.Column {
+	return nil
+}
+
+// VisibleCols implements table.Table VisibleCols interface.
+func (vt *VirtualTable) VisibleCols() []*table.Column {
 	return nil
 }
 

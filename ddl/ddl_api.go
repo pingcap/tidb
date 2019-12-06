@@ -2373,7 +2373,7 @@ func (d *ddl) DropColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTa
 
 	// Check whether dropped column has existed.
 	colName := spec.OldColumnName.Name
-	col := table.FindCol(t.Cols(), colName.L)
+	col := table.FindCol(t.VisibleCols(), colName.L)
 	if col == nil {
 		err = ErrCantDropFieldOrKey.GenWithStack("column %s doesn't exist", colName)
 		if spec.IfExists {
