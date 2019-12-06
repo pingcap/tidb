@@ -718,3 +718,40 @@ func (s *testPessimisticSuite) TestInnodbLockWaitTimeout(c *C) {
 
 	wg.Wait()
 }
+
+func (s *testPessimisticSuite) TestInnodbLockWaitTimeoutWaitStart(c *C) {
+	// prepare work
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	defer tk.MustExec("drop table if exists tk")
+	tk.MustExec("drop table if exists tk")
+	tk.MustExec("create table tk (c1 int primary key, c2 int)")
+	tk.MustExec("insert into tk values(1,1),(2,2),(3,3),(4,4),(5,5)")
+	tk.MustExec("set global innodb_lock_wait_timeout = 1")
+
+	// raise pessimistic transaction in tk2 and trigger failpoint returning ErrWriteConflict
+	tk2 := testkit.NewTestKitWithInit(c, s.store)
+	tk3 := testkit.NewTestKitWithInit(c, s.store)
+	tk2.MustQuery(`show variables like "innodb_lock_wait_timeout"`).Check(testkit.Rows("innodb_lock_wait_timeout 1"))
+
+	// tk3 gets the pessimistic lock
+	tk3.MustExec("begin pessimistic")
+	tk3.MustQuery("select * from tk where c1 = 1 for update")
+
+	tk2.MustExec("begin pessimistic")
+	done := make(chan error)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/PessimisticLockErrWriteConflict", "return"), IsNil)
+	start := time.Now()
+	go func() {
+		var err error
+		defer func() {
+			done <- err
+		}()
+		_, err = tk2.Exec("select * from tk where c1 = 1 for update")
+	}()
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/PessimisticLockErrWriteConflict"), IsNil)
+	waitErr := <-done
+	c.Assert(waitErr, NotNil)
+	c.Check(waitErr.Error(), Equals, tikv.ErrLockWaitTimeout.Error())
+	c.Check(time.Since(start), GreaterEqual, time.Duration(1000*time.Millisecond))
+	c.Check(time.Since(start), LessEqual, time.Duration(1100*time.Millisecond))
+}
