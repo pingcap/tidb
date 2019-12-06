@@ -687,7 +687,7 @@ func checkRangePartitioningKeysConstraints(sctx sessionctx.Context, s *ast.Creat
 	return nil
 }
 
-func checkPartitionKeysConstraint(pi *model.PartitionInfo, idxColNames []*ast.IndexColNameWithExpr, tblInfo *model.TableInfo, isPK bool) error {
+func checkPartitionKeysConstraint(pi *model.PartitionInfo, idxColNames []*ast.KeyPartSpecification, tblInfo *model.TableInfo, isPK bool) error {
 	var (
 		partCols []*model.ColumnInfo
 		err      error
@@ -772,7 +772,7 @@ type stringSlice interface {
 }
 
 // checkUniqueKeyIncludePartKey checks that the partitioning key is included in the constraint.
-func checkUniqueKeyIncludePartKey(partCols stringSlice, idxCols []*ast.IndexColNameWithExpr) bool {
+func checkUniqueKeyIncludePartKey(partCols stringSlice, idxCols []*ast.KeyPartSpecification) bool {
 	for i := 0; i < partCols.Len(); i++ {
 		partCol := partCols.At(i)
 		if !findColumnInIndexCols(partCol, idxCols) {

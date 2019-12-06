@@ -1010,7 +1010,7 @@ func (s *testIntegrationSuite5) TestBackwardCompatibility(c *C) {
 
 	unique := false
 	indexName := model.NewCIStr("idx_b")
-	idxColName := &ast.IndexColNameWithExpr{
+	idxColName := &ast.KeyPartSpecification{
 		Column: &ast.ColumnName{
 			Schema: schemaName,
 			Table:  tableName,
@@ -1018,7 +1018,7 @@ func (s *testIntegrationSuite5) TestBackwardCompatibility(c *C) {
 		},
 		Length: types.UnspecifiedLength,
 	}
-	idxColNames := []*ast.IndexColNameWithExpr{idxColName}
+	idxColNames := []*ast.KeyPartSpecification{idxColName}
 	var indexOption *ast.IndexOption
 	job := &model.Job{
 		SchemaID:   schema.ID,
