@@ -16,6 +16,7 @@ package executor
 import (
 	"context"
 	"math"
+	"time"
 
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
@@ -432,7 +433,7 @@ func (e *RecoverIndexExec) backfillIndexInTxn(ctx context.Context, txn kv.Transa
 		}
 
 		recordKey := e.table.RecordKey(row.handle)
-		err := txn.LockKeys(ctx, nil, 0, kv.LockAlwaysWait, recordKey)
+		err := txn.LockKeys(ctx, nil, 0, kv.LockAlwaysWait, time.Now(), recordKey)
 		if err != nil {
 			return result, err
 		}
