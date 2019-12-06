@@ -128,6 +128,7 @@ func serverFunc(lease time.Duration, requireLease chan leaseGrantItem, oracleCh 
 	var version int64
 	leaseTS := uint64(time.Now().UnixNano())
 	ticker := time.NewTicker(lease)
+	defer ticker.Stop()
 	for {
 		select {
 		case now := <-ticker.C:
