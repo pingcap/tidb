@@ -975,6 +975,10 @@ type vecGroupChecker struct {
 
 	// sameGroup is used to check whether the current row belongs to the same group as the previous row
 	sameGroup []bool
+
+	// set these functions for testing
+	allocateBuffer func(evalType types.EvalType, capacity int) (*chunk.Column, error)
+	releaseBuffer  func(buf *chunk.Column)
 }
 
 func newVecGroupChecker(ctx sessionctx.Context, items []expression.Expression) *vecGroupChecker {
@@ -1058,11 +1062,17 @@ func (e *vecGroupChecker) splitIntoGroups(chk *chunk.Chunk) (isFirstGroupSameAsP
 func (e *vecGroupChecker) evalGroupItemsAndResolveGroups(item expression.Expression, chk *chunk.Chunk, numRows int) (err error) {
 	tp := item.GetType()
 	eType := tp.EvalType()
-	col, err := expression.GetColumn(eType, numRows)
+	if e.allocateBuffer == nil {
+		e.allocateBuffer = expression.GetColumn
+	}
+	if e.releaseBuffer == nil {
+		e.releaseBuffer = expression.PutColumn
+	}
+	col, err := e.allocateBuffer(eType, numRows)
 	if err != nil {
 		return err
 	}
-	defer expression.PutColumn(col)
+	defer e.releaseBuffer(col)
 	err = expression.VecEval(e.ctx, item, chk, col)
 	if err != nil {
 		return err
