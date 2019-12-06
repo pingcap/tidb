@@ -1886,7 +1886,17 @@ func (b *builtinHourSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) er
 	}
 	defer b.bufAllocator.put(buf)
 	if err = b.args[0].VecEvalDuration(b.ctx, input, buf); err != nil {
-		return err
+		result.ResizeInt64(n, false)
+		i64s := result.Int64s()
+		for i := 0; i < n; i++ {
+			res, isNull, err := b.evalInt(input.GetRow(i))
+			if isNull || err != nil {
+				result.SetNull(i, true)
+				continue
+			}
+			i64s[i] = res
+		}
+		return nil
 	}
 
 	result.ResizeInt64(n, false)
