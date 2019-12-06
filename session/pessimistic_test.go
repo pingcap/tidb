@@ -722,6 +722,7 @@ func (s *testPessimisticSuite) TestInnodbLockWaitTimeout(c *C) {
 func (s *testPessimisticSuite) TestInnodbLockWaitTimeoutWaitStart(c *C) {
 	// prepare work
 	tk := testkit.NewTestKitWithInit(c, s.store)
+	defer tk.MustExec("drop table if exists tk")
 	tk.MustExec("drop table if exists tk")
 	tk.MustExec("create table tk (c1 int primary key, c2 int)")
 	tk.MustExec("insert into tk values(1,1),(2,2),(3,3),(4,4),(5,5)")
@@ -749,10 +750,8 @@ func (s *testPessimisticSuite) TestInnodbLockWaitTimeoutWaitStart(c *C) {
 	}()
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/PessimisticLockErrWriteConflict"), IsNil)
 	waitErr := <-done
+	c.Assert(waitErr, NotNil)
 	c.Check(waitErr.Error(), Equals, tikv.ErrLockWaitTimeout.Error())
 	c.Check(time.Since(start), GreaterEqual, time.Duration(1000*time.Millisecond))
 	c.Check(time.Since(start), LessEqual, time.Duration(1100*time.Millisecond))
-
-	// clean
-	tk.MustExec("drop table if exists tk")
 }
