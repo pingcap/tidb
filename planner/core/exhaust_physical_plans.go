@@ -1513,16 +1513,10 @@ func (la *LogicalAggregation) getStreamAggs(prop *property.PhysicalProperty) []P
 	}
 
 	for _, possibleChildProperty := range la.possibleProperties {
-		sortColOffsets := getMaxSortPrefix(possibleChildProperty, la.groupByCols)
-		if len(sortColOffsets) != len(la.groupByCols) {
-			continue
-		}
-
-		childProp.Items = property.ItemsFromCols(possibleChildProperty[:len(sortColOffsets)], desc)
+		childProp.Items = property.ItemsFromCols(possibleChildProperty[:len(la.groupByCols)], desc)
 		if !prop.IsPrefix(childProp) {
 			continue
 		}
-
 		// The table read of "CopDoubleReadTaskType" can't promises the sort
 		// property that the stream aggregation required, no need to consider.
 		taskTypes := []property.TaskType{property.CopSingleReadTaskType}

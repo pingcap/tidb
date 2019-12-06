@@ -136,7 +136,15 @@ func (a *connArray) Init(addr string, security config.Security, idleNotify *uint
 			grpc.WithUnaryInterceptor(unaryInterceptor),
 			grpc.WithStreamInterceptor(streamInterceptor),
 			grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(MaxRecvMsgSize)),
-			grpc.WithConnectParams(grpc.ConnectParams{Backoff: backoff.Config{BaseDelay: time.Second * 3}}),
+			grpc.WithConnectParams(grpc.ConnectParams{
+				Backoff: backoff.Config{
+					BaseDelay:  100 * time.Millisecond, // Default was 1s.
+					Multiplier: 1.6,                    // Default
+					Jitter:     0.2,                    // Default
+					MaxDelay:   3 * time.Second,        // Default was 120s.
+				},
+				MinConnectTimeout: dialTimeout,
+			}),
 			grpc.WithKeepaliveParams(keepalive.ClientParameters{
 				Time:                time.Duration(keepAlive) * time.Second,
 				Timeout:             time.Duration(keepAliveTimeout) * time.Second,

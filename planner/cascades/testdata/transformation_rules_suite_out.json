@@ -262,17 +262,6 @@
         ]
       },
       {
-        "SQL": "select 1 as a from dual limit 1",
-        "Result": [
-          "Group#0 Schema:[Column#1]",
-          "    Limit_3 input:[Group#1], offset:0, count:1",
-          "Group#1 Schema:[Column#1]",
-          "    Projection_2 input:[Group#2], 1->Column#1",
-          "Group#2 Schema:[]",
-          "    TableDual_1 rowcount:1"
-        ]
-      },
-      {
         "SQL": "select a, b, c from t t1 where t1.a in (select t2.a as a from t t2 where t2.b > t1.b order by t1.b limit 1)",
         "Result": [
           "Group#0 Schema:[test.t.a,test.t.b,test.t.c]",
