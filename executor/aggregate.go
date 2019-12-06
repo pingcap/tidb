@@ -540,7 +540,7 @@ func (w *HashAggFinalWorker) getFinalResult(sctx sessionctx.Context) {
 			result.SetNumVirtualRows(result.NumRows() + 1)
 		}
 		if result.IsFull() {
-			w.outputCh <- &AfFinalResult{chk: result}
+			w.outputCh <- &AfFinalResult{chk: result, giveBackCh: w.finalResultHolderCh}
 			result, finished = w.receiveFinalResultHolder()
 			if finished {
 				return
