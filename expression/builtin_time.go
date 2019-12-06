@@ -2611,7 +2611,7 @@ type baseDateArithmitical struct {
 
 func newDateArighmeticalUtil() baseDateArithmitical {
 	return baseDateArithmitical{
-		intervalRegexp: regexp.MustCompile(`[\d]+`),
+		intervalRegexp: regexp.MustCompile(`-?[\d]+`),
 	}
 }
 
