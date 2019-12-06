@@ -167,8 +167,8 @@ func (s *testUtilSuite) TestDumpTextValue(c *C) {
 	sc := mock.NewContext().GetSessionVars().StmtCtx
 	sc.IgnoreZeroInDate = true
 	losAngelesTz, err := time.LoadLocation("America/Los_Angeles")
-	sc.TimeZone = losAngelesTz
 	c.Assert(err, IsNil)
+	sc.TimeZone = losAngelesTz
 
 	time, err := types.ParseTime(sc, "2017-01-05 23:59:59.575601", mysql.TypeDatetime, 0)
 	c.Assert(err, IsNil)

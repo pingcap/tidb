@@ -122,26 +122,6 @@ func (s *testTimeSuite) TestDateTime(c *C) {
 		_, err := types.ParseDatetime(sc, test)
 		c.Assert(err, NotNil)
 	}
-	// test different time zone
-	losAngelesTz, err := time.LoadLocation("America/Los_Angeles")
-	sc.TimeZone = losAngelesTz
-	c.Assert(err, IsNil)
-
-	timeZoneTbl := []struct {
-		Input  string
-		Fsp    int8
-		Expect string
-	}{
-		{"1999-11-10 11:11:11.999999", 0, "1999-11-10 11:11:12"},
-	}
-	const form = "2006-01-02 15:04:05"
-
-	for _, test := range timeZoneTbl {
-		t, err := types.ParseTime(sc, test.Input, mysql.TypeDatetime, test.Fsp)
-		expTime, _ := time.ParseInLocation(form, test.Expect, losAngelesTz)
-		c.Assert(err, IsNil)
-		c.Assert(t.String(), Equals, expTime.Format(form))
-	}
 
 }
 
@@ -623,7 +603,8 @@ func (s *testTimeSuite) TestParseTimeFromNum(c *C) {
 func (s *testTimeSuite) TestToNumber(c *C) {
 	sc := mock.NewContext().GetSessionVars().StmtCtx
 	sc.IgnoreZeroInDate = true
-	losAngelesTz, _ := time.LoadLocation("America/Los_Angeles")
+	losAngelesTz, err := time.LoadLocation("America/Los_Angeles")
+	c.Assert(err, IsNil)
 	sc.TimeZone = losAngelesTz
 	defer testleak.AfterTest(c)()
 	tblDateTime := []struct {
@@ -764,7 +745,8 @@ func (s *testTimeSuite) TestRoundFrac(c *C) {
 		c.Assert(nv.String(), Equals, t.Except)
 	}
 	// test different time zone
-	losAngelesTz, _ := time.LoadLocation("America/Los_Angeles")
+	losAngelesTz, err := time.LoadLocation("America/Los_Angeles")
+	c.Assert(err, IsNil)
 	sc.TimeZone = losAngelesTz
 	tbl = []struct {
 		Input  string
