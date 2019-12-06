@@ -67,9 +67,18 @@ type PhysicalTableReader struct {
 	StoreType kv.StoreType
 }
 
-// GetPhysicalReader returns PhysicalTableReader for logical TableGather.
-func (tg *TableGather) GetPhysicalReader(schema *expression.Schema, stats *property.StatsInfo, props ...*property.PhysicalProperty) *PhysicalTableReader {
-	reader := PhysicalTableReader{}.Init(tg.ctx, tg.blockOffset)
+// GetPhysicalTableReader returns PhysicalTableReader for logical TiKVSingleGather.
+func (sg *TiKVSingleGather) GetPhysicalTableReader(schema *expression.Schema, stats *property.StatsInfo, props ...*property.PhysicalProperty) *PhysicalTableReader {
+	reader := PhysicalTableReader{}.Init(sg.ctx, sg.blockOffset)
+	reader.stats = stats
+	reader.SetSchema(schema)
+	reader.childrenReqProps = props
+	return reader
+}
+
+// GetPhysicalIndexReader returns PhysicalIndexReader for logical TiKVSingleGather.
+func (sg *TiKVSingleGather) GetPhysicalIndexReader(schema *expression.Schema, stats *property.StatsInfo, props ...*property.PhysicalProperty) *PhysicalIndexReader {
+	reader := PhysicalIndexReader{}.Init(sg.ctx, sg.blockOffset)
 	reader.stats = stats
 	reader.SetSchema(schema)
 	reader.childrenReqProps = props
@@ -92,6 +101,27 @@ type PhysicalIndexReader struct {
 
 	// OutputColumns represents the columns that index reader should return.
 	OutputColumns []*expression.Column
+}
+
+// SetSchema overrides PhysicalPlan SetSchema interface.
+func (p *PhysicalIndexReader) SetSchema(_ *expression.Schema) {
+	if p.indexPlan != nil {
+		p.IndexPlans = flattenPushDownPlan(p.indexPlan)
+		switch p.indexPlan.(type) {
+		case *PhysicalHashAgg, *PhysicalStreamAgg:
+			p.schema = p.indexPlan.Schema()
+		default:
+			is := p.IndexPlans[0].(*PhysicalIndexScan)
+			p.schema = is.dataSourceSchema
+		}
+		p.OutputColumns = p.schema.Clone().Columns
+	}
+}
+
+// SetChildren overrides PhysicalPlan SetChildren interface.
+func (p *PhysicalIndexReader) SetChildren(children ...PhysicalPlan) {
+	p.indexPlan = children[0]
+	p.SetSchema(nil)
 }
 
 // PushedDownLimit is the limit operator pushed down into PhysicalIndexLookUpReader.
@@ -172,10 +202,8 @@ type PhysicalIndexScan struct {
 type PhysicalMemTable struct {
 	physicalSchemaProducer
 
-	DBName      model.CIStr
-	Table       *model.TableInfo
-	Columns     []*model.ColumnInfo
-	TableAsName *model.CIStr
+	Table   *model.TableInfo
+	Columns []*model.ColumnInfo
 }
 
 // PhysicalTableScan represents a table scan plan.
@@ -258,8 +286,7 @@ type PhysicalTopN struct {
 type PhysicalApply struct {
 	PhysicalHashJoin
 
-	OuterSchema   []*expression.CorrelatedColumn
-	rightChOffset int
+	OuterSchema []*expression.CorrelatedColumn
 }
 
 type basePhysicalJoin struct {
@@ -288,6 +315,27 @@ type PhysicalHashJoin struct {
 
 	// use the outer table to build a hash table when the outer table is smaller.
 	UseOuterToBuild bool
+}
+
+// NewPhysicalHashJoin creates a new PhysicalHashJoin from LogicalJoin.
+func NewPhysicalHashJoin(p *LogicalJoin, innerIdx int, useOuterToBuild bool, newStats *property.StatsInfo, prop ...*property.PhysicalProperty) *PhysicalHashJoin {
+	baseJoin := basePhysicalJoin{
+		LeftConditions:  p.LeftConditions,
+		RightConditions: p.RightConditions,
+		OtherConditions: p.OtherConditions,
+		LeftJoinKeys:    p.LeftJoinKeys,
+		RightJoinKeys:   p.RightJoinKeys,
+		JoinType:        p.JoinType,
+		DefaultValues:   p.DefaultValues,
+		InnerChildIdx:   innerIdx,
+	}
+	hashJoin := PhysicalHashJoin{
+		basePhysicalJoin: baseJoin,
+		EqualConditions:  p.EqualConditions,
+		Concurrency:      uint(p.ctx.GetSessionVars().HashJoinConcurrency),
+		UseOuterToBuild:  useOuterToBuild,
+	}.Init(p.ctx, newStats, p.blockOffset, prop...)
+	return hashJoin
 }
 
 // PhysicalIndexJoin represents the plan of index look up join.

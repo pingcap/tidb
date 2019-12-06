@@ -82,9 +82,7 @@ type RegionStore struct {
 // clone clones region store struct.
 func (r *RegionStore) clone() *RegionStore {
 	storeFails := make([]uint32, len(r.stores))
-	for i, e := range r.storeFails {
-		storeFails[i] = e
-	}
+	copy(storeFails, r.storeFails)
 	return &RegionStore{
 		workTiFlashIdx: r.workTiFlashIdx,
 		workTiKVIdx:    r.workTiKVIdx,
@@ -1089,6 +1087,7 @@ func (c *RegionCache) switchNextFlashPeer(r *Region, currentPeerIdx int, err err
 			logutil.BgLogger().Info("mark store's regions need be refill", zap.String("store", s.addr))
 			tikvRegionCacheCounterWithInvalidateStoreRegionsOK.Inc()
 		}
+		s.markNeedCheck(c.notifyCheckCh)
 	}
 
 	nextIdx := (currentPeerIdx + 1) % len(rs.stores)
@@ -1107,6 +1106,7 @@ func (c *RegionCache) switchNextPeer(r *Region, currentPeerIdx int, err error) {
 			logutil.BgLogger().Info("mark store's regions need be refill", zap.String("store", s.addr))
 			tikvRegionCacheCounterWithInvalidateStoreRegionsOK.Inc()
 		}
+		s.markNeedCheck(c.notifyCheckCh)
 	}
 
 	if int(rs.workTiKVIdx) != currentPeerIdx {
@@ -1148,7 +1148,6 @@ retry:
 	if !r.compareAndSwapStore(oldRegionStore, newRegionStore) {
 		goto retry
 	}
-	return
 }
 
 // Contains checks whether the key is in the region, for the maximum region endKey is empty.
@@ -1302,7 +1301,6 @@ retryMarkResolved:
 	if !s.compareAndSwapState(oldState, newState) {
 		goto retryMarkResolved
 	}
-	return
 }
 
 func (s *Store) getResolveState() resolveState {

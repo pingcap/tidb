@@ -43,7 +43,7 @@ func newDateType() types.FieldType {
 func MockSignedTable() *model.TableInfo {
 	// column: a, b, c, d, e, c_str, d_str, e_str, f, g
 	// PK: a
-	// indeices: c_d_e, e, f, g, f_g, c_d_e_str, c_d_e_str_prefix
+	// indices: c_d_e, e, f, g, f_g, c_d_e_str, c_d_e_str_prefix
 	indices := []*model.IndexInfo{
 		{
 			Name: model.NewCIStr("c_d_e"),

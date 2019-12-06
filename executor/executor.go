@@ -46,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
@@ -834,7 +835,8 @@ func doLockKeys(ctx context.Context, se sessionctx.Context, waitTime int64, keys
 		return err
 	}
 	forUpdateTS := se.GetSessionVars().TxnCtx.GetForUpdateTS()
-	return txn.LockKeys(ctx, &se.GetSessionVars().Killed, forUpdateTS, waitTime, keys...)
+	return txn.LockKeys(ctx, &se.GetSessionVars().Killed, forUpdateTS, waitTime,
+		se.GetSessionVars().StmtCtx.GetLockWaitStartTime(), keys...)
 }
 
 // LimitExec represents limit executor
@@ -1468,8 +1470,7 @@ func handleStmtHints(hints []*ast.TableOptimizerHint) (stmtHints stmtctx.StmtHin
 			warn := errors.New("There are multiple NO_INDEX_MERGE hints, only the last one will take effect")
 			warns = append(warns, warn)
 		}
-		stmtHints.HasEnableIndexMergeHint = true
-		stmtHints.EnableIndexMerge = false
+		stmtHints.NoIndexMergeHint = true
 	}
 	// Handle READ_CONSISTENT_REPLICA
 	if readReplicaHintCnt != 0 {
@@ -1494,9 +1495,10 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		memQuota = stmtHints.MemQuotaQuery
 	}
 	sc := &stmtctx.StatementContext{
-		StmtHints:  stmtHints,
-		TimeZone:   vars.Location(),
-		MemTracker: memory.NewTracker(stringutil.MemoizeStr(s.Text), memQuota),
+		StmtHints:   stmtHints,
+		TimeZone:    vars.Location(),
+		MemTracker:  memory.NewTracker(stringutil.MemoizeStr(s.Text), memQuota),
+		DiskTracker: disk.NewTracker(stringutil.MemoizeStr(s.Text), -1),
 	}
 	switch config.GetGlobalConfig().OOMAction {
 	case config.OOMActionCancel:
@@ -1602,10 +1604,8 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		sc.AllowInvalidDate = vars.SQLMode.HasAllowInvalidDatesMode()
 	}
 	vars.PreparedParams = vars.PreparedParams[:0]
-	if !vars.InRestrictedSQL {
-		if priority := mysql.PriorityEnum(atomic.LoadInt32(&variable.ForcePriority)); priority != mysql.NoPriority {
-			sc.Priority = priority
-		}
+	if priority := mysql.PriorityEnum(atomic.LoadInt32(&variable.ForcePriority)); priority != mysql.NoPriority {
+		sc.Priority = priority
 	}
 	if vars.StmtCtx.LastInsertID > 0 {
 		sc.PrevLastInsertID = vars.StmtCtx.LastInsertID
@@ -1619,14 +1619,8 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		sc.PrevAffectedRows = -1
 	}
 	errCount, warnCount := vars.StmtCtx.NumErrorWarnings()
-	err = vars.SetSystemVar("warning_count", warnCount)
-	if err != nil {
-		return err
-	}
-	err = vars.SetSystemVar("error_count", errCount)
-	if err != nil {
-		return err
-	}
+	vars.SysErrorCount = errCount
+	vars.SysWarningCount = warnCount
 	vars.StmtCtx = sc
 	for _, warn := range hintWarns {
 		vars.StmtCtx.AppendWarning(warn)

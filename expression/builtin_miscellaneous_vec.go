@@ -16,6 +16,7 @@ package expression
 import (
 	"bytes"
 	"encoding/binary"
+	"fmt"
 	"math"
 	"net"
 	"strings"
@@ -194,11 +195,20 @@ func (b *builtinNameConstDurationSig) vecEvalDuration(input *chunk.Chunk, result
 }
 
 func (b *builtinLockSig) vectorized() bool {
-	return false
+	return true
 }
 
+// See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_get-lock
+// The lock function will do nothing.
+// Warning: get_lock() function is parsed but ignored.
 func (b *builtinLockSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	result.ResizeInt64(n, false)
+	i64s := result.Int64s()
+	for i := range i64s {
+		i64s[i] = 1
+	}
+	return nil
 }
 
 func (b *builtinDurationAnyValueSig) vectorized() bool {
@@ -484,11 +494,37 @@ func (b *builtinInetAtonSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column
 }
 
 func (b *builtinInet6NtoaSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinInet6NtoaSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	val, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(val)
+	if err := b.args[0].VecEvalString(b.ctx, input, val); err != nil {
+		return err
+	}
+	result.ReserveString(n)
+	for i := 0; i < n; i++ {
+		if val.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
+		valI := val.GetString(i)
+		ip := net.IP([]byte(valI)).String()
+		if len(valI) == net.IPv6len && !strings.Contains(ip, ":") {
+			ip = fmt.Sprintf("::ffff:%s", ip)
+		}
+		if net.ParseIP(ip) == nil {
+			result.AppendNull()
+			continue
+		}
+		result.AppendString(ip)
+	}
+	return nil
 }
 
 func (b *builtinNameConstRealSig) vectorized() bool {
@@ -500,9 +536,18 @@ func (b *builtinNameConstRealSig) vecEvalReal(input *chunk.Chunk, result *chunk.
 }
 
 func (b *builtinReleaseLockSig) vectorized() bool {
-	return false
+	return true
 }
 
+// See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_release-lock
+// The release lock function will do nothing.
+// Warning: release_lock() function is parsed but ignored.
 func (b *builtinReleaseLockSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	result.ResizeInt64(n, false)
+	i64s := result.Int64s()
+	for i := range i64s {
+		i64s[i] = 1
+	}
+	return nil
 }

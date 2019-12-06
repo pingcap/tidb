@@ -849,11 +849,32 @@ func (b *builtinTruncateUintSig) vecEvalInt(input *chunk.Chunk, result *chunk.Co
 }
 
 func (b *builtinCeilDecToDecSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinCeilDecToDecSig) vecEvalDecimal(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	if err := b.args[0].VecEvalDecimal(b.ctx, input, result); err != nil {
+		return err
+	}
+	ds := result.Decimals()
+
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		rst := new(types.MyDecimal)
+		if err := ds[i].Round(rst, 0, types.ModeTruncate); err != nil {
+			return err
+		}
+		if !ds[i].IsNegative() && rst.Compare(&ds[i]) != 0 {
+			if err := types.DecimalAdd(rst, types.NewDecFromInt(1), rst); err != nil {
+				return err
+			}
+		}
+		ds[i] = *rst
+	}
+	return nil
 }
 
 func (b *builtinFloorDecToDecSig) vectorized() bool {

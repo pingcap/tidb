@@ -36,9 +36,11 @@ import (
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/printer"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"github.com/soheilhy/cmux"
 	"github.com/tiancaiamao/appdash/traceapp"
 	"go.uber.org/zap"
 	static "sourcegraph.com/sourcegraph/appdash-data"
@@ -262,16 +264,43 @@ func (s *Server) startHTTPServer() {
 	})
 
 	logutil.BgLogger().Info("for status and metrics report", zap.String("listening on addr", addr))
-	s.statusServer = &http.Server{Addr: addr, Handler: CorsHandler{handler: serverMux, cfg: s.cfg}}
+	s.setupStatuServerAndRPCServer(addr, serverMux)
+}
 
-	if len(s.cfg.Security.ClusterSSLCA) != 0 {
-		err = s.statusServer.ListenAndServeTLS(s.cfg.Security.ClusterSSLCert, s.cfg.Security.ClusterSSLKey)
-	} else {
-		err = s.statusServer.ListenAndServe()
-	}
-
+func (s *Server) setupStatuServerAndRPCServer(addr string, serverMux *http.ServeMux) {
+	l, err := net.Listen("tcp", addr)
 	if err != nil {
 		logutil.BgLogger().Info("listen failed", zap.Error(err))
+		return
+	}
+	m := cmux.New(l)
+	// Match connections in order:
+	// First HTTP, and otherwise grpc.
+	httpL := m.Match(cmux.HTTP1Fast())
+	grpcL := m.Match(cmux.Any())
+
+	s.statusServer = &http.Server{Addr: addr, Handler: CorsHandler{handler: serverMux, cfg: s.cfg}}
+	s.grpcServer = NewRPCServer(s.cfg.Security, s.dom, s)
+
+	go util.WithRecovery(func() {
+		err := s.grpcServer.Serve(grpcL)
+		logutil.BgLogger().Error("grpc server error", zap.Error(err))
+	}, nil)
+
+	if len(s.cfg.Security.ClusterSSLCA) != 0 {
+		go util.WithRecovery(func() {
+			err := s.statusServer.ServeTLS(httpL, s.cfg.Security.ClusterSSLCert, s.cfg.Security.ClusterSSLKey)
+			logutil.BgLogger().Error("http server error", zap.Error(err))
+		}, nil)
+	} else {
+		go util.WithRecovery(func() {
+			err := s.statusServer.Serve(httpL)
+			logutil.BgLogger().Error("http server error", zap.Error(err))
+		}, nil)
+	}
+	err = m.Serve()
+	if err != nil {
+		logutil.BgLogger().Error("start status/rpc server error", zap.Error(err))
 	}
 }
 

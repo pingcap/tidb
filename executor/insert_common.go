@@ -49,8 +49,7 @@ type InsertValues struct {
 	Lists   [][]expression.Expression
 	SetList []*expression.Assignment
 
-	GenColumns []*ast.ColumnName
-	GenExprs   []expression.Expression
+	GenExprs []expression.Expression
 
 	insertColumns []*table.Column
 
@@ -105,9 +104,6 @@ func (e *InsertValues) initInsertColumns() error {
 		columns := make([]string, 0, len(e.SetList))
 		for _, v := range e.SetList {
 			columns = append(columns, v.ColName.O)
-		}
-		for _, v := range e.GenColumns {
-			columns = append(columns, v.Name.O)
 		}
 		cols, err = table.FindCols(tableCols, columns, e.Table.Meta().PKIsHandle)
 		if err != nil {
@@ -249,21 +245,34 @@ func (e *InsertValues) handleErr(col *table.Column, val *types.Datum, rowIdx int
 		return nil
 	}
 
-	if types.ErrDataTooLong.Equal(err) {
-		return resetErrDataTooLong(col.Name.O, rowIdx+1, err)
+	// Convert the error with full messages.
+	var (
+		colTp   byte
+		colName string
+	)
+	if col != nil {
+		colTp = col.Tp
+		colName = col.Name.String()
 	}
 
-	if types.ErrOverflow.Equal(err) {
-		return types.ErrWarnDataOutOfRange.GenWithStackByArgs(col.Name.O, rowIdx+1)
-	}
-	if types.ErrTruncated.Equal(err) {
+	if types.ErrDataTooLong.Equal(err) {
+		err = resetErrDataTooLong(colName, rowIdx+1, err)
+	} else if types.ErrOverflow.Equal(err) {
+		err = types.ErrWarnDataOutOfRange.GenWithStackByArgs(colName, rowIdx+1)
+	} else if types.ErrTruncated.Equal(err) || types.ErrTruncatedWrongVal.Equal(err) {
 		valStr, err1 := val.ToString()
 		if err1 != nil {
 			logutil.BgLogger().Warn("truncate value failed", zap.Error(err1))
 		}
-		return table.ErrTruncatedWrongValueForField.GenWithStackByArgs(types.TypeStr(col.Tp), valStr, col.Name.O, rowIdx+1)
+		err = table.ErrTruncatedWrongValueForField.GenWithStackByArgs(types.TypeStr(colTp), valStr, colName, rowIdx+1)
 	}
-	return e.filterErr(err)
+
+	if !e.ctx.GetSessionVars().StmtCtx.DupKeyAsWarning {
+		return err
+	}
+	// TODO: should not filter all types of errors here.
+	e.handleWarning(err)
+	return nil
 }
 
 // evalRow evaluates a to-be-inserted row. The value of the column may base on another column,
@@ -350,7 +359,7 @@ func (e *InsertValues) setValueForRefColumn(row []types.Datum, hasValue []bool) 
 		} else if table.ErrNoDefaultValue.Equal(err) {
 			row[i] = table.GetZeroValue(c.ToInfo())
 			hasValue[c.Offset] = false
-		} else if e.filterErr(err) != nil {
+		} else if e.handleErr(c, &d, 0, err) != nil {
 			return err
 		}
 	}
@@ -384,7 +393,7 @@ func insertRowsFromSelect(ctx context.Context, base insertCommon) error {
 		}
 
 		for innerChunkRow := iter.Begin(); innerChunkRow != iter.End(); innerChunkRow = iter.Next() {
-			innerRow := types.CloneRow(innerChunkRow.GetDatumRow(fields))
+			innerRow := innerChunkRow.GetDatumRow(fields)
 			e.rowCount++
 			row, err := e.getRow(ctx, innerRow)
 			if err != nil {
@@ -401,8 +410,14 @@ func insertRowsFromSelect(ctx context.Context, base insertCommon) error {
 				}
 			}
 		}
+
+		err = base.exec(ctx, rows)
+		if err != nil {
+			return err
+		}
+		rows = rows[:0]
 	}
-	return base.exec(ctx, rows)
+	return nil
 }
 
 func (e *InsertValues) doBatchInsert(ctx context.Context) error {
@@ -430,7 +445,7 @@ func (e *InsertValues) getRow(ctx context.Context, vals []types.Datum) ([]types.
 	hasValue := make([]bool, len(e.Table.Cols()))
 	for i, v := range vals {
 		casted, err := table.CastValue(e.ctx, v, e.insertColumns[i].ToInfo())
-		if e.filterErr(err) != nil {
+		if e.handleErr(nil, &v, 0, err) != nil {
 			return nil, err
 		}
 
@@ -446,7 +461,7 @@ func (e *InsertValues) getRowInPlace(ctx context.Context, vals []types.Datum, ro
 	hasValue := make([]bool, len(e.Table.Cols()))
 	for i, v := range vals {
 		casted, err := table.CastValue(e.ctx, v, e.insertColumns[i].ToInfo())
-		if e.filterErr(err) != nil {
+		if e.handleErr(nil, &v, 0, err) != nil {
 			return nil, err
 		}
 		offset := e.insertColumns[i].Offset
@@ -454,18 +469,6 @@ func (e *InsertValues) getRowInPlace(ctx context.Context, vals []types.Datum, ro
 		hasValue[offset] = true
 	}
 	return e.fillRow(ctx, rowBuf, hasValue)
-}
-
-func (e *InsertValues) filterErr(err error) error {
-	if err == nil {
-		return nil
-	}
-	if !e.ctx.GetSessionVars().StmtCtx.DupKeyAsWarning {
-		return err
-	}
-	// TODO: should not filter all types of errors here.
-	e.handleWarning(err)
-	return nil
 }
 
 // getColDefaultValue gets the column default value.
@@ -506,7 +509,7 @@ func (e *InsertValues) fillColValue(ctx context.Context, datum types.Datum, idx 
 	}
 	if !hasValue {
 		d, err := e.getColDefaultValue(idx, column)
-		if e.filterErr(err) != nil {
+		if e.handleErr(column, &datum, 0, err) != nil {
 			return types.Datum{}, err
 		}
 		return d, nil
@@ -542,7 +545,7 @@ func (e *InsertValues) fillRow(ctx context.Context, row []types.Datum, hasValue 
 	for i, gCol := range gCols {
 		colIdx := gCol.ColumnInfo.Offset
 		val, err := e.GenExprs[i].Eval(chunk.MutRowFromDatums(row).ToRow())
-		if e.filterErr(err) != nil {
+		if e.handleErr(gCol, &val, 0, err) != nil {
 			return nil, err
 		}
 		row[colIdx], err = table.CastValue(e.ctx, val, gCol.ToInfo())
@@ -674,7 +677,7 @@ func (e *InsertValues) lazyAdjustAutoIncrementDatum(ctx context.Context, rows []
 			// Alloc batch N consecutive (min, max] autoIDs.
 			// max value can be derived from adding one for cnt times.
 			min, _, err := table.AllocBatchAutoIncrementValue(ctx, e.Table, e.ctx, cnt)
-			if e.filterErr(err) != nil {
+			if e.handleErr(col, &autoDatum, cnt, err) != nil {
 				return nil, err
 			}
 			// It's compatible with mysql setting the first allocated autoID to lastInsertID.
@@ -751,7 +754,7 @@ func (e *InsertValues) adjustAutoIncrementDatum(ctx context.Context, d types.Dat
 	// Change value 0 to auto id, if NoAutoValueOnZero SQL mode is not set.
 	if d.IsNull() || e.ctx.GetSessionVars().SQLMode&mysql.ModeNoAutoValueOnZero == 0 {
 		recordID, err = table.AllocAutoIncrementValue(ctx, e.Table, e.ctx)
-		if e.filterErr(err) != nil {
+		if e.handleErr(c, &d, 0, err) != nil {
 			return types.Datum{}, err
 		}
 		// It's compatible with mysql setting the first allocated autoID to lastInsertID.

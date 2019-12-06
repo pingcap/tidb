@@ -121,7 +121,7 @@ func (t MysqlTime) GoTime(loc *gotime.Location) (gotime.Time, error) {
 	if year != t.Year() || int(month) != t.Month() || day != t.Day() ||
 		hour != t.Hour() || minute != t.Minute() || second != t.Second() ||
 		microsec != t.Microsecond() {
-		return tm, errors.Trace(ErrInvalidTimeFormat.GenWithStackByArgs(t))
+		return tm, errors.Trace(ErrWrongValue.GenWithStackByArgs(TimeStr, t))
 	}
 	return tm, nil
 }

@@ -439,26 +439,6 @@ func (s *testTimeSuite) TestYear(c *C) {
 	}
 }
 
-func (s *testTimeSuite) getLocation(c *C) *time.Location {
-	locations := []string{"Asia/Shanghai", "Europe/Berlin"}
-	timeFormat := "Jan 2, 2006 at 3:04pm (MST)"
-
-	z, err := time.LoadLocation(locations[0])
-	c.Assert(err, IsNil)
-
-	t1, err := time.ParseInLocation(timeFormat, "Jul 9, 2012 at 5:02am (CEST)", z)
-	c.Assert(err, IsNil)
-	t2, err := time.Parse(timeFormat, "Jul 9, 2012 at 5:02am (CEST)")
-	c.Assert(err, IsNil)
-
-	if t1.Equal(t2) {
-		z, err = time.LoadLocation(locations[1])
-		c.Assert(err, IsNil)
-	}
-
-	return z
-}
-
 func (s *testTimeSuite) TestCodec(c *C) {
 	defer testleak.AfterTest(c)()
 
@@ -731,6 +711,30 @@ func (s *testTimeSuite) TestRoundFrac(c *C) {
 		{"2011-11-11 10:10:10.111111", 0, "2011-11-11 10:10:10"},
 		// TODO: MySQL can handle this case, but we can't.
 		// {"2012-01-00 23:59:59.999999", 3, "2012-01-01 00:00:00.000"},
+	}
+
+	for _, t := range tbl {
+		v, err := types.ParseTime(sc, t.Input, mysql.TypeDatetime, types.MaxFsp)
+		c.Assert(err, IsNil)
+		nv, err := v.RoundFrac(sc, t.Fsp)
+		c.Assert(err, IsNil)
+		c.Assert(nv.String(), Equals, t.Except)
+	}
+	// test different time zone
+	losAngelesTz, _ := time.LoadLocation("America/Los_Angeles")
+	sc.TimeZone = losAngelesTz
+	tbl = []struct {
+		Input  string
+		Fsp    int8
+		Except string
+	}{
+		{"2019-11-25 07:25:45.123456", 4, "2019-11-25 07:25:45.1235"},
+		{"2019-11-25 07:25:45.123456", 5, "2019-11-25 07:25:45.12346"},
+		{"2019-11-25 07:25:45.123456", 0, "2019-11-25 07:25:45"},
+		{"2019-11-25 07:25:45.123456", 2, "2019-11-25 07:25:45.12"},
+		{"2019-11-26 11:30:45.999999", 4, "2019-11-26 11:30:46.0000"},
+		{"2019-11-26 11:30:45.999999", 0, "2019-11-26 11:30:46"},
+		{"2019-11-26 11:30:45.999999", 3, "2019-11-26 11:30:46.000"},
 	}
 
 	for _, t := range tbl {
@@ -1101,9 +1105,66 @@ func (s *testTimeSuite) TestCheckTimestamp(c *C) {
 	for _, t := range tests {
 		validTimestamp := types.CheckTimestampTypeForTest(&stmtctx.StatementContext{TimeZone: t.tz}, t.input)
 		if t.expectRetError {
-			c.Assert(validTimestamp, NotNil, Commentf("For %s", t.input))
+			c.Assert(validTimestamp, NotNil, Commentf("For %s %s", t.input, t.tz))
 		} else {
-			c.Assert(validTimestamp, IsNil, Commentf("For %s", t.input))
+			c.Assert(validTimestamp, IsNil, Commentf("For %s %s", t.input, t.tz))
+		}
+	}
+
+	// Issue #13605: "Invalid time format" caused by time zone issue
+	// Some regions like Los Angeles use daylight saving time, see https://en.wikipedia.org/wiki/Daylight_saving_time
+	losAngelesTz, _ := time.LoadLocation("America/Los_Angeles")
+	LondonTz, _ := time.LoadLocation("Europe/London")
+
+	tests = []struct {
+		tz             *time.Location
+		input          types.MysqlTime
+		expectRetError bool
+	}{{
+		tz:             losAngelesTz,
+		input:          types.FromDate(2018, 3, 11, 1, 0, 50, 0),
+		expectRetError: false,
+	}, {
+		tz:             losAngelesTz,
+		input:          types.FromDate(2018, 3, 11, 2, 0, 16, 0),
+		expectRetError: true,
+	}, {
+		tz:             losAngelesTz,
+		input:          types.FromDate(2018, 3, 11, 3, 0, 20, 0),
+		expectRetError: false,
+	}, {
+		tz:             shanghaiTz,
+		input:          types.FromDate(2018, 3, 11, 1, 0, 50, 0),
+		expectRetError: false,
+	}, {
+		tz:             shanghaiTz,
+		input:          types.FromDate(2018, 3, 11, 2, 0, 16, 0),
+		expectRetError: false,
+	}, {
+		tz:             shanghaiTz,
+		input:          types.FromDate(2018, 3, 11, 3, 0, 20, 0),
+		expectRetError: false,
+	}, {
+		tz:             LondonTz,
+		input:          types.FromDate(2019, 3, 31, 0, 0, 20, 0),
+		expectRetError: false,
+	}, {
+		tz:             LondonTz,
+		input:          types.FromDate(2019, 3, 31, 1, 0, 20, 0),
+		expectRetError: true,
+	}, {
+		tz:             LondonTz,
+		input:          types.FromDate(2019, 3, 31, 2, 0, 20, 0),
+		expectRetError: false,
+	},
+	}
+
+	for _, t := range tests {
+		validTimestamp := types.CheckTimestampTypeForTest(&stmtctx.StatementContext{TimeZone: t.tz}, t.input)
+		if t.expectRetError {
+			c.Assert(validTimestamp, NotNil, Commentf("For %s %s", t.input, t.tz))
+		} else {
+			c.Assert(validTimestamp, IsNil, Commentf("For %s %s", t.input, t.tz))
 		}
 	}
 }
@@ -1421,8 +1482,8 @@ func (s *testTimeSuite) TestParseDurationValue(c *C) {
 		{"-1 1", "YEAR_MONTH", -1, -1, 0, 0, nil},
 		{"-aa1bb1", "YEAR_MONTH", -1, -1, 0, 0, nil},
 		{" \t\n\r\n - aa1bb1 \t\n ", "YEAR_MONTH", -1, -1, 0, 0, nil},
-		{"1.111", "MICROSECOND", 0, 0, 0, 1000, types.ErrTruncatedWrongValue},
-		{"1.111", "DAY", 0, 0, 1, 0, types.ErrTruncatedWrongValue},
+		{"1.111", "MICROSECOND", 0, 0, 0, 1000, types.ErrTruncatedWrongVal},
+		{"1.111", "DAY", 0, 0, 1, 0, types.ErrTruncatedWrongVal},
 	}
 	for _, col := range tbl {
 		comment := Commentf("Extract %v Unit %v", col.format, col.unit)
@@ -1637,7 +1698,7 @@ func (s *testTimeSuite) TestCheckMonthDay(c *C) {
 		if t.isValidDate {
 			c.Check(err, IsNil)
 		} else {
-			c.Check(types.ErrIncorrectDatetimeValue.Equal(err), IsTrue)
+			c.Check(types.ErrWrongValue.Equal(err), IsTrue)
 		}
 	}
 }

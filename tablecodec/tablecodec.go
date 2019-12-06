@@ -30,10 +30,9 @@ import (
 )
 
 var (
-	errInvalidKey         = terror.ClassXEval.New(codeInvalidKey, "invalid key")
-	errInvalidRecordKey   = terror.ClassXEval.New(codeInvalidRecordKey, "invalid record key")
-	errInvalidIndexKey    = terror.ClassXEval.New(codeInvalidIndexKey, "invalid index key")
-	errInvalidColumnCount = terror.ClassXEval.New(codeInvalidColumnCount, "invalid column count")
+	errInvalidKey       = terror.ClassXEval.New(codeInvalidKey, "invalid key")
+	errInvalidRecordKey = terror.ClassXEval.New(codeInvalidRecordKey, "invalid record key")
+	errInvalidIndexKey  = terror.ClassXEval.New(codeInvalidIndexKey, "invalid index key")
 )
 
 var (

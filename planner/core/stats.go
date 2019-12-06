@@ -16,11 +16,14 @@ package core
 import (
 	"math"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/planner/property"
+	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/statistics"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/ranger"
 	"go.uber.org/zap"
@@ -40,6 +43,22 @@ func (p *LogicalTableDual) DeriveStats(childStats []*property.StatsInfo, selfSch
 		profile.Cardinality[i] = float64(p.RowCount)
 	}
 	p.stats = profile
+	return p.stats, nil
+}
+
+// DeriveStats implement LogicalPlan DeriveStats interface.
+func (p *LogicalMemTable) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema) (*property.StatsInfo, error) {
+	statsTable := statistics.PseudoTable(p.tableInfo)
+	stats := &property.StatsInfo{
+		RowCount:     float64(statsTable.Count),
+		Cardinality:  make([]float64, len(p.tableInfo.Columns)),
+		HistColl:     statsTable.GenerateHistCollFromColumnInfo(p.tableInfo.Columns, p.schema.Columns),
+		StatsVersion: statistics.PseudoVersion,
+	}
+	for i := range p.tableInfo.Columns {
+		stats.Cardinality[i] = float64(statsTable.Count)
+	}
+	p.stats = stats
 	return p.stats, nil
 }
 
@@ -119,91 +138,125 @@ func (ds *DataSource) getColumnNDV(colID int64) (ndv float64) {
 	return ndv
 }
 
-func (ds *DataSource) deriveStatsByFilter(conds expression.CNFExprs) {
-	if ds.tableStats == nil {
-		tableStats := &property.StatsInfo{
-			RowCount:     float64(ds.statisticTable.Count),
-			Cardinality:  make([]float64, len(ds.Columns)),
-			HistColl:     ds.statisticTable.GenerateHistCollFromColumnInfo(ds.Columns, ds.schema.Columns),
-			StatsVersion: ds.statisticTable.Version,
-		}
-		if ds.statisticTable.Pseudo {
-			tableStats.StatsVersion = statistics.PseudoVersion
-		}
-		for i, col := range ds.Columns {
-			tableStats.Cardinality[i] = ds.getColumnNDV(col.ID)
-		}
-		ds.tableStats = tableStats
-		ds.TblColHists = ds.statisticTable.ID2UniqueID(ds.TblCols)
+func (ds *DataSource) initStats() {
+	if ds.tableStats != nil {
+		return
 	}
-	selectivity, nodes, err := ds.tableStats.HistColl.Selectivity(ds.ctx, conds)
+	tableStats := &property.StatsInfo{
+		RowCount:     float64(ds.statisticTable.Count),
+		Cardinality:  make([]float64, len(ds.Columns)),
+		HistColl:     ds.statisticTable.GenerateHistCollFromColumnInfo(ds.Columns, ds.schema.Columns),
+		StatsVersion: ds.statisticTable.Version,
+	}
+	if ds.statisticTable.Pseudo {
+		tableStats.StatsVersion = statistics.PseudoVersion
+	}
+	for i, col := range ds.Columns {
+		tableStats.Cardinality[i] = ds.getColumnNDV(col.ID)
+	}
+	ds.tableStats = tableStats
+	ds.TblColHists = ds.statisticTable.ID2UniqueID(ds.TblCols)
+}
+
+func (ds *DataSource) deriveStatsByFilter(conds expression.CNFExprs, filledPaths []*util.AccessPath) *property.StatsInfo {
+	ds.initStats()
+	selectivity, nodes, err := ds.tableStats.HistColl.Selectivity(ds.ctx, conds, filledPaths)
 	if err != nil {
 		logutil.BgLogger().Debug("something wrong happened, use the default selectivity", zap.Error(err))
 		selectivity = selectionFactor
 	}
-	ds.stats = ds.tableStats.Scale(selectivity)
+	stats := ds.tableStats.Scale(selectivity)
 	if ds.ctx.GetSessionVars().OptimizerSelectivityLevel >= 1 {
-		ds.stats.HistColl = ds.stats.HistColl.NewHistCollBySelectivity(ds.ctx.GetSessionVars().StmtCtx, nodes)
+		stats.HistColl = stats.HistColl.NewHistCollBySelectivity(ds.ctx.GetSessionVars().StmtCtx, nodes)
 	}
+	return stats
 }
 
 // DeriveStats implement LogicalPlan DeriveStats interface.
 func (ds *DataSource) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema) (*property.StatsInfo, error) {
+	ds.initStats()
 	// PushDownNot here can convert query 'not (a != 1)' to 'a = 1'.
 	for i, expr := range ds.pushedDownConds {
-		ds.pushedDownConds[i] = expression.PushDownNot(nil, expr)
+		ds.pushedDownConds[i] = expression.PushDownNot(ds.ctx, expr)
 	}
-	ds.deriveStatsByFilter(ds.pushedDownConds)
 	for _, path := range ds.possibleAccessPaths {
-		if path.isTablePath {
+		if path.IsTablePath {
+			continue
+		}
+		err := ds.fillIndexPath(path, ds.pushedDownConds)
+		if err != nil {
+			return nil, err
+		}
+	}
+	ds.stats = ds.deriveStatsByFilter(ds.pushedDownConds, ds.possibleAccessPaths)
+	for _, path := range ds.possibleAccessPaths {
+		if path.IsTablePath {
 			noIntervalRanges, err := ds.deriveTablePathStats(path, ds.pushedDownConds, false)
 			if err != nil {
 				return nil, err
 			}
 			// If we have point or empty range, just remove other possible paths.
-			if noIntervalRanges || len(path.ranges) == 0 {
+			if noIntervalRanges || len(path.Ranges) == 0 {
 				ds.possibleAccessPaths[0] = path
 				ds.possibleAccessPaths = ds.possibleAccessPaths[:1]
 				break
 			}
 			continue
 		}
-		noIntervalRanges, err := ds.deriveIndexPathStats(path, ds.pushedDownConds, false)
-		if err != nil {
-			return nil, err
-		}
+		noIntervalRanges := ds.deriveIndexPathStats(path, ds.pushedDownConds, false)
 		// If we have empty range, or point range on unique index, just remove other possible paths.
-		if (noIntervalRanges && path.index.Unique) || len(path.ranges) == 0 {
+		if (noIntervalRanges && path.Index.Unique) || len(path.Ranges) == 0 {
 			ds.possibleAccessPaths[0] = path
 			ds.possibleAccessPaths = ds.possibleAccessPaths[:1]
 			break
 		}
 	}
 	// Consider the IndexMergePath. Now, we just generate `IndexMergePath` in DNF case.
-	if len(ds.pushedDownConds) > 0 && len(ds.possibleAccessPaths) > 1 && ds.ctx.GetSessionVars().GetEnableIndexMerge() {
-		needConsiderIndexMerge := true
-		for i := 1; i < len(ds.possibleAccessPaths); i++ {
-			if len(ds.possibleAccessPaths[i].accessConds) != 0 {
-				needConsiderIndexMerge = false
-				break
-			}
+	isPossibleIdxMerge := len(ds.pushedDownConds) > 0 && len(ds.possibleAccessPaths) > 1
+	sessionAndStmtPermission := (ds.ctx.GetSessionVars().GetEnableIndexMerge() || ds.indexMergeHints != nil) && !ds.ctx.GetSessionVars().StmtCtx.NoIndexMergeHint
+	// If there is an index path, we current do not consider `IndexMergePath`.
+	needConsiderIndexMerge := true
+	for i := 1; i < len(ds.possibleAccessPaths); i++ {
+		if len(ds.possibleAccessPaths[i].AccessConds) != 0 {
+			needConsiderIndexMerge = false
+			break
 		}
-		if needConsiderIndexMerge {
-			ds.generateIndexMergeOrPaths()
-		}
+	}
+	if isPossibleIdxMerge && sessionAndStmtPermission && needConsiderIndexMerge {
+		ds.generateAndPruneIndexMergePath()
+	} else if ds.indexMergeHints != nil {
+		ds.indexMergeHints = nil
+		ds.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("IndexMerge is inapplicable or disabled"))
 	}
 	return ds.stats, nil
 }
 
-// DeriveStats implement LogicalPlan DeriveStats interface.
-func (ts *TableScan) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema) (_ *property.StatsInfo, err error) {
+func (ds *DataSource) generateAndPruneIndexMergePath() {
+	regularPathCount := len(ds.possibleAccessPaths)
+	ds.generateIndexMergeOrPaths()
+	// If without hints, it means that `enableIndexMerge` is true
+	if ds.indexMergeHints == nil {
+		return
+	}
+	// With hints and without generated IndexMerge paths
+	if regularPathCount == len(ds.possibleAccessPaths) {
+		ds.indexMergeHints = nil
+		ds.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("IndexMerge is inapplicable or disabled"))
+		return
+	}
+	// Do not need to consider the regular paths in find_best_task().
+	ds.possibleAccessPaths = ds.possibleAccessPaths[regularPathCount:]
+}
+
+// DeriveStats implements LogicalPlan DeriveStats interface.
+func (ts *LogicalTableScan) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema) (_ *property.StatsInfo, err error) {
 	// PushDownNot here can convert query 'not (a != 1)' to 'a = 1'.
 	for i, expr := range ts.AccessConds {
 		// TODO The expressions may be shared by TableScan and several IndexScans, there would be redundant
 		// `PushDownNot` function call in multiple `DeriveStats` then.
-		ts.AccessConds[i] = expression.PushDownNot(nil, expr)
+		ts.AccessConds[i] = expression.PushDownNot(ts.ctx, expr)
 	}
-	ts.Source.deriveStatsByFilter(ts.AccessConds)
+	ts.stats = ts.Source.deriveStatsByFilter(ts.AccessConds, nil)
 	sc := ts.SCtx().GetSessionVars().StmtCtx
 	// ts.Handle could be nil if PK is Handle, and PK column has been pruned.
 	if ts.Handle != nil {
@@ -220,7 +273,30 @@ func (ts *TableScan) DeriveStats(childStats []*property.StatsInfo, selfSchema *e
 	if err != nil {
 		return nil, err
 	}
-	return ts.Source.stats, nil
+	return ts.stats, nil
+}
+
+// DeriveStats implements LogicalPlan DeriveStats interface.
+func (is *LogicalIndexScan) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema) (*property.StatsInfo, error) {
+	for i, expr := range is.AccessConds {
+		is.AccessConds[i] = expression.PushDownNot(is.ctx, expr)
+	}
+	is.stats = is.Source.deriveStatsByFilter(is.AccessConds, nil)
+	if len(is.AccessConds) == 0 {
+		is.Ranges = ranger.FullRange()
+	}
+	// TODO: If the AccessConds is not empty, we have set the range when push down the selection.
+
+	is.idxCols, is.idxColLens = expression.IndexInfo2PrefixCols(is.Columns, is.schema.Columns, is.Index)
+	is.fullIdxCols, is.fullIdxColLens = expression.IndexInfo2Cols(is.Columns, is.schema.Columns, is.Index)
+	if !is.Index.Unique && !is.Index.Primary && len(is.Index.Columns) == len(is.idxCols) {
+		handleCol := is.getPKIsHandleCol()
+		if handleCol != nil && !mysql.HasUnsignedFlag(handleCol.RetType.Flag) {
+			is.idxCols = append(is.idxCols, handleCol)
+			is.idxColLens = append(is.idxColLens, types.UnspecifiedLength)
+		}
+	}
+	return is.stats, nil
 }
 
 // getIndexMergeOrPath generates all possible IndexMergeOrPaths.
@@ -231,7 +307,7 @@ func (ds *DataSource) generateIndexMergeOrPaths() {
 		if !ok || sf.FuncName.L != ast.LogicOr {
 			continue
 		}
-		var partialPaths = make([]*accessPath, 0, usedIndexCount)
+		var partialPaths = make([]*util.AccessPath, 0, usedIndexCount)
 		dnfItems := expression.FlattenDNFConditions(sf)
 		for _, item := range dnfItems {
 			cnfItems := expression.SplitCNFItems(item)
@@ -256,44 +332,67 @@ func (ds *DataSource) generateIndexMergeOrPaths() {
 	}
 }
 
+// isInIndexMergeHints checks whether current index or primary key is in IndexMerge hints.
+func (ds *DataSource) isInIndexMergeHints(name string) bool {
+	if ds.indexMergeHints == nil ||
+		(len(ds.indexMergeHints) == 1 && ds.indexMergeHints[0].IndexNames == nil) {
+		return true
+	}
+	for _, hint := range ds.indexMergeHints {
+		for _, index := range hint.IndexNames {
+			if name == index.L {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // accessPathsForConds generates all possible index paths for conditions.
-func (ds *DataSource) accessPathsForConds(conditions []expression.Expression, usedIndexCount int) []*accessPath {
-	var results = make([]*accessPath, 0, usedIndexCount)
+func (ds *DataSource) accessPathsForConds(conditions []expression.Expression, usedIndexCount int) []*util.AccessPath {
+	var results = make([]*util.AccessPath, 0, usedIndexCount)
 	for i := 0; i < usedIndexCount; i++ {
-		path := &accessPath{}
-		if ds.possibleAccessPaths[i].isTablePath {
-			path.isTablePath = true
+		path := &util.AccessPath{}
+		if ds.possibleAccessPaths[i].IsTablePath {
+			if !ds.isInIndexMergeHints("primary") {
+				continue
+			}
+			path.IsTablePath = true
 			noIntervalRanges, err := ds.deriveTablePathStats(path, conditions, true)
 			if err != nil {
 				logutil.BgLogger().Debug("can not derive statistics of a path", zap.Error(err))
 				continue
 			}
 			// If we have point or empty range, just remove other possible paths.
-			if noIntervalRanges || len(path.ranges) == 0 {
+			if noIntervalRanges || len(path.Ranges) == 0 {
 				results[0] = path
 				results = results[:1]
 				break
 			}
 		} else {
-			path.index = ds.possibleAccessPaths[i].index
-			noIntervalRanges, err := ds.deriveIndexPathStats(path, conditions, true)
+			path.Index = ds.possibleAccessPaths[i].Index
+			if !ds.isInIndexMergeHints(path.Index.Name.L) {
+				continue
+			}
+			err := ds.fillIndexPath(path, conditions)
 			if err != nil {
 				logutil.BgLogger().Debug("can not derive statistics of a path", zap.Error(err))
 				continue
 			}
+			noIntervalRanges := ds.deriveIndexPathStats(path, conditions, true)
 			// If we have empty range, or point range on unique index, just remove other possible paths.
-			if (noIntervalRanges && path.index.Unique) || len(path.ranges) == 0 {
+			if (noIntervalRanges && path.Index.Unique) || len(path.Ranges) == 0 {
 				results[0] = path
 				results = results[:1]
 				break
 			}
 		}
-		// If accessConds is empty or tableFilter is not empty, we ignore the access path.
+		// If AccessConds is empty or tableFilter is not empty, we ignore the access path.
 		// Now these conditions are too strict.
 		// For example, a sql `select * from t where a > 1 or (b < 2 and c > 3)` and table `t` with indexes
 		// on a and b separately. we can generate a `IndexMergePath` with table filter `a > 1 or (b < 2 and c > 3)`.
 		// TODO: solve the above case
-		if len(path.tableFilters) > 0 || len(path.accessConds) == 0 {
+		if len(path.TableFilters) > 0 || len(path.AccessConds) == 0 {
 			continue
 		}
 		results = append(results, path)
@@ -307,15 +406,15 @@ func (ds *DataSource) accessPathsForConds(conditions []expression.Expression, us
 // with most columns, e.g, filter is c > 1 and the input indexes are c and c_d_e,
 // the former one is enough, and it is less expensive in execution compared with the latter one.
 // TODO: improve strategy of the partial path selection
-func (ds *DataSource) buildIndexMergePartialPath(indexAccessPaths []*accessPath) *accessPath {
+func (ds *DataSource) buildIndexMergePartialPath(indexAccessPaths []*util.AccessPath) *util.AccessPath {
 	if len(indexAccessPaths) == 1 {
 		return indexAccessPaths[0]
 	}
 
 	maxColsIndex := 0
-	maxCols := len(indexAccessPaths[0].idxCols)
+	maxCols := len(indexAccessPaths[0].IdxCols)
 	for i := 1; i < len(indexAccessPaths); i++ {
-		current := len(indexAccessPaths[i].idxCols)
+		current := len(indexAccessPaths[i].IdxCols)
 		if current > maxCols {
 			maxColsIndex = i
 			maxCols = current
@@ -325,10 +424,10 @@ func (ds *DataSource) buildIndexMergePartialPath(indexAccessPaths []*accessPath)
 }
 
 // buildIndexMergeOrPath generates one possible IndexMergePath.
-func (ds *DataSource) buildIndexMergeOrPath(partialPaths []*accessPath, current int) *accessPath {
-	indexMergePath := &accessPath{partialIndexPaths: partialPaths}
-	indexMergePath.tableFilters = append(indexMergePath.tableFilters, ds.pushedDownConds[:current]...)
-	indexMergePath.tableFilters = append(indexMergePath.tableFilters, ds.pushedDownConds[current+1:]...)
+func (ds *DataSource) buildIndexMergeOrPath(partialPaths []*util.AccessPath, current int) *util.AccessPath {
+	indexMergePath := &util.AccessPath{PartialIndexPaths: partialPaths}
+	indexMergePath.TableFilters = append(indexMergePath.TableFilters, ds.pushedDownConds[:current]...)
+	indexMergePath.TableFilters = append(indexMergePath.TableFilters, ds.pushedDownConds[current+1:]...)
 	return indexMergePath
 }
 

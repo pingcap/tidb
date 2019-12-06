@@ -24,6 +24,8 @@
 package expression
 
 import (
+	"sort"
+	"strings"
 	"sync"
 
 	"github.com/pingcap/errors"
@@ -32,6 +34,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/opcode"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
@@ -48,6 +51,9 @@ type baseBuiltinFunc struct {
 
 	childrenVectorizedOnce *sync.Once
 	childrenVectorized     bool
+
+	childrenReversedOnce *sync.Once
+	childrenReversed     bool
 }
 
 func (b *baseBuiltinFunc) PbCode() tipb.ScalarFuncSig {
@@ -74,6 +80,7 @@ func newBaseBuiltinFunc(ctx sessionctx.Context, args []Expression) baseBuiltinFu
 	return baseBuiltinFunc{
 		bufAllocator:           newLocalSliceBuffer(len(args)),
 		childrenVectorizedOnce: new(sync.Once),
+		childrenReversedOnce:   new(sync.Once),
 
 		args: args,
 		ctx:  ctx,
@@ -179,6 +186,7 @@ func newBaseBuiltinFuncWithTp(ctx sessionctx.Context, args []Expression, retType
 	return baseBuiltinFunc{
 		bufAllocator:           newLocalSliceBuffer(len(args)),
 		childrenVectorizedOnce: new(sync.Once),
+		childrenReversedOnce:   new(sync.Once),
 
 		args: args,
 		ctx:  ctx,
@@ -250,6 +258,27 @@ func (b *baseBuiltinFunc) vectorized() bool {
 	return false
 }
 
+func (b *baseBuiltinFunc) supportReverseEval() bool {
+	return false
+}
+
+func (b *baseBuiltinFunc) isChildrenReversed() bool {
+	b.childrenReversedOnce.Do(func() {
+		b.childrenReversed = true
+		for _, arg := range b.args {
+			if !arg.SupportReverseEval() {
+				b.childrenReversed = false
+				break
+			}
+		}
+	})
+	return b.childrenReversed
+}
+
+func (b *baseBuiltinFunc) reverseEval(sc *stmtctx.StatementContext, res types.Datum, rType types.RoundingType) (types.Datum, error) {
+	return types.Datum{}, errors.Errorf("baseBuiltinFunc.reverseEvalInt() should never be called, please contact the TiDB team for help")
+}
+
 func (b *baseBuiltinFunc) isChildrenVectorized() bool {
 	b.childrenVectorizedOnce.Do(func() {
 		b.childrenVectorized = true
@@ -305,6 +334,7 @@ func (b *baseBuiltinFunc) cloneFrom(from *baseBuiltinFunc) {
 	b.pbCode = from.pbCode
 	b.bufAllocator = newLocalSliceBuffer(len(b.args))
 	b.childrenVectorizedOnce = new(sync.Once)
+	b.childrenReversedOnce = new(sync.Once)
 }
 
 func (b *baseBuiltinFunc) Clone() builtinFunc {
@@ -372,9 +402,22 @@ type vecBuiltinFunc interface {
 	vecEvalJSON(input *chunk.Chunk, result *chunk.Column) error
 }
 
+// reverseBuiltinFunc evaluates the exactly one column value in the function when given a result for expression.
+// For example, the buitinFunc is builtinArithmeticPlusRealSig(2.3, builtinArithmeticMinusRealSig(Column, 3.4))
+// when given the result like 1.0, then the ReverseEval should evaluate the column value 1.0 - 2.3 + 3.4 = 2.1
+type reverseBuiltinFunc interface {
+	// supportReverseEval checks whether the builtinFunc support reverse evaluation.
+	supportReverseEval() bool
+	// isChildrenReversed checks whether the builtinFunc's children support reverse evaluation.
+	isChildrenReversed() bool
+	// reverseEval evaluates the only one column value with given function result.
+	reverseEval(sc *stmtctx.StatementContext, res types.Datum, rType types.RoundingType) (val types.Datum, err error)
+}
+
 // builtinFunc stands for a particular function signature.
 type builtinFunc interface {
 	vecBuiltinFunc
+	reverseBuiltinFunc
 
 	// evalInt evaluates int result of builtinFunc by given row.
 	evalInt(row chunk.Row) (val int64, isNull bool, err error)
@@ -733,4 +776,31 @@ var funcs = map[string]functionClass{
 func IsFunctionSupported(name string) bool {
 	_, ok := funcs[name]
 	return ok
+}
+
+// GetBuiltinList returns a list of builtin functions
+func GetBuiltinList() []string {
+	res := make([]string, 0, len(funcs))
+	notImplementedFunctions := []string{ast.RowFunc}
+	for funcName := range funcs {
+		skipFunc := false
+		// Skip not implemented functions
+		for _, notImplFunc := range notImplementedFunctions {
+			if funcName == notImplFunc {
+				skipFunc = true
+			}
+		}
+		// Skip literal functions
+		// (their names are not readable: 'tidb`.(dateliteral, for example)
+		// See: https://github.com/pingcap/parser/pull/591
+		if strings.HasPrefix(funcName, "'tidb`.(") {
+			skipFunc = true
+		}
+		if skipFunc {
+			continue
+		}
+		res = append(res, funcName)
+	}
+	sort.Strings(res)
+	return res
 }

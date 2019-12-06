@@ -142,7 +142,7 @@ func GetSessionOnlySysVars(s *SessionVars, key string) (string, bool, error) {
 	case TiDBCheckMb4ValueInUTF8:
 		return BoolToIntStr(config.GetGlobalConfig().CheckMb4ValueInUTF8), true, nil
 	}
-	sVal, ok := s.systems[key]
+	sVal, ok := s.GetSystemVar(key)
 	if ok {
 		return sVal, true, nil
 	}
@@ -503,6 +503,7 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		TiDBOptDescScanFactor,
 		TiDBOptSeekFactor,
 		TiDBOptMemoryFactor,
+		TiDBOptDiskFactor,
 		TiDBOptConcurrencyFactor:
 		v, err := strconv.ParseFloat(value, 64)
 		if err != nil {
@@ -523,14 +524,15 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		TIDBMemQuotaNestedLoopApply,
 		TiDBRetryLimit,
 		TiDBSlowLogThreshold,
-		TiDBQueryLogMaxLen:
+		TiDBQueryLogMaxLen,
+		TiDBEvolvePlanTaskMaxTime:
 		_, err := strconv.ParseInt(value, 10, 64)
 		if err != nil {
 			return value, ErrWrongValueForVar.GenWithStackByArgs(name)
 		}
 		return value, nil
-	case TiDBAutoAnalyzeStartTime, TiDBAutoAnalyzeEndTime:
-		v, err := setAnalyzeTime(vars, value)
+	case TiDBAutoAnalyzeStartTime, TiDBAutoAnalyzeEndTime, TiDBEvolvePlanTaskStartTime, TiDBEvolvePlanTaskEndTime:
+		v, err := setDayTime(vars, value)
 		if err != nil {
 			return "", err
 		}
@@ -628,6 +630,11 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 			return "", nil
 		}
 		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
+	case TiDBStmtSummaryRefreshInterval:
+		if value == "" {
+			return "", nil
+		}
+		return checkUInt64SystemVar(name, value, 1, math.MaxUint32, vars)
 	case TiDBIsolationReadEngines:
 		engines := strings.Split(value, ",")
 		var formatVal string
@@ -641,6 +648,8 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 				formatVal += kv.TiKV.Name()
 			case strings.EqualFold(engine, kv.TiFlash.Name()):
 				formatVal += kv.TiFlash.Name()
+			case strings.EqualFold(engine, kv.TiDB.Name()):
+				formatVal += kv.TiDB.Name()
 			default:
 				return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
 			}
@@ -744,23 +753,23 @@ func GoTimeToTS(t time.Time) uint64 {
 }
 
 const (
-	analyzeLocalTimeFormat = "15:04"
-	// AnalyzeFullTimeFormat is the full format of analyze start time and end time.
-	AnalyzeFullTimeFormat = "15:04 -0700"
+	localDayTimeFormat = "15:04"
+	// FullDayTimeFormat is the full format of analyze start time and end time.
+	FullDayTimeFormat = "15:04 -0700"
 )
 
-func setAnalyzeTime(s *SessionVars, val string) (string, error) {
+func setDayTime(s *SessionVars, val string) (string, error) {
 	var t time.Time
 	var err error
-	if len(val) <= len(analyzeLocalTimeFormat) {
-		t, err = time.ParseInLocation(analyzeLocalTimeFormat, val, s.TimeZone)
+	if len(val) <= len(localDayTimeFormat) {
+		t, err = time.ParseInLocation(localDayTimeFormat, val, s.TimeZone)
 	} else {
-		t, err = time.ParseInLocation(AnalyzeFullTimeFormat, val, s.TimeZone)
+		t, err = time.ParseInLocation(FullDayTimeFormat, val, s.TimeZone)
 	}
 	if err != nil {
 		return "", err
 	}
-	return t.Format(AnalyzeFullTimeFormat), nil
+	return t.Format(FullDayTimeFormat), nil
 }
 
 // serverGlobalVariable is used to handle variables that acts in server and global scope.

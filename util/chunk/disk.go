@@ -20,7 +20,7 @@ import (
 	"io"
 	"io/ioutil"
 	"os"
-	"path"
+	"path/filepath"
 	"sync"
 
 	"github.com/pingcap/log"
@@ -44,7 +44,7 @@ var bufReaderPool = sync.Pool{
 	New: func() interface{} { return bufio.NewReaderSize(nil, readBufSize) },
 }
 
-var tmpDir = path.Join(os.TempDir(), "tidb-server-"+path.Base(os.Args[0]))
+var tmpDir = filepath.Join(os.TempDir(), "tidb-server-"+filepath.Base(os.Args[0]))
 
 func init() {
 	err := os.RemoveAll(tmpDir) // clean the uncleared temp file during the last run.

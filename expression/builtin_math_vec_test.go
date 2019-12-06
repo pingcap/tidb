@@ -102,6 +102,7 @@ var vecBuiltinMathCases = map[string][]vecExprBenchCase{
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt}, childrenFieldTypes: []*types.FieldType{{Tp: mysql.TypeInt24}}, geners: nil},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDecimal}, geners: nil},
 		{retEvalType: types.ETDecimal, childrenTypes: []types.EvalType{types.ETInt}, geners: nil},
+		{retEvalType: types.ETDecimal, childrenTypes: []types.EvalType{types.ETDecimal}, childrenFieldTypes: []*types.FieldType{{Tp: mysql.TypeNewDecimal, Flen: 32, Decimal: 2}}, geners: nil},
 	},
 	ast.PI: {
 		{retEvalType: types.ETReal},

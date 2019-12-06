@@ -289,6 +289,27 @@ func (g *constJSONGener) gen() interface{} {
 	return *j
 }
 
+type decimalJSONGener struct {
+	nullRation float64
+}
+
+func (g *decimalJSONGener) gen() interface{} {
+	if rand.Float64() < g.nullRation {
+		return nil
+	}
+
+	var f float64
+	if rand.Float64() < 0.5 {
+		f = rand.Float64() * 100000
+	} else {
+		f = -rand.Float64() * 100000
+	}
+	if err := (&types.MyDecimal{}).FromFloat64(f); err != nil {
+		panic(err)
+	}
+	return json.CreateBinary(f)
+}
+
 type jsonStringGener struct{}
 
 func (g *jsonStringGener) gen() interface{} {
@@ -297,6 +318,16 @@ func (g *jsonStringGener) gen() interface{} {
 		panic(err)
 	}
 	return j.String()
+}
+
+type decimalStringGener struct{}
+
+func (g *decimalStringGener) gen() interface{} {
+	tempDecimal := new(types.MyDecimal)
+	if err := tempDecimal.FromFloat64(rand.Float64()); err != nil {
+		panic(err)
+	}
+	return tempDecimal.String()
 }
 
 type jsonTimeGener struct{}
@@ -404,19 +435,6 @@ type numStrGener struct {
 
 func (g *numStrGener) gen() interface{} {
 	return fmt.Sprintf("%v", g.rangeInt64Gener.gen())
-}
-
-// realStrGener is used to generate real number strings.
-type realStrGener struct {
-	rangeRealGener
-}
-
-func (g *realStrGener) gen() interface{} {
-	val := g.rangeRealGener.gen()
-	if val == nil {
-		return nil
-	}
-	return fmt.Sprintf("%v", val)
 }
 
 // ipv6StrGener is used to generate ipv6 strings.
@@ -594,14 +612,19 @@ func (g *dateTimeStrGener) gen() interface{} {
 	return dataTimeStr
 }
 
-// timeStrGener is used to generate strings which are time format
-type timeStrGener struct {
-	Year  int
-	Month int
-	Day   int
+// dateStrGener is used to generate strings which are date format
+type dateStrGener struct {
+	Year       int
+	Month      int
+	Day        int
+	NullRation float64
 }
 
-func (g *timeStrGener) gen() interface{} {
+func (g *dateStrGener) gen() interface{} {
+	if g.NullRation > 1e-6 && rand.Float64() < g.NullRation {
+		return nil
+	}
+
 	if g.Year == 0 {
 		g.Year = 1970 + rand.Intn(100)
 	}
@@ -615,15 +638,38 @@ func (g *timeStrGener) gen() interface{} {
 	return fmt.Sprintf("%d-%d-%d", g.Year, g.Month, g.Day)
 }
 
-// dateStrGener is used to generate strings which are data format
-type dateStrGener struct{}
+// timeStrGener is used to generate strings which are time format
+type timeStrGener struct {
+	nullRation float64
+}
 
-func (g *dateStrGener) gen() interface{} {
+func (g *timeStrGener) gen() interface{} {
+	if g.nullRation > 1e-6 && rand.Float64() < g.nullRation {
+		return nil
+	}
 	hour := rand.Intn(12)
 	minute := rand.Intn(60)
 	second := rand.Intn(60)
 
 	return fmt.Sprintf("%d:%d:%d", hour, minute, second)
+}
+
+type dateTimeIntGener struct {
+	dateTimeGener
+	nullRation float64
+}
+
+func (g *dateTimeIntGener) gen() interface{} {
+	if rand.Float64() < g.nullRation {
+		return nil
+	}
+
+	t := g.dateTimeGener.gen().(types.Time)
+	num, err := t.ToNumber().ToInt()
+	if err != nil {
+		panic(err)
+	}
+	return num
 }
 
 // constStrGener always returns the given string
@@ -639,6 +685,19 @@ type randDurInt struct{}
 
 func (g *randDurInt) gen() interface{} {
 	return int64(rand.Intn(types.TimeMaxHour)*10000 + rand.Intn(60)*100 + rand.Intn(60))
+}
+
+type randDurReal struct{}
+
+func (g *randDurReal) gen() interface{} {
+	return float64(rand.Intn(types.TimeMaxHour)*10000 + rand.Intn(60)*100 + rand.Intn(60))
+}
+
+type randDurDecimal struct{}
+
+func (g *randDurDecimal) gen() interface{} {
+	d := new(types.MyDecimal)
+	return d.FromFloat64(float64(rand.Intn(types.TimeMaxHour)*10000 + rand.Intn(60)*100 + rand.Intn(60)))
 }
 
 // locationGener is used to generate location for the built-in function GetFormat.
@@ -706,8 +765,13 @@ type vecExprBenchCase struct {
 	// geners[gen1, gen2] will be regarded as geners[gen1, gen2, nil].
 	// This field is optional.
 	geners []dataGenerator
+	// aesModeAttr information, needed by encryption functions
+	aesModes string
 	// constants are used to generate constant data for children[i].
 	constants []*Constant
+	// chunkSize is used to specify the chunk size of children, the maximum is 1024.
+	// This field is optional, 1024 by default.
+	chunkSize int
 }
 
 type vecExprBenchCases map[string][]vecExprBenchCase
@@ -721,7 +785,7 @@ func fillColumn(eType types.EvalType, chk *chunk.Chunk, colIdx int, testCase vec
 }
 
 func fillColumnWithGener(eType types.EvalType, chk *chunk.Chunk, colIdx int, gen dataGenerator) {
-	batchSize := 1024
+	batchSize := chk.Capacity()
 	if gen == nil {
 		gen = &defaultGener{0.2, eType}
 	}
@@ -799,8 +863,12 @@ func genVecExprBenchCase(ctx sessionctx.Context, funcName string, testCase vecEx
 			fts[i] = eType2FieldType(testCase.childrenTypes[i])
 		}
 	}
+	if testCase.chunkSize <= 0 || testCase.chunkSize > 1024 {
+		testCase.chunkSize = 1024
+	}
 	cols := make([]Expression, len(testCase.childrenTypes))
-	input = chunk.New(fts, 1024, 1024)
+	input = chunk.New(fts, testCase.chunkSize, testCase.chunkSize)
+	input.NumRows()
 	for i, eType := range testCase.childrenTypes {
 		fillColumn(eType, input, i, testCase)
 		if i < len(testCase.constants) && testCase.constants[i] != nil {
@@ -815,7 +883,7 @@ func genVecExprBenchCase(ctx sessionctx.Context, funcName string, testCase vecEx
 		panic(err)
 	}
 
-	output = chunk.New([]*types.FieldType{eType2FieldType(expr.GetType().EvalType())}, 1024, 1024)
+	output = chunk.New([]*types.FieldType{eType2FieldType(expr.GetType().EvalType())}, testCase.chunkSize, testCase.chunkSize)
 	return expr, fts, input, output
 }
 
@@ -936,7 +1004,10 @@ func genVecBuiltinFuncBenchCase(ctx sessionctx.Context, funcName string, testCas
 		}
 	}
 	cols := make([]Expression, childrenNumber)
-	input = chunk.New(fts, 1024, 1024)
+	if testCase.chunkSize <= 0 || testCase.chunkSize > 1024 {
+		testCase.chunkSize = 1024
+	}
+	input = chunk.New(fts, testCase.chunkSize, testCase.chunkSize)
 	for i, eType := range testCase.childrenTypes {
 		fillColumn(eType, input, i, testCase)
 		if i < len(testCase.constants) && testCase.constants[i] != nil {
@@ -946,7 +1017,7 @@ func genVecBuiltinFuncBenchCase(ctx sessionctx.Context, funcName string, testCas
 		}
 	}
 	if len(cols) == 0 {
-		input.SetNumVirtualRows(1024)
+		input.SetNumVirtualRows(testCase.chunkSize)
 	}
 
 	var err error
@@ -976,7 +1047,7 @@ func genVecBuiltinFuncBenchCase(ctx sessionctx.Context, funcName string, testCas
 	if err != nil {
 		panic(err)
 	}
-	result = chunk.NewColumn(eType2FieldType(testCase.retEvalType), 1024)
+	result = chunk.NewColumn(eType2FieldType(testCase.retEvalType), testCase.chunkSize)
 	// Mess up the output to make sure vecEvalXXX to call ResizeXXX/ReserveXXX itself.
 	result.AppendNull()
 	return baseFunc, fts, input, result
@@ -996,7 +1067,7 @@ func removeTestOptions(args []string) []string {
 	// args contains '-test.timeout=' option for example
 	// excluding it to be able to run all tests
 	for _, arg := range args {
-		if strings.HasPrefix(arg, "builtin") {
+		if strings.HasPrefix(arg, "builtin") || IsFunctionSupported(arg) {
 			argList = append(argList, arg)
 		}
 	}
@@ -1015,10 +1086,8 @@ func testVectorizedBuiltinFunc(c *C, vecExprCases vecExprBenchCases) {
 	for funcName, testCases := range vecExprCases {
 		for _, testCase := range testCases {
 			ctx := mock.NewContext()
-			if funcName == ast.AesDecrypt || funcName == ast.AesEncrypt {
-				err := ctx.GetSessionVars().SetSystemVar(variable.BlockEncryptionMode, "aes-128-ecb")
-				c.Assert(err, IsNil)
-			}
+			err := ctx.GetSessionVars().SetSystemVar(variable.BlockEncryptionMode, testCase.aesModes)
+			c.Assert(err, IsNil)
 			if funcName == ast.CurrentUser || funcName == ast.User {
 				ctx.GetSessionVars().User = &auth.UserIdentity{
 					Username:     "tidb",
@@ -1028,12 +1097,29 @@ func testVectorizedBuiltinFunc(c *C, vecExprCases vecExprBenchCases) {
 					AuthUsername: "tidb",
 				}
 			}
+			if funcName == ast.GetParam {
+				testTime := time.Now()
+				ctx.GetSessionVars().PreparedParams = []types.Datum{
+					types.NewIntDatum(1),
+					types.NewDecimalDatum(types.NewDecFromStringForTest("20170118123950.123")),
+					types.NewTimeDatum(types.Time{Time: types.FromGoTime(testTime), Fsp: 6, Type: mysql.TypeTimestamp}),
+					types.NewDurationDatum(types.ZeroDuration),
+					types.NewStringDatum("{}"),
+					types.NewBinaryLiteralDatum(types.BinaryLiteral([]byte{1})),
+					types.NewBytesDatum([]byte{'b'}),
+					types.NewFloat32Datum(1.1),
+					types.NewFloat64Datum(2.1),
+					types.NewUintDatum(100),
+					types.NewMysqlBitDatum(types.BinaryLiteral([]byte{1})),
+					types.NewMysqlEnumDatum(types.Enum{Name: "n", Value: 2}),
+				}
+			}
 			baseFunc, fts, input, output := genVecBuiltinFuncBenchCase(ctx, funcName, testCase)
 			baseFuncName := fmt.Sprintf("%v", reflect.TypeOf(baseFunc))
 			tmp := strings.Split(baseFuncName, ".")
 			baseFuncName = tmp[len(tmp)-1]
 
-			if !testAll && testFunc[baseFuncName] != true {
+			if !testAll && (testFunc[baseFuncName] != true && testFunc[funcName] != true) {
 				continue
 			}
 			// do not forget to implement the vectorized method.
@@ -1218,11 +1304,9 @@ func benchmarkVectorizedBuiltinFunc(b *testing.B, vecExprCases vecExprBenchCases
 	}
 	for funcName, testCases := range vecExprCases {
 		for _, testCase := range testCases {
-			if funcName == ast.AesDecrypt || funcName == ast.AesEncrypt {
-				err := ctx.GetSessionVars().SetSystemVar(variable.BlockEncryptionMode, "aes-128-ecb")
-				if err != nil {
-					panic(err)
-				}
+			err := ctx.GetSessionVars().SetSystemVar(variable.BlockEncryptionMode, testCase.aesModes)
+			if err != nil {
+				panic(err)
 			}
 			if funcName == ast.CurrentUser || funcName == ast.User {
 				ctx.GetSessionVars().User = &auth.UserIdentity{
@@ -1233,12 +1317,29 @@ func benchmarkVectorizedBuiltinFunc(b *testing.B, vecExprCases vecExprBenchCases
 					AuthUsername: "tidb",
 				}
 			}
+			if funcName == ast.GetParam {
+				testTime := time.Now()
+				ctx.GetSessionVars().PreparedParams = []types.Datum{
+					types.NewIntDatum(1),
+					types.NewDecimalDatum(types.NewDecFromStringForTest("20170118123950.123")),
+					types.NewTimeDatum(types.Time{Time: types.FromGoTime(testTime), Fsp: 6, Type: mysql.TypeTimestamp}),
+					types.NewDurationDatum(types.ZeroDuration),
+					types.NewStringDatum("{}"),
+					types.NewBinaryLiteralDatum(types.BinaryLiteral([]byte{1})),
+					types.NewBytesDatum([]byte{'b'}),
+					types.NewFloat32Datum(1.1),
+					types.NewFloat64Datum(2.1),
+					types.NewUintDatum(100),
+					types.NewMysqlBitDatum(types.BinaryLiteral([]byte{1})),
+					types.NewMysqlEnumDatum(types.Enum{Name: "n", Value: 2}),
+				}
+			}
 			baseFunc, _, input, output := genVecBuiltinFuncBenchCase(ctx, funcName, testCase)
 			baseFuncName := fmt.Sprintf("%v", reflect.TypeOf(baseFunc))
 			tmp := strings.Split(baseFuncName, ".")
 			baseFuncName = tmp[len(tmp)-1]
 
-			if !testAll && testFunc[baseFuncName] != true {
+			if !testAll && testFunc[baseFuncName] != true && testFunc[funcName] != true {
 				continue
 			}
 
