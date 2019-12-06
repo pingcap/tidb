@@ -188,6 +188,31 @@ func (s *testSuite3) TestRole(c *C) {
 	tk.MustExec("SET ROLE NONE")
 }
 
+func (s *testSuite3) TestRoleAdmin(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("CREATE USER 'testRoleAdmin';")
+	tk.MustExec("CREATE ROLE 'targetRole';")
+
+	// Create a new session.
+	se, err := session.CreateSession4Test(s.store)
+	c.Check(err, IsNil)
+	defer se.Close()
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "testRoleAdmin", Hostname: "localhost"}, nil, nil), IsTrue)
+
+	ctx := context.Background()
+	_, err = se.Execute(ctx, "GRANT `targetRole` TO `testRoleAdmin`;")
+	c.Assert(err, NotNil)
+
+	tk.MustExec("GRANT SUPER ON *.* TO `testRoleAdmin`;")
+	_, err = se.Execute(ctx, "GRANT `targetRole` TO `testRoleAdmin`;")
+	c.Assert(err, IsNil)
+	_, err = se.Execute(ctx, "REVOKE `targetRole` FROM `testRoleAdmin`;")
+	c.Assert(err, IsNil)
+
+	tk.MustExec("DROP USER 'testRoleAdmin';")
+	tk.MustExec("DROP ROLE 'targetRole';")
+}
+
 func (s *testSuite3) TestDefaultRole(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
