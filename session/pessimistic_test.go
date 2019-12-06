@@ -741,8 +741,11 @@ func (s *testPessimisticSuite) TestInnodbLockWaitTimeoutWaitStart(c *C) {
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/PessimisticLockErrWriteConflict", "return"), IsNil)
 	start := time.Now()
 	go func() {
-		_, err := tk2.Exec("select * from tk where c1 = 1 for update")
-		done <- err
+		var err error
+		defer func() {
+			done <- err
+		}()
+		_, err = tk2.Exec("select * from tk where c1 = 1 for update")
 	}()
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/PessimisticLockErrWriteConflict"), IsNil)
 	waitErr := <-done
