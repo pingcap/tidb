@@ -5205,4 +5205,3 @@ func (s *testIntegrationSuite) TestDecodetoChunkReuse(c *C) {
 	c.Assert(count, Equals, 200)
 	rs.Close()
 }
-

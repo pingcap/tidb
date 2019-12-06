@@ -50,7 +50,7 @@ type TableCommon struct {
 	physicalTableID int64
 	Columns         []*table.Column
 	PublicColumns   []*table.Column
-	VisibleColumns	[]*table.Column
+	VisibleColumns  []*table.Column
 	WritableColumns []*table.Column
 	writableIndices []table.Index
 	indices         []table.Index
