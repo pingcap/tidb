@@ -512,7 +512,7 @@ func (s *testTimeSuite) TestCodec(c *C) {
 	}
 
 	for _, test := range tbl {
-		t, err := types.ParseTime(nil, test, mysql.TypeDatetime, types.MaxFsp)
+		t, err := types.ParseTime(sc, test, mysql.TypeDatetime, types.MaxFsp)
 		c.Assert(err, IsNil)
 
 		packed, _ = t.ToPackedUint()
@@ -859,6 +859,7 @@ func (s *testTimeSuite) TestConvert(c *C) {
 }
 
 func (s *testTimeSuite) TestCompare(c *C) {
+	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
 	defer testleak.AfterTest(c)()
 	tbl := []struct {
 		Arg1 string
@@ -873,7 +874,7 @@ func (s *testTimeSuite) TestCompare(c *C) {
 	}
 
 	for _, t := range tbl {
-		v1, err := types.ParseTime(nil, t.Arg1, mysql.TypeDatetime, types.MaxFsp)
+		v1, err := types.ParseTime(sc, t.Arg1, mysql.TypeDatetime, types.MaxFsp)
 		c.Assert(err, IsNil)
 
 		ret, err := v1.CompareString(nil, t.Arg2)
@@ -881,7 +882,7 @@ func (s *testTimeSuite) TestCompare(c *C) {
 		c.Assert(ret, Equals, t.Ret)
 	}
 
-	v1, err := types.ParseTime(nil, "2011-10-10 11:11:11", mysql.TypeDatetime, types.MaxFsp)
+	v1, err := types.ParseTime(sc, "2011-10-10 11:11:11", mysql.TypeDatetime, types.MaxFsp)
 	c.Assert(err, IsNil)
 	res, err := v1.CompareString(nil, "Test should error")
 	c.Assert(err, NotNil)
@@ -1042,11 +1043,11 @@ func (s *testTimeSuite) TestTimeAdd(c *C) {
 		TimeZone: time.UTC,
 	}
 	for _, t := range tbl {
-		v1, err := types.ParseTime(nil, t.Arg1, mysql.TypeDatetime, types.MaxFsp)
+		v1, err := types.ParseTime(sc, t.Arg1, mysql.TypeDatetime, types.MaxFsp)
 		c.Assert(err, IsNil)
 		dur, err := types.ParseDuration(sc, t.Arg2, types.MaxFsp)
 		c.Assert(err, IsNil)
-		result, err := types.ParseTime(nil, t.Ret, mysql.TypeDatetime, types.MaxFsp)
+		result, err := types.ParseTime(sc, t.Ret, mysql.TypeDatetime, types.MaxFsp)
 		c.Assert(err, IsNil)
 		v2, err := v1.Add(sc, dur)
 		c.Assert(err, IsNil)
@@ -1679,9 +1680,9 @@ func (s *testTimeSuite) TestTimeSub(c *C) {
 		TimeZone: time.UTC,
 	}
 	for _, t := range tbl {
-		v1, err := types.ParseTime(nil, t.Arg1, mysql.TypeDatetime, types.MaxFsp)
+		v1, err := types.ParseTime(sc, t.Arg1, mysql.TypeDatetime, types.MaxFsp)
 		c.Assert(err, IsNil)
-		v2, err := types.ParseTime(nil, t.Arg2, mysql.TypeDatetime, types.MaxFsp)
+		v2, err := types.ParseTime(sc, t.Arg2, mysql.TypeDatetime, types.MaxFsp)
 		c.Assert(err, IsNil)
 		dur, err := types.ParseDuration(sc, t.Ret, types.MaxFsp)
 		c.Assert(err, IsNil)
