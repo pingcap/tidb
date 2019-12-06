@@ -15,6 +15,7 @@ package executor
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -24,6 +25,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/chunk"
@@ -46,6 +48,7 @@ type GrantExec struct {
 	ObjectType ast.ObjectTypeType
 	Level      *ast.GrantLevel
 	Users      []*ast.UserSpec
+	TslOptions []*ast.TslOption
 
 	is        infoschema.InfoSchema
 	WithGrant bool
@@ -86,9 +89,14 @@ func (e *GrantExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		}
 
 		// If there is no privilege entry in corresponding table, insert a new one.
-		// DB scope:		mysql.DB
-		// Table scope:		mysql.Tables_priv
-		// Column scope:	mysql.Columns_priv
+		// Global scope:		mysql.global_priv
+		// DB scope:			mysql.DB
+		// Table scope:			mysql.Tables_priv
+		// Column scope:		mysql.Columns_priv
+		err = checkAndInitGlobalPriv(e.ctx, user.User.Username, user.User.Hostname)
+		if err != nil {
+			return err
+		}
 		switch e.Level.Level {
 		case ast.GrantLevelDB:
 			err := checkAndInitDBPriv(e.ctx, dbName, e.is, user.User.Username, user.User.Hostname)
@@ -113,7 +121,11 @@ func (e *GrantExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			}
 			defer func() { e.ctx.GetSessionVars().SetStatusFlag(mysql.ServerStatusInTrans, false) }()
 		}
-
+		// Grant global priv to user.
+		err = e.grantGlobalPriv(user)
+		if err != nil {
+			return err
+		}
 		// Grant each priv to the user.
 		for _, priv := range privs {
 			if len(priv.Cols) > 0 {
@@ -124,7 +136,7 @@ func (e *GrantExec) Next(ctx context.Context, req *chunk.Chunk) error {
 					return err
 				}
 			}
-			err := e.grantPriv(priv, user)
+			err := e.grantLevelPriv(priv, user)
 			if err != nil {
 				return err
 			}
@@ -132,6 +144,20 @@ func (e *GrantExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 	domain.GetDomain(e.ctx).NotifyUpdatePrivilege(e.ctx)
 	return nil
+}
+
+// checkAndInitGlobalPriv checks if global scope privilege entry exists in mysql.global_priv.
+// If unexists, insert a new one.
+func checkAndInitGlobalPriv(ctx sessionctx.Context, user string, host string) error {
+	ok, err := globalPrivEntryExists(ctx, user, host)
+	if err != nil {
+		return err
+	}
+	if ok {
+		return nil
+	}
+	// Entry does not exist for user-host-db. Insert a new entry.
+	return initGlobalPrivEntry(ctx, user, host)
 }
 
 // checkAndInitDBPriv checks if DB scope privilege entry exists in mysql.DB.
@@ -190,6 +216,13 @@ func (e *GrantExec) checkAndInitColumnPriv(user string, host string, cols []*ast
 	return nil
 }
 
+// initGlobalPrivEntry inserts a new row into mysql.DB with empty privilege.
+func initGlobalPrivEntry(ctx sessionctx.Context, user string, host string) error {
+	sql := fmt.Sprintf(`INSERT INTO %s.%s (Host, User, PRIV) VALUES ('%s', '%s', '%s')`, mysql.SystemDB, mysql.GlobalPrivTable, host, user, "{}")
+	_, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
+	return err
+}
+
 // initDBPrivEntry inserts a new row into mysql.DB with empty privilege.
 func initDBPrivEntry(ctx sessionctx.Context, user string, host string, db string) error {
 	sql := fmt.Sprintf(`INSERT INTO %s.%s (Host, User, DB) VALUES ('%s', '%s', '%s')`, mysql.SystemDB, mysql.DBTable, host, user, db)
@@ -211,25 +244,74 @@ func initColumnPrivEntry(ctx sessionctx.Context, user string, host string, db st
 	return err
 }
 
-// grantPriv grants priv to user in s.Level scope.
-func (e *GrantExec) grantPriv(priv *ast.PrivElem, user *ast.UserSpec) error {
+// grantGlobalPriv grants priv to user in global scope.
+func (e *GrantExec) grantGlobalPriv(user *ast.UserSpec) error {
+	if len(e.TslOptions) == 0 {
+		return nil
+	}
+	priv, err := tslOption2GlobalPriv(e.TslOptions)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	sql := fmt.Sprintf(`UPDATE %s.%s SET PRIV = '%s' WHERE User='%s' AND Host='%s'`, mysql.SystemDB, mysql.GlobalPrivTable, priv, user.User.Username, user.User.Hostname)
+	_, _, err = e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
+	return err
+}
+
+var emptyGP privileges.GlobalPriv
+
+func tslOption2GlobalPriv(tslOptions []*ast.TslOption) (priv []byte, err error) {
+	if len(tslOptions) == 0 {
+		priv = []byte("{}")
+		return
+	}
+	var gp privileges.GlobalPriv
+	for _, tslOpt := range tslOptions {
+		switch tslOpt.Type {
+		case ast.TslNone, ast.Ssl, ast.X509:
+			gp.SSLType = tslOpt.Type
+		case ast.Cipher:
+			gp.SSLType = ast.X509 + 1
+		case ast.Issuer:
+			gp.SSLType = ast.X509 + 1
+			gp.X509Issuer = tslOpt.Value
+		case ast.Subject:
+			gp.SSLType = ast.X509 + 1
+			gp.X509Subject = tslOpt.Value
+		default:
+			err = errors.Errorf("Unknown ssl type: %#v", tslOpt.Type)
+			return
+		}
+	}
+	if gp == emptyGP {
+		return
+	}
+	priv, err = json.Marshal(&gp)
+	if err != nil {
+		return
+	}
+	return
+}
+
+// grantLevelPriv grants priv to user in s.Level scope.
+func (e *GrantExec) grantLevelPriv(priv *ast.PrivElem, user *ast.UserSpec) error {
 	switch e.Level.Level {
 	case ast.GrantLevelGlobal:
-		return e.grantGlobalPriv(priv, user)
+		return e.grantGlobalLevel(priv, user)
 	case ast.GrantLevelDB:
-		return e.grantDBPriv(priv, user)
+		return e.grantDBLevel(priv, user)
 	case ast.GrantLevelTable:
 		if len(priv.Cols) == 0 {
-			return e.grantTablePriv(priv, user)
+			return e.grantTableLevel(priv, user)
 		}
-		return e.grantColumnPriv(priv, user)
+		return e.grantColumnLevel(priv, user)
 	default:
 		return errors.Errorf("Unknown grant level: %#v", e.Level)
 	}
 }
 
-// grantGlobalPriv manipulates mysql.user table.
-func (e *GrantExec) grantGlobalPriv(priv *ast.PrivElem, user *ast.UserSpec) error {
+// grantGlobalLevel manipulates mysql.user table.
+func (e *GrantExec) grantGlobalLevel(priv *ast.PrivElem, user *ast.UserSpec) error {
 	if priv.Priv == 0 {
 		return nil
 	}
@@ -242,8 +324,8 @@ func (e *GrantExec) grantGlobalPriv(priv *ast.PrivElem, user *ast.UserSpec) erro
 	return err
 }
 
-// grantDBPriv manipulates mysql.db table.
-func (e *GrantExec) grantDBPriv(priv *ast.PrivElem, user *ast.UserSpec) error {
+// grantDBLevel manipulates mysql.db table.
+func (e *GrantExec) grantDBLevel(priv *ast.PrivElem, user *ast.UserSpec) error {
 	dbName := e.Level.DBName
 	if len(dbName) == 0 {
 		dbName = e.ctx.GetSessionVars().CurrentDB
@@ -257,8 +339,8 @@ func (e *GrantExec) grantDBPriv(priv *ast.PrivElem, user *ast.UserSpec) error {
 	return err
 }
 
-// grantTablePriv manipulates mysql.tables_priv table.
-func (e *GrantExec) grantTablePriv(priv *ast.PrivElem, user *ast.UserSpec) error {
+// grantTableLevel manipulates mysql.tables_priv table.
+func (e *GrantExec) grantTableLevel(priv *ast.PrivElem, user *ast.UserSpec) error {
 	dbName := e.Level.DBName
 	if len(dbName) == 0 {
 		dbName = e.ctx.GetSessionVars().CurrentDB
@@ -273,8 +355,8 @@ func (e *GrantExec) grantTablePriv(priv *ast.PrivElem, user *ast.UserSpec) error
 	return err
 }
 
-// grantColumnPriv manipulates mysql.tables_priv table.
-func (e *GrantExec) grantColumnPriv(priv *ast.PrivElem, user *ast.UserSpec) error {
+// grantColumnLevel manipulates mysql.tables_priv table.
+func (e *GrantExec) grantColumnLevel(priv *ast.PrivElem, user *ast.UserSpec) error {
 	dbName, tbl, err := getTargetSchemaAndTable(e.ctx, e.Level.DBName, e.Level.TableName, e.is)
 	if err != nil {
 		return err
@@ -471,6 +553,12 @@ func recordExists(ctx sessionctx.Context, sql string) (bool, error) {
 		return false, err
 	}
 	return len(rows) > 0, nil
+}
+
+// globalPrivEntryExists checks if there is an entry with key user-host in mysql.global_priv.
+func globalPrivEntryExists(ctx sessionctx.Context, name string, host string) (bool, error) {
+	sql := fmt.Sprintf(`SELECT * FROM %s.%s WHERE User='%s' AND Host='%s';`, mysql.SystemDB, mysql.GlobalPrivTable, name, host)
+	return recordExists(ctx, sql)
 }
 
 // dbUserExists checks if there is an entry with key user-host-db in mysql.DB.

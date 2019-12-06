@@ -15,6 +15,7 @@ package privileges
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -29,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/stringutil"
 	log "github.com/sirupsen/logrus"
@@ -59,6 +61,23 @@ type UserRecord struct {
 	// patChars is compiled from Host, cached for pattern match performance.
 	patChars []byte
 	patTypes []byte
+}
+
+type globalPrivRecord struct {
+	Host string
+	User string
+	Priv GlobalPriv
+
+	// patChars is compiled from Host, cached for pattern match performance.
+	patChars []byte
+	patTypes []byte
+}
+
+// GlobalPriv is store json format for priv column in mysql.global_priv.
+type GlobalPriv struct {
+	SSLType     int    `json:"ssl_type,omitempty""`
+	X509Issuer  string `json:"x509_issuer,omitempty""`
+	X509Subject string `json:"x509_subject,omitempty""`
 }
 
 type dbRecord struct {
@@ -137,6 +156,7 @@ func (g roleGraphEdgesTable) Find(user, host string) bool {
 // MySQLPrivilege is the in-memory cache of mysql privilege tables.
 type MySQLPrivilege struct {
 	User         []UserRecord
+	Global       []globalPrivRecord
 	DB           []dbRecord
 	TablesPriv   []tablesPrivRecord
 	ColumnsPriv  []columnsPrivRecord
@@ -183,6 +203,11 @@ func (p *MySQLPrivilege) FindRole(user string, host string, role *auth.RoleIdent
 // LoadAll loads the tables from database to memory.
 func (p *MySQLPrivilege) LoadAll(ctx sessionctx.Context) error {
 	err := p.LoadUserTable(ctx)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	err = p.LoadGlobalPrivTable(ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -351,6 +376,11 @@ func (p MySQLPrivilege) SortUserTable() {
 	sort.Sort(sortedUserRecord(p.User))
 }
 
+// LoadGlobalPrivTable loads the mysql.global_priv table from database.
+func (p *MySQLPrivilege) LoadGlobalPrivTable(ctx sessionctx.Context) error {
+	return p.loadTable(ctx, "select HIGH_PRIORITY Host,User,Priv from mysql.global_priv", p.decodeGlobalPrivTableRow)
+}
+
 // LoadDBTable loads the mysql.db table from database.
 func (p *MySQLPrivilege) LoadDBTable(ctx sessionctx.Context) error {
 	return p.loadTable(ctx, "select HIGH_PRIORITY Host,DB,User,Select_priv,Insert_priv,Update_priv,Delete_priv,Create_priv,Drop_priv,Grant_priv,Index_priv,Alter_priv,Execute_priv,Create_view_priv,Show_view_priv from mysql.db order by host, db, user;", p.decodeDBTableRow)
@@ -432,6 +462,29 @@ func (p *MySQLPrivilege) decodeUserTableRow(row chunk.Row, fs []*ast.ResultField
 		}
 	}
 	p.User = append(p.User, value)
+	return nil
+}
+
+func (p *MySQLPrivilege) decodeGlobalPrivTableRow(row chunk.Row, fs []*ast.ResultField) error {
+	var value globalPrivRecord
+	for i, f := range fs {
+		switch {
+		case f.ColumnAsName.L == "host":
+			value.Host = row.GetString(i)
+			value.patChars, value.patTypes = stringutil.CompilePattern(value.Host, '\\')
+		case f.ColumnAsName.L == "user":
+			value.User = row.GetString(i)
+		case f.ColumnAsName.L == "priv":
+			privData := row.GetString(i)
+			if len(privData) > 0 {
+				err := json.Unmarshal(hack.Slice(privData), &value.Priv)
+				if err != nil {
+					return errors.Trace(err)
+				}
+			}
+		}
+	}
+	p.Global = append(p.Global, value)
 	return nil
 }
 
@@ -574,6 +627,10 @@ func decodeSetToPrivilege(s types.Set) mysql.PrivilegeType {
 	return ret
 }
 
+func (record *globalPrivRecord) match(user, host string) bool {
+	return record.User == user && patternMatch(host, record.patChars, record.patTypes)
+}
+
 func (record *UserRecord) match(user, host string) bool {
 	return record.User == user && patternMatch(host, record.patChars, record.patTypes)
 }
@@ -610,6 +667,16 @@ func patternMatch(str string, patChars, patTypes []byte) bool {
 func (p *MySQLPrivilege) connectionVerification(user, host string) *UserRecord {
 	for i := 0; i < len(p.User); i++ {
 		record := &p.User[i]
+		if record.match(user, host) {
+			return record
+		}
+	}
+	return nil
+}
+
+func (p *MySQLPrivilege) matchGlobalPriv(user, host string) *globalPrivRecord {
+	for i := 0; i < len(p.Global); i++ {
+		record := &p.Global[i]
 		if record.match(user, host) {
 			return record
 		}

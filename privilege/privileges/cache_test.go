@@ -75,6 +75,25 @@ func (s *testCacheSuite) TestLoadUserTable(c *C) {
 	c.Assert(user[3].Privileges, Equals, mysql.CreateUserPriv|mysql.IndexPriv|mysql.ExecutePriv|mysql.CreateViewPriv|mysql.ShowViewPriv|mysql.ShowDBPriv|mysql.SuperPriv|mysql.TriggerPriv)
 }
 
+func (s *testCacheSuite) TestLoadGlobalPrivTable(c *C) {
+	se, err := session.CreateSession4Test(s.store)
+	c.Assert(err, IsNil)
+	defer se.Close()
+	mustExec(c, se, "use mysql;")
+	mustExec(c, se, "truncate table global_priv")
+
+	mustExec(c, se, `INSERT INTO mysql.global_priv VALUES ("%", "tu", "{\"access\":0,\"plugin\":\"mysql_native_password\",\"ssl_type\":3, \"ssl_cipher\":\"cipher\",\"x509_subject\":\"subj\", \"x509_issuer\":\"is\", \"password_last_changed\":1}")`)
+
+	var p privileges.MySQLPrivilege
+	err = p.LoadGlobalPrivTable(se)
+	c.Assert(err, IsNil)
+	c.Assert(p.Global[0].Host, Equals, `%`)
+	c.Assert(p.Global[0].User, Equals, `tu`)
+	c.Assert(p.Global[0].Priv.SSLType, Equals, 3)
+	c.Assert(p.Global[0].Priv.X509Issuer, Equals, `is`)
+	c.Assert(p.Global[0].Priv.X509Subject, Equals, "subj")
+}
+
 func (s *testCacheSuite) TestLoadDBTable(c *C) {
 	se, err := session.CreateSession4Test(s.store)
 	c.Assert(err, IsNil)

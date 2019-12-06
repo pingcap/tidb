@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"go.uber.org/zap"
@@ -656,7 +657,13 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 		}
 	}
 
+	privData, err := tslOption2GlobalPriv(s.TslOptions)
+	if err != nil {
+		return err
+	}
+
 	users := make([]string, 0, len(s.Specs))
+	privs := make([]string, 0, len(s.Specs))
 	for _, spec := range s.Specs {
 		exists, err1 := userExists(e.ctx, spec.User.Username, spec.User.Hostname)
 		if err1 != nil {
@@ -680,6 +687,11 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 			user = fmt.Sprintf(`('%s', '%s', '%s', 'Y')`, spec.User.Hostname, spec.User.Username, pwd)
 		}
 		users = append(users, user)
+
+		if len(privData) != 0 {
+			priv := fmt.Sprintf(`('%s', '%s', '%s')`, spec.User.Hostname, spec.User.Username, hack.String(privData))
+			privs = append(privs, priv)
+		}
 	}
 	if len(users) == 0 {
 		return nil
@@ -689,10 +701,19 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 	if s.IsCreateRole {
 		sql = fmt.Sprintf(`INSERT INTO %s.%s (Host, User, Password, Account_locked) VALUES %s;`, mysql.SystemDB, mysql.UserTable, strings.Join(users, ", "))
 	}
-	_, _, err := e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
+	_, _, err = e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
 	if err != nil {
 		return err
 	}
+
+	if len(privs) != 0 {
+		sql = fmt.Sprintf("INSERT IGNORE INTO %s.%s (Host, User, Priv) VALUES %s", mysql.SystemDB, mysql.GlobalPrivTable, strings.Join(privs, ", "))
+		_, _, err = e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
+		if err != nil {
+			return err
+		}
+	}
+
 	domain.GetDomain(e.ctx).NotifyUpdatePrivilege(e.ctx)
 	return err
 }
@@ -708,6 +729,11 @@ func (e *SimpleExec) executeAlterUser(s *ast.AlterUserStmt) error {
 			AuthOpt: s.CurrentAuth,
 		}
 		s.Specs = []*ast.UserSpec{spec}
+	}
+
+	privData, err := tslOption2GlobalPriv(s.TslOptions)
+	if err != nil {
+		return err
 	}
 
 	failedUsers := make([]string, 0, len(s.Specs))
@@ -734,6 +760,15 @@ func (e *SimpleExec) executeAlterUser(s *ast.AlterUserStmt) error {
 		_, _, err = e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
 		if err != nil {
 			failedUsers = append(failedUsers, spec.User.String())
+		}
+
+		if len(privData) > 0 {
+			sql = fmt.Sprintf("INSERT INTO %s.%s (Host, User, Priv) VALUES ('%s','%s','%s') ON DUPLICATE KEY UPDATE Priv = values(Priv)",
+				mysql.SystemDB, mysql.GlobalPrivTable, spec.User.Hostname, spec.User.Username, hack.String(privData))
+			_, _, err = e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
+			if err != nil {
+				failedUsers = append(failedUsers, spec.User.String())
+			}
 		}
 	}
 	if len(failedUsers) > 0 {
@@ -862,6 +897,16 @@ func (e *SimpleExec) executeDropUser(s *ast.DropUserStmt) error {
 			return err
 		}
 		sql := fmt.Sprintf(`DELETE FROM %s.%s WHERE Host = '%s' and User = '%s';`, mysql.SystemDB, mysql.UserTable, user.Hostname, user.Username)
+		if _, err := sqlExecutor.Execute(context.Background(), sql); err != nil {
+			failedUsers = append(failedUsers, user.String())
+			if _, err := sqlExecutor.Execute(context.Background(), "rollback"); err != nil {
+				return err
+			}
+			continue
+		}
+
+		// delete privileges from mysql.global_priv
+		sql = fmt.Sprintf(`DELETE FROM %s.%s WHERE Host = '%s' and User = '%s';`, mysql.SystemDB, mysql.GlobalPrivTable, user.Hostname, user.Username)
 		if _, err := sqlExecutor.Execute(context.Background(), sql); err != nil {
 			failedUsers = append(failedUsers, user.String())
 			if _, err := sqlExecutor.Execute(context.Background(), "rollback"); err != nil {

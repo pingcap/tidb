@@ -16,6 +16,7 @@ package privileges
 import (
 	"strings"
 
+	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/privilege"
@@ -120,6 +121,15 @@ func (p *UserPrivileges) ConnectionVerification(user, host string, authenticatio
 	u = record.User
 	h = record.Host
 
+	globalPriv := mysqlPriv.matchGlobalPriv(user, host)
+	if globalPriv != nil {
+		err := p.checkSSL(globalPriv)
+		logutil.BgLogger().Error("global priv check fail",
+			zap.String("user", user), zap.String("host", host), zap.Error(err))
+		success = false
+		return
+	}
+
 	// Login a locked account is not allowed.
 	locked := record.AccountLocked
 	if locked {
@@ -161,6 +171,18 @@ func (p *UserPrivileges) ConnectionVerification(user, host string, authenticatio
 	p.host = h
 	success = true
 	return
+}
+
+func (p *UserPrivileges) checkSSL(priv *globalPrivRecord) error {
+	switch priv.Priv.SSLType {
+	case ast.Ssl:
+
+	case ast.X509:
+	case 3:
+
+	}
+
+	return nil
 }
 
 // DBIsVisible implements the Manager interface.
