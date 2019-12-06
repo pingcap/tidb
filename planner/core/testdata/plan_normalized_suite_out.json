@@ -91,9 +91,9 @@
         "SQL": "SELECT /*+ TIDB_INLJ(t1, t2) */ * from t1, t2 where t1.a = t2.a and t1.c>1;",
         "Plan": [
           " IndexJoin_10       root inner join, inner:TableReader_9, outer key:test.t1.a, inner key:test.t2.a",
-          " ├─TableReader_19   root data:Selection_18",
-          " │ └─Selection_18   cop  gt(test.t1.c, ?)",
-          " │   └─TableScan_17 cop  table:t1, range:[?,?], keep order:false",
+          " ├─TableReader_30   root data:Selection_29",
+          " │ └─Selection_29   cop  gt(test.t1.c, ?)",
+          " │   └─TableScan_28 cop  table:t1, range:[?,?], keep order:false",
           " └─TableReader_9    root data:TableScan_8",
           "   └─TableScan_8    cop  table:t2, range: decided by [test.t1.a], keep order:false"
         ]
@@ -101,32 +101,32 @@
       {
         "SQL": "SELECT /*+ TIDB_HJ(t1, t2) */ * from t1, t2 where t1.a = t2.a and t1.c>1;",
         "Plan": [
-          " HashRightJoin_18   root inner join, inner:TableReader_21, equal:eq(test.t1.a, test.t2.a)",
-          " ├─TableReader_21   root data:Selection_20",
-          " │ └─Selection_20   cop  gt(test.t1.c, ?)",
-          " │   └─TableScan_19 cop  table:t1, range:[?,?], keep order:false",
-          " └─TableReader_23   root data:TableScan_22",
-          "   └─TableScan_22   cop  table:t2, range:[?,?], keep order:false"
+          " HashRightJoin_29   root inner join, inner:TableReader_32, equal:eq(test.t1.a, test.t2.a)",
+          " ├─TableReader_32   root data:Selection_31",
+          " │ └─Selection_31   cop  gt(test.t1.c, ?)",
+          " │   └─TableScan_30 cop  table:t1, range:[?,?], keep order:false",
+          " └─TableReader_34   root data:TableScan_33",
+          "   └─TableScan_33   cop  table:t2, range:[?,?], keep order:false"
         ]
       },
       {
         "SQL": "SELECT /*+ TIDB_HJ(t1, t2) */ * from t1, t2 where t1.a = t2.a and t1.c>1;",
         "Plan": [
-          " HashRightJoin_18   root inner join, inner:TableReader_21, equal:eq(test.t1.a, test.t2.a)",
-          " ├─TableReader_21   root data:Selection_20",
-          " │ └─Selection_20   cop  gt(test.t1.c, ?)",
-          " │   └─TableScan_19 cop  table:t1, range:[?,?], keep order:false",
-          " └─TableReader_23   root data:TableScan_22",
-          "   └─TableScan_22   cop  table:t2, range:[?,?], keep order:false"
+          " HashRightJoin_29   root inner join, inner:TableReader_32, equal:eq(test.t1.a, test.t2.a)",
+          " ├─TableReader_32   root data:Selection_31",
+          " │ └─Selection_31   cop  gt(test.t1.c, ?)",
+          " │   └─TableScan_30 cop  table:t1, range:[?,?], keep order:false",
+          " └─TableReader_34   root data:TableScan_33",
+          "   └─TableScan_33   cop  table:t2, range:[?,?], keep order:false"
         ]
       },
       {
         "SQL": "SELECT /*+ TIDB_INLJ(t1, t2) */ * from t1, t2 where t1.a = t2.a and t1.c>1;",
         "Plan": [
           " IndexJoin_10       root inner join, inner:TableReader_9, outer key:test.t1.a, inner key:test.t2.a",
-          " ├─TableReader_19   root data:Selection_18",
-          " │ └─Selection_18   cop  gt(test.t1.c, ?)",
-          " │   └─TableScan_17 cop  table:t1, range:[?,?], keep order:false",
+          " ├─TableReader_30   root data:Selection_29",
+          " │ └─Selection_29   cop  gt(test.t1.c, ?)",
+          " │   └─TableScan_28 cop  table:t1, range:[?,?], keep order:false",
           " └─TableReader_9    root data:TableScan_8",
           "   └─TableScan_8    cop  table:t2, range: decided by [test.t1.a], keep order:false"
         ]
