@@ -147,16 +147,16 @@ type StatementContext struct {
 
 // StmtHints are SessionVars related sql hints.
 type StmtHints struct {
+	// Hint Information
+	MemQuotaQuery           int64
+	ReplicaRead             byte
+	AllowInSubqToJoinAndAgg bool
+	NoIndexMergeHint        bool
+
 	// Hint flags
 	HasAllowInSubqToJoinAndAggHint bool
 	HasMemQuotaHint                bool
 	HasReplicaReadHint             bool
-
-	// Hint Information
-	AllowInSubqToJoinAndAgg bool
-	NoIndexMergeHint        bool
-	MemQuotaQuery           int64
-	ReplicaRead             byte
 }
 
 // GetNowTsCached getter for nowTs, if not set get now time and cache it
