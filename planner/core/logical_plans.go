@@ -515,6 +515,7 @@ func (ds *DataSource) buildIndexGather(path *util.AccessPath) LogicalPlan {
 	is.Columns = make([]*model.ColumnInfo, len(ds.Columns))
 	copy(is.Columns, ds.Columns)
 	is.SetSchema(ds.Schema())
+	is.idxCols, is.idxColLens = expression.IndexInfo2PrefixCols(is.Columns, is.schema.Columns, is.Index)
 
 	sg := TiKVSingleGather{
 		Source:        ds,

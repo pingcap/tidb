@@ -111,11 +111,9 @@ type LogicalPlan interface {
 	// cascades planner, where LogicalPlan might not record its children or schema.
 	DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema) (*property.StatsInfo, error)
 
-	// preparePossibleProperties is only used for join and aggregation. Like group by a,b,c, all permutation of (a,b,c) is
+	// PreparePossibleProperties is only used for join and aggregation. Like group by a,b,c, all permutation of (a,b,c) is
 	// valid, but the ordered indices in leaf plan is limited. So we can get all possible order properties by a pre-walking.
-	// Please make sure that children's method is called though we may not need its return value,
-	// so we can prepare possible properties for every LogicalPlan node.
-	preparePossibleProperties() [][]*expression.Column
+	PreparePossibleProperties(schema *expression.Schema, childrenProperties ...[][]*expression.Column) [][]*expression.Column
 
 	// exhaustPhysicalPlans generates all possible plans that can match the required property.
 	exhaustPhysicalPlans(*property.PhysicalProperty) []PhysicalPlan
