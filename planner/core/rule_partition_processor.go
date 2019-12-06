@@ -19,6 +19,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -93,7 +94,26 @@ func (s *partitionProcessor) rewriteDataSource(lp LogicalPlan) (LogicalPlan, err
 // partitionTable is for those tables which implement partition.
 type partitionTable interface {
 	PartitionExpr(ctx sessionctx.Context, columns []*expression.Column, names types.NameSlice) (*tables.PartitionExpr, error)
-	FastGeneratePartitionExpr(ctx sessionctx.Context, columns []*expression.Column, names types.NameSlice) (*tables.PartitionExpr, error)
+}
+
+func generateHashPartitionExpr(t table.Table, ctx sessionctx.Context, columns []*expression.Column, names types.NameSlice) (*tables.PartitionExpr, error) {
+	tblInfo := t.Meta()
+	pi := tblInfo.Partition
+	var column *expression.Column
+	schema := expression.NewSchema(columns...)
+	exprs, err := expression.ParseSimpleExprsWithNames(ctx, pi.Expr, schema, names)
+	if err != nil {
+		return nil, err
+	}
+	exprs[0].HashCode(ctx.GetSessionVars().StmtCtx)
+	if col, ok := exprs[0].(*expression.Column); ok {
+		column = col
+	}
+	return &tables.PartitionExpr{
+		Column: column,
+		Expr:   exprs[0],
+		Ranges: nil,
+	}, nil
 }
 
 func (s *partitionProcessor) prune(ds *DataSource) (LogicalPlan, error) {
@@ -106,32 +126,53 @@ func (s *partitionProcessor) prune(ds *DataSource) (LogicalPlan, error) {
 
 	// Try to locate partition directly for hash partition.
 	if pi.Type == model.PartitionTypeHash && len(filterConds) > 0 {
-		if table, ok := ds.table.(partitionTable); ok {
-			pExpr, err := table.FastGeneratePartitionExpr(ds.ctx, ds.TblCols, ds.names)
-			if err != nil {
-				return nil, err
-			}
-			pe := pExpr.Expr
-			val, ok, hasConflict := expression.FastLocateHashPartition(ds.SCtx(), filterConds, pe)
-			if hasConflict {
-				tableDual := LogicalTableDual{RowCount: 0}.Init(ds.SCtx(), ds.blockOffset)
-				tableDual.schema = ds.Schema()
-				return tableDual, nil
-			}
-			if ok {
-				idx := math.Abs(val) % int64(pi.Num)
+		pExpr, err := generateHashPartitionExpr(ds.table, ds.ctx, ds.TblCols, ds.names)
+		if err != nil {
+			return nil, err
+		}
+		pe := pExpr.Expr
+		val, ok, hasConflict := expression.FastLocateHashPartition(ds.SCtx(), filterConds, pe)
+		if hasConflict {
+			tableDual := LogicalTableDual{RowCount: 0}.Init(ds.SCtx(), ds.blockOffset)
+			tableDual.schema = ds.Schema()
+			return tableDual, nil
+		}
+		if ok {
+			idx := math.Abs(val) % int64(pi.Num)
+			newDataSource := *ds
+			newDataSource.baseLogicalPlan = newBaseLogicalPlan(ds.SCtx(), plancodec.TypeTableScan, &newDataSource, ds.blockOffset)
+			newDataSource.isPartition = true
+			newDataSource.physicalTableID = pi.Definitions[idx].ID
+			// There are many expression nodes in the plan tree use the original datasource
+			// id as FromID. So we set the id of the newDataSource with the original one to
+			// avoid traversing the whole plan tree to update the references.
+			newDataSource.id = ds.id
+			newDataSource.statisticTable = getStatsTable(ds.SCtx(), ds.table.Meta(), pi.Definitions[idx].ID)
+			pl := &newDataSource
+			return pl, nil
+		} else {
+			children := make([]LogicalPlan, 0, len(pi.Definitions))
+			for i := 0; i < len(pi.Definitions); i++ {
+				// Not a deep copy.
 				newDataSource := *ds
 				newDataSource.baseLogicalPlan = newBaseLogicalPlan(ds.SCtx(), plancodec.TypeTableScan, &newDataSource, ds.blockOffset)
 				newDataSource.isPartition = true
-				newDataSource.physicalTableID = pi.Definitions[idx].ID
+				newDataSource.physicalTableID = pi.Definitions[i].ID
+				newDataSource.possibleAccessPaths = make([]*util.AccessPath, len(ds.possibleAccessPaths))
+				for i := range ds.possibleAccessPaths {
+					newPath := *ds.possibleAccessPaths[i]
+					newDataSource.possibleAccessPaths[i] = &newPath
+				}
 				// There are many expression nodes in the plan tree use the original datasource
 				// id as FromID. So we set the id of the newDataSource with the original one to
 				// avoid traversing the whole plan tree to update the references.
 				newDataSource.id = ds.id
-				newDataSource.statisticTable = getStatsTable(ds.SCtx(), ds.table.Meta(), pi.Definitions[idx].ID)
-				pl := &newDataSource
-				return pl, nil
+				newDataSource.statisticTable = getStatsTable(ds.SCtx(), ds.table.Meta(), pi.Definitions[i].ID)
+				children = append(children, &newDataSource)
 			}
+			unionAll := LogicalUnionAll{}.Init(ds.SCtx(), ds.blockOffset)
+			unionAll.SetChildren(children...)
+			unionAll.SetSchema(ds.schema)
 		}
 	}
 
