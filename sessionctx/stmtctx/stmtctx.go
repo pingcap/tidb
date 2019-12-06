@@ -313,30 +313,12 @@ func (sc *StatementContext) WarningCount() uint16 {
 	return wc
 }
 
-const zero = "0"
-
 // NumErrorWarnings gets warning and error count.
-func (sc *StatementContext) NumErrorWarnings() (ec, wc string) {
-	var (
-		ecNum uint16
-		wcNum int
-	)
+func (sc *StatementContext) NumErrorWarnings() (ec uint16, wc int) {
 	sc.mu.Lock()
-	ecNum = sc.mu.errorCount
-	wcNum = len(sc.mu.warnings)
+	ec = sc.mu.errorCount
+	wc = len(sc.mu.warnings)
 	sc.mu.Unlock()
-
-	if ecNum == 0 {
-		ec = zero
-	} else {
-		ec = strconv.Itoa(int(ecNum))
-	}
-
-	if wcNum == 0 {
-		wc = zero
-	} else {
-		wc = strconv.Itoa(wcNum)
-	}
 	return
 }
 

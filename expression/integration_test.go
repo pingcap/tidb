@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -518,6 +519,9 @@ func (s *testIntegrationSuite2) TestMathBuiltin(c *C) {
 
 	result = tk.MustQuery(`select truncate(d, -1), truncate(d, 1), truncate(d, -2), truncate(d, 2) from t;`)
 	result.Check(testkit.Rows("10 12.3 0 12.34"))
+
+	result = tk.MustQuery(`select truncate(json_array(), 1), truncate("cascasc", 1);`)
+	result.Check(testkit.Rows("0 0"))
 
 	// for pow
 	result = tk.MustQuery("SELECT POW('12', 2), POW(1.2e1, '2.0'), POW(12, 2.0);")
@@ -3902,24 +3906,73 @@ func (s *testIntegrationSuite) TestFuncJSON(c *C) {
 	r := tk.MustQuery(`select json_type(a), json_type(b) from table_json`)
 	r.Check(testkit.Rows("OBJECT OBJECT", "ARRAY ARRAY"))
 
-	r = tk.MustQuery(`select json_unquote('hello'), json_unquote('world')`)
-	r.Check(testkit.Rows("hello world"))
+	tk.MustGetErrCode("select json_quote();", mysql.ErrWrongParamcountToNativeFct)
+	tk.MustGetErrCode("select json_quote('abc', 'def');", mysql.ErrWrongParamcountToNativeFct)
+	tk.MustGetErrCode("select json_quote(NULL, 'def');", mysql.ErrWrongParamcountToNativeFct)
+	tk.MustGetErrCode("select json_quote('abc', NULL);", mysql.ErrWrongParamcountToNativeFct)
 
-	r = tk.MustQuery(`select
-		json_quote(''),
-		json_quote('""'),
-		json_quote('a'),
-		json_quote('3'),
-		json_quote('{"a": "b"}'),
-		json_quote('{"a":     "b"}'),
-		json_quote('hello,"quoted string",world'),
-		json_quote('hello,"宽字符",world'),
-		json_quote('Invalid Json string	is OK'),
-		json_quote('1\u2232\u22322')
-	`)
-	r.Check(testkit.Rows(
-		`"" "\"\"" "a" "3" "{\"a\": \"b\"}" "{\"a\":     \"b\"}" "hello,\"quoted string\",world" "hello,\"宽字符\",world" "Invalid Json string\tis OK" "1u2232u22322"`,
-	))
+	tk.MustGetErrCode("select json_unquote();", mysql.ErrWrongParamcountToNativeFct)
+	tk.MustGetErrCode("select json_unquote('abc', 'def');", mysql.ErrWrongParamcountToNativeFct)
+	tk.MustGetErrCode("select json_unquote(NULL, 'def');", mysql.ErrWrongParamcountToNativeFct)
+	tk.MustGetErrCode("select json_unquote('abc', NULL);", mysql.ErrWrongParamcountToNativeFct)
+
+	tk.MustQuery("select json_quote(NULL);").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("select json_unquote(NULL);").Check(testkit.Rows("<nil>"))
+
+	tk.MustQuery("select json_quote('abc');").Check(testkit.Rows(`"abc"`))
+	tk.MustQuery(`select json_quote(convert('"abc"' using ascii));`).Check(testkit.Rows(`"\"abc\""`))
+	tk.MustQuery(`select json_quote(convert('"abc"' using latin1));`).Check(testkit.Rows(`"\"abc\""`))
+	tk.MustQuery(`select json_quote(convert('"abc"' using utf8));`).Check(testkit.Rows(`"\"abc\""`))
+	tk.MustQuery(`select json_quote(convert('"abc"' using utf8mb4));`).Check(testkit.Rows(`"\"abc\""`))
+
+	tk.MustQuery("select json_unquote('abc');").Check(testkit.Rows("abc"))
+	tk.MustQuery(`select json_unquote('"abc"');`).Check(testkit.Rows("abc"))
+	tk.MustQuery(`select json_unquote(convert('"abc"' using ascii));`).Check(testkit.Rows("abc"))
+	tk.MustQuery(`select json_unquote(convert('"abc"' using latin1));`).Check(testkit.Rows("abc"))
+	tk.MustQuery(`select json_unquote(convert('"abc"' using utf8));`).Check(testkit.Rows("abc"))
+	tk.MustQuery(`select json_unquote(convert('"abc"' using utf8mb4));`).Check(testkit.Rows("abc"))
+
+	tk.MustQuery(`select json_quote('"');`).Check(testkit.Rows(`"\""`))
+	tk.MustQuery(`select json_unquote('"');`).Check(testkit.Rows(`"`))
+
+	tk.MustQuery(`select json_unquote('""');`).Check(testkit.Rows(``))
+	tk.MustQuery(`select char_length(json_unquote('""'));`).Check(testkit.Rows(`0`))
+	tk.MustQuery(`select json_unquote('"" ');`).Check(testkit.Rows(`"" `))
+	tk.MustQuery(`select json_unquote(cast(json_quote('abc') as json));`).Check(testkit.Rows("abc"))
+
+	tk.MustQuery(`select json_unquote(cast('{"abc": "foo"}' as json));`).Check(testkit.Rows(`{"abc": "foo"}`))
+	tk.MustQuery(`select json_unquote(json_extract(cast('{"abc": "foo"}' as json), '$.abc'));`).Check(testkit.Rows("foo"))
+	tk.MustQuery(`select json_unquote('["a", "b", "c"]');`).Check(testkit.Rows(`["a", "b", "c"]`))
+	tk.MustQuery(`select json_unquote(cast('["a", "b", "c"]' as json));`).Check(testkit.Rows(`["a", "b", "c"]`))
+	tk.MustQuery(`select json_quote(convert(X'e68891' using utf8));`).Check(testkit.Rows(`"我"`))
+	tk.MustQuery(`select json_quote(convert(X'e68891' using utf8mb4));`).Check(testkit.Rows(`"我"`))
+	tk.MustQuery(`select cast(json_quote(convert(X'e68891' using utf8)) as json);`).Check(testkit.Rows(`"我"`))
+	tk.MustQuery(`select json_unquote(convert(X'e68891' using utf8));`).Check(testkit.Rows("我"))
+
+	tk.MustQuery(`select json_quote(json_quote(json_quote('abc')));`).Check(testkit.Rows(`"\"\\\"abc\\\"\""`))
+	tk.MustQuery(`select json_unquote(json_unquote(json_unquote(json_quote(json_quote(json_quote('abc'))))));`).Check(testkit.Rows("abc"))
+
+	tk.MustGetErrCode("select json_quote(123)", mysql.ErrIncorrectType)
+	tk.MustGetErrCode("select json_quote(-100)", mysql.ErrIncorrectType)
+	tk.MustGetErrCode("select json_quote(123.123)", mysql.ErrIncorrectType)
+	tk.MustGetErrCode("select json_quote(-100.000)", mysql.ErrIncorrectType)
+	tk.MustGetErrCode(`select json_quote(true);`, mysql.ErrIncorrectType)
+	tk.MustGetErrCode(`select json_quote(false);`, mysql.ErrIncorrectType)
+	tk.MustGetErrCode(`select json_quote(cast("{}" as JSON));`, mysql.ErrIncorrectType)
+	tk.MustGetErrCode(`select json_quote(cast("[]" as JSON));`, mysql.ErrIncorrectType)
+	tk.MustGetErrCode(`select json_quote(cast("2015-07-29" as date));`, mysql.ErrIncorrectType)
+	tk.MustGetErrCode(`select json_quote(cast("12:18:29.000000" as time));`, mysql.ErrIncorrectType)
+	tk.MustGetErrCode(`select json_quote(cast("2015-07-29 12:18:29.000000" as datetime));`, mysql.ErrIncorrectType)
+
+	tk.MustGetErrCode("select json_unquote(123)", mysql.ErrIncorrectType)
+	tk.MustGetErrCode("select json_unquote(-100)", mysql.ErrIncorrectType)
+	tk.MustGetErrCode("select json_unquote(123.123)", mysql.ErrIncorrectType)
+	tk.MustGetErrCode("select json_unquote(-100.000)", mysql.ErrIncorrectType)
+	tk.MustGetErrCode(`select json_unquote(true);`, mysql.ErrIncorrectType)
+	tk.MustGetErrCode(`select json_unquote(false);`, mysql.ErrIncorrectType)
+	tk.MustGetErrCode(`select json_unquote(cast("2015-07-29" as date));`, mysql.ErrIncorrectType)
+	tk.MustGetErrCode(`select json_unquote(cast("12:18:29.000000" as time));`, mysql.ErrIncorrectType)
+	tk.MustGetErrCode(`select json_unquote(cast("2015-07-29 12:18:29.000000" as datetime));`, mysql.ErrIncorrectType)
 
 	r = tk.MustQuery(`select json_extract(a, '$.a[1]'), json_extract(b, '$.b') from table_json`)
 	r.Check(testkit.Rows("\"2\" true", "<nil> <nil>"))
@@ -5146,4 +5199,95 @@ func (s *testIntegrationSuite) TestDecodetoChunkReuse(c *C) {
 	}
 	c.Assert(count, Equals, 200)
 	rs.Close()
+}
+
+func (s *testIntegrationSuite) TestHiddenColumn(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("CREATE DATABASE test_hidden;")
+	tk.MustExec("USE test_hidden;")
+	tk.MustExec("CREATE TABLE hidden (a int primary key, b int, c int, d int, e int);")
+	tk.MustExec("insert into hidden values (1, 2, 3, 4, 5);")
+	tb, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test_hidden"), model.NewCIStr("hidden"))
+	c.Assert(err, IsNil)
+	colInfo := tb.Meta().Columns
+	// Set column b, d to hidden
+	colInfo[1].Hidden = true
+	colInfo[3].Hidden = true
+	tc := tb.(*tables.TableCommon)
+	// Reset related caches
+	tc.PublicColumns = nil
+	tc.WritableColumns = nil
+
+	// Basic test
+	cols := tb.Cols()
+	c.Assert(table.FindCol(cols, "a"), NotNil)
+	c.Assert(table.FindCol(cols, "b"), IsNil)
+	c.Assert(table.FindCol(cols, "c"), NotNil)
+	c.Assert(table.FindCol(cols, "d"), IsNil)
+	c.Assert(table.FindCol(cols, "e"), NotNil)
+	hiddenCols := tc.HiddenCols()
+	c.Assert(table.FindCol(hiddenCols, "a"), IsNil)
+	c.Assert(table.FindCol(hiddenCols, "b"), NotNil)
+	c.Assert(table.FindCol(hiddenCols, "c"), IsNil)
+	c.Assert(table.FindCol(hiddenCols, "d"), NotNil)
+	c.Assert(table.FindCol(hiddenCols, "e"), IsNil)
+
+	// Can't select with b and d
+	tk.MustQuery("select * from hidden;").Check(testkit.Rows("1 3 5"))
+	_, err = tk.Exec("select b from hidden;")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[planner:1054]Unknown column 'b' in 'field list'")
+	_, err = tk.Exec("select d from hidden;")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[planner:1054]Unknown column 'd' in 'field list'")
+	err = tk.QueryToErr("select a, c, e from hidden;")
+	c.Assert(err, IsNil)
+	_, err = tk.Exec("select d from hidden;")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[planner:1054]Unknown column 'd' in 'field list'")
+	_, err = tk.Exec("select * from hidden where b>1;")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[planner:1054]Unknown column 'b' in 'where clause'")
+	_, err = tk.Exec("select * from hidden order by b;")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[planner:1054]Unknown column 'b' in 'order clause'")
+	_, err = tk.Exec("select * from hidden group by b;")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[planner:1054]Unknown column 'b' in 'group statement'")
+
+	// Can't update with b and d
+	_, err = tk.Exec("update hidden set d=1;")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[planner:1054]Unknown column 'd' in 'field_list'")
+	_, err = tk.Exec("update hidden set a=1 where b=1;")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[planner:1054]Unknown column 'b' in 'where clause'")
+	_, err = tk.Exec("update hidden set a=1 where c=2 order by b;")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[planner:1054]Unknown column 'b' in 'order clause'")
+
+	// Can't delete with b and d
+	_, err = tk.Exec("delete from hidden where b=1;")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[planner:1054]Unknown column 'b' in 'where clause'")
+	_, err = tk.Exec("delete from hidden order by d;")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[planner:1054]Unknown column 'd' in 'order clause'")
+
+	// Can't drop column b and d
+	_, err = tk.Exec("ALTER TABLE hidden DROP COLUMN b")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:1091]column b doesn't exist")
+	_, err = tk.Exec("ALTER TABLE hidden DROP COLUMN d")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:1091]column d doesn't exist")
+
+	// Test show create table
+	tk.MustQuery("show create table hidden;").Check(testkit.Rows(
+		"hidden CREATE TABLE `hidden` (\n" +
+			"  `a` int(11) NOT NULL,\n" +
+			"  `c` int(11) DEFAULT NULL,\n" +
+			"  `e` int(11) DEFAULT NULL,\n" +
+			"  PRIMARY KEY (`a`)\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 }
