@@ -14,9 +14,9 @@
 package cascades
 
 import (
-	"github.com/pingcap/parser/model"
 	"math"
 
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/expression"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	impl "github.com/pingcap/tidb/planner/implementation"

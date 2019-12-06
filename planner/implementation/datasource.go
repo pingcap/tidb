@@ -176,8 +176,8 @@ func NewIndexScanImpl(scan *plannercore.PhysicalIndexScan, tblColHists *statisti
 type IndexLookUpReaderImpl struct {
 	baseImpl
 
-	KeepOrder          bool
-	tblColHists        *statistics.HistColl
+	KeepOrder   bool
+	tblColHists *statistics.HistColl
 }
 
 // NewIndexLookUpReaderImpl creates a new table reader Implementation.
