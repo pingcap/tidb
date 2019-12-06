@@ -1219,11 +1219,17 @@ func (b *builtinNowWithoutArgSig) vecEvalTime(input *chunk.Chunk, result *chunk.
 }
 
 func (b *builtinTimestampLiteralSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinTimestampLiteralSig) vecEvalTime(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	result.ResizeTime(n, false)
+	times := result.Times()
+	for i := range times {
+		times[i] = b.tm
+	}
+	return nil
 }
 
 func (b *builtinMakeDateSig) vectorized() bool {
