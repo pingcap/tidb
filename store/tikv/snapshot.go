@@ -214,7 +214,7 @@ func (s *tikvSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, coll
 			NotFillCache: s.notFillCache,
 		})
 
-		resp, _, _, err := cli.SendReqCtx(bo, req, batch.region, ReadTimeoutMedium, kv.TiKV)
+		resp, _, _, err := cli.SendReqCtx(bo, req, batch.region, ReadTimeoutMedium, kv.TiKV, "")
 
 		if err != nil {
 			return errors.Trace(err)
@@ -323,7 +323,7 @@ func (s *tikvSnapshot) get(bo *Backoffer, k kv.Key) ([]byte, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		resp, _, _, err := cli.SendReqCtx(bo, req, loc.Region, readTimeoutShort, kv.TiKV)
+		resp, _, _, err := cli.SendReqCtx(bo, req, loc.Region, readTimeoutShort, kv.TiKV, "")
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
