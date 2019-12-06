@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/memory"
@@ -826,4 +827,68 @@ type mockPlan struct {
 
 func (mp *mockPlan) GetExecutor() Executor {
 	return mp.exec
+}
+
+func (s *testExecSuite) TestVecGroupCheckerDATARACE(c *C) {
+	ctx := mock.NewContext()
+
+	mTypes := []byte{mysql.TypeVarString, mysql.TypeNewDecimal, mysql.TypeJSON}
+	for _, mType := range mTypes {
+		exprs := make([]expression.Expression, 1)
+		exprs[0] = &expression.Column{
+			RetType: &types.FieldType{Tp: mType},
+			Index:   0,
+		}
+		vgc := newVecGroupChecker(ctx, exprs)
+
+		fts := []*types.FieldType{types.NewFieldType(mType)}
+		chk := chunk.New(fts, 1, 1)
+		vgc.allocateBuffer = func(evalType types.EvalType, capacity int) (*chunk.Column, error) {
+			return chk.Column(0), nil
+		}
+		vgc.releaseBuffer = func(column *chunk.Column) {}
+
+		switch mType {
+		case mysql.TypeVarString:
+			chk.Column(0).ReserveString(1)
+			chk.Column(0).AppendString("abc")
+		case mysql.TypeNewDecimal:
+			chk.Column(0).ResizeDecimal(1, false)
+			chk.Column(0).Decimals()[0] = *types.NewDecFromInt(123)
+		case mysql.TypeJSON:
+			chk.Column(0).ReserveJSON(1)
+			j := new(json.BinaryJSON)
+			c.Assert(j.UnmarshalJSON([]byte(fmt.Sprintf(`{"%v":%v}`, 123, 123))), IsNil)
+			chk.Column(0).AppendJSON(*j)
+		}
+
+		_, err := vgc.splitIntoGroups(chk)
+		c.Assert(err, IsNil)
+
+		switch mType {
+		case mysql.TypeVarString:
+			c.Assert(vgc.firstRowDatums[0].GetString(), Equals, "abc")
+			c.Assert(vgc.lastRowDatums[0].GetString(), Equals, "abc")
+			chk.Column(0).ReserveString(1)
+			chk.Column(0).AppendString("edf")
+			c.Assert(vgc.firstRowDatums[0].GetString(), Equals, "abc")
+			c.Assert(vgc.lastRowDatums[0].GetString(), Equals, "abc")
+		case mysql.TypeNewDecimal:
+			c.Assert(vgc.firstRowDatums[0].GetMysqlDecimal().String(), Equals, "123")
+			c.Assert(vgc.lastRowDatums[0].GetMysqlDecimal().String(), Equals, "123")
+			chk.Column(0).ResizeDecimal(1, false)
+			chk.Column(0).Decimals()[0] = *types.NewDecFromInt(456)
+			c.Assert(vgc.firstRowDatums[0].GetMysqlDecimal().String(), Equals, "123")
+			c.Assert(vgc.lastRowDatums[0].GetMysqlDecimal().String(), Equals, "123")
+		case mysql.TypeJSON:
+			c.Assert(vgc.firstRowDatums[0].GetMysqlJSON().String(), Equals, `{"123": 123}`)
+			c.Assert(vgc.lastRowDatums[0].GetMysqlJSON().String(), Equals, `{"123": 123}`)
+			chk.Column(0).ReserveJSON(1)
+			j := new(json.BinaryJSON)
+			c.Assert(j.UnmarshalJSON([]byte(fmt.Sprintf(`{"%v":%v}`, 456, 456))), IsNil)
+			chk.Column(0).AppendJSON(*j)
+			c.Assert(vgc.firstRowDatums[0].GetMysqlJSON().String(), Equals, `{"123": 123}`)
+			c.Assert(vgc.lastRowDatums[0].GetMysqlJSON().String(), Equals, `{"123": 123}`)
+		}
+	}
 }
