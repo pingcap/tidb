@@ -500,7 +500,7 @@ func (p *preprocessor) checkCreateIndexGrammar(stmt *ast.CreateIndexStmt) {
 		p.err = ddl.ErrWrongTableName.GenWithStackByArgs(tName)
 		return
 	}
-	p.err = checkIndexInfo(stmt.IndexName, stmt.IndexColNames)
+	p.err = checkIndexInfo(stmt.IndexName, stmt.IndexColNameWithExprs)
 }
 
 func (p *preprocessor) checkRenameTableGrammar(stmt *ast.RenameTableStmt) {
@@ -578,10 +578,10 @@ func (p *preprocessor) checkAlterTableGrammar(stmt *ast.AlterTableStmt) {
 }
 
 // checkDuplicateColumnName checks if index exists duplicated columns.
-func checkDuplicateColumnName(indexColNames []*ast.IndexColName) error {
-	colNames := make(map[string]struct{}, len(indexColNames))
-	for _, indexColName := range indexColNames {
-		name := indexColName.Column.Name
+func checkDuplicateColumnName(IndexColNameWithExprs []*ast.IndexColNameWithExpr) error {
+	colNames := make(map[string]struct{}, len(IndexColNameWithExprs))
+	for _, IndexColNameWithExpr := range IndexColNameWithExprs {
+		name := IndexColNameWithExpr.Column.Name
 		if _, ok := colNames[name.L]; ok {
 			return infoschema.ErrColumnExists.GenWithStackByArgs(name)
 		}
@@ -591,14 +591,14 @@ func checkDuplicateColumnName(indexColNames []*ast.IndexColName) error {
 }
 
 // checkIndexInfo checks index name and index column names.
-func checkIndexInfo(indexName string, indexColNames []*ast.IndexColName) error {
+func checkIndexInfo(indexName string, IndexColNameWithExprs []*ast.IndexColNameWithExpr) error {
 	if strings.EqualFold(indexName, mysql.PrimaryKeyName) {
 		return ddl.ErrWrongNameForIndex.GenWithStackByArgs(indexName)
 	}
-	if len(indexColNames) > mysql.MaxKeyParts {
+	if len(IndexColNameWithExprs) > mysql.MaxKeyParts {
 		return infoschema.ErrTooManyKeyParts.GenWithStackByArgs(mysql.MaxKeyParts)
 	}
-	return checkDuplicateColumnName(indexColNames)
+	return checkDuplicateColumnName(IndexColNameWithExprs)
 }
 
 // checkColumn checks if the column definition is valid.
