@@ -176,8 +176,8 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 				Flag:    mysql.BinaryFlag,
 			}},
 			geners: []dataGenerator{
-				&timeStrGener{},
-				&timeStrGener{},
+				&dateStrGener{},
+				&dateStrGener{},
 			},
 		},
 		// builtinSubTimeStringNullSig
@@ -220,15 +220,15 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 	},
 	ast.Timestamp: {
 		{retEvalType: types.ETDatetime, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{new(dateTimeStrGener)}},
-		{retEvalType: types.ETDatetime, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{new(timeStrGener)}},
 		{retEvalType: types.ETDatetime, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{new(dateStrGener)}},
+		{retEvalType: types.ETDatetime, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{new(timeStrGener)}},
 		{retEvalType: types.ETDatetime, childrenTypes: []types.EvalType{types.ETString}},
 		{retEvalType: types.ETDatetime, childrenTypes: []types.EvalType{types.ETString, types.ETString},
-			geners: []dataGenerator{new(dateTimeStrGener), new(dateStrGener)}},
+			geners: []dataGenerator{new(dateTimeStrGener), new(timeStrGener)}},
 		{retEvalType: types.ETDatetime, childrenTypes: []types.EvalType{types.ETString, types.ETString},
 			geners: []dataGenerator{new(dateTimeStrGener), nil}},
 		{retEvalType: types.ETDatetime, childrenTypes: []types.EvalType{types.ETString, types.ETString},
-			geners: []dataGenerator{nil, new(dateStrGener)}},
+			geners: []dataGenerator{nil, new(timeStrGener)}},
 	},
 	ast.MonthName: {
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETDatetime}},
@@ -278,31 +278,31 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 		{
 			retEvalType:   types.ETDatetime,
 			childrenTypes: []types.EvalType{types.ETString, types.ETString},
-			geners:        []dataGenerator{&timeStrGener{}, &constStrGener{"%y-%m-%d"}},
+			geners:        []dataGenerator{&dateStrGener{}, &constStrGener{"%y-%m-%d"}},
 		},
 		{
 			retEvalType:   types.ETDatetime,
 			childrenTypes: []types.EvalType{types.ETString, types.ETString},
-			geners:        []dataGenerator{&timeStrGener{NullRation: 0.3}, nil},
+			geners:        []dataGenerator{&dateStrGener{NullRation: 0.3}, nil},
 			constants:     []*Constant{nil, {Value: types.NewDatum("%Y-%m-%d"), RetType: types.NewFieldType(mysql.TypeString)}},
 		},
 		{
 			retEvalType:   types.ETDatetime,
 			childrenTypes: []types.EvalType{types.ETString, types.ETString},
-			geners:        []dataGenerator{&timeStrGener{}, nil},
+			geners:        []dataGenerator{&dateStrGener{}, nil},
 			// "%y%m%d" is wrong format, STR_TO_DATE should be failed for all rows
 			constants: []*Constant{nil, {Value: types.NewDatum("%y%m%d"), RetType: types.NewFieldType(mysql.TypeString)}},
 		},
 		{
 			retEvalType:   types.ETDuration,
 			childrenTypes: []types.EvalType{types.ETString, types.ETString},
-			geners:        []dataGenerator{&dateStrGener{nullRation: 0.3}, nil},
+			geners:        []dataGenerator{&timeStrGener{nullRation: 0.3}, nil},
 			constants:     []*Constant{nil, {Value: types.NewDatum("%H:%i:%s"), RetType: types.NewFieldType(mysql.TypeString)}},
 		},
 		{
 			retEvalType:   types.ETDuration,
 			childrenTypes: []types.EvalType{types.ETString, types.ETString},
-			geners:        []dataGenerator{&dateStrGener{nullRation: 0.3}, nil},
+			geners:        []dataGenerator{&timeStrGener{nullRation: 0.3}, nil},
 			// "%H%i%s" is wrong format, STR_TO_DATE should be failed for all rows
 			constants: []*Constant{nil, {Value: types.NewDatum("%H%i%s"), RetType: types.NewFieldType(mysql.TypeString)}},
 		},
