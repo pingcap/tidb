@@ -81,10 +81,11 @@ var (
 	errInvalidDDLJob         = terror.ClassDDL.New(mysql.ErrInvalidDDLJob, mysql.MySQLErrName[mysql.ErrInvalidDDLJob])
 	errCancelledDDLJob       = terror.ClassDDL.New(mysql.ErrCancelledDDLJob, mysql.MySQLErrName[mysql.ErrCancelledDDLJob])
 	errFileNotFound          = terror.ClassDDL.New(mysql.ErrFileNotFound, mysql.MySQLErrName[mysql.ErrFileNotFound])
-	errInvalidDDLJobFlag     = terror.ClassDDL.New(mysql.ErrInvalidDDLJobFlag, mysql.MySQLErrName[mysql.ErrInvalidDDLJobFlag])
 	errRunMultiSchemaChanges = terror.ClassDDL.New(mysql.ErrUnsupportedDDLOperation, fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation], "multi schema change"))
 	errWaitReorgTimeout      = terror.ClassDDL.New(mysql.ErrLockWaitTimeout, mysql.MySQLErrName[mysql.ErrWaitReorgTimeout])
 	errInvalidStoreVer       = terror.ClassDDL.New(mysql.ErrInvalidStoreVersion, mysql.MySQLErrName[mysql.ErrInvalidStoreVersion])
+	// ErrRepairTableFail is used to repair tableInfo in repair mode.
+	ErrRepairTableFail = terror.ClassDDL.New(mysql.ErrRepairTable, mysql.MySQLErrName[mysql.ErrRepairTable])
 
 	// We don't support dropping column with index covered now.
 	errCantDropColWithIndex      = terror.ClassDDL.New(mysql.ErrUnsupportedDDLOperation, fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation], "drop column with index"))
@@ -245,6 +246,7 @@ type DDL interface {
 	UnlockTables(ctx sessionctx.Context, lockedTables []model.TableLockTpInfo) error
 	CleanupTableLock(ctx sessionctx.Context, tables []*ast.TableName) error
 	UpdateTableReplicaInfo(ctx sessionctx.Context, tid int64, available bool) error
+	RepairTable(ctx sessionctx.Context, table *ast.TableName, createStmt *ast.CreateTableStmt) error
 
 	// GetLease returns current schema lease time.
 	GetLease() time.Duration
@@ -456,7 +458,7 @@ func (d *ddl) start(ctx context.Context, ctxPool *pools.ResourcePool) {
 					metrics.PanicCounter.WithLabelValues(metrics.LabelDDLSyncer).Inc()
 				}
 			})
-		metrics.DDLCounter.WithLabelValues(fmt.Sprintf("%s", metrics.StartCleanWork)).Inc()
+		metrics.DDLCounter.WithLabelValues(metrics.StartCleanWork).Inc()
 	}
 }
 
@@ -544,7 +546,7 @@ func (d *ddl) GetID() string {
 func checkJobMaxInterval(job *model.Job) time.Duration {
 	// The job of adding index takes more time to process.
 	// So it uses the longer time.
-	if job.Type == model.ActionAddIndex {
+	if job.Type == model.ActionAddIndex || job.Type == model.ActionAddPrimaryKey {
 		return 3 * time.Second
 	}
 	if job.Type == model.ActionCreateTable || job.Type == model.ActionCreateSchema {
@@ -559,7 +561,7 @@ func (d *ddl) asyncNotifyWorker(jobTp model.ActionType) {
 		return
 	}
 
-	if jobTp == model.ActionAddIndex {
+	if jobTp == model.ActionAddIndex || jobTp == model.ActionAddPrimaryKey {
 		asyncNotify(d.workers[addIdxWorker].ddlJobCh)
 	} else {
 		asyncNotify(d.workers[generalWorker].ddlJobCh)

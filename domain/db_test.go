@@ -27,8 +27,6 @@ type dbTestSuite struct{}
 
 var _ = Suite(&dbTestSuite{})
 
-var suite = new(dbTestSuite)
-
 func (ts *dbTestSuite) TestIntegration(c *C) {
 	var err error
 	lease := 50 * time.Millisecond

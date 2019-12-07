@@ -29,6 +29,7 @@ import (
 	"github.com/BurntSushi/toml"
 	"github.com/pingcap/errors"
 	zaplog "github.com/pingcap/log"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/util/logutil"
 	tracing "github.com/uber/jaeger-client-go/config"
 	"go.uber.org/atomic"
@@ -38,7 +39,7 @@ import (
 const (
 	MaxLogFileSize = 4096 // MB
 	// DefTxnTotalSizeLimit is the default value of TxnTxnTotalSizeLimit.
-	DefTxnTotalSizeLimit = 100 * 1024 * 1024
+	DefTxnTotalSizeLimit = 1024 * 1024 * 1024
 )
 
 // Valid config maps
@@ -74,8 +75,8 @@ type Config struct {
 	TxnLocalLatches  TxnLocalLatches `toml:"txn-local-latches" json:"txn-local-latches"`
 	// Set sys variable lower-case-table-names, ref: https://dev.mysql.com/doc/refman/5.7/en/identifier-case-sensitivity.html.
 	// TODO: We actually only support mode 2, which keeps the original case, but the comparison is case-insensitive.
-	LowerCaseTableNames int `toml:"lower-case-table-names" json:"lower-case-table-names"`
-
+	LowerCaseTableNames int               `toml:"lower-case-table-names" json:"lower-case-table-names"`
+	ServerVersion       string            `toml:"server-version" json:"server-version"`
 	Log                 Log               `toml:"log" json:"log"`
 	Security            Security          `toml:"security" json:"security"`
 	Status              Status            `toml:"status" json:"status"`
@@ -89,6 +90,8 @@ type Config struct {
 	Plugin              Plugin            `toml:"plugin" json:"plugin"`
 	PessimisticTxn      PessimisticTxn    `toml:"pessimistic-txn" json:"pessimistic-txn"`
 	CheckMb4ValueInUTF8 bool              `toml:"check-mb4-value-in-utf8" json:"check-mb4-value-in-utf8"`
+	// AlterPrimaryKey is used to control alter primary key feature.
+	AlterPrimaryKey bool `toml:"alter-primary-key" json:"alter-primary-key"`
 	// TreatOldVersionUTF8AsUTF8MB4 is use to treat old version table/column UTF8 charset as UTF8MB4. This is for compatibility.
 	// Currently not support dynamic modify, because this need to reload all old version schema.
 	TreatOldVersionUTF8AsUTF8MB4 bool `toml:"treat-old-version-utf8-as-utf8mb4" json:"treat-old-version-utf8-as-utf8mb4"`
@@ -98,6 +101,9 @@ type Config struct {
 	DelayCleanTableLock uint64      `toml:"delay-clean-table-lock" json:"delay-clean-table-lock"`
 	SplitRegionMaxNum   uint64      `toml:"split-region-max-num" json:"split-region-max-num"`
 	StmtSummary         StmtSummary `toml:"stmt-summary" json:"stmt-summary"`
+	// RepairMode indicates that the TiDB is in the repair mode for table meta.
+	RepairMode      bool     `toml:"repair-mode" json:"repair-mode"`
+	RepairTableList []string `toml:"repair-table-list" json:"repair-table-list"`
 }
 
 // nullableBool defaults unset bool options to unset instead of false, which enables us to know if the user has set 2
@@ -151,9 +157,9 @@ func (b *nullableBool) UnmarshalJSON(data []byte) error {
 	if err = json.Unmarshal(data, &v); err != nil {
 		return err
 	}
-	switch v.(type) {
+	switch raw := v.(type) {
 	case bool:
-		*b = nullableBool{true, v.(bool)}
+		*b = nullableBool{true, raw}
 	default:
 		*b = nbUnset
 	}
@@ -376,6 +382,9 @@ type TiKVClient struct {
 	// If a Region has not been accessed for more than the given duration (in seconds), it
 	// will be reloaded from the PD.
 	RegionCacheTTL uint `toml:"region-cache-ttl" json:"region-cache-ttl"`
+	// If a store has been up to the limit, it will return error for successive request to
+	// prevent the store occupying too much token in dispatching level.
+	StoreLimit int64 `toml:"store-limit" json:"store-limit"`
 }
 
 // Binlog is the config for binlog.
@@ -430,15 +439,19 @@ var defaultConf = Config{
 	EnableStreaming:              false,
 	EnableBatchDML:               false,
 	CheckMb4ValueInUTF8:          true,
+	AlterPrimaryKey:              false,
 	TreatOldVersionUTF8AsUTF8MB4: true,
 	EnableTableLock:              false,
 	DelayCleanTableLock:          0,
 	SplitRegionMaxNum:            1000,
+	RepairMode:                   false,
+	RepairTableList:              []string{},
 	TxnLocalLatches: TxnLocalLatches{
 		Enabled:  false,
 		Capacity: 2048000,
 	},
 	LowerCaseTableNames: 2,
+	ServerVersion:       "",
 	Log: Log{
 		Level:               "info",
 		Format:              "text",
@@ -505,6 +518,7 @@ var defaultConf = Config{
 		EnableChunkRPC: true,
 
 		RegionCacheTTL: 600,
+		StoreLimit:     0,
 	},
 	Binlog: Binlog{
 		WriteTimeout: "15s",
@@ -628,10 +642,12 @@ func collectsDiff(i1, i2 interface{}, fieldPath string) map[string][]interface{}
 // Load loads config options from a toml file.
 func (c *Config) Load(confFile string) error {
 	metaData, err := toml.DecodeFile(confFile, c)
-	if c.TokenLimit <= 0 {
+	if c.TokenLimit == 0 {
 		c.TokenLimit = 1000
 	}
-
+	if len(c.ServerVersion) > 0 {
+		mysql.ServerVersion = c.ServerVersion
+	}
 	// If any items in confFile file are not mapped into the Config struct, issue
 	// an error and stop the server from starting.
 	undecoded := metaData.Undecoded()
@@ -649,10 +665,14 @@ func (c *Config) Load(confFile string) error {
 // Valid checks if this config is valid.
 func (c *Config) Valid() error {
 	if c.Log.EnableErrorStack == c.Log.DisableErrorStack && c.Log.EnableErrorStack != nbUnset {
-		return fmt.Errorf("\"enable-error-stack\" (%v) conflicts \"disable-error-stack\" (%v). \"disable-error-stack\" is deprecated, please use \"enable-error-stack\" instead", c.Log.EnableErrorStack, c.Log.DisableErrorStack)
+		logutil.BgLogger().Warn(fmt.Sprintf("\"enable-error-stack\" (%v) conflicts \"disable-error-stack\" (%v). \"disable-error-stack\" is deprecated, please use \"enable-error-stack\" instead. disable-error-stack is ignored.", c.Log.EnableErrorStack, c.Log.DisableErrorStack))
+		// if two options conflict, we will use the value of EnableErrorStack
+		c.Log.DisableErrorStack = nbUnset
 	}
 	if c.Log.EnableTimestamp == c.Log.DisableTimestamp && c.Log.EnableTimestamp != nbUnset {
-		return fmt.Errorf("\"enable-timestamp\" (%v) conflicts \"disable-timestamp\" (%v). \"disable-timestamp\" is deprecated, please use \"enable-timestamp\" instead", c.Log.EnableTimestamp, c.Log.DisableTimestamp)
+		logutil.BgLogger().Warn(fmt.Sprintf("\"enable-timestamp\" (%v) conflicts \"disable-timestamp\" (%v). \"disable-timestamp\" is deprecated, please use \"enable-timestamp\" instead", c.Log.EnableTimestamp, c.Log.DisableTimestamp))
+		// if two options conflict, we will use the value of EnableTimestamp
+		c.Log.DisableTimestamp = nbUnset
 	}
 	if c.Security.SkipGrantTable && !hasRootPrivilege() {
 		return fmt.Errorf("TiDB run with skip-grant-table need root privilege")
@@ -689,6 +709,10 @@ func (c *Config) Valid() error {
 	// For tikvclient.
 	if c.TiKVClient.GrpcConnectionCount == 0 {
 		return fmt.Errorf("grpc-connection-count should be greater than 0")
+	}
+
+	if c.Performance.TxnTotalSizeLimit > (10 << 30) {
+		return fmt.Errorf("txn-total-size-limit should be less than %d", 10<<30)
 	}
 	return nil
 }

@@ -27,9 +27,11 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/store/mockstore"
@@ -61,7 +63,7 @@ PARTITION BY RANGE ( a ) (
 	}
 	tk.MustExec("analyze table t")
 
-	is := executor.GetInfoSchema(tk.Se.(sessionctx.Context))
+	is := infoschema.GetInfoSchema(tk.Se.(sessionctx.Context))
 	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 	pi := table.Meta().GetPartitionInfo()
@@ -88,7 +90,7 @@ PARTITION BY RANGE ( a ) (
 		tk.MustExec(fmt.Sprintf(`insert into t values (%d, %d, "hello")`, i, i))
 	}
 	tk.MustExec("alter table t analyze partition p0")
-	is = executor.GetInfoSchema(tk.Se.(sessionctx.Context))
+	is = infoschema.GetInfoSchema(tk.Se.(sessionctx.Context))
 	table, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 	pi = table.Meta().GetPartitionInfo()
@@ -138,7 +140,7 @@ func (s *testSuite1) TestAnalyzeParameters(c *C) {
 
 	tk.MustExec("set @@tidb_enable_fast_analyze = 1")
 	tk.MustExec("analyze table t with 30 samples")
-	is := executor.GetInfoSchema(tk.Se.(sessionctx.Context))
+	is := infoschema.GetInfoSchema(tk.Se.(sessionctx.Context))
 	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 	tableInfo := table.Meta()
@@ -169,7 +171,7 @@ func (s *testSuite1) TestAnalyzeTooLongColumns(c *C) {
 	tk.MustExec(fmt.Sprintf("insert into t values ('%s')", value))
 
 	tk.MustExec("analyze table t")
-	is := executor.GetInfoSchema(tk.Se.(sessionctx.Context))
+	is := infoschema.GetInfoSchema(tk.Se.(sessionctx.Context))
 	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 	tableInfo := table.Meta()
@@ -185,11 +187,13 @@ func (s *testFastAnalyze) TestAnalyzeFastSample(c *C) {
 		mockstore.WithCluster(cluster),
 	)
 	c.Assert(err, IsNil)
+	defer store.Close()
 	var dom *domain.Domain
 	session.DisableStats4Test()
 	session.SetSchemaLease(0)
 	dom, err = session.BootstrapSession(store)
 	c.Assert(err, IsNil)
+	defer dom.Close()
 	tk := testkit.NewTestKit(c, store)
 	executor.RandSeed = 123
 
@@ -242,14 +246,33 @@ func (s *testFastAnalyze) TestAnalyzeFastSample(c *C) {
 	c.Assert(len(mockExec.Collectors), Equals, 3)
 	for i := 0; i < 2; i++ {
 		vals = append(vals, make([]string, 0))
-		c.Assert(len(mockExec.Collectors[i].Samples), Equals, 20)
-		for j := 0; j < 20; j++ {
-			s, err := mockExec.Collectors[i].Samples[j].Value.ToString()
+		samples := mockExec.Collectors[i].Samples
+		c.Assert(len(samples), Equals, 20)
+		for j := 1; j < 20; j++ {
+			cmp, err := samples[j].Value.CompareDatum(tk.Se.GetSessionVars().StmtCtx, &samples[j-1].Value)
 			c.Assert(err, IsNil)
-			vals[i] = append(vals[i], s)
+			c.Assert(cmp, Greater, 0)
 		}
 	}
-	c.Assert(fmt.Sprintln(vals), Equals, "[[1 2 16 19 20 22 23 24 25 28 29 31 34 39 42 43 44 45 57 59] [1 2 16 19 20 22 23 24 25 28 29 31 34 39 42 43 44 45 57 59]]\n")
+}
+
+func checkHistogram(sc *stmtctx.StatementContext, hg *statistics.Histogram) (bool, error) {
+	for i := 0; i < len(hg.Buckets); i++ {
+		lower, upper := hg.GetLower(i), hg.GetUpper(i)
+		cmp, err := upper.CompareDatum(sc, lower)
+		if cmp < 0 || err != nil {
+			return false, err
+		}
+		if i == 0 {
+			continue
+		}
+		previousUpper := hg.GetUpper(i - 1)
+		cmp, err = lower.CompareDatum(sc, previousUpper)
+		if cmp <= 0 || err != nil {
+			return false, err
+		}
+	}
+	return true, nil
 }
 
 func (s *testFastAnalyze) TestFastAnalyze(c *C) {
@@ -259,11 +282,13 @@ func (s *testFastAnalyze) TestFastAnalyze(c *C) {
 		mockstore.WithCluster(cluster),
 	)
 	c.Assert(err, IsNil)
+	defer store.Close()
 	var dom *domain.Domain
 	session.DisableStats4Test()
 	session.SetSchemaLease(0)
 	dom, err = session.BootstrapSession(store)
 	c.Assert(err, IsNil)
+	defer dom.Close()
 	tk := testkit.NewTestKit(c, store)
 	executor.RandSeed = 123
 
@@ -287,26 +312,22 @@ func (s *testFastAnalyze) TestFastAnalyze(c *C) {
 	}
 	tk.MustExec("analyze table t with 5 buckets, 6 samples")
 
-	is := executor.GetInfoSchema(tk.Se.(sessionctx.Context))
+	is := infoschema.GetInfoSchema(tk.Se.(sessionctx.Context))
 	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 	tableInfo := table.Meta()
 	tbl := dom.StatsHandle().GetTableStats(tableInfo)
-	c.Assert(tbl.String(), Equals, "Table:43 Count:20\n"+
-		"column:1 ndv:20 totColSize:0\n"+
-		"num: 6 lower_bound: 3 upper_bound: 15 repeats: 1\n"+
-		"num: 7 lower_bound: 18 upper_bound: 33 repeats: 1\n"+
-		"num: 7 lower_bound: 39 upper_bound: 57 repeats: 1\n"+
-		"column:2 ndv:20 totColSize:0\n"+
-		"num: 6 lower_bound: 3 upper_bound: 15 repeats: 1\n"+
-		"num: 7 lower_bound: 18 upper_bound: 33 repeats: 1\n"+
-		"num: 7 lower_bound: 39 upper_bound: 57 repeats: 1\n"+
-		"column:3 ndv:1 totColSize:72\n"+
-		"num: 20 lower_bound: char upper_bound: char repeats: 18\n"+
-		"index:1 ndv:20\n"+
-		"num: 6 lower_bound: 3 upper_bound: 15 repeats: 1\n"+
-		"num: 7 lower_bound: 18 upper_bound: 33 repeats: 1\n"+
-		"num: 7 lower_bound: 39 upper_bound: 57 repeats: 1")
+	c.Assert(tbl.Count, Equals, int64(20))
+	for _, col := range tbl.Columns {
+		ok, err := checkHistogram(tk.Se.GetSessionVars().StmtCtx, &col.Histogram)
+		c.Assert(err, IsNil)
+		c.Assert(ok, IsTrue)
+	}
+	for _, idx := range tbl.Indices {
+		ok, err := checkHistogram(tk.Se.GetSessionVars().StmtCtx, &idx.Histogram)
+		c.Assert(err, IsNil)
+		c.Assert(ok, IsTrue)
+	}
 
 	// Test CM Sketch built from fast analyze.
 	tk.MustExec("create table t1(a int, b int, index idx(a, b))")
@@ -396,26 +417,6 @@ func (s *testSuite1) testAnalyzeIncremental(tk *testkit.TestKit, c *C) {
 }
 
 type testFastAnalyze struct {
-	store   kv.Storage
-	dom     *domain.Domain
-	cluster *mocktikv.Cluster
-}
-
-func (s *testFastAnalyze) SetUpSuite(c *C) {
-	var err error
-	s.cluster = mocktikv.NewCluster()
-	mocktikv.BootstrapWithSingleStore(s.cluster)
-	s.store, err = mockstore.NewMockTikvStore()
-	c.Assert(err, IsNil)
-	session.DisableStats4Test()
-	session.SetSchemaLease(0)
-	s.dom, err = session.BootstrapSession(s.store)
-	c.Assert(err, IsNil)
-}
-
-func (s *testFastAnalyze) TearDownSuite(c *C) {
-	s.dom.Close()
-	s.store.Close()
 }
 
 type regionProperityClient struct {
@@ -457,8 +458,10 @@ func (s *testFastAnalyze) TestFastAnalyzeRetryRowCount(c *C) {
 		mockstore.WithMVCCStore(mvccStore),
 	)
 	c.Assert(err, IsNil)
+	defer store.Close()
 	dom, err := session.BootstrapSession(store)
 	c.Assert(err, IsNil)
+	defer dom.Close()
 
 	tk := testkit.NewTestKit(c, store)
 	tk.MustExec("use test")

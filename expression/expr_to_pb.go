@@ -186,12 +186,32 @@ func ToPBFieldType(ft *types.FieldType) *tipb.FieldType {
 	}
 }
 
+// FieldTypeFromPB converts *tipb.FieldType to *types.FieldType.
+func FieldTypeFromPB(ft *tipb.FieldType) *types.FieldType {
+	return &types.FieldType{
+		Tp:      byte(ft.Tp),
+		Flag:    uint(ft.Flag),
+		Flen:    int(ft.Flen),
+		Decimal: int(ft.Decimal),
+		Charset: ft.Charset,
+		Collate: protoToCollation(ft.Collate),
+	}
+}
+
 func collationToProto(c string) int32 {
 	v, ok := mysql.CollationNames[c]
 	if ok {
 		return int32(v)
 	}
 	return int32(mysql.DefaultCollationID)
+}
+
+func protoToCollation(c int32) string {
+	v, ok := mysql.Collations[uint8(c)]
+	if ok {
+		return v
+	}
+	return mysql.DefaultCollationName
 }
 
 func (pc PbConverter) columnToPBExpr(column *Column) *tipb.Expr {
@@ -306,10 +326,17 @@ func (pc PbConverter) canFuncBePushed(sf *ScalarFunction) bool {
 
 	switch sf.FuncName.L {
 	case
-		// logical functions.
+		// op functions.
 		ast.LogicAnd,
 		ast.LogicOr,
+		ast.LogicXor,
 		ast.UnaryNot,
+		ast.And,
+		ast.Or,
+		ast.Xor,
+		ast.BitNeg,
+		ast.LeftShift,
+		ast.RightShift,
 
 		// compare functions.
 		ast.LT,
@@ -331,15 +358,46 @@ func (pc PbConverter) canFuncBePushed(sf *ScalarFunction) bool {
 		ast.Mul,
 		ast.Div,
 		ast.Abs,
+
+		// math functions.
 		ast.Ceil,
 		ast.Ceiling,
 		ast.Floor,
+		ast.Sqrt,
+		ast.Sign,
+		ast.Ln,
+		ast.Log,
+		ast.Log2,
+		ast.Log10,
+		ast.Exp,
+		ast.Sin,
+		ast.Asin,
+		ast.Cos,
+		ast.Acos,
+		ast.Tan,
+		ast.Atan,
+		ast.Atan2,
+		ast.Cot,
+		ast.Radians,
+		ast.Degrees,
+		ast.CRC32,
 
 		// control flow functions.
 		ast.Case,
 		ast.If,
 		ast.Ifnull,
 		ast.Coalesce,
+
+		// string functions.
+		ast.Length,
+		ast.BitLength,
+		ast.Concat,
+		ast.Locate,
+		ast.ASCII,
+		ast.Reverse,
+		ast.LTrim,
+		ast.RTrim,
+		ast.Left,
 
 		// json functions.
 		ast.JSONType,

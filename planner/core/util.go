@@ -185,7 +185,8 @@ func buildLogicalJoinSchema(joinType JoinType, join LogicalPlan) *expression.Sch
 	return newSchema
 }
 
-func buildPhysicalJoinSchema(joinType JoinType, join PhysicalPlan) *expression.Schema {
+// BuildPhysicalJoinSchema builds the schema of PhysicalJoin from it's children's schema.
+func BuildPhysicalJoinSchema(joinType JoinType, join PhysicalPlan) *expression.Schema {
 	switch joinType {
 	case SemiJoin, AntiSemiJoin:
 		return join.Children()[0].Schema().Clone()

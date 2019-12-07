@@ -31,11 +31,10 @@ type IndexIterator interface {
 
 // CreateIdxOpt contains the options will be used when creating an index.
 type CreateIdxOpt struct {
-	SkipHandleCheck   bool // If true, skip the handle constraint check.
-	SkipCheck         bool // If true, skip all the unique indices constraint check.
-	kv.AssertionProto      // If not nil, check assertion.
-	Ctx               context.Context
-	Untouched         bool // If true, the index key/value is no need to commit.
+	SkipHandleCheck bool // If true, skip the handle constraint check.
+	SkipCheck       bool // If true, skip all the unique indices constraint check.
+	Ctx             context.Context
+	Untouched       bool // If true, the index key/value is no need to commit.
 }
 
 // CreateIdxOptFunc is defined for the Create() method of Index interface.
@@ -51,13 +50,6 @@ var SkipHandleCheck CreateIdxOptFunc = func(opt *CreateIdxOpt) {
 // SkipCheck is a defined value of CreateIdxFunc.
 var SkipCheck CreateIdxOptFunc = func(opt *CreateIdxOpt) {
 	opt.SkipCheck = true
-}
-
-// WithAssertion returns a CreateIdxFunc.
-func WithAssertion(x kv.AssertionProto) CreateIdxOptFunc {
-	return func(opt *CreateIdxOpt) {
-		opt.AssertionProto = x
-	}
 }
 
 // IndexIsUntouched uses to indicate the index kv is untouched.
@@ -80,7 +72,7 @@ type Index interface {
 	// Create supports insert into statement.
 	Create(ctx sessionctx.Context, rm kv.RetrieverMutator, indexedValues []types.Datum, h int64, opts ...CreateIdxOptFunc) (int64, error)
 	// Delete supports delete from statement.
-	Delete(sc *stmtctx.StatementContext, m kv.Mutator, indexedValues []types.Datum, h int64, ss kv.Transaction) error
+	Delete(sc *stmtctx.StatementContext, m kv.Mutator, indexedValues []types.Datum, h int64) error
 	// Drop supports drop table, drop index statements.
 	Drop(rm kv.RetrieverMutator) error
 	// Exist supports check index exists or not.

@@ -15,12 +15,14 @@ package planner
 
 import (
 	"context"
+	"fmt"
 	"math"
 	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/format"
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
@@ -30,6 +32,9 @@ import (
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
+	driver "github.com/pingcap/tidb/types/parser_driver"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 )
 
 // Optimize does optimization and creates a Plan.
@@ -46,8 +51,11 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	sctx.PrepareTxnFuture(ctx)
 
 	bestPlan, names, _, err := optimize(ctx, sctx, node, is)
-	if err != nil || !sctx.GetSessionVars().UsePlanBaselines {
-		return bestPlan, names, err
+	if err != nil {
+		return nil, nil, err
+	}
+	if !(sctx.GetSessionVars().UsePlanBaselines || sctx.GetSessionVars().EvolvePlanBaselines) {
+		return bestPlan, names, nil
 	}
 	stmtNode, ok := node.(ast.StmtNode)
 	if !ok {
@@ -58,8 +66,9 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 		return bestPlan, names, nil
 	}
 	bestPlanHint := plannercore.GenHintsFromPhysicalPlan(bestPlan)
+	binding := bindRecord.FindBinding(bestPlanHint)
 	// If the best bestPlan is in baselines, just use it.
-	if bindRecord.FindUsingBinding(bestPlanHint) != nil {
+	if binding != nil && binding.Status == bindinfo.Using {
 		return bestPlan, names, nil
 	}
 	bestCostAmongHints := math.MaxFloat64
@@ -75,7 +84,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 		plan, _, cost, err := optimize(ctx, sctx, node, is)
 		if err != nil {
 			binding.Status = bindinfo.Invalid
-			handleInvalidBindRecord(sctx, scope, bindinfo.BindRecord{
+			handleInvalidBindRecord(ctx, sctx, scope, bindinfo.BindRecord{
 				OriginalSQL: bindRecord.OriginalSQL,
 				Db:          bindRecord.Db,
 				Bindings:    []bindinfo.Binding{binding},
@@ -87,10 +96,13 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 			bestPlanAmongHints = plan
 		}
 	}
+	// If there is already a evolution task, we do not need to handle it again.
+	if sctx.GetSessionVars().EvolvePlanBaselines && binding == nil {
+		handleEvolveTasks(ctx, sctx, bindRecord, stmtNode, bestPlanHint)
+	}
 	// Restore the hint to avoid changing the stmt node.
 	bindinfo.BindHint(stmtNode, originHints)
-	// TODO: Evolve the plan baselines using best plan.
-	if bestPlanAmongHints != nil {
+	if sctx.GetSessionVars().UsePlanBaselines && bestPlanAmongHints != nil {
 		return bestPlanAmongHints, names, nil
 	}
 	return bestPlan, names, nil
@@ -154,7 +166,7 @@ func extractSelectAndNormalizeDigest(stmtNode ast.StmtNode) (*ast.SelectStmt, st
 			normalizeExplainSQL := parser.Normalize(x.Text())
 			idx := strings.Index(normalizeExplainSQL, "select")
 			normalizeSQL := normalizeExplainSQL[idx:]
-			hash := parser.DigestHash(normalizeSQL)
+			hash := parser.DigestNormalized(normalizeSQL)
 			return x.Stmt.(*ast.SelectStmt), normalizeSQL, hash
 		}
 	case *ast.SelectStmt:
@@ -189,15 +201,68 @@ func getBindRecord(ctx sessionctx.Context, stmt ast.StmtNode) (*bindinfo.BindRec
 	return bindRecord, metrics.ScopeGlobal
 }
 
-func handleInvalidBindRecord(sctx sessionctx.Context, level string, bindRecord bindinfo.BindRecord) {
+func handleInvalidBindRecord(ctx context.Context, sctx sessionctx.Context, level string, bindRecord bindinfo.BindRecord) {
 	sessionHandle := sctx.Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
-	sessionHandle.DropBindRecord(&bindRecord)
+	// The first two parameters are only used to generate hints, but since we already have the hints,
+	// we do not need to pass real values and the error won't happen too.
+	err := sessionHandle.DropBindRecord(nil, nil, &bindRecord)
+	if err != nil {
+		logutil.Logger(ctx).Info("drop session bindings failed")
+	}
 	if level == metrics.ScopeSession {
 		return
 	}
 
 	globalHandle := domain.GetDomain(sctx).BindHandle()
 	globalHandle.AddDropInvalidBindTask(&bindRecord)
+}
+
+func handleEvolveTasks(ctx context.Context, sctx sessionctx.Context, br *bindinfo.BindRecord, stmtNode ast.StmtNode, planHint string) {
+	// If would be nil for very simple cases such as point get, we do not need to evolve for them.
+	if planHint == "" {
+		return
+	}
+	paramChecker := &paramMarkerChecker{}
+	stmtNode.Accept(paramChecker)
+	// We need to evolve on current sql, but we cannot restore values for paramMarkers yet,
+	// so just ignore them now.
+	if paramChecker.hasParamMarker {
+		return
+	}
+	// We need to evolve plan based on the current sql, not the original sql which may have different parameters.
+	// So here we would remove the hint and inject the current best plan hint.
+	bindinfo.BindHint(stmtNode, &bindinfo.HintsSet{})
+	var sb strings.Builder
+	restoreCtx := format.NewRestoreCtx(format.DefaultRestoreFlags, &sb)
+	err := stmtNode.Restore(restoreCtx)
+	if err != nil {
+		logutil.Logger(ctx).Info("Restore SQL failed", zap.Error(err))
+	}
+	bindSQL := sb.String()
+	selectIdx := strings.Index(bindSQL, "SELECT")
+	// Remove possible `explain` prefix.
+	bindSQL = bindSQL[selectIdx:]
+	bindsql := strings.Replace(bindSQL, "SELECT", fmt.Sprintf("SELECT /*+ %s*/", planHint), 1)
+	globalHandle := domain.GetDomain(sctx).BindHandle()
+	charset, collation := sctx.GetSessionVars().GetCharsetInfo()
+	binding := bindinfo.Binding{BindSQL: bindsql, Status: bindinfo.PendingVerify, Charset: charset, Collation: collation}
+	globalHandle.AddEvolvePlanTask(br.OriginalSQL, br.Db, binding, planHint)
+}
+
+type paramMarkerChecker struct {
+	hasParamMarker bool
+}
+
+func (e *paramMarkerChecker) Enter(in ast.Node) (ast.Node, bool) {
+	if _, ok := in.(*driver.ParamMarkerExpr); ok {
+		e.hasParamMarker = true
+		return in, true
+	}
+	return in, false
+}
+
+func (e *paramMarkerChecker) Leave(in ast.Node) (ast.Node, bool) {
+	return in, true
 }
 
 // isPointGetWithoutDoubleRead returns true when meets following conditions:

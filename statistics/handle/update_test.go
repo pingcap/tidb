@@ -1245,11 +1245,11 @@ func (s *testStatsSuite) TestNeedAnalyzeTable(c *C) {
 		},
 	}
 	for _, test := range tests {
-		start, err := time.ParseInLocation(variable.AnalyzeFullTimeFormat, test.start, time.UTC)
+		start, err := time.ParseInLocation(variable.FullDayTimeFormat, test.start, time.UTC)
 		c.Assert(err, IsNil)
-		end, err := time.ParseInLocation(variable.AnalyzeFullTimeFormat, test.end, time.UTC)
+		end, err := time.ParseInLocation(variable.FullDayTimeFormat, test.end, time.UTC)
 		c.Assert(err, IsNil)
-		now, err := time.ParseInLocation(variable.AnalyzeFullTimeFormat, test.now, time.UTC)
+		now, err := time.ParseInLocation(variable.FullDayTimeFormat, test.now, time.UTC)
 		c.Assert(err, IsNil)
 		needAnalyze, reason := handle.NeedAnalyzeTable(test.tbl, test.limit, test.ratio, start, end, now)
 		c.Assert(needAnalyze, Equals, test.result)

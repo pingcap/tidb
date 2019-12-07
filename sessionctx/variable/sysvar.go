@@ -16,6 +16,7 @@ package variable
 import (
 	"strconv"
 	"strings"
+	"sync/atomic"
 
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
@@ -406,7 +407,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal | ScopeSession, "binlog_format", "STATEMENT"},
 	{ScopeGlobal | ScopeSession, "optimizer_trace", "enabled=off,one_line=off"},
 	{ScopeGlobal | ScopeSession, "read_rnd_buffer_size", "262144"},
-	{ScopeNone, "version_comment", "MySQL Community Server (Apache License 2.0)"},
+	{ScopeNone, "version_comment", "TiDB Server (Apache License 2.0), MySQL 5.7 compatible"},
 	{ScopeGlobal | ScopeSession, NetWriteTimeout, "60"},
 	{ScopeGlobal, InnodbBufferPoolLoadAbort, "0"},
 	{ScopeGlobal | ScopeSession, TxnIsolation, "REPEATABLE-READ"},
@@ -647,6 +648,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal | ScopeSession, TiDBOptDescScanFactor, strconv.FormatFloat(DefOptDescScanFactor, 'f', -1, 64)},
 	{ScopeGlobal | ScopeSession, TiDBOptSeekFactor, strconv.FormatFloat(DefOptSeekFactor, 'f', -1, 64)},
 	{ScopeGlobal | ScopeSession, TiDBOptMemoryFactor, strconv.FormatFloat(DefOptMemoryFactor, 'f', -1, 64)},
+	{ScopeGlobal | ScopeSession, TiDBOptDiskFactor, strconv.FormatFloat(DefOptDiskFactor, 'f', -1, 64)},
 	{ScopeGlobal | ScopeSession, TiDBOptConcurrencyFactor, strconv.FormatFloat(DefOptConcurrencyFactor, 'f', -1, 64)},
 	{ScopeGlobal | ScopeSession, TiDBIndexJoinBatchSize, strconv.Itoa(DefIndexJoinBatchSize)},
 	{ScopeGlobal | ScopeSession, TiDBIndexLookupSize, strconv.Itoa(DefIndexLookupSize)},
@@ -716,9 +718,15 @@ var defaultSysVars = []*SysVar{
 	{ScopeSession, TiDBReplicaRead, "leader"},
 	{ScopeSession, TiDBAllowRemoveAutoInc, BoolToIntStr(DefTiDBAllowRemoveAutoInc)},
 	{ScopeGlobal | ScopeSession, TiDBEnableStmtSummary, "0"},
+	{ScopeGlobal | ScopeSession, TiDBStmtSummaryRefreshInterval, strconv.Itoa(DefTiDBStmtSummaryRefreshInterval)},
 	{ScopeGlobal | ScopeSession, TiDBCapturePlanBaseline, "0"},
 	{ScopeGlobal | ScopeSession, TiDBUsePlanBaselines, BoolToIntStr(DefTiDBUsePlanBaselines)},
-	{ScopeGlobal | ScopeSession, TiDBIsolationReadEngines, "tikv,tiflash"},
+	{ScopeGlobal | ScopeSession, TiDBEvolvePlanBaselines, BoolToIntStr(DefTiDBEvolvePlanBaselines)},
+	{ScopeGlobal, TiDBEvolvePlanTaskMaxTime, strconv.Itoa(DefTiDBEvolvePlanTaskMaxTime)},
+	{ScopeGlobal, TiDBEvolvePlanTaskStartTime, DefTiDBEvolvePlanTaskStartTime},
+	{ScopeGlobal, TiDBEvolvePlanTaskEndTime, DefTiDBEvolvePlanTaskEndTime},
+	{ScopeGlobal | ScopeSession, TiDBIsolationReadEngines, "tikv,tiflash,tidb"},
+	{ScopeGlobal | ScopeSession, TiDBStoreLimit, strconv.FormatInt(atomic.LoadInt64(&config.GetGlobalConfig().TiKVClient.StoreLimit), 10)},
 }
 
 // SynonymsSysVariables is synonyms of system variables.

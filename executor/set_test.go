@@ -388,6 +388,18 @@ func (s *testSuite5) TestSetVar(c *C) {
 	tk.MustQuery("select @@tidb_record_plan_in_slow_log;").Check(testkit.Rows("1"))
 	tk.MustExec("set @@tidb_record_plan_in_slow_log = 0")
 	tk.MustQuery("select @@tidb_record_plan_in_slow_log;").Check(testkit.Rows("0"))
+
+	tk.MustQuery("select @@tidb_store_limit;").Check(testkit.Rows("0"))
+	tk.MustExec("set @@tidb_store_limit = 100")
+	tk.MustQuery("select @@tidb_store_limit;").Check(testkit.Rows("100"))
+	tk.MustQuery("select @@session.tidb_store_limit;").Check(testkit.Rows("100"))
+	tk.MustQuery("select @@global.tidb_store_limit;").Check(testkit.Rows("0"))
+	tk.MustExec("set @@tidb_store_limit = 0")
+
+	tk.MustExec("set global tidb_store_limit = 100")
+	tk.MustQuery("select @@tidb_store_limit;").Check(testkit.Rows("0"))
+	tk.MustQuery("select @@session.tidb_store_limit;").Check(testkit.Rows("0"))
+	tk.MustQuery("select @@global.tidb_store_limit;").Check(testkit.Rows("100"))
 }
 
 func (s *testSuite5) TestSetCharset(c *C) {

@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/kv"
@@ -48,6 +49,7 @@ var dummySlice = make([]byte, 0)
 type dagContext struct {
 	dagReq    *tipb.DAGRequest
 	keyRanges []*coprocessor.KeyRange
+	startTS   uint64
 	evalCtx   *evalContext
 }
 
@@ -115,6 +117,7 @@ func (h *rpcHandler) buildDAGExecutor(req *coprocessor.Request) (*dagContext, ex
 	ctx := &dagContext{
 		dagReq:    dagReq,
 		keyRanges: req.Ranges,
+		startTS:   req.StartTs,
 		evalCtx:   &evalContext{sc: sc},
 	}
 	e, err := h.buildDAG(ctx, dagReq.Executors)
@@ -128,11 +131,7 @@ func (h *rpcHandler) buildDAGExecutor(req *coprocessor.Request) (*dagContext, ex
 // is set, the daylight saving problem must be considered. Otherwise the
 // timezone offset in seconds east of UTC is used to constructed the timezone.
 func constructTimeZone(name string, offset int) (*time.Location, error) {
-	if name != "" {
-		return timeutil.LoadLocation(name)
-	}
-
-	return time.FixedZone("", offset), nil
+	return timeutil.ConstructTimeZone(name, offset)
 }
 
 func (h *rpcHandler) handleCopStream(ctx context.Context, req *coprocessor.Request) (tikvpb.Tikv_CoprocessorStreamClient, error) {
@@ -196,12 +195,17 @@ func (h *rpcHandler) buildTableScan(ctx *dagContext, executor *tipb.Executor) (*
 		return nil, errors.Trace(err)
 	}
 
+	startTS := ctx.startTS
+	if startTS == 0 {
+		startTS = ctx.dagReq.GetStartTsFallback()
+	}
 	e := &tableScanExec{
 		TableScan:      executor.TblScan,
 		kvRanges:       ranges,
 		colIDs:         ctx.evalCtx.colIDs,
-		startTS:        ctx.dagReq.GetStartTs(),
+		startTS:        startTS,
 		isolationLevel: h.isolationLevel,
+		resolvedLocks:  h.resolvedLocks,
 		mvccStore:      h.mvccStore,
 		execDetail:     new(execDetail),
 	}
@@ -234,12 +238,17 @@ func (h *rpcHandler) buildIndexScan(ctx *dagContext, executor *tipb.Executor) (*
 		return nil, errors.Trace(err)
 	}
 
+	startTS := ctx.startTS
+	if startTS == 0 {
+		startTS = ctx.dagReq.GetStartTsFallback()
+	}
 	e := &indexScanExec{
 		IndexScan:      executor.IdxScan,
 		kvRanges:       ranges,
 		colsLen:        len(columns),
-		startTS:        ctx.dagReq.GetStartTs(),
+		startTS:        startTS,
 		isolationLevel: h.isolationLevel,
+		resolvedLocks:  h.resolvedLocks,
 		mvccStore:      h.mvccStore,
 		pkStatus:       pkStatus,
 		execDetail:     new(execDetail),
@@ -572,6 +581,9 @@ func (h *rpcHandler) fillUpData4SelectResponse(selResp *tipb.SelectResponse, dag
 	case tipb.EncodeType_TypeDefault:
 		h.encodeDefault(selResp, rows, dagReq.OutputOffsets)
 	case tipb.EncodeType_TypeChunk:
+		if dagReq.GetChunkMemoryLayout().GetEndian() != distsql.GetSystemEndian() {
+			return errors.Errorf("Mocktikv endian must be the same as TiDB system endian.")
+		}
 		colTypes := h.constructRespSchema(dagCtx)
 		loc := dagCtx.evalCtx.sc.TimeZone
 		err := h.encodeChunk(selResp, rows, colTypes, dagReq.OutputOffsets, loc)

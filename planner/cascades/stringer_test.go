@@ -51,13 +51,13 @@ func (s *testStringerSuite) TearDownSuite(c *C) {
 }
 
 func (s *testStringerSuite) TestGroupStringer(c *C) {
-	s.optimizer.ResetTransformationRules(map[memo.Operand][]TransformationID{
+	s.optimizer.ResetTransformationRules(map[memo.Operand][]Transformation{
 		memo.OperandSelection: {
-			rulePushSelDownTableGather,
-			rulePushSelDownTableScan,
+			NewRulePushSelDownTiKVSingleGather(),
+			NewRulePushSelDownTableScan(),
 		},
 		memo.OperandDataSource: {
-			ruleEnumeratePaths,
+			NewRuleEnumeratePaths(),
 		},
 	})
 	defer func() {
@@ -78,9 +78,10 @@ func (s *testStringerSuite) TestGroupStringer(c *C) {
 		c.Assert(ok, IsTrue)
 		logic, err = s.optimizer.onPhasePreprocessing(s.sctx, logic)
 		c.Assert(err, IsNil)
-		group := convert2Group(logic)
+		group := memo.Convert2Group(logic)
 		err = s.optimizer.onPhaseExploration(s.sctx, group)
 		c.Assert(err, IsNil)
+		group.BuildKeyInfo()
 		s.testData.OnRecord(func() {
 			output[i].SQL = sql
 			output[i].Result = ToString(group)

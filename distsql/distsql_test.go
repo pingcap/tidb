@@ -489,7 +489,7 @@ func BenchmarkSelectResponseChunk_BigResponse(b *testing.B) {
 		selectResult.Fetch(context.TODO())
 		chk := chunk.NewChunkWithCapacity(colTypes, 1024)
 		b.StartTimer()
-		for true {
+		for {
 			err := selectResult.Next(context.TODO(), chk)
 			if err != nil {
 				panic(err)
@@ -514,7 +514,7 @@ func BenchmarkSelectResponseChunk_SmallResponse(b *testing.B) {
 		selectResult.Fetch(context.TODO())
 		chk := chunk.NewChunkWithCapacity(colTypes, 1024)
 		b.StartTimer()
-		for true {
+		for {
 			err := selectResult.Next(context.TODO(), chk)
 			if err != nil {
 				panic(err)

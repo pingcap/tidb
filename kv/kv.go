@@ -161,7 +161,6 @@ type MemBuffer interface {
 // This is not thread safe.
 type Transaction interface {
 	MemBuffer
-	AssertionProto
 	// Commit commits the transaction operations to KV store.
 	Commit(context.Context) error
 	// Rollback undoes the transaction operations to KV store.
@@ -169,7 +168,8 @@ type Transaction interface {
 	// String implements fmt.Stringer interface.
 	String() string
 	// LockKeys tries to lock the entries with the keys in KV store.
-	LockKeys(ctx context.Context, killed *uint32, forUpdateTS uint64, lockWaitTime int64, keys ...Key) error
+	LockKeys(ctx context.Context, killed *uint32, forUpdateTS uint64,
+		lockWaitTime int64, waitStartTime time.Time, keys ...Key) error
 	// SetOption sets an option with a value, when val is nil, uses the default
 	// value of this option.
 	SetOption(opt Option, val interface{})
@@ -191,14 +191,6 @@ type Transaction interface {
 	// If a key doesn't exist, there shouldn't be any corresponding entry in the result map.
 	BatchGet(ctx context.Context, keys []Key) (map[string][]byte, error)
 	IsPessimistic() bool
-}
-
-// AssertionProto is an interface defined for the assertion protocol.
-type AssertionProto interface {
-	// SetAssertion sets an assertion for an operation on the key.
-	SetAssertion(key Key, assertion AssertionType)
-	// Confirm assertions to current position if `succ` is true, reset position otherwise.
-	ConfirmAssertions(succ bool)
 }
 
 // Client is used to send request to KV layer.
@@ -235,12 +227,16 @@ const (
 	TiKV StoreType = iota
 	// TiFlash means the type of a store is TiFlash.
 	TiFlash
+	// TiDB means the type of a store is TiDB.
+	TiDB
 )
 
 // Name returns the name of store type.
 func (t StoreType) Name() string {
 	if t == TiFlash {
 		return "tiflash"
+	} else if t == TiDB {
+		return "tidb"
 	}
 	return "tikv"
 }
@@ -309,9 +305,6 @@ type Snapshot interface {
 	Retriever
 	// BatchGet gets a batch of values from snapshot.
 	BatchGet(ctx context.Context, keys []Key) (map[string][]byte, error)
-	// SetPriority snapshot set the priority
-	SetPriority(priority int)
-
 	// SetOption sets an option with a value, when val is nil, uses the default
 	// value of this option. Only ReplicaRead is supported for snapshot
 	SetOption(opt Option, val interface{})
@@ -368,8 +361,8 @@ type Iterator interface {
 	Close()
 }
 
-// SplitableStore is the kv store which supports split regions.
-type SplitableStore interface {
+// SplittableStore is the kv store which supports split regions.
+type SplittableStore interface {
 	SplitRegions(ctx context.Context, splitKey [][]byte, scatter bool) (regionID []uint64, err error)
 	WaitScatterRegionFinish(regionID uint64, backOff int) error
 	CheckRegionInScattering(regionID uint64) (bool, error)

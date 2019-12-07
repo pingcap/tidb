@@ -97,6 +97,9 @@ func eliminatePhysicalProjection(p PhysicalPlan) PhysicalPlan {
 	newCols := newRoot.Schema().Columns
 	for i, oldCol := range oldSchema.Columns {
 		oldCol.Index = newCols[i].Index
+		oldCol.ID = newCols[i].ID
+		oldCol.UniqueID = newCols[i].UniqueID
+		oldCol.VirtualExpr = newCols[i].VirtualExpr
 		newRoot.Schema().Columns[i] = oldCol
 	}
 	return newRoot
@@ -212,7 +215,7 @@ func (p *LogicalSelection) replaceExprColumns(replace map[string]*expression.Col
 
 func (la *LogicalApply) replaceExprColumns(replace map[string]*expression.Column) {
 	la.LogicalJoin.replaceExprColumns(replace)
-	for _, coCol := range la.corCols {
+	for _, coCol := range la.CorCols {
 		dst := replace[string(coCol.Column.HashCode(nil))]
 		if dst != nil {
 			coCol.Column = *dst

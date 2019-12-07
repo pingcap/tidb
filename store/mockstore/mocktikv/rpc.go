@@ -153,6 +153,7 @@ type rpcHandler struct {
 	rawEndKey   []byte
 	// isolationLevel is used for current request.
 	isolationLevel kvrpcpb.IsolationLevel
+	resolvedLocks  []uint64
 }
 
 func (h *rpcHandler) checkRequestContext(ctx *kvrpcpb.Context) *errorpb.Error {
@@ -226,6 +227,7 @@ func (h *rpcHandler) checkRequestContext(ctx *kvrpcpb.Context) *errorpb.Error {
 	}
 	h.startKey, h.endKey = region.StartKey, region.EndKey
 	h.isolationLevel = ctx.IsolationLevel
+	h.resolvedLocks = ctx.ResolvedLocks
 	return nil
 }
 
@@ -256,7 +258,7 @@ func (h *rpcHandler) handleKvGet(req *kvrpcpb.GetRequest) *kvrpcpb.GetResponse {
 		panic("KvGet: key not in region")
 	}
 
-	val, err := h.mvccStore.Get(req.Key, req.GetVersion(), h.isolationLevel)
+	val, err := h.mvccStore.Get(req.Key, req.GetVersion(), h.isolationLevel, req.Context.GetResolvedLocks())
 	if err != nil {
 		return &kvrpcpb.GetResponse{
 			Error: convertToKeyError(err),
@@ -277,7 +279,7 @@ func (h *rpcHandler) handleKvScan(req *kvrpcpb.ScanRequest) *kvrpcpb.ScanRespons
 		if len(req.EndKey) > 0 && (len(endKey) == 0 || bytes.Compare(NewMvccKey(req.EndKey), h.endKey) < 0) {
 			endKey = req.EndKey
 		}
-		pairs = h.mvccStore.Scan(req.GetStartKey(), endKey, int(req.GetLimit()), req.GetVersion(), h.isolationLevel)
+		pairs = h.mvccStore.Scan(req.GetStartKey(), endKey, int(req.GetLimit()), req.GetVersion(), h.isolationLevel, req.Context.ResolvedLocks)
 	} else {
 		// TiKV use range [end_key, start_key) for reverse scan.
 		// Should use the req.EndKey to check in region.
@@ -291,7 +293,7 @@ func (h *rpcHandler) handleKvScan(req *kvrpcpb.ScanRequest) *kvrpcpb.ScanRespons
 			endKey = req.StartKey
 		}
 
-		pairs = h.mvccStore.ReverseScan(req.EndKey, endKey, int(req.GetLimit()), req.GetVersion(), h.isolationLevel)
+		pairs = h.mvccStore.ReverseScan(req.EndKey, endKey, int(req.GetLimit()), req.GetVersion(), h.isolationLevel, req.Context.ResolvedLocks)
 	}
 
 	return &kvrpcpb.ScanResponse{
@@ -387,11 +389,11 @@ func (h *rpcHandler) handleKvCheckTxnStatus(req *kvrpcpb.CheckTxnStatusRequest) 
 		panic("KvCheckTxnStatus: key not in region")
 	}
 	var resp kvrpcpb.CheckTxnStatusResponse
-	ttl, commitTS, err := h.mvccStore.CheckTxnStatus(req.GetPrimaryKey(), req.GetLockTs(), req.GetCallerStartTs(), req.GetCurrentTs(), req.GetRollbackIfNotExist())
+	ttl, commitTS, action, err := h.mvccStore.CheckTxnStatus(req.GetPrimaryKey(), req.GetLockTs(), req.GetCallerStartTs(), req.GetCurrentTs(), req.GetRollbackIfNotExist())
 	if err != nil {
 		resp.Error = convertToKeyError(err)
 	} else {
-		resp.LockTtl, resp.CommitVersion = ttl, commitTS
+		resp.LockTtl, resp.CommitVersion, resp.Action = ttl, commitTS, action
 	}
 	return &resp
 }
@@ -415,7 +417,7 @@ func (h *rpcHandler) handleKvBatchGet(req *kvrpcpb.BatchGetRequest) *kvrpcpb.Bat
 			panic("KvBatchGet: key not in region")
 		}
 	}
-	pairs := h.mvccStore.BatchGet(req.Keys, req.GetVersion(), h.isolationLevel)
+	pairs := h.mvccStore.BatchGet(req.Keys, req.GetVersion(), h.isolationLevel, req.Context.GetResolvedLocks())
 	return &kvrpcpb.BatchGetResponse{
 		Pairs: convertToPbPairs(pairs),
 	}
@@ -720,6 +722,10 @@ func (c *RPCClient) checkArgs(ctx context.Context, addr string) (*rpcHandler, er
 	return handler, nil
 }
 
+// TiDBRPCServerCoprocessorHandler is the TiDB rpc server coprocessor handler.
+// TODO: remove this global variable.
+var TiDBRPCServerCoprocessorHandler func(context.Context, *coprocessor.Request) *coprocessor.Response
+
 // SendRequest sends a request to mock cluster.
 func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
@@ -734,12 +740,18 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 		}
 	})
 
+	reqCtx := &req.Context
+	resp := &tikvrpc.Response{}
+	// When the store type is TiDB, the request should handle over to TiDB rpc server to handle.
+	if req.Type == tikvrpc.CmdCop && req.StoreTp == kv.TiDB && TiDBRPCServerCoprocessorHandler != nil {
+		resp.Resp = TiDBRPCServerCoprocessorHandler(context.Background(), req.Cop())
+		return resp, nil
+	}
+
 	handler, err := c.checkArgs(ctx, addr)
 	if err != nil {
 		return nil, err
 	}
-	reqCtx := &req.Context
-	resp := &tikvrpc.Response{}
 	switch req.Type {
 	case tikvrpc.CmdGet:
 		r := req.Get()
@@ -1011,7 +1023,13 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 	case tikvrpc.CmdDebugGetRegionProperties:
 		r := req.DebugGetRegionProperties()
 		region, _ := c.Cluster.GetRegion(r.RegionId)
-		scanResp := handler.handleKvScan(&kvrpcpb.ScanRequest{StartKey: MvccKey(region.StartKey).Raw(), EndKey: MvccKey(region.EndKey).Raw(), Version: math.MaxUint64, Limit: math.MaxUint32})
+		var reqCtx kvrpcpb.Context
+		scanResp := handler.handleKvScan(&kvrpcpb.ScanRequest{
+			Context:  &reqCtx,
+			StartKey: MvccKey(region.StartKey).Raw(),
+			EndKey:   MvccKey(region.EndKey).Raw(),
+			Version:  math.MaxUint64,
+			Limit:    math.MaxUint32})
 		resp.Resp = &debugpb.GetRegionPropertiesResponse{
 			Props: []*debugpb.Property{{
 				Name:  "mvcc.num_rows",

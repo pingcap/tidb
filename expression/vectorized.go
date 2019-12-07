@@ -25,7 +25,7 @@ func genVecFromConstExpr(ctx sessionctx.Context, expr Expression, targetType typ
 	if input != nil {
 		n = input.NumRows()
 		if n == 0 {
-			result.Reset()
+			result.Reset(targetType)
 			return nil
 		}
 	}

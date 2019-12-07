@@ -109,6 +109,7 @@ func NewLockResolver(etcdAddrs []string, security config.Security) (*LockResolve
 type TxnStatus struct {
 	ttl      uint64
 	commitTS uint64
+	action   kvrpcpb.Action
 }
 
 // IsCommitted returns true if the txn's final status is Commit.
@@ -277,23 +278,25 @@ func (lr *LockResolver) BatchResolveLocks(bo *Backoffer, locks []*Lock, loc Regi
 //    commit status.
 // 3) Send `ResolveLock` cmd to the lock's region to resolve all locks belong to
 //    the same transaction.
-func (lr *LockResolver) ResolveLocks(bo *Backoffer, callerStartTS uint64, locks []*Lock) (int64, error) {
+func (lr *LockResolver) ResolveLocks(bo *Backoffer, callerStartTS uint64, locks []*Lock) (int64, []uint64 /*pushed*/, error) {
 	var msBeforeTxnExpired txnExpireTime
 	if len(locks) == 0 {
-		return msBeforeTxnExpired.value(), nil
+		return msBeforeTxnExpired.value(), nil, nil
 	}
 
 	tikvLockResolverCountWithResolve.Inc()
 
+	var pushFail bool
 	// TxnID -> []Region, record resolved Regions.
 	// TODO: Maybe put it in LockResolver and share by all txns.
 	cleanTxns := make(map[uint64]map[RegionVerID]struct{})
+	pushed := make([]uint64, 0, len(locks))
 	for _, l := range locks {
 		status, err := lr.getTxnStatusFromLock(bo, l, callerStartTS)
 		if err != nil {
 			msBeforeTxnExpired.update(0)
 			err = errors.Trace(err)
-			return msBeforeTxnExpired.value(), err
+			return msBeforeTxnExpired.value(), nil, err
 		}
 
 		if status.ttl == 0 {
@@ -309,7 +312,7 @@ func (lr *LockResolver) ResolveLocks(bo *Backoffer, callerStartTS uint64, locks 
 			if err != nil {
 				msBeforeTxnExpired.update(0)
 				err = errors.Trace(err)
-				return msBeforeTxnExpired.value(), err
+				return msBeforeTxnExpired.value(), nil, err
 			}
 		} else {
 			tikvLockResolverCountWithNotExpired.Inc()
@@ -317,13 +320,25 @@ func (lr *LockResolver) ResolveLocks(bo *Backoffer, callerStartTS uint64, locks 
 			// Update the txn expire time.
 			msBeforeLockExpired := lr.store.GetOracle().UntilExpired(l.TxnID, status.ttl)
 			msBeforeTxnExpired.update(msBeforeLockExpired)
+			// In the write conflict scenes, callerStartTS is set to 0 to avoid unnecessary push minCommitTS operation.
+			if callerStartTS > 0 {
+				if status.action != kvrpcpb.Action_MinCommitTSPushed {
+					pushFail = true
+					continue
+				}
+				pushed = append(pushed, l.TxnID)
+			}
 		}
+	}
+	if pushFail {
+		// If any of the lock fails to push minCommitTS, don't return the pushed array.
+		pushed = nil
 	}
 
 	if msBeforeTxnExpired.value() > 0 {
 		tikvLockResolverCountWithWaitExpired.Inc()
 	}
-	return msBeforeTxnExpired.value(), nil
+	return msBeforeTxnExpired.value(), pushed, nil
 }
 
 type txnExpireTime struct {
@@ -343,7 +358,6 @@ func (t *txnExpireTime) update(lockExpire int64) {
 	if lockExpire < t.txnExpire {
 		t.txnExpire = lockExpire
 	}
-	return
 }
 
 func (t *txnExpireTime) value() int64 {
@@ -397,7 +411,7 @@ func (lr *LockResolver) getTxnStatusFromLock(bo *Backoffer, l *Lock, callerStart
 		}
 
 		if l.LockType == kvrpcpb.Op_PessimisticLock {
-			return TxnStatus{l.TTL, 0}, nil
+			return TxnStatus{ttl: l.TTL}, nil
 		}
 
 		// Handle txnNotFound error.
@@ -482,6 +496,7 @@ func (lr *LockResolver) getTxnStatus(bo *Backoffer, txnID uint64, primary []byte
 			logutil.BgLogger().Error("getTxnStatus error", zap.Error(err))
 			return status, err
 		}
+		status.action = cmdResp.Action
 		if cmdResp.LockTtl != 0 {
 			status.ttl = cmdResp.LockTtl
 		} else {

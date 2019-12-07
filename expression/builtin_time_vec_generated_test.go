@@ -16,6 +16,7 @@
 package expression
 
 import (
+	"math"
 	"testing"
 
 	. "github.com/pingcap/check"
@@ -44,13 +45,11 @@ func (g gener) gen() interface{} {
 }
 
 var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
-
 	ast.AddTime: {
 		// builtinAddDatetimeAndDurationSig
 		{
 			retEvalType:   types.ETDatetime,
 			childrenTypes: []types.EvalType{types.ETDatetime, types.ETDuration},
-
 			geners: []dataGenerator{
 				gener{defaultGener{eType: types.ETDatetime, nullRation: 0.2}},
 				gener{defaultGener{eType: types.ETDuration, nullRation: 0.2}},
@@ -60,7 +59,6 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 		{
 			retEvalType:   types.ETDatetime,
 			childrenTypes: []types.EvalType{types.ETDatetime, types.ETString},
-
 			geners: []dataGenerator{
 				gener{defaultGener{eType: types.ETDatetime, nullRation: 0.2}},
 				gener{defaultGener{eType: types.ETString, nullRation: 0.2}},
@@ -70,7 +68,6 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 		{
 			retEvalType:   types.ETDuration,
 			childrenTypes: []types.EvalType{types.ETDuration, types.ETDuration},
-
 			geners: []dataGenerator{
 				gener{defaultGener{eType: types.ETDuration, nullRation: 0.2}},
 				gener{defaultGener{eType: types.ETDuration, nullRation: 0.2}},
@@ -80,7 +77,6 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 		{
 			retEvalType:   types.ETDuration,
 			childrenTypes: []types.EvalType{types.ETDuration, types.ETString},
-
 			geners: []dataGenerator{
 				gener{defaultGener{eType: types.ETDuration, nullRation: 0.2}},
 				gener{defaultGener{eType: types.ETString, nullRation: 0.2}},
@@ -90,7 +86,6 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 		{
 			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETDuration},
-
 			geners: []dataGenerator{
 				gener{defaultGener{eType: types.ETString, nullRation: 0.2}},
 				gener{defaultGener{eType: types.ETDuration, nullRation: 0.2}},
@@ -100,7 +95,6 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 		{
 			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETString},
-
 			geners: []dataGenerator{
 				gener{defaultGener{eType: types.ETString, nullRation: 0.2}},
 				gener{defaultGener{eType: types.ETString, nullRation: 0.2}},
@@ -108,25 +102,21 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 		},
 		// builtinAddDateAndDurationSig
 		{
-			retEvalType:   types.ETString,
-			childrenTypes: []types.EvalType{types.ETDuration, types.ETDuration},
-
+			retEvalType:        types.ETString,
+			childrenTypes:      []types.EvalType{types.ETDatetime, types.ETDuration},
 			childrenFieldTypes: []*types.FieldType{types.NewFieldType(mysql.TypeDate), types.NewFieldType(mysql.TypeDuration)},
-
 			geners: []dataGenerator{
-				gener{defaultGener{eType: types.ETDuration, nullRation: 0.2}},
+				gener{defaultGener{eType: types.ETDatetime, nullRation: 0.2}},
 				gener{defaultGener{eType: types.ETDuration, nullRation: 0.2}},
 			},
 		},
 		// builtinAddDateAndStringSig
 		{
-			retEvalType:   types.ETString,
-			childrenTypes: []types.EvalType{types.ETDuration, types.ETString},
-
+			retEvalType:        types.ETString,
+			childrenTypes:      []types.EvalType{types.ETDatetime, types.ETString},
 			childrenFieldTypes: []*types.FieldType{types.NewFieldType(mysql.TypeDate), types.NewFieldType(mysql.TypeString)},
-
 			geners: []dataGenerator{
-				gener{defaultGener{eType: types.ETDuration, nullRation: 0.2}},
+				gener{defaultGener{eType: types.ETDatetime, nullRation: 0.2}},
 				gener{defaultGener{eType: types.ETString, nullRation: 0.2}},
 			},
 		},
@@ -134,7 +124,6 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 		{
 			retEvalType:   types.ETDatetime,
 			childrenTypes: []types.EvalType{types.ETDatetime, types.ETDatetime},
-
 			geners: []dataGenerator{
 				gener{defaultGener{eType: types.ETDatetime, nullRation: 0.2}},
 				gener{defaultGener{eType: types.ETDatetime, nullRation: 0.2}},
@@ -142,11 +131,9 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 		},
 		// builtinAddTimeStringNullSig
 		{
-			retEvalType:   types.ETString,
-			childrenTypes: []types.EvalType{types.ETDatetime, types.ETDatetime},
-
+			retEvalType:        types.ETString,
+			childrenTypes:      []types.EvalType{types.ETDatetime, types.ETDatetime},
 			childrenFieldTypes: []*types.FieldType{types.NewFieldType(mysql.TypeDate), types.NewFieldType(mysql.TypeDatetime)},
-
 			geners: []dataGenerator{
 				gener{defaultGener{eType: types.ETDatetime, nullRation: 0.2}},
 				gener{defaultGener{eType: types.ETDatetime, nullRation: 0.2}},
@@ -156,11 +143,6483 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 		{
 			retEvalType:   types.ETDuration,
 			childrenTypes: []types.EvalType{types.ETDuration, types.ETDatetime},
-
 			geners: []dataGenerator{
 				gener{defaultGener{eType: types.ETDuration, nullRation: 0.2}},
 				gener{defaultGener{eType: types.ETDatetime, nullRation: 0.2}},
 			},
+		},
+	},
+
+	ast.TimeDiff: {
+		// builtinNullTimeDiffSig
+		{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETDuration, types.ETDatetime}},
+		{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETDuration, types.ETTimestamp}},
+		{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETDatetime, types.ETDuration}},
+		{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETTimestamp, types.ETDuration}},
+		// builtinDurationDurationTimeDiffSig
+		{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETDuration, types.ETDuration}},
+		// builtinDurationStringTimeDiffSig
+		{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETDuration, types.ETString}, geners: []dataGenerator{nil, &dateStrGener{Year: 2019, Month: 10}}},
+		{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETDuration, types.ETString}, geners: []dataGenerator{nil, &dateTimeStrGener{Year: 2019, Month: 10}}},
+		{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETDuration, types.ETString}, geners: []dataGenerator{nil, &dateTimeStrGener{Year: 2019, Month: 10, Fsp: 4}}},
+		// builtinTimeTimeTimeDiffSig
+		{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETDatetime, types.ETDatetime}, geners: []dataGenerator{&dateTimeGener{Year: 2019, Month: 10}, &dateTimeGener{Year: 2019, Month: 10}}},
+		{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETDatetime, types.ETTimestamp}, geners: []dataGenerator{&dateTimeGener{Year: 2019, Month: 10}, &dateTimeGener{Year: 2019, Month: 10}}},
+		{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETTimestamp, types.ETTimestamp}, geners: []dataGenerator{&dateTimeGener{Year: 2019, Month: 10}, &dateTimeGener{Year: 2019, Month: 10}}},
+		{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETTimestamp, types.ETDatetime}, geners: []dataGenerator{&dateTimeGener{Year: 2019, Month: 10}, &dateTimeGener{Year: 2019, Month: 10}}},
+		// builtinTimeStringTimeDiffSig
+		{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETDatetime, types.ETString}, geners: []dataGenerator{&dateTimeGener{Year: 2019, Month: 10}, &dateStrGener{Year: 2019, Month: 10}}},
+		{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETDatetime, types.ETString}, geners: []dataGenerator{&dateTimeGener{Year: 2019, Month: 10}, &dateTimeStrGener{Year: 2019, Month: 10}}},
+		{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETTimestamp, types.ETString}, geners: []dataGenerator{&dateTimeGener{Year: 2019, Month: 10}, &dateStrGener{Year: 2019, Month: 10}}},
+		{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETTimestamp, types.ETString}, geners: []dataGenerator{&dateTimeGener{Year: 2019, Month: 10}, &dateTimeStrGener{Year: 2019, Month: 10}}},
+		// builtinStringDurationTimeDiffSig
+		{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETString, types.ETDuration}, geners: []dataGenerator{&dateStrGener{Year: 2019, Month: 10}, nil}},
+		{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETString, types.ETDuration}, geners: []dataGenerator{&dateTimeStrGener{Year: 2019, Month: 10}, nil}},
+		// builtinStringTimeTimeDiffSig
+		{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETString, types.ETDatetime}, geners: []dataGenerator{&dateStrGener{Year: 2019, Month: 10}, &dateTimeGener{Year: 2019, Month: 10}}},
+		{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETString, types.ETDatetime}, geners: []dataGenerator{&dateTimeStrGener{Year: 2019, Month: 10}, &dateTimeGener{Year: 2019, Month: 10}}},
+		{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETString, types.ETTimestamp}, geners: []dataGenerator{&dateStrGener{Year: 2019, Month: 10}, &dateTimeGener{Year: 2019, Month: 10}}},
+		{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETString, types.ETTimestamp}, geners: []dataGenerator{&dateTimeStrGener{Year: 2019, Month: 10}, &dateTimeGener{Year: 2019, Month: 10}}},
+		// builtinStringStringTimeDiffSig
+		{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETString, types.ETString}, geners: []dataGenerator{&dateStrGener{Year: 2019, Month: 10}, &dateTimeStrGener{Year: 2019, Month: 10}}},
+		{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETString, types.ETString}, geners: []dataGenerator{&dateTimeStrGener{Year: 2019, Month: 10}, &dateStrGener{Year: 2019, Month: 10}}},
+	},
+
+	ast.AddDate: {
+		// builtinAddDateStringStringSig
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("WEEK"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("QUARTER"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("YEAR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("SECOND_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("YEAR_MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		// builtinAddDateStringIntSig
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("WEEK"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("QUARTER"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("YEAR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("SECOND_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("YEAR_MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		// builtinAddDateStringRealSig
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("WEEK"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("QUARTER"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("YEAR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("SECOND_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("YEAR_MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		// builtinAddDateStringDecimalSig
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("WEEK"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("QUARTER"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("YEAR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("SECOND_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("YEAR_MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		// builtinAddDateIntStringSig
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("WEEK"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("QUARTER"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("YEAR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("SECOND_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("YEAR_MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		// builtinAddDateIntIntSig
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("WEEK"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("QUARTER"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("YEAR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("SECOND_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("YEAR_MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		// builtinAddDateIntRealSig
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("WEEK"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("QUARTER"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("YEAR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("SECOND_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("YEAR_MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		// builtinAddDateIntDecimalSig
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("WEEK"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("QUARTER"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("YEAR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("SECOND_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("YEAR_MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		// builtinAddDateDatetimeStringSig
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("WEEK"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("QUARTER"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("YEAR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("SECOND_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("YEAR_MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		// builtinAddDateDatetimeIntSig
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("WEEK"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("QUARTER"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("YEAR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("SECOND_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("YEAR_MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		// builtinAddDateDatetimeRealSig
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("WEEK"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("QUARTER"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("YEAR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("SECOND_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("YEAR_MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		// builtinAddDateDatetimeDecimalSig
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("WEEK"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("QUARTER"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("YEAR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("SECOND_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("YEAR_MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		// builtinAddDateDurationStringSig
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("WEEK"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("QUARTER"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("YEAR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("SECOND_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("YEAR_MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		// builtinAddDateDurationIntSig
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("WEEK"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("QUARTER"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("YEAR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("SECOND_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("YEAR_MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		// builtinAddDateDurationRealSig
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("WEEK"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("QUARTER"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("YEAR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("SECOND_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("YEAR_MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		// builtinAddDateDurationDecimalSig
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("WEEK"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("QUARTER"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("YEAR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("SECOND_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("YEAR_MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+	},
+
+	ast.SubDate: {
+		// builtinSubDateStringStringSig
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("WEEK"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("QUARTER"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("YEAR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("SECOND_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("YEAR_MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		// builtinSubDateStringIntSig
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("WEEK"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("QUARTER"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("YEAR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("SECOND_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("YEAR_MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		// builtinSubDateStringRealSig
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("WEEK"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("QUARTER"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("YEAR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("SECOND_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("YEAR_MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		// builtinSubDateStringDecimalSig
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("WEEK"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("QUARTER"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("YEAR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("SECOND_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETString, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&dateStrGener{NullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("YEAR_MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		// builtinSubDateIntStringSig
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("WEEK"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("QUARTER"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("YEAR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("SECOND_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("YEAR_MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		// builtinSubDateIntIntSig
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("WEEK"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("QUARTER"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("YEAR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("SECOND_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("YEAR_MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		// builtinSubDateIntRealSig
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("WEEK"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("QUARTER"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("YEAR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("SECOND_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("YEAR_MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		// builtinSubDateIntDecimalSig
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("WEEK"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("QUARTER"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("YEAR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("SECOND_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&dateTimeIntGener{nullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("YEAR_MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		// builtinSubDateDatetimeStringSig
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("WEEK"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("QUARTER"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("YEAR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("SECOND_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("YEAR_MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		// builtinSubDateDatetimeIntSig
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("WEEK"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("QUARTER"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("YEAR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("SECOND_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("YEAR_MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		// builtinSubDateDatetimeRealSig
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("WEEK"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("QUARTER"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("YEAR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("SECOND_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("YEAR_MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		// builtinSubDateDatetimeDecimalSig
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("WEEK"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("QUARTER"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("YEAR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("SECOND_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDatetime, nullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("YEAR_MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		// builtinSubDateDurationStringSig
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("WEEK"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("QUARTER"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("YEAR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("SECOND_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("YEAR_MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		// builtinSubDateDurationIntSig
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("WEEK"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("QUARTER"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("YEAR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("SECOND_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETInt, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&defaultGener{eType: types.ETInt, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("YEAR_MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		// builtinSubDateDurationRealSig
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("WEEK"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("QUARTER"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("YEAR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("SECOND_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETReal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&defaultGener{eType: types.ETReal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("YEAR_MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		// builtinSubDateDurationDecimalSig
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("WEEK"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("QUARTER"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("YEAR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("SECOND_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
+		},
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETDecimal, types.ETString},
+			geners: []dataGenerator{
+				&defaultGener{eType: types.ETDuration, nullRation: 0.2},
+				&defaultGener{eType: types.ETDecimal, nullRation: 0.2},
+			},
+			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("YEAR_MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
+			chunkSize: 128,
 		},
 	},
 }

@@ -69,6 +69,24 @@ delay-clean-table-lock = 0
 # Maximum number of the splitting region, which is used by the split region statement.
 split-region-max-num = 1000
 
+# alter-primary-key is used to control alter primary key feature. Default is false, indicate the alter primary key feature is disabled.
+# If it is true, we can add the primary key by "alter table", but we may not be able to drop the primary key.
+# In order to support "drop primary key" operation , this flag must be true and the table does not have the pkIsHandle flag.
+alter-primary-key = false
+
+# server-version is used to change the version string of TiDB in the following scenarios:
+# 1. the server version returned by builtin-function `VERSION()`.
+# 2. the server version filled in handshake packets of MySQL Connection Protocol, see https://dev.mysql.com/doc/internals/en/connection-phase-packets.html#packet-Protocol::Handshake for more details.
+# if server-version = "", the default value(original TiDB version string) is used.
+server-version = ""
+
+# repair mode is used to repair the broken table meta in TiKV in extreme cases.
+repair-mode = false
+
+# Repair table list is used to list the tables in repair mode with the format like ["db.table",].
+# In repair mode, repairing table which is not in repair list will get wrong database or wrong table error.
+repair-table-list = []
+
 [log]
 # Log level: debug, info, warn, error, fatal.
 level = "info"
@@ -196,7 +214,7 @@ bind-info-lease = "3s"
 # If using TiKV as the storage, the entry represents a key/value pair.
 # WARNING: Do not set the value too large, otherwise it will make a very large impact on the TiKV cluster.
 # Please adjust this configuration carefully.
-txn-total-size-limit = 104857600
+txn-total-size-limit = 1073741824
 
 [proxy-protocol]
 # PROXY protocol acceptable client networks.
@@ -292,6 +310,11 @@ enable-chunk-rpc = true
 # If a Region has not been accessed for more than the given duration (in seconds), it
 # will be reloaded from the PD.
 region-cache-ttl = 600
+
+# store-limit is used to restrain TiDB from sending request to some stores which is up to the limit.
+# If a store has been up to the limit, it will return error for the successive request in same store.
+# default 0 means shutting off store limit.
+store-limit = 0
 
 [txn-local-latches]
 # Enable local latches for transactions. Enable it when
