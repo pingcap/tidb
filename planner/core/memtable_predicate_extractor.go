@@ -101,7 +101,10 @@ func (helper extractHelper) extractColEqConsExpr(extractCols map[int64]*types.Fi
 	return name.ColName.L, []types.Datum{constant.Value}
 }
 
-func (helper extractHelper) intersection(lhs set.StringSet, datums []types.Datum, toLower bool) set.StringSet {
+// merges `lhs` and `datums` with CNF logic
+// 1. Returns `datums` set if the `lhs` is an empty set
+// 2. Returns the intersection of `datums` and `lhs` if the `lhs` is not an empty set
+func (helper extractHelper) merge(lhs set.StringSet, datums []types.Datum, toLower bool) set.StringSet {
 	tmpNodeTypes := set.NewStringSet()
 	for _, datum := range datums {
 		var s string
@@ -180,10 +183,10 @@ func (e *ClusterConfigTableExtractor) Extract(schema *expression.Schema, names [
 		}
 		switch colName {
 		case ColNameType:
-			nodeTypes = e.intersection(nodeTypes, datums, true)
+			nodeTypes = e.merge(nodeTypes, datums, true)
 			skipRequest = len(nodeTypes) == 0
 		case ColNameAddress:
-			addresses = e.intersection(addresses, datums, false)
+			addresses = e.merge(addresses, datums, false)
 			skipRequest = len(addresses) == 0
 		default:
 			remained = append(remained, expr)
