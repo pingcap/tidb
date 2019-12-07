@@ -15,6 +15,7 @@ package expression
 
 import (
 	"strconv"
+	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
@@ -792,11 +793,64 @@ func (b *builtinJSONMergeSig) vecEvalJSON(input *chunk.Chunk, result *chunk.Colu
 }
 
 func (b *builtinJSONContainsPathSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinJSONContainsPathSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	jsonBuf, err := b.bufAllocator.get(types.ETJson, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(jsonBuf)
+	if err := b.args[0].VecEvalJSON(b.ctx, input, jsonBuf); err != nil {
+		return err
+	}
+	typeBuf, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(typeBuf)
+	if err := b.args[1].VecEvalString(b.ctx, input, typeBuf); err != nil {
+		return err
+	}
+	pathBuf, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(pathBuf)
+
+	result.ResizeInt64(n, false)
+	result.MergeNulls(jsonBuf, typeBuf)
+	i64s := result.Int64s()
+	for i := 0; i < n; i++ {
+		containType := strings.ToLower(typeBuf.GetString(i))
+		obj := jsonBuf.GetJSON(i)
+		contains := int64(1)
+		var pathExpr json.PathExpression
+		for j := 2; j < len(b.args); j++ {
+			if err := b.args[j].VecEvalString(b.ctx, input, pathBuf); err != nil {
+				return err
+			}
+			path := pathBuf.GetString(i)
+			if pathExpr, err = json.ParseJSONPathExpr(path); err != nil {
+				return err
+			}
+			_, exists := obj.Extract([]json.PathExpression{pathExpr})
+			switch {
+			case exists && containType == json.ContainsPathOne:
+				contains = 1
+				break
+			case !exists && containType == json.ContainsPathOne:
+				contains = 0
+			case !exists && containType == json.ContainsPathAll:
+				contains = 0
+				break
+			}
+		}
+		i64s[i] = contains
+	}
+	return nil
 }
 
 func (b *builtinJSONArrayAppendSig) vectorized() bool {
