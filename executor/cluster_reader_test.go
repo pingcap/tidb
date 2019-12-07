@@ -29,24 +29,24 @@ import (
 	"github.com/pingcap/tidb/util/testkit"
 )
 
-type testClusterConfigSuite struct {
+type testClusterReaderSuite struct {
 	store kv.Storage
 	dom   *domain.Domain
 }
 
-func (s *testClusterConfigSuite) SetUpSuite(c *C) {
+func (s *testClusterReaderSuite) SetUpSuite(c *C) {
 	store, dom, err := newStoreWithBootstrap()
 	c.Assert(err, IsNil)
 	s.store = store
 	s.dom = dom
 }
 
-func (s *testClusterConfigSuite) TearDownSuite(c *C) {
+func (s *testClusterReaderSuite) TearDownSuite(c *C) {
 	s.dom.Close()
 	s.store.Close()
 }
 
-func (s *testClusterConfigSuite) TestTiDBClusterConfig(c *C) {
+func (s *testClusterReaderSuite) TestTiDBClusterConfig(c *C) {
 	// mock PD http server
 	router := mux.NewRouter()
 

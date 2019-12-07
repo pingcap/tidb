@@ -34,7 +34,7 @@ import (
 // The purpose of defining a `MemTablePredicateExtractor` is to optimize this
 // 1. Define a `ClusterConfigTablePredicateExtractor`
 // 2. Extract the `type/address` columns on the logic optimizing stage and save them via fields.
-// 3. Passing the extractor to the `ClusterConfigReaderExec` executor
+// 3. Passing the extractor to the `ClusterReaderExecExec` executor
 // 4. Executor sends requests to the target components instead of all of the components
 type MemTablePredicateExtractor interface {
 	// Extracts predicates which can be pushed down and returns the remained predicates

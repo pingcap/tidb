@@ -28,31 +28,41 @@ import (
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/infoschema"
 	plannercore "github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/pdapi"
 )
 
-// ClusterConfigReader executes configuration retrieving from the cluster components
-type ClusterConfigReader struct {
+type clusterRetriever interface {
+	retrieve(ctx sessionctx.Context) ([][]types.Datum, error)
+}
+
+// ClusterReaderExec executes cluster information retrieving from the cluster components
+type ClusterReaderExec struct {
 	baseExecutor
 	retrieved bool
-	extractor *plannercore.ClusterConfigTableExtractor
+	retriever clusterRetriever
 }
 
 // Next implements the Executor Next interface.
-func (e *ClusterConfigReader) Next(ctx context.Context, req *chunk.Chunk) error {
-	if e.extractor.SkipRequest || e.retrieved {
+func (e *ClusterReaderExec) Next(ctx context.Context, req *chunk.Chunk) error {
+	if e.retrieved {
 		req.Reset()
 		return nil
 	}
 
-	rows, err := e.retrieveClusterConfig()
+	rows, err := e.retriever.retrieve(e.ctx)
 	if err != nil {
 		return err
 	}
 	e.retrieved = true
+
+	if len(rows) == 0 {
+		req.Reset()
+		return nil
+	}
 
 	req.GrowAndReset(len(rows))
 	mutableRow := chunk.MutRowFromTypes(retTypes(e))
@@ -63,13 +73,22 @@ func (e *ClusterConfigReader) Next(ctx context.Context, req *chunk.Chunk) error 
 	return nil
 }
 
-func (e *ClusterConfigReader) retrieveClusterConfig() ([][]types.Datum, error) {
+type clusterConfigRetriever struct {
+	extractor *plannercore.ClusterConfigTableExtractor
+}
+
+// retrieve implements the clusterRetriever interface
+func (e *clusterConfigRetriever) retrieve(ctx sessionctx.Context) ([][]types.Datum, error) {
+	if e.extractor.SkipRequest {
+		return nil, nil
+	}
+
 	type result struct {
 		idx  int
 		rows [][]types.Datum
 		err  error
 	}
-	serversInfo, err := infoschema.GetClusterServerInfo(e.ctx)
+	serversInfo, err := infoschema.GetClusterServerInfo(ctx)
 	failpoint.Inject("mockClusterConfigServerInfo", func(val failpoint.Value) {
 		if s := val.(string); len(s) > 0 {
 			serversInfo = serversInfo[:0]
@@ -108,7 +127,7 @@ func (e *ClusterConfigReader) retrieveClusterConfig() ([][]types.Datum, error) {
 		}
 		statusAddr := srv.StatusAddr
 		if len(statusAddr) == 0 {
-			e.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("%s node %s does not contain status address", typ, address))
+			ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("%s node %s does not contain status address", typ, address))
 			continue
 		}
 		wg.Add(1)
@@ -185,7 +204,7 @@ func (e *ClusterConfigReader) retrieveClusterConfig() ([][]types.Datum, error) {
 	var results []result
 	for result := range ch {
 		if result.err != nil {
-			e.ctx.GetSessionVars().StmtCtx.AppendWarning(result.err)
+			ctx.GetSessionVars().StmtCtx.AppendWarning(result.err)
 			continue
 		}
 		results = append(results, result)

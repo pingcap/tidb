@@ -1244,9 +1244,11 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 	var e Executor
 	switch v.Table.Name.L {
 	case strings.ToLower(infoschema.TableTiDBClusterConfig):
-		e = &ClusterConfigReader{
+		e = &ClusterReaderExec{
 			baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
-			extractor:    v.Extractor.(*plannercore.ClusterConfigTableExtractor),
+			retriever: &clusterConfigRetriever{
+				extractor: v.Extractor.(*plannercore.ClusterConfigTableExtractor),
+			},
 		}
 	default:
 		tb, _ := b.is.TableByID(v.Table.ID)
