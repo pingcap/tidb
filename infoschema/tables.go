@@ -729,7 +729,7 @@ var tableTiDBServersInfoCols = []columnInfo{
 	{"BINLOG_STATUS", mysql.TypeVarchar, 64, 0, nil, nil},
 }
 
-var TableClusterConfigCols = []columnInfo{
+var tableClusterConfigCols = []columnInfo{
 	{"TYPE", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"ADDRESS", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"KEY", mysql.TypeVarchar, 256, 0, nil, nil},
@@ -2280,7 +2280,7 @@ var tableNameToColumns = map[string][]columnInfo{
 	tableTiKVRegionPeers:                    tableTiKVRegionPeersCols,
 	tableTiDBServersInfo:                    tableTiDBServersInfoCols,
 	tableClusterInfo:                        tableClusterInfoCols,
-	TableClusterConfig:                      TableClusterConfigCols,
+	TableClusterConfig:                      tableClusterConfigCols,
 	tableClusterLoad:                        tableClusterLoadCols,
 	tableTiFlashReplica:                     tableTableTiFlashReplicaCols,
 }
