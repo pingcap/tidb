@@ -17,6 +17,7 @@ import (
 	"strings"
 	"sync/atomic"
 
+	"github.com/gogo/protobuf/proto"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/ast"
@@ -267,10 +268,10 @@ func (pc PbConverter) scalarFuncToPBExpr(expr *ScalarFunction) *tipb.Expr {
 	}
 
 	var implicitArgs []byte
-	if args := expr.Function.implicitArgs(); len(args) > 0 {
-		encoded, err := codec.EncodeValue(pc.sc, nil, args...)
+	if args := expr.Function.implicitArgs(); args != nil {
+		encoded, err := proto.Marshal(args)
 		if err != nil {
-			logutil.BgLogger().Error("encode implicit parameters", zap.Any("datums", args), zap.Error(err))
+			logutil.BgLogger().Error("encode implicit parameters", zap.Any("implicit_args", args), zap.Error(err))
 			return nil
 		}
 		implicitArgs = encoded

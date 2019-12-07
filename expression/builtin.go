@@ -28,6 +28,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/gogo/protobuf/proto"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/charset"
@@ -63,7 +64,7 @@ func (b *baseBuiltinFunc) PbCode() tipb.ScalarFuncSig {
 // implicitArgs returns the implicit arguments of this function.
 // implicit arguments means some functions contain extra inner fields which will not
 // contain in `tipb.Expr.children` but must be pushed down to coprocessor
-func (b *baseBuiltinFunc) implicitArgs() []types.Datum {
+func (b *baseBuiltinFunc) implicitArgs() proto.Message {
 	// We will not use a field to store them because of only
 	// a few functions contain implicit parameters
 	return nil
@@ -350,12 +351,9 @@ type baseBuiltinCastFunc struct {
 }
 
 // implicitArgs returns the implicit arguments of cast functions
-func (b *baseBuiltinCastFunc) implicitArgs() []types.Datum {
-	args := b.baseBuiltinFunc.implicitArgs()
-	if b.inUnion {
-		args = append(args, types.NewIntDatum(1))
-	} else {
-		args = append(args, types.NewIntDatum(0))
+func (b *baseBuiltinCastFunc) implicitArgs() proto.Message {
+	args := &tipb.InUnionMetadata{
+		InUnion: b.inUnion,
 	}
 	return args
 }
@@ -448,7 +446,7 @@ type builtinFunc interface {
 	// implicitArgs returns the implicit parameters of a function.
 	// implicit arguments means some functions contain extra inner fields which will not
 	// contain in `tipb.Expr.children` but must be pushed down to coprocessor
-	implicitArgs() []types.Datum
+	implicitArgs() proto.Message
 	// Clone returns a copy of itself.
 	Clone() builtinFunc
 }
