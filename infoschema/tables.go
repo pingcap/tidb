@@ -97,11 +97,11 @@ const (
 	tableTiKVRegionStatus                   = "TIKV_REGION_STATUS"
 	tableTiKVRegionPeers                    = "TIKV_REGION_PEERS"
 	tableTiDBServersInfo                    = "TIDB_SERVERS_INFO"
-	tableTiDBClusterInfo                    = "CLUSTER_INFO"
-	// TableTiDBClusterConfig is the string constant of cluster configuration memory table
-	TableTiDBClusterConfig = "CLUSTER_CONFIG"
-	tableTiDBClusterLoad   = "CLUSTER_LOAD"
-	tableTiFlashReplica    = "TIFLASH_REPLICA"
+	tableClusterInfo                        = "CLUSTER_INFO"
+	// TableClusterConfig is the string constant of cluster configuration memory table
+	TableClusterConfig  = "CLUSTER_CONFIG"
+	tableClusterLoad    = "CLUSTER_LOAD"
+	tableTiFlashReplica = "TIFLASH_REPLICA"
 )
 
 var tableIDMap = map[string]int64{
@@ -146,9 +146,9 @@ var tableIDMap = map[string]int64{
 	tableTiKVRegionStatus:                   autoid.InformationSchemaDBID + 39,
 	tableTiKVRegionPeers:                    autoid.InformationSchemaDBID + 40,
 	tableTiDBServersInfo:                    autoid.InformationSchemaDBID + 41,
-	tableTiDBClusterInfo:                    autoid.InformationSchemaDBID + 42,
-	TableTiDBClusterConfig:                  autoid.InformationSchemaDBID + 43,
-	tableTiDBClusterLoad:                    autoid.InformationSchemaDBID + 44,
+	tableClusterInfo:                        autoid.InformationSchemaDBID + 42,
+	TableClusterConfig:                      autoid.InformationSchemaDBID + 43,
+	tableClusterLoad:                        autoid.InformationSchemaDBID + 44,
 	tableTiFlashReplica:                     autoid.InformationSchemaDBID + 45,
 	clusterTableSlowLog:                     autoid.InformationSchemaDBID + 46,
 	clusterTableProcesslist:                 autoid.InformationSchemaDBID + 47,
@@ -729,14 +729,14 @@ var tableTiDBServersInfoCols = []columnInfo{
 	{"BINLOG_STATUS", mysql.TypeVarchar, 64, 0, nil, nil},
 }
 
-var tableTiDBClusterConfigCols = []columnInfo{
+var TableClusterConfigCols = []columnInfo{
 	{"TYPE", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"ADDRESS", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"KEY", mysql.TypeVarchar, 256, 0, nil, nil},
 	{"VALUE", mysql.TypeVarchar, 128, 0, nil, nil},
 }
 
-var tableTiDBClusterLoadCols = []columnInfo{
+var tableClusterLoadCols = []columnInfo{
 	{"TYPE", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"ADDRESS", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"DEVICE_TYPE", mysql.TypeVarchar, 64, 0, nil, nil},
@@ -1099,7 +1099,7 @@ var filesCols = []columnInfo{
 	{"EXTRA", mysql.TypeVarchar, 255, 0, nil, nil},
 }
 
-var tableTiDBClusterInfoCols = []columnInfo{
+var tableClusterInfoCols = []columnInfo{
 	{"TYPE", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"ADDRESS", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"STATUS_ADDRESS", mysql.TypeVarchar, 64, 0, nil, nil},
@@ -2279,9 +2279,9 @@ var tableNameToColumns = map[string][]columnInfo{
 	tableTiKVRegionStatus:                   tableTiKVRegionStatusCols,
 	tableTiKVRegionPeers:                    tableTiKVRegionPeersCols,
 	tableTiDBServersInfo:                    tableTiDBServersInfoCols,
-	tableTiDBClusterInfo:                    tableTiDBClusterInfoCols,
-	TableTiDBClusterConfig:                  tableTiDBClusterConfigCols,
-	tableTiDBClusterLoad:                    tableTiDBClusterLoadCols,
+	tableClusterInfo:                        tableClusterInfoCols,
+	TableClusterConfig:                      TableClusterConfigCols,
+	tableClusterLoad:                        tableClusterLoadCols,
 	tableTiFlashReplica:                     tableTableTiFlashReplicaCols,
 }
 
@@ -2387,9 +2387,9 @@ func (it *infoschemaTable) getRows(ctx sessionctx.Context, cols []*table.Column)
 		fullRows, err = dataForTikVRegionPeers(ctx)
 	case tableTiDBServersInfo:
 		fullRows, err = dataForServersInfo()
-	case tableTiDBClusterInfo:
+	case tableClusterInfo:
 		fullRows, err = dataForTiDBClusterInfo(ctx)
-	case tableTiDBClusterLoad:
+	case tableClusterLoad:
 		fullRows, err = dataForClusterLoadInfo(ctx)
 	case tableTiFlashReplica:
 		fullRows = dataForTableTiFlashReplica(dbs)

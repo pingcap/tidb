@@ -1243,7 +1243,7 @@ func (b *executorBuilder) getStartTS() (uint64, error) {
 func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executor {
 	var e Executor
 	switch v.Table.Name.L {
-	case strings.ToLower(infoschema.TableTiDBClusterConfig):
+	case strings.ToLower(infoschema.TableClusterConfig):
 		e = &ClusterReaderExec{
 			baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
 			retriever: &clusterConfigRetriever{
