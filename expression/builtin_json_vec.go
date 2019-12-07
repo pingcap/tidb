@@ -814,11 +814,24 @@ func (b *builtinJSONContainsPathSig) vecEvalInt(input *chunk.Chunk, result *chun
 	if err := b.args[1].VecEvalString(b.ctx, input, typeBuf); err != nil {
 		return err
 	}
-	pathBuf, err := b.bufAllocator.get(types.ETString, n)
-	if err != nil {
-		return err
+	pathBufs := make([]*chunk.Column, len(b.args)-2)
+	defer func() {
+		for i := 0; i < len(pathBufs); i++ {
+			if pathBufs[i] != nil {
+				b.bufAllocator.put(pathBufs[i])
+			}
+		}
+	}()
+	for i := 0; i < len(pathBufs); i++ {
+		pathBuf, err := b.bufAllocator.get(types.ETString, n)
+		if err != nil {
+			return err
+		}
+		if err := b.args[2+i].VecEvalString(b.ctx, input, pathBuf); err != nil {
+			return err
+		}
+		pathBufs[i] = pathBuf
 	}
-	defer b.bufAllocator.put(pathBuf)
 
 	result.ResizeInt64(n, false)
 	result.MergeNulls(jsonBuf, typeBuf)
@@ -828,22 +841,18 @@ func (b *builtinJSONContainsPathSig) vecEvalInt(input *chunk.Chunk, result *chun
 		obj := jsonBuf.GetJSON(i)
 		contains := int64(1)
 		var pathExpr json.PathExpression
-		for j := 2; j < len(b.args); j++ {
-			if err := b.args[j].VecEvalString(b.ctx, input, pathBuf); err != nil {
-				return err
-			}
-			path := pathBuf.GetString(i)
+		for j := 0; j < len(pathBufs); j++ {
+			path := pathBufs[j].GetString(i)
 			if pathExpr, err = json.ParseJSONPathExpr(path); err != nil {
 				return err
 			}
 			_, exists := obj.Extract([]json.PathExpression{pathExpr})
-			switch {
-			case exists && containType == json.ContainsPathOne:
+			if exists && containType == json.ContainsPathOne {
 				contains = 1
 				break
-			case !exists && containType == json.ContainsPathOne:
+			} else if !exists && containType == json.ContainsPathOne {
 				contains = 0
-			case !exists && containType == json.ContainsPathAll:
+			} else if !exists && containType == json.ContainsPathAll {
 				contains = 0
 				break
 			}
