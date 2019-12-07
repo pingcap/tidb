@@ -121,6 +121,7 @@ func (o *pdOracle) setLastTS(ts uint64) {
 
 func (o *pdOracle) updateTS(ctx context.Context, interval time.Duration) {
 	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
 	for {
 		select {
 		case <-ticker.C:
@@ -131,7 +132,6 @@ func (o *pdOracle) updateTS(ctx context.Context, interval time.Duration) {
 			}
 			o.setLastTS(ts)
 		case <-o.quit:
-			ticker.Stop()
 			return
 		}
 	}

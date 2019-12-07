@@ -835,7 +835,8 @@ func doLockKeys(ctx context.Context, se sessionctx.Context, waitTime int64, keys
 		return err
 	}
 	forUpdateTS := se.GetSessionVars().TxnCtx.GetForUpdateTS()
-	return txn.LockKeys(ctx, &se.GetSessionVars().Killed, forUpdateTS, waitTime, keys...)
+	return txn.LockKeys(ctx, &se.GetSessionVars().Killed, forUpdateTS, waitTime,
+		se.GetSessionVars().StmtCtx.GetLockWaitStartTime(), keys...)
 }
 
 // LimitExec represents limit executor
@@ -1618,14 +1619,8 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		sc.PrevAffectedRows = -1
 	}
 	errCount, warnCount := vars.StmtCtx.NumErrorWarnings()
-	err = vars.SetSystemVar("warning_count", warnCount)
-	if err != nil {
-		return err
-	}
-	err = vars.SetSystemVar("error_count", errCount)
-	if err != nil {
-		return err
-	}
+	vars.SysErrorCount = errCount
+	vars.SysWarningCount = warnCount
 	vars.StmtCtx = sc
 	for _, warn := range hintWarns {
 		vars.StmtCtx.AppendWarning(warn)

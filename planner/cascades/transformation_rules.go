@@ -60,6 +60,9 @@ var defaultTransformationMap = map[memo.Operand][]Transformation{
 	memo.OperandLimit: {
 		NewRuleTransformLimitToTopN(),
 	},
+	memo.OperandProjection: {
+		NewRuleEliminateProjection(),
+	},
 }
 
 type baseRule struct {
@@ -590,4 +593,44 @@ func (r *PushSelDownJoin) OnTransform(old *memo.ExprIter) (newExprs []*memo.Grou
 	newJoinExpr := memo.NewGroupExpr(join)
 	newJoinExpr.SetChildren(leftGroup, rightGroup)
 	return []*memo.GroupExpr{newJoinExpr}, true, false, nil
+}
+
+// EliminateProjection eliminates the projection.
+type EliminateProjection struct {
+	baseRule
+}
+
+// NewRuleEliminateProjection creates a new Transformation EliminateProjection.
+// The pattern of this rule is `Projection -> Any`.
+func NewRuleEliminateProjection() Transformation {
+	rule := &EliminateProjection{}
+	rule.pattern = memo.BuildPattern(
+		memo.OperandProjection,
+		memo.EngineTiDBOnly,
+		memo.NewPattern(memo.OperandAny, memo.EngineTiDBOnly),
+	)
+	return rule
+}
+
+// OnTransform implements Transformation interface.
+// This rule tries to eliminate the projection whose output columns are the same with its child.
+func (r *EliminateProjection) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
+	child := old.Children[0]
+	if child.Group.Prop.Schema.Len() != old.GetExpr().Group.Prop.Schema.Len() {
+		return nil, false, false, nil
+	}
+
+	oldCols := old.GetExpr().Group.Prop.Schema.Columns
+	for i, col := range child.Group.Prop.Schema.Columns {
+		if !col.Equal(nil, oldCols[i]) {
+			return nil, false, false, nil
+		}
+	}
+
+	// Promote the children group's expression.
+	finalGroupExprs := make([]*memo.GroupExpr, 0, child.Group.Equivalents.Len())
+	for elem := child.Group.Equivalents.Front(); elem != nil; elem = elem.Next() {
+		finalGroupExprs = append(finalGroupExprs, elem.Value.(*memo.GroupExpr))
+	}
+	return finalGroupExprs, true, false, nil
 }
