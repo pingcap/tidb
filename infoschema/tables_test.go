@@ -917,7 +917,7 @@ func (s *testTableSuite) TestSelectHiddenColumn(c *C) {
 	tk.MustExec("CREATE DATABASE `test_hidden`;")
 	tk.MustExec("USE test_hidden;")
 	tk.MustExec("CREATE TABLE hidden (a int , b int, c int);")
-	tk.MustQuery("select count(*) from INFORMATION_SCHEMA.COLUMNS where table_name = \"hidden\"").Check(testkit.Rows("3"))
+	tk.MustQuery("select count(*) from INFORMATION_SCHEMA.COLUMNS where table_name = 'hidden'").Check(testkit.Rows("3"))
 	tb, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test_hidden"), model.NewCIStr("hidden"))
 	c.Assert(err, IsNil)
 	colInfo := tb.Meta().Columns
