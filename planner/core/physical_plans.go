@@ -286,8 +286,7 @@ type PhysicalTopN struct {
 type PhysicalApply struct {
 	PhysicalHashJoin
 
-	OuterSchema   []*expression.CorrelatedColumn
-	rightChOffset int
+	OuterSchema []*expression.CorrelatedColumn
 }
 
 type basePhysicalJoin struct {

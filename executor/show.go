@@ -185,6 +185,8 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 		return nil
 	case ast.ShowRegions:
 		return e.fetchShowTableRegions()
+	case ast.ShowBuiltins:
+		return e.fetchShowBuiltins()
 	}
 	return nil
 }
@@ -347,7 +349,7 @@ func (e *ShowExec) fetchShowTableStatus() error {
                FROM information_schema.tables
 	       WHERE table_schema='%s' ORDER BY table_name`, e.DBName)
 
-	rows, _, err := e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
+	rows, _, err := e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQLWithSnapshot(sql)
 
 	if err != nil {
 		return errors.Trace(err)
@@ -1326,4 +1328,11 @@ func (e *ShowExec) fillRegionsToChunk(regions []regionMeta) {
 		e.result.AppendInt64(9, regions[i].approximateSize)
 		e.result.AppendInt64(10, regions[i].approximateKeys)
 	}
+}
+
+func (e *ShowExec) fetchShowBuiltins() error {
+	for _, f := range expression.GetBuiltinList() {
+		e.appendRow([]interface{}{f})
+	}
+	return nil
 }
