@@ -672,11 +672,11 @@ func (r *MergeAdjacentProjection) OnTransform(old *memo.ExprIter) (newExprs []*m
 	}
 
 	newProj := plannercore.LogicalProjection{Exprs: make([]expression.Expression, len(proj.Exprs))}.Init(proj.SCtx(), proj.SelectBlockOffset())
-	copy(newProj.Exprs, proj.Exprs)
 	newProj.SetSchema(old.GetExpr().Group.Prop.Schema)
-	for i, expr := range newProj.Exprs {
-		plannercore.ResolveExprAndReplace(expr, replace)
-		newProj.Exprs[i] = plannercore.ReplaceColumnOfExpr(newProj.Exprs[i], child, childGroup.Prop.Schema)
+	for i, expr := range proj.Exprs {
+		newExpr := expr.Clone()
+		plannercore.ResolveExprAndReplace(newExpr, replace)
+		newProj.Exprs[i] = plannercore.ReplaceColumnOfExpr(newExpr, child, childGroup.Prop.Schema)
 	}
 
 	newProjExpr := memo.NewGroupExpr(newProj)
