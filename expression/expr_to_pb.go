@@ -271,7 +271,7 @@ func (pc PbConverter) scalarFuncToPBExpr(expr *ScalarFunction) *tipb.Expr {
 	if args := expr.Function.metadata(); args != nil {
 		encoded, err := proto.Marshal(args)
 		if err != nil {
-			logutil.BgLogger().Error("encode implicit parameters", zap.Any("implicit_args", args), zap.Error(err))
+			logutil.BgLogger().Error("encode metadata", zap.Any("metadata", args), zap.Error(err))
 			return nil
 		}
 		metadata = encoded
