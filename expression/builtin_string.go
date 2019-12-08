@@ -438,7 +438,7 @@ func (c *leftFunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 	SetBinFlagOrBinStr(argType, bf.tp)
 	if types.IsBinaryStr(argType) {
 		sig := &builtinLeftBinarySig{bf}
-		sig.setPbCode(tipb.ScalarFuncSig_LeftBinary)
+		sig.setPbCode(tipb.ScalarFuncSig_Left)
 		return sig, nil
 	}
 	sig := &builtinLeftSig{bf}
@@ -520,7 +520,7 @@ func (c *rightFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 	SetBinFlagOrBinStr(argType, bf.tp)
 	if types.IsBinaryStr(argType) {
 		sig := &builtinRightBinarySig{bf}
-		sig.setPbCode(tipb.ScalarFuncSig_RightBinary)
+		sig.setPbCode(tipb.ScalarFuncSig_Right)
 		return sig, nil
 	}
 	sig := &builtinRightSig{bf}
@@ -710,7 +710,7 @@ func (c *reverseFunctionClass) getFunction(ctx sessionctx.Context, args []Expres
 	var sig builtinFunc
 	if types.IsBinaryStr(bf.tp) {
 		sig = &builtinReverseBinarySig{bf}
-		sig.setPbCode(tipb.ScalarFuncSig_ReverseBinary)
+		sig.setPbCode(tipb.ScalarFuncSig_Reverse)
 	} else {
 		sig = &builtinReverseSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_ReverseUTF8)
@@ -1061,13 +1061,13 @@ func (c *substringFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 	switch {
 	case len(args) == 3 && types.IsBinaryStr(argType):
 		sig = &builtinSubstringBinary3ArgsSig{bf}
-		sig.setPbCode(tipb.ScalarFuncSig_SubstringBinary3Args)
+		sig.setPbCode(tipb.ScalarFuncSig_Substring3Args)
 	case len(args) == 3:
 		sig = &builtinSubstring3ArgsSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_Substring3ArgsUTF8)
 	case len(args) == 2 && types.IsBinaryStr(argType):
 		sig = &builtinSubstringBinary2ArgsSig{bf}
-		sig.setPbCode(tipb.ScalarFuncSig_SubstringBinary2Args)
+		sig.setPbCode(tipb.ScalarFuncSig_Substring2Args)
 	case len(args) == 2:
 		sig = &builtinSubstring2ArgsSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_Substring2ArgsUTF8)
@@ -1324,13 +1324,13 @@ func (c *locateFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 	switch {
 	case hasStartPos && hasBianryInput:
 		sig = &builtinLocateBinary3ArgsSig{bf}
-		sig.setPbCode(tipb.ScalarFuncSig_LocateBinary3Args)
+		sig.setPbCode(tipb.ScalarFuncSig_Locate3Args)
 	case hasStartPos:
 		sig = &builtinLocate3ArgsSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_Locate3ArgsUTF8)
 	case hasBianryInput:
 		sig = &builtinLocateBinary2ArgsSig{bf}
-		sig.setPbCode(tipb.ScalarFuncSig_LocateBinary2Args)
+		sig.setPbCode(tipb.ScalarFuncSig_Locate2Args)
 	default:
 		sig = &builtinLocate2ArgsSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_Locate2ArgsUTF8)
@@ -1895,7 +1895,7 @@ func (c *lpadFunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 
 	if types.IsBinaryStr(args[0].GetType()) || types.IsBinaryStr(args[2].GetType()) {
 		sig := &builtinLpadBinarySig{bf, maxAllowedPacket}
-		sig.setPbCode(tipb.ScalarFuncSig_LpadBinary)
+		sig.setPbCode(tipb.ScalarFuncSig_Lpad)
 		return sig, nil
 	}
 	if bf.tp.Flen *= 4; bf.tp.Flen > mysql.MaxBlobWidth {
@@ -2025,7 +2025,7 @@ func (c *rpadFunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 
 	if types.IsBinaryStr(args[0].GetType()) || types.IsBinaryStr(args[2].GetType()) {
 		sig := &builtinRpadBinarySig{bf, maxAllowedPacket}
-		sig.setPbCode(tipb.ScalarFuncSig_RpadBinary)
+		sig.setPbCode(tipb.ScalarFuncSig_Rpad)
 		return sig, nil
 	}
 	if bf.tp.Flen *= 4; bf.tp.Flen > mysql.MaxBlobWidth {
@@ -2270,7 +2270,7 @@ func (c *charLengthFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, types.ETString)
 	if types.IsBinaryStr(args[0].GetType()) {
 		sig := &builtinCharLengthBinarySig{bf}
-		sig.setPbCode(tipb.ScalarFuncSig_CharLengthBinary)
+		sig.setPbCode(tipb.ScalarFuncSig_CharLength)
 		return sig, nil
 	}
 	sig := &builtinCharLengthSig{bf}
@@ -3403,7 +3403,7 @@ func (c *insertFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 
 	if types.IsBinaryStr(args[0].GetType()) {
 		sig = &builtinInsertBinarySig{bf, maxAllowedPacket}
-		sig.setPbCode(tipb.ScalarFuncSig_InsertBinary)
+		sig.setPbCode(tipb.ScalarFuncSig_Insert)
 	} else {
 		sig = &builtinInsertSig{bf, maxAllowedPacket}
 		sig.setPbCode(tipb.ScalarFuncSig_InsertUTF8)
@@ -3527,7 +3527,7 @@ func (c *instrFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 	bf.tp.Flen = 11
 	if types.IsBinaryStr(bf.args[0].GetType()) || types.IsBinaryStr(bf.args[1].GetType()) {
 		sig := &builtinInstrBinarySig{bf}
-		sig.setPbCode(tipb.ScalarFuncSig_InstrBinary)
+		sig.setPbCode(tipb.ScalarFuncSig_Instr)
 		return sig, nil
 	}
 	sig := &builtinInstrSig{bf}

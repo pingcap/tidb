@@ -618,7 +618,7 @@ func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *ti
 		f = &builtinUUIDSig{base}
 	case tipb.ScalarFuncSig_LikeSig:
 		f = &builtinLikeSig{base}
-	//case tipb.ScalarFuncSig_RegexpBinarySig:
+	//case tipb.ScalarFuncSig_RegexpSig:
 	//	f = &builtinRegexpBinarySig{base}
 	//case tipb.ScalarFuncSig_RegexpUTF8Sig:
 	//	f = &builtinRegexpSig{base}
@@ -933,17 +933,17 @@ func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *ti
 		f = &builtinHexStrArgSig{base}
 	case tipb.ScalarFuncSig_InsertUTF8:
 		f = &builtinInsertSig{base, 65536}
-	case tipb.ScalarFuncSig_InsertBinary:
+	case tipb.ScalarFuncSig_Insert:
 		f = &builtinInsertBinarySig{base, 65536}
 	case tipb.ScalarFuncSig_InstrUTF8:
 		f = &builtinInstrSig{base}
-	case tipb.ScalarFuncSig_InstrBinary:
+	case tipb.ScalarFuncSig_Instr:
 		f = &builtinInstrBinarySig{base}
 	case tipb.ScalarFuncSig_LTrim:
 		f = &builtinLTrimSig{base}
 	case tipb.ScalarFuncSig_LeftUTF8:
 		f = &builtinLeftSig{base}
-	case tipb.ScalarFuncSig_LeftBinary:
+	case tipb.ScalarFuncSig_Left:
 		f = &builtinLeftBinarySig{base}
 	case tipb.ScalarFuncSig_Length:
 		f = &builtinLengthSig{base}
@@ -951,15 +951,15 @@ func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *ti
 		f = &builtinLocate2ArgsSig{base}
 	case tipb.ScalarFuncSig_Locate3ArgsUTF8:
 		f = &builtinLocate3ArgsSig{base}
-	case tipb.ScalarFuncSig_LocateBinary2Args:
+	case tipb.ScalarFuncSig_Locate2Args:
 		f = &builtinLocateBinary2ArgsSig{base}
-	case tipb.ScalarFuncSig_LocateBinary3Args:
+	case tipb.ScalarFuncSig_Locate3Args:
 		f = &builtinLocateBinary3ArgsSig{base}
 	case tipb.ScalarFuncSig_Lower:
 		f = &builtinLowerSig{base}
 	case tipb.ScalarFuncSig_LpadUTF8:
 		f = &builtinLpadSig{base, 65536}
-	case tipb.ScalarFuncSig_LpadBinary:
+	case tipb.ScalarFuncSig_Lpad:
 		f = &builtinLpadBinarySig{base, 65536}
 	case tipb.ScalarFuncSig_MakeSet:
 		f = &builtinMakeSetSig{base}
@@ -979,15 +979,15 @@ func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *ti
 		f = &builtinReplaceSig{base}
 	case tipb.ScalarFuncSig_ReverseUTF8:
 		f = &builtinReverseSig{base}
-	case tipb.ScalarFuncSig_ReverseBinary:
+	case tipb.ScalarFuncSig_Reverse:
 		f = &builtinReverseBinarySig{base}
 	case tipb.ScalarFuncSig_RightUTF8:
 		f = &builtinRightSig{base}
-	case tipb.ScalarFuncSig_RightBinary:
+	case tipb.ScalarFuncSig_Right:
 		f = &builtinRightBinarySig{base}
 	case tipb.ScalarFuncSig_RpadUTF8:
 		f = &builtinRpadSig{base, 65536}
-	case tipb.ScalarFuncSig_RpadBinary:
+	case tipb.ScalarFuncSig_Rpad:
 		f = &builtinRpadBinarySig{base, 65536}
 	case tipb.ScalarFuncSig_Space:
 		f = &builtinSpaceSig{base, 65536}
@@ -997,9 +997,9 @@ func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *ti
 		f = &builtinSubstring2ArgsSig{base}
 	case tipb.ScalarFuncSig_Substring3ArgsUTF8:
 		f = &builtinSubstring3ArgsSig{base}
-	case tipb.ScalarFuncSig_SubstringBinary2Args:
+	case tipb.ScalarFuncSig_Substring2Args:
 		f = &builtinSubstringBinary2ArgsSig{base}
-	case tipb.ScalarFuncSig_SubstringBinary3Args:
+	case tipb.ScalarFuncSig_Substring3Args:
 		f = &builtinSubstringBinary3ArgsSig{base}
 	case tipb.ScalarFuncSig_SubstringIndex:
 		f = &builtinSubstringIndexSig{base}
