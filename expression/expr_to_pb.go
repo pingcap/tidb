@@ -337,6 +337,7 @@ func (pc PbConverter) canFuncBePushed(sf *ScalarFunction) bool {
 		ast.BitNeg,
 		ast.LeftShift,
 		ast.RightShift,
+		ast.UnaryMinus,
 
 		// compare functions.
 		ast.LT,
@@ -370,6 +371,7 @@ func (pc PbConverter) canFuncBePushed(sf *ScalarFunction) bool {
 		ast.Log2,
 		ast.Log10,
 		ast.Exp,
+		ast.Pow,
 		ast.Sin,
 		ast.Asin,
 		ast.Cos,
@@ -380,6 +382,7 @@ func (pc PbConverter) canFuncBePushed(sf *ScalarFunction) bool {
 		ast.Cot,
 		ast.Radians,
 		ast.Degrees,
+		ast.Conv,
 		ast.CRC32,
 
 		// control flow functions.
@@ -392,12 +395,22 @@ func (pc PbConverter) canFuncBePushed(sf *ScalarFunction) bool {
 		ast.Length,
 		ast.BitLength,
 		ast.Concat,
+		ast.ConcatWS,
 		ast.Locate,
+		ast.Instr,
+		ast.Replace,
 		ast.ASCII,
+		ast.Hex,
 		ast.Reverse,
 		ast.LTrim,
 		ast.RTrim,
 		ast.Left,
+		ast.Right,
+		ast.Strcmp,
+		ast.Quote,
+		ast.Space,
+		ast.Elt,
+		ast.Field,
 
 		// json functions.
 		ast.JSONType,
@@ -413,7 +426,35 @@ func (pc PbConverter) canFuncBePushed(sf *ScalarFunction) bool {
 		ast.JSONLength,
 
 		// date functions.
-		ast.DateFormat:
+		ast.DateFormat,
+		ast.FromDays,
+		ast.ToDays,
+		ast.DayOfYear,
+		ast.DayOfMonth,
+		ast.Year,
+		ast.Month,
+		ast.Hour,
+		ast.Minute,
+		ast.Second,
+		ast.MicroSecond,
+		ast.PeriodAdd,
+		ast.PeriodDiff,
+		ast.DayName,
+
+		// encryption functions.
+		ast.MD5,
+		ast.SHA1,
+		ast.UncompressedLength,
+
+		// misc functions.
+		ast.InetNtoa,
+		ast.InetAton,
+		ast.Inet6Ntoa,
+		ast.Inet6Aton,
+		ast.IsIPv4,
+		ast.IsIPv4Compat,
+		ast.IsIPv4Mapped,
+		ast.IsIPv6:
 		_, disallowPushdown := DefaultExprPushdownBlacklist.Load().(map[string]struct{})[sf.FuncName.L]
 		return true && !disallowPushdown
 	}
