@@ -1989,11 +1989,89 @@ func (b *builtinCurrentDateSig) vecEvalTime(input *chunk.Chunk, result *chunk.Co
 }
 
 func (b *builtinMakeTimeSig) vectorized() bool {
-	return false
+	return true
+}
+
+func (b *builtinMakeTimeSig) getVecIntParam(arg Expression, input *chunk.Chunk, col *chunk.Column) (err error) {
+	if arg.GetType().EvalType() == types.ETReal {
+		err = arg.VecEvalReal(b.ctx, input, col)
+		if err = handleInvalidTimeError(b.ctx, err); err != nil {
+			return err
+		}
+		f64s := col.Float64s()
+		i64s := col.Int64s()
+		n := input.NumRows()
+		for i := 0; i < n; i++ {
+			i64s[i] = int64(f64s[i])
+		}
+		return nil
+	}
+	err = arg.VecEvalInt(b.ctx, input, col)
+	return handleInvalidTimeError(b.ctx, err)
 }
 
 func (b *builtinMakeTimeSig) vecEvalDuration(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	result.ResizeInt64(n, false)
+	hoursBuf := result
+	var err error
+	if err = b.getVecIntParam(b.args[0], input, hoursBuf); err != nil {
+		return err
+	}
+	minutesBuf, err := b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(minutesBuf)
+	if err = b.getVecIntParam(b.args[1], input, minutesBuf); err != nil {
+		return err
+	}
+	secondsBuf, err := b.bufAllocator.get(types.ETReal, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(secondsBuf)
+	if err = b.args[2].VecEvalReal(b.ctx, input, secondsBuf); err != nil {
+		return err
+	}
+	hours := hoursBuf.Int64s()
+	minutes := minutesBuf.Int64s()
+	seconds := secondsBuf.Float64s()
+	durs := result.GoDurations()
+	result.MergeNulls(minutesBuf, secondsBuf)
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		overflow := false
+		if hours[i] < 0 && mysql.HasUnsignedFlag(b.args[0].GetType().Flag) {
+			hours[i] = 838
+			overflow = true
+		}
+		if hours[i] < -838 {
+			hours[i] = -838
+			overflow = true
+		} else if hours[i] > 838 {
+			hours[i] = 838
+			overflow = true
+		}
+		if hours[i] == -838 || hours[i] == 838 {
+			if seconds[i] > 59 {
+				seconds[i] = 59
+			}
+		}
+		if overflow {
+			minutes[i] = 59
+			seconds[i] = 59
+		}
+		fsp := b.tp.Decimal
+		dur, err := types.ParseDuration(b.ctx.GetSessionVars().StmtCtx, fmt.Sprintf("%02d:%02d:%v", hours[i], minutes[i], seconds[i]), int8(fsp))
+		if err != nil {
+			return err
+		}
+		durs[i] = dur.Duration
+	}
+	return nil
 }
 
 func (b *builtinSubDateAndDurationSig) vectorized() bool {
