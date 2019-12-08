@@ -625,6 +625,17 @@ type LoadStats struct {
 	Path string
 }
 
+// IndexAdvise represents a index advise plan.
+type IndexAdvise struct {
+	baseSchemaProducer
+
+	IsLocal     bool
+	Path        string
+	MaxMinutes  uint64
+	MaxIndexNum *ast.MaxIndexNumClause
+	LinesInfo   *ast.LinesClause
+}
+
 // SplitRegion represents a split regions plan.
 type SplitRegion struct {
 	baseSchemaProducer
