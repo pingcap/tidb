@@ -100,7 +100,7 @@ func (c *regexpFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 		sig.setPbCode(tipb.ScalarFuncSig_RegexpBinarySig)
 	} else {
 		sig = newBuiltinRegexpSig(bf)
-		sig.setPbCode(tipb.ScalarFuncSig_RegexpSig)
+		sig.setPbCode(tipb.ScalarFuncSig_RegexpUTF8Sig)
 	}
 	return sig, nil
 }
