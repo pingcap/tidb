@@ -267,20 +267,20 @@ func (pc PbConverter) scalarFuncToPBExpr(expr *ScalarFunction) *tipb.Expr {
 		children = append(children, pbArg)
 	}
 
-	var metadata []byte
-	if args := expr.Function.metadata(); args != nil {
-		encoded, err := proto.Marshal(args)
+	var encoded []byte
+	if metadata := expr.Function.metadata(); metadata != nil {
+		var err error
+		encoded, err = proto.Marshal(metadata)
 		if err != nil {
-			logutil.BgLogger().Error("encode metadata", zap.Any("metadata", args), zap.Error(err))
+			logutil.BgLogger().Error("encode metadata", zap.Any("metadata", metadata), zap.Error(err))
 			return nil
 		}
-		metadata = encoded
 	}
 
 	// Construct expression ProtoBuf.
 	return &tipb.Expr{
 		Tp:        tipb.ExprType_ScalarFunc,
-		Val:       metadata,
+		Val:       encoded,
 		Sig:       pbCode,
 		Children:  children,
 		FieldType: ToPBFieldType(expr.RetType),
