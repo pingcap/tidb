@@ -1,12 +1,12 @@
 package metricschema
 
 import (
-	"github.com/pingcap/tidb/sessionctx"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	pmodel "github.com/prometheus/common/model"
 )
