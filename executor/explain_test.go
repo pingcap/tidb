@@ -112,22 +112,22 @@ func (s *testSuite1) TestExplainAnalyzeMemory(c *C) {
 	tk.MustExec("create table t (v int, k int, key(k))")
 	tk.MustExec("insert into t values (1, 1), (1, 1), (1, 1), (1, 1), (1, 1)")
 
-	s.checkMemoryInfo(c, tk, "explain analyze select * from t order by v", false)
-	s.checkMemoryInfo(c, tk, "explain analyze select * from t order by v limit 5", false)
-	s.checkMemoryInfo(c, tk, "explain analyze select /*+ HASH_JOIN(t1, t2) */ t1.k from t t1, t t2 where t1.v = t2.v+1", false)
-	s.checkMemoryInfo(c, tk, "explain analyze select /*+ SM_JOIN(t1, t2) */ t1.k from t t1, t t2 where t1.k = t2.k+1", false)
-	s.checkMemoryInfo(c, tk, "explain analyze select /*+ INL_JOIN(t1, t2) */ t1.k from t t1, t t2 where t1.k = t2.k and t1.v=1", false)
-	s.checkMemoryInfo(c, tk, "explain analyze select /*+ INL_HASH_JOIN(t1, t2) */ t1.k from t t1, t t2 where t1.k = t2.k and t1.v=1", false)
-	s.checkMemoryInfo(c, tk, "explain analyze select /*+ INL_MERGE_JOIN(t1, t2) */ t1.k from t t1, t t2 where t1.k = t2.k and t1.v=1", false)
-	s.checkMemoryInfo(c, tk, "explain analyze select sum(k) from t group by v", false)
-	s.checkMemoryInfo(c, tk, "explain analyze select sum(v) from t group by k", false)
-	s.checkMemoryInfo(c, tk, "explain analyze select * from t", false)
-	s.checkMemoryInfo(c, tk, "explain analyze select k from t use index(k)", false)
-	s.checkMemoryInfo(c, tk, "explain analyze select * from t use index(k)", false)
-	s.checkMemoryInfo(c, tk, "explain analyze select v+k from t", false)
+	s.checkMemoryInfo(c, tk, "explain analyze select * from t order by v")
+	s.checkMemoryInfo(c, tk, "explain analyze select * from t order by v limit 5")
+	s.checkMemoryInfo(c, tk, "explain analyze select /*+ HASH_JOIN(t1, t2) */ t1.k from t t1, t t2 where t1.v = t2.v+1")
+	s.checkMemoryInfo(c, tk, "explain analyze select /*+ SM_JOIN(t1, t2) */ t1.k from t t1, t t2 where t1.k = t2.k+1")
+	s.checkMemoryInfo(c, tk, "explain analyze select /*+ INL_JOIN(t1, t2) */ t1.k from t t1, t t2 where t1.k = t2.k and t1.v=1")
+	s.checkMemoryInfo(c, tk, "explain analyze select /*+ INL_HASH_JOIN(t1, t2) */ t1.k from t t1, t t2 where t1.k = t2.k and t1.v=1")
+	s.checkMemoryInfo(c, tk, "explain analyze select /*+ INL_MERGE_JOIN(t1, t2) */ t1.k from t t1, t t2 where t1.k = t2.k and t1.v=1")
+	s.checkMemoryInfo(c, tk, "explain analyze select sum(k) from t group by v")
+	s.checkMemoryInfo(c, tk, "explain analyze select sum(v) from t group by k")
+	s.checkMemoryInfo(c, tk, "explain analyze select * from t")
+	s.checkMemoryInfo(c, tk, "explain analyze select k from t use index(k)")
+	s.checkMemoryInfo(c, tk, "explain analyze select * from t use index(k)")
+	s.checkMemoryInfo(c, tk, "explain analyze select v+k from t")
 }
 
-func (s *testSuite1) checkMemoryInfo(c *C, tk *testkit.TestKit, sql string, checkMemAfterFinish bool) {
+func (s *testSuite1) checkMemoryInfo(c *C, tk *testkit.TestKit, sql string) {
 	memCol := 5
 	ops := []string{"Join", "Reader", "Top", "Sort", "LookUp", "Projection", "Selection"}
 	rows := tk.MustQuery(sql).Rows()
@@ -153,10 +153,6 @@ func (s *testSuite1) checkMemoryInfo(c *C, tk *testkit.TestKit, sql string, chec
 		} else {
 			c.Assert(strs[memCol], Equals, "N/A")
 		}
-	}
-	if checkMemAfterFinish {
-		c.Assert(tk.Se.GetSessionVars().StmtCtx.MemTracker.BytesConsumed(), Equals, 0)
-		c.Assert(tk.Se.GetSessionVars().StmtCtx.MemTracker.MaxConsumed(), Greater, 0)
 	}
 }
 

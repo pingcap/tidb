@@ -274,29 +274,8 @@ func (e *ProjectionExec) Close() error {
 	if e.prepared {
 		close(e.finishCh)
 		// Wait for "projectionInputFetcher" to finish and exit.
-		for po := range e.outputCh {
-			e.memTracker.Consume(-po.chk.MemoryUsage())
+		for range e.outputCh {
 		}
-		close(e.fetcher.inputCh)
-		close(e.fetcher.outputCh)
-		for po := range e.fetcher.inputCh {
-			e.memTracker.Consume(-po.chk.MemoryUsage())
-		}
-		for po := range e.fetcher.outputCh {
-			e.memTracker.Consume(-po.chk.MemoryUsage())
-		}
-
-		for _, w := range e.workers {
-			close(w.inputCh)
-			close(w.outputCh)
-			for po := range w.inputCh {
-				e.memTracker.Consume(-po.chk.MemoryUsage())
-			}
-			for po := range w.outputCh {
-				e.memTracker.Consume(-po.chk.MemoryUsage())
-			}
-		}
-
 		e.outputCh = nil
 	}
 	if e.runtimeStats != nil {
