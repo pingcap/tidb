@@ -1530,7 +1530,7 @@ func (s *testEvaluatorSuite) TestInsertBinarySig(c *C) {
 	}
 
 	base := baseBuiltinFunc{args: args, ctx: s.ctx, tp: resultType}
-	insert := &builtinInsertBinarySig{base, 3}
+	insert := &builtinInsertSig{base, 3}
 
 	input := chunk.NewChunkWithCapacity(colTypes, 2)
 	input.AppendString(0, "abc")

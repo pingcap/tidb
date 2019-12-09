@@ -30,7 +30,7 @@ var (
 
 var (
 	_ builtinFunc = &builtinLikeSig{}
-	_ builtinFunc = &builtinRegexpBinarySig{}
+	_ builtinFunc = &builtinRegexpSig{}
 	_ builtinFunc = &builtinRegexpUTF8Sig{}
 )
 
@@ -96,7 +96,7 @@ func (c *regexpFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 	bf.tp.Flen = 1
 	var sig builtinFunc
 	if types.IsBinaryStr(args[0].GetType()) || types.IsBinaryStr(args[1].GetType()) {
-		sig = newBuiltinRegexpBinarySig(bf)
+		sig = newBuiltinRegexpSig(bf)
 		sig.setPbCode(tipb.ScalarFuncSig_RegexpSig)
 	} else {
 		sig = newBuiltinRegexpUTF8Sig(bf)
@@ -142,18 +142,18 @@ func (b *builtinRegexpSharedSig) evalInt(row chunk.Row) (int64, bool, error) {
 	return boolToInt64(re.MatchString(expr)), false, nil
 }
 
-type builtinRegexpBinarySig struct {
+type builtinRegexpSig struct {
 	builtinRegexpSharedSig
 }
 
-func newBuiltinRegexpBinarySig(bf baseBuiltinFunc) *builtinRegexpBinarySig {
+func newBuiltinRegexpSig(bf baseBuiltinFunc) *builtinRegexpSig {
 	shared := builtinRegexpSharedSig{baseBuiltinFunc: bf}
 	shared.compile = regexp.Compile
-	return &builtinRegexpBinarySig{builtinRegexpSharedSig: shared}
+	return &builtinRegexpSig{builtinRegexpSharedSig: shared}
 }
 
-func (b *builtinRegexpBinarySig) Clone() builtinFunc {
-	newSig := &builtinRegexpBinarySig{}
+func (b *builtinRegexpSig) Clone() builtinFunc {
+	newSig := &builtinRegexpSig{}
 	newSig.clone(&b.builtinRegexpSharedSig)
 	return newSig
 }
