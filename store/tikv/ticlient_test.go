@@ -119,7 +119,7 @@ func (s *testTiclientSuite) TestSingleKey(c *C) {
 	txn := s.beginTxn(c)
 	err := txn.Set(encodeKey(s.prefix, "key"), []byte("value"))
 	c.Assert(err, IsNil)
-	err = txn.LockKeys(context.Background(), nil, 0, kv.LockAlwaysWait, encodeKey(s.prefix, "key"))
+	err = txn.LockKeys(context.Background(), nil, 0, kv.LockAlwaysWait, time.Now(), encodeKey(s.prefix, "key"))
 	c.Assert(err, IsNil)
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)

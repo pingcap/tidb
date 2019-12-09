@@ -33,7 +33,9 @@
     "cases": [
       "select a, b from (select a, b from t) as t2",
       "select a+b from (select a, b from t) as t2",
-      "select a from (select floor(a) as a from t) as t2"
+      "select a from (select floor(a) as a from t) as t2",
+      "select a from (select a, b from (select a, b, c from t) as t2) as t3",
+      "select a+c from (select floor(a) as a, b, c from t) as t2"
     ]
   }
 ]
