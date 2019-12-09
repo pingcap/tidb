@@ -272,13 +272,9 @@ func (b *builtinBenchmarkSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colum
 		return errors.Errorf("EvalType %v not implemented for builtin BENCHMARK()", evalType)
 	}
 
+	// Return value of BENCHMARK() is always 0.
+	// even if args[1].IsNull(i)
 	result.ResizeInt64(n, false)
-	i64s := result.Int64s()
-	for i := range i64s {
-		// Return value of BENCHMARK() is always 0.
-		// even if args[1].IsNull(i)
-		i64s[i] = 0
-	}
 
 	return nil
 }

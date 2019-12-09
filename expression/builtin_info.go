@@ -475,7 +475,7 @@ type builtinBenchmarkSig struct {
 }
 
 func (b *builtinBenchmarkSig) Clone() builtinFunc {
-	newSig := &builtinBenchmarkSig{}
+	newSig := &builtinBenchmarkSig{constLoopCount: b.constLoopCount}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
 	return newSig
 }
