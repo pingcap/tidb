@@ -557,7 +557,7 @@ func (ds *DataSource) buildIndexLookupGather(path *util.AccessPath, idxCols []*e
 	if ds.HandleCol == nil {
 		ds.HandleCol = ds.newExtraHandleSchemaCol()
 	}
-	for i := len(idxCols)-1; i >= 0; i-- {
+	for i := len(idxCols) - 1; i >= 0; i-- {
 		if idxCols[i] == nil {
 			idxCols = append(idxCols[:i], idxCols[i+1:]...)
 		}
