@@ -277,6 +277,26 @@ func (e *ProjectionExec) Close() error {
 		for po := range e.outputCh {
 			e.memTracker.Consume(-po.chk.MemoryUsage())
 		}
+		close(e.fetcher.inputCh)
+		close(e.fetcher.outputCh)
+		for po := range e.fetcher.inputCh {
+			e.memTracker.Consume(-po.chk.MemoryUsage())
+		}
+		for po := range e.fetcher.outputCh {
+			e.memTracker.Consume(-po.chk.MemoryUsage())
+		}
+
+		for _, w := range e.workers {
+			close(w.inputCh)
+			close(w.outputCh)
+			for po := range w.inputCh {
+				e.memTracker.Consume(-po.chk.MemoryUsage())
+			}
+			for po := range w.outputCh {
+				e.memTracker.Consume(-po.chk.MemoryUsage())
+			}
+		}
+
 		e.outputCh = nil
 	}
 	if e.runtimeStats != nil {
@@ -328,6 +348,7 @@ func (f *projectionInputFetcher) run(ctx context.Context) {
 
 		output = readProjectionOutput(f.outputCh, f.globalFinishCh)
 		if output == nil {
+			f.memTracker.Consume(-input.chk.MemoryUsage())
 			return
 		}
 
@@ -340,6 +361,7 @@ func (f *projectionInputFetcher) run(ctx context.Context) {
 		f.memTracker.Consume(input.chk.MemoryUsage() - mSize)
 		if err != nil || input.chk.NumRows() == 0 {
 			output.done <- err
+			f.memTracker.Consume(-input.chk.MemoryUsage())
 			return
 		}
 
