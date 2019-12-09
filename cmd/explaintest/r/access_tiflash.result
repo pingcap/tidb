@@ -40,3 +40,18 @@ id	count	task	operator info
 TableReader_7	44.00	root	data:Selection_6
 └─Selection_6	44.00	cop[tiflash]	or(and(gt(test.tt.a, 1), lt(test.tt.a, 20)), and(ge(test.tt.a, 30), lt(test.tt.a, 55)))
   └─TableScan_5	44.00	cop[tiflash]	table:tt, range:[-inf,+inf], keep order:false, stats:pseudo
+drop table if exists ttt;
+create table ttt (a int, primary key (a desc));
+desc select * from ttt order by ttt.a desc;
+id	count	task	operator info
+TableReader_11	10000.00	root	data:TableScan_10
+└─TableScan_10	10000.00	cop[tikv]	table:ttt, range:[-inf,+inf], keep order:true, desc, stats:pseudo
+desc select /*+ read_from_storage(tiflash[ttt]) */ * from ttt order by ttt.a desc;
+id	count	task	operator info
+Sort_4	10000.00	root	test.ttt.a:desc
+└─TableReader_8	10000.00	root	data:TableScan_7
+  └─TableScan_7	10000.00	cop[tiflash]	table:ttt, range:[-inf,+inf], keep order:false, stats:pseudo
+desc select /*+ read_from_storage(tiflash[ttt]) */ * from ttt order by ttt.a;
+id	count	task	operator info
+TableReader_11	10000.00	root	data:TableScan_10
+└─TableScan_10	10000.00	cop[tiflash]	table:ttt, range:[-inf,+inf], keep order:true, stats:pseudo
