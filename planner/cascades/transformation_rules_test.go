@@ -148,6 +148,9 @@ func (s *testTransformationRuleSuite) TestTopNRules(c *C) {
 		memo.OperandDataSource: {
 			NewRuleEnumeratePaths(),
 		},
+		memo.OperandTopN: {
+			NewRulePushTopNDownProjection(),
+		},
 	})
 	var input []string
 	var output []struct {
