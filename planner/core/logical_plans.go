@@ -554,6 +554,14 @@ func (ds *DataSource) buildIndexLookupGather(path *util.AccessPath, idxCols []*e
 	ts := LogicalTableScan{Source: ds, Handle: ds.getHandleCol(), IsDoubleRead: true}.Init(ds.ctx, ds.blockOffset)
 	ts.SetSchema(ds.Schema())
 
+	if ds.HandleCol == nil {
+		ds.HandleCol = ds.newExtraHandleSchemaCol()
+	}
+	for i := len(idxCols)-1; i >= 0; i-- {
+		if idxCols[i] == nil {
+			idxCols = append(idxCols[:i], idxCols[i+1:]...)
+		}
+	}
 	dg := TiKVDoubleGather{
 		Source:       ds,
 		IndexCols:    idxCols,
@@ -576,16 +584,6 @@ func (ds *DataSource) Convert2Gathers() (gathers []LogicalPlan) {
 			if isCoveringIndex(ds.schema.Columns, path.FullIdxCols, path.FullIdxColLens, ds.tableInfo.PKIsHandle) {
 				gathers = append(gathers, ds.buildIndexGather(path))
 			} else {
-				needBuildDoubleGather := true
-				for _, idxCol := range path.FullIdxCols {
-					if idxCol == nil {
-						needBuildDoubleGather = false
-						break
-					}
-				}
-				if !needBuildDoubleGather {
-					continue
-				}
 				gathers = append(gathers, ds.buildIndexLookupGather(path, path.FullIdxCols, path.FullIdxColLens))
 			}
 		}
