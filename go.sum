@@ -276,6 +276,8 @@ github.com/wjhuang2016/parser v0.0.0-20191206031745-13c7652ad9cc h1:6a2MegtxAnwz
 github.com/wjhuang2016/parser v0.0.0-20191206031745-13c7652ad9cc/go.mod h1:Z+iYjw0mki4x8jvQ1uxVOyHHG12YLyYsNi0qmse80G4=
 github.com/wjhuang2016/parser v0.0.0-20191206094617-4823db865956 h1:DwloEkuy1fM94T0qlu4MJFk3E0Jre5QtnXBmv5aNUPg=
 github.com/wjhuang2016/parser v0.0.0-20191206094617-4823db865956/go.mod h1:Z+iYjw0mki4x8jvQ1uxVOyHHG12YLyYsNi0qmse80G4=
+github.com/wjhuang2016/parser v0.0.0-20191209095659-ad651fb61e08 h1:z8l6Y+aC7nyqGh35I9dkB4XMqF16Y9WCO+t9QP8gqDI=
+github.com/wjhuang2016/parser v0.0.0-20191209095659-ad651fb61e08/go.mod h1:Z+iYjw0mki4x8jvQ1uxVOyHHG12YLyYsNi0qmse80G4=
 github.com/xiang90/probing v0.0.0-20190116061207-43a291ad63a2 h1:eY9dn8+vbi4tKz5Qo6v2eYzo7kUS51QINcR5jNpbZS8=
 github.com/xiang90/probing v0.0.0-20190116061207-43a291ad63a2/go.mod h1:UETIi67q53MR2AWcXfiuqkDkRtnGDLqkBTpCHuJHxtU=
 github.com/yookoala/realpath v1.0.0/go.mod h1:gJJMA9wuX7AcqLy1+ffPatSCySA1FQ2S8Ya9AIoYBpE=
