@@ -83,15 +83,6 @@ func (r *selectResult) Fetch(ctx context.Context) {
 }
 
 func (r *selectResult) fetchResp(ctx context.Context) error {
-	defer func() {
-		if r.selectResp == nil && !r.durationReported {
-			// final round of fetch
-			// TODO: Add a label to distinguish between success or failure.
-			// https://github.com/pingcap/tidb/issues/11397
-			metrics.DistSQLQueryHistgram.WithLabelValues(r.label, r.sqlType).Observe(r.fetchDuration.Seconds())
-			r.durationReported = true
-		}
-	}()
 	for {
 		r.respChkIdx = 0
 		startTime := time.Now()
@@ -106,6 +97,13 @@ func (r *selectResult) fetchResp(ctx context.Context) error {
 		}
 		if resultSubset == nil {
 			r.selectResp = nil
+			if !r.durationReported {
+				// final round of fetch
+				// TODO: Add a label to distinguish between success or failure.
+				// https://github.com/pingcap/tidb/issues/11397
+				metrics.DistSQLQueryHistgram.WithLabelValues(r.label, r.sqlType).Observe(r.fetchDuration.Seconds())
+				r.durationReported = true
+			}
 			return nil
 		}
 		r.selectResp = new(tipb.SelectResponse)
