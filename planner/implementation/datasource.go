@@ -178,14 +178,16 @@ type IndexLookUpReaderImpl struct {
 
 	KeepOrder   bool
 	tblColHists *statistics.HistColl
+	extraProj   *plannercore.PhysicalProjection
 }
 
 // NewIndexLookUpReaderImpl creates a new table reader Implementation.
-func NewIndexLookUpReaderImpl(reader plannercore.PhysicalPlan, hists *statistics.HistColl) *IndexLookUpReaderImpl {
+func NewIndexLookUpReaderImpl(reader plannercore.PhysicalPlan, hists *statistics.HistColl, proj *plannercore.PhysicalProjection) *IndexLookUpReaderImpl {
 	base := baseImpl{plan: reader}
 	impl := &IndexLookUpReaderImpl{
 		baseImpl:    base,
 		tblColHists: hists,
+		extraProj:   proj,
 	}
 	return impl
 }
@@ -193,12 +195,10 @@ func NewIndexLookUpReaderImpl(reader plannercore.PhysicalPlan, hists *statistics
 // CalcCost calculates the cost of the table reader Implementation.
 func (impl *IndexLookUpReaderImpl) CalcCost(outCount float64, children ...memo.Implementation) float64 {
 	var reader *plannercore.PhysicalIndexLookUpReader
-	if proj, isProj := impl.plan.(*plannercore.PhysicalProjection); isProj {
-		reader = proj.Children()[0].(*plannercore.PhysicalIndexLookUpReader)
-		impl.cost += proj.GetCost(proj.Stats().RowCount)
-	} else {
-		reader = impl.plan.(*plannercore.PhysicalIndexLookUpReader)
+	if impl.extraProj != nil {
+		impl.cost += impl.extraProj.GetCost(impl.extraProj.Stats().RowCount)
 	}
+	reader = impl.plan.(*plannercore.PhysicalIndexLookUpReader)
 	reader.IndexPlan, reader.TablePlan = children[0].GetPlan(), children[1].GetPlan()
 	reader.TablePlans = plannercore.FlattenPushDownPlan(reader.TablePlan)
 	reader.IndexPlans = plannercore.FlattenPushDownPlan(reader.IndexPlan)
@@ -249,4 +249,12 @@ func (impl *IndexLookUpReaderImpl) ScaleCostLimit(costLimit float64) float64 {
 // AttachChildren implements Implementation AttachChildren interface.
 func (impl *IndexLookUpReaderImpl) AttachChildren(children ...memo.Implementation) memo.Implementation {
 	return impl
+}
+
+// GetPlan implements Implementation GetPlan interface.
+func (impl *IndexLookUpReaderImpl) GetPlan() plannercore.PhysicalPlan {
+	if impl.extraProj != nil {
+		return impl.extraProj
+	}
+	return impl.plan
 }

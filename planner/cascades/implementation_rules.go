@@ -178,18 +178,19 @@ func (r *ImplTiKVDoubleReadGather) Match(expr *memo.GroupExpr, prop *property.Ph
 // OnImplement implements ImplementationRule OnImplement interface.
 func (r *ImplTiKVDoubleReadGather) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) (memo.Implementation, error) {
 	logicProp := expr.Group.Prop
-	sg := expr.ExprNode.(*plannercore.TiKVDoubleGather)
+	dg := expr.ExprNode.(*plannercore.TiKVDoubleGather)
 	var reader plannercore.PhysicalPlan
-	reader = sg.GetPhysicalIndexLookUpReader(logicProp.Schema, logicProp.Stats.ScaleByExpectCnt(reqProp.ExpectedCnt), reqProp, reqProp)
-	if sg.Source.HandleCol.ID == model.ExtraHandleID && !reqProp.IsEmpty() {
-		reader.Schema().Append(sg.Source.HandleCol)
-		reader.(*plannercore.PhysicalIndexLookUpReader).ExtraHandleCol = sg.Source.HandleCol
-		proj := plannercore.PhysicalProjection{Exprs: expression.Column2Exprs(logicProp.Schema.Columns)}.Init(sg.SCtx(), logicProp.Stats, sg.SelectBlockOffset(), reqProp, reqProp)
+	var proj *plannercore.PhysicalProjection
+	reader = dg.GetPhysicalIndexLookUpReader(logicProp.Schema, logicProp.Stats.ScaleByExpectCnt(reqProp.ExpectedCnt), reqProp, reqProp)
+	if dg.Source.HandleCol.ID == model.ExtraHandleID && !reqProp.IsEmpty() {
+		// TODO: if the origin schema for IndexLookUpReader has the `HandleCol`, we can remove the duplicated append.
+		reader.Schema().Append(dg.Source.HandleCol)
+		reader.(*plannercore.PhysicalIndexLookUpReader).ExtraHandleCol = dg.Source.HandleCol
+		proj = plannercore.PhysicalProjection{Exprs: expression.Column2Exprs(logicProp.Schema.Columns)}.Init(dg.SCtx(), logicProp.Stats, dg.SelectBlockOffset(), reqProp, reqProp)
 		proj.SetSchema(logicProp.Schema)
 		proj.SetChildren(reader)
-		reader = proj
 	}
-	indexLookUp := impl.NewIndexLookUpReaderImpl(reader, sg.Source.TblColHists)
+	indexLookUp := impl.NewIndexLookUpReaderImpl(reader, dg.Source.TblColHists, proj)
 	indexLookUp.KeepOrder = !reqProp.IsEmpty()
 	return indexLookUp, nil
 }

@@ -656,8 +656,8 @@ func (p *LogicalLimit) ExplainInfo() string {
 // ExplainInfo implements Plan interface.
 func (p *LogicalTableScan) ExplainInfo() string {
 	buffer := bytes.NewBufferString(p.Source.ExplainInfo())
-	if p.Source.HandleCol != nil {
-		fmt.Fprintf(buffer, ", pk col:%s", p.Source.HandleCol.ExplainInfo())
+	if p.Handle != nil {
+		fmt.Fprintf(buffer, ", pk col:%s", p.Handle.ExplainInfo())
 	}
 	if len(p.AccessConds) > 0 {
 		fmt.Fprintf(buffer, ", cond:%v", p.AccessConds)
