@@ -953,3 +953,27 @@ func (s *testClusterTableSuite) TestSelectClusterTable(c *C) {
 	tk.MustQuery("select digest, count(*) from `CLUSTER_SLOW_QUERY` group by digest").Check(testkit.Rows("42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772 1"))
 	tk.MustQuery("select count(*) from `CLUSTER_SLOW_QUERY` where time > now() group by digest").Check(testkit.Rows())
 }
+
+func (s *testTableSuite) TestSelectHiddenColumn(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("DROP DATABASE IF EXISTS `test_hidden`;")
+	tk.MustExec("CREATE DATABASE `test_hidden`;")
+	tk.MustExec("USE test_hidden;")
+	tk.MustExec("CREATE TABLE hidden (a int , b int, c int);")
+	tk.MustQuery("select count(*) from INFORMATION_SCHEMA.COLUMNS where table_name = 'hidden'").Check(testkit.Rows("3"))
+	tb, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test_hidden"), model.NewCIStr("hidden"))
+	c.Assert(err, IsNil)
+	colInfo := tb.Meta().Columns
+	// Set column b to hidden
+	colInfo[1].Hidden = true
+	tk.MustQuery("select count(*) from INFORMATION_SCHEMA.COLUMNS where table_name = 'hidden'").Check(testkit.Rows("2"))
+	tk.MustQuery("select count(*) from INFORMATION_SCHEMA.COLUMNS where table_name = 'hidden' and column_name = 'b'").Check(testkit.Rows("0"))
+	// Set column b to visible
+	colInfo[1].Hidden = false
+	tk.MustQuery("select count(*) from INFORMATION_SCHEMA.COLUMNS where table_name = 'hidden' and column_name = 'b'").Check(testkit.Rows("1"))
+	// Set a, b ,c to hidden
+	colInfo[0].Hidden = true
+	colInfo[1].Hidden = true
+	colInfo[2].Hidden = true
+	tk.MustQuery("select count(*) from INFORMATION_SCHEMA.COLUMNS where table_name = 'hidden'").Check(testkit.Rows("0"))
+}

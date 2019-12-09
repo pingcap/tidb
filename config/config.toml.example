@@ -347,8 +347,17 @@ enable = true
 max-retry-count = 256
 
 [stmt-summary]
+# enable statement summary.
+enable = false
+
 # max number of statements kept in memory.
 max-stmt-count = 100
 
 # max length of displayed normalized sql and sample sql.
 max-sql-length = 4096
+
+# the refresh interval of statement summary, it's counted in seconds.
+refresh-interval = 1800
+
+# the maximum history size of statement summary.
+history-size = 24
