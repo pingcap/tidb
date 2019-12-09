@@ -543,7 +543,7 @@ func (ds *DataSource) convertToPartialTableScan(prop *property.PhysicalProperty,
 	rowCount float64,
 	isCovered bool) {
 	ts, partialCost, rowCount := ds.getOriginalPhysicalTableScan(prop, path, false)
-	rowSize := ds.TblColHists.GetAvgRowSize(ds.ctx, ds.TblCols, false)
+	rowSize := ds.TblColHists.GetAvgRowSize(ds.ctx, ds.TblCols, false, false)
 	sessVars := ds.ctx.GetSessionVars()
 	if len(ts.filterCondition) > 0 {
 		selectivity, _, err := ds.tableStats.HistColl.Selectivity(ds.ctx, ts.filterCondition)
@@ -709,7 +709,7 @@ func (is *PhysicalIndexScan) indexScanRowSize(idx *model.IndexInfo, ds *DataSour
 	if isForScan {
 		return ds.TblColHists.GetIndexAvgRowSize(is.ctx, scanCols, is.Index.Unique)
 	}
-	return ds.TblColHists.GetAvgRowSize(is.ctx, scanCols, true)
+	return ds.TblColHists.GetAvgRowSize(is.ctx, scanCols, true, false)
 }
 
 func (is *PhysicalIndexScan) initSchema(idx *model.IndexInfo, idxExprCols []*expression.Column, isDoubleRead bool) {
