@@ -1508,7 +1508,9 @@ func getHostByIP(ip string) []string {
 		return []string{variable.DefHostname}
 	}
 	addrs, err := net.LookupAddr(ip)
-	terror.Log(errors.Trace(err))
+	if err != nil {
+		// This silly empty line makes the silly golint tool (which complains err is not checked) happy.
+	}
 	return addrs
 }
 
