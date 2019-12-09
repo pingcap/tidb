@@ -2001,6 +2001,12 @@ func (b *builtinOrdSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) err
 	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
 		return err
 	}
+	var ord func(string) int64
+	if b.args[0].GetType().Charset == "binary" {
+		ord = ordBinary
+	} else {
+		ord = ordUtf8
+	}
 	result.ResizeInt64(n, false)
 	result.MergeNulls(buf)
 	i64s := result.Int64s()

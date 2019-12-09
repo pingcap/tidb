@@ -2701,10 +2701,21 @@ func (b *builtinOrdSig) evalInt(row chunk.Row) (int64, bool, error) {
 	if isNull || err != nil {
 		return 0, isNull, err
 	}
-	return ord(str), false, nil
+	charSet := b.args[0].GetType().Charset
+	if charSet == "binary" {
+		return ordBinary(str), false, nil
+	}
+	return ordUtf8(str), false, nil
 }
 
-func ord(str string) int64 {
+func ordBinary(str string) int64 {
+	if len(str) == 0 {
+		return 0
+	}
+	return int64(str[0])
+}
+
+func ordUtf8(str string) int64 {
 	if len(str) == 0 {
 		return 0
 	}
