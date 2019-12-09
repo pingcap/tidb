@@ -955,7 +955,7 @@ func (s *testTypeConvertSuite) TestConvertJSONToFloat(c *C) {
 		Out float64
 		ty  json.TypeCode
 	}{
-		{make(map[string]interface{}, 0), 0, json.TypeCodeObject},
+		{make(map[string]interface{}), 0, json.TypeCodeObject},
 		{make([]interface{}, 0), 0, json.TypeCodeArray},
 		{int64(3), 3, json.TypeCodeInt64},
 		{int64(-3), -3, json.TypeCodeInt64},

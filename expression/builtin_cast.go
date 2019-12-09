@@ -1458,6 +1458,9 @@ func (b *builtinCastDurationAsDecimalSig) evalDecimal(row chunk.Row) (res *types
 	if isNull || err != nil {
 		return res, isNull, err
 	}
+	if val.Fsp, err = types.CheckFsp(int(val.Fsp)); err != nil {
+		return res, false, err
+	}
 	sc := b.ctx.GetSessionVars().StmtCtx
 	res, err = types.ProduceDecWithSpecifiedTp(val.ToNumber(), b.tp, sc)
 	return res, false, err

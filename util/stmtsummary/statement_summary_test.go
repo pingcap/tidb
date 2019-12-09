@@ -38,6 +38,7 @@ type testStmtSummarySuite struct {
 func (s *testStmtSummarySuite) SetUpSuite(c *C) {
 	s.ssMap = newStmtSummaryByDigestMap()
 	s.ssMap.SetEnabled("1", false)
+	s.ssMap.SetRefreshInterval("1800", false)
 }
 
 func TestT(t *testing.T) {
@@ -48,6 +49,10 @@ func TestT(t *testing.T) {
 // Test stmtSummaryByDigest.AddStatement.
 func (s *testStmtSummarySuite) TestAddStatement(c *C) {
 	s.ssMap.Clear()
+	now := time.Now().Unix()
+	s.ssMap.beginTimeForCurInterval = now
+	// to disable expiring
+	s.ssMap.lastCheckExpireTime = now + 60
 
 	tables := []stmtctx.TableEntry{{DB: "db1", Table: "tb1"}, {DB: "db2", Table: "tb2"}}
 	indexes := []string{"a"}
@@ -60,6 +65,7 @@ func (s *testStmtSummarySuite) TestAddStatement(c *C) {
 		digest:     stmtExecInfo1.Digest,
 	}
 	expectedSummary := stmtSummaryByDigest{
+		beginTime:            now,
 		schemaName:           stmtExecInfo1.SchemaName,
 		stmtType:             stmtExecInfo1.StmtCtx.StmtType,
 		digest:               stmtExecInfo1.Digest,
@@ -360,7 +366,8 @@ func (s *testStmtSummarySuite) TestAddStatement(c *C) {
 }
 
 func matchStmtSummaryByDigest(first, second *stmtSummaryByDigest) bool {
-	if first.schemaName != second.schemaName ||
+	if first.beginTime != second.beginTime ||
+		first.schemaName != second.schemaName ||
 		!strings.EqualFold(first.stmtType, second.stmtType) ||
 		first.digest != second.digest ||
 		first.normalizedSQL != second.normalizedSQL ||
@@ -509,13 +516,17 @@ func generateAnyExecInfo() *StmtExecInfo {
 // Test stmtSummaryByDigest.ToDatum.
 func (s *testStmtSummarySuite) TestToDatum(c *C) {
 	s.ssMap.Clear()
+	now := time.Now().Unix()
+	// to disable expiration
+	s.ssMap.beginTimeForCurInterval = now + 60
 
 	stmtExecInfo1 := generateAnyExecInfo()
 	s.ssMap.AddStatement(stmtExecInfo1)
 	datums := s.ssMap.ToDatum()
 	c.Assert(len(datums), Equals, 1)
+	n := types.Time{Time: types.FromGoTime(time.Unix(s.ssMap.beginTimeForCurInterval, 0)), Type: mysql.TypeTimestamp}
 	t := types.Time{Time: types.FromGoTime(stmtExecInfo1.StartTime), Type: mysql.TypeTimestamp}
-	match(c, datums[0], "select", stmtExecInfo1.SchemaName, stmtExecInfo1.Digest, stmtExecInfo1.NormalizedSQL,
+	match(c, datums[0], n, "select", stmtExecInfo1.SchemaName, stmtExecInfo1.Digest, stmtExecInfo1.NormalizedSQL,
 		"db1.tb1,db2.tb2", "a", stmtExecInfo1.User, 1, int64(stmtExecInfo1.TotalLatency),
 		int64(stmtExecInfo1.TotalLatency), int64(stmtExecInfo1.TotalLatency), int64(stmtExecInfo1.TotalLatency),
 		int64(stmtExecInfo1.ParseLatency), int64(stmtExecInfo1.ParseLatency), int64(stmtExecInfo1.CompileLatency),
@@ -543,6 +554,9 @@ func (s *testStmtSummarySuite) TestToDatum(c *C) {
 // Test AddStatement and ToDatum parallel.
 func (s *testStmtSummarySuite) TestAddStatementParallel(c *C) {
 	s.ssMap.Clear()
+	now := time.Now().Unix()
+	// to disable expiration
+	s.ssMap.beginTimeForCurInterval = now + 60
 
 	threads := 8
 	loops := 32
@@ -576,6 +590,9 @@ func (s *testStmtSummarySuite) TestAddStatementParallel(c *C) {
 // Test max number of statement count.
 func (s *testStmtSummarySuite) TestMaxStmtCount(c *C) {
 	s.ssMap.Clear()
+	now := time.Now().Unix()
+	// to disable expiration
+	s.ssMap.beginTimeForCurInterval = now + 60
 
 	stmtExecInfo1 := generateAnyExecInfo()
 	maxStmtCount := config.GetGlobalConfig().StmtSummary.MaxStmtCount
@@ -605,6 +622,9 @@ func (s *testStmtSummarySuite) TestMaxStmtCount(c *C) {
 // Test max length of normalized and sample SQL.
 func (s *testStmtSummarySuite) TestMaxSQLLength(c *C) {
 	s.ssMap.Clear()
+	now := time.Now().Unix()
+	// to disable expiration
+	s.ssMap.beginTimeForCurInterval = now + 60
 
 	// Create a long SQL
 	maxSQLLength := config.GetGlobalConfig().StmtSummary.MaxSQLLength
@@ -631,9 +651,11 @@ func (s *testStmtSummarySuite) TestMaxSQLLength(c *C) {
 // Test setting EnableStmtSummary to 0.
 func (s *testStmtSummarySuite) TestDisableStmtSummary(c *C) {
 	s.ssMap.Clear()
+	now := time.Now().Unix()
 
 	// Set false in global scope, it should work.
 	s.ssMap.SetEnabled("0", false)
+	s.ssMap.beginTimeForCurInterval = now + 60
 
 	stmtExecInfo1 := generateAnyExecInfo()
 	s.ssMap.AddStatement(stmtExecInfo1)
@@ -649,6 +671,7 @@ func (s *testStmtSummarySuite) TestDisableStmtSummary(c *C) {
 
 	// Set false in global scope, it shouldn't work.
 	s.ssMap.SetEnabled("0", false)
+	s.ssMap.beginTimeForCurInterval = now + 60
 
 	stmtExecInfo2 := stmtExecInfo1
 	stmtExecInfo2.OriginalSQL = "original_sql2"
@@ -660,12 +683,14 @@ func (s *testStmtSummarySuite) TestDisableStmtSummary(c *C) {
 
 	// Unset in session scope.
 	s.ssMap.SetEnabled("", true)
+	s.ssMap.beginTimeForCurInterval = now + 60
 	s.ssMap.AddStatement(stmtExecInfo2)
 	datums = s.ssMap.ToDatum()
 	c.Assert(len(datums), Equals, 0)
 
 	// Unset in global scope.
 	s.ssMap.SetEnabled("", false)
+	s.ssMap.beginTimeForCurInterval = now + 60
 	s.ssMap.AddStatement(stmtExecInfo1)
 	datums = s.ssMap.ToDatum()
 	c.Assert(len(datums), Equals, 0)
@@ -677,6 +702,9 @@ func (s *testStmtSummarySuite) TestDisableStmtSummary(c *C) {
 // Test GetMoreThanOnceSelect.
 func (s *testStmtSummarySuite) TestGetMoreThenOnceSelect(c *C) {
 	s.ssMap.Clear()
+	now := time.Now().Unix()
+	// to disable expiration
+	s.ssMap.beginTimeForCurInterval = now + 60
 
 	stmtExecInfo1 := generateAnyExecInfo()
 	stmtExecInfo1.OriginalSQL = "insert 1"
@@ -711,4 +739,33 @@ func (s *testStmtSummarySuite) TestFormatBackoffTypes(c *C) {
 
 	backoffMap[tikv.BoTxnLock] = 2
 	c.Assert(formatBackoffTypes(backoffMap), Equals, "txnLock:2,pdRPC:1")
+}
+
+// Test refreshing current statement summary periodically.
+func (s *testStmtSummarySuite) TestRefreshCurrentSummary(c *C) {
+	s.ssMap.Clear()
+	now := time.Now().Unix()
+
+	s.ssMap.beginTimeForCurInterval = now + 10
+	stmtExecInfo1 := generateAnyExecInfo()
+	key := &stmtSummaryByDigestKey{
+		schemaName: stmtExecInfo1.SchemaName,
+		digest:     stmtExecInfo1.Digest,
+	}
+	s.ssMap.AddStatement(stmtExecInfo1)
+	c.Assert(s.ssMap.summaryMap.Size(), Equals, 1)
+	value, ok := s.ssMap.summaryMap.Get(key)
+	c.Assert(ok, IsTrue)
+	c.Assert(value.(*stmtSummaryByDigest).beginTime, Equals, s.ssMap.beginTimeForCurInterval)
+	c.Assert(value.(*stmtSummaryByDigest).execCount, Equals, int64(1))
+
+	s.ssMap.beginTimeForCurInterval = now - 1900
+	value.(*stmtSummaryByDigest).beginTime = now - 1900
+	s.ssMap.lastCheckExpireTime = now - 10
+	s.ssMap.AddStatement(stmtExecInfo1)
+	c.Assert(s.ssMap.summaryMap.Size(), Equals, 1)
+	value, ok = s.ssMap.summaryMap.Get(key)
+	c.Assert(ok, IsTrue)
+	c.Assert(value.(*stmtSummaryByDigest).beginTime, Greater, now-1900)
+	c.Assert(value.(*stmtSummaryByDigest).execCount, Equals, int64(1))
 }

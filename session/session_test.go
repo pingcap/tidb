@@ -587,41 +587,6 @@ func (s *testSessionSuite) TestReadOnlyNotInHistory(c *C) {
 	c.Assert(history.Count(), Equals, 0)
 }
 
-func (s *testSessionSuite) TestNoHistoryWhenDisableRetry(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
-	tk.MustExec("create table history (a int)")
-	tk.MustExec("set @@autocommit = 0")
-
-	// retry_limit = 0 will not add history.
-	tk.MustExec("set @@tidb_retry_limit = 0")
-	tk.MustExec("insert history values (1)")
-	c.Assert(session.GetHistory(tk.Se).Count(), Equals, 0)
-
-	// Disable auto_retry will add history for auto committed only
-	tk.MustExec("set @@autocommit = 1")
-	tk.MustExec("set @@tidb_retry_limit = 10")
-	tk.MustExec("set @@tidb_disable_txn_auto_retry = 1")
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/session/keepHistory", `1*return(true)->return(false)`), IsNil)
-	tk.MustExec("insert history values (1)")
-	c.Assert(session.GetHistory(tk.Se).Count(), Equals, 1)
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/session/keepHistory"), IsNil)
-	tk.MustExec("begin")
-	tk.MustExec("insert history values (1)")
-	c.Assert(session.GetHistory(tk.Se).Count(), Equals, 0)
-	tk.MustExec("commit")
-
-	// Enable auto_retry will add history for both.
-	tk.MustExec("set @@tidb_disable_txn_auto_retry = 0")
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/session/keepHistory", `1*return(true)->return(false)`), IsNil)
-	tk.MustExec("insert history values (1)")
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/session/keepHistory"), IsNil)
-	c.Assert(session.GetHistory(tk.Se).Count(), Equals, 1)
-	tk.MustExec("begin")
-	tk.MustExec("insert history values (1)")
-	c.Assert(session.GetHistory(tk.Se).Count(), Equals, 2)
-	tk.MustExec("commit")
-}
-
 func (s *testSessionSuite) TestNoRetryForCurrentTxn(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk1 := testkit.NewTestKitWithInit(c, s.store)
@@ -783,7 +748,7 @@ func (s *testSessionSuite) TestSessionAuth(c *C) {
 	c.Assert(tk.Se.Auth(&auth.UserIdentity{Username: "Any not exist username with zero password!", Hostname: "anyhost"}, []byte(""), []byte("")), IsFalse)
 }
 
-func (s *testSessionSuite) TestSkipWithGrant(c *C) {
+func (s *testSessionSerialSuite) TestSkipWithGrant(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	save2 := privileges.SkipWithGrant
 
@@ -1290,78 +1255,88 @@ func (s *testSessionSuite) TestFieldText(c *C) {
 
 func (s *testSessionSuite2) TestIndexMaxLength(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
-	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create database test_index_max_length")
+	tk.MustExec("use test_index_max_length")
 
 	// create simple index at table creation
-	_, err := tk.Exec("create table t (c1 varchar(3073), index(c1));")
-	// ERROR 1071 (42000): Specified key was too long; max key length is 3072 bytes
-	c.Assert(err, NotNil)
+	tk.MustGetErrCode("create table t (c1 varchar(3073), index(c1)) charset = ascii;", mysql.ErrTooLongKey)
 
 	// create simple index after table creation
-	tk.MustExec("create table t (c1 varchar(3073));")
-	_, err = tk.Exec("create index idx_c1 on t(c1) ")
-	// ERROR 1071 (42000): Specified key was too long; max key length is 3072 bytes
-	c.Assert(err, NotNil)
+	tk.MustExec("create table t (c1 varchar(3073)) charset = ascii;")
+	tk.MustGetErrCode("create index idx_c1 on t(c1) ", mysql.ErrTooLongKey)
+	tk.MustExec("drop table t;")
 
 	// create compound index at table creation
-	tk.MustExec("drop table if exists t;")
-	_, err = tk.Exec("create table t (c1 varchar(3072), c2 varchar(1), index(c1, c2));")
-	// ERROR 1071 (42000): Specified key was too long; max key length is 3072 bytes
-	c.Assert(err, NotNil)
+	tk.MustGetErrCode("create table t (c1 varchar(3072), c2 varchar(1), index(c1, c2)) charset = ascii;", mysql.ErrTooLongKey)
+	tk.MustGetErrCode("create table t (c1 varchar(3072), c2 char(1), index(c1, c2)) charset = ascii;", mysql.ErrTooLongKey)
+	tk.MustGetErrCode("create table t (c1 varchar(3072), c2 char, index(c1, c2)) charset = ascii;", mysql.ErrTooLongKey)
+	tk.MustGetErrCode("create table t (c1 varchar(3072), c2 date, index(c1, c2)) charset = ascii;", mysql.ErrTooLongKey)
+	tk.MustGetErrCode("create table t (c1 varchar(3069), c2 timestamp(1), index(c1, c2)) charset = ascii;", mysql.ErrTooLongKey)
 
-	_, err = tk.Exec("create table t (c1 varchar(3072), c2 char(1), index(c1, c2));")
-	// ERROR 1071 (42000): Specified key was too long; max key length is 3072 bytes
-	c.Assert(err, NotNil)
-
-	_, err = tk.Exec("create table t (c1 varchar(3072), c2 char, index(c1, c2));")
-	// ERROR 1071 (42000): Specified key was too long; max key length is 3072 bytes
-	c.Assert(err, NotNil)
-
-	_, err = tk.Exec("create table t (c1 varchar(3072), c2 date, index(c1, c2));")
-	// ERROR 1071 (42000): Specified key was too long; max key length is 3072 bytes
-	c.Assert(err, NotNil)
-
-	_, err = tk.Exec("create table t (c1 varchar(3068), c2 timestamp(1), index(c1, c2));")
-	// ERROR 1071 (42000): Specified key was too long; max key length is 3072 bytes
-	c.Assert(err, NotNil)
-
-	tk.MustExec("create table t (c1 varchar(3068), c2 bit(26), index(c1, c2));") // 26 bit = 4 bytes
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec("create table t (c1 varchar(3068), c2 bit(32), index(c1, c2));") // 32 bit = 4 bytes
-	tk.MustExec("drop table if exists t;")
-	_, err = tk.Exec("create table t (c1 varchar(3068), c2 bit(33), index(c1, c2));")
-	// ERROR 1071 (42000): Specified key was too long; max key length is 3072 bytes
-	c.Assert(err, NotNil)
+	tk.MustExec("create table t (c1 varchar(3068), c2 bit(26), index(c1, c2)) charset = ascii;") // 26 bit = 4 bytes
+	tk.MustExec("drop table t;")
+	tk.MustExec("create table t (c1 varchar(3068), c2 bit(32), index(c1, c2)) charset = ascii;") // 32 bit = 4 bytes
+	tk.MustExec("drop table t;")
+	tk.MustGetErrCode("create table t (c1 varchar(3068), c2 bit(33), index(c1, c2)) charset = ascii;", mysql.ErrTooLongKey)
 
 	// create compound index after table creation
-	tk.MustExec("create table t (c1 varchar(3072), c2 varchar(1));")
-	_, err = tk.Exec("create index idx_c1_c2 on t(c1, c2);")
-	// ERROR 1071 (42000): Specified key was too long; max key length is 3072 bytes
-	c.Assert(err, NotNil)
+	tk.MustExec("create table t (c1 varchar(3072), c2 varchar(1)) charset = ascii;")
+	tk.MustGetErrCode("create index idx_c1_c2 on t(c1, c2);", mysql.ErrTooLongKey)
+	tk.MustExec("drop table t;")
 
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec("create table t (c1 varchar(3072), c2 char(1));")
-	_, err = tk.Exec("create index idx_c1_c2 on t(c1, c2);")
-	// ERROR 1071 (42000): Specified key was too long; max key length is 3072 bytes
-	c.Assert(err, NotNil)
+	tk.MustExec("create table t (c1 varchar(3072), c2 char(1)) charset = ascii;")
+	tk.MustGetErrCode("create index idx_c1_c2 on t(c1, c2);", mysql.ErrTooLongKey)
+	tk.MustExec("drop table t;")
 
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec("create table t (c1 varchar(3072), c2 char);")
-	_, err = tk.Exec("create index idx_c1_c2 on t(c1, c2);")
-	// ERROR 1071 (42000): Specified key was too long; max key length is 3072 bytes
-	c.Assert(err, NotNil)
+	tk.MustExec("create table t (c1 varchar(3072), c2 char) charset = ascii;")
+	tk.MustGetErrCode("create index idx_c1_c2 on t(c1, c2);", mysql.ErrTooLongKey)
+	tk.MustExec("drop table t;")
 
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec("create table t (c1 varchar(3072), c2 date);")
-	_, err = tk.Exec("create index idx_c1_c2 on t(c1, c2);")
-	// ERROR 1071 (42000): Specified key was too long; max key length is 3072 bytes
-	c.Assert(err, NotNil)
+	tk.MustExec("create table t (c1 varchar(3072), c2 date) charset = ascii;")
+	tk.MustGetErrCode("create index idx_c1_c2 on t(c1, c2);", mysql.ErrTooLongKey)
+	tk.MustExec("drop table t;")
 
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec("create table t (c1 varchar(3068), c2 timestamp(1));")
-	_, err = tk.Exec("create index idx_c1_c2 on t(c1, c2);")
-	// ERROR 1071 (42000): Specified key was too long; max key length is 3072 bytes
-	c.Assert(err, NotNil)
+	tk.MustExec("create table t (c1 varchar(3069), c2 timestamp(1)) charset = ascii;")
+	tk.MustGetErrCode("create index idx_c1_c2 on t(c1, c2);", mysql.ErrTooLongKey)
+	tk.MustExec("drop table t;")
+
+	// Test charsets other than `ascii`.
+	assertCharsetLimit := func(charset string, bytesPerChar int) {
+		base := 3072 / bytesPerChar
+		tk.MustGetErrCode(fmt.Sprintf("create table t (a varchar(%d) primary key) charset=%s", base+1, charset), mysql.ErrTooLongKey)
+		tk.MustExec(fmt.Sprintf("create table t (a varchar(%d) primary key) charset=%s", base, charset))
+		tk.MustExec("drop table if exists t")
+	}
+	assertCharsetLimit("binary", 1)
+	assertCharsetLimit("latin1", 1)
+	assertCharsetLimit("utf8", 3)
+	assertCharsetLimit("utf8mb4", 4)
+
+	// Test types bit length limit.
+	assertTypeLimit := func(tp string, limitBitLength int) {
+		base := 3072 - limitBitLength
+		tk.MustGetErrCode(fmt.Sprintf("create table t (a blob(10000), b %s, index idx(a(%d), b))", tp, base+1), mysql.ErrTooLongKey)
+		tk.MustExec(fmt.Sprintf("create table t (a blob(10000), b %s, index idx(a(%d), b))", tp, base))
+		tk.MustExec("drop table if exists t")
+	}
+
+	assertTypeLimit("tinyint", 1)
+	assertTypeLimit("smallint", 2)
+	assertTypeLimit("mediumint", 3)
+	assertTypeLimit("int", 4)
+	assertTypeLimit("integer", 4)
+	assertTypeLimit("bigint", 8)
+	assertTypeLimit("float", 4)
+	assertTypeLimit("float(24)", 4)
+	assertTypeLimit("float(25)", 8)
+	assertTypeLimit("decimal(9)", 4)
+	assertTypeLimit("decimal(10)", 5)
+	assertTypeLimit("decimal(17)", 8)
+	assertTypeLimit("year", 1)
+	assertTypeLimit("date", 3)
+	assertTypeLimit("time", 3)
+	assertTypeLimit("datetime", 8)
+	assertTypeLimit("timestamp", 4)
 }
 
 func (s *testSessionSuite2) TestIndexColumnLength(c *C) {
@@ -1778,7 +1753,6 @@ type testSchemaSuiteBase struct {
 	store     kv.Storage
 	lease     time.Duration
 	dom       *domain.Domain
-	checkLeak func()
 }
 
 type testSchemaSuite struct {
@@ -1892,9 +1866,9 @@ func (s *testSchemaSerialSuite) TestSchemaCheckerSQL(c *C) {
 	tk.MustExec(`commit;`)
 
 	// The schema version is out of date in the first transaction, and the SQL can't be retried.
-	session.SchemaChangedWithoutRetry = true
+	atomic.StoreUint32(&session.SchemaChangedWithoutRetry, 1)
 	defer func() {
-		session.SchemaChangedWithoutRetry = false
+		atomic.StoreUint32(&session.SchemaChangedWithoutRetry, 0)
 	}()
 	tk.MustExec(`begin;`)
 	tk1.MustExec(`alter table t modify column c bigint;`)
@@ -2848,7 +2822,7 @@ func (s *testSessionSuite2) TestIsolationRead(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.Se, err = session.CreateSession4Test(s.store)
 	c.Assert(err, IsNil)
-	c.Assert(len(tk.Se.GetSessionVars().GetIsolationReadEngines()), Equals, 2)
+	c.Assert(len(tk.Se.GetSessionVars().GetIsolationReadEngines()), Equals, 3)
 	tk.MustExec("set @@tidb_isolation_read_engines = 'tiflash';")
 	engines := tk.Se.GetSessionVars().GetIsolationReadEngines()
 	c.Assert(len(engines), Equals, 1)
