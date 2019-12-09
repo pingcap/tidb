@@ -16,6 +16,7 @@ package executor
 import (
 	"context"
 	"math"
+	"time"
 
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
@@ -108,9 +109,14 @@ func (e *CheckIndexRangeExec) Open(ctx context.Context) error {
 		return err
 	}
 	sc := e.ctx.GetSessionVars().StmtCtx
+	txn, err := e.ctx.Txn(true)
+	if err != nil {
+		return nil
+	}
 	var builder distsql.RequestBuilder
 	kvReq, err := builder.SetIndexRanges(sc, e.table.ID, e.index.ID, ranger.FullRange()).
 		SetDAGRequest(dagPB).
+		SetStartTS(txn.StartTS()).
 		SetKeepOrder(true).
 		SetFromSessionVars(e.ctx.GetSessionVars()).
 		Build()
@@ -128,11 +134,6 @@ func (e *CheckIndexRangeExec) Open(ctx context.Context) error {
 
 func (e *CheckIndexRangeExec) buildDAGPB() (*tipb.DAGRequest, error) {
 	dagReq := &tipb.DAGRequest{}
-	txn, err := e.ctx.Txn(true)
-	if err != nil {
-		return nil, err
-	}
-	dagReq.StartTs = txn.StartTS()
 	dagReq.TimeZoneName, dagReq.TimeZoneOffset = timeutil.Zone(e.ctx.GetSessionVars().Location())
 	sc := e.ctx.GetSessionVars().StmtCtx
 	dagReq.Flags = sc.PushDownFlags()
@@ -142,7 +143,7 @@ func (e *CheckIndexRangeExec) buildDAGPB() (*tipb.DAGRequest, error) {
 	execPB := e.constructIndexScanPB()
 	dagReq.Executors = append(dagReq.Executors, execPB)
 
-	err = plannercore.SetPBColumnsDefaultValue(e.ctx, dagReq.Executors[0].IdxScan.Columns, e.cols)
+	err := plannercore.SetPBColumnsDefaultValue(e.ctx, dagReq.Executors[0].IdxScan.Columns, e.cols)
 	if err != nil {
 		return nil, err
 	}
@@ -231,7 +232,6 @@ func (e *RecoverIndexExec) constructLimitPB(count uint64) *tipb.Executor {
 
 func (e *RecoverIndexExec) buildDAGPB(txn kv.Transaction, limitCnt uint64) (*tipb.DAGRequest, error) {
 	dagReq := &tipb.DAGRequest{}
-	dagReq.StartTs = txn.StartTS()
 	dagReq.TimeZoneName, dagReq.TimeZoneOffset = timeutil.Zone(e.ctx.GetSessionVars().Location())
 	sc := e.ctx.GetSessionVars().StmtCtx
 	dagReq.Flags = sc.PushDownFlags()
@@ -264,6 +264,7 @@ func (e *RecoverIndexExec) buildTableScan(ctx context.Context, txn kv.Transactio
 	var builder distsql.RequestBuilder
 	kvReq, err := builder.SetTableRanges(tblInfo.ID, ranges, nil).
 		SetDAGRequest(dagPB).
+		SetStartTS(txn.StartTS()).
 		SetKeepOrder(true).
 		SetFromSessionVars(e.ctx.GetSessionVars()).
 		Build()
@@ -432,12 +433,12 @@ func (e *RecoverIndexExec) backfillIndexInTxn(ctx context.Context, txn kv.Transa
 		}
 
 		recordKey := e.table.RecordKey(row.handle)
-		err := txn.LockKeys(ctx, nil, 0, kv.LockAlwaysWait, recordKey)
+		err := txn.LockKeys(ctx, nil, 0, kv.LockAlwaysWait, time.Now(), recordKey)
 		if err != nil {
 			return result, err
 		}
 
-		_, err = e.index.Create(e.ctx, txn, row.idxVals, row.handle, table.WithAssertion(txn))
+		_, err = e.index.Create(e.ctx, txn, row.idxVals, row.handle)
 		if err != nil {
 			return result, err
 		}
@@ -518,7 +519,7 @@ func (e *CleanupIndexExec) deleteDanglingIdx(txn kv.Transaction, values map[stri
 				return err
 			}
 			for _, idxVals := range e.idxValues[handle] {
-				if err := e.index.Delete(e.ctx.GetSessionVars().StmtCtx, txn, idxVals, handle, nil); err != nil {
+				if err := e.index.Delete(e.ctx.GetSessionVars().StmtCtx, txn, idxVals, handle); err != nil {
 					return err
 				}
 				e.removeCnt++
@@ -631,6 +632,7 @@ func (e *CleanupIndexExec) buildIndexScan(ctx context.Context, txn kv.Transactio
 	ranges := ranger.FullRange()
 	kvReq, err := builder.SetIndexRanges(sc, e.table.Meta().ID, e.index.Meta().ID, ranges).
 		SetDAGRequest(dagPB).
+		SetStartTS(txn.StartTS()).
 		SetKeepOrder(true).
 		SetFromSessionVars(e.ctx.GetSessionVars()).
 		Build()
@@ -668,7 +670,6 @@ func (e *CleanupIndexExec) Open(ctx context.Context) error {
 
 func (e *CleanupIndexExec) buildIdxDAGPB(txn kv.Transaction) (*tipb.DAGRequest, error) {
 	dagReq := &tipb.DAGRequest{}
-	dagReq.StartTs = txn.StartTS()
 	dagReq.TimeZoneName, dagReq.TimeZoneOffset = timeutil.Zone(e.ctx.GetSessionVars().Location())
 	sc := e.ctx.GetSessionVars().StmtCtx
 	dagReq.Flags = sc.PushDownFlags()

@@ -23,9 +23,12 @@ import (
 	"unicode/utf8"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"golang.org/x/text/transform"
 )
 
 func (b *builtinLowerSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
@@ -590,19 +593,117 @@ func (b *builtinInsertBinarySig) vecEvalString(input *chunk.Chunk, result *chunk
 }
 
 func (b *builtinConcatWSSig) vectorized() bool {
-	return false
+	return true
 }
 
+// vecEvalString evals a CONCAT_WS(separator,str1,str2,...).
+// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_concat-ws
 func (b *builtinConcatWSSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	argsLen := len(b.args)
+
+	bufs := make([]*chunk.Column, argsLen)
+	var err error
+	for i := 0; i < argsLen; i++ {
+		bufs[i], err = b.bufAllocator.get(types.ETString, n)
+		if err != nil {
+			return err
+		}
+		defer b.bufAllocator.put(bufs[i])
+		if err := b.args[i].VecEvalString(b.ctx, input, bufs[i]); err != nil {
+			return err
+		}
+	}
+
+	isNulls := make([]bool, n)
+	seps := make([]string, n)
+	strs := make([][]string, n)
+	for i := 0; i < n; i++ {
+		if bufs[0].IsNull(i) {
+			// If the separator is NULL, the result is NULL.
+			isNulls[i] = true
+			continue
+		}
+		isNulls[i] = false
+		seps[i] = bufs[0].GetString(i)
+		strs[i] = make([]string, 0, argsLen-1)
+	}
+
+	var strBuf string
+	targetLengths := make([]int, n)
+	for j := 1; j < argsLen; j++ {
+		for i := 0; i < n; i++ {
+			if isNulls[i] || bufs[j].IsNull(i) {
+				// CONCAT_WS() does not skip empty strings. However,
+				// it does skip any NULL values after the separator argument.
+				continue
+			}
+			strBuf = bufs[j].GetString(i)
+			targetLengths[i] += len(strBuf)
+			if i > 1 {
+				targetLengths[i] += len(seps[i])
+			}
+			if uint64(targetLengths[i]) > b.maxAllowedPacket {
+				b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnAllowedPacketOverflowed.GenWithStackByArgs("concat_ws", b.maxAllowedPacket))
+				isNulls[i] = true
+				continue
+			}
+			strs[i] = append(strs[i], strBuf)
+		}
+	}
+	result.ReserveString(n)
+	for i := 0; i < n; i++ {
+		if isNulls[i] {
+			result.AppendNull()
+			continue
+		}
+		str := strings.Join(strs[i], seps[i])
+		// todo check whether the length of result is larger than Flen
+		//if b.tp.Flen != types.UnspecifiedLength && len(str) > b.tp.Flen {
+		//	result.AppendNull()
+		//	continue
+		//}
+		result.AppendString(str)
+	}
+	return nil
 }
 
 func (b *builtinConvertSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinConvertSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	expr, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(expr)
+	if err := b.args[0].VecEvalString(b.ctx, input, expr); err != nil {
+		return err
+	}
+	// Since charset is already validated and set from getFunction(), there's no
+	// need to get charset from args again.
+	encoding, _ := charset.Lookup(b.tp.Charset)
+	// However, if `b.tp.Charset` is abnormally set to a wrong charset, we still
+	// return with error.
+	if encoding == nil {
+		return errUnknownCharacterSet.GenWithStackByArgs(b.tp.Charset)
+	}
+	result.ReserveString(n)
+	for i := 0; i < n; i++ {
+		if expr.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
+		exprI := expr.GetString(i)
+		target, _, err := transform.String(encoding.NewDecoder(), exprI)
+		if err != nil {
+			return err
+		}
+		result.AppendString(target)
+	}
+	return nil
 }
 
 func (b *builtinSubstringIndexSig) vectorized() bool {
@@ -1103,19 +1204,101 @@ func (b *builtinStrcmpSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 }
 
 func (b *builtinLocateBinary2ArgsSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinLocateBinary2ArgsSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf0, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf0)
+	buf1, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf1)
+	if err := b.args[0].VecEvalString(b.ctx, input, buf0); err != nil {
+		return err
+	}
+	if err := b.args[1].VecEvalString(b.ctx, input, buf1); err != nil {
+		return err
+	}
+	result.ResizeInt64(n, false)
+	result.MergeNulls(buf0, buf1)
+	i64s := result.Int64s()
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		subStr := buf0.GetString(i)
+		if len(subStr) == 0 {
+			i64s[i] = 1
+			continue
+		}
+		i64s[i] = int64(strings.Index(buf1.GetString(i), subStr) + 1)
+	}
+	return nil
 }
 
 func (b *builtinLocateBinary3ArgsSig) vectorized() bool {
-	return false
+	return true
 }
 
+// vecEvalInt evals LOCATE(substr,str,pos), case-sensitive.
+// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_locate
 func (b *builtinLocateBinary3ArgsSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf0, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf0)
+	if err := b.args[0].VecEvalString(b.ctx, input, buf0); err != nil {
+		return err
+	}
+	buf1, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf1)
+	if err := b.args[1].VecEvalString(b.ctx, input, buf1); err != nil {
+		return err
+	}
+	// store positions in result
+	if err := b.args[2].VecEvalInt(b.ctx, input, result); err != nil {
+		return err
+	}
+
+	result.MergeNulls(buf0, buf1)
+	i64s := result.Int64s()
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		pos := i64s[i]
+		// Transfer the argument which starts from 1 to real index which starts from 0.
+		pos--
+		subStr := buf0.GetString(i)
+		str := buf1.GetString(i)
+		subStrLen := len(subStr)
+		if pos < 0 || pos > int64(len(str)-subStrLen) {
+			i64s[i] = 0
+			continue
+		} else if subStrLen == 0 {
+			i64s[i] = pos + 1
+			continue
+		}
+		slice := str[pos:]
+		idx := strings.Index(slice, subStr)
+		if idx != -1 {
+			i64s[i] = pos + int64(idx) + 1
+			continue
+		}
+		i64s[i] = 0
+	}
+	return nil
 }
 
 func (b *builtinExportSet4ArgSig) vectorized() bool {
@@ -1741,11 +1924,67 @@ func (b *builtinSubstring3ArgsSig) vecEvalString(input *chunk.Chunk, result *chu
 }
 
 func (b *builtinTrim3ArgsSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinTrim3ArgsSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf0, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf0)
+	buf1, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf1)
+	buf2, err := b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf2)
+	if err := b.args[0].VecEvalString(b.ctx, input, buf0); err != nil {
+		return err
+	}
+	if err := b.args[1].VecEvalString(b.ctx, input, buf1); err != nil {
+		return err
+	}
+	if err := b.args[2].VecEvalInt(b.ctx, input, buf2); err != nil {
+		return err
+	}
+	result.ReserveString(n)
+	for i := 0; i < n; i++ {
+		if buf0.IsNull(i) || buf2.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
+		useDefaultRemStr := buf1.IsNull(i)
+		direction := ast.TrimDirectionType(buf2.GetInt64(i))
+		baseStr := buf0.GetString(i)
+		remStr := buf1.GetString(i)
+		if direction == ast.TrimLeading {
+			if useDefaultRemStr {
+				result.AppendString(strings.TrimLeft(baseStr, spaceChars))
+			} else {
+				result.AppendString(trimLeft(baseStr, remStr))
+			}
+		} else if direction == ast.TrimTrailing {
+			if useDefaultRemStr {
+				result.AppendString(strings.TrimRight(baseStr, spaceChars))
+			} else {
+				result.AppendString(trimRight(baseStr, remStr))
+			}
+		} else {
+			if useDefaultRemStr {
+				result.AppendString(strings.Trim(baseStr, spaceChars))
+			} else {
+				tmpStr := trimLeft(baseStr, remStr)
+				result.AppendString(trimRight(tmpStr, remStr))
+			}
+		}
+	}
+	return nil
 }
 
 func (b *builtinOrdSig) vectorized() bool {

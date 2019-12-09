@@ -105,9 +105,9 @@ func (s *testSuite5) TestShowWarnings(c *C) {
 	tk.MustExec("set @@sql_mode=''")
 	tk.MustExec("insert show_warnings values ('a')")
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(1))
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1265|Data Truncated"))
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect FLOAT value: 'a'"))
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(0))
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1265|Data Truncated"))
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect FLOAT value: 'a'"))
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(0))
 
 	// Test Warning level 'Error'
@@ -638,4 +638,14 @@ func (s *testSuite5) TestShowEscape(c *C) {
 
 	tk.MustExec("rename table \"t`abl\"\"e\" to t")
 	tk.MustExec("set sql_mode=@old_sql_mode")
+}
+
+func (s *testSuite5) TestShowBuiltin(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	res := tk.MustQuery("show builtins;")
+	c.Assert(res, NotNil)
+	rows := res.Rows()
+	c.Assert(262, Equals, len(rows))
+	c.Assert("abs", Equals, rows[0][0].(string))
+	c.Assert("yearweek", Equals, rows[261][0].(string))
 }

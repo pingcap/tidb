@@ -496,7 +496,7 @@ func (s *testDDLSuite) checkCancelDropColumn(c *C, d *ddl, schemaID int64, table
 	c.Assert(notFound, Equals, success)
 }
 
-func (s *testDDLSuite) TestCancelJobx(c *C) {
+func (s *testDDLSuite) TestCancelJob(c *C) {
 	store := testCreateStore(c, "test_cancel_job")
 	defer store.Close()
 	d := newDDL(

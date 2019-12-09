@@ -14,10 +14,12 @@
 package expression
 
 import (
+	"math"
 	"testing"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
 )
 
@@ -67,6 +69,13 @@ var vecBuiltinOpCases = map[string][]vecExprBenchCase{
 	ast.UnaryMinus: {
 		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETReal}},
 		{retEvalType: types.ETDecimal, childrenTypes: []types.EvalType{types.ETDecimal}},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt}},
+		{
+			retEvalType:        types.ETInt,
+			childrenTypes:      []types.EvalType{types.ETInt},
+			childrenFieldTypes: []*types.FieldType{{Tp: mysql.TypeLonglong, Flag: mysql.UnsignedFlag}},
+			geners:             []dataGenerator{&rangeInt64Gener{0, math.MaxInt64}},
+		},
 	},
 	ast.IsNull: {
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETReal}},

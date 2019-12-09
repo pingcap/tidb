@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
-	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/types"
 )
 
@@ -42,8 +41,8 @@ func getUsedList(usedCols []*expression.Column, schema *expression.Schema) []boo
 	return used
 }
 
-// exprsHasSideEffects checks if any of the expressions has side effects.
-func exprsHasSideEffects(exprs []expression.Expression) bool {
+// ExprsHasSideEffects checks if any of the expressions has side effects.
+func ExprsHasSideEffects(exprs []expression.Expression) bool {
 	for _, expr := range exprs {
 		if exprHasSetVarOrSleep(expr) {
 			return true
@@ -210,6 +209,8 @@ func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column) error {
 		handleCol = ds.handleCol
 		handleColInfo = ds.Columns[ds.schema.ColumnIndex(handleCol)]
 	}
+	originSchemaColumns := ds.schema.Columns
+	originColumns := ds.Columns
 	for i := len(used) - 1; i >= 0; i-- {
 		if !used[i] {
 			ds.schema.Columns = append(ds.schema.Columns[:i], ds.schema.Columns[i+1:]...)
@@ -218,8 +219,12 @@ func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column) error {
 	}
 	// For SQL like `select 1 from t`, tikv's response will be empty if no column is in schema.
 	// So we'll force to push one if schema doesn't have any column.
-	if ds.schema.Len() == 0 && !infoschema.IsMemoryDB(ds.DBName.L) {
-		if handleCol == nil {
+	if ds.schema.Len() == 0 {
+		if ds.table.Type().IsClusterTable() && len(originColumns) > 0 {
+			// use the first line.
+			handleCol = originSchemaColumns[0]
+			handleColInfo = originColumns[0]
+		} else if handleCol == nil {
 			handleCol = ds.newExtraHandleSchemaCol()
 			handleColInfo = model.NewExtraHandleColInfo()
 		}
@@ -311,8 +316,8 @@ func (la *LogicalApply) PruneColumns(parentUsedCols []*expression.Column) error 
 		return err
 	}
 
-	la.corCols = extractCorColumnsBySchema(la.children[1], la.children[0].Schema())
-	for _, col := range la.corCols {
+	la.CorCols = extractCorColumnsBySchema(la.children[1], la.children[0].Schema())
+	for _, col := range la.CorCols {
 		leftCols = append(leftCols, &col.Column)
 	}
 

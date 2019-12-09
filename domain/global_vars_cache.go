@@ -64,7 +64,6 @@ func (gvc *GlobalVariableCache) Disable() {
 	gvc.Lock()
 	defer gvc.Unlock()
 	gvc.disable = true
-	return
 }
 
 // checkEnableServerGlobalVar processes variables that acts in server and global level.
@@ -77,6 +76,12 @@ func checkEnableServerGlobalVar(rows []chunk.Row) {
 				sVal = row.GetString(1)
 			}
 			stmtsummary.StmtSummaryByDigestMap.SetEnabled(sVal, false)
+		case variable.TiDBStmtSummaryRefreshInterval:
+			sVal := ""
+			if !row.IsNull(1) {
+				sVal = row.GetString(1)
+			}
+			stmtsummary.StmtSummaryByDigestMap.SetRefreshInterval(sVal, false)
 		case variable.TiDBCapturePlanBaseline:
 			sVal := ""
 			if !row.IsNull(1) {

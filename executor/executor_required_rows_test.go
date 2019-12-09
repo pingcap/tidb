@@ -30,7 +30,9 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/mock"
 )
@@ -206,6 +208,7 @@ func defaultCtx() sessionctx.Context {
 	ctx.GetSessionVars().MaxChunkSize = variable.DefMaxChunkSize
 	ctx.GetSessionVars().MemQuotaSort = variable.DefTiDBMemQuotaSort
 	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(nil, ctx.GetSessionVars().MemQuotaQuery)
+	ctx.GetSessionVars().StmtCtx.DiskTracker = disk.NewTracker(nil, -1)
 	ctx.GetSessionVars().SnapshotTS = uint64(1)
 	return ctx
 }
@@ -675,67 +678,6 @@ func (s *testExecSuite) TestStreamAggRequiredRows(c *C) {
 	}
 }
 
-func (s *testExecSuite) TestHashAggParallelRequiredRows(c *C) {
-	maxChunkSize := defaultCtx().GetSessionVars().MaxChunkSize
-	testCases := []struct {
-		totalRows      int
-		aggFunc        string
-		requiredRows   []int
-		expectedRows   []int
-		expectedRowsDS []int
-		gen            func(valType *types.FieldType) interface{}
-	}{
-		{
-			totalRows:      maxChunkSize,
-			aggFunc:        ast.AggFuncSum,
-			requiredRows:   []int{1, 2, 3, 4, 5, 6, 7},
-			expectedRows:   []int{1, 2, 3, 4, 5, 6, 7},
-			expectedRowsDS: []int{maxChunkSize, 0},
-			gen:            divGenerator(1),
-		},
-		{
-			totalRows:      maxChunkSize * 3,
-			aggFunc:        ast.AggFuncAvg,
-			requiredRows:   []int{1, 3},
-			expectedRows:   []int{1, 2},
-			expectedRowsDS: []int{maxChunkSize, maxChunkSize, maxChunkSize, 0},
-			gen:            divGenerator(maxChunkSize),
-		},
-		{
-			totalRows:      maxChunkSize * 3,
-			aggFunc:        ast.AggFuncAvg,
-			requiredRows:   []int{maxChunkSize, maxChunkSize},
-			expectedRows:   []int{maxChunkSize, maxChunkSize / 2},
-			expectedRowsDS: []int{maxChunkSize, maxChunkSize, maxChunkSize, 0},
-			gen:            divGenerator(2),
-		},
-	}
-
-	for _, hasDistinct := range []bool{false, true} {
-		for _, testCase := range testCases {
-			sctx := defaultCtx()
-			ctx := context.Background()
-			ds := newRequiredRowsDataSourceWithGenerator(sctx, testCase.totalRows, testCase.expectedRowsDS, testCase.gen)
-			childCols := ds.Schema().Columns
-			schema := expression.NewSchema(childCols...)
-			groupBy := []expression.Expression{childCols[1]}
-			aggFunc, err := aggregation.NewAggFuncDesc(sctx, testCase.aggFunc, []expression.Expression{childCols[0]}, hasDistinct)
-			c.Assert(err, IsNil)
-			aggFuncs := []*aggregation.AggFuncDesc{aggFunc}
-			exec := buildHashAggExecutor(sctx, ds, schema, aggFuncs, groupBy)
-			c.Assert(exec.Open(ctx), IsNil)
-			chk := newFirstChunk(exec)
-			for i := range testCase.requiredRows {
-				chk.SetRequiredRows(testCase.requiredRows[i], maxChunkSize)
-				c.Assert(exec.Next(ctx, chk), IsNil)
-				c.Assert(chk.NumRows(), Equals, testCase.expectedRows[i])
-			}
-			c.Assert(exec.Close(), IsNil)
-			c.Assert(ds.checkNumNextCalled(), IsNil)
-		}
-	}
-}
-
 func (s *testExecSuite) TestMergeJoinRequiredRows(c *C) {
 	justReturn1 := func(valType *types.FieldType) interface{} {
 		switch valType.Tp {
@@ -770,6 +712,91 @@ func (s *testExecSuite) TestMergeJoinRequiredRows(c *C) {
 	}
 }
 
+func genTestChunk4VecGroupChecker(chkRows []int, sameNum int) (expr []expression.Expression, inputs []*chunk.Chunk) {
+	chkNum := len(chkRows)
+	inputs = make([]*chunk.Chunk, chkNum)
+	fts := make([]*types.FieldType, 1)
+	fts[0] = types.NewFieldType(mysql.TypeLonglong)
+	for i := 0; i < chkNum; i++ {
+		inputs[i] = chunk.New(fts, chkRows[i], chkRows[i])
+	}
+
+	cnt := 0
+	val := 0
+	for i := 0; i < chkNum; i++ {
+		col := inputs[i].Column(0)
+		col.ResizeInt64(chkRows[i], false)
+		i64s := col.Int64s()
+		for j := 0; j < chkRows[i]; j++ {
+			if cnt == sameNum {
+				val++
+				cnt = 0
+			}
+			i64s[j] = int64(val)
+			cnt++
+		}
+	}
+
+	expr = make([]expression.Expression, 1)
+	expr[0] = &expression.Column{
+		RetType: &types.FieldType{Tp: mysql.TypeLonglong, Flen: mysql.MaxIntWidth},
+		Index:   0,
+	}
+	return
+}
+
+func (s *testExecSuite) TestVecGroupChecker(c *C) {
+	testCases := []struct {
+		chunkRows      []int
+		expectedGroups int
+		expectedFlag   []bool
+		sameNum        int
+	}{
+		{
+			chunkRows:      []int{1024, 1},
+			expectedGroups: 1025,
+			expectedFlag:   []bool{false, false},
+			sameNum:        1,
+		},
+		{
+			chunkRows:      []int{1024, 1},
+			expectedGroups: 1,
+			expectedFlag:   []bool{false, true},
+			sameNum:        1025,
+		},
+		{
+			chunkRows:      []int{1, 1},
+			expectedGroups: 1,
+			expectedFlag:   []bool{false, true},
+			sameNum:        2,
+		},
+		{
+			chunkRows:      []int{1, 1},
+			expectedGroups: 2,
+			expectedFlag:   []bool{false, false},
+			sameNum:        1,
+		},
+	}
+
+	ctx := mock.NewContext()
+	for _, testCase := range testCases {
+		expr, inputChks := genTestChunk4VecGroupChecker(testCase.chunkRows, testCase.sameNum)
+		groupChecker := newVecGroupChecker(ctx, expr)
+		groupNum := 0
+		for i, inputChk := range inputChks {
+			flag, err := groupChecker.splitIntoGroups(inputChk)
+			c.Assert(err, IsNil)
+			c.Assert(flag, Equals, testCase.expectedFlag[i])
+			if flag {
+				groupNum += groupChecker.groupCount - 1
+			} else {
+				groupNum += groupChecker.groupCount
+			}
+		}
+		c.Assert(groupNum, Equals, testCase.expectedGroups)
+	}
+}
+
 func buildMergeJoinExec(ctx sessionctx.Context, joinType plannercore.JoinType, innerSrc, outerSrc Executor) Executor {
 	if joinType == plannercore.RightOuterJoin {
 		innerSrc, outerSrc = outerSrc, innerSrc
@@ -800,4 +827,68 @@ type mockPlan struct {
 
 func (mp *mockPlan) GetExecutor() Executor {
 	return mp.exec
+}
+
+func (s *testExecSuite) TestVecGroupCheckerDATARACE(c *C) {
+	ctx := mock.NewContext()
+
+	mTypes := []byte{mysql.TypeVarString, mysql.TypeNewDecimal, mysql.TypeJSON}
+	for _, mType := range mTypes {
+		exprs := make([]expression.Expression, 1)
+		exprs[0] = &expression.Column{
+			RetType: &types.FieldType{Tp: mType},
+			Index:   0,
+		}
+		vgc := newVecGroupChecker(ctx, exprs)
+
+		fts := []*types.FieldType{types.NewFieldType(mType)}
+		chk := chunk.New(fts, 1, 1)
+		vgc.allocateBuffer = func(evalType types.EvalType, capacity int) (*chunk.Column, error) {
+			return chk.Column(0), nil
+		}
+		vgc.releaseBuffer = func(column *chunk.Column) {}
+
+		switch mType {
+		case mysql.TypeVarString:
+			chk.Column(0).ReserveString(1)
+			chk.Column(0).AppendString("abc")
+		case mysql.TypeNewDecimal:
+			chk.Column(0).ResizeDecimal(1, false)
+			chk.Column(0).Decimals()[0] = *types.NewDecFromInt(123)
+		case mysql.TypeJSON:
+			chk.Column(0).ReserveJSON(1)
+			j := new(json.BinaryJSON)
+			c.Assert(j.UnmarshalJSON([]byte(fmt.Sprintf(`{"%v":%v}`, 123, 123))), IsNil)
+			chk.Column(0).AppendJSON(*j)
+		}
+
+		_, err := vgc.splitIntoGroups(chk)
+		c.Assert(err, IsNil)
+
+		switch mType {
+		case mysql.TypeVarString:
+			c.Assert(vgc.firstRowDatums[0].GetString(), Equals, "abc")
+			c.Assert(vgc.lastRowDatums[0].GetString(), Equals, "abc")
+			chk.Column(0).ReserveString(1)
+			chk.Column(0).AppendString("edf")
+			c.Assert(vgc.firstRowDatums[0].GetString(), Equals, "abc")
+			c.Assert(vgc.lastRowDatums[0].GetString(), Equals, "abc")
+		case mysql.TypeNewDecimal:
+			c.Assert(vgc.firstRowDatums[0].GetMysqlDecimal().String(), Equals, "123")
+			c.Assert(vgc.lastRowDatums[0].GetMysqlDecimal().String(), Equals, "123")
+			chk.Column(0).ResizeDecimal(1, false)
+			chk.Column(0).Decimals()[0] = *types.NewDecFromInt(456)
+			c.Assert(vgc.firstRowDatums[0].GetMysqlDecimal().String(), Equals, "123")
+			c.Assert(vgc.lastRowDatums[0].GetMysqlDecimal().String(), Equals, "123")
+		case mysql.TypeJSON:
+			c.Assert(vgc.firstRowDatums[0].GetMysqlJSON().String(), Equals, `{"123": 123}`)
+			c.Assert(vgc.lastRowDatums[0].GetMysqlJSON().String(), Equals, `{"123": 123}`)
+			chk.Column(0).ReserveJSON(1)
+			j := new(json.BinaryJSON)
+			c.Assert(j.UnmarshalJSON([]byte(fmt.Sprintf(`{"%v":%v}`, 456, 456))), IsNil)
+			chk.Column(0).AppendJSON(*j)
+			c.Assert(vgc.firstRowDatums[0].GetMysqlJSON().String(), Equals, `{"123": 123}`)
+			c.Assert(vgc.lastRowDatums[0].GetMysqlJSON().String(), Equals, `{"123": 123}`)
+		}
+	}
 }

@@ -28,12 +28,14 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
+	ddlutil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/util/admin"
@@ -91,6 +93,26 @@ func (s *testSerialSuite) TestPrimaryKey(c *C) {
 	c.Assert(ddl.ErrUnsupportedModifyPrimaryKey.Equal(err), IsTrue)
 	_, err = tk.Exec("alter table primary_key_test drop primary key")
 	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported drop primary key when alter-primary-key is false")
+
+	// Change the value of AlterPrimaryKey.
+	tk.MustExec("create table primary_key_test1 (a int, b varchar(10), primary key(a))")
+	tk.MustExec("create table primary_key_test2 (a int, b varchar(10), primary key(b))")
+	tk.MustExec("create table primary_key_test3 (a int, b varchar(10))")
+	cfg := config.GetGlobalConfig()
+	newCfg := *cfg
+	orignalAlterPrimaryKey := newCfg.AlterPrimaryKey
+	newCfg.AlterPrimaryKey = true
+	config.StoreGlobalConfig(&newCfg)
+	defer func() {
+		newCfg.AlterPrimaryKey = orignalAlterPrimaryKey
+		config.StoreGlobalConfig(&newCfg)
+	}()
+
+	_, err = tk.Exec("alter table primary_key_test1 drop primary key")
+	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported drop primary key when the table's pkIsHandle is true")
+	tk.MustExec("alter table primary_key_test2 drop primary key")
+	_, err = tk.Exec("alter table primary_key_test3 drop primary key")
+	c.Assert(err.Error(), Equals, "[ddl:1091]Can't DROP 'PRIMARY'; check that column/key exists")
 }
 
 func (s *testSerialSuite) TestMultiRegionGetTableEndHandle(c *C) {
@@ -591,7 +613,14 @@ func (s *testSerialSuite) TestCancelJobByErrorCountLimit(c *C) {
 	}()
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
-	_, err := tk.Exec("create table t (a int)")
+
+	limit := variable.GetDDLErrorCountLimit()
+	tk.MustExec("set @@global.tidb_ddl_error_count_limit = 16")
+	err := ddlutil.LoadDDLVars(tk.Se)
+	c.Assert(err, IsNil)
+	defer tk.MustExec(fmt.Sprintf("set @@global.tidb_ddl_error_count_limit = %d", limit))
+
+	_, err = tk.Exec("create table t (a int)")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[ddl:8214]Cancelled DDL job")
 }
