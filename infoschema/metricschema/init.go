@@ -18,7 +18,7 @@ func Init() {
 	initOnce := func() {
 		dbID := autoid.MetricSchemaDBID
 		tableID := dbID + 1
-		metricTables := make([]*model.TableInfo, 0)
+		metricTables := make([]*model.TableInfo, 0, len(metricTableMap))
 		for name, def := range metricTableMap {
 			cols := def.genColumnInfos()
 			tableInfo := buildTableMeta(name, cols)
