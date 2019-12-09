@@ -74,6 +74,8 @@ type selectResult struct {
 	copPlanIDs []fmt.Stringer
 	rootPlanID fmt.Stringer
 
+	fetchErr error
+
 	memTracker *memory.Tracker
 }
 
@@ -81,7 +83,23 @@ func (r *selectResult) Fetch(ctx context.Context) {
 }
 
 func (r *selectResult) fetchResp(ctx context.Context) error {
+	startTime := time.Now()
+	defer func() {
+		if c := recover(); c != nil {
+			err := fmt.Errorf("%v", c)
+			logutil.Logger(ctx).Error("OOM", zap.Error(err))
+			r.fetchErr = err
+		}
+
+		duration := time.Since(startTime)
+		// TODO: Add a label to distinguish between success or failure.
+		// https://github.com/pingcap/tidb/issues/11397
+		metrics.DistSQLQueryHistgram.WithLabelValues(r.label, r.sqlType).Observe(duration.Seconds())
+	}()
 	for {
+		if r.fetchErr != nil {
+			return errors.Trace(r.fetchErr)
+		}
 		r.respChkIdx = 0
 		resultSubset, err := r.resp.Next(ctx)
 		if err != nil {
