@@ -542,7 +542,8 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e Executor) error {
 			return nil
 		}
 		forUpdateTS := txnCtx.GetForUpdateTS()
-		err = txn.LockKeys(ctx, &sctx.GetSessionVars().Killed, forUpdateTS, sctx.GetSessionVars().LockWaitTimeout, keys...)
+		err = txn.LockKeys(ctx, &sctx.GetSessionVars().Killed, forUpdateTS, sctx.GetSessionVars().LockWaitTimeout,
+			sctx.GetSessionVars().StmtCtx.GetLockWaitStartTime(), keys...)
 		if err == nil {
 			return nil
 		}
@@ -606,7 +607,7 @@ func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, err error) (E
 		if err != nil {
 			tsErr := UpdateForUpdateTS(a.Ctx, 0)
 			if tsErr != nil {
-				return nil, tsErr
+				logutil.Logger(ctx).Warn("UpdateForUpdateTS failed", zap.Error(tsErr))
 			}
 		}
 		return nil, err
