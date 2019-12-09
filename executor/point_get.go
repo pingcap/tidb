@@ -174,7 +174,7 @@ func (e *PointGetExecutor) encodeIndexKey() (_ []byte, err error) {
 }
 
 func (e *PointGetExecutor) get(key kv.Key) (val []byte, err error) {
-	txn, err := e.ctx.Txn(true)
+	txn, err := e.ctx.Txn(false)
 	if err != nil {
 		return nil, err
 	}
