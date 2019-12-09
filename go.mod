@@ -85,5 +85,3 @@ require (
 )
 
 go 1.13
-
-replace github.com/pingcap/tipb => github.com/zimulala/tipb v0.0.0-20191125100138-f92a93462a91
