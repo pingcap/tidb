@@ -927,6 +927,24 @@ const (
 	ErrWindowNoGroupOrderUnused                                     = 3597
 	ErrWindowExplainJson                                            = 3598
 	ErrWindowFunctionIgnoresFrame                                   = 3599
+	ErrDataTruncatedFunctionalIndex                                 = 3751
+	ErrDataOutOfRangeFunctionalIndex                                = 3752
+	ErrFunctionalIndexOnJsonOrGeometryFunction                      = 3753
+	ErrFunctionalIndexRefAutoIncrement                              = 3754
+	ErrCannotDropColumnFunctionalIndex                              = 3755
+	ErrFunctionalIndexPrimaryKey                                    = 3756
+	ErrFunctionalIndexOnLob                                         = 3757
+	ErrFunctionalIndexFunctionIsNotAllowed                          = 3758
+	ErrFulltextFunctionalIndex                                      = 3759
+	ErrSpatialFunctionalIndex                                       = 3760
+	ErrWrongKeyColumnFunctionalIndex                                = 3761
+	ErrFunctionalIndexOnField                                       = 3762
+	ErrFunctionalIndexRowValueIsNotAllowed                          = 3800
+	ErrDependentByFunctionalIndex                                   = 3837
+	ErrInvalidJsonValueForFuncIndex                                 = 3903
+	ErrJsonValueOutOfRangeForFuncIndex                              = 3904
+	ErrFunctionalIndexDataIsTooLong                                 = 3907
+	ErrFunctionalIndexNotApplicable                                 = 3909
 
 	// MariaDB errors.
 	ErrOnlyOneDefaultPartionAllowed         = 4030

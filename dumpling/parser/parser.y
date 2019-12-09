@@ -879,9 +879,6 @@ import (
 	IfExists			"If Exists"
 	IfNotExists			"If Not Exists"
 	IgnoreOptional			"IGNORE or empty"
-	IndexColName			"Index column name"
-	IndexColNameList		"List of index column name"
-	IndexColNameListOpt		"List of index column name opt"
 	IndexHint			"index hint"
 	IndexHintList			"index hint list"
 	IndexHintListOpt		"index hint list opt"
@@ -898,6 +895,9 @@ import (
 	IndexType			"index type"
 	IndexTypeName			"index type name"
 	IndexTypeOpt			"optional index type"
+	IndexPartSpecification		"Index column name or expression"
+	IndexPartSpecificationList	"List of index column name or expression"
+	IndexPartSpecificationListOpt   "Optional list of index column name or expression"
 	InsertValues			"Rest part of INSERT/REPLACE INTO statement"
 	JoinTable 			"join table"
 	JoinType			"join type"
@@ -2672,11 +2672,11 @@ ColumnOptionListOpt:
 	}
 
 ConstraintElem:
-	"PRIMARY" "KEY" IndexNameAndTypeOpt '(' IndexColNameList ')' IndexOptionList
+	"PRIMARY" "KEY" IndexNameAndTypeOpt '(' IndexPartSpecificationList ')' IndexOptionList
 	{
 		c := &ast.Constraint{
 			Tp: ast.ConstraintPrimaryKey,
-			Keys: $5.([]*ast.IndexColName),
+			Keys: $5.([]*ast.IndexPartSpecification),
 			Name: $3.([]interface{})[0].(string),
 		}
 		if $7 != nil {
@@ -2690,11 +2690,11 @@ ConstraintElem:
 		}
 		$$ = c
 	}
-|	"FULLTEXT" KeyOrIndexOpt IndexName '(' IndexColNameList ')' IndexOptionList
+|	"FULLTEXT" KeyOrIndexOpt IndexName '(' IndexPartSpecificationList ')' IndexOptionList
 	{
 		c := &ast.Constraint{
 			Tp:	ast.ConstraintFulltext,
-			Keys:	$5.([]*ast.IndexColName),
+			Keys:	$5.([]*ast.IndexPartSpecification),
 			Name:	$3.(string),
 		}
 		if $7 != nil {
@@ -2702,12 +2702,12 @@ ConstraintElem:
 		}
 		$$ = c
 	}
-|	KeyOrIndex IfNotExists IndexNameAndTypeOpt '(' IndexColNameList ')' IndexOptionList
+|	KeyOrIndex IfNotExists IndexNameAndTypeOpt '(' IndexPartSpecificationList ')' IndexOptionList
 	{
 		c := &ast.Constraint{
 			IfNotExists:	$2.(bool),
 			Tp:		ast.ConstraintIndex,
-			Keys:		$5.([]*ast.IndexColName),
+			Keys:		$5.([]*ast.IndexPartSpecification),
 		}
 		if $7 != nil {
 			c.Option = $7.(*ast.IndexOption)
@@ -2721,11 +2721,11 @@ ConstraintElem:
 		}
 		$$ = c
 	}
-|	"UNIQUE" KeyOrIndexOpt IndexNameAndTypeOpt '(' IndexColNameList ')' IndexOptionList
+|	"UNIQUE" KeyOrIndexOpt IndexNameAndTypeOpt '(' IndexPartSpecificationList ')' IndexOptionList
 	{
 		c := &ast.Constraint{
 			Tp:	ast.ConstraintUniq,
-			Keys:	$5.([]*ast.IndexColName),
+			Keys:	$5.([]*ast.IndexPartSpecification),
 		}
 		if $7 != nil {
 			c.Option = $7.(*ast.IndexOption)
@@ -2739,12 +2739,12 @@ ConstraintElem:
 		}
 		$$ = c
 	}
-|	"FOREIGN" "KEY" IfNotExists IndexName '(' IndexColNameList ')' ReferDef
+|	"FOREIGN" "KEY" IfNotExists IndexName '(' IndexPartSpecificationList ')' ReferDef
 	{
 		$$ = &ast.Constraint{
 			IfNotExists:	$3.(bool),
 			Tp:		ast.ConstraintForeignKey,
-			Keys:		$6.([]*ast.IndexColName),
+			Keys:		$6.([]*ast.IndexPartSpecification),
 			Name:		$4.(string),
 			Refer:		$8.(*ast.ReferenceDef),
 		}
@@ -2786,27 +2786,18 @@ MatchOpt:
 	}
 
 ReferDef:
-	"REFERENCES" TableName IndexColNameListOpt MatchOpt OnDeleteUpdateOpt
+	"REFERENCES" TableName IndexPartSpecificationListOpt MatchOpt OnDeleteUpdateOpt
 	{
 		onDeleteUpdate := $5.([2]interface{})
 		$$ = &ast.ReferenceDef{
 			Table: $2.(*ast.TableName),
-			IndexColNames: $3.([]*ast.IndexColName),
+			IndexPartSpecifications: $3.([]*ast.IndexPartSpecification),
 			OnDelete: onDeleteUpdate[0].(*ast.OnDeleteOpt),
 			OnUpdate: onDeleteUpdate[1].(*ast.OnUpdateOpt),
 			Match: $4.(ast.MatchType),
 		}
 	}
 
-IndexColNameListOpt:
-{
-	$$ = ([]*ast.IndexColName)(nil)
-}
-|
-'(' IndexColNameList ')'
-{
-	$$ = $2
-}
 
 OnDelete:
 	"ON" "DELETE" ReferOpt
@@ -2952,7 +2943,7 @@ NumLiteral:
  *     LOCK [=] {DEFAULT | NONE | SHARED | EXCLUSIVE}
  *******************************************************************************************/
 CreateIndexStmt:
-	"CREATE" IndexKeyTypeOpt "INDEX" IfNotExists Identifier IndexTypeOpt "ON" TableName '(' IndexColNameList ')' IndexOptionList IndexLockAndAlgorithmOpt
+	"CREATE" IndexKeyTypeOpt "INDEX" IfNotExists Identifier IndexTypeOpt "ON" TableName '(' IndexPartSpecificationList ')' IndexOptionList IndexLockAndAlgorithmOpt
 	{
 		var indexOption *ast.IndexOption
 		if $12 != nil {
@@ -2979,28 +2970,41 @@ CreateIndexStmt:
 			IfNotExists:   $4.(bool),
 			IndexName:     $5,
 			Table:         $8.(*ast.TableName),
-			IndexColNames: $10.([]*ast.IndexColName),
+			IndexPartSpecifications: $10.([]*ast.IndexPartSpecification),
 			IndexOption:   indexOption,
 			KeyType:       $2.(ast.IndexKeyType),
 			LockAlg:       indexLockAndAlgorithm,
 		}
 	}
 
-IndexColName:
-	ColumnName OptFieldLen Order
+IndexPartSpecificationListOpt:
 	{
-		//Order is parsed but just ignored as MySQL did
-		$$ = &ast.IndexColName{Column: $1.(*ast.ColumnName), Length: $2.(int)}
+		$$ = ([]*ast.IndexPartSpecification)(nil)
+	}
+|	'(' IndexPartSpecificationList ')'
+	{
+		$$ = $2
 	}
 
-IndexColNameList:
-	IndexColName
+IndexPartSpecificationList:
+	IndexPartSpecification
 	{
-		$$ = []*ast.IndexColName{$1.(*ast.IndexColName)}
+		$$ = []*ast.IndexPartSpecification{$1.(*ast.IndexPartSpecification)}
 	}
-|	IndexColNameList ',' IndexColName
+|	IndexPartSpecificationList ',' IndexPartSpecification
 	{
-		$$ = append($1.([]*ast.IndexColName), $3.(*ast.IndexColName))
+		$$ = append($1.([]*ast.IndexPartSpecification), $3.(*ast.IndexPartSpecification))
+	}
+
+IndexPartSpecification:
+	ColumnName OptFieldLen Order
+	{
+		// Order is parsed but just ignored as MySQL did.
+		$$ = &ast.IndexPartSpecification{Column: $1.(*ast.ColumnName), Length: $2.(int)}
+	}
+|	'(' Expression ')' Order
+	{
+		$$ = &ast.IndexPartSpecification{Expr: $2}
 	}
 
 IndexLockAndAlgorithmOpt:
