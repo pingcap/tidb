@@ -203,3 +203,11 @@ func (impl *MaxOneRowImpl) CalcCost(outCount float64, children ...memo.Implement
 func NewMaxOneRowImpl(maxOneRow *plannercore.PhysicalMaxOneRow) *MaxOneRowImpl {
 	return &MaxOneRowImpl{baseImpl{plan: maxOneRow}}
 }
+
+type WindowImpl struct {
+	baseImpl
+}
+
+func NewWindowImpl(window *plannercore.PhysicalWindow) *WindowImpl {
+	return &WindowImpl{baseImpl{plan: window}}
+}
