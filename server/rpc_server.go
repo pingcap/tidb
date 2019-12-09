@@ -69,7 +69,7 @@ func NewRPCServer(security config.Security, dom *domain.Domain, sm util.SessionM
 // 2. Coprocessor service, it reuse the TikvServer interface, but only support the Coprocessor interface now.
 // Coprocessor service will handle the cop task from other TiDB server. Currently, it's only use for read the cluster memory table.
 type rpcServer struct {
-	sysutil.DiagnoseServer
+	sysutil.DiagnosticsServer
 	tikvpb.TikvServer
 	dom *domain.Domain
 	sm  util.SessionManager

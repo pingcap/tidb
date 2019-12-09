@@ -100,9 +100,11 @@ const (
 	tableTiDBServersInfo                    = "TIDB_SERVERS_INFO"
 	tableTiDBClusterInfo                    = "CLUSTER_INFO"
 	// TableTiDBClusterConfig is the string constant of cluster configuration memory table
-	TableTiDBClusterConfig = "CLUSTER_CONFIG"
-	tableTiDBClusterLoad   = "CLUSTER_LOAD"
-	tableTiFlashReplica    = "TIFLASH_REPLICA"
+	TableTiDBClusterConfig     = "CLUSTER_CONFIG"
+	tableTiDBClusterLoad       = "CLUSTER_LOAD"
+	tableTiFlashReplica        = "TIFLASH_REPLICA"
+	tableTiDBClusterHardware   = "CLUSTER_HARDWARE"
+	tableTiDBClusterSystemInfo = "CLUSTER_SYSTEMINFO"
 )
 
 var tableIDMap = map[string]int64{
@@ -153,6 +155,8 @@ var tableIDMap = map[string]int64{
 	tableTiFlashReplica:                     autoid.InformationSchemaDBID + 45,
 	clusterTableSlowLog:                     autoid.InformationSchemaDBID + 46,
 	clusterTableProcesslist:                 autoid.InformationSchemaDBID + 47,
+	tableTiDBClusterHardware:                autoid.InformationSchemaDBID + 48,
+	tableTiDBClusterSystemInfo:              autoid.InformationSchemaDBID + 49,
 }
 
 type columnInfo struct {
@@ -744,6 +748,24 @@ var tableTiDBClusterLoadCols = []columnInfo{
 	{"DEVICE_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"LOAD_NAME", mysql.TypeVarchar, 256, 0, nil, nil},
 	{"LOAD_VALUE", mysql.TypeVarchar, 128, 0, nil, nil},
+}
+
+var tableTiDBClusterHardwareCols = []columnInfo{
+	{"TYPE", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"ADDRESS", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"DEVICE_TYPE", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"DEVICE_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"NAME", mysql.TypeVarchar, 256, 0, nil, nil},
+	{"VALUE", mysql.TypeVarchar, 128, 0, nil, nil},
+}
+
+var tableTiDBClusterSystemInfoCols = []columnInfo{
+	{"TYPE", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"ADDRESS", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"DEVICE_TYPE", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"DEVICE_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"NAME", mysql.TypeVarchar, 256, 0, nil, nil},
+	{"VALUE", mysql.TypeVarchar, 128, 0, nil, nil},
 }
 
 func dataForTiKVRegionStatus(ctx sessionctx.Context) (records [][]types.Datum, err error) {
@@ -2137,6 +2159,10 @@ func dataForTiDBClusterInfo(ctx sessionctx.Context) ([][]types.Datum, error) {
 }
 
 func dataForClusterLoadInfo(ctx sessionctx.Context) ([][]types.Datum, error) {
+	return dataForClusterInfo(ctx, diagnosticspb.ServerInfoType_LoadInfo)
+}
+
+func dataForClusterInfo(ctx sessionctx.Context, infoTp diagnosticspb.ServerInfoType) ([][]types.Datum, error) {
 	serversInfo, err := GetClusterServerInfo(ctx)
 	if err != nil {
 		return nil, err
@@ -2157,7 +2183,7 @@ func dataForClusterLoadInfo(ctx sessionctx.Context) ([][]types.Datum, error) {
 			continue
 		}
 		ipMap[ip] = struct{}{}
-		items, err := getServerInfoByGRPC(srv.StatusAddr, diagnosticspb.ServerInfoType_LoadInfo)
+		items, err := getServerInfoByGRPC(srv.StatusAddr, infoTp)
 		if err != nil {
 			return nil, err
 		}
@@ -2165,6 +2191,14 @@ func dataForClusterLoadInfo(ctx sessionctx.Context) ([][]types.Datum, error) {
 		rows = append(rows, partRows...)
 	}
 	return rows, nil
+}
+
+func dataForClusterHardwareInfo(ctx sessionctx.Context) ([][]types.Datum, error) {
+	return dataForClusterInfo(ctx, diagnosticspb.ServerInfoType_HardwareInfo)
+}
+
+func dataForClusterSystemInfo(ctx sessionctx.Context) ([][]types.Datum, error) {
+	return dataForClusterInfo(ctx, diagnosticspb.ServerInfoType_SystemInfo)
 }
 
 func serverInfoItemToRows(items []*diagnosticspb.ServerInfoItem, tp, addr string) [][]types.Datum {
@@ -2387,6 +2421,8 @@ var tableNameToColumns = map[string][]columnInfo{
 	TableTiDBClusterConfig:                  tableTiDBClusterConfigCols,
 	tableTiDBClusterLoad:                    tableTiDBClusterLoadCols,
 	tableTiFlashReplica:                     tableTableTiFlashReplicaCols,
+	tableTiDBClusterHardware:                tableTiDBClusterHardwareCols,
+	tableTiDBClusterSystemInfo:              tableTiDBClusterSystemInfoCols,
 }
 
 func createInfoSchemaTable(_ autoid.Allocator, meta *model.TableInfo) (table.Table, error) {
@@ -2497,6 +2533,10 @@ func (it *infoschemaTable) getRows(ctx sessionctx.Context, cols []*table.Column)
 		fullRows, err = dataForClusterConfig(ctx)
 	case tableTiDBClusterLoad:
 		fullRows, err = dataForClusterLoadInfo(ctx)
+	case tableTiDBClusterHardware:
+		fullRows, err = dataForClusterHardwareInfo(ctx)
+	case tableTiDBClusterSystemInfo:
+		fullRows, err = dataForClusterSystemInfo(ctx)
 	case tableTiFlashReplica:
 		fullRows = dataForTableTiFlashReplica(dbs)
 	// Data for cluster memory table.

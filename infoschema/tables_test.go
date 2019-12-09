@@ -83,11 +83,12 @@ type testClusterTableSuite struct {
 	rpcserver  *grpc.Server
 	httpServer *httptest.Server
 	mockAddr   string
+	listenAddr string
 }
 
 func (s *testClusterTableSuite) SetUpSuite(c *C) {
 	s.testTableSuite.SetUpSuite(c)
-	s.rpcserver = s.setUpRPCService(c, "0.0.0.0:10080")
+	s.rpcserver = s.setUpRPCService(c, ":0")
 	s.httpServer, s.mockAddr = setUpMockPDHTTPSercer()
 }
 
@@ -103,6 +104,7 @@ func (s *testClusterTableSuite) setUpRPCService(c *C, addr string) *grpc.Server 
 		Command: mysql.ComQuery,
 	}
 	srv := server.NewRPCServer(config.GetGlobalConfig().Security, s.dom, sm)
+	s.listenAddr = fmt.Sprintf(":%d", lis.Addr().(*net.TCPAddr).Port)
 	go func() {
 		err = srv.Serve(lis)
 		c.Assert(err, IsNil)
@@ -871,17 +873,51 @@ func (s *testTableSuite) TestForTableTiFlashReplica(c *C) {
 
 func (s *testClusterTableSuite) TestForClusterServerInfo(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	mockAddr := "127.0.0.1:10080"
 	instances := []string{
-		"pd,127.0.0.1:11080," + mockAddr + ",mock-version,mock-githash",
-		"tidb,127.0.0.1:11080," + mockAddr + ",mock-version,mock-githash",
-		"tikv,127.0.0.1:11080," + mockAddr + ",mock-version,mock-githash",
+		"pd,127.0.0.1:11080," + s.listenAddr + ",mock-version,mock-githash",
+		"tidb,127.0.0.1:11080," + s.listenAddr + ",mock-version,mock-githash",
+		"tikv,127.0.0.1:11080," + s.listenAddr + ",mock-version,mock-githash",
 	}
 	fpExpr := `return("` + strings.Join(instances, ";") + `")`
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/infoschema/mockClusterInfo", fpExpr), IsNil)
 	defer func() { c.Assert(failpoint.Disable("github.com/pingcap/tidb/infoschema/mockClusterInfo"), IsNil) }()
 
+	checkInfoRows := func(re *testkit.Result) {
+		rows := re.Rows()
+		c.Assert(len(rows), Greater, 0)
+
+		// Currently only TiDB implement this.
+		// TODO: fix me after tikv/pd server support this.
+		typeMap := map[string]struct{}{
+			"tidb": {},
+		}
+		addrMap := map[string]struct{}{
+			s.listenAddr: {},
+		}
+		nameMap := map[string]struct{}{
+			"cpu":  {},
+			"mem":  {},
+			"net":  {},
+			"disk": {},
+		}
+		for _, row := range rows {
+			tp := row[0].(string)
+			addr := row[1].(string)
+			name := row[2].(string)
+			delete(typeMap, tp)
+			delete(addrMap, addr)
+			delete(nameMap, name)
+		}
+		c.Assert(len(typeMap), Equals, 0)
+		c.Assert(len(addrMap), Equals, 0)
+		c.Assert(len(nameMap), Equals, 0)
+	}
+
 	re := tk.MustQuery("select * from information_schema.CLUSTER_LOAD;")
+	checkInfoRows(re)
+	re = tk.MustQuery("select * from information_schema.CLUSTER_HARDWARE;")
+	checkInfoRows(re)
+	re = tk.MustQuery("select * from information_schema.CLUSTER_SYSTEMINFO;")
 	rows := re.Rows()
 	c.Assert(len(rows), Greater, 0)
 
@@ -891,13 +927,10 @@ func (s *testClusterTableSuite) TestForClusterServerInfo(c *C) {
 		"tidb": {},
 	}
 	addrMap := map[string]struct{}{
-		"127.0.0.1:10080": {},
+		s.listenAddr: {},
 	}
 	nameMap := map[string]struct{}{
-		"cpu":  {},
-		"mem":  {},
-		"net":  {},
-		"disk": {},
+		"system": {},
 	}
 	for _, row := range rows {
 		tp := row[0].(string)
