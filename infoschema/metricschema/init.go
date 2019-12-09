@@ -9,6 +9,7 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util"
 )
 
 var once sync.Once
@@ -24,14 +25,11 @@ func Init() {
 			tableInfo := buildTableMeta(name, cols)
 			tableInfo.ID = tableID
 			tableID++
-			for i, c := range tableInfo.Columns {
-				c.ID = int64(i) + 1
-			}
 			metricTables = append(metricTables, tableInfo)
 		}
 		dbInfo := &model.DBInfo{
 			ID:      dbID,
-			Name:    model.NewCIStr(metricDBName),
+			Name:    model.NewCIStr(util.MetricSchemaName),
 			Charset: mysql.DefaultCharset,
 			Collate: mysql.DefaultCollationName,
 			Tables:  metricTables,
@@ -72,6 +70,7 @@ func buildTableMeta(tableName string, cs []columnInfo) *model.TableInfo {
 	}
 	for i, col := range cols {
 		col.Offset = i
+		col.ID = int64(i) + 1
 	}
 	return &model.TableInfo{
 		Name:    model.NewCIStr(tableName),

@@ -17,8 +17,6 @@ const (
 	promQRangeDurationKey   = "$RANGE_DURATION"
 )
 
-const metricDBName = "METRIC_SCHEMA"
-
 type metricTableDef struct {
 	promQL   string
 	labels   []string
@@ -102,7 +100,7 @@ func (def *metricTableDef) genRows(value pmodel.Value, r promQLQueryRange) [][]t
 }
 
 func (def *metricTableDef) genRecord(metric pmodel.Metric, pair pmodel.SamplePair, r promQLQueryRange) []types.Datum {
-	record := make([]types.Datum, 0, 8)
+	record := make([]types.Datum, 0, 2+len(def.labels)+1)
 	// Record order should keep same with genColumnInfos.
 	record = append(record, types.NewTimeDatum(types.Time{
 		Time: types.FromGoTime(time.Unix(int64(pair.Timestamp/1000), int64(pair.Timestamp%1000)*1e6)),
