@@ -16,3 +16,10 @@ create table tt(a int, b int, primary key(a));
 
 desc select * from tt where (tt.a > 1 and tt.a < 20) or (tt.a >= 30 and tt.a < 55);
 desc select /*+ read_from_storage(tiflash[tt]) */ * from tt where (tt.a > 1 and tt.a < 20) or (tt.a >= 30 and tt.a < 55);
+
+drop table if exists ttt;
+create table ttt (a int, primary key (a desc));
+
+desc select * from ttt order by ttt.a desc;
+desc select /*+ read_from_storage(tiflash[ttt]) */ * from ttt order by ttt.a desc;
+desc select /*+ read_from_storage(tiflash[ttt]) */ * from ttt order by ttt.a;

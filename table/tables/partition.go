@@ -47,7 +47,7 @@ var _ table.PartitionedTable = &partitionedTable{}
 // partitions) is basically the same.
 // partition also implements the table.Table interface.
 type partition struct {
-	tableCommon
+	TableCommon
 }
 
 // GetPhysicalID implements table.Table GetPhysicalID interface.
@@ -58,27 +58,27 @@ func (p *partition) GetPhysicalID() int64 {
 // partitionedTable implements the table.PartitionedTable interface.
 // partitionedTable is a table, it contains many Partitions.
 type partitionedTable struct {
-	Table
+	TableCommon
 	partitionExpr *PartitionExpr
 	partitions    map[int64]*partition
 }
 
-func newPartitionedTable(tbl *Table, tblInfo *model.TableInfo) (table.Table, error) {
-	ret := &partitionedTable{Table: *tbl}
+func newPartitionedTable(tbl *TableCommon, tblInfo *model.TableInfo) (table.Table, error) {
+	ret := &partitionedTable{TableCommon: *tbl}
 	partitionExpr, err := newPartitionExpr(tblInfo)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	ret.partitionExpr = partitionExpr
 
-	if err := initTableIndices(&ret.tableCommon); err != nil {
+	if err := initTableIndices(&ret.TableCommon); err != nil {
 		return nil, errors.Trace(err)
 	}
 	partitions := make(map[int64]*partition)
 	pi := tblInfo.GetPartitionInfo()
 	for _, p := range pi.Definitions {
 		var t partition
-		err := initTableCommonWithIndices(&t.tableCommon, tblInfo, p.ID, tbl.Columns, tbl.alloc)
+		err := initTableCommonWithIndices(&t.TableCommon, tblInfo, p.ID, tbl.Columns, tbl.alloc)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

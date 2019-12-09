@@ -45,5 +45,4 @@ func OnGeneralEvent(ctx context.Context, sctx *variable.SessionVars, event plugi
 	fmt.Println("conn_ip_example notifiy called")
 	fmt.Println("variable test: ", variable.GetSysVar("conn_ip_example_test_variable").Value)
 	fmt.Printf("new connection by %s\n", ctx.Value("ip"))
-	return
 }
