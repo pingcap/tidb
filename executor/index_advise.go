@@ -17,7 +17,6 @@ import (
 	"context"
 	"math"
 	"strings"
-	"unsafe"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser"
@@ -36,7 +35,6 @@ type IndexAdviseExec struct {
 
 // Next implements the Executor Next interface.
 func (e *IndexAdviseExec) Next(ctx context.Context, req *chunk.Chunk) error {
-	req.GrowAndReset(e.maxChunkSize)
 	if !e.IsLocal {
 		return errors.New("Index Advise: don't support load data without local field")
 	}
@@ -74,7 +72,7 @@ type IndexAdviseInfo struct {
 }
 
 func (e *IndexAdviseInfo) getStmtNodes(data []byte) error {
-	str := *(*string)(unsafe.Pointer(&data))
+	str := string(data)
 	sqls := strings.Split(str, e.LinesInfo.Terminated)
 
 	j := 0
