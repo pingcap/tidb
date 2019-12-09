@@ -94,17 +94,22 @@ func (s *testSuite) TearDownTest(c *C) {
 type handleRange struct {
 	start int64
 	end   int64
+	point bool
 }
 
 func (s *testSuite) getExpectedRanges(tid int64, hrs []*handleRange) []kv.KeyRange {
 	krs := make([]kv.KeyRange, 0, len(hrs))
 	for _, hr := range hrs {
+		var kr kv.KeyRange
 		low := codec.EncodeInt(nil, hr.start)
-		high := codec.EncodeInt(nil, hr.end)
-		high = []byte(kv.Key(high).PrefixNext())
-		startKey := tablecodec.EncodeRowKey(tid, low)
-		endKey := tablecodec.EncodeRowKey(tid, high)
-		krs = append(krs, kv.KeyRange{StartKey: startKey, EndKey: endKey})
+		kr.StartKey = tablecodec.EncodeRowKey(tid, low)
+		if hr.point {
+			kr.Point = true
+		} else {
+			high := []byte(kv.Key(codec.EncodeInt(nil, hr.end)).PrefixNext())
+			kr.EndKey = tablecodec.EncodeRowKey(tid, high)
+		}
+		krs = append(krs, kr)
 	}
 	return krs
 }
@@ -114,10 +119,10 @@ func (s *testSuite) TestTableHandlesToKVRanges(c *C) {
 
 	// Build expected key ranges.
 	hrs := make([]*handleRange, 0, len(handles))
-	hrs = append(hrs, &handleRange{start: 0, end: 0})
+	hrs = append(hrs, &handleRange{start: 0, point: true})
 	hrs = append(hrs, &handleRange{start: 2, end: 5})
 	hrs = append(hrs, &handleRange{start: 10, end: 11})
-	hrs = append(hrs, &handleRange{start: 100, end: 100})
+	hrs = append(hrs, &handleRange{start: 100, point: true})
 	hrs = append(hrs, &handleRange{start: 9223372036854775806, end: 9223372036854775807})
 
 	// Build key ranges.
@@ -129,6 +134,7 @@ func (s *testSuite) TestTableHandlesToKVRanges(c *C) {
 	for i := range actual {
 		c.Assert(actual[i].StartKey, DeepEquals, expect[i].StartKey)
 		c.Assert(actual[i].EndKey, DeepEquals, expect[i].EndKey)
+		c.Assert(actual[i].Point, Equals, expect[i].Point)
 	}
 }
 
@@ -415,7 +421,7 @@ func (s *testSuite) TestRequestBuilder3(c *C) {
 		KeyRanges: []kv.KeyRange{
 			{
 				StartKey: kv.Key{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0xf, 0x5f, 0x72, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0},
-				EndKey:   kv.Key{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0xf, 0x5f, 0x72, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
+				Point:    true,
 			},
 			{
 				StartKey: kv.Key{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0xf, 0x5f, 0x72, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
@@ -427,7 +433,7 @@ func (s *testSuite) TestRequestBuilder3(c *C) {
 			},
 			{
 				StartKey: kv.Key{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0xf, 0x5f, 0x72, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x64},
-				EndKey:   kv.Key{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0xf, 0x5f, 0x72, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x65},
+				Point:    true,
 			},
 		},
 		KeepOrder:      false,

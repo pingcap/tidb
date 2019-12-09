@@ -65,7 +65,7 @@ require (
 	golang.org/x/sys v0.0.0-20191128015809-6d18c012aee9
 	golang.org/x/text v0.3.2
 	golang.org/x/time v0.0.0-20190308202827-9d24e82272b4 // indirect
-	golang.org/x/tools v0.0.0-20191107010934-f79515f33823
+	golang.org/x/tools v0.0.0-20191205133340-d1f10d1c4e25
 	google.golang.org/genproto v0.0.0-20190905072037-92dd089d5514 // indirect
 	google.golang.org/grpc v1.25.1
 	gopkg.in/check.v1 v1.0.0-20190902080502-41f04d3bba15 // indirect
@@ -76,4 +76,7 @@ require (
 
 go 1.13
 
-replace github.com/pingcap/check => github.com/tiancaiamao/check v0.0.0-20191119042138-8e73d07b629d
+replace (
+	github.com/pingcap/check => github.com/tiancaiamao/check v0.0.0-20191119042138-8e73d07b629d
+	github.com/pingcap/kvproto => /root/kvproto
+)

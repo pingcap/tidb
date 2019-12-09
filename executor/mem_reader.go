@@ -14,6 +14,7 @@
 package executor
 
 import (
+	"context"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -272,6 +273,16 @@ func iterTxnMemBuffer(ctx sessionctx.Context, kvRanges []kv.KeyRange, fn process
 		return err
 	}
 	for _, rg := range kvRanges {
+		if rg.IsPoint() {
+			value, err := txn.GetMemBuffer().Get(context.Background(), rg.StartKey)
+			if err != nil {
+				return err
+			}
+			if err = fn(rg.StartKey, value); err != nil {
+				return err
+			}
+			continue
+		}
 		iter, err := txn.GetMemBuffer().Iter(rg.StartKey, rg.EndKey)
 		if err != nil {
 			return err

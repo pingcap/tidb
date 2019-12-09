@@ -14,6 +14,7 @@
 package kv
 
 import (
+	"bytes"
 	"context"
 	"strconv"
 
@@ -61,4 +62,37 @@ func GetInt64(ctx context.Context, r Retriever, k Key) (int64, error) {
 		return intVal, errors.Trace(err)
 	}
 	return intVal, nil
+}
+
+func IsPoint(startKey Key, endKey Key) bool {
+	if len(startKey) != len(endKey) {
+		// Works like
+		//   return bytes.Equal(r.StartKey.Next(), r.EndKey)
+
+		startLen := len(startKey)
+		return startLen+1 == len(endKey) &&
+			endKey[startLen] == 0 &&
+			bytes.Equal(startKey, endKey[:startLen])
+	}
+	// Works like
+	//   return bytes.Equal(r.StartKey.PrefixNext(), r.EndKey)
+
+	i := len(startKey) - 1
+	for ; i >= 0; i-- {
+		if startKey[i] != 255 {
+			break
+		}
+		if endKey[i] != 0 {
+			return false
+		}
+	}
+	if i < 0 {
+		// In case all bytes in StartKey are 255.
+		return false
+	}
+	// The byte at diffIdx in StartKey should be one less than the byte at diffIdx in EndKey.
+	// And bytes in StartKey and EndKey before diffIdx should be equal.
+	diffOneIdx := i
+	return startKey[diffOneIdx]+1 == endKey[diffOneIdx] &&
+		bytes.Equal(startKey[:diffOneIdx], endKey[:diffOneIdx])
 }

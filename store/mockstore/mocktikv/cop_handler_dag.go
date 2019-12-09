@@ -733,13 +733,13 @@ func toPBError(err error) *tipb.Error {
 // extractKVRanges extracts kv.KeyRanges slice from a SelectRequest.
 func (h *rpcHandler) extractKVRanges(keyRanges []*coprocessor.KeyRange, descScan bool) (kvRanges []kv.KeyRange, err error) {
 	for _, kran := range keyRanges {
-		if bytes.Compare(kran.GetStart(), kran.GetEnd()) >= 0 {
-			err = errors.Errorf("invalid range, start should be smaller than end: %v %v", kran.GetStart(), kran.GetEnd())
+		if !kran.IsPoint && bytes.Compare(kran.GetStart(), kran.GetEnd()) >= 0 {
+			err = errors.Errorf("invalid range, start should be smaller than end: %v %v %v", kran.GetStart(), kran.GetEnd(), kran.GetIsPoint())
 			return
 		}
 
 		upperKey := kran.GetEnd()
-		if bytes.Compare(upperKey, h.rawStartKey) <= 0 {
+		if !kran.IsPoint && bytes.Compare(upperKey, h.rawStartKey) <= 0 {
 			continue
 		}
 		lowerKey := kran.GetStart()
@@ -748,7 +748,11 @@ func (h *rpcHandler) extractKVRanges(keyRanges []*coprocessor.KeyRange, descScan
 		}
 		var kvr kv.KeyRange
 		kvr.StartKey = kv.Key(maxStartKey(lowerKey, h.rawStartKey))
-		kvr.EndKey = kv.Key(minEndKey(upperKey, h.rawEndKey))
+		if kran.IsPoint {
+			kvr.Point = true
+		} else {
+			kvr.EndKey = kv.Key(minEndKey(upperKey, h.rawEndKey))
+		}
 		kvRanges = append(kvRanges, kvr)
 	}
 	if descScan {

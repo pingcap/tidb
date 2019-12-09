@@ -187,8 +187,9 @@ func (r *copRanges) toPBRanges() []*coprocessor.KeyRange {
 	ranges := make([]*coprocessor.KeyRange, 0, r.len())
 	r.do(func(ran *kv.KeyRange) {
 		ranges = append(ranges, &coprocessor.KeyRange{
-			Start: ran.StartKey,
-			End:   ran.EndKey,
+			Start:   ran.StartKey,
+			End:     ran.EndKey,
+			IsPoint: ran.IsPoint(),
 		})
 	})
 	return ranges
@@ -327,7 +328,8 @@ func splitRanges(bo *Backoffer, cache *RegionCache, ranges *copRanges, fn func(r
 		var i int
 		for ; i < ranges.len(); i++ {
 			r := ranges.at(i)
-			if !(loc.Contains(r.EndKey) || bytes.Equal(loc.EndKey, r.EndKey)) {
+			if !r.IsPoint() && !loc.Contains(r.EndKey) && !bytes.Equal(loc.EndKey, r.EndKey) ||
+				r.IsPoint() && !loc.Contains(r.StartKey) {
 				break
 			}
 		}
@@ -341,17 +343,27 @@ func splitRanges(bo *Backoffer, cache *RegionCache, ranges *copRanges, fn func(r
 		if loc.Contains(r.StartKey) {
 			// Part of r is not in the region. We need to split it.
 			taskRanges := ranges.slice(0, i)
-			taskRanges.last = &kv.KeyRange{
+			rangeSplitL := kv.KeyRange{
 				StartKey: r.StartKey,
-				EndKey:   loc.EndKey,
 			}
+			if kv.IsPoint(r.StartKey, loc.EndKey) {
+				rangeSplitL.Point = true
+			} else {
+				rangeSplitL.EndKey = loc.EndKey
+			}
+			taskRanges.last = &rangeSplitL
 			fn(loc, taskRanges)
 
 			ranges = ranges.slice(i+1, ranges.len())
-			ranges.first = &kv.KeyRange{
+			rangeSplitR := kv.KeyRange{
 				StartKey: loc.EndKey,
-				EndKey:   r.EndKey,
 			}
+			if kv.IsPoint(loc.EndKey, r.EndKey) {
+				rangeSplitR.Point = true
+			} else {
+				rangeSplitR.EndKey = r.EndKey
+			}
+			ranges.first = &rangeSplitR
 		} else {
 			// rs[i] is not in the region.
 			taskRanges := ranges.slice(0, i)
