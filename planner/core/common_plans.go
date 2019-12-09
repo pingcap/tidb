@@ -678,6 +678,8 @@ func (e *Explain) prepareSchema() error {
 		fieldNames = []string{"id", "count", "task", "operator info", "execution info", "memory", "disk"}
 	case format == ast.ExplainFormatDOT:
 		fieldNames = []string{"dot contents"}
+	case format == ast.ExplainFormatHint:
+		fieldNames = []string{"hint"}
 	default:
 		return errors.Errorf("explain format '%s' is not supported now", e.Format)
 	}
@@ -709,6 +711,8 @@ func (e *Explain) RenderResult() error {
 		}
 	case ast.ExplainFormatDOT:
 		e.prepareDotInfo(e.TargetPlan.(PhysicalPlan))
+	case ast.ExplainFormatHint:
+		e.Rows = append(e.Rows, []string{GenHintsFromPhysicalPlan(e.TargetPlan)})
 	default:
 		return errors.Errorf("explain format '%s' is not supported now", e.Format)
 	}
@@ -739,14 +743,12 @@ func (e *Explain) explainPlanInRowFormat(p Plan, taskType, indent string, isLast
 	case *PhysicalTableReader:
 		var storeType string
 		switch x.StoreType {
-		case kv.TiKV:
-			storeType = kv.TiKV.Name()
-		case kv.TiFlash:
-			storeType = kv.TiFlash.Name()
+		case kv.TiKV, kv.TiFlash, kv.TiDB:
+			// expected do nothing
 		default:
-			err = errors.Errorf("the store type %v is unknown", x.StoreType)
-			return
+			return errors.Errorf("the store type %v is unknown", x.StoreType)
 		}
+		storeType = x.StoreType.Name()
 		err = e.explainPlanInRowFormat(x.tablePlan, "cop["+storeType+"]", childIndent, true)
 	case *PhysicalIndexReader:
 		err = e.explainPlanInRowFormat(x.indexPlan, "cop[tikv]", childIndent, true)
@@ -788,7 +790,6 @@ func (e *Explain) explainPlanInRowFormat(p Plan, taskType, indent string, isLast
 // operator id, task type, operator info, and the estemated row count.
 func (e *Explain) prepareOperatorInfo(p Plan, taskType string, indent string, isLastChild bool) {
 	operatorInfo := p.ExplainInfo()
-
 	count := "N/A"
 	if si := p.statsInfo(); si != nil {
 		count = strconv.FormatFloat(si.RowCount, 'f', 2, 64)

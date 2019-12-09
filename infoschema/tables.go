@@ -98,11 +98,62 @@ const (
 	tableTiKVRegionStatus                   = "TIKV_REGION_STATUS"
 	tableTiKVRegionPeers                    = "TIKV_REGION_PEERS"
 	tableTiDBServersInfo                    = "TIDB_SERVERS_INFO"
-	tableTiDBClusterInfo                    = "TIDB_CLUSTER_INFO"
-	tableTiDBClusterConfig                  = "TIDB_CLUSTER_CONFIG"
-	tableTiDBClusterLoad                    = "TIDB_CLUSTER_LOAD"
-	tableTiFlashReplica                     = "TIFLASH_REPLICA"
+	tableTiDBClusterInfo                    = "CLUSTER_INFO"
+	// TableTiDBClusterConfig is the string constant of cluster configuration memory table
+	TableTiDBClusterConfig = "CLUSTER_CONFIG"
+	tableTiDBClusterLoad   = "CLUSTER_LOAD"
+	tableTiFlashReplica    = "TIFLASH_REPLICA"
 )
+
+var tableIDMap = map[string]int64{
+	tableSchemata:                           autoid.InformationSchemaDBID + 1,
+	tableTables:                             autoid.InformationSchemaDBID + 2,
+	tableColumns:                            autoid.InformationSchemaDBID + 3,
+	tableColumnStatistics:                   autoid.InformationSchemaDBID + 4,
+	tableStatistics:                         autoid.InformationSchemaDBID + 5,
+	tableCharacterSets:                      autoid.InformationSchemaDBID + 6,
+	tableCollations:                         autoid.InformationSchemaDBID + 7,
+	tableFiles:                              autoid.InformationSchemaDBID + 8,
+	catalogVal:                              autoid.InformationSchemaDBID + 9,
+	tableProfiling:                          autoid.InformationSchemaDBID + 10,
+	tablePartitions:                         autoid.InformationSchemaDBID + 11,
+	tableKeyColumm:                          autoid.InformationSchemaDBID + 12,
+	tableReferConst:                         autoid.InformationSchemaDBID + 13,
+	tableSessionVar:                         autoid.InformationSchemaDBID + 14,
+	tablePlugins:                            autoid.InformationSchemaDBID + 15,
+	tableConstraints:                        autoid.InformationSchemaDBID + 16,
+	tableTriggers:                           autoid.InformationSchemaDBID + 17,
+	tableUserPrivileges:                     autoid.InformationSchemaDBID + 18,
+	tableSchemaPrivileges:                   autoid.InformationSchemaDBID + 19,
+	tableTablePrivileges:                    autoid.InformationSchemaDBID + 20,
+	tableColumnPrivileges:                   autoid.InformationSchemaDBID + 21,
+	tableEngines:                            autoid.InformationSchemaDBID + 22,
+	tableViews:                              autoid.InformationSchemaDBID + 23,
+	tableRoutines:                           autoid.InformationSchemaDBID + 24,
+	tableParameters:                         autoid.InformationSchemaDBID + 25,
+	tableEvents:                             autoid.InformationSchemaDBID + 26,
+	tableGlobalStatus:                       autoid.InformationSchemaDBID + 27,
+	tableGlobalVariables:                    autoid.InformationSchemaDBID + 28,
+	tableSessionStatus:                      autoid.InformationSchemaDBID + 29,
+	tableOptimizerTrace:                     autoid.InformationSchemaDBID + 30,
+	tableTableSpaces:                        autoid.InformationSchemaDBID + 31,
+	tableCollationCharacterSetApplicability: autoid.InformationSchemaDBID + 32,
+	tableProcesslist:                        autoid.InformationSchemaDBID + 33,
+	tableTiDBIndexes:                        autoid.InformationSchemaDBID + 34,
+	tableSlowLog:                            autoid.InformationSchemaDBID + 35,
+	tableTiDBHotRegions:                     autoid.InformationSchemaDBID + 36,
+	tableTiKVStoreStatus:                    autoid.InformationSchemaDBID + 37,
+	tableAnalyzeStatus:                      autoid.InformationSchemaDBID + 38,
+	tableTiKVRegionStatus:                   autoid.InformationSchemaDBID + 39,
+	tableTiKVRegionPeers:                    autoid.InformationSchemaDBID + 40,
+	tableTiDBServersInfo:                    autoid.InformationSchemaDBID + 41,
+	tableTiDBClusterInfo:                    autoid.InformationSchemaDBID + 42,
+	TableTiDBClusterConfig:                  autoid.InformationSchemaDBID + 43,
+	tableTiDBClusterLoad:                    autoid.InformationSchemaDBID + 44,
+	tableTiFlashReplica:                     autoid.InformationSchemaDBID + 45,
+	clusterTableSlowLog:                     autoid.InformationSchemaDBID + 46,
+	clusterTableProcesslist:                 autoid.InformationSchemaDBID + 47,
+}
 
 type columnInfo struct {
 	name  string
@@ -983,7 +1034,7 @@ func dataForProcesslist(ctx sessionctx.Context) [][]types.Datum {
 	for _, pi := range pl {
 		// If you have the PROCESS privilege, you can see all threads.
 		// Otherwise, you can see only your own threads.
-		if !hasProcessPriv && pi.User != loginUser.Username {
+		if !hasProcessPriv && loginUser != nil && pi.User != loginUser.Username {
 			continue
 		}
 
@@ -1480,6 +1531,9 @@ func dataForColumns(ctx sessionctx.Context, schemas []*model.DBInfo) [][]types.D
 func dataForColumnsInTable(schema *model.DBInfo, tbl *model.TableInfo) [][]types.Datum {
 	rows := make([][]types.Datum, 0, len(tbl.Columns))
 	for i, col := range tbl.Columns {
+		if col.Hidden {
+			continue
+		}
 		var charMaxLen, charOctLen, numericPrecision, numericScale, datetimePrecision interface{}
 		colLen, decimal := col.Flen, col.Decimal
 		defaultFlen, defaultDecimal := mysql.GetDefaultFieldLengthAndDecimal(col.Tp)
@@ -1561,10 +1615,15 @@ func dataForColumnsInTable(schema *model.DBInfo, tbl *model.TableInfo) [][]types
 	return rows
 }
 
-func dataForStatistics(schemas []*model.DBInfo) [][]types.Datum {
+func dataForStatistics(ctx sessionctx.Context, schemas []*model.DBInfo) [][]types.Datum {
+	checker := privilege.GetPrivilegeManager(ctx)
 	var rows [][]types.Datum
 	for _, schema := range schemas {
 		for _, table := range schema.Tables {
+			if checker != nil && !checker.RequestVerification(ctx.GetSessionVars().ActiveRoles, schema.Name.L, table.Name.L, "", mysql.AllPrivMask) {
+				continue
+			}
+
 			rs := dataForStatisticsInTable(schema, table)
 			rows = append(rows, rs...)
 		}
@@ -2328,7 +2387,7 @@ var tableNameToColumns = map[string][]columnInfo{
 	tableTiKVRegionPeers:                    tableTiKVRegionPeersCols,
 	tableTiDBServersInfo:                    tableTiDBServersInfoCols,
 	tableTiDBClusterInfo:                    tableTiDBClusterInfoCols,
-	tableTiDBClusterConfig:                  tableTiDBClusterConfigCols,
+	TableTiDBClusterConfig:                  tableTiDBClusterConfigCols,
 	tableTiDBClusterLoad:                    tableTiDBClusterLoadCols,
 	tableTiFlashReplica:                     tableTableTiFlashReplicaCols,
 }
@@ -2338,12 +2397,17 @@ func createInfoSchemaTable(_ autoid.Allocator, meta *model.TableInfo) (table.Tab
 	for i, col := range meta.Columns {
 		columns[i] = table.ToColumn(col)
 	}
-	return &infoschemaTable{meta: meta, cols: columns}, nil
+	tp := table.VirtualTable
+	if isClusterTableByName(util.InformationSchemaName, meta.Name.L) {
+		tp = table.ClusterTable
+	}
+	return &infoschemaTable{meta: meta, cols: columns, tp: tp}, nil
 }
 
 type infoschemaTable struct {
 	meta *model.TableInfo
 	cols []*table.Column
+	tp   table.Type
 }
 
 // schemasSorter implements the sort.Interface interface, sorts DBInfo by name.
@@ -2362,7 +2426,7 @@ func (s schemasSorter) Less(i, j int) bool {
 }
 
 func (it *infoschemaTable) getRows(ctx sessionctx.Context, cols []*table.Column) (fullRows [][]types.Datum, err error) {
-	is := ctx.GetSessionVars().TxnCtx.InfoSchema.(InfoSchema)
+	is := GetInfoSchema(ctx)
 	dbs := is.AllSchemas()
 	sort.Sort(schemasSorter(dbs))
 	switch it.meta.Name.O {
@@ -2375,7 +2439,7 @@ func (it *infoschemaTable) getRows(ctx sessionctx.Context, cols []*table.Column)
 	case tableColumns:
 		fullRows = dataForColumns(ctx, dbs)
 	case tableStatistics:
-		fullRows = dataForStatistics(dbs)
+		fullRows = dataForStatistics(ctx, dbs)
 	case tableCharacterSets:
 		fullRows = dataForCharacterSets()
 	case tableCollations:
@@ -2432,12 +2496,15 @@ func (it *infoschemaTable) getRows(ctx sessionctx.Context, cols []*table.Column)
 		fullRows, err = dataForServersInfo()
 	case tableTiDBClusterInfo:
 		fullRows, err = dataForTiDBClusterInfo(ctx)
-	case tableTiDBClusterConfig:
+	case TableTiDBClusterConfig:
 		fullRows, err = dataForClusterConfig(ctx)
 	case tableTiDBClusterLoad:
 		fullRows, err = dataForClusterLoadInfo(ctx)
 	case tableTiFlashReplica:
 		fullRows = dataForTableTiFlashReplica(dbs)
+	// Data for cluster memory table.
+	case clusterTableSlowLog, clusterTableProcesslist:
+		fullRows, err = getClusterMemTableRows(ctx, it.meta.Name.O)
 	}
 	if err != nil {
 		return nil, err
@@ -2585,7 +2652,7 @@ func (it *infoschemaTable) Seek(ctx sessionctx.Context, h int64) (int64, bool, e
 
 // Type implements table.Table Type interface.
 func (it *infoschemaTable) Type() table.Type {
-	return table.VirtualTable
+	return it.tp
 }
 
 // VirtualTable is a dummy table.Table implementation.

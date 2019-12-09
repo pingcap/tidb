@@ -593,11 +593,79 @@ func (b *builtinInsertBinarySig) vecEvalString(input *chunk.Chunk, result *chunk
 }
 
 func (b *builtinConcatWSSig) vectorized() bool {
-	return false
+	return true
 }
 
+// vecEvalString evals a CONCAT_WS(separator,str1,str2,...).
+// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_concat-ws
 func (b *builtinConcatWSSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	argsLen := len(b.args)
+
+	bufs := make([]*chunk.Column, argsLen)
+	var err error
+	for i := 0; i < argsLen; i++ {
+		bufs[i], err = b.bufAllocator.get(types.ETString, n)
+		if err != nil {
+			return err
+		}
+		defer b.bufAllocator.put(bufs[i])
+		if err := b.args[i].VecEvalString(b.ctx, input, bufs[i]); err != nil {
+			return err
+		}
+	}
+
+	isNulls := make([]bool, n)
+	seps := make([]string, n)
+	strs := make([][]string, n)
+	for i := 0; i < n; i++ {
+		if bufs[0].IsNull(i) {
+			// If the separator is NULL, the result is NULL.
+			isNulls[i] = true
+			continue
+		}
+		isNulls[i] = false
+		seps[i] = bufs[0].GetString(i)
+		strs[i] = make([]string, 0, argsLen-1)
+	}
+
+	var strBuf string
+	targetLengths := make([]int, n)
+	for j := 1; j < argsLen; j++ {
+		for i := 0; i < n; i++ {
+			if isNulls[i] || bufs[j].IsNull(i) {
+				// CONCAT_WS() does not skip empty strings. However,
+				// it does skip any NULL values after the separator argument.
+				continue
+			}
+			strBuf = bufs[j].GetString(i)
+			targetLengths[i] += len(strBuf)
+			if i > 1 {
+				targetLengths[i] += len(seps[i])
+			}
+			if uint64(targetLengths[i]) > b.maxAllowedPacket {
+				b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnAllowedPacketOverflowed.GenWithStackByArgs("concat_ws", b.maxAllowedPacket))
+				isNulls[i] = true
+				continue
+			}
+			strs[i] = append(strs[i], strBuf)
+		}
+	}
+	result.ReserveString(n)
+	for i := 0; i < n; i++ {
+		if isNulls[i] {
+			result.AppendNull()
+			continue
+		}
+		str := strings.Join(strs[i], seps[i])
+		// todo check whether the length of result is larger than Flen
+		//if b.tp.Flen != types.UnspecifiedLength && len(str) > b.tp.Flen {
+		//	result.AppendNull()
+		//	continue
+		//}
+		result.AppendString(str)
+	}
+	return nil
 }
 
 func (b *builtinConvertSig) vectorized() bool {
@@ -1175,11 +1243,62 @@ func (b *builtinLocateBinary2ArgsSig) vecEvalInt(input *chunk.Chunk, result *chu
 }
 
 func (b *builtinLocateBinary3ArgsSig) vectorized() bool {
-	return false
+	return true
 }
 
+// vecEvalInt evals LOCATE(substr,str,pos), case-sensitive.
+// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_locate
 func (b *builtinLocateBinary3ArgsSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf0, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf0)
+	if err := b.args[0].VecEvalString(b.ctx, input, buf0); err != nil {
+		return err
+	}
+	buf1, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf1)
+	if err := b.args[1].VecEvalString(b.ctx, input, buf1); err != nil {
+		return err
+	}
+	// store positions in result
+	if err := b.args[2].VecEvalInt(b.ctx, input, result); err != nil {
+		return err
+	}
+
+	result.MergeNulls(buf0, buf1)
+	i64s := result.Int64s()
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		pos := i64s[i]
+		// Transfer the argument which starts from 1 to real index which starts from 0.
+		pos--
+		subStr := buf0.GetString(i)
+		str := buf1.GetString(i)
+		subStrLen := len(subStr)
+		if pos < 0 || pos > int64(len(str)-subStrLen) {
+			i64s[i] = 0
+			continue
+		} else if subStrLen == 0 {
+			i64s[i] = pos + 1
+			continue
+		}
+		slice := str[pos:]
+		idx := strings.Index(slice, subStr)
+		if idx != -1 {
+			i64s[i] = pos + int64(idx) + 1
+			continue
+		}
+		i64s[i] = 0
+	}
+	return nil
 }
 
 func (b *builtinExportSet4ArgSig) vectorized() bool {

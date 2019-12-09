@@ -200,6 +200,51 @@ func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 	).Check(testkit.Rows())
 }
 
+// Test events_statements_summary_by_digest_history.
+func (s *testTableSuite) TestStmtSummaryHistoryTable(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b varchar(10), key k(a))")
+
+	// Statement summary is disabled by default.
+	tk.MustQuery("select @@global.tidb_enable_stmt_summary").Check(testkit.Rows("0"))
+	tk.MustExec("insert into t values(1, 'a')")
+	tk.MustQuery("select * from performance_schema.events_statements_summary_by_digest_history").Check(testkit.Rows())
+
+	tk.MustExec("set global tidb_enable_stmt_summary = 1")
+	tk.MustQuery("select @@global.tidb_enable_stmt_summary").Check(testkit.Rows("1"))
+	defer tk.MustExec("set global tidb_enable_stmt_summary = false")
+
+	// Invalidate the cache manually so that tidb_enable_stmt_summary works immediately.
+	s.dom.GetGlobalVarsCache().Disable()
+	// Disable refreshing summary.
+	tk.MustExec("set global tidb_stmt_summary_refresh_interval = 999999999")
+	tk.MustQuery("select @@global.tidb_stmt_summary_refresh_interval").Check(testkit.Rows("999999999"))
+
+	// Create a new session to test.
+	tk = testkit.NewTestKitWithInit(c, s.store)
+
+	// Test INSERT
+	tk.MustExec("insert into t values(1, 'a')")
+	tk.MustExec("insert into t    values(2, 'b')")
+	tk.MustExec("insert into t VALUES(3, 'c')")
+	tk.MustExec("/**/insert into t values(4, 'd')")
+	tk.MustQuery(`select stmt_type, schema_name, table_names, index_names, exec_count, cop_task_num, avg_total_keys, 
+		max_total_keys, avg_processed_keys, max_processed_keys, avg_write_keys, max_write_keys, avg_prewrite_regions, 
+		max_prewrite_regions, avg_affected_rows, query_sample_text 
+		from performance_schema.events_statements_summary_by_digest_history
+		where digest_text like 'insert into t%'`,
+	).Check(testkit.Rows("insert test test.t <nil> 4 0 0 0 0 0 2 2 1 1 1 /**/insert into t values(4, 'd')"))
+
+	tk.MustExec("set global tidb_stmt_summary_history_size = 0")
+	tk.MustQuery(`select stmt_type, schema_name, table_names, index_names, exec_count, cop_task_num, avg_total_keys, 
+		max_total_keys, avg_processed_keys, max_processed_keys, avg_write_keys, max_write_keys, avg_prewrite_regions, 
+		max_prewrite_regions, avg_affected_rows, query_sample_text 
+		from performance_schema.events_statements_summary_by_digest_history`,
+	).Check(testkit.Rows())
+}
+
 func currentSourceDir() string {
 	_, file, _, _ := runtime.Caller(0)
 	return filepath.Dir(file)
