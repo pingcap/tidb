@@ -122,7 +122,6 @@ func (s *testTimeSuite) TestDateTime(c *C) {
 		_, err := types.ParseDatetime(sc, test)
 		c.Assert(err, NotNil)
 	}
-
 }
 
 func (s *testTimeSuite) TestTimestamp(c *C) {
