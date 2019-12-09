@@ -75,23 +75,23 @@
           "Group#7 Schema:[test.t.b]",
           "    IndexScan_22 table:t1, index:e_str, d_str, c_str",
           "Group#8 Schema:[test.t.b]",
-          "    TableScan_23 table:t1, pk col:test.t._tidb_rowid",
+          "    TableScan_23 table:t1",
           "Group#9 Schema:[test.t.b]",
           "    IndexScan_19 table:t1, index:c_str, d_str, e_str",
           "Group#10 Schema:[test.t.b]",
-          "    TableScan_20 table:t1, pk col:test.t._tidb_rowid",
+          "    TableScan_20 table:t1",
           "Group#11 Schema:[test.t.b]",
           "    IndexScan_16 table:t1, index:f, g",
           "Group#12 Schema:[test.t.b]",
-          "    TableScan_17 table:t1, pk col:test.t._tidb_rowid",
+          "    TableScan_17 table:t1",
           "Group#13 Schema:[test.t.b]",
           "    IndexScan_13 table:t1, index:g",
           "Group#14 Schema:[test.t.b]",
-          "    TableScan_14 table:t1, pk col:test.t._tidb_rowid",
+          "    TableScan_14 table:t1",
           "Group#15 Schema:[test.t.b]",
           "    IndexScan_10 table:t1, index:f",
           "Group#16 Schema:[test.t.b]",
-          "    TableScan_11 table:t1, pk col:test.t._tidb_rowid"
+          "    TableScan_11 table:t1"
         ]
       },
       {

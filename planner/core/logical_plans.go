@@ -451,6 +451,7 @@ type TiKVDoubleGather struct {
 	IndexCols    []*expression.Column
 	IndexColLens []int
 	index        *model.IndexInfo
+	HandleCol    *expression.Column
 }
 
 // LogicalTableScan is the logical table scan operator for TiKV.
@@ -554,9 +555,6 @@ func (ds *DataSource) buildIndexLookupGather(path *util.AccessPath, idxCols []*e
 	ts := LogicalTableScan{Source: ds, Handle: ds.getHandleCol(), IsDoubleRead: true}.Init(ds.ctx, ds.blockOffset)
 	ts.SetSchema(ds.Schema())
 
-	if ds.HandleCol == nil {
-		ds.HandleCol = ds.newExtraHandleSchemaCol()
-	}
 	for i := len(idxCols) - 1; i >= 0; i-- {
 		if idxCols[i] == nil {
 			idxCols = append(idxCols[:i], idxCols[i+1:]...)
@@ -567,9 +565,13 @@ func (ds *DataSource) buildIndexLookupGather(path *util.AccessPath, idxCols []*e
 		IndexCols:    idxCols,
 		IndexColLens: idxColLens,
 		index:        path.Index,
+		HandleCol:    ds.HandleCol,
 	}.Init(ds.ctx, ds.blockOffset)
 	dg.SetSchema(ds.Schema())
 	dg.SetChildren(is, ts)
+	if dg.HandleCol == nil {
+		dg.HandleCol = ds.newExtraHandleSchemaCol()
+	}
 	return dg
 }
 

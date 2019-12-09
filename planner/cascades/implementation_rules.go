@@ -182,10 +182,10 @@ func (r *ImplTiKVDoubleReadGather) OnImplement(expr *memo.GroupExpr, reqProp *pr
 	var reader plannercore.PhysicalPlan
 	var proj *plannercore.PhysicalProjection
 	reader = dg.GetPhysicalIndexLookUpReader(logicProp.Schema, logicProp.Stats.ScaleByExpectCnt(reqProp.ExpectedCnt), reqProp.Clone(), reqProp.Clone())
-	if dg.Source.HandleCol.ID == model.ExtraHandleID && !reqProp.IsEmpty() {
+	if dg.HandleCol.ID == model.ExtraHandleID && !reqProp.IsEmpty() {
 		// TODO: if the origin schema for IndexLookUpReader has the `HandleCol`, we can remove the duplicated append.
-		reader.Schema().Append(dg.Source.HandleCol)
-		reader.(*plannercore.PhysicalIndexLookUpReader).ExtraHandleCol = dg.Source.HandleCol
+		reader.Schema().Append(dg.HandleCol)
+		reader.(*plannercore.PhysicalIndexLookUpReader).ExtraHandleCol = dg.HandleCol
 		proj = plannercore.PhysicalProjection{Exprs: expression.Column2Exprs(logicProp.Schema.Columns)}.Init(dg.SCtx(), logicProp.Stats, dg.SelectBlockOffset(), reqProp.Clone(), reqProp.Clone())
 		proj.SetSchema(logicProp.Schema)
 		proj.SetChildren(reader)
