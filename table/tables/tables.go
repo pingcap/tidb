@@ -256,9 +256,6 @@ func (t *TableCommon) WritableCols() []*table.Column {
 		if col.State == model.StateDeleteOnly || col.State == model.StateDeleteReorganization {
 			continue
 		}
-		if col.Hidden {
-			continue
-		}
 		writableColumns = append(writableColumns, col)
 	}
 	return writableColumns

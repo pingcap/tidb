@@ -398,14 +398,15 @@ func (ts *testSuite) TestHiddenColumn(c *C) {
 	tk.MustExec("DROP DATABASE IF EXISTS test_hidden;")
 	tk.MustExec("CREATE DATABASE test_hidden;")
 	tk.MustExec("USE test_hidden;")
-	tk.MustExec("CREATE TABLE hidden (a int primary key, b int, c int, d int, e int);")
-	tk.MustExec("insert into hidden values (1, 2, 3, 4, 5);")
+	tk.MustExec("CREATE TABLE hidden (a int primary key, b int as (a+1), c int, d int as (c+1), e int, f tinyint as (a+1));")
+	tk.MustExec("insert into hidden values (1, default, 3, default, 5, default);")
 	tb, err := ts.dom.InfoSchema().TableByName(model.NewCIStr("test_hidden"), model.NewCIStr("hidden"))
 	c.Assert(err, IsNil)
 	colInfo := tb.Meta().Columns
-	// Set column b, d to hidden
+	// Set column b, d, f to hidden
 	colInfo[1].Hidden = true
 	colInfo[3].Hidden = true
+	colInfo[5].Hidden = true
 	tc := tb.(*tables.TableCommon)
 	// Reset related caches
 	tc.VisibleColumns = nil
@@ -425,7 +426,7 @@ func (ts *testSuite) TestHiddenColumn(c *C) {
 	c.Assert(table.FindCol(hiddenCols, "d"), NotNil)
 	c.Assert(table.FindCol(hiddenCols, "e"), IsNil)
 
-	// Can't select with b and d
+	// Can't select with b and d and f
 	tk.MustQuery("select * from hidden;").Check(testkit.Rows("1 3 5"))
 	_, err = tk.Exec("select b from hidden;")
 	c.Assert(err, NotNil)
@@ -458,6 +459,14 @@ func (ts *testSuite) TestHiddenColumn(c *C) {
 	_, err = tk.Exec("update hidden set a=1 where c=2 order by b;")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[planner:1054]Unknown column 'b' in 'order clause'")
+	tk.MustExec("update hidden set a = 5;")
+	colInfo[5].Hidden = false
+	tc.VisibleColumns = nil
+	tc.WritableColumns = nil
+	tk.MustQuery("select * from hidden;").Check(testkit.Rows("5 3 5 6"))
+	colInfo[5].Hidden = true
+	tc.VisibleColumns = nil
+	tc.WritableColumns = nil
 
 	// Can't delete with b and d
 	_, err = tk.Exec("delete from hidden where b=1;")

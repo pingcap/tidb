@@ -201,6 +201,7 @@ type Column struct {
 	VirtualExpr Expression
 
 	OrigName string
+	Hidden   bool
 }
 
 // Equal implements Expression interface.
