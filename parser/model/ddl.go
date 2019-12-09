@@ -63,6 +63,9 @@ const (
 	ActionUpdateTiFlashReplicaStatus    ActionType = 31
 	ActionAddPrimaryKey                 ActionType = 32
 	ActionDropPrimaryKey                ActionType = 33
+	ActionCreateSequence                ActionType = 34
+	ActionAlterSequence                 ActionType = 35
+	ActionDropSequence                  ActionType = 36
 )
 
 const (
@@ -105,6 +108,9 @@ var actionMap = map[ActionType]string{
 	ActionUpdateTiFlashReplicaStatus:    "update tiflash replica status",
 	ActionAddPrimaryKey:                 AddPrimaryKeyStr,
 	ActionDropPrimaryKey:                "drop primary key",
+	ActionCreateSequence:                "create sequence",
+	ActionAlterSequence:                 "alter sequence",
+	ActionDropSequence:                  "drop sequence",
 }
 
 // String return current ddl action in string
