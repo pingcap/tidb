@@ -973,6 +973,10 @@ type vecGroupChecker struct {
 
 	// sameGroup is used to check whether the current row belongs to the same group as the previous row
 	sameGroup []bool
+
+	// set these functions for testing
+	allocateBuffer func(evalType types.EvalType, capacity int) (*chunk.Column, error)
+	releaseBuffer  func(buf *chunk.Column)
 }
 
 func newVecGroupChecker(ctx sessionctx.Context, items []expression.Expression) *vecGroupChecker {
@@ -1056,11 +1060,17 @@ func (e *vecGroupChecker) splitIntoGroups(chk *chunk.Chunk) (isFirstGroupSameAsP
 func (e *vecGroupChecker) evalGroupItemsAndResolveGroups(item expression.Expression, chk *chunk.Chunk, numRows int) (err error) {
 	tp := item.GetType()
 	eType := tp.EvalType()
-	col, err := expression.GetColumn(eType, numRows)
+	if e.allocateBuffer == nil {
+		e.allocateBuffer = expression.GetColumn
+	}
+	if e.releaseBuffer == nil {
+		e.releaseBuffer = expression.PutColumn
+	}
+	col, err := e.allocateBuffer(eType, numRows)
 	if err != nil {
 		return err
 	}
-	defer expression.PutColumn(col)
+	defer e.releaseBuffer(col)
 	err = expression.VecEval(e.ctx, item, chk, col)
 	if err != nil {
 		return err
@@ -1115,8 +1125,10 @@ func (e *vecGroupChecker) evalGroupItemsAndResolveGroups(item expression.Express
 			}
 			previousIsNull = isNull
 		}
-		firstRowDatum.SetMysqlDecimal(&vals[0])
-		lastRowDatum.SetMysqlDecimal(&vals[numRows-1])
+		// make a copy to avoid DATA RACE
+		firstDatum, lastDatum := vals[0], vals[numRows-1]
+		firstRowDatum.SetMysqlDecimal(&firstDatum)
+		lastRowDatum.SetMysqlDecimal(&lastDatum)
 	case types.ETDatetime, types.ETTimestamp:
 		vals := col.Times()
 		for i := 1; i < numRows; i++ {
@@ -1162,8 +1174,9 @@ func (e *vecGroupChecker) evalGroupItemsAndResolveGroups(item expression.Express
 			previousKey = key
 			previousIsNull = isNull
 		}
-		firstRowDatum.SetMysqlJSON(col.GetJSON(0))
-		lastRowDatum.SetMysqlJSON(col.GetJSON(numRows - 1))
+		// make a copy to avoid DATA RACE
+		firstRowDatum.SetMysqlJSON(col.GetJSON(0).Copy())
+		lastRowDatum.SetMysqlJSON(col.GetJSON(numRows - 1).Copy())
 	case types.ETString:
 		previousKey := col.GetString(0)
 		for i := 1; i < numRows; i++ {
@@ -1177,8 +1190,9 @@ func (e *vecGroupChecker) evalGroupItemsAndResolveGroups(item expression.Express
 			previousKey = key
 			previousIsNull = isNull
 		}
-		firstRowDatum.SetString(col.GetString(0))
-		lastRowDatum.SetString(col.GetString(numRows - 1))
+		// don't use col.GetString since it will cause DATA RACE
+		firstRowDatum.SetString(string(col.GetBytes(0)))
+		lastRowDatum.SetString(string(col.GetBytes(numRows - 1)))
 	default:
 		err = errors.New(fmt.Sprintf("invalid eval type %v", eType))
 	}

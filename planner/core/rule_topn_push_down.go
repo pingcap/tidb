@@ -109,7 +109,7 @@ func (p *LogicalUnionAll) pushDownTopN(topN *LogicalTopN) LogicalPlan {
 func (p *LogicalProjection) pushDownTopN(topN *LogicalTopN) LogicalPlan {
 	for _, expr := range p.Exprs {
 		if expression.HasAssignSetVarFunc(expr) {
-			return p
+			return p.baseLogicalPlan.pushDownTopN(topN)
 		}
 	}
 	if topN != nil {
