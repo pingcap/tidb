@@ -449,7 +449,50 @@ func (s *testTableSuite) TestSomeTables(c *C) {
 		testkit.Rows("def mysql tbl def mysql stats_meta table_id 1 <nil> <nil> <nil> <nil>"))
 	tk.MustQuery("select * from information_schema.STATISTICS where TABLE_NAME='columns_priv' and COLUMN_NAME='Host';").Check(
 		testkit.Rows("def mysql columns_priv 0 mysql PRIMARY 1 Host A <nil> <nil> <nil>  BTREE  "))
-	tk.MustQuery("select * from information_schema.USER_PRIVILEGES where PRIVILEGE_TYPE='Select';").Check(testkit.Rows("'root'@'%' def Select YES"))
+
+	//test the privilege of new user for information_schema
+	tk.MustExec("create user tester1")
+	tk1 := testkit.NewTestKit(c, s.store)
+	tk1.MustExec("use information_schema")
+	c.Assert(tk1.Se.Auth(&auth.UserIdentity{
+		Username: "tester1",
+		Hostname: "127.0.0.1",
+	}, nil, nil), IsTrue)
+	tk1.MustQuery("select * from information_schema.STATISTICS;").Check([][]interface{}{})
+
+	//test the privilege of user with some privilege for information_schema
+	tk.MustExec("create user tester2")
+	tk.MustExec("CREATE ROLE r_columns_priv;")
+	tk.MustExec("GRANT ALL PRIVILEGES ON mysql.columns_priv TO r_columns_priv;")
+	tk.MustExec("GRANT r_columns_priv TO tester2;")
+	tk2 := testkit.NewTestKit(c, s.store)
+	tk2.MustExec("use information_schema")
+	c.Assert(tk2.Se.Auth(&auth.UserIdentity{
+		Username: "tester2",
+		Hostname: "127.0.0.1",
+	}, nil, nil), IsTrue)
+	tk2.MustExec("set role r_columns_priv")
+	tk2.MustQuery("select * from information_schema.STATISTICS where TABLE_NAME='columns_priv' and COLUMN_NAME='Host';").Check(
+		testkit.Rows("def mysql columns_priv 0 mysql PRIMARY 1 Host A <nil> <nil> <nil>  BTREE  "))
+	tk2.MustQuery("select * from information_schema.STATISTICS where TABLE_NAME='tables_priv' and COLUMN_NAME='Host';").Check(
+		[][]interface{}{})
+
+	//test the privilege of user with all privilege for information_schema
+	tk.MustExec("create user tester3")
+	tk.MustExec("CREATE ROLE r_all_priv;")
+	tk.MustExec("GRANT ALL PRIVILEGES ON mysql.* TO r_all_priv;")
+	tk.MustExec("GRANT r_all_priv TO tester3;")
+	tk3 := testkit.NewTestKit(c, s.store)
+	tk3.MustExec("use information_schema")
+	c.Assert(tk3.Se.Auth(&auth.UserIdentity{
+		Username: "tester3",
+		Hostname: "127.0.0.1",
+	}, nil, nil), IsTrue)
+	tk3.MustExec("set role r_all_priv")
+	tk3.MustQuery("select * from information_schema.STATISTICS where TABLE_NAME='columns_priv' and COLUMN_NAME='Host';").Check(
+		testkit.Rows("def mysql columns_priv 0 mysql PRIMARY 1 Host A <nil> <nil> <nil>  BTREE  "))
+	tk3.MustQuery("select * from information_schema.STATISTICS where TABLE_NAME='tables_priv' and COLUMN_NAME='Host';").Check(
+		testkit.Rows("def mysql tables_priv 0 mysql PRIMARY 1 Host A <nil> <nil> <nil>  BTREE  "))
 
 	sm := &mockSessionManager{make(map[uint64]*util.ProcessInfo, 2)}
 	sm.processInfoMap[1] = &util.ProcessInfo{
