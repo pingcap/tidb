@@ -25,6 +25,7 @@ type metricTableDef struct {
 	quantile float64
 }
 
+// TODO: read from system table.
 var metricTableMap = map[string]metricTableDef{
 	"query_duration": {
 		promQL:   `histogram_quantile($QUANTILE, sum(rate(tidb_server_handle_query_duration_seconds_bucket{$LABEL_CONDITION}[$RANGE_DURATION])) by (le))`,
@@ -35,6 +36,22 @@ var metricTableMap = map[string]metricTableDef{
 		promQL: `up{$LABEL_CONDITION}`,
 		labels: []string{"instance", "job"},
 	},
+}
+
+// IsMetricTable uses to checks whether the table is a metric table.
+func IsMetricTable(lowerTableName string) bool {
+	_, ok := metricTableMap[lowerTableName]
+	return ok
+}
+
+// GetExplainInfo uses to get the explain info of metric table.
+func GetExplainInfo(sctx sessionctx.Context, lowerTableName string) string {
+	def, ok := metricTableMap[lowerTableName]
+	if !ok {
+		return ""
+	}
+	promQL := def.genPromQL(sctx, nil)
+	return "promQL:" + promQL
 }
 
 func (def *metricTableDef) genColumnInfos() []columnInfo {
