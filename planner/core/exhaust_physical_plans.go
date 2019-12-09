@@ -1412,15 +1412,19 @@ func (lt *LogicalTopN) exhaustPhysicalPlans(prop *property.PhysicalProperty) []P
 	return nil
 }
 
+// GetHashJoin is public for cascades planner.
+func (la *LogicalApply) GetHashJoin(prop *property.PhysicalProperty) *PhysicalHashJoin {
+	return la.LogicalJoin.getHashJoin(prop, 1, false)
+}
+
 func (la *LogicalApply) exhaustPhysicalPlans(prop *property.PhysicalProperty) []PhysicalPlan {
 	if !prop.AllColsFromSchema(la.children[0].Schema()) { // for convenient, we don't pass through any prop
 		return nil
 	}
-	join := la.getHashJoin(prop, 1, false)
+	join := la.GetHashJoin(prop)
 	apply := PhysicalApply{
 		PhysicalHashJoin: *join,
-		OuterSchema:      la.corCols,
-		rightChOffset:    la.children[0].Schema().Len(),
+		OuterSchema:      la.CorCols,
 	}.Init(la.ctx,
 		la.stats.ScaleByExpectCnt(prop.ExpectedCnt),
 		la.blockOffset,
@@ -1513,16 +1517,10 @@ func (la *LogicalAggregation) getStreamAggs(prop *property.PhysicalProperty) []P
 	}
 
 	for _, possibleChildProperty := range la.possibleProperties {
-		sortColOffsets := getMaxSortPrefix(possibleChildProperty, la.groupByCols)
-		if len(sortColOffsets) != len(la.groupByCols) {
-			continue
-		}
-
-		childProp.Items = property.ItemsFromCols(possibleChildProperty[:len(sortColOffsets)], desc)
+		childProp.Items = property.ItemsFromCols(possibleChildProperty[:len(la.groupByCols)], desc)
 		if !prop.IsPrefix(childProp) {
 			continue
 		}
-
 		// The table read of "CopDoubleReadTaskType" can't promises the sort
 		// property that the stream aggregation required, no need to consider.
 		taskTypes := []property.TaskType{property.CopSingleReadTaskType}

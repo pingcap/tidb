@@ -62,6 +62,7 @@ var defaultTransformationMap = map[memo.Operand][]Transformation{
 	},
 	memo.OperandProjection: {
 		NewRuleEliminateProjection(),
+		NewRuleMergeAdjacentProjection(),
 	},
 }
 
@@ -633,4 +634,52 @@ func (r *EliminateProjection) OnTransform(old *memo.ExprIter) (newExprs []*memo.
 		finalGroupExprs = append(finalGroupExprs, elem.Value.(*memo.GroupExpr))
 	}
 	return finalGroupExprs, true, false, nil
+}
+
+// MergeAdjacentProjection merge the adjacent projection.
+type MergeAdjacentProjection struct {
+	baseRule
+}
+
+// NewRuleMergeAdjacentProjection creates a new Transformation MergeAdjacentProjection.
+// The pattern of this rule is `Projection -> Projection`.
+func NewRuleMergeAdjacentProjection() Transformation {
+	rule := &MergeAdjacentProjection{}
+	rule.pattern = memo.BuildPattern(
+		memo.OperandProjection,
+		memo.EngineTiDBOnly,
+		memo.NewPattern(memo.OperandProjection, memo.EngineTiDBOnly),
+	)
+	return rule
+}
+
+// OnTransform implements Transformation interface.
+// It will transform `proj->proj->x` to `proj->x`
+// or just keep the adjacent projections unchanged.
+func (r *MergeAdjacentProjection) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
+	proj := old.GetExpr().ExprNode.(*plannercore.LogicalProjection)
+	childGroup := old.Children[0].Group
+	child := old.Children[0].GetExpr().ExprNode.(*plannercore.LogicalProjection)
+	if plannercore.ExprsHasSideEffects(child.Exprs) {
+		return nil, false, false, nil
+	}
+
+	replace := make(map[string]*expression.Column)
+	for i, col := range childGroup.Prop.Schema.Columns {
+		if colOrigin, ok := child.Exprs[i].(*expression.Column); ok {
+			replace[string(col.HashCode(nil))] = colOrigin
+		}
+	}
+
+	newProj := plannercore.LogicalProjection{Exprs: make([]expression.Expression, len(proj.Exprs))}.Init(proj.SCtx(), proj.SelectBlockOffset())
+	newProj.SetSchema(old.GetExpr().Group.Prop.Schema)
+	for i, expr := range proj.Exprs {
+		newExpr := expr.Clone()
+		plannercore.ResolveExprAndReplace(newExpr, replace)
+		newProj.Exprs[i] = plannercore.ReplaceColumnOfExpr(newExpr, child, childGroup.Prop.Schema)
+	}
+
+	newProjExpr := memo.NewGroupExpr(newProj)
+	newProjExpr.SetChildren(old.Children[0].GetExpr().Children[0])
+	return []*memo.GroupExpr{newProjExpr}, true, false, nil
 }

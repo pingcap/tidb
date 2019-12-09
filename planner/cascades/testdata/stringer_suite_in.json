@@ -23,7 +23,9 @@
       // Union ALL.
       "select avg(a) from t union all select avg(b) from t",
       // Index Lookup Read.
-      "select b, f, g from t where t.b = 2 and t.f = 1 order by t.f, t.g"
+      "select b, f, g from t where t.b = 2 and t.f = 1 order by t.f, t.g",
+      // Apply.
+      "select a = (select a from t t2 where t1.b = t2.b order by a limit 1) from t t1"
     ]
   }
 ]

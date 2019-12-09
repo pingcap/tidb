@@ -41,8 +41,8 @@ func getUsedList(usedCols []*expression.Column, schema *expression.Schema) []boo
 	return used
 }
 
-// exprsHasSideEffects checks if any of the expressions has side effects.
-func exprsHasSideEffects(exprs []expression.Expression) bool {
+// ExprsHasSideEffects checks if any of the expressions has side effects.
+func ExprsHasSideEffects(exprs []expression.Expression) bool {
 	for _, expr := range exprs {
 		if exprHasSetVarOrSleep(expr) {
 			return true
@@ -316,8 +316,8 @@ func (la *LogicalApply) PruneColumns(parentUsedCols []*expression.Column) error 
 		return err
 	}
 
-	la.corCols = extractCorColumnsBySchema(la.children[1], la.children[0].Schema())
-	for _, col := range la.corCols {
+	la.CorCols = extractCorColumnsBySchema(la.children[1], la.children[0].Schema())
+	for _, col := range la.CorCols {
 		leftCols = append(leftCols, &col.Column)
 	}
 
