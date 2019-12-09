@@ -49,13 +49,12 @@
       {
         "SQL": "select a from t group by a having sum(b) > 4",
         "Plan": [
-          "Projection_11 6400.00 root test.t.a",
-          "└─Projection_12 6400.00 root test.t.a, Column#3",
-          "  └─Selection_13 6400.00 root gt(Column#3, 4)",
-          "    └─HashAgg_18 8000.00 root group by:test.t.a, funcs:sum(Column#5)->Column#3, funcs:firstrow(test.t.a)->test.t.a",
-          "      └─TableReader_19 8000.00 root data:HashAgg_20",
-          "        └─HashAgg_20 8000.00 cop[tikv] group by:test.t.a, funcs:sum(test.t.b)->Column#5",
-          "          └─TableScan_16 10000.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false, stats:pseudo"
+          "Projection_12 6400.00 root test.t.a",
+          "└─Selection_13 6400.00 root gt(Column#3, 4)",
+          "  └─HashAgg_18 8000.00 root group by:test.t.a, funcs:sum(Column#5)->Column#3, funcs:firstrow(test.t.a)->test.t.a",
+          "    └─TableReader_19 8000.00 root data:HashAgg_20",
+          "      └─HashAgg_20 8000.00 cop[tikv] group by:test.t.a, funcs:sum(test.t.b)->Column#5",
+          "        └─TableScan_16 10000.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false, stats:pseudo"
         ],
         "Result": [
           "5"

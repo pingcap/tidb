@@ -621,7 +621,7 @@ func (e *SimpleExec) executeRollback(s *ast.RollbackStmt) error {
 	sessVars := e.ctx.GetSessionVars()
 	logutil.BgLogger().Debug("execute rollback statement", zap.Uint64("conn", sessVars.ConnectionID))
 	sessVars.SetStatusFlag(mysql.ServerStatusInTrans, false)
-	txn, err := e.ctx.Txn(true)
+	txn, err := e.ctx.Txn(false)
 	if err != nil {
 		return err
 	}
