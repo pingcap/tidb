@@ -77,7 +77,7 @@ func (b *builtinRegexpBinarySig) vectorized() bool {
 	return true
 }
 
-func (b *builtinRegexpSig) vectorized() bool {
+func (b *builtinRegexpUTF8Sig) vectorized() bool {
 	return true
 }
 

@@ -1487,7 +1487,7 @@ func (s *testEvaluatorSuite) TestRpadSig(c *C) {
 	}
 
 	base := baseBuiltinFunc{args: args, ctx: s.ctx, tp: resultType}
-	rpad := &builtinRpadSig{base, 1000}
+	rpad := &builtinRpadUTF8Sig{base, 1000}
 
 	input := chunk.NewChunkWithCapacity(colTypes, 10)
 	input.AppendString(0, "abc")

@@ -31,7 +31,7 @@ var (
 var (
 	_ builtinFunc = &builtinLikeSig{}
 	_ builtinFunc = &builtinRegexpBinarySig{}
-	_ builtinFunc = &builtinRegexpSig{}
+	_ builtinFunc = &builtinRegexpUTF8Sig{}
 )
 
 type likeFunctionClass struct {
@@ -99,7 +99,7 @@ func (c *regexpFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 		sig = newBuiltinRegexpBinarySig(bf)
 		sig.setPbCode(tipb.ScalarFuncSig_RegexpSig)
 	} else {
-		sig = newBuiltinRegexpSig(bf)
+		sig = newBuiltinRegexpUTF8Sig(bf)
 		sig.setPbCode(tipb.ScalarFuncSig_RegexpUTF8Sig)
 	}
 	return sig, nil
@@ -158,20 +158,20 @@ func (b *builtinRegexpBinarySig) Clone() builtinFunc {
 	return newSig
 }
 
-type builtinRegexpSig struct {
+type builtinRegexpUTF8Sig struct {
 	builtinRegexpSharedSig
 }
 
-func newBuiltinRegexpSig(bf baseBuiltinFunc) *builtinRegexpSig {
+func newBuiltinRegexpUTF8Sig(bf baseBuiltinFunc) *builtinRegexpUTF8Sig {
 	shared := builtinRegexpSharedSig{baseBuiltinFunc: bf}
 	shared.compile = func(pat string) (*regexp.Regexp, error) {
 		return regexp.Compile("(?i)" + pat)
 	}
-	return &builtinRegexpSig{builtinRegexpSharedSig: shared}
+	return &builtinRegexpUTF8Sig{builtinRegexpSharedSig: shared}
 }
 
-func (b *builtinRegexpSig) Clone() builtinFunc {
-	newSig := &builtinRegexpSig{}
+func (b *builtinRegexpUTF8Sig) Clone() builtinFunc {
+	newSig := &builtinRegexpUTF8Sig{}
 	newSig.clone(&b.builtinRegexpSharedSig)
 	return newSig
 }
