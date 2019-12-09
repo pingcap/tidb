@@ -200,6 +200,8 @@ func (p *LogicalJoin) columnSubstitute(schema *expression.Schema, exprs []expres
 	}
 }
 
+// AttachOnConds extracts on conditions for join and set the `EqualConditions`, `LeftConditions`, `RightConditions` and
+// `OtherConditions` by the result of extract.
 func (p *LogicalJoin) AttachOnConds(onConds []expression.Expression) {
 	eq, left, right, other := p.extractOnCondition(onConds, false, false)
 	p.EqualConditions = append(eq, p.EqualConditions...)

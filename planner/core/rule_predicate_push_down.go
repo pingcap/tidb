@@ -443,7 +443,7 @@ func (p *LogicalMaxOneRow) PredicatePushDown(predicates []expression.Expression)
 	return predicates, p
 }
 
-// deriveOtherConditions given a LogicalJoin, check the OtherConditions to see if we can derive more
+// DeriveOtherConditions given a LogicalJoin, check the OtherConditions to see if we can derive more
 // conditions for left/right child pushdown.
 func DeriveOtherConditions(p *LogicalJoin, deriveLeft bool, deriveRight bool) (leftCond []expression.Expression,
 	rightCond []expression.Expression) {
