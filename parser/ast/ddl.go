@@ -29,6 +29,7 @@ var (
 	_ DDLNode = &CreateIndexStmt{}
 	_ DDLNode = &CreateTableStmt{}
 	_ DDLNode = &CreateViewStmt{}
+	_ DDLNode = &CreateSequenceStmt{}
 	_ DDLNode = &DropDatabaseStmt{}
 	_ DDLNode = &DropIndexStmt{}
 	_ DDLNode = &DropTableStmt{}
@@ -1252,6 +1253,65 @@ func (n *CreateViewStmt) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
+// CreateSequenceStmt is a statement to create a Sequence.
+type CreateSequenceStmt struct {
+	ddlNode
+
+	// TODO : support or replace if need : care for it will conflict on temporaryOpt.
+	OrReplace   bool
+	IsTemporary bool
+	IfNotExists bool
+	Name        *TableName
+	SeqOptions  []*SequenceOption
+	TblOptions  []*TableOption
+}
+
+// Restore implements Node interface.
+func (n *CreateSequenceStmt) Restore(ctx *RestoreCtx) error {
+	ctx.WriteKeyWord("CREATE ")
+	if n.OrReplace {
+		ctx.WriteKeyWord("OR REPLACE ")
+	}
+	if n.IsTemporary {
+		ctx.WriteKeyWord("TEMPORARY ")
+	}
+	ctx.WriteKeyWord("SEQUENCE ")
+	if n.IfNotExists {
+		ctx.WriteKeyWord("IF NOT EXISTS ")
+	}
+	if err := n.Name.Restore(ctx); err != nil {
+		return errors.Annotate(err, "An error occurred while create CreateSequenceStmt.Name")
+	}
+	for i, option := range n.SeqOptions {
+		ctx.WritePlain(" ")
+		if err := option.Restore(ctx); err != nil {
+			return errors.Annotatef(err, "An error occurred while splicing CreateSequenceStmt SequenceOption: [%v]", i)
+		}
+	}
+	for i, option := range n.TblOptions {
+		ctx.WritePlain(" ")
+		if err := option.Restore(ctx); err != nil {
+			return errors.Annotatef(err, "An error occurred while splicing CreateSequenceStmt TableOption: [%v]", i)
+		}
+	}
+	return nil
+}
+
+// Accept implements Node Accept interface.
+func (n *CreateSequenceStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*CreateSequenceStmt)
+	node, ok := n.Name.Accept(v)
+	if !ok {
+		return n, false
+	}
+	n.Name = node.(*TableName)
+	return v.Leave(n)
+}
+
 // IndexLockAndAlgorithm stores the algorithm option and the lock option.
 type IndexLockAndAlgorithm struct {
 	node
@@ -1864,6 +1924,69 @@ func (n *TableOption) Restore(ctx *RestoreCtx) error {
 		ctx.WriteString(n.StrValue)
 	default:
 		return errors.Errorf("invalid TableOption: %d", n.Tp)
+	}
+	return nil
+}
+
+// SequenceOptionType is the type for SequenceOption
+type SequenceOptionType int
+
+// SequenceOption types.
+const (
+	SequenceOptionNone SequenceOptionType = iota
+	SequenceOptionIncrementBy
+	SequenceStartWith
+	SequenceNoMinValue
+	SequenceMinValue
+	SequenceNoMaxValue
+	SequenceMaxValue
+	SequenceNoCache
+	SequenceCache
+	SequenceNoCycle
+	SequenceCycle
+	SequenceNoOrder
+	SequenceOrder
+)
+
+// SequenceOption is used for parsing sequence option from SQL.
+type SequenceOption struct {
+	Tp       SequenceOptionType
+	IntValue int64
+}
+
+func (n *SequenceOption) Restore(ctx *RestoreCtx) error {
+	switch n.Tp {
+	case SequenceOptionIncrementBy:
+		ctx.WriteKeyWord("INCREMENT BY ")
+		ctx.WritePlainf("%d", n.IntValue)
+	case SequenceStartWith:
+		ctx.WriteKeyWord("START WITH ")
+		ctx.WritePlainf("%d", n.IntValue)
+	case SequenceNoMinValue:
+		ctx.WriteKeyWord("NO MINVALUE")
+	case SequenceMinValue:
+		ctx.WriteKeyWord("MINVALUE ")
+		ctx.WritePlainf("%d", n.IntValue)
+	case SequenceNoMaxValue:
+		ctx.WriteKeyWord("NO MAXVALUE")
+	case SequenceMaxValue:
+		ctx.WriteKeyWord("MAXVALUE ")
+		ctx.WritePlainf("%d", n.IntValue)
+	case SequenceNoCache:
+		ctx.WriteKeyWord("NOCACHE")
+	case SequenceCache:
+		ctx.WriteKeyWord("CACHE ")
+		ctx.WritePlainf("%d", n.IntValue)
+	case SequenceNoCycle:
+		ctx.WriteKeyWord("NOCYCLE")
+	case SequenceCycle:
+		ctx.WriteKeyWord("CYCLE")
+	case SequenceNoOrder:
+		ctx.WriteKeyWord("NOORDER")
+	case SequenceOrder:
+		ctx.WriteKeyWord("ORDER")
+	default:
+		return errors.Errorf("invalid SequenceOption: %d", n.Tp)
 	}
 	return nil
 }
