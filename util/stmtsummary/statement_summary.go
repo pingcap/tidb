@@ -199,6 +199,13 @@ func newStmtSummaryByDigestMap() *stmtSummaryByDigestMap {
 	ssMap := &stmtSummaryByDigestMap{
 		summaryMap: kvcache.NewSimpleLRUCache(maxStmtCount, 0, 0),
 	}
+	// Initialize these configurations by values in the config file.
+	// They may be overwritten by system variables later.
+	if config.GetGlobalConfig().StmtSummary.Enable {
+		ssMap.sysVars.globalEnabled = "1"
+	}
+	ssMap.sysVars.refreshInterval = int64(config.GetGlobalConfig().StmtSummary.RefreshInterval)
+	ssMap.sysVars.historySize = int32(config.GetGlobalConfig().StmtSummary.HistorySize)
 	return ssMap
 }
 

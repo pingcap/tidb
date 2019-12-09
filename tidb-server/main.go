@@ -55,7 +55,6 @@ import (
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/printer"
 	"github.com/pingcap/tidb/util/signal"
-	"github.com/pingcap/tidb/util/stmtsummary"
 	"github.com/pingcap/tidb/util/storeutil"
 	"github.com/pingcap/tidb/util/sys/linux"
 	"github.com/pingcap/tidb/util/systimemon"
@@ -543,11 +542,6 @@ func setGlobalVars() {
 	plannercore.AllowCartesianProduct.Store(cfg.Performance.CrossJoin)
 	privileges.SkipWithGrant = cfg.Security.SkipGrantTable
 	kv.TxnTotalSizeLimit = cfg.Performance.TxnTotalSizeLimit
-
-	// This configurations can be overwritten by global variables, so it's equivalent to setting in global scope.
-	stmtsummary.StmtSummaryByDigestMap.SetEnabled(variable.BoolToIntStr(cfg.StmtSummary.Enable), false)
-	stmtsummary.StmtSummaryByDigestMap.SetRefreshInterval(strconv.Itoa(cfg.StmtSummary.RefreshInterval), false)
-	stmtsummary.StmtSummaryByDigestMap.SetHistorySize(strconv.Itoa(cfg.StmtSummary.HistorySize), false)
 
 	priority := mysql.Str2Priority(cfg.Performance.ForcePriority)
 	variable.ForcePriority = int32(priority)
