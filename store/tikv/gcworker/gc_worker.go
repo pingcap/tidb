@@ -996,7 +996,7 @@ func (w *GCWorker) greenResolveLocks(ctx context.Context, safePoint uint64) erro
 		return errors.Trace(err)
 	}
 
-	logutil.Logger(ctx).Info("[gc worker] green finish resolve locks",
+	logutil.Logger(ctx).Info("[gc worker] finish resolve locks in green mode",
 		zap.String("uuid", w.uuid),
 		zap.Uint64("safePoint", safePoint))
 	metrics.GCHistogram.WithLabelValues("resolve_locks").Observe(time.Since(startTime).Seconds())
