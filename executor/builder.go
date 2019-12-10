@@ -1230,7 +1230,7 @@ func (b *executorBuilder) getStartTS() (uint64, error) {
 	if err != nil {
 		return 0, err
 	}
-	if startTS == 0 && txn.Valid() {
+	if startTS == 0 {
 		startTS = txn.StartTS()
 	}
 	b.startTS = startTS
@@ -1241,13 +1241,24 @@ func (b *executorBuilder) getStartTS() (uint64, error) {
 }
 
 func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executor {
-	tb, _ := b.is.TableByID(v.Table.ID)
-	e := &TableScanExec{
-		baseExecutor:   newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
-		t:              tb,
-		columns:        v.Columns,
-		seekHandle:     math.MinInt64,
-		isVirtualTable: !tb.Type().IsNormalTable(),
+	var e Executor
+	switch v.Table.Name.L {
+	case strings.ToLower(infoschema.TableClusterConfig):
+		e = &ClusterReaderExec{
+			baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
+			retriever: &clusterConfigRetriever{
+				extractor: v.Extractor.(*plannercore.ClusterConfigTableExtractor),
+			},
+		}
+	default:
+		tb, _ := b.is.TableByID(v.Table.ID)
+		e = &TableScanExec{
+			baseExecutor:   newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
+			t:              tb,
+			columns:        v.Columns,
+			seekHandle:     math.MinInt64,
+			isVirtualTable: !tb.Type().IsNormalTable(),
+		}
 	}
 	return e
 }
