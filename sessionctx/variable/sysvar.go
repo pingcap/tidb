@@ -696,6 +696,8 @@ var defaultSysVars = []*SysVar{
 	{ScopeSession, TiDBGeneralLog, strconv.Itoa(DefTiDBGeneralLog)},
 	{ScopeSession, TiDBSlowLogThreshold, strconv.Itoa(logutil.DefaultSlowThreshold)},
 	{ScopeSession, TiDBRecordPlanInSlowLog, strconv.Itoa(logutil.DefaultRecordPlanInSlowLog)},
+	{ScopeSession, TiDBEnableSlowLog, strconv.Itoa(logutil.DefaultTiDBEnableSlowLog)},
+	{ScopeSession, TiDBEnableAuditLog, strconv.Itoa(logutil.DefaultTiDBEnableAuditLog)},
 	{ScopeSession, TiDBDDLSlowOprThreshold, strconv.Itoa(DefTiDBDDLSlowOprThreshold)},
 	{ScopeSession, TiDBQueryLogMaxLen, strconv.Itoa(logutil.DefaultQueryLogMaxLen)},
 	{ScopeSession, TiDBConfig, ""},

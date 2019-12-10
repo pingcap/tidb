@@ -711,7 +711,8 @@ var QueryReplacer = strings.NewReplacer("\r", " ", "\n", " ", "\t", " ")
 
 func (a *ExecStmt) logAudit() {
 	sessVars := a.Ctx.GetSessionVars()
-	if sessVars.InRestrictedSQL {
+	enable := atomic.LoadUint32(&config.GetGlobalConfig().Log.EnableAuditLog) > 0
+	if enable && sessVars.InRestrictedSQL {
 		return
 	}
 	err := plugin.ForeachPlugin(plugin.Audit, func(p *plugin.Plugin) error {
@@ -747,7 +748,8 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	cfg := config.GetGlobalConfig()
 	costTime := time.Since(sessVars.StartTime) + sessVars.DurationParse
 	threshold := time.Duration(atomic.LoadUint64(&cfg.Log.SlowThreshold)) * time.Millisecond
-	if costTime < threshold && level > zapcore.DebugLevel {
+	enable := atomic.LoadUint32(&cfg.Log.EnableSlowLog) > 0
+	if enable && costTime < threshold && level > zapcore.DebugLevel {
 		return
 	}
 	sql := FormatSQL(a.Text, sessVars.PreparedParams)
