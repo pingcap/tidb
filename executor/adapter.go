@@ -118,9 +118,6 @@ func (a *recordSet) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 		if r == nil {
 			return
 		}
-		if str, ok := r.(string); !ok || !strings.HasPrefix(str, memory.PanicMemoryExceed) {
-			panic(r)
-		}
 		err = errors.Errorf("%v", r)
 		logutil.Logger(ctx).Error("execute sql panic", zap.String("sql", a.stmt.Text), zap.Stack("stack"))
 	}()
