@@ -112,6 +112,16 @@ func (bj BinaryJSON) String() string {
 	return string(out)
 }
 
+// ToHashKey generate hash key using bj.TypeCode and bj.Value
+func (bj *BinaryJSON) ToHashKey() ([]byte, error) {
+	buf := make([]byte, 1+len(bj.Value))
+	buf[0] = bj.TypeCode
+	for i := range bj.Value {
+		buf[i+1] = bj.Value[i]
+	}
+	return buf, nil
+}
+
 // Copy makes a copy of the BinaryJSON
 func (bj BinaryJSON) Copy() BinaryJSON {
 	buf := make([]byte, len(bj.Value))

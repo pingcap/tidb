@@ -104,7 +104,12 @@ func (c *inFunctionClass) getFunction(ctx sessionctx.Context, args []Expression)
 		sig = &inReal
 		sig.setPbCode(tipb.ScalarFuncSig_InReal)
 	case types.ETDecimal:
-		sig = &builtinInDecimalSig{baseBuiltinFunc: bf}
+		inDecimal := builtinInDecimalSig{baseBuiltinFunc: bf, threshold: 2}
+		err := inDecimal.buildHashMapForConstArgs(ctx)
+		if err != nil {
+			return &inDecimal, err
+		}
+		sig = &inDecimal
 		sig.setPbCode(tipb.ScalarFuncSig_InDecimal)
 	case types.ETDatetime, types.ETTimestamp:
 		inTime := builtinInTimeSig{baseBuiltinFunc: bf, threshold: 2}
@@ -190,11 +195,9 @@ func (b *builtinInIntSig) evalInt(row chunk.Row) (int64, bool, error) {
 	}
 	isUnsigned0 := mysql.HasUnsignedFlag(b.args[0].GetType().Flag)
 
-	var args []Expression
+	args := b.args
 	if b.hashSet != nil {
 		args = b.nonConstArgs
-	} else {
-		args = b.args
 	}
 	if b.hashSet != nil {
 		if isUnsigned, ok := b.hashSet[arg0]; ok {
@@ -400,11 +403,53 @@ func (b *builtinInRealSig) evalInt(row chunk.Row) (int64, bool, error) {
 // builtinInDecimalSig see https://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_in
 type builtinInDecimalSig struct {
 	baseBuiltinFunc
+	nonConstArgs []Expression
+	hashSet      map[string]bool
+	threshold    int
+}
+
+func (b *builtinInDecimalSig) buildHashMapForConstArgs(ctx sessionctx.Context) error {
+	b.nonConstArgs = make([]Expression, 0, len(b.args))
+	b.nonConstArgs = append(b.nonConstArgs, b.args[0])
+	b.hashSet = make(map[string]bool, len(b.args)-1)
+	count := 0
+	for i := 1; i < len(b.args); i++ {
+		if b.args[i].ConstItem() {
+			val, isNull, err := b.args[i].EvalDecimal(ctx, chunk.Row{})
+			if err != nil {
+				return err
+			}
+			if isNull {
+				b.nonConstArgs = append(b.nonConstArgs, b.args[i])
+				continue
+			}
+			key, err := val.ToHashKey()
+			if err != nil {
+				return err
+			}
+			b.hashSet[string(key)] = true
+			count++
+		} else {
+			b.nonConstArgs = append(b.nonConstArgs, b.args[i])
+		}
+	}
+	if count < b.threshold {
+		b.nonConstArgs = b.args
+		b.hashSet = nil
+	}
+
+	return nil
 }
 
 func (b *builtinInDecimalSig) Clone() builtinFunc {
 	newSig := &builtinInDecimalSig{}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.nonConstArgs = make([]Expression, 0, len(b.nonConstArgs))
+	for _, arg := range b.nonConstArgs {
+		newSig.nonConstArgs = append(newSig.nonConstArgs, arg.Clone())
+	}
+	newSig.hashSet = b.hashSet
+	newSig.threshold = b.threshold
 	return newSig
 }
 
@@ -413,8 +458,21 @@ func (b *builtinInDecimalSig) evalInt(row chunk.Row) (int64, bool, error) {
 	if isNull0 || err != nil {
 		return 0, isNull0, err
 	}
+
+	args := b.args
+	if b.hashSet != nil {
+		args = b.nonConstArgs
+		key, err := arg0.ToHashKey()
+		if err != nil {
+			return 0, true, err
+		}
+		if _, ok := b.hashSet[string(key)]; ok {
+			return 1, false, nil
+		}
+	}
+
 	var hasNull bool
-	for _, arg := range b.args[1:] {
+	for _, arg := range args[1:] {
 		evaledArg, isNull, err := arg.EvalDecimal(b.ctx, row)
 		if err != nil {
 			return 0, true, err
@@ -609,11 +667,11 @@ func (b *builtinInJSONSig) buildHashMapForConstArgs(ctx sessionctx.Context) erro
 				b.nonConstArgs = append(b.nonConstArgs, b.args[i])
 				continue
 			}
-			json, err := val.MarshalJSON()
+			key, err := val.ToHashKey()
 			if err != nil {
 				return err
 			}
-			b.hashSet[string(json)] = true
+			b.hashSet[string(key)] = true
 			count++
 		} else {
 			b.nonConstArgs = append(b.nonConstArgs, b.args[i])
@@ -648,7 +706,7 @@ func (b *builtinInJSONSig) evalInt(row chunk.Row) (int64, bool, error) {
 	args := b.args
 	if b.hashSet != nil {
 		args = b.nonConstArgs
-		json, err := arg0.MarshalJSON()
+		json, err := arg0.ToHashKey()
 		if err != nil {
 			return 0, true, err
 		}
