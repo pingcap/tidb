@@ -21,14 +21,14 @@ import (
 	"github.com/pingcap/tidb/types"
 )
 
-// getChk generate a chunk of data, isOutTheSame means the first three columns are the same.
-func getChk(isFirst3TheSame bool) (*Chunk, *Chunk, []bool) {
+// getChk generate a chunk of data, isFirst3ColTheSame means the first three columns are the same.
+func getChk(isFirst3ColTheSame bool) (*Chunk, *Chunk, []bool) {
 	numRows := 1024
 	srcChk := newChunkWithInitCap(numRows, 0, 0, 8, 8, sizeTime, 0)
 	selected := make([]bool, numRows)
 	var row Row
 	for j := 0; j < numRows; j++ {
-		if isFirst3TheSame {
+		if isFirst3ColTheSame {
 			if j%7 == 0 {
 				row = MutRowFromValues("abc", "abcdefg", nil, 123, types.ZeroDatetime, "abcdefg").ToRow()
 			} else {
