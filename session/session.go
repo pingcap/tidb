@@ -44,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/metrics"
@@ -76,10 +77,10 @@ var (
 	statementPerTransactionInternalError = metrics.StatementPerTransaction.WithLabelValues(metrics.LblInternal, "error")
 	statementPerTransactionGeneralOK     = metrics.StatementPerTransaction.WithLabelValues(metrics.LblGeneral, "ok")
 	statementPerTransactionGeneralError  = metrics.StatementPerTransaction.WithLabelValues(metrics.LblGeneral, "error")
-	transactionDurationInternalOK        = metrics.TransactionDuration.WithLabelValues(metrics.LblInternal, "ok")
-	transactionDurationInternalError     = metrics.TransactionDuration.WithLabelValues(metrics.LblInternal, "error")
-	transactionDurationGeneralOK         = metrics.TransactionDuration.WithLabelValues(metrics.LblGeneral, "ok")
-	transactionDurationGeneralError      = metrics.TransactionDuration.WithLabelValues(metrics.LblGeneral, "error")
+	transactionDurationInternalCommit    = metrics.TransactionDuration.WithLabelValues(metrics.LblInternal, metrics.LblCommit)
+	transactionDurationInternalAbort     = metrics.TransactionDuration.WithLabelValues(metrics.LblInternal, metrics.LblAbort)
+	transactionDurationGeneralCommit     = metrics.TransactionDuration.WithLabelValues(metrics.LblGeneral, metrics.LblCommit)
+	transactionDurationGeneralAbort      = metrics.TransactionDuration.WithLabelValues(metrics.LblGeneral, metrics.LblAbort)
 
 	transactionCounterInternalOK             = metrics.TransactionCounter.WithLabelValues(metrics.LblInternal, metrics.LblOK)
 	transactionCounterInternalErr            = metrics.TransactionCounter.WithLabelValues(metrics.LblInternal, metrics.LblError)
@@ -367,7 +368,7 @@ func (s *session) StoreQueryFeedback(feedback interface{}) {
 
 // FieldList returns fields list of a table.
 func (s *session) FieldList(tableName string) ([]*ast.ResultField, error) {
-	is := executor.GetInfoSchema(s)
+	is := infoschema.GetInfoSchema(s)
 	dbName := model.NewCIStr(s.GetSessionVars().CurrentDB)
 	tName := model.NewCIStr(tableName)
 	table, err := is.TableByName(dbName, tName)
@@ -441,12 +442,16 @@ func (s *session) doCommit(ctx context.Context) error {
 }
 
 func (s *session) doCommitWithRetry(ctx context.Context) error {
-	var txnSize int
-	var isPessimistic bool
-	if s.txn.Valid() {
-		txnSize = s.txn.Size()
-		isPessimistic = s.txn.IsPessimistic()
+	defer func() {
+		s.txn.changeToInvalid()
+		s.cleanRetryInfo()
+	}()
+	if !s.txn.Valid() {
+		// If the transaction is invalid, maybe it has already been rolled back by the client.
+		return nil
 	}
+	txnSize := s.txn.Size()
+	isPessimistic := s.txn.IsPessimistic()
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("session.doCommitWitRetry", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
@@ -471,12 +476,21 @@ func (s *session) doCommitWithRetry(ctx context.Context) error {
 			txnSizeRate := float64(txnSize) / float64(kv.TxnTotalSizeLimit)
 			maxRetryCount := commitRetryLimit - int64(float64(commitRetryLimit-1)*txnSizeRate)
 			err = s.retry(ctx, uint(maxRetryCount))
+		} else {
+			logutil.Logger(ctx).Warn("can not retry txn",
+				zap.String("label", s.getSQLLabel()),
+				zap.Error(err),
+				zap.Bool("IsBatchInsert", s.sessionVars.BatchInsert),
+				zap.Bool("IsPessimistic", isPessimistic),
+				zap.Bool("InRestrictedSQL", s.sessionVars.InRestrictedSQL),
+				zap.Int64("tidb_retry_limit", s.sessionVars.RetryLimit),
+				zap.Bool("tidb_disable_txn_auto_retry", s.sessionVars.DisableTxnAutoRetry))
 		}
+
 	}
 	counter := s.sessionVars.TxnCtx.StatementCount
 	duration := time.Since(s.GetSessionVars().TxnCtx.CreateTime).Seconds()
 	s.recordOnTransactionExecution(err, counter, duration)
-	s.cleanRetryInfo()
 
 	if isoLevelOneShot := &s.sessionVars.TxnIsolationLevelOneShot; isoLevelOneShot.State != 0 {
 		switch isoLevelOneShot.State {
@@ -583,7 +597,7 @@ func (s *session) String() string {
 const sqlLogMaxLen = 1024
 
 // SchemaChangedWithoutRetry is used for testing.
-var SchemaChangedWithoutRetry bool
+var SchemaChangedWithoutRetry uint32
 
 func (s *session) getSQLLabel() string {
 	if s.sessionVars.InRestrictedSQL {
@@ -597,7 +611,7 @@ func (s *session) isInternal() bool {
 }
 
 func (s *session) isTxnRetryableError(err error) bool {
-	if SchemaChangedWithoutRetry {
+	if atomic.LoadUint32(&SchemaChangedWithoutRetry) == 1 {
 		return kv.IsTxnRetryableError(err)
 	}
 	return kv.IsTxnRetryableError(err) || domain.ErrInfoSchemaChanged.Equal(err)
@@ -649,9 +663,6 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 		for i, sr := range nh.history {
 			st := sr.st
 			s.sessionVars.StmtCtx = sr.stmtCtx
-			s.sessionVars.StartTime = time.Now()
-			s.sessionVars.DurationCompile = time.Duration(0)
-			s.sessionVars.DurationParse = time.Duration(0)
 			s.sessionVars.StmtCtx.ResetForRetry()
 			s.sessionVars.PreparedParams = s.sessionVars.PreparedParams[:0]
 			schemaVersion, err = st.RebuildPlan(ctx)
@@ -786,6 +797,10 @@ func (s *session) ExecRestrictedSQLWithSnapshot(sql string) ([]chunk.Row, []*ast
 	}
 	// Set snapshot.
 	if snapshot != 0 {
+		se.sessionVars.SnapshotInfoschema, err = domain.GetDomain(s).GetSnapshotInfoSchema(snapshot)
+		if err != nil {
+			return nil, nil, err
+		}
 		if err := se.sessionVars.SetSystemVar(variable.TiDBSnapshot, strconv.FormatUint(snapshot, 10)); err != nil {
 			return nil, nil, err
 		}
@@ -793,6 +808,7 @@ func (s *session) ExecRestrictedSQLWithSnapshot(sql string) ([]chunk.Row, []*ast
 			if err := se.sessionVars.SetSystemVar(variable.TiDBSnapshot, ""); err != nil {
 				logutil.BgLogger().Error("set tidbSnapshot error", zap.Error(err))
 			}
+			se.sessionVars.SnapshotInfoschema = nil
 		}()
 	}
 	return execRestrictedSQL(ctx, se, sql)
@@ -850,7 +866,7 @@ func createSessionFunc(store kv.Storage) pools.Factory {
 
 func createSessionWithDomainFunc(store kv.Storage) func(*domain.Domain) (pools.Resource, error) {
 	return func(dom *domain.Domain) (pools.Resource, error) {
-		se, err := createSessionWithDomain(store, dom)
+		se, err := CreateSessionWithDomain(store, dom)
 		if err != nil {
 			return nil, err
 		}
@@ -935,7 +951,7 @@ func (s *session) GetGlobalSysVar(name string) (string, error) {
 			if sv, ok := variable.SysVars[name]; ok {
 				return sv.Value, nil
 			}
-			return "", variable.UnknownSystemVar.GenWithStackByArgs(name)
+			return "", variable.ErrUnknownSystemVar.GenWithStackByArgs(name)
 		}
 		return "", err
 	}
@@ -1070,8 +1086,7 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 	charsetInfo, collation := s.sessionVars.GetCharsetInfo()
 
 	// Step1: Compile query string to abstract syntax trees(ASTs).
-	startTS := time.Now()
-	s.GetSessionVars().StartTime = startTS
+	parseStartTime := time.Now()
 	stmtNodes, warns, err := s.ParseSQL(ctx, sql, charsetInfo, collation)
 	if err != nil {
 		s.rollbackOnError(ctx)
@@ -1080,7 +1095,7 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 			zap.String("SQL", sql))
 		return nil, util.SyntaxError(err)
 	}
-	durParse := time.Since(startTS)
+	durParse := time.Since(parseStartTime)
 	s.GetSessionVars().DurationParse = durParse
 	isInternal := s.isInternal()
 	if isInternal {
@@ -1092,10 +1107,10 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 	compiler := executor.Compiler{Ctx: s}
 	multiQuery := len(stmtNodes) > 1
 	for _, stmtNode := range stmtNodes {
+		s.sessionVars.StartTime = time.Now()
 		s.PrepareTxnCtx(ctx)
 
 		// Step2: Transform abstract syntax tree to a physical plan(stored in executor.ExecStmt).
-		startTS = time.Now()
 		// Some executions are done in compile stage, so we reset them before compile.
 		if err := executor.ResetContextOfStmt(s, stmtNode); err != nil {
 			return nil, err
@@ -1108,7 +1123,7 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 				zap.String("SQL", sql))
 			return nil, err
 		}
-		durCompile := time.Since(startTS)
+		durCompile := time.Since(s.sessionVars.StartTime)
 		s.GetSessionVars().DurationCompile = durCompile
 		if isInternal {
 			sessionExecuteCompileDurationInternal.Observe(durCompile.Seconds())
@@ -1158,7 +1173,7 @@ func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields
 	// So we have to call PrepareTxnCtx here.
 	s.PrepareTxnCtx(ctx)
 	s.PrepareTxnFuture(ctx)
-	prepareExec := executor.NewPrepareExec(s, executor.GetInfoSchema(s), sql)
+	prepareExec := executor.NewPrepareExec(s, infoschema.GetInfoSchema(s), sql)
 	err = prepareExec.Next(ctx, nil)
 	if err != nil {
 		return
@@ -1185,7 +1200,7 @@ func (s *session) CachedPlanExec(ctx context.Context,
 	stmtID uint32, prepareStmt *plannercore.CachedPrepareStmt, args []types.Datum) (sqlexec.RecordSet, error) {
 	prepared := prepareStmt.PreparedAst
 	// compile ExecStmt
-	is := executor.GetInfoSchema(s)
+	is := infoschema.GetInfoSchema(s)
 	execAst := &ast.ExecuteStmt{ExecID: stmtID}
 	if err := executor.ResetContextOfStmt(s, execAst); err != nil {
 		return nil, err
@@ -1238,7 +1253,7 @@ func (s *session) IsCachedExecOk(ctx context.Context, preparedStmt *plannercore.
 		return false, nil
 	}
 	// check schema version
-	is := executor.GetInfoSchema(s)
+	is := infoschema.GetInfoSchema(s)
 	if prepared.SchemaVersion != is.SchemaMetaVersion() {
 		prepared.CachedPlan = nil
 		return false, nil
@@ -1299,6 +1314,9 @@ func (s *session) DropPreparedStmt(stmtID uint32) error {
 }
 
 func (s *session) Txn(active bool) (kv.Transaction, error) {
+	if !s.txn.validOrPending() && active {
+		return &s.txn, kv.ErrInvalidTxn
+	}
 	if s.txn.pending() && active {
 		// Transaction is lazy initialized.
 		// PrepareTxnCtx is called to get a tso future, makes s.txn a pending txn,
@@ -1627,7 +1645,11 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	if err != nil {
 		return nil, err
 	}
-	err = dom.LoadBindInfoLoop(se2)
+	se3, err := createSession(store)
+	if err != nil {
+		return nil, err
+	}
+	err = dom.LoadBindInfoLoop(se2, se3)
 	if err != nil {
 		return nil, err
 	}
@@ -1693,11 +1715,11 @@ func createSession(store kv.Storage) (*session, error) {
 	return s, nil
 }
 
-// createSessionWithDomain creates a new Session and binds it with a Domain.
+// CreateSessionWithDomain creates a new Session and binds it with a Domain.
 // We need this because when we start DDL in Domain, the DDL need a session
 // to change some system tables. But at that time, we have been already in
 // a lock context, which cause we can't call createSesion directly.
-func createSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, error) {
+func CreateSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, error) {
 	s := &session{
 		store:       store,
 		parser:      parser.New(),
@@ -1719,7 +1741,7 @@ func createSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 
 const (
 	notBootstrapped         = 0
-	currentBootstrapVersion = version36
+	currentBootstrapVersion = version37
 )
 
 func getStoreBootstrapVersion(store kv.Storage) int64 {
@@ -1754,9 +1776,7 @@ func getStoreBootstrapVersion(store kv.Storage) int64 {
 }
 
 func finishBootstrap(store kv.Storage) {
-	storeBootstrappedLock.Lock()
-	storeBootstrapped[store.UUID()] = true
-	storeBootstrappedLock.Unlock()
+	setStoreBootstrapped(store.UUID())
 
 	err := kv.RunInNewTxn(store, true, func(txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
@@ -1793,6 +1813,7 @@ var builtinGlobalVariable = []string{
 	variable.CollationServer,
 	variable.NetWriteTimeout,
 	variable.MaxExecutionTime,
+	variable.InnodbLockWaitTimeout,
 
 	/* TiDB specific global variables: */
 	variable.TiDBSkipUTF8Check,
@@ -1820,6 +1841,7 @@ var builtinGlobalVariable = []string{
 	variable.TiDBOptScanFactor,
 	variable.TiDBOptDescScanFactor,
 	variable.TiDBOptMemoryFactor,
+	variable.TiDBOptDiskFactor,
 	variable.TiDBOptConcurrencyFactor,
 	variable.TiDBDistSQLScanConcurrency,
 	variable.TiDBInitChunkSize,
@@ -1835,9 +1857,14 @@ var builtinGlobalVariable = []string{
 	variable.TiDBEnableIndexMerge,
 	variable.TiDBTxnMode,
 	variable.TiDBEnableStmtSummary,
+	variable.TiDBStmtSummaryRefreshInterval,
+	variable.TiDBStmtSummaryHistorySize,
 	variable.TiDBMaxDeltaSchemaCount,
 	variable.TiDBCapturePlanBaseline,
 	variable.TiDBUsePlanBaselines,
+	variable.TiDBEvolvePlanBaselines,
+	variable.TiDBIsolationReadEngines,
+	variable.TiDBStoreLimit,
 }
 
 var (
@@ -2029,18 +2056,18 @@ func (s *session) recordOnTransactionExecution(err error, counter int, duration 
 	if s.isInternal() {
 		if err != nil {
 			statementPerTransactionInternalError.Observe(float64(counter))
-			transactionDurationInternalError.Observe(duration)
+			transactionDurationInternalAbort.Observe(duration)
 		} else {
 			statementPerTransactionInternalOK.Observe(float64(counter))
-			transactionDurationInternalOK.Observe(duration)
+			transactionDurationInternalCommit.Observe(duration)
 		}
 	} else {
 		if err != nil {
 			statementPerTransactionGeneralError.Observe(float64(counter))
-			transactionDurationGeneralError.Observe(duration)
+			transactionDurationGeneralAbort.Observe(duration)
 		} else {
 			statementPerTransactionGeneralOK.Observe(float64(counter))
-			transactionDurationGeneralOK.Observe(duration)
+			transactionDurationGeneralCommit.Observe(duration)
 		}
 	}
 }

@@ -18,22 +18,24 @@ import (
 	"encoding/json"
 	"fmt"
 	"strconv"
+	"sync/atomic"
 	"time"
 
-	"github.com/coreos/etcd/clientv3"
-	"github.com/coreos/etcd/clientv3/concurrency"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/owner"
+	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	util2 "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/printer"
+	"go.etcd.io/etcd/clientv3"
+	"go.etcd.io/etcd/clientv3/concurrency"
 	"go.uber.org/zap"
 )
 
@@ -67,11 +69,12 @@ type InfoSyncer struct {
 // It will not be updated when tidb-server running. So please only put static information in ServerInfo struct.
 type ServerInfo struct {
 	ServerVersionInfo
-	ID         string `json:"ddl_id"`
-	IP         string `json:"ip"`
-	Port       uint   `json:"listening_port"`
-	StatusPort uint   `json:"status_port"`
-	Lease      string `json:"lease"`
+	ID           string `json:"ddl_id"`
+	IP           string `json:"ip"`
+	Port         uint   `json:"listening_port"`
+	StatusPort   uint   `json:"status_port"`
+	Lease        string `json:"lease"`
+	BinlogStatus string `json:"binlog_status"`
 }
 
 // ServerVersionInfo is the server version and git_hash.
@@ -80,17 +83,37 @@ type ServerVersionInfo struct {
 	GitHash string `json:"git_hash"`
 }
 
-var globalInfoSyncer *InfoSyncer
+// globalInfoSyncer stores the global infoSyncer.
+// Use a global variable for simply the code, use the domain.infoSyncer will have circle import problem in some pkg.
+// Use atomic.Value to avoid data race in the test.
+var globalInfoSyncer atomic.Value
+
+func getGlobalInfoSyncer() (*InfoSyncer, error) {
+	v := globalInfoSyncer.Load()
+	if v == nil {
+		return nil, errors.New("infoSyncer is not initialized")
+	}
+	return v.(*InfoSyncer), nil
+}
+
+func setGlobalInfoSyncer(is *InfoSyncer) {
+	globalInfoSyncer.Store(is)
+}
 
 // GlobalInfoSyncerInit return a new InfoSyncer. It is exported for testing.
 func GlobalInfoSyncerInit(ctx context.Context, id string, etcdCli *clientv3.Client) (*InfoSyncer, error) {
-	globalInfoSyncer = &InfoSyncer{
+	is := &InfoSyncer{
 		etcdCli:        etcdCli,
 		info:           getServerInfo(id),
 		serverInfoPath: fmt.Sprintf("%s/%s", ServerInformationPath, id),
 		minStartTSPath: fmt.Sprintf("%s/%s", ServerMinStartTSPath, id),
 	}
-	return globalInfoSyncer, globalInfoSyncer.init(ctx)
+	err := is.init(ctx)
+	if err != nil {
+		return nil, err
+	}
+	setGlobalInfoSyncer(is)
+	return is, nil
 }
 
 // Init creates a new etcd session and stores server info to etcd.
@@ -104,19 +127,21 @@ func (is *InfoSyncer) SetSessionManager(manager util2.SessionManager) {
 }
 
 // GetServerInfo gets self server static information.
-func GetServerInfo() *ServerInfo {
-	if globalInfoSyncer == nil {
-		return nil
+func GetServerInfo() (*ServerInfo, error) {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return nil, err
 	}
-	return globalInfoSyncer.info
+	return is.info, nil
 }
 
 // GetServerInfoByID gets specified server static information from etcd.
 func GetServerInfoByID(ctx context.Context, id string) (*ServerInfo, error) {
-	if globalInfoSyncer == nil {
-		return nil, errors.New("infoSyncer is not initialized")
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return nil, err
 	}
-	return globalInfoSyncer.getServerInfoByID(ctx, id)
+	return is.getServerInfoByID(ctx, id)
 }
 
 func (is *InfoSyncer) getServerInfoByID(ctx context.Context, id string) (*ServerInfo, error) {
@@ -137,10 +162,11 @@ func (is *InfoSyncer) getServerInfoByID(ctx context.Context, id string) (*Server
 
 // GetAllServerInfo gets all servers static information from etcd.
 func GetAllServerInfo(ctx context.Context) (map[string]*ServerInfo, error) {
-	if globalInfoSyncer == nil {
-		return nil, errors.New("infoSyncer is not initialized")
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return nil, err
 	}
-	return globalInfoSyncer.getAllServerInfo(ctx)
+	return is.getAllServerInfo(ctx)
 }
 
 func (is *InfoSyncer) getAllServerInfo(ctx context.Context) (map[string]*ServerInfo, error) {
@@ -263,7 +289,11 @@ func (is *InfoSyncer) newSessionAndStoreServerInfo(ctx context.Context, retryCnt
 		return err
 	}
 	is.session = session
-
+	binloginfo.RegisterStatusListener(func(status binloginfo.BinlogStatus) error {
+		is.info.BinlogStatus = status.String()
+		err := is.storeServerInfo(ctx)
+		return errors.Trace(err)
+	})
 	err = is.storeServerInfo(ctx)
 	return err
 }
@@ -289,7 +319,9 @@ func getInfo(ctx context.Context, etcdCli *clientv3.Client, key string, retryCnt
 			continue
 		}
 		for _, kv := range resp.Kvs {
-			info := &ServerInfo{}
+			info := &ServerInfo{
+				BinlogStatus: binloginfo.BinlogStatusUnknown.String(),
+			}
 			err = json.Unmarshal(kv.Value, info)
 			if err != nil {
 				logutil.BgLogger().Info("get key failed", zap.String("key", string(kv.Key)), zap.ByteString("value", kv.Value),
@@ -307,11 +339,12 @@ func getInfo(ctx context.Context, etcdCli *clientv3.Client, key string, retryCnt
 func getServerInfo(id string) *ServerInfo {
 	cfg := config.GetGlobalConfig()
 	info := &ServerInfo{
-		ID:         id,
-		IP:         cfg.AdvertiseAddress,
-		Port:       cfg.Port,
-		StatusPort: cfg.Status.StatusPort,
-		Lease:      cfg.Lease,
+		ID:           id,
+		IP:           cfg.AdvertiseAddress,
+		Port:         cfg.Port,
+		StatusPort:   cfg.Status.StatusPort,
+		Lease:        cfg.Lease,
+		BinlogStatus: binloginfo.GetStatus().String(),
 	}
 	info.Version = mysql.ServerVersion
 	info.GitHash = printer.TiDBGitHash

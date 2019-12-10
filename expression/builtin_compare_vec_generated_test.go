@@ -80,6 +80,78 @@ var vecGeneratedBuiltinCompareCases = map[string][]vecExprBenchCase{
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDuration, types.ETDuration}},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETJson, types.ETJson}},
 	},
+	ast.Coalesce: {
+
+		{
+			retEvalType:   types.ETInt,
+			childrenTypes: []types.EvalType{types.ETInt, types.ETInt, types.ETInt},
+			geners: []dataGenerator{
+				gener{defaultGener{eType: types.ETInt, nullRation: 0.2}},
+				gener{defaultGener{eType: types.ETInt, nullRation: 0.2}},
+				gener{defaultGener{eType: types.ETInt, nullRation: 0.2}},
+			},
+		},
+
+		{
+			retEvalType:   types.ETReal,
+			childrenTypes: []types.EvalType{types.ETReal, types.ETReal, types.ETReal},
+			geners: []dataGenerator{
+				gener{defaultGener{eType: types.ETReal, nullRation: 0.2}},
+				gener{defaultGener{eType: types.ETReal, nullRation: 0.2}},
+				gener{defaultGener{eType: types.ETReal, nullRation: 0.2}},
+			},
+		},
+
+		{
+			retEvalType:   types.ETDecimal,
+			childrenTypes: []types.EvalType{types.ETDecimal, types.ETDecimal, types.ETDecimal},
+			geners: []dataGenerator{
+				gener{defaultGener{eType: types.ETDecimal, nullRation: 0.2}},
+				gener{defaultGener{eType: types.ETDecimal, nullRation: 0.2}},
+				gener{defaultGener{eType: types.ETDecimal, nullRation: 0.2}},
+			},
+		},
+
+		{
+			retEvalType:   types.ETString,
+			childrenTypes: []types.EvalType{types.ETString, types.ETString, types.ETString},
+			geners: []dataGenerator{
+				gener{defaultGener{eType: types.ETString, nullRation: 0.2}},
+				gener{defaultGener{eType: types.ETString, nullRation: 0.2}},
+				gener{defaultGener{eType: types.ETString, nullRation: 0.2}},
+			},
+		},
+
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETDatetime, types.ETDatetime},
+			geners: []dataGenerator{
+				gener{defaultGener{eType: types.ETDatetime, nullRation: 0.2}},
+				gener{defaultGener{eType: types.ETDatetime, nullRation: 0.2}},
+				gener{defaultGener{eType: types.ETDatetime, nullRation: 0.2}},
+			},
+		},
+
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETDuration, types.ETDuration},
+			geners: []dataGenerator{
+				gener{defaultGener{eType: types.ETDuration, nullRation: 0.2}},
+				gener{defaultGener{eType: types.ETDuration, nullRation: 0.2}},
+				gener{defaultGener{eType: types.ETDuration, nullRation: 0.2}},
+			},
+		},
+
+		{
+			retEvalType:   types.ETJson,
+			childrenTypes: []types.EvalType{types.ETJson, types.ETJson, types.ETJson},
+			geners: []dataGenerator{
+				gener{defaultGener{eType: types.ETJson, nullRation: 0.2}},
+				gener{defaultGener{eType: types.ETJson, nullRation: 0.2}},
+				gener{defaultGener{eType: types.ETJson, nullRation: 0.2}},
+			},
+		},
+	},
 }
 
 func (s *testEvaluatorSuite) TestVectorizedGeneratedBuiltinCompareEvalOneVec(c *C) {

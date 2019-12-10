@@ -13,7 +13,11 @@
 
 package main
 
-import "testing"
+import (
+	"testing"
+
+	. "github.com/pingcap/check"
+)
 
 var isCoverageServer = "0"
 
@@ -23,4 +27,8 @@ func TestRunMain(t *testing.T) {
 	if isCoverageServer == "1" {
 		main()
 	}
+}
+
+func TestT(t *testing.T) {
+	TestingT(t)
 }

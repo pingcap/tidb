@@ -240,7 +240,6 @@ func (q *QueryFeedback) Update(startKey kv.Key, counts []int64) {
 		}
 		q.Feedback[i+idx].Count += count
 	}
-	return
 }
 
 // BucketFeedback stands for all the feedback for a bucket.
@@ -303,7 +302,7 @@ func buildBucketFeedback(h *Histogram, feedback *QueryFeedback) (map[int]*Bucket
 	}
 	total := 0
 	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
-	min, max := GetMinValue(h.Tp), GetMaxValue(h.Tp)
+	min, max := types.GetMinValue(h.Tp), types.GetMaxValue(h.Tp)
 	for _, fb := range feedback.Feedback {
 		skip, err := fb.adjustFeedbackBoundaries(sc, &min, &max)
 		if err != nil {
@@ -927,74 +926,4 @@ func SupportColumnType(ft *types.FieldType) bool {
 		return true
 	}
 	return false
-}
-
-// GetMaxValue returns the max value datum for each type.
-func GetMaxValue(ft *types.FieldType) (max types.Datum) {
-	switch ft.Tp {
-	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
-		if mysql.HasUnsignedFlag(ft.Flag) {
-			max.SetUint64(types.IntergerUnsignedUpperBound(ft.Tp))
-		} else {
-			max.SetInt64(types.IntergerSignedUpperBound(ft.Tp))
-		}
-	case mysql.TypeFloat:
-		max.SetFloat32(float32(types.GetMaxFloat(ft.Flen, ft.Decimal)))
-	case mysql.TypeDouble:
-		max.SetFloat64(types.GetMaxFloat(ft.Flen, ft.Decimal))
-	case mysql.TypeString, mysql.TypeVarString, mysql.TypeVarchar, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
-		val := types.MaxValueDatum()
-		bytes, err := codec.EncodeKey(nil, nil, val)
-		// should not happen
-		if err != nil {
-			logutil.BgLogger().Error("encode key fail", zap.Error(err))
-		}
-		max.SetBytes(bytes)
-	case mysql.TypeNewDecimal:
-		max.SetMysqlDecimal(types.NewMaxOrMinDec(false, ft.Flen, ft.Decimal))
-	case mysql.TypeDuration:
-		max.SetMysqlDuration(types.Duration{Duration: types.MaxTime})
-	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
-		if ft.Tp == mysql.TypeDate || ft.Tp == mysql.TypeDatetime {
-			max.SetMysqlTime(types.Time{Time: types.MaxDatetime, Type: ft.Tp})
-		} else {
-			max.SetMysqlTime(types.MaxTimestamp)
-		}
-	}
-	return
-}
-
-// GetMinValue returns the min value datum for each type.
-func GetMinValue(ft *types.FieldType) (min types.Datum) {
-	switch ft.Tp {
-	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
-		if mysql.HasUnsignedFlag(ft.Flag) {
-			min.SetUint64(0)
-		} else {
-			min.SetInt64(types.IntergerSignedLowerBound(ft.Tp))
-		}
-	case mysql.TypeFloat:
-		min.SetFloat32(float32(-types.GetMaxFloat(ft.Flen, ft.Decimal)))
-	case mysql.TypeDouble:
-		min.SetFloat64(-types.GetMaxFloat(ft.Flen, ft.Decimal))
-	case mysql.TypeString, mysql.TypeVarString, mysql.TypeVarchar, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
-		val := types.MinNotNullDatum()
-		bytes, err := codec.EncodeKey(nil, nil, val)
-		// should not happen
-		if err != nil {
-			logutil.BgLogger().Error("encode key fail", zap.Error(err))
-		}
-		min.SetBytes(bytes)
-	case mysql.TypeNewDecimal:
-		min.SetMysqlDecimal(types.NewMaxOrMinDec(true, ft.Flen, ft.Decimal))
-	case mysql.TypeDuration:
-		min.SetMysqlDuration(types.Duration{Duration: types.MinTime})
-	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
-		if ft.Tp == mysql.TypeDate || ft.Tp == mysql.TypeDatetime {
-			min.SetMysqlTime(types.Time{Time: types.MinDatetime, Type: ft.Tp})
-		} else {
-			min.SetMysqlTime(types.MinTimestamp)
-		}
-	}
-	return
 }

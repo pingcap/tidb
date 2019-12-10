@@ -55,6 +55,17 @@ func DecodePlan(planString string) (string, error) {
 	return pd.decode(planString)
 }
 
+// DecodeNormalizedPlan decodes the string to plan tree.
+func DecodeNormalizedPlan(planString string) (string, error) {
+	if len(planString) == 0 {
+		return "", nil
+	}
+	pd := decoderPool.Get().(*planDecoder)
+	defer decoderPool.Put(pd)
+	pd.buf.Reset()
+	return pd.buildPlanTree(planString)
+}
+
 type planDecoder struct {
 	buf       bytes.Buffer
 	depths    []int
@@ -72,8 +83,11 @@ func (pd *planDecoder) decode(planString string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	return pd.buildPlanTree(str)
+}
 
-	nodes := strings.Split(str, lineBreakerStr)
+func (pd *planDecoder) buildPlanTree(planString string) (string, error) {
+	nodes := strings.Split(planString, lineBreakerStr)
 	if len(pd.depths) < len(nodes) {
 		pd.depths = make([]int, 0, len(nodes))
 		pd.planInfos = make([]*planInfo, 0, len(nodes))
@@ -220,7 +234,7 @@ func decodePlanInfo(str string) (*planInfo, error) {
 				return nil, errors.Errorf("decode plan: %v error, invalid plan id: %v", str, v)
 			}
 			planID, err := strconv.Atoi(ids[0])
-			if err != err {
+			if err != nil {
 				return nil, errors.Errorf("decode plan: %v, plan id: %v, error: %v", str, v, err)
 			}
 			p.fields = append(p.fields, PhysicalIDToTypeString(planID)+idSeparator+ids[1])
@@ -251,6 +265,22 @@ func EncodePlanNode(depth, pid int, planType string, isRoot bool, rowCount float
 	}
 	buf.WriteByte(separator)
 	buf.WriteString(strconv.FormatFloat(rowCount, 'f', -1, 64))
+	buf.WriteByte(separator)
+	buf.WriteString(explainInfo)
+	buf.WriteByte(lineBreaker)
+}
+
+// NormalizePlanNode is used to normalize the plan to a string.
+func NormalizePlanNode(depth, pid int, planType string, isRoot bool, explainInfo string, buf *bytes.Buffer) {
+	buf.WriteString(strconv.Itoa(depth))
+	buf.WriteByte(separator)
+	buf.WriteString(encodeID(planType, pid))
+	buf.WriteByte(separator)
+	if isRoot {
+		buf.WriteString(rootTaskType)
+	} else {
+		buf.WriteString(copTaskType)
+	}
 	buf.WriteByte(separator)
 	buf.WriteString(explainInfo)
 	buf.WriteByte(lineBreaker)

@@ -107,6 +107,11 @@ func (p *LogicalUnionAll) pushDownTopN(topN *LogicalTopN) LogicalPlan {
 }
 
 func (p *LogicalProjection) pushDownTopN(topN *LogicalTopN) LogicalPlan {
+	for _, expr := range p.Exprs {
+		if expression.HasAssignSetVarFunc(expr) {
+			return p.baseLogicalPlan.pushDownTopN(topN)
+		}
+	}
 	if topN != nil {
 		for _, by := range topN.ByItems {
 			by.Expr = expression.ColumnSubstitute(by.Expr, p.schema, p.Exprs)

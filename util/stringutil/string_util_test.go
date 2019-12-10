@@ -62,7 +62,7 @@ func (s *testStringUtilSuite) TestUnquote(c *C) {
 		{`' '`, ` `, true},
 		{"'\\a汉字'", "a汉字", true},
 		{"'\\a\x90'", "a\x90", true},
-		{`"\aèàø»"`, `aèàø»`, true},
+		{"\"\\a\x18èàø»\x05\"", "a\x18èàø»\x05", true},
 	}
 
 	for _, t := range table {
@@ -150,5 +150,23 @@ func (s *testStringUtilSuite) TestIsExactMatch(c *C) {
 	for _, v := range tbl {
 		_, patTypes := CompilePattern(v.pattern, v.escape)
 		c.Assert(IsExactMatch(patTypes), Equals, v.exactMatch, Commentf("%v", v))
+	}
+}
+
+func BenchmarkMatchSpecial(b *testing.B) {
+	var (
+		pattern = `a%a%a%a%a%a%a%a%b`
+		target  = `aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`
+		escape  = byte('\\')
+	)
+
+	patChars, patTypes := CompilePattern(pattern, escape)
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		match := DoMatch(target, patChars, patTypes)
+		if match {
+			b.Fatal("Unmatch expected.")
+		}
 	}
 }

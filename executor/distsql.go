@@ -213,6 +213,7 @@ type IndexReaderExecutor struct {
 	// kvRanges are only used for union scan.
 	kvRanges []kv.KeyRange
 	dagPB    *tipb.DAGRequest
+	startTS  uint64
 
 	// result returns one or more distsql.PartialResult and each PartialResult is returned by one region.
 	result distsql.SelectResult
@@ -292,6 +293,7 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 	var builder distsql.RequestBuilder
 	kvReq, err := builder.SetKeyRanges(kvRanges).
 		SetDAGRequest(e.dagPB).
+		SetStartTS(e.startTS).
 		SetDesc(e.desc).
 		SetKeepOrder(e.keepOrder).
 		SetStreaming(e.streaming).
@@ -321,6 +323,7 @@ type IndexLookUpExecutor struct {
 	desc      bool
 	ranges    []*ranger.Range
 	dagPB     *tipb.DAGRequest
+	startTS   uint64
 	// handleIdx is the index of handle, which is only used for case of keeping order.
 	handleIdx    int
 	tableRequest *tipb.DAGRequest
@@ -426,8 +429,6 @@ func (e *IndexLookUpExecutor) startWorkers(ctx context.Context, initBatchSize in
 	return nil
 }
 
-var indexLookupDistSQLTrackerLabel fmt.Stringer = stringutil.StringerStr("IndexLookupDistSQLTracker")
-
 // startIndexWorker launch a background goroutine to fetch handles, send the results to workCh.
 func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, kvRanges []kv.KeyRange, workCh chan<- *lookupTableTask, initBatchSize int) error {
 	if e.runtimeStats != nil {
@@ -440,6 +441,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, kvRanges []k
 	var builder distsql.RequestBuilder
 	kvReq, err := builder.SetKeyRanges(kvRanges).
 		SetDAGRequest(e.dagPB).
+		SetStartTS(e.startTS).
 		SetDesc(e.desc).
 		SetKeepOrder(e.keepOrder).
 		SetStreaming(e.indexStreaming).
@@ -530,11 +532,14 @@ func (e *IndexLookUpExecutor) buildTableReader(ctx context.Context, handles []in
 		baseExecutor:   newBaseExecutor(e.ctx, e.schema, stringutil.MemoizeStr(func() string { return e.id.String() + "_tableReader" })),
 		table:          e.table,
 		dagPB:          e.tableRequest,
+		startTS:        e.startTS,
+		columns:        e.columns,
 		streaming:      e.tableStreaming,
 		feedback:       statistics.NewQueryFeedback(0, nil, 0, false),
 		corColInFilter: e.corColInTblSide,
 		plans:          e.tblPlans,
 	}
+	tableReaderExec.buildVirtualColumnInfo()
 	tableReader, err := e.dataReaderBuilder.buildTableReaderFromHandles(ctx, tableReaderExec, handles)
 	if err != nil {
 		logutil.Logger(ctx).Error("build table reader from handles failed", zap.Error(err))

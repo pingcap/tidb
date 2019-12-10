@@ -22,16 +22,18 @@ import (
 // ErrLocked is returned when trying to Read/Write on a locked key. Client should
 // backoff or cleanup the lock then retry.
 type ErrLocked struct {
-	Key     MvccKey
-	Primary []byte
-	StartTS uint64
-	TTL     uint64
-	TxnSize uint64
+	Key      MvccKey
+	Primary  []byte
+	StartTS  uint64
+	TTL      uint64
+	TxnSize  uint64
+	LockType kvrpcpb.Op
 }
 
 // Error formats the lock to a string.
 func (e *ErrLocked) Error() string {
-	return fmt.Sprintf("key is locked, key: %q, primary: %q, txnStartTS: %v", e.Key, e.Primary, e.StartTS)
+	return fmt.Sprintf("key is locked, key: %q, primary: %q, txnStartTS: %v, LockType: %v",
+		e.Key, e.Primary, e.StartTS, e.LockType)
 }
 
 // ErrKeyAlreadyExist is returned when key exists but this key has a constraint that
@@ -95,4 +97,13 @@ type ErrCommitTSExpired struct {
 
 func (e *ErrCommitTSExpired) Error() string {
 	return "commit ts expired"
+}
+
+// ErrTxnNotFound is returned when the primary lock of the txn is not found.
+type ErrTxnNotFound struct {
+	kvrpcpb.TxnNotFound
+}
+
+func (e *ErrTxnNotFound) Error() string {
+	return "txn not found"
 }

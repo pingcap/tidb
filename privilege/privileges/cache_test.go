@@ -28,7 +28,6 @@ var _ = Suite(&testCacheSuite{})
 
 type testCacheSuite struct {
 	store  kv.Storage
-	dbName string
 	domain *domain.Domain
 }
 

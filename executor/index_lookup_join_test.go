@@ -29,9 +29,25 @@ func (s *testSuite1) TestIndexLookupJoinHang(c *C) {
 	tk.Se.GetSessionVars().IndexJoinBatchSize = 1
 	tk.Se.GetSessionVars().IndexLookupJoinConcurrency = 1
 
-	rs, err := tk.Exec("select /*+ TIDB_INLJ(i)*/ * from idxJoinOuter o left join idxJoinInner i on o.a = i.a where o.a in (1, 2) and (i.a - 3) > 0")
+	rs, err := tk.Exec("select /*+ INL_JOIN(i)*/ * from idxJoinOuter o left join idxJoinInner i on o.a = i.a where o.a in (1, 2) and (i.a - 3) > 0")
 	c.Assert(err, IsNil)
 	req := rs.NewChunk()
+	for i := 0; i < 5; i++ {
+		rs.Next(context.Background(), req)
+	}
+	rs.Close()
+
+	rs, err = tk.Exec("select /*+ INL_HASH_JOIN(i)*/ * from idxJoinOuter o left join idxJoinInner i on o.a = i.a where o.a in (1, 2) and (i.a - 3) > 0")
+	c.Assert(err, IsNil)
+	req = rs.NewChunk()
+	for i := 0; i < 5; i++ {
+		rs.Next(context.Background(), req)
+	}
+	rs.Close()
+
+	rs, err = tk.Exec("select /*+ INL_MERGE_JOIN(i)*/ * from idxJoinOuter o left join idxJoinInner i on o.a = i.a where o.a in (1, 2) and (i.a - 3) > 0")
+	c.Assert(err, IsNil)
+	req = rs.NewChunk()
 	for i := 0; i < 5; i++ {
 		rs.Next(context.Background(), req)
 	}
@@ -47,16 +63,38 @@ func (s *testSuite1) TestIndexJoinUnionScan(c *C) {
 	tk.MustExec("insert into t1 values(2,2)")
 	tk.MustExec("insert into t2 values(2,2,2), (3,3,3)")
 	// TableScan below UnionScan
-	tk.MustQuery("select /*+ TIDB_INLJ(t1, t2)*/ * from t1 join t2 on t1.a = t2.id").Check(testkit.Rows(
+	tk.MustQuery("select /*+ INL_JOIN(t1, t2)*/ * from t1 join t2 on t1.a = t2.id").Check(testkit.Rows(
+		"2 2 2 2 2",
+	))
+	tk.MustQuery("select /*+ INL_HASH_JOIN(t1, t2)*/ * from t1 join t2 on t1.a = t2.id").Check(testkit.Rows(
+		"2 2 2 2 2",
+	))
+	tk.MustQuery("select /*+ INL_MERGE_JOIN(t1, t2)*/ * from t1 join t2 on t1.a = t2.id").Check(testkit.Rows(
 		"2 2 2 2 2",
 	))
 	// IndexLookUp below UnionScan
-	tk.MustQuery("select /*+ TIDB_INLJ(t1, t2)*/ * from t1 join t2 on t1.a = t2.a").Check(testkit.Rows(
+	tk.MustQuery("select /*+ INL_JOIN(t1, t2)*/ * from t1 join t2 on t1.a = t2.a").Check(testkit.Rows(
+		"2 2 2 2 2",
+		"2 2 4 2 4",
+	))
+	tk.MustQuery("select /*+ INL_HASH_JOIN(t1, t2)*/ * from t1 join t2 on t1.a = t2.a").Check(testkit.Rows(
+		"2 2 2 2 2",
+		"2 2 4 2 4",
+	))
+	tk.MustQuery("select /*+ INL_MERGE_JOIN(t1, t2)*/ * from t1 join t2 on t1.a = t2.a").Check(testkit.Rows(
 		"2 2 2 2 2",
 		"2 2 4 2 4",
 	))
 	// IndexScan below UnionScan
-	tk.MustQuery("select /*+ TIDB_INLJ(t1, t2)*/ t1.a, t2.a from t1 join t2 on t1.a = t2.a").Check(testkit.Rows(
+	tk.MustQuery("select /*+ INL_JOIN(t1, t2)*/ t1.a, t2.a from t1 join t2 on t1.a = t2.a").Check(testkit.Rows(
+		"2 2",
+		"2 2",
+	))
+	tk.MustQuery("select /*+ INL_HASH_JOIN(t1, t2)*/ t1.a, t2.a from t1 join t2 on t1.a = t2.a").Check(testkit.Rows(
+		"2 2",
+		"2 2",
+	))
+	tk.MustQuery("select /*+ INL_MERGE_JOIN(t1, t2)*/ t1.a, t2.a from t1 join t2 on t1.a = t2.a").Check(testkit.Rows(
 		"2 2",
 		"2 2",
 	))
@@ -73,9 +111,9 @@ func (s *testSuite1) TestBatchIndexJoinUnionScan(c *C) {
 	tk.MustExec("begin")
 	tk.MustExec("insert into t1 values(1,1),(2,1),(3,1),(4,1)")
 	tk.MustExec("insert into t2 values(1,1)")
-	tk.MustQuery("select /*+ TIDB_INLJ(t1, t2)*/ count(*) from t1 join t2 on t1.a = t2.id").Check(testkit.Rows(
-		"4",
-	))
+	tk.MustQuery("select /*+ INL_JOIN(t1, t2)*/ count(*) from t1 join t2 on t1.a = t2.id").Check(testkit.Rows("4"))
+	tk.MustQuery("select /*+ INL_HASH_JOIN(t1, t2)*/ count(*) from t1 join t2 on t1.a = t2.id").Check(testkit.Rows("4"))
+	tk.MustQuery("select /*+ INL_MERGE_JOIN(t1, t2)*/ count(*) from t1 join t2 on t1.a = t2.id").Check(testkit.Rows("4"))
 	tk.MustExec("rollback")
 }
 
@@ -89,6 +127,16 @@ func (s *testSuite1) TestInapplicableIndexJoinHint(c *C) {
 	tk.MustQuery(`select /*+ TIDB_INLJ(t1, t2) */ * from t1 join t2 on t1.a=t2.a;`).Check(testkit.Rows())
 	tk.MustQuery(`show warnings;`).Check(testkit.Rows(`Warning 1815 Optimizer Hint /*+ INL_JOIN(t1, t2) */ or /*+ TIDB_INLJ(t1, t2) */ is inapplicable`))
 
+	tk.MustQuery(`select /*+ INL_HASH_JOIN(t1, t2) */ * from t1, t2;`).Check(testkit.Rows())
+	tk.MustQuery(`show warnings;`).Check(testkit.Rows(`Warning 1815 Optimizer Hint /*+ INL_HASH_JOIN(t1, t2) */ is inapplicable without column equal ON condition`))
+	tk.MustQuery(`select /*+ INL_HASH_JOIN(t1, t2) */ * from t1 join t2 on t1.a=t2.a;`).Check(testkit.Rows())
+	tk.MustQuery(`show warnings;`).Check(testkit.Rows(`Warning 1815 Optimizer Hint /*+ INL_HASH_JOIN(t1, t2) */ is inapplicable`))
+
+	tk.MustQuery(`select /*+ INL_MERGE_JOIN(t1, t2) */ * from t1, t2;`).Check(testkit.Rows())
+	tk.MustQuery(`show warnings;`).Check(testkit.Rows(`Warning 1815 Optimizer Hint /*+ INL_MERGE_JOIN(t1, t2) */ is inapplicable without column equal ON condition`))
+	tk.MustQuery(`select /*+ INL_MERGE_JOIN(t1, t2) */ * from t1 join t2 on t1.a=t2.a;`).Check(testkit.Rows())
+	tk.MustQuery(`show warnings;`).Check(testkit.Rows(`Warning 1815 Optimizer Hint /*+ INL_MERGE_JOIN(t1, t2) */ is inapplicable`))
+
 	tk.MustExec(`drop table if exists t1, t2;`)
 	tk.MustExec(`create table t1(a bigint, b bigint, index idx_a(a));`)
 	tk.MustExec(`create table t2(a bigint, b bigint);`)
@@ -96,6 +144,16 @@ func (s *testSuite1) TestInapplicableIndexJoinHint(c *C) {
 	tk.MustQuery(`show warnings;`).Check(testkit.Rows(`Warning 1815 Optimizer Hint /*+ INL_JOIN(t1) */ or /*+ TIDB_INLJ(t1) */ is inapplicable`))
 	tk.MustQuery(`select /*+ TIDB_INLJ(t2) */ * from t1 right join t2 on t1.a=t2.a;`).Check(testkit.Rows())
 	tk.MustQuery(`show warnings;`).Check(testkit.Rows(`Warning 1815 Optimizer Hint /*+ INL_JOIN(t2) */ or /*+ TIDB_INLJ(t2) */ is inapplicable`))
+
+	tk.MustQuery(`select /*+ INL_HASH_JOIN(t1) */ * from t1 left join t2 on t1.a=t2.a;`).Check(testkit.Rows())
+	tk.MustQuery(`show warnings;`).Check(testkit.Rows(`Warning 1815 Optimizer Hint /*+ INL_HASH_JOIN(t1) */ is inapplicable`))
+	tk.MustQuery(`select /*+ INL_HASH_JOIN(t2) */ * from t1 right join t2 on t1.a=t2.a;`).Check(testkit.Rows())
+	tk.MustQuery(`show warnings;`).Check(testkit.Rows(`Warning 1815 Optimizer Hint /*+ INL_HASH_JOIN(t2) */ is inapplicable`))
+
+	tk.MustQuery(`select /*+ INL_MERGE_JOIN(t1) */ * from t1 left join t2 on t1.a=t2.a;`).Check(testkit.Rows())
+	tk.MustQuery(`show warnings;`).Check(testkit.Rows(`Warning 1815 Optimizer Hint /*+ INL_MERGE_JOIN(t1) */ is inapplicable`))
+	tk.MustQuery(`select /*+ INL_MERGE_JOIN(t2) */ * from t1 right join t2 on t1.a=t2.a;`).Check(testkit.Rows())
+	tk.MustQuery(`show warnings;`).Check(testkit.Rows(`Warning 1815 Optimizer Hint /*+ INL_MERGE_JOIN(t2) */ is inapplicable`))
 }
 
 func (s *testSuite) TestIndexJoinOverflow(c *C) {
@@ -104,7 +162,9 @@ func (s *testSuite) TestIndexJoinOverflow(c *C) {
 	tk.MustExec(`create table t1(a int)`)
 	tk.MustExec(`insert into t1 values (-1)`)
 	tk.MustExec(`create table t2(a int unsigned, index idx(a));`)
-	tk.MustQuery(`select /*+ TIDB_INLJ(t2) */ * from t1 join t2 on t1.a = t2.a;`).Check(testkit.Rows())
+	tk.MustQuery(`select /*+ INL_JOIN(t2) */ * from t1 join t2 on t1.a = t2.a;`).Check(testkit.Rows())
+	tk.MustQuery(`select /*+ INL_HASH_JOIN(t2) */ * from t1 join t2 on t1.a = t2.a;`).Check(testkit.Rows())
+	tk.MustQuery(`select /*+ INL_MERGE_JOIN(t2) */ * from t1 join t2 on t1.a = t2.a;`).Check(testkit.Rows())
 }
 
 func (s *testSuite5) TestIssue11061(c *C) {
@@ -112,7 +172,9 @@ func (s *testSuite5) TestIssue11061(c *C) {
 	tk.MustExec("drop table if exists t1, t2")
 	tk.MustExec("create table t1(c varchar(30), index ix_c(c(10)))")
 	tk.MustExec("insert into t1 (c) values('7_chars'), ('13_characters')")
-	tk.MustQuery("SELECT /*+ TIDB_INLJ(t1) */ SUM(LENGTH(c)) FROM t1 WHERE c IN (SELECT t1.c FROM t1)").Check(testkit.Rows("20"))
+	tk.MustQuery("SELECT /*+ INL_JOIN(t1) */ SUM(LENGTH(c)) FROM t1 WHERE c IN (SELECT t1.c FROM t1)").Check(testkit.Rows("20"))
+	tk.MustQuery("SELECT /*+ INL_HASH_JOIN(t1) */ SUM(LENGTH(c)) FROM t1 WHERE c IN (SELECT t1.c FROM t1)").Check(testkit.Rows("20"))
+	tk.MustQuery("SELECT /*+ INL_MERGE_JOIN(t1) */ SUM(LENGTH(c)) FROM t1 WHERE c IN (SELECT t1.c FROM t1)").Check(testkit.Rows("20"))
 }
 
 func (s *testSuite5) TestIndexJoinPartitionTable(c *C) {
@@ -120,5 +182,7 @@ func (s *testSuite5) TestIndexJoinPartitionTable(c *C) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int not null, c int, key idx(c)) partition by hash(b) partitions 30")
 	tk.MustExec("insert into t values(1, 27, 2)")
-	tk.MustQuery("SELECT /*+ TIDB_INLJ(t1) */ count(1) FROM t t1 INNER JOIN (SELECT a, max(c) AS c FROM t WHERE b = 27 AND a = 1 GROUP BY a) t2 ON t1.a = t2.a AND t1.c = t2.c WHERE t1.b = 27").Check(testkit.Rows("1"))
+	tk.MustQuery("SELECT /*+ INL_JOIN(t1) */ count(1) FROM t t1 INNER JOIN (SELECT a, max(c) AS c FROM t WHERE b = 27 AND a = 1 GROUP BY a) t2 ON t1.a = t2.a AND t1.c = t2.c WHERE t1.b = 27").Check(testkit.Rows("1"))
+	tk.MustQuery("SELECT /*+ INL_HASH_JOIN(t1) */ count(1) FROM t t1 INNER JOIN (SELECT a, max(c) AS c FROM t WHERE b = 27 AND a = 1 GROUP BY a) t2 ON t1.a = t2.a AND t1.c = t2.c WHERE t1.b = 27").Check(testkit.Rows("1"))
+	tk.MustQuery("SELECT /*+ INL_MERGE_JOIN(t1) */ count(1) FROM t t1 INNER JOIN (SELECT a, max(c) AS c FROM t WHERE b = 27 AND a = 1 GROUP BY a) t2 ON t1.a = t2.a AND t1.c = t2.c WHERE t1.b = 27").Check(testkit.Rows("1"))
 }

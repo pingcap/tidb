@@ -697,7 +697,7 @@ func (er *expressionRewriter) handleExistSubquery(ctx context.Context, v *ast.Ex
 		}
 		er.ctxStackAppend(er.p.Schema().Columns[er.p.Schema().Len()-1], er.p.OutputNames()[er.p.Schema().Len()-1])
 	} else {
-		physicalPlan, err := DoOptimize(ctx, er.b.optFlag, np)
+		physicalPlan, _, err := DoOptimize(ctx, er.b.optFlag, np)
 		if err != nil {
 			er.err = err
 			return v, true
@@ -860,7 +860,7 @@ func (er *expressionRewriter) handleScalarSubquery(ctx context.Context, v *ast.S
 		}
 		return v, true
 	}
-	physicalPlan, err := DoOptimize(ctx, er.b.optFlag, np)
+	physicalPlan, _, err := DoOptimize(ctx, er.b.optFlag, np)
 	if err != nil {
 		er.err = err
 		return v, true
@@ -1045,7 +1045,7 @@ func (er *expressionRewriter) rewriteVariable(v *ast.VariableExpr) {
 	}
 	sysVar := variable.SysVars[name]
 	if sysVar == nil {
-		er.err = variable.UnknownSystemVar.GenWithStackByArgs(name)
+		er.err = variable.ErrUnknownSystemVar.GenWithStackByArgs(name)
 		return
 	}
 	// Variable is @@gobal.variable_name or variable is only global scope variable.

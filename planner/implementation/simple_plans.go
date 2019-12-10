@@ -96,3 +96,110 @@ func (agg *TiDBHashAggImpl) AttachChildren(children ...memo.Implementation) memo
 func NewTiDBHashAggImpl(agg *plannercore.PhysicalHashAgg) *TiDBHashAggImpl {
 	return &TiDBHashAggImpl{baseImpl{plan: agg}}
 }
+
+// TiKVHashAggImpl is the implementation of PhysicalHashAgg in TiKV layer.
+type TiKVHashAggImpl struct {
+	baseImpl
+}
+
+// CalcCost implements Implementation CalcCost interface.
+func (agg *TiKVHashAggImpl) CalcCost(outCount float64, children ...memo.Implementation) float64 {
+	hashAgg := agg.plan.(*plannercore.PhysicalHashAgg)
+	selfCost := hashAgg.GetCost(children[0].GetPlan().Stats().RowCount, false)
+	agg.cost = selfCost + children[0].GetCost()
+	return agg.cost
+}
+
+// NewTiKVHashAggImpl creates a new TiKVHashAggImpl.
+func NewTiKVHashAggImpl(agg *plannercore.PhysicalHashAgg) *TiKVHashAggImpl {
+	return &TiKVHashAggImpl{baseImpl{plan: agg}}
+}
+
+// LimitImpl is the implementation of PhysicalLimit. Since PhysicalLimit on different
+// engines have the same behavior, and we don't calculate the cost of `Limit`, we only
+// have one Implementation for it.
+type LimitImpl struct {
+	baseImpl
+}
+
+// NewLimitImpl creates a new LimitImpl.
+func NewLimitImpl(limit *plannercore.PhysicalLimit) *LimitImpl {
+	return &LimitImpl{baseImpl{plan: limit}}
+}
+
+// TiDBTopNImpl is the implementation of PhysicalTopN in TiDB layer.
+type TiDBTopNImpl struct {
+	baseImpl
+}
+
+// CalcCost implements Implementation CalcCost interface.
+func (impl *TiDBTopNImpl) CalcCost(outCount float64, children ...memo.Implementation) float64 {
+	topN := impl.plan.(*plannercore.PhysicalTopN)
+	childCount := children[0].GetPlan().Stats().RowCount
+	impl.cost = topN.GetCost(childCount, true) + children[0].GetCost()
+	return impl.cost
+}
+
+// NewTiDBTopNImpl creates a new TiDBTopNImpl.
+func NewTiDBTopNImpl(topN *plannercore.PhysicalTopN) *TiDBTopNImpl {
+	return &TiDBTopNImpl{baseImpl{plan: topN}}
+}
+
+// UnionAllImpl is the implementation of PhysicalUnionAll.
+type UnionAllImpl struct {
+	baseImpl
+}
+
+// CalcCost implements Implementation CalcCost interface.
+func (impl *UnionAllImpl) CalcCost(outCount float64, children ...memo.Implementation) float64 {
+	var childMaxCost float64
+	for _, child := range children {
+		childCost := child.GetCost()
+		if childCost > childMaxCost {
+			childMaxCost = childCost
+		}
+	}
+	selfCost := float64(1+len(children)) * impl.plan.SCtx().GetSessionVars().ConcurrencyFactor
+	// Children of UnionAll are executed in parallel.
+	impl.cost = selfCost + childMaxCost
+	return impl.cost
+}
+
+// NewUnionAllImpl creates a new UnionAllImpl.
+func NewUnionAllImpl(union *plannercore.PhysicalUnionAll) *UnionAllImpl {
+	return &UnionAllImpl{baseImpl{plan: union}}
+}
+
+// ApplyImpl is the implementation of PhysicalApply.
+type ApplyImpl struct {
+	baseImpl
+}
+
+// CalcCost implements Implementation CalcCost interface.
+func (impl *ApplyImpl) CalcCost(outCount float64, children ...memo.Implementation) float64 {
+	apply := impl.plan.(*plannercore.PhysicalApply)
+	selfCost := apply.GetCost(children[0].GetPlan().Stats().RowCount, children[1].GetPlan().Stats().RowCount)
+	impl.cost = selfCost + children[0].GetCost()
+	return impl.cost
+}
+
+// NewApplyImpl creates a new ApplyImpl.
+func NewApplyImpl(apply *plannercore.PhysicalApply) *ApplyImpl {
+	return &ApplyImpl{baseImpl{plan: apply}}
+}
+
+// MaxOneRowImpl is the implementation of PhysicalApply.
+type MaxOneRowImpl struct {
+	baseImpl
+}
+
+// CalcCost implements Implementation CalcCost interface.
+func (impl *MaxOneRowImpl) CalcCost(outCount float64, children ...memo.Implementation) float64 {
+	impl.cost = children[0].GetCost()
+	return impl.cost
+}
+
+// NewMaxOneRowImpl creates a new MaxOneRowImpl.
+func NewMaxOneRowImpl(maxOneRow *plannercore.PhysicalMaxOneRow) *MaxOneRowImpl {
+	return &MaxOneRowImpl{baseImpl{plan: maxOneRow}}
+}

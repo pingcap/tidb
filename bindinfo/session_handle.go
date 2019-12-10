@@ -58,16 +58,20 @@ func (h *SessionHandle) AddBindRecord(sctx sessionctx.Context, is infoschema.Inf
 		record.Bindings[i].UpdateTime = record.Bindings[i].CreateTime
 	}
 
-	err := record.prepareHintsForUsing(sctx, is)
+	err := record.prepareHints(sctx, is)
 	// update the BindMeta to the cache.
 	if err == nil {
-		h.appendBindRecord(parser.DigestHash(record.OriginalSQL), record)
+		h.appendBindRecord(parser.DigestNormalized(record.OriginalSQL), record)
 	}
 	return err
 }
 
 // DropBindRecord drops a BindRecord in the cache.
-func (h *SessionHandle) DropBindRecord(record *BindRecord) {
+func (h *SessionHandle) DropBindRecord(sctx sessionctx.Context, is infoschema.InfoSchema, record *BindRecord) error {
+	err := record.prepareHints(sctx, is)
+	if err != nil {
+		return err
+	}
 	oldRecord := h.GetBindRecord(record.OriginalSQL, record.Db)
 	var newRecord *BindRecord
 	if oldRecord != nil {
@@ -75,19 +79,18 @@ func (h *SessionHandle) DropBindRecord(record *BindRecord) {
 	} else {
 		newRecord = record
 	}
-	h.ch.setBindRecord(parser.DigestHash(record.OriginalSQL), newRecord)
+	h.ch.setBindRecord(parser.DigestNormalized(record.OriginalSQL), newRecord)
 	updateMetrics(metrics.ScopeSession, oldRecord, newRecord, false)
+	return nil
 }
 
 // GetBindRecord return the BindMeta of the (normdOrigSQL,db) if BindMeta exist.
 func (h *SessionHandle) GetBindRecord(normdOrigSQL, db string) *BindRecord {
-	hash := parser.DigestHash(normdOrigSQL)
+	hash := parser.DigestNormalized(normdOrigSQL)
 	bindRecords := h.ch[hash]
-	if bindRecords != nil {
-		for _, bindRecord := range bindRecords {
-			if bindRecord.OriginalSQL == normdOrigSQL && bindRecord.Db == db {
-				return bindRecord
-			}
+	for _, bindRecord := range bindRecords {
+		if bindRecord.OriginalSQL == normdOrigSQL && bindRecord.Db == db {
+			return bindRecord
 		}
 	}
 	return nil

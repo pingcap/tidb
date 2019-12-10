@@ -44,6 +44,9 @@ oom-action = "log"
 # Enable coprocessor streaming.
 enable-streaming = false
 
+# Enable batch commit for the DMLs.
+enable-batch-dml = false
+
 # Set system variable 'lower_case_table_names'
 lower-case-table-names = 2
 
@@ -65,6 +68,24 @@ delay-clean-table-lock = 0
 
 # Maximum number of the splitting region, which is used by the split region statement.
 split-region-max-num = 1000
+
+# alter-primary-key is used to control alter primary key feature. Default is false, indicate the alter primary key feature is disabled.
+# If it is true, we can add the primary key by "alter table", but we may not be able to drop the primary key.
+# In order to support "drop primary key" operation , this flag must be true and the table does not have the pkIsHandle flag.
+alter-primary-key = false
+
+# server-version is used to change the version string of TiDB in the following scenarios:
+# 1. the server version returned by builtin-function `VERSION()`.
+# 2. the server version filled in handshake packets of MySQL Connection Protocol, see https://dev.mysql.com/doc/internals/en/connection-phase-packets.html#packet-Protocol::Handshake for more details.
+# if server-version = "", the default value(original TiDB version string) is used.
+server-version = ""
+
+# repair mode is used to repair the broken table meta in TiKV in extreme cases.
+repair-mode = false
+
+# Repair table list is used to list the tables in repair mode with the format like ["db.table",].
+# In repair mode, repairing table which is not in repair list will get wrong database or wrong table error.
+repair-table-list = []
 
 [log]
 # Log level: debug, info, warn, error, fatal.
@@ -135,14 +156,16 @@ report-status = true
 # TiDB status host.
 status-host = "0.0.0.0"
 
-# Prometheus pushgateway address, leaves it empty will disable prometheus push.
+## status-host is the HTTP address for reporting the internal status of a TiDB server, for example:
+## API for prometheus: http://${status-host}:${status_port}/metrics
+## API for pprof:      http://${status-host}:${status_port}/debug/pprof
 # TiDB status port.
 status-port = 10080
 
-# Prometheus pushgateway address, leaves it empty will disable prometheus push.
+# Prometheus pushgateway address, leaves it empty will disable push to pushgateway.
 metrics-addr = ""
 
-# Prometheus client push interval in second, set \"0\" to disable prometheus push.
+# Prometheus client push interval in second, set \"0\" to disable push to pushgateway.
 metrics-interval = 15
 
 # Record statements qps by database name if it is enabled.
@@ -191,7 +214,7 @@ bind-info-lease = "3s"
 # If using TiKV as the storage, the entry represents a key/value pair.
 # WARNING: Do not set the value too large, otherwise it will make a very large impact on the TiKV cluster.
 # Please adjust this configuration carefully.
-txn-total-size-limit = 104857600
+txn-total-size-limit = 1073741824
 
 [proxy-protocol]
 # PROXY protocol acceptable client networks.
@@ -281,12 +304,17 @@ max-batch-wait-time = 0
 # Batch wait size, to avoid waiting too long.
 batch-wait-size = 8
 
-# Enable chunk encoded data.
-enable-arrow = true
+# Enable chunk encoded data for coprocessor requests.
+enable-chunk-rpc = true
 
 # If a Region has not been accessed for more than the given duration (in seconds), it
 # will be reloaded from the PD.
 region-cache-ttl = 600
+
+# store-limit is used to restrain TiDB from sending request to some stores which is up to the limit.
+# If a store has been up to the limit, it will return error for the successive request in same store.
+# default 0 means shutting off store limit.
+store-limit = 0
 
 [txn-local-latches]
 # Enable local latches for transactions. Enable it when
@@ -318,13 +346,18 @@ enable = true
 # max retry count for a statement in a pessimistic transaction.
 max-retry-count = 256
 
-# default TTL in milliseconds for pessimistic lock.
-# The value must between "3s" and "30s".
-ttl = "10s"
-
 [stmt-summary]
+# enable statement summary.
+enable = false
+
 # max number of statements kept in memory.
 max-stmt-count = 100
 
 # max length of displayed normalized sql and sample sql.
 max-sql-length = 4096
+
+# the refresh interval of statement summary, it's counted in seconds.
+refresh-interval = 1800
+
+# the maximum history size of statement summary.
+history-size = 24

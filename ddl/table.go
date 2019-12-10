@@ -79,7 +79,7 @@ func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 		asyncNotifyEvent(d, &util.Event{Tp: model.ActionCreateTable, TableInfo: tbInfo})
 		return ver, nil
 	default:
-		return ver, ErrInvalidTableState.GenWithStack("invalid table state %v", tbInfo.State)
+		return ver, ErrInvalidDDLState.GenWithStackByArgs("table", tbInfo.State)
 	}
 }
 
@@ -90,6 +90,15 @@ func createTableOrViewWithCheck(t *meta.Meta, job *model.Job, schemaID int64, tb
 		return errors.Trace(err)
 	}
 	return t.CreateTableOrView(schemaID, tbInfo)
+}
+
+func repairTableOrViewWithCheck(t *meta.Meta, job *model.Job, schemaID int64, tbInfo *model.TableInfo) error {
+	err := checkTableInfoValid(tbInfo)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return errors.Trace(err)
+	}
+	return t.UpdateTable(schemaID, tbInfo)
 }
 
 func onCreateView(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
@@ -141,7 +150,7 @@ func onCreateView(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) 
 		asyncNotifyEvent(d, &util.Event{Tp: model.ActionCreateView, TableInfo: tbInfo})
 		return ver, nil
 	default:
-		return ver, ErrInvalidTableState.GenWithStack("invalid view state %v", tbInfo.State)
+		return ver, ErrInvalidDDLState.GenWithStackByArgs("table", tbInfo.State)
 	}
 }
 
@@ -177,7 +186,7 @@ func onDropTableOrView(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		startKey := tablecodec.EncodeTablePrefix(job.TableID)
 		job.Args = append(job.Args, startKey, getPartitionIDs(tblInfo))
 	default:
-		err = ErrInvalidTableState.GenWithStack("invalid table state %v", tblInfo.State)
+		err = ErrInvalidDDLState.GenWithStackByArgs("table", tblInfo.State)
 	}
 
 	return ver, errors.Trace(err)
@@ -264,7 +273,13 @@ func (w *worker) onRecoverTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 			return ver, errors.Trace(err)
 		}
 		// Remove dropped table DDL job from gc_delete_range table.
-		err = w.delRangeManager.removeFromGCDeleteRange(dropJobID, tblInfo.ID)
+		var tids []int64
+		if tblInfo.GetPartitionInfo() != nil {
+			tids = getPartitionIDs(tblInfo)
+		} else {
+			tids = []int64{tblInfo.ID}
+		}
+		err = w.delRangeManager.removeFromGCDeleteRange(dropJobID, tids)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -290,7 +305,7 @@ func (w *worker) onRecoverTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 	default:
-		return ver, ErrInvalidTableState.GenWithStack("invalid recover table state %v", tblInfo.State)
+		return ver, ErrInvalidDDLState.GenWithStackByArgs("table", tblInfo.State)
 	}
 	return ver, nil
 }
@@ -353,7 +368,7 @@ func getTableInfoAndCancelFaultJob(t *meta.Meta, job *model.Job, schemaID int64)
 
 	if tblInfo.State != model.StatePublic {
 		job.State = model.JobStateCancelled
-		return nil, ErrInvalidTableState.GenWithStack("table %s is not in public, but %s", tblInfo.Name, tblInfo.State)
+		return nil, ErrInvalidDDLState.GenWithStack("table %s is not in public, but %s", tblInfo.Name, tblInfo.State)
 	}
 
 	return tblInfo, nil
@@ -895,4 +910,47 @@ func checkAddPartitionValue(meta *model.TableInfo, part *model.PartitionInfo) er
 		}
 	}
 	return nil
+}
+
+func onRepairTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
+	schemaID := job.SchemaID
+	tblInfo := &model.TableInfo{}
+
+	if err := job.DecodeArgs(tblInfo); err != nil {
+		// Invalid arguments, cancel this job.
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+
+	tblInfo.State = model.StateNone
+
+	// Check the old DB and old table exist.
+	_, err := getTableInfoAndCancelFaultJob(t, job, schemaID)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+
+	// When in repair mode, the repaired table in a server is not access to user,
+	// the table after repairing will be removed from repair list. Other server left
+	// behind alive may need to restart to get the latest schema version.
+	ver, err = updateSchemaVersion(t, job)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	switch tblInfo.State {
+	case model.StateNone:
+		// none -> public
+		tblInfo.State = model.StatePublic
+		tblInfo.UpdateTS = t.StartTS
+		err = repairTableOrViewWithCheck(t, job, schemaID, tblInfo)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		// Finish this job.
+		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
+		asyncNotifyEvent(d, &util.Event{Tp: model.ActionRepairTable, TableInfo: tblInfo})
+		return ver, nil
+	default:
+		return ver, ErrInvalidDDLState.GenWithStackByArgs("table", tblInfo.State)
+	}
 }

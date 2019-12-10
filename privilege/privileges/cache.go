@@ -38,7 +38,6 @@ var (
 	userTablePrivilegeMask = computePrivMask(mysql.AllGlobalPrivs)
 	dbTablePrivilegeMask   = computePrivMask(mysql.AllDBPrivs)
 	tablePrivMask          = computePrivMask(mysql.AllTablePrivs)
-	columnPrivMask         = computePrivMask(mysql.AllColumnPrivs)
 )
 
 func computePrivMask(privs []mysql.PrivilegeType) mysql.PrivilegeType {
@@ -148,9 +147,7 @@ type MySQLPrivilege struct {
 // FindAllRole is used to find all roles grant to this user.
 func (p *MySQLPrivilege) FindAllRole(activeRoles []*auth.RoleIdentity) []*auth.RoleIdentity {
 	queue, head := make([]*auth.RoleIdentity, 0, len(activeRoles)), 0
-	for _, r := range activeRoles {
-		queue = append(queue, r)
-	}
+	queue = append(queue, activeRoles...)
 	// Using breadth first search to find all roles grant to this user.
 	visited, ret := make(map[string]bool), make([]*auth.RoleIdentity, 0)
 	for head < len(queue) {

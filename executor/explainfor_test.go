@@ -83,6 +83,8 @@ func (s *testSuite) TestExplainFor(c *C) {
 func (s *testSuite) TestIssue11124(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk2 := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists kankan1")
+	tk.MustExec("drop table if exists kankan2")
 	tk.MustExec("create table kankan1(id int, name text);")
 	tk.MustExec("create table kankan2(id int, h1 text);")
 	tk.MustExec("insert into kankan1 values(1, 'a'), (2, 'a');")

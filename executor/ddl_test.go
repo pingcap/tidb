@@ -556,6 +556,11 @@ func (s *testSuite6) TestTooLargeIdentifierLength(c *C) {
 	tk.MustExec(fmt.Sprintf("drop index %s on t", indexName1))
 	_, err = tk.Exec(fmt.Sprintf("create index %s on t(c)", indexName2))
 	c.Assert(err.Error(), Equals, fmt.Sprintf("[ddl:1059]Identifier name '%s' is too long", indexName2))
+
+	// for create table with index.
+	tk.MustExec("drop table t;")
+	_, err = tk.Exec(fmt.Sprintf("create table t(c int, index %s(c));", indexName2))
+	c.Assert(err.Error(), Equals, fmt.Sprintf("[ddl:1059]Identifier name '%s' is too long", indexName2))
 }
 
 func (s *testSuite8) TestShardRowIDBits(c *C) {
@@ -606,10 +611,10 @@ func (s *testSuite8) TestShardRowIDBits(c *C) {
 
 	// After PR 10759, shard_row_id_bits is not supported with pk_is_handle tables.
 	err = tk.ExecToErr("create table auto (id int not null auto_increment primary key, b int) shard_row_id_bits = 4")
-	c.Assert(err.Error(), Equals, "[ddl:207]unsupported shard_row_id_bits for table with primary key as row id.")
+	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported shard_row_id_bits for table with primary key as row id")
 	tk.MustExec("create table auto (id int not null auto_increment primary key, b int) shard_row_id_bits = 0")
 	err = tk.ExecToErr("alter table auto shard_row_id_bits = 5")
-	c.Assert(err.Error(), Equals, "[ddl:207]unsupported shard_row_id_bits for table with primary key as row id.")
+	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported shard_row_id_bits for table with primary key as row id")
 	tk.MustExec("alter table auto shard_row_id_bits = 0")
 
 	// Hack an existing table with shard_row_id_bits and primary key as handle
