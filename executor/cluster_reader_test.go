@@ -141,6 +141,24 @@ func (s *testClusterReaderSuite) TestTiDBClusterConfig(c *C) {
 		reqCount int32
 	}{
 		{
+			sql:      "select * from information_schema.cluster_config",
+			reqCount: 9,
+		},
+		// FIXME: the OR does not extract in current implementation, it equals IN ('pd', 'tikv')
+		// 		  and this filter are handled in Selection executor
+		{
+			sql:      "select * from information_schema.cluster_config where type='pd' or type='tikv'",
+			reqCount: 9,
+		},
+		{
+			sql:      "select * from information_schema.cluster_config where type='pd' or address='" + testServers[0].address + "'",
+			reqCount: 9,
+		},
+		{
+			sql:      "select * from information_schema.cluster_config where type='pd' and type='tikv'",
+			reqCount: 0,
+		},
+		{
 			sql:      "select * from information_schema.cluster_config where type='tikv'",
 			reqCount: 3,
 		},
