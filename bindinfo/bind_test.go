@@ -454,14 +454,13 @@ func (s *testSuite) TestBindingSymbolList(c *C) {
 	bindData := s.domain.BindHandle().GetBindRecord(hash, sql, "test")
 	c.Assert(bindData, NotNil)
 	c.Check(bindData.OriginalSQL, Equals, "select a , b from t where a = ? limit ...")
-	bind := bindData.Bindings[0]
-	c.Check(bind.BindSQL, Equals, "select a, b from t use index (ib) where a = 1 limit 0, 1")
+	c.Check(bindData.BindSQL, Equals, "select a, b from t use index (ib) where a = 1 limit 0, 1")
 	c.Check(bindData.Db, Equals, "test")
-	c.Check(bind.Status, Equals, "using")
-	c.Check(bind.Charset, NotNil)
-	c.Check(bind.Collation, NotNil)
-	c.Check(bind.CreateTime, NotNil)
-	c.Check(bind.UpdateTime, NotNil)
+	c.Check(bindData.Status, Equals, "using")
+	c.Check(bindData.Charset, NotNil)
+	c.Check(bindData.Collation, NotNil)
+	c.Check(bindData.CreateTime, NotNil)
+	c.Check(bindData.UpdateTime, NotNil)
 }
 
 func (s *testSuite) TestErrorBind(c *C) {
