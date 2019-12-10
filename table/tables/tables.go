@@ -51,6 +51,7 @@ type TableCommon struct {
 	Columns         []*table.Column
 	PublicColumns   []*table.Column
 	VisibleColumns  []*table.Column
+	HiddenColumns	[]*table.Column
 	WritableColumns []*table.Column
 	writableIndices []table.Index
 	indices         []table.Index
@@ -140,6 +141,7 @@ func initTableCommon(t *TableCommon, tblInfo *model.TableInfo, physicalTableID i
 	t.Columns = cols
 	t.PublicColumns = t.Cols()
 	t.VisibleColumns = t.VisibleCols()
+	t.HiddenColumns = t.HiddenCols()
 	t.WritableColumns = t.WritableCols()
 	t.writableIndices = t.WritableIndices()
 	t.recordPrefix = tablecodec.GenTableRecordPrefix(physicalTableID)
@@ -241,8 +243,11 @@ func (t *TableCommon) VisibleCols() []*table.Column {
 	return t.getCols(visible)
 }
 
-// HiddenCols returns the hidden columns of the table.
+// HiddenCols implements table.Table HiddenCols interface.
 func (t *TableCommon) HiddenCols() []*table.Column {
+	if len(t.HiddenColumns) > 0 {
+		return t.HiddenColumns
+	}
 	return t.getCols(hidden)
 }
 

@@ -150,6 +150,11 @@ func (vt *perfSchemaTable) VisibleCols() []*table.Column {
 	return vt.cols
 }
 
+// HiddenCols implements table.Table HiddenCols interface.
+func (vt *perfSchemaTable) HiddenCols() []*table.Column {
+	return nil
+}
+
 // WritableCols implements table.Table Type interface.
 func (vt *perfSchemaTable) WritableCols() []*table.Column {
 	return vt.cols

@@ -411,6 +411,7 @@ func (ts *testSuite) TestHiddenColumn(c *C) {
 	// Reset related caches
 	tc.VisibleColumns = nil
 	tc.WritableColumns = nil
+	tc.HiddenColumns = nil
 
 	// Basic test
 	cols := tb.VisibleCols()
@@ -419,7 +420,7 @@ func (ts *testSuite) TestHiddenColumn(c *C) {
 	c.Assert(table.FindCol(cols, "c"), NotNil)
 	c.Assert(table.FindCol(cols, "d"), IsNil)
 	c.Assert(table.FindCol(cols, "e"), NotNil)
-	hiddenCols := tc.HiddenCols()
+	hiddenCols := tb.HiddenCols()
 	c.Assert(table.FindCol(hiddenCols, "a"), IsNil)
 	c.Assert(table.FindCol(hiddenCols, "b"), NotNil)
 	c.Assert(table.FindCol(hiddenCols, "c"), IsNil)
