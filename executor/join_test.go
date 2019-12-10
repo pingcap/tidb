@@ -1771,6 +1771,9 @@ func (s *testSuiteJoin1) TestIssue11390(c *C) {
 	tk.MustQuery("select /*+ INL_MERGE_JOIN(t1, t2) */ * from 11390t t1, 11390t t2 where t1.k2 > 0 and t1.k2 = t2.k2 and t2.k1=1;").Check(testkit.Rows("1 1 1 1"))
 }
 
+func (s *testSuiteJoin1) TestOuterHashJoin(c *C) {
+
+}
 func (s *testSuiteJoin1) TestIssue13177(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")

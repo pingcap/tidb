@@ -227,7 +227,7 @@ func (j *baseJoiner) filterAndCheckOuterRowStatus(input, output *chunk.Chunk, in
 		innerColOffset, outerColOffset = input.NumCols()-innerColsLen, 0
 	}
 
-	_, err = chunk.CopySelectedJoinRows(input, innerColOffset, outerColOffset, j.selected, output)
+	_, err = chunk.CopySelectedJoinRowsDirect(input, innerColOffset, outerColOffset, j.selected, output)
 	return outerRowStatus, err
 }
 
