@@ -16,10 +16,11 @@ package bindinfo
 import (
 	"context"
 	"fmt"
-	"go.uber.org/zap"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"go.uber.org/zap"
 
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/mysql"
@@ -304,7 +305,7 @@ func (h *BindHandle) GetAllBindRecord() (bindRecords []*BindMeta) {
 }
 
 func (h *BindHandle) newBindMeta(record *BindRecord) (hash string, meta *BindMeta, err error) {
-	hash = parser.DigestHash(record.OriginalSQL)
+	hash = parser.DigestNormalized(record.OriginalSQL)
 	stmtNodes, _, err := h.bindInfo.parser.Parse(record.BindSQL, record.Charset, record.Collation)
 	if err != nil {
 		return "", nil, err
@@ -314,7 +315,7 @@ func (h *BindHandle) newBindMeta(record *BindRecord) (hash string, meta *BindMet
 }
 
 func newBindMetaWithoutAst(record *BindRecord) (hash string, meta *BindMeta) {
-	hash = parser.DigestHash(record.OriginalSQL)
+	hash = parser.DigestNormalized(record.OriginalSQL)
 	meta = &BindMeta{BindRecord: record}
 	return hash, meta
 }

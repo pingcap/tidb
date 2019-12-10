@@ -1109,7 +1109,7 @@ func (s *session) handleInvalidBindRecord(ctx context.Context, stmtNode ast.Stmt
 			normalizeExplainSQL := parser.Normalize(x.Text())
 			idx := strings.Index(normalizeExplainSQL, "select")
 			normdOrigSQL = normalizeExplainSQL[idx:]
-			hash = parser.DigestHash(normdOrigSQL)
+			hash = parser.DigestNormalized(normdOrigSQL)
 		default:
 			return
 		}

@@ -45,7 +45,7 @@ func (h *SessionHandle) appendBindMeta(hash string, meta *BindMeta) {
 }
 
 func (h *SessionHandle) newBindMeta(record *BindRecord) (hash string, meta *BindMeta, err error) {
-	hash = parser.DigestHash(record.OriginalSQL)
+	hash = parser.DigestNormalized(record.OriginalSQL)
 	stmtNodes, _, err := h.parser.Parse(record.BindSQL, record.Charset, record.Collation)
 	if err != nil {
 		return "", nil, err
@@ -75,14 +75,14 @@ func (h *SessionHandle) AddBindRecord(record *BindRecord) error {
 func (h *SessionHandle) DropBindRecord(record *BindRecord) {
 	meta := &BindMeta{BindRecord: record}
 	meta.Status = deleted
-	hash := parser.DigestHash(record.OriginalSQL)
+	hash := parser.DigestNormalized(record.OriginalSQL)
 	h.ch.removeDeletedBindMeta(hash, meta, metrics.ScopeSession)
 	h.appendBindMeta(hash, meta)
 }
 
 // GetBindRecord return the BindMeta of the (normdOrigSQL,db) if BindMeta exist.
 func (h *SessionHandle) GetBindRecord(normdOrigSQL, db string) *BindMeta {
-	hash := parser.DigestHash(normdOrigSQL)
+	hash := parser.DigestNormalized(normdOrigSQL)
 	bindRecords := h.ch[hash]
 	if bindRecords != nil {
 		for _, bindRecord := range bindRecords {
