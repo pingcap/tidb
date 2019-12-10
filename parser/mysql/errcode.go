@@ -1010,6 +1010,15 @@ const (
 	ErrColumnStateCantNone                 = 8046
 	ErrUnsupportedValueForVar              = 8047
 	ErrUnsupportedIsolationLevel           = 8048
+	ErrLoadPrivilege                       = 8049
+	ErrInvalidPrivilegeType                = 8050
+	ErrUnknownFieldType                    = 8051
+	ErrInvalidSequence                     = 8052
+	ErrCantGetValidID                      = 8053
+	ErrCantSetToNull                       = 8054
+	ErrSnapshotTooOld                      = 8055
+	ErrInvalidTableID                      = 8056
+	ErrInvalidType                         = 8057
 
 	// Error codes used by TiDB ddl package
 	ErrUnsupportedDDLOperation  = 8200
