@@ -156,6 +156,19 @@ func (s *testSuite1) checkMemoryInfo(c *C, tk *testkit.TestKit, sql string) {
 	}
 }
 
+func (s *testSuite1) TestMemoryUsageAfterClose(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (v int, k int, key(k))")
+	tk.MustExec("insert into t values (1, 1), (1, 1), (1, 1), (1, 1), (1, 1)")
+	SQLs := []string{"explain analyze select v+abs(k) from t"}
+	for _, sql := range SQLs {
+		tk.MustQuery(sql)
+		c.Assert(tk.Se.GetSessionVars().StmtCtx.MemTracker.BytesConsumed(), Equals, int64(0))
+		c.Assert(tk.Se.GetSessionVars().StmtCtx.MemTracker.MaxConsumed(), Greater, int64(0))
+	}
+}
+
 func (s *testSuite2) TestExplainAnalyzeExecutionInfo(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("drop table if exists t")
