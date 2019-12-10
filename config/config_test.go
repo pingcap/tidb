@@ -115,7 +115,7 @@ max-sql-length=1024
 	// Make sure the example config is the same as default config.
 	c.Assert(conf, DeepEquals, GetGlobalConfig())
 
-	// Test for lof config.
+	// Test for log config.
 	c.Assert(conf.Log.ToLogConfig(), DeepEquals, logutil.NewLogConfig("info", "text", "tidb-slow.log", conf.Log.File, false))
 
 	// Test for tracing config.
