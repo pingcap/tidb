@@ -828,7 +828,7 @@ func getPlanTree(p plannercore.Plan) string {
 	return variable.SlowLogPlanPrefix + planTree + variable.SlowLogPlanSuffix
 }
 
-// getPlanTree will try to get the select plan tree if the plan is select or the select plan of delete/update/insert statement.
+// getPlanDigest will try to get the select plan tree if the plan is select or the select plan of delete/update/insert statement.
 func getPlanDigest(sctx sessionctx.Context, p plannercore.Plan) (normalized, planDigest string) {
 	normalized, planDigest = sctx.GetSessionVars().StmtCtx.GetPlanDigest()
 	if len(normalized) > 0 {
