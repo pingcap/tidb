@@ -136,23 +136,68 @@ func (s *testClusterReaderSuite) TestTiDBClusterConfig(c *C) {
 	c.Assert(len(warnings), Equals, 0, Commentf("unexpected warnigns: %+v", warnings))
 	c.Assert(requestCounter, Equals, int32(9))
 
+	// type => server index => row
+	rows := map[string][][]string{}
+	for _, typ := range []string{"tidb", "tikv", "pd"} {
+		for _, server := range testServers {
+			rows[typ] = append(rows[typ], []string{
+				fmt.Sprintf("%s %s key1 value1", typ, server.address),
+				fmt.Sprintf("%s %s key2.nest1 n-value1", typ, server.address),
+				fmt.Sprintf("%s %s key2.nest2 n-value2", typ, server.address),
+			})
+		}
+	}
+	var flatten = func(ss ...[]string) []string {
+		var result []string
+		for _, xs := range ss {
+			result = append(result, xs...)
+		}
+		return result
+	}
 	var cases = []struct {
 		sql      string
 		reqCount int32
+		rows     []string
 	}{
 		{
 			sql:      "select * from information_schema.cluster_config",
 			reqCount: 9,
+			rows: flatten(
+				rows["tidb"][0],
+				rows["tidb"][1],
+				rows["tidb"][2],
+				rows["tikv"][0],
+				rows["tikv"][1],
+				rows["tikv"][2],
+				rows["pd"][0],
+				rows["pd"][1],
+				rows["pd"][2],
+			),
 		},
 		// FIXME: the OR does not extract in current implementation, it equals IN ('pd', 'tikv')
 		// 		  and this filter are handled in Selection executor
 		{
 			sql:      "select * from information_schema.cluster_config where type='pd' or type='tikv'",
 			reqCount: 9,
+			rows: flatten(
+				rows["tikv"][0],
+				rows["tikv"][1],
+				rows["tikv"][2],
+				rows["pd"][0],
+				rows["pd"][1],
+				rows["pd"][2],
+			),
 		},
 		{
 			sql:      "select * from information_schema.cluster_config where type='pd' or address='" + testServers[0].address + "'",
 			reqCount: 9,
+			rows: flatten(
+				rows["tidb"][0],
+				rows["tikv"][0],
+				rows["pd"][0],
+				rows["pd"][1],
+				rows["pd"][2],
+			),
 		},
 		{
 			sql:      "select * from information_schema.cluster_config where type='pd' and type='tikv'",
@@ -161,51 +206,112 @@ func (s *testClusterReaderSuite) TestTiDBClusterConfig(c *C) {
 		{
 			sql:      "select * from information_schema.cluster_config where type='tikv'",
 			reqCount: 3,
+			rows: flatten(
+				rows["tikv"][0],
+				rows["tikv"][1],
+				rows["tikv"][2],
+			),
 		},
 		{
 			sql:      "select * from information_schema.cluster_config where type='pd'",
 			reqCount: 3,
+			rows: flatten(
+				rows["pd"][0],
+				rows["pd"][1],
+				rows["pd"][2],
+			),
 		},
 		{
 			sql:      "select * from information_schema.cluster_config where type='tidb'",
 			reqCount: 3,
+			rows: flatten(
+				rows["tidb"][0],
+				rows["tidb"][1],
+				rows["tidb"][2],
+			),
 		},
 		{
 			sql:      "select * from information_schema.cluster_config where 'tidb'=type",
 			reqCount: 3,
+			rows: flatten(
+				rows["tidb"][0],
+				rows["tidb"][1],
+				rows["tidb"][2],
+			),
 		},
 		{
 			sql:      "select * from information_schema.cluster_config where type in ('tidb', 'tikv')",
 			reqCount: 6,
+			rows: flatten(
+				rows["tidb"][0],
+				rows["tidb"][1],
+				rows["tidb"][2],
+				rows["tikv"][0],
+				rows["tikv"][1],
+				rows["tikv"][2],
+			),
 		},
 		{
 			sql:      "select * from information_schema.cluster_config where type in ('tidb', 'tikv', 'pd')",
 			reqCount: 9,
+			rows: flatten(
+				rows["tidb"][0],
+				rows["tidb"][1],
+				rows["tidb"][2],
+				rows["tikv"][0],
+				rows["tikv"][1],
+				rows["tikv"][2],
+				rows["pd"][0],
+				rows["pd"][1],
+				rows["pd"][2],
+			),
 		},
 		{
 			sql: fmt.Sprintf(`select * from information_schema.cluster_config where address='%s'`,
 				testServers[0].address),
 			reqCount: 3,
+			rows: flatten(
+				rows["tidb"][0],
+				rows["tikv"][0],
+				rows["pd"][0],
+			),
 		},
 		{
 			sql: fmt.Sprintf(`select * from information_schema.cluster_config where type='tidb' and address='%s'`,
 				testServers[0].address),
 			reqCount: 1,
+			rows: flatten(
+				rows["tidb"][0],
+			),
 		},
 		{
 			sql: fmt.Sprintf(`select * from information_schema.cluster_config where type in ('tidb', 'tikv') and address='%s'`,
 				testServers[0].address),
 			reqCount: 2,
+			rows: flatten(
+				rows["tidb"][0],
+				rows["tikv"][0],
+			),
 		},
 		{
 			sql: fmt.Sprintf(`select * from information_schema.cluster_config where type in ('tidb', 'tikv') and address in ('%s', '%s')`,
 				testServers[0].address, testServers[0].address),
 			reqCount: 2,
+			rows: flatten(
+				rows["tidb"][0],
+				rows["tikv"][0],
+			),
 		},
 		{
 			sql: fmt.Sprintf(`select * from information_schema.cluster_config where type in ('tidb', 'tikv') and address in ('%s', '%s')`,
 				testServers[0].address, testServers[1].address),
 			reqCount: 4,
+			rows: flatten(
+				rows["tidb"][0],
+				rows["tidb"][1],
+				rows["tikv"][0],
+				rows["tikv"][1],
+			),
 		},
 		{
 			sql: fmt.Sprintf(`select * from information_schema.cluster_config where type in ('tidb', 'tikv') and type='pd' and address in ('%s', '%s')`,
@@ -221,13 +327,17 @@ func (s *testClusterReaderSuite) TestTiDBClusterConfig(c *C) {
 			sql: fmt.Sprintf(`select * from information_schema.cluster_config where type in ('tidb', 'tikv') and address in ('%s', '%s') and address='%s'`,
 				testServers[0].address, testServers[1].address, testServers[0].address),
 			reqCount: 2,
+			rows: flatten(
+				rows["tidb"][0],
+				rows["tikv"][0],
+			),
 		},
 	}
 
 	for _, ca := range cases {
 		// reset the request counter
 		requestCounter = 0
-		tk.MustQuery(ca.sql)
+		tk.MustQuery(ca.sql).Check(testkit.Rows(ca.rows...))
 		warnings := tk.Se.GetSessionVars().StmtCtx.GetWarnings()
 		c.Assert(len(warnings), Equals, 0, Commentf("unexpected warnigns: %+v", warnings))
 		c.Assert(requestCounter, Equals, ca.reqCount, Commentf("SQL: %s", ca.sql))
