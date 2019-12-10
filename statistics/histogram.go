@@ -152,7 +152,9 @@ func (c *Column) AvgColSizeChunkFormat(count int64) float64 {
 	}
 	// Keep two decimal place.
 	// Add 8 bytes for unfixed-len type's offsets.
-	return math.Round(float64(c.TotColSize)/float64(count)*100)/100 + 8
+	// Minus Log2(avgSize) for unfixed-len type LEN.
+	avgSize := float64(c.TotColSize) / float64(count)
+	return math.Round((avgSize-math.Log2(avgSize))*100)/100 + 8
 }
 
 // AvgColSizeListInDisk is the average column size of the histogram. These sizes are derived
