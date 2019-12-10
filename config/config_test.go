@@ -20,6 +20,7 @@ import (
 	"testing"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/util/logutil"
 	tracing "github.com/uber/jaeger-client-go/config"
 )
@@ -65,6 +66,7 @@ unrecognized-option-test = true
 token-limit = 0
 alter-primary-key = true
 split-region-max-num=10000
+server-version = "test_version"
 [performance]
 txn-entry-count-limit=2000
 txn-total-size-limit=2000
@@ -83,6 +85,8 @@ max-sql-length=1024
 
 	c.Assert(conf.Load(configFile), IsNil)
 
+	c.Assert(conf.ServerVersion, Equals, "test_version")
+	c.Assert(mysql.ServerVersion, Equals, conf.ServerVersion)
 	// Test that the original value will not be clear by load the config file that does not contain the option.
 	c.Assert(conf.Binlog.Enable, Equals, true)
 	c.Assert(conf.Binlog.Strategy, Equals, "hash")

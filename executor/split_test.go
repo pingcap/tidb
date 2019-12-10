@@ -301,7 +301,7 @@ func (s *testSplitIndex) TestSplitTable(c *C) {
 			},
 		},
 	}
-	defer func(originValue uint64) {
+	defer func(originValue int64) {
 		minRegionStepValue = originValue
 	}(minRegionStepValue)
 	minRegionStepValue = 10
