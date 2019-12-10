@@ -585,7 +585,7 @@
       },
       {
         "SQL": "select (select count(*) from t s, t t1 where s.a = t.a and s.a = t1.a) from t order by t.a",
-        "Best": "LeftHashJoin{IndexReader(Index(t.f)[[NULL,+inf]])->LeftHashJoin{IndexReader(Index(t.f)[[NULL,+inf]])->IndexReader(Index(t.f)[[NULL,+inf]])}(test.t.a,test.t.a)->HashAgg}(test.t.a,test.t.a)->Projection->Sort->Projection"
+        "Best": "MergeLeftOuterJoin{TableReader(Table(t))->MergeInnerJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t.a,test.t.a)->StreamAgg}(test.t.a,test.t.a)->Projection->Projection"
       }
     ]
   },
