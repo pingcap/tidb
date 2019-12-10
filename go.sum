@@ -254,8 +254,6 @@ github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2 h1:mbAskLJ0oJf
 github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2/go.mod h1:2PfKggNGDuadAa0LElHrByyrz4JPZ9fFx6Gs7nx7ZZU=
 github.com/tiancaiamao/check v0.0.0-20191119042138-8e73d07b629d h1:TMYOU9yCm2egiuzypRgFlVDw/5LzkJZaTmT26GPyFtE=
 github.com/tiancaiamao/check v0.0.0-20191119042138-8e73d07b629d/go.mod h1:PYMCGwN0JHjoqGr3HrZoD+b8Tgx8bKnArhSq8YVzUMc=
-github.com/tiancaiamao/parser v0.0.0-20191210025122-c1845fcb5e88 h1:9mqqGfdRgGkVZxa1Pu4CTlwTpTtRN9QICtl2GcCSO+g=
-github.com/tiancaiamao/parser v0.0.0-20191210025122-c1845fcb5e88/go.mod h1:vqvanuOAAZ9O2rVI51fUrA9P3nV7HoILjLby0/OKOqA=
 github.com/tiancaiamao/parser v0.0.0-20191210025557-86c4200bbf65 h1:Gzi5Pcb3V7M+1ETRMHuJoaQeKri8z7kgHuQNX5rL15M=
 github.com/tiancaiamao/parser v0.0.0-20191210025557-86c4200bbf65/go.mod h1:vqvanuOAAZ9O2rVI51fUrA9P3nV7HoILjLby0/OKOqA=
 github.com/tmc/grpc-websocket-proxy v0.0.0-20170815181823-89b8d40f7ca8/go.mod h1:ncp9v5uamzpCO7NfCPTXjqaC+bZgJeR0sMTm6dMHP7U=
