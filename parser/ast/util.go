@@ -13,6 +13,13 @@
 
 package ast
 
+import "math"
+
+// UnspecifiedSize is unspecified size.
+const (
+	UnspecifiedSize = math.MaxUint64
+)
+
 // IsReadOnly checks whether the input ast is readOnly.
 func IsReadOnly(node Node) bool {
 	switch st := node.(type) {
