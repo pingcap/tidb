@@ -80,3 +80,5 @@ require (
 go 1.13
 
 replace github.com/pingcap/check => github.com/tiancaiamao/check v0.0.0-20191119042138-8e73d07b629d
+
+replace github.com/coreos/go-systemd => github.com/5kbpers/go-systemd v0.0.0-20191209150347-994f05092cc6
