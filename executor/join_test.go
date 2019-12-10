@@ -1771,9 +1771,24 @@ func (s *testSuiteJoin1) TestIssue11390(c *C) {
 	tk.MustQuery("select /*+ INL_MERGE_JOIN(t1, t2) */ * from 11390t t1, 11390t t2 where t1.k2 > 0 and t1.k2 = t2.k2 and t2.k1=1;").Check(testkit.Rows("1 1 1 1"))
 }
 
-func (s *testSuiteJoin1) TestOuterHashJoin(c *C) {
+func (s *testSuiteJoin1) TestOuterTableBuildHashTable(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t, s")
+	tk.MustExec("create table t (a int,b int)")
+	tk.MustExec("create table s (a int,b int)")
+	tk.MustExec("insert into t values (11,11),(1,2)")
+	tk.MustExec("insert into s values (1,2),(2,1),(11,11)")
+	tk.MustQuery("select * from t left join s on s.a > t.a").Sort().Check(testkit.Rows("1 2 11 11", "1 2 2 1", "11 11 <nil> <nil>"))
 
+	tk.MustExec("drop table if exists t, s")
+	tk.MustExec("Create table s (a int, b int, key(b))")
+	tk.MustExec("Create table t (a int, b int, key(b))")
+	tk.MustExec("Insert into s values (1,2),(2,1),(11,11)")
+	tk.MustExec("Insert into t values (11,2),(1,2),(5,2)")
+	tk.MustQuery("select /*+ INL_HASH_JOIN(s)*/ * from t left join s on s.b=t.b and s.a < t.a;").Sort().Check(testkit.Rows("1 2 <nil> <nil>", "11 2 1 2", "5 2 1 2"))
 }
+
 func (s *testSuiteJoin1) TestIssue13177(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
