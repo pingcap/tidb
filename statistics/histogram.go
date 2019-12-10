@@ -173,8 +173,9 @@ func (c *Column) AvgColSizeListInDisk(count int64) float64 {
 		return float64(size) * notNullRatio
 	}
 	// Keep two decimal place.
-	// size of varchar type is LEN + BYTE, so we minus 1 here.
-	return math.Round(float64(c.TotColSize)/float64(count)*100)/100 - 1
+	// Minus Log2(avgSize) for unfixed-len type LEN.
+	avgSize := float64(c.TotColSize) / float64(count)
+	return math.Round((avgSize-math.Log2(avgSize))*100) / 100
 }
 
 // AppendBucket appends a bucket into `hg`.
