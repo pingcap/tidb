@@ -362,7 +362,7 @@ func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *ti
 	case tipb.ScalarFuncSig_Log10:
 		f = &builtinLog10Sig{base}
 	//case tipb.ScalarFuncSig_Rand:
-	case tipb.ScalarFuncSig_RandWithSeed:
+	case tipb.ScalarFuncSig_RandWithSeedFirstGen:
 		f = &builtinRandWithSeedSig{base}
 	case tipb.ScalarFuncSig_Pow:
 		f = &builtinPowSig{base}
