@@ -189,8 +189,6 @@ github.com/pingcap/kvproto v0.0.0-20191202044712-32be31591b03/go.mod h1:WWLmULLO
 github.com/pingcap/log v0.0.0-20190715063458-479153f07ebd/go.mod h1:WpHUKhNZ18v116SvGrmjkA9CBhYmuUTKL+p8JC9ANEw=
 github.com/pingcap/log v0.0.0-20191012051959-b742a5d432e9 h1:AJD9pZYm72vMgPcQDww9rkZ1DnWfl0pXV3BOWlkYIjA=
 github.com/pingcap/log v0.0.0-20191012051959-b742a5d432e9/go.mod h1:4rbK1p9ILyIfb6hU7OG2CiWSqMXnp3JMbiaVJ6mvoY8=
-github.com/pingcap/parser v0.0.0-20191204131342-259c92691fa4 h1:RdccMHB2TG4FexODGlLPSZe/H+MgHJVVptPMJP+9AcA=
-github.com/pingcap/parser v0.0.0-20191204131342-259c92691fa4/go.mod h1:1FNvfp9+J0wvc4kl8eGNh7Rqrxveg15jJoWo/a0uHwA=
 github.com/pingcap/parser v0.0.0-20191205103532-f9aa02863ec0 h1:gIBYyKaqynsMUZeo/HxW8OG0V4Kl8UsgKEr/QlnjykQ=
 github.com/pingcap/parser v0.0.0-20191205103532-f9aa02863ec0/go.mod h1:1FNvfp9+J0wvc4kl8eGNh7Rqrxveg15jJoWo/a0uHwA=
 github.com/pingcap/parser v0.0.0-20191209191717-b26f24ac026c h1:YS+2VBeqf5w+MTjdhnmOd937fd5P6zs/zwzKVOT3Xnk=
@@ -281,12 +279,6 @@ github.com/unrolled/render v0.0.0-20180914162206-b9786414de4d h1:ggUgChAeyge4NZ4
 github.com/unrolled/render v0.0.0-20180914162206-b9786414de4d/go.mod h1:tu82oB5W2ykJRVioYsB+IQKcft7ryBr7w12qMBUPyXg=
 github.com/urfave/cli v1.20.0/go.mod h1:70zkFmudgCuE/ngEzBv17Jvp/497gISqfk5gWijbERA=
 github.com/urfave/negroni v0.3.0/go.mod h1:Meg73S6kFm/4PpbYdq35yYWoCZ9mS/YSx+lKnmiohz4=
-github.com/wjhuang2016/parser v0.0.0-20191206031745-13c7652ad9cc h1:6a2MegtxAnwz4RR9ff3PNd/WOTTZVUwjILhjWtBXIHM=
-github.com/wjhuang2016/parser v0.0.0-20191206031745-13c7652ad9cc/go.mod h1:Z+iYjw0mki4x8jvQ1uxVOyHHG12YLyYsNi0qmse80G4=
-github.com/wjhuang2016/parser v0.0.0-20191206094617-4823db865956 h1:DwloEkuy1fM94T0qlu4MJFk3E0Jre5QtnXBmv5aNUPg=
-github.com/wjhuang2016/parser v0.0.0-20191206094617-4823db865956/go.mod h1:Z+iYjw0mki4x8jvQ1uxVOyHHG12YLyYsNi0qmse80G4=
-github.com/wjhuang2016/parser v0.0.0-20191209095659-ad651fb61e08 h1:z8l6Y+aC7nyqGh35I9dkB4XMqF16Y9WCO+t9QP8gqDI=
-github.com/wjhuang2016/parser v0.0.0-20191209095659-ad651fb61e08/go.mod h1:Z+iYjw0mki4x8jvQ1uxVOyHHG12YLyYsNi0qmse80G4=
 github.com/xiang90/probing v0.0.0-20190116061207-43a291ad63a2 h1:eY9dn8+vbi4tKz5Qo6v2eYzo7kUS51QINcR5jNpbZS8=
 github.com/xiang90/probing v0.0.0-20190116061207-43a291ad63a2/go.mod h1:UETIi67q53MR2AWcXfiuqkDkRtnGDLqkBTpCHuJHxtU=
 github.com/yookoala/realpath v1.0.0/go.mod h1:gJJMA9wuX7AcqLy1+ffPatSCySA1FQ2S8Ya9AIoYBpE=
