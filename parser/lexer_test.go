@@ -268,6 +268,30 @@ func (s *testLexerSuite) TestSpecialComment(c *C) {
 	c.Assert(pos, Equals, Pos{1, 1, 16})
 }
 
+func (s *testLexerSuite) TestSpecialCodeComment(c *C) {
+	specCmt := "/*T!123456 auto_random(5) */"
+	c.Assert(extractVersionCodeInComment(specCmt), Equals, CommentCodeVersion(123456))
+
+	specCmt = "/*T!40000 auto_random(5) */"
+	c.Assert(extractVersionCodeInComment(specCmt), Equals, CommentCodeAutoRandom)
+	l := NewScanner(specCmt)
+	tok, pos, lit := l.scan()
+	c.Assert(tok, Equals, identifier)
+	c.Assert(lit, Equals, "auto_random")
+	c.Assert(pos, Equals, Pos{0, 0, 10})
+	tok, pos, lit = l.scan()
+	c.Assert(tok, Equals, int('('))
+	tok, pos, lit = l.scan()
+	c.Assert(lit, Equals, "5")
+	c.Assert(pos, Equals, Pos{0, 12, 22})
+	tok, pos, lit = l.scan()
+	c.Assert(tok, Equals, int(')'))
+
+	l = NewScanner(WrapStringWithCodeVersion("auto_random(5)", CommentCodeCurrentVersion+1))
+	tok, pos, lit = l.scan()
+	c.Assert(tok, Equals, 0)
+}
+
 func (s *testLexerSuite) TestOptimizerHint(c *C) {
 	l := NewScanner("  /*+ BKA(t1) */")
 	tokens := []struct {
