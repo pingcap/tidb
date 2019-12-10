@@ -106,8 +106,7 @@ func BoolToIntStr(b bool) string {
 	return "0"
 }
 
-// BoolToIntStr converts bool to int string, for example "0" or "1".
-func BoolToOnOff(b bool) string {
+func boolToOnOff(b bool) string {
 	if b {
 		return "on"
 	}
@@ -729,8 +728,8 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal | ScopeSession, TiDBStmtSummaryRefreshInterval, strconv.Itoa(config.GetGlobalConfig().StmtSummary.RefreshInterval)},
 	{ScopeGlobal | ScopeSession, TiDBStmtSummaryHistorySize, strconv.Itoa(config.GetGlobalConfig().StmtSummary.HistorySize)},
 	{ScopeGlobal | ScopeSession, TiDBCapturePlanBaseline, "off"},
-	{ScopeGlobal | ScopeSession, TiDBUsePlanBaselines, BoolToOnOff(DefTiDBUsePlanBaselines)},
-	{ScopeGlobal | ScopeSession, TiDBEvolvePlanBaselines, BoolToOnOff(DefTiDBEvolvePlanBaselines)},
+	{ScopeGlobal | ScopeSession, TiDBUsePlanBaselines, boolToOnOff(DefTiDBUsePlanBaselines)},
+	{ScopeGlobal | ScopeSession, TiDBEvolvePlanBaselines, boolToOnOff(DefTiDBEvolvePlanBaselines)},
 	{ScopeGlobal, TiDBEvolvePlanTaskMaxTime, strconv.Itoa(DefTiDBEvolvePlanTaskMaxTime)},
 	{ScopeGlobal, TiDBEvolvePlanTaskStartTime, DefTiDBEvolvePlanTaskStartTime},
 	{ScopeGlobal, TiDBEvolvePlanTaskEndTime, DefTiDBEvolvePlanTaskEndTime},
