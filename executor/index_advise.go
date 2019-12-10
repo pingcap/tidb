@@ -15,7 +15,6 @@ package executor
 
 import (
 	"context"
-	"math"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -42,11 +41,11 @@ func (e *IndexAdviseExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		return errors.New("Index Advise: infile path is empty")
 	}
 
-	if val := e.ctx.Value(IndexAdviseKey); val != nil {
-		e.ctx.SetValue(IndexAdviseKey, nil)
-		return errors.New("Index Advise: there is already an IndexAdviseExec running in the session")
+	if val := e.ctx.Value(IndexAdviseVarKey); val != nil {
+		e.ctx.SetValue(IndexAdviseVarKey, nil)
+		return errors.New("Index Advise: there is already an IndexAdviseExec running in session")
 	}
-	e.ctx.SetValue(IndexAdviseKey, e.indexAdviseInfo)
+	e.ctx.SetValue(IndexAdviseVarKey, e.indexAdviseInfo)
 	return nil
 }
 
@@ -101,19 +100,12 @@ func (e *IndexAdviseInfo) prepareInfo(data []byte) error {
 		return err
 	}
 	if e.MaxMinutes == 0 {
-		e.MaxMinutes = math.MaxUint64
+		return errors.New("Index Advise: the maximum execution time limit should be greater than 0")
 	}
-	if e.MaxIndexNum == nil {
-		e.MaxIndexNum = &ast.MaxIndexNumClause{
-			PerTable: math.MaxUint64,
-			PerDB:    math.MaxUint64,
+	if e.MaxIndexNum != nil {
+		if e.MaxIndexNum.PerTable == 0 || e.MaxIndexNum.PerDB == 0 {
+			return errors.New("Index Advise: the maximum number of indexes should be greater than 0")
 		}
-	}
-	if e.MaxIndexNum.PerTable == 0 {
-		e.MaxIndexNum.PerTable = math.MaxUint64
-	}
-	if e.MaxIndexNum.PerDB == 0 {
-		e.MaxIndexNum.PerDB = math.MaxUint64
 	}
 	return nil
 }
@@ -121,7 +113,7 @@ func (e *IndexAdviseInfo) prepareInfo(data []byte) error {
 // GetIndexAdvice gets the index advice by workload file.
 func (e *IndexAdviseInfo) GetIndexAdvice(ctx context.Context, data []byte) error {
 	if err := e.prepareInfo(data); err != nil {
-		return nil
+		return err
 	}
 	// TODO: Finish the index advise process. It will be done in another PR.
 	return nil
@@ -132,13 +124,13 @@ type IndexAdvice struct {
 	// TODO: Define index advice data structure and implements the ResultSet interface. It will be done in another PR
 }
 
-// IndexAdviseKeyType is a dummy type to avoid naming collision in context.
-type IndexAdviseKeyType int
+// IndexAdviseVarKeyType is a dummy type to avoid naming collision in context.
+type IndexAdviseVarKeyType int
 
 // String defines a Stringer function for debugging and pretty printing.
-func (k IndexAdviseKeyType) String() string {
+func (k IndexAdviseVarKeyType) String() string {
 	return "index_advise_var"
 }
 
-// IndexAdviseKey is a variable key for index advise.
-const IndexAdviseKey IndexAdviseKeyType = 0
+// IndexAdviseVarKey is a variable key for index advise.
+const IndexAdviseVarKey IndexAdviseVarKeyType = 0

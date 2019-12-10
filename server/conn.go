@@ -1220,9 +1220,9 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 			}
 		}
 
-		indexAdvise := cc.ctx.Value(executor.IndexAdviseKey)
+		indexAdvise := cc.ctx.Value(executor.IndexAdviseVarKey)
 		if indexAdvise != nil {
-			defer cc.ctx.SetValue(executor.IndexAdviseKey, nil)
+			defer cc.ctx.SetValue(executor.IndexAdviseVarKey, nil)
 			err = cc.handleIndexAdvise(ctx, indexAdvise.(*executor.IndexAdviseInfo))
 			if err != nil {
 				return err

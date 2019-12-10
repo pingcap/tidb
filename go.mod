@@ -48,7 +48,7 @@ require (
 	github.com/shirou/gopsutil v2.19.10+incompatible
 	github.com/shurcooL/httpfs v0.0.0-20171119174359-809beceb2371 // indirect
 	github.com/shurcooL/vfsgen v0.0.0-20181020040650-a97a25d856ca // indirect
-	github.com/sirupsen/logrus v1.2.0
+	github.com/sirupsen/logrus v1.4.2
 	github.com/soheilhy/cmux v0.1.4
 	github.com/spaolacci/murmur3 v0.0.0-20180118202830-f09979ecbc72
 	github.com/struCoder/pidusage v0.1.2
@@ -78,5 +78,3 @@ require (
 go 1.13
 
 replace github.com/pingcap/check => github.com/tiancaiamao/check v0.0.0-20191119042138-8e73d07b629d
-
-replace github.com/pingcap/parser => github.com/PiotrNewt/parser v0.0.0-20191208055757-3611952bf747
