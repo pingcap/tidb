@@ -623,9 +623,9 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 	case TiDBEnableStmtSummary, TiDBCapturePlanBaseline:
 		switch {
 		case strings.EqualFold(value, "ON") || value == "1":
-			return "1", nil
+			return "on", nil
 		case strings.EqualFold(value, "OFF") || value == "0":
-			return "0", nil
+			return "off", nil
 		case value == "":
 			return "", nil
 		}
