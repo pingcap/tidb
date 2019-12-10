@@ -194,7 +194,7 @@ func (*testSessionSuite) TestSlowLogFormat(c *C) {
 # Succ: true
 select * from t;`
 	sql := "select * from t"
-	digest := parser.DigestHash(sql)
+	_, digest := parser.NormalizeDigest(sql)
 	logString := seVar.SlowLogFormat(&variable.SlowQueryLogItems{
 		TxnTS:          txnTS,
 		SQL:            sql,

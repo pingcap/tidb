@@ -449,7 +449,50 @@ func (s *testTableSuite) TestSomeTables(c *C) {
 		testkit.Rows("def mysql tbl def mysql stats_meta table_id 1 <nil> <nil> <nil> <nil>"))
 	tk.MustQuery("select * from information_schema.STATISTICS where TABLE_NAME='columns_priv' and COLUMN_NAME='Host';").Check(
 		testkit.Rows("def mysql columns_priv 0 mysql PRIMARY 1 Host A <nil> <nil> <nil>  BTREE  "))
-	tk.MustQuery("select * from information_schema.USER_PRIVILEGES where PRIVILEGE_TYPE='Select';").Check(testkit.Rows("'root'@'%' def Select YES"))
+
+	//test the privilege of new user for information_schema
+	tk.MustExec("create user tester1")
+	tk1 := testkit.NewTestKit(c, s.store)
+	tk1.MustExec("use information_schema")
+	c.Assert(tk1.Se.Auth(&auth.UserIdentity{
+		Username: "tester1",
+		Hostname: "127.0.0.1",
+	}, nil, nil), IsTrue)
+	tk1.MustQuery("select * from information_schema.STATISTICS;").Check([][]interface{}{})
+
+	//test the privilege of user with some privilege for information_schema
+	tk.MustExec("create user tester2")
+	tk.MustExec("CREATE ROLE r_columns_priv;")
+	tk.MustExec("GRANT ALL PRIVILEGES ON mysql.columns_priv TO r_columns_priv;")
+	tk.MustExec("GRANT r_columns_priv TO tester2;")
+	tk2 := testkit.NewTestKit(c, s.store)
+	tk2.MustExec("use information_schema")
+	c.Assert(tk2.Se.Auth(&auth.UserIdentity{
+		Username: "tester2",
+		Hostname: "127.0.0.1",
+	}, nil, nil), IsTrue)
+	tk2.MustExec("set role r_columns_priv")
+	tk2.MustQuery("select * from information_schema.STATISTICS where TABLE_NAME='columns_priv' and COLUMN_NAME='Host';").Check(
+		testkit.Rows("def mysql columns_priv 0 mysql PRIMARY 1 Host A <nil> <nil> <nil>  BTREE  "))
+	tk2.MustQuery("select * from information_schema.STATISTICS where TABLE_NAME='tables_priv' and COLUMN_NAME='Host';").Check(
+		[][]interface{}{})
+
+	//test the privilege of user with all privilege for information_schema
+	tk.MustExec("create user tester3")
+	tk.MustExec("CREATE ROLE r_all_priv;")
+	tk.MustExec("GRANT ALL PRIVILEGES ON mysql.* TO r_all_priv;")
+	tk.MustExec("GRANT r_all_priv TO tester3;")
+	tk3 := testkit.NewTestKit(c, s.store)
+	tk3.MustExec("use information_schema")
+	c.Assert(tk3.Se.Auth(&auth.UserIdentity{
+		Username: "tester3",
+		Hostname: "127.0.0.1",
+	}, nil, nil), IsTrue)
+	tk3.MustExec("set role r_all_priv")
+	tk3.MustQuery("select * from information_schema.STATISTICS where TABLE_NAME='columns_priv' and COLUMN_NAME='Host';").Check(
+		testkit.Rows("def mysql columns_priv 0 mysql PRIMARY 1 Host A <nil> <nil> <nil>  BTREE  "))
+	tk3.MustQuery("select * from information_schema.STATISTICS where TABLE_NAME='tables_priv' and COLUMN_NAME='Host';").Check(
+		testkit.Rows("def mysql tables_priv 0 mysql PRIMARY 1 Host A <nil> <nil> <nil>  BTREE  "))
 
 	sm := &mockSessionManager{make(map[uint64]*util.ProcessInfo, 2)}
 	sm.processInfoMap[1] = &util.ProcessInfo{
@@ -909,4 +952,28 @@ func (s *testClusterTableSuite) TestSelectClusterTable(c *C) {
 	tk.MustQuery("select count(*) from `CLUSTER_SLOW_QUERY` group by digest").Check(testkit.Rows("1"))
 	tk.MustQuery("select digest, count(*) from `CLUSTER_SLOW_QUERY` group by digest").Check(testkit.Rows("42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772 1"))
 	tk.MustQuery("select count(*) from `CLUSTER_SLOW_QUERY` where time > now() group by digest").Check(testkit.Rows())
+}
+
+func (s *testTableSuite) TestSelectHiddenColumn(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("DROP DATABASE IF EXISTS `test_hidden`;")
+	tk.MustExec("CREATE DATABASE `test_hidden`;")
+	tk.MustExec("USE test_hidden;")
+	tk.MustExec("CREATE TABLE hidden (a int , b int, c int);")
+	tk.MustQuery("select count(*) from INFORMATION_SCHEMA.COLUMNS where table_name = 'hidden'").Check(testkit.Rows("3"))
+	tb, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test_hidden"), model.NewCIStr("hidden"))
+	c.Assert(err, IsNil)
+	colInfo := tb.Meta().Columns
+	// Set column b to hidden
+	colInfo[1].Hidden = true
+	tk.MustQuery("select count(*) from INFORMATION_SCHEMA.COLUMNS where table_name = 'hidden'").Check(testkit.Rows("2"))
+	tk.MustQuery("select count(*) from INFORMATION_SCHEMA.COLUMNS where table_name = 'hidden' and column_name = 'b'").Check(testkit.Rows("0"))
+	// Set column b to visible
+	colInfo[1].Hidden = false
+	tk.MustQuery("select count(*) from INFORMATION_SCHEMA.COLUMNS where table_name = 'hidden' and column_name = 'b'").Check(testkit.Rows("1"))
+	// Set a, b ,c to hidden
+	colInfo[0].Hidden = true
+	colInfo[1].Hidden = true
+	colInfo[2].Hidden = true
+	tk.MustQuery("select count(*) from INFORMATION_SCHEMA.COLUMNS where table_name = 'hidden'").Check(testkit.Rows("0"))
 }

@@ -254,7 +254,7 @@ func (a *ExecStmt) IsReadOnly(vars *variable.SessionVars) bool {
 // RebuildPlan rebuilds current execute statement plan.
 // It returns the current information schema version that 'a' is using.
 func (a *ExecStmt) RebuildPlan(ctx context.Context) (int64, error) {
-	is := GetInfoSchema(a.Ctx)
+	is := infoschema.GetInfoSchema(a.Ctx)
 	a.InfoSchema = is
 	if err := plannercore.Preprocess(a.Ctx, a.StmtNode, is, plannercore.InTxnRetry); err != nil {
 		return 0, err
@@ -530,7 +530,8 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e Executor) error {
 			return nil
 		}
 		forUpdateTS := txnCtx.GetForUpdateTS()
-		err = txn.LockKeys(ctx, &sctx.GetSessionVars().Killed, forUpdateTS, sctx.GetSessionVars().LockWaitTimeout, keys...)
+		err = txn.LockKeys(ctx, &sctx.GetSessionVars().Killed, forUpdateTS, sctx.GetSessionVars().LockWaitTimeout,
+			sctx.GetSessionVars().StmtCtx.GetLockWaitStartTime(), keys...)
 		if err == nil {
 			return nil
 		}
@@ -594,7 +595,7 @@ func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, err error) (E
 		if err != nil {
 			tsErr := UpdateForUpdateTS(a.Ctx, 0)
 			if tsErr != nil {
-				return nil, tsErr
+				logutil.Logger(ctx).Warn("UpdateForUpdateTS failed", zap.Error(tsErr))
 			}
 		}
 		return nil, err
