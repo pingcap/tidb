@@ -447,9 +447,43 @@ func (s *testTableSuite) TestSomeTables(c *C) {
 	tk.MustQuery("select * from information_schema.TABLE_CONSTRAINTS where TABLE_NAME='gc_delete_range';").Check(testkit.Rows("def mysql delete_range_index mysql gc_delete_range UNIQUE"))
 	tk.MustQuery("select * from information_schema.KEY_COLUMN_USAGE where TABLE_NAME='stats_meta' and COLUMN_NAME='table_id';").Check(
 		testkit.Rows("def mysql tbl def mysql stats_meta table_id 1 <nil> <nil> <nil> <nil>"))
+	tk.MustQuery("select count(*) from information_schema.SCHEMATA;").Check(
+		testkit.Rows("4"))
+	tk.MustQuery("select * from information_schema.SCHEMATA where schema_name='mysql';").Check(
+		testkit.Rows("def mysql utf8mb4 utf8mb4_bin <nil>"))
+
+	//test the privilege of new user for information_schema.schemata
+	tk.MustExec("create user schemataTk1")
+	schemataTk1 := testkit.NewTestKit(c, s.store)
+	schemataTk1.MustExec("use information_schema")
+	c.Assert(schemataTk1.Se.Auth(&auth.UserIdentity{
+		Username: "schemataTk1",
+		Hostname: "127.0.0.1",
+	}, nil, nil), IsTrue)
+	schemataTk1.MustQuery("select count(*) from information_schema.SCHEMATA;").Check(testkit.Rows("1"))
+	schemataTk1.MustQuery("select * from information_schema.SCHEMATA where schema_name='mysql';").Check(
+		[][]interface{}{})
+	schemataTk1.MustQuery("select * from information_schema.SCHEMATA where schema_name='INFORMATION_SCHEMA';").Check(
+		testkit.Rows("def INFORMATION_SCHEMA utf8mb4 utf8mb4_bin <nil>"))
+
+	//test the privilege of user with privilege of mysql for information_schema.schemata
+	tk.MustExec("create user schemataTk2")
+	tk.MustExec("CREATE ROLE r_mysql_priv;")
+	tk.MustExec("GRANT ALL PRIVILEGES ON mysql.* TO r_mysql_priv;")
+	tk.MustExec("GRANT r_mysql_priv TO schemataTk2;")
+	schemataTk2 := testkit.NewTestKit(c, s.store)
+	schemataTk2.MustExec("use information_schema")
+	c.Assert(schemataTk2.Se.Auth(&auth.UserIdentity{
+		Username: "schemataTk2",
+		Hostname: "127.0.0.1",
+	}, nil, nil), IsTrue)
+	schemataTk2.MustExec("set role r_mysql_priv")
+	schemataTk2.MustQuery("select count(*) from information_schema.SCHEMATA;").Check(testkit.Rows("2"))
+	schemataTk2.MustQuery("select * from information_schema.SCHEMATA;").Check(
+		testkit.Rows("def INFORMATION_SCHEMA utf8mb4 utf8mb4_bin <nil>", "def mysql utf8mb4 utf8mb4_bin <nil>"))
+
 	tk.MustQuery("select * from information_schema.STATISTICS where TABLE_NAME='columns_priv' and COLUMN_NAME='Host';").Check(
 		testkit.Rows("def mysql columns_priv 0 mysql PRIMARY 1 Host A <nil> <nil> <nil>  BTREE  "))
-
 	//test the privilege of new user for information_schema
 	tk.MustExec("create user tester1")
 	tk1 := testkit.NewTestKit(c, s.store)

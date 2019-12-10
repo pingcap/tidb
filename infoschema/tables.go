@@ -1117,8 +1117,8 @@ var tableTableTiFlashReplicaCols = []columnInfo{
 	{"AVAILABLE", mysql.TypeTiny, 1, 0, nil, nil},
 }
 
-func dataForSchemata(schemas []*model.DBInfo) [][]types.Datum {
-
+func dataForSchemata(ctx sessionctx.Context, schemas []*model.DBInfo) [][]types.Datum {
+	checker := privilege.GetPrivilegeManager(ctx)
 	rows := make([][]types.Datum, 0, len(schemas))
 
 	for _, schema := range schemas {
@@ -1134,6 +1134,9 @@ func dataForSchemata(schemas []*model.DBInfo) [][]types.Datum {
 			collation = schema.Collate // Overwrite default
 		}
 
+		if checker != nil && !checker.RequestVerification(ctx.GetSessionVars().ActiveRoles, schema.Name.L, "", "", mysql.AllPrivMask) {
+			continue
+		}
 		record := types.MakeDatums(
 			catalogVal,    // CATALOG_NAME
 			schema.Name.O, // SCHEMA_NAME
@@ -2431,7 +2434,7 @@ func (it *infoschemaTable) getRows(ctx sessionctx.Context, cols []*table.Column)
 	sort.Sort(schemasSorter(dbs))
 	switch it.meta.Name.O {
 	case tableSchemata:
-		fullRows = dataForSchemata(dbs)
+		fullRows = dataForSchemata(ctx, dbs)
 	case tableTables:
 		fullRows, err = dataForTables(ctx, dbs)
 	case tableTiDBIndexes:
