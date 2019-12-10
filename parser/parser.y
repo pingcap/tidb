@@ -282,6 +282,7 @@ import (
 	/* The following tokens belong to UnReservedKeyword. Notice: make sure these tokens are contained in UnReservedKeyword. */
 	account		"ACCOUNT"
 	action		"ACTION"
+	advise		"ADVISE"
 	after		"AFTER"
 	against		"AGAINST"
 	always		"ALWAYS"
@@ -404,6 +405,8 @@ import (
 	merge		"MERGE"
 	minRows		"MIN_ROWS"
 	minValue        "MINVALUE"
+	max_minutes	"MAX_MINUTES"
+	max_idxnum	"MAX_IDXNUM"
 	names		"NAMES"
 	national	"NATIONAL"
 	ncharType	"NCHAR"
@@ -433,6 +436,8 @@ import (
 	processlist	"PROCESSLIST"
 	profile		"PROFILE"
 	profiles	"PROFILES"
+	per_table	"PER_TABLE"
+	per_db		"PER_DB"
 	quarter		"QUARTER"
 	query		"QUERY"
 	queries		"QUERIES"
@@ -760,6 +765,7 @@ import (
 	GrantStmt			"Grant statement"
 	GrantRoleStmt			"Grant role statement"
 	InsertIntoStmt			"INSERT INTO statement"
+	IndexAdviseStmt			"INDEX ADVISE stetement"
 	KillStmt			"Kill statement"
 	LoadDataStmt			"Load data statement"
 	LoadStatsStmt			"Load statistic statement"
@@ -1146,6 +1152,10 @@ import (
 	EnforcedOrNotOrNotNullOpt	"{[ENFORCED|NOT ENFORCED|NOT NULL]}"
 	Match			"[MATCH FULL | MATCH PARTIAL | MATCH SIMPLE]"
 	MatchOpt		"optional MATCH clause"
+	MaxMinutesOpt		"MAX_MINUTES num(int)"
+	MaxIndexNumOpt		"MAX_IDXNUM clause"
+	PerTable 		"Max index number PER_TABLE"
+	PerDB			"Max index number PER_DB"
 
 %type	<ident>
 	AsOpt			"AS or EmptyString"
@@ -4603,7 +4613,7 @@ Identifier:
 identifier | UnReservedKeyword | NotKeywordToken | TiDBKeyword
 
 UnReservedKeyword:
- "ACTION" | "ASCII" | "AUTO_INCREMENT" | "AFTER" | "ALWAYS" | "AVG" | "BEGIN" | "BIT" | "BOOL" | "BOOLEAN" | "BTREE" | "BYTE" | "CAPTURE" |"CLEANUP" | "CHARSET"
+ "ACTION" | "ADVISE" |"ASCII" | "AUTO_INCREMENT" | "AFTER" | "ALWAYS" | "AVG" | "BEGIN" | "BIT" | "BOOL" | "BOOLEAN" | "BTREE" | "BYTE" | "CAPTURE" |"CLEANUP" | "CHARSET"
 | "COLUMNS" | "COMMIT" | "COMPACT" | "COMPRESSED" | "CONSISTENT" | "CURRENT" | "DATA" | "DATE" %prec lowerThanStringLitToken| "DATETIME" | "DAY" | "DEALLOCATE" | "DO" | "DUPLICATE"
 | "DYNAMIC" | "ENCRYPTION" | "END" | "ENFORCED" | "ENGINE" | "ENGINES" | "ENUM" | "ERRORS" | "ESCAPE" | "EVOLVE" | "EXECUTE" | "EXTENDED" | "FIELDS" | "FIRST" | "FIXED" | "FLUSH" | "FOLLOWING" | "FORMAT" | "FULL" |"GLOBAL"
 | "HASH" | "HOUR" | "INSERT_METHOD" | "LESS" | "LOCAL" | "LAST" | "NAMES" | "OFFSET" | "PASSWORD" %prec lowerThanEq | "PREPARE" | "QUICK" | "REBUILD" | "REDUNDANT" | "REORGANIZE"
@@ -4621,7 +4631,7 @@ UnReservedKeyword:
 | "WITHOUT" | "RTREE" | "EXCHANGE" | "COLUMN_FORMAT" | "REPAIR" | "IMPORT" | "DISCARD" | "TABLE_CHECKSUM" | "UNICODE"
 | "SQL_TSI_DAY" | "SQL_TSI_HOUR" | "SQL_TSI_MINUTE" | "SQL_TSI_MONTH" | "SQL_TSI_QUARTER" | "SQL_TSI_SECOND" |
 "SQL_TSI_WEEK" | "SQL_TSI_YEAR" | "INVISIBLE" | "VISIBLE" | "TYPE" | "NOWAIT" | "REPLICA" | "LOCATION" | "LABELS"
-| "LOGS" | "HOSTS" | "AGAINST" | "EXPANSION" | "INCREMENT" | "MINVALUE" | "NOMAXVALUE" | "NOMINVALUE" | "NOCACHE" | "CACHE" | "CYCLE" | "NOCYCLE" | "NOORDER"
+| "LOGS" | "HOSTS" | "AGAINST" | "EXPANSION" | "INCREMENT" | "MINVALUE" | "NOMAXVALUE" | "NOMINVALUE" | "NOCACHE" | "CACHE" | "CYCLE" | "NOCYCLE" | "NOORDER" | "MAX_MINUTES" | "MAX_IDXNUM" | "PER_TABLE" | "PER_DB"
 
 TiDBKeyword:
  "ADMIN" | "AGG_TO_COP" |"BUCKETS" | "BUILTINS" | "CANCEL" | "CMSKETCH" | "DDL" | "DEPTH" | "DRAINER" | "JOBS" | "JOB" | "NODE_ID" | "NODE_STATE" | "PUMP" | "SAMPLES" | "STATS" | "STATS_META" | "STATS_HISTOGRAMS" | "STATS_BUCKETS" | "STATS_HEALTHY" | "TIDB"
@@ -8673,6 +8683,7 @@ Statement:
 |	GrantStmt
 |	GrantRoleStmt
 |	InsertIntoStmt
+|	IndexAdviseStmt
 |	KillStmt
 |	LoadDataStmt
 |	LoadStatsStmt
@@ -10925,6 +10936,81 @@ SignedNum:
 |	'-' NUM
 	{
 		$$ = -$2.(int64)
+	}
+
+/********************************************************************
+ * Index Advisor Statement
+ *
+ * INDEX ADVISE
+ * 	[LOCAL]
+ *	INFILE 'file_name'
+ *	[MAX_MINUTES number]
+ *	[MAX_IDXNUM
+ *  	[PER_TABLE number]
+ *  	[PER_DB number]
+ *	]
+ *	[LINES
+ *  	[STARTING BY 'string']
+ *  	[TERMINATED BY 'string']
+ *	]
+ *******************************************************************/
+
+IndexAdviseStmt:
+	"INDEX" "ADVISE" LocalOpt "INFILE" stringLit MaxMinutesOpt MaxIndexNumOpt Lines
+	{
+		x := &ast.IndexAdviseStmt{
+			Path:			$5,
+			MaxMinutes:		$6.(uint64),
+		}
+		if $3 != nil {
+			x.IsLocal = true
+		}
+		if $7 != nil {
+			x.MaxIndexNum = $7.(*ast.MaxIndexNumClause)
+		}
+		if $8 != nil {
+			x.LinesInfo = $8.(*ast.LinesClause)
+		}
+		$$ = x
+	}
+
+MaxMinutesOpt:
+	{
+		$$ = uint64(ast.UnspecifiedSize)
+	}
+|	"MAX_MINUTES" NUM
+	{
+		$$ = getUint64FromNUM($2)
+	}
+
+MaxIndexNumOpt:
+	{
+		$$ = nil
+	}
+|	"MAX_IDXNUM" PerTable PerDB
+	{
+		$$ = &ast.MaxIndexNumClause{
+			PerTable:	$2.(uint64),
+			PerDB: 		$3.(uint64),
+		}
+	}
+
+PerTable:
+	{
+		$$ = uint64(ast.UnspecifiedSize)
+	}
+|	"PER_TABLE" NUM
+	{
+		$$ = getUint64FromNUM($2)
+	}
+
+PerDB:
+	{
+		$$ = uint64(ast.UnspecifiedSize)
+	}
+|	"PER_DB" NUM
+	{
+		$$ = getUint64FromNUM($2)
 	}
 
 %%
