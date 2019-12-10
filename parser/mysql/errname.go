@@ -1016,6 +1016,7 @@ var MySQLErrName = map[uint16]string{
 	ErrCantSetToNull:              "cannot set variable to null",
 	ErrSnapshotTooOld:             "snapshot is older than GC safe point %s",
 	ErrInvalidTableID:             "invalid TableID",
+	ErrInvalidAutoRandom:          "Invalid auto random: %s",
 
 	ErrUnsupportedType:                     "Unsupported type %T",
 	ErrAnalyzeMissIndex:                    "Index '%s' in field list does not exist in table '%s'",

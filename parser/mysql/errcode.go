@@ -1037,6 +1037,7 @@ const (
 	ErrInvalidDDLJobVersion     = 8213
 	ErrCancelledDDLJob          = 8214
 	ErrRepairTable              = 8215
+	ErrInvalidAutoRandom        = 8216
 
 	// TiKV/PD errors.
 	ErrPDServerTimeout    = 9001

@@ -14,10 +14,39 @@
 package parser
 
 import (
+	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/pingcap/parser/charset"
 )
+
+// CommentCodeVersion is used to track the highest version can be parsed in the comment with pattern /*T!00001 xxx */
+type CommentCodeVersion int
+
+const (
+	CommentCodeNoVersion  CommentCodeVersion = iota
+	CommentCodeAutoRandom CommentCodeVersion = 40000
+
+	CommentCodeCurrentVersion
+)
+
+func (ccv CommentCodeVersion) String() string {
+	return fmt.Sprintf("%05d", ccv)
+}
+
+func extractVersionCodeInComment(comment string) CommentCodeVersion {
+	code, err := strconv.Atoi(specVersionCodeValue.FindString(comment))
+	if err != nil {
+		return CommentCodeNoVersion
+	}
+	return CommentCodeVersion(code)
+}
+
+// WrapStringWithCodeVersion convert a string `str` to `/*T!xxxxx str */`, where `xxxxx` is determined by CommentCodeVersion.
+func WrapStringWithCodeVersion(str string, ccv CommentCodeVersion) string {
+	return fmt.Sprintf("/*T!%05d %s */", ccv, str)
+}
 
 func isLetter(ch rune) bool {
 	return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z')
@@ -154,6 +183,7 @@ var tokenMap = map[string]int{
 	"ASC":                      asc,
 	"ASCII":                    ascii,
 	"AUTO_INCREMENT":           autoIncrement,
+	"AUTO_RANDOM":              autoRandom,
 	"AVG":                      avg,
 	"AVG_ROW_LENGTH":           avgRowLength,
 	"BEGIN":                    begin,
