@@ -82,7 +82,7 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 		return err
 	}
 
-	txn, err := e.ctx.Txn(true)
+	txn, err := e.ctx.Txn(false)
 	if err != nil {
 		return err
 	}
