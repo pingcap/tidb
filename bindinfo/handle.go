@@ -177,7 +177,7 @@ func (h *BindHandle) AddBindRecord(sctx sessionctx.Context, is infoschema.InfoSc
 		return err
 	}
 
-	br := h.GetBindRecord(parser.DigestHash(record.OriginalSQL), record.OriginalSQL, record.Db)
+	br := h.GetBindRecord(parser.DigestNormalized(record.OriginalSQL), record.OriginalSQL, record.Db)
 	var duplicateBinding string
 	if br != nil {
 		binding := br.FindBinding(record.Bindings[0].id)
@@ -216,7 +216,7 @@ func (h *BindHandle) AddBindRecord(sctx sessionctx.Context, is infoschema.InfoSc
 		// Make sure there is only one goroutine writes the cache and use parser.
 		h.bindInfo.Lock()
 		// update the BindRecord to the cache.
-		h.appendBindRecord(parser.DigestHash(record.OriginalSQL), record)
+		h.appendBindRecord(parser.DigestNormalized(record.OriginalSQL), record)
 		h.bindInfo.Unlock()
 	}()
 
@@ -277,7 +277,7 @@ func (h *BindHandle) DropBindRecord(sctx sessionctx.Context, is infoschema.InfoS
 			return
 		}
 
-		err = h.removeBindRecord(parser.DigestHash(record.OriginalSQL), record)
+		err = h.removeBindRecord(parser.DigestNormalized(record.OriginalSQL), record)
 	}()
 
 	txn, err1 := h.sctx.Context.Txn(true)
@@ -290,7 +290,7 @@ func (h *BindHandle) DropBindRecord(sctx sessionctx.Context, is infoschema.InfoS
 		Type: mysql.TypeDatetime,
 		Fsp:  3,
 	}
-	oldBindRecord := h.GetBindRecord(parser.DigestHash(record.OriginalSQL), record.OriginalSQL, record.Db)
+	oldBindRecord := h.GetBindRecord(parser.DigestNormalized(record.OriginalSQL), record.OriginalSQL, record.Db)
 	bindingSQLs := make([]string, 0, len(record.Bindings))
 	for i := range record.Bindings {
 		record.Bindings[i].Status = deleted
@@ -401,7 +401,7 @@ func (h *BindHandle) newBindRecord(row chunk.Row) (string, *BindRecord, error) {
 		Db:          row.GetString(2),
 		Bindings:    []Binding{hint},
 	}
-	hash := parser.DigestHash(bindRecord.OriginalSQL)
+	hash := parser.DigestNormalized(bindRecord.OriginalSQL)
 	h.sctx.Lock()
 	defer h.sctx.Unlock()
 	err := h.sctx.RefreshTxnCtx(context.TODO())
@@ -493,7 +493,6 @@ func copyBindRecordUpdateMap(oldMap map[string]*bindRecordUpdate) map[string]*bi
 
 func (c cache) getBindRecord(hash, normdOrigSQL, db string) *BindRecord {
 	bindRecords := c[hash]
-
 	for _, bindRecord := range bindRecords {
 		if bindRecord.OriginalSQL == normdOrigSQL && bindRecord.Db == db {
 			return bindRecord

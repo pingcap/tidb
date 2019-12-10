@@ -300,7 +300,7 @@ func (s *testSessionSuite) TestRowLock(c *C) {
 
 	tk.MustExec("drop table if exists t")
 	txn, err := tk.Se.Txn(true)
-	c.Assert(err, IsNil)
+	c.Assert(kv.ErrInvalidTxn.Equal(err), IsTrue)
 	c.Assert(txn.Valid(), IsFalse)
 	tk.MustExec("create table t (c1 int, c2 int, c3 int)")
 	tk.MustExec("insert t values (11, 2, 3)")
@@ -389,7 +389,9 @@ func (s *testSessionSuite) TestTxnLazyInitialize(c *C) {
 	tk.MustExec("create table t (id int)")
 
 	tk.MustExec("set @@autocommit = 0")
-	txn, err := tk.Se.Txn(false)
+	txn, err := tk.Se.Txn(true)
+	c.Assert(kv.ErrInvalidTxn.Equal(err), IsTrue)
+	txn, err = tk.Se.Txn(false)
 	c.Assert(err, IsNil)
 	c.Assert(txn.Valid(), IsFalse)
 	tk.MustQuery("select @@tidb_current_ts").Check(testkit.Rows("0"))
@@ -719,7 +721,7 @@ func (s *testSessionSuite) TestRetryPreparedStmt(c *C) {
 
 	tk.MustExec("drop table if exists t")
 	txn, err := tk.Se.Txn(true)
-	c.Assert(err, IsNil)
+	c.Assert(kv.ErrInvalidTxn.Equal(err), IsTrue)
 	c.Assert(txn.Valid(), IsFalse)
 	tk.MustExec("create table t (c1 int, c2 int, c3 int)")
 	tk.MustExec("insert t values (11, 2, 3)")
@@ -748,7 +750,7 @@ func (s *testSessionSuite) TestSessionAuth(c *C) {
 	c.Assert(tk.Se.Auth(&auth.UserIdentity{Username: "Any not exist username with zero password!", Hostname: "anyhost"}, []byte(""), []byte("")), IsFalse)
 }
 
-func (s *testSessionSuite) TestSkipWithGrant(c *C) {
+func (s *testSessionSerialSuite) TestSkipWithGrant(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	save2 := privileges.SkipWithGrant
 

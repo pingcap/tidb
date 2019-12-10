@@ -621,7 +621,7 @@ func (e *SimpleExec) executeRollback(s *ast.RollbackStmt) error {
 	sessVars := e.ctx.GetSessionVars()
 	logutil.BgLogger().Debug("execute rollback statement", zap.Uint64("conn", sessVars.ConnectionID))
 	sessVars.SetStatusFlag(mysql.ServerStatusInTrans, false)
-	txn, err := e.ctx.Txn(true)
+	txn, err := e.ctx.Txn(false)
 	if err != nil {
 		return err
 	}
@@ -759,7 +759,6 @@ func (e *SimpleExec) executeAlterUser(s *ast.AlterUserStmt) error {
 }
 
 func (e *SimpleExec) executeGrantRole(s *ast.GrantRoleStmt) error {
-	failedUsers := make([]string, 0, len(s.Users))
 	sessionVars := e.ctx.GetSessionVars()
 	for i, user := range s.Users {
 		if user.CurrentUser {
@@ -803,7 +802,6 @@ func (e *SimpleExec) executeGrantRole(s *ast.GrantRoleStmt) error {
 		for _, role := range s.Roles {
 			sql := fmt.Sprintf(`INSERT IGNORE INTO %s.%s (FROM_HOST, FROM_USER, TO_HOST, TO_USER) VALUES ('%s','%s','%s','%s')`, mysql.SystemDB, mysql.RoleEdgeTable, role.Hostname, role.Username, user.Hostname, user.Username)
 			if _, err := sqlExecutor.Execute(context.Background(), sql); err != nil {
-				failedUsers = append(failedUsers, user.String())
 				logutil.BgLogger().Error(fmt.Sprintf("Error occur when executing %s", sql))
 				if _, err := sqlExecutor.Execute(context.Background(), "rollback"); err != nil {
 					return err
@@ -1048,7 +1046,7 @@ func (e *SimpleExec) executeDropStats(s *ast.DropStatsStmt) error {
 	if err != nil {
 		return err
 	}
-	return h.Update(GetInfoSchema(e.ctx))
+	return h.Update(infoschema.GetInfoSchema(e.ctx))
 }
 
 func (e *SimpleExec) autoNewTxn() bool {
