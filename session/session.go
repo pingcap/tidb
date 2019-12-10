@@ -610,9 +610,6 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 		for i, sr := range nh.history {
 			st := sr.st
 			s.sessionVars.StmtCtx = sr.stmtCtx
-			s.sessionVars.StartTime = time.Now()
-			s.sessionVars.DurationCompile = time.Duration(0)
-			s.sessionVars.DurationParse = time.Duration(0)
 			s.sessionVars.StmtCtx.ResetForRetry()
 			s.sessionVars.PreparedParams = s.sessionVars.PreparedParams[:0]
 			schemaVersion, err = st.RebuildPlan(ctx)
@@ -1028,8 +1025,7 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 	charsetInfo, collation := s.sessionVars.GetCharsetInfo()
 
 	// Step1: Compile query string to abstract syntax trees(ASTs).
-	startTS := time.Now()
-	s.GetSessionVars().StartTime = startTS
+	parseStartTime := time.Now()
 	stmtNodes, warns, err := s.ParseSQL(ctx, sql, charsetInfo, collation)
 	if err != nil {
 		s.rollbackOnError(ctx)
@@ -1038,7 +1034,7 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 			zap.String("sql", sql))
 		return nil, util.SyntaxError(err)
 	}
-	durParse := time.Since(startTS)
+	durParse := time.Since(parseStartTime)
 	s.GetSessionVars().DurationParse = durParse
 	isInternal := s.isInternal()
 	if isInternal {
@@ -1051,10 +1047,10 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 	compiler := executor.Compiler{Ctx: s}
 	multiQuery := len(stmtNodes) > 1
 	for idx, stmtNode := range stmtNodes {
+		s.sessionVars.StartTime = time.Now()
 		s.PrepareTxnCtx(ctx)
 
 		// Step2: Transform abstract syntax tree to a physical plan(stored in executor.ExecStmt).
-		startTS = time.Now()
 		// Some executions are done in compile stage, so we reset them before compile.
 		if err := executor.ResetContextOfStmt(s, stmtNode); err != nil {
 			return nil, err
@@ -1078,7 +1074,7 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 			}
 			s.handleInvalidBindRecord(ctx, stmtNode)
 		}
-		durCompile := time.Since(startTS)
+		durCompile := time.Since(s.sessionVars.StartTime)
 		s.GetSessionVars().DurationCompile = durCompile
 		if isInternal {
 			sessionExecuteCompileDurationInternal.Observe(durCompile.Seconds())
