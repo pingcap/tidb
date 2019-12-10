@@ -69,7 +69,7 @@
         "SQL": "select a from t order by a",
         "Plan": [
           "TableReader_7 10000.00 root data:TableScan_8",
-          "└─TableScan_8 10000.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false, stats:pseudo"
+          "└─TableScan_8 10000.00 cop[tikv] table:t, range:[-inf,+inf], keep order:true, stats:pseudo"
         ],
         "Result": [
           "1",
@@ -284,7 +284,7 @@
         "Plan": [
           "Limit_9 1.00 root offset:2, count:1",
           "└─TableReader_12 3.00 root data:TableScan_13",
-          "  └─TableScan_13 3.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false, stats:pseudo"
+          "  └─TableScan_13 3.00 cop[tikv] table:t, range:[-inf,+inf], keep order:true, stats:pseudo"
         ],
         "Result": [
           "3"
@@ -486,7 +486,7 @@
           "      └─Limit_25 1.00 root offset:0, count:1",
           "        └─TableReader_29 1.00 root data:Selection_30",
           "          └─Selection_30 1.00 cop[tikv] eq(test.t1.b, test.t2.b)",
-          "            └─TableScan_31 1.00 cop[tikv] table:t2, range:[-inf,+inf], keep order:false, stats:pseudo"
+          "            └─TableScan_31 1.00 cop[tikv] table:t2, range:[-inf,+inf], keep order:true, stats:pseudo"
         ],
         "Result": [
           "1",

@@ -221,6 +221,7 @@ func (r *ImplTableScan) OnImplement(expr *memo.GroupExpr, reqProp *property.Phys
 			}
 		}
 	} else if !reqProp.IsEmpty() {
+		ts.KeepOrder = true
 		ts.Desc = reqProp.Items[0].Desc
 	}
 	tblCols, tblColHists := logicalScan.Source.TblCols, logicalScan.Source.TblColHists
