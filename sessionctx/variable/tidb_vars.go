@@ -200,6 +200,8 @@ const (
 	TiDBOptSeekFactor = "tidb_opt_seek_factor"
 	// tidb_opt_memory_factor is the memory cost of storing one tuple.
 	TiDBOptMemoryFactor = "tidb_opt_memory_factor"
+	// tidb_opt_disk_factor is the IO cost of reading/writing one byte to temporary disk.
+	TiDBOptDiskFactor = "tidb_opt_disk_factor"
 	// tidb_opt_concurrency_factor is the CPU cost of additional one goroutine.
 	TiDBOptConcurrencyFactor = "tidb_opt_concurrency_factor"
 
@@ -336,6 +338,12 @@ const (
 	// TiDBEnableStmtSummary indicates whether the statement summary is enabled.
 	TiDBEnableStmtSummary = "tidb_enable_stmt_summary"
 
+	// TiDBStmtSummaryRefreshInterval indicates the refresh interval in seconds for each statement summary.
+	TiDBStmtSummaryRefreshInterval = "tidb_stmt_summary_refresh_interval"
+
+	// TiDBStmtSummaryHistorySize indicates the history size of each statement summary.
+	TiDBStmtSummaryHistorySize = "tidb_stmt_summary_history_size"
+
 	// TiDBCapturePlanBaseline indicates whether the capture of plan baselines is enabled.
 	TiDBCapturePlanBaseline = "tidb_capture_plan_baselines"
 
@@ -379,6 +387,7 @@ const (
 	DefOptDescScanFactor               = 3.0
 	DefOptSeekFactor                   = 20.0
 	DefOptMemoryFactor                 = 0.001
+	DefOptDiskFactor                   = 1.5
 	DefOptConcurrencyFactor            = 3.0
 	DefOptInSubqToJoinAndAgg           = true
 	DefBatchInsert                     = false

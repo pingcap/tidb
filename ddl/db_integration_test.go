@@ -1010,7 +1010,7 @@ func (s *testIntegrationSuite5) TestBackwardCompatibility(c *C) {
 
 	unique := false
 	indexName := model.NewCIStr("idx_b")
-	idxColName := &ast.IndexColName{
+	idxColName := &ast.IndexPartSpecification{
 		Column: &ast.ColumnName{
 			Schema: schemaName,
 			Table:  tableName,
@@ -1018,7 +1018,7 @@ func (s *testIntegrationSuite5) TestBackwardCompatibility(c *C) {
 		},
 		Length: types.UnspecifiedLength,
 	}
-	idxColNames := []*ast.IndexColName{idxColName}
+	idxColNames := []*ast.IndexPartSpecification{idxColName}
 	var indexOption *ast.IndexOption
 	job := &model.Job{
 		SchemaID:   schema.ID,
@@ -1043,6 +1043,7 @@ func (s *testIntegrationSuite5) TestBackwardCompatibility(c *C) {
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 	ticker := time.NewTicker(s.lease)
+	defer ticker.Stop()
 	for range ticker.C {
 		historyJob, err := s.getHistoryDDLJob(job.ID)
 		c.Assert(err, IsNil)
@@ -1427,19 +1428,11 @@ func (s *testIntegrationSuite3) TestAlterColumn(c *C) {
 	c.Assert(err, NotNil)
 
 	s.tk.MustExec("drop table if exists t")
-	// TODO: fix me, below sql should execute successfully. Currently, the result of calculate key length is wrong.
-	//s.tk.MustExec("create table t1 (a varchar(10),b varchar(100),c tinyint,d varchar(3071),index(a),index(a,b),index (c,d));")
-	s.tk.MustExec("create table t1 (a varchar(10),b varchar(100),c tinyint,d varchar(3068),index(a),index(a,b),index (c,d));")
-	_, err = s.tk.Exec("alter table t1 modify column a varchar(3000);")
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[ddl:1071]Specified key was too long; max key length is 3072 bytes")
+	s.tk.MustExec("create table t1 (a varchar(10),b varchar(100),c tinyint,d varchar(3071),index(a),index(a,b),index (c,d)) charset = ascii;")
+	s.tk.MustGetErrCode("alter table t1 modify column a varchar(3000);", mysql.ErrTooLongKey)
 	// check modify column with rename column.
-	_, err = s.tk.Exec("alter table t1 change column a x varchar(3000);")
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[ddl:1071]Specified key was too long; max key length is 3072 bytes")
-	_, err = s.tk.Exec("alter table t1 modify column c bigint;")
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[ddl:1071]Specified key was too long; max key length is 3072 bytes")
+	s.tk.MustGetErrCode("alter table t1 change column a x varchar(3000);", mysql.ErrTooLongKey)
+	s.tk.MustGetErrCode("alter table t1 modify column c bigint;", mysql.ErrTooLongKey)
 
 	s.tk.MustExec("drop table if exists multi_unique")
 	s.tk.MustExec("create table multi_unique (a int unique unique)")

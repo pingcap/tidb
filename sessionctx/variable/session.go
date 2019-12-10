@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"crypto/tls"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -202,6 +203,10 @@ type SessionVars struct {
 	Users map[string]string
 	// systems variables, don't modify it directly, use GetSystemVar/SetSystemVar method.
 	systems map[string]string
+	// SysWarningCount is the system variable "warning_count", because it is on the hot path, so we extract it from the systems
+	SysWarningCount int
+	// SysErrorCount is the system variable "error_count", because it is on the hot path, so we extract it from the systems
+	SysErrorCount uint16
 	// PreparedStmts stores prepared statement.
 	PreparedStmts        map[uint32]interface{}
 	PreparedStmtNameToID map[string]uint32
@@ -308,6 +313,8 @@ type SessionVars struct {
 	SeekFactor float64
 	// MemoryFactor is the memory cost of storing one tuple.
 	MemoryFactor float64
+	// DiskFactor is the IO cost of reading/writing one byte to temporary disk.
+	DiskFactor float64
 	// ConcurrencyFactor is the CPU cost of additional one goroutine.
 	ConcurrencyFactor float64
 
@@ -517,6 +524,7 @@ func NewSessionVars() *SessionVars {
 		DescScanFactor:              DefOptDescScanFactor,
 		SeekFactor:                  DefOptSeekFactor,
 		MemoryFactor:                DefOptMemoryFactor,
+		DiskFactor:                  DefOptDiskFactor,
 		ConcurrencyFactor:           DefOptConcurrencyFactor,
 		EnableRadixJoin:             false,
 		EnableVectorizedExpression:  DefEnableVectorizedExpression,
@@ -532,7 +540,7 @@ func NewSessionVars() *SessionVars {
 		AllowRemoveAutoInc:          DefTiDBAllowRemoveAutoInc,
 		UsePlanBaselines:            DefTiDBUsePlanBaselines,
 		EvolvePlanBaselines:         DefTiDBEvolvePlanBaselines,
-		isolationReadEngines:        map[kv.StoreType]struct{}{kv.TiKV: {}, kv.TiFlash: {}},
+		isolationReadEngines:        map[kv.StoreType]struct{}{kv.TiKV: {}, kv.TiFlash: {}, kv.TiDB: {}},
 		LockWaitTimeout:             DefInnodbLockWaitTimeout * 1000,
 	}
 	vars.Concurrency = Concurrency{
@@ -594,11 +602,8 @@ func (s *SessionVars) SetAllowInSubqToJoinAndAgg(val bool) {
 	s.allowInSubqToJoinAndAgg = val
 }
 
-// GetEnableIndexMerge get EnableIndexMerge from sql hints and SessionVars.enableIndexMerge.
+// GetEnableIndexMerge get EnableIndexMerge from SessionVars.enableIndexMerge.
 func (s *SessionVars) GetEnableIndexMerge() bool {
-	if s.StmtCtx.HasEnableIndexMergeHint {
-		return s.StmtCtx.EnableIndexMerge
-	}
 	return s.enableIndexMerge
 }
 
@@ -710,6 +715,11 @@ func (s *SessionVars) Location() *time.Location {
 
 // GetSystemVar gets the string value of a system variable.
 func (s *SessionVars) GetSystemVar(name string) (string, bool) {
+	if name == WarningCount {
+		return strconv.Itoa(s.SysWarningCount), true
+	} else if name == ErrorCount {
+		return strconv.Itoa(int(s.SysErrorCount)), true
+	}
 	val, ok := s.systems[name]
 	return val, ok
 }
@@ -851,6 +861,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.SeekFactor = tidbOptFloat64(val, DefOptSeekFactor)
 	case TiDBOptMemoryFactor:
 		s.MemoryFactor = tidbOptFloat64(val, DefOptMemoryFactor)
+	case TiDBOptDiskFactor:
+		s.DiskFactor = tidbOptFloat64(val, DefOptDiskFactor)
 	case TiDBOptConcurrencyFactor:
 		s.ConcurrencyFactor = tidbOptFloat64(val, DefOptConcurrencyFactor)
 	case TiDBIndexLookupConcurrency:
@@ -988,6 +1000,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 				s.isolationReadEngines[kv.TiKV] = struct{}{}
 			case kv.TiFlash.Name():
 				s.isolationReadEngines[kv.TiFlash] = struct{}{}
+			case kv.TiDB.Name():
+				s.isolationReadEngines[kv.TiDB] = struct{}{}
 			}
 		}
 	case TiDBStoreLimit:
@@ -1184,6 +1198,8 @@ const (
 	SlowLogCopWaitMax = "Cop_wait_max"
 	// SlowLogCopWaitAddr is the address of TiKV where the cop-task which cost wait process time run.
 	SlowLogCopWaitAddr = "Cop_wait_addr"
+	// SlowLogCopBackoffPrefix contains backoff information.
+	SlowLogCopBackoffPrefix = "Cop_backoff_"
 	// SlowLogMemMax is the max number bytes of memory used in this statement.
 	SlowLogMemMax = "Mem_max"
 	// SlowLogPrepared is used to indicate whether this sql execute in prepare.
@@ -1297,6 +1313,13 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 	if logItems.CopTasks != nil {
 		writeSlowLogItem(&buf, SlowLogNumCopTasksStr, strconv.FormatInt(int64(logItems.CopTasks.NumCopTasks), 10))
 		if logItems.CopTasks.NumCopTasks > 0 {
+			// make the result stable
+			backoffs := make([]string, 0, 3)
+			for backoff := range logItems.CopTasks.TotBackoffTimes {
+				backoffs = append(backoffs, backoff)
+			}
+			sort.Strings(backoffs)
+
 			if logItems.CopTasks.NumCopTasks == 1 {
 				buf.WriteString(SlowLogRowPrefixStr + fmt.Sprintf("%v%v%v %v%v%v",
 					SlowLogCopProcAvg, SlowLogSpaceMarkStr, logItems.CopTasks.AvgProcessTime.Seconds(),
@@ -1304,7 +1327,13 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 				buf.WriteString(SlowLogRowPrefixStr + fmt.Sprintf("%v%v%v %v%v%v",
 					SlowLogCopWaitAvg, SlowLogSpaceMarkStr, logItems.CopTasks.AvgWaitTime.Seconds(),
 					SlowLogCopWaitAddr, SlowLogSpaceMarkStr, logItems.CopTasks.MaxWaitAddress) + "\n")
-
+				for _, backoff := range backoffs {
+					backoffPrefix := SlowLogCopBackoffPrefix + backoff + "_"
+					buf.WriteString(SlowLogRowPrefixStr + fmt.Sprintf("%v%v%v %v%v%v\n",
+						backoffPrefix+"total_times", SlowLogSpaceMarkStr, logItems.CopTasks.TotBackoffTimes[backoff],
+						backoffPrefix+"total_time", SlowLogSpaceMarkStr, logItems.CopTasks.TotBackoffTime[backoff].Seconds(),
+					))
+				}
 			} else {
 				buf.WriteString(SlowLogRowPrefixStr + fmt.Sprintf("%v%v%v %v%v%v %v%v%v %v%v%v",
 					SlowLogCopProcAvg, SlowLogSpaceMarkStr, logItems.CopTasks.AvgProcessTime.Seconds(),
@@ -1316,6 +1345,17 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 					SlowLogCopWaitP90, SlowLogSpaceMarkStr, logItems.CopTasks.P90WaitTime.Seconds(),
 					SlowLogCopWaitMax, SlowLogSpaceMarkStr, logItems.CopTasks.MaxWaitTime.Seconds(),
 					SlowLogCopWaitAddr, SlowLogSpaceMarkStr, logItems.CopTasks.MaxWaitAddress) + "\n")
+				for _, backoff := range backoffs {
+					backoffPrefix := SlowLogCopBackoffPrefix + backoff + "_"
+					buf.WriteString(SlowLogRowPrefixStr + fmt.Sprintf("%v%v%v %v%v%v %v%v%v %v%v%v %v%v%v %v%v%v\n",
+						backoffPrefix+"total_times", SlowLogSpaceMarkStr, logItems.CopTasks.TotBackoffTimes[backoff],
+						backoffPrefix+"total_time", SlowLogSpaceMarkStr, logItems.CopTasks.TotBackoffTime[backoff].Seconds(),
+						backoffPrefix+"max_time", SlowLogSpaceMarkStr, logItems.CopTasks.MaxBackoffTime[backoff].Seconds(),
+						backoffPrefix+"max_addr", SlowLogSpaceMarkStr, logItems.CopTasks.MaxBackoffAddress[backoff],
+						backoffPrefix+"avg_time", SlowLogSpaceMarkStr, logItems.CopTasks.AvgBackoffTime[backoff].Seconds(),
+						backoffPrefix+"p90_time", SlowLogSpaceMarkStr, logItems.CopTasks.P90BackoffTime[backoff].Seconds(),
+					))
+				}
 			}
 		}
 	}

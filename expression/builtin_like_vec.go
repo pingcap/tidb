@@ -73,11 +73,11 @@ func (b *builtinLikeSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) er
 	return nil
 }
 
-func (b *builtinRegexpBinarySig) vectorized() bool {
+func (b *builtinRegexpSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinRegexpSig) vectorized() bool {
+func (b *builtinRegexpUTF8Sig) vectorized() bool {
 	return true
 }
 

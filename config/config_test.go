@@ -23,6 +23,7 @@ import (
 	"github.com/BurntSushi/toml"
 	. "github.com/pingcap/check"
 	zaplog "github.com/pingcap/log"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/util/logutil"
 	tracing "github.com/uber/jaeger-client-go/config"
 )
@@ -179,6 +180,8 @@ alter-primary-key = true
 delay-clean-table-lock = 5
 split-region-max-num=10000
 enable-batch-dml = true
+server-version = "test_version"
+repair-mode = true
 [performance]
 txn-total-size-limit=2000
 [tikv-client]
@@ -187,8 +190,11 @@ max-batch-size=128
 region-cache-ttl=6000
 store-limit=0
 [stmt-summary]
+enable=true
 max-stmt-count=1000
 max-sql-length=1024
+refresh-interval=100
+history-size=100
 `)
 
 	c.Assert(err, IsNil)
@@ -196,6 +202,8 @@ max-sql-length=1024
 
 	c.Assert(conf.Load(configFile), IsNil)
 
+	c.Assert(conf.ServerVersion, Equals, "test_version")
+	c.Assert(mysql.ServerVersion, Equals, conf.ServerVersion)
 	// Test that the original value will not be clear by load the config file that does not contain the option.
 	c.Assert(conf.Binlog.Enable, Equals, true)
 	c.Assert(conf.Binlog.Strategy, Equals, "hash")
@@ -212,9 +220,13 @@ max-sql-length=1024
 	c.Assert(conf.EnableTableLock, IsTrue)
 	c.Assert(conf.DelayCleanTableLock, Equals, uint64(5))
 	c.Assert(conf.SplitRegionMaxNum, Equals, uint64(10000))
+	c.Assert(conf.StmtSummary.Enable, Equals, true)
 	c.Assert(conf.StmtSummary.MaxStmtCount, Equals, uint(1000))
 	c.Assert(conf.StmtSummary.MaxSQLLength, Equals, uint(1024))
+	c.Assert(conf.StmtSummary.RefreshInterval, Equals, 100)
+	c.Assert(conf.StmtSummary.HistorySize, Equals, 100)
 	c.Assert(conf.EnableBatchDML, Equals, true)
+	c.Assert(conf.RepairMode, Equals, true)
 	c.Assert(f.Close(), IsNil)
 	c.Assert(os.Remove(configFile), IsNil)
 
@@ -224,7 +236,7 @@ max-sql-length=1024
 	// Make sure the example config is the same as default config.
 	c.Assert(conf, DeepEquals, GetGlobalConfig())
 
-	// Test for lof config.
+	// Test for log config.
 	c.Assert(conf.Log.ToLogConfig(), DeepEquals, logutil.NewLogConfig("info", "text", "tidb-slow.log", conf.Log.File, false, func(config *zaplog.Config) { config.DisableErrorVerbose = conf.Log.getDisableErrorStack() }))
 
 	// Test for tracing config.
@@ -347,5 +359,22 @@ func (s *testConfigSuite) TestOOMActionValid(c *C) {
 	for _, tt := range tests {
 		c1.OOMAction = tt.oomAction
 		c.Assert(c1.Valid() == nil, Equals, tt.valid)
+	}
+}
+
+func (s *testConfigSuite) TestTxnTotalSizeLimitValid(c *C) {
+	conf := NewConfig()
+	tests := []struct {
+		limit uint64
+		valid bool
+	}{
+		{4 << 10, true},
+		{10 << 30, true},
+		{10<<30 + 1, false},
+	}
+
+	for _, tt := range tests {
+		conf.Performance.TxnTotalSizeLimit = tt.limit
+		c.Assert(conf.Valid() == nil, Equals, tt.valid)
 	}
 }
