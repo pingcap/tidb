@@ -609,7 +609,7 @@ func generateOriginDefaultValue(col *model.ColumnInfo) (interface{}, error) {
 	return odValue, nil
 }
 
-func findColumnInIndexCols(c string, cols []*ast.IndexColName) bool {
+func findColumnInIndexCols(c string, cols []*ast.IndexPartSpecification) bool {
 	for _, c1 := range cols {
 		if c == c1.Column.Name.L {
 			return true
