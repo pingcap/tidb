@@ -415,7 +415,7 @@
           "Projection_18 10000.00 root test.t.a, test.t.b",
           "└─IndexLookUp_17 10000.00 root ",
           "  ├─IndexScan_19 10000.00 cop[tikv] table:t, index:a, range:[NULL,+inf], keep order:true, stats:pseudo",
-          "  └─TableScan_20 10000.00 cop[tikv] table:t, range:[-inf,+inf], keep order:true, stats:pseudo"
+          "  └─TableScan_20 10000.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false, stats:pseudo"
         ],
         "Result": [
           "1 11",
@@ -430,7 +430,7 @@
           "Projection_18 10000.00 root test.t.a, test.t.b",
           "└─IndexLookUp_17 10000.00 root ",
           "  ├─IndexScan_19 10000.00 cop[tikv] table:t, index:b, c, range:[NULL,+inf], keep order:true, stats:pseudo",
-          "  └─TableScan_20 10000.00 cop[tikv] table:t, range:[-inf,+inf], keep order:true, stats:pseudo"
+          "  └─TableScan_20 10000.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false, stats:pseudo"
         ],
         "Result": [
           "1 11",
@@ -445,7 +445,7 @@
           "Projection_18 10000.00 root test.t.a, test.t.b, test.t.c",
           "└─IndexLookUp_17 10000.00 root ",
           "  ├─IndexScan_19 10000.00 cop[tikv] table:t, index:b, c, range:[NULL,+inf], keep order:true, stats:pseudo",
-          "  └─TableScan_20 10000.00 cop[tikv] table:t, range:[-inf,+inf], keep order:true, stats:pseudo"
+          "  └─TableScan_20 10000.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false, stats:pseudo"
         ],
         "Result": [
           "1 11 4",
@@ -460,7 +460,7 @@
           "Projection_18 10000.00 root test.t.a, test.t.b, test.t.c",
           "└─IndexLookUp_17 10000.00 root ",
           "  ├─IndexScan_19 10000.00 cop[tikv] table:t, index:c, b, range:[NULL,+inf], keep order:true, stats:pseudo",
-          "  └─TableScan_20 10000.00 cop[tikv] table:t, range:[-inf,+inf], keep order:true, stats:pseudo"
+          "  └─TableScan_20 10000.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false, stats:pseudo"
         ],
         "Result": [
           "4 44 1",
