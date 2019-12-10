@@ -64,6 +64,7 @@ type Histogram struct {
 	// For some types like `Int`, we do not build it because we can get them directly from `Bounds`.
 	scalars []scalar
 	// TotColSize is the total column size for the histogram.
+	// For unfixed-len types, it includes LEN and BYTES.
 	TotColSize int64
 
 	// Correlation is the statistical correlation between physical row ordering and logical ordering of
