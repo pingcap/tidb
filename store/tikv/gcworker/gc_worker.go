@@ -1131,9 +1131,15 @@ func (w *GCWorker) removeLockObservers(ctx context.Context, safePoint uint64, st
 
 // Returns successful
 func (w *GCWorker) physicalResolveLocks(ctx context.Context, safePoint uint64, stores map[uint64]*metapb.Store) (map[uint64]interface{}, error) {
+	storesList := make([]uint64, 0, len(stores))
+	for id := range stores {
+		storesList = append(storesList, id)
+	}
+
 	logutil.Logger(ctx).Info("[gc worker] running physical scan lock",
 		zap.String("uuid", w.uuid),
-		zap.Uint64("safePoint", safePoint))
+		zap.Uint64("safePoint", safePoint),
+		zap.Any("stores", storesList))
 
 	type result struct {
 		StoreID uint64
@@ -1148,7 +1154,7 @@ func (w *GCWorker) physicalResolveLocks(ctx context.Context, safePoint uint64, s
 		go func() {
 			err := w.physicalResolveLocksForStore(ctx, safePoint, store1)
 			if err != nil {
-				logutil.Logger(ctx).Warn("[gc worker] physical resolve locks for store failed",
+				logutil.Logger(ctx).Error("[gc worker] physical resolve locks for store failed",
 					zap.String("uuid", w.uuid),
 					zap.Uint64("safePoint", safePoint),
 					zap.Any("store", store1),
