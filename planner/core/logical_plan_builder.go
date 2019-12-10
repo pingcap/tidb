@@ -2379,7 +2379,6 @@ func (b *planBuilder) buildUpdateLists(tableList []*ast.TableName, list []*ast.A
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
-		newExpr = expression.BuildCastFunction(b.ctx, newExpr, col.GetType())
 		p = np
 		newList = append(newList, &expression.Assignment{Col: col, Expr: newExpr})
 	}
