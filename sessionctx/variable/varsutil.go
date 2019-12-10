@@ -142,7 +142,7 @@ func GetSessionOnlySysVars(s *SessionVars, key string) (string, bool, error) {
 	case TiDBCheckMb4ValueInUTF8:
 		return BoolToIntStr(config.GetGlobalConfig().CheckMb4ValueInUTF8), true, nil
 	}
-	sVal, ok := s.systems[key]
+	sVal, ok := s.GetSystemVar(key)
 	if ok {
 		return sVal, true, nil
 	}
@@ -635,6 +635,11 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 			return "", nil
 		}
 		return checkUInt64SystemVar(name, value, 1, math.MaxUint32, vars)
+	case TiDBStmtSummaryHistorySize:
+		if value == "" {
+			return "", nil
+		}
+		return checkUInt64SystemVar(name, value, 0, math.MaxUint8, vars)
 	case TiDBIsolationReadEngines:
 		engines := strings.Split(value, ",")
 		var formatVal string

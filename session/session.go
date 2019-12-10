@@ -44,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/metrics"
@@ -367,7 +368,7 @@ func (s *session) StoreQueryFeedback(feedback interface{}) {
 
 // FieldList returns fields list of a table.
 func (s *session) FieldList(tableName string) ([]*ast.ResultField, error) {
-	is := executor.GetInfoSchema(s)
+	is := infoschema.GetInfoSchema(s)
 	dbName := model.NewCIStr(s.GetSessionVars().CurrentDB)
 	tName := model.NewCIStr(tableName)
 	table, err := is.TableByName(dbName, tName)
@@ -662,9 +663,6 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 		for i, sr := range nh.history {
 			st := sr.st
 			s.sessionVars.StmtCtx = sr.stmtCtx
-			s.sessionVars.StartTime = time.Now()
-			s.sessionVars.DurationCompile = time.Duration(0)
-			s.sessionVars.DurationParse = time.Duration(0)
 			s.sessionVars.StmtCtx.ResetForRetry()
 			s.sessionVars.PreparedParams = s.sessionVars.PreparedParams[:0]
 			schemaVersion, err = st.RebuildPlan(ctx)
@@ -799,6 +797,10 @@ func (s *session) ExecRestrictedSQLWithSnapshot(sql string) ([]chunk.Row, []*ast
 	}
 	// Set snapshot.
 	if snapshot != 0 {
+		se.sessionVars.SnapshotInfoschema, err = domain.GetDomain(s).GetSnapshotInfoSchema(snapshot)
+		if err != nil {
+			return nil, nil, err
+		}
 		if err := se.sessionVars.SetSystemVar(variable.TiDBSnapshot, strconv.FormatUint(snapshot, 10)); err != nil {
 			return nil, nil, err
 		}
@@ -806,6 +808,7 @@ func (s *session) ExecRestrictedSQLWithSnapshot(sql string) ([]chunk.Row, []*ast
 			if err := se.sessionVars.SetSystemVar(variable.TiDBSnapshot, ""); err != nil {
 				logutil.BgLogger().Error("set tidbSnapshot error", zap.Error(err))
 			}
+			se.sessionVars.SnapshotInfoschema = nil
 		}()
 	}
 	return execRestrictedSQL(ctx, se, sql)
@@ -1083,8 +1086,7 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 	charsetInfo, collation := s.sessionVars.GetCharsetInfo()
 
 	// Step1: Compile query string to abstract syntax trees(ASTs).
-	startTS := time.Now()
-	s.GetSessionVars().StartTime = startTS
+	parseStartTime := time.Now()
 	stmtNodes, warns, err := s.ParseSQL(ctx, sql, charsetInfo, collation)
 	if err != nil {
 		s.rollbackOnError(ctx)
@@ -1093,7 +1095,7 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 			zap.String("SQL", sql))
 		return nil, util.SyntaxError(err)
 	}
-	durParse := time.Since(startTS)
+	durParse := time.Since(parseStartTime)
 	s.GetSessionVars().DurationParse = durParse
 	isInternal := s.isInternal()
 	if isInternal {
@@ -1105,10 +1107,10 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 	compiler := executor.Compiler{Ctx: s}
 	multiQuery := len(stmtNodes) > 1
 	for _, stmtNode := range stmtNodes {
+		s.sessionVars.StartTime = time.Now()
 		s.PrepareTxnCtx(ctx)
 
 		// Step2: Transform abstract syntax tree to a physical plan(stored in executor.ExecStmt).
-		startTS = time.Now()
 		// Some executions are done in compile stage, so we reset them before compile.
 		if err := executor.ResetContextOfStmt(s, stmtNode); err != nil {
 			return nil, err
@@ -1121,7 +1123,7 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 				zap.String("SQL", sql))
 			return nil, err
 		}
-		durCompile := time.Since(startTS)
+		durCompile := time.Since(s.sessionVars.StartTime)
 		s.GetSessionVars().DurationCompile = durCompile
 		if isInternal {
 			sessionExecuteCompileDurationInternal.Observe(durCompile.Seconds())
@@ -1171,7 +1173,7 @@ func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields
 	// So we have to call PrepareTxnCtx here.
 	s.PrepareTxnCtx(ctx)
 	s.PrepareTxnFuture(ctx)
-	prepareExec := executor.NewPrepareExec(s, executor.GetInfoSchema(s), sql)
+	prepareExec := executor.NewPrepareExec(s, infoschema.GetInfoSchema(s), sql)
 	err = prepareExec.Next(ctx, nil)
 	if err != nil {
 		return
@@ -1198,7 +1200,7 @@ func (s *session) CachedPlanExec(ctx context.Context,
 	stmtID uint32, prepareStmt *plannercore.CachedPrepareStmt, args []types.Datum) (sqlexec.RecordSet, error) {
 	prepared := prepareStmt.PreparedAst
 	// compile ExecStmt
-	is := executor.GetInfoSchema(s)
+	is := infoschema.GetInfoSchema(s)
 	execAst := &ast.ExecuteStmt{ExecID: stmtID}
 	if err := executor.ResetContextOfStmt(s, execAst); err != nil {
 		return nil, err
@@ -1251,7 +1253,7 @@ func (s *session) IsCachedExecOk(ctx context.Context, preparedStmt *plannercore.
 		return false, nil
 	}
 	// check schema version
-	is := executor.GetInfoSchema(s)
+	is := infoschema.GetInfoSchema(s)
 	if prepared.SchemaVersion != is.SchemaMetaVersion() {
 		prepared.CachedPlan = nil
 		return false, nil
@@ -1312,6 +1314,9 @@ func (s *session) DropPreparedStmt(stmtID uint32) error {
 }
 
 func (s *session) Txn(active bool) (kv.Transaction, error) {
+	if !s.txn.validOrPending() && active {
+		return &s.txn, kv.ErrInvalidTxn
+	}
 	if s.txn.pending() && active {
 		// Transaction is lazy initialized.
 		// PrepareTxnCtx is called to get a tso future, makes s.txn a pending txn,
@@ -1853,6 +1858,7 @@ var builtinGlobalVariable = []string{
 	variable.TiDBTxnMode,
 	variable.TiDBEnableStmtSummary,
 	variable.TiDBStmtSummaryRefreshInterval,
+	variable.TiDBStmtSummaryHistorySize,
 	variable.TiDBMaxDeltaSchemaCount,
 	variable.TiDBCapturePlanBaseline,
 	variable.TiDBUsePlanBaselines,

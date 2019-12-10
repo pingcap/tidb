@@ -254,12 +254,7 @@ func (a *ExecStmt) IsReadOnly(vars *variable.SessionVars) bool {
 // RebuildPlan rebuilds current execute statement plan.
 // It returns the current information schema version that 'a' is using.
 func (a *ExecStmt) RebuildPlan(ctx context.Context) (int64, error) {
-	startTime := time.Now()
-	defer func() {
-		a.Ctx.GetSessionVars().DurationCompile = time.Since(startTime)
-	}()
-
-	is := GetInfoSchema(a.Ctx)
+	is := infoschema.GetInfoSchema(a.Ctx)
 	a.InfoSchema = is
 	if err := plannercore.Preprocess(a.Ctx, a.StmtNode, is, plannercore.InTxnRetry); err != nil {
 		return 0, err
@@ -535,7 +530,8 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e Executor) error {
 			return nil
 		}
 		forUpdateTS := txnCtx.GetForUpdateTS()
-		err = txn.LockKeys(ctx, &sctx.GetSessionVars().Killed, forUpdateTS, sctx.GetSessionVars().LockWaitTimeout, keys...)
+		err = txn.LockKeys(ctx, &sctx.GetSessionVars().Killed, forUpdateTS, sctx.GetSessionVars().LockWaitTimeout,
+			sctx.GetSessionVars().StmtCtx.GetLockWaitStartTime(), keys...)
 		if err == nil {
 			return nil
 		}
@@ -599,7 +595,7 @@ func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, err error) (E
 		if err != nil {
 			tsErr := UpdateForUpdateTS(a.Ctx, 0)
 			if tsErr != nil {
-				return nil, tsErr
+				logutil.Logger(ctx).Warn("UpdateForUpdateTS failed", zap.Error(tsErr))
 			}
 		}
 		return nil, err
@@ -619,9 +615,6 @@ func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, err error) (E
 	// Rollback the statement change before retry it.
 	a.Ctx.StmtRollback()
 	a.Ctx.GetSessionVars().StmtCtx.ResetForRetry()
-	a.Ctx.GetSessionVars().StartTime = time.Now()
-	a.Ctx.GetSessionVars().DurationCompile = time.Duration(0)
-	a.Ctx.GetSessionVars().DurationParse = time.Duration(0)
 
 	if err = e.Open(ctx); err != nil {
 		return nil, err
@@ -752,7 +745,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	sessVars := a.Ctx.GetSessionVars()
 	level := log.GetLevel()
 	cfg := config.GetGlobalConfig()
-	costTime := time.Since(a.Ctx.GetSessionVars().StartTime)
+	costTime := time.Since(sessVars.StartTime) + sessVars.DurationParse
 	threshold := time.Duration(atomic.LoadUint64(&cfg.Log.SlowThreshold)) * time.Millisecond
 	if costTime < threshold && level > zapcore.DebugLevel {
 		return
@@ -761,10 +754,10 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 
 	var tableIDs, indexNames string
 	if len(sessVars.StmtCtx.TableIDs) > 0 {
-		tableIDs = strings.Replace(fmt.Sprintf("%v", a.Ctx.GetSessionVars().StmtCtx.TableIDs), " ", ",", -1)
+		tableIDs = strings.Replace(fmt.Sprintf("%v", sessVars.StmtCtx.TableIDs), " ", ",", -1)
 	}
 	if len(sessVars.StmtCtx.IndexNames) > 0 {
-		indexNames = strings.Replace(fmt.Sprintf("%v", a.Ctx.GetSessionVars().StmtCtx.IndexNames), " ", ",", -1)
+		indexNames = strings.Replace(fmt.Sprintf("%v", sessVars.StmtCtx.IndexNames), " ", ",", -1)
 	}
 	execDetail := sessVars.StmtCtx.GetExecDetails()
 	copTaskInfo := sessVars.StmtCtx.CopTasksDetails()
@@ -776,8 +769,8 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		SQL:            sql.String(),
 		Digest:         digest,
 		TimeTotal:      costTime,
-		TimeParse:      a.Ctx.GetSessionVars().DurationParse,
-		TimeCompile:    a.Ctx.GetSessionVars().DurationCompile,
+		TimeParse:      sessVars.DurationParse,
+		TimeCompile:    sessVars.DurationCompile,
 		IndexNames:     indexNames,
 		StatsInfos:     statsInfos,
 		CopTasks:       copTaskInfo,
@@ -805,7 +798,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		domain.GetDomain(a.Ctx).LogSlowQuery(&domain.SlowQueryInfo{
 			SQL:        sql.String(),
 			Digest:     digest,
-			Start:      a.Ctx.GetSessionVars().StartTime,
+			Start:      sessVars.StartTime,
 			Duration:   costTime,
 			Detail:     sessVars.StmtCtx.GetExecDetails(),
 			Succ:       succ,
