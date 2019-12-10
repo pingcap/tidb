@@ -748,10 +748,13 @@ func (s *testPessimisticSuite) TestInnodbLockWaitTimeoutWaitStart(c *C) {
 		}()
 		_, err = tk2.Exec("select * from tk where c1 = 1 for update")
 	}()
+	time.Sleep(time.Millisecond * 30)
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/PessimisticLockErrWriteConflict"), IsNil)
 	waitErr := <-done
 	c.Assert(waitErr, NotNil)
 	c.Check(waitErr.Error(), Equals, tikv.ErrLockWaitTimeout.Error())
 	c.Check(time.Since(start), GreaterEqual, time.Duration(1000*time.Millisecond))
 	c.Check(time.Since(start), LessEqual, time.Duration(1100*time.Millisecond))
+	tk2.MustExec("rollback")
+	tk3.MustExec("commit")
 }

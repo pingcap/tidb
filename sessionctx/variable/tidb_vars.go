@@ -341,6 +341,9 @@ const (
 	// TiDBStmtSummaryRefreshInterval indicates the refresh interval in seconds for each statement summary.
 	TiDBStmtSummaryRefreshInterval = "tidb_stmt_summary_refresh_interval"
 
+	// TiDBStmtSummaryHistorySize indicates the history size of each statement summary.
+	TiDBStmtSummaryHistorySize = "tidb_stmt_summary_history_size"
+
 	// TiDBCapturePlanBaseline indicates whether the capture of plan baselines is enabled.
 	TiDBCapturePlanBaseline = "tidb_capture_plan_baselines"
 
@@ -432,7 +435,6 @@ const (
 	DefWaitSplitRegionTimeout          = 300 // 300s
 	DefTiDBEnableNoopFuncs             = false
 	DefTiDBAllowRemoveAutoInc          = false
-	DefTiDBStmtSummaryRefreshInterval  = 1800 // 1800s
 	DefTiDBUsePlanBaselines            = true
 	DefTiDBEvolvePlanBaselines         = false
 	DefTiDBEvolvePlanTaskMaxTime       = 600 // 600s

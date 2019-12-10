@@ -144,6 +144,8 @@
       "select * from t, t s order by t.a limit 5",
       // Test Limit + Join + Proj.
       "select * from t, t s limit 5",
+      // Test Limit + Proj
+      "select a, b from (select @i as a, @i := @i+1 as b from t) t order by a desc limit 1",
       // Test TopN + Left Join + Proj.
       "select * from t left outer join t s on t.a = s.a order by t.a limit 5",
       // Test TopN + Left Join + Proj.
