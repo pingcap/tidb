@@ -696,10 +696,10 @@ func (coll *HistColl) GetAvgRowSize(cols []*expression.Column, isEncodedKey bool
 }
 
 // GetAvgRowSizeListInDisk computes average row size for given columns.
-func (coll *HistColl) GetAvgRowSizeListInDisk(cols []*expression.Column, padChar bool) (size float64) {
+func (coll *HistColl) GetAvgRowSizeListInDisk(cols []*expression.Column) (size float64) {
 	if coll.Pseudo || len(coll.Columns) == 0 || coll.Count == 0 {
 		for _, col := range cols {
-			size += float64(chunk.EstimateTypeWidth(padChar, col.GetType()))
+			size += float64(chunk.EstimateTypeWidth(col.GetType()))
 		}
 	} else {
 		for _, col := range cols {
@@ -707,7 +707,7 @@ func (coll *HistColl) GetAvgRowSizeListInDisk(cols []*expression.Column, padChar
 			// Normally this would not happen, it is for compatibility with old version stats which
 			// does not include TotColSize.
 			if !ok || (!colHist.IsHandle && colHist.TotColSize == 0 && (colHist.NullCount != coll.Count)) {
-				size += float64(chunk.EstimateTypeWidth(padChar, col.GetType()))
+				size += float64(chunk.EstimateTypeWidth(col.GetType()))
 				continue
 			}
 			size += colHist.AvgColSizeListInDisk(coll.Count)
