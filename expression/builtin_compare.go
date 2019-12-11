@@ -664,7 +664,7 @@ func (b *builtinLeastIntSig) Clone() builtinFunc {
 }
 
 // evalInt evals a builtinLeastIntSig.
-// See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#functionleast
+// See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_least
 func (b *builtinLeastIntSig) evalInt(row chunk.Row) (min int64, isNull bool, err error) {
 	min, isNull, err = b.args[0].EvalInt(b.ctx, row)
 	if isNull || err != nil {
