@@ -463,11 +463,9 @@ func (ts *testSuite) TestHiddenColumn(c *C) {
 	tk.MustExec("update hidden set a = 5;")
 	colInfo[5].Hidden = false
 	tc.VisibleColumns = nil
-	tc.WritableColumns = nil
 	tk.MustQuery("select * from hidden;").Check(testkit.Rows("5 3 5 6"))
 	colInfo[5].Hidden = true
 	tc.VisibleColumns = nil
-	tc.WritableColumns = nil
 
 	// Can't delete with b and d
 	_, err = tk.Exec("delete from hidden where b=1;")
