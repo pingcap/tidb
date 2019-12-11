@@ -1697,7 +1697,7 @@ func (b *builtinUnixTimestampDecSig) vectorized() bool {
 func (b *builtinUnixTimestampDecSig) vecEvalDecimal(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	result.ResizeDecimal(n, false)
-	Ts := result.Decimals()
+	ts := result.Decimals()
 	timeBuf, err := b.bufAllocator.get(types.ETTimestamp, n)
 	if err != nil {
 		return err
@@ -1709,7 +1709,7 @@ func (b *builtinUnixTimestampDecSig) vecEvalDecimal(input *chunk.Chunk, result *
 			if err != nil {
 				return err
 			}
-			Ts[i] = *temp
+			ts[i] = *temp
 			if isNull {
 				result.SetNull(i, true)
 			}
@@ -1722,14 +1722,14 @@ func (b *builtinUnixTimestampDecSig) vecEvalDecimal(input *chunk.Chunk, result *
 			}
 			t, err := timeBuf.GetTime(i).Time.GoTime(getTimeZone(b.ctx))
 			if err != nil {
-				Ts[i] = *new(types.MyDecimal)
+				ts[i] = *new(types.MyDecimal)
 				continue
 			}
 			tmp, err := goTimeToMysqlUnixTimestamp(t, b.tp.Decimal)
 			if err != nil {
 				return err
 			}
-			Ts[i] = *tmp
+			ts[i] = *tmp
 		}
 	}
 	return nil
