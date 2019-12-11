@@ -95,7 +95,7 @@ func NewBindHandle(ctx sessionctx.Context) *BindHandle {
 func (h *BindHandle) Update(fullLoad bool) (err error) {
 	sql := "select original_sql, bind_sql, default_db, status, create_time, update_time, charset, collation from mysql.bind_info"
 	if !fullLoad {
-		sql += " where update_time >= \"" + h.lastUpdateTime.String() + "\""
+		sql += " where update_time > \"" + h.lastUpdateTime.String() + "\""
 	}
 
 	// No need to acquire the session context lock for ExecRestrictedSQL, it
@@ -358,6 +358,7 @@ func (c cache) removeDeletedBindMeta(hash string, meta *BindMeta, scope string) 
 			}
 		}
 	}
+	c[hash] = metas
 }
 
 // removeStaleBindMetas removes all the stale BindMeta in the cache.
@@ -377,12 +378,15 @@ func (c cache) removeStaleBindMetas(hash string, meta *BindMeta, scope string) {
 			}
 		}
 	}
+	c[hash] = metas
 }
 
 func (c cache) copy() cache {
 	newCache := make(cache, len(c))
 	for k, v := range c {
-		newCache[k] = v
+		bindMetas := make([]*BindMeta, len(v))
+		copy(bindMetas, v)
+		newCache[k] = bindMetas
 	}
 	return newCache
 }
@@ -444,4 +448,11 @@ func (h *BindHandle) logicalDeleteBindInfoSQL(normdOrigSQL, db string, updateTs 
 		expression.Quote(updateTs.String()),
 		expression.Quote(normdOrigSQL),
 		expression.Quote(db))
+}
+
+// Clear resets the bind handle. It is used for test.
+func (h *BindHandle) Clear() {
+	h.bindInfo.Store(make(cache))
+	h.invalidBindRecordMap.Store(make(map[string]*invalidBindRecordMap))
+	h.lastUpdateTime = types.ZeroTimestamp
 }
