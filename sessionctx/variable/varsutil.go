@@ -537,6 +537,12 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 			return "", err
 		}
 		return v, nil
+	case TiDBAutoAnalyzeRatio:
+		v, err := strconv.ParseFloat(value, 64)
+		if err != nil || v < 0 {
+			return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
+		}
+		return value, nil
 	case TxnIsolation, TransactionIsolation:
 		upVal := strings.ToUpper(value)
 		_, exists := TxIsolationNames[upVal]
@@ -635,6 +641,11 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 			return "", nil
 		}
 		return checkUInt64SystemVar(name, value, 1, math.MaxUint32, vars)
+	case TiDBStmtSummaryHistorySize:
+		if value == "" {
+			return "", nil
+		}
+		return checkUInt64SystemVar(name, value, 0, math.MaxUint8, vars)
 	case TiDBIsolationReadEngines:
 		engines := strings.Split(value, ",")
 		var formatVal string

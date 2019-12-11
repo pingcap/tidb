@@ -164,7 +164,7 @@ func physicalOptimize(logic LogicalPlan) (PhysicalPlan, float64, error) {
 		return nil, 0, err
 	}
 
-	logic.preparePossibleProperties()
+	preparePossibleProperties(logic)
 
 	prop := &property.PhysicalProperty{
 		TaskTp:      property.RootTaskType,
