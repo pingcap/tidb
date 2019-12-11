@@ -318,7 +318,9 @@ func (helper extractHelper) extractTimeRange(
 		}
 
 		if colName == extractColName {
-			timeDatum, err := datums[0].ConvertTo(ctx.GetSessionVars().StmtCtx, types.NewFieldType(mysql.TypeDatetime))
+			timeType := types.NewFieldType(mysql.TypeDatetime)
+			timeType.Decimal = 3
+			timeDatum, err := datums[0].ConvertTo(ctx.GetSessionVars().StmtCtx, timeType)
 			if err != nil {
 				remained = append(remained, expr)
 				continue
