@@ -119,6 +119,8 @@ func (s *testSnapshotSuite) TestBatchGet(c *C) {
 	}
 }
 
+type contextKey string
+
 func (s *testSnapshotSuite) TestSnapshotCache(c *C) {
 	txn := s.beginTxn(c)
 	c.Assert(txn.Set(kv.Key("x"), []byte("x")), IsNil)
@@ -131,7 +133,7 @@ func (s *testSnapshotSuite) TestSnapshotCache(c *C) {
 	c.Assert(err, IsNil)
 
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/snapshot-get-cache-fail", `return(true)`), IsNil)
-	ctx := context.WithValue(context.Background(), "TestSnapshotCache", true)
+	ctx := context.WithValue(context.Background(), contextKey("TestSnapshotCache"), true)
 	_, err = snapshot.Get(ctx, kv.Key("x"))
 	c.Assert(err, IsNil)
 

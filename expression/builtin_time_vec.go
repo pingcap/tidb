@@ -1554,11 +1554,48 @@ func (b *builtinWeekWithoutModeSig) vecEvalInt(input *chunk.Chunk, result *chunk
 }
 
 func (b *builtinUnixTimestampDecSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinUnixTimestampDecSig) vecEvalDecimal(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	result.ResizeDecimal(n, false)
+	ts := result.Decimals()
+	timeBuf, err := b.bufAllocator.get(types.ETTimestamp, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(timeBuf)
+	if err := b.args[0].VecEvalTime(b.ctx, input, timeBuf); err != nil {
+		for i := 0; i < n; i++ {
+			temp, isNull, err := b.evalDecimal(input.GetRow(i))
+			if err != nil {
+				return err
+			}
+			ts[i] = *temp
+			if isNull {
+				result.SetNull(i, true)
+			}
+		}
+	} else {
+		result.MergeNulls(timeBuf)
+		for i := 0; i < n; i++ {
+			if result.IsNull(i) {
+				continue
+			}
+			t, err := timeBuf.GetTime(i).Time.GoTime(getTimeZone(b.ctx))
+			if err != nil {
+				ts[i] = *new(types.MyDecimal)
+				continue
+			}
+			tmp, err := goTimeToMysqlUnixTimestamp(t, b.tp.Decimal)
+			if err != nil {
+				return err
+			}
+			ts[i] = *tmp
+		}
+	}
+	return nil
 }
 
 func (b *builtinPeriodAddSig) vectorized() bool {
