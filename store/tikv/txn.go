@@ -367,8 +367,7 @@ func (txn *tikvTxn) rollbackPessimisticLocks() error {
 }
 
 // lockWaitTime in ms, except that kv.LockAlwaysWait(0) means always wait lock, kv.LockNowait(-1) means nowait lock
-func (txn *tikvTxn) LockKeys(ctx context.Context, killed *uint32, forUpdateTS uint64,
-	lockWaitTime int64, waitStartTime time.Time, keysInput ...kv.Key) error {
+func (txn *tikvTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keysInput ...kv.Key) error {
 	// Exclude keys that are already locked.
 	keys := make([][]byte, 0, len(keysInput))
 	txn.mu.Lock()
@@ -382,7 +381,7 @@ func (txn *tikvTxn) LockKeys(ctx context.Context, killed *uint32, forUpdateTS ui
 		return nil
 	}
 	tikvTxnCmdHistogramWithLockKeys.Inc()
-	if txn.IsPessimistic() && forUpdateTS > 0 {
+	if txn.IsPessimistic() && lockCtx.ForUpdateTS > 0 {
 		if txn.committer == nil {
 			// connID is used for log.
 			var connID uint64
@@ -403,16 +402,16 @@ func (txn *tikvTxn) LockKeys(ctx context.Context, killed *uint32, forUpdateTS ui
 		}
 
 		bo := NewBackoffer(ctx, pessimisticLockMaxBackoff).WithVars(txn.vars)
-		txn.committer.forUpdateTS = forUpdateTS
+		txn.committer.forUpdateTS = lockCtx.ForUpdateTS
 		// If the number of keys greater than 1, it can be on different region,
 		// concurrently execute on multiple regions may lead to deadlock.
 		txn.committer.isFirstLock = len(txn.lockKeys) == 0 && len(keys) == 1
-		err := txn.committer.pessimisticLockKeys(bo, killed, lockWaitTime, waitStartTime, keys)
-		if killed != nil {
+		err := txn.committer.pessimisticLockKeys(bo, lockCtx, keys)
+		if lockCtx.Killed != nil {
 			// If the kill signal is received during waiting for pessimisticLock,
 			// pessimisticLockKeys would handle the error but it doesn't reset the flag.
 			// We need to reset the killed flag here.
-			atomic.CompareAndSwapUint32(killed, 1, 0)
+			atomic.CompareAndSwapUint32(lockCtx.Killed, 1, 0)
 		}
 		if err != nil {
 			for _, key := range keys {
@@ -437,7 +436,7 @@ func (txn *tikvTxn) LockKeys(ctx context.Context, killed *uint32, forUpdateTS ui
 			return err
 		}
 		if assignedPrimaryKey {
-			txn.committer.ttlManager.run(txn.committer, killed)
+			txn.committer.ttlManager.run(txn.committer, lockCtx.Killed)
 		}
 	}
 	txn.mu.Lock()
