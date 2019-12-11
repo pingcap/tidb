@@ -1531,6 +1531,9 @@ func dataForColumns(ctx sessionctx.Context, schemas []*model.DBInfo) [][]types.D
 func dataForColumnsInTable(schema *model.DBInfo, tbl *model.TableInfo) [][]types.Datum {
 	rows := make([][]types.Datum, 0, len(tbl.Columns))
 	for i, col := range tbl.Columns {
+		if col.Hidden {
+			continue
+		}
 		var charMaxLen, charOctLen, numericPrecision, numericScale, datetimePrecision interface{}
 		colLen, decimal := col.Flen, col.Decimal
 		defaultFlen, defaultDecimal := mysql.GetDefaultFieldLengthAndDecimal(col.Tp)
