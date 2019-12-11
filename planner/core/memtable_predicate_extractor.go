@@ -267,7 +267,7 @@ type ClusterLogTableExtractor struct {
 	// Addresses represents all components addresses we should send request to.
 	// e.g:
 	// 1. SELECT * FROM cluster_log WHERE address='192.168.1.7:2379'
-	// 2. SELECT * FROM cluster_log WHERE type in ('192.168.1.7:2379', '192.168.1.9:2379')
+	// 2. SELECT * FROM cluster_log WHERE address in ('192.168.1.7:2379', '192.168.1.9:2379')
 	Addresses set.StringSet
 
 	// StartTime represents the beginning time of log message
