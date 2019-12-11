@@ -933,11 +933,7 @@ func IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx sessionctx.Context, p Plan) (bo
 // isAutoCommitTxn checks if session is in autocommit mode and not InTxn
 // used for fast plan like point get
 func isAutoCommitTxn(ctx sessionctx.Context) bool {
-	// check autocommit and InTxn
-	if !ctx.GetSessionVars().IsAutocommit() || ctx.GetSessionVars().InTxn() {
-		return false
-	}
-	return true
+	return ctx.GetSessionVars().IsAutocommit() && !ctx.GetSessionVars().InTxn()
 }
 
 // IsPointUpdateByAutoCommit checks if plan p is point update and is in autocommit context
