@@ -217,6 +217,139 @@ func (helper extractHelper) extractCol(
 	return
 }
 
+func (helper extractHelper) extractLikePatternCol(
+	schema *expression.Schema,
+	names []*types.FieldName,
+	predicates []expression.Expression,
+	extractColName string,
+) (
+	remained []expression.Expression,
+	patterns []string,
+) {
+	remained = make([]expression.Expression, 0, len(predicates))
+	extractCols := make(map[int64]*types.FieldName)
+	for i, name := range names {
+		if name.ColName.L == extractColName {
+			extractCols[schema.Columns[i].UniqueID] = name
+		}
+	}
+
+	if len(extractCols) == 0 {
+		return predicates, nil
+	}
+
+	// We use a string array to save multiple patterns because the Golang and Rust don't
+	// support perl-like CNF regular expression: (?=expr1)(?=expr2).
+	// e.g:
+	// SELECT * FROM t WHERE c LIKE '%a%' AND c LIKE '%b%' AND c REGEXP 'gc.*[0-9]{10,20}'
+	for _, expr := range predicates {
+		fn, ok := expr.(*expression.ScalarFunction)
+		if !ok {
+			remained = append(remained, expr)
+			continue
+		}
+		var colName string
+		var datums []types.Datum
+
+		switch fn.FuncName.L {
+		case ast.GT, ast.GE, ast.LT, ast.LE, ast.EQ, ast.Like, ast.Regexp:
+			colName, datums = helper.extractColBinaryOpConsExpr(extractCols, fn)
+		}
+		if colName == extractColName {
+			switch fn.FuncName.L {
+			case ast.EQ:
+				patterns = append(patterns, "^"+regexp.QuoteMeta(datums[0].GetString())+"$")
+			case ast.Like:
+				patterns = append(patterns, stringutil.CompileLike2Regexp(datums[0].GetString()))
+			case ast.Regexp:
+				patterns = append(patterns, datums[0].GetString())
+			default:
+				remained = append(remained, expr)
+			}
+		} else {
+			remained = append(remained, expr)
+		}
+	}
+	return
+}
+
+func (helper extractHelper) extractTimeRange(
+	ctx sessionctx.Context,
+	schema *expression.Schema,
+	names []*types.FieldName,
+	predicates []expression.Expression,
+	extractColName string,
+) (
+	remained []expression.Expression,
+	// unix timestamp in millisecond
+	startTime int64,
+	endTime int64,
+) {
+	remained = make([]expression.Expression, 0, len(predicates))
+	extractCols := make(map[int64]*types.FieldName)
+	for i, name := range names {
+		if name.ColName.L == extractColName {
+			extractCols[schema.Columns[i].UniqueID] = name
+		}
+	}
+
+	if len(extractCols) == 0 {
+		return predicates, startTime, endTime
+	}
+
+	for _, expr := range predicates {
+		fn, ok := expr.(*expression.ScalarFunction)
+		if !ok {
+			remained = append(remained, expr)
+			continue
+		}
+
+		var colName string
+		var datums []types.Datum
+		switch fn.FuncName.L {
+		case ast.GT, ast.GE, ast.LT, ast.LE, ast.EQ, ast.Like, ast.Regexp:
+			colName, datums = helper.extractColBinaryOpConsExpr(extractCols, fn)
+		}
+
+		if colName == extractColName {
+			timeDatum, err := datums[0].ConvertTo(ctx.GetSessionVars().StmtCtx, types.NewFieldType(mysql.TypeDatetime))
+			if err != nil {
+				remained = append(remained, expr)
+				continue
+			}
+
+			mysqlTime := timeDatum.GetMysqlTime().Time
+			timestamp := time.Date(mysqlTime.Year(),
+				time.Month(mysqlTime.Month()),
+				mysqlTime.Day(),
+				mysqlTime.Hour(),
+				mysqlTime.Minute(),
+				mysqlTime.Second(),
+				mysqlTime.Microsecond()*1000,
+				time.Local,
+			).UnixNano() / int64(time.Millisecond)
+			switch fn.FuncName.L {
+			case ast.EQ:
+				startTime = timestamp
+				endTime = timestamp
+			case ast.GT:
+				startTime = timestamp + 1
+			case ast.GE:
+				startTime = timestamp
+			case ast.LT:
+				endTime = timestamp - 1
+			case ast.LE:
+				endTime = timestamp
+			default:
+				remained = append(remained, expr)
+			}
+		} else {
+			remained = append(remained, expr)
+		}
+	}
+	return
+}
+
 // ClusterConfigTableExtractor is used to extract some predicates of `cluster_config`
 type ClusterConfigTableExtractor struct {
 	extractHelper
@@ -303,94 +436,19 @@ func (e *ClusterLogTableExtractor) Extract(
 		return nil
 	}
 
-	// Extract the `time/message/level` columns
-	const (
-		ColNameTime    = "time"
-		ColNameMessage = "message"
-	)
-	extractCols := make(map[int64]*types.FieldName)
-	for i, name := range names {
-		if ln := name.ColName.L; ln == ColNameTime || ln == ColNameMessage {
-			extractCols[schema.Columns[i].UniqueID] = name
-		}
-	}
-
-	// We should compile the regexp to (?=expr1)(?=expr2) if there are more than one regular expressions
-	// e.g:
-	// SELECT * FROM cluster_log WHERE message LIKE '%a%' AND message LIKE '%b%' AND message REGEXP 'gc.*[0-9]{10,20}'
-	var patterns []string
-	var startTime, endTime int64
-	for _, expr := range predicates {
-		x, ok := expr.(*expression.ScalarFunction)
-		if !ok {
-			remained = append(remained, expr)
-			continue
-		}
-		var colName string
-		var datums []types.Datum
-
-		switch x.FuncName.L {
-		case ast.GT, ast.GE, ast.LT, ast.LE, ast.EQ, ast.Like, ast.Regexp:
-			colName, datums = e.extractColBinaryOpConsExpr(extractCols, x)
-		}
-
-		switch colName {
-		case ColNameMessage:
-			switch x.FuncName.L {
-			case ast.EQ:
-				patterns = append(patterns, "^"+regexp.QuoteMeta(datums[0].GetString())+"$")
-			case ast.Like:
-				patterns = append(patterns, stringutil.CompileLike2Regexp(datums[0].GetString()))
-			case ast.Regexp:
-				patterns = append(patterns, datums[0].GetString())
-			default:
-				remained = append(remained, expr)
-			}
-		case ColNameTime:
-			timeDatum, err := datums[0].ConvertTo(ctx.GetSessionVars().StmtCtx, types.NewFieldType(mysql.TypeDatetime))
-			if err != nil {
-				remained = append(remained, expr)
-				continue
-			}
-
-			mysqlTime := timeDatum.GetMysqlTime().Time
-			timestamp := time.Date(mysqlTime.Year(),
-				time.Month(mysqlTime.Month()),
-				mysqlTime.Day(),
-				mysqlTime.Hour(),
-				mysqlTime.Minute(),
-				mysqlTime.Second(),
-				mysqlTime.Microsecond()*1000,
-				time.Local,
-			).UnixNano() / int64(time.Millisecond)
-			switch x.FuncName.L {
-			case ast.EQ:
-				startTime = timestamp
-				endTime = timestamp
-			case ast.GT:
-				startTime = timestamp + 1
-			case ast.GE:
-				startTime = timestamp
-			case ast.LT:
-				endTime = timestamp - 1
-			case ast.LE:
-				endTime = timestamp
-			default:
-				remained = append(remained, expr)
-			}
-		default:
-			remained = append(remained, expr)
-		}
-	}
-
+	remained, startTime, endTime := e.extractTimeRange(ctx, schema, names, remained, "time")
 	if endTime == 0 {
 		endTime = math.MaxInt64
 	}
-
-	e.Patterns = patterns
 	e.StartTime = startTime
 	e.EndTime = endTime
 	e.SkipRequest = startTime > endTime
 
+	if e.SkipRequest {
+		return nil
+	}
+
+	remained, patterns := e.extractLikePatternCol(schema, names, remained, "message")
+	e.Patterns = patterns
 	return remained
 }
