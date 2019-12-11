@@ -68,11 +68,21 @@ type VecExpr interface {
 	VecEvalJSON(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error
 }
 
+// ReverseExpr contains all resersed evaluation methods.
+type ReverseExpr interface {
+	// SupportReverseEval checks whether the builtinFunc support reverse evaluation.
+	SupportReverseEval() bool
+
+	// ReverseEval evaluates the only one column value with given function result.
+	ReverseEval(sc *stmtctx.StatementContext, res types.Datum, rType types.RoundingType) (val types.Datum, err error)
+}
+
 // Expression represents all scalar expression in SQL.
 type Expression interface {
 	fmt.Stringer
 	goJSON.Marshaler
 	VecExpr
+	ReverseExpr
 
 	// Eval evaluates an expression through a row.
 	Eval(row chunk.Row) (types.Datum, error)

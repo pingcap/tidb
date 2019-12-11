@@ -995,7 +995,7 @@ func (c *randFunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 		sig.setPbCode(tipb.ScalarFuncSig_Rand)
 	} else {
 		sig = &builtinRandWithSeedSig{bt}
-		sig.setPbCode(tipb.ScalarFuncSig_RandWithSeed)
+		sig.setPbCode(tipb.ScalarFuncSig_RandWithSeedFirstGen)
 	}
 	return sig, nil
 }
@@ -1770,7 +1770,7 @@ func (c *truncateFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	}
 
 	argTp := args[0].GetType().EvalType()
-	if argTp == types.ETTimestamp || argTp == types.ETDatetime || argTp == types.ETDuration || argTp == types.ETString {
+	if argTp.IsStringKind() {
 		argTp = types.ETReal
 	}
 
@@ -1796,6 +1796,8 @@ func (c *truncateFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	case types.ETDecimal:
 		sig = &builtinTruncateDecimalSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_TruncateDecimal)
+	default:
+		return nil, errIncorrectArgs.GenWithStackByArgs("truncate")
 	}
 
 	return sig, nil
