@@ -398,3 +398,9 @@ func WithKeyValue(ctx context.Context, key, value string) context.Context {
 	}
 	return context.WithValue(ctx, ctxLogKey, logger.With(zap.String(key, value)))
 }
+
+// HasLogger checks has attached sub logger.
+func HasLogger(ctx context.Context) bool {
+	has := ctx.Value(ctxLogKey)
+	return has != nil
+}

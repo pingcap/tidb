@@ -118,6 +118,7 @@ func (s *RegionRequestSender) SendReqCtx(bo *Backoffer, req *tikvrpc.Request, re
 			// TODO: Change the returned error to something like "region missing in cache",
 			// and handle this error like EpochNotMatch, which means to re-split the request and retry.
 			resp, err := tikvrpc.GenRegionErrorResp(req, &errorpb.Error{EpochNotMatch: &errorpb.EpochNotMatch{}})
+			logutil.Logger(bo.ctx).Error("FR-DEBUG: RegionRequestSender CacheMiss", zap.Error(err))
 			return resp, nil, err
 		}
 
@@ -161,15 +162,26 @@ func (s *RegionRequestSender) sendReqToRegion(bo *Backoffer, ctx *RPCContext, re
 		}
 		defer s.releaseStoreToken(ctx.Store)
 	}
+	if logutil.HasLogger(bo.ctx) {
+		logutil.Logger(bo.ctx).Warn("FR-DEBUG: RegionRequestSender send", zap.Uint64("regionid", req.RegionId))
+	}
 	resp, err = s.client.SendRequest(bo.ctx, ctx.Addr, req, timeout)
 	if err != nil {
-		logutil.Logger(bo.ctx).Error("FR-DEBUG: RegionRequestSender", zap.Error(err))
+		logutil.Logger(bo.ctx).Error("FR-DEBUG: RegionRequestSender sendErr", zap.Error(err), zap.Uint64("regionid", req.RegionId))
 		s.rpcError = err
 		if e := s.onSendFail(bo, ctx, err); e != nil {
-			logutil.Logger(bo.ctx).Error("FR-DEBUG: RegionRequestSender", zap.Error(err))
+			logutil.Logger(bo.ctx).Error("FR-DEBUG: RegionRequestSender noRetry", zap.Error(err), zap.Uint64("regionid", req.RegionId))
 			return nil, false, errors.Trace(e)
 		}
 		return nil, true, nil
+	}
+	rerr, _ := resp.GetRegionError()
+	if rerr != nil {
+		logutil.Logger(bo.ctx).Warn("FR-DEBUG: RegionRequestSender returnErr", zap.Uint64("regionid", req.RegionId), zap.Stringer("rerr", rerr))
+	} else {
+		if logutil.HasLogger(bo.ctx) {
+			logutil.Logger(bo.ctx).Warn("FR-DEBUG: RegionRequestSender sendSuccess", zap.Uint64("regionid", req.RegionId))
+		}
 	}
 	return
 }
