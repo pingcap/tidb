@@ -472,10 +472,10 @@ func (s *extractorSuite) TestClusterLogTableExtractor(c *C) {
 				  and (type='tidb' or type='pd')
 				  and message like '%coprocessor%'
 				  and message regexp '.*txn=123.*'
-				  and level in ('debug', 'info')`,
+				  and level in ('debug', 'info', 'ERROR')`,
 			nodeTypes: set.NewStringSet("tidb", "pd"),
 			addresses: set.NewStringSet("123.1.1.5:1234", "123.1.1.4:1234"),
-			level:     set.NewStringSet("debug", "info"),
+			level:     set.NewStringSet("debug", "info", "error"),
 			patterns:  []string{".*coprocessor.*", ".*txn=123.*"},
 		},
 	}

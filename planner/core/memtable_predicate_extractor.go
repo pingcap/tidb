@@ -294,7 +294,7 @@ func (e *ClusterLogTableExtractor) Extract(
 	// Extract the `type/address` columns
 	remained, typeSkipRequest, nodeTypes := e.extractCol(schema, names, predicates, "type", true)
 	remained, addrSkipRequest, addresses := e.extractCol(schema, names, remained, "address", false)
-	remained, levlSkipRequest, logLevels := e.extractCol(schema, names, remained, "level", false)
+	remained, levlSkipRequest, logLevels := e.extractCol(schema, names, remained, "level", true)
 	e.SkipRequest = typeSkipRequest || addrSkipRequest || levlSkipRequest
 	e.NodeTypes = nodeTypes
 	e.Addresses = addresses
