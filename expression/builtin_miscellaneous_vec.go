@@ -20,6 +20,8 @@ import (
 	"math"
 	"net"
 	"strings"
+	"sync/atomic"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
@@ -272,11 +274,67 @@ func (b *builtinNameConstTimeSig) vecEvalTime(input *chunk.Chunk, result *chunk.
 }
 
 func (b *builtinSleepSig) vectorized() bool {
-	return false
+	return true
 }
 
+// evalInt evals a builtinSleepSig.
+// See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_sleep
 func (b *builtinSleepSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETReal, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalReal(b.ctx, input, buf); err != nil {
+		return err
+	}
+
+	result.ResizeInt64(n, false)
+	result.MergeNulls(buf)
+	i64s := result.Int64s()
+
+	y := buf.Float64s()
+	sessVars := b.ctx.GetSessionVars()
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			if sessVars.StrictSQLMode {
+				return errIncorrectArgs.GenWithStackByArgs("sleep1")
+			}
+			continue
+		}
+
+		if y[i] < 0 {
+			if sessVars.StrictSQLMode {
+				return errIncorrectArgs.GenWithStackByArgs("sleep2")
+			}
+			i64s[i] = 0
+			continue
+		}
+
+		if y[i] > math.MaxFloat64/float64(time.Second.Nanoseconds()) {
+			return errIncorrectArgs.GenWithStackByArgs("sleep3")
+		}
+
+		dur := time.Duration(y[i] * float64(time.Second.Nanoseconds()))
+		ticker := time.NewTicker(10 * time.Millisecond)
+		defer ticker.Stop()
+		start := time.Now()
+		finish := false
+		for !finish {
+			select {
+			case now := <-ticker.C:
+				if now.Sub(start) > dur {
+					finish = true
+				}
+			default:
+				if atomic.CompareAndSwapUint32(&sessVars.Killed, 1, 0) {
+					i64s[i] = 1
+				}
+			}
+		}
+	}
+	return nil
 }
 
 func (b *builtinIsIPv4MappedSig) vectorized() bool {

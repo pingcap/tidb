@@ -14,12 +14,25 @@
 package expression
 
 import (
+	"math"
+	"math/rand"
 	"testing"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/types"
 )
+
+type sleepTimeGener struct {
+	nullRation float64
+}
+
+func (g *sleepTimeGener) gen() interface{} {
+	if rand.Float64() < g.nullRation {
+		return nil
+	}
+	return math.Floor(rand.Float64() * 100)
+}
 
 var vecBuiltinMiscellaneousCases = map[string][]vecExprBenchCase{
 	ast.Inet6Aton: {
@@ -28,8 +41,10 @@ var vecBuiltinMiscellaneousCases = map[string][]vecExprBenchCase{
 	ast.IsIPv6: {
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString}},
 	},
-	ast.Sleep: {},
-	ast.UUID:  {},
+	ast.Sleep: {
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETReal}, geners: []dataGenerator{&sleepTimeGener{0.2}}},
+	},
+	ast.UUID: {},
 	ast.Inet6Ntoa: {
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{
 			&selectStringGener{

@@ -1053,6 +1053,9 @@ func testVectorizedBuiltinFunc(c *C, vecExprCases vecExprBenchCases) {
 					AuthUsername: "tidb",
 				}
 			}
+			if funcName == ast.Sleep {
+				ctx.GetSessionVars().StrictSQLMode = false
+			}
 			if funcName == ast.GetParam {
 				testTime := time.Now()
 				ctx.GetSessionVars().PreparedParams = []types.Datum{
@@ -1272,6 +1275,9 @@ func benchmarkVectorizedBuiltinFunc(b *testing.B, vecExprCases vecExprBenchCases
 					AuthHostname: "localhost",
 					AuthUsername: "tidb",
 				}
+			}
+			if funcName == ast.Sleep {
+				ctx.GetSessionVars().StrictSQLMode = false
 			}
 			if funcName == ast.GetParam {
 				testTime := time.Now()
