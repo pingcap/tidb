@@ -51,7 +51,7 @@ type TableCommon struct {
 	Columns         []*table.Column
 	PublicColumns   []*table.Column
 	VisibleColumns  []*table.Column
-	HiddenColumns	[]*table.Column
+	HiddenColumns   []*table.Column
 	WritableColumns []*table.Column
 	writableIndices []table.Index
 	indices         []table.Index
