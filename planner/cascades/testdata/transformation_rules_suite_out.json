@@ -138,6 +138,33 @@
           "Group#1 Schema:[test.t.a,test.t.b,test.t.a]",
           "    TableDual_22 rowcount:0"
         ]
+      },
+      {
+        "SQL": "select a, b from ((select a, b from t where a > 1) union all (select a, b from t where b > 5)) as t1",
+        "Result": [
+          "Group#0 Schema:[Column#25,Column#26]",
+          "    Projection_10 input:[Group#1], Column#25, Column#26",
+          "Group#1 Schema:[Column#25,Column#26]",
+          "    Union_7 input:[Group#2,Group#3]",
+          "Group#2 Schema:[Column#25,Column#26]",
+          "    Projection_8 input:[Group#4], test.t.a, test.t.b",
+          "Group#4 Schema:[test.t.a,test.t.b]",
+          "    Projection_6 input:[Group#5], test.t.a, test.t.b",
+          "Group#5 Schema:[test.t.a,test.t.b]",
+          "    TiKVSingleGather_12 input:[Group#6], table:t",
+          "Group#6 Schema:[test.t.a,test.t.b]",
+          "    TableScan_14 table:t, pk col:test.t.a, cond:[gt(test.t.a, 1)]",
+          "Group#3 Schema:[Column#25,Column#26]",
+          "    Projection_9 input:[Group#7], test.t.a, test.t.b",
+          "Group#7 Schema:[test.t.a,test.t.b]",
+          "    Projection_3 input:[Group#8], test.t.a, test.t.b",
+          "Group#8 Schema:[test.t.a,test.t.b]",
+          "    TiKVSingleGather_16 input:[Group#9], table:t",
+          "Group#9 Schema:[test.t.a,test.t.b]",
+          "    Selection_17 input:[Group#10], gt(test.t.b, 5)",
+          "Group#10 Schema:[test.t.a,test.t.b]",
+          "    TableScan_15 table:t, pk col:test.t.a"
+        ]
       }
     ]
   },
