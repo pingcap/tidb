@@ -1113,6 +1113,26 @@ func (cc *clientConn) handleLoadData(ctx context.Context, loadDataInfo *executor
 	return err
 }
 
+// getDataFromPath gets file contents from file path.
+func (cc *clientConn) getDataFromPath(path string) ([]byte, error) {
+	err := cc.writeReq(path)
+	if err != nil {
+		return nil, err
+	}
+	var prevData, curData []byte
+	for {
+		curData, err = cc.readPacket()
+		if err != nil && terror.ErrorNotEqual(err, io.EOF) {
+			return nil, err
+		}
+		if len(curData) == 0 {
+			break
+		}
+		prevData = append(prevData, curData...)
+	}
+	return prevData, nil
+}
+
 // handleLoadStats does the additional work after processing the 'load stats' query.
 // It sends client a file path, then reads the file content from client, loads it into the storage.
 func (cc *clientConn) handleLoadStats(ctx context.Context, loadStatsInfo *executor.LoadStatsInfo) error {
@@ -1123,25 +1143,14 @@ func (cc *clientConn) handleLoadStats(ctx context.Context, loadStatsInfo *execut
 	if loadStatsInfo == nil {
 		return errors.New("load stats: info is empty")
 	}
-	err := cc.writeReq(loadStatsInfo.Path)
+	data, err := cc.getDataFromPath(loadStatsInfo.Path)
 	if err != nil {
 		return err
 	}
-	var prevData, curData []byte
-	for {
-		curData, err = cc.readPacket()
-		if err != nil && terror.ErrorNotEqual(err, io.EOF) {
-			return err
-		}
-		if len(curData) == 0 {
-			break
-		}
-		prevData = append(prevData, curData...)
-	}
-	if len(prevData) == 0 {
+	if len(data) == 0 {
 		return nil
 	}
-	return loadStatsInfo.Update(prevData)
+	return loadStatsInfo.Update(data)
 }
 
 // handleIndexAdvise does the index advise work and returns the advise result for index.
@@ -1153,26 +1162,15 @@ func (cc *clientConn) handleIndexAdvise(ctx context.Context, indexAdviseInfo *ex
 		return errors.New("Index Advise: info is empty")
 	}
 
-	err := cc.writeReq(indexAdviseInfo.Path)
+	data, err := cc.getDataFromPath(indexAdviseInfo.Path)
 	if err != nil {
 		return err
 	}
-	var prevData, curData []byte
-	for {
-		curData, err = cc.readPacket()
-		if err != nil && terror.ErrorNotEqual(err, io.EOF) {
-			return err
-		}
-		if len(curData) == 0 {
-			break
-		}
-		prevData = append(prevData, curData...)
-	}
-	if len(prevData) == 0 {
+	if len(data) == 0 {
 		return errors.New("Index Advise: infile is empty")
 	}
 
-	if err := indexAdviseInfo.GetIndexAdvice(ctx, prevData); err != nil {
+	if err := indexAdviseInfo.GetIndexAdvice(ctx, data); err != nil {
 		return err
 	}
 
