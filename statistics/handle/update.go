@@ -636,12 +636,8 @@ func NeedAnalyzeTable(tbl *statistics.Table, limit time.Duration, autoAnalyzeRat
 		return false, ""
 	}
 	// Tests if current time is within the time period.
-	return timeutil.WithinDayTimePeriod(start, end, now), fmt.Sprintf("too many modifications(%v/%v)", tbl.ModifyCount, tbl.Count)
+	return timeutil.WithinDayTimePeriod(start, end, now), fmt.Sprintf("too many modifications(%v/%v>%v)", tbl.ModifyCount, tbl.Count, autoAnalyzeRatio)
 }
-
-const (
-	minAutoAnalyzeRatio = 0.3
-)
 
 func (h *Handle) getAutoAnalyzeParameters() map[string]string {
 	sql := fmt.Sprintf("select variable_name, variable_value from mysql.global_variables where variable_name in ('%s', '%s', '%s')",
@@ -662,10 +658,7 @@ func parseAutoAnalyzeRatio(ratio string) float64 {
 	if err != nil {
 		return variable.DefAutoAnalyzeRatio
 	}
-	if autoAnalyzeRatio > 0 {
-		autoAnalyzeRatio = math.Max(autoAnalyzeRatio, minAutoAnalyzeRatio)
-	}
-	return autoAnalyzeRatio
+	return math.Max(autoAnalyzeRatio, 0)
 }
 
 func parseAnalyzePeriod(start, end string) (time.Time, time.Time, error) {
