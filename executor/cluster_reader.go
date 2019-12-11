@@ -14,9 +14,11 @@
 package executor
 
 import (
+	"container/heap"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"sort"
 	"strings"
@@ -29,6 +31,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/diagnosticspb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/sysutil"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/infoschema"
 	plannercore "github.com/pingcap/tidb/planner/core"
@@ -50,22 +53,15 @@ type clusterRetriever interface {
 // ClusterReaderExec executes cluster information retrieving from the cluster components
 type ClusterReaderExec struct {
 	baseExecutor
-	retrieved bool
 	retriever clusterRetriever
 }
 
 // Next implements the Executor Next interface.
 func (e *ClusterReaderExec) Next(ctx context.Context, req *chunk.Chunk) error {
-	if e.retrieved {
-		req.Reset()
-		return nil
-	}
-
 	rows, err := e.retriever.retrieve(e.ctx)
 	if err != nil {
 		return err
 	}
-	e.retrieved = true
 
 	if len(rows) == 0 {
 		req.Reset()
@@ -82,14 +78,16 @@ func (e *ClusterReaderExec) Next(ctx context.Context, req *chunk.Chunk) error {
 }
 
 type clusterConfigRetriever struct {
+	retrieved bool
 	extractor *plannercore.ClusterTableExtractor
 }
 
 // retrieve implements the clusterRetriever interface
 func (e *clusterConfigRetriever) retrieve(ctx sessionctx.Context) ([][]types.Datum, error) {
-	if e.extractor.SkipRequest {
+	if e.extractor.SkipRequest || e.retrieved {
 		return nil, nil
 	}
+	e.retrieved = true
 
 	type result struct {
 		idx  int
@@ -321,6 +319,7 @@ func getServerInfoByGRPC(address string, tp diagnosticspb.ServerInfoType) ([]*di
 }
 
 func getClusterServerInfoWithFilter(ctx sessionctx.Context, nodeTypes, addresses set.StringSet) ([]infoschema.ServerInfo, error) {
+	isFailpointTestMode := false
 	serversInfo, err := infoschema.GetClusterServerInfo(ctx)
 	failpoint.Inject("mockClusterServerInfo", func(val failpoint.Value) {
 		if s := val.(string); len(s) > 0 {
@@ -336,6 +335,7 @@ func getClusterServerInfoWithFilter(ctx sessionctx.Context, nodeTypes, addresses
 			}
 			// erase the error
 			err = nil
+			isFailpointTestMode = true
 		}
 	})
 	if err != nil {
@@ -356,4 +356,232 @@ func getClusterServerInfoWithFilter(ctx sessionctx.Context, nodeTypes, addresses
 		filterServers = append(filterServers, srv)
 	}
 	return filterServers, nil
+}
+
+type clusterLogRetriever struct {
+	isDrained  bool
+	retrieving bool
+	results    []chan logStreamResult
+	heap       *logResponseHeap
+	extractor  *plannercore.ClusterLogTableExtractor
+}
+
+type logStreamResult struct {
+	// Read the next stream result while current messages is drained
+	next chan logStreamResult
+
+	addr     string
+	typ      string
+	messages []*diagnosticspb.LogMessage
+	err      error
+}
+
+type logResponseHeap []logStreamResult
+
+func (h logResponseHeap) Len() int { return len(h) }
+func (h logResponseHeap) Less(i, j int) bool {
+	if lhs, rhs := h[i].messages[0].Time, h[j].messages[0].Time; lhs != rhs {
+		return lhs < rhs
+	}
+	return h[i].typ < h[j].typ
+}
+func (h logResponseHeap) Swap(i, j int) { h[i], h[j] = h[j], h[i] }
+
+func (h *logResponseHeap) Push(x interface{}) {
+	*h = append(*h, x.(logStreamResult))
+}
+func (h *logResponseHeap) Pop() interface{} {
+	old := *h
+	n := len(old)
+	x := old[n-1]
+	*h = old[0 : n-1]
+	return x
+}
+
+func (e *clusterLogRetriever) startRetrieving(ctx sessionctx.Context) error {
+	isFailpointTestMode := false
+	serversInfo, err := infoschema.GetClusterServerInfo(ctx)
+	failpoint.Inject("mockClusterLogServerInfo", func(val failpoint.Value) {
+		if s := val.(string); len(s) > 0 {
+			serversInfo = serversInfo[:0]
+			servers := strings.Split(s, ";")
+			for _, server := range servers {
+				parts := strings.Split(server, ",")
+				serversInfo = append(serversInfo, infoschema.ServerInfo{
+					ServerType: parts[0],
+					Address:    parts[1],
+					StatusAddr: parts[2],
+				})
+			}
+			// erase the error
+			err = nil
+			isFailpointTestMode = true
+		}
+	})
+	if err != nil {
+		return err
+	}
+
+	// gRPC options
+	opt := grpc.WithInsecure()
+	security := config.GetGlobalConfig().Security
+	if len(security.ClusterSSLCA) != 0 {
+		tlsConfig, err := security.ToTLSConfig()
+		if err != nil {
+			return errors.Trace(err)
+		}
+		opt = grpc.WithTransportCredentials(credentials.NewTLS(tlsConfig))
+	}
+
+	var levels []diagnosticspb.LogLevel
+	for l := range e.extractor.LogLevels {
+		levels = append(levels, sysutil.ParseLogLevel(l))
+	}
+	req := &diagnosticspb.SearchLogRequest{
+		StartTime: e.extractor.StartTime,
+		EndTime:   e.extractor.EndTime,
+		Levels:    levels,
+		Patterns:  e.extractor.Patterns,
+	}
+
+	// There is no performance isssue to check this variable everytime because it will
+	// be elimitation in non-failpoint mode.
+	if !isFailpointTestMode {
+		if req.StartTime == 0 {
+			req.StartTime = time.Now().UnixNano()/int64(time.Millisecond) - int64(30*time.Minute/time.Millisecond)
+		}
+
+		// To avoid search log interface overload, the user should specify at least one pattern
+		// in normally SQL. (But in test mode we should relax this limitation)
+		if len(req.Patterns) == 0 && len(req.Levels) == 0 {
+			return errors.New("denied to scan full logs (use `SELECT * FROM cluster_log WHERE message LIKE '%'` explicitly if intentionally)")
+		}
+	}
+
+	var results []chan logStreamResult
+	for _, srv := range serversInfo {
+		typ := srv.ServerType
+		// Skip some node type which has been filtered in WHERE cluase
+		// e.g: SELECT * FROM cluster_log WHERE type='tikv'
+		if len(e.extractor.NodeTypes) > 0 && !e.extractor.NodeTypes.Exist(typ) {
+			continue
+		}
+		address := srv.Address
+		// Skip some node address which has been filtered in WHERE cluase
+		// e.g: SELECT * FROM cluster_log WHERE address='192.16.8.12:2379'
+		if len(e.extractor.Addresses) > 0 && !e.extractor.Addresses.Exist(address) {
+			continue
+		}
+		statusAddr := srv.StatusAddr
+		if len(statusAddr) == 0 {
+			ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("%s node %s does not contain status address", typ, address))
+			continue
+		}
+		ch := make(chan logStreamResult)
+		results = append(results, ch)
+
+		go func(ch chan logStreamResult, serverType, address, statusAddr string) {
+			util.WithRecovery(func() {
+				defer close(ch)
+
+				// The TiDB provide diagnostics service via status address
+				remote := address
+				if serverType == "tidb" {
+					remote = statusAddr
+				}
+				conn, err := grpc.Dial(remote, opt)
+				if err != nil {
+					ch <- logStreamResult{addr: address, typ: serverType, err: err}
+					return
+				}
+				defer terror.Call(conn.Close)
+
+				cli := diagnosticspb.NewDiagnosticsClient(conn)
+				stream, err := cli.SearchLog(context.Background(), req)
+				if err != nil {
+					ch <- logStreamResult{addr: address, typ: serverType, err: err}
+					return
+				}
+
+				for {
+					res, err := stream.Recv()
+					if err != nil && err == io.EOF {
+						return
+					}
+					if err != nil {
+						ch <- logStreamResult{addr: address, typ: serverType, err: err}
+						return
+					}
+					ch <- logStreamResult{next: ch, addr: address, typ: serverType, messages: res.Messages}
+				}
+			}, nil)
+		}(ch, typ, address, statusAddr)
+	}
+
+	e.results = results
+	return nil
+}
+
+func (e *clusterLogRetriever) retrieve(ctx sessionctx.Context) ([][]types.Datum, error) {
+	if e.extractor.SkipRequest || e.isDrained {
+		return nil, nil
+	}
+
+	if !e.retrieving {
+		e.retrieving = true
+		if err := e.startRetrieving(ctx); err != nil {
+			e.isDrained = true
+			return nil, err
+		}
+
+		// initialize the heap
+		e.heap = &logResponseHeap{}
+		n := len(e.results)
+		for i := n - 1; i >= 0; i-- {
+			result := <-e.results[i]
+			if result.err != nil || len(result.messages) == 0 {
+				if result.err != nil {
+					ctx.GetSessionVars().StmtCtx.AppendWarning(result.err)
+				}
+				e.results = append(e.results[:i], e.results[i+1:]...)
+				continue
+			}
+			*e.heap = append(*e.heap, result)
+		}
+		heap.Init(e.heap)
+	}
+
+	// Merge the results
+	var finalRows [][]types.Datum
+	for e.heap.Len() > 0 && len(finalRows) < 1024 {
+		min := heap.Pop(e.heap).(logStreamResult)
+		item := min.messages[0]
+		time := time.Unix(item.Time/1000, (item.Time%1000)*int64(time.Millisecond))
+		finalRows = append(finalRows, types.MakeDatums(
+			time.Format("2006/01/02 15:04:05.000"),
+			min.typ,
+			min.addr,
+			strings.ToUpper(item.Level.String()),
+			item.Message,
+		))
+		min.messages = min.messages[1:]
+		// Current streaming result is drained, read the next to supply.
+		if len(min.messages) == 0 {
+			result := <-min.next
+			if result.err != nil {
+				ctx.GetSessionVars().StmtCtx.AppendWarning(result.err)
+				continue
+			}
+			if len(result.messages) > 0 {
+				heap.Push(e.heap, result)
+			}
+		} else {
+			heap.Push(e.heap, min)
+		}
+	}
+
+	// All stream are draied
+	e.isDrained = e.heap.Len() == 0
+
+	return finalRows, nil
 }

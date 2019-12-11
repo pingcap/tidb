@@ -1292,6 +1292,13 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 				serverInfoTP: diagnosticspb.ServerInfoType_SystemInfo,
 			},
 		}
+	case strings.ToLower(infoschema.TableClusterLog):
+		e = &ClusterReaderExec{
+			baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
+			retriever: &clusterLogRetriever{
+				extractor: v.Extractor.(*plannercore.ClusterLogTableExtractor),
+			},
+		}
 	default:
 		tb, _ := b.is.TableByID(v.Table.ID)
 		e = &TableScanExec{
