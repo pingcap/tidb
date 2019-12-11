@@ -78,7 +78,7 @@ func (b *builtinValuesJSONSig) vecEvalJSON(input *chunk.Chunk, result *chunk.Col
 	return errors.Errorf("not implemented")
 }
 
-// bitCount for counting the number of 1s in binary
+// bitCount returns the number of bits that are set in the argument 'value'.
 func bitCount(value int64) int64 {
 	value = value - ((value >> 1) & 0x5555555555555555)
 	value = (value & 0x3333333333333333) + ((value >> 2) & 0x3333333333333333)
@@ -115,13 +115,6 @@ func (b *builtinBitCountSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column
 		if result.IsNull(i) {
 			continue
 		}
-		/*i64s[i] = i64s[i] - ((i64s[i] >> 1) & 0x5555555555555555)
-		i64s[i] = (i64s[i] & 0x3333333333333333) + ((i64s[i] >> 2) & 0x3333333333333333)
-		i64s[i] = (i64s[i] & 0x0f0f0f0f0f0f0f0f) + ((i64s[i] >> 4) & 0x0f0f0f0f0f0f0f0f)
-		i64s[i] = i64s[i] + (i64s[i] >> 8)
-		i64s[i] = i64s[i] + (i64s[i] >> 16)
-		i64s[i] = i64s[i] + (i64s[i] >> 32)
-		i64s[i] = i64s[i] & 0x7f*/
 		i64s[i] = bitCount(i64s[i])
 	}
 	return nil

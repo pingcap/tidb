@@ -762,9 +762,6 @@ func (b *builtinBitCountSig) evalInt(row chunk.Row) (int64, bool, error) {
 		}
 		return 0, true, err
 	}
-	/*for ; n != 0; n = (n - 1) & n {
-		count++
-	}*/
 	return bitCount(n), false, nil
 }
 
