@@ -104,6 +104,24 @@ create table t2(a int, b int, c int, primary key(a));
 explain select t1.a, t1.b from t1 left outer join t2 on t1.a = t2.a;
 explain select distinct t1.a, t1.b from t1 left outer join t2 on t1.a = t2.a;
 
+CREATE TABLE `test01` (
+`id` bigint(20) NOT NULL AUTO_INCREMENT,
+`stat_date` int(11) NOT NULL DEFAULT '0',
+`show_date` varchar(20) NOT NULL DEFAULT '',
+`region_id` bigint(20) unsigned NOT NULL DEFAULT '0',
+`period` tinyint(3) unsigned NOT NULL DEFAULT '0',
+`registration_num` bigint(20) unsigned NOT NULL DEFAULT '0',
+PRIMARY KEY (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+
+CREATE TABLE `test02` (
+`id` bigint(20) NOT NULL AUTO_INCREMENT,
+`region_name` varchar(128) DEFAULT NULL,
+PRIMARY KEY (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+
+EXPLAIN SELECT COUNT(1) FROM (SELECT COALESCE(b.region_name, '不详') region_name, SUM(a.registration_num) registration_num FROM (SELECT stat_date, show_date, region_id, 0 registration_num FROM test01 WHERE period = 1 AND stat_date >= 20191202 AND stat_date <= 20191202 UNION ALL SELECT stat_date, show_date, region_id, registration_num registration_num FROM test01 WHERE period = 1 AND stat_date >= 20191202 AND stat_date <= 20191202) a LEFT JOIN test02 b ON a.region_id = b.id WHERE registration_num > 0 AND a.stat_date >= '20191202' AND a.stat_date <= '20191202' GROUP BY a.stat_date , a.show_date , COALESCE(b.region_name, '不详') ) JLS;
+
 # https://github.com/pingcap/tidb/issues/7918
 drop table if exists t;
 create table t(a int, nb int not null, nc int not null);
