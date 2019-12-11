@@ -14,7 +14,6 @@
 package core
 
 import (
-	"fmt"
 	"math"
 	"regexp"
 	"strings"
@@ -281,7 +280,7 @@ type ClusterLogTableExtractor struct {
 	// e.g:
 	// 1. SELECT * FROM cluster_log WHERE message like '%gc%'
 	// 2. SELECT * FROM cluster_log WHERE message regexp '.*'
-	Pattern   string
+	Patterns  []string
 	LogLevels set.StringSet
 }
 
@@ -384,22 +383,11 @@ func (e *ClusterLogTableExtractor) Extract(
 		}
 	}
 
-	switch len(patterns) {
-	case 0:
-		// do nothing
-	case 1:
-		e.Pattern = patterns[0]
-	default:
-		for i := range patterns {
-			patterns[i] = fmt.Sprintf(`(?=%s)`, patterns[i])
-		}
-		e.Pattern = strings.Join(patterns, "")
-	}
-
 	if endTime == 0 {
 		endTime = math.MaxInt64
 	}
 
+	e.Patterns = patterns
 	e.StartTime = startTime
 	e.EndTime = endTime
 	e.SkipRequest = startTime > endTime

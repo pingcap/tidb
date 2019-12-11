@@ -256,7 +256,7 @@ func (s *extractorSuite) TestClusterLogTableExtractor(c *C) {
 		addresses          set.StringSet
 		skipRequest        bool
 		startTime, endTime int64
-		pattern            string
+		patterns           []string
 		level              set.StringSet
 	}{
 		{
@@ -446,25 +446,25 @@ func (s *extractorSuite) TestClusterLogTableExtractor(c *C) {
 			addresses: set.NewStringSet(),
 			startTime: timestamp(c, "2019-10-10 10:10:10"),
 			endTime:   math.MaxInt64,
-			pattern:   ".*a.*",
+			patterns:  []string{".*a.*"},
 		},
 		{
 			sql:       "select * from information_schema.cluster_log where message like '%a%' and message regexp '^b'",
 			nodeTypes: set.NewStringSet(),
 			addresses: set.NewStringSet(),
-			pattern:   "(?=.*a.*)(?=^b)",
+			patterns:  []string{".*a.*", "^b"},
 		},
 		{
 			sql:       "select * from information_schema.cluster_log where message='gc'",
 			nodeTypes: set.NewStringSet(),
 			addresses: set.NewStringSet(),
-			pattern:   "^gc$",
+			patterns:  []string{"^gc$"},
 		},
 		{
 			sql:       "select * from information_schema.cluster_log where message='.*txn.*'",
 			nodeTypes: set.NewStringSet(),
 			addresses: set.NewStringSet(),
-			pattern:   "^" + regexp.QuoteMeta(".*txn.*") + "$",
+			patterns:  []string{"^" + regexp.QuoteMeta(".*txn.*") + "$"},
 		},
 		{
 			sql: `select * from information_schema.cluster_log 
@@ -476,7 +476,7 @@ func (s *extractorSuite) TestClusterLogTableExtractor(c *C) {
 			nodeTypes: set.NewStringSet("tidb", "pd"),
 			addresses: set.NewStringSet("123.1.1.5:1234", "123.1.1.4:1234"),
 			level:     set.NewStringSet("debug", "info"),
-			pattern:   "(?=.*coprocessor.*)(?=.*txn=123.*)",
+			patterns:  []string{".*coprocessor.*", ".*txn=123.*"},
 		},
 	}
 	for _, ca := range cases {
@@ -510,9 +510,7 @@ func (s *extractorSuite) TestClusterLogTableExtractor(c *C) {
 		if ca.endTime > 0 {
 			c.Assert(clusterConfigExtractor.EndTime, Equals, ca.endTime)
 		}
-		if len(ca.pattern) > 0 {
-			c.Assert(clusterConfigExtractor.Pattern, Equals, ca.pattern)
-		}
+		c.Assert(clusterConfigExtractor.Patterns, DeepEquals, ca.patterns)
 		if len(ca.level) > 0 {
 			c.Assert(clusterConfigExtractor.LogLevels, DeepEquals, ca.level)
 		}
