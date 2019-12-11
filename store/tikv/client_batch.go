@@ -562,6 +562,7 @@ func sendBatchRequest(
 	select {
 	case res, ok := <-entry.res:
 		if !ok {
+			logutil.Logger(ctx).Error("FR-DEBUG: sendBatchRequest", zap.Error(entry.err))
 			return nil, errors.Trace(entry.err)
 		}
 		return tikvrpc.FromBatchCommandsResponse(res), nil
