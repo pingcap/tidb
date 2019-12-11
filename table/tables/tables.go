@@ -214,7 +214,7 @@ const (
 )
 
 func (t *TableCommon) getCols(mode getColsMode) []*table.Column {
-	Columns := make([]*table.Column, 0, len(t.Columns))
+	columns := make([]*table.Column, 0, len(t.Columns))
 	for _, col := range t.Columns {
 		if col.State != model.StatePublic {
 			continue
@@ -222,9 +222,9 @@ func (t *TableCommon) getCols(mode getColsMode) []*table.Column {
 		if (mode == visible && col.Hidden) || (mode == hidden && !col.Hidden) {
 			continue
 		}
-		Columns = append(Columns, col)
+		columns = append(columns, col)
 	}
-	return Columns
+	return columns
 }
 
 // Cols implements table.Table Cols interface.

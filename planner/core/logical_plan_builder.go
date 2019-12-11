@@ -2598,7 +2598,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 			ID:       col.ID,
 			RetType:  &col.FieldType,
 			OrigName: names[i].String(),
-			Hidden:   col.Hidden,
+			IsHidden: col.Hidden,
 		}
 
 		if tableInfo.PKIsHandle && mysql.HasPriKeyFlag(col.Flag) {
