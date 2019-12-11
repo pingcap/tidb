@@ -16,6 +16,7 @@ package tikv
 
 import (
 	"context"
+	"go.uber.org/zap"
 	"io"
 	"math"
 	"strconv"
@@ -282,7 +283,11 @@ func (c *rpcClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 
 	if config.GetGlobalConfig().TiKVClient.MaxBatchSize > 0 {
 		if batchReq := req.ToBatchCommandsRequest(); batchReq != nil {
-			return sendBatchRequest(ctx, addr, connArray.batchConn, batchReq, timeout)
+			resp, err := sendBatchRequest(ctx, addr, connArray.batchConn, batchReq, timeout)
+			if err != nil {
+				logutil.Logger(ctx).Error("FR-DEBUG: rpcClient.SendRequest", zap.Error(err))
+			}
+			return resp, err
 		}
 	}
 

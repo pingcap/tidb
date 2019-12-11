@@ -553,9 +553,18 @@ func (it *copIterator) recvFromRespCh(ctx context.Context, respCh <-chan *copRes
 		if it.memTracker != nil && resp != nil {
 			it.memTracker.Consume(-int64(resp.MemSize()))
 		}
+		if resp != nil && resp.err != nil {
+			logutil.Logger(ctx).Error("FR-DEBUG: copIterator", zap.Error(resp.err))
+		}
 	case <-it.finishCh:
+		if len(respCh) > 0 {
+			logutil.Logger(ctx).Error("FR-DEBUG: copIterator", zap.Int("len(respCh)", len(respCh)))
+		}
 		exit = true
 	case <-ctx.Done():
+		if len(respCh) > 0 {
+			logutil.Logger(ctx).Error("FR-DEBUG: copIterator", zap.Int("len(respCh)", len(respCh)))
+		}
 		// We select the ctx.Done() in the thread of `Next` instead of in the worker to avoid the cost of `WithCancel`.
 		if atomic.CompareAndSwapUint32(&it.closed, 0, 1) {
 			close(it.finishCh)
@@ -580,7 +589,13 @@ func (worker *copIteratorWorker) sendToRespCh(resp *copResponse, respCh chan<- *
 	}
 	select {
 	case respCh <- resp:
+		if resp.err != nil {
+			logutil.Logger(context.Background()).Error("FR-DEBUG: copIteratorWorker", zap.Error(resp.err))
+		}
 	case <-worker.finishCh:
+		if resp.err != nil {
+			logutil.Logger(context.Background()).Error("FR-DEBUG: copIteratorWorker", zap.Error(resp.err))
+		}
 		exit = true
 	}
 	return
@@ -625,6 +640,7 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 	}
 
 	if resp.err != nil {
+		logutil.Logger(ctx).Error("FR-DEBUG: copIterator", zap.Error(resp.err))
 		return nil, errors.Trace(resp.err)
 	}
 
@@ -652,6 +668,7 @@ func (worker *copIteratorWorker) handleTask(bo *Backoffer, task *copTask, respCh
 	for len(remainTasks) > 0 {
 		tasks, err := worker.handleTaskOnce(bo, remainTasks[0], respCh)
 		if err != nil {
+			logutil.Logger(context.Background()).Error("FR-DEBUG: copIteratorWorker", zap.Error(err))
 			resp := &copResponse{err: errors.Trace(err)}
 			worker.sendToRespCh(resp, respCh, true)
 			return
@@ -695,6 +712,7 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 	startTime := time.Now()
 	resp, rpcCtx, err := sender.SendReqCtx(bo, req, task.region, ReadTimeoutMedium)
 	if err != nil {
+		logutil.Logger(context.Background()).Error("FR-DEBUG: copIteratorWorker", zap.Error(err))
 		return nil, errors.Trace(err)
 	}
 	// Set task.storeAddr field so its task.String() method have the store address information.
@@ -710,7 +728,11 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 	}
 
 	// Handles the response for non-streaming copTask.
-	return worker.handleCopResponse(bo, rpcCtx, &copResponse{pbResp: resp.Cop}, task, ch, nil)
+	tasks, err := worker.handleCopResponse(bo, rpcCtx, &copResponse{pbResp: resp.Cop}, task, ch, nil)
+	if err != nil {
+		logutil.Logger(context.Background()).Error("FR-DEBUG: copIteratorWorker", zap.Error(err))
+	}
+	return tasks, err
 }
 
 const (
