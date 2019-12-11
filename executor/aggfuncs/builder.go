@@ -182,6 +182,11 @@ func buildFirstRow(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 	switch aggFuncDesc.Mode {
 	case aggregation.DedupMode:
 	default:
+		switch fieldType.Tp {
+		case mysql.TypeEnum:
+			return &firstRow4Enum{base}
+		}
+
 		switch evalType {
 		case types.ETInt:
 			return &firstRow4Int{base}

@@ -43,6 +43,7 @@ var (
 	_ AggFunc = (*firstRow4Float32)(nil)
 	_ AggFunc = (*firstRow4Float64)(nil)
 	_ AggFunc = (*firstRow4JSON)(nil)
+	_ AggFunc = (*firstRow4Enum)(nil)
 
 	// All the AggFunc implementations for "MAX"/"MIN" are listed here.
 	_ AggFunc = (*maxMin4Int)(nil)
