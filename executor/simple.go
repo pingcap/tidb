@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/plugin"
+	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/chunk"
@@ -309,14 +310,22 @@ func userExists(ctx sessionctx.Context, name string, host string) (bool, error) 
 }
 
 func (e *SimpleExec) executeSetPwd(s *ast.SetPwdStmt) error {
+	var u, h string
 	if s.User == nil {
-		vars := e.ctx.GetSessionVars()
-		s.User = vars.User
-		if s.User == nil {
+		if e.ctx.GetSessionVars().User == nil {
 			return errors.New("Session error is empty")
 		}
+		u = e.ctx.GetSessionVars().User.AuthUsername
+		h = e.ctx.GetSessionVars().User.AuthHostname
+	} else {
+		checker := privilege.GetPrivilegeManager(e.ctx)
+		if checker != nil && !checker.RequestVerification("", "", "", mysql.SuperPriv) {
+			return ErrDBaccessDenied.GenWithStackByArgs(u, h, "mysql")
+		}
+		u = s.User.Username
+		h = s.User.Hostname
 	}
-	exists, err := userExists(e.ctx, s.User.Username, s.User.Hostname)
+	exists, err := userExists(e.ctx, u, h)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -325,7 +334,7 @@ func (e *SimpleExec) executeSetPwd(s *ast.SetPwdStmt) error {
 	}
 
 	// update mysql.user
-	sql := fmt.Sprintf(`UPDATE %s.%s SET password='%s' WHERE User='%s' AND Host='%s';`, mysql.SystemDB, mysql.UserTable, auth.EncodePassword(s.Password), s.User.Username, s.User.Hostname)
+	sql := fmt.Sprintf(`UPDATE %s.%s SET password="%s" WHERE User="%s" AND Host="%s";`, mysql.SystemDB, mysql.UserTable, auth.EncodePassword(s.Password), u, h)
 	_, _, err = e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(e.ctx, sql)
 	domain.GetDomain(e.ctx).NotifyUpdatePrivilege(e.ctx)
 	return errors.Trace(err)

@@ -262,6 +262,26 @@ func (s *testPrivilegeSuite) TestDropTablePriv(c *C) {
 	mustExec(c, se, `DROP TABLE todrop;`)
 }
 
+func (s *testPrivilegeSuite) TestSetPasswdStmt(c *C) {
+
+	se := newSession(c, s.store, s.dbName)
+
+	// high privileged user setting password for other user (passes)
+	mustExec(c, se, "CREATE USER 'superuser'")
+	mustExec(c, se, "CREATE USER 'nobodyuser'")
+	mustExec(c, se, "GRANT ALL ON *.* TO 'superuser'")
+	mustExec(c, se, "FLUSH PRIVILEGES")
+
+	// low privileged user trying to set password for other user (fails)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "nobodyuser", Hostname: "localhost", AuthUsername: "nobodyuser", AuthHostname: "%"}, nil, nil), IsTrue)
+	_, err := se.Execute(context.Background(), "SET PASSWORD for 'superuser' = 'newpassword'")
+	c.Assert(err, NotNil)
+
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "superuser", Hostname: "localhost", AuthUsername: "superuser", AuthHostname: "%"}, nil, nil), IsTrue)
+	mustExec(c, se, "SET PASSWORD for 'nobodyuser' = 'newpassword'")
+
+}
+
 func (s *testPrivilegeSuite) TestCheckAuthenticate(c *C) {
 
 	se := newSession(c, s.store, s.dbName)
