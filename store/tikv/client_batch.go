@@ -440,9 +440,9 @@ func (a *batchConn) batchSendLoop(cfg config.TiKVClient) {
 			return
 		} else if uint(length) < bestBatchWaitSize && bestBatchWaitSize > 1 {
 			// Waits too long to collect requests, reduce the target batch size.
-			bestBatchWaitSize -= 1
+			bestBatchWaitSize--
 		} else if uint(length) > bestBatchWaitSize+4 && bestBatchWaitSize < cfg.MaxBatchSize {
-			bestBatchWaitSize += 1
+			bestBatchWaitSize++
 		}
 
 		entries, requests = removeCanceledRequests(entries, requests)
