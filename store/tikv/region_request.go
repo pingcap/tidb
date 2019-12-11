@@ -124,6 +124,7 @@ func (s *RegionRequestSender) SendReqCtx(bo *Backoffer, req *tikvrpc.Request, re
 		s.storeAddr = ctx.Addr
 		resp, retry, err := s.sendReqToRegion(bo, ctx, req, timeout)
 		if err != nil {
+			logutil.Logger(context.Background()).Error("FR-DEBUG: RegionRequestSender", zap.Error(err))
 			return nil, nil, errors.Trace(err)
 		}
 		if retry {
@@ -132,11 +133,13 @@ func (s *RegionRequestSender) SendReqCtx(bo *Backoffer, req *tikvrpc.Request, re
 
 		regionErr, err := resp.GetRegionError()
 		if err != nil {
+			logutil.Logger(context.Background()).Error("FR-DEBUG: RegionRequestSender", zap.Error(err))
 			return nil, nil, errors.Trace(err)
 		}
 		if regionErr != nil {
 			retry, err := s.onRegionError(bo, ctx, &seed, regionErr)
 			if err != nil {
+				logutil.Logger(context.Background()).Error("FR-DEBUG: RegionRequestSender", zap.Error(err))
 				return nil, nil, errors.Trace(err)
 			}
 			if retry {
@@ -160,8 +163,10 @@ func (s *RegionRequestSender) sendReqToRegion(bo *Backoffer, ctx *RPCContext, re
 	}
 	resp, err = s.client.SendRequest(bo.ctx, ctx.Addr, req, timeout)
 	if err != nil {
+		logutil.Logger(context.Background()).Error("FR-DEBUG: RegionRequestSender", zap.Error(err))
 		s.rpcError = err
 		if e := s.onSendFail(bo, ctx, err); e != nil {
+			logutil.Logger(context.Background()).Error("FR-DEBUG: RegionRequestSender", zap.Error(err))
 			return nil, false, errors.Trace(e)
 		}
 		return nil, true, nil
