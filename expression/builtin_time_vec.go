@@ -2251,7 +2251,6 @@ func (b *builtinUnixTimestampIntSig) vecEvalInt(input *chunk.Chunk, result *chun
 	defer b.bufAllocator.put(buf)
 
 	result.ResizeInt64(n, false)
-	result.MergeNulls(buf)
 	i64s := result.Int64s()
 	ds := buf.Times()
 
@@ -2268,6 +2267,7 @@ func (b *builtinUnixTimestampIntSig) vecEvalInt(input *chunk.Chunk, result *chun
 		}
 		return nil
 	}
+	result.MergeNulls(buf)
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
