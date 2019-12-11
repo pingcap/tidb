@@ -68,11 +68,21 @@ type VecExpr interface {
 	VecEvalJSON(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error
 }
 
+// ReverseExpr contains all resersed evaluation methods.
+type ReverseExpr interface {
+	// SupportReverseEval checks whether the builtinFunc support reverse evaluation.
+	SupportReverseEval() bool
+
+	// ReverseEval evaluates the only one column value with given function result.
+	ReverseEval(sc *stmtctx.StatementContext, res types.Datum, rType types.RoundingType) (val types.Datum, err error)
+}
+
 // Expression represents all scalar expression in SQL.
 type Expression interface {
 	fmt.Stringer
 	goJSON.Marshaler
 	VecExpr
+	ReverseExpr
 
 	// Eval evaluates an expression through a row.
 	Eval(row chunk.Row) (types.Datum, error)
@@ -130,6 +140,9 @@ type Expression interface {
 
 	// ExplainInfo returns operator information to be explained.
 	ExplainInfo() string
+
+	// ExplainNormalizedInfo returns operator normalized information for generating digest.
+	ExplainNormalizedInfo() string
 
 	// HashCode creates the hashcode for expression which can be used to identify itself from other expression.
 	// It generated as the following:
@@ -609,20 +622,23 @@ func TableInfo2SchemaAndNames(ctx sessionctx.Context, dbName model.CIStr, tbl *m
 func ColumnInfos2ColumnsAndNames(ctx sessionctx.Context, dbName, tblName model.CIStr, colInfos []*model.ColumnInfo) ([]*Column, types.NameSlice) {
 	columns := make([]*Column, 0, len(colInfos))
 	names := make([]*types.FieldName, 0, len(colInfos))
-	for _, col := range colInfos {
+	for i, col := range colInfos {
 		if col.State != model.StatePublic {
 			continue
 		}
 		names = append(names, &types.FieldName{
-			ColName: col.Name,
-			TblName: tblName,
-			DBName:  dbName,
+			OrigTblName: tblName,
+			OrigColName: col.Name,
+			DBName:      dbName,
+			TblName:     tblName,
+			ColName:     col.Name,
 		})
 		newCol := &Column{
 			RetType:  &col.FieldType,
 			ID:       col.ID,
 			UniqueID: ctx.GetSessionVars().AllocPlanColumnID(),
 			Index:    col.Offset,
+			OrigName: names[i].String(),
 		}
 		columns = append(columns, newCol)
 	}

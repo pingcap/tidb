@@ -755,6 +755,43 @@ func (s *seqTestSuite) TestAdminShowNextID(c *C) {
 	r.Check(testkit.Rows("test1 tt id 41"))
 }
 
+func (s *seqTestSuite) TestNoHistoryWhenDisableRetry(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists history")
+	tk.MustExec("create table history (a int)")
+	tk.MustExec("set @@autocommit = 0")
+
+	// retry_limit = 0 will not add history.
+	tk.MustExec("set @@tidb_retry_limit = 0")
+	tk.MustExec("insert history values (1)")
+	c.Assert(session.GetHistory(tk.Se).Count(), Equals, 0)
+
+	// Disable auto_retry will add history for auto committed only
+	tk.MustExec("set @@autocommit = 1")
+	tk.MustExec("set @@tidb_retry_limit = 10")
+	tk.MustExec("set @@tidb_disable_txn_auto_retry = 1")
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/session/keepHistory", `return(true)`), IsNil)
+	tk.MustExec("insert history values (1)")
+	c.Assert(session.GetHistory(tk.Se).Count(), Equals, 1)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/session/keepHistory"), IsNil)
+	tk.MustExec("begin")
+	tk.MustExec("insert history values (1)")
+	c.Assert(session.GetHistory(tk.Se).Count(), Equals, 0)
+	tk.MustExec("commit")
+
+	// Enable auto_retry will add history for both.
+	tk.MustExec("set @@tidb_disable_txn_auto_retry = 0")
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/session/keepHistory", `return(true)`), IsNil)
+	tk.MustExec("insert history values (1)")
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/session/keepHistory"), IsNil)
+	c.Assert(session.GetHistory(tk.Se).Count(), Equals, 1)
+	tk.MustExec("begin")
+	tk.MustExec("insert history values (1)")
+	c.Assert(session.GetHistory(tk.Se).Count(), Equals, 2)
+	tk.MustExec("commit")
+}
+
 func (s *seqTestSuite) TestPrepareMaxParamCountCheck(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -1046,6 +1083,30 @@ func (s *seqTestSuite1) TestCoprocessorPriority(c *C) {
 
 	cli.setCheckPriority(pb.CommandPri_Low)
 	tk.MustQuery("select LOW_PRIORITY id from t where id = 1")
+
+	cli.setCheckPriority(pb.CommandPri_High)
+	tk.MustExec("set tidb_force_priority = 'HIGH_PRIORITY'")
+	tk.MustQuery("select * from t").Check(testkit.Rows("3"))
+	tk.MustExec("update t set id = id + 1")
+	tk.MustQuery("select v from t1 where id = 0 or id = 1").Check(testkit.Rows("0", "1"))
+
+	cli.setCheckPriority(pb.CommandPri_Low)
+	tk.MustExec("set tidb_force_priority = 'LOW_PRIORITY'")
+	tk.MustQuery("select * from t").Check(testkit.Rows("4"))
+	tk.MustExec("update t set id = id + 1")
+	tk.MustQuery("select v from t1 where id = 0 or id = 1").Check(testkit.Rows("0", "1"))
+
+	cli.setCheckPriority(pb.CommandPri_Normal)
+	tk.MustExec("set tidb_force_priority = 'DELAYED'")
+	tk.MustQuery("select * from t").Check(testkit.Rows("5"))
+	tk.MustExec("update t set id = id + 1")
+	tk.MustQuery("select v from t1 where id = 0 or id = 1").Check(testkit.Rows("0", "1"))
+
+	cli.setCheckPriority(pb.CommandPri_Low)
+	tk.MustExec("set tidb_force_priority = 'NO_PRIORITY'")
+	tk.MustQuery("select * from t").Check(testkit.Rows("6"))
+	tk.MustExec("update t set id = id + 1")
+	tk.MustQuery("select v from t1 where id = 0 or id = 1").Check(testkit.Rows("0", "1"))
 
 	cli.mu.Lock()
 	cli.mu.checkPrio = false

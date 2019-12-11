@@ -75,25 +75,25 @@ func lock(key, primary string, ts uint64) *kvrpcpb.LockInfo {
 }
 
 func (s *testMockTiKVSuite) mustGetNone(c *C, key string, ts uint64) {
-	val, err := s.store.Get([]byte(key), ts, kvrpcpb.IsolationLevel_SI)
+	val, err := s.store.Get([]byte(key), ts, kvrpcpb.IsolationLevel_SI, nil)
 	c.Assert(err, IsNil)
 	c.Assert(val, IsNil)
 }
 
 func (s *testMockTiKVSuite) mustGetErr(c *C, key string, ts uint64) {
-	val, err := s.store.Get([]byte(key), ts, kvrpcpb.IsolationLevel_SI)
+	val, err := s.store.Get([]byte(key), ts, kvrpcpb.IsolationLevel_SI, nil)
 	c.Assert(err, NotNil)
 	c.Assert(val, IsNil)
 }
 
 func (s *testMockTiKVSuite) mustGetOK(c *C, key string, ts uint64, expect string) {
-	val, err := s.store.Get([]byte(key), ts, kvrpcpb.IsolationLevel_SI)
+	val, err := s.store.Get([]byte(key), ts, kvrpcpb.IsolationLevel_SI, nil)
 	c.Assert(err, IsNil)
 	c.Assert(string(val), Equals, expect)
 }
 
 func (s *testMockTiKVSuite) mustGetRC(c *C, key string, ts uint64, expect string) {
-	val, err := s.store.Get([]byte(key), ts, kvrpcpb.IsolationLevel_RC)
+	val, err := s.store.Get([]byte(key), ts, kvrpcpb.IsolationLevel_RC, nil)
 	c.Assert(err, IsNil)
 	c.Assert(string(val), Equals, expect)
 }
@@ -411,7 +411,7 @@ func (s *testMockTiKVSuite) TestBatchGet(c *C) {
 	s.mustPutOK(c, "k2", "v2", 3, 4)
 	s.mustPutOK(c, "k3", "v3", 1, 2)
 	batchKeys := [][]byte{[]byte("k1"), []byte("k2"), []byte("k3")}
-	pairs := s.store.BatchGet(batchKeys, 5, kvrpcpb.IsolationLevel_SI)
+	pairs := s.store.BatchGet(batchKeys, 5, kvrpcpb.IsolationLevel_SI, nil)
 	for _, pair := range pairs {
 		c.Assert(pair.Err, IsNil)
 	}
