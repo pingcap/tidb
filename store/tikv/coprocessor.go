@@ -104,6 +104,7 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variable
 		memTracker:      req.MemTracker,
 		replicaReadSeed: c.replicaReadSeed,
 	}
+	logutil.Logger(ctx).Warn("send cop task", zap.Int("task-cnt", len(tasks)))
 	it.tasks = tasks
 	if it.concurrency > len(tasks) {
 		it.concurrency = len(tasks)
