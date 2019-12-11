@@ -283,7 +283,7 @@ func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, desc bo
 		reverseTasks(tasks)
 	}
 	if elapsed := time.Since(start); elapsed > time.Millisecond*500 {
-		logutil.Logger(context.Background()).Warn("buildCopTasks takes too much time",
+		logutil.Logger(bo.ctx).Warn("buildCopTasks takes too much time",
 			zap.Duration("elapsed", elapsed),
 			zap.Int("range len", rangesLen),
 			zap.Int("task len", len(tasks)))
@@ -394,6 +394,8 @@ type copIterator struct {
 
 // copIteratorWorker receives tasks from copIteratorTaskSender, handles tasks and sends the copResponse to respChan.
 type copIteratorWorker struct {
+	ctx context.Context
+
 	taskCh   <-chan *copTask
 	wg       *sync.WaitGroup
 	store    *tikvStore
@@ -495,6 +497,8 @@ func (it *copIterator) open(ctx context.Context) {
 	// Start it.concurrency number of workers to handle cop requests.
 	for i := 0; i < it.concurrency; i++ {
 		worker := &copIteratorWorker{
+			ctx: ctx,
+
 			taskCh:   taskCh,
 			wg:       &it.wg,
 			store:    it.store,
@@ -590,11 +594,11 @@ func (worker *copIteratorWorker) sendToRespCh(resp *copResponse, respCh chan<- *
 	select {
 	case respCh <- resp:
 		if resp.err != nil {
-			logutil.Logger(context.Background()).Error("FR-DEBUG: copIteratorWorker", zap.Error(resp.err))
+			logutil.Logger(worker.ctx).Error("FR-DEBUG: copIteratorWorker", zap.Error(resp.err))
 		}
 	case <-worker.finishCh:
 		if resp.err != nil {
-			logutil.Logger(context.Background()).Error("FR-DEBUG: copIteratorWorker", zap.Error(resp.err))
+			logutil.Logger(worker.ctx).Error("FR-DEBUG: copIteratorWorker", zap.Error(resp.err))
 		}
 		exit = true
 	}
@@ -656,7 +660,7 @@ func (worker *copIteratorWorker) handleTask(bo *Backoffer, task *copTask, respCh
 	defer func() {
 		r := recover()
 		if r != nil {
-			logutil.Logger(context.Background()).Error("copIteratorWork meet panic",
+			logutil.Logger(worker.ctx).Error("copIteratorWork meet panic",
 				zap.Reflect("r", r),
 				zap.Stack("stack trace"))
 			resp := &copResponse{err: errors.Errorf("%v", r)}
@@ -668,7 +672,7 @@ func (worker *copIteratorWorker) handleTask(bo *Backoffer, task *copTask, respCh
 	for len(remainTasks) > 0 {
 		tasks, err := worker.handleTaskOnce(bo, remainTasks[0], respCh)
 		if err != nil {
-			logutil.Logger(context.Background()).Error("FR-DEBUG: copIteratorWorker", zap.Error(err))
+			logutil.Logger(worker.ctx).Error("FR-DEBUG: copIteratorWorker", zap.Error(err))
 			resp := &copResponse{err: errors.Trace(err)}
 			worker.sendToRespCh(resp, respCh, true)
 			return
@@ -712,7 +716,7 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 	startTime := time.Now()
 	resp, rpcCtx, err := sender.SendReqCtx(bo, req, task.region, ReadTimeoutMedium)
 	if err != nil {
-		logutil.Logger(context.Background()).Error("FR-DEBUG: copIteratorWorker", zap.Error(err))
+		logutil.Logger(worker.ctx).Error("FR-DEBUG: copIteratorWorker", zap.Error(err))
 		return nil, errors.Trace(err)
 	}
 	// Set task.storeAddr field so its task.String() method have the store address information.
@@ -730,7 +734,7 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 	// Handles the response for non-streaming copTask.
 	tasks, err := worker.handleCopResponse(bo, rpcCtx, &copResponse{pbResp: resp.Cop}, task, ch, nil)
 	if err != nil {
-		logutil.Logger(context.Background()).Error("FR-DEBUG: copIteratorWorker", zap.Error(err))
+		logutil.Logger(worker.ctx).Error("FR-DEBUG: copIteratorWorker", zap.Error(err))
 	}
 	return tasks, err
 }
@@ -773,7 +777,7 @@ func (worker *copIteratorWorker) logTimeCopTask(costTime time.Duration, task *co
 			}
 		}
 	}
-	logutil.Logger(context.Background()).Info(logStr)
+	logutil.Logger(worker.ctx).Info(logStr)
 }
 
 func appendScanDetail(logStr string, columnFamily string, scanInfo *kvrpcpb.ScanInfo) string {
@@ -810,9 +814,9 @@ func (worker *copIteratorWorker) handleCopStreamResult(bo *Backoffer, rpcCtx *RP
 
 			// No coprocessor.Response for network error, rebuild task based on the last success one.
 			if errors.Cause(err) == context.Canceled {
-				logutil.Logger(context.Background()).Info("stream recv timeout", zap.Error(err))
+				logutil.Logger(worker.ctx).Info("stream recv timeout", zap.Error(err))
 			} else {
-				logutil.Logger(context.Background()).Info("stream unknown error", zap.Error(err))
+				logutil.Logger(worker.ctx).Info("stream unknown error", zap.Error(err))
 			}
 			return worker.buildCopTasksFromRemain(bo, lastRange, task)
 		}
@@ -835,7 +839,7 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *RPCCon
 		return buildCopTasks(bo, worker.store.regionCache, task.ranges, worker.req.Desc, worker.req.Streaming)
 	}
 	if lockErr := resp.pbResp.GetLocked(); lockErr != nil {
-		logutil.Logger(context.Background()).Debug("coprocessor encounters",
+		logutil.Logger(worker.ctx).Debug("coprocessor encounters",
 			zap.Stringer("lock", lockErr))
 		msBeforeExpired, err1 := worker.store.lockResolver.ResolveLocks(bo, []*Lock{NewLock(lockErr)})
 		if err1 != nil {
@@ -850,7 +854,7 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *RPCCon
 	}
 	if otherErr := resp.pbResp.GetOtherError(); otherErr != "" {
 		err := errors.Errorf("other error: %s", otherErr)
-		logutil.Logger(context.Background()).Warn("other error",
+		logutil.Logger(worker.ctx).Warn("other error",
 			zap.Uint64("txnStartTS", worker.req.StartTs),
 			zap.Uint64("regionID", task.region.id),
 			zap.String("storeAddr", task.storeAddr),

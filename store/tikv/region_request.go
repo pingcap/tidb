@@ -124,7 +124,7 @@ func (s *RegionRequestSender) SendReqCtx(bo *Backoffer, req *tikvrpc.Request, re
 		s.storeAddr = ctx.Addr
 		resp, retry, err := s.sendReqToRegion(bo, ctx, req, timeout)
 		if err != nil {
-			logutil.Logger(context.Background()).Error("FR-DEBUG: RegionRequestSender", zap.Error(err))
+			logutil.Logger(bo.ctx).Error("FR-DEBUG: RegionRequestSender", zap.Error(err))
 			return nil, nil, errors.Trace(err)
 		}
 		if retry {
@@ -133,13 +133,13 @@ func (s *RegionRequestSender) SendReqCtx(bo *Backoffer, req *tikvrpc.Request, re
 
 		regionErr, err := resp.GetRegionError()
 		if err != nil {
-			logutil.Logger(context.Background()).Error("FR-DEBUG: RegionRequestSender", zap.Error(err))
+			logutil.Logger(bo.ctx).Error("FR-DEBUG: RegionRequestSender", zap.Error(err))
 			return nil, nil, errors.Trace(err)
 		}
 		if regionErr != nil {
 			retry, err := s.onRegionError(bo, ctx, &seed, regionErr)
 			if err != nil {
-				logutil.Logger(context.Background()).Error("FR-DEBUG: RegionRequestSender", zap.Error(err))
+				logutil.Logger(bo.ctx).Error("FR-DEBUG: RegionRequestSender", zap.Error(err))
 				return nil, nil, errors.Trace(err)
 			}
 			if retry {
@@ -163,10 +163,10 @@ func (s *RegionRequestSender) sendReqToRegion(bo *Backoffer, ctx *RPCContext, re
 	}
 	resp, err = s.client.SendRequest(bo.ctx, ctx.Addr, req, timeout)
 	if err != nil {
-		logutil.Logger(context.Background()).Error("FR-DEBUG: RegionRequestSender", zap.Error(err))
+		logutil.Logger(bo.ctx).Error("FR-DEBUG: RegionRequestSender", zap.Error(err))
 		s.rpcError = err
 		if e := s.onSendFail(bo, ctx, err); e != nil {
-			logutil.Logger(context.Background()).Error("FR-DEBUG: RegionRequestSender", zap.Error(err))
+			logutil.Logger(bo.ctx).Error("FR-DEBUG: RegionRequestSender", zap.Error(err))
 			return nil, false, errors.Trace(e)
 		}
 		return nil, true, nil
@@ -212,7 +212,7 @@ func (s *RegionRequestSender) onSendFail(bo *Backoffer, ctx *RPCContext, err err
 			// If we don't cancel, but the error code is Canceled, it must be from grpc remote.
 			// This may happen when tikv is killed and exiting.
 			// Backoff and retry in this case.
-			logutil.Logger(context.Background()).Warn("receive a grpc cancel signal from remote", zap.Error(err))
+			logutil.Logger(bo.ctx).Warn("receive a grpc cancel signal from remote", zap.Error(err))
 		}
 	}
 
@@ -262,7 +262,7 @@ func (s *RegionRequestSender) onRegionError(bo *Backoffer, ctx *RPCContext, seed
 	metrics.TiKVRegionErrorCounter.WithLabelValues(regionErrorToLabel(regionErr)).Inc()
 	if notLeader := regionErr.GetNotLeader(); notLeader != nil {
 		// Retry if error is `NotLeader`.
-		logutil.Logger(context.Background()).Debug("tikv reports `NotLeader` retry later",
+		logutil.Logger(bo.ctx).Debug("tikv reports `NotLeader` retry later",
 			zap.String("notLeader", notLeader.String()),
 			zap.String("ctx", ctx.String()))
 		s.regionCache.UpdateLeader(ctx.Region, notLeader.GetLeader().GetStoreId(), ctx.PeerIdx)
@@ -283,7 +283,7 @@ func (s *RegionRequestSender) onRegionError(bo *Backoffer, ctx *RPCContext, seed
 
 	if storeNotMatch := regionErr.GetStoreNotMatch(); storeNotMatch != nil {
 		// store not match
-		logutil.Logger(context.Background()).Warn("tikv reports `StoreNotMatch` retry later",
+		logutil.Logger(bo.ctx).Warn("tikv reports `StoreNotMatch` retry later",
 			zap.Stringer("storeNotMatch", storeNotMatch),
 			zap.Stringer("ctx", ctx))
 		ctx.Store.markNeedCheck(s.regionCache.notifyCheckCh)
@@ -291,7 +291,7 @@ func (s *RegionRequestSender) onRegionError(bo *Backoffer, ctx *RPCContext, seed
 	}
 
 	if epochNotMatch := regionErr.GetEpochNotMatch(); epochNotMatch != nil {
-		logutil.Logger(context.Background()).Debug("tikv reports `EpochNotMatch` retry later",
+		logutil.Logger(bo.ctx).Debug("tikv reports `EpochNotMatch` retry later",
 			zap.Stringer("EpochNotMatch", epochNotMatch),
 			zap.Stringer("ctx", ctx))
 		if seed != nil {
@@ -301,7 +301,7 @@ func (s *RegionRequestSender) onRegionError(bo *Backoffer, ctx *RPCContext, seed
 		return false, errors.Trace(err)
 	}
 	if regionErr.GetServerIsBusy() != nil {
-		logutil.Logger(context.Background()).Warn("tikv reports `ServerIsBusy` retry later",
+		logutil.Logger(bo.ctx).Warn("tikv reports `ServerIsBusy` retry later",
 			zap.String("reason", regionErr.GetServerIsBusy().GetReason()),
 			zap.Stringer("ctx", ctx))
 		err = bo.Backoff(boServerBusy, errors.Errorf("server is busy, ctx: %v", ctx))
@@ -311,16 +311,16 @@ func (s *RegionRequestSender) onRegionError(bo *Backoffer, ctx *RPCContext, seed
 		return true, nil
 	}
 	if regionErr.GetStaleCommand() != nil {
-		logutil.Logger(context.Background()).Debug("tikv reports `StaleCommand`", zap.Stringer("ctx", ctx))
+		logutil.Logger(bo.ctx).Debug("tikv reports `StaleCommand`", zap.Stringer("ctx", ctx))
 		return true, nil
 	}
 	if regionErr.GetRaftEntryTooLarge() != nil {
-		logutil.Logger(context.Background()).Warn("tikv reports `RaftEntryTooLarge`", zap.Stringer("ctx", ctx))
+		logutil.Logger(bo.ctx).Warn("tikv reports `RaftEntryTooLarge`", zap.Stringer("ctx", ctx))
 		return false, errors.New(regionErr.String())
 	}
 	// For other errors, we only drop cache here.
 	// Because caller may need to re-split the request.
-	logutil.Logger(context.Background()).Debug("tikv reports region error",
+	logutil.Logger(bo.ctx).Debug("tikv reports region error",
 		zap.Stringer("regionErr", regionErr),
 		zap.Stringer("ctx", ctx))
 	s.regionCache.InvalidateCachedRegion(ctx.Region)
