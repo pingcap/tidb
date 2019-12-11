@@ -382,9 +382,9 @@ func (pc PbConverter) canFuncBePushed(sf *ScalarFunction) bool {
 		ast.Radians,
 		ast.Degrees,
 		ast.CRC32,
-		ast.RoundReal,
-		ast.RoundInt,
-		ast.RoundDec,
+		"round_real",
+		"round_int",
+		"round_dec",
 
 		// control flow functions.
 		ast.Case,
