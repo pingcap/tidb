@@ -301,7 +301,7 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 		if ctxValue != nil {
 			commitDetail := ctxValue.(**execdetails.CommitDetails)
 			if *commitDetail != nil {
-				(*commitDetail).TxnRetry += 1
+				(*commitDetail).TxnRetry++
 			} else {
 				*commitDetail = committer.getDetail()
 			}
