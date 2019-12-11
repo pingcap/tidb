@@ -217,6 +217,9 @@ func (helper extractHelper) extractCol(
 	return
 }
 
+// extracts the string pattern column, e.g:
+// SELECT * FROM t WHERE c LIKE '%a%'
+// SELECT * FROM t WHERE c LIKE '%a%' AND c REGEXP '.*xxx.*'
 func (helper extractHelper) extractLikePatternCol(
 	schema *expression.Schema,
 	names []*types.FieldName,
@@ -273,6 +276,9 @@ func (helper extractHelper) extractLikePatternCol(
 	return
 }
 
+// extracts the time range column, e.g:
+// SELECT * FROM t WHERE time='2019-10-10 10:10:10'
+// SELECT * FROM t WHERE time>'2019-10-10 10:10:10' AND time<'2019-10-11 10:10:10'
 func (helper extractHelper) extractTimeRange(
 	ctx sessionctx.Context,
 	schema *expression.Schema,
