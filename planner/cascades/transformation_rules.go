@@ -596,8 +596,6 @@ func (r *PushSelDownJoin) OnTransform(old *memo.ExprIter) (newExprs []*memo.Grou
 		join.LeftConditions = nil
 		join.RightConditions = nil
 		join.OtherConditions = nil
-		remainCond = make([]expression.Expression, len(sel.Conditions))
-		copy(remainCond, sel.Conditions)
 		nullSensitive := join.JoinType == plannercore.AntiLeftOuterSemiJoin || join.JoinType == plannercore.LeftOuterSemiJoin
 		if join.JoinType == plannercore.RightOuterJoin {
 			joinConds, remainCond = expression.PropConstOverOuterJoin(join.SCtx(), joinConds, sel.Conditions, rightGroup.Prop.Schema, leftGroup.Prop.Schema, nullSensitive)
@@ -642,7 +640,7 @@ func (r *PushSelDownJoin) OnTransform(old *memo.ExprIter) (newExprs []*memo.Grou
 		join.LeftJoinKeys = append(join.LeftJoinKeys, eqCond.GetArgs()[0].(*expression.Column))
 		join.RightJoinKeys = append(join.RightJoinKeys, eqCond.GetArgs()[1].(*expression.Column))
 	}
-	if len(remainCond) == len(sel.Conditions) {
+	if len(remainCond) == len(sel.Conditions) && len(leftCond) == 0 && len(rightCond) == 0 {
 		return nil, false, false, nil
 	}
 	// TODO: Update EqualConditions like what we have done in the method join.updateEQCond() before.
