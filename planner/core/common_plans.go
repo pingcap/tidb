@@ -901,14 +901,10 @@ func (e *Explain) prepareTaskDot(p PhysicalPlan, taskTp string, buffer *bytes.Bu
 
 // IsPointGetWithPKOrUniqueKeyByAutoCommit returns true when meets following conditions:
 //  1. ctx is auto commit tagged
-//  2. txn is not valid
+//  2. session is not InTxn
 //  3. plan is point get by pk, or point get by unique index (no double read)
 func IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx sessionctx.Context, p Plan) (bool, error) {
-	ok, err := IsAutoCommitNonValidTxn(ctx)
-	if err != nil {
-		return false, err
-	}
-	if !ok {
+	if !isAutoCommitTxn(ctx) {
 		return false, nil
 	}
 
@@ -934,32 +930,15 @@ func IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx sessionctx.Context, p Plan) (bo
 	}
 }
 
-// IsAutoCommitNonValidTxn checks if session is in autocommit mode and txn not valid
+// isAutoCommitTxn checks if session is in autocommit mode and not InTxn
 // used for fast plan like point get
-func IsAutoCommitNonValidTxn(ctx sessionctx.Context) (bool, error) {
-	// check auto commit
-	if !ctx.GetSessionVars().IsAutocommit() {
-		return false, nil
-	}
-
-	// check txn
-	txn, err := ctx.Txn(false)
-	if err != nil {
-		return false, err
-	}
-	if txn.Valid() {
-		return false, nil
-	}
-	return true, nil
+func isAutoCommitTxn(ctx sessionctx.Context) bool {
+	return ctx.GetSessionVars().IsAutocommit() && !ctx.GetSessionVars().InTxn()
 }
 
 // IsPointUpdateByAutoCommit checks if plan p is point update and is in autocommit context
 func IsPointUpdateByAutoCommit(ctx sessionctx.Context, p Plan) (bool, error) {
-	ok, err := IsAutoCommitNonValidTxn(ctx)
-	if err != nil {
-		return false, err
-	}
-	if !ok {
+	if !isAutoCommitTxn(ctx) {
 		return false, nil
 	}
 
