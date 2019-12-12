@@ -529,9 +529,14 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e Executor) error {
 		if len(keys) == 0 {
 			return nil
 		}
-		forUpdateTS := txnCtx.GetForUpdateTS()
-		err = txn.LockKeys(ctx, &sctx.GetSessionVars().Killed, forUpdateTS, sctx.GetSessionVars().LockWaitTimeout,
-			sctx.GetSessionVars().StmtCtx.GetLockWaitStartTime(), keys...)
+		seVars := sctx.GetSessionVars()
+		lockCtx := &kv.LockCtx{
+			Killed:        &seVars.Killed,
+			ForUpdateTS:   txnCtx.GetForUpdateTS(),
+			LockWaitTime:  seVars.LockWaitTimeout,
+			WaitStartTime: seVars.StmtCtx.GetLockWaitStartTime(),
+		}
+		err = txn.LockKeys(ctx, lockCtx, keys...)
 		if err == nil {
 			return nil
 		}
