@@ -587,3 +587,16 @@ func (s *testSuite) TestBindingCache(c *C) {
 	c.Assert(s.domain.BindHandle().Update(false), IsNil)
 	c.Assert(len(s.domain.BindHandle().GetAllBindRecord()), Equals, 1)
 }
+
+func (s *testSuite) TestDefaultSessionVars(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	s.cleanBindingEnv(tk)
+	tk.MustQuery(`show variables like "%baselines%"`).Sort().Check(testkit.Rows(
+		"tidb_capture_plan_baselines off",
+		"tidb_evolve_plan_baselines off",
+		"tidb_use_plan_baselines on"))
+	tk.MustQuery(`show global variables like "%baselines%"`).Sort().Check(testkit.Rows(
+		"tidb_capture_plan_baselines off",
+		"tidb_evolve_plan_baselines off",
+		"tidb_use_plan_baselines on"))
+}
