@@ -443,7 +443,7 @@ type TiKVSingleGather struct {
 }
 
 // TiKVDoubleGather is a leaf logical operator of TiDB layer to gather
-// tuples from TiKV regions. It for index lookup read.
+// tuples from TiKV regions. It is for index lookup read.
 type TiKVDoubleGather struct {
 	logicalSchemaProducer
 
