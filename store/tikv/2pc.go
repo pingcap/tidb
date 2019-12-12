@@ -50,8 +50,9 @@ type actionPrewrite struct{}
 type actionCommit struct{}
 type actionCleanup struct{}
 type actionPessimisticLock struct {
-	killed       *uint32
-	lockWaitTime int64
+	killed        *uint32
+	lockWaitTime  int64
+	waitStartTime time.Time
 }
 type actionPessimisticRollback struct{}
 
@@ -755,7 +756,7 @@ func (action actionPessimisticLock) handleSingleBatch(c *twoPhaseCommitter, bo *
 			SyncLog:  c.syncLog,
 		},
 	}
-	lockWaitStartTime := time.Now()
+	lockWaitStartTime := action.waitStartTime
 	for {
 		// if lockWaitTime set, refine the request `WaitTimeout` field based on timeout limit
 		if action.lockWaitTime > 0 {
@@ -766,6 +767,10 @@ func (action actionPessimisticLock) handleSingleBatch(c *twoPhaseCommitter, bo *
 				req.PessimisticLock.WaitTimeout = timeLeft
 			}
 		}
+		failpoint.Inject("PessimisticLockErrWriteConflict", func() error {
+			time.Sleep(300 * time.Millisecond)
+			return kv.ErrWriteConflict
+		})
 		resp, err := c.store.SendReq(bo, req, batch.region, readTimeoutShort)
 		if err != nil {
 			return errors.Trace(err)
@@ -779,7 +784,7 @@ func (action actionPessimisticLock) handleSingleBatch(c *twoPhaseCommitter, bo *
 			if err != nil {
 				return errors.Trace(err)
 			}
-			err = c.pessimisticLockKeys(bo, action.killed, action.lockWaitTime, batch.keys)
+			err = c.pessimisticLockKeys(bo, action.killed, action.lockWaitTime, lockWaitStartTime, batch.keys)
 			return errors.Trace(err)
 		}
 		lockResp := resp.PessimisticLock
@@ -1068,8 +1073,9 @@ func (c *twoPhaseCommitter) cleanupKeys(bo *Backoffer, keys [][]byte) error {
 	return c.doActionOnKeys(bo, actionCleanup{}, keys)
 }
 
-func (c *twoPhaseCommitter) pessimisticLockKeys(bo *Backoffer, killed *uint32, lockWaitTime int64, keys [][]byte) error {
-	return c.doActionOnKeys(bo, actionPessimisticLock{killed, lockWaitTime}, keys)
+func (c *twoPhaseCommitter) pessimisticLockKeys(bo *Backoffer, killed *uint32, lockWaitTime int64,
+	waitStartTime time.Time, keys [][]byte) error {
+	return c.doActionOnKeys(bo, actionPessimisticLock{killed, lockWaitTime, waitStartTime}, keys)
 }
 
 func (c *twoPhaseCommitter) pessimisticRollbackKeys(bo *Backoffer, keys [][]byte) error {
