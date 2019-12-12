@@ -466,17 +466,35 @@ func reverse(values []mvccValue) {
 	}
 }
 
+type lockCtx struct {
+	startTS     uint64
+	forUpdateTS uint64
+	primary     []byte
+	ttl         uint64
+	// for force pessimistic lock.
+	latestVal      []byte
+	latestCommitTS uint64
+}
+
 // PessimisticLock writes the pessimistic lock.
-func (mvcc *MVCCLevelDB) PessimisticLock(mutations []*kvrpcpb.Mutation, primary []byte, startTS,
-	forUpdateTS uint64, ttl uint64, lockWaitTime int64) []error {
+func (mvcc *MVCCLevelDB) PessimisticLock(req *kvrpcpb.PessimisticLockRequest) *kvrpcpb.PessimisticLockResponse {
+	resp := &kvrpcpb.PessimisticLockResponse{}
 	mvcc.mu.Lock()
 	defer mvcc.mu.Unlock()
+	mutations := req.Mutations
+	lCtx := &lockCtx{
+		startTS:     req.StartVersion,
+		forUpdateTS: req.ForUpdateTs,
+		primary:     req.PrimaryLock,
+		ttl:         req.LockTtl,
+	}
+	lockWaitTime := req.WaitTimeout
 
 	anyError := false
 	batch := &leveldb.Batch{}
 	errs := make([]error, 0, len(mutations))
 	for _, m := range mutations {
-		err := mvcc.pessimisticLockMutation(batch, m, startTS, forUpdateTS, primary, ttl)
+		err := mvcc.pessimisticLockMutation(batch, m, lCtx)
 		errs = append(errs, err)
 		if err != nil {
 			anyError = true
@@ -488,16 +506,27 @@ func (mvcc *MVCCLevelDB) PessimisticLock(mutations []*kvrpcpb.Mutation, primary 
 		}
 	}
 	if anyError {
-		return errs
+		if req.WaitTimeout != kv.LockNoWait {
+			// TODO: remove this when implement sever side wait.
+			simulateServerSideWaitLock(errs)
+		}
+		resp.Errors = convertToKeyErrors(errs)
+		return resp
 	}
 	if err := mvcc.db.Write(batch, nil); err != nil {
-		return []error{err}
+		resp.Errors = convertToKeyErrors([]error{err})
+		return resp
 	}
-
-	return errs
+	if req.Force {
+		resp.Value = lCtx.latestVal
+		resp.CommitTs = lCtx.latestCommitTS
+	}
+	return resp
 }
 
-func (mvcc *MVCCLevelDB) pessimisticLockMutation(batch *leveldb.Batch, mutation *kvrpcpb.Mutation, startTS, forUpdateTS uint64, primary []byte, ttl uint64) error {
+func (mvcc *MVCCLevelDB) pessimisticLockMutation(batch *leveldb.Batch, mutation *kvrpcpb.Mutation, lctx *lockCtx) error {
+	startTS := lctx.startTS
+	forUpdateTS := lctx.forUpdateTS
 	startKey := mvccEncode(mutation.Key, lockVer)
 	iter := newIterator(mvcc.db, &util.Range{
 		Start: startKey,
@@ -525,15 +554,18 @@ func (mvcc *MVCCLevelDB) pessimisticLockMutation(batch *leveldb.Batch, mutation 
 		}
 		return nil
 	}
-	if err = checkConflictValue(iter, mutation, forUpdateTS); err != nil {
+	valDec, err := checkConflictValue(iter, mutation, forUpdateTS)
+	if err != nil {
 		return err
 	}
+	lctx.latestVal = valDec.value.value
+	lctx.latestCommitTS = valDec.value.commitTS
 
 	lock := mvccLock{
 		startTS:     startTS,
-		primary:     primary,
+		primary:     lctx.primary,
 		op:          kvrpcpb.Op_PessimisticLock,
-		ttl:         ttl,
+		ttl:         lctx.ttl,
 		forUpdateTS: forUpdateTS,
 	}
 	writeKey := mvccEncode(mutation.Key, lockVer)
@@ -645,18 +677,18 @@ func (mvcc *MVCCLevelDB) Prewrite(req *kvrpcpb.PrewriteRequest) []error {
 	return errs
 }
 
-func checkConflictValue(iter *Iterator, m *kvrpcpb.Mutation, startTS uint64) error {
-	dec := valueDecoder{
+func checkConflictValue(iter *Iterator, m *kvrpcpb.Mutation, startTS uint64) (dec *valueDecoder, err error) {
+	dec = &valueDecoder{
 		expectKey: m.Key,
 	}
 	ok, err := dec.Decode(iter)
 	if err != nil {
-		return errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
 
 	// Note that it's a write conflict here, even if the value is a rollback one.
 	if dec.value.commitTS >= startTS {
-		return &ErrConflict{
+		return nil, &ErrConflict{
 			StartTS:          startTS,
 			ConflictTS:       dec.value.startTS,
 			ConflictCommitTS: dec.value.commitTS,
@@ -669,13 +701,13 @@ func checkConflictValue(iter *Iterator, m *kvrpcpb.Mutation, startTS uint64) err
 			if dec.value.valueType == typeRollback {
 				ok, err = dec.Decode(iter)
 				if err != nil {
-					return errors.Trace(err)
+					return nil, errors.Trace(err)
 				}
 			} else if dec.value.valueType == typeDelete {
 				break
 			} else {
 				if m.Op == kvrpcpb.Op_PessimisticLock {
-					return &ErrKeyAlreadyExist{
+					return nil, &ErrKeyAlreadyExist{
 						Key: m.Key,
 					}
 				}
@@ -683,7 +715,7 @@ func checkConflictValue(iter *Iterator, m *kvrpcpb.Mutation, startTS uint64) err
 			}
 		}
 	}
-	return nil
+	return dec, nil
 }
 
 func prewriteMutation(db *leveldb.DB, batch *leveldb.Batch,
@@ -725,7 +757,7 @@ func prewriteMutation(db *leveldb.DB, batch *leveldb.Batch,
 		if isPessimisticLock {
 			return ErrAbort("pessimistic lock not found")
 		}
-		err = checkConflictValue(iter, mutation, startTS)
+		_, err = checkConflictValue(iter, mutation, startTS)
 		if err != nil {
 			return err
 		}
