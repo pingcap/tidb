@@ -29,9 +29,10 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/stringutil"
-	log "github.com/sirupsen/logrus"
+	"go.uber.org/zap"
 )
 
 var (
@@ -199,47 +200,53 @@ func (p *MySQLPrivilege) FindRole(user string, host string, role *auth.RoleIdent
 func (p *MySQLPrivilege) LoadAll(ctx sessionctx.Context) error {
 	err := p.LoadUserTable(ctx)
 	if err != nil {
-		return errors.Trace(err)
+		logutil.BgLogger().Warn("load mysql.user fail", zap.Error(err))
+		return errLoadPrivilege.FastGen("mysql.user")
 	}
 
 	err = p.LoadDBTable(ctx)
 	if err != nil {
 		if !noSuchTable(err) {
-			return errors.Trace(err)
+			logutil.BgLogger().Warn("load mysql.db fail", zap.Error(err))
+			return errLoadPrivilege.FastGen("mysql.db")
 		}
-		log.Warn("mysql.db maybe missing")
+		logutil.BgLogger().Warn("mysql.db maybe missing")
 	}
 
 	err = p.LoadTablesPrivTable(ctx)
 	if err != nil {
 		if !noSuchTable(err) {
-			return errors.Trace(err)
+			logutil.BgLogger().Warn("load mysql.tables_priv fail", zap.Error(err))
+			return errLoadPrivilege.FastGen("mysql.tables_priv")
 		}
-		log.Warn("mysql.tables_priv missing")
+		logutil.BgLogger().Warn("mysql.tables_priv missing")
 	}
 
 	err = p.LoadDefaultRoles(ctx)
 	if err != nil {
 		if !noSuchTable(err) {
-			return errors.Trace(err)
+			logutil.BgLogger().Warn("load mysql.roles", zap.Error(err))
+			return errLoadPrivilege.FastGen("mysql.roles")
 		}
-		log.Warn("mysql.default_roles missing")
+		logutil.BgLogger().Warn("mysql.default_roles missing")
 	}
 
 	err = p.LoadColumnsPrivTable(ctx)
 	if err != nil {
 		if !noSuchTable(err) {
-			return errors.Trace(err)
+			logutil.BgLogger().Warn("load mysql.columns_priv", zap.Error(err))
+			return errLoadPrivilege.FastGen("mysql.columns_priv")
 		}
-		log.Warn("mysql.columns_priv missing")
+		logutil.BgLogger().Warn("mysql.columns_priv missing")
 	}
 
 	err = p.LoadRoleGraph(ctx)
 	if err != nil {
 		if !noSuchTable(err) {
-			return errors.Trace(err)
+			logutil.BgLogger().Warn("load mysql.role_edges", zap.Error(err))
+			return errLoadPrivilege.FastGen("mysql.role_edges")
 		}
-		log.Warn("mysql.role_edges missing")
+		logutil.BgLogger().Warn("mysql.role_edges missing")
 	}
 	return nil
 }
@@ -616,7 +623,7 @@ func decodeSetToPrivilege(s types.Set) mysql.PrivilegeType {
 	for _, str := range strings.Split(s.Name, ",") {
 		priv, ok := mysql.SetStr2Priv[str]
 		if !ok {
-			log.Warn("unsupported privilege type:", str)
+			logutil.BgLogger().Warn("unsupported privilege", zap.String("type", str))
 			continue
 		}
 		ret |= priv
@@ -1112,7 +1119,7 @@ func (h *Handle) Update(ctx sessionctx.Context) error {
 	var priv MySQLPrivilege
 	err := priv.LoadAll(ctx)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 
 	h.priv.Store(&priv)
