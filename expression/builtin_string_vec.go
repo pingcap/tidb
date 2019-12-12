@@ -2002,21 +2002,9 @@ func (b *builtinOrdSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) err
 		return err
 	}
 
-	charSet := b.args[0].GetType().Charset
-	// use utf8 by default
-	if charSet == "" {
-		charSet = charset.CharsetUTF8
-	}
-	desc, err := charset.GetCharsetDesc(charSet)
+	ord, err := chooseOrdFunc(b.args[0].GetType().Charset)
 	if err != nil {
 		return err
-	}
-
-	var ord func(string) int64
-	if desc.Maxlen == 1 {
-		ord = ordBinary
-	} else {
-		ord = ordUtf8
 	}
 
 	result.ResizeInt64(n, false)
