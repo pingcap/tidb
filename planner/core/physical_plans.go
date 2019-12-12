@@ -86,7 +86,7 @@ func (sg *TiKVSingleGather) GetPhysicalIndexReader(schema *expression.Schema, st
 	return reader
 }
 
-// GetPhysicalIndexLookUpReader returns PhysicalIndexReader for logical TiKVSingleGather.
+// GetPhysicalIndexLookUpReader returns PhysicalIndexReader for logical TiKVDoubleGather.
 func (dg *TiKVDoubleGather) GetPhysicalIndexLookUpReader(schema *expression.Schema, stats *property.StatsInfo, props ...*property.PhysicalProperty) *PhysicalIndexLookUpReader {
 	reader := PhysicalIndexLookUpReader{}
 	reader.basePhysicalPlan = newBasePhysicalPlan(dg.ctx, plancodec.TypeIndexLookUp, &reader, dg.blockOffset)
