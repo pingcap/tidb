@@ -168,6 +168,8 @@ const (
 const (
 	// SystemDB is the name of system database.
 	SystemDB = "mysql"
+	// GlobalPrivTable is the table in system db contains global scope privilege info.
+	GlobalPrivTable = "global_priv"
 	// UserTable is the table in system db contains user info.
 	UserTable = "User"
 	// DBTable is the table in system db contains db scope privilege info.
