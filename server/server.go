@@ -86,9 +86,9 @@ func init() {
 }
 
 var (
-	errUnknownFieldType  = terror.ClassServer.New(codeUnknownFieldType, "unknown field type")
-	errInvalidSequence   = terror.ClassServer.New(codeInvalidSequence, "invalid sequence")
-	errInvalidType       = terror.ClassServer.New(codeInvalidType, "invalid type")
+	errUnknownFieldType  = terror.ClassServer.New(mysql.ErrUnknownFieldType, mysql.MySQLErrName[mysql.ErrUnknownFieldType])
+	errInvalidSequence   = terror.ClassServer.New(mysql.ErrInvalidSequence, mysql.MySQLErrName[mysql.ErrInvalidSequence])
+	errInvalidType       = terror.ClassServer.New(mysql.ErrInvalidType, mysql.MySQLErrName[mysql.ErrInvalidType])
 	errNotAllowedCommand = terror.ClassServer.New(mysql.ErrNotAllowedCommand, mysql.MySQLErrName[mysql.ErrNotAllowedCommand])
 	errAccessDenied      = terror.ClassServer.New(mysql.ErrAccessDenied, mysql.MySQLErrName[mysql.ErrAccessDenied])
 )
@@ -647,6 +647,9 @@ func init() {
 	serverMySQLErrCodes := map[terror.ErrCode]uint16{
 		mysql.ErrNotAllowedCommand: mysql.ErrNotAllowedCommand,
 		mysql.ErrAccessDenied:      mysql.ErrAccessDenied,
+		mysql.ErrUnknownFieldType:  mysql.ErrUnknownFieldType,
+		mysql.ErrInvalidSequence:   mysql.ErrInvalidSequence,
+		mysql.ErrInvalidType:       mysql.ErrInvalidType,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassServer] = serverMySQLErrCodes
 }
