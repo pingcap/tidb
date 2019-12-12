@@ -199,7 +199,7 @@ func (br *BindRecord) metrics() ([]float64, []int) {
 	sizes[statusIndex[br.Bindings[0].Status]] = commonLength
 	for _, binding := range br.Bindings {
 		sizes[statusIndex[binding.Status]] += binding.size()
-		count[statusIndex[binding.Status]] += 1
+		count[statusIndex[binding.Status]]++
 	}
 	return sizes, count
 }
