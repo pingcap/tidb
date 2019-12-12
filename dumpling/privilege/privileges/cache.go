@@ -136,12 +136,27 @@ func (g roleGraphEdgesTable) Find(user, host string) bool {
 
 // MySQLPrivilege is the in-memory cache of mysql privilege tables.
 type MySQLPrivilege struct {
-	User         []UserRecord
-	DB           []dbRecord
-	TablesPriv   []tablesPrivRecord
-	ColumnsPriv  []columnsPrivRecord
-	DefaultRoles []defaultRoleRecord
-	RoleGraph    map[string]roleGraphEdgesTable
+	// In MySQL, a user identity consists of a user + host.
+	// Either portion of user or host can contain wildcards,
+	// requiring the privileges system to use a list-like
+	// structure instead of a hash.
+
+	// TiDB contains a sensible behavior difference from MySQL,
+	// which is that usernames can not contain wildcards.
+	// This means that DB-records are organized in both a
+	// slice (p.DB) and a Map (p.DBMap).
+
+	// This helps in the case that there are a number of users with
+	// non-full privileges (i.e. user.db entries).
+	User          []UserRecord
+	UserMap       map[string][]UserRecord // Accelerate User searching
+	DB            []dbRecord
+	DBMap         map[string][]dbRecord // Accelerate DB searching
+	TablesPriv    []tablesPrivRecord
+	TablesPrivMap map[string][]tablesPrivRecord // Accelerate TablesPriv searching
+	ColumnsPriv   []columnsPrivRecord
+	DefaultRoles  []defaultRoleRecord
+	RoleGraph     map[string]roleGraphEdgesTable
 }
 
 // FindAllRole is used to find all roles grant to this user.
@@ -267,7 +282,16 @@ func (p *MySQLPrivilege) LoadUserTable(ctx sessionctx.Context) error {
 	// 3. The server uses the first row that matches the client host name and user name.
 	// The server uses sorting rules that order rows with the most-specific Host values first.
 	p.SortUserTable()
+	p.buildUserMap()
 	return nil
+}
+
+func (p *MySQLPrivilege) buildUserMap() {
+	userMap := make(map[string][]UserRecord, len(p.User))
+	for _, record := range p.User {
+		userMap[record.User] = append(userMap[record.User], record)
+	}
+	p.UserMap = userMap
 }
 
 type sortedUserRecord []UserRecord
@@ -353,12 +377,38 @@ func (p MySQLPrivilege) SortUserTable() {
 
 // LoadDBTable loads the mysql.db table from database.
 func (p *MySQLPrivilege) LoadDBTable(ctx sessionctx.Context) error {
-	return p.loadTable(ctx, "select HIGH_PRIORITY Host,DB,User,Select_priv,Insert_priv,Update_priv,Delete_priv,Create_priv,Drop_priv,Grant_priv,Index_priv,Alter_priv,Execute_priv,Create_view_priv,Show_view_priv from mysql.db order by host, db, user;", p.decodeDBTableRow)
+	err := p.loadTable(ctx, "select HIGH_PRIORITY Host,DB,User,Select_priv,Insert_priv,Update_priv,Delete_priv,Create_priv,Drop_priv,Grant_priv,Index_priv,Alter_priv,Execute_priv,Create_view_priv,Show_view_priv from mysql.db order by host, db, user;", p.decodeDBTableRow)
+	if err != nil {
+		return err
+	}
+	p.buildDBMap()
+	return nil
+}
+
+func (p *MySQLPrivilege) buildDBMap() {
+	dbMap := make(map[string][]dbRecord, len(p.DB))
+	for _, record := range p.DB {
+		dbMap[record.User] = append(dbMap[record.User], record)
+	}
+	p.DBMap = dbMap
 }
 
 // LoadTablesPrivTable loads the mysql.tables_priv table from database.
 func (p *MySQLPrivilege) LoadTablesPrivTable(ctx sessionctx.Context) error {
-	return p.loadTable(ctx, "select HIGH_PRIORITY Host,DB,User,Table_name,Grantor,Timestamp,Table_priv,Column_priv from mysql.tables_priv", p.decodeTablesPrivTableRow)
+	err := p.loadTable(ctx, "select HIGH_PRIORITY Host,DB,User,Table_name,Grantor,Timestamp,Table_priv,Column_priv from mysql.tables_priv", p.decodeTablesPrivTableRow)
+	if err != nil {
+		return err
+	}
+	p.buildTablesPrivMap()
+	return nil
+}
+
+func (p *MySQLPrivilege) buildTablesPrivMap() {
+	tablesPrivMap := make(map[string][]tablesPrivRecord, len(p.TablesPriv))
+	for _, record := range p.TablesPriv {
+		tablesPrivMap[record.User] = append(tablesPrivMap[record.User], record)
+	}
+	p.TablesPrivMap = tablesPrivMap
 }
 
 // LoadColumnsPrivTable loads the mysql.columns_priv table from database.
@@ -618,30 +668,39 @@ func (p *MySQLPrivilege) connectionVerification(user, host string) *UserRecord {
 }
 
 func (p *MySQLPrivilege) matchUser(user, host string) *UserRecord {
-	for i := 0; i < len(p.User); i++ {
-		record := &p.User[i]
-		if record.match(user, host) {
-			return record
+	records, exists := p.UserMap[user]
+	if exists {
+		for i := 0; i < len(records); i++ {
+			record := &records[i]
+			if record.match(user, host) {
+				return record
+			}
 		}
 	}
 	return nil
 }
 
 func (p *MySQLPrivilege) matchDB(user, host, db string) *dbRecord {
-	for i := 0; i < len(p.DB); i++ {
-		record := &p.DB[i]
-		if record.match(user, host, db) {
-			return record
+	records, exists := p.DBMap[user]
+	if exists {
+		for i := 0; i < len(records); i++ {
+			record := &records[i]
+			if record.match(user, host, db) {
+				return record
+			}
 		}
 	}
 	return nil
 }
 
 func (p *MySQLPrivilege) matchTables(user, host, db, table string) *tablesPrivRecord {
-	for i := 0; i < len(p.TablesPriv); i++ {
-		record := &p.TablesPriv[i]
-		if record.match(user, host, db, table) {
-			return record
+	records, exists := p.TablesPrivMap[user]
+	if exists {
+		for i := 0; i < len(records); i++ {
+			record := &records[i]
+			if record.match(user, host, db, table) {
+				return record
+			}
 		}
 	}
 	return nil
