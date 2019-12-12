@@ -25,7 +25,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/jeremywohl/flatten"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/diagnosticspb"
@@ -98,11 +97,11 @@ const (
 	tableTiKVRegionStatus                   = "TIKV_REGION_STATUS"
 	tableTiKVRegionPeers                    = "TIKV_REGION_PEERS"
 	tableTiDBServersInfo                    = "TIDB_SERVERS_INFO"
-	tableTiDBClusterInfo                    = "CLUSTER_INFO"
-	// TableTiDBClusterConfig is the string constant of cluster configuration memory table
-	TableTiDBClusterConfig = "CLUSTER_CONFIG"
-	tableTiDBClusterLoad   = "CLUSTER_LOAD"
-	tableTiFlashReplica    = "TIFLASH_REPLICA"
+	tableClusterInfo                        = "CLUSTER_INFO"
+	// TableClusterConfig is the string constant of cluster configuration memory table
+	TableClusterConfig  = "CLUSTER_CONFIG"
+	tableClusterLoad    = "CLUSTER_LOAD"
+	tableTiFlashReplica = "TIFLASH_REPLICA"
 )
 
 var tableIDMap = map[string]int64{
@@ -147,9 +146,9 @@ var tableIDMap = map[string]int64{
 	tableTiKVRegionStatus:                   autoid.InformationSchemaDBID + 39,
 	tableTiKVRegionPeers:                    autoid.InformationSchemaDBID + 40,
 	tableTiDBServersInfo:                    autoid.InformationSchemaDBID + 41,
-	tableTiDBClusterInfo:                    autoid.InformationSchemaDBID + 42,
-	TableTiDBClusterConfig:                  autoid.InformationSchemaDBID + 43,
-	tableTiDBClusterLoad:                    autoid.InformationSchemaDBID + 44,
+	tableClusterInfo:                        autoid.InformationSchemaDBID + 42,
+	TableClusterConfig:                      autoid.InformationSchemaDBID + 43,
+	tableClusterLoad:                        autoid.InformationSchemaDBID + 44,
 	tableTiFlashReplica:                     autoid.InformationSchemaDBID + 45,
 	clusterTableSlowLog:                     autoid.InformationSchemaDBID + 46,
 	clusterTableProcesslist:                 autoid.InformationSchemaDBID + 47,
@@ -730,14 +729,14 @@ var tableTiDBServersInfoCols = []columnInfo{
 	{"BINLOG_STATUS", mysql.TypeVarchar, 64, 0, nil, nil},
 }
 
-var tableTiDBClusterConfigCols = []columnInfo{
+var tableClusterConfigCols = []columnInfo{
 	{"TYPE", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"ADDRESS", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"KEY", mysql.TypeVarchar, 256, 0, nil, nil},
 	{"VALUE", mysql.TypeVarchar, 128, 0, nil, nil},
 }
 
-var tableTiDBClusterLoadCols = []columnInfo{
+var tableClusterLoadCols = []columnInfo{
 	{"TYPE", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"ADDRESS", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"DEVICE_TYPE", mysql.TypeVarchar, 64, 0, nil, nil},
@@ -1100,7 +1099,7 @@ var filesCols = []columnInfo{
 	{"EXTRA", mysql.TypeVarchar, 255, 0, nil, nil},
 }
 
-var tableTiDBClusterInfoCols = []columnInfo{
+var tableClusterInfoCols = []columnInfo{
 	{"TYPE", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"ADDRESS", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"STATUS_ADDRESS", mysql.TypeVarchar, 64, 0, nil, nil},
@@ -2220,109 +2219,6 @@ func getServerInfoByGRPC(address string, tp diagnosticspb.ServerInfoType) ([]*di
 	return r.Items, nil
 }
 
-func dataForClusterConfig(ctx sessionctx.Context) ([][]types.Datum, error) {
-	type result struct {
-		idx  int
-		rows [][]types.Datum
-		err  error
-	}
-	serversInfo, err := GetClusterServerInfo(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	var finalRows [][]types.Datum
-	wg := sync.WaitGroup{}
-	ch := make(chan result, len(serversInfo))
-	for i, srv := range serversInfo {
-		typ := srv.ServerType
-		address := srv.Address
-		statusAddr := srv.StatusAddr
-		if len(statusAddr) == 0 {
-			ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("%s node %s does not contain status address", typ, address))
-			continue
-		}
-
-		wg.Add(1)
-		go func(index int) {
-			util.WithRecovery(func() {
-				defer wg.Done()
-				var url string
-				switch typ {
-				case "pd":
-					url = fmt.Sprintf("http://%s%s", statusAddr, pdapi.Config)
-				case "tikv", "tidb":
-					url = fmt.Sprintf("http://%s/config", statusAddr)
-				default:
-					ch <- result{err: errors.Errorf("unknown node type: %s(%s)", typ, address)}
-					return
-				}
-				req, err := http.NewRequest(http.MethodGet, url, nil)
-				if err != nil {
-					ch <- result{err: errors.Trace(err)}
-					return
-				}
-				req.Header.Add("PD-Allow-follower-handle", "true")
-				resp, err := http.DefaultClient.Do(req)
-				if err != nil {
-					ch <- result{err: errors.Trace(err)}
-					return
-				}
-				var nested map[string]interface{}
-				if err = json.NewDecoder(resp.Body).Decode(&nested); err != nil {
-					ch <- result{err: errors.Trace(err)}
-					return
-				}
-				terror.Log(resp.Body.Close())
-
-				data, err := flatten.Flatten(nested, "", flatten.DotStyle)
-				if err != nil {
-					ch <- result{err: errors.Trace(err)}
-					return
-				}
-				// Sorts by keys and make the result stable
-				type item struct {
-					key string
-					val string
-				}
-				var items []item
-				for key, val := range data {
-					items = append(items, item{key: key, val: fmt.Sprintf("%v", val)})
-				}
-				sort.Slice(items, func(i, j int) bool { return items[i].key < items[j].key })
-				var rows [][]types.Datum
-				for _, item := range items {
-					rows = append(rows, types.MakeDatums(
-						typ,
-						address,
-						item.key,
-						item.val,
-					))
-				}
-				ch <- result{idx: index, rows: rows}
-			}, nil)
-		}(i)
-	}
-
-	wg.Wait()
-	close(ch)
-
-	// Keep the original order to make the result more stable
-	var results []result
-	for result := range ch {
-		if result.err != nil {
-			ctx.GetSessionVars().StmtCtx.AppendWarning(result.err)
-			continue
-		}
-		results = append(results, result)
-	}
-	sort.Slice(results, func(i, j int) bool { return results[i].idx < results[j].idx })
-	for _, result := range results {
-		finalRows = append(finalRows, result.rows...)
-	}
-	return finalRows, nil
-}
-
 // dataForTableTiFlashReplica constructs data for table tiflash replica info.
 func dataForTableTiFlashReplica(schemas []*model.DBInfo) [][]types.Datum {
 	var rows [][]types.Datum
@@ -2386,9 +2282,9 @@ var tableNameToColumns = map[string][]columnInfo{
 	tableTiKVRegionStatus:                   tableTiKVRegionStatusCols,
 	tableTiKVRegionPeers:                    tableTiKVRegionPeersCols,
 	tableTiDBServersInfo:                    tableTiDBServersInfoCols,
-	tableTiDBClusterInfo:                    tableTiDBClusterInfoCols,
-	TableTiDBClusterConfig:                  tableTiDBClusterConfigCols,
-	tableTiDBClusterLoad:                    tableTiDBClusterLoadCols,
+	tableClusterInfo:                        tableClusterInfoCols,
+	TableClusterConfig:                      tableClusterConfigCols,
+	tableClusterLoad:                        tableClusterLoadCols,
 	tableTiFlashReplica:                     tableTableTiFlashReplicaCols,
 }
 
@@ -2494,11 +2390,9 @@ func (it *infoschemaTable) getRows(ctx sessionctx.Context, cols []*table.Column)
 		fullRows, err = dataForTikVRegionPeers(ctx)
 	case tableTiDBServersInfo:
 		fullRows, err = dataForServersInfo()
-	case tableTiDBClusterInfo:
+	case tableClusterInfo:
 		fullRows, err = dataForTiDBClusterInfo(ctx)
-	case TableTiDBClusterConfig:
-		fullRows, err = dataForClusterConfig(ctx)
-	case tableTiDBClusterLoad:
+	case tableClusterLoad:
 		fullRows, err = dataForClusterLoadInfo(ctx)
 	case tableTiFlashReplica:
 		fullRows = dataForTableTiFlashReplica(dbs)

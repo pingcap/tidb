@@ -84,6 +84,9 @@ func init() {
 
 	// Register terror to mysql error map.
 	mySQLErrCodes := map[terror.ErrCode]uint16{
+		mysql.ErrCantGetValidID:              mysql.ErrCantGetValidID,
+		mysql.ErrCantSetToNull:               mysql.ErrCantSetToNull,
+		mysql.ErrSnapshotTooOld:              mysql.ErrSnapshotTooOld,
 		mysql.ErrUnsupportedValueForVar:      mysql.ErrUnsupportedValueForVar,
 		mysql.ErrUnknownSystemVariable:       mysql.ErrUnknownSystemVariable,
 		mysql.ErrIncorrectGlobalLocalVar:     mysql.ErrIncorrectGlobalLocalVar,

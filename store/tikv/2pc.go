@@ -48,9 +48,7 @@ type actionPrewrite struct{}
 type actionCommit struct{}
 type actionCleanup struct{}
 type actionPessimisticLock struct {
-	killed        *uint32
-	lockWaitTime  int64
-	waitStartTime time.Time
+	*kv.LockCtx
 }
 type actionPessimisticRollback struct{}
 
@@ -686,13 +684,13 @@ func (action actionPessimisticLock) handleSingleBatch(c *twoPhaseCommitter, bo *
 		ForUpdateTs:  c.forUpdateTS,
 		LockTtl:      elapsed + ManagedLockTTL,
 		IsFirstLock:  c.isFirstLock,
-		WaitTimeout:  action.lockWaitTime,
+		WaitTimeout:  action.LockWaitTime,
 	}, pb.Context{Priority: c.priority, SyncLog: c.syncLog})
-	lockWaitStartTime := action.waitStartTime
+	lockWaitStartTime := action.WaitStartTime
 	for {
 		// if lockWaitTime set, refine the request `WaitTimeout` field based on timeout limit
-		if action.lockWaitTime > 0 {
-			timeLeft := action.lockWaitTime - (time.Since(lockWaitStartTime)).Milliseconds()
+		if action.LockWaitTime > 0 {
+			timeLeft := action.LockWaitTime - (time.Since(lockWaitStartTime)).Milliseconds()
 			if timeLeft <= 0 {
 				req.PessimisticLock().WaitTimeout = kv.LockNoWait
 			} else {
@@ -716,7 +714,7 @@ func (action actionPessimisticLock) handleSingleBatch(c *twoPhaseCommitter, bo *
 			if err != nil {
 				return errors.Trace(err)
 			}
-			err = c.pessimisticLockKeys(bo, action.killed, action.lockWaitTime, lockWaitStartTime, batch.keys)
+			err = c.pessimisticLockKeys(bo, action.LockCtx, batch.keys)
 			return errors.Trace(err)
 		}
 		if resp.Resp == nil {
@@ -753,18 +751,18 @@ func (action actionPessimisticLock) handleSingleBatch(c *twoPhaseCommitter, bo *
 			// (eg secondary locks not committed or rollbacked yet)
 			// we cant return "nowait conflict" directly
 			if lock.LockType == pb.Op_PessimisticLock {
-				if action.lockWaitTime == kv.LockNoWait {
+				if action.LockWaitTime == kv.LockNoWait {
 					// the pessimistic lock found could be invalid locks which is timeout but not recycled yet
 					if !c.store.oracle.IsExpired(lock.TxnID, lock.TTL) {
 						return ErrLockAcquireFailAndNoWaitSet
 					}
-				} else if action.lockWaitTime == kv.LockAlwaysWait {
+				} else if action.LockWaitTime == kv.LockAlwaysWait {
 					// do nothing but keep wait
 				} else {
 					// the lockWaitTime is set, check the lock wait timeout or not
 					// the pessimistic lock found could be invalid locks which is timeout but not recycled yet
 					if !c.store.oracle.IsExpired(lock.TxnID, lock.TTL) {
-						if time.Since(lockWaitStartTime).Milliseconds() >= action.lockWaitTime {
+						if time.Since(lockWaitStartTime).Milliseconds() >= action.LockWaitTime {
 							return ErrLockWaitTimeout
 						}
 					}
@@ -782,11 +780,11 @@ func (action actionPessimisticLock) handleSingleBatch(c *twoPhaseCommitter, bo *
 		// Handle the killed flag when waiting for the pessimistic lock.
 		// When a txn runs into LockKeys() and backoff here, it has no chance to call
 		// executor.Next() and check the killed flag.
-		if action.killed != nil {
+		if action.Killed != nil {
 			// Do not reset the killed flag here!
 			// actionPessimisticLock runs on each region parallelly, we have to consider that
 			// the error may be dropped.
-			if atomic.LoadUint32(action.killed) == 1 {
+			if atomic.LoadUint32(action.Killed) == 1 {
 				return ErrQueryInterrupted
 			}
 		}
@@ -1010,9 +1008,8 @@ func (c *twoPhaseCommitter) cleanupKeys(bo *Backoffer, keys [][]byte) error {
 	return c.doActionOnKeys(bo, actionCleanup{}, keys)
 }
 
-func (c *twoPhaseCommitter) pessimisticLockKeys(bo *Backoffer, killed *uint32, lockWaitTime int64,
-	waitStartTime time.Time, keys [][]byte) error {
-	return c.doActionOnKeys(bo, actionPessimisticLock{killed, lockWaitTime, waitStartTime}, keys)
+func (c *twoPhaseCommitter) pessimisticLockKeys(bo *Backoffer, lockCtx *kv.LockCtx, keys [][]byte) error {
+	return c.doActionOnKeys(bo, actionPessimisticLock{lockCtx}, keys)
 }
 
 func (c *twoPhaseCommitter) pessimisticRollbackKeys(bo *Backoffer, keys [][]byte) error {
