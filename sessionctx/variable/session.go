@@ -710,6 +710,7 @@ func (s *SessionVars) IsAutocommit() bool {
 	return s.GetStatusFlag(mysql.ServerStatusAutocommit)
 }
 
+// IsReadConsistencyTxn if true it means the transaction is an read consistency (read committed) transaction.
 func (s *SessionVars) IsReadConsistencyTxn() bool {
 	var isoLevel string
 	if s.TxnIsolationLevelOneShot.State == 2 {
