@@ -622,15 +622,16 @@ func NewRulePushSelDownUnionAll() Transformation {
 func (r *PushSelDownUnionAll) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
 	sel := old.GetExpr().ExprNode.(*plannercore.LogicalSelection)
 	unionAll := old.Children[0].GetExpr().ExprNode.(*plannercore.LogicalUnionAll)
-	childGroup := old.Children[0].GetExpr().Children[0]
-
-	newSelExpr := memo.NewGroupExpr(sel)
-	newSelExpr.Children = append(newSelExpr.Children, childGroup)
-	newSelGroup := memo.NewGroupWithSchema(newSelExpr, childGroup.Prop.Schema)
+	childGroups := old.Children[0].GetExpr().Children
 
 	newUnionAllExpr := memo.NewGroupExpr(unionAll)
-	newUnionAllExpr.Children = append(newUnionAllExpr.Children, newSelGroup)
+	for _, group := range childGroups {
+		newSelExpr := memo.NewGroupExpr(sel)
+		newSelExpr.Children = append(newSelExpr.Children, group)
+		newSelGroup := memo.NewGroupWithSchema(newSelExpr, group.Prop.Schema)
 
+		newUnionAllExpr.Children = append(newUnionAllExpr.Children, newSelGroup)
+	}
 	return []*memo.GroupExpr{newUnionAllExpr}, true, false, nil
 }
 
