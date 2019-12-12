@@ -550,6 +550,29 @@ func (g *dateTimeGener) gen() interface{} {
 	return t
 }
 
+// charInt64Gener is used to generate int which is equal to char's ascii
+type charInt64Gener struct{}
+
+func (g *charInt64Gener) gen() interface{} {
+	rand := time.Now().Nanosecond()
+	rand = rand % 128
+	return int64(rand)
+}
+
+// charsetStringGener is used to generate "ascii" or "gbk"
+type charsetStringGener struct{}
+
+func (g *charsetStringGener) gen() interface{} {
+	rand := time.Now().Nanosecond() % 3
+	if rand == 0 {
+		return "ascii"
+	}
+	if rand == 1 {
+		return "utf8"
+	}
+	return "gbk"
+}
+
 // dateTimeStrGener is used to generate strings which are dataTime format
 type dateTimeStrGener struct {
 	Fsp   int

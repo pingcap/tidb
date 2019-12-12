@@ -23,9 +23,13 @@ import (
 	"unicode/utf8"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
+	"golang.org/x/text/transform"
 )
 
 func (b *builtinLowerSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
@@ -1923,11 +1927,69 @@ func (b *builtinBitLengthSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colum
 }
 
 func (b *builtinCharSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinCharSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+
+	n := input.NumRows()
+	l := len(b.args)
+	buf := make([]*chunk.Column, l-1)
+	for i := 0; i < len(b.args)-1; i++ {
+		te, err := b.bufAllocator.get(types.ETInt, n)
+		if err != nil {
+			return err
+		}
+		buf[i] = te
+		defer b.bufAllocator.put(buf[i])
+		if err := b.args[i].VecEvalInt(b.ctx, input, buf[i]); err != nil {
+			return err
+		}
+	}
+	bufstr, err := b.bufAllocator.get(types.ETString, n)
+	defer b.bufAllocator.put(bufstr)
+	if err != nil {
+		return err
+	}
+	if err := b.args[l-1].VecEvalString(b.ctx, input, bufstr); err != nil {
+		return err
+	}
+	result.ReserveString(n)
+
+	for i := 0; i < n; i++ {
+		bigints := make([]int64, 0, l-1)
+		for j := 0; j < l-1; j++ {
+			if buf[j].IsNull(i) {
+				continue
+			} else {
+				bigints = append(bigints, buf[j].GetInt64(i))
+			}
+		}
+		tempres := string(b.convertToBytes(bigints))
+		charsetlabe := strings.ToLower(bufstr.GetString(i))
+		if bufstr.IsNull(i) || charsetlabe == "ascii" || strings.HasPrefix(charsetlabe, "utf8") {
+			result.AppendString(tempres)
+		} else {
+			encoding, charsetName := charset.Lookup(charsetlabe)
+			if encoding == nil {
+				result.AppendNull()
+				continue
+			}
+			oldStr := tempres
+			tempres, _, err := transform.String(encoding.NewDecoder(), tempres)
+			if err != nil {
+				logutil.BgLogger().Warn("change charset of string",
+					zap.String("string", oldStr),
+					zap.String("charset", charsetName),
+					zap.Error(err))
+				result.AppendNull()
+				continue
+			}
+			result.AppendString(tempres)
+		}
+
+	}
+	return nil
 }
 
 func (b *builtinReplaceSig) vectorized() bool {
