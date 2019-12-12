@@ -9790,7 +9790,7 @@ CreateUserStmt:
 			IsCreateRole: false,
 			IfNotExists: $3.(bool),
 			Specs: $4.([]*ast.UserSpec),
-			TslOptions: $5.([]*ast.TslOption),
+			TLSOptions: $5.([]*ast.TLSOption),
 			ResourceOptions: $6.([]*ast.ResourceOption),
 			PasswordOrLockOptions: $7.([]*ast.PasswordOrLockOption),
 		}
@@ -9814,7 +9814,7 @@ AlterUserStmt:
 		$$ = &ast.AlterUserStmt{
 			IfExists: $3.(bool),
 			Specs: $4.([]*ast.UserSpec),
-			TslOptions: $5.([]*ast.TslOption),
+			TLSOptions: $5.([]*ast.TLSOption),
 			ResourceOptions: $6.([]*ast.ResourceOption),
 			PasswordOrLockOptions: $7.([]*ast.PasswordOrLockOption),
 		}
@@ -9909,36 +9909,34 @@ ConnectionOption:
 
 RequireClauseOpt:
 	{
-		$$ = []*ast.TslOption{}
+		$$ = []*ast.TLSOption{}
 	}
 | RequireClause
 	{
 		$$ = $1
-		yylex.AppendError(yylex.Errorf("TiDB does not support REQUIRE now, they would be parsed but ignored."))
-		parser.lastErrorAsWarn()
 	}
 
 RequireClause:
 	"REQUIRE" "NONE"
 	{
-		t := &ast.TslOption {
+		t := &ast.TLSOption {
 			Type: ast.TslNone,
 		}
-		$$ = []*ast.TslOption{t}
+		$$ = []*ast.TLSOption{t}
 	}
 |	"REQUIRE" "SSL"
 	{
-		t := &ast.TslOption {
+		t := &ast.TLSOption {
 			Type: ast.Ssl,
 		}
-		$$ = []*ast.TslOption{t}
+		$$ = []*ast.TLSOption{t}
 	}
 |	"REQUIRE" "X509"
 	{
-		t := &ast.TslOption {
+		t := &ast.TLSOption {
 			Type: ast.X509,
 		}
-		$$ = []*ast.TslOption{t}
+		$$ = []*ast.TLSOption{t}
 	}
 |	"REQUIRE" RequireList
 	{
@@ -9948,33 +9946,39 @@ RequireClause:
 RequireList:
 	RequireListElement
 	{
-		$$ = []*ast.TslOption{$1.(*ast.TslOption)}
+		$$ = []*ast.TLSOption{$1.(*ast.TLSOption)}
 	}
-|	RequireListElement "AND" RequireList
+|	RequireList "AND" RequireListElement
 	{
-		l := $3.([]*ast.TslOption)
-		l = append(l, $1.(*ast.TslOption))
+		l := $1.([]*ast.TLSOption)
+		l = append(l, $3.(*ast.TLSOption))
+		$$ = l
+	}
+|	RequireList RequireListElement
+	{
+		l := $1.([]*ast.TLSOption)
+		l = append(l, $2.(*ast.TLSOption))
 		$$ = l
 	}
 
 RequireListElement:
 	"ISSUER" stringLit
 	{
-		$$ = &ast.TslOption {
+		$$ = &ast.TLSOption {
 			Type: ast.Issuer,
 			Value: $2,
 		}
 	}
 |	"SUBJECT" stringLit
 	{
-		$$ = &ast.TslOption {
+		$$ = &ast.TLSOption {
 			Type: ast.Subject,
 			Value: $2,
 		}
 	}
 |	"CIPHER" stringLit
 	{
-		$$ = &ast.TslOption {
+		$$ = &ast.TLSOption {
 			Type: ast.Cipher,
 			Value: $2,
 		}
@@ -10192,14 +10196,15 @@ DropBindingStmt:
  * See https://dev.mysql.com/doc/refman/5.7/en/grant.html
  *************************************************************************************/
 GrantStmt:
-	 "GRANT" PrivElemList "ON" ObjectType PrivLevel "TO" UserSpecList WithGrantOptionOpt
+	 "GRANT" PrivElemList "ON" ObjectType PrivLevel "TO" UserSpecList RequireClauseOpt WithGrantOptionOpt
 	 {
 		$$ = &ast.GrantStmt{
 			Privs: $2.([]*ast.PrivElem),
 			ObjectType: $4.(ast.ObjectTypeType),
 			Level: $5.(*ast.GrantLevel),
 			Users: $7.([]*ast.UserSpec),
-			WithGrant: $8.(bool),
+			TLSOptions: $8.([]*ast.TLSOption),
+			WithGrant: $9.(bool),
 		}
 	 }
 
