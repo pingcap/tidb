@@ -711,8 +711,7 @@ var QueryReplacer = strings.NewReplacer("\r", " ", "\n", " ", "\t", " ")
 
 func (a *ExecStmt) logAudit() {
 	sessVars := a.Ctx.GetSessionVars()
-	enable := atomic.LoadUint32(&config.GetGlobalConfig().Log.EnableAuditLog) > 0
-	if enable && sessVars.InRestrictedSQL {
+	if sessVars.InRestrictedSQL {
 		return
 	}
 	err := plugin.ForeachPlugin(plugin.Audit, func(p *plugin.Plugin) error {

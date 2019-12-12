@@ -155,7 +155,6 @@ func (s *testConfigSuite) TestConfig(c *C) {
 	conf.TiKVClient.CommitTimeout = "10s"
 	conf.TiKVClient.RegionCacheTTL = 600
 	conf.Log.EnableSlowLog = logutil.DefaultTiDBEnableSlowLog
-	conf.Log.EnableAuditLog = logutil.DefaultTiDBEnableAuditLog
 	configFile := "config.toml"
 	_, localFile, _, _ := runtime.Caller(0)
 	configFile = filepath.Join(filepath.Dir(localFile), configFile)

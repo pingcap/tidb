@@ -46,10 +46,4 @@ func (s testSuiteP2) TestTurnOffSlowLog(c *C) {
 	c.Assert(config.GetGlobalConfig().Log.EnableSlowLog, Equals, uint32(0))
 	tk.MustExec("set @@tidb_enable_slow_log=1")
 	c.Assert(config.GetGlobalConfig().Log.EnableSlowLog, Equals, uint32(logutil.DefaultTiDBEnableSlowLog))
-
-	c.Assert(config.GetGlobalConfig().Log.EnableAuditLog, Equals, uint32(logutil.DefaultTiDBEnableAuditLog))
-	tk.MustExec("set @@tidb_enable_audit_log=0")
-	c.Assert(config.GetGlobalConfig().Log.EnableAuditLog, Equals, uint32(0))
-	tk.MustExec("set @@tidb_enable_audit_log=1")
-	c.Assert(config.GetGlobalConfig().Log.EnableAuditLog, Equals, uint32(logutil.DefaultTiDBEnableAuditLog))
 }

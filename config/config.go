@@ -190,7 +190,6 @@ type Log struct {
 	ExpensiveThreshold  uint   `toml:"expensive-threshold" json:"expensive-threshold"`
 	QueryLogMaxLen      uint64 `toml:"query-log-max-len" json:"query-log-max-len"`
 	EnableSlowLog       uint32 `toml:"enable-slow-log" json:"enable-slow-log"`
-	EnableAuditLog      uint32 `toml:"enable-audit-log" json:"enable-audit-log"`
 	RecordPlanInSlowLog uint32 `toml:"record-plan-in-slow-log" json:"record-plan-in-slow-log"`
 }
 
@@ -474,7 +473,6 @@ var defaultConf = Config{
 		QueryLogMaxLen:      logutil.DefaultQueryLogMaxLen,
 		RecordPlanInSlowLog: logutil.DefaultRecordPlanInSlowLog,
 		EnableSlowLog:       logutil.DefaultTiDBEnableSlowLog,
-		EnableAuditLog:      logutil.DefaultTiDBEnableAuditLog,
 	},
 	Status: Status{
 		ReportStatus:    true,

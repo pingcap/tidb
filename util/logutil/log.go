@@ -49,8 +49,6 @@ const (
 	DefaultRecordPlanInSlowLog = 1
 	// DefaultTiDBEnableSlowLog enables TiDB to log slow queries.
 	DefaultTiDBEnableSlowLog = 1
-	// DefaultTiDBEnableAuditLog enables TiDB to do audit logs.
-	DefaultTiDBEnableAuditLog = 1
 )
 
 // EmptyFileLogConfig is an empty FileLogConfig.
