@@ -15,7 +15,6 @@ package bindinfo
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"runtime"
 	"strconv"
@@ -703,7 +702,7 @@ func runSQL(ctx context.Context, sctx sessionctx.Context, sql string, resultChan
 			buf := make([]byte, 4096)
 			stackSize := runtime.Stack(buf, false)
 			buf = buf[:stackSize]
-			resultChan <- errors.New(fmt.Sprintf("run sql panicked: %v", string(buf)))
+			resultChan <- fmt.Errorf("run sql panicked: %v", string(buf))
 		}
 	}()
 	recordSets, err := sctx.(sqlexec.SQLExecutor).Execute(ctx, sql)
