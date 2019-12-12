@@ -16,12 +16,10 @@ package metricschema
 import (
 	"strconv"
 	"strings"
-	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/types"
-	pmodel "github.com/prometheus/common/model"
 )
 
 const (
@@ -30,22 +28,23 @@ const (
 	promQRangeDurationKey   = "$RANGE_DURATION"
 )
 
-type metricTableDef struct {
-	promQL   string
-	labels   []string
-	quantile float64
+// MetricTableDef is the metric table define.
+type MetricTableDef struct {
+	PromQL   string
+	Labels   []string
+	Quantile float64
 }
 
 // TODO: read from system table.
-var metricTableMap = map[string]metricTableDef{
+var metricTableMap = map[string]MetricTableDef{
 	"query_duration": {
-		promQL:   `histogram_quantile($QUANTILE, sum(rate(tidb_server_handle_query_duration_seconds_bucket{$LABEL_CONDITION}[$RANGE_DURATION])) by (le))`,
-		labels:   []string{"instance", "sql_type"},
-		quantile: 0.90,
+		PromQL:   `histogram_quantile($QUANTILE, sum(rate(tidb_server_handle_query_duration_seconds_bucket{$LABEL_CONDITION}[$RANGE_DURATION])) by (le))`,
+		Labels:   []string{"instance", "sql_type"},
+		Quantile: 0.90,
 	},
 	"up": {
-		promQL: `up{$LABEL_CONDITION}`,
-		labels: []string{"instance", "job"},
+		PromQL: `up{$LABEL_CONDITION}`,
+		Labels: []string{"instance", "job"},
 	},
 }
 
@@ -55,38 +54,47 @@ func IsMetricTable(lowerTableName string) bool {
 	return ok
 }
 
+// GetMetricTableDef gets the metric table define.
+func GetMetricTableDef(lowerTableName string) (*MetricTableDef, error) {
+	def, ok := metricTableMap[lowerTableName]
+	if !ok {
+		return nil, errors.Errorf("can not find metric table: %v", lowerTableName)
+	}
+	return &def, nil
+}
+
 // GetExplainInfo uses to get the explain info of metric table.
 func GetExplainInfo(sctx sessionctx.Context, lowerTableName string) string {
 	def, ok := metricTableMap[lowerTableName]
 	if !ok {
 		return ""
 	}
-	promQL := def.genPromQL(sctx, nil)
-	return "promQL:" + promQL
+	promQL := def.GenPromQL(sctx, nil)
+	return "PromQL:" + promQL
 }
 
-func (def *metricTableDef) genColumnInfos() []columnInfo {
+func (def *MetricTableDef) genColumnInfos() []columnInfo {
 	cols := []columnInfo{
 		{"time", mysql.TypeDatetime, 19, 0, "CURRENT_TIMESTAMP", nil},
 		{"value", mysql.TypeDouble, 22, 0, nil, nil},
 	}
-	for _, label := range def.labels {
+	for _, label := range def.Labels {
 		cols = append(cols, columnInfo{label, mysql.TypeVarchar, 512, 0, nil, nil})
 	}
-	if def.quantile > 0 {
-		defaultValue := strconv.FormatFloat(def.quantile, 'f', -1, 64)
-		cols = append(cols, columnInfo{"quantile", mysql.TypeDouble, 22, 0, defaultValue, nil})
+	if def.Quantile > 0 {
+		defaultValue := strconv.FormatFloat(def.Quantile, 'f', -1, 64)
+		cols = append(cols, columnInfo{"Quantile", mysql.TypeDouble, 22, 0, defaultValue, nil})
 	}
 	return cols
 }
 
-func (def *metricTableDef) genPromQL(sctx sessionctx.Context, labels []string) string {
-	promQL := def.promQL
+// GenPromQL generates the promQL.
+func (def *MetricTableDef) GenPromQL(sctx sessionctx.Context, labels []string) string {
+	promQL := def.PromQL
 	if strings.Contains(promQL, promQLQuantileKey) {
-		promQL = strings.Replace(promQL, promQLQuantileKey, strconv.FormatFloat(def.quantile, 'f', -1, 64), -1)
+		promQL = strings.Replace(promQL, promQLQuantileKey, strconv.FormatFloat(def.Quantile, 'f', -1, 64), -1)
 	}
 
-	// TODO: add label condition.
 	if strings.Contains(promQL, promQLLabelConditionKey) {
 		promQL = strings.Replace(promQL, promQLLabelConditionKey, "", -1)
 	}
@@ -95,43 +103,6 @@ func (def *metricTableDef) genPromQL(sctx sessionctx.Context, labels []string) s
 		promQL = strings.Replace(promQL, promQRangeDurationKey, strconv.FormatInt(sctx.GetSessionVars().MetricSchemaRangeDuration, 10)+"s", -1)
 	}
 	return promQL
-}
-
-func (def *metricTableDef) genRows(value pmodel.Value, r promQLQueryRange) [][]types.Datum {
-	var rows [][]types.Datum
-	switch value.Type() {
-	case pmodel.ValMatrix:
-		matrix := value.(pmodel.Matrix)
-		for _, m := range matrix {
-			for _, v := range m.Values {
-				record := def.genRecord(m.Metric, v, r)
-				rows = append(rows, record)
-			}
-		}
-	}
-	return rows
-}
-
-func (def *metricTableDef) genRecord(metric pmodel.Metric, pair pmodel.SamplePair, r promQLQueryRange) []types.Datum {
-	record := make([]types.Datum, 0, 2+len(def.labels)+1)
-	// Record order should keep same with genColumnInfos.
-	record = append(record, types.NewTimeDatum(types.Time{
-		Time: types.FromGoTime(time.Unix(int64(pair.Timestamp/1000), int64(pair.Timestamp%1000)*1e6)),
-		Type: mysql.TypeDatetime,
-		Fsp:  types.MaxFsp,
-	}))
-	record = append(record, types.NewFloat64Datum(float64(pair.Value)))
-	for _, label := range def.labels {
-		v := ""
-		if metric != nil {
-			v = string(metric[pmodel.LabelName(label)])
-		}
-		record = append(record, types.NewStringDatum(v))
-	}
-	if def.quantile > 0 {
-		record = append(record, types.NewFloat64Datum(def.quantile))
-	}
-	return record
 }
 
 type columnInfo struct {

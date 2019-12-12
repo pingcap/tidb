@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/execdetails"
@@ -1242,23 +1243,35 @@ func (b *executorBuilder) getStartTS() (uint64, error) {
 
 func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executor {
 	var e Executor
-	switch v.Table.Name.L {
-	case strings.ToLower(infoschema.TableClusterConfig):
-		e = &ClusterReaderExec{
-			baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
-			retriever: &clusterConfigRetriever{
-				extractor: v.Extractor.(*plannercore.ClusterConfigTableExtractor),
-			},
+	if util.IsMemOrSysDB(v.DBName.L) {
+		switch v.DBName.L {
+		case util.MetricSchemaLowerName:
+			e = &MetricReaderExec{
+				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
+				table:        v.Table,
+				outputCols:   v.Columns,
+			}
 		}
-	default:
-		tb, _ := b.is.TableByID(v.Table.ID)
-		e = &TableScanExec{
-			baseExecutor:   newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
-			t:              tb,
-			columns:        v.Columns,
-			seekHandle:     math.MinInt64,
-			isVirtualTable: !tb.Type().IsNormalTable(),
+		switch v.Table.Name.L {
+		case strings.ToLower(infoschema.TableClusterConfig):
+			e = &ClusterReaderExec{
+				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
+				retriever: &clusterConfigRetriever{
+					extractor: v.Extractor.(*plannercore.ClusterConfigTableExtractor),
+				},
+			}
 		}
+	}
+	if e != nil {
+		return e
+	}
+	tb, _ := b.is.TableByID(v.Table.ID)
+	e = &TableScanExec{
+		baseExecutor:   newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
+		t:              tb,
+		columns:        v.Columns,
+		seekHandle:     math.MinInt64,
+		isVirtualTable: !tb.Type().IsNormalTable(),
 	}
 	return e
 }

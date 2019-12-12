@@ -14,17 +14,12 @@
 package metricschema
 
 import (
-	"time"
-
-	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/types"
-	"github.com/prometheus/client_golang/api/prometheus/v1"
 )
 
 // metricSchemaTable stands for the fake table all its data is in the memory.
@@ -35,11 +30,11 @@ type metricSchemaTable struct {
 }
 
 func tableFromMeta(alloc autoid.Allocator, meta *model.TableInfo) (table.Table, error) {
-	return createmetricSchemaTable(meta), nil
+	return createMetricSchemaTable(meta), nil
 }
 
-// createmetricSchemaTable creates all metricSchemaTables
-func createmetricSchemaTable(meta *model.TableInfo) *metricSchemaTable {
+// createMetricSchemaTable creates all metricSchemaTables
+func createMetricSchemaTable(meta *model.TableInfo) *metricSchemaTable {
 	columns := make([]*table.Column, 0, len(meta.Columns))
 	for _, colInfo := range meta.Columns {
 		col := table.ToColumn(colInfo)
@@ -72,62 +67,7 @@ func (vt *metricSchemaTable) Meta() *model.TableInfo {
 	return vt.meta
 }
 
-type promQLQueryRange = v1.Range
-
-func (vt *metricSchemaTable) getRows(ctx sessionctx.Context, cols []*table.Column) (fullRows [][]types.Datum, err error) {
-	tblDef, ok := metricTableMap[vt.meta.Name.L]
-	if !ok {
-		return nil, errors.Errorf("can not find metric table: %v", vt.meta.Name.L)
-	}
-
-	metricAddr, err := getMetricAddr(ctx)
-	if err != nil {
-		return nil, err
-	}
-	// TODO: Get query range from plan instead of use default range.
-	queryRange := getDefaultQueryRange(ctx)
-	queryValue, err := queryMetric(ctx, metricAddr, tblDef, queryRange)
-	if err != nil {
-		return nil, err
-	}
-
-	fullRows = tblDef.genRows(queryValue, queryRange)
-	if len(cols) == len(vt.cols) {
-		return
-	}
-	rows := make([][]types.Datum, len(fullRows))
-	for i, fullRow := range fullRows {
-		row := make([]types.Datum, len(cols))
-		for j, col := range cols {
-			row[j] = fullRow[col.Offset]
-		}
-		rows[i] = row
-	}
-	return rows, nil
-}
-
-func getDefaultQueryRange(ctx sessionctx.Context) promQLQueryRange {
-	return promQLQueryRange{Start: time.Now(), End: time.Now(), Step: time.Second * time.Duration(ctx.GetSessionVars().MetricSchemaStep)}
-}
-
 // IterRecords implements table.Table IterRecords interface.
-func (vt *metricSchemaTable) IterRecords(ctx sessionctx.Context, startKey kv.Key, cols []*table.Column,
-	fn table.RecordIterFunc) error {
-	if len(startKey) != 0 {
-		return table.ErrUnsupportedOp
-	}
-	rows, err := vt.getRows(ctx, cols)
-	if err != nil {
-		return err
-	}
-	for i, row := range rows {
-		more, err := fn(int64(i), row, cols)
-		if err != nil {
-			return err
-		}
-		if !more {
-			break
-		}
-	}
+func (vt *metricSchemaTable) IterRecords(_ sessionctx.Context, _ kv.Key, _ []*table.Column, _ table.RecordIterFunc) error {
 	return nil
 }
