@@ -200,8 +200,6 @@ func (impl *IndexLookUpReaderImpl) CalcCost(outCount float64, children ...memo.I
 	}
 	reader = impl.plan.(*plannercore.PhysicalIndexLookUpReader)
 	reader.IndexPlan, reader.TablePlan = children[0].GetPlan(), children[1].GetPlan()
-	reader.TablePlans = plannercore.FlattenPushDownPlan(reader.TablePlan)
-	reader.IndexPlans = plannercore.FlattenPushDownPlan(reader.IndexPlan)
 	// Add cost of building table reader executors. Handles are extracted in batch style,
 	// each handle is a range, the CPU cost of building copTasks should be:
 	// (indexRows / batchSize) * batchSize * CPUFactor
@@ -248,6 +246,9 @@ func (impl *IndexLookUpReaderImpl) ScaleCostLimit(costLimit float64) float64 {
 
 // AttachChildren implements Implementation AttachChildren interface.
 func (impl *IndexLookUpReaderImpl) AttachChildren(children ...memo.Implementation) memo.Implementation {
+	reader := impl.plan.(*plannercore.PhysicalIndexLookUpReader)
+	reader.TablePlans = plannercore.FlattenPushDownPlan(reader.TablePlan)
+	reader.IndexPlans = plannercore.FlattenPushDownPlan(reader.IndexPlan)
 	return impl
 }
 

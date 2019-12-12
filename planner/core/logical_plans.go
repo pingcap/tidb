@@ -558,6 +558,7 @@ func (ds *DataSource) buildIndexLookupGather(path *util.AccessPath, idxCols []*e
 	for i := len(idxCols) - 1; i >= 0; i-- {
 		if idxCols[i] == nil {
 			idxCols = append(idxCols[:i], idxCols[i+1:]...)
+			idxColLens = append(idxColLens[:i], idxColLens[i+1:]...)
 		}
 	}
 	dg := TiKVDoubleGather{
