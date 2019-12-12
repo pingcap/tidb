@@ -482,6 +482,39 @@ explain select distinct t1.a, t1.b from t1 left outer join t2 on t1.a = t2.a;
 id	count	task	operator info
 IndexReader_11	10000.00	root	index:IndexScan_10
 └─IndexScan_10	10000.00	cop[tikv]	table:t1, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
+CREATE TABLE `test01` (
+`id` bigint(20) NOT NULL AUTO_INCREMENT,
+`stat_date` int(11) NOT NULL DEFAULT '0',
+`show_date` varchar(20) NOT NULL DEFAULT '',
+`region_id` bigint(20) unsigned NOT NULL DEFAULT '0',
+`period` tinyint(3) unsigned NOT NULL DEFAULT '0',
+`registration_num` bigint(20) unsigned NOT NULL DEFAULT '0',
+PRIMARY KEY (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+CREATE TABLE `test02` (
+`id` bigint(20) NOT NULL AUTO_INCREMENT,
+`region_name` varchar(128) DEFAULT NULL,
+PRIMARY KEY (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+EXPLAIN SELECT COUNT(1) FROM (SELECT COALESCE(b.region_name, '不详') region_name, SUM(a.registration_num) registration_num FROM (SELECT stat_date, show_date, region_id, 0 registration_num FROM test01 WHERE period = 1 AND stat_date >= 20191202 AND stat_date <= 20191202 UNION ALL SELECT stat_date, show_date, region_id, registration_num registration_num FROM test01 WHERE period = 1 AND stat_date >= 20191202 AND stat_date <= 20191202) a LEFT JOIN test02 b ON a.region_id = b.id WHERE registration_num > 0 AND a.stat_date >= '20191202' AND a.stat_date <= '20191202' GROUP BY a.stat_date , a.show_date , COALESCE(b.region_name, '不详') ) JLS;
+id	count	task	operator info
+StreamAgg_22	1.00	root	funcs:count(1)->Column#22
+└─HashAgg_25	1.00	root	group by:Column#31, Column#32, Column#33, funcs:firstrow(1)->Column#23
+  └─Projection_50	0.02	root	Column#14, Column#15, coalesce(test.test02.region_name, 不详)->Column#33
+    └─IndexMergeJoin_32	0.02	root	left outer join, inner:TableReader_30, outer key:Column#16, inner key:test.test02.id
+      ├─Union_37	0.02	root	
+      │ ├─Projection_38	0.01	root	test.test01.stat_date, test.test01.show_date, test.test01.region_id, cast(0)->Column#17
+      │ │ └─Selection_39	0.01	root	gt(cast(0), 0)
+      │ │   └─TableReader_42	0.01	root	data:Selection_41
+      │ │     └─Selection_41	0.01	cop[tikv]	eq(test.test01.period, 1), ge(test.test01.stat_date, 20191202), ge(test.test01.stat_date, 20191202), le(test.test01.stat_date, 20191202), le(test.test01.stat_date, 20191202)
+      │ │       └─TableScan_40	10000.00	cop[tikv]	table:test01, range:[-inf,+inf], keep order:false, stats:pseudo
+      │ └─Projection_43	0.01	root	test.test01.stat_date, test.test01.show_date, test.test01.region_id, cast(test.test01.registration_num)->Column#17
+      │   └─Selection_44	0.01	root	gt(cast(test.test01.registration_num), 0)
+      │     └─TableReader_47	0.01	root	data:Selection_46
+      │       └─Selection_46	0.01	cop[tikv]	eq(test.test01.period, 1), ge(test.test01.stat_date, 20191202), ge(test.test01.stat_date, 20191202), le(test.test01.stat_date, 20191202), le(test.test01.stat_date, 20191202)
+      │         └─TableScan_45	10000.00	cop[tikv]	table:test01, range:[-inf,+inf], keep order:false, stats:pseudo
+      └─TableReader_30	1.00	root	data:TableScan_29
+        └─TableScan_29	1.00	cop[tikv]	table:b, range: decided by [Column#16], keep order:true, stats:pseudo
 drop table if exists t;
 create table t(a int, nb int not null, nc int not null);
 explain select ifnull(a, 0) from t;

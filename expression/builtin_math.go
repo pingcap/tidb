@@ -995,7 +995,7 @@ func (c *randFunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 		sig.setPbCode(tipb.ScalarFuncSig_Rand)
 	} else {
 		sig = &builtinRandWithSeedSig{bt}
-		sig.setPbCode(tipb.ScalarFuncSig_RandWithSeed)
+		sig.setPbCode(tipb.ScalarFuncSig_RandWithSeedFirstGen)
 	}
 	return sig, nil
 }
