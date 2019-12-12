@@ -600,9 +600,9 @@ func (r *PushSelDownJoin) OnTransform(old *memo.ExprIter) (newExprs []*memo.Grou
 		copy(remainCond, sel.Conditions)
 		nullSensitive := join.JoinType == plannercore.AntiLeftOuterSemiJoin || join.JoinType == plannercore.LeftOuterSemiJoin
 		if join.JoinType == plannercore.RightOuterJoin {
-			joinConds, remainCond = expression.PropConstOverOuterJoin(join.SCtx(), joinConds, remainCond, rightGroup.Prop.Schema, leftGroup.Prop.Schema, nullSensitive)
+			joinConds, remainCond = expression.PropConstOverOuterJoin(join.SCtx(), joinConds, sel.Conditions, rightGroup.Prop.Schema, leftGroup.Prop.Schema, nullSensitive)
 		} else {
-			joinConds, remainCond = expression.PropConstOverOuterJoin(join.SCtx(), joinConds, remainCond, leftGroup.Prop.Schema, rightGroup.Prop.Schema, nullSensitive)
+			joinConds, remainCond = expression.PropConstOverOuterJoin(join.SCtx(), joinConds, sel.Conditions, leftGroup.Prop.Schema, rightGroup.Prop.Schema, nullSensitive)
 		}
 		join.AttachOnConds(joinConds)
 		// Return table dual when filter is constant false or null.
