@@ -1964,7 +1964,7 @@ func (s *session) PrepareTSFuture(ctx context.Context) {
 		txnFuture := s.getTxnFuture(ctx)
 		s.txn.changeInvalidToPending(txnFuture)
 		s.GetSessionVars().TxnCtx.SetStmtFuture(txnFuture.future, 0)
-	} else if s.txn.IsPessimistic() {
+	} else if s.GetSessionVars().TxnCtx.IsPessimistic {
 		s.GetSessionVars().TxnCtx.SetStmtFuture(s.getTxnFuture(ctx).future, 0)
 	}
 }
