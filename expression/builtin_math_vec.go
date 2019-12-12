@@ -19,10 +19,10 @@ import (
 	"math"
 	"math/rand"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/cznic/mathutil"
-	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -1049,11 +1049,101 @@ func (b *builtinSignSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) er
 }
 
 func (b *builtinConvSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinConvSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf1, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf1)
+	buf2, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf2)
+	buf3, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf3)
+	if err := b.args[0].VecEvalString(b.ctx, input, buf1); err != nil {
+		return err
+	}
+	if err := b.args[1].VecEvalInt(b.ctx, input, buf2); err != nil {
+		return err
+	}
+	if err := b.args[2].VecEvalInt(b.ctx, input, buf3); err != nil {
+		return err
+	}
+	result.ReserveString(n)
+	fromBase := buf2.Int64s()
+	toBase := buf3.Int64s()
+	var (
+		signed     bool
+		negative   bool
+		ignoreSign bool
+	)
+	for i := 0; i < n; i++ {
+		if buf2.IsNull(i) || buf2.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
+		if fromBase[i] < 0 {
+			fromBase[i] = -fromBase[i]
+			signed = true
+		}
+		if toBase[i] < 0 {
+			toBase[i] = -toBase[i]
+			ignoreSign = true
+		}
+		if fromBase[i] > 36 || fromBase[i] < 2 || toBase[i] > 36 || toBase[i] < 2 {
+			result.AppendNull()
+			continue
+		}
+		n := getValidPrefix(strings.TrimSpace(buf1.GetString(i)), fromBase[i])
+		if len(n) == 0 {
+			result.AppendString("0")
+			continue
+		}
+		if n[0] == '-' {
+			negative = true
+			n = n[1:]
+		}
+		val, err := strconv.ParseUint(n, int(fromBase[i]), 64)
+		if err != nil {
+			result.AppendNull()
+			return types.ErrOverflow.GenWithStackByArgs("BIGINT UNSINGED", n)
+		}
+		if signed {
+			if negative && val > -math.MinInt64 {
+				val = -math.MinInt64
+			}
+			if !negative && val > math.MaxInt64 {
+				val = math.MaxInt64
+			}
+		}
+		if negative {
+			val = -val
+		}
+		if int64(val) < 0 {
+			negative = true
+		} else {
+			negative = false
+		}
+		if ignoreSign && negative {
+			val = 0 - val
+		}
+		s := strconv.FormatUint(val, int(toBase[i]))
+		if negative && ignoreSign {
+			s = "-" + s
+		}
+		res := strings.ToUpper(s)
+		result.AppendString(res)
+	}
+	return nil
 }
 
 func (b *builtinAbsUIntSig) vectorized() bool {
