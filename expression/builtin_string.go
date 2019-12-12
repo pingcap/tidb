@@ -2704,7 +2704,7 @@ func (b *builtinOrdSig) evalInt(row chunk.Row) (int64, bool, error) {
 
 	ord, err := chooseOrdFunc(b.args[0].GetType().Charset)
 	if err != nil {
-		return 0, isNull, nil
+		return 0, false, err
 	}
 	return ord(str), false, nil
 }
