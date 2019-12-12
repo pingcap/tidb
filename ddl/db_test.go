@@ -2306,7 +2306,18 @@ func (s *testDBSuite2) TestTableForeignKey(c *C) {
 	// test oreign key not match error
 	failSQL = "alter table t1 add foreign key (a) REFERENCES t3(a, b);"
 	s.tk.MustGetErrCode(failSQL, mysql.ErrWrongFkDef)
-	s.tk.MustExec("drop table if exists t1,t2,t3;")
+	// Test drop column with foreign key.
+	s.tk.MustExec("create table t4 (c int,d int,foreign key (d) references t1 (b));")
+	failSQL = "alter table t4 drop column d"
+	s.tk.MustGetErrCode(failSQL, mysql.ErrFkColumnCannotDrop)
+	// Test change column with foreign key.
+	failSQL = "alter table t4 change column d e bigint;"
+	s.tk.MustGetErrCode(failSQL, mysql.ErrReferencedForeignKey)
+	// Test modify column with foreign key.
+	failSQL = "alter table t4 modify column d bigint;"
+	s.tk.MustGetErrCode(failSQL, mysql.ErrReferencedForeignKey)
+	s.tk.MustQuery("select count(*) from information_schema.KEY_COLUMN_USAGE;")
+	s.tk.MustExec("drop table if exists t1,t2,t3,t4;")
 }
 
 func (s *testDBSuite3) TestFKOnGeneratedColumns(c *C) {

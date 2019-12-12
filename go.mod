@@ -78,3 +78,5 @@ require (
 go 1.13
 
 replace github.com/pingcap/check => github.com/tiancaiamao/check v0.0.0-20191119042138-8e73d07b629d
+
+replace github.com/pingcap/parser => github.com/crazycs520/parser v0.0.0-20191212113323-e9031788820f
