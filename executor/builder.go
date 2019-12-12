@@ -89,6 +89,14 @@ type MockPhysicalPlan interface {
 }
 
 func (b *executorBuilder) build(p plannercore.Plan) Executor {
+	sessVars := b.ctx.GetSessionVars()
+	if sessVars.IsReadConsistencyTxn() && sessVars.TxnCtx.IsPessimistic {
+		b.err = UpdateForUpdateTS(b.ctx, 0, true)
+		if b.err != nil {
+			return nil
+		}
+		b.startTS = b.ctx.GetSessionVars().TxnCtx.GetForUpdateTS()
+	}
 	switch v := p.(type) {
 	case nil:
 		return nil
@@ -1450,7 +1458,7 @@ func (b *executorBuilder) updateForUpdateTSIfNeeded(selectPlan plannercore.Physi
 	if _, ok := selectPlan.(*plannercore.PointGetPlan); ok {
 		return nil
 	}
-	return UpdateForUpdateTS(b.ctx, 0)
+	return UpdateForUpdateTS(b.ctx, 0, true)
 }
 
 func (b *executorBuilder) buildAnalyzeIndexPushdown(task plannercore.AnalyzeIndexTask, opts map[ast.AnalyzeOptionType]uint64, autoAnalyze string) *analyzeTask {

@@ -43,12 +43,12 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	fp := plannercore.TryFastPlan(sctx, node)
 	if fp != nil {
 		if !isPointGetWithoutDoubleRead(sctx, fp) {
-			sctx.PrepareTxnFuture(ctx)
+			sctx.PrepareTSFuture(ctx)
 		}
 		return fp, fp.OutputNames(), nil
 	}
 
-	sctx.PrepareTxnFuture(ctx)
+	sctx.PrepareTSFuture(ctx)
 
 	bestPlan, names, _, err := optimize(ctx, sctx, node, is)
 	if err != nil {

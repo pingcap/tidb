@@ -548,7 +548,19 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e Executor) error {
 }
 
 // UpdateForUpdateTS updates the ForUpdateTS, if newForUpdateTS is 0, it obtain a new TS from PD.
-func UpdateForUpdateTS(seCtx sessionctx.Context, newForUpdateTS uint64) error {
+func UpdateForUpdateTS(seCtx sessionctx.Context, newForUpdateTS uint64, couldSame bool) error {
+	if newForUpdateTS == 0 && couldSame {
+		future, cachedTS := seCtx.GetSessionVars().TxnCtx.GetStmtFuture()
+		if cachedTS != 0 {
+			newForUpdateTS = cachedTS
+		} else if future != nil {
+			newTS, err := future.Wait()
+			if err == nil {
+				newForUpdateTS = newTS
+				seCtx.GetSessionVars().TxnCtx.SetStmtFuture(nil, newTS)
+			}
+		}
+	}
 	if newForUpdateTS == 0 {
 		version, err := seCtx.GetStore().CurrentVersion()
 		if err != nil {
@@ -598,7 +610,7 @@ func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, err error) (E
 		//         select for update key1 again(this time lock succ(maybe lock released by others))
 		//         the async rollback operation rollbacked the lock just acquired
 		if err != nil {
-			tsErr := UpdateForUpdateTS(a.Ctx, 0)
+			tsErr := UpdateForUpdateTS(a.Ctx, 0, false)
 			if tsErr != nil {
 				logutil.Logger(ctx).Warn("UpdateForUpdateTS failed", zap.Error(tsErr))
 			}
@@ -609,7 +621,7 @@ func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, err error) (E
 		return nil, errors.New("pessimistic lock retry limit reached")
 	}
 	a.retryCount++
-	err = UpdateForUpdateTS(a.Ctx, newForUpdateTS)
+	err = UpdateForUpdateTS(a.Ctx, newForUpdateTS, false)
 	if err != nil {
 		return nil, err
 	}

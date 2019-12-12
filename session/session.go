@@ -1172,7 +1172,7 @@ func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields
 	// NewPrepareExec may need startTS to build the executor, for example prepare statement has subquery in int.
 	// So we have to call PrepareTxnCtx here.
 	s.PrepareTxnCtx(ctx)
-	s.PrepareTxnFuture(ctx)
+	s.PrepareTSFuture(ctx)
 	prepareExec := executor.NewPrepareExec(s, infoschema.GetInfoSchema(s), sql)
 	err = prepareExec.Next(ctx, nil)
 	if err != nil {
@@ -1230,7 +1230,7 @@ func (s *session) CachedPlanExec(ctx context.Context,
 		resultSet, err = stmt.PointGet(ctx, is)
 		s.txn.changeToInvalid()
 	case *plannercore.Update:
-		s.PrepareTxnFuture(ctx)
+		s.PrepareTSFuture(ctx)
 		s.GetSessionVars().StmtCtx.Priority = kv.PriorityHigh
 		resultSet, err = runStmt(ctx, s, stmt)
 	default:
@@ -1958,14 +1958,15 @@ func (s *session) PrepareTxnCtx(ctx context.Context) {
 	}
 }
 
-// PrepareTxnFuture uses to try to get txn future.
-func (s *session) PrepareTxnFuture(ctx context.Context) {
-	if s.txn.validOrPending() {
-		return
+// PrepareTSFuture uses to try to get txn future.
+func (s *session) PrepareTSFuture(ctx context.Context) {
+	if !s.txn.validOrPending() {
+		txnFuture := s.getTxnFuture(ctx)
+		s.txn.changeInvalidToPending(txnFuture)
+		s.GetSessionVars().TxnCtx.SetStmtFuture(txnFuture.future, 0)
+	} else if s.txn.IsPessimistic() {
+		s.GetSessionVars().TxnCtx.SetStmtFuture(s.getTxnFuture(ctx).future, 0)
 	}
-
-	txnFuture := s.getTxnFuture(ctx)
-	s.txn.changeInvalidToPending(txnFuture)
 }
 
 // RefreshTxnCtx implements context.RefreshTxnCtx interface.

@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/execdetails"
@@ -93,9 +94,16 @@ func (r *RetryInfo) GetCurrAutoIncrementID() (int64, error) {
 	return id, nil
 }
 
+// stmtFuture is used to async get timestamp for statement.
+type stmtFuture struct {
+	future   oracle.Future
+	cachedTS uint64
+}
+
 // TransactionContext is used to store variables that has transaction scope.
 type TransactionContext struct {
 	forUpdateTS   uint64
+	stmtFuture    *stmtFuture
 	DirtyDB       interface{}
 	Binlog        interface{}
 	InfoSchema    interface{}
@@ -157,6 +165,16 @@ func (tc *TransactionContext) SetForUpdateTS(forUpdateTS uint64) {
 	if forUpdateTS > tc.forUpdateTS {
 		tc.forUpdateTS = forUpdateTS
 	}
+}
+
+// SetStmtFuture sets the stmtFuture .
+func (tc *TransactionContext) SetStmtFuture(future oracle.Future, cachedTS uint64) {
+	tc.stmtFuture = &stmtFuture{future: future, cachedTS: cachedTS}
+}
+
+// GetStmtFuture gets the stmtFuture.
+func (tc *TransactionContext) GetStmtFuture() (oracle.Future, uint64) {
+	return tc.stmtFuture.future, tc.stmtFuture.cachedTS
 }
 
 // WriteStmtBufs can be used by insert/replace/delete/update statement.
@@ -690,6 +708,17 @@ func (s *SessionVars) InTxn() bool {
 // IsAutocommit returns if the session is set to autocommit.
 func (s *SessionVars) IsAutocommit() bool {
 	return s.GetStatusFlag(mysql.ServerStatusAutocommit)
+}
+
+func (s *SessionVars) IsReadConsistencyTxn() bool {
+	var isoLevel string
+	if s.TxnIsolationLevelOneShot.State == 2 {
+		isoLevel = s.TxnIsolationLevelOneShot.Value
+	}
+	if isoLevel == "" {
+		isoLevel, _ = s.GetSystemVar(TxnIsolation)
+	}
+	return isoLevel == ast.ReadCommitted
 }
 
 // GetNextPreparedStmtID generates and returns the next session scope prepared statement id.
