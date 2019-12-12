@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
+	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
@@ -116,6 +117,8 @@ func updateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datu
 		if ctx.GetSessionVars().ClientCapability&mysql.ClientFoundRows > 0 {
 			sc.AddAffectedRows(1)
 		}
+		unchangedRowKey := tablecodec.EncodeRowKeyWithHandle(t.Meta().ID, h)
+		sctx.GetSessionVars().TxnCtx.AddUnchangedRowKey(unchangedRowKey)
 		return false, false, 0, nil
 	}
 
