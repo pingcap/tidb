@@ -408,7 +408,7 @@
         "SQL": "select t1.a, t1.b from t1 left join t2 on t1.a = t2.a where t1.a > 2 and t2.b > 200",
         "Plan": [
           "Projection_16 3333.33 root test.t1.a, test.t1.b",
-          "└─Selection_17 3333.33 root gt(test.t1.a, 2), gt(test.t2.b, 200)",
+          "└─Selection_17 3333.33 root gt(test.t2.b, 200)",
           "  └─HashLeftJoin_19 4166.67 root left outer join, inner:TableReader_22, equal:[eq(test.t1.a, test.t2.a)]",
           "    ├─TableReader_20 3333.33 root data:TableScan_21",
           "    │ └─TableScan_21 3333.33 cop[tikv] table:t1, range:(2,+inf], keep order:false, stats:pseudo",

@@ -625,7 +625,7 @@ func (r *PushSelDownJoin) OnTransform(old *memo.ExprIter) (newExprs []*memo.Grou
 			remainCond = append(expression.ScalarFuncs2Exprs(equalCond), otherCond...)
 			remainCond = append(remainCond, leftPushCond...)
 		} else {
-			remainCond := expression.ExtractFiltersFromDNFs(join.SCtx(), remainCond)
+			remainCond = expression.ExtractFiltersFromDNFs(join.SCtx(), remainCond)
 			// Only derive left where condition, because right where condition cannot be pushed down
 			equalCond, leftPushCond, rightPushCond, otherCond = join.ExtractOnCondition(remainCond, leftGroup.Prop.Schema, rightGroup.Prop.Schema, true, false)
 			leftCond = leftPushCond
