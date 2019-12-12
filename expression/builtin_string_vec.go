@@ -2197,9 +2197,8 @@ func (b *builtinCharSig) vecEvalString(input *chunk.Chunk, result *chunk.Column)
 		for j := 0; j < l-1; j++ {
 			if buf[j].IsNull(i) {
 				continue
-			} else {
-				bigints = append(bigints, buf[j].GetInt64(i))
 			}
+			bigints = append(bigints, buf[j].GetInt64(i))
 		}
 		tempres := string(b.convertToBytes(bigints))
 		charsetlabe := strings.ToLower(bufstr.GetString(i))
