@@ -2255,16 +2255,10 @@ func (b *builtinUnixTimestampIntSig) vecEvalInt(input *chunk.Chunk, result *chun
 
 	if err := b.args[0].VecEvalTime(b.ctx, input, buf); err != nil {
 		var isNull bool
-		flag := terror.ErrorEqual(types.ErrWrongValue.GenWithStackByArgs(types.TimeStr, buf), err)
 		for i := 0; i < n; i++ {
 			i64s[i], isNull, err = b.evalInt(input.GetRow(i))
 			if err != nil {
 				return err
-			}
-			if flag {
-				// Return 0 for invalid date time.
-				i64s[i] = 0
-				continue
 			}
 			if isNull {
 				result.SetNull(i, true)
