@@ -407,7 +407,6 @@ func (*testTxStructureSuite) TestError(c *C) {
 	}
 	for _, err := range kvErrs {
 		code := err.ToSQLError().Code
-		c.Assert(code != mysql.ErrUnknown, IsTrue, Commentf("code: %v", code))
-		c.Assert(code == uint16(err.Code()), IsTrue, Commentf("err: %v", err))
+		c.Assert(code != mysql.ErrUnknown && code == uint16(err.Code()), IsTrue, Commentf("err: %v", err))
 	}
 }
