@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"fmt"
 	"time"
+	"unsafe"
 
 	"github.com/dgraph-io/ristretto"
 	"github.com/pingcap/errors"
@@ -53,7 +54,7 @@ func newCoprCache(config *config.CoprocessorCache) (*coprCache, error) {
 	estimatedEntities := capacityInBytes / int64(config.AdmissionMaxResultMB) * 2
 	cache, err := ristretto.NewCache(&ristretto.Config{
 		NumCounters: estimatedEntities * 10,
-		MaxCost:     int64(config.CapacityMB * 1024.0 * 1024.0),
+		MaxCost:     capacityInBytes,
 		BufferItems: 64,
 	})
 	if err != nil {
@@ -115,5 +116,5 @@ func (c *coprCache) Set(key []byte, value *coprCacheValue) bool {
 	if c == nil {
 		return false
 	}
-	return c.cache.Set(key, value, int64(len(value.Data)+24))
+	return c.cache.Set(key, value, int64(len(value.Data))+int64(unsafe.Sizeof(coprCacheValue{})))
 }

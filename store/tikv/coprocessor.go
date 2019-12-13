@@ -997,14 +997,18 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *RPCCon
 	}
 	if resp.pbResp.IsCacheHit && cacheValue != nil {
 		// Cache hit and is valid: use cached data as response data and we don't update the cache.
-		resp.pbResp.Data = cacheValue.Data
+		data := make([]byte, len(cacheValue.Data))
+		copy(data, cacheValue.Data)
+		resp.pbResp.Data = data
 	} else {
 		// Cache not hit or cache hit but not valid: update the cache if the response can be cached.
 		if cacheKey != nil && resp.pbResp.CacheLastVersion > 0 {
 			if worker.store.coprCache.CheckAdmission(resp.pbResp.Data.Size(), resp.detail.ProcessTime) {
+				data := make([]byte, len(resp.pbResp.Data))
+				copy(data, resp.pbResp.Data)
+
 				newCacheValue := coprCacheValue{
-					// TODO: Verify that using the data buffer directly is still safe.
-					Data:              resp.pbResp.Data,
+					Data:              data,
 					TimeStamp:         worker.req.StartTs,
 					RegionID:          task.region.id,
 					RegionDataVersion: resp.pbResp.CacheLastVersion,
