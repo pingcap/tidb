@@ -936,6 +936,7 @@ var MySQLErrName = map[uint16]string{
 	ErrSpatialFunctionalIndex:                                "Spatial functional index is not supported",
 	ErrWrongKeyColumnFunctionalIndex:                         "The used storage engine cannot index the expression '%s'",
 	ErrFunctionalIndexOnField:                                "Functional index on a column is not supported. Consider using a regular index instead",
+	ErrFKIncompatibleColumns:                                 "Referencing column '%s' in foreign key constraint '%s' are incompatible",
 	ErrFunctionalIndexRowValueIsNotAllowed:                   "Expression of functional index '%s' cannot refer to a row value",
 	ErrDependentByFunctionalIndex:                            "Column '%s' has a functional index dependency and cannot be dropped or renamed",
 	ErrInvalidJsonValueForFuncIndex:                          "Invalid JSON value for CAST for functional index '%s'",
