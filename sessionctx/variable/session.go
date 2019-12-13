@@ -105,12 +105,32 @@ type TransactionContext struct {
 	Shard         *int64
 	TableDeltaMap map[int64]TableDelta
 
+	// unchangedRowKeys is used to store the unchanged rows that needs to lock for pessimistic transaction.
+	unchangedRowKeys map[string]struct{}
+
 	// CreateTime For metrics.
 	CreateTime     time.Time
 	StatementCount int
 	ForUpdate      bool
 	CouldRetry     bool
 	IsPessimistic  bool
+}
+
+// AddUnchangedRowKey adds an unchanged row key in update statement for pessimistic lock.
+func (tc *TransactionContext) AddUnchangedRowKey(key []byte) {
+	if tc.unchangedRowKeys == nil {
+		tc.unchangedRowKeys = map[string]struct{}{}
+	}
+	tc.unchangedRowKeys[string(key)] = struct{}{}
+}
+
+// CollectUnchangedRowKeys collects unchanged row keys for pessimistic lock.
+func (tc *TransactionContext) CollectUnchangedRowKeys(buf []kv.Key) []kv.Key {
+	for key := range tc.unchangedRowKeys {
+		buf = append(buf, kv.Key(key))
+	}
+	tc.unchangedRowKeys = nil
+	return buf
 }
 
 // UpdateDeltaForTable updates the delta info for some table.
@@ -1206,6 +1226,8 @@ const (
 	SlowLogPrevStmt = "Prev_stmt"
 	// SlowLogPlan is used to record the query plan.
 	SlowLogPlan = "Plan"
+	// SlowLogPlanDigest is used to record the query plan digest.
+	SlowLogPlanDigest = "Plan_digest"
 	// SlowLogPlanPrefix is the prefix of the plan value.
 	SlowLogPlanPrefix = ast.TiDBDecodePlan + "('"
 	// SlowLogPlanSuffix is the suffix of the plan value.
@@ -1233,6 +1255,7 @@ type SlowQueryLogItems struct {
 	HasMoreResults bool
 	PrevStmt       string
 	Plan           string
+	PlanDigest     string
 }
 
 // SlowLogFormat uses for formatting slow log.
@@ -1362,6 +1385,9 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 	writeSlowLogItem(&buf, SlowLogSucc, strconv.FormatBool(logItems.Succ))
 	if len(logItems.Plan) != 0 {
 		writeSlowLogItem(&buf, SlowLogPlan, logItems.Plan)
+	}
+	if len(logItems.PlanDigest) != 0 {
+		writeSlowLogItem(&buf, SlowLogPlanDigest, logItems.PlanDigest)
 	}
 
 	if logItems.PrevStmt != "" {
