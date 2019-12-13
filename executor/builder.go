@@ -89,13 +89,20 @@ type MockPhysicalPlan interface {
 }
 
 func (b *executorBuilder) build(p plannercore.Plan) Executor {
-	sessVars := b.ctx.GetSessionVars()
-	if sessVars.IsReadConsistencyTxn() && sessVars.TxnCtx.IsPessimistic {
-		b.err = UpdateForUpdateTS(b.ctx, 0, true)
-		if b.err != nil {
-			return nil
+	switch p.(type) {
+	case *plannercore.PhysicalIndexLookUpReader,
+		*plannercore.PhysicalIndexReader,
+		*plannercore.PhysicalTableReader,
+		*plannercore.BatchPointGetPlan,
+		*plannercore.PointGetPlan:
+		sessVars := b.ctx.GetSessionVars()
+		if sessVars.IsReadConsistencyTxn() && sessVars.TxnCtx.IsPessimistic {
+			b.err = UpdateForUpdateTS(b.ctx, 0, true)
+			if b.err != nil {
+				return nil
+			}
+			b.startTS = b.ctx.GetSessionVars().TxnCtx.GetForUpdateTS()
 		}
-		b.startTS = b.ctx.GetSessionVars().TxnCtx.GetForUpdateTS()
 	}
 	switch v := p.(type) {
 	case nil:

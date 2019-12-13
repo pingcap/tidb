@@ -269,7 +269,7 @@ func (e *paramMarkerChecker) Leave(in ast.Node) (ast.Node, bool) {
 //  1. ctx is auto commit tagged.
 //  2. plan is point get by pk.
 func isPointGetWithoutDoubleRead(ctx sessionctx.Context, p plannercore.Plan) bool {
-	if !ctx.GetSessionVars().IsAutocommit() {
+	if !plannercore.IsAutoCommitTxn(ctx) {
 		return false
 	}
 

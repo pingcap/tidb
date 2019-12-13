@@ -53,6 +53,8 @@ import (
 
 var _ = Suite(&testSessionSuite{})
 var _ = Suite(&testSessionSuite2{})
+var _ = Suite(&testSchemaSuite{})
+var _ = SerialSuites(&testSchemaSerialSuite{})
 var _ = SerialSuites(&testSessionSerialSuite{})
 
 type testSessionSuiteBase struct {
@@ -1745,9 +1747,6 @@ func (s *testSessionSuite2) TestInformationSchemaCreateTime(c *C) {
 	r := t1.Compare(t)
 	c.Assert(r, Equals, 1)
 }
-
-var _ = Suite(&testSchemaSuite{})
-var _ = SerialSuites(&testSchemaSerialSuite{})
 
 type testSchemaSuiteBase struct {
 	cluster   *mocktikv.Cluster

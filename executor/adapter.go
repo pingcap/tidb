@@ -548,8 +548,8 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e Executor) error {
 }
 
 // UpdateForUpdateTS updates the ForUpdateTS, if newForUpdateTS is 0, it obtain a new TS from PD.
-func UpdateForUpdateTS(seCtx sessionctx.Context, newForUpdateTS uint64, couldSame bool) error {
-	if newForUpdateTS == 0 && couldSame {
+func UpdateForUpdateTS(seCtx sessionctx.Context, newForUpdateTS uint64, useFuture bool) error {
+	if newForUpdateTS == 0 && useFuture {
 		future, cachedTS := seCtx.GetSessionVars().TxnCtx.GetStmtFuture()
 		if cachedTS != 0 {
 			newForUpdateTS = cachedTS
@@ -573,7 +573,7 @@ func UpdateForUpdateTS(seCtx sessionctx.Context, newForUpdateTS uint64, couldSam
 		return err
 	}
 	seCtx.GetSessionVars().TxnCtx.SetForUpdateTS(newForUpdateTS)
-	txn.SetOption(kv.SnapshotTS, newForUpdateTS)
+	txn.SetOption(kv.SnapshotTS, seCtx.GetSessionVars().TxnCtx.GetForUpdateTS())
 	return nil
 }
 
