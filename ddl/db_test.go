@@ -2312,10 +2312,10 @@ func (s *testDBSuite2) TestTableForeignKey(c *C) {
 	s.tk.MustGetErrCode(failSQL, mysql.ErrFkColumnCannotDrop)
 	// Test change column with foreign key.
 	failSQL = "alter table t4 change column d e bigint;"
-	s.tk.MustGetErrCode(failSQL, mysql.ErrReferencedForeignKey)
+	s.tk.MustGetErrCode(failSQL, mysql.ErrFKIncompatibleColumns)
 	// Test modify column with foreign key.
 	failSQL = "alter table t4 modify column d bigint;"
-	s.tk.MustGetErrCode(failSQL, mysql.ErrReferencedForeignKey)
+	s.tk.MustGetErrCode(failSQL, mysql.ErrFKIncompatibleColumns)
 	s.tk.MustQuery("select count(*) from information_schema.KEY_COLUMN_USAGE;")
 	s.tk.MustExec("drop table if exists t1,t2,t3,t4;")
 }
