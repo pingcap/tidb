@@ -1082,9 +1082,9 @@ func (b *builtinConvSig) vecEvalString(input *chunk.Chunk, result *chunk.Column)
 	fromBase := buf2.Int64s()
 	toBase := buf3.Int64s()
 	var (
-		signed     bool = false
-		negative   bool = false
-		ignoreSign bool = false
+		signed     bool
+		negative   bool
+		ignoreSign bool
 	)
 	for i := 0; i < n; i++ {
 		if buf1.IsNull(i) || buf2.IsNull(i) || buf2.IsNull(i) {
