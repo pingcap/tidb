@@ -1311,9 +1311,7 @@ func (b *builtinWeekOfYearSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colu
 	}
 	defer b.bufAllocator.put(buf)
 	if err = b.args[0].VecEvalTime(b.ctx, input, buf); err != nil {
-		if err = handleInvalidTimeError(b.ctx, err); err != nil {
-			return err
-		}
+		return err
 	}
 	result.ResizeInt64(n, false)
 	result.MergeNulls(buf)
@@ -1995,7 +1993,7 @@ func (b *builtinMakeTimeSig) vectorized() bool {
 func (b *builtinMakeTimeSig) getVecIntParam(arg Expression, input *chunk.Chunk, col *chunk.Column) (err error) {
 	if arg.GetType().EvalType() == types.ETReal {
 		err = arg.VecEvalReal(b.ctx, input, col)
-		if err = handleInvalidTimeError(b.ctx, err); err != nil {
+		if err != nil {
 			return err
 		}
 		f64s := col.Float64s()
@@ -2007,7 +2005,7 @@ func (b *builtinMakeTimeSig) getVecIntParam(arg Expression, input *chunk.Chunk, 
 		return nil
 	}
 	err = arg.VecEvalInt(b.ctx, input, col)
-	return handleInvalidTimeError(b.ctx, err)
+	return err
 }
 
 func (b *builtinMakeTimeSig) vecEvalDuration(input *chunk.Chunk, result *chunk.Column) error {
@@ -2094,9 +2092,7 @@ func (b *builtinDayOfYearSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colum
 	}
 	defer b.bufAllocator.put(buf)
 	if err := b.args[0].VecEvalTime(b.ctx, input, buf); err != nil {
-		if err := handleInvalidTimeError(b.ctx, err); err != nil {
-			return err
-		}
+		return err
 	}
 	result.ResizeInt64(n, false)
 	result.MergeNulls(buf)
