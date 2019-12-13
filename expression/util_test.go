@@ -65,9 +65,10 @@ func (s *testUtilSuite) TestBaseBuiltin(c *check.C) {
 	c.Assert(err, check.NotNil)
 }
 
+// &builtinArithmeticPlusIntUnsignedUnsignedSig{}, &builtinArithmeticPlusIntUnsignedSignedSig{}, &builtinArithmeticPlusIntSignedUnsignedSig{}, &builtinArithmeticPlusIntSignedSignedSig{},
 func (s *testUtilSuite) TestClone(c *check.C) {
 	builtinFuncs := []builtinFunc{
-		&builtinArithmeticPlusRealSig{}, &builtinArithmeticPlusDecimalSig{}, &builtinArithmeticPlusIntSig{}, &builtinArithmeticMinusRealSig{}, &builtinArithmeticMinusDecimalSig{},
+		&builtinArithmeticPlusRealSig{}, &builtinArithmeticPlusDecimalSig{}, &builtinArithmeticPlusIntUnsignedUnsignedSig{}, &builtinArithmeticPlusIntUnsignedSignedSig{}, &builtinArithmeticPlusIntSignedUnsignedSig{}, &builtinArithmeticPlusIntSignedSignedSig{}, &builtinArithmeticMinusRealSig{}, &builtinArithmeticMinusDecimalSig{},
 		&builtinArithmeticMinusIntSig{}, &builtinArithmeticDivideRealSig{}, &builtinArithmeticDivideDecimalSig{}, &builtinArithmeticMultiplyRealSig{}, &builtinArithmeticMultiplyDecimalSig{},
 		&builtinArithmeticMultiplyIntUnsignedSig{}, &builtinArithmeticMultiplyIntSig{}, &builtinArithmeticIntDivideIntSig{}, &builtinArithmeticIntDivideDecimalSig{}, &builtinArithmeticModIntSig{},
 		&builtinArithmeticModRealSig{}, &builtinArithmeticModDecimalSig{}, &builtinCastIntAsIntSig{}, &builtinCastIntAsRealSig{}, &builtinCastIntAsStringSig{},
