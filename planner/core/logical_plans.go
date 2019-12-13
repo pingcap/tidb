@@ -324,6 +324,7 @@ type LogicalSelection struct {
 	Conditions []expression.Expression
 	// HasBeenPushed means whether the selection is applied rule `PushSelDown`,
 	// it's used in cascades planner.
+	// TODO: we need to general method to check the circle transfer rule application.
 	HasBeenPushed bool
 }
 

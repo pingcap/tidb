@@ -651,9 +651,10 @@ func (r *PushSelDownJoin) OnTransform(old *memo.ExprIter) (newExprs []*memo.Grou
 	newJoinExpr := memo.NewGroupExpr(join)
 	newJoinExpr.SetChildren(leftGroup, rightGroup)
 	if len(remainCond) > 0 {
-		sel.Conditions = remainCond
-		sel.HasBeenPushed = true
-		newSelExpr := memo.NewGroupExpr(sel)
+		newSel := plannercore.LogicalSelection{Conditions: remainCond}.Init(sctx, sel.SelectBlockOffset())
+		newSel.Conditions = remainCond
+		newSel.HasBeenPushed = true
+		newSelExpr := memo.NewGroupExpr(newSel)
 		newSelExpr.SetChildren(memo.NewGroupWithSchema(newJoinExpr, old.Children[0].Prop.Schema))
 		return []*memo.GroupExpr{newSelExpr}, true, false, nil
 	}
