@@ -21,7 +21,9 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
+	"unsafe"
 
 	"github.com/google/uuid"
 	"github.com/ngaut/pools"
@@ -41,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/table"
 	tidbutil "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
@@ -270,6 +273,8 @@ type DDL interface {
 	SetBinlogClient(*pumpcli.PumpsClient)
 	// GetHook gets the hook. It's exported for testing.
 	GetHook() Callback
+	// UpdateStatsHandle updates stats info of ddl.
+	UpdateStatsHandle(statsHandle *handle.Handle)
 }
 
 // ddl is used to handle the statements that define the structure or schema of the database.
@@ -412,6 +417,13 @@ func (d *ddl) newDeleteRangeManager(mock bool) delRangeManager {
 
 	delRangeMgr.start()
 	return delRangeMgr
+}
+
+// UpdateStatsHandle updates stats info of ddl workers.
+func (d *ddl) UpdateStatsHandle(statsHandle *handle.Handle) {
+	for _, worker := range d.workers {
+		atomic.StorePointer(&worker.statsHandle, unsafe.Pointer(statsHandle))
+	}
 }
 
 // start campaigns the owner and starts workers.

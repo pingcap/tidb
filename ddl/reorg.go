@@ -29,8 +29,10 @@ import (
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
+	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
+	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -108,7 +110,7 @@ func (rc *reorgCtx) clean() {
 	rc.doneCh = nil
 }
 
-func (w *worker) runReorgJob(t *meta.Meta, reorgInfo *reorgInfo, lease time.Duration, f func() error) error {
+func (w *worker) runReorgJob(t *meta.Meta, reorgInfo *reorgInfo, tblInfo *model.TableInfo, lease time.Duration, f func() error) error {
 	job := reorgInfo.Job
 	if w.reorgCtx.doneCh == nil {
 		// start a reorganization job
@@ -152,6 +154,8 @@ func (w *worker) runReorgJob(t *meta.Meta, reorgInfo *reorgInfo, lease time.Dura
 		rowCount, doneHandle := w.reorgCtx.getRowCountAndHandle()
 		// Update a job's RowCount.
 		job.SetRowCount(rowCount)
+		totalCount := getTableTotalCount(w, tblInfo)
+		metrics.AddIndexProgress.Set(float64(rowCount) / float64(totalCount))
 		// Update a reorgInfo's handle.
 		err := t.UpdateDDLReorgStartHandle(job, doneHandle)
 		logutil.BgLogger().Info("[ddl] run reorg job wait timeout", zap.Duration("waitTime", waitTimeout),
@@ -159,6 +163,37 @@ func (w *worker) runReorgJob(t *meta.Meta, reorgInfo *reorgInfo, lease time.Dura
 		// If timeout, we will return, check the owner and retry to wait job done again.
 		return errWaitReorgTimeout
 	}
+}
+
+func getTableTotalCount(w *worker, tblInfo *model.TableInfo) int64 {
+	if w.statsHandle == nil || tblInfo == nil {
+		return statistics.PseudoRowCount
+	}
+	statsHandle := (*handle.Handle)(atomic.LoadPointer(&w.statsHandle))
+	if pi := tblInfo.GetPartitionInfo(); pi != nil {
+		count := int64(0)
+		for _, def := range pi.Definitions {
+			statsTbl := statsHandle.GetPartitionStats(tblInfo, def.ID)
+			count += getStatsTableCount(statsTbl)
+		}
+		return count
+	}
+	statsTbl := statsHandle.GetTableStats(tblInfo)
+	return getStatsTableCount(statsTbl)
+}
+
+func getStatsTableCount(statsTbl *statistics.Table) int64 {
+	if statsTbl == nil {
+		return statistics.PseudoRowCount
+	}
+	if statsTbl.Count == 0 {
+		return statistics.PseudoRowCount
+	}
+	// Statistics is outdated.
+	if statsTbl.IsOutdated() {
+		return statistics.PseudoRowCount
+	}
+	return statsTbl.Count
 }
 
 func (w *worker) isReorgRunnable(d *ddlCtx) error {

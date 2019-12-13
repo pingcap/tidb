@@ -35,10 +35,11 @@ import (
 )
 
 const (
+	// PseudoRowCount export for other pkg to use.
 	// When we haven't analyzed a table, we use pseudo statistics to estimate costs.
 	// It has row count 10000, equal condition selects 1/1000 of total rows, less condition selects 1/3 of total rows,
 	// between condition selects 1/40 of total rows.
-	pseudoRowCount    = 10000
+	PseudoRowCount    = 10000
 	pseudoEqualRate   = 1000
 	pseudoLessRate    = 3
 	pseudoBetweenRate = 40
@@ -496,7 +497,7 @@ const fakePhysicalID int64 = -1
 // PseudoTable creates a pseudo table statistics.
 func PseudoTable(tblInfo *model.TableInfo) *Table {
 	pseudoHistColl := HistColl{
-		Count:          pseudoRowCount,
+		Count:          PseudoRowCount,
 		PhysicalID:     tblInfo.ID,
 		HavePhysicalID: true,
 		Columns:        make(map[int64]*Column, len(tblInfo.Columns)),

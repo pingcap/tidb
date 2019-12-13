@@ -19,6 +19,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unsafe"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -69,6 +70,7 @@ type worker struct {
 	quitCh   chan struct{}
 	wg       sync.WaitGroup
 
+	statsHandle     unsafe.Pointer
 	sessPool        *sessionPool // sessPool is used to new sessions to execute SQL in ddl package.
 	reorgCtx        *reorgCtx    // reorgCtx is used for reorganization.
 	delRangeManager delRangeManager
@@ -281,6 +283,7 @@ func (w *worker) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
 	if !job.IsCancelled() {
 		switch job.Type {
 		case model.ActionAddIndex, model.ActionAddPrimaryKey:
+			metrics.AddIndexProgress.Set(0)
 			if job.State != model.JobStateRollbackDone {
 				break
 			}

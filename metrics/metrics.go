@@ -71,6 +71,7 @@ func RegisterMetrics() {
 	prometheus.MustRegister(CriticalErrorCounter)
 	prometheus.MustRegister(DDLCounter)
 	prometheus.MustRegister(AddIndexTotalCounter)
+	prometheus.MustRegister(AddIndexProgress)
 	prometheus.MustRegister(DDLWorkerHistogram)
 	prometheus.MustRegister(DeploySyncerHistogram)
 	prometheus.MustRegister(DistSQLPartialCountHistogram)
