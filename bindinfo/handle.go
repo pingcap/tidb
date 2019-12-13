@@ -16,7 +16,6 @@ package bindinfo
 import (
 	"context"
 	"fmt"
-	"go.uber.org/zap"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -31,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"go.uber.org/zap"
 )
 
 // BindHandle is used to handle all global sql bind operations.
@@ -304,7 +304,7 @@ func (h *BindHandle) GetAllBindRecord() (bindRecords []*BindMeta) {
 }
 
 func (h *BindHandle) newBindMeta(record *BindRecord) (hash string, meta *BindMeta, err error) {
-	hash = parser.DigestHash(record.OriginalSQL)
+	hash = parser.DigestNormalized(record.OriginalSQL)
 	stmtNodes, _, err := h.bindInfo.parser.Parse(record.BindSQL, record.Charset, record.Collation)
 	if err != nil {
 		return "", nil, err
@@ -314,7 +314,7 @@ func (h *BindHandle) newBindMeta(record *BindRecord) (hash string, meta *BindMet
 }
 
 func newBindMetaWithoutAst(record *BindRecord) (hash string, meta *BindMeta) {
-	hash = parser.DigestHash(record.OriginalSQL)
+	hash = parser.DigestNormalized(record.OriginalSQL)
 	meta = &BindMeta{BindRecord: record}
 	return hash, meta
 }
