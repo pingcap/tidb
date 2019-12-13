@@ -15,6 +15,7 @@ package tikv
 
 import (
 	"context"
+	"encoding/hex"
 	"strconv"
 	"sync/atomic"
 	"time"
@@ -162,25 +163,48 @@ func (s *RegionRequestSender) sendReqToRegion(bo *Backoffer, ctx *RPCContext, re
 		}
 		defer s.releaseStoreToken(ctx.Store)
 	}
-	if logutil.HasLogger(bo.ctx) {
+	if logutil.HasLogger(bo.ctx) && req.Cop != nil {
 		logutil.Logger(bo.ctx).Warn("FR-DEBUG: RegionRequestSender send", zap.Uint64("regionid", req.RegionId))
 	}
 	resp, err = s.client.SendRequest(bo.ctx, ctx.Addr, req, timeout)
 	if err != nil {
-		logutil.Logger(bo.ctx).Error("FR-DEBUG: RegionRequestSender sendErr", zap.Error(err), zap.Uint64("regionid", req.RegionId))
+		if req.Cop != nil {
+			logutil.Logger(bo.ctx).Error("FR-DEBUG: RegionRequestSender sendErr", zap.Error(err), zap.Uint64("regionid", req.RegionId))
+		}
 		s.rpcError = err
 		if e := s.onSendFail(bo, ctx, err); e != nil {
-			logutil.Logger(bo.ctx).Error("FR-DEBUG: RegionRequestSender noRetry", zap.Error(err), zap.Uint64("regionid", req.RegionId))
+			if req.Cop != nil {
+				logutil.Logger(bo.ctx).Error("FR-DEBUG: RegionRequestSender noRetry", zap.Error(err), zap.Uint64("regionid", req.RegionId))
+			}
 			return nil, false, errors.Trace(e)
 		}
 		return nil, true, nil
 	}
 	rerr, _ := resp.GetRegionError()
 	if rerr != nil {
-		logutil.Logger(bo.ctx).Warn("FR-DEBUG: RegionRequestSender returnErr", zap.Uint64("regionid", req.RegionId), zap.Stringer("rerr", rerr))
+		if req.Cop != nil {
+			logutil.Logger(bo.ctx).Warn("FR-DEBUG: RegionRequestSender returnErr", zap.Uint64("regionid", req.RegionId), zap.Stringer("rerr", rerr))
+		}
 	} else {
-		if logutil.HasLogger(bo.ctx) {
-			logutil.Logger(bo.ctx).Warn("FR-DEBUG: RegionRequestSender sendSuccess", zap.Uint64("regionid", req.RegionId))
+		if logutil.HasLogger(bo.ctx) && req.Cop != nil {
+			if resp.Cop == nil {
+				logutil.Logger(bo.ctx).Warn(
+					"FR-DEBUG: RegionRequestSender sendSuccess, but return without cop",
+					zap.Uint64("regionid", req.RegionId),
+				)
+			} else {
+				data, err := resp.Cop.Marshal()
+				if err != nil {
+					panic("resp.cop marshal fail")
+				}
+				var dst = make([]byte, hex.EncodedLen(len(data)))
+				hex.Encode(dst, data)
+				logutil.Logger(bo.ctx).Warn(
+					"FR-DEBUG: RegionRequestSender sendSuccess",
+					zap.Uint64("regionid", req.RegionId),
+					zap.ByteString("resp", dst),
+				)
+			}
 		}
 	}
 	return

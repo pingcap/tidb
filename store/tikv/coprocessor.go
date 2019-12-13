@@ -842,8 +842,11 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *RPCCon
 		return buildCopTasks(bo, worker.store.regionCache, task.ranges, worker.req.Desc, worker.req.Streaming)
 	}
 	if lockErr := resp.pbResp.GetLocked(); lockErr != nil {
-		logutil.Logger(worker.ctx).Debug("coprocessor encounters",
-			zap.Stringer("lock", lockErr))
+		logutil.Logger(worker.ctx).Info("FR-DEBUG: coprocessor encounters",
+			zap.Stringer("lock", lockErr),
+			zap.Uint64("regionID", task.region.id),
+			zap.Uint64("txnStartTS", worker.req.StartTs),
+		)
 		msBeforeExpired, err1 := worker.store.lockResolver.ResolveLocks(bo, []*Lock{NewLock(lockErr)})
 		if err1 != nil {
 			return nil, errors.Trace(err1)
