@@ -11,6 +11,10 @@
       "select a, avg(b) from t group by a having a > 1 and max(b) > 10",
       "select t1.a, t1.b, t2.b from t t1, t t2 where t1.a = t2.a and t2.b = t1.b and t1.a > 10 and t2.b > 10 and t1.a > t2.b",
       "select t1.a, t1.b from t t1, t t2 where t1.a = t2.a and t1.a = 10 and t2.a = 5",
+      "select a, f from t where f > 1",
+      "select a, f from (select a, f, g from t where f = 1) t1 where g > 1",
+      "select a, f from t where g > 1 and f > 1",
+      "select t1.a, t1.b from t t1, t t2 where t1.a = t2.a and t1.a = 10 and t2.a = 5",
       "select a, b from ((select a, b from t) union all(select c as a, d as b from t)) as t1 where a > 1"
     ]
   },
