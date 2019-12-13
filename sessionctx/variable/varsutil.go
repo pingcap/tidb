@@ -626,7 +626,17 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 			return "off", nil
 		}
 		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
-	case TiDBEnableStmtSummary, TiDBCapturePlanBaseline:
+	case TiDBCapturePlanBaseline:
+		switch {
+		case strings.EqualFold(value, "ON") || value == "1":
+			return "on", nil
+		case strings.EqualFold(value, "OFF") || value == "0":
+			return "off", nil
+		case value == "":
+			return "", nil
+		}
+		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
+	case TiDBEnableStmtSummary:
 		switch {
 		case strings.EqualFold(value, "ON") || value == "1":
 			return "1", nil
