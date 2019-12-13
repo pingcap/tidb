@@ -351,6 +351,36 @@ func (s *testPessimisticSuite) TestBankTransfer(c *C) {
 	tk.MustQuery("select sum(c) from accounts").Check(testkit.Rows("300"))
 }
 
+func (s *testPessimisticSuite) TestLockUnchangedRowKey(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk2 := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists unchanged")
+	tk.MustExec("create table unchanged (id int primary key, c int)")
+	tk.MustExec("insert unchanged values (1, 1), (2, 2)")
+
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("update unchanged set c = 1 where id < 2")
+
+	tk2.MustExec("begin pessimistic")
+	err := tk2.ExecToErr("select * from unchanged where id = 1 for update nowait")
+	c.Assert(err, NotNil)
+
+	tk.MustExec("rollback")
+
+	tk2.MustQuery("select * from unchanged where id = 1 for update nowait")
+
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("insert unchanged values (2, 2) on duplicate key update c = values(c)")
+
+	err = tk2.ExecToErr("select * from unchanged where id = 2 for update nowait")
+	c.Assert(err, NotNil)
+
+	tk.MustExec("commit")
+
+	tk2.MustQuery("select * from unchanged where id = 1 for update nowait")
+	tk2.MustExec("rollback")
+}
+
 func (s *testPessimisticSuite) TestOptimisticConflicts(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk2 := testkit.NewTestKitWithInit(c, s.store)
@@ -717,4 +747,44 @@ func (s *testPessimisticSuite) TestInnodbLockWaitTimeout(c *C) {
 	tk4.MustExec("commit")
 
 	wg.Wait()
+}
+
+func (s *testPessimisticSuite) TestInnodbLockWaitTimeoutWaitStart(c *C) {
+	// prepare work
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	defer tk.MustExec("drop table if exists tk")
+	tk.MustExec("drop table if exists tk")
+	tk.MustExec("create table tk (c1 int primary key, c2 int)")
+	tk.MustExec("insert into tk values(1,1),(2,2),(3,3),(4,4),(5,5)")
+	tk.MustExec("set global innodb_lock_wait_timeout = 1")
+
+	// raise pessimistic transaction in tk2 and trigger failpoint returning ErrWriteConflict
+	tk2 := testkit.NewTestKitWithInit(c, s.store)
+	tk3 := testkit.NewTestKitWithInit(c, s.store)
+	tk2.MustQuery(`show variables like "innodb_lock_wait_timeout"`).Check(testkit.Rows("innodb_lock_wait_timeout 1"))
+
+	// tk3 gets the pessimistic lock
+	tk3.MustExec("begin pessimistic")
+	tk3.MustQuery("select * from tk where c1 = 1 for update")
+
+	tk2.MustExec("begin pessimistic")
+	done := make(chan error)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/PessimisticLockErrWriteConflict", "return"), IsNil)
+	start := time.Now()
+	go func() {
+		var err error
+		defer func() {
+			done <- err
+		}()
+		_, err = tk2.Exec("select * from tk where c1 = 1 for update")
+	}()
+	time.Sleep(time.Millisecond * 30)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/PessimisticLockErrWriteConflict"), IsNil)
+	waitErr := <-done
+	c.Assert(waitErr, NotNil)
+	c.Check(waitErr.Error(), Equals, tikv.ErrLockWaitTimeout.Error())
+	c.Check(time.Since(start), GreaterEqual, time.Duration(1000*time.Millisecond))
+	c.Check(time.Since(start), LessEqual, time.Duration(1100*time.Millisecond))
+	tk2.MustExec("rollback")
+	tk3.MustExec("commit")
 }

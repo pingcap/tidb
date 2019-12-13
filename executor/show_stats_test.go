@@ -14,6 +14,9 @@
 package executor_test
 
 import (
+	"fmt"
+	"time"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/util/testkit"
@@ -202,4 +205,29 @@ func (s *testShowStatsSuite) TestShowAnalyzeStatus(c *C) {
 	c.Assert(result.Rows()[1][4], Equals, "2")
 	c.Assert(result.Rows()[1][5], NotNil)
 	c.Assert(result.Rows()[1][6], Equals, "finished")
+}
+
+func (s *testShowStatsSuite) TestShowStatusSnapshot(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("drop database if exists test;")
+	tk.MustExec("create database test;")
+	tk.MustExec("use test;")
+	tk.MustExec("create table t (a int);")
+
+	// For mocktikv, safe point is not initialized, we manually insert it for snapshot to use.
+	safePointName := "tikv_gc_safe_point"
+	safePointValue := "20060102-15:04:05 -0700"
+	safePointComment := "All versions after safe point can be accessed. (DO NOT EDIT)"
+	updateSafePoint := fmt.Sprintf(`INSERT INTO mysql.tidb VALUES ('%[1]s', '%[2]s', '%[3]s')
+	ON DUPLICATE KEY
+	UPDATE variable_value = '%[2]s', comment = '%[3]s'`, safePointName, safePointValue, safePointComment)
+	tk.MustExec(updateSafePoint)
+
+	snapshotTime := time.Now()
+
+	tk.MustExec("drop table t;")
+	tk.MustQuery("show table status;").Check(testkit.Rows())
+	tk.MustExec("set @@tidb_snapshot = '" + snapshotTime.Format("2006-01-02 15:04:05.999999") + "'")
+	result := tk.MustQuery("show table status;")
+	c.Check(result.Rows()[0][0], Matches, "t")
 }

@@ -14,6 +14,7 @@
 package infoschema
 
 import (
+	"fmt"
 	"sort"
 	"sync/atomic"
 
@@ -22,8 +23,11 @@ import (
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 )
 
 var (
@@ -348,14 +352,18 @@ func init() {
 	terror.ErrClassToMySQLCodes[terror.ClassSchema] = schemaMySQLErrCodes
 
 	// Initialize the information shema database and register the driver to `drivers`
-	dbID := autoid.GenLocalSchemaID()
+	dbID := autoid.InformationSchemaDBID
 	infoSchemaTables := make([]*model.TableInfo, 0, len(tableNameToColumns))
 	for name, cols := range tableNameToColumns {
 		tableInfo := buildTableMeta(name, cols)
 		infoSchemaTables = append(infoSchemaTables, tableInfo)
-		tableInfo.ID = autoid.GenLocalSchemaID()
-		for _, c := range tableInfo.Columns {
-			c.ID = autoid.GenLocalSchemaID()
+		var ok bool
+		tableInfo.ID, ok = tableIDMap[tableInfo.Name.O]
+		if !ok {
+			panic(fmt.Sprintf("get information_schema table id failed, unknown system table `%v`", tableInfo.Name.O))
+		}
+		for i, c := range tableInfo.Columns {
+			c.ID = int64(i) + 1
 		}
 	}
 	infoSchemaDB := &model.DBInfo{
@@ -386,4 +394,18 @@ func HasAutoIncrementColumn(tbInfo *model.TableInfo) (bool, string) {
 		}
 	}
 	return false, ""
+}
+
+// GetInfoSchema gets TxnCtx InfoSchema if snapshot schema is not set,
+// Otherwise, snapshot schema is returned.
+func GetInfoSchema(ctx sessionctx.Context) InfoSchema {
+	sessVar := ctx.GetSessionVars()
+	var is InfoSchema
+	if snap := sessVar.SnapshotInfoschema; snap != nil {
+		is = snap.(InfoSchema)
+		logutil.BgLogger().Info("use snapshot schema", zap.Uint64("conn", sessVar.ConnectionID), zap.Int64("schemaVersion", is.SchemaMetaVersion()))
+	} else {
+		is = sessVar.TxnCtx.InfoSchema.(InfoSchema)
+	}
+	return is
 }

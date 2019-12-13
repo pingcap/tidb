@@ -52,12 +52,14 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/plugin"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sys/linux"
+	"github.com/pingcap/tidb/util/timeutil"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 )
@@ -84,9 +86,9 @@ func init() {
 }
 
 var (
-	errUnknownFieldType  = terror.ClassServer.New(codeUnknownFieldType, "unknown field type")
-	errInvalidSequence   = terror.ClassServer.New(codeInvalidSequence, "invalid sequence")
-	errInvalidType       = terror.ClassServer.New(codeInvalidType, "invalid type")
+	errUnknownFieldType  = terror.ClassServer.New(mysql.ErrUnknownFieldType, mysql.MySQLErrName[mysql.ErrUnknownFieldType])
+	errInvalidSequence   = terror.ClassServer.New(mysql.ErrInvalidSequence, mysql.MySQLErrName[mysql.ErrInvalidSequence])
+	errInvalidType       = terror.ClassServer.New(mysql.ErrInvalidType, mysql.MySQLErrName[mysql.ErrInvalidType])
 	errNotAllowedCommand = terror.ClassServer.New(mysql.ErrNotAllowedCommand, mysql.MySQLErrName[mysql.ErrNotAllowedCommand])
 	errAccessDenied      = terror.ClassServer.New(mysql.ErrAccessDenied, mysql.MySQLErrName[mysql.ErrAccessDenied])
 )
@@ -110,6 +112,7 @@ type Server struct {
 	concurrentLimiter *TokenLimiter
 	clients           map[uint32]*clientConn
 	capability        uint32
+	dom               *domain.Domain
 
 	// stopListenerCh is used when a critical error occurred, we don't want to exit the process, because there may be
 	// a supervisor automatically restart it, then new client connection will be created, but we can't server it.
@@ -137,6 +140,11 @@ func (s *Server) getToken() *Token {
 
 func (s *Server) releaseToken(token *Token) {
 	s.concurrentLimiter.Put(token)
+}
+
+// SetDomain use to set the server domain.
+func (s *Server) SetDomain(dom *domain.Domain) {
+	s.dom = dom
 }
 
 // newConn creates a new *clientConn from a net.Conn.
@@ -202,6 +210,7 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 		stopListenerCh:    make(chan struct{}, 1),
 	}
 	s.loadTLSCertificates()
+	setSystemTimeZoneVariable()
 
 	s.capability = defaultCapability
 	if s.tlsConfig != nil {
@@ -615,6 +624,18 @@ func (s *Server) kickIdleConnection() {
 	}
 }
 
+func setSystemTimeZoneVariable() {
+	tz, err := timeutil.GetSystemTZ()
+	if err != nil {
+		logutil.BgLogger().Error(
+			"Error getting SystemTZ, use default value instead",
+			zap.Error(err),
+			zap.String("default system_time_zone", variable.SysVars["system_time_zone"].Value))
+		return
+	}
+	variable.SysVars["system_time_zone"].Value = tz
+}
+
 // Server error codes.
 const (
 	codeUnknownFieldType = 1
@@ -626,6 +647,9 @@ func init() {
 	serverMySQLErrCodes := map[terror.ErrCode]uint16{
 		mysql.ErrNotAllowedCommand: mysql.ErrNotAllowedCommand,
 		mysql.ErrAccessDenied:      mysql.ErrAccessDenied,
+		mysql.ErrUnknownFieldType:  mysql.ErrUnknownFieldType,
+		mysql.ErrInvalidSequence:   mysql.ErrInvalidSequence,
+		mysql.ErrInvalidType:       mysql.ErrInvalidType,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassServer] = serverMySQLErrCodes
 }

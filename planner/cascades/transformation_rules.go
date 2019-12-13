@@ -45,11 +45,12 @@ type Transformation interface {
 var defaultTransformationMap = map[memo.Operand][]Transformation{
 	memo.OperandSelection: {
 		NewRulePushSelDownTableScan(),
-		NewRulePushSelDownTableGather(),
+		NewRulePushSelDownTiKVSingleGather(),
 		NewRulePushSelDownSort(),
 		NewRulePushSelDownProjection(),
 		NewRulePushSelDownAggregation(),
 		NewRulePushSelDownJoin(),
+		NewRulePushSelDownUnionAll(),
 	},
 	memo.OperandDataSource: {
 		NewRuleEnumeratePaths(),
@@ -59,6 +60,13 @@ var defaultTransformationMap = map[memo.Operand][]Transformation{
 	},
 	memo.OperandLimit: {
 		NewRuleTransformLimitToTopN(),
+	},
+	memo.OperandProjection: {
+		NewRuleEliminateProjection(),
+		NewRuleMergeAdjacentProjection(),
+	},
+	memo.OperandTopN: {
+		NewRulePushTopNDownProjection(),
 	},
 }
 
@@ -101,7 +109,7 @@ func NewRulePushSelDownTableScan() Transformation {
 // the key ranges of the `ts` operator.
 func (r *PushSelDownTableScan) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
 	sel := old.GetExpr().ExprNode.(*plannercore.LogicalSelection)
-	ts := old.Children[0].GetExpr().ExprNode.(*plannercore.TableScan)
+	ts := old.Children[0].GetExpr().ExprNode.(*plannercore.LogicalTableScan)
 	if ts.Handle == nil {
 		return nil, false, false, nil
 	}
@@ -109,7 +117,7 @@ func (r *PushSelDownTableScan) OnTransform(old *memo.ExprIter) (newExprs []*memo
 	if accesses == nil {
 		return nil, false, false, nil
 	}
-	newTblScan := plannercore.TableScan{
+	newTblScan := plannercore.LogicalTableScan{
 		Source:      ts.Source,
 		Handle:      ts.Handle,
 		AccessConds: ts.AccessConds.Shallow(),
@@ -129,19 +137,19 @@ func (r *PushSelDownTableScan) OnTransform(old *memo.ExprIter) (newExprs []*memo
 	return []*memo.GroupExpr{selExpr}, true, false, nil
 }
 
-// PushSelDownTableGather pushes the selection down to child of TableGather.
-type PushSelDownTableGather struct {
+// PushSelDownTiKVSingleGather pushes the selection down to child of TiKVSingleGather.
+type PushSelDownTiKVSingleGather struct {
 	baseRule
 }
 
-// NewRulePushSelDownTableGather creates a new Transformation PushSelDownTableGather.
-// The pattern of this rule is `Selection -> TableGather -> Any`.
-func NewRulePushSelDownTableGather() Transformation {
+// NewRulePushSelDownTiKVSingleGather creates a new Transformation PushSelDownTiKVSingleGather.
+// The pattern of this rule is `Selection -> TiKVSingleGather -> Any`.
+func NewRulePushSelDownTiKVSingleGather() Transformation {
 	any := memo.NewPattern(memo.OperandAny, memo.EngineTiKVOrTiFlash)
-	tg := memo.BuildPattern(memo.OperandTableGather, memo.EngineTiDBOnly, any)
+	tg := memo.BuildPattern(memo.OperandTiKVSingleGather, memo.EngineTiDBOnly, any)
 	p := memo.BuildPattern(memo.OperandSelection, memo.EngineTiDBOnly, tg)
 
-	rule := &PushSelDownTableGather{}
+	rule := &PushSelDownTiKVSingleGather{}
 	rule.pattern = p
 	return rule
 }
@@ -151,12 +159,12 @@ func NewRulePushSelDownTableGather() Transformation {
 // It transforms `oldSel -> oldTg -> any` to one of the following new exprs:
 // 1. `newTg -> pushedSel -> any`
 // 2. `remainedSel -> newTg -> pushedSel -> any`
-func (r *PushSelDownTableGather) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
+func (r *PushSelDownTiKVSingleGather) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
 	sel := old.GetExpr().ExprNode.(*plannercore.LogicalSelection)
-	tg := old.Children[0].GetExpr().ExprNode.(*plannercore.TableGather)
+	sg := old.Children[0].GetExpr().ExprNode.(*plannercore.TiKVSingleGather)
 	childGroup := old.Children[0].Children[0].Group
 	var pushed, remained []expression.Expression
-	sctx := tg.SCtx()
+	sctx := sg.SCtx()
 	_, pushed, remained = expression.ExpressionsToPB(sctx.GetSessionVars().StmtCtx, sel.Conditions, sctx.GetClient())
 	if len(pushed) == 0 {
 		return nil, false, false, nil
@@ -165,12 +173,12 @@ func (r *PushSelDownTableGather) OnTransform(old *memo.ExprIter) (newExprs []*me
 	pushedSelExpr := memo.NewGroupExpr(pushedSel)
 	pushedSelExpr.Children = append(pushedSelExpr.Children, childGroup)
 	pushedSelGroup := memo.NewGroupWithSchema(pushedSelExpr, childGroup.Prop.Schema).SetEngineType(childGroup.EngineType)
-	// The field content of TableGather would not be modified currently, so we
+	// The field content of TiKVSingleGather would not be modified currently, so we
 	// just reference the same tg instead of making a copy of it.
 	//
-	// TODO: if we save pushed filters later in TableGather, in order to do partition
-	//       pruning or skyline pruning, we need to make a copy of the TableGather here.
-	tblGatherExpr := memo.NewGroupExpr(tg)
+	// TODO: if we save pushed filters later in TiKVSingleGather, in order to do partition
+	//       pruning or skyline pruning, we need to make a copy of the TiKVSingleGather here.
+	tblGatherExpr := memo.NewGroupExpr(sg)
 	tblGatherExpr.Children = append(tblGatherExpr.Children, pushedSelGroup)
 	if len(remained) == 0 {
 		// `oldSel -> oldTg -> any` is transformed to `newTg -> pushedSel -> any`.
@@ -210,19 +218,19 @@ func (r *EnumeratePaths) OnTransform(old *memo.ExprIter) (newExprs []*memo.Group
 }
 
 // PushAggDownGather splits Aggregation to two stages, final and partial1,
-// and pushed the partial Aggregation down to the child of TableGather.
+// and pushed the partial Aggregation down to the child of TiKVSingleGather.
 type PushAggDownGather struct {
 	baseRule
 }
 
 // NewRulePushAggDownGather creates a new Transformation PushAggDownGather.
-// The pattern of this rule is: `Aggregation -> TableGather`.
+// The pattern of this rule is: `Aggregation -> TiKVSingleGather`.
 func NewRulePushAggDownGather() Transformation {
 	rule := &PushAggDownGather{}
 	rule.pattern = memo.BuildPattern(
 		memo.OperandAggregation,
 		memo.EngineTiDBOnly,
-		memo.NewPattern(memo.OperandTableGather, memo.EngineTiDBOnly),
+		memo.NewPattern(memo.OperandTiKVSingleGather, memo.EngineTiDBOnly),
 	)
 	return rule
 }
@@ -248,7 +256,7 @@ func (r *PushAggDownGather) Match(expr *memo.ExprIter) bool {
 func (r *PushAggDownGather) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
 	agg := old.GetExpr().ExprNode.(*plannercore.LogicalAggregation)
 	aggSchema := old.GetExpr().Group.Prop.Schema
-	gather := old.Children[0].GetExpr().ExprNode.(*plannercore.TableGather)
+	gather := old.Children[0].GetExpr().ExprNode.(*plannercore.TiKVSingleGather)
 	childGroup := old.Children[0].GetExpr().Children[0]
 	// The old Aggregation should stay unchanged for other transformation.
 	// So we build a new LogicalAggregation for the partialAgg.
@@ -590,4 +598,190 @@ func (r *PushSelDownJoin) OnTransform(old *memo.ExprIter) (newExprs []*memo.Grou
 	newJoinExpr := memo.NewGroupExpr(join)
 	newJoinExpr.SetChildren(leftGroup, rightGroup)
 	return []*memo.GroupExpr{newJoinExpr}, true, false, nil
+}
+
+// PushSelDownUnionAll pushes selection through union all.
+type PushSelDownUnionAll struct {
+	baseRule
+}
+
+// NewRulePushSelDownUnionAll creates a new Transformation PushSelDownUnionAll.
+// The pattern of this rule is `Selection -> UnionAll`.
+func NewRulePushSelDownUnionAll() Transformation {
+	rule := &PushSelDownUnionAll{}
+	rule.pattern = memo.BuildPattern(
+		memo.OperandSelection,
+		memo.EngineTiDBOnly,
+		memo.NewPattern(memo.OperandUnionAll, memo.EngineTiDBOnly),
+	)
+	return rule
+}
+
+// OnTransform implements Transformation interface.
+// It will transform `Selection->UnionAll->x` to `UnionAll->Selection->x`.
+func (r *PushSelDownUnionAll) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
+	sel := old.GetExpr().ExprNode.(*plannercore.LogicalSelection)
+	unionAll := old.Children[0].GetExpr().ExprNode.(*plannercore.LogicalUnionAll)
+	childGroups := old.Children[0].GetExpr().Children
+
+	newUnionAllExpr := memo.NewGroupExpr(unionAll)
+	for _, group := range childGroups {
+		newSelExpr := memo.NewGroupExpr(sel)
+		newSelExpr.Children = append(newSelExpr.Children, group)
+		newSelGroup := memo.NewGroupWithSchema(newSelExpr, group.Prop.Schema)
+
+		newUnionAllExpr.Children = append(newUnionAllExpr.Children, newSelGroup)
+	}
+	return []*memo.GroupExpr{newUnionAllExpr}, true, false, nil
+}
+
+// EliminateProjection eliminates the projection.
+type EliminateProjection struct {
+	baseRule
+}
+
+// NewRuleEliminateProjection creates a new Transformation EliminateProjection.
+// The pattern of this rule is `Projection -> Any`.
+func NewRuleEliminateProjection() Transformation {
+	rule := &EliminateProjection{}
+	rule.pattern = memo.BuildPattern(
+		memo.OperandProjection,
+		memo.EngineTiDBOnly,
+		memo.NewPattern(memo.OperandAny, memo.EngineTiDBOnly),
+	)
+	return rule
+}
+
+// OnTransform implements Transformation interface.
+// This rule tries to eliminate the projection whose output columns are the same with its child.
+func (r *EliminateProjection) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
+	child := old.Children[0]
+	if child.Group.Prop.Schema.Len() != old.GetExpr().Group.Prop.Schema.Len() {
+		return nil, false, false, nil
+	}
+
+	oldCols := old.GetExpr().Group.Prop.Schema.Columns
+	for i, col := range child.Group.Prop.Schema.Columns {
+		if !col.Equal(nil, oldCols[i]) {
+			return nil, false, false, nil
+		}
+	}
+
+	// Promote the children group's expression.
+	finalGroupExprs := make([]*memo.GroupExpr, 0, child.Group.Equivalents.Len())
+	for elem := child.Group.Equivalents.Front(); elem != nil; elem = elem.Next() {
+		finalGroupExprs = append(finalGroupExprs, elem.Value.(*memo.GroupExpr))
+	}
+	return finalGroupExprs, true, false, nil
+}
+
+// MergeAdjacentProjection merge the adjacent projection.
+type MergeAdjacentProjection struct {
+	baseRule
+}
+
+// NewRuleMergeAdjacentProjection creates a new Transformation MergeAdjacentProjection.
+// The pattern of this rule is `Projection -> Projection`.
+func NewRuleMergeAdjacentProjection() Transformation {
+	rule := &MergeAdjacentProjection{}
+	rule.pattern = memo.BuildPattern(
+		memo.OperandProjection,
+		memo.EngineTiDBOnly,
+		memo.NewPattern(memo.OperandProjection, memo.EngineTiDBOnly),
+	)
+	return rule
+}
+
+// OnTransform implements Transformation interface.
+// It will transform `proj->proj->x` to `proj->x`
+// or just keep the adjacent projections unchanged.
+func (r *MergeAdjacentProjection) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
+	proj := old.GetExpr().ExprNode.(*plannercore.LogicalProjection)
+	childGroup := old.Children[0].Group
+	child := old.Children[0].GetExpr().ExprNode.(*plannercore.LogicalProjection)
+	if plannercore.ExprsHasSideEffects(child.Exprs) {
+		return nil, false, false, nil
+	}
+
+	replace := make(map[string]*expression.Column)
+	for i, col := range childGroup.Prop.Schema.Columns {
+		if colOrigin, ok := child.Exprs[i].(*expression.Column); ok {
+			replace[string(col.HashCode(nil))] = colOrigin
+		}
+	}
+
+	newProj := plannercore.LogicalProjection{Exprs: make([]expression.Expression, len(proj.Exprs))}.Init(proj.SCtx(), proj.SelectBlockOffset())
+	newProj.SetSchema(old.GetExpr().Group.Prop.Schema)
+	for i, expr := range proj.Exprs {
+		newExpr := expr.Clone()
+		plannercore.ResolveExprAndReplace(newExpr, replace)
+		newProj.Exprs[i] = plannercore.ReplaceColumnOfExpr(newExpr, child, childGroup.Prop.Schema)
+	}
+
+	newProjExpr := memo.NewGroupExpr(newProj)
+	newProjExpr.SetChildren(old.Children[0].GetExpr().Children[0])
+	return []*memo.GroupExpr{newProjExpr}, true, false, nil
+}
+
+// PushTopNDownProjection pushes TopN to Projection.
+type PushTopNDownProjection struct {
+	baseRule
+}
+
+// NewRulePushTopNDownProjection creates a new Transformation PushTopNDownProjection.
+// The pattern of this rule is `TopN->Projection->X` to `Projection->TopN->X`.
+func NewRulePushTopNDownProjection() Transformation {
+	rule := &PushTopNDownProjection{}
+	rule.pattern = memo.BuildPattern(
+		memo.OperandTopN,
+		memo.EngineTiDBOnly,
+		memo.NewPattern(memo.OperandProjection, memo.EngineTiDBOnly),
+	)
+	return rule
+}
+
+// Match implements Transformation interface.
+func (r *PushTopNDownProjection) Match(expr *memo.ExprIter) bool {
+	proj := expr.Children[0].GetExpr().ExprNode.(*plannercore.LogicalProjection)
+	for _, expr := range proj.Exprs {
+		if expression.HasAssignSetVarFunc(expr) {
+			return false
+		}
+	}
+	return true
+}
+
+// OnTransform implements Transformation interface.
+// This rule tries to pushes the TopN through Projection.
+func (r *PushTopNDownProjection) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
+	topN := old.GetExpr().ExprNode.(*plannercore.LogicalTopN)
+	proj := old.Children[0].GetExpr().ExprNode.(*plannercore.LogicalProjection)
+	childGroup := old.Children[0].GetExpr().Children[0]
+
+	newTopN := plannercore.LogicalTopN{
+		Offset: topN.Offset,
+		Count:  topN.Count,
+	}.Init(topN.SCtx(), topN.SelectBlockOffset())
+
+	newTopN.ByItems = make([]*plannercore.ByItems, 0, len(topN.ByItems))
+	for _, by := range topN.ByItems {
+		newTopN.ByItems = append(newTopN.ByItems, &plannercore.ByItems{
+			Expr: expression.ColumnSubstitute(by.Expr, old.Children[0].Group.Prop.Schema, proj.Exprs),
+			Desc: by.Desc,
+		})
+	}
+
+	// remove meaningless constant sort items.
+	for i := len(newTopN.ByItems) - 1; i >= 0; i-- {
+		switch newTopN.ByItems[i].Expr.(type) {
+		case *expression.Constant, *expression.CorrelatedColumn:
+			topN.ByItems = append(newTopN.ByItems[:i], newTopN.ByItems[i+1:]...)
+		}
+	}
+	projExpr := memo.NewGroupExpr(proj)
+	topNExpr := memo.NewGroupExpr(newTopN)
+	topNExpr.SetChildren(childGroup)
+	topNGroup := memo.NewGroupWithSchema(topNExpr, childGroup.Prop.Schema)
+	projExpr.SetChildren(topNGroup)
+	return []*memo.GroupExpr{projExpr}, true, false, nil
 }
