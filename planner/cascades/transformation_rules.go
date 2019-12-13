@@ -50,6 +50,7 @@ var defaultTransformationMap = map[memo.Operand][]Transformation{
 		NewRulePushSelDownProjection(),
 		NewRulePushSelDownAggregation(),
 		NewRulePushSelDownJoin(),
+		NewRulePushSelDownUnionAll(),
 	},
 	memo.OperandDataSource: {
 		NewRuleEnumeratePaths(),
@@ -597,6 +598,41 @@ func (r *PushSelDownJoin) OnTransform(old *memo.ExprIter) (newExprs []*memo.Grou
 	newJoinExpr := memo.NewGroupExpr(join)
 	newJoinExpr.SetChildren(leftGroup, rightGroup)
 	return []*memo.GroupExpr{newJoinExpr}, true, false, nil
+}
+
+// PushSelDownUnionAll pushes selection through union all.
+type PushSelDownUnionAll struct {
+	baseRule
+}
+
+// NewRulePushSelDownUnionAll creates a new Transformation PushSelDownUnionAll.
+// The pattern of this rule is `Selection -> UnionAll`.
+func NewRulePushSelDownUnionAll() Transformation {
+	rule := &PushSelDownUnionAll{}
+	rule.pattern = memo.BuildPattern(
+		memo.OperandSelection,
+		memo.EngineTiDBOnly,
+		memo.NewPattern(memo.OperandUnionAll, memo.EngineTiDBOnly),
+	)
+	return rule
+}
+
+// OnTransform implements Transformation interface.
+// It will transform `Selection->UnionAll->x` to `UnionAll->Selection->x`.
+func (r *PushSelDownUnionAll) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
+	sel := old.GetExpr().ExprNode.(*plannercore.LogicalSelection)
+	unionAll := old.Children[0].GetExpr().ExprNode.(*plannercore.LogicalUnionAll)
+	childGroups := old.Children[0].GetExpr().Children
+
+	newUnionAllExpr := memo.NewGroupExpr(unionAll)
+	for _, group := range childGroups {
+		newSelExpr := memo.NewGroupExpr(sel)
+		newSelExpr.Children = append(newSelExpr.Children, group)
+		newSelGroup := memo.NewGroupWithSchema(newSelExpr, group.Prop.Schema)
+
+		newUnionAllExpr.Children = append(newUnionAllExpr.Children, newSelGroup)
+	}
+	return []*memo.GroupExpr{newUnionAllExpr}, true, false, nil
 }
 
 // EliminateProjection eliminates the projection.
