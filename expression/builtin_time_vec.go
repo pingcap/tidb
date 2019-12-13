@@ -2252,7 +2252,6 @@ func (b *builtinUnixTimestampIntSig) vecEvalInt(input *chunk.Chunk, result *chun
 
 	result.ResizeInt64(n, false)
 	i64s := result.Int64s()
-	ds := buf.Times()
 
 	if err := b.args[0].VecEvalTime(b.ctx, input, buf); err != nil && terror.ErrorEqual(types.ErrWrongValue.GenWithStackByArgs(types.TimeStr, buf), err) {
 		var isNull bool
@@ -2265,27 +2264,28 @@ func (b *builtinUnixTimestampIntSig) vecEvalInt(input *chunk.Chunk, result *chun
 				result.SetNull(i, true)
 			}
 		}
-		return nil
-	}
-	result.MergeNulls(buf)
-	for i := 0; i < n; i++ {
-		if result.IsNull(i) {
-			continue
-		}
+	} else {
+		result.MergeNulls(buf)
+		for i := 0; i < n; i++ {
+			if result.IsNull(i) {
+				continue
+			}
 
-		t, err := ds[i].Time.GoTime(getTimeZone(b.ctx))
-		if err != nil {
-			i64s[i] = 0
-			continue
+			t, err := buf.GetTime(i).Time.GoTime(getTimeZone(b.ctx))
+			if err != nil {
+				i64s[i] = 0
+				continue
+			}
+			dec, err := goTimeToMysqlUnixTimestamp(t, 1)
+			if err != nil {
+				return err
+			}
+			intVal, err := dec.ToInt()
+			terror.Log(err)
+			i64s[i] = intVal
 		}
-		dec, err := goTimeToMysqlUnixTimestamp(t, 1)
-		if err != nil {
-			return err
-		}
-		intVal, err := dec.ToInt()
-		terror.Log(err)
-		i64s[i] = intVal
 	}
+
 	return nil
 }
 
