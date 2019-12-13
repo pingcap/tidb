@@ -118,7 +118,10 @@ func updateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datu
 			sc.AddAffectedRows(1)
 		}
 		unchangedRowKey := tablecodec.EncodeRowKeyWithHandle(t.Meta().ID, h)
-		sctx.GetSessionVars().TxnCtx.AddUnchangedRowKey(unchangedRowKey)
+		txnCtx := sctx.GetSessionVars().TxnCtx
+		if txnCtx.IsPessimistic {
+			txnCtx.AddUnchangedRowKey(unchangedRowKey)
+		}
 		return false, false, 0, nil
 	}
 
