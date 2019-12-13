@@ -514,7 +514,7 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 	if colDef.Options != nil {
 		length := types.UnspecifiedLength
 
-		keys := []*ast.IndexColName{
+		keys := []*ast.IndexPartSpecification{
 			{
 				Column: colDef.Name,
 				Length: length,
@@ -3300,7 +3300,7 @@ func getAnonymousIndex(t table.Table, colName model.CIStr) model.CIStr {
 }
 
 func (d *ddl) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexName model.CIStr,
-	idxColNames []*ast.IndexColName, indexOption *ast.IndexOption) error {
+	idxColNames []*ast.IndexPartSpecification, indexOption *ast.IndexOption) error {
 	if !config.GetGlobalConfig().AlterPrimaryKey {
 		return ErrUnsupportedModifyPrimaryKey.GenWithStack("Unsupported add primary key, alter-primary-key is false")
 	}
@@ -3362,7 +3362,7 @@ func (d *ddl) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexName m
 }
 
 func (d *ddl) CreateIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.IndexKeyType, indexName model.CIStr,
-	idxColNames []*ast.IndexColName, indexOption *ast.IndexOption, ifNotExists bool) error {
+	idxColNames []*ast.IndexPartSpecification, indexOption *ast.IndexOption, ifNotExists bool) error {
 
 	// not support Spatial and FullText index
 	if keyType == ast.IndexKeyTypeFullText || keyType == ast.IndexKeyTypeSpatial {
@@ -3432,8 +3432,8 @@ func (d *ddl) CreateIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.Inde
 	return errors.Trace(err)
 }
 
-func buildFKInfo(fkName model.CIStr, keys []*ast.IndexColName, refer *ast.ReferenceDef, cols []*table.Column, tbInfo *model.TableInfo) (*model.FKInfo, error) {
-	if len(keys) != len(refer.IndexColNames) {
+func buildFKInfo(fkName model.CIStr, keys []*ast.IndexPartSpecification, refer *ast.ReferenceDef, cols []*table.Column, tbInfo *model.TableInfo) (*model.FKInfo, error) {
+	if len(keys) != len(refer.IndexPartSpecifications) {
 		return nil, infoschema.ErrForeignKeyNotMatch.GenWithStackByArgs("foreign key without name")
 	}
 
@@ -3495,8 +3495,8 @@ func buildFKInfo(fkName model.CIStr, keys []*ast.IndexColName, refer *ast.Refere
 		fkInfo.Cols[i] = key.Column.Name
 	}
 
-	fkInfo.RefCols = make([]model.CIStr, len(refer.IndexColNames))
-	for i, key := range refer.IndexColNames {
+	fkInfo.RefCols = make([]model.CIStr, len(refer.IndexPartSpecifications))
+	for i, key := range refer.IndexPartSpecifications {
 		fkInfo.RefCols[i] = key.Column.Name
 	}
 
@@ -3506,7 +3506,7 @@ func buildFKInfo(fkName model.CIStr, keys []*ast.IndexColName, refer *ast.Refere
 	return fkInfo, nil
 }
 
-func (d *ddl) CreateForeignKey(ctx sessionctx.Context, ti ast.Ident, fkName model.CIStr, keys []*ast.IndexColName, refer *ast.ReferenceDef) error {
+func (d *ddl) CreateForeignKey(ctx sessionctx.Context, ti ast.Ident, fkName model.CIStr, keys []*ast.IndexPartSpecification, refer *ast.ReferenceDef) error {
 	is := d.infoHandle.Get()
 	schema, ok := is.SchemaByName(ti.Schema)
 	if !ok {

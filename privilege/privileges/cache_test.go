@@ -67,6 +67,8 @@ func (s *testCacheSuite) TestLoadUserTable(c *C) {
 	p = privileges.MySQLPrivilege{}
 	err = p.LoadUserTable(se)
 	c.Assert(err, IsNil)
+	c.Assert(p.User, HasLen, len(p.UserMap))
+
 	user := p.User
 	c.Assert(user[0].User, Equals, "root")
 	c.Assert(user[0].Privileges, Equals, mysql.SelectPriv)
@@ -88,6 +90,8 @@ func (s *testCacheSuite) TestLoadDBTable(c *C) {
 	var p privileges.MySQLPrivilege
 	err = p.LoadDBTable(se)
 	c.Assert(err, IsNil)
+	c.Assert(p.DB, HasLen, len(p.DBMap))
+
 	c.Assert(p.DB[0].Privileges, Equals, mysql.SelectPriv|mysql.InsertPriv|mysql.UpdatePriv|mysql.DeletePriv|mysql.CreatePriv)
 	c.Assert(p.DB[1].Privileges, Equals, mysql.DropPriv|mysql.GrantPriv|mysql.IndexPriv|mysql.AlterPriv|mysql.CreateViewPriv|mysql.ShowViewPriv|mysql.ExecutePriv)
 }
@@ -104,6 +108,8 @@ func (s *testCacheSuite) TestLoadTablesPrivTable(c *C) {
 	var p privileges.MySQLPrivilege
 	err = p.LoadTablesPrivTable(se)
 	c.Assert(err, IsNil)
+	c.Assert(p.TablesPriv, HasLen, len(p.TablesPrivMap))
+
 	c.Assert(p.TablesPriv[0].Host, Equals, `%`)
 	c.Assert(p.TablesPriv[0].DB, Equals, "db")
 	c.Assert(p.TablesPriv[0].User, Equals, "user")

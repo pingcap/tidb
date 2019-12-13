@@ -123,6 +123,7 @@ func (s *testTransformationRuleSuite) TestPredicatePushDown(c *C) {
 			NewRulePushSelDownProjection(),
 			NewRulePushSelDownAggregation(),
 			NewRulePushSelDownJoin(),
+			NewRulePushSelDownUnionAll(),
 		},
 		memo.OperandDataSource: {
 			NewRuleEnumeratePaths(),
