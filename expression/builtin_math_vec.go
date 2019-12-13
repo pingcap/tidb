@@ -1059,12 +1059,12 @@ func (b *builtinConvSig) vecEvalString(input *chunk.Chunk, result *chunk.Column)
 		return err
 	}
 	defer b.bufAllocator.put(buf1)
-	buf2, err := b.bufAllocator.get(types.ETString, n)
+	buf2, err := b.bufAllocator.get(types.ETInt, n)
 	if err != nil {
 		return err
 	}
 	defer b.bufAllocator.put(buf2)
-	buf3, err := b.bufAllocator.get(types.ETString, n)
+	buf3, err := b.bufAllocator.get(types.ETInt, n)
 	if err != nil {
 		return err
 	}
@@ -1082,15 +1082,18 @@ func (b *builtinConvSig) vecEvalString(input *chunk.Chunk, result *chunk.Column)
 	fromBase := buf2.Int64s()
 	toBase := buf3.Int64s()
 	var (
-		signed     bool
-		negative   bool
-		ignoreSign bool
+		signed     bool = false
+		negative   bool = false
+		ignoreSign bool = false
 	)
 	for i := 0; i < n; i++ {
-		if buf2.IsNull(i) || buf2.IsNull(i) {
+		if buf1.IsNull(i) || buf2.IsNull(i) || buf2.IsNull(i) {
 			result.AppendNull()
 			continue
 		}
+		signed = false
+		negative = false
+		ignoreSign = false
 		if fromBase[i] < 0 {
 			fromBase[i] = -fromBase[i]
 			signed = true
