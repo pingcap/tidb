@@ -163,9 +163,21 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 	//	},
 	//},
 	ast.UnixTimestamp: {
+		{
+			retEvalType:   types.ETInt,
+			childrenTypes: []types.EvalType{types.ETDatetime},
+			childrenFieldTypes: []*types.FieldType{
+				{
+					Tp:      mysql.TypeDatetime,
+					Flen:    types.UnspecifiedLength,
+					Decimal: 0,
+					Flag:    mysql.BinaryFlag,
+				},
+			},
+			geners: []dataGenerator{&dateTimeGener{Fsp: 0}},
+		},
 		{retEvalType: types.ETDecimal, childrenTypes: []types.EvalType{types.ETTimestamp}},
 		{retEvalType: types.ETInt},
-		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDatetime}, geners: []dataGenerator{gener{defaultGener{eType: types.ETDatetime, nullRation: 0.2}}}},
 	},
 	ast.TimestampDiff: {
 		{
