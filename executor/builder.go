@@ -1243,15 +1243,14 @@ func (b *executorBuilder) getStartTS() (uint64, error) {
 
 func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executor {
 	var e Executor
-	if util.IsMemOrSysDB(v.DBName.L) {
-		switch v.DBName.L {
-		case util.MetricSchemaLowerName:
-			e = &MetricReaderExec{
-				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
-				table:        v.Table,
-				outputCols:   v.Columns,
-			}
+	switch v.DBName.L {
+	case util.MetricSchemaLowerName:
+		e = &MetricReaderExec{
+			baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
+			table:        v.Table,
+			outputCols:   v.Columns,
 		}
+	case util.InformationSchemaLowerName:
 		switch v.Table.Name.L {
 		case strings.ToLower(infoschema.TableClusterConfig):
 			e = &ClusterReaderExec{
