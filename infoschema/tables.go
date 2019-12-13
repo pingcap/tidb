@@ -102,7 +102,7 @@ const (
 	TableClusterConfig  = "CLUSTER_CONFIG"
 	tableClusterLoad    = "CLUSTER_LOAD"
 	tableTiFlashReplica = "TIFLASH_REPLICA"
-tableTiDBClusterHardware   = "CLUSTER_HARDWARE"
+    tableClusterHardware   = "CLUSTER_HARDWARE"
 tableTiDBClusterSystemInfo = "CLUSTER_SYSTEMINFO"
 )
 
