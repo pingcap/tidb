@@ -2207,8 +2207,7 @@ func (b *builtinCharSig) vecEvalString(input *chunk.Chunk, result *chunk.Column)
 		} else {
 			encoding, charsetName := charset.Lookup(charsetlabe)
 			if encoding == nil {
-				result.AppendNull()
-				continue
+				return errors.Errorf("unknown encoding: %s", bufstr.GetString(i))
 			}
 			oldStr := tempres
 			tempres, _, err := transform.String(encoding.NewDecoder(), tempres)
@@ -2217,8 +2216,7 @@ func (b *builtinCharSig) vecEvalString(input *chunk.Chunk, result *chunk.Column)
 					zap.String("string", oldStr),
 					zap.String("charset", charsetName),
 					zap.Error(err))
-				result.AppendNull()
-				continue
+				return err
 			}
 			result.AppendString(tempres)
 		}
