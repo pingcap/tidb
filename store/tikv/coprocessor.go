@@ -104,7 +104,6 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variable
 		memTracker:      req.MemTracker,
 		replicaReadSeed: c.replicaReadSeed,
 	}
-	logutil.Logger(ctx).Warn("send cop task", zap.Int("task-cnt", len(tasks)))
 	it.tasks = tasks
 	if it.concurrency > len(tasks) {
 		it.concurrency = len(tasks)
@@ -113,6 +112,11 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variable
 		// Make sure that there is at least one worker.
 		it.concurrency = 1
 	}
+	logutil.Logger(ctx).Warn(
+		"send cop task",
+		zap.Int("task-cnt", len(tasks)),
+		zap.Bool("kepe-order", it.req.KeepOrder),
+	)
 	if it.req.KeepOrder {
 		it.sendRate = newRateLimit(2 * it.concurrency)
 	} else {
@@ -560,18 +564,25 @@ func (it *copIterator) recvFromRespCh(ctx context.Context, respCh <-chan *copRes
 		if it.memTracker != nil && resp != nil {
 			it.memTracker.Consume(-int64(resp.MemSize()))
 		}
-		if resp != nil && resp.err != nil {
-			logutil.Logger(ctx).Error("FR-DEBUG: copIterator", zap.Error(resp.err))
+		if !ok {
+			logutil.Logger(ctx).Info(
+				"FR-DEBUG: copIterator::recvFromRespCh fetch is finished",
+				zap.Uint64("start-ts", it.req.StartTs),
+			)
 		}
 	case <-it.finishCh:
-		if len(respCh) > 0 {
-			logutil.Logger(ctx).Error("FR-DEBUG: copIterator", zap.Int("len(respCh)", len(respCh)))
-		}
+		logutil.Logger(ctx).Info(
+			"FR-DEBUG: copIterator::recvFromRespCh meets finishCh",
+			zap.Uint64("start-ts", it.req.StartTs),
+			zap.Int("pending-in-resp-ch", len(respCh)),
+		)
 		exit = true
 	case <-ctx.Done():
-		if len(respCh) > 0 {
-			logutil.Logger(ctx).Error("FR-DEBUG: copIterator", zap.Int("len(respCh)", len(respCh)))
-		}
+		logutil.Logger(ctx).Info(
+			"FR-DEBUG: copIterator::recvFromRespCh meets Done",
+			zap.Uint64("start-ts", it.req.StartTs),
+			zap.Int("pending-in-resp-ch", len(respCh)),
+		)
 		// We select the ctx.Done() in the thread of `Next` instead of in the worker to avoid the cost of `WithCancel`.
 		if atomic.CompareAndSwapUint32(&it.closed, 0, 1) {
 			close(it.finishCh)
