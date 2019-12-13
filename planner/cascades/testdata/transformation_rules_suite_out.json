@@ -140,6 +140,72 @@
         ]
       },
       {
+        "SQL": "select a, f from t where f > 1",
+        "Result": [
+          "Group#0 Schema:[test.t.a,test.t.f]",
+          "    Projection_3 input:[Group#1], test.t.a, test.t.f",
+          "Group#1 Schema:[test.t.a,test.t.f]",
+          "    TiKVSingleGather_5 input:[Group#2], table:t",
+          "    TiKVSingleGather_7 input:[Group#3], table:t, index:f",
+          "    TiKVSingleGather_9 input:[Group#4], table:t, index:f_g",
+          "Group#2 Schema:[test.t.a,test.t.f]",
+          "    Selection_10 input:[Group#5], gt(test.t.f, 1)",
+          "Group#5 Schema:[test.t.a,test.t.f]",
+          "    TableScan_4 table:t, pk col:test.t.a",
+          "Group#3 Schema:[test.t.a,test.t.f]",
+          "    IndexScan_13 table:t, index:f, cond:[gt(test.t.f, 1)]",
+          "Group#4 Schema:[test.t.a,test.t.f]",
+          "    IndexScan_14 table:t, index:f, g, cond:[gt(test.t.f, 1)]"
+        ]
+      },
+      {
+        "SQL": "select a, f from (select a, f, g from t where f = 1) t1 where g > 1",
+        "Result": [
+          "Group#0 Schema:[test.t.a,test.t.f]",
+          "    Projection_5 input:[Group#1], test.t.a, test.t.f",
+          "Group#1 Schema:[test.t.a,test.t.f,test.t.g]",
+          "    Projection_3 input:[Group#2], test.t.a, test.t.f, test.t.g",
+          "Group#2 Schema:[test.t.a,test.t.f,test.t.g]",
+          "    TiKVSingleGather_7 input:[Group#3], table:t",
+          "    TiKVSingleGather_9 input:[Group#4], table:t, index:f_g",
+          "Group#3 Schema:[test.t.a,test.t.f,test.t.g]",
+          "    Selection_14 input:[Group#5], gt(test.t.g, 1)",
+          "Group#5 Schema:[test.t.a,test.t.f,test.t.g]",
+          "    Selection_10 input:[Group#6], eq(test.t.f, 1)",
+          "Group#6 Schema:[test.t.a,test.t.f,test.t.g]",
+          "    TableScan_6 table:t, pk col:test.t.a",
+          "Group#4 Schema:[test.t.a,test.t.f,test.t.g]",
+          "    IndexScan_16 table:t, index:f, g, cond:[eq(test.t.f, 1) gt(test.t.g, 1)]"
+        ]
+      },
+      {
+        "SQL": "select a, f from t where g > 1 and f > 1",
+        "Result": [
+          "Group#0 Schema:[test.t.a,test.t.f]",
+          "    Projection_3 input:[Group#1], test.t.a, test.t.f",
+          "Group#1 Schema:[test.t.a,test.t.f,test.t.g]",
+          "    TiKVSingleGather_5 input:[Group#2], table:t",
+          "    TiKVSingleGather_7 input:[Group#3], table:t, index:f_g",
+          "Group#2 Schema:[test.t.a,test.t.f,test.t.g]",
+          "    Selection_8 input:[Group#4], gt(test.t.f, 1), gt(test.t.g, 1)",
+          "Group#4 Schema:[test.t.a,test.t.f,test.t.g]",
+          "    TableScan_4 table:t, pk col:test.t.a",
+          "Group#3 Schema:[test.t.a,test.t.f,test.t.g]",
+          "    Selection_11 input:[Group#5], gt(test.t.g, 1)",
+          "Group#5 Schema:[test.t.a,test.t.f,test.t.g]",
+          "    IndexScan_10 table:t, index:f, g, cond:[gt(test.t.f, 1)]"
+        ]
+      },
+      {
+        "SQL": "select t1.a, t1.b from t t1, t t2 where t1.a = t2.a and t1.a = 10 and t2.a = 5",
+        "Result": [
+          "Group#0 Schema:[test.t.a,test.t.b]",
+          "    Projection_5 input:[Group#1], test.t.a, test.t.b",
+          "Group#1 Schema:[test.t.a,test.t.b,test.t.a]",
+          "    TableDual_22 rowcount:0"
+        ]
+      },
+      {
         "SQL": "select a, b from ((select a, b from t) union all(select c as a, d as b from t)) as t1 where a > 1",
         "Result": [
           "Group#0 Schema:[Column#25,Column#26]",
@@ -166,9 +232,7 @@
           "Group#11 Schema:[test.t.c,test.t.d]",
           "    TableScan_12 table:t",
           "Group#10 Schema:[test.t.c,test.t.d]",
-          "    Selection_23 input:[Group#12], gt(test.t.c, 1)",
-          "Group#12 Schema:[test.t.c,test.t.d]",
-          "    IndexScan_14 table:t, index:c, d, e"
+          "    IndexScan_24 table:t, index:c, d, e, cond:[gt(test.t.c, 1)]"
         ]
       }
     ]
