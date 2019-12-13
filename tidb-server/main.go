@@ -150,8 +150,6 @@ var (
 )
 
 func main() {
-	fmt.Println("hello world")
-	return
 	flag.Parse()
 	if *version {
 		fmt.Println(printer.GetTiDBInfo())

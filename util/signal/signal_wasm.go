@@ -1,4 +1,5 @@
 package signal
 
-func SetupSignalHandler(shudownFunc func(bool)) {
+// SetupSignalHandler setup signal handler for TiDB Server
+func SetupSignalHandler(shutdownFunc func(bool)) {
 }
