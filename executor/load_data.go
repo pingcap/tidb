@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -233,7 +234,7 @@ func (e *LoadDataInfo) CommitWork(ctx context.Context) error {
 			e.ctx.StmtRollback()
 		}
 	}()
-	var tasks uint64 = 0
+	var tasks uint64
 	var end = false
 	for !end {
 		select {
@@ -243,11 +244,17 @@ func (e *LoadDataInfo) CommitWork(ctx context.Context) error {
 			break
 		case commitTask, ok := <-e.commitTaskQueue:
 			if ok {
+				start := time.Now()
 				err = e.CommitOneTask(ctx, commitTask)
 				if err != nil {
 					break
 				}
 				tasks++
+				logutil.Logger(ctx).Info("commit one task success",
+					zap.Duration("commit time usage", time.Since(start)),
+					zap.Uint64("keys processed", commitTask.cnt),
+					zap.Uint64("tasks processed", tasks),
+					zap.Int("tasks in queue", len(e.commitTaskQueue)))
 			} else {
 				end = true
 				break
@@ -485,6 +492,7 @@ func (e *LoadDataInfo) addRecordLD(ctx context.Context, row []types.Datum) (int6
 	h, err := e.addRecord(ctx, row)
 	if err != nil {
 		e.handleWarning(err)
+		return 0, err
 	}
 	return h, nil
 }

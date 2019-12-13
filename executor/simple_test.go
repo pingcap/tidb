@@ -59,6 +59,54 @@ func (s *testSuite3) TestDo(c *C) {
 	tk.MustQuery("select @a").Check(testkit.Rows("1"))
 }
 
+func (s *testSuite3) TestCreateRole(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create user testCreateRole;")
+	tk.MustExec("grant CREATE USER on *.* to testCreateRole;")
+	se, err := session.CreateSession4Test(s.store)
+	c.Check(err, IsNil)
+	defer se.Close()
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "testCreateRole", Hostname: "localhost"}, nil, nil), IsTrue)
+
+	ctx := context.Background()
+	_, err = se.Execute(ctx, `create role test_create_role;`)
+	c.Assert(err, IsNil)
+	tk.MustExec("revoke CREATE USER on *.* from testCreateRole;")
+	tk.MustExec("drop role test_create_role;")
+	tk.MustExec("grant CREATE ROLE on *.* to testCreateRole;")
+	_, err = se.Execute(ctx, `create role test_create_role;`)
+	c.Assert(err, IsNil)
+	tk.MustExec("drop role test_create_role;")
+	_, err = se.Execute(ctx, `create user test_create_role;`)
+	c.Assert(err, NotNil)
+	tk.MustExec("drop user testCreateRole;")
+}
+
+func (s *testSuite3) TestDropRole(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create user testCreateRole;")
+	tk.MustExec("create user test_create_role;")
+	tk.MustExec("grant CREATE USER on *.* to testCreateRole;")
+	se, err := session.CreateSession4Test(s.store)
+	c.Check(err, IsNil)
+	defer se.Close()
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "testCreateRole", Hostname: "localhost"}, nil, nil), IsTrue)
+
+	ctx := context.Background()
+	_, err = se.Execute(ctx, `drop role test_create_role;`)
+	c.Assert(err, IsNil)
+	tk.MustExec("revoke CREATE USER on *.* from testCreateRole;")
+	tk.MustExec("create role test_create_role;")
+	tk.MustExec("grant DROP ROLE on *.* to testCreateRole;")
+	_, err = se.Execute(ctx, `drop role test_create_role;`)
+	c.Assert(err, IsNil)
+	tk.MustExec("create user test_create_role;")
+	_, err = se.Execute(ctx, `drop user test_create_role;`)
+	c.Assert(err, NotNil)
+	tk.MustExec("drop user testCreateRole;")
+	tk.MustExec("drop user test_create_role;")
+}
+
 func (s *testSuite3) TestTransaction(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("begin")

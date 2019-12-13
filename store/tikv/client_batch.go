@@ -400,6 +400,22 @@ func (b *batchCommandsEntry) isCanceled() bool {
 
 const idleTimeout = 3 * time.Minute
 
+func resetEntries(entries []*batchCommandsEntry) []*batchCommandsEntry {
+	for i := 0; i < len(entries); i++ {
+		entries[i] = nil
+	}
+	entries = entries[:0]
+	return entries
+}
+
+func resetRequests(requests []*tikvpb.BatchCommandsRequest_Request) []*tikvpb.BatchCommandsRequest_Request {
+	for i := 0; i < len(requests); i++ {
+		requests[i] = nil
+	}
+	requests = requests[:0]
+	return requests
+}
+
 func (a *batchConn) batchSendLoop(cfg config.TiKVClient) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -418,8 +434,12 @@ func (a *batchConn) batchSendLoop(cfg config.TiKVClient) {
 
 	var bestBatchWaitSize = cfg.BatchWaitSize
 	for {
-		entries = entries[:0]
-		requests = requests[:0]
+		// NOTE: We can't simply set entries = entries[:0] here.
+		// The data in the cap part of the slice would reference the prewrite keys whose
+		// underlying memory is borrowed from memdb. The reference cause GC can't release
+		// the memdb, leading to serious memory leak problems in the large transaction case.
+		entries = resetEntries(entries)
+		requests = resetRequests(requests)
 		requestIDs = requestIDs[:0]
 
 		a.pendingRequests.Set(float64(len(a.batchCommandsCh)))
@@ -440,9 +460,9 @@ func (a *batchConn) batchSendLoop(cfg config.TiKVClient) {
 			return
 		} else if uint(length) < bestBatchWaitSize && bestBatchWaitSize > 1 {
 			// Waits too long to collect requests, reduce the target batch size.
-			bestBatchWaitSize -= 1
+			bestBatchWaitSize--
 		} else if uint(length) > bestBatchWaitSize+4 && bestBatchWaitSize < cfg.MaxBatchSize {
-			bestBatchWaitSize += 1
+			bestBatchWaitSize++
 		}
 
 		entries, requests = removeCanceledRequests(entries, requests)

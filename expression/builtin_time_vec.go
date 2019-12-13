@@ -1554,11 +1554,48 @@ func (b *builtinWeekWithoutModeSig) vecEvalInt(input *chunk.Chunk, result *chunk
 }
 
 func (b *builtinUnixTimestampDecSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinUnixTimestampDecSig) vecEvalDecimal(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	result.ResizeDecimal(n, false)
+	ts := result.Decimals()
+	timeBuf, err := b.bufAllocator.get(types.ETTimestamp, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(timeBuf)
+	if err := b.args[0].VecEvalTime(b.ctx, input, timeBuf); err != nil {
+		for i := 0; i < n; i++ {
+			temp, isNull, err := b.evalDecimal(input.GetRow(i))
+			if err != nil {
+				return err
+			}
+			ts[i] = *temp
+			if isNull {
+				result.SetNull(i, true)
+			}
+		}
+	} else {
+		result.MergeNulls(timeBuf)
+		for i := 0; i < n; i++ {
+			if result.IsNull(i) {
+				continue
+			}
+			t, err := timeBuf.GetTime(i).Time.GoTime(getTimeZone(b.ctx))
+			if err != nil {
+				ts[i] = *new(types.MyDecimal)
+				continue
+			}
+			tmp, err := goTimeToMysqlUnixTimestamp(t, b.tp.Decimal)
+			if err != nil {
+				return err
+			}
+			ts[i] = *tmp
+		}
+	}
+	return nil
 }
 
 func (b *builtinPeriodAddSig) vectorized() bool {
@@ -1748,7 +1785,17 @@ func (b *builtinHourSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) er
 	}
 	defer b.bufAllocator.put(buf)
 	if err = b.args[0].VecEvalDuration(b.ctx, input, buf); err != nil {
-		return err
+		result.ResizeInt64(n, false)
+		i64s := result.Int64s()
+		for i := 0; i < n; i++ {
+			res, isNull, err := b.evalInt(input.GetRow(i))
+			if err != nil {
+				return err
+			}
+			result.SetNull(i, isNull)
+			i64s[i] = res
+		}
+		return nil
 	}
 
 	result.ResizeInt64(n, false)
@@ -2292,11 +2339,17 @@ func (b *builtinDateLiteralSig) vecEvalTime(input *chunk.Chunk, result *chunk.Co
 }
 
 func (b *builtinTimeLiteralSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinTimeLiteralSig) vecEvalDuration(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	result.ResizeGoDuration(n, false)
+	d64s := result.GoDurations()
+	for i := 0; i < n; i++ {
+		d64s[i] = b.duration.Duration
+	}
+	return nil
 }
 
 func (b *builtinSubTimeStringNullSig) vectorized() bool {

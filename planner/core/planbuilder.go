@@ -394,6 +394,8 @@ func (b *PlanBuilder) Build(ctx context.Context, node ast.Node) (Plan, error) {
 		return b.buildLoadData(ctx, x)
 	case *ast.LoadStatsStmt:
 		return b.buildLoadStats(x), nil
+	case *ast.IndexAdviseStmt:
+		return b.buildIndexAdvise(x), nil
 	case *ast.PrepareStmt:
 		return b.buildPrepare(x), nil
 	case *ast.SelectStmt:
@@ -2173,6 +2175,17 @@ func (b *PlanBuilder) buildLoadStats(ld *ast.LoadStatsStmt) Plan {
 	return p
 }
 
+func (b *PlanBuilder) buildIndexAdvise(node *ast.IndexAdviseStmt) Plan {
+	p := &IndexAdvise{
+		IsLocal:     node.IsLocal,
+		Path:        node.Path,
+		MaxMinutes:  node.MaxMinutes,
+		MaxIndexNum: node.MaxIndexNum,
+		LinesInfo:   node.LinesInfo,
+	}
+	return p
+}
+
 func (b *PlanBuilder) buildSplitRegion(node *ast.SplitRegionStmt) (Plan, error) {
 	if len(node.IndexName.L) != 0 {
 		return b.buildSplitIndexRegion(node)
@@ -2822,6 +2835,9 @@ func buildShowSchema(s *ast.ShowStmt, isView bool) (schema *expression.Schema, o
 	case ast.ShowAnalyzeStatus:
 		names = []string{"Table_schema", "Table_name", "Partition_name", "Job_info", "Processed_rows", "Start_time", "State"}
 		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLonglong, mysql.TypeDatetime, mysql.TypeVarchar}
+	case ast.ShowBuiltins:
+		names = []string{"Supported_builtin_functions"}
+		ftypes = []byte{mysql.TypeVarchar}
 	}
 
 	schema = expression.NewSchema(make([]*expression.Column, 0, len(names))...)
