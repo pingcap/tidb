@@ -424,6 +424,9 @@ type copIteratorTaskSender struct {
 	finishCh <-chan struct{}
 	respChan chan<- *copResponse
 	sendRate *rateLimit
+
+	ctx context.Context
+	req *kv.Request
 }
 
 type copResponse struct {
@@ -526,6 +529,9 @@ func (it *copIterator) open(ctx context.Context) {
 		tasks:    it.tasks,
 		finishCh: it.finishCh,
 		sendRate: it.sendRate,
+
+		ctx: ctx,
+		req: it.req,
 	}
 	taskSender.respChan = it.respChan
 	go taskSender.run()
@@ -554,6 +560,10 @@ func (sender *copIteratorTaskSender) run() {
 	// Wait for worker goroutines to exit.
 	sender.wg.Wait()
 	if sender.respChan != nil {
+		logutil.Logger(sender.ctx).Error(
+			"FR-DEBUG: copIteratorTaskSender closes respChan",
+			zap.Uint64("start-ts", sender.req.StartTs),
+		)
 		close(sender.respChan)
 	}
 }
@@ -585,6 +595,11 @@ func (it *copIterator) recvFromRespCh(ctx context.Context, respCh <-chan *copRes
 		)
 		// We select the ctx.Done() in the thread of `Next` instead of in the worker to avoid the cost of `WithCancel`.
 		if atomic.CompareAndSwapUint32(&it.closed, 0, 1) {
+			logutil.Logger(ctx).Info(
+				"FR-DEBUG: copIterator::recvFromRespCh closes finishCh",
+				zap.Uint64("start-ts", it.req.StartTs),
+				zap.Int("pending-in-resp-ch", len(respCh)),
+			)
 			close(it.finishCh)
 		}
 		exit = true
