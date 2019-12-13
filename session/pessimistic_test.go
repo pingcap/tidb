@@ -359,23 +359,24 @@ func (s *testPessimisticSuite) TestLockUnchangedRowKey(c *C) {
 	tk.MustExec("begin pessimistic")
 	tk.MustExec("update unchanged set c = 1 where id < 2")
 
+	tk2.Se.GetSessionVars().LockWaitTimeout = 1
 	tk2.MustExec("begin pessimistic")
-	err := tk2.ExecToErr("select * from unchanged where id = 1 for update nowait")
+	err := tk2.ExecToErr("select * from unchanged where id = 1 for update")
 	c.Assert(err, NotNil)
 
 	tk.MustExec("rollback")
 
-	tk2.MustQuery("select * from unchanged where id = 1 for update nowait")
+	tk2.MustQuery("select * from unchanged where id = 1 for update")
 
 	tk.MustExec("begin pessimistic")
 	tk.MustExec("insert unchanged values (2, 2) on duplicate key update c = values(c)")
 
-	err = tk2.ExecToErr("select * from unchanged where id = 2 for update nowait")
+	err = tk2.ExecToErr("select * from unchanged where id = 2 for update")
 	c.Assert(err, NotNil)
 
 	tk.MustExec("commit")
 
-	tk2.MustQuery("select * from unchanged where id = 1 for update nowait")
+	tk2.MustQuery("select * from unchanged where id = 1 for update")
 	tk2.MustExec("rollback")
 }
 
