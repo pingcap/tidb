@@ -2260,6 +2260,8 @@ func (b *builtinUnixTimestampIntSig) vecEvalInt(input *chunk.Chunk, result *chun
 			if err != nil {
 				return err
 			}
+			// Return 0 for invalid date time.
+			i64s[i] = 0
 			if isNull {
 				result.SetNull(i, true)
 			}
