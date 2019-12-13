@@ -2041,6 +2041,10 @@ func (b *builtinMakeTimeSig) vecEvalDuration(input *chunk.Chunk, result *chunk.C
 		if result.IsNull(i) {
 			continue
 		}
+		if minutes[i] < 0 || minutes[i] >= 60 || seconds[i] < 0 || seconds[i] >= 60 {
+			result.SetNull(i, true)
+			continue
+		}
 		overflow := false
 		if hours[i] < 0 && mysql.HasUnsignedFlag(b.args[0].GetType().Flag) {
 			hours[i] = 838
