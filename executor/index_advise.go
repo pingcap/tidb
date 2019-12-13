@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 )
 
@@ -35,15 +36,18 @@ type IndexAdviseExec struct {
 // Next implements the Executor Next interface.
 func (e *IndexAdviseExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	if !e.IsLocal {
-		return errors.New("Index Advise: don't support load data without local field")
+		return errors.New("Index Advise: don't support load file without local field")
 	}
 	if e.indexAdviseInfo.Path == "" {
 		return errors.New("Index Advise: infile path is empty")
 	}
+	if len(e.indexAdviseInfo.LinesInfo.Terminated) == 0 {
+		return errors.New("Index Advise: don't support advise index for SQL terminated by nil")
+	}
 
 	if val := e.ctx.Value(IndexAdviseVarKey); val != nil {
 		e.ctx.SetValue(IndexAdviseVarKey, nil)
-		return errors.New("Index Advise: there is already an IndexAdviseExec running in session")
+		return errors.New("Index Advise: previous index advise option isn't closed normally")
 	}
 	e.ctx.SetValue(IndexAdviseVarKey, e.indexAdviseInfo)
 	return nil
@@ -83,22 +87,25 @@ func (e *IndexAdviseInfo) getStmtNodes(data []byte) error {
 	}
 	sqls = sqls[:j]
 
+	sv := e.Ctx.GetSessionVars()
 	e.StmtNodes = make([][]ast.StmtNode, len(sqls))
+	sqlParser := parser.New()
 	for i, sql := range sqls {
-		sqlParser := parser.New()
-		stmtNodes, _, err := sqlParser.Parse(sql, "", "")
+		stmtNodes, warns, err := sqlParser.Parse(sql, "", "")
 		if err != nil {
 			return err
 		}
-		e.StmtNodes[i] = stmtNodes
+		for _, warn := range warns {
+			sv.StmtCtx.AppendWarning(util.SyntaxWarn(warn))
+		}
+		curStmtNodes := make([]ast.StmtNode, len(stmtNodes))
+		copy(curStmtNodes, stmtNodes)
+		e.StmtNodes[i] = curStmtNodes
 	}
 	return nil
 }
 
 func (e *IndexAdviseInfo) prepareInfo(data []byte) error {
-	if err := e.getStmtNodes(data); err != nil {
-		return err
-	}
 	if e.MaxMinutes == 0 {
 		return errors.New("Index Advise: the maximum execution time limit should be greater than 0")
 	}
@@ -107,7 +114,7 @@ func (e *IndexAdviseInfo) prepareInfo(data []byte) error {
 			return errors.New("Index Advise: the maximum number of indexes should be greater than 0")
 		}
 	}
-	return nil
+	return e.getStmtNodes(data)
 }
 
 // GetIndexAdvice gets the index advice by workload file.
