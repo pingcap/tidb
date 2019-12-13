@@ -99,11 +99,11 @@ const (
 	tableTiDBServersInfo                    = "TIDB_SERVERS_INFO"
 	tableClusterInfo                        = "CLUSTER_INFO"
 	// TableClusterConfig is the string constant of cluster configuration memory table
-	TableClusterConfig  = "CLUSTER_CONFIG"
-	tableClusterLoad    = "CLUSTER_LOAD"
-	tableTiFlashReplica = "TIFLASH_REPLICA"
-    tableClusterHardware   = "CLUSTER_HARDWARE"
-tableTiDBClusterSystemInfo = "CLUSTER_SYSTEMINFO"
+	TableClusterConfig     = "CLUSTER_CONFIG"
+	tableClusterLoad       = "CLUSTER_LOAD"
+	tableTiFlashReplica    = "TIFLASH_REPLICA"
+	tableClusterHardware   = "CLUSTER_HARDWARE"
+	tableClusterSystemInfo = "CLUSTER_SYSTEMINFO"
 )
 
 var tableIDMap = map[string]int64{
@@ -154,8 +154,8 @@ var tableIDMap = map[string]int64{
 	tableTiFlashReplica:                     autoid.InformationSchemaDBID + 45,
 	clusterTableSlowLog:                     autoid.InformationSchemaDBID + 46,
 	clusterTableProcesslist:                 autoid.InformationSchemaDBID + 47,
-	tableTiDBClusterHardware:                autoid.InformationSchemaDBID + 48,
-	tableTiDBClusterSystemInfo:              autoid.InformationSchemaDBID + 49,
+	tableClusterHardware:                    autoid.InformationSchemaDBID + 48,
+	tableClusterSystemInfo:                  autoid.InformationSchemaDBID + 49,
 }
 
 type columnInfo struct {
@@ -2164,6 +2164,14 @@ func dataForClusterLoadInfo(ctx sessionctx.Context) ([][]types.Datum, error) {
 	return dataForClusterInfo(ctx, diagnosticspb.ServerInfoType_LoadInfo)
 }
 
+func dataForClusterHardwareInfo(ctx sessionctx.Context) ([][]types.Datum, error) {
+	return dataForClusterInfo(ctx, diagnosticspb.ServerInfoType_HardwareInfo)
+}
+
+func dataForClusterSystemInfo(ctx sessionctx.Context) ([][]types.Datum, error) {
+	return dataForClusterInfo(ctx, diagnosticspb.ServerInfoType_SystemInfo)
+}
+
 func dataForClusterInfo(ctx sessionctx.Context, infoTp diagnosticspb.ServerInfoType) ([][]types.Datum, error) {
 	serversInfo, err := GetClusterServerInfo(ctx)
 	if err != nil {
@@ -2193,14 +2201,6 @@ func dataForClusterInfo(ctx sessionctx.Context, infoTp diagnosticspb.ServerInfoT
 		rows = append(rows, partRows...)
 	}
 	return rows, nil
-}
-
-func dataForClusterHardwareInfo(ctx sessionctx.Context) ([][]types.Datum, error) {
-	return dataForClusterInfo(ctx, diagnosticspb.ServerInfoType_HardwareInfo)
-}
-
-func dataForClusterSystemInfo(ctx sessionctx.Context) ([][]types.Datum, error) {
-	return dataForClusterInfo(ctx, diagnosticspb.ServerInfoType_SystemInfo)
 }
 
 func serverInfoItemToRows(items []*diagnosticspb.ServerInfoItem, tp, addr string) [][]types.Datum {
@@ -2320,8 +2320,8 @@ var tableNameToColumns = map[string][]columnInfo{
 	TableClusterConfig:                      tableClusterConfigCols,
 	tableClusterLoad:                        tableClusterLoadCols,
 	tableTiFlashReplica:                     tableTableTiFlashReplicaCols,
-	tableTiDBClusterHardware:                tableTiDBClusterHardwareCols,
-	tableTiDBClusterSystemInfo:              tableTiDBClusterSystemInfoCols,
+	tableClusterHardware:                    tableTiDBClusterHardwareCols,
+	tableClusterSystemInfo:                  tableTiDBClusterSystemInfoCols,
 }
 
 func createInfoSchemaTable(_ autoid.Allocator, meta *model.TableInfo) (table.Table, error) {
@@ -2430,9 +2430,9 @@ func (it *infoschemaTable) getRows(ctx sessionctx.Context, cols []*table.Column)
 		fullRows, err = dataForTiDBClusterInfo(ctx)
 	case tableClusterLoad:
 		fullRows, err = dataForClusterLoadInfo(ctx)
-	case tableTiDBClusterHardware:
+	case tableClusterHardware:
 		fullRows, err = dataForClusterHardwareInfo(ctx)
-	case tableTiDBClusterSystemInfo:
+	case tableClusterSystemInfo:
 		fullRows, err = dataForClusterSystemInfo(ctx)
 	case tableTiFlashReplica:
 		fullRows = dataForTableTiFlashReplica(dbs)
