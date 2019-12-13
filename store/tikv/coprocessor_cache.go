@@ -110,11 +110,13 @@ func (c *coprCache) CheckAdmission(dataSize int, processTime time.Duration) bool
 	return true
 }
 
+const coprCacheValueSize = int64(unsafe.Sizeof(coprCacheValue{}))
+
 // Set inserts an item to the cache.
 // It is recommended to call `CheckAdmission` before inserting the item to the cache.
 func (c *coprCache) Set(key []byte, value *coprCacheValue) bool {
 	if c == nil {
 		return false
 	}
-	return c.cache.Set(key, value, int64(len(value.Data))+int64(unsafe.Sizeof(coprCacheValue{})))
+	return c.cache.Set(key, value, int64(len(value.Data))+coprCacheValueSize)
 }
