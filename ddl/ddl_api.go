@@ -2639,7 +2639,7 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 		}
 	}
 	// Check the column with foreign key.
-	if fkInfo := isColumnWithForeignKey(originalColName.L, t.Meta().ForeignKeys); fkInfo != nil {
+	if fkInfo := getColumnForeignKeyInfo(originalColName.L, t.Meta().ForeignKeys); fkInfo != nil {
 		return nil, errReferencedForeignKey.GenWithStackByArgs(originalColName, fkInfo.Name)
 	}
 
@@ -3655,7 +3655,7 @@ func isDroppableColumn(tblInfo *model.TableInfo, colName model.CIStr) error {
 		return errCantDropColWithIndex.GenWithStack("can't drop column %s with index covered now", colName)
 	}
 	// Check the column with foreign key.
-	if fkInfo := isColumnWithForeignKey(colName.L, tblInfo.ForeignKeys); fkInfo != nil {
+	if fkInfo := getColumnForeignKeyInfo(colName.L, tblInfo.ForeignKeys); fkInfo != nil {
 		return errFkColumnCannotDrop.GenWithStackByArgs(colName, fkInfo.Name)
 	}
 	return nil
