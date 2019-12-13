@@ -18,7 +18,6 @@ import (
 	"testing"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/util/testleak"
 )
 
 func TestT(t *testing.T) {
@@ -37,7 +36,6 @@ func testValidCharset(c *C, charset string, collation string, expect bool) {
 }
 
 func (s *testCharsetSuite) TestValidCharset(c *C) {
-	defer testleak.AfterTest(c)()
 	tests := []struct {
 		cs   string
 		co   string
@@ -63,7 +61,6 @@ func (s *testCharsetSuite) TestValidCharset(c *C) {
 }
 
 func (s *testCharsetSuite) TestGetSupportedCharsets(c *C) {
-	defer testleak.AfterTest(c)()
 	charset := &Charset{"test", "test_bin", nil, "Test", 5}
 	charsetInfos = append(charsetInfos, charset)
 	descs := GetSupportedCharsets()
@@ -80,7 +77,6 @@ func testGetDefaultCollation(c *C, charset string, expectCollation string, succ 
 }
 
 func (s *testCharsetSuite) TestGetDefaultCollation(c *C) {
-	defer testleak.AfterTest(c)()
 	tests := []struct {
 		cs   string
 		co   string
@@ -131,7 +127,6 @@ func (s *testCharsetSuite) TestSupportedCollations(c *C) {
 }
 
 func (s *testCharsetSuite) TestGetCharsetDesc(c *C) {
-	defer testleak.AfterTest(c)()
 	tests := []struct {
 		cs     string
 		result string
@@ -157,7 +152,6 @@ func (s *testCharsetSuite) TestGetCharsetDesc(c *C) {
 }
 
 func (s *testCharsetSuite) TestGetCollationByName(c *C) {
-	defer testleak.AfterTest(c)()
 
 	for _, collation := range collations {
 		coll, err := GetCollationByName(collation.Name)
