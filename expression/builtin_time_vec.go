@@ -2253,15 +2253,19 @@ func (b *builtinUnixTimestampIntSig) vecEvalInt(input *chunk.Chunk, result *chun
 	result.ResizeInt64(n, false)
 	i64s := result.Int64s()
 
-	if err := b.args[0].VecEvalTime(b.ctx, input, buf); err != nil && terror.ErrorEqual(types.ErrWrongValue.GenWithStackByArgs(types.TimeStr, buf), err) {
+	if err := b.args[0].VecEvalTime(b.ctx, input, buf); err != nil {
 		var isNull bool
+		flag := terror.ErrorEqual(types.ErrWrongValue.GenWithStackByArgs(types.TimeStr, buf), err)
 		for i := 0; i < n; i++ {
 			i64s[i], isNull, err = b.evalInt(input.GetRow(i))
 			if err != nil {
 				return err
 			}
-			// Return 0 for invalid date time.
-			i64s[i] = 0
+			if flag {
+				// Return 0 for invalid date time.
+				i64s[i] = 0
+				continue
+			}
 			if isNull {
 				result.SetNull(i, true)
 			}
