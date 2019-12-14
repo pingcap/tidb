@@ -417,7 +417,6 @@ func (pc PbConverter) canFuncBePushed(sf *ScalarFunction) bool {
 		ast.DateFormat:
 		return isPushdownEnabled(sf.FuncName.L)
 	case ast.Round:
-		// Disable time related cast function temporarily
 		switch sf.Function.PbCode() {
 		case
 			tipb.ScalarFuncSig_RoundReal,
