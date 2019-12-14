@@ -175,13 +175,7 @@ func (helper extractHelper) extractCol(
 ) {
 	remained = make([]expression.Expression, 0, len(predicates))
 	result = set.NewStringSet()
-	extractCols := make(map[int64]*types.FieldName)
-	for i, name := range names {
-		if name.ColName.L == extractColName {
-			extractCols[schema.Columns[i].UniqueID] = name
-		}
-	}
-
+	extractCols := helper.findColumn(schema, names, extractColName)
 	if len(extractCols) == 0 {
 		return predicates, false, result
 	}
@@ -230,13 +224,7 @@ func (helper extractHelper) extractLikePatternCol(
 	patterns []string,
 ) {
 	remained = make([]expression.Expression, 0, len(predicates))
-	extractCols := make(map[int64]*types.FieldName)
-	for i, name := range names {
-		if name.ColName.L == extractColName {
-			extractCols[schema.Columns[i].UniqueID] = name
-		}
-	}
-
+	extractCols := helper.findColumn(schema, names, extractColName)
 	if len(extractCols) == 0 {
 		return predicates, nil
 	}
@@ -255,7 +243,7 @@ func (helper extractHelper) extractLikePatternCol(
 		var datums []types.Datum
 
 		switch fn.FuncName.L {
-		case ast.GT, ast.GE, ast.LT, ast.LE, ast.EQ, ast.Like, ast.Regexp:
+		case ast.EQ, ast.Like, ast.Regexp:
 			colName, datums = helper.extractColBinaryOpConsExpr(extractCols, fn)
 		}
 		if colName == extractColName {
@@ -276,6 +264,16 @@ func (helper extractHelper) extractLikePatternCol(
 	return
 }
 
+func (helper extractHelper) findColumn(schema *expression.Schema, names []*types.FieldName, colName string) map[int64]*types.FieldName {
+	extractCols := make(map[int64]*types.FieldName)
+	for i, name := range names {
+		if name.ColName.L == colName {
+			extractCols[schema.Columns[i].UniqueID] = name
+		}
+	}
+	return extractCols
+}
+
 // extracts the time range column, e.g:
 // SELECT * FROM t WHERE time='2019-10-10 10:10:10'
 // SELECT * FROM t WHERE time>'2019-10-10 10:10:10' AND time<'2019-10-11 10:10:10'
@@ -292,13 +290,7 @@ func (helper extractHelper) extractTimeRange(
 	endTime int64,
 ) {
 	remained = make([]expression.Expression, 0, len(predicates))
-	extractCols := make(map[int64]*types.FieldName)
-	for i, name := range names {
-		if name.ColName.L == extractColName {
-			extractCols[schema.Columns[i].UniqueID] = name
-		}
-	}
-
+	extractCols := helper.findColumn(schema, names, extractColName)
 	if len(extractCols) == 0 {
 		return predicates, startTime, endTime
 	}
@@ -313,7 +305,7 @@ func (helper extractHelper) extractTimeRange(
 		var colName string
 		var datums []types.Datum
 		switch fn.FuncName.L {
-		case ast.GT, ast.GE, ast.LT, ast.LE, ast.EQ, ast.Like, ast.Regexp:
+		case ast.GT, ast.GE, ast.LT, ast.LE, ast.EQ:
 			colName, datums = helper.extractColBinaryOpConsExpr(extractCols, fn)
 		}
 
