@@ -19,6 +19,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cznic/mathutil"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
@@ -328,18 +329,31 @@ func (helper extractHelper) extractTimeRange(
 				mysqlTime.Microsecond()*1000,
 				time.Local,
 			).UnixNano() / int64(time.Millisecond)
+
 			switch fn.FuncName.L {
 			case ast.EQ:
-				startTime = timestamp
-				endTime = timestamp
+				startTime = mathutil.MaxInt64(startTime, timestamp)
+				if endTime == 0 {
+					endTime = timestamp
+				} else {
+					endTime = mathutil.MinInt64(endTime, timestamp)
+				}
 			case ast.GT:
-				startTime = timestamp + 1
+				startTime = mathutil.MaxInt64(startTime, timestamp+1)
 			case ast.GE:
-				startTime = timestamp
+				startTime = mathutil.MaxInt64(startTime, timestamp)
 			case ast.LT:
-				endTime = timestamp - 1
+				if endTime == 0 {
+					endTime = timestamp - 1
+				} else {
+					endTime = mathutil.MinInt64(endTime, timestamp-1)
+				}
 			case ast.LE:
-				endTime = timestamp
+				if endTime == 0 {
+					endTime = timestamp
+				} else {
+					endTime = mathutil.MinInt64(endTime, timestamp)
+				}
 			default:
 				remained = append(remained, expr)
 			}

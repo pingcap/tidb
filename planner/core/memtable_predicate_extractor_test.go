@@ -441,6 +441,35 @@ func (s *extractorSuite) TestClusterLogTableExtractor(c *C) {
 			endTime:   math.MaxInt64,
 		},
 		{
+			sql:       "select * from information_schema.cluster_log where time>='2019-10-10 10:10:10' and  time>='2019-10-11 10:10:10' and  time>='2019-10-12 10:10:10'",
+			nodeTypes: set.NewStringSet(),
+			addresses: set.NewStringSet(),
+			startTime: timestamp(c, "2019-10-12 10:10:10"),
+			endTime:   math.MaxInt64,
+		},
+		{
+			sql:       "select * from information_schema.cluster_log where time>='2019-10-10 10:10:10' and  time>='2019-10-11 10:10:10' and  time>='2019-10-12 10:10:10' and time='2019-10-13 10:10:10'",
+			nodeTypes: set.NewStringSet(),
+			addresses: set.NewStringSet(),
+			startTime: timestamp(c, "2019-10-13 10:10:10"),
+			endTime:   timestamp(c, "2019-10-13 10:10:10"),
+		},
+		{
+			sql:         "select * from information_schema.cluster_log where time<='2019-10-10 10:10:10' and time='2019-10-13 10:10:10'",
+			nodeTypes:   set.NewStringSet(),
+			addresses:   set.NewStringSet(),
+			startTime:   timestamp(c, "2019-10-13 10:10:10"),
+			endTime:     timestamp(c, "2019-10-10 10:10:10"),
+			skipRequest: true,
+		},
+		{
+			sql:       "select * from information_schema.cluster_log where time='2019-10-10 10:10:10' and time<='2019-10-13 10:10:10'",
+			nodeTypes: set.NewStringSet(),
+			addresses: set.NewStringSet(),
+			startTime: timestamp(c, "2019-10-10 10:10:10"),
+			endTime:   timestamp(c, "2019-10-10 10:10:10"),
+		},
+		{
 			sql:       "select * from information_schema.cluster_log where time>='2019-10-10 10:10:10' and message like '%a%'",
 			nodeTypes: set.NewStringSet(),
 			addresses: set.NewStringSet(),
@@ -505,14 +534,14 @@ func (s *extractorSuite) TestClusterLogTableExtractor(c *C) {
 		c.Assert(clusterConfigExtractor.Addresses, DeepEquals, ca.addresses, Commentf("SQL: %v", ca.sql))
 		c.Assert(clusterConfigExtractor.SkipRequest, DeepEquals, ca.skipRequest, Commentf("SQL: %v", ca.sql))
 		if ca.startTime > 0 {
-			c.Assert(clusterConfigExtractor.StartTime, Equals, ca.startTime)
+			c.Assert(clusterConfigExtractor.StartTime, Equals, ca.startTime, Commentf("SQL: %v", ca.sql))
 		}
 		if ca.endTime > 0 {
-			c.Assert(clusterConfigExtractor.EndTime, Equals, ca.endTime)
+			c.Assert(clusterConfigExtractor.EndTime, Equals, ca.endTime, Commentf("SQL: %v", ca.sql))
 		}
-		c.Assert(clusterConfigExtractor.Patterns, DeepEquals, ca.patterns)
+		c.Assert(clusterConfigExtractor.Patterns, DeepEquals, ca.patterns, Commentf("SQL: %v", ca.sql))
 		if len(ca.level) > 0 {
-			c.Assert(clusterConfigExtractor.LogLevels, DeepEquals, ca.level)
+			c.Assert(clusterConfigExtractor.LogLevels, DeepEquals, ca.level, Commentf("SQL: %v", ca.sql))
 		}
 	}
 }
