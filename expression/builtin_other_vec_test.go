@@ -15,13 +15,10 @@ package expression
 
 import (
 	"testing"
-	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/json"
 )
 
 func dateTimeFromString(s string) types.Time {
@@ -40,94 +37,7 @@ var vecBuiltinOtherCases = map[string][]vecExprBenchCase{
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString}},
 	},
 	ast.BitCount: {},
-	ast.In: {
-		{
-			retEvalType: types.ETInt,
-			childrenTypes: []types.EvalType{
-				types.ETInt,
-				types.ETInt, types.ETInt,
-			},
-			constants: []*Constant{
-				nil,
-				{Value: types.NewDatum(1), RetType: types.NewFieldType(mysql.TypeInt24)},
-				{Value: types.NewDatum(2), RetType: types.NewFieldType(mysql.TypeInt24)},
-			},
-			geners: []dataGenerator{&rangeInt64Gener{1, 3}},
-		},
-		{
-			retEvalType: types.ETInt,
-			childrenTypes: []types.EvalType{
-				types.ETString,
-				types.ETString, types.ETString,
-			},
-			constants: []*Constant{
-				nil,
-				{Value: types.NewStringDatum("aaaa"), RetType: types.NewFieldType(mysql.TypeString)},
-				{Value: types.NewStringDatum("bbbb"), RetType: types.NewFieldType(mysql.TypeString)},
-			},
-			geners: []dataGenerator{&constStrGener{"aaaa"}},
-		},
-		{
-			retEvalType: types.ETInt,
-			childrenTypes: []types.EvalType{
-				types.ETDatetime,
-				types.ETDatetime, types.ETDatetime,
-			},
-			constants: []*Constant{
-				nil,
-				{Value: types.NewTimeDatum(dateTimeFromString("2019-01-01")), RetType: types.NewFieldType(mysql.TypeDatetime)},
-				{Value: types.NewTimeDatum(dateTimeFromString("2019-01-01")), RetType: types.NewFieldType(mysql.TypeDatetime)},
-			},
-		},
-		{
-			retEvalType: types.ETInt,
-			childrenTypes: []types.EvalType{
-				types.ETJson,
-				types.ETJson, types.ETJson,
-			},
-			constants: []*Constant{
-				nil,
-				{Value: types.NewJSONDatum(json.CreateBinary("aaaa")), RetType: types.NewFieldType(mysql.TypeJSON)},
-				{Value: types.NewJSONDatum(json.CreateBinary("bbbb")), RetType: types.NewFieldType(mysql.TypeJSON)},
-			},
-		},
-		{
-			retEvalType: types.ETInt,
-			childrenTypes: []types.EvalType{
-				types.ETDuration,
-				types.ETDuration, types.ETDuration,
-			},
-			constants: []*Constant{
-				nil,
-				{Value: types.NewDurationDatum(types.Duration{Duration: time.Duration(1000)}), RetType: types.NewFieldType(mysql.TypeDuration)},
-				{Value: types.NewDurationDatum(types.Duration{Duration: time.Duration(2000)}), RetType: types.NewFieldType(mysql.TypeDuration)},
-			},
-		},
-		{
-			retEvalType: types.ETInt,
-			childrenTypes: []types.EvalType{
-				types.ETReal,
-				types.ETReal, types.ETReal,
-			},
-			constants: []*Constant{
-				nil,
-				{Value: types.NewFloat64Datum(0.1), RetType: types.NewFieldType(mysql.TypeFloat)},
-				{Value: types.NewFloat64Datum(0.2), RetType: types.NewFieldType(mysql.TypeFloat)},
-			},
-		},
-		{
-			retEvalType: types.ETInt,
-			childrenTypes: []types.EvalType{
-				types.ETDecimal,
-				types.ETDecimal, types.ETDecimal,
-			},
-			constants: []*Constant{
-				nil,
-				{Value: types.NewDecimalDatum(types.NewDecFromInt(10)), RetType: types.NewFieldType(mysql.TypeDecimal)},
-				{Value: types.NewDecimalDatum(types.NewDecFromInt(20)), RetType: types.NewFieldType(mysql.TypeDecimal)},
-			},
-		},
-	},
+	ast.In:       {},
 	ast.GetParam: {
 		{
 			retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETInt},
