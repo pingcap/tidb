@@ -367,6 +367,9 @@ func (sf *ScalarFunction) resolveIndices(schema *Schema) error {
 		case reflect.TypeOf(&builtinInJSONSig{}):
 			inFunc, _ := sf.Function.(*builtinInJSONSig)
 			args = inFunc.nonConstArgs
+		case reflect.TypeOf(&builtinInDecimalSig{}):
+			inFunc, _ := sf.Function.(*builtinInDecimalSig)
+			args = inFunc.nonConstArgs
 		default:
 			args = []Expression{}
 		}
