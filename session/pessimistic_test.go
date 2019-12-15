@@ -351,6 +351,36 @@ func (s *testPessimisticSuite) TestBankTransfer(c *C) {
 	tk.MustQuery("select sum(c) from accounts").Check(testkit.Rows("300"))
 }
 
+func (s *testPessimisticSuite) TestLockUnchangedRowKey(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk2 := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists unchanged")
+	tk.MustExec("create table unchanged (id int primary key, c int)")
+	tk.MustExec("insert unchanged values (1, 1), (2, 2)")
+
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("update unchanged set c = 1 where id < 2")
+
+	tk2.MustExec("begin pessimistic")
+	err := tk2.ExecToErr("select * from unchanged where id = 1 for update nowait")
+	c.Assert(err, NotNil)
+
+	tk.MustExec("rollback")
+
+	tk2.MustQuery("select * from unchanged where id = 1 for update nowait")
+
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("insert unchanged values (2, 2) on duplicate key update c = values(c)")
+
+	err = tk2.ExecToErr("select * from unchanged where id = 2 for update nowait")
+	c.Assert(err, NotNil)
+
+	tk.MustExec("commit")
+
+	tk2.MustQuery("select * from unchanged where id = 1 for update nowait")
+	tk2.MustExec("rollback")
+}
+
 func (s *testPessimisticSuite) TestOptimisticConflicts(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk2 := testkit.NewTestKitWithInit(c, s.store)
