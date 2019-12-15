@@ -882,6 +882,9 @@ func (s *testParserSuite) TestDBAStmt(c *C) {
 		// for show create database
 		{"show create database d1", true, "SHOW CREATE DATABASE `d1`"},
 		{"show create database if not exists d1", true, "SHOW CREATE DATABASE IF NOT EXISTS `d1`"},
+		// for show create sequence
+		{"show create sequence seq", true, "SHOW CREATE SEQUENCE `seq`"},
+		{"show create sequence test.seq", true, "SHOW CREATE SEQUENCE `test`.`seq`"},
 		// for show stats_meta.
 		{"show stats_meta", true, "SHOW STATS_META"},
 		{"show stats_meta where table_name = 't'", true, "SHOW STATS_META WHERE `table_name`='t'"},

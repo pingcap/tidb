@@ -8095,6 +8095,13 @@ ShowStmt:
 			DBName:	$5.(string),
 		}
 	}
+|	"SHOW" "CREATE" "SEQUENCE" TableName
+	{
+		$$ = &ast.ShowStmt{
+			Tp:	ast.ShowCreateSequence,
+			Table:	$4.(*ast.TableName),
+		}
+	}
 |	"SHOW" "CREATE" "USER" Username
         {
                 // See https://dev.mysql.com/doc/refman/5.7/en/show-create-user.html
