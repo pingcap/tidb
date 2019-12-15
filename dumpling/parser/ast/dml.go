@@ -1842,6 +1842,7 @@ const (
 	ShowCreateTable
 	ShowCreateView
 	ShowCreateUser
+	ShowCreateSequence
 	ShowGrants
 	ShowTriggers
 	ShowProcedureStatus
@@ -1963,6 +1964,11 @@ func (n *ShowStmt) Restore(ctx *RestoreCtx) error {
 			ctx.WriteKeyWord("IF NOT EXISTS ")
 		}
 		ctx.WriteName(n.DBName)
+	case ShowCreateSequence:
+		ctx.WriteKeyWord("CREATE SEQUENCE ")
+		if err := n.Table.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while restore ShowStmt.SEQUENCE")
+		}
 	case ShowCreateUser:
 		ctx.WriteKeyWord("CREATE USER ")
 		if err := n.User.Restore(ctx); err != nil {
