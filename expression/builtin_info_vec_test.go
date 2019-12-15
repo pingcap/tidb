@@ -53,7 +53,9 @@ var vecBuiltinInfoCases = map[string][]vecExprBenchCase{
 	ast.CurrentUser: {
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{}},
 	},
-	ast.FoundRows: {},
+	ast.FoundRows: {
+		{retEvalType: types.ETInt},
+	},
 	ast.Database: {
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{}},
 	},

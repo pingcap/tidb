@@ -16,6 +16,7 @@ package memo
 import (
 	"fmt"
 
+	"github.com/pingcap/tidb/expression"
 	plannercore "github.com/pingcap/tidb/planner/core"
 )
 
@@ -56,4 +57,9 @@ func (e *GroupExpr) FingerPrint() string {
 // SetChildren sets Children of the GroupExpr.
 func (e *GroupExpr) SetChildren(children ...*Group) {
 	e.Children = children
+}
+
+// Schema gets GroupExpr's Schema.
+func (e *GroupExpr) Schema() *expression.Schema {
+	return e.Group.Prop.Schema
 }
