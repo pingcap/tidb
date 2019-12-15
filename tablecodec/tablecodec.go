@@ -678,11 +678,16 @@ func GenTableIndexPrefix(tableID int64) kv.Key {
 	return appendTableIndexPrefix(buf, tableID)
 }
 
+// IsIndexKey is used to check whether the key is an index key.
+func IsIndexKey(k []byte) bool {
+	return len(k) > 11 && k[0] == 't' && k[10] == 'i'
+}
+
 // IsUntouchedIndexKValue uses to check whether the key is index key, and the value is untouched,
 // since the untouched index key/value is no need to commit.
 func IsUntouchedIndexKValue(k, v []byte) bool {
 	vLen := len(v)
-	return (len(k) > 11 && k[0] == 't' && k[10] == 'i') &&
+	return IsIndexKey(k) &&
 		((vLen == 1 || vLen == 9) && v[vLen-1] == kv.UnCommitIndexKVFlag)
 }
 
