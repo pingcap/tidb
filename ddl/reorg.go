@@ -175,7 +175,7 @@ func updateAddIndexProgress(w *worker, tblInfo *model.TableInfo, addedRowCount i
 	if progress > 1 {
 		progress = 1
 	}
-	metrics.AddIndexProgress.Set(progress)
+	metrics.AddIndexProgress.Set(progress * 100)
 }
 
 func getTableTotalCount(w *worker, tblInfo *model.TableInfo) int64 {
