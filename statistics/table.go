@@ -391,7 +391,7 @@ func isSingleColIdxNullRange(idx *Index, ran *ranger.Range) bool {
 func (coll *HistColl) getEqualCondSelectivity(idx *Index, bytes []byte, coverAll bool, unique bool) float64 {
 	// In this case, the row count is at most 1.
 	if unique && coverAll {
-		return 1.0 / float64(idx.TotalCount())
+		return 1.0 / float64(idx.TotalRowCount())
 	}
 	val := types.NewBytesDatum(bytes)
 	if idx.outOfRange(val) {
