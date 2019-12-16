@@ -50,12 +50,15 @@ var defaultTransformationMap = map[memo.Operand][]Transformation{
 		NewRulePushSelDownProjection(),
 		NewRulePushSelDownAggregation(),
 		NewRulePushSelDownJoin(),
+		NewRulePushSelDownIndexScan(),
+		NewRulePushSelDownUnionAll(),
 	},
 	memo.OperandDataSource: {
 		NewRuleEnumeratePaths(),
 	},
 	memo.OperandAggregation: {
 		NewRulePushAggDownGather(),
+		NewRuleMergeAggregationProjection(),
 	},
 	memo.OperandLimit: {
 		NewRuleTransformLimitToTopN(),
@@ -133,6 +136,87 @@ func (r *PushSelDownTableScan) OnTransform(old *memo.ExprIter) (newExprs []*memo
 	selExpr := memo.NewGroupExpr(newSel)
 	selExpr.Children = append(selExpr.Children, tblScanGroup)
 	// `sel -> ts` is transformed to `newSel ->newTS`.
+	return []*memo.GroupExpr{selExpr}, true, false, nil
+}
+
+// PushSelDownIndexScan pushes a Selection down to IndexScan.
+type PushSelDownIndexScan struct {
+	baseRule
+}
+
+// NewRulePushSelDownIndexScan creates a new Transformation PushSelDownIndexScan.
+// The pattern of this rule is `Selection -> IndexScan`.
+func NewRulePushSelDownIndexScan() Transformation {
+	rule := &PushSelDownIndexScan{}
+	rule.pattern = memo.BuildPattern(
+		memo.OperandSelection,
+		memo.EngineTiKVOnly,
+		memo.NewPattern(memo.OperandIndexScan, memo.EngineTiKVOnly),
+	)
+	return rule
+}
+
+// OnTransform implements Transformation interface.
+// It will transform `Selection -> IndexScan` to:
+//   `IndexScan(with a new access range)` or
+//   `Selection -> IndexScan(with a new access range)`
+//	 or just keep the two GroupExprs unchanged.
+func (r *PushSelDownIndexScan) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
+	sel := old.GetExpr().ExprNode.(*plannercore.LogicalSelection)
+	is := old.Children[0].GetExpr().ExprNode.(*plannercore.LogicalIndexScan)
+	if len(is.IdxCols) == 0 {
+		return nil, false, false, nil
+	}
+	conditions := sel.Conditions
+	if is.AccessConds != nil {
+		// If we have already pushed some conditions down here,
+		// we merge old AccessConds with new conditions,
+		// to make sure this rule can be applied more than once.
+		conditions = make([]expression.Expression, len(sel.Conditions)+len(is.AccessConds))
+		copy(conditions, sel.Conditions)
+		copy(conditions[len(sel.Conditions):], is.AccessConds)
+	}
+	res, err := ranger.DetachCondAndBuildRangeForIndex(is.SCtx(), conditions, is.IdxCols, is.IdxColLens)
+	if err != nil {
+		return nil, false, false, err
+	}
+	if len(res.AccessConds) == len(is.AccessConds) {
+		// There is no condition can be pushed down as range,
+		// or the pushed down conditions are the same with before.
+		sameConds := true
+		for i := range res.AccessConds {
+			if !res.AccessConds[i].Equal(is.SCtx(), is.AccessConds[i]) {
+				sameConds = false
+				break
+			}
+		}
+		if sameConds {
+			return nil, false, false, nil
+		}
+	}
+	// TODO: `res` still has some unused fields: EqOrInCount, IsDNFCond.
+	newIs := plannercore.LogicalIndexScan{
+		Source:         is.Source,
+		IsDoubleRead:   is.IsDoubleRead,
+		EqCondCount:    res.EqCondCount,
+		AccessConds:    res.AccessConds,
+		Ranges:         res.Ranges,
+		Index:          is.Index,
+		Columns:        is.Columns,
+		FullIdxCols:    is.FullIdxCols,
+		FullIdxColLens: is.FullIdxColLens,
+		IdxCols:        is.IdxCols,
+		IdxColLens:     is.IdxColLens,
+	}.Init(is.SCtx(), is.SelectBlockOffset())
+	isExpr := memo.NewGroupExpr(newIs)
+
+	if len(res.RemainedConds) == 0 {
+		return []*memo.GroupExpr{isExpr}, true, false, nil
+	}
+	isGroup := memo.NewGroupWithSchema(isExpr, old.Children[0].GetExpr().Group.Prop.Schema)
+	newSel := plannercore.LogicalSelection{Conditions: res.RemainedConds}.Init(sel.SCtx(), sel.SelectBlockOffset())
+	selExpr := memo.NewGroupExpr(newSel)
+	selExpr.SetChildren(isGroup)
 	return []*memo.GroupExpr{selExpr}, true, false, nil
 }
 
@@ -599,6 +683,41 @@ func (r *PushSelDownJoin) OnTransform(old *memo.ExprIter) (newExprs []*memo.Grou
 	return []*memo.GroupExpr{newJoinExpr}, true, false, nil
 }
 
+// PushSelDownUnionAll pushes selection through union all.
+type PushSelDownUnionAll struct {
+	baseRule
+}
+
+// NewRulePushSelDownUnionAll creates a new Transformation PushSelDownUnionAll.
+// The pattern of this rule is `Selection -> UnionAll`.
+func NewRulePushSelDownUnionAll() Transformation {
+	rule := &PushSelDownUnionAll{}
+	rule.pattern = memo.BuildPattern(
+		memo.OperandSelection,
+		memo.EngineTiDBOnly,
+		memo.NewPattern(memo.OperandUnionAll, memo.EngineTiDBOnly),
+	)
+	return rule
+}
+
+// OnTransform implements Transformation interface.
+// It will transform `Selection->UnionAll->x` to `UnionAll->Selection->x`.
+func (r *PushSelDownUnionAll) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
+	sel := old.GetExpr().ExprNode.(*plannercore.LogicalSelection)
+	unionAll := old.Children[0].GetExpr().ExprNode.(*plannercore.LogicalUnionAll)
+	childGroups := old.Children[0].GetExpr().Children
+
+	newUnionAllExpr := memo.NewGroupExpr(unionAll)
+	for _, group := range childGroups {
+		newSelExpr := memo.NewGroupExpr(sel)
+		newSelExpr.Children = append(newSelExpr.Children, group)
+		newSelGroup := memo.NewGroupWithSchema(newSelExpr, group.Prop.Schema)
+
+		newUnionAllExpr.Children = append(newUnionAllExpr.Children, newSelGroup)
+	}
+	return []*memo.GroupExpr{newUnionAllExpr}, true, false, nil
+}
+
 // EliminateProjection eliminates the projection.
 type EliminateProjection struct {
 	baseRule
@@ -748,4 +867,64 @@ func (r *PushTopNDownProjection) OnTransform(old *memo.ExprIter) (newExprs []*me
 	topNGroup := memo.NewGroupWithSchema(topNExpr, childGroup.Prop.Schema)
 	projExpr.SetChildren(topNGroup)
 	return []*memo.GroupExpr{projExpr}, true, false, nil
+}
+
+// MergeAggregationProjection merges the Projection below an Aggregation as a new Aggregation.
+// The Projection may be regenerated in the ImplementationPhase. But this rule allows the
+// Aggregation to match other rules, such as MergeAdjacentAggregation.
+type MergeAggregationProjection struct {
+	baseRule
+}
+
+// NewRuleMergeAggregationProjection creates a new Transformation MergeAggregationProjection.
+// The pattern of this rule is: `Aggregation -> Projection`.
+func NewRuleMergeAggregationProjection() Transformation {
+	rule := &MergeAggregationProjection{}
+	rule.pattern = memo.BuildPattern(
+		memo.OperandAggregation,
+		memo.EngineTiDBOnly,
+		memo.NewPattern(memo.OperandProjection, memo.EngineTiDBOnly),
+	)
+	return rule
+}
+
+// Match implements Transformation interface.
+func (r *MergeAggregationProjection) Match(old *memo.ExprIter) bool {
+	proj := old.Children[0].GetExpr().ExprNode.(*plannercore.LogicalProjection)
+	if plannercore.ExprsHasSideEffects(proj.Exprs) {
+		return false
+	}
+	return true
+}
+
+// OnTransform implements Transformation interface.
+// It will transform `Aggregation->Projection->X` to `Aggregation->X`.
+func (r *MergeAggregationProjection) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
+	oldAgg := old.GetExpr().ExprNode.(*plannercore.LogicalAggregation)
+	proj := old.Children[0].GetExpr().ExprNode.(*plannercore.LogicalProjection)
+	projSchema := old.Children[0].GetExpr().Schema()
+
+	groupByItems := make([]expression.Expression, len(oldAgg.GroupByItems))
+	for i, item := range oldAgg.GroupByItems {
+		groupByItems[i] = expression.ColumnSubstitute(item, projSchema, proj.Exprs)
+	}
+
+	aggFuncs := make([]*aggregation.AggFuncDesc, len(oldAgg.AggFuncs))
+	for i, aggFunc := range oldAgg.AggFuncs {
+		aggFuncs[i] = aggFunc.Clone()
+		newArgs := make([]expression.Expression, len(aggFunc.Args))
+		for j, arg := range aggFunc.Args {
+			newArgs[j] = expression.ColumnSubstitute(arg, projSchema, proj.Exprs)
+		}
+		aggFuncs[i].Args = newArgs
+	}
+
+	newAgg := plannercore.LogicalAggregation{
+		GroupByItems: groupByItems,
+		AggFuncs:     aggFuncs,
+	}.Init(oldAgg.SCtx(), oldAgg.SelectBlockOffset())
+
+	newAggExpr := memo.NewGroupExpr(newAgg)
+	newAggExpr.SetChildren(old.Children[0].GetExpr().Children...)
+	return []*memo.GroupExpr{newAggExpr}, true, false, nil
 }
