@@ -1,3 +1,16 @@
+// Copyright 2019 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package aggfuncs
 
 import (
@@ -38,7 +51,7 @@ func (e *varPop4Float64) AppendFinalResult2Chunk(sctx sessionctx.Context, pr Par
 }
 
 func calculateIntermediate(count int64, sum float64, input float64, variance float64) float64 {
-	t := float64(count) * input - sum
+	t := float64(count)*input - sum
 	variance += (t * t) / (float64(count * (count - 1)))
 	return variance
 }
@@ -66,8 +79,8 @@ func calculateMerge(srcCount, dstCount int64, srcSum, dstSum, srcVariance, dstVa
 	srcCountFloat64 := float64(srcCount)
 	dstCountFloat64 := float64(dstCount)
 
-	t := (srcCountFloat64 / dstCountFloat64) * dstSum - srcSum
-	dstVariance += srcVariance + ((dstCountFloat64 / srcCountFloat64) / (dstCountFloat64 + srcCountFloat64)) * t * t
+	t := (srcCountFloat64/dstCountFloat64)*dstSum - srcSum
+	dstVariance += srcVariance + ((dstCountFloat64/srcCountFloat64)/(dstCountFloat64+srcCountFloat64))*t*t
 	return dstVariance
 }
 
