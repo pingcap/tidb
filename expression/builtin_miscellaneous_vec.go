@@ -339,6 +339,7 @@ func (b *builtinSleepSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) e
 			default:
 				if atomic.CompareAndSwapUint32(&sessVars.Killed, 1, 0) {
 					i64s[i] = 1
+					return nil
 				}
 			}
 		}
