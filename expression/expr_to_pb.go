@@ -416,7 +416,7 @@ func (pc PbConverter) canFuncBePushed(sf *ScalarFunction) bool {
 		// date functions.
 		ast.DateFormat:
 		_, disallowPushdown := DefaultExprPushdownBlacklist.Load().(map[string]struct{})[sf.FuncName.L]
-		return true && !disallowPushdown
+		return !disallowPushdown
 	}
 	return false
 }

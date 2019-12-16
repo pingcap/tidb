@@ -462,10 +462,10 @@ type LogicalIndexScan struct {
 
 	Index          *model.IndexInfo
 	Columns        []*model.ColumnInfo
-	fullIdxCols    []*expression.Column
-	fullIdxColLens []int
-	idxCols        []*expression.Column
-	idxColLens     []int
+	FullIdxCols    []*expression.Column
+	FullIdxColLens []int
+	IdxCols        []*expression.Column
+	IdxColLens     []int
 }
 
 // MatchIndexProp checks if the indexScan can match the required property.
@@ -476,9 +476,9 @@ func (p *LogicalIndexScan) MatchIndexProp(prop *property.PhysicalProperty) (matc
 	if all, _ := prop.AllSameOrder(); !all {
 		return false
 	}
-	for i, col := range p.idxCols {
+	for i, col := range p.IdxCols {
 		if col.Equal(nil, prop.Items[0].Col) {
-			return matchIndicesProp(p.idxCols[i:], p.idxColLens[i:], prop.Items)
+			return matchIndicesProp(p.IdxCols[i:], p.IdxColLens[i:], prop.Items)
 		} else if i >= p.EqCondCount {
 			break
 		}
@@ -507,15 +507,19 @@ func (ds *DataSource) buildTableGather() LogicalPlan {
 
 func (ds *DataSource) buildIndexGather(path *util.AccessPath) LogicalPlan {
 	is := LogicalIndexScan{
-		Source:       ds,
-		IsDoubleRead: false,
-		Index:        path.Index,
+		Source:         ds,
+		IsDoubleRead:   false,
+		Index:          path.Index,
+		FullIdxCols:    path.FullIdxCols,
+		FullIdxColLens: path.FullIdxColLens,
+		IdxCols:        path.IdxCols,
+		IdxColLens:     path.IdxColLens,
 	}.Init(ds.ctx, ds.blockOffset)
 
 	is.Columns = make([]*model.ColumnInfo, len(ds.Columns))
 	copy(is.Columns, ds.Columns)
 	is.SetSchema(ds.Schema())
-	is.idxCols, is.idxColLens = expression.IndexInfo2PrefixCols(is.Columns, is.schema.Columns, is.Index)
+	is.IdxCols, is.IdxColLens = expression.IndexInfo2PrefixCols(is.Columns, is.schema.Columns, is.Index)
 
 	sg := TiKVSingleGather{
 		Source:        ds,
@@ -534,6 +538,7 @@ func (ds *DataSource) Convert2Gathers() (gathers []LogicalPlan) {
 	for _, path := range ds.possibleAccessPaths {
 		if !path.IsTablePath {
 			path.FullIdxCols, path.FullIdxColLens = expression.IndexInfo2Cols(ds.Columns, ds.schema.Columns, path.Index)
+			path.IdxCols, path.IdxColLens = expression.IndexInfo2PrefixCols(ds.Columns, ds.schema.Columns, path.Index)
 			// If index columns can cover all of the needed columns, we can use a IndexGather + IndexScan.
 			if isCoveringIndex(ds.schema.Columns, path.FullIdxCols, path.FullIdxColLens, ds.tableInfo.PKIsHandle) {
 				gathers = append(gathers, ds.buildIndexGather(path))
@@ -752,11 +757,11 @@ func (ds *DataSource) getPKIsHandleCol() *expression.Column {
 	return getPKIsHandleColFromSchema(ds.Columns, ds.schema, ds.tableInfo.PKIsHandle)
 }
 
-func (p *LogicalIndexScan) getPKIsHandleCol() *expression.Column {
+func (p *LogicalIndexScan) getPKIsHandleCol(schema *expression.Schema) *expression.Column {
 	// We cannot use p.Source.getPKIsHandleCol() here,
 	// Because we may re-prune p.Columns and p.schema during the transformation.
 	// That will make p.Columns different from p.Source.Columns.
-	return getPKIsHandleColFromSchema(p.Columns, p.schema, p.Source.tableInfo.PKIsHandle)
+	return getPKIsHandleColFromSchema(p.Columns, schema, p.Source.tableInfo.PKIsHandle)
 }
 
 func (ds *DataSource) getHandleCol() *expression.Column {
