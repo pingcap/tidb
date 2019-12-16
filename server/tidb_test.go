@@ -22,6 +22,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
+	"github.com/pingcap/tidb/util"
 	"io/ioutil"
 	"math/big"
 	"os"
@@ -219,7 +220,7 @@ func generateCert(sn int, commonName string, parentCert *x509.Certificate, paren
 
 	template := x509.Certificate{
 		SerialNumber:          big.NewInt(int64(sn)),
-		Subject:               pkix.Name{CommonName: commonName},
+		Subject:               pkix.Name{CommonName: commonName, Names: []pkix.AttributeTypeAndValue{util.MockPkixAttribute(util.CommonName, commonName)}},
 		NotBefore:             notBefore,
 		NotAfter:              notAfter,
 		KeyUsage:              x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature,

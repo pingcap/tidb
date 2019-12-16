@@ -73,6 +73,13 @@ const (
 		Drop_role_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Account_locked			ENUM('N','Y') NOT NULL DEFAULT 'N',
 		PRIMARY KEY (Host, User));`
+	// CreateGlobalPrivTable is the SQL statement creates Global scope privilege table in system db.
+	CreateGlobalPrivTable = "CREATE TABLE if not exists mysql.global_priv (" +
+		"Host char(60) NOT NULL DEFAULT ''," +
+		"User char(80) NOT NULL DEFAULT ''," +
+		"Priv longtext NOT NULL DEFAULT ''," +
+		"PRIMARY KEY (Host, User)" +
+		")"
 	// CreateDBPrivTable is the SQL statement creates DB scope privilege table in system db.
 	CreateDBPrivTable = `CREATE TABLE if not exists mysql.db (
 		Host			CHAR(60),
@@ -349,6 +356,7 @@ const (
 	version33 = 33
 	version34 = 34
 	version35 = 35
+	version38 = 38
 )
 
 func checkBootstrapped(s Session) (bool, error) {
@@ -547,6 +555,10 @@ func upgrade(s Session) {
 
 	if ver < version35 {
 		upgradeToVer35(s)
+	}
+
+	if ver < version38 {
+		upgradeToVer38(s)
 	}
 
 	updateBootstrapVer(s)
@@ -865,6 +877,14 @@ func upgradeToVer35(s Session) {
 	mustExecute(s, sql)
 }
 
+func upgradeToVer38(s Session) {
+	var err error
+	_, err = s.Execute(context.Background(), CreateGlobalPrivTable)
+	if err != nil {
+		logutil.Logger(context.Background()).Fatal("upgradeToVer38 error", zap.Error(err))
+	}
+}
+
 // updateBootstrapVer updates bootstrap version variable in mysql.TiDB table.
 func updateBootstrapVer(s Session) {
 	// Update bootstrap version.
@@ -894,6 +914,7 @@ func doDDLWorks(s Session) {
 	// Create user table.
 	mustExecute(s, CreateUserTable)
 	// Create privilege tables.
+	mustExecute(s, CreateGlobalPrivTable)
 	mustExecute(s, CreateDBPrivTable)
 	mustExecute(s, CreateTablePrivTable)
 	mustExecute(s, CreateColumnPrivTable)

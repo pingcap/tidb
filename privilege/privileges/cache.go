@@ -15,7 +15,9 @@ package privileges
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"go.uber.org/zap"
 	"sort"
 	"strings"
 	"sync/atomic"
@@ -29,6 +31,8 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/hack"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/stringutil"
 	log "github.com/sirupsen/logrus"
@@ -60,6 +64,71 @@ type UserRecord struct {
 	// patChars is compiled from Host, cached for pattern match performance.
 	patChars []byte
 	patTypes []byte
+}
+
+type globalPrivRecord struct {
+	Host   string
+	User   string
+	Priv   GlobalPrivValue
+	Broken bool
+
+	// patChars is compiled from Host, cached for pattern match performance.
+	patChars []byte
+	patTypes []byte
+}
+
+// SSLType is enum value for GlobalPrivValue.SSLType.
+// the value is compatible with MySQL storage json value.
+type SSLType int
+
+const (
+	// SslTypeNotSpecified indicates .
+	SslTypeNotSpecified SSLType = iota - 1
+	// SslTypeNone indicates not require use ssl.
+	SslTypeNone
+	// SslTypeAny indicates require use ssl but not validate cert.
+	SslTypeAny
+	// SslTypeX509 indicates require use ssl and validate cert.
+	SslTypeX509
+	// SslTypeSpecified indicates require use ssl and validate cert's subject or issuer.
+	SslTypeSpecified
+)
+
+// GlobalPrivValue is store json format for priv column in mysql.global_priv.
+type GlobalPrivValue struct {
+	SSLType     SSLType `json:"ssl_type,omitempty"`
+	SSLCipher   string  `json:"ssl_cipher,omitempty"`
+	X509Issuer  string  `json:"x509_issuer,omitempty"`
+	X509Subject string  `json:"x509_subject,omitempty"`
+}
+
+// RequireStr returns describe string after `REQUIRE` clause.
+func (g *GlobalPrivValue) RequireStr() string {
+	require := "NONE"
+	switch g.SSLType {
+	case SslTypeAny:
+		require = "SSL"
+	case SslTypeX509:
+		require = "X509"
+	case SslTypeSpecified:
+		var s []string
+		if len(g.SSLCipher) > 0 {
+			s = append(s, "CIPHER")
+			s = append(s, "'"+g.SSLCipher+"'")
+		}
+		if len(g.X509Issuer) > 0 {
+			s = append(s, "ISSUER")
+			s = append(s, "'"+g.X509Issuer+"'")
+		}
+		if len(g.X509Subject) > 0 {
+			s = append(s, "SUBJECT")
+			s = append(s, "'"+g.X509Subject+"'")
+		}
+		if len(s) > 0 {
+			require = strings.Join(s, " ")
+		}
+	}
+	return require
 }
 
 type dbRecord struct {
@@ -138,6 +207,7 @@ func (g roleGraphEdgesTable) Find(user, host string) bool {
 // MySQLPrivilege is the in-memory cache of mysql privilege tables.
 type MySQLPrivilege struct {
 	User         []UserRecord
+	Global       []globalPrivRecord
 	DB           []dbRecord
 	TablesPriv   []tablesPrivRecord
 	ColumnsPriv  []columnsPrivRecord
@@ -186,6 +256,11 @@ func (p *MySQLPrivilege) FindRole(user string, host string, role *auth.RoleIdent
 // LoadAll loads the tables from database to memory.
 func (p *MySQLPrivilege) LoadAll(ctx sessionctx.Context) error {
 	err := p.LoadUserTable(ctx)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	err = p.LoadGlobalPrivTable(ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -349,6 +424,11 @@ func (p MySQLPrivilege) SortUserTable() {
 	sort.Sort(sortedUserRecord(p.User))
 }
 
+// LoadGlobalPrivTable loads the mysql.global_priv table from database.
+func (p *MySQLPrivilege) LoadGlobalPrivTable(ctx sessionctx.Context) error {
+	return p.loadTable(ctx, "select HIGH_PRIORITY Host,User,Priv from mysql.global_priv", p.decodeGlobalPrivTableRow)
+}
+
 // LoadDBTable loads the mysql.db table from database.
 func (p *MySQLPrivilege) LoadDBTable(ctx sessionctx.Context) error {
 	return p.loadTable(ctx, "select HIGH_PRIORITY Host,DB,User,Select_priv,Insert_priv,Update_priv,Delete_priv,Create_priv,Drop_priv,Grant_priv,Index_priv,Alter_priv,Execute_priv,Create_view_priv,Show_view_priv from mysql.db order by host, db, user;", p.decodeDBTableRow)
@@ -430,6 +510,37 @@ func (p *MySQLPrivilege) decodeUserTableRow(row chunk.Row, fs []*ast.ResultField
 		}
 	}
 	p.User = append(p.User, value)
+	return nil
+}
+
+func (p *MySQLPrivilege) decodeGlobalPrivTableRow(row chunk.Row, fs []*ast.ResultField) error {
+	var value globalPrivRecord
+	for i, f := range fs {
+		switch {
+		case f.ColumnAsName.L == "host":
+			value.Host = row.GetString(i)
+			value.patChars, value.patTypes = stringutil.CompilePattern(value.Host, '\\')
+		case f.ColumnAsName.L == "user":
+			value.User = row.GetString(i)
+		case f.ColumnAsName.L == "priv":
+			privData := row.GetString(i)
+			if len(privData) > 0 {
+				var privValue GlobalPrivValue
+				err := json.Unmarshal(hack.Slice(privData), &privValue)
+				if err != nil {
+					logutil.Logger(context.Background()).Error("one userglobal priv data is broken, forbidden login until data be fixed",
+						zap.String("user", value.User), zap.String("host", value.Host))
+					value.Broken = true
+				} else {
+					value.Priv.SSLType = privValue.SSLType
+					value.Priv.SSLCipher = privValue.SSLCipher
+					value.Priv.X509Issuer = privValue.X509Issuer
+					value.Priv.X509Subject = privValue.X509Subject
+				}
+			}
+		}
+	}
+	p.Global = append(p.Global, value)
 	return nil
 }
 
@@ -572,6 +683,10 @@ func decodeSetToPrivilege(s types.Set) mysql.PrivilegeType {
 	return ret
 }
 
+func (record *globalPrivRecord) match(user, host string) bool {
+	return record.User == user && patternMatch(host, record.patChars, record.patTypes)
+}
+
 func (record *UserRecord) match(user, host string) bool {
 	return record.User == user && patternMatch(host, record.patChars, record.patTypes)
 }
@@ -608,6 +723,16 @@ func patternMatch(str string, patChars, patTypes []byte) bool {
 func (p *MySQLPrivilege) connectionVerification(user, host string) *UserRecord {
 	for i := 0; i < len(p.User); i++ {
 		record := &p.User[i]
+		if record.match(user, host) {
+			return record
+		}
+	}
+	return nil
+}
+
+func (p *MySQLPrivilege) matchGlobalPriv(user, host string) *globalPrivRecord {
+	for i := 0; i < len(p.Global); i++ {
+		record := &p.Global[i]
 		if record.match(user, host) {
 			return record
 		}
