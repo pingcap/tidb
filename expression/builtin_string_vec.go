@@ -2192,14 +2192,17 @@ func (b *builtinCharSig) vecEvalString(input *chunk.Chunk, result *chunk.Column)
 	}
 	bigints := make([]int64, 0, l-1)
 	result.ReserveString(n)
+	bufint := make([]([]int64), l-1)
+	for i := 0; i < l-1; i++ {
+		bufint[i] = buf[i].Int64s()
+	}
 	for i := 0; i < n; i++ {
-		bigints = bigints[:0]
-		bufint := buf[i].Int64s()
+		bigints = bigints[0:0]
 		for j := 0; j < l-1; j++ {
 			if buf[j].IsNull(i) {
 				continue
 			}
-			bigints = append(bigints, bufint[i])
+			bigints = append(bigints, bufint[j][i])
 		}
 		tempString := string(b.convertToBytes(bigints))
 		charsetLable := strings.ToLower(bufstr.GetString(i))

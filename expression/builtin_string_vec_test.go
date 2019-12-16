@@ -319,8 +319,8 @@ var vecBuiltinStringCases = map[string][]vecExprBenchCase{
 	ast.CharFunc: {
 		{
 			retEvalType:   types.ETString,
-			childrenTypes: []types.EvalType{types.ETInt, types.ETInt, types.ETString},
-			geners:        []dataGenerator{&charInt64Gener{}, &charInt64Gener{}, &charsetStringGener{}},
+			childrenTypes: []types.EvalType{types.ETInt, types.ETInt, types.ETInt, types.ETString},
+			geners:        []dataGenerator{&charInt64Gener{}, &charInt64Gener{}, &charInt64Gener{}, &charsetStringGener{}},
 		},
 	},
 	ast.FindInSet: {
