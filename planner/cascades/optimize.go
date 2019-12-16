@@ -183,6 +183,10 @@ func (opt *Optimizer) findMoreEquiv(g *memo.Group, elem *list.Element) (eraseCur
 		// the transformation rule to enumerate all the possible expressions.
 		iter := memo.NewExprIterFromGroupElem(elem, pattern)
 		for ; iter != nil && iter.Matched(); iter.Next() {
+			if iter.GetExpr().HasAppliedRule(rule) {
+				continue
+			}
+
 			if !rule.Match(iter) {
 				continue
 			}
