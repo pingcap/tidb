@@ -751,6 +751,7 @@ import (
 	DropIndexStmt			"DROP INDEX statement"
 	DropStatsStmt			"DROP STATS statement"
 	DropTableStmt			"DROP TABLE statement"
+	DropSequenceStmt                "DROP SEQUENCE statement"
 	DropUserStmt			"DROP USER"
 	DropRoleStmt			"DROP ROLE"
 	DropViewStmt			"DROP VIEW statement"
@@ -8685,6 +8686,7 @@ Statement:
 |	DropDatabaseStmt
 |	DropIndexStmt
 |	DropTableStmt
+|	DropSequenceStmt
 |	DropViewStmt
 |	DropUserStmt
 |	DropRoleStmt
@@ -10953,6 +10955,16 @@ SignedNum:
 |	'-' NUM
 	{
 		$$ = -$2.(int64)
+	}
+
+DropSequenceStmt:
+	"DROP" OptTemporary "SEQUENCE" IfExists TableNameList
+	{
+		$$ = &ast.DropSequenceStmt{
+			IsTemporary: $2.(bool),
+			IfExists: $4.(bool),
+			Sequences: $5.([]*ast.TableName),
+		}
 	}
 
 /********************************************************************
