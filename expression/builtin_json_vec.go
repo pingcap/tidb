@@ -837,11 +837,23 @@ func (b *builtinJSONContainsPathSig) vecEvalInt(input *chunk.Chunk, result *chun
 	result.MergeNulls(jsonBuf, typeBuf)
 	i64s := result.Int64s()
 	for i := 0; i < n; i++ {
+		if jsonBuf.IsNull(i) || typeBuf.IsNull(i) {
+			result.SetNull(i, true)
+			continue
+		}
 		containType := strings.ToLower(typeBuf.GetString(i))
+		if containType != json.ContainsPathAll && containType != json.ContainsPathOne {
+			return json.ErrInvalidJSONContainsPathType
+		}
 		obj := jsonBuf.GetJSON(i)
 		contains := int64(1)
 		var pathExpr json.PathExpression
 		for j := 0; j < len(pathBufs); j++ {
+			if pathBufs[j].IsNull(i) {
+				result.SetNull(i, true)
+				contains = -1
+				break
+			}
 			path := pathBufs[j].GetString(i)
 			if pathExpr, err = json.ParseJSONPathExpr(path); err != nil {
 				return err
@@ -857,7 +869,9 @@ func (b *builtinJSONContainsPathSig) vecEvalInt(input *chunk.Chunk, result *chun
 				break
 			}
 		}
-		i64s[i] = contains
+		if contains >= 0 {
+			i64s[i] = contains
+		}
 	}
 	return nil
 }
