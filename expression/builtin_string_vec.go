@@ -2183,34 +2183,35 @@ func (b *builtinCharSig) vecEvalString(input *chunk.Chunk, result *chunk.Column)
 		}
 	}
 	bufstr, err := b.bufAllocator.get(types.ETString, n)
-	defer b.bufAllocator.put(bufstr)
 	if err != nil {
 		return err
 	}
+	defer b.bufAllocator.put(bufstr)
 	if err := b.args[l-1].VecEvalString(b.ctx, input, bufstr); err != nil {
 		return err
 	}
+	bigints := make([]int64, 0, l-1)
 	result.ReserveString(n)
-
 	for i := 0; i < n; i++ {
-		bigints := make([]int64, 0, l-1)
+		bigints = bigints[:0]
+		bufint := buf[i].Int64s()
 		for j := 0; j < l-1; j++ {
 			if buf[j].IsNull(i) {
 				continue
 			}
-			bigints = append(bigints, buf[j].GetInt64(i))
+			bigints = append(bigints, bufint[i])
 		}
-		tempres := string(b.convertToBytes(bigints))
-		charsetlabe := strings.ToLower(bufstr.GetString(i))
-		if bufstr.IsNull(i) || charsetlabe == "ascii" || strings.HasPrefix(charsetlabe, "utf8") {
-			result.AppendString(tempres)
+		tempString := string(b.convertToBytes(bigints))
+		charsetLable := strings.ToLower(bufstr.GetString(i))
+		if bufstr.IsNull(i) || charsetLable == "ascii" || strings.HasPrefix(charsetLable, "utf8") {
+			result.AppendString(tempString)
 		} else {
-			encoding, charsetName := charset.Lookup(charsetlabe)
+			encoding, charsetName := charset.Lookup(charsetLable)
 			if encoding == nil {
 				return errors.Errorf("unknown encoding: %s", bufstr.GetString(i))
 			}
-			oldStr := tempres
-			tempres, _, err := transform.String(encoding.NewDecoder(), tempres)
+			oldStr := tempString
+			tempString, _, err := transform.String(encoding.NewDecoder(), tempString)
 			if err != nil {
 				logutil.BgLogger().Warn("change charset of string",
 					zap.String("string", oldStr),
@@ -2218,9 +2219,8 @@ func (b *builtinCharSig) vecEvalString(input *chunk.Chunk, result *chunk.Column)
 					zap.Error(err))
 				return err
 			}
-			result.AppendString(tempres)
+			result.AppendString(tempString)
 		}
-
 	}
 	return nil
 }
