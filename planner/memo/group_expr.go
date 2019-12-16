@@ -35,7 +35,7 @@ type GroupExpr struct {
 	// appliedRuleSet saves transformation rules which have been applied to this
 	// GroupExpr, and will not be applied again. Use `interface{}` instead of
 	// `Transformation` to avoid import cycle.
-	appliedRuleSet map[interface{}]bool
+	appliedRuleSet map[interface{}]struct{}
 }
 
 // NewGroupExpr creates a GroupExpr based on a logical plan node.
@@ -44,7 +44,7 @@ func NewGroupExpr(node plannercore.LogicalPlan) *GroupExpr {
 		ExprNode:       node,
 		Children:       nil,
 		Explored:       false,
-		appliedRuleSet: make(map[interface{}]bool),
+		appliedRuleSet: make(map[interface{}]struct{}),
 	}
 }
 
@@ -71,7 +71,7 @@ func (e *GroupExpr) Schema() *expression.Schema {
 
 // AddAppliedRule adds a rule into the appliedRuleSet.
 func (e *GroupExpr) AddAppliedRule(rule interface{}) {
-	e.appliedRuleSet[rule] = true
+	e.appliedRuleSet[rule] = struct{}{}
 }
 
 // HasAppliedRule returns if the rule has been applied.
