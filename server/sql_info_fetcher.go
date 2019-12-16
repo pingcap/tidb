@@ -250,7 +250,6 @@ func (sh *sqlInfoFetcher) getExplainAnalyze(ctx context.Context, sql string, res
 	rows, err := session.ResultSetToStringSlice(ctx, sh.s, recordSets[0])
 	if err != nil {
 		terror.Log(err)
-		rows = nil
 		return
 	}
 	resultChan <- &explainAnalyzeResult{rows: rows}

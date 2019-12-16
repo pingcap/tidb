@@ -47,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/domainutil"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/set"
@@ -513,7 +514,7 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 	if colDef.Options != nil {
 		length := types.UnspecifiedLength
 
-		keys := []*ast.IndexColName{
+		keys := []*ast.IndexPartSpecification{
 			{
 				Column: colDef.Name,
 				Length: length,
@@ -1412,7 +1413,7 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 	err = d.doDDLJob(ctx, job)
 	if err == nil {
 		// do pre-split and scatter.
-		sp, ok := d.store.(kv.SplitableStore)
+		sp, ok := d.store.(kv.SplittableStore)
 		if ok && atomic.LoadUint32(&EnableSplitTableRegion) != 0 {
 			var (
 				preSplit      func()
@@ -3141,6 +3142,10 @@ func (d *ddl) DropTable(ctx sessionctx.Context, ti ast.Ident) (err error) {
 		return errors.Trace(err)
 	}
 
+	if tb.Meta().IsView() {
+		return infoschema.ErrTableNotExists.GenWithStackByArgs(ti.Schema, ti.Name)
+	}
+
 	job := &model.Job{
 		SchemaID:   schema.ID,
 		TableID:    tb.Meta().ID,
@@ -3299,7 +3304,7 @@ func getAnonymousIndex(t table.Table, colName model.CIStr) model.CIStr {
 }
 
 func (d *ddl) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexName model.CIStr,
-	idxColNames []*ast.IndexColName, indexOption *ast.IndexOption) error {
+	idxColNames []*ast.IndexPartSpecification, indexOption *ast.IndexOption) error {
 	if !config.GetGlobalConfig().AlterPrimaryKey {
 		return ErrUnsupportedModifyPrimaryKey.GenWithStack("Unsupported add primary key, alter-primary-key is false")
 	}
@@ -3361,7 +3366,7 @@ func (d *ddl) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexName m
 }
 
 func (d *ddl) CreateIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.IndexKeyType, indexName model.CIStr,
-	idxColNames []*ast.IndexColName, indexOption *ast.IndexOption, ifNotExists bool) error {
+	idxColNames []*ast.IndexPartSpecification, indexOption *ast.IndexOption, ifNotExists bool) error {
 
 	// not support Spatial and FullText index
 	if keyType == ast.IndexKeyTypeFullText || keyType == ast.IndexKeyTypeSpatial {
@@ -3431,8 +3436,8 @@ func (d *ddl) CreateIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.Inde
 	return errors.Trace(err)
 }
 
-func buildFKInfo(fkName model.CIStr, keys []*ast.IndexColName, refer *ast.ReferenceDef, cols []*table.Column, tbInfo *model.TableInfo) (*model.FKInfo, error) {
-	if len(keys) != len(refer.IndexColNames) {
+func buildFKInfo(fkName model.CIStr, keys []*ast.IndexPartSpecification, refer *ast.ReferenceDef, cols []*table.Column, tbInfo *model.TableInfo) (*model.FKInfo, error) {
+	if len(keys) != len(refer.IndexPartSpecifications) {
 		return nil, infoschema.ErrForeignKeyNotMatch.GenWithStackByArgs("foreign key without name")
 	}
 
@@ -3494,8 +3499,8 @@ func buildFKInfo(fkName model.CIStr, keys []*ast.IndexColName, refer *ast.Refere
 		fkInfo.Cols[i] = key.Column.Name
 	}
 
-	fkInfo.RefCols = make([]model.CIStr, len(refer.IndexColNames))
-	for i, key := range refer.IndexColNames {
+	fkInfo.RefCols = make([]model.CIStr, len(refer.IndexPartSpecifications))
+	for i, key := range refer.IndexPartSpecifications {
 		fkInfo.RefCols[i] = key.Column.Name
 	}
 
@@ -3505,7 +3510,7 @@ func buildFKInfo(fkName model.CIStr, keys []*ast.IndexColName, refer *ast.Refere
 	return fkInfo, nil
 }
 
-func (d *ddl) CreateForeignKey(ctx sessionctx.Context, ti ast.Ident, fkName model.CIStr, keys []*ast.IndexColName, refer *ast.ReferenceDef) error {
+func (d *ddl) CreateForeignKey(ctx sessionctx.Context, ti ast.Ident, fkName model.CIStr, keys []*ast.IndexPartSpecification, refer *ast.ReferenceDef) error {
 	is := d.infoHandle.Get()
 	schema, ok := is.SchemaByName(ti.Schema)
 	if !ok {
@@ -3930,4 +3935,81 @@ func extractCollateFromOption(def *ast.ColumnDef) []string {
 		}
 	}
 	return specifiedCollates
+}
+
+func (d *ddl) RepairTable(ctx sessionctx.Context, table *ast.TableName, createStmt *ast.CreateTableStmt) error {
+	// Existence of DB and table has been checked in the preprocessor.
+	oldTableInfo, ok := (ctx.Value(domainutil.RepairedTable)).(*model.TableInfo)
+	if !ok || oldTableInfo == nil {
+		return ErrRepairTableFail.GenWithStack("Failed to get the repaired table")
+	}
+	oldDBInfo, ok := (ctx.Value(domainutil.RepairedDatabase)).(*model.DBInfo)
+	if !ok || oldDBInfo == nil {
+		return ErrRepairTableFail.GenWithStack("Failed to get the repaired database")
+	}
+	// By now only support same DB repair.
+	if createStmt.Table.Schema.L != oldDBInfo.Name.L {
+		return ErrRepairTableFail.GenWithStack("Repaired table should in same database with the old one")
+	}
+	// It is necessary to specify the table.ID and partition.ID manually.
+	newTableInfo, err := buildTableInfoWithCheck(ctx, d, createStmt, oldTableInfo.Charset, oldTableInfo.Collate)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	// Override newTableInfo with oldTableInfo's element necessary.
+	// TODO: There may be more element assignments here, and the new TableInfo should be verified with the actual data.
+	newTableInfo.ID = oldTableInfo.ID
+	if err = checkAndOverridePartitionID(newTableInfo, oldTableInfo); err != nil {
+		return err
+	}
+	newTableInfo.AutoIncID = oldTableInfo.AutoIncID
+	// If any old columnInfo has lost, that means the old column ID lost too, repair failed.
+	for i, newOne := range newTableInfo.Columns {
+		old := getColumnInfoByName(oldTableInfo, newOne.Name.L)
+		if old == nil {
+			return ErrRepairTableFail.GenWithStackByArgs("Column " + newOne.Name.L + " has lost")
+		}
+		if newOne.Tp != old.Tp {
+			return ErrRepairTableFail.GenWithStackByArgs("Column " + newOne.Name.L + " type should be the same")
+		}
+		if newOne.Flen != old.Flen {
+			logutil.BgLogger().Warn("[ddl] admin repair table : Column " + newOne.Name.L + " flen is not equal to the old one")
+		}
+		newTableInfo.Columns[i].ID = old.ID
+	}
+	// If any old indexInfo has lost, that means the index ID lost too, so did the data, repair failed.
+	for i, newOne := range newTableInfo.Indices {
+		old := getIndexInfoByNameAndColumn(oldTableInfo, newOne)
+		if old == nil {
+			return ErrRepairTableFail.GenWithStackByArgs("Index " + newOne.Name.L + " has lost")
+		}
+		if newOne.Tp != old.Tp {
+			return ErrRepairTableFail.GenWithStackByArgs("Index " + newOne.Name.L + " type should be the same")
+		}
+		newTableInfo.Indices[i].ID = old.ID
+	}
+
+	newTableInfo.State = model.StatePublic
+	err = checkTableInfoValid(newTableInfo)
+	if err != nil {
+		return err
+	}
+	newTableInfo.State = model.StateNone
+
+	job := &model.Job{
+		SchemaID:   oldDBInfo.ID,
+		TableID:    newTableInfo.ID,
+		SchemaName: oldDBInfo.Name.L,
+		Type:       model.ActionRepairTable,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{newTableInfo},
+	}
+	err = d.doDDLJob(ctx, job)
+	if err == nil {
+		// Remove the old TableInfo from repairInfo before domain reload.
+		domainutil.RepairInfo.RemoveFromRepairInfo(oldDBInfo.Name.L, oldTableInfo.Name.L)
+	}
+	err = d.callHookOnChanged(err)
+	return errors.Trace(err)
 }

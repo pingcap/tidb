@@ -1010,7 +1010,7 @@ func (s *testIntegrationSuite5) TestBackwardCompatibility(c *C) {
 
 	unique := false
 	indexName := model.NewCIStr("idx_b")
-	idxColName := &ast.IndexColName{
+	idxColName := &ast.IndexPartSpecification{
 		Column: &ast.ColumnName{
 			Schema: schemaName,
 			Table:  tableName,
@@ -1018,7 +1018,7 @@ func (s *testIntegrationSuite5) TestBackwardCompatibility(c *C) {
 		},
 		Length: types.UnspecifiedLength,
 	}
-	idxColNames := []*ast.IndexColName{idxColName}
+	idxColNames := []*ast.IndexPartSpecification{idxColName}
 	var indexOption *ast.IndexOption
 	job := &model.Job{
 		SchemaID:   schema.ID,
@@ -1043,6 +1043,7 @@ func (s *testIntegrationSuite5) TestBackwardCompatibility(c *C) {
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 	ticker := time.NewTicker(s.lease)
+	defer ticker.Stop()
 	for range ticker.C {
 		historyJob, err := s.getHistoryDDLJob(job.ID)
 		c.Assert(err, IsNil)

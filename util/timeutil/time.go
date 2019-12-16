@@ -117,6 +117,14 @@ func SetSystemTZ(name string) {
 	})
 }
 
+// GetSystemTZ gets the value of systemTZ, an error is returned if systemTZ is not properly set.
+func GetSystemTZ() (string, error) {
+	if systemTZ == "System" || systemTZ == "" {
+		return "", fmt.Errorf("variable `systemTZ` is not properly set")
+	}
+	return systemTZ, nil
+}
+
 // getLoc first trying to load location from a cache map. If nothing found in such map, then call
 // `time.LoadLocation` to get a timezone location. After trying both way, an error will be returned
 //  if valid Location is not found.
@@ -159,6 +167,16 @@ func Zone(loc *time.Location) (string, int64) {
 	}
 
 	return name, int64(offset)
+}
+
+// ConstructTimeZone constructs timezone by name first. When the timezone name
+// is set, the daylight saving problem must be considered. Otherwise the
+// timezone offset in seconds east of UTC is used to constructed the timezone.
+func ConstructTimeZone(name string, offset int) (*time.Location, error) {
+	if name != "" {
+		return LoadLocation(name)
+	}
+	return time.FixedZone("", offset), nil
 }
 
 // WithinDayTimePeriod tests whether `now` is between `start` and `end`.

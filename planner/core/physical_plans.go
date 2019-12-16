@@ -67,9 +67,18 @@ type PhysicalTableReader struct {
 	StoreType kv.StoreType
 }
 
-// GetPhysicalReader returns PhysicalTableReader for logical TableGather.
-func (tg *TableGather) GetPhysicalReader(schema *expression.Schema, stats *property.StatsInfo, props ...*property.PhysicalProperty) *PhysicalTableReader {
-	reader := PhysicalTableReader{}.Init(tg.ctx, tg.blockOffset)
+// GetPhysicalTableReader returns PhysicalTableReader for logical TiKVSingleGather.
+func (sg *TiKVSingleGather) GetPhysicalTableReader(schema *expression.Schema, stats *property.StatsInfo, props ...*property.PhysicalProperty) *PhysicalTableReader {
+	reader := PhysicalTableReader{}.Init(sg.ctx, sg.blockOffset)
+	reader.stats = stats
+	reader.SetSchema(schema)
+	reader.childrenReqProps = props
+	return reader
+}
+
+// GetPhysicalIndexReader returns PhysicalIndexReader for logical TiKVSingleGather.
+func (sg *TiKVSingleGather) GetPhysicalIndexReader(schema *expression.Schema, stats *property.StatsInfo, props ...*property.PhysicalProperty) *PhysicalIndexReader {
+	reader := PhysicalIndexReader{}.Init(sg.ctx, sg.blockOffset)
 	reader.stats = stats
 	reader.SetSchema(schema)
 	reader.childrenReqProps = props
@@ -92,6 +101,27 @@ type PhysicalIndexReader struct {
 
 	// OutputColumns represents the columns that index reader should return.
 	OutputColumns []*expression.Column
+}
+
+// SetSchema overrides PhysicalPlan SetSchema interface.
+func (p *PhysicalIndexReader) SetSchema(_ *expression.Schema) {
+	if p.indexPlan != nil {
+		p.IndexPlans = flattenPushDownPlan(p.indexPlan)
+		switch p.indexPlan.(type) {
+		case *PhysicalHashAgg, *PhysicalStreamAgg:
+			p.schema = p.indexPlan.Schema()
+		default:
+			is := p.IndexPlans[0].(*PhysicalIndexScan)
+			p.schema = is.dataSourceSchema
+		}
+		p.OutputColumns = p.schema.Clone().Columns
+	}
+}
+
+// SetChildren overrides PhysicalPlan SetChildren interface.
+func (p *PhysicalIndexReader) SetChildren(children ...PhysicalPlan) {
+	p.indexPlan = children[0]
+	p.SetSchema(nil)
 }
 
 // PushedDownLimit is the limit operator pushed down into PhysicalIndexLookUpReader.
@@ -172,8 +202,10 @@ type PhysicalIndexScan struct {
 type PhysicalMemTable struct {
 	physicalSchemaProducer
 
-	DBName model.CIStr
-	Table  *model.TableInfo
+	DBName    model.CIStr
+	Table     *model.TableInfo
+	Columns   []*model.ColumnInfo
+	Extractor MemTablePredicateExtractor
 }
 
 // PhysicalTableScan represents a table scan plan.
@@ -256,8 +288,7 @@ type PhysicalTopN struct {
 type PhysicalApply struct {
 	PhysicalHashJoin
 
-	OuterSchema   []*expression.CorrelatedColumn
-	rightChOffset int
+	OuterSchema []*expression.CorrelatedColumn
 }
 
 type basePhysicalJoin struct {

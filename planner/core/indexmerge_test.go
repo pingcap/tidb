@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
@@ -49,7 +50,7 @@ func (s *testIndexMergeSuite) TearDownSuite(c *C) {
 	c.Assert(s.testdata.GenerateOutputIfNeeded(), IsNil)
 }
 
-func getIndexMergePathDigest(paths []*accessPath, startIndex int) string {
+func getIndexMergePathDigest(paths []*util.AccessPath, startIndex int) string {
 	if len(paths) == startIndex {
 		return "[]"
 	}
@@ -60,18 +61,18 @@ func getIndexMergePathDigest(paths []*accessPath, startIndex int) string {
 		}
 		path := paths[i]
 		idxMergeDisgest += "{Idxs:["
-		for j := 0; j < len(path.partialIndexPaths); j++ {
+		for j := 0; j < len(path.PartialIndexPaths); j++ {
 			if j > 0 {
 				idxMergeDisgest += ","
 			}
-			idxMergeDisgest += path.partialIndexPaths[j].index.Name.L
+			idxMergeDisgest += path.PartialIndexPaths[j].Index.Name.L
 		}
 		idxMergeDisgest += "],TbFilters:["
-		for j := 0; j < len(path.tableFilters); j++ {
+		for j := 0; j < len(path.TableFilters); j++ {
 			if j > 0 {
 				idxMergeDisgest += ","
 			}
-			idxMergeDisgest += path.tableFilters[j].String()
+			idxMergeDisgest += path.TableFilters[j].String()
 		}
 		idxMergeDisgest += "]}"
 	}
