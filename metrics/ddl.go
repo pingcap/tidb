@@ -119,7 +119,7 @@ var (
 			Namespace: "tidb",
 			Subsystem: "ddl",
 			Name:      "add_index_progress",
-			Help:      "Speed of add index",
+			Help:      "Progress of add index",
 		})
 )
 

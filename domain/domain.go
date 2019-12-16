@@ -903,15 +903,7 @@ func (do *Domain) StatsHandle() *handle.Handle {
 
 // CreateStatsHandle is used only for test.
 func (do *Domain) CreateStatsHandle(ctx sessionctx.Context) {
-	do.UpdateStatsHandle(handle.NewHandle(ctx, do.statsLease))
-}
-
-// UpdateStatsHandle updates stats info.
-func (do *Domain) UpdateStatsHandle(statsHandle *handle.Handle) {
-	atomic.StorePointer(&do.statsHandle, unsafe.Pointer(statsHandle))
-	if do.ddl != nil {
-		do.ddl.UpdateStatsHandle(statsHandle)
-	}
+	atomic.StorePointer(&do.statsHandle, unsafe.Pointer(handle.NewHandle(ctx, do.statsLease)))
 }
 
 // StatsUpdating checks if the stats worker is updating.
@@ -937,7 +929,7 @@ var RunAutoAnalyze = true
 func (do *Domain) UpdateTableStatsLoop(ctx sessionctx.Context) error {
 	ctx.GetSessionVars().InRestrictedSQL = true
 	statsHandle := handle.NewHandle(ctx, do.statsLease)
-	do.UpdateStatsHandle(statsHandle)
+	atomic.StorePointer(&do.statsHandle, unsafe.Pointer(statsHandle))
 	do.ddl.RegisterEventCh(statsHandle.DDLEventCh())
 	// Negative stats lease indicates that it is in test, it does not need update.
 	if do.statsLease >= 0 {

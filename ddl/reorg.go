@@ -32,13 +32,13 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
-	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/ranger"
+	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
 )
@@ -154,8 +154,7 @@ func (w *worker) runReorgJob(t *meta.Meta, reorgInfo *reorgInfo, tblInfo *model.
 		rowCount, doneHandle := w.reorgCtx.getRowCountAndHandle()
 		// Update a job's RowCount.
 		job.SetRowCount(rowCount)
-		totalCount := getTableTotalCount(w, tblInfo)
-		metrics.AddIndexProgress.Set(float64(rowCount) / float64(totalCount))
+		updateAddIndexProgress(w, tblInfo, rowCount)
 		// Update a reorgInfo's handle.
 		err := t.UpdateDDLReorgStartHandle(job, doneHandle)
 		logutil.BgLogger().Info("[ddl] run reorg job wait timeout", zap.Duration("waitTime", waitTimeout),
@@ -165,35 +164,37 @@ func (w *worker) runReorgJob(t *meta.Meta, reorgInfo *reorgInfo, tblInfo *model.
 	}
 }
 
-func getTableTotalCount(w *worker, tblInfo *model.TableInfo) int64 {
-	if w.statsHandle == nil || tblInfo == nil {
-		return statistics.PseudoRowCount
+func updateAddIndexProgress(w *worker, tblInfo *model.TableInfo, addedRowCount int64) {
+	totalCount := getTableTotalCount(w, tblInfo)
+	progress := float64(0)
+	if totalCount > 0 {
+		progress = float64(addedRowCount) / float64(totalCount)
+	} else {
+		progress = 1
 	}
-	statsHandle := (*handle.Handle)(atomic.LoadPointer(&w.statsHandle))
-	if pi := tblInfo.GetPartitionInfo(); pi != nil {
-		count := int64(0)
-		for _, def := range pi.Definitions {
-			statsTbl := statsHandle.GetPartitionStats(tblInfo, def.ID)
-			count += getStatsTableCount(statsTbl)
-		}
-		return count
+	if progress > 1 {
+		progress = 1
 	}
-	statsTbl := statsHandle.GetTableStats(tblInfo)
-	return getStatsTableCount(statsTbl)
+	metrics.AddIndexProgress.Set(progress)
 }
 
-func getStatsTableCount(statsTbl *statistics.Table) int64 {
-	if statsTbl == nil {
+func getTableTotalCount(w *worker, tblInfo *model.TableInfo) int64 {
+	var ctx sessionctx.Context
+	ctx, err := w.sessPool.get()
+	if err != nil {
 		return statistics.PseudoRowCount
 	}
-	if statsTbl.Count == 0 {
+	defer w.sessPool.put(ctx)
+
+	sql := fmt.Sprintf("select table_rows from information_schema.tables where tidb_table_id=%v;", tblInfo.ID)
+	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
+	if err != nil {
 		return statistics.PseudoRowCount
 	}
-	// Statistics is outdated.
-	if statsTbl.IsOutdated() {
+	if len(rows) != 1 {
 		return statistics.PseudoRowCount
 	}
-	return statsTbl.Count
+	return rows[0].GetInt64(0)
 }
 
 func (w *worker) isReorgRunnable(d *ddlCtx) error {

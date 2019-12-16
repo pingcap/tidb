@@ -19,7 +19,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
-	"unsafe"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -70,7 +69,6 @@ type worker struct {
 	quitCh   chan struct{}
 	wg       sync.WaitGroup
 
-	statsHandle     unsafe.Pointer
 	sessPool        *sessionPool // sessPool is used to new sessions to execute SQL in ddl package.
 	reorgCtx        *reorgCtx    // reorgCtx is used for reorganization.
 	delRangeManager delRangeManager
