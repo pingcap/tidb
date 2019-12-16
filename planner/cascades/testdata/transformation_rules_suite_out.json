@@ -234,6 +234,10 @@
           "Group#10 Schema:[test.t.c,test.t.d]",
           "    IndexScan_24 table:t, index:c, d, e, cond:[gt(test.t.c, 1)]"
         ]
+      },
+      {
+        "SQL": "",
+        "Result": null
       }
     ]
   },
