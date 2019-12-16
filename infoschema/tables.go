@@ -749,7 +749,7 @@ var tableClusterLoadCols = []columnInfo{
 	{"LOAD_VALUE", mysql.TypeVarchar, 128, 0, nil, nil},
 }
 
-var tableTiDBClusterHardwareCols = []columnInfo{
+var tableClusterHardwareCols = []columnInfo{
 	{"TYPE", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"ADDRESS", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"DEVICE_TYPE", mysql.TypeVarchar, 64, 0, nil, nil},
@@ -758,11 +758,11 @@ var tableTiDBClusterHardwareCols = []columnInfo{
 	{"VALUE", mysql.TypeVarchar, 128, 0, nil, nil},
 }
 
-var tableTiDBClusterSystemInfoCols = []columnInfo{
+var tableClusterSystemInfoCols = []columnInfo{
 	{"TYPE", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"ADDRESS", mysql.TypeVarchar, 64, 0, nil, nil},
-	{"DEVICE_TYPE", mysql.TypeVarchar, 64, 0, nil, nil},
-	{"DEVICE_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"SYSTEM_TYPE", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"SYSTEM_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"NAME", mysql.TypeVarchar, 256, 0, nil, nil},
 	{"VALUE", mysql.TypeVarchar, 128, 0, nil, nil},
 }
@@ -2320,8 +2320,8 @@ var tableNameToColumns = map[string][]columnInfo{
 	TableClusterConfig:                      tableClusterConfigCols,
 	tableClusterLoad:                        tableClusterLoadCols,
 	tableTiFlashReplica:                     tableTableTiFlashReplicaCols,
-	tableClusterHardware:                    tableTiDBClusterHardwareCols,
-	tableClusterSystemInfo:                  tableTiDBClusterSystemInfoCols,
+	tableClusterHardware:                    tableClusterHardwareCols,
+	tableClusterSystemInfo:                  tableClusterSystemInfoCols,
 }
 
 func createInfoSchemaTable(_ autoid.Allocator, meta *model.TableInfo) (table.Table, error) {

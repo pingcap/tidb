@@ -934,17 +934,32 @@ func (s *testClusterTableSuite) TestForClusterServerInfo(c *C) {
 	nameMap := set.StringSet{
 		"system": {},
 	}
+	keyPrefixMap := set.StringSet{
+		"user":  {},
+		"kern":  {},
+		"vm":    {},
+		"net":   {},
+		"debug": {},
+	}
+
 	for _, row := range rows {
 		tp := row[0].(string)
 		addr := row[1].(string)
 		name := row[2].(string)
+		key := row[4].(string)
 		delete(typeMap, tp)
 		delete(addrMap, addr)
 		delete(nameMap, name)
+		for k := range keyPrefixMap {
+			if strings.HasPrefix(key, k) {
+				delete(keyPrefixMap, k)
+			}
+		}
 	}
 	c.Assert(len(typeMap), Equals, 0)
 	c.Assert(len(addrMap), Equals, 0)
 	c.Assert(len(nameMap), Equals, 0)
+	c.Assert(len(keyPrefixMap), Equals, 0)
 }
 
 func (s *testTableSuite) TestSystemSchemaID(c *C) {
