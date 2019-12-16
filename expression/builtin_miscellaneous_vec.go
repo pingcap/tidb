@@ -24,7 +24,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 )
@@ -308,23 +307,24 @@ func (b *builtinSleepSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) e
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			if sessVars.StrictSQLMode {
-				return errIncorrectArgs.GenWithStackByArgs("sleep1")
+				return errIncorrectArgs.GenWithStackByArgs("sleep")
 			}
 			continue
 		}
 
 		if y[i] < 0 {
 			if sessVars.StrictSQLMode {
-				return errIncorrectArgs.GenWithStackByArgs("sleep2")
+				return errIncorrectArgs.GenWithStackByArgs("sleep")
 			}
 			i64s[i] = 0
 			continue
 		}
 
 		if y[i] > math.MaxFloat64/float64(time.Second.Nanoseconds()) {
-			return errIncorrectArgs.GenWithStackByArgs("sleep3")
+			return errIncorrectArgs.GenWithStackByArgs("sleep")
 		}
 
+		i64s[i] = 0
 		dur := time.Duration(y[i] * float64(time.Second.Nanoseconds()))
 		ticker := time.NewTicker(10 * time.Millisecond)
 		defer ticker.Stop()
