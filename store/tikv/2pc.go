@@ -745,27 +745,6 @@ func (action actionPessimisticLock) handleSingleBatch(c *twoPhaseCommitter, bo *
 			if err1 != nil {
 				return errors.Trace(err1)
 			}
-			// Check lock conflict error for nowait, if nowait set and key locked by others,
-			// report error immediately and do no more resolve locks.
-			// if the lock left behind whose related txn is already committed or rollbacked,
-			// (eg secondary locks not committed or rollbacked yet)
-			// we cant return "nowait conflict" directly
-			if action.LockWaitTime == kv.LockNoWait {
-				// the pessimistic lock found could be invalid locks which is timeout but not recycled yet
-				if !c.store.oracle.IsExpired(lock.TxnID, lock.TTL) {
-					return ErrLockAcquireFailAndNoWaitSet
-				}
-			} else if action.LockWaitTime == kv.LockAlwaysWait {
-				// do nothing but keep wait
-			} else {
-				// the lockWaitTime is set, check the lock wait timeout or not
-				// the pessimistic lock found could be invalid locks which is timeout but not recycled yet
-				if !c.store.oracle.IsExpired(lock.TxnID, lock.TTL) {
-					if time.Since(lockWaitStartTime).Milliseconds() >= action.LockWaitTime {
-						return ErrLockWaitTimeout
-					}
-				}
-			}
 			locks = append(locks, lock)
 		}
 		// Because we already waited on tikv, no need to Backoff here.
@@ -775,10 +754,8 @@ func (action actionPessimisticLock) handleSingleBatch(c *twoPhaseCommitter, bo *
 			return errors.Trace(err)
 		}
 
-		// Before resolving locks, we checked whether the locks are expired according to its own TTL.
-		// However, it's not accurate because heartbeat only updates the TTL of the primary key.
 		// If msBeforeTxnExpired is not zero, it means there are still locks blocking us acquiring
-		// the pessimistic lock. We should return timeout error if necessary.
+		// the pessimistic lock. We should return acquire fail with nowait set or timeout error if necessary.
 		if msBeforeTxnExpired > 0 {
 			if action.LockWaitTime == kv.LockNoWait {
 				return ErrLockAcquireFailAndNoWaitSet
