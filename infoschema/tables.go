@@ -99,7 +99,9 @@ const (
 	tableTiDBServersInfo                    = "TIDB_SERVERS_INFO"
 	tableClusterInfo                        = "CLUSTER_INFO"
 	// TableClusterConfig is the string constant of cluster configuration memory table
-	TableClusterConfig  = "CLUSTER_CONFIG"
+	TableClusterConfig = "CLUSTER_CONFIG"
+	// TableClusterLog is the string constant of cluster log memory table
+	TableClusterLog     = "CLUSTER_LOG"
 	tableClusterLoad    = "CLUSTER_LOAD"
 	tableTiFlashReplica = "TIFLASH_REPLICA"
 )
@@ -152,6 +154,7 @@ var tableIDMap = map[string]int64{
 	tableTiFlashReplica:                     autoid.InformationSchemaDBID + 45,
 	clusterTableSlowLog:                     autoid.InformationSchemaDBID + 46,
 	clusterTableProcesslist:                 autoid.InformationSchemaDBID + 47,
+	TableClusterLog:                         autoid.InformationSchemaDBID + 48,
 }
 
 type columnInfo struct {
@@ -736,6 +739,14 @@ var tableClusterConfigCols = []columnInfo{
 	{"VALUE", mysql.TypeVarchar, 128, 0, nil, nil},
 }
 
+var tableClusterLogCols = []columnInfo{
+	{"TIME", mysql.TypeVarchar, 32, 0, nil, nil},
+	{"TYPE", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"ADDRESS", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"LEVEL", mysql.TypeVarchar, 8, 0, nil, nil},
+	{"MESSAGE", mysql.TypeVarString, 1024, 0, nil, nil},
+}
+
 var tableClusterLoadCols = []columnInfo{
 	{"TYPE", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"ADDRESS", mysql.TypeVarchar, 64, 0, nil, nil},
@@ -1116,8 +1127,8 @@ var tableTableTiFlashReplicaCols = []columnInfo{
 	{"AVAILABLE", mysql.TypeTiny, 1, 0, nil, nil},
 }
 
-func dataForSchemata(schemas []*model.DBInfo) [][]types.Datum {
-
+func dataForSchemata(ctx sessionctx.Context, schemas []*model.DBInfo) [][]types.Datum {
+	checker := privilege.GetPrivilegeManager(ctx)
 	rows := make([][]types.Datum, 0, len(schemas))
 
 	for _, schema := range schemas {
@@ -1133,6 +1144,9 @@ func dataForSchemata(schemas []*model.DBInfo) [][]types.Datum {
 			collation = schema.Collate // Overwrite default
 		}
 
+		if checker != nil && !checker.RequestVerification(ctx.GetSessionVars().ActiveRoles, schema.Name.L, "", "", mysql.AllPrivMask) {
+			continue
+		}
 		record := types.MakeDatums(
 			catalogVal,    // CATALOG_NAME
 			schema.Name.O, // SCHEMA_NAME
@@ -1703,10 +1717,15 @@ const (
 )
 
 // dataForTableConstraints constructs data for table information_schema.constraints.See https://dev.mysql.com/doc/refman/5.7/en/table-constraints-table.html
-func dataForTableConstraints(schemas []*model.DBInfo) [][]types.Datum {
+func dataForTableConstraints(ctx sessionctx.Context, schemas []*model.DBInfo) [][]types.Datum {
+	checker := privilege.GetPrivilegeManager(ctx)
 	var rows [][]types.Datum
 	for _, schema := range schemas {
 		for _, tbl := range schema.Tables {
+			if checker != nil && !checker.RequestVerification(ctx.GetSessionVars().ActiveRoles, schema.Name.L, tbl.Name.L, "", mysql.AllPrivMask) {
+				continue
+			}
+
 			if tbl.PKIsHandle {
 				record := types.MakeDatums(
 					catalogVal,           // CONSTRAINT_CATALOG
@@ -2284,6 +2303,7 @@ var tableNameToColumns = map[string][]columnInfo{
 	tableTiDBServersInfo:                    tableTiDBServersInfoCols,
 	tableClusterInfo:                        tableClusterInfoCols,
 	TableClusterConfig:                      tableClusterConfigCols,
+	TableClusterLog:                         tableClusterLogCols,
 	tableClusterLoad:                        tableClusterLoadCols,
 	tableTiFlashReplica:                     tableTableTiFlashReplicaCols,
 }
@@ -2327,7 +2347,7 @@ func (it *infoschemaTable) getRows(ctx sessionctx.Context, cols []*table.Column)
 	sort.Sort(schemasSorter(dbs))
 	switch it.meta.Name.O {
 	case tableSchemata:
-		fullRows = dataForSchemata(dbs)
+		fullRows = dataForSchemata(ctx, dbs)
 	case tableTables:
 		fullRows, err = dataForTables(ctx, dbs)
 	case tableTiDBIndexes:
@@ -2343,7 +2363,7 @@ func (it *infoschemaTable) getRows(ctx sessionctx.Context, cols []*table.Column)
 	case tableSessionVar:
 		fullRows, err = dataForSessionVar(ctx)
 	case tableConstraints:
-		fullRows = dataForTableConstraints(dbs)
+		fullRows = dataForTableConstraints(ctx, dbs)
 	case tableFiles:
 	case tableProfiling:
 		if v, ok := ctx.GetSessionVars().GetSystemVar("profiling"); ok && variable.TiDBOptOn(v) {
