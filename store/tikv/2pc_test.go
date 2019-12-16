@@ -674,7 +674,7 @@ func (s *testCommitterSuite) TestAcquireFalseTimeoutLock(c *C) {
 	err = txn2.LockKeys(context.Background(), lockCtx, k2)
 	elapsed := time.Now().Sub(startTime)
 	// cannot acquire lock immediately thus error
-	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, ErrLockAcquireFailAndNoWaitSet.Error())
 	// it should return immediately
 	c.Assert(elapsed, Less, 50*time.Millisecond)
 
@@ -683,8 +683,8 @@ func (s *testCommitterSuite) TestAcquireFalseTimeoutLock(c *C) {
 	startTime = time.Now()
 	err = txn2.LockKeys(context.Background(), lockCtx, k2)
 	elapsed = time.Now().Sub(startTime)
-	// cannot acquire lock immediately thus error
-	c.Assert(err, NotNil)
+	// cannot acquire lock in time thus error
+	c.Assert(err.Error(), Equals, ErrLockWaitTimeout.Error())
 	// it should return after about 300ms
 	c.Assert(elapsed, Less, 350*time.Millisecond)
 }
