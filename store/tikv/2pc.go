@@ -785,8 +785,7 @@ func (action actionPessimisticLock) handleSingleBatch(c *twoPhaseCommitter, bo *
 			} else if action.LockWaitTime == kv.LockAlwaysWait {
 				// do nothing but keep wait
 			} else {
-				// the lockWaitTime is set, check the lock wait timeout or not
-				// the pessimistic lock found could be invalid locks which is timeout but not recycled yet
+				// the lockWaitTime is set, we should return wait timeout if we are still blocked by a lock
 				if time.Since(lockWaitStartTime).Milliseconds() >= action.LockWaitTime {
 					return ErrLockWaitTimeout
 				}
