@@ -294,7 +294,7 @@ func (s *testSuite) TestSnapshot(c *C) {
 	c.Assert(n, Equals, int64(1))
 	_, err = snapMeta.GenGlobalID()
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[structure:5]write on snapshot")
+	c.Assert(err.Error(), Equals, "[structure:8220]write on snapshot")
 }
 
 func (s *testSuite) TestDDL(c *C) {
