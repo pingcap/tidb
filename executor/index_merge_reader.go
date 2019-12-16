@@ -475,11 +475,13 @@ func (e *IndexMergeReaderExecutor) getResultTask() (*lookupTableTask, error) {
 
 // Close implements Exec Close interface.
 func (e *IndexMergeReaderExecutor) Close() error {
-	e.processWokerWg.Wait()
 	if !e.workerStarted || e.finished == nil {
 		return nil
 	}
 	close(e.finished)
+	e.processWokerWg.Wait()
+	e.tblWorkerWg.Wait()
+	e.partialWorkerWg.Wait()
 	e.finished = nil
 	e.workerStarted = false
 	// TODO: how to store e.feedbacks
