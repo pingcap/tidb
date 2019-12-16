@@ -52,6 +52,7 @@ var defaultTransformationMap = map[memo.Operand][]Transformation{
 		NewRulePushSelDownJoin(),
 		NewRulePushSelDownIndexScan(),
 		NewRulePushSelDownUnionAll(),
+		NewRulePushSelDownWindow(),
 	},
 	memo.OperandDataSource: {
 		NewRuleEnumeratePaths(),
@@ -564,6 +565,69 @@ func (r *PushSelDownAggregation) OnTransform(old *memo.ExprIter) (newExprs []*me
 	remainedGroupExpr := memo.NewGroupExpr(remainedSel)
 	remainedGroupExpr.SetChildren(aggGroup)
 	return []*memo.GroupExpr{remainedGroupExpr}, true, false, nil
+}
+
+// PushSelDownWindow pushes Selection down to the child of Window.
+type PushSelDownWindow struct {
+	baseRule
+}
+
+// NewRulePushSelDownWindow creates a new Transformation PushSelDownWindow.
+// The pattern of this rule is `Selection -> Window`.
+func NewRulePushSelDownWindow() Transformation {
+	rule := &PushSelDownWindow{}
+	rule.pattern = memo.BuildPattern(
+		memo.OperandSelection,
+		memo.EngineTiDBOnly,
+		memo.NewPattern(memo.OperandWindow, memo.EngineAll),
+	)
+	return rule
+}
+
+// OnTransform implements Transformation interface.
+// This rule will transform `sel -> window -> x` to
+// 1. `window -> sel -> x` or
+// 2. `sel -> window -> sel -> x` or
+// 3. just keep unchanged.
+func (r *PushSelDownWindow) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
+	sel := old.GetExpr().ExprNode.(*plannercore.LogicalSelection)
+	window := old.Children[0].GetExpr().ExprNode.(*plannercore.LogicalWindow)
+	windowSchema := old.Children[0].Prop.Schema
+	childGroup := old.Children[0].GetExpr().Children[0]
+	canBePushed := make([]expression.Expression, 0, len(sel.Conditions))
+	canNotBePushed := make([]expression.Expression, 0, len(sel.Conditions))
+
+	// get partition Columns' Schema
+	partitionColsSchema := expression.NewSchema(window.GetPartitionByCols()...)
+
+	for _, cond := range sel.Conditions {
+		if expression.ExprFromSchema(cond, partitionColsSchema) {
+			canBePushed = append(canBePushed, cond)
+		} else {
+			canNotBePushed = append(canNotBePushed, cond)
+		}
+	}
+	// Nothing can be pushed!
+	if len(canBePushed) == 0 {
+		return nil, false, false, nil
+	}
+
+	// construct return GroupExpr
+	newBottomSel := plannercore.LogicalSelection{Conditions: canBePushed}.Init(sel.SCtx(), sel.SelectBlockOffset())
+	newBottomSelExpr := memo.NewGroupExpr(newBottomSel)
+	newBottomSelExpr.SetChildren(childGroup)
+	newBottomSelGroup := memo.NewGroupWithSchema(newBottomSelExpr, childGroup.Prop.Schema)
+	newWindowExpr := memo.NewGroupExpr(window)
+	newWindowExpr.SetChildren(newBottomSelGroup)
+	if len(canNotBePushed) == 0 {
+		return []*memo.GroupExpr{newWindowExpr}, true, false, nil
+	}
+
+	newWindowGroup := memo.NewGroupWithSchema(newWindowExpr, windowSchema)
+	newTopSel := plannercore.LogicalSelection{Conditions: canNotBePushed}.Init(sel.SCtx(), sel.SelectBlockOffset())
+	newTopSelExpr := memo.NewGroupExpr(newTopSel)
+	newTopSelExpr.SetChildren(newWindowGroup)
+	return []*memo.GroupExpr{newTopSelExpr}, true, false, nil
 }
 
 // TransformLimitToTopN transforms Limit+Sort to TopN.
