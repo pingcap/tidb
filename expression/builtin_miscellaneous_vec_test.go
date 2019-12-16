@@ -42,7 +42,12 @@ var vecBuiltinMiscellaneousCases = map[string][]vecExprBenchCase{
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString}},
 	},
 	ast.Sleep: {
-		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETReal}, geners: []dataGenerator{&sleepTimeGener{0.2}}},
+		{
+			retEvalType:   types.ETInt,
+			childrenTypes: []types.EvalType{types.ETReal},
+			geners:        []dataGenerator{&sleepTimeGener{0.2}},
+			chunkSize:     1,
+		},
 	},
 	ast.UUID: {},
 	ast.Inet6Ntoa: {
