@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/mysql"
 	. "github.com/pingcap/parser/types"
-	_ "github.com/pingcap/tidb/types/parser_driver"
 )
 
 func TestT(t *testing.T) {

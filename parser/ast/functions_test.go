@@ -16,9 +16,8 @@ package ast_test
 import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser"
-	"github.com/pingcap/parser/ast"
 	. "github.com/pingcap/parser/ast"
-	driver "github.com/pingcap/tidb/types/parser_driver"
+	"github.com/pingcap/parser/test_driver"
 )
 
 var _ = Suite(&testFunctionsSuite{})
@@ -146,9 +145,9 @@ func (ts *testFunctionsSuite) TestConvert(c *C) {
 		}
 		c.Assert(err, IsNil)
 
-		st := stmt.(*ast.SelectStmt)
+		st := stmt.(*SelectStmt)
 		expr := st.Fields.Fields[0].Expr.(*FuncCallExpr)
-		charsetArg := expr.Args[1].(*driver.ValueExpr)
+		charsetArg := expr.Args[1].(*test_driver.ValueExpr)
 		c.Assert(charsetArg.GetString(), Equals, testCase.CharsetName)
 	}
 }
@@ -175,9 +174,9 @@ func (ts *testFunctionsSuite) TestChar(c *C) {
 		}
 		c.Assert(err, IsNil)
 
-		st := stmt.(*ast.SelectStmt)
+		st := stmt.(*SelectStmt)
 		expr := st.Fields.Fields[0].Expr.(*FuncCallExpr)
-		charsetArg := expr.Args[1].(*driver.ValueExpr)
+		charsetArg := expr.Args[1].(*test_driver.ValueExpr)
 		c.Assert(charsetArg.GetString(), Equals, testCase.CharsetName)
 	}
 }

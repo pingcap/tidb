@@ -29,8 +29,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
-	"github.com/pingcap/tidb/types"
-	driver "github.com/pingcap/tidb/types/parser_driver"
+	"github.com/pingcap/parser/test_driver"
 )
 
 func TestT(t *testing.T) {
@@ -251,16 +250,16 @@ func (s *testParserSuite) TestSimple(c *C) {
 	sel, ok := st.(*ast.SelectStmt)
 	c.Assert(ok, IsTrue)
 	expr := sel.Fields.Fields[0]
-	vExpr := expr.Expr.(*driver.ValueExpr)
-	c.Assert(vExpr.Kind(), Equals, types.KindInt64)
+	vExpr := expr.Expr.(*test_driver.ValueExpr)
+	c.Assert(vExpr.Kind(), Equals, test_driver.KindInt64)
 	src = "SELECT 9223372036854775808;"
 	st, err = parser.ParseOneStmt(src, "", "")
 	c.Assert(err, IsNil)
 	sel, ok = st.(*ast.SelectStmt)
 	c.Assert(ok, IsTrue)
 	expr = sel.Fields.Fields[0]
-	vExpr = expr.Expr.(*driver.ValueExpr)
-	c.Assert(vExpr.Kind(), Equals, types.KindUint64)
+	vExpr = expr.Expr.(*test_driver.ValueExpr)
+	c.Assert(vExpr.Kind(), Equals, test_driver.KindUint64)
 }
 
 func (s *testParserSuite) TestSpecialComments(c *C) {
@@ -4827,8 +4826,8 @@ func (checker *nodeTextCleaner) Enter(in ast.Node) (out ast.Node, skipChildren b
 		node.F = strings.ToLower(node.F)
 	case *ast.SelectField:
 		node.Offset = 0
-	case *driver.ValueExpr:
-		if node.Kind() == types.KindMysqlDecimal {
+	case *test_driver.ValueExpr:
+		if node.Kind() == test_driver.KindMysqlDecimal {
 			node.GetMysqlDecimal().FromString(node.GetMysqlDecimal().ToString())
 		}
 	case *ast.GrantStmt:
