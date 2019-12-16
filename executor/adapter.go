@@ -112,8 +112,17 @@ func colNames2ResultFields(schema *expression.Schema, names []*types.FieldName, 
 // The reason we need update is that chunk with 0 rows indicating we already finished current query, we need prepare for
 // next query.
 // If stmt is not nil and chunk with some rows inside, we simply update last query found rows by the number of row in chunk.
-func (a *recordSet) Next(ctx context.Context, req *chunk.Chunk) error {
-	err := Next(ctx, a.executor, req)
+func (a *recordSet) Next(ctx context.Context, req *chunk.Chunk) (err error) {
+	defer func() {
+		r := recover()
+		if r == nil {
+			return
+		}
+		err = errors.Errorf("%v", r)
+		logutil.Logger(ctx).Error("execute sql panic", zap.String("sql", a.stmt.Text), zap.Stack("stack"))
+	}()
+
+	err = Next(ctx, a.executor, req)
 	if err != nil {
 		a.lastErr = err
 		return err
@@ -526,12 +535,18 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e Executor) error {
 		if err1 != nil {
 			return err1
 		}
+		keys = txnCtx.CollectUnchangedRowKeys(keys)
 		if len(keys) == 0 {
 			return nil
 		}
-		forUpdateTS := txnCtx.GetForUpdateTS()
-		err = txn.LockKeys(ctx, &sctx.GetSessionVars().Killed, forUpdateTS, sctx.GetSessionVars().LockWaitTimeout,
-			sctx.GetSessionVars().StmtCtx.GetLockWaitStartTime(), keys...)
+		seVars := sctx.GetSessionVars()
+		lockCtx := &kv.LockCtx{
+			Killed:        &seVars.Killed,
+			ForUpdateTS:   txnCtx.GetForUpdateTS(),
+			LockWaitTime:  seVars.LockWaitTimeout,
+			WaitStartTime: seVars.StmtCtx.GetLockWaitStartTime(),
+		}
+		err = txn.LockKeys(ctx, lockCtx, keys...)
 		if err == nil {
 			return nil
 		}
@@ -595,7 +610,7 @@ func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, err error) (E
 		if err != nil {
 			tsErr := UpdateForUpdateTS(a.Ctx, 0)
 			if tsErr != nil {
-				return nil, tsErr
+				logutil.Logger(ctx).Warn("UpdateForUpdateTS failed", zap.Error(tsErr))
 			}
 		}
 		return nil, err
@@ -764,6 +779,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	statsInfos := plannercore.GetStatsInfo(a.Plan)
 	memMax := sessVars.StmtCtx.MemTracker.MaxConsumed()
 	_, digest := sessVars.StmtCtx.SQLDigest()
+	_, planDigest := getPlanDigest(a.Ctx, a.Plan)
 	slowItems := &variable.SlowQueryLogItems{
 		TxnTS:          txnTS,
 		SQL:            sql.String(),
@@ -778,6 +794,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		MemMax:         memMax,
 		Succ:           succ,
 		Plan:           getPlanTree(a.Plan),
+		PlanDigest:     planDigest,
 		Prepared:       a.isPreparedStmt,
 		HasMoreResults: hasMoreResults,
 	}
@@ -824,6 +841,17 @@ func getPlanTree(p plannercore.Plan) string {
 		return planTree
 	}
 	return variable.SlowLogPlanPrefix + planTree + variable.SlowLogPlanSuffix
+}
+
+// getPlanDigest will try to get the select plan tree if the plan is select or the select plan of delete/update/insert statement.
+func getPlanDigest(sctx sessionctx.Context, p plannercore.Plan) (normalized, planDigest string) {
+	normalized, planDigest = sctx.GetSessionVars().StmtCtx.GetPlanDigest()
+	if len(normalized) > 0 {
+		return
+	}
+	normalized, planDigest = plannercore.NormalizePlan(p)
+	sctx.GetSessionVars().StmtCtx.SetPlanDigest(normalized, planDigest)
+	return
 }
 
 // SummaryStmt collects statements for performance_schema.events_statements_summary_by_digest
