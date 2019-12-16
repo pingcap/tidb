@@ -598,11 +598,7 @@ func (r *PushSelDownWindow) OnTransform(old *memo.ExprIter) (newExprs []*memo.Gr
 	canNotBePushed := make([]expression.Expression, 0, len(sel.Conditions))
 
 	// get partition Columns' Schema
-	partitionCols := make([]*expression.Column, 0, len(window.PartitionBy))
-	for _, partitionItem := range window.PartitionBy {
-		partitionCols = append(partitionCols, partitionItem.Col)
-	}
-	partitionColsSchema := expression.NewSchema(partitionCols...)
+	partitionColsSchema := expression.NewSchema(window.GetPartitionByCols()...)
 
 	for _, cond := range sel.Conditions {
 		if expression.ExprFromSchema(cond, partitionColsSchema) {
