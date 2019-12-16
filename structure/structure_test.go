@@ -18,6 +18,8 @@ import (
 	"testing"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/structure"
@@ -394,4 +396,17 @@ func (s *testTxStructureSuite) TestHash(c *C) {
 		return nil
 	})
 	c.Assert(err, IsNil)
+}
+
+func (*testTxStructureSuite) TestError(c *C) {
+	kvErrs := []*terror.Error{
+		structure.ErrInvalidHashKeyFlag,
+		structure.ErrInvalidListIndex,
+		structure.ErrInvalidListMetaData,
+		structure.ErrWriteOnSnapshot,
+	}
+	for _, err := range kvErrs {
+		code := err.ToSQLError().Code
+		c.Assert(code != mysql.ErrUnknown && code == uint16(err.Code()), IsTrue, Commentf("err: %v", err))
+	}
 }
