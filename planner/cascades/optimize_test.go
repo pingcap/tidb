@@ -197,5 +197,6 @@ func (s *testCascadesSuite) TestAppliedRuleSet(c *C) {
 	c.Assert(ok, IsTrue)
 	group := memo.Convert2Group(logic)
 	err = s.optimizer.onPhaseExploration(s.sctx, group)
+	c.Assert(err, IsNil)
 	c.Assert(rule.appliedTimes, Equals, 1)
 }
