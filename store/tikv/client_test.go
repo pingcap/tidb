@@ -91,7 +91,7 @@ func (s *testClientSuite) TestRemoveCanceledRequests(c *C) {
 
 func (s *testClientSuite) TestCancelTimeoutRetErr(c *C) {
 	req := new(tikvpb.BatchCommandsRequest_Request)
-	a := newBatchConn(1, 1, nil)
+	a := &batchConn{}
 
 	ctx, cancel := context.WithCancel(context.TODO())
 	cancel()
@@ -108,11 +108,11 @@ func (s *testClientSuite) TestSendWhenReconnect(c *C) {
 
 	rpcClient := newRPCClient(config.Security{})
 	addr := fmt.Sprintf("%s:%d", "127.0.0.1", port)
-	conn, err := rpcClient.getConnArray(addr)
+	conn, err := rpcClient.getBatchConn(addr)
 	c.Assert(err, IsNil)
 
 	// Suppose all connections are re-establishing.
-	for _, client := range conn.batchConn.batchCommandsClients {
+	for _, client := range conn.batchCommandsClients {
 		client.lockForRecreate()
 	}
 

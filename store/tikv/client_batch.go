@@ -38,7 +38,8 @@ import (
 type batchConn struct {
 	// An atomic flag indicates whether the batch is idle or not.
 	// 0 for busy, others for idle.
-	idle uint32
+	idle   uint32
+	target string
 
 	// batchCommandsCh used for batch commands.
 	batchCommandsCh        chan *batchCommandsEntry
@@ -55,16 +56,36 @@ type batchConn struct {
 	index uint32
 }
 
-func newBatchConn(connCount, maxBatchSize uint, idleNotify *uint32) *batchConn {
-	return &batchConn{
-		batchCommandsCh:        make(chan *batchCommandsEntry, maxBatchSize),
-		batchCommandsClients:   make([]*batchCommandsClient, 0, connCount),
+func newBatchConn(connCount uint, cfg *config.TiKVClient, addr string, security config.Security, idleNotify *uint32) (*batchConn, error) {
+	a := &batchConn{
+		target:                 addr,
+		batchCommandsCh:        make(chan *batchCommandsEntry, cfg.MaxBatchSize),
+		batchCommandsClients:   make([]*batchCommandsClient, connCount),
 		tikvTransportLayerLoad: 0,
 		closed:                 make(chan struct{}),
 
-		idleNotify: idleNotify,
-		idleDetect: time.NewTimer(idleTimeout),
+		idleNotify:      idleNotify,
+		idleDetect:      time.NewTimer(idleTimeout),
+		pendingRequests: metrics.TiKVPendingBatchRequests.WithLabelValues(addr),
 	}
+	for i := 0; i < len(a.batchCommandsClients); i++ {
+		conn, err := newGrpcConn(addr, security)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		batchClient := &batchCommandsClient{
+			target:        addr,
+			conn:          conn,
+			batched:       sync.Map{},
+			idAlloc:       0,
+			closed:        0,
+			tikvClientCfg: cfg,
+			tikvLoad:      &a.tikvTransportLayerLoad,
+		}
+		a.batchCommandsClients[i] = batchClient
+	}
+	go a.batchSendLoop(cfg)
+	return a, nil
 }
 
 func (a *batchConn) isIdle() bool {
@@ -201,7 +222,7 @@ type batchCommandsClient struct {
 	batched sync.Map
 	idAlloc uint64
 
-	tikvClientCfg config.TiKVClient
+	tikvClientCfg *config.TiKVClient
 	tikvLoad      *uint64
 
 	// closed indicates the batch client is closed explicitly or not.
@@ -303,7 +324,7 @@ func (c *batchCommandsClient) reCreateStreamingClientOnce(perr error) error {
 	return err
 }
 
-func (c *batchCommandsClient) batchRecvLoop(cfg config.TiKVClient, tikvTransportLayerLoad *uint64) {
+func (c *batchCommandsClient) batchRecvLoop(cfg *config.TiKVClient, tikvTransportLayerLoad *uint64) {
 	defer func() {
 		if r := recover(); r != nil {
 			metrics.PanicCounter.WithLabelValues(metrics.LabelBatchRecvLoop).Inc()
@@ -416,7 +437,7 @@ func resetRequests(requests []*tikvpb.BatchCommandsRequest_Request) []*tikvpb.Ba
 	return requests
 }
 
-func (a *batchConn) batchSendLoop(cfg config.TiKVClient) {
+func (a *batchConn) batchSendLoop(cfg *config.TiKVClient) {
 	defer func() {
 		if r := recover(); r != nil {
 			metrics.PanicCounter.WithLabelValues(metrics.LabelBatchSendLoop).Inc()
@@ -533,11 +554,18 @@ func (c *batchCommandsClient) initBatchClient() error {
 	return nil
 }
 
+func (c *batchCommandsClient) Close() {
+	// After connections are closed, `batchRecvLoop`s will check the flag.
+	atomic.StoreInt32(&c.closed, 1)
+	if err := c.conn.Close(); err != nil {
+		logutil.BgLogger().Warn("close grpc conn error", zap.Error(err))
+	}
+}
+
 func (a *batchConn) Close() {
 	// Close all batchRecvLoop.
 	for _, c := range a.batchCommandsClients {
-		// After connections are closed, `batchRecvLoop`s will check the flag.
-		atomic.StoreInt32(&c.closed, 1)
+		c.Close()
 	}
 	// Don't close(batchCommandsCh) because when Close() is called, someone maybe
 	// calling SendRequest and writing batchCommandsCh, if we close it here the
@@ -597,10 +625,10 @@ func sendBatchRequest(
 	}
 }
 
-func (c *rpcClient) recycleIdleConnArray() {
+func (c *rpcClient) recycleIdleConn() {
 	var addrs []string
 	c.RLock()
-	for _, conn := range c.conns {
+	for _, conn := range c.batchConns {
 		if conn.isIdle() {
 			addrs = append(addrs, conn.target)
 		}
@@ -609,7 +637,7 @@ func (c *rpcClient) recycleIdleConnArray() {
 
 	for _, addr := range addrs {
 		c.Lock()
-		conn, ok := c.conns[addr]
+		conn, ok := c.batchConns[addr]
 		if ok {
 			delete(c.conns, addr)
 			logutil.BgLogger().Info("recycle idle connection",
