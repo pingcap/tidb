@@ -349,7 +349,7 @@ func keyNeedToLock(k, v []byte) bool {
 	if tablecodec.IsUntouchedIndexKValue(k, v) {
 		return false
 	}
-	isNonUniqueIndex := len(v) == 1
+	isNonUniqueIndex := tablecodec.IsIndexKey(k) && len(v) == 1
 	// Put row key and unique index need to lock.
 	return !isNonUniqueIndex
 }

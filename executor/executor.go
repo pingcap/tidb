@@ -820,23 +820,30 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	if e.Lock == ast.SelectLockForUpdateNoWait {
 		lockWaitTime = kv.LockNoWait
 	}
-	return doLockKeys(ctx, e.ctx, lockWaitTime, e.keys...)
+	return doLockKeys(ctx, e.ctx, newLockCtx(e.ctx.GetSessionVars(), lockWaitTime), e.keys...)
+}
+
+func newLockCtx(seVars *variable.SessionVars, lockWaitTime int64) *kv.LockCtx {
+	return &kv.LockCtx{
+		Killed:        &seVars.Killed,
+		ForUpdateTS:   seVars.TxnCtx.GetForUpdateTS(),
+		LockWaitTime:  lockWaitTime,
+		WaitStartTime: seVars.StmtCtx.GetLockWaitStartTime(),
+	}
 }
 
 // doLockKeys is the main entry for pessimistic lock keys
 // waitTime means the lock operation will wait in milliseconds if target key is already
 // locked by others. used for (select for update nowait) situation
 // except 0 means alwaysWait 1 means nowait
-func doLockKeys(ctx context.Context, se sessionctx.Context, waitTime int64, keys ...kv.Key) error {
+func doLockKeys(ctx context.Context, se sessionctx.Context, lockCtx *kv.LockCtx, keys ...kv.Key) error {
 	se.GetSessionVars().TxnCtx.ForUpdate = true
 	// Lock keys only once when finished fetching all results.
 	txn, err := se.Txn(true)
 	if err != nil {
 		return err
 	}
-	forUpdateTS := se.GetSessionVars().TxnCtx.GetForUpdateTS()
-	return txn.LockKeys(ctx, &se.GetSessionVars().Killed, forUpdateTS, waitTime,
-		se.GetSessionVars().StmtCtx.GetLockWaitStartTime(), keys...)
+	return txn.LockKeys(ctx, lockCtx, keys...)
 }
 
 // LimitExec represents limit executor

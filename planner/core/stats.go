@@ -285,15 +285,13 @@ func (is *LogicalIndexScan) DeriveStats(childStats []*property.StatsInfo, selfSc
 	if len(is.AccessConds) == 0 {
 		is.Ranges = ranger.FullRange()
 	}
-	// TODO: If the AccessConds is not empty, we have set the range when push down the selection.
-
-	is.idxCols, is.idxColLens = expression.IndexInfo2PrefixCols(is.Columns, is.schema.Columns, is.Index)
-	is.fullIdxCols, is.fullIdxColLens = expression.IndexInfo2Cols(is.Columns, is.schema.Columns, is.Index)
-	if !is.Index.Unique && !is.Index.Primary && len(is.Index.Columns) == len(is.idxCols) {
-		handleCol := is.getPKIsHandleCol()
+	is.IdxCols, is.IdxColLens = expression.IndexInfo2PrefixCols(is.Columns, selfSchema.Columns, is.Index)
+	is.FullIdxCols, is.FullIdxColLens = expression.IndexInfo2Cols(is.Columns, selfSchema.Columns, is.Index)
+	if !is.Index.Unique && !is.Index.Primary && len(is.Index.Columns) == len(is.IdxCols) {
+		handleCol := is.getPKIsHandleCol(selfSchema)
 		if handleCol != nil && !mysql.HasUnsignedFlag(handleCol.RetType.Flag) {
-			is.idxCols = append(is.idxCols, handleCol)
-			is.idxColLens = append(is.idxColLens, types.UnspecifiedLength)
+			is.IdxCols = append(is.IdxCols, handleCol)
+			is.IdxColLens = append(is.IdxColLens, types.UnspecifiedLength)
 		}
 	}
 	return is.stats, nil

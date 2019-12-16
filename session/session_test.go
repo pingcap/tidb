@@ -99,10 +99,17 @@ func (s *testSessionSuiteBase) TearDownSuite(c *C) {
 
 func (s *testSessionSuiteBase) TearDownTest(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
-	r := tk.MustQuery("show tables")
+	r := tk.MustQuery("show full tables")
 	for _, tb := range r.Rows() {
 		tableName := tb[0]
-		tk.MustExec(fmt.Sprintf("drop table %v", tableName))
+		tableType := tb[1]
+		if tableType == "VIEW" {
+			tk.MustExec(fmt.Sprintf("drop view %v", tableName))
+		} else if tableType == "BASE TABLE" {
+			tk.MustExec(fmt.Sprintf("drop table %v", tableName))
+		} else {
+			panic(fmt.Sprintf("Unexpected table '%s' with type '%s'.", tableName, tableType))
+		}
 	}
 }
 
