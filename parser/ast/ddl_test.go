@@ -531,7 +531,7 @@ func (ts *testDDLSuite) TestAdminRepairTableRestore(c *C) {
 	RunNodeRestoreTest(c, testCases, "%s", extractNodeFunc)
 }
 
-func (ts *testDDLSuite) TestCreateSequenceRestore(c *C) {
+func (ts *testDDLSuite) TestSequenceRestore(c *C) {
 	testCases := []NodeRestoreTestCase{
 		{"create sequence seq", "CREATE SEQUENCE `seq`"},
 		{"create sequence if not exists seq", "CREATE SEQUENCE IF NOT EXISTS `seq`"},
@@ -564,6 +564,13 @@ func (ts *testDDLSuite) TestCreateSequenceRestore(c *C) {
 		{"create temporary sequence seq nocycle nocache maxvalue 1000 cache 1", "CREATE TEMPORARY SEQUENCE `seq` NOCYCLE NOCACHE MAXVALUE 1000 CACHE 1"},
 		{"create temporary sequence seq increment -1 no minvalue no maxvalue cache = 1", "CREATE TEMPORARY SEQUENCE `seq` INCREMENT BY -1 NO MINVALUE NO MAXVALUE CACHE 1"},
 		{"create temporary sequence if not exists seq increment 1 minvalue 0 nomaxvalue cache 100 nocycle noorder", "CREATE TEMPORARY SEQUENCE IF NOT EXISTS `seq` INCREMENT BY 1 MINVALUE 0 NO MAXVALUE CACHE 100 NOCYCLE NOORDER"},
+
+		// test drop sequence
+		{"drop sequence seq", "DROP SEQUENCE `seq`"},
+		{"drop sequence seq, seq2", "DROP SEQUENCE `seq`, `seq2`"},
+		{"drop sequence if exists seq, seq2", "DROP SEQUENCE IF EXISTS `seq`, `seq2`"},
+		{"drop temporary sequence if exists seq", "DROP TEMPORARY SEQUENCE IF EXISTS `seq`"},
+		{"drop temporary sequence sequence", "DROP TEMPORARY SEQUENCE `sequence`"},
 	}
 	extractNodeFunc := func(node Node) Node {
 		return node

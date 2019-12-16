@@ -2819,6 +2819,16 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"create table sequence (a int)", true, "CREATE TABLE `sequence` (`a` INT)"},
 		{"create table t (sequence int)", true, "CREATE TABLE `t` (`sequence` INT)"},
 
+		// test drop sequence
+		{"drop sequence", false, ""},
+		{"drop sequence seq", true, "DROP SEQUENCE `seq`"},
+		{"drop sequence if exists seq", true, "DROP SEQUENCE IF EXISTS `seq`"},
+		{"drop temporary sequence seq", true, "DROP TEMPORARY SEQUENCE `seq`"},
+		{"drop temporary sequence if exists seq", true, "DROP TEMPORARY SEQUENCE IF EXISTS `seq`"},
+		{"drop temporary sequence if exists seq, seq2, seq3", true, "DROP TEMPORARY SEQUENCE IF EXISTS `seq`, `seq2`, `seq3`"},
+		{"drop sequence seq seq2", false, ""},
+		{"drop sequence seq, seq2", true, "DROP SEQUENCE `seq`, `seq2`"},
+
 		// for auto_random
 		{"create table t (a bigint auto_random(3) primary key, b varchar(255))", true, "CREATE TABLE `t` (`a` BIGINT AUTO_RANDOM(3) PRIMARY KEY,`b` VARCHAR(255))"},
 		{"create table t (a bigint auto_random primary key, b varchar(255))", true, "CREATE TABLE `t` (`a` BIGINT AUTO_RANDOM PRIMARY KEY,`b` VARCHAR(255))"},

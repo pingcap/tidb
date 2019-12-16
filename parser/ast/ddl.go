@@ -33,6 +33,7 @@ var (
 	_ DDLNode = &DropDatabaseStmt{}
 	_ DDLNode = &DropIndexStmt{}
 	_ DDLNode = &DropTableStmt{}
+	_ DDLNode = &DropSequenceStmt{}
 	_ DDLNode = &RenameTableStmt{}
 	_ DDLNode = &TruncateTableStmt{}
 	_ DDLNode = &RepairTableStmt{}
@@ -1085,6 +1086,54 @@ func (n *DropTableStmt) Accept(v Visitor) (Node, bool) {
 			return n, false
 		}
 		n.Tables[i] = node.(*TableName)
+	}
+	return v.Leave(n)
+}
+
+// DropSequenceStmt is a statement to drop a Sequence.
+type DropSequenceStmt struct {
+	ddlNode
+
+	IfExists    bool
+	Sequences   []*TableName
+	IsTemporary bool
+}
+
+// Restore implements Node interface.
+func (n *DropSequenceStmt) Restore(ctx *RestoreCtx) error {
+	if n.IsTemporary {
+		ctx.WriteKeyWord("DROP TEMPORARY SEQUENCE ")
+	} else {
+		ctx.WriteKeyWord("DROP SEQUENCE ")
+	}
+	if n.IfExists {
+		ctx.WriteKeyWord("IF EXISTS ")
+	}
+	for i, sequence := range n.Sequences {
+		if i != 0 {
+			ctx.WritePlain(", ")
+		}
+		if err := sequence.Restore(ctx); err != nil {
+			return errors.Annotatef(err, "An error occurred while restore DropSequenceStmt.Sequences[%d]", i)
+		}
+	}
+
+	return nil
+}
+
+// Accept implements Node Accept interface.
+func (n *DropSequenceStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*DropSequenceStmt)
+	for i, val := range n.Sequences {
+		node, ok := val.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.Sequences[i] = node.(*TableName)
 	}
 	return v.Leave(n)
 }
