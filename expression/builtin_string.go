@@ -2701,10 +2701,37 @@ func (b *builtinOrdSig) evalInt(row chunk.Row) (int64, bool, error) {
 	if isNull || err != nil {
 		return 0, isNull, err
 	}
+
+	ord, err := chooseOrdFunc(b.args[0].GetType().Charset)
+	if err != nil {
+		return 0, false, err
+	}
 	return ord(str), false, nil
 }
 
-func ord(str string) int64 {
+func chooseOrdFunc(charSet string) (func(string) int64, error) {
+	// use utf8 by default
+	if charSet == "" {
+		charSet = charset.CharsetUTF8
+	}
+	desc, err := charset.GetCharsetDesc(charSet)
+	if err != nil {
+		return nil, err
+	}
+	if desc.Maxlen == 1 {
+		return ordSingleByte, nil
+	}
+	return ordUtf8, nil
+}
+
+func ordSingleByte(str string) int64 {
+	if len(str) == 0 {
+		return 0
+	}
+	return int64(str[0])
+}
+
+func ordUtf8(str string) int64 {
 	if len(str) == 0 {
 		return 0
 	}
