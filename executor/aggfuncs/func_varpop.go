@@ -11,9 +11,9 @@ type varPop4Float64 struct {
 }
 
 type partialResult4Float64 struct {
-	count        int64
-	sum          float64
-	variance	float64
+	count    int64
+	sum      float64
+	variance float64
 }
 
 func (e *varPop4Float64) AllocPartialResult() PartialResult {
@@ -89,4 +89,3 @@ func (e *varPop4Float64) MergePartialResult(sctx sessionctx.Context, src Partial
 	}
 	return nil
 }
-
