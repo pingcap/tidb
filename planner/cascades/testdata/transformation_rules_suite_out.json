@@ -441,7 +441,7 @@
         ]
       },
       {
-        "SQL": "(select a from t ) union all (select b from t) order by a limit 2;",
+        "SQL": "(select a from t) union all (select b from t) order by a limit 2;",
         "Result": [
           "Group#0 Schema:[Column#25]",
           "    Union_5 input:[Group#1,Group#2]",
