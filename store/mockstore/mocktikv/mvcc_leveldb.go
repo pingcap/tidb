@@ -686,9 +686,10 @@ func checkConflictValue(iter *Iterator, m *kvrpcpb.Mutation, startTS uint64) err
 	// Note that it's a write conflict here, even if the value is a rollback one.
 	if dec.value.commitTS >= startTS {
 		return &ErrConflict{
-			StartTS:    startTS,
-			ConflictTS: dec.value.commitTS,
-			Key:        m.Key,
+			StartTS:          startTS,
+			ConflictTS:       dec.value.startTS,
+			ConflictCommitTS: dec.value.commitTS,
+			Key:              m.Key,
 		}
 	}
 	if m.Op == kvrpcpb.Op_PessimisticLock && m.Assertion == kvrpcpb.Assertion_NotExist {
