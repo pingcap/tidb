@@ -84,6 +84,9 @@ func init() {
 
 	// Register terror to mysql error map.
 	mySQLErrCodes := map[terror.ErrCode]uint16{
+		mysql.ErrCantGetValidID:              mysql.ErrCantGetValidID,
+		mysql.ErrCantSetToNull:               mysql.ErrCantSetToNull,
+		mysql.ErrSnapshotTooOld:              mysql.ErrSnapshotTooOld,
 		mysql.ErrUnsupportedValueForVar:      mysql.ErrUnsupportedValueForVar,
 		mysql.ErrUnknownSystemVariable:       mysql.ErrUnknownSystemVariable,
 		mysql.ErrIncorrectGlobalLocalVar:     mysql.ErrIncorrectGlobalLocalVar,
@@ -104,6 +107,13 @@ func BoolToIntStr(b bool) string {
 		return "1"
 	}
 	return "0"
+}
+
+func boolToOnOff(b bool) string {
+	if b {
+		return "on"
+	}
+	return "off"
 }
 
 // BoolToInt32 converts bool to int32
@@ -720,9 +730,9 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal | ScopeSession, TiDBEnableStmtSummary, BoolToIntStr(config.GetGlobalConfig().StmtSummary.Enable)},
 	{ScopeGlobal | ScopeSession, TiDBStmtSummaryRefreshInterval, strconv.Itoa(config.GetGlobalConfig().StmtSummary.RefreshInterval)},
 	{ScopeGlobal | ScopeSession, TiDBStmtSummaryHistorySize, strconv.Itoa(config.GetGlobalConfig().StmtSummary.HistorySize)},
-	{ScopeGlobal | ScopeSession, TiDBCapturePlanBaseline, "0"},
-	{ScopeGlobal | ScopeSession, TiDBUsePlanBaselines, BoolToIntStr(DefTiDBUsePlanBaselines)},
-	{ScopeGlobal | ScopeSession, TiDBEvolvePlanBaselines, BoolToIntStr(DefTiDBEvolvePlanBaselines)},
+	{ScopeGlobal | ScopeSession, TiDBCapturePlanBaseline, "off"},
+	{ScopeGlobal | ScopeSession, TiDBUsePlanBaselines, boolToOnOff(DefTiDBUsePlanBaselines)},
+	{ScopeGlobal | ScopeSession, TiDBEvolvePlanBaselines, boolToOnOff(DefTiDBEvolvePlanBaselines)},
 	{ScopeGlobal, TiDBEvolvePlanTaskMaxTime, strconv.Itoa(DefTiDBEvolvePlanTaskMaxTime)},
 	{ScopeGlobal, TiDBEvolvePlanTaskStartTime, DefTiDBEvolvePlanTaskStartTime},
 	{ScopeGlobal, TiDBEvolvePlanTaskEndTime, DefTiDBEvolvePlanTaskEndTime},
