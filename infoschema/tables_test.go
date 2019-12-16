@@ -47,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/pdapi"
+	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
@@ -889,13 +890,13 @@ func (s *testClusterTableSuite) TestForClusterServerInfo(c *C) {
 
 		// Currently only TiDB implement this.
 		// TODO: fix me after tikv/pd server support this.
-		typeMap := map[string]struct{}{
+		typeMap := set.StringSet{
 			"tidb": {},
 		}
-		addrMap := map[string]struct{}{
+		addrMap := set.StringSet{
 			s.listenAddr: {},
 		}
-		nameMap := map[string]struct{}{
+		nameMap := set.StringSet{
 			"cpu":  {},
 			"mem":  {},
 			"net":  {},
@@ -924,13 +925,13 @@ func (s *testClusterTableSuite) TestForClusterServerInfo(c *C) {
 
 	// Currently only TiDB implement this.
 	// TODO: fix me after tikv/pd server support this.
-	typeMap := map[string]struct{}{
+	typeMap := set.StringSet{
 		"tidb": {},
 	}
-	addrMap := map[string]struct{}{
+	addrMap := set.StringSet{
 		s.listenAddr: {},
 	}
-	nameMap := map[string]struct{}{
+	nameMap := set.StringSet{
 		"system": {},
 	}
 	for _, row := range rows {
