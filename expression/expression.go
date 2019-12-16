@@ -343,7 +343,6 @@ func VecEvalBool(ctx sessionctx.Context, exprList CNFExprs, input *chunk.Chunk, 
 }
 
 func toBool(sc *stmtctx.StatementContext, eType types.EvalType, buf *chunk.Column, sel []int, isZero []int8) error {
-	var err error
 	switch eType {
 	case types.ETInt:
 		i64s := buf.Int64s()
@@ -402,8 +401,10 @@ func toBool(sc *stmtctx.StatementContext, eType types.EvalType, buf *chunk.Colum
 			if buf.IsNull(i) {
 				isZero[i] = -1
 			} else {
-				iVal, err1 := types.StrToInt(sc, buf.GetString(i))
-				err = err1
+				iVal, err := types.StrToInt(sc, buf.GetString(i))
+				if err != nil {
+					return err
+				}
 				if iVal == 0 {
 					isZero[i] = 0
 				} else {
@@ -417,8 +418,10 @@ func toBool(sc *stmtctx.StatementContext, eType types.EvalType, buf *chunk.Colum
 			if buf.IsNull(i) {
 				isZero[i] = -1
 			} else {
-				v, err1 := d64s[i].ToFloat64()
-				err = err1
+				v, err := d64s[i].ToFloat64()
+				if err != nil {
+					return err
+				}
 				if types.RoundFloat(v) == 0 {
 					isZero[i] = 0
 				} else {
@@ -429,7 +432,7 @@ func toBool(sc *stmtctx.StatementContext, eType types.EvalType, buf *chunk.Colum
 	case types.ETJson:
 		return errors.Errorf("cannot convert type json.BinaryJSON to bool")
 	}
-	return errors.Trace(err)
+	return nil
 }
 
 // VecEval evaluates this expr according to its type.

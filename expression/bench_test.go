@@ -1592,6 +1592,15 @@ func (s *testEvaluatorSuite) TestVecEvalBool(c *C) {
 	}
 }
 
+func (s *testEvaluatorSuite) TestVecToBool(c *C) {
+	ctx := mock.NewContext()
+	buf := chunk.NewColumn(eType2FieldType(types.ETString), 2)
+	buf.ReserveString(2)
+	buf.AppendString("999999999999999999923")
+	buf.AppendString("23")
+	c.Assert(toBool(ctx.GetSessionVars().StmtCtx, types.ETString, buf, []int{0, 1}, []int8{0, 0}), NotNil)
+}
+
 func BenchmarkVecEvalBool(b *testing.B) {
 	ctx := mock.NewContext()
 	selected := make([]bool, 0, 1024)
