@@ -493,7 +493,7 @@ func (p *LogicalIndexScan) MatchIndexProp(prop *property.PhysicalProperty) (matc
 	}
 	for i, col := range p.IdxCols {
 		if col.Equal(nil, prop.Items[0].Col) {
-			return MatchIndicesProp(p.idxCols[i:], p.idxColLens[i:], prop.Items)
+			return MatchIndicesProp(p.IdxCols[i:], p.IdxColLens[i:], prop.Items)
 		} else if i >= p.EqCondCount {
 			break
 		}
