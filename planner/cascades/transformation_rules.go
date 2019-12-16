@@ -882,7 +882,7 @@ func NewRulePushTopNDownUnionAll() Transformation {
 	rule.pattern = memo.BuildPattern(
 		memo.OperandTopN,
 		memo.EngineTiDBOnly,
-		memo.NewPattern(memo.OperandUnionScan, memo.EngineTiDBOnly),
+		memo.NewPattern(memo.OperandUnionAll, memo.EngineTiDBOnly),
 	)
 	return rule
 }
