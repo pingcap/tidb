@@ -113,12 +113,6 @@ var builtinInTmpl = template.Must(template.New("builtinInTmpl").Parse(`
 
 {{ range . }}
 {{ $InputInt := (eq .Input.TypeName "Int") }}
-{{ $InputString := (eq .Input.TypeName "String") }}
-{{ $InputReal := (eq .Input.TypeName "Real") }}
-{{ $InputTime := (eq .Input.TypeName "Time") }}
-{{ $InputJson := (eq .Input.TypeName "JSON") }}
-{{ $InputDuration := (eq .Input.TypeName "Duration")}}
-{{ $InputDecimal := (eq .Input.TypeName "Decimal")}}
 {{ $InputFixed := ( .Input.Fixed ) }}
 {{ $UseHashKey := ( or (eq .Input.TypeName "Decimal") (eq .Input.TypeName "JSON") )}}
 func (b *{{.SigName}}) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {

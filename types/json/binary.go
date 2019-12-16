@@ -116,9 +116,7 @@ func (bj BinaryJSON) String() string {
 func (bj *BinaryJSON) ToHashKey() ([]byte, error) {
 	buf := make([]byte, 1+len(bj.Value))
 	buf[0] = bj.TypeCode
-	for i := range bj.Value {
-		buf[i+1] = bj.Value[i]
-	}
+	copy(buf[1:], bj.Value)
 	return buf, nil
 }
 
