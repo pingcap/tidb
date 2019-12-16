@@ -13,7 +13,7 @@ require (
 	github.com/pingcap/tipb v0.0.0-20190428032612-535e1abaa330
 	github.com/pkg/errors v0.8.1 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20190728182440-6a916e37a237 // indirect
-	github.com/sirupsen/logrus v1.3.0
+	github.com/sirupsen/logrus v1.2.0
 	golang.org/x/text v0.3.1-0.20180807135948-17ff2d5776d2
 )
 
