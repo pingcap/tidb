@@ -1039,6 +1039,16 @@ const (
 	ErrCancelledDDLJob          = 8214
 	ErrRepairTable              = 8215
 	ErrInvalidAutoRandom        = 8216
+	ErrInvalidHashKeyFlag       = 8217
+	ErrInvalidListIndex         = 8218
+	ErrInvalidListMetaData      = 8219
+	ErrWriteOnSnapshot          = 8220
+	ErrInvalidKey               = 8221
+	ErrInvalidIndexKey          = 8222
+	ErrDataInConsistent         = 8223
+	ErrDDLJobNotFound           = 8224
+	ErrCancelFinishedDDLJob     = 8225
+	ErrCannotCancelDDLJob       = 8226
 
 	// TiKV/PD errors.
 	ErrPDServerTimeout    = 9001
