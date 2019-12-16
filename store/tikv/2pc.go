@@ -750,21 +750,19 @@ func (action actionPessimisticLock) handleSingleBatch(c *twoPhaseCommitter, bo *
 			// if the lock left behind whose related txn is already committed or rollbacked,
 			// (eg secondary locks not committed or rollbacked yet)
 			// we cant return "nowait conflict" directly
-			if lock.LockType == pb.Op_PessimisticLock {
-				if action.LockWaitTime == kv.LockNoWait {
-					// the pessimistic lock found could be invalid locks which is timeout but not recycled yet
-					if !c.store.oracle.IsExpired(lock.TxnID, lock.TTL) {
-						return ErrLockAcquireFailAndNoWaitSet
-					}
-				} else if action.LockWaitTime == kv.LockAlwaysWait {
-					// do nothing but keep wait
-				} else {
-					// the lockWaitTime is set, check the lock wait timeout or not
-					// the pessimistic lock found could be invalid locks which is timeout but not recycled yet
-					if !c.store.oracle.IsExpired(lock.TxnID, lock.TTL) {
-						if time.Since(lockWaitStartTime).Milliseconds() >= action.LockWaitTime {
-							return ErrLockWaitTimeout
-						}
+			if action.LockWaitTime == kv.LockNoWait {
+				// the pessimistic lock found could be invalid locks which is timeout but not recycled yet
+				if !c.store.oracle.IsExpired(lock.TxnID, lock.TTL) {
+					return ErrLockAcquireFailAndNoWaitSet
+				}
+			} else if action.LockWaitTime == kv.LockAlwaysWait {
+				// do nothing but keep wait
+			} else {
+				// the lockWaitTime is set, check the lock wait timeout or not
+				// the pessimistic lock found could be invalid locks which is timeout but not recycled yet
+				if !c.store.oracle.IsExpired(lock.TxnID, lock.TTL) {
+					if time.Since(lockWaitStartTime).Milliseconds() >= action.LockWaitTime {
+						return ErrLockWaitTimeout
 					}
 				}
 			}
@@ -772,9 +770,27 @@ func (action actionPessimisticLock) handleSingleBatch(c *twoPhaseCommitter, bo *
 		}
 		// Because we already waited on tikv, no need to Backoff here.
 		// tikv default will wait 3s(also the maximum wait value) when lock error occurs
-		_, _, err = c.store.lockResolver.ResolveLocks(bo, 0, locks)
+		msBeforeTxnExpired, _, err := c.store.lockResolver.ResolveLocks(bo, 0, locks)
 		if err != nil {
 			return errors.Trace(err)
+		}
+
+		// Before resolving locks, we checked whether the locks are expired according to its own TTL.
+		// However, it's not accurate because heartbeat only updates the TTL of the primary key.
+		// If msBeforeTxnExpired is not zero, it means there are still locks blocking us acquiring
+		// the pessimistic lock. We should return timeout error if necessary.
+		if msBeforeTxnExpired > 0 {
+			if action.LockWaitTime == kv.LockNoWait {
+				return ErrLockAcquireFailAndNoWaitSet
+			} else if action.LockWaitTime == kv.LockAlwaysWait {
+				// do nothing but keep wait
+			} else {
+				// the lockWaitTime is set, check the lock wait timeout or not
+				// the pessimistic lock found could be invalid locks which is timeout but not recycled yet
+				if time.Since(lockWaitStartTime).Milliseconds() >= action.LockWaitTime {
+					return ErrLockWaitTimeout
+				}
+			}
 		}
 
 		// Handle the killed flag when waiting for the pessimistic lock.
