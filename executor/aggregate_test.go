@@ -353,6 +353,12 @@ func (s *testSuiteAgg) TestAggregation(c *C) {
 	tk.MustExec("insert into t value(0), (-0.9871), (-0.9871)")
 	tk.MustQuery("select 10 from t group by a").Check(testkit.Rows("10", "10"))
 	tk.MustQuery("select sum(a) from (select a from t union all select a from t) tmp").Check(testkit.Rows("-3.9484"))
+
+	tk.MustExec("drop table t")
+	tk.MustExec("create table t(a tinyint, b smallint, c mediumint, d int, e bigint, f float, g double, h decimal)")
+	tk.MustExec("insert into t values(1, 2, 3, 4, 5, 6.1, 7.2, 8.3), (1, 3, 4, 5, 6, 7.1, 8.2, 9.3)")
+	result = tk.MustQuery("select var_pop(b), var_pop(c), var_pop(d), var_pop(e), var_pop(f), var_pop(g), var_pop(h) from t group by a")
+	result.Check(testkit.Rows("0.25 0.25 0.25 0.25 0.25 0.25 0.25"))
 	_, err = tk.Exec("select std(a) from t")
 	c.Assert(errors.Cause(err).Error(), Equals, "unsupported agg function: std")
 	_, err = tk.Exec("select stddev(a) from t")
@@ -362,11 +368,6 @@ func (s *testSuiteAgg) TestAggregation(c *C) {
 	_, err = tk.Exec("select std_samp(a) from t")
 	// TODO: Fix this error message.
 	c.Assert(errors.Cause(err).Error(), Equals, "[expression:1305]FUNCTION test.std_samp does not exist")
-	_, err = tk.Exec("select variance(a) from t")
-	// TODO: Fix this error message.
-	c.Assert(errors.Cause(err).Error(), Equals, "unsupported agg function: var_pop")
-	_, err = tk.Exec("select var_pop(a) from t")
-	c.Assert(errors.Cause(err).Error(), Equals, "unsupported agg function: var_pop")
 	_, err = tk.Exec("select var_samp(a) from t")
 	c.Assert(errors.Cause(err).Error(), Equals, "unsupported agg function: var_samp")
 }
