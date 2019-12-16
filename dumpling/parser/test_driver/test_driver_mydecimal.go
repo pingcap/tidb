@@ -23,7 +23,7 @@ const panicInfo = "This branch is not implemented. " +
 const (
 	maxWordBufLen = 9 // A MyDecimal holds 9 words.
 	digitsPerWord = 9 // A word holds 9 digits.
-	digMask       = 100_000_000
+	digMask       = 100000000
 )
 
 var (
