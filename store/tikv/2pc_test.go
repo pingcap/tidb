@@ -561,7 +561,8 @@ func (s *testCommitterSuite) TestUnsetPrimaryKey(c *C) {
 	c.Assert(txn.Set(key, key), IsNil)
 	txn.DelOption(kv.PresumeKeyNotExistsError)
 	txn.DelOption(kv.PresumeKeyNotExists)
-	err := txn.LockKeys(context.Background(), nil, txn.startTS, kv.LockAlwaysWait, time.Now(), key)
+	lockCtx := &kv.LockCtx{ForUpdateTS: txn.startTS, WaitStartTime: time.Now()}
+	err := txn.LockKeys(context.Background(), lockCtx, key)
 	c.Assert(err, NotNil)
 	c.Assert(txn.Delete(key), IsNil)
 	key2 := kv.Key("key2")
@@ -573,9 +574,11 @@ func (s *testCommitterSuite) TestUnsetPrimaryKey(c *C) {
 func (s *testCommitterSuite) TestPessimisticLockedKeysDedup(c *C) {
 	txn := s.begin(c)
 	txn.SetOption(kv.Pessimistic, true)
-	err := txn.LockKeys(context.Background(), nil, 100, kv.LockAlwaysWait, time.Now(), kv.Key("abc"), kv.Key("def"))
+	lockCtx := &kv.LockCtx{ForUpdateTS: 100, WaitStartTime: time.Now()}
+	err := txn.LockKeys(context.Background(), lockCtx, kv.Key("abc"), kv.Key("def"))
 	c.Assert(err, IsNil)
-	err = txn.LockKeys(context.Background(), nil, 100, kv.LockAlwaysWait, time.Now(), kv.Key("abc"), kv.Key("def"))
+	lockCtx = &kv.LockCtx{ForUpdateTS: 100, WaitStartTime: time.Now()}
+	err = txn.LockKeys(context.Background(), lockCtx, kv.Key("abc"), kv.Key("def"))
 	c.Assert(err, IsNil)
 	c.Assert(txn.lockKeys, HasLen, 2)
 }
@@ -585,11 +588,13 @@ func (s *testCommitterSuite) TestPessimisticTTL(c *C) {
 	txn := s.begin(c)
 	txn.SetOption(kv.Pessimistic, true)
 	time.Sleep(time.Millisecond * 100)
-	err := txn.LockKeys(context.Background(), nil, txn.startTS, kv.LockAlwaysWait, time.Now(), key)
+	lockCtx := &kv.LockCtx{ForUpdateTS: txn.startTS, WaitStartTime: time.Now()}
+	err := txn.LockKeys(context.Background(), lockCtx, key)
 	c.Assert(err, IsNil)
 	time.Sleep(time.Millisecond * 100)
 	key2 := kv.Key("key2")
-	err = txn.LockKeys(context.Background(), nil, txn.startTS, kv.LockAlwaysWait, time.Now(), key2)
+	lockCtx = &kv.LockCtx{ForUpdateTS: txn.startTS, WaitStartTime: time.Now()}
+	err = txn.LockKeys(context.Background(), lockCtx, key2)
 	c.Assert(err, IsNil)
 	lockInfo := s.getLockInfo(c, key)
 	msBeforeLockExpired := s.store.GetOracle().UntilExpired(txn.StartTS(), lockInfo.LockTtl)
@@ -626,8 +631,11 @@ func (s *testCommitterSuite) TestElapsedTTL(c *C) {
 	txn.startTS = oracle.ComposeTS(oracle.GetPhysical(time.Now().Add(time.Second*10)), 1)
 	txn.SetOption(kv.Pessimistic, true)
 	time.Sleep(time.Millisecond * 100)
-	forUpdateTS := oracle.ComposeTS(oracle.ExtractPhysical(txn.startTS)+100, 1)
-	err := txn.LockKeys(context.Background(), nil, forUpdateTS, kv.LockAlwaysWait, time.Now(), key)
+	lockCtx := &kv.LockCtx{
+		ForUpdateTS:   oracle.ComposeTS(oracle.ExtractPhysical(txn.startTS)+100, 1),
+		WaitStartTime: time.Now(),
+	}
+	err := txn.LockKeys(context.Background(), lockCtx, key)
 	c.Assert(err, IsNil)
 	lockInfo := s.getLockInfo(c, key)
 	c.Assert(lockInfo.LockTtl-ManagedLockTTL, GreaterEqual, uint64(100))

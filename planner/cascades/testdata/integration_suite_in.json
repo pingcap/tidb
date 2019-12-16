@@ -47,7 +47,10 @@
       "select b from t",
       "select a from t order by b",
       "select c from t",
-      "select a from t order by c"
+      "select a from t order by c",
+      "select a, b from t where b > 5 order by b",
+      "select a, b, c from t where c = 3 and b > 1 order by b",
+      "select a, b from t where c > 1 and b > 1 order by c"
     ]
   },
   {

@@ -367,6 +367,40 @@
           "4",
           "7"
         ]
+      },
+      {
+        "SQL": "select a, b from t where b > 5 order by b",
+        "Plan": [
+          "IndexReader_20 8000.00 root index:IndexScan_21",
+          "└─IndexScan_21 3333.33 cop[tikv] table:t, index:b, range:(5,+inf], keep order:true, stats:pseudo"
+        ],
+        "Result": [
+          "7 8"
+        ]
+      },
+      {
+        "SQL": "select a, b, c from t where c = 3 and b > 1 order by b",
+        "Plan": [
+          "IndexReader_15 8000.00 root index:IndexScan_16",
+          "└─IndexScan_16 33.33 cop[tikv] table:t, index:c, b, range:(3 1,3 +inf], keep order:true, stats:pseudo"
+        ],
+        "Result": [
+          "1 2 3"
+        ]
+      },
+      {
+        "SQL": "select a, b from t where c > 1 and b > 1 order by c",
+        "Plan": [
+          "Projection_14 8000.00 root test.t.a, test.t.b",
+          "└─IndexReader_18 8000.00 root index:Selection_19",
+          "  └─Selection_19 2666.67 cop[tikv] gt(test.t.b, 1)",
+          "    └─IndexScan_20 3333.33 cop[tikv] table:t, index:c, b, range:(1,+inf], keep order:true, stats:pseudo"
+        ],
+        "Result": [
+          "1 2",
+          "4 5",
+          "7 8"
+        ]
       }
     ]
   },
