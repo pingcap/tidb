@@ -2317,6 +2317,8 @@ func (s *testDBSuite2) TestTableForeignKey(c *C) {
 	failSQL = "alter table t4 modify column d bigint;"
 	s.tk.MustGetErrCode(failSQL, mysql.ErrFKIncompatibleColumns)
 	s.tk.MustQuery("select count(*) from information_schema.KEY_COLUMN_USAGE;")
+	s.tk.MustExec("alter table t4 drop foreign key d")
+	s.tk.MustExec("alter table t4 modify column d bigint;")
 	s.tk.MustExec("drop table if exists t1,t2,t3,t4;")
 }
 
