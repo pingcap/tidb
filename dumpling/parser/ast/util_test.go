@@ -21,7 +21,7 @@ import (
 	"github.com/pingcap/parser"
 	. "github.com/pingcap/parser/ast"
 	. "github.com/pingcap/parser/format"
-	"github.com/pingcap/tidb/types/parser_driver"
+	"github.com/pingcap/parser/test_driver"
 )
 
 var _ = Suite(&testCacheableSuite{})
@@ -99,7 +99,7 @@ func (checker *nodeTextCleaner) Enter(in Node) (out Node, skipChildren bool) {
 		node.FnName.O = strings.ToLower(node.FnName.O)
 		switch node.FnName.L {
 		case "convert":
-			node.Args[1].(*driver.ValueExpr).Datum.SetBytes(nil)
+			node.Args[1].(*test_driver.ValueExpr).Datum.SetBytes(nil)
 		}
 	case *AggregateFuncExpr:
 		node.F = strings.ToLower(node.F)
