@@ -270,7 +270,7 @@ type charInt64Gener struct{}
 
 func (g *charInt64Gener) gen() interface{} {
 	rand := time.Now().Nanosecond()
-	rand = rand % 128
+	rand = rand % 1024
 	return int64(rand)
 }
 
