@@ -767,12 +767,12 @@ l_shipmode;
 id	count	task	operator info
 Sort_9	1.00	root	tpch.lineitem.l_shipmode:asc
 └─Projection_11	1.00	root	tpch.lineitem.l_shipmode, Column#27, Column#28
-  └─HashAgg_14	1.00	root	group by:Column#35, funcs:sum(Column#32)->Column#27, funcs:sum(Column#33)->Column#28, funcs:firstrow(Column#34)->tpch.lineitem.l_shipmode
-    └─Projection_40	10023369.01	root	cast(case(or(eq(tpch.orders.o_orderpriority, 1-URGENT), eq(tpch.orders.o_orderpriority, 2-HIGH)), 1, 0))->Column#32, cast(case(and(ne(tpch.orders.o_orderpriority, 1-URGENT), ne(tpch.orders.o_orderpriority, 2-HIGH)), 1, 0))->Column#33, tpch.lineitem.l_shipmode, tpch.lineitem.l_shipmode
+  └─HashAgg_14	1.00	root	group by:Column#40, funcs:sum(Column#37)->Column#27, funcs:sum(Column#38)->Column#28, funcs:firstrow(Column#39)->tpch.lineitem.l_shipmode
+    └─Projection_54	10023369.01	root	cast(case(or(eq(tpch.orders.o_orderpriority, 1-URGENT), eq(tpch.orders.o_orderpriority, 2-HIGH)), 1, 0))->Column#37, cast(case(and(ne(tpch.orders.o_orderpriority, 1-URGENT), ne(tpch.orders.o_orderpriority, 2-HIGH)), 1, 0))->Column#38, tpch.lineitem.l_shipmode, tpch.lineitem.l_shipmode
       └─IndexMergeJoin_22	10023369.01	root	inner join, inner:TableReader_20, outer key:tpch.lineitem.l_orderkey, inner key:tpch.orders.o_orderkey
-        ├─TableReader_36	10023369.01	root	data:Selection_35
-        │ └─Selection_35	10023369.01	cop[tikv]	ge(tpch.lineitem.l_receiptdate, 1997-01-01 00:00:00.000000), in(tpch.lineitem.l_shipmode, "RAIL", "FOB"), lt(tpch.lineitem.l_commitdate, tpch.lineitem.l_receiptdate), lt(tpch.lineitem.l_receiptdate, 1998-01-01), lt(tpch.lineitem.l_shipdate, tpch.lineitem.l_commitdate)
-        │   └─TableScan_34	300005811.00	cop[tikv]	table:lineitem, range:[-inf,+inf], keep order:false
+        ├─TableReader_50	10023369.01	root	data:Selection_49
+        │ └─Selection_49	10023369.01	cop[tikv]	ge(tpch.lineitem.l_receiptdate, 1997-01-01 00:00:00.000000), in(tpch.lineitem.l_shipmode, "RAIL", "FOB"), lt(tpch.lineitem.l_commitdate, tpch.lineitem.l_receiptdate), lt(tpch.lineitem.l_receiptdate, 1998-01-01), lt(tpch.lineitem.l_shipdate, tpch.lineitem.l_commitdate)
+        │   └─TableScan_48	300005811.00	cop[tikv]	table:lineitem, range:[-inf,+inf], keep order:false
         └─TableReader_20	1.00	root	data:TableScan_19
           └─TableScan_19	1.00	cop[tikv]	table:orders, range: decided by [tpch.lineitem.l_orderkey], keep order:true
 /*
@@ -929,16 +929,16 @@ id	count	task	operator info
 Sort_13	3863988.24	root	Column#23:desc, tpch.part.p_brand:asc, tpch.part.p_type:asc, tpch.part.p_size:asc
 └─Projection_15	3863988.24	root	tpch.part.p_brand, tpch.part.p_type, tpch.part.p_size, Column#23
   └─HashAgg_18	3863988.24	root	group by:tpch.part.p_brand, tpch.part.p_size, tpch.part.p_type, funcs:count(distinct tpch.partsupp.ps_suppkey)->Column#23, funcs:firstrow(tpch.part.p_brand)->tpch.part.p_brand, funcs:firstrow(tpch.part.p_type)->tpch.part.p_type, funcs:firstrow(tpch.part.p_size)->tpch.part.p_size
-    └─HashLeftJoin_30	3863988.24	root	anti semi join, inner:TableReader_57, equal:[eq(tpch.partsupp.ps_suppkey, tpch.supplier.s_suppkey)]
+    └─HashLeftJoin_30	3863988.24	root	anti semi join, inner:TableReader_68, equal:[eq(tpch.partsupp.ps_suppkey, tpch.supplier.s_suppkey)]
       ├─IndexMergeJoin_38	4829985.30	root	inner join, inner:IndexReader_36, outer key:tpch.part.p_partkey, inner key:tpch.partsupp.ps_partkey
-      │ ├─TableReader_50	1200618.43	root	data:Selection_49
-      │ │ └─Selection_49	1200618.43	cop[tikv]	in(tpch.part.p_size, 48, 19, 12, 4, 41, 7, 21, 39), ne(tpch.part.p_brand, "Brand#34"), not(like(tpch.part.p_type, "LARGE BRUSHED%", 92))
-      │ │   └─TableScan_48	10000000.00	cop[tikv]	table:part, range:[-inf,+inf], keep order:false
+      │ ├─TableReader_61	1200618.43	root	data:Selection_60
+      │ │ └─Selection_60	1200618.43	cop[tikv]	in(tpch.part.p_size, 48, 19, 12, 4, 41, 7, 21, 39), ne(tpch.part.p_brand, "Brand#34"), not(like(tpch.part.p_type, "LARGE BRUSHED%", 92))
+      │ │   └─TableScan_59	10000000.00	cop[tikv]	table:part, range:[-inf,+inf], keep order:false
       │ └─IndexReader_36	4.02	root	index:IndexScan_35
       │   └─IndexScan_35	4.02	cop[tikv]	table:partsupp, index:PS_PARTKEY, PS_SUPPKEY, range: decided by [eq(tpch.partsupp.ps_partkey, tpch.part.p_partkey)], keep order:true
-      └─TableReader_57	400000.00	root	data:Selection_56
-        └─Selection_56	400000.00	cop[tikv]	like(tpch.supplier.s_comment, "%Customer%Complaints%", 92)
-          └─TableScan_55	500000.00	cop[tikv]	table:supplier, range:[-inf,+inf], keep order:false
+      └─TableReader_68	400000.00	root	data:Selection_67
+        └─Selection_67	400000.00	cop[tikv]	like(tpch.supplier.s_comment, "%Customer%Complaints%", 92)
+          └─TableScan_66	500000.00	cop[tikv]	table:supplier, range:[-inf,+inf], keep order:false
 /*
 Q17 Small-Quantity-Order Revenue Query
 This query determines how much average yearly revenue would be lost if orders were no longer filled for small
@@ -1159,15 +1159,15 @@ Sort_28	20000.00	root	tpch.supplier.s_name:asc
           └─HashAgg_58	80007.93	root	group by:tpch.partsupp.ps_partkey, tpch.partsupp.ps_suppkey, funcs:firstrow(tpch.partsupp.ps_partkey)->tpch.partsupp.ps_partkey, funcs:firstrow(tpch.partsupp.ps_suppkey)->tpch.partsupp.ps_suppkey, funcs:firstrow(tpch.partsupp.ps_availqty)->tpch.partsupp.ps_availqty, funcs:firstrow(tpch.part.p_partkey)->tpch.part.p_partkey, funcs:sum(tpch.lineitem.l_quantity)->Column#44
             └─HashLeftJoin_62	9711455.06	root	left outer join, inner:IndexHashJoin_75 (REVERSED), equal:[eq(tpch.partsupp.ps_partkey, tpch.lineitem.l_partkey) eq(tpch.partsupp.ps_suppkey, tpch.lineitem.l_suppkey)]
               ├─IndexHashJoin_75	321865.05	root	inner join, inner:IndexLookUp_66, outer key:tpch.part.p_partkey, inner key:tpch.partsupp.ps_partkey
-              │ ├─TableReader_87	80007.93	root	data:Selection_86
-              │ │ └─Selection_86	80007.93	cop[tikv]	like(tpch.part.p_name, "green%", 92)
-              │ │   └─TableScan_85	10000000.00	cop[tikv]	table:part, range:[-inf,+inf], keep order:false
+              │ ├─TableReader_98	80007.93	root	data:Selection_97
+              │ │ └─Selection_97	80007.93	cop[tikv]	like(tpch.part.p_name, "green%", 92)
+              │ │   └─TableScan_96	10000000.00	cop[tikv]	table:part, range:[-inf,+inf], keep order:false
               │ └─IndexLookUp_66	4.02	root	
               │   ├─IndexScan_64	4.02	cop[tikv]	table:partsupp, index:PS_PARTKEY, PS_SUPPKEY, range: decided by [eq(tpch.partsupp.ps_partkey, tpch.part.p_partkey)], keep order:false
               │   └─TableScan_65	4.02	cop[tikv]	table:partsupp, keep order:false
-              └─TableReader_92	44189356.65	root	data:Selection_91
-                └─Selection_91	44189356.65	cop[tikv]	ge(tpch.lineitem.l_shipdate, 1993-01-01 00:00:00.000000), lt(tpch.lineitem.l_shipdate, 1994-01-01)
-                  └─TableScan_90	300005811.00	cop[tikv]	table:lineitem, range:[-inf,+inf], keep order:false
+              └─TableReader_103	44189356.65	root	data:Selection_102
+                └─Selection_102	44189356.65	cop[tikv]	ge(tpch.lineitem.l_shipdate, 1993-01-01 00:00:00.000000), lt(tpch.lineitem.l_shipdate, 1994-01-01)
+                  └─TableScan_101	300005811.00	cop[tikv]	table:lineitem, range:[-inf,+inf], keep order:false
 /*
 Q21 Suppliers Who Kept Orders Waiting Query
 This query identifies certain suppliers who were not able to ship required parts in a timely manner.
