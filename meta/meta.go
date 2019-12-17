@@ -61,6 +61,7 @@ var (
 	mDBs              = []byte("DBs")
 	mDBPrefix         = "DB"
 	mTablePrefix      = "Table"
+	mSequencePrefix   = "SID"
 	mTableIDPrefix    = "TID"
 	mRandomIDPrefix   = "TARID"
 	mBootstrapKey     = []byte("BootstrapKey")
@@ -76,6 +77,10 @@ var (
 	ErrTableExists = terror.ClassMeta.New(mysql.ErrTableExists, mysql.MySQLErrName[mysql.ErrTableExists])
 	// ErrTableNotExists is the error for table not exists.
 	ErrTableNotExists = terror.ClassMeta.New(mysql.ErrNoSuchTable, mysql.MySQLErrName[mysql.ErrNoSuchTable])
+	// ErrSequenceExists is the error for table exists.
+	ErrSequenceExists = terror.ClassMeta.New(1, "sequence exists")
+	// ErrSequenceNotExists is the error for table not exists.
+	ErrSequenceNotExists = terror.ClassMeta.New(2, "sequence doesn't exist")
 )
 
 // Meta is for handling meta information in a transaction.
@@ -153,6 +158,10 @@ func (m *Meta) tableKey(tableID int64) []byte {
 	return []byte(fmt.Sprintf("%s:%d", mTablePrefix, tableID))
 }
 
+func (m *Meta) sequenceKey(sequenceID int64) []byte {
+	return []byte(fmt.Sprintf("%s:%d", mSequencePrefix, sequenceID))
+}
+
 // DDLJobHistoryKey is only used for testing.
 func DDLJobHistoryKey(m *Meta, jobID int64) []byte {
 	return m.txn.EncodeHashDataKey(mDDLJobHistoryKey, m.jobIDKey(jobID))
@@ -205,6 +214,26 @@ func (m *Meta) GetAutoTableID(dbID int64, tableID int64) (int64, error) {
 // GetAutoRandomID gets current auto shard id with table id.
 func (m *Meta) GetAutoRandomID(dbID int64, tableID int64) (int64, error) {
 	return m.txn.HGetInt64(m.dbKey(dbID), m.autoRandomTableIDKey(tableID))
+}
+
+// GenSequenceID adds step to the sequence value and returns the sum.
+func (m *Meta) GenSequenceID(dbID, sequenceID, step int64) (int64, error) {
+	// Check if DB exists.
+	dbKey := m.dbKey(dbID)
+	if err := m.checkDBExists(dbKey); err != nil {
+		return 0, errors.Trace(err)
+	}
+	// Check if sequence exists.
+	tableKey := m.tableKey(sequenceID)
+	if err := m.checkTableExists(dbKey, tableKey); err != nil {
+		return 0, errors.Trace(err)
+	}
+	return m.txn.HInc(dbKey, m.sequenceKey(sequenceID), step)
+}
+
+// GetSequenceID gets current sequence value with sequence id.
+func (m *Meta) GetSequenceID(dbID int64, sequenceID int64) (int64, error) {
+	return m.txn.HGetInt64(m.dbKey(dbID), m.autoTableIDKey(sequenceID))
 }
 
 // GetSchemaVersion gets current global schema version.
@@ -321,6 +350,16 @@ func (m *Meta) CreateTableAndSetAutoID(dbID int64, tableInfo *model.TableInfo, a
 		}
 	}
 	return nil
+}
+
+// CreateSequenceAndSetSeqValue creates sequence with tableInfo in database, and rebase the sequence seqID.
+func (m *Meta) CreateSequenceAndSetSeqValue(dbID int64, tableInfo *model.TableInfo, seqID int64) error {
+	err := m.CreateTableOrView(dbID, tableInfo)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	_, err = m.txn.HInc(m.dbKey(dbID), m.sequenceKey(tableInfo.ID), seqID)
+	return errors.Trace(err)
 }
 
 // DropDatabase drops whole database.

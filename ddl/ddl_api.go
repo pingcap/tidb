@@ -1653,6 +1653,87 @@ func buildViewInfo(ctx sessionctx.Context, s *ast.CreateViewStmt) (*model.ViewIn
 		Security: s.Security, SelectStmt: sb.String(), CheckOption: s.CheckOption, Cols: nil}, nil
 }
 
+func buildSequenceInfo(ctx sessionctx.Context, stmt *ast.CreateSequenceStmt, ident ast.Ident) (*model.SequenceInfo, error) {
+	sequenceInfo := &model.SequenceInfo{
+		Cache:      model.DefaultSequenceCacheBool,
+		Cycle:      model.DefaultSequenceCycleBool,
+		Order:      model.DefaultSequenceOrderBool,
+		CacheValue: model.DefaultSequenceCacheValue,
+		Increment:  model.DefaultSequenceIncrementValue,
+	}
+	var (
+		minSetFlag   bool
+		maxSetFlag   bool
+		startSetFlag bool
+	)
+	// handle sequence options.
+	for _, op := range stmt.SeqOptions {
+		switch op.Tp {
+		case ast.SequenceOptionIncrementBy:
+			sequenceInfo.Increment = op.IntValue
+		case ast.SequenceStartWith:
+			sequenceInfo.Start = op.IntValue
+			startSetFlag = true
+		case ast.SequenceMinValue:
+			sequenceInfo.MinValue = op.IntValue
+			minSetFlag = true
+		case ast.SequenceMaxValue:
+			sequenceInfo.MaxValue = op.IntValue
+			maxSetFlag = true
+		case ast.SequenceCache:
+			sequenceInfo.CacheValue = op.IntValue
+		case ast.SequenceNoCache:
+			sequenceInfo.Cache = false
+		case ast.SequenceCycle:
+			sequenceInfo.Cycle = true
+		case ast.SequenceNoCycle:
+			sequenceInfo.Cycle = false
+		case ast.SequenceOrder:
+			sequenceInfo.Order = true
+		case ast.SequenceNoOrder:
+			sequenceInfo.Order = false
+		}
+	}
+	// handle table options.
+	for _, op := range stmt.TblOptions {
+		switch op.Tp {
+		case ast.TableOptionComment:
+			sequenceInfo.Comment = op.StrValue
+		default:
+			return nil, errors.New(fmt.Sprintf("Unsupport table option type [%d]", op.Tp))
+		}
+	}
+	// fill the default value, min/max/start should be adjusted with increment's positive and negative.
+	if !minSetFlag || !maxSetFlag || !startSetFlag {
+		if sequenceInfo.Increment >= 0 {
+			if !minSetFlag {
+				sequenceInfo.MinValue = model.DefaultPositiveSequenceMinValue
+			}
+			if !startSetFlag {
+				sequenceInfo.Start = mathutil.MaxInt64(sequenceInfo.MinValue, model.DefaultPositiveSequenceStartValue)
+			}
+			if !maxSetFlag {
+				sequenceInfo.MaxValue = model.DefaultPositiveSequenceMaxValue
+			}
+		} else {
+			if !maxSetFlag {
+				sequenceInfo.MaxValue = model.DefaultNegativeSequenceMaxValue
+			}
+			if !startSetFlag {
+				sequenceInfo.Start = mathutil.MinInt64(sequenceInfo.MaxValue, model.DefaultNegativeSequenceStartValue)
+			}
+			if !minSetFlag {
+				sequenceInfo.MaxValue = model.DefaultNegativeSequenceMinValue
+			}
+		}
+	}
+	// valid the sequence value.
+	if sequenceInfo.MaxValue <= sequenceInfo.MinValue {
+		return nil, errors.New(fmt.Sprintf("Sequence '%s.%s' values are conflicting", ident.Schema.L, ident.Name.L))
+	}
+	return sequenceInfo, nil
+}
+
 func checkPartitionByHash(ctx sessionctx.Context, pi *model.PartitionInfo, s *ast.CreateTableStmt, cols []*table.Column, tbInfo *model.TableInfo) error {
 	if err := checkAddPartitionTooManyPartitions(pi.Num); err != nil {
 		return err
@@ -4213,4 +4294,47 @@ func (d *ddl) OrderByColumns(ctx sessionctx.Context, ident ast.Ident) error {
 		ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("ORDER BY ignored as there is a user-defined clustered index in the table '%s'", ident.Name))
 	}
 	return nil
+}
+
+func (d *ddl) CreateSequence(ctx sessionctx.Context, stmt *ast.CreateSequenceStmt) error {
+	ident := ast.Ident{Name: stmt.Name.Name, Schema: stmt.Name.Schema}
+	is := d.GetInfoSchemaWithInterceptor(ctx)
+	schema, ok := is.SchemaByName(ident.Schema)
+	if !ok {
+		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(ident.Schema)
+	}
+	_, err := is.TableByName(ident.Schema, ident.Name)
+	if err == nil {
+		if stmt.IfNotExists {
+			ctx.GetSessionVars().StmtCtx.AppendNote(infoschema.ErrTableExists.GenWithStackByArgs(ident))
+			return nil
+		}
+		return infoschema.ErrTableExists.GenWithStackByArgs(ident)
+	}
+	if err = checkTooLongTable(ident.Name); err != nil {
+		return err
+	}
+	sequenceInfo, err := buildSequenceInfo(ctx, stmt, ident)
+	if err != nil {
+		return err
+	}
+
+	tbInfo, err := buildTableInfo(ctx, d, ident.Name, nil, nil)
+	if err != nil {
+		return err
+	}
+	tbInfo.Sequence = sequenceInfo
+
+	job := &model.Job{
+		SchemaID:   schema.ID,
+		TableID:    tbInfo.ID,
+		SchemaName: schema.Name.L,
+		Type:       model.ActionCreateSequence,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{tbInfo},
+	}
+
+	err = d.doDDLJob(ctx, job)
+	err = d.callHookOnChanged(err)
+	return errors.Trace(err)
 }
