@@ -523,7 +523,7 @@ func (r *ImplMaxOneRow) OnImplement(expr *memo.GroupExpr, reqProp *property.Phys
 	return impl.NewMaxOneRowImpl(physicalMaxOneRow), nil
 }
 
-// ImplWindow implements LogicalWindow to PhysicalWindow
+// ImplWindow implements LogicalWindow to PhysicalWindow.
 type ImplWindow struct {
 }
 
@@ -537,7 +537,7 @@ func (w *ImplWindow) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty
 	return prop.IsPrefix(childProperty)
 }
 
-// OnImplement implements ImplementationRule OnImplement interface
+// OnImplement implements ImplementationRule OnImplement interface.
 func (w *ImplWindow) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) (memo.Implementation, error) {
 	lw := expr.ExprNode.(*plannercore.LogicalWindow)
 	var byItems []property.Item
@@ -550,7 +550,7 @@ func (w *ImplWindow) OnImplement(expr *memo.GroupExpr, reqProp *property.Physica
 		Frame:           lw.Frame,
 	}.Init(
 		lw.SCtx(),
-		expr.Group.Prop.Stats,
+		expr.Group.Prop.Stats.ScaleByExpectCnt(reqProp.ExpectedCnt),
 		lw.SelectBlockOffset(),
 		&property.PhysicalProperty{ExpectedCnt: math.MaxFloat64, Items: byItems},
 	)
