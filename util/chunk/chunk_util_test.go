@@ -22,13 +22,13 @@ import (
 )
 
 // getChk generate a chunk of data, isFirst3ColTheSame means the first three columns are the same.
-func getChk(isFirst3ColTheSame bool) (*Chunk, *Chunk, []bool) {
+func getChk(isLast3ColTheSame bool) (*Chunk, *Chunk, []bool) {
 	numRows := 1024
 	srcChk := newChunkWithInitCap(numRows, 0, 0, 8, 8, sizeTime, 0)
 	selected := make([]bool, numRows)
 	var row Row
 	for j := 0; j < numRows; j++ {
-		if isFirst3ColTheSame {
+		if isLast3ColTheSame {
 			if j%7 == 0 {
 				row = MutRowFromValues("abc", "abcdefg", nil, 123, types.ZeroDatetime, "abcdefg").ToRow()
 			} else {
@@ -61,12 +61,13 @@ func TestCopySelectedJoinRows(t *testing.T) {
 	}
 	// batch copy
 	dstChk2 := newChunkWithInitCap(numRows, 0, 0, 8, 8, sizeTime, 0)
-	CopySelectedJoinRows(srcChk, 0, 3, selected, dstChk2)
+	CopySelectedJoinRowsWithSameOuterRows(srcChk, 0, 3, selected, dstChk2)
 
 	if !reflect.DeepEqual(dstChk, dstChk2) {
 		t.Fatal()
 	}
 }
+
 func TestCopySelectedJoinRowsDirect(t *testing.T) {
 	srcChk, dstChk, selected := getChk(false)
 	numRows := srcChk.NumRows()
@@ -78,7 +79,7 @@ func TestCopySelectedJoinRowsDirect(t *testing.T) {
 	}
 	// batch copy
 	dstChk2 := newChunkWithInitCap(numRows, 0, 0, 8, 8, sizeTime, 0)
-	CopySelectedJoinRowsDirect(srcChk, 0, 3, selected, dstChk2)
+	CopySelectedJoinRowsDirect(srcChk, selected, dstChk2)
 
 	if !reflect.DeepEqual(dstChk, dstChk2) {
 		t.Fatal()
@@ -91,7 +92,7 @@ func BenchmarkCopySelectedJoinRows(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		dstChk.Reset()
-		CopySelectedJoinRows(srcChk, 0, 3, selected, dstChk)
+		CopySelectedJoinRowsWithSameOuterRows(srcChk, 0, 3, selected, dstChk)
 	}
 }
 func BenchmarkCopySelectedJoinRowsDirect(b *testing.B) {
@@ -100,7 +101,7 @@ func BenchmarkCopySelectedJoinRowsDirect(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		dstChk.Reset()
-		CopySelectedJoinRowsDirect(srcChk, 0, 3, selected, dstChk)
+		CopySelectedJoinRowsDirect(srcChk, selected, dstChk)
 	}
 }
 func BenchmarkAppendSelectedRow(b *testing.B) {

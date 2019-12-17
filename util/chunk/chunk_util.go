@@ -18,7 +18,7 @@ import "github.com/pingcap/errors"
 // CopySelectedJoinRowsDirect directly copies the selected joined rows from the source Chunk
 // to the destination Chunk.
 // Return true if at least one joined row was selected.
-func CopySelectedJoinRowsDirect(src *Chunk, innerColOffset, outerColOffset int, selected []bool, dst *Chunk) (bool, error) {
+func CopySelectedJoinRowsDirect(src *Chunk, selected []bool, dst *Chunk) (bool, error) {
 	if src.NumRows() == 0 {
 		return false, nil
 	}
@@ -60,12 +60,12 @@ func CopySelectedJoinRowsDirect(src *Chunk, innerColOffset, outerColOffset int, 
 	return numSelected > 0, nil
 }
 
-// CopySelectedJoinRows copies the selected joined rows from the source Chunk
+// CopySelectedJoinRowsWithSameOuterRows copies the selected joined rows from the source Chunk
 // to the destination Chunk.
 // Return true if at least one joined row was selected.
 //
 // NOTE: All the outer rows in the source Chunk should be the same.
-func CopySelectedJoinRows(src *Chunk, innerColOffset, outerColOffset int, selected []bool, dst *Chunk) (bool, error) {
+func CopySelectedJoinRowsWithSameOuterRows(src *Chunk, innerColOffset, outerColOffset int, selected []bool, dst *Chunk) (bool, error) {
 	if src.NumRows() == 0 {
 		return false, nil
 	}
