@@ -395,9 +395,9 @@ func (s *testSuite3) TestUser(c *C) {
 	dropUserSQL = `DROP USER 'test1'@'localhost', 'test2'@'localhost', 'test3'@'localhost';`
 	tk.MustGetErrCode(dropUserSQL, mysql.ErrCannotUser)
 	dropUserSQL = `DROP USER 'test3'@'localhost';`
-	tk.MustGetErrCode(dropUserSQL, mysql.ErrCannotUser)
+	tk.MustExec(dropUserSQL)
 	dropUserSQL = `DROP USER 'test1'@'localhost';`
-	tk.MustGetErrCode(dropUserSQL, mysql.ErrCannotUser)
+	tk.MustExec(dropUserSQL)
 	// Test positive cases without IF EXISTS.
 	createUserSQL = `CREATE USER 'test1'@'localhost', 'test3'@'localhost';`
 	tk.MustExec(createUserSQL)

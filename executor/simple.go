@@ -846,7 +846,6 @@ func (e *SimpleExec) executeDropUser(s *ast.DropUserStmt) error {
 	}
 
 	failedUsers := make([]string, 0, len(s.UserList))
-	notExistUsers := make([]string, 0, len(s.UserList))
 	sysSession, err := e.getSysSession()
 	defer e.releaseSysSession(sysSession)
 	if err != nil {
@@ -864,11 +863,15 @@ func (e *SimpleExec) executeDropUser(s *ast.DropUserStmt) error {
 			return err
 		}
 		if !exists {
-			notExistUsers = append(notExistUsers, user.String())
-			if _, err := sqlExecutor.Execute(context.Background(), "rollback"); err != nil {
-				return err
+			if s.IfExists {
+				e.ctx.GetSessionVars().StmtCtx.AppendNote(infoschema.ErrUserDropExists.GenWithStackByArgs(user))
+			} else {
+				failedUsers = append(failedUsers, user.String())
+				if _, err := sqlExecutor.Execute(context.Background(), "rollback"); err != nil {
+					return err
+				}
+				break
 			}
-			break
 		}
 
 		// begin a transaction to delete a user.
@@ -941,23 +944,11 @@ func (e *SimpleExec) executeDropUser(s *ast.DropUserStmt) error {
 		//TODO: need delete columns_priv once we implement columns_priv functionality.
 	}
 
-	if len(notExistUsers) == 0 && len(failedUsers) == 0 {
+	if len(failedUsers) == 0 {
 		if _, err := sqlExecutor.Execute(context.Background(), "commit"); err != nil {
 			return err
 		}
-	}
-
-	if len(notExistUsers) > 0 {
-		if s.IfExists {
-			for _, user := range notExistUsers {
-				e.ctx.GetSessionVars().StmtCtx.AppendNote(infoschema.ErrUserDropExists.GenWithStackByArgs(user))
-			}
-		} else {
-			failedUsers = append(failedUsers, notExistUsers...)
-		}
-	}
-
-	if len(failedUsers) > 0 {
+	} else {
 		if s.IsDropRole {
 			return ErrCannotUser.GenWithStackByArgs("DROP ROLE", strings.Join(failedUsers, ","))
 		}
