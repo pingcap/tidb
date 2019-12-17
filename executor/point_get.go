@@ -184,6 +184,9 @@ func encodeIndexKey(e *baseExecutor, tblInfo *model.TableInfo, idxInfo *model.In
 	sc := e.ctx.GetSessionVars().StmtCtx
 	for i := range idxVals {
 		colInfo := tblInfo.Columns[idxInfo.Columns[i].Offset]
+		// table.CastValue will append 0x0 if the string value's length is smaller than the BINARY column's length.
+		// So we don't use CastValue for string value for now.
+		// TODO: merge two if branch.
 		if colInfo.Tp == mysql.TypeString || colInfo.Tp == mysql.TypeVarString || colInfo.Tp == mysql.TypeVarchar {
 			var str string
 			str, err = idxVals[i].ToString()
