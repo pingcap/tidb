@@ -739,25 +739,25 @@ func (s *testPrivilegeSuite) TestUserTableConsistency(c *C) {
 	tk.MustExec("create user superadmin")
 	tk.MustExec("grant all privileges on *.* to 'superadmin'")
 
+	// GrantPriv is not in AllGlobalPrivs any more, see pingcap/parser#581
 	c.Assert(len(mysql.Priv2UserCol), Equals, len(mysql.AllGlobalPrivs)+1)
 
 	var buf bytes.Buffer
 	var res bytes.Buffer
 	buf.WriteString("select ")
 	i := 0
-	for _, priv := range mysql.Priv2UserCol {
+	for _, priv := range mysql.AllGlobalPrivs {
 		if i != 0 {
 			buf.WriteString(", ")
 			res.WriteString(" ")
 		}
-		buf.WriteString(priv)
+		buf.WriteString(mysql.Priv2UserCol[priv])
 		res.WriteString("Y")
 		i++
 	}
 	buf.WriteString(" from mysql.user where user = 'superadmin'")
 	tk.MustQuery(buf.String()).Check(testkit.Rows(res.String()))
 }
-
 func mustExec(c *C, se session.Session, sql string) {
 	_, err := se.Execute(context.Background(), sql)
 	c.Assert(err, IsNil)

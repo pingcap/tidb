@@ -14,7 +14,6 @@
 package executor_test
 
 import (
-	"bytes"
 	"fmt"
 	"strings"
 
@@ -237,29 +236,4 @@ func (s *testSuite3) TestGrantUnderANSIQuotes(c *C) {
 	tk.MustExec(`GRANT ALL PRIVILEGES ON video_ulimit.* TO web@'%' IDENTIFIED BY 'eDrkrhZ>l2sV'`)
 	tk.MustExec(`REVOKE ALL PRIVILEGES ON video_ulimit.* FROM web@'%';`)
 	tk.MustExec(`DROP USER IF EXISTS 'web'@'%'`)
-}
-
-func (s *testSuite3) TestUserTableConsistency(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("create user superadmin")
-	tk.MustExec("grant all privileges on *.* to 'superadmin'")
-
-	// GrantPriv is not in AllGlobalPrivs any more, see pingcap/parser#581
-	c.Assert(len(mysql.Priv2UserCol), Equals, len(mysql.AllGlobalPrivs)+1)
-
-	var buf bytes.Buffer
-	var res bytes.Buffer
-	buf.WriteString("select ")
-	i := 0
-	for _, priv := range mysql.AllGlobalPrivs {
-		if i != 0 {
-			buf.WriteString(", ")
-			res.WriteString(" ")
-		}
-		buf.WriteString(mysql.Priv2UserCol[priv])
-		res.WriteString("Y")
-		i++
-	}
-	buf.WriteString(" from mysql.user where user = 'superadmin'")
-	tk.MustQuery(buf.String()).Check(testkit.Rows(res.String()))
 }
