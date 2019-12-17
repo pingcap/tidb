@@ -17,7 +17,6 @@ import (
 	"container/heap"
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/util/disk"
 	"sort"
 	"sync/atomic"
 
@@ -25,6 +24,7 @@ import (
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/stringutil"
 )
@@ -107,7 +107,9 @@ func (e *SortExec) Close() error {
 		e.finalRowPtrs = nil
 	}
 	e.memTracker.Consume(int64(-8 * cap(e.rowPtrs)))
+	e.rowPtrs = nil
 	e.memTracker = nil
+	e.diskTracker = nil
 	return e.children[0].Close()
 }
 
