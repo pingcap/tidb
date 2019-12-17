@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
+	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
@@ -115,6 +116,11 @@ func updateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datu
 		// See https://dev.mysql.com/doc/refman/5.7/en/mysql-real-connect.html  CLIENT_FOUND_ROWS
 		if ctx.GetSessionVars().ClientCapability&mysql.ClientFoundRows > 0 {
 			sc.AddAffectedRows(1)
+		}
+		unchangedRowKey := tablecodec.EncodeRowKeyWithHandle(t.Meta().ID, h)
+		txnCtx := ctx.GetSessionVars().TxnCtx
+		if txnCtx.IsPessimistic {
+			txnCtx.AddUnchangedRowKey(unchangedRowKey)
 		}
 		return false, false, 0, nil
 	}

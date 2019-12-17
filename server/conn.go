@@ -1071,6 +1071,7 @@ func insertDataWithCommit(ctx context.Context, prevData, curData []byte, loadDat
 		if !reachLimit {
 			break
 		}
+		start := time.Now()
 		if err = loadDataInfo.Ctx.StmtCommit(); err != nil {
 			return nil, err
 		}
@@ -1080,6 +1081,7 @@ func insertDataWithCommit(ctx context.Context, prevData, curData []byte, loadDat
 		}
 		curData = prevData
 		prevData = nil
+		logutil.Logger(ctx).Info("commit one task finished", zap.Duration("commit time usage", time.Since(start)))
 	}
 	return prevData, nil
 }

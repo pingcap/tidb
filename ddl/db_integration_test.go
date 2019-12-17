@@ -1477,19 +1477,11 @@ func (s *testIntegrationSuite4) TestAlterColumn(c *C) {
 	c.Assert(err, NotNil)
 
 	s.tk.MustExec("drop table if exists t")
-	// TODO: fix me, below sql should execute successfully. Currently, the result of calculate key length is wrong.
-	//s.tk.MustExec("create table t1 (a varchar(10),b varchar(100),c tinyint,d varchar(3071),index(a),index(a,b),index (c,d));")
-	s.tk.MustExec("create table t1 (a varchar(10),b varchar(100),c tinyint,d varchar(3068),index(a),index(a,b),index (c,d));")
-	_, err = s.tk.Exec("alter table t1 modify column a varchar(3000);")
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[ddl:1071]Specified key was too long; max key length is 3072 bytes")
+	s.tk.MustExec("create table t1 (a varchar(10),b varchar(100),c tinyint,d varchar(3071),index(a),index(a,b),index (c,d)) charset = ascii;")
+	s.tk.MustGetErrCode("alter table t1 modify column a varchar(3000);", mysql.ErrTooLongKey)
 	// check modify column with rename column.
-	_, err = s.tk.Exec("alter table t1 change column a x varchar(3000);")
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[ddl:1071]Specified key was too long; max key length is 3072 bytes")
-	_, err = s.tk.Exec("alter table t1 modify column c bigint;")
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[ddl:1071]Specified key was too long; max key length is 3072 bytes")
+	s.tk.MustGetErrCode("alter table t1 change column a x varchar(3000);", mysql.ErrTooLongKey)
+	s.tk.MustGetErrCode("alter table t1 modify column c bigint;", mysql.ErrTooLongKey)
 
 	s.tk.MustExec("drop table if exists multi_unique")
 	s.tk.MustExec("create table multi_unique (a int unique unique)")
@@ -1891,6 +1883,68 @@ func (s *testIntegrationSuite4) TestDropAutoIncrementIndex(c *C) {
 	tk.MustExec("create table t1 (a int(11) not null auto_increment, b int(11), c bigint, unique key (a, b, c))")
 	dropIndexSQL = "alter table t1 drop index a"
 	tk.MustGetErrCode(dropIndexSQL, mysql.ErrWrongAutoKey)
+}
+
+func (s *testIntegrationSuite3) TestInsertIntoGeneratedColumnWithDefaultExpr(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create database if not exists test")
+	tk.MustExec("use test")
+
+	// insert into virtual / stored columns
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (a int, b int as (-a) virtual, c int as (-a) stored)")
+	tk.MustExec("insert into t1 values (1, default, default)")
+	tk.MustQuery("select * from t1").Check(testkit.Rows("1 -1 -1"))
+	tk.MustExec("delete from t1")
+
+	// insert multiple rows
+	tk.MustExec("insert into t1(a,b) values (1, default), (2, default)")
+	tk.MustQuery("select * from t1").Check(testkit.Rows("1 -1 -1", "2 -2 -2"))
+	tk.MustExec("delete from t1")
+
+	// insert into generated columns only
+	tk.MustExec("insert into t1(b) values (default)")
+	tk.MustQuery("select * from t1").Check(testkit.Rows("<nil> <nil> <nil>"))
+	tk.MustExec("delete from t1")
+	tk.MustExec("insert into t1(c) values (default)")
+	tk.MustQuery("select * from t1").Check(testkit.Rows("<nil> <nil> <nil>"))
+	tk.MustExec("delete from t1")
+
+	// generated columns with index
+	tk.MustExec("drop table if exists t2")
+	tk.MustExec("create table t2 like t1")
+	tk.MustExec("alter table t2 add index idx1(a)")
+	tk.MustExec("alter table t2 add index idx2(b)")
+	tk.MustExec("insert into t2 values (1, default, default)")
+	tk.MustQuery("select * from t2").Check(testkit.Rows("1 -1 -1"))
+	tk.MustExec("delete from t2")
+	tk.MustExec("alter table t2 drop index idx1")
+	tk.MustExec("alter table t2 drop index idx2")
+	tk.MustExec("insert into t2 values (1, default, default)")
+	tk.MustQuery("select * from t2").Check(testkit.Rows("1 -1 -1"))
+
+	// generated columns in different position
+	tk.MustExec("drop table if exists t3")
+	tk.MustExec("create table t3 (gc1 int as (r+1), gc2 int as (r+1) stored, gc3 int as (gc2+1), gc4 int as (gc1+1) stored, r int)")
+	tk.MustExec("insert into t3 values (default, default, default, default, 1)")
+	tk.MustQuery("select * from t3").Check(testkit.Rows("2 2 3 3 1"))
+
+	// generated columns in replace statement
+	tk.MustExec("create table t4 (a int key, b int, c int as (a+1), d int as (b+1) stored)")
+	tk.MustExec("insert into t4 values (1, 10, default, default)")
+	tk.MustQuery("select * from t4").Check(testkit.Rows("1 10 2 11"))
+	tk.MustExec("replace into t4 values (1, 20, default, default)")
+	tk.MustQuery("select * from t4").Check(testkit.Rows("1 20 2 21"))
+
+	// generated columns with default function is not allowed
+	tk.MustExec("create table t5 (a int default 10, b int as (a+1))")
+	assertErrorCode(c, tk, "insert into t5 values (20, default(a))", mysql.ErrBadGeneratedColumn)
+
+	tk.MustExec("drop table t1")
+	tk.MustExec("drop table t2")
+	tk.MustExec("drop table t3")
+	tk.MustExec("drop table t4")
+	tk.MustExec("drop table t5")
 }
 
 func (s *testIntegrationSuite3) TestParserIssue284(c *C) {

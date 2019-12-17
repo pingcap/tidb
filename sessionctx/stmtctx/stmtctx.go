@@ -133,7 +133,8 @@ type StatementContext struct {
 		normalized string
 		digest     string
 	}
-	Tables []TableEntry
+	Tables            []TableEntry
+	lockWaitStartTime *time.Time // LockWaitStartTime stores the pessimistic lock wait start time
 }
 
 // GetNowTsCached getter for nowTs, if not set get now time and cache it
@@ -492,6 +493,15 @@ func (sc *StatementContext) CopTasksDetails() *CopTasksDetails {
 	d.MaxWaitTime = sc.mu.allExecDetails[n-1].WaitTime
 	d.MaxWaitAddress = sc.mu.allExecDetails[n-1].CalleeAddress
 	return d
+}
+
+// GetLockWaitStartTime returns the statement pessimistic lock wait start time
+func (sc *StatementContext) GetLockWaitStartTime() time.Time {
+	if sc.lockWaitStartTime == nil {
+		curTime := time.Now()
+		sc.lockWaitStartTime = &curTime
+	}
+	return *sc.lockWaitStartTime
 }
 
 //CopTasksDetails collects some useful information of cop-tasks during execution.

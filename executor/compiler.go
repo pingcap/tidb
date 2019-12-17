@@ -388,7 +388,7 @@ func addHint(ctx sessionctx.Context, stmtNode ast.StmtNode) ast.StmtNode {
 			normalizeExplainSQL := parser.Normalize(x.Text())
 			idx := strings.Index(normalizeExplainSQL, "select")
 			normalizeSQL := normalizeExplainSQL[idx:]
-			hash := parser.DigestHash(normalizeSQL)
+			hash := parser.DigestNormalized(normalizeSQL)
 			x.Stmt = addHintForSelect(hash, normalizeSQL, ctx, x.Stmt)
 		}
 		return x

@@ -179,6 +179,17 @@ func (tk *TestKit) MustExec(sql string, args ...interface{}) {
 	}
 }
 
+// MustUseIndex checks if the result execution plan contains specific index(es).
+func (tk *TestKit) MustUseIndex(sql string, index string, args ...interface{}) bool {
+	rs := tk.MustQuery("explain "+sql, args...)
+	for i := range rs.rows {
+		if strings.Contains(rs.rows[i][3], "index:"+index+",") {
+			return true
+		}
+	}
+	return false
+}
+
 // MustIndexLookup checks whether the plan for the sql is Point_Get.
 func (tk *TestKit) MustIndexLookup(sql string, args ...interface{}) *Result {
 	rs := tk.MustQuery("explain "+sql, args...)
