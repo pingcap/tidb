@@ -1087,7 +1087,7 @@ func (b *builtinConvSig) vecEvalString(input *chunk.Chunk, result *chunk.Column)
 		ignoreSign bool
 	)
 	for i := 0; i < n; i++ {
-		if buf1.IsNull(i) || buf2.IsNull(i) || buf2.IsNull(i) {
+		if buf1.IsNull(i) || buf2.IsNull(i) || buf3.IsNull(i) {
 			result.AppendNull()
 			continue
 		}
