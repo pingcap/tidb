@@ -876,7 +876,7 @@ type PushTopNDownUnionAll struct {
 }
 
 // NewRulePushTopNDownUnionAll creates a new Transformation PushTopNDownUnionAll.
-// The pattern of this rule is `TopN->UnionAll->X` to `UnionAll->TopN->X`.
+// The pattern of this rule is `TopN->UnionAll->X` to `TopN->UnionAll->TopN->X`.
 func NewRulePushTopNDownUnionAll() Transformation {
 	rule := &PushTopNDownUnionAll{}
 	rule.pattern = memo.BuildPattern(
@@ -888,30 +888,56 @@ func NewRulePushTopNDownUnionAll() Transformation {
 }
 
 // OnTransform implements Transformation interface.
-// This rule tries to pushes the TopN through UnionAll.
+// It will transform `TopN->UnionAll->X` to `TopN->UnionAll->TopN->X`.
 func (r *PushTopNDownUnionAll) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
 	topN := old.GetExpr().ExprNode.(*plannercore.LogicalTopN)
 	unionAll := old.Children[0].GetExpr().ExprNode.(*plannercore.LogicalUnionAll)
 
-	newTopN := plannercore.LogicalTopN{
-		Offset: topN.Offset,
-		Count:  topN.Count,
-	}.Init(topN.SCtx(), topN.SelectBlockOffset())
-
-	newTopN.ByItems = make([]*plannercore.ByItems, 0, len(topN.ByItems))
-	for _, by := range topN.ByItems {
-		newTopN.ByItems = append(newTopN.ByItems, &plannercore.ByItems{by.Expr, by.Desc})
+	topNItemInd := make([]int, 0, len(topN.ByItems))
+	topNItemIndDesc := make([]bool, 0, len(topN.ByItems))
+	firstChildGroup := old.Children[0].GetExpr().Children[0]
+	firstChildGroupColumnsExpr := firstChildGroup.Prop.Schema.Columns
+	ind := 0
+	for i, col := range firstChildGroupColumnsExpr {
+		if col == topN.ByItems[ind].Expr {
+			topNItemInd = append(topNItemInd, i)
+			topNItemIndDesc = append(topNItemIndDesc, topN.ByItems[ind].Desc)
+			ind++
+			if ind == len(topN.ByItems) {
+				break
+			}
+		}
 	}
 
 	newUnionAllExpr := memo.NewGroupExpr(unionAll)
 	for _, childGroup := range old.Children[0].GetExpr().Children {
-		newTopNExpr := memo.NewGroupExpr(topN)
+		newTopN := plannercore.LogicalTopN{
+			Count: topN.Count + topN.Offset,
+		}.Init(topN.SCtx(), topN.SelectBlockOffset())
+		newTopN.ByItems = make([]*plannercore.ByItems, 0, len(topN.ByItems))
+		childGroupColumnsExpr := childGroup.Prop.Schema.ColumnsByIndices(topNItemInd)
+		for i := 0; i < len(topNItemInd); i++ {
+			newTopN.ByItems = append(newTopN.ByItems, &plannercore.ByItems{childGroupColumnsExpr[i], topNItemIndDesc[i]})
+		}
+
+		newTopNExpr := memo.NewGroupExpr(newTopN)
 		newTopNExpr.Children = append(newTopNExpr.Children, childGroup)
 		newTopNGroup := memo.NewGroupWithSchema(newTopNExpr, childGroup.Prop.Schema)
 
 		newUnionAllExpr.Children = append(newUnionAllExpr.Children, newTopNGroup)
 	}
-	return []*memo.GroupExpr{newUnionAllExpr}, true, false, nil
+
+	newTopN := plannercore.LogicalTopN{
+		Count: topN.Count + topN.Offset,
+	}.Init(topN.SCtx(), topN.SelectBlockOffset())
+	newTopN.ByItems = make([]*plannercore.ByItems, 0, len(topN.ByItems))
+	for _, by := range topN.ByItems {
+		newTopN.ByItems = append(newTopN.ByItems, &plannercore.ByItems{by.Expr, by.Desc})
+	}
+	newTopNExpr := memo.NewGroupExpr(newTopN)
+	newUnionAllGroup := memo.NewGroupWithSchema(newUnionAllExpr, unionAll.Schema())
+	newTopNExpr.SetChildren(newUnionAllGroup)
+	return []*memo.GroupExpr{newTopNExpr}, true, false, nil
 }
 
 // MergeAggregationProjection merges the Projection below an Aggregation as a new Aggregation.
