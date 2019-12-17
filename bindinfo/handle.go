@@ -16,7 +16,6 @@ package bindinfo
 import (
 	"context"
 	"fmt"
-	"go.uber.org/zap"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -31,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"go.uber.org/zap"
 )
 
 // BindHandle is used to handle all global sql bind operations.
@@ -95,7 +95,7 @@ func NewBindHandle(ctx sessionctx.Context) *BindHandle {
 func (h *BindHandle) Update(fullLoad bool) (err error) {
 	sql := "select original_sql, bind_sql, default_db, status, create_time, update_time, charset, collation from mysql.bind_info"
 	if !fullLoad {
-		sql += " where update_time >= \"" + h.lastUpdateTime.String() + "\""
+		sql += " where update_time > \"" + h.lastUpdateTime.String() + "\""
 	}
 
 	// No need to acquire the session context lock for ExecRestrictedSQL, it
@@ -304,7 +304,7 @@ func (h *BindHandle) GetAllBindRecord() (bindRecords []*BindMeta) {
 }
 
 func (h *BindHandle) newBindMeta(record *BindRecord) (hash string, meta *BindMeta, err error) {
-	hash = parser.DigestHash(record.OriginalSQL)
+	hash = parser.DigestNormalized(record.OriginalSQL)
 	stmtNodes, _, err := h.bindInfo.parser.Parse(record.BindSQL, record.Charset, record.Collation)
 	if err != nil {
 		return "", nil, err
@@ -314,7 +314,7 @@ func (h *BindHandle) newBindMeta(record *BindRecord) (hash string, meta *BindMet
 }
 
 func newBindMetaWithoutAst(record *BindRecord) (hash string, meta *BindMeta) {
-	hash = parser.DigestHash(record.OriginalSQL)
+	hash = parser.DigestNormalized(record.OriginalSQL)
 	meta = &BindMeta{BindRecord: record}
 	return hash, meta
 }
@@ -358,6 +358,7 @@ func (c cache) removeDeletedBindMeta(hash string, meta *BindMeta, scope string) 
 			}
 		}
 	}
+	c[hash] = metas
 }
 
 // removeStaleBindMetas removes all the stale BindMeta in the cache.
@@ -377,12 +378,15 @@ func (c cache) removeStaleBindMetas(hash string, meta *BindMeta, scope string) {
 			}
 		}
 	}
+	c[hash] = metas
 }
 
 func (c cache) copy() cache {
 	newCache := make(cache, len(c))
 	for k, v := range c {
-		newCache[k] = v
+		bindMetas := make([]*BindMeta, len(v))
+		copy(bindMetas, v)
+		newCache[k] = bindMetas
 	}
 	return newCache
 }
@@ -444,4 +448,11 @@ func (h *BindHandle) logicalDeleteBindInfoSQL(normdOrigSQL, db string, updateTs 
 		expression.Quote(updateTs.String()),
 		expression.Quote(normdOrigSQL),
 		expression.Quote(db))
+}
+
+// Clear resets the bind handle. It is used for test.
+func (h *BindHandle) Clear() {
+	h.bindInfo.Store(make(cache))
+	h.invalidBindRecordMap.Store(make(map[string]*invalidBindRecordMap))
+	h.lastUpdateTime = types.ZeroTimestamp
 }
