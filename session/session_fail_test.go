@@ -21,7 +21,7 @@ import (
 	"github.com/pingcap/tidb/util/testkit"
 )
 
-func (s *testSessionSuite2) TestFailStatementCommit(c *C) {
+func (s *testSessionSerialSuite) TestFailStatementCommit(c *C) {
 
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("create table t (id int)")
@@ -58,7 +58,7 @@ func (s *testSessionSuite2) TestFailStatementCommit(c *C) {
 	tk.MustQuery(`select * from t`).Check(testkit.Rows("1", "2"))
 }
 
-func (s *testSessionSuite2) TestFailStatementCommitInRetry(c *C) {
+func (s *testSessionSerialSuite) TestFailStatementCommitInRetry(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("create table t (id int)")
 
@@ -78,7 +78,7 @@ func (s *testSessionSuite2) TestFailStatementCommitInRetry(c *C) {
 	tk.MustQuery(`select * from t`).Check(testkit.Rows("6"))
 }
 
-func (s *testSessionSuite2) TestGetTSFailDirtyState(c *C) {
+func (s *testSessionSerialSuite) TestGetTSFailDirtyState(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("create table t (id int)")
 
@@ -96,7 +96,7 @@ func (s *testSessionSuite2) TestGetTSFailDirtyState(c *C) {
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/session/mockGetTSFail"), IsNil)
 }
 
-func (s *testSessionSuite2) TestGetTSFailDirtyStateInretry(c *C) {
+func (s *testSessionSerialSuite) TestGetTSFailDirtyStateInretry(c *C) {
 	defer func() {
 		c.Assert(failpoint.Disable("github.com/pingcap/tidb/session/mockCommitError"), IsNil)
 		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/mockGetTSErrorInRetry"), IsNil)
