@@ -154,9 +154,6 @@ func statementContextToFlags(sc *stmtctx.StatementContext) uint64 {
 	if sc.DividedByZeroAsWarning {
 		flags |= model.FlagDividedByZeroAsWarning
 	}
-	if sc.PadCharToFullLength {
-		flags |= model.FlagPadCharToFullLength
-	}
 	return flags
 }
 
