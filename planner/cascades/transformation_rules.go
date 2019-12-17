@@ -893,33 +893,18 @@ func (r *PushTopNDownUnionAll) OnTransform(old *memo.ExprIter) (newExprs []*memo
 	topN := old.GetExpr().ExprNode.(*plannercore.LogicalTopN)
 	unionAll := old.Children[0].GetExpr().ExprNode.(*plannercore.LogicalUnionAll)
 
-	topNItemInd := make([]int, 0, len(topN.ByItems))
-	topNItemIndDesc := make([]bool, 0, len(topN.ByItems))
-	firstChildGroup := old.Children[0].GetExpr().Children[0]
-	firstChildGroupColumnsExpr := firstChildGroup.Prop.Schema.Columns
-	ind := 0
-	for i, col := range firstChildGroupColumnsExpr {
-		if col == topN.ByItems[ind].Expr {
-			topNItemInd = append(topNItemInd, i)
-			topNItemIndDesc = append(topNItemIndDesc, topN.ByItems[ind].Desc)
-			ind++
-			if ind == len(topN.ByItems) {
-				break
-			}
-		}
+	newTopN := plannercore.LogicalTopN{
+		Count: topN.Count + topN.Offset,
+	}.Init(topN.SCtx(), topN.SelectBlockOffset())
+	newTopN.ByItems = make([]*plannercore.ByItems, 0, len(topN.ByItems))
+	for _, by := range topN.ByItems {
+		newTopN.ByItems = append(newTopN.ByItems, &plannercore.ByItems{
+			Expr: by.Expr,
+			Desc: by.Desc})
 	}
 
 	newUnionAllExpr := memo.NewGroupExpr(unionAll)
 	for _, childGroup := range old.Children[0].GetExpr().Children {
-		newTopN := plannercore.LogicalTopN{
-			Count: topN.Count + topN.Offset,
-		}.Init(topN.SCtx(), topN.SelectBlockOffset())
-		newTopN.ByItems = make([]*plannercore.ByItems, 0, len(topN.ByItems))
-		childGroupColumnsExpr := childGroup.Prop.Schema.ColumnsByIndices(topNItemInd)
-		for i := 0; i < len(topNItemInd); i++ {
-			newTopN.ByItems = append(newTopN.ByItems, &plannercore.ByItems{childGroupColumnsExpr[i], topNItemIndDesc[i]})
-		}
-
 		newTopNExpr := memo.NewGroupExpr(newTopN)
 		newTopNExpr.Children = append(newTopNExpr.Children, childGroup)
 		newTopNGroup := memo.NewGroupWithSchema(newTopNExpr, childGroup.Prop.Schema)
@@ -927,13 +912,6 @@ func (r *PushTopNDownUnionAll) OnTransform(old *memo.ExprIter) (newExprs []*memo
 		newUnionAllExpr.Children = append(newUnionAllExpr.Children, newTopNGroup)
 	}
 
-	newTopN := plannercore.LogicalTopN{
-		Count: topN.Count + topN.Offset,
-	}.Init(topN.SCtx(), topN.SelectBlockOffset())
-	newTopN.ByItems = make([]*plannercore.ByItems, 0, len(topN.ByItems))
-	for _, by := range topN.ByItems {
-		newTopN.ByItems = append(newTopN.ByItems, &plannercore.ByItems{by.Expr, by.Desc})
-	}
 	newTopNExpr := memo.NewGroupExpr(newTopN)
 	newUnionAllGroup := memo.NewGroupWithSchema(newUnionAllExpr, unionAll.Schema())
 	newTopNExpr.SetChildren(newUnionAllGroup)
