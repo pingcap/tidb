@@ -30,7 +30,6 @@ func onCreateSchema(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error
 	}
 
 	dbInfo.ID = schemaID
-	dbInfo.State = model.StateNone
 
 	err := checkSchemaNotExists(d, t, schemaID, dbInfo)
 	if err != nil {
@@ -56,6 +55,15 @@ func onCreateSchema(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error
 		}
 		// Finish this job.
 		job.FinishDBJob(model.JobStateDone, model.StatePublic, ver, dbInfo)
+		return ver, nil
+	case model.StateDeleteOnly:
+		// Create a invisible schema.
+		err = t.CreateDatabase(dbInfo)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		// Finish this job.
+		job.FinishDBJob(model.JobStateDone, model.StateDeleteOnly, ver, dbInfo)
 		return ver, nil
 	default:
 		// We can't enter here.
@@ -109,7 +117,7 @@ func checkSchemaNotExistsFromStore(t *meta.Meta, schemaID int64, dbInfo *model.D
 	return nil
 }
 
-func onModifySchemaCharsetAndCollate(t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func onModifySchemaOptions(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	var toCharset, toCollate string
 	if err := job.DecodeArgs(&toCharset, &toCollate); err != nil {
 		job.State = model.JobStateCancelled
@@ -120,6 +128,9 @@ func onModifySchemaCharsetAndCollate(t *meta.Meta, job *model.Job) (ver int64, _
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
+	}
+	if job.Type == model.ActionAlterSchemaVisibility {
+		dbInfo.State = model.StatePublic
 	}
 
 	if dbInfo.Charset == toCharset && dbInfo.Collate == toCollate {

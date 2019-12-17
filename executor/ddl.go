@@ -157,6 +157,7 @@ func (e *DDLExec) executeRenameTable(s *ast.RenameTableStmt) error {
 
 func (e *DDLExec) executeCreateDatabase(s *ast.CreateDatabaseStmt) error {
 	var opt *ast.CharsetOpt
+	isVisible := true
 	if len(s.Options) != 0 {
 		opt = &ast.CharsetOpt{}
 		for _, val := range s.Options {
@@ -165,10 +166,16 @@ func (e *DDLExec) executeCreateDatabase(s *ast.CreateDatabaseStmt) error {
 				opt.Chs = val.Value
 			case ast.DatabaseOptionCollate:
 				opt.Col = val.Value
+			case ast.DatabaseOptionVisibility:
+				if val.UintValue == uint64(ast.VisibilityOptionVisible) {
+					isVisible = true
+				} else if val.UintValue == uint64(ast.VisibilityOptionInvisible) {
+					isVisible = false
+				}
 			}
 		}
 	}
-	err := domain.GetDomain(e.ctx).DDL().CreateSchema(e.ctx, model.NewCIStr(s.Name), opt)
+	err := domain.GetDomain(e.ctx).DDL().CreateSchema(e.ctx, model.NewCIStr(s.Name), opt, isVisible)
 	if err != nil {
 		if infoschema.ErrDatabaseExists.Equal(err) && s.IfNotExists {
 			err = nil

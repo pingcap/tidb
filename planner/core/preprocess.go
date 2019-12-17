@@ -70,6 +70,7 @@ const (
 	parentIsJoin
 	// inRepairTable is set when visiting a repair table statement.
 	inRepairTable
+	allowedInvisibleDatabaseOrTable
 )
 
 // preprocessor is an ast.Visitor that preprocess
@@ -89,6 +90,7 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 	switch node := in.(type) {
 	case *ast.CreateTableStmt:
 		p.flag |= inCreateOrDropTable
+		p.flag |= allowedInvisibleDatabaseOrTable
 		p.resolveCreateTableStmt(node)
 		p.checkCreateTableGrammar(node)
 	case *ast.CreateViewStmt:
@@ -96,6 +98,7 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		p.checkCreateViewGrammar(node)
 	case *ast.DropTableStmt:
 		p.flag |= inCreateOrDropTable
+		p.flag |= allowedInvisibleDatabaseOrTable
 		p.checkDropTableGrammar(node)
 	case *ast.RenameTableStmt:
 		p.flag |= inCreateOrDropTable
@@ -103,15 +106,23 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 	case *ast.CreateIndexStmt:
 		p.checkCreateIndexGrammar(node)
 	case *ast.AlterTableStmt:
+		p.flag |= allowedInvisibleDatabaseOrTable
 		p.resolveAlterTableStmt(node)
 		p.checkAlterTableGrammar(node)
 	case *ast.CreateDatabaseStmt:
+		p.flag |= allowedInvisibleDatabaseOrTable
 		p.checkCreateDatabaseGrammar(node)
 	case *ast.AlterDatabaseStmt:
+		p.flag |= allowedInvisibleDatabaseOrTable
 		p.checkAlterDatabaseGrammar(node)
 	case *ast.DropDatabaseStmt:
+		p.flag |= allowedInvisibleDatabaseOrTable
 		p.checkDropDatabaseGrammar(node)
 	case *ast.ShowStmt:
+		tp := in.(*ast.ShowStmt).Tp
+		if tp == ast.ShowCreateDatabase || tp == ast.ShowCreateTable {
+			p.flag |= allowedInvisibleDatabaseOrTable
+		}
 		p.resolveShowStmt(node)
 	case *ast.UnionSelectList:
 		p.checkUnionSelectList(node)
@@ -153,11 +164,22 @@ func (p *preprocessor) Leave(in ast.Node) (out ast.Node, ok bool) {
 	switch x := in.(type) {
 	case *ast.CreateTableStmt:
 		p.flag &= ^inCreateOrDropTable
+		p.flag &= ^allowedInvisibleDatabaseOrTable
 		p.checkAutoIncrement(x)
 		p.checkContainDotColumn(x)
 	case *ast.CreateViewStmt:
 		p.flag &= ^inCreateOrDropTable
-	case *ast.DropTableStmt, *ast.AlterTableStmt, *ast.RenameTableStmt:
+	case *ast.CreateDatabaseStmt, *ast.AlterDatabaseStmt, *ast.DropDatabaseStmt:
+		p.flag &= ^allowedInvisibleDatabaseOrTable
+	case *ast.ShowStmt:
+		tp := in.(*ast.ShowStmt).Tp
+		if tp == ast.ShowCreateDatabase || tp == ast.ShowCreateTable {
+			p.flag &= ^allowedInvisibleDatabaseOrTable
+		}
+	case *ast.DropTableStmt, *ast.AlterTableStmt:
+		p.flag &= ^inCreateOrDropTable
+		p.flag &= ^allowedInvisibleDatabaseOrTable
+	case *ast.RenameTableStmt:
 		p.flag &= ^inCreateOrDropTable
 	case *driver.ParamMarkerExpr:
 		if p.flag&inPrepare == 0 {
@@ -768,9 +790,22 @@ func (p *preprocessor) handleTableName(tn *ast.TableName) {
 		p.err = err
 		return
 	}
+
 	tn.TableInfo = table.Meta()
 	dbInfo, _ := p.is.SchemaByName(tn.Schema)
 	tn.DBInfo = dbInfo
+	if p.flag&allowedInvisibleDatabaseOrTable > 0 {
+		return
+	}
+
+	if tn.TableInfo.State != model.StatePublic {
+		p.err = ddl.ErrSchemaState.GenWithStackByArgs("table", tn.TableInfo.State)
+		return
+	}
+	if tn.DBInfo.State != model.StatePublic {
+		p.err = ddl.ErrSchemaState.GenWithStackByArgs("schema", tn.TableInfo.State)
+		return
+	}
 }
 
 func (p *preprocessor) checkNotInRepair(tn *ast.TableName) {

@@ -183,6 +183,10 @@ var (
 	ErrPrimaryCantHaveNull = terror.ClassDDL.New(mysql.ErrPrimaryCantHaveNull, mysql.MySQLErrName[mysql.ErrPrimaryCantHaveNull])
 	// ErrErrorOnRename returns error for wrong database name in alter table rename
 	ErrErrorOnRename = terror.ClassDDL.New(mysql.ErrErrorOnRename, mysql.MySQLErrName[mysql.ErrErrorOnRename])
+	// ErrAlterVisibility returns an error when changing database/table visibility is not supported.
+	ErrAlterVisibility = terror.ClassDDL.New(mysql.ErrAlterVisibility, mysql.MySQLErrName[mysql.ErrAlterVisibility])
+	// ErrSchemaState  returns an error for wrong schema state.
+	ErrSchemaState = terror.ClassDDL.New(mysql.ErrSchemaState, mysql.MySQLErrName[mysql.ErrSchemaState])
 
 	// ErrNotAllowedTypeInPartition returns not allowed type error when creating table partition with unsupported expression type.
 	ErrNotAllowedTypeInPartition = terror.ClassDDL.New(mysql.ErrFieldTypeNotAllowedAsPartitionField, mysql.MySQLErrName[mysql.ErrFieldTypeNotAllowedAsPartitionField])
@@ -227,7 +231,7 @@ var (
 
 // DDL is responsible for updating schema in data store and maintaining in-memory InfoSchema cache.
 type DDL interface {
-	CreateSchema(ctx sessionctx.Context, name model.CIStr, charsetInfo *ast.CharsetOpt) error
+	CreateSchema(ctx sessionctx.Context, name model.CIStr, charsetInfo *ast.CharsetOpt, isVisible bool) error
 	AlterSchema(ctx sessionctx.Context, stmt *ast.AlterDatabaseStmt) error
 	DropSchema(ctx sessionctx.Context, schema model.CIStr) error
 	CreateTable(ctx sessionctx.Context, stmt *ast.CreateTableStmt) error
@@ -727,6 +731,8 @@ func init() {
 		mysql.ErrWrongTableName:                       mysql.ErrWrongTableName,
 		mysql.ErrWrongTypeColumnValue:                 mysql.ErrWrongTypeColumnValue,
 		mysql.WarnDataTruncated:                       mysql.WarnDataTruncated,
+		mysql.ErrAlterVisibility:                      mysql.ErrAlterVisibility,
+		mysql.ErrSchemaState:                          mysql.ErrSchemaState,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassDDL] = ddlMySQLErrCodes
 }

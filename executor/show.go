@@ -814,6 +814,9 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 		}
 		buf.WriteString("*/")
 	}
+	if tableInfo.State == model.StateDeleteOnly {
+		fmt.Fprintf(buf, "/*!90001 INVISIBLE */")
+	}
 
 	if len(tableInfo.Comment) > 0 {
 		fmt.Fprintf(buf, " COMMENT='%s'", format.OutputFormat(tableInfo.Comment))
@@ -926,6 +929,9 @@ func ConstructResultOfShowCreateDatabase(ctx sessionctx.Context, dbInfo *model.D
 	fmt.Fprintf(buf, "CREATE DATABASE %s%s", ifNotExistsStr, escape(dbInfo.Name, sqlMode))
 	if s := dbInfo.Charset; len(s) > 0 {
 		fmt.Fprintf(buf, " /*!40100 DEFAULT CHARACTER SET %s */", s)
+	}
+	if dbInfo.State == model.StateDeleteOnly {
+		fmt.Fprintf(buf, "/*!90001 INVISIBLE */")
 	}
 	return nil
 }

@@ -54,7 +54,7 @@ import (
 	"go.uber.org/zap"
 )
 
-func (d *ddl) CreateSchema(ctx sessionctx.Context, schema model.CIStr, charsetInfo *ast.CharsetOpt) (err error) {
+func (d *ddl) CreateSchema(ctx sessionctx.Context, schema model.CIStr, charsetInfo *ast.CharsetOpt, isVisible bool) (err error) {
 	is := d.GetInfoSchemaWithInterceptor(ctx)
 	_, ok := is.SchemaByName(schema)
 	if ok {
@@ -84,6 +84,9 @@ func (d *ddl) CreateSchema(ctx sessionctx.Context, schema model.CIStr, charsetIn
 	} else {
 		dbInfo.Charset, dbInfo.Collate = charset.GetDefaultCharsetAndCollate()
 	}
+	if !isVisible {
+		dbInfo.State = model.StateDeleteOnly
+	}
 
 	job := &model.Job{
 		SchemaID:   schemaID,
@@ -100,6 +103,8 @@ func (d *ddl) CreateSchema(ctx sessionctx.Context, schema model.CIStr, charsetIn
 func (d *ddl) AlterSchema(ctx sessionctx.Context, stmt *ast.AlterDatabaseStmt) (err error) {
 	// Resolve target charset and collation from options.
 	var toCharset, toCollate string
+	isVisible := true
+	isChangingVisibility := false
 	for _, val := range stmt.Options {
 		switch val.Tp {
 		case ast.DatabaseOptionCharset:
@@ -119,6 +124,13 @@ func (d *ddl) AlterSchema(ctx sessionctx.Context, stmt *ast.AlterDatabaseStmt) (
 				return ErrConflictingDeclarations.GenWithStackByArgs(toCharset, info.CharsetName)
 			}
 			toCollate = info.Name
+		case ast.DatabaseOptionVisibility:
+			if val.UintValue == uint64(ast.VisibilityOptionVisible) {
+				isVisible = true
+			} else if val.UintValue == uint64(ast.VisibilityOptionInvisible) {
+				isVisible = false
+			}
+			isChangingVisibility = true
 		}
 	}
 	if toCollate == "" {
@@ -143,13 +155,28 @@ func (d *ddl) AlterSchema(ctx sessionctx.Context, stmt *ast.AlterDatabaseStmt) (
 		return errors.Trace(err)
 	}
 
+	jobTp := model.ActionModifySchemaCharsetAndCollate
+	jobArgs := []interface{}{toCharset, toCollate}
+	// Change schema visibility.
+	if isChangingVisibility {
+		if !isVisible {
+			return ErrAlterVisibility.GenWithStackByArgs("schema", "invisible is unsupported")
+		}
+		if dbInfo.State != model.StateDeleteOnly {
+			return ErrAlterVisibility.GenWithStackByArgs("schema",
+				fmt.Sprintf("visible, schema %s state %s changing visibility is unsupported", dbInfo.Name, dbInfo.State))
+		}
+		jobTp = model.ActionAlterSchemaVisibility
+		jobArgs = []interface{}{toCharset, toCollate, isVisible}
+	}
+
 	// Do the DDL job.
 	job := &model.Job{
 		SchemaID:   dbInfo.ID,
 		SchemaName: dbInfo.Name.L,
-		Type:       model.ActionModifySchemaCharsetAndCollate,
+		Type:       jobTp,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{toCharset, toCollate},
+		Args:       jobArgs,
 	}
 	err = d.doDDLJob(ctx, job)
 	err = d.callHookOnChanged(err)
@@ -1394,12 +1421,13 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 	if err != nil {
 		return errors.Trace(err)
 	}
+	originalState := tbInfo.State
 	tbInfo.State = model.StatePublic
 	err = checkTableInfoValid(tbInfo)
 	if err != nil {
 		return err
 	}
-	tbInfo.State = model.StateNone
+	tbInfo.State = originalState
 
 	job := &model.Job{
 		SchemaID:   schema.ID,
@@ -1767,6 +1795,7 @@ func resolveDefaultTableCharsetAndCollation(tbInfo *model.TableInfo, dbCharset, 
 
 // handleTableOptions updates tableInfo according to table options.
 func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) error {
+	isVisible := true
 	for _, op := range options {
 		switch op.Tp {
 		case ast.TableOptionAutoIncrement:
@@ -1786,10 +1815,19 @@ func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) err
 			tbInfo.MaxShardRowIDBits = tbInfo.ShardRowIDBits
 		case ast.TableOptionPreSplitRegion:
 			tbInfo.PreSplitRegions = op.UintValue
+		case ast.TableOptionVisibility:
+			if op.UintValue == uint64(ast.VisibilityOptionVisible) {
+				isVisible = true
+			} else if op.UintValue == uint64(ast.VisibilityOptionInvisible) {
+				isVisible = false
+			}
 		}
 	}
 	if tbInfo.PreSplitRegions > tbInfo.ShardRowIDBits {
 		tbInfo.PreSplitRegions = tbInfo.ShardRowIDBits
+	}
+	if !isVisible {
+		tbInfo.State = model.StateDeleteOnly
 	}
 	return nil
 }
@@ -1977,11 +2015,11 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 					err = d.AlterTableCharsetAndCollate(ctx, ident, toCharset, toCollate)
 					handledCharsetOrCollate = true
 				}
-
 				if err != nil {
 					return errors.Trace(err)
 				}
 			}
+			err = d.AlterVisibility(ctx, ident, spec)
 		case ast.AlterTableSetTiFlashReplica:
 			err = d.AlterTableSetTiFlashReplica(ctx, ident, spec.TiFlashReplica)
 		default:
@@ -2918,6 +2956,55 @@ func (d *ddl) AlterTableComment(ctx sessionctx.Context, ident ast.Ident, spec *a
 		Type:       model.ActionModifyTableComment,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{spec.Comment},
+	}
+
+	err = d.doDDLJob(ctx, job)
+	err = d.callHookOnChanged(err)
+	return errors.Trace(err)
+}
+
+func (d *ddl) AlterVisibility(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
+	is := d.infoHandle.Get()
+	schema, ok := is.SchemaByName(ident.Schema)
+	if !ok {
+		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(ident.Schema)
+	}
+
+	tb, err := is.TableByName(ident.Schema, ident.Name)
+	if err != nil {
+		return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ident.Schema, ident.Name))
+	}
+
+	isVisible := true
+	var isChangingVisibility bool
+	for _, opt := range spec.Options {
+		if opt.Tp == ast.TableOptionVisibility {
+			if opt.UintValue == uint64(ast.VisibilityOptionVisible) {
+				isVisible = true
+			} else if opt.UintValue == uint64(ast.VisibilityOptionInvisible) {
+				isVisible = false
+			}
+			isChangingVisibility = true
+		}
+	}
+	tblInfo := tb.Meta()
+	if isChangingVisibility {
+		if !isVisible {
+			return ErrAlterVisibility.GenWithStackByArgs("table", "invisible is unsupported")
+		}
+		if tblInfo.State != model.StateDeleteOnly {
+			return ErrAlterVisibility.GenWithStackByArgs("table",
+				fmt.Sprintf("visible, table %s state %s changing visibility is unsupported", tblInfo.Name, tblInfo.State))
+		}
+	}
+
+	job := &model.Job{
+		SchemaID:   schema.ID,
+		TableID:    tblInfo.ID,
+		SchemaName: schema.Name.L,
+		Type:       model.ActionAlterTableVisibility,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       nil,
 	}
 
 	err = d.doDDLJob(ctx, job)

@@ -122,6 +122,32 @@ type testIntegrationSuite3 struct{ *testIntegrationSuite }
 type testIntegrationSuite4 struct{ *testIntegrationSuite }
 type testIntegrationSuite5 struct{ *testIntegrationSuite }
 
+func (s *testIntegrationSuite5) TestInvisibleDatabaseOrTable(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec(("create table t(a int, b int) invisible"))
+	tk.MustGetErrCode(("create table t(a int, b int) invisible"), mysql.ErrTableExists)
+	tk.MustGetErrCode(("create table t(a int, b int) visible"), mysql.ErrTableExists)
+	tk.MustGetErrCode(("create table t(a int, b int)"), mysql.ErrTableExists)
+	tk.MustGetErrCode(("alter table t add column c int"), mysql.ErrInvalidDDLState)
+	tk.MustGetErrCode(("insert into t values(1, 2)"), mysql.ErrSchemaState)
+	tk.MustQuery("show create table t").Check(testkit.Rows(
+		"t CREATE TABLE `t` (\n" +
+			"  `a` int(11) DEFAULT NULL,\n" +
+			"  `b` int(11) DEFAULT NULL\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin/*!90001 INVISIBLE */",
+	))
+	tk.MustExec("alter table t visible")
+	tk.MustExec("insert into t values(1, 2)")
+	tk.MustQuery("show create table t").Check(testkit.Rows(
+		"t CREATE TABLE `t` (\n" +
+			"  `a` int(11) DEFAULT NULL,\n" +
+			"  `b` int(11) DEFAULT NULL\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+	))
+}
+
 func (s *testIntegrationSuite5) TestNoZeroDateMode(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 

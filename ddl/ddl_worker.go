@@ -522,7 +522,9 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 	case model.ActionCreateSchema:
 		ver, err = onCreateSchema(d, t, job)
 	case model.ActionModifySchemaCharsetAndCollate:
-		ver, err = onModifySchemaCharsetAndCollate(t, job)
+		ver, err = onModifySchemaOptions(t, job)
+	case model.ActionAlterSchemaVisibility:
+		ver, err = onModifySchemaOptions(t, job)
 	case model.ActionDropSchema:
 		ver, err = onDropSchema(t, job)
 	case model.ActionCreateTable:
@@ -581,6 +583,8 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 		ver, err = onSetTableFlashReplica(t, job)
 	case model.ActionUpdateTiFlashReplicaStatus:
 		ver, err = onUpdateFlashReplicaStatus(t, job)
+	case model.ActionAlterTableVisibility:
+		ver, err = onAlterTableVisibility(t, job)
 	default:
 		// Invalid job, cancel it.
 		job.State = model.JobStateCancelled
