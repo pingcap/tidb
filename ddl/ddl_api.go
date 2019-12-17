@@ -2640,7 +2640,7 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 	}
 	// Check the column with foreign key.
 	if fkInfo := getColumnForeignKeyInfo(originalColName.L, t.Meta().ForeignKeys); fkInfo != nil {
-		return nil, errReferencedForeignKey.GenWithStackByArgs(originalColName, fkInfo.Name)
+		return nil, errFKIncompatibleColumns.GenWithStackByArgs(originalColName, fkInfo.Name)
 	}
 
 	// Constraints in the new column means adding new constraints. Errors should thrown,
