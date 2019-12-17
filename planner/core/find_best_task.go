@@ -183,6 +183,40 @@ func (p *baseLogicalPlan) findBestTask(prop *property.PhysicalProperty) (bestTas
 	return bestTask, nil
 }
 
+func (p *LogicalUnionScan) findBestTask(prop *property.PhysicalProperty) (bestTask task, err error) {
+	if prop == nil {
+		return nil, nil
+	}
+
+	bestTask = p.getTask(prop)
+	if bestTask != nil {
+		return bestTask, nil
+	}
+	bestTask = invalidTask
+	physicalPlans := p.exhaustPhysicalPlans(prop)
+	for _, pp := range physicalPlans {
+		// find best child tasks firstly.
+		childTask, err := p.children[0].findBestTask(pp.GetChildReqProps(0))
+		if err != nil {
+			return nil, err
+		}
+		if childTask != nil && childTask.invalid() {
+			continue
+		}
+		// The stats of PhysicalUnionScan is its physical child's stats.
+		pp.(*PhysicalUnionScan).stats = childTask.plan().statsInfo()
+		curTask := pp.attach2Task(childTask)
+
+		// get the most efficient one.
+		if curTask.cost() < bestTask.cost() {
+			bestTask = curTask
+		}
+	}
+
+	p.storeTask(prop, bestTask)
+	return bestTask, nil
+}
+
 func (p *LogicalMemTable) findBestTask(prop *property.PhysicalProperty) (t task, err error) {
 	if !prop.IsEmpty() {
 		return invalidTask, nil
