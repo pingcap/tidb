@@ -658,4 +658,3 @@ func (s *testSuite3) TestRoleAtomic(c *C) {
 	result.Check(testkit.Rows("r2"))
 	tk.MustExec("drop role r2;")
 }
-
