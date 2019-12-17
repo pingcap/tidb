@@ -102,7 +102,7 @@ func (s *testClusterTableSuite) setUpRPCService(c *C, addr string) *grpc.Server 
 		Host:    "127.0.0.1",
 		Command: mysql.ComQuery,
 	}
-	srv := server.NewRPCServer(config.GetGlobalConfig().Security, s.dom, sm)
+	srv := server.NewRPCServer(config.GetGlobalConfig(), s.dom, sm)
 	go func() {
 		err = srv.Serve(lis)
 		c.Assert(err, IsNil)
