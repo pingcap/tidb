@@ -89,11 +89,11 @@ type testClusterTableSuite struct {
 
 func (s *testClusterTableSuite) SetUpSuite(c *C) {
 	s.testTableSuite.SetUpSuite(c)
-	s.rpcserver = s.setUpRPCService(c, ":0")
+	s.rpcserver, s.listenAddr = s.setUpRPCService(c, ":0")
 	s.httpServer, s.mockAddr = setUpMockPDHTTPSercer()
 }
 
-func (s *testClusterTableSuite) setUpRPCService(c *C, addr string) *grpc.Server {
+func (s *testClusterTableSuite) setUpRPCService(c *C, addr string) (*grpc.Server, string) {
 	lis, err := net.Listen("tcp", addr)
 	c.Assert(err, IsNil)
 	// Fix issue 9836
@@ -105,12 +105,12 @@ func (s *testClusterTableSuite) setUpRPCService(c *C, addr string) *grpc.Server 
 		Command: mysql.ComQuery,
 	}
 	srv := server.NewRPCServer(config.GetGlobalConfig(), s.dom, sm)
-	s.listenAddr = fmt.Sprintf(":%d", lis.Addr().(*net.TCPAddr).Port)
+	addr = fmt.Sprintf(":%d", lis.Addr().(*net.TCPAddr).Port)
 	go func() {
 		err = srv.Serve(lis)
 		c.Assert(err, IsNil)
 	}()
-	return srv
+	return srv, addr
 }
 
 func setUpMockPDHTTPSercer() (*httptest.Server, string) {
@@ -920,8 +920,8 @@ func (s *testTableSuite) TestForTableTiFlashReplica(c *C) {
 func (s *testClusterTableSuite) TestForClusterServerInfo(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	instances := []string{
-		"pd,127.0.0.1:11080," + s.listenAddr + ",mock-version,mock-githash",
 		"tidb,127.0.0.1:11080," + s.listenAddr + ",mock-version,mock-githash",
+		"pd,127.0.0.1:11080," + s.listenAddr + ",mock-version,mock-githash",
 		"tikv,127.0.0.1:11080," + s.listenAddr + ",mock-version,mock-githash",
 	}
 	fpExpr := `return("` + strings.Join(instances, ";") + `")`
@@ -933,7 +933,6 @@ func (s *testClusterTableSuite) TestForClusterServerInfo(c *C) {
 		c.Assert(len(rows), Greater, 0)
 
 		// Currently only TiDB implement this.
-		// TODO: fix me after tikv/pd server support this.
 		types := set.NewStringSet("tidb")
 		addrs := set.NewStringSet(s.listenAddr)
 		names := set.NewStringSet("cpu", "mem", "net", "disk")
@@ -959,7 +958,6 @@ func (s *testClusterTableSuite) TestForClusterServerInfo(c *C) {
 	c.Assert(len(rows), Greater, 0)
 
 	// Currently only TiDB implement this.
-	// TODO: fix me after tikv/pd server support this.
 	types := set.NewStringSet("tidb")
 	addrs := set.NewStringSet(s.listenAddr)
 	nameMap := set.NewStringSet("system")

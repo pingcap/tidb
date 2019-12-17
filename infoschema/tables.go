@@ -2199,8 +2199,8 @@ func dataForClusterInfo(ctx sessionctx.Context, infoTp diagnosticspb.ServerInfoT
 	ipMap := make(map[string]struct{}, len(serversInfo))
 	rows := make([][]types.Datum, 0, len(serversInfo)*10)
 	for _, srv := range serversInfo {
-		// TODO: remove this after PD/TiKV support diagnostic grpc service.
-		if srv.ServerType == "pd" || srv.ServerType == "tikv" {
+		// TODO: remove this after TiKV support diagnostic grpc service.
+		if srv.ServerType == "tikv" {
 			continue
 		}
 		addr := srv.StatusAddr
@@ -2212,7 +2212,11 @@ func dataForClusterInfo(ctx sessionctx.Context, infoTp diagnosticspb.ServerInfoT
 			continue
 		}
 		ipMap[ip] = struct{}{}
-		items, err := getServerInfoByGRPC(srv.StatusAddr, infoTp)
+		addr = srv.Address
+		if srv.ServerType == "tidb" {
+			addr = srv.StatusAddr
+		}
+		items, err := getServerInfoByGRPC(addr, infoTp)
 		if err != nil {
 			return nil, err
 		}
