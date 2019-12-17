@@ -1938,7 +1938,7 @@ func (s *testIntegrationSuite3) TestInsertIntoGeneratedColumnWithDefaultExpr(c *
 
 	// generated columns with default function is not allowed
 	tk.MustExec("create table t5 (a int default 10, b int as (a+1))")
-	assertErrorCode(c, tk, "insert into t5 values (20, default(a))", mysql.ErrBadGeneratedColumn)
+	tk.MustGetErrCode("insert into t5 values (20, default(a))", mysql.ErrBadGeneratedColumn)
 
 	tk.MustExec("drop table t1")
 	tk.MustExec("drop table t2")
