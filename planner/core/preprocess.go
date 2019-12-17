@@ -120,9 +120,13 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 	case *ast.Join:
 		p.checkNonUniqTableAlias(node)
 	case *ast.CreateBindingStmt:
+		eraseLastSemicolon(node.OriginSel)
+		eraseLastSemicolon(node.HintedSel)
 		p.checkBindGrammar(node.OriginSel, node.HintedSel)
 	case *ast.DropBindingStmt:
+		eraseLastSemicolon(node.OriginSel)
 		if node.HintedSel != nil {
+			eraseLastSemicolon(node.HintedSel)
 			p.checkBindGrammar(node.OriginSel, node.HintedSel)
 		}
 	case *ast.RecoverTableStmt, *ast.FlashBackTableStmt:
@@ -138,6 +142,13 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		p.flag &= ^parentIsJoin
 	}
 	return in, p.err != nil
+}
+
+func eraseLastSemicolon(stmt ast.StmtNode) {
+	sql := stmt.Text()
+	if sql[len(sql)-1] == ';' {
+		stmt.SetText(sql[:len(sql)-1])
+	}
 }
 
 func (p *preprocessor) checkBindGrammar(originSel, hintedSel ast.StmtNode) {
