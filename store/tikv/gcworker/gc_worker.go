@@ -893,12 +893,6 @@ func (w *GCWorker) resolveLocksForRange(ctx context.Context, safePoint uint64, s
 			}
 			continue
 		}
-
-		bo = tikv.NewBackoffer(ctx, tikv.GcResolveLockMaxBackoff)
-		failpoint.Inject("setGcResolveMaxBackoff", func(v failpoint.Value) {
-			sleep := v.(int)
-			bo = tikv.NewBackoffer(ctx, sleep)
-		})
 		if len(locks) < gcScanLockLimit {
 			stat.CompletedRegions++
 			key = loc.EndKey
@@ -914,6 +908,11 @@ func (w *GCWorker) resolveLocksForRange(ctx context.Context, safePoint uint64, s
 		if len(key) == 0 || (len(endKey) != 0 && bytes.Compare(key, endKey) >= 0) {
 			break
 		}
+		bo = tikv.NewBackoffer(ctx, tikv.GcResolveLockMaxBackoff)
+		failpoint.Inject("setGcResolveMaxBackoff", func(v failpoint.Value) {
+			sleep := v.(int)
+			bo = tikv.NewBackoffer(ctx, sleep)
+		})
 	}
 	return stat, nil
 }
