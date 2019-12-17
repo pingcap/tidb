@@ -292,16 +292,20 @@ func (t *partitionedTable) locateRangePartition(ctx sessionctx.Context, pi *mode
 	}
 	if idx < 0 || idx >= len(partitionExprs) {
 		// The data does not belong to any of the partition returns `table has no partition for value %s`.
-		var ret int64
-		expr := rangePartitionString(pi)
-		e, err := expression.ParseSimpleExprWithTableInfo(ctx, expr, t.meta)
-		if err == nil {
-			ret, _, err = e.EvalInt(ctx, chunk.MutRowFromDatums(r).ToRow())
-			if err != nil {
-				logutil.BgLogger().Warn("locateRangePartition extrace index fail", zap.Error(err))
+		var valueMsg string
+		if pi.Expr != "" {
+			e, err := expression.ParseSimpleExprWithTableInfo(ctx, pi.Expr, t.meta)
+			if err == nil {
+				val, _, err := e.EvalInt(ctx, chunk.MutRowFromDatums(r).ToRow())
+				if err == nil {
+					valueMsg = fmt.Sprintf("%d", val)
+				}
 			}
+		} else {
+			// When the table is partitioned by range columns.
+			valueMsg = "from column_list"
 		}
-		return 0, errors.Trace(table.ErrNoPartitionForGivenValue.GenWithStackByArgs(fmt.Sprintf("%d", ret)))
+		return 0, table.ErrNoPartitionForGivenValue.GenWithStackByArgs(valueMsg)
 	}
 	return idx, nil
 }
