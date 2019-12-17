@@ -165,6 +165,9 @@ func (w *worker) runReorgJob(t *meta.Meta, reorgInfo *reorgInfo, tblInfo *model.
 }
 
 func updateAddIndexProgress(w *worker, tblInfo *model.TableInfo, addedRowCount int64) {
+	if tblInfo == nil || addedRowCount == 0 {
+		return
+	}
 	totalCount := getTableTotalCount(w, tblInfo)
 	progress := float64(0)
 	if totalCount > 0 {
