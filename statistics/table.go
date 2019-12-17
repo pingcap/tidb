@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/ranger"
 	"go.uber.org/atomic"
@@ -390,7 +391,7 @@ func isSingleColIdxNullRange(idx *Index, ran *ranger.Range) bool {
 func (coll *HistColl) getEqualCondSelectivity(idx *Index, bytes []byte, coverAll bool, unique bool) float64 {
 	// In this case, the row count is at most 1.
 	if unique && coverAll {
-		return 1.0 / float64(idx.TotalCount())
+		return 1.0 / float64(idx.TotalRowCount())
 	}
 	val := types.NewBytesDatum(bytes)
 	if idx.outOfRange(val) {
@@ -692,6 +693,28 @@ func (coll *HistColl) GetAvgRowSize(cols []*expression.Column, isEncodedKey bool
 	}
 	// Add 1 byte for each column's flag byte. See `encode` for details.
 	return size + float64(len(cols))
+}
+
+// GetAvgRowSizeListInDisk computes average row size for given columns.
+func (coll *HistColl) GetAvgRowSizeListInDisk(cols []*expression.Column, padChar bool) (size float64) {
+	if coll.Pseudo || len(coll.Columns) == 0 || coll.Count == 0 {
+		for _, col := range cols {
+			size += float64(chunk.EstimateTypeWidth(padChar, col.GetType()))
+		}
+	} else {
+		for _, col := range cols {
+			colHist, ok := coll.Columns[col.UniqueID]
+			// Normally this would not happen, it is for compatibility with old version stats which
+			// does not include TotColSize.
+			if !ok || (!colHist.IsHandle && colHist.TotColSize == 0 && (colHist.NullCount != coll.Count)) {
+				size += float64(chunk.EstimateTypeWidth(padChar, col.GetType()))
+				continue
+			}
+			size += colHist.AvgColSizeListInDisk(coll.Count)
+		}
+	}
+	// Add 8 byte for each column's size record. See `ListInDisk` for details.
+	return size + float64(8*len(cols))
 }
 
 // GetTableAvgRowSize computes average row size for a table scan, exclude the index key-value pairs.

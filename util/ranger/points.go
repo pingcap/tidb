@@ -33,12 +33,7 @@ import (
 
 // Error instances.
 var (
-	ErrUnsupportedType = terror.ClassOptimizer.New(CodeUnsupportedType, "Unsupported type")
-)
-
-// Error codes.
-const (
-	CodeUnsupportedType terror.ErrCode = 1
+	ErrUnsupportedType = terror.ClassOptimizer.New(mysql.ErrUnsupportedType, mysql.MySQLErrName[mysql.ErrUnsupportedType])
 )
 
 // RangeType is alias for int.

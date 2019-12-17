@@ -23,7 +23,7 @@ import (
 	"go.uber.org/zap"
 )
 
-func splitPartitionTableRegion(store kv.SplitableStore, pi *model.PartitionInfo, scatter bool) {
+func splitPartitionTableRegion(store kv.SplittableStore, pi *model.PartitionInfo, scatter bool) {
 	// Max partition count is 4096, should we sample and just choose some of the partition to split?
 	regionIDs := make([]uint64, 0, len(pi.Definitions))
 	for _, def := range pi.Definitions {
@@ -34,7 +34,7 @@ func splitPartitionTableRegion(store kv.SplitableStore, pi *model.PartitionInfo,
 	}
 }
 
-func splitTableRegion(store kv.SplitableStore, tbInfo *model.TableInfo, scatter bool) {
+func splitTableRegion(store kv.SplittableStore, tbInfo *model.TableInfo, scatter bool) {
 	if tbInfo.ShardRowIDBits > 0 && tbInfo.PreSplitRegions > 0 {
 		splitPreSplitedTable(store, tbInfo, scatter)
 	} else {
@@ -45,7 +45,7 @@ func splitTableRegion(store kv.SplitableStore, tbInfo *model.TableInfo, scatter 
 	}
 }
 
-func splitPreSplitedTable(store kv.SplitableStore, tbInfo *model.TableInfo, scatter bool) {
+func splitPreSplitedTable(store kv.SplittableStore, tbInfo *model.TableInfo, scatter bool) {
 	// Example:
 	// ShardRowIDBits = 4
 	// PreSplitRegions = 2
@@ -91,7 +91,7 @@ func splitPreSplitedTable(store kv.SplitableStore, tbInfo *model.TableInfo, scat
 	}
 }
 
-func splitRecordRegion(store kv.SplitableStore, tableID int64, scatter bool) uint64 {
+func splitRecordRegion(store kv.SplittableStore, tableID int64, scatter bool) uint64 {
 	tableStartKey := tablecodec.GenTablePrefix(tableID)
 	regionIDs, err := store.SplitRegions(context.Background(), [][]byte{tableStartKey}, scatter)
 	if err != nil {
@@ -104,7 +104,7 @@ func splitRecordRegion(store kv.SplitableStore, tableID int64, scatter bool) uin
 	return 0
 }
 
-func splitIndexRegion(store kv.SplitableStore, tblInfo *model.TableInfo, scatter bool) []uint64 {
+func splitIndexRegion(store kv.SplittableStore, tblInfo *model.TableInfo, scatter bool) []uint64 {
 	splitKeys := make([][]byte, 0, len(tblInfo.Indices))
 	for _, idx := range tblInfo.Indices {
 		indexPrefix := tablecodec.EncodeTableIndexPrefix(tblInfo.ID, idx.ID)
@@ -118,7 +118,7 @@ func splitIndexRegion(store kv.SplitableStore, tblInfo *model.TableInfo, scatter
 	return regionIDs
 }
 
-func waitScatterRegionFinish(store kv.SplitableStore, regionIDs ...uint64) {
+func waitScatterRegionFinish(store kv.SplittableStore, regionIDs ...uint64) {
 	for _, regionID := range regionIDs {
 		err := store.WaitScatterRegionFinish(regionID, 0)
 		if err != nil {

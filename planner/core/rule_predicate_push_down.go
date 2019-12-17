@@ -204,7 +204,7 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret
 		p.RightJoinKeys = append(p.RightJoinKeys, eqCond.GetArgs()[1].(*expression.Column))
 	}
 	p.mergeSchema()
-	p.BuildKeyInfo()
+	buildKeyInfo(p)
 	return ret, p.self
 }
 
@@ -551,8 +551,8 @@ func (p *LogicalJoin) outerJoinPropConst(predicates []expression.Expression) []e
 	return predicates
 }
 
-// getPartitionByCols extracts 'partition by' columns from the Window.
-func (p *LogicalWindow) getPartitionByCols() []*expression.Column {
+// GetPartitionByCols extracts 'partition by' columns from the Window.
+func (p *LogicalWindow) GetPartitionByCols() []*expression.Column {
 	partitionCols := make([]*expression.Column, 0, len(p.PartitionBy))
 	for _, partitionItem := range p.PartitionBy {
 		partitionCols = append(partitionCols, partitionItem.Col)
@@ -564,7 +564,7 @@ func (p *LogicalWindow) getPartitionByCols() []*expression.Column {
 func (p *LogicalWindow) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, LogicalPlan) {
 	canBePushed := make([]expression.Expression, 0, len(predicates))
 	canNotBePushed := make([]expression.Expression, 0, len(predicates))
-	partitionCols := expression.NewSchema(p.getPartitionByCols()...)
+	partitionCols := expression.NewSchema(p.GetPartitionByCols()...)
 	for _, cond := range predicates {
 		// We can push predicate beneath Window, only if all of the
 		// extractedCols are part of partitionBy columns.
@@ -576,6 +576,14 @@ func (p *LogicalWindow) PredicatePushDown(predicates []expression.Expression) ([
 	}
 	p.baseLogicalPlan.PredicatePushDown(canBePushed)
 	return canNotBePushed, p
+}
+
+// PredicatePushDown implements LogicalPlan PredicatePushDown interface.
+func (p *LogicalMemTable) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, LogicalPlan) {
+	if p.Extractor != nil {
+		predicates = p.Extractor.Extract(p.ctx, p.schema, p.names, predicates)
+	}
+	return predicates, p.self
 }
 
 func (*ppdSolver) name() string {

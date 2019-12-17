@@ -142,7 +142,7 @@ func GetSessionOnlySysVars(s *SessionVars, key string) (string, bool, error) {
 	case TiDBCheckMb4ValueInUTF8:
 		return BoolToIntStr(config.GetGlobalConfig().CheckMb4ValueInUTF8), true, nil
 	}
-	sVal, ok := s.systems[key]
+	sVal, ok := s.GetSystemVar(key)
 	if ok {
 		return sVal, true, nil
 	}
@@ -503,6 +503,7 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		TiDBOptDescScanFactor,
 		TiDBOptSeekFactor,
 		TiDBOptMemoryFactor,
+		TiDBOptDiskFactor,
 		TiDBOptConcurrencyFactor:
 		v, err := strconv.ParseFloat(value, 64)
 		if err != nil {
@@ -536,6 +537,12 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 			return "", err
 		}
 		return v, nil
+	case TiDBAutoAnalyzeRatio:
+		v, err := strconv.ParseFloat(value, 64)
+		if err != nil || v < 0 {
+			return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
+		}
+		return value, nil
 	case TxnIsolation, TransactionIsolation:
 		upVal := strings.ToUpper(value)
 		_, exists := TxIsolationNames[upVal]
@@ -619,7 +626,17 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 			return "off", nil
 		}
 		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
-	case TiDBEnableStmtSummary, TiDBCapturePlanBaseline:
+	case TiDBCapturePlanBaseline:
+		switch {
+		case strings.EqualFold(value, "ON") || value == "1":
+			return "on", nil
+		case strings.EqualFold(value, "OFF") || value == "0":
+			return "off", nil
+		case value == "":
+			return "", nil
+		}
+		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
+	case TiDBEnableStmtSummary:
 		switch {
 		case strings.EqualFold(value, "ON") || value == "1":
 			return "1", nil
@@ -634,6 +651,11 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 			return "", nil
 		}
 		return checkUInt64SystemVar(name, value, 1, math.MaxUint32, vars)
+	case TiDBStmtSummaryHistorySize:
+		if value == "" {
+			return "", nil
+		}
+		return checkUInt64SystemVar(name, value, 0, math.MaxUint8, vars)
 	case TiDBIsolationReadEngines:
 		engines := strings.Split(value, ",")
 		var formatVal string
@@ -647,6 +669,8 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 				formatVal += kv.TiKV.Name()
 			case strings.EqualFold(engine, kv.TiFlash.Name()):
 				formatVal += kv.TiFlash.Name()
+			case strings.EqualFold(engine, kv.TiDB.Name()):
+				formatVal += kv.TiDB.Name()
 			default:
 				return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
 			}
