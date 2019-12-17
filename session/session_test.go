@@ -2425,7 +2425,7 @@ func (s *testSessionSuite2) TestDBUserNameLength(c *C) {
 	tk.MustExec(`grant all privileges on test.t to 'abcddfjakldfjaldddds'@'%'`)
 }
 
-func (s *testSessionSuite2) TestKVVars(c *C) {
+func (s *testSessionSerialSuite) TestKVVars(c *C) {
 	c.Skip("there is no backoff here in the large txn, so this test is stale")
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("create table kvvars (a int, b int)")
@@ -2509,7 +2509,7 @@ func (s *testSessionSuite2) TestEnablePartition(c *C) {
 	tk1.MustQuery("show variables like 'tidb_enable_table_partition'").Check(testkit.Rows("tidb_enable_table_partition on"))
 }
 
-func (s *testSessionSuite2) TestTxnRetryErrMsg(c *C) {
+func (s *testSessionSerialSuite) TestTxnRetryErrMsg(c *C) {
 	tk1 := testkit.NewTestKitWithInit(c, s.store)
 	tk2 := testkit.NewTestKitWithInit(c, s.store)
 	tk1.MustExec("create table no_retry (id int)")
