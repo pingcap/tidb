@@ -585,6 +585,40 @@ func (s *testCommitterSuite) TestElapsedTTL(c *C) {
 	c.Assert(lockInfo.LockTtl-PessimisticLockTTL, Less, uint64(150))
 }
 
+// TestAcquireFalseTimeoutLock tests acquiring a key which is a secondary key of another transaction.
+// The lock's own TTL is expired but the primary key is still alive due to heartbeats.
+func (s *testCommitterSuite) TestAcquireFalseTimeoutLock(c *C) {
+	// k1 is the primary lock of txn1
+	k1 := kv.Key("k1")
+	// k2 is a secondary lock of txn1 and a key txn2 wants to lock
+	k2 := kv.Key("k2")
+
+	txn1 := s.begin(c)
+	txn1.SetOption(kv.Pessimistic, true)
+	// lock the primary key
+	err := txn1.LockKeys(context.Background(), nil, txn1.startTS, kv.LockAlwaysWait, time.Now(), k1)
+	c.Assert(err, IsNil)
+	// lock the secondary key
+	err = txn1.LockKeys(context.Background(), nil, txn1.startTS, kv.LockAlwaysWait, time.Now(), k2)
+	c.Assert(err, IsNil)
+
+	// Heartbeats will increase the TTL of the primary key
+
+	// wait until secondary key exceeds its own TTL
+	time.Sleep(time.Duration(PessimisticLockTTL) * time.Millisecond)
+	txn2 := s.begin(c)
+	txn2.SetOption(kv.Pessimistic, true)
+
+	// test for wait limited time (300ms)
+	startTime := time.Now()
+	err = txn2.LockKeys(context.Background(), nil, txn1.startTS, 300, time.Now(), k2)
+	elapsed := time.Now().Sub(startTime)
+	// cannot acquire lock in time thus error
+	c.Assert(err.Error(), Equals, ErrLockWaitTimeout.Error())
+	// it should return after about 300ms
+	c.Assert(elapsed, Less, 350*time.Millisecond)
+}
+
 func (s *testCommitterSuite) getLockInfo(c *C, key []byte) *kvrpcpb.LockInfo {
 	txn := s.begin(c)
 	err := txn.Set(key, key)
