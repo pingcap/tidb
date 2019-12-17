@@ -148,7 +148,7 @@ func (e *GrantExec) Next(ctx context.Context, req *chunk.Chunk) error {
 }
 
 // checkAndInitGlobalPriv checks if global scope privilege entry exists in mysql.global_priv.
-// If unexists, insert a new one.
+// If not exists, insert a new one.
 func checkAndInitGlobalPriv(ctx sessionctx.Context, user string, host string) error {
 	ok, err := globalPrivEntryExists(ctx, user, host)
 	if err != nil {

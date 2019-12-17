@@ -585,7 +585,7 @@ func (p *MySQLPrivilege) decodeGlobalPrivTableRow(row chunk.Row, fs []*ast.Resul
 				var privValue GlobalPrivValue
 				err := json.Unmarshal(hack.Slice(privData), &privValue)
 				if err != nil {
-					logutil.BgLogger().Error("one userglobal priv data is broken, forbidden login until data be fixed",
+					logutil.BgLogger().Error("one user global priv data is broken, forbidden login until data be fixed",
 						zap.String("user", value.User), zap.String("host", value.Host))
 					value.Broken = true
 				} else {
