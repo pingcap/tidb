@@ -934,29 +934,20 @@ func (s *testClusterTableSuite) TestForClusterServerInfo(c *C) {
 
 		// Currently only TiDB implement this.
 		// TODO: fix me after tikv/pd server support this.
-		typeMap := set.StringSet{
-			"tidb": {},
-		}
-		addrMap := set.StringSet{
-			s.listenAddr: {},
-		}
-		nameMap := set.StringSet{
-			"cpu":  {},
-			"mem":  {},
-			"net":  {},
-			"disk": {},
-		}
+		types := set.NewStringSet("tidb")
+		addrs := set.NewStringSet(s.listenAddr)
+		names := set.NewStringSet("cpu", "mem", "net", "disk")
 		for _, row := range rows {
 			tp := row[0].(string)
 			addr := row[1].(string)
 			name := row[2].(string)
-			delete(typeMap, tp)
-			delete(addrMap, addr)
-			delete(nameMap, name)
+			delete(types, tp)
+			delete(addrs, addr)
+			delete(names, name)
 		}
-		c.Assert(len(typeMap), Equals, 0)
-		c.Assert(len(addrMap), Equals, 0)
-		c.Assert(len(nameMap), Equals, 0)
+		c.Assert(len(types), Equals, 0)
+		c.Assert(len(addrs), Equals, 0)
+		c.Assert(len(names), Equals, 0)
 	}
 
 	re := tk.MustQuery("select * from information_schema.CLUSTER_LOAD;")
@@ -969,30 +960,17 @@ func (s *testClusterTableSuite) TestForClusterServerInfo(c *C) {
 
 	// Currently only TiDB implement this.
 	// TODO: fix me after tikv/pd server support this.
-	typeMap := set.StringSet{
-		"tidb": {},
-	}
-	addrMap := set.StringSet{
-		s.listenAddr: {},
-	}
-	nameMap := set.StringSet{
-		"system": {},
-	}
-	keyPrefixMap := set.StringSet{
-		"user":  {},
-		"kern":  {},
-		"vm":    {},
-		"net":   {},
-		"debug": {},
-	}
-
+	types := set.NewStringSet("tidb")
+	addrs := set.NewStringSet(s.listenAddr)
+	nameMap := set.NewStringSet("system")
+	keyPrefixMap := set.NewStringSet("user", "kern", "vm", "net", "debug")
 	for _, row := range rows {
 		tp := row[0].(string)
 		addr := row[1].(string)
 		name := row[2].(string)
 		key := row[4].(string)
-		delete(typeMap, tp)
-		delete(addrMap, addr)
+		delete(types, tp)
+		delete(addrs, addr)
 		delete(nameMap, name)
 		for k := range keyPrefixMap {
 			if strings.HasPrefix(key, k) {
@@ -1000,8 +978,8 @@ func (s *testClusterTableSuite) TestForClusterServerInfo(c *C) {
 			}
 		}
 	}
-	c.Assert(len(typeMap), Equals, 0)
-	c.Assert(len(addrMap), Equals, 0)
+	c.Assert(len(types), Equals, 0)
+	c.Assert(len(addrs), Equals, 0)
 	c.Assert(len(nameMap), Equals, 0)
 	c.Assert(len(keyPrefixMap), Equals, 0)
 }
