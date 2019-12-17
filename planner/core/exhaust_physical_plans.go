@@ -1280,31 +1280,24 @@ func (p *LogicalJoin) tryToGetIndexJoin(prop *property.PhysicalProperty) (indexJ
 		for _, j := range allLeftOuterJoins {
 			switch j.(type) {
 			case *PhysicalIndexJoin:
-				if hasINLJHint {
+				if inljLeftOuter {
 					forcedLeftOuterJoins = append(forcedLeftOuterJoins, j)
 				}
 			case *PhysicalIndexHashJoin:
-				if hasINLHJHint {
+				if inlhjLeftOuter {
 					forcedLeftOuterJoins = append(forcedLeftOuterJoins, j)
 				}
 			case *PhysicalIndexMergeJoin:
-				if hasINLMJHint {
+				if inlmjLeftOuter {
 					forcedLeftOuterJoins = append(forcedLeftOuterJoins, j)
 				}
 			}
 		}
 		switch {
-		case p.JoinType == InnerJoin && p.Children()[0].statsInfo().Count() < p.Children()[1].statsInfo().Count():
-			if len(forcedLeftOuterJoins) != 0 {
-				return forcedLeftOuterJoins, forceLeftOuter
-			}
-			if len(allLeftOuterJoins) != 0 {
-				return allLeftOuterJoins, forceLeftOuter
-			}
 		case len(forcedLeftOuterJoins) == 0 && !supportRightOuter:
 			return allLeftOuterJoins, false
-		case len(forcedLeftOuterJoins) != 0 && (!supportRightOuter || forceLeftOuter && !forceRightOuter):
-			return forcedLeftOuterJoins, forceLeftOuter
+		case len(forcedLeftOuterJoins) != 0 && (!supportRightOuter || (forceLeftOuter && !forceRightOuter)):
+			return forcedLeftOuterJoins, true
 		}
 	}
 	if supportRightOuter {
@@ -1313,31 +1306,24 @@ func (p *LogicalJoin) tryToGetIndexJoin(prop *property.PhysicalProperty) (indexJ
 		for _, j := range allRightOuterJoins {
 			switch j.(type) {
 			case *PhysicalIndexJoin:
-				if hasINLJHint {
+				if inljRightOuter {
 					forcedRightOuterJoins = append(forcedRightOuterJoins, j)
 				}
 			case *PhysicalIndexHashJoin:
-				if hasINLHJHint {
+				if inlhjRightOuter {
 					forcedRightOuterJoins = append(forcedRightOuterJoins, j)
 				}
 			case *PhysicalIndexMergeJoin:
-				if hasINLMJHint {
+				if inlmjRightOuter {
 					forcedRightOuterJoins = append(forcedRightOuterJoins, j)
 				}
 			}
 		}
 		switch {
-		case p.JoinType == InnerJoin && p.Children()[0].statsInfo().Count() > p.Children()[1].statsInfo().Count():
-			if len(forcedRightOuterJoins) != 0 {
-				return forcedRightOuterJoins, forceRightOuter
-			}
-			if len(allRightOuterJoins) != 0 {
-				return allRightOuterJoins, forceRightOuter
-			}
 		case len(forcedRightOuterJoins) == 0 && !supportLeftOuter:
 			return allRightOuterJoins, false
-		case len(forcedRightOuterJoins) != 0 && (!supportLeftOuter || forceRightOuter && !forceLeftOuter):
-			return forcedRightOuterJoins, forceRightOuter
+		case len(forcedRightOuterJoins) != 0 && (!supportLeftOuter || (forceRightOuter && !forceLeftOuter)):
+			return forcedRightOuterJoins, true
 		}
 	}
 
@@ -1345,9 +1331,9 @@ func (p *LogicalJoin) tryToGetIndexJoin(prop *property.PhysicalProperty) (indexJ
 	canForceRight := len(forcedRightOuterJoins) != 0 && forceRightOuter
 	forced = canForceLeft || canForceRight
 	if forced {
-		return append(forcedLeftOuterJoins, forcedRightOuterJoins...), forced
+		return append(forcedLeftOuterJoins, forcedRightOuterJoins...), true
 	}
-	return append(allLeftOuterJoins, allRightOuterJoins...), forced
+	return append(allLeftOuterJoins, allRightOuterJoins...), false
 }
 
 // LogicalJoin can generates hash join, index join and sort merge join.
