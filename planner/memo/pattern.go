@@ -63,6 +63,8 @@ const (
 	OperandIndexScan
 	// OperandShow is the operand for Show.
 	OperandShow
+	// OperandWindow is the operand for window function.
+	OperandWindow
 	// OperandUnsupported is the operand for unsupported operators.
 	OperandUnsupported
 )
@@ -106,6 +108,8 @@ func GetOperand(p plannercore.LogicalPlan) Operand {
 		return OperandIndexScan
 	case *plannercore.LogicalShow:
 		return OperandShow
+	case *plannercore.LogicalWindow:
+		return OperandWindow
 	default:
 		return OperandUnsupported
 	}
