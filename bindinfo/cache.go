@@ -14,11 +14,9 @@
 package bindinfo
 
 import (
-	"context"
 	"unsafe"
 
 	"github.com/pingcap/parser"
-	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
@@ -87,7 +85,7 @@ func (br *BindRecord) FindBinding(hint string) *Binding {
 	return nil
 }
 
-func (br *BindRecord) prepareHints(sctx sessionctx.Context, is infoschema.InfoSchema) error {
+func (br *BindRecord) prepareHints(sctx sessionctx.Context) error {
 	p := parser.New()
 	for i, bind := range br.Bindings {
 		if bind.Hint != nil || bind.id != "" {
@@ -97,7 +95,7 @@ func (br *BindRecord) prepareHints(sctx sessionctx.Context, is infoschema.InfoSc
 		if err != nil {
 			return err
 		}
-		hints, err := GenHintsFromSQL(context.TODO(), sctx, stmtNode, is)
+		hints, err := getHintsForSQL(sctx, bind.BindSQL)
 		if err != nil {
 			return err
 		}

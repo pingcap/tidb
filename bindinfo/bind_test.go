@@ -104,6 +104,7 @@ func (s *testSuite) cleanBindingEnv(tk *testkit.TestKit) {
 
 func (s *testSuite) TestBindParse(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
+	s.cleanBindingEnv(tk)
 	tk.MustExec("use test")
 	tk.MustExec("create table t(i int)")
 	tk.MustExec("create index index_t on t(i)")
@@ -599,4 +600,16 @@ func (s *testSuite) TestDefaultSessionVars(c *C) {
 		"tidb_capture_plan_baselines off",
 		"tidb_evolve_plan_baselines off",
 		"tidb_use_plan_baselines on"))
+}
+
+func (s *testSuite) TestOutdatedInfoSchema(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	s.cleanBindingEnv(tk)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, index idx(a))")
+	tk.MustExec("create global binding for select * from t using select * from t use index(idx)")
+	c.Assert(s.domain.BindHandle().Update(false), IsNil)
+	tk.MustExec("truncate table mysql.bind_info")
+	tk.MustExec("create global binding for select * from t using select * from t use index(idx)")
 }
