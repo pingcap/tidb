@@ -99,7 +99,9 @@ const (
 	tableTiDBServersInfo                    = "TIDB_SERVERS_INFO"
 	tableClusterInfo                        = "CLUSTER_INFO"
 	// TableClusterConfig is the string constant of cluster configuration memory table
-	TableClusterConfig     = "CLUSTER_CONFIG"
+	TableClusterConfig = "CLUSTER_CONFIG"
+	// TableClusterLog is the string constant of cluster log memory table
+	TableClusterLog        = "CLUSTER_LOG"
 	tableClusterLoad       = "CLUSTER_LOAD"
 	tableTiFlashReplica    = "TIFLASH_REPLICA"
 	tableClusterHardware   = "CLUSTER_HARDWARE"
@@ -154,8 +156,9 @@ var tableIDMap = map[string]int64{
 	tableTiFlashReplica:                     autoid.InformationSchemaDBID + 45,
 	clusterTableSlowLog:                     autoid.InformationSchemaDBID + 46,
 	clusterTableProcesslist:                 autoid.InformationSchemaDBID + 47,
-	tableClusterHardware:                    autoid.InformationSchemaDBID + 48,
-	tableClusterSystemInfo:                  autoid.InformationSchemaDBID + 49,
+	TableClusterLog:                         autoid.InformationSchemaDBID + 48,
+	tableClusterHardware:                    autoid.InformationSchemaDBID + 49,
+	tableClusterSystemInfo:                  autoid.InformationSchemaDBID + 50,
 }
 
 type columnInfo struct {
@@ -738,6 +741,14 @@ var tableClusterConfigCols = []columnInfo{
 	{"ADDRESS", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"KEY", mysql.TypeVarchar, 256, 0, nil, nil},
 	{"VALUE", mysql.TypeVarchar, 128, 0, nil, nil},
+}
+
+var tableClusterLogCols = []columnInfo{
+	{"TIME", mysql.TypeVarchar, 32, 0, nil, nil},
+	{"TYPE", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"ADDRESS", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"LEVEL", mysql.TypeVarchar, 8, 0, nil, nil},
+	{"MESSAGE", mysql.TypeVarString, 1024, 0, nil, nil},
 }
 
 var tableClusterLoadCols = []columnInfo{
@@ -2326,6 +2337,7 @@ var tableNameToColumns = map[string][]columnInfo{
 	tableTiDBServersInfo:                    tableTiDBServersInfoCols,
 	tableClusterInfo:                        tableClusterInfoCols,
 	TableClusterConfig:                      tableClusterConfigCols,
+	TableClusterLog:                         tableClusterLogCols,
 	tableClusterLoad:                        tableClusterLoadCols,
 	tableTiFlashReplica:                     tableTableTiFlashReplicaCols,
 	tableClusterHardware:                    tableClusterHardwareCols,
