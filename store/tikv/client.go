@@ -78,7 +78,7 @@ type connArray struct {
 	done          chan struct{}
 }
 
-func newConnArray(maxSize uint, addr string, security config.Security, idleNotify *uint32) (*connArray, error) {
+func newConnArray(maxSize uint, addr string, security config.Security) (*connArray, error) {
 	a := &connArray{
 		index:         0,
 		v:             make([]*grpc.ClientConn, maxSize),
@@ -242,7 +242,7 @@ func (c *rpcClient) createConnArray(addr string) (*connArray, error) {
 	if !ok {
 		var err error
 		connCount := config.GetGlobalConfig().TiKVClient.GrpcConnectionCount
-		array, err = newConnArray(connCount, addr, c.security, &c.idleNotify)
+		array, err = newConnArray(connCount, addr, c.security)
 		if err != nil {
 			return nil, err
 		}
@@ -299,13 +299,13 @@ func (c *rpcClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 	// TODO: remove this store type check after TiDB RPC Server support stream.
 	if config.GetGlobalConfig().TiKVClient.MaxBatchSize > 0 && req.StoreTp != kv.TiDB {
 		if batchReq := req.ToBatchCommandsRequest(); batchReq != nil {
+			if atomic.CompareAndSwapUint32(&c.idleNotify, 1, 0) {
+				c.recycleIdleConn()
+			}
+
 			batchConn, err := c.getBatchConn(addr)
 			if err != nil {
 				return nil, errors.Trace(err)
-			}
-
-			if atomic.CompareAndSwapUint32(&c.idleNotify, 1, 0) {
-				c.recycleIdleConn()
 			}
 
 			return sendBatchRequest(ctx, addr, batchConn, batchReq, timeout)
