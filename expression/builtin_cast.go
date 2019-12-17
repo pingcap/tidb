@@ -462,9 +462,13 @@ func (b *builtinCastIntAsRealSig) evalReal(row chunk.Row) (res float64, isNull b
 	if isNull || err != nil {
 		return res, isNull, errors.Trace(err)
 	}
-	if !mysql.HasUnsignedFlag(b.tp.Flag) {
+	if unsignedArgs0 := mysql.HasUnsignedFlag(b.args[0].GetType().Flag); !mysql.HasUnsignedFlag(b.tp.Flag) && !unsignedArgs0 {
 		res = float64(val)
-	} else if b.inUnion && val < 0 {
+	} else if b.inUnion && !unsignedArgs0 && val < 0 {
+		// Round up to 0 if the value is negative but the expression eval type is unsigned in `UNION` statement
+		// NOTE: the following expressions are equal (so choose the more efficient one):
+		// `b.inUnion && mysql.HasUnsignedFlag(b.tp.Flag) && !unsignedArgs0 && val < 0`
+		// `b.inUnion && !unsignedArgs0 && val < 0`
 		res = 0
 	} else {
 		// recall that, int to float is different from uint to float
@@ -488,9 +492,14 @@ func (b *builtinCastIntAsDecimalSig) evalDecimal(row chunk.Row) (res *types.MyDe
 	if isNull || err != nil {
 		return res, isNull, errors.Trace(err)
 	}
-	if !mysql.HasUnsignedFlag(b.tp.Flag) && !mysql.HasUnsignedFlag(b.args[0].GetType().Flag) {
+
+	if unsignedArgs0 := mysql.HasUnsignedFlag(b.args[0].GetType().Flag); !mysql.HasUnsignedFlag(b.tp.Flag) && !unsignedArgs0 {
 		res = types.NewDecFromInt(val)
-	} else if b.inUnion && val < 0 {
+		// Round up to 0 if the value is negative but the expression eval type is unsigned in `UNION` statement
+		// NOTE: the following expressions are equal (so choose the more efficient one):
+		// `b.inUnion && mysql.HasUnsignedFlag(b.tp.Flag) && !unsignedArgs0 && val < 0`
+		// `b.inUnion && !unsignedArgs0 && val < 0`
+	} else if b.inUnion && !unsignedArgs0 && val < 0 {
 		res = &types.MyDecimal{}
 	} else {
 		res = types.NewDecFromUint(uint64(val))
@@ -1087,6 +1096,10 @@ func (b *builtinCastStringAsIntSig) evalInt(row chunk.Row) (res int64, isNull bo
 	if len(val) > 1 && val[0] == '-' { // negative number
 		isNegative = true
 	}
+	sctx := b.ctx.GetSessionVars().StmtCtx
+	if val == "" && (sctx.InInsertStmt || sctx.InUpdateStmt) {
+		return 0, false, nil
+	}
 
 	var ures uint64
 	sc := b.ctx.GetSessionVars().StmtCtx
@@ -1128,6 +1141,10 @@ func (b *builtinCastStringAsRealSig) evalReal(row chunk.Row) (res float64, isNul
 	val, isNull, err := b.args[0].EvalString(b.ctx, row)
 	if isNull || err != nil {
 		return res, isNull, errors.Trace(err)
+	}
+	sctx := b.ctx.GetSessionVars().StmtCtx
+	if val == "" && (sctx.InInsertStmt || sctx.InUpdateStmt) {
+		return 0, false, nil
 	}
 	sc := b.ctx.GetSessionVars().StmtCtx
 	res, err = types.StrToFloat(sc, val)

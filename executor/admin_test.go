@@ -732,7 +732,7 @@ func (s *testSuite) TestAdminCheckTable(c *C) {
 	tk.MustExec(`insert into t1 set a='1.9'`)
 	err = tk.ExecToErr(`alter table t1 modify column a decimal(3,2);`)
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[ddl:203]unsupported modify decimal column precision")
+	c.Assert(err.Error(), Equals, "[ddl:203]unsupported modify column can't change decimal column precision")
 	tk.MustExec(`delete from t1;`)
 	tk.MustExec(`admin check table t1;`)
 }

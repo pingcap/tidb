@@ -359,7 +359,16 @@ func (s *session) doCommitWithRetry(ctx context.Context) error {
 			txnSizeRate := float64(txnSize) / float64(kv.TxnTotalSizeLimit)
 			maxRetryCount := commitRetryLimit - int64(float64(commitRetryLimit-1)*txnSizeRate)
 			err = s.retry(ctx, uint(maxRetryCount))
+		} else {
+			logutil.Logger(ctx).Warn("can not retry txn",
+				zap.String("label", s.getSQLLabel()),
+				zap.Error(err),
+				zap.Bool("IsBatchInsert", s.sessionVars.BatchInsert),
+				zap.Bool("InRestrictedSQL", s.sessionVars.InRestrictedSQL),
+				zap.Int64("tidb_retry_limit", s.sessionVars.RetryLimit),
+				zap.Bool("tidb_disable_txn_auto_retry", s.sessionVars.DisableTxnAutoRetry))
 		}
+
 	}
 	label := s.getSQLLabel()
 	counter := s.sessionVars.TxnCtx.StatementCount

@@ -12,7 +12,7 @@ path_to_add := $(addsuffix /bin,$(subst :,/bin:,$(GOPATH)))
 export PATH := $(path_to_add):$(PATH)
 
 GO        := GO111MODULE=on go
-GOBUILD   := CGO_ENABLED=1 $(GO) build $(BUILD_FLAG) -trimpath
+GOBUILD   := CGO_ENABLED=1 $(GO) build $(BUILD_FLAG)
 GOTEST    := CGO_ENABLED=1 $(GO) test -p 3
 OVERALLS  := CGO_ENABLED=1 overalls
 GOVERALLS := goveralls
