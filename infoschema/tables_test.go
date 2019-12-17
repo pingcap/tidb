@@ -102,7 +102,7 @@ func (s *testClusterTableSuite) setUpRPCService(c *C, addr string) *grpc.Server 
 		Host:    "127.0.0.1",
 		Command: mysql.ComQuery,
 	}
-	srv := server.NewRPCServer(config.GetGlobalConfig().Security, s.dom, sm)
+	srv := server.NewRPCServer(config.GetGlobalConfig(), s.dom, sm)
 	go func() {
 		err = srv.Serve(lis)
 		c.Assert(err, IsNil)
@@ -445,11 +445,55 @@ func (s *testTableSuite) TestSomeTables(c *C) {
 	tk.MustQuery("select * from information_schema.SESSION_VARIABLES where VARIABLE_NAME='tidb_retry_limit';").Check(testkit.Rows("tidb_retry_limit 10"))
 	tk.MustQuery("select * from information_schema.ENGINES;").Check(testkit.Rows("InnoDB DEFAULT Supports transactions, row-level locking, and foreign keys YES YES YES"))
 	tk.MustQuery("select * from information_schema.TABLE_CONSTRAINTS where TABLE_NAME='gc_delete_range';").Check(testkit.Rows("def mysql delete_range_index mysql gc_delete_range UNIQUE"))
+
+	//test the privilege of new user for information_schema.table_constraints
+	tk.MustExec("create user constraints_tester")
+	constraintsTester := testkit.NewTestKit(c, s.store)
+	constraintsTester.MustExec("use information_schema")
+	c.Assert(constraintsTester.Se.Auth(&auth.UserIdentity{
+		Username: "constraints_tester",
+		Hostname: "127.0.0.1",
+	}, nil, nil), IsTrue)
+	constraintsTester.MustQuery("select * from information_schema.TABLE_CONSTRAINTS;").Check([][]interface{}{})
+
+	//test the privilege of user with privilege of mysql.gc_delete_range for information_schema.table_constraints
+	tk.MustExec("CREATE ROLE r_gc_delete_range ;")
+	tk.MustExec("GRANT ALL PRIVILEGES ON mysql.gc_delete_range TO r_gc_delete_range;")
+	tk.MustExec("GRANT r_gc_delete_range TO constraints_tester;")
+	constraintsTester.MustExec("set role r_gc_delete_range")
+	c.Assert(len(constraintsTester.MustQuery("select * from information_schema.TABLE_CONSTRAINTS where TABLE_NAME='gc_delete_range';").Rows()), Greater, 0)
+	constraintsTester.MustQuery("select * from information_schema.TABLE_CONSTRAINTS where TABLE_NAME='tables_priv';").Check([][]interface{}{})
+
 	tk.MustQuery("select * from information_schema.KEY_COLUMN_USAGE where TABLE_NAME='stats_meta' and COLUMN_NAME='table_id';").Check(
 		testkit.Rows("def mysql tbl def mysql stats_meta table_id 1 <nil> <nil> <nil> <nil>"))
+	tk.MustQuery("select * from information_schema.SCHEMATA where schema_name='mysql';").Check(
+		testkit.Rows("def mysql utf8mb4 utf8mb4_bin <nil>"))
+
+	//test the privilege of new user for information_schema.schemata
+	tk.MustExec("create user schemata_tester")
+	schemataTester := testkit.NewTestKit(c, s.store)
+	schemataTester.MustExec("use information_schema")
+	c.Assert(schemataTester.Se.Auth(&auth.UserIdentity{
+		Username: "schemata_tester",
+		Hostname: "127.0.0.1",
+	}, nil, nil), IsTrue)
+	schemataTester.MustQuery("select count(*) from information_schema.SCHEMATA;").Check(testkit.Rows("1"))
+	schemataTester.MustQuery("select * from information_schema.SCHEMATA where schema_name='mysql';").Check(
+		[][]interface{}{})
+	schemataTester.MustQuery("select * from information_schema.SCHEMATA where schema_name='INFORMATION_SCHEMA';").Check(
+		testkit.Rows("def INFORMATION_SCHEMA utf8mb4 utf8mb4_bin <nil>"))
+
+	//test the privilege of user with privilege of mysql for information_schema.schemata
+	tk.MustExec("CREATE ROLE r_mysql_priv;")
+	tk.MustExec("GRANT ALL PRIVILEGES ON mysql.* TO r_mysql_priv;")
+	tk.MustExec("GRANT r_mysql_priv TO schemata_tester;")
+	schemataTester.MustExec("set role r_mysql_priv")
+	schemataTester.MustQuery("select count(*) from information_schema.SCHEMATA;").Check(testkit.Rows("2"))
+	schemataTester.MustQuery("select * from information_schema.SCHEMATA;").Check(
+		testkit.Rows("def INFORMATION_SCHEMA utf8mb4 utf8mb4_bin <nil>", "def mysql utf8mb4 utf8mb4_bin <nil>"))
+
 	tk.MustQuery("select * from information_schema.STATISTICS where TABLE_NAME='columns_priv' and COLUMN_NAME='Host';").Check(
 		testkit.Rows("def mysql columns_priv 0 mysql PRIMARY 1 Host A <nil> <nil> <nil>  BTREE  "))
-
 	//test the privilege of new user for information_schema
 	tk.MustExec("create user tester1")
 	tk1 := testkit.NewTestKit(c, s.store)
@@ -634,6 +678,7 @@ func prepareSlowLogfile(c *C, slowLogFileName string) {
 # Mem_max: 70724
 # Succ: true
 # Plan: abcd
+# Plan_digest: 60e9378c746d9a2be1c791047e008967cf252eb6de9167ad3aa6098fa2d523f4
 # Prev_stmt: update t set i = 2;
 select * from t_slim;`))
 	c.Assert(f.Sync(), IsNil)
@@ -693,10 +738,10 @@ func (s *testTableSuite) TestSlowQuery(c *C) {
 	tk.MustExec("set time_zone = '+08:00';")
 	re := tk.MustQuery("select * from information_schema.slow_query")
 	re.Check(testutil.RowsWithSep("|",
-		"2019-02-12 19:33:56.571953|406315658548871171|root|127.0.0.1|6|4.895492|0.4|0.2|0.19|0.01|0|0.18|[txnLock]|0.03|0|15|480|1|8|0.161|0.101|0.092|1|100001|100000|test||0|42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772|t1:1,t2:2|0.1|0.2|0.03|127.0.0.1:20160|0.05|0.6|0.8|0.0.0.0:20160|70724|1|abcd|update t set i = 2;|select * from t_slim;"))
+		"2019-02-12 19:33:56.571953|406315658548871171|root|127.0.0.1|6|4.895492|0.4|0.2|0.19|0.01|0|0.18|[txnLock]|0.03|0|15|480|1|8|0.161|0.101|0.092|1|100001|100000|test||0|42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772|t1:1,t2:2|0.1|0.2|0.03|127.0.0.1:20160|0.05|0.6|0.8|0.0.0.0:20160|70724|1|abcd|60e9378c746d9a2be1c791047e008967cf252eb6de9167ad3aa6098fa2d523f4|update t set i = 2;|select * from t_slim;"))
 	tk.MustExec("set time_zone = '+00:00';")
 	re = tk.MustQuery("select * from information_schema.slow_query")
-	re.Check(testutil.RowsWithSep("|", "2019-02-12 11:33:56.571953|406315658548871171|root|127.0.0.1|6|4.895492|0.4|0.2|0.19|0.01|0|0.18|[txnLock]|0.03|0|15|480|1|8|0.161|0.101|0.092|1|100001|100000|test||0|42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772|t1:1,t2:2|0.1|0.2|0.03|127.0.0.1:20160|0.05|0.6|0.8|0.0.0.0:20160|70724|1|abcd|update t set i = 2;|select * from t_slim;"))
+	re.Check(testutil.RowsWithSep("|", "2019-02-12 11:33:56.571953|406315658548871171|root|127.0.0.1|6|4.895492|0.4|0.2|0.19|0.01|0|0.18|[txnLock]|0.03|0|15|480|1|8|0.161|0.101|0.092|1|100001|100000|test||0|42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772|t1:1,t2:2|0.1|0.2|0.03|127.0.0.1:20160|0.05|0.6|0.8|0.0.0.0:20160|70724|1|abcd|60e9378c746d9a2be1c791047e008967cf252eb6de9167ad3aa6098fa2d523f4|update t set i = 2;|select * from t_slim;"))
 
 	// Test for long query.
 	f, err := os.OpenFile(slowLogFileName, os.O_CREATE|os.O_WRONLY, 0644)
@@ -952,4 +997,28 @@ func (s *testClusterTableSuite) TestSelectClusterTable(c *C) {
 	tk.MustQuery("select count(*) from `CLUSTER_SLOW_QUERY` group by digest").Check(testkit.Rows("1"))
 	tk.MustQuery("select digest, count(*) from `CLUSTER_SLOW_QUERY` group by digest").Check(testkit.Rows("42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772 1"))
 	tk.MustQuery("select count(*) from `CLUSTER_SLOW_QUERY` where time > now() group by digest").Check(testkit.Rows())
+}
+
+func (s *testTableSuite) TestSelectHiddenColumn(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("DROP DATABASE IF EXISTS `test_hidden`;")
+	tk.MustExec("CREATE DATABASE `test_hidden`;")
+	tk.MustExec("USE test_hidden;")
+	tk.MustExec("CREATE TABLE hidden (a int , b int, c int);")
+	tk.MustQuery("select count(*) from INFORMATION_SCHEMA.COLUMNS where table_name = 'hidden'").Check(testkit.Rows("3"))
+	tb, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test_hidden"), model.NewCIStr("hidden"))
+	c.Assert(err, IsNil)
+	colInfo := tb.Meta().Columns
+	// Set column b to hidden
+	colInfo[1].Hidden = true
+	tk.MustQuery("select count(*) from INFORMATION_SCHEMA.COLUMNS where table_name = 'hidden'").Check(testkit.Rows("2"))
+	tk.MustQuery("select count(*) from INFORMATION_SCHEMA.COLUMNS where table_name = 'hidden' and column_name = 'b'").Check(testkit.Rows("0"))
+	// Set column b to visible
+	colInfo[1].Hidden = false
+	tk.MustQuery("select count(*) from INFORMATION_SCHEMA.COLUMNS where table_name = 'hidden' and column_name = 'b'").Check(testkit.Rows("1"))
+	// Set a, b ,c to hidden
+	colInfo[0].Hidden = true
+	colInfo[1].Hidden = true
+	colInfo[2].Hidden = true
+	tk.MustQuery("select count(*) from INFORMATION_SCHEMA.COLUMNS where table_name = 'hidden'").Check(testkit.Rows("0"))
 }

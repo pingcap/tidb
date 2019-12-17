@@ -188,8 +188,10 @@ func (p *LogicalMemTable) findBestTask(prop *property.PhysicalProperty) (t task,
 		return invalidTask, nil
 	}
 	memTable := PhysicalMemTable{
-		Table:   p.tableInfo,
-		Columns: p.tableInfo.Columns,
+		DBName:    p.dbName,
+		Table:     p.tableInfo,
+		Columns:   p.tableInfo.Columns,
+		Extractor: p.Extractor,
 	}.Init(p.ctx, p.stats, p.blockOffset)
 	memTable.SetSchema(p.schema)
 	return &rootTask{p: memTable}, nil
@@ -999,8 +1001,8 @@ func (s *LogicalIndexScan) GetPhysicalIndexScan(schema *expression.Schema, stats
 		DBName:           ds.DBName,
 		Columns:          s.Columns,
 		Index:            s.Index,
-		IdxCols:          s.idxCols,
-		IdxColLens:       s.idxColLens,
+		IdxCols:          s.IdxCols,
+		IdxColLens:       s.IdxColLens,
 		AccessCondition:  s.AccessConds,
 		Ranges:           s.Ranges,
 		dataSourceSchema: ds.schema,
@@ -1008,7 +1010,7 @@ func (s *LogicalIndexScan) GetPhysicalIndexScan(schema *expression.Schema, stats
 		physicalTableID:  ds.physicalTableID,
 	}.Init(ds.ctx, ds.blockOffset)
 	is.stats = stats
-	is.initSchema(s.Index, s.fullIdxCols, s.IsDoubleRead)
+	is.initSchema(s.Index, s.FullIdxCols, s.IsDoubleRead)
 	return is
 }
 

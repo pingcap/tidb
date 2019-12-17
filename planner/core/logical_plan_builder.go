@@ -2715,8 +2715,10 @@ func (b *PlanBuilder) buildMemTable(ctx context.Context, dbName model.CIStr, tab
 
 	// Some memory tables can receive some predicates
 	switch tableInfo.Name.L {
-	case strings.ToLower(infoschema.TableTiDBClusterConfig):
+	case strings.ToLower(infoschema.TableClusterConfig):
 		p.Extractor = &ClusterConfigTableExtractor{}
+	case strings.ToLower(infoschema.TableClusterLog):
+		p.Extractor = &ClusterLogTableExtractor{}
 	}
 
 	return p, nil
@@ -3213,7 +3215,6 @@ func (b *PlanBuilder) buildUpdateLists(
 		if err != nil {
 			return nil, nil, false, err
 		}
-		newExpr = expression.BuildCastFunction(b.ctx, newExpr, col.GetType())
 		if _, isConst := newExpr.(*expression.Constant); !isConst {
 			allAssignmentsAreConstant = false
 		}
