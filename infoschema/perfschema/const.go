@@ -394,6 +394,7 @@ const tableStagesHistoryLong = "CREATE TABLE if not exists performance_schema." 
 // events_statements_summary_by_digest, same as MySQL.
 const tableEventsStatementsSummaryByDigest = "CREATE TABLE if not exists " + tableNameEventsStatementsSummaryByDigest + " (" +
 	"SUMMARY_BEGIN_TIME TIMESTAMP(6) NOT NULL," +
+	"SUMMARY_END_TIME TIMESTAMP(6) NOT NULL," +
 	"STMT_TYPE VARCHAR(64) NOT NULL," +
 	"SCHEMA_NAME VARCHAR(64) DEFAULT NULL," +
 	"DIGEST VARCHAR(64) NOT NULL," +
@@ -447,18 +448,21 @@ const tableEventsStatementsSummaryByDigest = "CREATE TABLE if not exists " + tab
 	"MAX_PREWRITE_REGIONS INT(11) UNSIGNED NOT NULL," +
 	"AVG_TXN_RETRY DOUBLE NOT NULL," +
 	"MAX_TXN_RETRY INT(11) UNSIGNED NOT NULL," +
+	"SUM_BACKOFF_TIMES BIGINT(20) UNSIGNED NOT NULL," +
 	"BACKOFF_TYPES VARCHAR(1024) DEFAULT NULL," +
 	"AVG_MEM BIGINT(20) UNSIGNED NOT NULL," +
 	"MAX_MEM BIGINT(20) UNSIGNED NOT NULL," +
 	"AVG_AFFECTED_ROWS DOUBLE UNSIGNED NOT NULL," +
 	"FIRST_SEEN TIMESTAMP(6) NOT NULL," +
 	"LAST_SEEN TIMESTAMP(6) NOT NULL," +
-	"QUERY_SAMPLE_TEXT LONGTEXT DEFAULT NULL);"
+	"QUERY_SAMPLE_TEXT LONGTEXT DEFAULT NULL," +
+	"PREV_SAMPLE_TEXT LONGTEXT DEFAULT NULL);"
 
 // tableEventsStatementsSummaryByDigestHistory contains the column name definitions for table
 // events_statements_summary_by_digest_history.
 const tableEventsStatementsSummaryByDigestHistory = "CREATE TABLE if not exists events_statements_summary_by_digest_history (" +
 	"SUMMARY_BEGIN_TIME TIMESTAMP(6) NOT NULL," +
+	"SUMMARY_END_TIME TIMESTAMP(6) NOT NULL," +
 	"STMT_TYPE VARCHAR(64) NOT NULL," +
 	"SCHEMA_NAME VARCHAR(64) DEFAULT NULL," +
 	"DIGEST VARCHAR(64) NOT NULL," +
@@ -512,13 +516,15 @@ const tableEventsStatementsSummaryByDigestHistory = "CREATE TABLE if not exists 
 	"MAX_PREWRITE_REGIONS INT(11) UNSIGNED NOT NULL," +
 	"AVG_TXN_RETRY DOUBLE NOT NULL," +
 	"MAX_TXN_RETRY INT(11) UNSIGNED NOT NULL," +
+	"SUM_BACKOFF_TIMES BIGINT(20) UNSIGNED NOT NULL," +
 	"BACKOFF_TYPES VARCHAR(1024) DEFAULT NULL," +
 	"AVG_MEM BIGINT(20) UNSIGNED NOT NULL," +
 	"MAX_MEM BIGINT(20) UNSIGNED NOT NULL," +
 	"AVG_AFFECTED_ROWS DOUBLE UNSIGNED NOT NULL," +
 	"FIRST_SEEN TIMESTAMP(6) NOT NULL," +
 	"LAST_SEEN TIMESTAMP(6) NOT NULL," +
-	"QUERY_SAMPLE_TEXT LONGTEXT DEFAULT NULL);"
+	"QUERY_SAMPLE_TEXT LONGTEXT DEFAULT NULL," +
+	"PREV_SAMPLE_TEXT LONGTEXT DEFAULT NULL);"
 
 // tableTiDBProfileCPU contains the columns name definitions for table tidb_profile_cpu
 const tableTiDBProfileCPU = "CREATE TABLE IF NOT EXISTS " + tableNameTiDBProfileCPU + " (" +

@@ -537,7 +537,7 @@ var defaultConf = Config{
 		MaxRetryCount: 256,
 	},
 	StmtSummary: StmtSummary{
-		Enable:          false,
+		Enable:          true,
 		MaxStmtCount:    100,
 		MaxSQLLength:    4096,
 		RefreshInterval: 1800,

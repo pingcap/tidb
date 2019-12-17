@@ -41,6 +41,8 @@ type stmtSummaryByDigestKey struct {
 	// Same statements may appear in different schema, but they refer to different tables.
 	schemaName string
 	digest     string
+	// The digest of the previous statement.
+	prevDigest string
 	// `hash` is the hash value of this object.
 	hash []byte
 }
@@ -48,9 +50,10 @@ type stmtSummaryByDigestKey struct {
 // Hash implements SimpleLRUCache.Key.
 func (key *stmtSummaryByDigestKey) Hash() []byte {
 	if len(key.hash) == 0 {
-		key.hash = make([]byte, 0, len(key.schemaName)+len(key.digest))
+		key.hash = make([]byte, 0, len(key.schemaName)+len(key.digest)+len(key.prevDigest))
 		key.hash = append(key.hash, hack.Slice(key.digest)...)
 		key.hash = append(key.hash, hack.Slice(key.schemaName)...)
+		key.hash = append(key.hash, hack.Slice(key.prevDigest)...)
 	}
 	return key.hash
 }
@@ -109,10 +112,12 @@ type stmtSummaryByDigest struct {
 // stmtSummaryByDigestElement is the summary for each type of statements in current interval.
 type stmtSummaryByDigestElement struct {
 	sync.Mutex
-	// Each summary is summarized between [beginTime, beginTime + refreshInterval].
+	// Each summary is summarized between [beginTime, endTime).
 	beginTime int64
+	endTime   int64
 	// basic
 	sampleSQL  string
+	prevSQL    string
 	sampleUser string
 	indexNames []string
 	execCount  int64
@@ -165,6 +170,7 @@ type stmtSummaryByDigestElement struct {
 	maxPrewriteRegionNum int32
 	sumTxnRetry          int64
 	maxTxnRetry          int
+	sumBackoffTimes      int64
 	backoffTypes         map[fmt.Stringer]int
 	// other
 	sumMem          int64
@@ -182,6 +188,8 @@ type StmtExecInfo struct {
 	OriginalSQL    string
 	NormalizedSQL  string
 	Digest         string
+	PrevSQL        string
+	PrevSQLDigest  string
 	User           string
 	TotalLatency   time.Duration
 	ParseLatency   time.Duration
@@ -220,6 +228,7 @@ func (ssMap *stmtSummaryByDigestMap) AddStatement(sei *StmtExecInfo) {
 	key := &stmtSummaryByDigestKey{
 		schemaName: sei.SchemaName,
 		digest:     sei.Digest,
+		prevDigest: sei.PrevSQLDigest,
 	}
 
 	// Enclose the block in a function to ensure the lock will always be released.
@@ -241,7 +250,7 @@ func (ssMap *stmtSummaryByDigestMap) AddStatement(sei *StmtExecInfo) {
 		beginTime := ssMap.beginTimeForCurInterval
 		value, ok := ssMap.summaryMap.Get(key)
 		if !ok {
-			newSummary := newStmtSummaryByDigest(sei, beginTime, historySize)
+			newSummary := newStmtSummaryByDigest(sei, beginTime, intervalSeconds, historySize)
 			ssMap.summaryMap.Put(key, newSummary)
 		}
 		return value, beginTime, ok
@@ -249,7 +258,7 @@ func (ssMap *stmtSummaryByDigestMap) AddStatement(sei *StmtExecInfo) {
 
 	// Lock a single entry, not the whole cache.
 	if ok {
-		value.(*stmtSummaryByDigest).add(sei, beginTime, historySize)
+		value.(*stmtSummaryByDigest).add(sei, beginTime, intervalSeconds, historySize)
 	}
 }
 
@@ -464,7 +473,7 @@ func (ssMap *stmtSummaryByDigestMap) historySize() int {
 }
 
 // newStmtSummaryByDigest creates a stmtSummaryByDigest from StmtExecInfo.
-func newStmtSummaryByDigest(sei *StmtExecInfo, beginTime int64, historySize int) *stmtSummaryByDigest {
+func newStmtSummaryByDigest(sei *StmtExecInfo, beginTime int64, intervalSeconds int64, historySize int) *stmtSummaryByDigest {
 	// Trim SQL to size MaxSQLLength.
 	maxSQLLength := config.GetGlobalConfig().StmtSummary.MaxSQLLength
 	normalizedSQL := sei.NormalizedSQL
@@ -493,11 +502,11 @@ func newStmtSummaryByDigest(sei *StmtExecInfo, beginTime int64, historySize int)
 		tableNames:    tableNames,
 		history:       list.New(),
 	}
-	ssbd.add(sei, beginTime, historySize)
+	ssbd.add(sei, beginTime, intervalSeconds, historySize)
 	return ssbd
 }
 
-func (ssbd *stmtSummaryByDigest) add(sei *StmtExecInfo, beginTime int64, historySize int) {
+func (ssbd *stmtSummaryByDigest) add(sei *StmtExecInfo, beginTime int64, intervalSeconds int64, historySize int) {
 	// Enclose this block in a function to ensure the lock will always be released.
 	ssElement, isElementNew := func() (*stmtSummaryByDigestElement, bool) {
 		ssbd.Lock()
@@ -510,11 +519,14 @@ func (ssbd *stmtSummaryByDigest) add(sei *StmtExecInfo, beginTime int64, history
 			if lastElement.beginTime >= beginTime {
 				ssElement = lastElement
 				isElementNew = false
+			} else {
+				// The last elements expires to the history.
+				lastElement.onExpire(intervalSeconds)
 			}
 		}
 		if isElementNew {
 			// If the element is new created, `ssElement.add(sei)` should be done inside the lock of `ssbd`.
-			ssElement = newStmtSummaryByDigestElement(sei, beginTime)
+			ssElement = newStmtSummaryByDigestElement(sei, beginTime, intervalSeconds)
 			ssbd.history.PushBack(ssElement)
 		}
 
@@ -529,7 +541,7 @@ func (ssbd *stmtSummaryByDigest) add(sei *StmtExecInfo, beginTime int64, history
 
 	// Lock a single entry, not the whole `ssbd`.
 	if !isElementNew {
-		ssElement.add(sei)
+		ssElement.add(sei, intervalSeconds)
 	}
 }
 
@@ -574,7 +586,7 @@ func (ssbd *stmtSummaryByDigest) collectHistorySummaries(historySize int) []*stm
 	return ssElements
 }
 
-func newStmtSummaryByDigestElement(sei *StmtExecInfo, beginTime int64) *stmtSummaryByDigestElement {
+func newStmtSummaryByDigestElement(sei *StmtExecInfo, beginTime int64, intervalSeconds int64) *stmtSummaryByDigestElement {
 	ssElement := &stmtSummaryByDigestElement{
 		beginTime:    beginTime,
 		minLatency:   sei.TotalLatency,
@@ -582,25 +594,50 @@ func newStmtSummaryByDigestElement(sei *StmtExecInfo, beginTime int64) *stmtSumm
 		lastSeen:     sei.StartTime,
 		backoffTypes: make(map[fmt.Stringer]int, 0),
 	}
-	ssElement.add(sei)
+	ssElement.add(sei, intervalSeconds)
 	return ssElement
 }
 
-func (ssElement *stmtSummaryByDigestElement) add(sei *StmtExecInfo) {
+// onExpire is called when this element expires to history.
+func (ssElement *stmtSummaryByDigestElement) onExpire(intervalSeconds int64) {
+	ssElement.Lock()
+	defer ssElement.Unlock()
+
+	// refreshInterval may change anytime, so we need to update endTime.
+	if ssElement.beginTime+intervalSeconds > ssElement.endTime {
+		// // If interval changes to a bigger value, update endTime to beginTime + interval.
+		ssElement.endTime = ssElement.beginTime + intervalSeconds
+	} else if ssElement.beginTime+intervalSeconds < ssElement.endTime {
+		now := time.Now().Unix()
+		// If interval changes to a smaller value and now > beginTime + interval, update endTime to current time.
+		if now > ssElement.beginTime+intervalSeconds {
+			ssElement.endTime = now
+		}
+	}
+}
+
+func (ssElement *stmtSummaryByDigestElement) add(sei *StmtExecInfo, intervalSeconds int64) {
 	maxSQLLength := config.GetGlobalConfig().StmtSummary.MaxSQLLength
 	sampleSQL := sei.OriginalSQL
 	if len(sampleSQL) > int(maxSQLLength) {
 		// Make sure the memory of original `sampleSQL` will be released.
 		sampleSQL = string([]byte(sampleSQL[:maxSQLLength]))
 	}
+	prevSQL := sei.PrevSQL
+	if len(prevSQL) > int(maxSQLLength) {
+		prevSQL = string([]byte(prevSQL[:maxSQLLength]))
+	}
 
 	ssElement.Lock()
 	defer ssElement.Unlock()
 
+	// refreshInterval may change anytime, update endTime ASAP.
+	ssElement.endTime = ssElement.beginTime + intervalSeconds
 	if sei.User != "" {
 		ssElement.sampleUser = sei.User
 	}
 	ssElement.sampleSQL = sampleSQL
+	ssElement.prevSQL = prevSQL
 	ssElement.indexNames = sei.StmtCtx.IndexNames
 	ssElement.execCount++
 
@@ -704,6 +741,7 @@ func (ssElement *stmtSummaryByDigestElement) add(sei *StmtExecInfo) {
 			ssElement.maxTxnRetry = commitDetails.TxnRetry
 		}
 		commitDetails.Mu.Lock()
+		ssElement.sumBackoffTimes += int64(len(commitDetails.Mu.BackoffTypes))
 		for _, backoffType := range commitDetails.Mu.BackoffTypes {
 			ssElement.backoffTypes[backoffType] += 1
 		}
@@ -728,8 +766,10 @@ func (ssElement *stmtSummaryByDigestElement) toDatum(ssbd *stmtSummaryByDigest) 
 	ssElement.Lock()
 	defer ssElement.Unlock()
 
+	// Actually, there's a small chance that endTime is out of date, but it's hard to keep it up to date all the time.
 	return types.MakeDatums(
 		types.Time{Time: types.FromGoTime(time.Unix(ssElement.beginTime, 0)), Type: mysql.TypeTimestamp},
+		types.Time{Time: types.FromGoTime(time.Unix(ssElement.endTime, 0)), Type: mysql.TypeTimestamp},
 		ssbd.stmtType,
 		ssbd.schemaName,
 		ssbd.digest,
@@ -783,6 +823,7 @@ func (ssElement *stmtSummaryByDigestElement) toDatum(ssbd *stmtSummaryByDigest) 
 		int(ssElement.maxPrewriteRegionNum),
 		avgFloat(ssElement.sumTxnRetry, ssElement.commitCount),
 		ssElement.maxTxnRetry,
+		ssElement.sumBackoffTimes,
 		formatBackoffTypes(ssElement.backoffTypes),
 		avgInt(ssElement.sumMem, ssElement.execCount),
 		ssElement.maxMem,
@@ -790,6 +831,7 @@ func (ssElement *stmtSummaryByDigestElement) toDatum(ssbd *stmtSummaryByDigest) 
 		types.Time{Time: types.FromGoTime(ssElement.firstSeen), Type: mysql.TypeTimestamp},
 		types.Time{Time: types.FromGoTime(ssElement.lastSeen), Type: mysql.TypeTimestamp},
 		ssElement.sampleSQL,
+		ssElement.prevSQL,
 	)
 }
 

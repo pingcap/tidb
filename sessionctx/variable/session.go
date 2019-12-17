@@ -26,6 +26,7 @@ import (
 
 	"github.com/klauspost/cpuid"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/mysql"
@@ -447,6 +448,9 @@ type SessionVars struct {
 
 	// PrevStmt is used to store the previous executed statement in the current session.
 	PrevStmt fmt.Stringer
+
+	// prevStmtDigest is used to store the digest of the previous statement in the current session.
+	prevStmtDigest string
 
 	// AllowRemoveAutoInc indicates whether a user can drop the auto_increment column attribute or not.
 	AllowRemoveAutoInc bool
@@ -1039,6 +1043,25 @@ func (s *SessionVars) setTxnMode(val string) error {
 		return ErrWrongValueForVar.FastGenByArgs(TiDBTxnMode, val)
 	}
 	return nil
+}
+
+// SetPrevStmtDigest sets the digest of the previous statement.
+func (s *SessionVars) SetPrevStmtDigest(prevStmtDigest string) {
+	s.prevStmtDigest = prevStmtDigest
+}
+
+// GetPrevStmtDigest returns the digest of the previous statement.
+func (s *SessionVars) GetPrevStmtDigest() string {
+	if len(s.prevStmtDigest) > 0 {
+		return s.prevStmtDigest
+	}
+	prevStmt := s.PrevStmt.String()
+	if len(prevStmt) == 0 {
+		return ""
+	}
+	_, digest := parser.NormalizeDigest(s.PrevStmt.String())
+	s.prevStmtDigest = digest
+	return digest
 }
 
 // SetLocalSystemVar sets values of the local variables which in "server" scope.

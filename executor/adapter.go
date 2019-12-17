@@ -859,12 +859,23 @@ func getPlanDigest(sctx sessionctx.Context, p plannercore.Plan) (normalized, pla
 // SummaryStmt collects statements for performance_schema.events_statements_summary_by_digest
 func (a *ExecStmt) SummaryStmt() {
 	sessVars := a.Ctx.GetSessionVars()
-	if sessVars.InRestrictedSQL || !stmtsummary.StmtSummaryByDigestMap.Enabled() {
+	if sessVars.InRestrictedSQL {
+		return
+	}
+	if !stmtsummary.StmtSummaryByDigestMap.Enabled() {
+		sessVars.SetPrevStmtDigest("")
 		return
 	}
 	stmtCtx := sessVars.StmtCtx
 	normalizedSQL, digest := stmtCtx.SQLDigest()
 	costTime := time.Since(sessVars.StartTime)
+
+	var prevSQL, prevSQLDigest string
+	if _, ok := a.StmtNode.(*ast.CommitStmt); ok {
+		prevSQLDigest = sessVars.GetPrevStmtDigest()
+		prevSQL = sessVars.PrevStmt.String()
+	}
+	sessVars.SetPrevStmtDigest(digest)
 
 	execDetail := stmtCtx.GetExecDetails()
 	copTaskInfo := stmtCtx.CopTasksDetails()
@@ -879,6 +890,8 @@ func (a *ExecStmt) SummaryStmt() {
 		OriginalSQL:    a.Text,
 		NormalizedSQL:  normalizedSQL,
 		Digest:         digest,
+		PrevSQL:        prevSQL,
+		PrevSQLDigest:  prevSQLDigest,
 		User:           userString,
 		TotalLatency:   costTime,
 		ParseLatency:   sessVars.DurationParse,
