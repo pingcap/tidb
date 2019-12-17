@@ -739,6 +739,30 @@ func (s *testTimeSuite) TestRoundFrac(c *C) {
 		c.Assert(err, IsNil)
 		c.Assert(nv.String(), Equals, t.Except)
 	}
+	// test different time zone
+	losAngelesTz, _ := time.LoadLocation("America/Los_Angeles")
+	sc.TimeZone = losAngelesTz
+	tbl = []struct {
+		Input  string
+		Fsp    int
+		Except string
+	}{
+		{"2019-11-25 07:25:45.123456", 4, "2019-11-25 07:25:45.1235"},
+		{"2019-11-25 07:25:45.123456", 5, "2019-11-25 07:25:45.12346"},
+		{"2019-11-25 07:25:45.123456", 0, "2019-11-25 07:25:45"},
+		{"2019-11-25 07:25:45.123456", 2, "2019-11-25 07:25:45.12"},
+		{"2019-11-26 11:30:45.999999", 4, "2019-11-26 11:30:46.0000"},
+		{"2019-11-26 11:30:45.999999", 0, "2019-11-26 11:30:46"},
+		{"2019-11-26 11:30:45.999999", 3, "2019-11-26 11:30:46.000"},
+	}
+
+	for _, t := range tbl {
+		v, err := types.ParseTime(sc, t.Input, mysql.TypeDatetime, types.MaxFsp)
+		c.Assert(err, IsNil)
+		nv, err := v.RoundFrac(sc, t.Fsp)
+		c.Assert(err, IsNil)
+		c.Assert(nv.String(), Equals, t.Except)
+	}
 
 	tbl = []struct {
 		Input  string

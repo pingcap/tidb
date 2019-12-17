@@ -47,23 +47,25 @@ func Select(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request, fie
 		return nil, err
 	}
 
+	label := metrics.LblGeneral
+	if sctx.GetSessionVars().InRestrictedSQL {
+		label = metrics.LblInternal
+	}
+
 	// kvReq.MemTracker is used to trace and control memory usage in DistSQL layer;
 	// for streamResult, since it is a pipeline which has no buffer, it's not necessary to trace it;
 	// for selectResult, we just use the kvReq.MemTracker prepared for co-processor
 	// instead of creating a new one for simplification.
 	if kvReq.Streaming {
 		return &streamResult{
+			label:      "dag-stream",
+			sqlType:    label,
 			resp:       resp,
 			rowLen:     len(fieldTypes),
 			fieldTypes: fieldTypes,
 			ctx:        sctx,
 			feedback:   fb,
 		}, nil
-	}
-
-	label := metrics.LblGeneral
-	if sctx.GetSessionVars().InRestrictedSQL {
-		label = metrics.LblInternal
 	}
 	return &selectResult{
 		label:      "dag",

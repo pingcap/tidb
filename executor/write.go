@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
+	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
@@ -116,6 +117,11 @@ func updateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datu
 		if ctx.GetSessionVars().ClientCapability&mysql.ClientFoundRows > 0 {
 			sc.AddAffectedRows(1)
 		}
+		unchangedRowKey := tablecodec.EncodeRowKeyWithHandle(t.Meta().ID, h)
+		txnCtx := ctx.GetSessionVars().TxnCtx
+		if txnCtx.IsPessimistic {
+			txnCtx.AddUnchangedRowKey(unchangedRowKey)
+		}
 		return false, false, 0, nil
 	}
 
@@ -187,4 +193,16 @@ func getTableOffset(schema *expression.Schema, handleCol *expression.Column) int
 		}
 	}
 	panic("Couldn't get column information when do update/delete")
+}
+
+func batchDMLCommit(gctx context.Context, ctx sessionctx.Context) error {
+	if err := ctx.StmtCommit(); err != nil {
+		return ErrBatchDMLFail.GenWithStackByArgs(err)
+	}
+	ctx.GetSessionVars().TxnCtx.IsBatched = true
+	if err := ctx.NewTxn(gctx); err != nil {
+		return ErrBatchDMLFail.GenWithStackByArgs(err)
+	}
+	ctx.GetSessionVars().TxnCtx.IsBatched = true
+	return nil
 }

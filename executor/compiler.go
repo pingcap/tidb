@@ -20,6 +20,7 @@ import (
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
@@ -81,7 +82,10 @@ func (c *Compiler) compile(ctx context.Context, stmtNode ast.StmtNode, skipBind 
 	}
 
 	CountStmtNode(stmtNode, c.Ctx.GetSessionVars().InRestrictedSQL)
-	lowerPriority := needLowerPriority(finalPlan)
+	var lowerPriority bool
+	if c.Ctx.GetSessionVars().StmtCtx.Priority == mysql.NoPriority {
+		lowerPriority = needLowerPriority(finalPlan)
+	}
 	return &ExecStmt{
 		InfoSchema:    infoSchema,
 		Plan:          finalPlan,
@@ -384,7 +388,7 @@ func addHint(ctx sessionctx.Context, stmtNode ast.StmtNode) ast.StmtNode {
 			normalizeExplainSQL := parser.Normalize(x.Text())
 			idx := strings.Index(normalizeExplainSQL, "select")
 			normalizeSQL := normalizeExplainSQL[idx:]
-			hash := parser.DigestHash(normalizeSQL)
+			hash := parser.DigestNormalized(normalizeSQL)
 			x.Stmt = addHintForSelect(hash, normalizeSQL, ctx, x.Stmt)
 		}
 		return x

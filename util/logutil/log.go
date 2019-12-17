@@ -18,7 +18,7 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"path"
+	"path/filepath"
 	"runtime"
 	"sort"
 	"strings"
@@ -104,7 +104,7 @@ func (hook *contextHook) Fire(entry *log.Entry) error {
 		name := fu.Name()
 		if !isSkippedPackageName(name) {
 			file, line := fu.FileLine(pc[i] - 1)
-			entry.Data["file"] = path.Base(file)
+			entry.Data["file"] = filepath.Base(file)
 			entry.Data["line"] = line
 			break
 		}

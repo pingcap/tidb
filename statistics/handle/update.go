@@ -230,7 +230,7 @@ func needDumpStatsDelta(h *Handle, id int64, item variable.TableDelta, currentTi
 	if item.InitTime.IsZero() {
 		item.InitTime = currentTime
 	}
-	tbl, ok := h.StatsCache.Load().(StatsCache)[id]
+	tbl, ok := h.statsCache.Load().(statsCache).tables[id]
 	if !ok {
 		// No need to dump if the stats is invalid.
 		return false
@@ -373,7 +373,7 @@ func (h *Handle) DumpStatsFeedbackToKV() error {
 		if fb.Tp == statistics.PkType {
 			err = h.DumpFeedbackToKV(fb)
 		} else {
-			t, ok := h.StatsCache.Load().(StatsCache)[fb.PhysicalID]
+			t, ok := h.statsCache.Load().(statsCache).tables[fb.PhysicalID]
 			if ok {
 				err = h.DumpFeedbackForIndex(fb, t)
 			}
@@ -452,7 +452,8 @@ func (h *Handle) UpdateStatsByLocalFeedback(is infoschema.InfoSchema) {
 			newCol.Flag = statistics.ResetAnalyzeFlag(newCol.Flag)
 			newTblStats.Columns[fb.Hist.ID] = &newCol
 		}
-		h.UpdateTableStats([]*statistics.Table{newTblStats}, nil)
+		oldCache := h.statsCache.Load().(statsCache)
+		h.updateStatsCache(oldCache.update([]*statistics.Table{newTblStats}, nil, oldCache.version))
 	}
 }
 
@@ -483,7 +484,8 @@ func (h *Handle) UpdateErrorRate(is infoschema.InfoSchema) {
 		delete(h.mu.rateMap, id)
 	}
 	h.mu.Unlock()
-	h.UpdateTableStats(tbls, nil)
+	oldCache := h.statsCache.Load().(statsCache)
+	h.updateStatsCache(oldCache.update(tbls, nil, oldCache.version))
 }
 
 // HandleUpdateStats update the stats using feedback.
@@ -647,12 +649,8 @@ func NeedAnalyzeTable(tbl *statistics.Table, limit time.Duration, autoAnalyzeRat
 		return false, ""
 	}
 	// Tests if current time is within the time period.
-	return withinTimePeriod(start, end, now), fmt.Sprintf("too many modifications(%v/%v)", tbl.ModifyCount, tbl.Count)
+	return withinTimePeriod(start, end, now), fmt.Sprintf("too many modifications(%v/%v>%v)", tbl.ModifyCount, tbl.Count, autoAnalyzeRatio)
 }
-
-const (
-	minAutoAnalyzeRatio = 0.3
-)
 
 func (h *Handle) getAutoAnalyzeParameters() map[string]string {
 	sql := fmt.Sprintf("select variable_name, variable_value from mysql.global_variables where variable_name in ('%s', '%s', '%s')",
@@ -673,10 +671,7 @@ func parseAutoAnalyzeRatio(ratio string) float64 {
 	if err != nil {
 		return variable.DefAutoAnalyzeRatio
 	}
-	if autoAnalyzeRatio > 0 {
-		autoAnalyzeRatio = math.Max(autoAnalyzeRatio, minAutoAnalyzeRatio)
-	}
-	return autoAnalyzeRatio
+	return math.Max(autoAnalyzeRatio, 0)
 }
 
 func parseAnalyzePeriod(start, end string) (time.Time, time.Time, error) {
@@ -871,7 +866,7 @@ func logForIndex(prefix string, t *statistics.Table, idx *statistics.Index, rang
 }
 
 func (h *Handle) logDetailedInfo(q *statistics.QueryFeedback) {
-	t, ok := h.StatsCache.Load().(StatsCache)[q.PhysicalID]
+	t, ok := h.statsCache.Load().(statsCache).tables[q.PhysicalID]
 	if !ok {
 		return
 	}
@@ -912,7 +907,7 @@ func logForPK(prefix string, c *statistics.Column, ranges []*ranger.Range, actua
 
 // RecalculateExpectCount recalculates the expect row count if the origin row count is estimated by pseudo.
 func (h *Handle) RecalculateExpectCount(q *statistics.QueryFeedback) error {
-	t, ok := h.StatsCache.Load().(StatsCache)[q.PhysicalID]
+	t, ok := h.statsCache.Load().(statsCache).tables[q.PhysicalID]
 	if !ok {
 		return nil
 	}

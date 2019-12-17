@@ -776,7 +776,11 @@ func (worker *copIteratorWorker) handleCopStreamResult(bo *Backoffer, rpcCtx *RP
 			}
 
 			// No coprocessor.Response for network error, rebuild task based on the last success one.
-			logutil.Logger(context.Background()).Info("stream recv timeout", zap.Error(err))
+			if errors.Cause(err) == context.Canceled {
+				logutil.Logger(context.Background()).Info("stream recv timeout", zap.Error(err))
+			} else {
+				logutil.Logger(context.Background()).Info("stream unknown error", zap.Error(err))
+			}
 			return worker.buildCopTasksFromRemain(bo, lastRange, task)
 		}
 		if resp.Range != nil {

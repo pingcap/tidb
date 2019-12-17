@@ -17,7 +17,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"github.com/pingcap/parser/terror"
 	"sort"
 	"strings"
 	"sync/atomic"
@@ -25,6 +24,7 @@ import (
 	"github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
@@ -177,6 +177,17 @@ func (tk *TestKit) MustExec(sql string, args ...interface{}) {
 	if res != nil {
 		tk.c.Assert(res.Close(), check.IsNil)
 	}
+}
+
+// MustUseIndex checks if the result execution plan contains specific index(es).
+func (tk *TestKit) MustUseIndex(sql string, index string, args ...interface{}) bool {
+	rs := tk.MustQuery("explain "+sql, args...)
+	for i := range rs.rows {
+		if strings.Contains(rs.rows[i][3], "index:"+index+",") {
+			return true
+		}
+	}
+	return false
 }
 
 // MustIndexLookup checks whether the plan for the sql is Point_Get.

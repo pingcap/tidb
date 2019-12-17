@@ -262,6 +262,20 @@ func (s *testPrivilegeSuite) TestShowGrants(c *C) {
 	c.Assert(gs, HasLen, 1)
 	c.Assert(gs[0], Equals, `GRANT ALL PRIVILEGES ON *.* TO 'show'@'localhost'`)
 
+	// All privileges with grant option
+	mustExec(c, se, `GRANT ALL ON *.* TO 'show'@'localhost' WITH GRANT OPTION;`)
+	gs, err = pc.ShowGrants(se, &auth.UserIdentity{Username: "show", Hostname: "localhost"}, nil)
+	c.Assert(err, IsNil)
+	c.Assert(gs, HasLen, 1)
+	c.Assert(gs[0], Equals, `GRANT ALL PRIVILEGES ON *.* TO 'show'@'localhost' WITH GRANT OPTION`)
+
+	// Revoke grant option
+	mustExec(c, se, `REVOKE GRANT OPTION ON *.* FROM 'show'@'localhost';`)
+	gs, err = pc.ShowGrants(se, &auth.UserIdentity{Username: "show", Hostname: "localhost"}, nil)
+	c.Assert(err, IsNil)
+	c.Assert(gs, HasLen, 1)
+	c.Assert(gs[0], Equals, `GRANT ALL PRIVILEGES ON *.* TO 'show'@'localhost'`)
+
 	// Add db scope privileges
 	mustExec(c, se, `GRANT Select ON test.* TO  'show'@'localhost';`)
 	gs, err = pc.ShowGrants(se, &auth.UserIdentity{Username: "show", Hostname: "localhost"}, nil)
@@ -490,6 +504,14 @@ func (s *testPrivilegeSuite) TestUseDB(c *C) {
 	mustExec(c, se, "CREATE USER 'usesuper'")
 	mustExec(c, se, "CREATE USER 'usenobody'")
 	mustExec(c, se, "GRANT ALL ON *.* TO 'usesuper'")
+	//without grant option
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "usesuper", Hostname: "localhost", AuthUsername: "usesuper", AuthHostname: "%"}, nil, nil), IsTrue)
+	_, e := se.Execute(context.Background(), "GRANT SELECT ON mysql.* TO 'usenobody'")
+	c.Assert(e, NotNil)
+	//with grant option
+	se = newSession(c, s.store, s.dbName)
+	// high privileged user
+	mustExec(c, se, "GRANT ALL ON *.* TO 'usesuper' WITH GRANT OPTION")
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "usesuper", Hostname: "localhost", AuthUsername: "usesuper", AuthHostname: "%"}, nil, nil), IsTrue)
 	mustExec(c, se, "use mysql")
 	// low privileged user
@@ -519,6 +541,24 @@ func (s *testPrivilegeSuite) TestUseDB(c *C) {
 	c.Assert(err, NotNil)
 }
 
+func (s *testPrivilegeSuite) TestRevokePrivileges(c *C) {
+	se := newSession(c, s.store, s.dbName)
+	mustExec(c, se, "CREATE USER 'hasgrant'")
+	mustExec(c, se, "CREATE USER 'withoutgrant'")
+	mustExec(c, se, "GRANT ALL ON *.* TO 'hasgrant'")
+	mustExec(c, se, "GRANT ALL ON mysql.* TO 'withoutgrant'")
+	// Without grant option
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "hasgrant", Hostname: "localhost", AuthUsername: "hasgrant", AuthHostname: "%"}, nil, nil), IsTrue)
+	_, e := se.Execute(context.Background(), "REVOKE SELECT ON mysql.* FROM 'withoutgrant'")
+	c.Assert(e, NotNil)
+	// With grant option
+	se = newSession(c, s.store, s.dbName)
+	mustExec(c, se, "GRANT ALL ON *.* TO 'hasgrant' WITH GRANT OPTION")
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "hasgrant", Hostname: "localhost", AuthUsername: "hasgrant", AuthHostname: "%"}, nil, nil), IsTrue)
+	mustExec(c, se, "REVOKE SELECT ON mysql.* FROM 'withoutgrant'")
+	mustExec(c, se, "REVOKE ALL ON mysql.* FROM withoutgrant")
+}
+
 func (s *testPrivilegeSuite) TestSetGlobal(c *C) {
 	se := newSession(c, s.store, s.dbName)
 	mustExec(c, se, `CREATE USER setglobal_a@localhost`)
@@ -536,7 +576,7 @@ func (s *testPrivilegeSuite) TestSetGlobal(c *C) {
 func (s *testPrivilegeSuite) TestCreateDropUser(c *C) {
 	se := newSession(c, s.store, s.dbName)
 	mustExec(c, se, `CREATE USER tcd1, tcd2`)
-	mustExec(c, se, `GRANT ALL ON *.* to tcd2`)
+	mustExec(c, se, `GRANT ALL ON *.* to tcd2 WITH GRANT OPTION`)
 
 	// should fail
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "tcd1", Hostname: "localhost", AuthUsername: "tcd1", AuthHostname: "%"}, nil, nil), IsTrue)
@@ -579,7 +619,7 @@ func (s *testPrivilegeSuite) TestAnalyzeTable(c *C) {
 	// high privileged user
 	mustExec(c, se, "CREATE USER 'asuper'")
 	mustExec(c, se, "CREATE USER 'anobody'")
-	mustExec(c, se, "GRANT ALL ON *.* TO 'asuper'")
+	mustExec(c, se, "GRANT ALL ON *.* TO 'asuper' WITH GRANT OPTION")
 	mustExec(c, se, "CREATE DATABASE atest")
 	mustExec(c, se, "use atest")
 	mustExec(c, se, "CREATE TABLE t1 (a int)")
@@ -649,6 +689,24 @@ func (s *testPrivilegeSuite) TestGetEncodedPassword(c *C) {
 	mustExec(c, se, `CREATE USER 'test_encode_u'@'localhost' identified by 'root';`)
 	pc := privilege.GetPrivilegeManager(se)
 	c.Assert(pc.GetEncodedPassword("test_encode_u", "localhost"), Equals, "*81F5E21E35407D884A6CD4A731AEBFB6AF209E1B")
+}
+
+func (s *testPrivilegeSuite) TestAuthHost(c *C) {
+	rootSe := newSession(c, s.store, s.dbName)
+	se := newSession(c, s.store, s.dbName)
+	mustExec(c, rootSe, `CREATE USER 'test_auth_host'@'%';`)
+	mustExec(c, rootSe, `GRANT ALL ON *.* TO 'test_auth_host'@'%' WITH GRANT OPTION;`)
+
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "test_auth_host", Hostname: "192.168.0.10"}, nil, nil), IsTrue)
+	mustExec(c, se, "CREATE USER 'test_auth_host'@'192.168.%';")
+	mustExec(c, se, "GRANT SELECT ON *.* TO 'test_auth_host'@'192.168.%';")
+
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "test_auth_host", Hostname: "192.168.0.10"}, nil, nil), IsTrue)
+	_, err := se.Execute(context.Background(), "create user test_auth_host_a")
+	c.Assert(err, NotNil)
+
+	mustExec(c, rootSe, "DROP USER 'test_auth_host'@'192.168.%';")
+	mustExec(c, rootSe, "DROP USER 'test_auth_host'@'%';")
 }
 
 func (s *testPrivilegeSuite) TestDefaultRoles(c *C) {
