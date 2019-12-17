@@ -2474,6 +2474,10 @@ func (s *testIntegrationSuite) TestBuiltin(c *C) {
 	result = tk.MustQuery("select from_unixtime(1451606400)")
 	unixTime := time.Unix(1451606400, 0).String()[:19]
 	result.Check(testkit.Rows(unixTime))
+	result = tk.MustQuery("select from_unixtime(14516064000/10)")
+	result.Check(testkit.Rows(unixTime))
+	result = tk.MustQuery("select from_unixtime('14516064000'/10)")
+	result.Check(testkit.Rows(unixTime))
 	result = tk.MustQuery("select from_unixtime(1451606400.123456)")
 	unixTime = time.Unix(1451606400, 123456000).String()[:26]
 	result.Check(testkit.Rows(unixTime))

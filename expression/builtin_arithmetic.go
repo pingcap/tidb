@@ -145,7 +145,7 @@ func (c *arithmeticDivideFunctionClass) setType4DivDecimal(retTp, a, b *types.Fi
 }
 
 func (c *arithmeticDivideFunctionClass) setType4DivReal(retTp *types.FieldType) {
-	retTp.Decimal = mysql.NotFixedDec
+	retTp.Decimal = types.UnspecifiedLength
 	retTp.Flen = mysql.MaxRealWidth
 }
 
