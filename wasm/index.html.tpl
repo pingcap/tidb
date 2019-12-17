@@ -26,7 +26,7 @@
     }
 
     div.term div.jquery-console-inner {
-        height: 800px;
+        height: 90%;
         background: black;
         overflow: auto
     }
@@ -61,7 +61,6 @@
     }
 
     body {
-        min-height: 100vh;
         min-width: 100vw;
         background-color: #000000;
         overflow-x: hidden;
@@ -71,7 +70,6 @@
         display: flex;
         align-items: center;
         justify-content: center;
-        min-height: 100vh;
         min-width: 100vw;
         font-family: "Poppins", sans-serif;
         background-color: #000000;

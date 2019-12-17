@@ -1,5 +1,6 @@
 PROJECT=tidb
 GOPATH ?= $(shell go env GOPATH)
+GOROOT ?= $(shell go env GOROOT)
 P=8
 
 # Ensure GOPATH is set before running build process.
