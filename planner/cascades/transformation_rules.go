@@ -888,20 +888,15 @@ func NewRulePushTopNDownUnionAll() Transformation {
 }
 
 // OnTransform implements Transformation interface.
-// It will transform `TopN->UnionAll->X` to `TopN->UnionAll->TopN->X`.
+// It will transform `TopN->UnionAll->X`.
 func (r *PushTopNDownUnionAll) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
 	topN := old.GetExpr().ExprNode.(*plannercore.LogicalTopN)
 	unionAll := old.Children[0].GetExpr().ExprNode.(*plannercore.LogicalUnionAll)
 
 	newTopN := plannercore.LogicalTopN{
-		Count: topN.Count + topN.Offset,
+		Count:   topN.Count + topN.Offset,
+		ByItems: topN.ByItems,
 	}.Init(topN.SCtx(), topN.SelectBlockOffset())
-	newTopN.ByItems = make([]*plannercore.ByItems, 0, len(topN.ByItems))
-	for _, by := range topN.ByItems {
-		newTopN.ByItems = append(newTopN.ByItems, &plannercore.ByItems{
-			Expr: by.Expr,
-			Desc: by.Desc})
-	}
 
 	newUnionAllExpr := memo.NewGroupExpr(unionAll)
 	for _, childGroup := range old.Children[0].GetExpr().Children {
@@ -912,7 +907,7 @@ func (r *PushTopNDownUnionAll) OnTransform(old *memo.ExprIter) (newExprs []*memo
 		newUnionAllExpr.Children = append(newUnionAllExpr.Children, newTopNGroup)
 	}
 
-	newTopNExpr := memo.NewGroupExpr(newTopN)
+	newTopNExpr := memo.NewGroupExpr(topN)
 	newUnionAllGroup := memo.NewGroupWithSchema(newUnionAllExpr, unionAll.Schema())
 	newTopNExpr.SetChildren(newUnionAllGroup)
 	return []*memo.GroupExpr{newTopNExpr}, true, false, nil
