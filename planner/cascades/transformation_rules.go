@@ -940,7 +940,7 @@ type PushTopNDownUnionAll struct {
 }
 
 // NewRulePushTopNDownUnionAll creates a new Transformation PushTopNDownUnionAll.
-// The pattern of this rule is `TopN->UnionAll->X` to `TopN->UnionAll->TopN->X`.
+// The pattern of this rule is `TopN->UnionAll->X`.
 func NewRulePushTopNDownUnionAll() Transformation {
 	rule := &PushTopNDownUnionAll{}
 	rule.pattern = memo.BuildPattern(
@@ -952,7 +952,7 @@ func NewRulePushTopNDownUnionAll() Transformation {
 }
 
 // OnTransform implements Transformation interface.
-// It will transform `TopN->UnionAll->X`.
+// It will transform `TopN->UnionAll->X` to `TopN->UnionAll->TopN->X`.
 func (r *PushTopNDownUnionAll) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
 	topN := old.GetExpr().ExprNode.(*plannercore.LogicalTopN)
 	unionAll := old.Children[0].GetExpr().ExprNode.(*plannercore.LogicalUnionAll)
