@@ -62,10 +62,6 @@ type SortExec struct {
 	partitionList []*chunk.ListInDisk
 	// partitionRowPtrs store the disk-chunk index and row index for each row for partitions.
 	partitionRowPtrs [][]chunk.RowPtr
-	// finalChunksInDisk store the final result in disk.
-	finalChunksInDisk *chunk.ListInDisk
-	// finalRowPtrs store the disk-chunk index and row index for final result.
-	finalRowPtrs []chunk.RowPtr
 	// exceeded indicates that records have exceeded memQuota during
 	// adding this chunk and we should spill now.
 	exceeded uint32
@@ -88,14 +84,8 @@ func (e *SortExec) Close() error {
 				}
 			}
 		}
-		if e.finalChunksInDisk != nil {
-			if err := e.finalChunksInDisk.Close(); err != nil {
-				return err
-			}
-		}
 		e.rowChunksInDisk = nil
 		e.partitionList = e.partitionList[:0]
-		e.finalChunksInDisk = nil
 
 		e.memTracker.Consume(int64(-8 * cap(e.rowPtrsInDisk)))
 		e.rowPtrsInDisk = nil
@@ -103,8 +93,6 @@ func (e *SortExec) Close() error {
 			e.memTracker.Consume(int64(-8 * cap(partitionPtrs)))
 		}
 		e.partitionRowPtrs = nil
-		e.memTracker.Consume(int64(-8 * cap(e.finalRowPtrs)))
-		e.finalRowPtrs = nil
 	}
 	e.memTracker.Consume(int64(-8 * cap(e.rowPtrs)))
 	e.rowPtrs = nil
@@ -131,8 +119,6 @@ func (e *SortExec) Open(ctx context.Context) error {
 	e.rowPtrsInDisk = e.rowPtrsInDisk[:0]
 	e.partitionList = e.partitionList[:0]
 	e.partitionRowPtrs = e.partitionRowPtrs[:0]
-	e.finalChunksInDisk = nil
-	e.finalRowPtrs = e.finalRowPtrs[:0]
 	return e.children[0].Open(ctx)
 }
 
@@ -145,7 +131,7 @@ func (e *SortExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			return err
 		}
 		if e.alreadySpilled() {
-			err = e.externalSorting()
+			err = e.prepareExternalSorting()
 			if err != nil {
 				return err
 			}
@@ -160,9 +146,9 @@ func (e *SortExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 
 	if e.alreadySpilled() {
-		for !req.IsFull() && e.Idx < len(e.finalRowPtrs) {
-			rowPtr := e.finalRowPtrs[e.Idx]
-			row, err := e.finalChunksInDisk.GetRow(rowPtr)
+		for !req.IsFull() && e.Idx < len(e.partitionRowPtrs[0]) {
+			rowPtr := e.partitionRowPtrs[0][e.Idx]
+			row, err := e.partitionList[0].GetRow(rowPtr)
 			if err != nil {
 				return err
 			}
@@ -179,7 +165,7 @@ func (e *SortExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	return nil
 }
 
-func (e *SortExec) externalSorting() (err error) {
+func (e *SortExec) prepareExternalSorting() (err error) {
 	e.initCompareFuncs()
 	e.buildKeyColumns()
 	e.rowPtrsInDisk = e.initPointersForListInDisk(e.rowChunksInDisk)
@@ -200,18 +186,6 @@ func (e *SortExec) externalSorting() (err error) {
 	e.rowChunks = nil
 	e.partitionList = append(e.partitionList, listInDisk)
 	e.partitionRowPtrs = append(e.partitionRowPtrs, e.initPointersForListInDisk(listInDisk))
-	// merge sort
-	// merge sort will be implemented in the next pr.
-	// Now it only read data from partition and restore again.
-	err = e.readPartition(e.partitionList[0], e.partitionRowPtrs[0])
-	if err != nil {
-		return err
-	}
-	e.initPointers()
-	e.finalChunksInDisk, err = e.spillToDiskByRowPtr()
-	e.memTracker.Consume(-e.rowChunks.GetMemTracker().BytesConsumed())
-	e.rowChunks = nil
-	e.finalRowPtrs = e.initPointersForListInDisk(e.finalChunksInDisk)
 	return err
 }
 
