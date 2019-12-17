@@ -2638,6 +2638,10 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 			return nil, infoschema.ErrColumnExists.GenWithStackByArgs(newColName)
 		}
 	}
+	// Check the column with foreign key.
+	if fkInfo := getColumnForeignKeyInfo(originalColName.L, t.Meta().ForeignKeys); fkInfo != nil {
+		return nil, errReferencedForeignKey.GenWithStackByArgs(originalColName, fkInfo.Name)
+	}
 
 	// Constraints in the new column means adding new constraints. Errors should thrown,
 	// which will be done by `processColumnOptions` later.
@@ -3653,6 +3657,10 @@ func isDroppableColumn(tblInfo *model.TableInfo, colName model.CIStr) error {
 	// We must drop the index first, then drop the column.
 	if isColumnWithIndex(colName.L, tblInfo.Indices) {
 		return errCantDropColWithIndex.GenWithStack("can't drop column %s with index covered now", colName)
+	}
+	// Check the column with foreign key.
+	if fkInfo := getColumnForeignKeyInfo(colName.L, tblInfo.ForeignKeys); fkInfo != nil {
+		return errFkColumnCannotDrop.GenWithStackByArgs(colName, fkInfo.Name)
 	}
 	return nil
 }

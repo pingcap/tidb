@@ -535,6 +535,17 @@ func isColumnWithIndex(colName string, indices []*model.IndexInfo) bool {
 	return false
 }
 
+func getColumnForeignKeyInfo(colName string, fkInfos []*model.FKInfo) *model.FKInfo {
+	for _, fkInfo := range fkInfos {
+		for _, col := range fkInfo.Cols {
+			if col.L == colName {
+				return fkInfo
+			}
+		}
+	}
+	return nil
+}
+
 func allocateColumnID(tblInfo *model.TableInfo) int64 {
 	tblInfo.MaxColumnID++
 	return tblInfo.MaxColumnID
