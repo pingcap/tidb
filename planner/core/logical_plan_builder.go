@@ -2718,6 +2718,8 @@ func (b *PlanBuilder) buildMemTable(ctx context.Context, dbName model.CIStr, tab
 	switch tableInfo.Name.L {
 	case strings.ToLower(infoschema.TableClusterConfig):
 		p.Extractor = &ClusterConfigTableExtractor{}
+	case strings.ToLower(infoschema.TableClusterLog):
+		p.Extractor = &ClusterLogTableExtractor{}
 	}
 
 	return p, nil
