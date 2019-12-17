@@ -800,13 +800,10 @@ func (b *builtinSubDurationAndDurationSig) vecEvalDuration(input *chunk.Chunk, r
 
 		// calculate
 
-		arg0Duration := types.Duration{Duration: arg0, Fsp: -1}
-		arg1Duration := types.Duration{Duration: arg1, Fsp: -1}
-		outputDuration, err := arg0Duration.Sub(arg1Duration)
+		output, err := types.SubDuration(arg0, arg1)
 		if err != nil {
 			return err
 		}
-		output := outputDuration.Duration
 
 		// commit result
 
@@ -872,12 +869,10 @@ func (b *builtinSubDurationAndStringSig) vecEvalDuration(input *chunk.Chunk, res
 			return err
 		}
 
-		arg0Duration := types.Duration{Duration: arg0, Fsp: -1}
-		outputDuration, err := arg0Duration.Sub(arg1Duration)
+		output, err := types.SubDuration(arg0, arg1Duration.Duration)
 		if err != nil {
 			return err
 		}
-		output := outputDuration.Duration
 
 		// commit result
 

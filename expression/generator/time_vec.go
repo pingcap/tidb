@@ -219,13 +219,10 @@ func (b *{{.SigName}}) vecEval{{ .Output.TypeName }}(input *chunk.Chunk, result 
 			return err
 		}
 		{{ else }}
-		arg0Duration := types.Duration{Duration: arg0, Fsp: -1}
-		arg1Duration := types.Duration{Duration: arg1, Fsp: -1}
-		outputDuration, err := arg0Duration.Sub(arg1Duration)
+		output, err := types.SubDuration(arg0, arg1)
 		if err != nil {
 			return err
 		}
-		output := outputDuration.Duration
 		{{ end }}
 	{{ else if or (eq .SigName "builtinAddDurationAndStringSig") (eq .SigName "builtinSubDurationAndStringSig") }}
 		{{ template "ConvertStringToDuration" . }}
@@ -235,12 +232,10 @@ func (b *{{.SigName}}) vecEval{{ .Output.TypeName }}(input *chunk.Chunk, result 
 			return err
 		}
 		{{ else }}
-		arg0Duration := types.Duration{Duration: arg0, Fsp: -1}
-		outputDuration, err := arg0Duration.Sub(arg1Duration)
+		output, err := types.SubDuration(arg0, arg1Duration.Duration)
 		if err != nil {
 			return err
 		}
-		output := outputDuration.Duration
 		{{ end }}
 	{{ else if or (eq .SigName "builtinAddStringAndDurationSig") (eq .SigName "builtinSubStringAndDurationSig") }}
 		sc := b.ctx.GetSessionVars().StmtCtx
@@ -327,7 +322,7 @@ func (b *{{.SigName}}) vecEval{{ .Output.TypeName }}(input *chunk.Chunk, result 
 
 		// commit result
 	{{ if .Output.Fixed }}
-		resultSlice[i] = output	
+		resultSlice[i] = output
 	{{ else }}
 		result.Append{{ .Output.TypeNameInColumn }}(output)
 	{{ end }}
