@@ -815,33 +815,28 @@ func (action actionPessimisticLock) handleSingleBatch(c *twoPhaseCommitter, bo *
 			if err1 != nil {
 				return errors.Trace(err1)
 			}
-			// Check lock conflict error for nowait, if nowait set and key locked by others,
-			// report error immediately and do no more resolve locks.
-			// if the lock left behind whose related txn is already committed or rollbacked,
-			// (eg secondary locks not committed or rollbacked yet)
-			// we cant return "nowait conflict" directly
-			if lock.LockType == pb.Op_PessimisticLock {
-				if action.lockWaitTime == kv.LockNoWait {
-					// 3.0 release not supported yet
-					return kv.ErrNotImplemented
-				} else if action.lockWaitTime == kv.LockAlwaysWait {
-					// do nothing but keep wait
-				} else {
-					// the lockWaitTime is set, check the lock wait timeout or not
-					// the pessimistic lock found could be invalid locks which is timeout but not recycled yet
-					if !c.store.oracle.IsExpired(lock.TxnID, lock.TTL) {
-						if time.Since(lockWaitStartTime).Milliseconds() >= action.lockWaitTime {
-							return ErrLockWaitTimeout
-						}
-					}
-				}
-			}
 			locks = append(locks, lock)
 		}
 		// Because we already waited on tikv, no need to Backoff here.
-		_, err = c.store.lockResolver.ResolveLocks(bo, locks)
+		msBeforeTxnExpired, err := c.store.lockResolver.ResolveLocks(bo, locks)
 		if err != nil {
 			return errors.Trace(err)
+		}
+
+		// If msBeforeTxnExpired is not zero, it means there are still locks blocking us acquiring
+		// the pessimistic lock. We should return timeout error if necessary.
+		if msBeforeTxnExpired > 0 {
+			if action.lockWaitTime == kv.LockNoWait {
+				// 3.0 release not supported yet
+				return kv.ErrNotImplemented
+			} else if action.lockWaitTime == kv.LockAlwaysWait {
+				// do nothing but keep wait
+			} else {
+				// the lockWaitTime is set, we should return wait timeout if we are still blocked by a lock
+				if time.Since(lockWaitStartTime).Milliseconds() >= action.lockWaitTime {
+					return ErrLockWaitTimeout
+				}
+			}
 		}
 
 		// Handle the killed flag when waiting for the pessimistic lock.
