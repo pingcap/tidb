@@ -25,6 +25,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
@@ -108,6 +109,27 @@ func (b *builtinSleepSig) Clone() builtinFunc {
 	return newSig
 }
 
+func sleepDuration(sessVars *variable.SessionVars, val float64) bool {
+	dur := time.Duration(val * float64(time.Second.Nanoseconds()))
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	start := time.Now()
+	finish := false
+	for !finish {
+		select {
+		case now := <-ticker.C:
+			if now.Sub(start) > dur {
+				finish = true
+			}
+		default:
+			if atomic.CompareAndSwapUint32(&sessVars.Killed, 1, 0) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // evalInt evals a builtinSleepSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_sleep
 func (b *builtinSleepSig) evalInt(row chunk.Row) (int64, bool, error) {
@@ -135,22 +157,9 @@ func (b *builtinSleepSig) evalInt(row chunk.Row) (int64, bool, error) {
 		return 0, false, errIncorrectArgs.GenWithStackByArgs("sleep")
 	}
 
-	dur := time.Duration(val * float64(time.Second.Nanoseconds()))
-	ticker := time.NewTicker(10 * time.Millisecond)
-	defer ticker.Stop()
-	start := time.Now()
-	finish := false
-	for !finish {
-		select {
-		case now := <-ticker.C:
-			if now.Sub(start) > dur {
-				finish = true
-			}
-		default:
-			if atomic.CompareAndSwapUint32(&sessVars.Killed, 1, 0) {
-				return 1, false, nil
-			}
-		}
+	flag := sleepDuration(sessVars, val)
+	if flag {
+		return 1, false, nil
 	}
 
 	return 0, false, nil

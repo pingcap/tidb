@@ -20,7 +20,6 @@ import (
 	"math"
 	"net"
 	"strings"
-	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -325,23 +324,11 @@ func (b *builtinSleepSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) e
 		}
 
 		i64s[i] = 0
-		dur := time.Duration(y[i] * float64(time.Second.Nanoseconds()))
-		ticker := time.NewTicker(10 * time.Millisecond)
-		defer ticker.Stop()
-		start := time.Now()
-		finish := false
-		for !finish {
-			select {
-			case now := <-ticker.C:
-				if now.Sub(start) > dur {
-					finish = true
-				}
-			default:
-				if atomic.CompareAndSwapUint32(&sessVars.Killed, 1, 0) {
-					i64s[i] = 1
-					return nil
-				}
-			}
+
+		flag := sleepDuration(sessVars, y[i])
+		if flag {
+			i64s[i] = 1
+			return nil
 		}
 	}
 	return nil
