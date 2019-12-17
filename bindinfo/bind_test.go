@@ -76,6 +76,7 @@ func (s *testSuite) SetUpSuite(c *C) {
 		session.SetSchemaLease(0)
 		session.DisableStats4Test()
 	}
+	bindinfo.Lease = 0
 	d, err := session.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
 	d.SetStatsUpdating(true)
@@ -99,8 +100,8 @@ func (s *testSuite) TearDownTest(c *C) {
 }
 
 func (s *testSuite) cleanBindingEnv(tk *testkit.TestKit) {
-	tk.MustExec("drop table if exists mysql.bind_info")
-	tk.MustExec(session.CreateBindInfoTable)
+	tk.MustExec("truncate table mysql.bind_info")
+	s.domain.BindHandle().Clear()
 }
 
 func (s *testSuite) TestBindParse(c *C) {
@@ -166,7 +167,7 @@ func (s *testSuite) TestGlobalBinding(c *C) {
 	metrics.BindMemoryUsage.WithLabelValues(metrics.ScopeGlobal, bindinfo.Using).Write(pb)
 	c.Assert(pb.GetGauge().GetValue(), Equals, float64(161))
 
-	sql, hash := parser.NormalizeDigest("select * from t where i > ?")
+	sql, hash := parser.NormalizeDigest("select * from t where i          >      30.0")
 
 	bindData := s.domain.BindHandle().GetBindRecord(hash, sql, "test")
 	c.Check(bindData, NotNil)
@@ -427,6 +428,42 @@ func (s *testSuite) TestExplain(c *C) {
 	tk.MustExec("drop global binding for SELECT * from t1,t2 where t1.id = t2.id")
 }
 
+// TestBindingSymbolList tests sql with "?, ?, ?, ?", fixes #13871
+func (s *testSuite) TestBindingSymbolList(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	s.cleanBindingEnv(tk)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, INDEX ia (a), INDEX ib (b));")
+	tk.MustExec("insert into t value(1, 1);")
+
+	// before binding
+	tk.MustQuery("select a, b from t where a = 3 limit 1, 100")
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.IndexNames[0], Equals, "t:ia")
+	c.Assert(tk.MustUseIndex("select a, b from t where a = 3 limit 1, 100", "a"), IsTrue)
+
+	tk.MustExec(`create global binding for select a, b from t where a = 1 limit 0, 1 using select a, b from t use index (ib) where a = 1 limit 0, 1`)
+
+	// after binding
+	tk.MustQuery("select a, b from t where a = 3 limit 1, 100")
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.IndexNames[0], Equals, "t:ib")
+	c.Assert(tk.MustUseIndex("select a, b from t where a = 3 limit 1, 100", "b"), IsTrue)
+
+	// Normalize
+	sql, hash := parser.NormalizeDigest("select a, b from t where a = 1 limit 0, 1")
+
+	bindData := s.domain.BindHandle().GetBindRecord(hash, sql, "test")
+	c.Assert(bindData, NotNil)
+	c.Check(bindData.OriginalSQL, Equals, "select a , b from t where a = ? limit ...")
+	c.Check(bindData.BindSQL, Equals, "select a, b from t use index (ib) where a = 1 limit 0, 1")
+	c.Check(bindData.Db, Equals, "test")
+	c.Check(bindData.Status, Equals, "using")
+	c.Check(bindData.Charset, NotNil)
+	c.Check(bindData.Collation, NotNil)
+	c.Check(bindData.CreateTime, NotNil)
+	c.Check(bindData.UpdateTime, NotNil)
+}
+
 func (s *testSuite) TestErrorBind(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	s.cleanBindingEnv(tk)
@@ -464,4 +501,22 @@ func (s *testSuite) TestErrorBind(c *C) {
 	err = rs.Next(context.TODO(), chk)
 	c.Check(err, IsNil)
 	c.Check(chk.NumRows(), Equals, 0)
+}
+
+func (s *testSuite) TestBindingCache(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	s.cleanBindingEnv(tk)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, index idx(a))")
+	tk.MustExec("create global binding for select * from t using select * from t use index(idx)")
+	tk.MustExec("create database tmp")
+	tk.MustExec("use tmp")
+	tk.MustExec("create table t(a int, b int, index idx(a))")
+	tk.MustExec("create global binding for select * from t using select * from t use index(idx)")
+
+	c.Assert(s.domain.BindHandle().Update(false), IsNil)
+	c.Assert(s.domain.BindHandle().Update(false), IsNil)
+	res := tk.MustQuery("show global bindings")
+	c.Assert(len(res.Rows()), Equals, 2)
 }
