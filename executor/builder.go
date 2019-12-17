@@ -1259,18 +1259,17 @@ func (b *executorBuilder) getStartTS() (uint64, error) {
 }
 
 func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executor {
-	var e Executor
 	switch v.DBName.L {
-	case util.MetricSchemaLowerName:
-		e = &MetricReaderExec{
+	case util.MetricSchemaName.L:
+		return &MetricReaderExec{
 			baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
 			table:        v.Table,
 			outputCols:   v.Columns,
 		}
-	case util.InformationSchemaLowerName:
+	case util.InformationSchemaName.L:
 		switch v.Table.Name.L {
 		case strings.ToLower(infoschema.TableClusterConfig):
-			e = &ClusterReaderExec{
+			return &ClusterReaderExec{
 				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
 				retriever: &clusterConfigRetriever{
 					extractor: v.Extractor.(*plannercore.ClusterConfigTableExtractor),
@@ -1278,18 +1277,14 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 			}
 		}
 	}
-	if e != nil {
-		return e
-	}
 	tb, _ := b.is.TableByID(v.Table.ID)
-	e = &TableScanExec{
+	return &TableScanExec{
 		baseExecutor:   newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
 		t:              tb,
 		columns:        v.Columns,
 		seekHandle:     math.MinInt64,
 		isVirtualTable: !tb.Type().IsNormalTable(),
 	}
-	return e
 }
 
 func (b *executorBuilder) buildSort(v *plannercore.PhysicalSort) Executor {

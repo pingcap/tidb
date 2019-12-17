@@ -28,7 +28,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/prometheus/client_golang/api"
-	v1 "github.com/prometheus/client_golang/api/prometheus/v1"
+	promv1 "github.com/prometheus/client_golang/api/prometheus/v1"
 	pmodel "github.com/prometheus/common/model"
 )
 
@@ -49,7 +49,7 @@ func (e *MetricReaderExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	if e.done {
 		return nil
 	}
-	rows, err := e.getRows()
+	rows, err := e.getRows(ctx)
 	if err != nil {
 		return err
 	}
@@ -68,7 +68,7 @@ func (e *MetricReaderExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	return nil
 }
 
-func (e *MetricReaderExec) getRows() (fullRows [][]types.Datum, err error) {
+func (e *MetricReaderExec) getRows(ctx context.Context) (fullRows [][]types.Datum, err error) {
 	tblDef, err := metricschema.GetMetricTableDef(e.table.Name.L)
 	if err != nil {
 		return nil, err
@@ -76,7 +76,7 @@ func (e *MetricReaderExec) getRows() (fullRows [][]types.Datum, err error) {
 	e.tblDef = tblDef
 	// TODO: Get query range from plan instead of use default range.
 	queryRange := e.getDefaultQueryRange()
-	queryValue, err := e.queryMetric(queryRange)
+	queryValue, err := e.queryMetric(ctx, queryRange)
 	if err != nil {
 		return nil, err
 	}
@@ -96,7 +96,7 @@ func (e *MetricReaderExec) getRows() (fullRows [][]types.Datum, err error) {
 	return rows, nil
 }
 
-func (e *MetricReaderExec) queryMetric(queryRange v1.Range) (pmodel.Value, error) {
+func (e *MetricReaderExec) queryMetric(ctx context.Context, queryRange promv1.Range) (pmodel.Value, error) {
 	addr, err := e.getMetricAddr()
 	if err != nil {
 		return nil, err
@@ -107,8 +107,8 @@ func (e *MetricReaderExec) queryMetric(queryRange v1.Range) (pmodel.Value, error
 		return nil, err
 	}
 
-	promQLAPI := v1.NewAPI(queryClient)
-	ctx, cancel := context.WithTimeout(context.Background(), promReadTimeout)
+	promQLAPI := promv1.NewAPI(queryClient)
+	ctx, cancel := context.WithTimeout(ctx, promReadTimeout)
 	defer cancel()
 
 	// TODO: add label condition.
@@ -131,7 +131,7 @@ func (e *MetricReaderExec) getMetricAddr() (string, error) {
 	return "", errors.Errorf("pd address was not found")
 }
 
-type promQLQueryRange = v1.Range
+type promQLQueryRange = promv1.Range
 
 func (e *MetricReaderExec) getDefaultQueryRange() promQLQueryRange {
 	return promQLQueryRange{Start: time.Now(), End: time.Now(), Step: time.Second * time.Duration(e.ctx.GetSessionVars().MetricSchemaStep)}

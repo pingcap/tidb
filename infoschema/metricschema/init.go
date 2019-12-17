@@ -42,7 +42,7 @@ func Init() {
 		}
 		dbInfo := &model.DBInfo{
 			ID:      dbID,
-			Name:    model.NewCIStr(util.MetricSchemaName),
+			Name:    model.NewCIStr(util.MetricSchemaName.O),
 			Charset: mysql.DefaultCharset,
 			Collate: mysql.DefaultCollationName,
 			Tables:  metricTables,

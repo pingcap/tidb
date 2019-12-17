@@ -102,9 +102,8 @@ type InfoSchema interface {
 }
 
 // Information Schema Name.
-const (
-	Name      = util.InformationSchemaName
-	LowerName = util.InformationSchemaLowerName
+var (
+	Name = util.InformationSchemaName.O
 )
 
 type sortedTables []table.Table
