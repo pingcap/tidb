@@ -533,7 +533,7 @@ func (w *ImplWindow) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty
 	var byItems []property.Item
 	byItems = append(byItems, lw.PartitionBy...)
 	byItems = append(byItems, lw.OrderBy...)
-	childProperty := &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64, Items: byItems, Enforced: true}
+	childProperty := &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64, Items: byItems}
 	return prop.IsPrefix(childProperty)
 }
 
@@ -552,8 +552,8 @@ func (w *ImplWindow) OnImplement(expr *memo.GroupExpr, reqProp *property.Physica
 		lw.SCtx(),
 		expr.Group.Prop.Stats,
 		lw.SelectBlockOffset(),
-		&property.PhysicalProperty{ExpectedCnt: math.MaxFloat64, Items: byItems, Enforced: true},
+		&property.PhysicalProperty{ExpectedCnt: math.MaxFloat64, Items: byItems},
 	)
-	physicalWindow.SetSchema(lw.Schema())
+	physicalWindow.SetSchema(expr.Group.Prop.Schema)
 	return impl.NewWindowImpl(physicalWindow), nil
 }
