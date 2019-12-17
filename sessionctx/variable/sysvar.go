@@ -686,7 +686,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeSession, TiDBEnableStreaming, "0"},
 	{ScopeSession, TiDBEnableChunkRPC, "1"},
 	{ScopeSession, TxnIsolationOneShot, ""},
-	{ScopeSession, TiDBEnableTablePartition, "auto"},
+	{ScopeGlobal | ScopeSession, TiDBEnableTablePartition, "auto"},
 	{ScopeGlobal | ScopeSession, TiDBHashJoinConcurrency, strconv.Itoa(DefTiDBHashJoinConcurrency)},
 	{ScopeGlobal | ScopeSession, TiDBProjectionConcurrency, strconv.Itoa(DefTiDBProjectionConcurrency)},
 	{ScopeGlobal | ScopeSession, TiDBHashAggPartialConcurrency, strconv.Itoa(DefTiDBHashAggPartialConcurrency)},

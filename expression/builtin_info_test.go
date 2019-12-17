@@ -167,6 +167,10 @@ func (s *testEvaluatorSuite) TestBenchMark(c *C) {
 		} else {
 			c.Assert(d.GetInt64(), Equals, t.Expected)
 		}
+
+		// test clone
+		b1 := f.Clone().(*ScalarFunction).Function.(*builtinBenchmarkSig)
+		c.Assert(b1.constLoopCount, Equals, int64(t.LoopCount))
 	}
 }
 
