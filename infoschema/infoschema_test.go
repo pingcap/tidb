@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
 )
@@ -123,7 +124,7 @@ func (*testSuite) TestT(c *C) {
 
 	schemaNames := is.AllSchemaNames()
 	c.Assert(schemaNames, HasLen, 4)
-	c.Assert(testutil.CompareUnorderedStringSlice(schemaNames, []string{infoschema.Name, "METRIC_SCHEMA", "PERFORMANCE_SCHEMA", "Test"}), IsTrue)
+	c.Assert(testutil.CompareUnorderedStringSlice(schemaNames, []string{util.InformationSchemaName.O, util.MetricSchemaName.O, util.PerformanceSchemaName.O, "Test"}), IsTrue)
 
 	schemas := is.AllSchemas()
 	c.Assert(schemas, HasLen, 4)
@@ -320,7 +321,7 @@ func (*testSuite) TestInfoTables(c *C) {
 		"PROCESSLIST",
 	}
 	for _, t := range infoTables {
-		tb, err1 := is.TableByName(model.NewCIStr(infoschema.Name), model.NewCIStr(t))
+		tb, err1 := is.TableByName(util.InformationSchemaName, model.NewCIStr(t))
 		c.Assert(err1, IsNil)
 		c.Assert(tb, NotNil)
 	}

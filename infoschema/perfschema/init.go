@@ -19,6 +19,7 @@ import (
 
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/ddl"
@@ -62,7 +63,7 @@ func Init() {
 		}
 		dbInfo := &model.DBInfo{
 			ID:      dbID,
-			Name:    model.NewCIStr(Name),
+			Name:    util.PerformanceSchemaName,
 			Charset: mysql.DefaultCharset,
 			Collate: mysql.DefaultCollationName,
 			Tables:  tbls,

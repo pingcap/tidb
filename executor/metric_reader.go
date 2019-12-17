@@ -43,6 +43,16 @@ type MetricReaderExec struct {
 	done       bool
 }
 
+// Open implements the Executor Open interface.
+func (e *MetricReaderExec) Open(ctx context.Context) error {
+	tblDef, err := metricschema.GetMetricTableDef(e.table.Name.L)
+	if err != nil {
+		return err
+	}
+	e.tblDef = tblDef
+	return nil
+}
+
 // Next implements the Executor Next interface.
 func (e *MetricReaderExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.Reset()
@@ -69,11 +79,6 @@ func (e *MetricReaderExec) Next(ctx context.Context, req *chunk.Chunk) error {
 }
 
 func (e *MetricReaderExec) getRows(ctx context.Context) (fullRows [][]types.Datum, err error) {
-	tblDef, err := metricschema.GetMetricTableDef(e.table.Name.L)
-	if err != nil {
-		return nil, err
-	}
-	e.tblDef = tblDef
 	// TODO: Get query range from plan instead of use default range.
 	queryRange := e.getDefaultQueryRange()
 	queryValue, err := e.queryMetric(ctx, queryRange)
@@ -125,7 +130,6 @@ func (e *MetricReaderExec) getMetricAddr() (string, error) {
 		return "", errors.Errorf("%T not an etcd backend", store)
 	}
 	for _, addr := range etcd.EtcdAddrs() {
-		addr = strings.TrimSpace(addr)
 		return addr, nil
 	}
 	return "", errors.Errorf("pd address was not found")

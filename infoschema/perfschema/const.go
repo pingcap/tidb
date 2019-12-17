@@ -13,13 +13,6 @@
 
 package perfschema
 
-import "github.com/pingcap/tidb/util"
-
-// Performance Schema Name.
-var (
-	Name = util.PerformanceSchemaName.O
-)
-
 // perfSchemaTables is a shortcut to involve all table names.
 var perfSchemaTables = []string{
 	tableGlobalStatus,

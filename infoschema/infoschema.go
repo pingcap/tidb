@@ -101,11 +101,6 @@ type InfoSchema interface {
 	TableIsView(schema, table model.CIStr) bool
 }
 
-// Information Schema Name.
-var (
-	Name = util.InformationSchemaName.O
-)
-
 type sortedTables []table.Table
 
 func (s sortedTables) Len() int {
@@ -367,7 +362,7 @@ func init() {
 	}
 	infoSchemaDB := &model.DBInfo{
 		ID:      dbID,
-		Name:    model.NewCIStr(Name),
+		Name:    util.InformationSchemaName,
 		Charset: mysql.DefaultCharset,
 		Collate: mysql.DefaultCollationName,
 		Tables:  infoSchemaTables,
