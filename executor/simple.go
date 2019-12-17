@@ -867,78 +867,54 @@ func (e *SimpleExec) executeDropUser(s *ast.DropUserStmt) error {
 				e.ctx.GetSessionVars().StmtCtx.AppendNote(infoschema.ErrUserDropExists.GenWithStackByArgs(user))
 			} else {
 				failedUsers = append(failedUsers, user.String())
-				if _, err := sqlExecutor.Execute(context.Background(), "rollback"); err != nil {
-					return err
-				}
 				break
 			}
 		}
 
 		// begin a transaction to delete a user.
 		sql := fmt.Sprintf(`DELETE FROM %s.%s WHERE Host = '%s' and User = '%s';`, mysql.SystemDB, mysql.UserTable, user.Hostname, user.Username)
-		if _, err := sqlExecutor.Execute(context.Background(), sql); err != nil {
+		if _, err = sqlExecutor.Execute(context.Background(), sql); err != nil {
 			failedUsers = append(failedUsers, user.String())
-			if _, err := sqlExecutor.Execute(context.Background(), "rollback"); err != nil {
-				return err
-			}
 			break
 		}
 
 		// delete privileges from mysql.db
 		sql = fmt.Sprintf(`DELETE FROM %s.%s WHERE Host = '%s' and User = '%s';`, mysql.SystemDB, mysql.DBTable, user.Hostname, user.Username)
-		if _, err := sqlExecutor.Execute(context.Background(), sql); err != nil {
+		if _, err = sqlExecutor.Execute(context.Background(), sql); err != nil {
 			failedUsers = append(failedUsers, user.String())
-			if _, err := sqlExecutor.Execute(context.Background(), "rollback"); err != nil {
-				return err
-			}
 			break
 		}
 
 		// delete privileges from mysql.tables_priv
 		sql = fmt.Sprintf(`DELETE FROM %s.%s WHERE Host = '%s' and User = '%s';`, mysql.SystemDB, mysql.TablePrivTable, user.Hostname, user.Username)
-		if _, err := sqlExecutor.Execute(context.Background(), sql); err != nil {
+		if _, err = sqlExecutor.Execute(context.Background(), sql); err != nil {
 			failedUsers = append(failedUsers, user.String())
-			if _, err := sqlExecutor.Execute(context.Background(), "rollback"); err != nil {
-				return err
-			}
 			break
 		}
 
 		// delete relationship from mysql.role_edges
 		sql = fmt.Sprintf(`DELETE FROM %s.%s WHERE TO_HOST = '%s' and TO_USER = '%s';`, mysql.SystemDB, mysql.RoleEdgeTable, user.Hostname, user.Username)
-		if _, err := sqlExecutor.Execute(context.Background(), sql); err != nil {
+		if _, err = sqlExecutor.Execute(context.Background(), sql); err != nil {
 			failedUsers = append(failedUsers, user.String())
-			if _, err := sqlExecutor.Execute(context.Background(), "rollback"); err != nil {
-				return err
-			}
 			break
 		}
 
 		sql = fmt.Sprintf(`DELETE FROM %s.%s WHERE FROM_HOST = '%s' and FROM_USER = '%s';`, mysql.SystemDB, mysql.RoleEdgeTable, user.Hostname, user.Username)
-		if _, err := sqlExecutor.Execute(context.Background(), sql); err != nil {
+		if _, err = sqlExecutor.Execute(context.Background(), sql); err != nil {
 			failedUsers = append(failedUsers, user.String())
-			if _, err := sqlExecutor.Execute(context.Background(), "rollback"); err != nil {
-				return err
-			}
 			break
 		}
 
 		// delete relationship from mysql.default_roles
 		sql = fmt.Sprintf(`DELETE FROM %s.%s WHERE DEFAULT_ROLE_HOST = '%s' and DEFAULT_ROLE_USER = '%s';`, mysql.SystemDB, mysql.DefaultRoleTable, user.Hostname, user.Username)
-		if _, err := sqlExecutor.Execute(context.Background(), sql); err != nil {
+		if _, err = sqlExecutor.Execute(context.Background(), sql); err != nil {
 			failedUsers = append(failedUsers, user.String())
-			if _, err := sqlExecutor.Execute(context.Background(), "rollback"); err != nil {
-				return err
-			}
 			break
 		}
 
 		sql = fmt.Sprintf(`DELETE FROM %s.%s WHERE HOST = '%s' and USER = '%s';`, mysql.SystemDB, mysql.DefaultRoleTable, user.Hostname, user.Username)
-		if _, err := sqlExecutor.Execute(context.Background(), sql); err != nil {
+		if _, err = sqlExecutor.Execute(context.Background(), sql); err != nil {
 			failedUsers = append(failedUsers, user.String())
-			if _, err := sqlExecutor.Execute(context.Background(), "rollback"); err != nil {
-				return err
-			}
 			break
 		}
 		//TODO: need delete columns_priv once we implement columns_priv functionality.
@@ -949,6 +925,9 @@ func (e *SimpleExec) executeDropUser(s *ast.DropUserStmt) error {
 			return err
 		}
 	} else {
+		if _, err := sqlExecutor.Execute(context.Background(), "rollback"); err != nil {
+			return err
+		}
 		if s.IsDropRole {
 			return ErrCannotUser.GenWithStackByArgs("DROP ROLE", strings.Join(failedUsers, ","))
 		}
