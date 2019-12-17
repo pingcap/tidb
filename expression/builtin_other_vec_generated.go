@@ -45,6 +45,11 @@ func (b *builtinInIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) e
 		r64s[i] = 0
 	}
 	hasNull := make([]bool, n)
+	if b.hasNull {
+		for i := 0; i < n; i++ {
+			hasNull[i] = true
+		}
+	}
 	isUnsigned0 := mysql.HasUnsignedFlag(b.args[0].GetType().Flag)
 	var compareResult int
 	args := b.args
@@ -140,6 +145,11 @@ func (b *builtinInStringSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column
 		r64s[i] = 0
 	}
 	hasNull := make([]bool, n)
+	if b.hasNull {
+		for i := 0; i < n; i++ {
+			hasNull[i] = true
+		}
+	}
 	var compareResult int
 	args := b.args
 
@@ -213,6 +223,11 @@ func (b *builtinInDecimalSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colum
 		r64s[i] = 0
 	}
 	hasNull := make([]bool, n)
+	if b.hasNull {
+		for i := 0; i < n; i++ {
+			hasNull[i] = true
+		}
+	}
 	var compareResult int
 	args := b.args
 
@@ -295,6 +310,11 @@ func (b *builtinInRealSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 		r64s[i] = 0
 	}
 	hasNull := make([]bool, n)
+	if b.hasNull {
+		for i := 0; i < n; i++ {
+			hasNull[i] = true
+		}
+	}
 	var compareResult int
 	args := b.args
 
@@ -370,6 +390,11 @@ func (b *builtinInTimeSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 		r64s[i] = 0
 	}
 	hasNull := make([]bool, n)
+	if b.hasNull {
+		for i := 0; i < n; i++ {
+			hasNull[i] = true
+		}
+	}
 	var compareResult int
 	args := b.args
 
@@ -445,6 +470,11 @@ func (b *builtinInDurationSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colu
 		r64s[i] = 0
 	}
 	hasNull := make([]bool, n)
+	if b.hasNull {
+		for i := 0; i < n; i++ {
+			hasNull[i] = true
+		}
+	}
 	var compareResult int
 	args := b.args
 
@@ -519,6 +549,11 @@ func (b *builtinInJSONSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 		r64s[i] = 0
 	}
 	hasNull := make([]bool, n)
+	if b.hasNull {
+		for i := 0; i < n; i++ {
+			hasNull[i] = true
+		}
+	}
 	var compareResult int
 	args := b.args
 

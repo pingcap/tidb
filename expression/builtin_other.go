@@ -145,6 +145,7 @@ type builtinInIntSig struct {
 	nonConstArgs []Expression
 	hashSet      map[int64]bool
 	threshold    int
+	hasNull      bool
 }
 
 func (b *builtinInIntSig) buildHashMapForConstArgs(ctx sessionctx.Context) error {
@@ -159,7 +160,7 @@ func (b *builtinInIntSig) buildHashMapForConstArgs(ctx sessionctx.Context) error
 				return err
 			}
 			if isNull {
-				b.nonConstArgs = append(b.nonConstArgs, b.args[i])
+				b.hasNull = true
 				continue
 			}
 			b.hashSet[val] = mysql.HasUnsignedFlag(b.args[i].GetType().Flag)
@@ -185,6 +186,7 @@ func (b *builtinInIntSig) Clone() builtinFunc {
 	}
 	newSig.hashSet = b.hashSet
 	newSig.threshold = b.threshold
+	newSig.hasNull = b.hasNull
 	return newSig
 }
 
@@ -210,7 +212,7 @@ func (b *builtinInIntSig) evalInt(row chunk.Row) (int64, bool, error) {
 		}
 	}
 
-	var hasNull bool
+	hasNull := b.hasNull
 	for _, arg := range args[1:] {
 		evaledArg, isNull, err := arg.EvalInt(b.ctx, row)
 		if err != nil {
@@ -248,6 +250,7 @@ type builtinInStringSig struct {
 	nonConstArgs []Expression
 	hashSet      map[string]bool
 	threshold    int
+	hasNull      bool
 }
 
 func (b *builtinInStringSig) buildHashMapForConstArgs(ctx sessionctx.Context) error {
@@ -262,7 +265,7 @@ func (b *builtinInStringSig) buildHashMapForConstArgs(ctx sessionctx.Context) er
 				return err
 			}
 			if isNull {
-				b.nonConstArgs = append(b.nonConstArgs, b.args[i])
+				b.hasNull = true
 				continue
 			}
 			b.hashSet[val] = true
@@ -288,6 +291,7 @@ func (b *builtinInStringSig) Clone() builtinFunc {
 	}
 	newSig.hashSet = b.hashSet
 	newSig.threshold = b.threshold
+	newSig.hasNull = b.hasNull
 	return newSig
 }
 
@@ -305,7 +309,7 @@ func (b *builtinInStringSig) evalInt(row chunk.Row) (int64, bool, error) {
 		}
 	}
 
-	var hasNull bool
+	hasNull := b.hasNull
 	for _, arg := range args[1:] {
 		evaledArg, isNull, err := arg.EvalString(b.ctx, row)
 		if err != nil {
@@ -328,6 +332,7 @@ type builtinInRealSig struct {
 	nonConstArgs []Expression
 	hashSet      map[float64]bool
 	threshold    int
+	hasNull      bool
 }
 
 func (b *builtinInRealSig) buildHashMapForConstArgs(ctx sessionctx.Context) error {
@@ -342,7 +347,7 @@ func (b *builtinInRealSig) buildHashMapForConstArgs(ctx sessionctx.Context) erro
 				return err
 			}
 			if isNull {
-				b.nonConstArgs = append(b.nonConstArgs, b.args[i])
+				b.hasNull = true
 				continue
 			}
 			b.hashSet[val] = true
@@ -368,6 +373,7 @@ func (b *builtinInRealSig) Clone() builtinFunc {
 	}
 	newSig.hashSet = b.hashSet
 	newSig.threshold = b.threshold
+	newSig.hasNull = b.hasNull
 	return newSig
 }
 
@@ -383,7 +389,7 @@ func (b *builtinInRealSig) evalInt(row chunk.Row) (int64, bool, error) {
 			return 1, false, nil
 		}
 	}
-	var hasNull bool
+	hasNull := b.hasNull
 	for _, arg := range args[1:] {
 		evaledArg, isNull, err := arg.EvalReal(b.ctx, row)
 		if err != nil {
@@ -406,6 +412,7 @@ type builtinInDecimalSig struct {
 	nonConstArgs []Expression
 	hashSet      map[string]bool
 	threshold    int
+	hasNull      bool
 }
 
 func (b *builtinInDecimalSig) buildHashMapForConstArgs(ctx sessionctx.Context) error {
@@ -420,7 +427,7 @@ func (b *builtinInDecimalSig) buildHashMapForConstArgs(ctx sessionctx.Context) e
 				return err
 			}
 			if isNull {
-				b.nonConstArgs = append(b.nonConstArgs, b.args[i])
+				b.hasNull = true
 				continue
 			}
 			key, err := val.ToHashKey()
@@ -450,6 +457,7 @@ func (b *builtinInDecimalSig) Clone() builtinFunc {
 	}
 	newSig.hashSet = b.hashSet
 	newSig.threshold = b.threshold
+	newSig.hasNull = b.hasNull
 	return newSig
 }
 
@@ -471,7 +479,7 @@ func (b *builtinInDecimalSig) evalInt(row chunk.Row) (int64, bool, error) {
 		}
 	}
 
-	var hasNull bool
+	hasNull := b.hasNull
 	for _, arg := range args[1:] {
 		evaledArg, isNull, err := arg.EvalDecimal(b.ctx, row)
 		if err != nil {
@@ -494,6 +502,7 @@ type builtinInTimeSig struct {
 	nonConstArgs []Expression
 	hashSet      map[types.Time]bool
 	threshold    int
+	hasNull      bool
 }
 
 func (b *builtinInTimeSig) buildHashMapForConstArgs(ctx sessionctx.Context) error {
@@ -508,7 +517,7 @@ func (b *builtinInTimeSig) buildHashMapForConstArgs(ctx sessionctx.Context) erro
 				return err
 			}
 			if isNull {
-				b.nonConstArgs = append(b.nonConstArgs, b.args[i])
+				b.hasNull = true
 				continue
 			}
 			b.hashSet[val] = true
@@ -534,6 +543,7 @@ func (b *builtinInTimeSig) Clone() builtinFunc {
 	}
 	newSig.hashSet = b.hashSet
 	newSig.threshold = b.threshold
+	newSig.hasNull = b.hasNull
 	return newSig
 }
 
@@ -549,7 +559,7 @@ func (b *builtinInTimeSig) evalInt(row chunk.Row) (int64, bool, error) {
 			return 1, false, nil
 		}
 	}
-	var hasNull bool
+	hasNull := b.hasNull
 	for _, arg := range args[1:] {
 		evaledArg, isNull, err := arg.EvalTime(b.ctx, row)
 		if err != nil {
@@ -572,6 +582,7 @@ type builtinInDurationSig struct {
 	nonConstArgs []Expression
 	hashSet      map[time.Duration]bool
 	threshold    int
+	hasNull      bool
 }
 
 func (b *builtinInDurationSig) buildHashMapForConstArgs(ctx sessionctx.Context) error {
@@ -586,7 +597,7 @@ func (b *builtinInDurationSig) buildHashMapForConstArgs(ctx sessionctx.Context) 
 				return err
 			}
 			if isNull {
-				b.nonConstArgs = append(b.nonConstArgs, b.args[i])
+				b.hasNull = true
 				continue
 			}
 			b.hashSet[val.Duration] = true
@@ -612,6 +623,7 @@ func (b *builtinInDurationSig) Clone() builtinFunc {
 	}
 	newSig.hashSet = b.hashSet
 	newSig.threshold = b.threshold
+	newSig.hasNull = b.hasNull
 	return newSig
 }
 
@@ -627,7 +639,7 @@ func (b *builtinInDurationSig) evalInt(row chunk.Row) (int64, bool, error) {
 			return 1, false, nil
 		}
 	}
-	var hasNull bool
+	hasNull := b.hasNull
 	for _, arg := range args[1:] {
 		evaledArg, isNull, err := arg.EvalDuration(b.ctx, row)
 		if err != nil {
@@ -650,6 +662,7 @@ type builtinInJSONSig struct {
 	nonConstArgs []Expression
 	hashSet      map[string]bool
 	threshold    int
+	hasNull      bool
 }
 
 func (b *builtinInJSONSig) buildHashMapForConstArgs(ctx sessionctx.Context) error {
@@ -664,7 +677,7 @@ func (b *builtinInJSONSig) buildHashMapForConstArgs(ctx sessionctx.Context) erro
 				return err
 			}
 			if isNull {
-				b.nonConstArgs = append(b.nonConstArgs, b.args[i])
+				b.hasNull = true
 				continue
 			}
 			key, err := val.ToHashKey()
@@ -694,6 +707,7 @@ func (b *builtinInJSONSig) Clone() builtinFunc {
 	}
 	newSig.hashSet = b.hashSet
 	newSig.threshold = b.threshold
+	newSig.hasNull = b.hasNull
 	return newSig
 }
 
@@ -715,7 +729,7 @@ func (b *builtinInJSONSig) evalInt(row chunk.Row) (int64, bool, error) {
 		}
 	}
 
-	var hasNull bool
+	hasNull := b.hasNull
 	for _, arg := range args[1:] {
 		evaledArg, isNull, err := arg.EvalJSON(b.ctx, row)
 		if err != nil {

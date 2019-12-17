@@ -127,6 +127,11 @@ func (b *{{.SigName}}) vecEvalInt(input *chunk.Chunk, result *chunk.Column) erro
 		r64s[i] = 0
 	}
 	hasNull := make([]bool, n)
+	if b.hasNull {
+		for i := 0; i < n; i++ {
+			hasNull[i] = true
+		}
+	}
 	{{- if $InputInt }}
 		isUnsigned0 := mysql.HasUnsignedFlag(b.args[0].GetType().Flag)
 	{{- end }}
