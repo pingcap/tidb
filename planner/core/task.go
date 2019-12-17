@@ -410,14 +410,13 @@ func (p *PhysicalIndexJoin) GetCost(outerTask, innerTask task) float64 {
 }
 
 func (p *PhysicalHashJoin) avgRowSize(inner PhysicalPlan) (size float64) {
-	padChar := p.ctx.GetSessionVars().StmtCtx.PadCharToFullLength
 	if inner.statsInfo().HistColl != nil {
-		size = inner.statsInfo().HistColl.GetAvgRowSizeListInDisk(inner.Schema().Columns, padChar)
+		size = inner.statsInfo().HistColl.GetAvgRowSizeListInDisk(inner.Schema().Columns)
 	} else {
 		// Estimate using just the type info.
 		cols := inner.Schema().Columns
 		for _, col := range cols {
-			size += float64(chunk.EstimateTypeWidth(padChar, col.GetType()))
+			size += float64(chunk.EstimateTypeWidth(col.GetType()))
 		}
 	}
 	return
