@@ -172,6 +172,7 @@ func (b *builtinInIntSig) buildHashMapForConstArgs(ctx sessionctx.Context) error
 	if count < b.threshold {
 		b.nonConstArgs = b.args
 		b.hashSet = nil
+		b.hasNull = false
 	}
 
 	return nil
@@ -277,6 +278,7 @@ func (b *builtinInStringSig) buildHashMapForConstArgs(ctx sessionctx.Context) er
 	if count < b.threshold {
 		b.nonConstArgs = b.args
 		b.hashSet = nil
+		b.hasNull = false
 	}
 
 	return nil
@@ -359,6 +361,7 @@ func (b *builtinInRealSig) buildHashMapForConstArgs(ctx sessionctx.Context) erro
 	if count < b.threshold {
 		b.nonConstArgs = b.args
 		b.hashSet = nil
+		b.hasNull = false
 	}
 
 	return nil
@@ -443,6 +446,7 @@ func (b *builtinInDecimalSig) buildHashMapForConstArgs(ctx sessionctx.Context) e
 	if count < b.threshold {
 		b.nonConstArgs = b.args
 		b.hashSet = nil
+		b.hasNull = false
 	}
 
 	return nil
@@ -529,6 +533,7 @@ func (b *builtinInTimeSig) buildHashMapForConstArgs(ctx sessionctx.Context) erro
 	if count < b.threshold {
 		b.nonConstArgs = b.args
 		b.hashSet = nil
+		b.hasNull = false
 	}
 
 	return nil
@@ -609,6 +614,7 @@ func (b *builtinInDurationSig) buildHashMapForConstArgs(ctx sessionctx.Context) 
 	if count < b.threshold {
 		b.nonConstArgs = b.args
 		b.hashSet = nil
+		b.hasNull = false
 	}
 
 	return nil
@@ -693,6 +699,7 @@ func (b *builtinInJSONSig) buildHashMapForConstArgs(ctx sessionctx.Context) erro
 	if count < b.threshold {
 		b.nonConstArgs = b.args
 		b.hashSet = nil
+		b.hasNull = false
 	}
 
 	return nil
