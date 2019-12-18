@@ -7,13 +7,13 @@ load stats 's/explain_join_stats_lo.json';
 explain select count(*) from e, lo where lo.a=e.a and e.b=22336;
 id	count	task	operator info
 StreamAgg_13	1.00	root	funcs:count(1)->Column#5
-└─HashRightJoin_71	19977.00	root	inner join, inner:TableReader_41, equal:[eq(test.lo.a, test.e.a)]
-  ├─TableReader_41	250.00	root	data:TableScan_40
-  │ └─TableScan_40	250.00	cop[tikv]	table:lo, range:[-inf,+inf], keep order:false
-  └─IndexLookUp_52	19977.00	root	
-    ├─IndexScan_49	19977.00	cop[tikv]	table:e, index:b, range:[22336,22336], keep order:false
-    └─Selection_51	19977.00	cop[tikv]	not(isnull(test.e.a))
-      └─TableScan_50	19977.00	cop[tikv]	table:e, keep order:false
+└─HashRightJoin_89	19977.00	root	inner join, inner:TableReader_50, equal:[eq(test.lo.a, test.e.a)]
+  ├─TableReader_50	250.00	root	data:TableScan_49
+  │ └─TableScan_49	250.00	cop[tikv]	table:lo, range:[-inf,+inf], keep order:false
+  └─IndexLookUp_61	19977.00	root	
+    ├─IndexScan_58	19977.00	cop[tikv]	table:e, index:b, range:[22336,22336], keep order:false
+    └─Selection_60	19977.00	cop[tikv]	not(isnull(test.e.a))
+      └─TableScan_59	19977.00	cop[tikv]	table:e, keep order:false
 explain select /*+ TIDB_INLJ(e) */ count(*) from e, lo where lo.a=e.a and e.b=22336;
 id	count	task	operator info
 StreamAgg_12	1.00	root	funcs:count(1)->Column#5

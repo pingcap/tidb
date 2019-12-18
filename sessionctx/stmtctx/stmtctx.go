@@ -68,7 +68,6 @@ type StatementContext struct {
 	OverflowAsWarning      bool
 	InShowWarning          bool
 	UseCache               bool
-	PadCharToFullLength    bool
 	BatchCheck             bool
 	InNullRejectCheck      bool
 	AllowInvalidDate       bool
@@ -502,9 +501,6 @@ func (sc *StatementContext) PushDownFlags() uint64 {
 	if sc.DividedByZeroAsWarning {
 		flags |= model.FlagDividedByZeroAsWarning
 	}
-	if sc.PadCharToFullLength {
-		flags |= model.FlagPadCharToFullLength
-	}
 	if sc.InLoadDataStmt {
 		flags |= model.FlagInLoadDataStmt
 	}
@@ -590,7 +586,6 @@ func (sc *StatementContext) CopTasksDetails() *CopTasksDetails {
 func (sc *StatementContext) SetFlagsFromPBFlag(flags uint64) {
 	sc.IgnoreTruncate = (flags & model.FlagIgnoreTruncate) > 0
 	sc.TruncateAsWarning = (flags & model.FlagTruncateAsWarning) > 0
-	sc.PadCharToFullLength = (flags & model.FlagPadCharToFullLength) > 0
 	sc.InInsertStmt = (flags & model.FlagInInsertStmt) > 0
 	sc.InSelectStmt = (flags & model.FlagInSelectStmt) > 0
 	sc.OverflowAsWarning = (flags & model.FlagOverflowAsWarning) > 0
