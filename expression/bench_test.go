@@ -265,6 +265,29 @@ func (g *defaultGener) gen() interface{} {
 	return nil
 }
 
+// charInt64Gener is used to generate int which is equal to char's ascii
+type charInt64Gener struct{}
+
+func (g *charInt64Gener) gen() interface{} {
+	rand := time.Now().Nanosecond()
+	rand = rand % 1024
+	return int64(rand)
+}
+
+// charsetStringGener is used to generate "ascii" or "gbk"
+type charsetStringGener struct{}
+
+func (g *charsetStringGener) gen() interface{} {
+	rand := time.Now().Nanosecond() % 3
+	if rand == 0 {
+		return "ascii"
+	}
+	if rand == 1 {
+		return "utf8"
+	}
+	return "gbk"
+}
+
 // selectStringGener select one string randomly from the candidates array
 type selectStringGener struct {
 	candidates []string

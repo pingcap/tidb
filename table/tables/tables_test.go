@@ -392,3 +392,103 @@ func (ts *testSuite) TestTableFromMeta(c *C) {
 	_, err = tb.AllocHandle(tk.Se)
 	c.Assert(err, NotNil)
 }
+
+func (ts *testSuite) TestHiddenColumn(c *C) {
+	tk := testkit.NewTestKit(c, ts.store)
+	tk.MustExec("DROP DATABASE IF EXISTS test_hidden;")
+	tk.MustExec("CREATE DATABASE test_hidden;")
+	tk.MustExec("USE test_hidden;")
+	tk.MustExec("CREATE TABLE hidden (a int primary key, b int as (a+1), c int, d int as (c+1), e int, f tinyint as (a+1));")
+	tk.MustExec("insert into hidden values (1, default, 3, default, 5, default);")
+	tb, err := ts.dom.InfoSchema().TableByName(model.NewCIStr("test_hidden"), model.NewCIStr("hidden"))
+	c.Assert(err, IsNil)
+	colInfo := tb.Meta().Columns
+	// Set column b, d, f to hidden
+	colInfo[1].Hidden = true
+	colInfo[3].Hidden = true
+	colInfo[5].Hidden = true
+	tc := tb.(*tables.TableCommon)
+	// Reset related caches
+	tc.VisibleColumns = nil
+	tc.WritableColumns = nil
+	tc.HiddenColumns = nil
+
+	// Basic test
+	cols := tb.VisibleCols()
+	c.Assert(table.FindCol(cols, "a"), NotNil)
+	c.Assert(table.FindCol(cols, "b"), IsNil)
+	c.Assert(table.FindCol(cols, "c"), NotNil)
+	c.Assert(table.FindCol(cols, "d"), IsNil)
+	c.Assert(table.FindCol(cols, "e"), NotNil)
+	hiddenCols := tb.HiddenCols()
+	c.Assert(table.FindCol(hiddenCols, "a"), IsNil)
+	c.Assert(table.FindCol(hiddenCols, "b"), NotNil)
+	c.Assert(table.FindCol(hiddenCols, "c"), IsNil)
+	c.Assert(table.FindCol(hiddenCols, "d"), NotNil)
+	c.Assert(table.FindCol(hiddenCols, "e"), IsNil)
+
+	// Can't select with b and d and f
+	tk.MustQuery("select * from hidden;").Check(testkit.Rows("1 3 5"))
+	_, err = tk.Exec("select b from hidden;")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[planner:1054]Unknown column 'b' in 'field list'")
+	_, err = tk.Exec("select d from hidden;")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[planner:1054]Unknown column 'd' in 'field list'")
+	err = tk.QueryToErr("select a, c, e from hidden;")
+	c.Assert(err, IsNil)
+	_, err = tk.Exec("select d from hidden;")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[planner:1054]Unknown column 'd' in 'field list'")
+	_, err = tk.Exec("select * from hidden where b>1;")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[planner:1054]Unknown column 'b' in 'where clause'")
+	_, err = tk.Exec("select * from hidden order by b;")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[planner:1054]Unknown column 'b' in 'order clause'")
+	_, err = tk.Exec("select * from hidden group by b;")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[planner:1054]Unknown column 'b' in 'group statement'")
+
+	// Can't update with b and d
+	_, err = tk.Exec("update hidden set d=1;")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[planner:1054]Unknown column 'd' in 'field_list'")
+	_, err = tk.Exec("update hidden set a=1 where b=1;")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[planner:1054]Unknown column 'b' in 'where clause'")
+	_, err = tk.Exec("update hidden set a=1 where c=2 order by b;")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[planner:1054]Unknown column 'b' in 'order clause'")
+	tk.MustExec("update hidden set a = 5;")
+	colInfo[5].Hidden = false
+	tc.VisibleColumns = nil
+	tk.MustQuery("select * from hidden;").Check(testkit.Rows("5 3 5 6"))
+	colInfo[5].Hidden = true
+	tc.VisibleColumns = nil
+
+	// Can't delete with b and d
+	_, err = tk.Exec("delete from hidden where b=1;")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[planner:1054]Unknown column 'b' in 'where clause'")
+	_, err = tk.Exec("delete from hidden order by d;")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[planner:1054]Unknown column 'd' in 'order clause'")
+
+	// Can't drop column b and d
+	_, err = tk.Exec("ALTER TABLE hidden DROP COLUMN b")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:1091]column b doesn't exist")
+	_, err = tk.Exec("ALTER TABLE hidden DROP COLUMN d")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:1091]column d doesn't exist")
+
+	// Test show create table
+	tk.MustQuery("show create table hidden;").Check(testkit.Rows(
+		"hidden CREATE TABLE `hidden` (\n" +
+			"  `a` int(11) NOT NULL,\n" +
+			"  `c` int(11) DEFAULT NULL,\n" +
+			"  `e` int(11) DEFAULT NULL,\n" +
+			"  PRIMARY KEY (`a`)\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+}

@@ -50,14 +50,6 @@ var (
 			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 20), // 0.5ms ~ 524s
 		}, []string{LblType})
 
-	TiKVBackoffCounter = prometheus.NewCounterVec(
-		prometheus.CounterOpts{
-			Namespace: "tidb",
-			Subsystem: "tikvclient",
-			Name:      "backoff_total",
-			Help:      "Counter of backoff.",
-		}, []string{LblType})
-
 	TiKVBackoffHistogram = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",

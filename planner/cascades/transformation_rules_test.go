@@ -44,6 +44,7 @@ func (s *testTransformationRuleSuite) SetUpSuite(c *C) {
 	var err error
 	s.testData, err = testutil.LoadTestSuiteData("testdata", "transformation_rules_suite")
 	c.Assert(err, IsNil)
+	s.Parser.EnableWindowFunc(true)
 }
 
 func (s *testTransformationRuleSuite) TearDownSuite(c *C) {
@@ -123,6 +124,9 @@ func (s *testTransformationRuleSuite) TestPredicatePushDown(c *C) {
 			NewRulePushSelDownProjection(),
 			NewRulePushSelDownAggregation(),
 			NewRulePushSelDownJoin(),
+			NewRulePushSelDownIndexScan(),
+			NewRulePushSelDownUnionAll(),
+			NewRulePushSelDownWindow(),
 		},
 		memo.OperandDataSource: {
 			NewRuleEnumeratePaths(),
@@ -166,6 +170,24 @@ func (s *testTransformationRuleSuite) TestProjectionElimination(c *C) {
 		memo.OperandProjection: {
 			NewRuleEliminateProjection(),
 			NewRuleMergeAdjacentProjection(),
+		},
+	})
+	defer func() {
+		s.optimizer.ResetTransformationRules(defaultTransformationMap)
+	}()
+	var input []string
+	var output []struct {
+		SQL    string
+		Result []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	testGroupToString(input, output, s, c)
+}
+
+func (s *testTransformationRuleSuite) TestMergeAggregationProjection(c *C) {
+	s.optimizer.ResetTransformationRules(map[memo.Operand][]Transformation{
+		memo.OperandAggregation: {
+			NewRuleMergeAggregationProjection(),
 		},
 	})
 	defer func() {
