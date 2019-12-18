@@ -466,3 +466,32 @@ func (e *ClusterLogTableExtractor) Extract(
 	e.Patterns = patterns
 	return remained
 }
+
+// InspectionResultTableExtractor is used to extract some predicates of `inspection_result`
+type InspectionResultTableExtractor struct {
+	extractHelper
+	// SkipInspection means the where clause always false, we don't need to request any component
+	SkipInspection bool
+	// Rules represents rules applied to, and we should apply all inspection rules if there is no rules specified
+	// e.g: SELECT * FROM inspection_result WHERE rule in ('ddl', 'config')
+	Rules set.StringSet
+	// Items represents items applied to, and we should apply all inspection item if there is no rules specified
+	// e.g: SELECT * FROM inspection_result WHERE item in ('ddl.lease', 'raftstore.threadpool')
+	Items set.StringSet
+}
+
+// Extract implements the MemTablePredicateExtractor Extract interface
+func (e *InspectionResultTableExtractor) Extract(
+	ctx sessionctx.Context,
+	schema *expression.Schema,
+	names []*types.FieldName,
+	predicates []expression.Expression,
+) (remained []expression.Expression) {
+	// Extract the `type/address` columns
+	remained, ruleSkip, rules := e.extractCol(schema, names, predicates, "rule", true)
+	remained, itemSkip, items := e.extractCol(schema, names, remained, "item", true)
+	e.SkipInspection = ruleSkip || itemSkip
+	e.Rules = rules
+	e.Items = items
+	return remained
+}

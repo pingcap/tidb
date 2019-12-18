@@ -1,0 +1,139 @@
+// Copyright 2019 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package executor
+
+import (
+	"context"
+	"fmt"
+
+	plannercore "github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/set"
+	"github.com/pingcap/tidb/util/sqlexec"
+)
+
+type (
+	// inspectionResult represents a abnormal diagnosis result
+	inspectionResult struct {
+		// represents the diagnostics item, e.g: `ddl.lease` `raftstore.cpuusage`
+		item string
+		// diagnosis result value base on current cluster status
+		value      string
+		reference  string
+		severity   string
+		suggestion string
+	}
+
+	inspectionRule interface {
+		name() string
+		inspect(ctx context.Context, sctx sessionctx.Context, filter set.StringSet) []inspectionResult
+	}
+)
+
+var inspectionRules = []inspectionRule{
+	&configInspection{},
+	&versionInspection{},
+}
+
+type inspectionRetriever struct {
+	extractor *plannercore.InspectionResultTableExtractor
+}
+
+func (e *inspectionRetriever) retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
+	if e.extractor.SkipInspection {
+		return nil, nil
+	}
+	rules := e.extractor.Rules
+	items := e.extractor.Items
+	var finalRows [][]types.Datum
+	for _, r := range inspectionRules {
+		name := r.name()
+		if len(rules) > 0 && !rules.Exist(name) {
+			continue
+		}
+		results := r.inspect(ctx, sctx, items)
+		for _, result := range results {
+			finalRows = append(finalRows, types.MakeDatums(
+				name,
+				result.item,
+				result.value,
+				result.reference,
+				result.severity,
+				result.suggestion,
+			))
+		}
+	}
+	return finalRows, nil
+}
+
+type configInspection struct{}
+
+func (configInspection) name() string {
+	return "config"
+}
+
+func (configInspection) inspect(_ context.Context, sctx sessionctx.Context, filter set.StringSet) []inspectionResult {
+	// check the configuration consistent
+	sql := "select type, `key`, count(*) as c from inspection_schema.cluster_config group by type, `key` having c > 1"
+	rows, _, err := sctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
+	if err != nil {
+		sctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("check configuration consistency failed: %v", err))
+	}
+
+	var results []inspectionResult
+	for _, row := range rows {
+		if len(filter) > 0 && !filter.Exist(row.GetString(1)) {
+			continue
+		}
+		results = append(results, inspectionResult{
+			item:       row.GetString(1), // key
+			value:      row.GetString(2), // count
+			reference:  "1",
+			severity:   "P2",
+			suggestion: fmt.Sprintf("select * from cluster_config where type='%s' and `key`='%s'", row.GetString(0), row.GetString(1)),
+		})
+	}
+	return results
+}
+
+type versionInspection struct{}
+
+func (versionInspection) name() string {
+	return "version"
+}
+
+func (versionInspection) inspect(_ context.Context, sctx sessionctx.Context, filter set.StringSet) []inspectionResult {
+	// check the configuration consistent
+	sql := "select type, count(*) as c from inspection_schema.cluster_info group by type, git_hash having c > 1;"
+	rows, _, err := sctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
+	if err != nil {
+		sctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("check version consistency failed: %v", err))
+	}
+
+	var results []inspectionResult
+	for _, row := range rows {
+		if len(filter) > 0 && !filter.Exist(row.GetString(0)) {
+			continue
+		}
+		results = append(results, inspectionResult{
+			item:       row.GetString(0), // type
+			value:      row.GetString(1), // count
+			reference:  "1",
+			severity:   "P1",
+			suggestion: fmt.Sprintf("select * from cluster_info where type='%s'", row.GetString(0)),
+		})
+	}
+	return results
+}

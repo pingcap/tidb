@@ -56,6 +56,28 @@ func (s *extractorSuite) TearDownSuite(c *C) {
 	s.store.Close()
 }
 
+func (s *extractorSuite) getLogicalMemTable(c *C, se session.Session, parser *parser.Parser, sql string) *plannercore.LogicalMemTable {
+	stmt, err := parser.ParseOneStmt(sql, "", "")
+	c.Assert(err, IsNil)
+
+	ctx := context.Background()
+	builder := plannercore.NewPlanBuilder(se, s.dom.InfoSchema(), &plannercore.BlockHintProcessor{})
+	plan, err := builder.Build(ctx, stmt)
+	c.Assert(err, IsNil)
+
+	logicalPlan, err := plannercore.LogicalOptimize(ctx, builder.GetOptFlag(), plan.(plannercore.LogicalPlan))
+	c.Assert(err, IsNil)
+
+	// Obtain the leaf plan
+	leafPlan := logicalPlan
+	for len(leafPlan.Children()) > 0 {
+		leafPlan = leafPlan.Children()[0]
+	}
+
+	logicalMemTable := leafPlan.(*plannercore.LogicalMemTable)
+	return logicalMemTable
+}
+
 func (s *extractorSuite) TestClusterConfigTableExtractor(c *C) {
 	se, err := session.CreateSession4Test(s.store)
 	c.Assert(err, IsNil)
@@ -212,24 +234,7 @@ func (s *extractorSuite) TestClusterConfigTableExtractor(c *C) {
 		},
 	}
 	for _, ca := range cases {
-		stmt, err := parser.ParseOneStmt(ca.sql, "", "")
-		c.Assert(err, IsNil)
-
-		ctx := context.Background()
-		builder := plannercore.NewPlanBuilder(se, s.dom.InfoSchema(), &plannercore.BlockHintProcessor{})
-		plan, err := builder.Build(ctx, stmt)
-		c.Assert(err, IsNil)
-
-		logicalPlan, err := plannercore.LogicalOptimize(ctx, builder.GetOptFlag(), plan.(plannercore.LogicalPlan))
-		c.Assert(err, IsNil)
-
-		// Obtain the leaf plan
-		leafPlan := logicalPlan
-		for len(leafPlan.Children()) > 0 {
-			leafPlan = leafPlan.Children()[0]
-		}
-
-		logicalMemTable := leafPlan.(*plannercore.LogicalMemTable)
+		logicalMemTable := s.getLogicalMemTable(c, se, parser, ca.sql)
 		c.Assert(logicalMemTable.Extractor, NotNil)
 
 		clusterConfigExtractor := logicalMemTable.Extractor.(*plannercore.ClusterTableExtractor)
@@ -509,24 +514,7 @@ func (s *extractorSuite) TestClusterLogTableExtractor(c *C) {
 		},
 	}
 	for _, ca := range cases {
-		stmt, err := parser.ParseOneStmt(ca.sql, "", "")
-		c.Assert(err, IsNil)
-
-		ctx := context.Background()
-		builder := plannercore.NewPlanBuilder(se, s.dom.InfoSchema(), &plannercore.BlockHintProcessor{})
-		plan, err := builder.Build(ctx, stmt)
-		c.Assert(err, IsNil)
-
-		logicalPlan, err := plannercore.LogicalOptimize(ctx, builder.GetOptFlag(), plan.(plannercore.LogicalPlan))
-		c.Assert(err, IsNil)
-
-		// Obtain the leaf plan
-		leafPlan := logicalPlan
-		for len(leafPlan.Children()) > 0 {
-			leafPlan = leafPlan.Children()[0]
-		}
-
-		logicalMemTable := leafPlan.(*plannercore.LogicalMemTable)
+		logicalMemTable := s.getLogicalMemTable(c, se, parser, ca.sql)
 		c.Assert(logicalMemTable.Extractor, NotNil)
 
 		clusterConfigExtractor := logicalMemTable.Extractor.(*plannercore.ClusterLogTableExtractor)
@@ -543,5 +531,148 @@ func (s *extractorSuite) TestClusterLogTableExtractor(c *C) {
 		if len(ca.level) > 0 {
 			c.Assert(clusterConfigExtractor.LogLevels, DeepEquals, ca.level, Commentf("SQL: %v", ca.sql))
 		}
+	}
+}
+
+func (s *extractorSuite) TestInspectionResultTableExtractor(c *C) {
+	se, err := session.CreateSession4Test(s.store)
+	c.Assert(err, IsNil)
+
+	var cases = []struct {
+		sql            string
+		rules          set.StringSet
+		items          set.StringSet
+		skipInspection bool
+	}{
+		{
+			sql: "select * from information_schema.inspection_result",
+		},
+		{
+			sql:   "select * from information_schema.inspection_result where rule='ddl'",
+			rules: set.NewStringSet("ddl"),
+		},
+		{
+			sql:   "select * from information_schema.inspection_result where 'ddl'=rule",
+			rules: set.NewStringSet("ddl"),
+		},
+		{
+			sql:   "select * from information_schema.inspection_result where 'ddl'=rule",
+			rules: set.NewStringSet("ddl"),
+		},
+		{
+			sql:   "select * from information_schema.inspection_result where 'ddl'=rule or rule='config'",
+			rules: set.NewStringSet("ddl", "config"),
+		},
+		{
+			sql:   "select * from information_schema.inspection_result where 'ddl'=rule or rule='config' or rule='slow_query'",
+			rules: set.NewStringSet("ddl", "config", "slow_query"),
+		},
+		{
+			sql:   "select * from information_schema.inspection_result where (rule='config' or rule='slow_query') and (item='ddl.owner' or item='ddl.lease')",
+			rules: set.NewStringSet("config", "slow_query"),
+			items: set.NewStringSet("ddl.owner", "ddl.lease"),
+		},
+		{
+			sql:   "select * from information_schema.inspection_result where rule in ('ddl', 'slow_query')",
+			rules: set.NewStringSet("ddl", "slow_query"),
+		},
+		{
+			sql:   "select * from information_schema.inspection_result where rule in ('ddl', 'slow_query') and item='ddl.lease'",
+			rules: set.NewStringSet("ddl", "slow_query"),
+			items: set.NewStringSet("ddl.lease"),
+		},
+		{
+			sql:   "select * from information_schema.inspection_result where rule in ('ddl', 'slow_query') and item in ('ddl.lease', '123.1.1.4:1234')",
+			rules: set.NewStringSet("ddl", "slow_query"),
+			items: set.NewStringSet("ddl.lease", "123.1.1.4:1234"),
+		},
+		{
+			sql:   "select * from information_schema.inspection_result where rule='ddl' and item in ('ddl.lease', '123.1.1.4:1234')",
+			rules: set.NewStringSet("ddl"),
+			items: set.NewStringSet("ddl.lease", "123.1.1.4:1234"),
+		},
+		{
+			sql:   "select * from information_schema.inspection_result where rule='ddl' and item='123.1.1.4:1234'",
+			rules: set.NewStringSet("ddl"),
+			items: set.NewStringSet("123.1.1.4:1234"),
+		},
+		{
+			sql:   "select * from information_schema.inspection_result where rule='ddl' and item='123.1.1.4:1234'",
+			rules: set.NewStringSet("ddl"),
+			items: set.NewStringSet("123.1.1.4:1234"),
+		},
+		{
+			sql:   "select * from information_schema.inspection_result where rule='ddl' and item='DDL.lease'",
+			rules: set.NewStringSet("ddl"),
+			items: set.NewStringSet("ddl.lease"),
+		},
+		{
+			sql:   "select * from information_schema.inspection_result where rule='ddl' and item='ddl.OWNER'",
+			rules: set.NewStringSet("ddl"),
+			items: set.NewStringSet("ddl.owner"),
+		},
+		{
+			sql:            "select * from information_schema.inspection_result where rule='ddl' and rule='slow_query'",
+			skipInspection: true,
+		},
+		{
+			sql:   "select * from information_schema.inspection_result where rule='ddl' and rule in ('slow_query', 'ddl')",
+			rules: set.NewStringSet("ddl"),
+		},
+		{
+			sql:            "select * from information_schema.inspection_result where rule='ddl' and rule in ('slow_query', 'config')",
+			skipInspection: true,
+		},
+		{
+			sql:   "select * from information_schema.inspection_result where rule in ('ddl', 'config') and rule in ('slow_query', 'config')",
+			rules: set.NewStringSet("config"),
+		},
+		{
+			sql:            "select * from information_schema.inspection_result where item='ddl.lease' and item='raftstore.threadpool'",
+			skipInspection: true,
+		},
+		{
+			sql:   "select * from information_schema.inspection_result where item='raftstore.threadpool' and item in ('raftstore.threadpool', 'ddl.lease')",
+			items: set.NewStringSet("raftstore.threadpool"),
+		},
+		{
+			sql:            "select * from information_schema.inspection_result where item='raftstore.threadpool' and item in ('ddl.lease', 'scheduler.limit')",
+			skipInspection: true,
+		},
+		{
+			sql:   "select * from information_schema.inspection_result where item in ('ddl.lease', 'scheduler.limit') and item in ('raftstore.threadpool', 'scheduler.limit')",
+			items: set.NewStringSet("scheduler.limit"),
+		},
+		{
+			sql: `select * from information_schema.inspection_result
+				where item in ('ddl.lease', 'scheduler.limit')
+				  and item in ('raftstore.threadpool', 'scheduler.limit')
+				  and rule in ('ddl', 'config')
+				  and rule in ('slow_query', 'config')`,
+			rules: set.NewStringSet("config"),
+			items: set.NewStringSet("scheduler.limit"),
+		},
+		{
+			sql: `select * from information_schema.inspection_result
+				where item in ('ddl.lease', 'scheduler.limit')
+				  and item in ('raftstore.threadpool', 'scheduler.limit')
+				  and item in ('raftstore.threadpool', 'ddl.lease')
+				  and item in ('ddl.lease', 'ddl.owner')`,
+			skipInspection: true,
+		},
+	}
+	parser := parser.New()
+	for _, ca := range cases {
+		logicalMemTable := s.getLogicalMemTable(c, se, parser, ca.sql)
+		c.Assert(logicalMemTable.Extractor, NotNil)
+
+		clusterConfigExtractor := logicalMemTable.Extractor.(*plannercore.InspectionResultTableExtractor)
+		if len(ca.rules) > 0 {
+			c.Assert(clusterConfigExtractor.Rules, DeepEquals, ca.rules, Commentf("SQL: %v", ca.sql))
+		}
+		if len(ca.items) > 0 {
+			c.Assert(clusterConfigExtractor.Items, DeepEquals, ca.items, Commentf("SQL: %v", ca.sql))
+		}
+		c.Assert(clusterConfigExtractor.SkipInspection, Equals, ca.skipInspection, Commentf("SQL: %v", ca.sql))
 	}
 }
