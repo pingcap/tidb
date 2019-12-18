@@ -17,11 +17,13 @@ import (
 	"fmt"
 	"math/rand"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
@@ -781,6 +783,36 @@ func (s *testEvaluatorSuite) TestFloat32ColVec(c *C) {
 	// set an empty Sel
 	sel = sel[:0]
 	c.Assert(col.VecEvalReal(ctx, chk, result), IsNil)
+}
+
+func (s *testEvaluatorSuite) TestSleepVec(c *C) {
+	ctx := mock.NewContext()
+	sessVars := ctx.GetSessionVars()
+
+	fc := funcs[ast.Sleep]
+	// non-strict model
+	sessVars.StrictSQLMode = false
+	d := make([]types.Datum, 1)
+	f, err := fc.getFunction(ctx, s.datumsToConstants(d))
+	c.Assert(err, IsNil)
+
+	start := time.Now()
+	go func() {
+		time.Sleep(1 * time.Second)
+		atomic.CompareAndSwapUint32(&ctx.GetSessionVars().Killed, 0, 1)
+	}()
+
+	plus, input, buf := genMockVecPlusIntBuiltinFunc()
+	plus.enableAlloc = false
+	err = f.vecEvalInt(input, buf)
+
+	c.Assert(f.vecEvalInt(input, buf), IsNil)
+
+	sub := time.Since(start)
+	c.Assert(buf.IsNull(0), IsFalse)
+	c.Assert(buf.GetInt64(0), Equals, int64(1))
+	c.Assert(sub.Nanoseconds(), LessEqual, int64(2*1e9))
+	c.Assert(sub.Nanoseconds(), GreaterEqual, int64(1*1e9))
 }
 
 func BenchmarkFloat32ColRow(b *testing.B) {
