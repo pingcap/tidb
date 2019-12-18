@@ -815,8 +815,6 @@ func (do *Domain) LoadPrivilegeLoop(ctx sessionctx.Context) error {
 			metrics.LoadPrivilegeCounter.WithLabelValues(metrics.RetLabel(err)).Inc()
 			if err != nil {
 				logutil.BgLogger().Error("load privilege failed", zap.Error(err))
-			} else {
-				logutil.BgLogger().Debug("reload privilege success")
 			}
 		}
 	}()

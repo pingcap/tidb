@@ -47,17 +47,21 @@ import (
 var _ = Suite(&testIntegrationSuite{})
 var _ = Suite(&testIntegrationSuite2{})
 
-type testIntegrationSuite struct {
+type testIntegrationSuiteBase struct {
 	store kv.Storage
 	dom   *domain.Domain
 	ctx   sessionctx.Context
 }
 
-type testIntegrationSuite2 struct {
-	testIntegrationSuite
+type testIntegrationSuite struct {
+	testIntegrationSuiteBase
 }
 
-func (s *testIntegrationSuite) cleanEnv(c *C) {
+type testIntegrationSuite2 struct {
+	testIntegrationSuiteBase
+}
+
+func (s *testIntegrationSuiteBase) cleanEnv(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	r := tk.MustQuery("show tables")
@@ -67,14 +71,14 @@ func (s *testIntegrationSuite) cleanEnv(c *C) {
 	}
 }
 
-func (s *testIntegrationSuite) SetUpSuite(c *C) {
+func (s *testIntegrationSuiteBase) SetUpSuite(c *C) {
 	var err error
 	s.store, s.dom, err = newStoreWithBootstrap()
 	c.Assert(err, IsNil)
 	s.ctx = mock.NewContext()
 }
 
-func (s *testIntegrationSuite) TearDownSuite(c *C) {
+func (s *testIntegrationSuiteBase) TearDownSuite(c *C) {
 	s.dom.Close()
 	s.store.Close()
 }
@@ -708,6 +712,8 @@ func (s *testIntegrationSuite2) TestStringBuiltin(c *C) {
 	result.Check(testkit.Rows("50 50 50 50 49 10 53 52 116"))
 	result = tk.MustQuery("select ord('123'), ord(123), ord(''), ord('你好'), ord(NULL), ord('👍')")
 	result.Check(testkit.Rows("49 49 0 14990752 <nil> 4036989325"))
+	result = tk.MustQuery("select ord(X''), ord(X'6161'), ord(X'e4bd'), ord(X'e4bda0'), ord(_ascii'你'), ord(_latin1'你')")
+	result.Check(testkit.Rows("0 97 228 228 228 228"))
 
 	// for space
 	result = tk.MustQuery(`select space(0), space(2), space(-1), space(1.1), space(1.9)`)

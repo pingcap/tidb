@@ -18,6 +18,8 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/store/mockstore"
@@ -341,5 +343,18 @@ func (s *testSuite) TestIsJobRollbackable(c *C) {
 		job.SchemaState = ca.state
 		re := IsJobRollbackable(job)
 		c.Assert(re == ca.result, IsTrue)
+	}
+}
+
+func (s *testSuite) TestError(c *C) {
+	kvErrs := []*terror.Error{
+		ErrDataInConsistent,
+		ErrDDLJobNotFound,
+		ErrCancelFinishedDDLJob,
+		ErrCannotCancelDDLJob,
+	}
+	for _, err := range kvErrs {
+		code := err.ToSQLError().Code
+		c.Assert(code != mysql.ErrUnknown && code == uint16(err.Code()), IsTrue, Commentf("err: %v", err))
 	}
 }

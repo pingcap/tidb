@@ -189,6 +189,7 @@ type Log struct {
 	SlowThreshold       uint64 `toml:"slow-threshold" json:"slow-threshold"`
 	ExpensiveThreshold  uint   `toml:"expensive-threshold" json:"expensive-threshold"`
 	QueryLogMaxLen      uint64 `toml:"query-log-max-len" json:"query-log-max-len"`
+	EnableSlowLog       uint32 `toml:"enable-slow-log" json:"enable-slow-log"`
 	RecordPlanInSlowLog uint32 `toml:"record-plan-in-slow-log" json:"record-plan-in-slow-log"`
 }
 
@@ -471,6 +472,7 @@ var defaultConf = Config{
 		DisableTimestamp:    nbUnset, // If both options are nbUnset, getDisableTimestamp() returns false
 		QueryLogMaxLen:      logutil.DefaultQueryLogMaxLen,
 		RecordPlanInSlowLog: logutil.DefaultRecordPlanInSlowLog,
+		EnableSlowLog:       logutil.DefaultTiDBEnableSlowLog,
 	},
 	Status: Status{
 		ReportStatus:    true,
@@ -720,7 +722,10 @@ func (c *Config) Valid() error {
 		return fmt.Errorf("grpc-connection-count should be greater than 0")
 	}
 
-	if c.Performance.TxnTotalSizeLimit > (10 << 30) {
+	if c.Performance.TxnTotalSizeLimit > 100<<20 && c.Binlog.Enable {
+		return fmt.Errorf("txn-total-size-limit should be less than %d with binlog enabled", 100<<20)
+	}
+	if c.Performance.TxnTotalSizeLimit > 10<<30 {
 		return fmt.Errorf("txn-total-size-limit should be less than %d", 10<<30)
 	}
 
