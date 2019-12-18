@@ -19,7 +19,6 @@ import (
 	"math"
 	"math/rand"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/cznic/mathutil"
@@ -1081,69 +1080,19 @@ func (b *builtinConvSig) vecEvalString(input *chunk.Chunk, result *chunk.Column)
 	result.ReserveString(n)
 	fromBase := buf2.Int64s()
 	toBase := buf3.Int64s()
-	var (
-		signed     bool
-		negative   bool
-		ignoreSign bool
-	)
 	for i := 0; i < n; i++ {
 		if buf1.IsNull(i) || buf2.IsNull(i) || buf3.IsNull(i) {
 			result.AppendNull()
 			continue
 		}
-		signed = false
-		negative = false
-		ignoreSign = false
-		if fromBase[i] < 0 {
-			fromBase[i] = -fromBase[i]
-			signed = true
-		}
-		if toBase[i] < 0 {
-			toBase[i] = -toBase[i]
-			ignoreSign = true
-		}
-		if fromBase[i] > 36 || fromBase[i] < 2 || toBase[i] > 36 || toBase[i] < 2 {
-			result.AppendNull()
-			continue
-		}
-		n := getValidPrefix(strings.TrimSpace(buf1.GetString(i)), fromBase[i])
-		if len(n) == 0 {
-			result.AppendString("0")
-			continue
-		}
-		if n[0] == '-' {
-			negative = true
-			n = n[1:]
-		}
-		val, err := strconv.ParseUint(n, int(fromBase[i]), 64)
+		res, isNull, err := b.conv(buf1.GetString(i), fromBase[i], toBase[i])
 		if err != nil {
+			return err
+		}
+		if isNull {
 			result.AppendNull()
-			return types.ErrOverflow.GenWithStackByArgs("BIGINT UNSINGED", n)
+			continue
 		}
-		if signed {
-			if negative && val > -math.MinInt64 {
-				val = -math.MinInt64
-			}
-			if !negative && val > math.MaxInt64 {
-				val = math.MaxInt64
-			}
-		}
-		if negative {
-			val = -val
-		}
-		if int64(val) < 0 {
-			negative = true
-		} else {
-			negative = false
-		}
-		if ignoreSign && negative {
-			val = 0 - val
-		}
-		s := strconv.FormatUint(val, int(toBase[i]))
-		if negative && ignoreSign {
-			s = "-" + s
-		}
-		res := strings.ToUpper(s)
 		result.AppendString(res)
 	}
 	return nil
