@@ -47,17 +47,21 @@ import (
 var _ = Suite(&testIntegrationSuite{})
 var _ = Suite(&testIntegrationSuite2{})
 
-type testIntegrationSuite struct {
+type testIntegrationSuiteBase struct {
 	store kv.Storage
 	dom   *domain.Domain
 	ctx   sessionctx.Context
 }
 
-type testIntegrationSuite2 struct {
-	testIntegrationSuite
+type testIntegrationSuite struct {
+	testIntegrationSuiteBase
 }
 
-func (s *testIntegrationSuite) cleanEnv(c *C) {
+type testIntegrationSuite2 struct {
+	testIntegrationSuiteBase
+}
+
+func (s *testIntegrationSuiteBase) cleanEnv(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	r := tk.MustQuery("show tables")
@@ -67,14 +71,14 @@ func (s *testIntegrationSuite) cleanEnv(c *C) {
 	}
 }
 
-func (s *testIntegrationSuite) SetUpSuite(c *C) {
+func (s *testIntegrationSuiteBase) SetUpSuite(c *C) {
 	var err error
 	s.store, s.dom, err = newStoreWithBootstrap()
 	c.Assert(err, IsNil)
 	s.ctx = mock.NewContext()
 }
 
-func (s *testIntegrationSuite) TearDownSuite(c *C) {
+func (s *testIntegrationSuiteBase) TearDownSuite(c *C) {
 	s.dom.Close()
 	s.store.Close()
 }

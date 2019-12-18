@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
@@ -674,7 +675,8 @@ func getPseudoRowCountByUnsignedIntRanges(intRanges []*ranger.Range, tableRowCou
 }
 
 // GetAvgRowSize computes average row size for given columns.
-func (coll *HistColl) GetAvgRowSize(cols []*expression.Column, isEncodedKey bool) (size float64) {
+func (coll *HistColl) GetAvgRowSize(ctx sessionctx.Context, cols []*expression.Column, isEncodedKey bool, isForScan bool) (size float64) {
+	sessionVars := ctx.GetSessionVars()
 	if coll.Pseudo || len(coll.Columns) == 0 || coll.Count == 0 {
 		size = pseudoColSize * float64(len(cols))
 	} else {
@@ -688,8 +690,16 @@ func (coll *HistColl) GetAvgRowSize(cols []*expression.Column, isEncodedKey bool
 			}
 			// We differentiate if the column is encoded as key or value, because the resulted size
 			// is different.
-			size += colHist.AvgColSize(coll.Count, isEncodedKey)
+			if sessionVars.EnableChunkRPC && !isForScan {
+				size += colHist.AvgColSizeChunkFormat(coll.Count)
+			} else {
+				size += colHist.AvgColSize(coll.Count, isEncodedKey)
+			}
 		}
+	}
+	if sessionVars.EnableChunkRPC && !isForScan {
+		// Add 1/8 byte for each column's nullBitMap byte.
+		return size + float64(len(cols))/8
 	}
 	// Add 1 byte for each column's flag byte. See `encode` for details.
 	return size + float64(len(cols))
@@ -718,8 +728,8 @@ func (coll *HistColl) GetAvgRowSizeListInDisk(cols []*expression.Column) (size f
 }
 
 // GetTableAvgRowSize computes average row size for a table scan, exclude the index key-value pairs.
-func (coll *HistColl) GetTableAvgRowSize(cols []*expression.Column, storeType kv.StoreType, handleInCols bool) (size float64) {
-	size = coll.GetAvgRowSize(cols, false)
+func (coll *HistColl) GetTableAvgRowSize(ctx sessionctx.Context, cols []*expression.Column, storeType kv.StoreType, handleInCols bool) (size float64) {
+	size = coll.GetAvgRowSize(ctx, cols, false, true)
 	switch storeType {
 	case kv.TiKV:
 		size += tablecodec.RecordRowKeyLen
@@ -734,8 +744,8 @@ func (coll *HistColl) GetTableAvgRowSize(cols []*expression.Column, storeType kv
 }
 
 // GetIndexAvgRowSize computes average row size for a index scan.
-func (coll *HistColl) GetIndexAvgRowSize(cols []*expression.Column, isUnique bool) (size float64) {
-	size = coll.GetAvgRowSize(cols, true)
+func (coll *HistColl) GetIndexAvgRowSize(ctx sessionctx.Context, cols []*expression.Column, isUnique bool) (size float64) {
+	size = coll.GetAvgRowSize(ctx, cols, true, true)
 	// tablePrefix(1) + tableID(8) + indexPrefix(2) + indexID(8)
 	// Because the cols for index scan always contain the handle, so we don't add the rowID here.
 	size += 19

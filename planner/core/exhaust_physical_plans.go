@@ -700,7 +700,7 @@ func (p *LogicalJoin) constructInnerTableScanTask(
 		StatsVersion: ds.stats.StatsVersion,
 		// Cardinality would not be used in cost computation of IndexJoin, set leave it as default nil.
 	}
-	rowSize := ds.TblColHists.GetTableAvgRowSize(ds.TblCols, ts.StoreType, true)
+	rowSize := ds.TblColHists.GetTableAvgRowSize(p.ctx, ds.TblCols, ts.StoreType, true)
 	sessVars := ds.ctx.GetSessionVars()
 	copTask := &copTask{
 		tablePlan:         ts,
