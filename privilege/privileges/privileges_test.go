@@ -258,12 +258,11 @@ func (s *testPrivilegeSuite) TestShowGrants(c *C) {
 	c.Assert(gs[0], Equals, `GRANT Select,Update,Index ON *.* TO 'show'@'localhost'`)
 
 	// All privileges
-	AllPrivs := "Select,Insert,Update,Delete,Create,Drop,Process,References,Alter,Show Databases,Super,Execute,Index,Create User,Trigger,Create View,Show View,Create Role,Drop Role,CREATE TEMPORARY TABLES,LOCK TABLES,CREATE ROUTINE,ALTER ROUTINE,EVENT,SHUTDOWN"
 	mustExec(c, se, `GRANT ALL ON *.* TO  'show'@'localhost';`)
 	gs, err = pc.ShowGrants(se, &auth.UserIdentity{Username: "show", Hostname: "localhost"}, nil)
 	c.Assert(err, IsNil)
 	c.Assert(gs, HasLen, 1)
-	c.Assert(gs[0], Equals, `GRANT `+AllPrivs+` ON *.* TO 'show'@'localhost'`)
+	c.Assert(gs[0], Equals, `GRANT ALL PRIVILEGES ON *.* TO 'show'@'localhost'`)
 
 	// All privileges with grant option
 	mustExec(c, se, `GRANT ALL ON *.* TO 'show'@'localhost' WITH GRANT OPTION;`)
@@ -284,7 +283,7 @@ func (s *testPrivilegeSuite) TestShowGrants(c *C) {
 	gs, err = pc.ShowGrants(se, &auth.UserIdentity{Username: "show", Hostname: "localhost"}, nil)
 	c.Assert(err, IsNil)
 	c.Assert(gs, HasLen, 2)
-	expected := []string{`GRANT ` + AllPrivs + ` ON *.* TO 'show'@'localhost'`,
+	expected := []string{`GRANT ALL PRIVILEGES ON *.* TO 'show'@'localhost'`,
 		`GRANT Select ON test.* TO 'show'@'localhost'`}
 	c.Assert(testutil.CompareUnorderedStringSlice(gs, expected), IsTrue)
 
@@ -292,7 +291,7 @@ func (s *testPrivilegeSuite) TestShowGrants(c *C) {
 	gs, err = pc.ShowGrants(se, &auth.UserIdentity{Username: "show", Hostname: "localhost"}, nil)
 	c.Assert(err, IsNil)
 	c.Assert(gs, HasLen, 3)
-	expected = []string{`GRANT ` + AllPrivs + ` ON *.* TO 'show'@'localhost'`,
+	expected = []string{`GRANT ALL PRIVILEGES ON *.* TO 'show'@'localhost'`,
 		`GRANT Select ON test.* TO 'show'@'localhost'`,
 		`GRANT Index ON test1.* TO 'show'@'localhost'`}
 	c.Assert(testutil.CompareUnorderedStringSlice(gs, expected), IsTrue)
@@ -301,7 +300,7 @@ func (s *testPrivilegeSuite) TestShowGrants(c *C) {
 	gs, err = pc.ShowGrants(se, &auth.UserIdentity{Username: "show", Hostname: "localhost"}, nil)
 	c.Assert(err, IsNil)
 	c.Assert(gs, HasLen, 3)
-	expected = []string{`GRANT ` + AllPrivs + ` ON *.* TO 'show'@'localhost'`,
+	expected = []string{`GRANT ALL PRIVILEGES ON *.* TO 'show'@'localhost'`,
 		`GRANT Select ON test.* TO 'show'@'localhost'`,
 		`GRANT ALL PRIVILEGES ON test1.* TO 'show'@'localhost'`}
 	c.Assert(testutil.CompareUnorderedStringSlice(gs, expected), IsTrue)
@@ -311,7 +310,7 @@ func (s *testPrivilegeSuite) TestShowGrants(c *C) {
 	gs, err = pc.ShowGrants(se, &auth.UserIdentity{Username: "show", Hostname: "localhost"}, nil)
 	c.Assert(err, IsNil)
 	c.Assert(gs, HasLen, 4)
-	expected = []string{`GRANT ` + AllPrivs + ` ON *.* TO 'show'@'localhost'`,
+	expected = []string{`GRANT ALL PRIVILEGES ON *.* TO 'show'@'localhost'`,
 		`GRANT Select ON test.* TO 'show'@'localhost'`,
 		`GRANT ALL PRIVILEGES ON test1.* TO 'show'@'localhost'`,
 		`GRANT Update ON test.test TO 'show'@'localhost'`}
