@@ -14,6 +14,7 @@
 package expression
 
 import (
+	"fmt"
 	"strings"
 	"time"
 
@@ -149,6 +150,7 @@ type builtinInIntSig struct {
 }
 
 func (b *builtinInIntSig) buildHashMapForConstArgs(ctx sessionctx.Context) error {
+	fmt.Println("enter buildHashMapForConstArgs")
 	b.nonConstArgs = make([]Expression, 0, len(b.args))
 	b.nonConstArgs = append(b.nonConstArgs, b.args[0])
 	b.hashSet = make(map[int64]bool, len(b.args)-1)
@@ -174,7 +176,7 @@ func (b *builtinInIntSig) buildHashMapForConstArgs(ctx sessionctx.Context) error
 		b.hashSet = nil
 		b.hasNull = false
 	}
-
+	fmt.Println("b.hasNull is ", b.hasNull, ", nonconst len is ", len(b.nonConstArgs))
 	return nil
 }
 
@@ -192,6 +194,7 @@ func (b *builtinInIntSig) Clone() builtinFunc {
 }
 
 func (b *builtinInIntSig) evalInt(row chunk.Row) (int64, bool, error) {
+	fmt.Println("enter evalInt")
 	arg0, isNull0, err := b.args[0].EvalInt(b.ctx, row)
 	if isNull0 || err != nil {
 		return 0, isNull0, err

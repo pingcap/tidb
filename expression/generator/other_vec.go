@@ -192,6 +192,7 @@ func (b *{{.SigName}}) vecEvalInt(input *chunk.Chunk, result *chunk.Column) erro
 		{{- end }}
 		for i := 0; i < n; i++ {
 			if r64s[i] != 0 {
+				result.SetNull(i, false)
 				continue
 			}
 {{- /* if is null */}}

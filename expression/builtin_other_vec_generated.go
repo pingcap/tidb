@@ -82,6 +82,7 @@ func (b *builtinInIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) e
 		buf1.MergeNulls(buf0)
 		for i := 0; i < n; i++ {
 			if r64s[i] != 0 {
+				result.SetNull(i, false)
 				continue
 			}
 			if buf1.IsNull(i) {
@@ -173,6 +174,7 @@ func (b *builtinInStringSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column
 		}
 		for i := 0; i < n; i++ {
 			if r64s[i] != 0 {
+				result.SetNull(i, false)
 				continue
 			}
 			if buf1.IsNull(i) || buf0.IsNull(i) {
@@ -257,6 +259,7 @@ func (b *builtinInDecimalSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colum
 		buf1.MergeNulls(buf0)
 		for i := 0; i < n; i++ {
 			if r64s[i] != 0 {
+				result.SetNull(i, false)
 				continue
 			}
 			if buf1.IsNull(i) {
@@ -340,6 +343,7 @@ func (b *builtinInRealSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 		buf1.MergeNulls(buf0)
 		for i := 0; i < n; i++ {
 			if r64s[i] != 0 {
+				result.SetNull(i, false)
 				continue
 			}
 			if buf1.IsNull(i) {
@@ -420,6 +424,7 @@ func (b *builtinInTimeSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 		buf1.MergeNulls(buf0)
 		for i := 0; i < n; i++ {
 			if r64s[i] != 0 {
+				result.SetNull(i, false)
 				continue
 			}
 			if buf1.IsNull(i) {
@@ -500,6 +505,7 @@ func (b *builtinInDurationSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colu
 		buf1.MergeNulls(buf0)
 		for i := 0; i < n; i++ {
 			if r64s[i] != 0 {
+				result.SetNull(i, false)
 				continue
 			}
 			if buf1.IsNull(i) {
@@ -581,6 +587,7 @@ func (b *builtinInJSONSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 		}
 		for i := 0; i < n; i++ {
 			if r64s[i] != 0 {
+				result.SetNull(i, false)
 				continue
 			}
 			if buf1.IsNull(i) || buf0.IsNull(i) {
