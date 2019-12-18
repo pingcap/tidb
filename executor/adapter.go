@@ -112,8 +112,17 @@ func colNames2ResultFields(schema *expression.Schema, names []*types.FieldName, 
 // The reason we need update is that chunk with 0 rows indicating we already finished current query, we need prepare for
 // next query.
 // If stmt is not nil and chunk with some rows inside, we simply update last query found rows by the number of row in chunk.
-func (a *recordSet) Next(ctx context.Context, req *chunk.Chunk) error {
-	err := Next(ctx, a.executor, req)
+func (a *recordSet) Next(ctx context.Context, req *chunk.Chunk) (err error) {
+	defer func() {
+		r := recover()
+		if r == nil {
+			return
+		}
+		err = errors.Errorf("%v", r)
+		logutil.Logger(ctx).Error("execute sql panic", zap.String("sql", a.stmt.Text), zap.Stack("stack"))
+	}()
+
+	err = Next(ctx, a.executor, req)
 	if err != nil {
 		a.lastErr = err
 		return err
@@ -526,6 +535,7 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e Executor) error {
 		if err1 != nil {
 			return err1
 		}
+		keys = txnCtx.CollectUnchangedRowKeys(keys)
 		if len(keys) == 0 {
 			return nil
 		}
@@ -752,7 +762,9 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	cfg := config.GetGlobalConfig()
 	costTime := time.Since(sessVars.StartTime) + sessVars.DurationParse
 	threshold := time.Duration(atomic.LoadUint64(&cfg.Log.SlowThreshold)) * time.Millisecond
-	if costTime < threshold && level > zapcore.DebugLevel {
+	enable := atomic.LoadUint32(&cfg.Log.EnableSlowLog) > 0
+	// if the level is Debug, print slow logs anyway
+	if (!enable || costTime < threshold) && level > zapcore.DebugLevel {
 		return
 	}
 	sql := FormatSQL(a.Text, sessVars.PreparedParams)
