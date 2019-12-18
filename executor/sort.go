@@ -94,6 +94,10 @@ func (e *SortExec) Close() error {
 		}
 		e.partitionRowPtrs = nil
 	}
+	if e.rowChunks != nil {
+		e.memTracker.Consume(-e.rowChunks.GetMemTracker().BytesConsumed())
+		e.rowChunks = nil
+	}
 	e.memTracker.Consume(int64(-8 * cap(e.rowPtrs)))
 	e.rowPtrs = nil
 	e.memTracker = nil
