@@ -239,7 +239,7 @@ var (
 	ErrNotSequence = terror.ClassDDL.New(mysql.ErrNotSequence, mysql.MySQLErrName[mysql.ErrNotSequence])
 	// ErrUnknownSequence returns when drop / alter unknown sequence.
 	ErrUnknownSequence = terror.ClassDDL.New(mysql.ErrUnknownSequence, mysql.MySQLErrName[mysql.ErrUnknownSequence])
-	// ErrUnsupportedTableOption returns when unsupported table option exists in sequence.
+	// ErrSequenceUnsupportedTableOption returns when unsupported table option exists in sequence.
 	ErrSequenceUnsupportedTableOption = terror.ClassDDL.New(mysql.ErrSequenceUnsupportedTableOption, mysql.MySQLErrName[mysql.ErrSequenceUnsupportedTableOption])
 )
 

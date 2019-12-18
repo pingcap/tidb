@@ -864,7 +864,7 @@ func (p *preprocessor) resolveAlterTableStmt(node *ast.AlterTableStmt) {
 func (p *preprocessor) resolveCreateSequenceStmt(stmt *ast.CreateSequenceStmt) {
 	sName := stmt.Name.Name.String()
 	if isIncorrectName(sName) {
-		p.err = ddl.ErrWrongSequenceName.GenWithStackByArgs(sName)
+		p.err = ddl.ErrWrongTableName.GenWithStackByArgs(sName)
 		return
 	}
 }
