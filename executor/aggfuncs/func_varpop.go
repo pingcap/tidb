@@ -35,8 +35,9 @@ func (e *varPop4Float64) AllocPartialResult() PartialResult {
 
 func (e *varPop4Float64) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4Float64)(pr)
-	p.sum = 0
 	p.count = 0
+	p.sum = 0
+	p.variance = 0
 }
 
 func (e *varPop4Float64) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
