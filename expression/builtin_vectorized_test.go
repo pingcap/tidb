@@ -802,9 +802,10 @@ func (s *testEvaluatorSuite) TestSleepVec(c *C) {
 		atomic.CompareAndSwapUint32(&ctx.GetSessionVars().Killed, 0, 1)
 	}()
 
-	plus, input, buf := genMockVecPlusIntBuiltinFunc()
-	plus.enableAlloc = false
-	err = f.vecEvalInt(input, buf)
+	tp := types.NewFieldType(mysql.TypeDecimal)
+	input := chunk.New([]*types.FieldType{tp}, 1, 1)
+	buf := chunk.NewColumn(types.NewFieldType(mysql.TypeLonglong), 1)
+	input.AppendFloat64(0, float64(10))
 
 	c.Assert(f.vecEvalInt(input, buf), IsNil)
 
