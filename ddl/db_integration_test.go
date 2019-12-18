@@ -1963,7 +1963,7 @@ func (s *testIntegrationSuite6) TestAddExpressionIndex(c *C) {
 	c.Assert(len(columns), Equals, 3)
 	c.Assert(columns[2].Hidden, IsTrue)
 
-	tk.MustQuery("select * from t;").Check(testkit.Rows("1 2.1 3.1"))
+	tk.MustQuery("select * from t;").Check(testkit.Rows("1 2.1"))
 
 	tk.MustExec("alter table t add index idx_multi((a+b),(a+1), b);")
 	tblInfo, err = s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
@@ -1973,7 +1973,7 @@ func (s *testIntegrationSuite6) TestAddExpressionIndex(c *C) {
 	c.Assert(columns[3].Hidden, IsTrue)
 	c.Assert(columns[4].Hidden, IsTrue)
 
-	tk.MustQuery("select * from t;").Check(testkit.Rows("1 2.1 3.1 3.1 2"))
+	tk.MustQuery("select * from t;").Check(testkit.Rows("1 2.1"))
 
 	tk.MustExec("alter table t drop index idx;")
 	tblInfo, err = s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
@@ -1981,7 +1981,7 @@ func (s *testIntegrationSuite6) TestAddExpressionIndex(c *C) {
 	columns = tblInfo.Meta().Columns
 	c.Assert(len(columns), Equals, 4)
 
-	tk.MustQuery("select * from t;").Check(testkit.Rows("1 2.1 3.1 2"))
+	tk.MustQuery("select * from t;").Check(testkit.Rows("1 2.1"))
 
 	tk.MustExec("alter table t drop index idx_multi;")
 	tblInfo, err = s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))

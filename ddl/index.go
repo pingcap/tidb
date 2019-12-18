@@ -383,6 +383,15 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 		}
 		return ver, err
 	}
+	for _, hiddenCol := range hiddenCols {
+		columnInfo := model.FindColumnInfo(tblInfo.Columns, hiddenCol.Name.L)
+		if columnInfo != nil && columnInfo.State == model.StatePublic {
+			// We already have a column with the same column name.
+			job.State = model.JobStateCancelled
+			// TODO: refine the error message
+			return ver, infoschema.ErrColumnExists.GenWithStackByArgs(hiddenCol.Name)
+		}
+	}
 
 	if indexInfo == nil {
 		if len(hiddenCols) > 0 {
@@ -395,6 +404,10 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 				}
 				hiddenCol = newHiddenCol
 			}
+		}
+		if err = checkAddColumnTooManyColumns(len(tblInfo.Columns)); err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
 		}
 		indexInfo, err = buildIndexInfo(tblInfo, indexName, indexPartSpecifications, model.StateNone)
 		if err != nil {

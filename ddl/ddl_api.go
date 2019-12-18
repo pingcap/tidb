@@ -3455,6 +3455,7 @@ func (d *ddl) CreateIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.Inde
 			if err = checkDependedColExist(colInfo.Dependences, t.Cols()); err != nil {
 				return errors.Trace(err)
 			}
+			idxPart.Expr = nil
 			hiddenCols = append(hiddenCols, colInfo)
 		}
 	}
