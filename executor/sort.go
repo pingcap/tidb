@@ -212,9 +212,7 @@ func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 			}
 		} else {
 			e.rowChunks.Add(chk)
-			// In this pr, it must use external sorting
-			// the check should be modified before we merge this pr.
-			if atomic.LoadUint32(&e.exceeded) == 0 {
+			if atomic.LoadUint32(&e.exceeded) == 1 {
 				e.rowChunksInDisk, err = e.spillToDisk()
 				if err != nil {
 					return err
