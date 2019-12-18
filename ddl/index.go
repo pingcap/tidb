@@ -61,13 +61,9 @@ func buildIndexColumns(columns []*model.ColumnInfo, indexPartSpecifications []*a
 	// The sum of length of all index columns.
 	sumLength := 0
 	for _, ip := range indexPartSpecifications {
-		if ip.Expr != nil {
-			col = model.FindColumnInfo(hiddenCols, ip.Column.Name.L)
-		} else {
-			col = model.FindColumnInfo(tbl.Columns, ip.Column.Name.L)
-			if col == nil {
-				return nil, errKeyColumnDoesNotExits.GenWithStack("column does not exist: %s", ip.Column.Name)
-			}
+		col = model.FindColumnInfo(columns, ip.Column.Name.L)
+		if col == nil {
+			return nil, errKeyColumnDoesNotExits.GenWithStack("column does not exist: %s", ip.Column.Name)
 		}
 
 		if err := checkIndexColumn(col, ip); err != nil {
@@ -341,47 +337,6 @@ func checkPrimaryKeyNotNull(w *worker, sqlMode mysql.SQLMode, t *meta.Meta, job 
 	return nil, err
 }
 
-// preCheckCreateIndex does the necessary or only need to check before the Create Index job enters the queue.
-// `necessary` means that we can't get nought information(ddlCtx, etc) to do the check in ddl worker.
-// `only need to` means that we don't need to check in ddl worker. Such as the length of index name.
-func preCheckCreateIndex(indexName model.CIStr, keyType ast.IndexKeyType) error {
-	// not support Spatial and FullText index
-	if keyType == ast.IndexKeyTypeFullText || keyType == ast.IndexKeyTypeSpatial {
-		return errUnsupportedIndexType.GenWithStack("FULLTEXT and SPATIAL index is not supported")
-	}
-	if err := checkTooLongIndex(indexName); err != nil {
-		return errors.Trace(err)
-	}
-
-	return nil
-}
-
-func checkCreateIndex(tblInfo *model.TableInfo, job *model.Job, indexName model.CIStr, isPK bool, hiddenCols []*model.ColumnInfo) (err error) {
-	indexInfo := tblInfo.FindIndexByName(indexName.L)
-	if indexInfo != nil && indexInfo.State == model.StatePublic {
-		job.State = model.JobStateCancelled
-		err = ErrDupKeyName.GenWithStack("index already exist %s", indexName)
-		if isPK {
-			err = infoschema.ErrMultiplePriKey
-		}
-		return
-	}
-	for _, hiddenCol := range hiddenCols {
-		columnInfo := model.FindColumnInfo(tblInfo.Columns, hiddenCol.Name.L)
-		if columnInfo != nil && columnInfo.State == model.StatePublic {
-			// We already have a column with the same column name.
-			job.State = model.JobStateCancelled
-			// TODO: refine the error message
-			return infoschema.ErrColumnExists.GenWithStackByArgs(hiddenCol.Name)
-		}
-	}
-	if err = checkAddColumnTooManyColumns(len(tblInfo.Columns) + len(hiddenCols)); err != nil {
-		job.State = model.JobStateCancelled
-		return errors.Trace(err)
-	}
-	return nil
-}
-
 func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK bool) (ver int64, err error) {
 	// Handle the rolling back job.
 	if job.IsRollingback() {
@@ -420,6 +375,14 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 	}
 
 	indexInfo := tblInfo.FindIndexByName(indexName.L)
+	if indexInfo != nil && indexInfo.State == model.StatePublic {
+		job.State = model.JobStateCancelled
+		err = ErrDupKeyName.GenWithStack("index already exist %s", indexName)
+		if isPK {
+			err = infoschema.ErrMultiplePriKey
+		}
+		return ver, err
+	}
 
 	if indexInfo == nil {
 		if len(hiddenCols) > 0 {
