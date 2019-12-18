@@ -89,11 +89,11 @@ func (s *testCacheSuite) TestLoadGlobalPrivTable(c *C) {
 	var p privileges.MySQLPrivilege
 	err = p.LoadGlobalPrivTable(se)
 	c.Assert(err, IsNil)
-	c.Assert(p.Global[0].Host, Equals, `%`)
-	c.Assert(p.Global[0].User, Equals, `tu`)
-	c.Assert(p.Global[0].Priv.SSLType, Equals, privileges.SslTypeSpecified)
-	c.Assert(p.Global[0].Priv.X509Issuer, Equals, "C=ZH2")
-	c.Assert(p.Global[0].Priv.X509Subject, Equals, "C=ZH1")
+	c.Assert(p.Global["tu"][0].Host, Equals, `%`)
+	c.Assert(p.Global["tu"][0].User, Equals, `tu`)
+	c.Assert(p.Global["tu"][0].Priv.SSLType, Equals, privileges.SslTypeSpecified)
+	c.Assert(p.Global["tu"][0].Priv.X509Issuer, Equals, "C=ZH2")
+	c.Assert(p.Global["tu"][0].Priv.X509Subject, Equals, "C=ZH1")
 }
 
 func (s *testCacheSuite) TestLoadDBTable(c *C) {

@@ -218,7 +218,7 @@ type MySQLPrivilege struct {
 	// non-full privileges (i.e. user.db entries).
 	User          []UserRecord
 	UserMap       map[string][]UserRecord // Accelerate User searching
-	Global        []globalPrivRecord
+	Global        map[string][]globalPrivRecord
 	DB            []dbRecord
 	DBMap         map[string][]dbRecord // Accelerate DB searching
 	TablesPriv    []tablesPrivRecord
@@ -597,7 +597,10 @@ func (p *MySQLPrivilege) decodeGlobalPrivTableRow(row chunk.Row, fs []*ast.Resul
 			}
 		}
 	}
-	p.Global = append(p.Global, value)
+	if p.Global == nil {
+		p.Global = make(map[string][]globalPrivRecord)
+	}
+	p.Global[value.User] = append(p.Global[value.User], value)
 	return nil
 }
 
@@ -788,8 +791,12 @@ func (p *MySQLPrivilege) connectionVerification(user, host string) *UserRecord {
 }
 
 func (p *MySQLPrivilege) matchGlobalPriv(user, host string) *globalPrivRecord {
-	for i := 0; i < len(p.Global); i++ {
-		record := &p.Global[i]
+	uGlobal, exists := p.Global[user]
+	if !exists {
+		return nil
+	}
+	for i := 0; i < len(uGlobal); i++ {
+		record := &uGlobal[i]
 		if record.match(user, host) {
 			return record
 		}
