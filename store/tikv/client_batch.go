@@ -638,7 +638,7 @@ func (c *rpcClient) recycleIdleConn() {
 	for _, addr := range addrs {
 		c.Lock()
 		conn, ok := c.batchConns[addr]
-		if ok {
+		if ok && conn.isIdle() {
 			delete(c.batchConns, addr)
 			logutil.BgLogger().Info("recycle idle connection",
 				zap.String("target", addr))
