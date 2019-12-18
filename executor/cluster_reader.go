@@ -46,6 +46,8 @@ import (
 	"google.golang.org/grpc/credentials"
 )
 
+const clusterLogBatchSize = 1024
+
 type clusterRetriever interface {
 	retrieve(ctx sessionctx.Context) ([][]types.Datum, error)
 }
@@ -82,6 +84,20 @@ type clusterConfigRetriever struct {
 	extractor *plannercore.ClusterTableExtractor
 }
 
+func parseFailpointInjectServerInfo(s string) []infoschema.ServerInfo {
+	var serversInfo []infoschema.ServerInfo
+	servers := strings.Split(s, ";")
+	for _, server := range servers {
+		parts := strings.Split(server, ",")
+		serversInfo = append(serversInfo, infoschema.ServerInfo{
+			ServerType: parts[0],
+			Address:    parts[1],
+			StatusAddr: parts[2],
+		})
+	}
+	return serversInfo
+}
+
 // retrieve implements the clusterRetriever interface
 func (e *clusterConfigRetriever) retrieve(ctx sessionctx.Context) ([][]types.Datum, error) {
 	if e.extractor.SkipRequest || e.retrieved {
@@ -94,7 +110,14 @@ func (e *clusterConfigRetriever) retrieve(ctx sessionctx.Context) ([][]types.Dat
 		rows [][]types.Datum
 		err  error
 	}
-	serversInfo, err := getClusterServerInfoWithFilter(ctx, e.extractor.NodeTypes, e.extractor.Addresses)
+	serversInfo, err := infoschema.GetClusterServerInfo(ctx)
+	failpoint.Inject("mockClusterConfigServerInfo", func(val failpoint.Value) {
+		if s := val.(string); len(s) > 0 {
+			serversInfo = parseFailpointInjectServerInfo(s)
+			// erase the error
+			err = nil
+		}
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -361,7 +384,6 @@ func getClusterServerInfoWithFilter(ctx sessionctx.Context, nodeTypes, addresses
 type clusterLogRetriever struct {
 	isDrained  bool
 	retrieving bool
-	results    []chan logStreamResult
 	heap       *logResponseHeap
 	extractor  *plannercore.ClusterLogTableExtractor
 }
@@ -378,18 +400,25 @@ type logStreamResult struct {
 
 type logResponseHeap []logStreamResult
 
-func (h logResponseHeap) Len() int { return len(h) }
+func (h logResponseHeap) Len() int {
+	return len(h)
+}
+
 func (h logResponseHeap) Less(i, j int) bool {
 	if lhs, rhs := h[i].messages[0].Time, h[j].messages[0].Time; lhs != rhs {
 		return lhs < rhs
 	}
 	return h[i].typ < h[j].typ
 }
-func (h logResponseHeap) Swap(i, j int) { h[i], h[j] = h[j], h[i] }
+
+func (h logResponseHeap) Swap(i, j int) {
+	h[i], h[j] = h[j], h[i]
+}
 
 func (h *logResponseHeap) Push(x interface{}) {
 	*h = append(*h, x.(logStreamResult))
 }
+
 func (h *logResponseHeap) Pop() interface{} {
 	old := *h
 	n := len(old)
@@ -398,28 +427,19 @@ func (h *logResponseHeap) Pop() interface{} {
 	return x
 }
 
-func (e *clusterLogRetriever) startRetrieving(ctx sessionctx.Context) error {
+func (e *clusterLogRetriever) startRetrieving(ctx sessionctx.Context) ([]chan logStreamResult, error) {
 	isFailpointTestMode := false
 	serversInfo, err := infoschema.GetClusterServerInfo(ctx)
 	failpoint.Inject("mockClusterLogServerInfo", func(val failpoint.Value) {
 		if s := val.(string); len(s) > 0 {
-			serversInfo = serversInfo[:0]
-			servers := strings.Split(s, ";")
-			for _, server := range servers {
-				parts := strings.Split(server, ",")
-				serversInfo = append(serversInfo, infoschema.ServerInfo{
-					ServerType: parts[0],
-					Address:    parts[1],
-					StatusAddr: parts[2],
-				})
-			}
+			serversInfo = parseFailpointInjectServerInfo(s)
 			// erase the error
 			err = nil
 			isFailpointTestMode = true
 		}
 	})
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	// gRPC options
@@ -428,7 +448,7 @@ func (e *clusterLogRetriever) startRetrieving(ctx sessionctx.Context) error {
 	if len(security.ClusterSSLCA) != 0 {
 		tlsConfig, err := security.ToTLSConfig()
 		if err != nil {
-			return errors.Trace(err)
+			return nil, errors.Trace(err)
 		}
 		opt = grpc.WithTransportCredentials(credentials.NewTLS(tlsConfig))
 	}
@@ -454,7 +474,7 @@ func (e *clusterLogRetriever) startRetrieving(ctx sessionctx.Context) error {
 		// To avoid search log interface overload, the user should specify at least one pattern
 		// in normally SQL. (But in test mode we should relax this limitation)
 		if len(req.Patterns) == 0 && len(req.Levels) == 0 {
-			return errors.New("denied to scan full logs (use `SELECT * FROM cluster_log WHERE message LIKE '%'` explicitly if intentionally)")
+			return nil, errors.New("denied to scan full logs (use `SELECT * FROM cluster_log WHERE message LIKE '%'` explicitly if intentionally)")
 		}
 	}
 
@@ -518,8 +538,7 @@ func (e *clusterLogRetriever) startRetrieving(ctx sessionctx.Context) error {
 		}(ch, typ, address, statusAddr)
 	}
 
-	e.results = results
-	return nil
+	return results, nil
 }
 
 func (e *clusterLogRetriever) retrieve(ctx sessionctx.Context) ([][]types.Datum, error) {
@@ -529,21 +548,20 @@ func (e *clusterLogRetriever) retrieve(ctx sessionctx.Context) ([][]types.Datum,
 
 	if !e.retrieving {
 		e.retrieving = true
-		if err := e.startRetrieving(ctx); err != nil {
+		results, err := e.startRetrieving(ctx)
+		if err != nil {
 			e.isDrained = true
 			return nil, err
 		}
 
 		// initialize the heap
 		e.heap = &logResponseHeap{}
-		n := len(e.results)
-		for i := n - 1; i >= 0; i-- {
-			result := <-e.results[i]
+		for _, ch := range results {
+			result := <-ch
 			if result.err != nil || len(result.messages) == 0 {
 				if result.err != nil {
 					ctx.GetSessionVars().StmtCtx.AppendWarning(result.err)
 				}
-				e.results = append(e.results[:i], e.results[i+1:]...)
 				continue
 			}
 			*e.heap = append(*e.heap, result)
@@ -553,7 +571,7 @@ func (e *clusterLogRetriever) retrieve(ctx sessionctx.Context) ([][]types.Datum,
 
 	// Merge the results
 	var finalRows [][]types.Datum
-	for e.heap.Len() > 0 && len(finalRows) < 1024 {
+	for e.heap.Len() > 0 && len(finalRows) < clusterLogBatchSize {
 		min := heap.Pop(e.heap).(logStreamResult)
 		item := min.messages[0]
 		time := time.Unix(item.Time/1000, (item.Time%1000)*int64(time.Millisecond))
