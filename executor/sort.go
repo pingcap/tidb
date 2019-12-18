@@ -251,7 +251,7 @@ func (e *SortExec) initPointersForListInDisk(disk *chunk.ListInDisk) []chunk.Row
 			rowPtrsInDisk = append(rowPtrsInDisk, chunk.RowPtr{ChkIdx: uint32(chkIdx), RowIdx: uint32(rowIdx)})
 		}
 	}
-	e.memTracker.Consume(int64(8 * len(e.rowPtrsInDisk)))
+	e.memTracker.Consume(int64(8 * len(rowPtrsInDisk)))
 	return rowPtrsInDisk
 }
 
