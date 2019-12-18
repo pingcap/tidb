@@ -762,7 +762,9 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	cfg := config.GetGlobalConfig()
 	costTime := time.Since(sessVars.StartTime) + sessVars.DurationParse
 	threshold := time.Duration(atomic.LoadUint64(&cfg.Log.SlowThreshold)) * time.Millisecond
-	if costTime < threshold && level > zapcore.DebugLevel {
+	enable := atomic.LoadUint32(&cfg.Log.EnableSlowLog) > 0
+	// if the level is Debug, print slow logs anyway
+	if (!enable || costTime < threshold) && level > zapcore.DebugLevel {
 		return
 	}
 	sql := FormatSQL(a.Text, sessVars.PreparedParams)
