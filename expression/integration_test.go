@@ -5230,3 +5230,22 @@ func (s *testIntegrationSuite) TestInMeetsPrepareAndExecute(c *C) {
 	tk.MustExec("set @a=1, @b=2, @c=3, @d=4")
 	tk.MustQuery("execute pr4 using @a,@b,@c,@d").Check(testkit.Rows("0"))
 }
+
+func (s *testIntegrationSuite) TestCastStrToInt(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	cases := []struct {
+		sql    string
+		result int
+	}{
+		{"select cast('' as signed)", 0},
+		{"select cast('12345abcde' as signed)", 12345},
+		{"select cast('123e456' as signed)", 123},
+		{"select cast('-12345abcde' as signed)", -12345},
+		{"select cast('-123e456' as signed)", -123},
+	}
+	for _, ca := range cases {
+		tk.Se.GetSessionVars().StmtCtx.SetWarnings(nil)
+		tk.MustQuery(ca.sql).Check(testkit.Rows(fmt.Sprintf("%v", ca.result)))
+		c.Assert(terror.ErrorEqual(tk.Se.GetSessionVars().StmtCtx.GetWarnings()[0].Err, types.ErrTruncatedWrongVal), IsTrue)
+	}
+}
