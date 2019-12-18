@@ -196,6 +196,37 @@ func (s *testCacheSuite) TestPatternMatch(c *C) {
 	c.Assert(p.RequestVerification(activeRoles, "genius", "127.0.0.1", "test", "", "", mysql.SelectPriv), IsTrue)
 }
 
+func (s *testCacheSuite) TestHostMatch(c *C) {
+	se, err := session.CreateSession4Test(s.store)
+	activeRoles := make([]*auth.RoleIdentity, 0)
+	c.Assert(err, IsNil)
+	defer se.Close()
+
+	// Host name can be IPv4 address + netmask
+	mustExec(c, se, "USE MYSQL;")
+	mustExec(c, se, "TRUNCATE TABLE mysql.user")
+	mustExec(c, se, `INSERT INTO mysql.user VALUES ("172.0.0.0/255.0.0.0", "root", "", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y")`)
+	var p privileges.MySQLPrivilege
+	err = p.LoadUserTable(se)
+	c.Assert(err, IsNil)
+	c.Assert(p.RequestVerification(activeRoles, "root", "172.0.0.1", "test", "", "", mysql.SelectPriv), IsTrue)
+	c.Assert(p.RequestVerification(activeRoles, "root", "172.1.1.1", "test", "", "", mysql.SelectPriv), IsTrue)
+	c.Assert(p.RequestVerification(activeRoles, "root", "localhost", "test", "", "", mysql.SelectPriv), IsFalse)
+	c.Assert(p.RequestVerification(activeRoles, "root", "127.0.0.1", "test", "", "", mysql.SelectPriv), IsFalse)
+	c.Assert(p.RequestVerification(activeRoles, "root", "198.0.0.1", "test", "", "", mysql.SelectPriv), IsFalse)
+	c.Assert(p.RequestVerification(activeRoles, "root", "198.0.0.1", "test", "", "", mysql.PrivilegeType(0)), IsTrue)
+	c.Assert(p.RequestVerification(activeRoles, "root", "172.0.0.1", "test", "", "", mysql.ShutdownPriv), IsTrue)
+
+	// Invalid host name, the user can be created, but cannot login
+	mustExec(c, se, `INSERT INTO mysql.user VALUES ("127.0.0.0/24", "root", "", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "N")`)
+	p = privileges.MySQLPrivilege{}
+	err = p.LoadUserTable(se)
+	c.Assert(err, IsNil)
+	c.Assert(p.RequestVerification(activeRoles, "root", "127.0.0.1", "test", "", "", mysql.SelectPriv), IsFalse)
+	c.Assert(p.RequestVerification(activeRoles, "root", "127.0.0.0", "test", "", "", mysql.SelectPriv), IsFalse)
+	c.Assert(p.RequestVerification(activeRoles, "root", "localhost", "test", "", "", mysql.ShutdownPriv), IsFalse)
+}
+
 func (s *testCacheSuite) TestCaseInsensitive(c *C) {
 	se, err := session.CreateSession4Test(s.store)
 	activeRoles := make([]*auth.RoleIdentity, 0)
@@ -365,39 +396,39 @@ func (s *testCacheSuite) TestAbnormalMySQLTable(c *C) {
 func (s *testCacheSuite) TestSortUserTable(c *C) {
 	var p privileges.MySQLPrivilege
 	p.User = []privileges.UserRecord{
-		{Host: `%`, User: "root"},
-		{Host: `%`, User: "jeffrey"},
-		{Host: "localhost", User: "root"},
-		{Host: "localhost", User: ""},
+		{BaseRecord: privileges.BaseRecord{Host: `%`, User: "root"}},
+		{BaseRecord: privileges.BaseRecord{Host: `%`, User: "jeffrey"}},
+		{BaseRecord: privileges.BaseRecord{Host: "localhost", User: "root"}},
+		{BaseRecord: privileges.BaseRecord{Host: "localhost", User: ""}},
 	}
 	p.SortUserTable()
 	result := []privileges.UserRecord{
-		{Host: "localhost", User: "root"},
-		{Host: "localhost", User: ""},
-		{Host: `%`, User: "jeffrey"},
-		{Host: `%`, User: "root"},
+		{BaseRecord: privileges.BaseRecord{Host: "localhost", User: "root"}},
+		{BaseRecord: privileges.BaseRecord{Host: "localhost", User: ""}},
+		{BaseRecord: privileges.BaseRecord{Host: `%`, User: "jeffrey"}},
+		{BaseRecord: privileges.BaseRecord{Host: `%`, User: "root"}},
 	}
 	checkUserRecord(p.User, result, c)
 
 	p.User = []privileges.UserRecord{
-		{Host: `%`, User: "jeffrey"},
-		{Host: "h1.example.net", User: ""},
+		{BaseRecord: privileges.BaseRecord{Host: `%`, User: "jeffrey"}},
+		{BaseRecord: privileges.BaseRecord{Host: "h1.example.net", User: ""}},
 	}
 	p.SortUserTable()
 	result = []privileges.UserRecord{
-		{Host: "h1.example.net", User: ""},
-		{Host: `%`, User: "jeffrey"},
+		{BaseRecord: privileges.BaseRecord{Host: "h1.example.net", User: ""}},
+		{BaseRecord: privileges.BaseRecord{Host: `%`, User: "jeffrey"}},
 	}
 	checkUserRecord(p.User, result, c)
 
 	p.User = []privileges.UserRecord{
-		{Host: `192.168.%`, User: "xxx"},
-		{Host: `192.168.199.%`, User: "xxx"},
+		{BaseRecord: privileges.BaseRecord{Host: `192.168.%`, User: "xxx"}},
+		{BaseRecord: privileges.BaseRecord{Host: `192.168.199.%`, User: "xxx"}},
 	}
 	p.SortUserTable()
 	result = []privileges.UserRecord{
-		{Host: `192.168.199.%`, User: "xxx"},
-		{Host: `192.168.%`, User: "xxx"},
+		{BaseRecord: privileges.BaseRecord{Host: `192.168.199.%`, User: "xxx"}},
+		{BaseRecord: privileges.BaseRecord{Host: `192.168.%`, User: "xxx"}},
 	}
 	checkUserRecord(p.User, result, c)
 }
