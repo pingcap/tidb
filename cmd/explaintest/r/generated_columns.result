@@ -172,3 +172,45 @@ Projection_4	10.00	root	test.person.name
 └─IndexLookUp_10	10.00	root	
   ├─IndexScan_8	10.00	cop[tikv]	table:person, index:city_no, range:[1,1], keep order:false, stats:pseudo
   └─TableScan_9	10.00	cop[tikv]	table:person, keep order:false, stats:pseudo
+DROP TABLE IF EXISTS t1;
+CREATE TABLE t1 (a INT,
+b INT GENERATED ALWAYS AS (-a) VIRTUAL,
+c INT GENERATED ALWAYS AS (-a) STORED,
+index (c));
+INSERT INTO t1 (a) VALUES (2), (1), (1), (3), (NULL);
+EXPLAIN SELECT sum(a) FROM t1 GROUP BY b;
+id	count	task	operator info
+HashAgg_5	8000.00	root	group by:Column#7, funcs:sum(Column#6)->Column#5
+└─Projection_12	10000.00	root	cast(test.t1.a)->Column#6, test.t1.b
+  └─TableReader_9	10000.00	root	data:TableScan_8
+    └─TableScan_8	10000.00	cop[tikv]	table:t1, range:[-inf,+inf], keep order:false, stats:pseudo
+EXPLAIN SELECT sum(a) FROM t1 GROUP BY c;
+id	count	task	operator info
+HashAgg_11	8000.00	root	group by:test.t1.c, funcs:sum(Column#6)->Column#5
+└─TableReader_12	8000.00	root	data:HashAgg_5
+  └─HashAgg_5	8000.00	cop[tikv]	group by:test.t1.c, funcs:sum(test.t1.a)->Column#6
+    └─TableScan_10	10000.00	cop[tikv]	table:t1, range:[-inf,+inf], keep order:false, stats:pseudo
+EXPLAIN SELECT sum(b) FROM t1 GROUP BY a;
+id	count	task	operator info
+HashAgg_5	8000.00	root	group by:Column#7, funcs:sum(Column#6)->Column#5
+└─Projection_12	10000.00	root	cast(test.t1.b)->Column#6, test.t1.a
+  └─TableReader_9	10000.00	root	data:TableScan_8
+    └─TableScan_8	10000.00	cop[tikv]	table:t1, range:[-inf,+inf], keep order:false, stats:pseudo
+EXPLAIN SELECT sum(b) FROM t1 GROUP BY c;
+id	count	task	operator info
+HashAgg_5	8000.00	root	group by:Column#9, funcs:sum(Column#8)->Column#5
+└─Projection_18	10000.00	root	cast(test.t1.b)->Column#8, test.t1.c
+  └─TableReader_11	10000.00	root	data:TableScan_10
+    └─TableScan_10	10000.00	cop[tikv]	table:t1, range:[-inf,+inf], keep order:false, stats:pseudo
+EXPLAIN SELECT sum(c) FROM t1 GROUP BY a;
+id	count	task	operator info
+HashAgg_9	8000.00	root	group by:test.t1.a, funcs:sum(Column#6)->Column#5
+└─TableReader_10	8000.00	root	data:HashAgg_5
+  └─HashAgg_5	8000.00	cop[tikv]	group by:test.t1.a, funcs:sum(test.t1.c)->Column#6
+    └─TableScan_8	10000.00	cop[tikv]	table:t1, range:[-inf,+inf], keep order:false, stats:pseudo
+EXPLAIN SELECT sum(c) FROM t1 GROUP BY b;
+id	count	task	operator info
+HashAgg_5	8000.00	root	group by:Column#7, funcs:sum(Column#6)->Column#5
+└─Projection_12	10000.00	root	cast(test.t1.c)->Column#6, test.t1.b
+  └─TableReader_9	10000.00	root	data:TableScan_8
+    └─TableScan_8	10000.00	cop[tikv]	table:t1, range:[-inf,+inf], keep order:false, stats:pseudo
