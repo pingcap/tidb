@@ -14,7 +14,6 @@
 package expression
 
 import (
-	"fmt"
 	"strings"
 	"time"
 
@@ -69,9 +68,61 @@ type inFunctionClass struct {
 	baseFunctionClass
 }
 
+// workaround for issue https://github.com/pingcap/tidb/issues/13710
+func (c *inFunctionClass) getInJSON(ctx sessionctx.Context, args []Expression) (sig builtinFunc, err error) {
+	argTps := make([]types.EvalType, len(args))
+	var tp types.EvalType
+	switch args[1].GetType().EvalType() {
+	case types.ETInt:
+		tp = types.ETInt
+	case types.ETReal:
+		tp = types.ETReal
+	default:
+		tp = types.ETString
+	}
+	for i := range args {
+		argTps[i] = tp
+	}
+	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, argTps...)
+	bf.tp.Flen = 1
+	switch args[0].GetType().EvalType() {
+	case types.ETInt:
+		inInt := builtinInIntSig{baseBuiltinFunc: bf, threshold: 1}
+		err := inInt.buildHashMapForConstArgs(ctx)
+		if err != nil {
+			return &inInt, err
+		}
+		sig = &inInt
+		sig.setPbCode(tipb.ScalarFuncSig_InInt)
+	case types.ETReal:
+		inReal := builtinInRealSig{baseBuiltinFunc: bf, threshold: 1}
+		err := inReal.buildHashMapForConstArgs(ctx)
+		if err != nil {
+			return &inReal, err
+		}
+		sig = &inReal
+		sig.setPbCode(tipb.ScalarFuncSig_InReal)
+	default:
+		inStr := builtinInStringSig{baseBuiltinFunc: bf, threshold: 1}
+		err := inStr.buildHashMapForConstArgs(ctx)
+		if err != nil {
+			return &inStr, err
+		}
+		sig = &inStr
+		sig.setPbCode(tipb.ScalarFuncSig_InString)
+	}
+	return sig, nil
+}
+
 func (c *inFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (sig builtinFunc, err error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
+	}
+	if args[0].GetType().EvalType() == types.ETJson {
+		// MySQL 8.0 hasn't implemented IN function for json yet. see https://dev.mysql.com/doc/refman/8.0/en/json.html#json-comparison
+		// It casts json value to int/string/... and use IN function for int/string/...
+		// we choose to be compatible with it. (related issue: https://github.com/pingcap/tidb/issues/13710)
+		return c.getInJSON(ctx, args)
 	}
 	argTps := make([]types.EvalType, len(args))
 	for i := range args {
@@ -128,14 +179,6 @@ func (c *inFunctionClass) getFunction(ctx sessionctx.Context, args []Expression)
 		}
 		sig = &inDuration
 		sig.setPbCode(tipb.ScalarFuncSig_InDuration)
-	case types.ETJson:
-		inJSON := builtinInJSONSig{baseBuiltinFunc: bf, threshold: 1}
-		err := inJSON.buildHashMapForConstArgs(ctx)
-		if err != nil {
-			return &inJSON, err
-		}
-		sig = &inJSON
-		sig.setPbCode(tipb.ScalarFuncSig_InJson)
 	}
 	return sig, nil
 }
@@ -150,7 +193,6 @@ type builtinInIntSig struct {
 }
 
 func (b *builtinInIntSig) buildHashMapForConstArgs(ctx sessionctx.Context) error {
-	fmt.Println("enter buildHashMapForConstArgs")
 	b.nonConstArgs = make([]Expression, 0, len(b.args))
 	b.nonConstArgs = append(b.nonConstArgs, b.args[0])
 	b.hashSet = make(map[int64]bool, len(b.args)-1)
@@ -176,7 +218,6 @@ func (b *builtinInIntSig) buildHashMapForConstArgs(ctx sessionctx.Context) error
 		b.hashSet = nil
 		b.hasNull = false
 	}
-	fmt.Println("b.hasNull is ", b.hasNull, ", nonconst len is ", len(b.nonConstArgs))
 	return nil
 }
 
@@ -194,7 +235,6 @@ func (b *builtinInIntSig) Clone() builtinFunc {
 }
 
 func (b *builtinInIntSig) evalInt(row chunk.Row) (int64, bool, error) {
-	fmt.Println("enter evalInt")
 	arg0, isNull0, err := b.args[0].EvalInt(b.ctx, row)
 	if isNull0 || err != nil {
 		return 0, isNull0, err

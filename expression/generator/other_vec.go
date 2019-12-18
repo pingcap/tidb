@@ -150,9 +150,11 @@ func (b *{{.SigName}}) vecEvalInt(input *chunk.Chunk, result *chunk.Column) erro
 				if isUnsigned, ok := b.hashSet[arg0]; ok {
 					if (isUnsigned0 && isUnsigned) || (!isUnsigned0 && !isUnsigned) {
 						r64s[i] = 1
+						result.SetNull(i, false)
 					}
 					if arg0 >= 0 {
 						r64s[i] = 1
+						result.SetNull(i, false)
 					}
 				}
 			{{- else }}
@@ -169,10 +171,12 @@ func (b *{{.SigName}}) vecEvalInt(input *chunk.Chunk, result *chunk.Column) erro
 					}
 					if _, ok := b.hashSet[string(key)]; ok {
 						r64s[i] = 1
+						result.SetNull(i, false)
 					}
 				{{- else }}
 					if _, ok := b.hashSet[arg0]; ok {
 						r64s[i] = 1
+						result.SetNull(i, false)
 					}
 				{{- end }}
 			{{- end }}
@@ -192,7 +196,6 @@ func (b *{{.SigName}}) vecEvalInt(input *chunk.Chunk, result *chunk.Column) erro
 		{{- end }}
 		for i := 0; i < n; i++ {
 			if r64s[i] != 0 {
-				result.SetNull(i, false)
 				continue
 			}
 {{- /* if is null */}}
