@@ -874,7 +874,7 @@ func upgradeToVer35(s Session) {
 func upgradeToVer36(s Session) {
 	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `Shutdown_priv` ENUM('N','Y') DEFAULT 'N'", infoschema.ErrColumnExists)
 	// A root user will have those privileges after upgrading.
-	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.user SET Shutdown_priv='Y' where User = 'root'")
+	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.user SET Shutdown_priv='Y' where Super_priv = 'Y'")
 }
 
 // updateBootstrapVer updates bootstrap version variable in mysql.TiDB table.
