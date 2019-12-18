@@ -644,8 +644,11 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 		}
 		activeRoles := e.ctx.GetSessionVars().ActiveRoles
 		if !checker.RequestVerification(activeRoles, mysql.SystemDB, mysql.UserTable, "", mysql.InsertPriv) {
-			if s.IsCreateRole && !checker.RequestVerification(activeRoles, "", "", "", mysql.CreateRolePriv) {
-				return core.ErrSpecificAccessDenied.GenWithStackByArgs("CREATE ROLE")
+			if s.IsCreateRole {
+				if !checker.RequestVerification(activeRoles, "", "", "", mysql.CreateRolePriv) &&
+					!checker.RequestVerification(activeRoles, "", "", "", mysql.CreateUserPriv) {
+					return core.ErrSpecificAccessDenied.GenWithStackByArgs("CREATE ROLE or CREATE USER")
+				}
 			}
 			if !s.IsCreateRole && !checker.RequestVerification(activeRoles, "", "", "", mysql.CreateUserPriv) {
 				return core.ErrSpecificAccessDenied.GenWithStackByArgs("CREATE User")
@@ -661,7 +664,10 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 		}
 		if exists {
 			if !s.IfNotExists {
-				return errors.New("Duplicate user")
+				if s.IsCreateRole {
+					return ErrCannotUser.GenWithStackByArgs("CREATE ROLE", spec.User.String())
+				}
+				return ErrCannotUser.GenWithStackByArgs("CREATE USER", spec.User.String())
 			}
 			continue
 		}
@@ -819,8 +825,11 @@ func (e *SimpleExec) executeDropUser(s *ast.DropUserStmt) error {
 		}
 		activeRoles := e.ctx.GetSessionVars().ActiveRoles
 		if !checker.RequestVerification(activeRoles, mysql.SystemDB, mysql.UserTable, "", mysql.DeletePriv) {
-			if s.IsDropRole && !checker.RequestVerification(activeRoles, "", "", "", mysql.DropRolePriv) {
-				return core.ErrSpecificAccessDenied.GenWithStackByArgs("DROP ROLE")
+			if s.IsDropRole {
+				if !checker.RequestVerification(activeRoles, "", "", "", mysql.DropRolePriv) &&
+					!checker.RequestVerification(activeRoles, "", "", "", mysql.CreateUserPriv) {
+					return core.ErrSpecificAccessDenied.GenWithStackByArgs("DROP ROLE or CREATE USER")
+				}
 			}
 			if !s.IsDropRole && !checker.RequestVerification(activeRoles, "", "", "", mysql.CreateUserPriv) {
 				return core.ErrSpecificAccessDenied.GenWithStackByArgs("CREATE USER")

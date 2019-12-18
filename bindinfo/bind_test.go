@@ -389,7 +389,7 @@ func (s *testSuite) TestExplain(c *C) {
 	tk.MustExec("create table t1(id int)")
 	tk.MustExec("create table t2(id int)")
 
-	tk.MustQuery("explain SELECT * from t1,t2 where t1.id = t2.id").Check(testkit.Rows(
+	tk.MustQuery("explain SELECT * from t1,t2 where t1.id = t2.id;").Check(testkit.Rows(
 		"HashLeftJoin_8 12487.50 root inner join, inner:TableReader_15, equal:[eq(test.t1.id, test.t2.id)]",
 		"├─TableReader_12 9990.00 root data:Selection_11",
 		"│ └─Selection_11 9990.00 cop not(isnull(test.t1.id))",
@@ -399,7 +399,7 @@ func (s *testSuite) TestExplain(c *C) {
 		"    └─TableScan_13 10000.00 cop table:t2, range:[-inf,+inf], keep order:false, stats:pseudo",
 	))
 
-	tk.MustQuery("explain SELECT  /*+ TIDB_SMJ(t1, t2) */  * from t1,t2 where t1.id = t2.id").Check(testkit.Rows(
+	tk.MustQuery("explain SELECT  /*+ TIDB_SMJ(t1, t2) */  * from t1,t2 where t1.id = t2.id;").Check(testkit.Rows(
 		"MergeJoin_7 12487.50 root inner join, left key:test.t1.id, right key:test.t2.id",
 		"├─Sort_11 9990.00 root test.t1.id:asc",
 		"│ └─TableReader_10 9990.00 root data:Selection_9",
@@ -413,7 +413,7 @@ func (s *testSuite) TestExplain(c *C) {
 
 	tk.MustExec("create global binding for SELECT * from t1,t2 where t1.id = t2.id using SELECT  /*+ TIDB_SMJ(t1, t2) */  * from t1,t2 where t1.id = t2.id")
 
-	tk.MustQuery("explain SELECT * from t1,t2 where t1.id = t2.id").Check(testkit.Rows(
+	tk.MustQuery("explain SELECT * from t1,t2 where t1.id = t2.id;").Check(testkit.Rows(
 		"MergeJoin_7 12487.50 root inner join, left key:test.t1.id, right key:test.t2.id",
 		"├─Sort_11 9990.00 root test.t1.id:asc",
 		"│ └─TableReader_10 9990.00 root data:Selection_9",
@@ -445,7 +445,7 @@ func (s *testSuite) TestBindingSymbolList(c *C) {
 	tk.MustExec(`create global binding for select a, b from t where a = 1 limit 0, 1 using select a, b from t use index (ib) where a = 1 limit 0, 1`)
 
 	// after binding
-	tk.MustQuery("select a, b from t where a = 3 limit 1, 100")
+	tk.MustQuery("select a, b from t where a = 3 limit 1, 100;")
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.IndexNames[0], Equals, "t:ib")
 	c.Assert(tk.MustUseIndex("select a, b from t where a = 3 limit 1, 100", "b"), IsTrue)
 
@@ -509,11 +509,11 @@ func (s *testSuite) TestBindingCache(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int, index idx(a))")
-	tk.MustExec("create global binding for select * from t using select * from t use index(idx)")
+	tk.MustExec("create global binding for select * from t using select * from t use index(idx);")
 	tk.MustExec("create database tmp")
 	tk.MustExec("use tmp")
 	tk.MustExec("create table t(a int, b int, index idx(a))")
-	tk.MustExec("create global binding for select * from t using select * from t use index(idx)")
+	tk.MustExec("create global binding for select * from t using select * from t use index(idx);")
 
 	c.Assert(s.domain.BindHandle().Update(false), IsNil)
 	c.Assert(s.domain.BindHandle().Update(false), IsNil)
