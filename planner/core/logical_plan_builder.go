@@ -2551,7 +2551,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		// If we use tbl.Cols() here, the update statement, will ignore the col `c`, and the data `3` will lost.
 		columns = tbl.WritableCols()
 	} else {
-		columns = tbl.Cols()
+		columns = tbl.VisibleCols()
 	}
 	var statisticTable *statistics.Table
 	if _, ok := tbl.(table.PartitionedTable); !ok {
@@ -2598,6 +2598,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 			ID:       col.ID,
 			RetType:  &col.FieldType,
 			OrigName: names[i].String(),
+			IsHidden: col.Hidden,
 		}
 
 		if tableInfo.PKIsHandle && mysql.HasPriKeyFlag(col.Flag) {
@@ -3151,9 +3152,13 @@ func (b *PlanBuilder) buildUpdateLists(
 				continue
 			}
 			columnFullName := fmt.Sprintf("%s.%s.%s", tn.Schema.L, tn.Name.L, colInfo.Name.L)
+			isDefault, ok := modifyColumns[columnFullName]
+			if ok && colInfo.Hidden {
+				return nil, nil, false, ErrUnknownColumn.GenWithStackByArgs(colInfo.Name, "field_list")
+			}
 			// Note: For INSERT, REPLACE, and UPDATE, if a generated column is inserted into, replaced, or updated explicitly, the only permitted value is DEFAULT.
 			// see https://dev.mysql.com/doc/refman/8.0/en/create-table-generated-columns.html
-			if isDefault, ok := modifyColumns[columnFullName]; ok && !isDefault {
+			if ok && !isDefault {
 				return nil, nil, false, ErrBadGeneratedColumn.GenWithStackByArgs(colInfo.Name.O, tableInfo.Name.O)
 			}
 			virtualAssignments = append(virtualAssignments, &ast.Assignment{

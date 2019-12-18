@@ -657,7 +657,14 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 	fmt.Fprintf(buf, "CREATE TABLE %s (\n", escape(tableInfo.Name, sqlMode))
 	var pkCol *model.ColumnInfo
 	var hasAutoIncID bool
+	needAddComma := false
 	for i, col := range tableInfo.Cols() {
+		if col.Hidden {
+			continue
+		}
+		if needAddComma {
+			buf.WriteString(",\n")
+		}
 		fmt.Fprintf(buf, "  %s %s", escape(col.Name, sqlMode), col.GetTypeDesc())
 		if col.Charset != "binary" {
 			if col.Charset != tblCharset {
@@ -732,7 +739,7 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 			fmt.Fprintf(buf, " COMMENT '%s'", format.OutputFormat(col.Comment))
 		}
 		if i != len(tableInfo.Cols())-1 {
-			buf.WriteString(",\n")
+			needAddComma = true
 		}
 		if tableInfo.PKIsHandle && mysql.HasPriKeyFlag(col.Flag) {
 			pkCol = col
