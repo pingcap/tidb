@@ -1653,87 +1653,6 @@ func buildViewInfo(ctx sessionctx.Context, s *ast.CreateViewStmt) (*model.ViewIn
 		Security: s.Security, SelectStmt: sb.String(), CheckOption: s.CheckOption, Cols: nil}, nil
 }
 
-func buildSequenceInfo(ctx sessionctx.Context, stmt *ast.CreateSequenceStmt, ident ast.Ident) (*model.SequenceInfo, error) {
-	sequenceInfo := &model.SequenceInfo{
-		Cache:      model.DefaultSequenceCacheBool,
-		Cycle:      model.DefaultSequenceCycleBool,
-		Order:      model.DefaultSequenceOrderBool,
-		CacheValue: model.DefaultSequenceCacheValue,
-		Increment:  model.DefaultSequenceIncrementValue,
-	}
-	var (
-		minSetFlag   bool
-		maxSetFlag   bool
-		startSetFlag bool
-	)
-	// handle sequence options.
-	for _, op := range stmt.SeqOptions {
-		switch op.Tp {
-		case ast.SequenceOptionIncrementBy:
-			sequenceInfo.Increment = op.IntValue
-		case ast.SequenceStartWith:
-			sequenceInfo.Start = op.IntValue
-			startSetFlag = true
-		case ast.SequenceMinValue:
-			sequenceInfo.MinValue = op.IntValue
-			minSetFlag = true
-		case ast.SequenceMaxValue:
-			sequenceInfo.MaxValue = op.IntValue
-			maxSetFlag = true
-		case ast.SequenceCache:
-			sequenceInfo.CacheValue = op.IntValue
-		case ast.SequenceNoCache:
-			sequenceInfo.Cache = false
-		case ast.SequenceCycle:
-			sequenceInfo.Cycle = true
-		case ast.SequenceNoCycle:
-			sequenceInfo.Cycle = false
-		case ast.SequenceOrder:
-			sequenceInfo.Order = true
-		case ast.SequenceNoOrder:
-			sequenceInfo.Order = false
-		}
-	}
-	// handle table options.
-	for _, op := range stmt.TblOptions {
-		switch op.Tp {
-		case ast.TableOptionComment:
-			sequenceInfo.Comment = op.StrValue
-		default:
-			return nil, errors.New(fmt.Sprintf("Unsupport table option type [%d]", op.Tp))
-		}
-	}
-	// fill the default value, min/max/start should be adjusted with increment's positive and negative.
-	if !minSetFlag || !maxSetFlag || !startSetFlag {
-		if sequenceInfo.Increment >= 0 {
-			if !minSetFlag {
-				sequenceInfo.MinValue = model.DefaultPositiveSequenceMinValue
-			}
-			if !startSetFlag {
-				sequenceInfo.Start = mathutil.MaxInt64(sequenceInfo.MinValue, model.DefaultPositiveSequenceStartValue)
-			}
-			if !maxSetFlag {
-				sequenceInfo.MaxValue = model.DefaultPositiveSequenceMaxValue
-			}
-		} else {
-			if !maxSetFlag {
-				sequenceInfo.MaxValue = model.DefaultNegativeSequenceMaxValue
-			}
-			if !startSetFlag {
-				sequenceInfo.Start = mathutil.MinInt64(sequenceInfo.MaxValue, model.DefaultNegativeSequenceStartValue)
-			}
-			if !minSetFlag {
-				sequenceInfo.MaxValue = model.DefaultNegativeSequenceMinValue
-			}
-		}
-	}
-	// valid the sequence value.
-	if sequenceInfo.MaxValue <= sequenceInfo.MinValue {
-		return nil, errors.New(fmt.Sprintf("Sequence '%s.%s' values are conflicting", ident.Schema.L, ident.Name.L))
-	}
-	return sequenceInfo, nil
-}
-
 func checkPartitionByHash(ctx sessionctx.Context, pi *model.PartitionInfo, s *ast.CreateTableStmt, cols []*table.Column, tbInfo *model.TableInfo) error {
 	if err := checkAddPartitionTooManyPartitions(pi.Num); err != nil {
 		return err
@@ -4314,7 +4233,7 @@ func (d *ddl) CreateSequence(ctx sessionctx.Context, stmt *ast.CreateSequenceStm
 	if err = checkTooLongTable(ident.Name); err != nil {
 		return err
 	}
-	sequenceInfo, err := buildSequenceInfo(ctx, stmt, ident)
+	sequenceInfo, err := buildSequenceInfo(stmt, ident)
 	if err != nil {
 		return err
 	}
