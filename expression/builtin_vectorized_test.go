@@ -802,10 +802,14 @@ func (s *testEvaluatorSuite) TestSleepVec(c *C) {
 		atomic.CompareAndSwapUint32(&ctx.GetSessionVars().Killed, 0, 1)
 	}()
 
-	tp := types.NewFieldType(mysql.TypeDecimal)
+	a := float64(10.0)
+	tp := new(types.FieldType)
+	types.DefaultTypeForValue(a, tp)
 	input := chunk.New([]*types.FieldType{tp}, 1, 1)
 	buf := chunk.NewColumn(types.NewFieldType(mysql.TypeLonglong), 1)
-	input.AppendFloat64(0, float64(10))
+	da := types.Datum{}
+	da.SetValue(a)
+	input.AppendDatum(0, &da)
 
 	c.Assert(f.vecEvalInt(input, buf), IsNil)
 
