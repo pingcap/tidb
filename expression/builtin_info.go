@@ -455,17 +455,27 @@ func (c *benchmarkFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 	// Syntax: BENCHMARK(loop_count, expression)
 	// Define with same eval type of input arg to avoid unnecessary cast function.
 	sameEvalType := args[1].GetType().EvalType()
+	// constLoopCount is used by VecEvalInt
+	// since non-constant loop count would be different between rows, and cannot be vectorized.
+	var constLoopCount int64
+	con, ok := args[0].(*Constant)
+	if ok && con.Value.Kind() == types.KindInt64 {
+		if lc, isNull, err := con.EvalInt(ctx, chunk.Row{}); err == nil && !isNull {
+			constLoopCount = lc
+		}
+	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, types.ETInt, sameEvalType)
-	sig := &builtinBenchmarkSig{bf}
+	sig := &builtinBenchmarkSig{bf, constLoopCount}
 	return sig, nil
 }
 
 type builtinBenchmarkSig struct {
 	baseBuiltinFunc
+	constLoopCount int64
 }
 
 func (b *builtinBenchmarkSig) Clone() builtinFunc {
-	newSig := &builtinBenchmarkSig{}
+	newSig := &builtinBenchmarkSig{constLoopCount: b.constLoopCount}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
 	return newSig
 }
@@ -474,9 +484,16 @@ func (b *builtinBenchmarkSig) Clone() builtinFunc {
 // See https://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_benchmark
 func (b *builtinBenchmarkSig) evalInt(row chunk.Row) (int64, bool, error) {
 	// Get loop count.
-	loopCount, isNull, err := b.args[0].EvalInt(b.ctx, row)
-	if isNull || err != nil {
-		return 0, isNull, err
+	var loopCount int64
+	var isNull bool
+	var err error
+	if b.constLoopCount > 0 {
+		loopCount = b.constLoopCount
+	} else {
+		loopCount, isNull, err = b.args[0].EvalInt(b.ctx, row)
+		if isNull || err != nil {
+			return 0, isNull, err
+		}
 	}
 
 	// BENCHMARK() will return NULL if loop count < 0,

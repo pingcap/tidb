@@ -546,7 +546,7 @@ func (ds *DataSource) convertToPartialTableScan(prop *property.PhysicalProperty,
 	rowCount float64,
 	isCovered bool) {
 	ts, partialCost, rowCount := ds.getOriginalPhysicalTableScan(prop, path, false)
-	rowSize := ds.TblColHists.GetAvgRowSize(ds.TblCols, false)
+	rowSize := ds.TblColHists.GetAvgRowSize(ds.ctx, ds.TblCols, false, false)
 	sessVars := ds.ctx.GetSessionVars()
 	if len(ts.filterCondition) > 0 {
 		selectivity, _, err := ds.tableStats.HistColl.Selectivity(ds.ctx, ts.filterCondition, nil)
@@ -584,7 +584,7 @@ func (ds *DataSource) buildIndexMergeTableScan(prop *property.PhysicalProperty, 
 			}
 		}
 	}
-	rowSize := ds.TblColHists.GetTableAvgRowSize(ds.TblCols, ts.StoreType, true)
+	rowSize := ds.TblColHists.GetTableAvgRowSize(ds.ctx, ds.TblCols, ts.StoreType, true)
 	partialCost += totalRowCount * rowSize * sessVars.ScanFactor
 	ts.stats = ds.tableStats.ScaleByExpectCnt(totalRowCount)
 	if ds.statisticTable.Pseudo {
@@ -710,9 +710,9 @@ func (is *PhysicalIndexScan) indexScanRowSize(idx *model.IndexInfo, ds *DataSour
 		scanCols = is.schema.Columns
 	}
 	if isForScan {
-		return ds.TblColHists.GetIndexAvgRowSize(scanCols, is.Index.Unique)
+		return ds.TblColHists.GetIndexAvgRowSize(is.ctx, scanCols, is.Index.Unique)
 	}
-	return ds.TblColHists.GetAvgRowSize(scanCols, true)
+	return ds.TblColHists.GetAvgRowSize(is.ctx, scanCols, true, false)
 }
 
 func (is *PhysicalIndexScan) initSchema(idx *model.IndexInfo, idxExprCols []*expression.Column, isDoubleRead bool) {
@@ -1109,11 +1109,11 @@ func (ds *DataSource) getOriginalPhysicalTableScan(prop *property.PhysicalProper
 	ts.stats = ds.tableStats.ScaleByExpectCnt(rowCount)
 	var rowSize float64
 	if ts.StoreType == kv.TiKV {
-		rowSize = ds.TblColHists.GetTableAvgRowSize(ds.TblCols, ts.StoreType, true)
+		rowSize = ds.TblColHists.GetTableAvgRowSize(ds.ctx, ds.TblCols, ts.StoreType, true)
 	} else {
 		// If `ds.handleCol` is nil, then the schema of tableScan doesn't have handle column.
 		// This logic can be ensured in column pruning.
-		rowSize = ds.TblColHists.GetTableAvgRowSize(ts.Schema().Columns, ts.StoreType, ds.handleCol != nil)
+		rowSize = ds.TblColHists.GetTableAvgRowSize(ds.ctx, ts.Schema().Columns, ts.StoreType, ds.handleCol != nil)
 	}
 	sessVars := ds.ctx.GetSessionVars()
 	cost := rowCount * rowSize * sessVars.ScanFactor
