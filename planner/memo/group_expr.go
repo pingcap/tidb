@@ -15,6 +15,7 @@ package memo
 
 import (
 	"fmt"
+	"reflect"
 
 	"github.com/pingcap/tidb/expression"
 	plannercore "github.com/pingcap/tidb/planner/core"
@@ -33,9 +34,9 @@ type GroupExpr struct {
 
 	selfFingerprint string
 	// appliedRuleSet saves transformation rules which have been applied to this
-	// GroupExpr, and will not be applied again. Use `interface{}` instead of
-	// `Transformation` to avoid import cycle.
-	appliedRuleSet map[interface{}]struct{}
+	// GroupExpr, and will not be applied again. Use `uint64` which should be the
+	// id of a Transformation instead of `Transformation` itself to avoid import cycle.
+	appliedRuleSet map[uint64]struct{}
 }
 
 // NewGroupExpr creates a GroupExpr based on a logical plan node.
@@ -44,7 +45,7 @@ func NewGroupExpr(node plannercore.LogicalPlan) *GroupExpr {
 		ExprNode:       node,
 		Children:       nil,
 		Explored:       false,
-		appliedRuleSet: make(map[interface{}]struct{}),
+		appliedRuleSet: make(map[uint64]struct{}),
 	}
 }
 
@@ -71,11 +72,13 @@ func (e *GroupExpr) Schema() *expression.Schema {
 
 // AddAppliedRule adds a rule into the appliedRuleSet.
 func (e *GroupExpr) AddAppliedRule(rule interface{}) {
-	e.appliedRuleSet[rule] = struct{}{}
+	ruleID := reflect.ValueOf(rule).Pointer()
+	e.appliedRuleSet[uint64(ruleID)] = struct{}{}
 }
 
 // HasAppliedRule returns if the rule has been applied.
 func (e *GroupExpr) HasAppliedRule(rule interface{}) bool {
-	_, ok := e.appliedRuleSet[rule]
+	ruleID := reflect.ValueOf(rule).Pointer()
+	_, ok := e.appliedRuleSet[uint64(ruleID)]
 	return ok
 }
