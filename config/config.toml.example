@@ -322,12 +322,12 @@ store-limit = 0
 enabled = true
 
 # The capacity in MB of the cache.
-capacity-mb = 10000.0
+capacity-mb = 1000.0
 
 # Only cache requests whose result set is small.
 admission-max-result-mb = 10.0
 # Only cache requests takes notable time to process.
-admission-min-process-ms = 20
+admission-min-process-ms = 5
 
 [txn-local-latches]
 # Enable local latches for transactions. Enable it when
