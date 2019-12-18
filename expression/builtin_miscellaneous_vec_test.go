@@ -31,7 +31,7 @@ func (g *sleepTimeGener) gen() interface{} {
 	if rand.Float64() < g.nullRation {
 		return nil
 	}
-	return math.Floor(rand.Float64() * 100)
+	return math.Floor(rand.Float64() * 10)
 }
 
 var vecBuiltinMiscellaneousCases = map[string][]vecExprBenchCase{

@@ -109,22 +109,19 @@ func (b *builtinSleepSig) Clone() builtinFunc {
 	return newSig
 }
 
-func sleepDuration(sessVars *variable.SessionVars, val float64) bool {
+func sleepDuration(sessVars *variable.SessionVars, val float64) (killed bool) {
 	dur := time.Duration(val * float64(time.Second.Nanoseconds()))
 	ticker := time.NewTicker(10 * time.Millisecond)
 	defer ticker.Stop()
 	start := time.Now()
 	finish := false
 	for !finish {
-		select {
-		case now := <-ticker.C:
-			if now.Sub(start) > dur {
-				finish = true
-			}
-		default:
-			if atomic.CompareAndSwapUint32(&sessVars.Killed, 1, 0) {
-				return true
-			}
+		now := <-ticker.C
+		if now.Sub(start) > dur {
+			finish = true
+		}
+		if atomic.CompareAndSwapUint32(&sessVars.Killed, 1, 0) {
+			return true
 		}
 	}
 	return false
