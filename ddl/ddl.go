@@ -113,6 +113,8 @@ var (
 	errTooManyFields            = terror.ClassDDL.New(codeTooManyFields, "Too many columns")
 	errInvalidSplitRegionRanges = terror.ClassDDL.New(codeInvalidRanges, "Failed to split region ranges")
 	errReorgPanic               = terror.ClassDDL.New(codeReorgWorkerPanic, "reorg worker panic.")
+	errFkColumnCannotDrop       = terror.ClassDDL.New(mysql.ErrFkColumnCannotDrop, mysql.MySQLErrName[mysql.ErrFkColumnCannotDrop])
+	errReferencedForeignKey     = terror.ClassDDL.New(mysql.ErrFKIncompatibleColumns, mysql.MySQLErrName[mysql.ErrFKIncompatibleColumns])
 
 	errOnlyOnRangeListPartition = terror.ClassDDL.New(codeOnlyOnRangeListPartition, mysql.MySQLErrName[mysql.ErrOnlyOnRangeListPartition])
 	// errWrongKeyColumn is for table column cannot be indexed.
@@ -826,6 +828,8 @@ func init() {
 		codeSystemVersioningWrongPartitions:        mysql.ErrSystemVersioningWrongPartitions,
 		codeWrongPartitionTypeExpectedSystemTime:   mysql.ErrWrongPartitionTypeExpectedSystemTime,
 		codeWrongTypeColumnValue:                   mysql.ErrWrongTypeColumnValue,
+		mysql.ErrFkColumnCannotDrop:                mysql.ErrFkColumnCannotDrop,
+		mysql.ErrFKIncompatibleColumns:             mysql.ErrFKIncompatibleColumns,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassDDL] = ddlMySQLErrCodes
 }
