@@ -72,11 +72,14 @@ func adjustColumnInfoInDropColumn(tblInfo *model.TableInfo, offset int) {
 	oldCols := tblInfo.Columns
 	// Adjust column offset.
 	offsetChanged := make(map[int]int)
-	for i := offset + 1; i < len(oldCols); i++ {
+	for i := offset; i < len(oldCols); i++ {
 		offsetChanged[oldCols[i].Offset] = i - 1
 		oldCols[i].Offset = i - 1
 	}
 	oldCols[offset].Offset = len(oldCols) - 1
+	// For expression index, we drop hidden columns and index simultaneously.
+	// So we need to change the offset of expression index.
+	offsetChanged[offset] = len(oldCols) - 1
 	// Update index column offset info.
 	// TODO: There may be some corner cases for index column offsets, we may check this later.
 	for _, idx := range tblInfo.Indices {

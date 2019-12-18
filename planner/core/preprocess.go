@@ -581,11 +581,13 @@ func (p *preprocessor) checkAlterTableGrammar(stmt *ast.AlterTableStmt) {
 func checkDuplicateColumnName(IndexPartSpecifications []*ast.IndexPartSpecification) error {
 	colNames := make(map[string]struct{}, len(IndexPartSpecifications))
 	for _, IndexColNameWithExpr := range IndexPartSpecifications {
-		name := IndexColNameWithExpr.Column.Name
-		if _, ok := colNames[name.L]; ok {
-			return infoschema.ErrColumnExists.GenWithStackByArgs(name)
+		if IndexColNameWithExpr.Column != nil {
+			name := IndexColNameWithExpr.Column.Name
+			if _, ok := colNames[name.L]; ok {
+				return infoschema.ErrColumnExists.GenWithStackByArgs(name)
+			}
+			colNames[name.L] = struct{}{}
 		}
-		colNames[name.L] = struct{}{}
 	}
 	return nil
 }

@@ -51,6 +51,7 @@ var _ = Suite(&testIntegrationSuite2{&testIntegrationSuite{}})
 var _ = Suite(&testIntegrationSuite3{&testIntegrationSuite{}})
 var _ = Suite(&testIntegrationSuite4{&testIntegrationSuite{}})
 var _ = Suite(&testIntegrationSuite5{&testIntegrationSuite{}})
+var _ = Suite(&testIntegrationSuite6{&testIntegrationSuite{}})
 
 type testIntegrationSuite struct {
 	lease     time.Duration
@@ -121,6 +122,7 @@ func (s *testIntegrationSuite2) TearDownTest(c *C) {
 type testIntegrationSuite3 struct{ *testIntegrationSuite }
 type testIntegrationSuite4 struct{ *testIntegrationSuite }
 type testIntegrationSuite5 struct{ *testIntegrationSuite }
+type testIntegrationSuite6 struct{ *testIntegrationSuite }
 
 func (s *testIntegrationSuite5) TestNoZeroDateMode(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
@@ -1010,7 +1012,7 @@ func (s *testIntegrationSuite5) TestBackwardCompatibility(c *C) {
 
 	unique := false
 	indexName := model.NewCIStr("idx_b")
-	idxColName := &ast.IndexPartSpecification{
+	indexPartSpecification := &ast.IndexPartSpecification{
 		Column: &ast.ColumnName{
 			Schema: schemaName,
 			Table:  tableName,
@@ -1018,14 +1020,14 @@ func (s *testIntegrationSuite5) TestBackwardCompatibility(c *C) {
 		},
 		Length: types.UnspecifiedLength,
 	}
-	idxColNames := []*ast.IndexPartSpecification{idxColName}
+	indexPartSpecifications := []*ast.IndexPartSpecification{indexPartSpecification}
 	var indexOption *ast.IndexOption
 	job := &model.Job{
 		SchemaID:   schema.ID,
 		TableID:    tbl.Meta().ID,
 		Type:       model.ActionAddIndex,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{unique, indexName, idxColNames, indexOption},
+		Args:       []interface{}{unique, indexName, indexPartSpecifications, indexOption},
 	}
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
@@ -1945,4 +1947,56 @@ func (s *testIntegrationSuite3) TestParserIssue284(c *C) {
 
 	tk.MustExec("drop table test.t_parser_issue_284")
 	tk.MustExec("drop table test.t_parser_issue_284_2")
+}
+
+func (s *testIntegrationSuite6) TestAddExpressionIndex(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a int, b real);")
+	tk.MustExec("insert into t values (1, 2.1);")
+	tk.MustExec("alter table t add index idx((a+b));")
+
+	tblInfo, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	columns := tblInfo.Meta().Columns
+	c.Assert(len(columns), Equals, 3)
+	c.Assert(columns[2].Hidden, IsTrue)
+
+	tk.MustQuery("select * from t;").Check(testkit.Rows("1 2.1 3.1"))
+
+	tk.MustExec("alter table t add index idx_multi((a+b),(a+1), b);")
+	tblInfo, err = s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	columns = tblInfo.Meta().Columns
+	c.Assert(len(columns), Equals, 5)
+	c.Assert(columns[3].Hidden, IsTrue)
+	c.Assert(columns[4].Hidden, IsTrue)
+
+	tk.MustQuery("select * from t;").Check(testkit.Rows("1 2.1 3.1 3.1 2"))
+
+	tk.MustExec("alter table t drop index idx;")
+	tblInfo, err = s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	columns = tblInfo.Meta().Columns
+	c.Assert(len(columns), Equals, 4)
+
+	tk.MustQuery("select * from t;").Check(testkit.Rows("1 2.1 3.1 2"))
+
+	tk.MustExec("alter table t drop index idx_multi;")
+	tblInfo, err = s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	columns = tblInfo.Meta().Columns
+	c.Assert(len(columns), Equals, 2)
+
+	tk.MustQuery("select * from t;").Check(testkit.Rows("1 2.1"))
+}
+
+func (s *testIntegrationSuite6) TestCreateExpressionIndexError(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a int, b real);")
+	tk.MustGetErrCode("alter table t add primary key ((a+b));", mysql.ErrFunctionalIndexPrimaryKey)
+
 }

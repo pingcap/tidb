@@ -3300,7 +3300,7 @@ func getAnonymousIndex(t table.Table, colName model.CIStr) model.CIStr {
 }
 
 func (d *ddl) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexName model.CIStr,
-	idxColNames []*ast.IndexPartSpecification, indexOption *ast.IndexOption) error {
+	indexPartSpecifications []*ast.IndexPartSpecification, indexOption *ast.IndexOption) error {
 	if !config.GetGlobalConfig().AlterPrimaryKey {
 		return ErrUnsupportedModifyPrimaryKey.GenWithStack("Unsupported add primary key, alter-primary-key is false")
 	}
@@ -3319,22 +3319,28 @@ func (d *ddl) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexName m
 		return infoschema.ErrMultiplePriKey
 	}
 
+	for _, idxPart := range indexPartSpecifications {
+		if idxPart.Expr != nil {
+			return ErrFunctionalIndexPrimaryKey
+		}
+	}
+
 	tblInfo := t.Meta()
 	// Check before the job is put to the queue.
 	// This check is redundant, but useful. If DDL check fail before the job is put
 	// to job queue, the fail path logic is super fast.
 	// After DDL job is put to the queue, and if the check fail, TiDB will run the DDL cancel logic.
 	// The recover step causes DDL wait a few seconds, makes the unit test painfully slow.
-	_, err = buildIndexColumns(tblInfo.Columns, idxColNames)
+	_, err = buildIndexColumns(tblInfo.Columns, indexPartSpecifications, indexName)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if _, err = checkPKOnGeneratedColumn(tblInfo, idxColNames); err != nil {
+	if _, err = checkPKOnGeneratedColumn(tblInfo, indexPartSpecifications); err != nil {
 		return err
 	}
 
 	if tblInfo.GetPartitionInfo() != nil {
-		if err := checkPartitionKeysConstraint(tblInfo.GetPartitionInfo(), idxColNames, tblInfo, true); err != nil {
+		if err := checkPartitionKeysConstraint(tblInfo.GetPartitionInfo(), indexPartSpecifications, tblInfo, true); err != nil {
 			return err
 		}
 	}
@@ -3352,7 +3358,7 @@ func (d *ddl) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexName m
 		SchemaName: schema.Name.L,
 		Type:       model.ActionAddPrimaryKey,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{unique, indexName, idxColNames, indexOption, sqlMode},
+		Args:       []interface{}{unique, indexName, indexPartSpecifications, indexOption, sqlMode},
 		Priority:   ctx.GetSessionVars().DDLReorgPriority,
 	}
 
@@ -3362,8 +3368,7 @@ func (d *ddl) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexName m
 }
 
 func (d *ddl) CreateIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.IndexKeyType, indexName model.CIStr,
-	idxColNames []*ast.IndexPartSpecification, indexOption *ast.IndexOption, ifNotExists bool) error {
-
+	indexPartSpecifications []*ast.IndexPartSpecification, indexOption *ast.IndexOption, ifNotExists bool) error {
 	// not support Spatial and FullText index
 	if keyType == ast.IndexKeyTypeFullText || keyType == ast.IndexKeyTypeSpatial {
 		return errUnsupportedIndexType.GenWithStack("FULLTEXT and SPATIAL index is not supported")
@@ -3376,7 +3381,7 @@ func (d *ddl) CreateIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.Inde
 
 	// Deal with anonymous index.
 	if len(indexName.L) == 0 {
-		indexName = getAnonymousIndex(t, idxColNames[0].Column.Name)
+		indexName = getAnonymousIndex(t, indexPartSpecifications[0].Column.Name)
 	}
 
 	if indexInfo := t.Meta().FindIndexByName(indexName.L); indexInfo != nil {
@@ -3393,17 +3398,70 @@ func (d *ddl) CreateIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.Inde
 	}
 
 	tblInfo := t.Meta()
+	hiddenCols := make([]*model.ColumnInfo, 0, len(indexPartSpecifications))
+	// build hidden columns if necessary
+	for i, idxPart := range indexPartSpecifications {
+		if idxPart.Expr != nil {
+			idxPart.Column = &ast.ColumnName{Name: model.NewCIStr(fmt.Sprintf("_v$_%s_%d", indexName, i))}
+			idxPart.Length = types.UnspecifiedLength
+			// The index part is an expression, prepare a hidden column for it.
+			if len(idxPart.Column.Name.L) > mysql.MaxColumnNameLength {
+				// TODO: refine the error message
+				return ErrTooLongIdent.GenWithStackByArgs("hidden column")
+			}
+			// // TODO: refine the error message
+			if err := checkIllegalFn4GeneratedColumn("expression index", idxPart.Expr); err != nil {
+				return errors.Trace(err)
+			}
+
+			var sb strings.Builder
+			restoreFlags := format.RestoreStringSingleQuotes | format.RestoreKeyWordLowercase | format.RestoreNameBackQuotes |
+				format.RestoreSpacesAroundBinaryOperation
+			restoreCtx := format.NewRestoreCtx(restoreFlags, &sb)
+			sb.Reset()
+			err = idxPart.Expr.Restore(restoreCtx)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			expr, err := expression.RewriteSimpleExprWithTableInfo(ctx, tblInfo, idxPart.Expr)
+			if err != nil {
+				// TODO: refine the error message
+				return err
+			}
+			if _, ok := expr.(*expression.Column); ok {
+				return ErrFunctionalIndexOnField
+			}
+
+			colInfo := &model.ColumnInfo{
+				Name:                idxPart.Column.Name,
+				GeneratedExprString: sb.String(),
+				GeneratedStored:     false,
+				Version:             model.CurrLatestColumnInfoVersion,
+				Dependences:         make(map[string]struct{}),
+				Hidden:              true,
+				FieldType:           *expr.GetType(),
+			}
+			for _, colName := range findColumnNamesInExpr(idxPart.Expr) {
+				colInfo.Dependences[colName.Name.O] = struct{}{}
+			}
+			if err = checkDependedColExist(colInfo.Dependences, t.Cols()); err != nil {
+				return errors.Trace(err)
+			}
+			hiddenCols = append(hiddenCols, colInfo)
+		}
+	}
+
 	// Check before the job is put to the queue.
 	// This check is redundant, but useful. If DDL check fail before the job is put
 	// to job queue, the fail path logic is super fast.
 	// After DDL job is put to the queue, and if the check fail, TiDB will run the DDL cancel logic.
 	// The recover step causes DDL wait a few seconds, makes the unit test painfully slow.
-	_, err = buildIndexColumns(tblInfo.Columns, idxColNames)
+	_, err = buildIndexColumns(append(tblInfo.Columns, hiddenCols...), indexPartSpecifications, indexName)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	if unique && tblInfo.GetPartitionInfo() != nil {
-		if err := checkPartitionKeysConstraint(tblInfo.GetPartitionInfo(), idxColNames, tblInfo, false); err != nil {
+		if err := checkPartitionKeysConstraint(tblInfo.GetPartitionInfo(), indexPartSpecifications, tblInfo, false); err != nil {
 			return err
 		}
 	}
@@ -3411,14 +3469,39 @@ func (d *ddl) CreateIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.Inde
 	if _, err = validateCommentLength(ctx.GetSessionVars(), indexName.String(), indexOption); err != nil {
 		return errors.Trace(err)
 	}
-
+	if len(hiddenCols) > 0 {
+		// Check hidden column
+		if err = checkAddColumnTooManyColumns(len(t.Cols()) + len(hiddenCols)); err != nil {
+			return errors.Trace(err)
+		}
+		// Check whether the hidden columns have existed.
+		for _, colInfo := range hiddenCols {
+			// Check whether the hidden columns have existed.
+			col := table.FindCol(t.Cols(), colInfo.Name.String())
+			if col != nil {
+				// TODO: use expression index related error
+				return infoschema.ErrColumnExists.GenWithStackByArgs(colInfo.Name.String())
+			}
+			if err = checkAutoIncrementRef("", colInfo.Dependences, tblInfo); err != nil {
+				return errors.Trace(err)
+			}
+		}
+		for _, indexPart := range indexPartSpecifications {
+			if indexPart.Expr != nil {
+				// TODO: refine the error message
+				if err := checkIllegalFn4GeneratedColumn("", indexPart.Expr); err != nil {
+					return errors.Trace(err)
+				}
+			}
+		}
+	}
 	job := &model.Job{
 		SchemaID:   schema.ID,
 		TableID:    t.Meta().ID,
 		SchemaName: schema.Name.L,
 		Type:       model.ActionAddIndex,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{unique, indexName, idxColNames, indexOption},
+		Args:       []interface{}{unique, indexName, indexPartSpecifications, indexOption, hiddenCols},
 		Priority:   ctx.GetSessionVars().DDLReorgPriority,
 	}
 

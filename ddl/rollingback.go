@@ -84,10 +84,10 @@ func convertNotStartAddIdxJob2RollbackJob(t *meta.Meta, job *model.Job, occuredE
 	var (
 		unique      bool
 		indexName   model.CIStr
-		idxColNames []*ast.IndexPartSpecification
+		indexPartSpecifications []*ast.IndexPartSpecification
 		indexOption *ast.IndexOption
 	)
-	err = job.DecodeArgs(&unique, &indexName, &idxColNames, &indexOption)
+	err = job.DecodeArgs(&unique, &indexName, &indexPartSpecifications, &indexOption)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
