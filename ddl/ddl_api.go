@@ -2373,7 +2373,7 @@ func (d *ddl) DropColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTa
 
 	// Check whether dropped column has existed.
 	colName := spec.OldColumnName.Name
-	col := table.FindCol(t.Cols(), colName.L)
+	col := table.FindCol(t.VisibleCols(), colName.L)
 	if col == nil {
 		err = ErrCantDropFieldOrKey.GenWithStack("column %s doesn't exist", colName)
 		if spec.IfExists {
@@ -2637,6 +2637,10 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 		if c != nil {
 			return nil, infoschema.ErrColumnExists.GenWithStackByArgs(newColName)
 		}
+	}
+	// Check the column with foreign key.
+	if fkInfo := getColumnForeignKeyInfo(originalColName.L, t.Meta().ForeignKeys); fkInfo != nil {
+		return nil, errReferencedForeignKey.GenWithStackByArgs(originalColName, fkInfo.Name)
 	}
 
 	// Constraints in the new column means adding new constraints. Errors should thrown,
@@ -3653,6 +3657,10 @@ func isDroppableColumn(tblInfo *model.TableInfo, colName model.CIStr) error {
 	// We must drop the index first, then drop the column.
 	if isColumnWithIndex(colName.L, tblInfo.Indices) {
 		return errCantDropColWithIndex.GenWithStack("can't drop column %s with index covered now", colName)
+	}
+	// Check the column with foreign key.
+	if fkInfo := getColumnForeignKeyInfo(colName.L, tblInfo.ForeignKeys); fkInfo != nil {
+		return errFkColumnCannotDrop.GenWithStackByArgs(colName, fkInfo.Name)
 	}
 	return nil
 }
