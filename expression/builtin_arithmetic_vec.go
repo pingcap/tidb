@@ -830,25 +830,20 @@ func (b *builtinArithmeticPlusIntUnsignedUnsignedSig) vecEvalInt(input *chunk.Ch
 		return err
 	}
 	defer b.bufAllocator.put(lh)
-
 	if err := b.args[0].VecEvalInt(b.ctx, input, lh); err != nil {
 		return err
 	}
-
 	// reuse result as rh to avoid buf allocate
 	if err := b.args[1].VecEvalInt(b.ctx, input, result); err != nil {
 		return err
 	}
-
 	result.MergeNulls(lh)
-
 	rh := result
 	lhi64s := lh.Int64s()
 	rhi64s := rh.Int64s()
 	resulti64s := result.Int64s()
 	err = b.plusUU(result, lhi64s, rhi64s, resulti64s)
 	return err
-
 }
 func (b *builtinArithmeticPlusIntUnsignedUnsignedSig) plusUU(result *chunk.Column, lhi64s, rhi64s, resulti64s []int64) error {
 	for i := 0; i < len(lhi64s); i++ {
@@ -856,11 +851,9 @@ func (b *builtinArithmeticPlusIntUnsignedUnsignedSig) plusUU(result *chunk.Colum
 			continue
 		}
 		lh, rh := lhi64s[i], rhi64s[i]
-
 		if uint64(lh) > math.MaxUint64-uint64(rh) {
 			return types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s + %s)", b.args[0].String(), b.args[1].String()))
 		}
-
 		resulti64s[i] = lh + rh
 	}
 	return nil
@@ -875,16 +868,13 @@ func (b *builtinArithmeticPlusIntUnsignedSignedSig) vecEvalInt(input *chunk.Chun
 		return err
 	}
 	defer b.bufAllocator.put(lh)
-
 	if err := b.args[0].VecEvalInt(b.ctx, input, lh); err != nil {
 		return err
 	}
-
 	// reuse result as rh to avoid buf allocate
 	if err := b.args[1].VecEvalInt(b.ctx, input, result); err != nil {
 		return err
 	}
-
 	result.MergeNulls(lh)
 
 	rh := result
@@ -900,14 +890,12 @@ func (b *builtinArithmeticPlusIntUnsignedSignedSig) plusUS(result *chunk.Column,
 			continue
 		}
 		lh, rh := lhi64s[i], rhi64s[i]
-
 		if rh < 0 && uint64(-rh) > uint64(lh) {
 			return types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s + %s)", b.args[0].String(), b.args[1].String()))
 		}
 		if rh > 0 && uint64(lh) > math.MaxUint64-uint64(lh) {
 			return types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s + %s)", b.args[0].String(), b.args[1].String()))
 		}
-
 		resulti64s[i] = lh + rh
 	}
 	return nil
@@ -922,18 +910,14 @@ func (b *builtinArithmeticPlusIntSignedUnsignedSig) vecEvalInt(input *chunk.Chun
 		return err
 	}
 	defer b.bufAllocator.put(lh)
-
 	if err := b.args[0].VecEvalInt(b.ctx, input, lh); err != nil {
 		return err
 	}
-
 	// reuse result as rh to avoid buf allocate
 	if err := b.args[1].VecEvalInt(b.ctx, input, result); err != nil {
 		return err
 	}
-
 	result.MergeNulls(lh)
-
 	rh := result
 	lhi64s := lh.Int64s()
 	rhi64s := rh.Int64s()
@@ -947,14 +931,12 @@ func (b *builtinArithmeticPlusIntSignedUnsignedSig) plusSU(result *chunk.Column,
 			continue
 		}
 		lh, rh := lhi64s[i], rhi64s[i]
-
 		if lh < 0 && uint64(-lh) > uint64(rh) {
 			return types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s + %s)", b.args[0].String(), b.args[1].String()))
 		}
 		if lh > 0 && uint64(rh) > math.MaxUint64-uint64(lh) {
 			return types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s + %s)", b.args[0].String(), b.args[1].String()))
 		}
-
 		resulti64s[i] = lh + rh
 	}
 	return nil

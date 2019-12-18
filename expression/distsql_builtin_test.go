@@ -617,8 +617,28 @@ func (s *testEvalSuite) TestEval(c *C) {
 				toPBFieldType(newDateFieldType()), datumExpr(c, types.NewStringDatum("20000101"))),
 			types.NewTimeDatum(newDateTime(c, "2000-01-01")),
 		},
+		// {
+		// 	scalarFunctionExpr(tipb.ScalarFuncSig_PlusInt,
+		// 		toPBFieldType(newIntFieldType()), datumExpr(c, types.NewIntDatum(1)), datumExpr(c, types.NewIntDatum(2))),
+		// 	types.NewIntDatum(3),
+		// },
 		{
-			scalarFunctionExpr(tipb.ScalarFuncSig_PlusInt,
+			scalarFunctionExpr(tipb.ScalarFuncSig_PlusIntUnsignedUnsigned,
+				toPBFieldType(newIntFieldType()), datumExpr(c, types.NewUintDatum(1)), datumExpr(c, types.NewUintDatum(2))),
+			types.NewIntDatum(3),
+		},
+		{
+			scalarFunctionExpr(tipb.ScalarFuncSig_PlusIntUnsignedSigned,
+				toPBFieldType(newIntFieldType()), datumExpr(c, types.NewUintDatum(1)), datumExpr(c, types.NewIntDatum(2))),
+			types.NewIntDatum(3),
+		},
+		{
+			scalarFunctionExpr(tipb.ScalarFuncSig_PlusIntSignedUnsigned,
+				toPBFieldType(newIntFieldType()), datumExpr(c, types.NewIntDatum(1)), datumExpr(c, types.NewUintDatum(2))),
+			types.NewIntDatum(3),
+		},
+		{
+			scalarFunctionExpr(tipb.ScalarFuncSig_PlusIntSignedSigned,
 				toPBFieldType(newIntFieldType()), datumExpr(c, types.NewIntDatum(1)), datumExpr(c, types.NewIntDatum(2))),
 			types.NewIntDatum(3),
 		},
