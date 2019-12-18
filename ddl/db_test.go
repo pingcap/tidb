@@ -2067,7 +2067,6 @@ func (s *testDBSuite2) TestTableForeignKey(c *C) {
 	s.tk.MustExec("create table t3 (a int, b int);")
 	failSQL = "alter table t1 add foreign key (c) REFERENCES t3(a);"
 	assertErrorCode(c, s.tk, failSQL, tmysql.ErrKeyColumnDoesNotExits)
-
 	// Test drop column with foreign key.
 	s.tk.MustExec("create table t4 (c int,d int,foreign key (d) references t1 (b));")
 	failSQL = "alter table t4 drop column d"
