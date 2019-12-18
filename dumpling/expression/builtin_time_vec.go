@@ -2098,11 +2098,56 @@ func (b *builtinTimestampDiffSig) vecEvalInt(input *chunk.Chunk, result *chunk.C
 }
 
 func (b *builtinUnixTimestampIntSig) vectorized() bool {
-	return false
+	return true
 }
 
+// evalInt evals a UNIX_TIMESTAMP(time).
+// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_unix-timestamp
 func (b *builtinUnixTimestampIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETDatetime, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+
+	result.ResizeInt64(n, false)
+	i64s := result.Int64s()
+
+	if err := b.args[0].VecEvalTime(b.ctx, input, buf); err != nil {
+		var isNull bool
+		for i := 0; i < n; i++ {
+			i64s[i], isNull, err = b.evalInt(input.GetRow(i))
+			if err != nil {
+				return err
+			}
+			if isNull {
+				result.SetNull(i, true)
+			}
+		}
+	} else {
+		result.MergeNulls(buf)
+		for i := 0; i < n; i++ {
+			if result.IsNull(i) {
+				continue
+			}
+
+			t, err := buf.GetTime(i).Time.GoTime(getTimeZone(b.ctx))
+			if err != nil {
+				i64s[i] = 0
+				continue
+			}
+			dec, err := goTimeToMysqlUnixTimestamp(t, 1)
+			if err != nil {
+				return err
+			}
+			intVal, err := dec.ToInt()
+			terror.Log(err)
+			i64s[i] = intVal
+		}
+	}
+
+	return nil
 }
 
 func (b *builtinCurrentTime0ArgSig) vectorized() bool {
