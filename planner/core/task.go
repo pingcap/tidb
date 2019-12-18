@@ -410,14 +410,13 @@ func (p *PhysicalIndexJoin) GetCost(outerTask, innerTask task) float64 {
 }
 
 func (p *PhysicalHashJoin) avgRowSize(inner PhysicalPlan) (size float64) {
-	padChar := p.ctx.GetSessionVars().StmtCtx.PadCharToFullLength
 	if inner.statsInfo().HistColl != nil {
-		size = inner.statsInfo().HistColl.GetAvgRowSizeListInDisk(inner.Schema().Columns, padChar)
+		size = inner.statsInfo().HistColl.GetAvgRowSizeListInDisk(inner.Schema().Columns)
 	} else {
 		// Estimate using just the type info.
 		cols := inner.Schema().Columns
 		for _, col := range cols {
-			size += float64(chunk.EstimateTypeWidth(padChar, col.GetType()))
+			size += float64(chunk.EstimateTypeWidth(col.GetType()))
 		}
 	}
 	return
@@ -938,7 +937,7 @@ func (sel *PhysicalSelection) attach2Task(tasks ...task) task {
 	return t
 }
 
-// CheckAggCanPushCop checks whether the aggFuncs with groupByItems can
+// CheckAggCanPushCop checks whether the aggFuncs and groupByItems can
 // be pushed down to coprocessor.
 func CheckAggCanPushCop(sctx sessionctx.Context, aggFuncs []*aggregation.AggFuncDesc, groupByItems []expression.Expression, copToFlash bool) bool {
 	sc := sctx.GetSessionVars().StmtCtx
@@ -959,6 +958,9 @@ func CheckAggCanPushCop(sctx sessionctx.Context, aggFuncs []*aggregation.AggFunc
 		if pb == nil {
 			return false
 		}
+	}
+	if expression.ContainVirtualColumn(groupByItems) {
+		return false
 	}
 	_, _, remained := expression.ExpressionsToPB(sc, groupByItems, client)
 	if len(remained) > 0 {

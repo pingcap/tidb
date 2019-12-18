@@ -141,8 +141,14 @@ type Table interface {
 	// Row returns a row for all columns.
 	Row(ctx sessionctx.Context, h int64) ([]types.Datum, error)
 
-	// Cols returns the columns of the table which is used in select.
+	// Cols returns the columns of the table which is used in select, including hidden columns.
 	Cols() []*Column
+
+	// VisibleCols returns the columns of the table which is used in select, excluding hidden columns.
+	VisibleCols() []*Column
+
+	// HiddenCols returns the hidden columns of the table.
+	HiddenCols() []*Column
 
 	// WritableCols returns columns of the table in writable states.
 	// Writable states includes Public, WriteOnly, WriteOnlyReorganization.
