@@ -161,9 +161,9 @@ id	count	task	operator info
 Projection_10	428.32	root	test.dt.id, test.dt.aid, test.dt.pt, test.dt.dic, test.dt.cm, test.rr.gid, test.rr.acd, test.rr.t, test.dt.p1, test.dt.p2, test.dt.p3, test.dt.p4, test.dt.p5, test.dt.p6_md5, test.dt.p7_md5
 └─Limit_13	428.32	root	offset:0, count:2000
   └─IndexJoin_19	428.32	root	inner join, inner:IndexLookUp_18, outer key:test.dt.aid, test.dt.dic, inner key:test.rr.aid, test.rr.dic
-    ├─TableReader_43	428.32	root	data:Selection_42
-    │ └─Selection_42	428.32	cop[tikv]	eq(test.dt.bm, 0), eq(test.dt.pt, "ios"), gt(test.dt.t, 1478185592), not(isnull(test.dt.dic))
-    │   └─TableScan_41	2000.00	cop[tikv]	table:dt, range:[0,+inf], keep order:false
+    ├─TableReader_58	428.32	root	data:Selection_57
+    │ └─Selection_57	428.32	cop[tikv]	eq(test.dt.bm, 0), eq(test.dt.pt, "ios"), gt(test.dt.t, 1478185592), not(isnull(test.dt.dic))
+    │   └─TableScan_56	2000.00	cop[tikv]	table:dt, range:[0,+inf], keep order:false
     └─IndexLookUp_18	1.00	root	
       ├─IndexScan_15	1.00	cop[tikv]	table:rr, index:aid, dic, range: decided by [eq(test.rr.aid, test.dt.aid) eq(test.rr.dic, test.dt.dic)], keep order:false
       └─Selection_17	1.00	cop[tikv]	eq(test.rr.pt, "ios"), gt(test.rr.t, 1478185592)
