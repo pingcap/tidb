@@ -475,6 +475,7 @@ func testSelectUpdateDeleteEmptyStringError(c *C) {
 		{false, true},
 	}
 	sc := new(stmtctx.StatementContext)
+	sc.TruncateAsWarning = true
 	for _, tc := range testCases {
 		sc.InSelectStmt = tc.inSelect
 		sc.InDeleteStmt = tc.inDelete
