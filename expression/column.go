@@ -106,10 +106,6 @@ func (col *CorrelatedColumn) EvalString(ctx sessionctx.Context, row chunk.Row) (
 		return "", true, nil
 	}
 	res, err := col.Data.ToString()
-	resLen := len([]rune(res))
-	if resLen < col.RetType.Flen && ctx.GetSessionVars().StmtCtx.PadCharToFullLength {
-		res = res + strings.Repeat(" ", col.RetType.Flen-resLen)
-	}
 	return res, err != nil, err
 }
 
@@ -201,6 +197,7 @@ type Column struct {
 	VirtualExpr Expression
 
 	OrigName string
+	IsHidden bool
 }
 
 // Equal implements Expression interface.
@@ -268,7 +265,7 @@ func (col *Column) VecEvalReal(ctx sessionctx.Context, input *chunk.Chunk, resul
 
 // VecEvalString evaluates this expression in a vectorized manner.
 func (col *Column) VecEvalString(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
-	if col.RetType.Hybrid() || ctx.GetSessionVars().StmtCtx.PadCharToFullLength {
+	if col.RetType.Hybrid() {
 		it := chunk.NewIterator4Chunk(input)
 		result.ReserveString(input.NumRows())
 		for row := it.Begin(); row != it.End(); row = it.Next() {
@@ -380,12 +377,6 @@ func (col *Column) EvalString(ctx sessionctx.Context, row chunk.Row) (string, bo
 	}
 
 	val := row.GetString(col.Index)
-	if ctx.GetSessionVars().StmtCtx.PadCharToFullLength && col.GetType().Tp == mysql.TypeString {
-		valLen := len([]rune(val))
-		if valLen < col.RetType.Flen {
-			val = val + strings.Repeat(" ", col.RetType.Flen-valLen)
-		}
-	}
 	return val, false, nil
 }
 
@@ -580,4 +571,19 @@ idLoop:
 // EvalVirtualColumn evals the virtual column
 func (col *Column) EvalVirtualColumn(row chunk.Row) (types.Datum, error) {
 	return col.VirtualExpr.Eval(row)
+}
+
+// SupportReverseEval checks whether the builtinFunc support reverse evaluation.
+func (col *Column) SupportReverseEval() bool {
+	switch col.RetType.Tp {
+	case mysql.TypeShort, mysql.TypeLong, mysql.TypeLonglong,
+		mysql.TypeFloat, mysql.TypeDouble, mysql.TypeNewDecimal:
+		return true
+	}
+	return false
+}
+
+// ReverseEval evaluates the only one column value with given function result.
+func (col *Column) ReverseEval(sc *stmtctx.StatementContext, res types.Datum, rType types.RoundingType) (val types.Datum, err error) {
+	return types.ChangeReverseResultByUpperLowerBound(sc, col.RetType, res, rType)
 }

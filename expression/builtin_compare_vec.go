@@ -14,7 +14,6 @@
 package expression
 
 import (
-	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -707,11 +706,69 @@ func (b *builtinGreatestRealSig) vecEvalReal(input *chunk.Chunk, result *chunk.C
 }
 
 func (b *builtinLeastTimeSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinLeastTimeSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	dst, err := b.bufAllocator.get(types.ETTimestamp, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(dst)
+
+	sc := b.ctx.GetSessionVars().StmtCtx
+	dst.ResizeTime(n, false)
+	dstTimes := dst.Times()
+	for i := 0; i < n; i++ {
+		dstTimes[i] = types.Time{
+			Time: types.MaxDatetime,
+			Type: mysql.TypeDatetime,
+			Fsp:  types.DefaultFsp,
+		}
+	}
+	var argTime types.Time
+
+	var findInvalidTime []bool = make([]bool, n)
+	var invalidValue []string = make([]string, n)
+
+	for j := 0; j < len(b.args); j++ {
+		if err := b.args[j].VecEvalString(b.ctx, input, result); err != nil {
+			return err
+		}
+		dst.MergeNulls(result)
+		for i := 0; i < n; i++ {
+			if dst.IsNull(i) {
+				continue
+			}
+			argTime, err = types.ParseDatetime(sc, result.GetString(i))
+			if err != nil {
+				if err = handleInvalidTimeError(b.ctx, err); err != nil {
+					return err
+				} else if !findInvalidTime[i] {
+					invalidValue[i] = result.GetString(i)
+					findInvalidTime[i] = true
+				}
+				continue
+			}
+			if argTime.Compare(dstTimes[i]) < 0 {
+				dstTimes[i] = argTime
+			}
+		}
+	}
+	result.ReserveString(n)
+	for i := 0; i < n; i++ {
+		if findInvalidTime[i] {
+			result.AppendString(invalidValue[i])
+			continue
+		}
+		if dst.IsNull(i) {
+			result.AppendNull()
+		} else {
+			result.AppendString(dstTimes[i].String())
+		}
+	}
+	return nil
 }
 
 func (b *builtinGreatestStringSig) vectorized() bool {

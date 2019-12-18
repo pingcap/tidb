@@ -53,7 +53,7 @@ const (
 	MaxCommentLength = 1024
 )
 
-func buildIndexColumns(columns []*model.ColumnInfo, idxColNames []*ast.IndexColName) ([]*model.IndexColumn, error) {
+func buildIndexColumns(columns []*model.ColumnInfo, idxColNames []*ast.IndexPartSpecification) ([]*model.IndexColumn, error) {
 	// Build offsets.
 	idxColumns := make([]*model.IndexColumn, 0, len(idxColNames))
 
@@ -90,7 +90,7 @@ func buildIndexColumns(columns []*model.ColumnInfo, idxColNames []*ast.IndexColN
 	return idxColumns, nil
 }
 
-func checkPKOnGeneratedColumn(tblInfo *model.TableInfo, idxColNames []*ast.IndexColName) (*model.ColumnInfo, error) {
+func checkPKOnGeneratedColumn(tblInfo *model.TableInfo, idxColNames []*ast.IndexPartSpecification) (*model.ColumnInfo, error) {
 	var lastCol *model.ColumnInfo
 	for _, colName := range idxColNames {
 		lastCol = getColumnInfoByName(tblInfo, colName.Column.Name.L)
@@ -128,7 +128,7 @@ func checkIndexPrefixLength(columns []*model.ColumnInfo, idxColumns []*model.Ind
 	return nil
 }
 
-func checkIndexColumn(col *model.ColumnInfo, ic *ast.IndexColName) error {
+func checkIndexColumn(col *model.ColumnInfo, ic *ast.IndexPartSpecification) error {
 	if col.Flen == 0 && (types.IsTypeChar(col.FieldType.Tp) || types.IsTypeVarchar(col.FieldType.Tp)) {
 		return errors.Trace(errWrongKeyColumn.GenWithStackByArgs(ic.Column.Name))
 	}
@@ -203,7 +203,7 @@ func calcBytesLengthForDecimal(m int) int {
 	return (m / 9 * 4) + ((m%9)+1)/2
 }
 
-func buildIndexInfo(tblInfo *model.TableInfo, indexName model.CIStr, idxColNames []*ast.IndexColName, state model.SchemaState) (*model.IndexInfo, error) {
+func buildIndexInfo(tblInfo *model.TableInfo, indexName model.CIStr, idxColNames []*ast.IndexPartSpecification, state model.SchemaState) (*model.IndexInfo, error) {
 	if err := checkTooLongIndex(indexName); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -356,7 +356,7 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 	var (
 		unique      bool
 		indexName   model.CIStr
-		idxColNames []*ast.IndexColName
+		idxColNames []*ast.IndexPartSpecification
 		indexOption *ast.IndexOption
 		sqlMode     mysql.SQLMode
 		warnings    []string
@@ -980,7 +980,7 @@ func (w *addIndexWorker) backfillIndexInTxn(handleRange reorgIndexTask) (taskCtx
 
 			// Lock the row key to notify us that someone delete or update the row,
 			// then we should not backfill the index of it, otherwise the adding index is redundant.
-			err := txn.LockKeys(context.Background(), nil, 0, kv.LockAlwaysWait, idxRecord.key)
+			err := txn.LockKeys(context.Background(), new(kv.LockCtx), idxRecord.key)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -1517,4 +1517,31 @@ func iterateSnapshotRows(store kv.Storage, priority int, t table.Table, version 
 	}
 
 	return nil
+}
+
+func getIndexInfoByNameAndColumn(oldTableInfo *model.TableInfo, newOne *model.IndexInfo) *model.IndexInfo {
+	for _, oldOne := range oldTableInfo.Indices {
+		if newOne.Name.L == oldOne.Name.L && indexColumnSliceEqual(newOne.Columns, oldOne.Columns) {
+			return oldOne
+		}
+	}
+	return nil
+}
+
+func indexColumnSliceEqual(a, b []*model.IndexColumn) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	if len(a) == 0 {
+		logutil.BgLogger().Warn("[ddl] admin repair table : index's columns length equal to 0")
+		return true
+	}
+	// Accelerate the compare by eliminate index bound check.
+	b = b[:len(a)]
+	for i, v := range a {
+		if v.Name.L != b[i].Name.L {
+			return false
+		}
+	}
+	return true
 }

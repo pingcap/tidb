@@ -163,13 +163,15 @@ func extractSelectAndNormalizeDigest(stmtNode ast.StmtNode) (*ast.SelectStmt, st
 	case *ast.ExplainStmt:
 		switch x.Stmt.(type) {
 		case *ast.SelectStmt:
+			plannercore.EraseLastSemicolon(x)
 			normalizeExplainSQL := parser.Normalize(x.Text())
 			idx := strings.Index(normalizeExplainSQL, "select")
 			normalizeSQL := normalizeExplainSQL[idx:]
-			hash := parser.DigestHash(normalizeSQL)
+			hash := parser.DigestNormalized(normalizeSQL)
 			return x.Stmt.(*ast.SelectStmt), normalizeSQL, hash
 		}
 	case *ast.SelectStmt:
+		plannercore.EraseLastSemicolon(x)
 		normalizedSQL, hash := parser.NormalizeDigest(x.Text())
 		return x, normalizedSQL, hash
 	}

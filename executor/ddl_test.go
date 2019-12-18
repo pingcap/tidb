@@ -286,7 +286,11 @@ func (s *testSuite6) TestCreateDropView(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create or replace view drop_test as select 1,2")
-	_, err := tk.Exec("drop view if exists drop_test")
+
+	_, err := tk.Exec("drop table drop_test")
+	c.Assert(err.Error(), Equals, "[schema:1051]Unknown table 'test.drop_test'")
+
+	_, err = tk.Exec("drop view if exists drop_test")
 	c.Assert(err, IsNil)
 
 	_, err = tk.Exec("drop view mysql.gc_delete_range")
