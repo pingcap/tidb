@@ -73,17 +73,22 @@ func (e *ExplainExec) Next(ctx context.Context, req *chunk.Chunk) error {
 func (e *ExplainExec) generateExplainInfo(ctx context.Context) ([][]string, error) {
 	if e.analyzeExec != nil {
 		chk := newFirstChunk(e.analyzeExec)
+		var next_err, close_err error
 		for {
-			err := Next(ctx, e.analyzeExec, chk)
-			if err != nil {
-				return nil, err
+			next_err = Next(ctx, e.analyzeExec, chk)
+			if next_err != nil {
+				break
 			}
 			if chk.NumRows() == 0 {
 				break
 			}
 		}
-		if err := e.analyzeExec.Close(); err != nil {
-			return nil, err
+		close_err = e.analyzeExec.Close()
+		if next_err != nil {
+			return nil, next_err
+		}
+		if close_err != nil {
+			return nil, close_err
 		}
 	}
 	if err := e.explain.RenderResult(); err != nil {
