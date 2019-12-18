@@ -496,9 +496,9 @@ func (s *testSuite) TestUseMultiplyBindings(c *C) {
 	tk.MustExec("create binding for select * from t where a >= 1 and b >= 1 and c = 0 using select * from t use index(idx_a) where a >= 1 and b >= 1 and c = 0")
 	tk.MustExec("create binding for select * from t where a >= 1 and b >= 1 and c = 0 using select * from t use index(idx_b) where a >= 1 and b >= 1 and c = 0")
 	// It cannot choose table path although it has lowest cost.
-	tk.MustQuery("select * from t where a >= 4 and b >= 1 and c = 0")
+	tk.MustQuery("select * from t where a >= 4 and b >= 1 and c = 0;")
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.IndexNames[0], Equals, "t:idx_a")
-	tk.MustQuery("select * from t where a >= 1 and b >= 4 and c = 0")
+	tk.MustQuery("select * from t where a >= 1 and b >= 4 and c = 0;")
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.IndexNames[0], Equals, "t:idx_b")
 }
 

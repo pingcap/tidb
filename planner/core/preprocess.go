@@ -120,13 +120,13 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 	case *ast.Join:
 		p.checkNonUniqTableAlias(node)
 	case *ast.CreateBindingStmt:
-		eraseLastSemicolon(node.OriginSel)
-		eraseLastSemicolon(node.HintedSel)
+		EraseLastSemicolon(node.OriginSel)
+		EraseLastSemicolon(node.HintedSel)
 		p.checkBindGrammar(node.OriginSel, node.HintedSel)
 	case *ast.DropBindingStmt:
-		eraseLastSemicolon(node.OriginSel)
+		EraseLastSemicolon(node.OriginSel)
 		if node.HintedSel != nil {
-			eraseLastSemicolon(node.HintedSel)
+			EraseLastSemicolon(node.HintedSel)
 			p.checkBindGrammar(node.OriginSel, node.HintedSel)
 		}
 	case *ast.RecoverTableStmt, *ast.FlashBackTableStmt:
@@ -144,9 +144,10 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 	return in, p.err != nil
 }
 
-func eraseLastSemicolon(stmt ast.StmtNode) {
+// EraseLastSemicolon removes last semicolon of sql.
+func EraseLastSemicolon(stmt ast.StmtNode) {
 	sql := stmt.Text()
-	if sql[len(sql)-1] == ';' {
+	if len(sql) > 0 && sql[len(sql)-1] == ';' {
 		stmt.SetText(sql[:len(sql)-1])
 	}
 }
