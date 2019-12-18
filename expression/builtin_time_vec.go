@@ -1039,13 +1039,13 @@ func (b *builtinExtractDurationSig) vecEvalInt(input *chunk.Chunk, result *chunk
 	i64s := result.Int64s()
 	durIs := dur.GoDurations()
 	var duration types.Duration
+	duration.Fsp = int8(b.args[1].GetType().Decimal)
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
 		}
 		unitI := unit.GetString(i)
 		duration.Duration = durIs[i]
-		duration.Fsp = int8(b.args[1].GetType().Decimal)
 		i64s[i], err = types.ExtractDurationNum(&duration, unitI)
 		if err != nil {
 			return err
