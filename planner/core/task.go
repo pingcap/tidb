@@ -937,7 +937,7 @@ func (sel *PhysicalSelection) attach2Task(tasks ...task) task {
 	return t
 }
 
-// CheckAggCanPushCop checks whether the aggFuncs with groupByItems can
+// CheckAggCanPushCop checks whether the aggFuncs and groupByItems can
 // be pushed down to coprocessor.
 func CheckAggCanPushCop(sctx sessionctx.Context, aggFuncs []*aggregation.AggFuncDesc, groupByItems []expression.Expression, copToFlash bool) bool {
 	sc := sctx.GetSessionVars().StmtCtx
@@ -958,6 +958,9 @@ func CheckAggCanPushCop(sctx sessionctx.Context, aggFuncs []*aggregation.AggFunc
 		if pb == nil {
 			return false
 		}
+	}
+	if expression.ContainVirtualColumn(groupByItems) {
+		return false
 	}
 	_, _, remained := expression.ExpressionsToPB(sc, groupByItems, client)
 	if len(remained) > 0 {
