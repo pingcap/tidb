@@ -168,8 +168,6 @@ var (
 	ErrWrongTableName = terror.ClassDDL.New(mysql.ErrWrongTableName, mysql.MySQLErrName[mysql.ErrWrongTableName])
 	// ErrWrongColumnName returns for wrong column name.
 	ErrWrongColumnName = terror.ClassDDL.New(mysql.ErrWrongColumnName, mysql.MySQLErrName[mysql.ErrWrongColumnName])
-	// ErrWrongSequenceName returns for wrong sequence name.
-	ErrWrongSequenceName = terror.ClassDDL.New(1, "wrong sequence name")
 	// ErrInvalidGroupFuncUse returns for using invalid group functions.
 	ErrInvalidGroupFuncUse = terror.ClassDDL.New(mysql.ErrInvalidGroupFuncUse, mysql.MySQLErrName[mysql.ErrInvalidGroupFuncUse])
 	// ErrTableMustHaveColumns returns for missing column when creating a table.

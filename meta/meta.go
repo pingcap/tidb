@@ -77,10 +77,6 @@ var (
 	ErrTableExists = terror.ClassMeta.New(mysql.ErrTableExists, mysql.MySQLErrName[mysql.ErrTableExists])
 	// ErrTableNotExists is the error for table not exists.
 	ErrTableNotExists = terror.ClassMeta.New(mysql.ErrNoSuchTable, mysql.MySQLErrName[mysql.ErrNoSuchTable])
-	// ErrSequenceExists is the error for table exists.
-	ErrSequenceExists = terror.ClassMeta.New(1, "sequence exists")
-	// ErrSequenceNotExists is the error for table not exists.
-	ErrSequenceNotExists = terror.ClassMeta.New(2, "sequence doesn't exist")
 )
 
 // Meta is for handling meta information in a transaction.
