@@ -1907,7 +1907,7 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 		case ast.AlterTableDropIndex:
 			err = d.DropIndex(ctx, ident, model.NewCIStr(spec.Name), spec.IfExists)
 		case ast.AlterTableDropPrimaryKey:
-			err = d.dropIndex(ctx, ident, true, model.NewCIStr(mysql.PrimaryKeyName), spec.IfExists)
+			err = d.DropIndex(ctx, ident, model.NewCIStr(mysql.PrimaryKeyName), spec.IfExists)
 		case ast.AlterTableRenameIndex:
 			err = d.RenameIndex(ctx, ident, spec)
 		case ast.AlterTableDropPartition:
@@ -3573,10 +3573,6 @@ func (d *ddl) DropForeignKey(ctx sessionctx.Context, ti ast.Ident, fkName model.
 }
 
 func (d *ddl) DropIndex(ctx sessionctx.Context, ti ast.Ident, indexName model.CIStr, ifExists bool) error {
-	return d.dropIndex(ctx, ti, false, indexName, ifExists)
-}
-
-func (d *ddl) dropIndex(ctx sessionctx.Context, ti ast.Ident, isPK bool, indexName model.CIStr, ifExists bool) error {
 	is := d.infoHandle.Get()
 	schema, ok := is.SchemaByName(ti.Schema)
 	if !ok {
@@ -3587,6 +3583,10 @@ func (d *ddl) dropIndex(ctx sessionctx.Context, ti ast.Ident, isPK bool, indexNa
 		return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ti.Schema, ti.Name))
 	}
 
+	var isPK bool
+	if indexName.L == strings.ToLower(mysql.PrimaryKeyName) {
+		isPK = true
+	}
 	indexInfo := t.Meta().FindIndexByName(indexName.L)
 	if isPK {
 		if !config.GetGlobalConfig().AlterPrimaryKey {
