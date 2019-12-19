@@ -42,7 +42,7 @@ type MetricRetriever struct {
 	done       bool
 }
 
-func (e *MetricRetriever) retrieve(sctx sessionctx.Context, ctx context.Context) (fullRows [][]types.Datum, err error) {
+func (e *MetricRetriever) retrieve(ctx context.Context, sctx sessionctx.Context) (fullRows [][]types.Datum, err error) {
 	tblDef, err := metricschema.GetMetricTableDef(e.table.Name.L)
 	if err != nil {
 		return nil, err
@@ -50,7 +50,7 @@ func (e *MetricRetriever) retrieve(sctx sessionctx.Context, ctx context.Context)
 	e.tblDef = tblDef
 	// TODO: Get query range from plan instead of use default range.
 	queryRange := e.getDefaultQueryRange(sctx)
-	queryValue, err := e.queryMetric(sctx, ctx, queryRange)
+	queryValue, err := e.queryMetric(ctx, sctx, queryRange)
 	if err != nil {
 		return nil, err
 	}
@@ -70,7 +70,7 @@ func (e *MetricRetriever) retrieve(sctx sessionctx.Context, ctx context.Context)
 	return rows, nil
 }
 
-func (e *MetricRetriever) queryMetric(sctx sessionctx.Context, ctx context.Context, queryRange promv1.Range) (pmodel.Value, error) {
+func (e *MetricRetriever) queryMetric(ctx context.Context, sctx sessionctx.Context, queryRange promv1.Range) (pmodel.Value, error) {
 	addr, err := e.getMetricAddr(sctx)
 	if err != nil {
 		return nil, err

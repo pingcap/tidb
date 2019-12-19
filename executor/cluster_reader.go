@@ -36,7 +36,7 @@ import (
 )
 
 type clusterRetriever interface {
-	retrieve(sctx sessionctx.Context, ctx context.Context) ([][]types.Datum, error)
+	retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error)
 }
 
 // ClusterReaderExec executes cluster information retrieving from the cluster components
@@ -53,7 +53,7 @@ func (e *ClusterReaderExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		return nil
 	}
 
-	rows, err := e.retriever.retrieve(e.ctx, ctx)
+	rows, err := e.retriever.retrieve(ctx, e.ctx)
 	if err != nil {
 		return err
 	}
@@ -78,7 +78,7 @@ type clusterConfigRetriever struct {
 }
 
 // retrieve implements the clusterRetriever interface
-func (e *clusterConfigRetriever) retrieve(ctx sessionctx.Context, _ context.Context) ([][]types.Datum, error) {
+func (e *clusterConfigRetriever) retrieve(_ context.Context, ctx sessionctx.Context) ([][]types.Datum, error) {
 	if e.extractor.SkipRequest {
 		return nil, nil
 	}
