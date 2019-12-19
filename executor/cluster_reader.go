@@ -572,20 +572,20 @@ func (e *clusterLogRetriever) retrieve(ctx sessionctx.Context) ([][]types.Datum,
 	// Merge the results
 	var finalRows [][]types.Datum
 	for e.heap.Len() > 0 && len(finalRows) < clusterLogBatchSize {
-		min := heap.Pop(e.heap).(logStreamResult)
-		item := min.messages[0]
-		time := time.Unix(item.Time/1000, (item.Time%1000)*int64(time.Millisecond))
+		minTimeItem := heap.Pop(e.heap).(logStreamResult)
+		headMessage := minTimeItem.messages[0]
+		loggingTime := time.Unix(headMessage.Time/1000, (headMessage.Time%1000)*int64(time.Millisecond))
 		finalRows = append(finalRows, types.MakeDatums(
-			time.Format("2006/01/02 15:04:05.000"),
-			min.typ,
-			min.addr,
-			strings.ToUpper(item.Level.String()),
-			item.Message,
+			loggingTime.Format("2006/01/02 15:04:05.000"),
+			minTimeItem.typ,
+			minTimeItem.addr,
+			strings.ToUpper(headMessage.Level.String()),
+			headMessage.Message,
 		))
-		min.messages = min.messages[1:]
+		minTimeItem.messages = minTimeItem.messages[1:]
 		// Current streaming result is drained, read the next to supply.
-		if len(min.messages) == 0 {
-			result := <-min.next
+		if len(minTimeItem.messages) == 0 {
+			result := <-minTimeItem.next
 			if result.err != nil {
 				ctx.GetSessionVars().StmtCtx.AppendWarning(result.err)
 				continue
@@ -594,7 +594,7 @@ func (e *clusterLogRetriever) retrieve(ctx sessionctx.Context) ([][]types.Datum,
 				heap.Push(e.heap, result)
 			}
 		} else {
-			heap.Push(e.heap, min)
+			heap.Push(e.heap, minTimeItem)
 		}
 	}
 
