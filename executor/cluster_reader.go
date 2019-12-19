@@ -245,6 +245,7 @@ func (e *clusterServerInfoRetriever) dataForClusterInfo(ctx sessionctx.Context, 
 				items, err := getServerInfoByGRPC(address, infoTp)
 				if err != nil {
 					ch <- result{idx: index, err: err}
+					return
 				}
 				partRows := serverInfoItemToRows(items, serverTP, address)
 				ch <- result{idx: index, rows: partRows}
