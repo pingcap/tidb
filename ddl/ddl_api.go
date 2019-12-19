@@ -3327,6 +3327,8 @@ func (d *ddl) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexName m
 		return infoschema.ErrMultiplePriKey
 	}
 
+	// Primary keys cannot include expression index parts. A primary key requires the generated column to be stored,
+	// but functional key parts are implemented as virtual generated columns, not stored generated columns.
 	for _, idxPart := range indexPartSpecifications {
 		if idxPart.Expr != nil {
 			return ErrFunctionalIndexPrimaryKey
