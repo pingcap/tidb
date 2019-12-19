@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tidb/util/ranger"
 )
 
 func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) Executor {
@@ -185,8 +184,13 @@ func encodeIndexKey(e *baseExecutor, tblInfo *model.TableInfo, idxInfo *model.In
 	sc := e.ctx.GetSessionVars().StmtCtx
 	for i := range idxVals {
 		colInfo := tblInfo.Columns[idxInfo.Columns[i].Offset]
+		// table.CastValue will append 0x0 if the string value's length is smaller than the BINARY column's length.
+		// So we don't use CastValue for string value for now.
+		// TODO: merge two if branch.
 		if colInfo.Tp == mysql.TypeString || colInfo.Tp == mysql.TypeVarString || colInfo.Tp == mysql.TypeVarchar {
-			idxVals[i], err = ranger.HandlePadCharToFullLength(sc, &colInfo.FieldType, idxVals[i])
+			var str string
+			str, err = idxVals[i].ToString()
+			idxVals[i].SetString(str)
 		} else {
 			idxVals[i], err = table.CastValue(e.ctx, idxVals[i], colInfo)
 		}

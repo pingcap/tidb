@@ -496,9 +496,9 @@ func (s *testSuite) TestUseMultiplyBindings(c *C) {
 	tk.MustExec("create binding for select * from t where a >= 1 and b >= 1 and c = 0 using select * from t use index(idx_a) where a >= 1 and b >= 1 and c = 0")
 	tk.MustExec("create binding for select * from t where a >= 1 and b >= 1 and c = 0 using select * from t use index(idx_b) where a >= 1 and b >= 1 and c = 0")
 	// It cannot choose table path although it has lowest cost.
-	tk.MustQuery("select * from t where a >= 4 and b >= 1 and c = 0")
+	tk.MustQuery("select * from t where a >= 4 and b >= 1 and c = 0;")
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.IndexNames[0], Equals, "t:idx_a")
-	tk.MustQuery("select * from t where a >= 1 and b >= 4 and c = 0")
+	tk.MustQuery("select * from t where a >= 1 and b >= 4 and c = 0;")
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.IndexNames[0], Equals, "t:idx_b")
 }
 
@@ -520,10 +520,12 @@ func (s *testSuite) TestDropSingleBindings(c *C) {
 	rows = tk.MustQuery("show bindings").Rows()
 	c.Assert(len(rows), Equals, 1)
 	c.Assert(rows[0][1], Equals, "select * from t use index(idx_b)")
+	tk.MustExec("drop table t")
 	tk.MustExec("drop binding for select * from t using select * from t use index(idx_b)")
 	rows = tk.MustQuery("show bindings").Rows()
 	c.Assert(len(rows), Equals, 0)
 
+	tk.MustExec("create table t(a int, b int, c int, index idx_a(a), index idx_b(b))")
 	// Test drop global bindings.
 	tk.MustExec("create global binding for select * from t using select * from t use index(idx_a)")
 	tk.MustExec("create global binding for select * from t using select * from t use index(idx_b)")
@@ -535,6 +537,7 @@ func (s *testSuite) TestDropSingleBindings(c *C) {
 	rows = tk.MustQuery("show global bindings").Rows()
 	c.Assert(len(rows), Equals, 1)
 	c.Assert(rows[0][1], Equals, "select * from t use index(idx_b)")
+	tk.MustExec("drop table t")
 	tk.MustExec("drop global binding for select * from t using select * from t use index(idx_b)")
 	rows = tk.MustQuery("show global bindings").Rows()
 	c.Assert(len(rows), Equals, 0)
@@ -572,18 +575,18 @@ func (s *testSuite) TestBindingCache(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int, index idx(a))")
-	tk.MustExec("create global binding for select * from t using select * from t use index(idx)")
+	tk.MustExec("create global binding for select * from t using select * from t use index(idx);")
 	tk.MustExec("create database tmp")
 	tk.MustExec("use tmp")
 	tk.MustExec("create table t(a int, b int, index idx(a))")
-	tk.MustExec("create global binding for select * from t using select * from t use index(idx)")
+	tk.MustExec("create global binding for select * from t using select * from t use index(idx);")
 
 	c.Assert(s.domain.BindHandle().Update(false), IsNil)
 	c.Assert(s.domain.BindHandle().Update(false), IsNil)
 	res := tk.MustQuery("show global bindings")
 	c.Assert(len(res.Rows()), Equals, 2)
 
-	tk.MustExec("drop global binding for select * from t")
+	tk.MustExec("drop global binding for select * from t;")
 	c.Assert(s.domain.BindHandle().Update(false), IsNil)
 	c.Assert(len(s.domain.BindHandle().GetAllBindRecord()), Equals, 1)
 }
