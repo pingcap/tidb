@@ -196,11 +196,7 @@ func (c *arithmeticPlusFunctionClass) getFunction(ctx sessionctx.Context, args [
 		case !isLHSUnsigned && !isRHSUnsigned:
 			sig = &builtinArithmeticPlusIntSignedSignedSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_PlusIntSignedSigned)
-		default:
-			sig = &builtinArithmeticPlusIntSignedSignedSig{bf}
-			sig.setPbCode(tipb.ScalarFuncSig_PlusIntUnsignedUnsigned)
 		}
-
 		return sig, nil
 	}
 }
