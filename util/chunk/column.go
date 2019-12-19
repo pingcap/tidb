@@ -294,7 +294,7 @@ func (c *Column) resize(n, typeSize int, isNull bool) {
 		newNulls = true
 	}
 	if !isNull || !newNulls {
-		var nullVal byte = 0
+		var nullVal byte
 		if !isNull {
 			nullVal = 0xFF
 		}

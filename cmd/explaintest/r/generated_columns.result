@@ -76,19 +76,19 @@ IndexJoin_26	5.00	root	inner join, inner:IndexLookUp_25, outer key:test.sgc2.a, 
 │ ├─Selection_24	5.00	cop[tikv]	not(isnull(test.sgc1.a))
 │ │ └─IndexScan_22	5.00	cop[tikv]	table:sgc1, index:a, range: decided by [eq(test.sgc1.a, test.sgc2.a)], keep order:false
 │ └─TableScan_23	5.00	cop[tikv]	table:sgc1, keep order:false
-└─TableReader_38	1.00	root	data:Selection_37
-  └─Selection_37	1.00	cop[tikv]	not(isnull(test.sgc2.a))
-    └─TableScan_36	1.00	cop[tikv]	table:sgc2, range:[-inf,+inf], keep order:false
+└─TableReader_47	1.00	root	data:Selection_46
+  └─Selection_46	1.00	cop[tikv]	not(isnull(test.sgc2.a))
+    └─TableScan_45	1.00	cop[tikv]	table:sgc2, range:[-inf,+inf], keep order:false
 EXPLAIN SELECT * from sgc1 join sgc2 on sgc1.a=sgc2.a;
 id	count	task	operator info
 Projection_6	5.00	root	test.sgc1.j1, test.sgc1.j2, test.sgc1.a, test.sgc1.b, test.sgc2.j1, test.sgc2.j2, test.sgc2.a, test.sgc2.b
-└─HashRightJoin_24	5.00	root	inner join, inner:TableReader_43, equal:[eq(test.sgc2.a, test.sgc1.a)]
-  ├─TableReader_43	1.00	root	data:Selection_42
-  │ └─Selection_42	1.00	cop[tikv]	not(isnull(test.sgc2.a))
-  │   └─TableScan_41	1.00	cop[tikv]	table:sgc2, range:[-inf,+inf], keep order:false
-  └─TableReader_52	5.00	root	data:Selection_51
-    └─Selection_51	5.00	cop[tikv]	not(isnull(test.sgc1.a))
-      └─TableScan_50	5.00	cop[tikv]	table:sgc1, range:[-inf,+inf], keep order:false
+└─HashRightJoin_38	5.00	root	inner join, inner:TableReader_57, equal:[eq(test.sgc2.a, test.sgc1.a)]
+  ├─TableReader_57	1.00	root	data:Selection_56
+  │ └─Selection_56	1.00	cop[tikv]	not(isnull(test.sgc2.a))
+  │   └─TableScan_55	1.00	cop[tikv]	table:sgc2, range:[-inf,+inf], keep order:false
+  └─TableReader_66	5.00	root	data:Selection_65
+    └─Selection_65	5.00	cop[tikv]	not(isnull(test.sgc1.a))
+      └─TableScan_64	5.00	cop[tikv]	table:sgc1, range:[-inf,+inf], keep order:false
 DROP TABLE IF EXISTS sgc3;
 CREATE TABLE sgc3 (
 j JSON,
@@ -172,3 +172,45 @@ Projection_4	10.00	root	test.person.name
 └─IndexLookUp_10	10.00	root	
   ├─IndexScan_8	10.00	cop[tikv]	table:person, index:city_no, range:[1,1], keep order:false, stats:pseudo
   └─TableScan_9	10.00	cop[tikv]	table:person, keep order:false, stats:pseudo
+DROP TABLE IF EXISTS t1;
+CREATE TABLE t1 (a INT,
+b INT GENERATED ALWAYS AS (-a) VIRTUAL,
+c INT GENERATED ALWAYS AS (-a) STORED,
+index (c));
+INSERT INTO t1 (a) VALUES (2), (1), (1), (3), (NULL);
+EXPLAIN SELECT sum(a) FROM t1 GROUP BY b;
+id	count	task	operator info
+HashAgg_5	8000.00	root	group by:Column#7, funcs:sum(Column#6)->Column#5
+└─Projection_12	10000.00	root	cast(test.t1.a)->Column#6, test.t1.b
+  └─TableReader_9	10000.00	root	data:TableScan_8
+    └─TableScan_8	10000.00	cop[tikv]	table:t1, range:[-inf,+inf], keep order:false, stats:pseudo
+EXPLAIN SELECT sum(a) FROM t1 GROUP BY c;
+id	count	task	operator info
+HashAgg_11	8000.00	root	group by:test.t1.c, funcs:sum(Column#6)->Column#5
+└─TableReader_12	8000.00	root	data:HashAgg_5
+  └─HashAgg_5	8000.00	cop[tikv]	group by:test.t1.c, funcs:sum(test.t1.a)->Column#6
+    └─TableScan_10	10000.00	cop[tikv]	table:t1, range:[-inf,+inf], keep order:false, stats:pseudo
+EXPLAIN SELECT sum(b) FROM t1 GROUP BY a;
+id	count	task	operator info
+HashAgg_5	8000.00	root	group by:Column#7, funcs:sum(Column#6)->Column#5
+└─Projection_12	10000.00	root	cast(test.t1.b)->Column#6, test.t1.a
+  └─TableReader_9	10000.00	root	data:TableScan_8
+    └─TableScan_8	10000.00	cop[tikv]	table:t1, range:[-inf,+inf], keep order:false, stats:pseudo
+EXPLAIN SELECT sum(b) FROM t1 GROUP BY c;
+id	count	task	operator info
+HashAgg_5	8000.00	root	group by:Column#9, funcs:sum(Column#8)->Column#5
+└─Projection_18	10000.00	root	cast(test.t1.b)->Column#8, test.t1.c
+  └─TableReader_11	10000.00	root	data:TableScan_10
+    └─TableScan_10	10000.00	cop[tikv]	table:t1, range:[-inf,+inf], keep order:false, stats:pseudo
+EXPLAIN SELECT sum(c) FROM t1 GROUP BY a;
+id	count	task	operator info
+HashAgg_9	8000.00	root	group by:test.t1.a, funcs:sum(Column#6)->Column#5
+└─TableReader_10	8000.00	root	data:HashAgg_5
+  └─HashAgg_5	8000.00	cop[tikv]	group by:test.t1.a, funcs:sum(test.t1.c)->Column#6
+    └─TableScan_8	10000.00	cop[tikv]	table:t1, range:[-inf,+inf], keep order:false, stats:pseudo
+EXPLAIN SELECT sum(c) FROM t1 GROUP BY b;
+id	count	task	operator info
+HashAgg_5	8000.00	root	group by:Column#7, funcs:sum(Column#6)->Column#5
+└─Projection_12	10000.00	root	cast(test.t1.c)->Column#6, test.t1.b
+  └─TableReader_9	10000.00	root	data:TableScan_8
+    └─TableScan_8	10000.00	cop[tikv]	table:t1, range:[-inf,+inf], keep order:false, stats:pseudo

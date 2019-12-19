@@ -111,3 +111,20 @@ KEY(city_no));
 
 INSERT INTO person (name, address_info) VALUES ("John", CAST('{"city_no": 1}' AS JSON));
 EXPLAIN SELECT name FROM person where city_no=1;
+
+-- Virtual generated columns in aggregate statement
+-- ISSUE https://github.com/pingcap/tidb/issues/14072
+
+DROP TABLE IF EXISTS t1;
+CREATE TABLE t1 (a INT,
+                 b INT GENERATED ALWAYS AS (-a) VIRTUAL,
+                 c INT GENERATED ALWAYS AS (-a) STORED,
+                 index (c));
+INSERT INTO t1 (a) VALUES (2), (1), (1), (3), (NULL);
+
+EXPLAIN SELECT sum(a) FROM t1 GROUP BY b;
+EXPLAIN SELECT sum(a) FROM t1 GROUP BY c;
+EXPLAIN SELECT sum(b) FROM t1 GROUP BY a;
+EXPLAIN SELECT sum(b) FROM t1 GROUP BY c;
+EXPLAIN SELECT sum(c) FROM t1 GROUP BY a;
+EXPLAIN SELECT sum(c) FROM t1 GROUP BY b;
