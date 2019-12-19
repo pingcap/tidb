@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"sort"
 	"strings"
@@ -457,25 +458,42 @@ func (e *clusterLogRetriever) startRetrieving(ctx sessionctx.Context) ([]chan lo
 	for l := range e.extractor.LogLevels {
 		levels = append(levels, sysutil.ParseLogLevel(l))
 	}
-	req := &diagnosticspb.SearchLogRequest{
-		StartTime: e.extractor.StartTime,
-		EndTime:   e.extractor.EndTime,
-		Levels:    levels,
-		Patterns:  e.extractor.Patterns,
+
+	addresses := e.extractor.Addresses
+	nodeTypes := e.extractor.NodeTypes
+	startTime := e.extractor.StartTime
+	endTime := e.extractor.EndTime
+	patterns := e.extractor.Patterns
+
+	if endTime == 0 {
+		endTime = math.MaxInt64
 	}
 
-	// There is no performance isssue to check this variable everytime because it will
-	// be elimitation in non-failpoint mode.
+	// There is no performance issue to check this variable because it will
+	// be eliminated in non-failpoint mode.
 	if !isFailpointTestMode {
-		if req.StartTime == 0 {
-			req.StartTime = time.Now().UnixNano()/int64(time.Millisecond) - int64(30*time.Minute/time.Millisecond)
-		}
-
 		// To avoid search log interface overload, the user should specify at least one pattern
 		// in normally SQL. (But in test mode we should relax this limitation)
-		if len(req.Patterns) == 0 && len(req.Levels) == 0 {
+		if len(patterns) == 0 && len(levels) == 0 && len(addresses) == 0 && len(nodeTypes) == 0 {
 			return nil, errors.New("denied to scan full logs (use `SELECT * FROM cluster_log WHERE message LIKE '%'` explicitly if intentionally)")
 		}
+
+		// Just search the recent half an hour logs if the user doesn't specify the start time
+		const defaultSearchLogDuration = 30 * time.Minute / time.Millisecond
+		if startTime == 0 {
+			if endTime == math.MaxInt64 {
+				startTime = time.Now().UnixNano()/int64(time.Millisecond) - int64(defaultSearchLogDuration)
+			} else {
+				startTime = endTime - int64(defaultSearchLogDuration)
+			}
+		}
+	}
+
+	req := &diagnosticspb.SearchLogRequest{
+		StartTime: startTime,
+		EndTime:   endTime,
+		Levels:    levels,
+		Patterns:  patterns,
 	}
 
 	var results []chan logStreamResult
@@ -483,13 +501,13 @@ func (e *clusterLogRetriever) startRetrieving(ctx sessionctx.Context) ([]chan lo
 		typ := srv.ServerType
 		// Skip some node type which has been filtered in WHERE cluase
 		// e.g: SELECT * FROM cluster_log WHERE type='tikv'
-		if len(e.extractor.NodeTypes) > 0 && !e.extractor.NodeTypes.Exist(typ) {
+		if len(nodeTypes) > 0 && !nodeTypes.Exist(typ) {
 			continue
 		}
 		address := srv.Address
 		// Skip some node address which has been filtered in WHERE cluase
 		// e.g: SELECT * FROM cluster_log WHERE address='192.16.8.12:2379'
-		if len(e.extractor.Addresses) > 0 && !e.extractor.Addresses.Exist(address) {
+		if len(addresses) > 0 && !addresses.Exist(address) {
 			continue
 		}
 		statusAddr := srv.StatusAddr
