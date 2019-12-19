@@ -361,10 +361,10 @@ const (
 	TiDBStoreLimit = "tidb_store_limit"
 
 	// TiDBMetricSchemaStep indicates the step when query metric schema.
-	TiDBMetricSchemaStep = "tidb_metric_schema_step"
+	TiDBMetricSchemaStep = "tidb_metric_query_step"
 
 	// TiDBMetricSchemaRangeDuration indicates the range duration when query metric schema.
-	TiDBMetricSchemaRangeDuration = "tidb_metric_schema_range_duration"
+	TiDBMetricSchemaRangeDuration = "tidb_metric_query_range_duration"
 )
 
 // Default TiDB system variable values.

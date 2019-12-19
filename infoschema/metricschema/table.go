@@ -24,7 +24,7 @@ import (
 
 const (
 	promQLQuantileKey       = "$QUANTILE"
-	promQLLabelConditionKey = "$LABEL_CONDITION"
+	promQLLabelConditionKey = "$LABEL_CONDITIONS"
 	promQRangeDurationKey   = "$RANGE_DURATION"
 )
 
@@ -38,12 +38,12 @@ type MetricTableDef struct {
 // TODO: read from system table.
 var metricTableMap = map[string]MetricTableDef{
 	"query_duration": {
-		PromQL:   `histogram_quantile($QUANTILE, sum(rate(tidb_server_handle_query_duration_seconds_bucket{$LABEL_CONDITION}[$RANGE_DURATION])) by (le))`,
+		PromQL:   `histogram_quantile($QUANTILE, sum(rate(tidb_server_handle_query_duration_seconds_bucket{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (le))`,
 		Labels:   []string{"instance", "sql_type"},
 		Quantile: 0.90,
 	},
 	"up": {
-		PromQL: `up{$LABEL_CONDITION}`,
+		PromQL: `up{$LABEL_CONDITIONS}`,
 		Labels: []string{"instance", "job"},
 	},
 }

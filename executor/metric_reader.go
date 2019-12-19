@@ -24,9 +24,9 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/infoschema/metricschema"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/chunk"
 	"github.com/prometheus/client_golang/api"
 	promv1 "github.com/prometheus/client_golang/api/prometheus/v1"
 	pmodel "github.com/prometheus/common/model"
@@ -34,54 +34,23 @@ import (
 
 const promReadTimeout = time.Second * 10
 
-// MetricReaderExec uses to read metric data.
-type MetricReaderExec struct {
-	baseExecutor
+// MetricRetriever uses to read metric data.
+type MetricRetriever struct {
 	table      *model.TableInfo
 	tblDef     *metricschema.MetricTableDef
 	outputCols []*model.ColumnInfo
 	done       bool
 }
 
-// Open implements the Executor Open interface.
-func (e *MetricReaderExec) Open(ctx context.Context) error {
+func (e *MetricRetriever) retrieve(sctx sessionctx.Context, ctx context.Context) (fullRows [][]types.Datum, err error) {
 	tblDef, err := metricschema.GetMetricTableDef(e.table.Name.L)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	e.tblDef = tblDef
-	return nil
-}
-
-// Next implements the Executor Next interface.
-func (e *MetricReaderExec) Next(ctx context.Context, req *chunk.Chunk) error {
-	req.Reset()
-	if e.done {
-		return nil
-	}
-	rows, err := e.getRows(ctx)
-	if err != nil {
-		return err
-	}
-	e.done = true
-
-	if len(rows) == 0 {
-		return nil
-	}
-
-	req.GrowAndReset(len(rows))
-	mutableRow := chunk.MutRowFromTypes(retTypes(e))
-	for _, row := range rows {
-		mutableRow.SetDatums(row...)
-		req.AppendRow(mutableRow.ToRow())
-	}
-	return nil
-}
-
-func (e *MetricReaderExec) getRows(ctx context.Context) (fullRows [][]types.Datum, err error) {
 	// TODO: Get query range from plan instead of use default range.
-	queryRange := e.getDefaultQueryRange()
-	queryValue, err := e.queryMetric(ctx, queryRange)
+	queryRange := e.getDefaultQueryRange(sctx)
+	queryValue, err := e.queryMetric(sctx, ctx, queryRange)
 	if err != nil {
 		return nil, err
 	}
@@ -101,8 +70,8 @@ func (e *MetricReaderExec) getRows(ctx context.Context) (fullRows [][]types.Datu
 	return rows, nil
 }
 
-func (e *MetricReaderExec) queryMetric(ctx context.Context, queryRange promv1.Range) (pmodel.Value, error) {
-	addr, err := e.getMetricAddr()
+func (e *MetricRetriever) queryMetric(sctx sessionctx.Context, ctx context.Context, queryRange promv1.Range) (pmodel.Value, error) {
+	addr, err := e.getMetricAddr(sctx)
 	if err != nil {
 		return nil, err
 	}
@@ -117,14 +86,14 @@ func (e *MetricReaderExec) queryMetric(ctx context.Context, queryRange promv1.Ra
 	defer cancel()
 
 	// TODO: add label condition.
-	promQL := e.tblDef.GenPromQL(e.ctx, nil)
+	promQL := e.tblDef.GenPromQL(sctx, nil)
 	result, _, err := promQLAPI.QueryRange(ctx, promQL, queryRange)
 	return result, err
 }
 
-func (e *MetricReaderExec) getMetricAddr() (string, error) {
+func (e *MetricRetriever) getMetricAddr(sctx sessionctx.Context) (string, error) {
 	// Get PD servers info.
-	store := e.ctx.GetStore()
+	store := sctx.GetStore()
 	etcd, ok := store.(tikv.EtcdBackend)
 	if !ok {
 		return "", errors.Errorf("%T not an etcd backend", store)
@@ -137,11 +106,11 @@ func (e *MetricReaderExec) getMetricAddr() (string, error) {
 
 type promQLQueryRange = promv1.Range
 
-func (e *MetricReaderExec) getDefaultQueryRange() promQLQueryRange {
-	return promQLQueryRange{Start: time.Now(), End: time.Now(), Step: time.Second * time.Duration(e.ctx.GetSessionVars().MetricSchemaStep)}
+func (e *MetricRetriever) getDefaultQueryRange(sctx sessionctx.Context) promQLQueryRange {
+	return promQLQueryRange{Start: time.Now(), End: time.Now(), Step: time.Second * time.Duration(sctx.GetSessionVars().MetricSchemaStep)}
 }
 
-func (e *MetricReaderExec) genRows(value pmodel.Value, r promQLQueryRange) [][]types.Datum {
+func (e *MetricRetriever) genRows(value pmodel.Value, r promQLQueryRange) [][]types.Datum {
 	var rows [][]types.Datum
 	switch value.Type() {
 	case pmodel.ValMatrix:
@@ -156,7 +125,7 @@ func (e *MetricReaderExec) genRows(value pmodel.Value, r promQLQueryRange) [][]t
 	return rows
 }
 
-func (e *MetricReaderExec) genRecord(metric pmodel.Metric, pair pmodel.SamplePair, r promQLQueryRange) []types.Datum {
+func (e *MetricRetriever) genRecord(metric pmodel.Metric, pair pmodel.SamplePair, r promQLQueryRange) []types.Datum {
 	record := make([]types.Datum, 0, 2+len(e.tblDef.Labels)+1)
 	// Record order should keep same with genColumnInfos.
 	record = append(record, types.NewTimeDatum(types.Time{

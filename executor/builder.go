@@ -1261,10 +1261,12 @@ func (b *executorBuilder) getStartTS() (uint64, error) {
 func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executor {
 	switch v.DBName.L {
 	case util.MetricSchemaName.L:
-		return &MetricReaderExec{
+		return &ClusterReaderExec{
 			baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
-			table:        v.Table,
-			outputCols:   v.Columns,
+			retriever: &MetricRetriever{
+				table:      v.Table,
+				outputCols: v.Columns,
+			},
 		}
 	case util.InformationSchemaName.L:
 		switch v.Table.Name.L {
