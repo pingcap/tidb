@@ -205,9 +205,7 @@ func getBindRecord(ctx sessionctx.Context, stmt ast.StmtNode) (*bindinfo.BindRec
 
 func handleInvalidBindRecord(ctx context.Context, sctx sessionctx.Context, level string, bindRecord bindinfo.BindRecord) {
 	sessionHandle := sctx.Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
-	// The first two parameters are only used to generate hints, but since we already have the hints,
-	// we do not need to pass real values and the error won't happen too.
-	err := sessionHandle.DropBindRecord(nil, nil, &bindRecord)
+	err := sessionHandle.DropBindRecord(bindRecord.OriginalSQL, bindRecord.Db, &bindRecord.Bindings[0])
 	if err != nil {
 		logutil.Logger(ctx).Info("drop session bindings failed")
 	}
