@@ -175,7 +175,7 @@ func (h *BindHandle) AddBindRecord(sctx sessionctx.Context, is infoschema.InfoSc
 	}
 
 	br := h.GetBindRecord(parser.DigestNormalized(record.OriginalSQL), record.OriginalSQL, record.Db)
-	var duplicateBinding string
+	var duplicateBinding *Binding
 	if br != nil {
 		binding := br.FindBinding(record.Bindings[0].id)
 		if binding != nil {
@@ -184,7 +184,7 @@ func (h *BindHandle) AddBindRecord(sctx sessionctx.Context, is infoschema.InfoSc
 				return nil
 			}
 			// Otherwise, we need to remove it before insert.
-			duplicateBinding = binding.BindSQL
+			duplicateBinding = binding
 		}
 	}
 
@@ -217,8 +217,8 @@ func (h *BindHandle) AddBindRecord(sctx sessionctx.Context, is infoschema.InfoSc
 		h.bindInfo.Unlock()
 	}()
 
-	if duplicateBinding != "" {
-		_, err = exec.Execute(context.TODO(), h.deleteBindInfoSQL(record.OriginalSQL, record.Db, duplicateBinding))
+	if duplicateBinding != nil {
+		_, err = exec.Execute(context.TODO(), h.deleteBindInfoSQL(record.OriginalSQL, record.Db, duplicateBinding.BindSQL))
 		if err != nil {
 			return err
 		}
@@ -228,13 +228,18 @@ func (h *BindHandle) AddBindRecord(sctx sessionctx.Context, is infoschema.InfoSc
 	if err1 != nil {
 		return err1
 	}
+	now := types.Time{
+		Time: types.FromGoTime(oracle.GetTimeFromTS(txn.StartTS())),
+		Type: mysql.TypeDatetime,
+		Fsp:  3,
+	}
 	for i := range record.Bindings {
-		record.Bindings[i].CreateTime = types.Time{
-			Time: types.FromGoTime(oracle.GetTimeFromTS(txn.StartTS())),
-			Type: mysql.TypeDatetime,
-			Fsp:  3,
+		if duplicateBinding != nil {
+			record.Bindings[i].CreateTime = duplicateBinding.CreateTime
+		} else {
+			record.Bindings[i].CreateTime = now
 		}
-		record.Bindings[i].UpdateTime = record.Bindings[0].CreateTime
+		record.Bindings[i].UpdateTime = now
 
 		// insert the BindRecord to the storage.
 		_, err = exec.Execute(context.TODO(), h.insertBindInfoSQL(record.OriginalSQL, record.Db, record.Bindings[i]))

@@ -49,21 +49,35 @@ func (h *SessionHandle) appendBindRecord(hash string, meta *BindRecord) {
 
 // AddBindRecord new a BindRecord with BindMeta, add it to the cache.
 func (h *SessionHandle) AddBindRecord(sctx sessionctx.Context, is infoschema.InfoSchema, record *BindRecord) error {
-	for i := range record.Bindings {
-		record.Bindings[i].CreateTime = types.Time{
-			Time: types.FromGoTime(time.Now()),
-			Type: mysql.TypeDatetime,
-			Fsp:  3,
+	err := record.prepareHints(sctx, is)
+	if err != nil {
+		return err
+	}
+	br := h.GetBindRecord(record.OriginalSQL, record.Db)
+	var duplicateBinding *Binding
+	if br != nil {
+		binding := br.FindBinding(record.Bindings[0].id)
+		if binding != nil {
+			duplicateBinding = binding
 		}
-		record.Bindings[i].UpdateTime = record.Bindings[i].CreateTime
+	}
+	now := types.Time{
+		Time: types.FromGoTime(time.Now()),
+		Type: mysql.TypeDatetime,
+		Fsp:  3,
+	}
+	for i := range record.Bindings {
+		if duplicateBinding != nil {
+			record.Bindings[i].CreateTime = duplicateBinding.CreateTime
+		} else {
+			record.Bindings[i].CreateTime = now
+		}
+		record.Bindings[i].UpdateTime = now
 	}
 
-	err := record.prepareHints(sctx, is)
 	// update the BindMeta to the cache.
-	if err == nil {
-		h.appendBindRecord(parser.DigestNormalized(record.OriginalSQL), record)
-	}
-	return err
+	h.appendBindRecord(parser.DigestNormalized(record.OriginalSQL), record)
+	return nil
 }
 
 // DropBindRecord drops a BindRecord in the cache.
