@@ -396,39 +396,39 @@ func (s *testCacheSuite) TestAbnormalMySQLTable(c *C) {
 func (s *testCacheSuite) TestSortUserTable(c *C) {
 	var p privileges.MySQLPrivilege
 	p.User = []privileges.UserRecord{
-		{BaseRecord: privileges.BaseRecord{Host: `%`, User: "root"}},
-		{BaseRecord: privileges.BaseRecord{Host: `%`, User: "jeffrey"}},
-		{BaseRecord: privileges.BaseRecord{Host: "localhost", User: "root"}},
-		{BaseRecord: privileges.BaseRecord{Host: "localhost", User: ""}},
+		privileges.NewUserRecord(`%`, "root"),
+		privileges.NewUserRecord(`%`, "jeffrey"),
+		privileges.NewUserRecord("localhost", "root"),
+		privileges.NewUserRecord("localhost", ""),
 	}
 	p.SortUserTable()
 	result := []privileges.UserRecord{
-		{BaseRecord: privileges.BaseRecord{Host: "localhost", User: "root"}},
-		{BaseRecord: privileges.BaseRecord{Host: "localhost", User: ""}},
-		{BaseRecord: privileges.BaseRecord{Host: `%`, User: "jeffrey"}},
-		{BaseRecord: privileges.BaseRecord{Host: `%`, User: "root"}},
+		privileges.NewUserRecord("localhost", "root"),
+		privileges.NewUserRecord("localhost", ""),
+		privileges.NewUserRecord(`%`, "jeffrey"),
+		privileges.NewUserRecord(`%`, "root"),
 	}
 	checkUserRecord(p.User, result, c)
 
 	p.User = []privileges.UserRecord{
-		{BaseRecord: privileges.BaseRecord{Host: `%`, User: "jeffrey"}},
-		{BaseRecord: privileges.BaseRecord{Host: "h1.example.net", User: ""}},
+		privileges.NewUserRecord(`%`, "jeffrey"),
+		privileges.NewUserRecord("h1.example.net", ""),
 	}
 	p.SortUserTable()
 	result = []privileges.UserRecord{
-		{BaseRecord: privileges.BaseRecord{Host: "h1.example.net", User: ""}},
-		{BaseRecord: privileges.BaseRecord{Host: `%`, User: "jeffrey"}},
+		privileges.NewUserRecord("h1.example.net", ""),
+		privileges.NewUserRecord(`%`, "jeffrey"),
 	}
 	checkUserRecord(p.User, result, c)
 
 	p.User = []privileges.UserRecord{
-		{BaseRecord: privileges.BaseRecord{Host: `192.168.%`, User: "xxx"}},
-		{BaseRecord: privileges.BaseRecord{Host: `192.168.199.%`, User: "xxx"}},
+		privileges.NewUserRecord(`192.168.%`, "xxx"),
+		privileges.NewUserRecord(`192.168.199.%`, "xxx"),
 	}
 	p.SortUserTable()
 	result = []privileges.UserRecord{
-		{BaseRecord: privileges.BaseRecord{Host: `192.168.199.%`, User: "xxx"}},
-		{BaseRecord: privileges.BaseRecord{Host: `192.168.%`, User: "xxx"}},
+		privileges.NewUserRecord(`192.168.199.%`, "xxx"),
+		privileges.NewUserRecord(`192.168.%`, "xxx"),
 	}
 	checkUserRecord(p.User, result, c)
 }
