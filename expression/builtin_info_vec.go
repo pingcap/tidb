@@ -210,11 +210,73 @@ func (b *builtinFoundRowsSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colum
 }
 
 func (b *builtinBenchmarkSig) vectorized() bool {
-	return false
+	return b.constLoopCount > 0
 }
 
 func (b *builtinBenchmarkSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	loopCount := b.constLoopCount
+	arg, ctx := b.args[1], b.ctx
+	evalType := arg.GetType().EvalType()
+	buf, err := b.bufAllocator.get(evalType, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+
+	var k int64
+	switch evalType {
+	case types.ETInt:
+		for ; k < loopCount; k++ {
+			if err = arg.VecEvalInt(ctx, input, buf); err != nil {
+				return err
+			}
+		}
+	case types.ETReal:
+		for ; k < loopCount; k++ {
+			if err = arg.VecEvalReal(ctx, input, buf); err != nil {
+				return err
+			}
+		}
+	case types.ETDecimal:
+		for ; k < loopCount; k++ {
+			if err = arg.VecEvalDecimal(ctx, input, buf); err != nil {
+				return err
+			}
+		}
+	case types.ETString:
+		for ; k < loopCount; k++ {
+			if err = arg.VecEvalString(ctx, input, buf); err != nil {
+				return err
+			}
+		}
+	case types.ETDatetime, types.ETTimestamp:
+		for ; k < loopCount; k++ {
+			if err = arg.VecEvalTime(ctx, input, buf); err != nil {
+				return err
+			}
+		}
+	case types.ETDuration:
+		for ; k < loopCount; k++ {
+			if err = arg.VecEvalDuration(ctx, input, buf); err != nil {
+				return err
+			}
+		}
+	case types.ETJson:
+		for ; k < loopCount; k++ {
+			if err = arg.VecEvalJSON(ctx, input, buf); err != nil {
+				return err
+			}
+		}
+	default: // Should never go into here.
+		return errors.Errorf("EvalType %v not implemented for builtin BENCHMARK()", evalType)
+	}
+
+	// Return value of BENCHMARK() is always 0.
+	// even if args[1].IsNull(i)
+	result.ResizeInt64(n, false)
+
+	return nil
 }
 
 func (b *builtinLastInsertIDSig) vectorized() bool {

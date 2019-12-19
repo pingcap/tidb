@@ -28,14 +28,17 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 )
 
-func (s *testEvaluatorSuite) TestCast(c *C) {
+func (s *testEvaluatorSuite) TestCastXXX(c *C) {
 	ctx, sc := s.ctx, s.ctx.GetSessionVars().StmtCtx
 
 	// Test `cast as char[(N)]` and `cast as binary[(N)]`.
 	originIgnoreTruncate := sc.IgnoreTruncate
-	sc.IgnoreTruncate = true
+	originTruncateAsWarning := sc.TruncateAsWarning
+	sc.IgnoreTruncate = false
+	sc.TruncateAsWarning = true
 	defer func() {
 		sc.IgnoreTruncate = originIgnoreTruncate
+		sc.TruncateAsWarning = originTruncateAsWarning
 	}()
 
 	tp := types.NewFieldType(mysql.TypeString)
@@ -150,7 +153,7 @@ func (s *testEvaluatorSuite) TestCast(c *C) {
 
 	warnings = sc.GetWarnings()
 	lastWarn = warnings[len(warnings)-1]
-	c.Assert(terror.ErrorEqual(types.ErrOverflow, lastWarn.Err), IsTrue, Commentf("err %v", lastWarn.Err))
+	c.Assert(terror.ErrorEqual(types.ErrTruncatedWrongVal, lastWarn.Err), IsTrue, Commentf("err %v", lastWarn.Err))
 
 	// cast('1e9223372036854775807' as unsigned)
 	f = BuildCastFunction(ctx, &Constant{Value: types.NewDatum("1e9223372036854775807"), RetType: types.NewFieldType(mysql.TypeString)}, tp1)
@@ -160,7 +163,7 @@ func (s *testEvaluatorSuite) TestCast(c *C) {
 
 	warnings = sc.GetWarnings()
 	lastWarn = warnings[len(warnings)-1]
-	c.Assert(terror.ErrorEqual(types.ErrOverflow, lastWarn.Err), IsTrue, Commentf("err %v", lastWarn.Err))
+	c.Assert(terror.ErrorEqual(types.ErrTruncatedWrongVal, lastWarn.Err), IsTrue, Commentf("err %v", lastWarn.Err))
 
 	// cast('18446744073709551616' as signed);
 	mask := ^mysql.UnsignedFlag
@@ -192,7 +195,7 @@ func (s *testEvaluatorSuite) TestCast(c *C) {
 
 	warnings = sc.GetWarnings()
 	lastWarn = warnings[len(warnings)-1]
-	c.Assert(terror.ErrorEqual(types.ErrOverflow, lastWarn.Err), IsTrue, Commentf("err %v", lastWarn.Err))
+	c.Assert(terror.ErrorEqual(types.ErrTruncatedWrongVal, lastWarn.Err), IsTrue, Commentf("err %v", lastWarn.Err))
 
 	// cast('1e9223372036854775807' as signed)
 	f = BuildCastFunction(ctx, &Constant{Value: types.NewDatum("1e9223372036854775807"), RetType: types.NewFieldType(mysql.TypeString)}, tp1)
@@ -202,7 +205,7 @@ func (s *testEvaluatorSuite) TestCast(c *C) {
 
 	warnings = sc.GetWarnings()
 	lastWarn = warnings[len(warnings)-1]
-	c.Assert(terror.ErrorEqual(types.ErrOverflow, lastWarn.Err), IsTrue, Commentf("err %v", lastWarn.Err))
+	c.Assert(terror.ErrorEqual(types.ErrTruncatedWrongVal, lastWarn.Err), IsTrue, Commentf("err %v", lastWarn.Err))
 
 	// create table t1(s1 time);
 	// insert into t1 values('11:11:11');

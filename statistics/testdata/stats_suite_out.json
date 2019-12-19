@@ -1,5 +1,14 @@
 [
   {
+    "Name": "TestUniqCompEqualEst",
+    "Cases": [
+      [
+        "IndexReader_6 1.00 root index:IndexScan_5",
+        "└─IndexScan_5 1.00 cop[tikv] table:t, index:a, b, range:[1 5,1 5], keep order:false"
+      ]
+    ]
+  },
+  {
     "Name": "TestColumnIndexNullEstimation",
     "Cases": [
       [
