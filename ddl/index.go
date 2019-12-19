@@ -396,13 +396,13 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 	if indexInfo == nil {
 		if len(hiddenCols) > 0 {
 			pos := &ast.ColumnPosition{Tp: ast.ColumnPositionNone}
-			for _, hiddenCol := range hiddenCols {
-				newHiddenCol, _, err := createColumnInfo(tblInfo, hiddenCol, pos)
+			for i, hiddenCol := range hiddenCols {
+				hiddenCol, _, err = createColumnInfo(tblInfo, hiddenCol, pos)
 				if err != nil {
 					job.State = model.JobStateCancelled
 					return ver, errors.Trace(err)
 				}
-				hiddenCol = newHiddenCol
+				hiddenCols[i] = hiddenCol
 			}
 		}
 		if err = checkAddColumnTooManyColumns(len(tblInfo.Columns)); err != nil {
