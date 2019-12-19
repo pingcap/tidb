@@ -948,6 +948,13 @@ var MySQLErrName = map[uint16]string{
 	ErrOnlyOneDefaultPartionAllowed:         "Only one DEFAULT partition allowed",
 	ErrWrongPartitionTypeExpectedSystemTime: "Wrong partitioning type, expected type: `SYSTEM_TIME`",
 	ErrSystemVersioningWrongPartitions:      "Wrong Partitions: must have at least one HISTORY and exactly one last CURRENT",
+	ErrSequenceRunOut:                       "Sequence '%-.64s.%-.64s' has run out",
+	ErrSequenceInvalidData:                  "Sequence '%-.64s.%-.64s' values are conflicting",
+	ErrSequenceAccessFail:                   "Sequence '%-.64s.%-.64s' access error",
+	ErrNotSequence:                          "'%-.64s.%-.64s' is not a SEQUENCE",
+	ErrUnknownSequence:                      "Unknown SEQUENCE: '%-.300s'",
+	ErrWrongInsertIntoSequence:              "Wrong INSERT into a SEQUENCE. One can only do single table INSERT into a sequence object (like with mysqldump).  If you want to change the SEQUENCE, use ALTER SEQUENCE instead.",
+	ErrSequenceInvalidTableStructure:        "Sequence '%-.64s.%-.64s' table structure is invalid (%s)",
 
 	// TiDB errors.
 	ErrMemExceedThreshold:         "%s holds %dB memory, exceeds threshold %dB.%s",
@@ -1029,6 +1036,7 @@ var MySQLErrName = map[uint16]string{
 	ErrCancelFinishedDDLJob:       "This job:%v is finished, so can't be cancelled",
 	ErrCannotCancelDDLJob:         "This job:%v is almost finished, can't be cancelled now",
 
+	ErrSequenceUnsupportedTableOption:      "Unsupported sequence table-option %s",
 	ErrUnsupportedType:                     "Unsupported type %T",
 	ErrAnalyzeMissIndex:                    "Index '%s' in field list does not exist in table '%s'",
 	ErrCartesianProductUnsupported:         "Cartesian product is unsupported",
