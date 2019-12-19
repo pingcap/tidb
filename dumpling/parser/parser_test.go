@@ -998,6 +998,11 @@ func (s *testParserSuite) TestDBAStmt(c *C) {
 		{"flush tidb plugins plugin1, plugin2", true, "FLUSH TIDB PLUGINS plugin1, plugin2"},
 		{"flush hosts", true, "FLUSH HOSTS"},
 		{"flush logs", true, "FLUSH LOGS"},
+		{"flush binary logs", true, "FLUSH BINARY LOGS"},
+		{"flush engine logs", true, "FLUSH ENGINE LOGS"},
+		{"flush error logs", true, "FLUSH ERROR LOGS"},
+		{"flush general logs", true, "FLUSH GENERAL LOGS"},
+		{"flush slow logs", true, "FLUSH SLOW LOGS"},
 
 		// for change statement
 		{"change pump to node_state ='paused' for node_id '127.0.0.1:8250'", true, "CHANGE PUMP TO NODE_STATE ='paused' FOR NODE_ID '127.0.0.1:8250'"},
