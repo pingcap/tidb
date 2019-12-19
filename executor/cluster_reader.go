@@ -95,23 +95,7 @@ func (e *clusterConfigRetriever) retrieve(ctx sessionctx.Context) ([][]types.Dat
 		rows [][]types.Datum
 		err  error
 	}
-	serversInfo, err := infoschema.GetClusterServerInfo(ctx)
-	failpoint.Inject("mockClusterConfigServerInfo", func(val failpoint.Value) {
-		if s := val.(string); len(s) > 0 {
-			serversInfo = serversInfo[:0]
-			servers := strings.Split(s, ";")
-			for _, server := range servers {
-				parts := strings.Split(server, ",")
-				serversInfo = append(serversInfo, infoschema.ServerInfo{
-					ServerType: parts[0],
-					Address:    parts[1],
-					StatusAddr: parts[2],
-				})
-			}
-			// erase the error
-			err = nil
-		}
-	})
+	serversInfo, err := getClusterServerInfoWithFilter(ctx, e.extractor)
 	if err != nil {
 		return nil, err
 	}
@@ -121,17 +105,7 @@ func (e *clusterConfigRetriever) retrieve(ctx sessionctx.Context) ([][]types.Dat
 	ch := make(chan result, len(serversInfo))
 	for i, srv := range serversInfo {
 		typ := srv.ServerType
-		// Skip some node type which has been filtered in WHERE cluase
-		// e.g: SELECT * FROM cluster_config WHERE type='tikv'
-		if len(e.extractor.NodeTypes) > 0 && !e.extractor.NodeTypes.Exist(typ) {
-			continue
-		}
 		address := srv.Address
-		// Skip some node address which has been filtered in WHERE cluase
-		// e.g: SELECT * FROM cluster_config WHERE address='192.16.8.12:2379'
-		if len(e.extractor.Addresses) > 0 && !e.extractor.Addresses.Exist(address) {
-			continue
-		}
 		statusAddr := srv.StatusAddr
 		if len(statusAddr) == 0 {
 			ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("%s node %s does not contain status address", typ, address))
@@ -237,28 +211,25 @@ func (e *clusterServerInfoRetriever) retrieve(ctx sessionctx.Context) ([][]types
 }
 
 func (e *clusterServerInfoRetriever) dataForClusterInfo(ctx sessionctx.Context, infoTp diagnosticspb.ServerInfoType) ([][]types.Datum, error) {
-	serversInfo, err := infoschema.GetClusterServerInfo(ctx)
+	serversInfo, err := getClusterServerInfoWithFilter(ctx, e.extractor)
 	if err != nil {
 		return nil, err
 	}
+	type result struct {
+		idx  int
+		rows [][]types.Datum
+		err  error
+	}
+	wg := sync.WaitGroup{}
+	ch := make(chan result, len(serversInfo))
 	ipMap := make(map[string]struct{}, len(serversInfo))
-	rows := make([][]types.Datum, 0, len(serversInfo)*10)
-	for _, srv := range serversInfo {
-		// Skip some node type which has been filtered in WHERE cluase
-		// e.g: SELECT * FROM cluster_config WHERE type='tikv'
-		if len(e.extractor.NodeTypes) > 0 && !e.extractor.NodeTypes.Exist(srv.ServerType) {
-			continue
-		}
+	finalRows := make([][]types.Datum, 0, len(serversInfo)*10)
+	for i, srv := range serversInfo {
 		address := srv.Address
-		// Skip some node address which has been filtered in WHERE cluase
-		// e.g: SELECT * FROM cluster_config WHERE address='192.16.8.12:2379'
-		if len(e.extractor.Addresses) > 0 && !e.extractor.Addresses.Exist(address) {
-			continue
-		}
 		if srv.ServerType == "tidb" {
 			address = srv.StatusAddr
 		}
-		ip := srv.StatusAddr
+		ip := address
 		if idx := strings.Index(address, ":"); idx != -1 {
 			ip = address[:idx]
 		}
@@ -266,14 +237,35 @@ func (e *clusterServerInfoRetriever) dataForClusterInfo(ctx sessionctx.Context, 
 			continue
 		}
 		ipMap[ip] = struct{}{}
-		items, err := getServerInfoByGRPC(address, infoTp)
-		if err != nil {
-			return nil, err
-		}
-		partRows := serverInfoItemToRows(items, srv.ServerType, srv.StatusAddr)
-		rows = append(rows, partRows...)
+		wg.Add(1)
+		go func(index int, address, serverTP string) {
+			util.WithRecovery(func() {
+				defer wg.Done()
+				items, err := getServerInfoByGRPC(address, infoTp)
+				if err != nil {
+					ch <- result{idx: index, err: err}
+				}
+				partRows := serverInfoItemToRows(items, serverTP, address)
+				ch <- result{idx: index, rows: partRows}
+			}, nil)
+		}(i, address, srv.ServerType)
 	}
-	return rows, nil
+	wg.Wait()
+	close(ch)
+	// Keep the original order to make the result more stable
+	var results []result
+	for result := range ch {
+		if result.err != nil {
+			ctx.GetSessionVars().StmtCtx.AppendWarning(result.err)
+			continue
+		}
+		results = append(results, result)
+	}
+	sort.Slice(results, func(i, j int) bool { return results[i].idx < results[j].idx })
+	for _, result := range results {
+		finalRows = append(finalRows, result.rows...)
+	}
+	return finalRows, nil
 }
 
 func serverInfoItemToRows(items []*diagnosticspb.ServerInfoItem, tp, addr string) [][]types.Datum {
@@ -324,4 +316,42 @@ func getServerInfoByGRPC(address string, tp diagnosticspb.ServerInfoType) ([]*di
 		return nil, err
 	}
 	return r.Items, nil
+}
+
+func getClusterServerInfoWithFilter(ctx sessionctx.Context, extractor *plannercore.ClusterTableExtractor) ([]infoschema.ServerInfo, error) {
+	serversInfo, err := infoschema.GetClusterServerInfo(ctx)
+	failpoint.Inject("mockClusterConfigServerInfo", func(val failpoint.Value) {
+		if s := val.(string); len(s) > 0 {
+			serversInfo = serversInfo[:0]
+			servers := strings.Split(s, ";")
+			for _, server := range servers {
+				parts := strings.Split(server, ",")
+				serversInfo = append(serversInfo, infoschema.ServerInfo{
+					ServerType: parts[0],
+					Address:    parts[1],
+					StatusAddr: parts[2],
+				})
+			}
+			// erase the error
+			err = nil
+		}
+	})
+	if err != nil {
+		return nil, err
+	}
+	filterServers := make([]infoschema.ServerInfo, 0, len(serversInfo))
+	for _, srv := range serversInfo {
+		// Skip some node type which has been filtered in WHERE cluase
+		// e.g: SELECT * FROM cluster_config WHERE type='tikv'
+		if len(extractor.NodeTypes) > 0 && !extractor.NodeTypes.Exist(srv.ServerType) {
+			continue
+		}
+		// Skip some node address which has been filtered in WHERE cluase
+		// e.g: SELECT * FROM cluster_config WHERE address='192.16.8.12:2379'
+		if len(extractor.Addresses) > 0 && !extractor.Addresses.Exist(srv.Address) {
+			continue
+		}
+		filterServers = append(filterServers, srv)
+	}
+	return filterServers, nil
 }

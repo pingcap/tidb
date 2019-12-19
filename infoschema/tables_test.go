@@ -920,9 +920,9 @@ func (s *testTableSuite) TestForTableTiFlashReplica(c *C) {
 func (s *testClusterTableSuite) TestForClusterServerInfo(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	instances := []string{
-		"tidb,127.0.0.1:11080," + s.listenAddr + ",mock-version,mock-githash",
-		"pd,127.0.0.1:11080," + s.listenAddr + ",mock-version,mock-githash",
-		"tikv,127.0.0.1:11080," + s.listenAddr + ",mock-version,mock-githash",
+		"tidb," + s.listenAddr + "," + s.listenAddr + ",mock-version,mock-githash",
+		"pd," + s.listenAddr + "," + s.listenAddr + ",mock-version,mock-githash",
+		"tikv," + s.listenAddr + "," + s.listenAddr + ",mock-version,mock-githash",
 	}
 	fpExpr := `return("` + strings.Join(instances, ";") + `")`
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/infoschema/mockClusterInfo", fpExpr), IsNil)
