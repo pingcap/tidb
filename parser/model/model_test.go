@@ -70,6 +70,12 @@ func (*testModelSuite) TestModelBasic(c *C) {
 		Cols:    []CIStr{NewCIStr("a")},
 	}
 
+	seq := &SequenceInfo{
+		Increment: 1,
+		MinValue:  1,
+		MaxValue:  100,
+	}
+
 	table := &TableInfo{
 		ID:          1,
 		Name:        NewCIStr("t"),
@@ -79,6 +85,12 @@ func (*testModelSuite) TestModelBasic(c *C) {
 		Indices:     []*IndexInfo{index},
 		ForeignKeys: []*FKInfo{fk},
 		PKIsHandle:  true,
+	}
+
+	table2 := &TableInfo{
+		ID:       2,
+		Name:     NewCIStr("s"),
+		Sequence: seq,
 	}
 
 	dbInfo := &DBInfo{
@@ -109,6 +121,7 @@ func (*testModelSuite) TestModelBasic(c *C) {
 	c.Assert(has, Equals, true)
 	t := table.GetUpdateTime()
 	c.Assert(t, Equals, TSConvert2Time(table.UpdateTS))
+	c.Assert(table2.IsSequence(), Equals, true)
 
 	// Corner cases
 	column.Flag ^= mysql.PriKeyFlag
