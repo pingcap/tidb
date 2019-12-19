@@ -198,6 +198,9 @@ func newTikvStore(uuid string, pdClient pd.Client, spkv SafePointKV, client Clie
 	}
 	store.lockResolver = newLockResolver(store)
 	store.enableGC = enableGC
+	if listenableClient, ok := store.client.(ListenableRPCClient); ok {
+		listenableClient.SetListener(store.regionCache.NotifyNodeDie)
+	}
 
 	go store.runSafePointChecker()
 
