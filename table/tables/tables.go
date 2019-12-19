@@ -49,8 +49,10 @@ type TableCommon struct {
 	// physicalTableID is a unique int64 to identify a physical table.
 	physicalTableID int64
 	Columns         []*table.Column
-	publicColumns   []*table.Column
-	writableColumns []*table.Column
+	PublicColumns   []*table.Column
+	VisibleColumns  []*table.Column
+	HiddenColumns   []*table.Column
+	WritableColumns []*table.Column
 	writableIndices []table.Index
 	indices         []table.Index
 	meta            *model.TableInfo
@@ -137,8 +139,10 @@ func initTableCommon(t *TableCommon, tblInfo *model.TableInfo, physicalTableID i
 	t.alloc = alloc
 	t.meta = tblInfo
 	t.Columns = cols
-	t.publicColumns = t.Cols()
-	t.writableColumns = t.WritableCols()
+	t.PublicColumns = t.Cols()
+	t.VisibleColumns = t.VisibleCols()
+	t.HiddenColumns = t.HiddenCols()
+	t.WritableColumns = t.WritableCols()
 	t.writableIndices = t.WritableIndices()
 	t.recordPrefix = tablecodec.GenTableRecordPrefix(physicalTableID)
 	t.indexPrefix = tablecodec.GenTableIndexPrefix(physicalTableID)
@@ -200,42 +204,66 @@ func (t *TableCommon) GetPhysicalID() int64 {
 	return t.physicalTableID
 }
 
-// Cols implements table.Table Cols interface.
-func (t *TableCommon) Cols() []*table.Column {
-	if len(t.publicColumns) > 0 {
-		return t.publicColumns
-	}
-	publicColumns := make([]*table.Column, len(t.Columns))
-	maxOffset := -1
+type getColsMode int64
+
+const (
+	_ getColsMode = iota
+	visible
+	hidden
+	full
+)
+
+func (t *TableCommon) getCols(mode getColsMode) []*table.Column {
+	columns := make([]*table.Column, 0, len(t.Columns))
 	for _, col := range t.Columns {
 		if col.State != model.StatePublic {
 			continue
 		}
-		publicColumns[col.Offset] = col
-		if maxOffset < col.Offset {
-			maxOffset = col.Offset
+		if (mode == visible && col.Hidden) || (mode == hidden && !col.Hidden) {
+			continue
 		}
+		columns = append(columns, col)
 	}
-	return publicColumns[0 : maxOffset+1]
+	return columns
+}
+
+// Cols implements table.Table Cols interface.
+func (t *TableCommon) Cols() []*table.Column {
+	if len(t.PublicColumns) > 0 {
+		return t.PublicColumns
+	}
+	return t.getCols(full)
+}
+
+// VisibleCols implements table.Table VisibleCols interface.
+func (t *TableCommon) VisibleCols() []*table.Column {
+	if len(t.VisibleColumns) > 0 {
+		return t.VisibleColumns
+	}
+	return t.getCols(visible)
+}
+
+// HiddenCols implements table.Table HiddenCols interface.
+func (t *TableCommon) HiddenCols() []*table.Column {
+	if len(t.HiddenColumns) > 0 {
+		return t.HiddenColumns
+	}
+	return t.getCols(hidden)
 }
 
 // WritableCols implements table WritableCols interface.
 func (t *TableCommon) WritableCols() []*table.Column {
-	if len(t.writableColumns) > 0 {
-		return t.writableColumns
+	if len(t.WritableColumns) > 0 {
+		return t.WritableColumns
 	}
-	writableColumns := make([]*table.Column, len(t.Columns))
-	maxOffset := -1
+	writableColumns := make([]*table.Column, 0, len(t.Columns))
 	for _, col := range t.Columns {
 		if col.State == model.StateDeleteOnly || col.State == model.StateDeleteReorganization {
 			continue
 		}
-		writableColumns[col.Offset] = col
-		if maxOffset < col.Offset {
-			maxOffset = col.Offset
-		}
+		writableColumns = append(writableColumns, col)
 	}
-	return writableColumns[0 : maxOffset+1]
+	return writableColumns
 }
 
 // RecordPrefix implements table.Table interface.

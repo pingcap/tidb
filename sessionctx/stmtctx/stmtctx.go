@@ -68,15 +68,9 @@ type StatementContext struct {
 	OverflowAsWarning      bool
 	InShowWarning          bool
 	UseCache               bool
-	PadCharToFullLength    bool
 	BatchCheck             bool
 	InNullRejectCheck      bool
 	AllowInvalidDate       bool
-	// CastStrToIntStrict is used to control the way we cast float format string to int.
-	// If ConvertStrToIntStrict is false, we convert it to a valid float string first,
-	// then cast the float string to int string. Otherwise, we cast string to integer
-	// prefix in a strict way, only extract 0-9 and (+ or - in first bit).
-	CastStrToIntStrict bool
 
 	// mu struct holds variables that change during execution.
 	mu struct {
@@ -502,9 +496,6 @@ func (sc *StatementContext) PushDownFlags() uint64 {
 	if sc.DividedByZeroAsWarning {
 		flags |= model.FlagDividedByZeroAsWarning
 	}
-	if sc.PadCharToFullLength {
-		flags |= model.FlagPadCharToFullLength
-	}
 	if sc.InLoadDataStmt {
 		flags |= model.FlagInLoadDataStmt
 	}
@@ -590,7 +581,6 @@ func (sc *StatementContext) CopTasksDetails() *CopTasksDetails {
 func (sc *StatementContext) SetFlagsFromPBFlag(flags uint64) {
 	sc.IgnoreTruncate = (flags & model.FlagIgnoreTruncate) > 0
 	sc.TruncateAsWarning = (flags & model.FlagTruncateAsWarning) > 0
-	sc.PadCharToFullLength = (flags & model.FlagPadCharToFullLength) > 0
 	sc.InInsertStmt = (flags & model.FlagInInsertStmt) > 0
 	sc.InSelectStmt = (flags & model.FlagInSelectStmt) > 0
 	sc.OverflowAsWarning = (flags & model.FlagOverflowAsWarning) > 0
