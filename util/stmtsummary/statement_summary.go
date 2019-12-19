@@ -48,6 +48,8 @@ type stmtSummaryByDigestKey struct {
 }
 
 // Hash implements SimpleLRUCache.Key.
+// Only when current SQL is `commit` do we record `prevSQL`. Otherwise, `prevSQL` is empty.
+// `prevSQL` is included in the key To distinguish different transactions.
 func (key *stmtSummaryByDigestKey) Hash() []byte {
 	if len(key.hash) == 0 {
 		key.hash = make([]byte, 0, len(key.schemaName)+len(key.digest)+len(key.prevDigest))
