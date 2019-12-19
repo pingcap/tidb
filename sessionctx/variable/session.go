@@ -26,7 +26,6 @@ import (
 
 	"github.com/klauspost/cpuid"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/mysql"
@@ -1052,16 +1051,9 @@ func (s *SessionVars) SetPrevStmtDigest(prevStmtDigest string) {
 
 // GetPrevStmtDigest returns the digest of the previous statement.
 func (s *SessionVars) GetPrevStmtDigest() string {
-	if len(s.prevStmtDigest) > 0 {
-		return s.prevStmtDigest
-	}
-	prevStmt := s.PrevStmt.String()
-	if len(prevStmt) == 0 {
-		return ""
-	}
-	_, digest := parser.NormalizeDigest(s.PrevStmt.String())
-	s.prevStmtDigest = digest
-	return digest
+	// Because `prevStmt` may be truncated, so it's senseless to normalize it.
+	// Even if `prevStmtDigest` is empty but `prevStmt` is not, just return it anyway.
+	return s.prevStmtDigest
 }
 
 // SetLocalSystemVar sets values of the local variables which in "server" scope.
