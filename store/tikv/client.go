@@ -215,7 +215,16 @@ type rpcClient struct {
 	idleNotify uint32
 	// Periodically check whether there is any connection that is idle and then close and remove these idle connections.
 	// Implement background cleanup.
-	isClosed bool
+	isClosed    bool
+	dieListener func(addr []string)
+}
+
+var _ ListenableRPCClient = &rpcClient{}
+
+// ListenableRPCClient present a RPCClient can be listen.
+type ListenableRPCClient interface {
+	// SetListener sets listener to rpc client.
+	SetListener(dieListener func(addr []string))
 }
 
 func newRPCClient(security config.Security) *rpcClient {
@@ -223,6 +232,11 @@ func newRPCClient(security config.Security) *rpcClient {
 		conns:    make(map[string]*connArray),
 		security: security,
 	}
+}
+
+// SetListener implements ListenableRPCClient interface.
+func (c *rpcClient) SetListener(dieHook func(addr []string)) {
+	c.dieListener = dieHook
 }
 
 // NewTestRPCClient is for some external tests.
