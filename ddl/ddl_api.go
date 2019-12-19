@@ -3328,7 +3328,7 @@ func (d *ddl) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexName m
 	}
 
 	// Primary keys cannot include expression index parts. A primary key requires the generated column to be stored,
-	// but functional key parts are implemented as virtual generated columns, not stored generated columns.
+	// but expression index parts are implemented as virtual generated columns, not stored generated columns.
 	for _, idxPart := range indexPartSpecifications {
 		if idxPart.Expr != nil {
 			return ErrFunctionalIndexPrimaryKey
@@ -3341,7 +3341,7 @@ func (d *ddl) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexName m
 	// to job queue, the fail path logic is super fast.
 	// After DDL job is put to the queue, and if the check fail, TiDB will run the DDL cancel logic.
 	// The recover step causes DDL wait a few seconds, makes the unit test painfully slow.
-	_, err = buildIndexColumns(tblInfo.Columns, indexPartSpecifications, indexName)
+	_, err = buildIndexColumns(tblInfo.Columns, indexPartSpecifications)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -3467,7 +3467,7 @@ func (d *ddl) CreateIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.Inde
 	// to job queue, the fail path logic is super fast.
 	// After DDL job is put to the queue, and if the check fail, TiDB will run the DDL cancel logic.
 	// The recover step causes DDL wait a few seconds, makes the unit test painfully slow.
-	_, err = buildIndexColumns(append(tblInfo.Columns, hiddenCols...), indexPartSpecifications, indexName)
+	_, err = buildIndexColumns(append(tblInfo.Columns, hiddenCols...), indexPartSpecifications)
 	if err != nil {
 		return errors.Trace(err)
 	}

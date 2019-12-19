@@ -53,9 +53,9 @@ const (
 	MaxCommentLength = 1024
 )
 
-func buildIndexColumns(columns []*model.ColumnInfo, indexPartSpecifications []*ast.IndexPartSpecification, indexName model.CIStr) ([]*model.IndexColumn, error) {
+func buildIndexColumns(columns []*model.ColumnInfo, indexPartSpecifications []*ast.IndexPartSpecification) ([]*model.IndexColumn, error) {
 	// Build offsets.
-	idxPart := make([]*model.IndexColumn, 0, len(indexPartSpecifications))
+	idxParts := make([]*model.IndexColumn, 0, len(indexPartSpecifications))
 	var col *model.ColumnInfo
 
 	// The sum of length of all index columns.
@@ -81,14 +81,14 @@ func buildIndexColumns(columns []*model.ColumnInfo, indexPartSpecifications []*a
 			return nil, errors.Trace(errTooLongKey)
 		}
 
-		idxPart = append(idxPart, &model.IndexColumn{
+		idxParts = append(idxParts, &model.IndexColumn{
 			Name:   col.Name,
 			Offset: col.Offset,
 			Length: ip.Length,
 		})
 	}
 
-	return idxPart, nil
+	return idxParts, nil
 }
 
 func checkPKOnGeneratedColumn(tblInfo *model.TableInfo, indexPartSpecifications []*ast.IndexPartSpecification) (*model.ColumnInfo, error) {
@@ -209,7 +209,7 @@ func buildIndexInfo(tblInfo *model.TableInfo, indexName model.CIStr, indexPartSp
 		return nil, errors.Trace(err)
 	}
 
-	idxColumns, err := buildIndexColumns(tblInfo.Columns, indexPartSpecifications, indexName)
+	idxColumns, err := buildIndexColumns(tblInfo.Columns, indexPartSpecifications)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
