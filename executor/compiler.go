@@ -385,6 +385,7 @@ func addHint(ctx sessionctx.Context, stmtNode ast.StmtNode) ast.StmtNode {
 	case *ast.ExplainStmt:
 		switch x.Stmt.(type) {
 		case *ast.SelectStmt:
+			plannercore.EraseLastSemicolon(x)
 			normalizeExplainSQL := parser.Normalize(x.Text())
 			idx := strings.Index(normalizeExplainSQL, "select")
 			normalizeSQL := normalizeExplainSQL[idx:]
@@ -393,6 +394,7 @@ func addHint(ctx sessionctx.Context, stmtNode ast.StmtNode) ast.StmtNode {
 		}
 		return x
 	case *ast.SelectStmt:
+		plannercore.EraseLastSemicolon(x)
 		normalizeSQL, hash := parser.NormalizeDigest(x.Text())
 		return addHintForSelect(hash, normalizeSQL, ctx, x)
 	default:
