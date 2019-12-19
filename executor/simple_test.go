@@ -377,11 +377,9 @@ func (s *testSuite3) TestUser(c *C) {
 	_, err = tk.Exec(dropUserSQL)
 	c.Check(err, NotNil)
 	dropUserSQL = `DROP USER 'test3'@'localhost';`
-	_, err = tk.Exec(dropUserSQL)
-	c.Check(err, NotNil)
+	tk.MustExec(dropUserSQL)
 	dropUserSQL = `DROP USER 'test1'@'localhost';`
-	_, err = tk.Exec(dropUserSQL)
-	c.Check(err, NotNil)
+	tk.MustExec(dropUserSQL)
 	// Test positive cases without IF EXISTS.
 	createUserSQL = `CREATE USER 'test1'@'localhost', 'test3'@'localhost';`
 	tk.MustExec(createUserSQL)
@@ -624,4 +622,21 @@ func (s *testSuite3) TestIssue9111(c *C) {
 	c.Check(err, IsNil)
 
 	tk.MustExec("drop user 'user_admin'@'localhost';")
+}
+
+func (s *testSuite3) TestRoleAtomic(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("create role r2;")
+	_, err := tk.Exec("create role r1, r2, r3")
+	c.Check(err, NotNil)
+	// Check atomic create role.
+	result := tk.MustQuery(`SELECT user FROM mysql.User WHERE user in ('r1', 'r2', 'r3')`)
+	result.Check(testkit.Rows("r2"))
+	// Check atomic drop role.
+	_, err = tk.Exec("drop role r1, r2, r3")
+	c.Check(err, NotNil)
+	result = tk.MustQuery(`SELECT user FROM mysql.User WHERE user in ('r1', 'r2', 'r3')`)
+	result.Check(testkit.Rows("r2"))
+	tk.MustExec("drop role r2;")
 }
