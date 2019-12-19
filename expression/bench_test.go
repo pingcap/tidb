@@ -1631,6 +1631,7 @@ func (s *testEvaluatorSuite) TestVecToBool(c *C) {
 	buf := chunk.NewColumn(eType2FieldType(types.ETString), 2)
 	buf.ReserveString(2)
 	buf.AppendString("999999999999999999923")
+	c.Assert(toBool(ctx.GetSessionVars().StmtCtx, types.ETString, buf, []int{0, 1}, []int8{0, 0}), NotNil)
 	buf.AppendString("23")
 	c.Assert(toBool(ctx.GetSessionVars().StmtCtx, types.ETString, buf, []int{0, 1}, []int8{0, 0}), NotNil)
 }
