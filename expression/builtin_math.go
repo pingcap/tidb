@@ -1125,7 +1125,7 @@ func (b *builtinConvSig) Clone() builtinFunc {
 // evalString evals CONV(N,from_base,to_base).
 // See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_conv.
 func (b *builtinConvSig) evalString(row chunk.Row) (res string, isNull bool, err error) {
-	n, isNull, err := b.args[0].EvalString(b.ctx, row)
+	str, isNull, err := b.args[0].EvalString(b.ctx, row)
 	if isNull || err != nil {
 		return res, isNull, err
 	}
@@ -1139,7 +1139,9 @@ func (b *builtinConvSig) evalString(row chunk.Row) (res string, isNull bool, err
 	if isNull || err != nil {
 		return res, isNull, err
 	}
-
+	return b.conv(str, fromBase, toBase)
+}
+func (b *builtinConvSig) conv(str string, fromBase, toBase int64) (res string, isNull bool, err error) {
 	var (
 		signed     bool
 		negative   bool
@@ -1159,19 +1161,19 @@ func (b *builtinConvSig) evalString(row chunk.Row) (res string, isNull bool, err
 		return res, true, nil
 	}
 
-	n = getValidPrefix(strings.TrimSpace(n), fromBase)
-	if len(n) == 0 {
+	str = getValidPrefix(strings.TrimSpace(str), fromBase)
+	if len(str) == 0 {
 		return "0", false, nil
 	}
 
-	if n[0] == '-' {
+	if str[0] == '-' {
 		negative = true
-		n = n[1:]
+		str = str[1:]
 	}
 
-	val, err := strconv.ParseUint(n, int(fromBase), 64)
+	val, err := strconv.ParseUint(str, int(fromBase), 64)
 	if err != nil {
-		return res, false, types.ErrOverflow.GenWithStackByArgs("BIGINT UNSINGED", n)
+		return res, false, types.ErrOverflow.GenWithStackByArgs("BIGINT UNSINGED", str)
 	}
 	if signed {
 		if negative && val > -math.MinInt64 {

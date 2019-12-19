@@ -21,7 +21,9 @@
           	"update t1 set a=a+1",
 			"update t1 set a=a+1 where a>0",
 			"delete from t1",
-			"delete from t1 where a>0 and b=1 and c!=2"
+			"delete from t1 where a>0 and b=1 and c!=2",
+			"create table t1_tmp (a int)",
+			"alter table t1_tmp add column c int"
 		]
 	}
 ]

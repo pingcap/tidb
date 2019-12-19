@@ -23,6 +23,12 @@ import (
 )
 
 var vecBuiltinMathCases = map[string][]vecExprBenchCase{
+	ast.Conv: {
+		{
+			retEvalType:   types.ETString,
+			childrenTypes: []types.EvalType{types.ETString, types.ETInt, types.ETInt},
+		},
+	},
 	ast.Sign: {
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETReal}},
 	},
