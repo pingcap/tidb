@@ -97,22 +97,6 @@ func (e *clusterConfigRetriever) retrieve(ctx sessionctx.Context) ([][]types.Dat
 		err  error
 	}
 	serversInfo, err := getClusterServerInfoWithFilter(ctx, e.extractor.NodeTypes, e.extractor.Addresses)
-	failpoint.Inject("mockClusterConfigServerInfo", func(val failpoint.Value) {
-		if s := val.(string); len(s) > 0 {
-			serversInfo = serversInfo[:0]
-			servers := strings.Split(s, ";")
-			for _, server := range servers {
-				parts := strings.Split(server, ",")
-				serversInfo = append(serversInfo, infoschema.ServerInfo{
-					ServerType: parts[0],
-					Address:    parts[1],
-					StatusAddr: parts[2],
-				})
-			}
-			// erase the error
-			err = nil
-		}
-	})
 	if err != nil {
 		return nil, err
 	}
@@ -337,6 +321,22 @@ func getServerInfoByGRPC(address string, tp diagnosticspb.ServerInfoType) ([]*di
 
 func getClusterServerInfoWithFilter(ctx sessionctx.Context, nodeTypes, addresses set.StringSet) ([]infoschema.ServerInfo, error) {
 	serversInfo, err := infoschema.GetClusterServerInfo(ctx)
+	failpoint.Inject("mockClusterServerInfo", func(val failpoint.Value) {
+		if s := val.(string); len(s) > 0 {
+			serversInfo = serversInfo[:0]
+			servers := strings.Split(s, ";")
+			for _, server := range servers {
+				parts := strings.Split(server, ",")
+				serversInfo = append(serversInfo, infoschema.ServerInfo{
+					ServerType: parts[0],
+					Address:    parts[1],
+					StatusAddr: parts[2],
+				})
+			}
+			// erase the error
+			err = nil
+		}
+	})
 	if err != nil {
 		return nil, err
 	}
