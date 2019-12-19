@@ -166,6 +166,7 @@ func newQueryClient(addr string) (api.Client, error) {
 // URL implement the api.Client interface.
 // This is use to convert prometheus api path to PD API path.
 func (c *queryClient) URL(ep string, args map[string]string) *url.URL {
+	// FIXME: add `PD-Allow-follower-handle: true` in http header, let pd follower can handle this request too.
 	ep = strings.Replace(ep, "api/v1", "pd/api/v1/metric", 1)
 	return c.Client.URL(ep, args)
 }
