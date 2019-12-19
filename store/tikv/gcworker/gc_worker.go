@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
@@ -818,14 +819,19 @@ func (w *GCWorker) resolveLocksForRange(
 
 	regions := 0
 	key := startKey
+	bo := tikv.NewBackoffer(ctx, tikv.GcResolveLockMaxBackoff)
+	failpoint.Inject("setGcResolveMaxBackoff", func(v failpoint.Value) {
+		sleep := v.(int)
+		// cooperate with github.com/pingcap/tidb/store/tikv/invalidCacheAndRetry
+		ctx = context.WithValue(ctx, "injectedBackoff", struct{}{})
+		bo = tikv.NewBackoffer(ctx, sleep)
+	})
 	for {
 		select {
 		case <-ctx.Done():
 			return regions, errors.New("[gc worker] gc job canceled")
 		default:
 		}
-
-		bo := tikv.NewBackoffer(ctx, tikv.GcResolveLockMaxBackoff)
 
 		req.ScanLock.StartKey = key
 		loc, err := w.store.GetRegionCache().LocateKey(bo, key)
@@ -871,7 +877,6 @@ func (w *GCWorker) resolveLocksForRange(
 			}
 			continue
 		}
-
 		if len(locks) < gcScanLockLimit {
 			regions++
 			key = loc.EndKey
@@ -887,6 +892,11 @@ func (w *GCWorker) resolveLocksForRange(
 		if len(key) == 0 || (len(endKey) != 0 && bytes.Compare(key, endKey) >= 0) {
 			break
 		}
+		bo = tikv.NewBackoffer(ctx, tikv.GcResolveLockMaxBackoff)
+		failpoint.Inject("setGcResolveMaxBackoff", func(v failpoint.Value) {
+			sleep := v.(int)
+			bo = tikv.NewBackoffer(ctx, sleep)
+		})
 	}
 	return regions, nil
 }
