@@ -204,6 +204,12 @@ func (ib *WriteStmtBufs) clean() {
 	ib.IndexKeyBuf = nil
 }
 
+// TableSnapshot represents a data snapshot of the table contained in `inspection_schema`.
+type TableSnapshot struct {
+	Rows [][]types.Datum
+	Err  error
+}
+
 // SessionVars is to handle user-defined or global variables in the current session.
 type SessionVars struct {
 	Concurrency
@@ -479,6 +485,12 @@ type SessionVars struct {
 	// LockWaitTimeout is the duration waiting for pessimistic lock in milliseconds
 	// negative value means nowait, 0 means default behavior, others means actual wait time
 	LockWaitTimeout int64
+
+	// Some data of cluster-level memory tables will be retrieved many times in different inspection rules,
+	// and the cost of retrieving some data is expensive. We use the `TableSnapshot` to cache those data
+	// and obtain them lazily, and provide a consistent view of inspection tables for each inspection rules.
+	// All cached snapshots will be released at the `InspectionExec` executor closing.
+	InspectionTableCache map[string]TableSnapshot
 }
 
 // PreparedParams contains the parameters of the current prepared statement when executing it.

@@ -376,16 +376,6 @@ func init() {
 	RegisterVirtualTable(infoSchemaDB, createInfoSchemaTable)
 }
 
-// IsMemoryDB checks if the db is in memory.
-func IsMemoryDB(dbName string) bool {
-	for _, driver := range drivers {
-		if driver.DBInfo.Name.L == dbName {
-			return true
-		}
-	}
-	return false
-}
-
 // HasAutoIncrementColumn checks whether the table has auto_increment columns, if so, return true and the column name.
 func HasAutoIncrementColumn(tbInfo *model.TableInfo) (bool, string) {
 	for _, col := range tbInfo.Columns {

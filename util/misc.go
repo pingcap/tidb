@@ -20,6 +20,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser"
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/util/logutil"
@@ -142,6 +143,8 @@ const (
 	// PerformanceSchemaLowerName is the `PERFORMANCE_SCHEMA` database lower name.
 	PerformanceSchemaLowerName = "performance_schema"
 )
+
+var InspectionSchemaName = model.NewCIStr("INSPECTION_SCHEMA")
 
 // IsMemOrSysDB uses to check whether dbLowerName is memory database or system database.
 func IsMemOrSysDB(dbLowerName string) bool {
