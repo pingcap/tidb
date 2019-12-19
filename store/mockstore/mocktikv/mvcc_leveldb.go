@@ -598,6 +598,11 @@ func (mvcc *MVCCLevelDB) Prewrite(req *kvrpcpb.PrewriteRequest) []error {
 	mutations := req.Mutations
 	primary := req.PrimaryLock
 	startTS := req.StartVersion
+	checkTS := startTS
+	forUpdateTS := req.GetForUpdateTs()
+	if forUpdateTS != 0 {
+		checkTS = forUpdateTS
+	}
 	ttl := req.LockTtl
 	minCommitTS := req.MinCommitTs
 	mvcc.mu.Lock()
@@ -611,7 +616,7 @@ func (mvcc *MVCCLevelDB) Prewrite(req *kvrpcpb.PrewriteRequest) []error {
 		// If the operation is Insert, check if key is exists at first.
 		var err error
 		if m.GetOp() == kvrpcpb.Op_Insert {
-			v, err := mvcc.getValue(m.Key, startTS, kvrpcpb.IsolationLevel_SI, req.Context.ResolvedLocks)
+			v, err := mvcc.getValue(m.Key, checkTS, kvrpcpb.IsolationLevel_SI, req.Context.ResolvedLocks)
 			if err != nil {
 				errs = append(errs, err)
 				anyError = true
