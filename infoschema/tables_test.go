@@ -928,14 +928,10 @@ func (s *testClusterTableSuite) TestForClusterServerInfo(c *C) {
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/infoschema/mockClusterInfo", fpExpr), IsNil)
 	defer func() { c.Assert(failpoint.Disable("github.com/pingcap/tidb/infoschema/mockClusterInfo"), IsNil) }()
 
-	checkInfoRows := func(re *testkit.Result) {
+	checkInfoRows := func(re *testkit.Result, types, addrs, names set.StringSet) {
 		rows := re.Rows()
 		c.Assert(len(rows), Greater, 0)
 
-		// Currently only TiDB implement this.
-		types := set.NewStringSet("tidb")
-		addrs := set.NewStringSet(s.listenAddr)
-		names := set.NewStringSet("cpu", "mem", "net", "disk")
 		for _, row := range rows {
 			tp := row[0].(string)
 			addr := row[1].(string)
@@ -949,37 +945,16 @@ func (s *testClusterTableSuite) TestForClusterServerInfo(c *C) {
 		c.Assert(len(names), Equals, 0)
 	}
 
-	re := tk.MustQuery("select * from information_schema.CLUSTER_LOAD;")
-	checkInfoRows(re)
-	re = tk.MustQuery("select * from information_schema.CLUSTER_HARDWARE;")
-	checkInfoRows(re)
-	re = tk.MustQuery("select * from information_schema.CLUSTER_SYSTEMINFO;")
-	rows := re.Rows()
-	c.Assert(len(rows), Greater, 0)
-
-	// Currently only TiDB implement this.
 	types := set.NewStringSet("tidb")
 	addrs := set.NewStringSet(s.listenAddr)
-	nameMap := set.NewStringSet("system")
-	keyPrefixMap := set.NewStringSet("user", "kern", "vm", "net", "debug")
-	for _, row := range rows {
-		tp := row[0].(string)
-		addr := row[1].(string)
-		name := row[2].(string)
-		key := row[4].(string)
-		delete(types, tp)
-		delete(addrs, addr)
-		delete(nameMap, name)
-		for k := range keyPrefixMap {
-			if strings.HasPrefix(key, k) {
-				delete(keyPrefixMap, k)
-			}
-		}
-	}
-	c.Assert(len(types), Equals, 0)
-	c.Assert(len(addrs), Equals, 0)
-	c.Assert(len(nameMap), Equals, 0)
-	c.Assert(len(keyPrefixMap), Equals, 0)
+	names := set.NewStringSet("cpu", "mem", "net", "disk")
+	re := tk.MustQuery("select * from information_schema.CLUSTER_LOAD;")
+	checkInfoRows(re, types, addrs, names)
+	re = tk.MustQuery("select * from information_schema.CLUSTER_HARDWARE;")
+	checkInfoRows(re, types, addrs, names)
+	re = tk.MustQuery("select * from information_schema.CLUSTER_SYSTEMINFO;")
+	names = set.NewStringSet("system")
+	checkInfoRows(re, types, addrs, names)
 }
 
 func (s *testTableSuite) TestSystemSchemaID(c *C) {

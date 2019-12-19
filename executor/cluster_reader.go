@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/pdapi"
+	"github.com/pingcap/tidb/util/set"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
@@ -95,7 +96,23 @@ func (e *clusterConfigRetriever) retrieve(ctx sessionctx.Context) ([][]types.Dat
 		rows [][]types.Datum
 		err  error
 	}
-	serversInfo, err := getClusterServerInfoWithFilter(ctx, e.extractor)
+	serversInfo, err := getClusterServerInfoWithFilter(ctx, e.extractor.NodeTypes, e.extractor.Addresses)
+	failpoint.Inject("mockClusterConfigServerInfo", func(val failpoint.Value) {
+		if s := val.(string); len(s) > 0 {
+			serversInfo = serversInfo[:0]
+			servers := strings.Split(s, ";")
+			for _, server := range servers {
+				parts := strings.Split(server, ",")
+				serversInfo = append(serversInfo, infoschema.ServerInfo{
+					ServerType: parts[0],
+					Address:    parts[1],
+					StatusAddr: parts[2],
+				})
+			}
+			// erase the error
+			err = nil
+		}
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -211,7 +228,7 @@ func (e *clusterServerInfoRetriever) retrieve(ctx sessionctx.Context) ([][]types
 }
 
 func (e *clusterServerInfoRetriever) dataForClusterInfo(ctx sessionctx.Context, infoTp diagnosticspb.ServerInfoType) ([][]types.Datum, error) {
-	serversInfo, err := getClusterServerInfoWithFilter(ctx, e.extractor)
+	serversInfo, err := getClusterServerInfoWithFilter(ctx, e.extractor.NodeTypes, e.extractor.Addresses)
 	if err != nil {
 		return nil, err
 	}
@@ -318,24 +335,8 @@ func getServerInfoByGRPC(address string, tp diagnosticspb.ServerInfoType) ([]*di
 	return r.Items, nil
 }
 
-func getClusterServerInfoWithFilter(ctx sessionctx.Context, extractor *plannercore.ClusterTableExtractor) ([]infoschema.ServerInfo, error) {
+func getClusterServerInfoWithFilter(ctx sessionctx.Context, nodeTypes, addresses set.StringSet) ([]infoschema.ServerInfo, error) {
 	serversInfo, err := infoschema.GetClusterServerInfo(ctx)
-	failpoint.Inject("mockClusterConfigServerInfo", func(val failpoint.Value) {
-		if s := val.(string); len(s) > 0 {
-			serversInfo = serversInfo[:0]
-			servers := strings.Split(s, ";")
-			for _, server := range servers {
-				parts := strings.Split(server, ",")
-				serversInfo = append(serversInfo, infoschema.ServerInfo{
-					ServerType: parts[0],
-					Address:    parts[1],
-					StatusAddr: parts[2],
-				})
-			}
-			// erase the error
-			err = nil
-		}
-	})
 	if err != nil {
 		return nil, err
 	}
@@ -343,12 +344,12 @@ func getClusterServerInfoWithFilter(ctx sessionctx.Context, extractor *plannerco
 	for _, srv := range serversInfo {
 		// Skip some node type which has been filtered in WHERE cluase
 		// e.g: SELECT * FROM cluster_config WHERE type='tikv'
-		if len(extractor.NodeTypes) > 0 && !extractor.NodeTypes.Exist(srv.ServerType) {
+		if len(nodeTypes) > 0 && !nodeTypes.Exist(srv.ServerType) {
 			continue
 		}
 		// Skip some node address which has been filtered in WHERE cluase
 		// e.g: SELECT * FROM cluster_config WHERE address='192.16.8.12:2379'
-		if len(extractor.Addresses) > 0 && !extractor.Addresses.Exist(srv.Address) {
+		if len(addresses) > 0 && !addresses.Exist(srv.Address) {
 			continue
 		}
 		filterServers = append(filterServers, srv)
