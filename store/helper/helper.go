@@ -436,11 +436,6 @@ func isIntersectingKeyRange(x withKeyRange, startKey, endKey string) bool {
 	return !isBeforeKeyRange(x, startKey, endKey) && !isBehindKeyRange(x, startKey, endKey)
 }
 
-// IsBefore returns true is x is before y
-func inBefore(x, y withKeyRange) bool {
-	return isBeforeKeyRange(x, y.getStartKey(), y.getEndKey())
-}
-
 // isBehind returns true is x is behind y
 func isBehind(x, y withKeyRange) bool {
 	return isBehindKeyRange(x, y.getStartKey(), y.getEndKey())
@@ -568,10 +563,6 @@ OutLoop:
 
 func bytesKeyToHex(key []byte) string {
 	return strings.ToUpper(hex.EncodeToString(key))
-}
-
-func hexKeyToBytes(key string) ([]byte, error) {
-	return hex.DecodeString(key)
 }
 
 // GetRegionsInfo gets the region information of current store by using PD's api.

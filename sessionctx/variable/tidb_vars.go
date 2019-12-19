@@ -112,6 +112,9 @@ const (
 	// tidb_record_plan_in_slow_log is used to log the plan of the slow query.
 	TiDBRecordPlanInSlowLog = "tidb_record_plan_in_slow_log"
 
+	// tidb_enable_slow_log enables TiDB to log slow queries.
+	TiDBEnableSlowLog = "tidb_enable_slow_log"
+
 	// tidb_query_log_max_len is used to set the max length of the query in the log.
 	TiDBQueryLogMaxLen = "tidb_query_log_max_len"
 
@@ -155,6 +158,14 @@ const (
 
 	// TiDBAllowRemoveAutoInc indicates whether a user can drop the auto_increment column attribute or not.
 	TiDBAllowRemoveAutoInc = "tidb_allow_remove_auto_inc"
+
+	// TiDBEvolvePlanTaskMaxTime controls the max time of a single evolution task.
+	TiDBEvolvePlanTaskMaxTime = "tidb_evolve_plan_task_max_time"
+
+	// TiDBEvolvePlanTaskStartTime is the start time of evolution task.
+	TiDBEvolvePlanTaskStartTime = "tidb_evolve_plan_task_start_time"
+	// TiDBEvolvePlanTaskEndTime is the end time of evolution task.
+	TiDBEvolvePlanTaskEndTime = "tidb_evolve_plan_task_end_time"
 )
 
 // TiDB system variable names that both in session and global scope.
@@ -192,6 +203,8 @@ const (
 	TiDBOptSeekFactor = "tidb_opt_seek_factor"
 	// tidb_opt_memory_factor is the memory cost of storing one tuple.
 	TiDBOptMemoryFactor = "tidb_opt_memory_factor"
+	// tidb_opt_disk_factor is the IO cost of reading/writing one byte to temporary disk.
+	TiDBOptDiskFactor = "tidb_opt_disk_factor"
 	// tidb_opt_concurrency_factor is the CPU cost of additional one goroutine.
 	TiDBOptConcurrencyFactor = "tidb_opt_concurrency_factor"
 
@@ -328,6 +341,12 @@ const (
 	// TiDBEnableStmtSummary indicates whether the statement summary is enabled.
 	TiDBEnableStmtSummary = "tidb_enable_stmt_summary"
 
+	// TiDBStmtSummaryRefreshInterval indicates the refresh interval in seconds for each statement summary.
+	TiDBStmtSummaryRefreshInterval = "tidb_stmt_summary_refresh_interval"
+
+	// TiDBStmtSummaryHistorySize indicates the history size of each statement summary.
+	TiDBStmtSummaryHistorySize = "tidb_stmt_summary_history_size"
+
 	// TiDBCapturePlanBaseline indicates whether the capture of plan baselines is enabled.
 	TiDBCapturePlanBaseline = "tidb_capture_plan_baselines"
 
@@ -371,6 +390,7 @@ const (
 	DefOptDescScanFactor               = 3.0
 	DefOptSeekFactor                   = 20.0
 	DefOptMemoryFactor                 = 0.001
+	DefOptDiskFactor                   = 1.5
 	DefOptConcurrencyFactor            = 3.0
 	DefOptInSubqToJoinAndAgg           = true
 	DefBatchInsert                     = false
@@ -420,6 +440,9 @@ const (
 	DefTiDBAllowRemoveAutoInc          = false
 	DefTiDBUsePlanBaselines            = true
 	DefTiDBEvolvePlanBaselines         = false
+	DefTiDBEvolvePlanTaskMaxTime       = 600 // 600s
+	DefTiDBEvolvePlanTaskStartTime     = "00:00 +0000"
+	DefTiDBEvolvePlanTaskEndTime       = "23:59 +0000"
 	DefInnodbLockWaitTimeout           = 50 // 50s
 	DefTiDBStoreLimit                  = 0
 )

@@ -24,7 +24,6 @@ import (
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
@@ -113,8 +112,17 @@ func colNames2ResultFields(schema *expression.Schema, names []*types.FieldName, 
 // The reason we need update is that chunk with 0 rows indicating we already finished current query, we need prepare for
 // next query.
 // If stmt is not nil and chunk with some rows inside, we simply update last query found rows by the number of row in chunk.
-func (a *recordSet) Next(ctx context.Context, req *chunk.Chunk) error {
-	err := Next(ctx, a.executor, req)
+func (a *recordSet) Next(ctx context.Context, req *chunk.Chunk) (err error) {
+	defer func() {
+		r := recover()
+		if r == nil {
+			return
+		}
+		err = errors.Errorf("%v", r)
+		logutil.Logger(ctx).Error("execute sql panic", zap.String("sql", a.stmt.Text), zap.Stack("stack"))
+	}()
+
+	err = Next(ctx, a.executor, req)
 	if err != nil {
 		a.lastErr = err
 		return err
@@ -255,12 +263,7 @@ func (a *ExecStmt) IsReadOnly(vars *variable.SessionVars) bool {
 // RebuildPlan rebuilds current execute statement plan.
 // It returns the current information schema version that 'a' is using.
 func (a *ExecStmt) RebuildPlan(ctx context.Context) (int64, error) {
-	startTime := time.Now()
-	defer func() {
-		a.Ctx.GetSessionVars().DurationCompile = time.Since(startTime)
-	}()
-
-	is := GetInfoSchema(a.Ctx)
+	is := infoschema.GetInfoSchema(a.Ctx)
 	a.InfoSchema = is
 	if err := plannercore.Preprocess(a.Ctx, a.StmtNode, is, plannercore.InTxnRetry); err != nil {
 		return 0, err
@@ -532,11 +535,18 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e Executor) error {
 		if err1 != nil {
 			return err1
 		}
+		keys = txnCtx.CollectUnchangedRowKeys(keys)
 		if len(keys) == 0 {
 			return nil
 		}
-		forUpdateTS := txnCtx.GetForUpdateTS()
-		err = txn.LockKeys(ctx, &sctx.GetSessionVars().Killed, forUpdateTS, sctx.GetSessionVars().LockWaitTimeout, keys...)
+		seVars := sctx.GetSessionVars()
+		lockCtx := &kv.LockCtx{
+			Killed:        &seVars.Killed,
+			ForUpdateTS:   txnCtx.GetForUpdateTS(),
+			LockWaitTime:  seVars.LockWaitTimeout,
+			WaitStartTime: seVars.StmtCtx.GetLockWaitStartTime(),
+		}
+		err = txn.LockKeys(ctx, lockCtx, keys...)
 		if err == nil {
 			return nil
 		}
@@ -547,30 +557,22 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e Executor) error {
 	}
 }
 
-// GetTimestampWithRetry tries to get timestamp using retry and backoff mechanism
-func (a *ExecStmt) GetTimestampWithRetry(ctx context.Context) (uint64, error) {
-	tsoMaxBackoff := 15000
-	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-		span1 := span.Tracer().StartSpan("ExecStmt.GetTimestampWithRetry", opentracing.ChildOf(span.Context()))
-		defer span1.Finish()
-		ctx = opentracing.ContextWithSpan(ctx, span1)
-	}
-	bo := tikv.NewBackoffer(ctx, tsoMaxBackoff)
-	for {
-		ts, err := a.Ctx.GetStore().GetOracle().GetTimestamp(ctx)
-		// mock get ts fail
-		failpoint.Inject("ExecStmtGetTsError", func() (uint64, error) {
-			return 0, errors.New("ExecStmtGetTsError")
-		})
-
-		if err == nil {
-			return ts, nil
-		}
-		err = bo.Backoff(tikv.BoPDRPC, errors.Errorf("ExecStmt get timestamp failed: %v", err))
+// UpdateForUpdateTS updates the ForUpdateTS, if newForUpdateTS is 0, it obtain a new TS from PD.
+func UpdateForUpdateTS(seCtx sessionctx.Context, newForUpdateTS uint64) error {
+	if newForUpdateTS == 0 {
+		version, err := seCtx.GetStore().CurrentVersion()
 		if err != nil {
-			return 0, errors.Trace(err)
+			return err
 		}
+		newForUpdateTS = version.Ver
 	}
+	txn, err := seCtx.Txn(true)
+	if err != nil {
+		return err
+	}
+	seCtx.GetSessionVars().TxnCtx.SetForUpdateTS(newForUpdateTS)
+	txn.SetOption(kv.SnapshotTS, newForUpdateTS)
+	return nil
 }
 
 // handlePessimisticLockError updates TS and rebuild executor if the err is write conflict.
@@ -606,11 +608,10 @@ func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, err error) (E
 		//         select for update key1 again(this time lock succ(maybe lock released by others))
 		//         the async rollback operation rollbacked the lock just acquired
 		if err != nil {
-			newForUpdateTS, tsErr := a.GetTimestampWithRetry(ctx)
+			tsErr := UpdateForUpdateTS(a.Ctx, 0)
 			if tsErr != nil {
-				return nil, tsErr
+				logutil.Logger(ctx).Warn("UpdateForUpdateTS failed", zap.Error(tsErr))
 			}
-			txnCtx.SetForUpdateTS(newForUpdateTS)
 		}
 		return nil, err
 	}
@@ -618,18 +619,10 @@ func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, err error) (E
 		return nil, errors.New("pessimistic lock retry limit reached")
 	}
 	a.retryCount++
-	if newForUpdateTS == 0 {
-		newForUpdateTS, err = a.Ctx.GetStore().GetOracle().GetTimestamp(ctx)
-		if err != nil {
-			return nil, err
-		}
-	}
-	txnCtx.SetForUpdateTS(newForUpdateTS)
-	txn, err := a.Ctx.Txn(true)
+	err = UpdateForUpdateTS(a.Ctx, newForUpdateTS)
 	if err != nil {
 		return nil, err
 	}
-	txn.SetOption(kv.SnapshotTS, newForUpdateTS)
 	e, err := a.buildExecutor()
 	if err != nil {
 		return nil, err
@@ -637,9 +630,6 @@ func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, err error) (E
 	// Rollback the statement change before retry it.
 	a.Ctx.StmtRollback()
 	a.Ctx.GetSessionVars().StmtCtx.ResetForRetry()
-	a.Ctx.GetSessionVars().StartTime = time.Now()
-	a.Ctx.GetSessionVars().DurationCompile = time.Duration(0)
-	a.Ctx.GetSessionVars().DurationParse = time.Duration(0)
 
 	if err = e.Open(ctx); err != nil {
 		return nil, err
@@ -770,32 +760,35 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	sessVars := a.Ctx.GetSessionVars()
 	level := log.GetLevel()
 	cfg := config.GetGlobalConfig()
-	costTime := time.Since(a.Ctx.GetSessionVars().StartTime)
+	costTime := time.Since(sessVars.StartTime) + sessVars.DurationParse
 	threshold := time.Duration(atomic.LoadUint64(&cfg.Log.SlowThreshold)) * time.Millisecond
-	if costTime < threshold && level > zapcore.DebugLevel {
+	enable := atomic.LoadUint32(&cfg.Log.EnableSlowLog) > 0
+	// if the level is Debug, print slow logs anyway
+	if (!enable || costTime < threshold) && level > zapcore.DebugLevel {
 		return
 	}
 	sql := FormatSQL(a.Text, sessVars.PreparedParams)
 
 	var tableIDs, indexNames string
 	if len(sessVars.StmtCtx.TableIDs) > 0 {
-		tableIDs = strings.Replace(fmt.Sprintf("%v", a.Ctx.GetSessionVars().StmtCtx.TableIDs), " ", ",", -1)
+		tableIDs = strings.Replace(fmt.Sprintf("%v", sessVars.StmtCtx.TableIDs), " ", ",", -1)
 	}
 	if len(sessVars.StmtCtx.IndexNames) > 0 {
-		indexNames = strings.Replace(fmt.Sprintf("%v", a.Ctx.GetSessionVars().StmtCtx.IndexNames), " ", ",", -1)
+		indexNames = strings.Replace(fmt.Sprintf("%v", sessVars.StmtCtx.IndexNames), " ", ",", -1)
 	}
 	execDetail := sessVars.StmtCtx.GetExecDetails()
 	copTaskInfo := sessVars.StmtCtx.CopTasksDetails()
 	statsInfos := plannercore.GetStatsInfo(a.Plan)
 	memMax := sessVars.StmtCtx.MemTracker.MaxConsumed()
 	_, digest := sessVars.StmtCtx.SQLDigest()
+	_, planDigest := getPlanDigest(a.Ctx, a.Plan)
 	slowItems := &variable.SlowQueryLogItems{
 		TxnTS:          txnTS,
 		SQL:            sql.String(),
 		Digest:         digest,
 		TimeTotal:      costTime,
-		TimeParse:      a.Ctx.GetSessionVars().DurationParse,
-		TimeCompile:    a.Ctx.GetSessionVars().DurationCompile,
+		TimeParse:      sessVars.DurationParse,
+		TimeCompile:    sessVars.DurationCompile,
 		IndexNames:     indexNames,
 		StatsInfos:     statsInfos,
 		CopTasks:       copTaskInfo,
@@ -803,6 +796,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		MemMax:         memMax,
 		Succ:           succ,
 		Plan:           getPlanTree(a.Plan),
+		PlanDigest:     planDigest,
 		Prepared:       a.isPreparedStmt,
 		HasMoreResults: hasMoreResults,
 	}
@@ -823,7 +817,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		domain.GetDomain(a.Ctx).LogSlowQuery(&domain.SlowQueryInfo{
 			SQL:        sql.String(),
 			Digest:     digest,
-			Start:      a.Ctx.GetSessionVars().StartTime,
+			Start:      sessVars.StartTime,
 			Duration:   costTime,
 			Detail:     sessVars.StmtCtx.GetExecDetails(),
 			Succ:       succ,
@@ -844,27 +838,22 @@ func getPlanTree(p plannercore.Plan) string {
 	if atomic.LoadUint32(&cfg.Log.RecordPlanInSlowLog) == 0 {
 		return ""
 	}
-	var selectPlan plannercore.PhysicalPlan
-	if physicalPlan, ok := p.(plannercore.PhysicalPlan); ok {
-		selectPlan = physicalPlan
-	} else {
-		switch x := p.(type) {
-		case *plannercore.Delete:
-			selectPlan = x.SelectPlan
-		case *plannercore.Update:
-			selectPlan = x.SelectPlan
-		case *plannercore.Insert:
-			selectPlan = x.SelectPlan
-		}
-	}
-	if selectPlan == nil {
-		return ""
-	}
-	planTree := plannercore.EncodePlan(selectPlan)
+	planTree := plannercore.EncodePlan(p)
 	if len(planTree) == 0 {
 		return planTree
 	}
 	return variable.SlowLogPlanPrefix + planTree + variable.SlowLogPlanSuffix
+}
+
+// getPlanDigest will try to get the select plan tree if the plan is select or the select plan of delete/update/insert statement.
+func getPlanDigest(sctx sessionctx.Context, p plannercore.Plan) (normalized, planDigest string) {
+	normalized, planDigest = sctx.GetSessionVars().StmtCtx.GetPlanDigest()
+	if len(normalized) > 0 {
+		return
+	}
+	normalized, planDigest = plannercore.NormalizePlan(p)
+	sctx.GetSessionVars().StmtCtx.SetPlanDigest(normalized, planDigest)
+	return
 }
 
 // SummaryStmt collects statements for performance_schema.events_statements_summary_by_digest
@@ -876,14 +865,28 @@ func (a *ExecStmt) SummaryStmt() {
 	stmtCtx := sessVars.StmtCtx
 	normalizedSQL, digest := stmtCtx.SQLDigest()
 	costTime := time.Since(sessVars.StartTime)
+
+	execDetail := stmtCtx.GetExecDetails()
+	copTaskInfo := stmtCtx.CopTasksDetails()
+	memMax := stmtCtx.MemTracker.MaxConsumed()
+	var userString string
+	if sessVars.User != nil {
+		userString = sessVars.User.String()
+	}
+
 	stmtsummary.StmtSummaryByDigestMap.AddStatement(&stmtsummary.StmtExecInfo{
-		SchemaName:    sessVars.CurrentDB,
-		OriginalSQL:   a.Text,
-		NormalizedSQL: normalizedSQL,
-		Digest:        digest,
-		TotalLatency:  uint64(costTime.Nanoseconds()),
-		AffectedRows:  stmtCtx.AffectedRows(),
-		SentRows:      0,
-		StartTime:     sessVars.StartTime,
+		SchemaName:     strings.ToLower(sessVars.CurrentDB),
+		OriginalSQL:    a.Text,
+		NormalizedSQL:  normalizedSQL,
+		Digest:         digest,
+		User:           userString,
+		TotalLatency:   costTime,
+		ParseLatency:   sessVars.DurationParse,
+		CompileLatency: sessVars.DurationCompile,
+		StmtCtx:        stmtCtx,
+		CopTasks:       copTaskInfo,
+		ExecDetail:     &execDetail,
+		MemMax:         memMax,
+		StartTime:      sessVars.StartTime,
 	})
 }

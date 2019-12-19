@@ -2,33 +2,33 @@ drop table if exists t, tt;
 create table t(a int, b int, index ia(a));
 desc select avg(a) from t;
 id	count	task	operator info
-StreamAgg_20	1.00	root	funcs:avg(Column#8, Column#9)
+StreamAgg_20	1.00	root	funcs:avg(Column#7, Column#8)->Column#4
 └─IndexReader_21	1.00	root	index:StreamAgg_8
-  └─StreamAgg_8	1.00	cop[tikv]	funcs:avg(Column#1)
+  └─StreamAgg_8	1.00	cop[tikv]	funcs:avg(test.t.a)->Column#7
     └─IndexScan_19	10000.00	cop[tikv]	table:t, index:a, range:[NULL,+inf], keep order:false, stats:pseudo
 desc select /*+ read_from_storage(tiflash[t]) */ avg(a) from t;
 id	count	task	operator info
-StreamAgg_16	1.00	root	funcs:avg(Column#8, Column#9)
+StreamAgg_16	1.00	root	funcs:avg(Column#7, Column#8)->Column#4
 └─TableReader_17	1.00	root	data:StreamAgg_8
-  └─StreamAgg_8	1.00	cop[tiflash]	funcs:count(Column#1), sum(Column#1)
+  └─StreamAgg_8	1.00	cop[tiflash]	funcs:count(test.t.a)->Column#7, funcs:sum(test.t.a)->Column#8
     └─TableScan_15	10000.00	cop[tiflash]	table:t, range:[-inf,+inf], keep order:false, stats:pseudo
 desc select /*+ read_from_storage(tiflash[t]) */ sum(a) from t;
 id	count	task	operator info
-StreamAgg_16	1.00	root	funcs:sum(Column#7)
+StreamAgg_16	1.00	root	funcs:sum(Column#6)->Column#4
 └─TableReader_17	1.00	root	data:StreamAgg_8
-  └─StreamAgg_8	1.00	cop[tiflash]	funcs:sum(Column#1)
+  └─StreamAgg_8	1.00	cop[tiflash]	funcs:sum(test.t.a)->Column#6
     └─TableScan_15	10000.00	cop[tiflash]	table:t, range:[-inf,+inf], keep order:false, stats:pseudo
 desc select /*+ read_from_storage(tiflash[t]) */ sum(a+1) from t;
 id	count	task	operator info
-StreamAgg_16	1.00	root	funcs:sum(Column#7)
+StreamAgg_16	1.00	root	funcs:sum(Column#6)->Column#4
 └─TableReader_17	1.00	root	data:StreamAgg_8
-  └─StreamAgg_8	1.00	cop[tiflash]	funcs:sum(plus(Column#1, 1))
+  └─StreamAgg_8	1.00	cop[tiflash]	funcs:sum(plus(test.t.a, 1))->Column#6
     └─TableScan_15	10000.00	cop[tiflash]	table:t, range:[-inf,+inf], keep order:false, stats:pseudo
 desc select /*+ read_from_storage(tiflash[t]) */ sum(isnull(a)) from t;
 id	count	task	operator info
-StreamAgg_16	1.00	root	funcs:sum(Column#7)
+StreamAgg_16	1.00	root	funcs:sum(Column#6)->Column#4
 └─TableReader_17	1.00	root	data:StreamAgg_8
-  └─StreamAgg_8	1.00	cop[tiflash]	funcs:sum(isnull(Column#1))
+  └─StreamAgg_8	1.00	cop[tiflash]	funcs:sum(isnull(test.t.a))->Column#6
     └─TableScan_15	10000.00	cop[tiflash]	table:t, range:[-inf,+inf], keep order:false, stats:pseudo
 create table tt(a int, b int, primary key(a));
 desc select * from tt where (tt.a > 1 and tt.a < 20) or (tt.a >= 30 and tt.a < 55);
@@ -38,5 +38,20 @@ TableReader_6	44.00	root	data:TableScan_5
 desc select /*+ read_from_storage(tiflash[tt]) */ * from tt where (tt.a > 1 and tt.a < 20) or (tt.a >= 30 and tt.a < 55);
 id	count	task	operator info
 TableReader_7	44.00	root	data:Selection_6
-└─Selection_6	44.00	cop[tiflash]	or(and(gt(Column#1, 1), lt(Column#1, 20)), and(ge(Column#1, 30), lt(Column#1, 55)))
+└─Selection_6	44.00	cop[tiflash]	or(and(gt(test.tt.a, 1), lt(test.tt.a, 20)), and(ge(test.tt.a, 30), lt(test.tt.a, 55)))
   └─TableScan_5	44.00	cop[tiflash]	table:tt, range:[-inf,+inf], keep order:false, stats:pseudo
+drop table if exists ttt;
+create table ttt (a int, primary key (a desc));
+desc select * from ttt order by ttt.a desc;
+id	count	task	operator info
+TableReader_11	10000.00	root	data:TableScan_10
+└─TableScan_10	10000.00	cop[tikv]	table:ttt, range:[-inf,+inf], keep order:true, desc, stats:pseudo
+desc select /*+ read_from_storage(tiflash[ttt]) */ * from ttt order by ttt.a desc;
+id	count	task	operator info
+Sort_4	10000.00	root	test.ttt.a:desc
+└─TableReader_8	10000.00	root	data:TableScan_7
+  └─TableScan_7	10000.00	cop[tiflash]	table:ttt, range:[-inf,+inf], keep order:false, stats:pseudo
+desc select /*+ read_from_storage(tiflash[ttt]) */ * from ttt order by ttt.a;
+id	count	task	operator info
+TableReader_11	10000.00	root	data:TableScan_10
+└─TableScan_10	10000.00	cop[tiflash]	table:ttt, range:[-inf,+inf], keep order:true, stats:pseudo

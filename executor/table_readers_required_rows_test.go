@@ -112,15 +112,10 @@ func mockSelectResult(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Re
 	}, nil
 }
 
-func mockSelectResultWithoutCheck(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request,
-	fieldTypes []*types.FieldType, fb *statistics.QueryFeedback, copPlanIDs []string) (distsql.SelectResult, error) {
-	return &requiredRowsSelectResult{retTypes: fieldTypes}, nil
-}
-
 func buildTableReader(sctx sessionctx.Context) Executor {
 	e := &TableReaderExecutor{
 		baseExecutor:     buildMockBaseExec(sctx),
-		table:            &tables.Table{},
+		table:            &tables.TableCommon{},
 		dagPB:            buildMockDAGRequest(sctx),
 		selectResultHook: selectResultHook{mockSelectResult},
 	}

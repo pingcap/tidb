@@ -249,7 +249,7 @@ func (c *Chunk) Reset() {
 		return
 	}
 	for _, col := range c.columns {
-		col.Reset()
+		col.reset()
 	}
 	c.numVirtualRows = 0
 }

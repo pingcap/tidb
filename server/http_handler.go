@@ -77,8 +77,12 @@ const (
 )
 
 // For query string
-const qTableID = "table_id"
-const qLimit = "limit"
+const (
+	qTableID   = "table_id"
+	qLimit     = "limit"
+	qOperation = "op"
+	qSeconds   = "seconds"
+)
 
 const (
 	headerContentType = "Content-Type"
@@ -669,7 +673,27 @@ func (h configReloadHandler) ServeHTTP(w http.ResponseWriter, req *http.Request)
 
 // ServeHTTP recovers binlog service.
 func (h binlogRecover) ServeHTTP(w http.ResponseWriter, req *http.Request) {
-	binloginfo.DisableSkipBinlogFlag()
+	op := req.FormValue(qOperation)
+	switch op {
+	case "reset":
+		binloginfo.ResetSkippedCommitterCounter()
+	case "nowait":
+		binloginfo.DisableSkipBinlogFlag()
+	case "status":
+	default:
+		sec, err := strconv.ParseInt(req.FormValue(qSeconds), 10, 64)
+		if sec <= 0 || err != nil {
+			sec = 1800
+		}
+		binloginfo.DisableSkipBinlogFlag()
+		timeout := time.Duration(sec) * time.Second
+		err = binloginfo.WaitBinlogRecover(timeout)
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+	}
+	writeData(w, binloginfo.GetBinlogStatus())
 }
 
 type tableFlashReplicaInfo struct {
@@ -1288,50 +1312,6 @@ func (h regionHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	writeData(w, regionDetail)
 }
 
-// NewFrameItemFromRegionKey creates a FrameItem with region's startKey or endKey,
-// returns err when key is illegal.
-func NewFrameItemFromRegionKey(key []byte) (frame *FrameItem, err error) {
-	frame = &FrameItem{}
-	frame.TableID, frame.IndexID, frame.IsRecord, err = tablecodec.DecodeKeyHead(key)
-	if err == nil {
-		if frame.IsRecord {
-			_, frame.RecordID, err = tablecodec.DecodeRecordKey(key)
-		} else {
-			_, _, frame.IndexValues, err = tablecodec.DecodeIndexKey(key)
-		}
-		log.Warnf("decode region key %q fail: %v", key, err)
-		// Ignore decode errors.
-		err = nil
-		return
-	}
-	if bytes.HasPrefix(key, tablecodec.TablePrefix()) {
-		// If SplitTable is enabled, the key may be `t{id}`.
-		if len(key) == tablecodec.TableSplitKeyLen {
-			frame.TableID = tablecodec.DecodeTableID(key)
-			return frame, nil
-		}
-		return nil, errors.Trace(err)
-	}
-
-	// key start with tablePrefix must be either record key or index key
-	// That's means table's record key and index key are always together
-	// in the continuous interval. And for key with prefix smaller than
-	// tablePrefix, is smaller than all tables. While for key with prefix
-	// bigger than tablePrefix, means is bigger than all tables.
-	err = nil
-	if bytes.Compare(key, tablecodec.TablePrefix()) < 0 {
-		frame.TableID = math.MinInt64
-		frame.IndexID = math.MinInt64
-		frame.IsRecord = false
-		return
-	}
-	// bigger than tablePrefix, means is bigger than all tables.
-	frame.TableID = math.MaxInt64
-	frame.IndexID = math.MaxInt64
-	frame.IsRecord = true
-	return
-}
-
 // parseQuery is used to parse query string in URL with shouldUnescape, due to golang http package can not distinguish
 // query like "?a=" and "?a". We rewrite it to separate these two queries. e.g.
 // "?a=" which means that a is an empty string "";
@@ -1541,7 +1521,12 @@ func (h serverInfoHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	info := serverInfo{}
-	info.ServerInfo = infosync.GetServerInfo()
+	info.ServerInfo, err = infosync.GetServerInfo()
+	if err != nil {
+		writeError(w, err)
+		log.Error(err)
+		return
+	}
 	info.IsOwner = do.DDL().OwnerManager().IsOwner()
 	writeData(w, info)
 }

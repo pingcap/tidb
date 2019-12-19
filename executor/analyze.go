@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
@@ -125,7 +126,7 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	if err != nil {
 		return err
 	}
-	return statsHandle.Update(GetInfoSchema(e.ctx))
+	return statsHandle.Update(infoschema.GetInfoSchema(e.ctx))
 }
 
 func getBuildStatsConcurrency(ctx sessionctx.Context) (int, error) {
@@ -259,6 +260,7 @@ func (e *AnalyzeIndexExec) fetchAnalyzeResult(ranges []*ranger.Range, isNullRang
 	var builder distsql.RequestBuilder
 	kvReq, err := builder.SetIndexRanges(e.ctx.GetSessionVars().StmtCtx, e.physicalTableID, e.idxInfo.ID, ranges).
 		SetAnalyzeRequest(e.analyzePB).
+		SetStartTS(math.MaxUint64).
 		SetKeepOrder(true).
 		SetConcurrency(e.concurrency).
 		Build()
@@ -429,6 +431,7 @@ func (e *AnalyzeColumnsExec) buildResp(ranges []*ranger.Range) (distsql.SelectRe
 	// correct `correlation` of columns.
 	kvReq, err := builder.SetTableRanges(e.physicalTableID, ranges, nil).
 		SetAnalyzeRequest(e.analyzePB).
+		SetStartTS(math.MaxUint64).
 		SetKeepOrder(true).
 		SetConcurrency(e.concurrency).
 		Build()
