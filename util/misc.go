@@ -144,6 +144,7 @@ const (
 	PerformanceSchemaLowerName = "performance_schema"
 )
 
+// InspectionSchemaName is the name of `inspection_schema`
 var InspectionSchemaName = model.NewCIStr("INSPECTION_SCHEMA")
 
 // IsMemOrSysDB uses to check whether dbLowerName is memory database or system database.
