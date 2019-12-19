@@ -951,6 +951,13 @@ const (
 	ErrOnlyOneDefaultPartionAllowed         = 4030
 	ErrWrongPartitionTypeExpectedSystemTime = 4113
 	ErrSystemVersioningWrongPartitions      = 4128
+	ErrSequenceRunOut                       = 4135
+	ErrSequenceInvalidData                  = 4136
+	ErrSequenceAccessFail                   = 4137
+	ErrNotSequence                          = 4138
+	ErrUnknownSequence                      = 4139
+	ErrWrongInsertIntoSequence              = 4140
+	ErrSequenceInvalidTableStructure        = 4141
 
 	// TiDB self-defined errors.
 	ErrMemExceedThreshold                  = 8001
@@ -1022,33 +1029,34 @@ const (
 	ErrInvalidType                         = 8057
 
 	// Error codes used by TiDB ddl package
-	ErrUnsupportedDDLOperation  = 8200
-	ErrNotOwner                 = 8201
-	ErrCantDecodeIndex          = 8202
-	ErrInvalidDDLWorker         = 8203
-	ErrInvalidDDLJob            = 8204
-	ErrInvalidDDLJobFlag        = 8205
-	ErrWaitReorgTimeout         = 8206
-	ErrInvalidStoreVersion      = 8207
-	ErrUnknownTypeLength        = 8208
-	ErrUnknownFractionLength    = 8209
-	ErrInvalidDDLState          = 8210
-	ErrReorgPanic               = 8211
-	ErrInvalidSplitRegionRanges = 8212
-	ErrInvalidDDLJobVersion     = 8213
-	ErrCancelledDDLJob          = 8214
-	ErrRepairTable              = 8215
-	ErrInvalidAutoRandom        = 8216
-	ErrInvalidHashKeyFlag       = 8217
-	ErrInvalidListIndex         = 8218
-	ErrInvalidListMetaData      = 8219
-	ErrWriteOnSnapshot          = 8220
-	ErrInvalidKey               = 8221
-	ErrInvalidIndexKey          = 8222
-	ErrDataInConsistent         = 8223
-	ErrDDLJobNotFound           = 8224
-	ErrCancelFinishedDDLJob     = 8225
-	ErrCannotCancelDDLJob       = 8226
+	ErrUnsupportedDDLOperation        = 8200
+	ErrNotOwner                       = 8201
+	ErrCantDecodeIndex                = 8202
+	ErrInvalidDDLWorker               = 8203
+	ErrInvalidDDLJob                  = 8204
+	ErrInvalidDDLJobFlag              = 8205
+	ErrWaitReorgTimeout               = 8206
+	ErrInvalidStoreVersion            = 8207
+	ErrUnknownTypeLength              = 8208
+	ErrUnknownFractionLength          = 8209
+	ErrInvalidDDLState                = 8210
+	ErrReorgPanic                     = 8211
+	ErrInvalidSplitRegionRanges       = 8212
+	ErrInvalidDDLJobVersion           = 8213
+	ErrCancelledDDLJob                = 8214
+	ErrRepairTable                    = 8215
+	ErrInvalidAutoRandom              = 8216
+	ErrInvalidHashKeyFlag             = 8217
+	ErrInvalidListIndex               = 8218
+	ErrInvalidListMetaData            = 8219
+	ErrWriteOnSnapshot                = 8220
+	ErrInvalidKey                     = 8221
+	ErrInvalidIndexKey                = 8222
+	ErrDataInConsistent               = 8223
+	ErrDDLJobNotFound                 = 8224
+	ErrCancelFinishedDDLJob           = 8225
+	ErrCannotCancelDDLJob             = 8226
+	ErrSequenceUnsupportedTableOption = 8227
 
 	// TiKV/PD errors.
 	ErrPDServerTimeout    = 9001
