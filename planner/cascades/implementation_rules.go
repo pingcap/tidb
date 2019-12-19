@@ -80,6 +80,9 @@ var defaultImplementationMap = map[memo.Operand][]ImplementationRule{
 	memo.OperandMaxOneRow: {
 		&ImplMaxOneRow{},
 	},
+	memo.OperandWindow: {
+		&ImplWindow{},
+	},
 }
 
 // ImplTableDual implements LogicalTableDual as PhysicalTableDual.
@@ -518,4 +521,39 @@ func (r *ImplMaxOneRow) OnImplement(expr *memo.GroupExpr, reqProp *property.Phys
 		mor.SelectBlockOffset(),
 		&property.PhysicalProperty{ExpectedCnt: 2})
 	return impl.NewMaxOneRowImpl(physicalMaxOneRow), nil
+}
+
+// ImplWindow implements LogicalWindow to PhysicalWindow.
+type ImplWindow struct {
+}
+
+// Match implements ImplementationRule Match interface.
+func (w *ImplWindow) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) (matched bool) {
+	lw := expr.ExprNode.(*plannercore.LogicalWindow)
+	var byItems []property.Item
+	byItems = append(byItems, lw.PartitionBy...)
+	byItems = append(byItems, lw.OrderBy...)
+	childProperty := &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64, Items: byItems}
+	return prop.IsPrefix(childProperty)
+}
+
+// OnImplement implements ImplementationRule OnImplement interface.
+func (w *ImplWindow) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) (memo.Implementation, error) {
+	lw := expr.ExprNode.(*plannercore.LogicalWindow)
+	var byItems []property.Item
+	byItems = append(byItems, lw.PartitionBy...)
+	byItems = append(byItems, lw.OrderBy...)
+	physicalWindow := plannercore.PhysicalWindow{
+		WindowFuncDescs: lw.WindowFuncDescs,
+		PartitionBy:     lw.PartitionBy,
+		OrderBy:         lw.OrderBy,
+		Frame:           lw.Frame,
+	}.Init(
+		lw.SCtx(),
+		expr.Group.Prop.Stats.ScaleByExpectCnt(reqProp.ExpectedCnt),
+		lw.SelectBlockOffset(),
+		&property.PhysicalProperty{ExpectedCnt: math.MaxFloat64, Items: byItems},
+	)
+	physicalWindow.SetSchema(expr.Group.Prop.Schema)
+	return impl.NewWindowImpl(physicalWindow), nil
 }
