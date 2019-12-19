@@ -1792,11 +1792,16 @@ func dataForPseudoProfiling() [][]types.Datum {
 	return rows
 }
 
-func dataForKeyColumnUsage(schemas []*model.DBInfo) [][]types.Datum {
+func dataForKeyColumnUsage(ctx sessionctx.Context, schemas []*model.DBInfo) [][]types.Datum {
+	checker := privilege.GetPrivilegeManager(ctx)
 	rows := make([][]types.Datum, 0, len(schemas)) // The capacity is not accurate, but it is not a big problem.
 	for _, schema := range schemas {
 		for _, table := range schema.Tables {
+			if checker != nil && !checker.RequestVerification(ctx.GetSessionVars().ActiveRoles, schema.Name.L, table.Name.L, "", mysql.AllPrivMask) {
+				continue
+			}
 			rs := keyColumnUsageInTable(schema, table)
+
 			rows = append(rows, rs...)
 		}
 	}
@@ -1940,7 +1945,8 @@ func dataForHotRegionByMetrics(metrics []helper.HotTableIndex, tp string) [][]ty
 }
 
 // DataForAnalyzeStatus gets all the analyze jobs.
-func DataForAnalyzeStatus() (rows [][]types.Datum) {
+func DataForAnalyzeStatus(ctx sessionctx.Context) (rows [][]types.Datum) {
+	checker := privilege.GetPrivilegeManager(ctx)
 	for _, job := range statistics.GetAllAnalyzeJobs() {
 		job.Lock()
 		var startTime interface{}
@@ -1948,6 +1954,10 @@ func DataForAnalyzeStatus() (rows [][]types.Datum) {
 			startTime = nil
 		} else {
 			startTime = types.Time{Time: types.FromGoTime(job.StartTime), Type: mysql.TypeDatetime}
+		}
+		if checker != nil && !checker.RequestVerification(ctx.GetSessionVars().ActiveRoles, job.DBName, job.TableName, "", mysql.AllPrivMask) {
+			job.Unlock()
+			continue
 		}
 		rows = append(rows, types.MakeDatums(
 			job.DBName,        // TABLE_SCHEMA
@@ -2371,7 +2381,7 @@ func (it *infoschemaTable) getRows(ctx sessionctx.Context, cols []*table.Column)
 		}
 	case tablePartitions:
 	case tableKeyColumm:
-		fullRows = dataForKeyColumnUsage(dbs)
+		fullRows = dataForKeyColumnUsage(ctx, dbs)
 	case tableReferConst:
 	case tablePlugins, tableTriggers:
 	case tableUserPrivileges:
@@ -2403,7 +2413,7 @@ func (it *infoschemaTable) getRows(ctx sessionctx.Context, cols []*table.Column)
 	case tableTiKVStoreStatus:
 		fullRows, err = dataForTiKVStoreStatus(ctx)
 	case tableAnalyzeStatus:
-		fullRows = DataForAnalyzeStatus()
+		fullRows = DataForAnalyzeStatus(ctx)
 	case tableTiKVRegionStatus:
 		fullRows, err = dataForTiKVRegionStatus(ctx)
 	case tableTiKVRegionPeers:
