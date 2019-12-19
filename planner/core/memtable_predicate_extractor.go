@@ -466,3 +466,66 @@ func (e *ClusterLogTableExtractor) Extract(
 	e.Patterns = patterns
 	return remained
 }
+
+// MetricTableExtractor is used to extract some predicates of metric_schema tables.
+type MetricTableExtractor struct {
+	extractHelper
+	// SkipRequest means the where clause always false, we don't need to request any component
+	SkipRequest bool
+	// StartTime represents the beginning time of metric data.
+	StartTime int64
+	// EndTime represents the ending time of metric data.
+	EndTime int64
+	// LabelConditions represents the label conditions of metric data.
+	LabelConditions map[string]set.StringSet
+	// Quantile represents the quantile of metric query.
+	Quantile set.StringSet
+}
+
+// Extract implements the MemTablePredicateExtractor Extract interface
+func (e *MetricTableExtractor) Extract(
+	ctx sessionctx.Context,
+	schema *expression.Schema,
+	names []*types.FieldName,
+	predicates []expression.Expression,
+) []expression.Expression {
+	// Extract the `quantile` columns
+	remained, skipRequest, quantile := e.extractCol(schema, names, predicates, "quantile", true)
+	e.SkipRequest = skipRequest
+	if e.SkipRequest {
+		return nil
+	}
+	e.Quantile = quantile
+
+	// Extract the `time` columns
+	remained, startTime, endTime := e.extractTimeRange(ctx, schema, names, remained, "time")
+	if endTime == 0 {
+		endTime = math.MaxInt64
+	}
+	e.StartTime = startTime
+	e.EndTime = endTime
+	e.SkipRequest = startTime > endTime
+
+	if e.SkipRequest {
+		return nil
+	}
+
+	// Extract the label columns.
+	for _, name := range names {
+		switch name.ColName.L {
+		case "quantile", "time", "value":
+			continue
+		}
+		var values set.StringSet
+		remained, skipRequest, values = e.extractCol(schema, names, remained, name.ColName.L, true)
+		if skipRequest {
+			e.SkipRequest = skipRequest
+			return nil
+		}
+		if e.LabelConditions == nil {
+			e.LabelConditions = make(map[string]set.StringSet)
+		}
+		e.LabelConditions[name.ColName.L] = values
+	}
+	return remained
+}
