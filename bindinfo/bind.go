@@ -13,7 +13,12 @@
 
 package bindinfo
 
-import "github.com/pingcap/parser/ast"
+import (
+	"strings"
+
+	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/format"
+)
 
 // HintsSet contains all hints of a query.
 type HintsSet struct {
@@ -27,6 +32,28 @@ type hintProcessor struct {
 	bindHint2Ast bool
 	tableCounter int
 	indexCounter int
+}
+
+func (hs *HintsSet) Restore() (string, error) {
+	builder := &strings.Builder{}
+	rCtx := &format.RestoreCtx{In: builder}
+	for _, th := range hs.tableHints {
+		for _, h := range th {
+			err := h.Restore(rCtx)
+			if err != nil {
+				return "", err
+			}
+		}
+	}
+	for _, ih := range hs.indexHints {
+		for _, h := range ih {
+			err := h.Restore(rCtx)
+			if err != nil {
+				return "", err
+			}
+		}
+	}
+	return builder.String(), nil
 }
 
 func (hp *hintProcessor) Enter(in ast.Node) (ast.Node, bool) {

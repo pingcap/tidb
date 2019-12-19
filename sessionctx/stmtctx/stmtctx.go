@@ -145,6 +145,8 @@ type StatementContext struct {
 	Tables            []TableEntry
 	PointExec         bool       // for point update cached execution, Constant expression need to set "paramMarker"
 	lockWaitStartTime *time.Time // LockWaitStartTime stores the pessimistic lock wait start time
+
+	OptTracer *OptimizerTracer
 }
 
 // StmtHints are SessionVars related sql hints.
@@ -640,4 +642,32 @@ func (d *CopTasksDetails) ToZapFields() (fields []zap.Field) {
 	fields = append(fields, zap.String("wait_max_time", strconv.FormatFloat(d.MaxWaitTime.Seconds(), 'f', -1, 64)+"s"))
 	fields = append(fields, zap.String("wait_max_addr", d.MaxWaitAddress))
 	return fields
+}
+
+type OptimizerTracer struct {
+	blockStk []interface{}
+	stkLen   int
+}
+
+func (o *OptimizerTracer) TailBlock() interface{} {
+	if o.stkLen <= 0 {
+		return nil
+	}
+	return o.blockStk[o.stkLen-1]
+}
+
+func (o *OptimizerTracer) PopBlock() {
+	if o.stkLen > 0 {
+		o.stkLen--
+		o.blockStk = o.blockStk[:o.stkLen]
+	}
+}
+
+func (o *OptimizerTracer) AppendBlock(block interface{}) {
+	o.stkLen++
+	o.blockStk = append(o.blockStk, block)
+}
+
+func (o *OptimizerTracer) Len() int {
+	return o.stkLen
 }

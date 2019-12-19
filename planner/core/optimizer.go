@@ -74,6 +74,10 @@ type logicalOptRule interface {
 	name() string
 }
 
+type RootTraceBlock struct {
+	ProcessBlock []interface{} `json:"process_block"`
+}
+
 // BuildLogicalPlan used to build logical plan from ast.Node.
 func BuildLogicalPlan(ctx context.Context, sctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (Plan, types.NameSlice, error) {
 	sctx.GetSessionVars().PlanID = 0
@@ -114,11 +118,28 @@ func CheckTableLock(ctx sessionctx.Context, is infoschema.InfoSchema, vs []visit
 	return nil
 }
 
+type LogicalOptimizeTraceBlock struct {
+	LogicalRules []interface{} `json:"logical_rules"`
+	FinalPlan    string        `json:"final_plan"`
+}
+
 // DoOptimize optimizes a logical plan to a physical plan.
 func DoOptimize(ctx context.Context, flag uint64, logic LogicalPlan) (PhysicalPlan, float64, error) {
+	optTracer := logic.SCtx().GetSessionVars().StmtCtx.OptTracer
+	if optTracer != nil {
+		curBlock := optTracer.TailBlock().(*RootTraceBlock)
+		loBlock := &LogicalOptimizeTraceBlock{}
+		curBlock.ProcessBlock = append(curBlock.ProcessBlock, loBlock)
+		optTracer.AppendBlock(loBlock)
+	}
 	logic, err := logicalOptimize(ctx, flag, logic)
 	if err != nil {
 		return nil, 0, err
+	}
+	if optTracer != nil {
+		curBlock := optTracer.TailBlock().(*LogicalOptimizeTraceBlock)
+		curBlock.FinalPlan = ToString(logic)
+		optTracer.PopBlock()
 	}
 	if !AllowCartesianProduct.Load() && existsCartesianProduct(logic) {
 		return nil, 0, errors.Trace(ErrCartesianProductUnsupported)
@@ -159,6 +180,12 @@ func isLogicalRuleDisabled(r logicalOptRule) bool {
 	return disabled
 }
 
+type PhysicalOptimizeTraceBlock struct {
+	VisitedPlans []interface{} `json:"visited_plans"`
+	FinalPlan    string        `json:"final_plan"`
+	BestCost     float64       `json:"best_cost"`
+}
+
 func physicalOptimize(logic LogicalPlan) (PhysicalPlan, float64, error) {
 	if _, err := logic.recursiveDeriveStats(); err != nil {
 		return nil, 0, err
@@ -171,12 +198,26 @@ func physicalOptimize(logic LogicalPlan) (PhysicalPlan, float64, error) {
 		ExpectedCnt: math.MaxFloat64,
 	}
 
+	optTracer := logic.SCtx().GetSessionVars().StmtCtx.OptTracer
+	if optTracer != nil {
+		curBlock := optTracer.TailBlock().(*RootTraceBlock)
+		poBlock := &PhysicalOptimizeTraceBlock{}
+		curBlock.ProcessBlock = append(curBlock.ProcessBlock, poBlock)
+		optTracer.AppendBlock(poBlock)
+	}
+
 	t, err := logic.findBestTask(prop)
 	if err != nil {
 		return nil, 0, err
 	}
 	if t.invalid() {
 		return nil, 0, ErrInternal.GenWithStackByArgs("Can't find a proper physical plan for this query")
+	}
+	if optTracer != nil {
+		curBlock := optTracer.TailBlock().(*PhysicalOptimizeTraceBlock)
+		curBlock.FinalPlan = ToString(t.plan())
+		curBlock.BestCost = t.cost()
+		optTracer.PopBlock()
 	}
 
 	err = t.plan().ResolveIndices()

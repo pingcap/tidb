@@ -354,6 +354,11 @@ func (b *PlanBuilder) popSelectOffset() {
 	b.selectOffset = b.selectOffset[:len(b.selectOffset)-1]
 }
 
+type BuilderTraceBlock struct {
+	KeyOptimize []interface{}
+	FinalPlan   string
+}
+
 // NewPlanBuilder creates a new PlanBuilder.
 func NewPlanBuilder(sctx sessionctx.Context, is infoschema.InfoSchema, processor *BlockHintProcessor) *PlanBuilder {
 	if processor == nil {
@@ -2605,12 +2610,13 @@ func (b *PlanBuilder) buildTrace(trace *ast.TraceStmt) (Plan, error) {
 	return p, nil
 }
 
-func (b *PlanBuilder) buildExplainPlan(targetPlan Plan, format string, analyze bool, execStmt ast.StmtNode) (Plan, error) {
+func (b *PlanBuilder) buildExplainPlan(targetPlan Plan, format string, analyze bool, execStmt ast.StmtNode, tracer *stmtctx.OptimizerTracer) (Plan, error) {
 	p := &Explain{
 		TargetPlan: targetPlan,
 		Format:     format,
 		Analyze:    analyze,
 		ExecStmt:   execStmt,
+		Tracer:     tracer,
 	}
 	p.ctx = b.ctx
 	return p, p.prepareSchema()
@@ -2636,19 +2642,25 @@ func (b *PlanBuilder) buildExplainFor(explainFor *ast.ExplainForStmt) (Plan, err
 		return &Explain{Format: explainFor.Format}, nil
 	}
 
-	return b.buildExplainPlan(targetPlan, explainFor.Format, false, nil)
+	return b.buildExplainPlan(targetPlan, explainFor.Format, false, nil, b.ctx.GetSessionVars().StmtCtx.OptTracer)
 }
 
 func (b *PlanBuilder) buildExplain(ctx context.Context, explain *ast.ExplainStmt) (Plan, error) {
 	if show, ok := explain.Stmt.(*ast.ShowStmt); ok {
 		return b.buildShow(ctx, show)
 	}
+	if explain.Format == ast.ExplainFormatTrace {
+		b.ctx.GetSessionVars().StmtCtx.OptTracer = &stmtctx.OptimizerTracer{}
+		defer func() {
+			b.ctx.GetSessionVars().StmtCtx.OptTracer = nil
+		}()
+	}
 	targetPlan, _, err := OptimizeAstNode(ctx, b.ctx, explain.Stmt, b.is)
 	if err != nil {
 		return nil, err
 	}
 
-	return b.buildExplainPlan(targetPlan, explain.Format, explain.Analyze, explain.Stmt)
+	return b.buildExplainPlan(targetPlan, explain.Format, explain.Analyze, explain.Stmt, b.ctx.GetSessionVars().StmtCtx.OptTracer)
 }
 
 func buildShowProcedureSchema() (*expression.Schema, []*types.FieldName) {

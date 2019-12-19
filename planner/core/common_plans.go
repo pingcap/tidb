@@ -16,6 +16,7 @@ package core
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
@@ -30,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
@@ -675,6 +677,8 @@ type Explain struct {
 
 	Rows           [][]string
 	explainedPlans map[int]bool
+
+	Tracer *stmtctx.OptimizerTracer
 }
 
 // prepareSchema prepares explain's result schema.
@@ -691,6 +695,8 @@ func (e *Explain) prepareSchema() error {
 		fieldNames = []string{"dot contents"}
 	case format == ast.ExplainFormatHint:
 		fieldNames = []string{"hint"}
+	case format == ast.ExplainFormatTrace:
+		fieldNames = []string{"optimizer trace"}
 	default:
 		return errors.Errorf("explain format '%s' is not supported now", e.Format)
 	}
@@ -724,6 +730,14 @@ func (e *Explain) RenderResult() error {
 		e.prepareDotInfo(e.TargetPlan.(PhysicalPlan))
 	case ast.ExplainFormatHint:
 		e.Rows = append(e.Rows, []string{GenHintsFromPhysicalPlan(e.TargetPlan)})
+	case ast.ExplainFormatTrace:
+		block := e.Tracer.TailBlock()
+		e.Tracer.PopBlock()
+		data, err := json.Marshal(block)
+		if err != nil {
+			return err
+		}
+		e.Rows = append(e.Rows, []string{string(data)})
 	default:
 		return errors.Errorf("explain format '%s' is not supported now", e.Format)
 	}

@@ -20,6 +20,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/log"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/format"
@@ -40,6 +41,10 @@ import (
 // Optimize does optimization and creates a Plan.
 // The node must be prepared first.
 func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (plannercore.Plan, types.NameSlice, error) {
+	optTracer := sctx.GetSessionVars().StmtCtx.OptTracer
+	if optTracer != nil {
+		optTracer.AppendBlock(&plannercore.RootTraceBlock{})
+	}
 	fp := plannercore.TryFastPlan(sctx, node)
 	if fp != nil {
 		if !isPointGetWithoutDoubleRead(sctx, fp) {
@@ -69,10 +74,22 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	binding := bindRecord.FindBinding(bestPlanHint)
 	// If the best bestPlan is in baselines, just use it.
 	if binding != nil && binding.Status == bindinfo.Using {
+		log.Warn("xxxx")
 		return bestPlan, names, nil
 	}
-	bestCostAmongHints := math.MaxFloat64
-	var bestPlanAmongHints plannercore.Plan
+	// We don't show the detail of the baseline plan.
+	if optTracer != nil {
+		sctx.GetSessionVars().StmtCtx.OptTracer = nil
+		curBlock := optTracer.TailBlock().(*plannercore.RootTraceBlock)
+		bb := &BaseLineTraceBlock{}
+		curBlock.ProcessBlock = append(curBlock.ProcessBlock, bb)
+		optTracer.AppendBlock(bb)
+	}
+	var (
+		bestPlanAmongHints plannercore.Plan
+		bestCostAmongHints = math.MaxFloat64
+		bestHintAmongHints *bindinfo.HintsSet
+	)
 	originHints := bindinfo.CollectHint(stmtNode)
 	// Try to find the best binding.
 	for _, binding := range bindRecord.Bindings {
@@ -91,10 +108,31 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 			})
 			continue
 		}
+		if optTracer != nil {
+			curBlock := optTracer.TailBlock().(*BaseLineTraceBlock)
+			s, err := binding.Hint.Restore()
+			if err != nil {
+				return nil, nil, err
+			}
+			curBlock.BaseLines = append(curBlock.BaseLines, s)
+		}
 		if cost < bestCostAmongHints {
 			bestCostAmongHints = cost
 			bestPlanAmongHints = plan
+			bestHintAmongHints = binding.Hint
 		}
+	}
+	if optTracer != nil {
+		curBlock := optTracer.TailBlock().(*BaseLineTraceBlock)
+		curBlock.BestBaseLineCost = bestCostAmongHints
+		s, err := bestHintAmongHints.Restore()
+		if err != nil {
+			return nil, nil, err
+		}
+		curBlock.BestBaseLineHint = s
+		optTracer.PopBlock()
+		// Baseline operation finished, add tracer back to stmtCtx.
+		sctx.GetSessionVars().StmtCtx.OptTracer = optTracer
 	}
 	// If there is already a evolution task, we do not need to handle it again.
 	if sctx.GetSessionVars().EvolvePlanBaselines && binding == nil {
@@ -108,16 +146,35 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	return bestPlan, names, nil
 }
 
+type BaseLineTraceBlock struct {
+	BaseLines        []string `json:"base_lines"`
+	BestBaseLineHint string   `json:"best_base_line_hint"`
+	BestBaseLineCost float64  `json:"best_base_line_cost"`
+}
+
 func optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (plannercore.Plan, types.NameSlice, float64, error) {
 	// build logical plan
 	sctx.GetSessionVars().PlanID = 0
 	sctx.GetSessionVars().PlanColumnID = 0
+	optTracer := sctx.GetSessionVars().StmtCtx.OptTracer
 	hintProcessor := &plannercore.BlockHintProcessor{Ctx: sctx}
 	node.Accept(hintProcessor)
 	builder := plannercore.NewPlanBuilder(sctx, is, hintProcessor)
+	if optTracer != nil {
+		curBlock := optTracer.TailBlock().(*plannercore.RootTraceBlock)
+		builderBlock := &plannercore.BuilderTraceBlock{}
+		curBlock.ProcessBlock = append(curBlock.ProcessBlock, builderBlock)
+		optTracer.AppendBlock(builderBlock)
+	}
 	p, err := builder.Build(ctx, node)
 	if err != nil {
 		return nil, nil, 0, err
+	}
+
+	if optTracer != nil {
+		curBlock := optTracer.TailBlock().(*plannercore.BuilderTraceBlock)
+		curBlock.FinalPlan = plannercore.ToString(p)
+		optTracer.PopBlock()
 	}
 
 	sctx.GetSessionVars().StmtCtx.Tables = builder.GetDBTableInfo()
@@ -160,15 +217,6 @@ func optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 
 func extractSelectAndNormalizeDigest(stmtNode ast.StmtNode) (*ast.SelectStmt, string, string) {
 	switch x := stmtNode.(type) {
-	case *ast.ExplainStmt:
-		switch x.Stmt.(type) {
-		case *ast.SelectStmt:
-			normalizeExplainSQL := parser.Normalize(x.Text())
-			idx := strings.Index(normalizeExplainSQL, "select")
-			normalizeSQL := normalizeExplainSQL[idx:]
-			hash := parser.DigestNormalized(normalizeSQL)
-			return x.Stmt.(*ast.SelectStmt), normalizeSQL, hash
-		}
 	case *ast.SelectStmt:
 		normalizedSQL, hash := parser.NormalizeDigest(x.Text())
 		return x, normalizedSQL, hash
