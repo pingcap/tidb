@@ -1453,11 +1453,46 @@ func (b *builtinCastJSONAsDecimalSig) vecEvalDecimal(input *chunk.Chunk, result 
 }
 
 func (b *builtinCastStringAsRealSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinCastStringAsRealSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	if IsBinaryLiteral(b.args[0]) {
+		return b.args[0].VecEvalReal(b.ctx, input, result)
+	}
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err = b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
+		return err
+	}
+
+	result.ResizeFloat64(n, false)
+	result.MergeNulls(buf)
+	ret := result.Float64s()
+	sc := b.ctx.GetSessionVars().StmtCtx
+
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		res, err := types.StrToFloat(sc, buf.GetString(i))
+		if err != nil {
+			return err
+		}
+		if b.inUnion && mysql.HasUnsignedFlag(b.tp.Flag) && res < 0 {
+			res = 0
+		}
+		res, err = types.ProduceFloatWithSpecifiedTp(res, b.tp, sc)
+		if err != nil {
+			return err
+		}
+		ret[i] = res
+	}
+	return nil
 }
 
 func (b *builtinCastStringAsDecimalSig) vectorized() bool {
