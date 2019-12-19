@@ -364,7 +364,6 @@ func (pc PbConverter) canFuncBePushed(sf *ScalarFunction) bool {
 		ast.Ceil,
 		ast.Ceiling,
 		ast.Floor,
-		ast.LeftShift,
 		ast.Sqrt,
 		ast.Sign,
 		ast.Ln,
