@@ -1629,9 +1629,14 @@ func (s *testEvaluatorSuite) TestVecEvalBool(c *C) {
 func (s *testEvaluatorSuite) TestVecToBool(c *C) {
 	ctx := mock.NewContext()
 	buf := chunk.NewColumn(eType2FieldType(types.ETString), 2)
-	buf.ReserveString(2)
+	buf.ReserveString(1)
 	buf.AppendString("999999999999999999923")
 	c.Assert(toBool(ctx.GetSessionVars().StmtCtx, types.ETString, buf, []int{0, 1}, []int8{0, 0}), NotNil)
+	buf.ReserveString(1)
+	buf.AppendString("23")
+	c.Assert(toBool(ctx.GetSessionVars().StmtCtx, types.ETString, buf, []int{0, 1}, []int8{0, 0}), IsNil)
+	buf.ReserveString(2)
+	buf.AppendString("999999999999999999923")
 	buf.AppendString("23")
 	c.Assert(toBool(ctx.GetSessionVars().StmtCtx, types.ETString, buf, []int{0, 1}, []int8{0, 0}), NotNil)
 }
