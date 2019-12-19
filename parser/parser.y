@@ -117,6 +117,7 @@ import (
 	dual 			"DUAL"
 	elseKwd			"ELSE"
 	enclosed		"ENCLOSED"
+	errorKwd		"ERROR"
 	escaped 		"ESCAPED"
 	exists			"EXISTS"
 	explain			"EXPLAIN"
@@ -130,6 +131,7 @@ import (
 	from			"FROM"
 	fulltext		"FULLTEXT"
 	generated		"GENERATED"
+	general			"GENERAL"
 	grant			"GRANT"
 	group			"GROUP"
 	groups			"GROUPS"
@@ -922,6 +924,7 @@ import (
 	LoadDataSetItem			"Single load data specification"
 	LocalOpt			"Local opt"
 	LockClause         		"Alter table lock clause"
+	LogTypeOpt			"Optional log type used in FLUSH statements"
 	NumLiteral			"Num/Int/Float/Decimal Literal"
 	NoWriteToBinLogAliasOpt		"NO_WRITE_TO_BINLOG alias LOCAL or empty"
 	ObjectType			"Grant statement object type"
@@ -8611,10 +8614,11 @@ FlushOption:
 			Tp: ast.FlushHosts,
 		}
 	}
-|	"LOGS"
+|	LogTypeOpt "LOGS"
 	{
 		$$ = &ast.FlushStmt{
 			Tp: ast.FlushLogs,
+			LogType: $1.(ast.LogType),
 		}
 	}
 |	TableOrTables TableNameListOpt WithReadLockOpt
@@ -8624,6 +8628,31 @@ FlushOption:
 			Tables: $2.([]*ast.TableName),
 			ReadLock: $3.(bool),
 		}
+	}
+
+LogTypeOpt:
+	/* empty */{
+		$$ = ast.LogTypeDefault
+	}
+|	"BINARY"
+	{
+		$$ = ast.LogTypeBinary
+	}
+|	"ENGINE"
+	{
+		$$ = ast.LogTypeEngine
+	}
+|	"ERROR"
+	{
+		$$ = ast.LogTypeError
+	}
+|	"GENERAL"
+	{
+		$$ = ast.LogTypeGeneral
+	}
+|	"SLOW"
+	{
+		$$ = ast.LogTypeSlow
 	}
 
 NoWriteToBinLogAliasOpt:
