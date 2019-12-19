@@ -851,10 +851,11 @@ func (b *builtinArithmeticPlusIntUnsignedUnsignedSig) plusUU(result *chunk.Colum
 			continue
 		}
 		lh, rh := lhi64s[i], rhi64s[i]
-		if uint64(lh) > math.MaxUint64-uint64(rh) {
-			return types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s + %s)", b.args[0].String(), b.args[1].String()))
+		res, _, err := b.plusUnsingedunsinged(lh, rh)
+		if err != nil {
+			return err
 		}
-		resulti64s[i] = lh + rh
+		resulti64s[i] = res
 	}
 	return nil
 }
@@ -890,13 +891,11 @@ func (b *builtinArithmeticPlusIntUnsignedSignedSig) plusUS(result *chunk.Column,
 			continue
 		}
 		lh, rh := lhi64s[i], rhi64s[i]
-		if rh < 0 && uint64(-rh) > uint64(lh) {
-			return types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s + %s)", b.args[0].String(), b.args[1].String()))
+		res, _, err := b.plusUnsignedsigned(lh, rh)
+		if err != nil {
+			return err
 		}
-		if rh > 0 && uint64(lh) > math.MaxUint64-uint64(lh) {
-			return types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s + %s)", b.args[0].String(), b.args[1].String()))
-		}
-		resulti64s[i] = lh + rh
+		resulti64s[i] = res
 	}
 	return nil
 }
@@ -931,13 +930,11 @@ func (b *builtinArithmeticPlusIntSignedUnsignedSig) plusSU(result *chunk.Column,
 			continue
 		}
 		lh, rh := lhi64s[i], rhi64s[i]
-		if lh < 0 && uint64(-lh) > uint64(rh) {
-			return types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s + %s)", b.args[0].String(), b.args[1].String()))
+		res, _, err := b.plusSignedunsigned(lh, rh)
+		if err != nil {
+			return err
 		}
-		if lh > 0 && uint64(rh) > math.MaxUint64-uint64(lh) {
-			return types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s + %s)", b.args[0].String(), b.args[1].String()))
-		}
-		resulti64s[i] = lh + rh
+		resulti64s[i] = res
 	}
 	return nil
 }
@@ -977,11 +974,12 @@ func (b *builtinArithmeticPlusIntSignedSignedSig) plusSS(result *chunk.Column, l
 		}
 		lh, rh := lhi64s[i], rhi64s[i]
 
-		if (lh > 0 && rh > math.MaxInt64-lh) || (lh < 0 && rh < math.MinInt64-lh) {
-			return types.ErrOverflow.GenWithStackByArgs("BIGINT", fmt.Sprintf("(%s + %s)", b.args[0].String(), b.args[1].String()))
+		res, _, err := b.plusSignedSigned(lh, rh)
+		if err != nil {
+			return err
 		}
+		resulti64s[i] = res
 
-		resulti64s[i] = lh + rh
 	}
 	return nil
 }

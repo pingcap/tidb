@@ -38,7 +38,6 @@ var (
 var (
 	_ builtinFunc = &builtinArithmeticPlusRealSig{}
 	_ builtinFunc = &builtinArithmeticPlusDecimalSig{}
-	// _ builtinFunc = &builtinArithmeticPlusIntSig{}
 	_ builtinFunc = &builtinArithmeticMinusRealSig{}
 	_ builtinFunc = &builtinArithmeticMinusDecimalSig{}
 	_ builtinFunc = &builtinArithmeticMinusIntSig{}
@@ -215,6 +214,7 @@ func (s *builtinArithmeticPlusIntUnsignedUnsignedSig) clone() builtinFunc {
 	newSig.cloneFrom(&s.baseBuiltinFunc)
 	return newSig
 }
+
 func (s *builtinArithmeticPlusIntUnsignedUnsignedSig) evalInt(row chunk.Row) (val int64, isNull bool, err error) {
 	a, isNull, err := s.args[0].EvalInt(s.ctx, row)
 	if isNull || err != nil {
@@ -224,10 +224,13 @@ func (s *builtinArithmeticPlusIntUnsignedUnsignedSig) evalInt(row chunk.Row) (va
 	if isNull || err != nil {
 		return 0, isNull, err
 	}
-	if uint64(a) > math.MaxUint64-uint64(b) {
+	return s.plusUnsingedunsinged(a, b)
+}
+func (s *builtinArithmeticPlusIntUnsignedUnsignedSig) plusUnsingedunsinged(arg1, arg2 int64) (val int64, isNull bool, err error) {
+	if uint64(arg1) > math.MaxUint64-uint64(arg2) {
 		return 0, true, types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s + %s)", s.args[0].String(), s.args[1].String()))
 	}
-	return a + b, false, nil
+	return arg1 + arg2, false, nil
 }
 
 type builtinArithmeticPlusIntUnsignedSignedSig struct {
@@ -248,13 +251,16 @@ func (s *builtinArithmeticPlusIntUnsignedSignedSig) evalInt(row chunk.Row) (val 
 	if isNull || err != nil {
 		return 0, isNull, err
 	}
-	if b < 0 && uint64(-b) > uint64(a) {
+	return s.plusUnsignedsigned(a, b)
+}
+func (s *builtinArithmeticPlusIntUnsignedSignedSig) plusUnsignedsigned(arg1, arg2 int64) (val int64, isNull bool, err error) {
+	if arg2 < 0 && uint64(-arg2) > uint64(arg1) {
 		return 0, true, types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s + %s)", s.args[0].String(), s.args[1].String()))
 	}
-	if b > 0 && uint64(a) > math.MaxUint64-uint64(b) {
+	if arg2 > 0 && uint64(arg1) > math.MaxUint64-uint64(arg2) {
 		return 0, true, types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s + %s)", s.args[0].String(), s.args[1].String()))
 	}
-	return a + b, false, nil
+	return arg1 + arg2, false, nil
 }
 
 type builtinArithmeticPlusIntSignedUnsignedSig struct {
@@ -275,13 +281,17 @@ func (s *builtinArithmeticPlusIntSignedUnsignedSig) evalInt(row chunk.Row) (val 
 	if isNull || err != nil {
 		return 0, isNull, err
 	}
-	if a < 0 && uint64(-a) > uint64(b) {
+	return s.plusSignedunsigned(a, b)
+
+}
+func (s *builtinArithmeticPlusIntSignedUnsignedSig) plusSignedunsigned(arg1, arg2 int64) (val int64, isNull bool, err error) {
+	if arg1 < 0 && uint64(-arg1) > uint64(arg2) {
 		return 0, true, types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s + %s)", s.args[0].String(), s.args[1].String()))
 	}
-	if a > 0 && uint64(b) > math.MaxUint64-uint64(a) {
+	if arg1 > 0 && uint64(arg2) > math.MaxUint64-uint64(arg1) {
 		return 0, true, types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s + %s)", s.args[0].String(), s.args[1].String()))
 	}
-	return a + b, false, nil
+	return arg1 + arg2, false, nil
 }
 
 type builtinArithmeticPlusIntSignedSignedSig struct {
@@ -302,10 +312,13 @@ func (s *builtinArithmeticPlusIntSignedSignedSig) evalInt(row chunk.Row) (val in
 	if isNull || err != nil {
 		return 0, isNull, err
 	}
-	if (a > 0 && b > math.MaxInt64-a) || (a < 0 && b < math.MinInt64-a) {
+	return s.plusSignedSigned(a, b)
+}
+func (s *builtinArithmeticPlusIntSignedSignedSig) plusSignedSigned(arg1, arg2 int64) (val int64, isNull bool, err error) {
+	if (arg1 > 0 && arg2 > math.MaxInt64-arg1) || (arg1 < 0 && arg2 < math.MinInt64-arg1) {
 		return 0, true, types.ErrOverflow.GenWithStackByArgs("BIGINT", fmt.Sprintf("(%s + %s)", s.args[0].String(), s.args[1].String()))
 	}
-	return a + b, false, nil
+	return arg1 + arg2, false, nil
 }
 
 type builtinArithmeticPlusDecimalSig struct {
