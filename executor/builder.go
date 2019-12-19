@@ -26,6 +26,7 @@ import (
 	"github.com/cznic/mathutil"
 	"github.com/cznic/sortutil"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/kvproto/pkg/diagnosticspb"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -1274,7 +1275,31 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 			return &ClusterReaderExec{
 				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
 				retriever: &clusterConfigRetriever{
-					extractor: v.Extractor.(*plannercore.ClusterConfigTableExtractor),
+					extractor: v.Extractor.(*plannercore.ClusterTableExtractor),
+				},
+			}
+		case strings.ToLower(infoschema.TableClusterLoad):
+			return &ClusterReaderExec{
+				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
+				retriever: &clusterServerInfoRetriever{
+					extractor:    v.Extractor.(*plannercore.ClusterTableExtractor),
+					serverInfoTP: diagnosticspb.ServerInfoType_LoadInfo,
+				},
+			}
+		case strings.ToLower(infoschema.TableClusterHardware):
+			return &ClusterReaderExec{
+				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
+				retriever: &clusterServerInfoRetriever{
+					extractor:    v.Extractor.(*plannercore.ClusterTableExtractor),
+					serverInfoTP: diagnosticspb.ServerInfoType_HardwareInfo,
+				},
+			}
+		case strings.ToLower(infoschema.TableClusterSystemInfo):
+			return &ClusterReaderExec{
+				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
+				retriever: &clusterServerInfoRetriever{
+					extractor:    v.Extractor.(*plannercore.ClusterTableExtractor),
+					serverInfoTP: diagnosticspb.ServerInfoType_SystemInfo,
 				},
 			}
 		}
