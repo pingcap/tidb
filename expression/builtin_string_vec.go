@@ -28,6 +28,8 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 	"golang.org/x/text/transform"
 )
 
@@ -2168,11 +2170,68 @@ func (b *builtinBitLengthSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colum
 }
 
 func (b *builtinCharSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinCharSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	l := len(b.args)
+	buf := make([]*chunk.Column, l-1)
+	for i := 0; i < len(b.args)-1; i++ {
+		te, err := b.bufAllocator.get(types.ETInt, n)
+		if err != nil {
+			return err
+		}
+		buf[i] = te
+		defer b.bufAllocator.put(buf[i])
+		if err := b.args[i].VecEvalInt(b.ctx, input, buf[i]); err != nil {
+			return err
+		}
+	}
+	bufstr, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(bufstr)
+	if err := b.args[l-1].VecEvalString(b.ctx, input, bufstr); err != nil {
+		return err
+	}
+	bigints := make([]int64, 0, l-1)
+	result.ReserveString(n)
+	bufint := make([]([]int64), l-1)
+	for i := 0; i < l-1; i++ {
+		bufint[i] = buf[i].Int64s()
+	}
+	for i := 0; i < n; i++ {
+		bigints = bigints[0:0]
+		for j := 0; j < l-1; j++ {
+			if buf[j].IsNull(i) {
+				continue
+			}
+			bigints = append(bigints, bufint[j][i])
+		}
+		tempString := string(b.convertToBytes(bigints))
+		charsetLable := strings.ToLower(bufstr.GetString(i))
+		if bufstr.IsNull(i) || charsetLable == "ascii" || strings.HasPrefix(charsetLable, "utf8") {
+			result.AppendString(tempString)
+		} else {
+			encoding, charsetName := charset.Lookup(charsetLable)
+			if encoding == nil {
+				return errors.Errorf("unknown encoding: %s", bufstr.GetString(i))
+			}
+			oldStr := tempString
+			tempString, _, err := transform.String(encoding.NewDecoder(), tempString)
+			if err != nil {
+				logutil.BgLogger().Warn("change charset of string",
+					zap.String("string", oldStr),
+					zap.String("charset", charsetName),
+					zap.Error(err))
+				return err
+			}
+			result.AppendString(tempString)
+		}
+	}
+	return nil
 }
 
 func (b *builtinReplaceSig) vectorized() bool {
