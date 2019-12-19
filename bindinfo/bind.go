@@ -34,6 +34,7 @@ type hintProcessor struct {
 	indexCounter int
 }
 
+// Restore restore the HintsSet to string text.
 func (hs *HintsSet) Restore() (string, error) {
 	builder := &strings.Builder{}
 	rCtx := &format.RestoreCtx{In: builder}

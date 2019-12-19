@@ -74,6 +74,7 @@ type logicalOptRule interface {
 	name() string
 }
 
+// RootTraceBlock is the root structure of the tracer.
 type RootTraceBlock struct {
 	ProcessBlock []interface{} `json:"process_block"`
 }
@@ -118,6 +119,7 @@ func CheckTableLock(ctx sessionctx.Context, is infoschema.InfoSchema, vs []visit
 	return nil
 }
 
+// LogicalOptimizeTraceBlock records the information what logical rule applies and what's the key impact of each rule.
 type LogicalOptimizeTraceBlock struct {
 	LogicalRules []interface{} `json:"logical_rules"`
 	FinalPlan    string        `json:"final_plan"`
@@ -180,6 +182,7 @@ func isLogicalRuleDisabled(r logicalOptRule) bool {
 	return disabled
 }
 
+// PhysicalOptimizeTraceBlock records the information how the final physical plan is chosen.
 type PhysicalOptimizeTraceBlock struct {
 	VisitedPlans []interface{} `json:"visited_plans"`
 	FinalPlan    string        `json:"final_plan"`

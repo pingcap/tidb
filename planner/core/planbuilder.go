@@ -354,6 +354,7 @@ func (b *PlanBuilder) popSelectOffset() {
 	b.selectOffset = b.selectOffset[:len(b.selectOffset)-1]
 }
 
+// BuilderTraceBlock records the key information of what happens during plan building.
 type BuilderTraceBlock struct {
 	KeyOptimize []interface{}
 	FinalPlan   string

@@ -146,6 +146,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	return bestPlan, names, nil
 }
 
+// BaseLineTraceBlock records the information when the baseline is opened.
 type BaseLineTraceBlock struct {
 	BaseLines        []string `json:"base_lines"`
 	BestBaseLineHint string   `json:"best_base_line_hint"`

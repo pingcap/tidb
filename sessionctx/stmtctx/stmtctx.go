@@ -644,11 +644,20 @@ func (d *CopTasksDetails) ToZapFields() (fields []zap.Field) {
 	return fields
 }
 
+// OptimizerTracer traces the key information what planner does to generate a final execution plan.
+// It's output is structured as JSON object so we can use the JSON's tools to view the trace content.
+// We maintain the content using a stack. When appending a new block:
+//   First assign it as a child block of the current tail block.
+//   Then pushing it into the stack.
+//   After finishing the current block. We pop it from the stack, the tail block will become its father block again.
+//   If it has child blocks, repeat the same procedure.
+//   Finally, the tracer's stack only has one block which is the root block containing all child blocks.
 type OptimizerTracer struct {
 	blockStk []interface{}
 	stkLen   int
 }
 
+// TailBlock returns the last block in the stack.
 func (o *OptimizerTracer) TailBlock() interface{} {
 	if o.stkLen <= 0 {
 		return nil
@@ -656,6 +665,7 @@ func (o *OptimizerTracer) TailBlock() interface{} {
 	return o.blockStk[o.stkLen-1]
 }
 
+// PopBlock pops the last block.
 func (o *OptimizerTracer) PopBlock() {
 	if o.stkLen > 0 {
 		o.stkLen--
@@ -663,11 +673,13 @@ func (o *OptimizerTracer) PopBlock() {
 	}
 }
 
+// AppendBlock appends the block to the tail of the stack.
 func (o *OptimizerTracer) AppendBlock(block interface{}) {
 	o.stkLen++
 	o.blockStk = append(o.blockStk, block)
 }
 
+// Len returns the stack len.
 func (o *OptimizerTracer) Len() int {
 	return o.stkLen
 }
