@@ -645,11 +645,91 @@ func (b *builtinArithmeticMultiplyDecimalSig) vecEvalDecimal(input *chunk.Chunk,
 }
 
 func (b *builtinArithmeticIntDivideDecimalSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinArithmeticIntDivideDecimalSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	sc := b.ctx.GetSessionVars().StmtCtx
+	n := input.NumRows()
+	var err error
+	var buf [2]*chunk.Column
+	var num [2][]types.MyDecimal
+	for i, arg := range b.args {
+		if buf[i], err = b.bufAllocator.get(types.ETDecimal, n); err != nil {
+			return err
+		}
+		defer b.bufAllocator.put(buf[i])
+
+		err = arg.VecEvalDecimal(b.ctx, input, buf[i])
+		// Its behavior is consistent with MySQL.
+		if terror.ErrorEqual(err, types.ErrTruncated) {
+			err = nil
+		}
+		if terror.ErrorEqual(err, types.ErrOverflow) {
+			newErr := errTruncatedWrongValue.GenWithStackByArgs("DECIMAL", arg)
+			err = sc.HandleOverflow(newErr, newErr)
+		}
+		if err != nil {
+			return err
+		}
+
+		num[i] = buf[i].Decimals()
+	}
+
+	isLHSUnsigned := mysql.HasUnsignedFlag(b.args[0].GetType().Flag)
+	isRHSUnsigned := mysql.HasUnsignedFlag(b.args[1].GetType().Flag)
+	isUnsigned := isLHSUnsigned || isRHSUnsigned
+
+	result.ResizeInt64(n, false)
+	result.MergeNulls(buf[0], buf[1])
+	i64s := result.Int64s()
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+
+		c := &types.MyDecimal{}
+		err = types.DecimalDiv(&num[0][i], &num[1][i], c, types.DivFracIncr)
+		if err == types.ErrDivByZero {
+			if err = handleDivisionByZeroError(b.ctx); err != nil {
+				return err
+			}
+			result.SetNull(i, true)
+			continue
+		}
+		if err == types.ErrTruncated {
+			err = sc.HandleTruncate(errTruncatedWrongValue.GenWithStackByArgs("DECIMAL", c))
+		}
+		if err == types.ErrOverflow {
+			newErr := errTruncatedWrongValue.GenWithStackByArgs("DECIMAL", c)
+			err = sc.HandleOverflow(newErr, newErr)
+		}
+		if err != nil {
+			return err
+		}
+
+		if isUnsigned {
+			val, err := c.ToUint()
+			// err returned by ToUint may be ErrTruncated or ErrOverflow, only handle ErrOverflow, ignore ErrTruncated.
+			if err == types.ErrOverflow {
+				v, err := c.ToInt()
+				// when the final result is at (-1, 0], it should be return 0 instead of the error
+				if v == 0 && err == types.ErrTruncated {
+					i64s[i] = int64(0)
+					continue
+				}
+				return types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s DIV %s)", num[0][i].String(), num[1][i].String()))
+			}
+			i64s[i] = int64(val)
+		} else {
+			i64s[i], err = c.ToInt()
+			// err returned by ToInt may be ErrTruncated or ErrOverflow, only handle ErrOverflow, ignore ErrTruncated.
+			if err == types.ErrOverflow {
+				return types.ErrOverflow.GenWithStackByArgs("BIGINT", fmt.Sprintf("(%s DIV %s)", num[0][i].String(), num[1][i].String()))
+			}
+		}
+	}
+	return nil
 }
 
 func (b *builtinArithmeticMultiplyIntSig) vectorized() bool {

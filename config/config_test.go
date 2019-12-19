@@ -154,6 +154,7 @@ func (s *testConfigSuite) TestConfig(c *C) {
 	conf.Performance.TxnTotalSizeLimit = 1000
 	conf.TiKVClient.CommitTimeout = "10s"
 	conf.TiKVClient.RegionCacheTTL = 600
+	conf.Log.EnableSlowLog = logutil.DefaultTiDBEnableSlowLog
 	configFile := "config.toml"
 	_, localFile, _, _ := runtime.Caller(0)
 	configFile = filepath.Join(filepath.Dir(localFile), configFile)
@@ -377,4 +378,8 @@ func (s *testConfigSuite) TestTxnTotalSizeLimitValid(c *C) {
 		conf.Performance.TxnTotalSizeLimit = tt.limit
 		c.Assert(conf.Valid() == nil, Equals, tt.valid)
 	}
+
+	conf.Binlog.Enable = true
+	conf.Performance.TxnTotalSizeLimit = 100<<20 + 1
+	c.Assert(conf.Valid(), NotNil)
 }

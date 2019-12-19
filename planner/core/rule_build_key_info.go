@@ -260,7 +260,7 @@ func (is *LogicalIndexScan) BuildKeyInfo(selfSchema *expression.Schema, childSch
 			selfSchema.Keys = append(selfSchema.Keys, newKey)
 		}
 	}
-	handle := is.getPKIsHandleCol()
+	handle := is.getPKIsHandleCol(selfSchema)
 	if handle != nil {
 		selfSchema.Keys = append(selfSchema.Keys, []*expression.Column{handle})
 	}
