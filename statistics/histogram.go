@@ -155,6 +155,9 @@ func (c *Column) AvgColSizeChunkFormat(count int64) float64 {
 	// Add 8 bytes for unfixed-len type's offsets.
 	// Minus Log2(avgSize) for unfixed-len type LEN.
 	avgSize := float64(c.TotColSize) / float64(count)
+	if avgSize < 1 {
+		return avgSize + 8
+	}
 	return math.Round((avgSize-math.Log2(avgSize))*100)/100 + 8
 }
 
@@ -176,6 +179,9 @@ func (c *Column) AvgColSizeListInDisk(count int64) float64 {
 	// Keep two decimal place.
 	// Minus Log2(avgSize) for unfixed-len type LEN.
 	avgSize := float64(c.TotColSize) / float64(count)
+	if avgSize < 1 {
+		return avgSize
+	}
 	return math.Round((avgSize-math.Log2(avgSize))*100) / 100
 }
 
