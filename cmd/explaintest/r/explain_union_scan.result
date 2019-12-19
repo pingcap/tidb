@@ -1,0 +1,32 @@
+drop table if exists city;
+CREATE TABLE `city` (
+`id` varchar(70) NOT NULL,
+`province_id` int(15) DEFAULT NULL,
+`city_name` varchar(90) DEFAULT NULL,
+`description` varchar(90) DEFAULT NULL,
+PRIMARY KEY (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+load stats "s/explain_union_scan.json";
+insert into city values("06766b3ef41d484d8878606393f1ed0b", 88, "chongqing", "chongqing city");
+begin;
+update city set province_id = 77 where id="06766b3ef41d484d8878606393f1ed0b";
+explain select t1.*, t2.province_id as provinceID, t2.city_name as cityName, t3.description as description from city t1 inner join city t2 on t1.id = t2.id left join city t3 on t1.province_id = t3.province_id where t1.province_id > 1 and t1.province_id < 100 limit 10;
+id	count	task	operator info
+Projection_17	10.00	root	test.t1.id, test.t1.province_id, test.t1.city_name, test.t1.description, test.t2.province_id, test.t2.city_name, test.t3.description
+└─Limit_20	10.00	root	offset:0, count:10
+  └─HashLeftJoin_21	10.00	root	left outer join, inner:UnionScan_52, equal:[eq(test.t1.province_id, test.t3.province_id)]
+    ├─Limit_24	10.00	root	offset:0, count:10
+    │ └─IndexJoin_29	10.00	root	inner join, inner:UnionScan_28, outer key:test.t1.id, inner key:test.t2.id
+    │   ├─UnionScan_38	10.00	root	gt(test.t1.province_id, 1), lt(test.t1.province_id, 100)
+    │   │ └─TableReader_41	10.00	root	data:Selection_40
+    │   │   └─Selection_40	10.00	cop	gt(test.t1.province_id, 1), lt(test.t1.province_id, 100)
+    │   │     └─TableScan_39	14.30	cop	table:city, range:[-inf,+inf], keep order:false
+    │   └─UnionScan_28	1.00	root	
+    │     └─IndexLookUp_27	1.00	root	
+    │       ├─IndexScan_25	1.00	cop	table:city, index:id, range: decided by [eq(test.t2.id, test.t1.id)], keep order:false
+    │       └─TableScan_26	1.00	cop	table:city, keep order:false
+    └─UnionScan_52	519304.44	root	gt(test.t3.province_id, 1), lt(test.t3.province_id, 100), not(isnull(test.t3.province_id))
+      └─TableReader_55	519304.44	root	data:Selection_54
+        └─Selection_54	519304.44	cop	gt(test.t3.province_id, 1), lt(test.t3.province_id, 100), not(isnull(test.t3.province_id))
+          └─TableScan_53	536284.00	cop	table:city, range:[-inf,+inf], keep order:false
+commit;
