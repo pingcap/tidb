@@ -917,7 +917,7 @@ func (s *testTableSuite) TestForTableTiFlashReplica(c *C) {
 	tk.MustQuery("select TABLE_SCHEMA,TABLE_NAME,REPLICA_COUNT,LOCATION_LABELS,AVAILABLE from information_schema.tiflash_replica").Check(testkit.Rows("test t 2 a,b 1"))
 }
 
-func (s *testClusterTableSuite) TestForClusterServerInfo(c *C) {
+func (s *testClusterTableSuite) _TestForClusterServerInfo(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	instances := []string{
 		"tidb," + s.listenAddr + "," + s.listenAddr + ",mock-version,mock-githash",
