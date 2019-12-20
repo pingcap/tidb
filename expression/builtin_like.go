@@ -107,7 +107,7 @@ func (c *regexpFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 
 type builtinRegexpSharedSig struct {
 	baseBuiltinFunc
-	compile        func(string) (*regexp.Regexp, error)
+	compile         func(string) (*regexp.Regexp, error)
 	memorizedRegexp *regexp.Regexp
 	memorizedErr    error
 }
