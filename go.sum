@@ -164,8 +164,6 @@ github.com/ngaut/pools v0.0.0-20180318154953-b7bc8c42aac7/go.mod h1:iWMfgwqYW+e8
 github.com/ngaut/sync2 v0.0.0-20141008032647-7a24ed77b2ef h1:K0Fn+DoFqNqktdZtdV3bPQ/0cuYh2H4rkg0tytX/07k=
 github.com/ngaut/sync2 v0.0.0-20141008032647-7a24ed77b2ef/go.mod h1:7WjlapSfwQyo6LNmIvEWzsW1hbBQfpUO4JWnuQRmva8=
 github.com/nicksnyder/go-i18n v1.10.0/go.mod h1:HrK7VCrbOvQoUAQ7Vpy7i87N7JZZZ7R2xBGjv0j365Q=
-github.com/nolouch/pd v1.1.0-beta.0.20191218082056-b2b25dcc40e5 h1:hNRTAVkJZKPUkUXb3PjZ9LXzwNfC4fhhQ4Hv1ZJCvsE=
-github.com/nolouch/pd v1.1.0-beta.0.20191218082056-b2b25dcc40e5/go.mod h1:CML+b1JVjN+VbDijaIcUSmuPgpDjXEY7UiOx5yDP8eE=
 github.com/olekukonko/tablewriter v0.0.0-20170122224234-a0225b3f23b5/go.mod h1:vsDQFd/mU46D+Z4whnwzcISnGGzXWMclvtLoiIKAKIo=
 github.com/onsi/ginkgo v1.6.0 h1:Ix8l273rp3QzYgXSR+c8d1fTG7UPgYkOSELPhiY/YGw=
 github.com/onsi/ginkgo v1.6.0/go.mod h1:lLunBs/Ym6LB5Z9jYTR76FiuTmxDTDusOGeTQH+WWjE=
@@ -195,6 +193,8 @@ github.com/pingcap/log v0.0.0-20191012051959-b742a5d432e9 h1:AJD9pZYm72vMgPcQDww
 github.com/pingcap/log v0.0.0-20191012051959-b742a5d432e9/go.mod h1:4rbK1p9ILyIfb6hU7OG2CiWSqMXnp3JMbiaVJ6mvoY8=
 github.com/pingcap/parser v0.0.0-20191216031109-53ef01243aa6 h1:aAhPfDloqGNCYkY0/vpcRGneyum5Sph4+foxA4XzarU=
 github.com/pingcap/parser v0.0.0-20191216031109-53ef01243aa6/go.mod h1:1FNvfp9+J0wvc4kl8eGNh7Rqrxveg15jJoWo/a0uHwA=
+github.com/pingcap/pd v1.1.0-beta.0.20191219054547-4d65bbefbc6d h1:Ui80aiLTyd0EZD56o2tjFRYpHfhazBjtBdKeR8UoTFY=
+github.com/pingcap/pd v1.1.0-beta.0.20191219054547-4d65bbefbc6d/go.mod h1:CML+b1JVjN+VbDijaIcUSmuPgpDjXEY7UiOx5yDP8eE=
 github.com/pingcap/sysutil v0.0.0-20191216090214-5f9620d22b3b h1:EEyo/SCRswLGuSk+7SB86Ak1p8bS6HL1Mi4Dhyuv6zg=
 github.com/pingcap/sysutil v0.0.0-20191216090214-5f9620d22b3b/go.mod h1:EB/852NMQ+aRKioCpToQ94Wl7fktV+FNnxf3CX/TTXI=
 github.com/pingcap/tidb-tools v3.0.6-0.20191106033616-90632dda3863+incompatible h1:H1jg0aDWz2SLRh3hNBo2HFtnuHtudIUvBumU7syRkic=
