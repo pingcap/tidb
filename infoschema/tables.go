@@ -27,13 +27,10 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/kvproto/pkg/diagnosticspb"
-	"github.com/pingcap/log"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
@@ -50,9 +47,6 @@ import (
 	"github.com/pingcap/tidb/util/pdapi"
 	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/sqlexec"
-	"go.uber.org/zap"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials"
 )
 
 const (
@@ -101,9 +95,14 @@ const (
 	// TableClusterConfig is the string constant of cluster configuration memory table
 	TableClusterConfig = "CLUSTER_CONFIG"
 	// TableClusterLog is the string constant of cluster log memory table
-	TableClusterLog     = "CLUSTER_LOG"
-	tableClusterLoad    = "CLUSTER_LOAD"
-	tableTiFlashReplica = "TIFLASH_REPLICA"
+	TableClusterLog = "CLUSTER_LOG"
+	// TableClusterLoad is the string constant of cluster load memory table
+	TableClusterLoad = "CLUSTER_LOAD"
+	// TableClusterHardware is the string constant of cluster hardware table
+	TableClusterHardware = "CLUSTER_HARDWARE"
+	// TableClusterSystemInfo is the string constant of cluster system info table
+	TableClusterSystemInfo = "CLUSTER_SYSTEMINFO"
+	tableTiFlashReplica    = "TIFLASH_REPLICA"
 )
 
 var tableIDMap = map[string]int64{
@@ -150,11 +149,13 @@ var tableIDMap = map[string]int64{
 	tableTiDBServersInfo:                    autoid.InformationSchemaDBID + 41,
 	tableClusterInfo:                        autoid.InformationSchemaDBID + 42,
 	TableClusterConfig:                      autoid.InformationSchemaDBID + 43,
-	tableClusterLoad:                        autoid.InformationSchemaDBID + 44,
+	TableClusterLoad:                        autoid.InformationSchemaDBID + 44,
 	tableTiFlashReplica:                     autoid.InformationSchemaDBID + 45,
 	clusterTableSlowLog:                     autoid.InformationSchemaDBID + 46,
 	clusterTableProcesslist:                 autoid.InformationSchemaDBID + 47,
 	TableClusterLog:                         autoid.InformationSchemaDBID + 48,
+	TableClusterHardware:                    autoid.InformationSchemaDBID + 49,
+	TableClusterSystemInfo:                  autoid.InformationSchemaDBID + 50,
 }
 
 type columnInfo struct {
@@ -754,6 +755,24 @@ var tableClusterLoadCols = []columnInfo{
 	{"DEVICE_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"LOAD_NAME", mysql.TypeVarchar, 256, 0, nil, nil},
 	{"LOAD_VALUE", mysql.TypeVarchar, 128, 0, nil, nil},
+}
+
+var tableClusterHardwareCols = []columnInfo{
+	{"TYPE", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"ADDRESS", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"DEVICE_TYPE", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"DEVICE_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"NAME", mysql.TypeVarchar, 256, 0, nil, nil},
+	{"VALUE", mysql.TypeVarchar, 128, 0, nil, nil},
+}
+
+var tableClusterSystemInfoCols = []columnInfo{
+	{"TYPE", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"ADDRESS", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"SYSTEM_TYPE", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"SYSTEM_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"NAME", mysql.TypeVarchar, 256, 0, nil, nil},
+	{"VALUE", mysql.TypeVarchar, 128, 0, nil, nil},
 }
 
 func dataForTiKVRegionStatus(ctx sessionctx.Context) (records [][]types.Datum, err error) {
@@ -2157,87 +2176,6 @@ func dataForTiDBClusterInfo(ctx sessionctx.Context) ([][]types.Datum, error) {
 	return rows, nil
 }
 
-func dataForClusterLoadInfo(ctx sessionctx.Context) ([][]types.Datum, error) {
-	serversInfo, err := GetClusterServerInfo(ctx)
-	if err != nil {
-		return nil, err
-	}
-	ipMap := make(map[string]struct{}, len(serversInfo))
-	rows := make([][]types.Datum, 0, len(serversInfo)*10)
-	for _, srv := range serversInfo {
-		// TODO: remove this after PD/TiKV support diagnostic grpc service.
-		if srv.ServerType == "pd" || srv.ServerType == "tikv" {
-			continue
-		}
-		addr := srv.StatusAddr
-		ip := addr
-		if idx := strings.Index(addr, ":"); idx != -1 {
-			ip = addr[:idx]
-		}
-		if _, ok := ipMap[ip]; ok {
-			continue
-		}
-		ipMap[ip] = struct{}{}
-		items, err := getServerInfoByGRPC(srv.StatusAddr, diagnosticspb.ServerInfoType_LoadInfo)
-		if err != nil {
-			return nil, err
-		}
-		partRows := serverInfoItemToRows(items, srv.ServerType, srv.StatusAddr)
-		rows = append(rows, partRows...)
-	}
-	return rows, nil
-}
-
-func serverInfoItemToRows(items []*diagnosticspb.ServerInfoItem, tp, addr string) [][]types.Datum {
-	rows := make([][]types.Datum, 0, len(items))
-	for _, v := range items {
-		for _, item := range v.Pairs {
-			row := types.MakeDatums(
-				tp,
-				addr,
-				v.Tp,
-				v.Name,
-				item.Key,
-				item.Value,
-			)
-			rows = append(rows, row)
-		}
-	}
-	return rows
-}
-
-func getServerInfoByGRPC(address string, tp diagnosticspb.ServerInfoType) ([]*diagnosticspb.ServerInfoItem, error) {
-	opt := grpc.WithInsecure()
-	security := config.GetGlobalConfig().Security
-	if len(security.ClusterSSLCA) != 0 {
-		tlsConfig, err := security.ToTLSConfig()
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		opt = grpc.WithTransportCredentials(credentials.NewTLS(tlsConfig))
-	}
-	conn, err := grpc.Dial(address, opt)
-	if err != nil {
-		return nil, err
-	}
-	defer func() {
-		err := conn.Close()
-		if err != nil {
-			log.Error("close grpc connection error", zap.Error(err))
-		}
-	}()
-
-	cli := diagnosticspb.NewDiagnosticsClient(conn)
-	// FIXME: use session context instead of context.Background().
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
-	defer cancel()
-	r, err := cli.ServerInfo(ctx, &diagnosticspb.ServerInfoRequest{Tp: tp})
-	if err != nil {
-		return nil, err
-	}
-	return r.Items, nil
-}
-
 // dataForTableTiFlashReplica constructs data for table tiflash replica info.
 func dataForTableTiFlashReplica(schemas []*model.DBInfo) [][]types.Datum {
 	var rows [][]types.Datum
@@ -2304,8 +2242,10 @@ var tableNameToColumns = map[string][]columnInfo{
 	tableClusterInfo:                        tableClusterInfoCols,
 	TableClusterConfig:                      tableClusterConfigCols,
 	TableClusterLog:                         tableClusterLogCols,
-	tableClusterLoad:                        tableClusterLoadCols,
+	TableClusterLoad:                        tableClusterLoadCols,
 	tableTiFlashReplica:                     tableTableTiFlashReplicaCols,
+	TableClusterHardware:                    tableClusterHardwareCols,
+	TableClusterSystemInfo:                  tableClusterSystemInfoCols,
 }
 
 func createInfoSchemaTable(_ autoid.Allocator, meta *model.TableInfo) (table.Table, error) {
@@ -2412,8 +2352,6 @@ func (it *infoschemaTable) getRows(ctx sessionctx.Context, cols []*table.Column)
 		fullRows, err = dataForServersInfo()
 	case tableClusterInfo:
 		fullRows, err = dataForTiDBClusterInfo(ctx)
-	case tableClusterLoad:
-		fullRows, err = dataForClusterLoadInfo(ctx)
 	case tableTiFlashReplica:
 		fullRows = dataForTableTiFlashReplica(dbs)
 	// Data for cluster memory table.

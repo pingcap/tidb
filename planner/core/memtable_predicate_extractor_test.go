@@ -192,7 +192,7 @@ func (s *extractorSuite) TestClusterConfigTableExtractor(c *C) {
 			addresses: set.NewStringSet("123.1.1.5:1234"),
 		},
 		{
-			sql: `select * from information_schema.cluster_config 
+			sql: `select * from information_schema.cluster_config
 				where address in ('123.1.1.5:1234', '123.1.1.4:1234')
 				  and address in ('123.1.1.5:1234', '123.1.1.6:1234')
 				  and type in ('tikv', 'tidb')
@@ -201,7 +201,7 @@ func (s *extractorSuite) TestClusterConfigTableExtractor(c *C) {
 			addresses: set.NewStringSet("123.1.1.5:1234"),
 		},
 		{
-			sql: `select * from information_schema.cluster_config 
+			sql: `select * from information_schema.cluster_config
 				where address in ('123.1.1.5:1234', '123.1.1.4:1234')
 				  and address in ('123.1.1.5:1234', '123.1.1.6:1234')
 				  and address in ('123.1.1.6:1234', '123.1.1.7:1234')
@@ -232,7 +232,7 @@ func (s *extractorSuite) TestClusterConfigTableExtractor(c *C) {
 		logicalMemTable := leafPlan.(*plannercore.LogicalMemTable)
 		c.Assert(logicalMemTable.Extractor, NotNil)
 
-		clusterConfigExtractor := logicalMemTable.Extractor.(*plannercore.ClusterConfigTableExtractor)
+		clusterConfigExtractor := logicalMemTable.Extractor.(*plannercore.ClusterTableExtractor)
 		c.Assert(clusterConfigExtractor.NodeTypes, DeepEquals, ca.nodeTypes, Commentf("SQL: %v", ca.sql))
 		c.Assert(clusterConfigExtractor.Addresses, DeepEquals, ca.addresses, Commentf("SQL: %v", ca.sql))
 		c.Assert(clusterConfigExtractor.SkipRequest, DeepEquals, ca.skipRequest, Commentf("SQL: %v", ca.sql))
@@ -379,7 +379,7 @@ func (s *extractorSuite) TestClusterLogTableExtractor(c *C) {
 			addresses: set.NewStringSet("123.1.1.5:1234"),
 		},
 		{
-			sql: `select * from information_schema.cluster_log 
+			sql: `select * from information_schema.cluster_log
 				where address in ('123.1.1.5:1234', '123.1.1.4:1234')
 				  and address in ('123.1.1.5:1234', '123.1.1.6:1234')
 				  and type in ('tikv', 'tidb')
@@ -388,7 +388,7 @@ func (s *extractorSuite) TestClusterLogTableExtractor(c *C) {
 			addresses: set.NewStringSet("123.1.1.5:1234"),
 		},
 		{
-			sql: `select * from information_schema.cluster_log 
+			sql: `select * from information_schema.cluster_log
 				where address in ('123.1.1.5:1234', '123.1.1.4:1234')
 				  and address in ('123.1.1.5:1234', '123.1.1.6:1234')
 				  and address in ('123.1.1.6:1234', '123.1.1.7:1234')
@@ -496,7 +496,7 @@ func (s *extractorSuite) TestClusterLogTableExtractor(c *C) {
 			patterns:  []string{"^" + regexp.QuoteMeta(".*txn.*") + "$"},
 		},
 		{
-			sql: `select * from information_schema.cluster_log 
+			sql: `select * from information_schema.cluster_log
 				where address in ('123.1.1.5:1234', '123.1.1.4:1234')
 				  and (type='tidb' or type='pd')
 				  and message like '%coprocessor%'
