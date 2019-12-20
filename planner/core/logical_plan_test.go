@@ -1760,9 +1760,7 @@ func (s *testPlanSuite) TestVisitInfo(c *C) {
 		},
 		{
 			sql: `set password for 'root'@'%' = 'xxxxx'`,
-			ans: []visitInfo{
-				{mysql.SuperPriv, "", "", ""},
-			},
+			ans: []visitInfo{},
 		},
 		{
 			sql: `show create table test.ttt`,
