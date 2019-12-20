@@ -486,6 +486,11 @@ type SessionVars struct {
 	// negative value means nowait, 0 means default behavior, others means actual wait time
 	LockWaitTimeout int64
 
+	// MetricSchemaStep indicates the step when query metric schema.
+	MetricSchemaStep int64
+	// MetricSchemaRangeDuration indicates the step when query metric schema.
+	MetricSchemaRangeDuration int64
+
 	// Some data of cluster-level memory tables will be retrieved many times in different inspection rules,
 	// and the cost of retrieving some data is expensive. We use the `TableSnapshot` to cache those data
 	// and obtain them lazily, and provide a consistent view of inspection tables for each inspection rules.
@@ -571,6 +576,8 @@ func NewSessionVars() *SessionVars {
 		EvolvePlanBaselines:         DefTiDBEvolvePlanBaselines,
 		isolationReadEngines:        map[kv.StoreType]struct{}{kv.TiKV: {}, kv.TiFlash: {}, kv.TiDB: {}},
 		LockWaitTimeout:             DefInnodbLockWaitTimeout * 1000,
+		MetricSchemaStep:            DefTiDBMetricSchemaStep,
+		MetricSchemaRangeDuration:   DefTiDBMetricSchemaRangeDuration,
 	}
 	vars.Concurrency = Concurrency{
 		IndexLookupConcurrency:     DefIndexLookupConcurrency,
@@ -1037,6 +1044,10 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		}
 	case TiDBStoreLimit:
 		storeutil.StoreLimit.Store(tidbOptInt64(val, DefTiDBStoreLimit))
+	case TiDBMetricSchemaStep:
+		s.MetricSchemaStep = tidbOptInt64(val, DefTiDBMetricSchemaStep)
+	case TiDBMetricSchemaRangeDuration:
+		s.MetricSchemaRangeDuration = tidbOptInt64(val, DefTiDBMetricSchemaRangeDuration)
 	}
 	s.systems[name] = val
 	return nil

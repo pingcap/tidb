@@ -133,15 +133,13 @@ func SyntaxWarn(err error) error {
 	return parser.ErrParse.GenWithStackByArgs(syntaxErrorPrefix, err.Error())
 }
 
-const (
+var (
 	// InformationSchemaName is the `INFORMATION_SCHEMA` database name.
-	InformationSchemaName = "INFORMATION_SCHEMA"
-	// InformationSchemaLowerName is the `INFORMATION_SCHEMA` database lower name.
-	InformationSchemaLowerName = "information_schema"
+	InformationSchemaName = model.CIStr{O: "INFORMATION_SCHEMA", L: "information_schema"}
 	// PerformanceSchemaName is the `PERFORMANCE_SCHEMA` database name.
-	PerformanceSchemaName = "PERFORMANCE_SCHEMA"
-	// PerformanceSchemaLowerName is the `PERFORMANCE_SCHEMA` database lower name.
-	PerformanceSchemaLowerName = "performance_schema"
+	PerformanceSchemaName = model.CIStr{O: "PERFORMANCE_SCHEMA", L: "performance_schema"}
+	// MetricSchemaName is the `METRIC_SCHEMA` database name.
+	MetricSchemaName = model.CIStr{O: "METRIC_SCHEMA", L: "metric_schema"}
 )
 
 // InspectionSchemaName is the name of `inspection_schema`
@@ -150,7 +148,7 @@ var InspectionSchemaName = model.NewCIStr("INSPECTION_SCHEMA")
 // IsMemOrSysDB uses to check whether dbLowerName is memory database or system database.
 func IsMemOrSysDB(dbLowerName string) bool {
 	switch dbLowerName {
-	case InformationSchemaLowerName, PerformanceSchemaLowerName, mysql.SystemDB:
+	case InformationSchemaName.L, PerformanceSchemaName.L, mysql.SystemDB, MetricSchemaName.L:
 		return true
 	}
 	return false
