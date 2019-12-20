@@ -22,6 +22,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/infoschema/metricschema"
 	"github.com/pingcap/tidb/kv"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
@@ -557,72 +558,72 @@ func (s *extractorSuite) TestMetricTableExtractor(c *C) {
 		startTime, endTime int64
 		labelConditions    map[string]set.StringSet
 		quantile           float64
-		explainInfo        string
+		promQL             string
 		err                string
 	}{
 		{
-			sql:         "select * from metric_schema.query_duration",
-			explainInfo: `PromQL:histogram_quantile(0.9, sum(rate(tidb_server_handle_query_duration_seconds_bucket{}[60s])) by (le))`,
+			sql:    "select * from metric_schema.query_duration",
+			promQL: `PromQL:histogram_quantile(0.9, sum(rate(tidb_server_handle_query_duration_seconds_bucket{}[60s])) by (le))`,
 		},
 		{
-			sql:         "select * from metric_schema.query_duration where instance='127.0.0.1:10080'",
-			explainInfo: `PromQL:histogram_quantile(0.9, sum(rate(tidb_server_handle_query_duration_seconds_bucket{instance="127.0.0.1:10080"}[60s])) by (le))`,
+			sql:    "select * from metric_schema.query_duration where instance='127.0.0.1:10080'",
+			promQL: `PromQL:histogram_quantile(0.9, sum(rate(tidb_server_handle_query_duration_seconds_bucket{instance="127.0.0.1:10080"}[60s])) by (le))`,
 			labelConditions: map[string]set.StringSet{
 				"instance": set.NewStringSet("127.0.0.1:10080"),
 			},
 		},
 		{
-			sql:         "select * from metric_schema.query_duration where instance='127.0.0.1:10080' or instance='127.0.0.1:10081'",
-			explainInfo: `PromQL:histogram_quantile(0.9, sum(rate(tidb_server_handle_query_duration_seconds_bucket{instance=~"127.0.0.1:10080|127.0.0.1:10081"}[60s])) by (le))`,
+			sql:    "select * from metric_schema.query_duration where instance='127.0.0.1:10080' or instance='127.0.0.1:10081'",
+			promQL: `PromQL:histogram_quantile(0.9, sum(rate(tidb_server_handle_query_duration_seconds_bucket{instance=~"127.0.0.1:10080|127.0.0.1:10081"}[60s])) by (le))`,
 			labelConditions: map[string]set.StringSet{
 				"instance": set.NewStringSet("127.0.0.1:10080", "127.0.0.1:10081"),
 			},
 		},
 		{
-			sql:         "select * from metric_schema.query_duration where instance='127.0.0.1:10080' and sql_type='general'",
-			explainInfo: `PromQL:histogram_quantile(0.9, sum(rate(tidb_server_handle_query_duration_seconds_bucket{instance="127.0.0.1:10080",sql_type="general"}[60s])) by (le))`,
+			sql:    "select * from metric_schema.query_duration where instance='127.0.0.1:10080' and sql_type='general'",
+			promQL: `PromQL:histogram_quantile(0.9, sum(rate(tidb_server_handle_query_duration_seconds_bucket{instance="127.0.0.1:10080",sql_type="general"}[60s])) by (le))`,
 			labelConditions: map[string]set.StringSet{
 				"instance": set.NewStringSet("127.0.0.1:10080"),
 				"sql_type": set.NewStringSet("general"),
 			},
 		},
 		{
-			sql:         "select * from metric_schema.query_duration where instance='127.0.0.1:10080' or sql_type='general'",
-			explainInfo: `PromQL:histogram_quantile(0.9, sum(rate(tidb_server_handle_query_duration_seconds_bucket{}[60s])) by (le))`,
+			sql:    "select * from metric_schema.query_duration where instance='127.0.0.1:10080' or sql_type='general'",
+			promQL: `PromQL:histogram_quantile(0.9, sum(rate(tidb_server_handle_query_duration_seconds_bucket{}[60s])) by (le))`,
 		},
 		{
-			sql:         "select * from metric_schema.query_duration where instance='127.0.0.1:10080' and sql_type='general' and time='2019-10-10 10:10:10'",
-			explainInfo: `PromQL:histogram_quantile(0.9, sum(rate(tidb_server_handle_query_duration_seconds_bucket{instance="127.0.0.1:10080",sql_type="general"}[60s])) by (le))`,
+			sql:    "select * from metric_schema.query_duration where instance='127.0.0.1:10080' and sql_type='Update' and time='2019-10-10 10:10:10'",
+			promQL: `PromQL:histogram_quantile(0.9, sum(rate(tidb_server_handle_query_duration_seconds_bucket{instance="127.0.0.1:10080",sql_type="Update"}[60s])) by (le))`,
 			labelConditions: map[string]set.StringSet{
 				"instance": set.NewStringSet("127.0.0.1:10080"),
-				"sql_type": set.NewStringSet("general"),
+				"sql_type": set.NewStringSet("Update"),
 			},
 			startTime: timestamp(c, "2019-10-10 10:10:10"),
 			endTime:   timestamp(c, "2019-10-10 10:10:10"),
 		},
 		{
-			sql:         "select * from metric_schema.query_duration where time>'2019-10-10 10:10:10' and time<'2019-10-11 10:10:10'",
-			explainInfo: `PromQL:histogram_quantile(0.9, sum(rate(tidb_server_handle_query_duration_seconds_bucket{}[60s])) by (le))`,
-			startTime:   timestamp(c, "2019-10-10 10:10:10") + 1,
-			endTime:     timestamp(c, "2019-10-11 10:10:10") - 1,
+			sql:       "select * from metric_schema.query_duration where time>'2019-10-10 10:10:10' and time<'2019-10-11 10:10:10'",
+			promQL:    `PromQL:histogram_quantile(0.9, sum(rate(tidb_server_handle_query_duration_seconds_bucket{}[60s])) by (le))`,
+			startTime: timestamp(c, "2019-10-10 10:10:10") + 1,
+			endTime:   timestamp(c, "2019-10-11 10:10:10") - 1,
 		},
 		{
-			sql:         "select * from metric_schema.query_duration where time>='2019-10-10 10:10:10'",
-			explainInfo: `PromQL:histogram_quantile(0.9, sum(rate(tidb_server_handle_query_duration_seconds_bucket{}[60s])) by (le))`,
-			startTime:   timestamp(c, "2019-10-10 10:10:10"),
-			endTime:     math.MaxInt64,
+			sql:       "select * from metric_schema.query_duration where time>='2019-10-10 10:10:10'",
+			promQL:    `PromQL:histogram_quantile(0.9, sum(rate(tidb_server_handle_query_duration_seconds_bucket{}[60s])) by (le))`,
+			startTime: timestamp(c, "2019-10-10 10:10:10"),
+			endTime:   math.MaxInt64,
 		},
 		{
 			sql:         "select * from metric_schema.query_duration where time>='2019-10-10 10:10:10' and time<='2019-10-09 10:10:10'",
-			explainInfo: "",
+			promQL:      "",
 			startTime:   timestamp(c, "2019-10-10 10:10:10"),
 			endTime:     timestamp(c, "2019-10-09 10:10:10"),
 			skipRequest: true,
 		},
 		{
-			sql:         "select * from metric_schema.query_duration where quantile=0.9 or quantile=0.8",
-			explainInfo: "",
-			err:         "query metric data not support specified multiple quantile",
+			sql:    "select * from metric_schema.query_duration where quantile=0.9 or quantile=0.8",
+			promQL: "",
+			err:    "query metric data not support specified multiple quantile",
 		},
 	}
 	se.GetSessionVars().StmtCtx.TimeZone = time.Local
@@ -656,14 +657,17 @@ func (s *extractorSuite) TestMetricTableExtractor(c *C) {
 			c.Assert(metricTableExtractor.EndTime, DeepEquals, ca.endTime, Commentf("SQL: %v", ca.sql))
 		}
 		c.Assert(metricTableExtractor.SkipRequest, DeepEquals, ca.skipRequest, Commentf("SQL: %v", ca.sql))
-		c.Assert(leafPlan.ExplainInfo(), DeepEquals, ca.explainInfo, Commentf("SQL: %v", ca.sql))
 		quantile, err := metricTableExtractor.GetQuantile()
 		if len(ca.err) > 0 {
 			c.Assert(err, NotNil)
 			c.Assert(err.Error(), DeepEquals, ca.err)
-		} else {
-			c.Assert(err, IsNil)
-			c.Assert(quantile, DeepEquals, ca.quantile)
+			continue
+		}
+		c.Assert(err, IsNil)
+		c.Assert(quantile, DeepEquals, ca.quantile)
+		if !ca.skipRequest {
+			promQL := metricschema.GetExplainInfo(se, "query_duration", metricTableExtractor.LabelConditions, quantile)
+			c.Assert(promQL, DeepEquals, ca.promQL, Commentf("SQL: %v", ca.sql))
 		}
 	}
 }

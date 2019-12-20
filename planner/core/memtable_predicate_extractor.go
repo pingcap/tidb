@@ -151,7 +151,10 @@ func (helper extractHelper) extractColOrExpr(extractCols map[int64]*types.FieldN
 func (helper extractHelper) merge(lhs set.StringSet, datums []types.Datum, toLower bool) set.StringSet {
 	tmpNodeTypes := set.NewStringSet()
 	for _, datum := range datums {
-		s, _ := datum.ToString()
+		s, err := datum.ToString()
+		if err != nil {
+			return nil
+		}
 		if toLower {
 			s = strings.ToLower(s)
 		}
@@ -516,7 +519,7 @@ func (e *MetricTableExtractor) Extract(
 			continue
 		}
 		var values set.StringSet
-		remained, skipRequest, values = e.extractCol(schema, names, remained, name.ColName.L, true)
+		remained, skipRequest, values = e.extractCol(schema, names, remained, name.ColName.L, false)
 		if skipRequest {
 			e.SkipRequest = skipRequest
 			return nil
@@ -545,4 +548,16 @@ func (e *MetricTableExtractor) GetQuantile() (quantile float64, err error) {
 		return
 	}
 	return 0, nil
+}
+
+// GetQueryRangeTime gets the metric query time range.
+func (e *MetricTableExtractor) GetQueryRangeTime(sctx sessionctx.Context) (start, end time.Time, step time.Duration) {
+	return e.convertToTime(e.StartTime), e.convertToTime(e.EndTime), time.Second * time.Duration(sctx.GetSessionVars().MetricSchemaStep)
+}
+
+func (e *MetricTableExtractor) convertToTime(t int64) time.Time {
+	if t == 0 || t == math.MaxInt64 {
+		return time.Now()
+	}
+	return time.Unix(t/int64(time.Microsecond), t%int64(time.Microsecond)*1000)
 }

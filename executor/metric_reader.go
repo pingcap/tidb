@@ -55,12 +55,19 @@ func (e *MetricRetriever) retrieve(ctx context.Context, sctx sessionctx.Context)
 	}
 	e.tblDef = tblDef
 	queryRange := e.getQueryRange(sctx)
-	queryValue, err := e.queryMetric(ctx, sctx, queryRange)
+	quantile, err := e.extractor.GetQuantile()
+	if err != nil {
+		return nil, err
+	}
+	if quantile == 0 {
+		quantile = tblDef.Quantile
+	}
+	queryValue, err := e.queryMetric(ctx, sctx, queryRange, quantile)
 	if err != nil {
 		return nil, err
 	}
 
-	fullRows = e.genRows(queryValue, queryRange)
+	fullRows = e.genRows(queryValue, queryRange, quantile)
 	if len(e.outputCols) == len(e.table.Columns) {
 		return
 	}
@@ -75,7 +82,7 @@ func (e *MetricRetriever) retrieve(ctx context.Context, sctx sessionctx.Context)
 	return rows, nil
 }
 
-func (e *MetricRetriever) queryMetric(ctx context.Context, sctx sessionctx.Context, queryRange promv1.Range) (pmodel.Value, error) {
+func (e *MetricRetriever) queryMetric(ctx context.Context, sctx sessionctx.Context, queryRange promv1.Range, quantile float64) (pmodel.Value, error) {
 	addr, err := e.getMetricAddr(sctx)
 	if err != nil {
 		return nil, err
@@ -90,10 +97,6 @@ func (e *MetricRetriever) queryMetric(ctx context.Context, sctx sessionctx.Conte
 	ctx, cancel := context.WithTimeout(ctx, promReadTimeout)
 	defer cancel()
 
-	quantile, err := e.extractor.GetQuantile()
-	if err != nil {
-		return nil, err
-	}
 	promQL := e.tblDef.GenPromQL(sctx, e.extractor.LabelConditions, quantile)
 	result, _, err := promQLAPI.QueryRange(ctx, promQL, queryRange)
 	return result, err
@@ -115,9 +118,8 @@ func (e *MetricRetriever) getMetricAddr(sctx sessionctx.Context) (string, error)
 type promQLQueryRange = promv1.Range
 
 func (e *MetricRetriever) getQueryRange(sctx sessionctx.Context) promQLQueryRange {
-	startTime := e.convertToTime(e.extractor.StartTime)
-	endTime := e.convertToTime(e.extractor.EndTime)
-	return promQLQueryRange{Start: startTime, End: endTime, Step: time.Second * time.Duration(sctx.GetSessionVars().MetricSchemaStep)}
+	startTime, endTime, step := e.extractor.GetQueryRangeTime(sctx)
+	return promQLQueryRange{Start: startTime, End: endTime, Step: step}
 }
 
 func (e *MetricRetriever) convertToTime(t int64) time.Time {
@@ -127,14 +129,14 @@ func (e *MetricRetriever) convertToTime(t int64) time.Time {
 	return time.Unix(t/int64(time.Microsecond), t%int64(time.Microsecond)*1000)
 }
 
-func (e *MetricRetriever) genRows(value pmodel.Value, r promQLQueryRange) [][]types.Datum {
+func (e *MetricRetriever) genRows(value pmodel.Value, r promQLQueryRange, quantile float64) [][]types.Datum {
 	var rows [][]types.Datum
 	switch value.Type() {
 	case pmodel.ValMatrix:
 		matrix := value.(pmodel.Matrix)
 		for _, m := range matrix {
 			for _, v := range m.Values {
-				record := e.genRecord(m.Metric, v, r)
+				record := e.genRecord(m.Metric, v, r, quantile)
 				rows = append(rows, record)
 			}
 		}
@@ -142,7 +144,7 @@ func (e *MetricRetriever) genRows(value pmodel.Value, r promQLQueryRange) [][]ty
 	return rows
 }
 
-func (e *MetricRetriever) genRecord(metric pmodel.Metric, pair pmodel.SamplePair, r promQLQueryRange) []types.Datum {
+func (e *MetricRetriever) genRecord(metric pmodel.Metric, pair pmodel.SamplePair, r promQLQueryRange, quantile float64) []types.Datum {
 	record := make([]types.Datum, 0, 2+len(e.tblDef.Labels)+1)
 	// Record order should keep same with genColumnInfos.
 	record = append(record, types.NewTimeDatum(types.Time{
@@ -156,10 +158,13 @@ func (e *MetricRetriever) genRecord(metric pmodel.Metric, pair pmodel.SamplePair
 		if metric != nil {
 			v = string(metric[pmodel.LabelName(label)])
 		}
+		if len(v) == 0 {
+			v = metricschema.GenLabelConditionValues(e.extractor.LabelConditions[strings.ToLower(label)])
+		}
 		record = append(record, types.NewStringDatum(v))
 	}
 	if e.tblDef.Quantile > 0 {
-		record = append(record, types.NewFloat64Datum(e.tblDef.Quantile))
+		record = append(record, types.NewFloat64Datum(quantile))
 	}
 	return record
 }

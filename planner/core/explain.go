@@ -16,17 +16,17 @@ package core
 import (
 	"bytes"
 	"fmt"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/util"
 	"strings"
 
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/infoschema/metricschema"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/ranger"
 )
 
@@ -720,5 +720,12 @@ func genMetricTableExplainInfo(ctx sessionctx.Context, dbName model.CIStr, tblIn
 	if err != nil {
 		return ""
 	}
-	return metricschema.GetExplainInfo(ctx, tblInfo.Name.L, e.LabelConditions, quantile)
+	promQL := metricschema.GetExplainInfo(ctx, tblInfo.Name.L, e.LabelConditions, quantile)
+	startTime, endTime, step := e.GetQueryRangeTime(ctx)
+	return fmt.Sprintf("%v, start_time:%v, end_time:%v, step:%v",
+		promQL,
+		startTime.In(ctx.GetSessionVars().StmtCtx.TimeZone).Format("2006-01-02 15:04:05.999"),
+		endTime.In(ctx.GetSessionVars().StmtCtx.TimeZone).Format("2006-01-02 15:04:05.999"),
+		step,
+	)
 }

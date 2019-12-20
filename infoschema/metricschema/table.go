@@ -125,16 +125,17 @@ func (def *MetricTableDef) genLabelCondition(labels map[string]set.StringSet) st
 		}
 		switch len(values) {
 		case 1:
-			buf.WriteString(fmt.Sprintf("%s=\"%s\"", label, def.genLabelConditionValues(values)))
+			buf.WriteString(fmt.Sprintf("%s=\"%s\"", label, GenLabelConditionValues(values)))
 		default:
-			buf.WriteString(fmt.Sprintf("%s=~\"%s\"", label, def.genLabelConditionValues(values)))
+			buf.WriteString(fmt.Sprintf("%s=~\"%s\"", label, GenLabelConditionValues(values)))
 		}
 		index++
 	}
 	return buf.String()
 }
 
-func (def *MetricTableDef) genLabelConditionValues(values set.StringSet) string {
+// GenLabelConditionValues generates the label condition values.
+func GenLabelConditionValues(values set.StringSet) string {
 	var buf bytes.Buffer
 	vs := make([]string, 0, len(values))
 	for k := range values {
@@ -145,7 +146,6 @@ func (def *MetricTableDef) genLabelConditionValues(values set.StringSet) string 
 		if i > 0 {
 			buf.WriteByte('|')
 		}
-		i++
 		buf.WriteString(value)
 	}
 	return buf.String()
