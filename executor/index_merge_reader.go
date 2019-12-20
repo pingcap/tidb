@@ -494,8 +494,6 @@ func (w *indexMergeProcessWorker) fetchLoop(ctx context.Context, partialWorkerCo
 		if partialWorkerCount == 0 {
 			close(workCh)
 			close(resultCh)
-			workCh = nil
-			resultCh = nil
 			return
 		}
 		select {
