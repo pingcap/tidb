@@ -50,7 +50,7 @@ import (
 const clusterLogBatchSize = 1024
 
 type clusterRetriever interface {
-	retrieve(ctx sessionctx.Context) ([][]types.Datum, error)
+	retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error)
 }
 
 // ClusterReaderExec executes cluster information retrieving from the cluster components
@@ -61,7 +61,7 @@ type ClusterReaderExec struct {
 
 // Next implements the Executor Next interface.
 func (e *ClusterReaderExec) Next(ctx context.Context, req *chunk.Chunk) error {
-	rows, err := e.retriever.retrieve(e.ctx)
+	rows, err := e.retriever.retrieve(ctx, e.ctx)
 	if err != nil {
 		return err
 	}
@@ -86,7 +86,7 @@ type clusterConfigRetriever struct {
 }
 
 // retrieve implements the clusterRetriever interface
-func (e *clusterConfigRetriever) retrieve(ctx sessionctx.Context) ([][]types.Datum, error) {
+func (e *clusterConfigRetriever) retrieve(_ context.Context, ctx sessionctx.Context) ([][]types.Datum, error) {
 	if e.extractor.SkipRequest || e.retrieved {
 		return nil, nil
 	}
@@ -214,7 +214,7 @@ type clusterServerInfoRetriever struct {
 }
 
 // retrieve implements the clusterRetriever interface
-func (e *clusterServerInfoRetriever) retrieve(ctx sessionctx.Context) ([][]types.Datum, error) {
+func (e *clusterServerInfoRetriever) retrieve(_ context.Context, ctx sessionctx.Context) ([][]types.Datum, error) {
 	if e.extractor.SkipRequest || e.retrieved {
 		return nil, nil
 	}
@@ -535,7 +535,7 @@ func (e *clusterLogRetriever) startRetrieving(ctx sessionctx.Context) ([]chan lo
 	return results, nil
 }
 
-func (e *clusterLogRetriever) retrieve(ctx sessionctx.Context) ([][]types.Datum, error) {
+func (e *clusterLogRetriever) retrieve(_ context.Context, ctx sessionctx.Context) ([][]types.Datum, error) {
 	if e.extractor.SkipRequest || e.isDrained {
 		return nil, nil
 	}
