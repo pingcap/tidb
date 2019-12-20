@@ -15,6 +15,7 @@ package executor
 
 import (
 	"context"
+	"github.com/pingcap/errors"
 
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/util/chunk"
@@ -73,22 +74,22 @@ func (e *ExplainExec) Next(ctx context.Context, req *chunk.Chunk) error {
 func (e *ExplainExec) generateExplainInfo(ctx context.Context) ([][]string, error) {
 	if e.analyzeExec != nil {
 		chk := newFirstChunk(e.analyzeExec)
-		var next_err, close_err error
+		var nextErr, closeErr error
 		for {
-			next_err = Next(ctx, e.analyzeExec, chk)
-			if next_err != nil {
-				break
-			}
-			if chk.NumRows() == 0 {
+			nextErr = Next(ctx, e.analyzeExec, chk)
+			if nextErr != nil || chk.NumRows() == 0 {
 				break
 			}
 		}
-		close_err = e.analyzeExec.Close()
-		if next_err != nil {
-			return nil, next_err
-		}
-		if close_err != nil {
-			return nil, close_err
+		closeErr = e.analyzeExec.Close()
+		if nextErr != nil {
+			if closeErr != nil {
+				return nil, errors.New(nextErr.Error() + ", " + closeErr.Error())
+			} else {
+				return nil, nextErr
+			}
+		} else if closeErr != nil {
+			return nil, closeErr
 		}
 	}
 	if err := e.explain.RenderResult(); err != nil {

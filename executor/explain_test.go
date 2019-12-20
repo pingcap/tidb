@@ -15,6 +15,7 @@ package executor_test
 
 import (
 	"fmt"
+	"github.com/pingcap/failpoint"
 	"strings"
 
 	. "github.com/pingcap/check"
@@ -104,6 +105,23 @@ func (s *testSuite1) TestExplainWrite(c *C) {
 	tk.MustQuery("select * from t").Check(testkit.Rows("2"))
 	tk.MustExec("explain analyze insert into t select 1")
 	tk.MustQuery("select * from t order by a").Check(testkit.Rows("1", "2"))
+}
+
+func (s *testSuite1) TestGoroutineLeakInExplainAnalyzeForProjection(c *C) {
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/mockErrorsInNextOfProjection", `return(true)`), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/mockErrorsInCloseOfProjection", `return(true)`), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/mockErrorsInNextOfProjection"), IsNil)
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/mockErrorsInCloseOfProjection"), IsNil)
+
+	}()
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int)")
+	tk.MustExec("insert into t values(1),(2),(3),(4)")
+	tk.MustExec("set @@tidb_projection_concurrency = 4")
+	err := tk.QueryToErr("explain analyze select a*200 from t")
+	c.Assert(err.Error(), Equals, "goroutines leak in next() of projection, An error in close() of projection")
 }
 
 func (s *testSuite1) TestExplainAnalyzeMemory(c *C) {

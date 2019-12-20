@@ -16,6 +16,7 @@ package executor
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/failpoint"
 	"sync"
 	"sync/atomic"
 
@@ -209,7 +210,11 @@ func (e *ProjectionExec) parallelExecute(ctx context.Context, chk *chunk.Chunk) 
 	if err != nil {
 		return err
 	}
-
+	failpoint.Inject("mockErrorsInNextOfProjection", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return(errors.New("goroutines leak in next() of projection"))
+		}
+	})
 	mSize := output.chk.MemoryUsage()
 	chk.SwapColumns(output.chk)
 	e.memTracker.Consume(output.chk.MemoryUsage() - mSize)
@@ -313,7 +318,13 @@ func (e *ProjectionExec) Close() error {
 			e.runtimeStats.SetConcurrencyInfo("Concurrency", int(e.numWorkers))
 		}
 	}
-	return e.baseExecutor.Close()
+	err := e.baseExecutor.Close()
+	failpoint.Inject("mockErrorsInCloseOfProjection", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return(errors.New("An error in close() of projection"))
+		}
+	})
+	return err
 }
 
 type projectionInputFetcher struct {
