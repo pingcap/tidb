@@ -98,8 +98,7 @@ func init() {
 			panic(fmt.Sprintf("get inspection_schema table id failed, unknown system table `%v`", tableInfo.Name.O))
 		}
 		// Reuse information_schema table id serial number
-		tid ^= autoid.InformationSchemaDBID
-		tableInfo.ID = tid | autoid.InspectionSchemaDBID
+		tableInfo.ID = tid - autoid.InformationSchemaDBID + autoid.InspectionSchemaDBID
 		for i, c := range tableInfo.Columns {
 			c.ID = int64(i) + 1
 		}
