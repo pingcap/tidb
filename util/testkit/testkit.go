@@ -258,6 +258,12 @@ func (tk *TestKit) ExecToErr(sql string, args ...interface{}) error {
 	return err
 }
 
+func (tk *TestKit) MustGetErr(sql string, errStr string) {
+	err := tk.ExecToErr(sql)
+	tk.c.Assert(err, check.NotNil)
+	tk.c.Assert(err.Error(), check.Equals, errStr)
+}
+
 // MustGetErrCode executes a sql statement and assert it's error code.
 func (tk *TestKit) MustGetErrCode(sql string, errCode int) {
 	_, err := tk.Exec(sql)

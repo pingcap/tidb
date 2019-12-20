@@ -398,9 +398,9 @@ func (ts *testSuite) TestHiddenColumn(c *C) {
 	tk.MustExec("DROP DATABASE IF EXISTS test_hidden;")
 	tk.MustExec("CREATE DATABASE test_hidden;")
 	tk.MustExec("USE test_hidden;")
-	tk.MustExec("CREATE TABLE hidden (a int primary key, b int as (a+1), c int, d int as (c+1), e int, f tinyint as (a+1));")
-	tk.MustExec("insert into hidden values (1, default, 3, default, 5, default);")
-	tb, err := ts.dom.InfoSchema().TableByName(model.NewCIStr("test_hidden"), model.NewCIStr("hidden"))
+	tk.MustExec("CREATE TABLE t (a int primary key, b int as (a+1), c int, d int as (c+1), e int, f tinyint as (a+1));")
+	tk.MustExec("insert into t values (1, default, 3, default, 5, default);")
+	tb, err := ts.dom.InfoSchema().TableByName(model.NewCIStr("test_hidden"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 	colInfo := tb.Meta().Columns
 	// Set column b, d, f to hidden
@@ -427,65 +427,97 @@ func (ts *testSuite) TestHiddenColumn(c *C) {
 	c.Assert(table.FindCol(hiddenCols, "d"), NotNil)
 	c.Assert(table.FindCol(hiddenCols, "e"), IsNil)
 
-	// Can't select with b and d and f
-	tk.MustQuery("select * from hidden;").Check(testkit.Rows("1 3 5"))
-	_, err = tk.Exec("select b from hidden;")
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[planner:1054]Unknown column 'b' in 'field list'")
-	_, err = tk.Exec("select d from hidden;")
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[planner:1054]Unknown column 'd' in 'field list'")
-	err = tk.QueryToErr("select a, c, e from hidden;")
-	c.Assert(err, IsNil)
-	_, err = tk.Exec("select d from hidden;")
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[planner:1054]Unknown column 'd' in 'field list'")
-	_, err = tk.Exec("select * from hidden where b>1;")
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[planner:1054]Unknown column 'b' in 'where clause'")
-	_, err = tk.Exec("select * from hidden order by b;")
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[planner:1054]Unknown column 'b' in 'order clause'")
-	_, err = tk.Exec("select * from hidden group by b;")
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[planner:1054]Unknown column 'b' in 'group statement'")
-
-	// Can't update with b and d
-	_, err = tk.Exec("update hidden set d=1;")
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[planner:1054]Unknown column 'd' in 'field_list'")
-	_, err = tk.Exec("update hidden set a=1 where b=1;")
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[planner:1054]Unknown column 'b' in 'where clause'")
-	_, err = tk.Exec("update hidden set a=1 where c=2 order by b;")
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[planner:1054]Unknown column 'b' in 'order clause'")
-	tk.MustExec("update hidden set a = 5;")
-	colInfo[5].Hidden = false
-	tc.VisibleColumns = nil
-	tk.MustQuery("select * from hidden;").Check(testkit.Rows("5 3 5 6"))
-	colInfo[5].Hidden = true
-	tc.VisibleColumns = nil
-
-	// Can't delete with b and d
-	_, err = tk.Exec("delete from hidden where b=1;")
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[planner:1054]Unknown column 'b' in 'where clause'")
-	_, err = tk.Exec("delete from hidden order by d;")
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[planner:1054]Unknown column 'd' in 'order clause'")
-
-	// Can't drop column b and d
-	_, err = tk.Exec("ALTER TABLE hidden DROP COLUMN b")
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[ddl:1091]column b doesn't exist")
-	_, err = tk.Exec("ALTER TABLE hidden DROP COLUMN d")
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[ddl:1091]column d doesn't exist")
-
 	// Test show create table
-	tk.MustQuery("show create table hidden;").Check(testkit.Rows(
-		"hidden CREATE TABLE `hidden` (\n" +
+	tk.MustQuery("show create table t;").Check(testkit.Rows(
+		"t CREATE TABLE `t` (\n" +
+			"  `a` int(11) NOT NULL,\n" +
+			"  `c` int(11) DEFAULT NULL,\n" +
+			"  `e` int(11) DEFAULT NULL,\n" +
+			"  PRIMARY KEY (`a`)\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+
+	// `SELECT` statement
+	tk.MustQuery("select * from t;").Check(testkit.Rows("1 3 5"))
+	tk.MustQuery("select a, c, e from t;").Check(testkit.Rows("1 3 5"))
+
+	// Can't use hidden columns in `SELECT` statement
+	tk.MustGetErr("select b from t;", "[planner:1054]Unknown column 'b' in 'field list'")
+	tk.MustGetErr("select b+1 from t;", "[planner:1054]Unknown column 'b' in 'field list'")
+	tk.MustGetErr("select b, c from t;", "[planner:1054]Unknown column 'b' in 'field list'")
+	tk.MustGetErr("select a, d from t;", "[planner:1054]Unknown column 'd' in 'field list'")
+	tk.MustGetErr("select d, b from t;", "[planner:1054]Unknown column 'd' in 'field list'")
+	tk.MustGetErr("select * from t where b > 1;", "[planner:1054]Unknown column 'b' in 'where clause'")
+	tk.MustGetErr("select * from t order by b;", "[planner:1054]Unknown column 'b' in 'order clause'")
+	tk.MustGetErr("select * from t group by b;", "[planner:1054]Unknown column 'b' in 'group statement'")
+
+	// `INSERT` statement
+	//tk.MustExec("delete from t;")
+	//tk.MustExec("insert into t values (1 3 5);")
+	//tk.MustQuery("select * from t;").Check(testkit.Rows("1 3 5"))
+
+	// Can't use hidden columns in `INSERT` statement
+	// insert into ... values ...
+	tk.MustGetErr("insert into t values (1, 2, 3, 4, 5, 6);", "[planner:1136]Column count doesn't match value count at row 1")
+	tk.MustGetErr("insert into t(b) values (2)", "[planner:1054]Unknown column 'b' in 'field list'")
+	tk.MustGetErr("insert into t(b, c) values (2, 3);", "[planner:1054]Unknown column 'b' in 'field list'")
+	tk.MustGetErr("insert into t(a, d) values (1, 4);", "[planner:1054]Unknown column 'd' in 'field list'")
+	tk.MustGetErr("insert into t(d, b) values (4, 2);", "[planner:1054]Unknown column 'd' in 'field list'")
+	tk.MustGetErr("insert into t(a) values (b);", "[planner:1054]Unknown column 'b' in 'field list'")
+	tk.MustGetErr("insert into t(a) values (d+1);", "[planner:1054]Unknown column 'd' in 'field list'")
+	// insert into ... set ...
+	tk.MustGetErr("insert into t set b = 2;", "[planner:1054]Unknown column 'b' in 'field list'")
+	tk.MustGetErr("insert into t set b = 2, c = 3;", "[planner:1054]Unknown column 'b' in 'field list'")
+	tk.MustGetErr("insert into t set a = 1, d = 4;", "[planner:1054]Unknown column 'd' in 'field list'")
+	tk.MustGetErr("insert into t set d = 4, b = 2;", "[planner:1054]Unknown column 'd' in 'field list'")
+	tk.MustGetErr("insert into t set a = b;", "[planner:1054]Unknown column 'b' in 'field list'")
+	tk.MustGetErr("insert into t set a = d + 1;", "[planner:1054]Unknown column 'd' in 'field list'")
+	// insert into ... on duplicated key update ...
+	tk.MustGetErr("insert into t set a = 1 on duplicate key update b = 2;", "[planner:1054]Unknown column 'b' in 'field list'")
+	tk.MustGetErr("insert into t set a = 1 on duplicate key update b = 2, c = 3;", "[planner:1054]Unknown column 'b' in 'field list'")
+	tk.MustGetErr("insert into t set a = 1 on duplicate key update c = 3, d = 4;", "[planner:1054]Unknown column 'd' in 'field list'")
+	tk.MustGetErr("insert into t set a = 1 on duplicate key update d = 4, b = 2;", "[planner:1054]Unknown column 'd' in 'field list'")
+	tk.MustGetErr("insert into t set a = 1 on duplicate key update c = b;", "[planner:1054]Unknown column 'b' in 'field list'")
+	tk.MustGetErr("insert into t set a = 1 on duplicate key update c = d + 1;", "[planner:1054]Unknown column 'd' in 'field list'")
+	// replace into ... set ...
+	tk.MustGetErr("replace into t set a = 1, b = 2;", "[planner:1054]Unknown column 'b' in 'field list'")
+	tk.MustGetErr("replace into t set a = 1, b = 2, c = 3;", "[planner:1054]Unknown column 'b' in 'field list'")
+	tk.MustGetErr("replace into t set a = 1, d = 4;", "[planner:1054]Unknown column 'd' in 'field list'")
+	tk.MustGetErr("replace into t set a = 1, d = 4, b = 2;", "[planner:1054]Unknown column 'd' in 'field list'")
+	tk.MustGetErr("replace into t set a = 1, c = b;", "[planner:1054]Unknown column 'b' in 'field list'")
+	tk.MustGetErr("replace into t set a = 1, c = d + 1;", "[planner:1054]Unknown column 'd' in 'field list'")
+	// insert into ... select ...
+	tk.MustExec("create table t1(a int, b int, c int, d int);")
+	tk.MustGetErr("insert into t1 select b from t;", "[planner:1054]Unknown column 'b' in 'field list'")
+	tk.MustGetErr("insert into t1 select b+1 from t;", "[planner:1054]Unknown column 'b' in 'field list'")
+	tk.MustGetErr("insert into t1 select b, c from t;", "[planner:1054]Unknown column 'b' in 'field list'")
+	tk.MustGetErr("insert into t1 select a, d from t;", "[planner:1054]Unknown column 'd' in 'field list'")
+	tk.MustGetErr("insert into t1 select d, b from t;", "[planner:1054]Unknown column 'd' in 'field list'")
+	tk.MustGetErr("insert into t1 select a from t where b > 1;", "[planner:1054]Unknown column 'b' in 'where clause'")
+	tk.MustGetErr("insert into t1 select a from t order by b;", "[planner:1054]Unknown column 'b' in 'order clause'")
+	tk.MustGetErr("insert into t1 select a from t group by b;", "[planner:1054]Unknown column 'b' in 'group statement'")
+	tk.MustExec("drop table t1")
+
+	// `UPDATE` statement
+	tk.MustGetErr("update t set b = 2;", "[planner:1054]Unknown column 'b' in 'field list'")
+	tk.MustGetErr("update t set b = 2, c = 3;", "[planner:1054]Unknown column 'b' in 'field list'")
+	tk.MustGetErr("update t set a = 1, d = 4;", "[planner:1054]Unknown column 'd' in 'field list'")
+
+	// FIXME: This sql return unknown column 'd' in MySQL
+	tk.MustGetErr("update t set d = 4, b = 2;", "[planner:1054]Unknown column 'b' in 'field list'")
+
+	tk.MustGetErr("update t set a = b;", "[planner:1054]Unknown column 'b' in 'field list'")
+	tk.MustGetErr("update t set a = d + 1;", "[planner:1054]Unknown column 'd' in 'field list'")
+	tk.MustGetErr("update t set a=1 where b=1;", "[planner:1054]Unknown column 'b' in 'where clause'")
+	tk.MustGetErr("update t set a=1 where c=3 order by b;", "[planner:1054]Unknown column 'b' in 'order clause'")
+
+	// `DELETE` statement
+	tk.MustGetErr("delete from t where b = 1;", "[planner:1054]Unknown column 'b' in 'where clause'")
+	tk.MustGetErr("delete from t order by d = 1;", "[planner:1054]Unknown column 'd' in 'order clause'")
+
+	// `DROP COLUMN` statement
+	tk.MustGetErr("ALTER TABLE t DROP COLUMN b;", "[ddl:1091]column b doesn't exist")
+	tk.MustQuery("show create table t;").Check(testkit.Rows(
+		"t CREATE TABLE `t` (\n" +
 			"  `a` int(11) NOT NULL,\n" +
 			"  `c` int(11) DEFAULT NULL,\n" +
 			"  `e` int(11) DEFAULT NULL,\n" +

@@ -1885,8 +1885,11 @@ func (p *Insert) resolveOnDuplicate(onDup []*ast.Assignment, tblInfo *model.Tabl
 			return nil, ErrUnknownColumn.GenWithStackByArgs(assign.Column.OrigColName(), "field list")
 		}
 
-		// Check whether the column to be updated is the generated column.
 		column := colMap[assign.Column.Name.L]
+		if column.Hidden {
+			return nil, ErrUnknownColumn.GenWithStackByArgs(column.Name, "field list")
+		}
+		// Check whether the column to be updated is the generated column.
 		defaultExpr := extractDefaultExpr(assign.Expr)
 		if defaultExpr != nil {
 			defaultExpr.Name = assign.Column
@@ -1982,6 +1985,7 @@ func (b *PlanBuilder) buildSetValuesOfInsert(ctx context.Context, insert *ast.In
 			}
 			return ErrBadGeneratedColumn.GenWithStackByArgs(assign.Column.Name.O, tableInfo.Name.O)
 		}
+		b.curClause = fieldList
 		expr, _, err := b.rewriteWithPreprocess(ctx, assign.Expr, mockTablePlan, nil, nil, true, checkRefColumn)
 		if err != nil {
 			return err
@@ -2054,6 +2058,7 @@ func (b *PlanBuilder) buildValuesListOfInsert(ctx context.Context, insert *ast.I
 					RetType: &x.Type,
 				}
 			default:
+				b.curClause = fieldList
 				expr, _, err = b.rewriteWithPreprocess(ctx, valueItem, mockTablePlan, nil, nil, true, checkRefColumn)
 			}
 			if err != nil {
