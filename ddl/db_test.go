@@ -520,8 +520,8 @@ func testCancelDropIndex(c *C, store kv.Storage, d ddl.DDL, idxName, addIdxSQL, 
 	}{
 		// model.JobStateNone means the jobs is canceled before the first run.
 		{true, model.JobStateNone, model.StateNone, true},
-		{false, model.JobStateRunning, model.StateWriteOnly, true},
-		{false, model.JobStateRunning, model.StateDeleteOnly, false},
+		{false, model.JobStateRunning, model.StateWriteOnly, false},
+		{true, model.JobStateRunning, model.StateDeleteOnly, false},
 		{true, model.JobStateRunning, model.StateDeleteReorganization, false},
 	}
 	var checkErr error

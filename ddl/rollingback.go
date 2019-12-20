@@ -59,6 +59,12 @@ func convertAddIdxJob2RollbackJob(t *meta.Meta, job *model.Job, tblInfo *model.T
 	// So the next state is delete only state.
 	originalState := indexInfo.State
 	indexInfo.State = model.StateDeleteOnly
+	// change dependent hidden columns if necessary
+	for _, indexCol := range indexInfo.Columns {
+		if tblInfo.Columns[indexCol.Offset].Hidden {
+			tblInfo.Columns[indexCol.Offset].State = model.StateDeleteOnly
+		}
+	}
 	job.SchemaState = model.StateDeleteOnly
 	ver, err1 := updateVersionAndTableInfo(t, job, tblInfo, originalState != indexInfo.State)
 	if err1 != nil {
@@ -150,12 +156,12 @@ func rollingbackDropIndex(t *meta.Meta, job *model.Job) (ver int64, err error) {
 
 	originalState := indexInfo.State
 	switch indexInfo.State {
-	case model.StateDeleteOnly, model.StateDeleteReorganization, model.StateNone:
+	case model.StateWriteOnly, model.StateDeleteOnly, model.StateDeleteReorganization, model.StateNone:
 		// We can not rollback now, so just continue to drop index.
 		// Normally won't fetch here, because there is check when cancel ddl jobs. see function: isJobRollbackable.
 		job.State = model.JobStateRunning
 		return ver, nil
-	case model.StatePublic, model.StateWriteOnly:
+	case model.StatePublic:
 		job.State = model.JobStateRollbackDone
 		indexInfo.State = model.StatePublic
 	default:
