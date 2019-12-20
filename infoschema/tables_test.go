@@ -90,7 +90,7 @@ type testClusterTableSuite struct {
 func (s *testClusterTableSuite) SetUpSuite(c *C) {
 	s.testTableSuite.SetUpSuite(c)
 	s.rpcserver, s.listenAddr = s.setUpRPCService(c, ":0")
-	s.httpServer, s.mockAddr = setUpMockPDHTTPSercer()
+	s.httpServer, s.mockAddr = s.setUpMockPDHTTPServer()
 }
 
 func (s *testClusterTableSuite) setUpRPCService(c *C, addr string) (*grpc.Server, string) {
@@ -105,7 +105,7 @@ func (s *testClusterTableSuite) setUpRPCService(c *C, addr string) (*grpc.Server
 		Command: mysql.ComQuery,
 	}
 	srv := server.NewRPCServer(config.GetGlobalConfig(), s.dom, sm)
-	addr = fmt.Sprintf(":%d", lis.Addr().(*net.TCPAddr).Port)
+	addr = fmt.Sprintf("127.0.0.1:%d", lis.Addr().(*net.TCPAddr).Port)
 	go func() {
 		err = srv.Serve(lis)
 		c.Assert(err, IsNil)
@@ -113,7 +113,7 @@ func (s *testClusterTableSuite) setUpRPCService(c *C, addr string) (*grpc.Server
 	return srv, addr
 }
 
-func setUpMockPDHTTPSercer() (*httptest.Server, string) {
+func (s *testClusterTableSuite) setUpMockPDHTTPServer() (*httptest.Server, string) {
 	// mock PD http server
 	router := mux.NewRouter()
 	server := httptest.NewServer(router)
