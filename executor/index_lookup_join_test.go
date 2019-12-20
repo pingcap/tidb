@@ -197,6 +197,7 @@ type testSuite9 struct {
 
 func (s *testSuite9) SetUpSuite(c *C) {
 	var err error
+	s.baseTestSuite.SetUpSuite(c)
 	s.testData, err = testutil.LoadTestSuiteData("testdata", "index_join_test")
 	c.Assert(err, IsNil)
 }
@@ -205,30 +206,24 @@ func (s *testSuite9) TearDownSuite(c *C) {
 	c.Assert(s.testData.GenerateOutputIfNeeded(), IsNil)
 }
 
-func (s *testSuite9) SetUpTest(c *C) {
-	var err error
-	s.store, s.domain, err = newStoreWithBootstrap()
-	c.Assert(err, IsNil)
-}
-
 func (s testSuite9) TestIndexJoinHavingExprInInnerJoinKeys(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("drop table if exists t1, t2")
 	tk.MustExec(`create table t1(
-						v_int int, 
-						v_float float, 
+						v_int int,
+						v_float float,
 						v_decimal decimal(40, 10));`)
 	tk.MustExec(`create table t2(
-						v_int int, 
-						v_float float, 
-						v_decimal decimal(40, 10), 
+						v_int int,
+						v_float float,
+						v_decimal decimal(40, 10),
 						key(v_int),
 						key(v_float),
 						key(v_decimal));`)
-	tk.MustExec(`insert into t1 values 
+	tk.MustExec(`insert into t1 values
 		(1, 1.0, 1),
 		(2, 2.0, 2);`)
-	tk.MustExec(`insert into t2 values 
+	tk.MustExec(`insert into t2 values
 		(1, 1.0, 1),
 		(2, 2.0, 2);`)
 
