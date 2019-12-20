@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/diagnosticspb"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/distsql"
@@ -43,7 +44,6 @@ import (
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/execdetails"
@@ -1282,24 +1282,31 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 			return &ClusterReaderExec{
 				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
 				retriever: &clusterServerInfoRetriever{
-					extractor:    v.Extractor.(*plannercore.ClusterTableExtractor),
-					serverInfoTP: diagnosticspb.ServerInfoType_LoadInfo,
+					extractor:      v.Extractor.(*plannercore.ClusterTableExtractor),
+					serverInfoType: diagnosticspb.ServerInfoType_LoadInfo,
 				},
 			}
 		case strings.ToLower(infoschema.TableClusterHardware):
 			return &ClusterReaderExec{
 				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
 				retriever: &clusterServerInfoRetriever{
-					extractor:    v.Extractor.(*plannercore.ClusterTableExtractor),
-					serverInfoTP: diagnosticspb.ServerInfoType_HardwareInfo,
+					extractor:      v.Extractor.(*plannercore.ClusterTableExtractor),
+					serverInfoType: diagnosticspb.ServerInfoType_HardwareInfo,
 				},
 			}
 		case strings.ToLower(infoschema.TableClusterSystemInfo):
 			return &ClusterReaderExec{
 				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
 				retriever: &clusterServerInfoRetriever{
-					extractor:    v.Extractor.(*plannercore.ClusterTableExtractor),
-					serverInfoTP: diagnosticspb.ServerInfoType_SystemInfo,
+					extractor:      v.Extractor.(*plannercore.ClusterTableExtractor),
+					serverInfoType: diagnosticspb.ServerInfoType_SystemInfo,
+				},
+			}
+		case strings.ToLower(infoschema.TableClusterLog):
+			return &ClusterReaderExec{
+				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
+				retriever: &clusterLogRetriever{
+					extractor: v.Extractor.(*plannercore.ClusterLogTableExtractor),
 				},
 			}
 		}

@@ -39,10 +39,14 @@ type MetricRetriever struct {
 	table      *model.TableInfo
 	tblDef     *metricschema.MetricTableDef
 	outputCols []*model.ColumnInfo
-	done       bool
+	retrieved  bool
 }
 
 func (e *MetricRetriever) retrieve(ctx context.Context, sctx sessionctx.Context) (fullRows [][]types.Datum, err error) {
+	if e.retrieved {
+		return nil, nil
+	}
+	e.retrieved = true
 	tblDef, err := metricschema.GetMetricTableDef(e.table.Name.L)
 	if err != nil {
 		return nil, err
