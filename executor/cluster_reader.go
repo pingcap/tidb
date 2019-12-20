@@ -85,20 +85,6 @@ type clusterConfigRetriever struct {
 	extractor *plannercore.ClusterTableExtractor
 }
 
-func parseFailpointInjectServerInfo(s string) []infoschema.ServerInfo {
-	var serversInfo []infoschema.ServerInfo
-	servers := strings.Split(s, ";")
-	for _, server := range servers {
-		parts := strings.Split(server, ",")
-		serversInfo = append(serversInfo, infoschema.ServerInfo{
-			ServerType: parts[0],
-			Address:    parts[1],
-			StatusAddr: parts[2],
-		})
-	}
-	return serversInfo
-}
-
 // retrieve implements the clusterRetriever interface
 func (e *clusterConfigRetriever) retrieve(ctx sessionctx.Context) ([][]types.Datum, error) {
 	if e.extractor.SkipRequest || e.retrieved {
@@ -111,14 +97,7 @@ func (e *clusterConfigRetriever) retrieve(ctx sessionctx.Context) ([][]types.Dat
 		rows [][]types.Datum
 		err  error
 	}
-	serversInfo, err := infoschema.GetClusterServerInfo(ctx)
-	failpoint.Inject("mockClusterConfigServerInfo", func(val failpoint.Value) {
-		if s := val.(string); len(s) > 0 {
-			serversInfo = parseFailpointInjectServerInfo(s)
-			// erase the error
-			err = nil
-		}
-	})
+	serversInfo, err := getClusterServerInfoWithFilter(ctx, "mockClusterServerInfo", e.extractor.NodeTypes, e.extractor.Addresses)
 	if err != nil {
 		return nil, err
 	}
@@ -221,8 +200,8 @@ func (e *clusterConfigRetriever) retrieve(ctx sessionctx.Context) ([][]types.Dat
 }
 
 type clusterServerInfoRetriever struct {
-	extractor    *plannercore.ClusterTableExtractor
-	serverInfoTP diagnosticspb.ServerInfoType
+	extractor      *plannercore.ClusterTableExtractor
+	serverInfoType diagnosticspb.ServerInfoType
 }
 
 // retrieve implements the clusterRetriever interface
@@ -230,11 +209,9 @@ func (e *clusterServerInfoRetriever) retrieve(ctx sessionctx.Context) ([][]types
 	if e.extractor.SkipRequest {
 		return nil, nil
 	}
-	return e.dataForClusterInfo(ctx, e.serverInfoTP)
-}
 
-func (e *clusterServerInfoRetriever) dataForClusterInfo(ctx sessionctx.Context, infoTp diagnosticspb.ServerInfoType) ([][]types.Datum, error) {
-	serversInfo, err := getClusterServerInfoWithFilter(ctx, e.extractor.NodeTypes, e.extractor.Addresses)
+	infoTp := e.serverInfoType
+	serversInfo, err := getClusterServerInfoWithFilter(ctx, "mockClusterServerInfo", e.extractor.NodeTypes, e.extractor.Addresses)
 	if err != nil {
 		return nil, err
 	}
@@ -342,10 +319,9 @@ func getServerInfoByGRPC(address string, tp diagnosticspb.ServerInfoType) ([]*di
 	return r.Items, nil
 }
 
-func getClusterServerInfoWithFilter(ctx sessionctx.Context, nodeTypes, addresses set.StringSet) ([]infoschema.ServerInfo, error) {
-	isFailpointTestMode := false
+func getClusterServerInfoWithFilter(ctx sessionctx.Context, fpName string, nodeTypes, addresses set.StringSet) ([]infoschema.ServerInfo, error) {
 	serversInfo, err := infoschema.GetClusterServerInfo(ctx)
-	failpoint.Inject("mockClusterServerInfo", func(val failpoint.Value) {
+	failpoint.Inject(fpName, func(val failpoint.Value) {
 		if s := val.(string); len(s) > 0 {
 			serversInfo = serversInfo[:0]
 			servers := strings.Split(s, ";")
@@ -359,7 +335,6 @@ func getClusterServerInfoWithFilter(ctx sessionctx.Context, nodeTypes, addresses
 			}
 			// erase the error
 			err = nil
-			isFailpointTestMode = true
 		}
 	})
 	if err != nil {
@@ -430,14 +405,11 @@ func (h *logResponseHeap) Pop() interface{} {
 
 func (e *clusterLogRetriever) startRetrieving(ctx sessionctx.Context) ([]chan logStreamResult, error) {
 	isFailpointTestMode := false
-	serversInfo, err := infoschema.GetClusterServerInfo(ctx)
-	failpoint.Inject("mockClusterLogServerInfo", func(val failpoint.Value) {
-		if s := val.(string); len(s) > 0 {
-			serversInfo = parseFailpointInjectServerInfo(s)
-			// erase the error
-			err = nil
-			isFailpointTestMode = true
-		}
+	addresses := e.extractor.Addresses
+	nodeTypes := e.extractor.NodeTypes
+	serversInfo, err := getClusterServerInfoWithFilter(ctx, "mockClusterLogServerInfo", nodeTypes, addresses)
+	failpoint.Inject("mockClusterLogServerInfo", func() {
+		isFailpointTestMode = true
 	})
 	if err != nil {
 		return nil, err
@@ -459,8 +431,6 @@ func (e *clusterLogRetriever) startRetrieving(ctx sessionctx.Context) ([]chan lo
 		levels = append(levels, sysutil.ParseLogLevel(l))
 	}
 
-	addresses := e.extractor.Addresses
-	nodeTypes := e.extractor.NodeTypes
 	startTime := e.extractor.StartTime
 	endTime := e.extractor.EndTime
 	patterns := e.extractor.Patterns
