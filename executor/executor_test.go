@@ -79,7 +79,8 @@ func TestT(t *testing.T) {
 	TestingT(t)
 }
 
-var _ = Suite(&testSuite{})
+var _ = Suite(&testSuite{&baseTestSuite{}})
+var _ = Suite(&testSuite3{&baseTestSuite{}})
 var _ = Suite(&testContextOptionSuite{})
 var _ = Suite(&testBypassSuite{})
 var _ = Suite(&testUpdateSuite{})
@@ -87,7 +88,9 @@ var _ = Suite(&testOOMSuite{})
 var _ = Suite(&testPointGetSuite{})
 var _ = Suite(&testFlushSuite{})
 
-type testSuite struct {
+type testSuite struct{ *baseTestSuite }
+
+type baseTestSuite struct {
 	cluster   *mocktikv.Cluster
 	mvccStore mocktikv.MVCCStore
 	store     kv.Storage
@@ -100,7 +103,7 @@ type testSuite struct {
 
 var mockTikv = flag.Bool("mockTikv", true, "use mock tikv store in executor test")
 
-func (s *testSuite) SetUpSuite(c *C) {
+func (s *baseTestSuite) SetUpSuite(c *C) {
 	testleak.BeforeTest()
 	s.autoIDStep = autoid.GetStep()
 	autoid.SetStep(5000)
@@ -126,7 +129,7 @@ func (s *testSuite) SetUpSuite(c *C) {
 	s.domain = d
 }
 
-func (s *testSuite) TearDownSuite(c *C) {
+func (s *baseTestSuite) TearDownSuite(c *C) {
 	s.domain.Close()
 	s.store.Close()
 	autoid.SetStep(s.autoIDStep)
@@ -327,7 +330,7 @@ func (s *testSuite) TestAdmin(c *C) {
 	c.Assert(historyJobs, DeepEquals, historyJobs2)
 }
 
-func (s *testSuite) fillData(tk *testkit.TestKit, table string) {
+func (s *baseTestSuite) fillData(tk *testkit.TestKit, table string) {
 	tk.MustExec("use test")
 	tk.MustExec(fmt.Sprintf("create table %s(id int not null default 1, name varchar(255), PRIMARY KEY(id));", table))
 
@@ -1933,6 +1936,24 @@ func (s *testSuite) TestPointGetRepeatableRead(c *C) {
 	c.Assert(failpoint.Disable(step1), IsNil)
 	tk2.MustExec("update point_get set b = 2, c = 2 where a = 1")
 	c.Assert(failpoint.Disable(step2), IsNil)
+}
+
+type testSuite3 struct {
+	*baseTestSuite
+}
+
+func (s *testSuite3) TearDownTest(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	r := tk.MustQuery("show full tables")
+	for _, tb := range r.Rows() {
+		tableName := tb[0]
+		if tb[1] == "VIEW" {
+			tk.MustExec(fmt.Sprintf("drop view %v", tableName))
+		} else {
+			tk.MustExec(fmt.Sprintf("drop table %v", tableName))
+		}
+	}
 }
 
 func (s *testSuite) TestSplitRegionTimeout(c *C) {
