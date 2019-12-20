@@ -154,7 +154,7 @@ type PhysicalIndexMergeReader struct {
 	PartialPlans [][]PhysicalPlan
 	// TablePlans flats the tablePlan to construct executor pb.
 	TablePlans []PhysicalPlan
-	// partialPlans are the partial plans and every one in it is a PhysicalIndexScan or a PhysicalTableScan.
+	// partialPlans are the partial plans that have not been flatted. The type of each element is permitted PhysicalIndexScan or PhysicalTableScan.
 	partialPlans []PhysicalPlan
 	// tablePlan is a PhysicalTableScan to get the table tuples. Current, it must be not nil.
 	tablePlan PhysicalPlan

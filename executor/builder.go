@@ -2282,10 +2282,6 @@ func buildNoRangeIndexMergeReader(b *executorBuilder, v *plannercore.PhysicalInd
 			keepOrders = append(keepOrders, is.KeepOrder)
 			descs = append(descs, is.Desc)
 			tempReq.OutputOffsets = []uint32{uint32(len(is.Index.Columns))}
-			collectIndex := false
-			tempReq.CollectRangeCounts = &collectIndex
-			partialReqs = append(partialReqs, tempReq)
-			partialStreamings = append(partialStreamings, tempStreaming)
 			indexes = append(indexes, is.Index)
 		} else {
 			ts := v.PartialPlans[i][0].(*plannercore.PhysicalTableScan)
@@ -2294,12 +2290,12 @@ func buildNoRangeIndexMergeReader(b *executorBuilder, v *plannercore.PhysicalInd
 			for i := range ts.Columns {
 				tempReq.OutputOffsets = append(tempReq.OutputOffsets, uint32(i))
 			}
-			collectTable := false
-			tempReq.CollectRangeCounts = &collectTable
-			partialReqs = append(partialReqs, tempReq)
-			partialStreamings = append(partialStreamings, tempStreaming)
 			indexes = append(indexes, nil)
 		}
+		collect := false
+		tempReq.CollectRangeCounts = &collect
+		partialReqs = append(partialReqs, tempReq)
+		partialStreamings = append(partialStreamings, tempStreaming)
 	}
 	tableReq, tableStreaming, err := b.constructDAGReq(v.TablePlans)
 	if err != nil {
@@ -2338,7 +2334,7 @@ func buildNoRangeIndexMergeReader(b *executorBuilder, v *plannercore.PhysicalInd
 func (b *executorBuilder) buildIndexMergeReader(v *plannercore.PhysicalIndexMergeReader) *IndexMergeReaderExecutor {
 	ret, err := buildNoRangeIndexMergeReader(b, v)
 	if err != nil {
-		b.err = errors.Trace(err)
+		b.err = err
 		return nil
 	}
 	ret.ranges = make([][]*ranger.Range, 0, len(v.PartialPlans))
