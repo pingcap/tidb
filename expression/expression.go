@@ -186,6 +186,16 @@ func IsEQCondFromIn(expr Expression) bool {
 	return len(cols) > 0
 }
 
+func handleOverflowOnSelection(sc *stmtctx.StatementContext, val int64, err error) (int64, error) {
+	// ignore overflow errors when evaluating selection conditions:
+	//		INSERT INTO t VALUES ("999999999999999999");
+	//		SELECT * FROM t WHERE v;
+	if sc.InSelectStmt && err != nil && types.ErrOverflow.Equal(err) {
+		return -1, nil
+	}
+	return val, err
+}
+
 // EvalBool evaluates expression list to a boolean value. The first returned value
 // indicates bool result of the expression list, the second returned value indicates
 // whether the result of the expression list is null, it can only be true when the
@@ -211,6 +221,7 @@ func EvalBool(ctx sessionctx.Context, exprList CNFExprs, row chunk.Row) (bool, b
 		}
 
 		i, err := data.ToBool(ctx.GetSessionVars().StmtCtx)
+		i, err = handleOverflowOnSelection(ctx.GetSessionVars().StmtCtx, i, err)
 		if err != nil {
 			return false, false, err
 		}
@@ -402,6 +413,7 @@ func toBool(sc *stmtctx.StatementContext, eType types.EvalType, buf *chunk.Colum
 				isZero[i] = -1
 			} else {
 				iVal, err := types.StrToInt(sc, buf.GetString(i))
+				iVal, err = handleOverflowOnSelection(sc, iVal, err)
 				if err != nil {
 					return err
 				}
