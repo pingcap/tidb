@@ -295,6 +295,9 @@ const (
 	// TiDBEnableStmtSummary indicates whether the statement summary is enabled.
 	TiDBEnableStmtSummary = "tidb_enable_stmt_summary"
 
+	// TiDBStmtSummaryRefreshInterval indicates the refresh interval in seconds for each statement summary.
+	TiDBStmtSummaryRefreshInterval = "tidb_stmt_summary_refresh_interval"
+
 	// TiDBStoreLimit indicates the limit of sending request to a store, 0 means without limit.
 	TiDBStoreLimit = "tidb_store_limit"
 )
@@ -362,7 +365,8 @@ const (
 	DefTiDBExpensiveQueryTimeThreshold = 60  // 60s
 	DefWaitSplitRegionTimeout          = 300 // 300s
 	DefTiDBAllowRemoveAutoInc          = false
-	DefInnodbLockWaitTimeout           = 50 // 50s
+	DefTiDBStmtSummaryRefreshInterval  = 1800 // 1800s
+	DefInnodbLockWaitTimeout           = 50   // 50s
 	DefTiDBStoreLimit                  = 0
 )
 

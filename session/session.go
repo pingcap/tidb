@@ -1715,10 +1715,12 @@ var builtinGlobalVariable = []string{
 	variable.TiDBRetryLimit,
 	variable.TiDBDisableTxnAutoRetry,
 	variable.TiDBEnableWindowFunction,
+	variable.TiDBEnableTablePartition,
 	variable.TiDBEnableFastAnalyze,
 	variable.TiDBExpensiveQueryTimeThreshold,
 	variable.TiDBTxnMode,
 	variable.TiDBEnableStmtSummary,
+	variable.TiDBStmtSummaryRefreshInterval,
 	variable.TiDBMaxDeltaSchemaCount,
 	variable.TiDBStoreLimit,
 }

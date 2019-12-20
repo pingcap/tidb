@@ -64,14 +64,14 @@ func (s *testTableSuite) TestPerfSchemaTables(c *C) {
 	tk.MustQuery("select * from events_stages_history_long").Check(testkit.Rows())
 }
 
-// Test events_statements_summary_by_digest
+// Test events_statements_summary_by_digest.
 func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 
 	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int, b varchar(10))")
+	tk.MustExec("create table t(a int, b varchar(10), key k(a))")
 
-	// Statement summary is disabled by default
+	// Statement summary is disabled by default.
 	tk.MustQuery("select @@global.tidb_enable_stmt_summary").Check(testkit.Rows("0"))
 	tk.MustExec("insert into t values(1, 'a')")
 	tk.MustQuery("select * from performance_schema.events_statements_summary_by_digest").Check(testkit.Rows())
@@ -81,8 +81,11 @@ func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 
 	// Invalidate the cache manually so that tidb_enable_stmt_summary works immediately.
 	s.dom.GetGlobalVarsCache().Disable()
+	// Disable refreshing summary.
+	tk.MustExec("set global tidb_stmt_summary_refresh_interval = 999999999")
+	tk.MustQuery("select @@global.tidb_stmt_summary_refresh_interval").Check(testkit.Rows("999999999"))
 
-	// Create a new session to test
+	// Create a new session to test.
 	tk = testkit.NewTestKitWithInit(c, s.store)
 
 	// Test INSERT
@@ -90,68 +93,98 @@ func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 	tk.MustExec("insert into t    values(2, 'b')")
 	tk.MustExec("insert into t VALUES(3, 'c')")
 	tk.MustExec("/**/insert into t values(4, 'd')")
-	tk.MustQuery(`select schema_name, exec_count, sum_rows_affected, query_sample_text 
+	tk.MustQuery(`select stmt_type, schema_name, table_names, index_names, exec_count, cop_task_num, avg_total_keys, 
+		max_total_keys, avg_processed_keys, max_processed_keys, avg_write_keys, max_write_keys, avg_prewrite_regions, 
+		max_prewrite_regions, avg_affected_rows, query_sample_text 
 		from performance_schema.events_statements_summary_by_digest
 		where digest_text like 'insert into t%'`,
-	).Check(testkit.Rows("test 4 4 insert into t values(1, 'a')"))
+	).Check(testkit.Rows("insert test test.t <nil> 4 0 0 0 0 0 2 2 1 1 1 /**/insert into t values(4, 'd')"))
 
-	// Test SELECT
+	// Test SELECT.
 	tk.MustQuery("select * from t where a=2")
-	tk.MustQuery(`select schema_name, exec_count, sum_rows_affected, query_sample_text 
+	tk.MustQuery(`select stmt_type, schema_name, table_names, index_names, exec_count, cop_task_num, avg_total_keys, 
+		max_total_keys, avg_processed_keys, max_processed_keys, avg_write_keys, max_write_keys, avg_prewrite_regions, 
+		max_prewrite_regions, avg_affected_rows, query_sample_text 
 		from performance_schema.events_statements_summary_by_digest
 		where digest_text like 'select * from t%'`,
-	).Check(testkit.Rows("test 1 0 select * from t where a=2"))
+	).Check(testkit.Rows("select test test.t t:k 1 2 0 0 0 0 0 0 0 0 0 select * from t where a=2"))
 
 	// select ... order by
-	tk.MustQuery(`select schema_name, exec_count, sum_rows_affected, query_sample_text 
+	tk.MustQuery(`select stmt_type, schema_name, table_names, index_names, exec_count, cop_task_num, avg_total_keys, 
+		max_total_keys, avg_processed_keys, max_processed_keys, avg_write_keys, max_write_keys, avg_prewrite_regions, 
+		max_prewrite_regions, avg_affected_rows, query_sample_text 
 		from performance_schema.events_statements_summary_by_digest
 		order by exec_count desc limit 1`,
-	).Check(testkit.Rows("test 4 4 insert into t values(1, 'a')"))
+	).Check(testkit.Rows("insert test test.t <nil> 4 0 0 0 0 0 2 2 1 1 1 /**/insert into t values(4, 'd')"))
 
-	// Disable it again
+	// Disable it again.
 	tk.MustExec("set global tidb_enable_stmt_summary = false")
 	tk.MustQuery("select @@global.tidb_enable_stmt_summary").Check(testkit.Rows("0"))
 
 	// Create a new session to test
 	tk = testkit.NewTestKitWithInit(c, s.store)
 
-	// This statement shouldn't be summarized
+	// This statement shouldn't be summarized.
 	tk.MustQuery("select * from t where a=2")
 
-	// The table should be cleared
-	tk.MustQuery(`select schema_name, exec_count, sum_rows_affected, query_sample_text 
+	// The table should be cleared.
+	tk.MustQuery(`select stmt_type, schema_name, table_names, index_names, exec_count, cop_task_num, avg_total_keys, 
+		max_total_keys, avg_processed_keys, max_processed_keys, avg_write_keys, max_write_keys, avg_prewrite_regions, 
+		max_prewrite_regions, avg_affected_rows, query_sample_text 
 		from performance_schema.events_statements_summary_by_digest`,
 	).Check(testkit.Rows())
 
-	// Enable it in session scope
+	// Enable it in session scope.
 	tk.MustExec("set session tidb_enable_stmt_summary = on")
-	// It should work immediately
+	// It should work immediately.
+	tk.MustExec("begin")
+	tk.MustExec("insert into t values(1, 'a')")
+	tk.MustExec("commit")
+	tk.MustQuery(`select stmt_type, schema_name, table_names, index_names, exec_count, cop_task_num, avg_total_keys, 
+		max_total_keys, avg_processed_keys, max_processed_keys, avg_write_keys, max_write_keys, avg_prewrite_regions, 
+		max_prewrite_regions, avg_affected_rows, query_sample_text 
+		from performance_schema.events_statements_summary_by_digest
+		where digest_text like 'insert into t%'`,
+	).Check(testkit.Rows("insert test test.t <nil> 1 0 0 0 0 0 0 0 0 0 1 insert into t values(1, 'a')"))
+	tk.MustQuery(`select stmt_type, schema_name, table_names, index_names, exec_count, cop_task_num, avg_total_keys, 
+		max_total_keys, avg_processed_keys, max_processed_keys, avg_write_keys, max_write_keys, avg_prewrite_regions, 
+		max_prewrite_regions, avg_affected_rows, query_sample_text 
+		from performance_schema.events_statements_summary_by_digest
+		where digest_text='commit'`,
+	).Check(testkit.Rows("commit test <nil> <nil> 1 0 0 0 0 0 2 2 1 1 0 commit"))
+
 	tk.MustQuery("select * from t where a=2")
-	tk.MustQuery(`select schema_name, exec_count, sum_rows_affected, query_sample_text 
+	tk.MustQuery(`select stmt_type, schema_name, table_names, index_names, exec_count, cop_task_num, avg_total_keys, 
+		max_total_keys, avg_processed_keys, max_processed_keys, avg_write_keys, max_write_keys, avg_prewrite_regions, 
+		max_prewrite_regions, avg_affected_rows, query_sample_text 
 		from performance_schema.events_statements_summary_by_digest
 		where digest_text like 'select * from t%'`,
-	).Check(testkit.Rows("test 1 0 select * from t where a=2"))
+	).Check(testkit.Rows("select test test.t t:k 1 2 0 0 0 0 0 0 0 0 0 select * from t where a=2"))
 
-	// Disable it in global scope
+	// Disable it in global scope.
 	tk.MustExec("set global tidb_enable_stmt_summary = off")
 
-	// Create a new session to test
+	// Create a new session to test.
 	tk = testkit.NewTestKitWithInit(c, s.store)
 
 	tk.MustQuery("select * from t where a=2")
 
-	// Statement summary is still enabled
-	tk.MustQuery(`select schema_name, exec_count, sum_rows_affected, query_sample_text 
+	// Statement summary is still enabled.
+	tk.MustQuery(`select stmt_type, schema_name, table_names, index_names, exec_count, cop_task_num, avg_total_keys, 
+		max_total_keys, avg_processed_keys, max_processed_keys, avg_write_keys, max_write_keys, avg_prewrite_regions, 
+		max_prewrite_regions, avg_affected_rows, query_sample_text 
 		from performance_schema.events_statements_summary_by_digest
 		where digest_text like 'select * from t%'`,
-	).Check(testkit.Rows("test 2 0 select * from t where a=2"))
+	).Check(testkit.Rows("select test test.t t:k 2 4 0 0 0 0 0 0 0 0 0 select * from t where a=2"))
 
-	// Unset session variable
+	// Unset session variable.
 	tk.MustExec("set session tidb_enable_stmt_summary = ''")
 	tk.MustQuery("select * from t where a=2")
 
-	// Statement summary is disabled
-	tk.MustQuery(`select schema_name, exec_count, sum_rows_affected, query_sample_text 
+	// Statement summary is disabled.
+	tk.MustQuery(`select stmt_type, schema_name, table_names, index_names, exec_count, cop_task_num, avg_total_keys, 
+		max_total_keys, avg_processed_keys, max_processed_keys, avg_write_keys, max_write_keys, avg_prewrite_regions, 
+		max_prewrite_regions, avg_affected_rows, query_sample_text 
 		from performance_schema.events_statements_summary_by_digest`,
 	).Check(testkit.Rows())
 }
