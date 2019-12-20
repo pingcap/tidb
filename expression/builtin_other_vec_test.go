@@ -52,8 +52,8 @@ func BenchmarkVectorizedBuiltinOtherFunc(b *testing.B) {
 func (s *testEvaluatorSuite) TestInDecimal(c *C) {
 	ctx := mock.NewContext()
 	ft := eType2FieldType(types.ETDecimal)
-	col0 := &Column{RetType: ft, Index: 0,}
-	col1 := &Column{RetType: ft, Index: 1,}
+	col0 := &Column{RetType: ft, Index: 0}
+	col1 := &Column{RetType: ft, Index: 1}
 	inFunc, err := funcs[ast.In].getFunction(ctx, []Expression{col0, col1})
 	c.Assert(err, IsNil)
 
