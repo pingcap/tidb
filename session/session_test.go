@@ -51,6 +51,7 @@ import (
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
 	"github.com/pingcap/tipb/go-binlog"
+	"go.etcd.io/etcd/clientv3"
 	"google.golang.org/grpc"
 )
 
@@ -101,6 +102,37 @@ func clearStorage(store kv.Storage) error {
 	return txn.Commit(context.Background())
 }
 
+func clearETCD(ebd tikv.EtcdBackend) error {
+	cli, err := clientv3.New(clientv3.Config{
+		Endpoints:        ebd.EtcdAddrs(),
+		AutoSyncInterval: 30 * time.Second,
+		DialTimeout:      5 * time.Second,
+		DialOptions: []grpc.DialOption{
+			grpc.WithBackoffMaxDelay(time.Second * 3),
+		},
+		TLS: ebd.TLSConfig(),
+	})
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer cli.Close()
+
+	leases, err := cli.Leases(context.Background())
+	if err != nil {
+		return errors.Trace(err)
+	}
+	for _, resp := range leases.Leases {
+		if _, err := cli.Revoke(context.Background(), resp.ID); err != nil {
+			return errors.Trace(err)
+		}
+	}
+	_, err = cli.Delete(context.Background(), "/tidb", clientv3.WithPrefix())
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return nil
+}
+
 func (s *testSessionSuiteBase) SetUpSuite(c *C) {
 	testleak.BeforeTest()
 	s.cluster = mocktikv.NewCluster()
@@ -111,6 +143,8 @@ func (s *testSessionSuiteBase) SetUpSuite(c *C) {
 		store, err := d.Open(fmt.Sprintf("tikv://%s", *pdAddrs))
 		c.Assert(err, IsNil)
 		err = clearStorage(store)
+		c.Assert(err, IsNil)
+		err = clearETCD(store.(tikv.EtcdBackend))
 		c.Assert(err, IsNil)
 		session.ResetForWithTiKVTest()
 		s.store = store

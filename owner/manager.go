@@ -235,10 +235,6 @@ func (m *ownerManager) campaignLoop(ctx context.Context, etcdSession *concurrenc
 		}
 
 		select {
-		case <-ctx.Done():
-			logutil.Logger(logCtx).Info("break campaign loop, context is done")
-			m.revokeSession(logPrefix, etcdSession.Lease())
-			return
 		case <-etcdSession.Done():
 			logutil.Logger(logCtx).Info("etcd session is done, creates a new one")
 			leaseID := etcdSession.Lease()
@@ -248,6 +244,10 @@ func (m *ownerManager) campaignLoop(ctx context.Context, etcdSession *concurrenc
 				m.revokeSession(logPrefix, leaseID)
 				return
 			}
+		case <-ctx.Done():
+			logutil.Logger(logCtx).Info("break campaign loop, context is done")
+			m.revokeSession(logPrefix, etcdSession.Lease())
+			return
 		default:
 		}
 		// If the etcd server turns clocks forward，the following case may occur.
@@ -279,13 +279,6 @@ func (m *ownerManager) campaignLoop(ctx context.Context, etcdSession *concurrenc
 
 		metrics.CampaignOwnerCounter.WithLabelValues(m.prompt, metrics.NoLongerOwner).Inc()
 		logutil.Logger(logCtx).Warn("is not the owner")
-
-		select {
-		case <-ctx.Done():
-			logutil.Logger(logCtx).Info("exit campaign loop, context is done")
-			return
-		default:
-		}
 	}
 }
 

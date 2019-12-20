@@ -509,12 +509,6 @@ func (do *Domain) loadSchemaInLoop(lease time.Duration) {
 		case <-do.exit:
 			return
 		}
-
-		select {
-		case <-do.exit:
-			return
-		default:
-		}
 	}
 }
 
