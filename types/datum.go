@@ -1378,6 +1378,13 @@ func (d *Datum) ToBool(sc *stmtctx.StatementContext) (int64, error) {
 		isZero = RoundFloat(d.GetFloat64()) == 0
 	case KindString, KindBytes:
 		iVal, err1 := StrToInt(sc, d.GetString())
+		if sc.InSelectStmt && err1 != nil && ErrOverflow.Equal(err1) {
+			// ignore overflow errors when evaluating selection conditions:
+			//		INSERT INTO t VALUES ("999999999999999999");
+			//		SELECT * FROM t WHERE v;
+			iVal = -1
+			err1 = nil
+		}
 		isZero, err = iVal == 0, err1
 	case KindMysqlTime:
 		isZero = d.GetMysqlTime().IsZero()
