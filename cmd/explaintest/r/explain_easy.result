@@ -350,13 +350,13 @@ Projection_11	5.00	root	Column#11
   ├─TableReader_15	5.00	root	data:TableScan_14
   │ └─TableScan_14	5.00	cop[tikv]	table:t, range:[-inf,+inf], keep order:false
   └─StreamAgg_20	1.00	root	funcs:count(1)->Column#10
-    └─MergeJoin_51	2.40	root	inner join, left key:test.t.a, right key:test.t.a
-      ├─IndexReader_38	2.40	root	index:Selection_37
-      │ └─Selection_37	2.40	cop[tikv]	eq(3, test.t.a)
-      │   └─IndexScan_36	3.00	cop[tikv]	table:s, index:b, range:[3,3], keep order:true
-      └─TableReader_41	4.00	root	data:Selection_40
-        └─Selection_40	4.00	cop[tikv]	eq(3, test.t.a)
-          └─TableScan_39	5.00	cop[tikv]	table:t1, range:[-inf,+inf], keep order:true
+    └─MergeJoin_62	2.40	root	inner join, left key:test.t.a, right key:test.t.a
+      ├─IndexReader_49	2.40	root	index:Selection_48
+      │ └─Selection_48	2.40	cop[tikv]	eq(3, test.t.a)
+      │   └─IndexScan_47	3.00	cop[tikv]	table:s, index:b, range:[3,3], keep order:true
+      └─TableReader_52	4.00	root	data:Selection_51
+        └─Selection_51	4.00	cop[tikv]	eq(3, test.t.a)
+          └─TableScan_50	5.00	cop[tikv]	table:t1, range:[-inf,+inf], keep order:true
 explain select t.c in (select count(*) from t s left join t t1 on s.a = t1.a where 3 = t.a and s.b = 3) from t;
 id	count	task	operator info
 Projection_10	5.00	root	Column#11

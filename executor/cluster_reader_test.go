@@ -97,7 +97,7 @@ func (s *testClusterReaderSuite) TestTiDBClusterConfig(c *C) {
 		}
 	}
 
-	fpName := "github.com/pingcap/tidb/executor/mockClusterConfigServerInfo"
+	fpName := "github.com/pingcap/tidb/executor/mockClusterServerInfo"
 	fpExpr := strings.Join(servers, ";")
 	c.Assert(failpoint.Enable(fpName, fmt.Sprintf(`return("%s")`, fpExpr)), IsNil)
 	defer func() { c.Assert(failpoint.Disable(fpName), IsNil) }()
@@ -174,11 +174,9 @@ func (s *testClusterReaderSuite) TestTiDBClusterConfig(c *C) {
 				rows["pd"][2],
 			),
 		},
-		// FIXME: the OR does not extract in current implementation, it equals IN ('pd', 'tikv')
-		// 		  and this filter are handled in Selection executor
 		{
 			sql:      "select * from information_schema.cluster_config where type='pd' or type='tikv'",
-			reqCount: 9,
+			reqCount: 6,
 			rows: flatten(
 				rows["tikv"][0],
 				rows["tikv"][1],

@@ -30,9 +30,9 @@ import (
 )
 
 var (
-	errInvalidKey       = terror.ClassXEval.New(codeInvalidKey, "invalid key")
-	errInvalidRecordKey = terror.ClassXEval.New(codeInvalidRecordKey, "invalid record key")
-	errInvalidIndexKey  = terror.ClassXEval.New(codeInvalidIndexKey, "invalid index key")
+	errInvalidKey       = terror.ClassXEval.New(mysql.ErrInvalidKey, mysql.MySQLErrName[mysql.ErrInvalidKey])
+	errInvalidRecordKey = terror.ClassXEval.New(mysql.ErrInvalidRecordKey, mysql.MySQLErrName[mysql.ErrInvalidRecordKey])
+	errInvalidIndexKey  = terror.ClassXEval.New(mysql.ErrInvalidIndexKey, mysql.MySQLErrName[mysql.ErrInvalidIndexKey])
 )
 
 var (
@@ -721,9 +721,11 @@ func GetTableIndexKeyRange(tableID, indexID int64) (startKey, endKey []byte) {
 	return
 }
 
-const (
-	codeInvalidRecordKey   = 4
-	codeInvalidColumnCount = 5
-	codeInvalidKey         = 6
-	codeInvalidIndexKey    = 7
-)
+func init() {
+	mySQLErrCodes := map[terror.ErrCode]uint16{
+		mysql.ErrInvalidKey:       mysql.ErrInvalidKey,
+		mysql.ErrInvalidRecordKey: mysql.ErrInvalidRecordKey,
+		mysql.ErrInvalidIndexKey:  mysql.ErrInvalidIndexKey,
+	}
+	terror.ErrClassToMySQLCodes[terror.ClassXEval] = mySQLErrCodes
+}
