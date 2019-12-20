@@ -95,6 +95,7 @@ func (e *InsertValues) exec(ctx context.Context, rows [][]types.Datum) error {
 // See https://dev.mysql.com/doc/refman/5.7/en/insert.html
 func (e *InsertValues) initInsertColumns() error {
 	var cols []*table.Column
+	var missingColName string
 	var err error
 
 	tableCols := e.Table.Cols()
@@ -105,9 +106,9 @@ func (e *InsertValues) initInsertColumns() error {
 		for _, v := range e.SetList {
 			columns = append(columns, v.ColName.O)
 		}
-		cols, err = table.FindCols(tableCols, columns, e.Table.Meta().PKIsHandle)
-		if err != nil {
-			return errors.Errorf("INSERT INTO %s: %s", e.Table.Meta().Name.O, err)
+		cols, missingColName = table.FindCols(tableCols, columns, e.Table.Meta().PKIsHandle)
+		if cols == nil {
+			return errors.Errorf("INSERT INTO %s: unknown column %s", e.Table.Meta().Name.O, missingColName)
 		}
 		if len(cols) == 0 {
 			return errors.Errorf("INSERT INTO %s: empty column", e.Table.Meta().Name.O)
@@ -118,9 +119,9 @@ func (e *InsertValues) initInsertColumns() error {
 		for _, v := range e.Columns {
 			columns = append(columns, v.Name.O)
 		}
-		cols, err = table.FindCols(tableCols, columns, e.Table.Meta().PKIsHandle)
-		if err != nil {
-			return errors.Errorf("INSERT INTO %s: %s", e.Table.Meta().Name.O, err)
+		cols, missingColName = table.FindCols(tableCols, columns, e.Table.Meta().PKIsHandle)
+		if cols == nil {
+			return errors.Errorf("INSERT INTO %s: unknown column %s", e.Table.Meta().Name.O, missingColName)
 		}
 	} else {
 		// If e.Columns are empty, use all columns instead.
