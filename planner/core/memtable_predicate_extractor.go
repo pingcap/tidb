@@ -364,8 +364,8 @@ func (helper extractHelper) extractTimeRange(
 	return
 }
 
-// ClusterConfigTableExtractor is used to extract some predicates of `cluster_config`
-type ClusterConfigTableExtractor struct {
+// ClusterTableExtractor is used to extract some predicates of cluster table.
+type ClusterTableExtractor struct {
 	extractHelper
 
 	// SkipRequest means the where clause always false, we don't need to request any component
@@ -385,7 +385,7 @@ type ClusterConfigTableExtractor struct {
 }
 
 // Extract implements the MemTablePredicateExtractor Extract interface
-func (e *ClusterConfigTableExtractor) Extract(_ sessionctx.Context,
+func (e *ClusterTableExtractor) Extract(_ sessionctx.Context,
 	schema *expression.Schema,
 	names []*types.FieldName,
 	predicates []expression.Expression,
