@@ -281,7 +281,6 @@ func (w *worker) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
 	if !job.IsCancelled() {
 		switch job.Type {
 		case model.ActionAddIndex, model.ActionAddPrimaryKey:
-			metrics.AddIndexProgress.Set(0)
 			if job.State != model.JobStateRollbackDone {
 				break
 			}
