@@ -53,6 +53,7 @@ var defaultTransformationMap = map[memo.Operand][]Transformation{
 		NewRulePushSelDownIndexScan(),
 		NewRulePushSelDownUnionAll(),
 		NewRulePushSelDownWindow(),
+		NewRuleMergeAdjacentSelection(),
 	},
 	memo.OperandDataSource: {
 		NewRuleEnumeratePaths(),
@@ -991,4 +992,35 @@ func (r *MergeAggregationProjection) OnTransform(old *memo.ExprIter) (newExprs [
 	newAggExpr := memo.NewGroupExpr(newAgg)
 	newAggExpr.SetChildren(old.Children[0].GetExpr().Children...)
 	return []*memo.GroupExpr{newAggExpr}, true, false, nil
+}
+
+// MergeAdjacentSelection merge adjacent selection
+type MergeAdjacentSelection struct {
+	baseRule
+}
+
+// NewRuleMergeAdjacentSelection creates a new Transformation MergeAdjacentSelection.
+// The pattern of this rule is `Selection->Selection->X` to `Selection->X`.
+func NewRuleMergeAdjacentSelection() Transformation {
+	rule := &MergeAdjacentSelection{}
+	rule.pattern = memo.BuildPattern(
+		memo.OperandSelection,
+		memo.EngineTiKVOrTiFlash,
+		memo.NewPattern(memo.OperandSelection, memo.EngineTiKVOrTiFlash),
+	)
+	return rule
+}
+
+// OnTransform implements Transformation interface.
+// This rule tries to merge adjacent selection, with no simplification
+func (r *MergeAdjacentSelection) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
+	sel := old.GetExpr().ExprNode.(*plannercore.LogicalSelection)
+	child := old.Children[0].GetExpr().ExprNode.(*plannercore.LogicalSelection)
+	childGroups := old.Children[0].GetExpr().Children
+
+	conditions := append(sel.Conditions, child.Conditions...)
+	newSel := plannercore.LogicalSelection{Conditions: conditions}.Init(sel.SCtx(), sel.SelectBlockOffset())
+	newSelExpr := memo.NewGroupExpr(newSel)
+	newSelExpr.SetChildren(childGroups...)
+	return []*memo.GroupExpr{newSelExpr}, true, false, nil
 }
