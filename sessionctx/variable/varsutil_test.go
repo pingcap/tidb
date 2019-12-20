@@ -294,6 +294,16 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(val, Equals, "0")
 	c.Assert(v.CorrelationThreshold, Equals, float64(0))
+
+	SetSessionSystemVar(v, TiDBEnableStmtSummary, types.NewStringDatum("on"))
+	val, err = GetSessionSystemVar(v, TiDBEnableStmtSummary)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, "1")
+
+	SetSessionSystemVar(v, TiDBStmtSummaryRefreshInterval, types.NewStringDatum("10"))
+	val, err = GetSessionSystemVar(v, TiDBStmtSummaryRefreshInterval)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, "10")
 }
 
 func (s *testVarsutilSuite) TestValidate(c *C) {
@@ -348,6 +358,11 @@ func (s *testVarsutilSuite) TestValidate(c *C) {
 		{TiDBTxnMode, "pessimistic", false},
 		{TiDBTxnMode, "optimistic", false},
 		{TiDBTxnMode, "", false},
+		{TiDBEnableStmtSummary, "a", true},
+		{TiDBEnableStmtSummary, "-1", true},
+		{TiDBEnableStmtSummary, "", false},
+		{TiDBStmtSummaryRefreshInterval, "a", true},
+		{TiDBStmtSummaryRefreshInterval, "", false},
 	}
 
 	for _, t := range tests {
