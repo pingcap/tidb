@@ -15,14 +15,14 @@ package expression
 
 import (
 	"fmt"
-	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/mock"
 	"math/rand"
 	"testing"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/mock"
 )
 
 var vecBuiltinOtherCases = map[string][]vecExprBenchCase{
