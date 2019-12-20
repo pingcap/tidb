@@ -116,7 +116,11 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 	case *ast.Join:
 		p.checkNonUniqTableAlias(node)
 	case *ast.CreateBindingStmt:
+		EraseLastSemicolon(node.OriginSel)
+		EraseLastSemicolon(node.HintedSel)
 		p.checkBindGrammar(node)
+	case *ast.DropBindingStmt:
+		EraseLastSemicolon(node.OriginSel)
 	case *ast.RecoverTableStmt:
 		// The specified table in recover table statement maybe already been dropped.
 		// So skip check table name here, otherwise, recover table [table_name] syntax will return
@@ -126,6 +130,14 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		p.flag &= ^parentIsJoin
 	}
 	return in, p.err != nil
+}
+
+// EraseLastSemicolon removes last semicolon of sql.
+func EraseLastSemicolon(stmt ast.StmtNode) {
+	sql := stmt.Text()
+	if len(sql) > 0 && sql[len(sql)-1] == ';' {
+		stmt.SetText(sql[:len(sql)-1])
+	}
 }
 
 func (p *preprocessor) checkBindGrammar(createBindingStmt *ast.CreateBindingStmt) {

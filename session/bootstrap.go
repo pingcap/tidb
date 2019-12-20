@@ -72,6 +72,7 @@ const (
 		Create_role_priv		ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Drop_role_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Account_locked			ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Shutdown_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
 		PRIMARY KEY (Host, User));`
 	// CreateDBPrivTable is the SQL statement creates DB scope privilege table in system db.
 	CreateDBPrivTable = `CREATE TABLE if not exists mysql.db (
@@ -349,6 +350,8 @@ const (
 	version33 = 33
 	version34 = 34
 	version35 = 35
+	version36 = 36
+	version37 = 37
 )
 
 func checkBootstrapped(s Session) (bool, error) {
@@ -547,6 +550,14 @@ func upgrade(s Session) {
 
 	if ver < version35 {
 		upgradeToVer35(s)
+	}
+
+	if ver < version36 {
+		upgradeToVer36(s)
+	}
+
+	if ver < version37 {
+		upgradeToVer37(s)
 	}
 
 	updateBootstrapVer(s)
@@ -865,6 +876,19 @@ func upgradeToVer35(s Session) {
 	mustExecute(s, sql)
 }
 
+func upgradeToVer36(s Session) {
+	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `Shutdown_priv` ENUM('N','Y') DEFAULT 'N'", infoschema.ErrColumnExists)
+	// A root user will have those privileges after upgrading.
+	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.user SET Shutdown_priv='Y' where Super_priv = 'Y'")
+}
+
+func upgradeToVer37(s Session) {
+	// when upgrade from old tidb and no 'tidb_enable_window_function' in GLOBAL_VARIABLES, init it with 0.
+	sql := fmt.Sprintf("INSERT IGNORE INTO  %s.%s (`VARIABLE_NAME`, `VARIABLE_VALUE`) VALUES ('%s', '%d')",
+		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBEnableWindowFunction, 0)
+	mustExecute(s, sql)
+}
+
 // updateBootstrapVer updates bootstrap version variable in mysql.TiDB table.
 func updateBootstrapVer(s Session) {
 	// Update bootstrap version.
@@ -936,7 +960,7 @@ func doDMLWorks(s Session) {
 
 	// Insert a default user with empty password.
 	mustExecute(s, `INSERT HIGH_PRIORITY INTO mysql.user VALUES
-		("%", "root", "", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N")`)
+		("%", "root", "", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y")`)
 
 	// Init global system variables table.
 	values := make([]string, 0, len(variable.SysVars))
