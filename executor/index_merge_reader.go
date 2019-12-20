@@ -146,14 +146,11 @@ func (e *IndexMergeReaderExecutor) Open(ctx context.Context) error {
 
 func (e *IndexMergeReaderExecutor) startIndexMergeProcessWorker(ctx context.Context, workCh chan<- *lookupTableTask, fetch <-chan *lookupTableTask, partialWorkerCount int) {
 	idxMergeProcessWorker := &indexMergeProcessWorker{
-		fetchCh:  fetch,
-		workCh:   workCh,
-		resultCh: e.resultCh,
-		maps:     make(map[int64]byte),
+		maps: make(map[int64]byte),
 	}
 	e.processWokerWg.Add(1)
 	go func() {
-		idxMergeProcessWorker.fetchLoop(ctx, partialWorkerCount)
+		idxMergeProcessWorker.fetchLoop(ctx, partialWorkerCount, fetch, workCh, e.resultCh, e.finished)
 		e.processWokerWg.Done()
 	}()
 }
@@ -184,9 +181,6 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 
 	result.Fetch(ctx)
 	worker := &partialIndexWorker{
-		fetchCh:      fetchCh,
-		finished:     e.finished,
-		resultCh:     e.resultCh,
 		keepOrder:    e.keepOrders[workID],
 		batchSize:    e.maxChunkSize,
 		maxBatchSize: e.ctx.GetSessionVars().IndexLookupSize,
@@ -199,7 +193,7 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 
 	go func() {
 		ctx1, cancel := context.WithCancel(ctx)
-		_, err := worker.fetchHandles(ctx1, result)
+		_, err := worker.fetchHandles(ctx1, result, fetchCh, e.resultCh, e.finished)
 		if err != nil {
 			e.feedbacks[workID].Invalidate()
 		}
@@ -236,9 +230,6 @@ func (e *IndexMergeReaderExecutor) startPartialTableWorker(ctx context.Context, 
 	}
 	tableInfo := e.partialPlans[workID][0].(*plannercore.PhysicalTableScan).Table
 	worker := &partialTableWorker{
-		fetchCh:      fetchCh,
-		finished:     e.finished,
-		resultCh:     e.resultCh,
 		keepOrder:    e.keepOrders[workID],
 		batchSize:    e.maxChunkSize,
 		maxBatchSize: e.ctx.GetSessionVars().IndexLookupSize,
@@ -252,7 +243,7 @@ func (e *IndexMergeReaderExecutor) startPartialTableWorker(ctx context.Context, 
 	}
 	go func() {
 		ctx1, cancel := context.WithCancel(ctx)
-		_, err := worker.fetchHandles(ctx1)
+		_, err := worker.fetchHandles(ctx1, fetchCh, e.resultCh, e.finished)
 		if err != nil {
 			e.feedbacks[workID].Invalidate()
 		}
@@ -267,9 +258,6 @@ func (e *IndexMergeReaderExecutor) startPartialTableWorker(ctx context.Context, 
 }
 
 type partialTableWorker struct {
-	fetchCh      chan<- *lookupTableTask
-	finished     <-chan struct{}
-	resultCh     chan<- *lookupTableTask
 	keepOrder    bool
 	batchSize    int
 	maxBatchSize int
@@ -278,7 +266,7 @@ type partialTableWorker struct {
 	tableInfo    *model.TableInfo
 }
 
-func (w *partialTableWorker) fetchHandles(ctx context.Context) (count int64, err error) {
+func (w *partialTableWorker) fetchHandles(ctx context.Context, fetchCh chan<- *lookupTableTask, resultCh chan<- *lookupTableTask, finished <-chan struct{}) (count int64, err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			buf := make([]byte, 4096)
@@ -288,7 +276,7 @@ func (w *partialTableWorker) fetchHandles(ctx context.Context) (count int64, err
 			err4Panic := errors.Errorf("%v", r)
 			doneCh := make(chan error, 1)
 			doneCh <- err4Panic
-			w.resultCh <- &lookupTableTask{
+			resultCh <- &lookupTableTask{
 				doneCh: doneCh,
 			}
 			if err != nil {
@@ -300,7 +288,6 @@ func (w *partialTableWorker) fetchHandles(ctx context.Context) (count int64, err
 	handleOffset := -1
 	if w.tableInfo.PKIsHandle {
 		handleCol := w.tableInfo.GetPkColInfo()
-		// colums := w.tableReader.Schema().Columns
 		columns := w.tableInfo.Columns
 		for i := 0; i < len(columns); i++ {
 			if columns[i].Name.L == handleCol.Name.L {
@@ -318,14 +305,14 @@ func (w *partialTableWorker) fetchHandles(ctx context.Context) (count int64, err
 		if err != nil {
 			doneCh := make(chan error, 1)
 			doneCh <- err
-			w.resultCh <- &lookupTableTask{
+			resultCh <- &lookupTableTask{
 				doneCh: doneCh,
 			}
 			return count, err
 		}
 		if len(handles) == 0 {
 			task := w.buildTableTask(handles, retChunk)
-			w.fetchCh <- task
+			fetchCh <- task
 			return count, nil
 		}
 		count += int64(len(handles))
@@ -333,9 +320,9 @@ func (w *partialTableWorker) fetchHandles(ctx context.Context) (count int64, err
 		select {
 		case <-ctx.Done():
 			return count, nil
-		case <-w.finished:
+		case <-finished:
 			return count, nil
-		case w.fetchCh <- task:
+		case fetchCh <- task:
 		}
 	}
 }
@@ -481,14 +468,11 @@ func (e *IndexMergeReaderExecutor) Close() error {
 }
 
 type indexMergeProcessWorker struct {
-	fetchCh  <-chan *lookupTableTask
-	finished <-chan struct{}
-	workCh   chan<- *lookupTableTask
-	resultCh chan<- *lookupTableTask
-	maps     map[int64]byte
+	maps map[int64]byte
 }
 
-func (w *indexMergeProcessWorker) fetchLoop(ctx context.Context, partialWorkerCount int) {
+func (w *indexMergeProcessWorker) fetchLoop(ctx context.Context, partialWorkerCount int,
+	fetchCh <-chan *lookupTableTask, workCh chan<- *lookupTableTask, resultCh chan<- *lookupTableTask, finished <-chan struct{}) {
 	defer func() {
 		if r := recover(); r != nil {
 			buf := make([]byte, 4096)
@@ -498,7 +482,7 @@ func (w *indexMergeProcessWorker) fetchLoop(ctx context.Context, partialWorkerCo
 			err4Panic := errors.Errorf("%v", r)
 			doneCh := make(chan error, 1)
 			doneCh <- err4Panic
-			w.resultCh <- &lookupTableTask{
+			resultCh <- &lookupTableTask{
 				doneCh: doneCh,
 			}
 		}
@@ -508,14 +492,14 @@ func (w *indexMergeProcessWorker) fetchLoop(ctx context.Context, partialWorkerCo
 	var ok bool
 	for {
 		if partialWorkerCount == 0 {
-			close(w.workCh)
-			close(w.resultCh)
-			w.workCh = nil
-			w.resultCh = nil
+			close(workCh)
+			close(resultCh)
+			workCh = nil
+			resultCh = nil
 			return
 		}
 		select {
-		case task, ok = <-w.fetchCh:
+		case task, ok = <-fetchCh:
 			if !ok {
 				return
 			}
@@ -542,26 +526,23 @@ func (w *indexMergeProcessWorker) fetchLoop(ctx context.Context, partialWorkerCo
 			select {
 			case <-ctx.Done():
 				return
-			case <-w.finished:
+			case <-finished:
 				return
-			case w.workCh <- task:
-				w.resultCh <- task
+			case workCh <- task:
+				resultCh <- task
 			}
 		}
 	}
 }
 
 type partialIndexWorker struct {
-	fetchCh      chan<- *lookupTableTask
-	finished     <-chan struct{}
-	resultCh     chan<- *lookupTableTask
 	keepOrder    bool
 	batchSize    int
 	maxBatchSize int
 	maxChunkSize int
 }
 
-func (w *partialIndexWorker) fetchHandles(ctx context.Context, result distsql.SelectResult) (count int64, err error) {
+func (w *partialIndexWorker) fetchHandles(ctx context.Context, result distsql.SelectResult, fetchCh chan<- *lookupTableTask, resultCh chan<- *lookupTableTask, finished <-chan struct{}) (count int64, err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			buf := make([]byte, 4096)
@@ -571,7 +552,7 @@ func (w *partialIndexWorker) fetchHandles(ctx context.Context, result distsql.Se
 			err4Panic := errors.Errorf("%v", r)
 			doneCh := make(chan error, 1)
 			doneCh <- err4Panic
-			w.resultCh <- &lookupTableTask{
+			resultCh <- &lookupTableTask{
 				doneCh: doneCh,
 			}
 			if err != nil {
@@ -586,14 +567,14 @@ func (w *partialIndexWorker) fetchHandles(ctx context.Context, result distsql.Se
 		if err != nil {
 			doneCh := make(chan error, 1)
 			doneCh <- err
-			w.resultCh <- &lookupTableTask{
+			resultCh <- &lookupTableTask{
 				doneCh: doneCh,
 			}
 			return count, err
 		}
 		if len(handles) == 0 {
 			task := w.buildTableTask(handles, retChunk)
-			w.fetchCh <- task
+			fetchCh <- task
 			return count, nil
 		}
 		count += int64(len(handles))
@@ -601,9 +582,9 @@ func (w *partialIndexWorker) fetchHandles(ctx context.Context, result distsql.Se
 		select {
 		case <-ctx.Done():
 			return count, nil
-		case <-w.finished:
+		case <-finished:
 			return count, nil
-		case w.fetchCh <- task:
+		case fetchCh <- task:
 		}
 	}
 }

@@ -2169,23 +2169,38 @@ func (b *executorBuilder) buildIndexReader(v *plannercore.PhysicalIndexReader) *
 	return ret
 }
 
-func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIndexLookUpReader) (*IndexLookUpExecutor, error) {
-	indexReq, indexStreaming, err := b.constructDAGReq(v.IndexPlans)
+func buildTableReq(b *executorBuilder, schemaLen int, plans []plannercore.PhysicalPlan) (dagReq *tipb.DAGRequest, streaming bool, val table.Table, err error) {
+	tableReq, tableStreaming, err := b.constructDAGReq(plans)
 	if err != nil {
-		return nil, err
+		return nil, false, nil, err
 	}
-	tableReq, tableStreaming, err := b.constructDAGReq(v.TablePlans)
-	if err != nil {
-		return nil, err
-	}
-	is := v.IndexPlans[0].(*plannercore.PhysicalIndexScan)
-	indexReq.OutputOffsets = []uint32{uint32(len(is.Index.Columns))}
-	tbl, _ := b.is.TableByID(is.Table.ID)
-
-	for i := 0; i < v.Schema().Len(); i++ {
+	for i := 0; i < schemaLen; i++ {
 		tableReq.OutputOffsets = append(tableReq.OutputOffsets, uint32(i))
 	}
+	ts := plans[0].(*plannercore.PhysicalTableScan)
+	tbl, _ := b.is.TableByID(ts.Table.ID)
+	return tableReq, tableStreaming, tbl, err
+}
 
+func buildIndexReq(b *executorBuilder, schemaLen int, plans []plannercore.PhysicalPlan) (dagReq *tipb.DAGRequest, streaming bool, err error) {
+	indexReq, indexStreaming, err := b.constructDAGReq(plans)
+	if err != nil {
+		return nil, false, err
+	}
+	indexReq.OutputOffsets = []uint32{uint32(schemaLen)}
+	return indexReq, indexStreaming, err
+}
+
+func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIndexLookUpReader) (*IndexLookUpExecutor, error) {
+	is := v.IndexPlans[0].(*plannercore.PhysicalIndexScan)
+	indexReq, indexStreaming, err := buildIndexReq(b, len(is.Index.Columns), v.IndexPlans)
+	if err != nil {
+		return nil, err
+	}
+	tableReq, tableStreaming, tbl, err := buildTableReq(b, v.Schema().Len(), v.TablePlans)
+	if err != nil {
+		return nil, err
+	}
 	ts := v.TablePlans[0].(*plannercore.PhysicalTableScan)
 	if isPartition, physicalTableID := ts.IsPartition(); isPartition {
 		pt := tbl.(table.PartitionedTable)
@@ -2271,40 +2286,38 @@ func buildNoRangeIndexMergeReader(b *executorBuilder, v *plannercore.PhysicalInd
 	feedbacks := make([]*statistics.QueryFeedback, 0, partialPlanCount)
 	ts := v.TablePlans[0].(*plannercore.PhysicalTableScan)
 	for i := 0; i < partialPlanCount; i++ {
+		var tempReq *tipb.DAGRequest
+		var tempStreaming bool
+		var err error
+
 		feedback := statistics.NewQueryFeedback(0, nil, 0, ts.Desc)
 		feedback.Invalidate()
 		feedbacks = append(feedbacks, feedback)
-		tempReq, tempStreaming, err := b.constructDAGReq(v.PartialPlans[i])
-		if err != nil {
-			return nil, err
-		}
+
 		if is, ok := v.PartialPlans[i][0].(*plannercore.PhysicalIndexScan); ok {
+			tempReq, tempStreaming, err = buildIndexReq(b, len(is.Index.Columns), v.PartialPlans[i])
 			keepOrders = append(keepOrders, is.KeepOrder)
 			descs = append(descs, is.Desc)
-			tempReq.OutputOffsets = []uint32{uint32(len(is.Index.Columns))}
 			indexes = append(indexes, is.Index)
 		} else {
 			ts := v.PartialPlans[i][0].(*plannercore.PhysicalTableScan)
+			tempReq, tempStreaming, _, err = buildTableReq(b, len(ts.Columns), v.PartialPlans[i])
 			keepOrders = append(keepOrders, ts.KeepOrder)
 			descs = append(descs, ts.Desc)
-			for i := range ts.Columns {
-				tempReq.OutputOffsets = append(tempReq.OutputOffsets, uint32(i))
-			}
 			indexes = append(indexes, nil)
+		}
+		if err != nil {
+			return nil, err
 		}
 		collect := false
 		tempReq.CollectRangeCounts = &collect
 		partialReqs = append(partialReqs, tempReq)
 		partialStreamings = append(partialStreamings, tempStreaming)
 	}
-	tableReq, tableStreaming, err := b.constructDAGReq(v.TablePlans)
+	tableReq, tableStreaming, table, err := buildTableReq(b, v.Schema().Len(), v.TablePlans)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
-	for i := 0; i < v.Schema().Len(); i++ {
-		tableReq.OutputOffsets = append(tableReq.OutputOffsets, uint32(i))
-	}
-	table, _ := b.is.TableByID(ts.Table.ID)
 	startTS, err := b.getStartTS()
 	if err != nil {
 		return nil, err
