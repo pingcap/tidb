@@ -258,6 +258,7 @@ func (tk *TestKit) ExecToErr(sql string, args ...interface{}) error {
 	return err
 }
 
+// MustGetErr executes a sql statement and assert it's error message.
 func (tk *TestKit) MustGetErr(sql string, errStr string) {
 	err := tk.ExecToErr(sql)
 	tk.c.Assert(err, check.NotNil)
