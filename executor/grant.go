@@ -94,9 +94,11 @@ func (e *GrantExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		// DB scope:			mysql.DB
 		// Table scope:			mysql.Tables_priv
 		// Column scope:		mysql.Columns_priv
-		err = checkAndInitGlobalPriv(e.ctx, user.User.Username, user.User.Hostname)
-		if err != nil {
-			return err
+		if e.TLSOptions != nil {
+			err = checkAndInitGlobalPriv(e.ctx, user.User.Username, user.User.Hostname)
+			if err != nil {
+				return err
+			}
 		}
 		switch e.Level.Level {
 		case ast.GrantLevelDB:
@@ -265,6 +267,23 @@ func tlsOption2GlobalPriv(tlsOptions []*ast.TLSOption) (priv []byte, err error) 
 	if len(tlsOptions) == 0 {
 		priv = []byte("{}")
 		return
+	}
+	dupSet := make(map[int]struct{})
+	for _, opt := range tlsOptions {
+		if _, dup := dupSet[opt.Type]; dup {
+			var typeName string
+			switch opt.Type {
+			case ast.Cipher:
+				typeName = "CIPHER"
+			case ast.Issuer:
+				typeName = "ISSUER"
+			case ast.Subject:
+				typeName = "SUBJECT"
+			}
+			err = errors.Errorf("Duplicate require %s clause", typeName)
+			return
+		}
+		dupSet[opt.Type] = struct{}{}
 	}
 	gp := privileges.GlobalPrivValue{SSLType: privileges.SslTypeNotSpecified}
 	for _, tlsOpt := range tlsOptions {
