@@ -203,3 +203,19 @@ func (impl *MaxOneRowImpl) CalcCost(outCount float64, children ...memo.Implement
 func NewMaxOneRowImpl(maxOneRow *plannercore.PhysicalMaxOneRow) *MaxOneRowImpl {
 	return &MaxOneRowImpl{baseImpl{plan: maxOneRow}}
 }
+
+// WindowImpl is the implementation of PhysicalWindow.
+type WindowImpl struct {
+	baseImpl
+}
+
+// NewWindowImpl creates a new WindowImpl.
+func NewWindowImpl(window *plannercore.PhysicalWindow) *WindowImpl {
+	return &WindowImpl{baseImpl{plan: window}}
+}
+
+// CalcCost implements Implementation CalcCost interface.
+func (impl *WindowImpl) CalcCost(outCount float64, children ...memo.Implementation) float64 {
+	impl.cost = children[0].GetCost()
+	return impl.cost
+}
