@@ -2261,7 +2261,7 @@ func createInfoSchemaTable(_ autoid.Allocator, meta *model.TableInfo) (table.Tab
 		columns[i] = table.ToColumn(col)
 	}
 	tp := table.VirtualTable
-	if isClusterTableByName(util.InformationSchemaName, meta.Name.L) {
+	if isClusterTableByName(util.InformationSchemaName.O, meta.Name.O) {
 		tp = table.ClusterTable
 	}
 	return &infoschemaTable{meta: meta, cols: columns, tp: tp}, nil
