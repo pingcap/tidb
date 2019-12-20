@@ -469,6 +469,24 @@ func (s *testTableSuite) TestSomeTables(c *C) {
 
 	tk.MustQuery("select * from information_schema.KEY_COLUMN_USAGE where TABLE_NAME='stats_meta' and COLUMN_NAME='table_id';").Check(
 		testkit.Rows("def mysql tbl def mysql stats_meta table_id 1 <nil> <nil> <nil> <nil>"))
+
+	//test the privilege of new user for information_schema.table_constraints
+	tk.MustExec("create user key_column_tester")
+	keyColumnTester := testkit.NewTestKit(c, s.store)
+	keyColumnTester.MustExec("use information_schema")
+	c.Assert(keyColumnTester.Se.Auth(&auth.UserIdentity{
+		Username: "key_column_tester",
+		Hostname: "127.0.0.1",
+	}, nil, nil), IsTrue)
+	keyColumnTester.MustQuery("select * from information_schema.KEY_COLUMN_USAGE;").Check([][]interface{}{})
+
+	//test the privilege of user with privilege of mysql.gc_delete_range for information_schema.table_constraints
+	tk.MustExec("CREATE ROLE r_stats_meta ;")
+	tk.MustExec("GRANT ALL PRIVILEGES ON mysql.stats_meta TO r_stats_meta;")
+	tk.MustExec("GRANT r_stats_meta TO key_column_tester;")
+	keyColumnTester.MustExec("set role r_stats_meta")
+	c.Assert(len(keyColumnTester.MustQuery("select * from information_schema.KEY_COLUMN_USAGE where TABLE_NAME='stats_meta';").Rows()), Greater, 0)
+
 	tk.MustQuery("select * from information_schema.SCHEMATA where schema_name='mysql';").Check(
 		testkit.Rows("def mysql utf8mb4 utf8mb4_bin <nil>"))
 
@@ -795,6 +813,28 @@ func (s *testTableSuite) TestForAnalyzeStatus(c *C) {
 	c.Assert(result.Rows()[1][4], Equals, "2")
 	c.Assert(result.Rows()[1][5], NotNil)
 	c.Assert(result.Rows()[1][6], Equals, "finished")
+
+	//test the privilege of new user for information_schema.analyze_status
+	tk.MustExec("create user analyze_tester")
+	analyzeTester := testkit.NewTestKit(c, s.store)
+	analyzeTester.MustExec("use information_schema")
+	c.Assert(analyzeTester.Se.Auth(&auth.UserIdentity{
+		Username: "analyze_tester",
+		Hostname: "127.0.0.1",
+	}, nil, nil), IsTrue)
+	analyzeTester.MustQuery("show analyze status").Check([][]interface{}{})
+	analyzeTester.MustQuery("select * from information_schema.ANALYZE_STATUS;").Check([][]interface{}{})
+
+	//test the privilege of user with privilege of test.t1 for information_schema.analyze_status
+	tk.MustExec("create table t1 (a int, b int, index idx(a))")
+	tk.MustExec("insert into t values (1,2),(3,4)")
+	tk.MustExec("analyze table t1")
+	tk.MustExec("CREATE ROLE r_t1 ;")
+	tk.MustExec("GRANT ALL PRIVILEGES ON test.t1 TO r_t1;")
+	tk.MustExec("GRANT r_t1 TO analyze_tester;")
+	analyzeTester.MustExec("set role r_t1")
+	resultT1 := tk.MustQuery("select * from information_schema.analyze_status where TABLE_NAME='t1'").Sort()
+	c.Assert(len(resultT1.Rows()), Greater, 0)
 }
 
 func (s *testTableSuite) TestForServersInfo(c *C) {
