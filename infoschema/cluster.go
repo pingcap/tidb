@@ -57,7 +57,7 @@ func init() {
 func isClusterTableByName(dbName, tableName string) bool {
 	dbName = strings.ToUpper(dbName)
 	switch dbName {
-	case util.InformationSchemaName, util.PerformanceSchemaName:
+	case util.InformationSchemaName.O, util.PerformanceSchemaName.O:
 		break
 	default:
 		return false
@@ -85,14 +85,17 @@ func getClusterMemTableRows(ctx sessionctx.Context, tableName string) (rows [][]
 	if err != nil {
 		return nil, err
 	}
-	return appendHostInfoToRows(rows), nil
+	return appendHostInfoToRows(rows)
 }
 
-func appendHostInfoToRows(rows [][]types.Datum) [][]types.Datum {
-	serverInfo := infosync.GetServerInfo()
+func appendHostInfoToRows(rows [][]types.Datum) ([][]types.Datum, error) {
+	serverInfo, err := infosync.GetServerInfo()
+	if err != nil {
+		return nil, err
+	}
 	addr := serverInfo.IP + ":" + strconv.FormatUint(uint64(serverInfo.StatusPort), 10)
 	for i := range rows {
 		rows[i] = append(rows[i], types.NewStringDatum(addr))
 	}
-	return rows
+	return rows, nil
 }

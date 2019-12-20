@@ -36,7 +36,7 @@ import (
 )
 
 // NewRPCServer creates a new rpc server.
-func NewRPCServer(security config.Security, dom *domain.Domain, sm util.SessionManager) *grpc.Server {
+func NewRPCServer(config *config.Config, dom *domain.Domain, sm util.SessionManager) *grpc.Server {
 	defer func() {
 		if v := recover(); v != nil {
 			logutil.BgLogger().Error("panic in TiDB RPC server", zap.Any("stack", v))
@@ -44,8 +44,8 @@ func NewRPCServer(security config.Security, dom *domain.Domain, sm util.SessionM
 	}()
 
 	var s *grpc.Server
-	if len(security.ClusterSSLCA) != 0 {
-		tlsConfig, err := security.ToTLSConfig()
+	if len(config.Security.ClusterSSLCA) != 0 {
+		tlsConfig, err := config.Security.ToTLSConfig()
 		if err == nil {
 			s = grpc.NewServer(grpc.Creds(credentials.NewTLS(tlsConfig)))
 		}
@@ -54,8 +54,9 @@ func NewRPCServer(security config.Security, dom *domain.Domain, sm util.SessionM
 		s = grpc.NewServer()
 	}
 	rpcSrv := &rpcServer{
-		dom: dom,
-		sm:  sm,
+		DiagnosticsServer: sysutil.NewDiagnosticsServer(config.Log.File.Filename),
+		dom:               dom,
+		sm:                sm,
 	}
 	// For redirection the cop task.
 	mocktikv.TiDBRPCServerCoprocessorHandler = rpcSrv.handleCopRequest
@@ -69,7 +70,7 @@ func NewRPCServer(security config.Security, dom *domain.Domain, sm util.SessionM
 // 2. Coprocessor service, it reuse the TikvServer interface, but only support the Coprocessor interface now.
 // Coprocessor service will handle the cop task from other TiDB server. Currently, it's only use for read the cluster memory table.
 type rpcServer struct {
-	sysutil.DiagnoseServer
+	*sysutil.DiagnosticsServer
 	tikvpb.TikvServer
 	dom *domain.Domain
 	sm  util.SessionManager

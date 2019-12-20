@@ -116,6 +116,7 @@ var _ = Suite(&testOOMSuite{})
 var _ = Suite(&testPointGetSuite{})
 var _ = Suite(&testBatchPointGetSuite{})
 var _ = SerialSuites(&testRecoverTable{})
+var _ = Suite(&testClusterReaderSuite{})
 var _ = Suite(&testFlushSuite{})
 
 type testSuite struct{ *baseTestSuite }
@@ -2652,7 +2653,7 @@ func (s *testSuite) TestSelectForUpdate(c *C) {
 	tk.MustExec("drop table if exists t, t1")
 
 	txn, err := tk.Se.Txn(true)
-	c.Assert(err, IsNil)
+	c.Assert(kv.ErrInvalidTxn.Equal(err), IsTrue)
 	c.Assert(txn.Valid(), IsFalse)
 	tk.MustExec("create table t (c1 int, c2 int, c3 int)")
 	tk.MustExec("insert t values (11, 2, 3)")

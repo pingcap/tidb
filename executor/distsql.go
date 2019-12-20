@@ -207,8 +207,6 @@ type IndexReaderExecutor struct {
 	table           table.Table
 	index           *model.IndexInfo
 	physicalTableID int64
-	keepOrder       bool
-	desc            bool
 	ranges          []*ranger.Range
 	// kvRanges are only used for union scan.
 	kvRanges []kv.KeyRange
@@ -221,8 +219,12 @@ type IndexReaderExecutor struct {
 	columns []*model.ColumnInfo
 	// outputColumns are only required by union scan.
 	outputColumns []*expression.Column
-	streaming     bool
-	feedback      *statistics.QueryFeedback
+
+	feedback  *statistics.QueryFeedback
+	streaming bool
+
+	keepOrder bool
+	desc      bool
 
 	corColInFilter bool
 	corColInAccess bool
@@ -317,29 +319,21 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 type IndexLookUpExecutor struct {
 	baseExecutor
 
-	table     table.Table
-	index     *model.IndexInfo
-	keepOrder bool
-	desc      bool
-	ranges    []*ranger.Range
-	dagPB     *tipb.DAGRequest
-	startTS   uint64
+	table   table.Table
+	index   *model.IndexInfo
+	ranges  []*ranger.Range
+	dagPB   *tipb.DAGRequest
+	startTS uint64
 	// handleIdx is the index of handle, which is only used for case of keeping order.
 	handleIdx    int
 	tableRequest *tipb.DAGRequest
 	// columns are only required by union scan.
-	columns        []*model.ColumnInfo
-	indexStreaming bool
-	tableStreaming bool
+	columns []*model.ColumnInfo
 	*dataReaderBuilder
 	// All fields above are immutable.
-
 	idxWorkerWg sync.WaitGroup
 	tblWorkerWg sync.WaitGroup
 	finished    chan struct{}
-
-	kvRanges      []kv.KeyRange
-	workerStarted bool
 
 	resultCh   chan *lookupTableTask
 	resultCurr *lookupTableTask
@@ -351,11 +345,20 @@ type IndexLookUpExecutor struct {
 	// checkIndexValue is used to check the consistency of the index data.
 	*checkIndexValue
 
+	kvRanges      []kv.KeyRange
+	workerStarted bool
+
+	keepOrder bool
+	desc      bool
+
+	indexStreaming bool
+	tableStreaming bool
+
 	corColInIdxSide bool
-	idxPlans        []plannercore.PhysicalPlan
 	corColInTblSide bool
-	tblPlans        []plannercore.PhysicalPlan
 	corColInAccess  bool
+	idxPlans        []plannercore.PhysicalPlan
+	tblPlans        []plannercore.PhysicalPlan
 	idxCols         []*expression.Column
 	colLens         []int
 	// PushedLimit is used to skip the preceding and tailing handles when Limit is sunk into IndexLookUpReader.
