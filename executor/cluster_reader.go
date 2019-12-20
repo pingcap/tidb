@@ -469,17 +469,7 @@ func (e *clusterLogRetriever) startRetrieving(ctx sessionctx.Context) ([]chan lo
 	var results []chan logStreamResult
 	for _, srv := range serversInfo {
 		typ := srv.ServerType
-		// Skip some node type which has been filtered in WHERE cluase
-		// e.g: SELECT * FROM cluster_log WHERE type='tikv'
-		if len(nodeTypes) > 0 && !nodeTypes.Exist(typ) {
-			continue
-		}
 		address := srv.Address
-		// Skip some node address which has been filtered in WHERE cluase
-		// e.g: SELECT * FROM cluster_log WHERE address='192.16.8.12:2379'
-		if len(addresses) > 0 && !addresses.Exist(address) {
-			continue
-		}
 		statusAddr := srv.StatusAddr
 		if len(statusAddr) == 0 {
 			ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("%s node %s does not contain status address", typ, address))
