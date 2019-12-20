@@ -127,9 +127,9 @@ func (*testSuite) TestT(c *C) {
 	c.Assert(testutil.CompareUnorderedStringSlice(schemaNames, []string{infoschema.Name, "PERFORMANCE_SCHEMA", "Test", util.InspectionSchemaName.O}), IsTrue)
 
 	schemas := is.AllSchemas()
-	c.Assert(schemas, HasLen, 3)
+	c.Assert(schemas, HasLen, 4)
 	schemas = is.Clone()
-	c.Assert(schemas, HasLen, 3)
+	c.Assert(schemas, HasLen, 4)
 
 	c.Assert(is.SchemaExists(dbName), IsTrue)
 	c.Assert(is.SchemaExists(noexist), IsFalse)
