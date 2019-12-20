@@ -118,8 +118,8 @@ var (
 		prometheus.GaugeOpts{
 			Namespace: "tidb",
 			Subsystem: "ddl",
-			Name:      "add_index_progress",
-			Help:      "Progress of add index",
+			Name:      "add_index_percentage_progress",
+			Help:      "Percentage progress of add index",
 		})
 )
 

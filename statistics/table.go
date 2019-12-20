@@ -36,11 +36,6 @@ import (
 )
 
 const (
-	// PseudoRowCount export for other pkg to use.
-	// When we haven't analyzed a table, we use pseudo statistics to estimate costs.
-	// It has row count 10000, equal condition selects 1/1000 of total rows, less condition selects 1/3 of total rows,
-	// between condition selects 1/40 of total rows.
-	PseudoRowCount    = 10000
 	pseudoEqualRate   = 1000
 	pseudoLessRate    = 3
 	pseudoBetweenRate = 40
@@ -49,8 +44,16 @@ const (
 	outOfRangeBetweenRate = 100
 )
 
-// PseudoVersion means the pseudo statistics version is 0.
-const PseudoVersion uint64 = 0
+const (
+	// PseudoVersion means the pseudo statistics version is 0.
+	PseudoVersion uint64 = 0
+
+	// PseudoRowCount export for other pkg to use.
+	// When we haven't analyzed a table, we use pseudo statistics to estimate costs.
+	// It has row count 10000, equal condition selects 1/1000 of total rows, less condition selects 1/3 of total rows,
+	// between condition selects 1/40 of total rows.
+	PseudoRowCount = 10000
+)
 
 // Table represents statistics for a table.
 type Table struct {
