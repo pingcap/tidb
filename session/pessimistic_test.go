@@ -547,6 +547,7 @@ func (s *testPessimisticSuite) TestWaitLockKill(c *C) {
 	tk.MustExec("create table test_kill (id int primary key, c int)")
 	tk.MustExec("insert test_kill values (1, 1)")
 	tk.MustExec("begin pessimistic")
+	tk2.MustExec("set innodb_lock_wait_timeout = 50")
 	tk2.MustExec("begin pessimistic")
 	tk.MustQuery("select * from test_kill where id = 1 for update")
 
@@ -562,11 +563,7 @@ func (s *testPessimisticSuite) TestWaitLockKill(c *C) {
 	_, err := tk2.Exec("update test_kill set c = c + 1 where id = 1")
 	wg.Done()
 	c.Assert(err, NotNil)
-	if *withTiKV {
-		// Test not stable under TiKV
-	} else {
-		c.Assert(terror.ErrorEqual(err, tikv.ErrQueryInterrupted), IsTrue)
-	}
+	c.Assert(terror.ErrorEqual(err, tikv.ErrQueryInterrupted), IsTrue)
 	tk.MustExec("rollback")
 }
 

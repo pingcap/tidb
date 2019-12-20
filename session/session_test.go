@@ -140,6 +140,7 @@ func (s *testSessionSuiteBase) SetUpSuite(c *C) {
 	if *withTiKV {
 		withTiKVGlobalLock.Lock()
 		var d tikv.Driver
+		config.GetGlobalConfig().TxnLocalLatches.Enabled = false
 		store, err := d.Open(fmt.Sprintf("tikv://%s", *pdAddrs))
 		c.Assert(err, IsNil)
 		err = clearStorage(store)
