@@ -1801,7 +1801,6 @@ func dataForKeyColumnUsage(ctx sessionctx.Context, schemas []*model.DBInfo) [][]
 				continue
 			}
 			rs := keyColumnUsageInTable(schema, table)
-
 			rows = append(rows, rs...)
 		}
 	}
@@ -1955,19 +1954,17 @@ func DataForAnalyzeStatus(ctx sessionctx.Context) (rows [][]types.Datum) {
 		} else {
 			startTime = types.Time{Time: types.FromGoTime(job.StartTime), Type: mysql.TypeDatetime}
 		}
-		if checker != nil && !checker.RequestVerification(ctx.GetSessionVars().ActiveRoles, job.DBName, job.TableName, "", mysql.AllPrivMask) {
-			job.Unlock()
-			continue
+		if checker == nil || checker.RequestVerification(ctx.GetSessionVars().ActiveRoles, job.DBName, job.TableName, "", mysql.AllPrivMask) {
+			rows = append(rows, types.MakeDatums(
+				job.DBName,        // TABLE_SCHEMA
+				job.TableName,     // TABLE_NAME
+				job.PartitionName, // PARTITION_NAME
+				job.JobInfo,       // JOB_INFO
+				job.RowCount,      // ROW_COUNT
+				startTime,         // START_TIME
+				job.State,         // STATE
+			))
 		}
-		rows = append(rows, types.MakeDatums(
-			job.DBName,        // TABLE_SCHEMA
-			job.TableName,     // TABLE_NAME
-			job.PartitionName, // PARTITION_NAME
-			job.JobInfo,       // JOB_INFO
-			job.RowCount,      // ROW_COUNT
-			startTime,         // START_TIME
-			job.State,         // STATE
-		))
 		job.Unlock()
 	}
 	return
