@@ -237,8 +237,8 @@ func (c *batchCommandsClient) send(request *tikvpb.BatchCommandsRequest, entries
 		return c.failPendingRequests(err)
 	}
 	if len(entries) == 1 {
-		failpoint.InjectContext(entries[0].ctx, "failBeforeSend", func() {
-			failpoint.Return(c.failPendingRequests(errors.New("test err")))
+		failpoint.InjectContext(entries[0].ctx, "failBeforeSend", func() bool {
+			return c.failPendingRequests(errors.New("test err"))
 		})
 	}
 	if err := c.client.Send(request); err != nil {
