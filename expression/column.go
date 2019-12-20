@@ -15,7 +15,6 @@ package expression
 
 import (
 	"fmt"
-	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
@@ -71,10 +70,6 @@ func (col *CorrelatedColumn) EvalString(ctx sessionctx.Context, row chunk.Row) (
 		return "", true, nil
 	}
 	res, err := col.Data.ToString()
-	resLen := len([]rune(res))
-	if resLen < col.RetType.Flen && ctx.GetSessionVars().StmtCtx.PadCharToFullLength {
-		res = res + strings.Repeat(" ", col.RetType.Flen-resLen)
-	}
 	return res, err != nil, err
 }
 
@@ -249,12 +244,6 @@ func (col *Column) EvalString(ctx sessionctx.Context, row chunk.Row) (string, bo
 	}
 
 	val := row.GetString(col.Index)
-	if ctx.GetSessionVars().StmtCtx.PadCharToFullLength && col.GetType().Tp == mysql.TypeString {
-		valLen := len([]rune(val))
-		if valLen < col.RetType.Flen {
-			val = val + strings.Repeat(" ", col.RetType.Flen-valLen)
-		}
-	}
 	return val, false, nil
 }
 
