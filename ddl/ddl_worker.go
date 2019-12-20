@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/terror"
+	pumpcli "github.com/pingcap/tidb-tools/tidb-binlog/pump_client"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/metrics"
@@ -396,9 +397,7 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 			if err = w.handleUpdateJobError(t, job, err); err != nil {
 				return errors.Trace(err)
 			}
-			if job.IsDone() || job.IsRollbackDone() {
-				binloginfo.SetDDLBinlog(d.binlogCli, txn, job.ID, job.Query)
-			}
+			writeBinlog(d.binlogCli, txn, job)
 			return nil
 		})
 
@@ -428,6 +427,16 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 		if job.IsSynced() || job.IsCancelled() {
 			asyncNotify(d.ddlJobDoneCh)
 		}
+	}
+}
+
+func writeBinlog(binlogCli *pumpcli.PumpsClient, txn kv.Transaction, job *model.Job) {
+	if job.IsDone() || job.IsRollbackDone() ||
+		// When this column is in the "delete only" and "delete reorg" states, the binlog of "drop column" has not been written yet,
+		// but the column has been removed from the binlog of the write operation.
+		// So we add this binlog to enable downstream components to handle DML correctly in this schema state.
+		(job.Type == model.ActionDropColumn && job.SchemaState == model.StateDeleteOnly) {
+		binloginfo.SetDDLBinlog(binlogCli, txn, job.ID, int32(job.SchemaState), job.Query)
 	}
 }
 
