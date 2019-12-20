@@ -220,9 +220,8 @@ func constructLimitPB(count uint64) *tipb.Executor {
 	return &tipb.Executor{Tp: tipb.ExecType_TypeLimit, Limit: limitExec}
 }
 
-func buildDescTableScanDAG(ctx sessionctx.Context, startTS uint64, tbl table.PhysicalTable, columns []*model.ColumnInfo, limit uint64) (*tipb.DAGRequest, error) {
+func buildDescTableScanDAG(ctx sessionctx.Context, tbl table.PhysicalTable, columns []*model.ColumnInfo, limit uint64) (*tipb.DAGRequest, error) {
 	dagReq := &tipb.DAGRequest{}
-	dagReq.StartTs = startTS
 	_, timeZoneOffset := time.Now().In(time.UTC).Zone()
 	dagReq.TimeZoneOffset = int64(timeZoneOffset)
 	for i := range columns {
@@ -249,7 +248,7 @@ func getColumnsTypes(columns []*model.ColumnInfo) []*types.FieldType {
 // buildDescTableScan builds a desc table scan upon tblInfo.
 func (d *ddlCtx) buildDescTableScan(ctx context.Context, startTS uint64, tbl table.PhysicalTable, columns []*model.ColumnInfo, limit uint64) (distsql.SelectResult, error) {
 	sctx := newContext(d.store)
-	dagPB, err := buildDescTableScanDAG(sctx, startTS, tbl, columns, limit)
+	dagPB, err := buildDescTableScanDAG(sctx, tbl, columns, limit)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -257,6 +256,7 @@ func (d *ddlCtx) buildDescTableScan(ctx context.Context, startTS uint64, tbl tab
 	var builder distsql.RequestBuilder
 	builder.SetTableRanges(tbl.GetPhysicalID(), ranges, nil).
 		SetDAGRequest(dagPB).
+		SetStartTS(startTS).
 		SetKeepOrder(true).
 		SetConcurrency(1).SetDesc(true)
 
@@ -341,9 +341,18 @@ func getTableRange(d *ddlCtx, tbl table.PhysicalTable, snapshotVer uint64, prior
 	return
 }
 
+func getValidCurrentVersion(store kv.Storage) (ver kv.Version, err error) {
+	ver, err = store.CurrentVersion()
+	if err != nil {
+		return ver, errors.Trace(err)
+	} else if ver.Ver <= 0 {
+		return ver, errInvalidStoreVer.GenWithStack("invalid storage current version %d", ver.Ver)
+	}
+	return ver, nil
+}
+
 func getReorgInfo(d *ddlCtx, t *meta.Meta, job *model.Job, tbl table.Table) (*reorgInfo, error) {
 	var (
-		err   error
 		start int64
 		end   int64
 		pid   int64
@@ -353,12 +362,9 @@ func getReorgInfo(d *ddlCtx, t *meta.Meta, job *model.Job, tbl table.Table) (*re
 	if job.SnapshotVer == 0 {
 		info.first = true
 		// get the current version for reorganization if we don't have
-		var ver kv.Version
-		ver, err = d.store.CurrentVersion()
+		ver, err := getValidCurrentVersion(d.store)
 		if err != nil {
 			return nil, errors.Trace(err)
-		} else if ver.Ver <= 0 {
-			return nil, errInvalidStoreVer.GenWithStack("invalid storage current version %d", ver.Ver)
 		}
 		tblInfo := tbl.Meta()
 		pid = tblInfo.ID
@@ -385,6 +391,7 @@ func getReorgInfo(d *ddlCtx, t *meta.Meta, job *model.Job, tbl table.Table) (*re
 		// Update info should after data persistent.
 		job.SnapshotVer = ver.Ver
 	} else {
+		var err error
 		start, end, pid, err = t.GetDDLReorgHandle(job)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -396,7 +403,7 @@ func getReorgInfo(d *ddlCtx, t *meta.Meta, job *model.Job, tbl table.Table) (*re
 	info.EndHandle = end
 	info.PhysicalTableID = pid
 
-	return &info, errors.Trace(err)
+	return &info, nil
 }
 
 func (r *reorgInfo) UpdateReorgMeta(txn kv.Transaction, startHandle, endHandle, physicalTableID int64) error {

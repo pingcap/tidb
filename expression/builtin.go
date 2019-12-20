@@ -24,8 +24,11 @@
 package expression
 
 import (
+	"sort"
+	"strings"
 	"sync"
 
+	"github.com/gogo/protobuf/proto"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/charset"
@@ -58,10 +61,10 @@ func (b *baseBuiltinFunc) PbCode() tipb.ScalarFuncSig {
 	return b.pbCode
 }
 
-// implicitArgs returns the implicit arguments of this function.
-// implicit arguments means some functions contain extra inner fields which will not
+// metadata returns the metadata of a function.
+// metadata means some functions contain extra inner fields which will not
 // contain in `tipb.Expr.children` but must be pushed down to coprocessor
-func (b *baseBuiltinFunc) implicitArgs() []types.Datum {
+func (b *baseBuiltinFunc) metadata() proto.Message {
 	// We will not use a field to store them because of only
 	// a few functions contain implicit parameters
 	return nil
@@ -273,7 +276,7 @@ func (b *baseBuiltinFunc) isChildrenReversed() bool {
 	return b.childrenReversed
 }
 
-func (b *baseBuiltinFunc) reverseEval(sc *stmtctx.StatementContext, res types.Datum, rType RoundingType) (types.Datum, error) {
+func (b *baseBuiltinFunc) reverseEval(sc *stmtctx.StatementContext, res types.Datum, rType types.RoundingType) (types.Datum, error) {
 	return types.Datum{}, errors.Errorf("baseBuiltinFunc.reverseEvalInt() should never be called, please contact the TiDB team for help")
 }
 
@@ -347,13 +350,10 @@ type baseBuiltinCastFunc struct {
 	inUnion bool
 }
 
-// implicitArgs returns the implicit arguments of cast functions
-func (b *baseBuiltinCastFunc) implicitArgs() []types.Datum {
-	args := b.baseBuiltinFunc.implicitArgs()
-	if b.inUnion {
-		args = append(args, types.NewIntDatum(1))
-	} else {
-		args = append(args, types.NewIntDatum(0))
+// metadata returns the metadata of cast functions
+func (b *baseBuiltinCastFunc) metadata() proto.Message {
+	args := &tipb.InUnionMetadata{
+		InUnion: b.inUnion,
 	}
 	return args
 }
@@ -400,16 +400,6 @@ type vecBuiltinFunc interface {
 	vecEvalJSON(input *chunk.Chunk, result *chunk.Column) error
 }
 
-// RoundingType is used to indicate the rounding type for reversing evaluation.
-type RoundingType uint8
-
-const (
-	// Ceiling means rounding up.
-	Ceiling RoundingType = iota
-	// Floor means rounding down.
-	Floor
-)
-
 // reverseBuiltinFunc evaluates the exactly one column value in the function when given a result for expression.
 // For example, the buitinFunc is builtinArithmeticPlusRealSig(2.3, builtinArithmeticMinusRealSig(Column, 3.4))
 // when given the result like 1.0, then the ReverseEval should evaluate the column value 1.0 - 2.3 + 3.4 = 2.1
@@ -419,7 +409,7 @@ type reverseBuiltinFunc interface {
 	// isChildrenReversed checks whether the builtinFunc's children support reverse evaluation.
 	isChildrenReversed() bool
 	// reverseEval evaluates the only one column value with given function result.
-	reverseEval(sc *stmtctx.StatementContext, res types.Datum, rType RoundingType) (val types.Datum, err error)
+	reverseEval(sc *stmtctx.StatementContext, res types.Datum, rType types.RoundingType) (val types.Datum, err error)
 }
 
 // builtinFunc stands for a particular function signature.
@@ -453,10 +443,10 @@ type builtinFunc interface {
 	setPbCode(tipb.ScalarFuncSig)
 	// PbCode returns PbCode of this signature.
 	PbCode() tipb.ScalarFuncSig
-	// implicitArgs returns the implicit parameters of a function.
-	// implicit arguments means some functions contain extra inner fields which will not
+	// metadata returns the metadata of a function.
+	// metadata means some functions contain extra inner fields which will not
 	// contain in `tipb.Expr.children` but must be pushed down to coprocessor
-	implicitArgs() []types.Datum
+	metadata() proto.Message
 	// Clone returns a copy of itself.
 	Clone() builtinFunc
 }
@@ -784,4 +774,31 @@ var funcs = map[string]functionClass{
 func IsFunctionSupported(name string) bool {
 	_, ok := funcs[name]
 	return ok
+}
+
+// GetBuiltinList returns a list of builtin functions
+func GetBuiltinList() []string {
+	res := make([]string, 0, len(funcs))
+	notImplementedFunctions := []string{ast.RowFunc}
+	for funcName := range funcs {
+		skipFunc := false
+		// Skip not implemented functions
+		for _, notImplFunc := range notImplementedFunctions {
+			if funcName == notImplFunc {
+				skipFunc = true
+			}
+		}
+		// Skip literal functions
+		// (their names are not readable: 'tidb`.(dateliteral, for example)
+		// See: https://github.com/pingcap/parser/pull/591
+		if strings.HasPrefix(funcName, "'tidb`.(") {
+			skipFunc = true
+		}
+		if skipFunc {
+			continue
+		}
+		res = append(res, funcName)
+	}
+	sort.Strings(res)
+	return res
 }

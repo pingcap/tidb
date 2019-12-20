@@ -29,6 +29,7 @@ import (
 	"github.com/BurntSushi/toml"
 	"github.com/pingcap/errors"
 	zaplog "github.com/pingcap/log"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/util/logutil"
 	tracing "github.com/uber/jaeger-client-go/config"
 	"go.uber.org/atomic"
@@ -38,7 +39,7 @@ import (
 const (
 	MaxLogFileSize = 4096 // MB
 	// DefTxnTotalSizeLimit is the default value of TxnTxnTotalSizeLimit.
-	DefTxnTotalSizeLimit = 100 * 1024 * 1024
+	DefTxnTotalSizeLimit = 1024 * 1024 * 1024
 )
 
 // Valid config maps
@@ -74,8 +75,8 @@ type Config struct {
 	TxnLocalLatches  TxnLocalLatches `toml:"txn-local-latches" json:"txn-local-latches"`
 	// Set sys variable lower-case-table-names, ref: https://dev.mysql.com/doc/refman/5.7/en/identifier-case-sensitivity.html.
 	// TODO: We actually only support mode 2, which keeps the original case, but the comparison is case-insensitive.
-	LowerCaseTableNames int `toml:"lower-case-table-names" json:"lower-case-table-names"`
-
+	LowerCaseTableNames int               `toml:"lower-case-table-names" json:"lower-case-table-names"`
+	ServerVersion       string            `toml:"server-version" json:"server-version"`
 	Log                 Log               `toml:"log" json:"log"`
 	Security            Security          `toml:"security" json:"security"`
 	Status              Status            `toml:"status" json:"status"`
@@ -100,6 +101,9 @@ type Config struct {
 	DelayCleanTableLock uint64      `toml:"delay-clean-table-lock" json:"delay-clean-table-lock"`
 	SplitRegionMaxNum   uint64      `toml:"split-region-max-num" json:"split-region-max-num"`
 	StmtSummary         StmtSummary `toml:"stmt-summary" json:"stmt-summary"`
+	// RepairMode indicates that the TiDB is in the repair mode for table meta.
+	RepairMode      bool     `toml:"repair-mode" json:"repair-mode"`
+	RepairTableList []string `toml:"repair-table-list" json:"repair-table-list"`
 }
 
 // nullableBool defaults unset bool options to unset instead of false, which enables us to know if the user has set 2
@@ -185,6 +189,7 @@ type Log struct {
 	SlowThreshold       uint64 `toml:"slow-threshold" json:"slow-threshold"`
 	ExpensiveThreshold  uint   `toml:"expensive-threshold" json:"expensive-threshold"`
 	QueryLogMaxLen      uint64 `toml:"query-log-max-len" json:"query-log-max-len"`
+	EnableSlowLog       uint32 `toml:"enable-slow-log" json:"enable-slow-log"`
 	RecordPlanInSlowLog uint32 `toml:"record-plan-in-slow-log" json:"record-plan-in-slow-log"`
 }
 
@@ -412,10 +417,16 @@ type PessimisticTxn struct {
 
 // StmtSummary is the config for statement summary.
 type StmtSummary struct {
+	// Enable statement summary or not.
+	Enable bool `toml:"enable" json:"enable"`
 	// The maximum number of statements kept in memory.
 	MaxStmtCount uint `toml:"max-stmt-count" json:"max-stmt-count"`
 	// The maximum length of displayed normalized SQL and sample SQL.
 	MaxSQLLength uint `toml:"max-sql-length" json:"max-sql-length"`
+	// The refresh interval of statement summary.
+	RefreshInterval int `toml:"refresh-interval" json:"refresh-interval"`
+	// The maximum history size of statement summary.
+	HistorySize int `toml:"history-size" json:"history-size"`
 }
 
 var defaultConf = Config{
@@ -440,11 +451,14 @@ var defaultConf = Config{
 	EnableTableLock:              false,
 	DelayCleanTableLock:          0,
 	SplitRegionMaxNum:            1000,
+	RepairMode:                   false,
+	RepairTableList:              []string{},
 	TxnLocalLatches: TxnLocalLatches{
 		Enabled:  false,
 		Capacity: 2048000,
 	},
 	LowerCaseTableNames: 2,
+	ServerVersion:       "",
 	Log: Log{
 		Level:               "info",
 		Format:              "text",
@@ -458,6 +472,7 @@ var defaultConf = Config{
 		DisableTimestamp:    nbUnset, // If both options are nbUnset, getDisableTimestamp() returns false
 		QueryLogMaxLen:      logutil.DefaultQueryLogMaxLen,
 		RecordPlanInSlowLog: logutil.DefaultRecordPlanInSlowLog,
+		EnableSlowLog:       logutil.DefaultTiDBEnableSlowLog,
 	},
 	Status: Status{
 		ReportStatus:    true,
@@ -522,8 +537,11 @@ var defaultConf = Config{
 		MaxRetryCount: 256,
 	},
 	StmtSummary: StmtSummary{
-		MaxStmtCount: 100,
-		MaxSQLLength: 4096,
+		Enable:          false,
+		MaxStmtCount:    100,
+		MaxSQLLength:    4096,
+		RefreshInterval: 1800,
+		HistorySize:     24,
 	},
 }
 
@@ -638,6 +656,9 @@ func (c *Config) Load(confFile string) error {
 	if c.TokenLimit == 0 {
 		c.TokenLimit = 1000
 	}
+	if len(c.ServerVersion) > 0 {
+		mysql.ServerVersion = c.ServerVersion
+	}
 	// If any items in confFile file are not mapped into the Config struct, issue
 	// an error and stop the server from starting.
 	undecoded := metaData.Undecoded()
@@ -699,6 +720,20 @@ func (c *Config) Valid() error {
 	// For tikvclient.
 	if c.TiKVClient.GrpcConnectionCount == 0 {
 		return fmt.Errorf("grpc-connection-count should be greater than 0")
+	}
+
+	if c.Performance.TxnTotalSizeLimit > 100<<20 && c.Binlog.Enable {
+		return fmt.Errorf("txn-total-size-limit should be less than %d with binlog enabled", 100<<20)
+	}
+	if c.Performance.TxnTotalSizeLimit > 10<<30 {
+		return fmt.Errorf("txn-total-size-limit should be less than %d", 10<<30)
+	}
+
+	if c.StmtSummary.HistorySize < 0 {
+		return fmt.Errorf("history-size in [stmt-summary] should be greater than or equal to 0")
+	}
+	if c.StmtSummary.RefreshInterval <= 0 {
+		return fmt.Errorf("refresh-interval in [stmt-summary] should be greater than 0")
 	}
 	return nil
 }

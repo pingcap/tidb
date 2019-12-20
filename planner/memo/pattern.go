@@ -55,12 +55,16 @@ const (
 	OperandLock
 	// OperandLimit is the operand for LogicalLimit.
 	OperandLimit
-	// OperandTableGather is the operand for TableGather.
-	OperandTableGather
+	// OperandTiKVSingleGather is the operand for TiKVSingleGather.
+	OperandTiKVSingleGather
 	// OperandTableScan is the operand for TableScan.
 	OperandTableScan
+	// OperandIndexScan is the operand for IndexScan.
+	OperandIndexScan
 	// OperandShow is the operand for Show.
 	OperandShow
+	// OperandWindow is the operand for window function.
+	OperandWindow
 	// OperandUnsupported is the operand for unsupported operators.
 	OperandUnsupported
 )
@@ -96,12 +100,16 @@ func GetOperand(p plannercore.LogicalPlan) Operand {
 		return OperandLock
 	case *plannercore.LogicalLimit:
 		return OperandLimit
-	case *plannercore.TableGather:
-		return OperandTableGather
-	case *plannercore.TableScan:
+	case *plannercore.TiKVSingleGather:
+		return OperandTiKVSingleGather
+	case *plannercore.LogicalTableScan:
 		return OperandTableScan
+	case *plannercore.LogicalIndexScan:
+		return OperandIndexScan
 	case *plannercore.LogicalShow:
 		return OperandShow
+	case *plannercore.LogicalWindow:
+		return OperandWindow
 	default:
 		return OperandUnsupported
 	}

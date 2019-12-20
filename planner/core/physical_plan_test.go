@@ -34,18 +34,31 @@ import (
 )
 
 var _ = Suite(&testPlanSuite{})
+var _ = SerialSuites(&testPlanSerialSuite{})
 
-type testPlanSuite struct {
+type testPlanSuiteBase struct {
 	*parser.Parser
 	is infoschema.InfoSchema
+}
+
+func (s *testPlanSuiteBase) SetUpSuite(c *C) {
+	s.is = infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable(), core.MockUnsignedTable()})
+	s.Parser = parser.New()
+	s.Parser.EnableWindowFunc(true)
+}
+
+type testPlanSerialSuite struct {
+	testPlanSuiteBase
+}
+
+type testPlanSuite struct {
+	testPlanSuiteBase
 
 	testData testutil.TestData
 }
 
 func (s *testPlanSuite) SetUpSuite(c *C) {
-	s.is = infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable(), core.MockUnsignedTable()})
-	s.Parser = parser.New()
-	s.Parser.EnableWindowFunc(true)
+	s.testPlanSuiteBase.SetUpSuite(c)
 
 	var err error
 	s.testData, err = testutil.LoadTestSuiteData("testdata", "plan_suite")

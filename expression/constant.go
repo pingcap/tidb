@@ -16,7 +16,6 @@ package expression
 import (
 	"fmt"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
@@ -452,10 +451,13 @@ func (c *Constant) Vectorized() bool {
 
 // SupportReverseEval checks whether the builtinFunc support reverse evaluation.
 func (c *Constant) SupportReverseEval() bool {
+	if c.DeferredExpr != nil {
+		return c.DeferredExpr.SupportReverseEval()
+	}
 	return true
 }
 
 // ReverseEval evaluates the only one column value with given function result.
-func (c *Constant) ReverseEval(sc *stmtctx.StatementContext, res types.Datum, rType RoundingType) (val types.Datum, err error) {
-	return types.Datum{}, errors.Errorf("Constant.ReverseEval() should never be called, please contact the TiDB team for help")
+func (c *Constant) ReverseEval(sc *stmtctx.StatementContext, res types.Datum, rType types.RoundingType) (val types.Datum, err error) {
+	return c.Value, nil
 }

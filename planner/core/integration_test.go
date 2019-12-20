@@ -15,9 +15,11 @@ package core_test
 
 import (
 	. "github.com/pingcap/check"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
 )
@@ -280,4 +282,26 @@ func (s *testIntegrationSuite) TestPartitionTableStats(c *C) {
 		})
 		tk.MustQuery(tt).Check(testkit.Rows(output[i].Result...))
 	}
+}
+
+func (s *testIntegrationSuite) TestErrNoDB(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create user test")
+	_, err := tk.Exec("grant select on test1111 to test@'%'")
+	c.Assert(errors.Cause(err), Equals, core.ErrNoDB)
+	tk.MustExec("use test")
+	tk.MustExec("grant select on test1111 to test@'%'")
+}
+
+func (s *testIntegrationSuite) TestINLJHintSmallTable(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1(a int not null, b int, key(a))")
+	tk.MustExec("insert into t1 values(1,1),(2,2)")
+	tk.MustExec("create table t2(a int not null, b int, key(a))")
+	tk.MustExec("insert into t2 values(1,1),(2,2),(3,3),(4,4),(5,5)")
+	tk.MustExec("analyze table t1, t2")
+	tk.MustExec("explain select /*+ TIDB_INLJ(t1) */ * from t1 join t2 on t1.a = t2.a")
+	tk.MustQuery("show warnings").Check(testkit.Rows())
 }

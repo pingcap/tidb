@@ -448,7 +448,7 @@ func (b *builtinCastIntAsIntSig) evalInt(row chunk.Row) (res int64, isNull bool,
 	return
 }
 
-func (b *builtinCastIntAsIntSig) reverseEval(sc *stmtctx.StatementContext, res types.Datum, rType RoundingType) (val types.Datum, err error) {
+func (b *builtinCastIntAsIntSig) reverseEval(sc *stmtctx.StatementContext, res types.Datum, rType types.RoundingType) (val types.Datum, err error) {
 	resVal := res.GetInt64()
 	switch x := b.args[0].(type) {
 	case *Column:
@@ -496,10 +496,10 @@ func (b *builtinCastIntAsRealSig) supportReverseEval() bool {
 	return true
 }
 
-func (b *builtinCastIntAsRealSig) reverseEval(sc *stmtctx.StatementContext, res types.Datum, rType RoundingType) (val types.Datum, err error) {
+func (b *builtinCastIntAsRealSig) reverseEval(sc *stmtctx.StatementContext, res types.Datum, rType types.RoundingType) (val types.Datum, err error) {
 	switch x := b.args[0].(type) {
 	case *Column, *ScalarFunction:
-		val, err = changeReverseResultByUpperLowerBound(sc, x.GetType(), res, rType)
+		val, err = types.ChangeReverseResultByUpperLowerBound(sc, x.GetType(), res, rType)
 		if err != nil {
 			return val, err
 		}
@@ -546,10 +546,10 @@ func (b *builtinCastIntAsDecimalSig) supportReverseEval() bool {
 	return true
 }
 
-func (b *builtinCastIntAsDecimalSig) reverseEval(sc *stmtctx.StatementContext, res types.Datum, rType RoundingType) (val types.Datum, err error) {
+func (b *builtinCastIntAsDecimalSig) reverseEval(sc *stmtctx.StatementContext, res types.Datum, rType types.RoundingType) (val types.Datum, err error) {
 	switch x := b.args[0].(type) {
 	case *Column, *ScalarFunction:
-		val, err = changeReverseResultByUpperLowerBound(sc, x.GetType(), res, rType)
+		val, err = types.ChangeReverseResultByUpperLowerBound(sc, x.GetType(), res, rType)
 		if err != nil {
 			return val, err
 		}
@@ -788,10 +788,10 @@ func (b *builtinCastRealAsRealSig) supportReverseEval() bool {
 	return true
 }
 
-func (b *builtinCastRealAsRealSig) reverseEval(sc *stmtctx.StatementContext, res types.Datum, rType RoundingType) (val types.Datum, err error) {
+func (b *builtinCastRealAsRealSig) reverseEval(sc *stmtctx.StatementContext, res types.Datum, rType types.RoundingType) (val types.Datum, err error) {
 	switch x := b.args[0].(type) {
 	case *Column, *ScalarFunction:
-		val, err = changeReverseResultByUpperLowerBound(sc, x.GetType(), res, rType)
+		val, err = types.ChangeReverseResultByUpperLowerBound(sc, x.GetType(), res, rType)
 		if err != nil {
 			return val, err
 		}
@@ -838,10 +838,10 @@ func (b *builtinCastRealAsIntSig) supportReverseEval() bool {
 	return true
 }
 
-func (b *builtinCastRealAsIntSig) reverseEval(sc *stmtctx.StatementContext, res types.Datum, rType RoundingType) (val types.Datum, err error) {
+func (b *builtinCastRealAsIntSig) reverseEval(sc *stmtctx.StatementContext, res types.Datum, rType types.RoundingType) (val types.Datum, err error) {
 	switch x := b.args[0].(type) {
 	case *Column, *ScalarFunction:
-		val, err = changeReverseResultByUpperLowerBound(sc, x.GetType(), res, rType)
+		val, err = types.ChangeReverseResultByUpperLowerBound(sc, x.GetType(), res, rType)
 		if err != nil {
 			return val, err
 		}
@@ -883,10 +883,10 @@ func (b *builtinCastRealAsDecimalSig) supportReverseEval() bool {
 	return true
 }
 
-func (b *builtinCastRealAsDecimalSig) reverseEval(sc *stmtctx.StatementContext, res types.Datum, rType RoundingType) (val types.Datum, err error) {
+func (b *builtinCastRealAsDecimalSig) reverseEval(sc *stmtctx.StatementContext, res types.Datum, rType types.RoundingType) (val types.Datum, err error) {
 	switch x := b.args[0].(type) {
 	case *Column, *ScalarFunction:
-		val, err = changeReverseResultByUpperLowerBound(sc, x.GetType(), res, rType)
+		val, err = types.ChangeReverseResultByUpperLowerBound(sc, x.GetType(), res, rType)
 		if err != nil {
 			return val, err
 		}
@@ -1007,10 +1007,10 @@ func (b *builtinCastDecimalAsDecimalSig) supportReverseEval() bool {
 	return true
 }
 
-func (b *builtinCastDecimalAsDecimalSig) reverseEval(sc *stmtctx.StatementContext, res types.Datum, rType RoundingType) (val types.Datum, err error) {
+func (b *builtinCastDecimalAsDecimalSig) reverseEval(sc *stmtctx.StatementContext, res types.Datum, rType types.RoundingType) (val types.Datum, err error) {
 	switch x := b.args[0].(type) {
 	case *Column, *ScalarFunction:
-		val, err = changeReverseResultByUpperLowerBound(sc, x.GetType(), res, rType)
+		val, err = types.ChangeReverseResultByUpperLowerBound(sc, x.GetType(), res, rType)
 		if err != nil {
 			return val, err
 		}
@@ -1067,10 +1067,10 @@ func (b *builtinCastDecimalAsIntSig) supportReverseEval() bool {
 	return true
 }
 
-func (b *builtinCastDecimalAsIntSig) reverseEval(sc *stmtctx.StatementContext, res types.Datum, rType RoundingType) (val types.Datum, err error) {
+func (b *builtinCastDecimalAsIntSig) reverseEval(sc *stmtctx.StatementContext, res types.Datum, rType types.RoundingType) (val types.Datum, err error) {
 	switch x := b.args[0].(type) {
 	case *Column, *ScalarFunction:
-		val, err = changeReverseResultByUpperLowerBound(sc, x.GetType(), res, rType)
+		val, err = types.ChangeReverseResultByUpperLowerBound(sc, x.GetType(), res, rType)
 		if err != nil {
 			return val, err
 		}
@@ -1132,10 +1132,10 @@ func (b *builtinCastDecimalAsRealSig) supportReverseEval() bool {
 	return true
 }
 
-func (b *builtinCastDecimalAsRealSig) reverseEval(sc *stmtctx.StatementContext, res types.Datum, rType RoundingType) (val types.Datum, err error) {
+func (b *builtinCastDecimalAsRealSig) reverseEval(sc *stmtctx.StatementContext, res types.Datum, rType types.RoundingType) (val types.Datum, err error) {
 	switch x := b.args[0].(type) {
 	case *Column, *ScalarFunction:
-		val, err = changeReverseResultByUpperLowerBound(sc, x.GetType(), res, rType)
+		val, err = types.ChangeReverseResultByUpperLowerBound(sc, x.GetType(), res, rType)
 		if err != nil {
 			return val, err
 		}
@@ -1271,6 +1271,10 @@ func (b *builtinCastStringAsIntSig) evalInt(row chunk.Row) (res int64, isNull bo
 	if len(val) > 1 && val[0] == '-' { // negative number
 		isNegative = true
 	}
+	sctx := b.ctx.GetSessionVars().StmtCtx
+	if val == "" && (sctx.InInsertStmt || sctx.InUpdateStmt) {
+		return 0, false, nil
+	}
 
 	var ures uint64
 	sc := b.ctx.GetSessionVars().StmtCtx
@@ -1312,6 +1316,10 @@ func (b *builtinCastStringAsRealSig) evalReal(row chunk.Row) (res float64, isNul
 	val, isNull, err := b.args[0].EvalString(b.ctx, row)
 	if isNull || err != nil {
 		return res, isNull, err
+	}
+	sctx := b.ctx.GetSessionVars().StmtCtx
+	if val == "" && (sctx.InInsertStmt || sctx.InUpdateStmt) {
+		return 0, false, nil
 	}
 	sc := b.ctx.GetSessionVars().StmtCtx
 	res, err = types.StrToFloat(sc, val)
@@ -1625,6 +1633,9 @@ func (b *builtinCastDurationAsDecimalSig) evalDecimal(row chunk.Row) (res *types
 	val, isNull, err := b.args[0].EvalDuration(b.ctx, row)
 	if isNull || err != nil {
 		return res, isNull, err
+	}
+	if val.Fsp, err = types.CheckFsp(int(val.Fsp)); err != nil {
+		return res, false, err
 	}
 	sc := b.ctx.GetSessionVars().StmtCtx
 	res, err = types.ProduceDecWithSpecifiedTp(val.ToNumber(), b.tp, sc)
