@@ -105,7 +105,7 @@ func (s *testClusterTableSuite) setUpRPCService(c *C, addr string) (*grpc.Server
 		Command: mysql.ComQuery,
 	}
 	srv := server.NewRPCServer(config.GetGlobalConfig(), s.dom, sm)
-	addr = fmt.Sprintf(":%d", lis.Addr().(*net.TCPAddr).Port)
+	addr = fmt.Sprintf("127.0.0.1:%d", lis.Addr().(*net.TCPAddr).Port)
 	go func() {
 		err = srv.Serve(lis)
 		c.Assert(err, IsNil)
@@ -917,7 +917,7 @@ func (s *testTableSuite) TestForTableTiFlashReplica(c *C) {
 	tk.MustQuery("select TABLE_SCHEMA,TABLE_NAME,REPLICA_COUNT,LOCATION_LABELS,AVAILABLE from information_schema.tiflash_replica").Check(testkit.Rows("test t 2 a,b 1"))
 }
 
-func (s *testClusterTableSuite) _TestForClusterServerInfo(c *C) {
+func (s *testClusterTableSuite) TestForClusterServerInfo(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	instances := []string{
 		"tidb," + s.listenAddr + "," + s.listenAddr + ",mock-version,mock-githash",
