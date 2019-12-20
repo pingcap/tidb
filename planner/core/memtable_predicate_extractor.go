@@ -498,6 +498,9 @@ func (e *MetricTableExtractor) Extract(
 
 	// Extract the `time` columns
 	remained, startTime, endTime := e.extractTimeRange(ctx, schema, names, remained, "time")
+	if endTime == 0 {
+		endTime = math.MaxInt64
+	}
 	e.StartTime = startTime
 	e.EndTime = endTime
 	e.SkipRequest = startTime > endTime

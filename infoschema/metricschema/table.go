@@ -16,6 +16,7 @@ package metricschema
 import (
 	"bytes"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -114,7 +115,8 @@ func (def *MetricTableDef) GenPromQL(sctx sessionctx.Context, labels map[string]
 func (def *MetricTableDef) genLabelCondition(labels map[string]set.StringSet) string {
 	var buf bytes.Buffer
 	index := 0
-	for label, values := range labels {
+	for _, label := range def.Labels {
+		values := labels[label]
 		if len(values) == 0 {
 			continue
 		}
@@ -134,13 +136,17 @@ func (def *MetricTableDef) genLabelCondition(labels map[string]set.StringSet) st
 
 func (def *MetricTableDef) genLabelConditionValues(values set.StringSet) string {
 	var buf bytes.Buffer
-	index := 0
+	vs := make([]string, 0, len(values))
 	for k := range values {
-		if index > 0 {
+		vs = append(vs, k)
+	}
+	sort.Strings(vs)
+	for i, value := range vs {
+		if i > 0 {
 			buf.WriteByte('|')
 		}
-		index++
-		buf.WriteString(k)
+		i++
+		buf.WriteString(value)
 	}
 	return buf.String()
 }

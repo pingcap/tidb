@@ -545,3 +545,125 @@ func (s *extractorSuite) TestClusterLogTableExtractor(c *C) {
 		}
 	}
 }
+
+func (s *extractorSuite) TestMetricTableExtractor(c *C) {
+	se, err := session.CreateSession4Test(s.store)
+	c.Assert(err, IsNil)
+
+	parser := parser.New()
+	var cases = []struct {
+		sql                string
+		skipRequest        bool
+		startTime, endTime int64
+		labelConditions    map[string]set.StringSet
+		quantile           float64
+		explainInfo        string
+		err                string
+	}{
+		{
+			sql:         "select * from metric_schema.query_duration",
+			explainInfo: `PromQL:histogram_quantile(0.9, sum(rate(tidb_server_handle_query_duration_seconds_bucket{}[60s])) by (le))`,
+		},
+		{
+			sql:         "select * from metric_schema.query_duration where instance='127.0.0.1:10080'",
+			explainInfo: `PromQL:histogram_quantile(0.9, sum(rate(tidb_server_handle_query_duration_seconds_bucket{instance="127.0.0.1:10080"}[60s])) by (le))`,
+			labelConditions: map[string]set.StringSet{
+				"instance": set.NewStringSet("127.0.0.1:10080"),
+			},
+		},
+		{
+			sql:         "select * from metric_schema.query_duration where instance='127.0.0.1:10080' or instance='127.0.0.1:10081'",
+			explainInfo: `PromQL:histogram_quantile(0.9, sum(rate(tidb_server_handle_query_duration_seconds_bucket{instance=~"127.0.0.1:10080|127.0.0.1:10081"}[60s])) by (le))`,
+			labelConditions: map[string]set.StringSet{
+				"instance": set.NewStringSet("127.0.0.1:10080", "127.0.0.1:10081"),
+			},
+		},
+		{
+			sql:         "select * from metric_schema.query_duration where instance='127.0.0.1:10080' and sql_type='general'",
+			explainInfo: `PromQL:histogram_quantile(0.9, sum(rate(tidb_server_handle_query_duration_seconds_bucket{instance="127.0.0.1:10080",sql_type="general"}[60s])) by (le))`,
+			labelConditions: map[string]set.StringSet{
+				"instance": set.NewStringSet("127.0.0.1:10080"),
+				"sql_type": set.NewStringSet("general"),
+			},
+		},
+		{
+			sql:         "select * from metric_schema.query_duration where instance='127.0.0.1:10080' or sql_type='general'",
+			explainInfo: `PromQL:histogram_quantile(0.9, sum(rate(tidb_server_handle_query_duration_seconds_bucket{}[60s])) by (le))`,
+		},
+		{
+			sql:         "select * from metric_schema.query_duration where instance='127.0.0.1:10080' and sql_type='general' and time='2019-10-10 10:10:10'",
+			explainInfo: `PromQL:histogram_quantile(0.9, sum(rate(tidb_server_handle_query_duration_seconds_bucket{instance="127.0.0.1:10080",sql_type="general"}[60s])) by (le))`,
+			labelConditions: map[string]set.StringSet{
+				"instance": set.NewStringSet("127.0.0.1:10080"),
+				"sql_type": set.NewStringSet("general"),
+			},
+			startTime: timestamp(c, "2019-10-10 10:10:10"),
+			endTime:   timestamp(c, "2019-10-10 10:10:10"),
+		},
+		{
+			sql:         "select * from metric_schema.query_duration where time>'2019-10-10 10:10:10' and time<'2019-10-11 10:10:10'",
+			explainInfo: `PromQL:histogram_quantile(0.9, sum(rate(tidb_server_handle_query_duration_seconds_bucket{}[60s])) by (le))`,
+			startTime:   timestamp(c, "2019-10-10 10:10:10") + 1,
+			endTime:     timestamp(c, "2019-10-11 10:10:10") - 1,
+		},
+		{
+			sql:         "select * from metric_schema.query_duration where time>='2019-10-10 10:10:10'",
+			explainInfo: `PromQL:histogram_quantile(0.9, sum(rate(tidb_server_handle_query_duration_seconds_bucket{}[60s])) by (le))`,
+			startTime:   timestamp(c, "2019-10-10 10:10:10"),
+			endTime:     math.MaxInt64,
+		},
+		{
+			sql:         "select * from metric_schema.query_duration where time>='2019-10-10 10:10:10' and time<='2019-10-09 10:10:10'",
+			explainInfo: "",
+			startTime:   timestamp(c, "2019-10-10 10:10:10"),
+			endTime:     timestamp(c, "2019-10-09 10:10:10"),
+			skipRequest: true,
+		},
+		{
+			sql:         "select * from metric_schema.query_duration where quantile=0.9 or quantile=0.8",
+			explainInfo: "",
+			err:         "query metric data not support specified multiple quantile",
+		},
+	}
+	se.GetSessionVars().StmtCtx.TimeZone = time.Local
+	for _, ca := range cases {
+		stmt, err := parser.ParseOneStmt(ca.sql, "", "")
+		c.Assert(err, IsNil)
+
+		ctx := context.Background()
+		builder := plannercore.NewPlanBuilder(se, s.dom.InfoSchema(), &plannercore.BlockHintProcessor{})
+		plan, err := builder.Build(ctx, stmt)
+		c.Assert(err, IsNil)
+
+		logicalPlan, err := plannercore.LogicalOptimize(ctx, builder.GetOptFlag(), plan.(plannercore.LogicalPlan))
+		c.Assert(err, IsNil)
+
+		// Obtain the leaf plan
+		leafPlan := logicalPlan
+		for len(leafPlan.Children()) > 0 {
+			leafPlan = leafPlan.Children()[0]
+		}
+
+		logicalMemTable := leafPlan.(*plannercore.LogicalMemTable)
+		c.Assert(logicalMemTable.Extractor, NotNil)
+
+		metricTableExtractor := logicalMemTable.Extractor.(*plannercore.MetricTableExtractor)
+		c.Assert(metricTableExtractor.LabelConditions, DeepEquals, ca.labelConditions, Commentf("SQL: %v", ca.sql))
+		if ca.startTime > 0 {
+			c.Assert(metricTableExtractor.StartTime, DeepEquals, ca.startTime, Commentf("SQL: %v", ca.sql))
+		}
+		if ca.endTime > 0 {
+			c.Assert(metricTableExtractor.EndTime, DeepEquals, ca.endTime, Commentf("SQL: %v", ca.sql))
+		}
+		c.Assert(metricTableExtractor.SkipRequest, DeepEquals, ca.skipRequest, Commentf("SQL: %v", ca.sql))
+		c.Assert(leafPlan.ExplainInfo(), DeepEquals, ca.explainInfo, Commentf("SQL: %v", ca.sql))
+		quantile, err := metricTableExtractor.GetQuantile()
+		if len(ca.err) > 0 {
+			c.Assert(err, NotNil)
+			c.Assert(err.Error(), DeepEquals, ca.err)
+		} else {
+			c.Assert(err, IsNil)
+			c.Assert(quantile, DeepEquals, ca.quantile)
+		}
+	}
+}

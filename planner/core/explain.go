@@ -16,6 +16,9 @@ package core
 import (
 	"bytes"
 	"fmt"
+	"github.com/pingcap/parser/model"
+	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/util"
 	"strings"
 
 	"github.com/pingcap/parser/ast"
@@ -696,17 +699,26 @@ func (p *TiKVSingleGather) ExplainInfo() string {
 
 // ExplainInfo implements Plan interface.
 func (p *PhysicalMemTable) ExplainInfo() string {
-	if !metricschema.IsMetricTable(p.Table.Name.L) {
+	return genMetricTableExplainInfo(p.ctx, p.DBName, p.Table, p.Extractor)
+}
+
+// ExplainInfo implements Plan interface.
+func (p *LogicalMemTable) ExplainInfo() string {
+	return genMetricTableExplainInfo(p.ctx, p.dbName, p.tableInfo, p.Extractor)
+}
+
+func genMetricTableExplainInfo(ctx sessionctx.Context, dbName model.CIStr, tblInfo *model.TableInfo, extractor MemTablePredicateExtractor) string {
+	if dbName.L != util.MetricSchemaName.L || !metricschema.IsMetricTable(tblInfo.Name.L) {
 		return ""
 	}
 
-	extractor, ok := p.Extractor.(*MetricTableExtractor)
-	if !ok {
+	e, ok := extractor.(*MetricTableExtractor)
+	if !ok || e.SkipRequest {
 		return ""
 	}
-	quantile, err := extractor.GetQuantile()
+	quantile, err := e.GetQuantile()
 	if err != nil {
 		return ""
 	}
-	return metricschema.GetExplainInfo(p.ctx, p.Table.Name.L, extractor.LabelConditions, quantile)
+	return metricschema.GetExplainInfo(ctx, tblInfo.Name.L, e.LabelConditions, quantile)
 }

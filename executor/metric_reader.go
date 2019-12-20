@@ -45,7 +45,7 @@ type MetricRetriever struct {
 }
 
 func (e *MetricRetriever) retrieve(ctx context.Context, sctx sessionctx.Context) (fullRows [][]types.Datum, err error) {
-	if e.retrieved {
+	if e.retrieved || e.extractor.SkipRequest {
 		return nil, nil
 	}
 	e.retrieved = true
