@@ -37,7 +37,7 @@ import (
 
 type batchConn struct {
 	// An atomic flag indicates whether the batch is die or not.
-	// 0 for busy, others for idle.
+	// 0 for busy, others for die.
 	die uint32
 
 	// batchCommandsCh used for batch commands.
@@ -46,7 +46,7 @@ type batchConn struct {
 	tikvTransportLayerLoad uint64
 	closed                 chan struct{}
 
-	// Notify rpcClient to check the idle flag
+	// Notify rpcClient to check the die flag
 	dieNotify  *uint32
 	idleDetect *time.Timer
 
@@ -55,14 +55,14 @@ type batchConn struct {
 	index uint32
 }
 
-func newBatchConn(connCount, maxBatchSize uint, idleNotify *uint32) *batchConn {
+func newBatchConn(connCount, maxBatchSize uint, dieNotify *uint32) *batchConn {
 	return &batchConn{
 		batchCommandsCh:        make(chan *batchCommandsEntry, maxBatchSize),
 		batchCommandsClients:   make([]*batchCommandsClient, 0, connCount),
 		tikvTransportLayerLoad: 0,
 		closed:                 make(chan struct{}),
 
-		dieNotify:  idleNotify,
+		dieNotify:  dieNotify,
 		idleDetect: time.NewTimer(idleTimeout),
 	}
 }
@@ -628,7 +628,7 @@ func sendBatchRequest(
 	}
 }
 
-func (c *rpcClient) recycleIdleConnArray() {
+func (c *rpcClient) recycleDieConnArray() {
 	var addrs []string
 	c.RLock()
 	for _, conn := range c.conns {
