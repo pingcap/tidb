@@ -1499,6 +1499,10 @@ func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
 	}
 	if idx >= 0 {
 		column := er.schema.Columns[idx]
+		if column.IsHidden {
+			er.err = ErrUnknownColumn.GenWithStackByArgs(v.Name, clauseMsg[er.b.curClause])
+			return
+		}
 		er.ctxStackAppend(column, er.names[idx])
 		return
 	}

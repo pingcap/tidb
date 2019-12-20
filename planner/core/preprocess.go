@@ -120,11 +120,16 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 	case *ast.Join:
 		p.checkNonUniqTableAlias(node)
 	case *ast.CreateBindingStmt:
+		EraseLastSemicolon(node.OriginSel)
+		EraseLastSemicolon(node.HintedSel)
 		p.checkBindGrammar(node.OriginSel, node.HintedSel)
 	case *ast.DropBindingStmt:
+		EraseLastSemicolon(node.OriginSel)
 		if node.HintedSel != nil {
+			EraseLastSemicolon(node.HintedSel)
 			p.checkBindGrammar(node.OriginSel, node.HintedSel)
 		}
+		return in, true
 	case *ast.RecoverTableStmt, *ast.FlashBackTableStmt:
 		// The specified table in recover table statement maybe already been dropped.
 		// So skip check table name here, otherwise, recover table [table_name] syntax will return
@@ -138,6 +143,14 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		p.flag &= ^parentIsJoin
 	}
 	return in, p.err != nil
+}
+
+// EraseLastSemicolon removes last semicolon of sql.
+func EraseLastSemicolon(stmt ast.StmtNode) {
+	sql := stmt.Text()
+	if len(sql) > 0 && sql[len(sql)-1] == ';' {
+		stmt.SetText(sql[:len(sql)-1])
+	}
 }
 
 func (p *preprocessor) checkBindGrammar(originSel, hintedSel ast.StmtNode) {
@@ -500,7 +513,7 @@ func (p *preprocessor) checkCreateIndexGrammar(stmt *ast.CreateIndexStmt) {
 		p.err = ddl.ErrWrongTableName.GenWithStackByArgs(tName)
 		return
 	}
-	p.err = checkIndexInfo(stmt.IndexName, stmt.IndexColNames)
+	p.err = checkIndexInfo(stmt.IndexName, stmt.IndexPartSpecifications)
 }
 
 func (p *preprocessor) checkRenameTableGrammar(stmt *ast.RenameTableStmt) {
@@ -578,10 +591,10 @@ func (p *preprocessor) checkAlterTableGrammar(stmt *ast.AlterTableStmt) {
 }
 
 // checkDuplicateColumnName checks if index exists duplicated columns.
-func checkDuplicateColumnName(indexColNames []*ast.IndexColName) error {
-	colNames := make(map[string]struct{}, len(indexColNames))
-	for _, indexColName := range indexColNames {
-		name := indexColName.Column.Name
+func checkDuplicateColumnName(IndexPartSpecifications []*ast.IndexPartSpecification) error {
+	colNames := make(map[string]struct{}, len(IndexPartSpecifications))
+	for _, IndexColNameWithExpr := range IndexPartSpecifications {
+		name := IndexColNameWithExpr.Column.Name
 		if _, ok := colNames[name.L]; ok {
 			return infoschema.ErrColumnExists.GenWithStackByArgs(name)
 		}
@@ -591,14 +604,14 @@ func checkDuplicateColumnName(indexColNames []*ast.IndexColName) error {
 }
 
 // checkIndexInfo checks index name and index column names.
-func checkIndexInfo(indexName string, indexColNames []*ast.IndexColName) error {
+func checkIndexInfo(indexName string, IndexPartSpecifications []*ast.IndexPartSpecification) error {
 	if strings.EqualFold(indexName, mysql.PrimaryKeyName) {
 		return ddl.ErrWrongNameForIndex.GenWithStackByArgs(indexName)
 	}
-	if len(indexColNames) > mysql.MaxKeyParts {
+	if len(IndexPartSpecifications) > mysql.MaxKeyParts {
 		return infoschema.ErrTooManyKeyParts.GenWithStackByArgs(mysql.MaxKeyParts)
 	}
-	return checkDuplicateColumnName(indexColNames)
+	return checkDuplicateColumnName(IndexPartSpecifications)
 }
 
 // checkColumn checks if the column definition is valid.

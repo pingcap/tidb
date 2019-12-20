@@ -74,6 +74,15 @@ var defaultImplementationMap = map[memo.Operand][]ImplementationRule{
 	memo.OperandUnionAll: {
 		&ImplUnionAll{},
 	},
+	memo.OperandApply: {
+		&ImplApply{},
+	},
+	memo.OperandMaxOneRow: {
+		&ImplMaxOneRow{},
+	},
+	memo.OperandWindow: {
+		&ImplWindow{},
+	},
 }
 
 // ImplTableDual implements LogicalTableDual as PhysicalTableDual.
@@ -466,4 +475,85 @@ func (r *ImplUnionAll) OnImplement(expr *memo.GroupExpr, reqProp *property.Physi
 	)
 	physicalUnion.SetSchema(expr.Group.Prop.Schema)
 	return impl.NewUnionAllImpl(physicalUnion), nil
+}
+
+// ImplApply implements LogicalApply to PhysicalApply
+type ImplApply struct {
+}
+
+// Match implements ImplementationRule Match interface.
+func (r *ImplApply) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) (matched bool) {
+	return prop.AllColsFromSchema(expr.Children[0].Prop.Schema)
+}
+
+// OnImplement implements ImplementationRule OnImplement interface
+func (r *ImplApply) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) (memo.Implementation, error) {
+	la := expr.ExprNode.(*plannercore.LogicalApply)
+	join := la.GetHashJoin(reqProp)
+	physicalApply := plannercore.PhysicalApply{
+		PhysicalHashJoin: *join,
+		OuterSchema:      la.CorCols,
+	}.Init(
+		la.SCtx(),
+		expr.Group.Prop.Stats.ScaleByExpectCnt(reqProp.ExpectedCnt),
+		la.SelectBlockOffset(),
+		&property.PhysicalProperty{ExpectedCnt: math.MaxFloat64, Items: reqProp.Items},
+		&property.PhysicalProperty{ExpectedCnt: math.MaxFloat64})
+	physicalApply.SetSchema(expr.Group.Prop.Schema)
+	return impl.NewApplyImpl(physicalApply), nil
+}
+
+// ImplMaxOneRow implements LogicalMaxOneRow to PhysicalMaxOneRow.
+type ImplMaxOneRow struct {
+}
+
+// Match implements ImplementationRule Match interface.
+func (r *ImplMaxOneRow) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) (matched bool) {
+	return prop.IsEmpty()
+}
+
+// OnImplement implements ImplementationRule OnImplement interface
+func (r *ImplMaxOneRow) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) (memo.Implementation, error) {
+	mor := expr.ExprNode.(*plannercore.LogicalMaxOneRow)
+	physicalMaxOneRow := plannercore.PhysicalMaxOneRow{}.Init(
+		mor.SCtx(),
+		expr.Group.Prop.Stats,
+		mor.SelectBlockOffset(),
+		&property.PhysicalProperty{ExpectedCnt: 2})
+	return impl.NewMaxOneRowImpl(physicalMaxOneRow), nil
+}
+
+// ImplWindow implements LogicalWindow to PhysicalWindow.
+type ImplWindow struct {
+}
+
+// Match implements ImplementationRule Match interface.
+func (w *ImplWindow) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) (matched bool) {
+	lw := expr.ExprNode.(*plannercore.LogicalWindow)
+	var byItems []property.Item
+	byItems = append(byItems, lw.PartitionBy...)
+	byItems = append(byItems, lw.OrderBy...)
+	childProperty := &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64, Items: byItems}
+	return prop.IsPrefix(childProperty)
+}
+
+// OnImplement implements ImplementationRule OnImplement interface.
+func (w *ImplWindow) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) (memo.Implementation, error) {
+	lw := expr.ExprNode.(*plannercore.LogicalWindow)
+	var byItems []property.Item
+	byItems = append(byItems, lw.PartitionBy...)
+	byItems = append(byItems, lw.OrderBy...)
+	physicalWindow := plannercore.PhysicalWindow{
+		WindowFuncDescs: lw.WindowFuncDescs,
+		PartitionBy:     lw.PartitionBy,
+		OrderBy:         lw.OrderBy,
+		Frame:           lw.Frame,
+	}.Init(
+		lw.SCtx(),
+		expr.Group.Prop.Stats.ScaleByExpectCnt(reqProp.ExpectedCnt),
+		lw.SelectBlockOffset(),
+		&property.PhysicalProperty{ExpectedCnt: math.MaxFloat64, Items: byItems},
+	)
+	physicalWindow.SetSchema(expr.Group.Prop.Schema)
+	return impl.NewWindowImpl(physicalWindow), nil
 }

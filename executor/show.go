@@ -185,6 +185,8 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 		return nil
 	case ast.ShowRegions:
 		return e.fetchShowTableRegions()
+	case ast.ShowBuiltins:
+		return e.fetchShowBuiltins()
 	}
 	return nil
 }
@@ -347,7 +349,7 @@ func (e *ShowExec) fetchShowTableStatus() error {
                FROM information_schema.tables
 	       WHERE table_schema='%s' ORDER BY table_name`, e.DBName)
 
-	rows, _, err := e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
+	rows, _, err := e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQLWithSnapshot(sql)
 
 	if err != nil {
 		return errors.Trace(err)
@@ -655,7 +657,14 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 	fmt.Fprintf(buf, "CREATE TABLE %s (\n", escape(tableInfo.Name, sqlMode))
 	var pkCol *model.ColumnInfo
 	var hasAutoIncID bool
+	needAddComma := false
 	for i, col := range tableInfo.Cols() {
+		if col.Hidden {
+			continue
+		}
+		if needAddComma {
+			buf.WriteString(",\n")
+		}
 		fmt.Fprintf(buf, "  %s %s", escape(col.Name, sqlMode), col.GetTypeDesc())
 		if col.Charset != "binary" {
 			if col.Charset != tblCharset {
@@ -730,7 +739,7 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 			fmt.Fprintf(buf, " COMMENT '%s'", format.OutputFormat(col.Comment))
 		}
 		if i != len(tableInfo.Cols())-1 {
-			buf.WriteString(",\n")
+			needAddComma = true
 		}
 		if tableInfo.PKIsHandle && mysql.HasPriKeyFlag(col.Flag) {
 			pkCol = col
@@ -1326,4 +1335,11 @@ func (e *ShowExec) fillRegionsToChunk(regions []regionMeta) {
 		e.result.AppendInt64(9, regions[i].approximateSize)
 		e.result.AppendInt64(10, regions[i].approximateKeys)
 	}
+}
+
+func (e *ShowExec) fetchShowBuiltins() error {
+	for _, f := range expression.GetBuiltinList() {
+		e.appendRow([]interface{}{f})
+	}
+	return nil
 }

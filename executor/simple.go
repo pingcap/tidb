@@ -621,7 +621,7 @@ func (e *SimpleExec) executeRollback(s *ast.RollbackStmt) error {
 	sessVars := e.ctx.GetSessionVars()
 	logutil.BgLogger().Debug("execute rollback statement", zap.Uint64("conn", sessVars.ConnectionID))
 	sessVars.SetStatusFlag(mysql.ServerStatusInTrans, false)
-	txn, err := e.ctx.Txn(true)
+	txn, err := e.ctx.Txn(false)
 	if err != nil {
 		return err
 	}
@@ -647,8 +647,11 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 		}
 		activeRoles := e.ctx.GetSessionVars().ActiveRoles
 		if !checker.RequestVerification(activeRoles, mysql.SystemDB, mysql.UserTable, "", mysql.InsertPriv) {
-			if s.IsCreateRole && !checker.RequestVerification(activeRoles, "", "", "", mysql.CreateRolePriv) {
-				return core.ErrSpecificAccessDenied.GenWithStackByArgs("CREATE ROLE")
+			if s.IsCreateRole {
+				if !checker.RequestVerification(activeRoles, "", "", "", mysql.CreateRolePriv) &&
+					!checker.RequestVerification(activeRoles, "", "", "", mysql.CreateUserPriv) {
+					return core.ErrSpecificAccessDenied.GenWithStackByArgs("CREATE ROLE or CREATE USER")
+				}
 			}
 			if !s.IsCreateRole && !checker.RequestVerification(activeRoles, "", "", "", mysql.CreateUserPriv) {
 				return core.ErrSpecificAccessDenied.GenWithStackByArgs("CREATE User")
@@ -665,6 +668,9 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 		if exists {
 			user := fmt.Sprintf(`'%s'@'%s'`, spec.User.Username, spec.User.Hostname)
 			if !s.IfNotExists {
+				if s.IsCreateRole {
+					return ErrCannotUser.GenWithStackByArgs("CREATE ROLE", user)
+				}
 				return ErrCannotUser.GenWithStackByArgs("CREATE USER", user)
 			}
 			err := infoschema.ErrUserAlreadyExists.GenWithStackByArgs(user)
@@ -759,7 +765,6 @@ func (e *SimpleExec) executeAlterUser(s *ast.AlterUserStmt) error {
 }
 
 func (e *SimpleExec) executeGrantRole(s *ast.GrantRoleStmt) error {
-	failedUsers := make([]string, 0, len(s.Users))
 	sessionVars := e.ctx.GetSessionVars()
 	for i, user := range s.Users {
 		if user.CurrentUser {
@@ -803,7 +808,6 @@ func (e *SimpleExec) executeGrantRole(s *ast.GrantRoleStmt) error {
 		for _, role := range s.Roles {
 			sql := fmt.Sprintf(`INSERT IGNORE INTO %s.%s (FROM_HOST, FROM_USER, TO_HOST, TO_USER) VALUES ('%s','%s','%s','%s')`, mysql.SystemDB, mysql.RoleEdgeTable, role.Hostname, role.Username, user.Hostname, user.Username)
 			if _, err := sqlExecutor.Execute(context.Background(), sql); err != nil {
-				failedUsers = append(failedUsers, user.String())
 				logutil.BgLogger().Error(fmt.Sprintf("Error occur when executing %s", sql))
 				if _, err := sqlExecutor.Execute(context.Background(), "rollback"); err != nil {
 					return err
@@ -829,8 +833,11 @@ func (e *SimpleExec) executeDropUser(s *ast.DropUserStmt) error {
 		}
 		activeRoles := e.ctx.GetSessionVars().ActiveRoles
 		if !checker.RequestVerification(activeRoles, mysql.SystemDB, mysql.UserTable, "", mysql.DeletePriv) {
-			if s.IsDropRole && !checker.RequestVerification(activeRoles, "", "", "", mysql.DropRolePriv) {
-				return core.ErrSpecificAccessDenied.GenWithStackByArgs("DROP ROLE")
+			if s.IsDropRole {
+				if !checker.RequestVerification(activeRoles, "", "", "", mysql.DropRolePriv) &&
+					!checker.RequestVerification(activeRoles, "", "", "", mysql.CreateUserPriv) {
+					return core.ErrSpecificAccessDenied.GenWithStackByArgs("DROP ROLE or CREATE USER")
+				}
 			}
 			if !s.IsDropRole && !checker.RequestVerification(activeRoles, "", "", "", mysql.CreateUserPriv) {
 				return core.ErrSpecificAccessDenied.GenWithStackByArgs("CREATE USER")
@@ -839,7 +846,6 @@ func (e *SimpleExec) executeDropUser(s *ast.DropUserStmt) error {
 	}
 
 	failedUsers := make([]string, 0, len(s.UserList))
-	notExistUsers := make([]string, 0, len(s.UserList))
 	sysSession, err := e.getSysSession()
 	defer e.releaseSysSession(sysSession)
 	if err != nil {
@@ -847,104 +853,84 @@ func (e *SimpleExec) executeDropUser(s *ast.DropUserStmt) error {
 	}
 	sqlExecutor := sysSession.(sqlexec.SQLExecutor)
 
+	if _, err := sqlExecutor.Execute(context.Background(), "begin"); err != nil {
+		return err
+	}
+
 	for _, user := range s.UserList {
 		exists, err := userExists(e.ctx, user.Username, user.Hostname)
 		if err != nil {
 			return err
 		}
 		if !exists {
-			notExistUsers = append(notExistUsers, user.String())
-			continue
+			if s.IfExists {
+				e.ctx.GetSessionVars().StmtCtx.AppendNote(infoschema.ErrUserDropExists.GenWithStackByArgs(user))
+			} else {
+				failedUsers = append(failedUsers, user.String())
+				break
+			}
 		}
 
 		// begin a transaction to delete a user.
-		if _, err := sqlExecutor.Execute(context.Background(), "begin"); err != nil {
-			return err
-		}
 		sql := fmt.Sprintf(`DELETE FROM %s.%s WHERE Host = '%s' and User = '%s';`, mysql.SystemDB, mysql.UserTable, user.Hostname, user.Username)
-		if _, err := sqlExecutor.Execute(context.Background(), sql); err != nil {
+		if _, err = sqlExecutor.Execute(context.Background(), sql); err != nil {
 			failedUsers = append(failedUsers, user.String())
-			if _, err := sqlExecutor.Execute(context.Background(), "rollback"); err != nil {
-				return err
-			}
-			continue
+			break
 		}
 
 		// delete privileges from mysql.db
 		sql = fmt.Sprintf(`DELETE FROM %s.%s WHERE Host = '%s' and User = '%s';`, mysql.SystemDB, mysql.DBTable, user.Hostname, user.Username)
-		if _, err := sqlExecutor.Execute(context.Background(), sql); err != nil {
+		if _, err = sqlExecutor.Execute(context.Background(), sql); err != nil {
 			failedUsers = append(failedUsers, user.String())
-			if _, err := sqlExecutor.Execute(context.Background(), "rollback"); err != nil {
-				return err
-			}
-			continue
+			break
 		}
 
 		// delete privileges from mysql.tables_priv
 		sql = fmt.Sprintf(`DELETE FROM %s.%s WHERE Host = '%s' and User = '%s';`, mysql.SystemDB, mysql.TablePrivTable, user.Hostname, user.Username)
-		if _, err := sqlExecutor.Execute(context.Background(), sql); err != nil {
+		if _, err = sqlExecutor.Execute(context.Background(), sql); err != nil {
 			failedUsers = append(failedUsers, user.String())
-			if _, err := sqlExecutor.Execute(context.Background(), "rollback"); err != nil {
-				return err
-			}
-			continue
+			break
 		}
 
 		// delete relationship from mysql.role_edges
 		sql = fmt.Sprintf(`DELETE FROM %s.%s WHERE TO_HOST = '%s' and TO_USER = '%s';`, mysql.SystemDB, mysql.RoleEdgeTable, user.Hostname, user.Username)
-		if _, err := sqlExecutor.Execute(context.Background(), sql); err != nil {
+		if _, err = sqlExecutor.Execute(context.Background(), sql); err != nil {
 			failedUsers = append(failedUsers, user.String())
-			if _, err := sqlExecutor.Execute(context.Background(), "rollback"); err != nil {
-				return err
-			}
-			continue
+			break
 		}
 
 		sql = fmt.Sprintf(`DELETE FROM %s.%s WHERE FROM_HOST = '%s' and FROM_USER = '%s';`, mysql.SystemDB, mysql.RoleEdgeTable, user.Hostname, user.Username)
-		if _, err := sqlExecutor.Execute(context.Background(), sql); err != nil {
+		if _, err = sqlExecutor.Execute(context.Background(), sql); err != nil {
 			failedUsers = append(failedUsers, user.String())
-			if _, err := sqlExecutor.Execute(context.Background(), "rollback"); err != nil {
-				return err
-			}
-			continue
+			break
 		}
 
 		// delete relationship from mysql.default_roles
 		sql = fmt.Sprintf(`DELETE FROM %s.%s WHERE DEFAULT_ROLE_HOST = '%s' and DEFAULT_ROLE_USER = '%s';`, mysql.SystemDB, mysql.DefaultRoleTable, user.Hostname, user.Username)
-		if _, err := sqlExecutor.Execute(context.Background(), sql); err != nil {
+		if _, err = sqlExecutor.Execute(context.Background(), sql); err != nil {
 			failedUsers = append(failedUsers, user.String())
-			if _, err := sqlExecutor.Execute(context.Background(), "rollback"); err != nil {
-				return err
-			}
-			continue
+			break
 		}
 
 		sql = fmt.Sprintf(`DELETE FROM %s.%s WHERE HOST = '%s' and USER = '%s';`, mysql.SystemDB, mysql.DefaultRoleTable, user.Hostname, user.Username)
-		if _, err := sqlExecutor.Execute(context.Background(), sql); err != nil {
+		if _, err = sqlExecutor.Execute(context.Background(), sql); err != nil {
 			failedUsers = append(failedUsers, user.String())
-			if _, err := sqlExecutor.Execute(context.Background(), "rollback"); err != nil {
-				return err
-			}
-			continue
+			break
 		}
-
 		//TODO: need delete columns_priv once we implement columns_priv functionality.
+	}
+
+	if len(failedUsers) == 0 {
 		if _, err := sqlExecutor.Execute(context.Background(), "commit"); err != nil {
-			failedUsers = append(failedUsers, user.String())
+			return err
 		}
-	}
-
-	if len(notExistUsers) > 0 {
-		if s.IfExists {
-			for _, user := range notExistUsers {
-				e.ctx.GetSessionVars().StmtCtx.AppendNote(infoschema.ErrUserDropExists.GenWithStackByArgs(user))
-			}
-		} else {
-			failedUsers = append(failedUsers, notExistUsers...)
+	} else {
+		if _, err := sqlExecutor.Execute(context.Background(), "rollback"); err != nil {
+			return err
 		}
-	}
-
-	if len(failedUsers) > 0 {
+		if s.IsDropRole {
+			return ErrCannotUser.GenWithStackByArgs("DROP ROLE", strings.Join(failedUsers, ","))
+		}
 		return ErrCannotUser.GenWithStackByArgs("DROP USER", strings.Join(failedUsers, ","))
 	}
 	domain.GetDomain(e.ctx).NotifyUpdatePrivilege(e.ctx)
@@ -1048,7 +1034,7 @@ func (e *SimpleExec) executeDropStats(s *ast.DropStatsStmt) error {
 	if err != nil {
 		return err
 	}
-	return h.Update(GetInfoSchema(e.ctx))
+	return h.Update(infoschema.GetInfoSchema(e.ctx))
 }
 
 func (e *SimpleExec) autoNewTxn() bool {

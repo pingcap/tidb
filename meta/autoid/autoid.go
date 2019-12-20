@@ -22,7 +22,6 @@ import (
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/metrics"
@@ -51,8 +50,6 @@ const (
 
 // Test needs to change it, so it's a variable.
 var step = int64(30000)
-
-var errInvalidTableID = terror.ClassAutoid.New(codeInvalidTableID, "invalid TableID")
 
 // Allocator is an auto increment id generator.
 // Just keep id unique actually.
@@ -261,9 +258,6 @@ func NewAllocator(store kv.Storage, dbID int64, isUnsigned bool) Allocator {
 		lastAllocTime: time.Now(),
 	}
 }
-
-// codeInvalidTableID is the code of autoid error.
-const codeInvalidTableID terror.ErrCode = 1
 
 // Alloc implements autoid.Allocator Alloc interface.
 func (alloc *allocator) Alloc(tableID int64, n uint64) (int64, int64, error) {
