@@ -468,17 +468,15 @@ func (s *testTypeConvertSuite) TestStrToNum(c *C) {
 func testSelectUpdateDeleteEmptyStringError(c *C) {
 	testCases := []struct {
 		inSelect bool
-		inUpdate bool
 		inDelete bool
 	}{
-		{true, false, false},
-		{false, true, false},
-		{false, false, true},
+		{true, false},
+		{false, true},
 	}
 	sc := new(stmtctx.StatementContext)
+	sc.TruncateAsWarning = true
 	for _, tc := range testCases {
 		sc.InSelectStmt = tc.inSelect
-		sc.InUpdateStmt = tc.inUpdate
 		sc.InDeleteStmt = tc.inDelete
 
 		str := ""
@@ -755,7 +753,7 @@ func (s *testTypeConvertSuite) TestGetValidInt(c *C) {
 	}
 	sc := new(stmtctx.StatementContext)
 	sc.TruncateAsWarning = true
-	sc.CastStrToIntStrict = true
+	sc.InSelectStmt = true
 	warningCount := 0
 	for _, tt := range tests {
 		prefix, err := getValidIntPrefix(sc, tt.origin)
@@ -798,7 +796,7 @@ func (s *testTypeConvertSuite) TestGetValidInt(c *C) {
 		{"123de", "123", true},
 	}
 	sc.TruncateAsWarning = false
-	sc.CastStrToIntStrict = false
+	sc.InSelectStmt = false
 	for _, tt := range tests2 {
 		prefix, err := getValidIntPrefix(sc, tt.origin)
 		if tt.warning {

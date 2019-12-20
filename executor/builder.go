@@ -26,6 +26,7 @@ import (
 	"github.com/cznic/mathutil"
 	"github.com/cznic/sortutil"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/kvproto/pkg/diagnosticspb"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -134,6 +135,8 @@ func (b *executorBuilder) build(p plannercore.Plan) Executor {
 		return b.buildLoadData(v)
 	case *plannercore.LoadStats:
 		return b.buildLoadStats(v)
+	case *plannercore.IndexAdvise:
+		return b.buildIndexAdvise(v)
 	case *plannercore.PhysicalLimit:
 		return b.buildLimit(v)
 	case *plannercore.Prepare:
@@ -766,6 +769,21 @@ func (b *executorBuilder) buildLoadStats(v *plannercore.LoadStats) Executor {
 	return e
 }
 
+func (b *executorBuilder) buildIndexAdvise(v *plannercore.IndexAdvise) Executor {
+	e := &IndexAdviseExec{
+		baseExecutor: newBaseExecutor(b.ctx, nil, v.ExplainID()),
+		IsLocal:      v.IsLocal,
+		indexAdviseInfo: &IndexAdviseInfo{
+			Path:        v.Path,
+			MaxMinutes:  v.MaxMinutes,
+			MaxIndexNum: v.MaxIndexNum,
+			LinesInfo:   v.LinesInfo,
+			Ctx:         b.ctx,
+		},
+	}
+	return e
+}
+
 func (b *executorBuilder) buildReplace(vals *InsertValues) Executor {
 	replaceExec := &ReplaceExec{
 		InsertValues: vals,
@@ -1230,7 +1248,7 @@ func (b *executorBuilder) getStartTS() (uint64, error) {
 	if err != nil {
 		return 0, err
 	}
-	if startTS == 0 && txn.Valid() {
+	if startTS == 0 {
 		startTS = txn.StartTS()
 	}
 	b.startTS = startTS
@@ -1241,13 +1259,48 @@ func (b *executorBuilder) getStartTS() (uint64, error) {
 }
 
 func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executor {
-	tb, _ := b.is.TableByID(v.Table.ID)
-	e := &TableScanExec{
-		baseExecutor:   newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
-		t:              tb,
-		columns:        v.Columns,
-		seekHandle:     math.MinInt64,
-		isVirtualTable: !tb.Type().IsNormalTable(),
+	var e Executor
+	switch v.Table.Name.L {
+	case strings.ToLower(infoschema.TableClusterConfig):
+		e = &ClusterReaderExec{
+			baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
+			retriever: &clusterConfigRetriever{
+				extractor: v.Extractor.(*plannercore.ClusterTableExtractor),
+			},
+		}
+	case strings.ToLower(infoschema.TableClusterLoad):
+		e = &ClusterReaderExec{
+			baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
+			retriever: &clusterServerInfoRetriever{
+				extractor:    v.Extractor.(*plannercore.ClusterTableExtractor),
+				serverInfoTP: diagnosticspb.ServerInfoType_LoadInfo,
+			},
+		}
+	case strings.ToLower(infoschema.TableClusterHardware):
+		e = &ClusterReaderExec{
+			baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
+			retriever: &clusterServerInfoRetriever{
+				extractor:    v.Extractor.(*plannercore.ClusterTableExtractor),
+				serverInfoTP: diagnosticspb.ServerInfoType_HardwareInfo,
+			},
+		}
+	case strings.ToLower(infoschema.TableClusterSystemInfo):
+		e = &ClusterReaderExec{
+			baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
+			retriever: &clusterServerInfoRetriever{
+				extractor:    v.Extractor.(*plannercore.ClusterTableExtractor),
+				serverInfoTP: diagnosticspb.ServerInfoType_SystemInfo,
+			},
+		}
+	default:
+		tb, _ := b.is.TableByID(v.Table.ID)
+		e = &TableScanExec{
+			baseExecutor:   newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
+			t:              tb,
+			columns:        v.Columns,
+			seekHandle:     math.MinInt64,
+			isVirtualTable: !tb.Type().IsNormalTable(),
+		}
 	}
 	return e
 }

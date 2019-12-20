@@ -17,6 +17,7 @@ import (
 	"strings"
 	"sync/atomic"
 
+	"github.com/gogo/protobuf/proto"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/ast"
@@ -266,20 +267,20 @@ func (pc PbConverter) scalarFuncToPBExpr(expr *ScalarFunction) *tipb.Expr {
 		children = append(children, pbArg)
 	}
 
-	var implicitArgs []byte
-	if args := expr.Function.implicitArgs(); len(args) > 0 {
-		encoded, err := codec.EncodeValue(pc.sc, nil, args...)
+	var encoded []byte
+	if metadata := expr.Function.metadata(); metadata != nil {
+		var err error
+		encoded, err = proto.Marshal(metadata)
 		if err != nil {
-			logutil.BgLogger().Error("encode implicit parameters", zap.Any("datums", args), zap.Error(err))
+			logutil.BgLogger().Error("encode metadata", zap.Any("metadata", metadata), zap.Error(err))
 			return nil
 		}
-		implicitArgs = encoded
 	}
 
 	// Construct expression ProtoBuf.
 	return &tipb.Expr{
 		Tp:        tipb.ExprType_ScalarFunc,
-		Val:       implicitArgs,
+		Val:       encoded,
 		Sig:       pbCode,
 		Children:  children,
 		FieldType: ToPBFieldType(expr.RetType),
@@ -414,10 +415,22 @@ func (pc PbConverter) canFuncBePushed(sf *ScalarFunction) bool {
 
 		// date functions.
 		ast.DateFormat:
-		_, disallowPushdown := DefaultExprPushdownBlacklist.Load().(map[string]struct{})[sf.FuncName.L]
-		return true && !disallowPushdown
+		return isPushdownEnabled(sf.FuncName.L)
+	case ast.Round:
+		switch sf.Function.PbCode() {
+		case
+			tipb.ScalarFuncSig_RoundReal,
+			tipb.ScalarFuncSig_RoundInt,
+			tipb.ScalarFuncSig_RoundDec:
+			return isPushdownEnabled(sf.FuncName.L)
+		}
 	}
 	return false
+}
+
+func isPushdownEnabled(name string) bool {
+	_, disallowPushdown := DefaultExprPushdownBlacklist.Load().(map[string]struct{})[name]
+	return !disallowPushdown
 }
 
 // DefaultExprPushdownBlacklist indicates the expressions which can not be pushed down to TiKV.

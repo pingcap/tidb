@@ -46,7 +46,7 @@ func (meta hashMeta) IsEmpty() bool {
 // HSet sets the string value of a hash field.
 func (t *TxStructure) HSet(key []byte, field []byte, value []byte) error {
 	if t.readWriter == nil {
-		return errWriteOnSnapshot
+		return ErrWriteOnSnapshot
 	}
 	return t.updateHash(key, field, func([]byte) ([]byte, error) {
 		return value, nil
@@ -76,7 +76,7 @@ func (t *TxStructure) EncodeHashAutoIDKeyValue(key []byte, field []byte, val int
 // the value after the increment.
 func (t *TxStructure) HInc(key []byte, field []byte, step int64) (int64, error) {
 	if t.readWriter == nil {
-		return 0, errWriteOnSnapshot
+		return 0, ErrWriteOnSnapshot
 	}
 	base := int64(0)
 	err := t.updateHash(key, field, func(oldValue []byte) ([]byte, error) {
@@ -156,7 +156,7 @@ func (t *TxStructure) HLen(key []byte) (int64, error) {
 // HDel deletes one or more hash fields.
 func (t *TxStructure) HDel(key []byte, fields ...[]byte) error {
 	if t.readWriter == nil {
-		return errWriteOnSnapshot
+		return ErrWriteOnSnapshot
 	}
 	metaKey := t.encodeHashMetaKey(key)
 	meta, err := t.loadHashMeta(metaKey)
@@ -332,7 +332,7 @@ func (t *TxStructure) loadHashMeta(metaKey []byte) (hashMeta, error) {
 	}
 
 	if len(v) != 8 {
-		return meta, errInvalidListMetaData
+		return meta, ErrInvalidListMetaData
 	}
 
 	meta.FieldCount = int64(binary.BigEndian.Uint64(v[0:8]))

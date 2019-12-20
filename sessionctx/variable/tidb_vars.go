@@ -112,6 +112,9 @@ const (
 	// tidb_record_plan_in_slow_log is used to log the plan of the slow query.
 	TiDBRecordPlanInSlowLog = "tidb_record_plan_in_slow_log"
 
+	// tidb_enable_slow_log enables TiDB to log slow queries.
+	TiDBEnableSlowLog = "tidb_enable_slow_log"
+
 	// tidb_query_log_max_len is used to set the max length of the query in the log.
 	TiDBQueryLogMaxLen = "tidb_query_log_max_len"
 
@@ -341,6 +344,9 @@ const (
 	// TiDBStmtSummaryRefreshInterval indicates the refresh interval in seconds for each statement summary.
 	TiDBStmtSummaryRefreshInterval = "tidb_stmt_summary_refresh_interval"
 
+	// TiDBStmtSummaryHistorySize indicates the history size of each statement summary.
+	TiDBStmtSummaryHistorySize = "tidb_stmt_summary_history_size"
+
 	// TiDBCapturePlanBaseline indicates whether the capture of plan baselines is enabled.
 	TiDBCapturePlanBaseline = "tidb_capture_plan_baselines"
 
@@ -432,7 +438,6 @@ const (
 	DefWaitSplitRegionTimeout          = 300 // 300s
 	DefTiDBEnableNoopFuncs             = false
 	DefTiDBAllowRemoveAutoInc          = false
-	DefTiDBStmtSummaryRefreshInterval  = 1800 // 1800s
 	DefTiDBUsePlanBaselines            = true
 	DefTiDBEvolvePlanBaselines         = false
 	DefTiDBEvolvePlanTaskMaxTime       = 600 // 600s

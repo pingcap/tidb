@@ -202,6 +202,8 @@ func (e *SetExecutor) setSysVariable(name string, v *expression.VarAssignment) e
 		stmtsummary.StmtSummaryByDigestMap.SetEnabled(valStr, !v.IsGlobal)
 	case variable.TiDBStmtSummaryRefreshInterval:
 		stmtsummary.StmtSummaryByDigestMap.SetRefreshInterval(valStr, !v.IsGlobal)
+	case variable.TiDBStmtSummaryHistorySize:
+		stmtsummary.StmtSummaryByDigestMap.SetHistorySize(valStr, !v.IsGlobal)
 	case variable.TiDBCapturePlanBaseline:
 		variable.CapturePlanBaseline.Set(valStr, !v.IsGlobal)
 	}
