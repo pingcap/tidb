@@ -80,6 +80,11 @@ func (s *inspectionSuite) TestInspectionTables(c *C) {
 	c.Assert(inspectionTableCache["cluster_info"].Err, IsNil)
 	c.Assert(len(inspectionTableCache["cluster_info"].Rows), DeepEquals, 3)
 
+	// should invisible to other sessions
+	tk2 := testkit.NewTestKitWithInit(c, s.store)
+	err := tk2.QueryToErr("select * from inspection_schema.cluster_info")
+	c.Assert(err, ErrorMatches, "not currently in inspection mode")
+
 	// check whether is obtain data from cache at the next time
 	inspectionTableCache["cluster_info"].Rows[0][0].SetString("modified-pd")
 	tk.MustQuery("select * from inspection_schema.cluster_info").Check(testkit.Rows(
@@ -90,6 +95,6 @@ func (s *inspectionSuite) TestInspectionTables(c *C) {
 	tk.Se.GetSessionVars().InspectionTableCache = nil
 
 	// disable inspection mode
-	err := tk.QueryToErr("select * from inspection_schema.cluster_info")
+	err = tk.QueryToErr("select * from inspection_schema.cluster_info")
 	c.Assert(err, ErrorMatches, "not currently in inspection mode")
 }
