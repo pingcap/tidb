@@ -106,7 +106,7 @@ func (s *testClusterReaderSuite) TestTiDBClusterConfig(c *C) {
 		}
 	}
 
-	fpName := "github.com/pingcap/tidb/executor/mockClusterServerInfo"
+	fpName := "github.com/pingcap/tidb/executor/mockClusterConfigServerInfo"
 	fpExpr := strings.Join(servers, ";")
 	c.Assert(failpoint.Enable(fpName, fmt.Sprintf(`return("%s")`, fpExpr)), IsNil)
 	defer func() { c.Assert(failpoint.Disable(fpName), IsNil) }()
