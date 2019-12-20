@@ -406,8 +406,8 @@ func (c *Constant) IsCorrelated() bool {
 }
 
 // ConstItem implements Expression interface.
-func (c *Constant) ConstItem() bool {
-	return true
+func (c *Constant) ConstItem(sc *stmtctx.StatementContext) bool {
+	return !sc.UseCache || (c.DeferredExpr == nil && c.ParamMarker == nil)
 }
 
 // Decorrelate implements Expression interface.

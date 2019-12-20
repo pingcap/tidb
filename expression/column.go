@@ -155,7 +155,7 @@ func (col *CorrelatedColumn) IsCorrelated() bool {
 }
 
 // ConstItem implements Expression interface.
-func (col *CorrelatedColumn) ConstItem() bool {
+func (col *CorrelatedColumn) ConstItem(_ *stmtctx.StatementContext) bool {
 	return false
 }
 
@@ -425,7 +425,7 @@ func (col *Column) IsCorrelated() bool {
 }
 
 // ConstItem implements Expression interface.
-func (col *Column) ConstItem() bool {
+func (col *Column) ConstItem(_ *stmtctx.StatementContext) bool {
 	return false
 }
 

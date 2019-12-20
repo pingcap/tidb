@@ -508,7 +508,7 @@ func (m *MockExpr) GetType() *types.FieldType                         { return m
 func (m *MockExpr) Clone() Expression                                 { return nil }
 func (m *MockExpr) Equal(ctx sessionctx.Context, e Expression) bool   { return false }
 func (m *MockExpr) IsCorrelated() bool                                { return false }
-func (m *MockExpr) ConstItem() bool                                   { return false }
+func (m *MockExpr) ConstItem(_ *stmtctx.StatementContext) bool        { return false }
 func (m *MockExpr) Decorrelate(schema *Schema) Expression             { return m }
 func (m *MockExpr) ResolveIndices(schema *Schema) (Expression, error) { return m, nil }
 func (m *MockExpr) resolveIndices(schema *Schema) error               { return nil }
