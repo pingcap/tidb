@@ -15,6 +15,7 @@ package session_test
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"strings"
 	"sync"
@@ -22,6 +23,7 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/auth"
@@ -41,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
+	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -49,6 +52,12 @@ import (
 	"github.com/pingcap/tidb/util/testutil"
 	"github.com/pingcap/tipb/go-binlog"
 	"google.golang.org/grpc"
+)
+
+var (
+	withTiKVGlobalLock sync.RWMutex
+	withTiKV           = flag.Bool("with-tikv", false, "run tests with TiKV cluster started. (not use the mock server)")
+	pdAddrs            = flag.String("pd-addrs", "127.0.0.1:2379", "pd addrs")
 )
 
 var _ = Suite(&testSessionSuite{})
@@ -74,27 +83,64 @@ type testSessionSerialSuite struct {
 	testSessionSuiteBase
 }
 
+func clearStorage(store kv.Storage) error {
+	txn, err := store.Begin()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	iter, err := txn.Iter(nil, nil)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	for iter.Valid() {
+		txn.Delete(iter.Key())
+		if err := iter.Next(); err != nil {
+			return errors.Trace(err)
+		}
+	}
+	return txn.Commit(context.Background())
+}
+
 func (s *testSessionSuiteBase) SetUpSuite(c *C) {
 	testleak.BeforeTest()
 	s.cluster = mocktikv.NewCluster()
-	mocktikv.BootstrapWithSingleStore(s.cluster)
-	s.mvccStore = mocktikv.MustNewMVCCStore()
-	store, err := mockstore.NewMockTikvStore(
-		mockstore.WithCluster(s.cluster),
-		mockstore.WithMVCCStore(s.mvccStore),
-	)
-	c.Assert(err, IsNil)
-	s.store = store
-	session.SetSchemaLease(0)
-	session.DisableStats4Test()
+
+	if *withTiKV {
+		withTiKVGlobalLock.Lock()
+		var d tikv.Driver
+		store, err := d.Open(fmt.Sprintf("tikv://%s", *pdAddrs))
+		c.Assert(err, IsNil)
+		err = clearStorage(store)
+		c.Assert(err, IsNil)
+		session.ResetForWithTiKVTest()
+		s.store = store
+	} else {
+		mocktikv.BootstrapWithSingleStore(s.cluster)
+		s.mvccStore = mocktikv.MustNewMVCCStore()
+		store, err := mockstore.NewMockTikvStore(
+			mockstore.WithCluster(s.cluster),
+			mockstore.WithMVCCStore(s.mvccStore),
+		)
+		c.Assert(err, IsNil)
+		s.store = store
+		session.SetSchemaLease(0)
+		session.DisableStats4Test()
+	}
+
+	var err error
 	s.dom, err = session.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
+	s.dom.GetGlobalVarsCache().Disable()
 }
 
 func (s *testSessionSuiteBase) TearDownSuite(c *C) {
 	s.dom.Close()
 	s.store.Close()
 	testleak.AfterTest(c)()
+	if *withTiKV {
+		withTiKVGlobalLock.Unlock()
+		time.Sleep(3 * time.Second)
+	}
 }
 
 func (s *testSessionSuiteBase) TearDownTest(c *C) {

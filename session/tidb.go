@@ -98,6 +98,15 @@ func (dm *domainMap) Delete(store kv.Storage) {
 	dm.mu.Unlock()
 }
 
+// ResetForWithTiKVTest is only used in the test code.
+// TODO: Remove domap and storeBootstrapped. Use store.SetOption() to do it.
+func ResetForWithTiKVTest() {
+	domap = &domainMap{
+		domains: map[string]*domain.Domain{},
+	}
+	storeBootstrapped = make(map[string]bool)
+}
+
 var (
 	domap = &domainMap{
 		domains: map[string]*domain.Domain{},
