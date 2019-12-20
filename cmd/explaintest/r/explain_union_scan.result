@@ -1,0 +1,31 @@
+drop table if exists city;
+CREATE TABLE `city` (
+`id` varchar(70) NOT NULL,
+`province_id` int(15) DEFAULT NULL,
+`city_name` varchar(90) DEFAULT NULL,
+`description` varchar(90) DEFAULT NULL,
+PRIMARY KEY (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+load stats "s/explain_union_scan.json";
+insert into city values("06766b3ef41d484d8878606393f1ed0b", 88, "chongqing", "chongqing city");
+begin;
+update city set province_id = 77 where id="06766b3ef41d484d8878606393f1ed0b";
+explain select t1.*, t2.province_id as provinceID, t2.city_name as cityName, t3.description as description from city t1 inner join city t2 on t1.id = t2.id left join city t3 on t1.province_id = t3.province_id where t1.province_id > 1 and t1.province_id < 100 limit 10;
+id	count	task	operator info
+Projection_16	10.00	root	test.t1.id, test.t1.province_id, test.t1.city_name, test.t1.description, test.t2.province_id, test.t2.city_name, test.t3.description
+└─Limit_19	10.00	root	offset:0, count:10
+  └─HashLeftJoin_20	10.00	root	left outer join, inner:UnionScan_51, equal:[eq(test.t1.province_id, test.t3.province_id)]
+    ├─Limit_23	10.00	root	offset:0, count:10
+    │ └─IndexJoin_28	10.00	root	inner join, inner:UnionScan_27, outer key:test.t1.id, inner key:test.t2.id
+    │   ├─UnionScan_37	10.00	root	gt(test.t1.province_id, 1), lt(test.t1.province_id, 100)
+    │   │ └─TableReader_40	10.00	root	data:Selection_39
+    │   │   └─Selection_39	10.00	cop	gt(test.t1.province_id, 1), lt(test.t1.province_id, 100)
+    │   │     └─TableScan_38	10.33	cop	table:city, range:[-inf,+inf], keep order:false
+    │   └─UnionScan_27	1.00	root	
+    │     └─IndexLookUp_26	1.00	root	
+    │       ├─IndexScan_24	1.00	cop	table:city, index:id, range: decided by [test.t1.id], keep order:false
+    │       └─TableScan_25	1.00	cop	table:city, keep order:false
+    └─UnionScan_51	536284.00	root	
+      └─TableReader_53	536284.00	root	data:TableScan_52
+        └─TableScan_52	536284.00	cop	table:city, range:[-inf,+inf], keep order:false
+commit;
