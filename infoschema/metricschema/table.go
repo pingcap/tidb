@@ -14,12 +14,15 @@
 package metricschema
 
 import (
+	"bytes"
+	"fmt"
 	"strconv"
 	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/util/set"
 )
 
 const (
@@ -64,12 +67,12 @@ func GetMetricTableDef(lowerTableName string) (*MetricTableDef, error) {
 }
 
 // GetExplainInfo uses to get the explain info of metric table.
-func GetExplainInfo(sctx sessionctx.Context, lowerTableName string) string {
+func GetExplainInfo(sctx sessionctx.Context, lowerTableName string, labels map[string]set.StringSet, quantile float64) string {
 	def, ok := metricTableMap[lowerTableName]
 	if !ok {
 		return ""
 	}
-	promQL := def.GenPromQL(sctx, nil)
+	promQL := def.GenPromQL(sctx, labels, quantile)
 	return "PromQL:" + promQL
 }
 
@@ -89,20 +92,57 @@ func (def *MetricTableDef) genColumnInfos() []columnInfo {
 }
 
 // GenPromQL generates the promQL.
-func (def *MetricTableDef) GenPromQL(sctx sessionctx.Context, labels []string) string {
+func (def *MetricTableDef) GenPromQL(sctx sessionctx.Context, labels map[string]set.StringSet, quantile float64) string {
 	promQL := def.PromQL
 	if strings.Contains(promQL, promQLQuantileKey) {
-		promQL = strings.Replace(promQL, promQLQuantileKey, strconv.FormatFloat(def.Quantile, 'f', -1, 64), -1)
+		if quantile == 0 {
+			quantile = def.Quantile
+		}
+		promQL = strings.Replace(promQL, promQLQuantileKey, strconv.FormatFloat(quantile, 'f', -1, 64), -1)
 	}
 
 	if strings.Contains(promQL, promQLLabelConditionKey) {
-		promQL = strings.Replace(promQL, promQLLabelConditionKey, "", -1)
+		promQL = strings.Replace(promQL, promQLLabelConditionKey, def.genLabelCondition(labels), -1)
 	}
 
 	if strings.Contains(promQL, promQRangeDurationKey) {
 		promQL = strings.Replace(promQL, promQRangeDurationKey, strconv.FormatInt(sctx.GetSessionVars().MetricSchemaRangeDuration, 10)+"s", -1)
 	}
 	return promQL
+}
+
+func (def *MetricTableDef) genLabelCondition(labels map[string]set.StringSet) string {
+	var buf bytes.Buffer
+	index := 0
+	for label, values := range labels {
+		if len(values) == 0 {
+			continue
+		}
+		if index > 0 {
+			buf.WriteByte(',')
+		}
+		switch len(values) {
+		case 1:
+			buf.WriteString(fmt.Sprintf("%s=\"%s\"", label, def.genLabelConditionValues(values)))
+		default:
+			buf.WriteString(fmt.Sprintf("%s=~\"%s\"", label, def.genLabelConditionValues(values)))
+		}
+		index++
+	}
+	return buf.String()
+}
+
+func (def *MetricTableDef) genLabelConditionValues(values set.StringSet) string {
+	var buf bytes.Buffer
+	index := 0
+	for k := range values {
+		if index > 0 {
+			buf.WriteByte('|')
+		}
+		index++
+		buf.WriteString(k)
+	}
+	return buf.String()
 }
 
 type columnInfo struct {

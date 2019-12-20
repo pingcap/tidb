@@ -699,5 +699,14 @@ func (p *PhysicalMemTable) ExplainInfo() string {
 	if !metricschema.IsMetricTable(p.Table.Name.L) {
 		return ""
 	}
-	return metricschema.GetExplainInfo(p.ctx, p.Table.Name.L)
+
+	extractor, ok := p.Extractor.(*MetricTableExtractor)
+	if !ok {
+		return ""
+	}
+	quantile, err := extractor.GetQuantile()
+	if err != nil {
+		return ""
+	}
+	return metricschema.GetExplainInfo(p.ctx, p.Table.Name.L, extractor.LabelConditions, quantile)
 }

@@ -1267,6 +1267,7 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 			retriever: &MetricRetriever{
 				table:      v.Table,
 				outputCols: v.Columns,
+				extractor:  v.Extractor.(*plannercore.MetricTableExtractor),
 			},
 		}
 	case util.InformationSchemaName.L:

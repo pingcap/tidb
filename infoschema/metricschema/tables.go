@@ -71,3 +71,8 @@ func (vt *metricSchemaTable) Meta() *model.TableInfo {
 func (vt *metricSchemaTable) IterRecords(_ sessionctx.Context, _ kv.Key, _ []*table.Column, _ table.RecordIterFunc) error {
 	return nil
 }
+
+// Type implements table.Table Type interface.
+func (vt *metricSchemaTable) Type() table.Type {
+	return table.VirtualTable
+}

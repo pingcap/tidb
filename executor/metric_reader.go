@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/infoschema/metricschema"
+	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/types"
@@ -39,6 +40,7 @@ type MetricRetriever struct {
 	table      *model.TableInfo
 	tblDef     *metricschema.MetricTableDef
 	outputCols []*model.ColumnInfo
+	extractor  *plannercore.MetricTableExtractor
 	retrieved  bool
 }
 
@@ -52,8 +54,7 @@ func (e *MetricRetriever) retrieve(ctx context.Context, sctx sessionctx.Context)
 		return nil, err
 	}
 	e.tblDef = tblDef
-	// TODO: Get query range from plan instead of use default range.
-	queryRange := e.getDefaultQueryRange(sctx)
+	queryRange := e.getQueryRange(sctx)
 	queryValue, err := e.queryMetric(ctx, sctx, queryRange)
 	if err != nil {
 		return nil, err
@@ -89,8 +90,11 @@ func (e *MetricRetriever) queryMetric(ctx context.Context, sctx sessionctx.Conte
 	ctx, cancel := context.WithTimeout(ctx, promReadTimeout)
 	defer cancel()
 
-	// TODO: add label condition.
-	promQL := e.tblDef.GenPromQL(sctx, nil)
+	quantile, err := e.extractor.GetQuantile()
+	if err != nil {
+		return nil, err
+	}
+	promQL := e.tblDef.GenPromQL(sctx, e.extractor.LabelConditions, quantile)
 	result, _, err := promQLAPI.QueryRange(ctx, promQL, queryRange)
 	return result, err
 }
@@ -110,8 +114,17 @@ func (e *MetricRetriever) getMetricAddr(sctx sessionctx.Context) (string, error)
 
 type promQLQueryRange = promv1.Range
 
-func (e *MetricRetriever) getDefaultQueryRange(sctx sessionctx.Context) promQLQueryRange {
-	return promQLQueryRange{Start: time.Now(), End: time.Now(), Step: time.Second * time.Duration(sctx.GetSessionVars().MetricSchemaStep)}
+func (e *MetricRetriever) getQueryRange(sctx sessionctx.Context) promQLQueryRange {
+	startTime := e.convertToTime(e.extractor.StartTime)
+	endTime := e.convertToTime(e.extractor.EndTime)
+	return promQLQueryRange{Start: startTime, End: endTime, Step: time.Second * time.Duration(sctx.GetSessionVars().MetricSchemaStep)}
+}
+
+func (e *MetricRetriever) convertToTime(t int64) time.Time {
+	if t == 0 {
+		return time.Now()
+	}
+	return time.Unix(t/int64(time.Microsecond), t%int64(time.Microsecond)*1000)
 }
 
 func (e *MetricRetriever) genRows(value pmodel.Value, r promQLQueryRange) [][]types.Datum {

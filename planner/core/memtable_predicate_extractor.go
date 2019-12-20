@@ -14,8 +14,10 @@
 package core
 
 import (
+	"errors"
 	"math"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -149,11 +151,9 @@ func (helper extractHelper) extractColOrExpr(extractCols map[int64]*types.FieldN
 func (helper extractHelper) merge(lhs set.StringSet, datums []types.Datum, toLower bool) set.StringSet {
 	tmpNodeTypes := set.NewStringSet()
 	for _, datum := range datums {
-		var s string
+		s, _ := datum.ToString()
 		if toLower {
-			s = strings.ToLower(datum.GetString())
-		} else {
-			s = datum.GetString()
+			s = strings.ToLower(s)
 		}
 		tmpNodeTypes.Insert(s)
 	}
@@ -478,8 +478,7 @@ type MetricTableExtractor struct {
 	EndTime int64
 	// LabelConditions represents the label conditions of metric data.
 	LabelConditions map[string]set.StringSet
-	// Quantile represents the quantile of metric query.
-	Quantile set.StringSet
+	quantile        set.StringSet
 }
 
 // Extract implements the MemTablePredicateExtractor Extract interface
@@ -495,13 +494,10 @@ func (e *MetricTableExtractor) Extract(
 	if e.SkipRequest {
 		return nil
 	}
-	e.Quantile = quantile
+	e.quantile = quantile
 
 	// Extract the `time` columns
 	remained, startTime, endTime := e.extractTimeRange(ctx, schema, names, remained, "time")
-	if endTime == 0 {
-		endTime = math.MaxInt64
-	}
 	e.StartTime = startTime
 	e.EndTime = endTime
 	e.SkipRequest = startTime > endTime
@@ -522,10 +518,28 @@ func (e *MetricTableExtractor) Extract(
 			e.SkipRequest = skipRequest
 			return nil
 		}
+		if len(values) == 0 {
+			continue
+		}
 		if e.LabelConditions == nil {
 			e.LabelConditions = make(map[string]set.StringSet)
 		}
 		e.LabelConditions[name.ColName.L] = values
 	}
 	return remained
+}
+
+// GetQuantile gets the quantile of metric query.
+func (e *MetricTableExtractor) GetQuantile() (quantile float64, err error) {
+	if len(e.quantile) == 0 {
+		return 0, nil
+	}
+	if len(e.quantile) > 1 {
+		return 0, errors.New("query metric data not support specified multiple quantile")
+	}
+	for k := range e.quantile {
+		quantile, err = strconv.ParseFloat(k, 64)
+		return
+	}
+	return 0, nil
 }

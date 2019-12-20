@@ -46,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
+	util2 "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/plancodec"
 )
@@ -2715,13 +2716,17 @@ func (b *PlanBuilder) buildMemTable(ctx context.Context, dbName model.CIStr, tab
 	p.names = names
 
 	// Some memory tables can receive some predicates
-	switch strings.ToUpper(tableInfo.Name.O) {
-	case infoschema.TableClusterConfig, infoschema.TableClusterLoad, infoschema.TableClusterHardware, infoschema.TableClusterSystemInfo:
-		p.Extractor = &ClusterTableExtractor{}
-	case infoschema.TableClusterLog:
-		p.Extractor = &ClusterLogTableExtractor{}
+	switch dbName.L {
+	case util2.MetricSchemaName.L:
+		p.Extractor = &MetricTableExtractor{}
+	case util2.InformationSchemaName.L:
+		switch strings.ToUpper(tableInfo.Name.O) {
+		case infoschema.TableClusterConfig, infoschema.TableClusterLoad, infoschema.TableClusterHardware, infoschema.TableClusterSystemInfo:
+			p.Extractor = &ClusterTableExtractor{}
+		case infoschema.TableClusterLog:
+			p.Extractor = &ClusterLogTableExtractor{}
+		}
 	}
-
 	return p, nil
 }
 
