@@ -5233,6 +5233,7 @@ func (s *testIntegrationSuite) TestCastStrToInt(c *C) {
 
 func (s *testIntegrationSuite) TestIssue14159(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("DROP TABLE t IF EXIST")
 	tk.MustExec("CREATE TABLE t (v VARCHAR(100))")
 	tk.MustExec("INSERT INTO t VALUES ('3289742893213123732904809')")
 	tk.MustQuery("SELECT * FROM t WHERE v").Check(testkit.Rows("3289742893213123732904809"))
