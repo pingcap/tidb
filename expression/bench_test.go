@@ -353,6 +353,12 @@ func (g *decimalStringGener) gen() interface{} {
 	return tempDecimal.String()
 }
 
+type realStringGener struct{}
+
+func (g *realStringGener) gen() interface{} {
+	return fmt.Sprintf("%f", rand.Float64())
+}
+
 type jsonTimeGener struct{}
 
 func (g *jsonTimeGener) gen() interface{} {
