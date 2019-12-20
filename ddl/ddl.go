@@ -115,6 +115,8 @@ var (
 	errTooManyFields            = terror.ClassDDL.New(codeTooManyFields, "Too many columns")
 	errInvalidSplitRegionRanges = terror.ClassDDL.New(codeInvalidRanges, "Failed to split region ranges")
 	errReorgPanic               = terror.ClassDDL.New(codeReorgWorkerPanic, "reorg worker panic.")
+	errFkColumnCannotDrop       = terror.ClassDDL.New(codeFkColumnCannotDrop, mysql.MySQLErrName[mysql.ErrFkColumnCannotDrop])
+	errReferencedForeignKey     = terror.ClassDDL.New(codeFKIncompatibleColumns, mysql.MySQLErrName[mysql.ErrFKIncompatibleColumns])
 
 	// errWrongKeyColumn is for table column cannot be indexed.
 	errWrongKeyColumn = terror.ClassDDL.New(codeWrongKeyColumn, mysql.MySQLErrName[mysql.ErrWrongKeyColumn])
@@ -662,6 +664,8 @@ const (
 	codePrimaryCantHaveNull                    = terror.ErrCode(mysql.ErrPrimaryCantHaveNull)
 	codeWrongExprInPartitionFunc               = terror.ErrCode(mysql.ErrWrongExprInPartitionFunc)
 	codeUnknownPartition                       = terror.ErrCode(mysql.ErrUnknownPartition)
+	codeFkColumnCannotDrop                     = terror.ErrCode(mysql.ErrFkColumnCannotDrop)
+	codeFKIncompatibleColumns                  = terror.ErrCode(mysql.ErrFKIncompatibleColumns)
 )
 
 func init() {
@@ -715,6 +719,8 @@ func init() {
 		codeUnknownCollation:                       mysql.ErrUnknownCollation,
 		codeCollationCharsetMismatch:               mysql.ErrCollationCharsetMismatch,
 		codeConflictingDeclarations:                mysql.ErrConflictingDeclarations,
+		codeFkColumnCannotDrop:                     mysql.ErrFkColumnCannotDrop,
+		codeFKIncompatibleColumns:                  mysql.ErrFKIncompatibleColumns,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassDDL] = ddlMySQLErrCodes
 }
