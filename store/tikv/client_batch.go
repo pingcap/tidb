@@ -236,7 +236,11 @@ func (c *batchCommandsClient) send(request *tikvpb.BatchCommandsRequest, entries
 		)
 		return c.failPendingRequests(err)
 	}
-
+	if len(entries) == 1 {
+		failpoint.InjectContext(entries[0].ctx, "failBeforeSend", func() {
+			failpoint.Return(c.failPendingRequests(errors.New("test err")))
+		})
+	}
 	if err := c.client.Send(request); err != nil {
 		logutil.BgLogger().Info(
 			"sending batch commands meets error",
@@ -269,7 +273,7 @@ func (c *batchCommandsClient) failPendingRequests(err error) bool {
 		entry.err = err
 		c.batched.Delete(id)
 		close(entry.res)
-		if i == 0 && heartbeatFail {
+		if i == 0 && entry.heartbeat {
 			heartbeatFail = true
 		}
 		i++
@@ -364,6 +368,11 @@ func (c *batchCommandsClient) batchRecvLoop(cfg config.TiKVClient, tikvTransport
 			}
 			entry := value.(*batchCommandsEntry)
 			logutil.Eventf(entry.ctx, "receive %T response with other %d batched requests from %s", responses[i].GetCmd(), len(responses), c.target)
+			failpoint.InjectContext(entry.ctx, "forceReturnIdleHeartbeatResp", func() {
+				if entry.heartbeat {
+					entry.res <- responses[i]
+				}
+			})
 			if atomic.LoadInt32(&entry.canceled) == 0 && !entry.heartbeat {
 				// Put the response only if the request is not canceled.
 				entry.res <- responses[i]
@@ -508,6 +517,11 @@ func (a *batchConn) getClientAndSend(entries []*batchCommandsEntry, requests []*
 			break
 		}
 	}
+	if len(entries) == 1 {
+		failpoint.InjectContext(entries[0].ctx, "noAvConn", func() {
+			cli = nil
+		})
+	}
 	if cli == nil {
 		logutil.BgLogger().Warn("no available connections", zap.String("target", target))
 		var heartbeatFail bool
@@ -604,6 +618,9 @@ func sendBatchRequest(
 		canceled: 0,
 		err:      nil,
 	}
+	failpoint.InjectContext(ctx, "sendIdleHeartbeatReq", func() {
+		entry.heartbeat = true
+	})
 	ctx1, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	select {
