@@ -383,9 +383,18 @@ func getTableRange(d *ddlCtx, tbl table.PhysicalTable, snapshotVer uint64, prior
 	return
 }
 
+func getValidCurrentVersion(store kv.Storage) (ver kv.Version, err error) {
+	ver, err = store.CurrentVersion()
+	if err != nil {
+		return ver, errors.Trace(err)
+	} else if ver.Ver <= 0 {
+		return ver, errInvalidStoreVer.GenWithStack("invalid storage current version %d", ver.Ver)
+	}
+	return ver, nil
+}
+
 func getReorgInfo(d *ddlCtx, t *meta.Meta, job *model.Job, tbl table.Table) (*reorgInfo, error) {
 	var (
-		err   error
 		start int64
 		end   int64
 		pid   int64
@@ -395,12 +404,9 @@ func getReorgInfo(d *ddlCtx, t *meta.Meta, job *model.Job, tbl table.Table) (*re
 	if job.SnapshotVer == 0 {
 		info.first = true
 		// get the current version for reorganization if we don't have
-		var ver kv.Version
-		ver, err = d.store.CurrentVersion()
+		ver, err := getValidCurrentVersion(d.store)
 		if err != nil {
 			return nil, errors.Trace(err)
-		} else if ver.Ver <= 0 {
-			return nil, errInvalidStoreVer.GenWithStack("invalid storage current version %d", ver.Ver)
 		}
 		tblInfo := tbl.Meta()
 		pid = tblInfo.ID
@@ -427,6 +433,7 @@ func getReorgInfo(d *ddlCtx, t *meta.Meta, job *model.Job, tbl table.Table) (*re
 		// Update info should after data persistent.
 		job.SnapshotVer = ver.Ver
 	} else {
+		var err error
 		start, end, pid, err = t.GetDDLReorgHandle(job)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -438,7 +445,7 @@ func getReorgInfo(d *ddlCtx, t *meta.Meta, job *model.Job, tbl table.Table) (*re
 	info.EndHandle = end
 	info.PhysicalTableID = pid
 
-	return &info, errors.Trace(err)
+	return &info, nil
 }
 
 func (r *reorgInfo) UpdateReorgMeta(txn kv.Transaction, startHandle, endHandle, physicalTableID int64) error {
