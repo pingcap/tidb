@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
@@ -967,7 +968,11 @@ func doDMLWorks(s Session) {
 	for k, v := range variable.SysVars {
 		// Session only variable should not be inserted.
 		if v.Scope != variable.ScopeSession {
-			value := fmt.Sprintf(`("%s", "%s")`, strings.ToLower(k), v.Value)
+			vVal := v.Value
+			if v.Name == variable.TiDBTxnMode && config.GetGlobalConfig().Store == "tikv" {
+				vVal = "pessimistic"
+			}
+			value := fmt.Sprintf(`("%s", "%s")`, strings.ToLower(k), vVal)
 			values = append(values, value)
 		}
 	}
