@@ -97,10 +97,18 @@ func (e *clusterConfigRetriever) retrieve(ctx sessionctx.Context) ([][]types.Dat
 		rows [][]types.Datum
 		err  error
 	}
-	serversInfo, err := getClusterServerInfoWithFilter(ctx, "mockClusterServerInfo", e.extractor.NodeTypes, e.extractor.Addresses)
+
+	serversInfo, err := infoschema.GetClusterServerInfo(ctx)
+	failpoint.Inject("mockClusterServerInfo", func(val failpoint.Value) {
+		if s := val.(string); len(s) > 0 {
+			// erase the error
+			serversInfo, err = parseFailpointServerInfo(s), nil
+		}
+	})
 	if err != nil {
 		return nil, err
 	}
+	serversInfo = filterClusterServerInfo(serversInfo, e.extractor.NodeTypes, e.extractor.Addresses)
 
 	var finalRows [][]types.Datum
 	wg := sync.WaitGroup{}
@@ -210,11 +218,11 @@ func (e *clusterServerInfoRetriever) retrieve(ctx sessionctx.Context) ([][]types
 		return nil, nil
 	}
 
-	infoTp := e.serverInfoType
-	serversInfo, err := getClusterServerInfoWithFilter(ctx, "mockClusterServerInfo", e.extractor.NodeTypes, e.extractor.Addresses)
+	serversInfo, err := infoschema.GetClusterServerInfo(ctx)
 	if err != nil {
 		return nil, err
 	}
+
 	type result struct {
 		idx  int
 		rows [][]types.Datum
@@ -223,6 +231,7 @@ func (e *clusterServerInfoRetriever) retrieve(ctx sessionctx.Context) ([][]types
 	wg := sync.WaitGroup{}
 	ch := make(chan result, len(serversInfo))
 	ipMap := make(map[string]struct{}, len(serversInfo))
+	infoTp := e.serverInfoType
 	finalRows := make([][]types.Datum, 0, len(serversInfo)*10)
 	for i, srv := range serversInfo {
 		address := srv.Address
@@ -319,42 +328,40 @@ func getServerInfoByGRPC(address string, tp diagnosticspb.ServerInfoType) ([]*di
 	return r.Items, nil
 }
 
-func getClusterServerInfoWithFilter(ctx sessionctx.Context, fpName string, nodeTypes, addresses set.StringSet) ([]infoschema.ServerInfo, error) {
-	serversInfo, err := infoschema.GetClusterServerInfo(ctx)
-	failpoint.Inject(fpName, func(val failpoint.Value) {
-		if s := val.(string); len(s) > 0 {
-			serversInfo = serversInfo[:0]
-			servers := strings.Split(s, ";")
-			for _, server := range servers {
-				parts := strings.Split(server, ",")
-				serversInfo = append(serversInfo, infoschema.ServerInfo{
-					ServerType: parts[0],
-					Address:    parts[1],
-					StatusAddr: parts[2],
-				})
-			}
-			// erase the error
-			err = nil
-		}
-	})
-	if err != nil {
-		return nil, err
+func parseFailpointServerInfo(s string) []infoschema.ServerInfo {
+	var serversInfo []infoschema.ServerInfo
+	servers := strings.Split(s, ";")
+	for _, server := range servers {
+		parts := strings.Split(server, ",")
+		serversInfo = append(serversInfo, infoschema.ServerInfo{
+			ServerType: parts[0],
+			Address:    parts[1],
+			StatusAddr: parts[2],
+		})
 	}
+	return serversInfo
+}
+
+func filterClusterServerInfo(serversInfo []infoschema.ServerInfo, nodeTypes, addresses set.StringSet) []infoschema.ServerInfo {
+	if len(nodeTypes) == 0 && len(addresses) == 0 {
+		return serversInfo
+	}
+
 	filterServers := make([]infoschema.ServerInfo, 0, len(serversInfo))
 	for _, srv := range serversInfo {
-		// Skip some node type which has been filtered in WHERE cluase
+		// Skip some node type which has been filtered in WHERE clause
 		// e.g: SELECT * FROM cluster_config WHERE type='tikv'
 		if len(nodeTypes) > 0 && !nodeTypes.Exist(srv.ServerType) {
 			continue
 		}
-		// Skip some node address which has been filtered in WHERE cluase
+		// Skip some node address which has been filtered in WHERE clause
 		// e.g: SELECT * FROM cluster_config WHERE address='192.16.8.12:2379'
 		if len(addresses) > 0 && !addresses.Exist(srv.Address) {
 			continue
 		}
 		filterServers = append(filterServers, srv)
 	}
-	return filterServers, nil
+	return filterServers
 }
 
 type clusterLogRetriever struct {
@@ -405,15 +412,21 @@ func (h *logResponseHeap) Pop() interface{} {
 
 func (e *clusterLogRetriever) startRetrieving(ctx sessionctx.Context) ([]chan logStreamResult, error) {
 	isFailpointTestMode := false
-	addresses := e.extractor.Addresses
-	nodeTypes := e.extractor.NodeTypes
-	serversInfo, err := getClusterServerInfoWithFilter(ctx, "mockClusterLogServerInfo", nodeTypes, addresses)
-	failpoint.Inject("mockClusterLogServerInfo", func() {
+	serversInfo, err := infoschema.GetClusterServerInfo(ctx)
+	failpoint.Inject("mockClusterLogServerInfo", func(val failpoint.Value) {
+		if s := val.(string); len(s) > 0 {
+			// erase the error
+			serversInfo, err = parseFailpointServerInfo(s), nil
+		}
 		isFailpointTestMode = true
 	})
 	if err != nil {
 		return nil, err
 	}
+
+	addresses := e.extractor.Addresses
+	nodeTypes := e.extractor.NodeTypes
+	serversInfo = filterClusterServerInfo(serversInfo, nodeTypes, addresses)
 
 	// gRPC options
 	opt := grpc.WithInsecure()
