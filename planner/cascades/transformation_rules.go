@@ -994,25 +994,25 @@ func (r *MergeAggregationProjection) OnTransform(old *memo.ExprIter) (newExprs [
 	return []*memo.GroupExpr{newAggExpr}, true, false, nil
 }
 
-// MergeAdjacentSelection merge adjacent selection
+// MergeAdjacentSelection merge adjacent selection.
 type MergeAdjacentSelection struct {
 	baseRule
 }
 
 // NewRuleMergeAdjacentSelection creates a new Transformation MergeAdjacentSelection.
-// The pattern of this rule is `Selection->Selection->X` to `Selection->X`.
+// The pattern of this rule is `Selection->Selection->X`.
 func NewRuleMergeAdjacentSelection() Transformation {
 	rule := &MergeAdjacentSelection{}
 	rule.pattern = memo.BuildPattern(
 		memo.OperandSelection,
-		memo.EngineTiKVOrTiFlash,
-		memo.NewPattern(memo.OperandSelection, memo.EngineTiKVOrTiFlash),
+		memo.EngineAll,
+		memo.NewPattern(memo.OperandSelection, memo.EngineAll),
 	)
 	return rule
 }
 
 // OnTransform implements Transformation interface.
-// This rule tries to merge adjacent selection, with no simplification
+// This rule tries to merge adjacent selection, with no simplification.
 func (r *MergeAdjacentSelection) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
 	sel := old.GetExpr().ExprNode.(*plannercore.LogicalSelection)
 	child := old.Children[0].GetExpr().ExprNode.(*plannercore.LogicalSelection)
