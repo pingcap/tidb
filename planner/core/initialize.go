@@ -193,8 +193,8 @@ func (p LogicalWindow) Init(ctx sessionctx.Context, offset int) *LogicalWindow {
 	return &p
 }
 
-// Init initializes basePhysicalWindow.
-func (p *basePhysicalWindow) Init(ctx sessionctx.Context, tp string, self PhysicalPlan, stats *property.StatsInfo, offset int, props ...*property.PhysicalProperty) {
+// Init initializes BasePhysicalWindow.
+func (p *BasePhysicalWindow) Init(ctx sessionctx.Context, tp string, self PhysicalPlan, stats *property.StatsInfo, offset int, props ...*property.PhysicalProperty) {
 	p.basePhysicalPlan = newBasePhysicalPlan(ctx, tp, self, offset)
 	p.childrenReqProps = props
 	p.stats = stats
@@ -202,13 +202,13 @@ func (p *basePhysicalWindow) Init(ctx sessionctx.Context, tp string, self Physic
 
 // Init initializes PhysicalWindow.
 func (p PhysicalWindow) Init(ctx sessionctx.Context, stats *property.StatsInfo, offset int, props ...*property.PhysicalProperty) *PhysicalWindow {
-	p.basePhysicalWindow.Init(ctx, plancodec.TypeWindow, &p, stats, offset, props...)
+	p.BasePhysicalWindow.Init(ctx, plancodec.TypeWindow, &p, stats, offset, props...)
 	return &p
 }
 
 // Init initializes PhysicalWindowParallel.
 func (p PhysicalWindowParallel) Init(ctx sessionctx.Context, stats *property.StatsInfo, offset int, props ...*property.PhysicalProperty) *PhysicalWindowParallel {
-	p.basePhysicalWindow.Init(ctx, plancodec.TypeWindowParallel, &p, stats, offset, props...)
+	p.BasePhysicalWindow.Init(ctx, plancodec.TypeWindowParallel, &p, stats, offset, props...)
 	return &p
 }
 

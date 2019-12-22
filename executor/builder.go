@@ -2573,7 +2573,7 @@ func buildKvRangesForIndexJoin(ctx sessionctx.Context, tableID, indexID int64, l
 	return kvRanges, nil
 }
 
-func (b *executorBuilder) buildWindowProcessor(v *plannercore.PhysicalWindow, windowFuncs []aggfuncs.AggFunc, orderByCols []*expression.Column) windowProcessor {
+func (b *executorBuilder) buildWindowProcessor(v *plannercore.BasePhysicalWindow, windowFuncs []aggfuncs.AggFunc, orderByCols []*expression.Column) windowProcessor {
 	partialResults := make([]aggfuncs.PartialResult, 0, len(v.WindowFuncDescs))
 	for _, agg := range windowFuncs {
 		partialResults = append(partialResults, agg.AllocPartialResult())
@@ -2636,7 +2636,7 @@ func (b *executorBuilder) buildWindow(v *plannercore.PhysicalWindow) *WindowExec
 		windowFuncs = append(windowFuncs, agg)
 		resultColIdx++
 	}
-	processor := b.buildWindowProcessor(v, windowFuncs, orderByCols)
+	processor := b.buildWindowProcessor(&v.BasePhysicalWindow, windowFuncs, orderByCols)
 	return &WindowExec{baseExecutor: base,
 		processor:      processor,
 		groupChecker:   newVecGroupChecker(b.ctx, groupByItems),
@@ -2653,13 +2653,13 @@ func (b *executorBuilder) buildWindowParallel(v *plannercore.PhysicalWindowParal
 	sortByItems := make([]*plannercore.ByItems, 0, len(v.PartitionBy)+len(v.OrderBy))
 	groupByItems := make([]expression.Expression, 0, len(v.PartitionBy))
 	for _, item := range v.PartitionBy {
-		groupByItems = append(groupByItems, item.Col)
 		sortByItems = append(sortByItems, &plannercore.ByItems{Expr: item.Col, Desc: item.Desc})
+		groupByItems = append(groupByItems, item.Col)
 	}
 	orderByCols := make([]*expression.Column, 0, len(v.OrderBy))
 	for _, item := range v.OrderBy {
-		orderByCols = append(orderByCols, item.Col)
 		sortByItems = append(sortByItems, &plannercore.ByItems{Expr: item.Col, Desc: item.Desc})
+		orderByCols = append(orderByCols, item.Col)
 	}
 	windowFuncs := make([]aggfuncs.AggFunc, 0, len(v.WindowFuncDescs))
 	resultColIdx := v.Schema().Len() - len(v.WindowFuncDescs)
@@ -2685,16 +2685,16 @@ func (b *executorBuilder) buildWindowParallel(v *plannercore.PhysicalWindowParal
 	}
 	for i := 0; i < concurrency; i++ {
 		e.dataFetchers[i] = &windowDataFetcherExec{
-			baseExecutor: newBaseExecutor(b.ctx, childExec.Schema(), v.ExplainID()),
+			baseExecutor: newBaseExecutor(b.ctx, v.Children()[0].Schema(), v.ExplainID()),
 		}
 		e.sortExecs[i] = &SortExec{
-			baseExecutor: newBaseExecutor(b.ctx, childExec.Schema(), v.ExplainID(), e.dataFetchers[i]),
+			baseExecutor: newBaseExecutor(b.ctx, v.Children()[0].Schema(), v.ExplainID(), e.dataFetchers[i]),
 			ByItems:      sortByItems,
-			schema:       childExec.Schema(),
+			schema:       v.Children()[0].Schema(),
 		}
 		e.windowExecs[i] = &WindowExec{
 			baseExecutor:   newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), e.sortExecs[i]),
-			processor:      b.buildWindowProcessor(v, windowFuncs, orderByCols),
+			processor:      b.buildWindowProcessor(&v.BasePhysicalWindow, windowFuncs, orderByCols),
 			groupChecker:   newVecGroupChecker(b.ctx, groupByItems),
 			numWindowFuncs: len(v.WindowFuncDescs),
 		}
