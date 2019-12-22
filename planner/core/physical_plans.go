@@ -52,6 +52,7 @@ var (
 	_ PhysicalPlan = &PhysicalMergeJoin{}
 	_ PhysicalPlan = &PhysicalUnionScan{}
 	_ PhysicalPlan = &PhysicalWindow{}
+	_ PhysicalPlan = &PhysicalWindowParallel{}
 	_ PhysicalPlan = &BatchPointGetPlan{}
 )
 
@@ -535,14 +536,24 @@ func (p *PhysicalTableDual) SetOutputNames(names types.NameSlice) {
 	p.names = names
 }
 
-// PhysicalWindow is the physical operator of window function.
-type PhysicalWindow struct {
+// basePhysicalWindow is the base physical operator of window function.
+type basePhysicalWindow struct {
 	physicalSchemaProducer
 
 	WindowFuncDescs []*aggregation.WindowFuncDesc
 	PartitionBy     []property.Item
 	OrderBy         []property.Item
 	Frame           *WindowFrame
+}
+
+// PhysicalWindow is the physical operator of window function.
+type PhysicalWindow struct {
+	basePhysicalWindow
+}
+
+// PhysicalWindowParallel is the physical operator of window function in a parallel manner.
+type PhysicalWindowParallel struct {
+	basePhysicalWindow
 }
 
 // CollectPlanStatsVersion uses to collect the statistics version of the plan.

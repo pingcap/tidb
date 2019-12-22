@@ -273,6 +273,9 @@ const (
 	// The hash agg executor starts multiple concurrent final workers to do final aggregate works.
 	TiDBHashAggFinalConcurrency = "tidb_hashagg_final_concurrency"
 
+	// tidb_window_concurrency is used for window parallel executor.
+	TiDBWindowConcurrency = "tidb_window_concurrency"
+
 	// tidb_backoff_lock_fast is used for tikv backoff base time in milliseconds.
 	TiDBBackoffLockFast = "tidb_backoff_lock_fast"
 
@@ -442,6 +445,7 @@ const (
 	DefTiDBMaxDeltaSchemaCount         = 1024
 	DefTiDBHashAggPartialConcurrency   = 4
 	DefTiDBHashAggFinalConcurrency     = 4
+	DefTiDBWindowConcurrency           = 4
 	DefTiDBForcePriority               = mysql.NoPriority
 	DefTiDBUseRadixJoin                = false
 	DefEnableWindowFunction            = true
