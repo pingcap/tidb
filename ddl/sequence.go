@@ -1,4 +1,4 @@
-// Copyright 2015 PingCAP, Inc.
+// Copyright 2019 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -109,7 +109,7 @@ func handleSequenceOptions(SeqOptions []*ast.SequenceOption, sequenceInfo *model
 			sequenceInfo.Order = false
 		}
 	}
-	// fill the default value, min/max/start should be adjusted with increment's positive and negative.
+	// Fill the default value, min/max/start should be adjusted with increment's positive and negative.
 	if !minSetFlag || !maxSetFlag || !startSetFlag {
 		if sequenceInfo.Increment >= 0 {
 			if !minSetFlag {
@@ -163,7 +163,7 @@ func buildSequenceInfo(stmt *ast.CreateSequenceStmt, ident ast.Ident) (*model.Se
 		Increment:  model.DefaultSequenceIncrementValue,
 	}
 
-	// handle comment table options.
+	// Handle table comment options.
 	for _, op := range stmt.TblOptions {
 		switch op.Tp {
 		case ast.TableOptionComment:
@@ -173,7 +173,7 @@ func buildSequenceInfo(stmt *ast.CreateSequenceStmt, ident ast.Ident) (*model.Se
 		}
 	}
 	handleSequenceOptions(stmt.SeqOptions, sequenceInfo)
-	// valid the sequence value.
+	// Valid the sequence value.
 	if !validSequenceOptions(sequenceInfo) {
 		return nil, ErrSequenceInvalidData.GenWithStackByArgs(ident.Schema.L, ident.Name.L)
 	}

@@ -4313,57 +4313,6 @@ func (s *testDBSuite1) TestAlterOrderBy(c *C) {
 	s.tk.MustExec("drop table if exists ob")
 }
 
-func (s *testDBSuite2) TestCreateSequence(c *C) {
-	s.tk = testkit.NewTestKit(c, s.store)
-	s.tk.MustExec("use test")
-	s.tk.MustGetErrCode("create sequence `seq  `", mysql.ErrWrongTableName)
-
-	// maxvalue should larger than minvalue.
-	_, err := s.tk.Exec("create sequence seq maxvalue 1 minvalue 2")
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[ddl:4136]Sequence 'test.seq' values are conflicting")
-
-	// maxvalue should larger than minvalue.
-	_, err = s.tk.Exec("create sequence seq maxvalue 1 minvalue 1")
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[ddl:4136]Sequence 'test.seq' values are conflicting")
-
-	// maxvalue shouldn't be equal to MaxInt64.
-	_, err = s.tk.Exec("create sequence seq maxvalue 9223372036854775807 minvalue 1")
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[ddl:4136]Sequence 'test.seq' values are conflicting")
-
-	// TODO : minvalue shouldn't be equal to MinInt64.
-
-	// maxvalue should larger than start.
-	_, err = s.tk.Exec("create sequence seq maxvalue 1 start with 2")
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[ddl:4136]Sequence 'test.seq' values are conflicting")
-
-	// cacheVal should less than (math.MaxInt64-maxIncrement)/maxIncrement.
-	_, err = s.tk.Exec("create sequence seq increment 100000 cache 922337203685477")
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[ddl:4136]Sequence 'test.seq' values are conflicting")
-
-	_, err = s.tk.Exec("create sequence seq ENGINE=InnoDB")
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[ddl:8227]Unsupported sequence table-option InnoDB")
-
-	_, err = s.tk.Exec("create sequence seq comment=\"test\"")
-	c.Assert(err, IsNil)
-
-	sequenceTable := testGetTableByName(c, s.s, "test", "seq")
-	c.Assert(sequenceTable.Meta().IsSequence(), Equals, true)
-	c.Assert(sequenceTable.Meta().Sequence.Increment, Equals, model.DefaultSequenceIncrementValue)
-	c.Assert(sequenceTable.Meta().Sequence.Start, Equals, model.DefaultPositiveSequenceStartValue)
-	c.Assert(sequenceTable.Meta().Sequence.MinValue, Equals, model.DefaultPositiveSequenceMinValue)
-	c.Assert(sequenceTable.Meta().Sequence.MaxValue, Equals, model.DefaultPositiveSequenceMaxValue)
-	c.Assert(sequenceTable.Meta().Sequence.Cache, Equals, true)
-	c.Assert(sequenceTable.Meta().Sequence.CacheValue, Equals, model.DefaultSequenceCacheValue)
-	c.Assert(sequenceTable.Meta().Sequence.Cycle, Equals, false)
-	c.Assert(sequenceTable.Meta().Sequence.Order, Equals, false)
-}
-
 func init() {
 	// Make sure it will only be executed once.
 	domain.SchemaOutOfDateRetryInterval = int64(50 * time.Millisecond)
