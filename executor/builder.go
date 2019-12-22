@@ -209,6 +209,8 @@ func (b *executorBuilder) build(p plannercore.Plan) Executor {
 		return b.buildIndexLookUpReader(v)
 	case *plannercore.PhysicalWindow:
 		return b.buildWindow(v)
+	case *plannercore.PhysicalWindowParallel:
+		return b.buildWindowParallel(v)
 	case *plannercore.SQLBindPlan:
 		return b.buildSQLBindExec(v)
 	case *plannercore.SplitRegion:
@@ -2571,34 +2573,12 @@ func buildKvRangesForIndexJoin(ctx sessionctx.Context, tableID, indexID int64, l
 	return kvRanges, nil
 }
 
-func (b *executorBuilder) buildWindow(v *plannercore.PhysicalWindow) *WindowExec {
-	childExec := b.build(v.Children()[0])
-	if b.err != nil {
-		return nil
-	}
-	base := newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), childExec)
-	groupByItems := make([]expression.Expression, 0, len(v.PartitionBy))
-	for _, item := range v.PartitionBy {
-		groupByItems = append(groupByItems, item.Col)
-	}
-	orderByCols := make([]*expression.Column, 0, len(v.OrderBy))
-	for _, item := range v.OrderBy {
-		orderByCols = append(orderByCols, item.Col)
-	}
-	windowFuncs := make([]aggfuncs.AggFunc, 0, len(v.WindowFuncDescs))
+func (b *executorBuilder) buildWindowProcessor(v *plannercore.PhysicalWindow, windowFuncs []aggfuncs.AggFunc, orderByCols []*expression.Column) windowProcessor {
 	partialResults := make([]aggfuncs.PartialResult, 0, len(v.WindowFuncDescs))
-	resultColIdx := v.Schema().Len() - len(v.WindowFuncDescs)
-	for _, desc := range v.WindowFuncDescs {
-		aggDesc, err := aggregation.NewAggFuncDesc(b.ctx, desc.Name, desc.Args, false)
-		if err != nil {
-			b.err = err
-			return nil
-		}
-		agg := aggfuncs.BuildWindowFunctions(b.ctx, aggDesc, resultColIdx, orderByCols)
-		windowFuncs = append(windowFuncs, agg)
+	for _, agg := range windowFuncs {
 		partialResults = append(partialResults, agg.AllocPartialResult())
-		resultColIdx++
 	}
+
 	var processor windowProcessor
 	if v.Frame == nil {
 		processor = &aggWindowProcessor{
@@ -2626,11 +2606,101 @@ func (b *executorBuilder) buildWindow(v *plannercore.PhysicalWindow) *WindowExec
 			expectedCmpResult: cmpResult,
 		}
 	}
+
+	return processor
+}
+
+func (b *executorBuilder) buildWindow(v *plannercore.PhysicalWindow) *WindowExec {
+	childExec := b.build(v.Children()[0])
+	if b.err != nil {
+		return nil
+	}
+	base := newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), childExec)
+	groupByItems := make([]expression.Expression, 0, len(v.PartitionBy))
+	for _, item := range v.PartitionBy {
+		groupByItems = append(groupByItems, item.Col)
+	}
+	orderByCols := make([]*expression.Column, 0, len(v.OrderBy))
+	for _, item := range v.OrderBy {
+		orderByCols = append(orderByCols, item.Col)
+	}
+	windowFuncs := make([]aggfuncs.AggFunc, 0, len(v.WindowFuncDescs))
+	resultColIdx := v.Schema().Len() - len(v.WindowFuncDescs)
+	for _, desc := range v.WindowFuncDescs {
+		aggDesc, err := aggregation.NewAggFuncDesc(b.ctx, desc.Name, desc.Args, false)
+		if err != nil {
+			b.err = err
+			return nil
+		}
+		agg := aggfuncs.BuildWindowFunctions(b.ctx, aggDesc, resultColIdx, orderByCols)
+		windowFuncs = append(windowFuncs, agg)
+		resultColIdx++
+	}
+	processor := b.buildWindowProcessor(v, windowFuncs, orderByCols)
 	return &WindowExec{baseExecutor: base,
 		processor:      processor,
 		groupChecker:   newVecGroupChecker(b.ctx, groupByItems),
 		numWindowFuncs: len(v.WindowFuncDescs),
 	}
+}
+
+func (b *executorBuilder) buildWindowParallel(v *plannercore.PhysicalWindowParallel) *WindowParallelExec {
+	childExec := b.build(v.Children()[0])
+	if b.err != nil {
+		return nil
+	}
+	base := newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), childExec)
+	sortByItems := make([]*plannercore.ByItems, 0, len(v.PartitionBy)+len(v.OrderBy))
+	groupByItems := make([]expression.Expression, 0, len(v.PartitionBy))
+	for _, item := range v.PartitionBy {
+		groupByItems = append(groupByItems, item.Col)
+		sortByItems = append(sortByItems, &plannercore.ByItems{Expr: item.Col, Desc: item.Desc})
+	}
+	orderByCols := make([]*expression.Column, 0, len(v.OrderBy))
+	for _, item := range v.OrderBy {
+		orderByCols = append(orderByCols, item.Col)
+		sortByItems = append(sortByItems, &plannercore.ByItems{Expr: item.Col, Desc: item.Desc})
+	}
+	windowFuncs := make([]aggfuncs.AggFunc, 0, len(v.WindowFuncDescs))
+	resultColIdx := v.Schema().Len() - len(v.WindowFuncDescs)
+	for _, desc := range v.WindowFuncDescs {
+		aggDesc, err := aggregation.NewAggFuncDesc(b.ctx, desc.Name, desc.Args, false)
+		if err != nil {
+			b.err = err
+			return nil
+		}
+		agg := aggfuncs.BuildWindowFunctions(b.ctx, aggDesc, resultColIdx, orderByCols)
+		windowFuncs = append(windowFuncs, agg)
+		resultColIdx++
+	}
+
+	concurrency := b.ctx.GetSessionVars().WindowConcurrency
+	e := &WindowParallelExec{baseExecutor: base,
+		concurrency:  concurrency,
+		groupByItems: groupByItems,
+		orderByCols:  orderByCols,
+		dataFetchers: make([]*windowDataFetcherExec, concurrency),
+		sortExecs:    make([]*SortExec, concurrency),
+		windowExecs:  make([]*WindowExec, concurrency),
+	}
+	for i := 0; i < concurrency; i++ {
+		e.dataFetchers[i] = &windowDataFetcherExec{
+			baseExecutor: newBaseExecutor(b.ctx, childExec.Schema(), v.ExplainID()),
+		}
+		e.sortExecs[i] = &SortExec{
+			baseExecutor: newBaseExecutor(b.ctx, childExec.Schema(), v.ExplainID(), e.dataFetchers[i]),
+			ByItems:      sortByItems,
+			schema:       childExec.Schema(),
+		}
+		e.windowExecs[i] = &WindowExec{
+			baseExecutor:   newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), e.sortExecs[i]),
+			processor:      b.buildWindowProcessor(v, windowFuncs, orderByCols),
+			groupChecker:   newVecGroupChecker(b.ctx, groupByItems),
+			numWindowFuncs: len(v.WindowFuncDescs),
+		}
+	}
+
+	return e
 }
 
 func (b *executorBuilder) buildSQLBindExec(v *plannercore.SQLBindPlan) Executor {

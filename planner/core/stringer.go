@@ -258,6 +258,8 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 		str = fmt.Sprintf("Window(%s)", buffer.String())
 	case *PhysicalWindow:
 		str = fmt.Sprintf("Window(%s)", x.ExplainInfo())
+	case *PhysicalWindowParallel:
+		str = fmt.Sprintf("WindowParallel(%s)", x.ExplainInfo())
 	default:
 		str = fmt.Sprintf("%T", in)
 	}

@@ -1483,16 +1483,40 @@ func (p *LogicalWindow) exhaustPhysicalPlans(prop *property.PhysicalProperty) []
 	var byItems []property.Item
 	byItems = append(byItems, p.PartitionBy...)
 	byItems = append(byItems, p.OrderBy...)
-	childProperty := &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64, Items: byItems, Enforced: true}
+
+	concurrency := p.ctx.GetSessionVars().WindowConcurrency
+	if concurrency <= 1 { //TODO: choose if children sorted (like `StreamAgg`)
+		return p.getWindow(prop, byItems)
+	}
+	return p.getWindowParallel(prop, byItems)
+}
+
+func (p *LogicalWindow) getWindow(prop *property.PhysicalProperty, byItems []property.Item) []PhysicalPlan {
+	childProperty := &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64, Items: byItems, Enforced: true} //TODO
 	if !prop.IsPrefix(childProperty) {
 		return nil
 	}
-	window := PhysicalWindow{
+	window := PhysicalWindow{basePhysicalWindow{
 		WindowFuncDescs: p.WindowFuncDescs,
 		PartitionBy:     p.PartitionBy,
 		OrderBy:         p.OrderBy,
 		Frame:           p.Frame,
-	}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), p.blockOffset, childProperty)
+	}}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), p.blockOffset, childProperty)
+	window.SetSchema(p.Schema())
+	return []PhysicalPlan{window}
+}
+
+func (p *LogicalWindow) getWindowParallel(prop *property.PhysicalProperty, byItems []property.Item) []PhysicalPlan {
+	childProperty := &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64, Items: byItems, Enforced: false} //TODO
+	if !prop.IsPrefix(childProperty) {
+		return nil
+	}
+	window := PhysicalWindowParallel{basePhysicalWindow{
+		WindowFuncDescs: p.WindowFuncDescs,
+		PartitionBy:     p.PartitionBy,
+		OrderBy:         p.OrderBy,
+		Frame:           p.Frame,
+	}}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), p.blockOffset, childProperty)
 	window.SetSchema(p.Schema())
 	return []PhysicalPlan{window}
 }
