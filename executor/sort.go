@@ -17,14 +17,18 @@ import (
 	"container/heap"
 	"context"
 	"fmt"
+	"go.uber.org/zap"
 	"sort"
+	"sync"
 	"sync/atomic"
 
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/expression"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/disk"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/stringutil"
 )
@@ -291,6 +295,10 @@ func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 	e.rowChunks = chunk.NewList(fields, e.initCap, e.maxChunkSize)
 	e.rowChunks.GetMemTracker().AttachTo(e.memTracker)
 	e.rowChunks.GetMemTracker().SetLabel(rowChunksLabel)
+	if config.GetGlobalConfig().OOMUseTmpStorage {
+		actionSpill := e.ActionSpill()
+		e.ctx.GetSessionVars().StmtCtx.MemTracker.FallbackOldAndSetNewAction(actionSpill)
+	}
 	for {
 		chk := newFirstChunk(e.children[0])
 		err := Next(ctx, e.children[0], chk)
@@ -444,6 +452,39 @@ func (e *SortExec) spillToDiskByRowPtr() (disk *chunk.ListInDisk, err error) {
 	}
 	return rowChunksInDisk, nil
 }
+
+func (e *SortExec) ActionSpill() memory.ActionOnExceed {
+	return &spillSortDiskAction{e: e}
+}
+
+// spillSortDiskAction implements memory.ActionOnExceed for chunk.List. If
+// the memory quota of a query is exceeded, spillSortDiskAction.Action is
+// triggered.
+type spillSortDiskAction struct {
+	once           sync.Once
+	e              *SortExec
+	fallbackAction memory.ActionOnExceed
+}
+
+// Action sends a signal to trigger spillToDisk method of SortExec
+// and if it is already triggered before, call its fallbackAction.
+func (a *spillSortDiskAction) Action(t *memory.Tracker) {
+	if a.e.alreadySpilledSafe() {
+		if a.fallbackAction != nil {
+			a.fallbackAction.Action(t)
+		}
+	}
+	a.once.Do(func() {
+		atomic.StoreUint32(&a.e.exceeded, 1)
+		logutil.BgLogger().Info("memory exceeds quota, spill to disk now.", zap.String("memory", t.String()))
+	})
+}
+
+func (a *spillSortDiskAction) SetFallback(fallback memory.ActionOnExceed) {
+	a.fallbackAction = fallback
+}
+
+func (a *spillSortDiskAction) SetLogHook(hook func(uint64)) {}
 
 // TopNExec implements a Top-N algorithm and it is built from a SELECT statement with ORDER BY and LIMIT.
 // Instead of sorting all the rows fetched from the table, it keeps the Top-N elements only in a heap to reduce memory usage.
