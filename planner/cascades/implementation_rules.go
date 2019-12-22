@@ -554,12 +554,12 @@ func (w *ImplWindow) OnImplement(expr *memo.GroupExpr, reqProp *property.Physica
 	var byItems []property.Item
 	byItems = append(byItems, lw.PartitionBy...)
 	byItems = append(byItems, lw.OrderBy...)
-	physicalWindow := plannercore.PhysicalWindow{
+	physicalWindow := plannercore.PhysicalWindow{BasePhysicalWindow: plannercore.BasePhysicalWindow{
 		WindowFuncDescs: lw.WindowFuncDescs,
 		PartitionBy:     lw.PartitionBy,
 		OrderBy:         lw.OrderBy,
 		Frame:           lw.Frame,
-	}.Init(
+	}}.Init(
 		lw.SCtx(),
 		expr.Group.Prop.Stats.ScaleByExpectCnt(reqProp.ExpectedCnt),
 		lw.SelectBlockOffset(),

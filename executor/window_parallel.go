@@ -102,9 +102,9 @@ type windowParallelWorker struct {
 	outputCh       chan *windowParallelOutput
 	outputHolderCh chan *chunk.Chunk
 
-	dataFetcher windowDataFetcherExec
-	sortExec    SortExec
-	windowExec  WindowExec
+	dataFetcher *windowDataFetcherExec
+	sortExec    *SortExec
+	windowExec  *WindowExec
 }
 
 // Open implements the Executor Open interface
@@ -114,8 +114,8 @@ func (e *WindowParallelExec) Open(ctx context.Context) error {
 	}
 
 	e.prepared = false
-	sessionVars := e.ctx.GetSessionVars()
-	e.concurrency = sessionVars.WindowConcurrency
+	//sessionVars := e.ctx.GetSessionVars()
+	//e.concurrency = sessionVars.WindowConcurrency
 
 	e.finishCh = make(chan struct{}, 1)
 	e.outputCh = make(chan *windowParallelOutput, e.concurrency)
@@ -131,11 +131,19 @@ func (e *WindowParallelExec) Open(ctx context.Context) error {
 			inputHolderCh:  make(chan *chunk.Chunk, 1),
 			outputCh:       e.outputCh,
 			outputHolderCh: make(chan *chunk.Chunk, 1),
+
+			dataFetcher: e.dataFetchers[i],
+			sortExec:    e.sortExecs[i],
+			windowExec:  e.windowExecs[i],
 		}
-		if err := e.workers[i].buildExecutors(); err != nil {
+		e.workers[i].dataFetcher.finishCh = e.finishCh
+		e.workers[i].dataFetcher.inputCh = e.workers[i].inputCh
+		e.workers[i].dataFetcher.giveBackCh = e.workers[i].inputHolderCh
+		if err := e.workers[i].windowExec.Open(ctx); err != nil {
 			return err
 		}
-		e.workers[i].inputHolderCh <- newFirstChunk(e)
+
+		e.workers[i].inputHolderCh <- newFirstChunk(e.children[0])
 		e.workers[i].outputHolderCh <- newFirstChunk(e)
 	}
 
@@ -200,12 +208,12 @@ func (e *WindowParallelExec) execDataFetcherThread(ctx context.Context) {
 		if chk.NumRows() == 0 {
 			break
 		}
+
 		groupKeys, err = getGroupKey(e.ctx, chk, groupKeys, e.groupByItems)
 		if err != nil {
 			e.outputCh <- &windowParallelOutput{err: err}
 			return
 		}
-
 		numRows := chk.NumRows()
 		for i := 0; i < numRows; i++ {
 			workerIdx := int(murmur3.Sum32(groupKeys[i])) % len(e.workers)
@@ -231,6 +239,7 @@ func (e *WindowParallelExec) execDataFetcherThread(ctx context.Context) {
 	for i := range e.workers {
 		if results[i] != nil {
 			e.workers[i].inputCh <- results[i]
+			results[i] = nil
 		}
 	}
 }
@@ -241,7 +250,7 @@ func (e *WindowParallelExec) prepare4ParallelExec(ctx context.Context) {
 	waitGroup := &sync.WaitGroup{}
 	waitGroup.Add(len(e.workers))
 	for i := range e.workers {
-		go e.workers[i].run(e.ctx, waitGroup)
+		go e.workers[i].run(ctx, waitGroup)
 	}
 
 	go e.waitWorkerAndCloseOutput(waitGroup)
@@ -253,7 +262,8 @@ func (e *WindowParallelExec) waitWorkerAndCloseOutput(waitGroup *sync.WaitGroup)
 }
 
 // Next implements the Executor Next interface.
-func (e *WindowParallelExec) Next(ctx context.Context, chk *chunk.Chunk) error {
+func (e *WindowParallelExec) Next(ctx context.Context, req *chunk.Chunk) error {
+	req.Reset()
 	if !e.prepared {
 		e.prepare4ParallelExec(ctx)
 		e.prepared = true
@@ -268,7 +278,6 @@ func (e *WindowParallelExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	if e.executed {
 		return nil
 	}
-
 	for {
 		result, ok := <-e.outputCh
 		if !ok {
@@ -278,10 +287,10 @@ func (e *WindowParallelExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 		if result.err != nil {
 			return result.err
 		}
-		chk.SwapColumns(result.chk)
+		req.SwapColumns(result.chk)
 		result.chk.Reset()
 		result.giveBackCh <- result.chk
-		if chk.NumRows() > 0 {
+		if req.NumRows() > 0 {
 			return nil
 		}
 	}
@@ -289,12 +298,71 @@ func (e *WindowParallelExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 
 type windowDataFetcherExec struct {
 	baseExecutor
+	finishCh   <-chan struct{}
+	inputCh    <-chan *chunk.Chunk
+	giveBackCh chan<- *chunk.Chunk
+
+	executed bool
 }
 
-func (w *windowParallelWorker) buildExecutors() error {
+func (e *windowDataFetcherExec) Open(ctx context.Context) error {
+	if err := e.baseExecutor.Open(ctx); err != nil {
+		return err
+	}
+	e.executed = false
 	return nil
 }
 
-func (w *windowParallelWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitGroup) {
-	return
+func (e *windowDataFetcherExec) Close() error {
+	return errors.Trace(e.baseExecutor.Close())
+}
+
+func (e *windowDataFetcherExec) Next(ctx context.Context, req *chunk.Chunk) error {
+	req.Reset()
+	if e.executed {
+		return nil
+	}
+	select {
+	case <-e.finishCh:
+		e.executed = true
+		return nil
+	case result, ok := <-e.inputCh:
+		if !ok || result.NumRows() == 0 {
+			e.executed = true
+			return nil
+		}
+		req.SwapColumns(result)
+		result.Reset()
+		e.giveBackCh <- result
+		return nil
+	}
+}
+
+func (w *windowParallelWorker) run(ctx context.Context, waitGroup *sync.WaitGroup) {
+	defer func() {
+		if r := recover(); r != nil {
+			recoveryWindowParallelExec(w.outputCh, r)
+		}
+		waitGroup.Done()
+	}()
+
+	for {
+		select {
+		case <-w.finishCh:
+			return
+		case chk, ok := <-w.outputHolderCh:
+			if !ok {
+				return
+			}
+			//if err := w.windowExec.Next(w.ctx, chk); err != nil {
+			if err := Next(ctx, w.windowExec, chk); err != nil {
+				w.outputCh <- &windowParallelOutput{err: err}
+				return
+			}
+			if chk.NumRows() == 0 {
+				return
+			}
+			w.outputCh <- &windowParallelOutput{chk: chk, giveBackCh: w.outputHolderCh}
+		}
+	}
 }

@@ -536,8 +536,8 @@ func (p *PhysicalTableDual) SetOutputNames(names types.NameSlice) {
 	p.names = names
 }
 
-// basePhysicalWindow is the base physical operator of window function.
-type basePhysicalWindow struct {
+// BasePhysicalWindow is the base physical operator of window function.
+type BasePhysicalWindow struct {
 	physicalSchemaProducer
 
 	WindowFuncDescs []*aggregation.WindowFuncDesc
@@ -548,12 +548,12 @@ type basePhysicalWindow struct {
 
 // PhysicalWindow is the physical operator of window function.
 type PhysicalWindow struct {
-	basePhysicalWindow
+	BasePhysicalWindow
 }
 
 // PhysicalWindowParallel is the physical operator of window function in a parallel manner.
 type PhysicalWindowParallel struct {
-	basePhysicalWindow
+	BasePhysicalWindow
 }
 
 // CollectPlanStatsVersion uses to collect the statistics version of the plan.

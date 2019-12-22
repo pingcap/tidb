@@ -436,7 +436,7 @@ func (p *PhysicalTopN) ExplainNormalizedInfo() string {
 	return buffer.String()
 }
 
-func (p *basePhysicalWindow) formatFrameBound(buffer *bytes.Buffer, bound *FrameBound) {
+func (p *BasePhysicalWindow) formatFrameBound(buffer *bytes.Buffer, bound *FrameBound) {
 	if bound.Type == ast.CurrentRow {
 		buffer.WriteString("current row")
 		return
@@ -464,7 +464,7 @@ func (p *basePhysicalWindow) formatFrameBound(buffer *bytes.Buffer, bound *Frame
 }
 
 // ExplainInfo implements Plan interface.
-func (p *basePhysicalWindow) ExplainInfo() string {
+func (p *BasePhysicalWindow) ExplainInfo() string {
 	buffer := bytes.NewBufferString("")
 	formatWindowFuncDescs(buffer, p.WindowFuncDescs, p.schema)
 	buffer.WriteString(" over(")
