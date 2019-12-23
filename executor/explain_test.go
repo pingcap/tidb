@@ -129,7 +129,7 @@ func (s *testSuite1) TestExplainAnalyzeMemory(c *C) {
 
 func (s *testSuite1) checkMemoryInfo(c *C, tk *testkit.TestKit, sql string) {
 	memCol := 5
-	ops := []string{"Join", "Reader", "Top", "Sort", "LookUp", "Projection"}
+	ops := []string{"Join", "Reader", "Top", "Sort", "LookUp", "Projection", "Selection"}
 	rows := tk.MustQuery(sql).Rows()
 	for _, row := range rows {
 		strs := make([]string, len(row))
@@ -164,6 +164,7 @@ func (s *testSuite1) TestMemoryUsageAfterClose(c *C) {
 		tk.MustExec(fmt.Sprintf("insert into t values (%v, %v)", i, i))
 	}
 	SQLs := []string{"select v+abs(k) from t",
+		"select v from t where abs(v) > 0",
 		"select v from t order by v"}
 	for _, sql := range SQLs {
 		tk.MustQuery(sql)
