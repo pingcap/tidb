@@ -42,7 +42,7 @@ type InsertExec struct {
 	row4Update     []types.Datum
 
 	Priority   mysql.PriorityEnum
-	memTracker *memory.Tracker
+	MemTracker *memory.Tracker
 }
 
 func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum, memTracker *memory.Tracker) error {
@@ -269,8 +269,8 @@ func (e *InsertExec) Close() error {
 
 // Open implements the Executor Open interface.
 func (e *InsertExec) Open(ctx context.Context) error {
-	e.memTracker = memory.NewTracker(e.id, -1)
-	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
+	e.MemTracker = memory.NewTracker(e.id, -1)
+	e.MemTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
 
 	if e.OnDuplicate != nil {
 		e.initEvalBuffer4Dup()

@@ -86,7 +86,7 @@ type hashRowContainer struct {
 	// hashTable stores the map of hashKey and RowPtr
 	hashTable *rowHashMap
 
-	// memTracker is the reference of records.GetMemTracker().
+	// MemTracker is the reference of records.GetMemTracker().
 	// records would be set to nil for garbage collection when spilling is activated
 	// so we need this reference.
 	memTracker  *memory.Tracker
