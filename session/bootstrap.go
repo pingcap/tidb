@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
@@ -74,6 +75,13 @@ const (
 		Account_locked			ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Shutdown_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
 		PRIMARY KEY (Host, User));`
+	// CreateGlobalPrivTable is the SQL statement creates Global scope privilege table in system db.
+	CreateGlobalPrivTable = "CREATE TABLE if not exists mysql.global_priv (" +
+		"Host char(60) NOT NULL DEFAULT ''," +
+		"User char(80) NOT NULL DEFAULT ''," +
+		"Priv longtext NOT NULL DEFAULT ''," +
+		"PRIMARY KEY (Host, User)" +
+		")"
 	// CreateDBPrivTable is the SQL statement creates DB scope privilege table in system db.
 	CreateDBPrivTable = `CREATE TABLE if not exists mysql.db (
 		Host			CHAR(60),
@@ -304,10 +312,10 @@ func bootstrap(s Session) {
 
 const (
 	// The variable name in mysql.TiDB table.
-	// It is used for checking if the store is boostrapped by any TiDB server.
+	// It is used for checking if the store is bootstrapped by any TiDB server.
 	bootstrappedVar = "bootstrapped"
 	// The variable value in mysql.TiDB table for bootstrappedVar.
-	// If the value true, the store is already boostrapped by a TiDB server.
+	// If the value true, the store is already bootstrapped by a TiDB server.
 	bootstrappedVarTrue = "True"
 	// The variable name in mysql.TiDB table.
 	// It is used for getting the version of the TiDB server which bootstrapped the store.
@@ -352,6 +360,7 @@ const (
 	version35 = 35
 	version36 = 36
 	version37 = 37
+	version38 = 38
 )
 
 func checkBootstrapped(s Session) (bool, error) {
@@ -406,7 +415,7 @@ func getTiDBVar(s Session, name string) (sVal string, isNull bool, e error) {
 	return row.GetString(0), false, nil
 }
 
-// upgrade function  will do some upgrade works, when the system is boostrapped by low version TiDB server
+// upgrade function  will do some upgrade works, when the system is bootstrapped by low version TiDB server
 // For example, add new system variables into mysql.global_variables table.
 func upgrade(s Session) {
 	ver, err := getBootstrapVersion(s)
@@ -558,6 +567,10 @@ func upgrade(s Session) {
 
 	if ver < version37 {
 		upgradeToVer37(s)
+	}
+
+	if ver < version38 {
+		upgradeToVer38(s)
 	}
 
 	updateBootstrapVer(s)
@@ -889,6 +902,14 @@ func upgradeToVer37(s Session) {
 	mustExecute(s, sql)
 }
 
+func upgradeToVer38(s Session) {
+	var err error
+	_, err = s.Execute(context.Background(), CreateGlobalPrivTable)
+	if err != nil {
+		logutil.BgLogger().Fatal("upgradeToVer38 error", zap.Error(err))
+	}
+}
+
 // updateBootstrapVer updates bootstrap version variable in mysql.TiDB table.
 func updateBootstrapVer(s Session) {
 	// Update bootstrap version.
@@ -918,6 +939,7 @@ func doDDLWorks(s Session) {
 	// Create user table.
 	mustExecute(s, CreateUserTable)
 	// Create privilege tables.
+	mustExecute(s, CreateGlobalPrivTable)
 	mustExecute(s, CreateDBPrivTable)
 	mustExecute(s, CreateTablePrivTable)
 	mustExecute(s, CreateColumnPrivTable)
@@ -967,7 +989,11 @@ func doDMLWorks(s Session) {
 	for k, v := range variable.SysVars {
 		// Session only variable should not be inserted.
 		if v.Scope != variable.ScopeSession {
-			value := fmt.Sprintf(`("%s", "%s")`, strings.ToLower(k), v.Value)
+			vVal := v.Value
+			if v.Name == variable.TiDBTxnMode && config.GetGlobalConfig().Store == "tikv" {
+				vVal = "pessimistic"
+			}
+			value := fmt.Sprintf(`("%s", "%s")`, strings.ToLower(k), vVal)
 			values = append(values, value)
 		}
 	}
