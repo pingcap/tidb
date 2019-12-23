@@ -68,13 +68,21 @@ func GetMetricTableDef(lowerTableName string) (*MetricTableDef, error) {
 }
 
 // GetExplainInfo uses to get the explain info of metric table.
-func GetExplainInfo(sctx sessionctx.Context, lowerTableName string, labels map[string]set.StringSet, quantile float64) string {
+func GetExplainInfo(sctx sessionctx.Context, lowerTableName string, labels map[string]set.StringSet, quantiles []float64) string {
 	def, ok := metricTableMap[lowerTableName]
 	if !ok {
 		return ""
 	}
-	promQL := def.GenPromQL(sctx, labels, quantile)
-	return "PromQL:" + promQL
+	var buf bytes.Buffer
+	buf.WriteString("PromQL:")
+	for i, quantile := range quantiles {
+		promQL := def.GenPromQL(sctx, labels, quantile)
+		if i > 0 {
+			buf.WriteByte('\n')
+		}
+		buf.WriteString(promQL)
+	}
+	return buf.String()
 }
 
 func (def *MetricTableDef) genColumnInfos() []columnInfo {
@@ -87,7 +95,7 @@ func (def *MetricTableDef) genColumnInfos() []columnInfo {
 	}
 	if def.Quantile > 0 {
 		defaultValue := strconv.FormatFloat(def.Quantile, 'f', -1, 64)
-		cols = append(cols, columnInfo{"Quantile", mysql.TypeDouble, 22, 0, defaultValue, nil})
+		cols = append(cols, columnInfo{"quantile", mysql.TypeDouble, 22, 0, defaultValue, nil})
 	}
 	return cols
 }

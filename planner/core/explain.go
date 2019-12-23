@@ -716,8 +716,10 @@ func genMetricTableExplainInfo(ctx sessionctx.Context, dbName model.CIStr, tblIn
 	if !ok || e.SkipRequest {
 		return ""
 	}
-	quantile, err := e.GetQuantile()
+	quantile, err := e.GetQuantiles()
 	if err != nil {
+		sc := ctx.GetSessionVars().StmtCtx
+		sc.AppendWarning(err)
 		return ""
 	}
 	promQL := metricschema.GetExplainInfo(ctx, tblInfo.Name.L, e.LabelConditions, quantile)

@@ -557,9 +557,8 @@ func (s *extractorSuite) TestMetricTableExtractor(c *C) {
 		skipRequest        bool
 		startTime, endTime int64
 		labelConditions    map[string]set.StringSet
-		quantile           float64
+		quantiles          []float64
 		promQL             string
-		err                string
 	}{
 		{
 			sql:    "select * from metric_schema.query_duration",
@@ -621,9 +620,10 @@ func (s *extractorSuite) TestMetricTableExtractor(c *C) {
 			skipRequest: true,
 		},
 		{
-			sql:    "select * from metric_schema.query_duration where quantile=0.9 or quantile=0.8",
-			promQL: "",
-			err:    "query metric data not support specified multiple quantile",
+			sql: "select * from metric_schema.query_duration where quantile=0.9 or quantile=0.8",
+			promQL: "PromQL:histogram_quantile(0.9, sum(rate(tidb_server_handle_query_duration_seconds_bucket{}[60s])) by (le))\n" +
+				"histogram_quantile(0.8, sum(rate(tidb_server_handle_query_duration_seconds_bucket{}[60s])) by (le))",
+			quantiles: []float64{0.9, 0.8},
 		},
 	}
 	se.GetSessionVars().StmtCtx.TimeZone = time.Local
@@ -657,16 +657,14 @@ func (s *extractorSuite) TestMetricTableExtractor(c *C) {
 			c.Assert(metricTableExtractor.EndTime, DeepEquals, ca.endTime, Commentf("SQL: %v", ca.sql))
 		}
 		c.Assert(metricTableExtractor.SkipRequest, DeepEquals, ca.skipRequest, Commentf("SQL: %v", ca.sql))
-		quantile, err := metricTableExtractor.GetQuantile()
-		if len(ca.err) > 0 {
-			c.Assert(err, NotNil)
-			c.Assert(err.Error(), DeepEquals, ca.err)
-			continue
-		}
+		quantiles, err := metricTableExtractor.GetQuantiles()
 		c.Assert(err, IsNil)
-		c.Assert(quantile, DeepEquals, ca.quantile)
+		c.Assert(len(quantiles) > 0, IsTrue)
+		if len(quantiles) != 1 || quantiles[0] != 0 {
+			c.Assert(quantiles, DeepEquals, ca.quantiles)
+		}
 		if !ca.skipRequest {
-			promQL := metricschema.GetExplainInfo(se, "query_duration", metricTableExtractor.LabelConditions, quantile)
+			promQL := metricschema.GetExplainInfo(se, "query_duration", metricTableExtractor.LabelConditions, quantiles)
 			c.Assert(promQL, DeepEquals, ca.promQL, Commentf("SQL: %v", ca.sql))
 		}
 	}

@@ -55,29 +55,32 @@ func (e *MetricRetriever) retrieve(ctx context.Context, sctx sessionctx.Context)
 	}
 	e.tblDef = tblDef
 	queryRange := e.getQueryRange(sctx)
-	quantile, err := e.extractor.GetQuantile()
+	quantiles, err := e.extractor.GetQuantiles()
 	if err != nil {
 		return nil, err
 	}
-	if quantile == 0 {
-		quantile = tblDef.Quantile
-	}
-	queryValue, err := e.queryMetric(ctx, sctx, queryRange, quantile)
-	if err != nil {
-		return nil, err
-	}
-
-	fullRows = e.genRows(queryValue, queryRange, quantile)
-	if len(e.outputCols) == len(e.table.Columns) {
-		return
-	}
-	rows := make([][]types.Datum, len(fullRows))
-	for i, fullRow := range fullRows {
-		row := make([]types.Datum, len(e.outputCols))
-		for j, col := range e.outputCols {
-			row[j] = fullRow[col.Offset]
+	rows := make([][]types.Datum, 0)
+	for _, quantile := range quantiles {
+		if quantile == 0 {
+			quantile = tblDef.Quantile
 		}
-		rows[i] = row
+		queryValue, err := e.queryMetric(ctx, sctx, queryRange, quantile)
+		if err != nil {
+			return nil, err
+		}
+
+		fullRows = e.genRows(queryValue, queryRange, quantile)
+		if len(e.outputCols) == len(e.table.Columns) {
+			rows = append(rows, fullRows...)
+			continue
+		}
+		for _, fullRow := range fullRows {
+			row := make([]types.Datum, len(e.outputCols))
+			for j, col := range e.outputCols {
+				row[j] = fullRow[col.Offset]
+			}
+			rows = append(rows, row)
+		}
 	}
 	return rows, nil
 }

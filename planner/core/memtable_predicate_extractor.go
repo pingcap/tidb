@@ -14,7 +14,6 @@
 package core
 
 import (
-	"errors"
 	"math"
 	"regexp"
 	"strconv"
@@ -367,6 +366,13 @@ func (helper extractHelper) extractTimeRange(
 	return
 }
 
+func (e extractHelper) convertToTime(t int64) time.Time {
+	if t == 0 || t == math.MaxInt64 {
+		return time.Now()
+	}
+	return time.Unix(t/int64(time.Microsecond), t%int64(time.Microsecond)*1000)
+}
+
 // ClusterTableExtractor is used to extract some predicates of cluster table.
 type ClusterTableExtractor struct {
 	extractHelper
@@ -536,28 +542,22 @@ func (e *MetricTableExtractor) Extract(
 }
 
 // GetQuantile gets the quantile of metric query.
-func (e *MetricTableExtractor) GetQuantile() (quantile float64, err error) {
+func (e *MetricTableExtractor) GetQuantiles() ([]float64, error) {
 	if len(e.quantile) == 0 {
-		return 0, nil
+		return []float64{0}, nil
 	}
-	if len(e.quantile) > 1 {
-		return 0, errors.New("query metric data not support specified multiple quantile")
-	}
+	quantiles := make([]float64, 0, len(e.quantile))
 	for k := range e.quantile {
-		quantile, err = strconv.ParseFloat(k, 64)
-		return
+		quantile, err := strconv.ParseFloat(k, 64)
+		if err != nil {
+			return nil, err
+		}
+		quantiles = append(quantiles, quantile)
 	}
-	return 0, nil
+	return quantiles, nil
 }
 
 // GetQueryRangeTime gets the metric query time range.
 func (e *MetricTableExtractor) GetQueryRangeTime(sctx sessionctx.Context) (start, end time.Time, step time.Duration) {
 	return e.convertToTime(e.StartTime), e.convertToTime(e.EndTime), time.Second * time.Duration(sctx.GetSessionVars().MetricSchemaStep)
-}
-
-func (e *MetricTableExtractor) convertToTime(t int64) time.Time {
-	if t == 0 || t == math.MaxInt64 {
-		return time.Now()
-	}
-	return time.Unix(t/int64(time.Microsecond), t%int64(time.Microsecond)*1000)
 }
