@@ -876,6 +876,9 @@ func (a *ExecStmt) SummaryStmt() {
 	}
 	sessVars.SetPrevStmtDigest(digest)
 
+	plan := plannercore.EncodePlan(a.Plan)
+	_, planDigest := getPlanDigest(a.Ctx, a.Plan)
+
 	execDetail := stmtCtx.GetExecDetails()
 	copTaskInfo := stmtCtx.CopTasksDetails()
 	memMax := stmtCtx.MemTracker.MaxConsumed()
@@ -891,6 +894,8 @@ func (a *ExecStmt) SummaryStmt() {
 		Digest:         digest,
 		PrevSQL:        prevSQL,
 		PrevSQLDigest:  prevSQLDigest,
+		Plan:           plan,
+		PlanDigest:     planDigest,
 		User:           userString,
 		TotalLatency:   costTime,
 		ParseLatency:   sessVars.DurationParse,

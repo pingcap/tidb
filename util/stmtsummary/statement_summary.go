@@ -31,6 +31,9 @@ import (
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/kvcache"
+	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/plancodec"
+	"go.uber.org/zap"
 )
 
 // There're many types of statement summary tables in MySQL, but we have
@@ -43,6 +46,8 @@ type stmtSummaryByDigestKey struct {
 	digest     string
 	// The digest of the previous statement.
 	prevDigest string
+	// The digest of the plan of this SQL.
+	planDigest string
 	// `hash` is the hash value of this object.
 	hash []byte
 }
@@ -52,10 +57,11 @@ type stmtSummaryByDigestKey struct {
 // `prevSQL` is included in the key To distinguish different transactions.
 func (key *stmtSummaryByDigestKey) Hash() []byte {
 	if len(key.hash) == 0 {
-		key.hash = make([]byte, 0, len(key.schemaName)+len(key.digest)+len(key.prevDigest))
+		key.hash = make([]byte, 0, len(key.schemaName)+len(key.digest)+len(key.prevDigest)+len(key.planDigest))
 		key.hash = append(key.hash, hack.Slice(key.digest)...)
 		key.hash = append(key.hash, hack.Slice(key.schemaName)...)
 		key.hash = append(key.hash, hack.Slice(key.prevDigest)...)
+		key.hash = append(key.hash, hack.Slice(key.planDigest)...)
 	}
 	return key.hash
 }
@@ -106,6 +112,7 @@ type stmtSummaryByDigest struct {
 	// They won't change once this object is created, so locking is not needed.
 	schemaName    string
 	digest        string
+	planDigest    string
 	stmtType      string
 	normalizedSQL string
 	tableNames    string
@@ -120,6 +127,7 @@ type stmtSummaryByDigestElement struct {
 	// basic
 	sampleSQL  string
 	prevSQL    string
+	samplePlan string
 	sampleUser string
 	indexNames []string
 	execCount  int64
@@ -192,6 +200,8 @@ type StmtExecInfo struct {
 	Digest         string
 	PrevSQL        string
 	PrevSQLDigest  string
+	Plan           string
+	PlanDigest     string
 	User           string
 	TotalLatency   time.Duration
 	ParseLatency   time.Duration
@@ -231,6 +241,7 @@ func (ssMap *stmtSummaryByDigestMap) AddStatement(sei *StmtExecInfo) {
 		schemaName: sei.SchemaName,
 		digest:     sei.Digest,
 		prevDigest: sei.PrevSQLDigest,
+		planDigest: sei.PlanDigest,
 	}
 
 	// Enclose the block in a function to ensure the lock will always be released.
@@ -499,6 +510,7 @@ func newStmtSummaryByDigest(sei *StmtExecInfo, beginTime int64, intervalSeconds 
 	ssbd := &stmtSummaryByDigest{
 		schemaName:    sei.SchemaName,
 		digest:        sei.Digest,
+		planDigest:    sei.PlanDigest,
 		stmtType:      strings.ToLower(sei.StmtCtx.StmtType),
 		normalizedSQL: normalizedSQL,
 		tableNames:    tableNames,
@@ -640,6 +652,8 @@ func (ssElement *stmtSummaryByDigestElement) add(sei *StmtExecInfo, intervalSeco
 	}
 	ssElement.sampleSQL = sampleSQL
 	ssElement.prevSQL = prevSQL
+	// Plan is compressed string. If it's truncated, it can't be decoded.
+	ssElement.samplePlan = sei.Plan
 	ssElement.indexNames = sei.StmtCtx.IndexNames
 	ssElement.execCount++
 
@@ -768,6 +782,12 @@ func (ssElement *stmtSummaryByDigestElement) toDatum(ssbd *stmtSummaryByDigest) 
 	ssElement.Lock()
 	defer ssElement.Unlock()
 
+	plan, err := plancodec.DecodePlan(ssElement.samplePlan)
+	if err != nil {
+		logutil.BgLogger().Error("decode plan in slow log failed", zap.String("plan", ssElement.samplePlan), zap.Error(err))
+		plan = ""
+	}
+
 	// Actually, there's a small chance that endTime is out of date, but it's hard to keep it up to date all the time.
 	return types.MakeDatums(
 		types.Time{Time: types.FromGoTime(time.Unix(ssElement.beginTime, 0)), Type: mysql.TypeTimestamp},
@@ -834,6 +854,8 @@ func (ssElement *stmtSummaryByDigestElement) toDatum(ssbd *stmtSummaryByDigest) 
 		types.Time{Time: types.FromGoTime(ssElement.lastSeen), Type: mysql.TypeTimestamp},
 		ssElement.sampleSQL,
 		ssElement.prevSQL,
+		ssbd.planDigest,
+		plan,
 	)
 }
 
