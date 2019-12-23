@@ -76,10 +76,10 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 	b.copySortedTables(oldTableID, newTableID)
 
 	// We try to reuse the old allocator, so the cached auto ID can be reused.
-	var alloc autoid.Allocator
+	var allocs autoid.Allocators
 	if tableIDIsValid(oldTableID) {
 		if oldTableID == newTableID && diff.Type != model.ActionRenameTable && diff.Type != model.ActionRebaseAutoID {
-			alloc, _ = b.is.AllocByID(oldTableID)
+			allocs, _ = b.is.AllocByID(oldTableID)
 		}
 		if diff.Type == model.ActionRenameTable && diff.OldSchemaID != diff.SchemaID {
 			oldRoDBInfo, ok := b.is.SchemaByID(diff.OldSchemaID)
@@ -96,7 +96,7 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 	}
 	if tableIDIsValid(newTableID) {
 		// All types except DropTableOrView.
-		err := b.applyCreateTable(m, dbInfo, newTableID, alloc, diff.Type)
+		err := b.applyCreateTable(m, dbInfo, newTableID, allocs, diff.Type)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -180,7 +180,7 @@ func (b *Builder) copySortedTablesBucket(bucketIdx int) {
 	b.is.sortedTablesBuckets[bucketIdx] = newSortedTables
 }
 
-func (b *Builder) applyCreateTable(m *meta.Meta, dbInfo *model.DBInfo, tableID int64, alloc autoid.Allocator, tp model.ActionType) error {
+func (b *Builder) applyCreateTable(m *meta.Meta, dbInfo *model.DBInfo, tableID int64, allocs autoid.Allocators, tp model.ActionType) error {
 	tblInfo, err := m.GetTable(dbInfo.ID, tableID)
 	if err != nil {
 		return errors.Trace(err)
@@ -206,11 +206,10 @@ func (b *Builder) applyCreateTable(m *meta.Meta, dbInfo *model.DBInfo, tableID i
 	ConvertCharsetCollateToLowerCaseIfNeed(tblInfo)
 	ConvertOldVersionUTF8ToUTF8MB4IfNeed(tblInfo)
 
-	if alloc == nil {
-		schemaID := dbInfo.ID
-		alloc = autoid.NewAllocator(b.handle.store, tblInfo.GetDBID(schemaID), tblInfo.IsAutoIncColUnsigned())
+	if len(allocs) == 0 {
+		allocs = autoid.NewAllocatorsFromTblInfo(b.handle.store, dbInfo.ID, tblInfo)
 	}
-	tbl, err := tables.TableFromMeta(alloc, tblInfo)
+	tbl, err := tables.TableFromMeta(allocs, tblInfo)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -342,7 +341,7 @@ func (b *Builder) InitWithDBInfos(dbInfos []*model.DBInfo, schemaVersion int64) 
 	return b, nil
 }
 
-type tableFromMetaFunc func(alloc autoid.Allocator, tblInfo *model.TableInfo) (table.Table, error)
+type tableFromMetaFunc func(alloc autoid.Allocators, tblInfo *model.TableInfo) (table.Table, error)
 
 func (b *Builder) createSchemaTablesForDB(di *model.DBInfo, tableFromMeta tableFromMetaFunc) error {
 	schTbls := &schemaTables{
@@ -351,10 +350,9 @@ func (b *Builder) createSchemaTablesForDB(di *model.DBInfo, tableFromMeta tableF
 	}
 	b.is.schemaMap[di.Name.L] = schTbls
 	for _, t := range di.Tables {
-		schemaID := di.ID
-		alloc := autoid.NewAllocator(b.handle.store, t.GetDBID(schemaID), t.IsAutoIncColUnsigned())
+		allocs := autoid.NewAllocatorsFromTblInfo(b.handle.store, di.ID, t)
 		var tbl table.Table
-		tbl, err := tableFromMeta(alloc, t)
+		tbl, err := tableFromMeta(allocs, t)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -367,7 +365,7 @@ func (b *Builder) createSchemaTablesForDB(di *model.DBInfo, tableFromMeta tableF
 
 type virtualTableDriver struct {
 	*model.DBInfo
-	TableFromMeta func(alloc autoid.Allocator, tblInfo *model.TableInfo) (table.Table, error)
+	TableFromMeta func(alloc autoid.Allocators, tblInfo *model.TableInfo) (table.Table, error)
 }
 
 var drivers []*virtualTableDriver
