@@ -46,6 +46,11 @@ func (eqh *Handle) SetSessionManager(sm util.SessionManager) *Handle {
 	return eqh
 }
 
+// Valid indicates whether the Handle is valid.
+func (eqh *Handle) Valid() bool {
+	return eqh.sm != nil
+}
+
 // Run starts a expensive query checker goroutine at the start time of the server.
 func (eqh *Handle) Run() {
 	threshold := atomic.LoadUint64(&variable.ExpensiveQueryTimeThreshold)
@@ -80,14 +85,6 @@ func (eqh *Handle) Run() {
 // LogOnQueryExceedMemQuota prints a log when memory usage of connID is out of memory quota.
 func (eqh *Handle) LogOnQueryExceedMemQuota(connID uint64) {
 	if log.GetLevel() > zapcore.WarnLevel {
-		return
-	}
-	// The out-of-memory SQL may be the internal SQL which is executed during
-	// the bootstrap phase, and the `sm` is not set at this phase. This is
-	// unlikely to happen except for testing. Thus we do not need to log
-	// detailed message for it.
-	if eqh.sm == nil {
-		logutil.BgLogger().Info("expensive_query during bootstrap phase", zap.Uint64("conn_id", connID))
 		return
 	}
 	info, ok := eqh.sm.GetProcessInfo(connID)
