@@ -490,10 +490,10 @@ func parseHostIPNet(s string) *net.IPNet {
 }
 
 func (record *baseRecord) assignUserOrHost(row chunk.Row, i int, f *ast.ResultField) {
-	switch {
-	case f.ColumnAsName.L == "user":
+	switch f.ColumnAsName.L {
+	case "user":
 		record.User = row.GetString(i)
-	case f.ColumnAsName.L == "host":
+	case "host":
 		record.Host = row.GetString(i)
 		record.patChars, record.patTypes = stringutil.CompilePattern(record.Host, '\\')
 		record.hostIPNet = parseHostIPNet(record.Host)
