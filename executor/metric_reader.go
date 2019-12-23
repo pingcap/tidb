@@ -57,11 +57,11 @@ func (e *MetricRetriever) retrieve(ctx context.Context, sctx sessionctx.Context)
 	e.tblDef = tblDef
 	queryRange := e.getQueryRange(sctx)
 	rows := make([][]types.Datum, 0)
-	quantiles := e.extractor.GetQuantiles()
+	quantiles := e.extractor.Quantiles
+	if len(quantiles) == 0 {
+		quantiles = []float64{tblDef.Quantile}
+	}
 	for _, quantile := range quantiles {
-		if quantile == 0 {
-			quantile = tblDef.Quantile
-		}
 		queryValue, err := e.queryMetric(ctx, sctx, queryRange, quantile)
 		if err != nil {
 			return nil, err

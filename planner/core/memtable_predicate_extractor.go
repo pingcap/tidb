@@ -489,7 +489,7 @@ type MetricTableExtractor struct {
 	EndTime int64
 	// LabelConditions represents the label conditions of metric data.
 	LabelConditions map[string]set.StringSet
-	quantiles       []float64
+	Quantiles       []float64
 }
 
 // Extract implements the MemTablePredicateExtractor Extract interface
@@ -501,11 +501,11 @@ func (e *MetricTableExtractor) Extract(
 ) []expression.Expression {
 	// Extract the `quantile` columns
 	remained, skipRequest, quantileSet := e.extractCol(schema, names, predicates, "quantile", true)
+	e.Quantiles = e.parseQuantiles(quantileSet)
 	e.SkipRequest = skipRequest
 	if e.SkipRequest {
 		return nil
 	}
-	e.quantiles = e.parseQuantiles(quantileSet)
 
 	// Extract the `time` columns
 	remained, startTime, endTime := e.extractTimeRange(ctx, schema, names, remained, "time", ctx.GetSessionVars().StmtCtx.TimeZone)
@@ -541,13 +541,6 @@ func (e *MetricTableExtractor) Extract(
 		e.LabelConditions[name.ColName.L] = values
 	}
 	return remained
-}
-
-func (e *MetricTableExtractor) GetQuantiles() []float64 {
-	if len(e.quantiles) > 0 {
-		return e.quantiles
-	}
-	return []float64{0}
 }
 
 func (e *MetricTableExtractor) parseQuantiles(quantileSet set.StringSet) []float64 {

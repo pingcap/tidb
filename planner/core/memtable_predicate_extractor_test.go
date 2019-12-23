@@ -629,6 +629,11 @@ func (s *extractorSuite) TestMetricTableExtractor(c *C) {
 				"histogram_quantile(0.9, sum(rate(tidb_server_handle_query_duration_seconds_bucket{}[60s])) by (le))",
 			quantiles: []float64{0.8, 0.9},
 		},
+		{
+			sql:       "select * from metric_schema.query_duration where quantile=0",
+			promQL:    "histogram_quantile(0, sum(rate(tidb_server_handle_query_duration_seconds_bucket{}[60s])) by (le))",
+			quantiles: []float64{0},
+		},
 	}
 	se.GetSessionVars().StmtCtx.TimeZone = time.Local
 	for _, ca := range cases {
@@ -661,13 +666,11 @@ func (s *extractorSuite) TestMetricTableExtractor(c *C) {
 			c.Assert(metricTableExtractor.EndTime, DeepEquals, ca.endTime, Commentf("SQL: %v", ca.sql))
 		}
 		c.Assert(metricTableExtractor.SkipRequest, DeepEquals, ca.skipRequest, Commentf("SQL: %v", ca.sql))
-		quantiles := metricTableExtractor.GetQuantiles()
-		c.Assert(len(quantiles) > 0, IsTrue, Commentf("SQL: %v", ca.sql))
-		if len(quantiles) != 1 || quantiles[0] != 0 {
-			c.Assert(quantiles, DeepEquals, ca.quantiles)
+		if len(metricTableExtractor.Quantiles) > 0 {
+			c.Assert(metricTableExtractor.Quantiles, DeepEquals, ca.quantiles)
 		}
 		if !ca.skipRequest {
-			promQL := plannercore.GetMetricTablePromQL(se, "query_duration", metricTableExtractor.LabelConditions, quantiles)
+			promQL := plannercore.GetMetricTablePromQL(se, "query_duration", metricTableExtractor.LabelConditions, metricTableExtractor.Quantiles)
 			c.Assert(promQL, DeepEquals, ca.promQL, Commentf("SQL: %v", ca.sql))
 			start, end, _ := metricTableExtractor.GetQueryRangeTime(se)
 			c.Assert(start.UnixNano() <= end.UnixNano(), IsTrue)

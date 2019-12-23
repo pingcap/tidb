@@ -86,9 +86,6 @@ func (def *MetricTableDef) genColumnInfos() []columnInfo {
 func (def *MetricTableDef) GenPromQL(sctx sessionctx.Context, labels map[string]set.StringSet, quantile float64) string {
 	promQL := def.PromQL
 	if strings.Contains(promQL, promQLQuantileKey) {
-		if quantile == 0 {
-			quantile = def.Quantile
-		}
 		promQL = strings.Replace(promQL, promQLQuantileKey, strconv.FormatFloat(quantile, 'f', -1, 64), -1)
 	}
 
