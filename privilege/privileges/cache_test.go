@@ -203,7 +203,7 @@ func (s *testCacheSuite) TestHostMatch(c *C) {
 	c.Assert(err, IsNil)
 	defer se.Close()
 
-	// Host name can be IPv4 address + netmask
+	// Host name can be IPv4 address + netmask.
 	mustExec(c, se, "USE MYSQL;")
 	mustExec(c, se, "TRUNCATE TABLE mysql.user")
 	mustExec(c, se, `INSERT INTO mysql.user VALUES ("172.0.0.0/255.0.0.0", "root", "", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y")`)
@@ -218,7 +218,7 @@ func (s *testCacheSuite) TestHostMatch(c *C) {
 	c.Assert(p.RequestVerification(activeRoles, "root", "198.0.0.1", "test", "", "", mysql.PrivilegeType(0)), IsTrue)
 	c.Assert(p.RequestVerification(activeRoles, "root", "172.0.0.1", "test", "", "", mysql.ShutdownPriv), IsTrue)
 
-	// Invalid host name, the user can be created, but cannot login
+	// Invalid host name, the user can be created, but cannot login.
 	cases := []string{
 		"127.0.0.0/24",
 		"127.0.0.0/255.0.0",

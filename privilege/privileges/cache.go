@@ -73,7 +73,7 @@ type UserRecord struct {
 	AccountLocked bool // A role record when this field is true
 }
 
-// NewUserRecord return a UserRecord, only use for unit test
+// NewUserRecord return a UserRecord, only use for unit test.
 func NewUserRecord(host, user string) UserRecord {
 	return UserRecord{
 		baseRecord: baseRecord{
