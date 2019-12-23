@@ -82,6 +82,14 @@ func (eqh *Handle) LogOnQueryExceedMemQuota(connID uint64) {
 	if log.GetLevel() > zapcore.WarnLevel {
 		return
 	}
+	// The out-of-memory SQL may be the internal SQL which is executed during
+	// the bootstrap phase, and the `sm` is not set at this phase. This is
+	// unlikely to happen except for testing. Thus we do not need to log
+	// detailed message for it.
+	if eqh.sm == nil {
+		logutil.BgLogger().Info("expensive_query during bootstrap phase", zap.Uint64("conn_id", connID))
+		return
+	}
 	info, ok := eqh.sm.GetProcessInfo(connID)
 	if !ok {
 		return
