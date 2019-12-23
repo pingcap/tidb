@@ -15,6 +15,7 @@ package executor
 
 import (
 	"context"
+	"github.com/pingcap/tidb/meta/autoid"
 	"strings"
 
 	"github.com/opentracing/opentracing-go"
@@ -107,6 +108,10 @@ func updateRecord(ctx context.Context, sctx sessionctx.Context, h int64, oldData
 			if col.IsPKHandleColumn(t.Meta()) {
 				handleChanged = true
 				newHandle = newData[i].GetInt64()
+				// Rebase auto random id if the field is changed.
+				if err := rebaseAutoRandomValue(sctx, t, &newData[i], col); err != nil {
+					return false, false, 0, err
+				}
 			}
 		} else {
 			if mysql.HasOnUpdateNowFlag(col.Flag) && modified[i] {
@@ -186,6 +191,20 @@ func updateRecord(ctx context.Context, sctx sessionctx.Context, h int64, oldData
 	sc.AddCopiedRows(1)
 
 	return true, handleChanged, newHandle, nil
+}
+
+func rebaseAutoRandomValue(sctx sessionctx.Context, t table.Table, newData *types.Datum, col *table.Column) error {
+	tableInfo := t.Meta()
+	if !tableInfo.ContainsAutoRandomBits() {
+		return nil
+	}
+	recordID, err := getAutoRecordID(*newData, &col.FieldType, false)
+	if err != nil {
+		return err
+	}
+	shardBits := tableInfo.AutoRandomBits + 1 // sign bit is reserved.
+	recordID = recordID << shardBits >> shardBits
+	return t.Allocator(sctx, autoid.AutoRandomType).Rebase(tableInfo.ID, recordID, true)
 }
 
 // resetErrDataTooLong reset ErrDataTooLong error msg.
