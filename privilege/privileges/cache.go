@@ -942,7 +942,7 @@ func (p *MySQLPrivilege) RequestVerification(activeRoles []*auth.RoleIdentity, u
 // DBIsVisible checks whether the user can see the db.
 func (p *MySQLPrivilege) DBIsVisible(user, host, db string) bool {
 	if record := p.matchUser(user, host); record != nil {
-		if record.Privileges != 0 {
+		if record.Privileges&mysql.GlobalDBVisible > 0 {
 			return true
 		}
 	}
