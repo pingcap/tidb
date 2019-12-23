@@ -87,21 +87,10 @@ func (e *MetricRetriever) retrieve(ctx context.Context, sctx sessionctx.Context)
 }
 
 func (e *MetricRetriever) queryMetric(ctx context.Context, sctx sessionctx.Context, queryRange promv1.Range, quantile float64) (pmodel.Value, error) {
-	failpoint.Inject("mockMetricRetrieverQueryPromQL", func() {
-		matrix := pmodel.Matrix{}
-		metric := map[pmodel.LabelName]pmodel.LabelValue{
-			"instance": "127.0.0.1:10080",
+	failpoint.InjectContext(ctx, "mockMetricRetrieverQueryPromQL", func() {
+		if matrix, ok := ctx.Value("__mockMetricsData").(pmodel.Matrix); ok {
+			failpoint.Return(matrix, nil)
 		}
-		t, err := time.ParseInLocation("2006-01-02 15:04:05.999", "2019-12-23 20:11:35", time.Local)
-		if err != nil {
-			failpoint.Return(nil, err)
-		}
-		v1 := pmodel.SamplePair{
-			Timestamp: pmodel.Time(t.UnixNano() / int64(time.Millisecond)),
-			Value:     pmodel.SampleValue(0.1),
-		}
-		matrix = append(matrix, &pmodel.SampleStream{Metric: metric, Values: []pmodel.SamplePair{v1}})
-		failpoint.Return(matrix, nil)
 	})
 
 	addr, err := e.getMetricAddr(sctx)
