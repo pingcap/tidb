@@ -498,7 +498,9 @@ func (b *builtinCastIntAsRealSig) supportReverseEval() bool {
 
 func (b *builtinCastIntAsRealSig) reverseEval(sc *stmtctx.StatementContext, res types.Datum, rType types.RoundingType) (val types.Datum, err error) {
 	switch x := b.args[0].(type) {
-	case *Column, *ScalarFunction:
+	case *Column:
+		return types.ChangeReverseResultByUpperLowerBound(sc, x.GetType(), res, rType)
+	case *ScalarFunction:
 		val, err = types.ChangeReverseResultByUpperLowerBound(sc, x.GetType(), res, rType)
 		if err != nil {
 			return val, err
@@ -548,7 +550,9 @@ func (b *builtinCastIntAsDecimalSig) supportReverseEval() bool {
 
 func (b *builtinCastIntAsDecimalSig) reverseEval(sc *stmtctx.StatementContext, res types.Datum, rType types.RoundingType) (val types.Datum, err error) {
 	switch x := b.args[0].(type) {
-	case *Column, *ScalarFunction:
+	case *Column:
+		return types.ChangeReverseResultByUpperLowerBound(sc, x.GetType(), res, rType)
+	case *ScalarFunction:
 		val, err = types.ChangeReverseResultByUpperLowerBound(sc, x.GetType(), res, rType)
 		if err != nil {
 			return val, err
@@ -790,7 +794,9 @@ func (b *builtinCastRealAsRealSig) supportReverseEval() bool {
 
 func (b *builtinCastRealAsRealSig) reverseEval(sc *stmtctx.StatementContext, res types.Datum, rType types.RoundingType) (val types.Datum, err error) {
 	switch x := b.args[0].(type) {
-	case *Column, *ScalarFunction:
+	case *Column:
+		return types.ChangeReverseResultByUpperLowerBound(sc, x.GetType(), res, rType)
+	case *ScalarFunction:
 		val, err = types.ChangeReverseResultByUpperLowerBound(sc, x.GetType(), res, rType)
 		if err != nil {
 			return val, err
@@ -840,7 +846,9 @@ func (b *builtinCastRealAsIntSig) supportReverseEval() bool {
 
 func (b *builtinCastRealAsIntSig) reverseEval(sc *stmtctx.StatementContext, res types.Datum, rType types.RoundingType) (val types.Datum, err error) {
 	switch x := b.args[0].(type) {
-	case *Column, *ScalarFunction:
+	case *Column:
+		return types.ChangeReverseResultByUpperLowerBound(sc, x.GetType(), res, rType)
+	case *ScalarFunction:
 		val, err = types.ChangeReverseResultByUpperLowerBound(sc, x.GetType(), res, rType)
 		if err != nil {
 			return val, err
@@ -885,7 +893,9 @@ func (b *builtinCastRealAsDecimalSig) supportReverseEval() bool {
 
 func (b *builtinCastRealAsDecimalSig) reverseEval(sc *stmtctx.StatementContext, res types.Datum, rType types.RoundingType) (val types.Datum, err error) {
 	switch x := b.args[0].(type) {
-	case *Column, *ScalarFunction:
+	case *Column:
+		return types.ChangeReverseResultByUpperLowerBound(sc, x.GetType(), res, rType)
+	case *ScalarFunction:
 		val, err = types.ChangeReverseResultByUpperLowerBound(sc, x.GetType(), res, rType)
 		if err != nil {
 			return val, err
@@ -1009,7 +1019,9 @@ func (b *builtinCastDecimalAsDecimalSig) supportReverseEval() bool {
 
 func (b *builtinCastDecimalAsDecimalSig) reverseEval(sc *stmtctx.StatementContext, res types.Datum, rType types.RoundingType) (val types.Datum, err error) {
 	switch x := b.args[0].(type) {
-	case *Column, *ScalarFunction:
+	case *Column:
+		return types.ChangeReverseResultByUpperLowerBound(sc, x.GetType(), res, rType)
+	case *ScalarFunction:
 		val, err = types.ChangeReverseResultByUpperLowerBound(sc, x.GetType(), res, rType)
 		if err != nil {
 			return val, err
@@ -1069,7 +1081,9 @@ func (b *builtinCastDecimalAsIntSig) supportReverseEval() bool {
 
 func (b *builtinCastDecimalAsIntSig) reverseEval(sc *stmtctx.StatementContext, res types.Datum, rType types.RoundingType) (val types.Datum, err error) {
 	switch x := b.args[0].(type) {
-	case *Column, *ScalarFunction:
+	case *Column:
+		return types.ChangeReverseResultByUpperLowerBound(sc, x.GetType(), res, rType)
+	case *ScalarFunction:
 		val, err = types.ChangeReverseResultByUpperLowerBound(sc, x.GetType(), res, rType)
 		if err != nil {
 			return val, err
@@ -1134,7 +1148,9 @@ func (b *builtinCastDecimalAsRealSig) supportReverseEval() bool {
 
 func (b *builtinCastDecimalAsRealSig) reverseEval(sc *stmtctx.StatementContext, res types.Datum, rType types.RoundingType) (val types.Datum, err error) {
 	switch x := b.args[0].(type) {
-	case *Column, *ScalarFunction:
+	case *Column:
+		return types.ChangeReverseResultByUpperLowerBound(sc, x.GetType(), res, rType)
+	case *ScalarFunction:
 		val, err = types.ChangeReverseResultByUpperLowerBound(sc, x.GetType(), res, rType)
 		if err != nil {
 			return val, err

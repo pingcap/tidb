@@ -2045,13 +2045,13 @@ func ChangeReverseResultByUpperLowerBound(
 			}
 		case mysql.TypeNewDecimal:
 			if d.GetMysqlDecimal().Compare(NewMaxOrMinDec(false, retType.Flen, retType.Decimal)) != 0 {
-				var decimalOne, newD MyDecimal
-				one := decimalOne.FromInt(1)
-				err = DecimalAdd(d.GetMysqlDecimal(), one, &newD)
+				decimalOne := NewDecFromInt(1)
+				var newD MyDecimal
+				err = DecimalAdd(d.GetMysqlDecimal(), decimalOne, &newD)
 				if err != nil {
 					return d, err
 				}
-				d = NewDecimalDatum(&newD)
+				d.SetMysqlDecimal(&newD)
 			}
 		}
 	}
