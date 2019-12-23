@@ -712,13 +712,7 @@ func genMetricTableExplainInfo(ctx sessionctx.Context, dbName model.CIStr, tblIn
 	if !ok || e.SkipRequest {
 		return ""
 	}
-	quantile, err := e.GetQuantiles()
-	if err != nil {
-		sc := ctx.GetSessionVars().StmtCtx
-		sc.AppendWarning(err)
-		return ""
-	}
-	promQL := GetMetricTablePromQL(ctx, tblInfo.Name.L, e.LabelConditions, quantile)
+	promQL := GetMetricTablePromQL(ctx, tblInfo.Name.L, e.LabelConditions, e.GetQuantiles())
 	startTime, endTime, step := e.GetQueryRangeTime(ctx)
 	return fmt.Sprintf("PromQL:%v, start_time:%v, end_time:%v, step:%v",
 		promQL,

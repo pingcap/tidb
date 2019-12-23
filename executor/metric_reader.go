@@ -56,11 +56,8 @@ func (e *MetricRetriever) retrieve(ctx context.Context, sctx sessionctx.Context)
 	}
 	e.tblDef = tblDef
 	queryRange := e.getQueryRange(sctx)
-	quantiles, err := e.extractor.GetQuantiles()
-	if err != nil {
-		return nil, err
-	}
 	rows := make([][]types.Datum, 0)
+	quantiles := e.extractor.GetQuantiles()
 	for _, quantile := range quantiles {
 		if quantile == 0 {
 			quantile = tblDef.Quantile

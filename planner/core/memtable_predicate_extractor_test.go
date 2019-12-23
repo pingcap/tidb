@@ -661,9 +661,8 @@ func (s *extractorSuite) TestMetricTableExtractor(c *C) {
 			c.Assert(metricTableExtractor.EndTime, DeepEquals, ca.endTime, Commentf("SQL: %v", ca.sql))
 		}
 		c.Assert(metricTableExtractor.SkipRequest, DeepEquals, ca.skipRequest, Commentf("SQL: %v", ca.sql))
-		quantiles, err := metricTableExtractor.GetQuantiles()
-		c.Assert(err, IsNil)
-		c.Assert(len(quantiles) > 0, IsTrue)
+		quantiles := metricTableExtractor.GetQuantiles()
+		c.Assert(len(quantiles) > 0, IsTrue, Commentf("SQL: %v", ca.sql))
 		if len(quantiles) != 1 || quantiles[0] != 0 {
 			c.Assert(quantiles, DeepEquals, ca.quantiles)
 		}

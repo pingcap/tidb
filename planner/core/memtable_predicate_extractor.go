@@ -489,7 +489,7 @@ type MetricTableExtractor struct {
 	EndTime int64
 	// LabelConditions represents the label conditions of metric data.
 	LabelConditions map[string]set.StringSet
-	quantile        set.StringSet
+	quantiles       []float64
 }
 
 // Extract implements the MemTablePredicateExtractor Extract interface
@@ -500,12 +500,12 @@ func (e *MetricTableExtractor) Extract(
 	predicates []expression.Expression,
 ) []expression.Expression {
 	// Extract the `quantile` columns
-	remained, skipRequest, quantile := e.extractCol(schema, names, predicates, "quantile", true)
+	remained, skipRequest, quantileSet := e.extractCol(schema, names, predicates, "quantile", true)
 	e.SkipRequest = skipRequest
 	if e.SkipRequest {
 		return nil
 	}
-	e.quantile = quantile
+	e.quantiles = e.parseQuantiles(quantileSet)
 
 	// Extract the `time` columns
 	remained, startTime, endTime := e.extractTimeRange(ctx, schema, names, remained, "time", ctx.GetSessionVars().StmtCtx.TimeZone)
@@ -543,21 +543,25 @@ func (e *MetricTableExtractor) Extract(
 	return remained
 }
 
-// GetQuantiles gets the quantiles of metric query.
-func (e *MetricTableExtractor) GetQuantiles() ([]float64, error) {
-	if len(e.quantile) == 0 {
-		return []float64{0}, nil
+func (e *MetricTableExtractor) GetQuantiles() []float64 {
+	if len(e.quantiles) > 0 {
+		return e.quantiles
 	}
-	quantiles := make([]float64, 0, len(e.quantile))
-	for k := range e.quantile {
-		quantile, err := strconv.ParseFloat(k, 64)
+	return []float64{0}
+}
+
+func (e *MetricTableExtractor) parseQuantiles(quantileSet set.StringSet) []float64 {
+	quantiles := make([]float64, 0, len(quantileSet))
+	for k := range quantileSet {
+		v, err := strconv.ParseFloat(k, 64)
 		if err != nil {
-			return nil, err
+			// ignore the parse error won't affect result.
+			continue
 		}
-		quantiles = append(quantiles, quantile)
+		quantiles = append(quantiles, v)
 	}
 	sort.Float64s(quantiles)
-	return quantiles, nil
+	return quantiles
 }
 
 // GetQueryRangeTime gets the metric query time range.
