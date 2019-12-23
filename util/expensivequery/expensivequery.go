@@ -34,7 +34,7 @@ import (
 type Handle struct {
 	mu     sync.RWMutex
 	exitCh chan struct{}
-	sm     util.SessionManager
+	sm     atomic.Value
 }
 
 // NewExpensiveQueryHandle builds a new expensive query handler.
@@ -45,7 +45,7 @@ func NewExpensiveQueryHandle(exitCh chan struct{}) *Handle {
 // SetSessionManager sets the SessionManager which is used to fetching the info
 // of all active sessions.
 func (eqh *Handle) SetSessionManager(sm util.SessionManager) *Handle {
-	eqh.sm = sm
+	eqh.sm.Store(sm)
 	return eqh
 }
 
@@ -55,10 +55,15 @@ func (eqh *Handle) Run() {
 	// use 100ms as tickInterval temply, may use given interval or use defined variable later
 	tickInterval := time.Millisecond * time.Duration(100)
 	ticker := time.NewTicker(tickInterval)
+<<<<<<< HEAD
+=======
+	defer ticker.Stop()
+	sm := eqh.sm.Load().(util.SessionManager)
+>>>>>>> 8666a6f... util: refine expensive query log during bootstrap (#14181)
 	for {
 		select {
 		case <-ticker.C:
-			processInfo := eqh.sm.ShowProcessList()
+			processInfo := sm.ShowProcessList()
 			for _, info := range processInfo {
 				if info.Info == nil || info.ExceedExpensiveTimeThresh {
 					continue
@@ -69,7 +74,7 @@ func (eqh *Handle) Run() {
 					info.ExceedExpensiveTimeThresh = true
 
 				} else if info.MaxExecutionTime > 0 && costTime > time.Duration(info.MaxExecutionTime)*time.Millisecond {
-					eqh.sm.Kill(info.ID, true)
+					sm.Kill(info.ID, true)
 				}
 			}
 			threshold = atomic.LoadUint64(&variable.ExpensiveQueryTimeThreshold)
@@ -89,7 +94,17 @@ func (eqh *Handle) LogOnQueryExceedMemQuota(connID uint64) {
 	if log.GetLevel() > zapcore.WarnLevel {
 		return
 	}
-	info, ok := eqh.sm.GetProcessInfo(connID)
+	// The out-of-memory SQL may be the internal SQL which is executed during
+	// the bootstrap phase, and the `sm` is not set at this phase. This is
+	// unlikely to happen except for testing. Thus we do not need to log
+	// detailed message for it.
+	v := eqh.sm.Load()
+	if v == nil {
+		logutil.BgLogger().Info("expensive_query during bootstrap phase", zap.Uint64("conn_id", connID))
+		return
+	}
+	sm := v.(util.SessionManager)
+	info, ok := sm.GetProcessInfo(connID)
 	if !ok {
 		return
 	}
