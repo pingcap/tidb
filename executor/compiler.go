@@ -342,6 +342,8 @@ func GetStmtLabel(stmtNode ast.StmtNode) string {
 		return "Use"
 	case *ast.CreateBindingStmt:
 		return "CreateBinding"
+	case *ast.IndexAdviseStmt:
+		return "IndexAdvise"
 	}
 	return "other"
 }

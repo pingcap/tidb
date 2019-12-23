@@ -23,7 +23,7 @@ import (
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/pdpb"
-	"github.com/pingcap/pd/client"
+	pd "github.com/pingcap/pd/client"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/mockoracle"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
@@ -211,6 +211,8 @@ func (c *mockPDClient) ScatterRegion(ctx context.Context, regionID uint64) error
 func (c *mockPDClient) GetOperator(ctx context.Context, regionID uint64) (*pdpb.GetOperatorResponse, error) {
 	return &pdpb.GetOperatorResponse{Status: pdpb.OperatorStatus_SUCCESS}, nil
 }
+
+func (c *mockPDClient) GetLeaderAddr() string { return "mockpd" }
 
 type checkRequestClient struct {
 	Client

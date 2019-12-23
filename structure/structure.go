@@ -14,22 +14,20 @@
 package structure
 
 import (
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
 )
 
-// structure error codes.
-const (
-	codeInvalidHashKeyFlag  terror.ErrCode = 1
-	codeInvalidListMetaData terror.ErrCode = 4
-	codeWriteOnSnapshot     terror.ErrCode = 5
-)
-
 var (
-	errInvalidHashKeyFlag  = terror.ClassStructure.New(codeInvalidHashKeyFlag, "invalid encoded hash key flag")
-	errInvalidListIndex    = terror.ClassStructure.New(codeInvalidListMetaData, "invalid list index")
-	errInvalidListMetaData = terror.ClassStructure.New(codeInvalidListMetaData, "invalid list meta data")
-	errWriteOnSnapshot     = terror.ClassStructure.New(codeWriteOnSnapshot, "write on snapshot")
+	// ErrInvalidHashKeyFlag used by structure
+	ErrInvalidHashKeyFlag = terror.ClassStructure.New(mysql.ErrInvalidHashKeyFlag, mysql.MySQLErrName[mysql.ErrInvalidHashKeyFlag])
+	// ErrInvalidListIndex used by structure
+	ErrInvalidListIndex = terror.ClassStructure.New(mysql.ErrInvalidListIndex, mysql.MySQLErrName[mysql.ErrInvalidListIndex])
+	// ErrInvalidListMetaData used by structure
+	ErrInvalidListMetaData = terror.ClassStructure.New(mysql.ErrInvalidListMetaData, mysql.MySQLErrName[mysql.ErrInvalidListMetaData])
+	// ErrWriteOnSnapshot used by structure
+	ErrWriteOnSnapshot = terror.ClassStructure.New(mysql.ErrWriteOnSnapshot, mysql.MySQLErrName[mysql.ErrWriteOnSnapshot])
 )
 
 // NewStructure creates a TxStructure with Retriever, RetrieverMutator and key prefix.
@@ -47,4 +45,15 @@ type TxStructure struct {
 	reader     kv.Retriever
 	readWriter kv.RetrieverMutator
 	prefix     []byte
+}
+
+func init() {
+	// Register terror to mysql error map.
+	mySQLErrCodes := map[terror.ErrCode]uint16{
+		mysql.ErrInvalidHashKeyFlag:  mysql.ErrInvalidHashKeyFlag,
+		mysql.ErrInvalidListIndex:    mysql.ErrInvalidListIndex,
+		mysql.ErrInvalidListMetaData: mysql.ErrInvalidListMetaData,
+		mysql.ErrWriteOnSnapshot:     mysql.ErrWriteOnSnapshot,
+	}
+	terror.ErrClassToMySQLCodes[terror.ClassStructure] = mySQLErrCodes
 }

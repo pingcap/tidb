@@ -44,19 +44,13 @@ import (
 	"github.com/pingcap/tidb/util/timeutil"
 )
 
-const (
-	codeCantGetValidID terror.ErrCode = 1
-	codeCantSetToNull  terror.ErrCode = 2
-	codeSnapshotTooOld terror.ErrCode = 3
-)
-
 var preparedStmtCount int64
 
 // Error instances.
 var (
-	errCantGetValidID = terror.ClassVariable.New(codeCantGetValidID, "cannot get valid auto-increment id in retry")
-	ErrCantSetToNull  = terror.ClassVariable.New(codeCantSetToNull, "cannot set variable to null")
-	ErrSnapshotTooOld = terror.ClassVariable.New(codeSnapshotTooOld, "snapshot is older than GC safe point %s")
+	errCantGetValidID = terror.ClassVariable.New(mysql.ErrCantGetValidID, mysql.MySQLErrName[mysql.ErrCantGetValidID])
+	ErrCantSetToNull  = terror.ClassVariable.New(mysql.ErrCantSetToNull, mysql.MySQLErrName[mysql.ErrCantSetToNull])
+	ErrSnapshotTooOld = terror.ClassVariable.New(mysql.ErrSnapshotTooOld, mysql.MySQLErrName[mysql.ErrSnapshotTooOld])
 )
 
 // RetryInfo saves retry information.
@@ -111,12 +105,32 @@ type TransactionContext struct {
 	Shard         *int64
 	TableDeltaMap map[int64]TableDelta
 
+	// unchangedRowKeys is used to store the unchanged rows that needs to lock for pessimistic transaction.
+	unchangedRowKeys map[string]struct{}
+
 	// CreateTime For metrics.
 	CreateTime     time.Time
 	StatementCount int
 	ForUpdate      bool
 	CouldRetry     bool
 	IsPessimistic  bool
+}
+
+// AddUnchangedRowKey adds an unchanged row key in update statement for pessimistic lock.
+func (tc *TransactionContext) AddUnchangedRowKey(key []byte) {
+	if tc.unchangedRowKeys == nil {
+		tc.unchangedRowKeys = map[string]struct{}{}
+	}
+	tc.unchangedRowKeys[string(key)] = struct{}{}
+}
+
+// CollectUnchangedRowKeys collects unchanged row keys for pessimistic lock.
+func (tc *TransactionContext) CollectUnchangedRowKeys(buf []kv.Key) []kv.Key {
+	for key := range tc.unchangedRowKeys {
+		buf = append(buf, kv.Key(key))
+	}
+	tc.unchangedRowKeys = nil
+	return buf
 }
 
 // UpdateDeltaForTable updates the delta info for some table.
@@ -434,6 +448,9 @@ type SessionVars struct {
 	// PrevStmt is used to store the previous executed statement in the current session.
 	PrevStmt fmt.Stringer
 
+	// prevStmtDigest is used to store the digest of the previous statement in the current session.
+	prevStmtDigest string
+
 	// AllowRemoveAutoInc indicates whether a user can drop the auto_increment column attribute or not.
 	AllowRemoveAutoInc bool
 
@@ -462,6 +479,11 @@ type SessionVars struct {
 	// LockWaitTimeout is the duration waiting for pessimistic lock in milliseconds
 	// negative value means nowait, 0 means default behavior, others means actual wait time
 	LockWaitTimeout int64
+
+	// MetricSchemaStep indicates the step when query metric schema.
+	MetricSchemaStep int64
+	// MetricSchemaRangeDuration indicates the step when query metric schema.
+	MetricSchemaRangeDuration int64
 }
 
 // PreparedParams contains the parameters of the current prepared statement when executing it.
@@ -542,6 +564,8 @@ func NewSessionVars() *SessionVars {
 		EvolvePlanBaselines:         DefTiDBEvolvePlanBaselines,
 		isolationReadEngines:        map[kv.StoreType]struct{}{kv.TiKV: {}, kv.TiFlash: {}, kv.TiDB: {}},
 		LockWaitTimeout:             DefInnodbLockWaitTimeout * 1000,
+		MetricSchemaStep:            DefTiDBMetricSchemaStep,
+		MetricSchemaRangeDuration:   DefTiDBMetricSchemaRangeDuration,
 	}
 	vars.Concurrency = Concurrency{
 		IndexLookupConcurrency:     DefIndexLookupConcurrency,
@@ -927,6 +951,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		atomic.StoreUint64(&config.GetGlobalConfig().Log.SlowThreshold, uint64(tidbOptInt64(val, logutil.DefaultSlowThreshold)))
 	case TiDBRecordPlanInSlowLog:
 		atomic.StoreUint32(&config.GetGlobalConfig().Log.RecordPlanInSlowLog, uint32(tidbOptInt64(val, logutil.DefaultRecordPlanInSlowLog)))
+	case TiDBEnableSlowLog:
+		atomic.StoreUint32(&config.GetGlobalConfig().Log.EnableSlowLog, uint32(tidbOptInt64(val, logutil.DefaultTiDBEnableSlowLog)))
 	case TiDBDDLSlowOprThreshold:
 		atomic.StoreUint32(&DDLSlowOprThreshold, uint32(tidbOptPositiveInt32(val, DefTiDBDDLSlowOprThreshold)))
 	case TiDBQueryLogMaxLen:
@@ -1006,6 +1032,10 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		}
 	case TiDBStoreLimit:
 		storeutil.StoreLimit.Store(tidbOptInt64(val, DefTiDBStoreLimit))
+	case TiDBMetricSchemaStep:
+		s.MetricSchemaStep = tidbOptInt64(val, DefTiDBMetricSchemaStep)
+	case TiDBMetricSchemaRangeDuration:
+		s.MetricSchemaRangeDuration = tidbOptInt64(val, DefTiDBMetricSchemaRangeDuration)
 	}
 	s.systems[name] = val
 	return nil
@@ -1023,6 +1053,18 @@ func (s *SessionVars) setTxnMode(val string) error {
 		return ErrWrongValueForVar.FastGenByArgs(TiDBTxnMode, val)
 	}
 	return nil
+}
+
+// SetPrevStmtDigest sets the digest of the previous statement.
+func (s *SessionVars) SetPrevStmtDigest(prevStmtDigest string) {
+	s.prevStmtDigest = prevStmtDigest
+}
+
+// GetPrevStmtDigest returns the digest of the previous statement.
+func (s *SessionVars) GetPrevStmtDigest() string {
+	// Because `prevStmt` may be truncated, so it's senseless to normalize it.
+	// Even if `prevStmtDigest` is empty but `prevStmt` is not, just return it anyway.
+	return s.prevStmtDigest
 }
 
 // SetLocalSystemVar sets values of the local variables which in "server" scope.
@@ -1212,6 +1254,8 @@ const (
 	SlowLogPrevStmt = "Prev_stmt"
 	// SlowLogPlan is used to record the query plan.
 	SlowLogPlan = "Plan"
+	// SlowLogPlanDigest is used to record the query plan digest.
+	SlowLogPlanDigest = "Plan_digest"
 	// SlowLogPlanPrefix is the prefix of the plan value.
 	SlowLogPlanPrefix = ast.TiDBDecodePlan + "('"
 	// SlowLogPlanSuffix is the suffix of the plan value.
@@ -1239,6 +1283,7 @@ type SlowQueryLogItems struct {
 	HasMoreResults bool
 	PrevStmt       string
 	Plan           string
+	PlanDigest     string
 }
 
 // SlowLogFormat uses for formatting slow log.
@@ -1368,6 +1413,9 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 	writeSlowLogItem(&buf, SlowLogSucc, strconv.FormatBool(logItems.Succ))
 	if len(logItems.Plan) != 0 {
 		writeSlowLogItem(&buf, SlowLogPlan, logItems.Plan)
+	}
+	if len(logItems.PlanDigest) != 0 {
+		writeSlowLogItem(&buf, SlowLogPlanDigest, logItems.PlanDigest)
 	}
 
 	if logItems.PrevStmt != "" {
