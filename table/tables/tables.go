@@ -56,7 +56,7 @@ type TableCommon struct {
 	writableIndices []table.Index
 	indices         []table.Index
 	meta            *model.TableInfo
-	alloc           autoid.Allocator
+	allocs          autoid.Allocators
 
 	// recordPrefix and indexPrefix are generated using physicalTableID.
 	recordPrefix kv.Key
@@ -88,7 +88,7 @@ func MockTableFromMeta(tblInfo *model.TableInfo) table.Table {
 }
 
 // TableFromMeta creates a Table instance from model.TableInfo.
-func TableFromMeta(alloc autoid.Allocator, tblInfo *model.TableInfo) (table.Table, error) {
+func TableFromMeta(allocs autoid.Allocators, tblInfo *model.TableInfo) (table.Table, error) {
 	if tblInfo.State == model.StateNone {
 		return nil, table.ErrTableStateCantNone.GenWithStackByArgs(tblInfo.Name)
 	}
@@ -121,7 +121,7 @@ func TableFromMeta(alloc autoid.Allocator, tblInfo *model.TableInfo) (table.Tabl
 	}
 
 	var t TableCommon
-	initTableCommon(&t, tblInfo, tblInfo.ID, columns, alloc)
+	initTableCommon(&t, tblInfo, tblInfo.ID, columns, allocs)
 	if tblInfo.GetPartitionInfo() == nil {
 		if err := initTableIndices(&t); err != nil {
 			return nil, err
@@ -133,10 +133,10 @@ func TableFromMeta(alloc autoid.Allocator, tblInfo *model.TableInfo) (table.Tabl
 }
 
 // initTableCommon initializes a TableCommon struct.
-func initTableCommon(t *TableCommon, tblInfo *model.TableInfo, physicalTableID int64, cols []*table.Column, alloc autoid.Allocator) {
+func initTableCommon(t *TableCommon, tblInfo *model.TableInfo, physicalTableID int64, cols []*table.Column, allocs autoid.Allocators) {
 	t.tableID = tblInfo.ID
 	t.physicalTableID = physicalTableID
-	t.alloc = alloc
+	t.allocs = allocs
 	t.meta = tblInfo
 	t.Columns = cols
 	t.PublicColumns = t.Cols()
@@ -163,8 +163,8 @@ func initTableIndices(t *TableCommon) error {
 	return nil
 }
 
-func initTableCommonWithIndices(t *TableCommon, tblInfo *model.TableInfo, physicalTableID int64, cols []*table.Column, alloc autoid.Allocator) error {
-	initTableCommon(t, tblInfo, physicalTableID, cols, alloc)
+func initTableCommonWithIndices(t *TableCommon, tblInfo *model.TableInfo, physicalTableID int64, cols []*table.Column, allocs autoid.Allocators) error {
+	initTableCommon(t, tblInfo, physicalTableID, cols, allocs)
 	return initTableIndices(t)
 }
 
@@ -467,12 +467,10 @@ func (t *TableCommon) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ..
 		recordID = r[len(r)-1].GetInt64()
 		hasRecordID = true
 	} else {
-		for _, col := range cols {
-			if col.IsPKHandleColumn(t.meta) {
-				recordID = r[col.Offset].GetInt64()
-				hasRecordID = true
-				break
-			}
+		tblInfo := t.Meta()
+		if tblInfo.PKIsHandle {
+			recordID = r[tblInfo.GetPkColInfo().Offset].GetInt64()
+			hasRecordID = true
 		}
 	}
 	if !hasRecordID {
@@ -986,19 +984,19 @@ func (t *TableCommon) AllocHandle(ctx sessionctx.Context) (int64, error) {
 	return rowID, err
 }
 
-// AllocHandleIDs implements table.Table AllocHandle interface.
+// AllocHandleIDs implements table.Table AllocHandleIDs interface.
 func (t *TableCommon) AllocHandleIDs(ctx sessionctx.Context, n uint64) (int64, int64, error) {
-	base, maxID, err := t.Allocator(ctx).Alloc(t.tableID, n)
+	base, maxID, err := t.Allocator(ctx, autoid.RowIDAllocType).Alloc(t.tableID, n)
 	if err != nil {
 		return 0, 0, err
 	}
 	if t.meta.ShardRowIDBits > 0 {
 		// Use max record ShardRowIDBits to check overflow.
-		if OverflowShardBits(maxID, t.meta.MaxShardRowIDBits) {
+		if OverflowShardBits(maxID, t.meta.MaxShardRowIDBits, autoid.RowIDBitLength) {
 			// If overflow, the rowID may be duplicated. For examples,
 			// t.meta.ShardRowIDBits = 4
 			// rowID = 0010111111111111111111111111111111111111111111111111111111111111
-			// shard = 01000000000000000000000000000000000000000000000000000000000000000
+			// shard = 0100000000000000000000000000000000000000000000000000000000000000
 			// will be duplicated with:
 			// rowID = 0100111111111111111111111111111111111111111111111111111111111111
 			// shard = 0010000000000000000000000000000000000000000000000000000000000000
@@ -1006,7 +1004,7 @@ func (t *TableCommon) AllocHandleIDs(ctx sessionctx.Context, n uint64) (int64, i
 		}
 		txnCtx := ctx.GetSessionVars().TxnCtx
 		if txnCtx.Shard == nil {
-			shard := t.calcShard(txnCtx.StartTS)
+			shard := CalcShard(t.meta.ShardRowIDBits, txnCtx.StartTS, autoid.RowIDBitLength)
 			txnCtx.Shard = &shard
 		}
 		base |= *txnCtx.Shard
@@ -1015,33 +1013,59 @@ func (t *TableCommon) AllocHandleIDs(ctx sessionctx.Context, n uint64) (int64, i
 	return base, maxID, nil
 }
 
-// OverflowShardBits checks whether the rowID overflow `1<<(64-shardRowIDBits-1) -1`.
-func OverflowShardBits(rowID int64, shardRowIDBits uint64) bool {
-	mask := (1<<shardRowIDBits - 1) << (64 - shardRowIDBits - 1)
-	return rowID&int64(mask) > 0
+// OverflowShardBits checks whether the recordID overflow `1<<(typeBitsLength-shardRowIDBits-1) -1`.
+func OverflowShardBits(recordID int64, shardRowIDBits uint64, typeBitsLength uint64) bool {
+	mask := (1<<shardRowIDBits - 1) << (typeBitsLength - shardRowIDBits - 1)
+	return recordID&int64(mask) > 0
 }
 
-func (t *TableCommon) calcShard(startTS uint64) int64 {
+// CalcShard calculates the shard prefix by hashing the startTS. Make sure OverflowShardBits is false before calling it.
+func CalcShard(shardRowIDBits uint64, startTS uint64, typeBitsLength uint64) int64 {
 	var buf [8]byte
 	binary.LittleEndian.PutUint64(buf[:], startTS)
 	hashVal := int64(murmur3.Sum32(buf[:]))
-	return (hashVal & (1<<t.meta.ShardRowIDBits - 1)) << (64 - t.meta.ShardRowIDBits - 1)
+	return (hashVal & (1<<shardRowIDBits - 1)) << (typeBitsLength - shardRowIDBits - 1)
 }
 
 // Allocator implements table.Table Allocator interface.
-func (t *TableCommon) Allocator(ctx sessionctx.Context) autoid.Allocator {
-	if ctx != nil {
-		sessAlloc := ctx.GetSessionVars().IDAllocator
-		if sessAlloc != nil {
-			return sessAlloc
+func (t *TableCommon) Allocator(ctx sessionctx.Context, allocType autoid.AllocatorType) autoid.Allocator {
+	allAllocs := t.AllAllocators(ctx)
+	for _, a := range allAllocs {
+		if a.GetType() == allocType {
+			return a
 		}
 	}
-	return t.alloc
+	return nil
+}
+
+// AllAllocators implements table.Table AllAllocators interface.
+func (t *TableCommon) AllAllocators(ctx sessionctx.Context) autoid.Allocators {
+	if ctx == nil || ctx.GetSessionVars().IDAllocator == nil {
+		return t.allocs
+	}
+
+	// Replace the row id allocator with the one in session variables.
+	sessAlloc := ctx.GetSessionVars().IDAllocator
+	retAllocs := make([]autoid.Allocator, 0, len(t.allocs))
+	copy(retAllocs, t.allocs)
+
+	overwritten := false
+	for i, a := range retAllocs {
+		if a.GetType() == autoid.RowIDAllocType {
+			retAllocs[i] = sessAlloc
+			overwritten = true
+			break
+		}
+	}
+	if !overwritten {
+		retAllocs = append(retAllocs, sessAlloc)
+	}
+	return retAllocs
 }
 
 // RebaseAutoID implements table.Table RebaseAutoID interface.
 func (t *TableCommon) RebaseAutoID(ctx sessionctx.Context, newBase int64, isSetStep bool) error {
-	return t.Allocator(ctx).Rebase(t.tableID, newBase, isSetStep)
+	return t.Allocator(ctx, autoid.RowIDAllocType).Rebase(t.tableID, newBase, isSetStep)
 }
 
 // Seek implements table.Table Seek interface.
