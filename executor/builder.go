@@ -805,6 +805,7 @@ func (b *executorBuilder) buildGrant(grant *ast.GrantStmt) Executor {
 		Level:        grant.Level,
 		Users:        grant.Users,
 		WithGrant:    grant.WithGrant,
+		TLSOptions:   grant.TLSOptions,
 		is:           b.is,
 	}
 	return e
