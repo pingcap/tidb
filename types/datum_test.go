@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types/json"
+	"github.com/pingcap/tidb/util/hack"
 )
 
 var _ = Suite(&testDatumSuite{})
@@ -394,6 +395,26 @@ func newRetTypeWithFlenDecimal(tp byte, flen int, decimal int) *FieldType {
 		Flen:    flen,
 		Decimal: decimal,
 	}
+}
+
+func (ts *testDatumSuite) TestEstimatedMemUsage(c *C) {
+	b := []byte{'a', 'b', 'c', 'd'}
+	enum := Enum{Name: "a", Value: 1}
+	datumArray := []Datum{
+		NewIntDatum(1),
+		NewFloat64Datum(1.0),
+		NewFloat32Datum(1.0),
+
+		NewStringDatum(string(b)),
+		NewBytesDatum(b),
+		NewDecimalDatum(newMyDecimal("1234.1234", c)),
+		NewMysqlEnumDatum(enum),
+	}
+	bytesConsumed := 10 * (len(datumArray)*sizeOfEmptyDatum +
+		sizeOfMyDecimal +
+		len(b)*2 +
+		len(hack.Slice(enum.Name)))
+	c.Assert(int(EstimatedMemUsage(datumArray, 10)), Equals, bytesConsumed)
 }
 
 func (ts *testDatumSuite) TestChangeReverseResultByUpperLowerBound(c *C) {
