@@ -2074,12 +2074,12 @@ func EstimatedMemUsage(array []Datum, numOfRows int) int64 {
 	var bytesConsumed int
 	for _, d := range array {
 		switch d.Kind() {
-		case KindString, KindBytes, KindBinaryLiteral, KindMysqlJSON, KindMysqlEnum, KindMysqlSet, KindMysqlBit:
-			bytesConsumed += len(d.b)
 		case KindMysqlDecimal:
 			bytesConsumed += sizeOfMyDecimal
 		case KindMysqlTime:
 			bytesConsumed += sizeOfMysqlTime
+		default:
+			bytesConsumed += len(d.b)
 		}
 	}
 	bytesConsumed += len(array) * sizeOfEmptyDatum
