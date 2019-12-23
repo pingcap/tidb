@@ -16,6 +16,7 @@ package executor_test
 import (
 	"context"
 
+	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
