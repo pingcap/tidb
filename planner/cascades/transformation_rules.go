@@ -698,6 +698,9 @@ func buildChildSelectionGroup(
 // OnTransform implements Transformation interface.
 // This rule tries to pushes the Selection through Join. Besides, this rule fulfills the `XXXConditions` field of Join.
 func (r *PushSelDownJoin) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
+	if old.GetExpr().HasAppliedRule(r) {
+		return nil, false, false, nil
+	}
 	sel := old.GetExpr().ExprNode.(*plannercore.LogicalSelection)
 	joinExpr := old.Children[0].GetExpr()
 	// TODO: we need to create a new LogicalJoin here.
@@ -798,9 +801,9 @@ func (r *PushSelDownJoin) OnTransform(old *memo.ExprIter) (newExprs []*memo.Grou
 	if len(remainCond) > 0 {
 		newSel := plannercore.LogicalSelection{Conditions: remainCond}.Init(sctx, sel.SelectBlockOffset())
 		newSel.Conditions = remainCond
-		newSel.HasBeenPushed = true
 		newSelExpr := memo.NewGroupExpr(newSel)
 		newSelExpr.SetChildren(memo.NewGroupWithSchema(newJoinExpr, old.Children[0].Prop.Schema))
+		newSelExpr.AddAppliedRule(r)
 		return []*memo.GroupExpr{newSelExpr}, true, false, nil
 	}
 	return []*memo.GroupExpr{newJoinExpr}, true, false, nil
