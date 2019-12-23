@@ -53,8 +53,8 @@ func (eqh *Handle) Run() {
 	tickInterval := time.Millisecond * time.Duration(100)
 	ticker := time.NewTicker(tickInterval)
 	defer ticker.Stop()
+	sm := eqh.sm.Load().(util.SessionManager)
 	for {
-		sm := eqh.sm.Load().(util.SessionManager)
 		select {
 		case <-ticker.C:
 			processInfo := sm.ShowProcessList()
