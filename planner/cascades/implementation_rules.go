@@ -409,12 +409,11 @@ type ImplHashJoinBuildLeft struct {
 
 // Match implements ImplementationRule Match interface.
 func (r *ImplHashJoinBuildLeft) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) (matched bool) {
-	join := expr.ExprNode.(*plannercore.LogicalJoin)
-	switch join.JoinType {
-	case plannercore.SemiJoin, plannercore.AntiSemiJoin, plannercore.LeftOuterSemiJoin, plannercore.AntiLeftOuterSemiJoin:
-		return false
-	default:
+	switch expr.ExprNode.(*plannercore.LogicalJoin).JoinType {
+	case plannercore.InnerJoin, plannercore.LeftOuterJoin, plannercore.RightOuterJoin:
 		return prop.IsEmpty()
+	default:
+		return false
 	}
 }
 
@@ -424,8 +423,11 @@ func (r *ImplHashJoinBuildLeft) OnImplement(expr *memo.GroupExpr, reqProp *prope
 	switch join.JoinType {
 	case plannercore.InnerJoin:
 		return getImplForHashJoin(expr, reqProp, 0, false), nil
+	case plannercore.LeftOuterJoin:
+		return getImplForHashJoin(expr, reqProp, 1, true), nil
+	case plannercore.RightOuterJoin:
+		return getImplForHashJoin(expr, reqProp, 0, false), nil
 	default:
-		// TODO: deal with other join type.
 		return nil, nil
 	}
 }
@@ -443,12 +445,17 @@ func (r *ImplHashJoinBuildRight) Match(expr *memo.GroupExpr, prop *property.Phys
 func (r *ImplHashJoinBuildRight) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) (memo.Implementation, error) {
 	join := expr.ExprNode.(*plannercore.LogicalJoin)
 	switch join.JoinType {
+	case plannercore.SemiJoin, plannercore.AntiSemiJoin,
+		plannercore.LeftOuterSemiJoin, plannercore.AntiLeftOuterSemiJoin:
+		return getImplForHashJoin(expr, reqProp, 1, false), nil
 	case plannercore.InnerJoin:
 		return getImplForHashJoin(expr, reqProp, 1, false), nil
-	default:
-		// TODO: deal with other join type.
-		return nil, nil
+	case plannercore.LeftOuterJoin:
+		return getImplForHashJoin(expr, reqProp, 1, false), nil
+	case plannercore.RightOuterJoin:
+		return getImplForHashJoin(expr, reqProp, 0, true), nil
 	}
+	return nil, nil
 }
 
 // ImplUnionAll implements LogicalUnionAll to PhysicalUnionAll.
