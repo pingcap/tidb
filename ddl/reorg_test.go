@@ -89,13 +89,13 @@ func (s *testDDLSuite) TestReorg(c *C) {
 	rInfo := &reorgInfo{
 		Job: job,
 	}
-	err = d.generalWorker().runReorgJob(m, rInfo, d.lease, f)
+	err = d.generalWorker().runReorgJob(m, rInfo, nil, d.lease, f)
 	c.Assert(err, NotNil)
 
 	// The longest to wait for 5 seconds to make sure the function of f is returned.
 	for i := 0; i < 1000; i++ {
 		time.Sleep(5 * time.Millisecond)
-		err = d.generalWorker().runReorgJob(m, rInfo, d.lease, f)
+		err = d.generalWorker().runReorgJob(m, rInfo, nil, d.lease, f)
 		if err == nil {
 			c.Assert(job.RowCount, Equals, rowCount)
 			c.Assert(d.generalWorker().reorgCtx.rowCount, Equals, int64(0))
@@ -117,7 +117,7 @@ func (s *testDDLSuite) TestReorg(c *C) {
 	c.Assert(err, IsNil)
 
 	d.Stop()
-	err = d.generalWorker().runReorgJob(m, rInfo, d.lease, func() error {
+	err = d.generalWorker().runReorgJob(m, rInfo, nil, d.lease, func() error {
 		time.Sleep(4 * testLease)
 		return nil
 	})
