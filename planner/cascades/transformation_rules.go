@@ -680,6 +680,11 @@ func NewRulePushSelDownJoin() Transformation {
 	return rule
 }
 
+// Match implements Transformation interface.
+func (r *PushSelDownJoin) Match(expr *memo.ExprIter) bool {
+	return expr.GetExpr().HasAppliedRule(r)
+}
+
 // buildChildSelectionGroup builds a new childGroup if the pushed down condition is not empty.
 func buildChildSelectionGroup(
 	oldSel *plannercore.LogicalSelection,
@@ -698,9 +703,6 @@ func buildChildSelectionGroup(
 // OnTransform implements Transformation interface.
 // This rule tries to pushes the Selection through Join. Besides, this rule fulfills the `XXXConditions` field of Join.
 func (r *PushSelDownJoin) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
-	if old.GetExpr().HasAppliedRule(r) {
-		return nil, false, false, nil
-	}
 	sel := old.GetExpr().ExprNode.(*plannercore.LogicalSelection)
 	joinExpr := old.Children[0].GetExpr()
 	// TODO: we need to create a new LogicalJoin here.
