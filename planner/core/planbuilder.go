@@ -1446,6 +1446,7 @@ func buildShowSlowSchema() (*expression.Schema, types.NameSlice) {
 	schema.Append(buildColumnWithName("", "SQL", mysql.TypeVarchar, 4096))
 	schema.Append(buildColumnWithName("", "START", mysql.TypeTimestamp, timestampSize))
 	schema.Append(buildColumnWithName("", "DURATION", mysql.TypeDuration, durationSize))
+	schema.Append(buildColumnWithName("", "PESSIMISTIC_LOCK_WAIT_DURATION", mysql.TypeDuration, durationSize))
 	schema.Append(buildColumnWithName("", "DETAILS", mysql.TypeVarchar, 256))
 	schema.Append(buildColumnWithName("", "SUCC", mysql.TypeTiny, tinySize))
 	schema.Append(buildColumnWithName("", "CONN_ID", mysql.TypeLonglong, longlongSize))

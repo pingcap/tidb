@@ -138,8 +138,9 @@ type StatementContext struct {
 	planNormalized    string
 	planDigest        string
 	Tables            []TableEntry
-	PointExec         bool       // for point update cached execution, Constant expression need to set "paramMarker"
-	lockWaitStartTime *time.Time // LockWaitStartTime stores the pessimistic lock wait start time
+	PointExec         bool          // for point update cached execution, Constant expression need to set "paramMarker"
+	lockWaitStartTime *time.Time    // LockWaitStartTime stores the pessimistic lock wait start time
+	LockTimeWaited    time.Duration // pessimistic lock waited time
 }
 
 // StmtHints are SessionVars related sql hints.

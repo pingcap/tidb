@@ -767,6 +767,7 @@ func (action actionPessimisticLock) handleSingleBatch(c *twoPhaseCommitter, bo *
 					return ErrLockWaitTimeout
 				}
 			}
+			atomic.StoreInt32(&action.LockCtx.PessimisticLockWaited, 1)
 		}
 
 		// Handle the killed flag when waiting for the pessimistic lock.
@@ -1001,7 +1002,16 @@ func (c *twoPhaseCommitter) cleanupKeys(bo *Backoffer, keys [][]byte) error {
 }
 
 func (c *twoPhaseCommitter) pessimisticLockKeys(bo *Backoffer, lockCtx *kv.LockCtx, keys [][]byte) error {
-	return c.doActionOnKeys(bo, actionPessimisticLock{lockCtx}, keys)
+	start := time.Now()
+	err := c.doActionOnKeys(bo, actionPessimisticLock{lockCtx}, keys)
+	if err != nil {
+		return nil
+	}
+	if lockCtx.PessimisticLockWaited > 0 {
+		lockCtx.LockTimeWaited = time.Since(start)
+	}
+	metrics.TiKVPessimisticLockWaitDuration.Observe(lockCtx.LockTimeWaited.Seconds())
+	return nil
 }
 
 func (c *twoPhaseCommitter) pessimisticRollbackKeys(bo *Backoffer, keys [][]byte) error {

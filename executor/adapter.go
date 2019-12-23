@@ -549,6 +549,9 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e Executor) error {
 			WaitStartTime: seVars.StmtCtx.GetLockWaitStartTime(),
 		}
 		err = txn.LockKeys(ctx, lockCtx, keys...)
+		if lockCtx.LockTimeWaited > 0 {
+			seVars.StmtCtx.LockTimeWaited = lockCtx.LockTimeWaited
+		}
 		if err == nil {
 			return nil
 		}
@@ -785,22 +788,23 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	_, digest := sessVars.StmtCtx.SQLDigest()
 	_, planDigest := getPlanDigest(a.Ctx, a.Plan)
 	slowItems := &variable.SlowQueryLogItems{
-		TxnTS:          txnTS,
-		SQL:            sql.String(),
-		Digest:         digest,
-		TimeTotal:      costTime,
-		TimeParse:      sessVars.DurationParse,
-		TimeCompile:    sessVars.DurationCompile,
-		IndexNames:     indexNames,
-		StatsInfos:     statsInfos,
-		CopTasks:       copTaskInfo,
-		ExecDetail:     execDetail,
-		MemMax:         memMax,
-		Succ:           succ,
-		Plan:           getPlanTree(a.Plan),
-		PlanDigest:     planDigest,
-		Prepared:       a.isPreparedStmt,
-		HasMoreResults: hasMoreResults,
+		TxnTS:                   txnTS,
+		SQL:                     sql.String(),
+		Digest:                  digest,
+		TimeTotal:               costTime,
+		TimeParse:               sessVars.DurationParse,
+		TimeCompile:             sessVars.DurationCompile,
+		TimePessimisticLockWait: sessVars.StmtCtx.LockTimeWaited,
+		IndexNames:              indexNames,
+		StatsInfos:              statsInfos,
+		CopTasks:                copTaskInfo,
+		ExecDetail:              execDetail,
+		MemMax:                  memMax,
+		Succ:                    succ,
+		Plan:                    getPlanTree(a.Plan),
+		PlanDigest:              planDigest,
+		Prepared:                a.isPreparedStmt,
+		HasMoreResults:          hasMoreResults,
 	}
 	if _, ok := a.StmtNode.(*ast.CommitStmt); ok {
 		slowItems.PrevStmt = sessVars.PrevStmt.String()
@@ -817,19 +821,20 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 			userString = sessVars.User.String()
 		}
 		domain.GetDomain(a.Ctx).LogSlowQuery(&domain.SlowQueryInfo{
-			SQL:        sql.String(),
-			Digest:     digest,
-			Start:      sessVars.StartTime,
-			Duration:   costTime,
-			Detail:     sessVars.StmtCtx.GetExecDetails(),
-			Succ:       succ,
-			ConnID:     sessVars.ConnectionID,
-			TxnTS:      txnTS,
-			User:       userString,
-			DB:         sessVars.CurrentDB,
-			TableIDs:   tableIDs,
-			IndexNames: indexNames,
-			Internal:   sessVars.InRestrictedSQL,
+			SQL:                         sql.String(),
+			Digest:                      digest,
+			Start:                       sessVars.StartTime,
+			Duration:                    costTime,
+			PessimisticLockWaitDuration: sessVars.StmtCtx.LockTimeWaited,
+			Detail:                      sessVars.StmtCtx.GetExecDetails(),
+			Succ:                        succ,
+			ConnID:                      sessVars.ConnectionID,
+			TxnTS:                       txnTS,
+			User:                        userString,
+			DB:                          sessVars.CurrentDB,
+			TableIDs:                    tableIDs,
+			IndexNames:                  indexNames,
+			Internal:                    sessVars.InRestrictedSQL,
 		})
 	}
 }

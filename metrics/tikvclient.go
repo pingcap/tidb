@@ -232,4 +232,12 @@ var (
 			Help:      "Bucketed histogram of the txn_heartbeat request duration.",
 			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 18), // 1ms ~ 292s
 		}, []string{LblType})
+	TiKVPessimisticLockWaitDuration = prometheus.NewHistogram(
+		prometheus.HistogramOpts{
+			Namespace: "tidb",
+			Subsystem: "tikvclient",
+			Name:      "pessimistic_lock_wait_duration",
+			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 30), // 1ms ~ 1073741s
+			Help:      "tidb txn pessimistic lock wait duration",
+		})
 )

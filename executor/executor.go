@@ -743,24 +743,25 @@ func (e *ShowSlowExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			Fsp:  types.MaxFsp,
 		})
 		req.AppendDuration(2, types.Duration{Duration: slow.Duration, Fsp: types.MaxFsp})
-		req.AppendString(3, slow.Detail.String())
+		req.AppendDuration(3, types.Duration{Duration: slow.PessimisticLockWaitDuration, Fsp: types.MaxFsp})
+		req.AppendString(4, slow.Detail.String())
 		if slow.Succ {
-			req.AppendInt64(4, 1)
+			req.AppendInt64(5, 1)
 		} else {
-			req.AppendInt64(4, 0)
+			req.AppendInt64(5, 0)
 		}
-		req.AppendUint64(5, slow.ConnID)
-		req.AppendUint64(6, slow.TxnTS)
-		req.AppendString(7, slow.User)
-		req.AppendString(8, slow.DB)
-		req.AppendString(9, slow.TableIDs)
-		req.AppendString(10, slow.IndexNames)
+		req.AppendUint64(6, slow.ConnID)
+		req.AppendUint64(7, slow.TxnTS)
+		req.AppendString(8, slow.User)
+		req.AppendString(9, slow.DB)
+		req.AppendString(10, slow.TableIDs)
+		req.AppendString(11, slow.IndexNames)
 		if slow.Internal {
-			req.AppendInt64(11, 1)
+			req.AppendInt64(12, 1)
 		} else {
-			req.AppendInt64(11, 0)
+			req.AppendInt64(12, 0)
 		}
-		req.AppendString(12, slow.Digest)
+		req.AppendString(13, slow.Digest)
 		e.cursor++
 	}
 	return nil
@@ -821,7 +822,13 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	if e.Lock == ast.SelectLockForUpdateNoWait {
 		lockWaitTime = kv.LockNoWait
 	}
-	return doLockKeys(ctx, e.ctx, newLockCtx(e.ctx.GetSessionVars(), lockWaitTime), e.keys...)
+	lockCtx := newLockCtx(e.ctx.GetSessionVars(), lockWaitTime)
+	err = doLockKeys(ctx, e.ctx, lockCtx, e.keys...)
+	e.ctx.GetSessionVars().StmtCtx.LockTimeWaited = lockCtx.LockTimeWaited
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
 func newLockCtx(seVars *variable.SessionVars, lockWaitTime int64) *kv.LockCtx {

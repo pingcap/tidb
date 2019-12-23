@@ -1210,6 +1210,8 @@ const (
 	SlowLogParseTimeStr = "Parse_time"
 	// SlowLogCompileTimeStr is the compile plan time.
 	SlowLogCompileTimeStr = "Compile_time"
+	// SlowLogPessimisticLockWaitStr the lock wait duration between trylock and lock succ
+	SlowLogPessimisticLockWaitStr = "Pessimistic_lock_wait_time"
 	// SlowLogDBStr is slow log field name.
 	SlowLogDBStr = "DB"
 	// SlowLogIsInternalStr is slow log field name.
@@ -1267,23 +1269,24 @@ const (
 // SlowQueryLogItems is a collection of items that should be included in the
 // slow query log.
 type SlowQueryLogItems struct {
-	TxnTS          uint64
-	SQL            string
-	Digest         string
-	TimeTotal      time.Duration
-	TimeParse      time.Duration
-	TimeCompile    time.Duration
-	IndexNames     string
-	StatsInfos     map[string]uint64
-	CopTasks       *stmtctx.CopTasksDetails
-	ExecDetail     execdetails.ExecDetails
-	MemMax         int64
-	Succ           bool
-	Prepared       bool
-	HasMoreResults bool
-	PrevStmt       string
-	Plan           string
-	PlanDigest     string
+	TxnTS                   uint64
+	SQL                     string
+	Digest                  string
+	TimeTotal               time.Duration
+	TimeParse               time.Duration
+	TimeCompile             time.Duration
+	TimePessimisticLockWait time.Duration
+	IndexNames              string
+	StatsInfos              map[string]uint64
+	CopTasks                *stmtctx.CopTasksDetails
+	ExecDetail              execdetails.ExecDetails
+	MemMax                  int64
+	Succ                    bool
+	Prepared                bool
+	HasMoreResults          bool
+	PrevStmt                string
+	Plan                    string
+	PlanDigest              string
 }
 
 // SlowLogFormat uses for formatting slow log.
@@ -1319,6 +1322,7 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 	writeSlowLogItem(&buf, SlowLogQueryTimeStr, strconv.FormatFloat(logItems.TimeTotal.Seconds(), 'f', -1, 64))
 	writeSlowLogItem(&buf, SlowLogParseTimeStr, strconv.FormatFloat(logItems.TimeParse.Seconds(), 'f', -1, 64))
 	writeSlowLogItem(&buf, SlowLogCompileTimeStr, strconv.FormatFloat(logItems.TimeCompile.Seconds(), 'f', -1, 64))
+	writeSlowLogItem(&buf, SlowLogPessimisticLockWaitStr, strconv.FormatFloat(logItems.TimePessimisticLockWait.Seconds(), 'f', -1, 64))
 
 	if execDetailStr := logItems.ExecDetail.String(); len(execDetailStr) > 0 {
 		buf.WriteString(SlowLogRowPrefixStr + execDetailStr + "\n")
