@@ -953,6 +953,12 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		atomic.StoreUint32(&config.GetGlobalConfig().Log.RecordPlanInSlowLog, uint32(tidbOptInt64(val, logutil.DefaultRecordPlanInSlowLog)))
 	case TiDBEnableSlowLog:
 		atomic.StoreUint32(&config.GetGlobalConfig().Log.EnableSlowLog, uint32(tidbOptInt64(val, logutil.DefaultTiDBEnableSlowLog)))
+	case TiDBLogLevel:
+		// Updating the zap log level is enough, and we don't need to modify GetGlobalConfig().Log.Level here.
+		// logutil.SetLevel is thread-safe, so it is safe here.
+		if err := logutil.SetLevel(strings.ToLower(val)); err != nil {
+			return errors.Trace(err)
+		}
 	case TiDBDDLSlowOprThreshold:
 		atomic.StoreUint32(&DDLSlowOprThreshold, uint32(tidbOptPositiveInt32(val, DefTiDBDDLSlowOprThreshold)))
 	case TiDBQueryLogMaxLen:

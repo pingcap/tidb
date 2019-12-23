@@ -40,6 +40,8 @@ const (
 	DefaultLogMaxSize = 300 // MB
 	// DefaultLogFormat is the default format of the log.
 	DefaultLogFormat = "text"
+	// DefaultLogLevel is the default log level.
+	DefaultLogLevel = "info"
 	defaultLogLevel  = log.InfoLevel
 	// DefaultSlowThreshold is the default slow log threshold in millisecond.
 	DefaultSlowThreshold = 300

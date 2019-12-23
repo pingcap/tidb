@@ -115,6 +115,9 @@ const (
 	// tidb_enable_slow_log enables TiDB to log slow queries.
 	TiDBEnableSlowLog = "tidb_enable_slow_log"
 
+	// tidb_log_level controls the log level in TiDB.
+	TiDBLogLevel = "tidb_log_level"
+
 	// tidb_query_log_max_len is used to set the max length of the query in the log.
 	TiDBQueryLogMaxLen = "tidb_query_log_max_len"
 

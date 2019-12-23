@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/log"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
@@ -133,6 +134,8 @@ func GetSessionOnlySysVars(s *SessionVars, key string) (string, bool, error) {
 		return strconv.FormatUint(uint64(atomic.LoadUint32(&config.GetGlobalConfig().Log.RecordPlanInSlowLog)), 10), true, nil
 	case TiDBEnableSlowLog:
 		return strconv.FormatUint(uint64(atomic.LoadUint32(&config.GetGlobalConfig().Log.EnableSlowLog)), 10), true, nil
+	case TiDBLogLevel:
+		return log.GetLevel().String(), true, nil
 	case TiDBDDLSlowOprThreshold:
 		return strconv.FormatUint(uint64(atomic.LoadUint32(&DDLSlowOprThreshold)), 10), true, nil
 	case TiDBQueryLogMaxLen:

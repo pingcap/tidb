@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/pingcap/log"
 	"sort"
 	"strconv"
 	"strings"
@@ -5229,6 +5230,17 @@ func (s *testIntegrationSuite) TestCastStrToInt(c *C) {
 		tk.MustQuery(ca.sql).Check(testkit.Rows(fmt.Sprintf("%v", ca.result)))
 		c.Assert(terror.ErrorEqual(tk.Se.GetSessionVars().StmtCtx.GetWarnings()[0].Err, types.ErrTruncatedWrongVal), IsTrue)
 	}
+}
+
+func (s *testIntegrationSuite) TestSetLogLevel(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	levels := []string{"debug", "info", "warn", "error"}
+	for _, l := range levels {
+		tk.MustExec(fmt.Sprintf("SET @@tidb_log_level='%v'", l))
+		tk.MustQuery("SHOW VARIABLES LIKE 'tidb_log_level'").Check(testkit.Rows(fmt.Sprintf("tidb_log_level %v", l)))
+		c.Assert(log.GetLevel().String(), Equals, l)
+	}
+	c.Assert(tk.ExecToErr("SET @@tidb_log_level='abcde'"), NotNil)
 }
 
 func (s *testIntegrationSuite) TestIssue14159(c *C) {
