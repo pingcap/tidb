@@ -404,7 +404,6 @@ func (ts *testDatumSuite) TestEstimatedMemUsage(c *C) {
 		NewIntDatum(1),
 		NewFloat64Datum(1.0),
 		NewFloat32Datum(1.0),
-
 		NewStringDatum(string(b)),
 		NewBytesDatum(b),
 		NewDecimalDatum(newMyDecimal("1234.1234", c)),
