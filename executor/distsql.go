@@ -76,13 +76,13 @@ type lookupTableTask struct {
 	duplicatedIndexOrder map[int64]int
 
 	// memUsage records the memory usage of this task calculated by table worker.
-	// MemTracker is used to release memUsage after task is done and unused.
+	// memTracker is used to release memUsage after task is done and unused.
 	//
 	// The sequence of function calls are:
 	//   1. calculate task.memUsage.
-	//   2. task.MemTracker = tableWorker.MemTracker
-	//   3. task.MemTracker.Consume(task.memUsage)
-	//   4. task.MemTracker.Consume(-task.memUsage)
+	//   2. task.memTracker = tableWorker.memTracker
+	//   3. task.memTracker.Consume(task.memUsage)
+	//   4. task.memTracker.Consume(-task.memUsage)
 	//
 	// Step 1~3 are completed in "tableWorker.executeTask".
 	// Step 4   is  completed in "IndexLookUpExecutor.Next".
@@ -345,7 +345,7 @@ type IndexLookUpExecutor struct {
 	resultCurr *lookupTableTask
 	feedback   *statistics.QueryFeedback
 
-	// MemTracker is used to track the memory usage of this executor.
+	// memTracker is used to track the memory usage of this executor.
 	memTracker *memory.Tracker
 
 	// checkIndexValue is used to check the consistency of the index data.
@@ -390,7 +390,7 @@ func (e *IndexLookUpExecutor) Open(ctx context.Context) error {
 }
 
 func (e *IndexLookUpExecutor) open(ctx context.Context) error {
-	// We have to initialize "MemTracker" and other execution resources in here
+	// We have to initialize "memTracker" and other execution resources in here
 	// instead of in function "Open", because this "IndexLookUpExecutor" may be
 	// constructed by a "IndexLookUpJoin" and "Open" will not be called in that
 	// situation.
@@ -787,7 +787,7 @@ type tableWorker struct {
 	keepOrder      bool
 	handleIdx      int
 
-	// MemTracker is used to track the memory usage of this executor.
+	// memTracker is used to track the memory usage of this executor.
 	memTracker *memory.Tracker
 
 	// checkIndexValue is used to check the consistency of the index data.

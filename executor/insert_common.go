@@ -203,7 +203,7 @@ func insertRows(ctx context.Context, base insertCommon) (err error) {
 	}
 	var memTracker *memory.Tracker
 	if insertExec, ok := base.(*InsertExec); ok {
-		memTracker = insertExec.MemTracker
+		memTracker = insertExec.memTracker
 	} else {
 		replaceExec := base.(*ReplaceExec)
 		memTracker = replaceExec.MemTracker
@@ -401,7 +401,7 @@ func insertRowsFromSelect(ctx context.Context, base insertCommon) error {
 	rows := make([][]types.Datum, 0, chk.Capacity())
 	var memTracker *memory.Tracker
 	if insertExec, ok := base.(*InsertExec); ok {
-		memTracker = insertExec.MemTracker
+		memTracker = insertExec.memTracker
 	} else {
 		replaceExec := base.(*ReplaceExec)
 		memTracker = replaceExec.MemTracker
