@@ -504,8 +504,8 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *property.PhysicalProperty, ou
 		return nil
 	}
 	var (
-		innerJoinKeys []*expression.Column
-		outerJoinKeys []*expression.Column
+		innerJoinKeys     []*expression.Column
+		outerJoinKeys     []*expression.Column
 	)
 	if outerIdx == 0 {
 		outerJoinKeys = p.LeftJoinKeys
@@ -513,6 +513,10 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *property.PhysicalProperty, ou
 	} else {
 		innerJoinKeys = p.LeftJoinKeys
 		outerJoinKeys = p.RightJoinKeys
+	}
+	origInnerJoinKeys := make([]expression.Expression, len(innerJoinKeys))
+	for i, innerKey := range innerJoinKeys {
+		origInnerJoinKeys[i] = innerKey
 	}
 	ds, isDataSource := innerChild.(*DataSource)
 	us, isUnionScan := innerChild.(*LogicalUnionScan)
@@ -577,6 +581,18 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *property.PhysicalProperty, ou
 	if outerChild.statsInfo().RowCount > 0 {
 		avgInnerRowCnt = p.equalCondOutCnt / outerChild.statsInfo().RowCount
 	}
+	defer func() {
+		for _, join := range joins {
+			switch x := join.(type) {
+			case *PhysicalIndexJoin:
+				x.OrigInnerJoinKeys = origInnerJoinKeys
+			case *PhysicalIndexHashJoin:
+				x.OrigInnerJoinKeys = origInnerJoinKeys
+			case *PhysicalIndexMergeJoin:
+				x.OrigInnerJoinKeys = origInnerJoinKeys
+			}
+		}
+	}()
 	joins = p.buildIndexJoinInner2TableScan(prop, ds, innerJoinKeys, outerJoinKeys, outerIdx, us, avgInnerRowCnt, pj)
 	if joins != nil {
 		return
@@ -677,7 +693,7 @@ func (p *LogicalJoin) buildIndexJoinInner2IndexScan(
 	// should construct another inner plan for it.
 	// Because we can't keep order for union scan, if there is a union scan in inner task,
 	// we can't construct index merge join.
-	if us == nil {
+	if us == nil && proj == nil {
 		innerTask2 := p.constructInnerIndexScanTask(ds, helper.chosenPath, helper.chosenRemained, outerJoinKeys, us, rangeInfo, true, !prop.IsEmpty() && prop.Items[0].Desc, avgInnerRowCnt, outerIdx, proj)
 		joins = append(joins, p.constructIndexMergeJoin(prop, outerIdx, innerTask2, helper.chosenRanges, keyOff2IdxOff, helper.chosenPath, helper.lastColManager)...)
 	}

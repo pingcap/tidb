@@ -344,6 +344,8 @@ func NewPhysicalHashJoin(p *LogicalJoin, innerIdx int, useOuterToBuild bool, new
 type PhysicalIndexJoin struct {
 	basePhysicalJoin
 
+	OrigInnerJoinKeys []expression.Expression
+
 	outerSchema *expression.Schema
 	innerTask   task
 

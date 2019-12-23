@@ -978,6 +978,7 @@ func (d *MyDecimal) FromInt(val int64) *MyDecimal {
 		d.negative = true
 		uVal = uint64(-val)
 	} else {
+		d.negative = false
 		uVal = uint64(val)
 	}
 	return d.FromUint(uVal)

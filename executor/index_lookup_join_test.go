@@ -16,7 +16,6 @@ package executor_test
 import (
 	"context"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
@@ -211,11 +210,11 @@ func (s testSuite9) TestIndexJoinHavingExprInInnerJoinKeys(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("drop table if exists t1, t2")
 	tk.MustExec(`create table t1(
-						v_int int,
+						v_int bigint,
 						v_float float,
 						v_decimal decimal(40, 10));`)
 	tk.MustExec(`create table t2(
-						v_int int,
+						v_int bigint,
 						v_float float,
 						v_decimal decimal(40, 10),
 						key(v_int),

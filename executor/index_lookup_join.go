@@ -91,7 +91,7 @@ type innerCtx struct {
 	keyCols       []int
 	colLens       []int
 	hasPrefixCol  bool
-	joinKeys      []*expression.Column
+	joinKeys      []expression.Expression
 }
 
 type lookUpJoinTask struct {

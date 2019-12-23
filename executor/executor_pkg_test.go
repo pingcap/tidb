@@ -151,8 +151,12 @@ func (s *testExecSuite) TestBuildKvRangesForIndexJoinWithoutCwc(c *C) {
 	joinKeyRows = append(joinKeyRows, &indexJoinLookUpContent{keys: generateDatumSlice(2, 3)})
 
 	keyOff2IdxOff := []int{1, 3}
+	innerJoinKeys := []expression.Expression{
+		&expression.Column{RetType: types.NewFieldType(mysql.TypeLonglong)},
+		&expression.Column{RetType: types.NewFieldType(mysql.TypeLonglong)},
+	}
 	ctx := mock.NewContext()
-	kvRanges, err := buildKvRangesForIndexJoin(ctx, 0, 0, joinKeyRows, indexRanges, keyOff2IdxOff, nil)
+	kvRanges, err := buildKvRangesForIndexJoin(ctx, 0, 0, joinKeyRows, indexRanges, keyOff2IdxOff, nil, false, innerJoinKeys)
 	c.Assert(err, IsNil)
 	// Check the kvRanges is in order.
 	for i, kvRange := range kvRanges {
