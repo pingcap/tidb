@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
@@ -95,9 +96,9 @@ func (ts *testSuite) TestBasic(c *C) {
 	c.Assert(string(tb.RecordPrefix()), Not(Equals), "")
 	c.Assert(tables.FindIndexByColName(tb, "b"), NotNil)
 
-	autoid, err := table.AllocAutoIncrementValue(context.Background(), tb, nil)
+	autoID, err := table.AllocAutoIncrementValue(context.Background(), tb, nil)
 	c.Assert(err, IsNil)
-	c.Assert(autoid, Greater, int64(0))
+	c.Assert(autoID, Greater, int64(0))
 
 	handle, err := tb.AllocHandle(nil)
 	c.Assert(err, IsNil)
@@ -156,7 +157,7 @@ func (ts *testSuite) TestBasic(c *C) {
 	c.Assert(err, IsNil)
 
 	table.MockTableFromMeta(tb.Meta())
-	alc := tb.Allocator(nil)
+	alc := tb.Allocator(nil, autoid.RowIDAllocType)
 	c.Assert(alc, NotNil)
 
 	err = tb.RebaseAutoID(nil, 0, false)
