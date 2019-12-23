@@ -15,6 +15,7 @@ package terror
 
 import (
 	"encoding/json"
+	"os"
 	"runtime"
 	"strings"
 	"testing"
@@ -108,13 +109,14 @@ func (s *testTErrorSuite) TestTraceAndLocation(c *C) {
 	err := example()
 	stack := errors.ErrorStack(err)
 	lines := strings.Split(stack, "\n")
+	goroot := strings.ReplaceAll(runtime.GOROOT(), string(os.PathSeparator), "/")
 	var sysStack = 0
 	for _, line := range lines {
-		if strings.Contains(line, runtime.GOROOT()) {
+		if strings.Contains(line, goroot) {
 			sysStack++
 		}
 	}
-	c.Assert(len(lines)-(2*sysStack), Equals, 15)
+	c.Assert(len(lines)-(2*sysStack), Equals, 15, Commentf("stack =\n%s", stack))
 	var containTerr bool
 	for _, v := range lines {
 		if strings.Contains(v, "terror_test.go") {
