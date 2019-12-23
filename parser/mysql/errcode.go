@@ -1027,6 +1027,8 @@ const (
 	ErrSnapshotTooOld                      = 8055
 	ErrInvalidTableID                      = 8056
 	ErrInvalidType                         = 8057
+	ErrUnknownAllocatorType                = 8058
+	ErrAutoRandReadFailed                  = 8059
 
 	// Error codes used by TiDB ddl package
 	ErrUnsupportedDDLOperation        = 8200
