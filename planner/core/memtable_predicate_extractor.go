@@ -366,7 +366,7 @@ func (helper extractHelper) extractTimeRange(
 	return
 }
 
-func (e extractHelper) convertToTime(t int64) time.Time {
+func (helper extractHelper) convertToTime(t int64) time.Time {
 	if t == 0 || t == math.MaxInt64 {
 		return time.Now()
 	}
@@ -541,7 +541,7 @@ func (e *MetricTableExtractor) Extract(
 	return remained
 }
 
-// GetQuantile gets the quantile of metric query.
+// GetQuantiles gets the quantiles of metric query.
 func (e *MetricTableExtractor) GetQuantiles() ([]float64, error) {
 	if len(e.quantile) == 0 {
 		return []float64{0}, nil
