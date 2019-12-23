@@ -628,6 +628,7 @@ var tableProcesslistCols = []columnInfo{
 	{"STATE", mysql.TypeVarchar, 7, 0, nil, nil},
 	{"INFO", mysql.TypeString, 512, 0, nil, nil},
 	{"MEM", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"DISK", mysql.TypeLonglong, 21, 0, nil, nil},
 	{"TxnStart", mysql.TypeVarchar, 64, mysql.NotNullFlag, "", nil},
 }
 
