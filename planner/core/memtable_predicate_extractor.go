@@ -287,6 +287,7 @@ func (helper extractHelper) extractTimeRange(
 	names []*types.FieldName,
 	predicates []expression.Expression,
 	extractColName string,
+	timezone *time.Location,
 ) (
 	remained []expression.Expression,
 	// unix timestamp in millisecond
@@ -330,7 +331,7 @@ func (helper extractHelper) extractTimeRange(
 				mysqlTime.Minute(),
 				mysqlTime.Second(),
 				mysqlTime.Microsecond()*1000,
-				time.Local,
+				timezone,
 			).UnixNano() / int64(time.Millisecond)
 
 			switch fn.FuncName.L {
@@ -460,7 +461,7 @@ func (e *ClusterLogTableExtractor) Extract(
 		return nil
 	}
 
-	remained, startTime, endTime := e.extractTimeRange(ctx, schema, names, remained, "time")
+	remained, startTime, endTime := e.extractTimeRange(ctx, schema, names, remained, "time", time.Local)
 	if endTime == 0 {
 		endTime = math.MaxInt64
 	}
@@ -507,7 +508,7 @@ func (e *MetricTableExtractor) Extract(
 	e.quantile = quantile
 
 	// Extract the `time` columns
-	remained, startTime, endTime := e.extractTimeRange(ctx, schema, names, remained, "time")
+	remained, startTime, endTime := e.extractTimeRange(ctx, schema, names, remained, "time", ctx.GetSessionVars().StmtCtx.TimeZone)
 	if endTime == 0 {
 		endTime = math.MaxInt64
 	}
