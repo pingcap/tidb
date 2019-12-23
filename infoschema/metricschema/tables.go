@@ -29,7 +29,7 @@ type metricSchemaTable struct {
 	cols []*table.Column
 }
 
-func tableFromMeta(alloc autoid.Allocator, meta *model.TableInfo) (table.Table, error) {
+func tableFromMeta(alloc autoid.Allocators, meta *model.TableInfo) (table.Table, error) {
 	return createMetricSchemaTable(meta), nil
 }
 
