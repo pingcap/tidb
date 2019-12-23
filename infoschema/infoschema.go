@@ -91,7 +91,7 @@ type InfoSchema interface {
 	SchemaByID(id int64) (*model.DBInfo, bool)
 	SchemaByTable(tableInfo *model.TableInfo) (*model.DBInfo, bool)
 	TableByID(id int64) (table.Table, bool)
-	AllocByID(id int64) (autoid.Allocator, bool)
+	AllocByID(id int64) (autoid.Allocators, bool)
 	AllSchemaNames() []string
 	AllSchemas() []*model.DBInfo
 	Clone() (result []*model.DBInfo)
@@ -243,12 +243,12 @@ func (is *infoSchema) TableByID(id int64) (val table.Table, ok bool) {
 	return slice[idx], true
 }
 
-func (is *infoSchema) AllocByID(id int64) (autoid.Allocator, bool) {
+func (is *infoSchema) AllocByID(id int64) (autoid.Allocators, bool) {
 	tbl, ok := is.TableByID(id)
 	if !ok {
 		return nil, false
 	}
-	return tbl.Allocator(nil), true
+	return tbl.AllAllocators(nil), true
 }
 
 func (is *infoSchema) AllSchemaNames() (names []string) {
