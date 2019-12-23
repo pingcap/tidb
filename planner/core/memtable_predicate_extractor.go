@@ -16,6 +16,7 @@ package core
 import (
 	"math"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -554,6 +555,7 @@ func (e *MetricTableExtractor) GetQuantiles() ([]float64, error) {
 		}
 		quantiles = append(quantiles, quantile)
 	}
+	sort.Float64s(quantiles)
 	return quantiles, nil
 }
 

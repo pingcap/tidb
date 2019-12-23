@@ -620,9 +620,9 @@ func (s *extractorSuite) TestMetricTableExtractor(c *C) {
 		},
 		{
 			sql: "select * from metric_schema.query_duration where quantile=0.9 or quantile=0.8",
-			promQL: "histogram_quantile(0.9, sum(rate(tidb_server_handle_query_duration_seconds_bucket{}[60s])) by (le))\n" +
-				"histogram_quantile(0.8, sum(rate(tidb_server_handle_query_duration_seconds_bucket{}[60s])) by (le))",
-			quantiles: []float64{0.9, 0.8},
+			promQL: "histogram_quantile(0.8, sum(rate(tidb_server_handle_query_duration_seconds_bucket{}[60s])) by (le))\n" +
+				"histogram_quantile(0.9, sum(rate(tidb_server_handle_query_duration_seconds_bucket{}[60s])) by (le))",
+			quantiles: []float64{0.8, 0.9},
 		},
 	}
 	se.GetSessionVars().StmtCtx.TimeZone = time.Local
