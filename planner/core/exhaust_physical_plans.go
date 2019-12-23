@@ -504,8 +504,8 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *property.PhysicalProperty, ou
 		return nil
 	}
 	var (
-		innerJoinKeys     []*expression.Column
-		outerJoinKeys     []*expression.Column
+		innerJoinKeys []*expression.Column
+		outerJoinKeys []*expression.Column
 	)
 	if outerIdx == 0 {
 		outerJoinKeys = p.LeftJoinKeys
