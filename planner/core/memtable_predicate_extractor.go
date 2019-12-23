@@ -561,5 +561,10 @@ func (e *MetricTableExtractor) GetQuantiles() ([]float64, error) {
 
 // GetQueryRangeTime gets the metric query time range.
 func (e *MetricTableExtractor) GetQueryRangeTime(sctx sessionctx.Context) (start, end time.Time, step time.Duration) {
-	return e.convertToTime(e.StartTime), e.convertToTime(e.EndTime), time.Second * time.Duration(sctx.GetSessionVars().MetricSchemaStep)
+	start = e.convertToTime(e.StartTime)
+	end = e.convertToTime(e.EndTime)
+	if start.After(end) {
+		start = end
+	}
+	return start, end, time.Second * time.Duration(sctx.GetSessionVars().MetricSchemaStep)
 }
