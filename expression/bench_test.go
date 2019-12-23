@@ -265,6 +265,29 @@ func (g *defaultGener) gen() interface{} {
 	return nil
 }
 
+// charInt64Gener is used to generate int which is equal to char's ascii
+type charInt64Gener struct{}
+
+func (g *charInt64Gener) gen() interface{} {
+	rand := time.Now().Nanosecond()
+	rand = rand % 1024
+	return int64(rand)
+}
+
+// charsetStringGener is used to generate "ascii" or "gbk"
+type charsetStringGener struct{}
+
+func (g *charsetStringGener) gen() interface{} {
+	rand := time.Now().Nanosecond() % 3
+	if rand == 0 {
+		return "ascii"
+	}
+	if rand == 1 {
+		return "utf8"
+	}
+	return "gbk"
+}
+
 // selectStringGener select one string randomly from the candidates array
 type selectStringGener struct {
 	candidates []string
@@ -328,6 +351,12 @@ func (g *decimalStringGener) gen() interface{} {
 		panic(err)
 	}
 	return tempDecimal.String()
+}
+
+type realStringGener struct{}
+
+func (g *realStringGener) gen() interface{} {
+	return fmt.Sprintf("%f", rand.Float64())
 }
 
 type jsonTimeGener struct{}
@@ -576,7 +605,12 @@ func (g *dateTimeGener) gen() interface{} {
 	if g.Day == 0 {
 		g.Day = rand.Intn(20) + 1
 	}
-	gt := types.FromDate(g.Year, g.Month, g.Day, rand.Intn(12), rand.Intn(60), rand.Intn(60), rand.Intn(1000000))
+	var gt types.MysqlTime
+	if g.Fsp > 0 && g.Fsp <= 6 {
+		gt = types.FromDate(g.Year, g.Month, g.Day, rand.Intn(12), rand.Intn(60), rand.Intn(60), rand.Intn(1000000))
+	} else {
+		gt = types.FromDate(g.Year, g.Month, g.Day, rand.Intn(12), rand.Intn(60), rand.Intn(60), 0)
+	}
 	t := types.Time{Time: gt, Type: mysql.TypeDatetime}
 	return t
 }
@@ -1590,6 +1624,21 @@ func (s *testEvaluatorSuite) TestVecEvalBool(c *C) {
 			}
 		}
 	}
+}
+
+func (s *testEvaluatorSuite) TestVecToBool(c *C) {
+	ctx := mock.NewContext()
+	buf := chunk.NewColumn(eType2FieldType(types.ETString), 2)
+	buf.ReserveString(1)
+	buf.AppendString("999999999999999999923")
+	c.Assert(toBool(ctx.GetSessionVars().StmtCtx, types.ETString, buf, []int{0, 1}, []int8{0, 0}), NotNil)
+	buf.ReserveString(1)
+	buf.AppendString("23")
+	c.Assert(toBool(ctx.GetSessionVars().StmtCtx, types.ETString, buf, []int{0, 1}, []int8{0, 0}), IsNil)
+	buf.ReserveString(2)
+	buf.AppendString("999999999999999999923")
+	buf.AppendString("23")
+	c.Assert(toBool(ctx.GetSessionVars().StmtCtx, types.ETString, buf, []int{0, 1}, []int8{0, 0}), NotNil)
 }
 
 func BenchmarkVecEvalBool(b *testing.B) {
