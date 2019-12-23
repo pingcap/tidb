@@ -42,7 +42,7 @@ const (
 	DefaultLogFormat = "text"
 	// DefaultLogLevel is the default log level.
 	DefaultLogLevel = "info"
-	defaultLogLevel  = log.InfoLevel
+	defaultLogLevel = log.InfoLevel
 	// DefaultSlowThreshold is the default slow log threshold in millisecond.
 	DefaultSlowThreshold = 300
 	// DefaultQueryLogMaxLen is the default max length of the query in the log.
