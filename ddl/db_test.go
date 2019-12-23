@@ -2173,7 +2173,20 @@ func (s *testDBSuite) TestTableForeignKey(c *C) {
 	s.tk.MustExec("create table t3 (a int, b int);")
 	failSQL = "alter table t1 add foreign key (c) REFERENCES t3(a);"
 	s.testErrorCode(c, failSQL, tmysql.ErrKeyColumnDoesNotExits)
-	s.tk.MustExec("drop table if exists t1,t2,t3;")
+	// Test drop column with foreign key.
+	s.tk.MustExec("create table t4 (c int,d int,foreign key (d) references t1 (b));")
+	failSQL = "alter table t4 drop column d"
+	s.testErrorCode(c, failSQL, mysql.ErrFkColumnCannotDrop)
+	// Test change column with foreign key.
+	failSQL = "alter table t4 change column d e bigint;"
+	s.testErrorCode(c, failSQL, mysql.ErrFKIncompatibleColumns)
+	// Test modify column with foreign key.
+	failSQL = "alter table t4 modify column d bigint;"
+	s.testErrorCode(c, failSQL, mysql.ErrFKIncompatibleColumns)
+	s.tk.MustQuery("select count(*) from information_schema.KEY_COLUMN_USAGE;")
+	s.tk.MustExec("alter table t4 drop foreign key d")
+	s.tk.MustExec("alter table t4 modify column d bigint;")
+	s.tk.MustExec("drop table if exists t1,t2,t3,t4;")
 }
 
 func (s *testDBSuite) TestBitDefaultValue(c *C) {
