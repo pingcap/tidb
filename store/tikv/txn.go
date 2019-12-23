@@ -369,6 +369,15 @@ func (txn *tikvTxn) rollbackPessimisticLocks() error {
 // lockWaitTime in ms, except that kv.LockAlwaysWait(0) means always wait lock, kv.LockNowait(-1) means nowait lock
 func (txn *tikvTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keysInput ...kv.Key) error {
 	// Exclude keys that are already locked.
+	var err error
+	defer func() {
+		if err == nil {
+			if lockCtx.PessimisticLockWaited > 0 {
+				lockCtx.LockTimeWaited = time.Since(lockCtx.WaitStartTime)
+				metrics.TiKVPessimisticLockKeysDuration.Observe(lockCtx.LockTimeWaited.Seconds())
+			}
+		}
+	}()
 	keys := make([][]byte, 0, len(keysInput))
 	txn.mu.Lock()
 	for _, key := range keysInput {
@@ -406,7 +415,7 @@ func (txn *tikvTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keysInput
 		// If the number of keys greater than 1, it can be on different region,
 		// concurrently execute on multiple regions may lead to deadlock.
 		txn.committer.isFirstLock = len(txn.lockKeys) == 0 && len(keys) == 1
-		err := txn.committer.pessimisticLockKeys(bo, lockCtx, keys)
+		err = txn.committer.pessimisticLockKeys(bo, lockCtx, keys)
 		if lockCtx.Killed != nil {
 			// If the kill signal is received during waiting for pessimisticLock,
 			// pessimisticLockKeys would handle the error but it doesn't reset the flag.
