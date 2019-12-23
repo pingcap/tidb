@@ -798,19 +798,19 @@ func (s *testEvaluatorSuite) TestSleepVec(c *C) {
 
 	start := time.Now()
 	go func() {
-		time.Sleep(1 * time.Second)
+		time.Sleep(7 * time.Second)
 		atomic.CompareAndSwapUint32(&ctx.GetSessionVars().Killed, 0, 1)
 	}()
 
 	a := float64(3)
+	da := types.Datum{}
+	da.SetValue(a)
+
 	tp := new(types.FieldType)
 	types.DefaultTypeForValue(a, tp)
 	input := chunk.New([]*types.FieldType{tp}, 1, 1)
 	buf := chunk.NewColumn(types.NewFieldType(mysql.TypeLonglong), 1)
-	da := types.Datum{}
-	da.SetValue(a)
 	input.AppendDatum(0, &da)
-
 	c.Assert(f.vecEvalInt(input, buf), IsNil)
 
 	sub := time.Since(start)
@@ -818,6 +818,23 @@ func (s *testEvaluatorSuite) TestSleepVec(c *C) {
 	c.Assert(buf.GetInt64(0), Equals, int64(1))
 	c.Assert(sub.Nanoseconds(), LessEqual, int64(2*1e9))
 	c.Assert(sub.Nanoseconds(), GreaterEqual, int64(1*1e9))
+
+	start = time.Now()
+	n := 3
+	input = chunk.New([]*types.FieldType{tp}, n, n)
+	buf = chunk.NewColumn(types.NewFieldType(mysql.TypeLonglong), n)
+	for i := 0; i < n; i++ {
+		input.AppendDatum(0, &da)
+	}
+	c.Assert(f.vecEvalInt(input, buf), IsNil)
+
+	sub = time.Since(start)
+	for i := 0; i < n; i++ {
+		c.Assert(buf.IsNull(i), IsFalse)
+		c.Assert(buf.GetInt64(i), Equals, int64(1))
+	}
+	c.Assert(sub.Nanoseconds(), LessEqual, int64(4*1e9))
+	c.Assert(sub.Nanoseconds(), GreaterEqual, int64(3*1e9))
 }
 
 func BenchmarkFloat32ColRow(b *testing.B) {
