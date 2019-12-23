@@ -194,10 +194,12 @@ type Transaction interface {
 
 // LockCtx contains information for LockKeys method.
 type LockCtx struct {
-	Killed        *uint32
-	ForUpdateTS   uint64
-	LockWaitTime  int64
-	WaitStartTime time.Time
+	Killed                *uint32
+	ForUpdateTS           uint64
+	LockWaitTime          int64
+	WaitStartTime         time.Time
+	PessimisticLockWaited int32
+	LockTimeWaited        time.Duration
 }
 
 // Client is used to send request to KV layer.
