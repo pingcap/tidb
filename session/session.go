@@ -30,7 +30,6 @@ import (
 	"time"
 
 	"github.com/ngaut/pools"
-	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser"
@@ -68,7 +67,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/timeutil"
-	"github.com/pingcap/tipb/go-binlog"
+	binlog "github.com/pingcap/tipb/go-binlog"
 	"go.uber.org/zap"
 )
 
