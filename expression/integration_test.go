@@ -4743,9 +4743,9 @@ from
     (select * from t1) a
 left join
     (select bussid,date(from_unixtime(ct)) date8 from t2) b
-on 
+on
     a.period_id = b.bussid
-where 
+where
     datediff(b.date8, date(from_unixtime(a.starttime))) >= 0`
 	tk.MustQuery(q)
 }
@@ -5237,4 +5237,13 @@ func (s *testIntegrationSuite) TestIssue14159(c *C) {
 	tk.MustExec("CREATE TABLE t (v VARCHAR(100))")
 	tk.MustExec("INSERT INTO t VALUES ('3289742893213123732904809')")
 	tk.MustQuery("SELECT * FROM t WHERE v").Check(testkit.Rows("3289742893213123732904809"))
+}
+
+func (s *testIntegrationSuite) TestIssue14146(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table tt(a varchar(10))")
+	tk.MustExec("insert into tt values(NULL)")
+	tk.MustExec("analyze table tt;")
+	tk.MustQuery("select * from tt").Check(testkit.Rows("<nil>"))
 }
