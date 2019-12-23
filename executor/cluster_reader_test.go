@@ -55,6 +55,15 @@ func (s *testClusterReaderSuite) TearDownSuite(c *C) {
 	s.store.Close()
 }
 
+func (s *testClusterReaderSuite) TestMetricTableData(c *C) {
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/mockMetricRetrieverQueryPromQL", "return"), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/mockMetricRetrieverQueryPromQL"), IsNil)
+	}()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustQuery("select * from metric_schema.query_duration;").Check(testkit.Rows("2019-12-23 20:11:35.000000 0.1 127.0.0.1:10080  0.9"))
+}
+
 func (s *testClusterReaderSuite) TestTiDBClusterConfig(c *C) {
 	// mock PD http server
 	router := mux.NewRouter()

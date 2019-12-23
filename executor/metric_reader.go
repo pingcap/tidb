@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/infoschema/metricschema"
@@ -86,6 +87,23 @@ func (e *MetricRetriever) retrieve(ctx context.Context, sctx sessionctx.Context)
 }
 
 func (e *MetricRetriever) queryMetric(ctx context.Context, sctx sessionctx.Context, queryRange promv1.Range, quantile float64) (pmodel.Value, error) {
+	failpoint.Inject("mockMetricRetrieverQueryPromQL", func() {
+		matrix := pmodel.Matrix{}
+		metric := map[pmodel.LabelName]pmodel.LabelValue{
+			"instance": "127.0.0.1:10080",
+		}
+		t, err := time.ParseInLocation("2006-01-02 15:04:05.999", "2019-12-23 20:11:35", time.Local)
+		if err != nil {
+			failpoint.Return(nil, err)
+		}
+		v1 := pmodel.SamplePair{
+			Timestamp: pmodel.Time(t.UnixNano() / int64(time.Millisecond)),
+			Value:     pmodel.SampleValue(0.1),
+		}
+		matrix = append(matrix, &pmodel.SampleStream{Metric: metric, Values: []pmodel.SamplePair{v1}})
+		failpoint.Return(matrix, nil)
+	})
+
 	addr, err := e.getMetricAddr(sctx)
 	if err != nil {
 		return nil, err
@@ -123,13 +141,6 @@ type promQLQueryRange = promv1.Range
 func (e *MetricRetriever) getQueryRange(sctx sessionctx.Context) promQLQueryRange {
 	startTime, endTime, step := e.extractor.GetQueryRangeTime(sctx)
 	return promQLQueryRange{Start: startTime, End: endTime, Step: step}
-}
-
-func (e *MetricRetriever) convertToTime(t int64) time.Time {
-	if t == 0 {
-		return time.Now()
-	}
-	return time.Unix(t/int64(time.Microsecond), t%int64(time.Microsecond)*1000)
 }
 
 func (e *MetricRetriever) genRows(value pmodel.Value, r promQLQueryRange, quantile float64) [][]types.Datum {
