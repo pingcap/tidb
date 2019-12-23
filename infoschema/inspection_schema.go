@@ -48,8 +48,7 @@ func (it *inspectionSchemaTable) IterRecords(ctx sessionctx.Context, startKey kv
 	fn table.RecordIterFunc) error {
 	sessionVars := ctx.GetSessionVars()
 	// The `InspectionTableCache` will be assigned in `InspectionExec.Open` and be
-	// cleaned at `InspectionExec.Close`, so it is nil that represents does not
-	// in inspection mode.
+	// cleaned at `InspectionExec.Close`, so nil represents currently in non-inspection mode.
 	if sessionVars.InspectionTableCache == nil {
 		return errors.New("not currently in inspection mode")
 	}
@@ -58,10 +57,10 @@ func (it *inspectionSchemaTable) IterRecords(ctx sessionctx.Context, startKey kv
 		return table.ErrUnsupportedOp
 	}
 
-	// Obtain data from cache first
+	// Obtain data from cache first.
 	cached, found := sessionVars.InspectionTableCache[it.meta.Name.L]
 	if !found {
-		// We retrieve data from `information_schema` if can found in cache
+		// We retrieve data from `information_schema` if can found in cache.
 		rows, err := it.getRows(ctx, cols)
 		cached = variable.TableSnapshot{
 			Rows: rows,
@@ -86,7 +85,7 @@ func (it *inspectionSchemaTable) IterRecords(ctx sessionctx.Context, startKey kv
 }
 
 func init() {
-	// Initialize the inspection schema database and register the driver to `drivers`
+	// Initialize the inspection schema database and register the driver to `drivers`.
 	dbID := autoid.InspectionSchemaDBID
 	tables := make([]*model.TableInfo, 0, len(inspectionTables))
 	for name, cols := range inspectionTables {
@@ -97,7 +96,7 @@ func init() {
 		if !ok {
 			panic(fmt.Sprintf("get inspection_schema table id failed, unknown system table `%v`", tableInfo.Name.O))
 		}
-		// Reuse information_schema table id serial number
+		// Reuse information_schema table id serial number.
 		tableInfo.ID = tid - autoid.InformationSchemaDBID + autoid.InspectionSchemaDBID
 		for i, c := range tableInfo.Columns {
 			c.ID = int64(i) + 1
