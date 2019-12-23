@@ -26,6 +26,7 @@ import (
 	"github.com/cznic/mathutil"
 	"github.com/cznic/sortutil"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/kvproto/pkg/diagnosticspb"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -42,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/execdetails"
@@ -134,6 +136,8 @@ func (b *executorBuilder) build(p plannercore.Plan) Executor {
 		return b.buildLoadData(v)
 	case *plannercore.LoadStats:
 		return b.buildLoadStats(v)
+	case *plannercore.IndexAdvise:
+		return b.buildIndexAdvise(v)
 	case *plannercore.PhysicalLimit:
 		return b.buildLimit(v)
 	case *plannercore.Prepare:
@@ -766,6 +770,21 @@ func (b *executorBuilder) buildLoadStats(v *plannercore.LoadStats) Executor {
 	return e
 }
 
+func (b *executorBuilder) buildIndexAdvise(v *plannercore.IndexAdvise) Executor {
+	e := &IndexAdviseExec{
+		baseExecutor: newBaseExecutor(b.ctx, nil, v.ExplainID()),
+		IsLocal:      v.IsLocal,
+		indexAdviseInfo: &IndexAdviseInfo{
+			Path:        v.Path,
+			MaxMinutes:  v.MaxMinutes,
+			MaxIndexNum: v.MaxIndexNum,
+			LinesInfo:   v.LinesInfo,
+			Ctx:         b.ctx,
+		},
+	}
+	return e
+}
+
 func (b *executorBuilder) buildReplace(vals *InsertValues) Executor {
 	replaceExec := &ReplaceExec{
 		InsertValues: vals,
@@ -786,6 +805,7 @@ func (b *executorBuilder) buildGrant(grant *ast.GrantStmt) Executor {
 		Level:        grant.Level,
 		Users:        grant.Users,
 		WithGrant:    grant.WithGrant,
+		TLSOptions:   grant.TLSOptions,
 		is:           b.is,
 	}
 	return e
@@ -1151,7 +1171,7 @@ func (b *executorBuilder) buildStreamAgg(v *plannercore.PhysicalStreamAgg) Execu
 	}
 	e := &StreamAggExec{
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), src),
-		groupChecker: newGroupChecker(b.ctx.GetSessionVars().StmtCtx, v.GroupByItems),
+		groupChecker: newVecGroupChecker(b.ctx, v.GroupByItems),
 		aggFuncs:     make([]aggfuncs.AggFunc, 0, len(v.AggFuncs)),
 	}
 	if len(v.GroupByItems) != 0 || aggregation.IsAllFirstRow(v.AggFuncs) {
@@ -1230,7 +1250,7 @@ func (b *executorBuilder) getStartTS() (uint64, error) {
 	if err != nil {
 		return 0, err
 	}
-	if startTS == 0 && txn.Valid() {
+	if startTS == 0 {
 		startTS = txn.StartTS()
 	}
 	b.startTS = startTS
@@ -1241,15 +1261,65 @@ func (b *executorBuilder) getStartTS() (uint64, error) {
 }
 
 func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executor {
+	switch v.DBName.L {
+	case util.MetricSchemaName.L:
+		return &ClusterReaderExec{
+			baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
+			retriever: &MetricRetriever{
+				table:      v.Table,
+				outputCols: v.Columns,
+			},
+		}
+	case util.InformationSchemaName.L:
+		switch v.Table.Name.L {
+		case strings.ToLower(infoschema.TableClusterConfig):
+			return &ClusterReaderExec{
+				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
+				retriever: &clusterConfigRetriever{
+					extractor: v.Extractor.(*plannercore.ClusterTableExtractor),
+				},
+			}
+		case strings.ToLower(infoschema.TableClusterLoad):
+			return &ClusterReaderExec{
+				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
+				retriever: &clusterServerInfoRetriever{
+					extractor:      v.Extractor.(*plannercore.ClusterTableExtractor),
+					serverInfoType: diagnosticspb.ServerInfoType_LoadInfo,
+				},
+			}
+		case strings.ToLower(infoschema.TableClusterHardware):
+			return &ClusterReaderExec{
+				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
+				retriever: &clusterServerInfoRetriever{
+					extractor:      v.Extractor.(*plannercore.ClusterTableExtractor),
+					serverInfoType: diagnosticspb.ServerInfoType_HardwareInfo,
+				},
+			}
+		case strings.ToLower(infoschema.TableClusterSystemInfo):
+			return &ClusterReaderExec{
+				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
+				retriever: &clusterServerInfoRetriever{
+					extractor:      v.Extractor.(*plannercore.ClusterTableExtractor),
+					serverInfoType: diagnosticspb.ServerInfoType_SystemInfo,
+				},
+			}
+		case strings.ToLower(infoschema.TableClusterLog):
+			return &ClusterReaderExec{
+				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
+				retriever: &clusterLogRetriever{
+					extractor: v.Extractor.(*plannercore.ClusterLogTableExtractor),
+				},
+			}
+		}
+	}
 	tb, _ := b.is.TableByID(v.Table.ID)
-	e := &TableScanExec{
+	return &TableScanExec{
 		baseExecutor:   newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
 		t:              tb,
 		columns:        v.Columns,
 		seekHandle:     math.MinInt64,
-		isVirtualTable: tb.Type() == table.VirtualTable,
+		isVirtualTable: !tb.Type().IsNormalTable(),
 	}
-	return e
 }
 
 func (b *executorBuilder) buildSort(v *plannercore.PhysicalSort) Executor {
@@ -1452,7 +1522,6 @@ func (b *executorBuilder) buildAnalyzeIndexPushdown(task plannercore.AnalyzeInde
 		concurrency:     b.ctx.GetSessionVars().IndexSerialScanConcurrency,
 		analyzePB: &tipb.AnalyzeReq{
 			Tp:             tipb.AnalyzeType_TypeIndex,
-			StartTs:        math.MaxUint64,
 			Flags:          sc.PushDownFlags(),
 			TimeZoneOffset: offset,
 		},
@@ -1520,7 +1589,6 @@ func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plannercore.AnalyzeCo
 		concurrency:     b.ctx.GetSessionVars().DistSQLScanConcurrency,
 		analyzePB: &tipb.AnalyzeReq{
 			Tp:             tipb.AnalyzeType_TypeColumn,
-			StartTs:        math.MaxUint64,
 			Flags:          sc.PushDownFlags(),
 			TimeZoneOffset: offset,
 		},
@@ -1698,10 +1766,6 @@ func constructDistExec(sctx sessionctx.Context, plans []plannercore.PhysicalPlan
 
 func (b *executorBuilder) constructDAGReq(plans []plannercore.PhysicalPlan) (dagReq *tipb.DAGRequest, streaming bool, err error) {
 	dagReq = &tipb.DAGRequest{}
-	dagReq.StartTs, err = b.getStartTS()
-	if err != nil {
-		return nil, false, err
-	}
 	dagReq.TimeZoneName, dagReq.TimeZoneOffset = timeutil.Zone(b.ctx.GetSessionVars().Location())
 	sc := b.ctx.GetSessionVars().StmtCtx
 	dagReq.Flags = sc.PushDownFlags()
@@ -1935,9 +1999,14 @@ func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableRea
 		pt := tbl.(table.PartitionedTable)
 		tbl = pt.GetPartition(physicalTableID)
 	}
+	startTS, err := b.getStartTS()
+	if err != nil {
+		return nil, err
+	}
 	e := &TableReaderExecutor{
 		baseExecutor:   newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
 		dagPB:          dagReq,
+		startTS:        startTS,
 		table:          tbl,
 		keepOrder:      ts.KeepOrder,
 		desc:           ts.Desc,
@@ -1997,9 +2066,14 @@ func buildNoRangeIndexReader(b *executorBuilder, v *plannercore.PhysicalIndexRea
 	} else {
 		physicalTableID = is.Table.ID
 	}
+	startTS, err := b.getStartTS()
+	if err != nil {
+		return nil, err
+	}
 	e := &IndexReaderExecutor{
 		baseExecutor:    newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
 		dagPB:           dagReq,
+		startTS:         startTS,
 		physicalTableID: physicalTableID,
 		table:           tbl,
 		index:           is.Index,
@@ -2068,9 +2142,14 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIn
 		pt := tbl.(table.PartitionedTable)
 		tbl = pt.GetPartition(physicalTableID)
 	}
+	startTS, err := b.getStartTS()
+	if err != nil {
+		return nil, err
+	}
 	e := &IndexLookUpExecutor{
 		baseExecutor:      newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
 		dagPB:             indexReq,
+		startTS:           startTS,
 		table:             tbl,
 		index:             is.Index,
 		keepOrder:         is.KeepOrder,
@@ -2199,11 +2278,16 @@ func (builder *dataReaderBuilder) buildTableReaderFromHandles(ctx context.Contex
 		colExec := true
 		e.dagPB.CollectExecutionSummaries = &colExec
 	}
+	startTS, err := builder.getStartTS()
+	if err != nil {
+		return nil, err
+	}
 
 	sort.Sort(sortutil.Int64Slice(handles))
 	var b distsql.RequestBuilder
 	kvReq, err := b.SetTableHandles(getPhysicalTableID(e.table), handles).
 		SetDAGRequest(e.dagPB).
+		SetStartTS(startTS).
 		SetDesc(e.desc).
 		SetKeepOrder(e.keepOrder).
 		SetStreaming(e.streaming).
@@ -2384,7 +2468,7 @@ func (b *executorBuilder) buildWindow(v *plannercore.PhysicalWindow) *WindowExec
 	}
 	return &WindowExec{baseExecutor: base,
 		processor:      processor,
-		groupChecker:   newGroupChecker(b.ctx.GetSessionVars().StmtCtx, groupByItems),
+		groupChecker:   newVecGroupChecker(b.ctx, groupByItems),
 		numWindowFuncs: len(v.WindowFuncDescs),
 	}
 }

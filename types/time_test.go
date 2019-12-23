@@ -439,26 +439,6 @@ func (s *testTimeSuite) TestYear(c *C) {
 	}
 }
 
-func (s *testTimeSuite) getLocation(c *C) *time.Location {
-	locations := []string{"Asia/Shanghai", "Europe/Berlin"}
-	timeFormat := "Jan 2, 2006 at 3:04pm (MST)"
-
-	z, err := time.LoadLocation(locations[0])
-	c.Assert(err, IsNil)
-
-	t1, err := time.ParseInLocation(timeFormat, "Jul 9, 2012 at 5:02am (CEST)", z)
-	c.Assert(err, IsNil)
-	t2, err := time.Parse(timeFormat, "Jul 9, 2012 at 5:02am (CEST)")
-	c.Assert(err, IsNil)
-
-	if t1.Equal(t2) {
-		z, err = time.LoadLocation(locations[1])
-		c.Assert(err, IsNil)
-	}
-
-	return z
-}
-
 func (s *testTimeSuite) TestCodec(c *C) {
 	defer testleak.AfterTest(c)()
 
@@ -511,7 +491,7 @@ func (s *testTimeSuite) TestCodec(c *C) {
 	}
 
 	for _, test := range tbl {
-		t, err := types.ParseTime(nil, test, mysql.TypeDatetime, types.MaxFsp)
+		t, err := types.ParseTime(sc, test, mysql.TypeDatetime, types.MaxFsp)
 		c.Assert(err, IsNil)
 
 		packed, _ = t.ToPackedUint()
@@ -602,6 +582,9 @@ func (s *testTimeSuite) TestParseTimeFromNum(c *C) {
 func (s *testTimeSuite) TestToNumber(c *C) {
 	sc := mock.NewContext().GetSessionVars().StmtCtx
 	sc.IgnoreZeroInDate = true
+	losAngelesTz, err := time.LoadLocation("America/Los_Angeles")
+	c.Assert(err, IsNil)
+	sc.TimeZone = losAngelesTz
 	defer testleak.AfterTest(c)()
 	tblDateTime := []struct {
 		Input  string
@@ -620,7 +603,7 @@ func (s *testTimeSuite) TestToNumber(c *C) {
 	}
 
 	for _, test := range tblDateTime {
-		t, err := types.ParseTime(nil, test.Input, mysql.TypeDatetime, test.Fsp)
+		t, err := types.ParseTime(sc, test.Input, mysql.TypeDatetime, test.Fsp)
 		c.Assert(err, IsNil)
 		c.Assert(t.ToNumber().String(), Equals, test.Expect)
 	}
@@ -643,7 +626,7 @@ func (s *testTimeSuite) TestToNumber(c *C) {
 	}
 
 	for _, test := range tblDate {
-		t, err := types.ParseTime(nil, test.Input, mysql.TypeDate, 0)
+		t, err := types.ParseTime(sc, test.Input, mysql.TypeDate, 0)
 		c.Assert(err, IsNil)
 		c.Assert(t.ToNumber().String(), Equals, test.Expect)
 	}
@@ -740,6 +723,31 @@ func (s *testTimeSuite) TestRoundFrac(c *C) {
 		c.Assert(err, IsNil)
 		c.Assert(nv.String(), Equals, t.Except)
 	}
+	// test different time zone
+	losAngelesTz, err := time.LoadLocation("America/Los_Angeles")
+	c.Assert(err, IsNil)
+	sc.TimeZone = losAngelesTz
+	tbl = []struct {
+		Input  string
+		Fsp    int8
+		Except string
+	}{
+		{"2019-11-25 07:25:45.123456", 4, "2019-11-25 07:25:45.1235"},
+		{"2019-11-25 07:25:45.123456", 5, "2019-11-25 07:25:45.12346"},
+		{"2019-11-25 07:25:45.123456", 0, "2019-11-25 07:25:45"},
+		{"2019-11-25 07:25:45.123456", 2, "2019-11-25 07:25:45.12"},
+		{"2019-11-26 11:30:45.999999", 4, "2019-11-26 11:30:46.0000"},
+		{"2019-11-26 11:30:45.999999", 0, "2019-11-26 11:30:46"},
+		{"2019-11-26 11:30:45.999999", 3, "2019-11-26 11:30:46.000"},
+	}
+
+	for _, t := range tbl {
+		v, err := types.ParseTime(sc, t.Input, mysql.TypeDatetime, types.MaxFsp)
+		c.Assert(err, IsNil)
+		nv, err := v.RoundFrac(sc, t.Fsp)
+		c.Assert(err, IsNil)
+		c.Assert(nv.String(), Equals, t.Except)
+	}
 
 	tbl = []struct {
 		Input  string
@@ -779,6 +787,10 @@ func (s *testTimeSuite) TestRoundFrac(c *C) {
 }
 
 func (s *testTimeSuite) TestConvert(c *C) {
+	sc := mock.NewContext().GetSessionVars().StmtCtx
+	sc.IgnoreZeroInDate = true
+	losAngelesTz, _ := time.LoadLocation("America/Los_Angeles")
+	sc.TimeZone = losAngelesTz
 	defer testleak.AfterTest(c)()
 	tbl := []struct {
 		Input  string
@@ -795,7 +807,7 @@ func (s *testTimeSuite) TestConvert(c *C) {
 	}
 
 	for _, t := range tbl {
-		v, err := types.ParseTime(nil, t.Input, mysql.TypeDatetime, t.Fsp)
+		v, err := types.ParseTime(sc, t.Input, mysql.TypeDatetime, t.Fsp)
 		c.Assert(err, IsNil)
 		nv, err := v.ConvertToDuration()
 		c.Assert(err, IsNil)
@@ -811,23 +823,22 @@ func (s *testTimeSuite) TestConvert(c *C) {
 		{"11:30:45.123456", 0},
 		{"1 11:30:45.999999", 0},
 	}
-
-	sc := mock.NewContext().GetSessionVars().StmtCtx
+	// test different time zone.
 	sc.TimeZone = time.UTC
 	for _, t := range tblDuration {
 		v, err := types.ParseDuration(sc, t.Input, t.Fsp)
 		c.Assert(err, IsNil)
-		year, month, day := time.Now().In(time.UTC).Date()
-		n := time.Date(year, month, day, 0, 0, 0, 0, time.UTC)
+		year, month, day := time.Now().In(sc.TimeZone).Date()
+		n := time.Date(year, month, day, 0, 0, 0, 0, sc.TimeZone)
 		t, err := v.ConvertToTime(sc, mysql.TypeDatetime)
 		c.Assert(err, IsNil)
-		// TODO: Consider time_zone variable.
-		t1, _ := t.Time.GoTime(time.UTC)
+		t1, _ := t.Time.GoTime(sc.TimeZone)
 		c.Assert(t1.Sub(n), Equals, v.Duration)
 	}
 }
 
 func (s *testTimeSuite) TestCompare(c *C) {
+	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
 	defer testleak.AfterTest(c)()
 	tbl := []struct {
 		Arg1 string
@@ -842,7 +853,7 @@ func (s *testTimeSuite) TestCompare(c *C) {
 	}
 
 	for _, t := range tbl {
-		v1, err := types.ParseTime(nil, t.Arg1, mysql.TypeDatetime, types.MaxFsp)
+		v1, err := types.ParseTime(sc, t.Arg1, mysql.TypeDatetime, types.MaxFsp)
 		c.Assert(err, IsNil)
 
 		ret, err := v1.CompareString(nil, t.Arg2)
@@ -850,7 +861,7 @@ func (s *testTimeSuite) TestCompare(c *C) {
 		c.Assert(ret, Equals, t.Ret)
 	}
 
-	v1, err := types.ParseTime(nil, "2011-10-10 11:11:11", mysql.TypeDatetime, types.MaxFsp)
+	v1, err := types.ParseTime(sc, "2011-10-10 11:11:11", mysql.TypeDatetime, types.MaxFsp)
 	c.Assert(err, IsNil)
 	res, err := v1.CompareString(nil, "Test should error")
 	c.Assert(err, NotNil)
@@ -1011,11 +1022,11 @@ func (s *testTimeSuite) TestTimeAdd(c *C) {
 		TimeZone: time.UTC,
 	}
 	for _, t := range tbl {
-		v1, err := types.ParseTime(nil, t.Arg1, mysql.TypeDatetime, types.MaxFsp)
+		v1, err := types.ParseTime(sc, t.Arg1, mysql.TypeDatetime, types.MaxFsp)
 		c.Assert(err, IsNil)
 		dur, err := types.ParseDuration(sc, t.Arg2, types.MaxFsp)
 		c.Assert(err, IsNil)
-		result, err := types.ParseTime(nil, t.Ret, mysql.TypeDatetime, types.MaxFsp)
+		result, err := types.ParseTime(sc, t.Ret, mysql.TypeDatetime, types.MaxFsp)
 		c.Assert(err, IsNil)
 		v2, err := v1.Add(sc, dur)
 		c.Assert(err, IsNil)
@@ -1478,8 +1489,8 @@ func (s *testTimeSuite) TestParseDurationValue(c *C) {
 		{"-1 1", "YEAR_MONTH", -1, -1, 0, 0, nil},
 		{"-aa1bb1", "YEAR_MONTH", -1, -1, 0, 0, nil},
 		{" \t\n\r\n - aa1bb1 \t\n ", "YEAR_MONTH", -1, -1, 0, 0, nil},
-		{"1.111", "MICROSECOND", 0, 0, 0, 1000, types.ErrTruncatedWrongValue},
-		{"1.111", "DAY", 0, 0, 1, 0, types.ErrTruncatedWrongValue},
+		{"1.111", "MICROSECOND", 0, 0, 0, 1000, types.ErrTruncatedWrongVal},
+		{"1.111", "DAY", 0, 0, 1, 0, types.ErrTruncatedWrongVal},
 	}
 	for _, col := range tbl {
 		comment := Commentf("Extract %v Unit %v", col.format, col.unit)
@@ -1648,9 +1659,9 @@ func (s *testTimeSuite) TestTimeSub(c *C) {
 		TimeZone: time.UTC,
 	}
 	for _, t := range tbl {
-		v1, err := types.ParseTime(nil, t.Arg1, mysql.TypeDatetime, types.MaxFsp)
+		v1, err := types.ParseTime(sc, t.Arg1, mysql.TypeDatetime, types.MaxFsp)
 		c.Assert(err, IsNil)
-		v2, err := types.ParseTime(nil, t.Arg2, mysql.TypeDatetime, types.MaxFsp)
+		v2, err := types.ParseTime(sc, t.Arg2, mysql.TypeDatetime, types.MaxFsp)
 		c.Assert(err, IsNil)
 		dur, err := types.ParseDuration(sc, t.Ret, types.MaxFsp)
 		c.Assert(err, IsNil)
@@ -1694,7 +1705,7 @@ func (s *testTimeSuite) TestCheckMonthDay(c *C) {
 		if t.isValidDate {
 			c.Check(err, IsNil)
 		} else {
-			c.Check(types.ErrIncorrectDatetimeValue.Equal(err), IsTrue)
+			c.Check(types.ErrWrongValue.Equal(err), IsTrue)
 		}
 	}
 }

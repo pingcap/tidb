@@ -96,13 +96,15 @@ var vecBuiltinJSONCases = map[string][]vecExprBenchCase{
 	ast.JSONUnquote: {
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{&jsonStringGener{}}},
 	},
-	ast.JSONRemove: {},
-	ast.JSONMerge:  {{retEvalType: types.ETJson, childrenTypes: []types.EvalType{types.ETJson, types.ETJson, types.ETJson, types.ETJson, types.ETJson}}},
+	ast.JSONRemove: {
+		{retEvalType: types.ETJson, childrenTypes: []types.EvalType{types.ETJson, types.ETString}, geners: []dataGenerator{nil, &constStrGener{"$.key"}}},
+	},
+	ast.JSONMerge: {{retEvalType: types.ETJson, childrenTypes: []types.EvalType{types.ETJson, types.ETJson, types.ETJson, types.ETJson, types.ETJson}}},
 	ast.JSONInsert: {
 		{retEvalType: types.ETJson, childrenTypes: []types.EvalType{types.ETJson, types.ETString, types.ETJson, types.ETString, types.ETJson}, geners: []dataGenerator{nil, &constStrGener{"$.aaa"}, nil, &constStrGener{"$.bbb"}, nil}},
 	},
 	ast.JSONQuote: {
-		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETJson}},
+		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString}},
 	},
 }
 

@@ -250,6 +250,11 @@ func (d *MyDecimal) GetDigitsFrac() int8 {
 	return d.digitsFrac
 }
 
+// GetDigitsInt returns the digitsInt.
+func (d *MyDecimal) GetDigitsInt() int8 {
+	return d.digitsInt
+}
+
 // String returns the decimal string representation rounded to resultFrac.
 func (d *MyDecimal) String() string {
 	tmp := *d
@@ -1781,10 +1786,10 @@ func doAdd(from1, from2, to *MyDecimal) error {
 	stop = 0
 	if wordsInt1 > wordsInt2 {
 		idx1 = wordsInt1 - wordsInt2
-		dec1, dec2 = from1, from2
+		dec1 = from1
 	} else {
 		idx1 = wordsInt2 - wordsInt1
-		dec1, dec2 = from2, from1
+		dec1 = from2
 	}
 	for idx1 > stop {
 		idxTo--

@@ -19,10 +19,24 @@ import (
 	"github.com/pingcap/parser/terror"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/util/testkit"
+	"github.com/pingcap/tidb/util/testutil"
 )
 
 type testSuiteAgg struct {
 	*baseTestSuite
+	testData testutil.TestData
+}
+
+func (s *testSuiteAgg) SetUpSuite(c *C) {
+	s.baseTestSuite.SetUpSuite(c)
+	var err error
+	s.testData, err = testutil.LoadTestSuiteData("testdata", "agg_suite")
+	c.Assert(err, IsNil)
+}
+
+func (s *testSuiteAgg) TearDownSuite(c *C) {
+	s.baseTestSuite.TearDownSuite(c)
+	c.Assert(s.testData.GenerateOutputIfNeeded(), IsNil)
 }
 
 func (s *testSuiteAgg) TestAggregation(c *C) {
@@ -355,6 +369,17 @@ func (s *testSuiteAgg) TestAggregation(c *C) {
 	c.Assert(errors.Cause(err).Error(), Equals, "unsupported agg function: var_pop")
 	_, err = tk.Exec("select var_samp(a) from t")
 	c.Assert(errors.Cause(err).Error(), Equals, "unsupported agg function: var_samp")
+
+	// For issue #14072: wrong result when using generated column with aggregate statement
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1 (a int, b int generated always as (-a) virtual, c int generated always as (-a) stored);")
+	tk.MustExec("insert into t1 (a) values (2), (1), (1), (3), (NULL);")
+	tk.MustQuery("select sum(a) from t1 group by b order by b;").Check(testkit.Rows("<nil>", "3", "2", "2"))
+	tk.MustQuery("select sum(a) from t1 group by c order by c;").Check(testkit.Rows("<nil>", "3", "2", "2"))
+	tk.MustQuery("select sum(b) from t1 group by a order by a;").Check(testkit.Rows("<nil>", "-2", "-2", "-3"))
+	tk.MustQuery("select sum(b) from t1 group by c order by c;").Check(testkit.Rows("<nil>", "-3", "-2", "-2"))
+	tk.MustQuery("select sum(c) from t1 group by a order by a;").Check(testkit.Rows("<nil>", "-2", "-2", "-3"))
+	tk.MustQuery("select sum(c) from t1 group by b order by b;").Check(testkit.Rows("<nil>", "-3", "-2", "-2"))
 }
 
 func (s *testSuiteAgg) TestAggPrune(c *C) {
@@ -645,25 +670,17 @@ func (s *testSuiteAgg) TestInjectProjBelowTopN(c *C) {
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t (i int);")
 	tk.MustExec("insert into t values (1), (1), (1),(2),(3),(2),(3),(2),(3);")
-	tk.MustQuery("explain select * from t order by i + 1").Check(testkit.Rows(
-		"Projection_8 10000.00 root Column#1",
-		"└─Sort_4 10000.00 root Column#3:asc",
-		"  └─Projection_9 10000.00 root Column#1, plus(Column#1, 1)",
-		"    └─TableReader_7 10000.00 root data:TableScan_6",
-		"      └─TableScan_6 10000.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false, stats:pseudo"))
-	rs := tk.MustQuery("select * from t order by i + 1 ")
-	rs.Check(testkit.Rows(
-		"1", "1", "1", "2", "2", "2", "3", "3", "3"))
-	tk.MustQuery("explain select * from t order by i + 1 limit 2").Check(testkit.Rows(
-		"Projection_15 2.00 root Column#1",
-		"└─TopN_7 2.00 root Column#3:asc, offset:0, count:2",
-		"  └─Projection_16 2.00 root Column#1, plus(Column#1, 1)",
-		"    └─TableReader_12 2.00 root data:TopN_11",
-		"      └─TopN_11 2.00 cop[tikv] plus(Column#1, 1):asc, offset:0, count:2",
-		"        └─TableScan_10 10000.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false, stats:pseudo"))
-	rs = tk.MustQuery("select * from t order by i + 1 limit 2")
-	rs.Check(testkit.Rows("1", "1"))
-	tk.MustQuery("select i, i, i from t order by i + 1").Check(testkit.Rows("1 1 1", "1 1 1", "1 1 1", "2 2 2", "2 2 2", "2 2 2", "3 3 3", "3 3 3", "3 3 3"))
+	var (
+		input  []string
+		output [][]string
+	)
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i] = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+		})
+		tk.MustQuery(tt).Check(testkit.Rows(output[i]...))
+	}
 }
 
 func (s *testSuiteAgg) TestFirstRowEnum(c *C) {
@@ -767,32 +784,15 @@ func (s *testSuiteAgg) TestIssue12759HashAggCalledByApply(c *C) {
 	tk.MustExec("insert into test value(1);")
 	tk.MustQuery("select /*+ hash_agg() */ sum(a), (select NULL from test where tt.a = test.a limit 1),(select NULL from test where tt.a = test.a limit 1),(select NULL from test where tt.a = test.a limit 1) from test tt;").Check(testkit.Rows("1 <nil> <nil> <nil>"))
 
-	// make sure the plan is Apply -> Apply -> Apply -> HashAgg, and the count of Apply is equal to HashAggFinalConcurrency-1.
-	tk.MustQuery("explain select /*+ hash_agg() */ sum(a), (select NULL from test where tt.a = test.a limit 1),(select NULL from test where tt.a = test.a limit 1),(select NULL from test where tt.a = test.a limit 1) from test tt;").Check(testkit.Rows("" +
-		"Projection_28 1.00 root Column#3, Column#6, Column#9, Column#12]\n" +
-		"[└─Apply_30 1.00 root CARTESIAN left outer join, inner:Projection_65]\n" +
-		"[  ├─Apply_32 1.00 root CARTESIAN left outer join, inner:Projection_54]\n" +
-		"[  │ ├─Apply_34 1.00 root CARTESIAN left outer join, inner:Projection_43]\n" +
-		"[  │ │ ├─HashAgg_39 1.00 root funcs:sum(Column#22), firstrow(Column#23)]\n" +
-		"[  │ │ │ └─TableReader_40 1.00 root data:HashAgg_35]\n" +
-		"[  │ │ │   └─HashAgg_35 1.00 cop[tikv] funcs:sum(Column#1), firstrow(Column#1)]\n" +
-		"[  │ │ │     └─TableScan_38 10000.00 cop[tikv] table:tt, range:[-inf,+inf], keep order:false, stats:pseudo]\n" +
-		"[  │ │ └─Projection_43 1.00 root NULL]\n" +
-		"[  │ │   └─Limit_44 1.00 root offset:0, count:1]\n" +
-		"[  │ │     └─TableReader_50 1.00 root data:Limit_49]\n" +
-		"[  │ │       └─Limit_49 1.00 cop[tikv] offset:0, count:1]\n" +
-		"[  │ │         └─Selection_48 1.00 cop[tikv] eq(Column#1, Column#4)]\n" +
-		"[  │ │           └─TableScan_47 1000.00 cop[tikv] table:test, range:[-inf,+inf], keep order:false, stats:pseudo]\n" +
-		"[  │ └─Projection_54 1.00 root NULL]\n" +
-		"[  │   └─Limit_55 1.00 root offset:0, count:1]\n" +
-		"[  │     └─TableReader_61 1.00 root data:Limit_60]\n" +
-		"[  │       └─Limit_60 1.00 cop[tikv] offset:0, count:1]\n" +
-		"[  │         └─Selection_59 1.00 cop[tikv] eq(Column#1, Column#7)]\n" +
-		"[  │           └─TableScan_58 1000.00 cop[tikv] table:test, range:[-inf,+inf], keep order:false, stats:pseudo]\n" +
-		"[  └─Projection_65 1.00 root NULL]\n" +
-		"[    └─Limit_66 1.00 root offset:0, count:1]\n" +
-		"[      └─TableReader_72 1.00 root data:Limit_71]\n" +
-		"[        └─Limit_71 1.00 cop[tikv] offset:0, count:1]\n" +
-		"[          └─Selection_70 1.00 cop[tikv] eq(Column#1, Column#10)]\n" +
-		"[            └─TableScan_69 1000.00 cop[tikv] table:test, range:[-inf,+inf], keep order:false, stats:pseudo"))
+	var (
+		input  []string
+		output [][]string
+	)
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i] = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+		})
+		tk.MustQuery(tt).Check(testkit.Rows(output[i]...))
+	}
 }

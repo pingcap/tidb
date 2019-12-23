@@ -15,6 +15,7 @@ package privileges
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -29,9 +30,11 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/hack"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/stringutil"
-	log "github.com/sirupsen/logrus"
+	"go.uber.org/zap"
 )
 
 var (
@@ -59,6 +62,71 @@ type UserRecord struct {
 	// patChars is compiled from Host, cached for pattern match performance.
 	patChars []byte
 	patTypes []byte
+}
+
+type globalPrivRecord struct {
+	Host   string
+	User   string
+	Priv   GlobalPrivValue
+	Broken bool
+
+	// patChars is compiled from Host, cached for pattern match performance.
+	patChars []byte
+	patTypes []byte
+}
+
+// SSLType is enum value for GlobalPrivValue.SSLType.
+// the value is compatible with MySQL storage json value.
+type SSLType int
+
+const (
+	// SslTypeNotSpecified indicates .
+	SslTypeNotSpecified SSLType = iota - 1
+	// SslTypeNone indicates not require use ssl.
+	SslTypeNone
+	// SslTypeAny indicates require use ssl but not validate cert.
+	SslTypeAny
+	// SslTypeX509 indicates require use ssl and validate cert.
+	SslTypeX509
+	// SslTypeSpecified indicates require use ssl and validate cert's subject or issuer.
+	SslTypeSpecified
+)
+
+// GlobalPrivValue is store json format for priv column in mysql.global_priv.
+type GlobalPrivValue struct {
+	SSLType     SSLType `json:"ssl_type,omitempty"`
+	SSLCipher   string  `json:"ssl_cipher,omitempty"`
+	X509Issuer  string  `json:"x509_issuer,omitempty"`
+	X509Subject string  `json:"x509_subject,omitempty"`
+}
+
+// RequireStr returns describe string after `REQUIRE` clause.
+func (g *GlobalPrivValue) RequireStr() string {
+	require := "NONE"
+	switch g.SSLType {
+	case SslTypeAny:
+		require = "SSL"
+	case SslTypeX509:
+		require = "X509"
+	case SslTypeSpecified:
+		var s []string
+		if len(g.SSLCipher) > 0 {
+			s = append(s, "CIPHER")
+			s = append(s, "'"+g.SSLCipher+"'")
+		}
+		if len(g.X509Issuer) > 0 {
+			s = append(s, "ISSUER")
+			s = append(s, "'"+g.X509Issuer+"'")
+		}
+		if len(g.X509Subject) > 0 {
+			s = append(s, "SUBJECT")
+			s = append(s, "'"+g.X509Subject+"'")
+		}
+		if len(s) > 0 {
+			require = strings.Join(s, " ")
+		}
+	}
+	return require
 }
 
 type dbRecord struct {
@@ -136,12 +204,28 @@ func (g roleGraphEdgesTable) Find(user, host string) bool {
 
 // MySQLPrivilege is the in-memory cache of mysql privilege tables.
 type MySQLPrivilege struct {
-	User         []UserRecord
-	DB           []dbRecord
-	TablesPriv   []tablesPrivRecord
-	ColumnsPriv  []columnsPrivRecord
-	DefaultRoles []defaultRoleRecord
-	RoleGraph    map[string]roleGraphEdgesTable
+	// In MySQL, a user identity consists of a user + host.
+	// Either portion of user or host can contain wildcards,
+	// requiring the privileges system to use a list-like
+	// structure instead of a hash.
+
+	// TiDB contains a sensible behavior difference from MySQL,
+	// which is that usernames can not contain wildcards.
+	// This means that DB-records are organized in both a
+	// slice (p.DB) and a Map (p.DBMap).
+
+	// This helps in the case that there are a number of users with
+	// non-full privileges (i.e. user.db entries).
+	User          []UserRecord
+	UserMap       map[string][]UserRecord // Accelerate User searching
+	Global        map[string][]globalPrivRecord
+	DB            []dbRecord
+	DBMap         map[string][]dbRecord // Accelerate DB searching
+	TablesPriv    []tablesPrivRecord
+	TablesPrivMap map[string][]tablesPrivRecord // Accelerate TablesPriv searching
+	ColumnsPriv   []columnsPrivRecord
+	DefaultRoles  []defaultRoleRecord
+	RoleGraph     map[string]roleGraphEdgesTable
 }
 
 // FindAllRole is used to find all roles grant to this user.
@@ -184,47 +268,58 @@ func (p *MySQLPrivilege) FindRole(user string, host string, role *auth.RoleIdent
 func (p *MySQLPrivilege) LoadAll(ctx sessionctx.Context) error {
 	err := p.LoadUserTable(ctx)
 	if err != nil {
+		logutil.BgLogger().Warn("load mysql.user fail", zap.Error(err))
+		return errLoadPrivilege.FastGen("mysql.user")
+	}
+
+	err = p.LoadGlobalPrivTable(ctx)
+	if err != nil {
 		return errors.Trace(err)
 	}
 
 	err = p.LoadDBTable(ctx)
 	if err != nil {
 		if !noSuchTable(err) {
-			return errors.Trace(err)
+			logutil.BgLogger().Warn("load mysql.db fail", zap.Error(err))
+			return errLoadPrivilege.FastGen("mysql.db")
 		}
-		log.Warn("mysql.db maybe missing")
+		logutil.BgLogger().Warn("mysql.db maybe missing")
 	}
 
 	err = p.LoadTablesPrivTable(ctx)
 	if err != nil {
 		if !noSuchTable(err) {
-			return errors.Trace(err)
+			logutil.BgLogger().Warn("load mysql.tables_priv fail", zap.Error(err))
+			return errLoadPrivilege.FastGen("mysql.tables_priv")
 		}
-		log.Warn("mysql.tables_priv missing")
+		logutil.BgLogger().Warn("mysql.tables_priv missing")
 	}
 
 	err = p.LoadDefaultRoles(ctx)
 	if err != nil {
 		if !noSuchTable(err) {
-			return errors.Trace(err)
+			logutil.BgLogger().Warn("load mysql.roles", zap.Error(err))
+			return errLoadPrivilege.FastGen("mysql.roles")
 		}
-		log.Warn("mysql.default_roles missing")
+		logutil.BgLogger().Warn("mysql.default_roles missing")
 	}
 
 	err = p.LoadColumnsPrivTable(ctx)
 	if err != nil {
 		if !noSuchTable(err) {
-			return errors.Trace(err)
+			logutil.BgLogger().Warn("load mysql.columns_priv", zap.Error(err))
+			return errLoadPrivilege.FastGen("mysql.columns_priv")
 		}
-		log.Warn("mysql.columns_priv missing")
+		logutil.BgLogger().Warn("mysql.columns_priv missing")
 	}
 
 	err = p.LoadRoleGraph(ctx)
 	if err != nil {
 		if !noSuchTable(err) {
-			return errors.Trace(err)
+			logutil.BgLogger().Warn("load mysql.role_edges", zap.Error(err))
+			return errLoadPrivilege.FastGen("mysql.role_edges")
 		}
-		log.Warn("mysql.role_edges missing")
+		logutil.BgLogger().Warn("mysql.role_edges missing")
 	}
 	return nil
 }
@@ -267,7 +362,16 @@ func (p *MySQLPrivilege) LoadUserTable(ctx sessionctx.Context) error {
 	// 3. The server uses the first row that matches the client host name and user name.
 	// The server uses sorting rules that order rows with the most-specific Host values first.
 	p.SortUserTable()
+	p.buildUserMap()
 	return nil
+}
+
+func (p *MySQLPrivilege) buildUserMap() {
+	userMap := make(map[string][]UserRecord, len(p.User))
+	for _, record := range p.User {
+		userMap[record.User] = append(userMap[record.User], record)
+	}
+	p.UserMap = userMap
 }
 
 type sortedUserRecord []UserRecord
@@ -351,14 +455,45 @@ func (p MySQLPrivilege) SortUserTable() {
 	sort.Sort(sortedUserRecord(p.User))
 }
 
+// LoadGlobalPrivTable loads the mysql.global_priv table from database.
+func (p *MySQLPrivilege) LoadGlobalPrivTable(ctx sessionctx.Context) error {
+	return p.loadTable(ctx, "select HIGH_PRIORITY Host,User,Priv from mysql.global_priv", p.decodeGlobalPrivTableRow)
+}
+
 // LoadDBTable loads the mysql.db table from database.
 func (p *MySQLPrivilege) LoadDBTable(ctx sessionctx.Context) error {
-	return p.loadTable(ctx, "select HIGH_PRIORITY Host,DB,User,Select_priv,Insert_priv,Update_priv,Delete_priv,Create_priv,Drop_priv,Grant_priv,Index_priv,Alter_priv,Execute_priv,Create_view_priv,Show_view_priv from mysql.db order by host, db, user;", p.decodeDBTableRow)
+	err := p.loadTable(ctx, "select HIGH_PRIORITY Host,DB,User,Select_priv,Insert_priv,Update_priv,Delete_priv,Create_priv,Drop_priv,Grant_priv,Index_priv,Alter_priv,Execute_priv,Create_view_priv,Show_view_priv from mysql.db order by host, db, user;", p.decodeDBTableRow)
+	if err != nil {
+		return err
+	}
+	p.buildDBMap()
+	return nil
+}
+
+func (p *MySQLPrivilege) buildDBMap() {
+	dbMap := make(map[string][]dbRecord, len(p.DB))
+	for _, record := range p.DB {
+		dbMap[record.User] = append(dbMap[record.User], record)
+	}
+	p.DBMap = dbMap
 }
 
 // LoadTablesPrivTable loads the mysql.tables_priv table from database.
 func (p *MySQLPrivilege) LoadTablesPrivTable(ctx sessionctx.Context) error {
-	return p.loadTable(ctx, "select HIGH_PRIORITY Host,DB,User,Table_name,Grantor,Timestamp,Table_priv,Column_priv from mysql.tables_priv", p.decodeTablesPrivTableRow)
+	err := p.loadTable(ctx, "select HIGH_PRIORITY Host,DB,User,Table_name,Grantor,Timestamp,Table_priv,Column_priv from mysql.tables_priv", p.decodeTablesPrivTableRow)
+	if err != nil {
+		return err
+	}
+	p.buildTablesPrivMap()
+	return nil
+}
+
+func (p *MySQLPrivilege) buildTablesPrivMap() {
+	tablesPrivMap := make(map[string][]tablesPrivRecord, len(p.TablesPriv))
+	for _, record := range p.TablesPriv {
+		tablesPrivMap[record.User] = append(tablesPrivMap[record.User], record)
+	}
+	p.TablesPrivMap = tablesPrivMap
 }
 
 // LoadColumnsPrivTable loads the mysql.columns_priv table from database.
@@ -432,6 +567,40 @@ func (p *MySQLPrivilege) decodeUserTableRow(row chunk.Row, fs []*ast.ResultField
 		}
 	}
 	p.User = append(p.User, value)
+	return nil
+}
+
+func (p *MySQLPrivilege) decodeGlobalPrivTableRow(row chunk.Row, fs []*ast.ResultField) error {
+	var value globalPrivRecord
+	for i, f := range fs {
+		switch {
+		case f.ColumnAsName.L == "host":
+			value.Host = row.GetString(i)
+			value.patChars, value.patTypes = stringutil.CompilePattern(value.Host, '\\')
+		case f.ColumnAsName.L == "user":
+			value.User = row.GetString(i)
+		case f.ColumnAsName.L == "priv":
+			privData := row.GetString(i)
+			if len(privData) > 0 {
+				var privValue GlobalPrivValue
+				err := json.Unmarshal(hack.Slice(privData), &privValue)
+				if err != nil {
+					logutil.BgLogger().Error("one user global priv data is broken, forbidden login until data be fixed",
+						zap.String("user", value.User), zap.String("host", value.Host))
+					value.Broken = true
+				} else {
+					value.Priv.SSLType = privValue.SSLType
+					value.Priv.SSLCipher = privValue.SSLCipher
+					value.Priv.X509Issuer = privValue.X509Issuer
+					value.Priv.X509Subject = privValue.X509Subject
+				}
+			}
+		}
+	}
+	if p.Global == nil {
+		p.Global = make(map[string][]globalPrivRecord)
+	}
+	p.Global[value.User] = append(p.Global[value.User], value)
 	return nil
 }
 
@@ -566,12 +735,16 @@ func decodeSetToPrivilege(s types.Set) mysql.PrivilegeType {
 	for _, str := range strings.Split(s.Name, ",") {
 		priv, ok := mysql.SetStr2Priv[str]
 		if !ok {
-			log.Warn("unsupported privilege type:", str)
+			logutil.BgLogger().Warn("unsupported privilege", zap.String("type", str))
 			continue
 		}
 		ret |= priv
 	}
 	return ret
+}
+
+func (record *globalPrivRecord) match(user, host string) bool {
+	return record.User == user && patternMatch(host, record.patChars, record.patTypes)
 }
 
 func (record *UserRecord) match(user, host string) bool {
@@ -617,9 +790,13 @@ func (p *MySQLPrivilege) connectionVerification(user, host string) *UserRecord {
 	return nil
 }
 
-func (p *MySQLPrivilege) matchUser(user, host string) *UserRecord {
-	for i := 0; i < len(p.User); i++ {
-		record := &p.User[i]
+func (p *MySQLPrivilege) matchGlobalPriv(user, host string) *globalPrivRecord {
+	uGlobal, exists := p.Global[user]
+	if !exists {
+		return nil
+	}
+	for i := 0; i < len(uGlobal); i++ {
+		record := &uGlobal[i]
 		if record.match(user, host) {
 			return record
 		}
@@ -627,21 +804,40 @@ func (p *MySQLPrivilege) matchUser(user, host string) *UserRecord {
 	return nil
 }
 
+func (p *MySQLPrivilege) matchUser(user, host string) *UserRecord {
+	records, exists := p.UserMap[user]
+	if exists {
+		for i := 0; i < len(records); i++ {
+			record := &records[i]
+			if record.match(user, host) {
+				return record
+			}
+		}
+	}
+	return nil
+}
+
 func (p *MySQLPrivilege) matchDB(user, host, db string) *dbRecord {
-	for i := 0; i < len(p.DB); i++ {
-		record := &p.DB[i]
-		if record.match(user, host, db) {
-			return record
+	records, exists := p.DBMap[user]
+	if exists {
+		for i := 0; i < len(records); i++ {
+			record := &records[i]
+			if record.match(user, host, db) {
+				return record
+			}
 		}
 	}
 	return nil
 }
 
 func (p *MySQLPrivilege) matchTables(user, host, db, table string) *tablesPrivRecord {
-	for i := 0; i < len(p.TablesPriv); i++ {
-		record := &p.TablesPriv[i]
-		if record.match(user, host, db, table) {
-			return record
+	records, exists := p.TablesPrivMap[user]
+	if exists {
+		for i := 0; i < len(records); i++ {
+			record := &records[i]
+			if record.match(user, host, db, table) {
+				return record
+			}
 		}
 	}
 	return nil
@@ -1053,7 +1249,7 @@ func (h *Handle) Update(ctx sessionctx.Context) error {
 	var priv MySQLPrivilege
 	err := priv.LoadAll(ctx)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 
 	h.priv.Store(&priv)

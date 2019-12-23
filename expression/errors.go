@@ -29,6 +29,7 @@ var (
 	ErrOperandColumns          = terror.ClassExpression.New(mysql.ErrOperandColumns, mysql.MySQLErrName[mysql.ErrOperandColumns])
 	ErrCutValueGroupConcat     = terror.ClassExpression.New(mysql.ErrCutValueGroupConcat, mysql.MySQLErrName[mysql.ErrCutValueGroupConcat])
 	ErrFunctionsNoopImpl       = terror.ClassExpression.New(mysql.ErrNotSupportedYet, "function %s has only noop implementation in tidb now, use tidb_enable_noop_functions to enable these functions")
+	ErrIncorrectType           = terror.ClassExpression.New(mysql.ErrIncorrectType, mysql.MySQLErrName[mysql.ErrIncorrectType])
 
 	// All the un-exported errors are defined here:
 	errFunctionNotExists             = terror.ClassExpression.New(mysql.ErrSpDoesNotExist, mysql.MySQLErrName[mysql.ErrSpDoesNotExist])
@@ -51,6 +52,7 @@ func init() {
 		mysql.ErrWrongParamcountToNativeFct:        mysql.ErrWrongParamcountToNativeFct,
 		mysql.ErrDivisionByZero:                    mysql.ErrDivisionByZero,
 		mysql.ErrSpDoesNotExist:                    mysql.ErrSpDoesNotExist,
+		mysql.ErrNotSupportedYet:                   mysql.ErrNotSupportedYet,
 		mysql.ErrZlibZData:                         mysql.ErrZlibZData,
 		mysql.ErrZlibZBuf:                          mysql.ErrZlibZBuf,
 		mysql.ErrWrongArguments:                    mysql.ErrWrongArguments,
@@ -66,14 +68,15 @@ func init() {
 		mysql.ErrUnknownLocale:                     mysql.ErrUnknownLocale,
 		mysql.ErrBadField:                          mysql.ErrBadField,
 		mysql.ErrNonUniq:                           mysql.ErrNonUniq,
+		mysql.ErrIncorrectType:                     mysql.ErrIncorrectType,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassExpression] = expressionMySQLErrCodes
 }
 
 // handleInvalidTimeError reports error or warning depend on the context.
 func handleInvalidTimeError(ctx sessionctx.Context, err error) error {
-	if err == nil || !(terror.ErrorEqual(err, types.ErrInvalidTimeFormat) || types.ErrIncorrectDatetimeValue.Equal(err) ||
-		types.ErrTruncatedWrongValue.Equal(err) || types.ErrInvalidWeekModeFormat.Equal(err) ||
+	if err == nil || !(types.ErrWrongValue.Equal(err) ||
+		types.ErrTruncatedWrongVal.Equal(err) || types.ErrInvalidWeekModeFormat.Equal(err) ||
 		types.ErrDatetimeFunctionOverflow.Equal(err)) {
 		return err
 	}

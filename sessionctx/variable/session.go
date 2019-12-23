@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"crypto/tls"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -43,19 +44,13 @@ import (
 	"github.com/pingcap/tidb/util/timeutil"
 )
 
-const (
-	codeCantGetValidID terror.ErrCode = 1
-	codeCantSetToNull  terror.ErrCode = 2
-	codeSnapshotTooOld terror.ErrCode = 3
-)
-
 var preparedStmtCount int64
 
 // Error instances.
 var (
-	errCantGetValidID = terror.ClassVariable.New(codeCantGetValidID, "cannot get valid auto-increment id in retry")
-	ErrCantSetToNull  = terror.ClassVariable.New(codeCantSetToNull, "cannot set variable to null")
-	ErrSnapshotTooOld = terror.ClassVariable.New(codeSnapshotTooOld, "snapshot is older than GC safe point %s")
+	errCantGetValidID = terror.ClassVariable.New(mysql.ErrCantGetValidID, mysql.MySQLErrName[mysql.ErrCantGetValidID])
+	ErrCantSetToNull  = terror.ClassVariable.New(mysql.ErrCantSetToNull, mysql.MySQLErrName[mysql.ErrCantSetToNull])
+	ErrSnapshotTooOld = terror.ClassVariable.New(mysql.ErrSnapshotTooOld, mysql.MySQLErrName[mysql.ErrSnapshotTooOld])
 )
 
 // RetryInfo saves retry information.
@@ -110,12 +105,32 @@ type TransactionContext struct {
 	Shard         *int64
 	TableDeltaMap map[int64]TableDelta
 
+	// unchangedRowKeys is used to store the unchanged rows that needs to lock for pessimistic transaction.
+	unchangedRowKeys map[string]struct{}
+
 	// CreateTime For metrics.
 	CreateTime     time.Time
 	StatementCount int
 	ForUpdate      bool
 	CouldRetry     bool
 	IsPessimistic  bool
+}
+
+// AddUnchangedRowKey adds an unchanged row key in update statement for pessimistic lock.
+func (tc *TransactionContext) AddUnchangedRowKey(key []byte) {
+	if tc.unchangedRowKeys == nil {
+		tc.unchangedRowKeys = map[string]struct{}{}
+	}
+	tc.unchangedRowKeys[string(key)] = struct{}{}
+}
+
+// CollectUnchangedRowKeys collects unchanged row keys for pessimistic lock.
+func (tc *TransactionContext) CollectUnchangedRowKeys(buf []kv.Key) []kv.Key {
+	for key := range tc.unchangedRowKeys {
+		buf = append(buf, kv.Key(key))
+	}
+	tc.unchangedRowKeys = nil
+	return buf
 }
 
 // UpdateDeltaForTable updates the delta info for some table.
@@ -202,6 +217,10 @@ type SessionVars struct {
 	Users map[string]string
 	// systems variables, don't modify it directly, use GetSystemVar/SetSystemVar method.
 	systems map[string]string
+	// SysWarningCount is the system variable "warning_count", because it is on the hot path, so we extract it from the systems
+	SysWarningCount int
+	// SysErrorCount is the system variable "error_count", because it is on the hot path, so we extract it from the systems
+	SysErrorCount uint16
 	// PreparedStmts stores prepared statement.
 	PreparedStmts        map[uint32]interface{}
 	PreparedStmtNameToID map[string]uint32
@@ -308,6 +327,8 @@ type SessionVars struct {
 	SeekFactor float64
 	// MemoryFactor is the memory cost of storing one tuple.
 	MemoryFactor float64
+	// DiskFactor is the IO cost of reading/writing one byte to temporary disk.
+	DiskFactor float64
 	// ConcurrencyFactor is the CPU cost of additional one goroutine.
 	ConcurrencyFactor float64
 
@@ -427,6 +448,9 @@ type SessionVars struct {
 	// PrevStmt is used to store the previous executed statement in the current session.
 	PrevStmt fmt.Stringer
 
+	// prevStmtDigest is used to store the digest of the previous statement in the current session.
+	prevStmtDigest string
+
 	// AllowRemoveAutoInc indicates whether a user can drop the auto_increment column attribute or not.
 	AllowRemoveAutoInc bool
 
@@ -455,6 +479,11 @@ type SessionVars struct {
 	// LockWaitTimeout is the duration waiting for pessimistic lock in milliseconds
 	// negative value means nowait, 0 means default behavior, others means actual wait time
 	LockWaitTimeout int64
+
+	// MetricSchemaStep indicates the step when query metric schema.
+	MetricSchemaStep int64
+	// MetricSchemaRangeDuration indicates the step when query metric schema.
+	MetricSchemaRangeDuration int64
 }
 
 // PreparedParams contains the parameters of the current prepared statement when executing it.
@@ -517,6 +546,7 @@ func NewSessionVars() *SessionVars {
 		DescScanFactor:              DefOptDescScanFactor,
 		SeekFactor:                  DefOptSeekFactor,
 		MemoryFactor:                DefOptMemoryFactor,
+		DiskFactor:                  DefOptDiskFactor,
 		ConcurrencyFactor:           DefOptConcurrencyFactor,
 		EnableRadixJoin:             false,
 		EnableVectorizedExpression:  DefEnableVectorizedExpression,
@@ -532,8 +562,10 @@ func NewSessionVars() *SessionVars {
 		AllowRemoveAutoInc:          DefTiDBAllowRemoveAutoInc,
 		UsePlanBaselines:            DefTiDBUsePlanBaselines,
 		EvolvePlanBaselines:         DefTiDBEvolvePlanBaselines,
-		isolationReadEngines:        map[kv.StoreType]struct{}{kv.TiKV: {}, kv.TiFlash: {}},
+		isolationReadEngines:        map[kv.StoreType]struct{}{kv.TiKV: {}, kv.TiFlash: {}, kv.TiDB: {}},
 		LockWaitTimeout:             DefInnodbLockWaitTimeout * 1000,
+		MetricSchemaStep:            DefTiDBMetricSchemaStep,
+		MetricSchemaRangeDuration:   DefTiDBMetricSchemaRangeDuration,
 	}
 	vars.Concurrency = Concurrency{
 		IndexLookupConcurrency:     DefIndexLookupConcurrency,
@@ -594,11 +626,8 @@ func (s *SessionVars) SetAllowInSubqToJoinAndAgg(val bool) {
 	s.allowInSubqToJoinAndAgg = val
 }
 
-// GetEnableIndexMerge get EnableIndexMerge from sql hints and SessionVars.enableIndexMerge.
+// GetEnableIndexMerge get EnableIndexMerge from SessionVars.enableIndexMerge.
 func (s *SessionVars) GetEnableIndexMerge() bool {
-	if s.StmtCtx.HasEnableIndexMergeHint {
-		return s.StmtCtx.EnableIndexMerge
-	}
 	return s.enableIndexMerge
 }
 
@@ -710,6 +739,11 @@ func (s *SessionVars) Location() *time.Location {
 
 // GetSystemVar gets the string value of a system variable.
 func (s *SessionVars) GetSystemVar(name string) (string, bool) {
+	if name == WarningCount {
+		return strconv.Itoa(s.SysWarningCount), true
+	} else if name == ErrorCount {
+		return strconv.Itoa(int(s.SysErrorCount)), true
+	}
 	val, ok := s.systems[name]
 	return val, ok
 }
@@ -851,6 +885,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.SeekFactor = tidbOptFloat64(val, DefOptSeekFactor)
 	case TiDBOptMemoryFactor:
 		s.MemoryFactor = tidbOptFloat64(val, DefOptMemoryFactor)
+	case TiDBOptDiskFactor:
+		s.DiskFactor = tidbOptFloat64(val, DefOptDiskFactor)
 	case TiDBOptConcurrencyFactor:
 		s.ConcurrencyFactor = tidbOptFloat64(val, DefOptConcurrencyFactor)
 	case TiDBIndexLookupConcurrency:
@@ -915,6 +951,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		atomic.StoreUint64(&config.GetGlobalConfig().Log.SlowThreshold, uint64(tidbOptInt64(val, logutil.DefaultSlowThreshold)))
 	case TiDBRecordPlanInSlowLog:
 		atomic.StoreUint32(&config.GetGlobalConfig().Log.RecordPlanInSlowLog, uint32(tidbOptInt64(val, logutil.DefaultRecordPlanInSlowLog)))
+	case TiDBEnableSlowLog:
+		atomic.StoreUint32(&config.GetGlobalConfig().Log.EnableSlowLog, uint32(tidbOptInt64(val, logutil.DefaultTiDBEnableSlowLog)))
 	case TiDBDDLSlowOprThreshold:
 		atomic.StoreUint32(&DDLSlowOprThreshold, uint32(tidbOptPositiveInt32(val, DefTiDBDDLSlowOprThreshold)))
 	case TiDBQueryLogMaxLen:
@@ -988,10 +1026,16 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 				s.isolationReadEngines[kv.TiKV] = struct{}{}
 			case kv.TiFlash.Name():
 				s.isolationReadEngines[kv.TiFlash] = struct{}{}
+			case kv.TiDB.Name():
+				s.isolationReadEngines[kv.TiDB] = struct{}{}
 			}
 		}
 	case TiDBStoreLimit:
 		storeutil.StoreLimit.Store(tidbOptInt64(val, DefTiDBStoreLimit))
+	case TiDBMetricSchemaStep:
+		s.MetricSchemaStep = tidbOptInt64(val, DefTiDBMetricSchemaStep)
+	case TiDBMetricSchemaRangeDuration:
+		s.MetricSchemaRangeDuration = tidbOptInt64(val, DefTiDBMetricSchemaRangeDuration)
 	}
 	s.systems[name] = val
 	return nil
@@ -1009,6 +1053,18 @@ func (s *SessionVars) setTxnMode(val string) error {
 		return ErrWrongValueForVar.FastGenByArgs(TiDBTxnMode, val)
 	}
 	return nil
+}
+
+// SetPrevStmtDigest sets the digest of the previous statement.
+func (s *SessionVars) SetPrevStmtDigest(prevStmtDigest string) {
+	s.prevStmtDigest = prevStmtDigest
+}
+
+// GetPrevStmtDigest returns the digest of the previous statement.
+func (s *SessionVars) GetPrevStmtDigest() string {
+	// Because `prevStmt` may be truncated, so it's senseless to normalize it.
+	// Even if `prevStmtDigest` is empty but `prevStmt` is not, just return it anyway.
+	return s.prevStmtDigest
 }
 
 // SetLocalSystemVar sets values of the local variables which in "server" scope.
@@ -1184,6 +1240,8 @@ const (
 	SlowLogCopWaitMax = "Cop_wait_max"
 	// SlowLogCopWaitAddr is the address of TiKV where the cop-task which cost wait process time run.
 	SlowLogCopWaitAddr = "Cop_wait_addr"
+	// SlowLogCopBackoffPrefix contains backoff information.
+	SlowLogCopBackoffPrefix = "Cop_backoff_"
 	// SlowLogMemMax is the max number bytes of memory used in this statement.
 	SlowLogMemMax = "Mem_max"
 	// SlowLogPrepared is used to indicate whether this sql execute in prepare.
@@ -1196,6 +1254,8 @@ const (
 	SlowLogPrevStmt = "Prev_stmt"
 	// SlowLogPlan is used to record the query plan.
 	SlowLogPlan = "Plan"
+	// SlowLogPlanDigest is used to record the query plan digest.
+	SlowLogPlanDigest = "Plan_digest"
 	// SlowLogPlanPrefix is the prefix of the plan value.
 	SlowLogPlanPrefix = ast.TiDBDecodePlan + "('"
 	// SlowLogPlanSuffix is the suffix of the plan value.
@@ -1223,6 +1283,7 @@ type SlowQueryLogItems struct {
 	HasMoreResults bool
 	PrevStmt       string
 	Plan           string
+	PlanDigest     string
 }
 
 // SlowLogFormat uses for formatting slow log.
@@ -1297,6 +1358,13 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 	if logItems.CopTasks != nil {
 		writeSlowLogItem(&buf, SlowLogNumCopTasksStr, strconv.FormatInt(int64(logItems.CopTasks.NumCopTasks), 10))
 		if logItems.CopTasks.NumCopTasks > 0 {
+			// make the result stable
+			backoffs := make([]string, 0, 3)
+			for backoff := range logItems.CopTasks.TotBackoffTimes {
+				backoffs = append(backoffs, backoff)
+			}
+			sort.Strings(backoffs)
+
 			if logItems.CopTasks.NumCopTasks == 1 {
 				buf.WriteString(SlowLogRowPrefixStr + fmt.Sprintf("%v%v%v %v%v%v",
 					SlowLogCopProcAvg, SlowLogSpaceMarkStr, logItems.CopTasks.AvgProcessTime.Seconds(),
@@ -1304,7 +1372,13 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 				buf.WriteString(SlowLogRowPrefixStr + fmt.Sprintf("%v%v%v %v%v%v",
 					SlowLogCopWaitAvg, SlowLogSpaceMarkStr, logItems.CopTasks.AvgWaitTime.Seconds(),
 					SlowLogCopWaitAddr, SlowLogSpaceMarkStr, logItems.CopTasks.MaxWaitAddress) + "\n")
-
+				for _, backoff := range backoffs {
+					backoffPrefix := SlowLogCopBackoffPrefix + backoff + "_"
+					buf.WriteString(SlowLogRowPrefixStr + fmt.Sprintf("%v%v%v %v%v%v\n",
+						backoffPrefix+"total_times", SlowLogSpaceMarkStr, logItems.CopTasks.TotBackoffTimes[backoff],
+						backoffPrefix+"total_time", SlowLogSpaceMarkStr, logItems.CopTasks.TotBackoffTime[backoff].Seconds(),
+					))
+				}
 			} else {
 				buf.WriteString(SlowLogRowPrefixStr + fmt.Sprintf("%v%v%v %v%v%v %v%v%v %v%v%v",
 					SlowLogCopProcAvg, SlowLogSpaceMarkStr, logItems.CopTasks.AvgProcessTime.Seconds(),
@@ -1316,6 +1390,17 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 					SlowLogCopWaitP90, SlowLogSpaceMarkStr, logItems.CopTasks.P90WaitTime.Seconds(),
 					SlowLogCopWaitMax, SlowLogSpaceMarkStr, logItems.CopTasks.MaxWaitTime.Seconds(),
 					SlowLogCopWaitAddr, SlowLogSpaceMarkStr, logItems.CopTasks.MaxWaitAddress) + "\n")
+				for _, backoff := range backoffs {
+					backoffPrefix := SlowLogCopBackoffPrefix + backoff + "_"
+					buf.WriteString(SlowLogRowPrefixStr + fmt.Sprintf("%v%v%v %v%v%v %v%v%v %v%v%v %v%v%v %v%v%v\n",
+						backoffPrefix+"total_times", SlowLogSpaceMarkStr, logItems.CopTasks.TotBackoffTimes[backoff],
+						backoffPrefix+"total_time", SlowLogSpaceMarkStr, logItems.CopTasks.TotBackoffTime[backoff].Seconds(),
+						backoffPrefix+"max_time", SlowLogSpaceMarkStr, logItems.CopTasks.MaxBackoffTime[backoff].Seconds(),
+						backoffPrefix+"max_addr", SlowLogSpaceMarkStr, logItems.CopTasks.MaxBackoffAddress[backoff],
+						backoffPrefix+"avg_time", SlowLogSpaceMarkStr, logItems.CopTasks.AvgBackoffTime[backoff].Seconds(),
+						backoffPrefix+"p90_time", SlowLogSpaceMarkStr, logItems.CopTasks.P90BackoffTime[backoff].Seconds(),
+					))
+				}
 			}
 		}
 	}
@@ -1328,6 +1413,9 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 	writeSlowLogItem(&buf, SlowLogSucc, strconv.FormatBool(logItems.Succ))
 	if len(logItems.Plan) != 0 {
 		writeSlowLogItem(&buf, SlowLogPlan, logItems.Plan)
+	}
+	if len(logItems.PlanDigest) != 0 {
+		writeSlowLogItem(&buf, SlowLogPlanDigest, logItems.PlanDigest)
 	}
 
 	if logItems.PrevStmt != "" {

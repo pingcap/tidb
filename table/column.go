@@ -154,7 +154,7 @@ func CastValues(ctx sessionctx.Context, rec []types.Datum, cols []*Column) (err 
 
 func handleWrongUtf8Value(ctx sessionctx.Context, col *model.ColumnInfo, casted *types.Datum, str string, i int) (types.Datum, error) {
 	sc := ctx.GetSessionVars().StmtCtx
-	err := ErrTruncateWrongValue.FastGen("incorrect utf8 value %x(%s) for column %s", casted.GetBytes(), str, col.Name)
+	err := ErrTruncatedWrongValueForField.FastGen("incorrect utf8 value %x(%s) for column %s", casted.GetBytes(), str, col.Name)
 	logutil.BgLogger().Error("incorrect UTF-8 value", zap.Uint64("conn", ctx.GetSessionVars().ConnectionID), zap.Error(err))
 	// Truncate to valid utf8 string.
 	truncateVal := types.NewStringDatum(str[:i])
@@ -168,7 +168,15 @@ func CastValue(ctx sessionctx.Context, val types.Datum, col *model.ColumnInfo) (
 	sc := ctx.GetSessionVars().StmtCtx
 	casted, err = val.ConvertTo(sc, &col.FieldType)
 	// TODO: make sure all truncate errors are handled by ConvertTo.
-	err = sc.HandleTruncate(err)
+	if types.ErrTruncated.Equal(err) {
+		str, err1 := val.ToString()
+		if err1 != nil {
+			logutil.BgLogger().Warn("Datum ToString failed", zap.Stringer("Datum", val), zap.Error(err1))
+		}
+		err = sc.HandleTruncate(types.ErrTruncatedWrongVal.GenWithStackByArgs(col.FieldType.CompactStr(), str))
+	} else {
+		err = sc.HandleTruncate(err)
+	}
 	if err != nil {
 		return casted, err
 	}
@@ -224,18 +232,6 @@ type ColDesc struct {
 
 const defaultPrivileges = "select,insert,update,references"
 
-// GetTypeDesc gets the description for column type.
-func (c *Column) GetTypeDesc() string {
-	desc := c.FieldType.CompactStr()
-	if mysql.HasUnsignedFlag(c.Flag) && c.Tp != mysql.TypeBit && c.Tp != mysql.TypeYear {
-		desc += " unsigned"
-	}
-	if mysql.HasZerofillFlag(c.Flag) && c.Tp != mysql.TypeYear {
-		desc += " zerofill"
-	}
-	return desc
-}
-
 // NewColDesc returns a new ColDesc for a column.
 func NewColDesc(col *Column) *ColDesc {
 	// TODO: if we have no primary key and a unique index which's columns are all not null
@@ -260,7 +256,7 @@ func NewColDesc(col *Column) *ColDesc {
 		defaultValue = col.GetDefaultValue()
 		if defaultValStr, ok := defaultValue.(string); ok {
 			if (col.Tp == mysql.TypeTimestamp || col.Tp == mysql.TypeDatetime) &&
-				strings.ToUpper(defaultValStr) == strings.ToUpper(ast.CurrentTimestamp) &&
+				strings.EqualFold(defaultValStr, ast.CurrentTimestamp) &&
 				col.Decimal > 0 {
 				defaultValue = fmt.Sprintf("%s(%d)", defaultValStr, col.Decimal)
 			}
@@ -316,7 +312,7 @@ func CheckOnce(cols []*Column) error {
 		name := col.Name
 		_, ok := m[name.L]
 		if ok {
-			return errDuplicateColumn.GenWithStack("column specified twice - %s", name)
+			return errDuplicateColumn.GenWithStackByArgs(name)
 		}
 
 		m[name.L] = struct{}{}
@@ -395,7 +391,7 @@ func getColDefaultValue(ctx sessionctx.Context, col *model.ColumnInfo, defaultVa
 	var needChangeTimeZone bool
 	// If the column's default value is not ZeroDatetimeStr nor CurrentTimestamp, should use the time zone of the default value itself.
 	if col.Tp == mysql.TypeTimestamp {
-		if vv, ok := defaultVal.(string); ok && vv != types.ZeroDatetimeStr && strings.ToUpper(vv) != strings.ToUpper(ast.CurrentTimestamp) {
+		if vv, ok := defaultVal.(string); ok && vv != types.ZeroDatetimeStr && !strings.EqualFold(vv, ast.CurrentTimestamp) {
 			needChangeTimeZone = true
 			originalTZ := sc.TimeZone
 			// For col.Version = 0, the timezone information of default value is already lost, so use the system timezone as the default value timezone.
@@ -408,8 +404,7 @@ func getColDefaultValue(ctx sessionctx.Context, col *model.ColumnInfo, defaultVa
 	}
 	value, err := expression.GetTimeValue(ctx, defaultVal, col.Tp, int8(col.Decimal))
 	if err != nil {
-		return types.Datum{}, errGetDefaultFailed.GenWithStack("Field '%s' get default value fail - %s",
-			col.Name, err)
+		return types.Datum{}, errGetDefaultFailed.GenWithStackByArgs(col.Name)
 	}
 	// If the column's default value is not ZeroDatetimeStr or CurrentTimestamp, convert the default value to the current session time zone.
 	if needChangeTimeZone {

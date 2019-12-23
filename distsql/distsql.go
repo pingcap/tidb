@@ -16,6 +16,7 @@ package distsql
 import (
 	"context"
 	"fmt"
+	"unsafe"
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
@@ -146,6 +147,7 @@ func Checksum(ctx context.Context, client kv.Client, kvReq *kv.Request, vars *kv
 func SetEncodeType(ctx sessionctx.Context, dagReq *tipb.DAGRequest) {
 	if canUseChunkRPC(ctx) {
 		dagReq.EncodeType = tipb.EncodeType_TypeChunk
+		setChunkMemoryLayout(dagReq)
 	} else {
 		dagReq.EncodeType = tipb.EncodeType_TypeDefault
 	}
@@ -158,5 +160,41 @@ func canUseChunkRPC(ctx sessionctx.Context) bool {
 	if ctx.GetSessionVars().EnableStreaming {
 		return false
 	}
+	if !checkAlignment() {
+		return false
+	}
 	return true
+}
+
+var supportedAlignment = !(unsafe.Sizeof(types.MysqlTime{}) != 16 ||
+	unsafe.Sizeof(types.Time{}) != 20 ||
+	unsafe.Sizeof(types.MyDecimal{}) != 40)
+
+// checkAlignment checks the alignment in current system environment.
+// The alignment is influenced by system, machine and Golang version.
+// Using this function can guarantee the alignment is we want.
+func checkAlignment() bool {
+	return supportedAlignment
+}
+
+var systemEndian tipb.Endian
+
+// setChunkMemoryLayout sets the chunk memory layout for the DAGRequest.
+func setChunkMemoryLayout(dagReq *tipb.DAGRequest) {
+	dagReq.ChunkMemoryLayout = &tipb.ChunkMemoryLayout{Endian: GetSystemEndian()}
+}
+
+// GetSystemEndian gets the system endian.
+func GetSystemEndian() tipb.Endian {
+	return systemEndian
+}
+
+func init() {
+	var i int = 0x0100
+	ptr := unsafe.Pointer(&i)
+	if 0x01 == *(*byte)(ptr) {
+		systemEndian = tipb.Endian_BigEndian
+	} else {
+		systemEndian = tipb.Endian_LittleEndian
+	}
 }

@@ -17,18 +17,31 @@ import (
 	"context"
 	"math"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
+)
+
+// Attention:
+// For reading cluster TiDB memory tables, the system schema/table should be same.
+// Once the system schema/table id been allocated, it can't be changed any more.
+// Change the system schema/table id may have the compatibility problem.
+const (
+	// SystemSchemaIDFlag is the system schema/table id flag, uses the highest bit position as system schema ID flag, it's exports for test.
+	SystemSchemaIDFlag = 1 << 62
+	// InformationSchemaDBID is the information_schema schema id, it's exports for test.
+	InformationSchemaDBID int64 = SystemSchemaIDFlag | 1
+	// PerformanceSchemaDBID is the performance_schema schema id, it's exports for test.
+	PerformanceSchemaDBID int64 = SystemSchemaIDFlag | 10000
+	// MetricSchemaDBID is the metric_schema schema id, it's exported for test.
+	MetricSchemaDBID int64 = SystemSchemaIDFlag | 20000
 )
 
 const (
@@ -39,8 +52,6 @@ const (
 
 // Test needs to change it, so it's a variable.
 var step = int64(30000)
-
-var errInvalidTableID = terror.ClassAutoid.New(codeInvalidTableID, "invalid TableID")
 
 // Allocator is an auto increment id generator.
 // Just keep id unique actually.
@@ -248,16 +259,6 @@ func NewAllocator(store kv.Storage, dbID int64, isUnsigned bool) Allocator {
 		step:          step,
 		lastAllocTime: time.Now(),
 	}
-}
-
-//codeInvalidTableID is the code of autoid error.
-const codeInvalidTableID terror.ErrCode = 1
-
-var localSchemaID = int64(math.MaxInt64)
-
-// GenLocalSchemaID generates a local schema ID.
-func GenLocalSchemaID() int64 {
-	return atomic.AddInt64(&localSchemaID, -1)
 }
 
 // Alloc implements autoid.Allocator Alloc interface.

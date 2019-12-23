@@ -14,6 +14,8 @@
 package expression
 
 import (
+	"strconv"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/sessionctx"
@@ -299,12 +301,12 @@ func (b *builtinJSONQuoteSig) vectorized() bool {
 
 func (b *builtinJSONQuoteSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get(types.ETJson, n)
+	buf, err := b.bufAllocator.get(types.ETString, n)
 	if err != nil {
 		return err
 	}
 	defer b.bufAllocator.put(buf)
-	if err := b.args[0].VecEvalJSON(b.ctx, input, buf); err != nil {
+	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
 		return err
 	}
 
@@ -314,7 +316,7 @@ func (b *builtinJSONQuoteSig) vecEvalString(input *chunk.Chunk, result *chunk.Co
 			result.AppendNull()
 			continue
 		}
-		result.AppendString(buf.GetJSON(i).Quote())
+		result.AppendString(strconv.Quote(buf.GetString(i)))
 	}
 	return nil
 }
@@ -718,11 +720,66 @@ func (b *builtinJSONExtractSig) vecEvalJSON(input *chunk.Chunk, result *chunk.Co
 }
 
 func (b *builtinJSONRemoveSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinJSONRemoveSig) vecEvalJSON(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	nr := input.NumRows()
+	jsonBuf, err := b.bufAllocator.get(types.ETJson, nr)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(jsonBuf)
+	if err := b.args[0].VecEvalJSON(b.ctx, input, jsonBuf); err != nil {
+		return err
+	}
+
+	strBufs := make([]*chunk.Column, len(b.args)-1)
+	for i := 1; i < len(b.args); i++ {
+		strBufs[i-1], err = b.bufAllocator.get(types.ETString, nr)
+		if err != nil {
+			return err
+		}
+		defer b.bufAllocator.put(strBufs[i-1])
+		if err := b.args[i].VecEvalString(b.ctx, input, strBufs[i-1]); err != nil {
+			return err
+		}
+	}
+
+	result.ReserveJSON(nr)
+	for i := 0; i < nr; i++ {
+		if jsonBuf.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
+
+		pathExprs := make([]json.PathExpression, 0, len(b.args)-1)
+		var pathExpr json.PathExpression
+		isNull := false
+
+		for j := 1; j < len(b.args); j++ {
+			if strBufs[j-1].IsNull(i) {
+				isNull = true
+				break
+			}
+			pathExpr, err = json.ParseJSONPathExpr(strBufs[j-1].GetString(i))
+			if err != nil {
+				return err
+			}
+			pathExprs = append(pathExprs, pathExpr)
+		}
+
+		if isNull {
+			result.AppendNull()
+		} else {
+			res, err := jsonBuf.GetJSON(i).Remove(pathExprs)
+			if err != nil {
+				return err
+			}
+			result.AppendJSON(res)
+		}
+	}
+	return nil
 }
 
 func (b *builtinJSONMergeSig) vectorized() bool {
@@ -811,12 +868,12 @@ func (b *builtinJSONUnquoteSig) vectorized() bool {
 
 func (b *builtinJSONUnquoteSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get(types.ETJson, n)
+	buf, err := b.bufAllocator.get(types.ETString, n)
 	if err != nil {
 		return err
 	}
 	defer b.bufAllocator.put(buf)
-	if err := b.args[0].VecEvalJSON(b.ctx, input, buf); err != nil {
+	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
 		return err
 	}
 
@@ -826,11 +883,11 @@ func (b *builtinJSONUnquoteSig) vecEvalString(input *chunk.Chunk, result *chunk.
 			result.AppendNull()
 			continue
 		}
-		res, err := buf.GetJSON(i).Unquote()
+		str, err := json.UnquoteString(buf.GetString(i))
 		if err != nil {
 			return err
 		}
-		result.AppendString(res)
+		result.AppendString(str)
 	}
 	return nil
 }
