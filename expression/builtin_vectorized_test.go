@@ -802,7 +802,7 @@ func (s *testEvaluatorSuite) TestSleepVec(c *C) {
 		atomic.CompareAndSwapUint32(&ctx.GetSessionVars().Killed, 0, 1)
 	}()
 
-	a := float64(10.0)
+	a := float64(3)
 	tp := new(types.FieldType)
 	types.DefaultTypeForValue(a, tp)
 	input := chunk.New([]*types.FieldType{tp}, 1, 1)
