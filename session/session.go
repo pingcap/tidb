@@ -689,7 +689,8 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 				s.StmtRollback()
 				break
 			}
-			err = s.StmtCommit()
+			// TODO: pass the memTracker here.
+			err = s.StmtCommit(nil)
 			if err != nil {
 				return err
 			}

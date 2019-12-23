@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/stringutil"
 	"go.uber.org/zap"
 )
@@ -40,10 +41,11 @@ type InsertExec struct {
 	curInsertVals  chunk.MutRow
 	row4Update     []types.Datum
 
-	Priority mysql.PriorityEnum
+	Priority   mysql.PriorityEnum
+	memTracker *memory.Tracker
 }
 
-func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum) error {
+func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum, memTracker *memory.Tracker) error {
 	logutil.Eventf(ctx, "insert %d rows into table `%s`", len(rows), stringutil.MemoizeStr(func() string {
 		var tblName string
 		if meta := e.Table.Meta(); meta != nil {
@@ -86,6 +88,7 @@ func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum) error {
 			}
 		}
 	}
+	memTracker.Consume(int64(txn.Size()))
 	return nil
 }
 
@@ -266,6 +269,9 @@ func (e *InsertExec) Close() error {
 
 // Open implements the Executor Open interface.
 func (e *InsertExec) Open(ctx context.Context) error {
+	e.memTracker = memory.NewTracker(e.id, -1)
+	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
+
 	if e.OnDuplicate != nil {
 		e.initEvalBuffer4Dup()
 	}

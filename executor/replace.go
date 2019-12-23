@@ -25,13 +25,15 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/memory"
 	"go.uber.org/zap"
 )
 
 // ReplaceExec represents a replace executor.
 type ReplaceExec struct {
 	*InsertValues
-	Priority int
+	Priority   int
+	memTracker *memory.Tracker
 }
 
 // Close implements the Executor Close interface.
@@ -45,6 +47,9 @@ func (e *ReplaceExec) Close() error {
 
 // Open implements the Executor Open interface.
 func (e *ReplaceExec) Open(ctx context.Context) error {
+	e.memTracker = memory.NewTracker(e.id, -1)
+	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
+
 	if e.SelectExec != nil {
 		return e.SelectExec.Open(ctx)
 	}
@@ -164,7 +169,7 @@ func (e *ReplaceExec) removeIndexRow(ctx context.Context, txn kv.Transaction, r 
 	return false, false, nil
 }
 
-func (e *ReplaceExec) exec(ctx context.Context, newRows [][]types.Datum) error {
+func (e *ReplaceExec) exec(ctx context.Context, newRows [][]types.Datum, memTracker *memory.Tracker) error {
 	/*
 	 * MySQL uses the following algorithm for REPLACE (and LOAD DATA ... REPLACE):
 	 *  1. Try to insert the new row into the table
@@ -202,6 +207,7 @@ func (e *ReplaceExec) exec(ctx context.Context, newRows [][]types.Datum) error {
 			return err
 		}
 	}
+	memTracker.Consume(int64(txn.Size()))
 	return nil
 }
 
