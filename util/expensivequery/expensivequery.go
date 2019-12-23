@@ -31,7 +31,7 @@ import (
 // Handle is the handler for expensive query.
 type Handle struct {
 	exitCh chan struct{}
-	sm     util.SessionManager
+	sm     atomic.Value
 }
 
 // NewExpensiveQueryHandle builds a new expensive query handler.
@@ -42,13 +42,8 @@ func NewExpensiveQueryHandle(exitCh chan struct{}) *Handle {
 // SetSessionManager sets the SessionManager which is used to fetching the info
 // of all active sessions.
 func (eqh *Handle) SetSessionManager(sm util.SessionManager) *Handle {
-	eqh.sm = sm
+	eqh.sm.Store(sm)
 	return eqh
-}
-
-// Valid indicates whether the Handle is valid.
-func (eqh *Handle) Valid() bool {
-	return eqh.sm != nil
 }
 
 // Run starts a expensive query checker goroutine at the start time of the server.
@@ -59,9 +54,10 @@ func (eqh *Handle) Run() {
 	ticker := time.NewTicker(tickInterval)
 	defer ticker.Stop()
 	for {
+		sm := eqh.sm.Load().(util.SessionManager)
 		select {
 		case <-ticker.C:
-			processInfo := eqh.sm.ShowProcessList()
+			processInfo := sm.ShowProcessList()
 			for _, info := range processInfo {
 				if len(info.Info) == 0 || info.ExceedExpensiveTimeThresh {
 					continue
@@ -72,7 +68,7 @@ func (eqh *Handle) Run() {
 					info.ExceedExpensiveTimeThresh = true
 
 				} else if info.MaxExecutionTime > 0 && costTime > time.Duration(info.MaxExecutionTime)*time.Millisecond {
-					eqh.sm.Kill(info.ID, true)
+					sm.Kill(info.ID, true)
 				}
 			}
 			threshold = atomic.LoadUint64(&variable.ExpensiveQueryTimeThreshold)
@@ -87,7 +83,16 @@ func (eqh *Handle) LogOnQueryExceedMemQuota(connID uint64) {
 	if log.GetLevel() > zapcore.WarnLevel {
 		return
 	}
-	info, ok := eqh.sm.GetProcessInfo(connID)
+	// The out-of-memory SQL may be the internal SQL which is executed during
+	// the bootstrap phase, and the `sm` is not set at this phase. This is
+	// unlikely to happen except for testing. Thus we do not need to log
+	// detailed message for it.
+	if eqh.sm.Load() == nil {
+		logutil.BgLogger().Info("expensive_query during bootstrap phase", zap.Uint64("conn_id", connID))
+		return
+	}
+	sm := eqh.sm.Load().(util.SessionManager)
+	info, ok := sm.GetProcessInfo(connID)
 	if !ok {
 		return
 	}
