@@ -87,11 +87,12 @@ func (eqh *Handle) LogOnQueryExceedMemQuota(connID uint64) {
 	// the bootstrap phase, and the `sm` is not set at this phase. This is
 	// unlikely to happen except for testing. Thus we do not need to log
 	// detailed message for it.
-	if eqh.sm.Load() == nil {
+	v := eqh.sm.Load()
+	if v == nil {
 		logutil.BgLogger().Info("expensive_query during bootstrap phase", zap.Uint64("conn_id", connID))
 		return
 	}
-	sm := eqh.sm.Load().(util.SessionManager)
+	sm := v.(util.SessionManager)
 	info, ok := sm.GetProcessInfo(connID)
 	if !ok {
 		return
