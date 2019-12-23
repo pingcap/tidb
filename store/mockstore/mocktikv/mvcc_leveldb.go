@@ -628,6 +628,7 @@ func (mvcc *MVCCLevelDB) Prewrite(req *kvrpcpb.PrewriteRequest) []error {
 	mutations := req.Mutations
 	primary := req.PrimaryLock
 	startTS := req.StartVersion
+	forUpdateTS := req.GetForUpdateTs()
 	ttl := req.LockTtl
 	mvcc.mu.Lock()
 	defer mvcc.mu.Unlock()
@@ -639,7 +640,8 @@ func (mvcc *MVCCLevelDB) Prewrite(req *kvrpcpb.PrewriteRequest) []error {
 	for i, m := range mutations {
 		// If the operation is Insert, check if key is exists at first.
 		var err error
-		if m.GetOp() == kvrpcpb.Op_Insert {
+		// no need to check insert values for pessimistic transaction.
+		if m.GetOp() == kvrpcpb.Op_Insert && forUpdateTS == 0 {
 			v, err := mvcc.getValue(m.Key, startTS, kvrpcpb.IsolationLevel_SI)
 			if err != nil {
 				errs = append(errs, err)
