@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
+	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
@@ -37,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/ranger"
+	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
 )
@@ -108,7 +110,7 @@ func (rc *reorgCtx) clean() {
 	rc.doneCh = nil
 }
 
-func (w *worker) runReorgJob(t *meta.Meta, reorgInfo *reorgInfo, lease time.Duration, f func() error) error {
+func (w *worker) runReorgJob(t *meta.Meta, reorgInfo *reorgInfo, tblInfo *model.TableInfo, lease time.Duration, f func() error) error {
 	job := reorgInfo.Job
 	if w.reorgCtx.doneCh == nil {
 		// start a reorganization job
@@ -140,6 +142,9 @@ func (w *worker) runReorgJob(t *meta.Meta, reorgInfo *reorgInfo, lease time.Dura
 		logutil.BgLogger().Info("[ddl] run reorg job done", zap.Int64("handled rows", rowCount))
 		// Update a job's RowCount.
 		job.SetRowCount(rowCount)
+		if err == nil {
+			metrics.AddIndexProgress.Set(100)
+		}
 		w.reorgCtx.clean()
 		return errors.Trace(err)
 	case <-w.quitCh:
@@ -152,6 +157,7 @@ func (w *worker) runReorgJob(t *meta.Meta, reorgInfo *reorgInfo, lease time.Dura
 		rowCount, doneHandle := w.reorgCtx.getRowCountAndHandle()
 		// Update a job's RowCount.
 		job.SetRowCount(rowCount)
+		updateAddIndexProgress(w, tblInfo, rowCount)
 		// Update a reorgInfo's handle.
 		err := t.UpdateDDLReorgStartHandle(job, doneHandle)
 		logutil.BgLogger().Info("[ddl] run reorg job wait timeout", zap.Duration("waitTime", waitTimeout),
@@ -159,6 +165,42 @@ func (w *worker) runReorgJob(t *meta.Meta, reorgInfo *reorgInfo, lease time.Dura
 		// If timeout, we will return, check the owner and retry to wait job done again.
 		return errWaitReorgTimeout
 	}
+}
+
+func updateAddIndexProgress(w *worker, tblInfo *model.TableInfo, addedRowCount int64) {
+	if tblInfo == nil || addedRowCount == 0 {
+		return
+	}
+	totalCount := getTableTotalCount(w, tblInfo)
+	progress := float64(0)
+	if totalCount > 0 {
+		progress = float64(addedRowCount) / float64(totalCount)
+	} else {
+		progress = 1
+	}
+	if progress > 1 {
+		progress = 1
+	}
+	metrics.AddIndexProgress.Set(progress * 100)
+}
+
+func getTableTotalCount(w *worker, tblInfo *model.TableInfo) int64 {
+	var ctx sessionctx.Context
+	ctx, err := w.sessPool.get()
+	if err != nil {
+		return statistics.PseudoRowCount
+	}
+	defer w.sessPool.put(ctx)
+
+	sql := fmt.Sprintf("select table_rows from information_schema.tables where tidb_table_id=%v;", tblInfo.ID)
+	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
+	if err != nil {
+		return statistics.PseudoRowCount
+	}
+	if len(rows) != 1 {
+		return statistics.PseudoRowCount
+	}
+	return rows[0].GetInt64(0)
 }
 
 func (w *worker) isReorgRunnable(d *ddlCtx) error {
@@ -341,9 +383,18 @@ func getTableRange(d *ddlCtx, tbl table.PhysicalTable, snapshotVer uint64, prior
 	return
 }
 
+func getValidCurrentVersion(store kv.Storage) (ver kv.Version, err error) {
+	ver, err = store.CurrentVersion()
+	if err != nil {
+		return ver, errors.Trace(err)
+	} else if ver.Ver <= 0 {
+		return ver, errInvalidStoreVer.GenWithStack("invalid storage current version %d", ver.Ver)
+	}
+	return ver, nil
+}
+
 func getReorgInfo(d *ddlCtx, t *meta.Meta, job *model.Job, tbl table.Table) (*reorgInfo, error) {
 	var (
-		err   error
 		start int64
 		end   int64
 		pid   int64
@@ -353,12 +404,9 @@ func getReorgInfo(d *ddlCtx, t *meta.Meta, job *model.Job, tbl table.Table) (*re
 	if job.SnapshotVer == 0 {
 		info.first = true
 		// get the current version for reorganization if we don't have
-		var ver kv.Version
-		ver, err = d.store.CurrentVersion()
+		ver, err := getValidCurrentVersion(d.store)
 		if err != nil {
 			return nil, errors.Trace(err)
-		} else if ver.Ver <= 0 {
-			return nil, errInvalidStoreVer.GenWithStack("invalid storage current version %d", ver.Ver)
 		}
 		tblInfo := tbl.Meta()
 		pid = tblInfo.ID
@@ -385,6 +433,7 @@ func getReorgInfo(d *ddlCtx, t *meta.Meta, job *model.Job, tbl table.Table) (*re
 		// Update info should after data persistent.
 		job.SnapshotVer = ver.Ver
 	} else {
+		var err error
 		start, end, pid, err = t.GetDDLReorgHandle(job)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -396,7 +445,7 @@ func getReorgInfo(d *ddlCtx, t *meta.Meta, job *model.Job, tbl table.Table) (*re
 	info.EndHandle = end
 	info.PhysicalTableID = pid
 
-	return &info, errors.Trace(err)
+	return &info, nil
 }
 
 func (r *reorgInfo) UpdateReorgMeta(txn kv.Transaction, startHandle, endHandle, physicalTableID int64) error {

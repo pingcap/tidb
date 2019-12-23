@@ -749,6 +749,22 @@ func (s *testPessimisticSuite) TestInnodbLockWaitTimeout(c *C) {
 	wg.Wait()
 }
 
+func (s *testPessimisticSuite) TestPushConditionCheckForPessimisticTxn(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk1 := testkit.NewTestKitWithInit(c, s.store)
+	defer tk.MustExec("drop table if exists t")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (i int key)")
+	tk.MustExec("insert into t values (1)")
+
+	tk.MustExec("set tidb_txn_mode = 'pessimistic'")
+	tk.MustExec("begin")
+	tk1.MustExec("delete from t where i = 1")
+	tk.MustExec("insert into t values (1) on duplicate key update i = values(i)")
+	tk.MustExec("commit")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1"))
+}
+
 func (s *testPessimisticSuite) TestInnodbLockWaitTimeoutWaitStart(c *C) {
 	// prepare work
 	tk := testkit.NewTestKitWithInit(c, s.store)
@@ -787,4 +803,34 @@ func (s *testPessimisticSuite) TestInnodbLockWaitTimeoutWaitStart(c *C) {
 	c.Check(time.Since(start), LessEqual, time.Duration(1100*time.Millisecond))
 	tk2.MustExec("rollback")
 	tk3.MustExec("commit")
+}
+
+func (s *testPessimisticSuite) TestPessimisticReadCommitted(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("use test")
+	tk1 := testkit.NewTestKitWithInit(c, s.store)
+	tk1.MustExec("use test")
+
+	tk.MustExec("set tidb_txn_mode = 'pessimistic'")
+	tk1.MustExec("set tidb_txn_mode = 'pessimistic'")
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(i int key);")
+	tk.MustExec("insert into t values (1);")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1"))
+
+	tk.MustExec("begin;")
+	tk1.MustExec("begin;")
+	tk.MustExec("update t set i = -i;")
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		tk1.MustExec("update t set i = -i;")
+		wg.Done()
+	}()
+	tk.MustExec("commit;")
+	wg.Wait()
+
+	tk1.MustExec("commit;")
 }
