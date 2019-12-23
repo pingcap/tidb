@@ -253,6 +253,9 @@ const (
 // If it's passed to RequestVerification, it means any privilege would be OK.
 const AllPrivMask = AllPriv - 1
 
+// GlobalDBVisible is a collection of global privileges which allow user to see all databases name.
+const GlobalDBVisible = CreatePriv | SelectPriv | InsertPriv | UpdatePriv | DeletePriv | ShowDBPriv | DropPriv | AlterPriv | IndexPriv | CreateViewPriv | ShowViewPriv | GrantPriv
+
 // MySQL type maximum length.
 const (
 	// For arguments that have no fixed number of decimals, the decimals value is set to 31,
