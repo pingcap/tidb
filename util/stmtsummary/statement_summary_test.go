@@ -39,8 +39,8 @@ type testStmtSummarySuite struct {
 func (s *testStmtSummarySuite) SetUpSuite(c *C) {
 	s.ssMap = newStmtSummaryByDigestMap()
 	s.ssMap.SetEnabled("1", false)
-	s.ssMap.SetRefreshInterval("999999999", false)
-	s.ssMap.SetHistorySize("1", false)
+	s.ssMap.SetRefreshInterval("1800", false)
+	s.ssMap.SetHistorySize("24", false)
 }
 
 func TestT(t *testing.T) {
@@ -66,6 +66,7 @@ func (s *testStmtSummarySuite) TestAddStatement(c *C) {
 	}
 	expectedSummaryElement := stmtSummaryByDigestElement{
 		beginTime:            now + 60,
+		endTime:              now + 1860,
 		sampleSQL:            stmtExecInfo1.OriginalSQL,
 		indexNames:           stmtExecInfo1.StmtCtx.IndexNames,
 		sampleUser:           stmtExecInfo1.User,
@@ -241,6 +242,7 @@ func (s *testStmtSummarySuite) TestAddStatement(c *C) {
 	expectedSummaryElement.maxPrewriteRegionNum = stmtExecInfo2.ExecDetail.CommitDetail.PrewriteRegionNum
 	expectedSummaryElement.sumTxnRetry += int64(stmtExecInfo2.ExecDetail.CommitDetail.TxnRetry)
 	expectedSummaryElement.maxTxnRetry = stmtExecInfo2.ExecDetail.CommitDetail.TxnRetry
+	expectedSummaryElement.sumBackoffTimes += 1
 	expectedSummaryElement.backoffTypes[tikv.BoTxnLock] = 1
 	expectedSummaryElement.sumMem += stmtExecInfo2.MemMax
 	expectedSummaryElement.maxMem = stmtExecInfo2.MemMax
@@ -335,6 +337,7 @@ func (s *testStmtSummarySuite) TestAddStatement(c *C) {
 	expectedSummaryElement.sumWriteSize += int64(stmtExecInfo3.ExecDetail.CommitDetail.WriteSize)
 	expectedSummaryElement.sumPrewriteRegionNum += int64(stmtExecInfo3.ExecDetail.CommitDetail.PrewriteRegionNum)
 	expectedSummaryElement.sumTxnRetry += int64(stmtExecInfo3.ExecDetail.CommitDetail.TxnRetry)
+	expectedSummaryElement.sumBackoffTimes += 1
 	expectedSummaryElement.backoffTypes[tikv.BoTxnLock] = 2
 	expectedSummaryElement.sumMem += stmtExecInfo3.MemMax
 	expectedSummaryElement.sumAffectedRows += stmtExecInfo3.StmtCtx.AffectedRows()
@@ -391,7 +394,9 @@ func matchStmtSummaryByDigest(first, second *stmtSummaryByDigest) bool {
 		ssElement1 := ele1.Value.(*stmtSummaryByDigestElement)
 		ssElement2 := ele2.Value.(*stmtSummaryByDigestElement)
 		if ssElement1.beginTime != ssElement2.beginTime ||
+			ssElement1.endTime != ssElement2.endTime ||
 			ssElement1.sampleSQL != ssElement2.sampleSQL ||
+			ssElement1.prevSQL != ssElement2.prevSQL ||
 			ssElement1.sampleUser != ssElement2.sampleUser ||
 			ssElement1.execCount != ssElement2.execCount ||
 			ssElement1.sumLatency != ssElement2.sumLatency ||
@@ -438,6 +443,7 @@ func matchStmtSummaryByDigest(first, second *stmtSummaryByDigest) bool {
 			ssElement1.maxPrewriteRegionNum != ssElement2.maxPrewriteRegionNum ||
 			ssElement1.sumTxnRetry != ssElement2.sumTxnRetry ||
 			ssElement1.maxTxnRetry != ssElement2.maxTxnRetry ||
+			ssElement1.sumBackoffTimes != ssElement2.sumBackoffTimes ||
 			ssElement1.sumMem != ssElement2.sumMem ||
 			ssElement1.maxMem != ssElement2.maxMem ||
 			ssElement1.sumAffectedRows != ssElement2.sumAffectedRows ||
@@ -551,8 +557,9 @@ func (s *testStmtSummarySuite) TestToDatum(c *C) {
 	datums := s.ssMap.ToCurrentDatum()
 	c.Assert(len(datums), Equals, 1)
 	n := types.Time{Time: types.FromGoTime(time.Unix(s.ssMap.beginTimeForCurInterval, 0)), Type: mysql.TypeTimestamp}
+	e := types.Time{Time: types.FromGoTime(time.Unix(s.ssMap.beginTimeForCurInterval+1800, 0)), Type: mysql.TypeTimestamp}
 	t := types.Time{Time: types.FromGoTime(stmtExecInfo1.StartTime), Type: mysql.TypeTimestamp}
-	expectedDatum := []interface{}{n, "select", stmtExecInfo1.SchemaName, stmtExecInfo1.Digest, stmtExecInfo1.NormalizedSQL,
+	expectedDatum := []interface{}{n, e, "select", stmtExecInfo1.SchemaName, stmtExecInfo1.Digest, stmtExecInfo1.NormalizedSQL,
 		"db1.tb1,db2.tb2", "a", stmtExecInfo1.User, 1, int64(stmtExecInfo1.TotalLatency),
 		int64(stmtExecInfo1.TotalLatency), int64(stmtExecInfo1.TotalLatency), int64(stmtExecInfo1.TotalLatency),
 		int64(stmtExecInfo1.ParseLatency), int64(stmtExecInfo1.ParseLatency), int64(stmtExecInfo1.CompileLatency),
@@ -572,9 +579,9 @@ func (s *testStmtSummarySuite) TestToDatum(c *C) {
 		stmtExecInfo1.ExecDetail.CommitDetail.WriteKeys, stmtExecInfo1.ExecDetail.CommitDetail.WriteKeys,
 		stmtExecInfo1.ExecDetail.CommitDetail.WriteSize, stmtExecInfo1.ExecDetail.CommitDetail.WriteSize,
 		stmtExecInfo1.ExecDetail.CommitDetail.PrewriteRegionNum, stmtExecInfo1.ExecDetail.CommitDetail.PrewriteRegionNum,
-		stmtExecInfo1.ExecDetail.CommitDetail.TxnRetry, stmtExecInfo1.ExecDetail.CommitDetail.TxnRetry,
+		stmtExecInfo1.ExecDetail.CommitDetail.TxnRetry, stmtExecInfo1.ExecDetail.CommitDetail.TxnRetry, 1,
 		"txnLock:1", stmtExecInfo1.MemMax, stmtExecInfo1.MemMax, stmtExecInfo1.StmtCtx.AffectedRows(),
-		t, t, stmtExecInfo1.OriginalSQL}
+		t, t, stmtExecInfo1.OriginalSQL, stmtExecInfo1.PrevSQL}
 	match(c, datums[0], expectedDatum...)
 
 	datums = s.ssMap.ToHistoryDatum()
@@ -665,11 +672,14 @@ func (s *testStmtSummarySuite) TestMaxSQLLength(c *C) {
 	stmtExecInfo1 := generateAnyExecInfo()
 	stmtExecInfo1.OriginalSQL = str
 	stmtExecInfo1.NormalizedSQL = str
+	stmtExecInfo1.PrevSQLDigest = "prevSQLDigest"
+	stmtExecInfo1.PrevSQL = str
 	s.ssMap.AddStatement(stmtExecInfo1)
 
 	key := &stmtSummaryByDigestKey{
 		schemaName: stmtExecInfo1.SchemaName,
 		digest:     stmtExecInfo1.Digest,
+		prevDigest: stmtExecInfo1.PrevSQLDigest,
 	}
 	value, ok := s.ssMap.summaryMap.Get(key)
 	c.Assert(ok, IsTrue)
@@ -678,6 +688,7 @@ func (s *testStmtSummarySuite) TestMaxSQLLength(c *C) {
 	c.Assert(len(summary.normalizedSQL), Equals, int(maxSQLLength))
 	ssElement := summary.history.Back().Value.(*stmtSummaryByDigestElement)
 	c.Assert(len(ssElement.sampleSQL), Equals, int(maxSQLLength))
+	c.Assert(len(ssElement.prevSQL), Equals, int(maxSQLLength))
 }
 
 // Test setting EnableStmtSummary to 0.
@@ -808,8 +819,6 @@ func (s *testStmtSummarySuite) TestFormatBackoffTypes(c *C) {
 func (s *testStmtSummarySuite) TestRefreshCurrentSummary(c *C) {
 	s.ssMap.Clear()
 	now := time.Now().Unix()
-	s.ssMap.SetRefreshInterval("1800", false)
-	s.ssMap.SetHistorySize("10", false)
 
 	s.ssMap.beginTimeForCurInterval = now + 10
 	stmtExecInfo1 := generateAnyExecInfo()
@@ -849,6 +858,8 @@ func (s *testStmtSummarySuite) TestSummaryHistory(c *C) {
 	now := time.Now().Unix()
 	s.ssMap.SetRefreshInterval("10", false)
 	s.ssMap.SetHistorySize("10", false)
+	defer s.ssMap.SetRefreshInterval("1800", false)
+	defer s.ssMap.SetHistorySize("24", false)
 
 	stmtExecInfo1 := generateAnyExecInfo()
 	key := &stmtSummaryByDigestKey{
@@ -881,4 +892,80 @@ func (s *testStmtSummarySuite) TestSummaryHistory(c *C) {
 	s.ssMap.SetHistorySize("5", false)
 	datum = s.ssMap.ToHistoryDatum()
 	c.Assert(len(datum), Equals, 5)
+}
+
+// Test summary when PrevSQL is not empty.
+func (s *testStmtSummarySuite) TestPrevSQL(c *C) {
+	s.ssMap.Clear()
+	now := time.Now().Unix()
+	// to disable expiration
+	s.ssMap.beginTimeForCurInterval = now + 60
+
+	stmtExecInfo1 := generateAnyExecInfo()
+	stmtExecInfo1.PrevSQL = "prevSQL"
+	stmtExecInfo1.PrevSQLDigest = "prevSQLDigest"
+	s.ssMap.AddStatement(stmtExecInfo1)
+	key := &stmtSummaryByDigestKey{
+		schemaName: stmtExecInfo1.SchemaName,
+		digest:     stmtExecInfo1.Digest,
+		prevDigest: stmtExecInfo1.PrevSQLDigest,
+	}
+	c.Assert(s.ssMap.summaryMap.Size(), Equals, 1)
+	_, ok := s.ssMap.summaryMap.Get(key)
+	c.Assert(ok, IsTrue)
+
+	// same prevSQL
+	s.ssMap.AddStatement(stmtExecInfo1)
+	c.Assert(s.ssMap.summaryMap.Size(), Equals, 1)
+
+	// different prevSQL
+	stmtExecInfo2 := stmtExecInfo1
+	stmtExecInfo2.PrevSQL = "prevSQL1"
+	stmtExecInfo2.PrevSQLDigest = "prevSQLDigest1"
+	key.prevDigest = stmtExecInfo2.PrevSQLDigest
+	s.ssMap.AddStatement(stmtExecInfo2)
+	c.Assert(s.ssMap.summaryMap.Size(), Equals, 2)
+	_, ok = s.ssMap.summaryMap.Get(key)
+	c.Assert(ok, IsTrue)
+}
+
+func (s *testStmtSummarySuite) TestEndTime(c *C) {
+	s.ssMap.Clear()
+	now := time.Now().Unix()
+	s.ssMap.beginTimeForCurInterval = now - 100
+
+	stmtExecInfo1 := generateAnyExecInfo()
+	s.ssMap.AddStatement(stmtExecInfo1)
+	key := &stmtSummaryByDigestKey{
+		schemaName: stmtExecInfo1.SchemaName,
+		digest:     stmtExecInfo1.Digest,
+	}
+	c.Assert(s.ssMap.summaryMap.Size(), Equals, 1)
+	value, ok := s.ssMap.summaryMap.Get(key)
+	c.Assert(ok, IsTrue)
+	ssbd := value.(*stmtSummaryByDigest)
+	ssElement := ssbd.history.Back().Value.(*stmtSummaryByDigestElement)
+	c.Assert(ssElement.beginTime, Equals, now-100)
+	c.Assert(ssElement.endTime, Equals, now+1700)
+
+	s.ssMap.SetRefreshInterval("3600", false)
+	defer s.ssMap.SetRefreshInterval("1800", false)
+	s.ssMap.AddStatement(stmtExecInfo1)
+	c.Assert(ssbd.history.Len(), Equals, 1)
+	ssElement = ssbd.history.Back().Value.(*stmtSummaryByDigestElement)
+	c.Assert(ssElement.beginTime, Equals, now-100)
+	c.Assert(ssElement.endTime, Equals, now+3500)
+
+	s.ssMap.SetRefreshInterval("60", false)
+	s.ssMap.AddStatement(stmtExecInfo1)
+	c.Assert(ssbd.history.Len(), Equals, 2)
+	now2 := time.Now().Unix()
+	ssElement = ssbd.history.Front().Value.(*stmtSummaryByDigestElement)
+	c.Assert(ssElement.beginTime, Equals, now-100)
+	c.Assert(ssElement.endTime, GreaterEqual, now)
+	c.Assert(ssElement.endTime, LessEqual, now2)
+	ssElement = ssbd.history.Back().Value.(*stmtSummaryByDigestElement)
+	c.Assert(ssElement.beginTime, GreaterEqual, now-60)
+	c.Assert(ssElement.beginTime, LessEqual, now2)
+	c.Assert(ssElement.endTime-ssElement.beginTime, Equals, int64(60))
 }

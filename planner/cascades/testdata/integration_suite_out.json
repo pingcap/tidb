@@ -312,6 +312,21 @@
           "33",
           "44"
         ]
+      },
+      {
+        "SQL": "select a, b, lag(a,1) over (order by b) from t order by b",
+        "Plan": [
+          "Window_10 10000.00 root lag(test.t.a, 1)->Column#4 over(order by test.t.b asc)",
+          "└─Sort_15 10000.00 root test.t.b:asc",
+          "  └─TableReader_13 10000.00 root data:TableScan_14",
+          "    └─TableScan_14 10000.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 11 <nil>",
+          "2 22 1",
+          "3 33 2",
+          "4 44 3"
+        ]
       }
     ]
   },
