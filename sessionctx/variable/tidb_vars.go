@@ -445,7 +445,7 @@ const (
 	DefTiDBMaxDeltaSchemaCount         = 1024
 	DefTiDBHashAggPartialConcurrency   = 4
 	DefTiDBHashAggFinalConcurrency     = 4
-	DefTiDBWindowConcurrency           = 4
+	DefTiDBWindowConcurrency           = 1
 	DefTiDBForcePriority               = mysql.NoPriority
 	DefTiDBUseRadixJoin                = false
 	DefEnableWindowFunction            = true

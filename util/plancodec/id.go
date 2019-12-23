@@ -84,7 +84,7 @@ const (
 	TypeIndexReader = "IndexReader"
 	// TypeWindow is the type of Window.
 	TypeWindow = "Window"
-	// TypeWindow is the type of WindowParallel.
+	// TypeWindowParallel is the type of WindowParallel.
 	TypeWindowParallel = "WindowParallel"
 	// TypeTiKVSingleGather is the type of TiKVSingleGather.
 	TypeTiKVSingleGather = "TiKVSingleGather"
