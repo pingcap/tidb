@@ -186,6 +186,17 @@ func IsEQCondFromIn(expr Expression) bool {
 	return len(cols) > 0
 }
 
+// HandleOverflowOnSelection handles Overflow errors when evaluating selection filters.
+// We should ignore overflow errors when evaluating selection conditions:
+//		INSERT INTO t VALUES ("999999999999999999");
+//		SELECT * FROM t WHERE v;
+func HandleOverflowOnSelection(sc *stmtctx.StatementContext, val int64, err error) (int64, error) {
+	if sc.InSelectStmt && err != nil && types.ErrOverflow.Equal(err) {
+		return -1, nil
+	}
+	return val, err
+}
+
 // EvalBool evaluates expression list to a boolean value. The first returned value
 // indicates bool result of the expression list, the second returned value indicates
 // whether the result of the expression list is null, it can only be true when the
@@ -212,7 +223,11 @@ func EvalBool(ctx sessionctx.Context, exprList CNFExprs, row chunk.Row) (bool, b
 
 		i, err := data.ToBool(ctx.GetSessionVars().StmtCtx)
 		if err != nil {
-			return false, false, err
+			i, err = HandleOverflowOnSelection(ctx.GetSessionVars().StmtCtx, i, err)
+			if err != nil {
+				return false, false, err
+
+			}
 		}
 		if i == 0 {
 			return false, false, nil
@@ -343,7 +358,6 @@ func VecEvalBool(ctx sessionctx.Context, exprList CNFExprs, input *chunk.Chunk, 
 }
 
 func toBool(sc *stmtctx.StatementContext, eType types.EvalType, buf *chunk.Column, sel []int, isZero []int8) error {
-	var err error
 	switch eType {
 	case types.ETInt:
 		i64s := buf.Int64s()
@@ -402,8 +416,13 @@ func toBool(sc *stmtctx.StatementContext, eType types.EvalType, buf *chunk.Colum
 			if buf.IsNull(i) {
 				isZero[i] = -1
 			} else {
-				iVal, err1 := types.StrToInt(sc, buf.GetString(i))
-				err = err1
+				iVal, err := types.StrToInt(sc, buf.GetString(i))
+				if err != nil {
+					iVal, err = HandleOverflowOnSelection(sc, iVal, err)
+					if err != nil {
+						return err
+					}
+				}
 				if iVal == 0 {
 					isZero[i] = 0
 				} else {
@@ -417,8 +436,10 @@ func toBool(sc *stmtctx.StatementContext, eType types.EvalType, buf *chunk.Colum
 			if buf.IsNull(i) {
 				isZero[i] = -1
 			} else {
-				v, err1 := d64s[i].ToFloat64()
-				err = err1
+				v, err := d64s[i].ToFloat64()
+				if err != nil {
+					return err
+				}
 				if types.RoundFloat(v) == 0 {
 					isZero[i] = 0
 				} else {
@@ -429,7 +450,7 @@ func toBool(sc *stmtctx.StatementContext, eType types.EvalType, buf *chunk.Colum
 	case types.ETJson:
 		return errors.Errorf("cannot convert type json.BinaryJSON to bool")
 	}
-	return errors.Trace(err)
+	return nil
 }
 
 // VecEval evaluates this expr according to its type.
