@@ -1472,7 +1472,7 @@ func (s *session) Auth(user *auth.UserIdentity, authentication []byte, salt []by
 
 	// Check IP or localhost.
 	var success bool
-	user.AuthUsername, user.AuthHostname, success = pm.ConnectionVerification(user.Username, user.Hostname, authentication, salt)
+	user.AuthUsername, user.AuthHostname, success = pm.ConnectionVerification(user.Username, user.Hostname, authentication, salt, s.sessionVars.TLSConnectionState)
 	if success {
 		s.sessionVars.User = user
 		s.sessionVars.ActiveRoles = pm.GetDefaultRoles(user.AuthUsername, user.AuthHostname)
@@ -1485,7 +1485,7 @@ func (s *session) Auth(user *auth.UserIdentity, authentication []byte, salt []by
 
 	// Check Hostname.
 	for _, addr := range getHostByIP(user.Hostname) {
-		u, h, success := pm.ConnectionVerification(user.Username, addr, authentication, salt)
+		u, h, success := pm.ConnectionVerification(user.Username, addr, authentication, salt, s.sessionVars.TLSConnectionState)
 		if success {
 			s.sessionVars.User = &auth.UserIdentity{
 				Username:     user.Username,
@@ -1671,7 +1671,7 @@ func GetDomain(store kv.Storage) (*domain.Domain, error) {
 	return domap.Get(store)
 }
 
-// runInBootstrapSession create a special session for boostrap to run.
+// runInBootstrapSession create a special session for bootstrap to run.
 // If no bootstrap and storage is remote, we must use a little lease time to
 // bootstrap quickly, after bootstrapped, we will reset the lease time.
 // TODO: Using a bootstrap tool for doing this may be better later.
@@ -1744,7 +1744,7 @@ func CreateSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 
 const (
 	notBootstrapped         = 0
-	currentBootstrapVersion = version37
+	currentBootstrapVersion = version38
 )
 
 func getStoreBootstrapVersion(store kv.Storage) int64 {

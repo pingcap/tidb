@@ -742,7 +742,7 @@ func (s *jobsSorter) Less(i, j int) bool {
 	return s.jobs[i].ID < s.jobs[j].ID
 }
 
-// GetBootstrapVersion returns the version of the server which boostrap the store.
+// GetBootstrapVersion returns the version of the server which bootstrap the store.
 // If the store is not bootstraped, the version will be zero.
 func (m *Meta) GetBootstrapVersion() (int64, error) {
 	value, err := m.txn.GetInt64(mBootstrapKey)
