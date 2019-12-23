@@ -163,6 +163,11 @@ func (p *basePhysicalPlan) attach2Task(tasks ...task) task {
 	return attachPlan2Task(p.self, t)
 }
 
+func (p *PhysicalUnionScan) attach2Task(tasks ...task) task {
+	p.stats = tasks[0].plan().statsInfo()
+	return p.basePhysicalPlan.attach2Task(tasks...)
+}
+
 func (p *PhysicalApply) attach2Task(tasks ...task) task {
 	lTask := finishCopTask(p.ctx, tasks[0].copy())
 	rTask := finishCopTask(p.ctx, tasks[1].copy())
