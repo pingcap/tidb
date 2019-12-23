@@ -174,7 +174,6 @@ func (s *testSessionSuiteBase) TearDownSuite(c *C) {
 	testleak.AfterTest(c)()
 	if *withTiKV {
 		withTiKVGlobalLock.Unlock()
-		time.Sleep(3 * time.Second)
 	}
 }
 
