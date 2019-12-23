@@ -234,6 +234,8 @@ var (
 	ErrFieldNotFoundPart = terror.ClassDDL.New(codeFieldNotFoundPart, mysql.MySQLErrName[mysql.ErrFieldNotFoundPart])
 	// ErrWrongTypeColumnValue returns 'Partition column values of incorrect type'
 	ErrWrongTypeColumnValue = terror.ClassDDL.New(codeWrongTypeColumnValue, mysql.MySQLErrName[mysql.ErrWrongTypeColumnValue])
+	// ErrInvalidAutoRandom returns when auto_random is used incorrectly.
+	ErrInvalidAutoRandom = terror.ClassDDL.New(codeInvalidAutoRandom, mysql.MySQLErrName[mysql.ErrInvalidAutoRandom])
 )
 
 // DDL is responsible for updating schema in data store and maintaining in-memory InfoSchema cache.
@@ -757,6 +759,7 @@ const (
 	codeSystemVersioningWrongPartitions        = terror.ErrCode(mysql.ErrSystemVersioningWrongPartitions)
 	codeWrongPartitionTypeExpectedSystemTime   = terror.ErrCode(mysql.ErrWrongPartitionTypeExpectedSystemTime)
 	codeWrongTypeColumnValue                   = terror.ErrCode(mysql.ErrWrongTypeColumnValue)
+	codeInvalidAutoRandom = terror.ErrCode(mysql.ErrInvalidAutoRandom)
 )
 
 func init() {
@@ -831,6 +834,7 @@ func init() {
 		codeWrongTypeColumnValue:                   mysql.ErrWrongTypeColumnValue,
 		mysql.ErrFkColumnCannotDrop:                mysql.ErrFkColumnCannotDrop,
 		mysql.ErrFKIncompatibleColumns:             mysql.ErrFKIncompatibleColumns,
+		mysql.ErrInvalidAutoRandom:                 mysql.ErrInvalidAutoRandom,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassDDL] = ddlMySQLErrCodes
 }

@@ -79,7 +79,7 @@ func newPartitionedTable(tbl *Table, tblInfo *model.TableInfo) (table.Table, err
 	pi := tblInfo.GetPartitionInfo()
 	for _, p := range pi.Definitions {
 		var t partition
-		err := initTableCommonWithIndices(&t.tableCommon, tblInfo, p.ID, tbl.Columns, tbl.alloc)
+		err := initTableCommonWithIndices(&t.tableCommon, tblInfo, p.ID, tbl.Columns, tbl.allocs)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

@@ -51,7 +51,7 @@ const (
 	catalogVal                              = "def"
 	tableProfiling                          = "PROFILING"
 	tablePartitions                         = "PARTITIONS"
-	tableKeyColumm                          = "KEY_COLUMN_USAGE"
+	tableKeyColumn                          = "KEY_COLUMN_USAGE"
 	tableReferConst                         = "REFERENTIAL_CONSTRAINTS"
 	tableSessionVar                         = "SESSION_VARIABLES"
 	tablePlugins                            = "PLUGINS"
@@ -1079,7 +1079,7 @@ func getAutoIncrementID(ctx sessionctx.Context, schema *model.DBInfo, tblInfo *m
 	if err != nil {
 		return 0, err
 	}
-	return tbl.Allocator(ctx).Base() + 1, nil
+	return tbl.Allocator(ctx, autoid.RowIDAllocType).Base() + 1, nil
 }
 
 func dataForViews(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.Datum, error) {
@@ -1729,7 +1729,7 @@ var tableNameToColumns = map[string][]columnInfo{
 	tableFiles:                              filesCols,
 	tableProfiling:                          profilingCols,
 	tablePartitions:                         partitionsCols,
-	tableKeyColumm:                          keyColumnUsageCols,
+	tableKeyColumn:                          keyColumnUsageCols,
 	tableReferConst:                         referConstCols,
 	tableSessionVar:                         sessionVarCols,
 	tablePlugins:                            pluginsCols,
@@ -1823,7 +1823,7 @@ func (it *infoschemaTable) getRows(ctx sessionctx.Context, cols []*table.Column)
 			fullRows = dataForPseudoProfiling()
 		}
 	case tablePartitions:
-	case tableKeyColumm:
+	case tableKeyColumn:
 		fullRows = dataForKeyColumnUsage(dbs)
 	case tableReferConst:
 	case tablePlugins, tableTriggers:
@@ -1977,7 +1977,12 @@ func (it *infoschemaTable) AllocHandle(ctx sessionctx.Context) (int64, error) {
 }
 
 // Allocator implements table.Table Allocator interface.
-func (it *infoschemaTable) Allocator(ctx sessionctx.Context) autoid.Allocator {
+func (it *infoschemaTable) Allocator(_ sessionctx.Context, _ autoid.AllocatorType) autoid.Allocator {
+	return nil
+}
+
+// AllAllocators implements table.Table AllAllocators interface.
+func (it *infoschemaTable) AllAllocators(_ sessionctx.Context) autoid.Allocators {
 	return nil
 }
 
@@ -2094,7 +2099,12 @@ func (vt *VirtualTable) AllocHandle(ctx sessionctx.Context) (int64, error) {
 }
 
 // Allocator implements table.Table Allocator interface.
-func (vt *VirtualTable) Allocator(ctx sessionctx.Context) autoid.Allocator {
+func (vt *VirtualTable) Allocator(_ sessionctx.Context, _ autoid.AllocatorType) autoid.Allocator {
+	return nil
+}
+
+// AllAllocators implements table.Table AllAllocators interface.
+func (vt *VirtualTable) AllAllocators(_ sessionctx.Context) autoid.Allocators {
 	return nil
 }
 
