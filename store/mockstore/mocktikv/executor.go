@@ -456,6 +456,7 @@ func evalBool(exprs []expression.Expression, row []types.Datum, ctx *stmtctx.Sta
 		}
 
 		isBool, err := data.ToBool(ctx)
+		isBool, err = expression.HandleOverflowOnSelection(ctx, isBool, err)
 		if err != nil {
 			return false, errors.Trace(err)
 		}

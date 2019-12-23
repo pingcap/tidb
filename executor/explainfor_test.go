@@ -101,3 +101,10 @@ func (s *testSuite) TestIssue11124(c *C) {
 		c.Assert(rs[i], DeepEquals, rs2[i])
 	}
 }
+
+func (s *testSuite) TestExplainMetricTable(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustQuery(fmt.Sprintf("desc select * from METRIC_SCHEMA.query_duration;")).Check(testkit.Rows(
+		"MemTableScan_4 10000.00 root PromQL:histogram_quantile(0.9, sum(rate(tidb_server_handle_query_duration_seconds_bucket{}[60s])) by (le))"))
+	tk.MustQuery(fmt.Sprintf("desc select * from METRIC_SCHEMA.up")).Check(testkit.Rows("MemTableScan_4 10000.00 root PromQL:up{}"))
+}
