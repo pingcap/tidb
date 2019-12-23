@@ -19,8 +19,9 @@ import (
 	"strconv"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/log"
 	"github.com/pingcap/parser/mysql"
-	log "github.com/sirupsen/logrus"
+	"go.uber.org/zap"
 )
 
 // Global error instances.
@@ -287,12 +288,12 @@ var defaultMySQLErrorCode uint16
 func (e *Error) getMySQLErrorCode() uint16 {
 	codeMap, ok := ErrClassToMySQLCodes[e.class]
 	if !ok {
-		log.Warnf("Unknown error class: %v", e.class)
+		log.Warn("Unknown error class", zap.Int("class", int(e.class)))
 		return defaultMySQLErrorCode
 	}
 	code, ok := codeMap[e.code]
 	if !ok {
-		log.Debugf("Unknown error class: %v code: %v", e.class, e.code)
+		log.Debug("Unknown error code", zap.Int("class", int(e.class)), zap.Uint16("code", code))
 		return defaultMySQLErrorCode
 	}
 	return code
@@ -341,7 +342,7 @@ func MustNil(err error, closeFuns ...func()) {
 		for _, f := range closeFuns {
 			f()
 		}
-		log.Fatalf(errors.ErrorStack(err))
+		log.Fatal("unexpected error", zap.Error(err))
 	}
 }
 
@@ -349,13 +350,13 @@ func MustNil(err error, closeFuns ...func()) {
 func Call(fn func() error) {
 	err := fn()
 	if err != nil {
-		log.Error(errors.ErrorStack(err))
+		log.Error("function call errored", zap.Error(err))
 	}
 }
 
 // Log logs the error if it is not nil.
 func Log(err error) {
 	if err != nil {
-		log.Error(errors.ErrorStack(err))
+		log.Error("encountered error", zap.Error(err))
 	}
 }
