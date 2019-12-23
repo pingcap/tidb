@@ -538,8 +538,25 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *property.PhysicalProperty, ou
 	}
 	if isProjection {
 		ds, isDataSource = pj.Children()[0].(*DataSource)
-		if !isDataSource || ds.preferStoreType&preferTiFlash != 0 {
+		us, isUnionScan = innerChild.(*LogicalUnionScan)
+		if !isUnionScan && !isDataSource {
 			return nil
+		}
+		if isDataSource && ds.preferStoreType&preferTiFlash != 0 {
+			return nil
+		}
+		if isUnionScan {
+			// The child of union scan may be union all for partition table.
+			ds, isDataSource = us.Children()[0].(*DataSource)
+			if !isDataSource {
+				return nil
+			}
+			// If one of the union scan children is a TiFlash table, then we can't choose index join.
+			for _, child := range us.Children() {
+				if ds, ok := child.(*DataSource); ok && ds.preferStoreType&preferTiFlash != 0 {
+					return nil
+				}
+			}
 		}
 		for i, key := range innerJoinKeys {
 			idx := pj.schema.ColumnIndex(key)

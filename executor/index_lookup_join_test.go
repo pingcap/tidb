@@ -15,6 +15,7 @@ package executor_test
 
 import (
 	"context"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/util/testkit"
@@ -222,10 +223,18 @@ func (s testSuite9) TestIndexJoinHavingExprInInnerJoinKeys(c *C) {
 						key(v_decimal));`)
 	tk.MustExec(`insert into t1 values
 		(1, 1.0, 1),
-		(2, 2.0, 2);`)
+		(2, 2.0, 2),
+		(-1, -1.0, 1),
+		(-2, -2.0, -2),
+		(9223372036854775807, 9223372036854775807.0, 9223372036854775807),
+		(9223372036854775807, 1.2e25, 1.2e25);`)
 	tk.MustExec(`insert into t2 values
 		(1, 1.0, 1),
-		(2, 2.0, 2);`)
+		(2, 2.0, 2),
+		(-1, -1.0, 1),
+		(-2, -2.0, -2),
+		(9223372036854775807, 9223372036854775807.0, 9223372036854775807),
+		(9223372036854775807, 1.2e25, 1.2e25);`)
 
 	var input []string
 	var output []struct {
