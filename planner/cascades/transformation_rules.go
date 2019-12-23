@@ -1019,7 +1019,8 @@ func (r *MergeAdjacentSelection) OnTransform(old *memo.ExprIter) (newExprs []*me
 	childGroups := old.Children[0].GetExpr().Children
 
 	conditions := make([]expression.Expression, 0, len(sel.Conditions)+len(child.Conditions))
-	conditions = append(sel.Conditions, child.Conditions...)
+	conditions = append(conditions, sel.Conditions...)
+	conditions = append(conditions, child.Conditions...)
 	newSel := plannercore.LogicalSelection{Conditions: conditions}.Init(sel.SCtx(), sel.SelectBlockOffset())
 	newSelExpr := memo.NewGroupExpr(newSel)
 	newSelExpr.SetChildren(childGroups...)
