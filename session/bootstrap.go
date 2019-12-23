@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
@@ -304,10 +305,10 @@ func bootstrap(s Session) {
 
 const (
 	// The variable name in mysql.TiDB table.
-	// It is used for checking if the store is boostrapped by any TiDB server.
+	// It is used for checking if the store is bootstrapped by any TiDB server.
 	bootstrappedVar = "bootstrapped"
 	// The variable value in mysql.TiDB table for bootstrappedVar.
-	// If the value true, the store is already boostrapped by a TiDB server.
+	// If the value true, the store is already bootstrapped by a TiDB server.
 	bootstrappedVarTrue = "True"
 	// The variable name in mysql.TiDB table.
 	// It is used for getting the version of the TiDB server which bootstrapped the store.
@@ -406,7 +407,7 @@ func getTiDBVar(s Session, name string) (sVal string, isNull bool, e error) {
 	return row.GetString(0), false, nil
 }
 
-// upgrade function  will do some upgrade works, when the system is boostrapped by low version TiDB server
+// upgrade function  will do some upgrade works, when the system is bootstrapped by low version TiDB server
 // For example, add new system variables into mysql.global_variables table.
 func upgrade(s Session) {
 	ver, err := getBootstrapVersion(s)
@@ -967,7 +968,11 @@ func doDMLWorks(s Session) {
 	for k, v := range variable.SysVars {
 		// Session only variable should not be inserted.
 		if v.Scope != variable.ScopeSession {
-			value := fmt.Sprintf(`("%s", "%s")`, strings.ToLower(k), v.Value)
+			vVal := v.Value
+			if v.Name == variable.TiDBTxnMode && config.GetGlobalConfig().Store == "tikv" {
+				vVal = "pessimistic"
+			}
+			value := fmt.Sprintf(`("%s", "%s")`, strings.ToLower(k), vVal)
 			values = append(values, value)
 		}
 	}
