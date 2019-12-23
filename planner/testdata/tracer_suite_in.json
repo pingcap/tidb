@@ -1,0 +1,8 @@
+[
+  {
+    "name": "TestBaseline",
+    "cases": [
+      "explain format=\"opt_trace\" select * from t use index(idxa)"
+    ]
+  }
+]

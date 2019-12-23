@@ -1,0 +1,13 @@
+[
+  {
+    "Name": "TestBaseline",
+    "Cases": [
+      {
+        "SQL": "explain format=\"opt_trace\" select * from t use index(idxa)",
+        "Result": [
+          "{\"process_block\":[{\"KeyOptimize\":null,\"FinalPlan\":\"DataScan(t)-\\u003eProjection\"},{\"logical_rules\":null,\"final_plan\":\"DataScan(t)-\\u003eProjection\"},{\"visited_plans\":null,\"final_plan\":\"IndexLookUp(Index(t.idxa)[[NULL,+inf]], Table(t))-\\u003eProjection\",\"best_cost\":246189.1761799542},{\"base_lines\":[\"USE INDEX (idxb)\"],\"best_base_line_hint\":\"USE INDEX (idxb)\",\"best_base_line_cost\":246189.1761799542}]}"
+        ]
+      }
+    ]
+  }
+]
