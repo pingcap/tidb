@@ -237,7 +237,7 @@ var (
 			Namespace: "tidb",
 			Subsystem: "tikvclient",
 			Name:      "pessimistic_lock_keys_duration",
-			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 30), // 1ms ~ 1073741s
+			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 24), // 1ms ~ 16777s
 			Help:      "tidb txn pessimistic lock keys duration",
 		})
 )
