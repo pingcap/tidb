@@ -682,7 +682,7 @@ func NewRulePushSelDownJoin() Transformation {
 
 // Match implements Transformation interface.
 func (r *PushSelDownJoin) Match(expr *memo.ExprIter) bool {
-	return expr.GetExpr().HasAppliedRule(r)
+	return !expr.GetExpr().HasAppliedRule(r)
 }
 
 // buildChildSelectionGroup builds a new childGroup if the pushed down condition is not empty.
