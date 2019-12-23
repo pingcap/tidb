@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/charset"
@@ -738,8 +739,11 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 				buf.WriteString(table.OptionalFsp(&col.FieldType))
 			}
 		}
+		if tableInfo.PKIsHandle && tableInfo.ContainsAutoRandomBits() && tableInfo.GetPkName().L == col.Name.L {
+			buf.WriteString(fmt.Sprintf(" /*T!%s AUTO_RANDOM(%d) */", parser.CommentCodeAutoRandom, tableInfo.AutoRandomBits))
+		}
 		if len(col.Comment) > 0 {
-			fmt.Fprintf(buf, " COMMENT '%s'", format.OutputFormat(col.Comment))
+			buf.WriteString(fmt.Sprintf(" COMMENT '%s'", format.OutputFormat(col.Comment)))
 		}
 		if i != len(tableInfo.Cols())-1 {
 			needAddComma = true
@@ -840,7 +844,7 @@ func (e *ShowExec) fetchShowCreateTable() error {
 	}
 
 	tableInfo := tb.Meta()
-	allocator := tb.Allocator(e.ctx)
+	allocator := tb.Allocator(e.ctx, autoid.RowIDAllocType)
 	var buf bytes.Buffer
 	// TODO: let the result more like MySQL.
 	if err = ConstructResultOfShowCreateTable(e.ctx, tb.Meta(), allocator, &buf); err != nil {
