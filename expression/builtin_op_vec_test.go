@@ -14,8 +14,6 @@
 package expression
 
 import (
-	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/mock"
 	"math"
 	"testing"
 
@@ -23,6 +21,8 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/mock"
 )
 
 var vecBuiltinOpCases = map[string][]vecExprBenchCase{
