@@ -67,24 +67,6 @@ func GetMetricTableDef(lowerTableName string) (*MetricTableDef, error) {
 	return &def, nil
 }
 
-// GetExplainInfo uses to get the explain info of metric table.
-func GetExplainInfo(sctx sessionctx.Context, lowerTableName string, labels map[string]set.StringSet, quantiles []float64) string {
-	def, ok := metricTableMap[lowerTableName]
-	if !ok {
-		return ""
-	}
-	var buf bytes.Buffer
-	buf.WriteString("PromQL:")
-	for i, quantile := range quantiles {
-		promQL := def.GenPromQL(sctx, labels, quantile)
-		if i > 0 {
-			buf.WriteByte('\n')
-		}
-		buf.WriteString(promQL)
-	}
-	return buf.String()
-}
-
 func (def *MetricTableDef) genColumnInfos() []columnInfo {
 	cols := []columnInfo{
 		{"time", mysql.TypeDatetime, 19, 0, "CURRENT_TIMESTAMP", nil},

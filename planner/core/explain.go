@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/ranger"
+	"github.com/pingcap/tidb/util/set"
 )
 
 // ExplainInfo implements Plan interface.
@@ -702,11 +703,6 @@ func (p *PhysicalMemTable) ExplainInfo() string {
 	return genMetricTableExplainInfo(p.ctx, p.DBName, p.Table, p.Extractor)
 }
 
-// ExplainInfo implements Plan interface.
-func (p *LogicalMemTable) ExplainInfo() string {
-	return genMetricTableExplainInfo(p.ctx, p.dbName, p.tableInfo, p.Extractor)
-}
-
 func genMetricTableExplainInfo(ctx sessionctx.Context, dbName model.CIStr, tblInfo *model.TableInfo, extractor MemTablePredicateExtractor) string {
 	if dbName.L != util.MetricSchemaName.L || !metricschema.IsMetricTable(tblInfo.Name.L) {
 		return ""
@@ -722,12 +718,29 @@ func genMetricTableExplainInfo(ctx sessionctx.Context, dbName model.CIStr, tblIn
 		sc.AppendWarning(err)
 		return ""
 	}
-	promQL := metricschema.GetExplainInfo(ctx, tblInfo.Name.L, e.LabelConditions, quantile)
+	promQL := GetMetricTablePromQL(ctx, tblInfo.Name.L, e.LabelConditions, quantile)
 	startTime, endTime, step := e.GetQueryRangeTime(ctx)
-	return fmt.Sprintf("%v, start_time:%v, end_time:%v, step:%v",
+	return fmt.Sprintf("PromQL:%v, start_time:%v, end_time:%v, step:%v",
 		promQL,
 		startTime.In(ctx.GetSessionVars().StmtCtx.TimeZone).Format("2006-01-02 15:04:05.999"),
 		endTime.In(ctx.GetSessionVars().StmtCtx.TimeZone).Format("2006-01-02 15:04:05.999"),
 		step,
 	)
+}
+
+// GetMetricTablePromQL uses to get the promQL of metric table.
+func GetMetricTablePromQL(sctx sessionctx.Context, lowerTableName string, labels map[string]set.StringSet, quantiles []float64) string {
+	def, err := metricschema.GetMetricTableDef(lowerTableName)
+	if err != nil {
+		return ""
+	}
+	var buf bytes.Buffer
+	for i, quantile := range quantiles {
+		promQL := def.GenPromQL(sctx, labels, quantile)
+		if i > 0 {
+			buf.WriteByte('\n')
+		}
+		buf.WriteString(promQL)
+	}
+	return buf.String()
 }
