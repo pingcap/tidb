@@ -553,9 +553,6 @@ func buildChildSelectionGroup(
 // This rule tries to pushes the Selection through Join. Besides, this rule fulfills the `XXXConditions` field of Join.
 func (r *PushSelDownJoin) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
 	sel := old.GetExpr().ExprNode.(*plannercore.LogicalSelection)
-	if sel.HasBeenPushed {
-		return nil, false, false, nil
-	}
 	joinExpr := old.Children[0].GetExpr()
 	// TODO: we need to create a new LogicalJoin here.
 	join := joinExpr.ExprNode.(*plannercore.LogicalJoin)

@@ -322,10 +322,6 @@ type LogicalSelection struct {
 	// but after we converted to CNF(Conjunctive normal form), it can be
 	// split into a list of AND conditions.
 	Conditions []expression.Expression
-	// HasBeenPushed means whether the selection is applied rule `PushSelDown`,
-	// it's used in cascades planner.
-	// TODO: we need a general method to check the circle transfer rule application.
-	HasBeenPushed bool
 }
 
 func (p *LogicalSelection) extractCorrelatedCols() []*expression.CorrelatedColumn {
