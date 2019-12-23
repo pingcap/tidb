@@ -202,7 +202,7 @@ func (s *testIntegrationSuite) TestJoin(c *C) {
 	tk.MustExec("create table t1(a int primary key, b int)")
 	tk.MustExec("create table t2(a int primary key, b int)")
 	tk.MustExec("insert into t1 values (1, 11), (4, 44), (2, 22), (3, 33)")
-	tk.MustExec("insert into t2 values (1, 111), (2, 222), (3, 333)")
+	tk.MustExec("insert into t2 values (1, 111), (2, 222), (3, 333), (5, 555)")
 	tk.MustExec("set session tidb_enable_cascades_planner = 1")
 	var input []string
 	var output []struct {
