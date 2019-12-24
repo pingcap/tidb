@@ -33,7 +33,7 @@ import (
 type ReplaceExec struct {
 	*InsertValues
 	Priority   int
-	MemTracker *memory.Tracker
+	memTracker *memory.Tracker
 }
 
 // Close implements the Executor Close interface.
@@ -47,8 +47,8 @@ func (e *ReplaceExec) Close() error {
 
 // Open implements the Executor Open interface.
 func (e *ReplaceExec) Open(ctx context.Context) error {
-	e.MemTracker = memory.NewTracker(e.id, -1)
-	e.MemTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
+	e.memTracker = memory.NewTracker(e.id, -1)
+	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
 
 	if e.SelectExec != nil {
 		return e.SelectExec.Open(ctx)

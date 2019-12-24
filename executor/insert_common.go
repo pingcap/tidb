@@ -206,7 +206,7 @@ func insertRows(ctx context.Context, base insertCommon) (err error) {
 		memTracker = insertExec.memTracker
 	} else {
 		replaceExec := base.(*ReplaceExec)
-		memTracker = replaceExec.MemTracker
+		memTracker = replaceExec.memTracker
 	}
 	sessVars := e.ctx.GetSessionVars()
 	batchInsert := sessVars.BatchInsert && !sessVars.InTxn() && config.GetGlobalConfig().EnableBatchDML
@@ -404,7 +404,7 @@ func insertRowsFromSelect(ctx context.Context, base insertCommon) error {
 		memTracker = insertExec.memTracker
 	} else {
 		replaceExec := base.(*ReplaceExec)
-		memTracker = replaceExec.MemTracker
+		memTracker = replaceExec.memTracker
 	}
 
 	sessVars := e.ctx.GetSessionVars()
