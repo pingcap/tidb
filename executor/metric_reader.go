@@ -44,7 +44,7 @@ type MetricRetriever struct {
 	retrieved bool
 }
 
-func (e *MetricRetriever) retrieve(ctx context.Context, sctx sessionctx.Context) (partRows [][]types.Datum, err error) {
+func (e *MetricRetriever) retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
 	if e.retrieved || e.extractor.SkipRequest {
 		return nil, nil
 	}
@@ -66,7 +66,7 @@ func (e *MetricRetriever) retrieve(ctx context.Context, sctx sessionctx.Context)
 			return nil, err
 		}
 
-		partRows = e.genRows(queryValue, queryRange, quantile)
+		partRows := e.genRows(queryValue, queryRange, quantile)
 		totalRows = append(totalRows, partRows...)
 	}
 	return totalRows, nil
@@ -112,7 +112,8 @@ func (e *MetricRetriever) getMetricAddr(sctx sessionctx.Context) (string, error)
 type promQLQueryRange = promv1.Range
 
 func (e *MetricRetriever) getQueryRange(sctx sessionctx.Context) promQLQueryRange {
-	startTime, endTime, step := e.extractor.GetQueryRangeTime(sctx)
+	startTime, endTime := e.extractor.StartTime, e.extractor.EndTime
+	step := time.Second * time.Duration(sctx.GetSessionVars().MetricSchemaStep)
 	return promQLQueryRange{Start: startTime, End: endTime, Step: step}
 }
 

@@ -368,13 +368,6 @@ func (helper extractHelper) extractTimeRange(
 	return
 }
 
-func (helper extractHelper) convertToTime(t int64) time.Time {
-	if t == 0 || t == math.MaxInt64 {
-		return time.Now()
-	}
-	return time.Unix(t/int64(time.Microsecond), t%int64(time.Microsecond)*1000)
-}
-
 // ClusterTableExtractor is used to extract some predicates of cluster table.
 type ClusterTableExtractor struct {
 	extractHelper
@@ -484,9 +477,9 @@ type MetricTableExtractor struct {
 	// SkipRequest means the where clause always false, we don't need to request any component
 	SkipRequest bool
 	// StartTime represents the beginning time of metric data.
-	StartTime int64
+	StartTime time.Time
 	// EndTime represents the ending time of metric data.
-	EndTime int64
+	EndTime time.Time
 	// LabelConditions represents the label conditions of metric data.
 	LabelConditions map[string]set.StringSet
 	Quantiles       []float64
@@ -512,12 +505,14 @@ func (e *MetricTableExtractor) Extract(
 	if endTime == 0 {
 		endTime = math.MaxInt64
 	}
-	e.StartTime = startTime
-	e.EndTime = endTime
 	e.SkipRequest = startTime > endTime
-
+	e.StartTime = e.convertToTime(startTime)
+	e.EndTime = e.convertToTime(endTime)
 	if e.SkipRequest {
 		return nil
+	}
+	if e.StartTime.After(e.EndTime) {
+		e.StartTime = e.EndTime
 	}
 
 	// Extract the label columns.
@@ -557,12 +552,9 @@ func (e *MetricTableExtractor) parseQuantiles(quantileSet set.StringSet) []float
 	return quantiles
 }
 
-// GetQueryRangeTime gets the metric query time range.
-func (e *MetricTableExtractor) GetQueryRangeTime(sctx sessionctx.Context) (start, end time.Time, step time.Duration) {
-	start = e.convertToTime(e.StartTime)
-	end = e.convertToTime(e.EndTime)
-	if start.After(end) {
-		start = end
+func (e *MetricTableExtractor) convertToTime(t int64) time.Time {
+	if t == 0 || t == math.MaxInt64 {
+		return time.Now()
 	}
-	return start, end, time.Second * time.Duration(sctx.GetSessionVars().MetricSchemaStep)
+	return time.Unix(t/int64(time.Microsecond), t%int64(time.Microsecond)*1000)
 }

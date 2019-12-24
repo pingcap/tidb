@@ -550,11 +550,17 @@ func (s *extractorSuite) TestMetricTableExtractor(c *C) {
 	se, err := session.CreateSession4Test(s.store)
 	c.Assert(err, IsNil)
 
+	parseTime := func(c *C, s string) time.Time {
+		t, err := time.ParseInLocation("2006-01-02 15:04:05.999", s, time.Local)
+		c.Assert(err, IsNil)
+		return t
+	}
+
 	parser := parser.New()
 	var cases = []struct {
 		sql                string
 		skipRequest        bool
-		startTime, endTime int64
+		startTime, endTime time.Time
 		labelConditions    map[string]set.StringSet
 		quantiles          []float64
 		promQL             string
@@ -596,36 +602,35 @@ func (s *extractorSuite) TestMetricTableExtractor(c *C) {
 				"instance": set.NewStringSet("127.0.0.1:10080"),
 				"sql_type": set.NewStringSet("Update"),
 			},
-			startTime: timestamp(c, "2019-10-10 10:10:10"),
-			endTime:   timestamp(c, "2019-10-10 10:10:10"),
+			startTime: parseTime(c, "2019-10-10 10:10:10"),
+			endTime:   parseTime(c, "2019-10-10 10:10:10"),
 		},
 		{
 			sql:       "select * from metric_schema.query_duration where time>'2019-10-10 10:10:10' and time<'2019-10-11 10:10:10'",
 			promQL:    `histogram_quantile(0.9, sum(rate(tidb_server_handle_query_duration_seconds_bucket{}[60s])) by (le))`,
-			startTime: timestamp(c, "2019-10-10 10:10:10") + 1,
-			endTime:   timestamp(c, "2019-10-11 10:10:10") - 1,
+			startTime: parseTime(c, "2019-10-10 10:10:10.000001"),
+			endTime:   parseTime(c, "2019-10-11 10:10:09.000999"),
 		},
 		{
 			sql:       "select * from metric_schema.query_duration where time>='2019-10-10 10:10:10'",
 			promQL:    `histogram_quantile(0.9, sum(rate(tidb_server_handle_query_duration_seconds_bucket{}[60s])) by (le))`,
-			startTime: timestamp(c, "2019-10-10 10:10:10"),
-			endTime:   math.MaxInt64,
+			startTime: parseTime(c, "2019-10-10 10:10:10"),
 		},
 		{
 			sql:         "select * from metric_schema.query_duration where time>='2019-10-10 10:10:10' and time<='2019-10-09 10:10:10'",
 			promQL:      "",
-			startTime:   timestamp(c, "2019-10-10 10:10:10"),
-			endTime:     timestamp(c, "2019-10-09 10:10:10"),
+			startTime:   parseTime(c, "2019-10-10 10:10:10"),
+			endTime:     parseTime(c, "2019-10-09 10:10:10"),
 			skipRequest: true,
 		},
 		{
 			sql:     "select * from metric_schema.query_duration where time<='2019-10-09 10:10:10'",
 			promQL:  "histogram_quantile(0.9, sum(rate(tidb_server_handle_query_duration_seconds_bucket{}[60s])) by (le))",
-			endTime: timestamp(c, "2019-10-09 10:10:10"),
+			endTime: parseTime(c, "2019-10-09 10:10:10"),
 		},
 		{
 			sql: "select * from metric_schema.query_duration where quantile=0.9 or quantile=0.8",
-			promQL: "histogram_quantile(0.8, sum(rate(tidb_server_handle_query_duration_seconds_bucket{}[60s])) by (le))\n" +
+			promQL: "histogram_quantile(0.8, sum(rate(tidb_server_handle_query_duration_seconds_bucket{}[60s])) by (le))," +
 				"histogram_quantile(0.9, sum(rate(tidb_server_handle_query_duration_seconds_bucket{}[60s])) by (le))",
 			quantiles: []float64{0.8, 0.9},
 		},
@@ -656,15 +661,8 @@ func (s *extractorSuite) TestMetricTableExtractor(c *C) {
 
 		logicalMemTable := leafPlan.(*plannercore.LogicalMemTable)
 		c.Assert(logicalMemTable.Extractor, NotNil)
-
 		metricTableExtractor := logicalMemTable.Extractor.(*plannercore.MetricTableExtractor)
 		c.Assert(metricTableExtractor.LabelConditions, DeepEquals, ca.labelConditions, Commentf("SQL: %v", ca.sql))
-		if ca.startTime > 0 {
-			c.Assert(metricTableExtractor.StartTime, DeepEquals, ca.startTime, Commentf("SQL: %v", ca.sql))
-		}
-		if ca.endTime > 0 {
-			c.Assert(metricTableExtractor.EndTime, DeepEquals, ca.endTime, Commentf("SQL: %v", ca.sql))
-		}
 		c.Assert(metricTableExtractor.SkipRequest, DeepEquals, ca.skipRequest, Commentf("SQL: %v", ca.sql))
 		if len(metricTableExtractor.Quantiles) > 0 {
 			c.Assert(metricTableExtractor.Quantiles, DeepEquals, ca.quantiles)
@@ -672,8 +670,14 @@ func (s *extractorSuite) TestMetricTableExtractor(c *C) {
 		if !ca.skipRequest {
 			promQL := plannercore.GetMetricTablePromQL(se, "query_duration", metricTableExtractor.LabelConditions, metricTableExtractor.Quantiles)
 			c.Assert(promQL, DeepEquals, ca.promQL, Commentf("SQL: %v", ca.sql))
-			start, end, _ := metricTableExtractor.GetQueryRangeTime(se)
+			start, end := metricTableExtractor.StartTime, metricTableExtractor.EndTime
 			c.Assert(start.UnixNano() <= end.UnixNano(), IsTrue)
+			if ca.startTime.Unix() > 0 {
+				c.Assert(metricTableExtractor.StartTime, DeepEquals, ca.startTime, Commentf("SQL: %v, start_time: %v", ca.sql, metricTableExtractor.StartTime))
+			}
+			if ca.endTime.Unix() > 0 {
+				c.Assert(metricTableExtractor.EndTime, DeepEquals, ca.endTime, Commentf("SQL: %v, end_time: %v", ca.sql, metricTableExtractor.EndTime))
+			}
 		}
 	}
 }

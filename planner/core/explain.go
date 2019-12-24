@@ -17,9 +17,9 @@ import (
 	"bytes"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/infoschema/metricschema"
@@ -700,24 +700,21 @@ func (p *TiKVSingleGather) ExplainInfo() string {
 
 // ExplainInfo implements Plan interface.
 func (p *PhysicalMemTable) ExplainInfo() string {
-	return genMetricTableExplainInfo(p.ctx, p.DBName, p.Table, p.Extractor)
-}
-
-func genMetricTableExplainInfo(ctx sessionctx.Context, dbName model.CIStr, tblInfo *model.TableInfo, extractor MemTablePredicateExtractor) string {
-	if dbName.L != util.MetricSchemaName.L || !metricschema.IsMetricTable(tblInfo.Name.L) {
+	if p.DBName.L != util.MetricSchemaName.L || !metricschema.IsMetricTable(p.Table.Name.L) {
 		return ""
 	}
 
-	e, ok := extractor.(*MetricTableExtractor)
-	if !ok || e.SkipRequest {
-		return ""
+	e := p.Extractor.(*MetricTableExtractor)
+	if e.SkipRequest {
+		return "skip_request: true"
 	}
-	promQL := GetMetricTablePromQL(ctx, tblInfo.Name.L, e.LabelConditions, e.Quantiles)
-	startTime, endTime, step := e.GetQueryRangeTime(ctx)
+	promQL := GetMetricTablePromQL(p.ctx, p.Table.Name.L, e.LabelConditions, e.Quantiles)
+	startTime, endTime := e.StartTime, e.EndTime
+	step := time.Second * time.Duration(p.ctx.GetSessionVars().MetricSchemaStep)
 	return fmt.Sprintf("PromQL:%v, start_time:%v, end_time:%v, step:%v",
 		promQL,
-		startTime.In(ctx.GetSessionVars().StmtCtx.TimeZone).Format("2006-01-02 15:04:05.999"),
-		endTime.In(ctx.GetSessionVars().StmtCtx.TimeZone).Format("2006-01-02 15:04:05.999"),
+		startTime.In(p.ctx.GetSessionVars().StmtCtx.TimeZone).Format("2006-01-02 15:04:05.999999"),
+		endTime.In(p.ctx.GetSessionVars().StmtCtx.TimeZone).Format("2006-01-02 15:04:05.999999"),
 		step,
 	)
 }
@@ -735,7 +732,7 @@ func GetMetricTablePromQL(sctx sessionctx.Context, lowerTableName string, labels
 	for i, quantile := range quantiles {
 		promQL := def.GenPromQL(sctx, labels, quantile)
 		if i > 0 {
-			buf.WriteByte('\n')
+			buf.WriteByte(',')
 		}
 		buf.WriteString(promQL)
 	}
