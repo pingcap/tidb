@@ -155,7 +155,7 @@ func (s *testTransformationRuleSuite) TestTopNRules(c *C) {
 		},
 		memo.OperandTopN: {
 			NewRulePushTopNDownProjection(),
-			//NewRulePushTopNDownUnionAll(),
+			NewRulePushTopNDownUnionAll(),
 		},
 	})
 	var input []string

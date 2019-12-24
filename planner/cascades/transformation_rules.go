@@ -1016,6 +1016,12 @@ func NewRulePushTopNDownUnionAll() Transformation {
 	return rule
 }
 
+// Match implements Transformation interface.
+// Use appliedRuleSet in GroupExpr to avoid re-apply rules.
+func (r *PushTopNDownUnionAll) Match(expr *memo.ExprIter) bool {
+	return !expr.GetExpr().HasAppliedRule(r)
+}
+
 // OnTransform implements Transformation interface.
 // It will transform `TopN->UnionAll->X` to `TopN->UnionAll->TopN->X`.
 func (r *PushTopNDownUnionAll) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
@@ -1039,6 +1045,7 @@ func (r *PushTopNDownUnionAll) OnTransform(old *memo.ExprIter) (newExprs []*memo
 	newTopNExpr := memo.NewGroupExpr(topN)
 	newUnionAllGroup := memo.NewGroupWithSchema(newUnionAllExpr, unionAll.Schema())
 	newTopNExpr.SetChildren(newUnionAllGroup)
+	newTopNExpr.AddAppliedRule(r)
 	return []*memo.GroupExpr{newTopNExpr}, true, false, nil
 }
 
