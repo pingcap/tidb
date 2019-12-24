@@ -51,6 +51,7 @@ func TestT(t *testing.T) {
 }
 
 var _ = Suite(&testMainSuite{})
+var _ = SerialSuites(&testBootstrapSuite{})
 
 type testMainSuite struct {
 	dbName string
