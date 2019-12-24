@@ -14,7 +14,6 @@
 package expression
 
 import (
-	"math"
 	"math/rand"
 	"testing"
 
@@ -31,7 +30,10 @@ func (g *sleepTimeGener) gen() interface{} {
 	if rand.Float64() < g.nullRation {
 		return nil
 	}
-	return math.Floor(rand.Float64())
+	if rand.Float64() < 0.5 {
+		return 0
+	}
+	return 0.1
 }
 
 var vecBuiltinMiscellaneousCases = map[string][]vecExprBenchCase{
