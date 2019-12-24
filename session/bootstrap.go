@@ -997,6 +997,9 @@ func doDMLWorks(s Session) {
 			if v.Name == variable.TiDBTxnMode && config.GetGlobalConfig().Store == "tikv" {
 				vVal = "pessimistic"
 			}
+			if v.Name == variable.TiDBRowFormatVersion {
+				vVal = strconv.Itoa(variable.DefTiDBRowFormatVersionNewCluster)
+			}
 			value := fmt.Sprintf(`("%s", "%s")`, strings.ToLower(k), vVal)
 			values = append(values, value)
 		}

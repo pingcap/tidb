@@ -594,7 +594,7 @@ func (ts *HTTPHandlerTestSuite) TestDecodeColumnValue(c *C) {
 	for _, col := range cols {
 		colIDs = append(colIDs, col.id)
 	}
-	var rd rowcodec.Encoder
+	rd := rowcodec.Encoder{Enable: true}
 	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
 	bs, err := tablecodec.EncodeRow(sc, row, colIDs, nil, nil, &rd)
 	c.Assert(err, IsNil)

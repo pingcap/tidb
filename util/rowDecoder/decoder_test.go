@@ -117,7 +117,7 @@ func (s *testDecoderSuite) TestRowDecoder(c *C) {
 			[]types.Datum{types.NewDatum(nil), types.NewDatum(nil), types.NewDatum(nil), types.NewDatum(nil), types.NewDatum(nil), types.NewDatum(nil)},
 		},
 	}
-	var rd rowcodec.Encoder
+	rd := rowcodec.Encoder{Enable: true}
 	for i, row := range testRows {
 		// test case for pk is unsigned.
 		if i > 0 {

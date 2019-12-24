@@ -1080,6 +1080,11 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		atomic.StoreUint64(&ExpensiveQueryTimeThreshold, uint64(tidbOptPositiveInt32(val, DefTiDBExpensiveQueryTimeThreshold)))
 	case TiDBTxnMode:
 		s.TxnMode = strings.ToUpper(val)
+	case TiDBRowFormatVersion:
+		formatVersion := int(tidbOptInt64(val, DefTiDBRowFormatVersionOldCluster))
+		if formatVersion != DefTiDBRowFormatVersionOldCluster {
+			s.RowEncoder.Enable = true
+		}
 	case TiDBLowResolutionTSO:
 		s.LowResolutionTSO = TiDBOptOn(val)
 	case TiDBEnableIndexMerge:
