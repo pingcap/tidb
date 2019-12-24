@@ -608,13 +608,14 @@ func (s *extractorSuite) TestMetricTableExtractor(c *C) {
 		{
 			sql:       "select * from metric_schema.query_duration where time>'2019-10-10 10:10:10' and time<'2019-10-11 10:10:10'",
 			promQL:    `histogram_quantile(0.9, sum(rate(tidb_server_handle_query_duration_seconds_bucket{}[60s])) by (le))`,
-			startTime: parseTime(c, "2019-10-10 10:10:10.000001"),
-			endTime:   parseTime(c, "2019-10-11 10:10:09.000999"),
+			startTime: parseTime(c, "2019-10-10 10:10:10.001"),
+			endTime:   parseTime(c, "2019-10-11 10:10:09.999"),
 		},
 		{
 			sql:       "select * from metric_schema.query_duration where time>='2019-10-10 10:10:10'",
 			promQL:    `histogram_quantile(0.9, sum(rate(tidb_server_handle_query_duration_seconds_bucket{}[60s])) by (le))`,
 			startTime: parseTime(c, "2019-10-10 10:10:10"),
+			endTime:   parseTime(c, "2019-10-10 10:20:10"),
 		},
 		{
 			sql:         "select * from metric_schema.query_duration where time>='2019-10-10 10:10:10' and time<='2019-10-09 10:10:10'",
@@ -624,9 +625,10 @@ func (s *extractorSuite) TestMetricTableExtractor(c *C) {
 			skipRequest: true,
 		},
 		{
-			sql:     "select * from metric_schema.query_duration where time<='2019-10-09 10:10:10'",
-			promQL:  "histogram_quantile(0.9, sum(rate(tidb_server_handle_query_duration_seconds_bucket{}[60s])) by (le))",
-			endTime: parseTime(c, "2019-10-09 10:10:10"),
+			sql:       "select * from metric_schema.query_duration where time<='2019-10-09 10:10:10'",
+			promQL:    "histogram_quantile(0.9, sum(rate(tidb_server_handle_query_duration_seconds_bucket{}[60s])) by (le))",
+			startTime: parseTime(c, "2019-10-09 10:00:10"),
+			endTime:   parseTime(c, "2019-10-09 10:10:10"),
 		},
 		{
 			sql: "select * from metric_schema.query_duration where quantile=0.9 or quantile=0.8",

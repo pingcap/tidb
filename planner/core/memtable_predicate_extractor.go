@@ -502,17 +502,10 @@ func (e *MetricTableExtractor) Extract(
 
 	// Extract the `time` columns
 	remained, startTime, endTime := e.extractTimeRange(ctx, schema, names, remained, "time", ctx.GetSessionVars().StmtCtx.TimeZone)
-	if endTime == 0 {
-		endTime = math.MaxInt64
-	}
-	e.SkipRequest = startTime > endTime
-	e.StartTime = e.convertToTime(startTime)
-	e.EndTime = e.convertToTime(endTime)
+	e.StartTime, e.EndTime = e.getTimeRange(startTime, endTime)
+	e.SkipRequest = e.StartTime.After(e.EndTime)
 	if e.SkipRequest {
 		return nil
-	}
-	if e.StartTime.After(e.EndTime) {
-		e.StartTime = e.EndTime
 	}
 
 	// Extract the label columns.
@@ -538,6 +531,28 @@ func (e *MetricTableExtractor) Extract(
 	return remained
 }
 
+func (e *MetricTableExtractor) getTimeRange(start, end int64) (time.Time, time.Time) {
+	const defaultMetricQueryDuration = 10 * time.Minute
+	var startTime, endTime time.Time
+	if start == 0 && end == 0 {
+		endTime = time.Now()
+		return endTime.Add(-defaultMetricQueryDuration), endTime
+	}
+	if start != 0 {
+		startTime = e.convertToTime(start)
+	}
+	if end != 0 {
+		endTime = e.convertToTime(end)
+	}
+	if start == 0 {
+		startTime = endTime.Add(-defaultMetricQueryDuration)
+	}
+	if end == 0 {
+		endTime = startTime.Add(defaultMetricQueryDuration)
+	}
+	return startTime, endTime
+}
+
 func (e *MetricTableExtractor) parseQuantiles(quantileSet set.StringSet) []float64 {
 	quantiles := make([]float64, 0, len(quantileSet))
 	for k := range quantileSet {
@@ -556,5 +571,5 @@ func (e *MetricTableExtractor) convertToTime(t int64) time.Time {
 	if t == 0 || t == math.MaxInt64 {
 		return time.Now()
 	}
-	return time.Unix(t/int64(time.Microsecond), t%int64(time.Microsecond)*1000)
+	return time.Unix(t/1000, (t%1000)*1e6)
 }
