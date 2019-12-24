@@ -123,19 +123,12 @@ func (def *MetricTableDef) genLabelCondition(labels map[string]set.StringSet) st
 
 // GenLabelConditionValues generates the label condition values.
 func GenLabelConditionValues(values set.StringSet) string {
-	var buf bytes.Buffer
 	vs := make([]string, 0, len(values))
 	for k := range values {
 		vs = append(vs, k)
 	}
 	sort.Strings(vs)
-	for i, value := range vs {
-		if i > 0 {
-			buf.WriteByte('|')
-		}
-		buf.WriteString(value)
-	}
-	return buf.String()
+	return strings.Join(vs, "|")
 }
 
 type columnInfo struct {

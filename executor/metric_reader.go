@@ -38,14 +38,13 @@ const promReadTimeout = time.Second * 10
 
 // MetricRetriever uses to read metric data.
 type MetricRetriever struct {
-	table      *model.TableInfo
-	tblDef     *metricschema.MetricTableDef
-	outputCols []*model.ColumnInfo
-	extractor  *plannercore.MetricTableExtractor
-	retrieved  bool
+	table     *model.TableInfo
+	tblDef    *metricschema.MetricTableDef
+	extractor *plannercore.MetricTableExtractor
+	retrieved bool
 }
 
-func (e *MetricRetriever) retrieve(ctx context.Context, sctx sessionctx.Context) (fullRows [][]types.Datum, err error) {
+func (e *MetricRetriever) retrieve(ctx context.Context, sctx sessionctx.Context) (partRows [][]types.Datum, err error) {
 	if e.retrieved || e.extractor.SkipRequest {
 		return nil, nil
 	}
@@ -56,7 +55,7 @@ func (e *MetricRetriever) retrieve(ctx context.Context, sctx sessionctx.Context)
 	}
 	e.tblDef = tblDef
 	queryRange := e.getQueryRange(sctx)
-	rows := make([][]types.Datum, 0)
+	totalRows := make([][]types.Datum, 0)
 	quantiles := e.extractor.Quantiles
 	if len(quantiles) == 0 {
 		quantiles = []float64{tblDef.Quantile}
@@ -67,27 +66,15 @@ func (e *MetricRetriever) retrieve(ctx context.Context, sctx sessionctx.Context)
 			return nil, err
 		}
 
-		fullRows = e.genRows(queryValue, queryRange, quantile)
-		if len(e.outputCols) == len(e.table.Columns) {
-			rows = append(rows, fullRows...)
-			continue
-		}
-		for _, fullRow := range fullRows {
-			row := make([]types.Datum, len(e.outputCols))
-			for j, col := range e.outputCols {
-				row[j] = fullRow[col.Offset]
-			}
-			rows = append(rows, row)
-		}
+		partRows = e.genRows(queryValue, queryRange, quantile)
+		totalRows = append(totalRows, partRows...)
 	}
-	return rows, nil
+	return totalRows, nil
 }
 
 func (e *MetricRetriever) queryMetric(ctx context.Context, sctx sessionctx.Context, queryRange promv1.Range, quantile float64) (pmodel.Value, error) {
 	failpoint.InjectContext(ctx, "mockMetricRetrieverQueryPromQL", func() {
-		if matrix, ok := ctx.Value("__mockMetricsData").(pmodel.Matrix); ok {
-			failpoint.Return(matrix, nil)
-		}
+		failpoint.Return(ctx.Value("__mockMetricsData").(pmodel.Matrix), nil)
 	})
 
 	addr, err := e.getMetricAddr(sctx)

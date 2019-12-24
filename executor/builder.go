@@ -1266,9 +1266,8 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 		return &ClusterReaderExec{
 			baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
 			retriever: &MetricRetriever{
-				table:      v.Table,
-				outputCols: v.Columns,
-				extractor:  v.Extractor.(*plannercore.MetricTableExtractor),
+				table:     v.Table,
+				extractor: v.Extractor.(*plannercore.MetricTableExtractor),
 			},
 		}
 	case util.InformationSchemaName.L:
