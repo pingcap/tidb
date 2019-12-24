@@ -152,14 +152,15 @@ explain select dt.id as id, dt.aid as aid, dt.pt as pt, dt.dic as dic, dt.cm as 
 id	count	task	operator info
 Projection_10	0.00	root	test.dt.id, test.dt.aid, test.dt.pt, test.dt.dic, test.dt.cm, test.rr.gid, test.rr.acd, test.rr.t, test.dt.p1, test.dt.p2, test.dt.p3, test.dt.p4, test.dt.p5, test.dt.p6_md5, test.dt.p7_md5
 └─Limit_13	0.00	root	offset:0, count:2000
-  └─IndexJoin_19	0.00	root	inner join, inner:IndexLookUp_18, outer key:test.dt.aid, test.dt.dic, inner key:test.rr.aid, test.rr.dic
-    ├─TableReader_43	0.00	root	data:Selection_42
-    │ └─Selection_42	0.00	cop[tikv]	eq(test.dt.bm, 0), eq(test.dt.pt, "ios"), gt(test.dt.t, 1478185592), not(isnull(test.dt.dic))
-    │   └─TableScan_41	10000.00	cop[tikv]	table:dt, range:[0,+inf], keep order:false, stats:pseudo
-    └─IndexLookUp_18	1.00	root	
-      ├─IndexScan_15	1.00	cop[tikv]	table:rr, index:aid, dic, range: decided by [eq(test.rr.aid, test.dt.aid) eq(test.rr.dic, test.dt.dic)], keep order:false, stats:pseudo
-      └─Selection_17	1.00	cop[tikv]	eq(test.rr.pt, "ios"), gt(test.rr.t, 1478185592)
-        └─TableScan_16	1.00	cop[tikv]	table:rr, keep order:false, stats:pseudo
+  └─IndexMergeJoin_41	0.00	root	inner join, inner:IndexLookUp_39, outer key:test.rr.aid, test.rr.dic, inner key:test.dt.aid, test.dt.dic
+    ├─IndexLookUp_39	0.00	root	
+    │ ├─Selection_37	1.00	cop[tikv]	not(isnull(test.dt.dic))
+    │ │ └─IndexScan_35	1.00	cop[tikv]	table:dt, index:aid, dic, range: decided by [eq(test.dt.aid, test.rr.aid) eq(test.dt.dic, test.rr.dic)], keep order:true, stats:pseudo
+    │ └─Selection_38	0.00	cop[tikv]	eq(test.dt.bm, 0), eq(test.dt.pt, "ios"), gt(test.dt.t, 1478185592)
+    │   └─TableScan_36	1.00	cop[tikv]	table:dt, keep order:false, stats:pseudo
+    └─TableReader_61	3.33	root	data:Selection_60
+      └─Selection_60	3.33	cop[tikv]	eq(test.rr.pt, "ios"), gt(test.rr.t, 1478185592)
+        └─TableScan_59	10000.00	cop[tikv]	table:rr, range:[-inf,+inf], keep order:false, stats:pseudo
 explain select pc,cr,count(DISTINCT uid) as pay_users,count(oid) as pay_times,sum(am) as am from pp where ps=2  and ppt>=1478188800 and ppt<1478275200  and pi in ('510017','520017') and uid in ('18089709','18090780') group by pc,cr;
 id	count	task	operator info
 Projection_5	1.00	root	test.pp.pc, test.pp.cr, Column#22, Column#23, Column#24

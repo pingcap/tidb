@@ -15,6 +15,7 @@ package session_test
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"strings"
 	"sync"
@@ -22,6 +23,7 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/auth"
@@ -41,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
+	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -48,7 +51,14 @@ import (
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
 	"github.com/pingcap/tipb/go-binlog"
+	"go.etcd.io/etcd/clientv3"
 	"google.golang.org/grpc"
+)
+
+var (
+	withTiKVGlobalLock sync.RWMutex
+	withTiKV           = flag.Bool("with-tikv", false, "run tests with TiKV cluster started. (not use the mock server)")
+	pdAddrs            = flag.String("pd-addrs", "127.0.0.1:2379", "pd addrs")
 )
 
 var _ = Suite(&testSessionSuite{})
@@ -74,27 +84,97 @@ type testSessionSerialSuite struct {
 	testSessionSuiteBase
 }
 
+func clearStorage(store kv.Storage) error {
+	txn, err := store.Begin()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	iter, err := txn.Iter(nil, nil)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	for iter.Valid() {
+		txn.Delete(iter.Key())
+		if err := iter.Next(); err != nil {
+			return errors.Trace(err)
+		}
+	}
+	return txn.Commit(context.Background())
+}
+
+func clearETCD(ebd tikv.EtcdBackend) error {
+	cli, err := clientv3.New(clientv3.Config{
+		Endpoints:        ebd.EtcdAddrs(),
+		AutoSyncInterval: 30 * time.Second,
+		DialTimeout:      5 * time.Second,
+		DialOptions: []grpc.DialOption{
+			grpc.WithBackoffMaxDelay(time.Second * 3),
+		},
+		TLS: ebd.TLSConfig(),
+	})
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer cli.Close()
+
+	leases, err := cli.Leases(context.Background())
+	if err != nil {
+		return errors.Trace(err)
+	}
+	for _, resp := range leases.Leases {
+		if _, err := cli.Revoke(context.Background(), resp.ID); err != nil {
+			return errors.Trace(err)
+		}
+	}
+	_, err = cli.Delete(context.Background(), "/tidb", clientv3.WithPrefix())
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return nil
+}
+
 func (s *testSessionSuiteBase) SetUpSuite(c *C) {
 	testleak.BeforeTest()
 	s.cluster = mocktikv.NewCluster()
-	mocktikv.BootstrapWithSingleStore(s.cluster)
-	s.mvccStore = mocktikv.MustNewMVCCStore()
-	store, err := mockstore.NewMockTikvStore(
-		mockstore.WithCluster(s.cluster),
-		mockstore.WithMVCCStore(s.mvccStore),
-	)
-	c.Assert(err, IsNil)
-	s.store = store
-	session.SetSchemaLease(0)
-	session.DisableStats4Test()
+
+	if *withTiKV {
+		withTiKVGlobalLock.Lock()
+		var d tikv.Driver
+		config.GetGlobalConfig().TxnLocalLatches.Enabled = false
+		store, err := d.Open(fmt.Sprintf("tikv://%s", *pdAddrs))
+		c.Assert(err, IsNil)
+		err = clearStorage(store)
+		c.Assert(err, IsNil)
+		err = clearETCD(store.(tikv.EtcdBackend))
+		c.Assert(err, IsNil)
+		session.ResetForWithTiKVTest()
+		s.store = store
+	} else {
+		mocktikv.BootstrapWithSingleStore(s.cluster)
+		s.mvccStore = mocktikv.MustNewMVCCStore()
+		store, err := mockstore.NewMockTikvStore(
+			mockstore.WithCluster(s.cluster),
+			mockstore.WithMVCCStore(s.mvccStore),
+		)
+		c.Assert(err, IsNil)
+		s.store = store
+		session.SetSchemaLease(0)
+		session.DisableStats4Test()
+	}
+
+	var err error
 	s.dom, err = session.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
+	s.dom.GetGlobalVarsCache().Disable()
 }
 
 func (s *testSessionSuiteBase) TearDownSuite(c *C) {
 	s.dom.Close()
 	s.store.Close()
 	testleak.AfterTest(c)()
+	if *withTiKV {
+		withTiKVGlobalLock.Unlock()
+	}
 }
 
 func (s *testSessionSuiteBase) TearDownTest(c *C) {
@@ -2425,7 +2505,7 @@ func (s *testSessionSuite2) TestDBUserNameLength(c *C) {
 	tk.MustExec(`grant all privileges on test.t to 'abcddfjakldfjaldddds'@'%'`)
 }
 
-func (s *testSessionSuite2) TestKVVars(c *C) {
+func (s *testSessionSerialSuite) TestKVVars(c *C) {
 	c.Skip("there is no backoff here in the large txn, so this test is stale")
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("create table kvvars (a int, b int)")
@@ -2493,7 +2573,23 @@ func (s *testSessionSuite2) TestCommitRetryCount(c *C) {
 	c.Assert(err, NotNil)
 }
 
-func (s *testSessionSuite2) TestTxnRetryErrMsg(c *C) {
+func (s *testSessionSuite2) TestEnablePartition(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("set tidb_enable_table_partition=off")
+	tk.MustQuery("show variables like 'tidb_enable_table_partition'").Check(testkit.Rows("tidb_enable_table_partition off"))
+
+	tk.MustExec("set global tidb_enable_table_partition = on")
+
+	tk.MustQuery("show variables like 'tidb_enable_table_partition'").Check(testkit.Rows("tidb_enable_table_partition off"))
+	tk.MustQuery("show global variables like 'tidb_enable_table_partition'").Check(testkit.Rows("tidb_enable_table_partition on"))
+
+	// Disable global variable cache, so load global session variable take effect immediate.
+	s.dom.GetGlobalVarsCache().Disable()
+	tk1 := testkit.NewTestKitWithInit(c, s.store)
+	tk1.MustQuery("show variables like 'tidb_enable_table_partition'").Check(testkit.Rows("tidb_enable_table_partition on"))
+}
+
+func (s *testSessionSerialSuite) TestTxnRetryErrMsg(c *C) {
 	tk1 := testkit.NewTestKitWithInit(c, s.store)
 	tk2 := testkit.NewTestKitWithInit(c, s.store)
 	tk1.MustExec("create table no_retry (id int)")

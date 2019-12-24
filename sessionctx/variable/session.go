@@ -204,6 +204,12 @@ func (ib *WriteStmtBufs) clean() {
 	ib.IndexKeyBuf = nil
 }
 
+// TableSnapshot represents a data snapshot of the table contained in `inspection_schema`.
+type TableSnapshot struct {
+	Rows [][]types.Datum
+	Err  error
+}
+
 // SessionVars is to handle user-defined or global variables in the current session.
 type SessionVars struct {
 	Concurrency
@@ -448,6 +454,9 @@ type SessionVars struct {
 	// PrevStmt is used to store the previous executed statement in the current session.
 	PrevStmt fmt.Stringer
 
+	// prevStmtDigest is used to store the digest of the previous statement in the current session.
+	prevStmtDigest string
+
 	// AllowRemoveAutoInc indicates whether a user can drop the auto_increment column attribute or not.
 	AllowRemoveAutoInc bool
 
@@ -476,6 +485,17 @@ type SessionVars struct {
 	// LockWaitTimeout is the duration waiting for pessimistic lock in milliseconds
 	// negative value means nowait, 0 means default behavior, others means actual wait time
 	LockWaitTimeout int64
+
+	// MetricSchemaStep indicates the step when query metric schema.
+	MetricSchemaStep int64
+	// MetricSchemaRangeDuration indicates the step when query metric schema.
+	MetricSchemaRangeDuration int64
+
+	// Some data of cluster-level memory tables will be retrieved many times in different inspection rules,
+	// and the cost of retrieving some data is expensive. We use the `TableSnapshot` to cache those data
+	// and obtain them lazily, and provide a consistent view of inspection tables for each inspection rules.
+	// All cached snapshots will be released at the `InspectionExec` executor closing.
+	InspectionTableCache map[string]TableSnapshot
 }
 
 // PreparedParams contains the parameters of the current prepared statement when executing it.
@@ -556,6 +576,8 @@ func NewSessionVars() *SessionVars {
 		EvolvePlanBaselines:         DefTiDBEvolvePlanBaselines,
 		isolationReadEngines:        map[kv.StoreType]struct{}{kv.TiKV: {}, kv.TiFlash: {}, kv.TiDB: {}},
 		LockWaitTimeout:             DefInnodbLockWaitTimeout * 1000,
+		MetricSchemaStep:            DefTiDBMetricSchemaStep,
+		MetricSchemaRangeDuration:   DefTiDBMetricSchemaRangeDuration,
 	}
 	vars.Concurrency = Concurrency{
 		IndexLookupConcurrency:     DefIndexLookupConcurrency,
@@ -941,6 +963,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		atomic.StoreUint64(&config.GetGlobalConfig().Log.SlowThreshold, uint64(tidbOptInt64(val, logutil.DefaultSlowThreshold)))
 	case TiDBRecordPlanInSlowLog:
 		atomic.StoreUint32(&config.GetGlobalConfig().Log.RecordPlanInSlowLog, uint32(tidbOptInt64(val, logutil.DefaultRecordPlanInSlowLog)))
+	case TiDBEnableSlowLog:
+		atomic.StoreUint32(&config.GetGlobalConfig().Log.EnableSlowLog, uint32(tidbOptInt64(val, logutil.DefaultTiDBEnableSlowLog)))
 	case TiDBDDLSlowOprThreshold:
 		atomic.StoreUint32(&DDLSlowOprThreshold, uint32(tidbOptPositiveInt32(val, DefTiDBDDLSlowOprThreshold)))
 	case TiDBQueryLogMaxLen:
@@ -1020,6 +1044,10 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		}
 	case TiDBStoreLimit:
 		storeutil.StoreLimit.Store(tidbOptInt64(val, DefTiDBStoreLimit))
+	case TiDBMetricSchemaStep:
+		s.MetricSchemaStep = tidbOptInt64(val, DefTiDBMetricSchemaStep)
+	case TiDBMetricSchemaRangeDuration:
+		s.MetricSchemaRangeDuration = tidbOptInt64(val, DefTiDBMetricSchemaRangeDuration)
 	}
 	s.systems[name] = val
 	return nil
@@ -1037,6 +1065,18 @@ func (s *SessionVars) setTxnMode(val string) error {
 		return ErrWrongValueForVar.FastGenByArgs(TiDBTxnMode, val)
 	}
 	return nil
+}
+
+// SetPrevStmtDigest sets the digest of the previous statement.
+func (s *SessionVars) SetPrevStmtDigest(prevStmtDigest string) {
+	s.prevStmtDigest = prevStmtDigest
+}
+
+// GetPrevStmtDigest returns the digest of the previous statement.
+func (s *SessionVars) GetPrevStmtDigest() string {
+	// Because `prevStmt` may be truncated, so it's senseless to normalize it.
+	// Even if `prevStmtDigest` is empty but `prevStmt` is not, just return it anyway.
+	return s.prevStmtDigest
 }
 
 // SetLocalSystemVar sets values of the local variables which in "server" scope.

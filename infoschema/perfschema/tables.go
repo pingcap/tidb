@@ -111,18 +111,18 @@ type perfSchemaTable struct {
 	cols []*table.Column
 }
 
-var pluginTable = make(map[string]func(autoid.Allocator, *model.TableInfo) (table.Table, error))
+var pluginTable = make(map[string]func(autoid.Allocators, *model.TableInfo) (table.Table, error))
 
 // RegisterTable registers a new table into TiDB.
 func RegisterTable(tableName, sql string,
-	tableFromMeta func(autoid.Allocator, *model.TableInfo) (table.Table, error)) {
+	tableFromMeta func(autoid.Allocators, *model.TableInfo) (table.Table, error)) {
 	perfSchemaTables = append(perfSchemaTables, sql)
 	pluginTable[tableName] = tableFromMeta
 }
 
-func tableFromMeta(alloc autoid.Allocator, meta *model.TableInfo) (table.Table, error) {
+func tableFromMeta(allocs autoid.Allocators, meta *model.TableInfo) (table.Table, error) {
 	if f, ok := pluginTable[meta.Name.L]; ok {
-		ret, err := f(alloc, meta)
+		ret, err := f(allocs, meta)
 		return ret, err
 	}
 	return createPerfSchemaTable(meta), nil
@@ -145,6 +145,16 @@ func createPerfSchemaTable(meta *model.TableInfo) *perfSchemaTable {
 // Cols implements table.Table Type interface.
 func (vt *perfSchemaTable) Cols() []*table.Column {
 	return vt.cols
+}
+
+// VisibleCols implements table.Table VisibleCols interface.
+func (vt *perfSchemaTable) VisibleCols() []*table.Column {
+	return vt.cols
+}
+
+// HiddenCols implements table.Table HiddenCols interface.
+func (vt *perfSchemaTable) HiddenCols() []*table.Column {
+	return nil
 }
 
 // WritableCols implements table.Table Type interface.

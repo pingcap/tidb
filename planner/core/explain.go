@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
+	"github.com/pingcap/tidb/infoschema/metricschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/util/ranger"
@@ -698,4 +699,12 @@ func (dg *TiKVDoubleGather) ExplainInfo() string {
 	buffer := bytes.NewBufferString(dg.Source.ExplainInfo())
 	buffer.WriteString(", index:" + dg.index.Name.String())
 	return buffer.String()
+}
+
+// ExplainInfo implements Plan interface.
+func (p *PhysicalMemTable) ExplainInfo() string {
+	if !metricschema.IsMetricTable(p.Table.Name.L) {
+		return ""
+	}
+	return metricschema.GetExplainInfo(p.ctx, p.Table.Name.L)
 }

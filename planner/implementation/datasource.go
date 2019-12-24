@@ -56,7 +56,7 @@ func NewTableReaderImpl(reader *plannercore.PhysicalTableReader, hists *statisti
 // CalcCost calculates the cost of the table reader Implementation.
 func (impl *TableReaderImpl) CalcCost(outCount float64, children ...memo.Implementation) float64 {
 	reader := impl.plan.(*plannercore.PhysicalTableReader)
-	width := impl.tblColHists.GetAvgRowSize(reader.Schema().Columns, false)
+	width := impl.tblColHists.GetAvgRowSize(impl.plan.SCtx(), reader.Schema().Columns, false, false)
 	sessVars := reader.SCtx().GetSessionVars()
 	networkCost := outCount * sessVars.NetworkFactor * width
 	// copTasks are run in parallel, to make the estimated cost closer to execution time, we amortize
@@ -100,7 +100,7 @@ func NewTableScanImpl(ts *plannercore.PhysicalTableScan, cols []*expression.Colu
 // CalcCost calculates the cost of the table scan Implementation.
 func (impl *TableScanImpl) CalcCost(outCount float64, children ...memo.Implementation) float64 {
 	ts := impl.plan.(*plannercore.PhysicalTableScan)
-	width := impl.tblColHists.GetTableAvgRowSize(impl.tblCols, kv.TiKV, true)
+	width := impl.tblColHists.GetTableAvgRowSize(impl.plan.SCtx(), impl.tblCols, kv.TiKV, true)
 	sessVars := ts.SCtx().GetSessionVars()
 	impl.cost = outCount * sessVars.ScanFactor * width
 	if ts.Desc {
@@ -130,7 +130,7 @@ func (impl *IndexReaderImpl) ScaleCostLimit(costLimit float64) float64 {
 func (impl *IndexReaderImpl) CalcCost(outCount float64, children ...memo.Implementation) float64 {
 	reader := impl.plan.(*plannercore.PhysicalIndexReader)
 	sessVars := reader.SCtx().GetSessionVars()
-	networkCost := outCount * sessVars.NetworkFactor * impl.tblColHists.GetAvgRowSize(children[0].GetPlan().Schema().Columns, true)
+	networkCost := outCount * sessVars.NetworkFactor * impl.tblColHists.GetAvgRowSize(reader.SCtx(), children[0].GetPlan().Schema().Columns, true, false)
 	copIterWorkers := float64(sessVars.DistSQLScanConcurrency)
 	impl.cost = (networkCost + children[0].GetCost()) / copIterWorkers
 	return impl.cost
@@ -154,7 +154,7 @@ type IndexScanImpl struct {
 func (impl *IndexScanImpl) CalcCost(outCount float64, children ...memo.Implementation) float64 {
 	is := impl.plan.(*plannercore.PhysicalIndexScan)
 	sessVars := is.SCtx().GetSessionVars()
-	rowSize := impl.tblColHists.GetIndexAvgRowSize(is.Schema().Columns, is.Index.Unique)
+	rowSize := impl.tblColHists.GetIndexAvgRowSize(is.SCtx(), is.Schema().Columns, is.Index.Unique)
 	cost := outCount * rowSize * sessVars.ScanFactor
 	if is.Desc {
 		cost = outCount * rowSize * sessVars.DescScanFactor
