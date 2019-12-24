@@ -41,7 +41,8 @@ import (
 )
 
 var (
-	_ Executor = &mockDataSource{}
+	_ Executor          = &mockDataSource{}
+	_ core.PhysicalPlan = &mockDataPhysicalPlan{}
 )
 
 type mockDataSourceParameters struct {
@@ -447,8 +448,6 @@ func buildWindowExecutor(ctx sessionctx.Context, windowFunc string, frame *core.
 	}
 	b := newExecutorBuilder(ctx, nil)
 	exec := b.build(plan)
-	//window := exec.(*WindowExec)
-	//window.children[0] = src
 	return exec
 }
 
@@ -463,7 +462,8 @@ type windowTestCase struct {
 	ctx              sessionctx.Context
 }
 
-var rawData = strings.Repeat("x", 5*1024)
+//var rawData = strings.Repeat("x", 5*1024)
+var rawData = strings.Repeat("x", 16)
 
 func (a windowTestCase) columns() []*expression.Column {
 	rawDataTp := new(types.FieldType)
@@ -535,14 +535,12 @@ func benchmarkWindowExecWithCase(b *testing.B, casTest *windowTestCase) {
 
 func BenchmarkWindowRows(b *testing.B) {
 	b.ReportAllocs()
-	//rows := []int{1000, 100000}
-	rows := []int{100000}
-	//ndvs := []int{10, 1000}
-	ndvs := []int{1000}
-	concs := []int{1, 4}
-	for _, con := range concs {
-		for _, row := range rows {
-			for _, ndv := range ndvs {
+	rows := []int{1000, 100000}
+	ndvs := []int{10, 1000}
+	concs := []int{1, 2, 4}
+	for _, row := range rows {
+		for _, ndv := range ndvs {
+			for _, con := range concs {
 				cas := defaultWindowTestCase()
 				cas.rows = row
 				cas.ndv = ndv
@@ -560,21 +558,21 @@ func BenchmarkWindowRows(b *testing.B) {
 func BenchmarkWindowFunctions(b *testing.B) {
 	b.ReportAllocs()
 	windowFuncs := []string{
-		// ast.WindowFuncRowNumber,
-		// ast.WindowFuncRank,
-		// ast.WindowFuncDenseRank,
-		// ast.WindowFuncCumeDist,
+		ast.WindowFuncRowNumber,
+		ast.WindowFuncRank,
+		ast.WindowFuncDenseRank,
+		ast.WindowFuncCumeDist,
 		ast.WindowFuncPercentRank,
-		// ast.WindowFuncNtile,
-		// ast.WindowFuncLead,
-		// ast.WindowFuncLag,
-		// ast.WindowFuncFirstValue,
-		// ast.WindowFuncLastValue,
-		// ast.WindowFuncNthValue,
+		ast.WindowFuncNtile,
+		ast.WindowFuncLead,
+		ast.WindowFuncLag,
+		ast.WindowFuncFirstValue,
+		ast.WindowFuncLastValue,
+		ast.WindowFuncNthValue,
 	}
 	concs := []int{1, 4}
-	for _, con := range concs {
-		for _, windowFunc := range windowFuncs {
+	for _, windowFunc := range windowFuncs {
+		for _, con := range concs {
 			cas := defaultWindowTestCase()
 			cas.rows = 100000
 			cas.ndv = 1000
@@ -591,15 +589,15 @@ func BenchmarkWindowFunctions(b *testing.B) {
 func BenchmarkWindowFunctionsWithFrame(b *testing.B) {
 	b.ReportAllocs()
 	windowFuncs := []string{
-		//ast.AggFuncSum,
 		ast.AggFuncAvg,
+		ast.AggFuncBitXor,
 	}
 	frames := []*core.WindowFrame{
 		{Type: ast.Rows, Start: &core.FrameBound{UnBounded: true}, End: &core.FrameBound{Type: ast.CurrentRow}},
 	}
-	concs := []int{2}
-	for _, con := range concs {
-		for i, windowFunc := range windowFuncs {
+	concs := []int{1, 2, 3, 4, 5, 6}
+	for i, windowFunc := range windowFuncs {
+		for _, con := range concs {
 			cas := defaultWindowTestCase()
 			cas.rows = 100000
 			cas.ndv = 1000
