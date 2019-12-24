@@ -32,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
-	"unsafe"
 )
 
 // Kind constants.
