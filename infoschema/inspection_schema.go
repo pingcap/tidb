@@ -47,8 +47,8 @@ type inspectionSchemaTable struct {
 func (it *inspectionSchemaTable) IterRecords(ctx sessionctx.Context, startKey kv.Key, cols []*table.Column,
 	fn table.RecordIterFunc) error {
 	sessionVars := ctx.GetSessionVars()
-	// The `InspectionTableCache` will be assigned in `InspectionExec.Open` and be
-	// cleaned at `InspectionExec.Close`, so nil represents currently in non-inspection mode.
+	// The `InspectionTableCache` will be assigned in the begin of retrieving` and be
+	// cleaned at the end of retrieving, so nil represents currently in non-inspection mode.
 	if sessionVars.InspectionTableCache == nil {
 		return errors.New("not currently in inspection mode")
 	}

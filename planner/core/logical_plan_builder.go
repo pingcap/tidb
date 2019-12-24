@@ -2720,7 +2720,7 @@ func (b *PlanBuilder) buildMemTable(ctx context.Context, dbName model.CIStr, tab
 		p.Extractor = &ClusterTableExtractor{}
 	case infoschema.TableClusterLog:
 		p.Extractor = &ClusterLogTableExtractor{}
-	case strings.ToLower(infoschema.TableInspectionResult):
+	case infoschema.TableInspectionResult:
 		p.Extractor = &InspectionResultTableExtractor{}
 	}
 

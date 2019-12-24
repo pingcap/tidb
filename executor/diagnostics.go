@@ -16,9 +16,12 @@ package executor
 import (
 	"context"
 	"fmt"
+	"strings"
 
+	"github.com/pingcap/failpoint"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -48,13 +51,39 @@ var inspectionRules = []inspectionRule{
 }
 
 type inspectionRetriever struct {
+	retrieved bool
 	extractor *plannercore.InspectionResultTableExtractor
 }
 
 func (e *inspectionRetriever) retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
-	if e.extractor.SkipInspection {
+	if e.retrieved || e.extractor.SkipInspection {
 		return nil, nil
 	}
+	e.retrieved = true
+
+	// Some data of cluster-level memory tables will be retrieved many times in different inspection rules,
+	// and the cost of retrieving some data is expensive. We use the `TableSnapshot` to cache those data
+	// and obtain them lazily, and provide a consistent view of inspection tables for each inspection rules.
+	// All cached snapshots should be released at the end of retrieving. So all diagnosis rules should query
+	// `cluster_config/cluster_hardware/cluster_load/cluster_info` in `inspection_schema`.
+	// e.g:
+	// SELECT * FROM inspection_schema.cluster_config
+	// instead of:
+	// SELECT * FROM information_schema.cluster_config
+	sctx.GetSessionVars().InspectionTableCache = map[string]variable.TableSnapshot{}
+	defer func() { sctx.GetSessionVars().InspectionTableCache = nil }()
+
+	failpoint.InjectContext(ctx, "mockMergeMockInspectionTables", func() {
+		// Merge mock snapshots injected from failpoint for test purpose
+		mockTables, ok := ctx.Value("__mockInspectionTables").(map[string]variable.TableSnapshot)
+		if !ok {
+			return
+		}
+		for name, snap := range mockTables {
+			sctx.GetSessionVars().InspectionTableCache[strings.ToLower(name)] = snap
+		}
+	})
+
 	rules := e.extractor.Rules
 	items := e.extractor.Items
 	var finalRows [][]types.Datum
