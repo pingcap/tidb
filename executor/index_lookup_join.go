@@ -497,7 +497,7 @@ func (iw *innerWorker) constructLookupContent(task *lookUpJoinTask) ([]*indexJoi
 		chk := task.outerResult.GetChunk(chkIdx)
 		numRows := chk.NumRows()
 		for rowIdx := 0; rowIdx < numRows; rowIdx++ {
-			dLookUpKey, err := iw.constructDatumLookupKey(task, chkIdx, rowIdx)
+			dLookUpKey, dLookUpKeyInner, err := iw.constructDatumLookupKey(task, chkIdx, rowIdx)
 			if err != nil {
 				return nil, err
 			}
@@ -507,7 +507,7 @@ func (iw *innerWorker) constructLookupContent(task *lookUpJoinTask) ([]*indexJoi
 				continue
 			}
 			keyBuf = keyBuf[:0]
-			keyBuf, err = codec.EncodeKey(iw.ctx.GetSessionVars().StmtCtx, keyBuf, dLookUpKey...)
+			keyBuf, err = codec.EncodeKey(iw.ctx.GetSessionVars().StmtCtx, keyBuf, dLookUpKeyInner...)
 			if err != nil {
 				return nil, err
 			}
@@ -517,7 +517,11 @@ func (iw *innerWorker) constructLookupContent(task *lookUpJoinTask) ([]*indexJoi
 				for i := range iw.outerCtx.keyCols {
 					// If it's a prefix column. Try to fix it.
 					if iw.colLens[i] != types.UnspecifiedLength {
-						ranger.CutDatumByPrefixLen(&dLookUpKey[i], iw.colLens[i], iw.rowTypes[iw.keyCols[i]])
+						ranger.CutDatumByPrefixLen(&dLookUpKeyInner[i], iw.colLens[i], iw.rowTypes[iw.keyCols[i]])
+						dLookUpKey[i], err = dLookUpKeyInner[i].ConvertTo(iw.ctx.GetSessionVars().StmtCtx, iw.outerCtx.rowTypes[iw.outerCtx.keyCols[i]])
+						if err != nil && !terror.ErrorEqual(err, types.ErrOverflow){
+							return nil, err
+						}
 					}
 				}
 				// dLookUpKey is sorted and deduplicated at sortAndDedupLookUpContents.
@@ -533,42 +537,44 @@ func (iw *innerWorker) constructLookupContent(task *lookUpJoinTask) ([]*indexJoi
 	return lookUpContents, nil
 }
 
-func (iw *innerWorker) constructDatumLookupKey(task *lookUpJoinTask, chkIdx, rowIdx int) ([]types.Datum, error) {
+func (iw *innerWorker) constructDatumLookupKey(task *lookUpJoinTask, chkIdx, rowIdx int) ([]types.Datum, []types.Datum, error) {
 	if task.outerMatch != nil && !task.outerMatch[chkIdx][rowIdx] {
-		return nil, nil
+		return nil, nil, nil
 	}
 	outerRow := task.outerResult.GetChunk(chkIdx).GetRow(rowIdx)
 	sc := iw.ctx.GetSessionVars().StmtCtx
 	keyLen := len(iw.keyCols)
 	dLookupKey := make([]types.Datum, 0, keyLen)
+	dLookupKeyInner := make([]types.Datum, 0, keyLen)
 	for i, keyCol := range iw.outerCtx.keyCols {
 		outerValue := outerRow.GetDatum(keyCol, iw.outerCtx.rowTypes[keyCol])
 		// Join-on-condition can be promised to be equal-condition in
 		// IndexNestedLoopJoin, thus the filter will always be false if
 		// outerValue is null, and we don't need to lookup it.
 		if outerValue.IsNull() {
-			return nil, nil
+			return nil, nil, nil
 		}
 		innerColType := iw.rowTypes[iw.keyCols[i]]
 		innerValue, err := outerValue.ConvertTo(sc, innerColType)
 		if err != nil {
 			// If the converted outerValue overflows, we don't need to lookup it.
 			if terror.ErrorEqual(err, types.ErrOverflow) {
-				return nil, nil
+				return nil, nil, nil
 			}
-			return nil, err
+			return nil, nil, err
 		}
 		cmp, err := outerValue.CompareDatum(sc, &innerValue)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		if cmp != 0 {
 			// If the converted outerValue is not equal to the origin outerValue, we don't need to lookup it.
-			return nil, nil
+			return nil, nil, nil
 		}
 		dLookupKey = append(dLookupKey, outerValue)
+		dLookupKeyInner = append(dLookupKeyInner, innerValue)
 	}
-	return dLookupKey, nil
+	return dLookupKey, dLookupKeyInner, nil
 }
 
 func (iw *innerWorker) sortAndDedupLookUpContents(lookUpContents []*indexJoinLookUpContent) []*indexJoinLookUpContent {

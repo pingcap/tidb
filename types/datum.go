@@ -1976,27 +1976,42 @@ func ChangeReverseResultByUpperLowerBound(
 
 	// When rType is Ceiling, we should add 1 to the minimal precision of float, to ensure the upper bound
 	// covering all precision losing situations.
-	if rType == Ceiling && (
-		(res.Kind() == KindFloat32 && res.GetFloat32() != math.MaxFloat32) ||
-		(res.Kind() == KindFloat64 && res.GetFloat64() != math.MaxFloat64)) {
-		var val float64
-		if res.Kind() == KindFloat32 {
-			val = float64(res.GetFloat32())
-		} else {
-			val = res.GetFloat64()
-		}
+	if res.Kind() == KindFloat32 && res.GetFloat32() != math.MaxFloat32 {
+		val := float64(res.GetFloat32())
 		floatBits := math.Float64bits(val)
 		e := ((floatBits >> 52) & 0x7ff) - 1023
-		number := floatBits & ((uint64(1) << 54) - 1)
+		number := int64(floatBits & ((uint64(1) << 52) - 1))
+		floatHead := 1.0
 		if val < 0 {
 			number = -number
+			floatHead = -1.0
 		}
-		newFloat := float64(number+1) * math.Pow(2, float64(e - 53))
-		if res.Kind() == KindFloat32 {
-			res.SetFloat32(float32(newFloat))
-		} else {
-			res.SetFloat64(newFloat)
+		var delta int64
+		delta = 1 << (52 - 23)
+		if rType == Floor {
+			delta = -delta
 		}
+		newFloat := (float64(number+delta)*math.Pow(2, -52) + floatHead) * math.Pow(2, float64(e))
+		res.SetFloat32(float32(newFloat))
+	}
+
+	if res.Kind() == KindFloat64 && res.GetFloat64() != math.MaxFloat64 {
+		val := res.GetFloat64()
+		floatBits := math.Float64bits(val)
+		e := ((floatBits >> 52) & 0x7ff) - 1023
+		number := int64(floatBits & ((uint64(1) << 52) - 1))
+		floatHead := 1.0
+		if val < 0 {
+			number = -number
+			floatHead = -1.0
+		}
+		var delta int64
+		delta = 1
+		if rType == Floor {
+			delta = -1
+		}
+		newFloat := (float64(number+delta)*math.Pow(2, -52) + floatHead) * math.Pow(2, float64(e))
+		res.SetFloat64(newFloat)
 	}
 
 	d, err := res.ConvertTo(sc, retType)
