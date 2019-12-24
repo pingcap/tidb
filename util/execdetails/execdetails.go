@@ -33,16 +33,17 @@ var CommitDetailCtxKey = commitDetailCtxKeyType{}
 
 // ExecDetails contains execution detail information.
 type ExecDetails struct {
-	CalleeAddress string
-	ProcessTime   time.Duration
-	WaitTime      time.Duration
-	BackoffTime   time.Duration
-	BackoffSleep  map[string]time.Duration
-	BackoffTimes  map[string]int
-	RequestCount  int
-	TotalKeys     int64
-	ProcessedKeys int64
-	CommitDetail  *CommitDetails
+	CalleeAddress    string
+	ProcessTime      time.Duration
+	WaitTime         time.Duration
+	BackoffTime      time.Duration
+	LockKeysDuration time.Duration
+	BackoffSleep     map[string]time.Duration
+	BackoffTimes     map[string]int
+	RequestCount     int
+	TotalKeys        int64
+	ProcessedKeys    int64
+	CommitDetail     *CommitDetails
 }
 
 // CommitDetails contains commit detail information.
@@ -71,6 +72,8 @@ const (
 	WaitTimeStr = "Wait_time"
 	// BackoffTimeStr means the time of all back-off.
 	BackoffTimeStr = "Backoff_time"
+	// LockKeysTimeStr means the time interval between pessimistic lock wait start and lock got obtain
+	LockKeysTimeStr = "LockKeys_time"
 	// RequestCountStr means the request count.
 	RequestCountStr = "Request_count"
 	// TotalKeysStr means the total scan keys.
@@ -114,6 +117,9 @@ func (d ExecDetails) String() string {
 	}
 	if d.BackoffTime > 0 {
 		parts = append(parts, BackoffTimeStr+": "+strconv.FormatFloat(d.BackoffTime.Seconds(), 'f', -1, 64))
+	}
+	if d.LockKeysDuration > 0 {
+		parts = append(parts, LockKeysTimeStr+": "+strconv.FormatFloat(d.LockKeysDuration.Seconds(), 'f', -1, 64))
 	}
 	if d.RequestCount > 0 {
 		parts = append(parts, RequestCountStr+": "+strconv.FormatInt(int64(d.RequestCount), 10))
