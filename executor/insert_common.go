@@ -41,8 +41,6 @@ type InsertValues struct {
 	curBatchCnt    uint64
 	maxRowsInBatch uint64
 	lastInsertID   uint64
-	hasRefCols     bool
-	hasExtraHandle bool
 
 	SelectExec Executor
 
@@ -55,13 +53,16 @@ type InsertValues struct {
 
 	insertColumns []*table.Column
 
-	allAssignmentsAreConstant bool
-
 	// colDefaultVals is used to store casted default value.
 	// Because not every insert statement needs colDefaultVals, so we will init the buffer lazily.
 	colDefaultVals  []defaultVal
 	evalBuffer      chunk.MutRow
 	evalBufferTypes []*types.FieldType
+
+	allAssignmentsAreConstant bool
+
+	hasRefCols     bool
+	hasExtraHandle bool
 
 	// Fill the autoID lazily to datum. This is used for being compatible with JDBC using getGeneratedKeys().
 	// `insert|replace values` can guarantee consecutive autoID in a batch.
