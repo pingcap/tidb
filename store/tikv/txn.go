@@ -356,6 +356,18 @@ func (txn *tikvTxn) rollbackPessimisticLocks() error {
 // LockKeys input param lockWaitTime in ms, except that kv.LockAlwaysWait(0) means always wait lock, kv.LockNowait(-1) means nowait lock
 func (txn *tikvTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keysInput ...kv.Key) error {
 	// Exclude keys that are already locked.
+	var err error
+	defer func() {
+		if err == nil {
+			if lockCtx.PessimisticLockWaited != nil {
+				if atomic.LoadInt32(lockCtx.PessimisticLockWaited) > 0 {
+					timeWaited := time.Since(lockCtx.WaitStartTime)
+					metrics.TiKVPessimisticLockKeysDuration.Observe(timeWaited.Seconds())
+					*lockCtx.LockKeysDuration = timeWaited
+				}
+			}
+		}
+	}()
 	keys := make([][]byte, 0, len(keysInput))
 	txn.mu.Lock()
 	for _, key := range keysInput {
