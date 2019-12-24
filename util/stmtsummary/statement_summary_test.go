@@ -63,11 +63,13 @@ func (s *testStmtSummarySuite) TestAddStatement(c *C) {
 	key := &stmtSummaryByDigestKey{
 		schemaName: stmtExecInfo1.SchemaName,
 		digest:     stmtExecInfo1.Digest,
+		planDigest: stmtExecInfo1.PlanDigest,
 	}
 	expectedSummaryElement := stmtSummaryByDigestElement{
 		beginTime:            now + 60,
 		endTime:              now + 1860,
 		sampleSQL:            stmtExecInfo1.OriginalSQL,
+		samplePlan:           stmtExecInfo1.Plan,
 		indexNames:           stmtExecInfo1.StmtCtx.IndexNames,
 		sampleUser:           stmtExecInfo1.User,
 		execCount:            1,
@@ -129,6 +131,7 @@ func (s *testStmtSummarySuite) TestAddStatement(c *C) {
 		stmtType:      stmtExecInfo1.StmtCtx.StmtType,
 		digest:        stmtExecInfo1.Digest,
 		normalizedSQL: stmtExecInfo1.NormalizedSQL,
+		planDigest:    stmtExecInfo1.PlanDigest,
 		tableNames:    "db1.tb1,db2.tb2",
 		history:       history,
 	}
@@ -144,6 +147,7 @@ func (s *testStmtSummarySuite) TestAddStatement(c *C) {
 		OriginalSQL:    "original_sql2",
 		NormalizedSQL:  "normalized_sql",
 		Digest:         "digest",
+		PlanDigest:     "plan_digest",
 		User:           "user2",
 		TotalLatency:   20000,
 		ParseLatency:   200,
@@ -261,6 +265,7 @@ func (s *testStmtSummarySuite) TestAddStatement(c *C) {
 		OriginalSQL:    "original_sql3",
 		NormalizedSQL:  "normalized_sql",
 		Digest:         "digest",
+		PlanDigest:     "plan_digest",
 		User:           "user3",
 		TotalLatency:   1000,
 		ParseLatency:   50,
@@ -355,6 +360,7 @@ func (s *testStmtSummarySuite) TestAddStatement(c *C) {
 	key = &stmtSummaryByDigestKey{
 		schemaName: stmtExecInfo4.SchemaName,
 		digest:     stmtExecInfo4.Digest,
+		planDigest: stmtExecInfo4.PlanDigest,
 	}
 	s.ssMap.AddStatement(stmtExecInfo4)
 	c.Assert(s.ssMap.summaryMap.Size(), Equals, 2)
@@ -367,9 +373,23 @@ func (s *testStmtSummarySuite) TestAddStatement(c *C) {
 	key = &stmtSummaryByDigestKey{
 		schemaName: stmtExecInfo5.SchemaName,
 		digest:     stmtExecInfo5.Digest,
+		planDigest: stmtExecInfo4.PlanDigest,
 	}
 	s.ssMap.AddStatement(stmtExecInfo5)
 	c.Assert(s.ssMap.summaryMap.Size(), Equals, 3)
+	_, ok = s.ssMap.summaryMap.Get(key)
+	c.Assert(ok, IsTrue)
+
+	// Sixth statement has a different plan digest.
+	stmtExecInfo6 := stmtExecInfo1
+	stmtExecInfo6.PlanDigest = "plan_digest2"
+	key = &stmtSummaryByDigestKey{
+		schemaName: stmtExecInfo6.SchemaName,
+		digest:     stmtExecInfo6.Digest,
+		planDigest: stmtExecInfo6.PlanDigest,
+	}
+	s.ssMap.AddStatement(stmtExecInfo6)
+	c.Assert(s.ssMap.summaryMap.Size(), Equals, 4)
 	_, ok = s.ssMap.summaryMap.Get(key)
 	c.Assert(ok, IsTrue)
 }
@@ -378,6 +398,7 @@ func matchStmtSummaryByDigest(first, second *stmtSummaryByDigest) bool {
 	if first.schemaName != second.schemaName ||
 		first.digest != second.digest ||
 		first.normalizedSQL != second.normalizedSQL ||
+		first.planDigest != second.planDigest ||
 		first.tableNames != second.tableNames ||
 		!strings.EqualFold(first.stmtType, second.stmtType) {
 		return false
@@ -396,6 +417,7 @@ func matchStmtSummaryByDigest(first, second *stmtSummaryByDigest) bool {
 		if ssElement1.beginTime != ssElement2.beginTime ||
 			ssElement1.endTime != ssElement2.endTime ||
 			ssElement1.sampleSQL != ssElement2.sampleSQL ||
+			ssElement1.samplePlan != ssElement2.samplePlan ||
 			ssElement1.prevSQL != ssElement2.prevSQL ||
 			ssElement1.sampleUser != ssElement2.sampleUser ||
 			ssElement1.execCount != ssElement2.execCount ||
@@ -491,6 +513,8 @@ func generateAnyExecInfo() *StmtExecInfo {
 		OriginalSQL:    "original_sql1",
 		NormalizedSQL:  "normalized_sql",
 		Digest:         "digest",
+		PlanDigest:     "plan_digest",
+		Plan:           "",
 		User:           "user",
 		TotalLatency:   10000,
 		ParseLatency:   100,
@@ -581,7 +605,7 @@ func (s *testStmtSummarySuite) TestToDatum(c *C) {
 		stmtExecInfo1.ExecDetail.CommitDetail.PrewriteRegionNum, stmtExecInfo1.ExecDetail.CommitDetail.PrewriteRegionNum,
 		stmtExecInfo1.ExecDetail.CommitDetail.TxnRetry, stmtExecInfo1.ExecDetail.CommitDetail.TxnRetry, 1,
 		"txnLock:1", stmtExecInfo1.MemMax, stmtExecInfo1.MemMax, stmtExecInfo1.StmtCtx.AffectedRows(),
-		t, t, stmtExecInfo1.OriginalSQL, stmtExecInfo1.PrevSQL, "", ""}
+		t, t, stmtExecInfo1.OriginalSQL, stmtExecInfo1.PrevSQL, "plan_digest", ""}
 	match(c, datums[0], expectedDatum...)
 
 	datums = s.ssMap.ToHistoryDatum()
@@ -651,6 +675,7 @@ func (s *testStmtSummarySuite) TestMaxStmtCount(c *C) {
 		key := &stmtSummaryByDigestKey{
 			schemaName: stmtExecInfo1.SchemaName,
 			digest:     fmt.Sprintf("digest%d", i),
+			planDigest: stmtExecInfo1.PlanDigest,
 		}
 		_, ok := sm.Get(key)
 		c.Assert(ok, IsTrue)
@@ -679,6 +704,7 @@ func (s *testStmtSummarySuite) TestMaxSQLLength(c *C) {
 	key := &stmtSummaryByDigestKey{
 		schemaName: stmtExecInfo1.SchemaName,
 		digest:     stmtExecInfo1.Digest,
+		planDigest: stmtExecInfo1.PlanDigest,
 		prevDigest: stmtExecInfo1.PrevSQLDigest,
 	}
 	value, ok := s.ssMap.summaryMap.Get(key)
@@ -825,6 +851,7 @@ func (s *testStmtSummarySuite) TestRefreshCurrentSummary(c *C) {
 	key := &stmtSummaryByDigestKey{
 		schemaName: stmtExecInfo1.SchemaName,
 		digest:     stmtExecInfo1.Digest,
+		planDigest: stmtExecInfo1.PlanDigest,
 	}
 	s.ssMap.AddStatement(stmtExecInfo1)
 	c.Assert(s.ssMap.summaryMap.Size(), Equals, 1)
@@ -865,6 +892,7 @@ func (s *testStmtSummarySuite) TestSummaryHistory(c *C) {
 	key := &stmtSummaryByDigestKey{
 		schemaName: stmtExecInfo1.SchemaName,
 		digest:     stmtExecInfo1.Digest,
+		planDigest: stmtExecInfo1.PlanDigest,
 	}
 	for i := 0; i < 11; i++ {
 		s.ssMap.beginTimeForCurInterval = now + int64(i+1)*10
@@ -908,6 +936,7 @@ func (s *testStmtSummarySuite) TestPrevSQL(c *C) {
 	key := &stmtSummaryByDigestKey{
 		schemaName: stmtExecInfo1.SchemaName,
 		digest:     stmtExecInfo1.Digest,
+		planDigest: stmtExecInfo1.PlanDigest,
 		prevDigest: stmtExecInfo1.PrevSQLDigest,
 	}
 	c.Assert(s.ssMap.summaryMap.Size(), Equals, 1)
@@ -939,6 +968,7 @@ func (s *testStmtSummarySuite) TestEndTime(c *C) {
 	key := &stmtSummaryByDigestKey{
 		schemaName: stmtExecInfo1.SchemaName,
 		digest:     stmtExecInfo1.Digest,
+		planDigest: stmtExecInfo1.PlanDigest,
 	}
 	c.Assert(s.ssMap.summaryMap.Size(), Equals, 1)
 	value, ok := s.ssMap.summaryMap.Get(key)
