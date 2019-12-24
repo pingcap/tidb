@@ -372,9 +372,12 @@ func (txn *tikvTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keysInput
 	var err error
 	defer func() {
 		if err == nil {
-			if lockCtx.PessimisticLockWaited > 0 {
-				lockCtx.LockTimeWaited = time.Since(lockCtx.WaitStartTime)
-				metrics.TiKVPessimisticLockKeysDuration.Observe(lockCtx.LockTimeWaited.Seconds())
+			if lockCtx.PessimisticLockWaited != nil {
+				if atomic.LoadInt32(lockCtx.PessimisticLockWaited) > 0 {
+					timeWaited := time.Since(lockCtx.WaitStartTime)
+					*lockCtx.LockKeysDuration = timeWaited
+					metrics.TiKVPessimisticLockKeysDuration.Observe(timeWaited.Seconds())
+				}
 			}
 		}
 	}()
