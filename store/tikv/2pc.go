@@ -767,6 +767,7 @@ func (action actionPessimisticLock) handleSingleBatch(c *twoPhaseCommitter, bo *
 					return errors.Trace(ErrLockWaitTimeout)
 				}
 			}
+			atomic.StoreInt32(&action.LockCtx.PessimisticLockWaited, 1)
 		}
 
 		// Handle the killed flag when waiting for the pessimistic lock.
