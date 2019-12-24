@@ -114,8 +114,8 @@ func (e *WindowParallelExec) Open(ctx context.Context) error {
 	}
 
 	e.prepared = false
-	//sessionVars := e.ctx.GetSessionVars()
-	//e.concurrency = sessionVars.WindowConcurrency
+	//e.concurrency is set by builder (`(*executorBuilder).buildWindowParallel`)
+	//e.concurrency = e.ctx.GetSessionVars().WindowConcurrency
 
 	e.finishCh = make(chan struct{}, 1)
 	e.outputCh = make(chan *windowParallelOutput, e.concurrency)
@@ -169,7 +169,7 @@ func (e *WindowParallelExec) Close() error {
 	}
 	e.executed = false
 
-	if e.runtimeStats != nil { // TODO: why ?
+	if e.runtimeStats != nil {
 		e.runtimeStats.SetConcurrencyInfo("WindowParallelConcurrency", e.concurrency)
 	}
 
