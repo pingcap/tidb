@@ -1973,6 +1973,32 @@ func ChangeReverseResultByUpperLowerBound(
 	retType *FieldType,
 	res Datum,
 	rType RoundingType) (Datum, error) {
+
+	// When rType is Ceiling, we should add 1 to the minimal precision of float, to ensure the upper bound
+	// covering all precision losing situations.
+	if rType == Ceiling && (
+		(res.Kind() == KindFloat32 && res.GetFloat32() != math.MaxFloat32) ||
+		(res.Kind() == KindFloat64 && res.GetFloat64() != math.MaxFloat64)) {
+		var val float64
+		if res.Kind() == KindFloat32 {
+			val = float64(res.GetFloat32())
+		} else {
+			val = res.GetFloat64()
+		}
+		floatBits := math.Float64bits(val)
+		e := ((floatBits >> 52) & 0x7ff) - 1023
+		number := floatBits & ((uint64(1) << 54) - 1)
+		if val < 0 {
+			number = -number
+		}
+		newFloat := float64(number+1) * math.Pow(2, float64(e - 53))
+		if res.Kind() == KindFloat32 {
+			res.SetFloat32(float32(newFloat))
+		} else {
+			res.SetFloat64(newFloat)
+		}
+	}
+
 	d, err := res.ConvertTo(sc, retType)
 	if terror.ErrorEqual(err, ErrOverflow) {
 		return d, nil
@@ -2003,57 +2029,6 @@ func ChangeReverseResultByUpperLowerBound(
 	}
 	if cmp == 0 {
 		d = getDatumBound(retType, rType)
-	} else if rType == Ceiling {
-		switch retType.Tp {
-		case mysql.TypeShort:
-			if mysql.HasUnsignedFlag(retType.Flag) {
-				if d.GetUint64() != math.MaxUint16 {
-					d.SetUint64(d.GetUint64() + 1)
-				}
-			} else {
-				if d.GetInt64() != math.MaxInt16 {
-					d.SetInt64(d.GetInt64() + 1)
-				}
-			}
-		case mysql.TypeLong:
-			if mysql.HasUnsignedFlag(retType.Flag) {
-				if d.GetUint64() != math.MaxUint32 {
-					d.SetUint64(d.GetUint64() + 1)
-				}
-			} else {
-				if d.GetInt64() != math.MaxInt32 {
-					d.SetInt64(d.GetInt64() + 1)
-				}
-			}
-		case mysql.TypeLonglong:
-			if mysql.HasUnsignedFlag(retType.Flag) {
-				if d.GetUint64() != math.MaxUint64 {
-					d.SetUint64(d.GetUint64() + 1)
-				}
-			} else {
-				if d.GetInt64() != math.MaxInt64 {
-					d.SetInt64(d.GetInt64() + 1)
-				}
-			}
-		case mysql.TypeFloat:
-			if d.GetFloat32() != math.MaxFloat32 {
-				d.SetFloat32(d.GetFloat32() + 1.0)
-			}
-		case mysql.TypeDouble:
-			if d.GetFloat64() != math.MaxFloat64 {
-				d.SetFloat64(d.GetFloat64() + 1.0)
-			}
-		case mysql.TypeNewDecimal:
-			if d.GetMysqlDecimal().Compare(NewMaxOrMinDec(false, retType.Flen, retType.Decimal)) != 0 {
-				decimalOne := NewDecFromInt(1)
-				var newD MyDecimal
-				err = DecimalAdd(d.GetMysqlDecimal(), decimalOne, &newD)
-				if err != nil {
-					return d, err
-				}
-				d.SetMysqlDecimal(&newD)
-			}
-		}
 	}
 	return d, nil
 }

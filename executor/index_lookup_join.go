@@ -566,7 +566,7 @@ func (iw *innerWorker) constructDatumLookupKey(task *lookUpJoinTask, chkIdx, row
 			// If the converted outerValue is not equal to the origin outerValue, we don't need to lookup it.
 			return nil, nil
 		}
-		dLookupKey = append(dLookupKey, innerValue)
+		dLookupKey = append(dLookupKey, outerValue)
 	}
 	return dLookupKey, nil
 }
