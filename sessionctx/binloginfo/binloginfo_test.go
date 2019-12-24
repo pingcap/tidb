@@ -463,6 +463,18 @@ func (s *testBinlogSuite) TestAddSpecialComment(c *C) {
 			"create table t6 (id int ) shard_row_id_bits=2 shard_row_id_bits=3 pre_split_regions=2;",
 			"create table t6 (id int ) /*!90000 shard_row_id_bits=2 shard_row_id_bits=3 pre_split_regions=2 */ ;",
 		},
+		{
+			"create table t1 (id int primary key auto_random(2));",
+			"create table t1 (id int primary key /*T!40000 auto_random(2) */ );",
+		},
+		{
+			"create table t1 (id int auto_random ( 4 ) primary key);",
+			"create table t1 (id int /*T!40000 auto_random ( 4 ) */ primary key);",
+		},
+		{
+			"create table t1 (id int  auto_random  (   4    ) primary key);",
+			"create table t1 (id int  /*T!40000 auto_random  (   4    ) */ primary key);",
+		},
 	}
 	for _, ca := range testCase {
 		re := binloginfo.AddSpecialComment(ca.input)
