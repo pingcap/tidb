@@ -2037,6 +2037,7 @@ func (b *builtinMakeTimeSig) vecEvalDuration(input *chunk.Chunk, result *chunk.C
 	seconds := secondsBuf.Float64s()
 	durs := result.GoDurations()
 	result.MergeNulls(minutesBuf, secondsBuf)
+	hourUnsignedFlag := mysql.HasUnsignedFlag(b.args[0].GetType().Flag)
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
@@ -2045,29 +2046,7 @@ func (b *builtinMakeTimeSig) vecEvalDuration(input *chunk.Chunk, result *chunk.C
 			result.SetNull(i, true)
 			continue
 		}
-		overflow := false
-		if hours[i] < 0 && mysql.HasUnsignedFlag(b.args[0].GetType().Flag) {
-			hours[i] = 838
-			overflow = true
-		}
-		if hours[i] < -838 {
-			hours[i] = -838
-			overflow = true
-		} else if hours[i] > 838 {
-			hours[i] = 838
-			overflow = true
-		}
-		if hours[i] == -838 || hours[i] == 838 {
-			if seconds[i] > 59 {
-				seconds[i] = 59
-			}
-		}
-		if overflow {
-			minutes[i] = 59
-			seconds[i] = 59
-		}
-		fsp := b.tp.Decimal
-		dur, err := types.ParseDuration(b.ctx.GetSessionVars().StmtCtx, fmt.Sprintf("%02d:%02d:%v", hours[i], minutes[i], seconds[i]), int8(fsp))
+		dur, err := b.makeTime(hours[i], minutes[i], seconds[i], hourUnsignedFlag)
 		if err != nil {
 			return err
 		}
