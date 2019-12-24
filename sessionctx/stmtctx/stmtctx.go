@@ -132,8 +132,10 @@ type StatementContext struct {
 		normalized string
 		digest     string
 	}
-	Tables            []TableEntry
-	lockWaitStartTime *time.Time // LockWaitStartTime stores the pessimistic lock wait start time
+	Tables                []TableEntry
+	lockWaitStartTime     *time.Time // LockWaitStartTime stores the pessimistic lock wait start time
+	PessimisticLockWaited int32
+	LockKeysDuration      time.Duration
 }
 
 // GetNowTsCached getter for nowTs, if not set get now time and cache it
