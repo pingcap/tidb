@@ -38,18 +38,8 @@ var (
 )
 
 var (
-	tikvTxnCmdCountWithGet             = metrics.TiKVTxnCmdCounter.WithLabelValues("get")
-	tikvTxnCmdHistogramWithGet         = metrics.TiKVTxnCmdHistogram.WithLabelValues("get")
-	tikvTxnCmdCountWithSeek            = metrics.TiKVTxnCmdCounter.WithLabelValues("seek")
-	tikvTxnCmdHistogramWithSeek        = metrics.TiKVTxnCmdHistogram.WithLabelValues("seek")
-	tikvTxnCmdCountWithSeekReverse     = metrics.TiKVTxnCmdCounter.WithLabelValues("seek_reverse")
-	tikvTxnCmdHistogramWithSeekReverse = metrics.TiKVTxnCmdHistogram.WithLabelValues("seek_reverse")
-	tikvTxnCmdCountWithDelete          = metrics.TiKVTxnCmdCounter.WithLabelValues("delete")
-	tikvTxnCmdCountWithSet             = metrics.TiKVTxnCmdCounter.WithLabelValues("set")
-	tikvTxnCmdCountWithCommit          = metrics.TiKVTxnCmdCounter.WithLabelValues("commit")
-	tikvTxnCmdHistogramWithCommit      = metrics.TiKVTxnCmdHistogram.WithLabelValues("commit")
-	tikvTxnCmdCountWithRollback        = metrics.TiKVTxnCmdCounter.WithLabelValues("rollback")
-	tikvTxnCmdHistogramWithLockKeys    = metrics.TiKVTxnCmdCounter.WithLabelValues("lock_keys")
+	tikvTxnCmdHistogramWithCommit   = metrics.TiKVTxnCmdHistogram.WithLabelValues("commit")
+	tikvTxnCmdHistogramWithRollback = metrics.TiKVTxnCmdHistogram.WithLabelValues("rollback")
 )
 
 // tikvTxn implements kv.Transaction.
@@ -129,10 +119,6 @@ func (txn *tikvTxn) Reset() {
 
 // Get implements transaction interface.
 func (txn *tikvTxn) Get(ctx context.Context, k kv.Key) ([]byte, error) {
-	tikvTxnCmdCountWithGet.Inc()
-	start := time.Now()
-	defer func() { tikvTxnCmdHistogramWithGet.Observe(time.Since(start).Seconds()) }()
-
 	ret, err := txn.us.Get(ctx, k)
 	if kv.IsErrNotFound(err) {
 		return nil, err
@@ -199,27 +185,15 @@ func (txn *tikvTxn) String() string {
 }
 
 func (txn *tikvTxn) Iter(k kv.Key, upperBound kv.Key) (kv.Iterator, error) {
-	tikvTxnCmdCountWithSeek.Inc()
-	start := time.Now()
-	defer func() { tikvTxnCmdHistogramWithSeek.Observe(time.Since(start).Seconds()) }()
-
 	return txn.us.Iter(k, upperBound)
 }
 
 // IterReverse creates a reversed Iterator positioned on the first entry which key is less than k.
 func (txn *tikvTxn) IterReverse(k kv.Key) (kv.Iterator, error) {
-	tikvTxnCmdCountWithSeekReverse.Inc()
-	start := time.Now()
-	defer func() {
-		tikvTxnCmdHistogramWithSeekReverse.Observe(time.Since(start).Seconds())
-	}()
-
 	return txn.us.IterReverse(k)
 }
 
 func (txn *tikvTxn) Delete(k kv.Key) error {
-	tikvTxnCmdCountWithDelete.Inc()
-
 	txn.dirty = true
 	return txn.us.Delete(k)
 }
@@ -267,8 +241,6 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 		}
 	})
 
-	tikvTxnCmdCountWithSet.Add(float64(txn.setCnt))
-	tikvTxnCmdCountWithCommit.Inc()
 	start := time.Now()
 	defer func() { tikvTxnCmdHistogramWithCommit.Observe(time.Since(start).Seconds()) }()
 
@@ -344,6 +316,7 @@ func (txn *tikvTxn) Rollback() error {
 	if !txn.valid {
 		return kv.ErrInvalidTxn
 	}
+	start := time.Now()
 	// Clean up pessimistic lock.
 	if txn.IsPessimistic() && txn.committer != nil {
 		err := txn.rollbackPessimisticLocks()
@@ -354,8 +327,7 @@ func (txn *tikvTxn) Rollback() error {
 	}
 	txn.close()
 	logutil.BgLogger().Debug("[kv] rollback txn", zap.Uint64("txnStartTS", txn.StartTS()))
-	tikvTxnCmdCountWithRollback.Inc()
-
+	tikvTxnCmdHistogramWithRollback.Observe(time.Since(start).Seconds())
 	return nil
 }
 
@@ -389,7 +361,6 @@ func (txn *tikvTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keysInput
 	if len(keys) == 0 {
 		return nil
 	}
-	tikvTxnCmdHistogramWithLockKeys.Inc()
 	if txn.IsPessimistic() && lockCtx.ForUpdateTS > 0 {
 		if txn.committer == nil {
 			// connID is used for log.
