@@ -63,6 +63,9 @@ var (
 
 var _ = Suite(&testSessionSuite{})
 var _ = Suite(&testSessionSuite2{})
+var _ = Suite(&testSchemaSuite{})
+var _ = Suite(&testIsolationSuite{})
+var _ = SerialSuites(&testSchemaSerialSuite{})
 var _ = SerialSuites(&testSessionSerialSuite{})
 
 type testSessionSuiteBase struct {
@@ -1833,9 +1836,6 @@ func (s *testSessionSuite2) TestInformationSchemaCreateTime(c *C) {
 	c.Assert(r, Equals, 1)
 }
 
-var _ = Suite(&testSchemaSuite{})
-var _ = SerialSuites(&testSchemaSerialSuite{})
-
 type testSchemaSuiteBase struct {
 	cluster   *mocktikv.Cluster
 	mvccStore mocktikv.MVCCStore
@@ -2476,7 +2476,12 @@ func (s *testSessionSuite2) TestSetTransactionIsolationOneShot(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("create table t (k int, v int)")
 	tk.MustExec("insert t values (1, 42)")
+	tk.MustExec("set tx_isolation = 'read-committed'")
+	tk.MustQuery("select @@tx_isolation").Check(testkit.Rows("READ-COMMITTED"))
+	tk.MustExec("set tx_isolation = 'repeatable-read'")
 	tk.MustExec("set transaction isolation level read committed")
+	tk.MustQuery("select @@tx_isolation_one_shot").Check(testkit.Rows("READ-COMMITTED"))
+	tk.MustQuery("select @@tx_isolation").Check(testkit.Rows("REPEATABLE-READ"))
 
 	// Check isolation level is set to read committed.
 	ctx := context.WithValue(context.Background(), "CheckSelectRequestHook", func(req *kv.Request) {
