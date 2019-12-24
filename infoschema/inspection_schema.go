@@ -109,7 +109,7 @@ func init() {
 		Collate: mysql.DefaultCollationName,
 		Tables:  tables,
 	}
-	builder := func(_ autoid.Allocator, meta *model.TableInfo) (table.Table, error) {
+	builder := func(_ autoid.Allocators, meta *model.TableInfo) (table.Table, error) {
 		columns := make([]*table.Column, len(meta.Columns))
 		for i, col := range meta.Columns {
 			columns[i] = table.ToColumn(col)
