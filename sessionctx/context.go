@@ -97,8 +97,8 @@ type Context interface {
 	ReleaseAllTableLocks()
 	// HasLockedTables uses to check whether this session locked any tables.
 	HasLockedTables() bool
-	// PrepareTxnFuture uses to prepare txn by future.
-	PrepareTxnFuture(ctx context.Context)
+	// PrepareTSFuture uses to prepare timestamp by future.
+	PrepareTSFuture(ctx context.Context)
 }
 
 type basicCtxType int
