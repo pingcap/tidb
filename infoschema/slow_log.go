@@ -57,6 +57,7 @@ var slowQueryCols = []columnInfo{
 	{execdetails.ProcessTimeStr, mysql.TypeDouble, 22, 0, nil, nil},
 	{execdetails.WaitTimeStr, mysql.TypeDouble, 22, 0, nil, nil},
 	{execdetails.BackoffTimeStr, mysql.TypeDouble, 22, 0, nil, nil},
+	{execdetails.LockKeysTimeStr, mysql.TypeDouble, 22, 0, nil, nil},
 	{execdetails.RequestCountStr, mysql.TypeLonglong, 20, mysql.UnsignedFlag, nil, nil},
 	{execdetails.TotalKeysStr, mysql.TypeLonglong, 20, mysql.UnsignedFlag, nil, nil},
 	{execdetails.ProcessKeysStr, mysql.TypeLonglong, 20, mysql.UnsignedFlag, nil, nil},
@@ -217,6 +218,7 @@ type slowQueryTuple struct {
 	processTime        float64
 	waitTime           float64
 	backOffTime        float64
+	lockKeysTime       float64
 	requestCount       uint64
 	totalKeys          uint64
 	processKeys        uint64
@@ -300,6 +302,8 @@ func (st *slowQueryTuple) setFieldValue(tz *time.Location, field, value string, 
 		st.waitTime, err = strconv.ParseFloat(value, 64)
 	case execdetails.BackoffTimeStr:
 		st.backOffTime, err = strconv.ParseFloat(value, 64)
+	case execdetails.LockKeysTimeStr:
+		st.lockKeysTime, err = strconv.ParseFloat(value, 64)
 	case execdetails.RequestCountStr:
 		st.requestCount, err = strconv.ParseUint(value, 10, 64)
 	case execdetails.TotalKeysStr:
@@ -378,6 +382,7 @@ func (st *slowQueryTuple) convertToDatumRow() []types.Datum {
 	record = append(record, types.NewFloat64Datum(st.processTime))
 	record = append(record, types.NewFloat64Datum(st.waitTime))
 	record = append(record, types.NewFloat64Datum(st.backOffTime))
+	record = append(record, types.NewFloat64Datum(st.lockKeysTime))
 	record = append(record, types.NewUintDatum(st.requestCount))
 	record = append(record, types.NewUintDatum(st.totalKeys))
 	record = append(record, types.NewUintDatum(st.processKeys))
