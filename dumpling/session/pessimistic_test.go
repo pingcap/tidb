@@ -24,52 +24,29 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
-	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
-	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/testkit"
-	"github.com/pingcap/tidb/util/testleak"
 )
 
 var _ = SerialSuites(&testPessimisticSuite{})
 
 type testPessimisticSuite struct {
-	cluster   *mocktikv.Cluster
-	mvccStore mocktikv.MVCCStore
-	store     kv.Storage
-	dom       *domain.Domain
+	testSessionSuiteBase
 }
 
 func (s *testPessimisticSuite) SetUpSuite(c *C) {
-	testleak.BeforeTest()
+	s.testSessionSuiteBase.SetUpSuite(c)
 	// Set it to 300ms for testing lock resolve.
 	tikv.ManagedLockTTL = 300
 	tikv.PrewriteMaxBackoff = 500
-	s.cluster = mocktikv.NewCluster()
-	mocktikv.BootstrapWithSingleStore(s.cluster)
-	s.mvccStore = mocktikv.MustNewMVCCStore()
-	store, err := mockstore.NewMockTikvStore(
-		mockstore.WithCluster(s.cluster),
-		mockstore.WithMVCCStore(s.mvccStore),
-	)
-	c.Assert(err, IsNil)
-	s.store = store
-	session.SetSchemaLease(0)
-	session.DisableStats4Test()
-	s.dom, err = session.BootstrapSession(s.store)
-	s.dom.GetGlobalVarsCache().Disable()
-	c.Assert(err, IsNil)
 }
 
 func (s *testPessimisticSuite) TearDownSuite(c *C) {
-	s.dom.Close()
-	s.store.Close()
-	testleak.AfterTest(c)()
+	s.testSessionSuiteBase.TearDownSuite(c)
 	tikv.PrewriteMaxBackoff = 20000
 }
 
@@ -200,6 +177,9 @@ func (s *testPessimisticSuite) TestDeadlock(c *C) {
 }
 
 func (s *testPessimisticSuite) TestSingleStatementRollback(c *C) {
+	if *withTiKV {
+		c.Skip("skip with tikv because cluster manipulate is not available")
+	}
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk2 := testkit.NewTestKitWithInit(c, s.store)
 
@@ -567,6 +547,7 @@ func (s *testPessimisticSuite) TestWaitLockKill(c *C) {
 	tk.MustExec("create table test_kill (id int primary key, c int)")
 	tk.MustExec("insert test_kill values (1, 1)")
 	tk.MustExec("begin pessimistic")
+	tk2.MustExec("set innodb_lock_wait_timeout = 50")
 	tk2.MustExec("begin pessimistic")
 	tk.MustQuery("select * from test_kill where id = 1 for update")
 
