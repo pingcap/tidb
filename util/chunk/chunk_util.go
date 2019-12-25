@@ -15,12 +15,57 @@ package chunk
 
 import "github.com/pingcap/errors"
 
-// CopySelectedJoinRows copies the selected joined rows from the source Chunk
+// CopySelectedJoinRowsDirect directly copies the selected joined rows from the source Chunk
+// to the destination Chunk.
+// Return true if at least one joined row was selected.
+func CopySelectedJoinRowsDirect(src *Chunk, selected []bool, dst *Chunk) (bool, error) {
+	if src.NumRows() == 0 {
+		return false, nil
+	}
+	if src.sel != nil || dst.sel != nil {
+		return false, errors.New(msgErrSelNotNil)
+	}
+
+	oldLen := dst.columns[0].length
+	for j, srcCol := range src.columns {
+		dstCol := dst.columns[j]
+		if srcCol.isFixed() {
+			for i := 0; i < len(selected); i++ {
+				if !selected[i] {
+					continue
+				}
+				dstCol.appendNullBitmap(!srcCol.IsNull(i))
+				dstCol.length++
+
+				elemLen := len(srcCol.elemBuf)
+				offset := i * elemLen
+				dstCol.data = append(dstCol.data, srcCol.data[offset:offset+elemLen]...)
+			}
+		} else {
+			for i := 0; i < len(selected); i++ {
+				if !selected[i] {
+					continue
+				}
+				dstCol.appendNullBitmap(!srcCol.IsNull(i))
+				dstCol.length++
+
+				start, end := srcCol.offsets[i], srcCol.offsets[i+1]
+				dstCol.data = append(dstCol.data, srcCol.data[start:end]...)
+				dstCol.offsets = append(dstCol.offsets, int64(len(dstCol.data)))
+			}
+		}
+	}
+	numSelected := dst.columns[0].length - oldLen
+	dst.numVirtualRows += numSelected
+	return numSelected > 0, nil
+}
+
+// CopySelectedJoinRowsWithSameOuterRows copies the selected joined rows from the source Chunk
 // to the destination Chunk.
 // Return true if at least one joined row was selected.
 //
 // NOTE: All the outer rows in the source Chunk should be the same.
-func CopySelectedJoinRows(src *Chunk, innerColOffset, outerColOffset int, selected []bool, dst *Chunk) (bool, error) {
+func CopySelectedJoinRowsWithSameOuterRows(src *Chunk, innerColOffset, outerColOffset int, selected []bool, dst *Chunk) (bool, error) {
 	if src.NumRows() == 0 {
 		return false, nil
 	}
