@@ -427,8 +427,8 @@ const (
 	DefTiDBProjectionConcurrency       = 4
 	DefTiDBOptimizerSelectivityLevel   = 0
 	DefTiDBTxnMode                     = ""
-	DefTiDBRowFormatVersionOldCluster  = 1
-	DefTiDBRowFormatVersionNewCluster  = 2
+	DefTiDBRowFormatV1                 = 1
+	DefTiDBRowFormatV2                 = 2
 	DefTiDBDDLReorgWorkerCount         = 4
 	DefTiDBDDLReorgBatchSize           = 256
 	DefTiDBDDLErrorCountLimit          = 512

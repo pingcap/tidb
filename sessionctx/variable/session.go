@@ -1081,8 +1081,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 	case TiDBTxnMode:
 		s.TxnMode = strings.ToUpper(val)
 	case TiDBRowFormatVersion:
-		formatVersion := int(tidbOptInt64(val, DefTiDBRowFormatVersionOldCluster))
-		if formatVersion != DefTiDBRowFormatVersionOldCluster {
+		formatVersion := int(tidbOptInt64(val, DefTiDBRowFormatV1))
+		if formatVersion == DefTiDBRowFormatV2 {
 			s.RowEncoder.Enable = true
 		}
 	case TiDBLowResolutionTSO:

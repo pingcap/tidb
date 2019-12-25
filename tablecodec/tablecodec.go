@@ -255,9 +255,6 @@ func EncodeValue(sc *stmtctx.StatementContext, b []byte, raw types.Datum) ([]byt
 	return codec.EncodeValue(sc, b, v)
 }
 
-// TODO: make this to a config.
-const useNewFormat = true
-
 // EncodeRow encode row data and column ids into a slice of byte.
 // valBuf and values pass by caller, for reducing EncodeRow allocates temporary bufs. If you pass valBuf and values as nil,
 // EncodeRow will allocate it.
