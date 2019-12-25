@@ -202,11 +202,11 @@ func insertRows(ctx context.Context, base insertCommon) (err error) {
 		return err
 	}
 	var memTracker *memory.Tracker
-	if insertExec, ok := base.(*InsertExec); ok {
-		memTracker = insertExec.memTracker
-	} else {
-		replaceExec := base.(*ReplaceExec)
-		memTracker = replaceExec.memTracker
+	switch x := base.(type) {
+	case *InsertExec:
+		memTracker = x.memTracker
+	case *ReplaceExec:
+		memTracker = x.memTracker
 	}
 	sessVars := e.ctx.GetSessionVars()
 	batchInsert := sessVars.BatchInsert && !sessVars.InTxn() && config.GetGlobalConfig().EnableBatchDML
@@ -400,11 +400,11 @@ func insertRowsFromSelect(ctx context.Context, base insertCommon) error {
 	iter := chunk.NewIterator4Chunk(chk)
 	rows := make([][]types.Datum, 0, chk.Capacity())
 	var memTracker *memory.Tracker
-	if insertExec, ok := base.(*InsertExec); ok {
-		memTracker = insertExec.memTracker
-	} else {
-		replaceExec := base.(*ReplaceExec)
-		memTracker = replaceExec.memTracker
+	switch x := base.(type) {
+	case *InsertExec:
+		memTracker = x.memTracker
+	case *ReplaceExec:
+		memTracker = x.memTracker
 	}
 
 	sessVars := e.ctx.GetSessionVars()
