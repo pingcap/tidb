@@ -139,6 +139,7 @@ func (e *GrantExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			if err != nil {
 				return err
 			}
+			inexistentUsers = append(inexistentUsers, user)
 		}
 	}
 
