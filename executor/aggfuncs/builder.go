@@ -347,11 +347,21 @@ func buildBitAnd(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 
 // buildVarPop builds the AggFunc implementation for function "VAR_POP".
 func buildVarPop(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
-	base := baseAggFunc{
-		args:    aggFuncDesc.Args,
-		ordinal: ordinal,
+	base := baseVarPopAggFunc{
+		baseAggFunc{
+			args:    aggFuncDesc.Args,
+			ordinal: ordinal,
+		},
 	}
-	return &varPop4Float64{baseAggFunc: base}
+	switch aggFuncDesc.Mode {
+	case aggregation.DedupMode:
+		return nil
+	default:
+		if aggFuncDesc.HasDistinct {
+			return &varPop4DistinctFloat64{base}
+		}
+		return &varPop4Float64{base}
+	}
 }
 
 // buildRowNumber builds the AggFunc implementation for function "ROW_NUMBER".

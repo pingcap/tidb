@@ -18,7 +18,7 @@ func (s *testSuite) TestMergePartialResult4Varpop(c *C) {
 
 func (s *testSuite) TestVarpop(c *C) {
 	tests := []aggTest{
-		buildAggTester(ast.AggFuncSum, mysql.TypeDouble, 5, nil, types.NewFloat64Datum(float64(2))),
+		buildAggTester(ast.AggFuncVarPop, mysql.TypeDouble, 5, nil, types.NewFloat64Datum(float64(2))),
 	}
 	for _, test := range tests {
 		s.testAggFunc(c, test)
