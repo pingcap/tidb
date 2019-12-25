@@ -197,7 +197,6 @@ func (a *connArray) Close() {
 type rpcClient struct {
 	sync.RWMutex
 	isClosed bool
-	done     chan struct{}
 
 	conns    map[string]*connArray
 	security config.Security
