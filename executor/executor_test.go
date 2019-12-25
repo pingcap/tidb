@@ -79,7 +79,9 @@ func TestT(t *testing.T) {
 	logutil.InitLogger(logutil.NewLogConfig(logLevel, logutil.DefaultLogFormat, "", logutil.EmptyFileLogConfig, false))
 	autoid.SetStep(5000)
 
+	testleak.BeforeTest()
 	TestingT(t)
+	testleak.AfterTestT(t)()
 }
 
 var _ = Suite(&testSuite{})
@@ -104,7 +106,6 @@ type testSuite struct {
 var mockTikv = flag.Bool("mockTikv", true, "use mock tikv store in executor test")
 
 func (s *testSuite) SetUpSuite(c *C) {
-	testleak.BeforeTest()
 	s.autoIDStep = autoid.GetStep()
 	autoid.SetStep(5000)
 	s.Parser = parser.New()
@@ -133,7 +134,6 @@ func (s *testSuite) TearDownSuite(c *C) {
 	s.domain.Close()
 	s.store.Close()
 	autoid.SetStep(s.autoIDStep)
-	testleak.AfterTest(c)()
 }
 
 func (s *testSuite) TearDownTest(c *C) {
@@ -3662,7 +3662,6 @@ type testOOMSuite struct {
 
 func (s *testOOMSuite) SetUpSuite(c *C) {
 	c.Skip("log.ReplaceGlobals(lg, r) in registerHook() may result in data race")
-	testleak.BeforeTest()
 	s.registerHook()
 	var err error
 	s.store, err = mockstore.NewMockTikvStore()
