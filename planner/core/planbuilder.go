@@ -1960,7 +1960,6 @@ func (b *PlanBuilder) buildSetValuesOfInsert(ctx context.Context, insert *ast.In
 	}
 
 	// Check whether the column to be updated is the generated column.
-	var missingColName string
 	tCols, missingColName := table.FindCols(insertPlan.Table.VisibleCols(), colNames, tableInfo.PKIsHandle)
 	if tCols == nil {
 		return ErrUnknownColumn.GenWithStackByArgs(missingColName, "field list")
