@@ -90,16 +90,49 @@ func (s *diagnosticsSuite) TestInspectionResult(c *C) {
 	c.Assert(failpoint.Enable(fpName, "return"), IsNil)
 	defer func() { c.Assert(failpoint.Disable(fpName), IsNil) }()
 
-	rs, err := tk.Se.Execute(ctx, "select * from information_schema.inspection_result where rule in ('config', 'version')")
-	c.Assert(err, IsNil)
-	result := tk.ResultSetToResultWithCtx(ctx, rs[0], Commentf("fetch result failed"))
-	warnings := tk.Se.GetSessionVars().StmtCtx.GetWarnings()
-	c.Assert(len(warnings), Equals, 0, Commentf("expected no warning, got: %+v", warnings))
-	result.Check(testkit.Rows(
-		"config coprocessor.high 2 1 P2 select * from information_schema.cluster_config where type='tikv' and `key`='coprocessor.high'",
-		"config ddl.lease 2 1 P2 select * from information_schema.cluster_config where type='tidb' and `key`='ddl.lease'",
-		"version pd 3 1 P1 select * from information_schema.cluster_info where type='pd'",
-		"version tidb 3 1 P1 select * from information_schema.cluster_info where type='tidb'",
-		"version tikv 2 1 P1 select * from information_schema.cluster_info where type='tikv'",
-	))
+	cases := []struct {
+		sql  string
+		rows []string
+	}{
+		{
+			sql: "select * from information_schema.inspection_result where rule in ('config', 'version')",
+			rows: []string{
+				"config coprocessor.high 2 1 P2 select * from information_schema.cluster_config where type='tikv' and `key`='coprocessor.high'",
+				"config ddl.lease 2 1 P2 select * from information_schema.cluster_config where type='tidb' and `key`='ddl.lease'",
+				"version pd 3 1 P1 select * from information_schema.cluster_info where type='pd'",
+				"version tidb 3 1 P1 select * from information_schema.cluster_info where type='tidb'",
+				"version tikv 2 1 P1 select * from information_schema.cluster_info where type='tikv'",
+			},
+		},
+		{
+			sql: "select * from information_schema.inspection_result where rule in ('config', 'version') and item in ('coprocessor.high', 'tikv')",
+			rows: []string{
+				"config coprocessor.high 2 1 P2 select * from information_schema.cluster_config where type='tikv' and `key`='coprocessor.high'",
+				"version tikv 2 1 P1 select * from information_schema.cluster_info where type='tikv'",
+			},
+		},
+		{
+			sql: "select * from information_schema.inspection_result where rule='config'",
+			rows: []string{
+				"config coprocessor.high 2 1 P2 select * from information_schema.cluster_config where type='tikv' and `key`='coprocessor.high'",
+				"config ddl.lease 2 1 P2 select * from information_schema.cluster_config where type='tidb' and `key`='ddl.lease'",
+			},
+		},
+		{
+			sql: "select * from information_schema.inspection_result where rule='version' and item in ('pd', 'tidb')",
+			rows: []string{
+				"version pd 3 1 P1 select * from information_schema.cluster_info where type='pd'",
+				"version tidb 3 1 P1 select * from information_schema.cluster_info where type='tidb'",
+			},
+		},
+	}
+
+	for _, cs := range cases {
+		rs, err := tk.Se.Execute(ctx, cs.sql)
+		c.Assert(err, IsNil)
+		result := tk.ResultSetToResultWithCtx(ctx, rs[0], Commentf("SQL: %v", cs.sql))
+		warnings := tk.Se.GetSessionVars().StmtCtx.GetWarnings()
+		c.Assert(len(warnings), Equals, 0, Commentf("expected no warning, got: %+v", warnings))
+		result.Check(testkit.Rows(cs.rows...))
+	}
 }
