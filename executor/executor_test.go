@@ -31,7 +31,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/log"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -4411,6 +4410,52 @@ func (s *testSuiteP2) TestUnsignedFeedback(c *C) {
 	tk.MustQuery("select count(distinct b) from t").Check(testkit.Rows("2"))
 	result := tk.MustQuery("explain analyze select count(distinct b) from t")
 	c.Assert(result.Rows()[2][3], Equals, "table:t, range:[0,+inf], keep order:false")
+}
+
+func (s *testSuite) TestOOMPanicAction(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int primary key, b double);")
+	tk.MustExec("insert into t values (1,1)")
+	sm := &mockSessionManager1{
+		PS: make([]*util.ProcessInfo, 0),
+	}
+	tk.Se.SetSessionManager(sm)
+	s.domain.ExpensiveQueryHandle().SetSessionManager(sm)
+	orgAction := config.GetGlobalConfig().OOMAction
+	setOOMAction(config.OOMActionCancel)
+	defer func() {
+		setOOMAction(orgAction)
+	}()
+	tk.MustExec("set @@tidb_mem_quota_query=1;")
+	err := tk.QueryToErr("select sum(b) from t group by a;")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Matches, "Out Of Memory Quota!.*")
+
+	// Test insert from select oom panic.
+	tk.MustExec("drop table if exists t,t1")
+	tk.MustExec("create table t (a bigint);")
+	tk.MustExec("create table t1 (a bigint);")
+	tk.MustExec("set @@tidb_mem_quota_query=200;")
+	_, err = tk.Exec("insert into t1 values (1),(2),(3),(4),(5);")
+	c.Assert(err.Error(), Matches, "Out Of Memory Quota!.*")
+	_, err = tk.Exec("replace into t1 values (1),(2),(3),(4),(5);")
+	c.Assert(err.Error(), Matches, "Out Of Memory Quota!.*")
+	tk.MustExec("set @@tidb_mem_quota_query=10000")
+	tk.MustExec("insert into t1 values (1),(2),(3),(4),(5);")
+	tk.MustExec("set @@tidb_mem_quota_query=200;")
+	_, err = tk.Exec("insert into t select a from t1 order by a desc;")
+	c.Assert(err.Error(), Matches, "Out Of Memory Quota!.*")
+	_, err = tk.Exec("replace into t select a from t1 order by a desc;")
+	c.Assert(err.Error(), Matches, "Out Of Memory Quota!.*")
+}
+
+func setOOMAction(action string) {
+	old := config.GetGlobalConfig()
+	newConf := *old
+	newConf.OOMAction = action
+	config.StoreGlobalConfig(&newConf)
 }
 
 type testRecoverTable struct {
