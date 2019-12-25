@@ -354,7 +354,6 @@ func (w *windowParallelWorker) run(ctx context.Context, waitGroup *sync.WaitGrou
 			if !ok {
 				return
 			}
-			//if err := w.windowExec.Next(w.ctx, chk); err != nil {
 			if err := Next(ctx, w.windowExec, chk); err != nil {
 				w.outputCh <- &windowParallelOutput{err: err}
 				return
