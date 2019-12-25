@@ -71,7 +71,16 @@ func (e *ExplainExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	return nil
 }
 
-func (e *ExplainExec) generateExplainInfo(ctx context.Context) ([][]string, error) {
+func (e *ExplainExec) generateExplainInfo(ctx context.Context) (rows [][]string, err error) {
+	closed := false
+	defer func() {
+		// handle panic
+		recover()
+		if !closed {
+			err = e.analyzeExec.Close()
+			closed = true
+		}
+	}()
 	if e.analyzeExec != nil {
 		chk := newFirstChunk(e.analyzeExec)
 		var nextErr, closeErr error
@@ -82,17 +91,21 @@ func (e *ExplainExec) generateExplainInfo(ctx context.Context) ([][]string, erro
 			}
 		}
 		closeErr = e.analyzeExec.Close()
+		closed = true
 		if nextErr != nil {
 			if closeErr != nil {
-				return nil, errors.New(nextErr.Error() + ", " + closeErr.Error())
+				err = errors.New(nextErr.Error() + ", " + closeErr.Error())
 			} else {
-				return nil, nextErr
+				err = nextErr
 			}
 		} else if closeErr != nil {
-			return nil, closeErr
+			err = closeErr
+		}
+		if err != nil {
+			return nil, err
 		}
 	}
-	if err := e.explain.RenderResult(); err != nil {
+	if err = e.explain.RenderResult(); err != nil {
 		return nil, err
 	}
 	if e.analyzeExec != nil {

@@ -32,6 +32,7 @@ var (
 
 type mockErrorOperator struct {
 	baseExecutor
+	toPanic bool
 }
 
 func (e *mockErrorOperator) Open(ctx context.Context) error {
@@ -39,6 +40,9 @@ func (e *mockErrorOperator) Open(ctx context.Context) error {
 }
 
 func (e *mockErrorOperator) Next(ctx context.Context, req *chunk.Chunk) error {
+	if e.toPanic {
+		panic("next panic")
+	}
 	return errors.New("next error")
 }
 
@@ -63,7 +67,8 @@ func TestExplainAnalyzeInvokeNextAndClose(t *testing.T) {
 		baseExecutor: baseExec,
 		explain:      nil,
 	}
-	explainExec.analyzeExec = &mockErrorOperator{baseExec}
+	// mockErrorOperator returns errors
+	explainExec.analyzeExec = &mockErrorOperator{baseExec, false}
 	tmpCtx := context.Background()
 	_, err := explainExec.generateExplainInfo(tmpCtx)
 
@@ -71,4 +76,13 @@ func TestExplainAnalyzeInvokeNextAndClose(t *testing.T) {
 	if err.Error() != expectedStr {
 		t.Errorf(err.Error())
 	}
+	// mockErrorOperator panic
+	explainExec.analyzeExec = &mockErrorOperator{baseExec, true}
+	_, err = explainExec.generateExplainInfo(tmpCtx)
+
+	expectedStr = "close error"
+	if err.Error() != expectedStr {
+		t.Errorf(err.Error())
+	}
+
 }
