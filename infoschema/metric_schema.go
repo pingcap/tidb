@@ -1,17 +1,4 @@
-// Copyright 2019 PingCAP, Inc.
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// See the License for the specific language governing permissions and
-// limitations under the License.
-
-package metricschema
+package infoschema
 
 import (
 	"bytes"
@@ -21,8 +8,12 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/set"
 )
 
@@ -31,6 +22,28 @@ const (
 	promQLLabelConditionKey = "$LABEL_CONDITIONS"
 	promQRangeDurationKey   = "$RANGE_DURATION"
 )
+
+func init() {
+	// Initialize the metric schema database and register the driver to `drivers`.
+	dbID := autoid.MetricSchemaDBID
+	tableID := dbID + 1
+	metricTables := make([]*model.TableInfo, 0, len(metricTableMap))
+	for name, def := range metricTableMap {
+		cols := def.genColumnInfos()
+		tableInfo := buildTableMeta(name, cols)
+		tableInfo.ID = tableID
+		tableID++
+		metricTables = append(metricTables, tableInfo)
+	}
+	dbInfo := &model.DBInfo{
+		ID:      dbID,
+		Name:    model.NewCIStr(util.MetricSchemaName.O),
+		Charset: mysql.DefaultCharset,
+		Collate: mysql.DefaultCollationName,
+		Tables:  metricTables,
+	}
+	RegisterVirtualTable(dbInfo, tableFromMeta)
+}
 
 // MetricTableDef is the metric table define.
 type MetricTableDef struct {
@@ -131,11 +144,23 @@ func GenLabelConditionValues(values set.StringSet) string {
 	return strings.Join(vs, "|")
 }
 
-type columnInfo struct {
-	name  string
-	tp    byte
-	size  int
-	flag  uint
-	deflt interface{}
-	elems []string
+// metricSchemaTable stands for the fake table all its data is in the memory.
+type metricSchemaTable struct {
+	infoschemaTable
+}
+
+func tableFromMeta(alloc autoid.Allocators, meta *model.TableInfo) (table.Table, error) {
+	columns := make([]*table.Column, 0, len(meta.Columns))
+	for _, colInfo := range meta.Columns {
+		col := table.ToColumn(colInfo)
+		columns = append(columns, col)
+	}
+	t := &metricSchemaTable{
+		infoschemaTable: infoschemaTable{
+			meta: meta,
+			cols: columns,
+			tp:   table.VirtualTable,
+		},
+	}
+	return t, nil
 }

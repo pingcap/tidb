@@ -24,7 +24,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/tidb/infoschema/metricschema"
+	"github.com/pingcap/tidb/infoschema"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/tikv"
@@ -39,7 +39,7 @@ const promReadTimeout = time.Second * 10
 // MetricRetriever uses to read metric data.
 type MetricRetriever struct {
 	table     *model.TableInfo
-	tblDef    *metricschema.MetricTableDef
+	tblDef    *infoschema.MetricTableDef
 	extractor *plannercore.MetricTableExtractor
 	retrieved bool
 }
@@ -49,7 +49,7 @@ func (e *MetricRetriever) retrieve(ctx context.Context, sctx sessionctx.Context)
 		return nil, nil
 	}
 	e.retrieved = true
-	tblDef, err := metricschema.GetMetricTableDef(e.table.Name.L)
+	tblDef, err := infoschema.GetMetricTableDef(e.table.Name.L)
 	if err != nil {
 		return nil, err
 	}
@@ -147,7 +147,7 @@ func (e *MetricRetriever) genRecord(metric pmodel.Metric, pair pmodel.SamplePair
 			v = string(metric[pmodel.LabelName(label)])
 		}
 		if len(v) == 0 {
-			v = metricschema.GenLabelConditionValues(e.extractor.LabelConditions[strings.ToLower(label)])
+			v = infoschema.GenLabelConditionValues(e.extractor.LabelConditions[strings.ToLower(label)])
 		}
 		record = append(record, types.NewStringDatum(v))
 	}
