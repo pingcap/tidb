@@ -486,17 +486,17 @@ type LogicalIndexScan struct {
 }
 
 // MatchIndexProp checks if the indexScan can match the required property.
-func (p *LogicalIndexScan) MatchIndexProp(prop *property.PhysicalProperty) (match bool) {
+func (s *LogicalIndexScan) MatchIndexProp(prop *property.PhysicalProperty) (match bool) {
 	if prop.IsEmpty() {
 		return true
 	}
 	if all, _ := prop.AllSameOrder(); !all {
 		return false
 	}
-	for i, col := range p.IdxCols {
+	for i, col := range s.IdxCols {
 		if col.Equal(nil, prop.Items[0].Col) {
-			return MatchIndicesProp(p.IdxCols[i:], p.IdxColLens[i:], prop.Items)
-		} else if i >= p.EqCondCount {
+			return MatchIndicesProp(s.IdxCols[i:], s.IdxColLens[i:], prop.Items)
+		} else if i >= s.EqCondCount {
 			break
 		}
 	}
@@ -548,20 +548,20 @@ func (ds *DataSource) buildIndexGather(path *util.AccessPath) LogicalPlan {
 	return sg
 }
 
-func (is *LogicalIndexScan) initSchema(isDoubleRead bool) {
-	indexCols := make([]*expression.Column, len(is.IdxCols), len(is.IdxCols)+1)
-	copy(indexCols, is.IdxCols)
-	for i, col := range is.Columns {
-		if (mysql.HasPriKeyFlag(col.Flag) && is.Source.tableInfo.PKIsHandle) || col.ID == model.ExtraHandleID {
-			indexCols = append(indexCols, is.Source.schema.Columns[i])
+func (s *LogicalIndexScan) initSchema(isDoubleRead bool) {
+	indexCols := make([]*expression.Column, len(s.IdxCols), len(s.IdxCols)+1)
+	copy(indexCols, s.IdxCols)
+	for i, col := range s.Columns {
+		if (mysql.HasPriKeyFlag(col.Flag) && s.Source.tableInfo.PKIsHandle) || col.ID == model.ExtraHandleID {
+			indexCols = append(indexCols, s.Source.schema.Columns[i])
 			break
 		}
 	}
 
-	if isDoubleRead && len(indexCols) == len(is.IdxCols) {
-		indexCols = append(indexCols, is.Source.getHandleCol())
+	if isDoubleRead && len(indexCols) == len(s.IdxCols) {
+		indexCols = append(indexCols, s.Source.getHandleCol())
 	}
-	is.SetSchema(expression.NewSchema(indexCols...))
+	s.SetSchema(expression.NewSchema(indexCols...))
 }
 
 func (ds *DataSource) buildIndexLookupGather(path *util.AccessPath) LogicalPlan {
@@ -828,11 +828,11 @@ func (ds *DataSource) getPKIsHandleCol() *expression.Column {
 	return getPKIsHandleColFromSchema(ds.Columns, ds.schema, ds.tableInfo.PKIsHandle)
 }
 
-func (p *LogicalIndexScan) getPKIsHandleCol(schema *expression.Schema) *expression.Column {
+func (s *LogicalIndexScan) getPKIsHandleCol(schema *expression.Schema) *expression.Column {
 	// We cannot use p.Source.getPKIsHandleCol() here,
 	// Because we may re-prune p.Columns and p.schema during the transformation.
 	// That will make p.Columns different from p.Source.Columns.
-	return getPKIsHandleColFromSchema(p.Columns, schema, p.Source.tableInfo.PKIsHandle)
+	return getPKIsHandleColFromSchema(s.Columns, schema, s.Source.tableInfo.PKIsHandle)
 }
 
 func (ds *DataSource) getHandleCol() *expression.Column {

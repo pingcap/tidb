@@ -217,7 +217,7 @@ func (r *ImplTableScan) OnImplement(expr *memo.GroupExpr, reqProp *property.Phys
 		if !reqProp.IsEmpty() {
 			if logicalScan.Source.HandleCol == nil {
 				ts.AppendExtraHandleCol(logicalScan.Source)
-			} else if logicalScan.Source.HandleCol.ID == model.ExtraHandleID {
+			} else if logicalScan.Source.HandleCol.ID == model.ExtraHandleID && ts.Schema().ColumnIndex(logicalScan.Source.HandleCol) == -1 {
 				ts.Schema().Append(logicalScan.Source.HandleCol)
 				ts.Columns = append(ts.Columns, model.NewExtraHandleColInfo())
 			}

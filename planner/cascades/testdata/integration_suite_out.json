@@ -548,6 +548,18 @@
           "2 22 3",
           "1 11 4"
         ]
+      },
+      {
+        "SQL": "select a, b, c from t where t.c = 1 order by t.c, t.b",
+        "Plan": [
+          "Sort_24 8000.00 root test.t.c:asc, test.t.b:asc",
+          "└─TableReader_21 8000.00 root data:Selection_22",
+          "  └─Selection_22 8000.00 cop[tikv] eq(test.t.c, 1)",
+          "    └─TableScan_23 10000.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "4 44 1"
+        ]
       }
     ]
   },

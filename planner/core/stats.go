@@ -277,24 +277,24 @@ func (ts *LogicalTableScan) DeriveStats(childStats []*property.StatsInfo, selfSc
 }
 
 // DeriveStats implements LogicalPlan DeriveStats interface.
-func (is *LogicalIndexScan) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema) (*property.StatsInfo, error) {
-	for i, expr := range is.AccessConds {
-		is.AccessConds[i] = expression.PushDownNot(is.ctx, expr)
+func (s *LogicalIndexScan) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema) (*property.StatsInfo, error) {
+	for i, expr := range s.AccessConds {
+		s.AccessConds[i] = expression.PushDownNot(s.ctx, expr)
 	}
-	is.stats = is.Source.deriveStatsByFilter(is.AccessConds, nil)
-	if len(is.AccessConds) == 0 {
-		is.Ranges = ranger.FullRange()
+	s.stats = s.Source.deriveStatsByFilter(s.AccessConds, nil)
+	if len(s.AccessConds) == 0 {
+		s.Ranges = ranger.FullRange()
 	}
-	is.IdxCols, is.IdxColLens = expression.IndexInfo2PrefixCols(is.Columns, selfSchema.Columns, is.Index)
-	is.FullIdxCols, is.FullIdxColLens = expression.IndexInfo2Cols(is.Columns, selfSchema.Columns, is.Index)
-	if !is.Index.Unique && !is.Index.Primary && len(is.Index.Columns) == len(is.IdxCols) {
-		handleCol := is.getPKIsHandleCol(selfSchema)
+	s.IdxCols, s.IdxColLens = expression.IndexInfo2PrefixCols(s.Columns, selfSchema.Columns, s.Index)
+	s.FullIdxCols, s.FullIdxColLens = expression.IndexInfo2Cols(s.Columns, selfSchema.Columns, s.Index)
+	if !s.Index.Unique && !s.Index.Primary && len(s.Index.Columns) == len(s.IdxCols) {
+		handleCol := s.getPKIsHandleCol(selfSchema)
 		if handleCol != nil && !mysql.HasUnsignedFlag(handleCol.RetType.Flag) {
-			is.IdxCols = append(is.IdxCols, handleCol)
-			is.IdxColLens = append(is.IdxColLens, types.UnspecifiedLength)
+			s.IdxCols = append(s.IdxCols, handleCol)
+			s.IdxColLens = append(s.IdxColLens, types.UnspecifiedLength)
 		}
 	}
-	return is.stats, nil
+	return s.stats, nil
 }
 
 // getIndexMergeOrPath generates all possible IndexMergeOrPaths.
