@@ -51,7 +51,7 @@ require (
 	github.com/pingcap/gofail v0.0.0-20181217135706-6a951c1e42c3 // indirect
 	github.com/pingcap/goleveldb v0.0.0-20171020084629-8d44bfdf1030
 	github.com/pingcap/kvproto v0.0.0-20190826051950-fc8799546726
-	github.com/pingcap/log v0.0.0-20190307075452-bd41d9273596
+	github.com/pingcap/log v0.0.0-20190715063458-479153f07ebd
 	github.com/pingcap/parser v0.0.0-20191220111854-63cc130be9fa
 	github.com/pingcap/pd v2.1.12+incompatible
 	github.com/pingcap/tidb-tools v2.1.3-0.20190116051332-34c808eef588+incompatible
@@ -69,14 +69,16 @@ require (
 	github.com/unrolled/render v0.0.0-20171102162132-65450fb6b2d3 // indirect
 	github.com/xiang90/probing v0.0.0-20160813154853-07dd2e8dfe18 // indirect
 	go.etcd.io/bbolt v1.3.3 // indirect
-	go.uber.org/zap v1.9.1
-	golang.org/x/crypto v0.0.0-20180503215945-1f94bef427e3 // indirect
-	golang.org/x/net v0.0.0-20180906233101-161cd47e91fd
+	go.uber.org/atomic v1.5.1 // indirect
+	go.uber.org/multierr v1.4.0 // indirect
+	go.uber.org/zap v1.13.0
+	golang.org/x/lint v0.0.0-20191125180803-fdd1cda4f05f // indirect
+	golang.org/x/net v0.0.0-20190620200207-3b0461eec859
 	golang.org/x/sync v0.0.0-20190911185100-cd5d95a43a6e // indirect
 	golang.org/x/sys v0.0.0-20191010194322-b09406accb47 // indirect
 	golang.org/x/text v0.3.2
 	golang.org/x/time v0.0.0-20180412165947-fbb02b2291d2 // indirect
-	golang.org/x/tools v0.0.0-20181105230042-78dc5bac0cac
+	golang.org/x/tools v0.0.0-20191224055732-dd894d0a8a40
 	google.golang.org/genproto v0.0.0-20180427144745-86e600f69ee4 // indirect
 	google.golang.org/grpc v1.12.0
 	gopkg.in/fsnotify.v1 v1.4.7 // indirect
