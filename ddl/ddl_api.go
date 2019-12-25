@@ -54,6 +54,8 @@ import (
 	"go.uber.org/zap"
 )
 
+const expressionIndexPrefix = "_V$"
+
 func (d *ddl) CreateSchema(ctx sessionctx.Context, schema model.CIStr, charsetInfo *ast.CharsetOpt) (err error) {
 	is := d.GetInfoSchemaWithInterceptor(ctx)
 	_, ok := is.SchemaByName(schema)
@@ -3499,7 +3501,7 @@ func buildHiddenColumn(ctx sessionctx.Context, tblInfo *model.TableInfo, t table
 	hiddenCols := make([]*model.ColumnInfo, 0, len(indexPartSpecifications))
 	for i, idxPart := range indexPartSpecifications {
 		if idxPart.Expr != nil {
-			idxPart.Column = &ast.ColumnName{Name: model.NewCIStr(fmt.Sprintf("_v$_%s_%d", indexName, i))}
+			idxPart.Column = &ast.ColumnName{Name: model.NewCIStr(fmt.Sprintf("%s_%s_%d", expressionIndexPrefix, indexName, i))}
 			// Check whether the hidden columns have existed.
 			col := table.FindCol(t.Cols(), idxPart.Column.Name.L)
 			if col != nil {
