@@ -72,6 +72,7 @@ func (s *FMSketch) InsertValue(sc *stmtctx.StatementContext, value types.Datum) 
 	if err != nil {
 		return errors.Trace(err)
 	}
+
 	s.insertHashValue(s.hashFunc.Sum64())
 	return nil
 }
