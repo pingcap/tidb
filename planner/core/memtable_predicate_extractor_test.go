@@ -545,3 +545,141 @@ func (s *extractorSuite) TestClusterLogTableExtractor(c *C) {
 		}
 	}
 }
+
+func (s *extractorSuite) TestMetricTableExtractor(c *C) {
+	se, err := session.CreateSession4Test(s.store)
+	c.Assert(err, IsNil)
+
+	parseTime := func(c *C, s string) time.Time {
+		t, err := time.ParseInLocation("2006-01-02 15:04:05.999", s, time.Local)
+		c.Assert(err, IsNil)
+		return t
+	}
+
+	parser := parser.New()
+	var cases = []struct {
+		sql                string
+		skipRequest        bool
+		startTime, endTime time.Time
+		labelConditions    map[string]set.StringSet
+		quantiles          []float64
+		promQL             string
+	}{
+		{
+			sql:    "select * from metric_schema.query_duration",
+			promQL: `histogram_quantile(0.9, sum(rate(tidb_server_handle_query_duration_seconds_bucket{}[60s])) by (le))`,
+		},
+		{
+			sql:    "select * from metric_schema.query_duration where instance='127.0.0.1:10080'",
+			promQL: `histogram_quantile(0.9, sum(rate(tidb_server_handle_query_duration_seconds_bucket{instance="127.0.0.1:10080"}[60s])) by (le))`,
+			labelConditions: map[string]set.StringSet{
+				"instance": set.NewStringSet("127.0.0.1:10080"),
+			},
+		},
+		{
+			sql:    "select * from metric_schema.query_duration where instance='127.0.0.1:10080' or instance='127.0.0.1:10081'",
+			promQL: `histogram_quantile(0.9, sum(rate(tidb_server_handle_query_duration_seconds_bucket{instance=~"127.0.0.1:10080|127.0.0.1:10081"}[60s])) by (le))`,
+			labelConditions: map[string]set.StringSet{
+				"instance": set.NewStringSet("127.0.0.1:10080", "127.0.0.1:10081"),
+			},
+		},
+		{
+			sql:    "select * from metric_schema.query_duration where instance='127.0.0.1:10080' and sql_type='general'",
+			promQL: `histogram_quantile(0.9, sum(rate(tidb_server_handle_query_duration_seconds_bucket{instance="127.0.0.1:10080",sql_type="general"}[60s])) by (le))`,
+			labelConditions: map[string]set.StringSet{
+				"instance": set.NewStringSet("127.0.0.1:10080"),
+				"sql_type": set.NewStringSet("general"),
+			},
+		},
+		{
+			sql:    "select * from metric_schema.query_duration where instance='127.0.0.1:10080' or sql_type='general'",
+			promQL: `histogram_quantile(0.9, sum(rate(tidb_server_handle_query_duration_seconds_bucket{}[60s])) by (le))`,
+		},
+		{
+			sql:    "select * from metric_schema.query_duration where instance='127.0.0.1:10080' and sql_type='Update' and time='2019-10-10 10:10:10'",
+			promQL: `histogram_quantile(0.9, sum(rate(tidb_server_handle_query_duration_seconds_bucket{instance="127.0.0.1:10080",sql_type="Update"}[60s])) by (le))`,
+			labelConditions: map[string]set.StringSet{
+				"instance": set.NewStringSet("127.0.0.1:10080"),
+				"sql_type": set.NewStringSet("Update"),
+			},
+			startTime: parseTime(c, "2019-10-10 10:10:10"),
+			endTime:   parseTime(c, "2019-10-10 10:10:10"),
+		},
+		{
+			sql:       "select * from metric_schema.query_duration where time>'2019-10-10 10:10:10' and time<'2019-10-11 10:10:10'",
+			promQL:    `histogram_quantile(0.9, sum(rate(tidb_server_handle_query_duration_seconds_bucket{}[60s])) by (le))`,
+			startTime: parseTime(c, "2019-10-10 10:10:10.001"),
+			endTime:   parseTime(c, "2019-10-11 10:10:09.999"),
+		},
+		{
+			sql:       "select * from metric_schema.query_duration where time>='2019-10-10 10:10:10'",
+			promQL:    `histogram_quantile(0.9, sum(rate(tidb_server_handle_query_duration_seconds_bucket{}[60s])) by (le))`,
+			startTime: parseTime(c, "2019-10-10 10:10:10"),
+			endTime:   parseTime(c, "2019-10-10 10:20:10"),
+		},
+		{
+			sql:         "select * from metric_schema.query_duration where time>='2019-10-10 10:10:10' and time<='2019-10-09 10:10:10'",
+			promQL:      "",
+			startTime:   parseTime(c, "2019-10-10 10:10:10"),
+			endTime:     parseTime(c, "2019-10-09 10:10:10"),
+			skipRequest: true,
+		},
+		{
+			sql:       "select * from metric_schema.query_duration where time<='2019-10-09 10:10:10'",
+			promQL:    "histogram_quantile(0.9, sum(rate(tidb_server_handle_query_duration_seconds_bucket{}[60s])) by (le))",
+			startTime: parseTime(c, "2019-10-09 10:00:10"),
+			endTime:   parseTime(c, "2019-10-09 10:10:10"),
+		},
+		{
+			sql: "select * from metric_schema.query_duration where quantile=0.9 or quantile=0.8",
+			promQL: "histogram_quantile(0.8, sum(rate(tidb_server_handle_query_duration_seconds_bucket{}[60s])) by (le))," +
+				"histogram_quantile(0.9, sum(rate(tidb_server_handle_query_duration_seconds_bucket{}[60s])) by (le))",
+			quantiles: []float64{0.8, 0.9},
+		},
+		{
+			sql:       "select * from metric_schema.query_duration where quantile=0",
+			promQL:    "histogram_quantile(0, sum(rate(tidb_server_handle_query_duration_seconds_bucket{}[60s])) by (le))",
+			quantiles: []float64{0},
+		},
+	}
+	se.GetSessionVars().StmtCtx.TimeZone = time.Local
+	for _, ca := range cases {
+		stmt, err := parser.ParseOneStmt(ca.sql, "", "")
+		c.Assert(err, IsNil)
+
+		ctx := context.Background()
+		builder := plannercore.NewPlanBuilder(se, s.dom.InfoSchema(), &plannercore.BlockHintProcessor{})
+		plan, err := builder.Build(ctx, stmt)
+		c.Assert(err, IsNil)
+
+		logicalPlan, err := plannercore.LogicalOptimize(ctx, builder.GetOptFlag(), plan.(plannercore.LogicalPlan))
+		c.Assert(err, IsNil)
+
+		// Obtain the leaf plan
+		leafPlan := logicalPlan
+		for len(leafPlan.Children()) > 0 {
+			leafPlan = leafPlan.Children()[0]
+		}
+
+		logicalMemTable := leafPlan.(*plannercore.LogicalMemTable)
+		c.Assert(logicalMemTable.Extractor, NotNil)
+		metricTableExtractor := logicalMemTable.Extractor.(*plannercore.MetricTableExtractor)
+		c.Assert(metricTableExtractor.LabelConditions, DeepEquals, ca.labelConditions, Commentf("SQL: %v", ca.sql))
+		c.Assert(metricTableExtractor.SkipRequest, DeepEquals, ca.skipRequest, Commentf("SQL: %v", ca.sql))
+		if len(metricTableExtractor.Quantiles) > 0 {
+			c.Assert(metricTableExtractor.Quantiles, DeepEquals, ca.quantiles)
+		}
+		if !ca.skipRequest {
+			promQL := plannercore.GetMetricTablePromQL(se, "query_duration", metricTableExtractor.LabelConditions, metricTableExtractor.Quantiles)
+			c.Assert(promQL, DeepEquals, ca.promQL, Commentf("SQL: %v", ca.sql))
+			start, end := metricTableExtractor.StartTime, metricTableExtractor.EndTime
+			c.Assert(start.UnixNano() <= end.UnixNano(), IsTrue)
+			if ca.startTime.Unix() > 0 {
+				c.Assert(metricTableExtractor.StartTime, DeepEquals, ca.startTime, Commentf("SQL: %v, start_time: %v", ca.sql, metricTableExtractor.StartTime))
+			}
+			if ca.endTime.Unix() > 0 {
+				c.Assert(metricTableExtractor.EndTime, DeepEquals, ca.endTime, Commentf("SQL: %v, end_time: %v", ca.sql, metricTableExtractor.EndTime))
+			}
+		}
+	}
+}
