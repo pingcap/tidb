@@ -117,7 +117,7 @@ type partialResult4VarPopDistinctFloat64 struct {
 	count    int64
 	sum      float64
 	variance float64
-	valSet set.Float64Set
+	valSet   set.Float64Set
 }
 
 func (e *varPop4DistinctFloat64) AllocPartialResult() PartialResult {
@@ -155,7 +155,7 @@ func (e *varPop4DistinctFloat64) UpdatePartialResult(sctx sessionctx.Context, ro
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if isNull || p.valSet.Exist(input){
+		if isNull || p.valSet.Exist(input) {
 			continue
 		}
 		p.valSet.Insert(input)
