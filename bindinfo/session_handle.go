@@ -62,8 +62,8 @@ func (h *SessionHandle) AddBindRecord(sctx sessionctx.Context, is infoschema.Inf
 		}
 	}
 	now := types.Time{
-		Time: types.FromGoTime(time.Now()),
-		Type: mysql.TypeDatetime,
+		Time: types.FromGoTime(time.Now().In(sctx.GetSessionVars().StmtCtx.TimeZone)),
+		Type: mysql.TypeTimestamp,
 		Fsp:  3,
 	}
 	for i := range record.Bindings {
