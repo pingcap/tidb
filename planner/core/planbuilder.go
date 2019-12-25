@@ -1888,7 +1888,7 @@ func (p *Insert) resolveOnDuplicate(onDup []*ast.Assignment, tblInfo *model.Tabl
 
 		column := colMap[assign.Column.Name.L]
 		if column.Hidden {
-			return nil, ErrUnknownColumn.GenWithStackByArgs(column.Name, "field list")
+			return nil, ErrUnknownColumn.GenWithStackByArgs(column.Name, clauseMsg[fieldList])
 		}
 		// Check whether the column to be updated is the generated column.
 		defaultExpr := extractDefaultExpr(assign.Expr)
@@ -1932,7 +1932,7 @@ func (b *PlanBuilder) getAffectCols(insertStmt *ast.InsertStmt, insertPlan *Inse
 		var missingColName string
 		affectedValuesCols, missingColName = table.FindCols(insertPlan.Table.VisibleCols(), colName, insertPlan.Table.Meta().PKIsHandle)
 		if affectedValuesCols == nil {
-			return nil, ErrUnknownColumn.GenWithStackByArgs(missingColName, "field list")
+			return nil, ErrUnknownColumn.GenWithStackByArgs(missingColName, clauseMsg[fieldList])
 		}
 	} else if len(insertStmt.Setlist) == 0 {
 		// This branch is for the following scenarios:
@@ -1962,7 +1962,7 @@ func (b *PlanBuilder) buildSetValuesOfInsert(ctx context.Context, insert *ast.In
 	// Check whether the column to be updated is the generated column.
 	tCols, missingColName := table.FindCols(insertPlan.Table.VisibleCols(), colNames, tableInfo.PKIsHandle)
 	if tCols == nil {
-		return ErrUnknownColumn.GenWithStackByArgs(missingColName, "field list")
+		return ErrUnknownColumn.GenWithStackByArgs(missingColName, clauseMsg[fieldList])
 	}
 	generatedColumns := make(map[string]struct{}, len(tCols))
 	for _, tCol := range tCols {
