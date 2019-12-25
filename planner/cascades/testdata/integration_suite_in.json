@@ -69,7 +69,7 @@
       "select a, b from t order by t.a",
       "select a, b from t order by t.b",
       "select a, b, c from t order by t.b, t.c",
-      "select a, b, c from t order by t.c, t.b",
+      "select a, b, c from t order by t.c, t.b"
     ]
   },
   {
