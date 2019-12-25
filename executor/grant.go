@@ -107,9 +107,8 @@ func (e *GrantExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		if !exists {
 			if e.ctx.GetSessionVars().SQLMode.HasNoAutoCreateUserMode() {
 				return ErrCantCreateUserWithGrant
-			} else {
-				inexistentUsers = append(inexistentUsers, user)
 			}
+			inexistentUsers = append(inexistentUsers, user)
 		}
 	}
 
