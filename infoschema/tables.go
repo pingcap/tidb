@@ -91,7 +91,8 @@ const (
 	tableTiKVRegionStatus                   = "TIKV_REGION_STATUS"
 	tableTiKVRegionPeers                    = "TIKV_REGION_PEERS"
 	tableTiDBServersInfo                    = "TIDB_SERVERS_INFO"
-	tableClusterInfo                        = "CLUSTER_INFO"
+	// TableClusterInfo is the string constant of cluster info memory table
+	TableClusterInfo = "CLUSTER_INFO"
 	// TableClusterConfig is the string constant of cluster configuration memory table
 	TableClusterConfig = "CLUSTER_CONFIG"
 	// TableClusterLog is the string constant of cluster log memory table
@@ -149,7 +150,7 @@ var tableIDMap = map[string]int64{
 	tableTiKVRegionStatus:                   autoid.InformationSchemaDBID + 39,
 	tableTiKVRegionPeers:                    autoid.InformationSchemaDBID + 40,
 	tableTiDBServersInfo:                    autoid.InformationSchemaDBID + 41,
-	tableClusterInfo:                        autoid.InformationSchemaDBID + 42,
+	TableClusterInfo:                        autoid.InformationSchemaDBID + 42,
 	TableClusterConfig:                      autoid.InformationSchemaDBID + 43,
 	TableClusterLoad:                        autoid.InformationSchemaDBID + 44,
 	tableTiFlashReplica:                     autoid.InformationSchemaDBID + 45,
@@ -2258,7 +2259,7 @@ var tableNameToColumns = map[string][]columnInfo{
 	tableTiKVRegionStatus:                   tableTiKVRegionStatusCols,
 	tableTiKVRegionPeers:                    tableTiKVRegionPeersCols,
 	tableTiDBServersInfo:                    tableTiDBServersInfoCols,
-	tableClusterInfo:                        tableClusterInfoCols,
+	TableClusterInfo:                        tableClusterInfoCols,
 	TableClusterConfig:                      tableClusterConfigCols,
 	TableClusterLog:                         tableClusterLogCols,
 	TableClusterLoad:                        tableClusterLoadCols,
@@ -2370,7 +2371,7 @@ func (it *infoschemaTable) getRows(ctx sessionctx.Context, cols []*table.Column)
 		fullRows, err = dataForTikVRegionPeers(ctx)
 	case tableTiDBServersInfo:
 		fullRows, err = dataForServersInfo()
-	case tableClusterInfo:
+	case TableClusterInfo:
 		fullRows, err = dataForTiDBClusterInfo(ctx)
 	case tableTiFlashReplica:
 		fullRows = dataForTableTiFlashReplica(dbs)

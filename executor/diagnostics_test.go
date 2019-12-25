@@ -14,9 +14,16 @@
 package executor_test
 
 import (
+	"context"
+
 	. "github.com/pingcap/check"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/testkit"
 )
 
 var _ = Suite(&diagnosticsSuite{})
@@ -39,5 +46,59 @@ func (s *diagnosticsSuite) TearDownSuite(c *C) {
 }
 
 func (s *diagnosticsSuite) TestInspectionResult(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
 
+	mockData := map[string]variable.TableSnapshot{}
+	// mock configuration inconsistent
+	mockData[infoschema.TableClusterConfig] = variable.TableSnapshot{
+		Rows: [][]types.Datum{
+			types.MakeDatums("tidb", "192.168.3.22:4000", "ddl.lease", "1"),
+			types.MakeDatums("tidb", "192.168.3.23:4000", "ddl.lease", "2"),
+			types.MakeDatums("tidb", "192.168.3.24:4000", "ddl.lease", "1"),
+			types.MakeDatums("tidb", "192.168.3.25:4000", "ddl.lease", "1"),
+			types.MakeDatums("tikv", "192.168.3.32:26600", "coprocessor.high", "8"),
+			types.MakeDatums("tikv", "192.168.3.33:26600", "coprocessor.high", "8"),
+			types.MakeDatums("tikv", "192.168.3.34:26600", "coprocessor.high", "7"),
+			types.MakeDatums("tikv", "192.168.3.35:26600", "coprocessor.high", "7"),
+			types.MakeDatums("pd", "192.168.3.32:2379", "scheduler.limit", "3"),
+			types.MakeDatums("pd", "192.168.3.33:2379", "scheduler.limit", "3"),
+			types.MakeDatums("pd", "192.168.3.34:2379", "scheduler.limit", "3"),
+			types.MakeDatums("pd", "192.168.3.35:2379", "scheduler.limit", "3"),
+		},
+	}
+	// mock version inconsistent
+	mockData[infoschema.TableClusterInfo] = variable.TableSnapshot{
+		Rows: [][]types.Datum{
+			types.MakeDatums("tidb", "192.168.1.11:1234", "192.168.1.11:1234", "4.0", "a234c"),
+			types.MakeDatums("tidb", "192.168.1.12:1234", "192.168.1.11:1234", "4.0", "a234d"),
+			types.MakeDatums("tidb", "192.168.1.13:1234", "192.168.1.11:1234", "4.0", "a234e"),
+			types.MakeDatums("tikv", "192.168.1.21:1234", "192.168.1.21:1234", "4.0", "c234d"),
+			types.MakeDatums("tikv", "192.168.1.22:1234", "192.168.1.22:1234", "4.0", "c234d"),
+			types.MakeDatums("tikv", "192.168.1.23:1234", "192.168.1.23:1234", "4.0", "c234e"),
+			types.MakeDatums("pd", "192.168.1.31:1234", "192.168.1.31:1234", "4.0", "m234c"),
+			types.MakeDatums("pd", "192.168.1.32:1234", "192.168.1.32:1234", "4.0", "m234d"),
+			types.MakeDatums("pd", "192.168.1.33:1234", "192.168.1.33:1234", "4.0", "m234e"),
+		},
+	}
+
+	ctx := context.WithValue(context.Background(), "__mockInspectionTables", mockData)
+	fpName := "github.com/pingcap/tidb/executor/mockMergeMockInspectionTables"
+	ctx = failpoint.WithHook(ctx, func(_ context.Context, fpname string) bool {
+		return fpname == fpName
+	})
+
+	c.Assert(failpoint.Enable(fpName, "return"), IsNil)
+	defer func() { c.Assert(failpoint.Disable(fpName), IsNil) }()
+
+	rs, err := tk.Se.Execute(ctx, "select * from information_schema.inspection_result where rule in ('config', 'version')")
+	c.Assert(err, IsNil)
+	result := tk.ResultSetToResultWithCtx(ctx, rs[0], Commentf("fetch result failed"))
+	warnings := tk.Se.GetSessionVars().StmtCtx.GetWarnings()
+	c.Assert(len(warnings), Equals, 0, Commentf("expected no warning, got: %+v", warnings))
+	result.Check(testkit.Rows(
+		"config coprocessor.high 4 1 P2 select * from information_schema.cluster_config where type='tikv' and `key`='coprocessor.high'",
+		"config scheduler.limit 4 1 P2 select * from information_schema.cluster_config where type='pd' and `key`='scheduler.limit'",
+		"config ddl.lease 4 1 P2 select * from information_schema.cluster_config where type='tidb' and `key`='ddl.lease'",
+		"version tikv 2 1 P1 select * from information_schema.cluster_info where type='tikv'",
+	))
 }

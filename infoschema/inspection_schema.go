@@ -32,7 +32,7 @@ import (
 // The data will be obtained lazily from `information_schema` and cache in `SessionVars`, and
 // the cached data will be cleared at `InspectionExec` closing.
 var inspectionTables = map[string][]columnInfo{
-	tableClusterInfo:       tableClusterInfoCols,
+	TableClusterInfo:       tableClusterInfoCols,
 	TableClusterConfig:     tableClusterConfigCols,
 	TableClusterLoad:       tableClusterLoadCols,
 	TableClusterHardware:   tableClusterHardwareCols,

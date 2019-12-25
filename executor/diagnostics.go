@@ -126,11 +126,12 @@ func (configInspection) inspect(_ context.Context, sctx sessionctx.Context, filt
 			continue
 		}
 		results = append(results, inspectionResult{
-			item:       row.GetString(1), // key
-			value:      row.GetString(2), // count
-			reference:  "1",
-			severity:   "P2",
-			suggestion: fmt.Sprintf("select * from cluster_config where type='%s' and `key`='%s'", row.GetString(0), row.GetString(1)),
+			item:      row.GetString(1),                   // key
+			value:     fmt.Sprintf("%d", row.GetInt64(2)), // count
+			reference: "1",
+			severity:  "P2",
+			suggestion: fmt.Sprintf("select * from information_schema.cluster_config where type='%s' and `key`='%s'",
+				row.GetString(0), row.GetString(1)),
 		})
 	}
 	return results
@@ -156,11 +157,11 @@ func (versionInspection) inspect(_ context.Context, sctx sessionctx.Context, fil
 			continue
 		}
 		results = append(results, inspectionResult{
-			item:       row.GetString(0), // type
-			value:      row.GetString(1), // count
+			item:       row.GetString(0),                   // type
+			value:      fmt.Sprintf("%d", row.GetInt64(1)), // count
 			reference:  "1",
 			severity:   "P1",
-			suggestion: fmt.Sprintf("select * from cluster_info where type='%s'", row.GetString(0)),
+			suggestion: fmt.Sprintf("select * from information_schema.cluster_info where type='%s'", row.GetString(0)),
 		})
 	}
 	return results
