@@ -32,7 +32,7 @@ import (
 // The data will be obtained lazily from `information_schema` and cache in `SessionVars`, and
 // the cached data will be cleared at `InspectionExec` closing.
 var inspectionTables = map[string][]columnInfo{
-	tableClusterInfo:       tableClusterInfoCols,
+	TableClusterInfo:       tableClusterInfoCols,
 	TableClusterConfig:     tableClusterConfigCols,
 	TableClusterLoad:       tableClusterLoadCols,
 	TableClusterHardware:   tableClusterHardwareCols,
@@ -47,8 +47,8 @@ type inspectionSchemaTable struct {
 func (it *inspectionSchemaTable) IterRecords(ctx sessionctx.Context, startKey kv.Key, cols []*table.Column,
 	fn table.RecordIterFunc) error {
 	sessionVars := ctx.GetSessionVars()
-	// The `InspectionTableCache` will be assigned in `InspectionExec.Open` and be
-	// cleaned at `InspectionExec.Close`, so nil represents currently in non-inspection mode.
+	// The `InspectionTableCache` will be assigned in the begin of retrieving` and be
+	// cleaned at the end of retrieving, so nil represents currently in non-inspection mode.
 	if sessionVars.InspectionTableCache == nil {
 		return errors.New("not currently in inspection mode")
 	}
