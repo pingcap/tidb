@@ -519,6 +519,7 @@ func testCancelDropIndex(c *C, store kv.Storage, d ddl.DDL, idxName, addIdxSQL, 
 		cancelSucc     bool
 	}{
 		// model.JobStateNone means the jobs is canceled before the first run.
+		// if we cancel successfully, we need to set needAddIndex to false in the next test case. Otherwise, set needAddIndex to true.
 		{true, model.JobStateNone, model.StateNone, true},
 		{false, model.JobStateRunning, model.StateWriteOnly, false},
 		{true, model.JobStateRunning, model.StateDeleteOnly, false},

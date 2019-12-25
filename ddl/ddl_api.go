@@ -3495,6 +3495,71 @@ func (d *ddl) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexName m
 	return errors.Trace(err)
 }
 
+func buildHiddenColumn(ctx sessionctx.Context, tblInfo *model.TableInfo, t table.Table, indexPartSpecifications []*ast.IndexPartSpecification, indexName model.CIStr) ([]*model.ColumnInfo, error) {
+	hiddenCols := make([]*model.ColumnInfo, 0, len(indexPartSpecifications))
+	for i, idxPart := range indexPartSpecifications {
+		if idxPart.Expr != nil {
+			idxPart.Column = &ast.ColumnName{Name: model.NewCIStr(fmt.Sprintf("_v$_%s_%d", indexName, i))}
+			// Check whether the hidden columns have existed.
+			col := table.FindCol(t.Cols(), idxPart.Column.Name.L)
+			if col != nil {
+				// TODO: Use expression index related error.
+				return nil, infoschema.ErrColumnExists.GenWithStackByArgs(col.Name.String())
+			}
+			idxPart.Length = types.UnspecifiedLength
+			// The index part is an expression, prepare a hidden column for it.
+			if len(idxPart.Column.Name.L) > mysql.MaxColumnNameLength {
+				// TODO: Refine the error message.
+				return nil, ErrTooLongIdent.GenWithStackByArgs("hidden column")
+			}
+			// TODO: refine the error message.
+			if err := checkIllegalFn4GeneratedColumn("expression index", idxPart.Expr); err != nil {
+				return nil, errors.Trace(err)
+			}
+
+			var sb strings.Builder
+			restoreFlags := format.RestoreStringSingleQuotes | format.RestoreKeyWordLowercase | format.RestoreNameBackQuotes |
+				format.RestoreSpacesAroundBinaryOperation
+			restoreCtx := format.NewRestoreCtx(restoreFlags, &sb)
+			sb.Reset()
+			err := idxPart.Expr.Restore(restoreCtx)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			expr, err := expression.RewriteSimpleExprWithTableInfo(ctx, tblInfo, idxPart.Expr)
+			if err != nil {
+				// TODO: refine the error message.
+				return nil, err
+			}
+			if _, ok := expr.(*expression.Column); ok {
+				return nil, ErrFunctionalIndexOnField
+			}
+
+			colInfo := &model.ColumnInfo{
+				Name:                idxPart.Column.Name,
+				GeneratedExprString: sb.String(),
+				GeneratedStored:     false,
+				Version:             model.CurrLatestColumnInfoVersion,
+				Dependences:         make(map[string]struct{}),
+				Hidden:              true,
+				FieldType:           *expr.GetType(),
+			}
+			for _, colName := range findColumnNamesInExpr(idxPart.Expr) {
+				colInfo.Dependences[colName.Name.O] = struct{}{}
+			}
+			if err = checkDependedColExist(colInfo.Dependences, t.Cols()); err != nil {
+				return nil, errors.Trace(err)
+			}
+			if err = checkAutoIncrementRef("", colInfo.Dependences, tblInfo); err != nil {
+				return nil, errors.Trace(err)
+			}
+			idxPart.Expr = nil
+			hiddenCols = append(hiddenCols, colInfo)
+		}
+	}
+	return hiddenCols, nil
+}
+
 func (d *ddl) CreateIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.IndexKeyType, indexName model.CIStr,
 	indexPartSpecifications []*ast.IndexPartSpecification, indexOption *ast.IndexOption, ifNotExists bool) error {
 	// not support Spatial and FullText index
@@ -3509,7 +3574,11 @@ func (d *ddl) CreateIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.Inde
 
 	// Deal with anonymous index.
 	if len(indexName.L) == 0 {
-		indexName = getAnonymousIndex(t, indexPartSpecifications[0].Column.Name)
+		colName := model.NewCIStr("expression_index")
+		if indexPartSpecifications[0].Column != nil {
+			colName = indexPartSpecifications[0].Column.Name
+		}
+		indexName = getAnonymousIndex(t, colName)
 	}
 
 	if indexInfo := t.Meta().FindIndexByName(indexName.L); indexInfo != nil {
@@ -3526,58 +3595,14 @@ func (d *ddl) CreateIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.Inde
 	}
 
 	tblInfo := t.Meta()
-	hiddenCols := make([]*model.ColumnInfo, 0, len(indexPartSpecifications))
-	// build hidden columns if necessary
-	for i, idxPart := range indexPartSpecifications {
-		if idxPart.Expr != nil {
-			idxPart.Column = &ast.ColumnName{Name: model.NewCIStr(fmt.Sprintf("_v$_%s_%d", indexName, i))}
-			idxPart.Length = types.UnspecifiedLength
-			// The index part is an expression, prepare a hidden column for it.
-			if len(idxPart.Column.Name.L) > mysql.MaxColumnNameLength {
-				// TODO: refine the error message
-				return ErrTooLongIdent.GenWithStackByArgs("hidden column")
-			}
-			// // TODO: refine the error message
-			if err := checkIllegalFn4GeneratedColumn("expression index", idxPart.Expr); err != nil {
-				return errors.Trace(err)
-			}
 
-			var sb strings.Builder
-			restoreFlags := format.RestoreStringSingleQuotes | format.RestoreKeyWordLowercase | format.RestoreNameBackQuotes |
-				format.RestoreSpacesAroundBinaryOperation
-			restoreCtx := format.NewRestoreCtx(restoreFlags, &sb)
-			sb.Reset()
-			err = idxPart.Expr.Restore(restoreCtx)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			expr, err := expression.RewriteSimpleExprWithTableInfo(ctx, tblInfo, idxPart.Expr)
-			if err != nil {
-				// TODO: refine the error message
-				return err
-			}
-			if _, ok := expr.(*expression.Column); ok {
-				return ErrFunctionalIndexOnField
-			}
-
-			colInfo := &model.ColumnInfo{
-				Name:                idxPart.Column.Name,
-				GeneratedExprString: sb.String(),
-				GeneratedStored:     false,
-				Version:             model.CurrLatestColumnInfoVersion,
-				Dependences:         make(map[string]struct{}),
-				Hidden:              true,
-				FieldType:           *expr.GetType(),
-			}
-			for _, colName := range findColumnNamesInExpr(idxPart.Expr) {
-				colInfo.Dependences[colName.Name.O] = struct{}{}
-			}
-			if err = checkDependedColExist(colInfo.Dependences, t.Cols()); err != nil {
-				return errors.Trace(err)
-			}
-			idxPart.Expr = nil
-			hiddenCols = append(hiddenCols, colInfo)
-		}
+	// Build hidden columns if necessary.
+	hiddenCols, err := buildHiddenColumn(ctx, tblInfo, t, indexPartSpecifications, indexName)
+	if err != nil {
+		return err
+	}
+	if err = checkAddColumnTooManyColumns(len(t.Cols()) + len(hiddenCols)); err != nil {
+		return errors.Trace(err)
 	}
 
 	// Check before the job is put to the queue.
@@ -3597,32 +3622,6 @@ func (d *ddl) CreateIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.Inde
 	// May be truncate comment here, when index comment too long and sql_mode is't strict.
 	if _, err = validateCommentLength(ctx.GetSessionVars(), indexName.String(), indexOption); err != nil {
 		return errors.Trace(err)
-	}
-	if len(hiddenCols) > 0 {
-		// Check hidden column
-		if err = checkAddColumnTooManyColumns(len(t.Cols()) + len(hiddenCols)); err != nil {
-			return errors.Trace(err)
-		}
-		// Check whether the hidden columns have existed.
-		for _, colInfo := range hiddenCols {
-			// Check whether the hidden columns have existed.
-			col := table.FindCol(t.Cols(), colInfo.Name.String())
-			if col != nil {
-				// TODO: use expression index related error
-				return infoschema.ErrColumnExists.GenWithStackByArgs(colInfo.Name.String())
-			}
-			if err = checkAutoIncrementRef("", colInfo.Dependences, tblInfo); err != nil {
-				return errors.Trace(err)
-			}
-		}
-		for _, indexPart := range indexPartSpecifications {
-			if indexPart.Expr != nil {
-				// TODO: refine the error message
-				if err := checkIllegalFn4GeneratedColumn("", indexPart.Expr); err != nil {
-					return errors.Trace(err)
-				}
-			}
-		}
 	}
 	job := &model.Job{
 		SchemaID:   schema.ID,
