@@ -361,8 +361,8 @@
       {
         "SQL": "select c from t",
         "Plan": [
-          "IndexReader_12 10000.00 root index:IndexScan_13",
-          "└─IndexScan_13 10000.00 cop[tikv] table:t, index:c, b, range:[NULL,+inf], keep order:false, stats:pseudo"
+          "IndexReader_9 10000.00 root index:IndexScan_10",
+          "└─IndexScan_10 10000.00 cop[tikv] table:t, index:c, b, range:[NULL,+inf], keep order:false, stats:pseudo"
         ],
         "Result": [
           "3",
@@ -373,9 +373,9 @@
       {
         "SQL": "select a from t order by c",
         "Plan": [
-          "Projection_12 10000.00 root test.t.a",
-          "└─IndexReader_15 10000.00 root index:IndexScan_16",
-          "  └─IndexScan_16 10000.00 cop[tikv] table:t, index:c, b, range:[NULL,+inf], keep order:true, stats:pseudo"
+          "Projection_9 10000.00 root test.t.a",
+          "└─IndexReader_12 10000.00 root index:IndexScan_13",
+          "  └─IndexScan_13 10000.00 cop[tikv] table:t, index:c, b, range:[NULL,+inf], keep order:true, stats:pseudo"
         ],
         "Result": [
           "1",
@@ -492,10 +492,10 @@
       {
         "SQL": "select a, b from t order by t.a",
         "Plan": [
-          "Projection_18 10000.00 root test.t.a, test.t.b",
-          "└─IndexLookUp_17 10000.00 root ",
-          "  ├─IndexScan_19 10000.00 cop[tikv] table:t, index:a, range:[NULL,+inf], keep order:true, stats:pseudo",
-          "  └─TableScan_20 10000.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false, stats:pseudo"
+          "Projection_15 10000.00 root test.t.a, test.t.b",
+          "└─IndexLookUp_14 10000.00 root ",
+          "  ├─IndexScan_16 10000.00 cop[tikv] table:t, index:a, range:[NULL,+inf], keep order:true, stats:pseudo",
+          "  └─TableScan_17 10000.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false, stats:pseudo"
         ],
         "Result": [
           "1 11",
@@ -507,10 +507,10 @@
       {
         "SQL": "select a, b from t order by t.b",
         "Plan": [
-          "Projection_18 10000.00 root test.t.a, test.t.b",
-          "└─IndexLookUp_17 10000.00 root ",
-          "  ├─IndexScan_19 10000.00 cop[tikv] table:t, index:b, c, range:[NULL,+inf], keep order:true, stats:pseudo",
-          "  └─TableScan_20 10000.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false, stats:pseudo"
+          "Projection_15 10000.00 root test.t.a, test.t.b",
+          "└─IndexLookUp_14 10000.00 root ",
+          "  ├─IndexScan_16 10000.00 cop[tikv] table:t, index:b, c, range:[NULL,+inf], keep order:true, stats:pseudo",
+          "  └─TableScan_17 10000.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false, stats:pseudo"
         ],
         "Result": [
           "1 11",
