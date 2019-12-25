@@ -549,17 +549,25 @@ func parseHostIPNet(s string) *net.IPNet {
 	if i < 0 {
 		return nil
 	}
-	ip := net.ParseIP(s[:i]).To4()
-	if ip == nil {
+	hostIP := net.ParseIP(s[:i]).To4()
+	if hostIP == nil {
 		return nil
 	}
-	mask := net.ParseIP(s[i+1:]).To4()
-	if mask == nil {
+	maskIP := net.ParseIP(s[i+1:]).To4()
+	if maskIP == nil {
+		return nil
+	}
+	mask := net.IPv4Mask(maskIP[0], maskIP[1], maskIP[2], maskIP[3])
+	// We must ensure that: <host_ip> & <netmask> == <host_ip>
+	// e.g. `127.0.0.1/255.0.0.0` is an illegal string,
+	// because `127.0.0.1` & `255.0.0.0` == `127.0.0.0`, but != `127.0.0.1`
+	// see https://dev.mysql.com/doc/refman/5.7/en/account-names.html
+	if !hostIP.Equal(hostIP.Mask(mask)) {
 		return nil
 	}
 	return &net.IPNet{
-		IP:   ip,
-		Mask: net.IPv4Mask(mask[0], mask[1], mask[2], mask[3]),
+		IP:   hostIP,
+		Mask: mask,
 	}
 }
 

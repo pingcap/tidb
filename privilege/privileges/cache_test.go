@@ -236,12 +236,18 @@ func (s *testCacheSuite) TestHostMatch(c *C) {
 	c.Assert(p.RequestVerification(activeRoles, "root", "198.0.0.1", "test", "", "", mysql.SelectPriv), IsFalse)
 	c.Assert(p.RequestVerification(activeRoles, "root", "198.0.0.1", "test", "", "", mysql.PrivilegeType(0)), IsTrue)
 	c.Assert(p.RequestVerification(activeRoles, "root", "172.0.0.1", "test", "", "", mysql.ShutdownPriv), IsTrue)
+	mustExec(c, se, `TRUNCATE TABLE mysql.user`)
 
 	// Invalid host name, the user can be created, but cannot login.
 	cases := []string{
 		"127.0.0.0/24",
+		"127.0.0.1/255.0.0.0",
 		"127.0.0.0/255.0.0",
 		"127.0.0.0/255.0.0.0.0",
+		"127%/255.0.0.0",
+		"127.0.0.0/%",
+		"127.0.0.%/%",
+		"127%/%",
 	}
 	for _, IPMask := range cases {
 		sql := fmt.Sprintf(`INSERT INTO mysql.user VALUES ("%s", "root", "", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "N")`, IPMask)
@@ -249,9 +255,9 @@ func (s *testCacheSuite) TestHostMatch(c *C) {
 		p = privileges.MySQLPrivilege{}
 		err = p.LoadUserTable(se)
 		c.Assert(err, IsNil)
-		c.Assert(p.RequestVerification(activeRoles, "root", "127.0.0.1", "test", "", "", mysql.SelectPriv), IsFalse)
-		c.Assert(p.RequestVerification(activeRoles, "root", "127.0.0.0", "test", "", "", mysql.SelectPriv), IsFalse)
-		c.Assert(p.RequestVerification(activeRoles, "root", "localhost", "test", "", "", mysql.ShutdownPriv), IsFalse)
+		c.Assert(p.RequestVerification(activeRoles, "root", "127.0.0.1", "test", "", "", mysql.SelectPriv), IsFalse, Commentf("test case: %s", IPMask))
+		c.Assert(p.RequestVerification(activeRoles, "root", "127.0.0.0", "test", "", "", mysql.SelectPriv), IsFalse, Commentf("test case: %s", IPMask))
+		c.Assert(p.RequestVerification(activeRoles, "root", "localhost", "test", "", "", mysql.ShutdownPriv), IsFalse, Commentf("test case: %s", IPMask))
 	}
 
 	// Netmask notation cannot be used for IPv6 addresses.
