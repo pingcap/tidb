@@ -16,6 +16,7 @@ package executor
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/pingcap/failpoint"
@@ -92,6 +93,16 @@ func (e *inspectionRetriever) retrieve(ctx context.Context, sctx sessionctx.Cont
 			continue
 		}
 		results := r.inspect(ctx, sctx, items)
+		if len(results) == 0 {
+			continue
+		}
+		// make result stable
+		sort.Slice(results, func(i, j int) bool {
+			if lhs, rhs := results[i].item, results[j].item; lhs != rhs {
+				return lhs < rhs
+			}
+			return results[i].value < results[j].value
+		})
 		for _, result := range results {
 			finalRows = append(finalRows, types.MakeDatums(
 				name,
@@ -114,7 +125,7 @@ func (configInspection) name() string {
 
 func (configInspection) inspect(_ context.Context, sctx sessionctx.Context, filter set.StringSet) []inspectionResult {
 	// check the configuration consistent
-	sql := "select type, `key`, count(*) as c from inspection_schema.cluster_config group by type, `key` having c > 1"
+	sql := "select type, `key`, count(distinct value) as c from inspection_schema.cluster_config group by type, `key` having c > 1"
 	rows, _, err := sctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
 	if err != nil {
 		sctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("check configuration consistency failed: %v", err))
@@ -145,7 +156,7 @@ func (versionInspection) name() string {
 
 func (versionInspection) inspect(_ context.Context, sctx sessionctx.Context, filter set.StringSet) []inspectionResult {
 	// check the configuration consistent
-	sql := "select type, count(*) as c from inspection_schema.cluster_info group by type, git_hash having c > 1;"
+	sql := "select type, count(distinct git_hash) as c from inspection_schema.cluster_info group by type having c > 1;"
 	rows, _, err := sctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
 	if err != nil {
 		sctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("check version consistency failed: %v", err))

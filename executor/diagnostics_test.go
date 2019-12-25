@@ -96,9 +96,10 @@ func (s *diagnosticsSuite) TestInspectionResult(c *C) {
 	warnings := tk.Se.GetSessionVars().StmtCtx.GetWarnings()
 	c.Assert(len(warnings), Equals, 0, Commentf("expected no warning, got: %+v", warnings))
 	result.Check(testkit.Rows(
-		"config coprocessor.high 4 1 P2 select * from information_schema.cluster_config where type='tikv' and `key`='coprocessor.high'",
-		"config scheduler.limit 4 1 P2 select * from information_schema.cluster_config where type='pd' and `key`='scheduler.limit'",
-		"config ddl.lease 4 1 P2 select * from information_schema.cluster_config where type='tidb' and `key`='ddl.lease'",
+		"config coprocessor.high 2 1 P2 select * from information_schema.cluster_config where type='tikv' and `key`='coprocessor.high'",
+		"config ddl.lease 2 1 P2 select * from information_schema.cluster_config where type='tidb' and `key`='ddl.lease'",
+		"version pd 3 1 P1 select * from information_schema.cluster_info where type='pd'",
+		"version tidb 3 1 P1 select * from information_schema.cluster_info where type='tidb'",
 		"version tikv 2 1 P1 select * from information_schema.cluster_info where type='tikv'",
 	))
 }
