@@ -64,6 +64,7 @@ type Histogram struct {
 	// For some types like `Int`, we do not build it because we can get them directly from `Bounds`.
 	scalars []scalar
 	// TotColSize is the total column size for the histogram.
+	// For unfixed-len types, it includes LEN and BYTE.
 	TotColSize int64
 
 	// Correlation is the statistical correlation between physical row ordering and logical ordering of
@@ -140,6 +141,26 @@ func (c *Column) AvgColSize(count int64, isKey bool) float64 {
 	return math.Round(float64(c.TotColSize)/float64(count)*100) / 100
 }
 
+// AvgColSizeChunkFormat is the average column size of the histogram. These sizes are derived from function `Encode`
+// and `DecodeToChunk`, so we need to update them if those 2 functions are changed.
+func (c *Column) AvgColSizeChunkFormat(count int64) float64 {
+	if count == 0 {
+		return 0
+	}
+	fixedLen := chunk.GetFixedLen(c.Histogram.Tp)
+	if fixedLen != -1 {
+		return float64(fixedLen)
+	}
+	// Keep two decimal place.
+	// Add 8 bytes for unfixed-len type's offsets.
+	// Minus Log2(avgSize) for unfixed-len type LEN.
+	avgSize := float64(c.TotColSize) / float64(count)
+	if avgSize < 1 {
+		return math.Round(avgSize*100)/100 + 8
+	}
+	return math.Round((avgSize-math.Log2(avgSize))*100)/100 + 8
+}
+
 // AvgColSizeListInDisk is the average column size of the histogram. These sizes are derived
 // from `chunk.ListInDisk` so we need to update them if those 2 functions are changed.
 func (c *Column) AvgColSizeListInDisk(count int64) float64 {
@@ -156,8 +177,12 @@ func (c *Column) AvgColSizeListInDisk(count int64) float64 {
 		return float64(size) * notNullRatio
 	}
 	// Keep two decimal place.
-	// size of varchar type is LEN + BYTE, so we minus 1 here.
-	return math.Round(float64(c.TotColSize)/float64(count)*100)/100 - 1
+	// Minus Log2(avgSize) for unfixed-len type LEN.
+	avgSize := float64(c.TotColSize) / float64(count)
+	if avgSize < 1 {
+		return math.Round((avgSize)*100) / 100
+	}
+	return math.Round((avgSize-math.Log2(avgSize))*100) / 100
 }
 
 // AppendBucket appends a bucket into `hg`.

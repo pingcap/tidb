@@ -4743,9 +4743,9 @@ from
     (select * from t1) a
 left join
     (select bussid,date(from_unixtime(ct)) date8 from t2) b
-on 
+on
     a.period_id = b.bussid
-where 
+where
     datediff(b.date8, date(from_unixtime(a.starttime))) >= 0`
 	tk.MustQuery(q)
 }
@@ -5210,4 +5210,40 @@ func (s *testIntegrationSuite) TestDecodetoChunkReuse(c *C) {
 	}
 	c.Assert(count, Equals, 200)
 	rs.Close()
+}
+
+func (s *testIntegrationSuite) TestCastStrToInt(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	cases := []struct {
+		sql    string
+		result int
+	}{
+		{"select cast('' as signed)", 0},
+		{"select cast('12345abcde' as signed)", 12345},
+		{"select cast('123e456' as signed)", 123},
+		{"select cast('-12345abcde' as signed)", -12345},
+		{"select cast('-123e456' as signed)", -123},
+	}
+	for _, ca := range cases {
+		tk.Se.GetSessionVars().StmtCtx.SetWarnings(nil)
+		tk.MustQuery(ca.sql).Check(testkit.Rows(fmt.Sprintf("%v", ca.result)))
+		c.Assert(terror.ErrorEqual(tk.Se.GetSessionVars().StmtCtx.GetWarnings()[0].Err, types.ErrTruncatedWrongVal), IsTrue)
+	}
+}
+
+func (s *testIntegrationSuite) TestIssue14159(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("DROP TABLE IF EXISTS t")
+	tk.MustExec("CREATE TABLE t (v VARCHAR(100))")
+	tk.MustExec("INSERT INTO t VALUES ('3289742893213123732904809')")
+	tk.MustQuery("SELECT * FROM t WHERE v").Check(testkit.Rows("3289742893213123732904809"))
+}
+
+func (s *testIntegrationSuite) TestIssue14146(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table tt(a varchar(10))")
+	tk.MustExec("insert into tt values(NULL)")
+	tk.MustExec("analyze table tt;")
+	tk.MustQuery("select * from tt").Check(testkit.Rows("<nil>"))
 }

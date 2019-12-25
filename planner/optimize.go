@@ -43,12 +43,12 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	fp := plannercore.TryFastPlan(sctx, node)
 	if fp != nil {
 		if !isPointGetWithoutDoubleRead(sctx, fp) {
-			sctx.PrepareTxnFuture(ctx)
+			sctx.PrepareTSFuture(ctx)
 		}
 		return fp, fp.OutputNames(), nil
 	}
 
-	sctx.PrepareTxnFuture(ctx)
+	sctx.PrepareTSFuture(ctx)
 
 	bestPlan, names, _, err := optimize(ctx, sctx, node, is)
 	if err != nil {
@@ -205,9 +205,7 @@ func getBindRecord(ctx sessionctx.Context, stmt ast.StmtNode) (*bindinfo.BindRec
 
 func handleInvalidBindRecord(ctx context.Context, sctx sessionctx.Context, level string, bindRecord bindinfo.BindRecord) {
 	sessionHandle := sctx.Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
-	// The first two parameters are only used to generate hints, but since we already have the hints,
-	// we do not need to pass real values and the error won't happen too.
-	err := sessionHandle.DropBindRecord(nil, nil, &bindRecord)
+	err := sessionHandle.DropBindRecord(bindRecord.OriginalSQL, bindRecord.Db, &bindRecord.Bindings[0])
 	if err != nil {
 		logutil.Logger(ctx).Info("drop session bindings failed")
 	}
@@ -271,7 +269,7 @@ func (e *paramMarkerChecker) Leave(in ast.Node) (ast.Node, bool) {
 //  1. ctx is auto commit tagged.
 //  2. plan is point get by pk.
 func isPointGetWithoutDoubleRead(ctx sessionctx.Context, p plannercore.Plan) bool {
-	if !ctx.GetSessionVars().IsAutocommit() {
+	if !plannercore.IsAutoCommitTxn(ctx) {
 		return false
 	}
 
