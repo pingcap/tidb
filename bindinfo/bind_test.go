@@ -603,3 +603,15 @@ func (s *testSuite) TestDefaultSessionVars(c *C) {
 		"tidb_evolve_plan_baselines off",
 		"tidb_use_plan_baselines on"))
 }
+
+func (s *testSuite) TestStmtHints(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	s.cleanBindingEnv(tk)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, index idx(a))")
+	tk.MustExec("create global binding for select * from t using select /*+ MAX_EXECUTION_TIME(100), MEMORY_QUOTA(1 GB) */ * from t use index(idx)")
+	tk.MustQuery("select * from t")
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.MemQuotaQuery, Equals, int64(1073741824))
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.MaxExecutionTime, Equals, uint64(100))
+}
