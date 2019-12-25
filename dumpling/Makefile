@@ -15,7 +15,7 @@ endif
 build: bin/dumpling
 
 bin/%: cmd/%/main.go $(wildcard v4/**/*.go)
-	$(GO) build $(GOFLAGS) -o $@ $<
+	$(GO) build $(GOFLAGS) -tags codes -o $@ $<
 
 test:
 	$(GO) list ./... | xargs $(GO) test $(GOFLAGS)
