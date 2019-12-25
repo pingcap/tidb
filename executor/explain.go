@@ -75,8 +75,7 @@ func (e *ExplainExec) generateExplainInfo(ctx context.Context) (rows [][]string,
 	closed := false
 	defer func() {
 		// handle panic
-		recover()
-		if !closed {
+		if panicErr := recover(); panicErr != nil && !closed {
 			err = e.analyzeExec.Close()
 			closed = true
 		}
