@@ -3583,11 +3583,12 @@ func (d *ddl) DropIndex(ctx sessionctx.Context, ti ast.Ident, indexName model.CI
 		return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ti.Schema, ti.Name))
 	}
 
+	indexInfo := t.Meta().FindIndexByName(indexName.L)
 	var isPK bool
-	if indexName.L == strings.ToLower(mysql.PrimaryKeyName) {
+	if indexName.L == strings.ToLower(mysql.PrimaryKeyName) &&
+		(indexInfo == nil || indexInfo.Primary) {
 		isPK = true
 	}
-	indexInfo := t.Meta().FindIndexByName(indexName.L)
 	if isPK {
 		if !config.GetGlobalConfig().AlterPrimaryKey {
 			return ErrUnsupportedModifyPrimaryKey.GenWithStack("Unsupported drop primary key when alter-primary-key is false")

@@ -126,6 +126,10 @@ func (s *testSerialSuite) TestPrimaryKey(c *C) {
 	config.StoreGlobalConfig(&newCfg)
 	_, err = tk.Exec("drop index `primary` on primary_key_test4")
 	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported drop primary key when alter-primary-key is false")
+	// for the index name is `primary`
+	tk.MustExec("create table tt(`primary` int);")
+	tk.MustExec("alter table tt add index (`primary`);")
+	tk.MustExec("drop index `primary` on tt")
 }
 
 func (s *testSerialSuite) TestMultiRegionGetTableEndHandle(c *C) {
