@@ -14,6 +14,7 @@
 package binloginfo
 
 import (
+	"fmt"
 	"math"
 	"regexp"
 	"strings"
@@ -22,6 +23,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb-tools/tidb-binlog/node"
 	pumpcli "github.com/pingcap/tidb-tools/tidb-binlog/pump_client"
@@ -45,6 +47,7 @@ var pumpsClient *pumpcli.PumpsClient
 var pumpsClientLock sync.RWMutex
 var shardPat = regexp.MustCompile(`SHARD_ROW_ID_BITS\s*=\s*\d+\s*`)
 var preSplitPat = regexp.MustCompile(`PRE_SPLIT_REGIONS\s*=\s*\d+\s*`)
+var autoRandomPat = regexp.MustCompile(`AUTO_RANDOM\s*\(\s*\d+\s*\)\s*`)
 
 // BinlogInfo contains binlog data and binlog client.
 type BinlogInfo struct {
@@ -297,18 +300,21 @@ func SetDDLBinlog(client *pumpcli.PumpsClient, txn kv.Transaction, jobID int64, 
 }
 
 const specialPrefix = `/*!90000 `
+const specialVersionPrefix = `/*T!%s `
 
 // AddSpecialComment uses to add comment for table option in DDL query.
 // Export for testing.
 func AddSpecialComment(ddlQuery string) string {
-	if strings.Contains(ddlQuery, specialPrefix) {
+	if strings.Contains(ddlQuery, specialPrefix) || parser.SpecVersionCodePattern.MatchString(ddlQuery) {
 		return ddlQuery
 	}
-	return addSpecialCommentByRegexps(ddlQuery, shardPat, preSplitPat)
+	ddlQuery = addSpecialCommentByRegexps(ddlQuery, specialPrefix, shardPat, preSplitPat)
+	ddlQuery = addSpecialCommentByRegexps(ddlQuery, fmt.Sprintf(specialVersionPrefix, parser.CommentCodeAutoRandom), autoRandomPat)
+	return ddlQuery
 }
 
 // addSpecialCommentByRegexps uses to add special comment for the worlds in the ddlQuery with match the regexps.
-func addSpecialCommentByRegexps(ddlQuery string, regs ...*regexp.Regexp) string {
+func addSpecialCommentByRegexps(ddlQuery string, prefix string, regs ...*regexp.Regexp) string {
 	upperQuery := strings.ToUpper(ddlQuery)
 	var specialComments []string
 	minIdx := math.MaxInt64
@@ -327,7 +333,7 @@ func addSpecialCommentByRegexps(ddlQuery string, regs ...*regexp.Regexp) string 
 		upperQuery = upperQuery[:loc[0]] + upperQuery[loc[1]:]
 	}
 	if minIdx != math.MaxInt64 {
-		query := ddlQuery[:minIdx] + specialPrefix
+		query := ddlQuery[:minIdx] + prefix
 		for _, comment := range specialComments {
 			if query[len(query)-1] != ' ' {
 				query += " "

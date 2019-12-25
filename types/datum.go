@@ -21,6 +21,7 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+	"unsafe"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/charset"
@@ -2062,4 +2063,31 @@ func ChangeReverseResultByUpperLowerBound(
 		}
 	}
 	return d, nil
+}
+
+const (
+	sizeOfEmptyDatum = int(unsafe.Sizeof(Datum{}))
+	sizeOfMysqlTime  = int(unsafe.Sizeof(Time{}))
+	sizeOfMyDecimal  = MyDecimalStructSize
+)
+
+// EstimatedMemUsage returns the estimated bytes consumed of a one-dimensional
+// or two-dimensional datum array.
+func EstimatedMemUsage(array []Datum, numOfRows int) int64 {
+	if numOfRows == 0 {
+		return 0
+	}
+	var bytesConsumed int
+	for _, d := range array {
+		switch d.Kind() {
+		case KindMysqlDecimal:
+			bytesConsumed += sizeOfMyDecimal
+		case KindMysqlTime:
+			bytesConsumed += sizeOfMysqlTime
+		default:
+			bytesConsumed += len(d.b)
+		}
+	}
+	bytesConsumed += len(array) * sizeOfEmptyDatum
+	return int64(bytesConsumed * numOfRows)
 }

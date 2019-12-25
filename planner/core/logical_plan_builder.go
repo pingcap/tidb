@@ -23,7 +23,6 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
@@ -46,7 +45,9 @@ import (
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
+	util2 "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/plancodec"
 )
 
@@ -574,7 +575,7 @@ func (b *PlanBuilder) buildJoin(ctx context.Context, joinNode *ast.Join) (Logica
 			return nil, errors.New("ON condition doesn't support subqueries yet")
 		}
 		onCondition := expression.SplitCNFItems(onExpr)
-		joinPlan.attachOnConds(onCondition)
+		joinPlan.AttachOnConds(onCondition)
 	} else if joinPlan.JoinType == InnerJoin {
 		// If a inner join without "ON" or "USING" clause, it's a cartesian
 		// product over the join tables.
@@ -2715,13 +2716,19 @@ func (b *PlanBuilder) buildMemTable(ctx context.Context, dbName model.CIStr, tab
 	p.names = names
 
 	// Some memory tables can receive some predicates
-	switch tableInfo.Name.L {
-	case strings.ToLower(infoschema.TableClusterConfig):
-		p.Extractor = &ClusterConfigTableExtractor{}
-	case strings.ToLower(infoschema.TableClusterLog):
-		p.Extractor = &ClusterLogTableExtractor{}
+	switch dbName.L {
+	case util2.MetricSchemaName.L:
+		p.Extractor = &MetricTableExtractor{}
+	case util2.InformationSchemaName.L:
+		switch strings.ToUpper(tableInfo.Name.O) {
+		case infoschema.TableClusterConfig, infoschema.TableClusterLoad, infoschema.TableClusterHardware, infoschema.TableClusterSystemInfo:
+			p.Extractor = &ClusterTableExtractor{}
+		case infoschema.TableClusterLog:
+			p.Extractor = &ClusterLogTableExtractor{}
+		case infoschema.TableInspectionResult:
+			p.Extractor = &InspectionResultTableExtractor{}
+		}
 	}
-
 	return p, nil
 }
 
@@ -2860,7 +2867,7 @@ func (b *PlanBuilder) buildSemiJoin(outerPlan, innerPlan LogicalPlan, onConditio
 		onCondition[i] = expr.Decorrelate(outerPlan.Schema())
 	}
 	joinPlan.SetChildren(outerPlan, innerPlan)
-	joinPlan.attachOnConds(onCondition)
+	joinPlan.AttachOnConds(onCondition)
 	joinPlan.names = make([]*types.FieldName, outerPlan.Schema().Len(), outerPlan.Schema().Len()+innerPlan.Schema().Len()+1)
 	copy(joinPlan.names, outerPlan.OutputNames())
 	if asScalar {
