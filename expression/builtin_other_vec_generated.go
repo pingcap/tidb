@@ -53,7 +53,6 @@ func (b *builtinInIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) e
 	isUnsigned0 := mysql.HasUnsignedFlag(b.args[0].GetType().Flag)
 	var compareResult int
 	args := b.args
-
 	if b.hashSet != nil {
 		args = b.nonConstArgs
 		for i := 0; i < n; i++ {
@@ -154,7 +153,6 @@ func (b *builtinInStringSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column
 	}
 	var compareResult int
 	args := b.args
-
 	if b.hashSet != nil {
 		args = b.nonConstArgs
 		for i := 0; i < n; i++ {
@@ -233,7 +231,6 @@ func (b *builtinInDecimalSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colum
 	}
 	var compareResult int
 	args := b.args
-
 	if b.hashSet != nil {
 		args = b.nonConstArgs
 		for i := 0; i < n; i++ {
@@ -321,7 +318,6 @@ func (b *builtinInRealSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 	}
 	var compareResult int
 	args := b.args
-
 	if b.hashSet != nil {
 		args = b.nonConstArgs
 		for i := 0; i < n; i++ {
@@ -402,7 +398,6 @@ func (b *builtinInTimeSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 	}
 	var compareResult int
 	args := b.args
-
 	if b.hashSet != nil {
 		args = b.nonConstArgs
 		for i := 0; i < n; i++ {
@@ -483,7 +478,6 @@ func (b *builtinInDurationSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colu
 	}
 	var compareResult int
 	args := b.args
-
 	if b.hashSet != nil {
 		args = b.nonConstArgs
 		for i := 0; i < n; i++ {
@@ -556,32 +550,8 @@ func (b *builtinInJSONSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 		r64s[i] = 0
 	}
 	hasNull := make([]bool, n)
-	if b.hasNull {
-		for i := 0; i < n; i++ {
-			hasNull[i] = true
-		}
-	}
 	var compareResult int
 	args := b.args
-
-	if b.hashSet != nil {
-		args = b.nonConstArgs
-		for i := 0; i < n; i++ {
-			if buf0.IsNull(i) {
-				hasNull[i] = true
-				continue
-			}
-			arg0 := buf0.GetJSON(i)
-			key, err := arg0.ToHashKey()
-			if err != nil {
-				return err
-			}
-			if _, ok := b.hashSet[string(key)]; ok {
-				r64s[i] = 1
-				result.SetNull(i, false)
-			}
-		}
-	}
 
 	for j := 1; j < len(args); j++ {
 		if err := args[j].VecEvalJSON(b.ctx, input, buf1); err != nil {

@@ -113,6 +113,7 @@ var builtinInTmpl = template.Must(template.New("builtinInTmpl").Parse(`
 
 {{ range . }}
 {{ $InputInt := (eq .Input.TypeName "Int") }}
+{{ $InputJSON := (eq .Input.TypeName "JSON")}}
 {{ $InputFixed := ( .Input.Fixed ) }}
 {{ $UseHashKey := ( or (eq .Input.TypeName "Decimal") (eq .Input.TypeName "JSON") )}}
 func (b *{{.SigName}}) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
@@ -127,17 +128,19 @@ func (b *{{.SigName}}) vecEvalInt(input *chunk.Chunk, result *chunk.Column) erro
 		r64s[i] = 0
 	}
 	hasNull := make([]bool, n)
+	{{- if not $InputJSON}}
 	if b.hasNull {
 		for i := 0; i < n; i++ {
 			hasNull[i] = true
 		}
 	}
+	{{- end }}
 	{{- if $InputInt }}
 		isUnsigned0 := mysql.HasUnsignedFlag(b.args[0].GetType().Flag)
 	{{- end }}
 	var compareResult int
 	args := b.args
-
+	{{- if not $InputJSON}}
 	if b.hashSet != nil {
 		args = b.nonConstArgs
 		for i := 0; i < n; i++ {
@@ -182,6 +185,7 @@ func (b *{{.SigName}}) vecEvalInt(input *chunk.Chunk, result *chunk.Column) erro
 			{{- end }}
 		}
 	}
+	{{- end }}
 
 	for j := 1; j < len(args); j++ {
 		if err := args[j].VecEval{{ .Input.TypeName }}(b.ctx, input, buf1); err != nil {

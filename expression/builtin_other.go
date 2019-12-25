@@ -68,61 +68,9 @@ type inFunctionClass struct {
 	baseFunctionClass
 }
 
-// workaround for issue https://github.com/pingcap/tidb/issues/13710
-func (c *inFunctionClass) getInJSON(ctx sessionctx.Context, args []Expression) (sig builtinFunc, err error) {
-	argTps := make([]types.EvalType, len(args))
-	var tp types.EvalType
-	switch args[1].GetType().EvalType() {
-	case types.ETInt:
-		tp = types.ETInt
-	case types.ETReal:
-		tp = types.ETReal
-	default:
-		tp = types.ETString
-	}
-	for i := range args {
-		argTps[i] = tp
-	}
-	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, argTps...)
-	bf.tp.Flen = 1
-	switch args[0].GetType().EvalType() {
-	case types.ETInt:
-		inInt := builtinInIntSig{baseBuiltinFunc: bf, threshold: 1}
-		err := inInt.buildHashMapForConstArgs(ctx)
-		if err != nil {
-			return &inInt, err
-		}
-		sig = &inInt
-		sig.setPbCode(tipb.ScalarFuncSig_InInt)
-	case types.ETReal:
-		inReal := builtinInRealSig{baseBuiltinFunc: bf, threshold: 1}
-		err := inReal.buildHashMapForConstArgs(ctx)
-		if err != nil {
-			return &inReal, err
-		}
-		sig = &inReal
-		sig.setPbCode(tipb.ScalarFuncSig_InReal)
-	default:
-		inStr := builtinInStringSig{baseBuiltinFunc: bf, threshold: 1}
-		err := inStr.buildHashMapForConstArgs(ctx)
-		if err != nil {
-			return &inStr, err
-		}
-		sig = &inStr
-		sig.setPbCode(tipb.ScalarFuncSig_InString)
-	}
-	return sig, nil
-}
-
 func (c *inFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (sig builtinFunc, err error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
-	}
-	if args[0].GetType().EvalType() == types.ETJson {
-		// MySQL 8.0 hasn't implemented IN function for json yet. see https://dev.mysql.com/doc/refman/8.0/en/json.html#json-comparison
-		// It casts json value to int/string/... and use IN function for int/string/...
-		// we choose to be compatible with it. (related issue: https://github.com/pingcap/tidb/issues/13710)
-		return c.getInJSON(ctx, args)
 	}
 	argTps := make([]types.EvalType, len(args))
 	for i := range args {
@@ -179,6 +127,9 @@ func (c *inFunctionClass) getFunction(ctx sessionctx.Context, args []Expression)
 		}
 		sig = &inDuration
 		sig.setPbCode(tipb.ScalarFuncSig_InDuration)
+	case types.ETJson:
+		sig = &builtinInJSONSig{baseBuiltinFunc: bf}
+		sig.setPbCode(tipb.ScalarFuncSig_InJson)
 	}
 	return sig, nil
 }
@@ -708,56 +659,11 @@ func (b *builtinInDurationSig) evalInt(row chunk.Row) (int64, bool, error) {
 // builtinInJSONSig see https://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_in
 type builtinInJSONSig struct {
 	baseBuiltinFunc
-	nonConstArgs []Expression
-	hashSet      map[string]bool
-	threshold    int
-	hasNull      bool
-}
-
-func (b *builtinInJSONSig) buildHashMapForConstArgs(ctx sessionctx.Context) error {
-	b.nonConstArgs = make([]Expression, 0, len(b.args))
-	b.nonConstArgs = append(b.nonConstArgs, b.args[0])
-	b.hashSet = make(map[string]bool, len(b.args)-1)
-	count := 0
-	for i := 1; i < len(b.args); i++ {
-		if b.args[i].ConstItem() {
-			val, isNull, err := b.args[i].EvalJSON(ctx, chunk.Row{})
-			if err != nil {
-				return err
-			}
-			if isNull {
-				b.hasNull = true
-				continue
-			}
-			key, err := val.ToHashKey()
-			if err != nil {
-				return err
-			}
-			b.hashSet[string(key)] = true
-			count++
-		} else {
-			b.nonConstArgs = append(b.nonConstArgs, b.args[i])
-		}
-	}
-	if count < b.threshold {
-		b.nonConstArgs = b.args
-		b.hashSet = nil
-		b.hasNull = false
-	}
-
-	return nil
 }
 
 func (b *builtinInJSONSig) Clone() builtinFunc {
 	newSig := &builtinInJSONSig{}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
-	newSig.nonConstArgs = make([]Expression, 0, len(b.nonConstArgs))
-	for _, arg := range b.nonConstArgs {
-		newSig.nonConstArgs = append(newSig.nonConstArgs, arg.Clone())
-	}
-	newSig.hashSet = b.hashSet
-	newSig.threshold = b.threshold
-	newSig.hasNull = b.hasNull
 	return newSig
 }
 
@@ -766,21 +672,8 @@ func (b *builtinInJSONSig) evalInt(row chunk.Row) (int64, bool, error) {
 	if isNull0 || err != nil {
 		return 0, isNull0, err
 	}
-
-	args := b.args
-	if b.hashSet != nil {
-		args = b.nonConstArgs
-		json, err := arg0.ToHashKey()
-		if err != nil {
-			return 0, true, err
-		}
-		if _, ok := b.hashSet[string(json)]; ok {
-			return 1, false, nil
-		}
-	}
-
-	hasNull := b.hasNull
-	for _, arg := range args[1:] {
+	var hasNull bool
+	for _, arg := range b.args[1:] {
 		evaledArg, isNull, err := arg.EvalJSON(b.ctx, row)
 		if err != nil {
 			return 0, true, err
