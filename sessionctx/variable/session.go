@@ -111,6 +111,9 @@ type TransactionContext struct {
 	SchemaVersion int64
 	StartTS       uint64
 	Shard         *int64
+	// TableDeltaMap is used in the schema validator for DDL changes in one table not to block others.
+	// It's also used in the statistias updating.
+	// Note: for the partitionted table, it only store all the partition IDs.
 	TableDeltaMap map[int64]TableDelta
 
 	// unchangedRowKeys is used to store the unchanged rows that needs to lock for pessimistic transaction.
@@ -143,11 +146,11 @@ func (tc *TransactionContext) CollectUnchangedRowKeys(buf []kv.Key) []kv.Key {
 }
 
 // UpdateDeltaForTable updates the delta info for some table.
-func (tc *TransactionContext) UpdateDeltaForTable(tableID int64, delta int64, count int64, colSize map[int64]int64) {
+func (tc *TransactionContext) UpdateDeltaForTable(physicalTableID int64, delta int64, count int64, colSize map[int64]int64) {
 	if tc.TableDeltaMap == nil {
 		tc.TableDeltaMap = make(map[int64]TableDelta)
 	}
-	item := tc.TableDeltaMap[tableID]
+	item := tc.TableDeltaMap[physicalTableID]
 	if item.ColSize == nil && colSize != nil {
 		item.ColSize = make(map[int64]int64)
 	}
@@ -156,7 +159,7 @@ func (tc *TransactionContext) UpdateDeltaForTable(tableID int64, delta int64, co
 	for key, val := range colSize {
 		item.ColSize[key] += val
 	}
-	tc.TableDeltaMap[tableID] = item
+	tc.TableDeltaMap[physicalTableID] = item
 }
 
 // Cleanup clears up transaction info that no longer use.
@@ -1183,7 +1186,7 @@ var (
 	}
 )
 
-// TableDelta stands for the changed count for one table.
+// TableDelta stands for the changed count for one table or partition.
 type TableDelta struct {
 	Delta    int64
 	Count    int64
