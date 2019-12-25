@@ -1183,8 +1183,13 @@ func (s *testOOMSuite) SetUpSuite(c *C) {
 	c.Assert(err, IsNil)
 }
 
+func (s *testOOMSuite) TearDownSuite(c *C) {
+	s.do.Close()
+	s.store.Close()
+}
+
 func (s *testOOMSuite) registerHook() {
-	conf := &log.Config{Level: "info", File: log.FileLogConfig{}}
+	conf := &log.Config{Level: os.Getenv("log_level"), File: log.FileLogConfig{}}
 	_, r, _ := log.InitLogger(conf)
 	s.oom = &oomCapturer{r.Core, ""}
 	lg := zap.New(s.oom)
@@ -1192,6 +1197,7 @@ func (s *testOOMSuite) registerHook() {
 }
 
 func (s *testOOMSuite) TestDistSQLMemoryControl(c *C) {
+	log.SetLevel(zap.WarnLevel)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -1224,6 +1230,7 @@ func (s *testOOMSuite) TestDistSQLMemoryControl(c *C) {
 }
 
 func (s *testOOMSuite) TestMemTracker4InsertAndReplaceExec(c *C) {
+	log.SetLevel(zap.InfoLevel)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
