@@ -1184,7 +1184,7 @@ func (s *testOOMSuite) SetUpSuite(c *C) {
 }
 
 func (s *testOOMSuite) registerHook() {
-	conf := &log.Config{Level: os.Getenv("log_level"), File: log.FileLogConfig{}}
+	conf := &log.Config{Level: "info", File: log.FileLogConfig{}}
 	_, r, _ := log.InitLogger(conf)
 	s.oom = &oomCapturer{r.Core, ""}
 	lg := zap.New(s.oom)
@@ -1234,7 +1234,7 @@ func (s *testOOMSuite) TestMemTracker4InsertAndReplaceExec(c *C) {
 	c.Assert(s.oom.tracker, Equals, "")
 	tk.Se.GetSessionVars().MemQuotaQuery = 1
 	tk.MustExec("insert into t values (1,1,1), (2,2,2), (3,3,3)")
-	c.Assert(len(s.oom.tracker) > 0, IsTrue)
+	c.Assert(s.oom.tracker, Matches, "expensive_query during bootstrap phase")
 	tk.Se.GetSessionVars().MemQuotaQuery = -1
 
 	s.oom.tracker = ""
@@ -1242,7 +1242,7 @@ func (s *testOOMSuite) TestMemTracker4InsertAndReplaceExec(c *C) {
 	c.Assert(s.oom.tracker, Equals, "")
 	tk.Se.GetSessionVars().MemQuotaQuery = 1
 	tk.MustExec("replace into t values (1,1,1), (2,2,2), (3,3,3)")
-	c.Assert(len(s.oom.tracker) > 0, IsTrue)
+	c.Assert(s.oom.tracker, Matches, "expensive_query during bootstrap phase")
 	tk.Se.GetSessionVars().MemQuotaQuery = -1
 
 	s.oom.tracker = ""
@@ -1250,7 +1250,7 @@ func (s *testOOMSuite) TestMemTracker4InsertAndReplaceExec(c *C) {
 	c.Assert(s.oom.tracker, Equals, "")
 	tk.Se.GetSessionVars().MemQuotaQuery = 1
 	tk.MustExec("insert into t select * from t")
-	c.Assert(len(s.oom.tracker) > 0, IsTrue)
+	c.Assert(s.oom.tracker, Matches, "expensive_query during bootstrap phase")
 	tk.Se.GetSessionVars().MemQuotaQuery = -1
 
 	s.oom.tracker = ""
@@ -1258,7 +1258,7 @@ func (s *testOOMSuite) TestMemTracker4InsertAndReplaceExec(c *C) {
 	c.Assert(s.oom.tracker, Equals, "")
 	tk.Se.GetSessionVars().MemQuotaQuery = 1
 	tk.MustExec("replace into t select * from t")
-	c.Assert(len(s.oom.tracker) > 0, IsTrue)
+	c.Assert(s.oom.tracker, Matches, "expensive_query during bootstrap phase")
 	tk.Se.GetSessionVars().MemQuotaQuery = -1
 
 	tk.Se.GetSessionVars().DMLBatchSize = 1
@@ -1268,7 +1268,7 @@ func (s *testOOMSuite) TestMemTracker4InsertAndReplaceExec(c *C) {
 	c.Assert(s.oom.tracker, Equals, "")
 	tk.Se.GetSessionVars().MemQuotaQuery = 1
 	tk.MustExec("insert into t values (1,1,1), (2,2,2), (3,3,3)")
-	c.Assert(len(s.oom.tracker) > 0, IsTrue)
+	c.Assert(s.oom.tracker, Matches, "expensive_query during bootstrap phase")
 	tk.Se.GetSessionVars().MemQuotaQuery = -1
 
 	s.oom.tracker = ""
@@ -1276,7 +1276,7 @@ func (s *testOOMSuite) TestMemTracker4InsertAndReplaceExec(c *C) {
 	c.Assert(s.oom.tracker, Equals, "")
 	tk.Se.GetSessionVars().MemQuotaQuery = 1
 	tk.MustExec("replace into t values (1,1,1), (2,2,2), (3,3,3)")
-	c.Assert(len(s.oom.tracker) > 0, IsTrue)
+	c.Assert(s.oom.tracker, Matches, "expensive_query during bootstrap phase")
 	tk.Se.GetSessionVars().MemQuotaQuery = -1
 }
 
