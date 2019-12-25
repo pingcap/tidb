@@ -113,7 +113,7 @@ type TransactionContext struct {
 	Shard         *int64
 	// TableDeltaMap is used in the schema validator for DDL changes in one table not to block others.
 	// It's also used in the statistias updating.
-	// Note: for the partitionted table, it only store all the partition IDs.
+	// Note: for the partitionted table, it stores all the partition IDs.
 	TableDeltaMap map[int64]TableDelta
 
 	// unchangedRowKeys is used to store the unchanged rows that needs to lock for pessimistic transaction.

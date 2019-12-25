@@ -280,7 +280,7 @@ func (b *Builder) applyDropTable(dbInfo *model.DBInfo, tableID int64, affected [
 	sortedTbls := b.is.sortedTablesBuckets[bucketIdx]
 	idx := sortedTbls.searchTable(tableID)
 	if idx == -1 {
-		return nil
+		return affected
 	}
 	if tableNames, ok := b.is.schemaMap[dbInfo.Name.L]; ok {
 		tblInfo := sortedTbls[idx].Meta()
