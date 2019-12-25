@@ -169,13 +169,11 @@
           "    TiKVSingleGather_7 input:[Group#3], table:t",
           "    TiKVSingleGather_9 input:[Group#4], table:t, index:f_g",
           "Group#3 Schema:[test.t.a,test.t.f,test.t.g]",
-          "    Selection_14 input:[Group#5], gt(test.t.g, 1)",
+          "    Selection_16 input:[Group#5], eq(test.t.f, 1), gt(test.t.g, 1)",
           "Group#5 Schema:[test.t.a,test.t.f,test.t.g]",
-          "    Selection_10 input:[Group#6], eq(test.t.f, 1)",
-          "Group#6 Schema:[test.t.a,test.t.f,test.t.g]",
           "    TableScan_6 table:t, pk col:test.t.a",
           "Group#4 Schema:[test.t.a,test.t.f,test.t.g]",
-          "    IndexScan_16 table:t, index:f, g, cond:[eq(test.t.f, 1) gt(test.t.g, 1)]"
+          "    IndexScan_17 table:t, index:f, g, cond:[eq(test.t.f, 1) gt(test.t.g, 1)]"
         ]
       },
       {
@@ -256,6 +254,21 @@
           "    Selection_15 input:[Group#8], gt(test.t.b, 10)",
           "Group#8 Schema:[test.t.a,test.t.b]",
           "    TableScan_8 table:t, pk col:test.t.a"
+        ]
+      },
+      {
+        "SQL": "select b, c from (select b, c from t where b > 1 and c > 1) as t1 where b > 2 and c > 2",
+        "Result": [
+          "Group#0 Schema:[test.t.b,test.t.c]",
+          "    Projection_5 input:[Group#1], test.t.b, test.t.c",
+          "Group#1 Schema:[test.t.b,test.t.c]",
+          "    Projection_3 input:[Group#2], test.t.b, test.t.c",
+          "Group#2 Schema:[test.t.b,test.t.c]",
+          "    TiKVSingleGather_7 input:[Group#3], table:t",
+          "Group#3 Schema:[test.t.b,test.t.c]",
+          "    Selection_11 input:[Group#4], gt(test.t.b, 1), gt(test.t.b, 2), gt(test.t.c, 1), gt(test.t.c, 2)",
+          "Group#4 Schema:[test.t.b,test.t.c]",
+          "    TableScan_6 table:t"
         ]
       }
     ]
