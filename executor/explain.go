@@ -74,7 +74,7 @@ func (e *ExplainExec) Next(ctx context.Context, req *chunk.Chunk) error {
 func (e *ExplainExec) generateExplainInfo(ctx context.Context) (rows [][]string, err error) {
 	closed := false
 	defer func() {
-		if !closed {
+		if !closed && e.analyzeExec != nil {
 			err = e.analyzeExec.Close()
 			closed = true
 		}

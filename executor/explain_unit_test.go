@@ -71,16 +71,17 @@ func TestExplainAnalyzeInvokeNextAndClose(t *testing.T) {
 		explain:      nil,
 	}
 	// mockErrorOperator returns errors
-	explainExec.analyzeExec = &mockErrorOperator{baseExec, false, false}
+	mockOper := mockErrorOperator{baseExec, false, false}
+	explainExec.analyzeExec = &mockOper
 	tmpCtx := context.Background()
 	_, err := explainExec.generateExplainInfo(tmpCtx)
 
 	expectedStr := "next error, close error"
-	if err.Error() != expectedStr {
+	if err.Error() != expectedStr || !mockOper.closed {
 		t.Errorf(err.Error())
 	}
 	// mockErrorOperator panic
-	mockOper := mockErrorOperator{baseExec, true, false}
+	mockOper = mockErrorOperator{baseExec, true, false}
 	explainExec.analyzeExec = &mockOper
 	defer func() {
 		if panicErr := recover(); panicErr != nil && !mockOper.closed {
