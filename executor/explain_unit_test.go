@@ -84,10 +84,9 @@ func TestExplainAnalyzeInvokeNextAndClose(t *testing.T) {
 	mockOper = mockErrorOperator{baseExec, true, false}
 	explainExec.analyzeExec = &mockOper
 	defer func() {
-		if panicErr := recover(); panicErr != nil && !mockOper.closed {
-			t.Errorf(err.Error())
+		if panicErr := recover(); panicErr == nil || !mockOper.closed {
+			t.Errorf("panic test failed: without panic or close() is not called")
 		}
 	}()
 	_, err = explainExec.generateExplainInfo(tmpCtx)
-
 }
