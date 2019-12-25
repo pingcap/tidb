@@ -112,6 +112,38 @@ func (s *testMemoSuite) TestGroupExists(c *C) {
 	c.Assert(g.Exists(expr), IsFalse)
 }
 
+func (s *testMemoSuite) TestGroupFingerPrint(c *C) {
+	stmt1, err := s.ParseOneStmt("select 1 + 3", "", "")
+	c.Assert(err, IsNil)
+	p1, _, err := plannercore.BuildLogicalPlan(context.Background(), s.sctx, stmt1, s.is)
+	c.Assert(err, IsNil)
+	logic1, ok := p1.(plannercore.LogicalPlan)
+	c.Assert(ok, IsTrue)
+	group1 := Convert2Group(logic1)
+	oldGroupExpr := group1.Equivalents.Front().Value.(*GroupExpr)
+	proj := oldGroupExpr.ExprNode
+
+	// Insert a GroupExpr with the same ExprNode.
+	newGroupExpr := NewGroupExpr(proj)
+	newGroupExpr.SetChildren(oldGroupExpr.Children[0])
+	group1.Insert(newGroupExpr)
+	c.Assert(group1.Equivalents.Len(), Equals, 1)
+
+	// Insert a GroupExpr with different children。
+	newGroupExpr2 := NewGroupExpr(proj)
+	newGroup := NewGroupWithSchema(oldGroupExpr, group1.Prop.Schema)
+	newGroupExpr2.SetChildren(newGroup)
+	group1.Insert(newGroupExpr2)
+	c.Assert(group1.Equivalents.Len(), Equals, 2)
+
+	// Insert a GroupExpr with different ExprNode.
+	limit := plannercore.LogicalLimit{}.Init(proj.SCtx(), 0)
+	newGroupExpr3 := NewGroupExpr(limit)
+	newGroupExpr3.SetChildren(oldGroupExpr.Children[0])
+	group1.Insert(newGroupExpr3)
+	c.Assert(group1.Equivalents.Len(), Equals, 3)
+}
+
 func (s *testMemoSuite) TestGroupGetFirstElem(c *C) {
 	expr0 := NewGroupExpr(plannercore.LogicalProjection{}.Init(s.sctx, 0))
 	expr1 := NewGroupExpr(plannercore.LogicalLimit{}.Init(s.sctx, 0))
@@ -182,9 +214,9 @@ func (s *testMemoSuite) TestEngineTypeSet(c *C) {
 }
 
 func (s *testMemoSuite) TestFirstElemAfterDelete(c *C) {
-	oldExpr := NewGroupExpr(plannercore.LogicalLimit{}.Init(s.sctx, 0))
+	oldExpr := NewGroupExpr(plannercore.LogicalLimit{Count: 10}.Init(s.sctx, 0))
 	g := NewGroupWithSchema(oldExpr, s.schema)
-	newExpr := NewGroupExpr(plannercore.LogicalLimit{}.Init(s.sctx, 0))
+	newExpr := NewGroupExpr(plannercore.LogicalLimit{Count: 20}.Init(s.sctx, 0))
 	g.Insert(newExpr)
 	c.Assert(g.GetFirstElem(OperandLimit), NotNil)
 	c.Assert(g.GetFirstElem(OperandLimit).Value, Equals, oldExpr)

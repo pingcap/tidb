@@ -72,3 +72,13 @@ func (p *LogicalSelection) HashCode() []byte {
 	}
 	return result
 }
+
+// HashCode implements LogicalPlan interface.
+func (p *LogicalLimit) HashCode() []byte {
+	// PlanType + Offset + Count
+	result := make([]byte, 20)
+	binary.BigEndian.PutUint32(result, uint32(plancodec.TypeStringToPhysicalID(p.tp)))
+	binary.BigEndian.PutUint64(result[4:], p.Offset)
+	binary.BigEndian.PutUint64(result[12:], p.Count)
+	return result
+}
