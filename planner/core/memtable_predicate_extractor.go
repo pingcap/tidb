@@ -571,5 +571,5 @@ func (e *MetricTableExtractor) convertToTime(t int64) time.Time {
 	if t == 0 || t == math.MaxInt64 {
 		return time.Now()
 	}
-	return time.Unix(t/1000, (t%1000)*1e6)
+	return time.Unix(t/1000, (t%1000)*int64(time.Millisecond))
 }
