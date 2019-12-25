@@ -17,14 +17,18 @@ import (
 	"bytes"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/infoschema/metricschema"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/ranger"
+	"github.com/pingcap/tidb/util/set"
 )
 
 // ExplainInfo implements Plan interface.
@@ -703,8 +707,41 @@ func (dg *TiKVDoubleGather) ExplainInfo() string {
 
 // ExplainInfo implements Plan interface.
 func (p *PhysicalMemTable) ExplainInfo() string {
-	if !metricschema.IsMetricTable(p.Table.Name.L) {
+	if p.DBName.L != util.MetricSchemaName.L || !metricschema.IsMetricTable(p.Table.Name.L) {
 		return ""
 	}
-	return metricschema.GetExplainInfo(p.ctx, p.Table.Name.L)
+
+	e := p.Extractor.(*MetricTableExtractor)
+	if e.SkipRequest {
+		return "skip_request: true"
+	}
+	promQL := GetMetricTablePromQL(p.ctx, p.Table.Name.L, e.LabelConditions, e.Quantiles)
+	startTime, endTime := e.StartTime, e.EndTime
+	step := time.Second * time.Duration(p.ctx.GetSessionVars().MetricSchemaStep)
+	return fmt.Sprintf("PromQL:%v, start_time:%v, end_time:%v, step:%v",
+		promQL,
+		startTime.In(p.ctx.GetSessionVars().StmtCtx.TimeZone).Format("2006-01-02 15:04:05.999"),
+		endTime.In(p.ctx.GetSessionVars().StmtCtx.TimeZone).Format("2006-01-02 15:04:05.999"),
+		step,
+	)
+}
+
+// GetMetricTablePromQL uses to get the promQL of metric table.
+func GetMetricTablePromQL(sctx sessionctx.Context, lowerTableName string, labels map[string]set.StringSet, quantiles []float64) string {
+	def, err := metricschema.GetMetricTableDef(lowerTableName)
+	if err != nil {
+		return ""
+	}
+	if len(quantiles) == 0 {
+		quantiles = []float64{def.Quantile}
+	}
+	var buf bytes.Buffer
+	for i, quantile := range quantiles {
+		promQL := def.GenPromQL(sctx, labels, quantile)
+		if i > 0 {
+			buf.WriteByte(',')
+		}
+		buf.WriteString(promQL)
+	}
+	return buf.String()
 }
