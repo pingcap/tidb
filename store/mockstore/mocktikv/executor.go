@@ -678,6 +678,7 @@ func convertToExprs(sc *stmtctx.StatementContext, fieldTps []*types.FieldType, p
 		}
 		exprs = append(exprs, e)
 	}
+
 	return exprs, nil
 }
 
