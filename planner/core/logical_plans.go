@@ -548,37 +548,56 @@ func (ds *DataSource) buildIndexGather(path *util.AccessPath) LogicalPlan {
 	return sg
 }
 
-func (ds *DataSource) buildIndexLookupGather(path *util.AccessPath, idxCols []*expression.Column, idxColLens []int) LogicalPlan {
+func (is *LogicalIndexScan) initSchema(isDoubleRead bool) {
+	indexCols := make([]*expression.Column, len(is.IdxCols), len(is.IdxCols)+1)
+	copy(indexCols, is.IdxCols)
+	for i, col := range is.Columns {
+		if (mysql.HasPriKeyFlag(col.Flag) && is.Source.tableInfo.PKIsHandle) || col.ID == model.ExtraHandleID {
+			indexCols = append(indexCols, is.Source.schema.Columns[i])
+			break
+		}
+	}
+
+	if isDoubleRead && len(indexCols) == len(is.IdxCols) {
+		indexCols = append(indexCols, is.Source.getHandleCol())
+	}
+	is.SetSchema(expression.NewSchema(indexCols...))
+}
+
+func (ds *DataSource) buildIndexLookupGather(path *util.AccessPath) LogicalPlan {
+	idxReaderCols := make([]*model.ColumnInfo, 0, len(path.Index.Columns))
+	for _, idxCol := range path.Index.Columns {
+		for _, tblCol := range ds.Columns {
+			if idxCol.Name.L == tblCol.Name.L {
+				idxReaderCols = append(idxReaderCols, tblCol)
+				break
+			}
+		}
+	}
 	is := LogicalIndexScan{
-		Source:       ds,
-		IsDoubleRead: true,
-		Index:        path.Index,
+		Source:         ds,
+		IsDoubleRead:   true,
+		Columns:        idxReaderCols,
+		Index:          path.Index,
+		IdxCols:        path.IdxCols,
+		IdxColLens:     path.IdxColLens,
+		FullIdxCols:    path.FullIdxCols,
+		FullIdxColLens: path.FullIdxColLens,
+		Ranges:         ranger.FullRange(),
 	}.Init(ds.ctx, ds.blockOffset)
-	is.Columns = make([]*model.ColumnInfo, len(ds.Columns))
-	copy(is.Columns, ds.Columns)
-	is.SetSchema(ds.schema)
+	is.initSchema(true)
 
 	ts := LogicalTableScan{Source: ds, Handle: ds.getHandleCol(), IsDoubleRead: true}.Init(ds.ctx, ds.blockOffset)
 	ts.SetSchema(ds.Schema())
-
-	for i := len(idxCols) - 1; i >= 0; i-- {
-		if idxCols[i] == nil {
-			idxCols = append(idxCols[:i], idxCols[i+1:]...)
-			idxColLens = append(idxColLens[:i], idxColLens[i+1:]...)
-		}
-	}
 	dg := TiKVDoubleGather{
 		Source:       ds,
-		IndexCols:    idxCols,
-		IndexColLens: idxColLens,
+		IndexCols:    path.IdxCols,
+		IndexColLens: path.IdxColLens,
 		index:        path.Index,
-		HandleCol:    ds.HandleCol,
+		HandleCol:    ds.getHandleCol(),
 	}.Init(ds.ctx, ds.blockOffset)
 	dg.SetSchema(ds.Schema())
 	dg.SetChildren(is, ts)
-	if dg.HandleCol == nil {
-		dg.HandleCol = ds.newExtraHandleSchemaCol()
-	}
 	return dg
 }
 
@@ -593,8 +612,8 @@ func (ds *DataSource) Convert2Gathers() (gathers []LogicalPlan) {
 			// If index columns can cover all of the needed columns, we can use a IndexGather + IndexScan.
 			if isCoveringIndex(ds.schema.Columns, path.FullIdxCols, path.FullIdxColLens, ds.tableInfo.PKIsHandle) {
 				gathers = append(gathers, ds.buildIndexGather(path))
-			} else {
-				gathers = append(gathers, ds.buildIndexLookupGather(path, path.FullIdxCols, path.FullIdxColLens))
+			} else if len(path.IdxCols) > 0 {
+				gathers = append(gathers, ds.buildIndexLookupGather(path))
 			}
 		}
 	}
