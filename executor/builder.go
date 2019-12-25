@@ -1310,6 +1310,13 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 					extractor: v.Extractor.(*plannercore.ClusterLogTableExtractor),
 				},
 			}
+		case strings.ToLower(infoschema.TableInspectionResult):
+			return &ClusterReaderExec{
+				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
+				retriever: &inspectionRetriever{
+					extractor: v.Extractor.(*plannercore.InspectionResultTableExtractor),
+				},
+			}
 		}
 	}
 	tb, _ := b.is.TableByID(v.Table.ID)
