@@ -50,9 +50,7 @@ type actionPrewrite struct{}
 type actionCommit struct{}
 type actionCleanup struct{}
 type actionPessimisticLock struct {
-	killed        *uint32
-	lockWaitTime  int64
-	waitStartTime time.Time
+	*kv.LockCtx
 }
 type actionPessimisticRollback struct{}
 
@@ -749,18 +747,18 @@ func (action actionPessimisticLock) handleSingleBatch(c *twoPhaseCommitter, bo *
 			ForUpdateTs:  c.forUpdateTS,
 			LockTtl:      elapsed + PessimisticLockTTL,
 			IsFirstLock:  c.isFirstLock,
-			WaitTimeout:  action.lockWaitTime,
+			WaitTimeout:  action.LockWaitTime,
 		},
 		Context: pb.Context{
 			Priority: c.priority,
 			SyncLog:  c.syncLog,
 		},
 	}
-	lockWaitStartTime := action.waitStartTime
+	lockWaitStartTime := action.WaitStartTime
 	for {
 		// if lockWaitTime set, refine the request `WaitTimeout` field based on timeout limit
-		if action.lockWaitTime > 0 {
-			timeLeft := action.lockWaitTime - (time.Since(lockWaitStartTime)).Milliseconds()
+		if action.LockWaitTime > 0 {
+			timeLeft := action.LockWaitTime - (time.Since(lockWaitStartTime)).Milliseconds()
 			if timeLeft <= 0 {
 				req.PessimisticLock.WaitTimeout = kv.LockNoWait
 			} else {
@@ -784,7 +782,7 @@ func (action actionPessimisticLock) handleSingleBatch(c *twoPhaseCommitter, bo *
 			if err != nil {
 				return errors.Trace(err)
 			}
-			err = c.pessimisticLockKeys(bo, action.killed, action.lockWaitTime, lockWaitStartTime, batch.keys)
+			err = c.pessimisticLockKeys(bo, action.LockCtx, batch.keys)
 			return errors.Trace(err)
 		}
 		lockResp := resp.PessimisticLock
@@ -826,27 +824,30 @@ func (action actionPessimisticLock) handleSingleBatch(c *twoPhaseCommitter, bo *
 		// If msBeforeTxnExpired is not zero, it means there are still locks blocking us acquiring
 		// the pessimistic lock. We should return timeout error if necessary.
 		if msBeforeTxnExpired > 0 {
-			if action.lockWaitTime == kv.LockNoWait {
+			if action.LockWaitTime == kv.LockNoWait {
 				// 3.0 release not supported yet
 				return kv.ErrNotImplemented
-			} else if action.lockWaitTime == kv.LockAlwaysWait {
+			} else if action.LockWaitTime == kv.LockAlwaysWait {
 				// do nothing but keep wait
 			} else {
 				// the lockWaitTime is set, we should return wait timeout if we are still blocked by a lock
-				if time.Since(lockWaitStartTime).Milliseconds() >= action.lockWaitTime {
+				if time.Since(lockWaitStartTime).Milliseconds() >= action.LockWaitTime {
 					return ErrLockWaitTimeout
 				}
+			}
+			if action.LockCtx.PessimisticLockWaited != nil {
+				atomic.StoreInt32(action.LockCtx.PessimisticLockWaited, 1)
 			}
 		}
 
 		// Handle the killed flag when waiting for the pessimistic lock.
 		// When a txn runs into LockKeys() and backoff here, it has no chance to call
 		// executor.Next() and check the killed flag.
-		if action.killed != nil {
+		if action.Killed != nil {
 			// Do not reset the killed flag here!
 			// actionPessimisticLock runs on each region parallelly, we have to consider that
 			// the error may be dropped.
-			if atomic.LoadUint32(action.killed) == 1 {
+			if atomic.LoadUint32(action.Killed) == 1 {
 				return ErrQueryInterrupted
 			}
 		}
@@ -1068,9 +1069,8 @@ func (c *twoPhaseCommitter) cleanupKeys(bo *Backoffer, keys [][]byte) error {
 	return c.doActionOnKeys(bo, actionCleanup{}, keys)
 }
 
-func (c *twoPhaseCommitter) pessimisticLockKeys(bo *Backoffer, killed *uint32, lockWaitTime int64,
-	waitStartTime time.Time, keys [][]byte) error {
-	return c.doActionOnKeys(bo, actionPessimisticLock{killed, lockWaitTime, waitStartTime}, keys)
+func (c *twoPhaseCommitter) pessimisticLockKeys(bo *Backoffer, lockCtx *kv.LockCtx, keys [][]byte) error {
+	return c.doActionOnKeys(bo, actionPessimisticLock{lockCtx}, keys)
 }
 
 func (c *twoPhaseCommitter) pessimisticRollbackKeys(bo *Backoffer, keys [][]byte) error {

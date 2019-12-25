@@ -456,9 +456,9 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e Executor) error {
 		if len(keys) == 0 {
 			return nil
 		}
-		forUpdateTS := txnCtx.GetForUpdateTS()
-		err = txn.LockKeys(ctx, &sctx.GetSessionVars().Killed, forUpdateTS, sctx.GetSessionVars().LockWaitTimeout,
-			sctx.GetSessionVars().StmtCtx.GetLockWaitStartTime(), keys...)
+		seVars := sctx.GetSessionVars()
+		lockCtx := newLockCtx(seVars, seVars.LockWaitTimeout)
+		err = txn.LockKeys(ctx, lockCtx, keys...)
 		if err == nil {
 			return nil
 		}
