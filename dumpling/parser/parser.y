@@ -26,6 +26,7 @@
 package parser
 
 import (
+	"math"
 	"strings"
 
 	"github.com/pingcap/parser/mysql"
@@ -7190,9 +7191,27 @@ HintMemoryQuota:
 	{
 		switch model.NewCIStr($2).L {
 		case "mb":
-			$$ = $1.(int64) * 1024 * 1024
+			num := getInt64FromNUM($1)
+			if num > math.MaxInt64 / 1024 / 1024 {
+				yylex.AppendError(yylex.Errorf("Max value of MEMORY_QUOTA is 8796093022208 MB, ignore this invalid limit."))
+				parser.lastErrorAsWarn()
+				$$ = int64(-1)
+			} else if num < 0 {
+				$$ = int64(-1)
+			} else {
+				$$ = num * 1024 * 1024
+			}
 		case "gb":
-			$$ = $1.(int64) * 1024 * 1024 * 1024
+			num := getInt64FromNUM($1)
+			if num > math.MaxInt64 / 1024 / 1024 / 1024 {
+				yylex.AppendError(yylex.Errorf("Max value of MEMORY_QUOTA is 8589934592 GB, ignore this invalid limit."))
+				parser.lastErrorAsWarn()
+				$$ = int64(-1)
+			} else if num < 0 {
+				$$ = int64(-1)
+			} else {
+				$$ = num * 1024 * 1024 * 1024
+			}
 		default:
 			// Executor handle memory quota < 0 as no memory limit, here use it to trigger warning in TiDB.
 			$$ = int64(-1)
