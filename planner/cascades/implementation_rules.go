@@ -339,6 +339,9 @@ type ImplTopN struct {
 // Match implements ImplementationRule Match interface.
 func (r *ImplTopN) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) (matched bool) {
 	topN := expr.ExprNode.(*plannercore.LogicalTopN)
+	if expr.Group.EngineType != memo.EngineTiDB {
+		return prop.IsEmpty()
+	}
 	return plannercore.MatchItems(prop, topN.ByItems)
 }
 

@@ -154,7 +154,7 @@ type TiKVTopNImpl struct {
 func (impl *TiKVTopNImpl) CalcCost(outCount float64, children ...memo.Implementation) float64 {
 	topN := impl.plan.(*plannercore.PhysicalTopN)
 	childCount := children[0].GetPlan().Stats().RowCount
-	impl.cost = topN.GetCost(childCount, true) + children[0].GetCost()
+	impl.cost = topN.GetCost(childCount, false) + children[0].GetCost()
 	return impl.cost
 }
 
