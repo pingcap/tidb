@@ -30,6 +30,7 @@ package parser
 import __yyfmt__ "fmt"
 
 import (
+	"math"
 	"strings"
 
 	"github.com/pingcap/parser/ast"
@@ -14574,9 +14575,27 @@ yynewstate:
 		{
 			switch model.NewCIStr(yyS[yypt-0].ident).L {
 			case "mb":
-				parser.yyVAL.item = yyS[yypt-1].item.(int64) * 1024 * 1024
+				num := getInt64FromNUM(yyS[yypt-1].item)
+				if num > math.MaxInt64/1024/1024 {
+					yylex.AppendError(yylex.Errorf("Max value of MEMORY_QUOTA is 8796093022208 MB, ignore this invalid limit."))
+					parser.lastErrorAsWarn()
+					parser.yyVAL.item = int64(-1)
+				} else if num < 0 {
+					parser.yyVAL.item = int64(-1)
+				} else {
+					parser.yyVAL.item = num * 1024 * 1024
+				}
 			case "gb":
-				parser.yyVAL.item = yyS[yypt-1].item.(int64) * 1024 * 1024 * 1024
+				num := getInt64FromNUM(yyS[yypt-1].item)
+				if num > math.MaxInt64/1024/1024/1024 {
+					yylex.AppendError(yylex.Errorf("Max value of MEMORY_QUOTA is 8589934592 GB, ignore this invalid limit."))
+					parser.lastErrorAsWarn()
+					parser.yyVAL.item = int64(-1)
+				} else if num < 0 {
+					parser.yyVAL.item = int64(-1)
+				} else {
+					parser.yyVAL.item = num * 1024 * 1024 * 1024
+				}
 			default:
 				// Executor handle memory quota < 0 as no memory limit, here use it to trigger warning in TiDB.
 				parser.yyVAL.item = int64(-1)
