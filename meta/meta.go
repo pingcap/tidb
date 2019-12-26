@@ -229,7 +229,7 @@ func (m *Meta) GenSequenceID(dbID, sequenceID, step int64) (int64, error) {
 
 // GetSequenceID gets current sequence value with sequence id.
 func (m *Meta) GetSequenceID(dbID int64, sequenceID int64) (int64, error) {
-	return m.txn.HGetInt64(m.dbKey(dbID), m.autoTableIDKey(sequenceID))
+	return m.txn.HGetInt64(m.dbKey(dbID), m.sequenceKey(sequenceID))
 }
 
 // GetSchemaVersion gets current global schema version.

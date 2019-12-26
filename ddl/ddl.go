@@ -749,6 +749,13 @@ func init() {
 		mysql.WarnDataTruncated:                       mysql.WarnDataTruncated,
 		mysql.ErrFkColumnCannotDrop:                   mysql.ErrFkColumnCannotDrop,
 		mysql.ErrFKIncompatibleColumns:                mysql.ErrFKIncompatibleColumns,
+		mysql.ErrSequenceRunOut:                       mysql.ErrSequenceRunOut,
+		mysql.ErrSequenceInvalidData:                  mysql.ErrSequenceInvalidData,
+		mysql.ErrSequenceAccessFail:                   mysql.ErrSequenceAccessFail,
+		mysql.ErrNotSequence:                          mysql.ErrNotSequence,
+		mysql.ErrUnknownSequence:                      mysql.ErrUnknownSequence,
+		mysql.ErrWrongInsertIntoSequence:              mysql.ErrWrongInsertIntoSequence,
+		mysql.ErrSequenceInvalidTableStructure:        mysql.ErrSequenceInvalidTableStructure,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassDDL] = ddlMySQLErrCodes
 }

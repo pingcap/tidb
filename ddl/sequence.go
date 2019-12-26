@@ -101,12 +101,9 @@ func handleSequenceOptions(SeqOptions []*ast.SequenceOption, sequenceInfo *model
 			sequenceInfo.Cache = false
 		case ast.SequenceCycle:
 			sequenceInfo.Cycle = true
-		case ast.SequenceNoCycle:
-			sequenceInfo.Cycle = false
 		case ast.SequenceOrder:
-			sequenceInfo.Order = true
-		case ast.SequenceNoOrder:
-			sequenceInfo.Order = false
+			// TODO : TiDB don't actually support ORDER option by now.
+		case ast.SequenceNoCycle, ast.SequenceNoOrder:
 		}
 	}
 	// Fill the default value, min/max/start should be adjusted with increment's positive and negative.
@@ -173,7 +170,7 @@ func buildSequenceInfo(stmt *ast.CreateSequenceStmt, ident ast.Ident) (*model.Se
 		}
 	}
 	handleSequenceOptions(stmt.SeqOptions, sequenceInfo)
-	// Valid the sequence value.
+	// Validate the sequence value.
 	if !validSequenceOptions(sequenceInfo) {
 		return nil, ErrSequenceInvalidData.GenWithStackByArgs(ident.Schema.L, ident.Name.L)
 	}

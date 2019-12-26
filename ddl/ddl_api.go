@@ -4222,15 +4222,15 @@ func (d *ddl) CreateSequence(ctx sessionctx.Context, stmt *ast.CreateSequenceStm
 	if !ok {
 		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(ident.Schema)
 	}
-	_, err := is.TableByName(ident.Schema, ident.Name)
-	if err == nil {
+	ok = is.TableExists(ident.Schema, ident.Name)
+	if ok {
 		if stmt.IfNotExists {
 			ctx.GetSessionVars().StmtCtx.AppendNote(infoschema.ErrTableExists.GenWithStackByArgs(ident))
 			return nil
 		}
 		return infoschema.ErrTableExists.GenWithStackByArgs(ident)
 	}
-	if err = checkTooLongTable(ident.Name); err != nil {
+	if err := checkTooLongTable(ident.Name); err != nil {
 		return err
 	}
 	sequenceInfo, err := buildSequenceInfo(stmt, ident)
@@ -4254,6 +4254,11 @@ func (d *ddl) CreateSequence(ctx sessionctx.Context, stmt *ast.CreateSequenceStm
 	}
 
 	err = d.doDDLJob(ctx, job)
+	// sequence exists, but if_not_exists flags is true, so it ignore this error.
+	if infoschema.ErrTableExists.Equal(err) && stmt.IfNotExists {
+		ctx.GetSessionVars().StmtCtx.AppendNote(err)
+		return nil
+	}
 	err = d.callHookOnChanged(err)
 	return errors.Trace(err)
 }
