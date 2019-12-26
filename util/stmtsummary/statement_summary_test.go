@@ -698,8 +698,6 @@ func (s *testStmtSummarySuite) TestMaxSQLLength(c *C) {
 	stmtExecInfo1 := generateAnyExecInfo()
 	stmtExecInfo1.OriginalSQL = str
 	stmtExecInfo1.NormalizedSQL = str
-	stmtExecInfo1.PrevSQLDigest = "prevSQLDigest"
-	stmtExecInfo1.PrevSQL = str
 	s.ssMap.AddStatement(stmtExecInfo1)
 
 	key := &stmtSummaryByDigestKey{
@@ -710,12 +708,12 @@ func (s *testStmtSummarySuite) TestMaxSQLLength(c *C) {
 	}
 	value, ok := s.ssMap.summaryMap.Get(key)
 	c.Assert(ok, IsTrue)
-	// Length of normalizedSQL and sampleSQL should be maxSQLLength.
+
+	expectedSQL := fmt.Sprintf("%s(len:%d)", strings.Repeat("a", int(maxSQLLength)), length)
 	summary := value.(*stmtSummaryByDigest)
-	c.Assert(len(summary.normalizedSQL), Equals, int(maxSQLLength))
+	c.Assert(summary.normalizedSQL, Equals, expectedSQL)
 	ssElement := summary.history.Back().Value.(*stmtSummaryByDigestElement)
-	c.Assert(len(ssElement.sampleSQL), Equals, int(maxSQLLength))
-	c.Assert(len(ssElement.prevSQL), Equals, int(maxSQLLength))
+	c.Assert(ssElement.sampleSQL, Equals, expectedSQL)
 }
 
 // Test setting EnableStmtSummary to 0.

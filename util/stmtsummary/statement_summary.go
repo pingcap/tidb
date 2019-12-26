@@ -487,14 +487,6 @@ func (ssMap *stmtSummaryByDigestMap) historySize() int {
 
 // newStmtSummaryByDigest creates a stmtSummaryByDigest from StmtExecInfo.
 func newStmtSummaryByDigest(sei *StmtExecInfo, beginTime int64, intervalSeconds int64, historySize int) *stmtSummaryByDigest {
-	// Trim SQL to size MaxSQLLength.
-	maxSQLLength := config.GetGlobalConfig().StmtSummary.MaxSQLLength
-	normalizedSQL := sei.NormalizedSQL
-	if len(normalizedSQL) > int(maxSQLLength) {
-		// Make sure the memory of original `normalizedSQL` will be released.
-		normalizedSQL = string([]byte(normalizedSQL[:maxSQLLength]))
-	}
-
 	// Use "," to separate table names to support FIND_IN_SET.
 	var buffer bytes.Buffer
 	for i, value := range sei.StmtCtx.Tables {
@@ -512,7 +504,7 @@ func newStmtSummaryByDigest(sei *StmtExecInfo, beginTime int64, intervalSeconds 
 		digest:        sei.Digest,
 		planDigest:    sei.PlanDigest,
 		stmtType:      strings.ToLower(sei.StmtCtx.StmtType),
-		normalizedSQL: normalizedSQL,
+		normalizedSQL: formatSQL(sei.NormalizedSQL),
 		tableNames:    tableNames,
 		history:       list.New(),
 	}
@@ -603,21 +595,12 @@ func (ssbd *stmtSummaryByDigest) collectHistorySummaries(historySize int) []*stm
 func newStmtSummaryByDigestElement(sei *StmtExecInfo, beginTime int64, intervalSeconds int64) *stmtSummaryByDigestElement {
 	// sampleSQL / sampleUser / samplePlan / prevSQL / indexNames store the values shown at the first time,
 	// because it compacts performance to update every time.
-	maxSQLLength := config.GetGlobalConfig().StmtSummary.MaxSQLLength
-	sampleSQL := sei.OriginalSQL
-	if len(sampleSQL) > int(maxSQLLength) {
-		// Make sure the memory of original `sampleSQL` will be released.
-		sampleSQL = string([]byte(sampleSQL[:maxSQLLength]))
-	}
-	prevSQL := sei.PrevSQL
-	if len(prevSQL) > int(maxSQLLength) {
-		prevSQL = string([]byte(prevSQL[:maxSQLLength]))
-	}
-
 	ssElement := &stmtSummaryByDigestElement{
-		beginTime:    beginTime,
-		sampleSQL:    sampleSQL,
-		prevSQL:      prevSQL,
+		beginTime: beginTime,
+		sampleSQL: formatSQL(sei.OriginalSQL),
+		// PrevSQL is already truncated to cfg.Log.QueryLogMaxLen.
+		prevSQL: sei.PrevSQL,
+		// samplePlan needs to be decoded so it can't be truncated.
 		samplePlan:   sei.PlanGenerator(),
 		sampleUser:   sei.User,
 		indexNames:   sei.StmtCtx.IndexNames,
@@ -856,6 +839,16 @@ func (ssElement *stmtSummaryByDigestElement) toDatum(ssbd *stmtSummaryByDigest) 
 		ssbd.planDigest,
 		plan,
 	)
+}
+
+// Truncate SQL to maxSQLLength.
+func formatSQL(sql string) string {
+	maxSQLLength := config.GetGlobalConfig().StmtSummary.MaxSQLLength
+	length := len(sql)
+	if length > int(maxSQLLength) {
+		sql = fmt.Sprintf("%.*s(len:%d)", maxSQLLength, sql, length)
+	}
+	return sql
 }
 
 // Format the backoffType map to a string or nil.
