@@ -76,6 +76,25 @@ func (s *testCacheSuite) TestLoadUserTable(c *C) {
 	c.Assert(user[3].Privileges, Equals, mysql.CreateUserPriv|mysql.IndexPriv|mysql.ExecutePriv|mysql.CreateViewPriv|mysql.ShowViewPriv|mysql.ShowDBPriv|mysql.SuperPriv|mysql.TriggerPriv)
 }
 
+func (s *testCacheSuite) TestLoadGlobalPrivTable(c *C) {
+	se, err := session.CreateSession4Test(s.store)
+	c.Assert(err, IsNil)
+	defer se.Close()
+	mustExec(c, se, "use mysql;")
+	mustExec(c, se, "truncate table global_priv")
+
+	mustExec(c, se, `INSERT INTO mysql.global_priv VALUES ("%", "tu", "{\"access\":0,\"plugin\":\"mysql_native_password\",\"ssl_type\":3, \"ssl_cipher\":\"cipher\",\"x509_subject\":\"\C=ZH1\", \"x509_issuer\":\"\C=ZH2\", \"password_last_changed\":1}")`)
+
+	var p privileges.MySQLPrivilege
+	err = p.LoadGlobalPrivTable(se)
+	c.Assert(err, IsNil)
+	c.Assert(p.Global["tu"][0].Host, Equals, `%`)
+	c.Assert(p.Global["tu"][0].User, Equals, `tu`)
+	c.Assert(p.Global["tu"][0].Priv.SSLType, Equals, privileges.SslTypeSpecified)
+	c.Assert(p.Global["tu"][0].Priv.X509Issuer, Equals, "C=ZH2")
+	c.Assert(p.Global["tu"][0].Priv.X509Subject, Equals, "C=ZH1")
+}
+
 func (s *testCacheSuite) TestLoadDBTable(c *C) {
 	se, err := session.CreateSession4Test(s.store)
 	c.Assert(err, IsNil)
@@ -395,6 +414,25 @@ func (s *testCacheSuite) TestSortUserTable(c *C) {
 		{Host: `192.168.%`, User: "xxx"},
 	}
 	checkUserRecord(p.User, result, c)
+}
+
+func (s *testCacheSuite) TestGlobalPrivValueRequireStr(c *C) {
+	var (
+		none  = privileges.GlobalPrivValue{SSLType: privileges.SslTypeNone}
+		tls   = privileges.GlobalPrivValue{SSLType: privileges.SslTypeAny}
+		x509  = privileges.GlobalPrivValue{SSLType: privileges.SslTypeX509}
+		spec  = privileges.GlobalPrivValue{SSLType: privileges.SslTypeSpecified, SSLCipher: "c1", X509Subject: "s1", X509Issuer: "i1"}
+		spec2 = privileges.GlobalPrivValue{SSLType: privileges.SslTypeSpecified, X509Subject: "s1", X509Issuer: "i1"}
+		spec3 = privileges.GlobalPrivValue{SSLType: privileges.SslTypeSpecified, X509Issuer: "i1"}
+		spec4 = privileges.GlobalPrivValue{SSLType: privileges.SslTypeSpecified}
+	)
+	c.Assert(none.RequireStr(), Equals, "NONE")
+	c.Assert(tls.RequireStr(), Equals, "SSL")
+	c.Assert(x509.RequireStr(), Equals, "X509")
+	c.Assert(spec.RequireStr(), Equals, "CIPHER 'c1' ISSUER 'i1' SUBJECT 's1'")
+	c.Assert(spec2.RequireStr(), Equals, "ISSUER 'i1' SUBJECT 's1'")
+	c.Assert(spec3.RequireStr(), Equals, "ISSUER 'i1'")
+	c.Assert(spec4.RequireStr(), Equals, "NONE")
 }
 
 func checkUserRecord(x, y []privileges.UserRecord, c *C) {
