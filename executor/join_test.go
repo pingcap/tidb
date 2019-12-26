@@ -35,7 +35,7 @@ func (s *testSuite) TestJoinPanic(c *C) {
 	c.Check(err, NotNil)
 }
 
-func (s *testSuite) TestJoin(c *C) {
+func (s *testSuite2) TestJoin(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
 	tk.MustExec("set @@tidb_index_lookup_join_concurrency = 200")
