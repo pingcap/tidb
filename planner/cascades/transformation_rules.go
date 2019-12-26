@@ -1017,11 +1017,13 @@ func NewRulePushTopNDownUnionAll() Transformation {
 	return rule
 }
 
+// Match implements Transformation interface.
 // Use appliedRuleSet in GroupExpr to avoid re-apply rules.
 func (r *PushTopNDownUnionAll) Match(expr *memo.ExprIter) bool {
 	return !expr.GetExpr().HasAppliedRule(r)
 }
 
+// OnTransform implements Transformation interface.
 // It will transform `TopN->UnionAll->X` to `TopN->UnionAll->TopN->X`.
 func (r *PushTopNDownUnionAll) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
 	topN := old.GetExpr().ExprNode.(*plannercore.LogicalTopN)
@@ -1061,14 +1063,14 @@ func NewRulePushTopNDownTiKVSingleGather() Transformation {
 		memo.OperandTopN,
 		memo.EngineTiDBOnly,
 		memo.NewPattern(memo.OperandTiKVSingleGather, memo.EngineTiDBOnly),
-    	)
+	)
 	return rule
 }
 
 // Match implements Transformation interface.
+// Use appliedRuleSet in GroupExpr to avoid re-apply rules.
 func (r *PushTopNDownTiKVSingleGather) Match(expr *memo.ExprIter) bool {
-  // Use appliedRuleSet in GroupExpr to avoid re-apply rules.
-  return !expr.GetExpr().HasAppliedRule(r)
+	return !expr.GetExpr().HasAppliedRule(r)
 }
 
 // OnTransform implements Transformation interface.
