@@ -52,7 +52,7 @@ func findIndexByName(idxName string, indices []*model.IndexInfo) *model.IndexInf
 	return nil
 }
 
-func (s *testSuite) TestAdminRecoverIndex(c *C) {
+func (s *testSuite5) TestAdminRecoverIndex(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists admin_test")
@@ -166,7 +166,7 @@ func (s *testSuite) TestAdminRecoverIndex(c *C) {
 	tk.MustExec("admin check table admin_test")
 }
 
-func (s *testSuite) TestAdminRecoverIndex1(c *C) {
+func (s *testSuite5) TestAdminRecoverIndex1(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	s.ctx = mock.NewContext()
 	s.ctx.Store = s.store
@@ -217,7 +217,7 @@ func (s *testSuite) TestAdminRecoverIndex1(c *C) {
 	tk.MustExec("admin check index admin_test `primary`")
 }
 
-func (s *testSuite) TestAdminCleanupIndex(c *C) {
+func (s *testSuite5) TestAdminCleanupIndex(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists admin_test")
@@ -296,7 +296,7 @@ func (s *testSuite) TestAdminCleanupIndex(c *C) {
 	tk.MustExec("admin check table admin_test")
 }
 
-func (s *testSuite) TestAdminCleanupIndexPKNotHandle(c *C) {
+func (s *testSuite5) TestAdminCleanupIndexPKNotHandle(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists admin_test")
@@ -344,7 +344,7 @@ func (s *testSuite) TestAdminCleanupIndexPKNotHandle(c *C) {
 	tk.MustExec("admin check table admin_test")
 }
 
-func (s *testSuite) TestAdminCleanupIndexMore(c *C) {
+func (s *testSuite5) TestAdminCleanupIndexMore(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists admin_test")
@@ -407,7 +407,7 @@ func (s *testSuite) TestAdminCleanupIndexMore(c *C) {
 	tk.MustExec("admin check table admin_test")
 }
 
-func (s *testSuite) TestAdminCheckTableFailed(c *C) {
+func (s *testSuite5) TestAdminCheckTableFailed(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists admin_test")
@@ -513,7 +513,7 @@ func (s *testSuite) TestAdminCheckTableFailed(c *C) {
 	tk.MustExec("admin check table admin_test")
 }
 
-func (s *testSuite) TestAdminCheckPartitionTableFailed(c *C) {
+func (s *testSuite2) TestAdminCheckPartitionTableFailed(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists admin_test_p")
@@ -616,7 +616,7 @@ func (s *testSuite) TestAdminCheckPartitionTableFailed(c *C) {
 	}
 }
 
-func (s *testSuite) TestAdminCheckTable(c *C) {
+func (s *testSuite2) TestAdminCheckTable(c *C) {
 	// test NULL value.
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")

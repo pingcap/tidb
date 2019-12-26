@@ -107,7 +107,7 @@ func (s *testSuite1) TestBatchIndexJoinUnionScan(c *C) {
 	tk.MustExec("rollback")
 }
 
-func (s *testSuite) TestIndexJoinPartitionTable(c *C) {
+func (s *testSuite5) TestIndexJoinPartitionTable(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int not null, c int, key idx(c)) partition by hash(b) partitions 30")

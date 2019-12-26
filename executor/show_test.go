@@ -32,7 +32,7 @@ import (
 	"golang.org/x/net/context"
 )
 
-func (s *testSuite) TestShowVisibility(c *C) {
+func (s *testSuite5) TestShowVisibility(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("create database showdatabase")
 	tk.MustExec("use showdatabase")
@@ -99,7 +99,7 @@ func (s stats) Stats(vars *variable.SessionVars) (map[string]interface{}, error)
 	return m, nil
 }
 
-func (s *testSuite) TestShowWarnings(c *C) {
+func (s *testSuite5) TestShowWarnings(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	testSQL := `create table if not exists show_warnings (a int)`
@@ -130,7 +130,7 @@ func (s *testSuite) TestShowWarnings(c *C) {
 	tk.MustQuery("select @@warning_count").Check(testutil.RowsWithSep("|", "0"))
 }
 
-func (s *testSuite) TestShowErrors(c *C) {
+func (s *testSuite5) TestShowErrors(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	testSQL := `create table if not exists show_errors (a int)`
@@ -141,7 +141,7 @@ func (s *testSuite) TestShowErrors(c *C) {
 	tk.MustQuery("show errors").Check(testutil.RowsWithSep("|", "Error|1050|Table 'test.show_errors' already exists"))
 }
 
-func (s *testSuite) TestIssue3641(c *C) {
+func (s *testSuite5) TestIssue3641(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	_, err := tk.Exec("show tables;")
 	c.Assert(err.Error(), Equals, plannercore.ErrNoDB.Error())
@@ -150,7 +150,7 @@ func (s *testSuite) TestIssue3641(c *C) {
 }
 
 // TestShow2 is moved from session_test
-func (s *testSuite) TestShow2(c *C) {
+func (s *testSuite5) TestShow2(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
@@ -262,7 +262,7 @@ func (s *testSuite) TestShow2(c *C) {
 	tk.MustQuery("show grants for current_user").Check(testkit.Rows(`GRANT ALL PRIVILEGES ON *.* TO 'root'@'%'`))
 }
 
-func (s *testSuite) TestCollation(c *C) {
+func (s *testSuite5) TestCollation(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
@@ -277,7 +277,7 @@ func (s *testSuite) TestCollation(c *C) {
 	c.Assert(fields[5].Column.Tp, Equals, mysql.TypeLonglong)
 }
 
-func (s *testSuite) TestShowTableStatus(c *C) {
+func (s *testSuite5) TestShowTableStatus(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
 	tk.MustExec("use test")
@@ -316,7 +316,7 @@ func (s *testSuite) TestShowTableStatus(c *C) {
 	c.Assert(rows[0].GetString(16), Equals, "partitioned")
 }
 
-func (s *testSuite) TestShowSlow(c *C) {
+func (s *testSuite5) TestShowSlow(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	// The test result is volatile, because
 	// 1. Slow queries is stored in domain, which may be affected by other tests.
@@ -329,13 +329,13 @@ func (s *testSuite) TestShowSlow(c *C) {
 	tk.MustQuery(`admin show slow top all 3`)
 }
 
-func (s *testSuite) TestShowOpenTables(c *C) {
+func (s *testSuite5) TestShowOpenTables(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustQuery("show open tables")
 	tk.MustQuery("show open tables in test")
 }
 
-func (s *testSuite) TestShowCreateTable(c *C) {
+func (s *testSuite5) TestShowCreateTable(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec(`drop table if exists different_charset`)
@@ -463,7 +463,7 @@ func (s *testSuite) TestShowCreateTable(c *C) {
 	))
 }
 
-func (s *testSuite) TestShowEscape(c *C) {
+func (s *testSuite5) TestShowEscape(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
 	tk.MustExec("use test")

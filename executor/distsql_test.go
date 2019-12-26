@@ -37,7 +37,7 @@ func checkGoroutineExists(keyword string) bool {
 	return strings.Contains(str, keyword)
 }
 
-func (s *testSuite) TestCopClientSend(c *C) {
+func (s *testSuite3) TestCopClientSend(c *C) {
 	c.Skip("not stable")
 	if _, ok := s.store.GetClient().(*tikv.CopClient); !ok {
 		// Make sure the store is tikv store.
@@ -100,7 +100,7 @@ func (s *testSuite) TestCopClientSend(c *C) {
 	c.Check(checkGoroutineExists(keyword), IsFalse)
 }
 
-func (s *testSuite) TestGetLackHandles(c *C) {
+func (s *testSuite3) TestGetLackHandles(c *C) {
 	expectedHandles := []int64{1, 2, 3, 4, 5, 6, 7, 8, 9, 10}
 	handlesMap := make(map[int64]struct{})
 	for _, h := range expectedHandles {
@@ -124,7 +124,7 @@ func (s *testSuite) TestGetLackHandles(c *C) {
 	c.Assert(retHandles, DeepEquals, diffHandles)
 }
 
-func (s *testSuite) TestBigIntPK(c *C) {
+func (s *testSuite3) TestBigIntPK(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a bigint unsigned primary key, b int, c int, index idx(a, b))")
@@ -132,7 +132,7 @@ func (s *testSuite) TestBigIntPK(c *C) {
 	tk.MustQuery("select * from t use index(idx) order by a").Check(testkit.Rows("1 1 1", "9223372036854775807 2 2"))
 }
 
-func (s *testSuite) TestCorColToRanges(c *C) {
+func (s *testSuite3) TestCorColToRanges(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -147,7 +147,7 @@ func (s *testSuite) TestCorColToRanges(c *C) {
 	tk.MustQuery("select t.c in (select count(*) from t s use index(idx), t t1 where s.b = t.a and s.c = t1.a) from t").Check(testkit.Rows("1", "0", "0", "0", "0", "0", "0", "0", "0"))
 }
 
-func (s *testSuite) TestUniqueKeyNullValueSelect(c *C) {
+func (s *testSuite3) TestUniqueKeyNullValueSelect(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -173,7 +173,7 @@ func (s *testSuite) TestUniqueKeyNullValueSelect(c *C) {
 }
 
 // TestIssue10178 contains tests for https://github.com/pingcap/tidb/issues/10178 .
-func (s *testSuite) TestIssue10178(c *C) {
+func (s *testSuite3) TestIssue10178(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -184,7 +184,7 @@ func (s *testSuite) TestIssue10178(c *C) {
 	tk.MustQuery("select * from t where a < 9223372036854775808").Check(testkit.Rows("9223372036854775807"))
 }
 
-func (s *testSuite) TestPushLimitDownIndexLookUpReader(c *C) {
+func (s *testSuite3) TestPushLimitDownIndexLookUpReader(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists tbl")

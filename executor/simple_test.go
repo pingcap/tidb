@@ -30,7 +30,7 @@ import (
 	"golang.org/x/net/context"
 )
 
-func (s *testSuite) TestCharsetDatabase(c *C) {
+func (s *testSuite3) TestCharsetDatabase(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	testSQL := `create database if not exists cd_test_utf8 CHARACTER SET utf8 COLLATE utf8_bin;`
 	tk.MustExec(testSQL)
@@ -49,13 +49,13 @@ func (s *testSuite) TestCharsetDatabase(c *C) {
 	tk.MustQuery(`select @@collation_database;`).Check(testkit.Rows("latin1_swedish_ci"))
 }
 
-func (s *testSuite) TestDo(c *C) {
+func (s *testSuite3) TestDo(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("do 1, @a:=1")
 	tk.MustQuery("select @a").Check(testkit.Rows("1"))
 }
 
-func (s *testSuite) TestTransaction(c *C) {
+func (s *testSuite3) TestTransaction(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("begin")
 	ctx := tk.Se.(sessionctx.Context)
@@ -88,7 +88,7 @@ func inTxn(ctx sessionctx.Context) bool {
 	return (ctx.GetSessionVars().Status & mysql.ServerStatusInTrans) > 0
 }
 
-func (s *testSuite) TestUser(c *C) {
+func (s *testSuite3) TestUser(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	// Make sure user test not in mysql.User.
 	result := tk.MustQuery(`SELECT Password FROM mysql.User WHERE User="test" and Host="localhost"`)
@@ -202,7 +202,7 @@ func (s *testSuite) TestUser(c *C) {
 	c.Assert(terror.ErrorEqual(err, executor.ErrCannotUser.GenWithStackByArgs("DROP USER", "")), IsTrue, Commentf("err %v", err))
 }
 
-func (s *testSuite) TestSetPwd(c *C) {
+func (s *testSuite3) TestSetPwd(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
 	createUserSQL := `CREATE USER 'testpwd'@'localhost' IDENTIFIED BY '';`
@@ -235,7 +235,7 @@ func (s *testSuite) TestSetPwd(c *C) {
 
 }
 
-func (s *testSuite) TestKillStmt(c *C) {
+func (s *testSuite3) TestKillStmt(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("kill 1")
@@ -244,7 +244,7 @@ func (s *testSuite) TestKillStmt(c *C) {
 	result.Check(testkit.Rows("Warning 1105 Invalid operation. Please use 'KILL TIDB [CONNECTION | QUERY] connectionID' instead"))
 }
 
-func (s *testSuite) TestFlushPrivileges(c *C) {
+func (s *testSuite3) TestFlushPrivileges(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
 	tk.MustExec(`CREATE USER 'testflush'@'localhost' IDENTIFIED BY '';`)
@@ -294,7 +294,7 @@ func (s *testFlushSuite) TestFlushPrivilegesPanic(c *C) {
 	config.GetGlobalConfig().Security.SkipGrantTable = false
 }
 
-func (s *testSuite) TestDropStats(c *C) {
+func (s *testSuite3) TestDropStats(c *C) {
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t (c1 int, c2 int)")
@@ -326,7 +326,7 @@ func (s *testSuite) TestDropStats(c *C) {
 	h.Lease = 0
 }
 
-func (s *testSuite) TestStmtAutoNewTxn(c *C) {
+func (s *testSuite3) TestStmtAutoNewTxn(c *C) {
 	// Some statements are like DDL, they commit the previous txn automically.
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")

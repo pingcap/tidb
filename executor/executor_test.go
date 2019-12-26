@@ -1960,7 +1960,7 @@ func (s *testSuiteP2) TestPointGetRepeatableRead(c *C) {
 	c.Assert(failpoint.Disable(step2), IsNil)
 }
 
-func (s *testSuite) TestSplitRegionTimeout(c *C) {
+func (s *testSuite7) TestSplitRegionTimeout(c *C) {
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/mockSplitRegionTimeout", `return(true)`), IsNil)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -3210,7 +3210,7 @@ func (s *testSuite) TestCoprocessorStreamingWarning(c *C) {
 	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1105|Division by 0"))
 }
 
-func (s *testSuite) TestYearTypeDeleteIndex(c *C) {
+func (s *testSuite3) TestYearTypeDeleteIndex(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -3220,7 +3220,7 @@ func (s *testSuite) TestYearTypeDeleteIndex(c *C) {
 	tk.MustExec("admin check table t")
 }
 
-func (s *testSuite) TestForSelectScopeInUnion(c *C) {
+func (s *testSuite3) TestForSelectScopeInUnion(c *C) {
 	// A union B for update, the "for update" option belongs to union statement, so
 	// it should works on both A and B.
 	tk1 := testkit.NewTestKit(c, s.store)
@@ -3252,7 +3252,7 @@ func (s *testSuite) TestForSelectScopeInUnion(c *C) {
 	c.Assert(err, IsNil)
 }
 
-func (s *testSuite) TestUnsignedDecimalOverflow(c *C) {
+func (s *testSuite3) TestUnsignedDecimalOverflow(c *C) {
 	tests := []struct {
 		input  interface{}
 		hasErr bool
@@ -3302,7 +3302,7 @@ func (s *testSuite) TestUnsignedDecimalOverflow(c *C) {
 	r.Check(testkit.Rows("0.00"))
 }
 
-func (s *testSuite) TestIndexJoinTableDualPanic(c *C) {
+func (s *testSuite3) TestIndexJoinTableDualPanic(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists a")
@@ -3312,7 +3312,7 @@ func (s *testSuite) TestIndexJoinTableDualPanic(c *C) {
 		Check(testkit.Rows("1 a"))
 }
 
-func (s *testSuite) TestUnionAutoSignedCast(c *C) {
+func (s *testSuite3) TestUnionAutoSignedCast(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1,t2")
@@ -3352,7 +3352,7 @@ func (s *testSuite) TestUnionAutoSignedCast(c *C) {
 		Check(testkit.Rows("1 1", "2 -1", "3 -1"))
 }
 
-func (s *testSuite) TestUpdateJoin(c *C) {
+func (s *testSuite3) TestUpdateJoin(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1, t2, t3, t4, t5, t6, t7")
@@ -3425,7 +3425,7 @@ func (s *testSuite) TestUpdateJoin(c *C) {
 	tk.MustQuery("select v from t6").Check(testkit.Rows("a"))
 }
 
-func (s *testSuite) TestMaxOneRow(c *C) {
+func (s *testSuite3) TestMaxOneRow(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test`)
 	tk.MustExec(`drop table if exists t1`)
@@ -3445,7 +3445,7 @@ func (s *testSuite) TestMaxOneRow(c *C) {
 	c.Assert(err, IsNil)
 }
 
-func (s *testSuite) TestCurrentTimestampValueSelection(c *C) {
+func (s *testSuite3) TestCurrentTimestampValueSelection(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t,t1")
@@ -3479,7 +3479,7 @@ func (s *testSuite) TestCurrentTimestampValueSelection(c *C) {
 	c.Assert(len(strings.Split(d, ".")[1]), Equals, 3)
 }
 
-func (s *testSuite) TestRowID(c *C) {
+func (s *testSuite3) TestRowID(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test`)
 	tk.MustExec(`drop table if exists t`)
@@ -3501,7 +3501,7 @@ func (s *testSuite) TestRowID(c *C) {
 	tk.MustQuery("select *, _tidb_rowid from t use index(`primary`) where _tidb_rowid=1").Check(testkit.Rows("a 1"))
 }
 
-func (s *testSuite) TestDoSubquery(c *C) {
+func (s *testSuite3) TestDoSubquery(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test`)
 	tk.MustExec(`drop table if exists t`)

@@ -40,7 +40,7 @@ import (
 	"golang.org/x/net/context"
 )
 
-func (s *testSuite) TestTruncateTable(c *C) {
+func (s *testSuite6) TestTruncateTable(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec(`drop table if exists truncate_test;`)
@@ -57,7 +57,7 @@ func (s *testSuite) TestTruncateTable(c *C) {
 //  1. Execute the SQL of "begin";
 //  2. A SQL that will fail to execute;
 //  3. Execute DDL.
-func (s *testSuite) TestInTxnExecDDLFail(c *C) {
+func (s *testSuite6) TestInTxnExecDDLFail(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (i int key);")
@@ -70,7 +70,7 @@ func (s *testSuite) TestInTxnExecDDLFail(c *C) {
 	result.Check(testkit.Rows("1"))
 }
 
-func (s *testSuite) TestCreateTable(c *C) {
+func (s *testSuite6) TestCreateTable(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	// Test create an exist database
@@ -171,7 +171,7 @@ func (s *testSuite) TestCreateTable(c *C) {
 	r.Check(testkit.Rows("1000 aa"))
 }
 
-func (s *testSuite) TestCreateDropDatabase(c *C) {
+func (s *testSuite6) TestCreateDropDatabase(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("create database if not exists drop_test;")
 	tk.MustExec("drop database if exists drop_test;")
@@ -187,7 +187,7 @@ func (s *testSuite) TestCreateDropDatabase(c *C) {
 	c.Assert(err, NotNil)
 }
 
-func (s *testSuite) TestCreateDropTable(c *C) {
+func (s *testSuite6) TestCreateDropTable(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table if not exists drop_test (a int)")
@@ -199,7 +199,7 @@ func (s *testSuite) TestCreateDropTable(c *C) {
 	c.Assert(err, NotNil)
 }
 
-func (s *testSuite) TestCreateDropIndex(c *C) {
+func (s *testSuite6) TestCreateDropIndex(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table if not exists drop_test (a int)")
@@ -208,7 +208,7 @@ func (s *testSuite) TestCreateDropIndex(c *C) {
 	tk.MustExec("drop table drop_test")
 }
 
-func (s *testSuite) TestAlterTableAddColumn(c *C) {
+func (s *testSuite6) TestAlterTableAddColumn(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table if not exists alter_test (c1 int)")
@@ -228,7 +228,7 @@ func (s *testSuite) TestAlterTableAddColumn(c *C) {
 	tk.MustQuery("select c3 from alter_test").Check(testkit.Rows("CURRENT_TIMESTAMP"))
 }
 
-func (s *testSuite) TestAddNotNullColumnNoDefault(c *C) {
+func (s *testSuite6) TestAddNotNullColumnNoDefault(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table nn (c1 int)")
@@ -249,7 +249,7 @@ func (s *testSuite) TestAddNotNullColumnNoDefault(c *C) {
 	tk.MustQuery("select * from nn").Check(testkit.Rows("1 0", "2 0", "3 0"))
 }
 
-func (s *testSuite) TestAlterTableModifyColumn(c *C) {
+func (s *testSuite6) TestAlterTableModifyColumn(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists mc")
@@ -309,7 +309,7 @@ func (s *testSuite) TestAlterTableModifyColumn(c *C) {
 
 }
 
-func (s *testSuite) TestDefaultDBAfterDropCurDB(c *C) {
+func (s *testSuite6) TestDefaultDBAfterDropCurDB(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
 	testSQL := `create database if not exists test_db CHARACTER SET latin1 COLLATE latin1_swedish_ci;`
@@ -328,7 +328,7 @@ func (s *testSuite) TestDefaultDBAfterDropCurDB(c *C) {
 	tk.MustQuery(`select @@collation_database;`).Check(testkit.Rows("utf8_unicode_ci"))
 }
 
-func (s *testSuite) TestRenameTable(c *C) {
+func (s *testSuite3) TestRenameTable(c *C) {
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange", `return(true)`), IsNil)
 	defer func() {
 		c.Assert(failpoint.Disable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange"), IsNil)
@@ -416,7 +416,7 @@ func (s *testSuite) TestUnsupportedCharset(c *C) {
 	tk.MustExec("drop database " + dbName)
 }
 
-func (s *testSuite) TestTooLargeIdentifierLength(c *C) {
+func (s *testSuite6) TestTooLargeIdentifierLength(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
 	// for database.
@@ -569,7 +569,7 @@ func (s *testSuite8) TestShardRowIDBits(c *C) {
 	c.Assert(autoid.ErrAutoincReadFailed.Equal(err), IsTrue, Commentf("err:%v", err))
 }
 
-func (s *testSuite) TestMaxHandleAddIndex(c *C) {
+func (s *testSuite6) TestMaxHandleAddIndex(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
 	tk.MustExec("use test")
@@ -586,7 +586,7 @@ func (s *testSuite) TestMaxHandleAddIndex(c *C) {
 	tk.MustExec("admin check table t1")
 }
 
-func (s *testSuite) TestSetDDLReorgWorkerCnt(c *C) {
+func (s *testSuite6) TestSetDDLReorgWorkerCnt(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	err := ddlutil.LoadDDLReorgVars(tk.Se)
@@ -620,7 +620,7 @@ func (s *testSuite) TestSetDDLReorgWorkerCnt(c *C) {
 	res.Check(testkit.Rows("100"))
 }
 
-func (s *testSuite) TestSetDDLReorgBatchSize(c *C) {
+func (s *testSuite6) TestSetDDLReorgBatchSize(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	err := ddlutil.LoadDDLReorgVars(tk.Se)
@@ -660,7 +660,7 @@ func (s *testSuite) TestSetDDLReorgBatchSize(c *C) {
 	c.Assert(variable.GetDDLReorgBatchSize(), Equals, int32(100))
 }
 
-func (s *testSuite) TestTimestampMinDefaultValue(c *C) {
+func (s *testSuite6) TestTimestampMinDefaultValue(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists tdv;")
