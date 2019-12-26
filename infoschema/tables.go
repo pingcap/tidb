@@ -91,7 +91,8 @@ const (
 	tableTiKVRegionStatus                   = "TIKV_REGION_STATUS"
 	tableTiKVRegionPeers                    = "TIKV_REGION_PEERS"
 	tableTiDBServersInfo                    = "TIDB_SERVERS_INFO"
-	tableClusterInfo                        = "CLUSTER_INFO"
+	// TableClusterInfo is the string constant of cluster info memory table
+	TableClusterInfo = "CLUSTER_INFO"
 	// TableClusterConfig is the string constant of cluster configuration memory table
 	TableClusterConfig = "CLUSTER_CONFIG"
 	// TableClusterLog is the string constant of cluster log memory table
@@ -103,6 +104,8 @@ const (
 	// TableClusterSystemInfo is the string constant of cluster system info table
 	TableClusterSystemInfo = "CLUSTER_SYSTEMINFO"
 	tableTiFlashReplica    = "TIFLASH_REPLICA"
+	// TableInspectionResult is the string constant of inspection result table
+	TableInspectionResult = "INSPECTION_RESULT"
 )
 
 var tableIDMap = map[string]int64{
@@ -147,7 +150,7 @@ var tableIDMap = map[string]int64{
 	tableTiKVRegionStatus:                   autoid.InformationSchemaDBID + 39,
 	tableTiKVRegionPeers:                    autoid.InformationSchemaDBID + 40,
 	tableTiDBServersInfo:                    autoid.InformationSchemaDBID + 41,
-	tableClusterInfo:                        autoid.InformationSchemaDBID + 42,
+	TableClusterInfo:                        autoid.InformationSchemaDBID + 42,
 	TableClusterConfig:                      autoid.InformationSchemaDBID + 43,
 	TableClusterLoad:                        autoid.InformationSchemaDBID + 44,
 	tableTiFlashReplica:                     autoid.InformationSchemaDBID + 45,
@@ -156,6 +159,7 @@ var tableIDMap = map[string]int64{
 	TableClusterLog:                         autoid.InformationSchemaDBID + 48,
 	TableClusterHardware:                    autoid.InformationSchemaDBID + 49,
 	TableClusterSystemInfo:                  autoid.InformationSchemaDBID + 50,
+	TableInspectionResult:                   autoid.InformationSchemaDBID + 51,
 }
 
 type columnInfo struct {
@@ -1116,6 +1120,15 @@ var tableTableTiFlashReplicaCols = []columnInfo{
 	{"REPLICA_COUNT", mysql.TypeLonglong, 64, 0, nil, nil},
 	{"LOCATION_LABELS", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"AVAILABLE", mysql.TypeTiny, 1, 0, nil, nil},
+}
+
+var tableInspectionResultCols = []columnInfo{
+	{"RULE", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"ITEM", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"VALUE", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"REFERENCE", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"SEVERITY", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"SUGGESTION", mysql.TypeVarchar, 256, 0, nil, nil},
 }
 
 func dataForSchemata(ctx sessionctx.Context, schemas []*model.DBInfo) [][]types.Datum {
@@ -2218,13 +2231,14 @@ var tableNameToColumns = map[string][]columnInfo{
 	tableTiKVRegionStatus:                   tableTiKVRegionStatusCols,
 	tableTiKVRegionPeers:                    tableTiKVRegionPeersCols,
 	tableTiDBServersInfo:                    tableTiDBServersInfoCols,
-	tableClusterInfo:                        tableClusterInfoCols,
+	TableClusterInfo:                        tableClusterInfoCols,
 	TableClusterConfig:                      tableClusterConfigCols,
 	TableClusterLog:                         tableClusterLogCols,
 	TableClusterLoad:                        tableClusterLoadCols,
 	tableTiFlashReplica:                     tableTableTiFlashReplicaCols,
 	TableClusterHardware:                    tableClusterHardwareCols,
 	TableClusterSystemInfo:                  tableClusterSystemInfoCols,
+	TableInspectionResult:                   tableInspectionResultCols,
 }
 
 func createInfoSchemaTable(_ autoid.Allocators, meta *model.TableInfo) (table.Table, error) {
@@ -2329,7 +2343,7 @@ func (it *infoschemaTable) getRows(ctx sessionctx.Context, cols []*table.Column)
 		fullRows, err = dataForTikVRegionPeers(ctx)
 	case tableTiDBServersInfo:
 		fullRows, err = dataForServersInfo()
-	case tableClusterInfo:
+	case TableClusterInfo:
 		fullRows, err = dataForTiDBClusterInfo(ctx)
 	case tableTiFlashReplica:
 		fullRows = dataForTableTiFlashReplica(dbs)
