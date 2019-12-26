@@ -438,10 +438,7 @@ func (s *session) getTxnFuture(ctx context.Context) *txnFuture {
 
 // StmtCommit implements the sessionctx.Context interface.
 func (s *session) StmtCommit(memTracker *memory.Tracker) error {
-	defer func() {
-		s.txn.cleanup()
-		memTracker.Consume(int64(-s.txn.Size()))
-	}()
+	defer s.txn.cleanup()
 	st := &s.txn
 	txnSize := st.Transaction.Size()
 	var count int
