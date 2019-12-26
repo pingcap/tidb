@@ -795,6 +795,7 @@ func (s *testPessimisticSuite) TestPessimisticReadCommitted(c *C) {
 	tk.MustExec("set tidb_txn_mode = 'pessimistic'")
 	tk1.MustExec("set tidb_txn_mode = 'pessimistic'")
 
+	// test SI
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t(i int key);")
 	tk.MustExec("insert into t values (1);")
@@ -814,4 +815,85 @@ func (s *testPessimisticSuite) TestPessimisticReadCommitted(c *C) {
 	wg.Wait()
 
 	tk1.MustExec("commit;")
+
+	// test RC
+	tk.MustExec("set tx_isolation = 'READ-COMMITTED'")
+	tk1.MustExec("set tx_isolation = 'READ-COMMITTED'")
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(i int key);")
+	tk.MustExec("insert into t values (1);")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1"))
+
+	tk.MustExec("begin;")
+	tk1.MustExec("begin;")
+	tk.MustExec("update t set i = -i;")
+
+	wg.Add(1)
+	go func() {
+		tk1.MustExec("update t set i = -i;")
+		wg.Done()
+	}()
+	tk.MustExec("commit;")
+	wg.Wait()
+
+	tk1.MustExec("commit;")
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(i int key, j int unique key, k int, l int, m int, key (k));")
+	tk.MustExec("insert into t values (1, 1, 1, 1, 1);")
+
+	// Set it back to RR to test set transaction statement.
+	tk.MustExec("set tx_isolation = 'REPEATABLE-READ'")
+	tk1.MustExec("set tx_isolation = 'REPEATABLE-READ'")
+
+	// test one shot and some reads.
+	tk.MustExec("set transaction isolation level read committed")
+	tk.MustExec("begin;")
+
+	// test table reader
+	tk.MustQuery("select l from t where l = 1").Check(testkit.Rows("1"))
+	tk1.MustExec("update t set l = l + 1 where l = 1;")
+	tk.MustQuery("select l from t where l = 2").Check(testkit.Rows("2"))
+	tk1.MustExec("update t set l = l + 1 where l = 2;")
+	tk.MustQuery("select l from t where l = 3").Check(testkit.Rows("3"))
+
+	// test index reader
+	tk.MustQuery("select k from t where k = 1").Check(testkit.Rows("1"))
+	tk1.MustExec("update t set k = k + 1 where k = 1;")
+	tk.MustQuery("select k from t where k = 2").Check(testkit.Rows("2"))
+	tk1.MustExec("update t set k = k + 1 where k = 2;")
+	tk.MustQuery("select k from t where k = 3").Check(testkit.Rows("3"))
+
+	// test double read
+	tk.MustQuery("select m from t where k = 3").Check(testkit.Rows("1"))
+	tk1.MustExec("update t set m = m + 1 where k = 3;")
+	tk.MustQuery("select m from t where k = 3").Check(testkit.Rows("2"))
+	tk1.MustExec("update t set m = m + 1 where k = 3;")
+	tk.MustQuery("select m from t where k = 3").Check(testkit.Rows("3"))
+
+	// test point get plan
+	tk.MustQuery("select m from t where i = 1").Check(testkit.Rows("3"))
+	tk1.MustExec("update t set m = m + 1 where i = 1;")
+	tk.MustQuery("select m from t where i = 1").Check(testkit.Rows("4"))
+	tk1.MustExec("update t set m = m + 1 where j = 1;")
+	tk.MustQuery("select m from t where j = 1").Check(testkit.Rows("5"))
+
+	// test batch point get plan
+	tk1.MustExec("insert into t values (2, 2, 2, 2, 2);")
+	tk.MustQuery("select m from t where i in (1, 2)").Check(testkit.Rows("5", "2"))
+	tk1.MustExec("update t set m = m + 1 where i in (1, 2);")
+	tk.MustQuery("select m from t where i in (1, 2)").Check(testkit.Rows("6", "3"))
+	tk1.MustExec("update t set m = m + 1 where j in (1, 2);")
+	tk.MustQuery("select m from t where j in (1, 2)").Check(testkit.Rows("7", "4"))
+
+	tk.MustExec("commit;")
+
+	// test for NewTxn()
+	tk.MustExec("set tx_isolation = 'READ-COMMITTED'")
+	tk.MustExec("begin optimistic;")
+	tk.MustQuery("select m from t where j in (1, 2)").Check(testkit.Rows("7", "4"))
+	tk.MustExec("begin pessimistic;")
+	tk.MustQuery("select m from t where j in (1, 2)").Check(testkit.Rows("7", "4"))
+	tk.MustExec("commit;")
 }

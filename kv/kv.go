@@ -198,8 +198,8 @@ type LockCtx struct {
 	ForUpdateTS           uint64
 	LockWaitTime          int64
 	WaitStartTime         time.Time
-	PessimisticLockWaited int32
-	LockTimeWaited        time.Duration
+	PessimisticLockWaited *int32
+	LockKeysDuration      *time.Duration
 }
 
 // Client is used to send request to KV layer.
