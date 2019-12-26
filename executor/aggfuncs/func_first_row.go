@@ -84,6 +84,12 @@ type partialResult4FirstRowEnum struct {
 	val types.Enum
 }
 
+type partialResult4FirstRowSet struct {
+	basePartialResult4FirstRow
+
+	val types.Set
+}
+
 type firstRow4Int struct {
 	baseAggFunc
 }
@@ -502,5 +508,51 @@ func (e *firstRow4Enum) AppendFinalResult2Chunk(sctx sessionctx.Context, pr Part
 		return nil
 	}
 	chk.AppendEnum(e.ordinal, p.val)
+	return nil
+}
+
+type firstRow4Set struct {
+	baseAggFunc
+}
+
+func (e *firstRow4Set) AllocPartialResult() PartialResult {
+	return PartialResult(new(partialResult4FirstRowSet))
+}
+
+func (e *firstRow4Set) ResetPartialResult(pr PartialResult) {
+	p := (*partialResult4FirstRowSet)(pr)
+	p.isNull, p.gotFirstRow = false, false
+}
+
+func (e *firstRow4Set) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) error {
+	p := (*partialResult4FirstRowSet)(pr)
+	if p.gotFirstRow {
+		return nil
+	}
+	for _, row := range rowsInGroup {
+		d, err := e.args[0].Eval(row)
+		if err != nil {
+			return err
+		}
+		p.gotFirstRow, p.isNull, p.val = true, d.IsNull(), d.GetMysqlSet()
+		break
+	}
+	return nil
+}
+
+func (*firstRow4Set) MergePartialResult(sctx sessionctx.Context, src PartialResult, dst PartialResult) error {
+	p1, p2 := (*partialResult4FirstRowSet)(src), (*partialResult4FirstRowSet)(dst)
+	if !p2.gotFirstRow {
+		*p2 = *p1
+	}
+	return nil
+}
+func (e *firstRow4Set) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
+	p := (*partialResult4FirstRowSet)(pr)
+	if p.isNull || !p.gotFirstRow {
+		chk.AppendNull(e.ordinal)
+		return nil
+	}
+	chk.AppendSet(e.ordinal, p.val)
 	return nil
 }

@@ -185,6 +185,8 @@ func buildFirstRow(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 		switch fieldType.Tp {
 		case mysql.TypeEnum:
 			return &firstRow4Enum{base}
+		case mysql.TypeSet:
+			return &firstRow4Set{base}
 		}
 
 		switch evalType {
