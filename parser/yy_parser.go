@@ -292,3 +292,11 @@ func getUint64FromNUM(num interface{}) uint64 {
 	}
 	return 0
 }
+
+func getInt64FromNUM(num interface{}) int64 {
+	switch v := num.(type) {
+	case int64:
+		return v
+	}
+	return -1
+}
