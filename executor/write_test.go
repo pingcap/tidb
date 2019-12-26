@@ -19,7 +19,6 @@ import (
 	"sync/atomic"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/executor"
@@ -1801,112 +1800,6 @@ func (s *testSuite) TestLoadDataOverflowBigintUnsigned(c *C) {
 	checkCases(tests, ld, c, tk, ctx, selectSQL, deleteSQL)
 }
 
-func (s *testSuite) TestBatchInsertDelete(c *C) {
-	originLimit := atomic.LoadUint64(&kv.TxnEntryCountLimit)
-	defer func() {
-		atomic.StoreUint64(&kv.TxnEntryCountLimit, originLimit)
-	}()
-	// Set the limitation to a small value, make it easier to reach the limitation.
-	atomic.StoreUint64(&kv.TxnEntryCountLimit, 100)
-
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists batch_insert")
-	tk.MustExec("create table batch_insert (c int)")
-	tk.MustExec("drop table if exists batch_insert_on_duplicate")
-	tk.MustExec("create table batch_insert_on_duplicate (id int primary key, c int)")
-	// Insert 10 rows.
-	tk.MustExec("insert into batch_insert values (1),(1),(1),(1),(1),(1),(1),(1),(1),(1)")
-	r := tk.MustQuery("select count(*) from batch_insert;")
-	r.Check(testkit.Rows("10"))
-	// Insert 10 rows.
-	tk.MustExec("insert into batch_insert (c) select * from batch_insert;")
-	r = tk.MustQuery("select count(*) from batch_insert;")
-	r.Check(testkit.Rows("20"))
-	// Insert 20 rows.
-	tk.MustExec("insert into batch_insert (c) select * from batch_insert;")
-	r = tk.MustQuery("select count(*) from batch_insert;")
-	r.Check(testkit.Rows("40"))
-	// Insert 40 rows.
-	tk.MustExec("insert into batch_insert (c) select * from batch_insert;")
-	r = tk.MustQuery("select count(*) from batch_insert;")
-	r.Check(testkit.Rows("80"))
-	// Insert 80 rows.
-	tk.MustExec("insert into batch_insert (c) select * from batch_insert;")
-	r = tk.MustQuery("select count(*) from batch_insert;")
-	r.Check(testkit.Rows("160"))
-	// for on duplicate key
-	for i := 0; i < 160; i++ {
-		tk.MustExec(fmt.Sprintf("insert into batch_insert_on_duplicate values(%d, %d);", i, i))
-	}
-	r = tk.MustQuery("select count(*) from batch_insert_on_duplicate;")
-	r.Check(testkit.Rows("160"))
-
-	// This will meet txn too large error.
-	_, err := tk.Exec("insert into batch_insert (c) select * from batch_insert;")
-	c.Assert(err, NotNil)
-	c.Assert(kv.ErrTxnTooLarge.Equal(err), IsTrue)
-	r = tk.MustQuery("select count(*) from batch_insert;")
-	r.Check(testkit.Rows("160"))
-
-	// for on duplicate key
-	_, err = tk.Exec(`insert into batch_insert_on_duplicate select * from batch_insert_on_duplicate as tt
-		on duplicate key update batch_insert_on_duplicate.id=batch_insert_on_duplicate.id+1000;`)
-	c.Assert(err, NotNil)
-	c.Assert(kv.ErrTxnTooLarge.Equal(err), IsTrue, Commentf("%v", err))
-	r = tk.MustQuery("select count(*) from batch_insert;")
-	r.Check(testkit.Rows("160"))
-
-	// Change to batch inset mode and batch size to 50.
-	tk.MustExec("set @@session.tidb_batch_insert=1;")
-	tk.MustExec("set @@session.tidb_dml_batch_size=50;")
-	tk.MustExec("insert into batch_insert (c) select * from batch_insert;")
-	r = tk.MustQuery("select count(*) from batch_insert;")
-	r.Check(testkit.Rows("320"))
-
-	// Enlarge the batch size to 150 which is larger than the txn limitation (100).
-	// So the insert will meet error.
-	tk.MustExec("set @@session.tidb_dml_batch_size=150;")
-	_, err = tk.Exec("insert into batch_insert (c) select * from batch_insert;")
-	c.Assert(err, NotNil)
-	c.Assert(kv.ErrTxnTooLarge.Equal(err), IsTrue)
-	r = tk.MustQuery("select count(*) from batch_insert;")
-	r.Check(testkit.Rows("320"))
-	// Set it back to 50.
-	tk.MustExec("set @@session.tidb_dml_batch_size=50;")
-
-	// for on duplicate key
-	_, err = tk.Exec(`insert into batch_insert_on_duplicate select * from batch_insert_on_duplicate as tt
-		on duplicate key update batch_insert_on_duplicate.id=batch_insert_on_duplicate.id+1000;`)
-	c.Assert(err, IsNil)
-	r = tk.MustQuery("select count(*) from batch_insert_on_duplicate;")
-	r.Check(testkit.Rows("160"))
-
-	// Disable BachInsert mode in transition.
-	tk.MustExec("begin;")
-	_, err = tk.Exec("insert into batch_insert (c) select * from batch_insert;")
-	c.Assert(err, NotNil)
-	c.Assert(kv.ErrTxnTooLarge.Equal(err), IsTrue)
-	tk.MustExec("rollback;")
-	r = tk.MustQuery("select count(*) from batch_insert;")
-	r.Check(testkit.Rows("320"))
-
-	// Test case for batch delete.
-	// This will meet txn too large error.
-	_, err = tk.Exec("delete from batch_insert;")
-	c.Assert(err, NotNil)
-	c.Assert(kv.ErrTxnTooLarge.Equal(err), IsTrue)
-	r = tk.MustQuery("select count(*) from batch_insert;")
-	r.Check(testkit.Rows("320"))
-	// Enable batch delete and set batch size to 50.
-	tk.MustExec("set @@session.tidb_batch_delete=on;")
-	tk.MustExec("set @@session.tidb_dml_batch_size=50;")
-	tk.MustExec("delete from batch_insert;")
-	// Make sure that all rows are gone.
-	r = tk.MustQuery("select count(*) from batch_insert;")
-	r.Check(testkit.Rows("0"))
-}
-
 func (s *testSuite) TestNullDefault(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test; drop table if exists test_null_default;")
@@ -2229,23 +2122,6 @@ func (s *testSuite) TestDefEnumInsert(c *C) {
 	tk.MustExec("create table test (id int, prescription_type enum('a','b','c','d','e','f') NOT NULL, primary key(id));")
 	tk.MustExec("insert into test (id)  values (1)")
 	tk.MustQuery("select prescription_type from test").Check(testkit.Rows("a"))
-}
-
-func (s *testSuite) TestAutoIDInRetry(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
-	tk.MustExec("create table t (id int not null auto_increment primary key)")
-
-	tk.MustExec("begin")
-	tk.MustExec("insert into t values ()")
-	tk.MustExec("insert into t values (),()")
-	tk.MustExec("insert into t values ()")
-
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/session/mockCommitRetryForAutoID", `return(true)`), IsNil)
-	tk.MustExec("commit")
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/session/mockCommitRetryForAutoID"), IsNil)
-
-	tk.MustExec("insert into t values ()")
-	tk.MustQuery(`select * from t`).Check(testkit.Rows("1", "2", "3", "4", "5"))
 }
 
 func (s *testSuite) TestDeferConstraintCheckForInsert(c *C) {
