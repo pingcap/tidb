@@ -23,7 +23,7 @@ Notice: OS X user may use `docker-machine ip` to connect it.
 
 #### __Or run TiDB on TiKV cluster__ 
 
-Read the documents for [Ansible deployment](https://github.com/pingcap/docs/blob/master/op-guide/ansible-deployment.md) or [docker deployment](https://github.com/pingcap/docs/blob/master/op-guide/docker-deployment.md).
+Read the documents for [Ansible deployment](https://pingcap.com/docs/stable/how-to/deploy/orchestrated/ansible/) or [Docker deployment](https://pingcap.com/docs/stable/how-to/deploy/orchestrated/docker/).
 
 #### __Pre-requirement__
 
