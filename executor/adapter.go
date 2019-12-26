@@ -876,7 +876,10 @@ func (a *ExecStmt) SummaryStmt() {
 	}
 	sessVars.SetPrevStmtDigest(digest)
 
-	plan := plannercore.EncodePlan(a.Plan)
+	// No need to encode every time, so encode lazily.
+	planGenerator := func() string {
+		return plannercore.EncodePlan(a.Plan)
+	}
 	_, planDigest := getPlanDigest(a.Ctx, a.Plan)
 
 	execDetail := stmtCtx.GetExecDetails()
@@ -894,7 +897,7 @@ func (a *ExecStmt) SummaryStmt() {
 		Digest:         digest,
 		PrevSQL:        prevSQL,
 		PrevSQLDigest:  prevSQLDigest,
-		Plan:           plan,
+		PlanGenerator:  planGenerator,
 		PlanDigest:     planDigest,
 		User:           userString,
 		TotalLatency:   costTime,

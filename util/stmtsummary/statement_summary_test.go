@@ -36,6 +36,10 @@ type testStmtSummarySuite struct {
 	ssMap *stmtSummaryByDigestMap
 }
 
+func emptyPlanGenerator() string {
+	return ""
+}
+
 func (s *testStmtSummarySuite) SetUpSuite(c *C) {
 	s.ssMap = newStmtSummaryByDigestMap()
 	s.ssMap.SetEnabled("1", false)
@@ -69,7 +73,7 @@ func (s *testStmtSummarySuite) TestAddStatement(c *C) {
 		beginTime:            now + 60,
 		endTime:              now + 1860,
 		sampleSQL:            stmtExecInfo1.OriginalSQL,
-		samplePlan:           stmtExecInfo1.Plan,
+		samplePlan:           stmtExecInfo1.PlanGenerator(),
 		indexNames:           stmtExecInfo1.StmtCtx.IndexNames,
 		sampleUser:           stmtExecInfo1.User,
 		execCount:            1,
@@ -148,6 +152,7 @@ func (s *testStmtSummarySuite) TestAddStatement(c *C) {
 		NormalizedSQL:  "normalized_sql",
 		Digest:         "digest",
 		PlanDigest:     "plan_digest",
+		PlanGenerator:  emptyPlanGenerator,
 		User:           "user2",
 		TotalLatency:   20000,
 		ParseLatency:   200,
@@ -200,9 +205,6 @@ func (s *testStmtSummarySuite) TestAddStatement(c *C) {
 	}
 	stmtExecInfo2.StmtCtx.AddAffectedRows(200)
 	expectedSummaryElement.execCount++
-	expectedSummaryElement.indexNames = indexes
-	expectedSummaryElement.sampleSQL = stmtExecInfo2.OriginalSQL
-	expectedSummaryElement.sampleUser = stmtExecInfo2.User
 	expectedSummaryElement.sumLatency += stmtExecInfo2.TotalLatency
 	expectedSummaryElement.maxLatency = stmtExecInfo2.TotalLatency
 	expectedSummaryElement.sumParseLatency += stmtExecInfo2.ParseLatency
@@ -266,6 +268,7 @@ func (s *testStmtSummarySuite) TestAddStatement(c *C) {
 		NormalizedSQL:  "normalized_sql",
 		Digest:         "digest",
 		PlanDigest:     "plan_digest",
+		PlanGenerator:  emptyPlanGenerator,
 		User:           "user3",
 		TotalLatency:   1000,
 		ParseLatency:   50,
@@ -318,8 +321,6 @@ func (s *testStmtSummarySuite) TestAddStatement(c *C) {
 	}
 	stmtExecInfo3.StmtCtx.AddAffectedRows(20000)
 	expectedSummaryElement.execCount++
-	expectedSummaryElement.sampleUser = stmtExecInfo3.User
-	expectedSummaryElement.sampleSQL = stmtExecInfo3.OriginalSQL
 	expectedSummaryElement.sumLatency += stmtExecInfo3.TotalLatency
 	expectedSummaryElement.minLatency = stmtExecInfo3.TotalLatency
 	expectedSummaryElement.sumParseLatency += stmtExecInfo3.ParseLatency
@@ -514,7 +515,7 @@ func generateAnyExecInfo() *StmtExecInfo {
 		NormalizedSQL:  "normalized_sql",
 		Digest:         "digest",
 		PlanDigest:     "plan_digest",
-		Plan:           "",
+		PlanGenerator:  emptyPlanGenerator,
 		User:           "user",
 		TotalLatency:   10000,
 		ParseLatency:   100,
