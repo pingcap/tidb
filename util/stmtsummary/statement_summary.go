@@ -200,7 +200,7 @@ type StmtExecInfo struct {
 	Digest         string
 	PrevSQL        string
 	PrevSQLDigest  string
-	Plan           string
+	PlanGenerator  func() string
 	PlanDigest     string
 	User           string
 	TotalLatency   time.Duration
@@ -601,8 +601,26 @@ func (ssbd *stmtSummaryByDigest) collectHistorySummaries(historySize int) []*stm
 }
 
 func newStmtSummaryByDigestElement(sei *StmtExecInfo, beginTime int64, intervalSeconds int64) *stmtSummaryByDigestElement {
+	// sampleSQL / sampleUser / samplePlan / prevSQL / indexNames store the values shown at the first time,
+	// because it compacts performance to update every time.
+	maxSQLLength := config.GetGlobalConfig().StmtSummary.MaxSQLLength
+	sampleSQL := sei.OriginalSQL
+	if len(sampleSQL) > int(maxSQLLength) {
+		// Make sure the memory of original `sampleSQL` will be released.
+		sampleSQL = string([]byte(sampleSQL[:maxSQLLength]))
+	}
+	prevSQL := sei.PrevSQL
+	if len(prevSQL) > int(maxSQLLength) {
+		prevSQL = string([]byte(prevSQL[:maxSQLLength]))
+	}
+
 	ssElement := &stmtSummaryByDigestElement{
 		beginTime:    beginTime,
+		sampleSQL:    sampleSQL,
+		prevSQL:      prevSQL,
+		samplePlan:   sei.PlanGenerator(),
+		sampleUser:   sei.User,
+		indexNames:   sei.StmtCtx.IndexNames,
 		minLatency:   sei.TotalLatency,
 		firstSeen:    sei.StartTime,
 		lastSeen:     sei.StartTime,
@@ -631,30 +649,11 @@ func (ssElement *stmtSummaryByDigestElement) onExpire(intervalSeconds int64) {
 }
 
 func (ssElement *stmtSummaryByDigestElement) add(sei *StmtExecInfo, intervalSeconds int64) {
-	maxSQLLength := config.GetGlobalConfig().StmtSummary.MaxSQLLength
-	sampleSQL := sei.OriginalSQL
-	if len(sampleSQL) > int(maxSQLLength) {
-		// Make sure the memory of original `sampleSQL` will be released.
-		sampleSQL = string([]byte(sampleSQL[:maxSQLLength]))
-	}
-	prevSQL := sei.PrevSQL
-	if len(prevSQL) > int(maxSQLLength) {
-		prevSQL = string([]byte(prevSQL[:maxSQLLength]))
-	}
-
 	ssElement.Lock()
 	defer ssElement.Unlock()
 
 	// refreshInterval may change anytime, update endTime ASAP.
 	ssElement.endTime = ssElement.beginTime + intervalSeconds
-	if sei.User != "" {
-		ssElement.sampleUser = sei.User
-	}
-	ssElement.sampleSQL = sampleSQL
-	ssElement.prevSQL = prevSQL
-	// Plan is compressed string. If it's truncated, it can't be decoded.
-	ssElement.samplePlan = sei.Plan
-	ssElement.indexNames = sei.StmtCtx.IndexNames
 	ssElement.execCount++
 
 	// latency
