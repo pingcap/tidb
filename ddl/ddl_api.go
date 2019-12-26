@@ -3415,7 +3415,7 @@ func getAnonymousIndex(t table.Table, colName model.CIStr) model.CIStr {
 	id := 2
 	l := len(t.Indices())
 	indexName := colName
-	if strings.EqualFold(indexName.L, strings.ToLower(mysql.PrimaryKeyName)) {
+	if strings.EqualFold(indexName.L, mysql.PrimaryKeyName) {
 		indexName = model.NewCIStr(fmt.Sprintf("%s_%d", colName.O, id))
 		id = 3
 	}
