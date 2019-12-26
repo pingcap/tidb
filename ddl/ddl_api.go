@@ -3497,7 +3497,8 @@ func (d *ddl) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexName m
 	return errors.Trace(err)
 }
 
-func buildHiddenColumn(ctx sessionctx.Context, tblInfo *model.TableInfo, t table.Table, indexPartSpecifications []*ast.IndexPartSpecification, indexName model.CIStr) ([]*model.ColumnInfo, error) {
+func buildHiddenColumnInfo(ctx sessionctx.Context, t table.Table, indexPartSpecifications []*ast.IndexPartSpecification, indexName model.CIStr) ([]*model.ColumnInfo, error) {
+	tblInfo := t.Meta()
 	hiddenCols := make([]*model.ColumnInfo, 0, len(indexPartSpecifications))
 	for i, idxPart := range indexPartSpecifications {
 		if idxPart.Expr == nil {
@@ -3600,7 +3601,7 @@ func (d *ddl) CreateIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.Inde
 	tblInfo := t.Meta()
 
 	// Build hidden columns if necessary.
-	hiddenCols, err := buildHiddenColumn(ctx, tblInfo, t, indexPartSpecifications, indexName)
+	hiddenCols, err := buildHiddenColumnInfo(ctx, t, indexPartSpecifications, indexName)
 	if err != nil {
 		return err
 	}
