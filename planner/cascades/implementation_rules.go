@@ -354,8 +354,9 @@ func (r *ImplTopN) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalP
 	switch expr.Group.EngineType {
 	case memo.EngineTiDB:
 		return impl.NewTiDBTopNImpl(topN), nil
+	case memo.EngineTiKV:
+		return impl.NewTiDBTopNImpl(topN), nil
 	default:
-		// TODO: return TiKVTopNImpl after we have implemented push topN down gather.
 		return nil, plannercore.ErrInternal.GenWithStack("Unsupported EngineType '%s' for TopN.", expr.Group.EngineType.String())
 	}
 }
