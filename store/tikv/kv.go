@@ -287,7 +287,6 @@ func (s *tikvStore) BeginWithStartTS(startTS uint64) (kv.Transaction, error) {
 
 func (s *tikvStore) GetSnapshot(ver kv.Version) (kv.Snapshot, error) {
 	snapshot := newTiKVSnapshot(s, ver, s.nextReplicaReadSeed())
-	metrics.TiKVSnapshotCounter.Inc()
 	return snapshot, nil
 }
 
