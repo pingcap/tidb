@@ -1,0 +1,14 @@
+coverage:
+  status:
+    project:
+      default:
+        threshold: 0.2
+    patch:
+      default:
+        target: 0% # trial operation
+    changes: no
+
+comment:
+  layout: "header, diff"
+  behavior: default
+  require_changes: no
