@@ -16,7 +16,6 @@ package executor
 import (
 	"context"
 	"runtime"
-	"sort"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -129,8 +128,8 @@ func (e *IndexMergeReaderExecutor) Open(ctx context.Context) error {
 	fetchCh := make(chan *lookupTableTask, len(kvRangess))
 
 	e.startIndexMergeProcessWorker(ctx, workCh, fetchCh, len(kvRangess))
-	e.partialWorkerWg.Add(len(kvRangess))
 	for i := 0; i < len(kvRangess); i++ {
+		e.partialWorkerWg.Add(1)
 		if e.indexes[i] != nil {
 			err := e.startPartialIndexWorker(ctx, kvRangess[i], fetchCh, i)
 			if err != nil {
@@ -379,7 +378,6 @@ func (e *IndexMergeReaderExecutor) startIndexMergeTableScanWorker(ctx context.Co
 			workCh:         workCh,
 			finished:       e.finished,
 			buildTblReader: e.buildFinalTableReader,
-			keepOrder:      false,
 			handleIdx:      e.handleIdx,
 			tblPlans:       e.tblPlans,
 			memTracker: memory.NewTracker(stringutil.MemoizeStr(func() string { return "TableWorker_" + strconv.Itoa(i) }),
@@ -637,7 +635,6 @@ type indexMergeTableScanWorker struct {
 	workCh         <-chan *lookupTableTask
 	finished       <-chan struct{}
 	buildTblReader func(ctx context.Context, handles []int64) (Executor, error)
-	keepOrder      bool
 	handleIdx      int
 	tblPlans       []plannercore.PhysicalPlan
 
@@ -706,17 +703,6 @@ func (w *indexMergeTableScanWorker) executeTask(ctx context.Context, task *looku
 	memUsage = int64(cap(task.rows)) * int64(unsafe.Sizeof(chunk.Row{}))
 	task.memUsage += memUsage
 	task.memTracker.Consume(memUsage)
-	if w.keepOrder {
-		task.rowIdx = make([]int, 0, len(task.rows))
-		for i := range task.rows {
-			handle := task.rows[i].GetInt64(w.handleIdx)
-			task.rowIdx = append(task.rowIdx, task.indexOrder[handle])
-		}
-		memUsage = int64(cap(task.rowIdx) * 4)
-		task.memUsage += memUsage
-		task.memTracker.Consume(memUsage)
-		sort.Sort(task)
-	}
 	if handleCnt != len(task.rows) && len(w.tblPlans) == 1 {
 		return errors.Errorf("handle count %d isn't equal to value count %d", handleCnt, len(task.rows))
 	}
