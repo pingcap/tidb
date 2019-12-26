@@ -78,13 +78,13 @@ func TestT(t *testing.T) {
 	logLevel := os.Getenv("log_level")
 	logutil.InitLogger(logutil.NewLogConfig(logLevel, logutil.DefaultLogFormat, "", logutil.EmptyFileLogConfig, false))
 	autoid.SetStep(5000)
-
 	testleak.BeforeTest()
 	TestingT(t)
 	testleak.AfterTestT(t)()
 }
 
-var _ = Suite(&testSuite{})
+var _ = Suite(&testSuite{&baseTestSuite{}})
+var _ = SerialSuites(&testShowStatsSuite{&baseTestSuite{}})
 var _ = Suite(&testContextOptionSuite{})
 var _ = Suite(&testBypassSuite{})
 var _ = Suite(&testUpdateSuite{})
@@ -92,7 +92,9 @@ var _ = Suite(&testOOMSuite{})
 var _ = Suite(&testPointGetSuite{})
 var _ = Suite(&testFlushSuite{})
 
-type testSuite struct {
+type testSuite struct{ *baseTestSuite }
+
+type baseTestSuite struct {
 	cluster   *mocktikv.Cluster
 	mvccStore mocktikv.MVCCStore
 	store     kv.Storage
@@ -105,7 +107,7 @@ type testSuite struct {
 
 var mockTikv = flag.Bool("mockTikv", true, "use mock tikv store in executor test")
 
-func (s *testSuite) SetUpSuite(c *C) {
+func (s *baseTestSuite) SetUpSuite(c *C) {
 	s.autoIDStep = autoid.GetStep()
 	autoid.SetStep(5000)
 	s.Parser = parser.New()
@@ -130,13 +132,13 @@ func (s *testSuite) SetUpSuite(c *C) {
 	s.domain = d
 }
 
-func (s *testSuite) TearDownSuite(c *C) {
+func (s *baseTestSuite) TearDownSuite(c *C) {
 	s.domain.Close()
 	s.store.Close()
 	autoid.SetStep(s.autoIDStep)
 }
 
-func (s *testSuite) TearDownTest(c *C) {
+func (s *baseTestSuite) TearDownTest(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	r := tk.MustQuery("show tables")
