@@ -27,11 +27,12 @@ func init() {
 	// Initialize the metric schema database and register the driver to `drivers`.
 	dbID := autoid.MetricSchemaDBID
 	tableID := dbID + 1
-	metricTables := make([]*model.TableInfo, 0, len(metricTableMap))
-	for name, def := range metricTableMap {
+	metricTables := make([]*model.TableInfo, 0, len(MetricTableMap))
+	for name, def := range MetricTableMap {
 		cols := def.genColumnInfos()
 		tableInfo := buildTableMeta(name, cols)
 		tableInfo.ID = tableID
+		tableInfo.Comment = def.Comment
 		tableID++
 		metricTables = append(metricTables, tableInfo)
 	}
@@ -50,30 +51,18 @@ type MetricTableDef struct {
 	PromQL   string
 	Labels   []string
 	Quantile float64
-}
-
-// TODO: read from system table.
-var metricTableMap = map[string]MetricTableDef{
-	"query_duration": {
-		PromQL:   `histogram_quantile($QUANTILE, sum(rate(tidb_server_handle_query_duration_seconds_bucket{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (le))`,
-		Labels:   []string{"instance", "sql_type"},
-		Quantile: 0.90,
-	},
-	"up": {
-		PromQL: `up{$LABEL_CONDITIONS}`,
-		Labels: []string{"instance", "job"},
-	},
+	Comment  string
 }
 
 // IsMetricTable uses to checks whether the table is a metric table.
 func IsMetricTable(lowerTableName string) bool {
-	_, ok := metricTableMap[lowerTableName]
+	_, ok := MetricTableMap[lowerTableName]
 	return ok
 }
 
 // GetMetricTableDef gets the metric table define.
 func GetMetricTableDef(lowerTableName string) (*MetricTableDef, error) {
-	def, ok := metricTableMap[lowerTableName]
+	def, ok := MetricTableMap[lowerTableName]
 	if !ok {
 		return nil, errors.Errorf("can not find metric table: %v", lowerTableName)
 	}
@@ -163,4 +152,214 @@ func tableFromMeta(alloc autoid.Allocators, meta *model.TableInfo) (table.Table,
 		},
 	}
 	return t, nil
+}
+
+// MetricTableMap records the metric table definition, export for test.
+// TODO: read from system table.
+var MetricTableMap = map[string]MetricTableDef{
+	"query_duration": {
+		PromQL:   `histogram_quantile($QUANTILE, sum(rate(tidb_server_handle_query_duration_seconds_bucket{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (le,sql_type,instance))`,
+		Labels:   []string{"instance", "sql_type"},
+		Quantile: 0.90,
+		Comment:  "TiDB query durations by histogram buckets",
+	},
+	"qps": {
+		PromQL:  `sum(rate(tidb_server_query_total{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (result,type,instance)`,
+		Labels:  []string{"instance", "type", "result"},
+		Comment: "TiDB query processing numbers per second",
+	},
+	"qps_ideal": {
+		PromQL: `sum(tidb_server_connections) * sum(rate(tidb_server_handle_query_duration_seconds_count[$RANGE_DURATION])) / sum(rate(tidb_server_handle_query_duration_seconds_sum[$RANGE_DURATION]))`,
+	},
+	"ops_statement": {
+		PromQL:  `sum(rate(tidb_executor_statement_total{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (instance,type)`,
+		Labels:  []string{"instance", "type"},
+		Comment: "TiDB statement statistics",
+	},
+	"failed_query_opm": {
+		PromQL:  `sum(increase(tidb_server_execute_error_total{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (type, instance)`,
+		Labels:  []string{"instance", "type"},
+		Comment: "TiDB failed query statistics",
+	},
+	"slow_query_time": {
+		PromQL:   "histogram_quantile($QUANTILE, sum(rate(tidb_server_slow_query_process_duration_seconds_bucket[$RANGE_DURATION])) by (le))",
+		Quantile: 0.90,
+		Comment:  "TiDB slow query statistics with slow query time",
+	},
+	"slow_query_cop_process_time": {
+		PromQL:   "histogram_quantile($QUANTILE, sum(rate(tidb_server_slow_query_cop_duration_seconds_bucket[$RANGE_DURATION])) by (le))",
+		Comment:  "TiDB slow query statistics with slow query total cop process time",
+		Quantile: 0.90,
+	},
+	"slow_query_cop_wait_time": {
+		PromQL:   "histogram_quantile($QUANTILE, sum(rate(tidb_server_slow_query_wait_duration_seconds_bucket[$RANGE_DURATION])) by (le))",
+		Comment:  "TiDB slow query statistics with slow query total cop wait time",
+		Quantile: 0.90,
+	},
+	"ops_internal": {
+		PromQL:  "sum(rate(tidb_session_restricted_sql_total[$RANGE_DURATION]))",
+		Comment: "TiDB internal SQL is used by TiDB itself.",
+	},
+	"process_mem_usage": {
+		PromQL:  "process_resident_memory_bytes{$LABEL_CONDITIONS}",
+		Labels:  []string{"instance", "job"},
+		Comment: "process rss memory usage",
+	},
+	"heap_mem_usage": {
+		PromQL:  "go_memstats_heap_alloc_bytes{$LABEL_CONDITIONS}",
+		Labels:  []string{"instance", "job"},
+		Comment: "TiDB heap memory size in use",
+	},
+	"process_cpu_usage": {
+		PromQL: "rate(process_cpu_seconds_total{$LABEL_CONDITIONS}[$RANGE_DURATION])",
+		Labels: []string{"instance", "job"},
+	},
+	"connection_count": {
+		PromQL:  "tidb_server_connections{$LABEL_CONDITIONS}",
+		Labels:  []string{"instance"},
+		Comment: "TiDB current connection counts",
+	},
+	"process_open_fd_count": {
+		PromQL:  "process_open_fds{$LABEL_CONDITIONS}",
+		Labels:  []string{"instance", "job"},
+		Comment: "Process opened file descriptors count",
+	},
+	"goroutines_count": {
+		PromQL:  " go_goroutines{$LABEL_CONDITIONS}",
+		Labels:  []string{"instance", "job"},
+		Comment: "Process current goroutines count)",
+	},
+	"go_gc_duration": {
+		PromQL:  "rate(go_gc_duration_seconds_sum{$LABEL_CONDITIONS}[$RANGE_DURATION])",
+		Labels:  []string{"instance", "job"},
+		Comment: "Go garbage collection time cost",
+	},
+	"go_threads": {
+		PromQL:  "go_threads{$LABEL_CONDITIONS}",
+		Labels:  []string{"instance", "job"},
+		Comment: "Total threads TiDB/PD process created currently",
+	},
+	"go_gc_count": {
+		PromQL:  " rate(go_gc_duration_seconds_count{$LABEL_CONDITIONS}[$RANGE_DURATION])",
+		Labels:  []string{"instance", "job"},
+		Comment: "The Go garbage collection counts per second",
+	},
+	"go_gc_cpu_usage": {
+		PromQL:  "go_memstats_gc_cpu_fraction{$LABEL_CONDITIONS}",
+		Labels:  []string{"instance", "job"},
+		Comment: "The fraction of TiDB/PD available CPU time used by the GC since the program started.",
+	},
+	"tidb_event_opm": {
+		PromQL:  "increase(tidb_server_event_total{$LABEL_CONDITIONS}[$RANGE_DURATION])",
+		Labels:  []string{"instance", "type"},
+		Comment: "TiDB Server critical events total, including start/close/shutdown/hang etc",
+	},
+	"tidb_keep_alive_opm": {
+		PromQL:  "sum(increase(tidb_monitor_keep_alive_total{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (instance)",
+		Labels:  []string{"instance"},
+		Comment: "TiDB instance monitor average keep alive times",
+	},
+	"prepared_statement_count": {
+		PromQL:  "tidb_server_prepared_stmts{$LABEL_CONDITIONS}",
+		Labels:  []string{"instance"},
+		Comment: "TiDB prepare statements count",
+	},
+	"tidb_time_jump_back_ops": {
+		PromQL:  "sum(increase(tidb_monitor_time_jump_back_total{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (instance)",
+		Labels:  []string{"instance"},
+		Comment: "TiDB monitor time jump back count",
+	},
+	"tidb_panic_count": {
+		Comment: "TiDB instance panic count",
+		PromQL:  "increase(tidb_server_panic_total{$LABEL_CONDITIONS}[$RANGE_DURATION])",
+		Labels:  []string{"instance"},
+	},
+	"tidb_binlog_error_count": {
+		Comment: "TiDB write binlog error, skip binlog count",
+		PromQL:  "tidb_server_critical_error_total{$LABEL_CONDITIONS}",
+		Labels:  []string{"instance"},
+	},
+	"get_token_duration": {
+		Comment:  "Duration (us) for getting token, it should be small until concurrency limit is reached.",
+		PromQL:   "histogram_quantile($QUANTILE, sum(rate(tidb_server_get_token_duration_seconds_bucket{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (le,instance))",
+		Labels:   []string{"instance"},
+		Quantile: 0.99,
+	},
+	"tidb_handshake_error_ops": {
+		PromQL:  "sum(increase(tidb_server_handshake_error_total{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (instance)",
+		Labels:  []string{"instance"},
+		Comment: "TiDB processing handshake error count",
+	},
+	"transaction_ops": {
+		PromQL:  "sum(rate(tidb_session_transaction_duration_seconds_count{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (type,sql_type,instance)",
+		Labels:  []string{"instance", "type", "sql_type"},
+		Comment: "TiDB transaction processing counts by type and source. Internal means TiDB inner transaction calls",
+	},
+	"transaction_duration": {
+		PromQL:   "histogram_quantile($QUANTILE, sum(rate(tidb_session_transaction_duration_seconds_bucket{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (le,type,sql_type,instance))",
+		Labels:   []string{"instance", "type", "sql_type"},
+		Comment:  "Bucketed histogram of transaction execution durations, including retry",
+		Quantile: 0.95,
+	},
+	"transaction_retry_num": {
+		PromQL:   "histogram_quantile($QUANTILE, sum(rate(tidb_session_retry_num_bucket{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (le,instance))",
+		Labels:   []string{"instance"},
+		Comment:  "TiDB transaction retry num",
+		Quantile: 0.95,
+	},
+	"transaction_statement_num": {
+		PromQL:   "histogram_quantile($QUANTILE, sum(rate(tidb_session_transaction_statement_num_bucket{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (le,instance,sql_type))",
+		Labels:   []string{"instance", "sql_type"},
+		Comment:  "TiDB statements numbers within one transaction. Internal means TiDB inner transaction",
+		Quantile: 0.95,
+	},
+	"transaction_retry_error_ops": {
+		PromQL:  "sum(rate(tidb_session_retry_error_total{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (type,sql_type,instance)",
+		Labels:  []string{"instance", "type", "sql_type"},
+		Comment: "Error numbers of transaction retry",
+	},
+	"tidb_transaction_local_latch_wait_duration": {
+		PromQL:   "histogram_quantile($QUANTILE, sum(rate(tidb_tikvclient_local_latch_wait_seconds_bucket{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (le,instance))",
+		Labels:   []string{"instance"},
+		Comment:  "TiDB transaction latch wait time on key value storage",
+		Quantile: 0.95,
+	},
+	"parse_duration": {
+		Comment:  "The time cost of parsing SQL to AST",
+		PromQL:   "histogram_quantile($QUANTILE, sum(rate(tidb_session_parse_duration_seconds_bucket{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (le,sql_type,instance))",
+		Labels:   []string{"instance", "sql_type"},
+		Quantile: 0.95,
+	},
+	"compile_duration": {
+		Comment:  "The time cost of building the query plan",
+		PromQL:   "histogram_quantile($QUANTILE, sum(rate(tidb_session_compile_duration_seconds_bucket{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (le, sql_type,instance))",
+		Labels:   []string{"instance", "sql_type"},
+		Quantile: 0.95,
+	},
+	"execute_duration": {
+		Comment:  "The time cost of executing the SQL which does not include the time to get the results of the query .",
+		PromQL:   "histogram_quantile($QUANTILE, sum(rate(tidb_session_execute_duration_seconds_bucket{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (le, sql_type, instance))",
+		Labels:   []string{"instance", "sql_type"},
+		Quantile: 0.95,
+	},
+	"expensive_executors_ops": {
+		Comment: "TiDB executors using more cpu and memory resources",
+		PromQL:  "sum(rate(tidb_executor_expensive_total{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (type,instance)",
+		Labels:  []string{"instance", "sql_type"},
+	},
+	"querie_using_plan_cache_ops": {
+		PromQL:  "sum(rate(tidb_server_plan_cache_total{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (type,instance)",
+		Labels:  []string{"instance", "sql_type"},
+		Comment: "TiDB plan cache hit ops",
+	},
+	"uptime": {
+		PromQL:  "(time() - process_start_time_seconds{$LABEL_CONDITIONS})",
+		Labels:  []string{"instance", "job"},
+		Comment: "TiDB uptime since last restart",
+	},
+	"up": {
+		PromQL:  `up{$LABEL_CONDITIONS}`,
+		Labels:  []string{"instance", "job"},
+		Comment: "whether the instance is up. 1 is up, 0 is down(off-line)",
+	},
 }

@@ -16,6 +16,7 @@ package executor
 import (
 	"context"
 	"fmt"
+	"math"
 	"net/url"
 	"strings"
 	"time"
@@ -140,7 +141,11 @@ func (e *MetricRetriever) genRecord(metric pmodel.Metric, pair pmodel.SamplePair
 		Type: mysql.TypeDatetime,
 		Fsp:  types.MaxFsp,
 	}))
-	record = append(record, types.NewFloat64Datum(float64(pair.Value)))
+	if math.IsNaN(float64(pair.Value)) {
+		record = append(record, types.NewDatum(nil))
+	} else {
+		record = append(record, types.NewFloat64Datum(float64(pair.Value)))
+	}
 	for _, label := range e.tblDef.Labels {
 		v := ""
 		if metric != nil {
