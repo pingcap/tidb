@@ -64,6 +64,7 @@ var defaultTransformationMap = map[memo.Operand][]Transformation{
 	},
 	memo.OperandLimit: {
 		NewRuleTransformLimitToTopN(),
+		NewRulePushLimitDownProjection(),
 	},
 	memo.OperandProjection: {
 		NewRuleEliminateProjection(),
@@ -663,6 +664,53 @@ func (r *TransformLimitToTopN) OnTransform(old *memo.ExprIter) (newExprs []*memo
 	topNExpr := memo.NewGroupExpr(topN)
 	topNExpr.SetChildren(childGroup)
 	return []*memo.GroupExpr{topNExpr}, true, false, nil
+}
+
+// PushLimitDownProjection pushes Limit to Projection.
+type PushLimitDownProjection struct {
+	baseRule
+}
+
+// NewRulePushLimitDownProjection creates a new Transformation. The pattern of this rule is `Limit->Projection->X` to `Projection->Limit->X`.
+func NewRulePushLimitDownProjection() Transformation {
+	rule := &PushLimitDownProjection{}
+	rule.pattern = memo.BuildPattern(
+		memo.OperandLimit,
+		memo.EngineTiDBOnly,
+		memo.NewPattern(memo.OperandProjection, memo.EngineTiDBOnly),
+	)
+	return rule
+}
+
+// Match implements Transformation interface.
+func (r *PushLimitDownProjection) Match(expr *memo.ExprIter) bool {
+	proj := expr.Children[0].GetExpr().ExprNode.(*plannercore.LogicalProjection)
+	for _, expr := range proj.Exprs {
+		if expression.HasAssignSetVarFunc(expr) {
+			return false
+		}
+	}
+	return true
+}
+
+// OnTransform implements Transformation interface.
+// This rule tries to pushes the Limit through Projection.
+func (r *PushLimitDownProjection) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
+	limit := old.GetExpr().ExprNode.(*plannercore.LogicalLimit)
+	proj := old.Children[0].GetExpr().ExprNode.(*plannercore.LogicalProjection)
+	childGroup := old.Children[0].GetExpr().Children[0]
+
+	newLimit := plannercore.LogicalLimit{
+		Offset: limit.Offset,
+		Count:  limit.Count,
+	}.Init(limit.SCtx(), limit.SelectBlockOffset())
+
+	projExpr := memo.NewGroupExpr(proj)
+	limitExpr := memo.NewGroupExpr(newLimit)
+	limitExpr.SetChildren(childGroup)
+	limitGroup := memo.NewGroupWithSchema(limitExpr, childGroup.Prop.Schema)
+	projExpr.SetChildren(limitGroup)
+	return []*memo.GroupExpr{projExpr}, true, false, nil
 }
 
 // PushSelDownJoin pushes Selection through Join.
