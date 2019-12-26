@@ -164,18 +164,7 @@ type ImplTiKVDoubleReadGather struct {
 
 // Match implements ImplementationRule Match interface.
 func (r *ImplTiKVDoubleReadGather) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) (matched bool) {
-	if prop.IsEmpty() {
-		return true
-	}
-	reader := expr.ExprNode.(*plannercore.TiKVDoubleGather)
-	if all, _ := prop.AllSameOrder(); all {
-		for i, col := range reader.IndexCols {
-			if col.Equal(nil, prop.Items[0].Col) {
-				return plannercore.MatchIndicesProp(reader.IndexCols[i:], reader.IndexColLens[i:], prop.Items)
-			}
-		}
-	}
-	return false
+	return true
 }
 
 // OnImplement implements ImplementationRule OnImplement interface.
