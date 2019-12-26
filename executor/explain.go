@@ -17,6 +17,7 @@ import (
 	"context"
 
 	"github.com/cznic/mathutil"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/util/chunk"
 )
@@ -70,23 +71,39 @@ func (e *ExplainExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	return nil
 }
 
-func (e *ExplainExec) generateExplainInfo(ctx context.Context) ([][]string, error) {
+func (e *ExplainExec) generateExplainInfo(ctx context.Context) (rows [][]string, err error) {
+	closed := false
+	defer func() {
+		if !closed && e.analyzeExec != nil {
+			err = e.analyzeExec.Close()
+			closed = true
+		}
+	}()
 	if e.analyzeExec != nil {
 		chk := newFirstChunk(e.analyzeExec)
+		var nextErr, closeErr error
 		for {
-			err := Next(ctx, e.analyzeExec, chk)
-			if err != nil {
-				return nil, err
-			}
-			if chk.NumRows() == 0 {
+			nextErr = Next(ctx, e.analyzeExec, chk)
+			if nextErr != nil || chk.NumRows() == 0 {
 				break
 			}
 		}
-		if err := e.analyzeExec.Close(); err != nil {
+		closeErr = e.analyzeExec.Close()
+		closed = true
+		if nextErr != nil {
+			if closeErr != nil {
+				err = errors.New(nextErr.Error() + ", " + closeErr.Error())
+			} else {
+				err = nextErr
+			}
+		} else if closeErr != nil {
+			err = closeErr
+		}
+		if err != nil {
 			return nil, err
 		}
 	}
-	if err := e.explain.RenderResult(); err != nil {
+	if err = e.explain.RenderResult(); err != nil {
 		return nil, err
 	}
 	if e.analyzeExec != nil {
