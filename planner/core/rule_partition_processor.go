@@ -143,26 +143,25 @@ func (s *partitionProcessor) pruneHashPartition(ds *DataSource, pi *model.Partit
 		newDataSource.statisticTable = getStatsTable(ds.SCtx(), ds.table.Meta(), pi.Definitions[idx].ID)
 		pl := &newDataSource
 		return pl, nil
-	} else {
-		// If can not hit partition by FastLocateHashPartition, try to prune all partition.
-		sctx := ds.SCtx()
-		filterConds = expression.PropagateConstant(sctx, filterConds)
-		filterConds = solver.Solve(sctx, filterConds)
-		alwaysFalse := false
-		if len(filterConds) == 1 {
-			// Constant false.
-			if con, ok := filterConds[0].(*expression.Constant); ok && con.DeferredExpr == nil && con.ParamMarker == nil {
-				ret, _, err := expression.EvalBool(sctx, expression.CNFExprs{con}, chunk.Row{})
-				if err == nil && ret == false {
-					alwaysFalse = true
-				}
+	}
+	// If can not hit partition by FastLocateHashPartition, try to prune all partition.
+	sctx := ds.SCtx()
+	filterConds = expression.PropagateConstant(sctx, filterConds)
+	filterConds = solver.Solve(sctx, filterConds)
+	alwaysFalse := false
+	if len(filterConds) == 1 {
+		// Constant false.
+		if con, ok := filterConds[0].(*expression.Constant); ok && con.DeferredExpr == nil && con.ParamMarker == nil {
+			ret, _, err := expression.EvalBool(sctx, expression.CNFExprs{con}, chunk.Row{})
+			if err == nil && ret == false {
+				alwaysFalse = true
 			}
 		}
-		if alwaysFalse {
-			tableDual := LogicalTableDual{RowCount: 0}.Init(ds.SCtx(), ds.blockOffset)
-			tableDual.schema = ds.Schema()
-			return tableDual, nil
-		}
+	}
+	if alwaysFalse {
+		tableDual := LogicalTableDual{RowCount: 0}.Init(ds.SCtx(), ds.blockOffset)
+		tableDual.schema = ds.Schema()
+		return tableDual, nil
 	}
 	children := make([]LogicalPlan, 0, len(pi.Definitions))
 	for i := 0; i < len(pi.Definitions); i++ {
