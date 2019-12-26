@@ -96,15 +96,12 @@ func (r *rowContainerTestSuite) TestSpillAction(c *check.C) {
 		_, err = rc.AppendRow(chk.GetRow(i))
 		c.Assert(err, check.IsNil)
 	}
-	_, err = rc.AppendRow(chk.GetRow(0))
-	// the implementation of List only count the memory consumption when a full chunk plus additional data is appended
 	c.Assert(err, check.IsNil)
 	c.Assert(rc.GetMemTracker().BytesConsumed(), check.Equals, chk.MemoryUsage())
-	for i := 1; i < sz; i++ {
+	for i := 0; i < sz; i++ {
 		_, err = rc.AppendRow(chk.GetRow(i))
 		c.Assert(err, check.IsNil)
 	}
-	_, err = rc.AppendRow(chk.GetRow(0))
 	c.Assert(err, check.IsNil)
 	c.Assert(atomic.LoadUint32(&rc.exceeded), check.Equals, uint32(1))
 	c.Assert(atomic.LoadUint32(&rc.spilled), check.Equals, uint32(1))

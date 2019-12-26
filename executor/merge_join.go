@@ -18,6 +18,7 @@ import (
 	"fmt"
 
 	"github.com/pingcap/errors"
+
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
@@ -120,15 +121,15 @@ func (t *mergeJoinInnerTable) rowsWithSameKey(ctx sessionctx.Context) (*chunk.Ro
 		rc.GetMemTracker().AttachTo(ctx.GetSessionVars().StmtCtx.MemTracker)
 		rc.GetDiskTracker().AttachTo(ctx.GetSessionVars().StmtCtx.DiskTracker)
 		t.sameKeyRows = rc
+		if config.GetGlobalConfig().OOMUseTmpStorage {
+			actionSpill := t.sameKeyRows.ActionSpill()
+			ctx.GetSessionVars().StmtCtx.MemTracker.SetActionOnExceed(actionSpill)
+		}
 	} else {
 		err := t.sameKeyRows.Reset()
 		if err != nil {
 			return nil, err
 		}
-	}
-	if config.GetGlobalConfig().OOMUseTmpStorage {
-		actionSpill := t.sameKeyRows.ActionSpill()
-		ctx.GetSessionVars().StmtCtx.MemTracker.SetActionOnExceed(actionSpill)
 	}
 
 	// no more data.

@@ -31,8 +31,7 @@ type List struct {
 	chunks        []*Chunk
 	freelist      []*Chunk
 
-	memTracker  *memory.Tracker // track memory usage.
-	consumedIdx int             // chunk index in "chunks", has been consumed.
+	memTracker *memory.Tracker // track memory usage.
 }
 
 // RowPtr is used to get a row from a list.
@@ -51,7 +50,6 @@ func NewList(fieldTypes []*types.FieldType, initChunkSize, maxChunkSize int) *Li
 		initChunkSize: initChunkSize,
 		maxChunkSize:  maxChunkSize,
 		memTracker:    memory.NewTracker(chunkListLabel, -1),
-		consumedIdx:   -1,
 	}
 	return l
 }
@@ -89,13 +87,10 @@ func (l *List) GetChunk(chkIdx int) *Chunk {
 // AppendRow appends a row to the List, the row is copied to the List.
 func (l *List) AppendRow(row Row) RowPtr {
 	chkIdx := len(l.chunks) - 1
-	if chkIdx == -1 || l.chunks[chkIdx].NumRows() >= l.chunks[chkIdx].Capacity() || chkIdx == l.consumedIdx {
-		newChk := l.allocChunk()
+	if chkIdx == -1 || l.chunks[chkIdx].NumRows() >= l.chunks[chkIdx].Capacity() {
+		newChk := l.AllocChunk()
 		l.chunks = append(l.chunks, newChk)
-		if chkIdx != l.consumedIdx {
-			l.memTracker.Consume(l.chunks[chkIdx].MemoryUsage())
-			l.consumedIdx = chkIdx
-		}
+		l.memTracker.Consume(newChk.MemoryUsage())
 		chkIdx++
 	}
 	chk := l.chunks[chkIdx]
@@ -113,21 +108,24 @@ func (l *List) Add(chk *Chunk) {
 		// TODO: return error here.
 		panic("chunk appended to List should have at least 1 row")
 	}
-	if chkIdx := len(l.chunks) - 1; l.consumedIdx != chkIdx {
-		l.memTracker.Consume(l.chunks[chkIdx].MemoryUsage())
-		l.consumedIdx = chkIdx
-	}
 	l.memTracker.Consume(chk.MemoryUsage())
-	l.consumedIdx++
 	l.chunks = append(l.chunks, chk)
 	l.length += chk.NumRows()
 }
 
-func (l *List) allocChunk() (chk *Chunk) {
+//// BorrowChunk returns a chunk from the list, and it should be returned back by calling List.Add(chk).
+//// The returned chunk is still managed by the list, and the memory usage is accounted under the list.
+//func (l *List) BorrowChunk() (chk *Chunk) {
+//
+//}
+
+// AllocChunk allocates a chunk from a list, it returns immediately if there is free chunks in the list,
+// otherwise new chunk will be allocated. In either case, the new chunk is no longer managed by the list,
+// and it is up to the caller to track the memory usage.
+func (l *List) AllocChunk() (chk *Chunk) {
 	if len(l.freelist) > 0 {
-		lastIdx := len(l.freelist) - 1
-		chk = l.freelist[lastIdx]
-		l.freelist = l.freelist[:lastIdx]
+		chk = l.freelist[0]
+		l.freelist = l.freelist[1:]
 		l.memTracker.Consume(-chk.MemoryUsage())
 		chk.Reset()
 		return
@@ -144,15 +142,11 @@ func (l *List) GetRow(ptr RowPtr) Row {
 	return chk.GetRow(int(ptr.RowIdx))
 }
 
-// Reset resets the List.
+// Reset resets the List, the memory is not freed.
 func (l *List) Reset() {
-	if lastIdx := len(l.chunks) - 1; lastIdx != l.consumedIdx {
-		l.memTracker.Consume(l.chunks[lastIdx].MemoryUsage())
-	}
 	l.freelist = append(l.freelist, l.chunks...)
 	l.chunks = l.chunks[:0]
 	l.length = 0
-	l.consumedIdx = -1
 }
 
 // Clear triggers GC for all the allocated chunks and reset the list
@@ -161,7 +155,6 @@ func (l *List) Clear() {
 	l.freelist = nil
 	l.chunks = nil
 	l.length = 0
-	l.consumedIdx = -1
 }
 
 // preAlloc4Row pre-allocates the storage memory for a Row.
@@ -173,12 +166,9 @@ func (l *List) Clear() {
 func (l *List) preAlloc4Row(row Row) (ptr RowPtr) {
 	chkIdx := len(l.chunks) - 1
 	if chkIdx == -1 || l.chunks[chkIdx].NumRows() >= l.chunks[chkIdx].Capacity() {
-		newChk := l.allocChunk()
+		newChk := l.AllocChunk()
 		l.chunks = append(l.chunks, newChk)
-		if chkIdx != l.consumedIdx {
-			l.memTracker.Consume(l.chunks[chkIdx].MemoryUsage())
-			l.consumedIdx = chkIdx
-		}
+		l.memTracker.Consume(newChk.MemoryUsage())
 		chkIdx++
 	}
 	chk := l.chunks[chkIdx]

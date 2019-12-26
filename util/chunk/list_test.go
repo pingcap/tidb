@@ -60,9 +60,9 @@ func (s *testChunkSuite) TestList(c *check.C) {
 	nChunk.AppendNull(0)
 	l.Add(nChunk)
 	ptr := l.AppendRow(srcRow)
-	c.Assert(l.NumChunks(), check.Equals, 2)
-	c.Assert(ptr.ChkIdx, check.Equals, uint32(1))
-	c.Assert(ptr.RowIdx, check.Equals, uint32(0))
+	c.Assert(l.NumChunks(), check.Equals, 1)
+	c.Assert(ptr.ChkIdx, check.Equals, uint32(0))
+	c.Assert(ptr.RowIdx, check.Equals, uint32(1))
 	row := l.GetRow(ptr)
 	c.Assert(row.GetInt64(0), check.Equals, int64(1))
 
@@ -108,7 +108,7 @@ func (s *testChunkSuite) TestListMemoryUsage(c *check.C) {
 	c.Assert(list.GetMemTracker().BytesConsumed(), check.Equals, int64(0))
 
 	list.AppendRow(srcChk.GetRow(0))
-	c.Assert(list.GetMemTracker().BytesConsumed(), check.Equals, int64(0))
+	c.Assert(list.GetMemTracker().BytesConsumed(), check.Greater, int64(0))
 
 	memUsage := list.chunks[0].MemoryUsage()
 	list.Reset()
