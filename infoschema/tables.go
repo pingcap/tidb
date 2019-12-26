@@ -61,7 +61,7 @@ const (
 	catalogVal                              = "def"
 	tableProfiling                          = "PROFILING"
 	tablePartitions                         = "PARTITIONS"
-	tableKeyColumm                          = "KEY_COLUMN_USAGE"
+	tableKeyColumn                          = "KEY_COLUMN_USAGE"
 	tableReferConst                         = "REFERENTIAL_CONSTRAINTS"
 	tableSessionVar                         = "SESSION_VARIABLES"
 	tablePlugins                            = "PLUGINS"
@@ -91,7 +91,8 @@ const (
 	tableTiKVRegionStatus                   = "TIKV_REGION_STATUS"
 	tableTiKVRegionPeers                    = "TIKV_REGION_PEERS"
 	tableTiDBServersInfo                    = "TIDB_SERVERS_INFO"
-	tableClusterInfo                        = "CLUSTER_INFO"
+	// TableClusterInfo is the string constant of cluster info memory table
+	TableClusterInfo = "CLUSTER_INFO"
 	// TableClusterConfig is the string constant of cluster configuration memory table
 	TableClusterConfig = "CLUSTER_CONFIG"
 	// TableClusterLog is the string constant of cluster log memory table
@@ -103,6 +104,8 @@ const (
 	// TableClusterSystemInfo is the string constant of cluster system info table
 	TableClusterSystemInfo = "CLUSTER_SYSTEMINFO"
 	tableTiFlashReplica    = "TIFLASH_REPLICA"
+	// TableInspectionResult is the string constant of inspection result table
+	TableInspectionResult = "INSPECTION_RESULT"
 )
 
 var tableIDMap = map[string]int64{
@@ -117,7 +120,7 @@ var tableIDMap = map[string]int64{
 	catalogVal:                              autoid.InformationSchemaDBID + 9,
 	tableProfiling:                          autoid.InformationSchemaDBID + 10,
 	tablePartitions:                         autoid.InformationSchemaDBID + 11,
-	tableKeyColumm:                          autoid.InformationSchemaDBID + 12,
+	tableKeyColumn:                          autoid.InformationSchemaDBID + 12,
 	tableReferConst:                         autoid.InformationSchemaDBID + 13,
 	tableSessionVar:                         autoid.InformationSchemaDBID + 14,
 	tablePlugins:                            autoid.InformationSchemaDBID + 15,
@@ -147,7 +150,7 @@ var tableIDMap = map[string]int64{
 	tableTiKVRegionStatus:                   autoid.InformationSchemaDBID + 39,
 	tableTiKVRegionPeers:                    autoid.InformationSchemaDBID + 40,
 	tableTiDBServersInfo:                    autoid.InformationSchemaDBID + 41,
-	tableClusterInfo:                        autoid.InformationSchemaDBID + 42,
+	TableClusterInfo:                        autoid.InformationSchemaDBID + 42,
 	TableClusterConfig:                      autoid.InformationSchemaDBID + 43,
 	TableClusterLoad:                        autoid.InformationSchemaDBID + 44,
 	tableTiFlashReplica:                     autoid.InformationSchemaDBID + 45,
@@ -156,6 +159,7 @@ var tableIDMap = map[string]int64{
 	TableClusterLog:                         autoid.InformationSchemaDBID + 48,
 	TableClusterHardware:                    autoid.InformationSchemaDBID + 49,
 	TableClusterSystemInfo:                  autoid.InformationSchemaDBID + 50,
+	TableInspectionResult:                   autoid.InformationSchemaDBID + 51,
 }
 
 type columnInfo struct {
@@ -1146,6 +1150,15 @@ var tableTableTiFlashReplicaCols = []columnInfo{
 	{"AVAILABLE", mysql.TypeTiny, 1, 0, nil, nil},
 }
 
+var tableInspectionResultCols = []columnInfo{
+	{"RULE", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"ITEM", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"VALUE", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"REFERENCE", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"SEVERITY", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"SUGGESTION", mysql.TypeVarchar, 256, 0, nil, nil},
+}
+
 func dataForSchemata(ctx sessionctx.Context, schemas []*model.DBInfo) [][]types.Datum {
 	checker := privilege.GetPrivilegeManager(ctx)
 	rows := make([][]types.Datum, 0, len(schemas))
@@ -1303,7 +1316,7 @@ func getAutoIncrementID(ctx sessionctx.Context, schema *model.DBInfo, tblInfo *m
 	if err != nil {
 		return 0, err
 	}
-	return tbl.Allocator(ctx).Base() + 1, nil
+	return tbl.Allocator(ctx, autoid.RowIDAllocType).Base() + 1, nil
 }
 
 func dataForViews(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.Datum, error) {
@@ -1811,10 +1824,14 @@ func dataForPseudoProfiling() [][]types.Datum {
 	return rows
 }
 
-func dataForKeyColumnUsage(schemas []*model.DBInfo) [][]types.Datum {
+func dataForKeyColumnUsage(ctx sessionctx.Context, schemas []*model.DBInfo) [][]types.Datum {
+	checker := privilege.GetPrivilegeManager(ctx)
 	rows := make([][]types.Datum, 0, len(schemas)) // The capacity is not accurate, but it is not a big problem.
 	for _, schema := range schemas {
 		for _, table := range schema.Tables {
+			if checker != nil && !checker.RequestVerification(ctx.GetSessionVars().ActiveRoles, schema.Name.L, table.Name.L, "", mysql.AllPrivMask) {
+				continue
+			}
 			rs := keyColumnUsageInTable(schema, table)
 			rows = append(rows, rs...)
 		}
@@ -1959,7 +1976,8 @@ func dataForHotRegionByMetrics(metrics []helper.HotTableIndex, tp string) [][]ty
 }
 
 // DataForAnalyzeStatus gets all the analyze jobs.
-func DataForAnalyzeStatus() (rows [][]types.Datum) {
+func DataForAnalyzeStatus(ctx sessionctx.Context) (rows [][]types.Datum) {
+	checker := privilege.GetPrivilegeManager(ctx)
 	for _, job := range statistics.GetAllAnalyzeJobs() {
 		job.Lock()
 		var startTime interface{}
@@ -1968,15 +1986,17 @@ func DataForAnalyzeStatus() (rows [][]types.Datum) {
 		} else {
 			startTime = types.Time{Time: types.FromGoTime(job.StartTime), Type: mysql.TypeDatetime}
 		}
-		rows = append(rows, types.MakeDatums(
-			job.DBName,        // TABLE_SCHEMA
-			job.TableName,     // TABLE_NAME
-			job.PartitionName, // PARTITION_NAME
-			job.JobInfo,       // JOB_INFO
-			job.RowCount,      // ROW_COUNT
-			startTime,         // START_TIME
-			job.State,         // STATE
-		))
+		if checker == nil || checker.RequestVerification(ctx.GetSessionVars().ActiveRoles, job.DBName, job.TableName, "", mysql.AllPrivMask) {
+			rows = append(rows, types.MakeDatums(
+				job.DBName,        // TABLE_SCHEMA
+				job.TableName,     // TABLE_NAME
+				job.PartitionName, // PARTITION_NAME
+				job.JobInfo,       // JOB_INFO
+				job.RowCount,      // ROW_COUNT
+				startTime,         // START_TIME
+				job.State,         // STATE
+			))
+		}
 		job.Unlock()
 	}
 	return
@@ -2209,7 +2229,7 @@ var tableNameToColumns = map[string][]columnInfo{
 	tableFiles:                              filesCols,
 	tableProfiling:                          profilingCols,
 	tablePartitions:                         partitionsCols,
-	tableKeyColumm:                          keyColumnUsageCols,
+	tableKeyColumn:                          keyColumnUsageCols,
 	tableReferConst:                         referConstCols,
 	tableSessionVar:                         sessionVarCols,
 	tablePlugins:                            pluginsCols,
@@ -2239,22 +2259,23 @@ var tableNameToColumns = map[string][]columnInfo{
 	tableTiKVRegionStatus:                   tableTiKVRegionStatusCols,
 	tableTiKVRegionPeers:                    tableTiKVRegionPeersCols,
 	tableTiDBServersInfo:                    tableTiDBServersInfoCols,
-	tableClusterInfo:                        tableClusterInfoCols,
+	TableClusterInfo:                        tableClusterInfoCols,
 	TableClusterConfig:                      tableClusterConfigCols,
 	TableClusterLog:                         tableClusterLogCols,
 	TableClusterLoad:                        tableClusterLoadCols,
 	tableTiFlashReplica:                     tableTableTiFlashReplicaCols,
 	TableClusterHardware:                    tableClusterHardwareCols,
 	TableClusterSystemInfo:                  tableClusterSystemInfoCols,
+	TableInspectionResult:                   tableInspectionResultCols,
 }
 
-func createInfoSchemaTable(_ autoid.Allocator, meta *model.TableInfo) (table.Table, error) {
+func createInfoSchemaTable(_ autoid.Allocators, meta *model.TableInfo) (table.Table, error) {
 	columns := make([]*table.Column, len(meta.Columns))
 	for i, col := range meta.Columns {
 		columns[i] = table.ToColumn(col)
 	}
 	tp := table.VirtualTable
-	if isClusterTableByName(util.InformationSchemaName, meta.Name.L) {
+	if isClusterTableByName(util.InformationSchemaName.O, meta.Name.O) {
 		tp = table.ClusterTable
 	}
 	return &infoschemaTable{meta: meta, cols: columns, tp: tp}, nil
@@ -2310,8 +2331,8 @@ func (it *infoschemaTable) getRows(ctx sessionctx.Context, cols []*table.Column)
 			fullRows = dataForPseudoProfiling()
 		}
 	case tablePartitions:
-	case tableKeyColumm:
-		fullRows = dataForKeyColumnUsage(dbs)
+	case tableKeyColumn:
+		fullRows = dataForKeyColumnUsage(ctx, dbs)
 	case tableReferConst:
 	case tablePlugins, tableTriggers:
 	case tableUserPrivileges:
@@ -2343,14 +2364,14 @@ func (it *infoschemaTable) getRows(ctx sessionctx.Context, cols []*table.Column)
 	case tableTiKVStoreStatus:
 		fullRows, err = dataForTiKVStoreStatus(ctx)
 	case tableAnalyzeStatus:
-		fullRows = DataForAnalyzeStatus()
+		fullRows = DataForAnalyzeStatus(ctx)
 	case tableTiKVRegionStatus:
 		fullRows, err = dataForTiKVRegionStatus(ctx)
 	case tableTiKVRegionPeers:
 		fullRows, err = dataForTikVRegionPeers(ctx)
 	case tableTiDBServersInfo:
 		fullRows, err = dataForServersInfo()
-	case tableClusterInfo:
+	case TableClusterInfo:
 		fullRows, err = dataForTiDBClusterInfo(ctx)
 	case tableTiFlashReplica:
 		fullRows = dataForTableTiFlashReplica(dbs)
@@ -2488,7 +2509,12 @@ func (it *infoschemaTable) AllocHandleIDs(ctx sessionctx.Context, n uint64) (int
 }
 
 // Allocator implements table.Table Allocator interface.
-func (it *infoschemaTable) Allocator(ctx sessionctx.Context) autoid.Allocator {
+func (it *infoschemaTable) Allocator(_ sessionctx.Context, _ autoid.AllocatorType) autoid.Allocator {
+	return nil
+}
+
+// AllAllocators implements table.Table AllAllocators interface.
+func (it *infoschemaTable) AllAllocators(_ sessionctx.Context) autoid.Allocators {
 	return nil
 }
 
@@ -2620,7 +2646,12 @@ func (vt *VirtualTable) AllocHandleIDs(ctx sessionctx.Context, n uint64) (int64,
 }
 
 // Allocator implements table.Table Allocator interface.
-func (vt *VirtualTable) Allocator(ctx sessionctx.Context) autoid.Allocator {
+func (vt *VirtualTable) Allocator(_ sessionctx.Context, _ autoid.AllocatorType) autoid.Allocator {
+	return nil
+}
+
+// AllAllocators implements table.Table AllAllocators interface.
+func (vt *VirtualTable) AllAllocators(_ sessionctx.Context) autoid.Allocators {
 	return nil
 }
 

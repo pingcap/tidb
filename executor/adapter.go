@@ -224,6 +224,7 @@ func (a *ExecStmt) PointGet(ctx context.Context, is infoschema.InfoSchema) (*rec
 		}
 		a.PsStmt.Executor = newExecutor
 	}
+	stmtNodeCounterSelect.Inc()
 	pointExecutor := a.PsStmt.Executor.(*PointGetExecutor)
 	if err = pointExecutor.Open(ctx); err != nil {
 		terror.Call(pointExecutor.Close)
@@ -541,12 +542,7 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e Executor) error {
 			return nil
 		}
 		seVars := sctx.GetSessionVars()
-		lockCtx := &kv.LockCtx{
-			Killed:        &seVars.Killed,
-			ForUpdateTS:   txnCtx.GetForUpdateTS(),
-			LockWaitTime:  seVars.LockWaitTimeout,
-			WaitStartTime: seVars.StmtCtx.GetLockWaitStartTime(),
-		}
+		lockCtx := newLockCtx(seVars, seVars.LockWaitTimeout)
 		err = txn.LockKeys(ctx, lockCtx, keys...)
 		if err == nil {
 			return nil
@@ -572,7 +568,7 @@ func UpdateForUpdateTS(seCtx sessionctx.Context, newForUpdateTS uint64) error {
 		return err
 	}
 	seCtx.GetSessionVars().TxnCtx.SetForUpdateTS(newForUpdateTS)
-	txn.SetOption(kv.SnapshotTS, newForUpdateTS)
+	txn.SetOption(kv.SnapshotTS, seCtx.GetSessionVars().TxnCtx.GetForUpdateTS())
 	return nil
 }
 
@@ -880,6 +876,12 @@ func (a *ExecStmt) SummaryStmt() {
 	}
 	sessVars.SetPrevStmtDigest(digest)
 
+	// No need to encode every time, so encode lazily.
+	planGenerator := func() string {
+		return plannercore.EncodePlan(a.Plan)
+	}
+	_, planDigest := getPlanDigest(a.Ctx, a.Plan)
+
 	execDetail := stmtCtx.GetExecDetails()
 	copTaskInfo := stmtCtx.CopTasksDetails()
 	memMax := stmtCtx.MemTracker.MaxConsumed()
@@ -895,6 +897,8 @@ func (a *ExecStmt) SummaryStmt() {
 		Digest:         digest,
 		PrevSQL:        prevSQL,
 		PrevSQLDigest:  prevSQLDigest,
+		PlanGenerator:  planGenerator,
+		PlanDigest:     planDigest,
 		User:           userString,
 		TotalLatency:   costTime,
 		ParseLatency:   sessVars.DurationParse,

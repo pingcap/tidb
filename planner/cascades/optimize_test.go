@@ -164,3 +164,39 @@ func (s *testCascadesSuite) TestPreparePossibleProperties(c *C) {
 		c.Assert(prop[0].Equal(nil, columnA) || prop[0].Equal(nil, columnF), IsTrue)
 	}
 }
+
+// fakeTransformation is used for TestAppliedRuleSet.
+type fakeTransformation struct {
+	baseRule
+	appliedTimes int
+}
+
+// OnTransform implements Transformation interface.
+func (rule *fakeTransformation) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
+	rule.appliedTimes++
+	old.GetExpr().AddAppliedRule(rule)
+	return []*memo.GroupExpr{old.GetExpr()}, true, false, nil
+}
+
+func (s *testCascadesSuite) TestAppliedRuleSet(c *C) {
+	rule := fakeTransformation{}
+	rule.pattern = memo.NewPattern(memo.OperandProjection, memo.EngineAll)
+	s.optimizer.ResetTransformationRules(map[memo.Operand][]Transformation{
+		memo.OperandProjection: {
+			&rule,
+		},
+	})
+	defer func() {
+		s.optimizer.ResetTransformationRules(defaultTransformationMap)
+	}()
+	stmt, err := s.ParseOneStmt("select 1", "", "")
+	c.Assert(err, IsNil)
+	p, _, err := plannercore.BuildLogicalPlan(context.Background(), s.sctx, stmt, s.is)
+	c.Assert(err, IsNil)
+	logic, ok := p.(plannercore.LogicalPlan)
+	c.Assert(ok, IsTrue)
+	group := memo.Convert2Group(logic)
+	err = s.optimizer.onPhaseExploration(s.sctx, group)
+	c.Assert(err, IsNil)
+	c.Assert(rule.appliedTimes, Equals, 1)
+}
