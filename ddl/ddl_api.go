@@ -4238,8 +4238,11 @@ func (d *ddl) CreateSequence(ctx sessionctx.Context, stmt *ast.CreateSequenceStm
 		return err
 	}
 
-	tbInfo, err := buildTableInfo(ctx, d, ident.Name, nil, nil)
+	tbInfo, err := buildTableInfo(ctx, ident.Name, nil, nil)
 	if err != nil {
+		return err
+	}
+	if err := d.assignTableID(tbInfo); err != nil {
 		return err
 	}
 	tbInfo.Sequence = sequenceInfo
