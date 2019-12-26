@@ -32,37 +32,26 @@ func (s *testSequenceSuite) TestCreateSequence(c *C) {
 	s.tk.MustGetErrCode("create sequence `seq  `", mysql.ErrWrongTableName)
 
 	// maxvalue should be larger than minvalue.
-	_, err := s.tk.Exec("create sequence seq maxvalue 1 minvalue 2")
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[ddl:4136]Sequence 'test.seq' values are conflicting")
+	s.tk.MustGetErrCode("create sequence seq maxvalue 1 minvalue 2", mysql.ErrSequenceInvalidData)
 
 	// maxvalue should be larger than minvalue.
-	_, err = s.tk.Exec("create sequence seq maxvalue 1 minvalue 1")
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[ddl:4136]Sequence 'test.seq' values are conflicting")
+	s.tk.MustGetErrCode("create sequence seq maxvalue 1 minvalue 1", mysql.ErrSequenceInvalidData)
 
 	// maxvalue shouldn't be equal to MaxInt64.
-	_, err = s.tk.Exec("create sequence seq maxvalue 9223372036854775807 minvalue 1")
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[ddl:4136]Sequence 'test.seq' values are conflicting")
+	s.tk.MustGetErrCode("create sequence seq maxvalue 9223372036854775807 minvalue 1", mysql.ErrSequenceInvalidData)
 
 	// TODO : minvalue shouldn't be equal to MinInt64.
 
 	// maxvalue should be larger than start.
-	_, err = s.tk.Exec("create sequence seq maxvalue 1 start with 2")
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[ddl:4136]Sequence 'test.seq' values are conflicting")
+	s.tk.MustGetErrCode("create sequence seq maxvalue 1 start with 2", mysql.ErrSequenceInvalidData)
 
 	// cacheVal should be less than (math.MaxInt64-maxIncrement)/maxIncrement.
-	_, err = s.tk.Exec("create sequence seq increment 100000 cache 922337203685477")
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[ddl:4136]Sequence 'test.seq' values are conflicting")
+	s.tk.MustGetErrCode("create sequence seq increment 100000 cache 922337203685477", mysql.ErrSequenceInvalidData)
 
-	_, err = s.tk.Exec("create sequence seq ENGINE=InnoDB")
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[ddl:8227]Unsupported sequence table-option InnoDB")
+	// test unsupported table option in sequence.
+	s.tk.MustGetErrCode("create sequence seq ENGINE=InnoDB", mysql.ErrSequenceUnsupportedTableOption)
 
-	_, err = s.tk.Exec("create sequence seq comment=\"test\"")
+	_, err := s.tk.Exec("create sequence seq comment=\"test\"")
 	c.Assert(err, IsNil)
 
 	sequenceTable := testGetTableByName(c, s.s, "test", "seq")

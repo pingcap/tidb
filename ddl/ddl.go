@@ -756,6 +756,7 @@ func init() {
 		mysql.ErrUnknownSequence:                      mysql.ErrUnknownSequence,
 		mysql.ErrWrongInsertIntoSequence:              mysql.ErrWrongInsertIntoSequence,
 		mysql.ErrSequenceInvalidTableStructure:        mysql.ErrSequenceInvalidTableStructure,
+		mysql.ErrSequenceUnsupportedTableOption:       mysql.ErrSequenceUnsupportedTableOption,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassDDL] = ddlMySQLErrCodes
 }
