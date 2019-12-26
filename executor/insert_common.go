@@ -109,7 +109,7 @@ func (e *InsertValues) initInsertColumns() error {
 			columns = append(columns, v.ColName.O)
 		}
 		cols, missingColName = table.FindCols(tableCols, columns, e.Table.Meta().PKIsHandle)
-		if cols == nil {
+		if missingColName != "" {
 			return errors.Errorf("INSERT INTO %s: unknown column %s", e.Table.Meta().Name.O, missingColName)
 		}
 		if len(cols) == 0 {
@@ -122,7 +122,7 @@ func (e *InsertValues) initInsertColumns() error {
 			columns = append(columns, v.Name.O)
 		}
 		cols, missingColName = table.FindCols(tableCols, columns, e.Table.Meta().PKIsHandle)
-		if cols == nil {
+		if missingColName != "" {
 			return errors.Errorf("INSERT INTO %s: unknown column %s", e.Table.Meta().Name.O, missingColName)
 		}
 	} else {
