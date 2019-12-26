@@ -43,11 +43,6 @@ import (
 )
 
 var _ = Suite(&testStateChangeSuite{})
-var _ = SerialSuites(&serialTestStateChangeSuite{})
-
-type serialTestStateChangeSuite struct {
-	testStateChangeSuite
-}
 
 type testStateChangeSuite struct {
 	lease  time.Duration
