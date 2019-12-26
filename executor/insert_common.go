@@ -207,6 +207,8 @@ func insertRows(ctx context.Context, base insertCommon) (err error) {
 		memTracker = x.memTracker
 	case *ReplaceExec:
 		memTracker = x.memTracker
+	default:
+		return errors.Errorf("unexpected executor type %v", x)
 	}
 	sessVars := e.ctx.GetSessionVars()
 	batchInsert := sessVars.BatchInsert && !sessVars.InTxn() && config.GetGlobalConfig().EnableBatchDML
@@ -405,6 +407,8 @@ func insertRowsFromSelect(ctx context.Context, base insertCommon) error {
 		memTracker = x.memTracker
 	case *ReplaceExec:
 		memTracker = x.memTracker
+	default:
+		return errors.Errorf("unexpected executor type %v", x)
 	}
 
 	sessVars := e.ctx.GetSessionVars()

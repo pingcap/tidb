@@ -438,8 +438,12 @@ func (s *session) getTxnFuture(ctx context.Context) *txnFuture {
 
 // StmtCommit implements the sessionctx.Context interface.
 func (s *session) StmtCommit(memTracker *memory.Tracker) error {
-	defer s.txn.cleanup()
+	defer func() {
+		s.txn.cleanup()
+		memTracker.Consume(int64(-s.txn.Size()))
+	}()
 	st := &s.txn
+	txnSize := st.Transaction.Size()
 	var count int
 	err := kv.WalkMemBuffer(st.buf, func(k kv.Key, v []byte) error {
 		failpoint.Inject("mockStmtCommitError", func(val failpoint.Value) {
@@ -462,7 +466,7 @@ func (s *session) StmtCommit(memTracker *memory.Tracker) error {
 		return err
 	}
 	if memTracker != nil {
-		memTracker.Consume(int64(st.Transaction.Size()))
+		memTracker.Consume(int64(st.Transaction.Size() - txnSize))
 	}
 
 	// Need to flush binlog.
