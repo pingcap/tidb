@@ -826,10 +826,12 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 func newLockCtx(seVars *variable.SessionVars, lockWaitTime int64) *kv.LockCtx {
 	return &kv.LockCtx{
-		Killed:        &seVars.Killed,
-		ForUpdateTS:   seVars.TxnCtx.GetForUpdateTS(),
-		LockWaitTime:  lockWaitTime,
-		WaitStartTime: seVars.StmtCtx.GetLockWaitStartTime(),
+		Killed:                &seVars.Killed,
+		ForUpdateTS:           seVars.TxnCtx.GetForUpdateTS(),
+		LockWaitTime:          lockWaitTime,
+		WaitStartTime:         seVars.StmtCtx.GetLockWaitStartTime(),
+		PessimisticLockWaited: &seVars.StmtCtx.PessimisticLockWaited,
+		LockKeysDuration:      &seVars.StmtCtx.LockKeysDuration,
 	}
 }
 

@@ -53,6 +53,7 @@ var defaultTransformationMap = map[memo.Operand][]Transformation{
 		NewRulePushSelDownIndexScan(),
 		NewRulePushSelDownUnionAll(),
 		NewRulePushSelDownWindow(),
+		NewRuleMergeAdjacentSelection(),
 	},
 	memo.OperandDataSource: {
 		NewRuleEnumeratePaths(),
@@ -70,6 +71,7 @@ var defaultTransformationMap = map[memo.Operand][]Transformation{
 	},
 	memo.OperandTopN: {
 		NewRulePushTopNDownProjection(),
+		NewRulePushTopNDownUnionAll(),
 	},
 }
 
@@ -997,6 +999,56 @@ func (r *PushTopNDownProjection) OnTransform(old *memo.ExprIter) (newExprs []*me
 	return []*memo.GroupExpr{projExpr}, true, false, nil
 }
 
+// PushTopNDownUnionAll pushes topN to union all.
+type PushTopNDownUnionAll struct {
+	baseRule
+}
+
+// NewRulePushTopNDownUnionAll creates a new Transformation PushTopNDownUnionAll.
+// The pattern of this rule is `TopN->UnionAll->X`.
+func NewRulePushTopNDownUnionAll() Transformation {
+	rule := &PushTopNDownUnionAll{}
+	rule.pattern = memo.BuildPattern(
+		memo.OperandTopN,
+		memo.EngineTiDBOnly,
+		memo.NewPattern(memo.OperandUnionAll, memo.EngineTiDBOnly),
+	)
+	return rule
+}
+
+// Match implements Transformation interface.
+// Use appliedRuleSet in GroupExpr to avoid re-apply rules.
+func (r *PushTopNDownUnionAll) Match(expr *memo.ExprIter) bool {
+	return !expr.GetExpr().HasAppliedRule(r)
+}
+
+// OnTransform implements Transformation interface.
+// It will transform `TopN->UnionAll->X` to `TopN->UnionAll->TopN->X`.
+func (r *PushTopNDownUnionAll) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
+	topN := old.GetExpr().ExprNode.(*plannercore.LogicalTopN)
+	unionAll := old.Children[0].GetExpr().ExprNode.(*plannercore.LogicalUnionAll)
+
+	newTopN := plannercore.LogicalTopN{
+		Count:   topN.Count + topN.Offset,
+		ByItems: topN.ByItems,
+	}.Init(topN.SCtx(), topN.SelectBlockOffset())
+
+	newUnionAllExpr := memo.NewGroupExpr(unionAll)
+	for _, childGroup := range old.Children[0].GetExpr().Children {
+		newTopNExpr := memo.NewGroupExpr(newTopN)
+		newTopNExpr.Children = append(newTopNExpr.Children, childGroup)
+		newTopNGroup := memo.NewGroupWithSchema(newTopNExpr, childGroup.Prop.Schema)
+
+		newUnionAllExpr.Children = append(newUnionAllExpr.Children, newTopNGroup)
+	}
+
+	newTopNExpr := memo.NewGroupExpr(topN)
+	newUnionAllGroup := memo.NewGroupWithSchema(newUnionAllExpr, unionAll.Schema())
+	newTopNExpr.SetChildren(newUnionAllGroup)
+	newTopNExpr.AddAppliedRule(r)
+	return []*memo.GroupExpr{newTopNExpr}, true, false, nil
+}
+
 // MergeAggregationProjection merges the Projection below an Aggregation as a new Aggregation.
 // The Projection may be regenerated in the ImplementationPhase. But this rule allows the
 // Aggregation to match other rules, such as MergeAdjacentAggregation.
@@ -1055,4 +1107,37 @@ func (r *MergeAggregationProjection) OnTransform(old *memo.ExprIter) (newExprs [
 	newAggExpr := memo.NewGroupExpr(newAgg)
 	newAggExpr.SetChildren(old.Children[0].GetExpr().Children...)
 	return []*memo.GroupExpr{newAggExpr}, true, false, nil
+}
+
+// MergeAdjacentSelection merge adjacent selection.
+type MergeAdjacentSelection struct {
+	baseRule
+}
+
+// NewRuleMergeAdjacentSelection creates a new Transformation MergeAdjacentSelection.
+// The pattern of this rule is `Selection->Selection->X`.
+func NewRuleMergeAdjacentSelection() Transformation {
+	rule := &MergeAdjacentSelection{}
+	rule.pattern = memo.BuildPattern(
+		memo.OperandSelection,
+		memo.EngineAll,
+		memo.NewPattern(memo.OperandSelection, memo.EngineAll),
+	)
+	return rule
+}
+
+// OnTransform implements Transformation interface.
+// This rule tries to merge adjacent selection, with no simplification.
+func (r *MergeAdjacentSelection) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
+	sel := old.GetExpr().ExprNode.(*plannercore.LogicalSelection)
+	child := old.Children[0].GetExpr().ExprNode.(*plannercore.LogicalSelection)
+	childGroups := old.Children[0].GetExpr().Children
+
+	conditions := make([]expression.Expression, 0, len(sel.Conditions)+len(child.Conditions))
+	conditions = append(conditions, sel.Conditions...)
+	conditions = append(conditions, child.Conditions...)
+	newSel := plannercore.LogicalSelection{Conditions: conditions}.Init(sel.SCtx(), sel.SelectBlockOffset())
+	newSelExpr := memo.NewGroupExpr(newSel)
+	newSelExpr.SetChildren(childGroups...)
+	return []*memo.GroupExpr{newSelExpr}, true, false, nil
 }
