@@ -26,7 +26,7 @@ import (
 	"golang.org/x/net/context"
 )
 
-func (s *testSuite) TestAdminCheckIndexRange(c *C) {
+func (s *testSuite1) TestAdminCheckIndexRange(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec(`drop table if exists check_index_test;`)
@@ -735,7 +735,7 @@ func (s *testSuite) TestAdminCheckTable(c *C) {
 	tk.MustExec(`admin check table t1;`)
 }
 
-func (s *testSuite) TestAdminCheckPrimaryIndex(c *C) {
+func (s *testSuite1) TestAdminCheckPrimaryIndex(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a bigint unsigned primary key, b int, c int, index idx(a, b));")

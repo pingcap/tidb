@@ -285,7 +285,7 @@ func (s *testSuite) TestInsert(c *C) {
 	tk.MustQuery("select * from t").Check(testkit.Rows("1 1"))
 }
 
-func (s *testSuite) TestMultiBatch(c *C) {
+func (s *testSuiteP2) TestMultiBatch(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t0 (i int)")
@@ -1000,7 +1000,7 @@ func (s *testSuite) TestPartitionedTableReplace(c *C) {
 	r.Check(testkit.Rows("111 2"))
 }
 
-func (s *testSuite) TestUpdate(c *C) {
+func (s *testSuite8) TestUpdate(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	s.fillData(tk, "update_test")

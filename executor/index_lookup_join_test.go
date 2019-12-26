@@ -20,7 +20,7 @@ import (
 	"github.com/pingcap/tidb/util/testkit"
 )
 
-func (s *testSuite) TestIndexLookupJoinHang(c *C) {
+func (s *testSuite1) TestIndexLookupJoinHang(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("create table idxJoinOuter (a int unsigned)")
 	tk.MustExec("create table idxJoinInner (a int unsigned unique)")
@@ -38,7 +38,7 @@ func (s *testSuite) TestIndexLookupJoinHang(c *C) {
 	rs.Close()
 }
 
-func (s *testSuite) TestInapplicableIndexJoinHint(c *C) {
+func (s *testSuite1) TestInapplicableIndexJoinHint(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec(`drop table if exists t1, t2;`)
 	tk.MustExec(`create table t1(a bigint, b bigint);`)
@@ -66,7 +66,7 @@ func (s *testSuite) TestIndexJoinOverflow(c *C) {
 	tk.MustQuery(`select /*+ TIDB_INLJ(t2) */ * from t1 join t2 on t1.a = t2.a;`).Check(testkit.Rows())
 }
 
-func (s *testSuite) TestIndexJoinUnionScan(c *C) {
+func (s *testSuite1) TestIndexJoinUnionScan(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("create table t1(id int primary key, a int)")
 	tk.MustExec("create table t2(id int primary key, a int, b int, key idx_a(a))")
@@ -91,7 +91,7 @@ func (s *testSuite) TestIndexJoinUnionScan(c *C) {
 	tk.MustExec("rollback")
 }
 
-func (s *testSuite) TestBatchIndexJoinUnionScan(c *C) {
+func (s *testSuite1) TestBatchIndexJoinUnionScan(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("create table t1(id int primary key, a int)")
 	tk.MustExec("create table t2(id int primary key, a int, key idx_a(a))")
