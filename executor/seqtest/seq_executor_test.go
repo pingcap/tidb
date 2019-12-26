@@ -1177,7 +1177,6 @@ func (s *testOOMSuite) SetUpSuite(c *C) {
 	var err error
 	s.store, err = mockstore.NewMockTikvStore()
 	c.Assert(err, IsNil)
-	session.SetSchemaLease(0)
 	domain.RunAutoAnalyze = false
 	s.do, err = session.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
@@ -1197,13 +1196,12 @@ func (s *testOOMSuite) registerHook() {
 }
 
 func (s *testOOMSuite) TestDistSQLMemoryControl(c *C) {
-	log.SetLevel(zap.WarnLevel)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (id int, a int, b int, index idx_a(`a`))")
 	tk.MustExec("insert into t values (1,1,1), (2,2,2), (3,3,3)")
 
+	log.SetLevel(zap.WarnLevel)
 	s.oom.tracker = ""
 	tk.MustQuery("select * from t")
 	c.Assert(s.oom.tracker, Equals, "")
@@ -1230,59 +1228,59 @@ func (s *testOOMSuite) TestDistSQLMemoryControl(c *C) {
 }
 
 func (s *testOOMSuite) TestMemTracker4InsertAndReplaceExec(c *C) {
-	log.SetLevel(zap.InfoLevel)
+	//log.SetLevel(zap.FatalLevel)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t (id int, a int, b int, index idx_a(`a`))")
+	tk.MustExec("create table t1 (id int, a int, b int, index idx_a(`a`))")
 
+	log.SetLevel(zap.InfoLevel)
 	s.oom.tracker = ""
-	tk.MustExec("insert into t values (1,1,1), (2,2,2), (3,3,3)")
+	tk.MustExec("insert into t1 values (1,1,1), (2,2,2), (3,3,3)")
 	c.Assert(s.oom.tracker, Equals, "")
 	tk.Se.GetSessionVars().MemQuotaQuery = 1
-	tk.MustExec("insert into t values (1,1,1), (2,2,2), (3,3,3)")
+	tk.MustExec("insert into t1 values (1,1,1), (2,2,2), (3,3,3)")
 	c.Assert(s.oom.tracker, Matches, "expensive_query during bootstrap phase")
 	tk.Se.GetSessionVars().MemQuotaQuery = -1
 
 	s.oom.tracker = ""
-	tk.MustExec("replace into t values (1,1,1), (2,2,2), (3,3,3)")
+	tk.MustExec("replace into t1 values (1,1,1), (2,2,2), (3,3,3)")
 	c.Assert(s.oom.tracker, Equals, "")
 	tk.Se.GetSessionVars().MemQuotaQuery = 1
-	tk.MustExec("replace into t values (1,1,1), (2,2,2), (3,3,3)")
+	tk.MustExec("replace into t1 values (1,1,1), (2,2,2), (3,3,3)")
 	c.Assert(s.oom.tracker, Matches, "expensive_query during bootstrap phase")
 	tk.Se.GetSessionVars().MemQuotaQuery = -1
 
 	s.oom.tracker = ""
-	tk.MustExec("insert into t select * from t")
+	tk.MustExec("insert into t1 select * from t")
 	c.Assert(s.oom.tracker, Equals, "")
 	tk.Se.GetSessionVars().MemQuotaQuery = 1
-	tk.MustExec("insert into t select * from t")
+	tk.MustExec("insert into t1 select * from t")
 	c.Assert(s.oom.tracker, Matches, "expensive_query during bootstrap phase")
 	tk.Se.GetSessionVars().MemQuotaQuery = -1
 
 	s.oom.tracker = ""
-	tk.MustExec("replace into t select * from t")
+	tk.MustExec("replace into t1 select * from t")
 	c.Assert(s.oom.tracker, Equals, "")
 	tk.Se.GetSessionVars().MemQuotaQuery = 1
-	tk.MustExec("replace into t select * from t")
+	tk.MustExec("replace into t1 select * from t")
 	c.Assert(s.oom.tracker, Matches, "expensive_query during bootstrap phase")
 	tk.Se.GetSessionVars().MemQuotaQuery = -1
 
 	tk.Se.GetSessionVars().DMLBatchSize = 1
 	tk.Se.GetSessionVars().BatchInsert = true
 	s.oom.tracker = ""
-	tk.MustExec("insert into t values (1,1,1), (2,2,2), (3,3,3)")
+	tk.MustExec("insert into t1 values (1,1,1), (2,2,2), (3,3,3)")
 	c.Assert(s.oom.tracker, Equals, "")
 	tk.Se.GetSessionVars().MemQuotaQuery = 1
-	tk.MustExec("insert into t values (1,1,1), (2,2,2), (3,3,3)")
+	tk.MustExec("insert into t1 values (1,1,1), (2,2,2), (3,3,3)")
 	c.Assert(s.oom.tracker, Matches, "expensive_query during bootstrap phase")
 	tk.Se.GetSessionVars().MemQuotaQuery = -1
 
 	s.oom.tracker = ""
-	tk.MustExec("replace into t values (1,1,1), (2,2,2), (3,3,3)")
+	tk.MustExec("replace into t1 values (1,1,1), (2,2,2), (3,3,3)")
 	c.Assert(s.oom.tracker, Equals, "")
 	tk.Se.GetSessionVars().MemQuotaQuery = 1
-	tk.MustExec("replace into t values (1,1,1), (2,2,2), (3,3,3)")
+	tk.MustExec("replace into t1 values (1,1,1), (2,2,2), (3,3,3)")
 	c.Assert(s.oom.tracker, Matches, "expensive_query during bootstrap phase")
 	tk.Se.GetSessionVars().MemQuotaQuery = -1
 }
