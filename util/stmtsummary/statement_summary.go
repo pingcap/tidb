@@ -783,7 +783,7 @@ func (ssElement *stmtSummaryByDigestElement) toDatum(ssbd *stmtSummaryByDigest) 
 
 	plan, err := plancodec.DecodePlan(ssElement.samplePlan)
 	if err != nil {
-		logutil.BgLogger().Error("decode plan in slow log failed", zap.String("plan", ssElement.samplePlan), zap.Error(err))
+		logutil.BgLogger().Error("decode plan in statement summary failed", zap.String("plan", ssElement.samplePlan), zap.Error(err))
 		plan = ""
 	}
 
