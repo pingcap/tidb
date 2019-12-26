@@ -33,8 +33,10 @@ import (
 	"github.com/pingcap/failpoint"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/parser"
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/session"
@@ -95,6 +97,51 @@ func (s *seqTestSuite) SetUpSuite(c *C) {
 func (s *seqTestSuite) TearDownSuite(c *C) {
 	s.domain.Close()
 	s.store.Close()
+}
+
+func (s *seqTestSuite) TestEarlyClose(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table earlyclose (id int primary key)")
+
+	// Insert 1000 rows.
+	var values []string
+	for i := 0; i < 1000; i++ {
+		values = append(values, fmt.Sprintf("(%d)", i))
+	}
+	tk.MustExec("insert earlyclose values " + strings.Join(values, ","))
+
+	// Get table ID for split.
+	dom := domain.GetDomain(tk.Se)
+	is := dom.InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("earlyclose"))
+	c.Assert(err, IsNil)
+	tblID := tbl.Meta().ID
+
+	// Split the table.
+	s.cluster.SplitTable(s.mvccStore, tblID, 500)
+
+	ctx := context.Background()
+	for i := 0; i < 500; i++ {
+		rss, err1 := tk.Se.Execute(ctx, "select * from earlyclose order by id")
+		c.Assert(err1, IsNil)
+		rs := rss[0]
+		chk := rs.NewChunk()
+		err = rs.Next(ctx, chk)
+		c.Assert(err, IsNil)
+		rs.Close()
+	}
+
+	// Goroutine should not leak when error happen.
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/handleTaskOnceError", `return(true)`), IsNil)
+	defer func() { c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/handleTaskOnceError"), IsNil) }()
+	rss, err := tk.Se.Execute(ctx, "select * from earlyclose")
+	c.Assert(err, IsNil)
+	rs := rss[0]
+	chk := rs.NewChunk()
+	err = rs.Next(ctx, chk)
+	c.Assert(err, NotNil)
+	rs.Close()
 }
 
 type stats struct {
@@ -839,4 +886,80 @@ func (s *seqTestSuite) TestAutoIDInRetry(c *C) {
 
 	tk.MustExec("insert into t values ()")
 	tk.MustQuery(`select * from t`).Check(testkit.Rows("1", "2", "3", "4", "5"))
+}
+
+func (s *seqTestSuite) TestBatchDML(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (i int key, j varchar(20))")
+	originConfig := config.GetGlobalConfig().EnableBatchDML
+	originLimit := atomic.LoadUint64(&kv.TxnEntryCountLimit)
+	defer func() {
+		config.GetGlobalConfig().EnableBatchDML = originConfig
+		atomic.StoreUint64(&kv.TxnEntryCountLimit, originLimit)
+	}()
+	atomic.StoreUint64(&kv.TxnEntryCountLimit, 2)
+	tk.MustExec("set @@session.tidb_dml_batch_size=1;")
+
+	// Test auto commit transaction.
+	config.GetGlobalConfig().EnableBatchDML = true
+	tk.MustExec("insert into t values (1, 'a'), (2, 'b'), (3, 'c')")
+	tk.MustQuery("select * from t order by i").Check(testkit.Rows("1 a", "2 b", "3 c"))
+	tk.MustExec("replace into t values (1, '-a'), (2, '-b'), (3, '-c')")
+	tk.MustQuery("select * from t order by i").Check(testkit.Rows("1 -a", "2 -b", "3 -c"))
+	tk.MustExec("update t set i = -i")
+	tk.MustQuery("select * from t order by i desc").Check(testkit.Rows("-1 -a", "-2 -b", "-3 -c"))
+	tk.MustExec("delete from t")
+	tk.MustQuery("select * from t").Check(testkit.Rows())
+
+	// Test transaction block.
+	tk.MustExec("begin")
+	tk.MustExec("insert into t values (1, 'a'), (2, 'b'), (3, 'c')")
+	tk.MustQuery("select * from t order by i").Check(testkit.Rows("1 a", "2 b", "3 c"))
+	tk.MustExec("replace into t values (1, '-a'), (2, '-b'), (3, '-c')")
+	tk.MustQuery("select * from t order by i").Check(testkit.Rows("1 -a", "2 -b", "3 -c"))
+	tk.MustExec("update t set i = -i")
+	tk.MustQuery("select * from t order by i desc").Check(testkit.Rows("-1 -a", "-2 -b", "-3 -c"))
+	tk.MustExec("delete from t")
+	tk.MustQuery("select * from t").Check(testkit.Rows())
+	tk.MustExec("commit")
+
+	// Test disable batch DML.
+	config.GetGlobalConfig().EnableBatchDML = false
+	_, err := tk.Exec("insert into t values (1, 'a'), (2, 'b'), (3, 'c')")
+	c.Assert(kv.ErrTxnTooLarge.Equal(err), IsTrue)
+	tk.MustQuery("select * from t").Check(testkit.Rows())
+	_, err = tk.Exec("replace into t values (1, '-a'), (2, '-b'), (3, '-c')")
+	c.Assert(kv.ErrTxnTooLarge.Equal(err), IsTrue)
+	tk.MustQuery("select * from t").Check(testkit.Rows())
+	tk.MustExec("insert into t values (1, 'a')")
+	tk.MustExec("insert into t values (2, 'b')")
+	tk.MustExec("insert into t values (3, 'c')")
+	_, err = tk.Exec("update t set i = -i")
+	c.Assert(kv.ErrTxnTooLarge.Equal(err), IsTrue)
+	tk.MustQuery("select * from t order by i").Check(testkit.Rows("1 a", "2 b", "3 c"))
+	_, err = tk.Exec("delete from t")
+	c.Assert(kv.ErrTxnTooLarge.Equal(err), IsTrue)
+	tk.MustQuery("select * from t order by i").Check(testkit.Rows("1 a", "2 b", "3 c"))
+
+	// Test batched retry
+	config.GetGlobalConfig().EnableBatchDML = true
+	atomic.StoreUint64(&kv.TxnEntryCountLimit, 10)
+	tk1 := testkit.NewTestKit(c, s.store)
+	tk1.MustExec("use test")
+	tk.MustExec("set @@session.tidb_dml_batch_size=2;")
+
+	tk.MustExec("begin")
+	tk1.MustExec("update t set j = 'e'")
+	_, err = tk.Exec("update t set j = 'd'")
+	c.Assert(executor.ErrBatchDMLFail.Equal(err), IsTrue, Commentf("error %s", err))
+	tk.MustQuery("select * from t order by i").Check(testkit.Rows("1 e", "2 e", "3 e"))
+
+	// Test normal retry
+	config.GetGlobalConfig().EnableBatchDML = false
+	tk.MustExec("begin")
+	tk1.MustExec("update t set j = 'f' where i = 1")
+	tk.MustExec("update t set j = 'd' where i = 1")
+	tk.MustExec("commit")
+	tk.MustQuery("select * from t order by i").Check(testkit.Rows("1 d", "2 e", "3 e"))
 }
