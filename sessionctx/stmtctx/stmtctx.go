@@ -446,6 +446,7 @@ func (sc *StatementContext) GetExecDetails() execdetails.ExecDetails {
 	var details execdetails.ExecDetails
 	sc.mu.Lock()
 	details = sc.mu.execDetails
+	details.LockKeysDuration = sc.LockKeysDuration
 	sc.mu.Unlock()
 	return details
 }
