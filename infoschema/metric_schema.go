@@ -161,7 +161,7 @@ var MetricTableMap = map[string]MetricTableDef{
 		PromQL:   `histogram_quantile($QUANTILE, sum(rate(tidb_server_handle_query_duration_seconds_bucket{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (le,sql_type,instance))`,
 		Labels:   []string{"instance", "sql_type"},
 		Quantile: 0.90,
-		Comment:  "TiDB query durations by histogram buckets",
+		Comment:  "TiDB query durations(second)",
 	},
 	"qps": {
 		PromQL:  `sum(rate(tidb_server_query_total{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (result,type,instance)`,
@@ -179,22 +179,22 @@ var MetricTableMap = map[string]MetricTableDef{
 	"failed_query_opm": {
 		PromQL:  `sum(increase(tidb_server_execute_error_total{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (type, instance)`,
 		Labels:  []string{"instance", "type"},
-		Comment: "TiDB failed query statistics",
+		Comment: "TiDB failed query opm",
 	},
 	"slow_query_time": {
 		PromQL:   "histogram_quantile($QUANTILE, sum(rate(tidb_server_slow_query_process_duration_seconds_bucket[$RANGE_DURATION])) by (le))",
 		Quantile: 0.90,
-		Comment:  "TiDB slow query statistics with slow query time",
+		Comment:  "TiDB slow query statistics with slow query time(second)",
 	},
 	"slow_query_cop_process_time": {
 		PromQL:   "histogram_quantile($QUANTILE, sum(rate(tidb_server_slow_query_cop_duration_seconds_bucket[$RANGE_DURATION])) by (le))",
-		Comment:  "TiDB slow query statistics with slow query total cop process time",
 		Quantile: 0.90,
+		Comment:  "TiDB slow query statistics with slow query total cop process time(second)",
 	},
 	"slow_query_cop_wait_time": {
 		PromQL:   "histogram_quantile($QUANTILE, sum(rate(tidb_server_slow_query_wait_duration_seconds_bucket[$RANGE_DURATION])) by (le))",
-		Comment:  "TiDB slow query statistics with slow query total cop wait time",
 		Quantile: 0.90,
+		Comment:  "TiDB slow query statistics with slow query total cop wait time(second)",
 	},
 	"ops_internal": {
 		PromQL:  "sum(rate(tidb_session_restricted_sql_total[$RANGE_DURATION]))",
@@ -232,7 +232,7 @@ var MetricTableMap = map[string]MetricTableDef{
 	"go_gc_duration": {
 		PromQL:  "rate(go_gc_duration_seconds_sum{$LABEL_CONDITIONS}[$RANGE_DURATION])",
 		Labels:  []string{"instance", "job"},
-		Comment: "Go garbage collection time cost",
+		Comment: "Go garbage collection time cost(second)",
 	},
 	"go_threads": {
 		PromQL:  "go_threads{$LABEL_CONDITIONS}",
@@ -280,10 +280,10 @@ var MetricTableMap = map[string]MetricTableDef{
 		Labels:  []string{"instance"},
 	},
 	"get_token_duration": {
-		Comment:  "Duration (us) for getting token, it should be small until concurrency limit is reached.",
 		PromQL:   "histogram_quantile($QUANTILE, sum(rate(tidb_server_get_token_duration_seconds_bucket{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (le,instance))",
 		Labels:   []string{"instance"},
 		Quantile: 0.99,
+		Comment:  "Duration (us) for getting token, it should be small until concurrency limit is reached(second)",
 	},
 	"tidb_handshake_error_ops": {
 		PromQL:  "sum(increase(tidb_server_handshake_error_total{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (instance)",
@@ -298,8 +298,8 @@ var MetricTableMap = map[string]MetricTableDef{
 	"transaction_duration": {
 		PromQL:   "histogram_quantile($QUANTILE, sum(rate(tidb_session_transaction_duration_seconds_bucket{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (le,type,sql_type,instance))",
 		Labels:   []string{"instance", "type", "sql_type"},
-		Comment:  "Bucketed histogram of transaction execution durations, including retry",
 		Quantile: 0.95,
+		Comment:  "Bucketed histogram of transaction execution durations, including retry(second)",
 	},
 	"transaction_retry_num": {
 		PromQL:   "histogram_quantile($QUANTILE, sum(rate(tidb_session_retry_num_bucket{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (le,instance))",
@@ -321,26 +321,26 @@ var MetricTableMap = map[string]MetricTableDef{
 	"tidb_transaction_local_latch_wait_duration": {
 		PromQL:   "histogram_quantile($QUANTILE, sum(rate(tidb_tikvclient_local_latch_wait_seconds_bucket{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (le,instance))",
 		Labels:   []string{"instance"},
-		Comment:  "TiDB transaction latch wait time on key value storage",
+		Comment:  "TiDB transaction latch wait time on key value storage(second)",
 		Quantile: 0.95,
 	},
 	"parse_duration": {
-		Comment:  "The time cost of parsing SQL to AST",
 		PromQL:   "histogram_quantile($QUANTILE, sum(rate(tidb_session_parse_duration_seconds_bucket{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (le,sql_type,instance))",
 		Labels:   []string{"instance", "sql_type"},
 		Quantile: 0.95,
+		Comment:  "The time cost of parsing SQL to AST(second)",
 	},
 	"compile_duration": {
-		Comment:  "The time cost of building the query plan",
 		PromQL:   "histogram_quantile($QUANTILE, sum(rate(tidb_session_compile_duration_seconds_bucket{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (le, sql_type,instance))",
 		Labels:   []string{"instance", "sql_type"},
 		Quantile: 0.95,
+		Comment:  "The time cost of building the query plan(second)",
 	},
 	"execute_duration": {
-		Comment:  "The time cost of executing the SQL which does not include the time to get the results of the query .",
 		PromQL:   "histogram_quantile($QUANTILE, sum(rate(tidb_session_execute_duration_seconds_bucket{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (le, sql_type, instance))",
 		Labels:   []string{"instance", "sql_type"},
 		Quantile: 0.95,
+		Comment:  "The time cost of executing the SQL which does not include the time to get the results of the query(second)",
 	},
 	"expensive_executors_ops": {
 		Comment: "TiDB executors using more cpu and memory resources",
@@ -355,7 +355,7 @@ var MetricTableMap = map[string]MetricTableDef{
 	"uptime": {
 		PromQL:  "(time() - process_start_time_seconds{$LABEL_CONDITIONS})",
 		Labels:  []string{"instance", "job"},
-		Comment: "TiDB uptime since last restart",
+		Comment: "TiDB uptime since last restart(second)",
 	},
 	"up": {
 		PromQL:  `up{$LABEL_CONDITIONS}`,
