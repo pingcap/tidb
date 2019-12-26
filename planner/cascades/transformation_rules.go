@@ -71,6 +71,7 @@ var defaultTransformationMap = map[memo.Operand][]Transformation{
 	},
 	memo.OperandTopN: {
 		NewRulePushTopNDownProjection(),
+		NewRulePushTopNDownUnionAll(),
 		NewRulePushTopNDownTiKVSingleGather(),
 	},
 }
@@ -999,6 +1000,54 @@ func (r *PushTopNDownProjection) OnTransform(old *memo.ExprIter) (newExprs []*me
 	return []*memo.GroupExpr{projExpr}, true, false, nil
 }
 
+// PushTopNDownUnionAll pushes topN to union all.
+type PushTopNDownUnionAll struct {
+	baseRule
+}
+
+// NewRulePushTopNDownUnionAll creates a new Transformation PushTopNDownUnionAll.
+// The pattern of this rule is `TopN->UnionAll->X`.
+func NewRulePushTopNDownUnionAll() Transformation {
+	rule := &PushTopNDownUnionAll{}
+	rule.pattern = memo.BuildPattern(
+		memo.OperandTopN,
+		memo.EngineTiDBOnly,
+		memo.NewPattern(memo.OperandUnionAll, memo.EngineTiDBOnly),
+	)
+	return rule
+}
+
+// Use appliedRuleSet in GroupExpr to avoid re-apply rules.
+func (r *PushTopNDownUnionAll) Match(expr *memo.ExprIter) bool {
+	return !expr.GetExpr().HasAppliedRule(r)
+}
+
+// It will transform `TopN->UnionAll->X` to `TopN->UnionAll->TopN->X`.
+func (r *PushTopNDownUnionAll) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
+	topN := old.GetExpr().ExprNode.(*plannercore.LogicalTopN)
+	unionAll := old.Children[0].GetExpr().ExprNode.(*plannercore.LogicalUnionAll)
+
+	newTopN := plannercore.LogicalTopN{
+		Count:   topN.Count + topN.Offset,
+		ByItems: topN.ByItems,
+	}.Init(topN.SCtx(), topN.SelectBlockOffset())
+
+	newUnionAllExpr := memo.NewGroupExpr(unionAll)
+	for _, childGroup := range old.Children[0].GetExpr().Children {
+		newTopNExpr := memo.NewGroupExpr(newTopN)
+		newTopNExpr.Children = append(newTopNExpr.Children, childGroup)
+		newTopNGroup := memo.NewGroupWithSchema(newTopNExpr, childGroup.Prop.Schema)
+
+		newUnionAllExpr.Children = append(newUnionAllExpr.Children, newTopNGroup)
+	}
+
+	newTopNExpr := memo.NewGroupExpr(topN)
+	newUnionAllGroup := memo.NewGroupWithSchema(newUnionAllExpr, unionAll.Schema())
+	newTopNExpr.SetChildren(newUnionAllGroup)
+	newTopNExpr.AddAppliedRule(r)
+	return []*memo.GroupExpr{newTopNExpr}, true, false, nil
+}
+
 // PushTopNDownTiKVSingleGather pushes the top-n down to child of TiKVSingleGather.
 type PushTopNDownTiKVSingleGather struct {
 	baseRule
@@ -1012,13 +1061,14 @@ func NewRulePushTopNDownTiKVSingleGather() Transformation {
 		memo.OperandTopN,
 		memo.EngineTiDBOnly,
 		memo.NewPattern(memo.OperandTiKVSingleGather, memo.EngineTiDBOnly),
-	)
+    	)
 	return rule
 }
 
 // Match implements Transformation interface.
 func (r *PushTopNDownTiKVSingleGather) Match(expr *memo.ExprIter) bool {
-	return !expr.GetExpr().HasAppliedRule(r)
+  // Use appliedRuleSet in GroupExpr to avoid re-apply rules.
+  return !expr.GetExpr().HasAppliedRule(r)
 }
 
 // OnTransform implements Transformation interface.
