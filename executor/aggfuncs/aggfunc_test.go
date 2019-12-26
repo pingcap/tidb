@@ -174,6 +174,12 @@ func getDataGenFunc(ft *types.FieldType) func(i int) types.Datum {
 			e, _ := types.ParseEnumValue(elems, uint64(i+1))
 			return types.NewMysqlEnumDatum(e)
 		}
+	case mysql.TypeSet:
+		elems := []string{"a", "b", "c", "d", "e"}
+		return func(i int) types.Datum {
+			e, _ := types.ParseSetValue(elems, uint64(i+1))
+			return types.NewMysqlSetDatum(e)
+		}
 	}
 	return nil
 }
