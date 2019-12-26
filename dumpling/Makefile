@@ -18,4 +18,4 @@ bin/%: cmd/%/main.go $(wildcard v4/**/*.go)
 	$(GO) build $(GOFLAGS) -tags codes -o $@ $<
 
 test:
-	$(GO) list ./... | xargs $(GO) test $(GOFLAGS)
+	$(GO) list ./... | xargs $(GO) test $(GOFLAGS) -coverprofile=coverage.txt -covermode=atomic
