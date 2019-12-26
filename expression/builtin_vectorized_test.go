@@ -796,12 +796,6 @@ func (s *testEvaluatorSuite) TestSleepVec(c *C) {
 	f, err := fc.getFunction(ctx, s.datumsToConstants(d))
 	c.Assert(err, IsNil)
 
-	start := time.Now()
-	go func() {
-		time.Sleep(7 * time.Second)
-		atomic.CompareAndSwapUint32(&ctx.GetSessionVars().Killed, 0, 1)
-	}()
-
 	a := float64(3)
 	da := types.Datum{}
 	da.SetValue(a)
@@ -811,21 +805,31 @@ func (s *testEvaluatorSuite) TestSleepVec(c *C) {
 	input := chunk.New([]*types.FieldType{tp}, 1, 1)
 	buf := chunk.NewColumn(types.NewFieldType(mysql.TypeLonglong), 1)
 	input.AppendDatum(0, &da)
+
+	start := time.Now()
+	go func() {
+		time.Sleep(1 * time.Second)
+		atomic.CompareAndSwapUint32(&ctx.GetSessionVars().Killed, 0, 1)
+	}()
 	c.Assert(f.vecEvalInt(input, buf), IsNil)
 
 	sub := time.Since(start)
-	c.Assert(buf.IsNull(0), IsFalse)
+	c.Assert(buf.IsNull(0), IsTrue)
 	c.Assert(buf.GetInt64(0), Equals, int64(1))
 	c.Assert(sub.Nanoseconds(), LessEqual, int64(2*1e9))
 	c.Assert(sub.Nanoseconds(), GreaterEqual, int64(1*1e9))
 
-	start = time.Now()
 	n := 3
 	input = chunk.New([]*types.FieldType{tp}, n, n)
 	buf = chunk.NewColumn(types.NewFieldType(mysql.TypeLonglong), n)
 	for i := 0; i < n; i++ {
 		input.AppendDatum(0, &da)
 	}
+	start = time.Now()
+	go func() {
+		time.Sleep(3 * time.Second)
+		atomic.CompareAndSwapUint32(&ctx.GetSessionVars().Killed, 0, 1)
+	}()
 	c.Assert(f.vecEvalInt(input, buf), IsNil)
 
 	sub = time.Since(start)
