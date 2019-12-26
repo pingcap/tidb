@@ -72,6 +72,7 @@ var defaultTransformationMap = map[memo.Operand][]Transformation{
 	memo.OperandTopN: {
 		NewRulePushTopNDownProjection(),
 		NewRulePushTopNDownOuterJoin(),
+		NewRulePushTopNDownUnionAll(),
 	},
 }
 
@@ -959,7 +960,6 @@ func (r *PushTopNDownOuterJoin) Match(expr *memo.ExprIter) bool {
 }
 
 func pushTopNDownOuterJoinToChild(topN *plannercore.LogicalTopN, childGroup *memo.Group, otherGroup *memo.Group) *memo.Group {
-
 	for _, by := range topN.ByItems {
 		cols := expression.ExtractColumns(by.Expr)
 		for _, col := range cols {
@@ -1003,7 +1003,6 @@ func (r *PushTopNDownOuterJoin) OnTransform(old *memo.ExprIter) (newExprs []*mem
 
 	newJoinExpr := memo.NewGroupExpr(join)
 	newJoinExpr.SetChildren(leftGroup, rightGroup)
-	// newJoinExpr.AddAppliedRule(r)
 	newTopNExpr := memo.NewGroupExpr(topN)
 	newTopNExpr.SetChildren(memo.NewGroupWithSchema(newJoinExpr, joinSchema))
 	newTopNExpr.AddAppliedRule(r)
@@ -1071,6 +1070,56 @@ func (r *PushTopNDownProjection) OnTransform(old *memo.ExprIter) (newExprs []*me
 	topNGroup := memo.NewGroupWithSchema(topNExpr, childGroup.Prop.Schema)
 	projExpr.SetChildren(topNGroup)
 	return []*memo.GroupExpr{projExpr}, true, false, nil
+}
+
+// PushTopNDownUnionAll pushes topN to union all.
+type PushTopNDownUnionAll struct {
+	baseRule
+}
+
+// NewRulePushTopNDownUnionAll creates a new Transformation PushTopNDownUnionAll.
+// The pattern of this rule is `TopN->UnionAll->X`.
+func NewRulePushTopNDownUnionAll() Transformation {
+	rule := &PushTopNDownUnionAll{}
+	rule.pattern = memo.BuildPattern(
+		memo.OperandTopN,
+		memo.EngineTiDBOnly,
+		memo.NewPattern(memo.OperandUnionAll, memo.EngineTiDBOnly),
+	)
+	return rule
+}
+
+// Match implements Transformation interface.
+// Use appliedRuleSet in GroupExpr to avoid re-apply rules.
+func (r *PushTopNDownUnionAll) Match(expr *memo.ExprIter) bool {
+	return !expr.GetExpr().HasAppliedRule(r)
+}
+
+// OnTransform implements Transformation interface.
+// It will transform `TopN->UnionAll->X` to `TopN->UnionAll->TopN->X`.
+func (r *PushTopNDownUnionAll) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
+	topN := old.GetExpr().ExprNode.(*plannercore.LogicalTopN)
+	unionAll := old.Children[0].GetExpr().ExprNode.(*plannercore.LogicalUnionAll)
+
+	newTopN := plannercore.LogicalTopN{
+		Count:   topN.Count + topN.Offset,
+		ByItems: topN.ByItems,
+	}.Init(topN.SCtx(), topN.SelectBlockOffset())
+
+	newUnionAllExpr := memo.NewGroupExpr(unionAll)
+	for _, childGroup := range old.Children[0].GetExpr().Children {
+		newTopNExpr := memo.NewGroupExpr(newTopN)
+		newTopNExpr.Children = append(newTopNExpr.Children, childGroup)
+		newTopNGroup := memo.NewGroupWithSchema(newTopNExpr, childGroup.Prop.Schema)
+
+		newUnionAllExpr.Children = append(newUnionAllExpr.Children, newTopNGroup)
+	}
+
+	newTopNExpr := memo.NewGroupExpr(topN)
+	newUnionAllGroup := memo.NewGroupWithSchema(newUnionAllExpr, unionAll.Schema())
+	newTopNExpr.SetChildren(newUnionAllGroup)
+	newTopNExpr.AddAppliedRule(r)
+	return []*memo.GroupExpr{newTopNExpr}, true, false, nil
 }
 
 // MergeAggregationProjection merges the Projection below an Aggregation as a new Aggregation.
