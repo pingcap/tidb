@@ -38,6 +38,8 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"go.etcd.io/etcd/clientv3"
 	"go.uber.org/zap"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/keepalive"
 )
 
 type storeCache struct {
@@ -71,6 +73,7 @@ func (d Driver) Open(path string) (kv.Storage, error) {
 	defer mc.Unlock()
 
 	security := config.GetGlobalConfig().Security
+	tikvConfig := config.GetGlobalConfig().TiKVClient
 	txnLocalLatches := config.GetGlobalConfig().TxnLocalLatches
 	etcdAddrs, disableGC, err := parsePath(path)
 	if err != nil {
@@ -81,7 +84,13 @@ func (d Driver) Open(path string) (kv.Storage, error) {
 		CAPath:   security.ClusterSSLCA,
 		CertPath: security.ClusterSSLCert,
 		KeyPath:  security.ClusterSSLKey,
-	})
+	}, pd.WithGRPCDialOptions(
+		grpc.WithKeepaliveParams(keepalive.ClientParameters{
+			Time:                time.Duration(tikvConfig.GrpcKeepAliveTime) * time.Second,
+			Timeout:             time.Duration(tikvConfig.GrpcKeepAliveTimeout) * time.Second,
+			PermitWithoutStream: true,
+		}),
+	))
 
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -278,7 +287,6 @@ func (s *tikvStore) BeginWithStartTS(startTS uint64) (kv.Transaction, error) {
 
 func (s *tikvStore) GetSnapshot(ver kv.Version) (kv.Snapshot, error) {
 	snapshot := newTiKVSnapshot(s, ver, s.nextReplicaReadSeed())
-	metrics.TiKVSnapshotCounter.Inc()
 	return snapshot, nil
 }
 

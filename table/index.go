@@ -31,9 +31,9 @@ type IndexIterator interface {
 
 // CreateIdxOpt contains the options will be used when creating an index.
 type CreateIdxOpt struct {
+	Ctx             context.Context
 	SkipHandleCheck bool // If true, skip the handle constraint check.
 	SkipCheck       bool // If true, skip all the unique indices constraint check.
-	Ctx             context.Context
 	Untouched       bool // If true, the index key/value is no need to commit.
 }
 
