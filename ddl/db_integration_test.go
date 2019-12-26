@@ -1995,6 +1995,22 @@ func (s *testIntegrationSuite6) TestAddExpressionIndex(c *C) {
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t (a int, b real);")
 	tk.MustGetErrCode("alter table t add primary key ((a+b));", mysql.ErrFunctionalIndexPrimaryKey)
-	tk.MustGetErrCode("alter table t add index ((rand()))", mysql.ErrGeneratedColumnFunctionIsNotAllowed)
-	tk.MustGetErrCode("alter table t add index ((now()+1))", mysql.ErrGeneratedColumnFunctionIsNotAllowed)
+	tk.MustGetErrCode("alter table t add index ((rand()));", mysql.ErrGeneratedColumnFunctionIsNotAllowed)
+	tk.MustGetErrCode("alter table t add index ((now()+1));", mysql.ErrGeneratedColumnFunctionIsNotAllowed)
+
+	tk.MustExec("alter table t add column (_V$_idx_0 int);")
+	tk.MustGetErrCode("alter table t add index idx((a+1));", mysql.ErrDupFieldName)
+	tk.MustExec("alter table t drop column _V$_idx_0;")
+	tk.MustExec("alter table t add index idx((a+1));")
+	tk.MustGetErrCode("alter table t add column (_V$_idx_0 int);", mysql.ErrDupFieldName)
+	tk.MustExec("alter table t drop index idx;")
+	tk.MustExec("alter table t add column (_V$_idx_0 int);")
+
+	tk.MustExec("alter table t add column (_V$_expression_index_0 int);")
+	tk.MustGetErrCode("alter table t add index ((a+1));", mysql.ErrDupFieldName)
+	tk.MustExec("alter table t drop column _V$_expression_index_0;")
+	tk.MustExec("alter table t add index ((a+1));")
+	tk.MustGetErrCode("alter table t drop column _V$_expression_index_0;", mysql.ErrCantDropFieldOrKey)
+
+
 }
