@@ -16,7 +16,6 @@ package cascades
 import (
 	"math"
 
-	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/expression"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	impl "github.com/pingcap/tidb/planner/implementation"
@@ -177,8 +176,7 @@ func (r *ImplTiKVDoubleReadGather) OnImplement(expr *memo.GroupExpr, reqProp *pr
 	tableScanProp := reqProp.Clone()
 	tableScanProp.Items = nil
 	reader = dg.GetPhysicalIndexLookUpReader(logicProp.Schema, logicProp.Stats.ScaleByExpectCnt(reqProp.ExpectedCnt), indexScanProp, tableScanProp)
-	if dg.HandleCol.ID == model.ExtraHandleID && !reqProp.IsEmpty() {
-		// TODO: if the origin schema for IndexLookUpReader has the `HandleCol`, we can remove the duplicated append.
+	if reader.Schema().ColumnIndex(dg.HandleCol) == -1 && !reqProp.IsEmpty() {
 		reader.Schema().Append(dg.HandleCol)
 		reader.(*plannercore.PhysicalIndexLookUpReader).ExtraHandleCol = dg.HandleCol
 		proj = plannercore.PhysicalProjection{Exprs: expression.Column2Exprs(logicProp.Schema.Columns)}.Init(dg.SCtx(), logicProp.Stats, dg.SelectBlockOffset())
