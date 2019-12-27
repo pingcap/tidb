@@ -87,6 +87,7 @@ func (c *Context) ClearValue(key fmt.Stringer) {
 	delete(c.values, key)
 }
 
+// HasDirtyContent implements sessionctx.Context ClearValue interface.
 func (c *Context) HasDirtyContent(tid int64) bool {
 	return true
 }
