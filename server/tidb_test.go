@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
@@ -220,7 +221,7 @@ func generateCert(sn int, commonName string, parentCert *x509.Certificate, paren
 
 	template := x509.Certificate{
 		SerialNumber:          big.NewInt(int64(sn)),
-		Subject:               pkix.Name{CommonName: commonName},
+		Subject:               pkix.Name{CommonName: commonName, Names: []pkix.AttributeTypeAndValue{util.MockPkixAttribute(util.CommonName, commonName)}},
 		NotBefore:             notBefore,
 		NotAfter:              notAfter,
 		KeyUsage:              x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature,

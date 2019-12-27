@@ -16,6 +16,9 @@ package privileges_test
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"fmt"
 	"strings"
 	"testing"
@@ -31,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
@@ -447,16 +451,238 @@ func (s *testPrivilegeSuite) TestSelectViewSecurity(c *C) {
 
 func (s *testPrivilegeSuite) TestRoleAdminSecurity(c *C) {
 	se := newSession(c, s.store, s.dbName)
-	mustExec(c, se, `CREATE USER 'r1'@'localhost';`)
-	mustExec(c, se, `CREATE USER 'r2'@'localhost';`)
-	mustExec(c, se, `GRANT ALL ON *.* to r1@localhost`)
+	mustExec(c, se, `CREATE USER 'ar1'@'localhost';`)
+	mustExec(c, se, `CREATE USER 'ar2'@'localhost';`)
+	mustExec(c, se, `GRANT ALL ON *.* to ar1@localhost`)
+	defer func() {
+		c.Assert(se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil), IsTrue)
+		mustExec(c, se, "drop user 'ar1'@'localhost'")
+		mustExec(c, se, "drop user 'ar2'@'localhost'")
+	}()
 
-	c.Assert(se.Auth(&auth.UserIdentity{Username: "r1", Hostname: "localhost"}, nil, nil), IsTrue)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "ar1", Hostname: "localhost"}, nil, nil), IsTrue)
 	mustExec(c, se, `create role r_test1@localhost`)
 
-	c.Assert(se.Auth(&auth.UserIdentity{Username: "r2", Hostname: "localhost"}, nil, nil), IsTrue)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "ar2", Hostname: "localhost"}, nil, nil), IsTrue)
 	_, err := se.Execute(context.Background(), `create role r_test2@localhost`)
 	c.Assert(terror.ErrorEqual(err, core.ErrSpecificAccessDenied), IsTrue)
+}
+
+func (s *testPrivilegeSuite) TestCheckCertBasedAuth(c *C) {
+	se := newSession(c, s.store, s.dbName)
+	mustExec(c, se, `CREATE USER 'r1'@'localhost';`)
+	mustExec(c, se, `CREATE USER 'r2'@'localhost' require none;`)
+	mustExec(c, se, `CREATE USER 'r3'@'localhost' require ssl;`)
+	mustExec(c, se, `CREATE USER 'r4'@'localhost' require x509;`)
+	mustExec(c, se, `CREATE USER 'r5'@'localhost' require issuer '/C=US/ST=California/L=San Francisco/O=PingCAP/OU=TiDB/CN=TiDB admin'
+		subject '/C=ZH/ST=Beijing/L=Haidian/O=PingCAP.Inc/OU=TiDB/CN=tester1' cipher 'TLS_AES_128_GCM_SHA256'`)
+	mustExec(c, se, `CREATE USER 'r6'@'localhost' require issuer '/C=US/ST=California/L=San Francisco/O=PingCAP/OU=TiDB/CN=TiDB admin'
+		subject '/C=ZH/ST=Beijing/L=Haidian/O=PingCAP.Inc/OU=TiDB/CN=tester1'`)
+	mustExec(c, se, `CREATE USER 'r7_issuer_only'@'localhost' require issuer '/C=US/ST=California/L=San Francisco/O=PingCAP/OU=TiDB/CN=TiDB admin'`)
+	mustExec(c, se, `CREATE USER 'r8_subject_only'@'localhost' require subject '/C=ZH/ST=Beijing/L=Haidian/O=PingCAP.Inc/OU=TiDB/CN=tester1'`)
+	mustExec(c, se, `CREATE USER 'r9_subject_disorder'@'localhost' require subject '/ST=Beijing/C=ZH/L=Haidian/O=PingCAP.Inc/OU=TiDB/CN=tester1'`)
+	mustExec(c, se, `CREATE USER 'r10_issuer_disorder'@'localhost' require issuer '/ST=California/C=US/L=San Francisco/O=PingCAP/OU=TiDB/CN=TiDB admin'`)
+	mustExec(c, se, `CREATE USER 'r11_cipher_only'@'localhost' require cipher 'TLS_AES_256_GCM_SHA384'`)
+	mustExec(c, se, `CREATE USER 'r12_old_tidb_user'@'localhost'`)
+	mustExec(c, se, "DELETE FROM mysql.global_priv WHERE `user` = 'r12_old_tidb_user' and `host` = 'localhost'")
+	mustExec(c, se, `CREATE USER 'r13_broken_user'@'localhost'require issuer '/C=US/ST=California/L=San Francisco/O=PingCAP/OU=TiDB/CN=TiDB admin'
+		subject '/C=ZH/ST=Beijing/L=Haidian/O=PingCAP.Inc/OU=TiDB/CN=tester1'`)
+	mustExec(c, se, "UPDATE mysql.global_priv set priv = 'abc' where `user` = 'r13_broken_user' and `host` = 'localhost'")
+	mustExec(c, se, "flush privileges")
+
+	defer func() {
+		c.Assert(se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil), IsTrue)
+		mustExec(c, se, "drop user 'r1'@'localhost'")
+		mustExec(c, se, "drop user 'r2'@'localhost'")
+		mustExec(c, se, "drop user 'r3'@'localhost'")
+		mustExec(c, se, "drop user 'r4'@'localhost'")
+		mustExec(c, se, "drop user 'r5'@'localhost'")
+		mustExec(c, se, "drop user 'r6'@'localhost'")
+		mustExec(c, se, "drop user 'r7_issuer_only'@'localhost'")
+		mustExec(c, se, "drop user 'r8_subject_only'@'localhost'")
+		mustExec(c, se, "drop user 'r9_subject_disorder'@'localhost'")
+		mustExec(c, se, "drop user 'r10_issuer_disorder'@'localhost'")
+		mustExec(c, se, "drop user 'r11_cipher_only'@'localhost'")
+		mustExec(c, se, "drop user 'r12_old_tidb_user'@'localhost'")
+		mustExec(c, se, "drop user 'r13_broken_user'@'localhost'")
+	}()
+
+	// test without ssl or ca
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "r1", Hostname: "localhost"}, nil, nil), IsTrue)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "r2", Hostname: "localhost"}, nil, nil), IsTrue)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "r3", Hostname: "localhost"}, nil, nil), IsFalse)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "r4", Hostname: "localhost"}, nil, nil), IsFalse)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "r5", Hostname: "localhost"}, nil, nil), IsFalse)
+
+	// test use ssl without ca
+	se.GetSessionVars().TLSConnectionState = &tls.ConnectionState{VerifiedChains: nil}
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "r1", Hostname: "localhost"}, nil, nil), IsTrue)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "r2", Hostname: "localhost"}, nil, nil), IsTrue)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "r3", Hostname: "localhost"}, nil, nil), IsTrue)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "r4", Hostname: "localhost"}, nil, nil), IsFalse)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "r5", Hostname: "localhost"}, nil, nil), IsFalse)
+
+	// test use ssl with signed but info wrong ca.
+	se.GetSessionVars().TLSConnectionState = &tls.ConnectionState{VerifiedChains: [][]*x509.Certificate{{{}}}}
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "r1", Hostname: "localhost"}, nil, nil), IsTrue)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "r2", Hostname: "localhost"}, nil, nil), IsTrue)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "r3", Hostname: "localhost"}, nil, nil), IsTrue)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "r4", Hostname: "localhost"}, nil, nil), IsTrue)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "r5", Hostname: "localhost"}, nil, nil), IsFalse)
+
+	// test a all pass case
+	se.GetSessionVars().TLSConnectionState = connectionState(
+		pkix.Name{
+			Names: []pkix.AttributeTypeAndValue{
+				util.MockPkixAttribute(util.Country, "US"),
+				util.MockPkixAttribute(util.Province, "California"),
+				util.MockPkixAttribute(util.Locality, "San Francisco"),
+				util.MockPkixAttribute(util.Organization, "PingCAP"),
+				util.MockPkixAttribute(util.OrganizationalUnit, "TiDB"),
+				util.MockPkixAttribute(util.CommonName, "TiDB admin"),
+			},
+		},
+		pkix.Name{
+			Names: []pkix.AttributeTypeAndValue{
+				util.MockPkixAttribute(util.Country, "ZH"),
+				util.MockPkixAttribute(util.Province, "Beijing"),
+				util.MockPkixAttribute(util.Locality, "Haidian"),
+				util.MockPkixAttribute(util.Organization, "PingCAP.Inc"),
+				util.MockPkixAttribute(util.OrganizationalUnit, "TiDB"),
+				util.MockPkixAttribute(util.CommonName, "tester1"),
+			},
+		},
+		tls.TLS_AES_128_GCM_SHA256)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "r1", Hostname: "localhost"}, nil, nil), IsTrue)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "r2", Hostname: "localhost"}, nil, nil), IsTrue)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "r3", Hostname: "localhost"}, nil, nil), IsTrue)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "r4", Hostname: "localhost"}, nil, nil), IsTrue)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "r5", Hostname: "localhost"}, nil, nil), IsTrue)
+
+	// test require but give nothing
+	se.GetSessionVars().TLSConnectionState = nil
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "r5", Hostname: "localhost"}, nil, nil), IsFalse)
+
+	// test mismatch cipher
+	se.GetSessionVars().TLSConnectionState = connectionState(
+		pkix.Name{
+			Names: []pkix.AttributeTypeAndValue{
+				util.MockPkixAttribute(util.Country, "US"),
+				util.MockPkixAttribute(util.Province, "California"),
+				util.MockPkixAttribute(util.Locality, "San Francisco"),
+				util.MockPkixAttribute(util.Organization, "PingCAP"),
+				util.MockPkixAttribute(util.OrganizationalUnit, "TiDB"),
+				util.MockPkixAttribute(util.CommonName, "TiDB admin"),
+			},
+		},
+		pkix.Name{
+			Names: []pkix.AttributeTypeAndValue{
+				util.MockPkixAttribute(util.Country, "ZH"),
+				util.MockPkixAttribute(util.Province, "Beijing"),
+				util.MockPkixAttribute(util.Locality, "Haidian"),
+				util.MockPkixAttribute(util.Organization, "PingCAP.Inc"),
+				util.MockPkixAttribute(util.OrganizationalUnit, "TiDB"),
+				util.MockPkixAttribute(util.CommonName, "tester1"),
+			},
+		},
+		tls.TLS_AES_256_GCM_SHA384)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "r5", Hostname: "localhost"}, nil, nil), IsFalse)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "r6", Hostname: "localhost"}, nil, nil), IsTrue) // not require cipher
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "r11_cipher_only", Hostname: "localhost"}, nil, nil), IsTrue)
+
+	// test only subject or only issuer
+	se.GetSessionVars().TLSConnectionState = connectionState(
+		pkix.Name{
+			Names: []pkix.AttributeTypeAndValue{
+				util.MockPkixAttribute(util.Country, "US"),
+				util.MockPkixAttribute(util.Province, "California"),
+				util.MockPkixAttribute(util.Locality, "San Francisco"),
+				util.MockPkixAttribute(util.Organization, "PingCAP"),
+				util.MockPkixAttribute(util.OrganizationalUnit, "TiDB"),
+				util.MockPkixAttribute(util.CommonName, "TiDB admin"),
+			},
+		},
+		pkix.Name{
+			Names: []pkix.AttributeTypeAndValue{
+				util.MockPkixAttribute(util.Country, "AZ"),
+				util.MockPkixAttribute(util.Province, "Beijing"),
+				util.MockPkixAttribute(util.Locality, "Shijingshang"),
+				util.MockPkixAttribute(util.Organization, "CAPPing.Inc"),
+				util.MockPkixAttribute(util.OrganizationalUnit, "TiDB"),
+				util.MockPkixAttribute(util.CommonName, "tester2"),
+			},
+		},
+		tls.TLS_AES_128_GCM_SHA256)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "r7_issuer_only", Hostname: "localhost"}, nil, nil), IsTrue)
+	se.GetSessionVars().TLSConnectionState = connectionState(
+		pkix.Name{
+			Names: []pkix.AttributeTypeAndValue{
+				util.MockPkixAttribute(util.Country, "AU"),
+				util.MockPkixAttribute(util.Province, "California"),
+				util.MockPkixAttribute(util.Locality, "San Francisco"),
+				util.MockPkixAttribute(util.Organization, "PingCAP"),
+				util.MockPkixAttribute(util.OrganizationalUnit, "TiDB"),
+				util.MockPkixAttribute(util.CommonName, "TiDB admin2"),
+			},
+		},
+		pkix.Name{
+			Names: []pkix.AttributeTypeAndValue{
+				util.MockPkixAttribute(util.Country, "ZH"),
+				util.MockPkixAttribute(util.Province, "Beijing"),
+				util.MockPkixAttribute(util.Locality, "Haidian"),
+				util.MockPkixAttribute(util.Organization, "PingCAP.Inc"),
+				util.MockPkixAttribute(util.OrganizationalUnit, "TiDB"),
+				util.MockPkixAttribute(util.CommonName, "tester1"),
+			},
+		},
+		tls.TLS_AES_128_GCM_SHA256)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "r8_subject_only", Hostname: "localhost"}, nil, nil), IsTrue)
+
+	// test disorder issuer or subject
+	se.GetSessionVars().TLSConnectionState = connectionState(
+		pkix.Name{
+			Names: []pkix.AttributeTypeAndValue{},
+		},
+		pkix.Name{
+			Names: []pkix.AttributeTypeAndValue{
+				util.MockPkixAttribute(util.Country, "ZH"),
+				util.MockPkixAttribute(util.Province, "Beijing"),
+				util.MockPkixAttribute(util.Locality, "Haidian"),
+				util.MockPkixAttribute(util.Organization, "PingCAP.Inc"),
+				util.MockPkixAttribute(util.OrganizationalUnit, "TiDB"),
+				util.MockPkixAttribute(util.CommonName, "tester1"),
+			},
+		},
+		tls.TLS_AES_128_GCM_SHA256)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "r9_subject_disorder", Hostname: "localhost"}, nil, nil), IsFalse)
+	se.GetSessionVars().TLSConnectionState = connectionState(
+		pkix.Name{
+			Names: []pkix.AttributeTypeAndValue{
+				util.MockPkixAttribute(util.Country, "US"),
+				util.MockPkixAttribute(util.Province, "California"),
+				util.MockPkixAttribute(util.Locality, "San Francisco"),
+				util.MockPkixAttribute(util.Organization, "PingCAP"),
+				util.MockPkixAttribute(util.OrganizationalUnit, "TiDB"),
+				util.MockPkixAttribute(util.CommonName, "TiDB admin"),
+			},
+		},
+		pkix.Name{
+			Names: []pkix.AttributeTypeAndValue{},
+		},
+		tls.TLS_AES_128_GCM_SHA256)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "r10_issuer_disorder", Hostname: "localhost"}, nil, nil), IsFalse)
+
+	// test old data and broken data
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "r12_old_tidb_user", Hostname: "localhost"}, nil, nil), IsTrue)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "r13_broken_user", Hostname: "localhost"}, nil, nil), IsFalse)
+
+}
+
+func connectionState(issuer, subject pkix.Name, cipher uint16) *tls.ConnectionState {
+	return &tls.ConnectionState{
+		VerifiedChains: [][]*x509.Certificate{{{Issuer: issuer, Subject: subject}}},
+		CipherSuite:    cipher,
+	}
 }
 
 func (s *testPrivilegeSuite) TestCheckAuthenticate(c *C) {
