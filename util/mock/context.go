@@ -87,6 +87,10 @@ func (c *Context) ClearValue(key fmt.Stringer) {
 	delete(c.values, key)
 }
 
+func (c *Context) HasDirtyContent(tid int64) bool {
+	return true
+}
+
 // GetSessionVars implements the sessionctx.Context GetSessionVars interface.
 func (c *Context) GetSessionVars() *variable.SessionVars {
 	return c.sessionVars

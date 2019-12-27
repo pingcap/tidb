@@ -430,6 +430,16 @@ func (s *session) getTxnFuture(ctx context.Context) *txnFuture {
 	return ret
 }
 
+// HasDirtyContent checks whether there's dirty update on the given table.
+// Put this function here is to avoid cycle import.
+func (s *session) HasDirtyContent(tid int64) bool {
+	x := s.GetSessionVars().TxnCtx.DirtyDB
+	if x == nil {
+		return false
+	}
+	return !x.(*executor.DirtyDB).GetDirtyTable(tid).IsEmpty()
+}
+
 // StmtCommit implements the sessionctx.Context interface.
 func (s *session) StmtCommit() error {
 	defer s.txn.cleanup()
