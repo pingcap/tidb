@@ -173,12 +173,15 @@ func (r *ImplTiKVDoubleReadGather) OnImplement(expr *memo.GroupExpr, reqProp *pr
 	dg := expr.ExprNode.(*plannercore.TiKVDoubleGather)
 	var reader plannercore.PhysicalPlan
 	var proj *plannercore.PhysicalProjection
-	reader = dg.GetPhysicalIndexLookUpReader(logicProp.Schema, logicProp.Stats.ScaleByExpectCnt(reqProp.ExpectedCnt), reqProp.Clone(), reqProp.Clone())
+	indexScanProp := reqProp.Clone()
+	tableScanProp := reqProp.Clone()
+	tableScanProp.Items = nil
+	reader = dg.GetPhysicalIndexLookUpReader(logicProp.Schema, logicProp.Stats.ScaleByExpectCnt(reqProp.ExpectedCnt), indexScanProp, tableScanProp)
 	if dg.HandleCol.ID == model.ExtraHandleID && !reqProp.IsEmpty() {
 		// TODO: if the origin schema for IndexLookUpReader has the `HandleCol`, we can remove the duplicated append.
 		reader.Schema().Append(dg.HandleCol)
 		reader.(*plannercore.PhysicalIndexLookUpReader).ExtraHandleCol = dg.HandleCol
-		proj = plannercore.PhysicalProjection{Exprs: expression.Column2Exprs(logicProp.Schema.Columns)}.Init(dg.SCtx(), logicProp.Stats, dg.SelectBlockOffset(), reqProp.Clone(), reqProp.Clone())
+		proj = plannercore.PhysicalProjection{Exprs: expression.Column2Exprs(logicProp.Schema.Columns)}.Init(dg.SCtx(), logicProp.Stats, dg.SelectBlockOffset())
 		proj.SetSchema(logicProp.Schema)
 		proj.SetChildren(reader)
 	}
@@ -194,7 +197,7 @@ type ImplTableScan struct {
 // Match implements ImplementationRule Match interface.
 func (r *ImplTableScan) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) (matched bool) {
 	ts := expr.ExprNode.(*plannercore.LogicalTableScan)
-	return prop.IsEmpty() || ts.IsDoubleRead || (len(prop.Items) == 1 && ts.Handle != nil && prop.Items[0].Col.Equal(nil, ts.Handle))
+	return prop.IsEmpty() || (len(prop.Items) == 1 && ts.Handle != nil && prop.Items[0].Col.Equal(nil, ts.Handle))
 }
 
 // OnImplement implements ImplementationRule OnImplement interface.
@@ -202,16 +205,7 @@ func (r *ImplTableScan) OnImplement(expr *memo.GroupExpr, reqProp *property.Phys
 	logicProp := expr.Group.Prop
 	logicalScan := expr.ExprNode.(*plannercore.LogicalTableScan)
 	ts := logicalScan.GetPhysicalScan(logicProp.Schema, logicProp.Stats.ScaleByExpectCnt(reqProp.ExpectedCnt))
-	if logicalScan.IsDoubleRead {
-		if !reqProp.IsEmpty() {
-			if logicalScan.Source.HandleCol == nil {
-				ts.AppendExtraHandleCol(logicalScan.Source)
-			} else if logicalScan.Source.HandleCol.ID == model.ExtraHandleID && ts.Schema().ColumnIndex(logicalScan.Source.HandleCol) == -1 {
-				ts.Schema().Append(logicalScan.Source.HandleCol)
-				ts.Columns = append(ts.Columns, model.NewExtraHandleColInfo())
-			}
-		}
-	} else if !reqProp.IsEmpty() {
+	if !reqProp.IsEmpty() {
 		ts.KeepOrder = true
 		ts.Desc = reqProp.Items[0].Desc
 	}

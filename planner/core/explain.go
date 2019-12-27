@@ -129,9 +129,6 @@ func (p *PhysicalTableScan) explainInfo(normalized bool) string {
 			fmt.Fprintf(buffer, ", partition:%s", partitionName)
 		}
 	}
-	if p.pkCol != nil {
-		fmt.Fprintf(buffer, ", pk col:%s", p.pkCol.ExplainInfo())
-	}
 	haveCorCol := false
 	for _, cond := range p.AccessCondition {
 		if len(expression.ExtractCorColumns(cond)) > 0 {

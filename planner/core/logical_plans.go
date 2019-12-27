@@ -463,7 +463,6 @@ type LogicalTableScan struct {
 	Handle       *expression.Column
 	AccessConds  expression.CNFExprs
 	Ranges       []*ranger.Range
-	IsDoubleRead bool
 }
 
 // LogicalIndexScan is the logical index scan operator for TiKV.
@@ -587,7 +586,7 @@ func (ds *DataSource) buildIndexLookupGather(path *util.AccessPath) LogicalPlan 
 	}.Init(ds.ctx, ds.blockOffset)
 	is.initSchema(true)
 
-	ts := LogicalTableScan{Source: ds, Handle: ds.getHandleCol(), IsDoubleRead: true}.Init(ds.ctx, ds.blockOffset)
+	ts := LogicalTableScan{Source: ds, Handle: ds.getHandleCol()}.Init(ds.ctx, ds.blockOffset)
 	ts.SetSchema(ds.Schema())
 	dg := TiKVDoubleGather{
 		Source:       ds,

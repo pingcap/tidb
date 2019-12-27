@@ -14,6 +14,7 @@
 package implementation
 
 import (
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	plannercore "github.com/pingcap/tidb/planner/core"
@@ -197,8 +198,10 @@ func (impl *IndexLookUpReaderImpl) CalcCost(outCount float64, children ...memo.I
 	var reader *plannercore.PhysicalIndexLookUpReader
 	if impl.extraProj != nil {
 		impl.cost += impl.extraProj.GetCost(impl.extraProj.Stats().RowCount)
+		reader = impl.extraProj.Children()[0].(*plannercore.PhysicalIndexLookUpReader)
+	} else {
+		reader = impl.plan.(*plannercore.PhysicalIndexLookUpReader)
 	}
-	reader = impl.plan.(*plannercore.PhysicalIndexLookUpReader)
 	reader.IndexPlan, reader.TablePlan = children[0].GetPlan(), children[1].GetPlan()
 	// Add cost of building table reader executors. Handles are extracted in batch style,
 	// each handle is a range, the CPU cost of building copTasks should be:
@@ -248,14 +251,17 @@ func (impl *IndexLookUpReaderImpl) ScaleCostLimit(costLimit float64) float64 {
 func (impl *IndexLookUpReaderImpl) AttachChildren(children ...memo.Implementation) memo.Implementation {
 	reader := impl.plan.(*plannercore.PhysicalIndexLookUpReader)
 	reader.TablePlans = plannercore.FlattenPushDownPlan(reader.TablePlan)
-	reader.IndexPlans = plannercore.FlattenPushDownPlan(reader.IndexPlan)
-	return impl
-}
-
-// GetPlan implements Implementation GetPlan interface.
-func (impl *IndexLookUpReaderImpl) GetPlan() plannercore.PhysicalPlan {
-	if impl.extraProj != nil {
-		return impl.extraProj
+	tableScan := reader.TablePlans[len(reader.TablePlans)-1].(*plannercore.PhysicalTableScan)
+	if tableScan.Schema().ColumnIndex(tableScan.HandleCol) == -1 {
+		tableScan.Schema().Append(tableScan.HandleCol)
+		if tableScan.HandleCol.ID == model.ExtraHandleID {
+			tableScan.Columns = append(tableScan.Columns, model.NewExtraHandleColInfo())
+		}
 	}
-	return impl.plan
+	reader.IndexPlans = plannercore.FlattenPushDownPlan(reader.IndexPlan)
+	if impl.extraProj != nil {
+		impl.extraProj.SetChildren(reader)
+		impl.plan = impl.extraProj
+	}
+	return impl
 }

@@ -227,11 +227,11 @@ type PhysicalTableScan struct {
 	AccessCondition []expression.Expression
 	filterCondition []expression.Expression
 
-	Table   *model.TableInfo
-	Columns []*model.ColumnInfo
-	DBName  model.CIStr
-	Ranges  []*ranger.Range
-	pkCol   *expression.Column
+	Table     *model.TableInfo
+	Columns   []*model.ColumnInfo
+	DBName    model.CIStr
+	Ranges    []*ranger.Range
+	HandleCol *expression.Column
 
 	TableAsName *model.CIStr
 
