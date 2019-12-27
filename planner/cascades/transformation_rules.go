@@ -72,6 +72,7 @@ var defaultTransformationMap = map[memo.Operand][]Transformation{
 	memo.OperandTopN: {
 		NewRulePushTopNDownProjection(),
 		NewRulePushTopNDownUnionAll(),
+		NewRulePushTopNDownTiKVSingleGather(),
 	},
 }
 
@@ -1047,6 +1048,55 @@ func (r *PushTopNDownUnionAll) OnTransform(old *memo.ExprIter) (newExprs []*memo
 	newTopNExpr.SetChildren(newUnionAllGroup)
 	newTopNExpr.AddAppliedRule(r)
 	return []*memo.GroupExpr{newTopNExpr}, true, false, nil
+}
+
+// PushTopNDownTiKVSingleGather pushes the top-n down to child of TiKVSingleGather.
+type PushTopNDownTiKVSingleGather struct {
+	baseRule
+}
+
+// NewRulePushTopNDownTiKVSingleGather creates a new Transformation PushTopNDownTiKVSingleGather.
+// The pattern of this rule is `TopN -> TiKVSingleGather`.
+func NewRulePushTopNDownTiKVSingleGather() Transformation {
+	rule := &PushTopNDownTiKVSingleGather{}
+	rule.pattern = memo.BuildPattern(
+		memo.OperandTopN,
+		memo.EngineTiDBOnly,
+		memo.NewPattern(memo.OperandTiKVSingleGather, memo.EngineTiDBOnly),
+	)
+	return rule
+}
+
+// Match implements Transformation interface.
+// Use appliedRuleSet in GroupExpr to avoid re-apply rules.
+func (r *PushTopNDownTiKVSingleGather) Match(expr *memo.ExprIter) bool {
+	return !expr.GetExpr().HasAppliedRule(r)
+}
+
+// OnTransform implements Transformation interface.
+// It transforms `TopN -> TiKVSingleGather` to `TopN(Final) -> TiKVSingleGather -> TopN(Partial)`.
+func (r *PushTopNDownTiKVSingleGather) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
+	topN := old.GetExpr().ExprNode.(*plannercore.LogicalTopN)
+	topNSchema := old.Children[0].Group.Prop.Schema
+	gather := old.Children[0].GetExpr().ExprNode.(*plannercore.TiKVSingleGather)
+	childGroup := old.Children[0].GetExpr().Children[0]
+
+	particalTopN := plannercore.LogicalTopN{
+		ByItems: topN.ByItems,
+		Count:   topN.Count + topN.Offset,
+	}.Init(topN.SCtx(), topN.SelectBlockOffset())
+	partialTopNExpr := memo.NewGroupExpr(particalTopN)
+	partialTopNExpr.SetChildren(childGroup)
+	partialTopNGroup := memo.NewGroupWithSchema(partialTopNExpr, topNSchema).SetEngineType(childGroup.EngineType)
+
+	gatherExpr := memo.NewGroupExpr(gather)
+	gatherExpr.SetChildren(partialTopNGroup)
+	gatherGroup := memo.NewGroupWithSchema(gatherExpr, topNSchema)
+
+	finalTopNExpr := memo.NewGroupExpr(topN)
+	finalTopNExpr.SetChildren(gatherGroup)
+	finalTopNExpr.AddAppliedRule(r)
+	return []*memo.GroupExpr{finalTopNExpr}, true, false, nil
 }
 
 // MergeAggregationProjection merges the Projection below an Aggregation as a new Aggregation.
