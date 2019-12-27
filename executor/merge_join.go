@@ -80,19 +80,19 @@ type mergeJoinInnerTable struct {
 	ctx      context.Context
 
 	// for chunk executions
-	sameKeyRows    *chunk.RowContainer
-	keyCmpFuncs    []chunk.CompareFunc
-	firstRow4Key   chunk.Row
-	curRow         chunk.Row
-	curChk      *chunk.Chunk
-	curSel []int
-	curIter        *chunk.Iterator4Chunk
-	curChkInUse bool
+	sameKeyRows  *chunk.RowContainer
+	keyCmpFuncs  []chunk.CompareFunc
+	firstRow4Key chunk.Row
+	curRow       chunk.Row
+	curChk       *chunk.Chunk
+	curSel       []int
+	curIter      *chunk.Iterator4Chunk
+	curChkInUse  bool
 
 	memTracker *memory.Tracker
 }
 
-func (t *mergeJoinInnerTable) init(ctx context.Context, chk4Reader *chunk.Chunk) (err error) {
+func (t *mergeJoinInnerTable) init(sctx sessionctx.Context, ctx context.Context, chk4Reader *chunk.Chunk) (err error) {
 	if t.reader == nil || ctx == nil {
 		return errors.Errorf("Invalid arguments: Empty arguments detected.")
 	}
@@ -102,6 +102,13 @@ func (t *mergeJoinInnerTable) init(ctx context.Context, chk4Reader *chunk.Chunk)
 	t.curRow = t.curIter.End()
 	t.curChkInUse = false
 	t.memTracker.Consume(chk4Reader.MemoryUsage())
+	t.sameKeyRows = chunk.NewRowContainer(t.reader.base().retFieldTypes, t.curChk.Capacity())
+	t.sameKeyRows.GetMemTracker().AttachTo(sctx.GetSessionVars().StmtCtx.MemTracker)
+	t.sameKeyRows.GetDiskTracker().AttachTo(sctx.GetSessionVars().StmtCtx.DiskTracker)
+	if config.GetGlobalConfig().OOMUseTmpStorage {
+		actionSpill := t.sameKeyRows.ActionSpill()
+		sctx.GetSessionVars().StmtCtx.MemTracker.SetActionOnExceed(actionSpill)
+	}
 	t.firstRow4Key, err = t.nextRow()
 	t.keyCmpFuncs = make([]chunk.CompareFunc, 0, len(t.joinKeys))
 	for i := range t.joinKeys {
@@ -123,27 +130,16 @@ func (t *mergeJoinInnerTable) selectedRows() *chunk.RowContainer {
 	return t.sameKeyRows
 }
 
-func (t *mergeJoinInnerTable) rowsWithSameKey(ctx sessionctx.Context) (*chunk.RowContainer, error) {
+func (t *mergeJoinInnerTable) rowsWithSameKey() (*chunk.RowContainer, error) {
 	// t.curSel sets to nil, so that it won't overwrite Sel in chunks in RowContainer,
 	// it might be unnecessary since merge join only runs single thread. However since we want to hand
 	// over the management of a chunk to the RowContainer, to keep the semantic consistent, we set it
 	// to nil.
 	t.curSel = nil
 	t.curChk.SetSel(nil)
-	if t.sameKeyRows == nil {
-		rc := chunk.NewRowContainer(t.reader.base().retFieldTypes, t.curChk.Capacity())
-		rc.GetMemTracker().AttachTo(ctx.GetSessionVars().StmtCtx.MemTracker)
-		rc.GetDiskTracker().AttachTo(ctx.GetSessionVars().StmtCtx.DiskTracker)
-		t.sameKeyRows = rc
-		if config.GetGlobalConfig().OOMUseTmpStorage {
-			actionSpill := t.sameKeyRows.ActionSpill()
-			ctx.GetSessionVars().StmtCtx.MemTracker.SetActionOnExceed(actionSpill)
-		}
-	} else {
-		err := t.sameKeyRows.Reset()
-		if err != nil {
-			return nil, err
-		}
+	err := t.sameKeyRows.Reset()
+	if err != nil {
+		return nil, err
 	}
 
 	// no more data.
@@ -171,7 +167,7 @@ func (t *mergeJoinInnerTable) rowsWithSameKey(ctx sessionctx.Context) (*chunk.Ro
 func (t *mergeJoinInnerTable) nextRow() (chunk.Row, error) {
 	for {
 		if t.curRow == t.curIter.End() {
-			err := t.reallocReaderResult()
+			err := t.reallocCurChkForReader()
 			if err != nil {
 				t.curRow = t.curIter.End()
 				return t.curRow, err
@@ -209,11 +205,16 @@ func (t *mergeJoinInnerTable) hasNullInJoinKey(row chunk.Row) bool {
 	return false
 }
 
-// reallocReaderResult resets "t.curResult" to an empty Chunk to buffer the result of "t.reader".
-// It pops a Chunk from "t.resourceQueue" and push it into "t.resultQueue" immediately.
-func (t *mergeJoinInnerTable) reallocReaderResult() (err error) {
-	if !t.curChkInUse {
+// reallocCurChkForNext resets "t.curChk" to an empty Chunk to buffer the result of "t.reader".
+// It saves the curChk to RowContainer and then allocates a new one from RowContainer.
+func (t *mergeJoinInnerTable) reallocCurChkForReader() (err error) {
+	if !t.curChkInUse || t.curSel == nil {
 		// If "t.curResult" is not in use, we can just reuse it.
+		// Note: t.curSel should never be nil. There is a case the chunk is in use but curSel is nil,
+		// and it would cause panic, so we add the condition here to avoid it. The case is that when
+		// init is called, and the firstRow4Key is set up by nextRow(), however the first several rows
+		// contain null value and are skipped, and in the next time the reallocCurChkFOrReader is called
+		// the curChkInUse would be set however the curSel is still nil.
 		t.curChk.Reset()
 		return
 	}
@@ -224,7 +225,7 @@ func (t *mergeJoinInnerTable) reallocReaderResult() (err error) {
 
 	// hand over the management to the RowContainer, therefore needs to reserve the first row by CopyConstruct
 	t.firstRow4Key = t.firstRow4Key.CopyConstruct()
-	// TODO(zhifeng): will this curSel be nil? If so, don't add it to RowContainer.
+	// curSel be never be nil, since the chunk is in use.
 	t.curChk.SetSel(t.curSel)
 	err = t.sameKeyRows.Add(t.curChk)
 	if err != nil {
@@ -285,7 +286,7 @@ func compareChunkRow(cmpFuncs []chunk.CompareFunc, lhsRow, rhsRow chunk.Row, lhs
 }
 
 func (e *MergeJoinExec) prepare(ctx context.Context, requiredRows int) error {
-	err := e.innerTable.init(ctx, e.childrenResults[e.outerIdx^1])
+	err := e.innerTable.init(e.ctx, ctx, e.childrenResults[e.outerIdx^1])
 	if err != nil {
 		return err
 	}
@@ -415,7 +416,7 @@ func (e *MergeJoinExec) fetchNextInnerRows() (err error) {
 			return err
 		}
 	}
-	e.innerRows, err = e.innerTable.rowsWithSameKey(e.ctx)
+	e.innerRows, err = e.innerTable.rowsWithSameKey()
 	if err != nil {
 		return err
 	}

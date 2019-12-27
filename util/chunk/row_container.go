@@ -111,7 +111,7 @@ func (c *RowContainer) NumRow() int {
 
 // NumRowsOfChunk returns the number of rows of a chunk in the ListInDisk.
 func (c *RowContainer) NumRowsOfChunk(chkID int) int {
-	if c.tmp != nil && chkID == c.NumChunks() - 1 {
+	if c.tmp != nil && chkID == c.NumChunks()-1 {
 		return c.tmp.NumRows()
 	}
 	if c.AlreadySpilled() {
@@ -175,7 +175,7 @@ func (c *RowContainer) GetChunk(chkIdx int) *Chunk {
 
 // GetRow returns the row the ptr pointed to
 func (c *RowContainer) GetRow(ptr RowPtr) (Row, error) {
-	if c.tmp != nil && ptr.ChkIdx == uint32(c.NumChunks() - 1) {
+	if c.tmp != nil && ptr.ChkIdx == uint32(c.NumChunks()-1) {
 		return c.tmp.GetRow(int(ptr.RowIdx)), nil
 	}
 	if c.AlreadySpilled() {

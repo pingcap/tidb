@@ -42,7 +42,7 @@ func (r *rowContainerTestSuite) TestTmpAndSel(c *check.C) {
 	n := 64
 	chk := NewChunkWithCapacity(fields, sz)
 	numRows := 0
-	for i := 0; i < n - sz; i++ {
+	for i := 0; i < n-sz; i++ {
 		chk.AppendInt64(0, int64(i))
 		if chk.NumRows() == sz {
 			chk.SetSel([]int{0, 2})
@@ -52,27 +52,27 @@ func (r *rowContainerTestSuite) TestTmpAndSel(c *check.C) {
 			chk = NewChunkWithCapacity(fields, sz)
 		}
 	}
-	c.Assert(rc.NumChunks(), check.Equals, numRows / 2)
+	c.Assert(rc.NumChunks(), check.Equals, numRows/2)
 	c.Assert(rc.NumRow(), check.Equals, numRows)
 	for i := n - sz; i < n; i++ {
 		chk.AppendInt64(0, int64(i))
 	}
 	chk.SetSel([]int{0, 1, 2})
 	rc.SetTemporary(chk)
-	c.Assert(rc.NumChunks(), check.Equals, numRows / 2 + 1)
-	c.Assert(rc.NumRow(), check.Equals, numRows + 3)
+	c.Assert(rc.NumChunks(), check.Equals, numRows/2+1)
+	c.Assert(rc.NumRow(), check.Equals, numRows+3)
 	checkByIter := func() {
 		it := NewIterator4RowContainer(rc)
 		i := 0
 		for row := it.Begin(); row != it.End(); row = it.Next() {
 			c.Assert(row.GetInt64(0), check.Equals, int64(i))
-			if i < n - sz {
+			if i < n-sz {
 				i += 2
 			} else {
 				i++
 			}
 		}
-		c.Assert(i, check.Equals, n - 1)
+		c.Assert(i, check.Equals, n-1)
 	}
 	checkByIter()
 	err := rc.spillToDisk()
