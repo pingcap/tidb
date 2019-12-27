@@ -41,6 +41,7 @@
       "select a, b from (select @i as a, @i := @i+1 as b from t) t order by a desc limit 1",
       "(select a from t) union all (select b from t) order by a limit 2;",
       "(select a from t) union all (select b from t) limit 2;",
+      "(select a from t) union all (select b from t) limit 2 offset 5;",
       "(select a from t) union all (select sum(a) from t where a > 2 group by b) order by a limit 2;",
       "(select a from t) union all (select sum(a) from t where a > 2 group by b) order by a limit 1, 2;",
       "(select a from t where a = 1) union all (select b from t where a = 2) union all (select c from t where a = 3) order by a limit 2;"

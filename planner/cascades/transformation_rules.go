@@ -740,9 +740,13 @@ func (r *PushLimitDownUnionAll) OnTransform(old *memo.ExprIter) (newExprs []*mem
 	limit := old.GetExpr().ExprNode.(*plannercore.LogicalLimit)
 	unionAll := old.Children[0].GetExpr().ExprNode.(*plannercore.LogicalUnionAll)
 
+	newLimit := plannercore.LogicalLimit{
+		Count: limit.Count + limit.Offset,
+	}.Init(limit.SCtx(), limit.SelectBlockOffset())
+
 	newUnionAllExpr := memo.NewGroupExpr(unionAll)
 	for _, childGroup := range old.Children[0].GetExpr().Children {
-		newLimitExpr := memo.NewGroupExpr(limit)
+		newLimitExpr := memo.NewGroupExpr(newLimit)
 		newLimitExpr.Children = append(newLimitExpr.Children, childGroup)
 		newLimitGroup := memo.NewGroupWithSchema(newLimitExpr, childGroup.Prop.Schema)
 
