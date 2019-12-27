@@ -444,4 +444,3 @@ timezone.*
     * op=nowait: return after binlog status is recoverd, do not wait until the skipped-binlog transactions are committed.
     * op=reset: reset `SkippedCommitterCounter` to 0 to avoid the problem that `SkippedCommitterCounter` is not cleared due to some unusual cases.
     * op=status: Get the current status of binlog recovery.
-    * seconds={num}: Specify the interface request timeout time in seconds. If not specified, the default is 1800 seconds.

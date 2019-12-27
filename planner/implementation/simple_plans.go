@@ -145,6 +145,24 @@ func NewTiDBTopNImpl(topN *plannercore.PhysicalTopN) *TiDBTopNImpl {
 	return &TiDBTopNImpl{baseImpl{plan: topN}}
 }
 
+// TiKVTopNImpl is the implementation of PhysicalTopN in TiKV layer.
+type TiKVTopNImpl struct {
+	baseImpl
+}
+
+// CalcCost implements Implementation CalcCost interface.
+func (impl *TiKVTopNImpl) CalcCost(outCount float64, children ...memo.Implementation) float64 {
+	topN := impl.plan.(*plannercore.PhysicalTopN)
+	childCount := children[0].GetPlan().Stats().RowCount
+	impl.cost = topN.GetCost(childCount, false) + children[0].GetCost()
+	return impl.cost
+}
+
+// NewTiKVTopNImpl creates a new TiKVTopNImpl.
+func NewTiKVTopNImpl(topN *plannercore.PhysicalTopN) *TiKVTopNImpl {
+	return &TiKVTopNImpl{baseImpl{plan: topN}}
+}
+
 // UnionAllImpl is the implementation of PhysicalUnionAll.
 type UnionAllImpl struct {
 	baseImpl
