@@ -39,6 +39,3 @@ clean:
 	go clean -i ./...
 	rm -rf *.out
 	rm parser.go
-
-cpmod:
-	cp go.mod1 go.mod && cp go.sum1 go.sum
