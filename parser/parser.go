@@ -13292,7 +13292,11 @@ yynewstate:
 		}
 	case 1105:
 		{
-			parser.yyVAL.expr = &ast.AggregateFuncExpr{F: ast.AggFuncVarPop, Args: []ast.ExprNode{yyS[yypt-2].expr}, Distinct: yyS[yypt-3].item.(bool)}
+			if yyS[yypt-0].item != nil {
+				parser.yyVAL.expr = &ast.WindowFuncExpr{F: ast.AggFuncVarPop, Args: []ast.ExprNode{yyS[yypt-2].expr}, Distinct: yyS[yypt-3].item.(bool), Spec: *(yyS[yypt-0].item.(*ast.WindowSpec))}
+			} else {
+				parser.yyVAL.expr = &ast.AggregateFuncExpr{F: ast.AggFuncVarPop, Args: []ast.ExprNode{yyS[yypt-2].expr}, Distinct: yyS[yypt-3].item.(bool)}
+			}
 		}
 	case 1106:
 		{
