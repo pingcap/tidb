@@ -754,6 +754,12 @@ func (s *session) ExecRestrictedSQL(sql string) ([]chunk.Row, []*ast.ResultField
 		return nil, nil, err
 	}
 	se := tmp.(*session)
+	// The special session will share the `InspectionTableCache` with current session
+	// if the current session in inspection mode.
+	if cache := s.sessionVars.InspectionTableCache; cache != nil {
+		se.sessionVars.InspectionTableCache = cache
+		defer func() { se.sessionVars.InspectionTableCache = nil }()
+	}
 	defer s.sysSessionPool().Put(tmp)
 	metrics.SessionRestrictedSQLCounter.Inc()
 
@@ -773,6 +779,12 @@ func (s *session) ExecRestrictedSQLWithSnapshot(sql string) ([]chunk.Row, []*ast
 		return nil, nil, err
 	}
 	se := tmp.(*session)
+	// The special session will share the `InspectionTableCache` with current session
+	// if the current session in inspection mode.
+	if cache := s.sessionVars.InspectionTableCache; cache != nil {
+		se.sessionVars.InspectionTableCache = cache
+		defer func() { se.sessionVars.InspectionTableCache = nil }()
+	}
 	defer s.sysSessionPool().Put(tmp)
 	metrics.SessionRestrictedSQLCounter.Inc()
 	var snapshot uint64
