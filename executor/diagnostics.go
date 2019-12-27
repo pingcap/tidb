@@ -52,6 +52,7 @@ var inspectionRules = []inspectionRule{
 }
 
 type inspectionRetriever struct {
+	dummyClose
 	retrieved bool
 	extractor *plannercore.InspectionResultTableExtractor
 }
