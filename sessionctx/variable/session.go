@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/execdetails"
@@ -93,9 +94,16 @@ func (r *RetryInfo) GetCurrAutoIncrementID() (int64, error) {
 	return id, nil
 }
 
+// stmtFuture is used to async get timestamp for statement.
+type stmtFuture struct {
+	future   oracle.Future
+	cachedTS uint64
+}
+
 // TransactionContext is used to store variables that has transaction scope.
 type TransactionContext struct {
 	forUpdateTS   uint64
+	stmtFuture    *stmtFuture
 	DirtyDB       interface{}
 	Binlog        interface{}
 	InfoSchema    interface{}
@@ -114,6 +122,7 @@ type TransactionContext struct {
 	ForUpdate      bool
 	CouldRetry     bool
 	IsPessimistic  bool
+	Isolation      string
 }
 
 // AddUnchangedRowKey adds an unchanged row key in update statement for pessimistic lock.
@@ -179,6 +188,21 @@ func (tc *TransactionContext) SetForUpdateTS(forUpdateTS uint64) {
 	}
 }
 
+// SetStmtFuture sets the stmtFuture .
+func (tc *TransactionContext) SetStmtFuture(future oracle.Future, cachedTS uint64) {
+	tc.stmtFuture = &stmtFuture{future: future, cachedTS: cachedTS}
+}
+
+// GetStmtFuture gets the stmtFuture.
+func (tc *TransactionContext) GetStmtFuture() (oracle.Future, uint64) {
+	if tc.stmtFuture == nil {
+		panic("The statement future is nil, it should not happen." +
+			" The statement future should be set at the beginning of the transaction or" +
+			" at the beginning of each statement in the pessimistic read-committed transaction in PrepareTSFuture.")
+	}
+	return tc.stmtFuture.future, tc.stmtFuture.cachedTS
+}
+
 // WriteStmtBufs can be used by insert/replace/delete/update statement.
 // TODO: use a common memory pool to replace this.
 type WriteStmtBufs struct {
@@ -203,6 +227,23 @@ func (ib *WriteStmtBufs) clean() {
 	ib.IndexValsBuf = nil
 	ib.IndexKeyBuf = nil
 }
+
+// TableSnapshot represents a data snapshot of the table contained in `inspection_schema`.
+type TableSnapshot struct {
+	Rows [][]types.Datum
+	Err  error
+}
+
+type txnIsolationLevelOneShotState uint
+
+const (
+	// oneShotDef means default, that is tx_isolation_one_shot not set.
+	oneShotDef txnIsolationLevelOneShotState = iota
+	// oneShotSet means it's set in current transaction.
+	oneShotSet
+	// onsShotUse means it should be used in current transaction.
+	oneShotUse
+)
 
 // SessionVars is to handle user-defined or global variables in the current session.
 type SessionVars struct {
@@ -239,13 +280,10 @@ type SessionVars struct {
 	// KVVars is the variables for KV storage.
 	KVVars *kv.Variables
 
-	// TxnIsolationLevelOneShot is used to implements "set transaction isolation level ..."
-	TxnIsolationLevelOneShot struct {
-		// State 0 means default
-		// State 1 means it's set in current transaction.
-		// State 2 means it should be used in current transaction.
-		State int
-		Value string
+	// txnIsolationLevelOneShot is used to implements "set transaction isolation level ..."
+	txnIsolationLevelOneShot struct {
+		state txnIsolationLevelOneShotState
+		value string
 	}
 
 	// Status stands for the session status. e.g. in transaction or not, auto commit is on or off, and so on.
@@ -484,6 +522,12 @@ type SessionVars struct {
 	MetricSchemaStep int64
 	// MetricSchemaRangeDuration indicates the step when query metric schema.
 	MetricSchemaRangeDuration int64
+
+	// Some data of cluster-level memory tables will be retrieved many times in different inspection rules,
+	// and the cost of retrieving some data is expensive. We use the `TableSnapshot` to cache those data
+	// and obtain them lazily, and provide a consistent view of inspection tables for each inspection rules.
+	// All cached snapshots will be released at the end of retrieving
+	InspectionTableCache map[string]TableSnapshot
 }
 
 // PreparedParams contains the parameters of the current prepared statement when executing it.
@@ -722,6 +766,38 @@ func (s *SessionVars) IsAutocommit() bool {
 	return s.GetStatusFlag(mysql.ServerStatusAutocommit)
 }
 
+// IsReadConsistencyTxn if true it means the transaction is an read consistency (read committed) transaction.
+func (s *SessionVars) IsReadConsistencyTxn() bool {
+	if s.TxnCtx.Isolation != "" {
+		return s.TxnCtx.Isolation == ast.ReadCommitted
+	}
+	if s.txnIsolationLevelOneShot.state == oneShotUse {
+		s.TxnCtx.Isolation = s.txnIsolationLevelOneShot.value
+	}
+	if s.TxnCtx.Isolation == "" {
+		s.TxnCtx.Isolation, _ = s.GetSystemVar(TxnIsolation)
+	}
+	return s.TxnCtx.Isolation == ast.ReadCommitted
+}
+
+// SetTxnIsolationLevelOneShotStateForNextTxn sets the txnIsolationLevelOneShot.state for next transaction.
+func (s *SessionVars) SetTxnIsolationLevelOneShotStateForNextTxn() {
+	if isoLevelOneShot := &s.txnIsolationLevelOneShot; isoLevelOneShot.state != oneShotDef {
+		switch isoLevelOneShot.state {
+		case oneShotSet:
+			isoLevelOneShot.state = oneShotUse
+		case oneShotUse:
+			isoLevelOneShot.state = oneShotDef
+			isoLevelOneShot.value = ""
+		}
+	}
+}
+
+// IsPessimisticReadConsistency if true it means the statement is in an read consistency pessimistic transaction.
+func (s *SessionVars) IsPessimisticReadConsistency() bool {
+	return s.TxnCtx.IsPessimistic && s.IsReadConsistencyTxn()
+}
+
 // GetNextPreparedStmtID generates and returns the next session scope prepared statement id.
 func (s *SessionVars) GetNextPreparedStmtID() uint32 {
 	s.preparedStmtID++
@@ -824,8 +900,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 				s.StmtCtx.AppendWarning(returnErr)
 			}
 		}
-		s.TxnIsolationLevelOneShot.State = 1
-		s.TxnIsolationLevelOneShot.Value = val
+		s.txnIsolationLevelOneShot.state = oneShotSet
+		s.txnIsolationLevelOneShot.value = val
 	case TimeZone:
 		tz, err := parseTimeZone(val)
 		if err != nil {

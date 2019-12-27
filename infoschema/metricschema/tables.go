@@ -29,7 +29,7 @@ type metricSchemaTable struct {
 	cols []*table.Column
 }
 
-func tableFromMeta(alloc autoid.Allocator, meta *model.TableInfo) (table.Table, error) {
+func tableFromMeta(alloc autoid.Allocators, meta *model.TableInfo) (table.Table, error) {
 	return createMetricSchemaTable(meta), nil
 }
 
@@ -70,4 +70,9 @@ func (vt *metricSchemaTable) Meta() *model.TableInfo {
 // IterRecords implements table.Table IterRecords interface.
 func (vt *metricSchemaTable) IterRecords(_ sessionctx.Context, _ kv.Key, _ []*table.Column, _ table.RecordIterFunc) error {
 	return nil
+}
+
+// Type implements table.Table Type interface.
+func (vt *metricSchemaTable) Type() table.Type {
+	return table.VirtualTable
 }
