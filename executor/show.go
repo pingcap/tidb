@@ -23,7 +23,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
@@ -56,6 +55,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/format"
 	"github.com/pingcap/tidb/util/hack"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 )
 

@@ -576,6 +576,7 @@ func (do *Domain) Close() {
 	if do.etcdClient != nil {
 		terror.Log(errors.Trace(do.etcdClient.Close()))
 	}
+
 	do.sysSessionPool.Close()
 	do.slowQuery.Close()
 	do.wg.Wait()
@@ -884,6 +885,7 @@ func (do *Domain) handleEvolvePlanTasksLoop(ctx sessionctx.Context) {
 		for {
 			select {
 			case <-do.exit:
+				owner.Cancel()
 				return
 			case <-time.After(bindinfo.Lease):
 			}
@@ -1022,6 +1024,7 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 		select {
 		case <-do.exit:
 			statsHandle.FlushStats()
+			owner.Cancel()
 			return
 			// This channel is sent only by ddl owner.
 		case t := <-statsHandle.DDLEventCh():

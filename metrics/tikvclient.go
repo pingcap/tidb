@@ -25,22 +25,6 @@ var (
 			Help:      "Counter of created txns.",
 		})
 
-	TiKVSnapshotCounter = prometheus.NewCounter(
-		prometheus.CounterOpts{
-			Namespace: "tidb",
-			Subsystem: "tikvclient",
-			Name:      "snapshot_total",
-			Help:      "Counter of snapshots.",
-		})
-
-	TiKVTxnCmdCounter = prometheus.NewCounterVec(
-		prometheus.CounterOpts{
-			Namespace: "tidb",
-			Subsystem: "tikvclient",
-			Name:      "txn_cmd_total",
-			Help:      "Counter of txn commands.",
-		}, []string{LblType})
-
 	TiKVTxnCmdHistogram = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
@@ -232,4 +216,12 @@ var (
 			Help:      "Bucketed histogram of the txn_heartbeat request duration.",
 			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 18), // 1ms ~ 292s
 		}, []string{LblType})
+	TiKVPessimisticLockKeysDuration = prometheus.NewHistogram(
+		prometheus.HistogramOpts{
+			Namespace: "tidb",
+			Subsystem: "tikvclient",
+			Name:      "pessimistic_lock_keys_duration",
+			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 24), // 1ms ~ 16777s
+			Help:      "tidb txn pessimistic lock keys duration",
+		})
 )

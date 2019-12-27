@@ -19,7 +19,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/model"
@@ -27,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/mathutil"
 	"go.uber.org/zap"
 )
 
@@ -43,6 +43,8 @@ const (
 	PerformanceSchemaDBID int64 = SystemSchemaIDFlag | 10000
 	// MetricSchemaDBID is the metric_schema schema id, it's exported for test.
 	MetricSchemaDBID int64 = SystemSchemaIDFlag | 20000
+	// InspectionSchemaDBID is the inspection_schema id, it's exports for test.
+	InspectionSchemaDBID int64 = SystemSchemaIDFlag | 30000
 )
 
 const (
