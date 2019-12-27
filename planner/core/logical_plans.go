@@ -459,10 +459,10 @@ type TiKVDoubleGather struct {
 // LogicalTableScan is the logical table scan operator for TiKV.
 type LogicalTableScan struct {
 	logicalSchemaProducer
-	Source       *DataSource
-	Handle       *expression.Column
-	AccessConds  expression.CNFExprs
-	Ranges       []*ranger.Range
+	Source      *DataSource
+	Handle      *expression.Column
+	AccessConds expression.CNFExprs
+	Ranges      []*ranger.Range
 }
 
 // LogicalIndexScan is the logical index scan operator for TiKV.
