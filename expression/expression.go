@@ -660,6 +660,7 @@ func ColumnInfos2ColumnsAndNames(ctx sessionctx.Context, dbName, tblName model.C
 			UniqueID: ctx.GetSessionVars().AllocPlanColumnID(),
 			Index:    col.Offset,
 			OrigName: names[i].String(),
+			IsHidden: col.Hidden,
 		}
 		columns = append(columns, newCol)
 	}
