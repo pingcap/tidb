@@ -597,7 +597,7 @@ func GenerateBindSQL(ctx context.Context, stmtNode ast.StmtNode, planHint string
 	restoreCtx := format.NewRestoreCtx(format.DefaultRestoreFlags, &sb)
 	err := stmtNode.Restore(restoreCtx)
 	if err != nil {
-		logutil.Logger(ctx).Info("Restore SQL failed", zap.Error(err))
+		logutil.Logger(ctx).Warn("Restore SQL failed", zap.Error(err))
 	}
 	bindSQL := sb.String()
 	selectIdx := strings.Index(bindSQL, "SELECT")
