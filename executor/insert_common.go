@@ -245,7 +245,7 @@ func insertRows(ctx context.Context, base insertCommon) (err error) {
 			rows = rows[:0]
 			memTracker.Consume(-memUsageOfRows)
 			memUsageOfRows = 0
-			if err = e.doBatchInsert(ctx, memTracker); err != nil {
+			if err = e.doBatchInsert(ctx); err != nil {
 				return err
 			}
 		}
@@ -447,7 +447,7 @@ func insertRowsFromSelect(ctx context.Context, base insertCommon) error {
 				rows = rows[:0]
 				memTracker.Consume(-memUsageOfRows)
 				memUsageOfRows = 0
-				if err = e.doBatchInsert(ctx, memTracker); err != nil {
+				if err = e.doBatchInsert(ctx); err != nil {
 					return err
 				}
 			}
