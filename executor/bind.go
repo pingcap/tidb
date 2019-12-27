@@ -34,6 +34,7 @@ type SQLBindExec struct {
 	bindSQL      string
 	charset      string
 	collation    string
+	db           string
 	isGlobal     bool
 	bindAst      ast.StmtNode
 }
@@ -59,7 +60,7 @@ func (e *SQLBindExec) Next(ctx context.Context, req *chunk.Chunk) error {
 func (e *SQLBindExec) dropSQLBind() error {
 	record := &bindinfo.BindRecord{
 		OriginalSQL: e.normdOrigSQL,
-		Db:          e.ctx.GetSessionVars().CurrentDB,
+		Db:          e.db,
 	}
 	if !e.isGlobal {
 		handle := e.ctx.Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
@@ -73,7 +74,7 @@ func (e *SQLBindExec) createSQLBind() error {
 	record := &bindinfo.BindRecord{
 		OriginalSQL: e.normdOrigSQL,
 		BindSQL:     e.bindSQL,
-		Db:          e.ctx.GetSessionVars().CurrentDB,
+		Db:          e.db,
 		Charset:     e.charset,
 		Collation:   e.collation,
 		Status:      bindinfo.Using,
