@@ -1272,21 +1272,21 @@ func BenchmarkMergeJoinExec(b *testing.B) {
 
 	totalRows := 300000
 
-	//{
-	//	numInnerDup := 1
-	//	tc, innerDS, outerDS := newMergeJoinBenchmark(totalRows/numInnerDup, numInnerDup, 0)
-	//	b.Run(fmt.Sprintf("merge join %v", tc), func(b *testing.B) {
-	//		benchmarkMergeJoinExecWithCase(b, tc, outerDS, innerDS, innerMergeJoin)
-	//	})
-	//}
-	//
-	//{
-	//	numInnerDup := 100
-	//	tc, innerDS, outerDS := newMergeJoinBenchmark(totalRows/numInnerDup, numInnerDup, 0)
-	//	b.Run(fmt.Sprintf("merge join %v", tc), func(b *testing.B) {
-	//		benchmarkMergeJoinExecWithCase(b, tc, outerDS, innerDS, innerMergeJoin)
-	//	})
-	//}
+	{
+		numInnerDup := 1
+		tc, innerDS, outerDS := newMergeJoinBenchmark(totalRows/numInnerDup, numInnerDup, 0)
+		b.Run(fmt.Sprintf("merge join %v", tc), func(b *testing.B) {
+			benchmarkMergeJoinExecWithCase(b, tc, outerDS, innerDS, innerMergeJoin)
+		})
+	}
+
+	{
+		numInnerDup := 100
+		tc, innerDS, outerDS := newMergeJoinBenchmark(totalRows/numInnerDup, numInnerDup, 0)
+		b.Run(fmt.Sprintf("merge join %v", tc), func(b *testing.B) {
+			benchmarkMergeJoinExecWithCase(b, tc, outerDS, innerDS, innerMergeJoin)
+		})
+	}
 
 	{
 		numInnerDup := 10000
@@ -1296,12 +1296,12 @@ func BenchmarkMergeJoinExec(b *testing.B) {
 		})
 	}
 
-	//{
-	//	numInnerDup := 1
-	//	numInnerRedundant := 30000
-	//	tc, innerDS, outerDS := newMergeJoinBenchmark(totalRows/numInnerDup, numInnerDup, numInnerRedundant)
-	//	b.Run(fmt.Sprintf("merge join %v", tc), func(b *testing.B) {
-	//		benchmarkMergeJoinExecWithCase(b, tc, outerDS, innerDS, innerMergeJoin)
-	//	})
-	//}
+	{
+		numInnerDup := 1
+		numInnerRedundant := 30000
+		tc, innerDS, outerDS := newMergeJoinBenchmark(totalRows/numInnerDup, numInnerDup, numInnerRedundant)
+		b.Run(fmt.Sprintf("merge join %v", tc), func(b *testing.B) {
+			benchmarkMergeJoinExecWithCase(b, tc, outerDS, innerDS, innerMergeJoin)
+		})
+	}
 }
