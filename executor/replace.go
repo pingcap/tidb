@@ -32,8 +32,7 @@ import (
 // ReplaceExec represents a replace executor.
 type ReplaceExec struct {
 	*InsertValues
-	Priority   int
-	memTracker *memory.Tracker
+	Priority int
 }
 
 // Close implements the Executor Close interface.
@@ -169,7 +168,7 @@ func (e *ReplaceExec) removeIndexRow(ctx context.Context, txn kv.Transaction, r 
 	return false, false, nil
 }
 
-func (e *ReplaceExec) exec(ctx context.Context, newRows [][]types.Datum, memTracker *memory.Tracker) error {
+func (e *ReplaceExec) exec(ctx context.Context, newRows [][]types.Datum) error {
 	/*
 	 * MySQL uses the following algorithm for REPLACE (and LOAD DATA ... REPLACE):
 	 *  1. Try to insert the new row into the table
@@ -207,7 +206,7 @@ func (e *ReplaceExec) exec(ctx context.Context, newRows [][]types.Datum, memTrac
 			return err
 		}
 	}
-	memTracker.Consume(int64(txn.Size()))
+	e.memTracker.Consume(int64(txn.Size()))
 	return nil
 }
 

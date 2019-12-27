@@ -69,6 +69,7 @@ type InsertValues struct {
 	// Other statements like `insert select from` don't guarantee consecutive autoID.
 	// https://dev.mysql.com/doc/refman/8.0/en/innodb-auto-increment-handling.html
 	lazyFillAutoID bool
+	memTracker     *memory.Tracker
 }
 
 type defaultVal struct {
@@ -79,7 +80,7 @@ type defaultVal struct {
 
 type insertCommon interface {
 	insertCommon() *InsertValues
-	exec(ctx context.Context, rows [][]types.Datum, memTracker *memory.Tracker) error
+	exec(ctx context.Context, rows [][]types.Datum) error
 }
 
 func (e *InsertValues) insertCommon() *InsertValues {
@@ -238,7 +239,7 @@ func insertRows(ctx context.Context, base insertCommon) (err error) {
 			if err != nil {
 				return err
 			}
-			if err = base.exec(ctx, rows, memTracker); err != nil {
+			if err = base.exec(ctx, rows); err != nil {
 				return err
 			}
 			rows = rows[:0]
@@ -258,7 +259,7 @@ func insertRows(ctx context.Context, base insertCommon) (err error) {
 	if err != nil {
 		return err
 	}
-	err = base.exec(ctx, rows, memTracker)
+	err = base.exec(ctx, rows)
 	if err != nil {
 		return err
 	}
@@ -440,7 +441,7 @@ func insertRowsFromSelect(ctx context.Context, base insertCommon) error {
 			if batchInsert && e.rowCount%uint64(batchSize) == 0 {
 				memUsageOfRows = types.EstimatedMemUsage(rows[0], len(rows))
 				memTracker.Consume(memUsageOfRows)
-				if err = base.exec(ctx, rows, memTracker); err != nil {
+				if err = base.exec(ctx, rows); err != nil {
 					return err
 				}
 				rows = rows[:0]
@@ -456,7 +457,7 @@ func insertRowsFromSelect(ctx context.Context, base insertCommon) error {
 			memUsageOfRows = types.EstimatedMemUsage(rows[0], len(rows))
 			memTracker.Consume(memUsageOfRows)
 		}
-		err = base.exec(ctx, rows, memTracker)
+		err = base.exec(ctx, rows)
 		if err != nil {
 			return err
 		}

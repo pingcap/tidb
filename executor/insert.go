@@ -41,11 +41,10 @@ type InsertExec struct {
 	curInsertVals  chunk.MutRow
 	row4Update     []types.Datum
 
-	Priority   mysql.PriorityEnum
-	memTracker *memory.Tracker
+	Priority mysql.PriorityEnum
 }
 
-func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum, memTracker *memory.Tracker) error {
+func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum) error {
 	logutil.Eventf(ctx, "insert %d rows into table `%s`", len(rows), stringutil.MemoizeStr(func() string {
 		var tblName string
 		if meta := e.Table.Meta(); meta != nil {
@@ -88,7 +87,7 @@ func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum, memTracker 
 			}
 		}
 	}
-	memTracker.Consume(int64(txn.Size()))
+	e.memTracker.Consume(int64(txn.Size()))
 	return nil
 }
 
