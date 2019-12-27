@@ -252,7 +252,7 @@ timezone.*
     }
     ```
 
-    *Hint: On a partitioned table, use the `table(partition)` pattern as the table name, `test(p1)` for example:
+    *Hint: On a partitioned table, use the `table(partition)` pattern as the table name, `test(p1)` for example:*
 
     ```shell
     $curl http://127.0.0.1:10080/mvcc/index/test(p1)/t1/idx/1\?a\=A
