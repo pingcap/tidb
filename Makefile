@@ -5,9 +5,9 @@ LDFLAGS += -X "github.com/pingcap/dumpling/v4/cli.GitBranch=$(shell git rev-pars
 LDFLAGS += -X "github.com/pingcap/dumpling/v4/cli.GoVersion=$(shell go version)"
 
 GO = go
-GOFLAGS = -ldflags '$(LDFLAGS)'
+GOLDFLAGS = -ldflags '$(LDFLAGS)'
 ifeq ("$(WITH_RACE)", "1")
-	GOFLAGS += -race
+	GOLDFLAGS += -race
 endif
 
 .PHONY: build test
@@ -15,7 +15,7 @@ endif
 build: bin/dumpling
 
 bin/%: cmd/%/main.go $(wildcard v4/**/*.go)
-	$(GO) build $(GOFLAGS) -tags codes -o $@ $<
+	$(GO) build $(GOLDFLAGS) -tags codes -o $@ $<
 
 test:
-	$(GO) list ./... | xargs $(GO) test $(GOFLAGS) -coverprofile=coverage.txt -covermode=atomic
+	$(GO) list ./... | xargs $(GO) test $(GOLDFLAGS) -coverprofile=coverage.txt -covermode=atomic
