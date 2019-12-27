@@ -447,7 +447,9 @@ const fieldsInEventsStatementsSummary = " (" +
 	"FIRST_SEEN TIMESTAMP(6) NOT NULL," +
 	"LAST_SEEN TIMESTAMP(6) NOT NULL," +
 	"QUERY_SAMPLE_TEXT LONGTEXT DEFAULT NULL," +
-	"PREV_SAMPLE_TEXT LONGTEXT DEFAULT NULL);"
+	"PREV_SAMPLE_TEXT LONGTEXT DEFAULT NULL," +
+	"PLAN_DIGEST VARCHAR(64) DEFAULT NULL," +
+	"PLAN LONGTEXT DEFAULT NULL);"
 
 // tableEventsStatementsSummaryByDigest contains the column name definitions for table
 // events_statements_summary_by_digest, same as MySQL.

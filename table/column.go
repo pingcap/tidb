@@ -86,7 +86,8 @@ func ToColumn(col *model.ColumnInfo) *Column {
 
 // FindCols finds columns in cols by names.
 // If pkIsHandle is false and name is ExtraHandleName, the extra handle column will be added.
-func FindCols(cols []*Column, names []string, pkIsHandle bool) ([]*Column, error) {
+// If any columns don't match, return nil and the first missing column's name
+func FindCols(cols []*Column, names []string, pkIsHandle bool) ([]*Column, string) {
 	var rcols []*Column
 	for _, name := range names {
 		col := FindCol(cols, name)
@@ -98,11 +99,11 @@ func FindCols(cols []*Column, names []string, pkIsHandle bool) ([]*Column, error
 			col.ColumnInfo.Offset = len(cols)
 			rcols = append(rcols, col)
 		} else {
-			return nil, errUnknownColumn.GenWithStack("unknown column %s", name)
+			return nil, name
 		}
 	}
 
-	return rcols, nil
+	return rcols, ""
 }
 
 // FindOnUpdateCols finds columns which have OnUpdateNow flag.
