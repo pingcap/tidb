@@ -1128,5 +1128,8 @@ func (e *SimpleExec) executeShutdown(s *ast.ShutdownStmt) error {
 // This function need to run with async model, otherwise it will block main coroutine
 func asyncDelayShutdown(p *os.Process, delay time.Duration) {
 	time.Sleep(delay)
-	p.Kill()
+	err := p.Kill()
+	if err != nil {
+		panic(err)
+	}
 }
