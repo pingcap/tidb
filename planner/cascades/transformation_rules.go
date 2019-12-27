@@ -988,6 +988,7 @@ type PushTopNDownOuterJoin struct {
 }
 
 // NewRulePushTopNDownOuterJoin creates a new Transformation PushTopNDownOuterJoin.
+// The pattern of this rule is: `TopN -> Join`.
 func NewRulePushTopNDownOuterJoin() Transformation {
 	rule := &PushTopNDownOuterJoin{}
 	rule.pattern = memo.BuildPattern(
@@ -1001,15 +1002,24 @@ func NewRulePushTopNDownOuterJoin() Transformation {
 // Match implements Transformation interface.
 // Use appliedRuleSet in GroupExpr to avoid re-apply rules.
 func (r *PushTopNDownOuterJoin) Match(expr *memo.ExprIter) bool {
-	return !expr.GetExpr().HasAppliedRule(r)
+	if expr.GetExpr().HasAppliedRule(r) {
+		return false
+	}
+	join := expr.Children[0].GetExpr().ExprNode.(*plannercore.LogicalJoin)
+	switch join.JoinType {
+	case plannercore.LeftOuterJoin, plannercore.LeftOuterSemiJoin, plannercore.AntiLeftOuterSemiJoin, plannercore.RightOuterJoin:
+		return true
+	default:
+		return false
+	}
 }
 
-func pushTopNDownOuterJoinToChild(topN *plannercore.LogicalTopN, childGroup *memo.Group, otherGroup *memo.Group) *memo.Group {
+func pushTopNDownOuterJoinToChild(topN *plannercore.LogicalTopN, outerGroup *memo.Group, innerGroup *memo.Group) *memo.Group {
 	for _, by := range topN.ByItems {
 		cols := expression.ExtractColumns(by.Expr)
 		for _, col := range cols {
-			if otherGroup.Prop.Schema.Contains(col) {
-				return childGroup
+			if innerGroup.Prop.Schema.Contains(col) {
+				return outerGroup
 			}
 		}
 	}
@@ -1023,12 +1033,13 @@ func pushTopNDownOuterJoinToChild(topN *plannercore.LogicalTopN, childGroup *mem
 		newTopN.ByItems[i] = topN.ByItems[i].Clone()
 	}
 	newTopNGroup := memo.NewGroupExpr(newTopN)
-	newTopNGroup.SetChildren(childGroup)
-	newChild := memo.NewGroupWithSchema(newTopNGroup, childGroup.Prop.Schema)
+	newTopNGroup.SetChildren(outerGroup)
+	newChild := memo.NewGroupWithSchema(newTopNGroup, outerGroup.Prop.Schema)
 	return newChild
 }
 
 // OnTransform implements Transformation interface.
+// This rule will transform `TopN->OuterJoin->(OuterChild, InnerChild)` to `TopN->OuterJoin->(TopN->OuterChild, InnerChild)`
 func (r *PushTopNDownOuterJoin) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
 	topN := old.GetExpr().ExprNode.(*plannercore.LogicalTopN)
 	joinExpr := old.Children[0].GetExpr()
@@ -1043,7 +1054,7 @@ func (r *PushTopNDownOuterJoin) OnTransform(old *memo.ExprIter) (newExprs []*mem
 	case plannercore.RightOuterJoin:
 		rightGroup = pushTopNDownOuterJoinToChild(topN, rightGroup, leftGroup)
 	default:
-		// TODO
+		return nil, false, false, nil
 	}
 
 	newJoinExpr := memo.NewGroupExpr(join)
