@@ -17,7 +17,6 @@ import (
 	"fmt"
 	"net/http"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -26,7 +25,6 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/terror"
-	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
@@ -258,19 +256,7 @@ func getClusterMemTableRows(ctx sessionctx.Context, tableName string) (rows [][]
 	if err != nil {
 		return nil, err
 	}
-	return appendHostInfoToRows(rows)
-}
-
-func appendHostInfoToRows(rows [][]types.Datum) ([][]types.Datum, error) {
-	serverInfo, err := infosync.GetServerInfo()
-	if err != nil {
-		return nil, err
-	}
-	addr := serverInfo.IP + ":" + strconv.FormatUint(uint64(serverInfo.StatusPort), 10)
-	for i := range rows {
-		rows[i] = append(rows[i], types.NewStringDatum(addr))
-	}
-	return rows, nil
+	return infoschema.AppendHostInfoToRows(rows)
 }
 
 // IterRecords implements table.Table IterRecords interface.
