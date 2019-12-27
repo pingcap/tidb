@@ -87,7 +87,7 @@ func (e *InsertValues) insertCommon() *InsertValues {
 	return e
 }
 
-func (e *InsertValues) exec(_ context.Context, _ [][]types.Datum, _ *memory.Tracker) error {
+func (e *InsertValues) exec(_ context.Context, _ [][]types.Datum) error {
 	panic("derived should overload exec function")
 }
 
