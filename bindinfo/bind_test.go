@@ -137,9 +137,9 @@ func (s *testSuite) TestBindParse(c *C) {
 	c.Check(bindData.UpdateTime, NotNil)
 
 	// Test fields with quotes or slashes.
-	sql = `CREATE GLOBAL BINDING FOR  select * from t where a BETWEEN "a" and "b" USING select * from t use index(idx) where a BETWEEN "a\nb\rc\td\0e" and 'x'`
+	sql = `CREATE GLOBAL BINDING FOR  select * from t where i BETWEEN "a" and "b" USING select * from t use index(index_t) where i BETWEEN "a\nb\rc\td\0e" and 'x'`
 	tk.MustExec(sql)
-	tk.MustExec(`DROP global binding for select * from t use index(idx) where a BETWEEN "a\nb\rc\td\0e" and "x"`)
+	tk.MustExec(`DROP global binding for select * from t use index(index_t) where i BETWEEN "a\nb\rc\td\0e" and "x"`)
 }
 
 func (s *testSuite) TestGlobalBinding(c *C) {
@@ -378,6 +378,15 @@ func (s *testSuite) TestGlobalAndSessionBindingBothExist(c *C) {
 		"  └─Selection_14 9990.00 cop not(isnull(test.t2.id))",
 		"    └─TableScan_13 10000.00 cop table:t2, range:[-inf,+inf], keep order:false, stats:pseudo",
 	))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, index idx(a))")
+	tk.MustExec("create global binding for select * from t where a > 10 using select * from t ignore index(idx) where a > 10")
+	// Should not panic for `-1`.
+	tk.MustContains("select * from t where a > -1", "TableReader")
+	// Session bindings should be able to cover the global bindings.
+	tk.MustExec("drop session binding for select * from t where a > 10")
+	tk.MustIndexLookup("select * from t where a > -1")
 }
 
 func (s *testSuite) TestExplain(c *C) {
