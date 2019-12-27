@@ -233,3 +233,12 @@ func (s *testUpdateSuite) TestUpdateMultiDatabaseTable(c *C) {
 	tk.MustExec("create table test2.t(a int, b int generated always  as (a+1) virtual)")
 	tk.MustExec("update t, test2.t set test.t.a=1")
 }
+
+func (s *testUpdateSuite) TestUpdatePanic(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec(`create table t(a varchar(1), b varchar(1));`)
+	tk.MustExec(`insert into t values("", "");`)
+	tk.MustExec(`update (select * from t) t1 set a = 5;`)
+}
