@@ -33,31 +33,52 @@ func (r *rowContainerTestSuite) TestNewRowContainer(c *check.C) {
 	c.Assert(rc.AlreadySpilled(), check.Equals, false)
 }
 
-func (r *rowContainerTestSuite) TestAppendRow(c *check.C) {
+func (r *rowContainerTestSuite) TestTmpAndSel(c *check.C) {
 	fields := []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}
 	sz := 4
 	rc := NewRowContainer(fields, sz)
 	c.Assert(rc, check.NotNil)
 	c.Assert(rc.AlreadySpilled(), check.Equals, false)
 	n := 64
-	chk := NewChunkWithCapacity(fields, n)
-	for i := 0; i < n; i++ {
+	chk := NewChunkWithCapacity(fields, sz)
+	numRows := 0
+	for i := 0; i < n - sz; i++ {
+		chk.AppendInt64(0, int64(i))
+		if chk.NumRows() == sz {
+			chk.SetSel([]int{0, 2})
+			numRows += 2
+			err := rc.Add(chk)
+			c.Assert(err, check.IsNil)
+			chk = NewChunkWithCapacity(fields, sz)
+		}
+	}
+	c.Assert(rc.NumChunks(), check.Equals, numRows / 2)
+	c.Assert(rc.NumRow(), check.Equals, numRows)
+	for i := n - sz; i < n; i++ {
 		chk.AppendInt64(0, int64(i))
 	}
-	for i := 0; i < n; i++ {
-		_, err := rc.AppendRow(chk.GetRow(i))
-		c.Assert(err, check.IsNil)
+	chk.SetSel([]int{0, 1, 2})
+	rc.SetTemporary(chk)
+	c.Assert(rc.NumChunks(), check.Equals, numRows / 2 + 1)
+	c.Assert(rc.NumRow(), check.Equals, numRows + 3)
+	checkByIter := func() {
+		it := NewIterator4RowContainer(rc)
+		i := 0
+		for row := it.Begin(); row != it.End(); row = it.Next() {
+			c.Assert(row.GetInt64(0), check.Equals, int64(i))
+			if i < n - sz {
+				i += 2
+			} else {
+				i++
+			}
+		}
+		c.Assert(i, check.Equals, n - 1)
 	}
-	c.Assert(rc.NumChunks(), check.Equals, n/sz)
+	checkByIter()
 	err := rc.spillToDisk()
 	c.Assert(err, check.IsNil)
 	c.Assert(rc.AlreadySpilled(), check.Equals, true)
-	it := NewIterator4RowContainer(rc)
-	row := it.Begin()
-	for i := 0; i < n; i++ {
-		c.Assert(row.GetInt64(0), check.Equals, int64(i))
-		row = it.Next()
-	}
+	checkByIter()
 	err = rc.Close()
 	c.Assert(err, check.IsNil)
 }
@@ -83,26 +104,12 @@ func (r *rowContainerTestSuite) TestSpillAction(c *check.C) {
 	c.Assert(atomic.LoadUint32(&rc.spilled), check.Equals, uint32(0))
 	c.Assert(atomic.LoadUint32(&rc.exceeded), check.Equals, uint32(0))
 	c.Assert(rc.GetMemTracker().BytesConsumed(), check.Equals, chk.MemoryUsage())
+	// The following line is erroneous, since chk is already handled by rc, Add it again causes duplicated memory usage account.
+	// It is only for test of spill, do not double-add a chunk elsewhere.
 	err = rc.Add(chk)
 	c.Assert(err, check.IsNil)
 	c.Assert(atomic.LoadUint32(&rc.exceeded), check.Equals, uint32(1))
 	c.Assert(atomic.LoadUint32(&rc.spilled), check.Equals, uint32(1))
 	err = rc.Reset()
 	c.Assert(err, check.IsNil)
-
-	c.Assert(atomic.LoadUint32(&rc.spilled), check.Equals, uint32(0))
-	c.Assert(atomic.LoadUint32(&rc.exceeded), check.Equals, uint32(0))
-	for i := 0; i < sz; i++ {
-		_, err = rc.AppendRow(chk.GetRow(i))
-		c.Assert(err, check.IsNil)
-	}
-	c.Assert(err, check.IsNil)
-	c.Assert(rc.GetMemTracker().BytesConsumed(), check.Equals, chk.MemoryUsage())
-	for i := 0; i < sz; i++ {
-		_, err = rc.AppendRow(chk.GetRow(i))
-		c.Assert(err, check.IsNil)
-	}
-	c.Assert(err, check.IsNil)
-	c.Assert(atomic.LoadUint32(&rc.exceeded), check.Equals, uint32(1))
-	c.Assert(atomic.LoadUint32(&rc.spilled), check.Equals, uint32(1))
 }

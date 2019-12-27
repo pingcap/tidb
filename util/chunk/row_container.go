@@ -168,23 +168,6 @@ func (c *RowContainer) AllocChunk() (chk *Chunk) {
 	return c.records.allocChunk()
 }
 
-// AppendRow copies one row into RowContainer, it is not thread safe
-func (c *RowContainer) AppendRow(row Row) (ptr RowPtr, err error) {
-	if c.AlreadySpilled() {
-		ptr, err = c.recordsInDisk.AppendRow(row)
-	} else {
-		ptr = c.records.AppendRow(row)
-		if atomic.LoadUint32(&c.exceeded) != 0 {
-			err = c.spillToDisk()
-			if err != nil {
-				return
-			}
-			atomic.StoreUint32(&c.spilled, 1)
-		}
-	}
-	return
-}
-
 // GetChunk returns chkIdx th chunk of in memory records
 func (c *RowContainer) GetChunk(chkIdx int) *Chunk {
 	return c.records.GetChunk(chkIdx)

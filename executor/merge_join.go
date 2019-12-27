@@ -118,6 +118,7 @@ func (t *mergeJoinInnerTable) selectedRows() *chunk.RowContainer {
 	if t.curSel != nil {
 		t.curChk.SetSel(t.curSel)
 		t.sameKeyRows.SetTemporary(t.curChk)
+		t.curSel = nil
 	}
 	return t.sameKeyRows
 }
@@ -128,6 +129,7 @@ func (t *mergeJoinInnerTable) rowsWithSameKey(ctx sessionctx.Context) (*chunk.Ro
 	// over the management of a chunk to the RowContainer, to keep the semantic consistent, we set it
 	// to nil.
 	t.curSel = nil
+	t.curChk.SetSel(nil)
 	if t.sameKeyRows == nil {
 		rc := chunk.NewRowContainer(t.reader.base().retFieldTypes, t.curChk.Capacity())
 		rc.GetMemTracker().AttachTo(ctx.GetSessionVars().StmtCtx.MemTracker)
@@ -193,6 +195,7 @@ func (t *mergeJoinInnerTable) nextRow() (chunk.Row, error) {
 		if !t.hasNullInJoinKey(result) {
 			return result, nil
 		}
+		fmt.Println("has null key!")
 	}
 }
 
