@@ -351,7 +351,7 @@
           "Group#0 Schema:[test.t.b]", 
           "    Projection_2 input:[Group#1], test.t.b", 
           "Group#1 Schema:[test.t.b]", 
-          "    Limit_6 input:[Group#2], offset:0, count:2", 
+          "    Limit_3 input:[Group#2], offset:0, count:2", 
           "Group#2 Schema:[test.t.b]", 
           "    TiKVSingleGather_5 input:[Group#3], table:t", 
           "Group#3 Schema:[test.t.b]", 

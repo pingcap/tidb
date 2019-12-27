@@ -671,7 +671,8 @@ type PushLimitDownProjection struct {
 	baseRule
 }
 
-// NewRulePushLimitDownProjection creates a new Transformation. The pattern of this rule is `Limit->Projection->X` to `Projection->Limit->X`.
+// NewRulePushLimitDownProjection creates a new Transformation.
+// The pattern of this rule is `Limit->Projection->X` to `Projection->Limit->X`.
 func NewRulePushLimitDownProjection() Transformation {
 	rule := &PushLimitDownProjection{}
 	rule.pattern = memo.BuildPattern(
@@ -700,13 +701,8 @@ func (r *PushLimitDownProjection) OnTransform(old *memo.ExprIter) (newExprs []*m
 	proj := old.Children[0].GetExpr().ExprNode.(*plannercore.LogicalProjection)
 	childGroup := old.Children[0].GetExpr().Children[0]
 
-	newLimit := plannercore.LogicalLimit{
-		Offset: limit.Offset,
-		Count:  limit.Count,
-	}.Init(limit.SCtx(), limit.SelectBlockOffset())
-
 	projExpr := memo.NewGroupExpr(proj)
-	limitExpr := memo.NewGroupExpr(newLimit)
+	limitExpr := memo.NewGroupExpr(limit)
 	limitExpr.SetChildren(childGroup)
 	limitGroup := memo.NewGroupWithSchema(limitExpr, childGroup.Prop.Schema)
 	projExpr.SetChildren(limitGroup)
