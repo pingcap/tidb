@@ -32,6 +32,8 @@ type RowContainer struct {
 	records *List
 	// recordsInDisk stores the chunks in disk.
 	recordsInDisk *ListInDisk
+	// tmp is the last chunk in RowContainer which is not managed by the RowContainer
+	tmp *Chunk
 
 	fieldType []*types.FieldType
 	chunkSize int
@@ -88,6 +90,7 @@ func (c *RowContainer) Reset() error {
 	} else {
 		c.records.Reset()
 	}
+	c.tmp = nil
 	return nil
 }
 
@@ -99,14 +102,18 @@ func (c *RowContainer) AlreadySpilledSafe() bool { return atomic.LoadUint32(&c.s
 
 // NumRow returns the number of rows in the container
 func (c *RowContainer) NumRow() int {
+	num := c.numRowsInTemporary()
 	if c.AlreadySpilled() {
-		return c.recordsInDisk.Len()
+		return c.recordsInDisk.Len() + num
 	}
-	return c.records.Len()
+	return c.records.Len() + num
 }
 
 // NumRowsOfChunk returns the number of rows of a chunk in the ListInDisk.
 func (c *RowContainer) NumRowsOfChunk(chkID int) int {
+	if c.tmp != nil && chkID == c.NumChunks() - 1 {
+		return c.tmp.NumRows()
+	}
 	if c.AlreadySpilled() {
 		return c.recordsInDisk.NumRowsOfChunk(chkID)
 	}
@@ -115,10 +122,16 @@ func (c *RowContainer) NumRowsOfChunk(chkID int) int {
 
 // NumChunks returns the number of chunks in the container.
 func (c *RowContainer) NumChunks() int {
-	if c.AlreadySpilled() {
-		return c.recordsInDisk.NumChunks()
+	var numTmp int
+	if c.tmp == nil {
+		numTmp = 0
+	} else {
+		numTmp = 1
 	}
-	return c.records.NumChunks()
+	if c.AlreadySpilled() {
+		return c.recordsInDisk.NumChunks() + numTmp
+	}
+	return c.records.NumChunks() + numTmp
 }
 
 // Add appends a chunk into the RowContainer
@@ -138,7 +151,24 @@ func (c *RowContainer) Add(chk *Chunk) (err error) {
 	return
 }
 
-// AppendRow appends one row into RowContainer, it is not thread safe
+func (c *RowContainer) numRowsInTemporary() int {
+	if c.tmp == nil {
+		return 0
+	}
+	return c.tmp.NumRows()
+}
+
+// SetTemporary appends an additional chunk at the end of the RowContainer, it is not managed by the RowContainer.
+func (c *RowContainer) SetTemporary(chk *Chunk) {
+	c.tmp = chk
+}
+
+// AllocChunk allocates a new chunk from RowContainer
+func (c *RowContainer) AllocChunk() (chk *Chunk) {
+	return c.records.allocChunk()
+}
+
+// AppendRow copies one row into RowContainer, it is not thread safe
 func (c *RowContainer) AppendRow(row Row) (ptr RowPtr, err error) {
 	if c.AlreadySpilled() {
 		ptr, err = c.recordsInDisk.AppendRow(row)
@@ -162,6 +192,9 @@ func (c *RowContainer) GetChunk(chkIdx int) *Chunk {
 
 // GetRow returns the row the ptr pointed to
 func (c *RowContainer) GetRow(ptr RowPtr) (Row, error) {
+	if c.tmp != nil && ptr.ChkIdx == uint32(c.NumChunks() - 1) {
+		return c.tmp.GetRow(int(ptr.RowIdx)), nil
+	}
 	if c.AlreadySpilled() {
 		return c.recordsInDisk.GetRow(ptr)
 	}

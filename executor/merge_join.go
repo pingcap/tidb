@@ -84,11 +84,10 @@ type mergeJoinInnerTable struct {
 	keyCmpFuncs    []chunk.CompareFunc
 	firstRow4Key   chunk.Row
 	curRow         chunk.Row
-	curResult      *chunk.Chunk
+	curChk      *chunk.Chunk
+	curSel []int
 	curIter        *chunk.Iterator4Chunk
-	curResultInUse bool
-	resultQueue    []*chunk.Chunk
-	resourceQueue  []*chunk.Chunk
+	curChkInUse bool
 
 	memTracker *memory.Tracker
 }
@@ -98,11 +97,10 @@ func (t *mergeJoinInnerTable) init(ctx context.Context, chk4Reader *chunk.Chunk)
 		return errors.Errorf("Invalid arguments: Empty arguments detected.")
 	}
 	t.ctx = ctx
-	t.curResult = chk4Reader
-	t.curIter = chunk.NewIterator4Chunk(t.curResult)
+	t.curChk = chk4Reader
+	t.curIter = chunk.NewIterator4Chunk(t.curChk)
 	t.curRow = t.curIter.End()
-	t.curResultInUse = false
-	t.resultQueue = append(t.resultQueue, chk4Reader)
+	t.curChkInUse = false
 	t.memTracker.Consume(chk4Reader.MemoryUsage())
 	t.firstRow4Key, err = t.nextRow()
 	t.keyCmpFuncs = make([]chunk.CompareFunc, 0, len(t.joinKeys))
@@ -112,12 +110,26 @@ func (t *mergeJoinInnerTable) init(ctx context.Context, chk4Reader *chunk.Chunk)
 	return err
 }
 
+func (t *mergeJoinInnerTable) selectRow(row chunk.Row) {
+	t.curSel = append(t.curSel, row.Idx())
+}
+
+func (t *mergeJoinInnerTable) selectedRows() *chunk.RowContainer {
+	if t.curSel != nil {
+		t.curChk.SetSel(t.curSel)
+		t.sameKeyRows.SetTemporary(t.curChk)
+	}
+	return t.sameKeyRows
+}
+
 func (t *mergeJoinInnerTable) rowsWithSameKey(ctx sessionctx.Context) (*chunk.RowContainer, error) {
-	lastResultIdx := len(t.resultQueue) - 1
-	t.resourceQueue = append(t.resourceQueue, t.resultQueue[0:lastResultIdx]...)
-	t.resultQueue = t.resultQueue[lastResultIdx:]
+	// t.curSel sets to nil, so that it won't overwrite Sel in chunks in RowContainer,
+	// it might be unnecessary since merge join only runs single thread. However since we want to hand
+	// over the management of a chunk to the RowContainer, to keep the semantic consistent, we set it
+	// to nil.
+	t.curSel = nil
 	if t.sameKeyRows == nil {
-		rc := chunk.NewRowContainer(t.reader.base().retFieldTypes, t.curResult.Capacity())
+		rc := chunk.NewRowContainer(t.reader.base().retFieldTypes, t.curChk.Capacity())
 		rc.GetMemTracker().AttachTo(ctx.GetSessionVars().StmtCtx.MemTracker)
 		rc.GetDiskTracker().AttachTo(ctx.GetSessionVars().StmtCtx.DiskTracker)
 		t.sameKeyRows = rc
@@ -136,25 +148,20 @@ func (t *mergeJoinInnerTable) rowsWithSameKey(ctx sessionctx.Context) (*chunk.Ro
 	if t.firstRow4Key == t.curIter.End() {
 		return t.sameKeyRows, nil
 	}
-	if _, err := t.sameKeyRows.AppendRow(t.firstRow4Key); err != nil {
-		return t.sameKeyRows, err
-	}
+	t.selectRow(t.firstRow4Key)
 	for {
 		selectedRow, err := t.nextRow()
 		// error happens or no more data.
 		if err != nil || selectedRow == t.curIter.End() {
 			t.firstRow4Key = t.curIter.End()
-			return t.sameKeyRows, err
+			return t.selectedRows(), err
 		}
 		compareResult := compareChunkRow(t.keyCmpFuncs, selectedRow, t.firstRow4Key, t.joinKeys, t.joinKeys)
 		if compareResult == 0 {
-			_, err := t.sameKeyRows.AppendRow(selectedRow)
-			if err != nil {
-				return nil, err
-			}
+			t.selectRow(selectedRow)
 		} else {
 			t.firstRow4Key = selectedRow
-			return t.sameKeyRows, nil
+			return t.selectedRows(), nil
 		}
 	}
 }
@@ -162,21 +169,25 @@ func (t *mergeJoinInnerTable) rowsWithSameKey(ctx sessionctx.Context) (*chunk.Ro
 func (t *mergeJoinInnerTable) nextRow() (chunk.Row, error) {
 	for {
 		if t.curRow == t.curIter.End() {
-			t.reallocReaderResult()
-			oldMemUsage := t.curResult.MemoryUsage()
-			err := Next(t.ctx, t.reader, t.curResult)
-			// error happens or no more data.
-			if err != nil || t.curResult.NumRows() == 0 {
+			err := t.reallocReaderResult()
+			if err != nil {
 				t.curRow = t.curIter.End()
 				return t.curRow, err
 			}
-			newMemUsage := t.curResult.MemoryUsage()
+			oldMemUsage := t.curChk.MemoryUsage()
+			err = Next(t.ctx, t.reader, t.curChk)
+			// error happens or no more data.
+			if err != nil || t.curChk.NumRows() == 0 {
+				t.curRow = t.curIter.End()
+				return t.curRow, err
+			}
+			newMemUsage := t.curChk.MemoryUsage()
 			t.memTracker.Consume(newMemUsage - oldMemUsage)
 			t.curRow = t.curIter.Begin()
 		}
 
 		result := t.curRow
-		t.curResultInUse = true
+		t.curChkInUse = true
 		t.curRow = t.curIter.Next()
 
 		if !t.hasNullInJoinKey(result) {
@@ -197,28 +208,31 @@ func (t *mergeJoinInnerTable) hasNullInJoinKey(row chunk.Row) bool {
 
 // reallocReaderResult resets "t.curResult" to an empty Chunk to buffer the result of "t.reader".
 // It pops a Chunk from "t.resourceQueue" and push it into "t.resultQueue" immediately.
-func (t *mergeJoinInnerTable) reallocReaderResult() {
-	if !t.curResultInUse {
+func (t *mergeJoinInnerTable) reallocReaderResult() (err error) {
+	if !t.curChkInUse {
 		// If "t.curResult" is not in use, we can just reuse it.
-		t.curResult.Reset()
+		t.curChk.Reset()
 		return
 	}
 
-	// Create a new Chunk and append it to "resourceQueue" if there is no more
-	// available chunk in "resourceQueue".
-	if len(t.resourceQueue) == 0 {
-		newChunk := newFirstChunk(t.reader)
-		t.memTracker.Consume(newChunk.MemoryUsage())
-		t.resourceQueue = append(t.resourceQueue, newChunk)
-	}
+	// Allocate a new Chunk from RowContainer
+	newChk := t.sameKeyRows.AllocChunk()
+	t.memTracker.Consume(newChk.MemoryUsage() - t.curChk.MemoryUsage())
 
-	// NOTE: "t.curResult" is always the last element of "resultQueue".
-	t.curResult = t.resourceQueue[0]
-	t.curIter = chunk.NewIterator4Chunk(t.curResult)
-	t.resourceQueue = t.resourceQueue[1:]
-	t.resultQueue = append(t.resultQueue, t.curResult)
-	t.curResult.Reset()
-	t.curResultInUse = false
+	// hand over the management to the RowContainer, therefore needs to reserve the first row by CopyConstruct
+	t.firstRow4Key = t.firstRow4Key.CopyConstruct()
+	// TODO(zhifeng): will this curSel be nil? If so, don't add it to RowContainer.
+	t.curChk.SetSel(t.curSel)
+	err = t.sameKeyRows.Add(t.curChk)
+	if err != nil {
+		return err
+	}
+	t.curChk = newChk
+	t.curChk.Reset()
+	t.curSel = nil
+	t.curChkInUse = false
+	t.curIter = chunk.NewIterator4Chunk(t.curChk)
+	return
 }
 
 // Close implements the Executor Close interface.
