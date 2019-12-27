@@ -92,7 +92,7 @@ type mergeJoinInnerTable struct {
 	memTracker *memory.Tracker
 }
 
-func (t *mergeJoinInnerTable) init(sctx sessionctx.Context, ctx context.Context, chk4Reader *chunk.Chunk) (err error) {
+func (t *mergeJoinInnerTable) init(ctx context.Context, sctx sessionctx.Context, chk4Reader *chunk.Chunk) (err error) {
 	if t.reader == nil || ctx == nil {
 		return errors.Errorf("Invalid arguments: Empty arguments detected.")
 	}
@@ -286,7 +286,7 @@ func compareChunkRow(cmpFuncs []chunk.CompareFunc, lhsRow, rhsRow chunk.Row, lhs
 }
 
 func (e *MergeJoinExec) prepare(ctx context.Context, requiredRows int) error {
-	err := e.innerTable.init(e.ctx, ctx, e.childrenResults[e.outerIdx^1])
+	err := e.innerTable.init(ctx, e.ctx, e.childrenResults[e.outerIdx^1])
 	if err != nil {
 		return err
 	}
