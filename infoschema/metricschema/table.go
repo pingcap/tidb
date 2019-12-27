@@ -14,12 +14,16 @@
 package metricschema
 
 import (
+	"bytes"
+	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/util/set"
 )
 
 const (
@@ -63,16 +67,6 @@ func GetMetricTableDef(lowerTableName string) (*MetricTableDef, error) {
 	return &def, nil
 }
 
-// GetExplainInfo uses to get the explain info of metric table.
-func GetExplainInfo(sctx sessionctx.Context, lowerTableName string) string {
-	def, ok := metricTableMap[lowerTableName]
-	if !ok {
-		return ""
-	}
-	promQL := def.GenPromQL(sctx, nil)
-	return "PromQL:" + promQL
-}
-
 func (def *MetricTableDef) genColumnInfos() []columnInfo {
 	cols := []columnInfo{
 		{"time", mysql.TypeDatetime, 19, 0, "CURRENT_TIMESTAMP", nil},
@@ -83,26 +77,58 @@ func (def *MetricTableDef) genColumnInfos() []columnInfo {
 	}
 	if def.Quantile > 0 {
 		defaultValue := strconv.FormatFloat(def.Quantile, 'f', -1, 64)
-		cols = append(cols, columnInfo{"Quantile", mysql.TypeDouble, 22, 0, defaultValue, nil})
+		cols = append(cols, columnInfo{"quantile", mysql.TypeDouble, 22, 0, defaultValue, nil})
 	}
 	return cols
 }
 
 // GenPromQL generates the promQL.
-func (def *MetricTableDef) GenPromQL(sctx sessionctx.Context, labels []string) string {
+func (def *MetricTableDef) GenPromQL(sctx sessionctx.Context, labels map[string]set.StringSet, quantile float64) string {
 	promQL := def.PromQL
 	if strings.Contains(promQL, promQLQuantileKey) {
-		promQL = strings.Replace(promQL, promQLQuantileKey, strconv.FormatFloat(def.Quantile, 'f', -1, 64), -1)
+		promQL = strings.Replace(promQL, promQLQuantileKey, strconv.FormatFloat(quantile, 'f', -1, 64), -1)
 	}
 
 	if strings.Contains(promQL, promQLLabelConditionKey) {
-		promQL = strings.Replace(promQL, promQLLabelConditionKey, "", -1)
+		promQL = strings.Replace(promQL, promQLLabelConditionKey, def.genLabelCondition(labels), -1)
 	}
 
 	if strings.Contains(promQL, promQRangeDurationKey) {
 		promQL = strings.Replace(promQL, promQRangeDurationKey, strconv.FormatInt(sctx.GetSessionVars().MetricSchemaRangeDuration, 10)+"s", -1)
 	}
 	return promQL
+}
+
+func (def *MetricTableDef) genLabelCondition(labels map[string]set.StringSet) string {
+	var buf bytes.Buffer
+	index := 0
+	for _, label := range def.Labels {
+		values := labels[label]
+		if len(values) == 0 {
+			continue
+		}
+		if index > 0 {
+			buf.WriteByte(',')
+		}
+		switch len(values) {
+		case 1:
+			buf.WriteString(fmt.Sprintf("%s=\"%s\"", label, GenLabelConditionValues(values)))
+		default:
+			buf.WriteString(fmt.Sprintf("%s=~\"%s\"", label, GenLabelConditionValues(values)))
+		}
+		index++
+	}
+	return buf.String()
+}
+
+// GenLabelConditionValues generates the label condition values.
+func GenLabelConditionValues(values set.StringSet) string {
+	vs := make([]string, 0, len(values))
+	for k := range values {
+		vs = append(vs, k)
+	}
+	sort.Strings(vs)
+	return strings.Join(vs, "|")
 }
 
 type columnInfo struct {

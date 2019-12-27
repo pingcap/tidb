@@ -247,8 +247,8 @@ func (c *Context) HasLockedTables() bool {
 	return false
 }
 
-// PrepareTxnFuture implements the sessionctx.Context interface.
-func (c *Context) PrepareTxnFuture(ctx context.Context) {
+// PrepareTSFuture implements the sessionctx.Context interface.
+func (c *Context) PrepareTSFuture(ctx context.Context) {
 }
 
 // Close implements the sessionctx.Context interface.

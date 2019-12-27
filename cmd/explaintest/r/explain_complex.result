@@ -118,11 +118,11 @@ id	count	task	operator info
 Projection_13	1.00	root	test.st.id, test.dd.id, test.st.aid, test.st.cm, test.dd.dic, test.dd.ip, test.dd.t, test.st.p1, test.st.p2, test.st.p3, test.st.p4, test.st.p5, test.st.p6_md5, test.st.p7_md5, test.st.ext, test.st.t
 └─Limit_16	1.00	root	offset:0, count:2500
   └─HashAgg_19	1.00	root	group by:test.dd.dic, test.st.aid, funcs:firstrow(test.st.id)->test.st.id, funcs:firstrow(test.st.aid)->test.st.aid, funcs:firstrow(test.st.cm)->test.st.cm, funcs:firstrow(test.st.p1)->test.st.p1, funcs:firstrow(test.st.p2)->test.st.p2, funcs:firstrow(test.st.p3)->test.st.p3, funcs:firstrow(test.st.p4)->test.st.p4, funcs:firstrow(test.st.p5)->test.st.p5, funcs:firstrow(test.st.p6_md5)->test.st.p6_md5, funcs:firstrow(test.st.p7_md5)->test.st.p7_md5, funcs:firstrow(test.st.ext)->test.st.ext, funcs:firstrow(test.st.t)->test.st.t, funcs:firstrow(test.dd.id)->test.dd.id, funcs:firstrow(test.dd.dic)->test.dd.dic, funcs:firstrow(test.dd.ip)->test.dd.ip, funcs:firstrow(test.dd.t)->test.dd.t
-    └─IndexMergeJoin_30	0.00	root	inner join, inner:IndexLookUp_28, outer key:test.st.aid, inner key:test.dd.aid, other cond:eq(test.dd.ip, test.st.ip), gt(test.dd.t, test.st.t)
-      ├─IndexLookUp_28	0.00	root	
-      │ ├─IndexScan_25	1.00	cop[tikv]	table:dd, index:aid, dic, range: decided by [eq(test.dd.aid, test.st.aid)], keep order:true, stats:pseudo
-      │ └─Selection_27	0.00	cop[tikv]	eq(test.dd.bm, 0), eq(test.dd.pt, "android"), gt(test.dd.t, 1478143908), not(isnull(test.dd.ip)), not(isnull(test.dd.t))
-      │   └─TableScan_26	1.00	cop[tikv]	table:dd, keep order:false, stats:pseudo
+    └─HashRightJoin_34	0.00	root	inner join, inner:IndexLookUp_52, equal:[eq(test.dd.aid, test.st.aid) eq(test.dd.ip, test.st.ip)], other cond:gt(test.dd.t, test.st.t)
+      ├─IndexLookUp_52	0.00	root	
+      │ ├─IndexScan_49	3333.33	cop[tikv]	table:dd, index:t, range:(1478143908,+inf], keep order:false, stats:pseudo
+      │ └─Selection_51	0.00	cop[tikv]	eq(test.dd.bm, 0), eq(test.dd.pt, "android"), not(isnull(test.dd.ip))
+      │   └─TableScan_50	3333.33	cop[tikv]	table:dd, keep order:false, stats:pseudo
       └─IndexLookUp_41	3.33	root	
         ├─IndexScan_38	3333.33	cop[tikv]	table:gad, index:t, range:(1478143908,+inf], keep order:false, stats:pseudo
         └─Selection_40	3.33	cop[tikv]	eq(test.st.pt, "android"), not(isnull(test.st.ip))
@@ -137,9 +137,9 @@ Projection_10	0.00	root	test.st.id, test.dd.id, test.st.aid, test.st.cm, test.dd
     │ └─Selection_34	0.00	cop[tikv]	eq(test.st.bm, 0), eq(test.st.dit, "mac"), eq(test.st.pt, "ios"), not(isnull(test.st.dic))
     │   └─TableScan_33	3333.33	cop[tikv]	table:gad, keep order:false, stats:pseudo
     └─IndexLookUp_22	0.00	root	
-      ├─IndexScan_19	1.00	cop[tikv]	table:sdk, index:aid, dic, range: decided by [eq(test.dd.aid, test.st.aid)], keep order:true, stats:pseudo
+      ├─IndexScan_19	10000.00	cop[tikv]	table:sdk, index:aid, dic, range: decided by [eq(test.dd.aid, test.st.aid)], keep order:true, stats:pseudo
       └─Selection_21	0.00	cop[tikv]	eq(test.dd.bm, 0), eq(test.dd.pt, "ios"), gt(test.dd.t, 1477971479), not(isnull(test.dd.mac)), not(isnull(test.dd.t))
-        └─TableScan_20	1.00	cop[tikv]	table:sdk, keep order:false, stats:pseudo
+        └─TableScan_20	10000.00	cop[tikv]	table:sdk, keep order:false, stats:pseudo
 explain SELECT cm, p1, p2, p3, p4, p5, p6_md5, p7_md5, count(1) as click_pv, count(DISTINCT ip) as click_ip FROM st WHERE (t between 1478188800 and 1478275200) and aid='cn.sbkcq' and pt='android' GROUP BY cm, p1, p2, p3, p4, p5, p6_md5, p7_md5;
 id	count	task	operator info
 Projection_5	1.00	root	test.st.cm, test.st.p1, test.st.p2, test.st.p3, test.st.p4, test.st.p5, test.st.p6_md5, test.st.p7_md5, Column#20, Column#21

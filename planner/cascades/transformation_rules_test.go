@@ -127,6 +127,7 @@ func (s *testTransformationRuleSuite) TestPredicatePushDown(c *C) {
 			NewRulePushSelDownIndexScan(),
 			NewRulePushSelDownUnionAll(),
 			NewRulePushSelDownWindow(),
+			NewRuleMergeAdjacentSelection(),
 		},
 		memo.OperandDataSource: {
 			NewRuleEnumeratePaths(),
@@ -154,6 +155,7 @@ func (s *testTransformationRuleSuite) TestTopNRules(c *C) {
 		},
 		memo.OperandTopN: {
 			NewRulePushTopNDownProjection(),
+			NewRulePushTopNDownUnionAll(),
 		},
 	})
 	var input []string

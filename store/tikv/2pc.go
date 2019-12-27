@@ -764,10 +764,12 @@ func (action actionPessimisticLock) handleSingleBatch(c *twoPhaseCommitter, bo *
 			} else {
 				// the lockWaitTime is set, we should return wait timeout if we are still blocked by a lock
 				if time.Since(lockWaitStartTime).Milliseconds() >= action.LockWaitTime {
-					return ErrLockWaitTimeout
+					return errors.Trace(ErrLockWaitTimeout)
 				}
 			}
-			atomic.StoreInt32(&action.LockCtx.PessimisticLockWaited, 1)
+			if action.LockCtx.PessimisticLockWaited != nil {
+				atomic.StoreInt32(action.LockCtx.PessimisticLockWaited, 1)
+			}
 		}
 
 		// Handle the killed flag when waiting for the pessimistic lock.
@@ -778,7 +780,7 @@ func (action actionPessimisticLock) handleSingleBatch(c *twoPhaseCommitter, bo *
 			// actionPessimisticLock runs on each region parallelly, we have to consider that
 			// the error may be dropped.
 			if atomic.LoadUint32(action.Killed) == 1 {
-				return ErrQueryInterrupted
+				return errors.Trace(ErrQueryInterrupted)
 			}
 		}
 	}

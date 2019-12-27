@@ -882,7 +882,7 @@ func (b *builtinMicroSecondSig) vecEvalInt(input *chunk.Chunk, result *chunk.Col
 	}
 	defer b.bufAllocator.put(buf)
 	if err = b.args[0].VecEvalDuration(b.ctx, input, buf); err != nil {
-		return err
+		return vecEvalIntByRows(b, input, result)
 	}
 
 	result.ResizeInt64(n, false)
@@ -1140,7 +1140,7 @@ func (b *builtinMinuteSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 	}
 	defer b.bufAllocator.put(buf)
 	if err = b.args[0].VecEvalDuration(b.ctx, input, buf); err != nil {
-		return err
+		return vecEvalIntByRows(b, input, result)
 	}
 
 	result.ResizeInt64(n, false)
@@ -1167,7 +1167,7 @@ func (b *builtinSecondSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 	}
 	defer b.bufAllocator.put(buf)
 	if err = b.args[0].VecEvalDuration(b.ctx, input, buf); err != nil {
-		return err
+		return vecEvalIntByRows(b, input, result)
 	}
 
 	result.ResizeInt64(n, false)
@@ -1763,17 +1763,7 @@ func (b *builtinHourSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) er
 	}
 	defer b.bufAllocator.put(buf)
 	if err = b.args[0].VecEvalDuration(b.ctx, input, buf); err != nil {
-		result.ResizeInt64(n, false)
-		i64s := result.Int64s()
-		for i := 0; i < n; i++ {
-			res, isNull, err := b.evalInt(input.GetRow(i))
-			if err != nil {
-				return err
-			}
-			result.SetNull(i, isNull)
-			i64s[i] = res
-		}
-		return nil
+		return vecEvalIntByRows(b, input, result)
 	}
 
 	result.ResizeInt64(n, false)
