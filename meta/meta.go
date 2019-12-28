@@ -62,20 +62,20 @@ var (
 	mDBPrefix         = "DB"
 	mTablePrefix      = "Table"
 	mTableIDPrefix    = "TID"
+	mRandomIDPrefix   = "TARID"
 	mBootstrapKey     = []byte("BootstrapKey")
 	mSchemaDiffPrefix = "Diff"
 )
 
 var (
-
 	// ErrDBExists is the error for db exists.
-	ErrDBExists = terror.ClassMeta.New(codeDatabaseExists, "database already exists")
+	ErrDBExists = terror.ClassMeta.New(mysql.ErrDBCreateExists, mysql.MySQLErrName[mysql.ErrDBCreateExists])
 	// ErrDBNotExists is the error for db not exists.
-	ErrDBNotExists = terror.ClassMeta.New(codeDatabaseNotExists, "database doesn't exist")
+	ErrDBNotExists = terror.ClassMeta.New(mysql.ErrBadDB, mysql.MySQLErrName[mysql.ErrBadDB])
 	// ErrTableExists is the error for table exists.
-	ErrTableExists = terror.ClassMeta.New(codeTableExists, "table already exists")
+	ErrTableExists = terror.ClassMeta.New(mysql.ErrTableExists, mysql.MySQLErrName[mysql.ErrTableExists])
 	// ErrTableNotExists is the error for table not exists.
-	ErrTableNotExists = terror.ClassMeta.New(codeTableNotExists, "table doesn't exist")
+	ErrTableNotExists = terror.ClassMeta.New(mysql.ErrNoSuchTable, mysql.MySQLErrName[mysql.ErrNoSuchTable])
 )
 
 // Meta is for handling meta information in a transaction.
@@ -145,6 +145,10 @@ func (m *Meta) autoTableIDKey(tableID int64) []byte {
 	return []byte(fmt.Sprintf("%s:%d", mTableIDPrefix, tableID))
 }
 
+func (m *Meta) autoRandomTableIDKey(tableID int64) []byte {
+	return []byte(fmt.Sprintf("%s:%d", mRandomIDPrefix, tableID))
+}
+
 func (m *Meta) tableKey(tableID int64) []byte {
 	return []byte(fmt.Sprintf("%s:%d", mTablePrefix, tableID))
 }
@@ -177,9 +181,30 @@ func (m *Meta) GenAutoTableID(dbID, tableID, step int64) (int64, error) {
 	return m.txn.HInc(dbKey, m.autoTableIDKey(tableID), step)
 }
 
+// GenAutoRandomID adds step to the auto shard ID of the table and returns the sum.
+func (m *Meta) GenAutoRandomID(dbID, tableID, step int64) (int64, error) {
+	// Check if DB exists.
+	dbKey := m.dbKey(dbID)
+	if err := m.checkDBExists(dbKey); err != nil {
+		return 0, errors.Trace(err)
+	}
+	// Check if table exists.
+	tableKey := m.tableKey(tableID)
+	if err := m.checkTableExists(dbKey, tableKey); err != nil {
+		return 0, errors.Trace(err)
+	}
+
+	return m.txn.HInc(dbKey, m.autoRandomTableIDKey(tableID), step)
+}
+
 // GetAutoTableID gets current auto id with table id.
 func (m *Meta) GetAutoTableID(dbID int64, tableID int64) (int64, error) {
 	return m.txn.HGetInt64(m.dbKey(dbID), m.autoTableIDKey(tableID))
+}
+
+// GetAutoRandomID gets current auto shard id with table id.
+func (m *Meta) GetAutoRandomID(dbID int64, tableID int64) (int64, error) {
+	return m.txn.HGetInt64(m.dbKey(dbID), m.autoRandomTableIDKey(tableID))
 }
 
 // GetSchemaVersion gets current global schema version.
@@ -195,7 +220,7 @@ func (m *Meta) GenSchemaVersion() (int64, error) {
 func (m *Meta) checkDBExists(dbKey []byte) error {
 	v, err := m.txn.HGet(mDBs, dbKey)
 	if err == nil && v == nil {
-		err = ErrDBNotExists
+		err = ErrDBNotExists.GenWithStack("database doesn't exist")
 	}
 	return errors.Trace(err)
 }
@@ -203,7 +228,7 @@ func (m *Meta) checkDBExists(dbKey []byte) error {
 func (m *Meta) checkDBNotExists(dbKey []byte) error {
 	v, err := m.txn.HGet(mDBs, dbKey)
 	if err == nil && v != nil {
-		err = ErrDBExists
+		err = ErrDBExists.GenWithStack("database already exists")
 	}
 	return errors.Trace(err)
 }
@@ -211,7 +236,7 @@ func (m *Meta) checkDBNotExists(dbKey []byte) error {
 func (m *Meta) checkTableExists(dbKey []byte, tableKey []byte) error {
 	v, err := m.txn.HGet(dbKey, tableKey)
 	if err == nil && v == nil {
-		err = ErrTableNotExists
+		err = ErrTableNotExists.GenWithStack("table doesn't exist")
 	}
 	return errors.Trace(err)
 }
@@ -219,7 +244,7 @@ func (m *Meta) checkTableExists(dbKey []byte, tableKey []byte) error {
 func (m *Meta) checkTableNotExists(dbKey []byte, tableKey []byte) error {
 	v, err := m.txn.HGet(dbKey, tableKey)
 	if err == nil && v != nil {
-		err = ErrTableExists
+		err = ErrTableExists.GenWithStack("table already exists")
 	}
 	return errors.Trace(err)
 }
@@ -286,7 +311,16 @@ func (m *Meta) CreateTableAndSetAutoID(dbID int64, tableInfo *model.TableInfo, a
 		return errors.Trace(err)
 	}
 	_, err = m.txn.HInc(m.dbKey(dbID), m.autoTableIDKey(tableInfo.ID), autoID)
-	return errors.Trace(err)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if tableInfo.AutoRandomBits > 0 {
+		_, err = m.txn.HInc(m.dbKey(dbID), m.autoRandomTableIDKey(tableInfo.ID), 0)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+	return nil
 }
 
 // DropDatabase drops whole database.
@@ -325,6 +359,9 @@ func (m *Meta) DropTableOrView(dbID int64, tblID int64, delAutoID bool) error {
 	}
 	if delAutoID {
 		if err := m.txn.HDel(dbKey, m.autoTableIDKey(tblID)); err != nil {
+			return errors.Trace(err)
+		}
+		if err := m.txn.HDel(dbKey, m.autoRandomTableIDKey(tblID)); err != nil {
 			return errors.Trace(err)
 		}
 	}
@@ -705,7 +742,7 @@ func (s *jobsSorter) Less(i, j int) bool {
 	return s.jobs[i].ID < s.jobs[j].ID
 }
 
-// GetBootstrapVersion returns the version of the server which boostrap the store.
+// GetBootstrapVersion returns the version of the server which bootstrap the store.
 // If the store is not bootstraped, the version will be zero.
 func (m *Meta) GetBootstrapVersion() (int64, error) {
 	value, err := m.txn.GetInt64(mBootstrapKey)
@@ -818,23 +855,12 @@ func (m *Meta) SetSchemaDiff(diff *model.SchemaDiff) error {
 	return errors.Trace(err)
 }
 
-// meta error codes.
-const (
-	codeInvalidTableKey terror.ErrCode = 1
-	codeInvalidDBKey                   = 2
-
-	codeDatabaseExists    = 1007
-	codeDatabaseNotExists = 1049
-	codeTableExists       = 1050
-	codeTableNotExists    = 1146
-)
-
 func init() {
 	metaMySQLErrCodes := map[terror.ErrCode]uint16{
-		codeDatabaseExists:    mysql.ErrDBCreateExists,
-		codeDatabaseNotExists: mysql.ErrBadDB,
-		codeTableNotExists:    mysql.ErrNoSuchTable,
-		codeTableExists:       mysql.ErrTableExists,
+		mysql.ErrDBCreateExists: mysql.ErrDBCreateExists,
+		mysql.ErrBadDB:          mysql.ErrBadDB,
+		mysql.ErrNoSuchTable:    mysql.ErrNoSuchTable,
+		mysql.ErrTableExists:    mysql.ErrTableExists,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassMeta] = metaMySQLErrCodes
 }

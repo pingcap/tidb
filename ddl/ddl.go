@@ -84,6 +84,8 @@ var (
 	errRunMultiSchemaChanges = terror.ClassDDL.New(mysql.ErrUnsupportedDDLOperation, fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation], "multi schema change"))
 	errWaitReorgTimeout      = terror.ClassDDL.New(mysql.ErrLockWaitTimeout, mysql.MySQLErrName[mysql.ErrWaitReorgTimeout])
 	errInvalidStoreVer       = terror.ClassDDL.New(mysql.ErrInvalidStoreVersion, mysql.MySQLErrName[mysql.ErrInvalidStoreVersion])
+	// ErrRepairTableFail is used to repair tableInfo in repair mode.
+	ErrRepairTableFail = terror.ClassDDL.New(mysql.ErrRepairTable, mysql.MySQLErrName[mysql.ErrRepairTable])
 
 	// We don't support dropping column with index covered now.
 	errCantDropColWithIndex      = terror.ClassDDL.New(mysql.ErrUnsupportedDDLOperation, fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation], "drop column with index"))
@@ -105,6 +107,8 @@ var (
 	errTooManyFields            = terror.ClassDDL.New(mysql.ErrTooManyFields, mysql.MySQLErrName[mysql.ErrTooManyFields])
 	errInvalidSplitRegionRanges = terror.ClassDDL.New(mysql.ErrInvalidSplitRegionRanges, mysql.MySQLErrName[mysql.ErrInvalidSplitRegionRanges])
 	errReorgPanic               = terror.ClassDDL.New(mysql.ErrReorgPanic, mysql.MySQLErrName[mysql.ErrReorgPanic])
+	errFkColumnCannotDrop       = terror.ClassDDL.New(mysql.ErrFkColumnCannotDrop, mysql.MySQLErrName[mysql.ErrFkColumnCannotDrop])
+	errFKIncompatibleColumns    = terror.ClassDDL.New(mysql.ErrFKIncompatibleColumns, mysql.MySQLErrName[mysql.ErrFKIncompatibleColumns])
 
 	errOnlyOnRangeListPartition = terror.ClassDDL.New(mysql.ErrOnlyOnRangeListPartition, mysql.MySQLErrName[mysql.ErrOnlyOnRangeListPartition])
 	// errWrongKeyColumn is for table column cannot be indexed.
@@ -135,6 +139,7 @@ var (
 	// ErrUnsupportedPartitionByRangeColumns returns for does unsupported partition by range columns.
 	ErrUnsupportedPartitionByRangeColumns = terror.ClassDDL.New(mysql.ErrUnsupportedDDLOperation, fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation], "partition by range columns"))
 	errUnsupportedCreatePartition         = terror.ClassDDL.New(mysql.ErrUnsupportedDDLOperation, fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation], "partition type, treat as normal table"))
+	errTablePartitionDisabled             = terror.ClassDDL.New(mysql.ErrUnsupportedDDLOperation, "Partitions are ignored because Table Partition is disabled, please set 'tidb_enable_table_partition' if you need to need to enable it")
 	errUnsupportedIndexType               = terror.ClassDDL.New(mysql.ErrUnsupportedDDLOperation, fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation], "index type"))
 
 	// ErrDupKeyName returns for duplicated key name
@@ -221,6 +226,8 @@ var (
 	ErrFieldNotFoundPart = terror.ClassDDL.New(mysql.ErrFieldNotFoundPart, mysql.MySQLErrName[mysql.ErrFieldNotFoundPart])
 	// ErrWrongTypeColumnValue returns 'Partition column values of incorrect type'
 	ErrWrongTypeColumnValue = terror.ClassDDL.New(mysql.ErrWrongTypeColumnValue, mysql.MySQLErrName[mysql.ErrWrongTypeColumnValue])
+	// ErrInvalidAutoRandom returns when auto_random is used incorrectly.
+	ErrInvalidAutoRandom = terror.ClassDDL.New(mysql.ErrInvalidAutoRandom, mysql.MySQLErrName[mysql.ErrInvalidAutoRandom])
 )
 
 // DDL is responsible for updating schema in data store and maintaining in-memory InfoSchema cache.
@@ -235,7 +242,7 @@ type DDL interface {
 	RecoverTable(ctx sessionctx.Context, tbInfo *model.TableInfo, schemaID, autoID, dropJobID int64, snapshotTS uint64) (err error)
 	DropView(ctx sessionctx.Context, tableIdent ast.Ident) (err error)
 	CreateIndex(ctx sessionctx.Context, tableIdent ast.Ident, keyType ast.IndexKeyType, indexName model.CIStr,
-		columnNames []*ast.IndexColName, indexOption *ast.IndexOption, ifNotExists bool) error
+		columnNames []*ast.IndexPartSpecification, indexOption *ast.IndexOption, ifNotExists bool) error
 	DropIndex(ctx sessionctx.Context, tableIdent ast.Ident, indexName model.CIStr, ifExists bool) error
 	AlterTable(ctx sessionctx.Context, tableIdent ast.Ident, spec []*ast.AlterTableSpec) error
 	TruncateTable(ctx sessionctx.Context, tableIdent ast.Ident) error
@@ -244,6 +251,7 @@ type DDL interface {
 	UnlockTables(ctx sessionctx.Context, lockedTables []model.TableLockTpInfo) error
 	CleanupTableLock(ctx sessionctx.Context, tables []*ast.TableName) error
 	UpdateTableReplicaInfo(ctx sessionctx.Context, tid int64, available bool) error
+	RepairTable(ctx sessionctx.Context, table *ast.TableName, createStmt *ast.CreateTableStmt) error
 
 	// GetLease returns current schema lease time.
 	GetLease() time.Duration
@@ -455,7 +463,7 @@ func (d *ddl) start(ctx context.Context, ctxPool *pools.ResourcePool) {
 					metrics.PanicCounter.WithLabelValues(metrics.LabelDDLSyncer).Inc()
 				}
 			})
-		metrics.DDLCounter.WithLabelValues(fmt.Sprintf("%s", metrics.StartCleanWork)).Inc()
+		metrics.DDLCounter.WithLabelValues(metrics.StartCleanWork).Inc()
 	}
 }
 
@@ -664,6 +672,7 @@ func init() {
 		mysql.ErrGeneratedColumnFunctionIsNotAllowed:  mysql.ErrGeneratedColumnFunctionIsNotAllowed,
 		mysql.ErrGeneratedColumnNonPrior:              mysql.ErrGeneratedColumnNonPrior,
 		mysql.ErrGeneratedColumnRefAutoInc:            mysql.ErrGeneratedColumnRefAutoInc,
+		mysql.ErrInvalidAutoRandom:                    mysql.ErrInvalidAutoRandom,
 		mysql.ErrInvalidDDLJob:                        mysql.ErrInvalidDDLJob,
 		mysql.ErrInvalidDDLState:                      mysql.ErrInvalidDDLState,
 		mysql.ErrInvalidDDLWorker:                     mysql.ErrInvalidDDLWorker,
@@ -724,6 +733,8 @@ func init() {
 		mysql.ErrWrongTableName:                       mysql.ErrWrongTableName,
 		mysql.ErrWrongTypeColumnValue:                 mysql.ErrWrongTypeColumnValue,
 		mysql.WarnDataTruncated:                       mysql.WarnDataTruncated,
+		mysql.ErrFkColumnCannotDrop:                   mysql.ErrFkColumnCannotDrop,
+		mysql.ErrFKIncompatibleColumns:                mysql.ErrFKIncompatibleColumns,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassDDL] = ddlMySQLErrCodes
 }

@@ -93,6 +93,14 @@ func (s *testExecutorSuite) TestResolvedLargeTxnLocks(c *C) {
 	// After that, the query should read the previous version data.
 	tk.MustQuery("select * from t").Check(testkit.Rows("1 1"))
 
+	// Cover BatchGet.
+	tk.MustQuery("select * from t where id in (1)").Check(testkit.Rows("1 1"))
+
+	// Cover PointGet.
+	tk.MustExec("begin")
+	tk.MustQuery("select * from t where id = 1").Check(testkit.Rows("1 1"))
+	tk.MustExec("rollback")
+
 	// And check the large txn is still alive.
 	pairs = s.mvccStore.Scan([]byte("primary"), nil, 1, tso, kvrpcpb.IsolationLevel_SI, nil)
 	c.Assert(pairs, HasLen, 1)

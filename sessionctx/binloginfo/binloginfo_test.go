@@ -270,7 +270,8 @@ func (s *testBinlogSuite) TestMaxRecvSize(c *C) {
 		},
 		Client: s.client,
 	}
-	err := info.WriteBinlog(1)
+	binlogWR := info.WriteBinlog(1)
+	err := binlogWR.GetError()
 	c.Assert(err, NotNil)
 	c.Assert(terror.ErrCritical.Equal(err), IsFalse, Commentf("%v", err))
 }
@@ -461,6 +462,18 @@ func (s *testBinlogSuite) TestAddSpecialComment(c *C) {
 		{
 			"create table t6 (id int ) shard_row_id_bits=2 shard_row_id_bits=3 pre_split_regions=2;",
 			"create table t6 (id int ) /*!90000 shard_row_id_bits=2 shard_row_id_bits=3 pre_split_regions=2 */ ;",
+		},
+		{
+			"create table t1 (id int primary key auto_random(2));",
+			"create table t1 (id int primary key /*T!40000 auto_random(2) */ );",
+		},
+		{
+			"create table t1 (id int auto_random ( 4 ) primary key);",
+			"create table t1 (id int /*T!40000 auto_random ( 4 ) */ primary key);",
+		},
+		{
+			"create table t1 (id int  auto_random  (   4    ) primary key);",
+			"create table t1 (id int  /*T!40000 auto_random  (   4    ) */ primary key);",
 		},
 	}
 	for _, ca := range testCase {

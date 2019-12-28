@@ -17,6 +17,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -286,7 +287,11 @@ func (s *testSuite6) TestCreateDropView(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create or replace view drop_test as select 1,2")
-	_, err := tk.Exec("drop view if exists drop_test")
+
+	_, err := tk.Exec("drop table drop_test")
+	c.Assert(err.Error(), Equals, "[schema:1051]Unknown table 'test.drop_test'")
+
+	_, err = tk.Exec("drop view if exists drop_test")
 	c.Assert(err, IsNil)
 
 	_, err = tk.Exec("drop view mysql.gc_delete_range")
@@ -568,9 +573,12 @@ func (s *testSuite8) TestShardRowIDBits(c *C) {
 
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int) shard_row_id_bits = 15")
+	var insertingValues = make([]string, 100)
 	for i := 0; i < 100; i++ {
-		tk.MustExec(fmt.Sprintf("insert t values (%d)", i))
+		insertingValues[i] = fmt.Sprintf("(%d)", i)
 	}
+	tk.MustExec("insert into t values " + strings.Join(insertingValues, ","))
+
 	dom := domain.GetDomain(tk.Se)
 	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
@@ -643,9 +651,11 @@ func (s *testSuite8) TestShardRowIDBits(c *C) {
 
 	// Test shard_row_id_bits with auto_increment column
 	tk.MustExec("create table auto (a int, b int auto_increment unique) shard_row_id_bits = 15")
+	insertingValues = make([]string, 100)
 	for i := 0; i < 100; i++ {
-		tk.MustExec(fmt.Sprintf("insert auto(a) values (%d)", i))
+		insertingValues[i] = fmt.Sprintf("(%d)", i)
 	}
+	tk.MustExec("insert auto(a) values " + strings.Join(insertingValues, ","))
 	tbl, err = dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("auto"))
 	assertCountAndShard(tbl, 100)
 	prevB, err := strconv.Atoi(tk.MustQuery("select b from auto where a=0").Rows()[0][0].(string))
@@ -674,6 +684,100 @@ func (s *testSuite8) TestShardRowIDBits(c *C) {
 	c.Assert(autoid.ErrAutoincReadFailed.Equal(err), IsTrue, Commentf("err:%v", err))
 	_, err = tk.Exec("insert into t1 values(3)")
 	c.Assert(autoid.ErrAutoincReadFailed.Equal(err), IsTrue, Commentf("err:%v", err))
+}
+
+type testAutoRandomSuite struct {
+	*baseTestSuite
+}
+
+func (s *testAutoRandomSuite) TestAutoRandomBitsData(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("create database if not exists test_auto_random_bits")
+	defer tk.MustExec("drop database if exists test_auto_random_bits")
+	tk.MustExec("use test_auto_random_bits")
+	tk.MustExec("drop table if exists t")
+
+	testutil.ConfigTestUtils.SetupAutoRandomTestConfig()
+	defer testutil.ConfigTestUtils.RestoreAutoRandomTestConfig()
+
+	tk.MustExec("create table t (a bigint primary key auto_random(15), b int)")
+	insertingValues := make([]string, 100)
+	for i := 0; i < 100; i++ {
+		insertingValues[i] = fmt.Sprintf("(%d)", i)
+	}
+	tk.MustExec(fmt.Sprintf("insert into t (b) values %s;", strings.Join(insertingValues, ",")))
+
+	dom := domain.GetDomain(tk.Se)
+	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr("test_auto_random_bits"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	c.Assert(tk.Se.NewTxn(context.Background()), IsNil)
+	var allHandles []int64
+	// Iterate all the record. The order is not guaranteed.
+	err = tbl.IterRecords(tk.Se, tbl.FirstKey(), nil, func(h int64, _ []types.Datum, _ []*table.Column) (more bool, err error) {
+		allHandles = append(allHandles, h)
+		return true, nil
+	})
+	c.Assert(err, IsNil)
+	tk.MustExec("drop table t")
+
+	// Test auto random id number.
+	c.Assert(len(allHandles), Equals, 100)
+	// Test the first 15 bits of each handle is greater than 0.
+	for _, h := range allHandles {
+		c.Assert(h>>(64-15), Greater, int64(0))
+	}
+	// Test auto random id is monotonic increasing and continuous.
+	orderedHandles := make([]int64, len(allHandles))
+	for i, h := range allHandles {
+		orderedHandles[i] = h << 16 >> 16
+	}
+	sort.Slice(orderedHandles, func(i, j int) bool { return orderedHandles[i] < orderedHandles[j] })
+	size := int64(len(allHandles))
+	for i := int64(1); i <= size; i++ {
+		c.Assert(i, Equals, orderedHandles[i-1])
+	}
+
+	// Test explicit insert.
+	tk.MustExec("create table t (a tinyint primary key auto_random(2), b int)")
+	insertingValues = make([]string, 100)
+	for i := 0; i < 100; i++ {
+		insertingValues[i] = fmt.Sprintf("(%d, %d)", i, i)
+	}
+	tk.MustExec(fmt.Sprintf("insert into t values %s;", strings.Join(insertingValues, ",")))
+
+	_, err = tk.Exec("insert into t (b) values (0)")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, autoid.ErrAutoRandReadFailed.GenWithStackByArgs().Error())
+	tk.MustExec("drop table t")
+
+	// Test overflow.
+	tk.MustExec("create table t (a tinyint primary key auto_random(2), b int)")
+	fieldLength := uint64(mysql.DefaultLengthOfMysqlTypes[mysql.TypeTiny] * 8)
+	signBit := uint64(1)
+	for i := 0; i < (1<<(fieldLength-2-signBit))-1; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t (b) values (%d)", i))
+	}
+	_, err = tk.Exec("insert into t (b) values (0)")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, autoid.ErrAutoRandReadFailed.GenWithStackByArgs().Error())
+	tk.MustExec("drop table t")
+
+	// Test rebase.
+	tk.MustExec("create table t (a tinyint primary key auto_random(2), b int)")
+	tk.MustExec("insert into t values (31, 2)")
+	_, err = tk.Exec("insert into t (b) values (0)")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, autoid.ErrAutoRandReadFailed.GenWithStackByArgs().Error())
+	tk.MustExec("drop table t")
+
+	tk.MustExec("create table t (a tinyint primary key auto_random(2), b int)")
+	tk.MustExec("insert into t values (0, 2)")
+	tk.MustExec("update t set a = 31 where a = 0")
+	_, err = tk.Exec("insert into t (b) values (0)")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, autoid.ErrAutoRandReadFailed.GenWithStackByArgs().Error())
+	tk.MustExec("drop table t")
 }
 
 func (s *testSuite6) TestMaxHandleAddIndex(c *C) {

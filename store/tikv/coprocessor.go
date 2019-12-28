@@ -19,24 +19,26 @@ import (
 	"fmt"
 	"io"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 	"unsafe"
 
-	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/distsql"
+	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/ranger"
 	"go.uber.org/zap"
@@ -217,7 +219,6 @@ const rangesPerTask = 25000
 
 func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, req *kv.Request) ([]*copTask, error) {
 	start := time.Now()
-	rangesLen := ranges.len()
 	cmdType := tikvrpc.CmdCop
 	if req.Streaming {
 		cmdType = tikvrpc.CmdCopStream
@@ -230,6 +231,11 @@ func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, req *kv
 		tableStart, tableEnd = keyRange[0].StartKey, keyRange[0].EndKey
 	}
 
+	if req.StoreType == kv.TiDB {
+		return buildTiDBMemCopTasks(ranges, req)
+	}
+
+	rangesLen := ranges.len()
 	var tasks []*copTask
 	appendTask := func(regionWithRangeInfo *KeyLocation, ranges *copRanges) {
 		if req.StoreType == kv.TiKV {
@@ -288,6 +294,25 @@ func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, req *kv
 			zap.Int("task len", len(tasks)))
 	}
 	tikvTxnRegionsNumHistogramWithCoprocessor.Observe(float64(len(tasks)))
+	return tasks, nil
+}
+
+func buildTiDBMemCopTasks(ranges *copRanges, req *kv.Request) ([]*copTask, error) {
+	servers, err := infosync.GetAllServerInfo(context.Background())
+	if err != nil {
+		return nil, err
+	}
+	tasks := make([]*copTask, 0, len(servers))
+	for _, ser := range servers {
+		addr := ser.IP + ":" + strconv.FormatUint(uint64(ser.StatusPort), 10)
+		tasks = append(tasks, &copTask{
+			ranges:    ranges,
+			respChan:  make(chan *copResponse, 2),
+			cmdType:   tikvrpc.CmdCop,
+			storeType: req.StoreType,
+			storeAddr: addr,
+		})
+	}
 	return tasks, nil
 }
 
@@ -688,9 +713,10 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 	})
 
 	req := tikvrpc.NewReplicaReadRequest(task.cmdType, &coprocessor.Request{
-		Tp:     worker.req.Tp,
-		Data:   worker.req.Data,
-		Ranges: task.ranges.toPBRanges(),
+		Tp:      worker.req.Tp,
+		StartTs: worker.req.StartTs,
+		Data:    worker.req.Data,
+		Ranges:  task.ranges.toPBRanges(),
 	}, worker.req.ReplicaRead, worker.replicaReadSeed, kvrpcpb.Context{
 		IsolationLevel: pbIsolationLevel(worker.req.IsolationLevel),
 		Priority:       kvPriorityToCommandPri(worker.req.Priority),
@@ -698,8 +724,9 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 		HandleTime:     true,
 		ScanDetail:     true,
 	})
+	req.StoreTp = task.storeType
 	startTime := time.Now()
-	resp, rpcCtx, storeAddr, err := worker.SendReqCtx(bo, req, task.region, task.storeType)
+	resp, rpcCtx, storeAddr, err := worker.SendReqCtx(bo, req, task.region, ReadTimeoutMedium, task.storeType, task.storeAddr)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -774,10 +801,13 @@ func (ch *clientHelper) ResolveLocks(bo *Backoffer, callerStartTS uint64, locks 
 }
 
 // SendReqCtx wraps the SendReqCtx function and use the resolved lock result in the kvrpcpb.Context.
-func (ch *clientHelper) SendReqCtx(bo *Backoffer, req *tikvrpc.Request, regionID RegionVerID, sType kv.StoreType) (*tikvrpc.Response, *RPCContext, string, error) {
+func (ch *clientHelper) SendReqCtx(bo *Backoffer, req *tikvrpc.Request, regionID RegionVerID, timeout time.Duration, sType kv.StoreType, directStoreAddr string) (*tikvrpc.Response, *RPCContext, string, error) {
 	sender := NewRegionRequestSender(ch.RegionCache, ch.Client)
+	if len(directStoreAddr) > 0 {
+		sender.storeAddr = directStoreAddr
+	}
 	req.Context.ResolvedLocks = ch.minCommitTSPushed.Get()
-	resp, ctx, err := sender.SendReqCtx(bo, req, regionID, ReadTimeoutMedium, sType)
+	resp, ctx, err := sender.SendReqCtx(bo, req, regionID, timeout, sType)
 	return resp, ctx, sender.storeAddr, err
 }
 
@@ -881,6 +911,11 @@ func (worker *copIteratorWorker) handleCopStreamResult(bo *Backoffer, rpcCtx *RP
 // successful response, otherwise it's nil.
 func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *RPCContext, resp *copResponse, task *copTask, ch chan<- *copResponse, lastRange *coprocessor.KeyRange, costTime time.Duration) ([]*copTask, error) {
 	if regionErr := resp.pbResp.GetRegionError(); regionErr != nil {
+		if rpcCtx != nil && task.storeType == kv.TiDB {
+			resp.err = errors.Errorf("error: %v", regionErr)
+			worker.sendToRespCh(resp, ch, true)
+			return nil, nil
+		}
 		if err := bo.Backoff(BoRegionMiss, errors.New(regionErr.String())); err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -913,13 +948,19 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *RPCCon
 	// When the request is using streaming API, the `Range` is not nil.
 	if resp.pbResp.Range != nil {
 		resp.startKey = resp.pbResp.Range.Start
-	} else {
+	} else if task.ranges != nil && task.ranges.len() > 0 {
 		resp.startKey = task.ranges.at(0).StartKey
 	}
 	if resp.detail == nil {
 		resp.detail = new(execdetails.ExecDetails)
 	}
 	resp.detail.BackoffTime = time.Duration(bo.totalSleep) * time.Millisecond
+	resp.detail.BackoffSleep, resp.detail.BackoffTimes = make(map[string]time.Duration), make(map[string]int)
+	for backoff := range bo.backoffTimes {
+		backoffName := backoff.String()
+		resp.detail.BackoffTimes[backoffName] = bo.backoffTimes[backoff]
+		resp.detail.BackoffSleep[backoffName] = time.Duration(bo.backoffSleepMS[backoff]) * time.Millisecond
+	}
 	if rpcCtx != nil {
 		resp.detail.CalleeAddress = rpcCtx.Addr
 	}

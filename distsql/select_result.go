@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tipb/go-tipb"
@@ -73,7 +74,9 @@ type selectResult struct {
 	copPlanIDs []fmt.Stringer
 	rootPlanID fmt.Stringer
 
-	memTracker *memory.Tracker
+	fetchDuration    time.Duration
+	durationReported bool
+	memTracker       *memory.Tracker
 }
 
 func (r *selectResult) Fetch(ctx context.Context) {
@@ -82,7 +85,10 @@ func (r *selectResult) Fetch(ctx context.Context) {
 func (r *selectResult) fetchResp(ctx context.Context) error {
 	for {
 		r.respChkIdx = 0
+		startTime := time.Now()
 		resultSubset, err := r.resp.Next(ctx)
+		duration := time.Since(startTime)
+		r.fetchDuration += duration
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -91,6 +97,13 @@ func (r *selectResult) fetchResp(ctx context.Context) error {
 		}
 		if resultSubset == nil {
 			r.selectResp = nil
+			if !r.durationReported {
+				// final round of fetch
+				// TODO: Add a label to distinguish between success or failure.
+				// https://github.com/pingcap/tidb/issues/11397
+				metrics.DistSQLQueryHistgram.WithLabelValues(r.label, r.sqlType).Observe(r.fetchDuration.Seconds())
+				r.durationReported = true
+			}
 			return nil
 		}
 		r.selectResp = new(tipb.SelectResponse)
@@ -107,7 +120,7 @@ func (r *selectResult) fetchResp(ctx context.Context) error {
 		for _, warning := range r.selectResp.Warnings {
 			sc.AppendWarning(terror.ClassTiKV.New(terror.ErrCode(warning.Code), warning.Msg))
 		}
-		r.updateCopRuntimeStats(resultSubset.GetExecDetails().CalleeAddress, resultSubset.RespTime())
+		r.updateCopRuntimeStats(resultSubset.GetExecDetails(), resultSubset.RespTime())
 		r.feedback.Update(resultSubset.GetStartKey(), r.selectResp.OutputCounts)
 		r.partialCount++
 		sc.MergeExecDetails(resultSubset.GetExecDetails(), nil)
@@ -206,7 +219,8 @@ func (r *selectResult) readFromChunk(ctx context.Context, chk *chunk.Chunk) erro
 	return nil
 }
 
-func (r *selectResult) updateCopRuntimeStats(callee string, respTime time.Duration) {
+func (r *selectResult) updateCopRuntimeStats(detail *execdetails.ExecDetails, respTime time.Duration) {
+	callee := detail.CalleeAddress
 	if r.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl == nil || callee == "" {
 		return
 	}
@@ -218,7 +232,7 @@ func (r *selectResult) updateCopRuntimeStats(callee string, respTime time.Durati
 		return
 	}
 
-	r.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RecordOneReaderStats(r.rootPlanID.String(), respTime)
+	r.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RecordOneReaderStats(r.rootPlanID.String(), respTime, detail)
 	for i, detail := range r.selectResp.GetExecutionSummaries() {
 		if detail != nil && detail.TimeProcessedNs != nil &&
 			detail.NumProducedRows != nil && detail.NumIterations != nil {

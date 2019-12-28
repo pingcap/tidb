@@ -14,12 +14,17 @@
 package util
 
 import (
+	"crypto/tls"
+	"crypto/x509/pkix"
+	"fmt"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser"
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/util/logutil"
@@ -132,22 +137,171 @@ func SyntaxWarn(err error) error {
 	return parser.ErrParse.GenWithStackByArgs(syntaxErrorPrefix, err.Error())
 }
 
-const (
+var (
 	// InformationSchemaName is the `INFORMATION_SCHEMA` database name.
-	InformationSchemaName = "INFORMATION_SCHEMA"
-	// InformationSchemaLowerName is the `INFORMATION_SCHEMA` database lower name.
-	InformationSchemaLowerName = "information_schema"
+	InformationSchemaName = model.NewCIStr("INFORMATION_SCHEMA")
 	// PerformanceSchemaName is the `PERFORMANCE_SCHEMA` database name.
-	PerformanceSchemaName = "PERFORMANCE_SCHEMA"
-	// PerformanceSchemaLowerName is the `PERFORMANCE_SCHEMA` database lower name.
-	PerformanceSchemaLowerName = "performance_schema"
+	PerformanceSchemaName = model.NewCIStr("PERFORMANCE_SCHEMA")
+	// MetricSchemaName is the `METRIC_SCHEMA` database name.
+	MetricSchemaName = model.NewCIStr("METRIC_SCHEMA")
+	// InspectionSchemaName is the `INSPECTION_SCHEMA` database name
+	InspectionSchemaName = model.NewCIStr("INSPECTION_SCHEMA")
 )
 
 // IsMemOrSysDB uses to check whether dbLowerName is memory database or system database.
 func IsMemOrSysDB(dbLowerName string) bool {
 	switch dbLowerName {
-	case InformationSchemaLowerName, PerformanceSchemaLowerName, mysql.SystemDB:
+	case InformationSchemaName.L,
+		InspectionSchemaName.L,
+		PerformanceSchemaName.L,
+		mysql.SystemDB,
+		MetricSchemaName.L:
 		return true
 	}
 	return false
+}
+
+// X509NameOnline prints pkix.Name into old X509_NAME_oneline format.
+// https://www.openssl.org/docs/manmaster/man3/X509_NAME_oneline.html
+func X509NameOnline(n pkix.Name) string {
+	s := make([]string, 0, len(n.Names))
+	for _, name := range n.Names {
+		oid := name.Type.String()
+		// unlike MySQL, TiDB only support check pkixAttributeTypeNames fields
+		if n, exist := pkixAttributeTypeNames[oid]; exist {
+			s = append(s, n+"="+fmt.Sprint(name.Value))
+		}
+	}
+	if len(s) == 0 {
+		return ""
+	}
+	return "/" + strings.Join(s, "/")
+}
+
+const (
+	// Country is type name for country.
+	Country = "C"
+	// Organization is type name for organization.
+	Organization = "O"
+	// OrganizationalUnit is type name for organizational unit.
+	OrganizationalUnit = "OU"
+	// Locality is type name for locality.
+	Locality = "L"
+	// Email is type name for email.
+	Email = "emailAddress"
+	// CommonName is type name for common name.
+	CommonName = "CN"
+	// Province is type name for province or state.
+	Province = "ST"
+)
+
+// see go/src/crypto/x509/pkix/pkix.go:attributeTypeNames
+var pkixAttributeTypeNames = map[string]string{
+	"2.5.4.6":              Country,
+	"2.5.4.10":             Organization,
+	"2.5.4.11":             OrganizationalUnit,
+	"2.5.4.3":              CommonName,
+	"2.5.4.5":              "SERIALNUMBER",
+	"2.5.4.7":              Locality,
+	"2.5.4.8":              Province,
+	"2.5.4.9":              "STREET",
+	"2.5.4.17":             "POSTALCODE",
+	"1.2.840.113549.1.9.1": Email,
+}
+
+var pkixTypeNameAttributes = make(map[string]string)
+
+// MockPkixAttribute generates mock AttributeTypeAndValue.
+// only used for test.
+func MockPkixAttribute(name, value string) pkix.AttributeTypeAndValue {
+	n, exists := pkixTypeNameAttributes[name]
+	if !exists {
+		panic(fmt.Sprintf("unsupport mock type: %s", name))
+	}
+	var vs []int
+	for _, v := range strings.Split(n, ".") {
+		i, err := strconv.Atoi(v)
+		if err != nil {
+			panic(err)
+		}
+		vs = append(vs, i)
+	}
+	return pkix.AttributeTypeAndValue{
+		Type:  vs,
+		Value: value,
+	}
+}
+
+// CheckSupportX509NameOneline parses and validate input str is X509_NAME_oneline format
+// and precheck check-item is supported by TiDB
+// https://www.openssl.org/docs/manmaster/man3/X509_NAME_oneline.html
+func CheckSupportX509NameOneline(oneline string) (err error) {
+	entries := strings.Split(oneline, `/`)
+	for _, entry := range entries {
+		if len(entry) == 0 {
+			continue
+		}
+		kvs := strings.Split(entry, "=")
+		if len(kvs) != 2 {
+			err = errors.Errorf("invalid X509_NAME input: %s", oneline)
+			return
+		}
+		k := kvs[0]
+		if _, support := pkixTypeNameAttributes[k]; !support {
+			err = errors.Errorf("Unsupport check '%s' in current version TiDB", k)
+			return
+		}
+	}
+	return
+}
+
+var tlsCipherString = map[uint16]string{
+	tls.TLS_RSA_WITH_RC4_128_SHA:                "RC4-SHA",
+	tls.TLS_RSA_WITH_3DES_EDE_CBC_SHA:           "DES-CBC3-SHA",
+	tls.TLS_RSA_WITH_AES_128_CBC_SHA:            "AES128-SHA",
+	tls.TLS_RSA_WITH_AES_256_CBC_SHA:            "AES256-SHA",
+	tls.TLS_RSA_WITH_AES_128_CBC_SHA256:         "AES128-SHA256",
+	tls.TLS_RSA_WITH_AES_128_GCM_SHA256:         "AES128-GCM-SHA256",
+	tls.TLS_RSA_WITH_AES_256_GCM_SHA384:         "AES256-GCM-SHA384",
+	tls.TLS_ECDHE_ECDSA_WITH_RC4_128_SHA:        "ECDHE-ECDSA-RC4-SHA",
+	tls.TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA:    "ECDHE-ECDSA-AES128-SHA",
+	tls.TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA:    "ECDHE-ECDSA-AES256-SHA",
+	tls.TLS_ECDHE_RSA_WITH_RC4_128_SHA:          "ECDHE-RSA-RC4-SHA",
+	tls.TLS_ECDHE_RSA_WITH_3DES_EDE_CBC_SHA:     "ECDHE-RSA-DES-CBC3-SHA",
+	tls.TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA:      "ECDHE-RSA-AES128-SHA",
+	tls.TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA:      "ECDHE-RSA-AES256-SHA",
+	tls.TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA256: "ECDHE-ECDSA-AES128-SHA256",
+	tls.TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA256:   "ECDHE-RSA-AES128-SHA256",
+	tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256:   "ECDHE-RSA-AES128-GCM-SHA256",
+	tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256: "ECDHE-ECDSA-AES128-GCM-SHA256",
+	tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384:   "ECDHE-RSA-AES256-GCM-SHA384",
+	tls.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384: "ECDHE-ECDSA-AES256-GCM-SHA384",
+	tls.TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305:    "ECDHE-RSA-CHACHA20-POLY1305",
+	tls.TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305:  "ECDHE-ECDSA-CHACHA20-POLY1305",
+	// TLS 1.3 cipher suites, compatible with mysql using '_'.
+	tls.TLS_AES_128_GCM_SHA256:       "TLS_AES_128_GCM_SHA256",
+	tls.TLS_AES_256_GCM_SHA384:       "TLS_AES_256_GCM_SHA384",
+	tls.TLS_CHACHA20_POLY1305_SHA256: "TLS_CHACHA20_POLY1305_SHA256",
+}
+
+// SupportCipher maintains cipher supported by TiDB.
+var SupportCipher = make(map[string]struct{}, len(tlsCipherString))
+
+// TLSCipher2String convert tls num to string.
+// Taken from https://testssl.sh/openssl-rfc.mapping.html .
+func TLSCipher2String(n uint16) string {
+	s, ok := tlsCipherString[n]
+	if !ok {
+		return ""
+	}
+	return s
+}
+
+func init() {
+	for _, value := range tlsCipherString {
+		SupportCipher[value] = struct{}{}
+	}
+	for key, value := range pkixAttributeTypeNames {
+		pkixTypeNameAttributes[value] = key
+	}
 }

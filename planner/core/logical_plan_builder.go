@@ -23,7 +23,6 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
@@ -35,8 +34,10 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/planner/property"
+	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
@@ -44,7 +45,9 @@ import (
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
+	util2 "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/plancodec"
 )
 
@@ -81,6 +84,8 @@ const (
 	HintTiFlash = "tiflash"
 	// HintTiKV is a label represents the tikv storage type.
 	HintTiKV = "tikv"
+	// HintIndexMerge is a hint to enforce using some indexes at the same time.
+	HintIndexMerge = "use_index_merge"
 )
 
 const (
@@ -434,10 +439,10 @@ func (ds *DataSource) setPreferredStoreType(hintInfo *tableHintInfo) {
 	} else {
 		alias = &hintTableInfo{dbName: ds.DBName, tblName: ds.tableInfo.Name, selectOffset: ds.SelectBlockOffset()}
 	}
-	if hintInfo.ifPreferTiFlash(alias) {
-		ds.preferStoreType |= preferTiFlash
-	}
 	if hintInfo.ifPreferTiKV(alias) {
+		ds.preferStoreType |= preferTiKV
+	}
+	if hintInfo.ifPreferTiFlash(alias) {
 		if ds.preferStoreType != 0 {
 			errMsg := fmt.Sprintf("Storage hints are conflict, you can only specify one storage type of table %s.%s",
 				alias.dbName.L, alias.tblName.L)
@@ -446,7 +451,19 @@ func (ds *DataSource) setPreferredStoreType(hintInfo *tableHintInfo) {
 			ds.preferStoreType = 0
 			return
 		}
-		ds.preferStoreType |= preferTiKV
+		ds.preferStoreType |= preferTiFlash
+		hasTiFlashPath := false
+		for _, path := range ds.possibleAccessPaths {
+			if path.StoreType == kv.TiFlash {
+				hasTiFlashPath = true
+				break
+			}
+		}
+		// TODO: For now, if there is a TiFlash hint for a table, we enforce a TiFlash path. But hint is just a suggestion
+		//       for the planner. We can keep it since we need it to debug with PD and TiFlash. In future, this should be removed.
+		if !hasTiFlashPath {
+			ds.possibleAccessPaths = append(ds.possibleAccessPaths, &util.AccessPath{IsTablePath: true, StoreType: kv.TiFlash})
+		}
 	}
 }
 
@@ -558,7 +575,7 @@ func (b *PlanBuilder) buildJoin(ctx context.Context, joinNode *ast.Join) (Logica
 			return nil, errors.New("ON condition doesn't support subqueries yet")
 		}
 		onCondition := expression.SplitCNFItems(onExpr)
-		joinPlan.attachOnConds(onCondition)
+		joinPlan.AttachOnConds(onCondition)
 	} else if joinPlan.JoinType == InnerJoin {
 		// If a inner join without "ON" or "USING" clause, it's a cartesian
 		// product over the join tables.
@@ -581,7 +598,7 @@ func (b *PlanBuilder) buildUsingClause(p *LogicalJoin, leftPlan, rightPlan Logic
 	for _, col := range join.Using {
 		filter[col.Name.L] = true
 	}
-	return b.coalesceCommonColumns(p, leftPlan, rightPlan, join.Tp == ast.RightJoin, filter)
+	return b.coalesceCommonColumns(p, leftPlan, rightPlan, join.Tp, filter)
 }
 
 // buildNaturalJoin builds natural join output schema. It finds out all the common columns
@@ -591,16 +608,21 @@ func (b *PlanBuilder) buildUsingClause(p *LogicalJoin, leftPlan, rightPlan Logic
 // 	Every column in the first (left) table that is not a common column
 // 	Every column in the second (right) table that is not a common column
 func (b *PlanBuilder) buildNaturalJoin(p *LogicalJoin, leftPlan, rightPlan LogicalPlan, join *ast.Join) error {
-	return b.coalesceCommonColumns(p, leftPlan, rightPlan, join.Tp == ast.RightJoin, nil)
+	return b.coalesceCommonColumns(p, leftPlan, rightPlan, join.Tp, nil)
 }
 
 // coalesceCommonColumns is used by buildUsingClause and buildNaturalJoin. The filter is used by buildUsingClause.
-func (b *PlanBuilder) coalesceCommonColumns(p *LogicalJoin, leftPlan, rightPlan LogicalPlan, rightJoin bool, filter map[string]bool) error {
+func (b *PlanBuilder) coalesceCommonColumns(p *LogicalJoin, leftPlan, rightPlan LogicalPlan, joinTp ast.JoinType, filter map[string]bool) error {
 	lsc := leftPlan.Schema().Clone()
 	rsc := rightPlan.Schema().Clone()
+	if joinTp == ast.LeftJoin {
+		resetNotNullFlag(rsc, 0, rsc.Len())
+	} else if joinTp == ast.RightJoin {
+		resetNotNullFlag(lsc, 0, lsc.Len())
+	}
 	lColumns, rColumns := lsc.Columns, rsc.Columns
 	lNames, rNames := leftPlan.OutputNames().Shallow(), rightPlan.OutputNames().Shallow()
-	if rightJoin {
+	if joinTp == ast.RightJoin {
 		lNames, rNames = rNames, lNames
 		lColumns, rColumns = rsc.Columns, lsc.Columns
 	}
@@ -2122,7 +2144,7 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, nodeType n
 	hints = b.hintProcessor.getCurrentStmtHints(hints, nodeType, currentLevel)
 	var (
 		sortMergeTables, INLJTables, INLHJTables, INLMJTables, hashJoinTables []hintTableInfo
-		indexHintList                                                         []indexHintInfo
+		indexHintList, indexMergeHintList                                     []indexHintInfo
 		tiflashTables, tikvTables                                             []hintTableInfo
 		aggHints                                                              aggHintInfo
 	)
@@ -2183,6 +2205,17 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, nodeType n
 			if hint.StoreType.L == HintTiKV {
 				tikvTables = tableNames2HintTableInfo(b.ctx, hint.Tables, b.hintProcessor, nodeType, currentLevel)
 			}
+		case HintIndexMerge:
+			if len(hint.Tables) != 0 {
+				indexMergeHintList = append(indexMergeHintList, indexHintInfo{
+					tblName: hint.Tables[0].TableName,
+					indexHint: &ast.IndexHint{
+						IndexNames: hint.Indexes,
+						HintType:   ast.HintUse,
+						HintScope:  ast.HintForScan,
+					},
+				})
+			}
 		default:
 			// ignore hints that not implemented
 		}
@@ -2195,6 +2228,7 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, nodeType n
 		tiflashTables:             tiflashTables,
 		tikvTables:                tikvTables,
 		aggHints:                  aggHints,
+		indexMergeHintList:        indexMergeHintList,
 	})
 }
 
@@ -2416,6 +2450,7 @@ func (ds *DataSource) newExtraHandleSchemaCol() *expression.Column {
 		RetType:  types.NewFieldType(mysql.TypeLonglong),
 		UniqueID: ds.ctx.GetSessionVars().AllocPlanColumnID(),
 		ID:       model.ExtraHandleID,
+		OrigName: fmt.Sprintf("%v.%v.%v", ds.DBName, ds.tableInfo.Name, model.ExtraHandleName),
 	}
 }
 
@@ -2472,6 +2507,10 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	}
 	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, dbName.L, tableInfo.Name.L, "", authErr)
 
+	if tbl.Type().IsVirtualTable() {
+		return b.buildMemTable(ctx, dbName, tableInfo)
+	}
+
 	if tableInfo.IsView() {
 		return b.BuildDataSourceFromView(ctx, dbName, tableInfo)
 	}
@@ -2493,7 +2532,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	if tblName.L == "" {
 		tblName = tn.Name
 	}
-	possiblePaths, err := b.getPossibleAccessPaths(tn.IndexHints, tableInfo, dbName, tblName)
+	possiblePaths, err := b.getPossibleAccessPaths(tn.IndexHints, tbl, dbName, tblName)
 	if err != nil {
 		return nil, err
 	}
@@ -2513,13 +2552,22 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		// If we use tbl.Cols() here, the update statement, will ignore the col `c`, and the data `3` will lost.
 		columns = tbl.WritableCols()
 	} else {
-		columns = tbl.Cols()
+		columns = tbl.VisibleCols()
 	}
 	var statisticTable *statistics.Table
 	if _, ok := tbl.(table.PartitionedTable); !ok {
 		statisticTable = getStatsTable(b.ctx, tbl.Meta(), tbl.Meta().ID)
 	}
 
+	// extract the IndexMergeHint
+	var indexMergeHints []*ast.IndexHint
+	if hints := b.TableHints(); hints != nil {
+		for _, hint := range hints.indexMergeHintList {
+			if hint.tblName.L == tblName.L {
+				indexMergeHints = append(indexMergeHints, hint.indexHint)
+			}
+		}
+	}
 	ds := DataSource{
 		DBName:              dbName,
 		TableAsName:         asName,
@@ -2527,6 +2575,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		tableInfo:           tableInfo,
 		statisticTable:      statisticTable,
 		indexHints:          tn.IndexHints,
+		indexMergeHints:     indexMergeHints,
 		possibleAccessPaths: possiblePaths,
 		Columns:             make([]*model.ColumnInfo, 0, len(columns)),
 		partitionNames:      tn.PartitionNames,
@@ -2536,7 +2585,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	var handleCol *expression.Column
 	schema := expression.NewSchema(make([]*expression.Column, 0, len(columns))...)
 	names := make([]*types.FieldName, 0, len(columns))
-	for _, col := range columns {
+	for i, col := range columns {
 		ds.Columns = append(ds.Columns, col.ToInfo())
 		names = append(names, &types.FieldName{
 			DBName:      dbName,
@@ -2549,6 +2598,8 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 			UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
 			ID:       col.ID,
 			RetType:  &col.FieldType,
+			OrigName: names[i].String(),
+			IsHidden: col.Hidden,
 		}
 
 		if tableInfo.PKIsHandle && mysql.HasPriKeyFlag(col.Flag) {
@@ -2557,11 +2608,9 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		schema.Append(newCol)
 		ds.TblCols = append(ds.TblCols, newCol)
 	}
-	// We append an extra handle column to the schema when "ds" is not a memory
-	// table e.g. table in the "INFORMATION_SCHEMA" database, and the handle
+	// We append an extra handle column to the schema when the handle
 	// column is not the primary key of "ds".
-	isMemDB := infoschema.IsMemoryDB(ds.DBName.L)
-	if !isMemDB && handleCol == nil {
+	if handleCol == nil {
 		ds.Columns = append(ds.Columns, model.NewExtraHandleColInfo())
 		handleCol = ds.newExtraHandleSchemaCol()
 		schema.Append(handleCol)
@@ -2585,10 +2634,10 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	ds.names = names
 	ds.setPreferredStoreType(b.TableHints())
 
-	// Init fullIdxCols, fullIdxColLens for accessPaths.
+	// Init FullIdxCols, FullIdxColLens for accessPaths.
 	for _, path := range ds.possibleAccessPaths {
-		if !path.isTablePath {
-			path.fullIdxCols, path.fullIdxColLens = expression.IndexInfo2Cols(ds.Columns, ds.schema.Columns, path.index)
+		if !path.IsTablePath {
+			path.FullIdxCols, path.FullIdxColLens = expression.IndexInfo2Cols(ds.Columns, ds.schema.Columns, path.Index)
 		}
 	}
 
@@ -2601,7 +2650,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	if err != nil {
 		return nil, err
 	}
-	if txn.Valid() && !txn.IsReadOnly() && !isMemDB {
+	if txn.Valid() && !txn.IsReadOnly() {
 		us := LogicalUnionScan{handleCol: handleCol}.Init(b.ctx, b.getSelectOffset())
 		us.SetChildren(ds)
 		result = us
@@ -2622,6 +2671,65 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	}
 
 	return result, nil
+}
+
+func (b *PlanBuilder) buildMemTable(ctx context.Context, dbName model.CIStr, tableInfo *model.TableInfo) (LogicalPlan, error) {
+	// We can use the `tableInfo.Columns` directly because the memory table has
+	// a stable schema and there is no online DDL on the memory table.
+	schema := expression.NewSchema(make([]*expression.Column, 0, len(tableInfo.Columns))...)
+	names := make([]*types.FieldName, 0, len(tableInfo.Columns))
+	var handleCol *expression.Column
+	for _, col := range tableInfo.Columns {
+		names = append(names, &types.FieldName{
+			DBName:      dbName,
+			TblName:     tableInfo.Name,
+			ColName:     col.Name,
+			OrigTblName: tableInfo.Name,
+			OrigColName: col.Name,
+		})
+		// NOTE: Rewrite the expression if memory table supports generated columns in the future
+		newCol := &expression.Column{
+			UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
+			ID:       col.ID,
+			RetType:  &col.FieldType,
+		}
+		if tableInfo.PKIsHandle && mysql.HasPriKeyFlag(col.Flag) {
+			handleCol = newCol
+		}
+		schema.Append(newCol)
+	}
+
+	if handleCol != nil {
+		handleMap := make(map[int64][]*expression.Column)
+		handleMap[tableInfo.ID] = []*expression.Column{handleCol}
+		b.handleHelper.pushMap(handleMap)
+	} else {
+		b.handleHelper.pushMap(nil)
+	}
+
+	// NOTE: Add a `LogicalUnionScan` if we support update memory table in the future
+	p := LogicalMemTable{
+		dbName:    dbName,
+		tableInfo: tableInfo,
+	}.Init(b.ctx, b.getSelectOffset())
+	p.SetSchema(schema)
+	p.names = names
+
+	// Some memory tables can receive some predicates
+	switch dbName.L {
+	case util2.MetricSchemaName.L:
+		p.Extractor = &MetricTableExtractor{}
+	case util2.InformationSchemaName.L:
+		switch strings.ToUpper(tableInfo.Name.O) {
+		case infoschema.TableClusterConfig, infoschema.TableClusterLoad, infoschema.TableClusterHardware, infoschema.TableClusterSystemInfo:
+			p.Extractor = &ClusterTableExtractor{}
+		case infoschema.TableClusterLog:
+			p.Extractor = &ClusterLogTableExtractor{}
+		case infoschema.TableInspectionResult:
+			p.Extractor = &InspectionResultTableExtractor{}
+		}
+	}
+	return p, nil
 }
 
 // BuildDataSourceFromView is used to build LogicalPlan from view
@@ -2759,7 +2867,7 @@ func (b *PlanBuilder) buildSemiJoin(outerPlan, innerPlan LogicalPlan, onConditio
 		onCondition[i] = expr.Decorrelate(outerPlan.Schema())
 	}
 	joinPlan.SetChildren(outerPlan, innerPlan)
-	joinPlan.attachOnConds(onCondition)
+	joinPlan.AttachOnConds(onCondition)
 	joinPlan.names = make([]*types.FieldName, outerPlan.Schema().Len(), outerPlan.Schema().Len()+innerPlan.Schema().Len()+1)
 	copy(joinPlan.names, outerPlan.OutputNames())
 	if asScalar {
@@ -3051,9 +3159,13 @@ func (b *PlanBuilder) buildUpdateLists(
 				continue
 			}
 			columnFullName := fmt.Sprintf("%s.%s.%s", tn.Schema.L, tn.Name.L, colInfo.Name.L)
+			isDefault, ok := modifyColumns[columnFullName]
+			if ok && colInfo.Hidden {
+				return nil, nil, false, ErrUnknownColumn.GenWithStackByArgs(colInfo.Name, clauseMsg[fieldList])
+			}
 			// Note: For INSERT, REPLACE, and UPDATE, if a generated column is inserted into, replaced, or updated explicitly, the only permitted value is DEFAULT.
 			// see https://dev.mysql.com/doc/refman/8.0/en/create-table-generated-columns.html
-			if isDefault, ok := modifyColumns[columnFullName]; ok && !isDefault {
+			if ok && !isDefault {
 				return nil, nil, false, ErrBadGeneratedColumn.GenWithStackByArgs(colInfo.Name.O, tableInfo.Name.O)
 			}
 			virtualAssignments = append(virtualAssignments, &ast.Assignment{
@@ -3115,7 +3227,6 @@ func (b *PlanBuilder) buildUpdateLists(
 		if err != nil {
 			return nil, nil, false, err
 		}
-		newExpr = expression.BuildCastFunction(b.ctx, newExpr, col.GetType())
 		if _, isConst := newExpr.(*expression.Constant); !isConst {
 			allAssignmentsAreConstant = false
 		}

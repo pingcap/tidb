@@ -22,7 +22,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/cznic/mathutil"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
@@ -35,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/meta/autoid"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -46,8 +46,10 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/stringutil"
 	"go.uber.org/zap"
@@ -263,7 +265,7 @@ func (e *ShowNextRowIDExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			break
 		}
 	}
-	nextGlobalID, err := tbl.Allocator(e.ctx).NextGlobalAutoID(tbl.Meta().ID)
+	nextGlobalID, err := tbl.Allocator(e.ctx, autoid.RowIDAllocType).NextGlobalAutoID(tbl.Meta().ID)
 	if err != nil {
 		return err
 	}
@@ -819,22 +821,32 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	if e.Lock == ast.SelectLockForUpdateNoWait {
 		lockWaitTime = kv.LockNoWait
 	}
-	return doLockKeys(ctx, e.ctx, lockWaitTime, e.keys...)
+	return doLockKeys(ctx, e.ctx, newLockCtx(e.ctx.GetSessionVars(), lockWaitTime), e.keys...)
+}
+
+func newLockCtx(seVars *variable.SessionVars, lockWaitTime int64) *kv.LockCtx {
+	return &kv.LockCtx{
+		Killed:                &seVars.Killed,
+		ForUpdateTS:           seVars.TxnCtx.GetForUpdateTS(),
+		LockWaitTime:          lockWaitTime,
+		WaitStartTime:         seVars.StmtCtx.GetLockWaitStartTime(),
+		PessimisticLockWaited: &seVars.StmtCtx.PessimisticLockWaited,
+		LockKeysDuration:      &seVars.StmtCtx.LockKeysDuration,
+	}
 }
 
 // doLockKeys is the main entry for pessimistic lock keys
 // waitTime means the lock operation will wait in milliseconds if target key is already
 // locked by others. used for (select for update nowait) situation
 // except 0 means alwaysWait 1 means nowait
-func doLockKeys(ctx context.Context, se sessionctx.Context, waitTime int64, keys ...kv.Key) error {
+func doLockKeys(ctx context.Context, se sessionctx.Context, lockCtx *kv.LockCtx, keys ...kv.Key) error {
 	se.GetSessionVars().TxnCtx.ForUpdate = true
 	// Lock keys only once when finished fetching all results.
 	txn, err := se.Txn(true)
 	if err != nil {
 		return err
 	}
-	forUpdateTS := se.GetSessionVars().TxnCtx.GetForUpdateTS()
-	return txn.LockKeys(ctx, &se.GetSessionVars().Killed, forUpdateTS, waitTime, keys...)
+	return txn.LockKeys(ctx, lockCtx, keys...)
 }
 
 // LimitExec represents limit executor
@@ -1020,6 +1032,8 @@ type SelectionExec struct {
 	inputIter   *chunk.Iterator4Chunk
 	inputRow    chunk.Row
 	childResult *chunk.Chunk
+
+	memTracker *memory.Tracker
 }
 
 // Open implements the Executor Open interface.
@@ -1027,7 +1041,10 @@ func (e *SelectionExec) Open(ctx context.Context) error {
 	if err := e.baseExecutor.Open(ctx); err != nil {
 		return err
 	}
+	e.memTracker = memory.NewTracker(e.id, -1)
+	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
 	e.childResult = newFirstChunk(e.children[0])
+	e.memTracker.Consume(e.childResult.MemoryUsage())
 	e.batched = expression.Vectorizable(e.filters)
 	if e.batched {
 		e.selected = make([]bool, 0, chunk.InitialCapacity)
@@ -1039,6 +1056,7 @@ func (e *SelectionExec) Open(ctx context.Context) error {
 
 // Close implements plannercore.Plan Close interface.
 func (e *SelectionExec) Close() error {
+	e.memTracker.Consume(-e.childResult.MemoryUsage())
 	e.childResult = nil
 	e.selected = nil
 	return e.baseExecutor.Close()
@@ -1062,7 +1080,9 @@ func (e *SelectionExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			}
 			req.AppendRow(e.inputRow)
 		}
+		mSize := e.childResult.MemoryUsage()
 		err := Next(ctx, e.children[0], e.childResult)
+		e.memTracker.Consume(e.childResult.MemoryUsage() - mSize)
 		if err != nil {
 			return err
 		}
@@ -1094,7 +1114,9 @@ func (e *SelectionExec) unBatchedNext(ctx context.Context, chk *chunk.Chunk) err
 				return nil
 			}
 		}
+		mSize := e.childResult.MemoryUsage()
 		err := Next(ctx, e.children[0], e.childResult)
+		e.memTracker.Consume(e.childResult.MemoryUsage() - mSize)
 		if err != nil {
 			return err
 		}
@@ -1468,8 +1490,7 @@ func handleStmtHints(hints []*ast.TableOptimizerHint) (stmtHints stmtctx.StmtHin
 			warn := errors.New("There are multiple NO_INDEX_MERGE hints, only the last one will take effect")
 			warns = append(warns, warn)
 		}
-		stmtHints.HasEnableIndexMergeHint = true
-		stmtHints.EnableIndexMerge = false
+		stmtHints.NoIndexMergeHint = true
 	}
 	// Handle READ_CONSISTENT_REPLICA
 	if readReplicaHintCnt != 0 {
@@ -1494,9 +1515,10 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		memQuota = stmtHints.MemQuotaQuery
 	}
 	sc := &stmtctx.StatementContext{
-		StmtHints:  stmtHints,
-		TimeZone:   vars.Location(),
-		MemTracker: memory.NewTracker(stringutil.MemoizeStr(s.Text), memQuota),
+		StmtHints:   stmtHints,
+		TimeZone:    vars.Location(),
+		MemTracker:  memory.NewTracker(stringutil.MemoizeStr(s.Text), memQuota),
+		DiskTracker: disk.NewTracker(stringutil.MemoizeStr(s.Text), -1),
 	}
 	switch config.GetGlobalConfig().OOMAction {
 	case config.OOMActionCancel:
@@ -1520,7 +1542,6 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	sc.OriginalSQL = s.Text()
 	if explainStmt, ok := s.(*ast.ExplainStmt); ok {
 		sc.InExplainStmt = true
-		sc.CastStrToIntStrict = true
 		s = explainStmt.Stmt
 	}
 	// TODO: Many same bool variables here.
@@ -1582,8 +1603,6 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 			sc.Priority = opts.Priority
 			sc.NotFillCache = !opts.SQLCache
 		}
-		sc.PadCharToFullLength = ctx.GetSessionVars().SQLMode.HasPadCharToFullLengthMode()
-		sc.CastStrToIntStrict = true
 	case *ast.ShowStmt:
 		sc.IgnoreTruncate = true
 		sc.IgnoreZeroInDate = true
@@ -1617,14 +1636,8 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		sc.PrevAffectedRows = -1
 	}
 	errCount, warnCount := vars.StmtCtx.NumErrorWarnings()
-	err = vars.SetSystemVar("warning_count", warnCount)
-	if err != nil {
-		return err
-	}
-	err = vars.SetSystemVar("error_count", errCount)
-	if err != nil {
-		return err
-	}
+	vars.SysErrorCount = errCount
+	vars.SysWarningCount = warnCount
 	vars.StmtCtx = sc
 	for _, warn := range hintWarns {
 		vars.StmtCtx.AppendWarning(warn)
