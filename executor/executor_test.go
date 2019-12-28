@@ -116,7 +116,9 @@ var _ = Suite(&testOOMSuite{})
 var _ = Suite(&testPointGetSuite{})
 var _ = Suite(&testBatchPointGetSuite{})
 var _ = SerialSuites(&testRecoverTable{})
+var _ = Suite(&testClusterReaderSuite{})
 var _ = Suite(&testFlushSuite{})
+var _ = SerialSuites(&testAutoRandomSuite{&baseTestSuite{}})
 
 type testSuite struct{ *baseTestSuite }
 type testSuiteP1 struct{ *baseTestSuite }
@@ -2652,7 +2654,7 @@ func (s *testSuite) TestSelectForUpdate(c *C) {
 	tk.MustExec("drop table if exists t, t1")
 
 	txn, err := tk.Se.Txn(true)
-	c.Assert(err, IsNil)
+	c.Assert(kv.ErrInvalidTxn.Equal(err), IsTrue)
 	c.Assert(txn.Valid(), IsFalse)
 	tk.MustExec("create table t (c1 int, c2 int, c3 int)")
 	tk.MustExec("insert t values (11, 2, 3)")
@@ -3239,8 +3241,8 @@ func (s *testSuite) TestCheckIndex(c *C) {
 	c.Assert(err, IsNil)
 	tbInfo := tbl.Meta()
 
-	alloc := autoid.NewAllocator(s.store, dbInfo.ID, false)
-	tb, err := tables.TableFromMeta(alloc, tbInfo)
+	alloc := autoid.NewAllocator(s.store, dbInfo.ID, false, autoid.RowIDAllocType)
+	tb, err := tables.TableFromMeta(autoid.NewAllocators(alloc), tbInfo)
 	c.Assert(err, IsNil)
 
 	_, err = se.Execute(context.Background(), "admin check index t c")

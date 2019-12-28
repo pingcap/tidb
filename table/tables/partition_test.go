@@ -290,3 +290,19 @@ func (ts *testSuite) TestGeneratePartitionExpr(c *C) {
 		c.Assert(expr.String(), Equals, upperBounds[i])
 	}
 }
+
+func (ts *testSuite) TestLocateRangePartitionErr(c *C) {
+	tk := testkit.NewTestKitWithInit(c, ts.store)
+	tk.MustExec("use test")
+	tk.MustExec(`CREATE TABLE t_month_data_monitor (
+		id int(20) NOT NULL AUTO_INCREMENT,
+		data_date date NOT NULL,
+		PRIMARY KEY (id, data_date)
+	) PARTITION BY RANGE COLUMNS(data_date) (
+		PARTITION p20190401 VALUES LESS THAN ('2019-04-02'),
+		PARTITION p20190402 VALUES LESS THAN ('2019-04-03')
+	)`)
+
+	_, err := tk.Exec("INSERT INTO t_month_data_monitor VALUES (4, '2019-04-04')")
+	c.Assert(table.ErrNoPartitionForGivenValue.Equal(err), IsTrue)
+}

@@ -145,6 +145,24 @@ func NewTiDBTopNImpl(topN *plannercore.PhysicalTopN) *TiDBTopNImpl {
 	return &TiDBTopNImpl{baseImpl{plan: topN}}
 }
 
+// TiKVTopNImpl is the implementation of PhysicalTopN in TiKV layer.
+type TiKVTopNImpl struct {
+	baseImpl
+}
+
+// CalcCost implements Implementation CalcCost interface.
+func (impl *TiKVTopNImpl) CalcCost(outCount float64, children ...memo.Implementation) float64 {
+	topN := impl.plan.(*plannercore.PhysicalTopN)
+	childCount := children[0].GetPlan().Stats().RowCount
+	impl.cost = topN.GetCost(childCount, false) + children[0].GetCost()
+	return impl.cost
+}
+
+// NewTiKVTopNImpl creates a new TiKVTopNImpl.
+func NewTiKVTopNImpl(topN *plannercore.PhysicalTopN) *TiKVTopNImpl {
+	return &TiKVTopNImpl{baseImpl{plan: topN}}
+}
+
 // UnionAllImpl is the implementation of PhysicalUnionAll.
 type UnionAllImpl struct {
 	baseImpl
@@ -202,4 +220,20 @@ func (impl *MaxOneRowImpl) CalcCost(outCount float64, children ...memo.Implement
 // NewMaxOneRowImpl creates a new MaxOneRowImpl.
 func NewMaxOneRowImpl(maxOneRow *plannercore.PhysicalMaxOneRow) *MaxOneRowImpl {
 	return &MaxOneRowImpl{baseImpl{plan: maxOneRow}}
+}
+
+// WindowImpl is the implementation of PhysicalWindow.
+type WindowImpl struct {
+	baseImpl
+}
+
+// NewWindowImpl creates a new WindowImpl.
+func NewWindowImpl(window *plannercore.PhysicalWindow) *WindowImpl {
+	return &WindowImpl{baseImpl{plan: window}}
+}
+
+// CalcCost implements Implementation CalcCost interface.
+func (impl *WindowImpl) CalcCost(outCount float64, children ...memo.Implementation) float64 {
+	impl.cost = children[0].GetCost()
+	return impl.cost
 }

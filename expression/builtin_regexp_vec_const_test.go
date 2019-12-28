@@ -67,7 +67,7 @@ func (s *testEvaluatorSuite) TestVectorizedBuiltinRegexpForConstants(c *C) {
 	it := chunk.NewIterator4Chunk(input)
 	i := 0
 	commentf := func(row int) CommentInterface {
-		return Commentf("func: builtinRegexpSig, row: %v, rowData: %v", row, input.GetRow(row).GetDatumRow(childrenFieldTypes))
+		return Commentf("func: builtinRegexpUTF8Sig, row: %v, rowData: %v", row, input.GetRow(row).GetDatumRow(childrenFieldTypes))
 	}
 	for row := it.Begin(); row != it.End(); row = it.Next() {
 		val, isNull, err := bf.evalInt(row)
@@ -82,7 +82,7 @@ func (s *testEvaluatorSuite) TestVectorizedBuiltinRegexpForConstants(c *C) {
 
 func BenchmarkVectorizedBuiltinRegexpForConstants(b *testing.B) {
 	bf, _, input, output := genVecBuiltinRegexpBenchCaseForConstants()
-	b.Run("builtinRegexpSig-Constants-VecBuiltinFunc", func(b *testing.B) {
+	b.Run("builtinRegexpUTF8Sig-Constants-VecBuiltinFunc", func(b *testing.B) {
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
 			if err := bf.vecEvalInt(input, output); err != nil {
@@ -90,7 +90,7 @@ func BenchmarkVectorizedBuiltinRegexpForConstants(b *testing.B) {
 			}
 		}
 	})
-	b.Run("builtinRegexpSig-Constants-NonVecBuiltinFunc", func(b *testing.B) {
+	b.Run("builtinRegexpUTF8Sig-Constants-NonVecBuiltinFunc", func(b *testing.B) {
 		b.ResetTimer()
 		it := chunk.NewIterator4Chunk(input)
 		for i := 0; i < b.N; i++ {

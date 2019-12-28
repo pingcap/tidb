@@ -155,15 +155,15 @@ func (s *testTypeConvertSuite) TestConvertType(c *C) {
 	vv, err := Convert(v, ft)
 	c.Assert(err, IsNil)
 	c.Assert(vv.(Duration).String(), Equals, "10:11:12.1")
-
-	vd, err := ParseTime(nil, "2010-10-10 10:11:11.12345", mysql.TypeDatetime, 2)
+	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
+	vd, err := ParseTime(sc, "2010-10-10 10:11:11.12345", mysql.TypeDatetime, 2)
 	c.Assert(vd.String(), Equals, "2010-10-10 10:11:11.12")
 	c.Assert(err, IsNil)
 	v, err = Convert(vd, ft)
 	c.Assert(err, IsNil)
 	c.Assert(v.(Duration).String(), Equals, "10:11:11.1")
 
-	vt, err := ParseTime(&stmtctx.StatementContext{TimeZone: time.UTC}, "2010-10-10 10:11:11.12345", mysql.TypeTimestamp, 2)
+	vt, err := ParseTime(sc, "2010-10-10 10:11:11.12345", mysql.TypeTimestamp, 2)
 	c.Assert(vt.String(), Equals, "2010-10-10 10:11:11.12")
 	c.Assert(err, IsNil)
 	v, err = Convert(vt, ft)
@@ -249,7 +249,6 @@ func (s *testTypeConvertSuite) TestConvertType(c *C) {
 
 	// Test Datum.ToDecimal with bad number.
 	d := NewDatum("hello")
-	sc := new(stmtctx.StatementContext)
 	_, err = d.ToDecimal(sc)
 	c.Assert(terror.ErrorEqual(err, ErrBadNumber), IsTrue, Commentf("err %v", err))
 
@@ -469,17 +468,15 @@ func (s *testTypeConvertSuite) TestStrToNum(c *C) {
 func testSelectUpdateDeleteEmptyStringError(c *C) {
 	testCases := []struct {
 		inSelect bool
-		inUpdate bool
 		inDelete bool
 	}{
-		{true, false, false},
-		{false, true, false},
-		{false, false, true},
+		{true, false},
+		{false, true},
 	}
 	sc := new(stmtctx.StatementContext)
+	sc.TruncateAsWarning = true
 	for _, tc := range testCases {
 		sc.InSelectStmt = tc.inSelect
-		sc.InUpdateStmt = tc.inUpdate
 		sc.InDeleteStmt = tc.inDelete
 
 		str := ""
@@ -756,7 +753,7 @@ func (s *testTypeConvertSuite) TestGetValidInt(c *C) {
 	}
 	sc := new(stmtctx.StatementContext)
 	sc.TruncateAsWarning = true
-	sc.CastStrToIntStrict = true
+	sc.InSelectStmt = true
 	warningCount := 0
 	for _, tt := range tests {
 		prefix, err := getValidIntPrefix(sc, tt.origin)
@@ -799,7 +796,7 @@ func (s *testTypeConvertSuite) TestGetValidInt(c *C) {
 		{"123de", "123", true},
 	}
 	sc.TruncateAsWarning = false
-	sc.CastStrToIntStrict = false
+	sc.InSelectStmt = false
 	for _, tt := range tests2 {
 		prefix, err := getValidIntPrefix(sc, tt.origin)
 		if tt.warning {

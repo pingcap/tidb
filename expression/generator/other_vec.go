@@ -97,7 +97,7 @@ var builtinInTmpl = template.Must(template.New("builtinInTmpl").Parse(`
 		}
 	{{- else if eq .Input.TypeName "Decimal" -}}
 		compareResult = 1
-		if arg0 == arg1 {
+		if arg0.Compare(&arg1) == 0 {
 			compareResult = 0
 		}
 	{{- else if eq .Input.TypeName "Time" -}}

@@ -443,6 +443,7 @@ func (s *session) doCommit(ctx context.Context) error {
 
 func (s *session) doCommitWithRetry(ctx context.Context) error {
 	defer func() {
+		s.GetSessionVars().SetTxnIsolationLevelOneShotStateForNextTxn()
 		s.txn.changeToInvalid()
 		s.cleanRetryInfo()
 	}()
@@ -491,16 +492,6 @@ func (s *session) doCommitWithRetry(ctx context.Context) error {
 	counter := s.sessionVars.TxnCtx.StatementCount
 	duration := time.Since(s.GetSessionVars().TxnCtx.CreateTime).Seconds()
 	s.recordOnTransactionExecution(err, counter, duration)
-
-	if isoLevelOneShot := &s.sessionVars.TxnIsolationLevelOneShot; isoLevelOneShot.State != 0 {
-		switch isoLevelOneShot.State {
-		case 1:
-			isoLevelOneShot.State = 2
-		case 2:
-			isoLevelOneShot.State = 0
-			isoLevelOneShot.Value = ""
-		}
-	}
 
 	if err != nil {
 		logutil.Logger(ctx).Warn("commit failed",
@@ -763,6 +754,12 @@ func (s *session) ExecRestrictedSQL(sql string) ([]chunk.Row, []*ast.ResultField
 		return nil, nil, err
 	}
 	se := tmp.(*session)
+	// The special session will share the `InspectionTableCache` with current session
+	// if the current session in inspection mode.
+	if cache := s.sessionVars.InspectionTableCache; cache != nil {
+		se.sessionVars.InspectionTableCache = cache
+		defer func() { se.sessionVars.InspectionTableCache = nil }()
+	}
 	defer s.sysSessionPool().Put(tmp)
 	metrics.SessionRestrictedSQLCounter.Inc()
 
@@ -782,6 +779,12 @@ func (s *session) ExecRestrictedSQLWithSnapshot(sql string) ([]chunk.Row, []*ast
 		return nil, nil, err
 	}
 	se := tmp.(*session)
+	// The special session will share the `InspectionTableCache` with current session
+	// if the current session in inspection mode.
+	if cache := s.sessionVars.InspectionTableCache; cache != nil {
+		se.sessionVars.InspectionTableCache = cache
+		defer func() { se.sessionVars.InspectionTableCache = nil }()
+	}
 	defer s.sysSessionPool().Put(tmp)
 	metrics.SessionRestrictedSQLCounter.Inc()
 	var snapshot uint64
@@ -1172,7 +1175,7 @@ func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields
 	// NewPrepareExec may need startTS to build the executor, for example prepare statement has subquery in int.
 	// So we have to call PrepareTxnCtx here.
 	s.PrepareTxnCtx(ctx)
-	s.PrepareTxnFuture(ctx)
+	s.PrepareTSFuture(ctx)
 	prepareExec := executor.NewPrepareExec(s, infoschema.GetInfoSchema(s), sql)
 	err = prepareExec.Next(ctx, nil)
 	if err != nil {
@@ -1230,7 +1233,7 @@ func (s *session) CachedPlanExec(ctx context.Context,
 		resultSet, err = stmt.PointGet(ctx, is)
 		s.txn.changeToInvalid()
 	case *plannercore.Update:
-		s.PrepareTxnFuture(ctx)
+		s.PrepareTSFuture(ctx)
 		s.GetSessionVars().StmtCtx.Priority = kv.PriorityHigh
 		resultSet, err = runStmt(ctx, s, stmt)
 	default:
@@ -1314,6 +1317,9 @@ func (s *session) DropPreparedStmt(stmtID uint32) error {
 }
 
 func (s *session) Txn(active bool) (kv.Transaction, error) {
+	if !s.txn.validOrPending() && active {
+		return &s.txn, kv.ErrInvalidTxn
+	}
 	if s.txn.pending() && active {
 		// Transaction is lazy initialized.
 		// PrepareTxnCtx is called to get a tso future, makes s.txn a pending txn,
@@ -1469,7 +1475,7 @@ func (s *session) Auth(user *auth.UserIdentity, authentication []byte, salt []by
 
 	// Check IP or localhost.
 	var success bool
-	user.AuthUsername, user.AuthHostname, success = pm.ConnectionVerification(user.Username, user.Hostname, authentication, salt)
+	user.AuthUsername, user.AuthHostname, success = pm.ConnectionVerification(user.Username, user.Hostname, authentication, salt, s.sessionVars.TLSConnectionState)
 	if success {
 		s.sessionVars.User = user
 		s.sessionVars.ActiveRoles = pm.GetDefaultRoles(user.AuthUsername, user.AuthHostname)
@@ -1482,7 +1488,7 @@ func (s *session) Auth(user *auth.UserIdentity, authentication []byte, salt []by
 
 	// Check Hostname.
 	for _, addr := range getHostByIP(user.Hostname) {
-		u, h, success := pm.ConnectionVerification(user.Username, addr, authentication, salt)
+		u, h, success := pm.ConnectionVerification(user.Username, addr, authentication, salt, s.sessionVars.TLSConnectionState)
 		if success {
 			s.sessionVars.User = &auth.UserIdentity{
 				Username:     user.Username,
@@ -1505,7 +1511,10 @@ func getHostByIP(ip string) []string {
 		return []string{variable.DefHostname}
 	}
 	addrs, err := net.LookupAddr(ip)
-	terror.Log(errors.Trace(err))
+	if err != nil {
+		// The error is ignorable.
+		// The empty line here makes the golint tool (which complains err is not checked) happy.
+	}
 	return addrs
 }
 
@@ -1665,7 +1674,7 @@ func GetDomain(store kv.Storage) (*domain.Domain, error) {
 	return domap.Get(store)
 }
 
-// runInBootstrapSession create a special session for boostrap to run.
+// runInBootstrapSession create a special session for bootstrap to run.
 // If no bootstrap and storage is remote, we must use a little lease time to
 // bootstrap quickly, after bootstrapped, we will reset the lease time.
 // TODO: Using a bootstrap tool for doing this may be better later.
@@ -1738,7 +1747,7 @@ func CreateSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 
 const (
 	notBootstrapped         = 0
-	currentBootstrapVersion = version37
+	currentBootstrapVersion = version38
 )
 
 func getStoreBootstrapVersion(store kv.Storage) int64 {
@@ -1847,6 +1856,7 @@ var builtinGlobalVariable = []string{
 	variable.TiDBRetryLimit,
 	variable.TiDBDisableTxnAutoRetry,
 	variable.TiDBEnableWindowFunction,
+	variable.TiDBEnableTablePartition,
 	variable.TiDBEnableVectorizedExpression,
 	variable.TiDBEnableFastAnalyze,
 	variable.TiDBExpensiveQueryTimeThreshold,
@@ -1855,6 +1865,7 @@ var builtinGlobalVariable = []string{
 	variable.TiDBTxnMode,
 	variable.TiDBEnableStmtSummary,
 	variable.TiDBStmtSummaryRefreshInterval,
+	variable.TiDBStmtSummaryHistorySize,
 	variable.TiDBMaxDeltaSchemaCount,
 	variable.TiDBCapturePlanBaseline,
 	variable.TiDBUsePlanBaselines,
@@ -1954,14 +1965,15 @@ func (s *session) PrepareTxnCtx(ctx context.Context) {
 	}
 }
 
-// PrepareTxnFuture uses to try to get txn future.
-func (s *session) PrepareTxnFuture(ctx context.Context) {
-	if s.txn.validOrPending() {
-		return
+// PrepareTSFuture uses to try to get txn future.
+func (s *session) PrepareTSFuture(ctx context.Context) {
+	if !s.txn.validOrPending() {
+		txnFuture := s.getTxnFuture(ctx)
+		s.txn.changeInvalidToPending(txnFuture)
+		s.GetSessionVars().TxnCtx.SetStmtFuture(txnFuture.future, 0)
+	} else if s.GetSessionVars().IsPessimisticReadConsistency() {
+		s.GetSessionVars().TxnCtx.SetStmtFuture(s.getTxnFuture(ctx).future, 0)
 	}
-
-	txnFuture := s.getTxnFuture(ctx)
-	s.txn.changeInvalidToPending(txnFuture)
 }
 
 // RefreshTxnCtx implements context.RefreshTxnCtx interface.

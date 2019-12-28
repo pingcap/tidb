@@ -371,7 +371,7 @@ func NumberToDuration(number int64, fsp int8) (Duration, error) {
 
 // getValidIntPrefix gets prefix of the string which can be successfully parsed as int.
 func getValidIntPrefix(sc *stmtctx.StatementContext, str string) (string, error) {
-	if !sc.CastStrToIntStrict {
+	if !sc.InSelectStmt {
 		floatPrefix, err := getValidFloatPrefix(sc, str)
 		if err != nil {
 			return floatPrefix, errors.Trace(err)
@@ -629,7 +629,7 @@ func ConvertJSONToDecimal(sc *stmtctx.StatementContext, j json.BinaryJSON) (*MyD
 
 // getValidFloatPrefix gets prefix of string which can be successfully parsed as float.
 func getValidFloatPrefix(sc *stmtctx.StatementContext, s string) (valid string, err error) {
-	if (sc.InDeleteStmt || sc.InSelectStmt || sc.InUpdateStmt) && s == "" {
+	if (sc.InDeleteStmt || sc.InSelectStmt) && s == "" {
 		return "0", nil
 	}
 

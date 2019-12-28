@@ -1,0 +1,21 @@
+drop table if exists city;
+
+CREATE TABLE `city` (
+  `id` varchar(70) NOT NULL,
+  `province_id` int(15) DEFAULT NULL,
+  `city_name` varchar(90) DEFAULT NULL,
+  `description` varchar(90) DEFAULT NULL,
+  PRIMARY KEY (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+
+load stats "s/explain_union_scan.json";
+
+insert into city values("06766b3ef41d484d8878606393f1ed0b", 88, "chongqing", "chongqing city");
+
+begin;
+
+update city set province_id = 77 where id="06766b3ef41d484d8878606393f1ed0b";
+
+explain select t1.*, t2.province_id as provinceID, t2.city_name as cityName, t3.description as description from city t1 inner join city t2 on t1.id = t2.id left join city t3 on t1.province_id = t3.province_id where t1.province_id > 1 and t1.province_id < 100 limit 10;
+
+commit;

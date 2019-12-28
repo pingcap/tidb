@@ -160,36 +160,36 @@ func (s *testJSONSuite) TestBinaryJSONModify(c *C) {
 		base     string
 		setField string
 		setValue string
-		mt       ModifyType
 		expected string
 		success  bool
+		mt       ModifyType
 	}{
-		{`null`, "$", `{}`, ModifySet, `{}`, true},
-		{`{}`, "$.a", `3`, ModifySet, `{"a": 3}`, true},
-		{`{"a": 3}`, "$.a", `[]`, ModifyReplace, `{"a": []}`, true},
-		{`{"a": 3}`, "$.b", `"3"`, ModifySet, `{"a": 3, "b": "3"}`, true},
-		{`{"a": []}`, "$.a[0]", `3`, ModifySet, `{"a": [3]}`, true},
-		{`{"a": [3]}`, "$.a[1]", `4`, ModifyInsert, `{"a": [3, 4]}`, true},
-		{`{"a": [3]}`, "$[0]", `4`, ModifySet, `4`, true},
-		{`{"a": [3]}`, "$[1]", `4`, ModifySet, `[{"a": [3]}, 4]`, true},
-		{`{"b": true}`, "$.b", `false`, ModifySet, `{"b": false}`, true},
+		{`null`, "$", `{}`, `{}`, true, ModifySet},
+		{`{}`, "$.a", `3`, `{"a": 3}`, true, ModifySet},
+		{`{"a": 3}`, "$.a", `[]`, `{"a": []}`, true, ModifyReplace},
+		{`{"a": 3}`, "$.b", `"3"`, `{"a": 3, "b": "3"}`, true, ModifySet},
+		{`{"a": []}`, "$.a[0]", `3`, `{"a": [3]}`, true, ModifySet},
+		{`{"a": [3]}`, "$.a[1]", `4`, `{"a": [3, 4]}`, true, ModifyInsert},
+		{`{"a": [3]}`, "$[0]", `4`, `4`, true, ModifySet},
+		{`{"a": [3]}`, "$[1]", `4`, `[{"a": [3]}, 4]`, true, ModifySet},
+		{`{"b": true}`, "$.b", `false`, `{"b": false}`, true, ModifySet},
 
 		// nothing changed because the path is empty and we want to insert.
-		{`{}`, "$", `1`, ModifyInsert, `{}`, true},
+		{`{}`, "$", `1`, `{}`, true, ModifyInsert},
 		// nothing changed because the path without last leg doesn't exist.
-		{`{"a": [3, 4]}`, "$.b[1]", `3`, ModifySet, `{"a": [3, 4]}`, true},
+		{`{"a": [3, 4]}`, "$.b[1]", `3`, `{"a": [3, 4]}`, true, ModifySet},
 		// nothing changed because the path without last leg doesn't exist.
-		{`{"a": [3, 4]}`, "$.a[2].b", `3`, ModifySet, `{"a": [3, 4]}`, true},
+		{`{"a": [3, 4]}`, "$.a[2].b", `3`, `{"a": [3, 4]}`, true, ModifySet},
 		// nothing changed because we want to insert but the full path exists.
-		{`{"a": [3, 4]}`, "$.a[0]", `30`, ModifyInsert, `{"a": [3, 4]}`, true},
+		{`{"a": [3, 4]}`, "$.a[0]", `30`, `{"a": [3, 4]}`, true, ModifyInsert},
 		// nothing changed because we want to replace but the full path doesn't exist.
-		{`{"a": [3, 4]}`, "$.a[2]", `30`, ModifyReplace, `{"a": [3, 4]}`, true},
+		{`{"a": [3, 4]}`, "$.a[2]", `30`, `{"a": [3, 4]}`, true, ModifyReplace},
 
 		// bad path expression.
-		{"null", "$.*", "{}", ModifySet, "null", false},
-		{"null", "$[*]", "{}", ModifySet, "null", false},
-		{"null", "$**.a", "{}", ModifySet, "null", false},
-		{"null", "$**[3]", "{}", ModifySet, "null", false},
+		{"null", "$.*", "{}", "null", false, ModifySet},
+		{"null", "$[*]", "{}", "null", false, ModifySet},
+		{"null", "$**.a", "{}", "null", false, ModifySet},
+		{"null", "$**[3]", "{}", "null", false, ModifySet},
 	}
 	for _, tt := range tests {
 		pathExpr, err := ParseJSONPathExpr(tt.setField)
