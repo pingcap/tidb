@@ -75,8 +75,15 @@ func (e *SimpleExec) getSysSession() (sessionctx.Context, error) {
 }
 
 func (e *SimpleExec) releaseSysSession(ctx sessionctx.Context) {
+	if ctx == nil {
+		return
+	}
 	dom := domain.GetDomain(e.ctx)
 	sysSessionPool := dom.SysSessionPool()
+	if _, err := ctx.(sqlexec.SQLExecutor).Execute(context.Background(), "rollback"); err != nil {
+		ctx.(pools.Resource).Close()
+		return
+	}
 	sysSessionPool.Put(ctx.(pools.Resource))
 }
 
