@@ -1270,7 +1270,10 @@ func (r *EliminateSingleMaxMin) OnTransform(old *memo.ExprIter) (newExprs []*mem
 		desc := f.Name == ast.AggFuncMax
 		// Compose Sort operator.
 		sort := plannercore.LogicalSort{}.Init(ctx, agg.SelectBlockOffset())
-		sort.ByItems = append(sort.ByItems, &plannercore.ByItems{f.Args[0], desc})
+		sort.ByItems = append(sort.ByItems, &plannercore.ByItems{
+			Expr: f.Args[0],
+			Desc: desc,
+		})
 		sortExpr := memo.NewGroupExpr(sort)
 		sortExpr.SetChildren(childGroup)
 		sortGroup := memo.NewGroupWithSchema(sortExpr, childGroup.Prop.Schema)
