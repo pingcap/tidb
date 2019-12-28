@@ -1122,5 +1122,21 @@ func (e *SimpleExec) executeShutdown(s *ast.ShutdownStmt) error {
 	if err != nil {
 		return err
 	}
-	return p.Kill()
+
+	// Call with async
+	go asyncDelayShutdown(p, time.Second)
+
+	return nil
+}
+
+// #14239 - https://github.com/pingcap/tidb/issues/14239
+// Need repair 'shutdown' command behavior.
+// Response of TiDB is different to MySQL.
+// This function need to run with async model, otherwise it will block main coroutine
+func asyncDelayShutdown(p *os.Process, delay time.Duration) {
+	time.Sleep(delay)
+	err := p.Kill()
+	if err != nil {
+		panic(err)
+	}
 }
