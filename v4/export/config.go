@@ -2,6 +2,10 @@ package export
 
 import (
 	"fmt"
+	"regexp"
+	"strings"
+
+	"github.com/coreos/go-semver/semver"
 )
 
 type Config struct {
@@ -15,6 +19,8 @@ type Config struct {
 	Logger        Logger
 	FileSize      uint64
 	OutputDirPath string
+	ServerInfo    ServerInfo
+	SortByPk      bool
 }
 
 func DefaultConfig() *Config {
@@ -28,6 +34,8 @@ func DefaultConfig() *Config {
 		Logger:        &DummyLogger{},
 		FileSize:      UnspecifiedSize,
 		OutputDirPath: ".",
+		ServerInfo:    ServerInfoUnknown,
+		SortByPk:      false,
 	}
 }
 
@@ -35,21 +43,56 @@ func (conf *Config) getDSN(db string) string {
 	return fmt.Sprintf("%s:%s@tcp(%s:%d)/%s", conf.User, conf.Password, conf.Host, conf.Port, db)
 }
 
-func extractOutputConfig(conf *Config) *Config {
-	return &Config{
-		Logger:        conf.Logger,
-		FileSize:      conf.FileSize,
-		OutputDirPath: conf.OutputDirPath,
-	}
-}
-
-type WriteConfig struct {
-	// Logger is used to log the export routine.
-	Logger Logger
-	// Output size limit in bytes.
-	OutputSize int
-	// OutputDirPath is the directory to output.
-	OutputDirPath string
-}
-
 const UnspecifiedSize = 0
+
+type ServerInfo struct {
+	ServerType    ServerType
+	ServerVersion *semver.Version
+}
+
+var ServerInfoUnknown = ServerInfo{
+	ServerType:    ServerTypeUnknown,
+	ServerVersion: nil,
+}
+
+var versionRegex = regexp.MustCompile(`^\d+\.\d+\.\d+([0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?`)
+var tidbVersionRegex = regexp.MustCompile(`v\d+\.\d+\.\d+([0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?`)
+
+func ParseServerInfo(src string) ServerInfo {
+	lowerCase := strings.ToLower(src)
+	serverInfo := ServerInfo{}
+	if strings.Contains(lowerCase, "tidb") {
+		serverInfo.ServerType = ServerTypeTiDB
+	} else if strings.Contains(lowerCase, "mariadb") {
+		serverInfo.ServerType = ServerTypeMariaDB
+	} else if versionRegex.MatchString(lowerCase) {
+		serverInfo.ServerType = ServerTypeMySQL
+	} else {
+		serverInfo.ServerType = ServerTypeUnknown
+	}
+
+	var versionStr string
+	if serverInfo.ServerType == ServerTypeTiDB {
+		versionStr = tidbVersionRegex.FindString(src)[1:]
+	} else {
+		versionStr = versionRegex.FindString(src)
+	}
+
+	var err error
+	serverInfo.ServerVersion, err = semver.NewVersion(versionStr)
+	if err != nil {
+		return serverInfo
+	}
+	return serverInfo
+}
+
+type ServerType int8
+
+const (
+	ServerTypeUnknown = iota
+	ServerTypeMySQL
+	ServerTypeMariaDB
+	ServerTypeTiDB
+
+	ServerTypeAll
+)
