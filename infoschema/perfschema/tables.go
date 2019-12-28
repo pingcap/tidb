@@ -26,13 +26,14 @@ import (
 )
 
 const (
-	tableNameEventsStatementsSummaryByDigest = "events_statements_summary_by_digest"
-	tableNameTiDBProfileCPU                  = "tidb_profile_cpu"
-	tableNameTiDBProfileMemory               = "tidb_profile_memory"
-	tableNameTiDBProfileMutex                = "tidb_profile_mutex"
-	tableNameTiDBProfileAllocs               = "tidb_profile_allocs"
-	tableNameTiDBProfileBlock                = "tidb_profile_block"
-	tableNameTiDBProfileGoroutines           = "tidb_profile_goroutines"
+	tableNameEventsStatementsSummaryByDigest        = "events_statements_summary_by_digest"
+	tableNameEventsStatementsSummaryByDigestHistory = "events_statements_summary_by_digest_history"
+	tableNameTiDBProfileCPU                         = "tidb_profile_cpu"
+	tableNameTiDBProfileMemory                      = "tidb_profile_memory"
+	tableNameTiDBProfileMutex                       = "tidb_profile_mutex"
+	tableNameTiDBProfileAllocs                      = "tidb_profile_allocs"
+	tableNameTiDBProfileBlock                       = "tidb_profile_block"
+	tableNameTiDBProfileGoroutines                  = "tidb_profile_goroutines"
 )
 
 // perfSchemaTable stands for the fake table all its data is in the memory.
@@ -96,7 +97,9 @@ func (vt *perfSchemaTable) Meta() *model.TableInfo {
 func (vt *perfSchemaTable) getRows(ctx sessionctx.Context, cols []*table.Column) (fullRows [][]types.Datum, err error) {
 	switch vt.meta.Name.O {
 	case tableNameEventsStatementsSummaryByDigest:
-		fullRows = stmtsummary.StmtSummaryByDigestMap.ToDatum()
+		fullRows = stmtsummary.StmtSummaryByDigestMap.ToCurrentDatum()
+	case tableNameEventsStatementsSummaryByDigestHistory:
+		fullRows = stmtsummary.StmtSummaryByDigestMap.ToHistoryDatum()
 	case tableNameTiDBProfileCPU:
 		fullRows, err = (&profile.Collector{}).ProfileGraph("cpu")
 	case tableNameTiDBProfileMemory:

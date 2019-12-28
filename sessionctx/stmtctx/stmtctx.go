@@ -65,7 +65,6 @@ type StatementContext struct {
 	OverflowAsWarning      bool
 	InShowWarning          bool
 	UseCache               bool
-	PadCharToFullLength    bool
 	BatchCheck             bool
 	InNullRejectCheck      bool
 	AllowInvalidDate       bool
@@ -133,8 +132,10 @@ type StatementContext struct {
 		normalized string
 		digest     string
 	}
-	Tables            []TableEntry
-	lockWaitStartTime *time.Time // LockWaitStartTime stores the pessimistic lock wait start time
+	Tables                []TableEntry
+	lockWaitStartTime     *time.Time // LockWaitStartTime stores the pessimistic lock wait start time
+	PessimisticLockWaited int32
+	LockKeysDuration      time.Duration
 }
 
 // GetNowTsCached getter for nowTs, if not set get now time and cache it
@@ -445,6 +446,7 @@ func (sc *StatementContext) GetExecDetails() execdetails.ExecDetails {
 	var details execdetails.ExecDetails
 	sc.mu.Lock()
 	details = sc.mu.execDetails
+	details.LockKeysDuration = sc.LockKeysDuration
 	sc.mu.Unlock()
 	return details
 }

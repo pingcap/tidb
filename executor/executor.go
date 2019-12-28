@@ -786,19 +786,28 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		return nil
 	}
 	lockWaitTime := e.ctx.GetSessionVars().LockWaitTimeout
-	return doLockKeys(ctx, e.ctx, lockWaitTime, e.keys...)
+	return doLockKeys(ctx, e.ctx, newLockCtx(e.ctx.GetSessionVars(), lockWaitTime), e.keys...)
 }
 
-func doLockKeys(ctx context.Context, se sessionctx.Context, lockWaitTime int64, keys ...kv.Key) error {
+func newLockCtx(seVars *variable.SessionVars, lockWaitTime int64) *kv.LockCtx {
+	return &kv.LockCtx{
+		Killed:                &seVars.Killed,
+		ForUpdateTS:           seVars.TxnCtx.GetForUpdateTS(),
+		LockWaitTime:          lockWaitTime,
+		WaitStartTime:         seVars.StmtCtx.GetLockWaitStartTime(),
+		PessimisticLockWaited: &seVars.StmtCtx.PessimisticLockWaited,
+		LockKeysDuration:      &seVars.StmtCtx.LockKeysDuration,
+	}
+}
+
+func doLockKeys(ctx context.Context, se sessionctx.Context, lockCtx *kv.LockCtx, keys ...kv.Key) error {
 	se.GetSessionVars().TxnCtx.ForUpdate = true
 	// Lock keys only once when finished fetching all results.
 	txn, err := se.Txn(true)
 	if err != nil {
 		return err
 	}
-	forUpdateTS := se.GetSessionVars().TxnCtx.GetForUpdateTS()
-	return txn.LockKeys(ctx, &se.GetSessionVars().Killed, forUpdateTS, lockWaitTime,
-		se.GetSessionVars().StmtCtx.GetLockWaitStartTime(), keys...)
+	return txn.LockKeys(ctx, lockCtx, keys...)
 }
 
 // LimitExec represents limit executor
@@ -1499,7 +1508,6 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 			sc.Priority = opts.Priority
 			sc.NotFillCache = !opts.SQLCache
 		}
-		sc.PadCharToFullLength = ctx.GetSessionVars().SQLMode.HasPadCharToFullLengthMode()
 		sc.CastStrToIntStrict = true
 	case *ast.ShowStmt:
 		sc.IgnoreTruncate = true
