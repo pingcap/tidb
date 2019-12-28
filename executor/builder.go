@@ -356,11 +356,10 @@ func buildIndexLookUpChecker(b *executorBuilder, readerPlan *plannercore.Physica
 	for _, col := range is.Columns {
 		colNames = append(colNames, col.Name.O)
 	}
-	var err error
-	readerExec.idxTblCols, err = table.FindCols(readerExec.table.Cols(), colNames, true)
-	if err != nil {
-		b.err = errors.Trace(err)
-		return
+	if cols, missingColName := table.FindCols(readerExec.table.Cols(), colNames, true); missingColName != "" {
+		b.err = plannercore.ErrUnknownColumn.GenWithStack("Unknown column %s", missingColName)
+	} else {
+		readerExec.idxTblCols = cols
 	}
 }
 
@@ -1308,6 +1307,13 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
 				retriever: &clusterLogRetriever{
 					extractor: v.Extractor.(*plannercore.ClusterLogTableExtractor),
+				},
+			}
+		case strings.ToLower(infoschema.TableInspectionResult):
+			return &ClusterReaderExec{
+				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
+				retriever: &inspectionRetriever{
+					extractor: v.Extractor.(*plannercore.InspectionResultTableExtractor),
 				},
 			}
 		}
@@ -2529,6 +2535,7 @@ func (b *executorBuilder) buildSQLBindExec(v *plannercore.SQLBindPlan) Executor 
 		bindSQL:      v.BindSQL,
 		charset:      v.Charset,
 		collation:    v.Collation,
+		db:           v.Db,
 		isGlobal:     v.IsGlobal,
 		bindAst:      v.BindStmt,
 	}
