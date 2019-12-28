@@ -739,6 +739,7 @@ func (r *PushLimitDownUnionAll) Match(expr *memo.ExprIter) bool {
 func (r *PushLimitDownUnionAll) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
 	limit := old.GetExpr().ExprNode.(*plannercore.LogicalLimit)
 	unionAll := old.Children[0].GetExpr().ExprNode.(*plannercore.LogicalUnionAll)
+	unionAllSchema := old.Children[0].Group.Prop.Schema
 
 	newLimit := plannercore.LogicalLimit{
 		Count: limit.Count + limit.Offset,
@@ -754,7 +755,7 @@ func (r *PushLimitDownUnionAll) OnTransform(old *memo.ExprIter) (newExprs []*mem
 	}
 
 	newLimitExpr := memo.NewGroupExpr(limit)
-	newUnionAllGroup := memo.NewGroupWithSchema(newUnionAllExpr, unionAll.Schema())
+	newUnionAllGroup := memo.NewGroupWithSchema(newUnionAllExpr, unionAllSchema)
 	newLimitExpr.SetChildren(newUnionAllGroup)
 	newLimitExpr.AddAppliedRule(r)
 	return []*memo.GroupExpr{newLimitExpr}, true, false, nil
