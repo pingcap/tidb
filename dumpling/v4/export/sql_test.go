@@ -35,8 +35,9 @@ func (s *testDumpSuite) TestDetectServerInfo(c *C) {
 		rows := sqlmock.NewRows([]string{"version"}).AddRow(r)
 		mock.ExpectQuery("SELECT version()").WillReturnRows(rows)
 
-		info, err := detectServerInfo(db)
+		verStr, err := SelectVersion(db)
 		c.Assert(err, IsNil, cmt)
+		info := ParseServerInfo(verStr)
 		c.Assert(info.ServerType, Equals, serverTp, cmt)
 		c.Assert(info.ServerVersion == nil, Equals, expectVer == nil, cmt)
 		if info.ServerVersion == nil {
