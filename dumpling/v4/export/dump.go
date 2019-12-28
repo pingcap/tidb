@@ -11,26 +11,14 @@ import (
 )
 
 func Dump(conf *Config) error {
-	pool, err := sql.Open("mysql", conf.getDSN(""))
+	databases, serverInfo, err := prepareMeta(conf)
 	if err != nil {
-		return withStack(err)
+		return err
 	}
 
-	var databases []string
-	if conf.Database == "" {
-		var err error
-		databases, err = showDatabases(pool)
-		if err != nil {
-			pool.Close()
-			return err
-		}
-	} else {
-		databases = strings.Split(conf.Database, ",")
-	}
-	pool.Close()
-
+	conf.ServerInfo = serverInfo
 	for _, database := range databases {
-		fsWriter, err := NewSimpleWriter(extractOutputConfig(conf))
+		fsWriter, err := NewSimpleWriter(conf)
 		if err != nil {
 			return err
 		}
@@ -39,6 +27,42 @@ func Dump(conf *Config) error {
 		}
 	}
 	return nil
+}
+
+func prepareMeta(conf *Config) (databases []string, info ServerInfo, err error) {
+	pool, err := sql.Open("mysql", conf.getDSN(""))
+	if err != nil {
+		return nil, ServerInfoUnknown, withStack(err)
+	}
+	defer pool.Close()
+	databases, err = getDumpingDatabaseNames(pool, conf)
+	if err != nil {
+		return nil, ServerInfoUnknown, withStack(err)
+	}
+	info, err = detectServerInfo(pool)
+	if err != nil {
+		return databases, ServerInfoUnknown, withStack(err)
+	}
+	return
+}
+
+func getDumpingDatabaseNames(pool *sql.DB, conf *Config) ([]string, error) {
+	if conf.Database == "" {
+		return showDatabases(pool)
+	}
+	return strings.Split(conf.Database, ","), nil
+}
+
+func detectServerInfo(db *sql.DB) (ServerInfo, error) {
+	var versionInfo string
+	handleOneRow := func(rows *sql.Rows) error {
+		return rows.Scan(&versionInfo)
+	}
+	err := simpleQuery(db, "SELECT version()", handleOneRow)
+	if err != nil {
+		return ServerInfoUnknown, withStack(err)
+	}
+	return ParseServerInfo(versionInfo), nil
 }
 
 func simpleQuery(db *sql.DB, sql string, handleOneRow func(*sql.Rows) error) error {
@@ -151,7 +175,7 @@ func dumpDatabase(ctx context.Context, conf *Config, dbName string, writer Write
 			}
 
 			rateLimit.getToken()
-			tableIR, err := dumpTable(ctx, db, dbName, table)
+			tableIR, err := dumpTable(conf, db, dbName, table)
 			defer rateLimit.putToken()
 			if err != nil {
 				res[ith] = err
@@ -188,13 +212,17 @@ type tableDumper interface {
 	finishTable(ctx context.Context)
 }
 
-func dumpTable(ctx context.Context, db *sql.DB, database, table string) (TableDataIR, error) {
+func dumpTable(conf *Config, db *sql.DB, database, table string) (TableDataIR, error) {
 	colTypes, err := getColumnTypes(db, table)
 	if err != nil {
 		return nil, err
 	}
 
-	rows, err := db.Query(fmt.Sprintf("SELECT * from %s", table))
+	query, err := buildSelectAllQuery(conf, db, database, table)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := db.Query(query)
 	if err != nil {
 		return nil, withStack(err)
 	}
@@ -205,4 +233,83 @@ func dumpTable(ctx context.Context, db *sql.DB, database, table string) (TableDa
 		rows:     rows,
 		colTypes: colTypes,
 	}, nil
+}
+
+func buildSelectAllQuery(conf *Config, db *sql.DB, database, table string) (string, error) {
+	var query strings.Builder
+	query.WriteString("SELECT * FROM ")
+	query.WriteString(database)
+	query.WriteString(".")
+	query.WriteString(table)
+	if conf.SortByPk {
+		orderByClause, err := buildOrderByClause(conf, db, database, table)
+		if err != nil {
+			return "", err
+		}
+		if orderByClause != "" {
+			query.WriteString(" ")
+			query.WriteString(orderByClause)
+		}
+	}
+	return query.String(), nil
+}
+
+const errBadFieldCode = 1054
+
+func buildOrderByClause(conf *Config, db *sql.DB, database, table string) (string, error) {
+	if conf.ServerInfo.ServerType == ServerTypeTiDB {
+		tiDBRowIDQuery := fmt.Sprintf("SELECT _tidb_rowid from %s.%s LIMIT 0", database, table)
+		isBadField, otherErr := queryReturnExpectedErrorCode(db, tiDBRowIDQuery, errBadFieldCode)
+		if otherErr != nil {
+			return "", otherErr
+		}
+		if isBadField {
+			return "", nil
+		}
+		return "ORDER BY _tidb_rowid", nil
+	}
+	pkName, err := getPrimaryKeyName(db, database, table)
+	if err != nil {
+		return "", err
+	}
+	tableContainsPriKey := pkName != ""
+	if tableContainsPriKey {
+		return fmt.Sprintf("ORDER BY %s", pkName), nil
+	}
+	return "", nil
+}
+
+func queryReturnExpectedErrorCode(db *sql.DB, sql string, errCode int) (bool, error) {
+	_, err := db.Exec(sql)
+	if err != nil {
+		errMsg := strings.ToLower(err.Error())
+		if strings.Contains(errMsg, fmt.Sprintf("%d", errCode)) {
+			return true, nil
+		}
+		return false, withStack(err)
+	}
+	return false, nil
+}
+
+func getPrimaryKeyName(db *sql.DB, database, table string) (string, error) {
+	priKeyQuery := `SELECT column_name FROM information_schema.columns
+		WHERE table_schema = ? AND table_name = ? AND column_key = 'PRI';`
+	stmt, err := db.Prepare(priKeyQuery)
+	if err != nil {
+		return "", err
+	}
+	defer stmt.Close()
+	rows, err := stmt.Query(database, table)
+	if err != nil {
+		return "", withStack(err)
+	}
+
+	var colName string
+	for rows.Next() {
+		if err := rows.Scan(&colName); err != nil {
+			rows.Close()
+			return "", withStack(err)
+		}
+	}
+	return colName, nil
 }
