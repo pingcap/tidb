@@ -866,11 +866,10 @@ func (do *Domain) globalBindHandleWorkerLoop() {
 				if err != nil {
 					logutil.BgLogger().Error("update bindinfo failed", zap.Error(err))
 				}
-				if !variable.TiDBOptOn(variable.CapturePlanBaseline.GetVal()) {
-					continue
-				}
 				do.bindHandle.DropInvalidBindRecord()
-				do.bindHandle.CaptureBaselines()
+				if variable.TiDBOptOn(variable.CapturePlanBaseline.GetVal()) {
+					do.bindHandle.CaptureBaselines()
+				}
 				do.bindHandle.SaveEvolveTasksToStore()
 			}
 		}
