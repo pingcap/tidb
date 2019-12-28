@@ -65,6 +65,7 @@ var defaultTransformationMap = map[memo.Operand][]Transformation{
 	memo.OperandLimit: {
 		NewRuleTransformLimitToTopN(),
 		NewRulePushLimitDownProjection(),
+		NewRulePushLimitDownUnionAll(),
 	},
 	memo.OperandProjection: {
 		NewRuleEliminateProjection(),
@@ -708,6 +709,56 @@ func (r *PushLimitDownProjection) OnTransform(old *memo.ExprIter) (newExprs []*m
 	limitGroup := memo.NewGroupWithSchema(limitExpr, childGroup.Prop.Schema)
 	projExpr.SetChildren(limitGroup)
 	return []*memo.GroupExpr{projExpr}, true, false, nil
+}
+
+// PushLimitDownUnionAll pushes limit to union all.
+type PushLimitDownUnionAll struct {
+	baseRule
+}
+
+// NewRulePushLimitDownUnionAll creates a new Transformation PushLimitDownUnionAll.
+// The pattern of this rule is `Limit->UnionAll->X`.
+func NewRulePushLimitDownUnionAll() Transformation {
+	rule := &PushLimitDownUnionAll{}
+	rule.pattern = memo.BuildPattern(
+		memo.OperandLimit,
+		memo.EngineTiDBOnly,
+		memo.NewPattern(memo.OperandUnionAll, memo.EngineTiDBOnly),
+	)
+	return rule
+}
+
+// Match implements Transformation interface.
+// Use appliedRuleSet in GroupExpr to avoid re-apply rules.
+func (r *PushLimitDownUnionAll) Match(expr *memo.ExprIter) bool {
+	return !expr.GetExpr().HasAppliedRule(r)
+}
+
+// OnTransform implements Transformation interface.
+// It will transform `Limit->UnionAll->X` to `Limit->UnionAll->Limit->X`.
+func (r *PushLimitDownUnionAll) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
+	limit := old.GetExpr().ExprNode.(*plannercore.LogicalLimit)
+	unionAll := old.Children[0].GetExpr().ExprNode.(*plannercore.LogicalUnionAll)
+	unionAllSchema := old.Children[0].Group.Prop.Schema
+
+	newLimit := plannercore.LogicalLimit{
+		Count: limit.Count + limit.Offset,
+	}.Init(limit.SCtx(), limit.SelectBlockOffset())
+
+	newUnionAllExpr := memo.NewGroupExpr(unionAll)
+	for _, childGroup := range old.Children[0].GetExpr().Children {
+		newLimitExpr := memo.NewGroupExpr(newLimit)
+		newLimitExpr.Children = append(newLimitExpr.Children, childGroup)
+		newLimitGroup := memo.NewGroupWithSchema(newLimitExpr, childGroup.Prop.Schema)
+
+		newUnionAllExpr.Children = append(newUnionAllExpr.Children, newLimitGroup)
+	}
+
+	newLimitExpr := memo.NewGroupExpr(limit)
+	newUnionAllGroup := memo.NewGroupWithSchema(newUnionAllExpr, unionAllSchema)
+	newLimitExpr.SetChildren(newUnionAllGroup)
+	newLimitExpr.AddAppliedRule(r)
+	return []*memo.GroupExpr{newLimitExpr}, true, false, nil
 }
 
 // PushSelDownJoin pushes Selection through Join.
