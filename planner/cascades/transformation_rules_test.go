@@ -192,6 +192,7 @@ func (s *testTransformationRuleSuite) TestMergeAggregationProjection(c *C) {
 	s.optimizer.ResetTransformationRules(map[memo.Operand][]Transformation{
 		memo.OperandAggregation: {
 			NewRuleMergeAggregationProjection(),
+			NewRuleEliminateSingleMaxMin(),
 		},
 	})
 	defer func() {

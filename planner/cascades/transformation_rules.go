@@ -14,10 +14,13 @@
 package cascades
 
 import (
+	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/planner/memo"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/ranger"
 )
 
@@ -61,6 +64,7 @@ var defaultTransformationMap = map[memo.Operand][]Transformation{
 	memo.OperandAggregation: {
 		NewRulePushAggDownGather(),
 		NewRuleMergeAggregationProjection(),
+		NewRuleEliminateSingleMaxMin(),
 	},
 	memo.OperandLimit: {
 		NewRuleTransformLimitToTopN(),
@@ -1200,6 +1204,91 @@ func (r *MergeAggregationProjection) OnTransform(old *memo.ExprIter) (newExprs [
 
 	newAggExpr := memo.NewGroupExpr(newAgg)
 	newAggExpr.SetChildren(old.Children[0].GetExpr().Children...)
+	return []*memo.GroupExpr{newAggExpr}, true, false, nil
+}
+
+// EliminateSingleMaxMin tries to convert a single max/min to Limit+Sort operators.
+type EliminateSingleMaxMin struct {
+	baseRule
+}
+
+// NewRuleEliminateSingleMaxMin creates a new Transformation EliminateSingleMaxMin.
+// The pattern of this rule is `max/min->X`.
+func NewRuleEliminateSingleMaxMin() Transformation {
+	rule := &EliminateSingleMaxMin{}
+	rule.pattern = memo.BuildPattern(
+		memo.OperandAggregation,
+		memo.EngineTiDBOnly,
+		memo.NewPattern(memo.OperandAny, memo.EngineTiDBOnly),
+	)
+	return rule
+}
+
+// Match implements Transformation interface.
+// Use appliedRuleSet in GroupExpr to avoid re-apply rules.
+func (r *EliminateSingleMaxMin) Match(expr *memo.ExprIter) bool {
+	agg := expr.GetExpr().ExprNode.(*plannercore.LogicalAggregation)
+	if len(agg.GroupByItems) != 0 {
+		return false
+	}
+	if len(agg.AggFuncs) != 1 {
+		return false
+	}
+	// If there is only one aggFunc, we don't need to guarantee that the child of it is a data
+	// source, or whether the sort can be eliminated. This transformation won't be worse than previous.
+	// Make sure that the aggFunc are Max or Min.
+	if agg.AggFuncs[0].Name != ast.AggFuncMax && agg.AggFuncs[0].Name != ast.AggFuncMin {
+		return false
+	}
+	return !expr.GetExpr().HasAppliedRule(r)
+}
+
+// OnTransform implements Transformation interface.
+// It will transform `max/min->X` to `max/min->limit->sort->sel->X`.
+func (r *EliminateSingleMaxMin) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
+	agg := old.GetExpr().ExprNode.(*plannercore.LogicalAggregation)
+	childGroup := old.GetExpr().Children[0]
+	ctx := agg.SCtx()
+	f := agg.AggFuncs[0]
+
+	// If there's no column in f.GetArgs()[0], we still need limit and read data from real table because the result should be NULL if the input is empty.
+	if len(expression.ExtractColumns(f.Args[0])) > 0 {
+		// If it can be NULL, we need to filter NULL out first.
+		if !mysql.HasNotNullFlag(f.Args[0].GetType().Flag) {
+			sel := plannercore.LogicalSelection{}.Init(ctx, agg.SelectBlockOffset())
+			isNullFunc := expression.NewFunctionInternal(ctx, ast.IsNull, types.NewFieldType(mysql.TypeTiny), f.Args[0])
+			notNullFunc := expression.NewFunctionInternal(ctx, ast.UnaryNot, types.NewFieldType(mysql.TypeTiny), isNullFunc)
+			sel.Conditions = []expression.Expression{notNullFunc}
+			selExpr := memo.NewGroupExpr(sel)
+			selExpr.SetChildren(childGroup)
+			selGroup := memo.NewGroupWithSchema(selExpr, childGroup.Prop.Schema)
+			childGroup = selGroup
+		}
+
+		// Add Sort and Limit operators.
+		// For max function, the sort order should be desc.
+		desc := f.Name == ast.AggFuncMax
+		// Compose Sort operator.
+		sort := plannercore.LogicalSort{}.Init(ctx, agg.SelectBlockOffset())
+		sort.ByItems = append(sort.ByItems, &plannercore.ByItems{f.Args[0], desc})
+		sortExpr := memo.NewGroupExpr(sort)
+		sortExpr.SetChildren(childGroup)
+		sortGroup := memo.NewGroupWithSchema(sortExpr, childGroup.Prop.Schema)
+		childGroup = sortGroup
+	}
+
+	// Compose Limit operator.
+	li := plannercore.LogicalLimit{Count: 1}.Init(ctx, agg.SelectBlockOffset())
+	liExpr := memo.NewGroupExpr(li)
+	liExpr.SetChildren(childGroup)
+	liGroup := memo.NewGroupWithSchema(liExpr, childGroup.Prop.Schema)
+
+	newAgg := agg
+	newAggExpr := memo.NewGroupExpr(newAgg)
+	// If no data in the child, we need to return NULL instead of empty. This cannot be done by sort and limit themselves.
+	// Since now there would be at most one row returned, the remained agg operator is not expensive anymore.
+	newAggExpr.SetChildren(liGroup)
+	newAggExpr.AddAppliedRule(r)
 	return []*memo.GroupExpr{newAggExpr}, true, false, nil
 }
 
