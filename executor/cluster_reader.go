@@ -49,9 +49,9 @@ import (
 
 const clusterLogBatchSize = 256
 
-type dummyClose struct{}
+type dummyCloser struct{}
 
-func (dummyClose) close() error { return nil }
+func (dummyCloser) close() error { return nil }
 
 type clusterRetriever interface {
 	retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error)
@@ -91,7 +91,7 @@ func (e *ClusterReaderExec) Close() error {
 }
 
 type clusterConfigRetriever struct {
-	dummyClose
+	dummyCloser
 	retrieved bool
 	extractor *plannercore.ClusterTableExtractor
 }
@@ -218,7 +218,7 @@ func (e *clusterConfigRetriever) retrieve(_ context.Context, sctx sessionctx.Con
 }
 
 type clusterServerInfoRetriever struct {
-	dummyClose
+	dummyCloser
 	retrieved      bool
 	extractor      *plannercore.ClusterTableExtractor
 	serverInfoType diagnosticspb.ServerInfoType
@@ -382,7 +382,7 @@ type clusterLogRetriever struct {
 	retrieving bool
 	heap       *logResponseHeap
 	extractor  *plannercore.ClusterLogTableExtractor
-	cancel     func()
+	cancel     context.CancelFunc
 }
 
 type logStreamResult struct {
