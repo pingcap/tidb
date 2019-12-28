@@ -59,6 +59,54 @@ func (s *testSuite3) TestDo(c *C) {
 	tk.MustQuery("select @a").Check(testkit.Rows("1"))
 }
 
+func (s *testSuite3) TestCreateRole(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create user testCreateRole;")
+	tk.MustExec("grant CREATE USER on *.* to testCreateRole;")
+	se, err := session.CreateSession4Test(s.store)
+	c.Check(err, IsNil)
+	defer se.Close()
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "testCreateRole", Hostname: "localhost"}, nil, nil), IsTrue)
+
+	ctx := context.Background()
+	_, err = se.Execute(ctx, `create role test_create_role;`)
+	c.Assert(err, IsNil)
+	tk.MustExec("revoke CREATE USER on *.* from testCreateRole;")
+	tk.MustExec("drop role test_create_role;")
+	tk.MustExec("grant CREATE ROLE on *.* to testCreateRole;")
+	_, err = se.Execute(ctx, `create role test_create_role;`)
+	c.Assert(err, IsNil)
+	tk.MustExec("drop role test_create_role;")
+	_, err = se.Execute(ctx, `create user test_create_role;`)
+	c.Assert(err, NotNil)
+	tk.MustExec("drop user testCreateRole;")
+}
+
+func (s *testSuite3) TestDropRole(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create user testCreateRole;")
+	tk.MustExec("create user test_create_role;")
+	tk.MustExec("grant CREATE USER on *.* to testCreateRole;")
+	se, err := session.CreateSession4Test(s.store)
+	c.Check(err, IsNil)
+	defer se.Close()
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "testCreateRole", Hostname: "localhost"}, nil, nil), IsTrue)
+
+	ctx := context.Background()
+	_, err = se.Execute(ctx, `drop role test_create_role;`)
+	c.Assert(err, IsNil)
+	tk.MustExec("revoke CREATE USER on *.* from testCreateRole;")
+	tk.MustExec("create role test_create_role;")
+	tk.MustExec("grant DROP ROLE on *.* to testCreateRole;")
+	_, err = se.Execute(ctx, `drop role test_create_role;`)
+	c.Assert(err, IsNil)
+	tk.MustExec("create user test_create_role;")
+	_, err = se.Execute(ctx, `drop user test_create_role;`)
+	c.Assert(err, NotNil)
+	tk.MustExec("drop user testCreateRole;")
+	tk.MustExec("drop user test_create_role;")
+}
+
 func (s *testSuite3) TestTransaction(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("begin")
@@ -186,6 +234,31 @@ func (s *testSuite3) TestRole(c *C) {
 	tk.MustExec("SET ROLE ALL EXCEPT role1, role2")
 	tk.MustExec("SET ROLE DEFAULT")
 	tk.MustExec("SET ROLE NONE")
+}
+
+func (s *testSuite3) TestRoleAdmin(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("CREATE USER 'testRoleAdmin';")
+	tk.MustExec("CREATE ROLE 'targetRole';")
+
+	// Create a new session.
+	se, err := session.CreateSession4Test(s.store)
+	c.Check(err, IsNil)
+	defer se.Close()
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "testRoleAdmin", Hostname: "localhost"}, nil, nil), IsTrue)
+
+	ctx := context.Background()
+	_, err = se.Execute(ctx, "GRANT `targetRole` TO `testRoleAdmin`;")
+	c.Assert(err, NotNil)
+
+	tk.MustExec("GRANT SUPER ON *.* TO `testRoleAdmin`;")
+	_, err = se.Execute(ctx, "GRANT `targetRole` TO `testRoleAdmin`;")
+	c.Assert(err, IsNil)
+	_, err = se.Execute(ctx, "REVOKE `targetRole` FROM `testRoleAdmin`;")
+	c.Assert(err, IsNil)
+
+	tk.MustExec("DROP USER 'testRoleAdmin';")
+	tk.MustExec("DROP ROLE 'targetRole';")
 }
 
 func (s *testSuite3) TestDefaultRole(c *C) {
@@ -322,9 +395,9 @@ func (s *testSuite3) TestUser(c *C) {
 	dropUserSQL = `DROP USER 'test1'@'localhost', 'test2'@'localhost', 'test3'@'localhost';`
 	tk.MustGetErrCode(dropUserSQL, mysql.ErrCannotUser)
 	dropUserSQL = `DROP USER 'test3'@'localhost';`
-	tk.MustGetErrCode(dropUserSQL, mysql.ErrCannotUser)
+	tk.MustExec(dropUserSQL)
 	dropUserSQL = `DROP USER 'test1'@'localhost';`
-	tk.MustGetErrCode(dropUserSQL, mysql.ErrCannotUser)
+	tk.MustExec(dropUserSQL)
 	// Test positive cases without IF EXISTS.
 	createUserSQL = `CREATE USER 'test1'@'localhost', 'test3'@'localhost';`
 	tk.MustExec(createUserSQL)
@@ -567,4 +640,21 @@ func (s *testSuite3) TestIssue9111(c *C) {
 	c.Check(err, IsNil)
 
 	tk.MustExec("drop user 'user_admin'@'localhost';")
+}
+
+func (s *testSuite3) TestRoleAtomic(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("create role r2;")
+	_, err := tk.Exec("create role r1, r2, r3")
+	c.Check(err, NotNil)
+	// Check atomic create role.
+	result := tk.MustQuery(`SELECT user FROM mysql.User WHERE user in ('r1', 'r2', 'r3')`)
+	result.Check(testkit.Rows("r2"))
+	// Check atomic drop role.
+	_, err = tk.Exec("drop role r1, r2, r3")
+	c.Check(err, NotNil)
+	result = tk.MustQuery(`SELECT user FROM mysql.User WHERE user in ('r1', 'r2', 'r3')`)
+	result.Check(testkit.Rows("r2"))
+	tk.MustExec("drop role r2;")
 }

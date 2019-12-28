@@ -14,6 +14,7 @@
 package infoschema
 
 import (
+	"fmt"
 	"sort"
 	"sync/atomic"
 
@@ -22,8 +23,11 @@ import (
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 )
 
 var (
@@ -87,7 +91,7 @@ type InfoSchema interface {
 	SchemaByID(id int64) (*model.DBInfo, bool)
 	SchemaByTable(tableInfo *model.TableInfo) (*model.DBInfo, bool)
 	TableByID(id int64) (table.Table, bool)
-	AllocByID(id int64) (autoid.Allocator, bool)
+	AllocByID(id int64) (autoid.Allocators, bool)
 	AllSchemaNames() []string
 	AllSchemas() []*model.DBInfo
 	Clone() (result []*model.DBInfo)
@@ -96,12 +100,6 @@ type InfoSchema interface {
 	// TableIsView indicates whether the schema.table is a view.
 	TableIsView(schema, table model.CIStr) bool
 }
-
-// Information Schema Name.
-const (
-	Name      = util.InformationSchemaName
-	LowerName = util.InformationSchemaLowerName
-)
 
 type sortedTables []table.Table
 
@@ -245,12 +243,12 @@ func (is *infoSchema) TableByID(id int64) (val table.Table, ok bool) {
 	return slice[idx], true
 }
 
-func (is *infoSchema) AllocByID(id int64) (autoid.Allocator, bool) {
+func (is *infoSchema) AllocByID(id int64) (autoid.Allocators, bool) {
 	tbl, ok := is.TableByID(id)
 	if !ok {
 		return nil, false
 	}
-	return tbl.Allocator(nil), true
+	return tbl.AllAllocators(nil), true
 }
 
 func (is *infoSchema) AllSchemaNames() (names []string) {
@@ -348,34 +346,28 @@ func init() {
 	terror.ErrClassToMySQLCodes[terror.ClassSchema] = schemaMySQLErrCodes
 
 	// Initialize the information shema database and register the driver to `drivers`
-	dbID := autoid.GenLocalSchemaID()
+	dbID := autoid.InformationSchemaDBID
 	infoSchemaTables := make([]*model.TableInfo, 0, len(tableNameToColumns))
 	for name, cols := range tableNameToColumns {
 		tableInfo := buildTableMeta(name, cols)
 		infoSchemaTables = append(infoSchemaTables, tableInfo)
-		tableInfo.ID = autoid.GenLocalSchemaID()
-		for _, c := range tableInfo.Columns {
-			c.ID = autoid.GenLocalSchemaID()
+		var ok bool
+		tableInfo.ID, ok = tableIDMap[tableInfo.Name.O]
+		if !ok {
+			panic(fmt.Sprintf("get information_schema table id failed, unknown system table `%v`", tableInfo.Name.O))
+		}
+		for i, c := range tableInfo.Columns {
+			c.ID = int64(i) + 1
 		}
 	}
 	infoSchemaDB := &model.DBInfo{
 		ID:      dbID,
-		Name:    model.NewCIStr(Name),
+		Name:    util.InformationSchemaName,
 		Charset: mysql.DefaultCharset,
 		Collate: mysql.DefaultCollationName,
 		Tables:  infoSchemaTables,
 	}
 	RegisterVirtualTable(infoSchemaDB, createInfoSchemaTable)
-}
-
-// IsMemoryDB checks if the db is in memory.
-func IsMemoryDB(dbName string) bool {
-	for _, driver := range drivers {
-		if driver.DBInfo.Name.L == dbName {
-			return true
-		}
-	}
-	return false
 }
 
 // HasAutoIncrementColumn checks whether the table has auto_increment columns, if so, return true and the column name.
@@ -386,4 +378,18 @@ func HasAutoIncrementColumn(tbInfo *model.TableInfo) (bool, string) {
 		}
 	}
 	return false, ""
+}
+
+// GetInfoSchema gets TxnCtx InfoSchema if snapshot schema is not set,
+// Otherwise, snapshot schema is returned.
+func GetInfoSchema(ctx sessionctx.Context) InfoSchema {
+	sessVar := ctx.GetSessionVars()
+	var is InfoSchema
+	if snap := sessVar.SnapshotInfoschema; snap != nil {
+		is = snap.(InfoSchema)
+		logutil.BgLogger().Info("use snapshot schema", zap.Uint64("conn", sessVar.ConnectionID), zap.Int64("schemaVersion", is.SchemaMetaVersion()))
+	} else {
+		is = sessVar.TxnCtx.InfoSchema.(InfoSchema)
+	}
+	return is
 }

@@ -20,6 +20,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 )
@@ -53,7 +54,9 @@ var vecBuiltinInfoCases = map[string][]vecExprBenchCase{
 	ast.CurrentUser: {
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{}},
 	},
-	ast.FoundRows: {},
+	ast.FoundRows: {
+		{retEvalType: types.ETInt},
+	},
 	ast.Database: {
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{}},
 	},
@@ -87,6 +90,24 @@ var vecBuiltinInfoCases = map[string][]vecExprBenchCase{
 	ast.LastInsertId: {
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{}},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt}},
+	},
+	ast.Benchmark: {
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt},
+			constants: []*Constant{{Value: types.NewIntDatum(10), RetType: types.NewFieldType(mysql.TypeLonglong)}, nil}},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETReal},
+			constants: []*Constant{{Value: types.NewIntDatum(11), RetType: types.NewFieldType(mysql.TypeLonglong)}, nil}},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETDecimal},
+			constants: []*Constant{{Value: types.NewIntDatum(12), RetType: types.NewFieldType(mysql.TypeLonglong)}, nil}},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETString},
+			constants: []*Constant{{Value: types.NewIntDatum(13), RetType: types.NewFieldType(mysql.TypeLonglong)}, nil}},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETDatetime},
+			constants: []*Constant{{Value: types.NewIntDatum(14), RetType: types.NewFieldType(mysql.TypeLonglong)}, nil}},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETTimestamp},
+			constants: []*Constant{{Value: types.NewIntDatum(15), RetType: types.NewFieldType(mysql.TypeLonglong)}, nil}},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETDuration},
+			constants: []*Constant{{Value: types.NewIntDatum(16), RetType: types.NewFieldType(mysql.TypeLonglong)}, nil}},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETJson},
+			constants: []*Constant{{Value: types.NewIntDatum(17), RetType: types.NewFieldType(mysql.TypeLonglong)}, nil}},
 	},
 }
 

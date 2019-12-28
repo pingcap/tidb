@@ -251,6 +251,7 @@ func runStmt(ctx context.Context, sctx sessionctx.Context, s sqlexec.Statement) 
 		// If it is not a select statement, we record its slow log here,
 		// then it could include the transaction commit time.
 		if rs == nil {
+			// `LowSlowQuery` and `SummaryStmt` must be called before recording `PrevStmt`.
 			s.(*executor.ExecStmt).LogSlowQuery(origTxnCtx.StartTS, err == nil, false)
 			s.(*executor.ExecStmt).SummaryStmt()
 			pps := types.CloneRow(sessVars.PreparedParams)
@@ -367,17 +368,12 @@ func ResultSetToStringSlice(ctx context.Context, s Session, rs sqlexec.RecordSet
 
 // Session errors.
 var (
-	ErrForUpdateCantRetry = terror.ClassSession.New(codeForUpdateCantRetry,
-		mysql.MySQLErrName[mysql.ErrForUpdateCantRetry])
-)
-
-const (
-	codeForUpdateCantRetry terror.ErrCode = mysql.ErrForUpdateCantRetry
+	ErrForUpdateCantRetry = terror.ClassSession.New(mysql.ErrForUpdateCantRetry, mysql.MySQLErrName[mysql.ErrForUpdateCantRetry])
 )
 
 func init() {
 	sessionMySQLErrCodes := map[terror.ErrCode]uint16{
-		codeForUpdateCantRetry: mysql.ErrForUpdateCantRetry,
+		mysql.ErrForUpdateCantRetry: mysql.ErrForUpdateCantRetry,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassSession] = sessionMySQLErrCodes
 }

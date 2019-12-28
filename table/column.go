@@ -86,7 +86,8 @@ func ToColumn(col *model.ColumnInfo) *Column {
 
 // FindCols finds columns in cols by names.
 // If pkIsHandle is false and name is ExtraHandleName, the extra handle column will be added.
-func FindCols(cols []*Column, names []string, pkIsHandle bool) ([]*Column, error) {
+// If any columns don't match, return nil and the first missing column's name
+func FindCols(cols []*Column, names []string, pkIsHandle bool) ([]*Column, string) {
 	var rcols []*Column
 	for _, name := range names {
 		col := FindCol(cols, name)
@@ -98,11 +99,11 @@ func FindCols(cols []*Column, names []string, pkIsHandle bool) ([]*Column, error
 			col.ColumnInfo.Offset = len(cols)
 			rcols = append(rcols, col)
 		} else {
-			return nil, errUnknownColumn.GenWithStack("unknown column %s", name)
+			return nil, name
 		}
 	}
 
-	return rcols, nil
+	return rcols, ""
 }
 
 // FindOnUpdateCols finds columns which have OnUpdateNow flag.
@@ -154,7 +155,7 @@ func CastValues(ctx sessionctx.Context, rec []types.Datum, cols []*Column) (err 
 
 func handleWrongUtf8Value(ctx sessionctx.Context, col *model.ColumnInfo, casted *types.Datum, str string, i int) (types.Datum, error) {
 	sc := ctx.GetSessionVars().StmtCtx
-	err := ErrTruncateWrongValue.FastGen("incorrect utf8 value %x(%s) for column %s", casted.GetBytes(), str, col.Name)
+	err := ErrTruncatedWrongValueForField.FastGen("incorrect utf8 value %x(%s) for column %s", casted.GetBytes(), str, col.Name)
 	logutil.BgLogger().Error("incorrect UTF-8 value", zap.Uint64("conn", ctx.GetSessionVars().ConnectionID), zap.Error(err))
 	// Truncate to valid utf8 string.
 	truncateVal := types.NewStringDatum(str[:i])
@@ -231,18 +232,6 @@ type ColDesc struct {
 }
 
 const defaultPrivileges = "select,insert,update,references"
-
-// GetTypeDesc gets the description for column type.
-func (c *Column) GetTypeDesc() string {
-	desc := c.FieldType.CompactStr()
-	if mysql.HasUnsignedFlag(c.Flag) && c.Tp != mysql.TypeBit && c.Tp != mysql.TypeYear {
-		desc += " unsigned"
-	}
-	if mysql.HasZerofillFlag(c.Flag) && c.Tp != mysql.TypeYear {
-		desc += " zerofill"
-	}
-	return desc
-}
 
 // NewColDesc returns a new ColDesc for a column.
 func NewColDesc(col *Column) *ColDesc {
@@ -324,7 +313,7 @@ func CheckOnce(cols []*Column) error {
 		name := col.Name
 		_, ok := m[name.L]
 		if ok {
-			return errDuplicateColumn.GenWithStack("column specified twice - %s", name)
+			return errDuplicateColumn.GenWithStackByArgs(name)
 		}
 
 		m[name.L] = struct{}{}
@@ -416,8 +405,7 @@ func getColDefaultValue(ctx sessionctx.Context, col *model.ColumnInfo, defaultVa
 	}
 	value, err := expression.GetTimeValue(ctx, defaultVal, col.Tp, int8(col.Decimal))
 	if err != nil {
-		return types.Datum{}, errGetDefaultFailed.GenWithStack("Field '%s' get default value fail - %s",
-			col.Name, err)
+		return types.Datum{}, errGetDefaultFailed.GenWithStackByArgs(col.Name)
 	}
 	// If the column's default value is not ZeroDatetimeStr or CurrentTimestamp, convert the default value to the current session time zone.
 	if needChangeTimeZone {

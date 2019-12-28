@@ -304,7 +304,7 @@ func checkDropColumn(t *meta.Meta, job *model.Job) (*model.TableInfo, *model.Col
 	}
 
 	colInfo := model.FindColumnInfo(tblInfo.Columns, colName.L)
-	if colInfo == nil {
+	if colInfo == nil || colInfo.Hidden {
 		job.State = model.JobStateCancelled
 		return nil, nil, ErrCantDropFieldOrKey.GenWithStack("column %s doesn't exist", colName)
 	}
@@ -535,6 +535,17 @@ func isColumnWithIndex(colName string, indices []*model.IndexInfo) bool {
 	return false
 }
 
+func getColumnForeignKeyInfo(colName string, fkInfos []*model.FKInfo) *model.FKInfo {
+	for _, fkInfo := range fkInfos {
+		for _, col := range fkInfo.Cols {
+			if col.L == colName {
+				return fkInfo
+			}
+		}
+	}
+	return nil
+}
+
 func allocateColumnID(tblInfo *model.TableInfo) int64 {
 	tblInfo.MaxColumnID++
 	return tblInfo.MaxColumnID
@@ -609,7 +620,7 @@ func generateOriginDefaultValue(col *model.ColumnInfo) (interface{}, error) {
 	return odValue, nil
 }
 
-func findColumnInIndexCols(c string, cols []*ast.IndexColName) bool {
+func findColumnInIndexCols(c string, cols []*ast.IndexPartSpecification) bool {
 	for _, c1 := range cols {
 		if c == c1.Column.Name.L {
 			return true

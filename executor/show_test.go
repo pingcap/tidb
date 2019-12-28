@@ -594,7 +594,7 @@ func (s *testSuite5) TestShowCreateTable(c *C) {
 			"  PARTITION p12 VALUES LESS THAN (MAXVALUE)\n"+
 			")"))
 
-	//for issue #11831
+	// for issue #11831
 	tk.MustExec("create table ttt4(a varchar(123) default null collate utf8mb4_unicode_ci)engine=innodb default charset=utf8mb4 collate=utf8mb4_unicode_ci;")
 	tk.MustQuery("show create table `ttt4`").Check(testutil.RowsWithSep("|",
 		""+
@@ -607,6 +607,46 @@ func (s *testSuite5) TestShowCreateTable(c *C) {
 		""+
 			"ttt5 CREATE TABLE `ttt5` (\n"+
 			"  `a` varchar(123) DEFAULT NULL\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+	))
+}
+
+func (s *testAutoRandomSuite) TestShowCreateTableAutoRandom(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	testutil.ConfigTestUtils.SetupAutoRandomTestConfig()
+	defer testutil.ConfigTestUtils.RestoreAutoRandomTestConfig()
+
+	// Basic show create table.
+	tk.MustExec("create table auto_random_tbl1 (a bigint primary key auto_random(3), b varchar(255))")
+	tk.MustQuery("show create table `auto_random_tbl1`").Check(testutil.RowsWithSep("|",
+		""+
+			"auto_random_tbl1 CREATE TABLE `auto_random_tbl1` (\n"+
+			"  `a` bigint(20) NOT NULL /*T!40000 AUTO_RANDOM(3) */,\n"+
+			"  `b` varchar(255) DEFAULT NULL,\n"+
+			"  PRIMARY KEY (`a`)\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+	))
+
+	// Implicit auto_random value should be shown explicitly.
+	tk.MustExec("create table auto_random_tbl2 (a bigint auto_random primary key, b char)")
+	tk.MustQuery("show create table auto_random_tbl2").Check(testutil.RowsWithSep("|",
+		""+
+			"auto_random_tbl2 CREATE TABLE `auto_random_tbl2` (\n"+
+			"  `a` bigint(20) NOT NULL /*T!40000 AUTO_RANDOM(5) */,\n"+
+			"  `b` char(1) DEFAULT NULL,\n"+
+			"  PRIMARY KEY (`a`)\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+	))
+
+	// Special version comment can be shown in TiDB with new version.
+	tk.MustExec("create table auto_random_tbl3 (a bigint /*T!40000 auto_random */ primary key)")
+	tk.MustQuery("show create table auto_random_tbl3").Check(testutil.RowsWithSep("|",
+		""+
+			"auto_random_tbl3 CREATE TABLE `auto_random_tbl3` (\n"+
+			"  `a` bigint(20) NOT NULL /*T!40000 AUTO_RANDOM(5) */,\n"+
+			"  PRIMARY KEY (`a`)\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
 	))
 }
@@ -638,4 +678,14 @@ func (s *testSuite5) TestShowEscape(c *C) {
 
 	tk.MustExec("rename table \"t`abl\"\"e\" to t")
 	tk.MustExec("set sql_mode=@old_sql_mode")
+}
+
+func (s *testSuite5) TestShowBuiltin(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	res := tk.MustQuery("show builtins;")
+	c.Assert(res, NotNil)
+	rows := res.Rows()
+	c.Assert(262, Equals, len(rows))
+	c.Assert("abs", Equals, rows[0][0].(string))
+	c.Assert("yearweek", Equals, rows[261][0].(string))
 }

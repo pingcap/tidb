@@ -430,7 +430,7 @@ func (t Time) RoundFrac(sc *stmtctx.StatementContext, fsp int8) (Time, error) {
 	} else {
 		// Take the hh:mm:ss part out to avoid handle month or day = 0.
 		hour, minute, second, microsecond := t.Time.Hour(), t.Time.Minute(), t.Time.Second(), t.Time.Microsecond()
-		t1 := gotime.Date(1, 1, 1, hour, minute, second, microsecond*1000, gotime.Local)
+		t1 := gotime.Date(1, 1, 1, hour, minute, second, microsecond*1000, sc.TimeZone)
 		t2 := roundTime(t1, fsp)
 		hour, minute, second = t2.Clock()
 		microsecond = t2.Nanosecond() / 1000
@@ -824,7 +824,7 @@ func parseDatetime(sc *stmtctx.StatementContext, str string, fsp int8, isFloat b
 	tmp := FromDate(year, month, day, hour, minute, second, microsecond)
 	if overflow {
 		// Convert to Go time and add 1 second, to handle input like 2017-01-05 08:40:59.575601
-		t1, err := tmp.GoTime(gotime.Local)
+		t1, err := tmp.GoTime(sc.TimeZone)
 		if err != nil {
 			return ZeroDatetime, errors.Trace(err)
 		}
@@ -911,7 +911,7 @@ type Duration struct {
 
 //Add adds d to d, returns a duration value.
 func (d Duration) Add(v Duration) (Duration, error) {
-	if &v == nil {
+	if v == (Duration{}) {
 		return d, nil
 	}
 	dsum, err := AddInt64(int64(d.Duration), int64(v.Duration))
@@ -926,7 +926,7 @@ func (d Duration) Add(v Duration) (Duration, error) {
 
 // Sub subtracts d to d, returns a duration value.
 func (d Duration) Sub(v Duration) (Duration, error) {
-	if &v == nil {
+	if v == (Duration{}) {
 		return d, nil
 	}
 	dsum, err := SubInt64(int64(d.Duration), int64(v.Duration))
@@ -2252,16 +2252,6 @@ func skipWhiteSpace(input string) string {
 	return ""
 }
 
-var weekdayAbbrev = map[string]gotime.Weekday{
-	"Sun": gotime.Sunday,
-	"Mon": gotime.Monday,
-	"Tue": gotime.Tuesday,
-	"Wed": gotime.Wednesday,
-	"Thu": gotime.Tuesday,
-	"Fri": gotime.Friday,
-	"Sat": gotime.Saturday,
-}
-
 var monthAbbrev = map[string]gotime.Month{
 	"Jan": gotime.January,
 	"Feb": gotime.February,
@@ -2626,35 +2616,6 @@ func monthNumeric(t *MysqlTime, input string, ctx map[string]int) (string, bool)
 	}
 	t.month = uint8(v)
 	return input[length:], true
-}
-
-func parseOrdinalNumbers(input string) (value int, remain string) {
-	for i, c := range input {
-		if !unicode.IsDigit(c) {
-			v, err := strconv.ParseUint(input[:i], 10, 64)
-			if err != nil {
-				return -1, input
-			}
-			value = int(v)
-			break
-		}
-	}
-	switch {
-	case strings.HasPrefix(remain, "st"):
-		if value == 1 {
-			remain = remain[2:]
-			return
-		}
-	case strings.HasPrefix(remain, "nd"):
-		if value == 2 {
-			remain = remain[2:]
-			return
-		}
-	case strings.HasPrefix(remain, "th"):
-		remain = remain[2:]
-		return
-	}
-	return -1, input
 }
 
 // DateFSP gets fsp from date string.

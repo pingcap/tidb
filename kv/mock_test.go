@@ -15,7 +15,6 @@ package kv
 
 import (
 	"context"
-
 	. "github.com/pingcap/check"
 )
 
@@ -38,7 +37,7 @@ func (s testMockSuite) TestInterface(c *C) {
 
 	transaction, err := storage.Begin()
 	c.Check(err, IsNil)
-	err = transaction.LockKeys(context.Background(), nil, 0, LockAlwaysWait, Key("lock"))
+	err = transaction.LockKeys(context.Background(), new(LockCtx), Key("lock"))
 	c.Check(err, IsNil)
 	transaction.SetOption(Option(23), struct{}{})
 	if mock, ok := transaction.(*mockTxn); ok {
