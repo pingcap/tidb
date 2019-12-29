@@ -118,7 +118,7 @@ var (
 	ZeroDuration = Duration{Duration: gotime.Duration(0), Fsp: DefaultFsp}
 
 	// ZeroTime is the zero value for TimeInternal type.
-	ZeroTime = MysqlTime{}
+	ZeroTime = MysqlTime(0)
 
 	// ZeroDatetime is the zero value for datetime Time.
 	ZeroDatetime = Time{
@@ -205,15 +205,33 @@ func FromGoTime(t gotime.Time) MysqlTime {
 
 // FromDate makes a internal time representation from the given date.
 func FromDate(year int, month int, day int, hour int, minute int, second int, microsecond int) MysqlTime {
-	return MysqlTime{
-		year:        uint16(year),
-		month:       uint8(month),
-		day:         uint8(day),
-		hour:        uint32(hour),
-		minute:      uint8(minute),
-		second:      uint8(second),
-		microsecond: uint32(microsecond),
+	return NewMysqlTime(uint16(year), uint8(month), uint8(day), uint8(hour), uint8(minute), uint8(second), uint32(microsecond))
+}
+
+// FromDateChecked makes a internal time representation from the given date with field overflow check.
+func FromDateChecked(year int, month int, day int, hour int, minute int, second int, microsecond int) (MysqlTime, error) {
+	if uint64(year) >= (1 << (yearBitFieldStart - yearBitFieldEnd + 1)) {
+		return ZeroTime, ErrOverflow.GenWithStackByArgs(year)
 	}
+	if uint64(month) >= (1 << (monthBitFieldStart - monthBitFieldEnd + 1)) {
+		return ZeroTime, ErrOverflow.GenWithStackByArgs(month)
+	}
+	if uint64(day) >= (1 << (dayBitFieldStart - dayBitFieldEnd + 1)) {
+		return ZeroTime, ErrOverflow.GenWithStackByArgs(day)
+	}
+	if uint64(hour) >= (1 << (hourBitFieldStart - hourBitFieldEnd + 1)) {
+		return ZeroTime, ErrOverflow.GenWithStackByArgs(hour)
+	}
+	if uint64(minute) >= (1 << (minuteBitFieldStart - minuteBitFieldEnd + 1)) {
+		return ZeroTime, ErrOverflow.GenWithStackByArgs(minute)
+	}
+	if uint64(second) >= (1 << (secondBitFieldStart - secondBitFieldEnd + 1)) {
+		return ZeroTime, ErrOverflow.GenWithStackByArgs(second)
+	}
+	if uint64(microsecond) >= (1 << (microsecondBitFieldStart - microsecondBitFieldEnd + 1)) {
+		return ZeroTime, ErrOverflow.GenWithStackByArgs(microsecond)
+	}
+	return NewMysqlTime(uint16(year), uint8(month), uint8(day), uint8(hour), uint8(minute), uint8(second), uint32(microsecond)), nil
 }
 
 // Clock returns the hour, minute, and second within the day specified by t.
@@ -440,7 +458,10 @@ func (t Time) RoundFrac(sc *stmtctx.StatementContext, fsp int8) (Time, error) {
 		if t2.Day()-1 > 0 {
 			return t, errors.Trace(ErrWrongValue.GenWithStackByArgs(TimeStr, t.String()))
 		}
-		nt = FromDate(t.Time.Year(), t.Time.Month(), t.Time.Day(), hour, minute, second, microsecond)
+		nt, err = FromDateChecked(t.Time.Year(), t.Time.Month(), t.Time.Day(), hour, minute, second, microsecond)
+		if err != nil {
+			return t, errors.Trace(err)
+		}
 	}
 
 	return Time{Time: nt, Type: t.Type, Fsp: fsp}, nil
@@ -612,17 +633,19 @@ func (t *Time) Sub(sc *stmtctx.StatementContext, t1 *Time) Duration {
 // Add adds d to t, returns the result time value.
 func (t *Time) Add(sc *stmtctx.StatementContext, d Duration) (Time, error) {
 	sign, hh, mm, ss, micro := splitDuration(d.Duration)
-	seconds, microseconds, _ := calcTimeDiff(t.Time, FromDate(0, 0, 0, hh, mm, ss, micro), -sign)
+	seconds, microseconds, _ := calcTimeDiffWithExtraDays(t.Time, FromDate(0, 0, 0, hh%24, mm, ss, micro), hh/24, -sign)
 	days := seconds / secondsIn24Hour
 	year, month, day := getDateFromDaynr(uint(days))
 	var tm MysqlTime
-	tm.year, tm.month, tm.day = uint16(year), uint8(month), uint8(day)
+	tm.setYear(uint16(year))
+	tm.setMonth(uint8(month))
+	tm.setDay(uint8(day))
 	calcTimeFromSec(&tm, seconds%secondsIn24Hour, microseconds)
 	if t.Type == mysql.TypeDate {
-		tm.hour = 0
-		tm.minute = 0
-		tm.second = 0
-		tm.microsecond = 0
+		tm.setHour(0)
+		tm.setMinute(0)
+		tm.setSecond(0)
+		tm.setMicrosecond(0)
 	}
 	fsp := t.Fsp
 	if d.Fsp > fsp {
@@ -821,7 +844,10 @@ func parseDatetime(sc *stmtctx.StatementContext, str string, fsp int8, isFloat b
 		}
 	}
 
-	tmp := FromDate(year, month, day, hour, minute, second, microsecond)
+	tmp, err := FromDateChecked(year, month, day, hour, minute, second, microsecond)
+	if err != nil {
+		return ZeroDatetime, errors.Trace(err)
+	}
 	if overflow {
 		// Convert to Go time and add 1 second, to handle input like 2017-01-05 08:40:59.575601
 		t1, err := tmp.GoTime(gotime.Local)
@@ -997,8 +1023,8 @@ func (d Duration) ConvertToTime(sc *stmtctx.StatementContext, tp uint8) (Time, e
 	year, month, day := gotime.Now().In(sc.TimeZone).Date()
 	sign, hour, minute, second, frac := splitDuration(d.Duration)
 	datePart := FromDate(year, int(month), day, 0, 0, 0, 0)
-	timePart := FromDate(0, 0, 0, hour, minute, second, frac)
-	mixDateAndTime(&datePart, &timePart, sign < 0)
+	timePart := FromDate(0, 0, 0, hour%24, minute, second, frac)
+	mixDateAndTime(&datePart, &timePart, hour/24, sign < 0)
 
 	t := Time{
 		Time: datePart,
@@ -1248,12 +1274,16 @@ func getTime(sc *stmtctx.StatementContext, num int64, tp byte) (Time, error) {
 	minute := int(s2 / 100)
 	second := int(s2 % 100)
 
+	mt, err := FromDateChecked(year, month, day, hour, minute, second, 0)
+	if err != nil {
+		return ZeroDatetime, errors.Trace(err)
+	}
 	t := Time{
-		Time: FromDate(year, month, day, hour, minute, second, 0),
+		Time: mt,
 		Type: tp,
 		Fsp:  DefaultFsp,
 	}
-	err := t.check(sc)
+	err = t.check(sc)
 	return t, errors.Trace(err)
 }
 
@@ -2171,21 +2201,21 @@ func mysqlTimeFix(t *MysqlTime, ctx map[string]int) error {
 		if _, ok := ctx["%H"]; ok {
 			return ErrWrongValue.GenWithStackByArgs(TimeStr, t)
 		}
-		if t.hour == 0 {
+		if t.getHour() == 0 {
 			return ErrWrongValue.GenWithStackByArgs(TimeStr, t)
 		}
-		if t.hour == 12 {
+		if t.getHour() == 12 {
 			// 12 is a special hour.
 			switch valueAMorPm {
 			case constForAM:
-				t.hour = 0
+				t.setHour(0)
 			case constForPM:
-				t.hour = 12
+				t.setHour(12)
 			}
 			return nil
 		}
 		if valueAMorPm == constForPM {
-			t.hour += 12
+			t.setHour(t.getHour() + 12)
 		}
 	}
 	return nil
@@ -2362,7 +2392,8 @@ func hour24TwoDigits(t *MysqlTime, input string, ctx map[string]int) (string, bo
 	if !succ || v >= 24 {
 		return input, false
 	}
-	t.hour = uint32(v)
+	// FIXME: hour overflow
+	t.setHour(uint8(v))
 	return input[2:], true
 }
 
@@ -2374,7 +2405,7 @@ func secondsNumeric(t *MysqlTime, input string, ctx map[string]int) (string, boo
 	if !succ || v >= 60 {
 		return input, false
 	}
-	t.second = uint8(v)
+	t.setSecond(uint8(v))
 	return input[length:], true
 }
 
@@ -2386,7 +2417,7 @@ func minutesNumeric(t *MysqlTime, input string, ctx map[string]int) (string, boo
 	if !succ || v >= 60 {
 		return input, false
 	}
-	t.minute = uint8(v)
+	t.setMinute(uint8(v))
 	return input[length:], true
 }
 
@@ -2415,15 +2446,16 @@ func time12Hour(t *MysqlTime, input string, ctx map[string]int) (string, bool) {
 	remain := skipWhiteSpace(input[8:])
 	switch {
 	case strings.HasPrefix(remain, "AM"):
-		t.hour = uint32(hour)
+		// FIXME: hour overflow
+		t.setHour(uint8(hour))
 	case strings.HasPrefix(remain, "PM"):
-		t.hour = uint32(hour + 12)
+		t.setHour(uint8(hour + 12))
 	default:
 		return input, false
 	}
 
-	t.minute = uint8(minute)
-	t.second = uint8(second)
+	t.setMinute(uint8(minute))
+	t.setSecond(uint8(second))
 	return remain, true
 }
 
@@ -2450,9 +2482,10 @@ func time24Hour(t *MysqlTime, input string, ctx map[string]int) (string, bool) {
 		return input, false
 	}
 
-	t.hour = uint32(hour)
-	t.minute = uint8(minute)
-	t.second = uint8(second)
+	// FIXME: hour overflow
+	t.setHour(uint8(hour))
+	t.setMinute(uint8(minute))
+	t.setSecond(uint8(second))
 	return input[8:], true
 }
 
@@ -2496,7 +2529,7 @@ func dayOfMonthNumeric(t *MysqlTime, input string, ctx map[string]int) (string, 
 	if !ok || v > 31 {
 		return input, false
 	}
-	t.day = uint8(v)
+	t.setDay(uint8(v))
 	return input[length:], true
 }
 
@@ -2509,7 +2542,8 @@ func hour24Numeric(t *MysqlTime, input string, ctx map[string]int) (string, bool
 	if !ok || v > 23 {
 		return input, false
 	}
-	t.hour = uint32(v)
+	// FIXME: hour overflow
+	t.setHour(uint8(v))
 	ctx["%H"] = v
 	return input[length:], true
 }
@@ -2523,7 +2557,8 @@ func hour12Numeric(t *MysqlTime, input string, ctx map[string]int) (string, bool
 	if !ok || v > 12 || v == 0 {
 		return input, false
 	}
-	t.hour = uint32(v)
+	// FIXME: hour overflow
+	t.setHour(uint8(v))
 	return input[length:], true
 }
 
@@ -2531,7 +2566,7 @@ func microSeconds(t *MysqlTime, input string, ctx map[string]int) (string, bool)
 	result := oneToSixDigitRegex.FindString(input)
 	length := len(result)
 	if length == 0 {
-		t.microsecond = 0
+		t.setMicrosecond(0)
 		return input, true
 	}
 
@@ -2543,7 +2578,7 @@ func microSeconds(t *MysqlTime, input string, ctx map[string]int) (string, bool)
 	for v > 0 && v*10 < 1000000 {
 		v *= 10
 	}
-	t.microsecond = uint32(v)
+	t.setMicrosecond(uint32(v))
 	return input[length:], true
 }
 
@@ -2571,7 +2606,7 @@ func yearNumericNDigits(t *MysqlTime, input string, ctx map[string]int, n int) (
 	if effectiveCount <= 2 {
 		effectiveValue = adjustYear(effectiveValue)
 	}
-	t.year = uint16(effectiveValue)
+	t.setYear(uint16(effectiveValue))
 	return input[effectiveCount:], true
 }
 
@@ -2588,7 +2623,7 @@ func abbreviatedMonth(t *MysqlTime, input string, ctx map[string]int) (string, b
 	if len(input) >= 3 {
 		monthName := input[:3]
 		if month, ok := monthAbbrev[monthName]; ok {
-			t.month = uint8(month)
+			t.setMonth(uint8(month))
 			return input[len(monthName):], true
 		}
 	}
@@ -2598,7 +2633,7 @@ func abbreviatedMonth(t *MysqlTime, input string, ctx map[string]int) (string, b
 func fullNameMonth(t *MysqlTime, input string, ctx map[string]int) (string, bool) {
 	for i, month := range MonthNames {
 		if strings.HasPrefix(input, month) {
-			t.month = uint8(i + 1)
+			t.setMonth(uint8(i + 1))
 			return input[len(month):], true
 		}
 	}
@@ -2614,7 +2649,7 @@ func monthNumeric(t *MysqlTime, input string, ctx map[string]int) (string, bool)
 	if !ok || v > 12 {
 		return input, false
 	}
-	t.month = uint8(v)
+	t.setMonth(uint8(v))
 	return input[length:], true
 }
 
