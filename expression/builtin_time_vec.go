@@ -374,7 +374,7 @@ func (b *builtinTimeFormatSig) vecEvalString(input *chunk.Chunk, result *chunk.C
 	}
 	defer b.bufAllocator.put(buf)
 	if err := b.args[0].VecEvalDuration(b.ctx, input, buf); err != nil {
-		return err
+		return vecEvalStringByRows(b, input, result)
 	}
 
 	buf1, err1 := b.bufAllocator.get(types.ETString, n)
