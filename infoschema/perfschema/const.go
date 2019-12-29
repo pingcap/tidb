@@ -33,6 +33,8 @@ var perfSchemaTables = []string{
 	tableStagesHistoryLong,
 	tableEventsStatementsSummaryByDigest,
 	tableEventsStatementsSummaryByDigestHistory,
+	tableClusterEventsStatementsSummaryByDigest,
+	tableClusterEventsStatementsSummaryByDigestHistory,
 	tableTiDBProfileCPU,
 	tableTiDBProfileMemory,
 	tableTiDBProfileMutex,
@@ -383,8 +385,7 @@ const tableStagesHistoryLong = "CREATE TABLE if not exists performance_schema." 
 	"NESTING_EVENT_TYPE		ENUM('TRANSACTION','STATEMENT','STAGE'));"
 
 // Fields in `events_statements_summary_by_digest` and `events_statements_summary_by_digest_history` are the same.
-const fieldsInEventsStatementsSummary = " (" +
-	"SUMMARY_BEGIN_TIME TIMESTAMP(6) NOT NULL," +
+const fieldsInEventsStatementsSummary = "SUMMARY_BEGIN_TIME TIMESTAMP(6) NOT NULL," +
 	"SUMMARY_END_TIME TIMESTAMP(6) NOT NULL," +
 	"STMT_TYPE VARCHAR(64) NOT NULL," +
 	"SCHEMA_NAME VARCHAR(64) DEFAULT NULL," +
@@ -454,12 +455,22 @@ const fieldsInEventsStatementsSummary = " (" +
 // tableEventsStatementsSummaryByDigest contains the column name definitions for table
 // events_statements_summary_by_digest, same as MySQL.
 const tableEventsStatementsSummaryByDigest = "CREATE TABLE if not exists " + tableNameEventsStatementsSummaryByDigest +
-	fieldsInEventsStatementsSummary
+	"(" + fieldsInEventsStatementsSummary
 
 // tableEventsStatementsSummaryByDigestHistory contains the column name definitions for table
 // events_statements_summary_by_digest_history.
 const tableEventsStatementsSummaryByDigestHistory = "CREATE TABLE if not exists " + tableNameEventsStatementsSummaryByDigestHistory +
-	fieldsInEventsStatementsSummary
+	"(" + fieldsInEventsStatementsSummary
+
+// tableClusterEventsStatementsSummaryByDigest contains the column name definitions for table
+// cluster_events_statements_summary_by_digest, same as MySQL.
+const tableClusterEventsStatementsSummaryByDigest = "CREATE TABLE if not exists " + tableNameClusterEventsStatementsSummaryByDigest +
+	"(ADDRESS VARCHAR(64) DEFAULT NULL," + fieldsInEventsStatementsSummary
+
+// tableClusterEventsStatementsSummaryByDigestHistory contains the column name definitions for table
+// cluster_events_statements_summary_by_digest_history.
+const tableClusterEventsStatementsSummaryByDigestHistory = "CREATE TABLE if not exists " + tableNameClusterEventsStatementsSummaryByDigestHistory +
+	"(ADDRESS VARCHAR(64) DEFAULT NULL," + fieldsInEventsStatementsSummary
 
 // tableTiDBProfileCPU contains the columns name definitions for table tidb_profile_cpu
 const tableTiDBProfileCPU = "CREATE TABLE IF NOT EXISTS " + tableNameTiDBProfileCPU + " (" +
