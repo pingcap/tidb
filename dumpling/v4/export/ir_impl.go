@@ -5,17 +5,31 @@ import (
 )
 
 // rowIter implements the SQLRowIter interface.
+// Note: To create a rowIter, please use `newRowIter()` instead of struct literal.
 type rowIter struct {
-	rows *sql.Rows
-	args []interface{}
+	rows    *sql.Rows
+	hasNext bool
+	args    []interface{}
+}
+
+func newRowIter(rows *sql.Rows, argLen int) *rowIter {
+	r := &rowIter{
+		rows:    rows,
+		hasNext: false,
+		args:    make([]interface{}, argLen),
+	}
+	r.hasNext = r.rows.Next()
+	return r
 }
 
 func (iter *rowIter) Next(row RowReceiver) error {
-	return decodeFromRows(iter.rows, iter.args, row)
+	err := decodeFromRows(iter.rows, iter.args, row)
+	iter.hasNext = iter.rows.Next()
+	return err
 }
 
 func (iter *rowIter) HasNext() bool {
-	return iter.rows.Next()
+	return iter.hasNext
 }
 
 type sizedRowIter struct {
@@ -94,10 +108,7 @@ func (td *tableData) ColumnCount() uint {
 }
 
 func (td *tableData) Rows() SQLRowIter {
-	return &rowIter{
-		rows: td.rows,
-		args: make([]interface{}, len(td.colTypes)),
-	}
+	return newRowIter(td.rows, len(td.colTypes))
 }
 
 func (td *tableData) SpecialComments() StringIter {
