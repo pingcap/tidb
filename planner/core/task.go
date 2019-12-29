@@ -1327,7 +1327,7 @@ func (p *BasePhysicalWindow) getNumberOfPartitions() float64 {
 	return getCardinality(partitionBys, p.Schema(), p.statsInfo())
 }
 
-// getWindowFuncsCost computes the cost of window funcs.
+// getWindowFuncsCostUnit computes the cost of window funcs.
 // with frame:
 //   cpuCost = SUM(partitionSize * frameSize * funcFactor)
 // without frame:
