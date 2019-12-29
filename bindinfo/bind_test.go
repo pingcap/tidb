@@ -134,6 +134,9 @@ func (s *testSuite) TestBindParse(c *C) {
 	c.Check(bind.Collation, Equals, "utf8mb4_bin")
 	c.Check(bind.CreateTime, NotNil)
 	c.Check(bind.UpdateTime, NotNil)
+	dur, err := bind.SinceUpdateTime()
+	c.Assert(err, IsNil)
+	c.Assert(int64(dur), GreaterEqual, int64(0))
 
 	// Test fields with quotes or slashes.
 	sql = `CREATE GLOBAL BINDING FOR  select * from t where i BETWEEN "a" and "b" USING select * from t use index(index_t) where i BETWEEN "a\nb\rc\td\0e" and 'x'`
@@ -476,13 +479,13 @@ func (s *testSuite) TestCapturePlanBaseline(c *C) {
 	tk.MustExec("create table t(a int)")
 	s.domain.BindHandle().CaptureBaselines()
 	tk.MustQuery("show global bindings").Check(testkit.Rows())
-	tk.MustExec("select * from t")
-	tk.MustExec("select * from t")
+	tk.MustExec("select count(*) from t where a > 10")
+	tk.MustExec("select count(*) from t where a > 10")
 	tk.MustExec("admin capture bindings")
 	rows := tk.MustQuery("show global bindings").Rows()
 	c.Assert(len(rows), Equals, 1)
-	c.Assert(rows[0][0], Equals, "select * from t")
-	c.Assert(rows[0][1], Equals, "select /*+ USE_INDEX(@`sel_1` `test`.`t` )*/ * from t")
+	c.Assert(rows[0][0], Equals, "select count ( ? ) from t where a > ?")
+	c.Assert(rows[0][1], Equals, "SELECT /*+ USE_INDEX(@`sel_1` `test`.`t` ), STREAM_AGG(@`sel_1`)*/ COUNT(1) FROM `test`.`t` WHERE `a`>10")
 }
 
 func (s *testSuite) TestUseMultiplyBindings(c *C) {
