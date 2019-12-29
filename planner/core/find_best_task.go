@@ -57,6 +57,23 @@ var aggFuncFactor = map[string]float64{
 	"default":              1.5,
 }
 
+var windowFuncFactorOnPartitionSize = map[string]float64{
+	ast.WindowFuncRowNumber:   1.0,
+	ast.WindowFuncRank:        1.0,
+	ast.WindowFuncDenseRank:   1.0,
+	ast.WindowFuncCumeDist:    1.0,
+	ast.WindowFuncPercentRank: 1.0,
+	ast.WindowFuncNtile:       1.0,
+	ast.WindowFuncLead:        1.0,
+	ast.WindowFuncLag:         1.0,
+	ast.WindowFuncFirstValue:  1.0, // O(1) on frame size
+}
+
+var windowFuncFactorOnFrameSize = map[string]float64{
+	ast.WindowFuncLastValue: 1.0,
+	ast.WindowFuncNthValue:  1.0, // estimate cost for worth condition
+}
+
 // wholeTaskTypes records all possible kinds of task that a plan can return. For Agg, TopN and Limit, we will try to get
 // these tasks one by one.
 var wholeTaskTypes = [...]property.TaskType{property.CopSingleReadTaskType, property.CopDoubleReadTaskType, property.RootTaskType}

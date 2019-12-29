@@ -1487,8 +1487,14 @@ func (p *LogicalWindow) exhaustPhysicalPlans(prop *property.PhysicalProperty) []
 	concurrency := p.ctx.GetSessionVars().WindowConcurrency
 	if concurrency > 1 && prop.IsEmpty() { //TODO: implement a cost-based strategy
 		return p.getWindowParallel(prop, byItems)
+	phys := make([]PhysicalPlan, 0)
+	if w := p.getWindow(prop, byItems); w != nil {
+		phys = append(phys, w...)
 	}
-	return p.getWindow(prop, byItems)
+	if w := p.getWindowParallel(prop, byItems); w != nil {
+		phys = append(phys, w...)
+	}
+	return phys
 }
 
 func (p *LogicalWindow) getWindow(prop *property.PhysicalProperty, byItems []property.Item) []PhysicalPlan {
@@ -1507,6 +1513,13 @@ func (p *LogicalWindow) getWindow(prop *property.PhysicalProperty, byItems []pro
 }
 
 func (p *LogicalWindow) getWindowParallel(prop *property.PhysicalProperty, byItems []property.Item) []PhysicalPlan {
+	concurrency := p.ctx.GetSessionVars().WindowConcurrency
+	if concurrency <= 1 {
+		return nil
+	}
+	if !prop.IsEmpty() {
+		return nil
+	}
 	childProperty := &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64}
 	window := PhysicalWindowParallel{BasePhysicalWindow{
 		WindowFuncDescs: p.WindowFuncDescs,

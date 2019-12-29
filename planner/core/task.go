@@ -14,6 +14,7 @@
 package core
 
 import (
+	"fmt"
 	"math"
 
 	"github.com/pingcap/parser/ast"
@@ -834,11 +835,16 @@ func (p *PhysicalTopN) allColsFromSchema(schema *expression.Schema) bool {
 
 // GetCost computes the cost of in memory sort.
 func (p *PhysicalSort) GetCost(count float64) float64 {
+	sessVars := p.ctx.GetSessionVars()
+	cpu, memory := getPhysicalSortCostUnit(count)
+	return cpu*sessVars.CPUFactor + memory*sessVars.MemoryFactor
+}
+
+func getPhysicalSortCostUnit(count float64) (cpu, memory float64) {
 	if count < 2.0 {
 		count = 2.0
 	}
-	sessVars := p.ctx.GetSessionVars()
-	return count*math.Log2(count)*sessVars.CPUFactor + count*sessVars.MemoryFactor
+	return count * math.Log2(count), count
 }
 
 func (p *PhysicalSort) attach2Task(tasks ...task) task {
@@ -1262,4 +1268,139 @@ func (p *PhysicalHashAgg) GetCost(inputRows float64, isRoot bool) float64 {
 	// check duplication.
 	memoryCost += inputRows * distinctFactor * sessVars.MemoryFactor * float64(numDistinctFunc)
 	return cpuCost + memoryCost
+}
+
+// GetCost computes the cost of in window operator itself.
+//   cpuCost = inputRows[do partition] + numPartitions * windowFuncsCost(partitionSize).Cpu.
+//   memCost = groupNums * windowFuncsCost(partitionSize).Memory.
+func (p *PhysicalWindow) GetCost(count float64) float64 {
+	numPartitions := p.getNumberOfPartitions()
+	cpuFuncs, memFuncs := p.getWindowFuncsCostUnit(count / numPartitions)
+	sessVars := p.ctx.GetSessionVars()
+
+	cpu := (count + numPartitions*cpuFuncs) * sessVars.CPUFactor
+	mem := numPartitions * memFuncs * sessVars.MemoryFactor
+	return cpu + mem
+}
+
+func (p *PhysicalWindow) attach2Task(tasks ...task) task {
+	t := tasks[0].copy()
+	t = attachPlan2Task(p, t)
+	//DEBUG
+	fmt.Printf("[PhysicalWindow] t.cost(): %v, p.GetCost(): %v \n", t.cost(), p.GetCost(t.count()))
+	t.addCost(p.GetCost(t.count()))
+	return t
+}
+
+// GetCost computes the cost of in window operator (in parallel manner) itself.
+//   cpuCost = inputRows[do hash] + (getPhysicalSortCost(inputRows/concurrency).Cpu +
+//               inputRows/concurrency[do partition] + groupNums/concurrency * windowFuncsCost(groupSize).Cpu) * concurrency.
+//   memCost = inputRows[do hash] + (getPhysicalSortCost(inputRows/concurrency).Memory +
+//               groupNums/concurrency * windowFuncsCost(groupSize).Memory) * concurrency.
+func (p *PhysicalWindowParallel) GetCost(count float64) float64 {
+	sessVars := p.ctx.GetSessionVars()
+	concurrency := float64(sessVars.WindowConcurrency)
+	numPartitions := p.getNumberOfPartitions()
+
+	cpuSort, memSort := getPhysicalSortCostUnit(count / concurrency)
+	cpuFuncs, memFuncs := p.getWindowFuncsCostUnit(count / numPartitions)
+
+	cpu := count + concurrency*(cpuSort+count/concurrency+numPartitions/concurrency*cpuFuncs)
+	mem := count + concurrency*(memSort+numPartitions/concurrency*memFuncs)
+	return cpu*sessVars.CPUFactor + mem*sessVars.MemoryFactor + (concurrency+1)*sessVars.ConcurrencyFactor
+}
+
+func (p *PhysicalWindowParallel) attach2Task(tasks ...task) task {
+	t := tasks[0].copy()
+	t = attachPlan2Task(p, t)
+	//DEBUG
+	fmt.Printf("[PhysicalWindowParallel] t.cost(): %v, p.GetCost(): %v \n", t.cost(), p.GetCost(t.count()))
+	t.addCost(p.GetCost(t.count()))
+	return t
+}
+
+func (p *BasePhysicalWindow) getNumberOfPartitions() float64 {
+	partitionBys := make([]*expression.Column, 0, len(p.PartitionBy))
+	for _, item := range p.PartitionBy {
+		partitionBys = append(partitionBys, item.Col)
+	}
+	return getCardinality(partitionBys, p.Schema(), p.statsInfo())
+}
+
+// getWindowFuncsCost computes the cost of window funcs.
+// with frame:
+//   cpuCost = SUM(partitionSize * frameSize * funcFactor)
+// without frame:
+//   cpuCost = SUM(partitionSize * funcFactor)
+func (p *BasePhysicalWindow) getWindowFuncsCostUnit(count float64) (cpu, memory float64) {
+	var (
+		fac       float64
+		ok        bool
+		frameSize float64
+	)
+
+	if p.Frame != nil {
+		frameSize = p.getWindowFrameSize(count)
+	}
+	for _, desc := range p.WindowFuncDescs {
+		fac, ok = windowFuncFactorOnPartitionSize[desc.Name]
+		if p.Frame == nil || ok {
+			cpu += count * fac
+			continue
+		}
+		fac, ok = windowFuncFactorOnFrameSize[desc.Name]
+		if !ok {
+			fac, ok = aggFuncFactor[desc.Name]
+		}
+		if !ok {
+			fac = aggFuncFactor["default"]
+		}
+		cpu += count * frameSize * fac
+	}
+
+	memory = float64(len(p.WindowFuncDescs))
+	return cpu, memory
+}
+
+// getWindowFrameSize estimates the frame size of window operator.
+// It's hard to estimate `range`, therefore, it estimates as the same as `rows`.
+func (p *BasePhysicalWindow) getWindowFrameSize(count float64) (size float64) {
+	if p.Frame == nil {
+		return 0.0
+	}
+
+	// Start
+	if p.Frame.Start.UnBounded {
+		size += (count - 1.0) / 2.0 // average([1, 2, ..., count-1])
+	} else {
+		switch p.Frame.Start.Type {
+		case ast.Preceding:
+			size += float64(p.Frame.Start.Num)
+		case ast.Following:
+			size -= float64(p.Frame.Start.Num)
+		case ast.CurrentRow:
+			size = 0.0
+		}
+	}
+	// End
+	if p.Frame.End.UnBounded {
+		size += (count + 1.0) / 2.0 // average([1, 2, ..., count])
+	} else {
+		switch p.Frame.End.Type {
+		case ast.Preceding:
+			size -= float64(p.Frame.Start.Num) + 1.0
+		case ast.Following:
+			size += float64(p.Frame.Start.Num) + 1.0
+		case ast.CurrentRow:
+			size += 1.0
+		}
+	}
+
+	if size < 0 {
+		size = 0.0
+	} else if size > count {
+		size = count
+	}
+
+	return size
 }
