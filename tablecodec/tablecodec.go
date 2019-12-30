@@ -459,7 +459,7 @@ func unflatten(datum types.Datum, ft *types.FieldType, loc *time.Location) (type
 		mysql.TypeString:
 		return datum, nil
 	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
-		t := types.NewTime(types.ZeroTime, ft.Tp, int8(ft.Decimal))
+		t := types.NewTime(types.ZeroCoreTime, ft.Tp, int8(ft.Decimal))
 		var err error
 		err = t.FromPackedUint(datum.GetUint64())
 		if err != nil {

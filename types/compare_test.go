@@ -93,8 +93,8 @@ func (s *testCompareSuite) TestCompare(c *C) {
 		{[]byte(""), nil, 1},
 		{[]byte(""), []byte("sff"), -1},
 
-		{NewTime(ZeroTime, 0, 0), nil, 1},
-		{NewTime(ZeroTime, 0, 0), NewTime(FromGoTime(time.Now()), mysql.TypeDatetime, 3), -1},
+		{NewTime(ZeroCoreTime, 0, 0), nil, 1},
+		{NewTime(ZeroCoreTime, 0, 0), NewTime(FromGoTime(time.Now()), mysql.TypeDatetime, 3), -1},
 		{NewTime(FromGoTime(time.Now()), mysql.TypeDatetime, 3), "0000-00-00 00:00:00", 1},
 
 		{Duration{Duration: time.Duration(34), Fsp: 2}, nil, 1},

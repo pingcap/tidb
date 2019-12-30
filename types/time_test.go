@@ -457,14 +457,14 @@ func (s *testTimeSuite) TestCodec(c *C) {
 	packed, err := t1.ToPackedUint()
 	c.Assert(err, IsNil)
 
-	t2 := types.NewTime(types.ZeroTime, mysql.TypeTimestamp, 0)
+	t2 := types.NewTime(types.ZeroCoreTime, mysql.TypeTimestamp, 0)
 	err = t2.FromPackedUint(packed)
 	c.Assert(err, IsNil)
 	c.Assert(t1.String(), Equals, t2.String())
 
 	packed, _ = types.ZeroDatetime.ToPackedUint()
 
-	t3 := types.NewTime(types.ZeroTime, mysql.TypeDatetime, 0)
+	t3 := types.NewTime(types.ZeroCoreTime, mysql.TypeDatetime, 0)
 	err = t3.FromPackedUint(packed)
 	c.Assert(err, IsNil)
 	c.Assert(t3.String(), Equals, types.ZeroDatetime.String())
@@ -473,7 +473,7 @@ func (s *testTimeSuite) TestCodec(c *C) {
 	c.Assert(err, IsNil)
 	packed, _ = t.ToPackedUint()
 
-	t4 := types.NewTime(types.ZeroTime, mysql.TypeDatetime, 0)
+	t4 := types.NewTime(types.ZeroCoreTime, mysql.TypeDatetime, 0)
 	err = t4.FromPackedUint(packed)
 	c.Assert(err, IsNil)
 	c.Assert(t.String(), Equals, t4.String())
@@ -491,7 +491,7 @@ func (s *testTimeSuite) TestCodec(c *C) {
 
 		packed, _ = t.ToPackedUint()
 
-		dest := types.NewTime(types.ZeroTime, mysql.TypeDatetime, types.MaxFsp)
+		dest := types.NewTime(types.ZeroCoreTime, mysql.TypeDatetime, types.MaxFsp)
 		err = dest.FromPackedUint(packed)
 		c.Assert(err, IsNil)
 		c.Assert(dest.String(), Equals, test)
@@ -1302,7 +1302,7 @@ func (s *testTimeSuite) TestCurrentTime(c *C) {
 }
 
 func (s *testTimeSuite) TestInvalidZero(c *C) {
-	in := types.NewTime(types.ZeroTime, mysql.TypeTimestamp, types.DefaultFsp)
+	in := types.NewTime(types.ZeroCoreTime, mysql.TypeTimestamp, types.DefaultFsp)
 	c.Assert(in.InvalidZero(), Equals, true)
 	in.SetCoreTime(types.FromDate(2019, 00, 00, 00, 00, 00, 00))
 	c.Assert(in.InvalidZero(), Equals, true)

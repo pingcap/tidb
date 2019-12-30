@@ -117,26 +117,26 @@ var (
 	// ZeroDuration is the zero value for Duration type.
 	ZeroDuration = Duration{Duration: gotime.Duration(0), Fsp: DefaultFsp}
 
-	// ZeroTime is the zero value for TimeInternal type.
-	ZeroTime = MysqlTime{}
+	// ZeroCoreTime is the zero value for TimeInternal type.
+	ZeroCoreTime = MysqlTime{}
 
 	// ZeroDatetime is the zero value for datetime Time.
 	ZeroDatetime = Time{
-		time: ZeroTime,
+		time: ZeroCoreTime,
 		tp:   mysql.TypeDatetime,
 		fsp:  DefaultFsp,
 	}
 
 	// ZeroTimestamp is the zero value for timestamp Time.
 	ZeroTimestamp = Time{
-		time: ZeroTime,
+		time: ZeroCoreTime,
 		tp:   mysql.TypeTimestamp,
 		fsp:  DefaultFsp,
 	}
 
 	// ZeroDate is the zero value for date Time.
 	ZeroDate = Time{
-		time: ZeroTime,
+		time: ZeroCoreTime,
 		tp:   mysql.TypeDate,
 		fsp:  DefaultFsp,
 	}
@@ -378,9 +378,9 @@ func (t Time) String() string {
 	return str
 }
 
-// IsZero returns a boolean indicating whether the time is equal to ZeroTime.
+// IsZero returns a boolean indicating whether the time is equal to ZeroCoreTime.
 func (t Time) IsZero() bool {
-	return compareTime(t.time, ZeroTime) == 0
+	return compareTime(t.time, ZeroCoreTime) == 0
 }
 
 // InvalidZero returns a boolean indicating whether the month or day is zero.
@@ -637,7 +637,7 @@ func (t Time) ToPackedUint() (uint64, error) {
 // FromPackedUint decodes Time from a packed uint64 value.
 func (t *Time) FromPackedUint(packed uint64) error {
 	if packed == 0 {
-		t.time = ZeroTime
+		t.time = ZeroCore
 		return nil
 	}
 	ymdhms := packed >> 24
@@ -1470,7 +1470,7 @@ func ParseTime(sc *stmtctx.StatementContext, str string, tp byte, fsp int8) (Tim
 func ParseTimeFromFloatString(sc *stmtctx.StatementContext, str string, tp byte, fsp int8) (Time, error) {
 	// MySQL compatibility: 0.0 should not be converted to null, see #11203
 	if len(str) >= 3 && str[:3] == "0.0" {
-		return Time{time: ZeroTime, tp: tp}, nil
+		return Time{time: ZeroCoreTime, tp: tp}, nil
 	}
 	return parseTime(sc, str, tp, fsp, true)
 }
@@ -1478,17 +1478,17 @@ func ParseTimeFromFloatString(sc *stmtctx.StatementContext, str string, tp byte,
 func parseTime(sc *stmtctx.StatementContext, str string, tp byte, fsp int8, isFloat bool) (Time, error) {
 	fsp, err := CheckFsp(int(fsp))
 	if err != nil {
-		return Time{time: ZeroTime, tp: tp}, errors.Trace(err)
+		return Time{time: ZeroCoreTime, tp: tp}, errors.Trace(err)
 	}
 
 	t, err := parseDatetime(sc, str, fsp, isFloat)
 	if err != nil {
-		return Time{time: ZeroTime, tp: tp}, errors.Trace(err)
+		return Time{time: ZeroCoreTime, tp: tp}, errors.Trace(err)
 	}
 
 	t.tp = tp
 	if err = t.check(sc); err != nil {
-		return Time{time: ZeroTime, tp: tp}, errors.Trace(err)
+		return Time{time: ZeroCoreTime, tp: tp}, errors.Trace(err)
 	}
 	return t, nil
 }
@@ -1514,22 +1514,22 @@ func ParseDate(sc *stmtctx.StatementContext, str string) (Time, error) {
 func ParseTimeFromNum(sc *stmtctx.StatementContext, num int64, tp byte, fsp int8) (Time, error) {
 	// MySQL compatibility: 0 should not be converted to null, see #11203
 	if num == 0 {
-		return Time{time: ZeroTime, tp: tp}, nil
+		return Time{time: ZeroCoreTime, tp: tp}, nil
 	}
 	fsp, err := CheckFsp(int(fsp))
 	if err != nil {
-		return Time{time: ZeroTime, tp: tp}, errors.Trace(err)
+		return Time{time: ZeroCoreTime, tp: tp}, errors.Trace(err)
 	}
 
 	t, err := parseDateTimeFromNum(sc, num)
 	if err != nil {
-		return Time{time: ZeroTime, tp: tp}, errors.Trace(err)
+		return Time{time: ZeroCoreTime, tp: tp}, errors.Trace(err)
 	}
 
 	t.tp = tp
 	t.fsp = fsp
 	if err := t.check(sc); err != nil {
-		return Time{time: ZeroTime, tp: tp}, errors.Trace(err)
+		return Time{time: ZeroCoreTime, tp: tp}, errors.Trace(err)
 	}
 	return t, nil
 }
@@ -1623,7 +1623,7 @@ func checkMonthDay(year, month, day int, allowInvalidDate bool) error {
 }
 
 func checkTimestampType(sc *stmtctx.StatementContext, t MysqlTime) error {
-	if compareTime(t, ZeroTime) == 0 {
+	if compareTime(t, ZeroCoreTime) == 0 {
 		return nil
 	}
 
@@ -2259,7 +2259,7 @@ func (t *Time) StrToDate(sc *stmtctx.StatementContext, date, format string) bool
 	ctx := make(map[string]int)
 	var tm MysqlTime
 	if !strToDate(&tm, date, format, ctx) {
-		t.time = ZeroTime
+		t.time = ZeroCoreTime
 		t.tp = mysql.TypeDatetime
 		t.fsp = 0
 		return false

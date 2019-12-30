@@ -1029,7 +1029,7 @@ func appendIntToChunk(val int64, chk *chunk.Chunk, colIdx int, ft *types.FieldTy
 func appendUintToChunk(val uint64, chk *chunk.Chunk, colIdx int, ft *types.FieldType, loc *time.Location) error {
 	switch ft.Tp {
 	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
-		t := types.NewTime(types.ZeroTime, ft.Tp, int8(ft.Decimal))
+		t := types.NewTime(types.ZeroCoreTime, ft.Tp, int8(ft.Decimal))
 		var err error
 		err = t.FromPackedUint(val)
 		if err != nil {

@@ -451,7 +451,7 @@ func checkColumnDefaultValue(ctx sessionctx.Context, col *table.Column, value in
 			if err != nil {
 				return hasDefaultValue, value, errors.Trace(err)
 			}
-			if timeValue.GetMysqlTime().CoreTime() == types.ZeroTime {
+			if timeValue.GetMysqlTime().CoreTime() == types.ZeroCoreTime {
 				return hasDefaultValue, value, types.ErrInvalidDefault.GenWithStackByArgs(col.Name.O)
 			}
 		}
