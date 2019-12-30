@@ -148,7 +148,6 @@ func (s *baseTestSuite) SetUpSuite(c *C) {
 func (s *baseTestSuite) TearDownSuite(c *C) {
 	s.domain.Close()
 	s.store.Close()
-	autoid.SetStep(s.autoIDStep)
 }
 
 func (s *baseTestSuite) TearDownTest(c *C) {
