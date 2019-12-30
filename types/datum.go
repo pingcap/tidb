@@ -1051,7 +1051,7 @@ func (d *Datum) convertToMysqlTime(sc *stmtctx.StatementContext, target *FieldTy
 	}
 	if tp == mysql.TypeDate {
 		// Truncate hh:mm:ss part if the type is Date.
-		t = NewTime(FromDate(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0), t.Type(), t.Fsp())
+		t.SetCoreTime(FromDate(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0))
 	}
 	ret.SetValue(t)
 	if err != nil {
