@@ -46,12 +46,13 @@ var (
 )
 
 type mockDataSourceParameters struct {
-	schema      *expression.Schema
-	genDataFunc func(row int, typ *types.FieldType) interface{}
-	ndvs        []int  // number of distinct values on columns[i] and zero represents no limit
-	orders      []bool // columns[i] should be ordered if orders[i] is true
-	rows        int    // number of rows the DataSource should output
-	ctx         sessionctx.Context
+	schema         *expression.Schema
+	genDataFunc    func(row int, typ *types.FieldType) interface{}
+	ndvs           []int  // number of distinct values on columns[i] and zero represents no limit
+	orders         []bool // columns[i] should be ordered if orders[i] is true
+	rows           int    // number of rows the DataSource should output
+	ctx            sessionctx.Context
+	isRawDataSmall bool // false: rawData, true: rawDataSmall
 }
 
 type mockDataSource struct {
@@ -139,6 +140,9 @@ func (mds *mockDataSource) randDatum(typ *types.FieldType) interface{} {
 	case mysql.TypeDouble:
 		return rand.Float64()
 	case mysql.TypeVarString:
+		if mds.p.isRawDataSmall {
+			return rawDataSmall
+		}
 		return rawData
 	default:
 		panic("not implement")
@@ -452,7 +456,7 @@ func buildWindowExecutor(ctx sessionctx.Context, windowFunc string, frame *core.
 }
 
 type windowTestCase struct {
-	// The test table's schema is fixed (col Double, partitionBy LongLong, rawData VarString(5128), col LongLong).
+	// The test table's schema is fixed (col Double, partitionBy LongLong, rawData VarString(16), col LongLong).
 	windowFunc       string
 	frame            *core.WindowFrame
 	ndv              int // the number of distinct group-by keys
@@ -462,8 +466,8 @@ type windowTestCase struct {
 	ctx              sessionctx.Context
 }
 
-//var rawData = strings.Repeat("x", 5*1024)
-var rawData = strings.Repeat("x", 16)
+var rawData = strings.Repeat("x", 5*1024)
+var rawDataSmall = strings.Repeat("x", 16)
 
 func (a windowTestCase) columns() []*expression.Column {
 	rawDataTp := new(types.FieldType)
@@ -496,11 +500,12 @@ func benchmarkWindowExecWithCase(b *testing.B, casTest *windowTestCase) {
 
 	cols := casTest.columns()
 	dataSource := buildMockDataSource(mockDataSourceParameters{
-		schema: expression.NewSchema(cols...),
-		ndvs:   []int{0, casTest.ndv, 0, 0},
-		orders: []bool{false, casTest.dataSourceSorted, false, false},
-		rows:   casTest.rows,
-		ctx:    casTest.ctx,
+		schema:         expression.NewSchema(cols...),
+		ndvs:           []int{0, casTest.ndv, 0, 0},
+		orders:         []bool{false, casTest.dataSourceSorted, false, false},
+		rows:           casTest.rows,
+		ctx:            casTest.ctx,
+		isRawDataSmall: true,
 	})
 
 	b.ResetTimer()

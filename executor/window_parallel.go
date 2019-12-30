@@ -29,41 +29,41 @@ import (
 
 // WindowParallelExec is the executor for window functions in a parallel manner.
 //
-//                            +-------------+
-//                            | Main Thread |
-//                            +------+------+
-//                                   ^
-//                                   |
-//                                   +
-//                                  +++
-//                                  | |  outputCh (1 x Concurrency)
-//                                  +++
-//                                   ^
-//                                   |
-//                               +---+-----------+
-//                               |               |
+//                                +-------------+
+//                        +-------| Main Thread |
+//                        |       +------+------+
+//                        |              ^
+//                        |              |
+//                        |              +
+//                        v             +++
+//                 outputHolderCh       | | outputCh (1 x Concurrency)
+//                        v             +++
+//                        |              ^
+//                        |              |
+//                        |      +-------+-------+
+//                        v      |               |
 //                 +--------------+             +--------------+
-//                 |    worker    |     ......  |    worker    |  worker (x Concurrency): SortExec + WindowExec
-//                 +------------+-+             +-+------------+
-//                              ^                 ^
-//                              |                 |
-//                             +-+  +-+  ......  +-+
-//                             | |  | |          | |
-//                             ...  ...          ...    inputChs (Concurrency x 1)
-//                             | |  | |          | |
-//                             +++  +++          +++
-//                              ^    ^            ^
-//                              |    |            |
-//                     +--------o----+            |
-//                     |        +-----------------+---+
-//                     |                              |
-//                 +---+------------+------------+----+-----------+
-//                 |                     hash                     |
-//                 +--------------+-+------------+-+--------------+
-//                                        ^
-//                                        |
-//                        +---------------v-----------------+
-//                        |          fetch data             |
+//          +----- |    worker    |   .......   |    worker    |  worker (x Concurrency): SortExec + WindowExec
+//          |      +------------+-+             +-+------------+
+//          |                 ^                 ^
+//          |                 |                 |
+//          |                +-+  +-+  ......  +-+
+//          |                | |  | |          | |
+//          |                ...  ...          ...  inputCh (Concurrency x 1)
+//          v                | |  | |          | |
+//    inputHolderCh          +++  +++          +++
+//          v                 ^    ^            ^
+//          |                 |    |            |
+//          |          +------o----+            |
+//          |          |      +-----------------+-----+
+//          |          |                              |
+//          |      +---+------------+------------+----+-----------+
+//          |      |                     hash                     |
+//          |      +--------------+-+------------+-+--------------+
+//          |                             ^
+//          |                             |
+//          |             +---------------v-----------------+
+//          +---------->  |          fetch data             |
 //                        +---------------------------------+
 //
 ////////////////////////////////////////////////////////////////////////////////////////
@@ -92,21 +92,6 @@ type windowParallelOutput struct {
 	giveBackCh chan *chunk.Chunk
 }
 
-type windowParallelWorker struct {
-	ctx      sessionctx.Context
-	e        *WindowParallelExec
-	finishCh <-chan struct{}
-
-	inputCh        chan *chunk.Chunk
-	inputHolderCh  chan *chunk.Chunk
-	outputCh       chan *windowParallelOutput
-	outputHolderCh chan *chunk.Chunk
-
-	dataFetcher *windowDataFetcherExec
-	sortExec    *SortExec
-	windowExec  *WindowExec
-}
-
 // Open implements the Executor Open interface
 func (e *WindowParallelExec) Open(ctx context.Context) error {
 	if err := e.baseExecutor.Open(ctx); err != nil {
@@ -114,9 +99,6 @@ func (e *WindowParallelExec) Open(ctx context.Context) error {
 	}
 
 	e.prepared = false
-	//e.concurrency is set by builder (`(*executorBuilder).buildWindowParallel`)
-	//e.concurrency = e.ctx.GetSessionVars().WindowConcurrency
-
 	e.finishCh = make(chan struct{}, 1)
 	e.outputCh = make(chan *windowParallelOutput, e.concurrency)
 
@@ -288,7 +270,6 @@ func (e *WindowParallelExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			return result.err
 		}
 		req.SwapColumns(result.chk)
-		result.chk.Reset()
 		result.giveBackCh <- result.chk
 		if req.NumRows() > 0 {
 			return nil
@@ -336,6 +317,25 @@ func (e *windowDataFetcherExec) Next(ctx context.Context, req *chunk.Chunk) erro
 		e.giveBackCh <- result
 		return nil
 	}
+}
+
+type windowParallelWorker struct {
+	ctx      sessionctx.Context
+	e        *WindowParallelExec
+	finishCh <-chan struct{}
+
+	// Workers get inputs from dataFetcherThread by `inputCh`,
+	//   and output results to main thread by `outputCh`.
+	// `inputHolderCh` and `outputHolderCh` are "Chunk Holder" channels of `inputCh` and `outputCh` respectively,
+	//   which give the `*Chunk` back, to implement the data transport in a streaming manner.
+	inputCh        chan *chunk.Chunk
+	inputHolderCh  chan *chunk.Chunk
+	outputCh       chan *windowParallelOutput
+	outputHolderCh chan *chunk.Chunk
+
+	dataFetcher *windowDataFetcherExec
+	sortExec    *SortExec
+	windowExec  *WindowExec
 }
 
 func (w *windowParallelWorker) run(ctx context.Context, waitGroup *sync.WaitGroup) {
