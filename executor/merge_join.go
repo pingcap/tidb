@@ -245,7 +245,9 @@ func (t *mergeJoinInnerTable) reallocCurChkForReader() (err error) {
 // Close implements the Executor Close interface.
 func (e *MergeJoinExec) Close() error {
 	e.childrenResults = nil
-	e.innerTable.memTracker.Consume(-e.innerTable.curChk.MemoryUsage())
+	if e.innerTable.curChk != nil {
+		e.innerTable.memTracker.Consume(-e.innerTable.curChk.MemoryUsage())
+	}
 	e.memTracker = nil
 	if e.innerTable.rowContainer != nil {
 		if err := e.innerTable.rowContainer.Close(); err != nil {
