@@ -1307,7 +1307,7 @@ func (s *testTimeSuite) TestInvalidZero(c *C) {
 	c.Assert(in.InvalidZero(), Equals, true)
 	in = types.NewTime(types.FromDate(2019, 00, 00, 00, 00, 00, 00), mysql.TypeTimestamp, types.DefaultFsp)
 	c.Assert(in.InvalidZero(), Equals, true)
-	in = types.NewTime(types.FromDate(2019, 04, 12, 12, 00, 00, 00), mysql.TypeTimestamp, types.DefaultFsp)
+	in.SetCoreTime(types.FromDate(2019, 04, 12, 12, 00, 00, 00))
 	c.Assert(in.InvalidZero(), Equals, false)
 }
 
