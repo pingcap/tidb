@@ -2302,6 +2302,9 @@ func (s *testParserSuite) TestDDL(c *C) {
 
 		// For alter table rename column statement.
 		{"ALTER TABLE t RENAME COLUMN a TO b", true, "ALTER TABLE `t` RENAME COLUMN `a` TO `b`"},
+		{"ALTER TABLE t RENAME COLUMN t.a TO t.b", false, ""},
+		{"ALTER TABLE t RENAME COLUMN a TO t.b", false, ""},
+		{"ALTER TABLE t RENAME COLUMN t.a TO b", false, ""},
 
 		{"ALTER TABLE t ALTER COLUMN a SET DEFAULT 1", true, "ALTER TABLE `t` ALTER COLUMN `a` SET DEFAULT 1"},
 		{"ALTER TABLE t ALTER a SET DEFAULT 1", true, "ALTER TABLE `t` ALTER COLUMN `a` SET DEFAULT 1"},
