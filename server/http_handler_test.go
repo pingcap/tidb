@@ -686,6 +686,7 @@ func (ts *HTTPHandlerTestSuite) TestGetIndexMVCC(c *C) {
 
 	resp, err = http.Get("http://127.0.0.1:10090/mvcc/index/tidb/pt(p2)/idx/666?a=666&b=def")
 	c.Assert(err, IsNil)
+	defer resp.Body.Close()
 	decodeKeyMvcc(resp.Body, c, true)
 }
 
