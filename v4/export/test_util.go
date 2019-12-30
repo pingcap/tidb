@@ -2,7 +2,10 @@ package export
 
 import (
 	"database/sql"
+	"database/sql/driver"
 	"fmt"
+
+	"github.com/DATA-DOG/go-sqlmock"
 )
 
 type mockStringWriter struct {
@@ -71,65 +74,60 @@ func newMockMetaIR(targetName string, meta string, specialComments []string) Met
 	}
 }
 
-func makeNullString(ss []string) []sql.NullString {
-	var ns []sql.NullString
-	for _, s := range ss {
-		if len(s) != 0 {
-			ns = append(ns, sql.NullString{String: s, Valid: true})
-		} else {
-			ns = append(ns, sql.NullString{Valid: false})
-		}
-	}
-	return ns
-}
-
-type mockTableDataIR struct {
+type mockTableIR struct {
 	dbName   string
 	tblName  string
-	data     [][]sql.NullString
+	data     [][]driver.Value
 	specCmt  []string
 	colTypes []string
 }
 
-func (m *mockTableDataIR) ColumnTypes() []string {
-	return m.colTypes
-}
-
-func newMockTableDataIR(databaseName, tableName string, data [][]string, specialComments []string, colTypes []string) TableDataIR {
-	var nData [][]sql.NullString
-	for _, ss := range data {
-		nData = append(nData, makeNullString(ss))
-	}
-
-	return &mockTableDataIR{
-		dbName:   databaseName,
-		tblName:  tableName,
-		data:     nData,
-		specCmt:  specialComments,
-		colTypes: colTypes,
-	}
-}
-
-func (m *mockTableDataIR) DatabaseName() string {
+func (m *mockTableIR) DatabaseName() string {
 	return m.dbName
 }
 
-func (m *mockTableDataIR) TableName() string {
-	return "employee"
+func (m *mockTableIR) TableName() string {
+	return m.tblName
 }
 
-func (m *mockTableDataIR) ColumnCount() uint {
-	return 5
+func (m *mockTableIR) ColumnCount() uint {
+	return uint(len(m.colTypes))
 }
 
-func (m *mockTableDataIR) SpecialComments() StringIter {
+func (m *mockTableIR) ColumnTypes() []string {
+	return m.colTypes
+}
+
+func (m *mockTableIR) SpecialComments() StringIter {
 	return newStringIter(m.specCmt...)
 }
 
-func (m *mockTableDataIR) Rows() SQLRowIter {
-	return &mockSQLRowIterator{
-		idx:  0,
-		data: m.data,
+func (m *mockTableIR) Rows() SQLRowIter {
+	mockRows := sqlmock.NewRows(m.colTypes)
+	for _, datum := range m.data {
+		mockRows.AddRow(datum...)
+	}
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		panic(fmt.Sprintf("sqlmock.New return error: %v", err))
+	}
+	defer db.Close()
+	mock.ExpectQuery("select 1").WillReturnRows(mockRows)
+	rows, err := db.Query("select 1")
+	if err != nil {
+		panic(fmt.Sprintf("sqlmock.New return error: %v", err))
+	}
+
+	return newRowIter(rows, len(m.colTypes))
+}
+
+func newMockTableIR(databaseName, tableName string, data [][]driver.Value, specialComments, colTypes []string) TableDataIR {
+	return &mockTableIR{
+		dbName:   databaseName,
+		tblName:  tableName,
+		data:     data,
+		specCmt:  specialComments,
+		colTypes: colTypes,
 	}
 }
 

@@ -9,6 +9,18 @@ var _ = Suite(&testIRImplSuite{})
 
 type testIRImplSuite struct{}
 
+type simpleRowReceiver struct {
+	data string
+}
+
+func (s *simpleRowReceiver) BindAddress(arg []interface{}) {
+	arg[0] = &s.data
+}
+
+func (s *simpleRowReceiver) ReportSize() uint64 {
+	panic("not implement")
+}
+
 func (s *testIRImplSuite) TestRowIter(c *C) {
 	db, mock, err := sqlmock.New()
 	c.Assert(err, IsNil)
@@ -26,15 +38,15 @@ func (s *testIRImplSuite) TestRowIter(c *C) {
 	for i := 0; i < 100; i += 1 {
 		c.Assert(iter.HasNext(), IsTrue)
 	}
-	res := make(dumplingRow, 1)
+	res := &simpleRowReceiver{}
 	c.Assert(iter.Next(res), IsNil)
-	c.Assert(res[0].String, Equals, "1")
+	c.Assert(res.data, Equals, "1")
 	c.Assert(iter.HasNext(), IsTrue)
 	c.Assert(iter.HasNext(), IsTrue)
 	c.Assert(iter.Next(res), IsNil)
-	c.Assert(res[0].String, Equals, "2")
+	c.Assert(res.data, Equals, "2")
 	c.Assert(iter.HasNext(), IsTrue)
 	c.Assert(iter.Next(res), IsNil)
-	c.Assert(res[0].String, Equals, "3")
+	c.Assert(res.data, Equals, "3")
 	c.Assert(iter.HasNext(), IsFalse)
 }
