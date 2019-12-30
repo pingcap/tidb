@@ -209,17 +209,17 @@ func dumpBinaryDateTime(data []byte, t types.Time, loc *time.Location) ([]byte, 
 		// TODO: Consider time_zone variable.
 		t1, err := t.GoTime(time.Local)
 		if err != nil {
-			return nil, errors.Errorf("FATAL: convert timestamp %v go time return error!", t.Time)
+			return nil, errors.Errorf("FATAL: convert timestamp %v go time return error!", t.GetDateTimePart())
 		}
 		t.SetDateTimePart(types.FromGoTime(t1.In(loc)))
 	}
 
 	year, mon, day := t.Year(), t.Month(), t.Day()
-	switch t.Type {
+	switch t.Type() {
 	case mysql.TypeTimestamp, mysql.TypeDatetime:
 		data = append(data, 11)
 		data = dumpUint16(data, uint16(year))
-		data = append(data, byte(mon), byte(day), byte(t.Hour()), byte(t.Minute()), byte(t.Time.Second()))
+		data = append(data, byte(mon), byte(day), byte(t.Hour()), byte(t.Minute()), byte(t.Second()))
 		data = dumpUint32(data, uint32(t.Microsecond()))
 	case mysql.TypeDate:
 		data = append(data, 4)
