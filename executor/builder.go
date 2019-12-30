@@ -356,11 +356,10 @@ func buildIndexLookUpChecker(b *executorBuilder, readerPlan *plannercore.Physica
 	for _, col := range is.Columns {
 		colNames = append(colNames, col.Name.O)
 	}
-	var err error
-	readerExec.idxTblCols, err = table.FindCols(readerExec.table.Cols(), colNames, true)
-	if err != nil {
-		b.err = errors.Trace(err)
-		return
+	if cols, missingColName := table.FindCols(readerExec.table.Cols(), colNames, true); missingColName != "" {
+		b.err = plannercore.ErrUnknownColumn.GenWithStack("Unknown column %s", missingColName)
+	} else {
+		readerExec.idxTblCols = cols
 	}
 }
 
@@ -623,13 +622,14 @@ func (b *executorBuilder) buildShow(v *plannercore.PhysicalShow) Executor {
 		Table:        v.Table,
 		Column:       v.Column,
 		IndexName:    v.IndexName,
-		User:         v.User,
-		Roles:        v.Roles,
-		IfNotExists:  v.IfNotExists,
 		Flag:         v.Flag,
-		Full:         v.Full,
-		GlobalScope:  v.GlobalScope,
+		Roles:        v.Roles,
+		User:         v.User,
 		is:           b.is,
+		Full:         v.Full,
+		IfNotExists:  v.IfNotExists,
+		GlobalScope:  v.GlobalScope,
+		Extended:     v.Extended,
 	}
 	if e.Tp == ast.ShowGrants && e.User == nil {
 		// The input is a "show grants" statement, fulfill the user and roles field.
@@ -2536,6 +2536,7 @@ func (b *executorBuilder) buildSQLBindExec(v *plannercore.SQLBindPlan) Executor 
 		bindSQL:      v.BindSQL,
 		charset:      v.Charset,
 		collation:    v.Collation,
+		db:           v.Db,
 		isGlobal:     v.IsGlobal,
 		bindAst:      v.BindStmt,
 	}

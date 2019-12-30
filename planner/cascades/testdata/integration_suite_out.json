@@ -269,9 +269,10 @@
       {
         "SQL": "select b from t order by b limit 3",
         "Plan": [
-          "TopN_8 3.00 root test.t.b:asc, offset:0, count:3",
-          "└─TableReader_10 10000.00 root data:TableScan_11",
-          "  └─TableScan_11 10000.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false, stats:pseudo"
+          "TopN_9 3.00 root test.t.b:asc, offset:0, count:3",
+          "└─TableReader_11 3.00 root data:TopN_12",
+          "  └─TopN_12 3.00 cop[tikv] test.t.b:asc, offset:0, count:3",
+          "    └─TableScan_14 10000.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false, stats:pseudo"
         ],
         "Result": [
           "11",
@@ -282,9 +283,10 @@
       {
         "SQL": "select a from t order by a limit 1 offset 2",
         "Plan": [
-          "Limit_9 1.00 root offset:2, count:1",
-          "└─TableReader_12 3.00 root data:TableScan_13",
-          "  └─TableScan_13 3.00 cop[tikv] table:t, range:[-inf,+inf], keep order:true, stats:pseudo"
+          "Limit_10 1.00 root offset:2, count:1",
+          "└─TableReader_16 3.00 root data:Limit_17",
+          "  └─Limit_17 3.00 cop[tikv] offset:0, count:3",
+          "    └─TableScan_15 3.00 cop[tikv] table:t, range:[-inf,+inf], keep order:true, stats:pseudo"
         ],
         "Result": [
           "3"
@@ -492,16 +494,17 @@
       {
         "SQL": "select a = (select a from t2 where t1.b = t2.b order by a limit 1) from t1",
         "Plan": [
-          "Projection_17 10000.00 root eq(test.t1.a, test.t2.a)->Column#5",
-          "└─Apply_19 10000.00 root CARTESIAN left outer join, inner:MaxOneRow_22",
-          "  ├─TableReader_20 10000.00 root data:TableScan_21",
-          "  │ └─TableScan_21 10000.00 cop[tikv] table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
-          "  └─MaxOneRow_22 1.00 root ",
-          "    └─Projection_23 1.00 root test.t2.a",
-          "      └─Limit_25 1.00 root offset:0, count:1",
-          "        └─TableReader_29 1.00 root data:Selection_30",
-          "          └─Selection_30 1.00 cop[tikv] eq(test.t1.b, test.t2.b)",
-          "            └─TableScan_31 1.00 cop[tikv] table:t2, range:[-inf,+inf], keep order:true, stats:pseudo"
+          "Projection_18 10000.00 root eq(test.t1.a, test.t2.a)->Column#5",
+          "└─Apply_20 10000.00 root CARTESIAN left outer join, inner:MaxOneRow_23",
+          "  ├─TableReader_21 10000.00 root data:TableScan_22",
+          "  │ └─TableScan_22 10000.00 cop[tikv] table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
+          "  └─MaxOneRow_23 1.00 root ",
+          "    └─Projection_24 1.00 root test.t2.a",
+          "      └─Limit_26 1.00 root offset:0, count:1",
+          "        └─TableReader_34 1.00 root data:Limit_35",
+          "          └─Limit_35 1.00 cop[tikv] offset:0, count:1",
+          "            └─Selection_32 1.00 cop[tikv] eq(test.t1.b, test.t2.b)",
+          "              └─TableScan_33 1.00 cop[tikv] table:t2, range:[-inf,+inf], keep order:true, stats:pseudo"
         ],
         "Result": [
           "1",
