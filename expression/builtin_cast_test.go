@@ -1324,7 +1324,7 @@ func (s *testEvaluatorSuite) TestWrapWithCastAsTime(c *C) {
 		res, isNull, err := expr.EvalTime(s.ctx, chunk.Row{})
 		c.Assert(err, IsNil)
 		c.Assert(isNull, Equals, false)
-		c.Assert(res.Type, Equals, t.tp.Tp)
+		c.Assert(res.Type(), Equals, t.tp.Tp)
 		c.Assert(res.Compare(t.res), Equals, 0, Commentf("case %d res = %s, expect = %s", d, res, t.res))
 	}
 }
