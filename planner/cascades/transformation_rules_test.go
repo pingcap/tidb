@@ -149,6 +149,8 @@ func (s *testTransformationRuleSuite) TestTopNRules(c *C) {
 	s.optimizer.ResetTransformationRules(map[memo.Operand][]Transformation{
 		memo.OperandLimit: {
 			NewRuleTransformLimitToTopN(),
+			NewRulePushLimitDownProjection(),
+			NewRulePushLimitDownUnionAll(),
 		},
 		memo.OperandDataSource: {
 			NewRuleEnumeratePaths(),
@@ -156,6 +158,7 @@ func (s *testTransformationRuleSuite) TestTopNRules(c *C) {
 		memo.OperandTopN: {
 			NewRulePushTopNDownProjection(),
 			NewRulePushTopNDownUnionAll(),
+			NewRulePushTopNDownTiKVSingleGather(),
 		},
 	})
 	var input []string
