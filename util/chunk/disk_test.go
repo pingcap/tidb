@@ -83,37 +83,6 @@ func (s *testChunkSuite) TestListInDisk(c *check.C) {
 	}
 }
 
-func (s *testChunkSuite) TestListInDiskAppendRow(c *check.C) {
-	numChk, numRow := 2, 2
-	chks, fields := initChunks(numChk, numRow)
-	l := NewListInDisk(fields)
-	for _, chk := range chks {
-		it := NewIterator4Chunk(chk)
-		for row := it.Begin(); row != it.End(); row = it.Next() {
-			ptr, err := l.AppendRow(row)
-			c.Assert(err, check.IsNil)
-			row2, err := l.GetRow(ptr)
-			c.Assert(err, check.IsNil)
-			c.Assert(row.GetDatumRow(fields), check.DeepEquals, row2.GetDatumRow(fields))
-		}
-	}
-	c.Assert(l.NumChunks(), check.Equals, 1)
-	err := l.Add(chks[0])
-	c.Assert(err, check.IsNil)
-	for _, chk := range chks[1:] {
-		it := NewIterator4Chunk(chk)
-		for row := it.Begin(); row != it.End(); row = it.Next() {
-			ptr, err := l.AppendRow(row)
-			c.Assert(err, check.IsNil)
-			row2, err := l.GetRow(ptr)
-			c.Assert(err, check.IsNil)
-			c.Assert(row.GetDatumRow(fields), check.DeepEquals, row2.GetDatumRow(fields))
-		}
-	}
-	c.Assert(l.NumChunks(), check.Equals, 2)
-	c.Assert(l.Len(), check.Equals, numChk*numRow*2)
-}
-
 func BenchmarkListInDiskAdd(b *testing.B) {
 	numChk, numRow := 1, 2
 	chks, fields := initChunks(numChk, numRow)

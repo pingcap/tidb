@@ -191,7 +191,6 @@ func (t *mergeJoinInnerTable) nextRow() (chunk.Row, error) {
 		if !t.hasNullInJoinKey(result) {
 			return result, nil
 		}
-		fmt.Println("has null key!")
 	}
 }
 

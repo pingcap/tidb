@@ -86,7 +86,7 @@ func (c *RowContainer) Reset() error {
 		}
 		atomic.StoreUint32(&c.exceeded, 0)
 		atomic.StoreUint32(&c.spilled, 0)
-		c.actionSpill.Reset()
+		c.actionSpill.reset()
 	} else {
 		c.records.Reset()
 	}
@@ -232,12 +232,15 @@ func (a *spillDiskAction) Action(t *memory.Tracker) {
 	})
 }
 
+// SetFallback sets the fallback action.
 func (a *spillDiskAction) SetFallback(fallback memory.ActionOnExceed) {
 	a.fallbackAction = fallback
 }
 
+// SetLogHook sets the hook, it does nothing just to form the memory.ActionOnExceed interface.
 func (a *spillDiskAction) SetLogHook(hook func(uint64)) {}
 
-func (a *spillDiskAction) Reset() {
+// reset resets the spill action so that it can be triggered next time.
+func (a *spillDiskAction) reset() {
 	a.once = sync.Once{}
 }

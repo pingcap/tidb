@@ -136,34 +136,6 @@ func (l *ListInDisk) Add(chk *Chunk) (err error) {
 	return
 }
 
-// AppendRow appends a row to the last chunk in disk, if no chunk has ever been added,
-// a new chunk will be created. Note that the write will be flushed to disk every time.
-func (l *ListInDisk) AppendRow(row Row) (ptr RowPtr, err error) {
-	var format *diskFormatRow
-	if l.disk == nil {
-		err = l.initDiskFile()
-		if err != nil {
-			return
-		}
-	}
-	offWrite := l.offWrite
-	format = convertFromRow(row, format)
-	n, err := rowInDisk{diskFormatRow: *format}.WriteTo(l.bufWriter)
-	if err != nil {
-		return
-	}
-	l.offWrite += n
-	l.diskTracker.Consume(n)
-	l.numRowsInDisk += 1
-	if len(l.offsets) == 0 {
-		l.offsets = append(l.offsets, make([]int64, 0))
-	}
-	chkID := l.NumChunks() - 1
-	l.offsets[chkID] = append(l.offsets[chkID], offWrite)
-	ptr = RowPtr{uint32(chkID), uint32(l.NumRowsOfChunk(chkID) - 1)}
-	return
-}
-
 // GetRow gets a Row from the ListInDisk by RowPtr.
 func (l *ListInDisk) GetRow(ptr RowPtr) (row Row, err error) {
 	err = l.flush()

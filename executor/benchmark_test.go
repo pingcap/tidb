@@ -1100,8 +1100,6 @@ type mergeJoinTestCase struct {
 	indexJoinTestCase
 }
 
-//type mergeJoinTestCase indexJoinTestCase
-
 func prepare4MergeJoin(tc *mergeJoinTestCase, leftExec, rightExec *mockDataSource) *MergeJoinExec {
 	outerCols, innerCols := tc.columns(), tc.columns()
 	joinSchema := expression.NewSchema(outerCols...)
