@@ -138,10 +138,10 @@ func (configInspection) inspect(_ context.Context, sctx sessionctx.Context, filt
 			continue
 		}
 		results = append(results, inspectionResult{
-			item:      row.GetString(1),                   // key
-			value:     fmt.Sprintf("%d", row.GetInt64(2)), // count
-			reference: "1",
-			severity:  "P2",
+			item:      row.GetString(1), // key
+			value:     "inconsistent",
+			reference: "consistent",
+			severity:  "warning",
 			suggestion: fmt.Sprintf("select * from information_schema.cluster_config where type='%s' and `key`='%s'",
 				row.GetString(0), row.GetString(1)),
 		})
@@ -169,10 +169,10 @@ func (versionInspection) inspect(_ context.Context, sctx sessionctx.Context, fil
 			continue
 		}
 		results = append(results, inspectionResult{
-			item:       row.GetString(0),                   // type
-			value:      fmt.Sprintf("%d", row.GetInt64(1)), // count
-			reference:  "1",
-			severity:   "P1",
+			item:       row.GetString(0), // type
+			value:      "inconsistent",
+			reference:  "consistent",
+			severity:   "critical",
 			suggestion: fmt.Sprintf("select * from information_schema.cluster_info where type='%s'", row.GetString(0)),
 		})
 	}
