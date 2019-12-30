@@ -60,8 +60,17 @@ func newCoprCache(config *config.CoprocessorCache) (*coprCache, error) {
 		return nil, nil
 	}
 	capacityInBytes := int64(config.CapacityMB * 1024.0 * 1024.0)
+	if capacityInBytes == 0 {
+		return nil, errors.New("Capacity must be > 0 to enable the cache")
+	}
 	maxEntityInBytes := int64(config.AdmissionMaxResultMB * 1024.0 * 1024.0)
+	if maxEntityInBytes == 0 {
+		return nil, errors.New("AdmissionMaxResultMB must be > 0 to enable the cache")
+	}
 	estimatedEntities := capacityInBytes / maxEntityInBytes * 2
+	if estimatedEntities < 10 {
+		estimatedEntities = 10
+	}
 	cache, err := ristretto.NewCache(&ristretto.Config{
 		NumCounters: estimatedEntities * 10,
 		MaxCost:     capacityInBytes,
@@ -134,6 +143,9 @@ func coprCacheBuildKey(copReq *coprocessor.Request) ([]byte, error) {
 
 // Get gets a cache item according to cache key.
 func (c *coprCache) Get(key []byte) *coprCacheValue {
+	if c == nil {
+		return nil
+	}
 	value, hit := c.cache.Get(key)
 	if !hit {
 		return nil
@@ -166,5 +178,7 @@ func (c *coprCache) Set(key []byte, value *coprCacheValue) bool {
 	if c == nil {
 		return false
 	}
+	// Always ensure that the `Key` in `value` is the `key` we received.
+	value.Key = key
 	return c.cache.Set(key, value, int64(value.Len()))
 }

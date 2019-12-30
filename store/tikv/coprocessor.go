@@ -720,20 +720,21 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 	}
 
 	var cacheKey []byte = nil
-	var err error
 	var cacheValue *coprCacheValue = nil
 
 	// If there are many ranges, it is very likely to be a TableLookupRequest. They are not worth to cache since
 	// computing is not the main cost. Ignore such requests directly to avoid slowly building the cache key.
 	if task.cmdType == tikvrpc.CmdCop && worker.store.coprCache != nil && worker.req.Cacheable && len(copReq.Ranges) < 10 {
-		copReq.IsCacheEnabled = true
-		cacheKey, err = coprCacheBuildKey(&copReq)
-		if err != nil {
-			cacheValue = worker.store.coprCache.Get(cacheKey)
-			if cacheValue != nil && cacheValue.RegionID == task.region.id && cacheValue.TimeStamp <= worker.req.StartTs {
+		cKey, err := coprCacheBuildKey(&copReq)
+		if err == nil {
+			cacheKey = cKey
+			cValue := worker.store.coprCache.Get(cKey)
+			if cValue != nil && cValue.RegionID == task.region.id && cValue.TimeStamp <= worker.req.StartTs {
 				// Append cache version to the request to skip Coprocessor computation if possible
 				// when request result is cached
-				copReq.CacheIfMatchVersion = cacheValue.RegionDataVersion
+				copReq.IsCacheEnabled = true
+				copReq.CacheIfMatchVersion = cValue.RegionDataVersion
+				cacheValue = cValue
 			}
 		} else {
 			logutil.BgLogger().Warn("Failed to build copr cache key", zap.Error(err))

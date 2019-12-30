@@ -14,9 +14,11 @@
 package tikv
 
 import (
-	"github.com/pingcap/kvproto/pkg/coprocessor"
+	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/kvproto/pkg/coprocessor"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 )
 
@@ -68,4 +70,111 @@ func (s *testCoprocessorSuite) TestBuildCacheKey(c *C) {
 
 	_, err = coprCacheBuildKey(&req)
 	c.Assert(err, NotNil)
+}
+
+func (s *testCoprocessorSuite) TestDisable(c *C) {
+	cache, err := newCoprCache(&config.CoprocessorCache{Enabled: false})
+	c.Assert(err, IsNil)
+	c.Assert(cache, IsNil)
+
+	v := cache.Set([]byte("foo"), &coprCacheValue{})
+	c.Assert(v, Equals, false)
+
+	v2 := cache.Get([]byte("foo"))
+	c.Assert(v2, IsNil)
+
+	v = cache.CheckAdmission(1024, time.Second*5)
+	c.Assert(v, Equals, false)
+
+	cache, err = newCoprCache(&config.CoprocessorCache{Enabled: true, CapacityMB: 0, AdmissionMaxResultMB: 1})
+	c.Assert(err, NotNil)
+	c.Assert(cache, IsNil)
+
+	cache, err = newCoprCache(&config.CoprocessorCache{Enabled: true, CapacityMB: 0.001})
+	c.Assert(err, NotNil)
+	c.Assert(cache, IsNil)
+
+	cache, err = newCoprCache(&config.CoprocessorCache{Enabled: true, CapacityMB: 0.001, AdmissionMaxResultMB: 1})
+	c.Assert(err, IsNil)
+	c.Assert(cache, NotNil)
+}
+
+func (s *testCoprocessorSuite) TestAdmission(c *C) {
+	cache, err := newCoprCache(&config.CoprocessorCache{Enabled: true, AdmissionMinProcessMs: 5, AdmissionMaxResultMB: 1, CapacityMB: 1})
+	c.Assert(err, IsNil)
+	c.Assert(cache, NotNil)
+
+	v := cache.CheckAdmission(0, 0)
+	c.Assert(v, Equals, false)
+
+	v = cache.CheckAdmission(0, 4*time.Millisecond)
+	c.Assert(v, Equals, false)
+
+	v = cache.CheckAdmission(0, 5*time.Millisecond)
+	c.Assert(v, Equals, false)
+
+	v = cache.CheckAdmission(1, 0)
+	c.Assert(v, Equals, false)
+
+	v = cache.CheckAdmission(1, 4*time.Millisecond)
+	c.Assert(v, Equals, false)
+
+	v = cache.CheckAdmission(1, 5*time.Millisecond)
+	c.Assert(v, Equals, true)
+
+	v = cache.CheckAdmission(1024, 5*time.Millisecond)
+	c.Assert(v, Equals, true)
+
+	v = cache.CheckAdmission(1024*1024, 5*time.Millisecond)
+	c.Assert(v, Equals, true)
+
+	v = cache.CheckAdmission(1024*1024+1, 5*time.Millisecond)
+	c.Assert(v, Equals, false)
+
+	v = cache.CheckAdmission(1024*1024+1, 4*time.Millisecond)
+	c.Assert(v, Equals, false)
+}
+
+func (s *testCoprocessorSuite) TestCacheValueLen(c *C) {
+	v := coprCacheValue{
+		TimeStamp:         0x123,
+		RegionID:          0x1,
+		RegionDataVersion: 0x3,
+	}
+	// 72 = (8 byte pointer + 8 byte for length + 8 byte for cap) * 2 + 8 byte * 3
+	c.Assert(v.Len(), Equals, 72)
+
+	v = coprCacheValue{
+		Key:               []byte("foobar"),
+		Data:              []byte("12345678"),
+		TimeStamp:         0x123,
+		RegionID:          0x1,
+		RegionDataVersion: 0x3,
+	}
+	c.Assert(v.Len(), Equals, 72+6+8)
+}
+
+func (s *testCoprocessorSuite) TestGetSet(c *C) {
+	cache, err := newCoprCache(&config.CoprocessorCache{Enabled: true, AdmissionMinProcessMs: 5, AdmissionMaxResultMB: 1, CapacityMB: 1})
+	c.Assert(err, IsNil)
+	c.Assert(cache, NotNil)
+
+	v := cache.Get([]byte("foo"))
+	c.Assert(v, IsNil)
+
+	v2 := cache.Set([]byte("foo"), &coprCacheValue{
+		Data:              []byte("bar"),
+		TimeStamp:         0x123,
+		RegionID:          0x1,
+		RegionDataVersion: 0x3,
+	})
+	c.Assert(v2, Equals, true)
+
+	// See https://github.com/dgraph-io/ristretto/blob/83508260cb49a2c3261c2774c991870fd18b5a1b/cache_test.go#L13
+	// Changed from 10ms to 50ms to resist from unstable CI environment.
+	time.Sleep(time.Millisecond * 50)
+
+	v = cache.Get([]byte("foo"))
+	c.Assert(v, NotNil)
+	c.Assert(v.Data, DeepEquals, []byte("bar"))
 }
