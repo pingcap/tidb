@@ -310,7 +310,7 @@ func (t Time) CoreTime() MysqlTime {
 }
 
 // SetCoreTime update core time.
-func (t Time) SetCoreTime(mt MysqlTime) {
+func (t *Time) SetCoreTime(mt MysqlTime) {
 	t.time = mt
 }
 
