@@ -1867,8 +1867,41 @@ func (s *testDBSuite5) TestRenameColumn(c *C) {
 	assertColNames("test_rename_column", "id", "col1")
 	s.mustExec(c, "alter table test_rename_column rename column col1 to col2")
 	assertColNames("test_rename_column", "id", "col2")
+
+	// Test renaming non-exist columns.
 	s.tk.MustGetErrCode("alter table test_rename_column rename column non_exist_col to col3", mysql.ErrBadField)
+
+	// Test renaming to an exist column.
 	s.tk.MustGetErrCode("alter table test_rename_column rename column col2 to id", mysql.ErrDupFieldName)
+
+	// Test renaming the column with foreign key.
+	s.tk.MustExec("drop table test_rename_column")
+	s.tk.MustExec("create table test_rename_column_base (base int)")
+	s.tk.MustExec("create table test_rename_column (col int, foreign key (col) references test_rename_column_base(base))")
+
+	s.tk.MustGetErrCode("alter table test_rename_column rename column col to col1", mysql.ErrFKIncompatibleColumns)
+
+	s.tk.MustExec("drop table test_rename_column_base")
+
+	// Test renaming generated columns.
+	s.tk.MustExec("drop table test_rename_column")
+	s.tk.MustExec("create table test_rename_column (id int, col1 int generated always as (id + 1))")
+
+	s.mustExec(c, "alter table test_rename_column rename column col1 to col2")
+	assertColNames("test_rename_column", "id", "col2")
+	s.mustExec(c, "alter table test_rename_column rename column col2 to col1")
+	assertColNames("test_rename_column", "id", "col1")
+
+	// Test renaming view columns.
+	s.tk.MustExec("drop table test_rename_column")
+	s.mustExec(c, "create table test_rename_column (id int, col1 int)")
+	s.mustExec(c, "create view test_rename_column_view as select * from test_rename_column")
+
+	s.mustExec(c, "alter table test_rename_column rename column col1 to col2")
+	s.tk.MustGetErrCode("select * from test_rename_column_view", mysql.ErrViewInvalid)
+
+	s.mustExec(c, "drop view test_rename_column_view")
+	s.tk.MustExec("drop table test_rename_column")
 }
 
 func (s *testDBSuite) mustExec(c *C, query string, args ...interface{}) {
