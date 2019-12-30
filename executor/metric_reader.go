@@ -62,9 +62,14 @@ func (e *MetricRetriever) retrieve(ctx context.Context, sctx sessionctx.Context)
 		quantiles = []float64{tblDef.Quantile}
 	}
 	for _, quantile := range quantiles {
-		queryValue, err := e.queryMetric(ctx, sctx, queryRange, quantile)
-		if err != nil {
-			return nil, err
+		var queryValue pmodel.Value
+		// Add retry to avoid network error.
+		for i := 0; i < 10; i++ {
+			queryValue, err = e.queryMetric(ctx, sctx, queryRange, quantile)
+			if err == nil {
+				break
+			}
+			time.Sleep(100 * time.Millisecond)
 		}
 
 		partRows := e.genRows(queryValue, queryRange, quantile)
