@@ -15,7 +15,6 @@ package ddltest
 
 import (
 	"math/rand"
-	"strconv"
 )
 
 func randomInt() int {
@@ -53,29 +52,4 @@ func randomNum(args ...int) int {
 	} else {
 		return randomInt()
 	}
-}
-
-// Args
-// 0 -> min
-// 1 -> max
-// 2 -> prec
-// randomFloat64(1,10) -> [1.0,10.0]
-// randomFloat64(1,10,3) -> [1.000,10.000]
-// randomFloat64(-1) -> random
-// randomFloat64() -> random
-func randomFloat64(args ...int) float64 {
-	value := float64(randomNum(args...))
-
-	if len(args) > 2 {
-		fvalue := strconv.FormatFloat(value, 'f', args[2], 64)
-		value, _ = strconv.ParseFloat(fvalue, 64)
-	}
-
-	return value
-}
-
-// true/false
-func randomBool() bool {
-	value := randomIntn(2)
-	return value == 1
 }

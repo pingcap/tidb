@@ -76,7 +76,6 @@ func (builder *RequestBuilder) SetTableHandles(tid int64, handles []int64) *Requ
 func (builder *RequestBuilder) SetDAGRequest(dag *tipb.DAGRequest) *RequestBuilder {
 	if builder.err == nil {
 		builder.Request.Tp = kv.ReqTypeDAG
-		builder.Request.StartTs = dag.StartTs
 		builder.Request.Data, builder.err = dag.Marshal()
 	}
 
@@ -87,7 +86,6 @@ func (builder *RequestBuilder) SetDAGRequest(dag *tipb.DAGRequest) *RequestBuild
 func (builder *RequestBuilder) SetAnalyzeRequest(ana *tipb.AnalyzeReq) *RequestBuilder {
 	if builder.err == nil {
 		builder.Request.Tp = kv.ReqTypeAnalyze
-		builder.Request.StartTs = ana.StartTs
 		builder.Request.Data, builder.err = ana.Marshal()
 		builder.Request.NotFillCache = true
 		builder.Request.IsolationLevel = kv.RC
@@ -101,7 +99,6 @@ func (builder *RequestBuilder) SetAnalyzeRequest(ana *tipb.AnalyzeReq) *RequestB
 func (builder *RequestBuilder) SetChecksumRequest(checksum *tipb.ChecksumRequest) *RequestBuilder {
 	if builder.err == nil {
 		builder.Request.Tp = kv.ReqTypeChecksum
-		builder.Request.StartTs = checksum.StartTs
 		builder.Request.Data, builder.err = checksum.Marshal()
 		builder.Request.NotFillCache = true
 	}
@@ -115,6 +112,12 @@ func (builder *RequestBuilder) SetKeyRanges(keyRanges []kv.KeyRange) *RequestBui
 	return builder
 }
 
+// SetStartTS sets "StartTS" for "kv.Request".
+func (builder *RequestBuilder) SetStartTS(startTS uint64) *RequestBuilder {
+	builder.Request.StartTs = startTS
+	return builder
+}
+
 // SetDesc sets "Desc" for "kv.Request".
 func (builder *RequestBuilder) SetDesc(desc bool) *RequestBuilder {
 	builder.Request.Desc = desc
@@ -124,6 +127,12 @@ func (builder *RequestBuilder) SetDesc(desc bool) *RequestBuilder {
 // SetKeepOrder sets "KeepOrder" for "kv.Request".
 func (builder *RequestBuilder) SetKeepOrder(order bool) *RequestBuilder {
 	builder.Request.KeepOrder = order
+	return builder
+}
+
+// SetStoreType sets "StoreType" for "kv.Request".
+func (builder *RequestBuilder) SetStoreType(storeType kv.StoreType) *RequestBuilder {
+	builder.Request.StoreType = storeType
 	return builder
 }
 
@@ -148,12 +157,13 @@ func (builder *RequestBuilder) getKVPriority(sv *variable.SessionVars) int {
 }
 
 // SetFromSessionVars sets the following fields for "kv.Request" from session variables:
-// "Concurrency", "IsolationLevel", "NotFillCache".
+// "Concurrency", "IsolationLevel", "NotFillCache", "ReplicaRead".
 func (builder *RequestBuilder) SetFromSessionVars(sv *variable.SessionVars) *RequestBuilder {
 	builder.Request.Concurrency = sv.DistSQLScanConcurrency
 	builder.Request.IsolationLevel = builder.getIsolationLevel()
 	builder.Request.NotFillCache = sv.StmtCtx.NotFillCache
 	builder.Request.Priority = builder.getKVPriority(sv)
+	builder.Request.ReplicaRead = sv.GetReplicaRead()
 	return builder
 }
 

@@ -18,10 +18,10 @@ import (
 	"math"
 	"time"
 
-	"github.com/cznic/mathutil"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/mathutil"
 )
 
 // calcFraction is used to calculate the fraction of the interval [lower, upper] that lies within the [lower, value]
@@ -237,8 +237,8 @@ func enumRangeValues(low, high types.Datum, lowExclude, highExclude bool) []type
 		return values
 	case types.KindMysqlDuration:
 		lowDur, highDur := low.GetMysqlDuration(), high.GetMysqlDuration()
-		fsp := mathutil.Max(lowDur.Fsp, highDur.Fsp)
-		stepSize := int64(math.Pow10(types.MaxFsp-fsp)) * int64(time.Microsecond)
+		fsp := mathutil.MaxInt8(lowDur.Fsp, highDur.Fsp)
+		stepSize := int64(math.Pow10(int(types.MaxFsp-fsp))) * int64(time.Microsecond)
 		lowDur.Duration = lowDur.Duration.Round(time.Duration(stepSize))
 		remaining := int64(highDur.Duration-lowDur.Duration)/stepSize + 1 - int64(exclude)
 		if remaining >= maxNumStep {
@@ -258,7 +258,7 @@ func enumRangeValues(low, high types.Datum, lowExclude, highExclude bool) []type
 		if lowTime.Type != highTime.Type {
 			return nil
 		}
-		fsp := mathutil.Max(lowTime.Fsp, highTime.Fsp)
+		fsp := mathutil.MaxInt8(lowTime.Fsp, highTime.Fsp)
 		var stepSize int64
 		sc := &stmtctx.StatementContext{TimeZone: time.UTC}
 		if lowTime.Type == mysql.TypeDate {
@@ -270,7 +270,7 @@ func enumRangeValues(low, high types.Datum, lowExclude, highExclude bool) []type
 			if err != nil {
 				return nil
 			}
-			stepSize = int64(math.Pow10(types.MaxFsp-fsp)) * int64(time.Microsecond)
+			stepSize = int64(math.Pow10(int(types.MaxFsp-fsp))) * int64(time.Microsecond)
 		}
 		remaining := int64(highTime.Sub(sc, &lowTime).Duration)/stepSize + 1 - int64(exclude)
 		if remaining >= maxNumStep {

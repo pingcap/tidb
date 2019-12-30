@@ -31,13 +31,16 @@ import (
 
 	"github.com/gorilla/mux"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/fn"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/printer"
-	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"github.com/soheilhy/cmux"
 	"github.com/tiancaiamao/appdash/traceapp"
 	"go.uber.org/zap"
 	static "sourcegraph.com/sourcegraph/appdash-data"
@@ -70,7 +73,7 @@ func (s *Server) startHTTPServer() {
 
 	router.HandleFunc("/status", s.handleStatus).Name("Status")
 	// HTTP path for prometheus.
-	router.Handle("/metrics", prometheus.Handler()).Name("Metrics")
+	router.Handle("/metrics", promhttp.Handler()).Name("Metrics")
 
 	// HTTP path for dump statistics.
 	router.Handle("/stats/dump/{db}/{table}", s.newStatsHandler()).Name("StatsDump")
@@ -88,11 +91,18 @@ func (s *Server) startHTTPServer() {
 	router.Handle("/ddl/history", ddlHistoryJobHandler{tikvHandlerTool}).Name("DDL_History")
 	router.Handle("/ddl/owner/resign", ddlResignOwnerHandler{tikvHandlerTool.Store.(kv.Storage)}).Name("DDL_Owner_Resign")
 
+	// HTTP path for get the TiDB config
+	router.Handle("/config", fn.Wrap(func() (*config.Config, error) {
+		return config.GetGlobalConfig(), nil
+	}))
+
 	// HTTP path for get server info.
 	router.Handle("/info", serverInfoHandler{tikvHandlerTool}).Name("Info")
 	router.Handle("/info/all", allServerInfoHandler{tikvHandlerTool}).Name("InfoALL")
 	// HTTP path for get db and table info that is related to the tableID.
 	router.Handle("/db-table/{tableID}", dbTableHandler{tikvHandlerTool})
+	// HTTP path for get table tiflash replica info.
+	router.Handle("/tiflash/replica", flashReplicaHandler{tikvHandlerTool})
 
 	if s.cfg.Store == "tikv" {
 		// HTTP path for tikv.
@@ -103,11 +113,14 @@ func (s *Server) startHTTPServer() {
 		router.Handle("/regions/meta", regionHandler{tikvHandlerTool}).Name("RegionsMeta")
 		router.Handle("/regions/hot", regionHandler{tikvHandlerTool}).Name("RegionHot")
 		router.Handle("/regions/{regionID}", regionHandler{tikvHandlerTool})
-		router.Handle("/mvcc/key/{db}/{table}/{handle}", mvccTxnHandler{tikvHandlerTool, opMvccGetByKey})
-		router.Handle("/mvcc/txn/{startTS}/{db}/{table}", mvccTxnHandler{tikvHandlerTool, opMvccGetByTxn})
-		router.Handle("/mvcc/hex/{hexKey}", mvccTxnHandler{tikvHandlerTool, opMvccGetByHex})
-		router.Handle("/mvcc/index/{db}/{table}/{index}/{handle}", mvccTxnHandler{tikvHandlerTool, opMvccGetByIdx})
 	}
+
+	// HTTP path for get MVCC info
+	router.Handle("/mvcc/key/{db}/{table}/{handle}", mvccTxnHandler{tikvHandlerTool, opMvccGetByKey})
+	router.Handle("/mvcc/txn/{startTS}/{db}/{table}", mvccTxnHandler{tikvHandlerTool, opMvccGetByTxn})
+	router.Handle("/mvcc/hex/{hexKey}", mvccTxnHandler{tikvHandlerTool, opMvccGetByHex})
+	router.Handle("/mvcc/index/{db}/{table}/{index}/{handle}", mvccTxnHandler{tikvHandlerTool, opMvccGetByIdx})
+
 	addr := fmt.Sprintf("%s:%d", s.cfg.Status.StatusHost, s.cfg.Status.StatusPort)
 	if s.cfg.Status.StatusPort == 0 {
 		addr = fmt.Sprintf("%s:%d", s.cfg.Status.StatusHost, defaultStatusPort)
@@ -244,23 +257,50 @@ func (s *Server) startHTTPServer() {
 	httpRouterPage.WriteString("<tr><td><a href='/debug/pprof/'>Debug</a><td></tr>")
 	httpRouterPage.WriteString("</table></body></html>")
 	router.HandleFunc("/", func(responseWriter http.ResponseWriter, request *http.Request) {
-		_, err = responseWriter.Write([]byte(httpRouterPage.String()))
+		_, err = responseWriter.Write(httpRouterPage.Bytes())
 		if err != nil {
 			logutil.BgLogger().Error("write HTTP index page failed", zap.Error(err))
 		}
 	})
 
 	logutil.BgLogger().Info("for status and metrics report", zap.String("listening on addr", addr))
-	s.statusServer = &http.Server{Addr: addr, Handler: CorsHandler{handler: serverMux, cfg: s.cfg}}
+	s.setupStatuServerAndRPCServer(addr, serverMux)
+}
 
-	if len(s.cfg.Security.ClusterSSLCA) != 0 {
-		err = s.statusServer.ListenAndServeTLS(s.cfg.Security.ClusterSSLCert, s.cfg.Security.ClusterSSLKey)
-	} else {
-		err = s.statusServer.ListenAndServe()
-	}
-
+func (s *Server) setupStatuServerAndRPCServer(addr string, serverMux *http.ServeMux) {
+	l, err := net.Listen("tcp", addr)
 	if err != nil {
 		logutil.BgLogger().Info("listen failed", zap.Error(err))
+		return
+	}
+	m := cmux.New(l)
+	// Match connections in order:
+	// First HTTP, and otherwise grpc.
+	httpL := m.Match(cmux.HTTP1Fast())
+	grpcL := m.Match(cmux.Any())
+
+	s.statusServer = &http.Server{Addr: addr, Handler: CorsHandler{handler: serverMux, cfg: s.cfg}}
+	s.grpcServer = NewRPCServer(s.cfg, s.dom, s)
+
+	go util.WithRecovery(func() {
+		err := s.grpcServer.Serve(grpcL)
+		logutil.BgLogger().Error("grpc server error", zap.Error(err))
+	}, nil)
+
+	if len(s.cfg.Security.ClusterSSLCA) != 0 {
+		go util.WithRecovery(func() {
+			err := s.statusServer.ServeTLS(httpL, s.cfg.Security.ClusterSSLCert, s.cfg.Security.ClusterSSLKey)
+			logutil.BgLogger().Error("http server error", zap.Error(err))
+		}, nil)
+	} else {
+		go util.WithRecovery(func() {
+			err := s.statusServer.Serve(httpL)
+			logutil.BgLogger().Error("http server error", zap.Error(err))
+		}, nil)
+	}
+	err = m.Serve()
+	if err != nil {
+		logutil.BgLogger().Error("start status/rpc server error", zap.Error(err))
 	}
 }
 

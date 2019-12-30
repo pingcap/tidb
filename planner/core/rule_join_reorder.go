@@ -144,10 +144,14 @@ func (s *baseSingleGroupJoinOrderSolver) makeBushyJoin(cartesianJoinGroup []Logi
 }
 
 func (s *baseSingleGroupJoinOrderSolver) newCartesianJoin(lChild, rChild LogicalPlan) *LogicalJoin {
+	offset := lChild.SelectBlockOffset()
+	if offset != rChild.SelectBlockOffset() {
+		offset = -1
+	}
 	join := LogicalJoin{
 		JoinType:  InnerJoin,
 		reordered: true,
-	}.Init(s.ctx)
+	}.Init(s.ctx, offset)
 	join.SetSchema(expression.MergeSchema(lChild.Schema(), rChild.Schema()))
 	join.SetChildren(lChild, rChild)
 	return join

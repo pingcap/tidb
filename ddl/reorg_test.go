@@ -36,7 +36,11 @@ func (s *testDDLSuite) TestReorg(c *C) {
 	store := testCreateStore(c, "test_reorg")
 	defer store.Close()
 
-	d := testNewDDL(context.Background(), nil, store, nil, nil, testLease)
+	d := newDDL(
+		context.Background(),
+		WithStore(store),
+		WithLease(testLease),
+	)
 	defer d.Stop()
 
 	time.Sleep(testLease)
@@ -85,13 +89,13 @@ func (s *testDDLSuite) TestReorg(c *C) {
 	rInfo := &reorgInfo{
 		Job: job,
 	}
-	err = d.generalWorker().runReorgJob(m, rInfo, d.lease, f)
+	err = d.generalWorker().runReorgJob(m, rInfo, nil, d.lease, f)
 	c.Assert(err, NotNil)
 
 	// The longest to wait for 5 seconds to make sure the function of f is returned.
 	for i := 0; i < 1000; i++ {
 		time.Sleep(5 * time.Millisecond)
-		err = d.generalWorker().runReorgJob(m, rInfo, d.lease, f)
+		err = d.generalWorker().runReorgJob(m, rInfo, nil, d.lease, f)
 		if err == nil {
 			c.Assert(job.RowCount, Equals, rowCount)
 			c.Assert(d.generalWorker().reorgCtx.rowCount, Equals, int64(0))
@@ -113,7 +117,7 @@ func (s *testDDLSuite) TestReorg(c *C) {
 	c.Assert(err, IsNil)
 
 	d.Stop()
-	err = d.generalWorker().runReorgJob(m, rInfo, d.lease, func() error {
+	err = d.generalWorker().runReorgJob(m, rInfo, nil, d.lease, func() error {
 		time.Sleep(4 * testLease)
 		return nil
 	})
@@ -159,14 +163,22 @@ func (s *testDDLSuite) TestReorgOwner(c *C) {
 	store := testCreateStore(c, "test_reorg_owner")
 	defer store.Close()
 
-	d1 := testNewDDL(context.Background(), nil, store, nil, nil, testLease)
+	d1 := newDDL(
+		context.Background(),
+		WithStore(store),
+		WithLease(testLease),
+	)
 	defer d1.Stop()
 
 	ctx := testNewContext(d1)
 
 	testCheckOwner(c, d1, true)
 
-	d2 := testNewDDL(context.Background(), nil, store, nil, nil, testLease)
+	d2 := newDDL(
+		context.Background(),
+		WithStore(store),
+		WithLease(testLease),
+	)
 	defer d2.Stop()
 
 	dbInfo := testSchemaInfo(c, d1, "test")

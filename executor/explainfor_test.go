@@ -67,7 +67,7 @@ func (s *testSuite) TestExplainFor(c *C) {
 	tkUser.Se.SetSessionManager(&mockSessionManager1{PS: ps})
 	tkRoot.MustQuery(fmt.Sprintf("explain for connection %d", tkRootProcess.ID)).Check(testkit.Rows(
 		"TableReader_5 10000.00 root data:TableScan_4",
-		"└─TableScan_4 10000.00 cop table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
+		"└─TableScan_4 10000.00 cop[tikv] table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
 	))
 	err := tkUser.ExecToErr(fmt.Sprintf("explain for connection %d", tkRootProcess.ID))
 	c.Check(core.ErrAccessDenied.Equal(err), IsTrue)
@@ -78,4 +78,34 @@ func (s *testSuite) TestExplainFor(c *C) {
 	ps = []*util.ProcessInfo{tkRootProcess}
 	tkRoot.Se.SetSessionManager(&mockSessionManager1{PS: ps})
 	tkRoot.MustExec(fmt.Sprintf("explain for connection %d", tkRootProcess.ID))
+}
+
+func (s *testSuite) TestIssue11124(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk2 := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists kankan1")
+	tk.MustExec("drop table if exists kankan2")
+	tk.MustExec("create table kankan1(id int, name text);")
+	tk.MustExec("create table kankan2(id int, h1 text);")
+	tk.MustExec("insert into kankan1 values(1, 'a'), (2, 'a');")
+	tk.MustExec("insert into kankan2 values(2, 'z');")
+	tk.MustQuery("select t1.id from kankan1 t1 left join kankan2 t2 on t1.id = t2.id where (case  when t1.name='b' then 'case2' when t1.name='a' then 'case1' else NULL end) = 'case1'")
+	tkRootProcess := tk.Se.ShowProcess()
+	ps := []*util.ProcessInfo{tkRootProcess}
+	tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
+	tk2.Se.SetSessionManager(&mockSessionManager1{PS: ps})
+
+	rs := tk.MustQuery("explain select t1.id from kankan1 t1 left join kankan2 t2 on t1.id = t2.id where (case  when t1.name='b' then 'case2' when t1.name='a' then 'case1' else NULL end) = 'case1'").Rows()
+	rs2 := tk2.MustQuery(fmt.Sprintf("explain for connection %d", tkRootProcess.ID)).Rows()
+	for i := range rs {
+		c.Assert(rs[i], DeepEquals, rs2[i])
+	}
+}
+
+func (s *testSuite) TestExplainMetricTable(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustQuery(fmt.Sprintf("desc select * from METRIC_SCHEMA.query_duration where time >= '2019-12-23 16:10:13' and time <= '2019-12-23 16:30:13' ")).Check(testkit.Rows(
+		"MemTableScan_5 10000.00 root PromQL:histogram_quantile(0.9, sum(rate(tidb_server_handle_query_duration_seconds_bucket{}[60s])) by (le)), start_time:2019-12-23 16:10:13, end_time:2019-12-23 16:30:13, step:1m0s"))
+	tk.MustQuery(fmt.Sprintf("desc select * from METRIC_SCHEMA.up where time >= '2019-12-23 16:10:13' and time <= '2019-12-23 16:30:13' ")).Check(testkit.Rows(
+		"MemTableScan_5 10000.00 root PromQL:up{}, start_time:2019-12-23 16:10:13, end_time:2019-12-23 16:30:13, step:1m0s"))
 }

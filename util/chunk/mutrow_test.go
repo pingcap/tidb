@@ -197,7 +197,7 @@ func BenchmarkMutRowShallowCopyPartialRow(b *testing.B) {
 
 func BenchmarkChunkAppendPartialRow(b *testing.B) {
 	b.ReportAllocs()
-	chk := newChunkWithInitCap(rowsNum, 0, 0, 8, 8, 16)
+	chk := newChunkWithInitCap(rowsNum, 0, 0, 8, 8, sizeTime)
 	row := MutRowFromValues("abc", "abcdefg", 123, 456, types.ZeroDatetime).ToRow()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {

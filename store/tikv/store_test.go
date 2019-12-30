@@ -23,7 +23,7 @@ import (
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/pdpb"
-	"github.com/pingcap/pd/client"
+	pd "github.com/pingcap/pd/client"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/mockoracle"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
@@ -168,14 +168,14 @@ func (c *mockPDClient) GetRegionByID(ctx context.Context, regionID uint64) (*met
 	return c.client.GetRegionByID(ctx, regionID)
 }
 
-func (c *mockPDClient) ScanRegions(ctx context.Context, startKey []byte, limit int) ([]*metapb.Region, []*metapb.Peer, error) {
+func (c *mockPDClient) ScanRegions(ctx context.Context, startKey []byte, endKey []byte, limit int) ([]*metapb.Region, []*metapb.Peer, error) {
 	c.RLock()
 	defer c.RUnlock()
 
 	if c.stop {
 		return nil, nil, errors.Trace(errStopped)
 	}
-	return c.client.ScanRegions(ctx, startKey, limit)
+	return c.client.ScanRegions(ctx, startKey, endKey, limit)
 }
 
 func (c *mockPDClient) GetStore(ctx context.Context, storeID uint64) (*metapb.Store, error) {
@@ -211,6 +211,8 @@ func (c *mockPDClient) ScatterRegion(ctx context.Context, regionID uint64) error
 func (c *mockPDClient) GetOperator(ctx context.Context, regionID uint64) (*pdpb.GetOperatorResponse, error) {
 	return &pdpb.GetOperatorResponse{Status: pdpb.OperatorStatus_SUCCESS}, nil
 }
+
+func (c *mockPDClient) GetLeaderAddr() string { return "mockpd" }
 
 type checkRequestClient struct {
 	Client

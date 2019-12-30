@@ -24,17 +24,19 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/parser/terror"
-	"github.com/pingcap/pd/client"
-	"github.com/pingcap/tidb/config"
+	pd "github.com/pingcap/pd/client"
 	"github.com/pingcap/tidb/ddl/util"
+	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
@@ -178,7 +180,7 @@ func (w *GCWorker) start(ctx context.Context, wg *sync.WaitGroup) {
 			w.lastFinish = time.Now()
 			if err != nil {
 				logutil.Logger(ctx).Error("[gc worker] runGCJob", zap.Error(err))
-				break
+				return
 			}
 		case <-ctx.Done():
 			logutil.Logger(ctx).Info("[gc worker] quit", zap.String("uuid", w.uuid))
@@ -320,6 +322,30 @@ func (w *GCWorker) checkPrepare(ctx context.Context) (bool, uint64, error) {
 	return true, oracle.ComposeTS(oracle.GetPhysical(*newSafePoint), 0), nil
 }
 
+// calculateNewSafePoint uses the current global transaction min start timestamp to calculate the new safe point.
+func (w *GCWorker) calSafePointByMinStartTS(safePoint time.Time) time.Time {
+	kvs, err := w.store.GetSafePointKV().GetWithPrefix(infosync.ServerMinStartTSPath)
+	if err != nil {
+		logutil.BgLogger().Warn("get all minStartTS failed", zap.Error(err))
+		return safePoint
+	}
+
+	safePointTS := variable.GoTimeToTS(safePoint)
+	for _, v := range kvs {
+		minStartTS, err := strconv.ParseUint(string(v.Value), 10, 64)
+		if err != nil {
+			logutil.BgLogger().Warn("parse minStartTS failed", zap.Error(err))
+			continue
+		}
+		if minStartTS < safePointTS {
+			safePointTS = minStartTS
+		}
+	}
+	safePoint = time.Unix(0, oracle.ExtractPhysical(safePointTS)*1e6)
+	logutil.BgLogger().Debug("calSafePointByMinStartTS", zap.Time("safePoint", safePoint))
+	return safePoint
+}
+
 func (w *GCWorker) getOracleTime() (time.Time, error) {
 	currentVer, err := w.store.CurrentVersion()
 	if err != nil {
@@ -419,23 +445,16 @@ func (w *GCWorker) checkGCInterval(now time.Time) (bool, error) {
 
 // validateGCLiftTime checks whether life time is small than min gc life time.
 func (w *GCWorker) validateGCLiftTime(lifeTime time.Duration) (time.Duration, error) {
-	minLifeTime := gcMinLifeTime
-	// max-txn-time-use value is less than gc_life_time - 10s.
-	maxTxnTime := time.Duration(config.GetGlobalConfig().TiKVClient.MaxTxnTimeUse+10) * time.Second
-	if minLifeTime < maxTxnTime {
-		minLifeTime = maxTxnTime
-	}
-
-	if lifeTime >= minLifeTime {
+	if lifeTime >= gcMinLifeTime {
 		return lifeTime, nil
 	}
 
 	logutil.BgLogger().Info("[gc worker] invalid gc life time",
 		zap.Duration("get gc life time", lifeTime),
-		zap.Duration("min gc life time", minLifeTime))
+		zap.Duration("min gc life time", gcMinLifeTime))
 
-	err := w.saveDuration(gcLifeTimeKey, minLifeTime)
-	return minLifeTime, err
+	err := w.saveDuration(gcLifeTimeKey, gcMinLifeTime)
+	return gcMinLifeTime, err
 }
 
 func (w *GCWorker) calculateNewSafePoint(now time.Time) (*time.Time, error) {
@@ -452,7 +471,7 @@ func (w *GCWorker) calculateNewSafePoint(now time.Time) (*time.Time, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	safePoint := now.Add(-*lifeTime)
+	safePoint := w.calSafePointByMinStartTS(now.Add(-*lifeTime))
 	// We should never decrease safePoint.
 	if lastSafePoint != nil && safePoint.Before(*lastSafePoint) {
 		logutil.BgLogger().Info("[gc worker] last safe point is later than current one."+
@@ -477,7 +496,7 @@ func (w *GCWorker) runGCJob(ctx context.Context, safePoint uint64, concurrency i
 		return errors.Trace(err)
 	}
 	// Save safe point to pd.
-	err = w.saveSafePoint(w.store.GetSafePointKV(), tikv.GcSavedSafePoint, safePoint)
+	err = w.saveSafePoint(w.store.GetSafePointKV(), safePoint)
 	if err != nil {
 		logutil.Logger(ctx).Error("[gc worker] failed to save safe point to PD",
 			zap.String("uuid", w.uuid),
@@ -560,8 +579,8 @@ func (w *GCWorker) deleteRanges(ctx context.Context, safePoint uint64, concurren
 		if err != nil {
 			logutil.Logger(ctx).Error("[gc worker] delete range failed on range",
 				zap.String("uuid", w.uuid),
-				zap.Binary("startKey", startKey),
-				zap.Binary("endKey", endKey),
+				zap.Stringer("startKey", startKey),
+				zap.Stringer("endKey", endKey),
 				zap.Error(err))
 			continue
 		}
@@ -572,8 +591,8 @@ func (w *GCWorker) deleteRanges(ctx context.Context, safePoint uint64, concurren
 		if err != nil {
 			logutil.Logger(ctx).Error("[gc worker] failed to mark delete range task done",
 				zap.String("uuid", w.uuid),
-				zap.Binary("startKey", startKey),
-				zap.Binary("endKey", endKey),
+				zap.Stringer("startKey", startKey),
+				zap.Stringer("endKey", endKey),
 				zap.Error(err))
 			metrics.GCUnsafeDestroyRangeFailuresCounterVec.WithLabelValues("save").Inc()
 		}
@@ -612,8 +631,8 @@ func (w *GCWorker) redoDeleteRanges(ctx context.Context, safePoint uint64, concu
 		if err != nil {
 			logutil.Logger(ctx).Error("[gc worker] redo-delete range failed on range",
 				zap.String("uuid", w.uuid),
-				zap.Binary("startKey", startKey),
-				zap.Binary("endKey", endKey),
+				zap.Stringer("startKey", startKey),
+				zap.Stringer("endKey", endKey),
 				zap.Error(err))
 			continue
 		}
@@ -624,8 +643,8 @@ func (w *GCWorker) redoDeleteRanges(ctx context.Context, safePoint uint64, concu
 		if err != nil {
 			logutil.Logger(ctx).Error("[gc worker] failed to remove delete_range_done record",
 				zap.String("uuid", w.uuid),
-				zap.Binary("startKey", startKey),
-				zap.Binary("endKey", endKey),
+				zap.Stringer("startKey", startKey),
+				zap.Stringer("endKey", endKey),
 				zap.Error(err))
 			metrics.GCUnsafeDestroyRangeFailuresCounterVec.WithLabelValues("save_redo").Inc()
 		}
@@ -816,14 +835,19 @@ func (w *GCWorker) resolveLocksForRange(ctx context.Context, safePoint uint64, s
 
 	var stat tikv.RangeTaskStat
 	key := startKey
+	bo := tikv.NewBackoffer(ctx, tikv.GcResolveLockMaxBackoff)
+	failpoint.Inject("setGcResolveMaxBackoff", func(v failpoint.Value) {
+		sleep := v.(int)
+		// cooperate with github.com/pingcap/tidb/store/tikv/invalidCacheAndRetry
+		ctx = context.WithValue(ctx, "injectedBackoff", struct{}{})
+		bo = tikv.NewBackoffer(ctx, sleep)
+	})
 	for {
 		select {
 		case <-ctx.Done():
 			return stat, errors.New("[gc worker] gc job canceled")
 		default:
 		}
-
-		bo := tikv.NewBackoffer(ctx, tikv.GcResolveLockMaxBackoff)
 
 		req.ScanLock().StartKey = key
 		loc, err := w.store.GetRegionCache().LocateKey(bo, key)
@@ -869,7 +893,6 @@ func (w *GCWorker) resolveLocksForRange(ctx context.Context, safePoint uint64, s
 			}
 			continue
 		}
-
 		if len(locks) < gcScanLockLimit {
 			stat.CompletedRegions++
 			key = loc.EndKey
@@ -885,6 +908,11 @@ func (w *GCWorker) resolveLocksForRange(ctx context.Context, safePoint uint64, s
 		if len(key) == 0 || (len(endKey) != 0 && bytes.Compare(key, endKey) >= 0) {
 			break
 		}
+		bo = tikv.NewBackoffer(ctx, tikv.GcResolveLockMaxBackoff)
+		failpoint.Inject("setGcResolveMaxBackoff", func(v failpoint.Value) {
+			sleep := v.(int)
+			bo = tikv.NewBackoffer(ctx, sleep)
+		})
 	}
 	return stat, nil
 }
@@ -1107,7 +1135,7 @@ func (w *GCWorker) checkLeader() (bool, error) {
 	return false, nil
 }
 
-func (w *GCWorker) saveSafePoint(kv tikv.SafePointKV, key string, t uint64) error {
+func (w *GCWorker) saveSafePoint(kv tikv.SafePointKV, t uint64) error {
 	s := strconv.FormatUint(t, 10)
 	err := kv.Put(tikv.GcSavedSafePoint, s)
 	if err != nil {
@@ -1231,7 +1259,7 @@ func RunGCJob(ctx context.Context, s tikv.Storage, safePoint uint64, identifier 
 		return errors.Errorf("[gc worker] gc concurrency should greater than 0, current concurrency: %v", concurrency)
 	}
 
-	err = gcWorker.saveSafePoint(gcWorker.store.GetSafePointKV(), tikv.GcSavedSafePoint, safePoint)
+	err = gcWorker.saveSafePoint(gcWorker.store.GetSafePointKV(), safePoint)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1261,7 +1289,7 @@ func RunDistributedGCJob(ctx context.Context, s tikv.Storage, pd pd.Client, safe
 	}
 
 	// Save safe point to pd.
-	err = gcWorker.saveSafePoint(gcWorker.store.GetSafePointKV(), tikv.GcSavedSafePoint, safePoint)
+	err = gcWorker.saveSafePoint(gcWorker.store.GetSafePointKV(), safePoint)
 	if err != nil {
 		return errors.Trace(err)
 	}

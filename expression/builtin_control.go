@@ -14,13 +14,13 @@
 package expression
 
 import (
-	"github.com/cznic/mathutil"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -37,6 +37,7 @@ var (
 	_ builtinFunc = &builtinCaseWhenStringSig{}
 	_ builtinFunc = &builtinCaseWhenTimeSig{}
 	_ builtinFunc = &builtinCaseWhenDurationSig{}
+	_ builtinFunc = &builtinCaseWhenJSONSig{}
 	_ builtinFunc = &builtinIfNullIntSig{}
 	_ builtinFunc = &builtinIfNullRealSig{}
 	_ builtinFunc = &builtinIfNullDecimalSig{}

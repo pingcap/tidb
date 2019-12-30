@@ -25,7 +25,7 @@ type FspTest struct{}
 
 func (s *FspTest) TestCheckFsp(c *C) {
 	c.Parallel()
-	obtained, err := CheckFsp(UnspecifiedFsp)
+	obtained, err := CheckFsp(int(UnspecifiedFsp))
 	c.Assert(obtained, Equals, DefaultFsp)
 	c.Assert(err, IsNil)
 
@@ -33,33 +33,33 @@ func (s *FspTest) TestCheckFsp(c *C) {
 	c.Assert(obtained, Equals, DefaultFsp)
 	c.Assert(err, ErrorMatches, "Invalid fsp -2019")
 
-	obtained, err = CheckFsp(MinFsp - 4294967296)
+	obtained, err = CheckFsp(int(MinFsp) - 4294967296)
 	c.Assert(obtained, Equals, DefaultFsp)
-	c.Assert(err, ErrorMatches, "Invalid fsp "+strconv.Itoa(MinFsp-4294967296))
+	c.Assert(err, ErrorMatches, "Invalid fsp "+strconv.Itoa(int(MinFsp)-4294967296))
 
 	// UnspecifiedFsp
 	obtained, err = CheckFsp(-1)
 	c.Assert(obtained, Equals, DefaultFsp)
 	c.Assert(err, IsNil)
 
-	obtained, err = CheckFsp(MaxFsp + 1)
+	obtained, err = CheckFsp(int(MaxFsp) + 1)
 	c.Assert(obtained, Equals, DefaultFsp)
-	c.Assert(err, ErrorMatches, "Invalid fsp "+strconv.Itoa(MaxFsp+1))
+	c.Assert(err, ErrorMatches, "Invalid fsp "+strconv.Itoa(int(MaxFsp)+1))
 
-	obtained, err = CheckFsp(MaxFsp + 2019)
+	obtained, err = CheckFsp(int(MaxFsp) + 2019)
 	c.Assert(obtained, Equals, DefaultFsp)
-	c.Assert(err, ErrorMatches, "Invalid fsp "+strconv.Itoa(MaxFsp+2019))
+	c.Assert(err, ErrorMatches, "Invalid fsp "+strconv.Itoa(int(MaxFsp)+2019))
 
-	obtained, err = CheckFsp(MaxFsp + 4294967296)
+	obtained, err = CheckFsp(int(MaxFsp) + 4294967296)
 	c.Assert(obtained, Equals, DefaultFsp)
-	c.Assert(err, ErrorMatches, "Invalid fsp "+strconv.Itoa(MaxFsp+4294967296))
+	c.Assert(err, ErrorMatches, "Invalid fsp "+strconv.Itoa(int(MaxFsp)+4294967296))
 
-	obtained, err = CheckFsp((MaxFsp + MinFsp) / 2)
+	obtained, err = CheckFsp(int(MaxFsp+MinFsp) / 2)
 	c.Assert(obtained, Equals, (MaxFsp+MinFsp)/2)
 	c.Assert(err, IsNil)
 
 	obtained, err = CheckFsp(5)
-	c.Assert(obtained, Equals, 5)
+	c.Assert(obtained, Equals, int8(5))
 	c.Assert(err, IsNil)
 }
 
@@ -70,7 +70,8 @@ func (s *FspTest) TestParseFrac(c *C) {
 	c.Assert(overflow, Equals, false)
 	c.Assert(err, IsNil)
 
-	obtained, overflow, err = ParseFrac("999", 200)
+	a := 200
+	obtained, overflow, err = ParseFrac("999", int8(a))
 	c.Assert(obtained, Equals, 0)
 	c.Assert(overflow, Equals, false)
 	c.Assert(err, ErrorMatches, "Invalid fsp .*")

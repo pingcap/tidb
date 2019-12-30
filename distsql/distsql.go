@@ -16,6 +16,7 @@ package distsql
 import (
 	"context"
 	"fmt"
+	"unsafe"
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
@@ -24,11 +25,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
-)
-
-// XAPI error codes.
-const (
-	codeInvalidResp = 1
+	"github.com/pingcap/tipb/go-tipb"
 )
 
 // Select sends a DAG request, returns SelectResult.
@@ -74,17 +71,20 @@ func Select(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request, fie
 			feedback:   fb,
 		}, nil
 	}
+	encodetype := tipb.EncodeType_TypeDefault
+	if canUseChunkRPC(sctx) {
+		encodetype = tipb.EncodeType_TypeChunk
+	}
 	return &selectResult{
 		label:      "dag",
 		resp:       resp,
-		results:    make(chan resultWithErr, kvReq.Concurrency),
-		closed:     make(chan struct{}),
 		rowLen:     len(fieldTypes),
 		fieldTypes: fieldTypes,
 		ctx:        sctx,
 		feedback:   fb,
 		sqlType:    label,
 		memTracker: kvReq.MemTracker,
+		encodeType: encodetype,
 	}, nil
 }
 
@@ -92,11 +92,12 @@ func Select(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request, fie
 // The difference from Select is that SelectWithRuntimeStats will set copPlanIDs into selectResult,
 // which can help selectResult to collect runtime stats.
 func SelectWithRuntimeStats(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request,
-	fieldTypes []*types.FieldType, fb *statistics.QueryFeedback, copPlanIDs []fmt.Stringer) (SelectResult, error) {
+	fieldTypes []*types.FieldType, fb *statistics.QueryFeedback, copPlanIDs []fmt.Stringer, rootPlanID fmt.Stringer) (SelectResult, error) {
 	sr, err := Select(ctx, sctx, kvReq, fieldTypes, fb)
 	if err == nil {
 		if selectResult, ok := sr.(*selectResult); ok {
 			selectResult.copPlanIDs = copPlanIDs
+			selectResult.rootPlanID = rootPlanID
 		}
 	}
 	return sr, err
@@ -114,12 +115,11 @@ func Analyze(ctx context.Context, client kv.Client, kvReq *kv.Request, vars *kv.
 		label = metrics.LblInternal
 	}
 	result := &selectResult{
-		label:    "analyze",
-		resp:     resp,
-		results:  make(chan resultWithErr, kvReq.Concurrency),
-		closed:   make(chan struct{}),
-		feedback: statistics.NewQueryFeedback(0, nil, 0, false),
-		sqlType:  label,
+		label:      "analyze",
+		resp:       resp,
+		feedback:   statistics.NewQueryFeedback(0, nil, 0, false),
+		sqlType:    label,
+		encodeType: tipb.EncodeType_TypeDefault,
 	}
 	return result, nil
 }
@@ -131,12 +131,70 @@ func Checksum(ctx context.Context, client kv.Client, kvReq *kv.Request, vars *kv
 		return nil, errors.New("client returns nil response")
 	}
 	result := &selectResult{
-		label:    "checksum",
-		resp:     resp,
-		results:  make(chan resultWithErr, kvReq.Concurrency),
-		closed:   make(chan struct{}),
-		feedback: statistics.NewQueryFeedback(0, nil, 0, false),
-		sqlType:  metrics.LblGeneral,
+		label:      "checksum",
+		resp:       resp,
+		feedback:   statistics.NewQueryFeedback(0, nil, 0, false),
+		sqlType:    metrics.LblGeneral,
+		encodeType: tipb.EncodeType_TypeDefault,
 	}
 	return result, nil
+}
+
+// SetEncodeType sets the encoding method for the DAGRequest. The supported encoding
+// methods are:
+// 1. TypeChunk: the result is encoded using the Chunk format, refer util/chunk/chunk.go
+// 2. TypeDefault: the result is encoded row by row
+func SetEncodeType(ctx sessionctx.Context, dagReq *tipb.DAGRequest) {
+	if canUseChunkRPC(ctx) {
+		dagReq.EncodeType = tipb.EncodeType_TypeChunk
+		setChunkMemoryLayout(dagReq)
+	} else {
+		dagReq.EncodeType = tipb.EncodeType_TypeDefault
+	}
+}
+
+func canUseChunkRPC(ctx sessionctx.Context) bool {
+	if !ctx.GetSessionVars().EnableChunkRPC {
+		return false
+	}
+	if ctx.GetSessionVars().EnableStreaming {
+		return false
+	}
+	if !checkAlignment() {
+		return false
+	}
+	return true
+}
+
+var supportedAlignment = !(unsafe.Sizeof(types.MysqlTime{}) != 16 ||
+	unsafe.Sizeof(types.Time{}) != 20 ||
+	unsafe.Sizeof(types.MyDecimal{}) != 40)
+
+// checkAlignment checks the alignment in current system environment.
+// The alignment is influenced by system, machine and Golang version.
+// Using this function can guarantee the alignment is we want.
+func checkAlignment() bool {
+	return supportedAlignment
+}
+
+var systemEndian tipb.Endian
+
+// setChunkMemoryLayout sets the chunk memory layout for the DAGRequest.
+func setChunkMemoryLayout(dagReq *tipb.DAGRequest) {
+	dagReq.ChunkMemoryLayout = &tipb.ChunkMemoryLayout{Endian: GetSystemEndian()}
+}
+
+// GetSystemEndian gets the system endian.
+func GetSystemEndian() tipb.Endian {
+	return systemEndian
+}
+
+func init() {
+	var i int = 0x0100
+	ptr := unsafe.Pointer(&i)
+	if 0x01 == *(*byte)(ptr) {
+		systemEndian = tipb.Endian_BigEndian
+	} else {
+		systemEndian = tipb.Endian_LittleEndian
+	}
 }

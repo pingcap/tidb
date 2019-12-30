@@ -59,7 +59,11 @@ func (s *testColumnChangeSuite) TearDownSuite(c *C) {
 }
 
 func (s *testColumnChangeSuite) TestColumnChange(c *C) {
-	d := testNewDDL(context.Background(), nil, s.store, nil, nil, testLease)
+	d := newDDL(
+		context.Background(),
+		WithStore(s.store),
+		WithLease(testLease),
+	)
 	defer d.Stop()
 	// create table t (c1 int, c2 int);
 	tblInfo := testTableInfo(c, d, "t", 2)
@@ -352,8 +356,8 @@ func getCurrentTable(d *ddl, schemaID, tableID int64) (table.Table, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	alloc := autoid.NewAllocator(d.store, schemaID, false)
-	tbl, err := table.TableFromMeta(alloc, tblInfo)
+	alloc := autoid.NewAllocator(d.store, schemaID, false, autoid.RowIDAllocType)
+	tbl, err := table.TableFromMeta(autoid.NewAllocators(alloc), tblInfo)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

@@ -47,8 +47,9 @@ type UpdateExec struct {
 	matched     uint64 // a counter of matched rows during update
 	// tblColPosInfos stores relationship between column ordinal to its table handle.
 	// the columns ordinals is present in ordinal range format, @see plannercore.TblColPosInfos
-	tblColPosInfos plannercore.TblColPosInfoSlice
-	evalBuffer     chunk.MutRow
+	tblColPosInfos            plannercore.TblColPosInfoSlice
+	evalBuffer                chunk.MutRow
+	allAssignmentsAreConstant bool
 }
 
 func (e *UpdateExec) exec(ctx context.Context, schema *expression.Schema) ([]types.Datum, error) {
@@ -165,7 +166,13 @@ func (e *UpdateExec) fetchChunkRows(ctx context.Context) error {
 	}
 	globalRowIdx := 0
 	chk := newFirstChunk(e.children[0])
-	e.evalBuffer = chunk.MutRowFromTypes(fields)
+	if !e.allAssignmentsAreConstant {
+		e.evalBuffer = chunk.MutRowFromTypes(fields)
+	}
+	composeFunc := e.fastComposeNewRow
+	if !e.allAssignmentsAreConstant {
+		composeFunc = e.composeNewRow
+	}
 	for {
 		err := Next(ctx, e.children[0], chk)
 		if err != nil {
@@ -175,11 +182,10 @@ func (e *UpdateExec) fetchChunkRows(ctx context.Context) error {
 		if chk.NumRows() == 0 {
 			break
 		}
-
 		for rowIdx := 0; rowIdx < chk.NumRows(); rowIdx++ {
 			chunkRow := chk.GetRow(rowIdx)
 			datumRow := chunkRow.GetDatumRow(fields)
-			newRow, err1 := e.composeNewRow(globalRowIdx, datumRow, colsInfo)
+			newRow, err1 := composeFunc(globalRowIdx, datumRow, colsInfo)
 			if err1 != nil {
 				return err1
 			}
@@ -208,6 +214,34 @@ func (e *UpdateExec) handleErr(colName model.CIStr, rowIdx int, err error) error
 	return err
 }
 
+func (e *UpdateExec) fastComposeNewRow(rowIdx int, oldRow []types.Datum, cols []*table.Column) ([]types.Datum, error) {
+	newRowData := types.CloneRow(oldRow)
+	for _, assign := range e.OrderedList {
+		handleIdx, handleFound := e.tblColPosInfos.FindHandle(assign.Col.Index)
+		if handleFound && e.canNotUpdate(oldRow[handleIdx]) {
+			continue
+		}
+
+		con := assign.Expr.(*expression.Constant)
+		val, err := con.Eval(emptyRow)
+		if err = e.handleErr(assign.ColName, rowIdx, err); err != nil {
+			return nil, err
+		}
+
+		// info of `_tidb_rowid` column is nil.
+		// No need to cast `_tidb_rowid` column value.
+		if cols[assign.Col.Index] != nil {
+			val, err = table.CastValue(e.ctx, val, cols[assign.Col.Index].ColumnInfo)
+			if err = e.handleErr(assign.ColName, rowIdx, err); err != nil {
+				return nil, err
+			}
+		}
+
+		newRowData[assign.Col.Index] = *val.Copy()
+	}
+	return newRowData, nil
+}
+
 func (e *UpdateExec) composeNewRow(rowIdx int, oldRow []types.Datum, cols []*table.Column) ([]types.Datum, error) {
 	newRowData := types.CloneRow(oldRow)
 	e.evalBuffer.SetDatums(newRowData...)
@@ -217,7 +251,7 @@ func (e *UpdateExec) composeNewRow(rowIdx int, oldRow []types.Datum, cols []*tab
 			continue
 		}
 		val, err := assign.Expr.Eval(e.evalBuffer.ToRow())
-		if err = e.handleErr(assign.Col.ColName, rowIdx, err); err != nil {
+		if err = e.handleErr(assign.ColName, rowIdx, err); err != nil {
 			return nil, err
 		}
 
@@ -225,7 +259,7 @@ func (e *UpdateExec) composeNewRow(rowIdx int, oldRow []types.Datum, cols []*tab
 		// No need to cast `_tidb_rowid` column value.
 		if cols[assign.Col.Index] != nil {
 			val, err = table.CastValue(e.ctx, val, cols[assign.Col.Index].ColumnInfo)
-			if err = e.handleErr(assign.Col.ColName, rowIdx, err); err != nil {
+			if err = e.handleErr(assign.ColName, rowIdx, err); err != nil {
 				return nil, err
 			}
 		}
@@ -250,7 +284,7 @@ func (e *UpdateExec) Open(ctx context.Context) error {
 func (e *UpdateExec) getUpdateColumns(ctx sessionctx.Context, schemaLen int) ([]bool, error) {
 	assignFlag := make([]bool, schemaLen)
 	for _, v := range e.OrderedList {
-		if !ctx.GetSessionVars().AllowWriteRowID && v.Col.ColName.L == model.ExtraHandleName.L {
+		if !ctx.GetSessionVars().AllowWriteRowID && v.Col.ID == model.ExtraHandleID {
 			return nil, errors.Errorf("insert, update and replace statements for _tidb_rowid are not supported.")
 		}
 		idx := v.Col.Index

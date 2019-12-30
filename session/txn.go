@@ -30,8 +30,8 @@ import (
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
-	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tipb/go-binlog"
 	"go.uber.org/zap"
 )
@@ -60,6 +60,11 @@ type TxnState struct {
 func (st *TxnState) init() {
 	st.buf = kv.NewMemDbBuffer(kv.DefaultTxnMembufCap)
 	st.mutations = make(map[int64]*binlog.TableMutation)
+}
+
+// Size implements the MemBuffer interface.
+func (st *TxnState) Size() int {
+	return st.buf.Size()
 }
 
 // Valid implements the kv.Transaction interface.
@@ -150,7 +155,6 @@ type dirtyTableOperation struct {
 	kind   int
 	tid    int64
 	handle int64
-	row    []types.Datum
 }
 
 var hasMockAutoIDRetry = int64(0)
@@ -294,7 +298,15 @@ func (st *TxnState) IterReverse(k kv.Key) (kv.Iterator, error) {
 }
 
 func (st *TxnState) cleanup() {
-	st.buf.Reset()
+	const sz4M = 4 << 20
+	if st.buf.Size() > sz4M {
+		// The memory footprint for the large transaction could be huge here.
+		// Each active session has its own buffer, we should free the buffer to
+		// avoid memory leak.
+		st.buf = kv.NewMemDbBuffer(kv.DefaultTxnMembufCap)
+	} else {
+		st.buf.Reset()
+	}
 	for key := range st.mutations {
 		delete(st.mutations, key)
 	}
@@ -303,7 +315,12 @@ func (st *TxnState) cleanup() {
 		for i := 0; i < len(st.dirtyTableOP); i++ {
 			st.dirtyTableOP[i] = empty
 		}
-		st.dirtyTableOP = st.dirtyTableOP[:0]
+		if len(st.dirtyTableOP) > 256 {
+			// Reduce memory footprint for the large transaction.
+			st.dirtyTableOP = nil
+		} else {
+			st.dirtyTableOP = st.dirtyTableOP[:0]
+		}
 	}
 }
 
@@ -335,7 +352,10 @@ func keyNeedToLock(k, v []byte) bool {
 		// only need to delete row key.
 		return k[10] == 'r'
 	}
-	isNonUniqueIndex := len(v) == 1 && v[0] == '0'
+	if tablecodec.IsUntouchedIndexKValue(k, v) {
+		return false
+	}
+	isNonUniqueIndex := tablecodec.IsIndexKey(k) && len(v) == 1
 	// Put row key and unique index need to lock.
 	return !isNonUniqueIndex
 }
@@ -365,30 +385,30 @@ func mergeToDirtyDB(dirtyDB *executor.DirtyDB, op dirtyTableOperation) {
 	dt := dirtyDB.GetDirtyTable(op.tid)
 	switch op.kind {
 	case table.DirtyTableAddRow:
-		dt.AddRow(op.handle, op.row)
+		dt.AddRow(op.handle)
 	case table.DirtyTableDeleteRow:
 		dt.DeleteRow(op.handle)
-	case table.DirtyTableTruncate:
-		dt.TruncateTable()
 	}
+}
+
+type txnFailFuture struct{}
+
+func (txnFailFuture) Wait() (uint64, error) {
+	return 0, errors.New("mock get timestamp fail")
 }
 
 // txnFuture is a promise, which promises to return a txn in future.
 type txnFuture struct {
 	future oracle.Future
 	store  kv.Storage
-
-	mockFail bool
 }
 
 func (tf *txnFuture) wait() (kv.Transaction, error) {
-	if tf.mockFail {
-		return nil, errors.New("mock get timestamp fail")
-	}
-
 	startTS, err := tf.future.Wait()
 	if err == nil {
 		return tf.store.BeginWithStartTS(startTS)
+	} else if _, ok := tf.future.(txnFailFuture); ok {
+		return nil, err
 	}
 
 	// It would retry get timestamp.
@@ -410,16 +430,17 @@ func (s *session) getTxnFuture(ctx context.Context) *txnFuture {
 		tsFuture = oracleStore.GetTimestampAsync(ctx)
 	}
 	ret := &txnFuture{future: tsFuture, store: s.store}
-	if x := ctx.Value("mockGetTSFail"); x != nil {
-		ret.mockFail = true
-	}
+	failpoint.InjectContext(ctx, "mockGetTSFail", func() {
+		ret.future = txnFailFuture{}
+	})
 	return ret
 }
 
 // StmtCommit implements the sessionctx.Context interface.
-func (s *session) StmtCommit() error {
+func (s *session) StmtCommit(memTracker *memory.Tracker) error {
 	defer s.txn.cleanup()
 	st := &s.txn
+	txnSize := st.Transaction.Size()
 	var count int
 	err := kv.WalkMemBuffer(st.buf, func(k kv.Key, v []byte) error {
 		failpoint.Inject("mockStmtCommitError", func(val failpoint.Value) {
@@ -439,8 +460,10 @@ func (s *session) StmtCommit() error {
 	})
 	if err != nil {
 		st.doNotCommit = err
-		st.ConfirmAssertions(false)
 		return err
+	}
+	if memTracker != nil {
+		memTracker.Consume(int64(st.Transaction.Size() - txnSize))
 	}
 
 	// Need to flush binlog.
@@ -455,15 +478,12 @@ func (s *session) StmtCommit() error {
 			mergeToDirtyDB(dirtyDB, op)
 		}
 	}
-	st.ConfirmAssertions(true)
 	return nil
 }
 
 // StmtRollback implements the sessionctx.Context interface.
 func (s *session) StmtRollback() {
 	s.txn.cleanup()
-	s.txn.ConfirmAssertions(false)
-	return
 }
 
 // StmtGetMutation implements the sessionctx.Context interface.
@@ -475,6 +495,6 @@ func (s *session) StmtGetMutation(tableID int64) *binlog.TableMutation {
 	return st.mutations[tableID]
 }
 
-func (s *session) StmtAddDirtyTableOP(op int, tid int64, handle int64, row []types.Datum) {
-	s.txn.dirtyTableOP = append(s.txn.dirtyTableOP, dirtyTableOperation{op, tid, handle, row})
+func (s *session) StmtAddDirtyTableOP(op int, tid int64, handle int64) {
+	s.txn.dirtyTableOP = append(s.txn.dirtyTableOP, dirtyTableOperation{op, tid, handle})
 }

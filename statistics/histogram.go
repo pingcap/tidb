@@ -64,6 +64,7 @@ type Histogram struct {
 	// For some types like `Int`, we do not build it because we can get them directly from `Bounds`.
 	scalars []scalar
 	// TotColSize is the total column size for the histogram.
+	// For unfixed-len types, it includes LEN and BYTE.
 	TotColSize int64
 
 	// Correlation is the statistical correlation between physical row ordering and logical ordering of
@@ -138,6 +139,50 @@ func (c *Column) AvgColSize(count int64, isKey bool) float64 {
 	}
 	// Keep two decimal place.
 	return math.Round(float64(c.TotColSize)/float64(count)*100) / 100
+}
+
+// AvgColSizeChunkFormat is the average column size of the histogram. These sizes are derived from function `Encode`
+// and `DecodeToChunk`, so we need to update them if those 2 functions are changed.
+func (c *Column) AvgColSizeChunkFormat(count int64) float64 {
+	if count == 0 {
+		return 0
+	}
+	fixedLen := chunk.GetFixedLen(c.Histogram.Tp)
+	if fixedLen != -1 {
+		return float64(fixedLen)
+	}
+	// Keep two decimal place.
+	// Add 8 bytes for unfixed-len type's offsets.
+	// Minus Log2(avgSize) for unfixed-len type LEN.
+	avgSize := float64(c.TotColSize) / float64(count)
+	if avgSize < 1 {
+		return math.Round(avgSize*100)/100 + 8
+	}
+	return math.Round((avgSize-math.Log2(avgSize))*100)/100 + 8
+}
+
+// AvgColSizeListInDisk is the average column size of the histogram. These sizes are derived
+// from `chunk.ListInDisk` so we need to update them if those 2 functions are changed.
+func (c *Column) AvgColSizeListInDisk(count int64) float64 {
+	if count == 0 {
+		return 0
+	}
+	histCount := c.TotalRowCount()
+	notNullRatio := 1.0
+	if histCount > 0 {
+		notNullRatio = 1.0 - float64(c.NullCount)/histCount
+	}
+	size := chunk.GetFixedLen(c.Histogram.Tp)
+	if size != -1 {
+		return float64(size) * notNullRatio
+	}
+	// Keep two decimal place.
+	// Minus Log2(avgSize) for unfixed-len type LEN.
+	avgSize := float64(c.TotColSize) / float64(count)
+	if avgSize < 1 {
+		return math.Round((avgSize)*100) / 100
+	}
+	return math.Round((avgSize-math.Log2(avgSize))*100) / 100
 }
 
 // AppendBucket appends a bucket into `hg`.
@@ -226,9 +271,12 @@ func ValueToString(value *types.Datum, idxCols int) (string, error) {
 	if idxCols == 0 {
 		return value.ToString()
 	}
-	decodedVals, err := codec.DecodeRange(value.GetBytes(), idxCols)
-	if err != nil {
-		return "", errors.Trace(err)
+	// Ignore the error and treat remaining part that cannot decode successfully as bytes.
+	decodedVals, remained, err := codec.DecodeRange(value.GetBytes(), idxCols)
+	// Ignore err explicit to pass errcheck.
+	_ = err
+	if len(remained) > 0 {
+		decodedVals = append(decodedVals, types.NewBytesDatum(remained))
 	}
 	str, err := types.DatumsToString(decodedVals, true)
 	return str, err
@@ -361,7 +409,6 @@ func (hg *Histogram) mergeBuckets(bucketIdx int) {
 	}
 	hg.Bounds = c
 	hg.Buckets = hg.Buckets[:curBuck]
-	return
 }
 
 // GetIncreaseFactor will return a factor of data increasing after the last analysis.
@@ -431,12 +478,16 @@ func (hg *Histogram) typeMatch(ranges []*ranger.Range) bool {
 	return true
 }
 
-// SplitRange splits the range according to the histogram upper bound. Note that we treat last bucket's upper bound
-// as inf, so all the split Ranges will totally fall in one of the (-inf, u(0)], (u(0), u(1)],...(u(n-3), u(n-2)],
-// (u(n-2), +inf), where n is the number of buckets, u(i) is the i-th bucket's upper bound.
+// SplitRange splits the range according to the histogram lower bound. Note that we treat first bucket's lower bound
+// as -inf and last bucket's upper bound as +inf, so all the split ranges will totally fall in one of the (-inf, l(1)),
+// [l(1), l(2)),...[l(n-2), l(n-1)), [l(n-1), +inf), where n is the number of buckets, l(i) is the i-th bucket's lower bound.
 func (hg *Histogram) SplitRange(sc *stmtctx.StatementContext, oldRanges []*ranger.Range, encoded bool) ([]*ranger.Range, bool) {
 	if !hg.typeMatch(oldRanges) {
 		return oldRanges, false
+	}
+	// Treat the only buckets as (-inf, +inf), so we do not need split it.
+	if hg.Len() == 1 {
+		return oldRanges, true
 	}
 	ranges := make([]*ranger.Range, 0, len(oldRanges))
 	for _, ran := range oldRanges {
@@ -444,28 +495,26 @@ func (hg *Histogram) SplitRange(sc *stmtctx.StatementContext, oldRanges []*range
 	}
 	split := make([]*ranger.Range, 0, len(ranges))
 	for len(ranges) > 0 {
-		// Find the last bound that greater or equal to the LowVal.
+		// Find the first bound that greater than the LowVal.
 		idx := hg.Bounds.UpperBound(0, &ranges[0].LowVal[0])
-		if !ranges[0].LowExclude && idx > 0 {
-			cmp := chunk.Compare(hg.Bounds.GetRow(idx-1), 0, &ranges[0].LowVal[0])
-			if cmp == 0 {
-				idx--
-			}
-		}
-		// Treat last bucket's upper bound as inf, so we do not need split any more.
-		if idx >= hg.Bounds.NumRows()-2 {
+		// Treat last bucket's upper bound as +inf, so we do not need split any more.
+		if idx >= hg.Bounds.NumRows()-1 {
 			split = append(split, ranges...)
 			break
 		}
-		// Get the corresponding upper bound.
-		if idx%2 == 0 {
+		// Treat first buckets's lower bound as -inf, just increase it to the next lower bound.
+		if idx == 0 {
+			idx = 2
+		}
+		// Get the next lower bound.
+		if idx%2 == 1 {
 			idx++
 		}
-		upperBound := hg.Bounds.GetRow(idx)
+		lowerBound := hg.Bounds.GetRow(idx)
 		var i int
-		// Find the first range that need to be split by the upper bound.
+		// Find the first range that need to be split by the lower bound.
 		for ; i < len(ranges); i++ {
-			if chunk.Compare(upperBound, 0, &ranges[i].HighVal[0]) < 0 {
+			if chunk.Compare(lowerBound, 0, &ranges[i].HighVal[0]) <= 0 {
 				break
 			}
 		}
@@ -474,17 +523,20 @@ func (hg *Histogram) SplitRange(sc *stmtctx.StatementContext, oldRanges []*range
 		if len(ranges) == 0 {
 			break
 		}
-		// Split according to the upper bound.
-		cmp := chunk.Compare(upperBound, 0, &ranges[0].LowVal[0])
-		if cmp > 0 || (cmp == 0 && !ranges[0].LowExclude) {
-			upper := upperBound.GetDatum(0, hg.Tp)
-			split = append(split, &ranger.Range{
+		// Split according to the lower bound.
+		cmp := chunk.Compare(lowerBound, 0, &ranges[0].LowVal[0])
+		if cmp > 0 {
+			lower := lowerBound.GetDatum(0, hg.Tp)
+			newRange := &ranger.Range{
 				LowExclude:  ranges[0].LowExclude,
 				LowVal:      []types.Datum{ranges[0].LowVal[0]},
-				HighVal:     []types.Datum{upper},
-				HighExclude: false})
-			ranges[0].LowVal[0] = upper
-			ranges[0].LowExclude = true
+				HighVal:     []types.Datum{lower},
+				HighExclude: true}
+			if validRange(sc, newRange, encoded) {
+				split = append(split, newRange)
+			}
+			ranges[0].LowVal[0] = lower
+			ranges[0].LowExclude = false
 			if !validRange(sc, ranges[0], encoded) {
 				ranges = ranges[1:]
 			}
@@ -616,9 +668,7 @@ func (hg *Histogram) Copy() *Histogram {
 	newHist := *hg
 	newHist.Bounds = hg.Bounds.CopyConstruct()
 	newHist.Buckets = make([]Bucket, 0, len(hg.Buckets))
-	for _, bkt := range hg.Buckets {
-		newHist.Buckets = append(newHist.Buckets, bkt)
-	}
+	newHist.Buckets = append(newHist.Buckets, hg.Buckets...)
 	return &newHist
 }
 
@@ -723,7 +773,7 @@ func (c *Column) equalRowCount(sc *stmtctx.StatementContext, val types.Datum, mo
 }
 
 // GetColumnRowCount estimates the row count by a slice of Range.
-func (c *Column) GetColumnRowCount(sc *stmtctx.StatementContext, ranges []*ranger.Range, modifyCount int64) (float64, error) {
+func (c *Column) GetColumnRowCount(sc *stmtctx.StatementContext, ranges []*ranger.Range, modifyCount int64, pkIsHandle bool) (float64, error) {
 	var rowCount float64
 	for _, rg := range ranges {
 		cmp, err := rg.LowVal[0].CompareDatum(sc, &rg.HighVal[0])
@@ -733,6 +783,11 @@ func (c *Column) GetColumnRowCount(sc *stmtctx.StatementContext, ranges []*range
 		if cmp == 0 {
 			// the point case.
 			if !rg.LowExclude && !rg.HighExclude {
+				// In this case, the row count is at most 1.
+				if pkIsHandle {
+					rowCount += 1
+					continue
+				}
 				var cnt float64
 				cnt, err = c.equalRowCount(sc, rg.LowVal[0], modifyCount)
 				if err != nil {
@@ -847,6 +902,11 @@ func (idx *Index) GetRowCount(sc *stmtctx.StatementContext, indexRanges []*range
 				continue
 			}
 			if fullLen {
+				// At most 1 in this case.
+				if idx.Info.Unique {
+					totalCount += 1
+					continue
+				}
 				count, err := idx.equalRowCount(sc, lb, modifyCount)
 				if err != nil {
 					return 0, err
@@ -988,7 +1048,8 @@ func (coll *HistColl) NewHistCollBySelectivity(sc *stmtctx.StatementContext, sta
 			}
 			newIdxHist, err := idxHist.newIndexBySelectivity(sc, node)
 			if err != nil {
-				logutil.BgLogger().Warn("[Histogram-in-plan]: error happened when calculating row count, failed to build histogram for index %v of table %v",
+				logutil.BgLogger().Warn("[Histogram-in-plan]: something wrong happened when calculating row count, "+
+					"failed to build histogram for index %v of table %v",
 					zap.String("index", idxHist.Info.Name.O), zap.String("table", idxHist.Info.Table.O), zap.Error(err))
 				continue
 			}
@@ -1030,7 +1091,8 @@ func (coll *HistColl) NewHistCollBySelectivity(sc *stmtctx.StatementContext, sta
 			err = newHistogramBySelectivity(sc, node.ID, &oldCol.Histogram, &newCol.Histogram, splitRanges, coll.GetRowCountByColumnRanges)
 		}
 		if err != nil {
-			logutil.BgLogger().Warn("[Histogram-in-plan]: error happened when calculating row count", zap.Error(err))
+			logutil.BgLogger().Warn("[Histogram-in-plan]: something wrong happened when calculating row count",
+				zap.Error(err))
 			continue
 		}
 		newColl.Columns[node.ID] = newCol

@@ -22,7 +22,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/cznic/mathutil"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
@@ -31,21 +30,26 @@ import (
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/meta/autoid"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/stringutil"
 	"go.uber.org/zap"
@@ -53,10 +57,15 @@ import (
 
 var (
 	_ Executor = &baseExecutor{}
+	_ Executor = &CheckIndexExec{}
 	_ Executor = &CheckTableExec{}
 	_ Executor = &HashAggExec{}
+	_ Executor = &HashJoinExec{}
+	_ Executor = &IndexLookUpExecutor{}
+	_ Executor = &IndexReaderExecutor{}
 	_ Executor = &LimitExec{}
 	_ Executor = &MaxOneRowExec{}
+	_ Executor = &MergeJoinExec{}
 	_ Executor = &ProjectionExec{}
 	_ Executor = &SelectionExec{}
 	_ Executor = &SelectLockExec{}
@@ -67,13 +76,10 @@ var (
 	_ Executor = &SortExec{}
 	_ Executor = &StreamAggExec{}
 	_ Executor = &TableDualExec{}
+	_ Executor = &TableReaderExecutor{}
 	_ Executor = &TableScanExec{}
 	_ Executor = &TopNExec{}
 	_ Executor = &UnionExec{}
-	_ Executor = &CheckIndexExec{}
-	_ Executor = &HashJoinExec{}
-	_ Executor = &IndexLookUpExecutor{}
-	_ Executor = &MergeJoinExec{}
 )
 
 type baseExecutor struct {
@@ -126,6 +132,12 @@ func (e *baseExecutor) Schema() *expression.Schema {
 func newFirstChunk(e Executor) *chunk.Chunk {
 	base := e.base()
 	return chunk.New(base.retFieldTypes, base.initCap, base.maxChunkSize)
+}
+
+// newList creates a new List to buffer current executor's result.
+func newList(e Executor) *chunk.List {
+	base := e.base()
+	return chunk.NewList(base.retFieldTypes, base.initCap, base.maxChunkSize)
 }
 
 // retTypes returns all output column types.
@@ -253,7 +265,7 @@ func (e *ShowNextRowIDExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			break
 		}
 	}
-	nextGlobalID, err := tbl.Allocator(e.ctx).NextGlobalAutoID(tbl.Meta().ID)
+	nextGlobalID, err := tbl.Allocator(e.ctx, autoid.RowIDAllocType).NextGlobalAutoID(tbl.Meta().ID)
 	if err != nil {
 		return err
 	}
@@ -294,8 +306,7 @@ func (e *ShowDDLExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		}
 	}
 
-	do := domain.GetDomain(e.ctx)
-	serverInfo, err := do.InfoSyncer().GetServerInfoByID(ctx, e.ddlOwnerID)
+	serverInfo, err := infosync.GetServerInfoByID(ctx, e.ddlOwnerID)
 	if err != nil {
 		return err
 	}
@@ -477,14 +488,14 @@ func getTableName(is infoschema.InfoSchema, id int64) string {
 type CheckTableExec struct {
 	baseExecutor
 
-	dbName  string
-	tblInfo *model.TableInfo
-	indices []table.Index
-	srcs    []*IndexLookUpExecutor
-	done    bool
-	is      infoschema.InfoSchema
-	exitCh  chan struct{}
-	retCh   chan error
+	dbName     string
+	table      table.Table
+	indexInfos []*model.IndexInfo
+	srcs       []*IndexLookUpExecutor
+	done       bool
+	is         infoschema.InfoSchema
+	exitCh     chan struct{}
+	retCh      chan error
 }
 
 // Open implements the Executor Open interface.
@@ -512,7 +523,20 @@ func (e *CheckTableExec) Close() error {
 	return firstErr
 }
 
-func (e *CheckTableExec) checkIndexHandle(ctx context.Context, num int, src *IndexLookUpExecutor) error {
+func (e *CheckTableExec) checkTableIndexHandle(ctx context.Context, idxInfo *model.IndexInfo) error {
+	// For partition table, there will be multi same index indexLookUpReaders on different partitions.
+	for _, src := range e.srcs {
+		if src.index.Name.L == idxInfo.Name.L {
+			err := e.checkIndexHandle(ctx, src)
+			if err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func (e *CheckTableExec) checkIndexHandle(ctx context.Context, src *IndexLookUpExecutor) error {
 	cols := src.schema.Columns
 	retFieldTypes := make([]*types.FieldType, len(cols))
 	for i := range cols {
@@ -522,7 +546,7 @@ func (e *CheckTableExec) checkIndexHandle(ctx context.Context, num int, src *Ind
 
 	var err error
 	for {
-		err = src.Next(ctx, chk)
+		err = Next(ctx, src, chk)
 		if err != nil {
 			break
 		}
@@ -553,20 +577,19 @@ func (e *CheckTableExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 	defer func() { e.done = true }()
 
-	idxNames := make([]string, 0, len(e.indices))
-	for _, idx := range e.indices {
-		idxNames = append(idxNames, idx.Meta().Name.O)
+	idxNames := make([]string, 0, len(e.indexInfos))
+	for _, idx := range e.indexInfos {
+		idxNames = append(idxNames, idx.Name.O)
 	}
-	greater, idxOffset, err := admin.CheckIndicesCount(e.ctx, e.dbName, e.tblInfo.Name.O, idxNames)
+	greater, idxOffset, err := admin.CheckIndicesCount(e.ctx, e.dbName, e.table.Meta().Name.O, idxNames)
 	if err != nil {
-		tbl := e.srcs[idxOffset].table
 		if greater == admin.IdxCntGreater {
-			err = e.checkIndexHandle(ctx, idxOffset, e.srcs[idxOffset])
+			err = e.checkTableIndexHandle(ctx, e.indexInfos[idxOffset])
 		} else if greater == admin.TblCntGreater {
-			err = e.checkTableRecord(tbl, idxOffset)
+			err = e.checkTableRecord(idxOffset)
 		}
 		if err != nil && admin.ErrDataInConsistent.Equal(err) {
-			return ErrAdminCheckTable.GenWithStack("%v err:%v", tbl.Meta().Name, err)
+			return ErrAdminCheckTable.GenWithStack("%v err:%v", e.table.Meta().Name, err)
 		}
 		return errors.Trace(err)
 	}
@@ -580,7 +603,7 @@ func (e *CheckTableExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		go func(num int) {
 			defer wg.Done()
 			util.WithRecovery(func() {
-				err1 := e.checkIndexHandle(ctx, num, e.srcs[num])
+				err1 := e.checkIndexHandle(ctx, e.srcs[num])
 				if err1 != nil {
 					logutil.Logger(ctx).Info("check index handle failed", zap.Error(err))
 				}
@@ -601,21 +624,24 @@ func (e *CheckTableExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	return nil
 }
 
-func (e *CheckTableExec) checkTableRecord(tbl table.Table, idxOffset int) error {
-	idx := e.indices[idxOffset]
+func (e *CheckTableExec) checkTableRecord(idxOffset int) error {
+	idxInfo := e.indexInfos[idxOffset]
+	// TODO: Fix me later, can not use genExprs in indexLookUpReader, because the schema of expression is different.
 	genExprs := e.srcs[idxOffset].genExprs
 	txn, err := e.ctx.Txn(true)
 	if err != nil {
 		return err
 	}
-	if tbl.Meta().GetPartitionInfo() == nil {
-		return admin.CheckRecordAndIndex(e.ctx, txn, tbl, idx, genExprs)
+	if e.table.Meta().GetPartitionInfo() == nil {
+		idx := tables.NewIndex(e.table.Meta().ID, e.table.Meta(), idxInfo)
+		return admin.CheckRecordAndIndex(e.ctx, txn, e.table, idx, genExprs)
 	}
 
-	info := tbl.Meta().GetPartitionInfo()
+	info := e.table.Meta().GetPartitionInfo()
 	for _, def := range info.Definitions {
 		pid := def.ID
-		partition := tbl.(table.PartitionedTable).GetPartition(pid)
+		partition := e.table.(table.PartitionedTable).GetPartition(pid)
+		idx := tables.NewIndex(def.ID, e.table.Meta(), idxInfo)
 		if err := admin.CheckRecordAndIndex(e.ctx, txn, partition, idx, genExprs); err != nil {
 			return errors.Trace(err)
 		}
@@ -728,7 +754,7 @@ func (e *ShowSlowExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		req.AppendString(7, slow.User)
 		req.AppendString(8, slow.DB)
 		req.AppendString(9, slow.TableIDs)
-		req.AppendString(10, slow.IndexIDs)
+		req.AppendString(10, slow.IndexNames)
 		if slow.Internal {
 			req.AppendInt64(11, 1)
 		} else {
@@ -751,6 +777,8 @@ type SelectLockExec struct {
 
 	Lock ast.SelectLockType
 	keys []kv.Key
+
+	tblID2Handle map[int64][]*expression.Column
 }
 
 // Open implements the Executor Open interface.
@@ -760,7 +788,7 @@ func (e *SelectLockExec) Open(ctx context.Context) error {
 	}
 
 	txnCtx := e.ctx.GetSessionVars().TxnCtx
-	for id := range e.Schema().TblID2Handle {
+	for id := range e.tblID2Handle {
 		// This operation is only for schema validator check.
 		txnCtx.UpdateDeltaForTable(id, 0, 0, map[int64]int64{})
 	}
@@ -775,12 +803,12 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		return err
 	}
 	// If there's no handle or it's not a `SELECT FOR UPDATE` statement.
-	if len(e.Schema().TblID2Handle) == 0 || e.Lock != ast.SelectLockForUpdate {
+	if len(e.tblID2Handle) == 0 || (e.Lock != ast.SelectLockForUpdate && e.Lock != ast.SelectLockForUpdateNoWait) {
 		return nil
 	}
 	if req.NumRows() != 0 {
 		iter := chunk.NewIterator4Chunk(req)
-		for id, cols := range e.Schema().TblID2Handle {
+		for id, cols := range e.tblID2Handle {
 			for _, col := range cols {
 				for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 					e.keys = append(e.keys, tablecodec.EncodeRowKeyWithHandle(id, row.GetInt64(col.Index)))
@@ -789,18 +817,36 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		}
 		return nil
 	}
-	return doLockKeys(ctx, e.ctx, e.keys...)
+	lockWaitTime := e.ctx.GetSessionVars().LockWaitTimeout
+	if e.Lock == ast.SelectLockForUpdateNoWait {
+		lockWaitTime = kv.LockNoWait
+	}
+	return doLockKeys(ctx, e.ctx, newLockCtx(e.ctx.GetSessionVars(), lockWaitTime), e.keys...)
 }
 
-func doLockKeys(ctx context.Context, se sessionctx.Context, keys ...kv.Key) error {
+func newLockCtx(seVars *variable.SessionVars, lockWaitTime int64) *kv.LockCtx {
+	return &kv.LockCtx{
+		Killed:                &seVars.Killed,
+		ForUpdateTS:           seVars.TxnCtx.GetForUpdateTS(),
+		LockWaitTime:          lockWaitTime,
+		WaitStartTime:         seVars.StmtCtx.GetLockWaitStartTime(),
+		PessimisticLockWaited: &seVars.StmtCtx.PessimisticLockWaited,
+		LockKeysDuration:      &seVars.StmtCtx.LockKeysDuration,
+	}
+}
+
+// doLockKeys is the main entry for pessimistic lock keys
+// waitTime means the lock operation will wait in milliseconds if target key is already
+// locked by others. used for (select for update nowait) situation
+// except 0 means alwaysWait 1 means nowait
+func doLockKeys(ctx context.Context, se sessionctx.Context, lockCtx *kv.LockCtx, keys ...kv.Key) error {
 	se.GetSessionVars().TxnCtx.ForUpdate = true
 	// Lock keys only once when finished fetching all results.
 	txn, err := se.Txn(true)
 	if err != nil {
 		return err
 	}
-	forUpdateTS := se.GetSessionVars().TxnCtx.GetForUpdateTS()
-	return txn.LockKeys(ctx, forUpdateTS, keys...)
+	return txn.LockKeys(ctx, lockCtx, keys...)
 }
 
 // LimitExec represents limit executor
@@ -918,7 +964,7 @@ func init() {
 		e := &executorBuilder{is: is, ctx: sctx}
 		exec := e.build(p)
 		if e.err != nil {
-			return rows, err
+			return rows, e.err
 		}
 		err = exec.Open(ctx)
 		defer terror.Call(exec.Close)
@@ -986,6 +1032,8 @@ type SelectionExec struct {
 	inputIter   *chunk.Iterator4Chunk
 	inputRow    chunk.Row
 	childResult *chunk.Chunk
+
+	memTracker *memory.Tracker
 }
 
 // Open implements the Executor Open interface.
@@ -993,7 +1041,10 @@ func (e *SelectionExec) Open(ctx context.Context) error {
 	if err := e.baseExecutor.Open(ctx); err != nil {
 		return err
 	}
+	e.memTracker = memory.NewTracker(e.id, -1)
+	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
 	e.childResult = newFirstChunk(e.children[0])
+	e.memTracker.Consume(e.childResult.MemoryUsage())
 	e.batched = expression.Vectorizable(e.filters)
 	if e.batched {
 		e.selected = make([]bool, 0, chunk.InitialCapacity)
@@ -1005,6 +1056,7 @@ func (e *SelectionExec) Open(ctx context.Context) error {
 
 // Close implements plannercore.Plan Close interface.
 func (e *SelectionExec) Close() error {
+	e.memTracker.Consume(-e.childResult.MemoryUsage())
 	e.childResult = nil
 	e.selected = nil
 	return e.baseExecutor.Close()
@@ -1028,7 +1080,9 @@ func (e *SelectionExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			}
 			req.AppendRow(e.inputRow)
 		}
+		mSize := e.childResult.MemoryUsage()
 		err := Next(ctx, e.children[0], e.childResult)
+		e.memTracker.Consume(e.childResult.MemoryUsage() - mSize)
 		if err != nil {
 			return err
 		}
@@ -1060,7 +1114,9 @@ func (e *SelectionExec) unBatchedNext(ctx context.Context, chk *chunk.Chunk) err
 				return nil
 			}
 		}
+		mSize := e.childResult.MemoryUsage()
 		err := Next(ctx, e.children[0], e.childResult)
+		e.memTracker.Consume(e.childResult.MemoryUsage() - mSize)
 		if err != nil {
 			return err
 		}
@@ -1364,13 +1420,105 @@ func (e *UnionExec) Close() error {
 	return e.baseExecutor.Close()
 }
 
+func extractStmtHintsFromStmtNode(stmtNode ast.StmtNode) []*ast.TableOptimizerHint {
+	switch x := stmtNode.(type) {
+	case *ast.SelectStmt:
+		return x.TableHints
+	case *ast.UpdateStmt:
+		return x.TableHints
+	case *ast.DeleteStmt:
+		return x.TableHints
+	// TODO: support hint for InsertStmt
+	case *ast.ExplainStmt:
+		return extractStmtHintsFromStmtNode(x.Stmt)
+	default:
+		return nil
+	}
+}
+
+func handleStmtHints(hints []*ast.TableOptimizerHint) (stmtHints stmtctx.StmtHints, warns []error) {
+	if len(hints) == 0 {
+		return
+	}
+	var memoryQuotaHint, useToJAHint *ast.TableOptimizerHint
+	var memoryQuotaHintCnt, useToJAHintCnt, noIndexMergeHintCnt, readReplicaHintCnt int
+	for _, hint := range hints {
+		switch hint.HintName.L {
+		case "memory_quota":
+			memoryQuotaHint = hint
+			memoryQuotaHintCnt++
+		case "use_toja":
+			useToJAHint = hint
+			useToJAHintCnt++
+		case "no_index_merge":
+			noIndexMergeHintCnt++
+		case "read_consistent_replica":
+			readReplicaHintCnt++
+		}
+	}
+	// Handle MEMORY_QUOTA
+	if memoryQuotaHintCnt != 0 {
+		if memoryQuotaHintCnt > 1 {
+			warn := errors.New("There are multiple MEMORY_QUOTA hints, only the last one will take effect")
+			warns = append(warns, warn)
+		}
+		// Executor use MemoryQuota <= 0 to indicate no memory limit, here use < 0 to handle hint syntax error.
+		if memoryQuotaHint.MemoryQuota < 0 {
+			warn := errors.New("The use of MEMORY_QUOTA hint is invalid, valid usage: MEMORY_QUOTA(10 MB) or MEMORY_QUOTA(10 GB)")
+			warns = append(warns, warn)
+		} else {
+			stmtHints.HasMemQuotaHint = true
+			stmtHints.MemQuotaQuery = memoryQuotaHint.MemoryQuota
+			if memoryQuotaHint.MemoryQuota == 0 {
+				warn := errors.New("Setting the MEMORY_QUOTA to 0 means no memory limit")
+				warns = append(warns, warn)
+			}
+		}
+	}
+	// Handle USE_TOJA
+	if useToJAHintCnt != 0 {
+		if useToJAHintCnt > 1 {
+			warn := errors.New("There are multiple USE_TOJA hints, only the last one will take effect")
+			warns = append(warns, warn)
+		}
+		stmtHints.HasAllowInSubqToJoinAndAggHint = true
+		stmtHints.AllowInSubqToJoinAndAgg = useToJAHint.HintFlag
+	}
+	// Handle NO_INDEX_MERGE
+	if noIndexMergeHintCnt != 0 {
+		if noIndexMergeHintCnt > 1 {
+			warn := errors.New("There are multiple NO_INDEX_MERGE hints, only the last one will take effect")
+			warns = append(warns, warn)
+		}
+		stmtHints.NoIndexMergeHint = true
+	}
+	// Handle READ_CONSISTENT_REPLICA
+	if readReplicaHintCnt != 0 {
+		if readReplicaHintCnt > 1 {
+			warn := errors.New("There are multiple READ_CONSISTENT_REPLICA hints, only the last one will take effect")
+			warns = append(warns, warn)
+		}
+		stmtHints.HasReplicaReadHint = true
+		stmtHints.ReplicaRead = byte(kv.ReplicaReadFollower)
+	}
+	return
+}
+
 // ResetContextOfStmt resets the StmtContext and session variables.
 // Before every execution, we must clear statement context.
 func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
+	hints := extractStmtHintsFromStmtNode(s)
+	stmtHints, hintWarns := handleStmtHints(hints)
 	vars := ctx.GetSessionVars()
+	memQuota := vars.MemQuotaQuery
+	if stmtHints.HasMemQuotaHint {
+		memQuota = stmtHints.MemQuotaQuery
+	}
 	sc := &stmtctx.StatementContext{
-		TimeZone:   vars.Location(),
-		MemTracker: memory.NewTracker(stringutil.MemoizeStr(s.Text), vars.MemQuotaQuery),
+		StmtHints:   stmtHints,
+		TimeZone:    vars.Location(),
+		MemTracker:  memory.NewTracker(stringutil.MemoizeStr(s.Text), memQuota),
+		DiskTracker: disk.NewTracker(stringutil.MemoizeStr(s.Text), -1),
 	}
 	switch config.GetGlobalConfig().OOMAction {
 	case config.OOMActionCancel:
@@ -1384,12 +1532,17 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		action.SetLogHook(domain.GetDomain(ctx).ExpensiveQueryHandle().LogOnQueryExceedMemQuota)
 		sc.MemTracker.SetActionOnExceed(action)
 	}
-
 	if execStmt, ok := s.(*ast.ExecuteStmt); ok {
 		s, err = getPreparedStmt(execStmt, vars)
 		if err != nil {
 			return
 		}
+	}
+	// execute missed stmtID uses empty sql
+	sc.OriginalSQL = s.Text()
+	if explainStmt, ok := s.(*ast.ExplainStmt); ok {
+		sc.InExplainStmt = true
+		s = explainStmt.Stmt
 	}
 	// TODO: Many same bool variables here.
 	// We should set only two variables (
@@ -1450,11 +1603,6 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 			sc.Priority = opts.Priority
 			sc.NotFillCache = !opts.SQLCache
 		}
-		sc.PadCharToFullLength = ctx.GetSessionVars().SQLMode.HasPadCharToFullLengthMode()
-		sc.CastStrToIntStrict = true
-	case *ast.ExplainStmt:
-		sc.InExplainStmt = true
-		sc.CastStrToIntStrict = true
 	case *ast.ShowStmt:
 		sc.IgnoreTruncate = true
 		sc.IgnoreZeroInDate = true
@@ -1473,10 +1621,8 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		sc.AllowInvalidDate = vars.SQLMode.HasAllowInvalidDatesMode()
 	}
 	vars.PreparedParams = vars.PreparedParams[:0]
-	if !vars.InRestrictedSQL {
-		if priority := mysql.PriorityEnum(atomic.LoadInt32(&variable.ForcePriority)); priority != mysql.NoPriority {
-			sc.Priority = priority
-		}
+	if priority := mysql.PriorityEnum(atomic.LoadInt32(&variable.ForcePriority)); priority != mysql.NoPriority {
+		sc.Priority = priority
 	}
 	if vars.StmtCtx.LastInsertID > 0 {
 		sc.PrevLastInsertID = vars.StmtCtx.LastInsertID
@@ -1490,16 +1636,11 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		sc.PrevAffectedRows = -1
 	}
 	errCount, warnCount := vars.StmtCtx.NumErrorWarnings()
-	err = vars.SetSystemVar("warning_count", warnCount)
-	if err != nil {
-		return err
-	}
-	err = vars.SetSystemVar("error_count", errCount)
-	if err != nil {
-		return err
-	}
-	// execute missed stmtID uses empty sql
-	sc.OriginalSQL = s.Text()
+	vars.SysErrorCount = errCount
+	vars.SysWarningCount = warnCount
 	vars.StmtCtx = sc
+	for _, warn := range hintWarns {
+		vars.StmtCtx.AppendWarning(warn)
+	}
 	return
 }

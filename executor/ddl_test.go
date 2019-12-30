@@ -17,6 +17,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -29,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/ddl"
 	ddlutil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
@@ -42,7 +44,7 @@ import (
 	"github.com/pingcap/tidb/util/testutil"
 )
 
-func (s *testSuite3) TestTruncateTable(c *C) {
+func (s *testSuite6) TestTruncateTable(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec(`drop table if exists truncate_test;`)
@@ -59,7 +61,7 @@ func (s *testSuite3) TestTruncateTable(c *C) {
 //  1. Execute the SQL of "begin";
 //  2. A SQL that will fail to execute;
 //  3. Execute DDL.
-func (s *testSuite3) TestInTxnExecDDLFail(c *C) {
+func (s *testSuite6) TestInTxnExecDDLFail(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (i int key);")
@@ -72,7 +74,7 @@ func (s *testSuite3) TestInTxnExecDDLFail(c *C) {
 	result.Check(testkit.Rows("1"))
 }
 
-func (s *testSuite3) TestCreateTable(c *C) {
+func (s *testSuite6) TestCreateTable(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	// Test create an exist database
@@ -173,7 +175,7 @@ func (s *testSuite3) TestCreateTable(c *C) {
 	r.Check(testkit.Rows("1000 aa"))
 }
 
-func (s *testSuite3) TestCreateView(c *C) {
+func (s *testSuite6) TestCreateView(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	//create an source table
@@ -224,9 +226,36 @@ func (s *testSuite3) TestCreateView(c *C) {
 	// create view using prepare
 	tk.MustExec(`prepare stmt from "create view v10 (x) as select 1";`)
 	tk.MustExec("execute stmt")
+
+	// create view on union
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("drop view if exists v")
+	_, err = tk.Exec("create view v as select * from t1 union select * from t2")
+	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableNotExists), IsTrue)
+	tk.MustExec("create table t1(a int, b int)")
+	tk.MustExec("create table t2(a int, b int)")
+	tk.MustExec("insert into t1 values(1,2), (1,1), (1,2)")
+	tk.MustExec("insert into t2 values(1,1),(1,3)")
+	tk.MustExec("create definer='root'@'localhost' view v as select * from t1 union select * from t2")
+	tk.MustQuery("select * from v").Sort().Check(testkit.Rows("1 1", "1 2", "1 3"))
+	tk.MustExec("alter table t1 drop column a")
+	_, err = tk.Exec("select * from v")
+	c.Assert(terror.ErrorEqual(err, plannercore.ErrViewInvalid), IsTrue)
+	tk.MustExec("alter table t1 add column a int")
+	tk.MustQuery("select * from v").Sort().Check(testkit.Rows("1 1", "1 3", "<nil> 1", "<nil> 2"))
+	tk.MustExec("alter table t1 drop column a")
+	tk.MustExec("alter table t2 drop column b")
+	_, err = tk.Exec("select * from v")
+	c.Assert(terror.ErrorEqual(err, plannercore.ErrViewInvalid), IsTrue)
+	tk.MustExec("drop view v")
+
+	tk.MustExec("create view v as (select * from t1)")
+	tk.MustExec("drop view v")
+	tk.MustExec("create view v as (select * from t1 union select * from t2)")
+	tk.MustExec("drop view v")
 }
 
-func (s *testSuite3) TestCreateDropDatabase(c *C) {
+func (s *testSuite6) TestCreateDropDatabase(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("create database if not exists drop_test;")
 	tk.MustExec("drop database if exists drop_test;")
@@ -242,7 +271,7 @@ func (s *testSuite3) TestCreateDropDatabase(c *C) {
 	c.Assert(err, NotNil)
 }
 
-func (s *testSuite3) TestCreateDropTable(c *C) {
+func (s *testSuite6) TestCreateDropTable(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table if not exists drop_test (a int)")
@@ -254,11 +283,15 @@ func (s *testSuite3) TestCreateDropTable(c *C) {
 	c.Assert(err, NotNil)
 }
 
-func (s *testSuite3) TestCreateDropView(c *C) {
+func (s *testSuite6) TestCreateDropView(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create or replace view drop_test as select 1,2")
-	_, err := tk.Exec("drop view if exists drop_test")
+
+	_, err := tk.Exec("drop table drop_test")
+	c.Assert(err.Error(), Equals, "[schema:1051]Unknown table 'test.drop_test'")
+
+	_, err = tk.Exec("drop view if exists drop_test")
 	c.Assert(err, IsNil)
 
 	_, err = tk.Exec("drop view mysql.gc_delete_range")
@@ -272,7 +305,7 @@ func (s *testSuite3) TestCreateDropView(c *C) {
 	c.Assert(err.Error(), Equals, "[ddl:1347]'test.t_v' is not VIEW")
 }
 
-func (s *testSuite3) TestCreateDropIndex(c *C) {
+func (s *testSuite6) TestCreateDropIndex(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table if not exists drop_test (a int)")
@@ -281,7 +314,7 @@ func (s *testSuite3) TestCreateDropIndex(c *C) {
 	tk.MustExec("drop table drop_test")
 }
 
-func (s *testSuite3) TestAlterTableAddColumn(c *C) {
+func (s *testSuite6) TestAlterTableAddColumn(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table if not exists alter_test (c1 int)")
@@ -306,7 +339,7 @@ func (s *testSuite3) TestAlterTableAddColumn(c *C) {
 	tk.MustExec("drop view alter_view")
 }
 
-func (s *testSuite3) TestAddNotNullColumnNoDefault(c *C) {
+func (s *testSuite6) TestAddNotNullColumnNoDefault(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table nn (c1 int)")
@@ -327,11 +360,11 @@ func (s *testSuite3) TestAddNotNullColumnNoDefault(c *C) {
 	tk.MustQuery("select * from nn").Check(testkit.Rows("1 0", "2 0", "3 0"))
 }
 
-func (s *testSuite3) TestAlterTableModifyColumn(c *C) {
+func (s *testSuite6) TestAlterTableModifyColumn(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists mc")
-	tk.MustExec("create table mc(c1 int, c2 varchar(10))")
+	tk.MustExec("create table mc(c1 int, c2 varchar(10), c3 bit)")
 	_, err := tk.Exec("alter table mc modify column c1 short")
 	c.Assert(err, NotNil)
 	tk.MustExec("alter table mc modify column c1 bigint")
@@ -344,9 +377,10 @@ func (s *testSuite3) TestAlterTableModifyColumn(c *C) {
 	tk.MustExec("alter table mc modify column c2 varchar(11)")
 	tk.MustExec("alter table mc modify column c2 text(13)")
 	tk.MustExec("alter table mc modify column c2 text")
+	tk.MustExec("alter table mc modify column c3 bit")
 	result := tk.MustQuery("show create table mc")
 	createSQL := result.Rows()[0][1]
-	expected := "CREATE TABLE `mc` (\n  `c1` bigint(20) DEFAULT NULL,\n  `c2` text DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
+	expected := "CREATE TABLE `mc` (\n  `c1` bigint(20) DEFAULT NULL,\n  `c2` text DEFAULT NULL,\n  `c3` bit(1) DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
 	c.Assert(createSQL, Equals, expected)
 	tk.MustExec("create or replace view alter_view as select c1,c2 from mc")
 	_, err = tk.Exec("alter table alter_view modify column c2 text")
@@ -391,7 +425,7 @@ func (s *testSuite3) TestAlterTableModifyColumn(c *C) {
 
 }
 
-func (s *testSuite3) TestDefaultDBAfterDropCurDB(c *C) {
+func (s *testSuite6) TestDefaultDBAfterDropCurDB(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
 	testSQL := `create database if not exists test_db CHARACTER SET latin1 COLLATE latin1_swedish_ci;`
@@ -410,67 +444,7 @@ func (s *testSuite3) TestDefaultDBAfterDropCurDB(c *C) {
 	tk.MustQuery(`select @@collation_database;`).Check(testkit.Rows("utf8_unicode_ci"))
 }
 
-func (s *testSuite3) TestRenameTable(c *C) {
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange", `return(true)`), IsNil)
-	defer func() {
-		c.Assert(failpoint.Disable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange"), IsNil)
-	}()
-	tk := testkit.NewTestKit(c, s.store)
-
-	tk.MustExec("create database rename1")
-	tk.MustExec("create database rename2")
-	tk.MustExec("create database rename3")
-	tk.MustExec("create table rename1.t (a int primary key auto_increment)")
-	tk.MustExec("insert rename1.t values ()")
-	tk.MustExec("rename table rename1.t to rename2.t")
-	// Make sure the drop old database doesn't affect the rename3.t's operations.
-	tk.MustExec("drop database rename1")
-	tk.MustExec("insert rename2.t values ()")
-	tk.MustExec("rename table rename2.t to rename3.t")
-	tk.MustExec("insert rename3.t values ()")
-	tk.MustQuery("select * from rename3.t").Check(testkit.Rows("1", "5001", "10001"))
-	// Make sure the drop old database doesn't affect the rename3.t's operations.
-	tk.MustExec("drop database rename2")
-	tk.MustExec("insert rename3.t values ()")
-	tk.MustQuery("select * from rename3.t").Check(testkit.Rows("1", "5001", "10001", "10002"))
-	tk.MustExec("drop database rename3")
-
-	tk.MustExec("create database rename1")
-	tk.MustExec("create database rename2")
-	tk.MustExec("create table rename1.t (a int primary key auto_increment)")
-	tk.MustExec("rename table rename1.t to rename2.t1")
-	tk.MustExec("insert rename2.t1 values ()")
-	result := tk.MustQuery("select * from rename2.t1")
-	result.Check(testkit.Rows("1"))
-	// Make sure the drop old database doesn't affect the t1's operations.
-	tk.MustExec("drop database rename1")
-	tk.MustExec("insert rename2.t1 values ()")
-	result = tk.MustQuery("select * from rename2.t1")
-	result.Check(testkit.Rows("1", "2"))
-	// Rename a table to another table in the same database.
-	tk.MustExec("rename table rename2.t1 to rename2.t2")
-	tk.MustExec("insert rename2.t2 values ()")
-	result = tk.MustQuery("select * from rename2.t2")
-	result.Check(testkit.Rows("1", "2", "5001"))
-	tk.MustExec("drop database rename2")
-
-	tk.MustExec("create database rename1")
-	tk.MustExec("create database rename2")
-	tk.MustExec("create table rename1.t (a int primary key auto_increment)")
-	tk.MustExec("insert rename1.t values ()")
-	tk.MustExec("rename table rename1.t to rename2.t1")
-	// Make sure the value is greater than autoid.step.
-	tk.MustExec("insert rename2.t1 values (100000)")
-	tk.MustExec("insert rename2.t1 values ()")
-	result = tk.MustQuery("select * from rename2.t1")
-	result.Check(testkit.Rows("1", "100000", "100001"))
-	_, err := tk.Exec("insert rename1.t values ()")
-	c.Assert(err, NotNil)
-	tk.MustExec("drop database rename1")
-	tk.MustExec("drop database rename2")
-}
-
-func (s *testSuite3) TestColumnCharsetAndCollate(c *C) {
+func (s *testSuite6) TestColumnCharsetAndCollate(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	dbName := "col_charset_collate"
 	tk.MustExec("create database " + dbName)
@@ -554,7 +528,7 @@ func (s *testSuite3) TestColumnCharsetAndCollate(c *C) {
 	tk.MustExec("drop database " + dbName)
 }
 
-func (s *testSuite3) TestTooLargeIdentifierLength(c *C) {
+func (s *testSuite6) TestTooLargeIdentifierLength(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
 	// for database.
@@ -587,16 +561,24 @@ func (s *testSuite3) TestTooLargeIdentifierLength(c *C) {
 	tk.MustExec(fmt.Sprintf("drop index %s on t", indexName1))
 	_, err = tk.Exec(fmt.Sprintf("create index %s on t(c)", indexName2))
 	c.Assert(err.Error(), Equals, fmt.Sprintf("[ddl:1059]Identifier name '%s' is too long", indexName2))
+
+	// for create table with index.
+	tk.MustExec("drop table t;")
+	_, err = tk.Exec(fmt.Sprintf("create table t(c int, index %s(c));", indexName2))
+	c.Assert(err.Error(), Equals, fmt.Sprintf("[ddl:1059]Identifier name '%s' is too long", indexName2))
 }
 
-func (s *testSuite3) TestShardRowIDBits(c *C) {
+func (s *testSuite8) TestShardRowIDBits(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int) shard_row_id_bits = 15")
+	var insertingValues = make([]string, 100)
 	for i := 0; i < 100; i++ {
-		tk.MustExec(fmt.Sprintf("insert t values (%d)", i))
+		insertingValues[i] = fmt.Sprintf("(%d)", i)
 	}
+	tk.MustExec("insert into t values " + strings.Join(insertingValues, ","))
+
 	dom := domain.GetDomain(tk.Se)
 	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
@@ -637,10 +619,10 @@ func (s *testSuite3) TestShardRowIDBits(c *C) {
 
 	// After PR 10759, shard_row_id_bits is not supported with pk_is_handle tables.
 	err = tk.ExecToErr("create table auto (id int not null auto_increment primary key, b int) shard_row_id_bits = 4")
-	c.Assert(err.Error(), Equals, "[ddl:207]unsupported shard_row_id_bits for table with primary key as row id.")
+	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported shard_row_id_bits for table with primary key as row id")
 	tk.MustExec("create table auto (id int not null auto_increment primary key, b int) shard_row_id_bits = 0")
 	err = tk.ExecToErr("alter table auto shard_row_id_bits = 5")
-	c.Assert(err.Error(), Equals, "[ddl:207]unsupported shard_row_id_bits for table with primary key as row id.")
+	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported shard_row_id_bits for table with primary key as row id")
 	tk.MustExec("alter table auto shard_row_id_bits = 0")
 
 	// Hack an existing table with shard_row_id_bits and primary key as handle
@@ -669,9 +651,11 @@ func (s *testSuite3) TestShardRowIDBits(c *C) {
 
 	// Test shard_row_id_bits with auto_increment column
 	tk.MustExec("create table auto (a int, b int auto_increment unique) shard_row_id_bits = 15")
+	insertingValues = make([]string, 100)
 	for i := 0; i < 100; i++ {
-		tk.MustExec(fmt.Sprintf("insert auto(a) values (%d)", i))
+		insertingValues[i] = fmt.Sprintf("(%d)", i)
 	}
+	tk.MustExec("insert auto(a) values " + strings.Join(insertingValues, ","))
 	tbl, err = dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("auto"))
 	assertCountAndShard(tbl, 100)
 	prevB, err := strconv.Atoi(tk.MustQuery("select b from auto where a=0").Rows()[0][0].(string))
@@ -702,7 +686,101 @@ func (s *testSuite3) TestShardRowIDBits(c *C) {
 	c.Assert(autoid.ErrAutoincReadFailed.Equal(err), IsTrue, Commentf("err:%v", err))
 }
 
-func (s *testSuite3) TestMaxHandleAddIndex(c *C) {
+type testAutoRandomSuite struct {
+	*baseTestSuite
+}
+
+func (s *testAutoRandomSuite) TestAutoRandomBitsData(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("create database if not exists test_auto_random_bits")
+	defer tk.MustExec("drop database if exists test_auto_random_bits")
+	tk.MustExec("use test_auto_random_bits")
+	tk.MustExec("drop table if exists t")
+
+	testutil.ConfigTestUtils.SetupAutoRandomTestConfig()
+	defer testutil.ConfigTestUtils.RestoreAutoRandomTestConfig()
+
+	tk.MustExec("create table t (a bigint primary key auto_random(15), b int)")
+	insertingValues := make([]string, 100)
+	for i := 0; i < 100; i++ {
+		insertingValues[i] = fmt.Sprintf("(%d)", i)
+	}
+	tk.MustExec(fmt.Sprintf("insert into t (b) values %s;", strings.Join(insertingValues, ",")))
+
+	dom := domain.GetDomain(tk.Se)
+	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr("test_auto_random_bits"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	c.Assert(tk.Se.NewTxn(context.Background()), IsNil)
+	var allHandles []int64
+	// Iterate all the record. The order is not guaranteed.
+	err = tbl.IterRecords(tk.Se, tbl.FirstKey(), nil, func(h int64, _ []types.Datum, _ []*table.Column) (more bool, err error) {
+		allHandles = append(allHandles, h)
+		return true, nil
+	})
+	c.Assert(err, IsNil)
+	tk.MustExec("drop table t")
+
+	// Test auto random id number.
+	c.Assert(len(allHandles), Equals, 100)
+	// Test the first 15 bits of each handle is greater than 0.
+	for _, h := range allHandles {
+		c.Assert(h>>(64-15), Greater, int64(0))
+	}
+	// Test auto random id is monotonic increasing and continuous.
+	orderedHandles := make([]int64, len(allHandles))
+	for i, h := range allHandles {
+		orderedHandles[i] = h << 16 >> 16
+	}
+	sort.Slice(orderedHandles, func(i, j int) bool { return orderedHandles[i] < orderedHandles[j] })
+	size := int64(len(allHandles))
+	for i := int64(1); i <= size; i++ {
+		c.Assert(i, Equals, orderedHandles[i-1])
+	}
+
+	// Test explicit insert.
+	tk.MustExec("create table t (a tinyint primary key auto_random(2), b int)")
+	insertingValues = make([]string, 100)
+	for i := 0; i < 100; i++ {
+		insertingValues[i] = fmt.Sprintf("(%d, %d)", i, i)
+	}
+	tk.MustExec(fmt.Sprintf("insert into t values %s;", strings.Join(insertingValues, ",")))
+
+	_, err = tk.Exec("insert into t (b) values (0)")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, autoid.ErrAutoRandReadFailed.GenWithStackByArgs().Error())
+	tk.MustExec("drop table t")
+
+	// Test overflow.
+	tk.MustExec("create table t (a tinyint primary key auto_random(2), b int)")
+	fieldLength := uint64(mysql.DefaultLengthOfMysqlTypes[mysql.TypeTiny] * 8)
+	signBit := uint64(1)
+	for i := 0; i < (1<<(fieldLength-2-signBit))-1; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t (b) values (%d)", i))
+	}
+	_, err = tk.Exec("insert into t (b) values (0)")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, autoid.ErrAutoRandReadFailed.GenWithStackByArgs().Error())
+	tk.MustExec("drop table t")
+
+	// Test rebase.
+	tk.MustExec("create table t (a tinyint primary key auto_random(2), b int)")
+	tk.MustExec("insert into t values (31, 2)")
+	_, err = tk.Exec("insert into t (b) values (0)")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, autoid.ErrAutoRandReadFailed.GenWithStackByArgs().Error())
+	tk.MustExec("drop table t")
+
+	tk.MustExec("create table t (a tinyint primary key auto_random(2), b int)")
+	tk.MustExec("insert into t values (0, 2)")
+	tk.MustExec("update t set a = 31 where a = 0")
+	_, err = tk.Exec("insert into t (b) values (0)")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, autoid.ErrAutoRandReadFailed.GenWithStackByArgs().Error())
+	tk.MustExec("drop table t")
+}
+
+func (s *testSuite6) TestMaxHandleAddIndex(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
 	tk.MustExec("use test")
@@ -719,7 +797,7 @@ func (s *testSuite3) TestMaxHandleAddIndex(c *C) {
 	tk.MustExec("admin check table t1")
 }
 
-func (s *testSuite3) TestSetDDLReorgWorkerCnt(c *C) {
+func (s *testSuite6) TestSetDDLReorgWorkerCnt(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	err := ddlutil.LoadDDLReorgVars(tk.Se)
@@ -753,7 +831,7 @@ func (s *testSuite3) TestSetDDLReorgWorkerCnt(c *C) {
 	res.Check(testkit.Rows("100"))
 }
 
-func (s *testSuite3) TestSetDDLReorgBatchSize(c *C) {
+func (s *testSuite6) TestSetDDLReorgBatchSize(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	err := ddlutil.LoadDDLReorgVars(tk.Se)
@@ -790,7 +868,7 @@ func (s *testSuite3) TestSetDDLReorgBatchSize(c *C) {
 	res.Check(testkit.Rows("1000"))
 }
 
-func (s *testSuite3) TestIllegalFunctionCall4GeneratedColumns(c *C) {
+func (s *testSuite6) TestIllegalFunctionCall4GeneratedColumns(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	// Test create an exist database
@@ -835,7 +913,7 @@ func (s *testSuite3) TestIllegalFunctionCall4GeneratedColumns(c *C) {
 	c.Assert(err.Error(), Equals, ddl.ErrGeneratedColumnFunctionIsNotAllowed.GenWithStackByArgs("cc").Error())
 }
 
-func (s *testSuite3) TestGeneratedColumnRelatedDDL(c *C) {
+func (s *testSuite6) TestGeneratedColumnRelatedDDL(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	// Test create an exist database
@@ -861,7 +939,7 @@ func (s *testSuite3) TestGeneratedColumnRelatedDDL(c *C) {
 	tk.MustExec("drop table t1;")
 }
 
-func (s *testSuite3) TestSetDDLErrorCountLimit(c *C) {
+func (s *testSuite6) TestSetDDLErrorCountLimit(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	err := ddlutil.LoadDDLVars(tk.Se)
@@ -890,7 +968,7 @@ func (s *testSuite3) TestSetDDLErrorCountLimit(c *C) {
 
 // Test issue #9205, fix the precision problem for time type default values
 // See https://github.com/pingcap/tidb/issues/9205 for details
-func (s *testSuite3) TestIssue9205(c *C) {
+func (s *testSuite6) TestIssue9205(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec(`drop table if exists t;`)
@@ -929,7 +1007,7 @@ func (s *testSuite3) TestIssue9205(c *C) {
 	))
 }
 
-func (s *testSuite3) TestCheckDefaultFsp(c *C) {
+func (s *testSuite6) TestCheckDefaultFsp(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec(`drop table if exists t;`)
@@ -969,10 +1047,70 @@ func (s *testSuite3) TestCheckDefaultFsp(c *C) {
 	c.Assert(err.Error(), Equals, "[ddl:1067]Invalid default value for 'tttt'")
 }
 
-func (s *testSuite3) TestTimestampMinDefaultValue(c *C) {
+func (s *testSuite6) TestTimestampMinDefaultValue(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists tdv;")
 	tk.MustExec("create table tdv(a int);")
 	tk.MustExec("ALTER TABLE tdv ADD COLUMN ts timestamp DEFAULT '1970-01-01 08:00:01';")
+}
+
+func (s *testSuite3) TestRenameTable(c *C) {
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange", `return(true)`), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange"), IsNil)
+	}()
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("create database rename1")
+	tk.MustExec("create database rename2")
+	tk.MustExec("create database rename3")
+	tk.MustExec("create table rename1.t (a int primary key auto_increment)")
+	tk.MustExec("insert rename1.t values ()")
+	tk.MustExec("rename table rename1.t to rename2.t")
+	// Make sure the drop old database doesn't affect the rename3.t's operations.
+	tk.MustExec("drop database rename1")
+	tk.MustExec("insert rename2.t values ()")
+	tk.MustExec("rename table rename2.t to rename3.t")
+	tk.MustExec("insert rename3.t values ()")
+	tk.MustQuery("select * from rename3.t").Check(testkit.Rows("1", "5001", "10001"))
+	// Make sure the drop old database doesn't affect the rename3.t's operations.
+	tk.MustExec("drop database rename2")
+	tk.MustExec("insert rename3.t values ()")
+	tk.MustQuery("select * from rename3.t").Check(testkit.Rows("1", "5001", "10001", "10002"))
+	tk.MustExec("drop database rename3")
+
+	tk.MustExec("create database rename1")
+	tk.MustExec("create database rename2")
+	tk.MustExec("create table rename1.t (a int primary key auto_increment)")
+	tk.MustExec("rename table rename1.t to rename2.t1")
+	tk.MustExec("insert rename2.t1 values ()")
+	result := tk.MustQuery("select * from rename2.t1")
+	result.Check(testkit.Rows("1"))
+	// Make sure the drop old database doesn't affect the t1's operations.
+	tk.MustExec("drop database rename1")
+	tk.MustExec("insert rename2.t1 values ()")
+	result = tk.MustQuery("select * from rename2.t1")
+	result.Check(testkit.Rows("1", "2"))
+	// Rename a table to another table in the same database.
+	tk.MustExec("rename table rename2.t1 to rename2.t2")
+	tk.MustExec("insert rename2.t2 values ()")
+	result = tk.MustQuery("select * from rename2.t2")
+	result.Check(testkit.Rows("1", "2", "5001"))
+	tk.MustExec("drop database rename2")
+
+	tk.MustExec("create database rename1")
+	tk.MustExec("create database rename2")
+	tk.MustExec("create table rename1.t (a int primary key auto_increment)")
+	tk.MustExec("insert rename1.t values ()")
+	tk.MustExec("rename table rename1.t to rename2.t1")
+	// Make sure the value is greater than autoid.step.
+	tk.MustExec("insert rename2.t1 values (100000)")
+	tk.MustExec("insert rename2.t1 values ()")
+	result = tk.MustQuery("select * from rename2.t1")
+	result.Check(testkit.Rows("1", "100000", "100001"))
+	_, err := tk.Exec("insert rename1.t values ()")
+	c.Assert(err, NotNil)
+	tk.MustExec("drop database rename1")
+	tk.MustExec("drop database rename2")
 }

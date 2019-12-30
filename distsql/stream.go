@@ -98,6 +98,7 @@ func (r *streamResult) readDataFromResponse(ctx context.Context, resp kv.Respons
 	}
 	r.feedback.Update(resultSubset.GetStartKey(), stream.OutputCounts)
 	r.partialCount++
+	r.ctx.GetSessionVars().StmtCtx.MergeExecDetails(resultSubset.GetExecDetails(), nil)
 	return false, nil
 }
 

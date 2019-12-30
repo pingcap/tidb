@@ -43,7 +43,7 @@ func newDateType() types.FieldType {
 func MockSignedTable() *model.TableInfo {
 	// column: a, b, c, d, e, c_str, d_str, e_str, f, g
 	// PK: a
-	// indeices: c_d_e, e, f, g, f_g, c_d_e_str, c_d_e_str_prefix
+	// indices: c_d_e, e, f, g, f_g, c_d_e_str, c_d_e_str_prefix
 	indices := []*model.IndexInfo{
 		{
 			Name: model.NewCIStr("c_d_e"),
@@ -275,11 +275,27 @@ func MockUnsignedTable() *model.TableInfo {
 				{
 					Name:   model.NewCIStr("b"),
 					Length: types.UnspecifiedLength,
-					Offset: 4,
+					Offset: 1,
 				},
 			},
 			State:  model.StatePublic,
 			Unique: true,
+		},
+		{
+			Name: model.NewCIStr("b_c"),
+			Columns: []*model.IndexColumn{
+				{
+					Name:   model.NewCIStr("b"),
+					Length: types.UnspecifiedLength,
+					Offset: 1,
+				},
+				{
+					Name:   model.NewCIStr("c"),
+					Length: types.UnspecifiedLength,
+					Offset: 2,
+				},
+			},
+			State: model.StatePublic,
 		},
 	}
 	pkColumn := &model.ColumnInfo{
@@ -296,11 +312,19 @@ func MockUnsignedTable() *model.TableInfo {
 		FieldType: newLongType(),
 		ID:        2,
 	}
+	col1 := &model.ColumnInfo{
+		State:     model.StatePublic,
+		Offset:    2,
+		Name:      model.NewCIStr("c"),
+		FieldType: newLongType(),
+		ID:        3,
+	}
 	pkColumn.Flag = mysql.PriKeyFlag | mysql.NotNullFlag | mysql.UnsignedFlag
 	// Column 'b', 'c', 'd', 'f', 'g' is not null.
 	col0.Flag = mysql.NotNullFlag
+	col1.Flag = mysql.UnsignedFlag
 	table := &model.TableInfo{
-		Columns:    []*model.ColumnInfo{pkColumn, col0},
+		Columns:    []*model.ColumnInfo{pkColumn, col0, col1},
 		Indices:    indices,
 		Name:       model.NewCIStr("t2"),
 		PKIsHandle: true,

@@ -14,14 +14,18 @@
 package expression
 
 import (
+	json2 "encoding/json"
+	"strconv"
 	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tipb/go-tipb"
 )
@@ -72,6 +76,9 @@ var (
 	_ builtinFunc = &builtinJSONKeysSig{}
 	_ builtinFunc = &builtinJSONKeys2ArgsSig{}
 	_ builtinFunc = &builtinJSONLengthSig{}
+	_ builtinFunc = &builtinJSONValidJSONSig{}
+	_ builtinFunc = &builtinJSONValidStringSig{}
+	_ builtinFunc = &builtinJSONValidOthersSig{}
 )
 
 type jsonTypeFunctionClass struct {
@@ -176,25 +183,38 @@ func (b *builtinJSONUnquoteSig) Clone() builtinFunc {
 	return newSig
 }
 
+func (c *jsonUnquoteFunctionClass) verifyArgs(args []Expression) error {
+	if err := c.baseFunctionClass.verifyArgs(args); err != nil {
+		return err
+	}
+	if evalType := args[0].GetType().EvalType(); evalType != types.ETString && evalType != types.ETJson {
+		return ErrIncorrectType.GenWithStackByArgs("1", "json_unquote")
+	}
+	return nil
+}
+
 func (c *jsonUnquoteFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETJson)
+	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETString)
+	bf.tp.Flen = mysql.MaxFieldVarCharLength
 	DisableParseJSONFlag4Expr(args[0])
 	sig := &builtinJSONUnquoteSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_JsonUnquoteSig)
 	return sig, nil
 }
 
-func (b *builtinJSONUnquoteSig) evalString(row chunk.Row) (res string, isNull bool, err error) {
-	var j json.BinaryJSON
-	j, isNull, err = b.args[0].EvalJSON(b.ctx, row)
+func (b *builtinJSONUnquoteSig) evalString(row chunk.Row) (string, bool, error) {
+	str, isNull, err := b.args[0].EvalString(b.ctx, row)
 	if isNull || err != nil {
 		return "", isNull, err
 	}
-	res, err = j.Unquote()
-	return res, err != nil, err
+	str, err = json.UnquoteString(str)
+	if err != nil {
+		return "", false, err
+	}
+	return str, false, nil
 }
 
 type jsonSetFunctionClass struct {
@@ -716,7 +736,87 @@ type jsonValidFunctionClass struct {
 }
 
 func (c *jsonValidFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
-	return nil, errFunctionNotExists.GenWithStackByArgs("FUNCTION", "JSON_VALID")
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+
+	var sig builtinFunc
+	argType := args[0].GetType().EvalType()
+	switch argType {
+	case types.ETJson:
+		bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, types.ETJson)
+		sig = &builtinJSONValidJSONSig{bf}
+		sig.setPbCode(tipb.ScalarFuncSig_JsonValidJsonSig)
+	case types.ETString:
+		bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, types.ETString)
+		sig = &builtinJSONValidStringSig{bf}
+		sig.setPbCode(tipb.ScalarFuncSig_JsonValidStringSig)
+	default:
+		bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, argType)
+		sig = &builtinJSONValidOthersSig{bf}
+		sig.setPbCode(tipb.ScalarFuncSig_JsonValidOthersSig)
+	}
+	return sig, nil
+}
+
+type builtinJSONValidJSONSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinJSONValidJSONSig) Clone() builtinFunc {
+	newSig := &builtinJSONValidJSONSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+// evalInt evals a builtinJSONValidJSONSig.
+// See https://dev.mysql.com/doc/refman/5.7/en/json-attribute-functions.html#function_json-valid
+func (b *builtinJSONValidJSONSig) evalInt(row chunk.Row) (res int64, isNull bool, err error) {
+	_, isNull, err = b.args[0].EvalJSON(b.ctx, row)
+	return 1, isNull, err
+}
+
+type builtinJSONValidStringSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinJSONValidStringSig) Clone() builtinFunc {
+	newSig := &builtinJSONValidStringSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+// evalInt evals a builtinJSONValidStringSig.
+// See https://dev.mysql.com/doc/refman/5.7/en/json-attribute-functions.html#function_json-valid
+func (b *builtinJSONValidStringSig) evalInt(row chunk.Row) (res int64, isNull bool, err error) {
+	val, isNull, err := b.args[0].EvalString(b.ctx, row)
+	if err != nil || isNull {
+		return 0, isNull, err
+	}
+
+	data := hack.Slice(val)
+	if json2.Valid(data) {
+		res = 1
+	} else {
+		res = 0
+	}
+	return res, false, nil
+}
+
+type builtinJSONValidOthersSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinJSONValidOthersSig) Clone() builtinFunc {
+	newSig := &builtinJSONValidOthersSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+// evalInt evals a builtinJSONValidOthersSig.
+// See https://dev.mysql.com/doc/refman/5.7/en/json-attribute-functions.html#function_json-valid
+func (b *builtinJSONValidOthersSig) evalInt(row chunk.Row) (res int64, isNull bool, err error) {
+	return 0, false, nil
 }
 
 type jsonArrayAppendFunctionClass struct {
@@ -935,24 +1035,33 @@ func (b *builtinJSONQuoteSig) Clone() builtinFunc {
 	return newSig
 }
 
+func (c *jsonQuoteFunctionClass) verifyArgs(args []Expression) error {
+	if err := c.baseFunctionClass.verifyArgs(args); err != nil {
+		return err
+	}
+	if evalType := args[0].GetType().EvalType(); evalType != types.ETString {
+		return ErrIncorrectType.GenWithStackByArgs("1", "json_quote")
+	}
+	return nil
+}
+
 func (c *jsonQuoteFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETJson)
+	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETString)
 	DisableParseJSONFlag4Expr(args[0])
 	sig := &builtinJSONQuoteSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_JsonQuoteSig)
 	return sig, nil
 }
 
-func (b *builtinJSONQuoteSig) evalString(row chunk.Row) (res string, isNull bool, err error) {
-	var j json.BinaryJSON
-	j, isNull, err = b.args[0].EvalJSON(b.ctx, row)
+func (b *builtinJSONQuoteSig) evalString(row chunk.Row) (string, bool, error) {
+	str, isNull, err := b.args[0].EvalString(b.ctx, row)
 	if isNull || err != nil {
 		return "", isNull, err
 	}
-	return j.Quote(), false, nil
+	return strconv.Quote(str), false, nil
 }
 
 type jsonSearchFunctionClass struct {

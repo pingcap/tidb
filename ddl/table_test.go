@@ -298,8 +298,8 @@ func testGetTableWithError(d *ddl, schemaID, tableID int64) (table.Table, error)
 	if tblInfo == nil {
 		return nil, errors.New("table not found")
 	}
-	alloc := autoid.NewAllocator(d.store, schemaID, false)
-	tbl, err := table.TableFromMeta(alloc, tblInfo)
+	alloc := autoid.NewAllocator(d.store, schemaID, false, autoid.RowIDAllocType)
+	tbl, err := table.TableFromMeta(autoid.NewAllocators(alloc), tblInfo)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -308,7 +308,11 @@ func testGetTableWithError(d *ddl, schemaID, tableID int64) (table.Table, error)
 
 func (s *testTableSuite) SetUpSuite(c *C) {
 	s.store = testCreateStore(c, "test_table")
-	s.d = testNewDDL(context.Background(), nil, s.store, nil, nil, testLease)
+	s.d = newDDL(
+		context.Background(),
+		WithStore(s.store),
+		WithLease(testLease),
+	)
 
 	s.dbInfo = testSchemaInfo(c, s.d, "test")
 	testCreateSchema(c, testNewContext(s.d), s.d, s.dbInfo)

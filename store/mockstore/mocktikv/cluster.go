@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/tablecodec"
+	"go.uber.org/atomic"
 )
 
 // Cluster simulates a TiKV cluster. It focuses on management and the change of
@@ -271,7 +272,7 @@ func (c *Cluster) GetRegionByID(regionID uint64) (*metapb.Region, *metapb.Peer) 
 }
 
 // ScanRegions returns at most `limit` regions from given `key` and their leaders.
-func (c *Cluster) ScanRegions(key []byte, limit int) ([]*metapb.Region, []*metapb.Peer) {
+func (c *Cluster) ScanRegions(startKey, endKey []byte, limit int) ([]*metapb.Region, []*metapb.Peer) {
 	c.RLock()
 	defer c.RUnlock()
 
@@ -284,15 +285,22 @@ func (c *Cluster) ScanRegions(key []byte, limit int) ([]*metapb.Region, []*metap
 		return bytes.Compare(regions[i].Meta.GetStartKey(), regions[j].Meta.GetStartKey()) < 0
 	})
 
-	keyLocation := sort.Search(len(regions), func(i int) bool {
-		endKey := regions[i].Meta.GetEndKey()
-		if len(endKey) == 0 {
+	startPos := sort.Search(len(regions), func(i int) bool {
+		if len(regions[i].Meta.GetEndKey()) == 0 {
 			return true
 		}
-		return bytes.Compare(regions[i].Meta.GetEndKey(), key) > 0
+		return bytes.Compare(regions[i].Meta.GetEndKey(), startKey) > 0
 	})
-	regions = regions[keyLocation:]
-	if len(regions) > limit {
+	regions = regions[startPos:]
+	if len(endKey) > 0 {
+		endPos := sort.Search(len(regions), func(i int) bool {
+			return bytes.Compare(regions[i].Meta.GetStartKey(), endKey) >= 0
+		})
+		if endPos > 0 {
+			regions = regions[:endPos]
+		}
+	}
+	if limit > 0 && len(regions) > limit {
 		regions = regions[:limit]
 	}
 
@@ -363,13 +371,15 @@ func (c *Cluster) Split(regionID, newRegionID uint64, key []byte, peerIDs []uint
 }
 
 // SplitRaw splits a Region at the key (not encoded) and creates new Region.
-func (c *Cluster) SplitRaw(regionID, newRegionID uint64, rawKey []byte, peerIDs []uint64, leaderPeerID uint64) *Region {
+func (c *Cluster) SplitRaw(regionID, newRegionID uint64, rawKey []byte, peerIDs []uint64, leaderPeerID uint64) *metapb.Region {
 	c.Lock()
 	defer c.Unlock()
 
 	newRegion := c.regions[regionID].split(newRegionID, rawKey, peerIDs, leaderPeerID)
 	c.regions[newRegionID] = newRegion
-	return newRegion
+	// The mocktikv should return a deep copy of meta info to avoid data race
+	meta := proto.Clone(newRegion.Meta)
+	return meta.(*metapb.Region)
 }
 
 // Merge merges 2 regions, their key ranges should be adjacent.
@@ -435,7 +445,7 @@ func (c *Cluster) splitRange(mvccStore MVCCStore, start, end MvccKey, count int)
 func (c *Cluster) getEntriesGroupByRegions(mvccStore MVCCStore, start, end MvccKey, count int) [][]Pair {
 	startTS := uint64(math.MaxUint64)
 	limit := int(math.MaxInt32)
-	pairs := mvccStore.Scan(start.Raw(), end.Raw(), limit, startTS, kvrpcpb.IsolationLevel_SI)
+	pairs := mvccStore.Scan(start.Raw(), end.Raw(), limit, startTS, kvrpcpb.IsolationLevel_SI, nil)
 	regionEntriesSlice := make([][]Pair, 0, count)
 	quotient := len(pairs) / count
 	remainder := len(pairs) % count
@@ -630,8 +640,9 @@ func (r *Region) incVersion() {
 
 // Store is the Store's meta data.
 type Store struct {
-	meta   *metapb.Store
-	cancel bool // return context.Cancelled error when cancel is true.
+	meta       *metapb.Store
+	cancel     bool // return context.Cancelled error when cancel is true.
+	tokenCount atomic.Int64
 }
 
 func newStore(storeID uint64, addr string) *Store {

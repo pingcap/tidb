@@ -44,7 +44,7 @@ func (s *testSuite1) TestAdminCheckIndexRange(c *C) {
 	result.Check(testkit.Rows("-1 hi 4", "2 cd 2"))
 }
 
-func (s *testSuite2) TestAdminRecoverIndex(c *C) {
+func (s *testSuite5) TestAdminRecoverIndex(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists admin_test")
@@ -87,7 +87,7 @@ func (s *testSuite2) TestAdminRecoverIndex(c *C) {
 	sc := s.ctx.GetSessionVars().StmtCtx
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
-	err = indexOpr.Delete(sc, txn, types.MakeDatums(1), 1, nil)
+	err = indexOpr.Delete(sc, txn, types.MakeDatums(1), 1)
 	c.Assert(err, IsNil)
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
@@ -110,7 +110,7 @@ func (s *testSuite2) TestAdminRecoverIndex(c *C) {
 
 	txn, err = s.store.Begin()
 	c.Assert(err, IsNil)
-	err = indexOpr.Delete(sc, txn, types.MakeDatums(10), 10, nil)
+	err = indexOpr.Delete(sc, txn, types.MakeDatums(10), 10)
 	c.Assert(err, IsNil)
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
@@ -124,15 +124,15 @@ func (s *testSuite2) TestAdminRecoverIndex(c *C) {
 
 	txn, err = s.store.Begin()
 	c.Assert(err, IsNil)
-	err = indexOpr.Delete(sc, txn, types.MakeDatums(1), 1, nil)
+	err = indexOpr.Delete(sc, txn, types.MakeDatums(1), 1)
 	c.Assert(err, IsNil)
-	err = indexOpr.Delete(sc, txn, types.MakeDatums(2), 2, nil)
+	err = indexOpr.Delete(sc, txn, types.MakeDatums(2), 2)
 	c.Assert(err, IsNil)
-	err = indexOpr.Delete(sc, txn, types.MakeDatums(3), 3, nil)
+	err = indexOpr.Delete(sc, txn, types.MakeDatums(3), 3)
 	c.Assert(err, IsNil)
-	err = indexOpr.Delete(sc, txn, types.MakeDatums(10), 10, nil)
+	err = indexOpr.Delete(sc, txn, types.MakeDatums(10), 10)
 	c.Assert(err, IsNil)
-	err = indexOpr.Delete(sc, txn, types.MakeDatums(20), 20, nil)
+	err = indexOpr.Delete(sc, txn, types.MakeDatums(20), 20)
 	c.Assert(err, IsNil)
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
@@ -145,7 +145,7 @@ func (s *testSuite2) TestAdminRecoverIndex(c *C) {
 	r = tk.MustQuery("SELECT COUNT(*) FROM admin_test USE INDEX(c2)")
 	r.Check(testkit.Rows("0"))
 
-	r = tk.MustQuery("SELECT COUNT(*) FROM admin_test")
+	r = tk.MustQuery("SELECT COUNT(*) FROM admin_test USE INDEX()")
 	r.Check(testkit.Rows("5"))
 
 	r = tk.MustQuery("admin recover index admin_test c2")
@@ -158,7 +158,7 @@ func (s *testSuite2) TestAdminRecoverIndex(c *C) {
 	tk.MustExec("admin check table admin_test")
 }
 
-func (s *testSuite2) TestAdminRecoverIndex1(c *C) {
+func (s *testSuite5) TestAdminRecoverIndex1(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	s.ctx = mock.NewContext()
 	s.ctx.Store = s.store
@@ -184,13 +184,13 @@ func (s *testSuite2) TestAdminRecoverIndex1(c *C) {
 
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
-	err = indexOpr.Delete(sc, txn, types.MakeDatums("1"), 1, nil)
+	err = indexOpr.Delete(sc, txn, types.MakeDatums("1"), 1)
 	c.Assert(err, IsNil)
-	err = indexOpr.Delete(sc, txn, types.MakeDatums("2"), 2, nil)
+	err = indexOpr.Delete(sc, txn, types.MakeDatums("2"), 2)
 	c.Assert(err, IsNil)
-	err = indexOpr.Delete(sc, txn, types.MakeDatums("3"), 3, nil)
+	err = indexOpr.Delete(sc, txn, types.MakeDatums("3"), 3)
 	c.Assert(err, IsNil)
-	err = indexOpr.Delete(sc, txn, types.MakeDatums("10"), 4, nil)
+	err = indexOpr.Delete(sc, txn, types.MakeDatums("10"), 4)
 	c.Assert(err, IsNil)
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
@@ -209,7 +209,7 @@ func (s *testSuite2) TestAdminRecoverIndex1(c *C) {
 	tk.MustExec("admin check index admin_test `primary`")
 }
 
-func (s *testSuite2) TestAdminCleanupIndex(c *C) {
+func (s *testSuite5) TestAdminCleanupIndex(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists admin_test")
@@ -288,7 +288,7 @@ func (s *testSuite2) TestAdminCleanupIndex(c *C) {
 	tk.MustExec("admin check table admin_test")
 }
 
-func (s *testSuite2) TestAdminCleanupIndexPKNotHandle(c *C) {
+func (s *testSuite5) TestAdminCleanupIndexPKNotHandle(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists admin_test")
@@ -336,7 +336,7 @@ func (s *testSuite2) TestAdminCleanupIndexPKNotHandle(c *C) {
 	tk.MustExec("admin check table admin_test")
 }
 
-func (s *testSuite2) TestAdminCleanupIndexMore(c *C) {
+func (s *testSuite5) TestAdminCleanupIndexMore(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists admin_test")
@@ -380,7 +380,7 @@ func (s *testSuite2) TestAdminCleanupIndexMore(c *C) {
 	c.Assert(err, NotNil)
 	err = tk.ExecToErr("admin check index admin_test c2")
 	c.Assert(err, NotNil)
-	r := tk.MustQuery("SELECT COUNT(*) FROM admin_test")
+	r := tk.MustQuery("SELECT COUNT(*) FROM admin_test USE INDEX()")
 	r.Check(testkit.Rows("3"))
 	r = tk.MustQuery("SELECT COUNT(*) FROM admin_test USE INDEX(c1)")
 	r.Check(testkit.Rows("2003"))
@@ -399,7 +399,102 @@ func (s *testSuite2) TestAdminCleanupIndexMore(c *C) {
 	tk.MustExec("admin check table admin_test")
 }
 
-func (s *testSuite2) TestAdminCheckTableFailed(c *C) {
+func (s *testSuite2) TestAdminCheckPartitionTableFailed(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists admin_test_p")
+	tk.MustExec("create table admin_test_p (c1 int key,c2 int,c3 int,index idx(c2)) partition by hash(c1) partitions 4")
+	tk.MustExec("insert admin_test_p (c1, c2, c3) values (0,0,0), (1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5)")
+	tk.MustExec("admin check table admin_test_p")
+
+	// Make some corrupted index. Build the index information.
+	s.ctx = mock.NewContext()
+	s.ctx.Store = s.store
+	is := s.domain.InfoSchema()
+	dbName := model.NewCIStr("test")
+	tblName := model.NewCIStr("admin_test_p")
+	tbl, err := is.TableByName(dbName, tblName)
+	c.Assert(err, IsNil)
+	tblInfo := tbl.Meta()
+	idxInfo := tblInfo.Indices[0]
+	sc := s.ctx.GetSessionVars().StmtCtx
+	tk.Se.GetSessionVars().IndexLookupSize = 3
+	tk.Se.GetSessionVars().MaxChunkSize = 3
+
+	// Reduce one row of index on partitions.
+	// Table count > index count.
+	for i := 0; i <= 5; i++ {
+		partitionIdx := i % len(tblInfo.GetPartitionInfo().Definitions)
+		indexOpr := tables.NewIndex(tblInfo.GetPartitionInfo().Definitions[partitionIdx].ID, tblInfo, idxInfo)
+		txn, err := s.store.Begin()
+		c.Assert(err, IsNil)
+		err = indexOpr.Delete(sc, txn, types.MakeDatums(i), int64(i))
+		c.Assert(err, IsNil)
+		err = txn.Commit(context.Background())
+		c.Assert(err, IsNil)
+		err = tk.ExecToErr("admin check table admin_test_p")
+		c.Assert(err.Error(), Equals, fmt.Sprintf("[executor:8003]admin_test_p err:[admin:8223]index:<nil> != record:&admin.RecordData{Handle:%d, Values:[]types.Datum{types.Datum{k:0x1, collation:0x0, decimal:0x0, length:0x0, i:%d, b:[]uint8(nil), x:interface {}(nil)}}}", i, i))
+		c.Assert(executor.ErrAdminCheckTable.Equal(err), IsTrue)
+		// TODO: fix admin recover for partition table.
+		//r := tk.MustQuery("admin recover index admin_test_p idx")
+		//r.Check(testkit.Rows("0 0"))
+		//tk.MustExec("admin check table admin_test_p")
+		// Manual recover index.
+		txn, err = s.store.Begin()
+		c.Assert(err, IsNil)
+		_, err = indexOpr.Create(s.ctx, txn, types.MakeDatums(i), int64(i))
+		c.Assert(err, IsNil)
+		err = txn.Commit(context.Background())
+		tk.MustExec("admin check table admin_test_p")
+	}
+
+	// Add one row of index on partitions.
+	// Table count < index count.
+	for i := 0; i <= 5; i++ {
+		partitionIdx := i % len(tblInfo.GetPartitionInfo().Definitions)
+		indexOpr := tables.NewIndex(tblInfo.GetPartitionInfo().Definitions[partitionIdx].ID, tblInfo, idxInfo)
+		txn, err := s.store.Begin()
+		c.Assert(err, IsNil)
+		_, err = indexOpr.Create(s.ctx, txn, types.MakeDatums(i+8), int64(i+8))
+		c.Assert(err, IsNil)
+		err = txn.Commit(context.Background())
+		c.Assert(err, IsNil)
+		err = tk.ExecToErr("admin check table admin_test_p")
+		c.Assert(err, NotNil)
+		c.Assert(err.Error(), Equals, fmt.Sprintf("handle %d, index:types.Datum{k:0x1, collation:0x0, decimal:0x0, length:0x0, i:%d, b:[]uint8(nil), x:interface {}(nil)} != record:<nil>", i+8, i+8))
+		// TODO: fix admin recover for partition table.
+		txn, err = s.store.Begin()
+		c.Assert(err, IsNil)
+		err = indexOpr.Delete(sc, txn, types.MakeDatums(i+8), int64(i+8))
+		c.Assert(err, IsNil)
+		err = txn.Commit(context.Background())
+		tk.MustExec("admin check table admin_test_p")
+	}
+
+	// Table count = index count, but the index value was wrong.
+	for i := 0; i <= 5; i++ {
+		partitionIdx := i % len(tblInfo.GetPartitionInfo().Definitions)
+		indexOpr := tables.NewIndex(tblInfo.GetPartitionInfo().Definitions[partitionIdx].ID, tblInfo, idxInfo)
+		txn, err := s.store.Begin()
+		c.Assert(err, IsNil)
+		_, err = indexOpr.Create(s.ctx, txn, types.MakeDatums(i+8), int64(i))
+		c.Assert(err, IsNil)
+		err = txn.Commit(context.Background())
+		c.Assert(err, IsNil)
+		err = tk.ExecToErr("admin check table admin_test_p")
+		c.Assert(err, NotNil)
+		c.Assert(err.Error(), Equals, fmt.Sprintf("col c2, handle %d, index:types.Datum{k:0x1, collation:0x0, decimal:0x0, length:0x0, i:%d, b:[]uint8(nil), x:interface {}(nil)} != record:types.Datum{k:0x1, collation:0x0, decimal:0x0, length:0x0, i:%d, b:[]uint8(nil), x:interface {}(nil)}", i, i+8, i))
+		// TODO: fix admin recover for partition table.
+		txn, err = s.store.Begin()
+		c.Assert(err, IsNil)
+		err = indexOpr.Delete(sc, txn, types.MakeDatums(i+8), int64(i))
+		c.Assert(err, IsNil)
+		err = txn.Commit(context.Background())
+		tk.MustExec("admin check table admin_test_p")
+	}
+}
+
+func (s *testSuite5) TestAdminCheckTableFailed(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists admin_test")
@@ -426,13 +521,13 @@ func (s *testSuite2) TestAdminCheckTableFailed(c *C) {
 	// Index c2 is missing 11.
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
-	err = indexOpr.Delete(sc, txn, types.MakeDatums(-10), -1, nil)
+	err = indexOpr.Delete(sc, txn, types.MakeDatums(-10), -1)
 	c.Assert(err, IsNil)
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 	err = tk.ExecToErr("admin check table admin_test")
 	c.Assert(err.Error(), Equals,
-		"[executor:8003]admin_test err:[admin:1]index:<nil> != record:&admin.RecordData{Handle:-1, Values:[]types.Datum{types.Datum{k:0x1, collation:0x0, decimal:0x0, length:0x0, i:-10, b:[]uint8(nil), x:interface {}(nil)}}}")
+		"[executor:8003]admin_test err:[admin:8223]index:<nil> != record:&admin.RecordData{Handle:-1, Values:[]types.Datum{types.Datum{k:0x1, collation:0x0, decimal:0x0, length:0x0, i:-10, b:[]uint8(nil), x:interface {}(nil)}}}")
 	c.Assert(executor.ErrAdminCheckTable.Equal(err), IsTrue)
 	r := tk.MustQuery("admin recover index admin_test c2")
 	r.Check(testkit.Rows("1 7"))
@@ -452,10 +547,10 @@ func (s *testSuite2) TestAdminCheckTableFailed(c *C) {
 
 	// Add one row of index.
 	// Table count < index count.
-	// Index c2 has two more values ​​than table data: 10, 13, and these handles have correlative record.
+	// Index c2 has two more values than table data: 10, 13, and these handles have correlative record.
 	txn, err = s.store.Begin()
 	c.Assert(err, IsNil)
-	err = indexOpr.Delete(sc, txn, types.MakeDatums(0), 0, nil)
+	err = indexOpr.Delete(sc, txn, types.MakeDatums(0), 0)
 	c.Assert(err, IsNil)
 	// Make sure the index value "19" is smaller "21". Then we scan to "19" before "21".
 	_, err = indexOpr.Create(s.ctx, txn, types.MakeDatums(19), 10)
@@ -471,9 +566,9 @@ func (s *testSuite2) TestAdminCheckTableFailed(c *C) {
 	// Two indices have the same handle.
 	txn, err = s.store.Begin()
 	c.Assert(err, IsNil)
-	err = indexOpr.Delete(sc, txn, types.MakeDatums(13), 2, nil)
+	err = indexOpr.Delete(sc, txn, types.MakeDatums(13), 2)
 	c.Assert(err, IsNil)
-	err = indexOpr.Delete(sc, txn, types.MakeDatums(12), 2, nil)
+	err = indexOpr.Delete(sc, txn, types.MakeDatums(12), 2)
 	c.Assert(err, IsNil)
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
@@ -486,7 +581,7 @@ func (s *testSuite2) TestAdminCheckTableFailed(c *C) {
 	c.Assert(err, IsNil)
 	_, err = indexOpr.Create(s.ctx, txn, types.MakeDatums(12), 2)
 	c.Assert(err, IsNil)
-	err = indexOpr.Delete(sc, txn, types.MakeDatums(20), 10, nil)
+	err = indexOpr.Delete(sc, txn, types.MakeDatums(20), 10)
 	c.Assert(err, IsNil)
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
@@ -496,7 +591,7 @@ func (s *testSuite2) TestAdminCheckTableFailed(c *C) {
 	// Recover records.
 	txn, err = s.store.Begin()
 	c.Assert(err, IsNil)
-	err = indexOpr.Delete(sc, txn, types.MakeDatums(19), 10, nil)
+	err = indexOpr.Delete(sc, txn, types.MakeDatums(19), 10)
 	c.Assert(err, IsNil)
 	_, err = indexOpr.Create(s.ctx, txn, types.MakeDatums(20), 10)
 	c.Assert(err, IsNil)
@@ -505,7 +600,7 @@ func (s *testSuite2) TestAdminCheckTableFailed(c *C) {
 	tk.MustExec("admin check table admin_test")
 }
 
-func (s *testSuite1) TestAdminCheckTable(c *C) {
+func (s *testSuite2) TestAdminCheckTable(c *C) {
 	// test NULL value.
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -525,8 +620,8 @@ func (s *testSuite1) TestAdminCheckTable(c *C) {
 	tk.MustExec(`drop table if exists test`)
 	tk.MustExec(`create table test (
 		a time,
- 		PRIMARY KEY (a)
- 		);`)
+		PRIMARY KEY (a)
+		);`)
 
 	tk.MustExec(`insert into test set a='12:10:36';`)
 	tk.MustExec(`admin check table test`)
@@ -618,7 +713,7 @@ func (s *testSuite1) TestAdminCheckTable(c *C) {
 	tk.MustExec(`insert into t1 set a='1.9'`)
 	err = tk.ExecToErr(`alter table t1 modify column a decimal(3,2);`)
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[ddl:203]unsupported modify decimal column precision")
+	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported modify column: can't change decimal column precision")
 	tk.MustExec(`delete from t1;`)
 	tk.MustExec(`admin check table t1;`)
 }
@@ -631,7 +726,7 @@ func (s *testSuite1) TestAdminCheckPrimaryIndex(c *C) {
 	tk.MustExec("admin check index t idx;")
 }
 
-func (s *testSuite2) TestAdminCheckWithSnapshot(c *C) {
+func (s *testSuite5) TestAdminCheckWithSnapshot(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists admin_t_s")

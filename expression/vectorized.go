@@ -20,84 +20,85 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 )
 
-func genVecFromConstExpr(ctx sessionctx.Context, expr Expression, input *chunk.Chunk, result *chunk.Column) error {
-	n := input.NumRows()
-	tp := expr.GetType()
-	switch tp.EvalType() {
+func genVecFromConstExpr(ctx sessionctx.Context, expr Expression, targetType types.EvalType, input *chunk.Chunk, result *chunk.Column) error {
+	n := 1
+	if input != nil {
+		n = input.NumRows()
+		if n == 0 {
+			result.Reset(targetType)
+			return nil
+		}
+	}
+	switch targetType {
 	case types.ETInt:
-		result.ResizeInt64(n)
 		v, isNull, err := expr.EvalInt(ctx, chunk.Row{})
 		if err != nil {
 			return err
 		}
 		if isNull {
-			result.SetNulls(0, n, true)
+			result.ResizeInt64(n, true)
 			return nil
 		}
+		result.ResizeInt64(n, false)
 		i64s := result.Int64s()
 		for i := range i64s {
 			i64s[i] = v
 		}
-		result.SetNulls(0, n, false)
 	case types.ETReal:
-		result.ResizeFloat64(n)
 		v, isNull, err := expr.EvalReal(ctx, chunk.Row{})
 		if err != nil {
 			return err
 		}
 		if isNull {
-			result.SetNulls(0, n, true)
+			result.ResizeFloat64(n, true)
 			return nil
 		}
+		result.ResizeFloat64(n, false)
 		f64s := result.Float64s()
 		for i := range f64s {
 			f64s[i] = v
 		}
-		result.SetNulls(0, n, false)
 	case types.ETDecimal:
-		result.ResizeDecimal(n)
 		v, isNull, err := expr.EvalDecimal(ctx, chunk.Row{})
 		if err != nil {
 			return err
 		}
 		if isNull {
-			result.SetNulls(0, n, true)
+			result.ResizeDecimal(n, true)
 			return nil
 		}
+		result.ResizeDecimal(n, false)
 		ds := result.Decimals()
 		for i := range ds {
 			ds[i] = *v
 		}
-		result.SetNulls(0, n, false)
 	case types.ETDatetime, types.ETTimestamp:
-		result.Reset()
 		v, isNull, err := expr.EvalTime(ctx, chunk.Row{})
 		if err != nil {
 			return err
 		}
 		if isNull {
-			for i := 0; i < n; i++ {
-				result.AppendNull()
-			}
-		} else {
-			for i := 0; i < n; i++ {
-				result.AppendTime(v)
-			}
+			result.ResizeTime(n, true)
+			return nil
+		}
+		result.ResizeTime(n, false)
+		ts := result.Times()
+		for i := range ts {
+			ts[i] = v
 		}
 	case types.ETDuration:
-		result.ResizeDuration(n)
 		v, isNull, err := expr.EvalDuration(ctx, chunk.Row{})
 		if err != nil {
 			return err
 		}
 		if isNull {
-			for i := 0; i < n; i++ {
-				result.AppendNull()
-			}
-		} else {
-			for i := 0; i < n; i++ {
-				result.AppendDuration(v)
-			}
+			result.ResizeGoDuration(n, true)
+			return nil
+		}
+		result.ResizeGoDuration(n, false)
+		ds := result.GoDurations()
+		for i := range ds {
+			ds[i] = v.Duration
 		}
 	case types.ETJson:
 		result.ReserveJSON(n)

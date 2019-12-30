@@ -19,7 +19,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"sort"
-	"strconv"
 	"unicode/utf8"
 	"unsafe"
 
@@ -55,33 +54,31 @@ func (bj BinaryJSON) Type() string {
 	}
 }
 
-// Quote is for JSON_QUOTE
-func (bj BinaryJSON) Quote() string {
-	str := hack.String(bj.GetString())
-	return strconv.Quote(string(str))
-}
-
 // Unquote is for JSON_UNQUOTE.
 func (bj BinaryJSON) Unquote() (string, error) {
 	switch bj.TypeCode {
 	case TypeCodeString:
-		tmp := string(hack.String(bj.GetString()))
-		s, err := unquoteString(tmp)
-		if err != nil {
-			return "", errors.Trace(err)
-		}
-		// Remove prefix and suffix '"'.
-		slen := len(s)
-		if slen > 1 {
-			head, tail := s[0], s[slen-1]
-			if head == '"' && tail == '"' {
-				return s[1 : slen-1], nil
-			}
-		}
-		return s, nil
+		str := string(hack.String(bj.GetString()))
+		return UnquoteString(str)
 	default:
 		return bj.String(), nil
 	}
+}
+
+// UnquoteString remove quotes in a string,
+// including the quotes at the head and tail of string.
+func UnquoteString(str string) (string, error) {
+	strLen := len(str)
+	if strLen < 2 {
+		return str, nil
+	}
+	head, tail := str[0], str[strLen-1]
+	if head == '"' && tail == '"' {
+		// Remove prefix and suffix '"' before unquoting
+		return unquoteString(str[1 : strLen-1])
+	}
+	// if value is not double quoted, do nothing
+	return str, nil
 }
 
 // unquoteString recognizes the escape sequences shown in:

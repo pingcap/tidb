@@ -16,6 +16,7 @@ package types
 import (
 	"fmt"
 	"math"
+	"time"
 
 	"github.com/pingcap/errors"
 )
@@ -36,6 +37,26 @@ func AddInt64(a int64, b int64) (int64, error) {
 	}
 
 	return a + b, nil
+}
+
+// AddDuration adds time.Duration a and b if no overflow, otherwise returns error.
+func AddDuration(a time.Duration, b time.Duration) (time.Duration, error) {
+	if (a > 0 && b > 0 && math.MaxInt64-a < b) ||
+		(a < 0 && b < 0 && math.MinInt64-a > b) {
+		return 0, ErrOverflow.GenWithStackByArgs("BIGINT", fmt.Sprintf("(%d, %d)", int64(a), int64(b)))
+	}
+
+	return a + b, nil
+}
+
+// SubDuration subtracts time.Duration a with b and returns time.Duration if no overflow error.
+func SubDuration(a time.Duration, b time.Duration) (time.Duration, error) {
+	if (a > 0 && b < 0 && math.MaxInt64-a < -b) ||
+		(a < 0 && b > 0 && math.MinInt64-a > -b) ||
+		(a == 0 && b == math.MinInt64) {
+		return 0, ErrOverflow.GenWithStackByArgs("BIGINT", fmt.Sprintf("(%d, %d)", a, b))
+	}
+	return a - b, nil
 }
 
 // AddInteger adds uint64 a and int64 b and returns uint64 if no overflow error.

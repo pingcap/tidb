@@ -39,7 +39,7 @@ func (t *mockTxn) String() string {
 	return ""
 }
 
-func (t *mockTxn) LockKeys(_ context.Context, _ uint64, _ ...Key) error {
+func (t *mockTxn) LockKeys(_ context.Context, _ *LockCtx, _ ...Key) error {
 	return nil
 }
 
@@ -112,9 +112,6 @@ func (t *mockTxn) Reset() {
 func (t *mockTxn) SetVars(vars *Variables) {
 
 }
-
-func (t *mockTxn) SetAssertion(key Key, assertion AssertionType) {}
-func (t *mockTxn) ConfirmAssertions(succ bool)                   {}
 
 // NewMockTxn new a mockTxn.
 func NewMockTxn() Transaction {
@@ -229,3 +226,6 @@ func (s *mockSnapshot) Iter(k Key, upperBound Key) (Iterator, error) {
 func (s *mockSnapshot) IterReverse(k Key) (Iterator, error) {
 	return s.store.IterReverse(k)
 }
+
+func (s *mockSnapshot) SetOption(opt Option, val interface{}) {}
+func (s *mockSnapshot) DelOption(opt Option)                  {}

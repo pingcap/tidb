@@ -21,6 +21,8 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/planner/util"
+	"github.com/pingcap/tidb/types"
 )
 
 var _ = Suite(&testPlanBuilderSuite{})
@@ -57,7 +59,7 @@ func (s *testPlanBuilderSuite) TestShow(c *C) {
 	}
 	for _, tp := range tps {
 		node.Tp = tp
-		schema := buildShowSchema(node, false)
+		schema, _ := buildShowSchema(node, false)
 		for _, col := range schema.Columns {
 			c.Assert(col.RetType.Flen, Greater, 0)
 		}
@@ -70,9 +72,9 @@ func (s *testPlanBuilderSuite) TestGetPathByIndexName(c *C) {
 		PKIsHandle: true,
 	}
 
-	accessPath := []*accessPath{
-		{isTablePath: true},
-		{index: &model.IndexInfo{Name: model.NewCIStr("idx")}},
+	accessPath := []*util.AccessPath{
+		{IsTablePath: true},
+		{Index: &model.IndexInfo{Name: model.NewCIStr("idx")}},
 	}
 
 	path := getPathByIndexName(accessPath, model.NewCIStr("idx"), tblInfo)
@@ -96,7 +98,7 @@ func (s *testPlanBuilderSuite) TestGetPathByIndexName(c *C) {
 }
 
 func (s *testPlanBuilderSuite) TestRewriterPool(c *C) {
-	builder := NewPlanBuilder(MockContext(), nil)
+	builder := NewPlanBuilder(MockContext(), nil, &BlockHintProcessor{})
 
 	// Make sure PlanBuilder.getExpressionRewriter() provides clean rewriter from pool.
 	// First, pick one rewriter from the pool and make it dirty.
@@ -108,6 +110,7 @@ func (s *testPlanBuilderSuite) TestRewriterPool(c *C) {
 	dirtyRewriter.insertPlan = &Insert{}
 	dirtyRewriter.disableFoldCounter = 1
 	dirtyRewriter.ctxStack = make([]expression.Expression, 2)
+	dirtyRewriter.ctxNameStk = make([]*types.FieldName, 2)
 	builder.rewriterCounter--
 	// Then, pick again and check if it's cleaned up.
 	builder.rewriterCounter++
@@ -149,7 +152,7 @@ func (s *testPlanBuilderSuite) TestDisableFold(c *C) {
 		stmt := st.(*ast.SelectStmt)
 		expr := stmt.Fields.Fields[0].Expr
 
-		builder := NewPlanBuilder(ctx, nil)
+		builder := NewPlanBuilder(ctx, nil, &BlockHintProcessor{})
 		builder.rewriterCounter++
 		rewriter := builder.getExpressionRewriter(context.TODO(), nil)
 		c.Assert(rewriter, NotNil)

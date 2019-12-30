@@ -270,7 +270,8 @@ func (s *testBinlogSuite) TestMaxRecvSize(c *C) {
 		},
 		Client: s.client,
 	}
-	err := info.WriteBinlog(1)
+	binlogWR := info.WriteBinlog(1)
+	err := binlogWR.GetError()
 	c.Assert(err, NotNil)
 	c.Assert(terror.ErrCritical.Equal(err), IsFalse, Commentf("%v", err))
 }
@@ -430,4 +431,53 @@ func (s *testBinlogSuite) TestDeleteSchema(c *C) {
 	// The final schema of this SQL should be the schema of table b1, rather than the schema of join result.
 	tk.MustExec("delete from b1 where job_id in (select job_id from b2 where batch_class = 'TEST') or split_job_id in (select job_id from b2 where batch_class = 'TEST');")
 	tk.MustExec("delete b1 from b2 right join b1 on b1.job_id = b2.job_id and batch_class = 'TEST';")
+}
+
+func (s *testBinlogSuite) TestAddSpecialComment(c *C) {
+	testCase := []struct {
+		input  string
+		result string
+	}{
+		{
+			"create table t1 (id int ) shard_row_id_bits=2;",
+			"create table t1 (id int ) /*!90000 shard_row_id_bits=2 */ ;",
+		},
+		{
+			"create table t1 (id int ) shard_row_id_bits=2 pre_split_regions=2;",
+			"create table t1 (id int ) /*!90000 shard_row_id_bits=2 pre_split_regions=2 */ ;",
+		},
+		{
+			"create table t1 (id int ) shard_row_id_bits=2     pre_split_regions=2;",
+			"create table t1 (id int ) /*!90000 shard_row_id_bits=2     pre_split_regions=2 */ ;",
+		},
+
+		{
+			"create table t1 (id int ) shard_row_id_bits=2 engine=innodb pre_split_regions=2;",
+			"create table t1 (id int ) /*!90000 shard_row_id_bits=2 pre_split_regions=2 */ engine=innodb ;",
+		},
+		{
+			"create table t1 (id int ) pre_split_regions=2 shard_row_id_bits=2;",
+			"create table t1 (id int ) /*!90000 shard_row_id_bits=2 pre_split_regions=2 */ ;",
+		},
+		{
+			"create table t6 (id int ) shard_row_id_bits=2 shard_row_id_bits=3 pre_split_regions=2;",
+			"create table t6 (id int ) /*!90000 shard_row_id_bits=2 shard_row_id_bits=3 pre_split_regions=2 */ ;",
+		},
+		{
+			"create table t1 (id int primary key auto_random(2));",
+			"create table t1 (id int primary key /*T!40000 auto_random(2) */ );",
+		},
+		{
+			"create table t1 (id int auto_random ( 4 ) primary key);",
+			"create table t1 (id int /*T!40000 auto_random ( 4 ) */ primary key);",
+		},
+		{
+			"create table t1 (id int  auto_random  (   4    ) primary key);",
+			"create table t1 (id int  /*T!40000 auto_random  (   4    ) */ primary key);",
+		},
+	}
+	for _, ca := range testCase {
+		re := binloginfo.AddSpecialComment(ca.input)
+		c.Assert(re, Equals, ca.result)
+	}
 }

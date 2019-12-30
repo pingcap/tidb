@@ -111,7 +111,11 @@ func getForeignKey(t table.Table, name string) *model.FKInfo {
 }
 
 func (s *testForeighKeySuite) TestForeignKey(c *C) {
-	d := testNewDDL(context.Background(), nil, s.store, nil, nil, testLease)
+	d := newDDL(
+		context.Background(),
+		WithStore(s.store),
+		WithLease(testLease),
+	)
 	defer d.Stop()
 	s.d = d
 	s.dbInfo = testSchemaInfo(c, d, "test_foreign")

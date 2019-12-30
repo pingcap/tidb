@@ -31,7 +31,7 @@ type partialResult4Ntile struct {
 	curGroupIdx uint64
 	remainder   uint64
 	quotient    uint64
-	rows        []chunk.Row
+	numRows     uint64
 }
 
 func (n *ntile) AllocPartialResult() PartialResult {
@@ -42,16 +42,16 @@ func (n *ntile) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4Ntile)(pr)
 	p.curIdx = 0
 	p.curGroupIdx = 1
-	p.rows = p.rows[:0]
+	p.numRows = 0
 }
 
 func (n *ntile) UpdatePartialResult(_ sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) error {
 	p := (*partialResult4Ntile)(pr)
-	p.rows = append(p.rows, rowsInGroup...)
+	p.numRows += uint64(len(rowsInGroup))
 	// Update the quotient and remainder.
 	if n.n != 0 {
-		p.quotient = uint64(len(p.rows)) / n.n
-		p.remainder = uint64(len(p.rows)) % n.n
+		p.quotient = p.numRows / n.n
+		p.remainder = p.numRows % n.n
 	}
 	return nil
 }

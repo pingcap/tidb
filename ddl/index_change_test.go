@@ -52,7 +52,11 @@ func (s *testIndexChangeSuite) TearDownSuite(c *C) {
 }
 
 func (s *testIndexChangeSuite) TestIndexChange(c *C) {
-	d := testNewDDL(context.Background(), nil, s.store, nil, nil, testLease)
+	d := newDDL(
+		context.Background(),
+		WithStore(s.store),
+		WithLease(testLease),
+	)
 	defer d.Stop()
 	// create table t (c1 int primary key, c2 int);
 	tblInfo := testTableInfo(c, d, "t", 2)
