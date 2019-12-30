@@ -1014,7 +1014,7 @@ func (s *testTimeSuite) TestTimeAdd(c *C) {
 		c.Assert(err, IsNil)
 		v2, err := v1.Add(sc, dur)
 		c.Assert(err, IsNil)
-		c.Assert(v2.Compare(result), Equals, 0, Commentf("%v %v", v2, result))
+		c.Assert(v2.Compare(result), Equals, 0, Commentf("%v %v", v2.CoreTime(), result.CoreTime()))
 	}
 }
 
