@@ -982,9 +982,9 @@ func (s *testTimeSuite) TestConvertTimeZone(c *C) {
 	}
 
 	for _, test := range tests {
-		t := types.NewTime(test.input, mysql.TypeDatetime, 0)
+		t := types.NewTime(test.input, 0, 0)
 		t.ConvertTimeZone(test.from, test.to)
-		c.Assert(t.Compare(types.NewTime(test.expect, mysql.TypeDatetime, 0)), Equals, 0)
+		c.Assert(t.Compare(types.NewTime(test.expect, 0, 0)), Equals, 0)
 	}
 }
 
