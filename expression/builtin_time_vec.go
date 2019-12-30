@@ -1884,7 +1884,7 @@ func (b *builtinDateDiffSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column
 			result.SetNull(i, true)
 			continue
 		}
-		i64s[i] = int64(types.DateDiff(args0[i], args1[i]))
+		i64s[i] = int64(types.DateDiff(args0[i].GetDateTimePart(), args1[i].GetDateTimePart()))
 	}
 	return nil
 }

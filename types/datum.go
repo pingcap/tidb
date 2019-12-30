@@ -1051,7 +1051,7 @@ func (d *Datum) convertToMysqlTime(sc *stmtctx.StatementContext, target *FieldTy
 	}
 	if tp == mysql.TypeDate {
 		// Truncate hh:mm:ss part if the type is Date.
-		t = t.TruncateTimePart()
+		t = NewTime(FromDate(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0), t.Type(), t.Fsp())
 	}
 	ret.SetValue(t)
 	if err != nil {
@@ -2061,7 +2061,7 @@ func ChangeReverseResultByUpperLowerBound(
 
 const (
 	sizeOfEmptyDatum = int(unsafe.Sizeof(Datum{}))
-	sizeOfMysqlTime  = int(unsafe.Sizeof(Time(0)))
+	sizeOfMysqlTime  = int(unsafe.Sizeof(NewTimeZeroValue()))
 	sizeOfMyDecimal  = MyDecimalStructSize
 )
 

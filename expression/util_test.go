@@ -487,7 +487,7 @@ func (m *MockExpr) EvalTime(ctx sessionctx.Context, row chunk.Row) (val types.Ti
 	if x, ok := m.i.(types.Time); ok {
 		return x, false, m.err
 	}
-	return types.Time(0), m.i == nil, m.err
+	return types.NewTimeZeroValue(), m.i == nil, m.err
 }
 func (m *MockExpr) EvalDuration(ctx sessionctx.Context, row chunk.Row) (val types.Duration, isNull bool, err error) {
 	if x, ok := m.i.(types.Duration); ok {

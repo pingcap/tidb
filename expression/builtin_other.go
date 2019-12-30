@@ -650,19 +650,19 @@ func (b *builtinValuesTimeSig) Clone() builtinFunc {
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_values
 func (b *builtinValuesTimeSig) evalTime(_ chunk.Row) (types.Time, bool, error) {
 	if !b.ctx.GetSessionVars().StmtCtx.InInsertStmt {
-		return types.Time(0), true, nil
+		return types.NewTimeZeroValue(), true, nil
 	}
 	row := b.ctx.GetSessionVars().CurrInsertValues
 	if row.IsEmpty() {
-		return types.Time(0), true, errors.New("Session current insert values is nil")
+		return types.NewTimeZeroValue(), true, errors.New("Session current insert values is nil")
 	}
 	if b.offset < row.Len() {
 		if row.IsNull(b.offset) {
-			return types.Time(0), true, nil
+			return types.NewTimeZeroValue(), true, nil
 		}
 		return row.GetTime(b.offset), false, nil
 	}
-	return types.Time(0), true, errors.Errorf("Session current insert values len %d and column's offset %v don't match", row.Len(), b.offset)
+	return types.NewTimeZeroValue(), true, errors.Errorf("Session current insert values len %d and column's offset %v don't match", row.Len(), b.offset)
 }
 
 type builtinValuesDurationSig struct {
