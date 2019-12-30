@@ -31,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
-	"github.com/sirupsen/logrus"
 	"go.uber.org/zap"
 )
 
@@ -199,7 +198,6 @@ func (e *InsertValues) processSetList() error {
 
 // insertRows processes `insert|replace into values ()` or `insert|replace into set x=y`
 func insertRows(ctx context.Context, base insertCommon) (err error) {
-	logrus.Warning("common here")
 	e := base.insertCommon()
 	// For `insert|replace into set x=y`, process the set list here.
 	if err = e.processSetList(); err != nil {
