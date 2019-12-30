@@ -19,6 +19,7 @@ var (
 	_ Iterator = (*iterator4List)(nil)
 	_ Iterator = (*iterator4Slice)(nil)
 	_ Iterator = (*iterator4RowContainer)(nil)
+	_ Iterator = (*multiIterator)(nil)
 )
 
 // Iterator is used to iterate a number of rows.
@@ -321,6 +322,7 @@ type iterator4RowContainer struct {
 	err    error
 }
 
+// Len implements the Iterator interface.
 func (it *iterator4RowContainer) Len() int {
 	return it.c.NumRow()
 }
@@ -333,11 +335,13 @@ func (it *iterator4RowContainer) setNextPtr() {
 	}
 }
 
+// Begin implements the Iterator interface.
 func (it *iterator4RowContainer) Begin() Row {
 	it.chkIdx, it.rowIdx = 0, -1
 	return it.Next()
 }
 
+// Next implements the Iterator interface.
 func (it *iterator4RowContainer) Next() Row {
 	if it.chkIdx >= it.c.NumChunks() {
 		it.ReachEnd()
@@ -347,6 +351,7 @@ func (it *iterator4RowContainer) Next() Row {
 	return it.Current()
 }
 
+// Current implements the Iterator interface.
 func (it *iterator4RowContainer) Current() Row {
 	if it.rowIdx < 0 || it.chkIdx >= it.c.NumChunks() {
 		return it.End()
@@ -360,15 +365,104 @@ func (it *iterator4RowContainer) Current() Row {
 	return row
 }
 
+// End implements the Iterator interface.
 func (it *iterator4RowContainer) End() Row {
 	return Row{}
 }
 
+// ReachEnd implements the Iterator interface.
 func (it *iterator4RowContainer) ReachEnd() {
 	it.chkIdx, it.rowIdx = it.c.NumChunks(), 0
 }
 
 // Error returns none-nil error if anything wrong happens during the iteration.
 func (it *iterator4RowContainer) Error() error {
+	return it.err
+}
+
+// multiIterator joins several iterators together to form a new iterator
+type multiIterator struct {
+	iters   []Iterator
+	numIter int
+	length  int
+	curPtr  int
+	curIter Iterator
+	err     error
+}
+
+// NewMultiIterator creates a new multiIterator
+func NewMultiIterator(iters ...Iterator) Iterator {
+	iter := &multiIterator{}
+	for i := 0; i < len(iters); i++ {
+		if iters[i].Len() > 0 {
+			iter.iters = append(iter.iters, iters[i])
+			iter.length += iters[i].Len()
+		}
+	}
+	iter.numIter = len(iter.iters)
+	return iter
+}
+
+// Len implements the Iterator interface.
+func (it *multiIterator) Len() int {
+	return it.length
+}
+
+// Begin implements the Iterator interface.
+func (it *multiIterator) Begin() Row {
+	it.curPtr = 0
+	if it.numIter > 0 {
+		it.curIter = it.iters[0]
+		it.curIter.Begin()
+	}
+	return it.Current()
+}
+
+// Next implements the Iterator interface.
+func (it *multiIterator) Next() Row {
+	if it.curPtr == it.numIter {
+		return it.End()
+	}
+	next := it.curIter.Next()
+	if next == it.curIter.End() {
+		it.err = it.curIter.Error()
+		if it.err != nil {
+			it.ReachEnd()
+			return it.End()
+		}
+		it.curPtr++
+		if it.curPtr == it.numIter {
+			return it.End()
+		}
+		it.curIter = it.iters[it.curPtr]
+		next = it.curIter.Begin()
+	}
+	return next
+}
+
+// Current implements the Iterator interface.
+func (it *multiIterator) Current() Row {
+	if it.curPtr == it.numIter {
+		return it.End()
+	}
+	row := it.curIter.Current()
+	if row == it.curIter.End() {
+		it.err = it.curIter.Error()
+	}
+	return row
+}
+
+// End implements the Iterator interface.
+func (it *multiIterator) End() Row {
+	return Row{}
+}
+
+// ReachEnd implements the Iterator interface.
+func (it *multiIterator) ReachEnd() {
+	it.curPtr = it.numIter
+}
+
+// Error returns none-nil error if anything wrong happens during the iteration.
+func (it *multiIterator) Error() error {
 	return it.err
 }

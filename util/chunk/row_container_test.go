@@ -33,7 +33,7 @@ func (r *rowContainerTestSuite) TestNewRowContainer(c *check.C) {
 	c.Assert(rc.AlreadySpilled(), check.Equals, false)
 }
 
-func (r *rowContainerTestSuite) TestTmpAndSel(c *check.C) {
+func (r *rowContainerTestSuite) TestSel(c *check.C) {
 	fields := []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}
 	sz := 4
 	rc := NewRowContainer(fields, sz)
@@ -58,11 +58,8 @@ func (r *rowContainerTestSuite) TestTmpAndSel(c *check.C) {
 		chk.AppendInt64(0, int64(i))
 	}
 	chk.SetSel([]int{0, 1, 2})
-	rc.SetTemporary(chk)
-	c.Assert(rc.NumChunks(), check.Equals, numRows/2+1)
-	c.Assert(rc.NumRow(), check.Equals, numRows+3)
-	checkByIter := func() {
-		it := NewIterator4RowContainer(rc)
+
+	checkByIter := func(it Iterator) {
 		i := 0
 		for row := it.Begin(); row != it.End(); row = it.Next() {
 			c.Assert(row.GetInt64(0), check.Equals, int64(i))
@@ -74,11 +71,11 @@ func (r *rowContainerTestSuite) TestTmpAndSel(c *check.C) {
 		}
 		c.Assert(i, check.Equals, n-1)
 	}
-	checkByIter()
+	checkByIter(NewMultiIterator(NewIterator4RowContainer(rc), NewIterator4Chunk(chk)))
 	err := rc.spillToDisk()
 	c.Assert(err, check.IsNil)
 	c.Assert(rc.AlreadySpilled(), check.Equals, true)
-	checkByIter()
+	checkByIter(NewMultiIterator(NewIterator4RowContainer(rc), NewIterator4Chunk(chk)))
 	err = rc.Close()
 	c.Assert(err, check.IsNil)
 }

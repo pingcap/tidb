@@ -49,7 +49,6 @@ type MergeJoinExec struct {
 	innerTable *mergeJoinInnerTable
 	outerTable *mergeJoinOuterTable
 
-	innerRows     *chunk.RowContainer
 	innerIter4Row chunk.Iterator
 
 	childrenResults []*chunk.Chunk
@@ -80,7 +79,7 @@ type mergeJoinInnerTable struct {
 	ctx      context.Context
 
 	// for chunk executions
-	sameKeyRows  *chunk.RowContainer
+	rowContainer *chunk.RowContainer
 	keyCmpFuncs  []chunk.CompareFunc
 	firstRow4Key chunk.Row
 	curRow       chunk.Row
@@ -102,11 +101,12 @@ func (t *mergeJoinInnerTable) init(ctx context.Context, sctx sessionctx.Context,
 	t.curRow = t.curIter.End()
 	t.curChkInUse = false
 	t.memTracker.Consume(chk4Reader.MemoryUsage())
-	t.sameKeyRows = chunk.NewRowContainer(t.reader.base().retFieldTypes, t.curChk.Capacity())
-	t.sameKeyRows.GetMemTracker().AttachTo(sctx.GetSessionVars().StmtCtx.MemTracker)
-	t.sameKeyRows.GetDiskTracker().AttachTo(sctx.GetSessionVars().StmtCtx.DiskTracker)
+	// t.rowContainer needs to be closed when exit, it is done by the MergeJoinExec, see MergeJoinExec.Close
+	t.rowContainer = chunk.NewRowContainer(t.reader.base().retFieldTypes, t.curChk.Capacity())
+	t.rowContainer.GetMemTracker().AttachTo(sctx.GetSessionVars().StmtCtx.MemTracker)
+	t.rowContainer.GetDiskTracker().AttachTo(sctx.GetSessionVars().StmtCtx.DiskTracker)
 	if config.GetGlobalConfig().OOMUseTmpStorage {
-		actionSpill := t.sameKeyRows.ActionSpill()
+		actionSpill := t.rowContainer.ActionSpill()
 		sctx.GetSessionVars().StmtCtx.MemTracker.SetActionOnExceed(actionSpill)
 	}
 	t.firstRow4Key, err = t.nextRow()
@@ -121,30 +121,35 @@ func (t *mergeJoinInnerTable) selectRow(row chunk.Row) {
 	t.curSel = append(t.curSel, row.Idx())
 }
 
-func (t *mergeJoinInnerTable) selectedRows() *chunk.RowContainer {
+func (t *mergeJoinInnerTable) selectedRowsIter() chunk.Iterator {
+	var iters []chunk.Iterator
+	if t.rowContainer.NumChunks() != 0 {
+		iters = append(iters, chunk.NewIterator4RowContainer(t.rowContainer))
+	}
 	if t.curSel != nil {
 		t.curChk.SetSel(t.curSel)
-		t.sameKeyRows.SetTemporary(t.curChk)
+		iters = append(iters, chunk.NewIterator4Chunk(t.curChk))
 		t.curSel = nil
 	}
-	return t.sameKeyRows
+	return chunk.NewMultiIterator(iters...)
 }
 
-func (t *mergeJoinInnerTable) rowsWithSameKey() (*chunk.RowContainer, error) {
+func (t *mergeJoinInnerTable) rowsWithSameKeyIter() (chunk.Iterator, error) {
 	// t.curSel sets to nil, so that it won't overwrite Sel in chunks in RowContainer,
 	// it might be unnecessary since merge join only runs single thread. However since we want to hand
 	// over the management of a chunk to the RowContainer, to keep the semantic consistent, we set it
 	// to nil.
 	t.curSel = nil
 	t.curChk.SetSel(nil)
-	err := t.sameKeyRows.Reset()
+	err := t.rowContainer.Reset()
 	if err != nil {
 		return nil, err
 	}
 
 	// no more data.
 	if t.firstRow4Key == t.curIter.End() {
-		return t.sameKeyRows, nil
+		// the iterator is a blank iterator only as a place holder
+		return chunk.NewIterator4Chunk(t.curChk), nil
 	}
 	t.selectRow(t.firstRow4Key)
 	for {
@@ -152,14 +157,14 @@ func (t *mergeJoinInnerTable) rowsWithSameKey() (*chunk.RowContainer, error) {
 		// error happens or no more data.
 		if err != nil || selectedRow == t.curIter.End() {
 			t.firstRow4Key = t.curIter.End()
-			return t.selectedRows(), err
+			return t.selectedRowsIter(), err
 		}
 		compareResult := compareChunkRow(t.keyCmpFuncs, selectedRow, t.firstRow4Key, t.joinKeys, t.joinKeys)
 		if compareResult == 0 {
 			t.selectRow(selectedRow)
 		} else {
 			t.firstRow4Key = selectedRow
-			return t.selectedRows(), nil
+			return t.selectedRowsIter(), nil
 		}
 	}
 }
@@ -218,15 +223,14 @@ func (t *mergeJoinInnerTable) reallocCurChkForReader() (err error) {
 		return
 	}
 
-	// Allocate a new Chunk from RowContainer
-	newChk := t.sameKeyRows.AllocChunk()
+	newChk := t.rowContainer.AllocChunk()
 	t.memTracker.Consume(newChk.MemoryUsage() - t.curChk.MemoryUsage())
 
 	// hand over the management to the RowContainer, therefore needs to reserve the first row by CopyConstruct
 	t.firstRow4Key = t.firstRow4Key.CopyConstruct()
 	// curSel be never be nil, since the chunk is in use.
 	t.curChk.SetSel(t.curSel)
-	err = t.sameKeyRows.Add(t.curChk)
+	err = t.rowContainer.Add(t.curChk)
 	if err != nil {
 		return err
 	}
@@ -241,9 +245,10 @@ func (t *mergeJoinInnerTable) reallocCurChkForReader() (err error) {
 // Close implements the Executor Close interface.
 func (e *MergeJoinExec) Close() error {
 	e.childrenResults = nil
+	e.innerTable.memTracker.Consume(-e.innerTable.curChk.MemoryUsage())
 	e.memTracker = nil
-	if e.innerRows != nil {
-		if err := e.innerRows.Close(); err != nil {
+	if e.innerTable.rowContainer != nil {
+		if err := e.innerTable.rowContainer.Close(); err != nil {
 			return err
 		}
 	}
@@ -337,7 +342,7 @@ func (e *MergeJoinExec) joinToChunk(ctx context.Context, chk *chunk.Chunk) (hasM
 		}
 
 		cmpResult := -1
-		if e.outerTable.selected[e.outerTable.row.Idx()] && e.innerRows.NumRow() > 0 {
+		if e.outerTable.selected[e.outerTable.row.Idx()] && e.innerIter4Row.Len() > 0 {
 			cmpResult, err = e.compare(e.outerTable.row, e.innerIter4Row.Current())
 			if err != nil {
 				return false, err
@@ -409,17 +414,10 @@ func (e *MergeJoinExec) compare(outerRow, innerRow chunk.Row) (int, error) {
 // fetchNextInnerRows fetches the next join group, within which all the rows
 // have the same join key, from the inner table.
 func (e *MergeJoinExec) fetchNextInnerRows() (err error) {
-	if e.innerRows != nil {
-		err = e.innerRows.Close()
-		if err != nil {
-			return err
-		}
-	}
-	e.innerRows, err = e.innerTable.rowsWithSameKey()
+	e.innerIter4Row, err = e.innerTable.rowsWithSameKeyIter()
 	if err != nil {
 		return err
 	}
-	e.innerIter4Row = chunk.NewIterator4RowContainer(e.innerRows)
 	e.innerIter4Row.Begin()
 	return nil
 }
