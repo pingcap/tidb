@@ -37,7 +37,7 @@ func (g gener) gen() interface{} {
 		if int8(d.Duration)%2 == 0 {
 			d.Fsp = 0
 		} else {
-			f.Fsp = 1
+			d.Fsp = 1
 		}
 		result = d.String()
 	}
