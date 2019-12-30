@@ -602,7 +602,7 @@ func (s *testCodecSuite) TestDuration(c *C) {
 		c.Assert(err, IsNil)
 		v, err := Decode(b, 1)
 		c.Assert(err, IsNil)
-		m.SetFsp(types.MaxFsp)
+		m.Fsp = types.MaxFsp
 		c.Assert(v, DeepEquals, types.MakeDatums(m))
 	}
 

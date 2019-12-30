@@ -21,6 +21,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 )
@@ -136,10 +137,11 @@ func (g *datetimeJSONGener) gen() interface{} {
 	minute := rand.Intn(60)
 	second := rand.Intn(60)
 	microsecond := rand.Intn(1000000)
-	d := types.Time{
-		Time: types.FromDate(year, month, day, hour, minute, second, microsecond),
-		Fsp:  3,
-	}
+	d := types.NewTime(
+		types.FromDate(year, month, day, hour, minute, second, microsecond),
+		mysql.TypeDatetime,
+		3,
+	)
 	return json.CreateBinary(d.String())
 }
 

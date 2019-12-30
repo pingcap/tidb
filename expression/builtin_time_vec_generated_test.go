@@ -35,9 +35,9 @@ func (g gener) gen() interface{} {
 		dg := &defaultGener{eType: types.ETDuration, nullRation: 0}
 		d := dg.gen().(types.Duration)
 		if int8(d.Duration)%2 == 0 {
-			d.SetFsp(0)
+			d.Fsp = 0
 		} else {
-			d.SetFsp(1)
+			d.Fsp = 1
 		}
 		result = d.String()
 	}
