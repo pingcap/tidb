@@ -122,7 +122,7 @@ func (b *builtinDateSig) vecEvalTime(input *chunk.Chunk, result *chunk.Column) e
 			}
 			result.SetNull(i, true)
 		} else {
-			times[i].SetDateTimePart(types.FromDate(times[i].Year(), times[i].Month(), times[i].Day(), 0, 0, 0, 0))
+			times[i].SetCoreTime(types.FromDate(times[i].Year(), times[i].Month(), times[i].Day(), 0, 0, 0, 0))
 			times[i].SetType(mysql.TypeDate)
 		}
 	}
@@ -1884,7 +1884,7 @@ func (b *builtinDateDiffSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column
 			result.SetNull(i, true)
 			continue
 		}
-		i64s[i] = int64(types.DateDiff(args0[i].GetDateTimePart(), args1[i].GetDateTimePart()))
+		i64s[i] = int64(types.DateDiff(args0[i].GetCoreTime(), args1[i].GetCoreTime()))
 	}
 	return nil
 }

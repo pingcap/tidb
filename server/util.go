@@ -209,9 +209,9 @@ func dumpBinaryDateTime(data []byte, t types.Time, loc *time.Location) ([]byte, 
 		// TODO: Consider time_zone variable.
 		t1, err := t.GoTime(time.Local)
 		if err != nil {
-			return nil, errors.Errorf("FATAL: convert timestamp %v go time return error!", t.GetDateTimePart())
+			return nil, errors.Errorf("FATAL: convert timestamp %v go time return error!", t.GetCoreTime())
 		}
-		t.SetDateTimePart(types.FromGoTime(t1.In(loc)))
+		t.SetCoreTime(types.FromGoTime(t1.In(loc)))
 	}
 
 	year, mon, day := t.Year(), t.Month(), t.Day()

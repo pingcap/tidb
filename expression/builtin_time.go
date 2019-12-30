@@ -292,7 +292,7 @@ func (b *builtinDateSig) evalTime(row chunk.Row) (types.Time, bool, error) {
 		return types.NewTimeZeroValue(), true, handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, expr.String()))
 	}
 
-	expr.SetDateTimePart(types.FromDate(expr.Year(), expr.Month(), expr.Day(), 0, 0, 0, 0))
+	expr.SetCoreTime(types.FromDate(expr.Year(), expr.Month(), expr.Day(), 0, 0, 0, 0))
 	expr.SetType(mysql.TypeDate)
 	return expr, false, nil
 }
@@ -395,7 +395,7 @@ func (b *builtinDateDiffSig) evalInt(row chunk.Row) (int64, bool, error) {
 		}
 		return 0, true, err
 	}
-	return int64(types.DateDiff(lhs.GetDateTimePart(), rhs.GetDateTimePart())), false, nil
+	return int64(types.DateDiff(lhs.GetCoreTime(), rhs.GetCoreTime())), false, nil
 }
 
 type timeDiffFunctionClass struct {
@@ -2769,7 +2769,7 @@ func (du *baseDateArithmitical) add(ctx sessionctx.Context, date types.Time, int
 		return types.NewTimeZeroValue(), true, handleInvalidTimeError(ctx, types.ErrDatetimeFunctionOverflow.GenWithStackByArgs("datetime"))
 	}
 
-	date.SetDateTimePart(types.FromGoTime(goTime))
+	date.SetCoreTime(types.FromGoTime(goTime))
 	overflow, err := types.DateTimeIsOverflow(ctx.GetSessionVars().StmtCtx, date)
 	if err := handleInvalidTimeError(ctx, err); err != nil {
 		return types.NewTimeZeroValue(), true, err
@@ -2830,7 +2830,7 @@ func (du *baseDateArithmitical) sub(ctx sessionctx.Context, date types.Time, int
 		return types.NewTimeZeroValue(), true, handleInvalidTimeError(ctx, types.ErrDatetimeFunctionOverflow.GenWithStackByArgs("datetime"))
 	}
 
-	date.SetDateTimePart(types.FromGoTime(goTime))
+	date.SetCoreTime(types.FromGoTime(goTime))
 	overflow, err := types.DateTimeIsOverflow(ctx.GetSessionVars().StmtCtx, date)
 	if err := handleInvalidTimeError(ctx, err); err != nil {
 		return types.NewTimeZeroValue(), true, err

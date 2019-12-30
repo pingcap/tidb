@@ -913,7 +913,7 @@ func testConvertTimeTimeZone(c *C, sc *stmtctx.StatementContext) {
 		c.Assert(err, IsNil)
 		t := nd.GetMysqlTime()
 		c.Assert(t.Type(), Equals, test.expect.Type)
-		c.Assert(t.GetDateTimePart(), Equals, test.expect.GetDateTimePart())
+		c.Assert(t.GetCoreTime(), Equals, test.expect.GetCoreTime())
 	}
 }
 

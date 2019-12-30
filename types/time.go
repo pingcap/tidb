@@ -287,11 +287,11 @@ func (t *Time) SetFsp(fsp int8) {
 	t.fsp = fsp
 }
 
-func (t Time) GetDateTimePart() MysqlTime {
+func (t Time) GetCoreTime() MysqlTime {
 	return t.time
 }
 
-func (t Time) SetDateTimePart(mt MysqlTime) {
+func (t Time) SetCoreTime(mt MysqlTime) {
 	t.time = mt
 }
 

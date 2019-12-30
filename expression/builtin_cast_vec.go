@@ -389,7 +389,7 @@ func (b *builtinCastIntAsTimeSig) vecEvalTime(input *chunk.Chunk, result *chunk.
 		times[i] = tm
 		if b.tp.Tp == mysql.TypeDate {
 			// Truncate hh:mm:ss part if the type is Date.
-			times[i].SetDateTimePart(types.FromDate(tm.Year(), tm.Month(), tm.Day(), 0, 0, 0, 0))
+			times[i].SetCoreTime(types.FromDate(tm.Year(), tm.Month(), tm.Day(), 0, 0, 0, 0))
 		}
 	}
 	return nil
@@ -492,7 +492,7 @@ func (b *builtinCastJSONAsTimeSig) vecEvalTime(input *chunk.Chunk, result *chunk
 		times[i] = tm
 		if b.tp.Tp == mysql.TypeDate {
 			// Truncate hh:mm:ss part if the type is Date.
-			times[i].SetDateTimePart(types.FromDate(tm.Year(), tm.Month(), tm.Day(), 0, 0, 0, 0))
+			times[i].SetCoreTime(types.FromDate(tm.Year(), tm.Month(), tm.Day(), 0, 0, 0, 0))
 		}
 	}
 	return nil
@@ -534,7 +534,7 @@ func (b *builtinCastRealAsTimeSig) vecEvalTime(input *chunk.Chunk, result *chunk
 		times[i] = tm
 		if b.tp.Tp == mysql.TypeDate {
 			// Truncate hh:mm:ss part if the type is Date.
-			times[i].SetDateTimePart(types.FromDate(tm.Year(), tm.Month(), tm.Day(), 0, 0, 0, 0))
+			times[i].SetCoreTime(types.FromDate(tm.Year(), tm.Month(), tm.Day(), 0, 0, 0, 0))
 		}
 	}
 	return nil
@@ -1339,7 +1339,7 @@ func (b *builtinCastDecimalAsTimeSig) vecEvalTime(input *chunk.Chunk, result *ch
 		times[i] = tm
 		if b.tp.Tp == mysql.TypeDate {
 			// Truncate hh:mm:ss part if the type is Date.
-			times[i].SetDateTimePart(types.FromDate(tm.Year(), tm.Month(), tm.Day(), 0, 0, 0, 0))
+			times[i].SetCoreTime(types.FromDate(tm.Year(), tm.Month(), tm.Day(), 0, 0, 0, 0))
 		}
 	}
 	return nil
@@ -1413,7 +1413,7 @@ func (b *builtinCastTimeAsTimeSig) vecEvalTime(input *chunk.Chunk, result *chunk
 		times[i] = tm
 		if b.tp.Tp == mysql.TypeDate {
 			// Truncate hh:mm:ss part if the type is Date.
-			times[i].SetDateTimePart(types.FromDate(tm.Year(), tm.Month(), tm.Day(), 0, 0, 0, 0))
+			times[i].SetCoreTime(types.FromDate(tm.Year(), tm.Month(), tm.Day(), 0, 0, 0, 0))
 			times[i].SetType(b.tp.Tp)
 		}
 	}
@@ -1615,7 +1615,7 @@ func (b *builtinCastStringAsTimeSig) vecEvalTime(input *chunk.Chunk, result *chu
 		times[i] = tm
 		if b.tp.Tp == mysql.TypeDate {
 			// Truncate hh:mm:ss part if the type is Date.
-			times[i].SetDateTimePart(types.FromDate(tm.Year(), tm.Month(), tm.Day(), 0, 0, 0, 0))
+			times[i].SetCoreTime(types.FromDate(tm.Year(), tm.Month(), tm.Day(), 0, 0, 0, 0))
 		}
 	}
 	return nil

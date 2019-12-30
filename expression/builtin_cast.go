@@ -555,7 +555,7 @@ func (b *builtinCastIntAsTimeSig) evalTime(row chunk.Row) (res types.Time, isNul
 	}
 	if b.tp.Tp == mysql.TypeDate {
 		// Truncate hh:mm:ss part if the type is Date.
-		res.SetDateTimePart(types.FromDate(res.Year(), res.Month(), res.Day(), 0, 0, 0, 0))
+		res.SetCoreTime(types.FromDate(res.Year(), res.Month(), res.Day(), 0, 0, 0, 0))
 	}
 	return res, false, nil
 }
@@ -844,7 +844,7 @@ func (b *builtinCastRealAsTimeSig) evalTime(row chunk.Row) (types.Time, bool, er
 	}
 	if b.tp.Tp == mysql.TypeDate {
 		// Truncate hh:mm:ss part if the type is Date.
-		res.SetDateTimePart(types.FromDate(res.Year(), res.Month(), res.Day(), 0, 0, 0, 0))
+		res.SetCoreTime(types.FromDate(res.Year(), res.Month(), res.Day(), 0, 0, 0, 0))
 	}
 	return res, false, nil
 }
@@ -1001,7 +1001,7 @@ func (b *builtinCastDecimalAsTimeSig) evalTime(row chunk.Row) (res types.Time, i
 	}
 	if b.tp.Tp == mysql.TypeDate {
 		// Truncate hh:mm:ss part if the type is Date.
-		res.SetDateTimePart(types.FromDate(res.Year(), res.Month(), res.Day(), 0, 0, 0, 0))
+		res.SetCoreTime(types.FromDate(res.Year(), res.Month(), res.Day(), 0, 0, 0, 0))
 	}
 	return res, false, err
 }
@@ -1217,7 +1217,7 @@ func (b *builtinCastStringAsTimeSig) evalTime(row chunk.Row) (res types.Time, is
 	}
 	if b.tp.Tp == mysql.TypeDate {
 		// Truncate hh:mm:ss part if the type is Date.
-		res.SetDateTimePart(types.FromDate(res.Year(), res.Month(), res.Day(), 0, 0, 0, 0))
+		res.SetCoreTime(types.FromDate(res.Year(), res.Month(), res.Day(), 0, 0, 0, 0))
 	}
 	return res, false, nil
 }
@@ -1272,7 +1272,7 @@ func (b *builtinCastTimeAsTimeSig) evalTime(row chunk.Row) (res types.Time, isNu
 	res, err = res.RoundFrac(sc, int8(b.tp.Decimal))
 	if b.tp.Tp == mysql.TypeDate {
 		// Truncate hh:mm:ss part if the type is Date.
-		res.SetDateTimePart(types.FromDate(res.Year(), res.Month(), res.Day(), 0, 0, 0, 0))
+		res.SetCoreTime(types.FromDate(res.Year(), res.Month(), res.Day(), 0, 0, 0, 0))
 		res.SetType(b.tp.Tp)
 	}
 	return res, false, err
@@ -1662,7 +1662,7 @@ func (b *builtinCastJSONAsTimeSig) evalTime(row chunk.Row) (res types.Time, isNu
 	}
 	if b.tp.Tp == mysql.TypeDate {
 		// Truncate hh:mm:ss part if the type is Date.
-		res.SetDateTimePart(types.FromDate(res.Year(), res.Month(), res.Day(), 0, 0, 0, 0))
+		res.SetCoreTime(types.FromDate(res.Year(), res.Month(), res.Day(), 0, 0, 0, 0))
 	}
 	return
 }

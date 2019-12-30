@@ -67,7 +67,7 @@ func GetTimeValue(ctx sessionctx.Context, v interface{}, tp byte, fsp int8) (d t
 			if err != nil {
 				return d, err
 			}
-			value.SetDateTimePart(types.FromGoTime(defaultTime.Truncate(time.Duration(math.Pow10(9-int(fsp))) * time.Nanosecond)))
+			value.SetCoreTime(types.FromGoTime(defaultTime.Truncate(time.Duration(math.Pow10(9-int(fsp))) * time.Nanosecond)))
 			if tp == mysql.TypeTimestamp || tp == mysql.TypeDatetime {
 				err = value.ConvertTimeZone(time.Local, ctx.GetSessionVars().Location())
 				if err != nil {
