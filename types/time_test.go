@@ -825,7 +825,6 @@ func (s *testTimeSuite) TestConvert(c *C) {
 		n := time.Date(year, month, day, 0, 0, 0, 0, sc.TimeZone)
 		t, err := v.ConvertToTime(sc, mysql.TypeDatetime)
 		c.Assert(err, IsNil)
-		// TODO: Consider time_zone variable.
 		t1, _ := t.GoTime(sc.TimeZone)
 		c.Assert(t1.Sub(n), Equals, v.Duration)
 	}

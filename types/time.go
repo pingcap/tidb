@@ -205,7 +205,15 @@ func FromGoTime(t gotime.Time) MysqlTime {
 
 // FromDate makes a internal time representation from the given date.
 func FromDate(year int, month int, day int, hour int, minute int, second int, microsecond int) MysqlTime {
-	return NewMysqlTime(uint16(year), uint8(month), uint8(day), uint8(hour), uint8(minute), uint8(second), uint32(microsecond))
+	return MysqlTime{
+		year:        uint16(year),
+		month:       uint8(month),
+		day:         uint8(day),
+		hour:        uint32(hour),
+		minute:      uint8(minute),
+		second:      uint8(second),
+		microsecond: uint32(microsecond),
+	}
 }
 
 // Clock returns the hour, minute, and second within the day specified by t.
