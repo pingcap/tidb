@@ -2643,7 +2643,22 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 
 	var result LogicalPlan = ds
 
-	if b.ctx.HasDirtyContent(tableInfo.ID) {
+	needUS := false
+	if pi := tableInfo.GetPartitionInfo(); pi == nil {
+		if b.ctx.HasDirtyContent(tableInfo.ID) {
+			needUS = true
+		}
+	} else {
+		// Currently, we'll add a UnionScan on every partition even though only one partition's data is changed.
+		// This is limited by current implementation of Partition Prune. It'll updated once we modify that part.
+		for _, partition := range pi.Definitions {
+			if b.ctx.HasDirtyContent(partition.ID) {
+				needUS = true
+				break
+			}
+		}
+	}
+	if needUS {
 		us := LogicalUnionScan{handleCol: handleCol}.Init(b.ctx, b.getSelectOffset())
 		us.SetChildren(ds)
 		result = us

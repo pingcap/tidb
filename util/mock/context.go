@@ -89,7 +89,7 @@ func (c *Context) ClearValue(key fmt.Stringer) {
 
 // HasDirtyContent implements sessionctx.Context ClearValue interface.
 func (c *Context) HasDirtyContent(tid int64) bool {
-	return true
+	return false
 }
 
 // GetSessionVars implements the sessionctx.Context GetSessionVars interface.
