@@ -219,6 +219,11 @@ func FromDate(year int, month int, day int, hour int, minute int, second int, mi
 	}
 }
 
+// MaxMySQLTime returns Duration with maximum mysql time.
+func MaxMySQLTime(fsp int8) Time {
+	return NewTime(FromDate(0, 0, 0, TimeMaxHour, TimeMaxMinute, TimeMaxSecond, 0), mysql.TypeDuration, fsp)
+}
+
 // Clock returns the hour, minute, and second within the day specified by t.
 func (t Time) Clock() (hour int, minute int, second int) {
 	return t.time.Hour(), t.time.Minute(), t.time.Second()
@@ -332,11 +337,6 @@ func (t Time) Week(mode int) int {
 // YearDay return year and day.
 func (t Time) YearDay() int {
 	return t.time.YearDay()
-}
-
-// MaxMySQLTime returns Duration with maximum mysql time.
-func MaxMySQLTime(fsp int8) Duration {
-	return NewDuration(TimeMaxHour, TimeMaxMinute, TimeMaxSecond, 0, fsp)
 }
 
 // CurrentTime returns current time with type tp.
