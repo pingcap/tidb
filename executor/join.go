@@ -336,7 +336,7 @@ func (e *HashJoinExec) handleUnmatchedRowsFromHashTableInMemory(workerID uint) {
 	for i := int(workerID); i < numChks; i += int(e.concurrency) {
 		chk := e.rowContainer.records.GetChunk(i)
 		for j := 0; j < chk.NumRows(); j++ {
-			if e.outerMatchedStatus[i].UnsafeIsSet(j) == false { // process unmatched outer rows
+			if !e.outerMatchedStatus[i].UnsafeIsSet(j) { // process unmatched outer rows
 				e.joiners[workerID].onMissMatch(false, chk.GetRow(j), joinResult.chk)
 			}
 			if joinResult.chk.IsFull() {
@@ -373,7 +373,7 @@ func (e *HashJoinExec) handleUnmatchedRowsFromHashTableInDisk(workerID uint) {
 				e.joinResultCh <- joinResult
 				return
 			}
-			if e.outerMatchedStatus[i].UnsafeIsSet(j) == false { // process unmatched outer rows
+			if !e.outerMatchedStatus[i].UnsafeIsSet(j) { // process unmatched outer rows
 				e.joiners[workerID].onMissMatch(false, row, joinResult.chk)
 			}
 			if joinResult.chk.IsFull() {
