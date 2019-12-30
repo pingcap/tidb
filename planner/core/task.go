@@ -14,7 +14,6 @@
 package core
 
 import (
-	"fmt"
 	"math"
 
 	"github.com/pingcap/parser/ast"
@@ -28,7 +27,9 @@ import (
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/plancodec"
+	"go.uber.org/zap"
 )
 
 // task is a new version of `PhysicalPlanInfo`. It stores cost information for a task.
@@ -1270,53 +1271,63 @@ func (p *PhysicalHashAgg) GetCost(inputRows float64, isRoot bool) float64 {
 	return cpuCost + memoryCost
 }
 
+func (p *PhysicalWindow) attach2Task(tasks ...task) task {
+	t := tasks[0].copy()
+	t = attachPlan2Task(p, t)
+	/*DEBUG*/ logutil.BgLogger().Info("[PhysicalWindow] attach2Task", zap.Float64("t.cost()", t.cost()),
+		zap.Float64("p.GetCost()", p.GetCost(t.count())))
+	return t
+}
+
+func (p *PhysicalWindowParallel) attach2Task(tasks ...task) task {
+	t := tasks[0].copy()
+	t = attachPlan2Task(p, t)
+	/*DEBUG*/ logutil.BgLogger().Info("[PhysicalWindowParallel] attach2Task", zap.Float64("t.cost()", t.cost()),
+		zap.Float64("p.GetCost()", p.GetCost(t.count())))
+	t.addCost(p.GetCost(t.count()))
+	return t
+}
+
+// Objective of `GetCost` for window operator:
+//   Cost( multi-thread, heavy window functions ), smaller than
+//   Cost( single-thread<without enforce>, light window functions ), smaller than
+//   Cost( multi-thread,light window functions ), smaller than
+//   Cost( single-thread<with enforce> )
+
 // GetCost computes the cost of in window operator itself.
-//   cpuCost = inputRows[do partition] + numPartitions * windowFuncsCost(partitionSize).Cpu.
-//   memCost = groupNums * windowFuncsCost(partitionSize).Memory.
+//   cpuCost := inputRows/*split partition*/ + numPartitions x windowFuncsCost(partitionSize)
+//   memCost := numPartitions x windowFuncsCost(partitionSize)
 func (p *PhysicalWindow) GetCost(count float64) float64 {
+	sessVars := p.ctx.GetSessionVars()
+
 	numPartitions := p.getNumberOfPartitions()
 	cpuFuncs, memFuncs := p.getWindowFuncsCostUnit(count / numPartitions)
-	sessVars := p.ctx.GetSessionVars()
 
 	cpu := (count + numPartitions*cpuFuncs) * sessVars.CPUFactor
 	mem := numPartitions * memFuncs * sessVars.MemoryFactor
 	return cpu + mem
 }
 
-func (p *PhysicalWindow) attach2Task(tasks ...task) task {
-	t := tasks[0].copy()
-	t = attachPlan2Task(p, t)
-	//DEBUG
-	fmt.Printf("[PhysicalWindow] t.cost(): %v, p.GetCost(): %v \n", t.cost(), p.GetCost(t.count()))
-	t.addCost(p.GetCost(t.count()))
-	return t
-}
-
 // GetCost computes the cost of in window operator (in parallel manner) itself.
-//   cpuCost = inputRows[do hash] + (getPhysicalSortCost(inputRows/concurrency).Cpu +
-//               inputRows/concurrency[do partition] + groupNums/concurrency * windowFuncsCost(groupSize).Cpu) * concurrency.
-//   memCost = inputRows[do hash] + (getPhysicalSortCost(inputRows/concurrency).Memory +
-//               groupNums/concurrency * windowFuncsCost(groupSize).Memory) * concurrency.
+//   workerRows := inputRows / concurrency
+//   cpuCost := inputRows/*hashing*/ + { sortCost(workerRows) +
+//               workerRows/*split partition*/ + numPartitions/concurrency x windowFuncsCost(partitionSize) }
+//   memCost := inputRows/*hashing*/ + concurrency x { sortCost(workerRows) +
+//               numPartitions/concurrency x windowFuncsCost(partitionSize) }
+//          ==> inputRows + concurrency x sortCost(workerRows) + numPartitions x windowFuncsCost(partitionSize)
 func (p *PhysicalWindowParallel) GetCost(count float64) float64 {
 	sessVars := p.ctx.GetSessionVars()
+
 	concurrency := float64(sessVars.WindowConcurrency)
 	numPartitions := p.getNumberOfPartitions()
+	workerRows := count / concurrency
 
-	cpuSort, memSort := getPhysicalSortCostUnit(count / concurrency)
+	cpuSort, memSort := getPhysicalSortCostUnit(workerRows)
 	cpuFuncs, memFuncs := p.getWindowFuncsCostUnit(count / numPartitions)
 
-	cpu := count + concurrency*(cpuSort+count/concurrency+numPartitions/concurrency*cpuFuncs)
-	mem := count + concurrency*(memSort+numPartitions/concurrency*memFuncs)
+	cpu := count + cpuSort + workerRows + numPartitions/concurrency*cpuFuncs
+	mem := count + concurrency*memSort + numPartitions*memFuncs
 	return cpu*sessVars.CPUFactor + mem*sessVars.MemoryFactor + (concurrency+1)*sessVars.ConcurrencyFactor
-}
-
-func (p *PhysicalWindowParallel) attach2Task(tasks ...task) task {
-	t := tasks[0].copy()
-	t = attachPlan2Task(p, t)
-	//DEBUG
-	fmt.Printf("[PhysicalWindowParallel] t.cost(): %v, p.GetCost(): %v \n", t.cost(), p.GetCost(t.count()))
-	t.addCost(p.GetCost(t.count()))
-	return t
 }
 
 func (p *BasePhysicalWindow) getNumberOfPartitions() float64 {
