@@ -39,6 +39,7 @@ const promReadTimeout = time.Second * 10
 
 // MetricRetriever uses to read metric data.
 type MetricRetriever struct {
+	dummyCloser
 	table     *model.TableInfo
 	tblDef    *infoschema.MetricTableDef
 	extractor *plannercore.MetricTableExtractor

@@ -79,6 +79,44 @@
     ]
   },
   {
+    "Name": "TestIndexJoinUniqueCompositeIndex",
+    "Cases": [
+      {
+        "SQL": "explain select /*+ TIDB_INLJ(t2) */ * from t1 join t2 on t1.a = t2.a and t1.c = t2.c",
+        "Plan": [
+          "IndexJoin_9 2.00 root inner join, inner:IndexLookUp_8, outer key:test.t1.a, inner key:test.t2.a, other cond:eq(test.t1.c, test.t2.c)",
+          "├─TableReader_19 1.00 root data:TableScan_18",
+          "│ └─TableScan_18 1.00 cop[tikv] table:t1, range:[-inf,+inf], keep order:false",
+          "└─IndexLookUp_8 2.00 root ",
+          "  ├─IndexScan_6 2.00 cop[tikv] table:t2, index:a, b, range: decided by [eq(test.t2.a, test.t1.a)], keep order:false",
+          "  └─TableScan_7 2.00 cop[tikv] table:t2, keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain select /*+ TIDB_INLJ(t2) */ * from t1 join t2 on t1.a = t2.a and t1.c <= t2.b",
+        "Plan": [
+          "IndexJoin_9 2.00 root inner join, inner:IndexLookUp_8, outer key:test.t1.a, inner key:test.t2.a, other cond:le(test.t1.c, test.t2.b)",
+          "├─TableReader_19 1.00 root data:TableScan_18",
+          "│ └─TableScan_18 1.00 cop[tikv] table:t1, range:[-inf,+inf], keep order:false",
+          "└─IndexLookUp_8 2.00 root ",
+          "  ├─IndexScan_6 2.00 cop[tikv] table:t2, index:a, b, range: decided by [eq(test.t2.a, test.t1.a) le(test.t1.c, test.t2.b)], keep order:false",
+          "  └─TableScan_7 2.00 cop[tikv] table:t2, keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain select /*+ TIDB_INLJ(t2) */ * from t1 join t2 on t1.a = t2.a and t2.b = 1",
+        "Plan": [
+          "IndexJoin_9 1.00 root inner join, inner:IndexLookUp_8, outer key:test.t1.a, inner key:test.t2.a",
+          "├─TableReader_19 1.00 root data:TableScan_18",
+          "│ └─TableScan_18 1.00 cop[tikv] table:t1, range:[-inf,+inf], keep order:false",
+          "└─IndexLookUp_8 1.00 root ",
+          "  ├─IndexScan_6 1.00 cop[tikv] table:t2, index:a, b, range: decided by [eq(test.t2.a, test.t1.a) eq(test.t2.b, 1)], keep order:false",
+          "  └─TableScan_7 1.00 cop[tikv] table:t2, keep order:false"
+        ]
+      }
+    ]
+  },
+  {
     "Name": "TestPartitionTableStats",
     "Cases": [
       {

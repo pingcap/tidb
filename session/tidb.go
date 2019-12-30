@@ -277,7 +277,7 @@ func runStmt(ctx context.Context, sctx sessionctx.Context, s sqlexec.Statement) 
 				if err != nil {
 					sctx.StmtRollback()
 				} else {
-					err = sctx.StmtCommit()
+					err = sctx.StmtCommit(sctx.GetSessionVars().StmtCtx.MemTracker)
 				}
 			}
 		} else {

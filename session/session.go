@@ -680,7 +680,10 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 				s.StmtRollback()
 				break
 			}
-			err = s.StmtCommit()
+			// We do not need to pass memTracker here, because that retry
+			// happened after commit, the memory usage was calculated during the
+			// first execution.
+			err = s.StmtCommit(nil)
 			if err != nil {
 				return err
 			}
@@ -688,10 +691,12 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 		logutil.Logger(ctx).Warn("transaction association",
 			zap.Uint64("retrying txnStartTS", s.GetSessionVars().TxnCtx.StartTS),
 			zap.Uint64("original txnStartTS", orgStartTS))
-		if hook := ctx.Value("preCommitHook"); hook != nil {
-			// For testing purpose.
-			hook.(func())()
-		}
+		failpoint.Inject("preCommitHook", func() {
+			hook, ok := ctx.Value("__preCommitHook").(func())
+			if ok {
+				hook()
+			}
+		})
 		if err == nil {
 			err = s.doCommit(ctx)
 			if err == nil {
