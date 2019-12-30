@@ -364,7 +364,7 @@ func (*testExpressionSuite) TestDeferredParamNotNull(c *C) {
 	ctx.GetSessionVars().PreparedParams = []types.Datum{
 		types.NewIntDatum(1),
 		types.NewDecimalDatum(types.NewDecFromStringForTest("20170118123950.123")),
-		types.NewTimeDatum(types.Time{Time: types.FromGoTime(testTime), Fsp: 6, Type: mysql.TypeTimestamp}),
+		types.NewTimeDatum(types.NewTime(types.FromGoTime(testTime), mysql.TypeTimestamp, 6)),
 		types.NewDurationDatum(types.ZeroDuration),
 		types.NewStringDatum("{}"),
 		types.NewBinaryLiteralDatum(types.BinaryLiteral([]byte{1})),
@@ -483,7 +483,7 @@ func (*testExpressionSuite) TestDeferredExprNotNull(c *C) {
 	xDec, _, _ := cst.EvalDecimal(ctx, chunk.Row{})
 	c.Assert(xDec.Compare(m.i.(*types.MyDecimal)), Equals, 0)
 
-	m.i = types.Time{}
+	m.i = types.Time(0)
 	xTim, _, _ := cst.EvalTime(ctx, chunk.Row{})
 	c.Assert(xTim.Compare(m.i.(types.Time)), Equals, 0)
 

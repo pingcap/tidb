@@ -480,7 +480,7 @@ func convertColumnInfo(fld *ast.ResultField) (ci *ColumnInfo) {
 	// Keep things compatible for old clients.
 	// Refer to mysql-server/sql/protocol.cc send_result_set_metadata()
 	if ci.Type == mysql.TypeVarchar {
-		ci.Type = mysql.TypeVarString
+		ci.SetType(mysql.TypeVarString)
 	}
 	return
 }

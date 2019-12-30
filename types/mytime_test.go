@@ -320,5 +320,5 @@ func (s *testMyTimeSuite) TestWeekday(c *C) {
 
 func (s *testMyTimeSuite) TestTimeStructSize(c *C) {
 	c.Assert(unsafe.Sizeof(MysqlTime(0)), Equals, uintptr(0x8))
-	c.Assert(unsafe.Sizeof(Time{}), Equals, uintptr(0x10))
+	c.Assert(unsafe.Sizeof(Time(0)), Equals, uintptr(0x8))
 }

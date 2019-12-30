@@ -16,8 +16,6 @@ package types
 import (
 	gotime "time"
 
-	"fmt"
-
 	"github.com/pingcap/errors"
 )
 
@@ -43,7 +41,7 @@ var (
 	microsecondBitFieldMask = maskBase << (64 - microsecondBitFieldStart - 1) >> (64 - microsecondBitFieldStart - 1 + microsecondBitFieldEnd) << microsecondBitFieldEnd
 )
 
-// MysqlTime is the internal struct type for Time.
+// MysqlTime is the internal type for Time.
 type MysqlTime uint64
 
 func NewMysqlTime(year uint16, month, day, hour, minute, second uint8, microsecond uint32) MysqlTime {
@@ -56,11 +54,6 @@ func NewMysqlTime(year uint16, month, day, hour, minute, second uint8, microseco
 	mt.setSecond(second)
 	mt.setMicrosecond(microsecond)
 	return mt
-}
-
-// String implements fmt.Stringer.
-func (t MysqlTime) String() string {
-	return fmt.Sprintf("{%d %d %d %d %d %d %d}", t.getYear(), t.getMonth(), t.getDay(), t.getHour(), t.getMinute(), t.getSecond(), t.getMicrosecond())
 }
 
 func (t MysqlTime) getYear() uint16 {

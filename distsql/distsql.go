@@ -167,7 +167,7 @@ func canUseChunkRPC(ctx sessionctx.Context) bool {
 }
 
 var supportedAlignment = !(unsafe.Sizeof(types.MysqlTime(0)) != 8 ||
-	unsafe.Sizeof(types.Time{}) != 12 ||
+	unsafe.Sizeof(types.Time(0)) != 12 ||
 	unsafe.Sizeof(types.MyDecimal{}) != 40)
 
 // checkAlignment checks the alignment in current system environment.

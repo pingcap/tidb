@@ -231,11 +231,7 @@ func (h *BindHandle) AddBindRecord(sctx sessionctx.Context, is infoschema.InfoSc
 		return err1
 	}
 	for i := range record.Bindings {
-		record.Bindings[i].CreateTime = types.Time{
-			Time: types.FromGoTime(oracle.GetTimeFromTS(txn.StartTS())),
-			Type: mysql.TypeDatetime,
-			Fsp:  3,
-		}
+		record.Bindings[i].CreateTime = types.NewTime(types.FromGoTime(oracle.GetTimeFromTS(txn.StartTS())), mysql.TypeDatetime, 3)
 		record.Bindings[i].UpdateTime = record.Bindings[0].CreateTime
 
 		// insert the BindRecord to the storage.
@@ -284,11 +280,7 @@ func (h *BindHandle) DropBindRecord(sctx sessionctx.Context, is infoschema.InfoS
 		return err1
 	}
 
-	updateTs := types.Time{
-		Time: types.FromGoTime(oracle.GetTimeFromTS(txn.StartTS())),
-		Type: mysql.TypeDatetime,
-		Fsp:  3,
-	}
+	updateTs := types.NewTime(types.FromGoTime(oracle.GetTimeFromTS(txn.StartTS())), mysql.TypeDatetime, 3)
 	oldBindRecord := h.GetBindRecord(parser.DigestNormalized(record.OriginalSQL), record.OriginalSQL, record.Db)
 	bindingSQLs := make([]string, 0, len(record.Bindings))
 	for i := range record.Bindings {
@@ -654,7 +646,7 @@ func (h *BindHandle) getOnePendingVerifyJob() (string, string, Binding) {
 				if bind.Status != Rejected {
 					continue
 				}
-				updateTime, err := bind.UpdateTime.Time.GoTime(time.UTC)
+				updateTime, err := bind.UpdateTime.GoTime(time.UTC)
 				// Should not happen.
 				if err != nil {
 					continue

@@ -935,17 +935,9 @@ func dataForTiKVStoreStatus(ctx sessionctx.Context) (records [][]types.Datum, er
 		row[13].SetFloat64(storeStat.Status.RegionWeight)
 		row[14].SetFloat64(storeStat.Status.RegionScore)
 		row[15].SetInt64(storeStat.Status.RegionSize)
-		startTs := types.Time{
-			Time: types.FromGoTime(storeStat.Status.StartTs),
-			Type: mysql.TypeDatetime,
-			Fsp:  types.DefaultFsp,
-		}
+		startTs := types.NewTime(types.FromGoTime(storeStat.Status.StartTs), mysql.TypeDatetime, types.DefaultFsp)
 		row[16].SetMysqlTime(startTs)
-		lastHeartbeatTs := types.Time{
-			Time: types.FromGoTime(storeStat.Status.LastHeartbeatTs),
-			Type: mysql.TypeDatetime,
-			Fsp:  types.DefaultFsp,
-		}
+		lastHeartbeatTs := types.NewTime(types.FromGoTime(storeStat.Status.LastHeartbeatTs), mysql.TypeDatetime, types.DefaultFsp)
 		row[17].SetMysqlTime(lastHeartbeatTs)
 		row[18].SetString(storeStat.Status.Uptime)
 		records = append(records, row)
@@ -1340,10 +1332,7 @@ func dataForTables(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.D
 			if collation == "" {
 				collation = mysql.DefaultCollationName
 			}
-			createTime := types.Time{
-				Time: types.FromGoTime(table.GetUpdateTime()),
-				Type: createTimeTp,
-			}
+			createTime := types.NewTime(types.FromGoTime(table.GetUpdateTime()), createTimeTp, types.DefaultFsp)
 
 			createOptions := ""
 
@@ -1947,7 +1936,7 @@ func DataForAnalyzeStatus() (rows [][]types.Datum) {
 		if job.StartTime.IsZero() {
 			startTime = nil
 		} else {
-			startTime = types.Time{Time: types.FromGoTime(job.StartTime), Type: mysql.TypeDatetime}
+			startTime = types.NewTime(types.FromGoTime(job.StartTime), mysql.TypeDatetime, 0)
 		}
 		rows = append(rows, types.MakeDatums(
 			job.DBName,        // TABLE_SCHEMA

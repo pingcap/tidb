@@ -557,7 +557,7 @@ func (s *testCodecSuite) TestTime(c *C) {
 		v, err := Decode(b, 1)
 		c.Assert(err, IsNil)
 		var t types.Time
-		t.Type = mysql.TypeDatetime
+		t.SetType(mysql.TypeDatetime)
 		t.FromPackedUint(v[0].GetUint64())
 		c.Assert(types.NewDatum(t), DeepEquals, m)
 	}
@@ -601,7 +601,7 @@ func (s *testCodecSuite) TestDuration(c *C) {
 		c.Assert(err, IsNil)
 		v, err := Decode(b, 1)
 		c.Assert(err, IsNil)
-		m.Fsp = types.MaxFsp
+		m.SetFsp(types.MaxFsp)
 		c.Assert(v, DeepEquals, types.MakeDatums(m))
 	}
 

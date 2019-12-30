@@ -109,7 +109,7 @@ type dateTimeGenerWithFsp struct {
 func (g *dateTimeGenerWithFsp) gen() interface{} {
 	result := g.defaultGener.gen()
 	if t, ok := result.(types.Time); ok {
-		t.Fsp = g.fsp
+		t.SetFsp(g.fsp)
 		return t
 	}
 	return result
