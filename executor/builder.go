@@ -23,9 +23,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cznic/mathutil"
 	"github.com/cznic/sortutil"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/kvproto/pkg/diagnosticspb"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -42,9 +42,11 @@ import (
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/execdetails"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tidb/util/timeutil"
@@ -354,11 +356,10 @@ func buildIndexLookUpChecker(b *executorBuilder, readerPlan *plannercore.Physica
 	for _, col := range is.Columns {
 		colNames = append(colNames, col.Name.O)
 	}
-	var err error
-	readerExec.idxTblCols, err = table.FindCols(readerExec.table.Cols(), colNames, true)
-	if err != nil {
-		b.err = errors.Trace(err)
-		return
+	if cols, missingColName := table.FindCols(readerExec.table.Cols(), colNames, true); missingColName != "" {
+		b.err = plannercore.ErrUnknownColumn.GenWithStack("Unknown column %s", missingColName)
+	} else {
+		readerExec.idxTblCols = cols
 	}
 }
 
@@ -621,13 +622,14 @@ func (b *executorBuilder) buildShow(v *plannercore.PhysicalShow) Executor {
 		Table:        v.Table,
 		Column:       v.Column,
 		IndexName:    v.IndexName,
-		User:         v.User,
-		Roles:        v.Roles,
-		IfNotExists:  v.IfNotExists,
 		Flag:         v.Flag,
-		Full:         v.Full,
-		GlobalScope:  v.GlobalScope,
+		Roles:        v.Roles,
+		User:         v.User,
 		is:           b.is,
+		Full:         v.Full,
+		IfNotExists:  v.IfNotExists,
+		GlobalScope:  v.GlobalScope,
+		Extended:     v.Extended,
 	}
 	if e.Tp == ast.ShowGrants && e.User == nil {
 		// The input is a "show grants" statement, fulfill the user and roles field.
@@ -803,6 +805,7 @@ func (b *executorBuilder) buildGrant(grant *ast.GrantStmt) Executor {
 		Level:        grant.Level,
 		Users:        grant.Users,
 		WithGrant:    grant.WithGrant,
+		TLSOptions:   grant.TLSOptions,
 		is:           b.is,
 	}
 	return e
@@ -1258,26 +1261,72 @@ func (b *executorBuilder) getStartTS() (uint64, error) {
 }
 
 func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executor {
-	var e Executor
-	switch v.Table.Name.L {
-	case strings.ToLower(infoschema.TableClusterConfig):
-		e = &ClusterReaderExec{
+	switch v.DBName.L {
+	case util.MetricSchemaName.L:
+		return &ClusterReaderExec{
 			baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
-			retriever: &clusterConfigRetriever{
-				extractor: v.Extractor.(*plannercore.ClusterConfigTableExtractor),
+			retriever: &MetricRetriever{
+				table:     v.Table,
+				extractor: v.Extractor.(*plannercore.MetricTableExtractor),
 			},
 		}
-	default:
-		tb, _ := b.is.TableByID(v.Table.ID)
-		e = &TableScanExec{
-			baseExecutor:   newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
-			t:              tb,
-			columns:        v.Columns,
-			seekHandle:     math.MinInt64,
-			isVirtualTable: !tb.Type().IsNormalTable(),
+	case util.InformationSchemaName.L:
+		switch v.Table.Name.L {
+		case strings.ToLower(infoschema.TableClusterConfig):
+			return &ClusterReaderExec{
+				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
+				retriever: &clusterConfigRetriever{
+					extractor: v.Extractor.(*plannercore.ClusterTableExtractor),
+				},
+			}
+		case strings.ToLower(infoschema.TableClusterLoad):
+			return &ClusterReaderExec{
+				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
+				retriever: &clusterServerInfoRetriever{
+					extractor:      v.Extractor.(*plannercore.ClusterTableExtractor),
+					serverInfoType: diagnosticspb.ServerInfoType_LoadInfo,
+				},
+			}
+		case strings.ToLower(infoschema.TableClusterHardware):
+			return &ClusterReaderExec{
+				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
+				retriever: &clusterServerInfoRetriever{
+					extractor:      v.Extractor.(*plannercore.ClusterTableExtractor),
+					serverInfoType: diagnosticspb.ServerInfoType_HardwareInfo,
+				},
+			}
+		case strings.ToLower(infoschema.TableClusterSystemInfo):
+			return &ClusterReaderExec{
+				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
+				retriever: &clusterServerInfoRetriever{
+					extractor:      v.Extractor.(*plannercore.ClusterTableExtractor),
+					serverInfoType: diagnosticspb.ServerInfoType_SystemInfo,
+				},
+			}
+		case strings.ToLower(infoschema.TableClusterLog):
+			return &ClusterReaderExec{
+				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
+				retriever: &clusterLogRetriever{
+					extractor: v.Extractor.(*plannercore.ClusterLogTableExtractor),
+				},
+			}
+		case strings.ToLower(infoschema.TableInspectionResult):
+			return &ClusterReaderExec{
+				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
+				retriever: &inspectionRetriever{
+					extractor: v.Extractor.(*plannercore.InspectionResultTableExtractor),
+				},
+			}
 		}
 	}
-	return e
+	tb, _ := b.is.TableByID(v.Table.ID)
+	return &TableScanExec{
+		baseExecutor:   newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
+		t:              tb,
+		columns:        v.Columns,
+		seekHandle:     math.MinInt64,
+		isVirtualTable: !tb.Type().IsNormalTable(),
+	}
 }
 
 func (b *executorBuilder) buildSort(v *plannercore.PhysicalSort) Executor {
@@ -1467,7 +1516,34 @@ func (b *executorBuilder) updateForUpdateTSIfNeeded(selectPlan plannercore.Physi
 	if _, ok := selectPlan.(*plannercore.PointGetPlan); ok {
 		return nil
 	}
+	// The Repeatable Read transaction use Read Committed level to read data for writing (insert, update, delete, select for update),
+	// We should always update/refresh the for-update-ts no matter the isolation level is RR or RC.
+	if b.ctx.GetSessionVars().IsPessimisticReadConsistency() {
+		return b.refreshForUpdateTS()
+	}
 	return UpdateForUpdateTS(b.ctx, 0)
+}
+
+// refreshForUpdateTS is used to refresh the for-update-ts for reading data at read consistency level in pessimistic transaction.
+// It could use the cached tso from the statement future to avoid get tso many times.
+func (b *executorBuilder) refreshForUpdateTS() error {
+	var newForUpdateTS uint64
+	future, cachedTS := b.ctx.GetSessionVars().TxnCtx.GetStmtFuture()
+	if cachedTS != 0 {
+		newForUpdateTS = cachedTS
+	} else if future != nil {
+		newTS, waitErr := future.Wait()
+		if waitErr == nil {
+			newForUpdateTS = newTS
+			b.ctx.GetSessionVars().TxnCtx.SetStmtFuture(nil, newTS)
+		}
+	}
+	// If cachedTS is 0 or Wait() return an error, newForUpdateTS should be 0, it will force to get a new for-update-ts from PD.
+	if err := UpdateForUpdateTS(b.ctx, newForUpdateTS); err != nil {
+		return err
+	}
+	b.startTS = b.ctx.GetSessionVars().TxnCtx.GetForUpdateTS()
+	return nil
 }
 
 func (b *executorBuilder) buildAnalyzeIndexPushdown(task plannercore.AnalyzeIndexTask, opts map[ast.AnalyzeOptionType]uint64, autoAnalyze string) *analyzeTask {
@@ -1997,6 +2073,12 @@ func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableRea
 // buildTableReader builds a table reader executor. It first build a no range table reader,
 // and then update it ranges from table scan plan.
 func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) *TableReaderExecutor {
+	if b.ctx.GetSessionVars().IsPessimisticReadConsistency() {
+		if err := b.refreshForUpdateTS(); err != nil {
+			b.err = err
+			return nil
+		}
+	}
 	ret, err := buildNoRangeTableReader(b, v)
 	if err != nil {
 		b.err = err
@@ -2065,6 +2147,12 @@ func buildNoRangeIndexReader(b *executorBuilder, v *plannercore.PhysicalIndexRea
 }
 
 func (b *executorBuilder) buildIndexReader(v *plannercore.PhysicalIndexReader) *IndexReaderExecutor {
+	if b.ctx.GetSessionVars().IsPessimisticReadConsistency() {
+		if err := b.refreshForUpdateTS(); err != nil {
+			b.err = err
+			return nil
+		}
+	}
 	ret, err := buildNoRangeIndexReader(b, v)
 	if err != nil {
 		b.err = err
@@ -2147,6 +2235,12 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIn
 }
 
 func (b *executorBuilder) buildIndexLookUpReader(v *plannercore.PhysicalIndexLookUpReader) *IndexLookUpExecutor {
+	if b.ctx.GetSessionVars().IsPessimisticReadConsistency() {
+		if err := b.refreshForUpdateTS(); err != nil {
+			b.err = err
+			return nil
+		}
+	}
 	ret, err := buildNoRangeIndexLookUpReader(b, v)
 	if err != nil {
 		b.err = err
@@ -2442,6 +2536,7 @@ func (b *executorBuilder) buildSQLBindExec(v *plannercore.SQLBindPlan) Executor 
 		bindSQL:      v.BindSQL,
 		charset:      v.Charset,
 		collation:    v.Collation,
+		db:           v.Db,
 		isGlobal:     v.IsGlobal,
 		bindAst:      v.BindStmt,
 	}
@@ -2449,6 +2544,12 @@ func (b *executorBuilder) buildSQLBindExec(v *plannercore.SQLBindPlan) Executor 
 }
 
 func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan) Executor {
+	if b.ctx.GetSessionVars().IsPessimisticReadConsistency() {
+		if err := b.refreshForUpdateTS(); err != nil {
+			b.err = err
+			return nil
+		}
+	}
 	startTS, err := b.getStartTS()
 	if err != nil {
 		b.err = err

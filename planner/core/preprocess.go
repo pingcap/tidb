@@ -123,12 +123,14 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		EraseLastSemicolon(node.OriginSel)
 		EraseLastSemicolon(node.HintedSel)
 		p.checkBindGrammar(node.OriginSel, node.HintedSel)
+		return in, true
 	case *ast.DropBindingStmt:
 		EraseLastSemicolon(node.OriginSel)
 		if node.HintedSel != nil {
 			EraseLastSemicolon(node.HintedSel)
 			p.checkBindGrammar(node.OriginSel, node.HintedSel)
 		}
+		return in, true
 	case *ast.RecoverTableStmt, *ast.FlashBackTableStmt:
 		// The specified table in recover table statement maybe already been dropped.
 		// So skip check table name here, otherwise, recover table [table_name] syntax will return
