@@ -200,7 +200,9 @@ func (p *LogicalJoin) columnSubstitute(schema *expression.Schema, exprs []expres
 	}
 }
 
-func (p *LogicalJoin) attachOnConds(onConds []expression.Expression) {
+// AttachOnConds extracts on conditions for join and set the `EqualConditions`, `LeftConditions`, `RightConditions` and
+// `OtherConditions` by the result of extract.
+func (p *LogicalJoin) AttachOnConds(onConds []expression.Expression) {
 	eq, left, right, other := p.extractOnCondition(onConds, false, false)
 	p.EqualConditions = append(eq, p.EqualConditions...)
 	p.LeftConditions = append(left, p.LeftConditions...)
@@ -905,18 +907,19 @@ func extractCorColumnsBySchema(p LogicalPlan, schema *expression.Schema) []*expr
 
 // ShowContents stores the contents for the `SHOW` statement.
 type ShowContents struct {
-	Tp          ast.ShowStmtType // Databases/Tables/Columns/....
-	DBName      string
-	Table       *ast.TableName  // Used for showing columns.
-	Column      *ast.ColumnName // Used for `desc table column`.
-	IndexName   model.CIStr
-	Flag        int                  // Some flag parsed from sql, such as FULL.
-	User        *auth.UserIdentity   // Used for show grants.
-	Roles       []*auth.RoleIdentity // Used for show grants.
+	Tp        ast.ShowStmtType // Databases/Tables/Columns/....
+	DBName    string
+	Table     *ast.TableName  // Used for showing columns.
+	Column    *ast.ColumnName // Used for `desc table column`.
+	IndexName model.CIStr
+	Flag      int                  // Some flag parsed from sql, such as FULL.
+	User      *auth.UserIdentity   // Used for show grants.
+	Roles     []*auth.RoleIdentity // Used for show grants.
+
 	Full        bool
 	IfNotExists bool // Used for `show create database if not exists`.
-
 	GlobalScope bool // Used by show variables.
+	Extended    bool // Used for `show extended columns from ...`
 }
 
 // LogicalShow represents a show plan.

@@ -24,7 +24,9 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
@@ -95,6 +97,7 @@ func (e *InsertValues) exec(ctx context.Context, rows [][]types.Datum) error {
 // See https://dev.mysql.com/doc/refman/5.7/en/insert.html
 func (e *InsertValues) initInsertColumns() error {
 	var cols []*table.Column
+	var missingColName string
 	var err error
 
 	tableCols := e.Table.Cols()
@@ -105,9 +108,9 @@ func (e *InsertValues) initInsertColumns() error {
 		for _, v := range e.SetList {
 			columns = append(columns, v.ColName.O)
 		}
-		cols, err = table.FindCols(tableCols, columns, e.Table.Meta().PKIsHandle)
-		if err != nil {
-			return errors.Errorf("INSERT INTO %s: %s", e.Table.Meta().Name.O, err)
+		cols, missingColName = table.FindCols(tableCols, columns, e.Table.Meta().PKIsHandle)
+		if missingColName != "" {
+			return errors.Errorf("INSERT INTO %s: unknown column %s", e.Table.Meta().Name.O, missingColName)
 		}
 		if len(cols) == 0 {
 			return errors.Errorf("INSERT INTO %s: empty column", e.Table.Meta().Name.O)
@@ -118,9 +121,9 @@ func (e *InsertValues) initInsertColumns() error {
 		for _, v := range e.Columns {
 			columns = append(columns, v.Name.O)
 		}
-		cols, err = table.FindCols(tableCols, columns, e.Table.Meta().PKIsHandle)
-		if err != nil {
-			return errors.Errorf("INSERT INTO %s: %s", e.Table.Meta().Name.O, err)
+		cols, missingColName = table.FindCols(tableCols, columns, e.Table.Meta().PKIsHandle)
+		if missingColName != "" {
+			return errors.Errorf("INSERT INTO %s: unknown column %s", e.Table.Meta().Name.O, missingColName)
 		}
 	} else {
 		// If e.Columns are empty, use all columns instead.
@@ -507,6 +510,14 @@ func (e *InsertValues) fillColValue(ctx context.Context, datum types.Datum, idx 
 		}
 		return d, nil
 	}
+	tblInfo := e.Table.Meta()
+	if tblInfo.PKIsHandle && tblInfo.ContainsAutoRandomBits() && column.ID == tblInfo.GetPkColInfo().ID {
+		d, err := e.adjustAutoRandomDatum(ctx, datum, hasValue, column)
+		if err != nil {
+			return types.Datum{}, err
+		}
+		return d, nil
+	}
 	if !hasValue {
 		d, err := e.getColDefaultValue(idx, column)
 		if e.handleErr(column, &datum, 0, err) != nil {
@@ -793,6 +804,66 @@ func getAutoRecordID(d types.Datum, target *types.FieldType, isInsert bool) (int
 	}
 
 	return recordID, nil
+}
+
+func (e *InsertValues) adjustAutoRandomDatum(ctx context.Context, d types.Datum, hasValue bool, c *table.Column) (types.Datum, error) {
+	if !hasValue || d.IsNull() {
+		_, err := e.ctx.Txn(true)
+		if err != nil {
+			return types.Datum{}, errors.Trace(err)
+		}
+		autoRandomID, err := e.allocAutoRandomID(&c.FieldType)
+		if err != nil {
+			return types.Datum{}, err
+		}
+		d.SetAutoID(autoRandomID, c.Flag)
+	} else {
+		recordID, err := getAutoRecordID(d, &c.FieldType, true)
+		if err != nil {
+			return types.Datum{}, err
+		}
+		err = e.rebaseAutoRandomID(recordID, &c.FieldType)
+		if err != nil {
+			return types.Datum{}, err
+		}
+		d.SetAutoID(recordID, c.Flag)
+	}
+
+	casted, err := table.CastValue(e.ctx, d, c.ToInfo())
+	if err != nil {
+		return types.Datum{}, err
+	}
+	return casted, nil
+}
+
+// allocAutoRandomID allocates a random id for primary key column. It assumes tableInfo.AutoRandomBits > 0.
+func (e *InsertValues) allocAutoRandomID(fieldType *types.FieldType) (int64, error) {
+	alloc := e.Table.Allocator(e.ctx, autoid.AutoRandomType)
+	tableInfo := e.Table.Meta()
+	_, autoRandomID, err := alloc.Alloc(tableInfo.ID, 1)
+	if err != nil {
+		return 0, err
+	}
+
+	typeBitsLength := uint64(mysql.DefaultLengthOfMysqlTypes[fieldType.Tp] * 8)
+	if tables.OverflowShardBits(autoRandomID, tableInfo.AutoRandomBits, typeBitsLength) {
+		return 0, autoid.ErrAutoRandReadFailed
+	}
+	shard := tables.CalcShard(tableInfo.AutoRandomBits, e.ctx.GetSessionVars().TxnCtx.StartTS, typeBitsLength)
+	autoRandomID |= shard
+	return autoRandomID, nil
+}
+
+func (e *InsertValues) rebaseAutoRandomID(recordID int64, fieldType *types.FieldType) error {
+	alloc := e.Table.Allocator(e.ctx, autoid.AutoRandomType)
+	tableInfo := e.Table.Meta()
+
+	typeBitsLength := uint64(mysql.DefaultLengthOfMysqlTypes[fieldType.Tp] * 8)
+	signBit := uint64(1)
+	mask := (1 << (typeBitsLength - tableInfo.AutoRandomBits - signBit)) - 1
+	autoRandomID := int64(mask) & recordID
+
+	return alloc.Rebase(tableInfo.ID, autoRandomID, true)
 }
 
 func (e *InsertValues) handleWarning(err error) {

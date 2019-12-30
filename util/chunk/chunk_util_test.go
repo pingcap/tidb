@@ -14,22 +14,34 @@
 package chunk
 
 import (
+	"math/rand"
 	"reflect"
 	"testing"
 
 	"github.com/pingcap/tidb/types"
 )
 
-func getChk() (*Chunk, *Chunk, []bool) {
+// getChk generate a chunk of data, isFirst3ColTheSame means the first three columns are the same.
+func getChk(isLast3ColTheSame bool) (*Chunk, *Chunk, []bool) {
 	numRows := 1024
 	srcChk := newChunkWithInitCap(numRows, 0, 0, 8, 8, sizeTime, 0)
 	selected := make([]bool, numRows)
 	var row Row
 	for j := 0; j < numRows; j++ {
-		if j%7 == 0 {
-			row = MutRowFromValues("abc", "abcdefg", nil, 123, types.ZeroDatetime, "abcdefg").ToRow()
+		if isLast3ColTheSame {
+			if j%7 == 0 {
+				row = MutRowFromValues("abc", "abcdefg", nil, 123, types.ZeroDatetime, "abcdefg").ToRow()
+			} else {
+				row = MutRowFromValues("abc", "abcdefg", j, 123, types.ZeroDatetime, "abcdefg").ToRow()
+			}
 		} else {
-			row = MutRowFromValues("abc", "abcdefg", j, 123, types.ZeroDatetime, "abcdefg").ToRow()
+			if j%7 == 0 {
+				row = MutRowFromValues("abc", "abcdefg", nil, rand.Int(), types.ZeroDatetime, "abcdefg").ToRow()
+			} else {
+				row = MutRowFromValues("aabc", "ab234fg", j, 123, types.ZeroDatetime, "abcdefg").ToRow()
+			}
+		}
+		if j%7 != 0 {
 			selected[j] = true
 		}
 		srcChk.AppendPartialRow(0, row)
@@ -39,7 +51,7 @@ func getChk() (*Chunk, *Chunk, []bool) {
 }
 
 func TestCopySelectedJoinRows(t *testing.T) {
-	srcChk, dstChk, selected := getChk()
+	srcChk, dstChk, selected := getChk(true)
 	numRows := srcChk.NumRows()
 	for i := 0; i < numRows; i++ {
 		if !selected[i] {
@@ -49,7 +61,25 @@ func TestCopySelectedJoinRows(t *testing.T) {
 	}
 	// batch copy
 	dstChk2 := newChunkWithInitCap(numRows, 0, 0, 8, 8, sizeTime, 0)
-	CopySelectedJoinRows(srcChk, 0, 3, selected, dstChk2)
+	CopySelectedJoinRowsWithSameOuterRows(srcChk, 0, 3, selected, dstChk2)
+
+	if !reflect.DeepEqual(dstChk, dstChk2) {
+		t.Fatal()
+	}
+}
+
+func TestCopySelectedJoinRowsDirect(t *testing.T) {
+	srcChk, dstChk, selected := getChk(false)
+	numRows := srcChk.NumRows()
+	for i := 0; i < numRows; i++ {
+		if !selected[i] {
+			continue
+		}
+		dstChk.AppendRow(srcChk.GetRow(i))
+	}
+	// batch copy
+	dstChk2 := newChunkWithInitCap(numRows, 0, 0, 8, 8, sizeTime, 0)
+	CopySelectedJoinRowsDirect(srcChk, selected, dstChk2)
 
 	if !reflect.DeepEqual(dstChk, dstChk2) {
 		t.Fatal()
@@ -58,17 +88,25 @@ func TestCopySelectedJoinRows(t *testing.T) {
 
 func BenchmarkCopySelectedJoinRows(b *testing.B) {
 	b.ReportAllocs()
-	srcChk, dstChk, selected := getChk()
+	srcChk, dstChk, selected := getChk(true)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		dstChk.Reset()
-		CopySelectedJoinRows(srcChk, 0, 3, selected, dstChk)
+		CopySelectedJoinRowsWithSameOuterRows(srcChk, 0, 3, selected, dstChk)
 	}
 }
-
+func BenchmarkCopySelectedJoinRowsDirect(b *testing.B) {
+	b.ReportAllocs()
+	srcChk, dstChk, selected := getChk(false)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		dstChk.Reset()
+		CopySelectedJoinRowsDirect(srcChk, selected, dstChk)
+	}
+}
 func BenchmarkAppendSelectedRow(b *testing.B) {
 	b.ReportAllocs()
-	srcChk, dstChk, selected := getChk()
+	srcChk, dstChk, selected := getChk(true)
 	numRows := srcChk.NumRows()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {

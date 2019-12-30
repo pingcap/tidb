@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/infoschema/metricschema"
 	"github.com/pingcap/tidb/infoschema/perfschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -575,6 +576,7 @@ func (do *Domain) Close() {
 	if do.etcdClient != nil {
 		terror.Log(errors.Trace(do.etcdClient.Close()))
 	}
+
 	do.sysSessionPool.Close()
 	do.slowQuery.Close()
 	do.wg.Wait()
@@ -619,6 +621,7 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 // Init initializes a domain.
 func (do *Domain) Init(ddlLease time.Duration, sysFactory func(*Domain) (pools.Resource, error)) error {
 	perfschema.Init()
+	metricschema.Init()
 	if ebd, ok := do.store.(tikv.EtcdBackend); ok {
 		if addrs := ebd.EtcdAddrs(); addrs != nil {
 			cfg := config.GetGlobalConfig()
@@ -863,11 +866,10 @@ func (do *Domain) globalBindHandleWorkerLoop() {
 				if err != nil {
 					logutil.BgLogger().Error("update bindinfo failed", zap.Error(err))
 				}
-				if !variable.TiDBOptOn(variable.CapturePlanBaseline.GetVal()) {
-					continue
-				}
 				do.bindHandle.DropInvalidBindRecord()
-				do.bindHandle.CaptureBaselines()
+				if variable.TiDBOptOn(variable.CapturePlanBaseline.GetVal()) {
+					do.bindHandle.CaptureBaselines()
+				}
 				do.bindHandle.SaveEvolveTasksToStore()
 			}
 		}
@@ -883,6 +885,7 @@ func (do *Domain) handleEvolvePlanTasksLoop(ctx sessionctx.Context) {
 		for {
 			select {
 			case <-do.exit:
+				owner.Cancel()
 				return
 			case <-time.After(bindinfo.Lease):
 			}
@@ -1021,6 +1024,7 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 		select {
 		case <-do.exit:
 			statsHandle.FlushStats()
+			owner.Cancel()
 			return
 			// This channel is sent only by ddl owner.
 		case t := <-statsHandle.DDLEventCh():

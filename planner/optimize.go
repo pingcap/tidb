@@ -15,14 +15,12 @@ package planner
 
 import (
 	"context"
-	"fmt"
 	"math"
 	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/format"
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
@@ -34,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/logutil"
-	"go.uber.org/zap"
 )
 
 // Optimize does optimization and creates a Plan.
@@ -43,12 +40,12 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	fp := plannercore.TryFastPlan(sctx, node)
 	if fp != nil {
 		if !isPointGetWithoutDoubleRead(sctx, fp) {
-			sctx.PrepareTxnFuture(ctx)
+			sctx.PrepareTSFuture(ctx)
 		}
 		return fp, fp.OutputNames(), nil
 	}
 
-	sctx.PrepareTxnFuture(ctx)
+	sctx.PrepareTSFuture(ctx)
 
 	bestPlan, names, _, err := optimize(ctx, sctx, node, is)
 	if err != nil {
@@ -163,6 +160,7 @@ func extractSelectAndNormalizeDigest(stmtNode ast.StmtNode) (*ast.SelectStmt, st
 	case *ast.ExplainStmt:
 		switch x.Stmt.(type) {
 		case *ast.SelectStmt:
+			plannercore.EraseLastSemicolon(x)
 			normalizeExplainSQL := parser.Normalize(x.Text())
 			idx := strings.Index(normalizeExplainSQL, "select")
 			normalizeSQL := normalizeExplainSQL[idx:]
@@ -170,6 +168,7 @@ func extractSelectAndNormalizeDigest(stmtNode ast.StmtNode) (*ast.SelectStmt, st
 			return x.Stmt.(*ast.SelectStmt), normalizeSQL, hash
 		}
 	case *ast.SelectStmt:
+		plannercore.EraseLastSemicolon(x)
 		normalizedSQL, hash := parser.NormalizeDigest(x.Text())
 		return x, normalizedSQL, hash
 	}
@@ -187,6 +186,9 @@ func getBindRecord(ctx sessionctx.Context, stmt ast.StmtNode) (*bindinfo.BindRec
 	}
 	sessionHandle := ctx.Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
 	bindRecord := sessionHandle.GetBindRecord(normalizedSQL, ctx.GetSessionVars().CurrentDB)
+	if bindRecord == nil {
+		bindRecord = sessionHandle.GetBindRecord(normalizedSQL, "")
+	}
 	if bindRecord != nil {
 		if bindRecord.HasUsingBinding() {
 			return bindRecord, metrics.ScopeSession
@@ -203,9 +205,7 @@ func getBindRecord(ctx sessionctx.Context, stmt ast.StmtNode) (*bindinfo.BindRec
 
 func handleInvalidBindRecord(ctx context.Context, sctx sessionctx.Context, level string, bindRecord bindinfo.BindRecord) {
 	sessionHandle := sctx.Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
-	// The first two parameters are only used to generate hints, but since we already have the hints,
-	// we do not need to pass real values and the error won't happen too.
-	err := sessionHandle.DropBindRecord(nil, nil, &bindRecord)
+	err := sessionHandle.DropBindRecord(bindRecord.OriginalSQL, bindRecord.Db, &bindRecord.Bindings[0])
 	if err != nil {
 		logutil.Logger(ctx).Info("drop session bindings failed")
 	}
@@ -218,34 +218,13 @@ func handleInvalidBindRecord(ctx context.Context, sctx sessionctx.Context, level
 }
 
 func handleEvolveTasks(ctx context.Context, sctx sessionctx.Context, br *bindinfo.BindRecord, stmtNode ast.StmtNode, planHint string) {
-	// If would be nil for very simple cases such as point get, we do not need to evolve for them.
-	if planHint == "" {
+	bindSQL := bindinfo.GenerateBindSQL(ctx, stmtNode, planHint)
+	if bindSQL == "" {
 		return
 	}
-	paramChecker := &paramMarkerChecker{}
-	stmtNode.Accept(paramChecker)
-	// We need to evolve on current sql, but we cannot restore values for paramMarkers yet,
-	// so just ignore them now.
-	if paramChecker.hasParamMarker {
-		return
-	}
-	// We need to evolve plan based on the current sql, not the original sql which may have different parameters.
-	// So here we would remove the hint and inject the current best plan hint.
-	bindinfo.BindHint(stmtNode, &bindinfo.HintsSet{})
-	var sb strings.Builder
-	restoreCtx := format.NewRestoreCtx(format.DefaultRestoreFlags, &sb)
-	err := stmtNode.Restore(restoreCtx)
-	if err != nil {
-		logutil.Logger(ctx).Info("Restore SQL failed", zap.Error(err))
-	}
-	bindSQL := sb.String()
-	selectIdx := strings.Index(bindSQL, "SELECT")
-	// Remove possible `explain` prefix.
-	bindSQL = bindSQL[selectIdx:]
-	bindsql := strings.Replace(bindSQL, "SELECT", fmt.Sprintf("SELECT /*+ %s*/", planHint), 1)
 	globalHandle := domain.GetDomain(sctx).BindHandle()
 	charset, collation := sctx.GetSessionVars().GetCharsetInfo()
-	binding := bindinfo.Binding{BindSQL: bindsql, Status: bindinfo.PendingVerify, Charset: charset, Collation: collation}
+	binding := bindinfo.Binding{BindSQL: bindSQL, Status: bindinfo.PendingVerify, Charset: charset, Collation: collation}
 	globalHandle.AddEvolvePlanTask(br.OriginalSQL, br.Db, binding, planHint)
 }
 
@@ -269,7 +248,7 @@ func (e *paramMarkerChecker) Leave(in ast.Node) (ast.Node, bool) {
 //  1. ctx is auto commit tagged.
 //  2. plan is point get by pk.
 func isPointGetWithoutDoubleRead(ctx sessionctx.Context, p plannercore.Plan) bool {
-	if !ctx.GetSessionVars().IsAutocommit() {
+	if !plannercore.IsAutoCommitTxn(ctx) {
 		return false
 	}
 
