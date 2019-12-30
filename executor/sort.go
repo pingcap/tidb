@@ -63,7 +63,7 @@ type SortExec struct {
 	// partitionRowPtrs store the disk-chunk index and row index for each row for partitions.
 	partitionRowPtrs [][]chunk.RowPtr
 
-	// sortRows
+	// sortRows is used to maintain a heap.
 	sortRows []chunk.Row
 	// sortRowsIndex store the partition index for each row.
 	sortRowsIndex []int
