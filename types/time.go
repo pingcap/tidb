@@ -231,6 +231,7 @@ type Time struct {
 	fsp int8
 }
 
+// NewTime construct time from core time, type and fsp.
 func NewTime(mt MysqlTime, tp uint8, fsp int8) Time {
 	return Time{
 		time: mt,
@@ -239,78 +240,98 @@ func NewTime(mt MysqlTime, tp uint8, fsp int8) Time {
 	}
 }
 
+// NewTimeZeroValue return time zero value.
 func NewTimeZeroValue() Time {
 	return Time{}
 }
 
+// Year return year value.
 func (t Time) Year() int {
 	return t.time.Year()
 }
 
+// Month return month value.
 func (t Time) Month() int {
 	return t.time.Month()
 }
 
+// Day return day value.
 func (t Time) Day() int {
 	return t.time.Day()
 }
 
+// Hour return hour value.
 func (t Time) Hour() int {
 	return t.time.Hour()
 }
 
+// Minute return minute value.
 func (t Time) Minute() int {
 	return t.time.Minute()
 }
 
+// Second return second value.
 func (t Time) Second() int {
 	return t.time.Second()
 }
 
+// Microsecond return microsecond value.
 func (t Time) Microsecond() int {
 	return t.time.Microsecond()
 }
 
+// Type return type value.
 func (t Time) Type() uint8 {
 	return t.tp
 }
 
+// Fsp return fsp value.
 func (t Time) Fsp() int8 {
 	return t.fsp
 }
 
+// SetType update the type in Time.
+// Only DateTime/Date/Time is valid.
 func (t *Time) SetType(tp uint8) {
 	t.tp = tp
 }
 
+// SetFsp update the fsp in Time.
 func (t *Time) SetFsp(fsp int8) {
 	t.fsp = fsp
 }
 
+// GetCoreTime return core time.
 func (t Time) GetCoreTime() MysqlTime {
 	return t.time
 }
 
+// SetCoreTime update core time.
 func (t Time) SetCoreTime(mt MysqlTime) {
 	t.time = mt
 }
 
+// GoTime converts Time to GoTime.
 func (t Time) GoTime(loc *gotime.Location) (gotime.Time, error) {
 	return t.time.GoTime(loc)
 }
 
+// Weekday return weekday value.
 func (t Time) Weekday() gotime.Weekday {
 	return t.time.Weekday()
 }
 
+// YearWeek return year and week.
 func (t Time) YearWeek(mode int) (int, int) {
 	return t.time.YearWeek(mode)
 }
 
+// Week return week value.
 func (t Time) Week(mode int) int {
 	return t.time.Week(mode)
 }
 
+// YearDay return year and day.
 func (t Time) YearDay() int {
 	return t.time.YearDay()
 }
