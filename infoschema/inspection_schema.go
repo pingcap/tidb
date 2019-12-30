@@ -62,7 +62,7 @@ func (it *inspectionSchemaTable) IterRecords(ctx sessionctx.Context, startKey kv
 	// Obtain data from cache first.
 	cached, found := sessionVars.InspectionTableCache[it.meta.Name.L]
 	if !found {
-		// We retrieve data from `information_schema` if cannot found in cache.
+		// Retrieve data from `information_schema` if cannot found in cache.
 		sql := "select * from information_schema." + it.meta.Name.L
 		results, fieldTypes, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
 		var rows [][]types.Datum
