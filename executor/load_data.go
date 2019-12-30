@@ -257,7 +257,6 @@ func (e *LoadDataInfo) CommitWork(ctx context.Context) error {
 					zap.Int("tasks in queue", len(e.commitTaskQueue)))
 			} else {
 				end = true
-				return err
 			}
 		}
 		if err != nil {
