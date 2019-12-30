@@ -154,6 +154,7 @@ func (s *testConfigSuite) TestConfig(c *C) {
 	conf.Performance.TxnTotalSizeLimit = 1000
 	conf.TiKVClient.CommitTimeout = "10s"
 	conf.TiKVClient.RegionCacheTTL = 600
+	conf.Log.EnableSlowLog = logutil.DefaultTiDBEnableSlowLog
 	configFile := "config.toml"
 	_, localFile, _, _ := runtime.Caller(0)
 	configFile = filepath.Join(filepath.Dir(localFile), configFile)
@@ -195,6 +196,8 @@ max-stmt-count=1000
 max-sql-length=1024
 refresh-interval=100
 history-size=100
+[experimental]
+allow-auto-random = true
 `)
 
 	c.Assert(err, IsNil)
@@ -227,6 +230,7 @@ history-size=100
 	c.Assert(conf.StmtSummary.HistorySize, Equals, 100)
 	c.Assert(conf.EnableBatchDML, Equals, true)
 	c.Assert(conf.RepairMode, Equals, true)
+	c.Assert(conf.Experimental.AllowAutoRandom, IsTrue)
 	c.Assert(f.Close(), IsNil)
 	c.Assert(os.Remove(configFile), IsNil)
 
@@ -381,4 +385,17 @@ func (s *testConfigSuite) TestTxnTotalSizeLimitValid(c *C) {
 	conf.Binlog.Enable = true
 	conf.Performance.TxnTotalSizeLimit = 100<<20 + 1
 	c.Assert(conf.Valid(), NotNil)
+}
+
+func (s *testConfigSuite) TestAllowAutoRandomValid(c *C) {
+	conf := NewConfig()
+	checkValid := func(allowAlterPK, allowAutoRand, shouldBeValid bool) {
+		conf.AlterPrimaryKey = allowAlterPK
+		conf.Experimental.AllowAutoRandom = allowAutoRand
+		c.Assert(conf.Valid() == nil, Equals, shouldBeValid)
+	}
+	checkValid(true, true, false)
+	checkValid(true, false, true)
+	checkValid(false, true, true)
+	checkValid(false, false, true)
 }

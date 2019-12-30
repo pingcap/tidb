@@ -257,7 +257,7 @@ func (s *Server) startHTTPServer() {
 	httpRouterPage.WriteString("<tr><td><a href='/debug/pprof/'>Debug</a><td></tr>")
 	httpRouterPage.WriteString("</table></body></html>")
 	router.HandleFunc("/", func(responseWriter http.ResponseWriter, request *http.Request) {
-		_, err = responseWriter.Write([]byte(httpRouterPage.String()))
+		_, err = responseWriter.Write(httpRouterPage.Bytes())
 		if err != nil {
 			logutil.BgLogger().Error("write HTTP index page failed", zap.Error(err))
 		}

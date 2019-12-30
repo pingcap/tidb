@@ -150,6 +150,111 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 		},
 	},
 
+	ast.SubTime: {
+		// builtinSubDatetimeAndDurationSig
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETDuration},
+			geners: []dataGenerator{
+				gener{defaultGener{eType: types.ETDatetime, nullRation: 0.2}},
+				gener{defaultGener{eType: types.ETDuration, nullRation: 0.2}},
+			},
+		},
+		// builtinSubDatetimeAndStringSig
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETString},
+			geners: []dataGenerator{
+				gener{defaultGener{eType: types.ETDatetime, nullRation: 0.2}},
+				gener{defaultGener{eType: types.ETString, nullRation: 0.2}},
+			},
+		},
+		// builtinSubDurationAndDurationSig
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETDuration},
+			geners: []dataGenerator{
+				gener{defaultGener{eType: types.ETDuration, nullRation: 0.2}},
+				gener{defaultGener{eType: types.ETDuration, nullRation: 0.2}},
+			},
+		},
+		// builtinSubDurationAndStringSig
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETString},
+			geners: []dataGenerator{
+				gener{defaultGener{eType: types.ETDuration, nullRation: 0.2}},
+				gener{defaultGener{eType: types.ETString, nullRation: 0.2}},
+			},
+		},
+		// builtinSubStringAndDurationSig
+		{
+			retEvalType:   types.ETString,
+			childrenTypes: []types.EvalType{types.ETString, types.ETDuration},
+			geners: []dataGenerator{
+				gener{defaultGener{eType: types.ETString, nullRation: 0.2}},
+				gener{defaultGener{eType: types.ETDuration, nullRation: 0.2}},
+			},
+		},
+		// builtinSubStringAndStringSig
+		{
+			retEvalType:   types.ETString,
+			childrenTypes: []types.EvalType{types.ETString, types.ETString},
+			geners: []dataGenerator{
+				gener{defaultGener{eType: types.ETString, nullRation: 0.2}},
+				gener{defaultGener{eType: types.ETString, nullRation: 0.2}},
+			},
+		},
+		// builtinSubDateAndDurationSig
+		{
+			retEvalType:        types.ETString,
+			childrenTypes:      []types.EvalType{types.ETDatetime, types.ETDuration},
+			childrenFieldTypes: []*types.FieldType{types.NewFieldType(mysql.TypeDate), types.NewFieldType(mysql.TypeDuration)},
+			geners: []dataGenerator{
+				gener{defaultGener{eType: types.ETDatetime, nullRation: 0.2}},
+				gener{defaultGener{eType: types.ETDuration, nullRation: 0.2}},
+			},
+		},
+		// builtinSubDateAndStringSig
+		{
+			retEvalType:        types.ETString,
+			childrenTypes:      []types.EvalType{types.ETDatetime, types.ETString},
+			childrenFieldTypes: []*types.FieldType{types.NewFieldType(mysql.TypeDate), types.NewFieldType(mysql.TypeString)},
+			geners: []dataGenerator{
+				gener{defaultGener{eType: types.ETDatetime, nullRation: 0.2}},
+				gener{defaultGener{eType: types.ETString, nullRation: 0.2}},
+			},
+		},
+		// builtinSubTimeDateTimeNullSig
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETDatetime, types.ETDatetime},
+			geners: []dataGenerator{
+				gener{defaultGener{eType: types.ETDatetime, nullRation: 0.2}},
+				gener{defaultGener{eType: types.ETDatetime, nullRation: 0.2}},
+			},
+		},
+		// builtinSubTimeStringNullSig
+		{
+			retEvalType:        types.ETString,
+			childrenTypes:      []types.EvalType{types.ETDatetime, types.ETDatetime},
+			childrenFieldTypes: []*types.FieldType{types.NewFieldType(mysql.TypeDate), types.NewFieldType(mysql.TypeDatetime)},
+			geners: []dataGenerator{
+				gener{defaultGener{eType: types.ETDatetime, nullRation: 0.2}},
+				gener{defaultGener{eType: types.ETDatetime, nullRation: 0.2}},
+			},
+		},
+		// builtinSubTimeDurationNullSig
+		{
+			retEvalType:   types.ETDuration,
+			childrenTypes: []types.EvalType{types.ETDuration, types.ETDatetime},
+			geners: []dataGenerator{
+				gener{defaultGener{eType: types.ETDuration, nullRation: 0.2}},
+				gener{defaultGener{eType: types.ETDatetime, nullRation: 0.2}},
+			},
+		},
+	},
+
 	ast.TimeDiff: {
 		// builtinNullTimeDiffSig
 		{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETDuration, types.ETDatetime}},

@@ -50,7 +50,7 @@ func (h *SessionHandle) appendBindRecord(hash string, meta *BindRecord) {
 // AddBindRecord new a BindRecord with BindMeta, add it to the cache.
 func (h *SessionHandle) AddBindRecord(sctx sessionctx.Context, is infoschema.InfoSchema, record *BindRecord) error {
 	for i := range record.Bindings {
-		record.Bindings[i].CreateTime = types.NewTime(types.FromGoTime(time.Now()), mysql.TypeDatetime, 3)
+		record.Bindings[i].CreateTime = types.NewTime(types.FromGoTime(time.Now()), mysql.TypeTimestamp, 3)
 		record.Bindings[i].UpdateTime = record.Bindings[i].CreateTime
 	}
 
@@ -63,13 +63,13 @@ func (h *SessionHandle) AddBindRecord(sctx sessionctx.Context, is infoschema.Inf
 }
 
 // DropBindRecord drops a BindRecord in the cache.
-func (h *SessionHandle) DropBindRecord(sctx sessionctx.Context, is infoschema.InfoSchema, record *BindRecord) error {
-	err := record.prepareHints(sctx, is)
-	if err != nil {
-		return err
-	}
-	oldRecord := h.GetBindRecord(record.OriginalSQL, record.Db)
+func (h *SessionHandle) DropBindRecord(originalSQL, db string, binding *Binding) error {
+	oldRecord := h.GetBindRecord(originalSQL, db)
 	var newRecord *BindRecord
+	record := &BindRecord{OriginalSQL: originalSQL, Db: db}
+	if binding != nil {
+		record.Bindings = append(record.Bindings, *binding)
+	}
 	if oldRecord != nil {
 		newRecord = oldRecord.remove(record)
 	} else {

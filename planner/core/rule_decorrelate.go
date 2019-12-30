@@ -115,7 +115,7 @@ func (s *decorrelateSolver) optimize(ctx context.Context, p LogicalPlan) (Logica
 			for _, cond := range sel.Conditions {
 				newConds = append(newConds, cond.Decorrelate(outerPlan.Schema()))
 			}
-			apply.attachOnConds(newConds)
+			apply.AttachOnConds(newConds)
 			innerPlan = sel.children[0]
 			apply.SetChildren(outerPlan, innerPlan)
 			return s.optimize(ctx, p)

@@ -225,7 +225,7 @@ func (ts *HTTPHandlerTestSuite) TestListTableRegions(c *C) {
 	c.Assert(err, IsNil)
 
 	region := data[1]
-	resp, err = http.Get(fmt.Sprintf("http://127.0.0.1:10090/regions/%d", region.TableID))
+	_, err = http.Get(fmt.Sprintf("http://127.0.0.1:10090/regions/%d", region.TableID))
 	c.Assert(err, IsNil)
 }
 
@@ -688,7 +688,7 @@ func (ts *HTTPHandlerTestSuite) TestGetSchema(c *C) {
 	var dbs []*model.DBInfo
 	err = decoder.Decode(&dbs)
 	c.Assert(err, IsNil)
-	expects := []string{"information_schema", "mysql", "performance_schema", "test", "tidb"}
+	expects := []string{"information_schema", "inspection_schema", "metric_schema", "mysql", "performance_schema", "test", "tidb"}
 	names := make([]string, len(dbs))
 	for i, v := range dbs {
 		names[i] = v.Name.L
@@ -767,7 +767,7 @@ func (ts *HTTPHandlerTestSuite) TestGetSchema(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(t.Name.L, Equals, "t1")
 
-	resp, err = http.Get(fmt.Sprintf(fmt.Sprintf("http://127.0.0.1:10090/db-table/%v", t.GetPartitionInfo().Definitions[0].ID)))
+	resp, err = http.Get(fmt.Sprintf("http://127.0.0.1:10090/db-table/%v", t.GetPartitionInfo().Definitions[0].ID))
 	c.Assert(err, IsNil)
 	decoder = json.NewDecoder(resp.Body)
 	err = decoder.Decode(&dbtbl)

@@ -200,7 +200,7 @@ func (j *baseJoiner) filter(input, output *chunk.Chunk, outerColsLen int) (bool,
 	if !j.outerIsRight {
 		innerColOffset, outerColOffset = outerColsLen, 0
 	}
-	return chunk.CopySelectedJoinRows(input, innerColOffset, outerColOffset, j.selected, output)
+	return chunk.CopySelectedJoinRowsWithSameOuterRows(input, innerColOffset, outerColOffset, j.selected, output)
 }
 
 // filterAndCheckOuterRowStatus is used to filter the result constructed by
@@ -222,12 +222,7 @@ func (j *baseJoiner) filterAndCheckOuterRowStatus(input, output *chunk.Chunk, in
 	}
 
 	// Batch copies selected rows to output chunk.
-	innerColOffset, outerColOffset := 0, innerColsLen
-	if !j.outerIsRight {
-		innerColOffset, outerColOffset = input.NumCols()-innerColsLen, 0
-	}
-
-	_, err = chunk.CopySelectedJoinRows(input, innerColOffset, outerColOffset, j.selected, output)
+	_, err = chunk.CopySelectedJoinRowsDirect(input, j.selected, output)
 	return outerRowStatus, err
 }
 

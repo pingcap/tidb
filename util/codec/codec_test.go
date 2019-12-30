@@ -530,7 +530,8 @@ func (s *testCodecSuite) TestBytes(c *C) {
 }
 
 func parseTime(c *C, s string) types.Time {
-	m, err := types.ParseTime(nil, s, mysql.TypeDatetime, types.DefaultFsp)
+	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
+	m, err := types.ParseTime(sc, s, mysql.TypeDatetime, types.DefaultFsp)
 	c.Assert(err, IsNil)
 	return m
 }

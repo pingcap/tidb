@@ -16,14 +16,15 @@ package executor
 import (
 	"bytes"
 	"context"
+	gjson "encoding/json"
 	"fmt"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/charset"
@@ -43,6 +44,7 @@ import (
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/plugin"
 	"github.com/pingcap/tidb/privilege"
+	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -52,6 +54,8 @@ import (
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/format"
+	"github.com/pingcap/tidb/util/hack"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 )
 
@@ -78,6 +82,7 @@ type ShowExec struct {
 	Full        bool
 	IfNotExists bool // Used for `show create database if not exists`
 	GlobalScope bool // GlobalScope is used by show variables
+	Extended    bool // Used for `show extended columns from ...`
 }
 
 // Next implements the Executor Next interface.
@@ -378,7 +383,14 @@ func (e *ShowExec) fetchShowColumns(ctx context.Context) error {
 		return e.tableAccessDenied("SELECT", tb.Meta().Name.O)
 	}
 
-	cols := tb.Cols()
+	var cols []*table.Column
+	// The optional EXTENDED keyword causes the output to include information about hidden columns that MySQL uses internally and are not accessible by users.
+	// See https://dev.mysql.com/doc/refman/8.0/en/show-columns.html
+	if e.Extended {
+		cols = tb.Cols()
+	} else {
+		cols = tb.VisibleCols()
+	}
 	if tb.Meta().IsView() {
 		// Because view's undertable's column could change or recreate, so view's column type may change overtime.
 		// To avoid this situation we need to generate a logical plan and extract current column types from Schema.
@@ -735,8 +747,11 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 				buf.WriteString(table.OptionalFsp(&col.FieldType))
 			}
 		}
+		if tableInfo.PKIsHandle && tableInfo.ContainsAutoRandomBits() && tableInfo.GetPkName().L == col.Name.L {
+			buf.WriteString(fmt.Sprintf(" /*T!%s AUTO_RANDOM(%d) */", parser.CommentCodeAutoRandom, tableInfo.AutoRandomBits))
+		}
 		if len(col.Comment) > 0 {
-			fmt.Fprintf(buf, " COMMENT '%s'", format.OutputFormat(col.Comment))
+			buf.WriteString(fmt.Sprintf(" COMMENT '%s'", format.OutputFormat(col.Comment)))
 		}
 		if i != len(tableInfo.Cols())-1 {
 			needAddComma = true
@@ -837,7 +852,7 @@ func (e *ShowExec) fetchShowCreateTable() error {
 	}
 
 	tableInfo := tb.Meta()
-	allocator := tb.Allocator(e.ctx)
+	allocator := tb.Allocator(e.ctx, autoid.RowIDAllocType)
 	var buf bytes.Buffer
 	// TODO: let the result more like MySQL.
 	if err = ConstructResultOfShowCreateTable(e.ctx, tb.Meta(), allocator, &buf); err != nil {
@@ -1009,8 +1024,24 @@ func (e *ShowExec) fetchShowCreateUser() error {
 		return ErrCannotUser.GenWithStackByArgs("SHOW CREATE USER",
 			fmt.Sprintf("'%s'@'%s'", e.User.Username, e.User.Hostname))
 	}
-	showStr := fmt.Sprintf("CREATE USER '%s'@'%s' IDENTIFIED WITH 'mysql_native_password' AS '%s' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK",
-		e.User.Username, e.User.Hostname, checker.GetEncodedPassword(e.User.Username, e.User.Hostname))
+	sql = fmt.Sprintf(`SELECT PRIV FROM %s.%s WHERE User='%s' AND Host='%s'`,
+		mysql.SystemDB, mysql.GlobalPrivTable, userName, hostName)
+	rows, _, err = e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	require := "NONE"
+	if len(rows) == 1 {
+		privData := rows[0].GetString(0)
+		var privValue privileges.GlobalPrivValue
+		err = gjson.Unmarshal(hack.Slice(privData), &privValue)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		require = privValue.RequireStr()
+	}
+	showStr := fmt.Sprintf("CREATE USER '%s'@'%s' IDENTIFIED WITH 'mysql_native_password' AS '%s' REQUIRE %s PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK",
+		e.User.Username, e.User.Hostname, checker.GetEncodedPassword(e.User.Username, e.User.Hostname), require)
 	e.appendRow([]interface{}{showStr})
 	return nil
 }
