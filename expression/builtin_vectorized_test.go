@@ -332,11 +332,11 @@ func (p *mockBuiltinDouble) evalDecimal(row chunk.Row) (*types.MyDecimal, bool, 
 func (p *mockBuiltinDouble) evalTime(row chunk.Row) (types.Time, bool, error) {
 	v, isNull, err := p.args[0].EvalTime(p.ctx, row)
 	if err != nil {
-		return types.NewTimeZeroValue(), false, err
+		return types.ZeroTime, false, err
 	}
 	d, err := v.ConvertToDuration()
 	if err != nil {
-		return types.NewTimeZeroValue(), false, err
+		return types.ZeroTime, false, err
 	}
 	v, err = v.Add(p.ctx.GetSessionVars().StmtCtx, d)
 	return v, isNull, err

@@ -480,7 +480,7 @@ func (*testExpressionSuite) TestDeferredExprNotNull(c *C) {
 	xDec, _, _ := cst.EvalDecimal(ctx, chunk.Row{})
 	c.Assert(xDec.Compare(m.i.(*types.MyDecimal)), Equals, 0)
 
-	m.i = types.NewTimeZeroValue()
+	m.i = types.ZeroTime
 	xTim, _, _ := cst.EvalTime(ctx, chunk.Row{})
 	c.Assert(xTim.Compare(m.i.(types.Time)), Equals, 0)
 

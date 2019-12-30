@@ -120,6 +120,9 @@ var (
 	// ZeroCoreTime is the zero value for TimeInternal type.
 	ZeroCoreTime = MysqlTime{}
 
+	// ZeroCoreTime is the zero value for Time type.
+	ZeroTime = Time{}
+
 	// ZeroDatetime is the zero value for datetime Time.
 	ZeroDatetime = Time{
 		time: ZeroCoreTime,
@@ -238,11 +241,6 @@ func NewTime(mt MysqlTime, tp uint8, fsp int8) Time {
 		tp:   tp,
 		fsp:  fsp,
 	}
-}
-
-// NewTimeZeroValue return time zero value.
-func NewTimeZeroValue() Time {
-	return Time{}
 }
 
 // Year return year value.
@@ -637,7 +635,7 @@ func (t Time) ToPackedUint() (uint64, error) {
 // FromPackedUint decodes Time from a packed uint64 value.
 func (t *Time) FromPackedUint(packed uint64) error {
 	if packed == 0 {
-		t.time = ZeroCore
+		t.time = ZeroCoreTime
 		return nil
 	}
 	ymdhms := packed >> 24

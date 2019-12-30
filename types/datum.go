@@ -2061,7 +2061,7 @@ func ChangeReverseResultByUpperLowerBound(
 
 const (
 	sizeOfEmptyDatum = int(unsafe.Sizeof(Datum{}))
-	sizeOfMysqlTime  = int(unsafe.Sizeof(NewTimeZeroValue()))
+	sizeOfMysqlTime  = int(unsafe.Sizeof(ZeroTime))
 	sizeOfMyDecimal  = MyDecimalStructSize
 )
 
