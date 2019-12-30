@@ -60,10 +60,7 @@ func newTimestamp(yy, mm, dd, hh, min, ss int) *Constant {
 
 func newTimeConst(yy, mm, dd, hh, min, ss int, tp uint8) *Constant {
 	var tmp types.Datum
-	tmp.SetMysqlTime(types.Time{
-		Time: types.FromDate(yy, mm, dd, 0, 0, 0, 0),
-		Type: tp,
-	})
+	tmp.SetMysqlTime(types.NewTime(types.FromDate(yy, mm, dd, 0, 0, 0, 0), tp, types.DefaultFsp))
 	return &Constant{
 		Value:   tmp,
 		RetType: types.NewFieldType(tp),
