@@ -236,7 +236,7 @@ type TableInfo struct {
 	// MaxShardRowIDBits uses to record the max ShardRowIDBits be used so far.
 	MaxShardRowIDBits uint64 `json:"max_shard_row_id_bits"`
 	// AutoRandomBits is used to set the bit number to shard automatically when PKIsHandle.
-	AutoRandomBits uint64 `json:"auto_shard_bits"`
+	AutoRandomBits uint64 `json:"auto_random_bits"`
 	// PreSplitRegions specify the pre-split region when create table.
 	// The pre-split region num is 2^(PreSplitRegions-1).
 	// And the PreSplitRegions should less than or equal to ShardRowIDBits.
