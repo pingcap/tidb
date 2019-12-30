@@ -470,6 +470,7 @@ func (ts *HTTPHandlerTestSuite) TestGetTableMVCC(c *C) {
 
 	resp, err = http.Get(fmt.Sprintf("http://127.0.0.1:10090/mvcc/key/tidb/pt(p0)/42?decode=true"))
 	c.Assert(err, IsNil)
+	defer resp.Body.Close()
 	decoder = json.NewDecoder(resp.Body)
 	var data4 map[string]interface{}
 	err = decoder.Decode(&data4)
