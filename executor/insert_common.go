@@ -202,15 +202,6 @@ func insertRows(ctx context.Context, base insertCommon) (err error) {
 	if err = e.processSetList(); err != nil {
 		return err
 	}
-	var memTracker *memory.Tracker
-	switch x := base.(type) {
-	case *InsertExec:
-		memTracker = x.memTracker
-	case *ReplaceExec:
-		memTracker = x.memTracker
-	default:
-		return errors.Errorf("unexpected executor type %v", x)
-	}
 	sessVars := e.ctx.GetSessionVars()
 	batchInsert := sessVars.BatchInsert && !sessVars.InTxn() && config.GetGlobalConfig().EnableBatchDML
 	batchSize := sessVars.DMLBatchSize
@@ -223,6 +214,7 @@ func insertRows(ctx context.Context, base insertCommon) (err error) {
 
 	rows := make([][]types.Datum, 0, len(e.Lists))
 	memUsageOfRows := int64(0)
+	memTracker := e.memTracker
 	for i, list := range e.Lists {
 		e.rowCount++
 		var row []types.Datum
@@ -402,15 +394,6 @@ func insertRowsFromSelect(ctx context.Context, base insertCommon) error {
 	chk := newFirstChunk(selectExec)
 	iter := chunk.NewIterator4Chunk(chk)
 	rows := make([][]types.Datum, 0, chk.Capacity())
-	var memTracker *memory.Tracker
-	switch x := base.(type) {
-	case *InsertExec:
-		memTracker = x.memTracker
-	case *ReplaceExec:
-		memTracker = x.memTracker
-	default:
-		return errors.Errorf("unexpected executor type %v", x)
-	}
 
 	sessVars := e.ctx.GetSessionVars()
 	if !sessVars.StrictSQLMode {
@@ -420,6 +403,7 @@ func insertRowsFromSelect(ctx context.Context, base insertCommon) error {
 	batchInsert := sessVars.BatchInsert && !sessVars.InTxn() && config.GetGlobalConfig().EnableBatchDML
 	batchSize := sessVars.DMLBatchSize
 	memUsageOfRows := int64(0)
+	memTracker := e.memTracker
 	for {
 		err := Next(ctx, selectExec, chk)
 		if err != nil {
