@@ -1124,7 +1124,7 @@ func (w *GCWorker) removeLockObservers(ctx context.Context, safePoint uint64, st
 		errStr := resp.Resp.(*kvrpcpb.RemoveLockObserverResponse).Error
 		if len(errStr) > 0 {
 			err = errors.Errorf("remove lock observer on store %v returns error: %v", store.Id, errStr)
-			logutil.Logger(ctx).Error("[gc wroker] failed to remove lock observer from store",
+			logutil.Logger(ctx).Error("[gc worker] failed to remove lock observer from store",
 				zap.String("uuid", w.uuid),
 				zap.Any("store", store),
 				zap.Error(err))
