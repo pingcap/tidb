@@ -15,7 +15,9 @@ package tikv
 
 import (
 	"bytes"
+	"encoding/binary"
 	"fmt"
+	"math"
 	"time"
 	"unsafe"
 
@@ -32,6 +34,7 @@ type coprCache struct {
 }
 
 type coprCacheValue struct {
+	Key               []byte
 	Data              []byte
 	TimeStamp         uint64
 	RegionID          uint64
@@ -44,6 +47,12 @@ func (v *coprCacheValue) String() string {
 		v.RegionID,
 		v.RegionDataVersion,
 		len(v.Data))
+}
+
+const coprCacheValueSize = int(unsafe.Sizeof(coprCacheValue{}))
+
+func (v *coprCacheValue) Len() int {
+	return coprCacheValueSize + len(v.Key) + len(v.Data)
 }
 
 func newCoprCache(config *config.CoprocessorCache) (*coprCache, error) {
@@ -69,23 +78,58 @@ func newCoprCache(config *config.CoprocessorCache) (*coprCache, error) {
 	return &c, nil
 }
 
-func coprCacheBuildKey(copReq *coprocessor.Request) []byte {
-	l := len(copReq.Data) + 1
+func coprCacheBuildKey(copReq *coprocessor.Request) ([]byte, error) {
+	// Calculate amount of space to allocate
+	if copReq.Tp > math.MaxUint8 {
+		return nil, errors.New("Request Tp too big")
+	}
+	if len(copReq.Data) > math.MaxUint32 {
+		return nil, errors.New("Cache data too big")
+	}
+	totalLength := 1 + 4 + len(copReq.Data)
 	for _, r := range copReq.Ranges {
-		l = l + len(r.Start) + 1 + len(r.End) + 1
+		if len(r.Start) > math.MaxUint16 {
+			return nil, errors.New("Cache start key too big")
+		}
+		if len(r.End) > math.MaxUint16 {
+			return nil, errors.New("Cache end key too big")
+		}
+		totalLength += 2 + len(r.Start) + 2 + len(r.End)
 	}
 
-	key := bytes.NewBuffer(make([]byte, 0, l))
-	key.Write(copReq.Data)
-	key.WriteByte(0)
+	key := make([]byte, totalLength)
+
+	// 1 byte Tp
+	key[0] = uint8(copReq.Tp)
+	dest := 1
+
+	// 4 bytes Data len
+	binary.LittleEndian.PutUint32(key[dest:], uint32(len(copReq.Data)))
+	dest += 4
+
+	// N bytes Data
+	copy(key[dest:], copReq.Data)
+	dest += len(copReq.Data)
+
 	for _, r := range copReq.Ranges {
-		key.Write(r.Start)
-		key.WriteByte(0)
-		key.Write(r.End)
-		key.WriteByte(0)
+		// 2 bytes Key len
+		binary.LittleEndian.PutUint16(key[dest:], uint16(len(r.Start)))
+		dest += 2
+
+		// N bytes Key
+		copy(key[dest:], r.Start)
+		dest += len(r.Start)
+
+		// 2 bytes Key len
+		binary.LittleEndian.PutUint16(key[dest:], uint16(len(r.End)))
+		dest += 2
+
+		// N bytes Key
+		copy(key[dest:], r.End)
+		dest += len(r.End)
 	}
 
-	return key.Bytes()
+	return key, nil
 }
 
 // Get gets a cache item according to cache key.
@@ -94,7 +138,12 @@ func (c *coprCache) Get(key []byte) *coprCacheValue {
 	if !hit {
 		return nil
 	}
-	return value.(*coprCacheValue)
+	typedValue := value.(*coprCacheValue)
+	// ristretto does not handle hash collision, so check the key equality after getting a value.
+	if bytes.Compare(typedValue.Key, key) != 0 {
+		return nil
+	}
+	return typedValue
 }
 
 // CheckAdmission checks whether an item is worth caching.
@@ -105,13 +154,11 @@ func (c *coprCache) CheckAdmission(dataSize int, processTime time.Duration) bool
 	if dataSize == 0 || dataSize > c.admissionMaxSize {
 		return false
 	}
-	if processTime == 0 || processTime < c.admissionMinProcessTime {
+	if processTime < c.admissionMinProcessTime {
 		return false
 	}
 	return true
 }
-
-const coprCacheValueSize = int64(unsafe.Sizeof(coprCacheValue{}))
 
 // Set inserts an item to the cache.
 // It is recommended to call `CheckAdmission` before inserting the item to the cache.
@@ -119,5 +166,5 @@ func (c *coprCache) Set(key []byte, value *coprCacheValue) bool {
 	if c == nil {
 		return false
 	}
-	return c.cache.Set(key, value, int64(len(value.Data))+coprCacheValueSize)
+	return c.cache.Set(key, value, int64(value.Len()))
 }
