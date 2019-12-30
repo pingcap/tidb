@@ -2959,7 +2959,7 @@ func (d *ddl) RenameColumn(ctx sessionctx.Context, ident ast.Ident, spec *ast.Al
 		return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ident.Schema, ident.Name))
 	}
 
-	oldCol := table.FindCol(tbl.Cols(), oldColName.L)
+	oldCol := table.FindCol(tbl.VisibleCols(), oldColName.L)
 	if oldCol == nil {
 		return infoschema.ErrColumnNotExists.GenWithStackByArgs(oldColName, ident.Name)
 	}
