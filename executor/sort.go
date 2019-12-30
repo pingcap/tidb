@@ -62,6 +62,16 @@ type SortExec struct {
 	partitionList []*chunk.ListInDisk
 	// partitionRowPtrs store the disk-chunk index and row index for each row for partitions.
 	partitionRowPtrs [][]chunk.RowPtr
+
+	// sortRows
+	sortRows []chunk.Row
+	// sortRowsIndex store the partition index for each row.
+	sortRowsIndex []int
+	// partitionConsumedRows store the consumed rows num for each partition.
+	partitionConsumedRows []int
+	// heapSort use heap sort for spill disk.
+	heapSort *topNChunkHeapWithIndex
+
 	// exceeded indicates that records have exceeded memQuota during
 	// adding this chunk and we should spill now.
 	exceeded uint32
@@ -150,14 +160,8 @@ func (e *SortExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 
 	if e.alreadySpilled() {
-		for !req.IsFull() && e.Idx < len(e.partitionRowPtrs[0]) {
-			rowPtr := e.partitionRowPtrs[0][e.Idx]
-			row, err := e.partitionList[0].GetRow(rowPtr)
-			if err != nil {
-				return err
-			}
-			req.AppendRow(row)
-			e.Idx++
+		if err := e.externalSorting(req); err != nil {
+			return err
 		}
 	} else {
 		for !req.IsFull() && e.Idx < len(e.rowPtrs) {
@@ -190,7 +194,75 @@ func (e *SortExec) prepareExternalSorting() (err error) {
 	e.rowChunks = nil
 	e.partitionList = append(e.partitionList, listInDisk)
 	e.partitionRowPtrs = append(e.partitionRowPtrs, e.initPointersForListInDisk(listInDisk))
+	e.sortRowsIndex = make([]int, len(e.partitionList))
+	e.partitionConsumedRows = make([]int, len(e.partitionList))
+	e.heapSort = nil
 	return err
+}
+
+type topNChunkHeapWithIndex struct {
+	*SortExec
+}
+
+func (h *topNChunkHeapWithIndex) Less(i, j int) bool {
+	rowI := h.sortRows[i]
+	rowJ := h.sortRows[j]
+	return h.lessRow(rowI, rowJ)
+}
+
+func (h *topNChunkHeapWithIndex) Len() int {
+	return len(h.sortRows)
+}
+
+func (h *topNChunkHeapWithIndex) Push(x interface{}) {
+	// Should never be called.
+}
+
+func (h *topNChunkHeapWithIndex) Pop() interface{} {
+	return nil
+}
+
+func (h *topNChunkHeapWithIndex) Swap(i, j int) {
+	h.sortRows[i], h.sortRows[j] = h.sortRows[j], h.sortRows[i]
+	h.sortRowsIndex[i], h.sortRowsIndex[j] = h.sortRowsIndex[j], h.sortRowsIndex[i]
+}
+
+func (e *SortExec) externalSorting(req *chunk.Chunk) (err error) {
+	if e.heapSort == nil {
+		e.heapSort = &topNChunkHeapWithIndex{e}
+		heap.Init(e.heapSort)
+		for i := 0; i < len(e.partitionList); i++ {
+			e.partitionConsumedRows[i] = 0
+			row, err := e.partitionList[i].GetRow(e.partitionRowPtrs[i][0])
+			if err != nil {
+				return err
+			}
+			e.sortRows = append(e.sortRows, row)
+			e.sortRowsIndex = append(e.sortRowsIndex, i)
+			heap.Fix(e.heapSort, 0)
+		}
+	}
+
+	for !req.IsFull() && e.heapSort.Len() > 0 {
+		length := e.heapSort.Len() - 1
+		heap.Pop(e.heapSort)
+		row, idx := e.sortRows[length], e.sortRowsIndex[length]
+		e.sortRows = e.sortRows[:length]
+		e.sortRowsIndex = e.sortRowsIndex[:length]
+		req.AppendRow(row)
+		e.partitionConsumedRows[idx]++
+
+		if e.partitionConsumedRows[idx] < len(e.partitionRowPtrs[idx]) {
+			row, err := e.partitionList[idx].GetRow(e.partitionRowPtrs[idx][e.partitionConsumedRows[idx]])
+			if err != nil {
+				return err
+			}
+			e.sortRows = append(e.sortRows, row)
+			e.sortRowsIndex = append(e.sortRowsIndex, idx)
+			heap.Fix(e.heapSort, 0)
+		}
+	}
+	return nil
 }
 
 func (e *SortExec) fetchRowChunks(ctx context.Context) error {
@@ -216,7 +288,7 @@ func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 			}
 		} else {
 			e.rowChunks.Add(chk)
-			if atomic.LoadUint32(&e.exceeded) == 1 {
+			if atomic.LoadUint32(&e.exceeded) == 0 {
 				e.rowChunksInDisk, err = e.spillToDisk()
 				if err != nil {
 					return err
