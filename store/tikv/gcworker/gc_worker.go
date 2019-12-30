@@ -1090,6 +1090,9 @@ func (w *GCWorker) checkLockObservers(ctx context.Context, safePoint uint64, sto
 		}
 
 		if respInner.IsClean {
+			logutil.Logger(ctx).Warn("[gc worker] check lock observer: store is not clean",
+				zap.String("uuid", w.uuid),
+				zap.Any("store", store))
 			cleanStores[store.Id] = nil
 		}
 	}
