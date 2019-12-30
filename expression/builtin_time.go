@@ -395,7 +395,7 @@ func (b *builtinDateDiffSig) evalInt(row chunk.Row) (int64, bool, error) {
 		}
 		return 0, true, err
 	}
-	return int64(types.DateDiff(lhs.GetCoreTime(), rhs.GetCoreTime())), false, nil
+	return int64(types.DateDiff(lhs.CoreTime(), rhs.CoreTime())), false, nil
 }
 
 type timeDiffFunctionClass struct {

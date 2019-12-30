@@ -118,7 +118,7 @@ func (s *testTimeSuite) TestStrToDate(c *C) {
 	for i, tt := range tests {
 		var t types.Time
 		c.Assert(t.StrToDate(sc, tt.input, tt.format), IsTrue, Commentf("no.%d failed", i))
-		c.Assert(t.GetCoreTime(), Equals, tt.expect, Commentf("no.%d failed", i))
+		c.Assert(t.CoreTime(), Equals, tt.expect, Commentf("no.%d failed", i))
 	}
 
 	errTests := []struct {

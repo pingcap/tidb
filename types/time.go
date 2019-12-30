@@ -301,8 +301,8 @@ func (t *Time) SetFsp(fsp int8) {
 	t.fsp = fsp
 }
 
-// GetCoreTime return core time.
-func (t Time) GetCoreTime() MysqlTime {
+// CoreTime return core time.
+func (t Time) CoreTime() MysqlTime {
 	return t.time
 }
 
