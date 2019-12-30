@@ -15,6 +15,7 @@ package gcworker
 
 import (
 	"bytes"
+	"container/heap"
 	"context"
 	"fmt"
 	"io"
@@ -998,7 +999,8 @@ func (w *GCWorker) greenResolveLocks(ctx context.Context, safePoint uint64) erro
 
 	logutil.Logger(ctx).Info("[gc worker] finish resolve locks in green mode",
 		zap.String("uuid", w.uuid),
-		zap.Uint64("safePoint", safePoint))
+		zap.Uint64("safePoint", safePoint),
+		zap.Duration("takes", time.Since(startTime)))
 	metrics.GCHistogram.WithLabelValues("resolve_locks").Observe(time.Since(startTime).Seconds())
 	return nil
 }
@@ -1129,58 +1131,127 @@ func (w *GCWorker) removeLockObservers(ctx context.Context, safePoint uint64, st
 	return nil
 }
 
-// Returns successful
+// Returns successful stores
 func (w *GCWorker) physicalResolveLocks(ctx context.Context, safePoint uint64, stores map[uint64]*metapb.Store) (map[uint64]interface{}, error) {
-	storesList := make([]uint64, 0, len(stores))
-	for id := range stores {
-		storesList = append(storesList, id)
+	scanner := newMergeLockScanner(safePoint, w.store.GetTiKVClient(), stores)
+	err := scanner.Start(ctx)
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
 
-	logutil.Logger(ctx).Info("[gc worker] running physical scan lock",
-		zap.String("uuid", w.uuid),
-		zap.Uint64("safePoint", safePoint),
-		zap.Any("stores", storesList))
+	innerCtx, cancel := context.WithCancel(ctx)
+	wg := &sync.WaitGroup{}
+	defer func() {
+		cancel()
+		wg.Wait()
+	}()
 
-	type result struct {
-		StoreID uint64
-		Err     error
-	}
+	taskCh := make(chan []*tikv.Lock, len(stores))
+	errCh := make(chan error, len(stores))
 
-	resultCh := make(chan result, len(stores))
-
-	for id, store := range stores {
-		id1 := id
-		store1 := store
+	for range stores {
+		wg.Add(1)
 		go func() {
-			err := w.physicalResolveLocksForStore(ctx, safePoint, store1)
-			if err != nil {
-				logutil.Logger(ctx).Error("[gc worker] physical resolve locks for store failed",
-					zap.String("uuid", w.uuid),
-					zap.Uint64("safePoint", safePoint),
-					zap.Any("store", store1),
-					zap.Error(err))
+			defer wg.Done()
+			for {
+				select {
+				case <-innerCtx.Done():
+					return
+				case locks, ok := <-taskCh:
+					if !ok {
+						// Closed
+						return
+					}
+					err := w.resolveLocksAcrossRegions(innerCtx, locks)
+					if err != nil {
+						logutil.Logger(innerCtx).Error("resolve locks failed", zap.Error(err))
+						errCh <- err
+					}
+				}
 			}
-			resultCh <- result{StoreID: id1, Err: err}
 		}()
 	}
 
-	successfulStores := make(map[uint64]interface{}, len(stores))
-
-	for i := 0; i < len(stores); i++ {
-		var res result
+	for {
 		select {
-		case <-ctx.Done():
-			return nil, errors.New("physical scan locks canceled")
-		case res = <-resultCh:
+		case err := <-errCh:
+			return nil, errors.Trace(err)
+		default:
 		}
 
-		if res.Err == nil {
-			successfulStores[res.StoreID] = nil
+		locks := scanner.NextBatch(128)
+		if len(locks) == 0 {
+			break
 		}
+
+		taskCh <- locks
 	}
 
-	return successfulStores, nil
+	close(taskCh)
+	wg.Wait()
+
+	select {
+	case err := <-errCh:
+		return nil, errors.Trace(err)
+	default:
+	}
+
+	return scanner.GetSucceededStores(), nil
 }
+
+// Returns successful stores
+// Non dedup version
+//func (w *GCWorker) physicalResolveLocks(ctx context.Context, safePoint uint64, stores map[uint64]*metapb.Store) (map[uint64]interface{}, error) {
+//	storesList := make([]uint64, 0, len(stores))
+//	for id := range stores {
+//		storesList = append(storesList, id)
+//	}
+//
+//	logutil.Logger(ctx).Info("[gc worker] running physical scan lock",
+//		zap.String("uuid", w.uuid),
+//		zap.Uint64("safePoint", safePoint),
+//		zap.Any("stores", storesList))
+//
+//	type result struct {
+//		StoreID uint64
+//		Err     error
+//	}
+//
+//	resultCh := make(chan result, len(stores))
+//
+//	for id, store := range stores {
+//		id1 := id
+//		store1 := store
+//		go func() {
+//			err := w.physicalResolveLocksForStore(ctx, safePoint, store1)
+//			if err != nil {
+//				logutil.Logger(ctx).Error("[gc worker] physical resolve locks for store failed",
+//					zap.String("uuid", w.uuid),
+//					zap.Uint64("safePoint", safePoint),
+//					zap.Any("store", store1),
+//					zap.Error(err))
+//			}
+//			resultCh <- result{StoreID: id1, Err: err}
+//		}()
+//	}
+//
+//	successfulStores := make(map[uint64]interface{}, len(stores))
+//
+//	for i := 0; i < len(stores); i++ {
+//		var res result
+//		select {
+//		case <-ctx.Done():
+//			return nil, errors.New("physical scan locks canceled")
+//		case res = <-resultCh:
+//		}
+//
+//		if res.Err == nil {
+//			successfulStores[res.StoreID] = nil
+//		}
+//	}
+//
+//	return successfulStores, nil
+//}
 
 func (w *GCWorker) physicalResolveLocksForStore(ctx context.Context, safePoint uint64, store *metapb.Store) error {
 	address := store.Address
@@ -1695,4 +1766,193 @@ func NewMockGCWorker(store tikv.Storage) (*MockGCWorker, error) {
 func (w *MockGCWorker) DeleteRanges(ctx context.Context, safePoint uint64) error {
 	logutil.Logger(ctx).Error("deleteRanges is called")
 	return w.worker.deleteRanges(ctx, safePoint, 1)
+}
+
+const scanLockResultBufferSize = 128
+
+type mergeLockScanner struct {
+	safePoint      uint64
+	client         tikv.Client
+	stores         map[uint64]*metapb.Store
+	receivers      mergeReceiver
+	currentLockKey []byte
+}
+
+type receiver struct {
+	Ch       <-chan scanLockResult
+	StoreID  uint64
+	NextLock *tikv.Lock
+	Err      error
+}
+
+func (r *receiver) PeekNextLock() *tikv.Lock {
+	if r.NextLock != nil {
+		return r.NextLock
+	}
+	result, ok := <-r.Ch
+	if !ok {
+		return nil
+	}
+	r.Err = result.Err
+	r.NextLock = result.Lock
+	return r.NextLock
+}
+
+func (r *receiver) TakeNextLock() *tikv.Lock {
+	lock := r.PeekNextLock()
+	r.NextLock = nil
+	return lock
+}
+
+type mergeReceiver []*receiver
+
+func (r mergeReceiver) Len() int {
+	return len(r)
+}
+
+func (r mergeReceiver) Less(i, j int) bool {
+	lhs := r[i].PeekNextLock()
+	rhs := r[j].PeekNextLock()
+	// nil which means the receiver has finished should be the greatest one.
+	if lhs == nil {
+		// lhs >= rhs
+		return false
+	}
+	if rhs == nil {
+		// lhs != nil, so lhs < rhs
+		return true
+	}
+
+	return bytes.Compare(lhs.Key, rhs.Key) < 0
+}
+
+func (r mergeReceiver) Swap(i, j int) {
+	r[i], r[j] = r[j], r[i]
+}
+
+func (r *mergeReceiver) Push(x interface{}) {
+	*r = append(*r, x.(*receiver))
+}
+
+func (r *mergeReceiver) Pop() interface{} {
+	receivers := *r
+	res := receivers[len(receivers)-1]
+	*r = receivers[:len(receivers)-1]
+	return res
+}
+
+type scanLockResult struct {
+	Lock *tikv.Lock
+	Err  error
+}
+
+func newMergeLockScanner(safePoint uint64, client tikv.Client, stores map[uint64]*metapb.Store) *mergeLockScanner {
+	return &mergeLockScanner{
+		safePoint: safePoint,
+		client:    client,
+		stores:    stores,
+	}
+}
+
+func (s *mergeLockScanner) Start(ctx context.Context) error {
+	for storeID, store := range s.stores {
+		ch := make(chan scanLockResult, scanLockResultBufferSize)
+		go func() {
+			err := s.physicalScanLocksForStore(ctx, s.safePoint, store, ch)
+			if err != nil {
+				logutil.Logger(ctx).Error("physical scan lock for store encountered error",
+					zap.Uint64("safePoint", s.safePoint),
+					zap.Any("store", store),
+					zap.Error(err))
+				ch <- scanLockResult{Err: err}
+			}
+		}()
+		s.receivers = append(s.receivers, &receiver{Ch: ch, StoreID: storeID})
+	}
+
+	heap.Init(&s.receivers)
+
+	return nil
+}
+
+func (s *mergeLockScanner) Next() *tikv.Lock {
+	for {
+		nextReceiver := heap.Pop(&s.receivers).(*receiver)
+		nextLock := nextReceiver.TakeNextLock()
+		heap.Push(&s.receivers, nextReceiver)
+
+		if nextLock == nil {
+			return nil
+		}
+		if s.currentLockKey == nil || !bytes.Equal(s.currentLockKey, nextLock.Key) {
+			s.currentLockKey = nextLock.Key
+			return nextLock
+		}
+	}
+}
+
+func (s *mergeLockScanner) NextBatch(batchSize int) []*tikv.Lock {
+	result := make([]*tikv.Lock, 0, batchSize)
+	for len(result) < batchSize {
+		lock := s.Next()
+		if lock == nil {
+			return result
+		}
+		result = append(result, lock)
+	}
+	return result
+}
+
+func (s *mergeLockScanner) GetSucceededStores() map[uint64]interface{} {
+	stores := make(map[uint64]interface{})
+	for _, receiver := range s.receivers {
+		if receiver.Err == nil {
+			stores[receiver.StoreID] = nil
+		}
+	}
+	return stores
+}
+
+func (s *mergeLockScanner) physicalScanLocksForStore(ctx context.Context, safePoint uint64, store *metapb.Store, lockCh chan<- scanLockResult) error {
+	defer close(lockCh)
+
+	address := store.Address
+	req := tikvrpc.NewRequest(tikvrpc.CmdPhysicalScanLock, &kvrpcpb.PhysicalScanLockRequest{
+		MaxTs: safePoint,
+	})
+
+	const Unlimited = time.Duration(math.MaxInt64)
+
+	ctx1, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	response, err := s.client.SendRequest(ctx1, address, req, Unlimited)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	respStream := response.Resp.(tikvpb.Tikv_PhysicalScanLockClient)
+	if respStream == nil {
+		return errors.Errorf("cannot get stream from physical scan lock response")
+	}
+
+	for {
+		resp, err := respStream.Recv()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		if len(resp.Error) > 0 {
+			return errors.Errorf("physical scan lock received error from store: %v", resp.Error)
+		}
+
+		for _, lockInfo := range resp.Locks {
+			lockCh <- scanLockResult{Lock: tikv.NewLock(lockInfo)}
+		}
+	}
+
+	return nil
 }
