@@ -178,9 +178,29 @@ func (e *SortExec) prepareExternalSorting() (err error) {
 	e.buildKeyColumns()
 	e.rowPtrsInDisk = e.initPointersForListInDisk(e.rowChunksInDisk)
 	// partition sort
-	// Now only have one partition.
-	// The partition will be adjusted in the next pr.
-	err = e.readPartition(e.rowChunksInDisk, e.rowPtrsInDisk)
+	partStartPtr := 0
+	partStartOffset := e.rowChunksInDisk.GetOffsetOfRow(e.rowPtrsInDisk[partStartPtr])
+	for i := 0; i < len(e.rowPtrsInDisk); i++ {
+		size := e.rowChunksInDisk.GetOffsetOfRow(e.rowPtrsInDisk[i]) - partStartOffset
+		if size > e.ctx.GetSessionVars().MemQuotaQuery {
+			if err := e.generatePartition(partStartPtr, i); err != nil {
+				return err
+			}
+			partStartPtr = i
+			partStartOffset = e.rowChunksInDisk.GetOffsetOfRow(e.rowPtrsInDisk[partStartPtr])
+		}
+	}
+	if err := e.generatePartition(partStartPtr, len(e.rowPtrsInDisk)); err != nil {
+		return nil
+	}
+	e.sortRowsIndex = make([]int, 0, len(e.partitionList))
+	e.partitionConsumedRows = make([]int, len(e.partitionList))
+	e.heapSort = nil
+	return err
+}
+
+func (e *SortExec) generatePartition(st, ed int) error {
+	err := e.readPartition(e.rowChunksInDisk, e.rowPtrsInDisk[st:ed])
 	if err != nil {
 		return err
 	}
@@ -194,10 +214,7 @@ func (e *SortExec) prepareExternalSorting() (err error) {
 	e.rowChunks = nil
 	e.partitionList = append(e.partitionList, listInDisk)
 	e.partitionRowPtrs = append(e.partitionRowPtrs, e.initPointersForListInDisk(listInDisk))
-	e.sortRowsIndex = make([]int, len(e.partitionList))
-	e.partitionConsumedRows = make([]int, len(e.partitionList))
-	e.heapSort = nil
-	return err
+	return nil
 }
 
 type topNChunkHeapWithIndex struct {

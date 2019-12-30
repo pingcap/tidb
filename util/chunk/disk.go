@@ -143,6 +143,11 @@ func (l *ListInDisk) NumChunks() int {
 	return len(l.offsets)
 }
 
+// GetOffsetOfRow returns the offset of a row in the ListInDisk.
+func (l *ListInDisk) GetOffsetOfRow(ptr RowPtr) int64 {
+	return l.offsets[ptr.ChkIdx][ptr.RowIdx]
+}
+
 // Close releases the disk resource.
 func (l *ListInDisk) Close() error {
 	if l.disk != nil {
