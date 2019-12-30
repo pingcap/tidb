@@ -136,7 +136,7 @@ func (decoder *DatumMapDecoder) decodeColDatum(col *ColInfo, colData []byte) (ty
 		d.SetMysqlDecimal(dec)
 	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
 		var t types.Time
-		t.Type = uint8(col.Tp)
+		t.SetType(uint8(col.Tp))
 		t.SetFsp(int8(col.Decimal))
 		err := t.FromPackedUint(decodeUint(colData))
 		if err != nil {
@@ -152,7 +152,7 @@ func (decoder *DatumMapDecoder) decodeColDatum(col *ColInfo, colData []byte) (ty
 	case mysql.TypeDuration:
 		var dur types.Duration
 		dur.Duration = time.Duration(decodeInt(colData))
-		dur.SetFsp(int8(col.Decimal))
+		dur.Fsp = int8(col.Decimal)
 		d.SetMysqlDuration(dur)
 	case mysql.TypeEnum:
 		// ignore error deliberately, to read empty enum value.
@@ -273,7 +273,7 @@ func (decoder *ChunkDecoder) decodeColToChunk(colIdx int, col *ColInfo, colData 
 		chk.AppendMyDecimal(colIdx, dec)
 	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
 		var t types.Time
-		t.Type = uint8(col.Tp)
+		t.SetType(uint8(col.Tp))
 		t.SetFsp(int8(col.Decimal))
 		err := t.FromPackedUint(decodeUint(colData))
 		if err != nil {
@@ -289,7 +289,7 @@ func (decoder *ChunkDecoder) decodeColToChunk(colIdx int, col *ColInfo, colData 
 	case mysql.TypeDuration:
 		var dur types.Duration
 		dur.Duration = time.Duration(decodeInt(colData))
-		dur.SetFsp(int8(col.Decimal))
+		dur.Fsp = int8(col.Decimal)
 		chk.AppendDuration(colIdx, dur)
 	case mysql.TypeEnum:
 		// ignore error deliberately, to read empty enum value.
