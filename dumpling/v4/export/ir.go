@@ -19,6 +19,15 @@ type SQLRowIter interface {
 	HasNext() bool
 }
 
+type RowReceiverStringer interface {
+	RowReceiver
+	Stringer
+}
+
+type Stringer interface {
+	ToString() string
+}
+
 type RowReceiver interface {
 	BindAddress([]interface{})
 	ReportSize() uint64

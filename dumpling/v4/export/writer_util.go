@@ -1,31 +1,10 @@
 package export
 
 import (
-	"database/sql"
 	"fmt"
 	"io"
 	"strings"
 )
-
-type dumplingRow []sql.NullString
-
-func (d dumplingRow) BindAddress(args []interface{}) {
-	for i := range d {
-		args[i] = &d[i]
-	}
-}
-
-func (d dumplingRow) ReportSize() uint64 {
-	var totalSize uint64
-	for _, ns := range d {
-		if ns.Valid {
-			totalSize += 4
-		} else {
-			totalSize += uint64(len(ns.String))
-		}
-	}
-	return totalSize
-}
 
 func WriteMeta(meta MetaIR, w io.StringWriter, cfg *Config) error {
 	log := cfg.Logger
@@ -70,15 +49,13 @@ func WriteInsert(tblIR TableDataIR, w io.StringWriter, cfg *Config) error {
 	}
 
 	for rowIter.HasNext() {
-		var dumplingRow = make(dumplingRow, tblIR.ColumnCount())
-		if err := rowIter.Next(dumplingRow); err != nil {
+		row := MakeRowReceiver(tblIR.ColumnTypes())
+		if err := rowIter.Next(row); err != nil {
 			log.Error("scanning from sql.Row failed, error: %s", err.Error())
 			return err
 		}
 
-		row := convert(dumplingRow, tblIR.ColumnTypes())
-
-		if err := write(w, fmt.Sprintf("(%s)", strings.Join(row, ", ")), log); err != nil {
+		if err := write(w, row.ToString(), log); err != nil {
 			return err
 		}
 
@@ -106,39 +83,4 @@ func write(writer io.StringWriter, str string, logger Logger) error {
 
 func wrapStringWith(str string, wrapper string) string {
 	return fmt.Sprintf("%s%s%s", wrapper, str, wrapper)
-}
-
-func convert(origin []sql.NullString, colTypes []string) []string {
-	ret := make([]string, len(origin))
-	for i, s := range origin {
-		if !s.Valid {
-			ret[i] = "NULL"
-			continue
-		}
-
-		if isCharTypes(colTypes[i]) {
-			ret[i] = wrapStringWith(s.String, "'")
-		} else {
-			ret[i] = s.String
-		}
-	}
-	return ret
-}
-
-var charTypes = map[string]struct{}{
-	"CHAR":      {},
-	"NCHAR":     {},
-	"VARCHAR":   {},
-	"NVARCHAR":  {},
-	"BINARY":    {},
-	"VARBINARY": {},
-	"BLOB":      {},
-	"TEXT":      {},
-	"ENUM":      {},
-	"SET":       {},
-}
-
-func isCharTypes(colType string) bool {
-	_, ok := charTypes[colType]
-	return ok
 }

@@ -57,7 +57,7 @@ func (s *testDumpSuite) TestBuildSelectAllQuery(c *C) {
 	mockConf := DefaultConfig()
 	mockConf.SortByPk = true
 
-	// Test when the server is TiDB.
+	// Test TiDB server.
 	mockConf.ServerInfo.ServerType = ServerTypeTiDB
 
 	// _tidb_rowid is available.
@@ -73,7 +73,7 @@ func (s *testDumpSuite) TestBuildSelectAllQuery(c *C) {
 	c.Assert(q, Equals, "SELECT * FROM test.t")
 	c.Assert(mock.ExpectationsWereMet(), IsNil)
 
-	// Test other server.
+	// Test other servers.
 	otherServers := []ServerType{ServerTypeUnknown, ServerTypeMySQL, ServerTypeMariaDB}
 
 	// Test table with primary key.
