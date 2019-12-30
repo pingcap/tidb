@@ -1001,7 +1001,10 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *RPCCon
 			}
 		}
 	}
-	if resp.pbResp.IsCacheHit && cacheValue != nil {
+	if resp.pbResp.IsCacheHit {
+		if cacheValue == nil {
+			return nil, errors.New("Internal error: received illegal TiKV response")
+		}
 		// Cache hit and is valid: use cached data as response data and we don't update the cache.
 		data := make([]byte, len(cacheValue.Data))
 		copy(data, cacheValue.Data)
