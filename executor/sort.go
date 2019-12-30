@@ -98,7 +98,11 @@ func (e *SortExec) Close() error {
 		e.partitionList = e.partitionList[:0]
 
 		e.memTracker.Consume(int64(-8 * cap(e.rowPtrsInDisk)))
+		e.memTracker.Consume(int64(-8 * cap(e.sortRowsIndex)))
+		e.memTracker.Consume(int64(-8 * cap(e.partitionConsumedRows)))
 		e.rowPtrsInDisk = nil
+		e.sortRowsIndex = nil
+		e.partitionConsumedRows = nil
 		for _, partitionPtrs := range e.partitionRowPtrs {
 			e.memTracker.Consume(int64(-8 * cap(partitionPtrs)))
 		}
@@ -195,6 +199,8 @@ func (e *SortExec) prepareExternalSorting() (err error) {
 	}
 	e.sortRowsIndex = make([]int, 0, len(e.partitionList))
 	e.partitionConsumedRows = make([]int, len(e.partitionList))
+	e.memTracker.Consume(int64(8 * cap(e.sortRowsIndex)))
+	e.memTracker.Consume(int64(8 * cap(e.partitionConsumedRows)))
 	e.heapSort = nil
 	return err
 }
