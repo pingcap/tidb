@@ -1227,6 +1227,20 @@ func (s *testOOMSuite) TestDistSQLMemoryControl(c *C) {
 	tk.Se.GetSessionVars().MemQuotaIndexLookupReader = -1
 }
 
+func (s *testOOMSuite) TestMemTracker4UpdateExec(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_MemTracker4UpdateExec (id int, a int, b int, index idx_a(`a`))")
+
+	log.SetLevel(zap.InfoLevel)
+	s.oom.tracker = ""
+	tk.MustExec("insert into t_MemTracker4UpdateExec values (1,1,1), (2,2,2), (3,3,3)")
+	c.Assert(s.oom.tracker, Equals, "")
+	tk.Se.GetSessionVars().MemQuotaQuery = 244
+	tk.MustExec("update t_MemTracker4UpdateExec set a = 4")
+	c.Assert(s.oom.tracker, Matches, "expensive_query during bootstrap phase")
+}
+
 func (s *testOOMSuite) TestMemTracker4InsertAndReplaceExec(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")

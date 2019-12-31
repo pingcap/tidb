@@ -4464,6 +4464,14 @@ func (s *testSuite) TestOOMPanicAction(c *C) {
 	tk.MustExec("insert into t values (1),(2),(3),(4),(5);")
 	tk.MustExec("set @@tidb_mem_quota_query=244;")
 	_, err = tk.Exec("delete t, t1 from t join t1 on t.a = t1.a")
+
+	tk.MustExec("set @@tidb_mem_quota_query=100000;")
+	tk.MustExec("truncate table t")
+	tk.MustExec("insert into t values(1),(2),(3)")
+	// set the memory to quota to make the SQL panic during UpdateExec instead
+	// of TableReader.
+	tk.MustExec("set @@tidb_mem_quota_query=244;")
+	_, err = tk.Exec("update t set a = 4")
 	c.Assert(err.Error(), Matches, "Out Of Memory Quota!.*")
 }
 
