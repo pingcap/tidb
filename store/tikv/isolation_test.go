@@ -33,7 +33,6 @@ type testIsolationSuite struct {
 	OneByOneSuite
 	store *tikvStore
 }
-
 var _ = Suite(&testIsolationSuite{})
 
 func (s *testIsolationSuite) SetUpSuite(c *C) {
@@ -106,7 +105,7 @@ func (s *testIsolationSuite) GetWithRetry(c *C, k []byte) readRecord {
 func (s *testIsolationSuite) TestWriteWriteConflict(c *C) {
 	const (
 		threadCount  = 10
-		setPerThread = 100
+		setPerThread = 50
 	)
 	var (
 		mu     sync.Mutex
