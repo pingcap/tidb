@@ -15,7 +15,9 @@ package ddl
 
 import (
 	"context"
+	"fmt"
 	"os"
+	"sync"
 	"testing"
 	"time"
 
@@ -23,11 +25,13 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
+	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/types"
@@ -70,6 +74,13 @@ func (d *ddl) generalWorker() *worker {
 // It only starts the original workers.
 func (d *ddl) restartWorkers(ctx context.Context) {
 	d.quitCh = make(chan struct{})
+	go util.WithRecovery(
+		func() { d.addBatchDDLJobs() },
+		func(r interface{}) {
+			logutil.BgLogger().Error("[ddl] DDL add batch DDL jobs meet paninc",
+				zap.String("ID", d.uuid), zap.Reflect("r", r), zap.Stack("stack trace"))
+			metrics.PanicCounter.WithLabelValues(metrics.LabelDDL).Inc()
+		})
 	if !RunWorker {
 		return
 	}
@@ -257,4 +268,116 @@ func buildRebaseAutoIDJobJob(dbInfo *model.DBInfo, tblInfo *model.TableInfo, new
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{newBaseID},
 	}
+}
+
+func testCreateTable1(ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo) *model.Job {
+	job := &model.Job{
+		SchemaID:   dbInfo.ID,
+		TableID:    tblInfo.ID,
+		Type:       model.ActionCreateTable,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{tblInfo},
+	}
+	job.Query, _ = ctx.Value(sessionctx.QueryString).(string)
+	task := &limitJobTask{job, make(chan error)}
+	d.limitJobCh <- task
+	err := <-task.err
+	if err != nil {
+		log.Fatal(err.Error())
+	}
+	return job
+}
+
+func testTableInfo1(d *ddl, name string, num int) *model.TableInfo {
+	tblInfo := &model.TableInfo{
+		Name: model.NewCIStr(name),
+	}
+	genIDs, err := d.genGlobalIDs(1)
+	if err != nil {
+		log.Fatal(err.Error())
+	}
+	tblInfo.ID = genIDs[0]
+
+	cols := make([]*model.ColumnInfo, num)
+	for i := range cols {
+		col := &model.ColumnInfo{
+			Name:         model.NewCIStr(fmt.Sprintf("c%d", i+1)),
+			Offset:       i,
+			DefaultValue: i + 1,
+			State:        model.StatePublic,
+		}
+
+		col.FieldType = *types.NewFieldType(mysql.TypeLong)
+		col.ID = allocateColumnID(tblInfo)
+		cols[i] = col
+	}
+	tblInfo.Columns = cols
+	tblInfo.Charset = "utf8"
+	tblInfo.Collate = "utf8_bin"
+	return tblInfo
+}
+
+func BenchmarkAddDDLs(b *testing.B) {
+	store, err := mockstore.NewMockTikvStore()
+	if err != nil {
+		log.Fatal(err.Error())
+	}
+	defer store.Close()
+	d := newDDL(
+		context.Background(),
+		WithStore(store),
+		WithLease(testLease),
+	)
+	ctx := testNewContext(d)
+	defer d.Stop()
+	// create database add_ddls;
+	dbInfo := &model.DBInfo{
+		Name: model.NewCIStr("add_ddls"),
+	}
+	genIDs, err := d.genGlobalIDs(1)
+	if err != nil {
+		log.Fatal(err.Error())
+	}
+	dbInfo.ID = genIDs[0]
+	job := &model.Job{
+		SchemaID:   dbInfo.ID,
+		Type:       model.ActionCreateSchema,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{dbInfo},
+	}
+	err = d.doDDLJob(ctx, job)
+	if err != nil {
+		log.Fatal(err.Error())
+	}
+	// create table t1 (c1 int, c2 int);
+	tblInfo1 := testTableInfo1(d, "t1", 2)
+	testCreateTable1(ctx, d, dbInfo, tblInfo1)
+
+	count := 200
+	taskCnt := 1
+	tblInfos := make([]*model.TableInfo, 0, count*taskCnt)
+	for i := 0; i < count*taskCnt; i++ {
+		tblInfo := testTableInfo1(d, fmt.Sprintf("t_%d", i), 2)
+		tblInfos = append(tblInfos, tblInfo)
+	}
+	wg := sync.WaitGroup{}
+	b.ResetTimer()
+	runDDLsFunc := func(start, end int) {
+		defer wg.Done()
+		for i := start; i < end; i++ {
+			// tblInfo := testTableInfo1(d, fmt.Sprintf("t_%d", i), 2)
+			testCreateTable1(ctx, d, dbInfo, tblInfos[i])
+			// se.Execute(ctx, fmt.Sprintf("create table t_%d(a int, b int)", i))
+			// se.Execute(ctx, fmt.Sprintf("alter table t%d add index(a)", i))
+			// se.Execute(ctx, fmt.Sprintf("alter table t%d add column c%d int", i, i))
+		}
+		log.Error("xxx-------------", zap.Int("count", end))
+	}
+	wg.Add(taskCnt)
+	for i := 0; i < taskCnt; i++ {
+		go runDDLsFunc(i*count, (i+1)*count)
+	}
+	wg.Wait()
+	log.Error("xxx-------------", zap.Int("count", count*taskCnt))
+	b.StopTimer()
 }

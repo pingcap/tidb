@@ -185,27 +185,61 @@ func buildJobDependence(t *meta.Meta, curJob *model.Job) error {
 	return nil
 }
 
+func (d *ddl) addBatchDDLJobs() {
+	for {
+		select {
+		case task := <-d.limitJobCh:
+			jobLen := len(d.limitJobCh)
+			tasks := make([]*limitJobTask, jobLen+1)
+			tasks[0] = task
+			for i := 1; i < jobLen+1; i++ {
+				tasks[i] = <-d.limitJobCh
+			}
+			d.addDDLJob(tasks)
+		case <-d.quitCh:
+			return
+		}
+	}
+}
+
 // addDDLJob gets a global job ID and puts the DDL job in the DDL queue.
-func (d *ddl) addDDLJob(ctx sessionctx.Context, job *model.Job) error {
+func (d *ddl) addDDLJob(tasks []*limitJobTask) error {
 	startTime := time.Now()
-	job.Version = currentVersion
-	job.Query, _ = ctx.Value(sessionctx.QueryString).(string)
 	err := kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
-		t := newMetaWithQueueTp(txn, job.Type.String())
-		var err error
-		job.ID, err = t.GenGlobalID()
+		t := meta.NewMeta(txn)
+		ids, err := t.GenGlobalIDs(len(tasks))
 		if err != nil {
 			return errors.Trace(err)
 		}
-		job.StartTS = txn.StartTS()
-		if err = buildJobDependence(t, job); err != nil {
-			return errors.Trace(err)
-		}
-		err = t.EnQueueDDLJob(job)
+		for i, task := range tasks {
+			job := task.job
+			job.Version = currentVersion
+			job.StartTS = txn.StartTS()
+			job.ID = ids[i]
+			if err = buildJobDependence(t, job); err != nil {
+				return errors.Trace(err)
+			}
 
-		return errors.Trace(err)
+			if job.Type.String() == model.AddIndexStr || job.Type.String() == model.AddPrimaryKeyStr {
+				jobKey := meta.AddIndexJobListKey
+				err = t.EnQueueDDLJob(job, jobKey)
+			} else {
+				err = t.EnQueueDDLJob(job)
+			}
+			if err != nil {
+				return errors.Trace(err)
+			}
+		}
+		return nil
 	})
-	metrics.DDLWorkerHistogram.WithLabelValues(metrics.WorkerAddDDLJob, job.Type.String(), metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
+	var jobs string
+	for _, task := range tasks {
+		task.err <- err
+		jobs += task.job.String() + "; "
+		metrics.DDLWorkerHistogram.WithLabelValues(metrics.WorkerAddDDLJob, task.job.Type.String(),
+			metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
+	}
+	logutil.BgLogger().Info("[ddl] add DDL jobs", zap.Int("batch count", len(tasks)), zap.String("jobs", jobs))
 	return errors.Trace(err)
 }
 

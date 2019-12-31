@@ -56,6 +56,8 @@ const (
 
 	shardRowIDBitsMax = 15
 
+	batchAddingJobs = 10
+
 	// PartitionCountLimit is limit of the number of partitions in a table.
 	// Mysql maximum number of partitions is 8192, our maximum number of partitions is 1024.
 	// Reference linking https://dev.mysql.com/doc/refman/5.7/en/partitioning-limitations.html.
@@ -277,10 +279,16 @@ type DDL interface {
 	GetHook() Callback
 }
 
+type limitJobTask struct {
+	job *model.Job
+	err chan error
+}
+
 // ddl is used to handle the statements that define the structure or schema of the database.
 type ddl struct {
-	m      sync.RWMutex
-	quitCh chan struct{}
+	m          sync.RWMutex
+	quitCh     chan struct{}
+	limitJobCh chan *limitJobTask
 
 	*ddlCtx
 	workers     map[workerType]*worker
@@ -424,6 +432,15 @@ func (d *ddl) newDeleteRangeManager(mock bool) delRangeManager {
 func (d *ddl) start(ctx context.Context, ctxPool *pools.ResourcePool) {
 	logutil.BgLogger().Info("[ddl] start DDL", zap.String("ID", d.uuid), zap.Bool("runWorker", RunWorker))
 	d.quitCh = make(chan struct{})
+	d.limitJobCh = make(chan *limitJobTask, batchAddingJobs)
+
+	go tidbutil.WithRecovery(
+		func() { d.addBatchDDLJobs() },
+		func(r interface{}) {
+			logutil.BgLogger().Error("[ddl] DDL add batch DDL jobs meet paninc",
+				zap.String("ID", d.uuid), zap.Reflect("r", r), zap.Stack("stack trace"))
+			metrics.PanicCounter.WithLabelValues(metrics.LabelDDL).Inc()
+		})
 
 	// If RunWorker is true, we need campaign owner and do DDL job.
 	// Otherwise, we needn't do that.
@@ -444,7 +461,7 @@ func (d *ddl) start(ctx context.Context, ctxPool *pools.ResourcePool) {
 				func(r interface{}) {
 					if r != nil {
 						logutil.Logger(w.logCtx).Error("[ddl] DDL worker meet panic", zap.String("ID", d.uuid))
-						metrics.PanicCounter.WithLabelValues(metrics.LabelDDL).Inc()
+						metrics.PanicCounter.WithLabelValues(metrics.LabelDDLWorker).Inc()
 					}
 				})
 			metrics.DDLCounter.WithLabelValues(fmt.Sprintf("%s_%s", metrics.CreateDDL, worker.String())).Inc()
@@ -575,7 +592,10 @@ func (d *ddl) asyncNotifyWorker(jobTp model.ActionType) {
 
 func (d *ddl) doDDLJob(ctx sessionctx.Context, job *model.Job) error {
 	// Get a global job ID and put the DDL job in the queue.
-	err := d.addDDLJob(ctx, job)
+	job.Query, _ = ctx.Value(sessionctx.QueryString).(string)
+	task := &limitJobTask{job, make(chan error)}
+	d.limitJobCh <- task
+	err := <-task.err
 	if err != nil {
 		return errors.Trace(err)
 	}

@@ -32,6 +32,7 @@ const (
 	LabelDomain    = "domain"
 	LabelDDLOwner  = "ddl-owner"
 	LabelDDL       = "ddl"
+	LabelDDLWorker = "ddl-worker"
 	LabelDDLSyncer = "ddl-syncer"
 	LabelGCWorker  = "gcworker"
 	LabelAnalyze   = "analyze"

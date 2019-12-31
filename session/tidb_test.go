@@ -19,7 +19,6 @@ import (
 	"os"
 	"sync"
 	"sync/atomic"
-	"testing"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/auth"
@@ -29,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/testleak"
 )
@@ -43,12 +41,12 @@ func ResetForWithTiKVTest() {
 	storeBootstrapped = make(map[string]bool)
 }
 
-func TestT(t *testing.T) {
-	logLevel := os.Getenv("log_level")
-	logutil.InitLogger(logutil.NewLogConfig(logLevel, logutil.DefaultLogFormat, "", logutil.EmptyFileLogConfig, false))
-	CustomVerboseFlag = true
-	TestingT(t)
-}
+// func TestT(t *testing.T) {
+// 	logLevel := os.Getenv("log_level")
+// 	logutil.InitLogger(logutil.NewLogConfig(logLevel, logutil.DefaultLogFormat, "", logutil.EmptyFileLogConfig, false))
+// 	CustomVerboseFlag = true
+//	TestingT(t)
+// }
 
 var _ = Suite(&testMainSuite{})
 var _ = SerialSuites(&testBootstrapSuite{})

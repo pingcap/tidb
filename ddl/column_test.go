@@ -906,7 +906,7 @@ func (s *testColumnSuite) TestDropColumn(c *C) {
 	d.Stop()
 	d.start(context.Background(), nil)
 
-	job := testDropColumn(c, ctx, s.d, s.dbInfo, tblInfo, colName, false)
+	job := testDropColumn(c, ctx, d, s.dbInfo, tblInfo, colName, false)
 	testCheckJobDone(c, d, job, false)
 	mu.Lock()
 	hErr := hookErr
