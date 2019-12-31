@@ -65,9 +65,9 @@ func (it *inspectionSchemaTable) IterRecords(ctx sessionctx.Context, startKey kv
 		// Retrieve data from `information_schema` if cannot found in cache.
 		sql := "select * from information_schema." + it.meta.Name.L
 		results, fieldTypes, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
-		var rows [][]types.Datum
+		rows := make([][]types.Datum, 0, len(results))
 		if len(results) > 0 {
-			var fileds []*types.FieldType
+			fields := make([]*types.FieldType, 0, len(fieldTypes))
 			for _, field := range fieldTypes {
 				fileds = append(fileds, &field.Column.FieldType)
 			}
