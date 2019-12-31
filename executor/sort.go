@@ -242,6 +242,8 @@ func (h *topNChunkHeapWithIndex) Push(x interface{}) {
 }
 
 func (h *topNChunkHeapWithIndex) Pop() interface{} {
+	h.sortRows = h.sortRows[:len(h.sortRows)-1]
+	h.sortRowsIndex = h.sortRowsIndex[:len(h.sortRowsIndex)-1]
 	return nil
 }
 
@@ -253,7 +255,6 @@ func (h *topNChunkHeapWithIndex) Swap(i, j int) {
 func (e *SortExec) externalSorting(req *chunk.Chunk) (err error) {
 	if e.heapSort == nil {
 		e.heapSort = &topNChunkHeapWithIndex{e}
-		heap.Init(e.heapSort)
 		for i := 0; i < len(e.partitionList); i++ {
 			e.partitionConsumedRows[i] = 0
 			row, err := e.partitionList[i].GetRow(e.partitionRowPtrs[i][0])
@@ -262,16 +263,13 @@ func (e *SortExec) externalSorting(req *chunk.Chunk) (err error) {
 			}
 			e.sortRows = append(e.sortRows, row)
 			e.sortRowsIndex = append(e.sortRowsIndex, i)
-			heap.Fix(e.heapSort, 0)
 		}
+		heap.Init(e.heapSort)
 	}
 
 	for !req.IsFull() && e.heapSort.Len() > 0 {
-		length := e.heapSort.Len() - 1
-		heap.Pop(e.heapSort)
-		row, idx := e.sortRows[length], e.sortRowsIndex[length]
-		e.sortRows = e.sortRows[:length]
-		e.sortRowsIndex = e.sortRowsIndex[:length]
+		row, idx := e.sortRows[0], e.sortRowsIndex[0]
+		heap.Remove(e.heapSort, 0)
 		req.AppendRow(row)
 		e.partitionConsumedRows[idx]++
 
