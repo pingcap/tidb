@@ -392,10 +392,19 @@ func (ts *HTTPHandlerTestSuite) prepareData(c *C) {
 	dbt.mustExec("alter table tidb.test add index idx1 (a, b);")
 	dbt.mustExec("alter table tidb.test add unique index idx2 (a, b);")
 
-	dbt.mustExec(`create table tidb.pt (a int) partition by range (a)
+	dbt.mustExec(`create table tidb.pt (a int primary key, b varchar(20), key idx(a, b))
+partition by range (a)
 (partition p0 values less than (256),
  partition p1 values less than (512),
  partition p2 values less than (1024))`)
+
+	txn2, err := dbt.db.Begin()
+	c.Assert(err, IsNil)
+	txn2.Exec("insert into tidb.pt values (42, '123')")
+	txn2.Exec("insert into tidb.pt values (256, 'b')")
+	txn2.Exec("insert into tidb.pt values (666, 'def')")
+	err = txn2.Commit()
+	c.Assert(err, IsNil)
 }
 
 func decodeKeyMvcc(closer io.ReadCloser, c *C, valid bool) {
@@ -458,6 +467,32 @@ func (ts *HTTPHandlerTestSuite) TestGetTableMVCC(c *C) {
 	err = decoder.Decode(&data2)
 	c.Assert(err, IsNil)
 	c.Assert(data2, DeepEquals, data)
+<<<<<<< HEAD
+=======
+
+	resp, err = http.Get(fmt.Sprintf("http://127.0.0.1:10090/mvcc/key/tidb/test/1?decode=true"))
+	c.Assert(err, IsNil)
+	decoder = json.NewDecoder(resp.Body)
+	var data3 map[string]interface{}
+	err = decoder.Decode(&data3)
+	c.Assert(err, IsNil)
+	c.Assert(data3["key"], NotNil)
+	c.Assert(data3["info"], NotNil)
+	c.Assert(data3["data"], NotNil)
+	c.Assert(data3["decode_error"], IsNil)
+
+	resp, err = http.Get(fmt.Sprintf("http://127.0.0.1:10090/mvcc/key/tidb/pt(p0)/42?decode=true"))
+	c.Assert(err, IsNil)
+	defer resp.Body.Close()
+	decoder = json.NewDecoder(resp.Body)
+	var data4 map[string]interface{}
+	err = decoder.Decode(&data4)
+	c.Assert(err, IsNil)
+	c.Assert(data4["key"], NotNil)
+	c.Assert(data4["info"], NotNil)
+	c.Assert(data4["data"], NotNil)
+	c.Assert(data4["decode_error"], IsNil)
+>>>>>>> 57c2d76... server: support partitioned table for the /mvcc/* HTTP API (#14197)
 }
 
 func (ts *HTTPHandlerTestSuite) TestGetMVCCNotFound(c *C) {
@@ -601,6 +636,11 @@ func (ts *HTTPHandlerTestSuite) TestGetIndexMVCC(c *C) {
 	var data2 kvrpcpb.MvccGetByKeyResponse
 	err = decoder.Decode(&data2)
 	c.Assert(err, NotNil)
+
+	resp, err = http.Get("http://127.0.0.1:10090/mvcc/index/tidb/pt(p2)/idx/666?a=666&b=def")
+	c.Assert(err, IsNil)
+	defer resp.Body.Close()
+	decodeKeyMvcc(resp.Body, c, true)
 }
 
 func (ts *HTTPHandlerTestSuite) TestGetSettings(c *C) {

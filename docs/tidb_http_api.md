@@ -252,6 +252,12 @@ timezone.*
     }
     ```
 
+    *Hint: On a partitioned table, use the `table(partition)` pattern as the table name, `test(p1)` for example:*
+
+    ```shell
+    $curl http://127.0.0.1:10080/mvcc/index/test(p1)/t1/idx/1\?a\=A
+    ```
+
 1. Scatter regions of the specified table, add a `scatter-range` scheduler for the PD and the range is same as the table range.
 
     ```shell
@@ -413,3 +419,31 @@ timezone.*
     ```shell
     curl http://{TiDBIP}:10080/stats/dump/{db}/{table}/{yyyy-MM-dd HH:mm:ss}
     ```
+<<<<<<< HEAD
+=======
+
+1. Resume the binlog writing when Pump is recovered.
+
+    ```shell
+    curl http://{TiDBIP}:10080/binlog/recover
+    ```
+
+    Return value:
+
+    * timeout, return status code: 400, message: `timeout`
+    * If it returns normally, status code: 200, message example:
+        ```text
+        {
+          "Skipped": false,
+          "SkippedCommitterCounter": 0
+        }
+        ```
+        `Skipped`: false indicates that the current binlog is not in the skipped state, otherwise, it is in the skipped state
+        `SkippedCommitterCounter`: Represents how many transactions are currently being committed in the skipped state. By default, the API will return after waiting until all skipped-binlog transactions are committed. If this value is greater than 0, it means that you need to wait until them are committed .
+
+    Param:
+
+    * op=nowait: return after binlog status is recoverd, do not wait until the skipped-binlog transactions are committed.
+    * op=reset: reset `SkippedCommitterCounter` to 0 to avoid the problem that `SkippedCommitterCounter` is not cleared due to some unusual cases.
+    * op=status: Get the current status of binlog recovery.
+>>>>>>> 57c2d76... server: support partitioned table for the /mvcc/* HTTP API (#14197)
