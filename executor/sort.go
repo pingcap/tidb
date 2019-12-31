@@ -168,8 +168,8 @@ func (e *SortExec) Next(ctx context.Context, req *chunk.Chunk) error {
 }
 
 func (e *SortExec) prepareExternalSorting() (err error) {
-	e.sortRowsIndex = make([]int, 0, len(e.partitionList))
-	e.partitionConsumedRows = make([]int, len(e.partitionList))
+	e.sortRowsIndex = make([]int, 0, len(e.partitionList)+1)
+	e.partitionConsumedRows = make([]int, len(e.partitionList)+1)
 	e.memTracker.Consume(int64(8 * cap(e.sortRowsIndex)))
 	e.memTracker.Consume(int64(8 * cap(e.partitionConsumedRows)))
 	e.heapSort = nil
@@ -230,6 +230,11 @@ func (e *SortExec) externalSorting(req *chunk.Chunk) (err error) {
 			e.sortRows = append(e.sortRows, row)
 			e.sortRowsIndex = append(e.sortRowsIndex, i)
 		}
+		if len(e.rowPtrs) != 0 {
+			e.partitionConsumedRows[len(e.partitionList)] = 0
+			e.sortRows = append(e.sortRows, e.rowChunks.GetRow(e.rowPtrs[0]))
+			e.sortRowsIndex = append(e.sortRowsIndex, len(e.partitionList))
+		}
 		heap.Init(e.heapSort)
 	}
 
@@ -239,15 +244,23 @@ func (e *SortExec) externalSorting(req *chunk.Chunk) (err error) {
 		req.AppendRow(row)
 		e.partitionConsumedRows[idx]++
 
-		if e.partitionConsumedRows[idx] < len(e.partitionRowPtrs[idx]) {
-			row, err := e.partitionList[idx].GetRow(e.partitionRowPtrs[idx][e.partitionConsumedRows[idx]])
+		if idx == len(e.partitionList) {
+			if e.partitionConsumedRows[idx] >= len(e.rowPtrs) {
+				continue
+			}
+			row = e.rowChunks.GetRow(e.rowPtrs[e.partitionConsumedRows[idx]])
+		} else {
+			if e.partitionConsumedRows[idx] >= len(e.partitionRowPtrs[idx]) {
+				continue
+			}
+			row, err = e.partitionList[idx].GetRow(e.partitionRowPtrs[idx][e.partitionConsumedRows[idx]])
 			if err != nil {
 				return err
 			}
-			e.sortRows = append(e.sortRows, row)
-			e.sortRowsIndex = append(e.sortRowsIndex, idx)
-			heap.Fix(e.heapSort, 0)
 		}
+		e.sortRows = append(e.sortRows, row)
+		e.sortRowsIndex = append(e.sortRowsIndex, idx)
+		heap.Fix(e.heapSort, 0)
 	}
 	return nil
 }
@@ -280,9 +293,6 @@ func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 			atomic.StoreUint32(&e.spilled, 1)
 			e.spillAction.reset()
 		}
-	}
-	if e.alreadySpilledSafe() && e.rowChunks.Len() != 0 {
-		return e.generatePartition()
 	}
 	return nil
 }
