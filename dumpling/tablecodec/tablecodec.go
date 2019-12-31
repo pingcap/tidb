@@ -286,7 +286,7 @@ func flatten(sc *stmtctx.StatementContext, data types.Datum, ret *types.Datum) e
 	case types.KindMysqlTime:
 		// for mysql datetime, timestamp and date type
 		t := data.GetMysqlTime()
-		if t.Type == mysql.TypeTimestamp && sc.TimeZone != time.UTC {
+		if t.Type() == mysql.TypeTimestamp && sc.TimeZone != time.UTC {
 			err := t.ConvertTimeZone(sc.TimeZone, time.UTC)
 			if err != nil {
 				return errors.Trace(err)
@@ -459,9 +459,7 @@ func unflatten(datum types.Datum, ft *types.FieldType, loc *time.Location) (type
 		mysql.TypeString:
 		return datum, nil
 	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
-		var t types.Time
-		t.Type = ft.Tp
-		t.Fsp = int8(ft.Decimal)
+		t := types.NewTime(types.ZeroCoreTime, ft.Tp, int8(ft.Decimal))
 		var err error
 		err = t.FromPackedUint(datum.GetUint64())
 		if err != nil {
