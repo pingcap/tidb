@@ -359,15 +359,15 @@ func appendDecimal(encodedBytes []byte, val *types.MyDecimal) ([]byte, error) {
 }
 
 func writeTime(buf []byte, t types.Time) {
-	binary.BigEndian.PutUint16(buf, uint16(t.Time.Year()))
-	buf[2] = uint8(t.Time.Month())
-	buf[3] = uint8(t.Time.Day())
-	buf[4] = uint8(t.Time.Hour())
-	buf[5] = uint8(t.Time.Minute())
-	buf[6] = uint8(t.Time.Second())
-	binary.BigEndian.PutUint32(buf[8:], uint32(t.Time.Microsecond()))
-	buf[12] = t.Type
-	buf[13] = uint8(t.Fsp)
+	binary.BigEndian.PutUint16(buf, uint16(t.Year()))
+	buf[2] = uint8(t.Month())
+	buf[3] = uint8(t.Day())
+	buf[4] = uint8(t.Hour())
+	buf[5] = uint8(t.Minute())
+	buf[6] = uint8(t.Second())
+	binary.BigEndian.PutUint32(buf[8:], uint32(t.Microsecond()))
+	buf[12] = t.Type()
+	buf[13] = uint8(t.Fsp())
 }
 
 func appendTime(encodedBytes, buf []byte, val types.Time) []byte {
