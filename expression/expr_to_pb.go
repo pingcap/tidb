@@ -468,6 +468,7 @@ func (pc PbConverter) canFuncBePushed(sf *ScalarFunction) bool {
 		switch sf.Function.PbCode() {
 		case tipb.ScalarFuncSig_CastStringAsInt,
 			tipb.ScalarFuncSig_CastStringAsReal,
+			tipb.ScalarFuncSig_CastStringAsTime,
 			tipb.ScalarFuncSig_CastTimeAsInt:
 			return false
 		default:
