@@ -275,7 +275,6 @@ func (s *tikvStore) Begin() (kv.Transaction, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	metrics.TiKVTxnCounter.Inc()
 	return txn, nil
 }
 
@@ -285,7 +284,6 @@ func (s *tikvStore) BeginWithStartTS(startTS uint64) (kv.Transaction, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	metrics.TiKVTxnCounter.Inc()
 	return txn, nil
 }
 

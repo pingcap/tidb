@@ -4284,3 +4284,71 @@ Union_8	500.00	root
 └─TableReader_14	250.00	root	data:Selection_13
   └─Selection_13	250.00	cop[tikv]	ge(test.t.a, 2019-02-16 14:19:00), le(test.t.a, 2019-02-16 14:21:00)
     └─TableScan_12	10000.00	cop[tikv]	table:t, partition:p1, range:[-inf,+inf], keep order:false, stats:pseudo
+drop table if exists t;
+create table t(a int) partition by range(a) (partition p0 values less than (100), partition p1 values less than (200), partition p2 values less than (300));
+begin;
+explain select * from t;
+id	count	task	operator info
+Union_8	30000.00	root	
+├─TableReader_10	10000.00	root	data:TableScan_9
+│ └─TableScan_9	10000.00	cop[tikv]	table:t, partition:p0, range:[-inf,+inf], keep order:false, stats:pseudo
+├─TableReader_12	10000.00	root	data:TableScan_11
+│ └─TableScan_11	10000.00	cop[tikv]	table:t, partition:p1, range:[-inf,+inf], keep order:false, stats:pseudo
+└─TableReader_14	10000.00	root	data:TableScan_13
+  └─TableScan_13	10000.00	cop[tikv]	table:t, partition:p2, range:[-inf,+inf], keep order:false, stats:pseudo
+insert into t values(1);
+explain select * from t;
+id	count	task	operator info
+Projection_11	30000.00	root	test.t.a
+└─Union_12	30000.00	root	
+  ├─UnionScan_13	10000.00	root	
+  │ └─TableReader_15	10000.00	root	data:TableScan_14
+  │   └─TableScan_14	10000.00	cop[tikv]	table:t, partition:p0, range:[-inf,+inf], keep order:false, stats:pseudo
+  ├─UnionScan_16	10000.00	root	
+  │ └─TableReader_18	10000.00	root	data:TableScan_17
+  │   └─TableScan_17	10000.00	cop[tikv]	table:t, partition:p1, range:[-inf,+inf], keep order:false, stats:pseudo
+  └─UnionScan_19	10000.00	root	
+    └─TableReader_21	10000.00	root	data:TableScan_20
+      └─TableScan_20	10000.00	cop[tikv]	table:t, partition:p2, range:[-inf,+inf], keep order:false, stats:pseudo
+rollback;
+begin;
+insert into t values(101);
+explain select * from t;
+id	count	task	operator info
+Projection_11	30000.00	root	test.t.a
+└─Union_12	30000.00	root	
+  ├─UnionScan_13	10000.00	root	
+  │ └─TableReader_15	10000.00	root	data:TableScan_14
+  │   └─TableScan_14	10000.00	cop[tikv]	table:t, partition:p0, range:[-inf,+inf], keep order:false, stats:pseudo
+  ├─UnionScan_16	10000.00	root	
+  │ └─TableReader_18	10000.00	root	data:TableScan_17
+  │   └─TableScan_17	10000.00	cop[tikv]	table:t, partition:p1, range:[-inf,+inf], keep order:false, stats:pseudo
+  └─UnionScan_19	10000.00	root	
+    └─TableReader_21	10000.00	root	data:TableScan_20
+      └─TableScan_20	10000.00	cop[tikv]	table:t, partition:p2, range:[-inf,+inf], keep order:false, stats:pseudo
+rollback;
+begin;
+insert into t values(201);
+explain select * from t;
+id	count	task	operator info
+Projection_11	30000.00	root	test.t.a
+└─Union_12	30000.00	root	
+  ├─UnionScan_13	10000.00	root	
+  │ └─TableReader_15	10000.00	root	data:TableScan_14
+  │   └─TableScan_14	10000.00	cop[tikv]	table:t, partition:p0, range:[-inf,+inf], keep order:false, stats:pseudo
+  ├─UnionScan_16	10000.00	root	
+  │ └─TableReader_18	10000.00	root	data:TableScan_17
+  │   └─TableScan_17	10000.00	cop[tikv]	table:t, partition:p1, range:[-inf,+inf], keep order:false, stats:pseudo
+  └─UnionScan_19	10000.00	root	
+    └─TableReader_21	10000.00	root	data:TableScan_20
+      └─TableScan_20	10000.00	cop[tikv]	table:t, partition:p2, range:[-inf,+inf], keep order:false, stats:pseudo
+rollback;
+explain select * from t;
+id	count	task	operator info
+Union_8	30000.00	root	
+├─TableReader_10	10000.00	root	data:TableScan_9
+│ └─TableScan_9	10000.00	cop[tikv]	table:t, partition:p0, range:[-inf,+inf], keep order:false, stats:pseudo
+├─TableReader_12	10000.00	root	data:TableScan_11
+│ └─TableScan_11	10000.00	cop[tikv]	table:t, partition:p1, range:[-inf,+inf], keep order:false, stats:pseudo
+└─TableReader_14	10000.00	root	data:TableScan_13
+  └─TableScan_13	10000.00	cop[tikv]	table:t, partition:p2, range:[-inf,+inf], keep order:false, stats:pseudo
