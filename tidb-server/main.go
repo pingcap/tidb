@@ -61,7 +61,6 @@ import (
 	"github.com/pingcap/tidb/util/systimemon"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/push"
-	"github.com/struCoder/pidusage"
 	"go.uber.org/automaxprocs/maxprocs"
 	"go.uber.org/zap"
 	"google.golang.org/grpc/grpclog"
@@ -637,20 +636,11 @@ func setupMetrics() {
 		if callBackCount >= 5 {
 			callBackCount = 0
 			metrics.KeepAliveCounter.Inc()
-			updateCPUUsageMetrics()
 		}
 	}
 	go systimemon.StartMonitor(time.Now, systimeErrHandler, sucessCallBack)
 
 	pushMetric(cfg.Status.MetricsAddr, time.Duration(cfg.Status.MetricsInterval)*time.Second)
-}
-
-func updateCPUUsageMetrics() {
-	sysInfo, err := pidusage.GetStat(os.Getpid())
-	if err != nil {
-		return
-	}
-	metrics.CPUUsagePercentageGauge.Set(sysInfo.CPU)
 }
 
 func setupTracing() {
