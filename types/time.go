@@ -248,47 +248,47 @@ func NewTime(mt MysqlTime, tp uint8, fsp int8) Time {
 	}
 }
 
-// Year return year value.
+// Year returns year value.
 func (t Time) Year() int {
 	return t.time.Year()
 }
 
-// Month return month value.
+// Month returns month value.
 func (t Time) Month() int {
 	return t.time.Month()
 }
 
-// Day return day value.
+// Day returns day value.
 func (t Time) Day() int {
 	return t.time.Day()
 }
 
-// Hour return hour value.
+// Hour returns hour value.
 func (t Time) Hour() int {
 	return t.time.Hour()
 }
 
-// Minute return minute value.
+// Minute returns minute value.
 func (t Time) Minute() int {
 	return t.time.Minute()
 }
 
-// Second return second value.
+// Second returns second value.
 func (t Time) Second() int {
 	return t.time.Second()
 }
 
-// Microsecond return microsecond value.
+// Microsecond returns microsecond value.
 func (t Time) Microsecond() int {
 	return t.time.Microsecond()
 }
 
-// Type return type value.
+// Type returns type value.
 func (t Time) Type() uint8 {
 	return t.tp
 }
 
-// Fsp return fsp value.
+// Fsp returns fsp value.
 func (t Time) Fsp() int8 {
 	return t.fsp
 }
@@ -304,7 +304,7 @@ func (t *Time) SetFsp(fsp int8) {
 	t.fsp = fsp
 }
 
-// CoreTime return core time.
+// CoreTime returns core time.
 func (t Time) CoreTime() MysqlTime {
 	return t.time
 }
@@ -319,22 +319,22 @@ func (t Time) GoTime(loc *gotime.Location) (gotime.Time, error) {
 	return t.time.GoTime(loc)
 }
 
-// Weekday return weekday value.
+// Weekday returns weekday value.
 func (t Time) Weekday() gotime.Weekday {
 	return t.time.Weekday()
 }
 
-// YearWeek return year and week.
+// YearWeek returns year and week.
 func (t Time) YearWeek(mode int) (int, int) {
 	return t.time.YearWeek(mode)
 }
 
-// Week return week value.
+// Week returns week value.
 func (t Time) Week(mode int) int {
 	return t.time.Week(mode)
 }
 
-// YearDay return year and day.
+// YearDay returns year and day.
 func (t Time) YearDay() int {
 	return t.time.YearDay()
 }
@@ -460,7 +460,7 @@ func (t Time) ConvertToDuration() (Duration, error) {
 }
 
 // Compare returns an integer comparing the time instant t to o.
-// If t is after o, return 1, equal o, return 0, before o, return -1.
+// If t is after o, returns 1, equal o, returns 0, before o, returns -1.
 func (t Time) Compare(o Time) int {
 	return compareTime(t.time, o.time)
 }
@@ -1139,7 +1139,7 @@ func (d Duration) RoundFrac(fsp int8) (Duration, error) {
 }
 
 // Compare returns an integer comparing the Duration instant t to o.
-// If d is after o, return 1, equal o, return 0, before o, return -1.
+// If d is after o, returns 1, equal o, returns 0, before o, returns -1.
 func (d Duration) Compare(o Duration) int {
 	if d.Duration > o.Duration {
 		return 1
@@ -1314,7 +1314,7 @@ func ParseDuration(sc *stmtctx.StatementContext, str string, fsp int8) (Duration
 	return Duration{Duration: d, Fsp: fsp}, errors.Trace(err)
 }
 
-// TruncateOverflowMySQLTime truncates d when it overflows, and return ErrTruncatedWrongVal.
+// TruncateOverflowMySQLTime truncates d when it overflows, and returns ErrTruncatedWrongVal.
 func TruncateOverflowMySQLTime(d gotime.Duration) (gotime.Duration, error) {
 	if d > MaxTime {
 		return MaxTime, ErrTruncatedWrongVal.GenWithStackByArgs("time", d)
@@ -2034,7 +2034,7 @@ func ExtractDurationValue(unit string, format string) (Duration, error) {
 		if err != nil {
 			return ZeroDuration, err
 		}
-		// MONTH must exceed the limit of mysql's duration. So just return overflow error.
+		// MONTH must exceed the limit of mysql's duration. So just returns overflow error.
 		return ZeroDuration, ErrDatetimeFunctionOverflow.GenWithStackByArgs("time")
 	default:
 		return ZeroDuration, errors.Errorf("invalid single timeunit - %s", unit)
@@ -2738,7 +2738,7 @@ func DateFSP(date string) (fsp int) {
 	return
 }
 
-// DateTimeIsOverflow return if this date is overflow.
+// DateTimeIsOverflow returns if this date is overflow.
 // See: https://dev.mysql.com/doc/refman/8.0/en/datetime.html
 func DateTimeIsOverflow(sc *stmtctx.StatementContext, date Time) (bool, error) {
 	tz := sc.TimeZone
