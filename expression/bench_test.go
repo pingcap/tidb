@@ -245,7 +245,7 @@ func (g *defaultGener) gen() interface{} {
 		return d
 	case types.ETDatetime, types.ETTimestamp:
 		gt := getRandomTime()
-		t := types.Time{Time: gt, Type: convertETType(g.eType)}
+		t := types.NewTime(gt, convertETType(g.eType), 0)
 		return t
 	case types.ETDuration:
 		d := types.Duration{
@@ -362,7 +362,7 @@ func (g *realStringGener) gen() interface{} {
 type jsonTimeGener struct{}
 
 func (g *jsonTimeGener) gen() interface{} {
-	tm := types.Time{Time: getRandomTime(), Type: mysql.TypeDatetime, Fsp: types.DefaultFsp}
+	tm := types.NewTime(getRandomTime(), mysql.TypeDatetime, types.DefaultFsp)
 	return json.CreateBinary(tm.String())
 }
 
@@ -611,7 +611,7 @@ func (g *dateTimeGener) gen() interface{} {
 	} else {
 		gt = types.FromDate(g.Year, g.Month, g.Day, rand.Intn(12), rand.Intn(60), rand.Intn(60), 0)
 	}
-	t := types.Time{Time: gt, Type: mysql.TypeDatetime}
+	t := types.NewTime(gt, mysql.TypeDatetime, types.DefaultFsp)
 	return t
 }
 
@@ -1136,7 +1136,7 @@ func testVectorizedBuiltinFunc(c *C, vecExprCases vecExprBenchCases) {
 				ctx.GetSessionVars().PreparedParams = []types.Datum{
 					types.NewIntDatum(1),
 					types.NewDecimalDatum(types.NewDecFromStringForTest("20170118123950.123")),
-					types.NewTimeDatum(types.Time{Time: types.FromGoTime(testTime), Fsp: 6, Type: mysql.TypeTimestamp}),
+					types.NewTimeDatum(types.NewTime(types.FromGoTime(testTime), mysql.TypeTimestamp, 6)),
 					types.NewDurationDatum(types.ZeroDuration),
 					types.NewStringDatum("{}"),
 					types.NewBinaryLiteralDatum(types.BinaryLiteral([]byte{1})),
@@ -1356,7 +1356,7 @@ func benchmarkVectorizedBuiltinFunc(b *testing.B, vecExprCases vecExprBenchCases
 				ctx.GetSessionVars().PreparedParams = []types.Datum{
 					types.NewIntDatum(1),
 					types.NewDecimalDatum(types.NewDecFromStringForTest("20170118123950.123")),
-					types.NewTimeDatum(types.Time{Time: types.FromGoTime(testTime), Fsp: 6, Type: mysql.TypeTimestamp}),
+					types.NewTimeDatum(types.NewTime(types.FromGoTime(testTime), mysql.TypeTimestamp, 6)),
 					types.NewDurationDatum(types.ZeroDuration),
 					types.NewStringDatum("{}"),
 					types.NewBinaryLiteralDatum(types.BinaryLiteral([]byte{1})),
