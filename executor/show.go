@@ -82,6 +82,7 @@ type ShowExec struct {
 	Full        bool
 	IfNotExists bool // Used for `show create database if not exists`
 	GlobalScope bool // GlobalScope is used by show variables
+	Extended    bool // Used for `show extended columns from ...`
 }
 
 // Next implements the Executor Next interface.
@@ -382,7 +383,14 @@ func (e *ShowExec) fetchShowColumns(ctx context.Context) error {
 		return e.tableAccessDenied("SELECT", tb.Meta().Name.O)
 	}
 
-	cols := tb.Cols()
+	var cols []*table.Column
+	// The optional EXTENDED keyword causes the output to include information about hidden columns that MySQL uses internally and are not accessible by users.
+	// See https://dev.mysql.com/doc/refman/8.0/en/show-columns.html
+	if e.Extended {
+		cols = tb.Cols()
+	} else {
+		cols = tb.VisibleCols()
+	}
 	if tb.Meta().IsView() {
 		// Because view's undertable's column could change or recreate, so view's column type may change overtime.
 		// To avoid this situation we need to generate a logical plan and extract current column types from Schema.
