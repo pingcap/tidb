@@ -14,6 +14,7 @@
 package privileges_test
 
 import (
+	"fmt"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/mysql"
@@ -67,12 +68,33 @@ func (s *testCacheSuite) TestLoadUserTable(c *C) {
 	p = privileges.MySQLPrivilege{}
 	err = p.LoadUserTable(se)
 	c.Assert(err, IsNil)
+	c.Assert(p.User, HasLen, len(p.UserMap))
+
 	user := p.User
 	c.Assert(user[0].User, Equals, "root")
 	c.Assert(user[0].Privileges, Equals, mysql.SelectPriv)
 	c.Assert(user[1].Privileges, Equals, mysql.InsertPriv)
 	c.Assert(user[2].Privileges, Equals, mysql.UpdatePriv|mysql.ShowDBPriv|mysql.ReferencesPriv)
 	c.Assert(user[3].Privileges, Equals, mysql.CreateUserPriv|mysql.IndexPriv|mysql.ExecutePriv|mysql.CreateViewPriv|mysql.ShowViewPriv|mysql.ShowDBPriv|mysql.SuperPriv|mysql.TriggerPriv)
+}
+
+func (s *testCacheSuite) TestLoadGlobalPrivTable(c *C) {
+	se, err := session.CreateSession4Test(s.store)
+	c.Assert(err, IsNil)
+	defer se.Close()
+	mustExec(c, se, "use mysql;")
+	mustExec(c, se, "truncate table global_priv")
+
+	mustExec(c, se, `INSERT INTO mysql.global_priv VALUES ("%", "tu", "{\"access\":0,\"plugin\":\"mysql_native_password\",\"ssl_type\":3, \"ssl_cipher\":\"cipher\",\"x509_subject\":\"\C=ZH1\", \"x509_issuer\":\"\C=ZH2\", \"password_last_changed\":1}")`)
+
+	var p privileges.MySQLPrivilege
+	err = p.LoadGlobalPrivTable(se)
+	c.Assert(err, IsNil)
+	c.Assert(p.Global["tu"][0].Host, Equals, `%`)
+	c.Assert(p.Global["tu"][0].User, Equals, `tu`)
+	c.Assert(p.Global["tu"][0].Priv.SSLType, Equals, privileges.SslTypeSpecified)
+	c.Assert(p.Global["tu"][0].Priv.X509Issuer, Equals, "C=ZH2")
+	c.Assert(p.Global["tu"][0].Priv.X509Subject, Equals, "C=ZH1")
 }
 
 func (s *testCacheSuite) TestLoadDBTable(c *C) {
@@ -88,6 +110,8 @@ func (s *testCacheSuite) TestLoadDBTable(c *C) {
 	var p privileges.MySQLPrivilege
 	err = p.LoadDBTable(se)
 	c.Assert(err, IsNil)
+	c.Assert(p.DB, HasLen, len(p.DBMap))
+
 	c.Assert(p.DB[0].Privileges, Equals, mysql.SelectPriv|mysql.InsertPriv|mysql.UpdatePriv|mysql.DeletePriv|mysql.CreatePriv)
 	c.Assert(p.DB[1].Privileges, Equals, mysql.DropPriv|mysql.GrantPriv|mysql.IndexPriv|mysql.AlterPriv|mysql.CreateViewPriv|mysql.ShowViewPriv|mysql.ExecutePriv)
 }
@@ -104,6 +128,8 @@ func (s *testCacheSuite) TestLoadTablesPrivTable(c *C) {
 	var p privileges.MySQLPrivilege
 	err = p.LoadTablesPrivTable(se)
 	c.Assert(err, IsNil)
+	c.Assert(p.TablesPriv, HasLen, len(p.TablesPrivMap))
+
 	c.Assert(p.TablesPriv[0].Host, Equals, `%`)
 	c.Assert(p.TablesPriv[0].DB, Equals, "db")
 	c.Assert(p.TablesPriv[0].User, Equals, "user")
@@ -188,6 +214,60 @@ func (s *testCacheSuite) TestPatternMatch(c *C) {
 	err = p.LoadDBTable(se)
 	c.Assert(err, IsNil)
 	c.Assert(p.RequestVerification(activeRoles, "genius", "127.0.0.1", "test", "", "", mysql.SelectPriv), IsTrue)
+}
+
+func (s *testCacheSuite) TestHostMatch(c *C) {
+	se, err := session.CreateSession4Test(s.store)
+	activeRoles := make([]*auth.RoleIdentity, 0)
+	c.Assert(err, IsNil)
+	defer se.Close()
+
+	// Host name can be IPv4 address + netmask.
+	mustExec(c, se, "USE MYSQL;")
+	mustExec(c, se, "TRUNCATE TABLE mysql.user")
+	mustExec(c, se, `INSERT INTO mysql.user VALUES ("172.0.0.0/255.0.0.0", "root", "", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y")`)
+	var p privileges.MySQLPrivilege
+	err = p.LoadUserTable(se)
+	c.Assert(err, IsNil)
+	c.Assert(p.RequestVerification(activeRoles, "root", "172.0.0.1", "test", "", "", mysql.SelectPriv), IsTrue)
+	c.Assert(p.RequestVerification(activeRoles, "root", "172.1.1.1", "test", "", "", mysql.SelectPriv), IsTrue)
+	c.Assert(p.RequestVerification(activeRoles, "root", "localhost", "test", "", "", mysql.SelectPriv), IsFalse)
+	c.Assert(p.RequestVerification(activeRoles, "root", "127.0.0.1", "test", "", "", mysql.SelectPriv), IsFalse)
+	c.Assert(p.RequestVerification(activeRoles, "root", "198.0.0.1", "test", "", "", mysql.SelectPriv), IsFalse)
+	c.Assert(p.RequestVerification(activeRoles, "root", "198.0.0.1", "test", "", "", mysql.PrivilegeType(0)), IsTrue)
+	c.Assert(p.RequestVerification(activeRoles, "root", "172.0.0.1", "test", "", "", mysql.ShutdownPriv), IsTrue)
+	mustExec(c, se, `TRUNCATE TABLE mysql.user`)
+
+	// Invalid host name, the user can be created, but cannot login.
+	cases := []string{
+		"127.0.0.0/24",
+		"127.0.0.1/255.0.0.0",
+		"127.0.0.0/255.0.0",
+		"127.0.0.0/255.0.0.0.0",
+		"127%/255.0.0.0",
+		"127.0.0.0/%",
+		"127.0.0.%/%",
+		"127%/%",
+	}
+	for _, IPMask := range cases {
+		sql := fmt.Sprintf(`INSERT INTO mysql.user VALUES ("%s", "root", "", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "N")`, IPMask)
+		mustExec(c, se, sql)
+		p = privileges.MySQLPrivilege{}
+		err = p.LoadUserTable(se)
+		c.Assert(err, IsNil)
+		c.Assert(p.RequestVerification(activeRoles, "root", "127.0.0.1", "test", "", "", mysql.SelectPriv), IsFalse, Commentf("test case: %s", IPMask))
+		c.Assert(p.RequestVerification(activeRoles, "root", "127.0.0.0", "test", "", "", mysql.SelectPriv), IsFalse, Commentf("test case: %s", IPMask))
+		c.Assert(p.RequestVerification(activeRoles, "root", "localhost", "test", "", "", mysql.ShutdownPriv), IsFalse, Commentf("test case: %s", IPMask))
+	}
+
+	// Netmask notation cannot be used for IPv6 addresses.
+	mustExec(c, se, `INSERT INTO mysql.user VALUES ("2001:db8::/ffff:ffff::", "root", "", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "N")`)
+	p = privileges.MySQLPrivilege{}
+	err = p.LoadUserTable(se)
+	c.Assert(err, IsNil)
+	c.Assert(p.RequestVerification(activeRoles, "root", "2001:db8::1234", "test", "", "", mysql.SelectPriv), IsFalse)
+	c.Assert(p.RequestVerification(activeRoles, "root", "2001:db8::", "test", "", "", mysql.SelectPriv), IsFalse)
+	c.Assert(p.RequestVerification(activeRoles, "root", "localhost", "test", "", "", mysql.ShutdownPriv), IsFalse)
 }
 
 func (s *testCacheSuite) TestCaseInsensitive(c *C) {
@@ -359,41 +439,60 @@ func (s *testCacheSuite) TestAbnormalMySQLTable(c *C) {
 func (s *testCacheSuite) TestSortUserTable(c *C) {
 	var p privileges.MySQLPrivilege
 	p.User = []privileges.UserRecord{
-		{Host: `%`, User: "root"},
-		{Host: `%`, User: "jeffrey"},
-		{Host: "localhost", User: "root"},
-		{Host: "localhost", User: ""},
+		privileges.NewUserRecord(`%`, "root"),
+		privileges.NewUserRecord(`%`, "jeffrey"),
+		privileges.NewUserRecord("localhost", "root"),
+		privileges.NewUserRecord("localhost", ""),
 	}
 	p.SortUserTable()
 	result := []privileges.UserRecord{
-		{Host: "localhost", User: "root"},
-		{Host: "localhost", User: ""},
-		{Host: `%`, User: "jeffrey"},
-		{Host: `%`, User: "root"},
+		privileges.NewUserRecord("localhost", "root"),
+		privileges.NewUserRecord("localhost", ""),
+		privileges.NewUserRecord(`%`, "jeffrey"),
+		privileges.NewUserRecord(`%`, "root"),
 	}
 	checkUserRecord(p.User, result, c)
 
 	p.User = []privileges.UserRecord{
-		{Host: `%`, User: "jeffrey"},
-		{Host: "h1.example.net", User: ""},
+		privileges.NewUserRecord(`%`, "jeffrey"),
+		privileges.NewUserRecord("h1.example.net", ""),
 	}
 	p.SortUserTable()
 	result = []privileges.UserRecord{
-		{Host: "h1.example.net", User: ""},
-		{Host: `%`, User: "jeffrey"},
+		privileges.NewUserRecord("h1.example.net", ""),
+		privileges.NewUserRecord(`%`, "jeffrey"),
 	}
 	checkUserRecord(p.User, result, c)
 
 	p.User = []privileges.UserRecord{
-		{Host: `192.168.%`, User: "xxx"},
-		{Host: `192.168.199.%`, User: "xxx"},
+		privileges.NewUserRecord(`192.168.%`, "xxx"),
+		privileges.NewUserRecord(`192.168.199.%`, "xxx"),
 	}
 	p.SortUserTable()
 	result = []privileges.UserRecord{
-		{Host: `192.168.199.%`, User: "xxx"},
-		{Host: `192.168.%`, User: "xxx"},
+		privileges.NewUserRecord(`192.168.199.%`, "xxx"),
+		privileges.NewUserRecord(`192.168.%`, "xxx"),
 	}
 	checkUserRecord(p.User, result, c)
+}
+
+func (s *testCacheSuite) TestGlobalPrivValueRequireStr(c *C) {
+	var (
+		none  = privileges.GlobalPrivValue{SSLType: privileges.SslTypeNone}
+		tls   = privileges.GlobalPrivValue{SSLType: privileges.SslTypeAny}
+		x509  = privileges.GlobalPrivValue{SSLType: privileges.SslTypeX509}
+		spec  = privileges.GlobalPrivValue{SSLType: privileges.SslTypeSpecified, SSLCipher: "c1", X509Subject: "s1", X509Issuer: "i1"}
+		spec2 = privileges.GlobalPrivValue{SSLType: privileges.SslTypeSpecified, X509Subject: "s1", X509Issuer: "i1"}
+		spec3 = privileges.GlobalPrivValue{SSLType: privileges.SslTypeSpecified, X509Issuer: "i1"}
+		spec4 = privileges.GlobalPrivValue{SSLType: privileges.SslTypeSpecified}
+	)
+	c.Assert(none.RequireStr(), Equals, "NONE")
+	c.Assert(tls.RequireStr(), Equals, "SSL")
+	c.Assert(x509.RequireStr(), Equals, "X509")
+	c.Assert(spec.RequireStr(), Equals, "CIPHER 'c1' ISSUER 'i1' SUBJECT 's1'")
+	c.Assert(spec2.RequireStr(), Equals, "ISSUER 'i1' SUBJECT 's1'")
+	c.Assert(spec3.RequireStr(), Equals, "ISSUER 'i1'")
+	c.Assert(spec4.RequireStr(), Equals, "NONE")
 }
 
 func checkUserRecord(x, y []privileges.UserRecord, c *C) {

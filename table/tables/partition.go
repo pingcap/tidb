@@ -47,7 +47,7 @@ var _ table.PartitionedTable = &partitionedTable{}
 // partitions) is basically the same.
 // partition also implements the table.Table interface.
 type partition struct {
-	tableCommon
+	TableCommon
 }
 
 // GetPhysicalID implements table.Table GetPhysicalID interface.
@@ -58,27 +58,27 @@ func (p *partition) GetPhysicalID() int64 {
 // partitionedTable implements the table.PartitionedTable interface.
 // partitionedTable is a table, it contains many Partitions.
 type partitionedTable struct {
-	Table
+	TableCommon
 	partitionExpr *PartitionExpr
 	partitions    map[int64]*partition
 }
 
-func newPartitionedTable(tbl *Table, tblInfo *model.TableInfo) (table.Table, error) {
-	ret := &partitionedTable{Table: *tbl}
+func newPartitionedTable(tbl *TableCommon, tblInfo *model.TableInfo) (table.Table, error) {
+	ret := &partitionedTable{TableCommon: *tbl}
 	partitionExpr, err := newPartitionExpr(tblInfo)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	ret.partitionExpr = partitionExpr
 
-	if err := initTableIndices(&ret.tableCommon); err != nil {
+	if err := initTableIndices(&ret.TableCommon); err != nil {
 		return nil, errors.Trace(err)
 	}
 	partitions := make(map[int64]*partition)
 	pi := tblInfo.GetPartitionInfo()
 	for _, p := range pi.Definitions {
 		var t partition
-		err := initTableCommonWithIndices(&t.tableCommon, tblInfo, p.ID, tbl.Columns, tbl.alloc)
+		err := initTableCommonWithIndices(&t.TableCommon, tblInfo, p.ID, tbl.Columns, tbl.allocs)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -292,16 +292,20 @@ func (t *partitionedTable) locateRangePartition(ctx sessionctx.Context, pi *mode
 	}
 	if idx < 0 || idx >= len(partitionExprs) {
 		// The data does not belong to any of the partition returns `table has no partition for value %s`.
-		e, err := expression.ParseSimpleExprWithTableInfo(ctx, pi.Expr, t.meta)
-		if err != nil {
-			return 0, errors.Trace(err)
+		var valueMsg string
+		if pi.Expr != "" {
+			e, err := expression.ParseSimpleExprWithTableInfo(ctx, pi.Expr, t.meta)
+			if err == nil {
+				val, _, err := e.EvalInt(ctx, chunk.MutRowFromDatums(r).ToRow())
+				if err == nil {
+					valueMsg = fmt.Sprintf("%d", val)
+				}
+			}
+		} else {
+			// When the table is partitioned by range columns.
+			valueMsg = "from column_list"
 		}
-
-		ret, _, err2 := e.EvalInt(ctx, chunk.MutRowFromDatums(r).ToRow())
-		if err2 != nil {
-			return 0, errors.Trace(err2)
-		}
-		return 0, errors.Trace(table.ErrNoPartitionForGivenValue.GenWithStackByArgs(fmt.Sprintf("%d", ret)))
+		return 0, table.ErrNoPartitionForGivenValue.GenWithStackByArgs(valueMsg)
 	}
 	return idx, nil
 }

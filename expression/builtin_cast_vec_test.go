@@ -28,7 +28,9 @@ import (
 var vecBuiltinCastCases = map[string][]vecExprBenchCase{
 	ast.Cast: {
 		{retEvalType: types.ETDecimal, childrenTypes: []types.EvalType{types.ETJson}, geners: []dataGenerator{&decimalJSONGener{}}},
+		{retEvalType: types.ETDecimal, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{&decimalStringGener{}}},
 		{retEvalType: types.ETDecimal, childrenTypes: []types.EvalType{types.ETReal}},
+		{retEvalType: types.ETDecimal, childrenTypes: []types.EvalType{types.ETDuration}},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt}},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETReal}},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDecimal}},
@@ -47,10 +49,12 @@ var vecBuiltinCastCases = map[string][]vecExprBenchCase{
 		},
 		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETInt}},
 		{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETInt}, geners: []dataGenerator{new(randDurInt)}},
+		{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETReal}, geners: []dataGenerator{new(randDurReal)}},
 		{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETDecimal}, geners: []dataGenerator{new(randDurDecimal)}},
 		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETReal}},
 		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETJson}},
 		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETDecimal}},
+		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{&realStringGener{}}},
 		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETDatetime}},
 		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETDuration}, geners: []dataGenerator{&rangeDurationGener{nullRation: 0.5}}},
 		{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETDatetime},
@@ -84,8 +88,8 @@ var vecBuiltinCastCases = map[string][]vecExprBenchCase{
 		{retEvalType: types.ETDatetime, childrenTypes: []types.EvalType{types.ETString},
 			geners: []dataGenerator{
 				&dateTimeStrGener{},
-				&timeStrGener{},
 				&dateStrGener{},
+				&timeStrGener{},
 			}},
 		{retEvalType: types.ETDatetime, childrenTypes: []types.EvalType{types.ETDuration}},
 		{retEvalType: types.ETDatetime, childrenTypes: []types.EvalType{types.ETDatetime}},
@@ -95,6 +99,7 @@ var vecBuiltinCastCases = map[string][]vecExprBenchCase{
 				&jsonTimeGener{},
 			}},
 		{retEvalType: types.ETDecimal, childrenTypes: []types.EvalType{types.ETDecimal}},
+		{retEvalType: types.ETDecimal, childrenTypes: []types.EvalType{types.ETInt}},
 	},
 }
 
@@ -106,7 +111,7 @@ type dateTimeGenerWithFsp struct {
 func (g *dateTimeGenerWithFsp) gen() interface{} {
 	result := g.defaultGener.gen()
 	if t, ok := result.(types.Time); ok {
-		t.Fsp = g.fsp
+		t.SetFsp(g.fsp)
 		return t
 	}
 	return result
@@ -131,10 +136,11 @@ func (g *datetimeJSONGener) gen() interface{} {
 	minute := rand.Intn(60)
 	second := rand.Intn(60)
 	microsecond := rand.Intn(1000000)
-	d := types.Time{
-		Time: types.FromDate(year, month, day, hour, minute, second, microsecond),
-		Fsp:  3,
-	}
+	d := types.NewTime(
+		types.FromDate(year, month, day, hour, minute, second, microsecond),
+		0,
+		3,
+	)
 	return json.CreateBinary(d.String())
 }
 

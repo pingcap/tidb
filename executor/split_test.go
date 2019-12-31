@@ -228,14 +228,8 @@ func (s *testSplitIndex) TestSplitIndex(c *C) {
 	// .
 	// .
 	// region10: [2019-01-01 00:00:00 	~ +inf)
-	lowerTime := types.Time{
-		Time: types.FromDate(2010, 1, 1, 0, 0, 0, 0),
-		Type: mysql.TypeTimestamp,
-	}
-	upperTime := types.Time{
-		Time: types.FromDate(2020, 1, 1, 0, 0, 0, 0),
-		Type: mysql.TypeTimestamp,
-	}
+	lowerTime := types.NewTime(types.FromDate(2010, 1, 1, 0, 0, 0, 0), mysql.TypeTimestamp, types.DefaultFsp)
+	upperTime := types.NewTime(types.FromDate(2020, 1, 1, 0, 0, 0, 0), mysql.TypeTimestamp, types.DefaultFsp)
 	e.lower = []types.Datum{types.NewDatum(lowerTime)}
 	e.upper = []types.Datum{types.NewDatum(upperTime)}
 	e.num = 10
@@ -268,10 +262,7 @@ func (s *testSplitIndex) TestSplitIndex(c *C) {
 	}
 
 	for _, ca := range cases3 {
-		value := types.Time{
-			Time: ca.value,
-			Type: mysql.TypeTimestamp,
-		}
+		value := types.NewTime(ca.value, mysql.TypeTimestamp, types.DefaultFsp)
 		// test for min int64 handle
 		idxValue, _, err := index.GenIndexKey(ctx.GetSessionVars().StmtCtx, []types.Datum{types.NewDatum(value)}, math.MinInt64, nil)
 		c.Assert(err, IsNil)

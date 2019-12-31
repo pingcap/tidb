@@ -23,7 +23,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	"github.com/pingcap/parser/model"
@@ -39,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/timeutil"
@@ -244,11 +244,13 @@ func needDumpStatsDelta(h *Handle, id int64, item variable.TableDelta, currentTi
 	return false
 }
 
+type dumpMode bool
+
 const (
-	// DumpAll indicates dump all the delta info in to kv
-	DumpAll = true
+	// DumpAll indicates dump all the delta info in to kv.
+	DumpAll dumpMode = true
 	// DumpDelta indicates dump part of the delta info in to kv.
-	DumpDelta = false
+	DumpDelta dumpMode = false
 )
 
 // sweepList will loop over the list, merge each session's local stats into handle
@@ -278,12 +280,12 @@ func (h *Handle) sweepList() {
 }
 
 // DumpStatsDeltaToKV sweeps the whole list and updates the global map, then we dumps every table that held in map to KV.
-// If the `dumpAll` is false, it will only dump that delta info that `Modify Count / Table Count` greater than a ratio.
-func (h *Handle) DumpStatsDeltaToKV(dumpMode bool) error {
+// If the mode is `DumpDelta`, it will only dump that delta info that `Modify Count / Table Count` greater than a ratio.
+func (h *Handle) DumpStatsDeltaToKV(mode dumpMode) error {
 	h.sweepList()
 	currentTime := time.Now()
 	for id, item := range h.globalMap {
-		if dumpMode == DumpDelta && !needDumpStatsDelta(h, id, item, currentTime) {
+		if mode == DumpDelta && !needDumpStatsDelta(h, id, item, currentTime) {
 			continue
 		}
 		updated, err := h.dumpTableStatCountToKV(id, item)
@@ -634,12 +636,8 @@ func NeedAnalyzeTable(tbl *statistics.Table, limit time.Duration, autoAnalyzeRat
 		return false, ""
 	}
 	// Tests if current time is within the time period.
-	return timeutil.WithinDayTimePeriod(start, end, now), fmt.Sprintf("too many modifications(%v/%v)", tbl.ModifyCount, tbl.Count)
+	return timeutil.WithinDayTimePeriod(start, end, now), fmt.Sprintf("too many modifications(%v/%v>%v)", tbl.ModifyCount, tbl.Count, autoAnalyzeRatio)
 }
-
-const (
-	minAutoAnalyzeRatio = 0.3
-)
 
 func (h *Handle) getAutoAnalyzeParameters() map[string]string {
 	sql := fmt.Sprintf("select variable_name, variable_value from mysql.global_variables where variable_name in ('%s', '%s', '%s')",
@@ -660,10 +658,7 @@ func parseAutoAnalyzeRatio(ratio string) float64 {
 	if err != nil {
 		return variable.DefAutoAnalyzeRatio
 	}
-	if autoAnalyzeRatio > 0 {
-		autoAnalyzeRatio = math.Max(autoAnalyzeRatio, minAutoAnalyzeRatio)
-	}
-	return autoAnalyzeRatio
+	return math.Max(autoAnalyzeRatio, 0)
 }
 
 func parseAnalyzePeriod(start, end string) (time.Time, time.Time, error) {
@@ -717,7 +712,6 @@ func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) {
 			}
 		}
 	}
-	return
 }
 
 func (h *Handle) autoAnalyzeTable(tblInfo *model.TableInfo, statsTbl *statistics.Table, start, end time.Time, ratio float64, sql string) bool {
@@ -947,10 +941,10 @@ func (h *Handle) dumpRangeFeedback(sc *stmtctx.StatementContext, ran *ranger.Ran
 			return nil
 		}
 		if ran.LowVal[0].Kind() == types.KindMinNotNull {
-			ran.LowVal[0] = statistics.GetMinValue(q.Hist.Tp)
+			ran.LowVal[0] = types.GetMinValue(q.Hist.Tp)
 		}
 		if ran.HighVal[0].Kind() == types.KindMaxValue {
-			ran.HighVal[0] = statistics.GetMaxValue(q.Hist.Tp)
+			ran.HighVal[0] = types.GetMaxValue(q.Hist.Tp)
 		}
 	}
 	ranges, ok := q.Hist.SplitRange(sc, []*ranger.Range{ran}, q.Tp == statistics.IndexType)

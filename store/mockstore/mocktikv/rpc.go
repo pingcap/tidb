@@ -73,9 +73,10 @@ func convertToKeyError(err error) *kvrpcpb.KeyError {
 	if writeConflict, ok := errors.Cause(err).(*ErrConflict); ok {
 		return &kvrpcpb.KeyError{
 			Conflict: &kvrpcpb.WriteConflict{
-				Key:        writeConflict.Key,
-				ConflictTs: writeConflict.ConflictTS,
-				StartTs:    writeConflict.StartTS,
+				Key:              writeConflict.Key,
+				ConflictTs:       writeConflict.ConflictTS,
+				ConflictCommitTs: writeConflict.ConflictCommitTS,
+				StartTs:          writeConflict.StartTS,
 			},
 		}
 	}
@@ -722,6 +723,10 @@ func (c *RPCClient) checkArgs(ctx context.Context, addr string) (*rpcHandler, er
 	return handler, nil
 }
 
+// TiDBRPCServerCoprocessorHandler is the TiDB rpc server coprocessor handler.
+// TODO: remove this global variable.
+var TiDBRPCServerCoprocessorHandler func(context.Context, *coprocessor.Request) *coprocessor.Response
+
 // SendRequest sends a request to mock cluster.
 func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
@@ -736,12 +741,18 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 		}
 	})
 
+	reqCtx := &req.Context
+	resp := &tikvrpc.Response{}
+	// When the store type is TiDB, the request should handle over to TiDB rpc server to handle.
+	if req.Type == tikvrpc.CmdCop && req.StoreTp == kv.TiDB && TiDBRPCServerCoprocessorHandler != nil {
+		resp.Resp = TiDBRPCServerCoprocessorHandler(context.Background(), req.Cop())
+		return resp, nil
+	}
+
 	handler, err := c.checkArgs(ctx, addr)
 	if err != nil {
 		return nil, err
 	}
-	reqCtx := &req.Context
-	resp := &tikvrpc.Response{}
 	switch req.Type {
 	case tikvrpc.CmdGet:
 		r := req.Get()

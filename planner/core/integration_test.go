@@ -292,3 +292,41 @@ func (s *testIntegrationSuite) TestErrNoDB(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("grant select on test1111 to test@'%'")
 }
+
+func (s *testIntegrationSuite) TestINLJHintSmallTable(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1(a int not null, b int, key(a))")
+	tk.MustExec("insert into t1 values(1,1),(2,2)")
+	tk.MustExec("create table t2(a int not null, b int, key(a))")
+	tk.MustExec("insert into t2 values(1,1),(2,2),(3,3),(4,4),(5,5)")
+	tk.MustExec("analyze table t1, t2")
+	tk.MustExec("explain select /*+ TIDB_INLJ(t1) */ * from t1 join t2 on t1.a = t2.a")
+}
+
+func (s *testIntegrationSuite) TestIndexJoinUniqueCompositeIndex(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1(a int not null, c int not null)")
+	tk.MustExec("create table t2(a int not null, b int not null, c int not null, primary key(a,b))")
+	tk.MustExec("insert into t1 values(1,1)")
+	tk.MustExec("insert into t2 values(1,1,1),(1,2,1)")
+	tk.MustExec("analyze table t1,t2")
+
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+		})
+		tk.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
+	}
+}
