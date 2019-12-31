@@ -669,7 +669,7 @@ func (b *builtinSubDatetimeAndDurationSig) vecEvalTime(input *chunk.Chunk, resul
 			return err
 		}
 		tmpDuration := arg0.Sub(sc, &arg1time)
-		output, err := tmpDuration.ConvertToTime(sc, arg0.Type)
+		output, err := tmpDuration.ConvertToTime(sc, arg0.Type())
 
 		if err != nil {
 			return err

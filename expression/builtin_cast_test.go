@@ -274,14 +274,8 @@ var (
 	curTimeWithFspReal   = float64(curTimeInt) + 0.555
 	curTimeString        = fmt.Sprintf("%4d-%02d-%02d 12:59:59", year, int(month), day)
 	curTimeWithFspString = fmt.Sprintf("%4d-%02d-%02d 12:59:59.555000", year, int(month), day)
-	tm                   = types.Time{
-		Time: types.FromDate(year, int(month), day, 12, 59, 59, 0),
-		Type: mysql.TypeDatetime,
-		Fsp:  types.DefaultFsp}
-	tmWithFsp = types.Time{
-		Time: types.FromDate(year, int(month), day, 12, 59, 59, 555000),
-		Type: mysql.TypeDatetime,
-		Fsp:  types.MaxFsp}
+	tm                   = types.NewTime(types.FromDate(year, int(month), day, 12, 59, 59, 0), mysql.TypeDatetime, types.DefaultFsp)
+	tmWithFsp            = types.NewTime(types.FromDate(year, int(month), day, 12, 59, 59, 555000), mysql.TypeDatetime, types.MaxFsp)
 	// timeDatum indicates datetime "curYear-curMonth-curDay 12:59:59".
 	timeDatum = types.NewDatum(tm)
 	// timeWithFspDatum indicates datetime "curYear-curMonth-curDay 12:59:59.555000".
@@ -296,10 +290,7 @@ var (
 		Fsp:      3}
 	// durationWithFspDatum indicates duration "12:59:59.555"
 	durationWithFspDatum = types.NewDatum(durationWithFsp)
-	dt                   = types.Time{
-		Time: types.FromDate(year, int(month), day, 0, 0, 0, 0),
-		Type: mysql.TypeDate,
-		Fsp:  types.DefaultFsp}
+	dt                   = types.NewTime(types.FromDate(year, int(month), day, 0, 0, 0, 0), mysql.TypeDate, types.DefaultFsp)
 
 	// jsonInt indicates json(3)
 	jsonInt = types.NewDatum(json.CreateBinary(int64(3)))
@@ -1333,7 +1324,7 @@ func (s *testEvaluatorSuite) TestWrapWithCastAsTime(c *C) {
 		res, isNull, err := expr.EvalTime(s.ctx, chunk.Row{})
 		c.Assert(err, IsNil)
 		c.Assert(isNull, Equals, false)
-		c.Assert(res.Type, Equals, t.tp.Tp)
+		c.Assert(res.Type(), Equals, t.tp.Tp)
 		c.Assert(res.Compare(t.res), Equals, 0, Commentf("case %d res = %s, expect = %s", d, res, t.res))
 	}
 }
