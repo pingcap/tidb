@@ -4240,6 +4240,23 @@ func (s *testDBSuite2) TestDDLWithInvalidTableInfo(c *C) {
 	c.Assert(err.Error(), Equals, "[parser:1064]You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 94 near \"then (b / a) end));\" ")
 }
 
+func (s *testDBSuite1) TestAlterOrderBy(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use " + s.schemaName)
+	s.tk.MustExec("create table ob (pk int primary key, c int default 1, c1 int default 1, KEY cl(cl))")
+
+	// Test order by with primary key
+	s.tk.MustExec("alter table ob order by c")
+	c.Assert(s.tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(1))
+	s.tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1105|ORDER BY ignored as there is a user-defined clustered index in the table '%s'", "ob"))
+
+	//Test order by with no primary key
+	s.tk.MustExec("alter table ob drop primary key")
+	s.tk.MustExec("alter table ob order by c")
+	c.Assert(s.tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(0))
+	s.tk.MustExec("drop table ob")
+}
+
 func init() {
 	// Make sure it will only be executed once.
 	domain.SchemaOutOfDateRetryInterval = int64(50 * time.Millisecond)
