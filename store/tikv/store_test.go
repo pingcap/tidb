@@ -23,7 +23,7 @@ import (
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/pdpb"
-	pd "github.com/pingcap/pd/client"
+	"github.com/pingcap/pd/client"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/mockoracle"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
@@ -44,19 +44,6 @@ func (s *testStoreSuite) SetUpTest(c *C) {
 
 func (s *testStoreSuite) TearDownTest(c *C) {
 	c.Assert(s.store.Close(), IsNil)
-}
-
-func (s *testStoreSuite) TestParsePath(c *C) {
-	etcdAddrs, disableGC, err := parsePath("tikv://node1:2379,node2:2379")
-	c.Assert(err, IsNil)
-	c.Assert(etcdAddrs, DeepEquals, []string{"node1:2379", "node2:2379"})
-	c.Assert(disableGC, IsFalse)
-
-	_, _, err = parsePath("tikv://node1:2379")
-	c.Assert(err, IsNil)
-	_, disableGC, err = parsePath("tikv://node1:2379?disableGC=true")
-	c.Assert(err, IsNil)
-	c.Assert(disableGC, IsTrue)
 }
 
 func (s *testStoreSuite) TestOracle(c *C) {

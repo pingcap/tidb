@@ -1,0 +1,127 @@
+// Copyright 2019 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package config
+
+import (
+	"context"
+	"fmt"
+	"sync"
+	"time"
+
+	. "github.com/pingcap/check"
+	"github.com/pingcap/kvproto/pkg/configpb"
+	"github.com/pingcap/pd/client"
+)
+
+type mockPDConfigClient struct {
+	status      *configpb.Status
+	version     *configpb.Version
+	confContent string
+	err         error
+}
+
+var mockPDConfigClient0 = new(mockPDConfigClient)
+var newMockPDConfigClientErr error
+
+func newMockPDConfigClient([]string, pd.SecurityOption) (pd.ConfigClient, error) {
+	return mockPDConfigClient0, newMockPDConfigClientErr
+}
+
+func (mc *mockPDConfigClient) GetClusterID(ctx context.Context) uint64 {
+	return 0
+}
+
+func (mc *mockPDConfigClient) Create(ctx context.Context, v *configpb.Version, component, componentID, config string) (*configpb.Status, *configpb.Version, string, error) {
+	return mc.status, mc.version, mc.confContent, mc.err
+}
+
+func (mc *mockPDConfigClient) Get(ctx context.Context, v *configpb.Version, component, componentID string) (*configpb.Status, *configpb.Version, string, error) {
+	return mc.status, mc.version, mc.confContent, mc.err
+}
+
+func (mc *mockPDConfigClient) Update(ctx context.Context, v *configpb.Version, kind *configpb.ConfigKind, entries []*configpb.ConfigEntry) (*configpb.Status, *configpb.Version, error) {
+	return nil, nil, nil
+}
+
+func (mc *mockPDConfigClient) Delete(ctx context.Context, v *configpb.Version, kind *configpb.ConfigKind) (*configpb.Status, error) {
+	return nil, nil
+}
+
+func (mc *mockPDConfigClient) Close() {}
+
+func (s *testConfigSuite) TestConstantConfHandler(c *C) {
+	conf := defaultConf
+	conf.Store = "mock"
+	ch, err := NewConfHandler(&conf, nil)
+	c.Assert(err, IsNil)
+	_, ok := ch.(*constantConfHandler)
+	c.Assert(ok, IsTrue)
+	c.Assert(ch.GetConfig(), Equals, &conf)
+}
+
+func (s *testConfigSuite) TestPDConfHandler(c *C) {
+	conf := defaultConf
+
+	// wrong path
+	conf.Store = "tikv"
+	conf.Path = "WRONGPATH"
+	_, err := newPDConfHandler(&conf, nil, newMockPDConfigClient)
+	c.Assert(err, NotNil)
+
+	// error when creating PD config client
+	conf.Path = "tikv://node1:2379"
+	newMockPDConfigClientErr = fmt.Errorf("")
+	_, err = newPDConfHandler(&conf, nil, newMockPDConfigClient)
+	c.Assert(err, NotNil)
+
+	// error when registering
+	newMockPDConfigClientErr = nil
+	mockPDConfigClient0.err = fmt.Errorf("")
+	_, err = newPDConfHandler(&conf, nil, newMockPDConfigClient)
+	c.Assert(err, NotNil)
+
+	// wrong response when registering
+	mockPDConfigClient0.err = nil
+	mockPDConfigClient0.status = &configpb.Status{Code: configpb.StatusCode_UNKNOWN}
+	_, err = newPDConfHandler(&conf, nil, newMockPDConfigClient)
+	c.Assert(err, NotNil)
+
+	// create client successfully
+	mockPDConfigClient0.status.Code = configpb.StatusCode_OK
+	mockPDConfigClient0.confContent, _ = encodeConfig(&conf)
+	ch, err := newPDConfHandler(&conf, nil, newMockPDConfigClient)
+	c.Assert(err, IsNil)
+	ch.Close()
+
+	// update log level
+	wg := sync.WaitGroup{}
+	wg.Add(1)
+	mockReloadFunc := func(oldConf, newConf *Config) {
+		wg.Done()
+		c.Assert(oldConf.Log.Level, Equals, "info")
+		c.Assert(newConf.Log.Level, Equals, "debug")
+	}
+	ch, err = newPDConfHandler(&conf, mockReloadFunc, newMockPDConfigClient)
+	c.Assert(err, IsNil)
+	ch.interval = time.Second
+	ch.Start()
+	c.Assert(ch.GetConfig().Log.Level, Equals, "info")
+	newConf := conf
+	newConf.Log.Level = "debug"
+	mockPDConfigClient0.confContent, _ = encodeConfig(&newConf)
+	time.Sleep(time.Second * 2)
+	wg.Wait()
+	c.Assert(ch.GetConfig().Log.Level, Equals, "debug")
+	ch.Close()
+}
