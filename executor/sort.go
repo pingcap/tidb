@@ -183,7 +183,10 @@ func (e *SortExec) generatePartition() error {
 	if err != nil {
 		return err
 	}
-	e.rowChunks.Reset()
+	e.memTracker.Consume(-e.rowChunks.GetMemTracker().BytesConsumed())
+	e.rowChunks = chunk.NewList(retTypes(e), e.initCap, e.maxChunkSize)
+	e.rowChunks.GetMemTracker().AttachTo(e.memTracker)
+	e.rowChunks.GetMemTracker().SetLabel(rowChunksLabel)
 	e.partitionList = append(e.partitionList, listInDisk)
 	e.partitionRowPtrs = append(e.partitionRowPtrs, e.initPointersForListInDisk(listInDisk))
 	return nil
@@ -286,6 +289,7 @@ func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 		}
 		e.rowChunks.Add(chk)
 		if atomic.LoadUint32(&e.exceeded) == 1 {
+			fmt.Println(e.rowChunks.Len())
 			err := e.generatePartition()
 			if err != nil {
 				return err
