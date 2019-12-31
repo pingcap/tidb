@@ -703,6 +703,7 @@ func (tm *ttlManager) keepAlive(c *twoPhaseCommitter) {
 				// the key will not be locked forever.
 				logutil.Logger(context.Background()).Info("ttlManager live up to its lifetime",
 					zap.Uint64("txnStartTS", c.startTS))
+				metrics.TiKVTTLLifeTimeReachCounter.Inc()
 				return
 			}
 
