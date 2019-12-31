@@ -32,6 +32,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/connectivity"
 )
 
 type batchConn struct {
@@ -200,6 +201,9 @@ type batchCommandsClient struct {
 	batched sync.Map
 	idAlloc uint64
 
+	tikvClientCfg config.TiKVClient
+	tikvLoad      *uint64
+
 	// closed indicates the batch client is closed explicitly or not.
 	closed int32
 	// tryLock protects client when re-create the streaming.
@@ -214,6 +218,17 @@ func (c *batchCommandsClient) send(request *tikvpb.BatchCommandsRequest, entries
 	for i, requestID := range request.RequestIds {
 		c.batched.Store(requestID, entries[i])
 	}
+
+	if err := c.initBatchClient(); err != nil {
+		logutil.BgLogger().Warn(
+			"init create streaming fail",
+			zap.String("target", c.target),
+			zap.Error(err),
+		)
+		c.failPendingRequests(err)
+		return
+	}
+
 	if err := c.client.Send(request); err != nil {
 		logutil.BgLogger().Info(
 			"sending batch commands meets error",
@@ -245,20 +260,40 @@ func (c *batchCommandsClient) failPendingRequests(err error) {
 	})
 }
 
-func (c *batchCommandsClient) reCreateStreamingClientOnce(err error) error {
-	c.failPendingRequests(err) // fail all pending requests.
+func (c *batchCommandsClient) waitConnReady() (err error) {
+	dialCtx, cancel := context.WithTimeout(context.Background(), dialTimeout)
+	for {
+		s := c.conn.GetState()
+		if s == connectivity.Ready {
+			cancel()
+			break
+		}
+		if !c.conn.WaitForStateChange(dialCtx, s) {
+			cancel()
+			err = dialCtx.Err()
+			return
+		}
+	}
+	return
+}
 
+func (c *batchCommandsClient) reCreateStreamingClientOnce(perr error) error {
+	c.failPendingRequests(perr) // fail all pending requests.
+
+	err := c.waitConnReady()
 	// Re-establish a application layer stream. TCP layer is handled by gRPC.
-	tikvClient := tikvpb.NewTikvClient(c.conn)
-	streamClient, err := tikvClient.BatchCommands(context.TODO())
 	if err == nil {
-		logutil.BgLogger().Info(
-			"batchRecvLoop re-create streaming success",
-			zap.String("target", c.target),
-		)
-		c.client = streamClient
-
-		return nil
+		tikvClient := tikvpb.NewTikvClient(c.conn)
+		var streamClient tikvpb.Tikv_BatchCommandsClient
+		streamClient, err = tikvClient.BatchCommands(context.TODO())
+		if err == nil {
+			logutil.BgLogger().Info(
+				"batchRecvLoop re-create streaming success",
+				zap.String("target", c.target),
+			)
+			c.client = streamClient
+			return nil
+		}
 	}
 	logutil.BgLogger().Info(
 		"batchRecvLoop re-create streaming fail",
@@ -365,6 +400,22 @@ func (b *batchCommandsEntry) isCanceled() bool {
 
 const idleTimeout = 3 * time.Minute
 
+func resetEntries(entries []*batchCommandsEntry) []*batchCommandsEntry {
+	for i := 0; i < len(entries); i++ {
+		entries[i] = nil
+	}
+	entries = entries[:0]
+	return entries
+}
+
+func resetRequests(requests []*tikvpb.BatchCommandsRequest_Request) []*tikvpb.BatchCommandsRequest_Request {
+	for i := 0; i < len(requests); i++ {
+		requests[i] = nil
+	}
+	requests = requests[:0]
+	return requests
+}
+
 func (a *batchConn) batchSendLoop(cfg config.TiKVClient) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -383,8 +434,12 @@ func (a *batchConn) batchSendLoop(cfg config.TiKVClient) {
 
 	var bestBatchWaitSize = cfg.BatchWaitSize
 	for {
-		entries = entries[:0]
-		requests = requests[:0]
+		// NOTE: We can't simply set entries = entries[:0] here.
+		// The data in the cap part of the slice would reference the prewrite keys whose
+		// underlying memory is borrowed from memdb. The reference cause GC can't release
+		// the memdb, leading to serious memory leak problems in the large transaction case.
+		entries = resetEntries(entries)
+		requests = resetRequests(requests)
 		requestIDs = requestIDs[:0]
 
 		a.pendingRequests.Set(float64(len(a.batchCommandsCh)))
@@ -405,9 +460,9 @@ func (a *batchConn) batchSendLoop(cfg config.TiKVClient) {
 			return
 		} else if uint(length) < bestBatchWaitSize && bestBatchWaitSize > 1 {
 			// Waits too long to collect requests, reduce the target batch size.
-			bestBatchWaitSize -= 1
+			bestBatchWaitSize--
 		} else if uint(length) > bestBatchWaitSize+4 && bestBatchWaitSize < cfg.MaxBatchSize {
-			bestBatchWaitSize += 1
+			bestBatchWaitSize++
 		}
 
 		entries, requests = removeCanceledRequests(entries, requests)
@@ -456,7 +511,26 @@ func (a *batchConn) getClientAndSend(entries []*batchCommandsEntry, requests []*
 	}
 
 	cli.send(req, entries)
-	return
+}
+
+func (c *batchCommandsClient) initBatchClient() error {
+	if c.client != nil {
+		return nil
+	}
+
+	if err := c.waitConnReady(); err != nil {
+		return err
+	}
+
+	// Initialize batch streaming clients.
+	tikvClient := tikvpb.NewTikvClient(c.conn)
+	streamClient, err := tikvClient.BatchCommands(context.TODO())
+	if err != nil {
+		return errors.Trace(err)
+	}
+	c.client = streamClient
+	go c.batchRecvLoop(c.tikvClientCfg, c.tikvLoad)
+	return nil
 }
 
 func (a *batchConn) Close() {

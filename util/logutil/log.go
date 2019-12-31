@@ -18,7 +18,7 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"path"
+	"path/filepath"
 	"runtime"
 	"sort"
 	"strings"
@@ -44,7 +44,11 @@ const (
 	// DefaultSlowThreshold is the default slow log threshold in millisecond.
 	DefaultSlowThreshold = 300
 	// DefaultQueryLogMaxLen is the default max length of the query in the log.
-	DefaultQueryLogMaxLen = 2048
+	DefaultQueryLogMaxLen = 4096
+	// DefaultRecordPlanInSlowLog is the default value for whether enable log query plan in the slow log.
+	DefaultRecordPlanInSlowLog = 1
+	// DefaultTiDBEnableSlowLog enables TiDB to log slow queries.
+	DefaultTiDBEnableSlowLog = 1
 )
 
 // EmptyFileLogConfig is an empty FileLogConfig.
@@ -56,10 +60,9 @@ type FileLogConfig struct {
 }
 
 // NewFileLogConfig creates a FileLogConfig.
-func NewFileLogConfig(rotate bool, maxSize uint) FileLogConfig {
+func NewFileLogConfig(maxSize uint) FileLogConfig {
 	return FileLogConfig{FileLogConfig: zaplog.FileLogConfig{
-		LogRotate: rotate,
-		MaxSize:   int(maxSize),
+		MaxSize: int(maxSize),
 	},
 	}
 }
@@ -109,7 +112,7 @@ func (hook *contextHook) Fire(entry *log.Entry) error {
 		name := fu.Name()
 		if !isSkippedPackageName(name) {
 			file, line := fu.FileLine(pc[i] - 1)
-			entry.Data["file"] = path.Base(file)
+			entry.Data["file"] = filepath.Base(file)
 			entry.Data["line"] = line
 			break
 		}
@@ -292,9 +295,8 @@ func InitZapLogger(cfg *LogConfig) error {
 
 	if len(cfg.SlowQueryFile) != 0 {
 		sqfCfg := zaplog.FileLogConfig{
-			LogRotate: cfg.File.LogRotate,
-			MaxSize:   cfg.File.MaxSize,
-			Filename:  cfg.SlowQueryFile,
+			MaxSize:  cfg.File.MaxSize,
+			Filename: cfg.SlowQueryFile,
 		}
 		sqCfg := &zaplog.Config{
 			Level:            cfg.Level,

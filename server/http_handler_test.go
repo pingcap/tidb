@@ -14,6 +14,7 @@
 package server
 
 import (
+	"bytes"
 	"database/sql"
 	"encoding/base64"
 	"encoding/json"
@@ -22,7 +23,9 @@ import (
 	"io/ioutil"
 	"net/http"
 	"net/url"
+	"os"
 	"sort"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -37,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/helper"
@@ -221,7 +225,7 @@ func (ts *HTTPHandlerTestSuite) TestListTableRegions(c *C) {
 	c.Assert(err, IsNil)
 
 	region := data[1]
-	resp, err = http.Get(fmt.Sprintf("http://127.0.0.1:10090/regions/%d", region.TableID))
+	_, err = http.Get(fmt.Sprintf("http://127.0.0.1:10090/regions/%d", region.TableID))
 	c.Assert(err, IsNil)
 }
 
@@ -232,6 +236,73 @@ func (ts *HTTPHandlerTestSuite) TestGetRegionByIDWithError(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(resp.StatusCode, Equals, http.StatusBadRequest)
 	defer resp.Body.Close()
+}
+
+func (ts *HTTPHandlerTestSuite) TestBinlogRecover(c *C) {
+	ts.startServer(c)
+	defer ts.stopServer(c)
+	binloginfo.EnableSkipBinlogFlag()
+	c.Assert(binloginfo.IsBinlogSkipped(), Equals, true)
+	resp, err := http.Get(fmt.Sprintf("http://127.0.0.1:10090/binlog/recover"))
+	c.Assert(err, IsNil)
+	defer resp.Body.Close()
+	c.Assert(resp.StatusCode, Equals, http.StatusOK)
+	c.Assert(binloginfo.IsBinlogSkipped(), Equals, false)
+
+	// Invalid operation will use the default operation.
+	binloginfo.EnableSkipBinlogFlag()
+	c.Assert(binloginfo.IsBinlogSkipped(), Equals, true)
+	resp, err = http.Get(fmt.Sprintf("http://127.0.0.1:10090/binlog/recover?op=abc"))
+	c.Assert(err, IsNil)
+	defer resp.Body.Close()
+	c.Assert(resp.StatusCode, Equals, http.StatusOK)
+	c.Assert(binloginfo.IsBinlogSkipped(), Equals, false)
+
+	binloginfo.EnableSkipBinlogFlag()
+	c.Assert(binloginfo.IsBinlogSkipped(), Equals, true)
+	resp, err = http.Get(fmt.Sprintf("http://127.0.0.1:10090/binlog/recover?op=abc&seconds=1"))
+	c.Assert(err, IsNil)
+	defer resp.Body.Close()
+	c.Assert(resp.StatusCode, Equals, http.StatusOK)
+	c.Assert(binloginfo.IsBinlogSkipped(), Equals, false)
+
+	binloginfo.EnableSkipBinlogFlag()
+	c.Assert(binloginfo.IsBinlogSkipped(), Equals, true)
+	binloginfo.AddOneSkippedCommitter()
+	resp, err = http.Get(fmt.Sprintf("http://127.0.0.1:10090/binlog/recover?op=abc&seconds=1"))
+	c.Assert(err, IsNil)
+	defer resp.Body.Close()
+	c.Assert(resp.StatusCode, Equals, http.StatusBadRequest)
+	c.Assert(binloginfo.IsBinlogSkipped(), Equals, false)
+	binloginfo.RemoveOneSkippedCommitter()
+
+	binloginfo.AddOneSkippedCommitter()
+	c.Assert(binloginfo.SkippedCommitterCount(), Equals, int32(1))
+	resp, err = http.Get(fmt.Sprintf("http://127.0.0.1:10090/binlog/recover?op=reset"))
+	c.Assert(err, IsNil)
+	defer resp.Body.Close()
+	c.Assert(resp.StatusCode, Equals, http.StatusOK)
+	c.Assert(binloginfo.SkippedCommitterCount(), Equals, int32(0))
+
+	binloginfo.EnableSkipBinlogFlag()
+	resp, err = http.Get(fmt.Sprintf("http://127.0.0.1:10090/binlog/recover?op=nowait"))
+	c.Assert(err, IsNil)
+	defer resp.Body.Close()
+	c.Assert(resp.StatusCode, Equals, http.StatusOK)
+	c.Assert(binloginfo.IsBinlogSkipped(), Equals, false)
+
+	// Only the first should work.
+	binloginfo.EnableSkipBinlogFlag()
+	resp, err = http.Get(fmt.Sprintf("http://127.0.0.1:10090/binlog/recover?op=nowait&op=reset"))
+	c.Assert(err, IsNil)
+	defer resp.Body.Close()
+	c.Assert(resp.StatusCode, Equals, http.StatusOK)
+	c.Assert(binloginfo.IsBinlogSkipped(), Equals, false)
+
+	resp, err = http.Get(fmt.Sprintf("http://127.0.0.1:10090/binlog/recover?op=status"))
+	c.Assert(err, IsNil)
+	defer resp.Body.Close()
+	c.Assert(resp.StatusCode, Equals, http.StatusOK)
 }
 
 func (ts *HTTPHandlerTestSuite) TestRegionsFromMeta(c *C) {
@@ -376,6 +447,17 @@ func (ts *HTTPHandlerTestSuite) TestGetTableMVCC(c *C) {
 	err = decoder.Decode(&data2)
 	c.Assert(err, IsNil)
 	c.Assert(data2, DeepEquals, data)
+
+	resp, err = http.Get(fmt.Sprintf("http://127.0.0.1:10090/mvcc/key/tidb/test/1?decode=true"))
+	c.Assert(err, IsNil)
+	decoder = json.NewDecoder(resp.Body)
+	var data3 map[string]interface{}
+	err = decoder.Decode(&data3)
+	c.Assert(err, IsNil)
+	c.Assert(data3["key"], NotNil)
+	c.Assert(data3["info"], NotNil)
+	c.Assert(data3["data"], NotNil)
+	c.Assert(data3["decode_error"], IsNil)
 }
 
 func (ts *HTTPHandlerTestSuite) TestGetMVCCNotFound(c *C) {
@@ -391,6 +473,76 @@ func (ts *HTTPHandlerTestSuite) TestGetMVCCNotFound(c *C) {
 	c.Assert(data.Value.Info.Lock, IsNil)
 	c.Assert(data.Value.Info.Writes, IsNil)
 	c.Assert(data.Value.Info.Values, IsNil)
+}
+
+func (ts *HTTPHandlerTestSuite) TestTiFlashReplica(c *C) {
+	ts.startServer(c)
+	ts.prepareData(c)
+	defer ts.stopServer(c)
+	resp, err := http.Get("http://127.0.0.1:10090/tiflash/replica")
+	c.Assert(err, IsNil)
+	decoder := json.NewDecoder(resp.Body)
+	var data []tableFlashReplicaInfo
+	err = decoder.Decode(&data)
+	c.Assert(err, IsNil)
+	c.Assert(len(data), Equals, 0)
+
+	db, err := sql.Open("mysql", getDSN())
+	c.Assert(err, IsNil, Commentf("Error connecting"))
+	defer db.Close()
+	dbt := &DBTest{c, db}
+
+	dbt.mustExec("use tidb")
+	dbt.mustExec("alter table test set tiflash replica 2 location labels 'a','b';")
+
+	resp, err = http.Get("http://127.0.0.1:10090/tiflash/replica")
+	c.Assert(err, IsNil)
+	decoder = json.NewDecoder(resp.Body)
+	err = decoder.Decode(&data)
+	c.Assert(err, IsNil)
+	c.Assert(len(data), Equals, 1)
+	c.Assert(data[0].ReplicaCount, Equals, uint64(2))
+	c.Assert(strings.Join(data[0].LocationLabels, ","), Equals, "a,b")
+	c.Assert(data[0].Available, Equals, false)
+
+	resp, err = http.Post("http://127.0.0.1:10090/tiflash/replica", "application/json", bytes.NewBuffer([]byte(`{"id":84,"region_count":3,"flash_region_count":3}`)))
+	c.Assert(err, IsNil)
+	c.Assert(resp, NotNil)
+	body, err := ioutil.ReadAll(resp.Body)
+	c.Assert(err, IsNil)
+	c.Assert(string(body), Equals, "[schema:1146]Table which ID = 84 does not exist.")
+
+	t, err := ts.domain.InfoSchema().TableByName(model.NewCIStr("tidb"), model.NewCIStr("test"))
+	c.Assert(err, IsNil)
+	req := fmt.Sprintf(`{"id":%d,"region_count":3,"flash_region_count":3}`, t.Meta().ID)
+	resp, err = http.Post("http://127.0.0.1:10090/tiflash/replica", "application/json", bytes.NewBuffer([]byte(req)))
+	c.Assert(err, IsNil)
+	c.Assert(resp, NotNil)
+	body, err = ioutil.ReadAll(resp.Body)
+	c.Assert(err, IsNil)
+	c.Assert(string(body), Equals, "")
+
+	resp, err = http.Get("http://127.0.0.1:10090/tiflash/replica")
+	c.Assert(err, IsNil)
+	decoder = json.NewDecoder(resp.Body)
+	err = decoder.Decode(&data)
+	c.Assert(err, IsNil)
+	c.Assert(len(data), Equals, 1)
+	c.Assert(data[0].ReplicaCount, Equals, uint64(2))
+	c.Assert(strings.Join(data[0].LocationLabels, ","), Equals, "a,b")
+	c.Assert(data[0].Available, Equals, true) // The status should be true now.
+
+	// Should not take effect.
+	dbt.mustExec("alter table test set tiflash replica 2 location labels 'a','b';")
+	resp, err = http.Get("http://127.0.0.1:10090/tiflash/replica")
+	c.Assert(err, IsNil)
+	decoder = json.NewDecoder(resp.Body)
+	err = decoder.Decode(&data)
+	c.Assert(err, IsNil)
+	c.Assert(len(data), Equals, 1)
+	c.Assert(data[0].ReplicaCount, Equals, uint64(2))
+	c.Assert(strings.Join(data[0].LocationLabels, ","), Equals, "a,b")
+	c.Assert(data[0].Available, Equals, true) // The status should be true now.
 }
 
 func (ts *HTTPHandlerTestSuite) TestDecodeColumnValue(c *C) {
@@ -536,7 +688,7 @@ func (ts *HTTPHandlerTestSuite) TestGetSchema(c *C) {
 	var dbs []*model.DBInfo
 	err = decoder.Decode(&dbs)
 	c.Assert(err, IsNil)
-	expects := []string{"information_schema", "mysql", "performance_schema", "test", "tidb"}
+	expects := []string{"information_schema", "inspection_schema", "metric_schema", "mysql", "performance_schema", "test", "tidb"}
 	names := make([]string, len(dbs))
 	for i, v := range dbs {
 		names[i] = v.Name.L
@@ -615,7 +767,7 @@ func (ts *HTTPHandlerTestSuite) TestGetSchema(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(t.Name.L, Equals, "t1")
 
-	resp, err = http.Get(fmt.Sprintf(fmt.Sprintf("http://127.0.0.1:10090/db-table/%v", t.GetPartitionInfo().Definitions[0].ID)))
+	resp, err = http.Get(fmt.Sprintf("http://127.0.0.1:10090/db-table/%v", t.GetPartitionInfo().Definitions[0].ID))
 	c.Assert(err, IsNil)
 	decoder = json.NewDecoder(resp.Body)
 	err = decoder.Decode(&dbtbl)
@@ -667,15 +819,16 @@ func (ts *HTTPHandlerTestSuite) TestPostSettings(c *C) {
 	c.Assert(config.GetGlobalConfig().Log.Level, Equals, "error")
 	c.Assert(atomic.LoadUint32(&variable.ProcessGeneralLog), Equals, uint32(1))
 	form = make(url.Values)
-	form.Set("log_level", "info")
+	form.Set("log_level", "fatal")
 	form.Set("tidb_general_log", "0")
 	resp, err = http.PostForm("http://127.0.0.1:10090/settings", form)
 	c.Assert(err, IsNil)
 	c.Assert(resp.StatusCode, Equals, http.StatusOK)
 	c.Assert(atomic.LoadUint32(&variable.ProcessGeneralLog), Equals, uint32(0))
-	c.Assert(log.GetLevel(), Equals, log.InfoLevel)
-	c.Assert(zaplog.GetLevel(), Equals, zap.InfoLevel)
-	c.Assert(config.GetGlobalConfig().Log.Level, Equals, "info")
+	c.Assert(log.GetLevel(), Equals, log.FatalLevel)
+	c.Assert(zaplog.GetLevel(), Equals, zap.FatalLevel)
+	c.Assert(config.GetGlobalConfig().Log.Level, Equals, "fatal")
+	form.Set("log_level", os.Getenv("log_level"))
 
 	// test ddl_slow_threshold
 	form = make(url.Values)
@@ -805,8 +958,20 @@ func (ts *HTTPHandlerTestSuite) TestHotRegionInfo(c *C) {
 func (ts *HTTPHandlerTestSuite) TestDebugZip(c *C) {
 	ts.startServer(c)
 	defer ts.stopServer(c)
-	resp, err := http.Get("http://127.0.0.1:10090/debug/zip")
+	resp, err := http.Get("http://127.0.0.1:10090/debug/zip?seconds=1")
 	c.Assert(err, IsNil)
-	defer resp.Body.Close()
 	c.Assert(resp.StatusCode, Equals, http.StatusOK)
+	out, err := os.Create("/tmp/tidb_debug.zip")
+	c.Assert(err, IsNil)
+	_, err = io.Copy(out, resp.Body)
+	c.Assert(err, IsNil)
+	fileInfo, err := out.Stat()
+	c.Assert(err, IsNil)
+	c.Assert(fileInfo.Size(), Greater, int64(0))
+	err = out.Close()
+	c.Assert(err, IsNil)
+	err = os.Remove("/tmp/tidb_debug.zip")
+	c.Assert(err, IsNil)
+	err = resp.Body.Close()
+	c.Assert(err, IsNil)
 }

@@ -109,6 +109,12 @@ const (
 	// tidb_slow_log_threshold is used to set the slow log threshold in the server.
 	TiDBSlowLogThreshold = "tidb_slow_log_threshold"
 
+	// tidb_record_plan_in_slow_log is used to log the plan of the slow query.
+	TiDBRecordPlanInSlowLog = "tidb_record_plan_in_slow_log"
+
+	// tidb_enable_slow_log enables TiDB to log slow queries.
+	TiDBEnableSlowLog = "tidb_enable_slow_log"
+
 	// tidb_query_log_max_len is used to set the max length of the query in the log.
 	TiDBQueryLogMaxLen = "tidb_query_log_max_len"
 
@@ -121,8 +127,8 @@ const (
 	// tidb_enable_streaming enables TiDB to use streaming API for coprocessor requests.
 	TiDBEnableStreaming = "tidb_enable_streaming"
 
-	// tidb_enable_arrow enables TiDB to use Chunk format for coprocessor requests.
-	TiDBEnableArrow = "tidb_enable_arrow"
+	// tidb_enable_chunk_rpc enables TiDB to use Chunk format for coprocessor requests.
+	TiDBEnableChunkRPC = "tidb_enable_chunk_rpc"
 
 	// tidb_optimizer_selectivity_level is used to control the selectivity estimation level.
 	TiDBOptimizerSelectivityLevel = "tidb_optimizer_selectivity_level"
@@ -152,6 +158,14 @@ const (
 
 	// TiDBAllowRemoveAutoInc indicates whether a user can drop the auto_increment column attribute or not.
 	TiDBAllowRemoveAutoInc = "tidb_allow_remove_auto_inc"
+
+	// TiDBEvolvePlanTaskMaxTime controls the max time of a single evolution task.
+	TiDBEvolvePlanTaskMaxTime = "tidb_evolve_plan_task_max_time"
+
+	// TiDBEvolvePlanTaskStartTime is the start time of evolution task.
+	TiDBEvolvePlanTaskStartTime = "tidb_evolve_plan_task_start_time"
+	// TiDBEvolvePlanTaskEndTime is the end time of evolution task.
+	TiDBEvolvePlanTaskEndTime = "tidb_evolve_plan_task_end_time"
 )
 
 // TiDB system variable names that both in session and global scope.
@@ -185,8 +199,12 @@ const (
 	TiDBOptScanFactor = "tidb_opt_scan_factor"
 	// tidb_opt_desc_factor is the IO cost of scanning 1 byte data on TiKV in desc order.
 	TiDBOptDescScanFactor = "tidb_opt_desc_factor"
+	// tidb_opt_seek_factor is the IO cost of seeking the start value in a range on TiKV or TiFlash.
+	TiDBOptSeekFactor = "tidb_opt_seek_factor"
 	// tidb_opt_memory_factor is the memory cost of storing one tuple.
 	TiDBOptMemoryFactor = "tidb_opt_memory_factor"
+	// tidb_opt_disk_factor is the IO cost of reading/writing one byte to temporary disk.
+	TiDBOptDiskFactor = "tidb_opt_disk_factor"
 	// tidb_opt_concurrency_factor is the CPU cost of additional one goroutine.
 	TiDBOptConcurrencyFactor = "tidb_opt_concurrency_factor"
 
@@ -322,6 +340,34 @@ const (
 
 	// TiDBEnableStmtSummary indicates whether the statement summary is enabled.
 	TiDBEnableStmtSummary = "tidb_enable_stmt_summary"
+
+	// TiDBStmtSummaryRefreshInterval indicates the refresh interval in seconds for each statement summary.
+	TiDBStmtSummaryRefreshInterval = "tidb_stmt_summary_refresh_interval"
+
+	// TiDBStmtSummaryHistorySize indicates the history size of each statement summary.
+	TiDBStmtSummaryHistorySize = "tidb_stmt_summary_history_size"
+
+	// TiDBCapturePlanBaseline indicates whether the capture of plan baselines is enabled.
+	TiDBCapturePlanBaseline = "tidb_capture_plan_baselines"
+
+	// TiDBUsePlanBaselines indicates whether the use of plan baselines is enabled.
+	TiDBUsePlanBaselines = "tidb_use_plan_baselines"
+
+	// TiDBEvolvePlanBaselines indicates whether the evolution of plan baselines is enabled.
+	TiDBEvolvePlanBaselines = "tidb_evolve_plan_baselines"
+
+	// TiDBIsolationReadEngines indicates the tidb only read from the stores whose engine type is involved in IsolationReadEngines.
+	// Now, only support TiKV and TiFlash.
+	TiDBIsolationReadEngines = "tidb_isolation_read_engines"
+
+	// TiDBStoreLimit indicates the limit of sending request to a store, 0 means without limit.
+	TiDBStoreLimit = "tidb_store_limit"
+
+	// TiDBMetricSchemaStep indicates the step when query metric schema.
+	TiDBMetricSchemaStep = "tidb_metric_query_step"
+
+	// TiDBMetricSchemaRangeDuration indicates the range duration when query metric schema.
+	TiDBMetricSchemaRangeDuration = "tidb_metric_query_range_duration"
 )
 
 // Default TiDB system variable values.
@@ -348,7 +394,9 @@ const (
 	DefOptNetworkFactor                = 1.0
 	DefOptScanFactor                   = 1.5
 	DefOptDescScanFactor               = 3.0
+	DefOptSeekFactor                   = 20.0
 	DefOptMemoryFactor                 = 0.001
+	DefOptDiskFactor                   = 1.5
 	DefOptConcurrencyFactor            = 3.0
 	DefOptInSubqToJoinAndAgg           = true
 	DefBatchInsert                     = false
@@ -396,6 +444,16 @@ const (
 	DefWaitSplitRegionTimeout          = 300 // 300s
 	DefTiDBEnableNoopFuncs             = false
 	DefTiDBAllowRemoveAutoInc          = false
+	DefTiDBUsePlanBaselines            = true
+	DefTiDBEvolvePlanBaselines         = false
+	DefTiDBEvolvePlanTaskMaxTime       = 600 // 600s
+	DefTiDBEvolvePlanTaskStartTime     = "00:00 +0000"
+	DefTiDBEvolvePlanTaskEndTime       = "23:59 +0000"
+	DefInnodbLockWaitTimeout           = 50 // 50s
+	DefTiDBStoreLimit                  = 0
+	DefTiDBMetricSchemaStep            = 60 // 60s
+	DefTiDBMetricSchemaRangeDuration   = 60 // 60s
+
 )
 
 // Process global variables.
@@ -416,4 +474,5 @@ var (
 	MaxOfMaxAllowedPacket          uint64 = 1073741824
 	ExpensiveQueryTimeThreshold    uint64 = DefTiDBExpensiveQueryTimeThreshold
 	MinExpensiveQueryTimeThreshold uint64 = 10 //10s
+	CapturePlanBaseline                   = serverGlobalVariable{globalVal: "0"}
 )

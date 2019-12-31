@@ -30,7 +30,9 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/printer"
+	"github.com/pingcap/tipb/go-tipb"
 )
 
 var (
@@ -49,6 +51,7 @@ var (
 	_ functionClass = &rowCountFunctionClass{}
 	_ functionClass = &tidbVersionFunctionClass{}
 	_ functionClass = &tidbIsDDLOwnerFunctionClass{}
+	_ functionClass = &tidbDecodePlanFunctionClass{}
 	_ functionClass = &tidbDecodeKeyFunctionClass{}
 )
 
@@ -277,7 +280,7 @@ func (b *builtinConnectionIDSig) Clone() builtinFunc {
 func (b *builtinConnectionIDSig) evalInt(_ chunk.Row) (int64, bool, error) {
 	data := b.ctx.GetSessionVars()
 	if data == nil {
-		return 0, true, errors.Errorf("Missing session variable when evalue builtin")
+		return 0, true, errors.Errorf("Missing session variable `builtinConnectionIDSig.evalInt`")
 	}
 	return int64(data.ConnectionID), false, nil
 }
@@ -300,8 +303,10 @@ func (c *lastInsertIDFunctionClass) getFunction(ctx sessionctx.Context, args []E
 
 	if len(args) == 1 {
 		sig = &builtinLastInsertIDWithIDSig{bf}
+		sig.setPbCode(tipb.ScalarFuncSig_LastInsertIDWithID)
 	} else {
 		sig = &builtinLastInsertIDSig{bf}
+		sig.setPbCode(tipb.ScalarFuncSig_LastInsertID)
 	}
 	return sig, err
 }
@@ -450,17 +455,27 @@ func (c *benchmarkFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 	// Syntax: BENCHMARK(loop_count, expression)
 	// Define with same eval type of input arg to avoid unnecessary cast function.
 	sameEvalType := args[1].GetType().EvalType()
+	// constLoopCount is used by VecEvalInt
+	// since non-constant loop count would be different between rows, and cannot be vectorized.
+	var constLoopCount int64
+	con, ok := args[0].(*Constant)
+	if ok && con.Value.Kind() == types.KindInt64 {
+		if lc, isNull, err := con.EvalInt(ctx, chunk.Row{}); err == nil && !isNull {
+			constLoopCount = lc
+		}
+	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, types.ETInt, sameEvalType)
-	sig := &builtinBenchmarkSig{bf}
+	sig := &builtinBenchmarkSig{bf, constLoopCount}
 	return sig, nil
 }
 
 type builtinBenchmarkSig struct {
 	baseBuiltinFunc
+	constLoopCount int64
 }
 
 func (b *builtinBenchmarkSig) Clone() builtinFunc {
-	newSig := &builtinBenchmarkSig{}
+	newSig := &builtinBenchmarkSig{constLoopCount: b.constLoopCount}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
 	return newSig
 }
@@ -469,9 +484,16 @@ func (b *builtinBenchmarkSig) Clone() builtinFunc {
 // See https://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_benchmark
 func (b *builtinBenchmarkSig) evalInt(row chunk.Row) (int64, bool, error) {
 	// Get loop count.
-	loopCount, isNull, err := b.args[0].EvalInt(b.ctx, row)
-	if isNull || err != nil {
-		return 0, isNull, err
+	var loopCount int64
+	var isNull bool
+	var err error
+	if b.constLoopCount > 0 {
+		loopCount = b.constLoopCount
+	} else {
+		loopCount, isNull, err = b.args[0].EvalInt(b.ctx, row)
+		if isNull || err != nil {
+			return 0, isNull, err
+		}
 	}
 
 	// BENCHMARK() will return NULL if loop count < 0,
@@ -577,6 +599,7 @@ func (c *rowCountFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt)
 	sig = &builtinRowCountSig{bf}
+	sig.setPbCode(tipb.ScalarFuncSig_RowCount)
 	return sig, nil
 }
 
@@ -655,4 +678,36 @@ func decodeKey(ctx sessionctx.Context, s string) string {
 	// TODO: try to decode other type key.
 	ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("invalid record/index key: %X", key))
 	return s
+}
+
+type tidbDecodePlanFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *tidbDecodePlanFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETString)
+	sig := &builtinTiDBDecodePlanSig{bf}
+	return sig, nil
+}
+
+type builtinTiDBDecodePlanSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinTiDBDecodePlanSig) Clone() builtinFunc {
+	newSig := &builtinTiDBDecodePlanSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+func (b *builtinTiDBDecodePlanSig) evalString(row chunk.Row) (string, bool, error) {
+	planString, isNull, err := b.args[0].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return "", isNull, err
+	}
+	planTree, err := plancodec.DecodePlan(planString)
+	return planTree, false, err
 }

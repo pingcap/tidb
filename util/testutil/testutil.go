@@ -30,6 +30,7 @@ import (
 
 	"github.com/pingcap/check"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 )
@@ -150,7 +151,7 @@ func LoadTestSuiteData(dir, suiteName string) (res TestData, err error) {
 		return res, err
 	}
 	if record {
-		res.output = make([]testCases, len(res.input), len(res.input))
+		res.output = make([]testCases, len(res.input))
 		for i := range res.input {
 			res.output[i].Name = res.input[i].Name
 		}
@@ -178,7 +179,11 @@ func loadTestSuiteCases(filePath string) (res []testCases, err error) {
 	if err != nil {
 		return res, err
 	}
-	defer jsonFile.Close()
+	defer func() {
+		if err1 := jsonFile.Close(); err == nil && err1 != nil {
+			err = err1
+		}
+	}()
 	byteValue, err := ioutil.ReadAll(jsonFile)
 	if err != nil {
 		return res, err
@@ -269,7 +274,7 @@ func (t *TestData) GenerateOutputIfNeeded() error {
 		if err != nil {
 			return err
 		}
-		res := make([]byte, len(buf.Bytes()), len(buf.Bytes()))
+		res := make([]byte, len(buf.Bytes()))
 		copy(res, buf.Bytes())
 		buf.Reset()
 		rm := json.RawMessage(res)
@@ -283,7 +288,41 @@ func (t *TestData) GenerateOutputIfNeeded() error {
 	if err != nil {
 		return err
 	}
-	defer file.Close()
+	defer func() {
+		if err1 := file.Close(); err == nil && err1 != nil {
+			err = err1
+		}
+	}()
 	_, err = file.Write(buf.Bytes())
 	return err
+}
+
+// ConfigTestUtils contains a set of set-up/restore methods related to config used in tests.
+var ConfigTestUtils configTestUtils
+
+type configTestUtils struct {
+	autoRandom
+}
+
+type autoRandom struct {
+	originAllowAutoRandom bool
+	originAlterPrimaryKey bool
+}
+
+// SetupAutoRandomTestConfig set alter-primary-key to false, and set allow-auto-random to true and save their origin values.
+// This method should only be used for the tests in SerialSuite.
+func (c *configTestUtils) SetupAutoRandomTestConfig() {
+	globalCfg := config.GetGlobalConfig()
+	c.originAllowAutoRandom = globalCfg.Experimental.AllowAutoRandom
+	c.originAlterPrimaryKey = globalCfg.AlterPrimaryKey
+	globalCfg.AlterPrimaryKey = false
+	globalCfg.Experimental.AllowAutoRandom = true
+}
+
+// RestoreAutoRandomTestConfig restore the values had been saved in SetupTestConfig.
+// This method should only be used for the tests in SerialSuite.
+func (c *configTestUtils) RestoreAutoRandomTestConfig() {
+	globalCfg := config.GetGlobalConfig()
+	globalCfg.Experimental.AllowAutoRandom = c.originAllowAutoRandom
+	globalCfg.AlterPrimaryKey = c.originAlterPrimaryKey
 }

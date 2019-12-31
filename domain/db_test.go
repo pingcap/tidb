@@ -27,8 +27,6 @@ type dbTestSuite struct{}
 
 var _ = Suite(&dbTestSuite{})
 
-var suite = new(dbTestSuite)
-
 func (ts *dbTestSuite) TestIntegration(c *C) {
 	var err error
 	lease := 50 * time.Millisecond
@@ -54,7 +52,7 @@ func (ts *dbTestSuite) TestIntegration(c *C) {
 	// for BindHandle
 	se.Execute(context.Background(), "use test")
 	se.Execute(context.Background(), "drop table if exists t")
-	se.Execute(context.Background(), "create table t(i int, s varchar(20), index(i, s))")
+	se.Execute(context.Background(), "create table t(i int, s varchar(20), index index_t(i, s))")
 	_, err = se.Execute(context.Background(), "create global binding for select * from t where i>100 using select * from t use index(index_t) where i>100")
 	c.Assert(err, IsNil, Commentf("err %v", err))
 }

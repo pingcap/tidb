@@ -16,6 +16,7 @@ package executor
 import (
 	"context"
 
+	"github.com/pingcap/tidb/config"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
@@ -73,7 +74,7 @@ func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
 	}
 
 	// If tidb_batch_delete is ON and not in a transaction, we could use BatchDelete mode.
-	batchDelete := e.ctx.GetSessionVars().BatchDelete && !e.ctx.GetSessionVars().InTxn()
+	batchDelete := e.ctx.GetSessionVars().BatchDelete && !e.ctx.GetSessionVars().InTxn() && config.GetGlobalConfig().EnableBatchDML
 	batchDMLSize := e.ctx.GetSessionVars().DMLBatchSize
 	fields := retTypes(e.children[0])
 	chk := newFirstChunk(e.children[0])
@@ -90,7 +91,7 @@ func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
 
 		for chunkRow := iter.Begin(); chunkRow != iter.End(); chunkRow = iter.Next() {
 			if batchDelete && rowCount >= batchDMLSize {
-				if err = e.ctx.StmtCommit(); err != nil {
+				if err = e.ctx.StmtCommit(nil); err != nil {
 					return err
 				}
 				if err = e.ctx.NewTxn(ctx); err != nil {

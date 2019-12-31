@@ -14,7 +14,6 @@
 package types
 
 import (
-	"reflect"
 	"strings"
 	"testing"
 
@@ -539,33 +538,6 @@ func (s *testMyDecimalSuite) TestToString(c *C) {
 		result := dec.ToString()
 		c.Check(string(result), Equals, ca.output)
 	}
-}
-
-func (s *testMyDecimalSuite) TestCopy(c *C) {
-	type tcase struct {
-		input string
-	}
-	tests := []tcase{
-		{".0"},
-		{".123"},
-		{"123.123"},
-		{"123."},
-		{"123"},
-		{"123.1230"},
-		{"-123.1230"},
-		{"00123.123"},
-	}
-	for _, ca := range tests {
-		var dec MyDecimal
-		err := dec.FromString([]byte(ca.input))
-		c.Assert(err, IsNil)
-
-		dec2 := dec.Copy()
-		c.Assert(reflect.DeepEqual(dec, *dec2), IsTrue)
-	}
-
-	var dec *MyDecimal
-	c.Assert(dec.Copy(), IsNil)
 }
 
 func (s *testMyDecimalSuite) TestToBinFromBin(c *C) {

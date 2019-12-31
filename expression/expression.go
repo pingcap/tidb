@@ -18,9 +18,11 @@ import (
 	"fmt"
 	"sync"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/opcode"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -66,11 +68,21 @@ type VecExpr interface {
 	VecEvalJSON(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error
 }
 
+// ReverseExpr contains all resersed evaluation methods.
+type ReverseExpr interface {
+	// SupportReverseEval checks whether the builtinFunc support reverse evaluation.
+	SupportReverseEval() bool
+
+	// ReverseEval evaluates the only one column value with given function result.
+	ReverseEval(sc *stmtctx.StatementContext, res types.Datum, rType types.RoundingType) (val types.Datum, err error)
+}
+
 // Expression represents all scalar expression in SQL.
 type Expression interface {
 	fmt.Stringer
 	goJSON.Marshaler
 	VecExpr
+	ReverseExpr
 
 	// Eval evaluates an expression through a row.
 	Eval(row chunk.Row) (types.Datum, error)
@@ -129,6 +141,9 @@ type Expression interface {
 	// ExplainInfo returns operator information to be explained.
 	ExplainInfo() string
 
+	// ExplainNormalizedInfo returns operator normalized information for generating digest.
+	ExplainNormalizedInfo() string
+
 	// HashCode creates the hashcode for expression which can be used to identify itself from other expression.
 	// It generated as the following:
 	// Constant: ConstantFlag+encoded value
@@ -171,6 +186,17 @@ func IsEQCondFromIn(expr Expression) bool {
 	return len(cols) > 0
 }
 
+// HandleOverflowOnSelection handles Overflow errors when evaluating selection filters.
+// We should ignore overflow errors when evaluating selection conditions:
+//		INSERT INTO t VALUES ("999999999999999999");
+//		SELECT * FROM t WHERE v;
+func HandleOverflowOnSelection(sc *stmtctx.StatementContext, val int64, err error) (int64, error) {
+	if sc.InSelectStmt && err != nil && types.ErrOverflow.Equal(err) {
+		return -1, nil
+	}
+	return val, err
+}
+
 // EvalBool evaluates expression list to a boolean value. The first returned value
 // indicates bool result of the expression list, the second returned value indicates
 // whether the result of the expression list is null, it can only be true when the
@@ -197,7 +223,11 @@ func EvalBool(ctx sessionctx.Context, exprList CNFExprs, row chunk.Row) (bool, b
 
 		i, err := data.ToBool(ctx.GetSessionVars().StmtCtx)
 		if err != nil {
-			return false, false, err
+			i, err = HandleOverflowOnSelection(ctx.GetSessionVars().StmtCtx, i, err)
+			if err != nil {
+				return false, false, err
+
+			}
 		}
 		if i == 0 {
 			return false, false, nil
@@ -210,15 +240,53 @@ func EvalBool(ctx sessionctx.Context, exprList CNFExprs, row chunk.Row) (bool, b
 }
 
 var (
-	selPool = sync.Pool{
+	defaultChunkSize = 1024
+	selPool          = sync.Pool{
 		New: func() interface{} {
-			return make([]int, 1024)
+			return make([]int, defaultChunkSize)
+		},
+	}
+	zeroPool = sync.Pool{
+		New: func() interface{} {
+			return make([]int8, defaultChunkSize)
 		},
 	}
 )
 
+func allocSelSlice(n int) []int {
+	if n > defaultChunkSize {
+		return make([]int, n)
+	}
+	return selPool.Get().([]int)
+}
+
+func deallocateSelSlice(sel []int) {
+	if cap(sel) <= defaultChunkSize {
+		selPool.Put(sel)
+	}
+}
+
+func allocZeroSlice(n int) []int8 {
+	if n > defaultChunkSize {
+		return make([]int8, n)
+	}
+	return zeroPool.Get().([]int8)
+}
+
+func deallocateZeroSlice(isZero []int8) {
+	if cap(isZero) <= defaultChunkSize {
+		zeroPool.Put(isZero)
+	}
+}
+
 // VecEvalBool does the same thing as EvalBool but it works in a vectorized manner.
 func VecEvalBool(ctx sessionctx.Context, exprList CNFExprs, input *chunk.Chunk, selected, nulls []bool) ([]bool, []bool, error) {
+	// If input.Sel() != nil, we will call input.SetSel(nil) to clear the sel slice in input chunk.
+	// After the function finished, then we reset the input.Sel().
+	// The caller will handle the input.Sel() and selected slices.
+	defer input.SetSel(input.Sel())
+	input.SetSel(nil)
+
 	n := input.NumRows()
 	selected = selected[:0]
 	nulls = nulls[:0]
@@ -227,15 +295,17 @@ func VecEvalBool(ctx sessionctx.Context, exprList CNFExprs, input *chunk.Chunk, 
 		nulls = append(nulls, false)
 	}
 
-	sel := selPool.Get().([]int)
-	defer selPool.Put(sel)
+	sel := allocSelSlice(n)
+	defer deallocateSelSlice(sel)
 	sel = sel[:0]
 	for i := 0; i < n; i++ {
 		sel = append(sel, i)
 	}
-	defer input.SetSel(input.Sel())
 	input.SetSel(sel)
 
+	// In isZero slice, -1 means Null, 0 means zero, 1 means not zero
+	isZero := allocZeroSlice(n)
+	defer deallocateZeroSlice(isZero)
 	for _, expr := range exprList {
 		eType := expr.GetType().EvalType()
 		buf, err := globalColumnAllocator.get(eType, n)
@@ -243,17 +313,20 @@ func VecEvalBool(ctx sessionctx.Context, exprList CNFExprs, input *chunk.Chunk, 
 			return nil, nil, err
 		}
 
-		if err := vecEval(ctx, expr, input, buf); err != nil {
+		if err := VecEval(ctx, expr, input, buf); err != nil {
 			return nil, nil, err
 		}
 
+		err = toBool(ctx.GetSessionVars().StmtCtx, eType, buf, sel, isZero)
+		if err != nil {
+			return nil, nil, err
+		}
+
+		j := 0
 		isEQCondFromIn := IsEQCondFromIn(expr)
-		hasUnsignedFlag := mysql.HasUnsignedFlag(expr.GetType().Flag)
-		d, j := types.Datum{}, 0
 		for i := range sel {
-			if buf.IsNull(i) {
-				if !isEQCondFromIn {
-					nulls[sel[i]] = false
+			if isZero[i] == -1 {
+				if eType != types.ETInt && !isEQCondFromIn {
 					continue
 				}
 				// In this case, we set this row to null and let it pass this filter.
@@ -264,32 +337,7 @@ func VecEvalBool(ctx sessionctx.Context, exprList CNFExprs, input *chunk.Chunk, 
 				continue
 			}
 
-			switch eType {
-			case types.ETInt:
-				if hasUnsignedFlag {
-					d.SetUint64(buf.GetUint64(i))
-				} else {
-					d.SetInt64(buf.GetInt64(i))
-				}
-			case types.ETReal:
-				d.SetFloat64(buf.GetFloat64(i))
-			case types.ETDuration:
-				d.SetMysqlDuration(buf.GetDuration(i, 0))
-			case types.ETDatetime, types.ETTimestamp:
-				d.SetMysqlTime(buf.GetTime(i))
-			case types.ETString:
-				d.SetString(buf.GetString(i))
-			case types.ETJson:
-				d.SetMysqlJSON(buf.GetJSON(i))
-			case types.ETDecimal:
-				d.SetMysqlDecimal(buf.GetDecimal(i))
-			}
-
-			b, err := d.ToBool(ctx.GetSessionVars().StmtCtx)
-			if err != nil {
-				return nil, nil, err
-			}
-			if b == 0 {
+			if isZero[i] == 0 {
 				continue
 			}
 			sel[j] = sel[i] // this row passes this filter
@@ -309,7 +357,104 @@ func VecEvalBool(ctx sessionctx.Context, exprList CNFExprs, input *chunk.Chunk, 
 	return selected, nulls, nil
 }
 
-func vecEval(ctx sessionctx.Context, expr Expression, input *chunk.Chunk, result *chunk.Column) (err error) {
+func toBool(sc *stmtctx.StatementContext, eType types.EvalType, buf *chunk.Column, sel []int, isZero []int8) error {
+	switch eType {
+	case types.ETInt:
+		i64s := buf.Int64s()
+		for i := range sel {
+			if buf.IsNull(i) {
+				isZero[i] = -1
+			} else {
+				if i64s[i] == 0 {
+					isZero[i] = 0
+				} else {
+					isZero[i] = 1
+				}
+			}
+		}
+	case types.ETReal:
+		f64s := buf.Float64s()
+		for i := range sel {
+			if buf.IsNull(i) {
+				isZero[i] = -1
+			} else {
+				if types.RoundFloat(f64s[i]) == 0 {
+					isZero[i] = 0
+				} else {
+					isZero[i] = 1
+				}
+			}
+		}
+	case types.ETDuration:
+		d64s := buf.GoDurations()
+		for i := range sel {
+			if buf.IsNull(i) {
+				isZero[i] = -1
+			} else {
+				if d64s[i] == 0 {
+					isZero[i] = 0
+				} else {
+					isZero[i] = 1
+				}
+			}
+		}
+	case types.ETDatetime, types.ETTimestamp:
+		t64s := buf.Times()
+		for i := range sel {
+			if buf.IsNull(i) {
+				isZero[i] = -1
+			} else {
+				if t64s[i].IsZero() {
+					isZero[i] = 0
+				} else {
+					isZero[i] = 1
+				}
+			}
+		}
+	case types.ETString:
+		for i := range sel {
+			if buf.IsNull(i) {
+				isZero[i] = -1
+			} else {
+				iVal, err := types.StrToInt(sc, buf.GetString(i))
+				if err != nil {
+					iVal, err = HandleOverflowOnSelection(sc, iVal, err)
+					if err != nil {
+						return err
+					}
+				}
+				if iVal == 0 {
+					isZero[i] = 0
+				} else {
+					isZero[i] = 1
+				}
+			}
+		}
+	case types.ETDecimal:
+		d64s := buf.Decimals()
+		for i := range sel {
+			if buf.IsNull(i) {
+				isZero[i] = -1
+			} else {
+				v, err := d64s[i].ToFloat64()
+				if err != nil {
+					return err
+				}
+				if types.RoundFloat(v) == 0 {
+					isZero[i] = 0
+				} else {
+					isZero[i] = 1
+				}
+			}
+		}
+	case types.ETJson:
+		return errors.Errorf("cannot convert type json.BinaryJSON to bool")
+	}
+	return nil
+}
+
+// VecEval evaluates this expr according to its type.
+func VecEval(ctx sessionctx.Context, expr Expression, input *chunk.Chunk, result *chunk.Column) (err error) {
 	switch expr.GetType().EvalType() {
 	case types.ETInt:
 		err = expr.VecEvalInt(ctx, input, result)
@@ -325,6 +470,8 @@ func vecEval(ctx sessionctx.Context, expr Expression, input *chunk.Chunk, result
 		err = expr.VecEvalJSON(ctx, input, result)
 	case types.ETDecimal:
 		err = expr.VecEvalDecimal(ctx, input, result)
+	default:
+		err = errors.New(fmt.Sprintf("invalid eval type %v", expr.GetType().EvalType()))
 	}
 	return
 }
@@ -382,8 +529,10 @@ func FlattenCNFConditions(CNFCondition *ScalarFunction) []Expression {
 // Assignment represents a set assignment in Update, such as
 // Update t set c1 = hex(12), c2 = c3 where c2 = 1
 type Assignment struct {
-	Col  *Column
-	Expr Expression
+	Col *Column
+	// ColName indicates its original column name in table schema. It's used for outputting helping message when executing meets some errors.
+	ColName model.CIStr
+	Expr    Expression
 }
 
 // VarAssignment represents a variable assignment in Set, such as set global a = 1.
@@ -432,7 +581,7 @@ func EvaluateExprWithNull(ctx sessionctx.Context, schema *Schema, expr Expressio
 		for i, arg := range x.GetArgs() {
 			args[i] = EvaluateExprWithNull(ctx, schema, arg)
 		}
-		return NewFunctionInternal(ctx, x.FuncName.L, types.NewFieldType(mysql.TypeTiny), args...)
+		return NewFunctionInternal(ctx, x.FuncName.L, x.RetType, args...)
 	case *Column:
 		if !schema.Contains(x) {
 			return x
@@ -446,14 +595,9 @@ func EvaluateExprWithNull(ctx sessionctx.Context, schema *Schema, expr Expressio
 	return expr
 }
 
-// TableInfo2Schema converts table info to schema with empty DBName.
-func TableInfo2Schema(ctx sessionctx.Context, tbl *model.TableInfo) *Schema {
-	return TableInfo2SchemaWithDBName(ctx, model.CIStr{}, tbl)
-}
-
-// TableInfo2SchemaWithDBName converts table info to schema.
-func TableInfo2SchemaWithDBName(ctx sessionctx.Context, dbName model.CIStr, tbl *model.TableInfo) *Schema {
-	cols := ColumnInfos2ColumnsWithDBName(ctx, dbName, tbl.Name, tbl.Columns)
+// TableInfo2SchemaAndNames converts the TableInfo to the schema and name slice.
+func TableInfo2SchemaAndNames(ctx sessionctx.Context, dbName model.CIStr, tbl *model.TableInfo) (*Schema, []*types.FieldName) {
+	cols, names := ColumnInfos2ColumnsAndNames(ctx, dbName, tbl.Name, tbl.Columns)
 	keys := make([]KeyInfo, 0, len(tbl.Indices)+1)
 	for _, idx := range tbl.Indices {
 		if !idx.Unique || idx.State != model.StatePublic {
@@ -492,28 +636,35 @@ func TableInfo2SchemaWithDBName(ctx sessionctx.Context, dbName model.CIStr, tbl 
 	}
 	schema := NewSchema(cols...)
 	schema.SetUniqueKeys(keys)
-	return schema
+	return schema, names
 }
 
-// ColumnInfos2ColumnsWithDBName converts a slice of ColumnInfo to a slice of Column.
-func ColumnInfos2ColumnsWithDBName(ctx sessionctx.Context, dbName, tblName model.CIStr, colInfos []*model.ColumnInfo) []*Column {
+// ColumnInfos2ColumnsAndNames converts the ColumnInfo to the *Column and NameSlice.
+func ColumnInfos2ColumnsAndNames(ctx sessionctx.Context, dbName, tblName model.CIStr, colInfos []*model.ColumnInfo) ([]*Column, types.NameSlice) {
 	columns := make([]*Column, 0, len(colInfos))
-	for _, col := range colInfos {
+	names := make([]*types.FieldName, 0, len(colInfos))
+	for i, col := range colInfos {
 		if col.State != model.StatePublic {
 			continue
 		}
+		names = append(names, &types.FieldName{
+			OrigTblName: tblName,
+			OrigColName: col.Name,
+			DBName:      dbName,
+			TblName:     tblName,
+			ColName:     col.Name,
+		})
 		newCol := &Column{
-			ColName:  col.Name,
-			TblName:  tblName,
-			DBName:   dbName,
 			RetType:  &col.FieldType,
 			ID:       col.ID,
 			UniqueID: ctx.GetSessionVars().AllocPlanColumnID(),
 			Index:    col.Offset,
+			OrigName: names[i].String(),
+			IsHidden: col.Hidden,
 		}
 		columns = append(columns, newCol)
 	}
-	return columns
+	return columns, names
 }
 
 // NewValuesFunc creates a new values function.
@@ -558,4 +709,27 @@ func CheckExprPushFlash(exprs []Expression) (exprPush, remain []Expression) {
 		}
 	}
 	return
+}
+
+// wrapWithIsTrue wraps `arg` with istrue function if the return type of expr is not
+// type int, otherwise, returns `arg` directly.
+// The `keepNull` controls what the istrue function will return when `arg` is null:
+// 1. keepNull is true and arg is null, the istrue function returns null.
+// 2. keepNull is false and arg is null, the istrue function returns 0.
+// TODO: remove this function. ScalarFunction should be newed in one place.
+func wrapWithIsTrue(ctx sessionctx.Context, keepNull bool, arg Expression) (Expression, error) {
+	if arg.GetType().EvalType() == types.ETInt {
+		return arg, nil
+	}
+	fc := &isTrueOrFalseFunctionClass{baseFunctionClass{ast.IsTruth, 1, 1}, opcode.IsTruth, keepNull}
+	f, err := fc.getFunction(ctx, []Expression{arg})
+	if err != nil {
+		return nil, err
+	}
+	sf := &ScalarFunction{
+		FuncName: model.NewCIStr(fmt.Sprintf("sig_%T", f)),
+		Function: f,
+		RetType:  f.getRetTp(),
+	}
+	return FoldConstant(sf), nil
 }

@@ -18,7 +18,6 @@ import (
 	"fmt"
 	"math/rand"
 
-	"github.com/cznic/mathutil"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -31,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -112,15 +112,10 @@ func mockSelectResult(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Re
 	}, nil
 }
 
-func mockSelectResultWithoutCheck(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request,
-	fieldTypes []*types.FieldType, fb *statistics.QueryFeedback, copPlanIDs []string) (distsql.SelectResult, error) {
-	return &requiredRowsSelectResult{retTypes: fieldTypes}, nil
-}
-
 func buildTableReader(sctx sessionctx.Context) Executor {
 	e := &TableReaderExecutor{
 		baseExecutor:     buildMockBaseExec(sctx),
-		table:            &tables.Table{},
+		table:            &tables.TableCommon{},
 		dagPB:            buildMockDAGRequest(sctx),
 		selectResultHook: selectResultHook{mockSelectResult},
 	}

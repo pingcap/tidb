@@ -45,14 +45,6 @@ const (
 )
 
 var (
-	tikvBackoffCounterRPC            = metrics.TiKVBackoffCounter.WithLabelValues("tikvRPC")
-	tikvBackoffCounterLock           = metrics.TiKVBackoffCounter.WithLabelValues("txnLock")
-	tikvBackoffCounterLockFast       = metrics.TiKVBackoffCounter.WithLabelValues("tikvLockFast")
-	tikvBackoffCounterPD             = metrics.TiKVBackoffCounter.WithLabelValues("pdRPC")
-	tikvBackoffCounterRegionMiss     = metrics.TiKVBackoffCounter.WithLabelValues("regionMiss")
-	tikvBackoffCounterUpdateLeader   = metrics.TiKVBackoffCounter.WithLabelValues("updateLeader")
-	tikvBackoffCounterServerBusy     = metrics.TiKVBackoffCounter.WithLabelValues("serverBusy")
-	tikvBackoffCounterEmpty          = metrics.TiKVBackoffCounter.WithLabelValues("")
 	tikvBackoffHistogramRPC          = metrics.TiKVBackoffHistogram.WithLabelValues("tikvRPC")
 	tikvBackoffHistogramLock         = metrics.TiKVBackoffHistogram.WithLabelValues("txnLock")
 	tikvBackoffHistogramLockFast     = metrics.TiKVBackoffHistogram.WithLabelValues("tikvLockFast")
@@ -63,24 +55,24 @@ var (
 	tikvBackoffHistogramEmpty        = metrics.TiKVBackoffHistogram.WithLabelValues("")
 )
 
-func (t backoffType) metric() (prometheus.Counter, prometheus.Observer) {
+func (t backoffType) metric() prometheus.Observer {
 	switch t {
 	case boTiKVRPC:
-		return tikvBackoffCounterRPC, tikvBackoffHistogramRPC
+		return tikvBackoffHistogramRPC
 	case BoTxnLock:
-		return tikvBackoffCounterLock, tikvBackoffHistogramLock
+		return tikvBackoffHistogramLock
 	case boTxnLockFast:
-		return tikvBackoffCounterLockFast, tikvBackoffHistogramLockFast
+		return tikvBackoffHistogramLockFast
 	case BoPDRPC:
-		return tikvBackoffCounterPD, tikvBackoffHistogramPD
+		return tikvBackoffHistogramPD
 	case BoRegionMiss:
-		return tikvBackoffCounterRegionMiss, tikvBackoffHistogramRegionMiss
+		return tikvBackoffHistogramRegionMiss
 	case BoUpdateLeader:
-		return tikvBackoffCounterUpdateLeader, tikvBackoffHistogramUpdateLeader
+		return tikvBackoffHistogramUpdateLeader
 	case boServerBusy:
-		return tikvBackoffCounterServerBusy, tikvBackoffHistogramServerBusy
+		return tikvBackoffHistogramServerBusy
 	}
-	return tikvBackoffCounterEmpty, tikvBackoffHistogramEmpty
+	return tikvBackoffHistogramEmpty
 }
 
 // NewBackoffFn creates a backoff func which implements exponential backoff with
@@ -142,6 +134,7 @@ const (
 	BoRegionMiss
 	BoUpdateLeader
 	boServerBusy
+	boTxnNotFound
 )
 
 func (t backoffType) createFn(vars *kv.Variables) func(context.Context, int) int {
@@ -159,6 +152,8 @@ func (t backoffType) createFn(vars *kv.Variables) func(context.Context, int) int
 		return NewBackoffFn(500, 3000, EqualJitter)
 	case BoRegionMiss:
 		// change base time to 2ms, because it may recover soon.
+		return NewBackoffFn(2, 500, NoJitter)
+	case boTxnNotFound:
 		return NewBackoffFn(2, 500, NoJitter)
 	case BoUpdateLeader:
 		return NewBackoffFn(1, 10, NoJitter)
@@ -184,6 +179,8 @@ func (t backoffType) String() string {
 		return "updateLeader"
 	case boServerBusy:
 		return "serverBusy"
+	case boTxnNotFound:
+		return "txnNotFound"
 	}
 	return ""
 }
@@ -192,7 +189,7 @@ func (t backoffType) TError() error {
 	switch t {
 	case boTiKVRPC:
 		return ErrTiKVServerTimeout
-	case BoTxnLock, boTxnLockFast:
+	case BoTxnLock, boTxnLockFast, boTxnNotFound:
 		return ErrResolveLockTimeout
 	case BoPDRPC:
 		return ErrPDServerTimeout
@@ -212,7 +209,6 @@ const (
 	batchGetMaxBackoff             = 20000
 	copNextMaxBackoff              = 20000
 	getMaxBackoff                  = 20000
-	prewriteMaxBackoff             = 20000
 	cleanupMaxBackoff              = 20000
 	GcOneRegionMaxBackoff          = 20000
 	GcResolveLockMaxBackoff        = 100000
@@ -227,8 +223,13 @@ const (
 	pessimisticRollbackMaxBackoff  = 10000
 )
 
-// CommitMaxBackoff is max sleep time of the 'commit' command
-var CommitMaxBackoff = 41000
+var (
+	// CommitMaxBackoff is max sleep time of the 'commit' command
+	CommitMaxBackoff = 41000
+
+	// PrewriteMaxBackoff is max sleep time of the `pre-write` command.
+	PrewriteMaxBackoff = 20000
+)
 
 // Backoffer is a utility for retrying queries.
 type Backoffer struct {
@@ -241,6 +242,9 @@ type Backoffer struct {
 	types      []fmt.Stringer
 	vars       *kv.Variables
 	noop       bool
+
+	backoffSleepMS map[backoffType]int
+	backoffTimes   map[backoffType]int
 }
 
 type txnStartCtxKeyType struct{}
@@ -308,8 +312,6 @@ func (b *Backoffer) BackoffWithMaxSleep(typ backoffType, maxSleepMs int, err err
 		return b.types[0].(backoffType).TError()
 	}
 
-	backoffCounter, backoffDuration := typ.metric()
-	backoffCounter.Inc()
 	// Lazy initialize.
 	if b.fn == nil {
 		b.fn = make(map[backoffType]func(context.Context, int) int)
@@ -321,8 +323,16 @@ func (b *Backoffer) BackoffWithMaxSleep(typ backoffType, maxSleepMs int, err err
 	}
 
 	realSleep := f(b.ctx, maxSleepMs)
-	backoffDuration.Observe(float64(realSleep) / 1000)
+	typ.metric().Observe(float64(realSleep) / 1000)
 	b.totalSleep += realSleep
+	if b.backoffSleepMS == nil {
+		b.backoffSleepMS = make(map[backoffType]int)
+	}
+	b.backoffSleepMS[typ] += realSleep
+	if b.backoffTimes == nil {
+		b.backoffTimes = make(map[backoffType]int)
+	}
+	b.backoffTimes[typ]++
 
 	var startTs interface{}
 	if ts := b.ctx.Value(txnStartKey); ts != nil {

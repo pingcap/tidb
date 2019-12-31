@@ -437,14 +437,19 @@ func (c *greatestFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	switch tp {
 	case types.ETInt:
 		sig = &builtinGreatestIntSig{bf}
+		sig.setPbCode(tipb.ScalarFuncSig_GreatestInt)
 	case types.ETReal:
 		sig = &builtinGreatestRealSig{bf}
+		sig.setPbCode(tipb.ScalarFuncSig_GreatestReal)
 	case types.ETDecimal:
 		sig = &builtinGreatestDecimalSig{bf}
+		sig.setPbCode(tipb.ScalarFuncSig_GreatestDecimal)
 	case types.ETString:
 		sig = &builtinGreatestStringSig{bf}
+		sig.setPbCode(tipb.ScalarFuncSig_GreatestString)
 	case types.ETDatetime:
 		sig = &builtinGreatestTimeSig{bf}
+		sig.setPbCode(tipb.ScalarFuncSig_GreatestTime)
 	}
 	return sig, nil
 }
@@ -631,14 +636,19 @@ func (c *leastFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 	switch tp {
 	case types.ETInt:
 		sig = &builtinLeastIntSig{bf}
+		sig.setPbCode(tipb.ScalarFuncSig_LeastInt)
 	case types.ETReal:
 		sig = &builtinLeastRealSig{bf}
+		sig.setPbCode(tipb.ScalarFuncSig_LeastReal)
 	case types.ETDecimal:
 		sig = &builtinLeastDecimalSig{bf}
+		sig.setPbCode(tipb.ScalarFuncSig_LeastDecimal)
 	case types.ETString:
 		sig = &builtinLeastStringSig{bf}
+		sig.setPbCode(tipb.ScalarFuncSig_LeastString)
 	case types.ETDatetime:
 		sig = &builtinLeastTimeSig{bf}
+		sig.setPbCode(tipb.ScalarFuncSig_LeastTime)
 	}
 	return sig, nil
 }
@@ -654,7 +664,7 @@ func (b *builtinLeastIntSig) Clone() builtinFunc {
 }
 
 // evalInt evals a builtinLeastIntSig.
-// See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#functionleast
+// See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_least
 func (b *builtinLeastIntSig) evalInt(row chunk.Row) (min int64, isNull bool, err error) {
 	min, isNull, err = b.args[0].EvalInt(b.ctx, row)
 	if isNull || err != nil {
@@ -838,8 +848,10 @@ func (c *intervalFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	var sig builtinFunc
 	if allInt {
 		sig = &builtinIntervalIntSig{bf}
+		sig.setPbCode(tipb.ScalarFuncSig_IntervalInt)
 	} else {
 		sig = &builtinIntervalRealSig{bf}
+		sig.setPbCode(tipb.ScalarFuncSig_IntervalReal)
 	}
 	return sig, nil
 }
@@ -933,7 +945,7 @@ func (b *builtinIntervalRealSig) binSearch(target float64, args []Expression, ro
 	for i < j {
 		mid := i + (j-i)/2
 		v, isNull, err1 := args[mid].EvalReal(b.ctx, row)
-		if err != nil {
+		if err1 != nil {
 			err = err1
 			break
 		}

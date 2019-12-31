@@ -186,31 +186,37 @@ func (tk *TestKit) MustExec(sql string, args ...interface{}) {
 	}
 }
 
-// MustIndexLookup checks whether the plan for the sql is Point_Get.
-func (tk *TestKit) MustIndexLookup(sql string, args ...interface{}) *Result {
+// HasPlan checks if the result execution plan contains specific plan.
+func (tk *TestKit) HasPlan(sql string, plan string, args ...interface{}) bool {
 	rs := tk.MustQuery("explain "+sql, args...)
-	hasIndexLookup := false
 	for i := range rs.rows {
-		if strings.Contains(rs.rows[i][0], "IndexLookUp") {
-			hasIndexLookup = true
-			break
+		if strings.Contains(rs.rows[i][0], plan) {
+			return true
 		}
 	}
-	tk.c.Assert(hasIndexLookup, check.IsTrue)
+	return false
+}
+
+// MustUseIndex checks if the result execution plan contains specific index(es).
+func (tk *TestKit) MustUseIndex(sql string, index string, args ...interface{}) bool {
+	rs := tk.MustQuery("explain "+sql, args...)
+	for i := range rs.rows {
+		if strings.Contains(rs.rows[i][3], "index:"+index+",") {
+			return true
+		}
+	}
+	return false
+}
+
+// MustIndexLookup checks whether the plan for the sql is IndexLookUp.
+func (tk *TestKit) MustIndexLookup(sql string, args ...interface{}) *Result {
+	tk.c.Assert(tk.HasPlan(sql, "IndexLookUp", args...), check.IsTrue)
 	return tk.MustQuery(sql, args...)
 }
 
 // MustTableDual checks whether the plan for the sql is TableDual.
 func (tk *TestKit) MustTableDual(sql string, args ...interface{}) *Result {
-	rs := tk.MustQuery("explain "+sql, args...)
-	hasTableDual := false
-	for i := range rs.rows {
-		if strings.Contains(rs.rows[i][0], "TableDual") {
-			hasTableDual = true
-			break
-		}
-	}
-	tk.c.Assert(hasTableDual, check.IsTrue)
+	tk.c.Assert(tk.HasPlan(sql, "TableDual", args...), check.IsTrue)
 	return tk.MustQuery(sql, args...)
 }
 
@@ -250,6 +256,13 @@ func (tk *TestKit) ExecToErr(sql string, args ...interface{}) error {
 		tk.c.Assert(res.Close(), check.IsNil)
 	}
 	return err
+}
+
+// MustGetErrMsg executes a sql statement and assert it's error message.
+func (tk *TestKit) MustGetErrMsg(sql string, errStr string) {
+	err := tk.ExecToErr(sql)
+	tk.c.Assert(err, check.NotNil)
+	tk.c.Assert(err.Error(), check.Equals, errStr)
 }
 
 // MustGetErrCode executes a sql statement and assert it's error code.

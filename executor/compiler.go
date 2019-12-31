@@ -18,14 +18,13 @@ import (
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/planner"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/util/logutil"
-	"go.uber.org/zap"
 )
 
 var (
@@ -54,18 +53,21 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (*ExecStm
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
 
-	infoSchema := GetInfoSchema(c.Ctx)
+	infoSchema := infoschema.GetInfoSchema(c.Ctx)
 	if err := plannercore.Preprocess(c.Ctx, stmtNode, infoSchema); err != nil {
 		return nil, err
 	}
 
-	finalPlan, err := planner.Optimize(ctx, c.Ctx, stmtNode, infoSchema)
+	finalPlan, names, err := planner.Optimize(ctx, c.Ctx, stmtNode, infoSchema)
 	if err != nil {
 		return nil, err
 	}
 
 	CountStmtNode(stmtNode, c.Ctx.GetSessionVars().InRestrictedSQL)
-	lowerPriority := needLowerPriority(finalPlan)
+	var lowerPriority bool
+	if c.Ctx.GetSessionVars().StmtCtx.Priority == mysql.NoPriority {
+		lowerPriority = needLowerPriority(finalPlan)
+	}
 	return &ExecStmt{
 		InfoSchema:    infoSchema,
 		Plan:          finalPlan,
@@ -74,7 +76,7 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (*ExecStm
 		Text:          stmtNode.Text(),
 		StmtNode:      stmtNode,
 		Ctx:           c.Ctx,
-		OutputNames:   finalPlan.OutputNames(),
+		OutputNames:   names,
 	}, nil
 }
 
@@ -340,20 +342,8 @@ func GetStmtLabel(stmtNode ast.StmtNode) string {
 		return "Use"
 	case *ast.CreateBindingStmt:
 		return "CreateBinding"
+	case *ast.IndexAdviseStmt:
+		return "IndexAdvise"
 	}
 	return "other"
-}
-
-// GetInfoSchema gets TxnCtx InfoSchema if snapshot schema is not set,
-// Otherwise, snapshot schema is returned.
-func GetInfoSchema(ctx sessionctx.Context) infoschema.InfoSchema {
-	sessVar := ctx.GetSessionVars()
-	var is infoschema.InfoSchema
-	if snap := sessVar.SnapshotInfoschema; snap != nil {
-		is = snap.(infoschema.InfoSchema)
-		logutil.BgLogger().Info("use snapshot schema", zap.Uint64("conn", sessVar.ConnectionID), zap.Int64("schemaVersion", is.SchemaMetaVersion()))
-	} else {
-		is = sessVar.TxnCtx.InfoSchema.(infoschema.InfoSchema)
-	}
-	return is
 }

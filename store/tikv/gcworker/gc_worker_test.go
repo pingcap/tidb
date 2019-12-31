@@ -32,7 +32,7 @@ import (
 	pd "github.com/pingcap/pd/client"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/domain"
-	domainutil "github.com/pingcap/tidb/domain/util"
+	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -192,28 +192,28 @@ func (s *testGCWorkerSuite) TestGetOracleTime(c *C) {
 
 func (s *testGCWorkerSuite) TestMinStartTS(c *C) {
 	spkv := s.store.GetSafePointKV()
-	err := spkv.Put(fmt.Sprintf("%s/%s", domainutil.ServerMinStartTSPath, "a"), strconv.FormatUint(math.MaxUint64, 10))
+	err := spkv.Put(fmt.Sprintf("%s/%s", infosync.ServerMinStartTSPath, "a"), strconv.FormatUint(math.MaxUint64, 10))
 	c.Assert(err, IsNil)
 	now := time.Now()
 	sp := s.gcWorker.calSafePointByMinStartTS(now)
 	c.Assert(sp.Second(), Equals, now.Second())
-	err = spkv.Put(fmt.Sprintf("%s/%s", domainutil.ServerMinStartTSPath, "a"), "0")
+	err = spkv.Put(fmt.Sprintf("%s/%s", infosync.ServerMinStartTSPath, "a"), "0")
 	c.Assert(err, IsNil)
 	sp = s.gcWorker.calSafePointByMinStartTS(now)
 	zeroTime := time.Unix(0, oracle.ExtractPhysical(0)*1e6)
 	c.Assert(sp, Equals, zeroTime)
 
-	err = spkv.Put(fmt.Sprintf("%s/%s", domainutil.ServerMinStartTSPath, "a"), "0")
+	err = spkv.Put(fmt.Sprintf("%s/%s", infosync.ServerMinStartTSPath, "a"), "0")
 	c.Assert(err, IsNil)
-	err = spkv.Put(fmt.Sprintf("%s/%s", domainutil.ServerMinStartTSPath, "b"), "1")
+	err = spkv.Put(fmt.Sprintf("%s/%s", infosync.ServerMinStartTSPath, "b"), "1")
 	c.Assert(err, IsNil)
 	sp = s.gcWorker.calSafePointByMinStartTS(now)
 	c.Assert(sp, Equals, zeroTime)
 
-	err = spkv.Put(fmt.Sprintf("%s/%s", domainutil.ServerMinStartTSPath, "a"),
+	err = spkv.Put(fmt.Sprintf("%s/%s", infosync.ServerMinStartTSPath, "a"),
 		strconv.FormatUint(variable.GoTimeToTS(now), 10))
 	c.Assert(err, IsNil)
-	err = spkv.Put(fmt.Sprintf("%s/%s", domainutil.ServerMinStartTSPath, "b"),
+	err = spkv.Put(fmt.Sprintf("%s/%s", infosync.ServerMinStartTSPath, "b"),
 		strconv.FormatUint(variable.GoTimeToTS(now.Add(-20*time.Second)), 10))
 	c.Assert(err, IsNil)
 	sp = s.gcWorker.calSafePointByMinStartTS(now.Add(-10 * time.Second))
@@ -707,6 +707,17 @@ func (s *testGCWorkerSuite) TestLeaderTick(c *C) {
 		break
 	}
 	c.Assert(err, IsNil)
+}
+
+func (s *testGCWorkerSuite) TestResolveLockRangeInfine(c *C) {
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/invalidCacheAndRetry", "return(true)"), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/gcworker/setGcResolveMaxBackoff", "return(1)"), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/invalidCacheAndRetry"), IsNil)
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/gcworker/setGcResolveMaxBackoff"), IsNil)
+	}()
+	_, err := s.gcWorker.resolveLocksForRange(context.Background(), 1, []byte{0}, []byte{1})
+	c.Assert(err, NotNil)
 }
 
 func (s *testGCWorkerSuite) TestRunGCJob(c *C) {

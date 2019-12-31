@@ -24,13 +24,14 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/parser/terror"
 	pd "github.com/pingcap/pd/client"
 	"github.com/pingcap/tidb/ddl/util"
-	domainutil "github.com/pingcap/tidb/domain/util"
+	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/privilege"
@@ -179,7 +180,7 @@ func (w *GCWorker) start(ctx context.Context, wg *sync.WaitGroup) {
 			w.lastFinish = time.Now()
 			if err != nil {
 				logutil.Logger(ctx).Error("[gc worker] runGCJob", zap.Error(err))
-				break
+				return
 			}
 		case <-ctx.Done():
 			logutil.Logger(ctx).Info("[gc worker] quit", zap.String("uuid", w.uuid))
@@ -323,7 +324,7 @@ func (w *GCWorker) checkPrepare(ctx context.Context) (bool, uint64, error) {
 
 // calculateNewSafePoint uses the current global transaction min start timestamp to calculate the new safe point.
 func (w *GCWorker) calSafePointByMinStartTS(safePoint time.Time) time.Time {
-	kvs, err := w.store.GetSafePointKV().GetWithPrefix(domainutil.ServerMinStartTSPath)
+	kvs, err := w.store.GetSafePointKV().GetWithPrefix(infosync.ServerMinStartTSPath)
 	if err != nil {
 		logutil.BgLogger().Warn("get all minStartTS failed", zap.Error(err))
 		return safePoint
@@ -834,14 +835,19 @@ func (w *GCWorker) resolveLocksForRange(ctx context.Context, safePoint uint64, s
 
 	var stat tikv.RangeTaskStat
 	key := startKey
+	bo := tikv.NewBackoffer(ctx, tikv.GcResolveLockMaxBackoff)
+	failpoint.Inject("setGcResolveMaxBackoff", func(v failpoint.Value) {
+		sleep := v.(int)
+		// cooperate with github.com/pingcap/tidb/store/tikv/invalidCacheAndRetry
+		ctx = context.WithValue(ctx, "injectedBackoff", struct{}{})
+		bo = tikv.NewBackoffer(ctx, sleep)
+	})
 	for {
 		select {
 		case <-ctx.Done():
 			return stat, errors.New("[gc worker] gc job canceled")
 		default:
 		}
-
-		bo := tikv.NewBackoffer(ctx, tikv.GcResolveLockMaxBackoff)
 
 		req.ScanLock().StartKey = key
 		loc, err := w.store.GetRegionCache().LocateKey(bo, key)
@@ -887,7 +893,6 @@ func (w *GCWorker) resolveLocksForRange(ctx context.Context, safePoint uint64, s
 			}
 			continue
 		}
-
 		if len(locks) < gcScanLockLimit {
 			stat.CompletedRegions++
 			key = loc.EndKey
@@ -903,6 +908,11 @@ func (w *GCWorker) resolveLocksForRange(ctx context.Context, safePoint uint64, s
 		if len(key) == 0 || (len(endKey) != 0 && bytes.Compare(key, endKey) >= 0) {
 			break
 		}
+		bo = tikv.NewBackoffer(ctx, tikv.GcResolveLockMaxBackoff)
+		failpoint.Inject("setGcResolveMaxBackoff", func(v failpoint.Value) {
+			sleep := v.(int)
+			bo = tikv.NewBackoffer(ctx, sleep)
+		})
 	}
 	return stat, nil
 }
