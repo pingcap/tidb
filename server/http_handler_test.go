@@ -225,7 +225,7 @@ func (ts *HTTPHandlerTestSuite) TestListTableRegions(c *C) {
 	c.Assert(err, IsNil)
 
 	region := data[1]
-	resp, err = http.Get(fmt.Sprintf("http://127.0.0.1:10090/regions/%d", region.TableID))
+	_, err = http.Get(fmt.Sprintf("http://127.0.0.1:10090/regions/%d", region.TableID))
 	c.Assert(err, IsNil)
 }
 
@@ -565,7 +565,7 @@ func (ts *HTTPHandlerTestSuite) TestDecodeColumnValue(c *C) {
 	row[0] = types.NewIntDatum(100)
 	row[1] = types.NewBytesDatum([]byte("abc"))
 	row[2] = types.NewDecimalDatum(types.NewDecFromInt(1))
-	row[3] = types.NewTimeDatum(types.Time{Time: types.FromGoTime(time.Now()), Fsp: 6, Type: mysql.TypeTimestamp})
+	row[3] = types.NewTimeDatum(types.NewTime(types.FromGoTime(time.Now()), mysql.TypeTimestamp, 6))
 
 	// Encode the row.
 	colIDs := make([]int64, 0, 3)
@@ -598,13 +598,13 @@ func (ts *HTTPHandlerTestSuite) TestDecodeColumnValue(c *C) {
 	// Test bin has `+`.
 	// 2018-03-08 16:01:00.315313
 	bin = "CAIIyAEIBAIGYWJjCAYGAQCBCAgJsZ+TgISg1M8Z"
-	row[3] = types.NewTimeDatum(types.Time{Time: types.FromGoTime(time.Date(2018, 3, 8, 16, 1, 0, 315313000, time.UTC)), Fsp: 6, Type: mysql.TypeTimestamp})
+	row[3] = types.NewTimeDatum(types.NewTime(types.FromGoTime(time.Date(2018, 3, 8, 16, 1, 0, 315313000, time.UTC)), mysql.TypeTimestamp, 6))
 	unitTest(cols[3])
 
 	// Test bin has `/`.
 	// 2018-03-08 02:44:46.409199
 	bin = "CAIIyAEIBAIGYWJjCAYGAQCBCAgJ7/yY8LKF1M8Z"
-	row[3] = types.NewTimeDatum(types.Time{Time: types.FromGoTime(time.Date(2018, 3, 8, 2, 44, 46, 409199000, time.UTC)), Fsp: 6, Type: mysql.TypeTimestamp})
+	row[3] = types.NewTimeDatum(types.NewTime(types.FromGoTime(time.Date(2018, 3, 8, 2, 44, 46, 409199000, time.UTC)), mysql.TypeTimestamp, 6))
 	unitTest(cols[3])
 }
 
@@ -767,7 +767,7 @@ func (ts *HTTPHandlerTestSuite) TestGetSchema(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(t.Name.L, Equals, "t1")
 
-	resp, err = http.Get(fmt.Sprintf(fmt.Sprintf("http://127.0.0.1:10090/db-table/%v", t.GetPartitionInfo().Definitions[0].ID)))
+	resp, err = http.Get(fmt.Sprintf("http://127.0.0.1:10090/db-table/%v", t.GetPartitionInfo().Definitions[0].ID))
 	c.Assert(err, IsNil)
 	decoder = json.NewDecoder(resp.Body)
 	err = decoder.Decode(&dbtbl)

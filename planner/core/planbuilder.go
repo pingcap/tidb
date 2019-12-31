@@ -524,6 +524,7 @@ func (b *PlanBuilder) buildDropBindPlan(v *ast.DropBindingStmt) (Plan, error) {
 		SQLBindOp:    OpSQLBindDrop,
 		NormdOrigSQL: parser.Normalize(v.OriginSel.Text()),
 		IsGlobal:     v.GlobalScope,
+		Db:           getDefaultDB(b.ctx, v.OriginSel),
 	}
 	if v.HintedSel != nil {
 		p.BindSQL = v.HintedSel.Text()
@@ -540,11 +541,40 @@ func (b *PlanBuilder) buildCreateBindPlan(v *ast.CreateBindingStmt) (Plan, error
 		BindSQL:      v.HintedSel.Text(),
 		IsGlobal:     v.GlobalScope,
 		BindStmt:     v.HintedSel,
+		Db:           getDefaultDB(b.ctx, v.OriginSel),
 		Charset:      charSet,
 		Collation:    collation,
 	}
 	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "", nil)
 	return p, nil
+}
+
+func getDefaultDB(ctx sessionctx.Context, sel ast.StmtNode) string {
+	implicitDB := &implicitDatabase{}
+	sel.Accept(implicitDB)
+	if implicitDB.hasImplicit {
+		return ctx.GetSessionVars().CurrentDB
+	}
+	return ""
+}
+
+type implicitDatabase struct {
+	hasImplicit bool
+}
+
+func (i *implicitDatabase) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
+	switch x := in.(type) {
+	case *ast.TableName:
+		if x.Schema.L == "" {
+			i.hasImplicit = true
+		}
+		return in, true
+	}
+	return in, false
+}
+
+func (i *implicitDatabase) Leave(in ast.Node) (out ast.Node, ok bool) {
+	return in, true
 }
 
 // detectSelectAgg detects an aggregate function or GROUP BY clause.
@@ -1538,11 +1568,12 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (Plan, 
 			Column:      show.Column,
 			IndexName:   show.IndexName,
 			Flag:        show.Flag,
-			Full:        show.Full,
 			User:        show.User,
 			Roles:       show.Roles,
+			Full:        show.Full,
 			IfNotExists: show.IfNotExists,
 			GlobalScope: show.GlobalScope,
+			Extended:    show.Extended,
 		},
 	}.Init(b.ctx)
 	isView := false

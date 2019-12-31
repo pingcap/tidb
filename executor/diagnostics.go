@@ -34,8 +34,8 @@ type (
 		// represents the diagnostics item, e.g: `ddl.lease` `raftstore.cpuusage`
 		item string
 		// diagnosis result value base on current cluster status
-		value      string
-		reference  string
+		actual     string
+		expected   string
 		severity   string
 		suggestion string
 	}
@@ -52,6 +52,7 @@ var inspectionRules = []inspectionRule{
 }
 
 type inspectionRetriever struct {
+	dummyCloser
 	retrieved bool
 	extractor *plannercore.InspectionResultTableExtractor
 }
@@ -101,14 +102,14 @@ func (e *inspectionRetriever) retrieve(ctx context.Context, sctx sessionctx.Cont
 			if lhs, rhs := results[i].item, results[j].item; lhs != rhs {
 				return lhs < rhs
 			}
-			return results[i].value < results[j].value
+			return results[i].actual < results[j].actual
 		})
 		for _, result := range results {
 			finalRows = append(finalRows, types.MakeDatums(
 				name,
 				result.item,
-				result.value,
-				result.reference,
+				result.actual,
+				result.expected,
 				result.severity,
 				result.suggestion,
 			))
@@ -137,10 +138,10 @@ func (configInspection) inspect(_ context.Context, sctx sessionctx.Context, filt
 			continue
 		}
 		results = append(results, inspectionResult{
-			item:      row.GetString(1),                   // key
-			value:     fmt.Sprintf("%d", row.GetInt64(2)), // count
-			reference: "1",
-			severity:  "P2",
+			item:     row.GetString(1), // key
+			actual:   "inconsistent",
+			expected: "consistent",
+			severity: "warning",
 			suggestion: fmt.Sprintf("select * from information_schema.cluster_config where type='%s' and `key`='%s'",
 				row.GetString(0), row.GetString(1)),
 		})
@@ -168,10 +169,10 @@ func (versionInspection) inspect(_ context.Context, sctx sessionctx.Context, fil
 			continue
 		}
 		results = append(results, inspectionResult{
-			item:       row.GetString(0),                   // type
-			value:      fmt.Sprintf("%d", row.GetInt64(1)), // count
-			reference:  "1",
-			severity:   "P1",
+			item:       row.GetString(0), // type
+			actual:     "inconsistent",
+			expected:   "consistent",
+			severity:   "critical",
 			suggestion: fmt.Sprintf("select * from information_schema.cluster_info where type='%s'", row.GetString(0)),
 		})
 	}

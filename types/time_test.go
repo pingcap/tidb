@@ -103,8 +103,8 @@ func (s *testTimeSuite) TestDateTime(c *C) {
 	}
 
 	t, _ := types.ParseTime(sc, "121231113045.9999999", mysql.TypeDatetime, 6)
-	c.Assert(t.Time.Second(), Equals, 46)
-	c.Assert(t.Time.Microsecond(), Equals, 0)
+	c.Assert(t.Second(), Equals, 46)
+	c.Assert(t.Microsecond(), Equals, 0)
 
 	// test error
 	errTable := []string{
@@ -453,22 +453,18 @@ func (s *testTimeSuite) TestCodec(c *C) {
 	_, err = t.ToPackedUint()
 	c.Assert(err, IsNil)
 
-	var t1 types.Time
-	t1.Type = mysql.TypeTimestamp
-	t1.Time = types.FromGoTime(time.Now())
+	t1 := types.NewTime(types.FromGoTime(time.Now()), mysql.TypeTimestamp, 0)
 	packed, err := t1.ToPackedUint()
 	c.Assert(err, IsNil)
 
-	var t2 types.Time
-	t2.Type = mysql.TypeTimestamp
+	t2 := types.NewTime(types.ZeroCoreTime, mysql.TypeTimestamp, 0)
 	err = t2.FromPackedUint(packed)
 	c.Assert(err, IsNil)
 	c.Assert(t1.String(), Equals, t2.String())
 
 	packed, _ = types.ZeroDatetime.ToPackedUint()
 
-	var t3 types.Time
-	t3.Type = mysql.TypeDatetime
+	t3 := types.NewTime(types.ZeroCoreTime, mysql.TypeDatetime, 0)
 	err = t3.FromPackedUint(packed)
 	c.Assert(err, IsNil)
 	c.Assert(t3.String(), Equals, types.ZeroDatetime.String())
@@ -477,8 +473,7 @@ func (s *testTimeSuite) TestCodec(c *C) {
 	c.Assert(err, IsNil)
 	packed, _ = t.ToPackedUint()
 
-	var t4 types.Time
-	t4.Type = mysql.TypeDatetime
+	t4 := types.NewTime(types.ZeroCoreTime, mysql.TypeDatetime, 0)
 	err = t4.FromPackedUint(packed)
 	c.Assert(err, IsNil)
 	c.Assert(t.String(), Equals, t4.String())
@@ -496,9 +491,7 @@ func (s *testTimeSuite) TestCodec(c *C) {
 
 		packed, _ = t.ToPackedUint()
 
-		var dest types.Time
-		dest.Type = mysql.TypeDatetime
-		dest.Fsp = types.MaxFsp
+		dest := types.NewTime(types.ZeroCoreTime, mysql.TypeDatetime, types.MaxFsp)
 		err = dest.FromPackedUint(packed)
 		c.Assert(err, IsNil)
 		c.Assert(dest.String(), Equals, test)
@@ -550,7 +543,7 @@ func (s *testTimeSuite) TestParseTimeFromNum(c *C) {
 			c.Assert(err, NotNil, Commentf("%d", ith))
 		} else {
 			c.Assert(err, IsNil)
-			c.Assert(t.Type, Equals, mysql.TypeDatetime)
+			c.Assert(t.Type(), Equals, mysql.TypeDatetime)
 		}
 		c.Assert(t.String(), Equals, test.ExpectDateTimeValue)
 
@@ -562,7 +555,7 @@ func (s *testTimeSuite) TestParseTimeFromNum(c *C) {
 			c.Assert(err, NotNil)
 		} else {
 			c.Assert(err, IsNil, Commentf("%d", ith))
-			c.Assert(t.Type, Equals, mysql.TypeTimestamp)
+			c.Assert(t.Type(), Equals, mysql.TypeTimestamp)
 		}
 		c.Assert(t.String(), Equals, test.ExpectTimeStampValue)
 
@@ -573,7 +566,7 @@ func (s *testTimeSuite) TestParseTimeFromNum(c *C) {
 			c.Assert(err, NotNil)
 		} else {
 			c.Assert(err, IsNil)
-			c.Assert(t.Type, Equals, mysql.TypeDate)
+			c.Assert(t.Type(), Equals, mysql.TypeDate)
 		}
 		c.Assert(t.String(), Equals, test.ExpectDateValue)
 	}
@@ -832,7 +825,7 @@ func (s *testTimeSuite) TestConvert(c *C) {
 		n := time.Date(year, month, day, 0, 0, 0, 0, sc.TimeZone)
 		t, err := v.ConvertToTime(sc, mysql.TypeDatetime)
 		c.Assert(err, IsNil)
-		t1, _ := t.Time.GoTime(sc.TimeZone)
+		t1, _ := t.GoTime(sc.TimeZone)
 		c.Assert(t1.Sub(n), Equals, v.Duration)
 	}
 }
@@ -953,16 +946,8 @@ func (s *testTimeSuite) TestTamestampDiff(c *C) {
 	}
 
 	for _, test := range tests {
-		t1 := types.Time{
-			Time: test.t1,
-			Type: mysql.TypeDatetime,
-			Fsp:  6,
-		}
-		t2 := types.Time{
-			Time: test.t2,
-			Type: mysql.TypeDatetime,
-			Fsp:  6,
-		}
+		t1 := types.NewTime(test.t1, mysql.TypeDatetime, 6)
+		t2 := types.NewTime(test.t2, mysql.TypeDatetime, 6)
 		c.Assert(types.TimestampDiff(test.unit, t1, t2), Equals, test.expect)
 	}
 }
@@ -997,10 +982,9 @@ func (s *testTimeSuite) TestConvertTimeZone(c *C) {
 	}
 
 	for _, test := range tests {
-		var t types.Time
-		t.Time = test.input
+		t := types.NewTime(test.input, 0, 0)
 		t.ConvertTimeZone(test.from, test.to)
-		c.Assert(t.Compare(types.Time{Time: test.expect}), Equals, 0)
+		c.Assert(t.Compare(types.NewTime(test.expect, 0, 0)), Equals, 0)
 	}
 }
 
@@ -1030,7 +1014,7 @@ func (s *testTimeSuite) TestTimeAdd(c *C) {
 		c.Assert(err, IsNil)
 		v2, err := v1.Add(sc, dur)
 		c.Assert(err, IsNil)
-		c.Assert(v2.Compare(result), Equals, 0, Commentf("%v %v", v2.Time, result.Time))
+		c.Assert(v2.Compare(result), Equals, 0, Commentf("%v %v", v2.CoreTime(), result.CoreTime()))
 	}
 }
 
@@ -1313,21 +1297,16 @@ func (s *testTimeSuite) TestExtractDurationValue(c *C) {
 
 func (s *testTimeSuite) TestCurrentTime(c *C) {
 	res := types.CurrentTime(mysql.TypeTimestamp)
-	c.Assert(res.Time, NotNil)
-	c.Assert(res.Type, Equals, mysql.TypeTimestamp)
-	c.Assert(res.Fsp, Equals, int8(0))
+	c.Assert(res.Type(), Equals, mysql.TypeTimestamp)
+	c.Assert(res.Fsp(), Equals, int8(0))
 }
 
 func (s *testTimeSuite) TestInvalidZero(c *C) {
-	in := types.Time{
-		Time: types.ZeroTime,
-		Type: mysql.TypeTimestamp,
-		Fsp:  types.DefaultFsp,
-	}
+	in := types.NewTime(types.ZeroCoreTime, mysql.TypeTimestamp, types.DefaultFsp)
 	c.Assert(in.InvalidZero(), Equals, true)
-	in.Time = types.FromDate(2019, 00, 00, 00, 00, 00, 00)
+	in.SetCoreTime(types.FromDate(2019, 00, 00, 00, 00, 00, 00))
 	c.Assert(in.InvalidZero(), Equals, true)
-	in.Time = types.FromDate(2019, 04, 12, 12, 00, 00, 00)
+	in.SetCoreTime(types.FromDate(2019, 04, 12, 12, 00, 00, 00))
 	c.Assert(in.InvalidZero(), Equals, false)
 }
 
@@ -1346,11 +1325,7 @@ func (s *testTimeSuite) TestGetFsp(c *C) {
 }
 
 func (s *testTimeSuite) TestExtractDatetimeNum(c *C) {
-	in := types.Time{
-		Time: types.FromDate(2019, 04, 12, 14, 00, 00, 0000),
-		Type: mysql.TypeTimestamp,
-		Fsp:  types.DefaultFsp,
-	}
+	in := types.NewTime(types.FromDate(2019, 04, 12, 14, 00, 00, 0000), mysql.TypeTimestamp, types.DefaultFsp)
 
 	res, err := types.ExtractDatetimeNum(&in, "day")
 	c.Assert(err, IsNil)
@@ -1396,11 +1371,7 @@ func (s *testTimeSuite) TestExtractDatetimeNum(c *C) {
 	c.Assert(res, Equals, int64(0))
 	c.Assert(err, ErrorMatches, "invalid unit.*")
 
-	in = types.Time{
-		Time: types.FromDate(0000, 00, 00, 00, 00, 00, 0000),
-		Type: mysql.TypeTimestamp,
-		Fsp:  types.DefaultFsp,
-	}
+	in = types.NewTime(types.FromDate(0000, 00, 00, 00, 00, 00, 0000), mysql.TypeTimestamp, types.DefaultFsp)
 
 	res, err = types.ExtractDatetimeNum(&in, "day")
 	c.Assert(err, IsNil)
@@ -1556,15 +1527,15 @@ func (s *testTimeSuite) TestParseTimeFromInt64(c *C) {
 	input := int64(20190412140000)
 	output, err := types.ParseTimeFromInt64(sc, input)
 	c.Assert(err, IsNil)
-	c.Assert(output.Fsp, Equals, types.DefaultFsp)
-	c.Assert(output.Type, Equals, mysql.TypeDatetime)
-	c.Assert(output.Time.Year(), Equals, 2019)
-	c.Assert(output.Time.Month(), Equals, 04)
-	c.Assert(output.Time.Day(), Equals, 12)
-	c.Assert(output.Time.Hour(), Equals, 14)
-	c.Assert(output.Time.Minute(), Equals, 00)
-	c.Assert(output.Time.Second(), Equals, 00)
-	c.Assert(output.Time.Microsecond(), Equals, 00)
+	c.Assert(output.Fsp(), Equals, types.DefaultFsp)
+	c.Assert(output.Type(), Equals, mysql.TypeDatetime)
+	c.Assert(output.Year(), Equals, 2019)
+	c.Assert(output.Month(), Equals, 04)
+	c.Assert(output.Day(), Equals, 12)
+	c.Assert(output.Hour(), Equals, 14)
+	c.Assert(output.Minute(), Equals, 00)
+	c.Assert(output.Second(), Equals, 00)
+	c.Assert(output.Microsecond(), Equals, 00)
 }
 
 func (s *testTimeSuite) TestGetFormatType(c *C) {
@@ -1696,11 +1667,7 @@ func (s *testTimeSuite) TestCheckMonthDay(c *C) {
 	}
 
 	for _, t := range dates {
-		tt := types.Time{
-			Time: t.date,
-			Type: mysql.TypeDate,
-			Fsp:  types.DefaultFsp,
-		}
+		tt := types.NewTime(t.date, mysql.TypeDate, types.DefaultFsp)
 		err := tt.Check(sc)
 		if t.isValidDate {
 			c.Check(err, IsNil)
@@ -1761,9 +1728,7 @@ func (s *testTimeSuite) TestFromGoTime(c *C) {
 }
 
 func BenchmarkFormat(b *testing.B) {
-	var t1 types.Time
-	t1.Type = mysql.TypeTimestamp
-	t1.Time = types.FromGoTime(time.Now())
+	t1 := types.NewTime(types.FromGoTime(time.Now()), mysql.TypeTimestamp, 0)
 	for i := 0; i < b.N; i++ {
 		t1.DateFormat("%Y-%m-%d %H:%i:%s")
 	}

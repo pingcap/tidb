@@ -136,7 +136,7 @@ func (h *histogram) randDate(unit string, mysqlFmt string, dateFmt string) strin
 			return str
 		}
 		delta := randInt(0, int(diff)-1)
-		l, err := lower.Time.GoTime(time.Local)
+		l, err := lower.GoTime(time.Local)
 		if err != nil {
 			log.Fatal(err.Error())
 		}

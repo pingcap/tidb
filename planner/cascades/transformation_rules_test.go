@@ -150,6 +150,7 @@ func (s *testTransformationRuleSuite) TestTopNRules(c *C) {
 		memo.OperandLimit: {
 			NewRuleTransformLimitToTopN(),
 			NewRulePushLimitDownProjection(),
+			NewRulePushLimitDownUnionAll(),
 		},
 		memo.OperandDataSource: {
 			NewRuleEnumeratePaths(),

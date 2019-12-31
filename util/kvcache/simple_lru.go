@@ -48,8 +48,8 @@ type SimpleLRUCache struct {
 // NewSimpleLRUCache creates a SimpleLRUCache object, whose capacity is "capacity".
 // NOTE: "capacity" should be a positive value.
 func NewSimpleLRUCache(capacity uint, guard float64, quota uint64) *SimpleLRUCache {
-	if capacity == 0 {
-		panic("capacity of LRU Cache should be positive.")
+	if capacity < 1 {
+		panic("capacity of LRU Cache should be at least 1.")
 	}
 	return &SimpleLRUCache{
 		capacity: capacity,
