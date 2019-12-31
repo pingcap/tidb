@@ -171,9 +171,9 @@ func (e *DeleteExec) removeRowsInTblRowMap(tblRowMap tableRowMapType) error {
 }
 
 func (e *DeleteExec) removeRow(ctx sessionctx.Context, t table.Table, h int64, data []types.Datum) error {
-	// err is always nil if `active` is false.
 	txnState, err := e.ctx.Txn(false)
 	if err != nil {
+		return err
 	}
 	memUsageOfTxnState := txnState.Size()
 	err = t.RemoveRecord(ctx, h, data)
