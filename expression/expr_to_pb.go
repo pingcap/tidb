@@ -464,6 +464,17 @@ func (pc PbConverter) canFuncBePushed(sf *ScalarFunction) bool {
 			tipb.ScalarFuncSig_RoundDec:
 			return isPushdownEnabled(sf.FuncName.L)
 		}
+
+	case ast.Cast:
+		switch sf.Function.PbCode() {
+		case tipb.ScalarFuncSig_CastStringAsInt,
+			tipb.ScalarFuncSig_CastStringAsReal,
+			tipb.ScalarFuncSig_CastTimeAsInt:
+			return false
+		default:
+			return isPushdownEnabled(sf.FuncName.L)
+		}
+
 	}
 	return false
 }
