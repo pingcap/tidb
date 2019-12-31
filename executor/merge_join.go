@@ -131,6 +131,12 @@ func (t *mergeJoinInnerTable) selectedRowsIter() chunk.Iterator {
 		iters = append(iters, chunk.NewIterator4Chunk(t.curChk))
 		t.curSel = nil
 	}
+	if len(iters) == 1 {
+		return iters[0]
+	}
+	// If any of iters has zero length it will be discarded in the following function.
+	// If all of them are empty, the returned iterator is also empty.
+	// Check out the implementation of multiIterator for more details.
 	return chunk.NewMultiIterator(iters...)
 }
 

@@ -25,7 +25,7 @@ import (
 	"go.uber.org/zap"
 )
 
-// RowContainer provides a place for many rows, so many that we might want to spill them into disk
+// RowContainer provides a place for many rows, so many that we might want to spill them into disk.
 type RowContainer struct {
 	// records stores the chunks in memory.
 	records *List
@@ -49,7 +49,7 @@ type RowContainer struct {
 	actionSpill *spillDiskAction
 }
 
-// NewRowContainer creates a new RowContainer in memory
+// NewRowContainer creates a new RowContainer in memory.
 func NewRowContainer(fieldType []*types.FieldType, chunkSize int) *RowContainer {
 	li := NewList(fieldType, chunkSize, chunkSize)
 	rc := &RowContainer{records: li, fieldType: fieldType, chunkSize: chunkSize}
@@ -73,7 +73,7 @@ func (c *RowContainer) spillToDisk() (err error) {
 	return
 }
 
-// Reset resets RowContainer
+// Reset resets RowContainer.
 func (c *RowContainer) Reset() error {
 	if c.AlreadySpilled() {
 		err := c.recordsInDisk.Close()
@@ -120,7 +120,7 @@ func (c *RowContainer) NumChunks() int {
 	return c.records.NumChunks()
 }
 
-// Add appends a chunk into the RowContainer
+// Add appends a chunk into the RowContainer.
 func (c *RowContainer) Add(chk *Chunk) (err error) {
 	if c.AlreadySpilled() {
 		err = c.recordsInDisk.Add(chk)
@@ -137,17 +137,17 @@ func (c *RowContainer) Add(chk *Chunk) (err error) {
 	return
 }
 
-// AllocChunk allocates a new chunk from RowContainer
+// AllocChunk allocates a new chunk from RowContainer.
 func (c *RowContainer) AllocChunk() (chk *Chunk) {
 	return c.records.allocChunk()
 }
 
-// GetChunk returns chkIdx th chunk of in memory records
+// GetChunk returns chkIdx th chunk of in memory records.
 func (c *RowContainer) GetChunk(chkIdx int) *Chunk {
 	return c.records.GetChunk(chkIdx)
 }
 
-// GetRow returns the row the ptr pointed to
+// GetRow returns the row the ptr pointed to.
 func (c *RowContainer) GetRow(ptr RowPtr) (Row, error) {
 	if c.AlreadySpilled() {
 		return c.recordsInDisk.GetRow(ptr)
@@ -155,7 +155,7 @@ func (c *RowContainer) GetRow(ptr RowPtr) (Row, error) {
 	return c.records.GetRow(ptr), nil
 }
 
-// GetMemTracker returns the memory tracker in records, panics if the RowContainer has already spilled
+// GetMemTracker returns the memory tracker in records, panics if the RowContainer has already spilled.
 func (c *RowContainer) GetMemTracker() *memory.Tracker {
 	return c.memTracker
 }
