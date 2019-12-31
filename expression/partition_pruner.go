@@ -94,7 +94,7 @@ func (p *hashPartitionPruner) reduceConstantEQ() bool {
 	return false
 }
 
-func (p *hashPartitionPruner) tryEvalPartitionExpr(piExpr Expression) (int64, bool, bool) {
+func (p *hashPartitionPruner) tryEvalPartitionExpr(piExpr Expression) (val int64, success bool, isNil bool) {
 	switch pi := piExpr.(type) {
 	case *ScalarFunction:
 		if pi.FuncName.L == ast.Plus || pi.FuncName.L == ast.Minus || pi.FuncName.L == ast.Mul || pi.FuncName.L == ast.Div {
@@ -150,7 +150,9 @@ func newHashPartitionPruner() *hashPartitionPruner {
 	return pruner
 }
 
-func (p *hashPartitionPruner) solve(ctx sessionctx.Context, conds []Expression, piExpr Expression) (int64, bool, bool) {
+// solve eval the hash partition expression, the first return value represent the result of partition expression. The second
+// return value is whether eval success. The third return value represent whether the eval result of partition value is null.
+func (p *hashPartitionPruner) solve(ctx sessionctx.Context, conds []Expression, piExpr Expression) (val int64, ok bool, isNil bool) {
 	p.ctx = ctx
 	for _, cond := range conds {
 		p.conditions = append(p.conditions, SplitCNFItems(cond)...)
