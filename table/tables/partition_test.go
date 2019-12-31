@@ -15,6 +15,7 @@ package tables_test
 
 import (
 	"context"
+	"github.com/pingcap/tidb/ddl"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/model"
@@ -305,4 +306,17 @@ func (ts *testSuite) TestLocateRangePartitionErr(c *C) {
 
 	_, err := tk.Exec("INSERT INTO t_month_data_monitor VALUES (4, '2019-04-04')")
 	c.Assert(table.ErrNoPartitionForGivenValue.Equal(err), IsTrue)
+}
+
+func (ts *testSuite) TestCreatePartitionTableNotSupport(c *C) {
+	tk := testkit.NewTestKitWithInit(c, ts.store)
+	tk.MustExec("use test")
+	_, err := tk.Exec(`create table t7 (a int) partition by range (mod((select * from t), 5)) (partition p1 values less than (1));`)
+	c.Assert(ddl.ErrPartitionFunctionIsNotAllowed.Equal(err), IsTrue)
+	_, err = tk.Exec(`create table t7 (a int) partition by range (1 + (select * from t)) (partition p1 values less than (1));`)
+	c.Assert(ddl.ErrPartitionFunctionIsNotAllowed.Equal(err), IsTrue)
+	_, err = tk.Exec(`create table t7 (a int) partition by range (a + row(1, 2, 3)) (partition p1 values less than (1));`)
+	c.Assert(ddl.ErrPartitionFunctionIsNotAllowed.Equal(err), IsTrue)
+	_, err = tk.Exec(`create table t7 (a int) partition by range (-(select * from t)) (partition p1 values less than (1));`)
+	c.Assert(ddl.ErrPartitionFunctionIsNotAllowed.Equal(err), IsTrue)
 }
