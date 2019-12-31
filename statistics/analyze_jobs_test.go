@@ -19,7 +19,7 @@ import (
 
 var _ = SerialSuites(&testStatisticsSerialSuite{})
 
-type testStatisticsSerialSuite struct {}
+type testStatisticsSerialSuite struct{}
 
 func (s *testStatisticsSerialSuite) TestMoveToHistory(c *C) {
 	ClearHistoryJobs()

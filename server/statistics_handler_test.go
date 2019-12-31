@@ -34,16 +34,16 @@ import (
 )
 
 type testDumpStatsSuite struct {
-	server *Server
-	sh     *StatsHandler
-	store  kv.Storage
-	domain *domain.Domain
-	port	uint
+	server     *Server
+	sh         *StatsHandler
+	store      kv.Storage
+	domain     *domain.Domain
+	port       uint
 	statusPort uint
 }
 
 var _ = Suite(&testDumpStatsSuite{
-	port: 4012,
+	port:       4012,
 	statusPort: 10099,
 })
 
