@@ -75,6 +75,8 @@ type SortExec struct {
 	partitionConsumedRows []int
 	// heapSort use heap sort for spill disk.
 	heapSort *topNChunkHeapWithIndex
+	// action
+	spillAction *spillSortDiskAction
 
 	// exceeded indicates that records have exceeded memQuota during
 	// adding this chunk and we should spill now.
@@ -85,7 +87,7 @@ type SortExec struct {
 
 // Close implements the Executor Close interface.
 func (e *SortExec) Close() error {
-	if e.alreadySpilled() {
+	if e.alreadySpilledSafe() {
 		if e.rowChunksInDisk != nil {
 			if err := e.rowChunksInDisk.Close(); err != nil {
 				return err
@@ -148,26 +150,24 @@ func (e *SortExec) Open(ctx context.Context) error {
 func (e *SortExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.Reset()
 	if !e.fetched {
+		e.initCompareFuncs()
+		e.buildKeyColumns()
 		err := e.fetchRowChunks(ctx)
 		if err != nil {
 			return err
 		}
-		if e.alreadySpilled() {
+		if e.alreadySpilledSafe() {
 			err = e.prepareExternalSorting()
 			if err != nil {
 				return err
 			}
-			e.fetched = true
-		} else {
-			e.initPointers()
-			e.initCompareFuncs()
-			e.buildKeyColumns()
-			sort.Slice(e.rowPtrs, e.keyColumnsLess)
-			e.fetched = true
 		}
+		e.initPointers()
+		sort.Slice(e.rowPtrs, e.keyColumnsLess)
+		e.fetched = true
 	}
 
-	if e.alreadySpilled() {
+	if e.alreadySpilledSafe() {
 		if err := e.externalSorting(req); err != nil {
 			return err
 		}
@@ -182,25 +182,6 @@ func (e *SortExec) Next(ctx context.Context, req *chunk.Chunk) error {
 }
 
 func (e *SortExec) prepareExternalSorting() (err error) {
-	e.initCompareFuncs()
-	e.buildKeyColumns()
-	e.rowPtrsInDisk = e.initPointersForListInDisk(e.rowChunksInDisk)
-	// partition sort
-	partStartPtr := 0
-	partStartOffset := e.rowChunksInDisk.GetOffsetOfRow(e.rowPtrsInDisk[partStartPtr])
-	for i := 0; i < len(e.rowPtrsInDisk); i++ {
-		size := e.rowChunksInDisk.GetOffsetOfRow(e.rowPtrsInDisk[i]) - partStartOffset
-		if size > e.ctx.GetSessionVars().MemQuotaQuery {
-			if err := e.generatePartition(partStartPtr, i); err != nil {
-				return err
-			}
-			partStartPtr = i
-			partStartOffset = e.rowChunksInDisk.GetOffsetOfRow(e.rowPtrsInDisk[partStartPtr])
-		}
-	}
-	if err := e.generatePartition(partStartPtr, len(e.rowPtrsInDisk)); err != nil {
-		return nil
-	}
 	e.sortRowsIndex = make([]int, 0, len(e.partitionList))
 	e.partitionConsumedRows = make([]int, len(e.partitionList))
 	e.memTracker.Consume(int64(8 * cap(e.sortRowsIndex)))
@@ -209,19 +190,14 @@ func (e *SortExec) prepareExternalSorting() (err error) {
 	return err
 }
 
-func (e *SortExec) generatePartition(st, ed int) error {
-	err := e.readPartition(e.rowChunksInDisk, e.rowPtrsInDisk[st:ed])
-	if err != nil {
-		return err
-	}
+func (e *SortExec) generatePartition() error {
 	e.initPointers()
 	sort.Slice(e.rowPtrs, e.keyColumnsLess)
 	listInDisk, err := e.spillToDiskByRowPtr()
 	if err != nil {
 		return err
 	}
-	e.memTracker.Consume(-e.rowChunks.GetMemTracker().BytesConsumed())
-	e.rowChunks = nil
+	e.rowChunks.Reset()
 	e.partitionList = append(e.partitionList, listInDisk)
 	e.partitionRowPtrs = append(e.partitionRowPtrs, e.initPointersForListInDisk(listInDisk))
 	return nil
@@ -309,24 +285,18 @@ func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 		if rowCount == 0 {
 			break
 		}
-		if e.alreadySpilled() {
-			// append chk to disk.
-			err := e.rowChunksInDisk.Add(chk)
+		e.rowChunks.Add(chk)
+		if atomic.LoadUint32(&e.exceeded) == 1 {
+			err := e.generatePartition()
 			if err != nil {
 				return err
 			}
-		} else {
-			e.rowChunks.Add(chk)
-			if atomic.LoadUint32(&e.exceeded) == 0 {
-				e.rowChunksInDisk, err = e.spillToDisk()
-				if err != nil {
-					return err
-				}
-				e.memTracker.Consume(-e.rowChunks.GetMemTracker().BytesConsumed())
-				e.rowChunks = nil // GC its internal chunks.
-				atomic.StoreUint32(&e.spilled, 1)
-			}
+			atomic.StoreUint32(&e.spilled, 1)
+			e.spillAction.reset()
 		}
+	}
+	if e.alreadySpilledSafe() && e.rowChunks.Len() != 0 {
+		return e.generatePartition()
 	}
 	return nil
 }
@@ -397,39 +367,8 @@ func (e *SortExec) keyColumnsLess(i, j int) bool {
 	return e.lessRow(rowI, rowJ)
 }
 
-func (e *SortExec) readPartition(disk *chunk.ListInDisk, rowPtrs []chunk.RowPtr) error {
-	e.rowChunks = chunk.NewList(retTypes(e), e.initCap, e.maxChunkSize)
-	e.rowChunks.GetMemTracker().AttachTo(e.memTracker)
-	e.rowChunks.GetMemTracker().SetLabel(rowChunksLabel)
-	for _, rowPtr := range rowPtrs {
-		rowPtr, err := disk.GetRow(rowPtr)
-		if err != nil {
-			return err
-		}
-		e.rowChunks.AppendRow(rowPtr)
-	}
-	return nil
-}
-
-// alreadySpilled indicates that records have spilled out into disk.
-func (e *SortExec) alreadySpilled() bool { return e.rowChunksInDisk != nil }
-
 // alreadySpilledSafe indicates that records have spilled out into disk. It's thread-safe.
 func (e *SortExec) alreadySpilledSafe() bool { return atomic.LoadUint32(&e.spilled) == 1 }
-
-func (e *SortExec) spillToDisk() (disk *chunk.ListInDisk, err error) {
-	N := e.rowChunks.NumChunks()
-	rowChunksInDisk := chunk.NewListInDisk(e.retFieldTypes)
-	rowChunksInDisk.GetDiskTracker().AttachTo(e.diskTracker)
-	for i := 0; i < N; i++ {
-		chk := e.rowChunks.GetChunk(i)
-		err = rowChunksInDisk.Add(chk)
-		if err != nil {
-			return nil, err
-		}
-	}
-	return rowChunksInDisk, nil
-}
 
 func (e *SortExec) spillToDiskByRowPtr() (disk *chunk.ListInDisk, err error) {
 	rowChunksInDisk := chunk.NewListInDisk(e.retFieldTypes)
@@ -455,7 +394,8 @@ func (e *SortExec) spillToDiskByRowPtr() (disk *chunk.ListInDisk, err error) {
 
 // ActionSpill returns a memory.ActionOnExceed for spilling over to disk.
 func (e *SortExec) ActionSpill() memory.ActionOnExceed {
-	return &spillSortDiskAction{e: e}
+	e.spillAction = &spillSortDiskAction{e: e}
+	return e.spillAction
 }
 
 // spillSortDiskAction implements memory.ActionOnExceed for chunk.List. If
@@ -486,6 +426,11 @@ func (a *spillSortDiskAction) SetFallback(fallback memory.ActionOnExceed) {
 }
 
 func (a *spillSortDiskAction) SetLogHook(hook func(uint64)) {}
+
+func (a *spillSortDiskAction) reset() {
+	atomic.StoreUint32(&a.e.exceeded, 0)
+	a.once = sync.Once{}
+}
 
 // TopNExec implements a Top-N algorithm and it is built from a SELECT statement with ORDER BY and LIMIT.
 // Instead of sorting all the rows fetched from the table, it keeps the Top-N elements only in a heap to reduce memory usage.
