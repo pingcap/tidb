@@ -1354,7 +1354,7 @@ func buildTableInfoWithCheck(ctx sessionctx.Context, s *ast.CreateTableStmt, dbC
 		return nil, errors.Trace(err)
 	}
 
-	tableCharset, tableCollate, err := getCharsetAndCollateInTableOption(0, s.Options)
+	tableCharset, tableCollate, _, err := getCharsetAndCollateInTableOption(0, s.Options)
 	if err != nil {
 		return nil, err
 	}
@@ -1886,7 +1886,7 @@ func isIgnorableSpec(tp ast.AlterTableType) bool {
 // getCharsetAndCollateInTableOption will iterate the charset and collate in the options,
 // and returns the last charset and collate in options. If there is no charset in the options,
 // the returns charset will be "", the same as collate.
-func getCharsetAndCollateInTableOption(startIdx int, options []*ast.TableOption) (chs, coll string, err error) {
+func getCharsetAndCollateInTableOption(startIdx int, options []*ast.TableOption) (chs, coll string, needOverwriteCols bool, err error) {
 	for i := startIdx; i < len(options); i++ {
 		opt := options[i]
 		// we set the charset to the last option. example: alter table t charset latin1 charset utf8 collate utf8_bin;
@@ -1895,12 +1895,13 @@ func getCharsetAndCollateInTableOption(startIdx int, options []*ast.TableOption)
 		case ast.TableOptionCharset:
 			info, err := charset.GetCharsetDesc(opt.StrValue)
 			if err != nil {
-				return "", "", err
+				return "", "", false, err
 			}
 			if len(chs) == 0 {
 				chs = info.Name
+				needOverwriteCols = opt.UintValue == ast.TableOptionCharsetWithConvertTo
 			} else if chs != info.Name {
-				return "", "", ErrConflictingDeclarations.GenWithStackByArgs(chs, info.Name)
+				return "", "", false, ErrConflictingDeclarations.GenWithStackByArgs(chs, info.Name)
 			}
 			if len(coll) == 0 {
 				coll = info.DefaultCollation
@@ -1908,12 +1909,12 @@ func getCharsetAndCollateInTableOption(startIdx int, options []*ast.TableOption)
 		case ast.TableOptionCollate:
 			info, err := charset.GetCollationByName(opt.StrValue)
 			if err != nil {
-				return "", "", err
+				return "", "", false, err
 			}
 			if len(chs) == 0 {
 				chs = info.CharsetName
 			} else if chs != info.CharsetName {
-				return "", "", ErrCollationCharsetMismatch.GenWithStackByArgs(info.Name, chs)
+				return "", "", false, ErrCollationCharsetMismatch.GenWithStackByArgs(info.Name, chs)
 			}
 			coll = info.Name
 		}
@@ -2052,11 +2053,12 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 						continue
 					}
 					var toCharset, toCollate string
-					toCharset, toCollate, err = getCharsetAndCollateInTableOption(i, spec.Options)
+					var needsOverwriteCols bool
+					toCharset, toCollate, needsOverwriteCols, err = getCharsetAndCollateInTableOption(i, spec.Options)
 					if err != nil {
 						return err
 					}
-					err = d.AlterTableCharsetAndCollate(ctx, ident, toCharset, toCollate)
+					err = d.AlterTableCharsetAndCollate(ctx, ident, toCharset, toCollate, needsOverwriteCols)
 					handledCharsetOrCollate = true
 				}
 
@@ -3048,7 +3050,7 @@ func (d *ddl) AlterTableComment(ctx sessionctx.Context, ident ast.Ident, spec *a
 }
 
 // AlterTableCharset changes the table charset and collate.
-func (d *ddl) AlterTableCharsetAndCollate(ctx sessionctx.Context, ident ast.Ident, toCharset, toCollate string) error {
+func (d *ddl) AlterTableCharsetAndCollate(ctx sessionctx.Context, ident ast.Ident, toCharset, toCollate string, needsOverwriteCols bool) error {
 	// use the last one.
 	if toCharset == "" && toCollate == "" {
 		return ErrUnknownCharacterSet.GenWithStackByArgs(toCharset)
@@ -3091,7 +3093,7 @@ func (d *ddl) AlterTableCharsetAndCollate(ctx sessionctx.Context, ident ast.Iden
 		SchemaName: schema.Name.L,
 		Type:       model.ActionModifyTableCharsetAndCollate,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{toCharset, toCollate},
+		Args:       []interface{}{toCharset, toCollate, needsOverwriteCols},
 	}
 	err = d.doDDLJob(ctx, job)
 	err = d.callHookOnChanged(err)
