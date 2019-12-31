@@ -33,6 +33,7 @@ type testIsolationSuite struct {
 	OneByOneSuite
 	store *tikvStore
 }
+
 var _ = Suite(&testIsolationSuite{})
 
 func (s *testIsolationSuite) SetUpSuite(c *C) {
