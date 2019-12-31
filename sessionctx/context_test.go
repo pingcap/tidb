@@ -16,7 +16,13 @@ package sessionctx
 import (
 	"fmt"
 	"testing"
+
+	. "github.com/pingcap/check"
 )
+
+func TestT(t *testing.T) {
+	TestingT(t)
+}
 
 func TestBasicCtxTypeToString(t *testing.T) {
 	tests := []struct {

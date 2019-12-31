@@ -21,11 +21,10 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/cznic/mathutil"
-	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/mathutil"
 )
 
 func (b *builtinLog1ArgSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) error {
@@ -849,19 +848,67 @@ func (b *builtinTruncateUintSig) vecEvalInt(input *chunk.Chunk, result *chunk.Co
 }
 
 func (b *builtinCeilDecToDecSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinCeilDecToDecSig) vecEvalDecimal(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	if err := b.args[0].VecEvalDecimal(b.ctx, input, result); err != nil {
+		return err
+	}
+	ds := result.Decimals()
+
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		rst := new(types.MyDecimal)
+		if err := ds[i].Round(rst, 0, types.ModeTruncate); err != nil {
+			return err
+		}
+		if !ds[i].IsNegative() && rst.Compare(&ds[i]) != 0 {
+			if err := types.DecimalAdd(rst, types.NewDecFromInt(1), rst); err != nil {
+				return err
+			}
+		}
+		ds[i] = *rst
+	}
+	return nil
 }
 
 func (b *builtinFloorDecToDecSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinFloorDecToDecSig) vecEvalDecimal(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	if err := b.args[0].VecEvalDecimal(b.ctx, input, result); err != nil {
+		return err
+	}
+	ds := result.Decimals()
+
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		rst := new(types.MyDecimal)
+		if !ds[i].IsNegative() {
+			if err := ds[i].Round(rst, 0, types.ModeTruncate); err != nil {
+				return err
+			}
+		} else {
+			if err := ds[i].Round(rst, 0, types.ModeTruncate); err != nil {
+				return err
+			}
+			if rst.Compare(&ds[i]) != 0 {
+				if err := types.DecimalSub(rst, types.NewDecFromInt(1), rst); err != nil {
+					return err
+				}
+			}
+		}
+		ds[i] = *rst
+	}
+	return nil
 }
 
 func (b *builtinTruncateDecimalSig) vectorized() bool {
@@ -1001,11 +1048,54 @@ func (b *builtinSignSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) er
 }
 
 func (b *builtinConvSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinConvSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf1, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf1)
+	buf2, err := b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf2)
+	buf3, err := b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf3)
+	if err := b.args[0].VecEvalString(b.ctx, input, buf1); err != nil {
+		return err
+	}
+	if err := b.args[1].VecEvalInt(b.ctx, input, buf2); err != nil {
+		return err
+	}
+	if err := b.args[2].VecEvalInt(b.ctx, input, buf3); err != nil {
+		return err
+	}
+	result.ReserveString(n)
+	fromBase := buf2.Int64s()
+	toBase := buf3.Int64s()
+	for i := 0; i < n; i++ {
+		if buf1.IsNull(i) || buf2.IsNull(i) || buf3.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
+		res, isNull, err := b.conv(buf1.GetString(i), fromBase[i], toBase[i])
+		if err != nil {
+			return err
+		}
+		if isNull {
+			result.AppendNull()
+			continue
+		}
+		result.AppendString(res)
+	}
+	return nil
 }
 
 func (b *builtinAbsUIntSig) vectorized() bool {

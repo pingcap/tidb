@@ -44,7 +44,7 @@ func (s *testEvaluatorSuite) TestLengthAndOctetLength(c *C) {
 		{1, 1, false, false},
 		{3.14, 4, false, false},
 		{types.NewDecFromFloatForTest(123.123), 7, false, false},
-		{types.Time{Time: types.FromGoTime(time.Now()), Fsp: 6, Type: mysql.TypeDatetime}, 26, false, false},
+		{types.NewTime(types.FromGoTime(time.Now()), mysql.TypeDatetime, 6), 26, false, false},
 		{types.NewBinaryLiteralFromUint(0x01, -1), 1, false, false},
 		{types.Set{Value: 1, Name: "abc"}, 3, false, false},
 		{types.Duration{Duration: time.Duration(12*time.Hour + 1*time.Minute + 1*time.Second), Fsp: types.DefaultFsp}, 8, false, false},
@@ -129,10 +129,7 @@ func (s *testEvaluatorSuite) TestConcat(c *C) {
 				1, 2,
 				1.1, 1.2,
 				types.NewDecFromFloatForTest(1.1),
-				types.Time{
-					Time: types.FromDate(2000, 1, 1, 12, 01, 01, 0),
-					Type: mysql.TypeDatetime,
-					Fsp:  types.DefaultFsp},
+				types.NewTime(types.FromDate(2000, 1, 1, 12, 01, 01, 0), mysql.TypeDatetime, types.DefaultFsp),
 				types.Duration{
 					Duration: time.Duration(12*time.Hour + 1*time.Minute + 1*time.Second),
 					Fsp:      types.DefaultFsp},
@@ -250,10 +247,7 @@ func (s *testEvaluatorSuite) TestConcatWS(c *C) {
 		{
 			[]interface{}{",", "a", "b", 1, 2, 1.1, 0.11,
 				types.NewDecFromFloatForTest(1.1),
-				types.Time{
-					Time: types.FromDate(2000, 1, 1, 12, 01, 01, 0),
-					Type: mysql.TypeDatetime,
-					Fsp:  types.DefaultFsp},
+				types.NewTime(types.FromDate(2000, 1, 1, 12, 01, 01, 0), mysql.TypeDatetime, types.DefaultFsp),
 				types.Duration{
 					Duration: time.Duration(12*time.Hour + 1*time.Minute + 1*time.Second),
 					Fsp:      types.DefaultFsp},
@@ -1487,7 +1481,7 @@ func (s *testEvaluatorSuite) TestRpadSig(c *C) {
 	}
 
 	base := baseBuiltinFunc{args: args, ctx: s.ctx, tp: resultType}
-	rpad := &builtinRpadSig{base, 1000}
+	rpad := &builtinRpadUTF8Sig{base, 1000}
 
 	input := chunk.NewChunkWithCapacity(colTypes, 10)
 	input.AppendString(0, "abc")
@@ -1530,7 +1524,7 @@ func (s *testEvaluatorSuite) TestInsertBinarySig(c *C) {
 	}
 
 	base := baseBuiltinFunc{args: args, ctx: s.ctx, tp: resultType}
-	insert := &builtinInsertBinarySig{base, 3}
+	insert := &builtinInsertSig{base, 3}
 
 	input := chunk.NewChunkWithCapacity(colTypes, 2)
 	input.AppendString(0, "abc")
@@ -1813,7 +1807,7 @@ func (s *testEvaluatorSuite) TestFormat(c *C) {
 			warnings := s.ctx.GetSessionVars().StmtCtx.GetWarnings()
 			c.Assert(len(warnings), Equals, tt.warnings, Commentf("test %v", tt))
 			for i := 0; i < tt.warnings; i++ {
-				c.Assert(terror.ErrorEqual(types.ErrTruncated, warnings[i].Err), IsTrue, Commentf("test %v", tt))
+				c.Assert(terror.ErrorEqual(types.ErrTruncatedWrongVal, warnings[i].Err), IsTrue, Commentf("test %v", tt))
 			}
 			s.ctx.GetSessionVars().StmtCtx.SetWarnings([]stmtctx.SQLWarn{})
 		}

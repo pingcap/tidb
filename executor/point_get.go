@@ -27,10 +27,15 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tidb/util/ranger"
 )
 
 func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) Executor {
+	if b.ctx.GetSessionVars().IsPessimisticReadConsistency() {
+		if err := b.refreshForUpdateTS(); err != nil {
+			b.err = err
+			return nil
+		}
+	}
 	startTS, err := b.getStartTS()
 	if err != nil {
 		b.err = err
@@ -156,13 +161,13 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 
 func (e *PointGetExecutor) lockKeyIfNeeded(ctx context.Context, key []byte) error {
 	if e.lock {
-		return doLockKeys(ctx, e.ctx, e.lockWaitTime, key)
+		return doLockKeys(ctx, e.ctx, newLockCtx(e.ctx.GetSessionVars(), e.lockWaitTime), key)
 	}
 	return nil
 }
 
 func (e *PointGetExecutor) get(ctx context.Context, key kv.Key) (val []byte, err error) {
-	txn, err := e.ctx.Txn(true)
+	txn, err := e.ctx.Txn(false)
 	if err != nil {
 		return nil, err
 	}
@@ -185,8 +190,13 @@ func encodeIndexKey(e *baseExecutor, tblInfo *model.TableInfo, idxInfo *model.In
 	sc := e.ctx.GetSessionVars().StmtCtx
 	for i := range idxVals {
 		colInfo := tblInfo.Columns[idxInfo.Columns[i].Offset]
+		// table.CastValue will append 0x0 if the string value's length is smaller than the BINARY column's length.
+		// So we don't use CastValue for string value for now.
+		// TODO: merge two if branch.
 		if colInfo.Tp == mysql.TypeString || colInfo.Tp == mysql.TypeVarString || colInfo.Tp == mysql.TypeVarchar {
-			idxVals[i], err = ranger.HandlePadCharToFullLength(sc, &colInfo.FieldType, idxVals[i])
+			var str string
+			str, err = idxVals[i].ToString()
+			idxVals[i].SetString(str)
 		} else {
 			idxVals[i], err = table.CastValue(e.ctx, idxVals[i], colInfo)
 		}

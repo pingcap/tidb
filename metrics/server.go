@@ -157,14 +157,6 @@ var (
 			Help:      "Bucketed histogram of all cop waiting time (s) of of slow queries.",
 			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 22), // 1ms ~ 4096s
 		})
-
-	CPUUsagePercentageGauge = prometheus.NewGauge(
-		prometheus.GaugeOpts{
-			Namespace: "tidb",
-			Subsystem: "server",
-			Name:      "cpu_usage",
-			Help:      "Percentage of CPU usage.",
-		})
 )
 
 // ExecuteErrorToLabel converts an execute error to label.

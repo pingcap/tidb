@@ -118,6 +118,20 @@ var (
 	statsLease = int64(3 * time.Second)
 )
 
+func setStoreBootstrapped(storeUUID string) {
+	storeBootstrappedLock.Lock()
+	defer storeBootstrappedLock.Unlock()
+	storeBootstrapped[storeUUID] = true
+}
+
+// unsetStoreBootstrapped delete store uuid from stored bootstrapped map.
+// currently this function only used for test.
+func unsetStoreBootstrapped(storeUUID string) {
+	storeBootstrappedLock.Lock()
+	defer storeBootstrappedLock.Unlock()
+	delete(storeBootstrapped, storeUUID)
+}
+
 // SetSchemaLease changes the default schema lease time for DDL.
 // This function is very dangerous, don't use it if you really know what you do.
 // SetSchemaLease only affects not local storage after bootstrapped.
@@ -162,15 +176,26 @@ func Compile(ctx context.Context, sctx sessionctx.Context, stmtNode ast.StmtNode
 	return stmt, err
 }
 
+func recordAbortTxnDuration(sessVars *variable.SessionVars) {
+	duration := time.Since(sessVars.TxnCtx.CreateTime).Seconds()
+	if sessVars.InRestrictedSQL {
+		transactionDurationInternalAbort.Observe(duration)
+	} else {
+		transactionDurationGeneralAbort.Observe(duration)
+	}
+}
+
 func finishStmt(ctx context.Context, sctx sessionctx.Context, se *session, sessVars *variable.SessionVars,
 	meetsErr error, sql sqlexec.Statement) error {
 	if meetsErr != nil {
 		if !sessVars.InTxn() {
 			logutil.BgLogger().Info("rollbackTxn for ddl/autocommit failed")
 			se.RollbackTxn(ctx)
+			recordAbortTxnDuration(sessVars)
 		} else if se.txn.Valid() && se.txn.IsPessimistic() && executor.ErrDeadlock.Equal(meetsErr) {
 			logutil.BgLogger().Info("rollbackTxn for deadlock", zap.Uint64("txn", se.txn.StartTS()))
 			se.RollbackTxn(ctx)
+			recordAbortTxnDuration(sessVars)
 		}
 		return meetsErr
 	}
@@ -226,6 +251,7 @@ func runStmt(ctx context.Context, sctx sessionctx.Context, s sqlexec.Statement) 
 		// If it is not a select statement, we record its slow log here,
 		// then it could include the transaction commit time.
 		if rs == nil {
+			// `LowSlowQuery` and `SummaryStmt` must be called before recording `PrevStmt`.
 			s.(*executor.ExecStmt).LogSlowQuery(origTxnCtx.StartTS, err == nil, false)
 			s.(*executor.ExecStmt).SummaryStmt()
 			pps := types.CloneRow(sessVars.PreparedParams)
@@ -251,7 +277,7 @@ func runStmt(ctx context.Context, sctx sessionctx.Context, s sqlexec.Statement) 
 				if err != nil {
 					sctx.StmtRollback()
 				} else {
-					err = sctx.StmtCommit()
+					err = sctx.StmtCommit(sctx.GetSessionVars().StmtCtx.MemTracker)
 				}
 			}
 		} else {
@@ -342,17 +368,12 @@ func ResultSetToStringSlice(ctx context.Context, s Session, rs sqlexec.RecordSet
 
 // Session errors.
 var (
-	ErrForUpdateCantRetry = terror.ClassSession.New(codeForUpdateCantRetry,
-		mysql.MySQLErrName[mysql.ErrForUpdateCantRetry])
-)
-
-const (
-	codeForUpdateCantRetry terror.ErrCode = mysql.ErrForUpdateCantRetry
+	ErrForUpdateCantRetry = terror.ClassSession.New(mysql.ErrForUpdateCantRetry, mysql.MySQLErrName[mysql.ErrForUpdateCantRetry])
 )
 
 func init() {
 	sessionMySQLErrCodes := map[terror.ErrCode]uint16{
-		codeForUpdateCantRetry: mysql.ErrForUpdateCantRetry,
+		mysql.ErrForUpdateCantRetry: mysql.ErrForUpdateCantRetry,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassSession] = sessionMySQLErrCodes
 }

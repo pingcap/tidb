@@ -64,13 +64,6 @@ var (
 			Name:      "retry_error_total",
 			Help:      "Counter of session retry error.",
 		}, []string{LblSQLType, LblType})
-	TransactionCounter = prometheus.NewCounterVec(
-		prometheus.CounterOpts{
-			Namespace: "tidb",
-			Subsystem: "session",
-			Name:      "transaction_total",
-			Help:      "Counter of transactions.",
-		}, []string{LblSQLType, LblType})
 
 	SessionRestrictedSQLCounter = prometheus.NewCounter(
 		prometheus.CounterOpts{
@@ -105,8 +98,9 @@ const (
 	LblReachMax    = "reach_max"
 	LblOK          = "ok"
 	LblError       = "error"
+	LblCommit      = "commit"
+	LblAbort       = "abort"
 	LblRollback    = "rollback"
-	LblComRol      = "com_rol"
 	LblType        = "type"
 	LblDb          = "db"
 	LblResult      = "result"

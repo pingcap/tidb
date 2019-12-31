@@ -15,10 +15,12 @@ package expression
 
 import (
 	json2 "encoding/json"
+	"strconv"
 	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
@@ -181,25 +183,38 @@ func (b *builtinJSONUnquoteSig) Clone() builtinFunc {
 	return newSig
 }
 
+func (c *jsonUnquoteFunctionClass) verifyArgs(args []Expression) error {
+	if err := c.baseFunctionClass.verifyArgs(args); err != nil {
+		return err
+	}
+	if evalType := args[0].GetType().EvalType(); evalType != types.ETString && evalType != types.ETJson {
+		return ErrIncorrectType.GenWithStackByArgs("1", "json_unquote")
+	}
+	return nil
+}
+
 func (c *jsonUnquoteFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETJson)
+	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETString)
+	bf.tp.Flen = mysql.MaxFieldVarCharLength
 	DisableParseJSONFlag4Expr(args[0])
 	sig := &builtinJSONUnquoteSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_JsonUnquoteSig)
 	return sig, nil
 }
 
-func (b *builtinJSONUnquoteSig) evalString(row chunk.Row) (res string, isNull bool, err error) {
-	var j json.BinaryJSON
-	j, isNull, err = b.args[0].EvalJSON(b.ctx, row)
+func (b *builtinJSONUnquoteSig) evalString(row chunk.Row) (string, bool, error) {
+	str, isNull, err := b.args[0].EvalString(b.ctx, row)
 	if isNull || err != nil {
 		return "", isNull, err
 	}
-	res, err = j.Unquote()
-	return res, err != nil, err
+	str, err = json.UnquoteString(str)
+	if err != nil {
+		return "", false, err
+	}
+	return str, false, nil
 }
 
 type jsonSetFunctionClass struct {
@@ -1020,24 +1035,33 @@ func (b *builtinJSONQuoteSig) Clone() builtinFunc {
 	return newSig
 }
 
+func (c *jsonQuoteFunctionClass) verifyArgs(args []Expression) error {
+	if err := c.baseFunctionClass.verifyArgs(args); err != nil {
+		return err
+	}
+	if evalType := args[0].GetType().EvalType(); evalType != types.ETString {
+		return ErrIncorrectType.GenWithStackByArgs("1", "json_quote")
+	}
+	return nil
+}
+
 func (c *jsonQuoteFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETJson)
+	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETString)
 	DisableParseJSONFlag4Expr(args[0])
 	sig := &builtinJSONQuoteSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_JsonQuoteSig)
 	return sig, nil
 }
 
-func (b *builtinJSONQuoteSig) evalString(row chunk.Row) (res string, isNull bool, err error) {
-	var j json.BinaryJSON
-	j, isNull, err = b.args[0].EvalJSON(b.ctx, row)
+func (b *builtinJSONQuoteSig) evalString(row chunk.Row) (string, bool, error) {
+	str, isNull, err := b.args[0].EvalString(b.ctx, row)
 	if isNull || err != nil {
 		return "", isNull, err
 	}
-	return j.Quote(), false, nil
+	return strconv.Quote(str), false, nil
 }
 
 type jsonSearchFunctionClass struct {

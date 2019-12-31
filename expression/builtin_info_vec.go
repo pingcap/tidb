@@ -98,11 +98,23 @@ func (b *builtinRowCountSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column
 }
 
 func (b *builtinCurrentUserSig) vectorized() bool {
-	return false
+	return true
 }
 
+// evalString evals a builtinCurrentUserSig.
+// See https://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_current-user
 func (b *builtinCurrentUserSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+
+	data := b.ctx.GetSessionVars()
+	result.ReserveString(n)
+	if data == nil || data.User == nil {
+		return errors.Errorf("Missing session variable when eval builtin")
+	}
+	for i := 0; i < n; i++ {
+		result.AppendString(data.User.AuthIdentityString())
+	}
+	return nil
 }
 
 func (b *builtinCurrentRoleSig) vectorized() bool {
@@ -140,11 +152,23 @@ func (b *builtinCurrentRoleSig) vecEvalString(input *chunk.Chunk, result *chunk.
 }
 
 func (b *builtinUserSig) vectorized() bool {
-	return false
+	return true
 }
 
+// evalString evals a builtinUserSig.
+// See https://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_user
 func (b *builtinUserSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	data := b.ctx.GetSessionVars()
+	if data == nil || data.User == nil {
+		return errors.Errorf("Missing session variable when eval builtin")
+	}
+
+	result.ReserveString(n)
+	for i := 0; i < n; i++ {
+		result.AppendString(data.User.String())
+	}
+	return nil
 }
 
 func (b *builtinTiDBIsDDLOwnerSig) vectorized() bool {
@@ -167,19 +191,92 @@ func (b *builtinTiDBIsDDLOwnerSig) vecEvalInt(input *chunk.Chunk, result *chunk.
 }
 
 func (b *builtinFoundRowsSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinFoundRowsSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	data := b.ctx.GetSessionVars()
+	if data == nil {
+		return errors.Errorf("Missing session variable when eval builtin")
+	}
+	lastFoundRows := int64(data.LastFoundRows)
+	n := input.NumRows()
+	result.ResizeInt64(n, false)
+	i64s := result.Int64s()
+	for i := range i64s {
+		i64s[i] = lastFoundRows
+	}
+	return nil
 }
 
 func (b *builtinBenchmarkSig) vectorized() bool {
-	return false
+	return b.constLoopCount > 0
 }
 
 func (b *builtinBenchmarkSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	loopCount := b.constLoopCount
+	arg, ctx := b.args[1], b.ctx
+	evalType := arg.GetType().EvalType()
+	buf, err := b.bufAllocator.get(evalType, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+
+	var k int64
+	switch evalType {
+	case types.ETInt:
+		for ; k < loopCount; k++ {
+			if err = arg.VecEvalInt(ctx, input, buf); err != nil {
+				return err
+			}
+		}
+	case types.ETReal:
+		for ; k < loopCount; k++ {
+			if err = arg.VecEvalReal(ctx, input, buf); err != nil {
+				return err
+			}
+		}
+	case types.ETDecimal:
+		for ; k < loopCount; k++ {
+			if err = arg.VecEvalDecimal(ctx, input, buf); err != nil {
+				return err
+			}
+		}
+	case types.ETString:
+		for ; k < loopCount; k++ {
+			if err = arg.VecEvalString(ctx, input, buf); err != nil {
+				return err
+			}
+		}
+	case types.ETDatetime, types.ETTimestamp:
+		for ; k < loopCount; k++ {
+			if err = arg.VecEvalTime(ctx, input, buf); err != nil {
+				return err
+			}
+		}
+	case types.ETDuration:
+		for ; k < loopCount; k++ {
+			if err = arg.VecEvalDuration(ctx, input, buf); err != nil {
+				return err
+			}
+		}
+	case types.ETJson:
+		for ; k < loopCount; k++ {
+			if err = arg.VecEvalJSON(ctx, input, buf); err != nil {
+				return err
+			}
+		}
+	default: // Should never go into here.
+		return errors.Errorf("EvalType %v not implemented for builtin BENCHMARK()", evalType)
+	}
+
+	// Return value of BENCHMARK() is always 0.
+	// even if args[1].IsNull(i)
+	result.ResizeInt64(n, false)
+
+	return nil
 }
 
 func (b *builtinLastInsertIDSig) vectorized() bool {

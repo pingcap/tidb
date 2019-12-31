@@ -137,7 +137,7 @@ func (dr *mockDelRange) addDelRangeJob(job *model.Job) error {
 }
 
 // removeFromGCDeleteRange implements delRangeManager interface.
-func (dr *mockDelRange) removeFromGCDeleteRange(jobID, tableID int64) error {
+func (dr *mockDelRange) removeFromGCDeleteRange(jobID int64, tableIDs []int64) error {
 	return nil
 }
 
@@ -153,7 +153,7 @@ func MockTableInfo(ctx sessionctx.Context, stmt *ast.CreateTableStmt, tableID in
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	tbl, err := buildTableInfo(ctx, nil, stmt.Table.Name, cols, newConstraints)
+	tbl, err := buildTableInfo(ctx, stmt.Table.Name, cols, newConstraints)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

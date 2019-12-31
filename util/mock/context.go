@@ -17,7 +17,6 @@ package mock
 import (
 	"context"
 	"fmt"
-	"sync"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -27,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -43,7 +43,6 @@ type Context struct {
 	txn         wrapTxn    // mock global variable
 	Store       kv.Storage // mock global variable
 	sessionVars *variable.SessionVars
-	mux         sync.Mutex // fix data race in ddl test.
 	ctx         context.Context
 	cancel      context.CancelFunc
 	sm          util.SessionManager
@@ -86,6 +85,11 @@ func (c *Context) Value(key fmt.Stringer) interface{} {
 // ClearValue implements sessionctx.Context ClearValue interface.
 func (c *Context) ClearValue(key fmt.Stringer) {
 	delete(c.values, key)
+}
+
+// HasDirtyContent implements sessionctx.Context ClearValue interface.
+func (c *Context) HasDirtyContent(tid int64) bool {
+	return false
 }
 
 // GetSessionVars implements the sessionctx.Context GetSessionVars interface.
@@ -200,7 +204,7 @@ func (c *Context) GoCtx() context.Context {
 func (c *Context) StoreQueryFeedback(_ interface{}) {}
 
 // StmtCommit implements the sessionctx.Context interface.
-func (c *Context) StmtCommit() error {
+func (c *Context) StmtCommit(tracker *memory.Tracker) error {
 	return nil
 }
 
@@ -248,8 +252,8 @@ func (c *Context) HasLockedTables() bool {
 	return false
 }
 
-// PrepareTxnFuture implements the sessionctx.Context interface.
-func (c *Context) PrepareTxnFuture(ctx context.Context) {
+// PrepareTSFuture implements the sessionctx.Context interface.
+func (c *Context) PrepareTSFuture(ctx context.Context) {
 }
 
 // Close implements the sessionctx.Context interface.
@@ -269,6 +273,7 @@ func NewContext() *Context {
 	sctx.sessionVars.MaxChunkSize = 32
 	sctx.sessionVars.StmtCtx.TimeZone = time.UTC
 	sctx.sessionVars.StmtCtx.MemTracker = memory.NewTracker(stringutil.StringerStr("mock.NewContext"), -1)
+	sctx.sessionVars.StmtCtx.DiskTracker = disk.NewTracker(stringutil.StringerStr("mock.NewContext"), -1)
 	sctx.sessionVars.GlobalVarsAccessor = variable.NewMockGlobalAccessor()
 	if err := sctx.GetSessionVars().SetSystemVar(variable.MaxAllowedPacket, "67108864"); err != nil {
 		panic(err)

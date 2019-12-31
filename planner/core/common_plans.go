@@ -481,6 +481,12 @@ const (
 	OpSQLBindCreate SQLBindOpType = iota
 	// OpSQLBindDrop represents the operation to drop a SQL bind.
 	OpSQLBindDrop
+	// OpFlushBindings is used to flush plan bindings.
+	OpFlushBindings
+	// OpCaptureBindings is used to capture plan bindings.
+	OpCaptureBindings
+	// OpEvolveBindings is used to evolve plan binding.
+	OpEvolveBindings
 )
 
 // SQLBindPlan represents a plan for SQL bind.
@@ -492,6 +498,7 @@ type SQLBindPlan struct {
 	BindSQL      string
 	IsGlobal     bool
 	BindStmt     ast.StmtNode
+	Db           string
 	Charset      string
 	Collation    string
 }
@@ -619,6 +626,17 @@ type LoadStats struct {
 	Path string
 }
 
+// IndexAdvise represents a index advise plan.
+type IndexAdvise struct {
+	baseSchemaProducer
+
+	IsLocal     bool
+	Path        string
+	MaxMinutes  uint64
+	MaxIndexNum *ast.MaxIndexNumClause
+	LinesInfo   *ast.LinesClause
+}
+
 // SplitRegion represents a split regions plan.
 type SplitRegion struct {
 	baseSchemaProducer
@@ -669,9 +687,11 @@ func (e *Explain) prepareSchema() error {
 	case format == ast.ExplainFormatROW && !e.Analyze:
 		fieldNames = []string{"id", "count", "task", "operator info"}
 	case format == ast.ExplainFormatROW && e.Analyze:
-		fieldNames = []string{"id", "count", "task", "operator info", "execution info", "memory"}
+		fieldNames = []string{"id", "count", "task", "operator info", "execution info", "memory", "disk"}
 	case format == ast.ExplainFormatDOT:
 		fieldNames = []string{"dot contents"}
+	case format == ast.ExplainFormatHint:
+		fieldNames = []string{"hint"}
 	default:
 		return errors.Errorf("explain format '%s' is not supported now", e.Format)
 	}
@@ -703,6 +723,8 @@ func (e *Explain) RenderResult() error {
 		}
 	case ast.ExplainFormatDOT:
 		e.prepareDotInfo(e.TargetPlan.(PhysicalPlan))
+	case ast.ExplainFormatHint:
+		e.Rows = append(e.Rows, []string{GenHintsFromPhysicalPlan(e.TargetPlan)})
 	default:
 		return errors.Errorf("explain format '%s' is not supported now", e.Format)
 	}
@@ -733,14 +755,12 @@ func (e *Explain) explainPlanInRowFormat(p Plan, taskType, indent string, isLast
 	case *PhysicalTableReader:
 		var storeType string
 		switch x.StoreType {
-		case kv.TiKV:
-			storeType = kv.TiKV.Name()
-		case kv.TiFlash:
-			storeType = kv.TiFlash.Name()
+		case kv.TiKV, kv.TiFlash, kv.TiDB:
+			// expected do nothing
 		default:
-			err = errors.Errorf("the store type %v is unknown", x.StoreType)
-			return
+			return errors.Errorf("the store type %v is unknown", x.StoreType)
 		}
+		storeType = x.StoreType.Name()
 		err = e.explainPlanInRowFormat(x.tablePlan, "cop["+storeType+"]", childIndent, true)
 	case *PhysicalIndexReader:
 		err = e.explainPlanInRowFormat(x.indexPlan, "cop[tikv]", childIndent, true)
@@ -782,7 +802,6 @@ func (e *Explain) explainPlanInRowFormat(p Plan, taskType, indent string, isLast
 // operator id, task type, operator info, and the estemated row count.
 func (e *Explain) prepareOperatorInfo(p Plan, taskType string, indent string, isLastChild bool) {
 	operatorInfo := p.ExplainInfo()
-
 	count := "N/A"
 	if si := p.statsInfo(); si != nil {
 		count = strconv.FormatFloat(si.RowCount, 'f', 2, 64)
@@ -809,9 +828,16 @@ func (e *Explain) prepareOperatorInfo(p Plan, taskType string, indent string, is
 		}
 		row = append(row, analyzeInfo)
 
-		tracker := e.ctx.GetSessionVars().StmtCtx.MemTracker.SearchTracker(p.ExplainID().String())
-		if tracker != nil {
-			row = append(row, tracker.BytesToString(tracker.MaxConsumed()))
+		memTracker := e.ctx.GetSessionVars().StmtCtx.MemTracker.SearchTracker(p.ExplainID().String())
+		if memTracker != nil {
+			row = append(row, memTracker.BytesToString(memTracker.MaxConsumed()))
+		} else {
+			row = append(row, "N/A")
+		}
+
+		diskTracker := e.ctx.GetSessionVars().StmtCtx.DiskTracker.SearchTracker(p.ExplainID().String())
+		if diskTracker != nil {
+			row = append(row, diskTracker.BytesToString(diskTracker.MaxConsumed()))
 		} else {
 			row = append(row, "N/A")
 		}
@@ -887,14 +913,10 @@ func (e *Explain) prepareTaskDot(p PhysicalPlan, taskTp string, buffer *bytes.Bu
 
 // IsPointGetWithPKOrUniqueKeyByAutoCommit returns true when meets following conditions:
 //  1. ctx is auto commit tagged
-//  2. txn is not valid
+//  2. session is not InTxn
 //  3. plan is point get by pk, or point get by unique index (no double read)
 func IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx sessionctx.Context, p Plan) (bool, error) {
-	ok, err := IsAutoCommitNonValidTxn(ctx)
-	if err != nil {
-		return false, err
-	}
-	if !ok {
+	if !IsAutoCommitTxn(ctx) {
 		return false, nil
 	}
 
@@ -920,32 +942,15 @@ func IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx sessionctx.Context, p Plan) (bo
 	}
 }
 
-// IsAutoCommitNonValidTxn checks if session is in autocommit mode and txn not valid
+// IsAutoCommitTxn checks if session is in autocommit mode and not InTxn
 // used for fast plan like point get
-func IsAutoCommitNonValidTxn(ctx sessionctx.Context) (bool, error) {
-	// check auto commit
-	if !ctx.GetSessionVars().IsAutocommit() {
-		return false, nil
-	}
-
-	// check txn
-	txn, err := ctx.Txn(false)
-	if err != nil {
-		return false, err
-	}
-	if txn.Valid() {
-		return false, nil
-	}
-	return true, nil
+func IsAutoCommitTxn(ctx sessionctx.Context) bool {
+	return ctx.GetSessionVars().IsAutocommit() && !ctx.GetSessionVars().InTxn()
 }
 
 // IsPointUpdateByAutoCommit checks if plan p is point update and is in autocommit context
 func IsPointUpdateByAutoCommit(ctx sessionctx.Context, p Plan) (bool, error) {
-	ok, err := IsAutoCommitNonValidTxn(ctx)
-	if err != nil {
-		return false, err
-	}
-	if !ok {
+	if !IsAutoCommitTxn(ctx) {
 		return false, nil
 	}
 
