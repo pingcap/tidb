@@ -208,7 +208,7 @@ func (*testSuite) TestT(c *C) {
 	min, max, err = alloc.Alloc(5, 2, increment, offset)
 	c.Assert(err, IsNil)
 	c.Assert(max-min, Equals, int64(4))
-	c.Assert(max-min, Equals, autoid.CalcNeededIDs(100, 2, increment, offset))
+	c.Assert(max-min, Equals, autoid.CalcNeededIDs(100, 2, increment, offset, false))
 	c.Assert(min, Equals, int64(100))
 	c.Assert(max, Equals, int64(104))
 
@@ -216,7 +216,7 @@ func (*testSuite) TestT(c *C) {
 	min, max, err = alloc.Alloc(5, 3, increment, offset)
 	c.Assert(err, IsNil)
 	c.Assert(max-min, Equals, int64(11))
-	c.Assert(max-min, Equals, autoid.CalcNeededIDs(104, 3, increment, offset))
+	c.Assert(max-min, Equals, autoid.CalcNeededIDs(104, 3, increment, offset, false))
 	c.Assert(min, Equals, int64(104))
 	c.Assert(max, Equals, int64(115))
 	firstID := seekToFirstAutoID(104, increment, offset)
@@ -226,7 +226,7 @@ func (*testSuite) TestT(c *C) {
 	min, max, err = alloc.Alloc(5, 2, increment, offset)
 	c.Assert(err, IsNil)
 	c.Assert(max-min, Equals, int64(30))
-	c.Assert(max-min, Equals, autoid.CalcNeededIDs(115, 2, increment, offset))
+	c.Assert(max-min, Equals, autoid.CalcNeededIDs(115, 2, increment, offset, false))
 	c.Assert(min, Equals, int64(115))
 	c.Assert(max, Equals, int64(145))
 	firstID = seekToFirstAutoID(115, increment, offset)
@@ -237,7 +237,7 @@ func (*testSuite) TestT(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(max-min, Equals, int64(16))
 	// offset-1 > base will cause alloc rebase to offset-1.
-	c.Assert(max-min, Equals, autoid.CalcNeededIDs(offset-1, 2, increment, offset))
+	c.Assert(max-min, Equals, autoid.CalcNeededIDs(offset-1, 2, increment, offset, false))
 	c.Assert(min, Equals, int64(199))
 	c.Assert(max, Equals, int64(215))
 	firstID = seekToFirstAutoID(offset-1, increment, offset)
@@ -398,7 +398,7 @@ func (*testSuite) TestUnsignedAutoid(c *C) {
 	c.Assert(uint64(min), Equals, uint64(math.MaxUint64-101))
 	c.Assert(uint64(max), Equals, uint64(math.MaxUint64-98))
 
-	c.Assert(max-min, Equals, autoid.CalcNeededIDs(offset-1, 1, increment, offset))
+	c.Assert(max-min, Equals, autoid.CalcNeededIDs(int64(uint64(offset)-1), 2, increment, offset, true))
 	firstID := seekToFirstAutoID(min, increment, offset)
 	c.Assert(uint64(firstID), Equals, uint64(math.MaxUint64-100))
 

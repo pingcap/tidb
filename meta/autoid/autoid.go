@@ -330,11 +330,20 @@ func (alloc *allocator) Alloc(tableID int64, n uint64, increment, offset int64) 
 }
 
 // CallNeededIDs is exported for test.
-func CalcNeededIDs(base, n, increment, offset int64) int64 {
+func CalcNeededIDs(base, n, increment, offset int64, isUnsigned bool) int64 {
 	if increment == 1 {
 		return n
 	}
-	// seek to next valid position.
+	if isUnsigned {
+		// seek to the next unsigned valid position.
+		nr := (uint64(base) + uint64(increment) - uint64(offset)) / uint64(increment)
+		nr = nr*uint64(increment) + uint64(offset)
+
+		// calc the total batch size needed.
+		nr += (uint64(n) - 1) * uint64(increment)
+		return int64(nr - uint64(base))
+	}
+	// seek to the next signed valid position.
 	nr := (base + increment - offset) / increment
 	nr = nr*increment + offset
 
@@ -351,7 +360,7 @@ func (alloc *allocator) alloc4Signed(tableID int64, n uint64, increment, offset 
 		}
 	}
 	// Calculate the total batch size needed.
-	n1 := CalcNeededIDs(alloc.base, int64(n), increment, offset)
+	n1 := CalcNeededIDs(alloc.base, int64(n), increment, offset, alloc.isUnsigned)
 
 	// Condition alloc.base+N1 > alloc.end will overflow when alloc.base + N1 > MaxInt64. So need this.
 	if math.MaxInt64-alloc.base <= n1 {
@@ -413,7 +422,7 @@ func (alloc *allocator) alloc4Unsigned(tableID int64, n uint64, increment, offse
 		}
 	}
 	// Calculate the total batch size needed.
-	n1 := CalcNeededIDs(alloc.base, int64(n), increment, offset)
+	n1 := CalcNeededIDs(alloc.base, int64(n), increment, offset, alloc.isUnsigned)
 
 	// Condition alloc.base+n1 > alloc.end will overflow when alloc.base + n1 > MaxInt64. So need this.
 	if math.MaxUint64-uint64(alloc.base) <= uint64(n1) {
