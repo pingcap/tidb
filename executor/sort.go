@@ -58,10 +58,6 @@ type SortExec struct {
 	memTracker  *memory.Tracker
 	diskTracker *disk.Tracker
 
-	// rowChunksInDisk is the chunks to store row values in disk.
-	rowChunksInDisk *chunk.ListInDisk
-	// rowPtrsInDisk store the disk-chunk index and row index for each row.
-	rowPtrsInDisk []chunk.RowPtr
 	// partitionList is the chunks to store row values in disk for partitions.
 	partitionList []*chunk.ListInDisk
 	// partitionRowPtrs store the disk-chunk index and row index for each row for partitions.
@@ -75,7 +71,7 @@ type SortExec struct {
 	partitionConsumedRows []int
 	// heapSort use heap sort for spill disk.
 	heapSort *topNChunkHeapWithIndex
-	// action
+	// spillAction save the spill action for the Sort Executor.
 	spillAction *spillSortDiskAction
 
 	// exceeded indicates that records have exceeded memQuota during
@@ -88,11 +84,6 @@ type SortExec struct {
 // Close implements the Executor Close interface.
 func (e *SortExec) Close() error {
 	if e.alreadySpilledSafe() {
-		if e.rowChunksInDisk != nil {
-			if err := e.rowChunksInDisk.Close(); err != nil {
-				return err
-			}
-		}
 		for _, chunkInDisk := range e.partitionList {
 			if chunkInDisk != nil {
 				if err := chunkInDisk.Close(); err != nil {
@@ -100,13 +91,10 @@ func (e *SortExec) Close() error {
 				}
 			}
 		}
-		e.rowChunksInDisk = nil
 		e.partitionList = e.partitionList[:0]
 
-		e.memTracker.Consume(int64(-8 * cap(e.rowPtrsInDisk)))
 		e.memTracker.Consume(int64(-8 * cap(e.sortRowsIndex)))
 		e.memTracker.Consume(int64(-8 * cap(e.partitionConsumedRows)))
-		e.rowPtrsInDisk = nil
 		e.sortRowsIndex = nil
 		e.partitionConsumedRows = nil
 		for _, partitionPtrs := range e.partitionRowPtrs {
@@ -139,8 +127,6 @@ func (e *SortExec) Open(ctx context.Context) error {
 	}
 	e.exceeded = 0
 	e.spilled = 0
-	e.rowChunksInDisk = nil
-	e.rowPtrsInDisk = e.rowPtrsInDisk[:0]
 	e.partitionList = e.partitionList[:0]
 	e.partitionRowPtrs = e.partitionRowPtrs[:0]
 	return e.children[0].Open(ctx)
