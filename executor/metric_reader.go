@@ -142,11 +142,11 @@ func (e *MetricRetriever) genRows(value pmodel.Value, r promQLQueryRange, quanti
 func (e *MetricRetriever) genRecord(metric pmodel.Metric, pair pmodel.SamplePair, r promQLQueryRange, quantile float64) []types.Datum {
 	record := make([]types.Datum, 0, 2+len(e.tblDef.Labels)+1)
 	// Record order should keep same with genColumnInfos.
-	record = append(record, types.NewTimeDatum(types.Time{
-		Time: types.FromGoTime(time.Unix(int64(pair.Timestamp/1000), int64(pair.Timestamp%1000)*1e6)),
-		Type: mysql.TypeDatetime,
-		Fsp:  types.MaxFsp,
-	}))
+	record = append(record, types.NewTimeDatum(types.NewTime(
+		types.FromGoTime(time.Unix(int64(pair.Timestamp/1000), int64(pair.Timestamp%1000)*1e6)),
+		mysql.TypeDatetime,
+		types.MaxFsp,
+	)))
 	if math.IsNaN(float64(pair.Value)) {
 		record = append(record, types.NewDatum(nil))
 	} else {
