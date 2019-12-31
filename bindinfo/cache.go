@@ -67,7 +67,7 @@ func (b *Binding) isSame(rb *Binding) bool {
 
 // SinceUpdateTime returns the duration since last update time. Export for test.
 func (b *Binding) SinceUpdateTime() (time.Duration, error) {
-	updateTime, err := b.UpdateTime.Time.GoTime(time.Local)
+	updateTime, err := b.UpdateTime.GoTime(time.Local)
 	if err != nil {
 		return 0, err
 	}

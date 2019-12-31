@@ -136,8 +136,8 @@ func (decoder *DatumMapDecoder) decodeColDatum(col *ColInfo, colData []byte) (ty
 		d.SetMysqlDecimal(dec)
 	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
 		var t types.Time
-		t.Type = uint8(col.Tp)
-		t.Fsp = int8(col.Decimal)
+		t.SetType(uint8(col.Tp))
+		t.SetFsp(int8(col.Decimal))
 		err := t.FromPackedUint(decodeUint(colData))
 		if err != nil {
 			return d, err
@@ -273,8 +273,8 @@ func (decoder *ChunkDecoder) decodeColToChunk(colIdx int, col *ColInfo, colData 
 		chk.AppendMyDecimal(colIdx, dec)
 	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
 		var t types.Time
-		t.Type = uint8(col.Tp)
-		t.Fsp = int8(col.Decimal)
+		t.SetType(uint8(col.Tp))
+		t.SetFsp(int8(col.Decimal))
 		err := t.FromPackedUint(decodeUint(colData))
 		if err != nil {
 			return err
