@@ -2976,6 +2976,19 @@ func (d *ddl) RenameColumn(ctx sessionctx.Context, ident ast.Ident, spec *ast.Al
 	newCol := oldCol.Clone()
 	newCol.Name = newColName
 
+	// Check generated expression.
+	for _, col := range tbl.Cols() {
+		if col.GeneratedExpr == nil {
+			continue
+		}
+		dependedColNames := findColumnNamesInExpr(col.GeneratedExpr)
+		for _, name := range dependedColNames {
+			if name.Name.L == oldColName.L {
+				return ErrBadField.GenWithStackByArgs(oldColName.O, "generated column function")
+			}
+		}
+	}
+
 	job := &model.Job{
 		SchemaID:   schema.ID,
 		TableID:    tbl.Meta().ID,
