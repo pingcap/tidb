@@ -58,6 +58,31 @@ func (e *countOriginal4Int) UpdatePartialResult(sctx sessionctx.Context, rowsInG
 	return nil
 }
 
+func (e *countOriginal4Int) Slide(sctx sessionctx.Context, rows []chunk.Row, lastStart, lastEnd uint64, shiftStart, shiftEnd uint64, pr PartialResult) error {
+	p := (*partialResult4Count)(pr)
+	for i := uint64(0); i < shiftStart; i++ {
+		_, isNull, err := e.args[0].EvalInt(sctx, rows[lastStart+i])
+		if err != nil {
+			return err
+		}
+		if isNull {
+			continue
+		}
+		*p--
+	}
+	for i := uint64(0); i < shiftEnd; i++ {
+		_, isNull, err := e.args[0].EvalInt(sctx, rows[lastEnd+i])
+		if err != nil {
+			return err
+		}
+		if isNull {
+			continue
+		}
+		*p++
+	}
+	return nil
+}
+
 type countOriginal4Real struct {
 	baseCount
 }
