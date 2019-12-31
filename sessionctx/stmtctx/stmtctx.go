@@ -136,6 +136,9 @@ type StatementContext struct {
 	lockWaitStartTime     *time.Time // LockWaitStartTime stores the pessimistic lock wait start time
 	PessimisticLockWaited int32
 	LockKeysDuration      time.Duration
+	// planNormalized use for cache the normalized plan, avoid duplicate builds.
+	planNormalized string
+	planDigest     string
 }
 
 // GetNowTsCached getter for nowTs, if not set get now time and cache it
@@ -160,6 +163,16 @@ func (sc *StatementContext) SQLDigest() (normalized, sqlDigest string) {
 		sc.digestMemo.normalized, sc.digestMemo.digest = parser.NormalizeDigest(sc.OriginalSQL)
 	})
 	return sc.digestMemo.normalized, sc.digestMemo.digest
+}
+
+// GetPlanDigest gets the normalized plan and plan digest.
+func (sc *StatementContext) GetPlanDigest() (normalized, planDigest string) {
+	return sc.planNormalized, sc.planDigest
+}
+
+// SetPlanDigest sets the normalized plan and plan digest.
+func (sc *StatementContext) SetPlanDigest(normalized, planDigest string) {
+	sc.planNormalized, sc.planDigest = normalized, planDigest
 }
 
 // TableEntry presents table in db.
