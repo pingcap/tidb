@@ -293,13 +293,13 @@ func (t Time) Fsp() int8 {
 	return t.fsp
 }
 
-// SetType update the type in Time.
+// SetType updates the type in Time.
 // Only DateTime/Date/Time is valid.
 func (t *Time) SetType(tp uint8) {
 	t.tp = tp
 }
 
-// SetFsp update the fsp in Time.
+// SetFsp updates the fsp in Time.
 func (t *Time) SetFsp(fsp int8) {
 	t.fsp = fsp
 }
@@ -309,7 +309,7 @@ func (t Time) CoreTime() MysqlTime {
 	return t.time
 }
 
-// SetCoreTime update core time.
+// SetCoreTime updates core time.
 func (t *Time) SetCoreTime(mt MysqlTime) {
 	t.time = mt
 }
