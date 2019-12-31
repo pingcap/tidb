@@ -717,8 +717,10 @@ func (e *InsertValues) lazyAdjustAutoIncrementDatum(ctx context.Context, rows []
 				cnt++
 			}
 			// Alloc batch N consecutive (min, max] autoIDs.
-			// max value can be derived from adding one for cnt times.
+			// max value can be derived from adding the increment value for cnt-1 times after seeking to the first autoID.
 			min, _, err := table.AllocBatchAutoIncrementValue(ctx, e.Table, e.ctx, cnt)
+			min, increment := e.seekToFirstAutoID(min)
+
 			if e.handleErr(col, &autoDatum, cnt, err) != nil {
 				return nil, err
 			}
@@ -732,7 +734,7 @@ func (e *InsertValues) lazyAdjustAutoIncrementDatum(ctx context.Context, rows []
 				offset := j + start
 				d := rows[offset][colIdx]
 
-				id := int64(uint64(min) + uint64(j) + 1)
+				id := min + int64(j)*increment
 				d.SetAutoID(id, col.Flag)
 				retryInfo.AddAutoIncrementID(id)
 
@@ -757,6 +759,14 @@ func (e *InsertValues) lazyAdjustAutoIncrementDatum(ctx context.Context, rows []
 		rows[i][colIdx] = autoDatum
 	}
 	return rows, nil
+}
+
+func (e *InsertValues) seekToFirstAutoID(base int64) (firstID, increment int64) {
+	increment = int64(e.ctx.GetSessionVars().AutoIncrementIncrement)
+	offset := int64(e.ctx.GetSessionVars().AutoIncrementOffset)
+	nr := (base + increment - offset) / increment
+	nr = nr*increment + offset
+	return nr, increment
 }
 
 func (e *InsertValues) adjustAutoIncrementDatum(ctx context.Context, d types.Datum, hasValue bool, c *table.Column) (types.Datum, error) {
@@ -871,7 +881,7 @@ func (e *InsertValues) adjustAutoRandomDatum(ctx context.Context, d types.Datum,
 func (e *InsertValues) allocAutoRandomID(fieldType *types.FieldType) (int64, error) {
 	alloc := e.Table.Allocator(e.ctx, autoid.AutoRandomType)
 	tableInfo := e.Table.Meta()
-	_, autoRandomID, err := alloc.Alloc(tableInfo.ID, 1)
+	_, autoRandomID, err := alloc.Alloc(tableInfo.ID, 1, 1, 1)
 	if err != nil {
 		return 0, err
 	}

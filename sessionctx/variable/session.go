@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"crypto/tls"
 	"fmt"
+	"math"
 	"sort"
 	"strconv"
 	"strings"
@@ -384,6 +385,10 @@ type SessionVars struct {
 
 	SQLMode mysql.SQLMode
 
+	AutoIncrementIncrement int
+
+	AutoIncrementOffset int
+
 	/* TiDB system variables */
 
 	// SkipUTF8Check check on input value.
@@ -580,6 +585,8 @@ func NewSessionVars() *SessionVars {
 		RetryInfo:                   &RetryInfo{},
 		ActiveRoles:                 make([]*auth.RoleIdentity, 0, 10),
 		StrictSQLMode:               true,
+		AutoIncrementIncrement:      DefAutoIncrementIncrement,
+		AutoIncrementOffset:         DefAutoIncrementOffset,
 		Status:                      mysql.ServerStatusAutocommit,
 		StmtCtx:                     new(stmtctx.StatementContext),
 		AllowAggPushDown:            false,
@@ -935,6 +942,27 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.SetStatusFlag(mysql.ServerStatusAutocommit, isAutocommit)
 		if isAutocommit {
 			s.SetStatusFlag(mysql.ServerStatusInTrans, false)
+		}
+	case AutoIncrementIncrement:
+		// AutoIncrementIncrement is valid in [1, 65535].
+		temp := tidbOptPositiveInt32(val, DefAutoIncrementIncrement)
+		if temp <= 0 {
+			s.AutoIncrementIncrement = 1
+		} else if temp > math.MaxUint16 {
+			s.AutoIncrementIncrement = math.MaxUint16
+		} else {
+			s.AutoIncrementIncrement = temp
+		}
+
+	case AutoIncrementOffset:
+		// AutoIncrementOffset is valid in [1, 65535].
+		temp := tidbOptPositiveInt32(val, DefAutoIncrementOffset)
+		if temp <= 0 {
+			s.AutoIncrementOffset = 1
+		} else if temp > math.MaxUint16 {
+			s.AutoIncrementOffset = math.MaxUint16
+		} else {
+			s.AutoIncrementOffset = temp
 		}
 	case MaxExecutionTime:
 		timeoutMS := tidbOptPositiveInt32(val, 0)
