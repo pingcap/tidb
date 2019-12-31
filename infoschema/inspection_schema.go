@@ -24,7 +24,9 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/sqlexec"
 )
 
 // The `inspection_schema` is used to provide a consistent view of `information_schema` tables,
@@ -60,8 +62,20 @@ func (it *inspectionSchemaTable) IterRecords(ctx sessionctx.Context, startKey kv
 	// Obtain data from cache first.
 	cached, found := sessionVars.InspectionTableCache[it.meta.Name.L]
 	if !found {
-		// We retrieve data from `information_schema` if can found in cache.
-		rows, err := it.getRows(ctx, cols)
+		// Retrieve data from `information_schema` if cannot found in cache.
+		sql := "select * from information_schema." + it.meta.Name.L
+		results, fieldTypes, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
+		var rows [][]types.Datum
+		if len(results) > 0 {
+			fields := make([]*types.FieldType, 0, len(fieldTypes))
+			for _, field := range fieldTypes {
+				fields = append(fields, &field.Column.FieldType)
+			}
+			rows = make([][]types.Datum, 0, len(results))
+			for _, result := range results {
+				rows = append(rows, result.GetDatumRow(fields))
+			}
+		}
 		cached = variable.TableSnapshot{
 			Rows: rows,
 			Err:  err,
