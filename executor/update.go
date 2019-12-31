@@ -43,7 +43,6 @@ type UpdateExec struct {
 
 	rows        [][]types.Datum // The rows fetched from TableExec.
 	newRowsData [][]types.Datum // The new values to be set.
-	fetched     bool
 	cursor      int
 	matched     uint64 // a counter of matched rows during update
 	// tblColPosInfos stores relationship between column ordinal to its table handle.
@@ -51,6 +50,7 @@ type UpdateExec struct {
 	tblColPosInfos            plannercore.TblColPosInfoSlice
 	evalBuffer                chunk.MutRow
 	allAssignmentsAreConstant bool
+	fetched bool
 	memTracker                *memory.Tracker
 }
 

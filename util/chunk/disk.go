@@ -66,9 +66,10 @@ type ListInDisk struct {
 	// offWrite is the current offset for writing.
 	offWrite int64
 
-	disk        *os.File
-	bufWriter   *bufio.Writer
-	diskTracker *disk.Tracker // track disk usage.
+	disk          *os.File
+	bufWriter     *bufio.Writer
+	diskTracker   *disk.Tracker // track disk usage.
+	numRowsInDisk int
 }
 
 var defaultChunkListInDiskLabel fmt.Stringer = stringutil.StringerStr("chunk.ListInDisk")
@@ -83,9 +84,32 @@ func NewListInDisk(fieldTypes []*types.FieldType) *ListInDisk {
 	return l
 }
 
+func (l *ListInDisk) initDiskFile() (err error) {
+	l.disk, err = ioutil.TempFile(tmpDir, l.diskTracker.Label().String())
+	if err != nil {
+		return
+	}
+	l.bufWriter = bufWriterPool.Get().(*bufio.Writer)
+	l.bufWriter.Reset(l.disk)
+	return
+}
+
+// Len returns the number of rows in ListInDisk
+func (l *ListInDisk) Len() int {
+	return l.numRowsInDisk
+}
+
 // GetDiskTracker returns the memory tracker of this List.
 func (l *ListInDisk) GetDiskTracker() *disk.Tracker {
 	return l.diskTracker
+}
+
+// flush empties the write buffer, please call flush before read!
+func (l *ListInDisk) flush() error {
+	if l.bufWriter.Buffered() != 0 {
+		return l.bufWriter.Flush()
+	}
+	return nil
 }
 
 // Add adds a chunk to the ListInDisk. Caller must make sure the input chk
@@ -95,12 +119,10 @@ func (l *ListInDisk) Add(chk *Chunk) (err error) {
 		return errors.New("chunk appended to List should have at least 1 row")
 	}
 	if l.disk == nil {
-		l.disk, err = ioutil.TempFile(tmpDir, l.diskTracker.Label().String())
+		err = l.initDiskFile()
 		if err != nil {
 			return
 		}
-		l.bufWriter = bufWriterPool.Get().(*bufio.Writer)
-		l.bufWriter.Reset(l.disk)
 	}
 	chk2 := chunkInDisk{Chunk: chk, offWrite: l.offWrite}
 	n, err := chk2.WriteTo(l.bufWriter)
@@ -109,15 +131,17 @@ func (l *ListInDisk) Add(chk *Chunk) (err error) {
 		return
 	}
 	l.offsets = append(l.offsets, chk2.getOffsetsOfRows())
-	err = l.bufWriter.Flush()
-	if err == nil {
-		l.diskTracker.Consume(n)
-	}
+	l.diskTracker.Consume(n)
+	l.numRowsInDisk += chk.NumRows()
 	return
 }
 
 // GetRow gets a Row from the ListInDisk by RowPtr.
 func (l *ListInDisk) GetRow(ptr RowPtr) (row Row, err error) {
+	err = l.flush()
+	if err != nil {
+		return
+	}
 	off := l.offsets[ptr.ChkIdx][ptr.RowIdx]
 	r := io.NewSectionReader(l.disk, off, l.offWrite-off)
 	bufReader := bufReaderPool.Get().(*bufio.Reader)

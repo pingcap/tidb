@@ -721,11 +721,7 @@ func (b *builtinLeastTimeSig) vecEvalString(input *chunk.Chunk, result *chunk.Co
 	dst.ResizeTime(n, false)
 	dstTimes := dst.Times()
 	for i := 0; i < n; i++ {
-		dstTimes[i] = types.Time{
-			Time: types.MaxDatetime,
-			Type: mysql.TypeDatetime,
-			Fsp:  types.DefaultFsp,
-		}
+		dstTimes[i] = types.NewTime(types.MaxDatetime, mysql.TypeDatetime, types.DefaultFsp)
 	}
 	var argTime types.Time
 
