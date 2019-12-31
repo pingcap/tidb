@@ -53,9 +53,7 @@ type HashJoinExec struct {
 	concurrency   uint
 	rowContainer  *hashRowContainer
 	buildFinished chan error
-	// joinWorkerWaitGroup is for sync multiple join workers.
-	joinWorkerWaitGroup sync.WaitGroup
-	finished            atomic.Value
+
 	// closeCh add a lock for closing executor.
 	closeCh      chan struct{}
 	joinType     plannercore.JoinType
@@ -72,11 +70,16 @@ type HashJoinExec struct {
 
 	memTracker  *memory.Tracker // track memory usage.
 	diskTracker *disk.Tracker   // track disk usage.
-	prepared    bool
-	isOuterJoin bool
 
 	outerMatchedStatus []*bitmap.ConcurrentBitmap
 	useOuterToBuild    bool
+
+	prepared    bool
+	isOuterJoin bool
+
+	// joinWorkerWaitGroup is for sync multiple join workers.
+	joinWorkerWaitGroup sync.WaitGroup
+	finished            atomic.Value
 }
 
 // probeChkResource stores the result of the join probe side fetch worker,
@@ -725,7 +728,6 @@ type NestedLoopApplyExec struct {
 	outerExec   Executor
 	innerFilter expression.CNFExprs
 	outerFilter expression.CNFExprs
-	outer       bool
 
 	joiner joiner
 
@@ -741,6 +743,8 @@ type NestedLoopApplyExec struct {
 	outerRow         *chunk.Row
 	hasMatch         bool
 	hasNull          bool
+
+	outer bool
 
 	memTracker *memory.Tracker // track memory usage.
 }

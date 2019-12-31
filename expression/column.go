@@ -120,7 +120,7 @@ func (col *CorrelatedColumn) EvalDecimal(ctx sessionctx.Context, row chunk.Row) 
 // EvalTime returns DATE/DATETIME/TIMESTAMP representation of CorrelatedColumn.
 func (col *CorrelatedColumn) EvalTime(ctx sessionctx.Context, row chunk.Row) (types.Time, bool, error) {
 	if col.Data.IsNull() {
-		return types.Time{}, true, nil
+		return types.ZeroTime, true, nil
 	}
 	return col.Data.GetMysqlTime(), false, nil
 }
@@ -391,7 +391,7 @@ func (col *Column) EvalDecimal(ctx sessionctx.Context, row chunk.Row) (*types.My
 // EvalTime returns DATE/DATETIME/TIMESTAMP representation of Column.
 func (col *Column) EvalTime(ctx sessionctx.Context, row chunk.Row) (types.Time, bool, error) {
 	if row.IsNull(col.Index) {
-		return types.Time{}, true, nil
+		return types.ZeroTime, true, nil
 	}
 	return row.GetTime(col.Index), false, nil
 }

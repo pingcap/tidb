@@ -535,8 +535,8 @@ type hashJoinTestCase struct {
 	concurrency     int
 	ctx             sessionctx.Context
 	keyIdx          []int
-	disk            bool
 	joinType        core.JoinType
+	disk            bool
 	useOuterToBuild bool
 }
 

@@ -50,11 +50,7 @@ func (h *SessionHandle) appendBindRecord(hash string, meta *BindRecord) {
 // AddBindRecord new a BindRecord with BindMeta, add it to the cache.
 func (h *SessionHandle) AddBindRecord(sctx sessionctx.Context, is infoschema.InfoSchema, record *BindRecord) error {
 	for i := range record.Bindings {
-		record.Bindings[i].CreateTime = types.Time{
-			Time: types.FromGoTime(time.Now()),
-			Type: mysql.TypeDatetime,
-			Fsp:  3,
-		}
+		record.Bindings[i].CreateTime = types.NewTime(types.FromGoTime(time.Now()), mysql.TypeTimestamp, 3)
 		record.Bindings[i].UpdateTime = record.Bindings[i].CreateTime
 	}
 

@@ -2643,14 +2643,22 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 
 	var result LogicalPlan = ds
 
-	// If this SQL is executed in a non-readonly transaction, we need a
-	// "UnionScan" operator to read the modifications of former SQLs, which is
-	// buffered in tidb-server memory.
-	txn, err := b.ctx.Txn(false)
-	if err != nil {
-		return nil, err
+	needUS := false
+	if pi := tableInfo.GetPartitionInfo(); pi == nil {
+		if b.ctx.HasDirtyContent(tableInfo.ID) {
+			needUS = true
+		}
+	} else {
+		// Currently, we'll add a UnionScan on every partition even though only one partition's data is changed.
+		// This is limited by current implementation of Partition Prune. It'll updated once we modify that part.
+		for _, partition := range pi.Definitions {
+			if b.ctx.HasDirtyContent(partition.ID) {
+				needUS = true
+				break
+			}
+		}
 	}
-	if txn.Valid() && !txn.IsReadOnly() {
+	if needUS {
 		us := LogicalUnionScan{handleCol: handleCol}.Init(b.ctx, b.getSelectOffset())
 		us.SetChildren(ds)
 		result = us
@@ -3161,7 +3169,7 @@ func (b *PlanBuilder) buildUpdateLists(
 			columnFullName := fmt.Sprintf("%s.%s.%s", tn.Schema.L, tn.Name.L, colInfo.Name.L)
 			isDefault, ok := modifyColumns[columnFullName]
 			if ok && colInfo.Hidden {
-				return nil, nil, false, ErrUnknownColumn.GenWithStackByArgs(colInfo.Name, "field_list")
+				return nil, nil, false, ErrUnknownColumn.GenWithStackByArgs(colInfo.Name, clauseMsg[fieldList])
 			}
 			// Note: For INSERT, REPLACE, and UPDATE, if a generated column is inserted into, replaced, or updated explicitly, the only permitted value is DEFAULT.
 			// see https://dev.mysql.com/doc/refman/8.0/en/create-table-generated-columns.html
