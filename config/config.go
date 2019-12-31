@@ -104,6 +104,8 @@ type Config struct {
 	// RepairMode indicates that the TiDB is in the repair mode for table meta.
 	RepairMode      bool     `toml:"repair-mode" json:"repair-mode"`
 	RepairTableList []string `toml:"repair-table-list" json:"repair-table-list"`
+
+	Experimental Experimental `toml:"experimental" json:"experimental"`
 }
 
 // nullableBool defaults unset bool options to unset instead of false, which enables us to know if the user has set 2
@@ -189,6 +191,7 @@ type Log struct {
 	SlowThreshold       uint64 `toml:"slow-threshold" json:"slow-threshold"`
 	ExpensiveThreshold  uint   `toml:"expensive-threshold" json:"expensive-threshold"`
 	QueryLogMaxLen      uint64 `toml:"query-log-max-len" json:"query-log-max-len"`
+	EnableSlowLog       uint32 `toml:"enable-slow-log" json:"enable-slow-log"`
 	RecordPlanInSlowLog uint32 `toml:"record-plan-in-slow-log" json:"record-plan-in-slow-log"`
 }
 
@@ -428,6 +431,13 @@ type StmtSummary struct {
 	HistorySize int `toml:"history-size" json:"history-size"`
 }
 
+// Experimental controls the features that are still experimental: their semantics, interfaces are subject to change.
+// Using these features in the production environment is not recommended.
+type Experimental struct {
+	// Whether enable the syntax like `auto_random(3)` on the primary key column.
+	AllowAutoRandom bool `toml:"allow-auto-random" json:"allow-auto-random"`
+}
+
 var defaultConf = Config{
 	Host:                         "0.0.0.0",
 	AdvertiseAddress:             "",
@@ -471,6 +481,7 @@ var defaultConf = Config{
 		DisableTimestamp:    nbUnset, // If both options are nbUnset, getDisableTimestamp() returns false
 		QueryLogMaxLen:      logutil.DefaultQueryLogMaxLen,
 		RecordPlanInSlowLog: logutil.DefaultRecordPlanInSlowLog,
+		EnableSlowLog:       logutil.DefaultTiDBEnableSlowLog,
 	},
 	Status: Status{
 		ReportStatus:    true,
@@ -536,10 +547,13 @@ var defaultConf = Config{
 	},
 	StmtSummary: StmtSummary{
 		Enable:          false,
-		MaxStmtCount:    100,
+		MaxStmtCount:    200,
 		MaxSQLLength:    4096,
 		RefreshInterval: 1800,
 		HistorySize:     24,
+	},
+	Experimental: Experimental{
+		AllowAutoRandom: false,
 	},
 }
 
@@ -732,6 +746,13 @@ func (c *Config) Valid() error {
 	}
 	if c.StmtSummary.RefreshInterval <= 0 {
 		return fmt.Errorf("refresh-interval in [stmt-summary] should be greater than 0")
+	}
+
+	if c.AlterPrimaryKey && c.Experimental.AllowAutoRandom {
+		return fmt.Errorf("allow-auto-random is unavailable when alter-primary-key is enabled")
+	}
+	if c.PreparedPlanCache.Capacity < 1 {
+		return fmt.Errorf("capacity in [prepared-plan-cache] should be at least 1")
 	}
 	return nil
 }

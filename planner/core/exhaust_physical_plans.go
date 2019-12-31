@@ -594,7 +594,17 @@ func (p *LogicalJoin) buildIndexJoinInner2IndexScan(
 	}
 	joins = make([]PhysicalPlan, 0, 3)
 	rangeInfo := helper.buildRangeDecidedByInformation(helper.chosenPath.IdxCols, outerJoinKeys)
-	innerTask := p.constructInnerIndexScanTask(ds, helper.chosenPath, helper.chosenRemained, outerJoinKeys, us, rangeInfo, false, false, avgInnerRowCnt)
+	maxOneRow := false
+	if helper.chosenPath.Index.Unique && helper.maxUsedCols == len(helper.chosenPath.FullIdxCols) {
+		l := len(helper.chosenAccess)
+		if l == 0 {
+			maxOneRow = true
+		} else {
+			sf, ok := helper.chosenAccess[l-1].(*expression.ScalarFunction)
+			maxOneRow = ok && (sf.FuncName.L == ast.EQ)
+		}
+	}
+	innerTask := p.constructInnerIndexScanTask(ds, helper.chosenPath, helper.chosenRemained, outerJoinKeys, us, rangeInfo, false, false, avgInnerRowCnt, maxOneRow)
 
 	joins = append(joins, p.constructIndexJoin(prop, outerIdx, innerTask, helper.chosenRanges, keyOff2IdxOff, helper.chosenPath, helper.lastColManager)...)
 	// The index merge join's inner plan is different from index join, so we
@@ -602,7 +612,7 @@ func (p *LogicalJoin) buildIndexJoinInner2IndexScan(
 	// Because we can't keep order for union scan, if there is a union scan in inner task,
 	// we can't construct index merge join.
 	if us == nil {
-		innerTask2 := p.constructInnerIndexScanTask(ds, helper.chosenPath, helper.chosenRemained, outerJoinKeys, us, rangeInfo, true, !prop.IsEmpty() && prop.Items[0].Desc, avgInnerRowCnt)
+		innerTask2 := p.constructInnerIndexScanTask(ds, helper.chosenPath, helper.chosenRemained, outerJoinKeys, us, rangeInfo, true, !prop.IsEmpty() && prop.Items[0].Desc, avgInnerRowCnt, maxOneRow)
 		joins = append(joins, p.constructIndexMergeJoin(prop, outerIdx, innerTask2, helper.chosenRanges, keyOff2IdxOff, helper.chosenPath, helper.lastColManager)...)
 	}
 	// We can reuse the `innerTask` here since index nested loop hash join
@@ -700,7 +710,7 @@ func (p *LogicalJoin) constructInnerTableScanTask(
 		StatsVersion: ds.stats.StatsVersion,
 		// Cardinality would not be used in cost computation of IndexJoin, set leave it as default nil.
 	}
-	rowSize := ds.TblColHists.GetTableAvgRowSize(ds.TblCols, ts.StoreType, true)
+	rowSize := ds.TblColHists.GetTableAvgRowSize(p.ctx, ds.TblCols, ts.StoreType, true)
 	sessVars := ds.ctx.GetSessionVars()
 	copTask := &copTask{
 		tablePlan:         ts,
@@ -742,6 +752,7 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 	keepOrder bool,
 	desc bool,
 	rowCount float64,
+	maxOneRow bool,
 ) task {
 	is := PhysicalIndexScan{
 		Table:            ds.tableInfo,
@@ -793,7 +804,6 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 	if rowCount <= 0 {
 		rowCount = ds.tableStats.RowCount
 	}
-	maxOneRow := path.Index.Unique && len(outerJoinKeys) == len(path.FullIdxCols)
 	if maxOneRow {
 		// Theoretically, this line is unnecessary because row count estimation of join should guarantee rowCount is not larger
 		// than 1.0; however, there may be rowCount larger than 1.0 in reality, e.g, pseudo statistics cases, which does not reflect
@@ -1280,31 +1290,24 @@ func (p *LogicalJoin) tryToGetIndexJoin(prop *property.PhysicalProperty) (indexJ
 		for _, j := range allLeftOuterJoins {
 			switch j.(type) {
 			case *PhysicalIndexJoin:
-				if hasINLJHint {
+				if inljLeftOuter {
 					forcedLeftOuterJoins = append(forcedLeftOuterJoins, j)
 				}
 			case *PhysicalIndexHashJoin:
-				if hasINLHJHint {
+				if inlhjLeftOuter {
 					forcedLeftOuterJoins = append(forcedLeftOuterJoins, j)
 				}
 			case *PhysicalIndexMergeJoin:
-				if hasINLMJHint {
+				if inlmjLeftOuter {
 					forcedLeftOuterJoins = append(forcedLeftOuterJoins, j)
 				}
 			}
 		}
 		switch {
-		case p.JoinType == InnerJoin && p.Children()[0].statsInfo().Count() < p.Children()[1].statsInfo().Count():
-			if len(forcedLeftOuterJoins) != 0 {
-				return forcedLeftOuterJoins, forceLeftOuter
-			}
-			if len(allLeftOuterJoins) != 0 {
-				return allLeftOuterJoins, forceLeftOuter
-			}
 		case len(forcedLeftOuterJoins) == 0 && !supportRightOuter:
 			return allLeftOuterJoins, false
-		case len(forcedLeftOuterJoins) != 0 && (!supportRightOuter || forceLeftOuter && !forceRightOuter):
-			return forcedLeftOuterJoins, forceLeftOuter
+		case len(forcedLeftOuterJoins) != 0 && (!supportRightOuter || (forceLeftOuter && !forceRightOuter)):
+			return forcedLeftOuterJoins, true
 		}
 	}
 	if supportRightOuter {
@@ -1313,31 +1316,24 @@ func (p *LogicalJoin) tryToGetIndexJoin(prop *property.PhysicalProperty) (indexJ
 		for _, j := range allRightOuterJoins {
 			switch j.(type) {
 			case *PhysicalIndexJoin:
-				if hasINLJHint {
+				if inljRightOuter {
 					forcedRightOuterJoins = append(forcedRightOuterJoins, j)
 				}
 			case *PhysicalIndexHashJoin:
-				if hasINLHJHint {
+				if inlhjRightOuter {
 					forcedRightOuterJoins = append(forcedRightOuterJoins, j)
 				}
 			case *PhysicalIndexMergeJoin:
-				if hasINLMJHint {
+				if inlmjRightOuter {
 					forcedRightOuterJoins = append(forcedRightOuterJoins, j)
 				}
 			}
 		}
 		switch {
-		case p.JoinType == InnerJoin && p.Children()[0].statsInfo().Count() > p.Children()[1].statsInfo().Count():
-			if len(forcedRightOuterJoins) != 0 {
-				return forcedRightOuterJoins, forceRightOuter
-			}
-			if len(allRightOuterJoins) != 0 {
-				return allRightOuterJoins, forceRightOuter
-			}
 		case len(forcedRightOuterJoins) == 0 && !supportLeftOuter:
 			return allRightOuterJoins, false
-		case len(forcedRightOuterJoins) != 0 && (!supportLeftOuter || forceRightOuter && !forceLeftOuter):
-			return forcedRightOuterJoins, forceRightOuter
+		case len(forcedRightOuterJoins) != 0 && (!supportLeftOuter || (forceRightOuter && !forceLeftOuter)):
+			return forcedRightOuterJoins, true
 		}
 	}
 
@@ -1345,9 +1341,9 @@ func (p *LogicalJoin) tryToGetIndexJoin(prop *property.PhysicalProperty) (indexJ
 	canForceRight := len(forcedRightOuterJoins) != 0 && forceRightOuter
 	forced = canForceLeft || canForceRight
 	if forced {
-		return append(forcedLeftOuterJoins, forcedRightOuterJoins...), forced
+		return append(forcedLeftOuterJoins, forcedRightOuterJoins...), true
 	}
-	return append(allLeftOuterJoins, allRightOuterJoins...), forced
+	return append(allLeftOuterJoins, allRightOuterJoins...), false
 }
 
 // LogicalJoin can generates hash join, index join and sort merge join.

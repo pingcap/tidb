@@ -30,9 +30,9 @@ import (
 )
 
 var (
-	errInvalidKey       = terror.ClassXEval.New(codeInvalidKey, "invalid key")
-	errInvalidRecordKey = terror.ClassXEval.New(codeInvalidRecordKey, "invalid record key")
-	errInvalidIndexKey  = terror.ClassXEval.New(codeInvalidIndexKey, "invalid index key")
+	errInvalidKey       = terror.ClassXEval.New(mysql.ErrInvalidKey, mysql.MySQLErrName[mysql.ErrInvalidKey])
+	errInvalidRecordKey = terror.ClassXEval.New(mysql.ErrInvalidRecordKey, mysql.MySQLErrName[mysql.ErrInvalidRecordKey])
+	errInvalidIndexKey  = terror.ClassXEval.New(mysql.ErrInvalidIndexKey, mysql.MySQLErrName[mysql.ErrInvalidIndexKey])
 )
 
 var (
@@ -678,11 +678,16 @@ func GenTableIndexPrefix(tableID int64) kv.Key {
 	return appendTableIndexPrefix(buf, tableID)
 }
 
+// IsIndexKey is used to check whether the key is an index key.
+func IsIndexKey(k []byte) bool {
+	return len(k) > 11 && k[0] == 't' && k[10] == 'i'
+}
+
 // IsUntouchedIndexKValue uses to check whether the key is index key, and the value is untouched,
 // since the untouched index key/value is no need to commit.
 func IsUntouchedIndexKValue(k, v []byte) bool {
 	vLen := len(v)
-	return (len(k) > 11 && k[0] == 't' && k[10] == 'i') &&
+	return IsIndexKey(k) &&
 		((vLen == 1 || vLen == 9) && v[vLen-1] == kv.UnCommitIndexKVFlag)
 }
 
@@ -716,9 +721,11 @@ func GetTableIndexKeyRange(tableID, indexID int64) (startKey, endKey []byte) {
 	return
 }
 
-const (
-	codeInvalidRecordKey   = 4
-	codeInvalidColumnCount = 5
-	codeInvalidKey         = 6
-	codeInvalidIndexKey    = 7
-)
+func init() {
+	mySQLErrCodes := map[terror.ErrCode]uint16{
+		mysql.ErrInvalidKey:       mysql.ErrInvalidKey,
+		mysql.ErrInvalidRecordKey: mysql.ErrInvalidRecordKey,
+		mysql.ErrInvalidIndexKey:  mysql.ErrInvalidIndexKey,
+	}
+	terror.ErrClassToMySQLCodes[terror.ClassXEval] = mySQLErrCodes
+}
