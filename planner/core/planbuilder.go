@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/planner/property"
+	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -41,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
+	util2 "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/ranger"
@@ -67,8 +69,10 @@ type tableHintInfo struct {
 	sortMergeJoinTables []hintTableInfo
 	hashJoinTables      []hintTableInfo
 	indexHintList       []indexHintInfo
-	flashTables         []hintTableInfo
+	tiflashTables       []hintTableInfo
+	tikvTables          []hintTableInfo
 	aggHints            aggHintInfo
+	indexMergeHintList  []indexHintInfo
 }
 
 type hintTableInfo struct {
@@ -126,7 +130,11 @@ func (info *tableHintInfo) ifPreferINLMJ(tableNames ...*hintTableInfo) bool {
 }
 
 func (info *tableHintInfo) ifPreferTiFlash(tableNames ...*hintTableInfo) bool {
-	return info.matchTableName(tableNames, info.flashTables)
+	return info.matchTableName(tableNames, info.tiflashTables)
+}
+
+func (info *tableHintInfo) ifPreferTiKV(tableNames ...*hintTableInfo) bool {
+	return info.matchTableName(tableNames, info.tikvTables)
 }
 
 // matchTableName checks whether the hint hit the need.
@@ -387,6 +395,8 @@ func (b *PlanBuilder) Build(ctx context.Context, node ast.Node) (Plan, error) {
 		return b.buildLoadData(ctx, x)
 	case *ast.LoadStatsStmt:
 		return b.buildLoadStats(x), nil
+	case *ast.IndexAdviseStmt:
+		return b.buildIndexAdvise(x), nil
 	case *ast.PrepareStmt:
 		return b.buildPrepare(x), nil
 	case *ast.SelectStmt:
@@ -514,6 +524,7 @@ func (b *PlanBuilder) buildDropBindPlan(v *ast.DropBindingStmt) (Plan, error) {
 		SQLBindOp:    OpSQLBindDrop,
 		NormdOrigSQL: parser.Normalize(v.OriginSel.Text()),
 		IsGlobal:     v.GlobalScope,
+		Db:           getDefaultDB(b.ctx, v.OriginSel),
 	}
 	if v.HintedSel != nil {
 		p.BindSQL = v.HintedSel.Text()
@@ -530,11 +541,40 @@ func (b *PlanBuilder) buildCreateBindPlan(v *ast.CreateBindingStmt) (Plan, error
 		BindSQL:      v.HintedSel.Text(),
 		IsGlobal:     v.GlobalScope,
 		BindStmt:     v.HintedSel,
+		Db:           getDefaultDB(b.ctx, v.OriginSel),
 		Charset:      charSet,
 		Collation:    collation,
 	}
 	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "", nil)
 	return p, nil
+}
+
+func getDefaultDB(ctx sessionctx.Context, sel ast.StmtNode) string {
+	implicitDB := &implicitDatabase{}
+	sel.Accept(implicitDB)
+	if implicitDB.hasImplicit {
+		return ctx.GetSessionVars().CurrentDB
+	}
+	return ""
+}
+
+type implicitDatabase struct {
+	hasImplicit bool
+}
+
+func (i *implicitDatabase) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
+	switch x := in.(type) {
+	case *ast.TableName:
+		if x.Schema.L == "" {
+			i.hasImplicit = true
+		}
+		return in, true
+	}
+	return in, false
+}
+
+func (i *implicitDatabase) Leave(in ast.Node) (out ast.Node, ok bool) {
+	return in, true
 }
 
 // detectSelectAgg detects an aggregate function or GROUP BY clause.
@@ -578,14 +618,14 @@ func (b *PlanBuilder) detectSelectWindow(sel *ast.SelectStmt) bool {
 	return false
 }
 
-func getPathByIndexName(paths []*accessPath, idxName model.CIStr, tblInfo *model.TableInfo) *accessPath {
-	var tablePath *accessPath
+func getPathByIndexName(paths []*util.AccessPath, idxName model.CIStr, tblInfo *model.TableInfo) *util.AccessPath {
+	var tablePath *util.AccessPath
 	for _, path := range paths {
-		if path.isTablePath {
+		if path.IsTablePath {
 			tablePath = path
 			continue
 		}
-		if path.index.Name.L == idxName.L {
+		if path.Index.Name.L == idxName.L {
 			return path
 		}
 	}
@@ -599,21 +639,26 @@ func isPrimaryIndex(indexName model.CIStr) bool {
 	return indexName.L == "primary"
 }
 
-func (b *PlanBuilder) getPossibleAccessPaths(indexHints []*ast.IndexHint, tblInfo *model.TableInfo, dbName, tblName model.CIStr) ([]*accessPath, error) {
-	publicPaths := make([]*accessPath, 0, len(tblInfo.Indices)+2)
-	publicPaths = append(publicPaths, &accessPath{isTablePath: true, storeType: kv.TiKV})
+func (b *PlanBuilder) getPossibleAccessPaths(indexHints []*ast.IndexHint, tbl table.Table, dbName, tblName model.CIStr) ([]*util.AccessPath, error) {
+	tblInfo := tbl.Meta()
+	publicPaths := make([]*util.AccessPath, 0, len(tblInfo.Indices)+2)
+	tp := kv.TiKV
+	if tbl.Type().IsClusterTable() {
+		tp = kv.TiDB
+	}
+	publicPaths = append(publicPaths, &util.AccessPath{IsTablePath: true, StoreType: tp})
 	if tblInfo.TiFlashReplica != nil && tblInfo.TiFlashReplica.Available {
-		publicPaths = append(publicPaths, &accessPath{isTablePath: true, storeType: kv.TiFlash})
+		publicPaths = append(publicPaths, &util.AccessPath{IsTablePath: true, StoreType: kv.TiFlash})
 	}
 	for _, index := range tblInfo.Indices {
 		if index.State == model.StatePublic {
-			publicPaths = append(publicPaths, &accessPath{index: index})
+			publicPaths = append(publicPaths, &util.AccessPath{Index: index})
 		}
 	}
 
 	hasScanHint, hasUseOrForce := false, false
-	available := make([]*accessPath, 0, len(publicPaths))
-	ignored := make([]*accessPath, 0, len(publicPaths))
+	available := make([]*util.AccessPath, 0, len(publicPaths))
+	ignored := make([]*util.AccessPath, 0, len(publicPaths))
 
 	// Extract comment-style index hint like /*+ INDEX(t, idx1, idx2) */.
 	indexHintsLen := len(indexHints)
@@ -638,7 +683,7 @@ func (b *PlanBuilder) getPossibleAccessPaths(indexHints []*ast.IndexHint, tblInf
 		if hint.IndexNames == nil && hint.HintType != ast.HintIgnore {
 			if path := getTablePath(publicPaths); path != nil {
 				hasUseOrForce = true
-				path.forced = true
+				path.Forced = true
 				available = append(available, path)
 			}
 		}
@@ -661,7 +706,7 @@ func (b *PlanBuilder) getPossibleAccessPaths(indexHints []*ast.IndexHint, tblInf
 			// Currently we don't distinguish between "FORCE" and "USE" because
 			// our cost estimation is not reliable.
 			hasUseOrForce = true
-			path.forced = true
+			path.Forced = true
 			available = append(available, path)
 		}
 	}
@@ -675,25 +720,25 @@ func (b *PlanBuilder) getPossibleAccessPaths(indexHints []*ast.IndexHint, tblInf
 	// If we have got "FORCE" or "USE" index hint but got no available index,
 	// we have to use table scan.
 	if len(available) == 0 {
-		available = append(available, &accessPath{isTablePath: true})
+		available = append(available, &util.AccessPath{IsTablePath: true})
 	}
 	return available, nil
 }
 
-func (b *PlanBuilder) filterPathByIsolationRead(paths []*accessPath) ([]*accessPath, error) {
+func (b *PlanBuilder) filterPathByIsolationRead(paths []*util.AccessPath) ([]*util.AccessPath, error) {
 	// TODO: filter paths with isolation read locations.
 	isolationReadEngines := b.ctx.GetSessionVars().GetIsolationReadEngines()
 	availableEngine := map[kv.StoreType]struct{}{}
 	var availableEngineStr string
 	for i := len(paths) - 1; i >= 0; i-- {
-		if _, ok := availableEngine[paths[i].storeType]; !ok {
-			availableEngine[paths[i].storeType] = struct{}{}
+		if _, ok := availableEngine[paths[i].StoreType]; !ok {
+			availableEngine[paths[i].StoreType] = struct{}{}
 			if availableEngineStr != "" {
 				availableEngineStr += ", "
 			}
-			availableEngineStr += paths[i].storeType.Name()
+			availableEngineStr += paths[i].StoreType.Name()
 		}
-		if _, ok := isolationReadEngines[paths[i].storeType]; !ok {
+		if _, ok := isolationReadEngines[paths[i].StoreType]; !ok {
 			paths = append(paths[:i], paths[i+1:]...)
 		}
 	}
@@ -706,13 +751,13 @@ func (b *PlanBuilder) filterPathByIsolationRead(paths []*accessPath) ([]*accessP
 	return paths, err
 }
 
-func removeIgnoredPaths(paths, ignoredPaths []*accessPath, tblInfo *model.TableInfo) []*accessPath {
+func removeIgnoredPaths(paths, ignoredPaths []*util.AccessPath, tblInfo *model.TableInfo) []*util.AccessPath {
 	if len(ignoredPaths) == 0 {
 		return paths
 	}
-	remainedPaths := make([]*accessPath, 0, len(paths))
+	remainedPaths := make([]*util.AccessPath, 0, len(paths))
 	for _, path := range paths {
-		if path.isTablePath || getPathByIndexName(ignoredPaths, path.index.Name, tblInfo) == nil {
+		if path.IsTablePath || getPathByIndexName(ignoredPaths, path.Index.Name, tblInfo) == nil {
 			remainedPaths = append(remainedPaths, path)
 		}
 	}
@@ -853,6 +898,12 @@ func (b *PlanBuilder) buildAdmin(ctx context.Context, as *ast.AdminStmt) (Plan, 
 		return &AdminPlugins{Action: Enable, Plugins: as.Plugins}, nil
 	case ast.AdminPluginDisable:
 		return &AdminPlugins{Action: Disable, Plugins: as.Plugins}, nil
+	case ast.AdminFlushBindings:
+		return &SQLBindPlan{SQLBindOp: OpFlushBindings}, nil
+	case ast.AdminCaptureBindings:
+		return &SQLBindPlan{SQLBindOp: OpCaptureBindings}, nil
+	case ast.AdminEvolveBindings:
+		return &SQLBindPlan{SQLBindOp: OpEvolveBindings}, nil
 	default:
 		return nil, ErrUnsupportedType.GenWithStack("Unsupported ast.AdminStmt(%T) for buildAdmin", as)
 	}
@@ -1464,7 +1515,7 @@ func buildColumnWithName(tableName, name string, tp byte, size int) (*expression
 	}
 	return &expression.Column{
 		RetType: fieldType,
-	}, &types.FieldName{DBName: model.NewCIStr(infoschema.Name), TblName: model.NewCIStr(tableName), ColName: model.NewCIStr(name)}
+	}, &types.FieldName{DBName: util2.InformationSchemaName, TblName: model.NewCIStr(tableName), ColName: model.NewCIStr(name)}
 }
 
 type columnsWithNames struct {
@@ -1517,11 +1568,12 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (Plan, 
 			Column:      show.Column,
 			IndexName:   show.IndexName,
 			Flag:        show.Flag,
-			Full:        show.Full,
 			User:        show.User,
 			Roles:       show.Roles,
+			Full:        show.Full,
 			IfNotExists: show.IfNotExists,
 			GlobalScope: show.GlobalScope,
+			Extended:    show.Extended,
 		},
 	}.Init(b.ctx)
 	isView := false
@@ -1595,14 +1647,20 @@ func (b *PlanBuilder) buildSimple(node ast.StmtNode) (Plan, error) {
 		err := ErrSpecificAccessDenied.GenWithStackByArgs("CREATE USER")
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreateUserPriv, "", "", "", err)
 	case *ast.GrantStmt:
+		if b.ctx.GetSessionVars().CurrentDB == "" && raw.Level.DBName == "" {
+			if raw.Level.Level == ast.GrantLevelTable {
+				return nil, ErrNoDB
+			}
+		}
 		b.visitInfo = collectVisitInfoFromGrantStmt(b.ctx, b.visitInfo, raw)
 	case *ast.GrantRoleStmt:
-		err := ErrSpecificAccessDenied.GenWithStackByArgs("GRANT ROLE")
-		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.GrantPriv, "", "", "", err)
+		err := ErrSpecificAccessDenied.GenWithStackByArgs("SUPER")
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "", err)
 	case *ast.RevokeStmt:
 		b.visitInfo = collectVisitInfoFromRevokeStmt(b.ctx, b.visitInfo, raw)
 	case *ast.RevokeRoleStmt:
-		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "", nil)
+		err := ErrSpecificAccessDenied.GenWithStackByArgs("SUPER")
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "", err)
 	case *ast.KillStmt:
 		// If you have the SUPER privilege, you can kill all threads and statements.
 		// Otherwise, you can kill only your own threads and statements.
@@ -1824,26 +1882,12 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 
 	mockTablePlan.SetSchema(insertPlan.Schema4OnDuplicate)
 	mockTablePlan.names = insertPlan.names4OnDuplicate
-	columnByName := make(map[string]*table.Column, len(insertPlan.Table.Cols()))
-	for _, col := range insertPlan.Table.Cols() {
-		columnByName[col.Name.L] = col
-	}
-	onDupColSet, dupCols, dupColNames, err := insertPlan.validateOnDup(insert.OnDuplicate, columnByName, tableInfo)
+
+	onDupColSet, err := insertPlan.resolveOnDuplicate(insert.OnDuplicate, tableInfo, func(node ast.ExprNode) (expression.Expression, error) {
+		return b.rewriteInsertOnDuplicateUpdate(ctx, node, mockTablePlan, insertPlan)
+	})
 	if err != nil {
 		return nil, err
-	}
-	for i, assign := range insert.OnDuplicate {
-		// Construct the function which calculates the assign value of the column.
-		expr, err1 := b.rewriteInsertOnDuplicateUpdate(ctx, assign.Expr, mockTablePlan, insertPlan)
-		if err1 != nil {
-			return nil, err1
-		}
-
-		insertPlan.OnDuplicate = append(insertPlan.OnDuplicate, &expression.Assignment{
-			Col:     dupCols[i],
-			ColName: dupColNames[i].ColName,
-			Expr:    expr,
-		})
 	}
 
 	// Calculate generated columns.
@@ -1858,29 +1902,53 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 	return insertPlan, err
 }
 
-func (p *Insert) validateOnDup(onDup []*ast.Assignment, colMap map[string]*table.Column, tblInfo *model.TableInfo) (map[string]struct{}, []*expression.Column, types.NameSlice, error) {
+func (p *Insert) resolveOnDuplicate(onDup []*ast.Assignment, tblInfo *model.TableInfo, yield func(ast.ExprNode) (expression.Expression, error)) (map[string]struct{}, error) {
 	onDupColSet := make(map[string]struct{}, len(onDup))
-	dupCols := make([]*expression.Column, 0, len(onDup))
-	dupColNames := make(types.NameSlice, 0, len(onDup))
+	colMap := make(map[string]*table.Column, len(p.Table.Cols()))
+	for _, col := range p.Table.Cols() {
+		colMap[col.Name.L] = col
+	}
 	for _, assign := range onDup {
 		// Check whether the column to be updated exists in the source table.
 		idx, err := expression.FindFieldName(p.tableColNames, assign.Column)
 		if err != nil {
-			return nil, nil, nil, err
+			return nil, err
 		} else if idx < 0 {
-			return nil, nil, nil, ErrUnknownColumn.GenWithStackByArgs(assign.Column.OrigColName(), "field list")
+			return nil, ErrUnknownColumn.GenWithStackByArgs(assign.Column.OrigColName(), "field list")
 		}
 
-		// Check whether the column to be updated is the generated column.
 		column := colMap[assign.Column.Name.L]
-		if column.IsGenerated() {
-			return nil, nil, nil, ErrBadGeneratedColumn.GenWithStackByArgs(assign.Column.Name.O, tblInfo.Name.O)
+		if column.Hidden {
+			return nil, ErrUnknownColumn.GenWithStackByArgs(column.Name, clauseMsg[fieldList])
 		}
+		// Check whether the column to be updated is the generated column.
+		defaultExpr := extractDefaultExpr(assign.Expr)
+		if defaultExpr != nil {
+			defaultExpr.Name = assign.Column
+		}
+		// Note: For INSERT, REPLACE, and UPDATE, if a generated column is inserted into, replaced, or updated explicitly, the only permitted value is DEFAULT.
+		// see https://dev.mysql.com/doc/refman/8.0/en/create-table-generated-columns.html
+		if column.IsGenerated() {
+			if defaultExpr != nil {
+				continue
+			}
+			return nil, ErrBadGeneratedColumn.GenWithStackByArgs(assign.Column.Name.O, tblInfo.Name.O)
+		}
+
 		onDupColSet[column.Name.L] = struct{}{}
-		dupCols = append(dupCols, p.tableSchema.Columns[idx])
-		dupColNames = append(dupColNames, p.tableColNames[idx])
+
+		expr, err := yield(assign.Expr)
+		if err != nil {
+			return nil, err
+		}
+
+		p.OnDuplicate = append(p.OnDuplicate, &expression.Assignment{
+			Col:     p.tableSchema.Columns[idx],
+			ColName: p.tableColNames[idx].ColName,
+			Expr:    expr,
+		})
 	}
-	return onDupColSet, dupCols, dupColNames, nil
+	return onDupColSet, nil
 }
 
 func (b *PlanBuilder) getAffectCols(insertStmt *ast.InsertStmt, insertPlan *Insert) (affectedValuesCols []*table.Column, err error) {
@@ -1892,16 +1960,16 @@ func (b *PlanBuilder) getAffectCols(insertStmt *ast.InsertStmt, insertPlan *Inse
 		for _, col := range insertStmt.Columns {
 			colName = append(colName, col.Name.O)
 		}
-		affectedValuesCols, err = table.FindCols(insertPlan.Table.Cols(), colName, insertPlan.Table.Meta().PKIsHandle)
-		if err != nil {
-			return nil, err
+		var missingColName string
+		affectedValuesCols, missingColName = table.FindCols(insertPlan.Table.VisibleCols(), colName, insertPlan.Table.Meta().PKIsHandle)
+		if missingColName != "" {
+			return nil, ErrUnknownColumn.GenWithStackByArgs(missingColName, clauseMsg[fieldList])
 		}
-
 	} else if len(insertStmt.Setlist) == 0 {
 		// This branch is for the following scenarios:
 		// 1. `INSERT INTO tbl_name {VALUES | VALUE} (value_list) [, (value_list)] ...`,
 		// 2. `INSERT INTO tbl_name SELECT ...`.
-		affectedValuesCols = insertPlan.Table.Cols()
+		affectedValuesCols = insertPlan.Table.VisibleCols()
 	}
 	return affectedValuesCols, nil
 }
@@ -1923,18 +1991,32 @@ func (b *PlanBuilder) buildSetValuesOfInsert(ctx context.Context, insert *ast.In
 	}
 
 	// Check whether the column to be updated is the generated column.
-	tCols, err := table.FindCols(insertPlan.Table.Cols(), colNames, tableInfo.PKIsHandle)
-	if err != nil {
-		return err
+	tCols, missingColName := table.FindCols(insertPlan.Table.VisibleCols(), colNames, tableInfo.PKIsHandle)
+	if missingColName != "" {
+		return ErrUnknownColumn.GenWithStackByArgs(missingColName, clauseMsg[fieldList])
 	}
+	generatedColumns := make(map[string]struct{}, len(tCols))
 	for _, tCol := range tCols {
 		if tCol.IsGenerated() {
-			return ErrBadGeneratedColumn.GenWithStackByArgs(tCol.Name.O, tableInfo.Name.O)
+			generatedColumns[tCol.Name.L] = struct{}{}
 		}
 	}
 
 	insertPlan.AllAssignmentsAreConstant = true
 	for i, assign := range insert.Setlist {
+		defaultExpr := extractDefaultExpr(assign.Expr)
+		if defaultExpr != nil {
+			defaultExpr.Name = assign.Column
+		}
+		// Note: For INSERT, REPLACE, and UPDATE, if a generated column is inserted into, replaced, or updated explicitly, the only permitted value is DEFAULT.
+		// see https://dev.mysql.com/doc/refman/8.0/en/create-table-generated-columns.html
+		if _, ok := generatedColumns[assign.Column.Name.L]; ok {
+			if defaultExpr != nil {
+				continue
+			}
+			return ErrBadGeneratedColumn.GenWithStackByArgs(assign.Column.Name.O, tableInfo.Name.O)
+		}
+		b.curClause = fieldList
 		expr, _, err := b.rewriteWithPreprocess(ctx, assign.Expr, mockTablePlan, nil, nil, true, checkRefColumn)
 		if err != nil {
 			return err
@@ -2007,6 +2089,7 @@ func (b *PlanBuilder) buildValuesListOfInsert(ctx context.Context, insert *ast.I
 					RetType: &x.Type,
 				}
 			default:
+				b.curClause = fieldList
 				expr, _, err = b.rewriteWithPreprocess(ctx, valueItem, mockTablePlan, nil, nil, true, checkRefColumn)
 			}
 			if err != nil {
@@ -2016,10 +2099,9 @@ func (b *PlanBuilder) buildValuesListOfInsert(ctx context.Context, insert *ast.I
 				_, isConstant := expr.(*expression.Constant)
 				insertPlan.AllAssignmentsAreConstant = isConstant
 			}
-			// insert value into a generated column is not allowed
+			// Note: For INSERT, REPLACE, and UPDATE, if a generated column is inserted into, replaced, or updated explicitly, the only permitted value is DEFAULT.
+			// see https://dev.mysql.com/doc/refman/8.0/en/create-table-generated-columns.html
 			if col.IsGenerated() {
-				// but there is only one exception:
-				// it is allowed to insert the `default` value into a generated column
 				if generatedColumnWithDefaultExpr {
 					continue
 				}
@@ -2126,6 +2208,17 @@ func (b *PlanBuilder) buildLoadData(ctx context.Context, ld *ast.LoadDataStmt) (
 
 func (b *PlanBuilder) buildLoadStats(ld *ast.LoadStatsStmt) Plan {
 	p := &LoadStats{Path: ld.Path}
+	return p
+}
+
+func (b *PlanBuilder) buildIndexAdvise(node *ast.IndexAdviseStmt) Plan {
+	p := &IndexAdvise{
+		IsLocal:     node.IsLocal,
+		Path:        node.Path,
+		MaxMinutes:  node.MaxMinutes,
+		MaxIndexNum: node.MaxIndexNum,
+		LinesInfo:   node.LinesInfo,
+	}
 	return p
 }
 
@@ -2239,7 +2332,7 @@ func (b *PlanBuilder) convertValue(valueItem ast.ExprNode, mockTablePlan Logical
 	}
 	d, err = value.ConvertTo(b.ctx.GetSessionVars().StmtCtx, &col.FieldType)
 	if err != nil {
-		if !types.ErrTruncated.Equal(err) {
+		if !types.ErrTruncated.Equal(err) && !types.ErrTruncatedWrongVal.Equal(err) {
 			return d, err
 		}
 		valStr, err1 := value.ToString()
@@ -2491,13 +2584,16 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (Plan, err
 		}
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.InsertPriv, v.NewTable.Schema.L,
 			v.NewTable.Name.L, "", authErr)
-	case *ast.RecoverTableStmt:
+	case *ast.RecoverTableStmt, *ast.FlashBackTableStmt:
 		// Recover table command can only be executed by administrator.
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "", nil)
 	case *ast.LockTablesStmt, *ast.UnlockTablesStmt:
 		// TODO: add Lock Table privilege check.
 	case *ast.CleanupTableLockStmt:
 		// This command can only be executed by administrator.
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "", nil)
+	case *ast.RepairTableStmt:
+		// Repair table command can only be executed by administrator.
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "", nil)
 	}
 	p := &DDL{Statement: node}
@@ -2775,6 +2871,9 @@ func buildShowSchema(s *ast.ShowStmt, isView bool) (schema *expression.Schema, o
 	case ast.ShowAnalyzeStatus:
 		names = []string{"Table_schema", "Table_name", "Partition_name", "Job_info", "Processed_rows", "Start_time", "State"}
 		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLonglong, mysql.TypeDatetime, mysql.TypeVarchar}
+	case ast.ShowBuiltins:
+		names = []string{"Supported_builtin_functions"}
+		ftypes = []byte{mysql.TypeVarchar}
 	}
 
 	schema = expression.NewSchema(make([]*expression.Column, 0, len(names))...)

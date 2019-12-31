@@ -437,6 +437,11 @@ func (s *testEvalSuite) TestEval(c *C) {
 			types.NewIntDatum(1),
 		},
 		{
+			scalarFunctionExpr(tipb.ScalarFuncSig_LeftShift,
+				ToPBFieldType(newIntFieldType()), datumExpr(c, types.NewDatum(1)), datumExpr(c, types.NewIntDatum(1))),
+			types.NewIntDatum(2),
+		},
+		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_AbsInt,
 				toPBFieldType(newIntFieldType()), datumExpr(c, types.NewIntDatum(-1))),
 			types.NewIntDatum(1),
@@ -794,21 +799,6 @@ func (s *testEvalSuite) TestEval(c *C) {
 		c.Assert(err, IsNil)
 		c.Assert(cmp, Equals, 0)
 	}
-}
-
-func buildExpr(tp tipb.ExprType, children ...interface{}) *tipb.Expr {
-	expr := new(tipb.Expr)
-	expr.Tp = tp
-	expr.Children = make([]*tipb.Expr, len(children))
-	for i, child := range children {
-		switch x := child.(type) {
-		case types.Datum:
-			expr.Children[i] = datumExpr(nil, x)
-		case *tipb.Expr:
-			expr.Children[i] = x
-		}
-	}
-	return expr
 }
 
 func datumExpr(c *C, d types.Datum) *tipb.Expr {

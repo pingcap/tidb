@@ -207,12 +207,11 @@ type IndexReaderExecutor struct {
 	table           table.Table
 	index           *model.IndexInfo
 	physicalTableID int64
-	keepOrder       bool
-	desc            bool
 	ranges          []*ranger.Range
 	// kvRanges are only used for union scan.
 	kvRanges []kv.KeyRange
 	dagPB    *tipb.DAGRequest
+	startTS  uint64
 
 	// result returns one or more distsql.PartialResult and each PartialResult is returned by one region.
 	result distsql.SelectResult
@@ -220,8 +219,12 @@ type IndexReaderExecutor struct {
 	columns []*model.ColumnInfo
 	// outputColumns are only required by union scan.
 	outputColumns []*expression.Column
-	streaming     bool
-	feedback      *statistics.QueryFeedback
+
+	feedback  *statistics.QueryFeedback
+	streaming bool
+
+	keepOrder bool
+	desc      bool
 
 	corColInFilter bool
 	corColInAccess bool
@@ -292,6 +295,7 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 	var builder distsql.RequestBuilder
 	kvReq, err := builder.SetKeyRanges(kvRanges).
 		SetDAGRequest(e.dagPB).
+		SetStartTS(e.startTS).
 		SetDesc(e.desc).
 		SetKeepOrder(e.keepOrder).
 		SetStreaming(e.streaming).
@@ -315,28 +319,21 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 type IndexLookUpExecutor struct {
 	baseExecutor
 
-	table     table.Table
-	index     *model.IndexInfo
-	keepOrder bool
-	desc      bool
-	ranges    []*ranger.Range
-	dagPB     *tipb.DAGRequest
+	table   table.Table
+	index   *model.IndexInfo
+	ranges  []*ranger.Range
+	dagPB   *tipb.DAGRequest
+	startTS uint64
 	// handleIdx is the index of handle, which is only used for case of keeping order.
 	handleIdx    int
 	tableRequest *tipb.DAGRequest
 	// columns are only required by union scan.
-	columns        []*model.ColumnInfo
-	indexStreaming bool
-	tableStreaming bool
+	columns []*model.ColumnInfo
 	*dataReaderBuilder
 	// All fields above are immutable.
-
 	idxWorkerWg sync.WaitGroup
 	tblWorkerWg sync.WaitGroup
 	finished    chan struct{}
-
-	kvRanges      []kv.KeyRange
-	workerStarted bool
 
 	resultCh   chan *lookupTableTask
 	resultCurr *lookupTableTask
@@ -348,11 +345,20 @@ type IndexLookUpExecutor struct {
 	// checkIndexValue is used to check the consistency of the index data.
 	*checkIndexValue
 
+	kvRanges      []kv.KeyRange
+	workerStarted bool
+
+	keepOrder bool
+	desc      bool
+
+	indexStreaming bool
+	tableStreaming bool
+
 	corColInIdxSide bool
-	idxPlans        []plannercore.PhysicalPlan
 	corColInTblSide bool
-	tblPlans        []plannercore.PhysicalPlan
 	corColInAccess  bool
+	idxPlans        []plannercore.PhysicalPlan
+	tblPlans        []plannercore.PhysicalPlan
 	idxCols         []*expression.Column
 	colLens         []int
 	// PushedLimit is used to skip the preceding and tailing handles when Limit is sunk into IndexLookUpReader.
@@ -426,8 +432,6 @@ func (e *IndexLookUpExecutor) startWorkers(ctx context.Context, initBatchSize in
 	return nil
 }
 
-var indexLookupDistSQLTrackerLabel fmt.Stringer = stringutil.StringerStr("IndexLookupDistSQLTracker")
-
 // startIndexWorker launch a background goroutine to fetch handles, send the results to workCh.
 func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, kvRanges []kv.KeyRange, workCh chan<- *lookupTableTask, initBatchSize int) error {
 	if e.runtimeStats != nil {
@@ -440,6 +444,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, kvRanges []k
 	var builder distsql.RequestBuilder
 	kvReq, err := builder.SetKeyRanges(kvRanges).
 		SetDAGRequest(e.dagPB).
+		SetStartTS(e.startTS).
 		SetDesc(e.desc).
 		SetKeepOrder(e.keepOrder).
 		SetStreaming(e.indexStreaming).
@@ -504,6 +509,7 @@ func (e *IndexLookUpExecutor) startTableWorker(ctx context.Context, workCh <-cha
 	lookupConcurrencyLimit := e.ctx.GetSessionVars().IndexLookupConcurrency
 	e.tblWorkerWg.Add(lookupConcurrencyLimit)
 	for i := 0; i < lookupConcurrencyLimit; i++ {
+		workerID := i
 		worker := &tableWorker{
 			idxLookup:       e,
 			workCh:          workCh,
@@ -512,7 +518,7 @@ func (e *IndexLookUpExecutor) startTableWorker(ctx context.Context, workCh <-cha
 			keepOrder:       e.keepOrder,
 			handleIdx:       e.handleIdx,
 			checkIndexValue: e.checkIndexValue,
-			memTracker: memory.NewTracker(stringutil.MemoizeStr(func() string { return "TableWorker_" + strconv.Itoa(i) }),
+			memTracker: memory.NewTracker(stringutil.MemoizeStr(func() string { return "TableWorker_" + strconv.Itoa(workerID) }),
 				e.ctx.GetSessionVars().MemQuotaIndexLookupReader),
 		}
 		worker.memTracker.AttachTo(e.memTracker)
@@ -530,6 +536,7 @@ func (e *IndexLookUpExecutor) buildTableReader(ctx context.Context, handles []in
 		baseExecutor:   newBaseExecutor(e.ctx, e.schema, stringutil.MemoizeStr(func() string { return e.id.String() + "_tableReader" })),
 		table:          e.table,
 		dagPB:          e.tableRequest,
+		startTS:        e.startTS,
 		columns:        e.columns,
 		streaming:      e.tableStreaming,
 		feedback:       statistics.NewQueryFeedback(0, nil, 0, false),

@@ -814,7 +814,7 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, v *ast.Patte
 		join.names = make([]*types.FieldName, er.p.Schema().Len()+agg.Schema().Len())
 		copy(join.names, er.p.OutputNames())
 		copy(join.names[er.p.Schema().Len():], agg.OutputNames())
-		join.attachOnConds(expression.SplitCNFItems(checkCondition))
+		join.AttachOnConds(expression.SplitCNFItems(checkCondition))
 		// Set join hint for this join.
 		if er.b.TableHints() != nil {
 			join.setPreferredJoinType(er.b.TableHints())
@@ -1499,6 +1499,10 @@ func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
 	}
 	if idx >= 0 {
 		column := er.schema.Columns[idx]
+		if column.IsHidden {
+			er.err = ErrUnknownColumn.GenWithStackByArgs(v.Name, clauseMsg[er.b.curClause])
+			return
+		}
 		er.ctxStackAppend(column, er.names[idx])
 		return
 	}

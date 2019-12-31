@@ -16,8 +16,8 @@ package core
 import (
 	"context"
 
-	"github.com/cznic/mathutil"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/util/mathutil"
 )
 
 // pushDownTopNOptimizer pushes down the topN or limit. In the future we will remove the limit from `requiredProperty` in CBO phase.
@@ -107,6 +107,11 @@ func (p *LogicalUnionAll) pushDownTopN(topN *LogicalTopN) LogicalPlan {
 }
 
 func (p *LogicalProjection) pushDownTopN(topN *LogicalTopN) LogicalPlan {
+	for _, expr := range p.Exprs {
+		if expression.HasAssignSetVarFunc(expr) {
+			return p.baseLogicalPlan.pushDownTopN(topN)
+		}
+	}
 	if topN != nil {
 		for _, by := range topN.ByItems {
 			by.Expr = expression.ColumnSubstitute(by.Expr, p.schema, p.Exprs)

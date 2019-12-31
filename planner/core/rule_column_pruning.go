@@ -16,14 +16,11 @@ package core
 import (
 	"context"
 
-	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
-	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/types"
 )
 
@@ -35,26 +32,17 @@ func (s *columnPruner) optimize(ctx context.Context, lp LogicalPlan) (LogicalPla
 	return lp, err
 }
 
-func getUsedList(usedCols []*expression.Column, schema *expression.Schema) ([]bool, error) {
-	failpoint.Inject("enableGetUsedListErr", func(val failpoint.Value) {
-		if val.(bool) {
-			failpoint.Return(nil, errors.New("getUsedList failed, triggered by gofail enableGetUsedListErr"))
-		}
-	})
-
+func getUsedList(usedCols []*expression.Column, schema *expression.Schema) []bool {
+	tmpSchema := expression.NewSchema(usedCols...)
 	used := make([]bool, schema.Len())
-	for _, col := range usedCols {
-		idx := schema.ColumnIndex(col)
-		if idx == -1 {
-			return nil, errors.Errorf("Can't find column %s from schema %s.", col, schema)
-		}
-		used[idx] = true
+	for i, col := range schema.Columns {
+		used[i] = tmpSchema.Contains(col)
 	}
-	return used, nil
+	return used
 }
 
-// exprsHasSideEffects checks if any of the expressions has side effects.
-func exprsHasSideEffects(exprs []expression.Expression) bool {
+// ExprsHasSideEffects checks if any of the expressions has side effects.
+func ExprsHasSideEffects(exprs []expression.Expression) bool {
 	for _, expr := range exprs {
 		if exprHasSetVarOrSleep(expr) {
 			return true
@@ -84,10 +72,7 @@ func exprHasSetVarOrSleep(expr expression.Expression) bool {
 // If any expression has SetVar function or Sleep function, we do not prune it.
 func (p *LogicalProjection) PruneColumns(parentUsedCols []*expression.Column) error {
 	child := p.children[0]
-	used, err := getUsedList(parentUsedCols, p.schema)
-	if err != nil {
-		return err
-	}
+	used := getUsedList(parentUsedCols, p.schema)
 
 	for i := len(used) - 1; i >= 0; i-- {
 		if !used[i] && !exprHasSetVarOrSleep(p.Exprs[i]) {
@@ -110,10 +95,7 @@ func (p *LogicalSelection) PruneColumns(parentUsedCols []*expression.Column) err
 // PruneColumns implements LogicalPlan interface.
 func (la *LogicalAggregation) PruneColumns(parentUsedCols []*expression.Column) error {
 	child := la.children[0]
-	used, err := getUsedList(parentUsedCols, la.Schema())
-	if err != nil {
-		return err
-	}
+	used := getUsedList(parentUsedCols, la.Schema())
 
 	for i := len(used) - 1; i >= 0; i-- {
 		if !used[i] {
@@ -180,10 +162,7 @@ func (ls *LogicalSort) PruneColumns(parentUsedCols []*expression.Column) error {
 
 // PruneColumns implements LogicalPlan interface.
 func (p *LogicalUnionAll) PruneColumns(parentUsedCols []*expression.Column) error {
-	used, err := getUsedList(parentUsedCols, p.schema)
-	if err != nil {
-		return err
-	}
+	used := getUsedList(parentUsedCols, p.schema)
 
 	hasBeenUsed := false
 	for i := range used {
@@ -220,10 +199,7 @@ func (p *LogicalUnionScan) PruneColumns(parentUsedCols []*expression.Column) err
 
 // PruneColumns implements LogicalPlan interface.
 func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column) error {
-	used, err := getUsedList(parentUsedCols, ds.schema)
-	if err != nil {
-		return err
-	}
+	used := getUsedList(parentUsedCols, ds.schema)
 
 	var (
 		handleCol     *expression.Column
@@ -233,6 +209,8 @@ func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column) error {
 		handleCol = ds.handleCol
 		handleColInfo = ds.Columns[ds.schema.ColumnIndex(handleCol)]
 	}
+	originSchemaColumns := ds.schema.Columns
+	originColumns := ds.Columns
 	for i := len(used) - 1; i >= 0; i-- {
 		if !used[i] {
 			ds.schema.Columns = append(ds.schema.Columns[:i], ds.schema.Columns[i+1:]...)
@@ -241,8 +219,12 @@ func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column) error {
 	}
 	// For SQL like `select 1 from t`, tikv's response will be empty if no column is in schema.
 	// So we'll force to push one if schema doesn't have any column.
-	if ds.schema.Len() == 0 && !infoschema.IsMemoryDB(ds.DBName.L) {
-		if handleCol == nil {
+	if ds.schema.Len() == 0 {
+		if ds.table.Type().IsClusterTable() && len(originColumns) > 0 {
+			// use the first line.
+			handleCol = originSchemaColumns[0]
+			handleColInfo = originColumns[0]
+		} else if handleCol == nil {
 			handleCol = ds.newExtraHandleSchemaCol()
 			handleColInfo = model.NewExtraHandleColInfo()
 		}
@@ -257,10 +239,7 @@ func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column) error {
 
 // PruneColumns implements LogicalPlan interface.
 func (p *LogicalTableDual) PruneColumns(parentUsedCols []*expression.Column) error {
-	used, err := getUsedList(parentUsedCols, p.Schema())
-	if err != nil {
-		return err
-	}
+	used := getUsedList(parentUsedCols, p.Schema())
 
 	for i := len(used) - 1; i >= 0; i-- {
 		if !used[i] {
@@ -337,8 +316,8 @@ func (la *LogicalApply) PruneColumns(parentUsedCols []*expression.Column) error 
 		return err
 	}
 
-	la.corCols = extractCorColumnsBySchema(la.children[1], la.children[0].Schema())
-	for _, col := range la.corCols {
+	la.CorCols = extractCorColumnsBySchema(la.children[1], la.children[0].Schema())
+	for _, col := range la.CorCols {
 		leftCols = append(leftCols, &col.Column)
 	}
 
