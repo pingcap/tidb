@@ -109,12 +109,12 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 }
 
 func appendAffectedIDs(affected []int64, tblInfo *model.TableInfo) []int64 {
+	affected = append(affected, tblInfo.ID)
 	if pi := tblInfo.GetPartitionInfo(); pi != nil {
 		for _, def := range pi.Definitions {
 			affected = append(affected, def.ID)
 		}
 	}
-	affected = append(affected, tblInfo.ID)
 	return affected
 }
 
