@@ -438,7 +438,16 @@ func (s *session) getTxnFuture(ctx context.Context) *txnFuture {
 
 // StmtCommit implements the sessionctx.Context interface.
 func (s *session) StmtCommit(memTracker *memory.Tracker) error {
-	defer s.txn.cleanup()
+	defer func() {
+		s.txn.cleanup()
+		// If StmtCommit is called in batch mode, we need to clear the txn size
+		// in memTracker to avoid double-counting. If it's not batch mode, this
+		// work has no effect because that no more data will be appended into
+		// s.txn.
+		if memTracker != nil {
+			memTracker.Consume(int64(-s.txn.Size()))
+		}
+	}()
 	st := &s.txn
 	txnSize := st.Transaction.Size()
 	var count int

@@ -1228,7 +1228,6 @@ func (s *testOOMSuite) TestDistSQLMemoryControl(c *C) {
 }
 
 func (s *testOOMSuite) TestMemTracker4InsertAndReplaceExec(c *C) {
-	//log.SetLevel(zap.FatalLevel)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t1 (id int, a int, b int, index idx_a(`a`))")
@@ -1283,6 +1282,32 @@ func (s *testOOMSuite) TestMemTracker4InsertAndReplaceExec(c *C) {
 	tk.MustExec("replace into t1 values (1,1,1), (2,2,2), (3,3,3)")
 	c.Assert(s.oom.tracker, Matches, "expensive_query during bootstrap phase")
 	tk.Se.GetSessionVars().MemQuotaQuery = -1
+}
+
+func (s *testOOMSuite) TestMemTracker4DeleteExec(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (id int, a int, b int, index idx_a(`a`))")
+	tk.MustExec("create table t2 (id int, a int, b int, index idx_a(`a`))")
+
+	log.SetLevel(zap.InfoLevel)
+	tk.MustExec("insert into t1 values(1,1,1), (2,2,2), (3,3,3), (4,4,4), (5,5,5)")
+	s.oom.tracker = ""
+	tk.MustExec("delete from t1")
+	c.Assert(s.oom.tracker, Equals, "")
+	tk.MustExec("insert into t1 values (1,1,1), (2,2,2), (3,3,3)")
+	tk.Se.GetSessionVars().MemQuotaQuery = 1
+	tk.MustExec("delete from t1")
+	c.Assert(s.oom.tracker, Matches, "expensive_query during bootstrap phase")
+
+	tk.Se.GetSessionVars().MemQuotaQuery = 10000
+	tk.MustExec("insert into t1 values(1,1,1), (2,2,2), (3,3,3), (4,4,4), (5,5,5)")
+	tk.MustExec("insert into t2 values(1,1,1), (2,2,2), (3,3,3), (4,4,4), (5,5,5)")
+	tk.MustExec("delete t1, t2 from t1 join t2 on t1.a=t2.a")
+	tk.Se.GetSessionVars().MemQuotaQuery = 1
+	tk.MustExec("insert into t1 values(1,1,1), (2,2,2), (3,3,3), (4,4,4), (5,5,5)")
+	tk.MustExec("insert into t2 values(1,1,1), (2,2,2), (3,3,3), (4,4,4), (5,5,5)")
+	tk.MustExec("delete t1, t2 from t1 join t2 on t1.a=t2.a")
 }
 
 type oomCapturer struct {
