@@ -198,8 +198,8 @@ type LockCtx struct {
 	ForUpdateTS           uint64
 	LockWaitTime          int64
 	WaitStartTime         time.Time
-	PessimisticLockWaited int32
-	LockTimeWaited        time.Duration
+	PessimisticLockWaited *int32
+	LockKeysDuration      *time.Duration
 }
 
 // Client is used to send request to KV layer.
@@ -266,7 +266,7 @@ type Request struct {
 	IsolationLevel IsoLevel
 	// Priority is the priority of this KV request, its value may be PriorityNormal/PriorityLow/PriorityHigh.
 	Priority int
-	// MemTracker is used to trace and control memory usage in co-processor layer.
+	// memTracker is used to trace and control memory usage in co-processor layer.
 	MemTracker *memory.Tracker
 	// KeepOrder is true, if the response should be returned in order.
 	KeepOrder bool

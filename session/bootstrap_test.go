@@ -29,8 +29,6 @@ import (
 	"github.com/pingcap/tidb/util/testleak"
 )
 
-var _ = SerialSuites(&testBootstrapSuite{})
-
 type testBootstrapSuite struct {
 	dbName          string
 	dbNameBootstrap string

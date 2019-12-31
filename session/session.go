@@ -82,15 +82,6 @@ var (
 	transactionDurationGeneralCommit     = metrics.TransactionDuration.WithLabelValues(metrics.LblGeneral, metrics.LblCommit)
 	transactionDurationGeneralAbort      = metrics.TransactionDuration.WithLabelValues(metrics.LblGeneral, metrics.LblAbort)
 
-	transactionCounterInternalOK             = metrics.TransactionCounter.WithLabelValues(metrics.LblInternal, metrics.LblOK)
-	transactionCounterInternalErr            = metrics.TransactionCounter.WithLabelValues(metrics.LblInternal, metrics.LblError)
-	transactionCounterGeneralOK              = metrics.TransactionCounter.WithLabelValues(metrics.LblGeneral, metrics.LblOK)
-	transactionCounterGeneralErr             = metrics.TransactionCounter.WithLabelValues(metrics.LblGeneral, metrics.LblError)
-	transactionCounterInternalCommitRollback = metrics.TransactionCounter.WithLabelValues(metrics.LblInternal, metrics.LblComRol)
-	transactionCounterGeneralCommitRollback  = metrics.TransactionCounter.WithLabelValues(metrics.LblGeneral, metrics.LblComRol)
-	transactionRollbackCounterInternal       = metrics.TransactionCounter.WithLabelValues(metrics.LblInternal, metrics.LblRollback)
-	transactionRollbackCounterGeneral        = metrics.TransactionCounter.WithLabelValues(metrics.LblGeneral, metrics.LblRollback)
-
 	sessionExecuteRunDurationInternal = metrics.SessionExecuteRunDuration.WithLabelValues(metrics.LblInternal)
 	sessionExecuteRunDurationGeneral  = metrics.SessionExecuteRunDuration.WithLabelValues(metrics.LblGeneral)
 
@@ -443,6 +434,7 @@ func (s *session) doCommit(ctx context.Context) error {
 
 func (s *session) doCommitWithRetry(ctx context.Context) error {
 	defer func() {
+		s.GetSessionVars().SetTxnIsolationLevelOneShotStateForNextTxn()
 		s.txn.changeToInvalid()
 		s.cleanRetryInfo()
 	}()
@@ -492,16 +484,6 @@ func (s *session) doCommitWithRetry(ctx context.Context) error {
 	duration := time.Since(s.GetSessionVars().TxnCtx.CreateTime).Seconds()
 	s.recordOnTransactionExecution(err, counter, duration)
 
-	if isoLevelOneShot := &s.sessionVars.TxnIsolationLevelOneShot; isoLevelOneShot.State != 0 {
-		switch isoLevelOneShot.State {
-		case 1:
-			isoLevelOneShot.State = 2
-		case 2:
-			isoLevelOneShot.State = 0
-			isoLevelOneShot.Value = ""
-		}
-	}
-
 	if err != nil {
 		logutil.Logger(ctx).Warn("commit failed",
 			zap.String("finished txn", s.txn.GoString()),
@@ -538,7 +520,6 @@ func (s *session) CommitTxn(ctx context.Context) error {
 	})
 
 	s.sessionVars.TxnCtx.Cleanup()
-	s.recordTransactionCounter(nil, err)
 	return err
 }
 
@@ -550,11 +531,6 @@ func (s *session) RollbackTxn(ctx context.Context) {
 
 	if s.txn.Valid() {
 		terror.Log(s.txn.Rollback())
-		if s.isInternal() {
-			transactionRollbackCounterInternal.Inc()
-		} else {
-			transactionRollbackCounterGeneral.Inc()
-		}
 	}
 	s.cleanRetryInfo()
 	s.txn.changeToInvalid()
@@ -689,7 +665,10 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 				s.StmtRollback()
 				break
 			}
-			err = s.StmtCommit()
+			// We do not need to pass memTracker here, because that retry
+			// happened after commit, the memory usage was calculated during the
+			// first execution.
+			err = s.StmtCommit(nil)
 			if err != nil {
 				return err
 			}
@@ -697,10 +676,12 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 		logutil.Logger(ctx).Warn("transaction association",
 			zap.Uint64("retrying txnStartTS", s.GetSessionVars().TxnCtx.StartTS),
 			zap.Uint64("original txnStartTS", orgStartTS))
-		if hook := ctx.Value("preCommitHook"); hook != nil {
-			// For testing purpose.
-			hook.(func())()
-		}
+		failpoint.Inject("preCommitHook", func() {
+			hook, ok := ctx.Value("__preCommitHook").(func())
+			if ok {
+				hook()
+			}
+		})
 		if err == nil {
 			err = s.doCommit(ctx)
 			if err == nil {
@@ -763,6 +744,12 @@ func (s *session) ExecRestrictedSQL(sql string) ([]chunk.Row, []*ast.ResultField
 		return nil, nil, err
 	}
 	se := tmp.(*session)
+	// The special session will share the `InspectionTableCache` with current session
+	// if the current session in inspection mode.
+	if cache := s.sessionVars.InspectionTableCache; cache != nil {
+		se.sessionVars.InspectionTableCache = cache
+		defer func() { se.sessionVars.InspectionTableCache = nil }()
+	}
 	defer s.sysSessionPool().Put(tmp)
 	metrics.SessionRestrictedSQLCounter.Inc()
 
@@ -782,6 +769,12 @@ func (s *session) ExecRestrictedSQLWithSnapshot(sql string) ([]chunk.Row, []*ast
 		return nil, nil, err
 	}
 	se := tmp.(*session)
+	// The special session will share the `InspectionTableCache` with current session
+	// if the current session in inspection mode.
+	if cache := s.sessionVars.InspectionTableCache; cache != nil {
+		se.sessionVars.InspectionTableCache = cache
+		defer func() { se.sessionVars.InspectionTableCache = nil }()
+	}
 	defer s.sysSessionPool().Put(tmp)
 	metrics.SessionRestrictedSQLCounter.Inc()
 	var snapshot uint64
@@ -1039,7 +1032,6 @@ func (s *session) executeStatement(ctx context.Context, connID uint64, stmtNode 
 		}
 		return nil, err
 	}
-	s.recordTransactionCounter(stmtNode, err)
 	if s.isInternal() {
 		sessionExecuteRunDurationInternal.Observe(time.Since(startTime).Seconds())
 	} else {
@@ -1172,7 +1164,7 @@ func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields
 	// NewPrepareExec may need startTS to build the executor, for example prepare statement has subquery in int.
 	// So we have to call PrepareTxnCtx here.
 	s.PrepareTxnCtx(ctx)
-	s.PrepareTxnFuture(ctx)
+	s.PrepareTSFuture(ctx)
 	prepareExec := executor.NewPrepareExec(s, infoschema.GetInfoSchema(s), sql)
 	err = prepareExec.Next(ctx, nil)
 	if err != nil {
@@ -1230,7 +1222,7 @@ func (s *session) CachedPlanExec(ctx context.Context,
 		resultSet, err = stmt.PointGet(ctx, is)
 		s.txn.changeToInvalid()
 	case *plannercore.Update:
-		s.PrepareTxnFuture(ctx)
+		s.PrepareTSFuture(ctx)
 		s.GetSessionVars().StmtCtx.Priority = kv.PriorityHigh
 		resultSet, err = runStmt(ctx, s, stmt)
 	default:
@@ -1962,14 +1954,15 @@ func (s *session) PrepareTxnCtx(ctx context.Context) {
 	}
 }
 
-// PrepareTxnFuture uses to try to get txn future.
-func (s *session) PrepareTxnFuture(ctx context.Context) {
-	if s.txn.validOrPending() {
-		return
+// PrepareTSFuture uses to try to get txn future.
+func (s *session) PrepareTSFuture(ctx context.Context) {
+	if !s.txn.validOrPending() {
+		txnFuture := s.getTxnFuture(ctx)
+		s.txn.changeInvalidToPending(txnFuture)
+		s.GetSessionVars().TxnCtx.SetStmtFuture(txnFuture.future, 0)
+	} else if s.GetSessionVars().IsPessimisticReadConsistency() {
+		s.GetSessionVars().TxnCtx.SetStmtFuture(s.getTxnFuture(ctx).future, 0)
 	}
-
-	txnFuture := s.getTxnFuture(ctx)
-	s.txn.changeInvalidToPending(txnFuture)
 }
 
 // RefreshTxnCtx implements context.RefreshTxnCtx interface.
@@ -2073,41 +2066,6 @@ func (s *session) recordOnTransactionExecution(err error, counter int, duration 
 			statementPerTransactionGeneralOK.Observe(float64(counter))
 			transactionDurationGeneralCommit.Observe(duration)
 		}
-	}
-}
-
-func (s *session) recordTransactionCounter(stmtNode ast.StmtNode, err error) {
-	if stmtNode == nil {
-		if s.isInternal() {
-			if err != nil {
-				transactionCounterInternalErr.Inc()
-			} else {
-				transactionCounterInternalOK.Inc()
-			}
-		} else {
-			if err != nil {
-				transactionCounterGeneralErr.Inc()
-			} else {
-				transactionCounterGeneralOK.Inc()
-			}
-		}
-		return
-	}
-
-	var isTxn bool
-	switch stmtNode.(type) {
-	case *ast.CommitStmt:
-		isTxn = true
-	case *ast.RollbackStmt:
-		isTxn = true
-	}
-	if !isTxn {
-		return
-	}
-	if s.isInternal() {
-		transactionCounterInternalCommitRollback.Inc()
-	} else {
-		transactionCounterGeneralCommitRollback.Inc()
 	}
 }
 

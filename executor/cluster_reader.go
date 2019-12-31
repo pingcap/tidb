@@ -47,10 +47,15 @@ import (
 	"google.golang.org/grpc/credentials"
 )
 
-const clusterLogBatchSize = 1024
+const clusterLogBatchSize = 256
+
+type dummyCloser struct{}
+
+func (dummyCloser) close() error { return nil }
 
 type clusterRetriever interface {
 	retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error)
+	close() error
 }
 
 // ClusterReaderExec executes cluster information retrieving from the cluster components
@@ -80,13 +85,19 @@ func (e *ClusterReaderExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	return nil
 }
 
+// Close implements the Executor Close interface.
+func (e *ClusterReaderExec) Close() error {
+	return e.retriever.close()
+}
+
 type clusterConfigRetriever struct {
+	dummyCloser
 	retrieved bool
 	extractor *plannercore.ClusterTableExtractor
 }
 
 // retrieve implements the clusterRetriever interface
-func (e *clusterConfigRetriever) retrieve(_ context.Context, ctx sessionctx.Context) ([][]types.Datum, error) {
+func (e *clusterConfigRetriever) retrieve(_ context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
 	if e.extractor.SkipRequest || e.retrieved {
 		return nil, nil
 	}
@@ -97,8 +108,7 @@ func (e *clusterConfigRetriever) retrieve(_ context.Context, ctx sessionctx.Cont
 		rows [][]types.Datum
 		err  error
 	}
-
-	serversInfo, err := infoschema.GetClusterServerInfo(ctx)
+	serversInfo, err := infoschema.GetClusterServerInfo(sctx)
 	failpoint.Inject("mockClusterConfigServerInfo", func(val failpoint.Value) {
 		if s := val.(string); len(s) > 0 {
 			// erase the error
@@ -118,7 +128,7 @@ func (e *clusterConfigRetriever) retrieve(_ context.Context, ctx sessionctx.Cont
 		address := srv.Address
 		statusAddr := srv.StatusAddr
 		if len(statusAddr) == 0 {
-			ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("%s node %s does not contain status address", typ, address))
+			sctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("%s node %s does not contain status address", typ, address))
 			continue
 		}
 		wg.Add(1)
@@ -195,7 +205,7 @@ func (e *clusterConfigRetriever) retrieve(_ context.Context, ctx sessionctx.Cont
 	var results []result
 	for result := range ch {
 		if result.err != nil {
-			ctx.GetSessionVars().StmtCtx.AppendWarning(result.err)
+			sctx.GetSessionVars().StmtCtx.AppendWarning(result.err)
 			continue
 		}
 		results = append(results, result)
@@ -208,19 +218,20 @@ func (e *clusterConfigRetriever) retrieve(_ context.Context, ctx sessionctx.Cont
 }
 
 type clusterServerInfoRetriever struct {
+	dummyCloser
 	extractor      *plannercore.ClusterTableExtractor
 	serverInfoType diagnosticspb.ServerInfoType
 	retrieved      bool
 }
 
 // retrieve implements the clusterRetriever interface
-func (e *clusterServerInfoRetriever) retrieve(_ context.Context, ctx sessionctx.Context) ([][]types.Datum, error) {
+func (e *clusterServerInfoRetriever) retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
 	if e.extractor.SkipRequest || e.retrieved {
 		return nil, nil
 	}
 	e.retrieved = true
 
-	serversInfo, err := infoschema.GetClusterServerInfo(ctx)
+	serversInfo, err := infoschema.GetClusterServerInfo(sctx)
 	if err != nil {
 		return nil, err
 	}
@@ -253,7 +264,7 @@ func (e *clusterServerInfoRetriever) retrieve(_ context.Context, ctx sessionctx.
 		go func(index int, address, serverTP string) {
 			util.WithRecovery(func() {
 				defer wg.Done()
-				items, err := getServerInfoByGRPC(address, infoTp)
+				items, err := getServerInfoByGRPC(ctx, address, infoTp)
 				if err != nil {
 					ch <- result{idx: index, err: err}
 					return
@@ -269,7 +280,7 @@ func (e *clusterServerInfoRetriever) retrieve(_ context.Context, ctx sessionctx.
 	var results []result
 	for result := range ch {
 		if result.err != nil {
-			ctx.GetSessionVars().StmtCtx.AppendWarning(result.err)
+			sctx.GetSessionVars().StmtCtx.AppendWarning(result.err)
 			continue
 		}
 		results = append(results, result)
@@ -299,7 +310,7 @@ func serverInfoItemToRows(items []*diagnosticspb.ServerInfoItem, tp, addr string
 	return rows
 }
 
-func getServerInfoByGRPC(address string, tp diagnosticspb.ServerInfoType) ([]*diagnosticspb.ServerInfoItem, error) {
+func getServerInfoByGRPC(ctx context.Context, address string, tp diagnosticspb.ServerInfoType) ([]*diagnosticspb.ServerInfoItem, error) {
 	opt := grpc.WithInsecure()
 	security := config.GetGlobalConfig().Security
 	if len(security.ClusterSSLCA) != 0 {
@@ -321,8 +332,7 @@ func getServerInfoByGRPC(address string, tp diagnosticspb.ServerInfoType) ([]*di
 	}()
 
 	cli := diagnosticspb.NewDiagnosticsClient(conn)
-	// FIXME: use session context instead of context.Background().
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
+	ctx, cancel := context.WithTimeout(ctx, time.Second*10)
 	defer cancel()
 	r, err := cli.ServerInfo(ctx, &diagnosticspb.ServerInfoRequest{Tp: tp})
 	if err != nil {
@@ -372,6 +382,7 @@ type clusterLogRetriever struct {
 	retrieving bool
 	heap       *logResponseHeap
 	extractor  *plannercore.ClusterLogTableExtractor
+	cancel     context.CancelFunc
 }
 
 type logStreamResult struct {
@@ -413,9 +424,9 @@ func (h *logResponseHeap) Pop() interface{} {
 	return x
 }
 
-func (e *clusterLogRetriever) startRetrieving(ctx sessionctx.Context) ([]chan logStreamResult, error) {
+func (e *clusterLogRetriever) startRetrieving(ctx context.Context, sctx sessionctx.Context) ([]chan logStreamResult, error) {
 	isFailpointTestMode := false
-	serversInfo, err := infoschema.GetClusterServerInfo(ctx)
+	serversInfo, err := infoschema.GetClusterServerInfo(sctx)
 	failpoint.Inject("mockClusterLogServerInfo", func(val failpoint.Value) {
 		if s := val.(string); len(s) > 0 {
 			// erase the error
@@ -482,13 +493,16 @@ func (e *clusterLogRetriever) startRetrieving(ctx sessionctx.Context) ([]chan lo
 		Patterns:  patterns,
 	}
 
+	// The retrieve progress may be abort
+	ctx, e.cancel = context.WithCancel(ctx)
+
 	var results []chan logStreamResult
 	for _, srv := range serversInfo {
 		typ := srv.ServerType
 		address := srv.Address
 		statusAddr := srv.StatusAddr
 		if len(statusAddr) == 0 {
-			ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("%s node %s does not contain status address", typ, address))
+			sctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("%s node %s does not contain status address", typ, address))
 			continue
 		}
 		ch := make(chan logStreamResult)
@@ -511,7 +525,7 @@ func (e *clusterLogRetriever) startRetrieving(ctx sessionctx.Context) ([]chan lo
 				defer terror.Call(conn.Close)
 
 				cli := diagnosticspb.NewDiagnosticsClient(conn)
-				stream, err := cli.SearchLog(context.Background(), req)
+				stream, err := cli.SearchLog(ctx, req)
 				if err != nil {
 					ch <- logStreamResult{addr: address, typ: serverType, err: err}
 					return
@@ -535,14 +549,14 @@ func (e *clusterLogRetriever) startRetrieving(ctx sessionctx.Context) ([]chan lo
 	return results, nil
 }
 
-func (e *clusterLogRetriever) retrieve(_ context.Context, ctx sessionctx.Context) ([][]types.Datum, error) {
+func (e *clusterLogRetriever) retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
 	if e.extractor.SkipRequest || e.isDrained {
 		return nil, nil
 	}
 
 	if !e.retrieving {
 		e.retrieving = true
-		results, err := e.startRetrieving(ctx)
+		results, err := e.startRetrieving(ctx, sctx)
 		if err != nil {
 			e.isDrained = true
 			return nil, err
@@ -554,7 +568,7 @@ func (e *clusterLogRetriever) retrieve(_ context.Context, ctx sessionctx.Context
 			result := <-ch
 			if result.err != nil || len(result.messages) == 0 {
 				if result.err != nil {
-					ctx.GetSessionVars().StmtCtx.AppendWarning(result.err)
+					sctx.GetSessionVars().StmtCtx.AppendWarning(result.err)
 				}
 				continue
 			}
@@ -581,7 +595,7 @@ func (e *clusterLogRetriever) retrieve(_ context.Context, ctx sessionctx.Context
 		if len(minTimeItem.messages) == 0 {
 			result := <-minTimeItem.next
 			if result.err != nil {
-				ctx.GetSessionVars().StmtCtx.AppendWarning(result.err)
+				sctx.GetSessionVars().StmtCtx.AppendWarning(result.err)
 				continue
 			}
 			if len(result.messages) > 0 {
@@ -596,4 +610,9 @@ func (e *clusterLogRetriever) retrieve(_ context.Context, ctx sessionctx.Context
 	e.isDrained = e.heap.Len() == 0
 
 	return finalRows, nil
+}
+
+func (e *clusterLogRetriever) close() error {
+	e.cancel()
+	return nil
 }

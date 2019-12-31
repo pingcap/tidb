@@ -34,6 +34,7 @@ type SQLBindExec struct {
 	bindSQL      string
 	charset      string
 	collation    string
+	db           string
 	isGlobal     bool
 	bindAst      ast.StmtNode
 }
@@ -69,9 +70,9 @@ func (e *SQLBindExec) dropSQLBind() error {
 	}
 	if !e.isGlobal {
 		handle := e.ctx.Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
-		return handle.DropBindRecord(e.normdOrigSQL, e.ctx.GetSessionVars().CurrentDB, bindInfo)
+		return handle.DropBindRecord(e.normdOrigSQL, e.db, bindInfo)
 	}
-	return domain.GetDomain(e.ctx).BindHandle().DropBindRecord(e.normdOrigSQL, e.ctx.GetSessionVars().CurrentDB, bindInfo)
+	return domain.GetDomain(e.ctx).BindHandle().DropBindRecord(e.normdOrigSQL, e.db, bindInfo)
 }
 
 func (e *SQLBindExec) createSQLBind() error {
@@ -83,7 +84,7 @@ func (e *SQLBindExec) createSQLBind() error {
 	}
 	record := &bindinfo.BindRecord{
 		OriginalSQL: e.normdOrigSQL,
-		Db:          e.ctx.GetSessionVars().CurrentDB,
+		Db:          e.db,
 		Bindings:    []bindinfo.Binding{bindInfo},
 	}
 	if !e.isGlobal {

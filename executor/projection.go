@@ -210,7 +210,6 @@ func (e *ProjectionExec) parallelExecute(ctx context.Context, chk *chunk.Chunk) 
 	if err != nil {
 		return err
 	}
-
 	mSize := output.chk.MemoryUsage()
 	chk.SwapColumns(output.chk)
 	e.memTracker.Consume(output.chk.MemoryUsage() - mSize)
