@@ -79,19 +79,19 @@ type Group struct {
 	FirstExpr    map[Operand]*list.Element
 	Fingerprints map[string]*list.Element
 
+	ImplMap map[string]Implementation
+	Prop    *property.LogicalProperty
+
+	EngineType EngineType
+
+	SelfFingerprint string
+	Explored        bool
+
 	//hasBuiltKeyInfo indicates whether this group has called `BuildKeyInfo`.
 	// BuildKeyInfo is lazily called when a rule needs information of
 	// unique key or maxOneRow (in LogicalProp). For each Group, we only need
 	// to collect these information once.
 	hasBuiltKeyInfo bool
-
-	Explored        bool
-	SelfFingerprint string
-
-	ImplMap map[string]Implementation
-	Prop    *property.LogicalProperty
-
-	EngineType EngineType
 }
 
 // NewGroupWithSchema creates a new Group with given schema.
