@@ -55,10 +55,8 @@ type projectionOutput struct {
 type ProjectionExec struct {
 	baseExecutor
 
-	evaluatorSuit    *expression.EvaluatorSuite
-	calculateNoDelay bool
+	evaluatorSuit *expression.EvaluatorSuite
 
-	prepared    bool
 	finishCh    chan struct{}
 	outputCh    chan *projectionOutput
 	fetcher     projectionInputFetcher
@@ -66,15 +64,18 @@ type ProjectionExec struct {
 	workers     []*projectionWorker
 	childResult *chunk.Chunk
 
-	wg         sync.WaitGroup
-	memTracker *memory.Tracker
-
 	// parentReqRows indicates how many rows the parent executor is
 	// requiring. It is set when parallelExecute() is called and used by the
 	// concurrent projectionInputFetcher.
 	//
 	// NOTE: It should be protected by atomic operations.
 	parentReqRows int64
+
+	memTracker *memory.Tracker
+	wg         sync.WaitGroup
+
+	calculateNoDelay bool
+	prepared         bool
 }
 
 // Open implements the Executor Open interface.
