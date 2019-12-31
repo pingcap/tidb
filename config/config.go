@@ -547,7 +547,7 @@ var defaultConf = Config{
 	},
 	StmtSummary: StmtSummary{
 		Enable:          false,
-		MaxStmtCount:    100,
+		MaxStmtCount:    200,
 		MaxSQLLength:    4096,
 		RefreshInterval: 1800,
 		HistorySize:     24,
@@ -750,6 +750,9 @@ func (c *Config) Valid() error {
 
 	if c.AlterPrimaryKey && c.Experimental.AllowAutoRandom {
 		return fmt.Errorf("allow-auto-random is unavailable when alter-primary-key is enabled")
+	}
+	if c.PreparedPlanCache.Capacity < 1 {
+		return fmt.Errorf("capacity in [prepared-plan-cache] should be at least 1")
 	}
 	return nil
 }

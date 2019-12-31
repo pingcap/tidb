@@ -529,7 +529,7 @@ type SessionVars struct {
 	// Some data of cluster-level memory tables will be retrieved many times in different inspection rules,
 	// and the cost of retrieving some data is expensive. We use the `TableSnapshot` to cache those data
 	// and obtain them lazily, and provide a consistent view of inspection tables for each inspection rules.
-	// All cached snapshots will be released at the `InspectionExec` executor closing.
+	// All cached snapshots will be released at the end of retrieving
 	InspectionTableCache map[string]TableSnapshot
 }
 

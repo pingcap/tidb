@@ -17,14 +17,6 @@ import "github.com/prometheus/client_golang/prometheus"
 
 // TiKVClient metrics.
 var (
-	TiKVTxnCounter = prometheus.NewCounter(
-		prometheus.CounterOpts{
-			Namespace: "tidb",
-			Subsystem: "tikvclient",
-			Name:      "txn_total",
-			Help:      "Counter of created txns.",
-		})
-
 	TiKVTxnCmdHistogram = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",

@@ -15,6 +15,7 @@ package bindinfo
 
 import (
 	"context"
+	"time"
 	"unsafe"
 
 	"github.com/pingcap/parser"
@@ -62,6 +63,15 @@ func (b *Binding) isSame(rb *Binding) bool {
 	}
 	// Sometimes we cannot construct `id` because of the changed schema, so we need to compare by bind sql.
 	return b.BindSQL == rb.BindSQL
+}
+
+// SinceUpdateTime returns the duration since last update time. Export for test.
+func (b *Binding) SinceUpdateTime() (time.Duration, error) {
+	updateTime, err := b.UpdateTime.GoTime(time.Local)
+	if err != nil {
+		return 0, err
+	}
+	return time.Since(updateTime), nil
 }
 
 // cache is a k-v map, key is original sql, value is a slice of BindRecord.
