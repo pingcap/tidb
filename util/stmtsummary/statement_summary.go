@@ -772,8 +772,8 @@ func (ssElement *stmtSummaryByDigestElement) toDatum(ssbd *stmtSummaryByDigest) 
 
 	// Actually, there's a small chance that endTime is out of date, but it's hard to keep it up to date all the time.
 	return types.MakeDatums(
-		types.Time{Time: types.FromGoTime(time.Unix(ssElement.beginTime, 0)), Type: mysql.TypeTimestamp},
-		types.Time{Time: types.FromGoTime(time.Unix(ssElement.endTime, 0)), Type: mysql.TypeTimestamp},
+		types.NewTime(types.FromGoTime(time.Unix(ssElement.beginTime, 0)), mysql.TypeTimestamp, 0),
+		types.NewTime(types.FromGoTime(time.Unix(ssElement.endTime, 0)), mysql.TypeTimestamp, 0),
 		ssbd.stmtType,
 		ssbd.schemaName,
 		ssbd.digest,
@@ -832,8 +832,8 @@ func (ssElement *stmtSummaryByDigestElement) toDatum(ssbd *stmtSummaryByDigest) 
 		avgInt(ssElement.sumMem, ssElement.execCount),
 		ssElement.maxMem,
 		avgFloat(int64(ssElement.sumAffectedRows), ssElement.execCount),
-		types.Time{Time: types.FromGoTime(ssElement.firstSeen), Type: mysql.TypeTimestamp},
-		types.Time{Time: types.FromGoTime(ssElement.lastSeen), Type: mysql.TypeTimestamp},
+		types.NewTime(types.FromGoTime(ssElement.firstSeen), mysql.TypeTimestamp, 0),
+		types.NewTime(types.FromGoTime(ssElement.lastSeen), mysql.TypeTimestamp, 0),
 		ssElement.sampleSQL,
 		ssElement.prevSQL,
 		ssbd.planDigest,
