@@ -15,10 +15,10 @@ package tables_test
 
 import (
 	"context"
-	"github.com/pingcap/tidb/ddl"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/model"
+	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
