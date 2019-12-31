@@ -50,7 +50,7 @@ type UpdateExec struct {
 	tblColPosInfos            plannercore.TblColPosInfoSlice
 	evalBuffer                chunk.MutRow
 	allAssignmentsAreConstant bool
-	fetched bool
+	fetched                   bool
 	memTracker                *memory.Tracker
 }
 
@@ -202,6 +202,7 @@ func (e *UpdateExec) fetchChunkRows(ctx context.Context) error {
 		}
 		e.memTracker.Consume(types.EstimatedMemUsage(e.rows[firstRowIdx], globalRowIdx-firstRowIdx))
 		e.memTracker.Consume(types.EstimatedMemUsage(e.newRowsData[firstRowIdx], globalRowIdx-firstRowIdx))
+		chk = chunk.Renew(chk, e.maxChunkSize)
 	}
 	return nil
 }
