@@ -67,9 +67,9 @@ func TestT(t *testing.T) {
 	TestingT(t)
 }
 
-var _ = Suite(&seqTestSuite{})
-var _ = Suite(&seqTestSuite1{})
-var _ = Suite(&testOOMSuite{})
+var _ = SerialSuites(&seqTestSuite{})
+var _ = SerialSuites(&seqTestSuite1{})
+var _ = SerialSuites(&testOOMSuite{})
 
 type seqTestSuite struct {
 	cluster   *mocktikv.Cluster

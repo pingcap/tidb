@@ -32,14 +32,23 @@ import (
 )
 
 var _ = Suite(new(testSQLSuite))
+var _ = SerialSuites(new(testSQLSerialSuite))
 
 type testSQLSuite struct {
+	testSQLSuiteBase
+}
+
+type testSQLSerialSuite struct {
+	testSQLSuiteBase
+}
+
+type testSQLSuiteBase struct {
 	OneByOneSuite
 	store Storage
 	dom   *domain.Domain
 }
 
-func (s *testSQLSuite) SetUpSuite(c *C) {
+func (s *testSQLSuiteBase) SetUpSuite(c *C) {
 	s.OneByOneSuite.SetUpSuite(c)
 	var err error
 	s.store = NewTestStore(c).(Storage)
@@ -47,13 +56,13 @@ func (s *testSQLSuite) SetUpSuite(c *C) {
 	c.Assert(err, IsNil)
 }
 
-func (s *testSQLSuite) TearDownSuite(c *C) {
+func (s *testSQLSuiteBase) TearDownSuite(c *C) {
 	s.dom.Close()
 	s.store.Close()
 	s.OneByOneSuite.TearDownSuite(c)
 }
 
-func (s *testSQLSuite) TestFailBusyServerCop(c *C) {
+func (s *testSQLSerialSuite) TestFailBusyServerCop(c *C) {
 	se, err := session.CreateSession4Test(s.store)
 	c.Assert(err, IsNil)
 

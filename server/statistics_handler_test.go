@@ -38,9 +38,14 @@ type testDumpStatsSuite struct {
 	sh     *StatsHandler
 	store  kv.Storage
 	domain *domain.Domain
+	port	uint
+	statusPort uint
 }
 
-var _ = Suite(new(testDumpStatsSuite))
+var _ = Suite(&testDumpStatsSuite{
+	port: 4012,
+	statusPort: 10099,
+})
 
 func (ds *testDumpStatsSuite) startServer(c *C) {
 	mvccStore := mocktikv.MustNewMVCCStore()
@@ -54,8 +59,8 @@ func (ds *testDumpStatsSuite) startServer(c *C) {
 	tidbdrv := NewTiDBDriver(ds.store)
 
 	cfg := config.NewConfig()
-	cfg.Port = 4001
-	cfg.Status.StatusPort = 10090
+	cfg.Port = ds.port
+	cfg.Status.StatusPort = ds.statusPort
 	cfg.Status.ReportStatus = true
 
 	server, err := NewServer(cfg, tidbdrv)
@@ -67,6 +72,14 @@ func (ds *testDumpStatsSuite) startServer(c *C) {
 	do, err := session.GetDomain(ds.store)
 	c.Assert(err, IsNil)
 	ds.sh = &StatsHandler{do}
+}
+
+func (ds *testDumpStatsSuite) getDSN(confs ...configOverrider) string {
+	portConfig := func(c *mysql.Config) {
+		c.Addr = fmt.Sprintf("127.0.0.1:%d", ds.port)
+	}
+	confs = append(confs, portConfig)
+	return getDSN(confs...)
 }
 
 func (ds *testDumpStatsSuite) stopServer(c *C) {
@@ -89,7 +102,9 @@ func (ds *testDumpStatsSuite) TestDumpStatsAPI(c *C) {
 	router := mux.NewRouter()
 	router.Handle("/stats/dump/{db}/{table}", ds.sh)
 
-	resp, err := http.Get("http://127.0.0.1:10090/stats/dump/tidb/test")
+	testStatsBaseURL := fmt.Sprintf("http://127.0.0.1:%d/stats/dump/tidb/test", ds.statusPort)
+
+	resp, err := http.Get(testStatsBaseURL)
 	c.Assert(err, IsNil)
 	defer resp.Body.Close()
 
@@ -115,7 +130,7 @@ func (ds *testDumpStatsSuite) TestDumpStatsAPI(c *C) {
 	ds.prepare4DumpHistoryStats(c)
 
 	// test dump history stats
-	resp1, err := http.Get("http://127.0.0.1:10090/stats/dump/tidb/test")
+	resp1, err := http.Get(testStatsBaseURL)
 	c.Assert(err, IsNil)
 	defer resp1.Body.Close()
 	js, err = ioutil.ReadAll(resp1.Body)
@@ -131,7 +146,7 @@ func (ds *testDumpStatsSuite) TestDumpStatsAPI(c *C) {
 		c.Assert(os.Remove(path1), IsNil)
 	}()
 
-	resp1, err = http.Get("http://127.0.0.1:10090/stats/dump/tidb/test/" + snapshot)
+	resp1, err = http.Get(testStatsBaseURL + "/" + snapshot)
 	c.Assert(err, IsNil)
 
 	js, err = ioutil.ReadAll(resp1.Body)
@@ -141,7 +156,8 @@ func (ds *testDumpStatsSuite) TestDumpStatsAPI(c *C) {
 }
 
 func (ds *testDumpStatsSuite) prepareData(c *C) {
-	db, err := sql.Open("mysql", getDSN())
+
+	db, err := sql.Open("mysql", ds.getDSN())
 	c.Assert(err, IsNil, Commentf("Error connecting"))
 	defer db.Close()
 	dbt := &DBTest{c, db}
@@ -162,7 +178,7 @@ func (ds *testDumpStatsSuite) prepareData(c *C) {
 }
 
 func (ds *testDumpStatsSuite) prepare4DumpHistoryStats(c *C) {
-	db, err := sql.Open("mysql", getDSN())
+	db, err := sql.Open("mysql", ds.getDSN())
 	c.Assert(err, IsNil, Commentf("Error connecting"))
 	defer db.Close()
 
@@ -181,7 +197,7 @@ func (ds *testDumpStatsSuite) prepare4DumpHistoryStats(c *C) {
 }
 
 func (ds *testDumpStatsSuite) checkCorrelation(c *C) {
-	db, err := sql.Open("mysql", getDSN(nil))
+	db, err := sql.Open("mysql", ds.getDSN())
 	c.Assert(err, IsNil, Commentf("Error connecting"))
 	dbt := &DBTest{c, db}
 	defer db.Close()
@@ -209,7 +225,7 @@ func (ds *testDumpStatsSuite) checkCorrelation(c *C) {
 }
 
 func (ds *testDumpStatsSuite) checkData(c *C, path string) {
-	db, err := sql.Open("mysql", getDSN(func(config *mysql.Config) {
+	db, err := sql.Open("mysql", ds.getDSN(func(config *mysql.Config) {
 		config.AllowAllFiles = true
 		config.Strict = false
 	}))
@@ -236,7 +252,7 @@ func (ds *testDumpStatsSuite) checkData(c *C, path string) {
 }
 
 func (ds *testDumpStatsSuite) clearData(c *C, path string) {
-	db, err := sql.Open("mysql", getDSN())
+	db, err := sql.Open("mysql", ds.getDSN())
 	c.Assert(err, IsNil, Commentf("Error connecting"))
 	defer db.Close()
 

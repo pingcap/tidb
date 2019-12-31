@@ -49,7 +49,7 @@ type TidbTestSuite struct {
 }
 
 var suite = new(TidbTestSuite)
-var _ = Suite(suite)
+var _ = SerialSuites(suite)
 
 func (ts *TidbTestSuite) SetUpSuite(c *C) {
 	metrics.RegisterMetrics()
