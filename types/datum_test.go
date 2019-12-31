@@ -519,14 +519,14 @@ func prepareCompareDatums() ([]Datum, []Datum) {
 	vals = append(vals, NewFloat64Datum(1.23))
 	vals = append(vals, NewStringDatum("abcde"))
 	vals = append(vals, NewDecimalDatum(NewDecFromStringForTest("1.2345")))
-	vals = append(vals, NewTimeDatum(Time{Time: FromGoTime(time.Date(2018, 3, 8, 16, 1, 0, 315313000, time.UTC)), Fsp: 6, Type: mysql.TypeTimestamp}))
+	vals = append(vals, NewTimeDatum(NewTime(FromGoTime(time.Date(2018, 3, 8, 16, 1, 0, 315313000, time.UTC)), mysql.TypeTimestamp, 6)))
 
 	vals1 := make([]Datum, 0, 5)
 	vals1 = append(vals1, NewIntDatum(1))
 	vals1 = append(vals1, NewFloat64Datum(1.23))
 	vals1 = append(vals1, NewStringDatum("abcde"))
 	vals1 = append(vals1, NewDecimalDatum(NewDecFromStringForTest("1.2345")))
-	vals1 = append(vals1, NewTimeDatum(Time{Time: FromGoTime(time.Date(2018, 3, 8, 16, 1, 0, 315313000, time.UTC)), Fsp: 6, Type: mysql.TypeTimestamp}))
+	vals1 = append(vals1, NewTimeDatum(NewTime(FromGoTime(time.Date(2018, 3, 8, 16, 1, 0, 315313000, time.UTC)), mysql.TypeTimestamp, 6)))
 	return vals, vals1
 }
 
