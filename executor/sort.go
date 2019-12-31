@@ -453,6 +453,7 @@ func (e *SortExec) spillToDiskByRowPtr() (disk *chunk.ListInDisk, err error) {
 	return rowChunksInDisk, nil
 }
 
+// ActionSpill returns a memory.ActionOnExceed for spilling over to disk.
 func (e *SortExec) ActionSpill() memory.ActionOnExceed {
 	return &spillSortDiskAction{e: e}
 }
