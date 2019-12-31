@@ -14,6 +14,8 @@
 package executor_test
 
 import (
+	"fmt"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/util"
@@ -37,9 +39,16 @@ func (s *testSuite) TestSortInDisk(c *C) {
 	s.domain.ExpensiveQueryHandle().SetSessionManager(sm)
 
 	tk.MustExec("set @@tidb_mem_quota_query=1;")
+	tk.MustExec("set @@tidb_max_chunk_size=32;")
 	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(c1 int, c2 int)")
-	tk.MustExec("insert into t values(1,5),(2,4),(3,3),(4,2),(5,1)")
-	result := tk.MustQuery("select * from t order by c2")
-	result.Check(testkit.Rows("5 1", "4 2", "3 3", "2 4", "1 5"))
+	tk.MustExec("create table t(c1 int)")
+	for i := 0; i < 5; i++ {
+		for j := i; j < 1024; j += 5 {
+			tk.MustExec(fmt.Sprintf("insert into t values(%v)", j))
+		}
+	}
+	result := tk.MustQuery("select * from t order by c1")
+	for i := 0; i < 1024; i++ {
+		c.Assert(result.Rows()[i][0].(string), Equals, fmt.Sprint(i))
+	}
 }
