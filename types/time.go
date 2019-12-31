@@ -230,7 +230,7 @@ func (t Time) Clock() (hour int, minute int, second int) {
 }
 
 // Time is the struct for handling datetime, timestamp and date.
-// TODO: check if need a NewTime function to set.fsp default value?
+// TODO: check if need a NewTime function to set Fsp default value?
 type Time struct {
 	time MysqlTime
 	tp   uint8
@@ -239,7 +239,7 @@ type Time struct {
 	fsp int8
 }
 
-// NewTime construct time from core time, type and fsp.
+// NewTime constructs time from core time, type and fsp.
 func NewTime(mt MysqlTime, tp uint8, fsp int8) Time {
 	return Time{
 		time: mt,
