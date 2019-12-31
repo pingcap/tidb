@@ -413,7 +413,8 @@ func (pc PbConverter) canFuncBePushed(sf *ScalarFunction) bool {
 		// json functions.
 		ast.JSONType,
 		ast.JSONExtract,
-		ast.JSONUnquote,
+		// FIXME: JSONUnquote is incompatible with Coprocessor
+		// ast.JSONUnquote,
 		ast.JSONObject,
 		ast.JSONArray,
 		ast.JSONMerge,
