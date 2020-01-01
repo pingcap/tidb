@@ -19,6 +19,7 @@ import (
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/planner/memo"
 	"github.com/pingcap/tidb/util/ranger"
+	"math"
 )
 
 // Transformation defines the interface for the transformation rules.
@@ -66,6 +67,7 @@ var defaultTransformationMap = map[memo.Operand][]Transformation{
 		NewRuleTransformLimitToTopN(),
 		NewRulePushLimitDownProjection(),
 		NewRulePushLimitDownUnionAll(),
+		NewRuleMergeAdjacentLimit(),
 	},
 	memo.OperandProjection: {
 		NewRuleEliminateProjection(),
@@ -1285,4 +1287,39 @@ func (r *MergeAdjacentSelection) OnTransform(old *memo.ExprIter) (newExprs []*me
 	newSelExpr := memo.NewGroupExpr(newSel)
 	newSelExpr.SetChildren(childGroups...)
 	return []*memo.GroupExpr{newSelExpr}, true, false, nil
+}
+
+// MergeAdjacentLimit merge the adjacent limit.
+type MergeAdjacentLimit struct {
+	baseRule
+}
+
+// NewRuleMergeAdjacentLimit creates a new Transformation MergeAdjacentLimit.
+// The pattern of this rule is `Limit->Limit->X`.
+func NewRuleMergeAdjacentLimit() Transformation {
+	rule := &MergeAdjacentLimit{}
+	rule.pattern = memo.BuildPattern(
+		memo.OperandLimit,
+		memo.EngineAll,
+		memo.NewPattern(memo.OperandLimit, memo.EngineAll),
+	)
+	return rule
+}
+
+// OnTransform implements Transformation interface.
+// This rule tries to merge adjacent limit, with no simplification.
+func (r *MergeAdjacentLimit) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
+	limit := old.GetExpr().ExprNode.(*plannercore.LogicalLimit)
+	child := old.Children[0].GetExpr().ExprNode.(*plannercore.LogicalLimit)
+	childGroups := old.Children[0].GetExpr().Children
+
+	offset := child.Offset + limit.Offset
+	count := uint64(math.Min(float64(child.Count-limit.Offset), float64(limit.Count)))
+	newLimit := plannercore.LogicalLimit{
+		Offset: offset,
+		Count:  count,
+	}.Init(limit.SCtx(), limit.SelectBlockOffset())
+	newLimitExpr := memo.NewGroupExpr(newLimit)
+	newLimitExpr.SetChildren(childGroups...)
+	return []*memo.GroupExpr{newLimitExpr}, true, false, nil
 }
