@@ -329,7 +329,7 @@ func (alloc *allocator) Alloc(tableID int64, n uint64, increment, offset int64) 
 	return alloc.alloc4Signed(tableID, n, increment, offset)
 }
 
-// CallNeededIDs is exported for test.
+// CalcNeededIDs is exported for test.
 func CalcNeededIDs(base, n, increment, offset int64, isUnsigned bool) int64 {
 	if increment == 1 {
 		return n

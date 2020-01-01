@@ -727,7 +727,7 @@ func (e *InsertValues) lazyAdjustAutoIncrementDatum(ctx context.Context, rows []
 			// It's compatible with mysql setting the first allocated autoID to lastInsertID.
 			// Cause autoID may be specified by user, judge only the first row is not suitable.
 			if e.lastInsertID == 0 {
-				e.lastInsertID = uint64(min) + 1
+				e.lastInsertID = uint64(min)
 			}
 			// Assign autoIDs to rows.
 			for j := 0; j < cnt; j++ {
