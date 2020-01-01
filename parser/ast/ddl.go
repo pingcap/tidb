@@ -1803,6 +1803,11 @@ const (
 	OnDuplicateKeyHandlingReplace
 )
 
+const (
+	TableOptionCharsetWithoutConvertTo uint64 = 0
+	TableOptionCharsetWithConvertTo    uint64 = 1
+)
+
 // TableOption is used for parsing table option from SQL.
 type TableOption struct {
 	Tp         TableOptionType
@@ -1823,8 +1828,15 @@ func (n *TableOption) Restore(ctx *RestoreCtx) error {
 			ctx.WritePlain("''")
 		}
 	case TableOptionCharset:
-		ctx.WriteKeyWord("DEFAULT CHARACTER SET ")
-		ctx.WritePlain("= ")
+		if n.UintValue == TableOptionCharsetWithConvertTo {
+			ctx.WriteKeyWord("CONVERT TO ")
+		} else {
+			ctx.WriteKeyWord("DEFAULT ")
+		}
+		ctx.WriteKeyWord("CHARACTER SET ")
+		if n.UintValue == TableOptionCharsetWithoutConvertTo {
+			ctx.WriteKeyWord("= ")
+		}
 		if n.Default {
 			ctx.WriteKeyWord("DEFAULT")
 		} else {
@@ -2306,10 +2318,11 @@ func (n *AlterTableSpec) Restore(ctx *RestoreCtx) error {
 		}
 	case AlterTableOption:
 		switch {
-		case len(n.Options) == 2 &&
-			n.Options[0].Tp == TableOptionCharset &&
-			n.Options[1].Tp == TableOptionCollate:
-			ctx.WriteKeyWord("CONVERT TO CHARACTER SET ")
+		case len(n.Options) == 2 && n.Options[0].Tp == TableOptionCharset && n.Options[1].Tp == TableOptionCollate:
+			if n.Options[0].UintValue == TableOptionCharsetWithConvertTo {
+				ctx.WriteKeyWord("CONVERT TO ")
+			}
+			ctx.WriteKeyWord("CHARACTER SET ")
 			if n.Options[0].Default {
 				ctx.WriteKeyWord("DEFAULT")
 			} else {
@@ -2317,9 +2330,11 @@ func (n *AlterTableSpec) Restore(ctx *RestoreCtx) error {
 			}
 			ctx.WriteKeyWord(" COLLATE ")
 			ctx.WriteKeyWord(n.Options[1].StrValue)
-		case n.Options[0].Tp == TableOptionCharset &&
-			n.Options[0].Default:
-			ctx.WriteKeyWord("CONVERT TO CHARACTER SET DEFAULT")
+		case n.Options[0].Tp == TableOptionCharset && n.Options[0].Default:
+			if n.Options[0].UintValue == TableOptionCharsetWithConvertTo {
+				ctx.WriteKeyWord("CONVERT TO ")
+			}
+			ctx.WriteKeyWord("CHARACTER SET DEFAULT")
 		default:
 			for i, opt := range n.Options {
 				if i != 0 {
