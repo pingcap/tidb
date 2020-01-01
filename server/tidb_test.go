@@ -37,6 +37,8 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/testkit"
 )
 
 type TidbTestSuite struct {
@@ -218,7 +220,7 @@ func generateCert(sn int, commonName string, parentCert *x509.Certificate, paren
 
 	template := x509.Certificate{
 		SerialNumber:          big.NewInt(int64(sn)),
-		Subject:               pkix.Name{CommonName: commonName},
+		Subject:               pkix.Name{CommonName: commonName, Names: []pkix.AttributeTypeAndValue{util.MockPkixAttribute(util.CommonName, commonName)}},
 		NotBefore:             notBefore,
 		NotAfter:              notAfter,
 		KeyUsage:              x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature,
@@ -291,6 +293,19 @@ func registerTLSConfig(configName string, caCertPath string, clientCertPath stri
 	}
 	mysql.RegisterTLSConfig(configName, tlsConfig)
 	return nil
+}
+
+func (ts *TidbTestSuite) TestSystemTimeZone(c *C) {
+	tk := testkit.NewTestKit(c, ts.store)
+	cfg := config.NewConfig()
+	cfg.Port = 4002
+	cfg.Status.ReportStatus = false
+	server, err := NewServer(cfg, ts.tidbdrv)
+	c.Assert(err, IsNil)
+	defer server.Close()
+
+	tz1 := tk.MustQuery("select variable_value from mysql.tidb where variable_name = 'system_tz'").Rows()
+	tk.MustQuery("select @@system_time_zone").Check(tz1)
 }
 
 func (ts *TidbTestSuite) TestTLS(c *C) {

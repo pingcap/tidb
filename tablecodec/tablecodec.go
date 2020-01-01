@@ -30,10 +30,9 @@ import (
 )
 
 var (
-	errInvalidKey         = terror.ClassXEval.New(codeInvalidKey, "invalid key")
-	errInvalidRecordKey   = terror.ClassXEval.New(codeInvalidRecordKey, "invalid record key")
-	errInvalidIndexKey    = terror.ClassXEval.New(codeInvalidIndexKey, "invalid index key")
-	errInvalidColumnCount = terror.ClassXEval.New(codeInvalidColumnCount, "invalid column count")
+	errInvalidKey       = terror.ClassXEval.New(mysql.ErrInvalidKey, mysql.MySQLErrName[mysql.ErrInvalidKey])
+	errInvalidRecordKey = terror.ClassXEval.New(mysql.ErrInvalidRecordKey, mysql.MySQLErrName[mysql.ErrInvalidRecordKey])
+	errInvalidIndexKey  = terror.ClassXEval.New(mysql.ErrInvalidIndexKey, mysql.MySQLErrName[mysql.ErrInvalidIndexKey])
 )
 
 var (
@@ -287,7 +286,7 @@ func flatten(sc *stmtctx.StatementContext, data types.Datum, ret *types.Datum) e
 	case types.KindMysqlTime:
 		// for mysql datetime, timestamp and date type
 		t := data.GetMysqlTime()
-		if t.Type == mysql.TypeTimestamp && sc.TimeZone != time.UTC {
+		if t.Type() == mysql.TypeTimestamp && sc.TimeZone != time.UTC {
 			err := t.ConvertTimeZone(sc.TimeZone, time.UTC)
 			if err != nil {
 				return errors.Trace(err)
@@ -460,9 +459,7 @@ func unflatten(datum types.Datum, ft *types.FieldType, loc *time.Location) (type
 		mysql.TypeString:
 		return datum, nil
 	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
-		var t types.Time
-		t.Type = ft.Tp
-		t.Fsp = int8(ft.Decimal)
+		t := types.NewTime(types.ZeroCoreTime, ft.Tp, int8(ft.Decimal))
 		var err error
 		err = t.FromPackedUint(datum.GetUint64())
 		if err != nil {
@@ -679,11 +676,16 @@ func GenTableIndexPrefix(tableID int64) kv.Key {
 	return appendTableIndexPrefix(buf, tableID)
 }
 
+// IsIndexKey is used to check whether the key is an index key.
+func IsIndexKey(k []byte) bool {
+	return len(k) > 11 && k[0] == 't' && k[10] == 'i'
+}
+
 // IsUntouchedIndexKValue uses to check whether the key is index key, and the value is untouched,
 // since the untouched index key/value is no need to commit.
 func IsUntouchedIndexKValue(k, v []byte) bool {
 	vLen := len(v)
-	return (len(k) > 11 && k[0] == 't' && k[10] == 'i') &&
+	return IsIndexKey(k) &&
 		((vLen == 1 || vLen == 9) && v[vLen-1] == kv.UnCommitIndexKVFlag)
 }
 
@@ -717,9 +719,11 @@ func GetTableIndexKeyRange(tableID, indexID int64) (startKey, endKey []byte) {
 	return
 }
 
-const (
-	codeInvalidRecordKey   = 4
-	codeInvalidColumnCount = 5
-	codeInvalidKey         = 6
-	codeInvalidIndexKey    = 7
-)
+func init() {
+	mySQLErrCodes := map[terror.ErrCode]uint16{
+		mysql.ErrInvalidKey:       mysql.ErrInvalidKey,
+		mysql.ErrInvalidRecordKey: mysql.ErrInvalidRecordKey,
+		mysql.ErrInvalidIndexKey:  mysql.ErrInvalidIndexKey,
+	}
+	terror.ErrClassToMySQLCodes[terror.ClassXEval] = mySQLErrCodes
+}

@@ -100,12 +100,17 @@ func (a *PanicOnExceed) Action(t *Tracker) {
 func (a *PanicOnExceed) SetFallback(ActionOnExceed) {}
 
 var (
-	errMemExceedThreshold = terror.ClassExecutor.New(codeMemExceedThreshold, mysql.MySQLErrName[mysql.ErrMemExceedThreshold])
+	errMemExceedThreshold = terror.ClassUtil.New(mysql.ErrMemExceedThreshold, mysql.MySQLErrName[mysql.ErrMemExceedThreshold])
 )
 
 const (
-	codeMemExceedThreshold terror.ErrCode = 8001
-
 	// PanicMemoryExceed represents the panic message when out of memory quota.
 	PanicMemoryExceed string = "Out Of Memory Quota!"
 )
+
+func init() {
+	errCodes := map[terror.ErrCode]uint16{
+		mysql.ErrMemExceedThreshold: mysql.ErrMemExceedThreshold,
+	}
+	terror.ErrClassToMySQLCodes[terror.ClassUtil] = errCodes
+}

@@ -20,7 +20,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cznic/mathutil"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/mysql"
@@ -32,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/execdetails"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tipb/go-tipb"
@@ -489,7 +489,7 @@ func BenchmarkSelectResponseChunk_BigResponse(b *testing.B) {
 		selectResult.Fetch(context.TODO())
 		chk := chunk.NewChunkWithCapacity(colTypes, 1024)
 		b.StartTimer()
-		for true {
+		for {
 			err := selectResult.Next(context.TODO(), chk)
 			if err != nil {
 				panic(err)
@@ -514,7 +514,7 @@ func BenchmarkSelectResponseChunk_SmallResponse(b *testing.B) {
 		selectResult.Fetch(context.TODO())
 		chk := chunk.NewChunkWithCapacity(colTypes, 1024)
 		b.StartTimer()
-		for true {
+		for {
 			err := selectResult.Next(context.TODO(), chk)
 			if err != nil {
 				panic(err)

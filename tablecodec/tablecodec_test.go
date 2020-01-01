@@ -22,6 +22,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
@@ -148,10 +149,7 @@ func (s *testTableCodecSuite) TestRowCodec(c *C) {
 
 func (s *testTableCodecSuite) TestDecodeColumnValue(c *C) {
 	sc := &stmtctx.StatementContext{TimeZone: time.Local}
-	d := types.NewTimeDatum(types.Time{
-		Time: types.FromGoTime(time.Now()),
-		Type: mysql.TypeTimestamp,
-	})
+	d := types.NewTimeDatum(types.NewTime(types.FromGoTime(time.Now()), mysql.TypeTimestamp, types.DefaultFsp))
 	bs, err := EncodeRow(sc, []types.Datum{d}, []int64{1}, nil, nil)
 	c.Assert(err, IsNil)
 	c.Assert(bs, NotNil)
@@ -517,5 +515,17 @@ func BenchmarkEncodeValue(b *testing.B) {
 			encodedCol = encodedCol[:0]
 			EncodeValue(nil, encodedCol, d)
 		}
+	}
+}
+
+func (s *testTableCodecSuite) TestError(c *C) {
+	kvErrs := []*terror.Error{
+		errInvalidKey,
+		errInvalidRecordKey,
+		errInvalidIndexKey,
+	}
+	for _, err := range kvErrs {
+		code := err.ToSQLError().Code
+		c.Assert(code != mysql.ErrUnknown && code == uint16(err.Code()), IsTrue, Commentf("err: %v", err))
 	}
 }

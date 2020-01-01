@@ -52,6 +52,15 @@
     ]
   },
   {
+    "name": "TestIndexMergeHint",
+    "cases": [
+      "select /*+ USE_INDEX_MERGE(t, c_d_e, f_g) */ * from t where c < 1 or f > 2",
+      "select /*+ USE_INDEX_MERGE(t, primary, f_g) */ * from t where a < 1 or f > 2",
+      "select /*+ USE_INDEX_MERGE(t, primary, f_g, c_d_e) */ * from t where a < 1 or f > 2",
+      "select /*+ NO_INDEX_MERGE(), USE_INDEX_MERGE(t, primary, f_g, c_d_e) */ * from t where a < 1 or f > 2"
+    ]
+  },
+  {
     "name": "TestDAGPlanBuilderSimpleCase",
     "cases":[
       // Test index hint.
@@ -476,12 +485,25 @@
   {
     "name": "TestIndexJoinUnionScan",
     "cases": [
-      // Test Index Join + UnionScan + TableScan.
-      "select /*+ TIDB_INLJ(t2) */ * from t t1, t t2 where t1.a = t2.a",
-      // Test Index Join + UnionScan + DoubleRead.
-      "select /*+ TIDB_INLJ(t1, t2) */ * from t t1, t t2 where t1.a = t2.c",
-      // Test Index Join + UnionScan + IndexScan.
-      "select /*+ TIDB_INLJ(t1, t2) */ t1.a , t2.c from t t1, t t2 where t1.a = t2.c"
+      [
+        "insert into t values(1, 1)",
+        // Test Index Join + UnionScan + TableScan.
+        "explain select /*+ TIDB_INLJ(t2) */ * from t t1, t t2 where t1.a = t2.a"
+      ],
+      [
+        "insert into t values(1, 1)",
+        // Test Index Join + UnionScan + DoubleRead.
+        "explain select /*+ TIDB_INLJ(t2) */ * from t t1, t t2 where t1.a = t2.b"
+      ],
+      [
+        "insert into t values(1, 1)",
+        // Test Index Join + UnionScan + IndexScan.
+        "explain select /*+ TIDB_INLJ(t2) */ t1.a , t2.b from t t1, t t2 where t1.a = t2.b"
+      ],
+      [
+        "insert into tt values(1)",
+        "explain select /*+ TIDB_INLJ(t2) */ * from tt t1, tt t2 where t1.a = t2.a"
+      ]
     ]
   },
   {
@@ -496,6 +518,15 @@
       "select /*+ INL_JOIN(t1) */ * from t1 join t2 on t1.a = t2.a;",
       "select /*+ INL_HASH_JOIN(t1) */ * from t1 join t2 on t1.a = t2.a;",
       "select /*+ INL_MERGE_JOIN(t1) */ * from t1 join t2 on t1.a = t2.a;"
+    ]
+  },
+  {
+    "name": "TestAggToCopHint",
+    "cases": [
+      "select /*+ AGG_TO_COP(), HASH_AGG(), USE_INDEX(t) */ sum(a) from t group by a",
+      "select /*+ AGG_TO_COP(), USE_INDEX(t) */ sum(b) from t group by b",
+      "select /*+ AGG_TO_COP(), HASH_AGG(), USE_INDEX(t) */ distinct a from t group by a",
+      "select /*+ AGG_TO_COP(), HASH_AGG(), HASH_JOIN(t1), USE_INDEX(t1), USE_INDEX(t2) */ sum(t1.a) from t t1, t t2 where t1.a = t2.b group by t1.a"
     ]
   }
 ]

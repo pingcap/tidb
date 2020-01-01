@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
 )
@@ -122,13 +123,13 @@ func (*testSuite) TestT(c *C) {
 	is := handle.Get()
 
 	schemaNames := is.AllSchemaNames()
-	c.Assert(schemaNames, HasLen, 3)
-	c.Assert(testutil.CompareUnorderedStringSlice(schemaNames, []string{infoschema.Name, "PERFORMANCE_SCHEMA", "Test"}), IsTrue)
+	c.Assert(schemaNames, HasLen, 5)
+	c.Assert(testutil.CompareUnorderedStringSlice(schemaNames, []string{util.InformationSchemaName.O, util.MetricSchemaName.O, util.PerformanceSchemaName.O, "Test", util.InspectionSchemaName.O}), IsTrue)
 
 	schemas := is.AllSchemas()
-	c.Assert(schemas, HasLen, 3)
+	c.Assert(schemas, HasLen, 5)
 	schemas = is.Clone()
-	c.Assert(schemas, HasLen, 3)
+	c.Assert(schemas, HasLen, 5)
 
 	c.Assert(is.SchemaExists(dbName), IsTrue)
 	c.Assert(is.SchemaExists(noexist), IsFalse)
@@ -320,7 +321,7 @@ func (*testSuite) TestInfoTables(c *C) {
 		"PROCESSLIST",
 	}
 	for _, t := range infoTables {
-		tb, err1 := is.TableByName(model.NewCIStr(infoschema.Name), model.NewCIStr(t))
+		tb, err1 := is.TableByName(util.InformationSchemaName, model.NewCIStr(t))
 		c.Assert(err1, IsNil)
 		c.Assert(tb, NotNil)
 	}
