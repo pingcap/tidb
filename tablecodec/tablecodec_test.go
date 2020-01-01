@@ -149,10 +149,7 @@ func (s *testTableCodecSuite) TestRowCodec(c *C) {
 
 func (s *testTableCodecSuite) TestDecodeColumnValue(c *C) {
 	sc := &stmtctx.StatementContext{TimeZone: time.Local}
-	d := types.NewTimeDatum(types.Time{
-		Time: types.FromGoTime(time.Now()),
-		Type: mysql.TypeTimestamp,
-	})
+	d := types.NewTimeDatum(types.NewTime(types.FromGoTime(time.Now()), mysql.TypeTimestamp, types.DefaultFsp))
 	bs, err := EncodeRow(sc, []types.Datum{d}, []int64{1}, nil, nil)
 	c.Assert(err, IsNil)
 	c.Assert(bs, NotNil)

@@ -219,9 +219,9 @@ func (e *clusterConfigRetriever) retrieve(_ context.Context, sctx sessionctx.Con
 
 type clusterServerInfoRetriever struct {
 	dummyCloser
-	retrieved      bool
 	extractor      *plannercore.ClusterTableExtractor
 	serverInfoType diagnosticspb.ServerInfoType
+	retrieved      bool
 }
 
 // retrieve implements the clusterRetriever interface
