@@ -314,6 +314,17 @@ func NewAllocatorsFromTblInfo(store kv.Storage, schemaID int64, tblInfo *model.T
 
 // Alloc implements autoid.Allocator Alloc interface.
 // For autoIncrement allocator, the increment and offset should always be positive in [1, 65535].
+// Attention:
+// When increment and offset is not the default value = 1, the return range (min, max] need to
+// calculate the right start position rather than simply the add 1 to min. Then you can derive
+// the successive autoID by adding increment * cnt to start for (n-1) times.
+//
+// Example:
+// (6, 13] is returned, increment = 4, offset = 1, n = 2.
+// 6 is the last allocated value for other autoID or handle, maybe with different increment and step,
+// but actually we don't care about it, all we need is to calc the new autoID corresponding to the
+// increment and offset at this time now. To simplify the rule is like (ID - offset) % increment = 0,
+// so the first autoID should be 9, then add increment to it to get 13.
 func (alloc *allocator) Alloc(tableID int64, n uint64, increment, offset int64) (int64, int64, error) {
 	if tableID == 0 {
 		return 0, 0, errInvalidTableID.GenWithStackByArgs("Invalid tableID")

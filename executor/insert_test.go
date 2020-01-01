@@ -830,3 +830,47 @@ func (s *testSuite3) TestDMLCast(c *C) {
 	tk.MustExec("delete from t where a = ''")
 	tk.MustQuery(`select * from t`).Check(testkit.Rows())
 }
+
+func (s *testSuite3) TestAutoIDIncrementAndOffset(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test`)
+	// Test handle is PK.
+	tk.MustExec(`create table io (a int key auto_increment)`)
+	tk.Se.GetSessionVars().AutoIncrementOffset = 10
+	tk.Se.GetSessionVars().AutoIncrementIncrement = 2
+	tk.MustExec(`insert into io values (),(),()`)
+	tk.MustQuery(`select * from io`).Check(testkit.Rows("10", "12", "14"))
+	tk.MustExec(`delete from io`)
+
+	// Test reset the increment.
+	tk.Se.GetSessionVars().AutoIncrementIncrement = 5
+	tk.MustExec(`insert into io values (),(),()`)
+	tk.MustQuery(`select * from io`).Check(testkit.Rows("15", "20", "25"))
+	tk.MustExec(`delete from io`)
+
+	tk.Se.GetSessionVars().AutoIncrementIncrement = 10
+	tk.MustExec(`insert into io values (),(),()`)
+	tk.MustQuery(`select * from io`).Check(testkit.Rows("30", "40", "50"))
+	tk.MustExec(`delete from io`)
+
+	tk.Se.GetSessionVars().AutoIncrementIncrement = 5
+	tk.MustExec(`insert into io values (),(),()`)
+	tk.MustQuery(`select * from io`).Check(testkit.Rows("55", "60", "65"))
+	tk.MustExec(`drop table io`)
+
+	// Test handle is not PK.
+	tk.Se.GetSessionVars().AutoIncrementIncrement = 2
+	tk.Se.GetSessionVars().AutoIncrementOffset = 10
+	tk.MustExec(`create table io (a int, b int auto_increment, key(b))`)
+	tk.MustExec(`insert into io(b) values (null),(null),(null)`)
+	// AutoID allocation will take increment and offset into consideration.
+	tk.MustQuery(`select b from io`).Check(testkit.Rows("10", "12", "14"))
+	// HandleID allocation will ignore the increment and offset.
+	tk.MustQuery(`select _tidb_rowid from io`).Check(testkit.Rows("15", "16", "17"))
+	tk.MustExec(`delete from io`)
+
+	tk.Se.GetSessionVars().AutoIncrementIncrement = 10
+	tk.MustExec(`insert into io(b) values (null),(null),(null)`)
+	tk.MustQuery(`select b from io`).Check(testkit.Rows("20", "30", "40"))
+	tk.MustQuery(`select _tidb_rowid from io`).Check(testkit.Rows("41", "42", "43"))
+}
