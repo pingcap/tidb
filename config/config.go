@@ -388,6 +388,21 @@ type TiKVClient struct {
 	// If a store has been up to the limit, it will return error for successive request to
 	// prevent the store occupying too much token in dispatching level.
 	StoreLimit int64 `toml:"store-limit" json:"store-limit"`
+
+	CoprCache CoprocessorCache `toml:"copr-cache" json:"copr-cache"`
+}
+
+// CoprocessorCache is the config for coprocessor cache.
+type CoprocessorCache struct {
+	// Whether to enable the copr cache. The copr cache saves the result from TiKV Coprocessor in the memory and
+	// reuses the result when corresponding data in TiKV is unchanged, on a region basis.
+	Enabled bool `toml:"enabled" json:"enabled"`
+	// The capacity in MB of the cache.
+	CapacityMB float64 `toml:"capacity-mb" json:"capacity-mb"`
+	// Only cache requests whose result set is small.
+	AdmissionMaxResultMB float64 `toml:"admission-max-result-mb" json:"admission-max-result-mb"`
+	// Only cache requests takes notable time to process.
+	AdmissionMinProcessMs uint64 `toml:"admission-min-process-ms" json:"admission-min-process-ms"`
 }
 
 // Binlog is the config for binlog.
@@ -536,6 +551,13 @@ var defaultConf = Config{
 
 		RegionCacheTTL: 600,
 		StoreLimit:     0,
+
+		CoprCache: CoprocessorCache{
+			Enabled:               true,
+			CapacityMB:            1000,
+			AdmissionMaxResultMB:  10,
+			AdmissionMinProcessMs: 5,
+		},
 	},
 	Binlog: Binlog{
 		WriteTimeout: "15s",
