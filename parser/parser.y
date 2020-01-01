@@ -1365,8 +1365,9 @@ AlterTableSpec:
 |	"CONVERT" "TO" CharsetKw CharsetName OptCollate
 	{
 		op := &ast.AlterTableSpec{
-			Tp:      ast.AlterTableOption,
-			Options: []*ast.TableOption{{Tp: ast.TableOptionCharset, StrValue: $4.(string)}},
+			Tp: ast.AlterTableOption,
+			Options: []*ast.TableOption{{Tp: ast.TableOptionCharset, StrValue: $4.(string),
+				UintValue: ast.TableOptionCharsetWithConvertTo}},
 		}
 		if $5 != "" {
 			op.Options = append(op.Options, &ast.TableOption{Tp: ast.TableOptionCollate, StrValue: $5.(string)})
@@ -1376,8 +1377,9 @@ AlterTableSpec:
 |	"CONVERT" "TO" CharsetKw "DEFAULT" OptCollate
 	{
 		op := &ast.AlterTableSpec{
-			Tp:      ast.AlterTableOption,
-			Options: []*ast.TableOption{{Tp: ast.TableOptionCharset, Default: true}},
+			Tp: ast.AlterTableOption,
+			Options: []*ast.TableOption{{Tp: ast.TableOptionCharset, Default: true,
+				UintValue: ast.TableOptionCharsetWithConvertTo}},
 		}
 		if $5 != "" {
 			op.Options = append(op.Options, &ast.TableOption{Tp: ast.TableOptionCollate, StrValue: $5.(string)})
@@ -9233,11 +9235,13 @@ TableOption:
 	}
 |	DefaultKwdOpt CharsetKw EqOpt CharsetName
 	{
-		$$ = &ast.TableOption{Tp: ast.TableOptionCharset, StrValue: $4.(string)}
+		$$ = &ast.TableOption{Tp: ast.TableOptionCharset, StrValue: $4.(string),
+			UintValue: ast.TableOptionCharsetWithoutConvertTo}
 	}
 |	DefaultKwdOpt "COLLATE" EqOpt CollationName
 	{
-		$$ = &ast.TableOption{Tp: ast.TableOptionCollate, StrValue: $4.(string)}
+		$$ = &ast.TableOption{Tp: ast.TableOptionCollate, StrValue: $4.(string),
+			UintValue: ast.TableOptionCharsetWithoutConvertTo}
 	}
 |	"AUTO_INCREMENT" EqOpt LengthNum
 	{

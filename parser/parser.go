@@ -9687,8 +9687,9 @@ yynewstate:
 	case 11:
 		{
 			op := &ast.AlterTableSpec{
-				Tp:      ast.AlterTableOption,
-				Options: []*ast.TableOption{{Tp: ast.TableOptionCharset, StrValue: yyS[yypt-1].item.(string)}},
+				Tp: ast.AlterTableOption,
+				Options: []*ast.TableOption{{Tp: ast.TableOptionCharset, StrValue: yyS[yypt-1].item.(string),
+					UintValue: ast.TableOptionCharsetWithConvertTo}},
 			}
 			if yyS[yypt-0].item != "" {
 				op.Options = append(op.Options, &ast.TableOption{Tp: ast.TableOptionCollate, StrValue: yyS[yypt-0].item.(string)})
@@ -9698,8 +9699,9 @@ yynewstate:
 	case 12:
 		{
 			op := &ast.AlterTableSpec{
-				Tp:      ast.AlterTableOption,
-				Options: []*ast.TableOption{{Tp: ast.TableOptionCharset, Default: true}},
+				Tp: ast.AlterTableOption,
+				Options: []*ast.TableOption{{Tp: ast.TableOptionCharset, Default: true,
+					UintValue: ast.TableOptionCharsetWithConvertTo}},
 			}
 			if yyS[yypt-0].item != "" {
 				op.Options = append(op.Options, &ast.TableOption{Tp: ast.TableOptionCollate, StrValue: yyS[yypt-0].item.(string)})
@@ -16043,11 +16045,13 @@ yynewstate:
 		}
 	case 1683:
 		{
-			parser.yyVAL.item = &ast.TableOption{Tp: ast.TableOptionCharset, StrValue: yyS[yypt-0].item.(string)}
+			parser.yyVAL.item = &ast.TableOption{Tp: ast.TableOptionCharset, StrValue: yyS[yypt-0].item.(string),
+				UintValue: ast.TableOptionCharsetWithoutConvertTo}
 		}
 	case 1684:
 		{
-			parser.yyVAL.item = &ast.TableOption{Tp: ast.TableOptionCollate, StrValue: yyS[yypt-0].item.(string)}
+			parser.yyVAL.item = &ast.TableOption{Tp: ast.TableOptionCollate, StrValue: yyS[yypt-0].item.(string),
+				UintValue: ast.TableOptionCharsetWithoutConvertTo}
 		}
 	case 1685:
 		{
