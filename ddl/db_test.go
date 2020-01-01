@@ -107,6 +107,7 @@ func setUpSuite(s *testDBSuite, c *C) {
 
 	_, err = s.s.Execute(context.Background(), "create database test_db")
 	c.Assert(err, IsNil)
+	s.s.Execute(context.Background(), "set @@global.tidb_max_delta_schema_count= 4096")
 
 	s.tk = testkit.NewTestKit(c, s.store)
 }
