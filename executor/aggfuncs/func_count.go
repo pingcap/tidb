@@ -108,7 +108,7 @@ func (e *countOriginal4Real) UpdatePartialResult(sctx sessionctx.Context, rowsIn
 func (e *countOriginal4Real) Slide(sctx sessionctx.Context, rows []chunk.Row, lastStart, lastEnd uint64, shiftStart, shiftEnd uint64, pr PartialResult) error {
 	p := (*partialResult4Count)(pr)
 	for i := uint64(0); i < shiftStart; i++ {
-		_, isNull, err := e.args[0].EvalInt(sctx, rows[lastStart+i])
+		_, isNull, err := e.args[0].EvalReal(sctx, rows[lastStart+i])
 		if err != nil {
 			return err
 		}
@@ -118,7 +118,7 @@ func (e *countOriginal4Real) Slide(sctx sessionctx.Context, rows []chunk.Row, la
 		*p--
 	}
 	for i := uint64(0); i < shiftEnd; i++ {
-		_, isNull, err := e.args[0].EvalInt(sctx, rows[lastEnd+i])
+		_, isNull, err := e.args[0].EvalReal(sctx, rows[lastEnd+i])
 		if err != nil {
 			return err
 		}
