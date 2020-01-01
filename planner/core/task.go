@@ -1301,7 +1301,7 @@ func (p *PhysicalWindow) GetCost(count float64) float64 {
 	sessVars := p.ctx.GetSessionVars()
 
 	numPartitions := p.getNumberOfPartitions()
-	cpuFuncs, memFuncs := p.getWindowFuncsCostUnit(count / numPartitions)
+	cpuFuncs, memFuncs := p.GetWindowFuncsCostUnit(count / numPartitions)
 
 	cpu := (count + numPartitions*cpuFuncs) * sessVars.CPUFactor
 	mem := numPartitions * memFuncs * sessVars.MemoryFactor
@@ -1323,7 +1323,7 @@ func (p *PhysicalWindowParallel) GetCost(count float64) float64 {
 	workerRows := count / concurrency
 
 	cpuSort, memSort := getPhysicalSortCostUnit(workerRows)
-	cpuFuncs, memFuncs := p.getWindowFuncsCostUnit(count / numPartitions)
+	cpuFuncs, memFuncs := p.GetWindowFuncsCostUnit(count / numPartitions)
 
 	cpu := count + cpuSort + workerRows + numPartitions/concurrency*cpuFuncs
 	mem := count + concurrency*memSort + numPartitions*memFuncs
@@ -1331,6 +1331,9 @@ func (p *PhysicalWindowParallel) GetCost(count float64) float64 {
 }
 
 func (p *BasePhysicalWindow) getNumberOfPartitions() float64 {
+	if len(p.PartitionBy) == 0 {
+		return 1.0
+	}
 	partitionBys := make([]*expression.Column, 0, len(p.PartitionBy))
 	for _, item := range p.PartitionBy {
 		partitionBys = append(partitionBys, item.Col)
@@ -1338,12 +1341,12 @@ func (p *BasePhysicalWindow) getNumberOfPartitions() float64 {
 	return getCardinality(partitionBys, p.Schema(), p.statsInfo())
 }
 
-// getWindowFuncsCostUnit computes the cost of window funcs.
+// GetWindowFuncsCostUnit computes the cost of window funcs.
 // with frame:
 //   cpuCost = SUM(partitionSize * frameSize * funcFactor)
 // without frame:
 //   cpuCost = SUM(partitionSize * funcFactor)
-func (p *BasePhysicalWindow) getWindowFuncsCostUnit(count float64) (cpu, memory float64) {
+func (p *BasePhysicalWindow) GetWindowFuncsCostUnit(count float64) (cpu, memory float64) {
 	var (
 		fac       float64
 		ok        bool
@@ -1351,7 +1354,7 @@ func (p *BasePhysicalWindow) getWindowFuncsCostUnit(count float64) (cpu, memory 
 	)
 
 	if p.Frame != nil {
-		frameSize = p.getWindowFrameSize(count)
+		frameSize = p.GetWindowFrameSize(count)
 	}
 	for _, desc := range p.WindowFuncDescs {
 		fac, ok = windowFuncFactorOnPartitionSize[desc.Name]
@@ -1373,9 +1376,9 @@ func (p *BasePhysicalWindow) getWindowFuncsCostUnit(count float64) (cpu, memory 
 	return cpu, memory
 }
 
-// getWindowFrameSize estimates the frame size of window operator.
+// GetWindowFrameSize estimates the frame size of window operator.
 // It's hard to estimate `range`, therefore, it estimates as the same as `rows`.
-func (p *BasePhysicalWindow) getWindowFrameSize(count float64) (size float64) {
+func (p *BasePhysicalWindow) GetWindowFrameSize(count float64) (size float64) {
 	if p.Frame == nil {
 		return 0.0
 	}
@@ -1395,13 +1398,13 @@ func (p *BasePhysicalWindow) getWindowFrameSize(count float64) (size float64) {
 	}
 	// End
 	if p.Frame.End.UnBounded {
-		size += (count + 1.0) / 2.0 // average([1, 2, ..., count])
+		size += (count + 1.0) / 2.0 // average([count, ..., 2, 1])
 	} else {
 		switch p.Frame.End.Type {
 		case ast.Preceding:
-			size -= float64(p.Frame.Start.Num) + 1.0
+			size -= float64(p.Frame.End.Num) - 1.0
 		case ast.Following:
-			size += float64(p.Frame.Start.Num) + 1.0
+			size += float64(p.Frame.End.Num) + 1.0
 		case ast.CurrentRow:
 			size += 1.0
 		}

@@ -54,42 +54,42 @@ set @@session.tidb_window_concurrency = 4;
 explain select sum(a) over() from t;
 id	count	task	operator info
 Projection_7	10000.00	root	Column#6
-└─WindowParallel_8	10000.00	root	sum(cast(test.t.a))->Column#6 over()
-  └─IndexReader_12	10000.00	root	index:IndexScan_11
-    └─IndexScan_11	10000.00	cop[tikv]	table:t, index:a, range:[NULL,+inf], keep order:false, stats:pseudo
+└─Window_8	10000.00	root	sum(cast(test.t.a))->Column#6 over()
+  └─IndexReader_13	10000.00	root	index:IndexScan_12
+    └─IndexScan_12	10000.00	cop[tikv]	table:t, index:a, range:[NULL,+inf], keep order:false, stats:pseudo
 explain select sum(a) over(partition by a) from t;
 id	count	task	operator info
 Projection_7	10000.00	root	Column#6
-└─WindowParallel_8	10000.00	root	sum(cast(test.t.a))->Column#6 over(partition by test.t.a)
-  └─IndexReader_12	10000.00	root	index:IndexScan_11
-    └─IndexScan_11	10000.00	cop[tikv]	table:t, index:a, range:[NULL,+inf], keep order:false, stats:pseudo
+└─Window_8	10000.00	root	sum(cast(test.t.a))->Column#6 over(partition by test.t.a)
+  └─IndexReader_11	10000.00	root	index:IndexScan_10
+    └─IndexScan_10	10000.00	cop[tikv]	table:t, index:a, range:[NULL,+inf], keep order:true, stats:pseudo
 explain select sum(a) over(partition by a order by b) from t;
 id	count	task	operator info
 Projection_7	10000.00	root	Column#6
-└─WindowParallel_8	10000.00	root	sum(cast(test.t.a))->Column#6 over(partition by test.t.a order by test.t.b asc range between unbounded preceding and current row)
-  └─TableReader_10	10000.00	root	data:TableScan_9
-    └─TableScan_9	10000.00	cop[tikv]	table:t, range:[-inf,+inf], keep order:false, stats:pseudo
+└─WindowParallel_9	10000.00	root	sum(cast(test.t.a))->Column#6 over(partition by test.t.a order by test.t.b asc range between unbounded preceding and current row)
+  └─TableReader_14	10000.00	root	data:TableScan_13
+    └─TableScan_13	10000.00	cop[tikv]	table:t, range:[-inf,+inf], keep order:false, stats:pseudo
 explain select sum(a) over(partition by a order by b rows unbounded preceding) from t;
 id	count	task	operator info
 Projection_7	10000.00	root	Column#6
-└─WindowParallel_8	10000.00	root	sum(cast(test.t.a))->Column#6 over(partition by test.t.a order by test.t.b asc rows between unbounded preceding and current row)
-  └─TableReader_10	10000.00	root	data:TableScan_9
-    └─TableScan_9	10000.00	cop[tikv]	table:t, range:[-inf,+inf], keep order:false, stats:pseudo
+└─WindowParallel_9	10000.00	root	sum(cast(test.t.a))->Column#6 over(partition by test.t.a order by test.t.b asc rows between unbounded preceding and current row)
+  └─TableReader_14	10000.00	root	data:TableScan_13
+    └─TableScan_13	10000.00	cop[tikv]	table:t, range:[-inf,+inf], keep order:false, stats:pseudo
 explain select sum(a) over(partition by a order by b rows between 1 preceding and 1 following) from t;
 id	count	task	operator info
 Projection_7	10000.00	root	Column#6
-└─WindowParallel_8	10000.00	root	sum(cast(test.t.a))->Column#6 over(partition by test.t.a order by test.t.b asc rows between 1 preceding and 1 following)
-  └─TableReader_10	10000.00	root	data:TableScan_9
-    └─TableScan_9	10000.00	cop[tikv]	table:t, range:[-inf,+inf], keep order:false, stats:pseudo
+└─WindowParallel_9	10000.00	root	sum(cast(test.t.a))->Column#6 over(partition by test.t.a order by test.t.b asc rows between 1 preceding and 1 following)
+  └─TableReader_14	10000.00	root	data:TableScan_13
+    └─TableScan_13	10000.00	cop[tikv]	table:t, range:[-inf,+inf], keep order:false, stats:pseudo
 explain select sum(a) over(partition by a order by b range between 1 preceding and 1 following) from t;
 id	count	task	operator info
 Projection_7	10000.00	root	Column#6
-└─WindowParallel_8	10000.00	root	sum(cast(test.t.a))->Column#6 over(partition by test.t.a order by test.t.b asc range between 1 preceding and 1 following)
-  └─TableReader_10	10000.00	root	data:TableScan_9
-    └─TableScan_9	10000.00	cop[tikv]	table:t, range:[-inf,+inf], keep order:false, stats:pseudo
+└─WindowParallel_9	10000.00	root	sum(cast(test.t.a))->Column#6 over(partition by test.t.a order by test.t.b asc range between 1 preceding and 1 following)
+  └─TableReader_14	10000.00	root	data:TableScan_13
+    └─TableScan_13	10000.00	cop[tikv]	table:t, range:[-inf,+inf], keep order:false, stats:pseudo
 explain select sum(a) over(partition by a order by c range between interval '2:30' minute_second preceding and interval '2:30' minute_second following) from t;
 id	count	task	operator info
 Projection_7	10000.00	root	Column#6
-└─WindowParallel_8	10000.00	root	sum(cast(test.t.a))->Column#6 over(partition by test.t.a order by test.t.c asc range between interval "2:30" "MINUTE_SECOND" preceding and interval "2:30" "MINUTE_SECOND" following)
-  └─TableReader_10	10000.00	root	data:TableScan_9
-    └─TableScan_9	10000.00	cop[tikv]	table:t, range:[-inf,+inf], keep order:false, stats:pseudo
+└─WindowParallel_9	10000.00	root	sum(cast(test.t.a))->Column#6 over(partition by test.t.a order by test.t.c asc range between interval "2:30" "MINUTE_SECOND" preceding and interval "2:30" "MINUTE_SECOND" following)
+  └─TableReader_14	10000.00	root	data:TableScan_13
+    └─TableScan_13	10000.00	cop[tikv]	table:t, range:[-inf,+inf], keep order:false, stats:pseudo

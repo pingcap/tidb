@@ -320,7 +320,7 @@
       "delete from t order by (sum(a) over())",
       "delete from t order by (SUM(a) over())",
       "SELECT * from t having ROW_NUMBER() over()",
-      // TODO: `WindowExec` which sorts outside would be better than `WindowParallelExec` in this case.
+      // The best execution order should be (a,c), (a, b, c), (a, b), (), it requires only 2 sort operations.
       "select sum(a) over (partition by a order by b), sum(b) over (order by a, b, c), sum(c) over(partition by a order by c), sum(d) over() from t",
       // Test issue 11010.
       "select dense_rank() over w1, a, b from t window w1 as (partition by t.b order by t.a desc, t.b desc range between current row and 1 following)",
