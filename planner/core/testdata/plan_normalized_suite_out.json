@@ -176,6 +176,18 @@
           " └─Selection_10  cop  ne(test.t1.c, ?)",
           "   └─TableScan_8 cop  table:t1, keep order:false"
         ]
+      },
+      {
+        "SQL": "create table t1_tmp (a int)",
+        "Plan": [
+          ""
+        ]
+      },
+      {
+        "SQL": "alter table t1_tmp add column c int",
+        "Plan": [
+          ""
+        ]
       }
     ]
   }
