@@ -384,7 +384,7 @@ func BenchmarkAggDistinct(b *testing.B) {
 	}
 }
 
-func buildWindowExecutor(ctx sessionctx.Context, windowFunc string, src Executor, schema *expression.Schema, partitionBy []*expression.Column) Executor {
+func buildWindowExecutor(ctx sessionctx.Context, windowFunc string, frame *core.WindowFrame, src Executor, schema *expression.Schema, partitionBy []*expression.Column) Executor {
 	plan := new(core.PhysicalWindow)
 
 	var args []expression.Expression
@@ -393,6 +393,8 @@ func buildWindowExecutor(ctx sessionctx.Context, windowFunc string, src Executor
 		args = append(args, &expression.Constant{Value: types.NewUintDatum(2)})
 	case ast.WindowFuncNthValue:
 		args = append(args, partitionBy[0], &expression.Constant{Value: types.NewUintDatum(2)})
+	case ast.AggFuncCount:
+		args = append(args, src.Schema().Columns[0])
 	default:
 		args = append(args, partitionBy[0])
 	}
@@ -402,6 +404,7 @@ func buildWindowExecutor(ctx sessionctx.Context, windowFunc string, src Executor
 		plan.PartitionBy = append(plan.PartitionBy, property.Item{Col: col})
 	}
 	plan.OrderBy = nil
+	plan.Frame = frame
 	plan.SetSchema(schema)
 	plan.Init(ctx, nil, 0)
 	plan.SetChildren(nil)
@@ -415,6 +418,7 @@ func buildWindowExecutor(ctx sessionctx.Context, windowFunc string, src Executor
 type windowTestCase struct {
 	// The test table's schema is fixed (col Double, partitionBy LongLong, rawData VarString(5128), col LongLong).
 	windowFunc string
+	frame      *core.WindowFrame
 	ndv        int // the number of distinct group-by keys
 	rows       int
 	ctx        sessionctx.Context
@@ -442,7 +446,13 @@ func defaultWindowTestCase() *windowTestCase {
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().InitChunkSize = variable.DefInitChunkSize
 	ctx.GetSessionVars().MaxChunkSize = variable.DefMaxChunkSize
-	return &windowTestCase{ast.WindowFuncRowNumber, 1000, 10000000, ctx}
+	return &windowTestCase{
+		windowFunc: ast.WindowFuncRowNumber,
+		frame:      nil,
+		ndv:        1000,
+		rows:       10000000,
+		ctx:        ctx,
+	}
 }
 
 func benchmarkWindowExecWithCase(b *testing.B, casTest *windowTestCase) {
@@ -454,13 +464,21 @@ func benchmarkWindowExecWithCase(b *testing.B, casTest *windowTestCase) {
 		rows:   casTest.rows,
 		ctx:    casTest.ctx,
 	})
+	if casTest.frame != nil {
+		switch casTest.frame.Type {
+		case ast.Rows:
+			cmpFuncs := []expression.CompareFunc{expression.GetCmpFunction(cols[1], cols[1])}
+			casTest.frame.Start.CmpFuncs = cmpFuncs
+			casTest.frame.End.CmpFuncs = cmpFuncs
+		}
+	}
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		b.StopTimer() // prepare a new window-executor
 		childCols := casTest.columns()
 		schema := expression.NewSchema(childCols...)
-		windowExec := buildWindowExecutor(casTest.ctx, casTest.windowFunc, dataSource, schema, childCols[1:2])
+		windowExec := buildWindowExecutor(casTest.ctx, casTest.windowFunc, casTest.frame, dataSource, schema, childCols[1:2])
 		tmpCtx := context.Background()
 		chk := newFirstChunk(windowExec)
 		dataSource.prepareChunks()
@@ -525,6 +543,35 @@ func BenchmarkWindowFunctions(b *testing.B) {
 		b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
 			benchmarkWindowExecWithCase(b, cas)
 		})
+	}
+}
+
+func BenchmarkWindowFunctionsWithSlidingWindow(b *testing.B) {
+	b.ReportAllocs()
+	windowFuncs := []string{
+		ast.AggFuncCount,
+	}
+	rows := []int{1000, 100000}
+	ndvs := []int{10, 1000}
+	frames := []*core.WindowFrame{
+		{Type: ast.Rows, Start: &core.FrameBound{Type: ast.Preceding, Num: 10}, End: &core.FrameBound{Type: ast.Following, Num: 10}},
+		{Type: ast.Rows, Start: &core.FrameBound{Type: ast.Preceding, Num: 100}, End: &core.FrameBound{Type: ast.Following, Num: 100}},
+	}
+	for _, row := range rows {
+		for _, ndv := range ndvs {
+			for _, frame := range frames {
+				for _, windowFunc := range windowFuncs {
+					cas := defaultWindowTestCase()
+					cas.rows = row
+					cas.ndv = ndv
+					cas.windowFunc = windowFunc
+					cas.frame = frame
+					b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
+						benchmarkWindowExecWithCase(b, cas)
+					})
+				}
+			}
+		}
 	}
 }
 
