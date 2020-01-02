@@ -2809,6 +2809,7 @@ func (b *PlanBuilder) buildProjUponView(ctx context.Context, dbName model.CIStr,
 			origColName = tableInfo.View.Cols[i]
 		}
 		projNames = append(projNames, &types.FieldName{
+			// TblName is the of view instead of the name of the underlying table.
 			TblName:     tableInfo.Name,
 			OrigTblName: name.OrigTblName,
 			ColName:     columnInfo[i].Name,
