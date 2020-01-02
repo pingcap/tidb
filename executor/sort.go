@@ -183,7 +183,7 @@ func (e *SortExec) generatePartition() error {
 	if err != nil {
 		return err
 	}
-	e.memTracker.Consume(-e.rowChunks.GetMemTracker().BytesConsumed())
+	e.memTracker.ReplaceChild(e.rowChunks.GetMemTracker(), nil)
 	e.rowChunks = chunk.NewList(retTypes(e), e.initCap, e.maxChunkSize)
 	e.rowChunks.GetMemTracker().AttachTo(e.memTracker)
 	e.rowChunks.GetMemTracker().SetLabel(rowChunksLabel)
