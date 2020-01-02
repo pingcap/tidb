@@ -2536,7 +2536,9 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	if err != nil {
 		return nil, err
 	}
-	possiblePaths, err = b.filterPathByIsolationRead(possiblePaths)
+	if dbName.L != mysql.SystemDB {
+		possiblePaths, err = b.filterPathByIsolationRead(possiblePaths)
+	}
 	if err != nil {
 		return nil, err
 	}
