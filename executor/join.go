@@ -335,9 +335,9 @@ func (e *HashJoinExec) handleUnmatchedRowsFromHashTableInMemory(workerID uint) {
 	if !ok {
 		return
 	}
-	numChks := e.rowContainer.records.NumChunks()
+	numChks := e.rowContainer.NumChunks()
 	for i := int(workerID); i < numChks; i += int(e.concurrency) {
-		chk := e.rowContainer.records.GetChunk(i)
+		chk := e.rowContainer.GetChunk(i)
 		for j := 0; j < chk.NumRows(); j++ {
 			if e.outerMatchedStatus[i].UnsafeIsSet(j) == false { // process unmatched outer rows
 				e.joiners[workerID].onMissMatch(false, chk.GetRow(j), joinResult.chk)
@@ -365,11 +365,11 @@ func (e *HashJoinExec) handleUnmatchedRowsFromHashTableInDisk(workerID uint) {
 	if !ok {
 		return
 	}
-	numChks := e.rowContainer.recordsInDisk.NumChunks()
+	numChks := e.rowContainer.NumChunks()
 	for i := 0; i < numChks; i++ {
-		numOfRows := e.rowContainer.recordsInDisk.NumRowsOfChunk(i)
+		numOfRows := e.rowContainer.NumRowsOfChunk(i)
 		for j := 0; j < numOfRows; j++ {
-			row, err := e.rowContainer.recordsInDisk.GetRow(chunk.RowPtr{ChkIdx: uint32(i), RowIdx: uint32(j)})
+			row, err := e.rowContainer.GetRow(chunk.RowPtr{ChkIdx: uint32(i), RowIdx: uint32(j)})
 			if err != nil {
 				// Catching the error and send it
 				joinResult.err = err

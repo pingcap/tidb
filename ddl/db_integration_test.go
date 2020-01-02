@@ -1257,56 +1257,6 @@ func (s *testIntegrationSuite3) TestResolveCharset(c *C) {
 	c.Assert(tbl.Meta().Charset, Equals, "binary")
 }
 
-func (s *testIntegrationSuite2) TestAddAnonymousIndex(c *C) {
-	s.tk = testkit.NewTestKit(c, s.store)
-	s.tk.MustExec("use test")
-	s.tk.MustExec("create table t_anonymous_index (c1 int, c2 int, C3 int)")
-	s.tk.MustExec("alter table t_anonymous_index add index (c1, c2)")
-	// for dropping empty index
-	_, err := s.tk.Exec("alter table t_anonymous_index drop index")
-	c.Assert(err, NotNil)
-	// The index name is c1 when adding index (c1, c2).
-	s.tk.MustExec("alter table t_anonymous_index drop index c1")
-	t := testGetTableByName(c, s.ctx, "test", "t_anonymous_index")
-	c.Assert(t.Indices(), HasLen, 0)
-	// for adding some indices that the first column name is c1
-	s.tk.MustExec("alter table t_anonymous_index add index (c1)")
-	_, err = s.tk.Exec("alter table t_anonymous_index add index c1 (c2)")
-	c.Assert(err, NotNil)
-	t = testGetTableByName(c, s.ctx, "test", "t_anonymous_index")
-	c.Assert(t.Indices(), HasLen, 1)
-	idx := t.Indices()[0].Meta().Name.L
-	c.Assert(idx, Equals, "c1")
-	// The MySQL will be a warning.
-	s.tk.MustExec("alter table t_anonymous_index add index c1_3 (c1)")
-	s.tk.MustExec("alter table t_anonymous_index add index (c1, c2, C3)")
-	// The MySQL will be a warning.
-	s.tk.MustExec("alter table t_anonymous_index add index (c1)")
-	t = testGetTableByName(c, s.ctx, "test", "t_anonymous_index")
-	c.Assert(t.Indices(), HasLen, 4)
-	s.tk.MustExec("alter table t_anonymous_index drop index c1")
-	s.tk.MustExec("alter table t_anonymous_index drop index c1_2")
-	s.tk.MustExec("alter table t_anonymous_index drop index c1_3")
-	s.tk.MustExec("alter table t_anonymous_index drop index c1_4")
-	// for case insensitive
-	s.tk.MustExec("alter table t_anonymous_index add index (C3)")
-	s.tk.MustExec("alter table t_anonymous_index drop index c3")
-	s.tk.MustExec("alter table t_anonymous_index add index c3 (C3)")
-	s.tk.MustExec("alter table t_anonymous_index drop index C3")
-	// for anonymous index with column name `primary`
-	s.tk.MustExec("create table t_primary (`primary` int, key (`primary`))")
-	t = testGetTableByName(c, s.ctx, "test", "t_primary")
-	c.Assert(t.Indices()[0].Meta().Name.String(), Equals, "primary_2")
-	s.tk.MustExec("create table t_primary_2 (`primary` int, key primary_2 (`primary`), key (`primary`))")
-	t = testGetTableByName(c, s.ctx, "test", "t_primary_2")
-	c.Assert(t.Indices()[0].Meta().Name.String(), Equals, "primary_2")
-	c.Assert(t.Indices()[1].Meta().Name.String(), Equals, "primary_3")
-	s.tk.MustExec("create table t_primary_3 (`primary_2` int, key(`primary_2`), `primary` int, key(`primary`));")
-	t = testGetTableByName(c, s.ctx, "test", "t_primary_3")
-	c.Assert(t.Indices()[0].Meta().Name.String(), Equals, "primary_2")
-	c.Assert(t.Indices()[1].Meta().Name.String(), Equals, "primary_3")
-}
-
 func (s *testIntegrationSuite1) TestAddColumnTooMany(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use test")
