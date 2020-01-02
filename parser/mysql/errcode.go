@@ -1029,6 +1029,7 @@ const (
 	ErrInvalidType                         = 8057
 	ErrUnknownAllocatorType                = 8058
 	ErrAutoRandReadFailed                  = 8059
+	ErrInvalidIncrementAndOffset           = 8060
 
 	// Error codes used by TiDB ddl package
 	ErrUnsupportedDDLOperation        = 8200
