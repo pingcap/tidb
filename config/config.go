@@ -19,6 +19,7 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"fmt"
+	"github.com/pingcap/parser/terror"
 	"io/ioutil"
 	"net/url"
 	"os"
@@ -591,13 +592,67 @@ var defaultConf = Config{
 }
 
 var (
-	confHandler             ConfHandler
+	globalConfHandler       ConfHandler
 	reloadConfPath          = ""
 	confReloader            func(nc, c *Config)
 	confReloadLock          sync.Mutex
 	supportedReloadConfigs  = make(map[string]struct{}, 32)
 	supportedReloadConfList = make([]string, 0, 32)
 )
+
+var deprecatedConfig = map[string]struct{}{
+	"pessimistic-txn.ttl": {},
+	"log.rotate":          {},
+}
+
+func isDeprecatedConfigItem(items []string) bool {
+	for _, item := range items {
+		if _, ok := deprecatedConfig[item]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
+// InitializeConfig initialize the global config handler.
+func InitializeConfig(confPath string, configCheck, configStrict bool, reloadFunc ConfReloadFunc) {
+	if confPath == "" {
+		zaplog.Fatal("config check failed", zap.Error(errors.New("no config file specified for config-check")))
+		os.Exit(1)
+	}
+
+	cfgVal := defaultConf // copy to avoid changing the original default config
+	cfg := &cfgVal
+	err := cfg.Load(confPath)
+	warning := ""
+	if err != nil {
+		// Unused config item erro turns to warnings.
+		if confErr, ok := err.(*ErrConfigValidationFailed); ok {
+			if isDeprecatedConfigItem(confErr.UndecodedItems) {
+				warning = err.Error()
+				err = nil
+			}
+		}
+		// This block is to accommodate an interim situation where strict config checking
+		// is not the default behavior of TiDB. The warning message must be deferred until
+		// logging has been set up. After strict config checking is the default behavior,
+		// This should all be removed.
+		if !configCheck && !configStrict {
+			warning = err.Error()
+			err = nil
+		}
+	}
+
+	terror.MustNil(err)
+	if warning != "" {
+		zaplog.Warn(warning)
+	}
+
+	globalConfHandler, err = NewConfHandler(cfg, reloadFunc)
+	terror.MustNil(err)
+	confReloader = reloadFunc
+	globalConfHandler.Start()
+}
 
 // NewConfig creates a new config instance with default value.
 func NewConfig() *Config {
@@ -621,12 +676,12 @@ func SetConfReloader(cpath string, reloader func(nc, c *Config), confItems ...st
 // Other parts of the system can read the global configuration use this function.
 // NOTE: the returned config is read-only.
 func GetGlobalConfig() *Config {
-	return confHandler.GetConfig()
+	return globalConfHandler.GetConfig()
 }
 
 // StoreGlobalConfig stores a new config to the globalConf. It mostly uses in the test to avoid some data races.
 func StoreGlobalConfig(config *Config) {
-	if err := confHandler.SetConfig(config); err != nil {
+	if err := globalConfHandler.SetConfig(config); err != nil {
 		logutil.BgLogger().Error("update the global config error", zap.Error(err))
 	}
 }
@@ -664,7 +719,7 @@ func ReloadGlobalConfig() error {
 			"your changes%s", unsupported, supportedReloadConfList, formattedDiff.String())
 	}
 
-	if err := confHandler.SetConfig(nc); err != nil {
+	if err := globalConfHandler.SetConfig(nc); err != nil {
 		return err
 	}
 	confReloader(nc, c)
@@ -837,7 +892,7 @@ func (t *OpenTracing) ToTracingConfig() *tracing.Configuration {
 
 func init() {
 	conf := defaultConf
-	confHandler = &constantConfHandler{&conf}
+	globalConfHandler = &constantConfHandler{&conf}
 	if checkBeforeDropLDFlag == "1" {
 		CheckTableBeforeDrop = true
 	}
