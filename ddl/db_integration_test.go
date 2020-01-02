@@ -2011,5 +2011,5 @@ func (s *testIntegrationSuite6) TestAddExpressionIndex(c *C) {
 	tk.MustExec("alter table t drop column _V$_expression_index_0;")
 	tk.MustExec("alter table t add index ((a+1));")
 	tk.MustGetErrCode("alter table t drop column _V$_expression_index_0;", mysql.ErrCantDropFieldOrKey)
-
+	tk.MustGetErrCode("alter table t add column e int as (_V$_expression_index_0 + 1);", mysql.ErrBadField)
 }
