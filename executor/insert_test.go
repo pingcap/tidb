@@ -831,9 +831,19 @@ func (s *testSuite3) TestDMLCast(c *C) {
 	tk.MustQuery(`select * from t`).Check(testkit.Rows())
 }
 
+// TiDB has fixed a issue, when the value of auto_increment_offset is greater than that of auto_increment_increment,
+// the value of auto_increment_offset is ignored in MySQL. https://dev.mysql.com/doc/refman/8.0/en/replication-options-master.html#sysvar_auto_increment_increment
 func (s *testSuite3) TestAutoIDIncrementAndOffset(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test`)
+	// Test for offset is larger than increment.
+	tk.Se.GetSessionVars().AutoIncrementIncrement = 5
+	tk.Se.GetSessionVars().AutoIncrementOffset = 10
+	tk.MustExec(`create table io (a int key auto_increment)`)
+	tk.MustExec(`insert into io values (null),(null),(null)`)
+	tk.MustQuery(`select * from io`).Check(testkit.Rows("10", "15", "20"))
+	tk.MustExec(`drop table io`)
+
 	// Test handle is PK.
 	tk.MustExec(`create table io (a int key auto_increment)`)
 	tk.Se.GetSessionVars().AutoIncrementOffset = 10
@@ -873,4 +883,5 @@ func (s *testSuite3) TestAutoIDIncrementAndOffset(c *C) {
 	tk.MustExec(`insert into io(b) values (null),(null),(null)`)
 	tk.MustQuery(`select b from io`).Check(testkit.Rows("20", "30", "40"))
 	tk.MustQuery(`select _tidb_rowid from io`).Check(testkit.Rows("41", "42", "43"))
+	tk.MustExec(`drop table io`)
 }
