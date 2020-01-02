@@ -192,7 +192,7 @@ func (*testSuite) TestT(c *C) {
 	c.Assert(max-min, Equals, int64(5))
 	c.Assert(min+1, Greater, lastRemainOne)
 
-	// Test for increment & offset.
+	// Test for increment & offset for signed.
 	alloc = autoid.NewAllocator(store, 1, false, autoid.RowIDAllocType)
 	c.Assert(alloc, NotNil)
 

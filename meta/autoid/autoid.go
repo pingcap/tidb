@@ -322,7 +322,7 @@ func NewAllocatorsFromTblInfo(store kv.Storage, schemaID int64, tblInfo *model.T
 // Example:
 // (6, 13] is returned, increment = 4, offset = 1, n = 2.
 // 6 is the last allocated value for other autoID or handle, maybe with different increment and step,
-// but actually we don't care about it, all we need is to calc the new autoID corresponding to the
+// but actually we don't care about it, all we need is to calculate the new autoID corresponding to the
 // increment and offset at this time now. To simplify the rule is like (ID - offset) % increment = 0,
 // so the first autoID should be 9, then add increment to it to get 13.
 func (alloc *allocator) Alloc(tableID int64, n uint64, increment, offset int64) (int64, int64, error) {
@@ -349,7 +349,7 @@ func validIncrementAndOffset(increment, offset int64) bool {
 	return (increment >= 1 && increment <= 65535) && (offset >= 1 && offset <= 65535)
 }
 
-// CalcNeededIDs is used to calculate batch size for autoID allocation.
+// CalcNeededIDLength is used to calculate batch size for autoID allocation.
 // Firstly seek to the first valid position based on increment and offset.
 // Then plus the length remained, which could be (n-1) * increment.
 func CalcNeededIDLength(base, n, increment, offset int64, isUnsigned bool) int64 {
