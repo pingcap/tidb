@@ -46,10 +46,11 @@ type TidbTestSuite struct {
 	server  *Server
 	domain  *domain.Domain
 	store   kv.Storage
+	testPortConfig
 }
 
-var suite = new(TidbTestSuite)
-var _ = SerialSuites(suite)
+var suite = &TidbTestSuite{testPortConfig: newTestPortConfig()}
+var _ = Suite(suite)
 
 func (ts *TidbTestSuite) SetUpSuite(c *C) {
 	metrics.RegisterMetrics()
@@ -61,19 +62,19 @@ func (ts *TidbTestSuite) SetUpSuite(c *C) {
 	c.Assert(err, IsNil)
 	ts.tidbdrv = NewTiDBDriver(ts.store)
 	cfg := config.NewConfig()
-	cfg.Port = 4001
+	cfg.Port = ts.port
 	cfg.Status.ReportStatus = true
-	cfg.Status.StatusPort = 10090
+	cfg.Status.StatusPort = ts.statusPort
 	cfg.Performance.TCPKeepAlive = true
 
 	server, err := NewServer(cfg, ts.tidbdrv)
 	c.Assert(err, IsNil)
 	ts.server = server
 	go ts.server.Run()
-	waitUntilServerOnline(cfg.Status.StatusPort)
+	waitUntilServerOnline(&ts.testPortConfig)
 
 	// Run this test here because parallel would affect the result of it.
-	runTestStmtCount(c)
+	runTestStmtCount(c, &ts.testPortConfig)
 }
 
 func (ts *TidbTestSuite) TearDownSuite(c *C) {
@@ -91,80 +92,81 @@ func (ts *TidbTestSuite) TearDownSuite(c *C) {
 func (ts *TidbTestSuite) TestRegression(c *C) {
 	if regression {
 		c.Parallel()
-		runTestRegression(c, nil, "Regression")
+		runTestRegression(c, &ts.testPortConfig, nil, "Regression")
 	}
 }
 
 func (ts *TidbTestSuite) TestUint64(c *C) {
-	runTestPrepareResultFieldType(c)
+	runTestPrepareResultFieldType(c, &ts.testPortConfig)
 }
 
 func (ts *TidbTestSuite) TestSpecialType(c *C) {
 	c.Parallel()
-	runTestSpecialType(c)
+	runTestSpecialType(c, &ts.testPortConfig)
 }
 
 func (ts *TidbTestSuite) TestPreparedString(c *C) {
 	c.Parallel()
-	runTestPreparedString(c)
+	runTestPreparedString(c, &ts.testPortConfig)
 }
 
 func (ts *TidbTestSuite) TestPreparedTimestamp(c *C) {
 	c.Parallel()
-	runTestPreparedTimestamp(c)
+	runTestPreparedTimestamp(c, &ts.testPortConfig)
 }
 
 func (ts *TidbTestSuite) TestLoadData(c *C) {
 	c.Parallel()
-	runTestLoadData(c, suite.server)
+	runTestLoadData(c, suite.server, &ts.testPortConfig)
 }
 
 func (ts *TidbTestSuite) TestConcurrentUpdate(c *C) {
 	c.Parallel()
-	runTestConcurrentUpdate(c)
+	runTestConcurrentUpdate(c, &ts.testPortConfig)
 }
 
 func (ts *TidbTestSuite) TestErrorCode(c *C) {
 	c.Parallel()
-	runTestErrorCode(c)
+	runTestErrorCode(c, &ts.testPortConfig)
 }
 
 func (ts *TidbTestSuite) TestAuth(c *C) {
 	c.Parallel()
-	runTestAuth(c)
-	runTestIssue3682(c)
+	runTestAuth(c, &ts.testPortConfig)
+	runTestIssue3682(c, &ts.testPortConfig)
 }
 
 func (ts *TidbTestSuite) TestIssues(c *C) {
 	c.Parallel()
-	runTestIssue3662(c)
-	runTestIssue3680(c)
+	runTestIssue3662(c, &ts.testPortConfig)
+	runTestIssue3680(c, &ts.testPortConfig)
 }
 
 func (ts *TidbTestSuite) TestDBNameEscape(c *C) {
 	c.Parallel()
-	runTestDBNameEscape(c)
+	runTestDBNameEscape(c, &ts.testPortConfig)
 }
 
 func (ts *TidbTestSuite) TestResultFieldTableIsNull(c *C) {
 	c.Parallel()
-	runTestResultFieldTableIsNull(c)
+	runTestResultFieldTableIsNull(c, &ts.testPortConfig)
 }
 
 func (ts *TidbTestSuite) TestStatusAPI(c *C) {
 	c.Parallel()
-	runTestStatusAPI(c)
+	runTestStatusAPI(c, &ts.testPortConfig)
 }
 
 func (ts *TidbTestSuite) TestMultiStatements(c *C) {
 	c.Parallel()
-	runTestMultiStatements(c)
+	runTestMultiStatements(c, &ts.testPortConfig)
 }
 
 func (ts *TidbTestSuite) TestSocketForwarding(c *C) {
+	portConf := newTestPortConfig()
 	cfg := config.NewConfig()
 	cfg.Socket = "/tmp/tidbtest.sock"
-	cfg.Port = 3999
+	cfg.Port = portConf.port
 	os.Remove(cfg.Socket)
 	cfg.Status.ReportStatus = false
 
@@ -174,7 +176,7 @@ func (ts *TidbTestSuite) TestSocketForwarding(c *C) {
 	time.Sleep(time.Millisecond * 100)
 	defer server.Close()
 
-	runTestRegression(c, func(config *mysql.Config) {
+	runTestRegression(c, &portConf, func(config *mysql.Config) {
 		config.User = "root"
 		config.Net = "unix"
 		config.Addr = "/tmp/tidbtest.sock"
@@ -197,7 +199,7 @@ func (ts *TidbTestSuite) TestSocket(c *C) {
 	time.Sleep(time.Millisecond * 100)
 	defer server.Close()
 
-	runTestRegression(c, func(config *mysql.Config) {
+	runTestRegression(c, &ts.testPortConfig, func(config *mysql.Config) {
 		config.User = "root"
 		config.Net = "unix"
 		config.Addr = "/tmp/tidbtest.sock"
@@ -296,9 +298,10 @@ func registerTLSConfig(configName string, caCertPath string, clientCertPath stri
 }
 
 func (ts *TidbTestSuite) TestSystemTimeZone(c *C) {
+	portConf := newTestPortConfig()
 	tk := testkit.NewTestKit(c, ts.store)
 	cfg := config.NewConfig()
-	cfg.Port = 4002
+	cfg.Port = portConf.port
 	cfg.Status.ReportStatus = false
 	server, err := NewServer(cfg, ts.tidbdrv)
 	c.Assert(err, IsNil)
@@ -331,16 +334,16 @@ func (ts *TidbTestSuite) TestTLS(c *C) {
 	// Start the server without TLS.
 	connOverrider := func(config *mysql.Config) {
 		config.TLSConfig = "skip-verify"
-		config.Addr = "localhost:4002"
 	}
+	portConf := newTestPortConfig()
 	cfg := config.NewConfig()
-	cfg.Port = 4002
+	cfg.Port = portConf.port
 	cfg.Status.ReportStatus = false
 	server, err := NewServer(cfg, ts.tidbdrv)
 	c.Assert(err, IsNil)
 	go server.Run()
 	time.Sleep(time.Millisecond * 100)
-	err = runTestTLSConnection(c, connOverrider) // We should get ErrNoTLS.
+	err = runTestTLSConnection(c, &portConf, connOverrider) // We should get ErrNoTLS.
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, mysql.ErrNoTLS.Error())
 	server.Close()
@@ -348,10 +351,10 @@ func (ts *TidbTestSuite) TestTLS(c *C) {
 	// Start the server with TLS but without CA, in this case the server will not verify client's certificate.
 	connOverrider = func(config *mysql.Config) {
 		config.TLSConfig = "skip-verify"
-		config.Addr = "localhost:4003"
 	}
+	portConf = newTestPortConfig()
 	cfg = config.NewConfig()
-	cfg.Port = 4003
+	cfg.Port = portConf.port
 	cfg.Status.ReportStatus = false
 	cfg.Security = config.Security{
 		SSLCert: "/tmp/server-cert.pem",
@@ -361,22 +364,22 @@ func (ts *TidbTestSuite) TestTLS(c *C) {
 	c.Assert(err, IsNil)
 	go server.Run()
 	time.Sleep(time.Millisecond * 100)
-	err = runTestTLSConnection(c, connOverrider) // We should establish connection successfully.
+	err = runTestTLSConnection(c, &portConf, connOverrider) // We should establish connection successfully.
 	c.Assert(err, IsNil)
-	runTestRegression(c, connOverrider, "TLSRegression")
+	runTestRegression(c, &portConf, connOverrider, "TLSRegression")
 	// Perform server verification.
 	connOverrider = func(config *mysql.Config) {
 		config.TLSConfig = "client-certificate"
-		config.Addr = "localhost:4003"
 	}
-	err = runTestTLSConnection(c, connOverrider) // We should establish connection successfully.
+	err = runTestTLSConnection(c, &portConf, connOverrider) // We should establish connection successfully.
 	c.Assert(err, IsNil, Commentf("%v", errors.ErrorStack(err)))
-	runTestRegression(c, connOverrider, "TLSRegression")
+	runTestRegression(c, &portConf, connOverrider, "TLSRegression")
 	server.Close()
 
 	// Start the server with TLS & CA, if the client presents its certificate, the certificate will be verified.
+	portConf = newTestPortConfig()
 	cfg = config.NewConfig()
-	cfg.Port = 4004
+	cfg.Port = portConf.port
 	cfg.Status.ReportStatus = false
 	cfg.Security = config.Security{
 		SSLCA:   "/tmp/ca-cert.pem",
@@ -388,26 +391,22 @@ func (ts *TidbTestSuite) TestTLS(c *C) {
 	go server.Run()
 	time.Sleep(time.Millisecond * 100)
 	// The client does not provide a certificate, the connection should succeed.
-	connOverrider = func(config *mysql.Config) {
-		config.Addr = "localhost:4004"
-	}
-	err = runTestTLSConnection(c, connOverrider)
+	err = runTestTLSConnection(c, &portConf, nil)
 	c.Assert(err, IsNil)
-	runTestRegression(c, connOverrider, "TLSRegression")
+	runTestRegression(c, &portConf, connOverrider, "TLSRegression")
 	// The client provides a valid certificate.
 	connOverrider = func(config *mysql.Config) {
 		config.TLSConfig = "client-certificate"
-		config.Addr = "localhost:4004"
 	}
-	err = runTestTLSConnection(c, connOverrider)
+	err = runTestTLSConnection(c, &portConf, connOverrider)
 	c.Assert(err, IsNil)
-	runTestRegression(c, connOverrider, "TLSRegression")
+	runTestRegression(c, &portConf, connOverrider, "TLSRegression")
 	server.Close()
 }
 
 func (ts *TidbTestSuite) TestClientWithCollation(c *C) {
 	c.Parallel()
-	runTestClientWithCollation(c)
+	runTestClientWithCollation(c, &ts.testPortConfig)
 }
 
 func (ts *TidbTestSuite) TestCreateTableFlen(c *C) {
@@ -578,7 +577,7 @@ func (ts *TidbTestSuite) TestFieldList(c *C) {
 
 func (ts *TidbTestSuite) TestSumAvg(c *C) {
 	c.Parallel()
-	runTestSumAvg(c)
+	runTestSumAvg(c, &ts.testPortConfig)
 }
 
 func (ts *TidbTestSuite) TestNullFlag(c *C) {

@@ -17,7 +17,6 @@ import (
 	"database/sql"
 	"fmt"
 	"io/ioutil"
-	"net/http"
 	"os"
 	"time"
 
@@ -34,17 +33,15 @@ import (
 )
 
 type testDumpStatsSuite struct {
-	server     *Server
-	sh         *StatsHandler
-	store      kv.Storage
-	domain     *domain.Domain
-	port       uint
-	statusPort uint
+	server *Server
+	sh     *StatsHandler
+	store  kv.Storage
+	domain *domain.Domain
+	testPortConfig
 }
 
 var _ = Suite(&testDumpStatsSuite{
-	port:       4012,
-	statusPort: 10099,
+	testPortConfig: newTestPortConfig(),
 })
 
 func (ds *testDumpStatsSuite) startServer(c *C) {
@@ -67,19 +64,11 @@ func (ds *testDumpStatsSuite) startServer(c *C) {
 	c.Assert(err, IsNil)
 	ds.server = server
 	go server.Run()
-	waitUntilServerOnline(cfg.Status.StatusPort)
+	waitUntilServerOnline(&ds.testPortConfig)
 
 	do, err := session.GetDomain(ds.store)
 	c.Assert(err, IsNil)
 	ds.sh = &StatsHandler{do}
-}
-
-func (ds *testDumpStatsSuite) getDSN(confs ...configOverrider) string {
-	portConfig := func(c *mysql.Config) {
-		c.Addr = fmt.Sprintf("127.0.0.1:%d", ds.port)
-	}
-	confs = append(confs, portConfig)
-	return getDSN(confs...)
 }
 
 func (ds *testDumpStatsSuite) stopServer(c *C) {
@@ -102,8 +91,7 @@ func (ds *testDumpStatsSuite) TestDumpStatsAPI(c *C) {
 	router := mux.NewRouter()
 	router.Handle("/stats/dump/{db}/{table}", ds.sh)
 
-	testStatsBaseURL := fmt.Sprintf("http://127.0.0.1:%d/stats/dump/tidb/test", ds.statusPort)
-	resp, err := http.Get(testStatsBaseURL)
+	resp, err := ds.fetchStatus("/stats/dump/tidb/test")
 	c.Assert(err, IsNil)
 	defer resp.Body.Close()
 
@@ -129,7 +117,7 @@ func (ds *testDumpStatsSuite) TestDumpStatsAPI(c *C) {
 	ds.prepare4DumpHistoryStats(c)
 
 	// test dump history stats
-	resp1, err := http.Get(testStatsBaseURL)
+	resp1, err := ds.fetchStatus("/stats/dump/tidb/test")
 	c.Assert(err, IsNil)
 	defer resp1.Body.Close()
 	js, err = ioutil.ReadAll(resp1.Body)
@@ -145,7 +133,7 @@ func (ds *testDumpStatsSuite) TestDumpStatsAPI(c *C) {
 		c.Assert(os.Remove(path1), IsNil)
 	}()
 
-	resp1, err = http.Get(testStatsBaseURL + "/" + snapshot)
+	resp1, err = ds.fetchStatus("/stats/dump/tidb/test/" + snapshot)
 	c.Assert(err, IsNil)
 
 	js, err = ioutil.ReadAll(resp1.Body)
