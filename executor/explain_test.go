@@ -14,6 +14,7 @@
 package executor_test
 
 import (
+	"bytes"
 	"fmt"
 	"strings"
 
@@ -160,8 +161,22 @@ func (s *testSuite1) TestMemoryAndDiskUsageAfterClose(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (v int, k int, key(k))")
-	for i := 0; i < tk.Se.GetSessionVars().MaxChunkSize*5; i++ {
-		tk.MustExec(fmt.Sprintf("insert into t values (%v, %v)", i, i))
+	batch := 128
+	limit := tk.Se.GetSessionVars().MaxChunkSize * 5
+	var buf bytes.Buffer
+	for i := 0; i < limit; {
+		buf.Reset()
+		_, err := buf.WriteString("insert into t values ")
+		c.Assert(err, IsNil)
+		for j := 0; j < batch && i < limit; i, j = i+1, j+1 {
+			if j > 0 {
+				_, err = buf.WriteString(", ")
+				c.Assert(err, IsNil)
+			}
+			_, err = buf.WriteString(fmt.Sprintf("(%v,%v)", i, i))
+			c.Assert(err, IsNil)
+		}
+		tk.MustExec(buf.String())
 	}
 	SQLs := []string{"select v+abs(k) from t",
 		"select v from t where abs(v) > 0",
