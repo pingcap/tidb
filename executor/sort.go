@@ -126,6 +126,13 @@ func (e *SortExec) Open(ctx context.Context) error {
 }
 
 // Next implements the Executor Next interface.
+// Sort constructs the result following these step:
+// 1. Read as mush as rows into memory.
+// 2. If memory quota is triggered, sort these rows in memory and put them into disk as partition 1, then reset
+//    the memory quota trigger and return to step 1
+// 3. If memory quota is not triggered and child is consumed, sort these rows in memory as partition N merge sort
+//    if the count of partitions is larger than 1.
+// 4. If there is only one partition in step 4, it works just like in-memory sort before.
 func (e *SortExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.Reset()
 	if !e.fetched {
