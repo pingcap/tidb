@@ -162,7 +162,7 @@ func (s *testSuite1) TestMemoryAndDiskUsageAfterClose(c *C) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (v int, k int, key(k))")
 	batch := 128
-	limit := tk.Se.GetSessionVars().MaxChunkSize * 5
+	limit := tk.Se.GetSessionVars().MaxChunkSize*2 + 10
 	var buf bytes.Buffer
 	for i := 0; i < limit; {
 		buf.Reset()
