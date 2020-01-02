@@ -428,11 +428,14 @@ func (e *clusterLogRetriever) startRetrieving(ctx context.Context, sctx sessionc
 	isFailpointTestMode := false
 	serversInfo, err := infoschema.GetClusterServerInfo(sctx)
 	failpoint.Inject("mockClusterLogServerInfo", func(val failpoint.Value) {
+		// erase the error
+		err = nil
 		if s := val.(string); len(s) > 0 {
-			// erase the error
-			serversInfo, err = parseFailpointServerInfo(s), nil
+			serversInfo = parseFailpointServerInfo(s)
+			isFailpointTestMode = true
+		} else {
+			isFailpointTestMode = false
 		}
-		isFailpointTestMode = true
 	})
 	if err != nil {
 		return nil, err
@@ -613,6 +616,8 @@ func (e *clusterLogRetriever) retrieve(ctx context.Context, sctx sessionctx.Cont
 }
 
 func (e *clusterLogRetriever) close() error {
-	e.cancel()
+	if e.cancel != nil {
+		e.cancel()
+	}
 	return nil
 }
