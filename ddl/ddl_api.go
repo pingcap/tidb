@@ -3586,6 +3586,7 @@ func (d *ddl) DropIndex(ctx sessionctx.Context, ti ast.Ident, indexName model.CI
 	indexInfo := t.Meta().FindIndexByName(indexName.L)
 	var isPK bool
 	if indexName.L == strings.ToLower(mysql.PrimaryKeyName) &&
+		// Before we fixed #14243, there might be a general index named `primary` but not a primary key.
 		(indexInfo == nil || indexInfo.Primary) {
 		isPK = true
 	}
