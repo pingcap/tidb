@@ -425,16 +425,16 @@ func (h *logResponseHeap) Pop() interface{} {
 }
 
 func (e *clusterLogRetriever) startRetrieving(ctx context.Context, sctx sessionctx.Context) ([]chan logStreamResult, error) {
-	isFailpointTestMode := false
+	isFailpointTestModeSkipCheck := false
 	serversInfo, err := infoschema.GetClusterServerInfo(sctx)
 	failpoint.Inject("mockClusterLogServerInfo", func(val failpoint.Value) {
 		// erase the error
 		err = nil
 		if s := val.(string); len(s) > 0 {
 			serversInfo = parseFailpointServerInfo(s)
-			isFailpointTestMode = true
+			isFailpointTestModeSkipCheck = true
 		} else {
-			isFailpointTestMode = false
+			isFailpointTestModeSkipCheck = false
 		}
 	})
 	if err != nil {
@@ -471,7 +471,7 @@ func (e *clusterLogRetriever) startRetrieving(ctx context.Context, sctx sessionc
 
 	// There is no performance issue to check this variable because it will
 	// be eliminated in non-failpoint mode.
-	if !isFailpointTestMode {
+	if !isFailpointTestModeSkipCheck {
 		// To avoid search log interface overload, the user should specify at least one pattern
 		// in normally SQL. (But in test mode we should relax this limitation)
 		if len(patterns) == 0 && len(levels) == 0 && len(addresses) == 0 && len(nodeTypes) == 0 {
