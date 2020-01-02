@@ -319,7 +319,7 @@ func (s *testEvaluatorSuite) TestIsIPv4Compat(c *C) {
 
 func (s *testEvaluatorSuite) TestNameConst(c *C) {
 	dec := types.NewDecFromFloatForTest(123.123)
-	tm := types.Time{Time: types.FromGoTime(time.Now()), Fsp: 6, Type: mysql.TypeDatetime}
+	tm := types.NewTime(types.FromGoTime(time.Now()), mysql.TypeDatetime, 6)
 	du := types.Duration{Duration: time.Duration(12*time.Hour + 1*time.Minute + 1*time.Second), Fsp: types.DefaultFsp}
 	cases := []struct {
 		colName string
