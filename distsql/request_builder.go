@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/ranger"
@@ -134,6 +135,15 @@ func (builder *RequestBuilder) SetKeepOrder(order bool) *RequestBuilder {
 // SetStoreType sets "StoreType" for "kv.Request".
 func (builder *RequestBuilder) SetStoreType(storeType kv.StoreType) *RequestBuilder {
 	builder.Request.StoreType = storeType
+	return builder
+}
+
+// SetSchemaVer sets "SchemaVer" for "kv.Request".
+func (builder *RequestBuilder) SetSchemaVer(ddlInfo *admin.DDLInfo) *RequestBuilder {
+	if ddlInfo == nil {
+		return builder
+	}
+	builder.Request.SchemaVar = ddlInfo.SchemaVer
 	return builder
 }
 
