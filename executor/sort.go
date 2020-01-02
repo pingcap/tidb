@@ -242,17 +242,18 @@ func (e *SortExec) externalSorting(req *chunk.Chunk) (err error) {
 
 	for !req.IsFull() && e.heapSort.Len() > 0 {
 		row, idx := e.sortRows[0], e.sortRowsIndex[0]
-		heap.Remove(e.heapSort, 0)
 		req.AppendRow(row)
 		if idx == len(e.partitionList) {
 			e.partitionConsumedRowsPtr[idx].RowIdx++
 			if e.partitionConsumedRowsPtr[idx].RowIdx >= uint32(len(e.rowPtrs)) {
+				heap.Remove(e.heapSort, 0)
 				continue
 			}
 			row = e.rowChunks.GetRow(e.rowPtrs[e.partitionConsumedRowsPtr[idx].RowIdx])
 		} else {
 			rowPtr, ok := getNextRowPtr(e.partitionList[idx], e.partitionConsumedRowsPtr[idx])
 			if !ok {
+				heap.Remove(e.heapSort, 0)
 				continue
 			}
 			e.partitionConsumedRowsPtr[idx] = rowPtr
@@ -261,9 +262,8 @@ func (e *SortExec) externalSorting(req *chunk.Chunk) (err error) {
 				return err
 			}
 		}
-		e.sortRows = append(e.sortRows, row)
-		e.sortRowsIndex = append(e.sortRowsIndex, idx)
-		heap.Fix(e.heapSort, e.heapSort.Len()-1)
+		e.sortRows[0] = row
+		heap.Fix(e.heapSort, 0)
 	}
 	return nil
 }
