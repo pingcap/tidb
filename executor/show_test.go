@@ -619,7 +619,7 @@ func (s *testSuite5) TestShowCreateTable(c *C) {
 			"t CREATE TABLE `t` (\n"+
 			"  `a` int(11) DEFAULT NULL,\n"+
 			"  `b` double DEFAULT NULL,\n"+
-			"  KEY `expr_idx` (`a` * `b` + 1)\n"+
+			"  KEY `expr_idx` ((`a` * `b` + 1))\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
 	))
 }

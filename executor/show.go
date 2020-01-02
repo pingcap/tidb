@@ -790,7 +790,7 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 		var colInfo string
 		for _, c := range idxInfo.Columns {
 			if tableInfo.Columns[c.Offset].Hidden {
-				colInfo = tableInfo.Columns[c.Offset].GeneratedExprString
+				colInfo = fmt.Sprintf("(%s)", tableInfo.Columns[c.Offset].GeneratedExprString)
 			} else {
 				colInfo = escape(c.Name, sqlMode)
 				if c.Length != types.UnspecifiedLength {
