@@ -616,12 +616,12 @@ func (s *testSuite5) TestShowCreateTable(c *C) {
 	tk.MustExec("alter table t add index expr_idx((a*b+1));")
 	tk.MustQuery("show create table t;").Check(testutil.RowsWithSep("|",
 		""+
-		"t CREATE TABLE `t` (\n"+
-		"  `a` int(11) DEFAULT NULL,\n"+
-		"  `b` double DEFAULT NULL,\n"+
-		"  KEY `expr_idx` (`a` * `b` + 1)\n"+
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
-		))
+			"t CREATE TABLE `t` (\n"+
+			"  `a` int(11) DEFAULT NULL,\n"+
+			"  `b` double DEFAULT NULL,\n"+
+			"  KEY `expr_idx` (`a` * `b` + 1)\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+	))
 }
 
 func (s *testAutoRandomSuite) TestShowCreateTableAutoRandom(c *C) {
