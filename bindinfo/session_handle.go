@@ -61,11 +61,7 @@ func (h *SessionHandle) AddBindRecord(sctx sessionctx.Context, is infoschema.Inf
 			duplicateBinding = binding
 		}
 	}
-	now := types.Time{
-		Time: types.FromGoTime(time.Now().In(sctx.GetSessionVars().StmtCtx.TimeZone)),
-		Type: mysql.TypeTimestamp,
-		Fsp:  3,
-	}
+	now := types.NewTime(types.FromGoTime(time.Now().In(sctx.GetSessionVars().StmtCtx.TimeZone)), mysql.TypeTimestamp, 3)
 	for i := range record.Bindings {
 		if duplicateBinding != nil {
 			record.Bindings[i].CreateTime = duplicateBinding.CreateTime

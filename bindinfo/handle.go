@@ -25,6 +25,7 @@ import (
 
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/format"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/expression"
@@ -34,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/types"
+	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -228,11 +230,7 @@ func (h *BindHandle) AddBindRecord(sctx sessionctx.Context, is infoschema.InfoSc
 	if err1 != nil {
 		return err1
 	}
-	now := types.Time{
-		Time: types.FromGoTime(oracle.GetTimeFromTS(txn.StartTS())),
-		Type: mysql.TypeDatetime,
-		Fsp:  3,
-	}
+	now := types.NewTime(types.FromGoTime(oracle.GetTimeFromTS(txn.StartTS())), mysql.TypeTimestamp, 3)
 	for i := range record.Bindings {
 		if duplicateBinding != nil {
 			record.Bindings[i].CreateTime = duplicateBinding.CreateTime
@@ -287,11 +285,7 @@ func (h *BindHandle) DropBindRecord(originalSQL, db string, binding *Binding) (e
 		return err1
 	}
 
-	updateTs := types.Time{
-		Time: types.FromGoTime(oracle.GetTimeFromTS(txn.StartTS())),
-		Type: mysql.TypeDatetime,
-		Fsp:  3,
-	}
+	updateTs := types.NewTime(types.FromGoTime(oracle.GetTimeFromTS(txn.StartTS())), mysql.TypeTimestamp, 3)
 
 	bindSQL := ""
 	if binding != nil {
@@ -559,23 +553,70 @@ func (h *BindHandle) CaptureBaselines() {
 			logutil.BgLogger().Info("generate hints failed", zap.String("SQL", sqls[i]), zap.Error(err))
 			continue
 		}
-		// We can skip simple query like point get.
-		if hints == "" {
+		bindSQL := GenerateBindSQL(context.TODO(), stmt, hints)
+		if bindSQL == "" {
 			continue
 		}
-		bindsql := strings.Replace(normalizedSQL, "select", fmt.Sprintf("select /*+ %s*/", hints), 1)
+		charset, collation := h.sctx.GetSessionVars().GetCharsetInfo()
 		binding := Binding{
-			BindSQL: bindsql,
-			Status:  Using,
-			Hint:    CollectHint(stmt),
-			id:      hints,
+			BindSQL:   bindSQL,
+			Status:    Using,
+			Hint:      CollectHint(stmt),
+			id:        hints,
+			Charset:   charset,
+			Collation: collation,
 		}
 		// We don't need to pass the `sctx` and `is` because they are used to generate hints and we already filled hints in.
-		err = h.AddBindRecord(nil, nil, &BindRecord{OriginalSQL: sqls[i], Db: schemas[i], Bindings: []Binding{binding}})
+		err = h.AddBindRecord(nil, nil, &BindRecord{OriginalSQL: normalizedSQL, Db: schemas[i], Bindings: []Binding{binding}})
 		if err != nil {
 			logutil.BgLogger().Info("capture baseline failed", zap.String("SQL", sqls[i]), zap.Error(err))
 		}
 	}
+}
+
+// GenerateBindSQL generates binding sqls from stmt node and plan hints.
+func GenerateBindSQL(ctx context.Context, stmtNode ast.StmtNode, planHint string) string {
+	// If would be nil for very simple cases such as point get, we do not need to evolve for them.
+	if planHint == "" {
+		return ""
+	}
+	paramChecker := &paramMarkerChecker{}
+	stmtNode.Accept(paramChecker)
+	// We need to evolve on current sql, but we cannot restore values for paramMarkers yet,
+	// so just ignore them now.
+	if paramChecker.hasParamMarker {
+		return ""
+	}
+	// We need to evolve plan based on the current sql, not the original sql which may have different parameters.
+	// So here we would remove the hint and inject the current best plan hint.
+	BindHint(stmtNode, &HintsSet{})
+	var sb strings.Builder
+	restoreCtx := format.NewRestoreCtx(format.DefaultRestoreFlags, &sb)
+	err := stmtNode.Restore(restoreCtx)
+	if err != nil {
+		logutil.Logger(ctx).Warn("Restore SQL failed", zap.Error(err))
+	}
+	bindSQL := sb.String()
+	selectIdx := strings.Index(bindSQL, "SELECT")
+	// Remove possible `explain` prefix.
+	bindSQL = bindSQL[selectIdx:]
+	return strings.Replace(bindSQL, "SELECT", fmt.Sprintf("SELECT /*+ %s*/", planHint), 1)
+}
+
+type paramMarkerChecker struct {
+	hasParamMarker bool
+}
+
+func (e *paramMarkerChecker) Enter(in ast.Node) (ast.Node, bool) {
+	if _, ok := in.(*driver.ParamMarkerExpr); ok {
+		e.hasParamMarker = true
+		return in, true
+	}
+	return in, false
+}
+
+func (e *paramMarkerChecker) Leave(in ast.Node) (ast.Node, bool) {
+	return in, true
 }
 
 // AddEvolvePlanTask adds the evolve plan task into memory cache. It would be flushed to store periodically.
@@ -646,13 +687,13 @@ func (h *BindHandle) getOnePendingVerifyJob() (string, string, Binding) {
 				if bind.Status != Rejected {
 					continue
 				}
-				updateTime, err := bind.UpdateTime.Time.GoTime(time.UTC)
+				dur, err := bind.SinceUpdateTime()
 				// Should not happen.
 				if err != nil {
 					continue
 				}
 				// Rejected and retry it now.
-				if time.Since(updateTime) > nextVerifyDuration {
+				if dur > nextVerifyDuration {
 					return bindRecord.OriginalSQL, bindRecord.Db, bind
 				}
 			}

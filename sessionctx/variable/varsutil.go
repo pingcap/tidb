@@ -678,6 +678,15 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 			}
 		}
 		return formatVal, nil
+	case TiDBMetricSchemaStep, TiDBMetricSchemaRangeDuration:
+		v, err := strconv.ParseInt(value, 10, 64)
+		if err != nil {
+			return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
+		}
+		if v < 10 || v > 60*60*60 {
+			return value, errors.Errorf("%v(%d) cannot be smaller than %v or larger than %v", name, v, 10, 60*60*60)
+		}
+		return value, nil
 	}
 	return value, nil
 }
@@ -764,7 +773,7 @@ func setSnapshotTS(s *SessionVars, sVal string) error {
 	}
 
 	// TODO: Consider time_zone variable.
-	t1, err := t.Time.GoTime(time.Local)
+	t1, err := t.GoTime(time.Local)
 	s.SnapshotTS = GoTimeToTS(t1)
 	return err
 }

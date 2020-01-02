@@ -27,6 +27,17 @@
     ]
   },
   {
+    "name": "TestIndexJoinUniqueCompositeIndex",
+    "cases": [
+      // Row count of IndexScan should be 2.
+      "explain select /*+ TIDB_INLJ(t2) */ * from t1 join t2 on t1.a = t2.a and t1.c = t2.c",
+      // Row count of IndexScan should be 2.
+	  "explain select /*+ TIDB_INLJ(t2) */ * from t1 join t2 on t1.a = t2.a and t1.c <= t2.b",
+      // Row count of IndexScan should be 1.
+	  "explain select /*+ TIDB_INLJ(t2) */ * from t1 join t2 on t1.a = t2.a and t2.b = 1"
+    ]
+  },
+  {
     "name": "TestPartitionTableStats",
     "cases": [
       "explain select * from t order by a",

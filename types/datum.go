@@ -21,6 +21,7 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+	"unsafe"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/charset"
@@ -1005,7 +1006,7 @@ func (d *Datum) convertToMysqlTimestamp(sc *stmtctx.StatementContext, target *Fi
 	default:
 		return invalidConv(d, mysql.TypeTimestamp)
 	}
-	t.Type = mysql.TypeTimestamp
+	t.SetType(mysql.TypeTimestamp)
 	ret.SetMysqlTime(t)
 	if err != nil {
 		return ret, errors.Trace(err)
@@ -1050,7 +1051,7 @@ func (d *Datum) convertToMysqlTime(sc *stmtctx.StatementContext, target *FieldTy
 	}
 	if tp == mysql.TypeDate {
 		// Truncate hh:mm:ss part if the type is Date.
-		t.Time = FromDate(t.Time.Year(), t.Time.Month(), t.Time.Day(), 0, 0, 0, 0)
+		t.SetCoreTime(FromDate(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0))
 	}
 	ret.SetValue(t)
 	if err != nil {
@@ -1234,7 +1235,7 @@ func (d *Datum) convertToMysqlYear(sc *stmtctx.StatementContext, target *FieldTy
 			adjust = true
 		}
 	case KindMysqlTime:
-		y = int64(d.GetMysqlTime().Time.Year())
+		y = int64(d.GetMysqlTime().Year())
 	case KindMysqlDuration:
 		y = int64(time.Now().Year())
 	default:
@@ -1902,7 +1903,7 @@ func GetMaxValue(ft *FieldType) (max Datum) {
 		max.SetMysqlDuration(Duration{Duration: MaxTime})
 	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
 		if ft.Tp == mysql.TypeDate || ft.Tp == mysql.TypeDatetime {
-			max.SetMysqlTime(Time{Time: MaxDatetime, Type: ft.Tp})
+			max.SetMysqlTime(NewTime(MaxDatetime, ft.Tp, 0))
 		} else {
 			max.SetMysqlTime(MaxTimestamp)
 		}
@@ -1933,7 +1934,7 @@ func GetMinValue(ft *FieldType) (min Datum) {
 		min.SetMysqlDuration(Duration{Duration: MinTime})
 	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
 		if ft.Tp == mysql.TypeDate || ft.Tp == mysql.TypeDatetime {
-			min.SetMysqlTime(Time{Time: MinDatetime, Type: ft.Tp})
+			min.SetMysqlTime(NewTime(MinDatetime, ft.Tp, 0))
 		} else {
 			min.SetMysqlTime(MinTimestamp)
 		}
@@ -2056,4 +2057,31 @@ func ChangeReverseResultByUpperLowerBound(
 		}
 	}
 	return d, nil
+}
+
+const (
+	sizeOfEmptyDatum = int(unsafe.Sizeof(Datum{}))
+	sizeOfMysqlTime  = int(unsafe.Sizeof(ZeroTime))
+	sizeOfMyDecimal  = MyDecimalStructSize
+)
+
+// EstimatedMemUsage returns the estimated bytes consumed of a one-dimensional
+// or two-dimensional datum array.
+func EstimatedMemUsage(array []Datum, numOfRows int) int64 {
+	if numOfRows == 0 {
+		return 0
+	}
+	var bytesConsumed int
+	for _, d := range array {
+		switch d.Kind() {
+		case KindMysqlDecimal:
+			bytesConsumed += sizeOfMyDecimal
+		case KindMysqlTime:
+			bytesConsumed += sizeOfMysqlTime
+		default:
+			bytesConsumed += len(d.b)
+		}
+	}
+	bytesConsumed += len(array) * sizeOfEmptyDatum
+	return int64(bytesConsumed * numOfRows)
 }

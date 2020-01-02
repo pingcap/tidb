@@ -177,9 +177,9 @@ func (b *builtinCastTimeAsJSONSig) vecEvalJSON(input *chunk.Chunk, result *chunk
 			continue
 		}
 
-		tp := tms[i].Type
+		tp := tms[i].Type()
 		if tp == mysql.TypeDatetime || tp == mysql.TypeTimestamp {
-			tms[i].Fsp = types.MaxFsp
+			tms[i].SetFsp(types.MaxFsp)
 		}
 		result.AppendJSON(json.CreateBinary(tms[i].String()))
 	}
@@ -290,19 +290,24 @@ func (b *builtinCastTimeAsDecimalSig) vecEvalDecimal(input *chunk.Chunk, result 
 	if err := b.args[0].VecEvalTime(b.ctx, input, buf); err != nil {
 		return err
 	}
+
 	result.ResizeDecimal(n, false)
 	result.MergeNulls(buf)
 	times := buf.Times()
 	decs := result.Decimals()
 	sc := b.ctx.GetSessionVars().StmtCtx
+	dec := new(types.MyDecimal)
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
 		}
-		times[i].FillNumber(&decs[i])
-		if _, err := types.ProduceDecWithSpecifiedTp(&decs[i], b.tp, sc); err != nil {
+		*dec = types.MyDecimal{}
+		times[i].FillNumber(dec)
+		dec, err = types.ProduceDecWithSpecifiedTp(dec, b.tp, sc)
+		if err != nil {
 			return err
 		}
+		decs[i] = *dec
 	}
 	return nil
 }
@@ -384,7 +389,7 @@ func (b *builtinCastIntAsTimeSig) vecEvalTime(input *chunk.Chunk, result *chunk.
 		times[i] = tm
 		if b.tp.Tp == mysql.TypeDate {
 			// Truncate hh:mm:ss part if the type is Date.
-			times[i].Time = types.FromDate(tm.Time.Year(), tm.Time.Month(), tm.Time.Day(), 0, 0, 0, 0)
+			times[i].SetCoreTime(types.FromDate(tm.Year(), tm.Month(), tm.Day(), 0, 0, 0, 0))
 		}
 	}
 	return nil
@@ -487,7 +492,7 @@ func (b *builtinCastJSONAsTimeSig) vecEvalTime(input *chunk.Chunk, result *chunk
 		times[i] = tm
 		if b.tp.Tp == mysql.TypeDate {
 			// Truncate hh:mm:ss part if the type is Date.
-			times[i].Time = types.FromDate(tm.Time.Year(), tm.Time.Month(), tm.Time.Day(), 0, 0, 0, 0)
+			times[i].SetCoreTime(types.FromDate(tm.Year(), tm.Month(), tm.Day(), 0, 0, 0, 0))
 		}
 	}
 	return nil
@@ -529,7 +534,7 @@ func (b *builtinCastRealAsTimeSig) vecEvalTime(input *chunk.Chunk, result *chunk
 		times[i] = tm
 		if b.tp.Tp == mysql.TypeDate {
 			// Truncate hh:mm:ss part if the type is Date.
-			times[i].Time = types.FromDate(tm.Time.Year(), tm.Time.Month(), tm.Time.Day(), 0, 0, 0, 0)
+			times[i].SetCoreTime(types.FromDate(tm.Year(), tm.Month(), tm.Day(), 0, 0, 0, 0))
 		}
 	}
 	return nil
@@ -548,11 +553,12 @@ func (b *builtinCastDecimalAsDecimalSig) vecEvalDecimal(input *chunk.Chunk, resu
 	decs := result.Decimals()
 	sc := b.ctx.GetSessionVars().StmtCtx
 	conditionUnionAndUnsigned := b.inUnion && mysql.HasUnsignedFlag(b.tp.Flag)
+	dec := new(types.MyDecimal)
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
 		}
-		dec := &types.MyDecimal{}
+		*dec = types.MyDecimal{}
 		if !(conditionUnionAndUnsigned && decs[i].IsNegative()) {
 			*dec = decs[i]
 		}
@@ -807,10 +813,11 @@ func (b *builtinCastRealAsDecimalSig) vecEvalDecimal(input *chunk.Chunk, result 
 				return err
 			}
 		}
-		_, err = types.ProduceDecWithSpecifiedTp(&resdecimal[i], b.tp, b.ctx.GetSessionVars().StmtCtx)
+		dec, err := types.ProduceDecWithSpecifiedTp(&resdecimal[i], b.tp, b.ctx.GetSessionVars().StmtCtx)
 		if err != nil {
 			return err
 		}
+		resdecimal[i] = *dec
 	}
 	return nil
 }
@@ -920,11 +927,49 @@ func (b *builtinCastDurationAsDecimalSig) vecEvalDecimal(input *chunk.Chunk, res
 }
 
 func (b *builtinCastIntAsDecimalSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinCastIntAsDecimalSig) vecEvalDecimal(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalInt(b.ctx, input, buf); err != nil {
+		return err
+	}
+
+	isUnsignedTp := mysql.HasUnsignedFlag(b.tp.Flag)
+	isUnsignedArgs0 := mysql.HasUnsignedFlag(b.args[0].GetType().Flag)
+	nums := buf.Int64s()
+	result.ResizeDecimal(n, false)
+	result.MergeNulls(buf)
+	decs := result.Decimals()
+	sc := b.ctx.GetSessionVars().StmtCtx
+	dec := new(types.MyDecimal)
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+
+		*dec = types.MyDecimal{}
+		if !isUnsignedTp && !isUnsignedArgs0 {
+			dec.FromInt(nums[i])
+		} else if b.inUnion && !isUnsignedArgs0 && nums[i] < 0 {
+			dec.FromUint(0)
+		} else {
+			dec.FromUint(uint64(nums[i]))
+		}
+
+		dec, err = types.ProduceDecWithSpecifiedTp(dec, b.tp, sc)
+		if err != nil {
+			return err
+		}
+		decs[i] = *dec
+	}
+	return nil
 }
 
 func (b *builtinCastIntAsJSONSig) vectorized() bool {
@@ -1294,7 +1339,7 @@ func (b *builtinCastDecimalAsTimeSig) vecEvalTime(input *chunk.Chunk, result *ch
 		times[i] = tm
 		if b.tp.Tp == mysql.TypeDate {
 			// Truncate hh:mm:ss part if the type is Date.
-			times[i].Time = types.FromDate(tm.Time.Year(), tm.Time.Month(), tm.Time.Day(), 0, 0, 0, 0)
+			times[i].SetCoreTime(types.FromDate(tm.Year(), tm.Month(), tm.Day(), 0, 0, 0, 0))
 		}
 	}
 	return nil
@@ -1368,8 +1413,8 @@ func (b *builtinCastTimeAsTimeSig) vecEvalTime(input *chunk.Chunk, result *chunk
 		times[i] = tm
 		if b.tp.Tp == mysql.TypeDate {
 			// Truncate hh:mm:ss part if the type is Date.
-			times[i].Time = types.FromDate(tm.Time.Year(), tm.Time.Month(), tm.Time.Day(), 0, 0, 0, 0)
-			times[i].Type = b.tp.Tp
+			times[i].SetCoreTime(types.FromDate(tm.Year(), tm.Month(), tm.Day(), 0, 0, 0, 0))
+			times[i].SetType(b.tp.Tp)
 		}
 	}
 	return nil
@@ -1570,7 +1615,7 @@ func (b *builtinCastStringAsTimeSig) vecEvalTime(input *chunk.Chunk, result *chu
 		times[i] = tm
 		if b.tp.Tp == mysql.TypeDate {
 			// Truncate hh:mm:ss part if the type is Date.
-			times[i].Time = types.FromDate(tm.Time.Year(), tm.Time.Month(), tm.Time.Day(), 0, 0, 0, 0)
+			times[i].SetCoreTime(types.FromDate(tm.Year(), tm.Month(), tm.Day(), 0, 0, 0, 0))
 		}
 	}
 	return nil

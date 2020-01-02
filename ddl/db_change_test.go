@@ -237,14 +237,14 @@ func (s *testStateChangeSuite) TestTwoStates(c *C) {
 	// Fill the SQLs and expected error messages.
 	testInfo.sqlInfos[0].sql = "insert into t (c1, c2, c3, c4) value(2, 'b', 'N', '2017-07-02')"
 	testInfo.sqlInfos[1].sql = "insert into t (c1, c2, c3, d3, c4) value(3, 'b', 'N', 'a', '2017-07-03')"
-	unknownColErr := errors.New("unknown column d3")
+	unknownColErr := "[planner:1054]Unknown column 'd3' in 'field list'"
 	testInfo.sqlInfos[1].cases[0].expectedCompileErr = unknownColErr
 	testInfo.sqlInfos[1].cases[1].expectedCompileErr = unknownColErr
 	testInfo.sqlInfos[1].cases[2].expectedCompileErr = unknownColErr
 	testInfo.sqlInfos[1].cases[3].expectedCompileErr = unknownColErr
 	testInfo.sqlInfos[2].sql = "update t set c2 = 'c2_update'"
 	testInfo.sqlInfos[3].sql = "replace into t values(5, 'e', 'N', '2017-07-05')"
-	testInfo.sqlInfos[3].cases[4].expectedCompileErr = errors.New("Column count doesn't match value count at row 1")
+	testInfo.sqlInfos[3].cases[4].expectedCompileErr = "[planner:1136]Column count doesn't match value count at row 1"
 	alterTableSQL := "alter table t add column d3 enum('a', 'b') not null default 'a' after c3"
 	s.test(c, "", alterTableSQL, testInfo)
 	// TODO: Add more DDL statements.
@@ -336,8 +336,8 @@ type stateCase struct {
 	session            session.Session
 	rawStmt            ast.StmtNode
 	stmt               sqlexec.Statement
-	expectedExecErr    error
-	expectedCompileErr error
+	expectedExecErr    string
+	expectedCompileErr string
 }
 
 type sqlInfo struct {
@@ -406,10 +406,10 @@ func (t *testExecInfo) compileSQL(idx int) (err error) {
 			return errors.Trace(err)
 		}
 		c.stmt, err = compiler.Compile(ctx, c.rawStmt)
-		if c.expectedCompileErr != nil {
+		if c.expectedCompileErr != "" {
 			if err == nil {
 				err = errors.Errorf("expected error %s but got nil", c.expectedCompileErr)
-			} else if strings.Contains(err.Error(), c.expectedCompileErr.Error()) {
+			} else if err.Error() == c.expectedCompileErr {
 				err = nil
 			}
 		}
@@ -423,14 +423,14 @@ func (t *testExecInfo) compileSQL(idx int) (err error) {
 func (t *testExecInfo) execSQL(idx int) error {
 	for _, sqlInfo := range t.sqlInfos {
 		c := sqlInfo.cases[idx]
-		if c.expectedCompileErr != nil {
+		if c.expectedCompileErr != "" {
 			continue
 		}
 		_, err := c.stmt.Exec(context.TODO())
-		if c.expectedExecErr != nil {
+		if c.expectedExecErr != "" {
 			if err == nil {
 				err = errors.Errorf("expected error %s but got nil", c.expectedExecErr)
-			} else if strings.Contains(err.Error(), c.expectedExecErr.Error()) {
+			} else if err.Error() == c.expectedExecErr {
 				err = nil
 			}
 		}
@@ -675,7 +675,7 @@ func (s *testStateChangeSuite) TestShowIndex(c *C) {
 	c.Assert(err, IsNil)
 
 	_, err = s.se.Execute(context.Background(), `create table tr(
-		id int, name varchar(50), 
+		id int, name varchar(50),
 		purchased date
 	)
 	partition by range( year(purchased) ) (

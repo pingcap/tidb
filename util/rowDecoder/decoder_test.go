@@ -77,10 +77,7 @@ func (s *testDecoderSuite) TestRowDecoder(c *C) {
 
 	timeZoneIn8, err := time.LoadLocation("Asia/Shanghai")
 	c.Assert(err, IsNil)
-	time1 := types.Time{
-		Time: types.FromDate(2019, 01, 01, 8, 01, 01, 0),
-		Type: mysql.TypeTimestamp,
-	}
+	time1 := types.NewTime(types.FromDate(2019, 01, 01, 8, 01, 01, 0), mysql.TypeTimestamp, types.DefaultFsp)
 	t1 := types.NewTimeDatum(time1)
 	d1 := types.NewDurationDatum(types.Duration{
 		Duration: time.Hour + time.Second,
