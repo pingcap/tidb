@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/util/logutil"
 	tracing "github.com/uber/jaeger-client-go/config"
-	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
 
@@ -592,7 +591,7 @@ var defaultConf = Config{
 }
 
 var (
-	globalConf              = atomic.Value{}
+	confHandler             ConfHandler
 	reloadConfPath          = ""
 	confReloader            func(nc, c *Config)
 	confReloadLock          sync.Mutex
@@ -620,13 +619,16 @@ func SetConfReloader(cpath string, reloader func(nc, c *Config), confItems ...st
 // GetGlobalConfig returns the global configuration for this server.
 // It should store configuration from command line and configuration file.
 // Other parts of the system can read the global configuration use this function.
+// NOTE: the returned config is read-only.
 func GetGlobalConfig() *Config {
-	return globalConf.Load().(*Config)
+	return confHandler.GetConfig()
 }
 
 // StoreGlobalConfig stores a new config to the globalConf. It mostly uses in the test to avoid some data races.
 func StoreGlobalConfig(config *Config) {
-	globalConf.Store(config)
+	if err := confHandler.SetConfig(config); err != nil {
+		logutil.BgLogger().Error("update the global config error", zap.Error(err))
+	}
 }
 
 // ReloadGlobalConfig reloads global configuration for this server.
@@ -662,8 +664,10 @@ func ReloadGlobalConfig() error {
 			"your changes%s", unsupported, supportedReloadConfList, formattedDiff.String())
 	}
 
+	if err := confHandler.SetConfig(nc); err != nil {
+		return err
+	}
 	confReloader(nc, c)
-	globalConf.Store(nc)
 	logutil.BgLogger().Info("reload config changes" + formattedDiff.String())
 	return nil
 }
@@ -832,7 +836,8 @@ func (t *OpenTracing) ToTracingConfig() *tracing.Configuration {
 }
 
 func init() {
-	globalConf.Store(&defaultConf)
+	conf := defaultConf
+	confHandler = &constantConfHandler{&conf}
 	if checkBeforeDropLDFlag == "1" {
 		CheckTableBeforeDrop = true
 	}

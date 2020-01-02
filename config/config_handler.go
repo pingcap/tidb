@@ -35,6 +35,7 @@ type ConfHandler interface {
 	Start()
 	Close()
 	GetConfig() *Config // read only
+	SetConfig(conf *Config) error
 }
 
 // ConfReloadFunc is used to reload the config to make it work.
@@ -59,6 +60,11 @@ func (cch *constantConfHandler) Start() {}
 func (cch *constantConfHandler) Close() {}
 
 func (cch *constantConfHandler) GetConfig() *Config { return cch.conf }
+
+func (cch *constantConfHandler) SetConfig(conf *Config) error {
+	cch.conf = conf
+	return nil
+}
 
 const (
 	pdConfHandlerRefreshInterval = 30 * time.Second
@@ -149,6 +155,10 @@ func (ch *pdConfHandler) Close() {
 
 func (ch *pdConfHandler) GetConfig() *Config {
 	return ch.curConf.Load().(*Config)
+}
+
+func (ch *pdConfHandler) SetConfig(conf *Config) error {
+	return errors.New("[PDConfHandler] only support to update the config from PD whereas forbid to modify it locally")
 }
 
 func (ch *pdConfHandler) run() {
