@@ -2953,7 +2953,6 @@ func (d *ddl) RenameColumn(ctx sessionctx.Context, ident ast.Ident, spec *ast.Al
 	if !ok {
 		return errors.Trace(infoschema.ErrDatabaseNotExists)
 	}
-
 	tbl, err := is.TableByName(ident.Schema, ident.Name)
 	if err != nil {
 		return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ident.Schema, ident.Name))
@@ -2964,7 +2963,8 @@ func (d *ddl) RenameColumn(ctx sessionctx.Context, ident ast.Ident, spec *ast.Al
 		return infoschema.ErrColumnNotExists.GenWithStackByArgs(oldColName, ident.Name)
 	}
 
-	colWithNewNameAlreadyExist := table.FindCol(tbl.Cols(), newColName.L) != nil
+	allCols := tbl.Cols()
+	colWithNewNameAlreadyExist := table.FindCol(allCols, newColName.L) != nil
 	if colWithNewNameAlreadyExist {
 		return infoschema.ErrColumnExists.GenWithStackByArgs(newColName)
 	}
@@ -2973,11 +2973,8 @@ func (d *ddl) RenameColumn(ctx sessionctx.Context, ident ast.Ident, spec *ast.Al
 		return errFKIncompatibleColumns.GenWithStackByArgs(oldColName, fkInfo.Name)
 	}
 
-	newCol := oldCol.Clone()
-	newCol.Name = newColName
-
 	// Check generated expression.
-	for _, col := range tbl.Cols() {
+	for _, col := range allCols {
 		if col.GeneratedExpr == nil {
 			continue
 		}
@@ -2989,6 +2986,8 @@ func (d *ddl) RenameColumn(ctx sessionctx.Context, ident ast.Ident, spec *ast.Al
 		}
 	}
 
+	newCol := oldCol.Clone()
+	newCol.Name = newColName
 	job := &model.Job{
 		SchemaID:   schema.ID,
 		TableID:    tbl.Meta().ID,
@@ -2997,7 +2996,6 @@ func (d *ddl) RenameColumn(ctx sessionctx.Context, ident ast.Ident, spec *ast.Al
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{&newCol, oldColName, spec.Position, 0},
 	}
-
 	err = d.doDDLJob(ctx, job)
 	err = d.callHookOnChanged(err)
 	return errors.Trace(err)
