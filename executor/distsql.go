@@ -509,6 +509,7 @@ func (e *IndexLookUpExecutor) startTableWorker(ctx context.Context, workCh <-cha
 	lookupConcurrencyLimit := e.ctx.GetSessionVars().IndexLookupConcurrency
 	e.tblWorkerWg.Add(lookupConcurrencyLimit)
 	for i := 0; i < lookupConcurrencyLimit; i++ {
+		workerID := i
 		worker := &tableWorker{
 			idxLookup:       e,
 			workCh:          workCh,
@@ -517,7 +518,7 @@ func (e *IndexLookUpExecutor) startTableWorker(ctx context.Context, workCh <-cha
 			keepOrder:       e.keepOrder,
 			handleIdx:       e.handleIdx,
 			checkIndexValue: e.checkIndexValue,
-			memTracker: memory.NewTracker(stringutil.MemoizeStr(func() string { return "TableWorker_" + strconv.Itoa(i) }),
+			memTracker: memory.NewTracker(stringutil.MemoizeStr(func() string { return "TableWorker_" + strconv.Itoa(workerID) }),
 				e.ctx.GetSessionVars().MemQuotaIndexLookupReader),
 		}
 		worker.memTracker.AttachTo(e.memTracker)
