@@ -383,8 +383,8 @@ func (*testSuite) TestUnsignedAutoid(c *C) {
 	c.Assert(max-min, Equals, int64(5))
 	c.Assert(min+1, Greater, lastRemainOne)
 
-	// Test increment & offset for unsigned.
-	alloc = autoid.NewAllocator(store, 1, true, autoid.RowIDAllocType)
+	// Test increment & offset for unsigned. Using AutoRandomType to avoid valid range check for increment and offset.
+	alloc = autoid.NewAllocator(store, 1, true, autoid.AutoRandomType)
 	c.Assert(alloc, NotNil)
 	c.Assert(err, IsNil)
 	c.Assert(globalAutoID, Equals, int64(1))
