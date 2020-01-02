@@ -60,15 +60,13 @@ type SortExec struct {
 
 	// partitionList is the chunks to store row values in disk for partitions.
 	partitionList []*chunk.ListInDisk
-	// partitionRowPtrs store the disk-chunk index and row index for each row for partitions.
-	partitionRowPtrs [][]chunk.RowPtr
 
 	// sortRows is used to maintain a heap.
 	sortRows []chunk.Row
 	// sortRowsIndex store the partition index for each row.
 	sortRowsIndex []int
 	// partitionConsumedRows store the consumed rows num for each partition.
-	partitionConsumedRows []int
+	partitionConsumedRowsPtr []chunk.RowPtr
 	// heapSort use heap sort for spill disk.
 	heapSort *topNChunkHeapWithIndex
 	// spillAction save the spill action for the Sort Executor.
@@ -94,13 +92,9 @@ func (e *SortExec) Close() error {
 		e.partitionList = e.partitionList[:0]
 
 		e.memTracker.Consume(int64(-8 * cap(e.sortRowsIndex)))
-		e.memTracker.Consume(int64(-8 * cap(e.partitionConsumedRows)))
+		e.memTracker.Consume(int64(-8 * cap(e.partitionConsumedRowsPtr)))
 		e.sortRowsIndex = nil
-		e.partitionConsumedRows = nil
-		for _, partitionPtrs := range e.partitionRowPtrs {
-			e.memTracker.Consume(int64(-8 * cap(partitionPtrs)))
-		}
-		e.partitionRowPtrs = nil
+		e.partitionConsumedRowsPtr = nil
 	}
 	if e.rowChunks != nil {
 		e.memTracker.Consume(-e.rowChunks.GetMemTracker().BytesConsumed())
@@ -128,7 +122,6 @@ func (e *SortExec) Open(ctx context.Context) error {
 	e.exceeded = 0
 	e.spilled = 0
 	e.partitionList = e.partitionList[:0]
-	e.partitionRowPtrs = e.partitionRowPtrs[:0]
 	return e.children[0].Open(ctx)
 }
 
@@ -169,9 +162,9 @@ func (e *SortExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 func (e *SortExec) prepareExternalSorting() (err error) {
 	e.sortRowsIndex = make([]int, 0, len(e.partitionList)+1)
-	e.partitionConsumedRows = make([]int, len(e.partitionList)+1)
+	e.partitionConsumedRowsPtr = make([]chunk.RowPtr, len(e.partitionList)+1)
 	e.memTracker.Consume(int64(8 * cap(e.sortRowsIndex)))
-	e.memTracker.Consume(int64(8 * cap(e.partitionConsumedRows)))
+	e.memTracker.Consume(int64(8 * cap(e.partitionConsumedRowsPtr)))
 	e.heapSort = nil
 	return err
 }
@@ -188,7 +181,6 @@ func (e *SortExec) generatePartition() error {
 	e.rowChunks.GetMemTracker().AttachTo(e.memTracker)
 	e.rowChunks.GetMemTracker().SetLabel(rowChunksLabel)
 	e.partitionList = append(e.partitionList, listInDisk)
-	e.partitionRowPtrs = append(e.partitionRowPtrs, e.initPointersForListInDisk(listInDisk))
 	return nil
 }
 
@@ -225,8 +217,8 @@ func (e *SortExec) externalSorting(req *chunk.Chunk) (err error) {
 	if e.heapSort == nil {
 		e.heapSort = &topNChunkHeapWithIndex{e}
 		for i := 0; i < len(e.partitionList); i++ {
-			e.partitionConsumedRows[i] = 0
-			row, err := e.partitionList[i].GetRow(e.partitionRowPtrs[i][0])
+			e.partitionConsumedRowsPtr[i] = chunk.RowPtr{ChkIdx: 0, RowIdx: 0}
+			row, err := e.partitionList[i].GetRow(e.partitionConsumedRowsPtr[i])
 			if err != nil {
 				return err
 			}
@@ -234,7 +226,7 @@ func (e *SortExec) externalSorting(req *chunk.Chunk) (err error) {
 			e.sortRowsIndex = append(e.sortRowsIndex, i)
 		}
 		if len(e.rowPtrs) != 0 {
-			e.partitionConsumedRows[len(e.partitionList)] = 0
+			e.partitionConsumedRowsPtr[len(e.partitionList)] = chunk.RowPtr{ChkIdx: 0, RowIdx: 0}
 			e.sortRows = append(e.sortRows, e.rowChunks.GetRow(e.rowPtrs[0]))
 			e.sortRowsIndex = append(e.sortRowsIndex, len(e.partitionList))
 		}
@@ -245,18 +237,19 @@ func (e *SortExec) externalSorting(req *chunk.Chunk) (err error) {
 		row, idx := e.sortRows[0], e.sortRowsIndex[0]
 		heap.Remove(e.heapSort, 0)
 		req.AppendRow(row)
-		e.partitionConsumedRows[idx]++
-
 		if idx == len(e.partitionList) {
-			if e.partitionConsumedRows[idx] >= len(e.rowPtrs) {
+			e.partitionConsumedRowsPtr[idx].RowIdx++
+			if e.partitionConsumedRowsPtr[idx].RowIdx >= uint32(len(e.rowPtrs)) {
 				continue
 			}
-			row = e.rowChunks.GetRow(e.rowPtrs[e.partitionConsumedRows[idx]])
+			row = e.rowChunks.GetRow(e.rowPtrs[e.partitionConsumedRowsPtr[idx].RowIdx])
 		} else {
-			if e.partitionConsumedRows[idx] >= len(e.partitionRowPtrs[idx]) {
+			rowPtr, ok := e.partitionList[idx].GetNextRowPtr(e.partitionConsumedRowsPtr[idx])
+			if !ok {
 				continue
 			}
-			row, err = e.partitionList[idx].GetRow(e.partitionRowPtrs[idx][e.partitionConsumedRows[idx]])
+			e.partitionConsumedRowsPtr[idx] = rowPtr
+			row, err = e.partitionList[idx].GetRow(rowPtr)
 			if err != nil {
 				return err
 			}
@@ -314,17 +307,6 @@ func (e *SortExec) initPointers() {
 		}
 	}
 	e.memTracker.Consume(int64(8 * cap(e.rowPtrs)))
-}
-
-func (e *SortExec) initPointersForListInDisk(disk *chunk.ListInDisk) []chunk.RowPtr {
-	rowPtrsInDisk := make([]chunk.RowPtr, 0)
-	for chkIdx := 0; chkIdx < disk.NumChunks(); chkIdx++ {
-		for rowIdx := 0; rowIdx < disk.NumRowsOfChunk(chkIdx); rowIdx++ {
-			rowPtrsInDisk = append(rowPtrsInDisk, chunk.RowPtr{ChkIdx: uint32(chkIdx), RowIdx: uint32(rowIdx)})
-		}
-	}
-	e.memTracker.Consume(int64(8 * len(rowPtrsInDisk)))
-	return rowPtrsInDisk
 }
 
 func (e *SortExec) initCompareFuncs() {

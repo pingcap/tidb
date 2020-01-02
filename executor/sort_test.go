@@ -41,14 +41,16 @@ func (s *testSuite) TestSortInDisk(c *C) {
 	tk.MustExec("set @@tidb_mem_quota_query=1;")
 	tk.MustExec("set @@tidb_max_chunk_size=32;")
 	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(c1 int)")
+	tk.MustExec("create table t(c1 int, c2 int, c3 int)")
 	for i := 0; i < 5; i++ {
 		for j := i; j < 1024; j += 5 {
-			tk.MustExec(fmt.Sprintf("insert into t values(%v)", j))
+			tk.MustExec(fmt.Sprintf("insert into t values(%v, %v, %v)", j, j, j))
 		}
 	}
 	result := tk.MustQuery("select * from t order by c1")
 	for i := 0; i < 1024; i++ {
 		c.Assert(result.Rows()[i][0].(string), Equals, fmt.Sprint(i))
+		c.Assert(result.Rows()[i][1].(string), Equals, fmt.Sprint(i))
+		c.Assert(result.Rows()[i][2].(string), Equals, fmt.Sprint(i))
 	}
 }
