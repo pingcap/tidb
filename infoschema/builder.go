@@ -55,32 +55,30 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 		)
 	}
 	var oldTableID, newTableID int64
-	tblIDs := make([]int64, 0, 2)
 	switch diff.Type {
 	case model.ActionCreateTable, model.ActionRecoverTable, model.ActionRepairTable:
 		newTableID = diff.TableID
-		tblIDs = append(tblIDs, newTableID)
 	case model.ActionDropTable, model.ActionDropView:
 		oldTableID = diff.TableID
-		tblIDs = append(tblIDs, oldTableID)
 	case model.ActionTruncateTable:
 		oldTableID = diff.OldTableID
 		newTableID = diff.TableID
-		tblIDs = append(tblIDs, oldTableID, newTableID)
 	default:
 		oldTableID = diff.TableID
 		newTableID = diff.TableID
-		tblIDs = append(tblIDs, oldTableID)
 	}
 	dbInfo := b.copySchemaTables(roDBInfo.Name.L)
 	b.copySortedTables(oldTableID, newTableID)
 
+	tblIDs := make([]int64, 0, 2)
 	// We try to reuse the old allocator, so the cached auto ID can be reused.
 	var allocs autoid.Allocators
 	if tableIDIsValid(oldTableID) {
 		if oldTableID == newTableID && diff.Type != model.ActionRenameTable && diff.Type != model.ActionRebaseAutoID {
 			allocs, _ = b.is.AllocByID(oldTableID)
 		}
+
+		tmpIDs := tblIDs
 		if diff.Type == model.ActionRenameTable && diff.OldSchemaID != diff.SchemaID {
 			oldRoDBInfo, ok := b.is.SchemaByID(diff.OldSchemaID)
 			if !ok {
@@ -89,19 +87,35 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 				)
 			}
 			oldDBInfo := b.copySchemaTables(oldRoDBInfo.Name.L)
-			b.applyDropTable(oldDBInfo, oldTableID)
+			tmpIDs = b.applyDropTable(oldDBInfo, oldTableID, tmpIDs)
 		} else {
-			b.applyDropTable(dbInfo, oldTableID)
+			tmpIDs = b.applyDropTable(dbInfo, oldTableID, tmpIDs)
+		}
+
+		if oldTableID != newTableID {
+			// Update tblIDs only when oldTableID != newTableID because applyCreateTable() also updates tblIDs.
+			tblIDs = tmpIDs
 		}
 	}
 	if tableIDIsValid(newTableID) {
 		// All types except DropTableOrView.
-		err := b.applyCreateTable(m, dbInfo, newTableID, allocs, diff.Type)
+		var err error
+		tblIDs, err = b.applyCreateTable(m, dbInfo, newTableID, allocs, diff.Type, tblIDs)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 	}
 	return tblIDs, nil
+}
+
+func appendAffectedIDs(affected []int64, tblInfo *model.TableInfo) []int64 {
+	affected = append(affected, tblInfo.ID)
+	if pi := tblInfo.GetPartitionInfo(); pi != nil {
+		for _, def := range pi.Definitions {
+			affected = append(affected, def.ID)
+		}
+	}
+	return affected
 }
 
 // copySortedTables copies sortedTables for old table and new table for later modification.
@@ -160,7 +174,7 @@ func (b *Builder) applyDropSchema(schemaID int64) []int64 {
 	for _, tbl := range di.Tables {
 		bucketIdxMap[tableBucketIdx(tbl.ID)] = struct{}{}
 		// TODO: If the table ID doesn't exist.
-		tableIDs = append(tableIDs, tbl.ID)
+		tableIDs = appendAffectedIDs(tableIDs, tbl)
 	}
 	for bucketIdx := range bucketIdxMap {
 		b.copySortedTablesBucket(bucketIdx)
@@ -168,7 +182,7 @@ func (b *Builder) applyDropSchema(schemaID int64) []int64 {
 
 	di = di.Clone()
 	for _, id := range tableIDs {
-		b.applyDropTable(di, id)
+		b.applyDropTable(di, id, nil)
 	}
 	return tableIDs
 }
@@ -180,25 +194,27 @@ func (b *Builder) copySortedTablesBucket(bucketIdx int) {
 	b.is.sortedTablesBuckets[bucketIdx] = newSortedTables
 }
 
-func (b *Builder) applyCreateTable(m *meta.Meta, dbInfo *model.DBInfo, tableID int64, allocs autoid.Allocators, tp model.ActionType) error {
+func (b *Builder) applyCreateTable(m *meta.Meta, dbInfo *model.DBInfo, tableID int64, allocs autoid.Allocators, tp model.ActionType, affected []int64) ([]int64, error) {
 	tblInfo, err := m.GetTable(dbInfo.ID, tableID)
 	if err != nil {
-		return errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
 	if tblInfo == nil {
 		// When we apply an old schema diff, the table may has been dropped already, so we need to fall back to
 		// full load.
-		return ErrTableNotExists.GenWithStackByArgs(
+		return nil, ErrTableNotExists.GenWithStackByArgs(
 			fmt.Sprintf("(Schema ID %d)", dbInfo.ID),
 			fmt.Sprintf("(Table ID %d)", tableID),
 		)
 	}
+	affected = appendAffectedIDs(affected, tblInfo)
+
 	// Failpoint check whether tableInfo should be added to repairInfo.
 	// Typically used in repair table test to load mock `bad` tableInfo into repairInfo.
 	failpoint.Inject("repairFetchCreateTable", func(val failpoint.Value) {
 		if val.(bool) {
 			if domainutil.RepairInfo.InRepairMode() && tp != model.ActionRepairTable && domainutil.RepairInfo.CheckAndFetchRepairedTable(dbInfo, tblInfo) {
-				failpoint.Return(nil)
+				failpoint.Return(nil, nil)
 			}
 		}
 	})
@@ -211,7 +227,7 @@ func (b *Builder) applyCreateTable(m *meta.Meta, dbInfo *model.DBInfo, tableID i
 	}
 	tbl, err := tables.TableFromMeta(allocs, tblInfo)
 	if err != nil {
-		return errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
 	tableNames := b.is.schemaMap[dbInfo.Name.L]
 	tableNames.tables[tblInfo.Name.L] = tbl
@@ -225,7 +241,7 @@ func (b *Builder) applyCreateTable(m *meta.Meta, dbInfo *model.DBInfo, tableID i
 	if ok {
 		dbInfo.Tables = append(dbInfo.Tables, newTbl.Meta())
 	}
-	return nil
+	return affected, nil
 }
 
 // ConvertCharsetCollateToLowerCaseIfNeed convert the charset / collation of table and its columns to lower case,
@@ -259,15 +275,17 @@ func ConvertOldVersionUTF8ToUTF8MB4IfNeed(tbInfo *model.TableInfo) {
 	}
 }
 
-func (b *Builder) applyDropTable(dbInfo *model.DBInfo, tableID int64) {
+func (b *Builder) applyDropTable(dbInfo *model.DBInfo, tableID int64, affected []int64) []int64 {
 	bucketIdx := tableBucketIdx(tableID)
 	sortedTbls := b.is.sortedTablesBuckets[bucketIdx]
 	idx := sortedTbls.searchTable(tableID)
 	if idx == -1 {
-		return
+		return affected
 	}
 	if tableNames, ok := b.is.schemaMap[dbInfo.Name.L]; ok {
-		delete(tableNames.tables, sortedTbls[idx].Meta().Name.L)
+		tblInfo := sortedTbls[idx].Meta()
+		delete(tableNames.tables, tblInfo.Name.L)
+		affected = appendAffectedIDs(affected, tblInfo)
 	}
 	// Remove the table in sorted table slice.
 	b.is.sortedTablesBuckets[bucketIdx] = append(sortedTbls[0:idx], sortedTbls[idx+1:]...)
@@ -283,6 +301,7 @@ func (b *Builder) applyDropTable(dbInfo *model.DBInfo, tableID int64) {
 			break
 		}
 	}
+	return affected
 }
 
 // InitWithOldInfoSchema initializes an empty new InfoSchema by copies all the data from old InfoSchema.
