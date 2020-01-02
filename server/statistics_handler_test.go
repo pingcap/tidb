@@ -103,7 +103,6 @@ func (ds *testDumpStatsSuite) TestDumpStatsAPI(c *C) {
 	router.Handle("/stats/dump/{db}/{table}", ds.sh)
 
 	testStatsBaseURL := fmt.Sprintf("http://127.0.0.1:%d/stats/dump/tidb/test", ds.statusPort)
-
 	resp, err := http.Get(testStatsBaseURL)
 	c.Assert(err, IsNil)
 	defer resp.Body.Close()
@@ -156,7 +155,6 @@ func (ds *testDumpStatsSuite) TestDumpStatsAPI(c *C) {
 }
 
 func (ds *testDumpStatsSuite) prepareData(c *C) {
-
 	db, err := sql.Open("mysql", ds.getDSN())
 	c.Assert(err, IsNil, Commentf("Error connecting"))
 	defer db.Close()
