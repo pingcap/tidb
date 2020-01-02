@@ -51,10 +51,4 @@ func (s *testSuite) TestSortInDisk(c *C) {
 	for i := 0; i < 1024; i++ {
 		c.Assert(result.Rows()[i][0].(string), Equals, fmt.Sprint(i))
 	}
-
-	tk.MustExec("set @@tidb_mem_quota_query=500;")
-	result = tk.MustQuery("select * from t order by c1")
-	for i := 0; i < 1024; i++ {
-		c.Assert(result.Rows()[i][0].(string), Equals, fmt.Sprint(i))
-	}
 }

@@ -289,7 +289,6 @@ func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 		}
 		e.rowChunks.Add(chk)
 		if atomic.LoadUint32(&e.exceeded) == 1 {
-			fmt.Println(e.rowChunks.Len())
 			err := e.generatePartition()
 			if err != nil {
 				return err
