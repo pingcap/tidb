@@ -16,6 +16,7 @@ package stmtsummary
 import (
 	"bytes"
 	"container/list"
+	"context"
 	"fmt"
 	"sort"
 	"strconv"
@@ -766,7 +767,7 @@ func (ssElement *stmtSummaryByDigestElement) toDatum(ssbd *stmtSummaryByDigest) 
 
 	plan, err := plancodec.DecodePlan(ssElement.samplePlan)
 	if err != nil {
-		logutil.BgLogger().Error("decode plan in statement summary failed", zap.String("plan", ssElement.samplePlan), zap.Error(err))
+		logutil.Logger(context.Background()).Error("decode plan in statement summary failed", zap.String("plan", ssElement.samplePlan), zap.Error(err))
 		plan = ""
 	}
 
