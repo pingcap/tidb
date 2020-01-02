@@ -244,7 +244,7 @@ func (e *SortExec) externalSorting(req *chunk.Chunk) (err error) {
 			}
 			row = e.rowChunks.GetRow(e.rowPtrs[e.partitionConsumedRowsPtr[idx].RowIdx])
 		} else {
-			rowPtr, ok := e.partitionList[idx].GetNextRowPtr(e.partitionConsumedRowsPtr[idx])
+			rowPtr, ok := getNextRowPtr(e.partitionList[idx], e.partitionConsumedRowsPtr[idx])
 			if !ok {
 				continue
 			}
@@ -256,9 +256,21 @@ func (e *SortExec) externalSorting(req *chunk.Chunk) (err error) {
 		}
 		e.sortRows = append(e.sortRows, row)
 		e.sortRowsIndex = append(e.sortRowsIndex, idx)
-		heap.Fix(e.heapSort, 0)
+		heap.Fix(e.heapSort, e.heapSort.Len()-1)
 	}
 	return nil
+}
+
+func getNextRowPtr(l *chunk.ListInDisk, ptr chunk.RowPtr) (chunk.RowPtr, bool) {
+	ptr.RowIdx++
+	if ptr.RowIdx == uint32(l.NumRowsOfChunk(int(ptr.ChkIdx))) {
+		ptr.ChkIdx++
+		ptr.RowIdx = 0
+	}
+	if ptr.ChkIdx == uint32(l.NumChunks()) {
+		return ptr, false
+	}
+	return ptr, true
 }
 
 func (e *SortExec) fetchRowChunks(ctx context.Context) error {

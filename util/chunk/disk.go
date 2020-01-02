@@ -133,19 +133,6 @@ func (l *ListInDisk) GetRow(ptr RowPtr) (row Row, err error) {
 	return row, err
 }
 
-// GetNextRowPtr gets the next RowPtr for the ListInDisk by given RowPtr.
-func (l *ListInDisk) GetNextRowPtr(ptr RowPtr) (RowPtr, bool) {
-	ptr.RowIdx++
-	if ptr.RowIdx == uint32(l.NumRowsOfChunk(int(ptr.ChkIdx))) {
-		ptr.ChkIdx++
-		ptr.RowIdx = 0
-	}
-	if ptr.ChkIdx == uint32(l.NumChunks()) {
-		return ptr, false
-	}
-	return ptr, true
-}
-
 // NumRowsOfChunk returns the number of rows of a chunk in the ListInDisk.
 func (l *ListInDisk) NumRowsOfChunk(chkID int) int {
 	return len(l.offsets[chkID])
