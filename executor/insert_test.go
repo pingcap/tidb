@@ -884,10 +884,17 @@ func (s *testSuite3) TestAutoIDIncrementAndOffset(c *C) {
 	tk.MustQuery(`select b from io`).Check(testkit.Rows("20", "30", "40"))
 	tk.MustQuery(`select _tidb_rowid from io`).Check(testkit.Rows("41", "42", "43"))
 
-	// Test robust value check.
+	// Test invalid value.
 	tk.Se.GetSessionVars().AutoIncrementIncrement = -1
 	tk.Se.GetSessionVars().AutoIncrementOffset = -2
 	_, err := tk.Exec(`insert into io(b) values (null),(null),(null)`)
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[autoid:8060]Invalid auto_increment settings: auto_increment_increment: -1, auto_increment_offset: -2, both of them must be in range [1..65535]")
+	tk.MustExec(`delete from io`)
+
+	tk.Se.GetSessionVars().AutoIncrementIncrement = 65536
+	tk.Se.GetSessionVars().AutoIncrementOffset = 65536
+	_, err = tk.Exec(`insert into io(b) values (null),(null),(null)`)
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[autoid:8060]Invalid auto_increment settings: auto_increment_increment: 65536, auto_increment_offset: 65536, both of them must be in range [1..65535]")
 }
