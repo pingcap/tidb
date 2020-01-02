@@ -88,5 +88,9 @@ func TestExplainAnalyzeInvokeNextAndClose(t *testing.T) {
 			t.Errorf("panic test failed: without panic or close() is not called")
 		}
 	}()
-	_, _ = explainExec.generateExplainInfo(tmpCtx)
+
+	_, err = explainExec.generateExplainInfo(tmpCtx)
+	if err != nil {
+		t.Errorf(err.Error())
+	}
 }
