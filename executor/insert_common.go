@@ -732,7 +732,7 @@ func (e *InsertValues) lazyAdjustAutoIncrementDatum(ctx context.Context, rows []
 				offset := j + start
 				d := rows[offset][colIdx]
 
-				id := min + int64(j)*increment
+				id := int64(uint64(min) + uint64(j)*uint64(increment))
 				d.SetAutoID(id, col.Flag)
 				retryInfo.AddAutoIncrementID(id)
 

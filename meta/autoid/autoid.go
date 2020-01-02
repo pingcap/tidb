@@ -332,6 +332,11 @@ func (alloc *allocator) Alloc(tableID int64, n uint64, increment, offset int64) 
 	if n == 0 {
 		return 0, 0, nil
 	}
+	if alloc.allocType == AutoIncrementType || alloc.allocType == RowIDAllocType {
+		if !validIncrementAndOffset(increment, offset) {
+			return 0, 0, errInvalidIncrementAndOffset.GenWithStackByArgs(increment, offset)
+		}
+	}
 	alloc.mu.Lock()
 	defer alloc.mu.Unlock()
 	if alloc.isUnsigned {
@@ -340,8 +345,14 @@ func (alloc *allocator) Alloc(tableID int64, n uint64, increment, offset int64) 
 	return alloc.alloc4Signed(tableID, n, increment, offset)
 }
 
-// CalcNeededIDs is exported for test.
-func CalcNeededIDs(base, n, increment, offset int64, isUnsigned bool) int64 {
+func validIncrementAndOffset(increment, offset int64) bool {
+	return (increment >= 1 && increment <= 65535) && (offset >= 1 && offset <= 65535)
+}
+
+// CalcNeededIDs is used to calculate batch size for autoID allocation.
+// Firstly seek to the first valid position based on increment and offset.
+// Then plus the length remained, which could be (n-1) * increment.
+func CalcNeededIDLength(base, n, increment, offset int64, isUnsigned bool) int64 {
 	if increment == 1 {
 		return n
 	}
@@ -371,7 +382,7 @@ func (alloc *allocator) alloc4Signed(tableID int64, n uint64, increment, offset 
 		}
 	}
 	// Calculate the total batch size needed.
-	n1 := CalcNeededIDs(alloc.base, int64(n), increment, offset, alloc.isUnsigned)
+	n1 := CalcNeededIDLength(alloc.base, int64(n), increment, offset, alloc.isUnsigned)
 
 	// Condition alloc.base+N1 > alloc.end will overflow when alloc.base + N1 > MaxInt64. So need this.
 	if math.MaxInt64-alloc.base <= n1 {
@@ -433,7 +444,7 @@ func (alloc *allocator) alloc4Unsigned(tableID int64, n uint64, increment, offse
 		}
 	}
 	// Calculate the total batch size needed.
-	n1 := CalcNeededIDs(alloc.base, int64(n), increment, offset, alloc.isUnsigned)
+	n1 := CalcNeededIDLength(alloc.base, int64(n), increment, offset, alloc.isUnsigned)
 
 	// Condition alloc.base+n1 > alloc.end will overflow when alloc.base + n1 > MaxInt64. So need this.
 	if math.MaxUint64-uint64(alloc.base) <= uint64(n1) {

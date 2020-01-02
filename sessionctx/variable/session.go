@@ -953,7 +953,6 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		} else {
 			s.AutoIncrementIncrement = temp
 		}
-
 	case AutoIncrementOffset:
 		// AutoIncrementOffset is valid in [1, 65535].
 		temp := tidbOptPositiveInt32(val, DefAutoIncrementOffset)
