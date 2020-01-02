@@ -31,6 +31,8 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/parser_driver"
+	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/math"
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tipb/go-tipb"
 )
@@ -44,6 +46,7 @@ type PointGetPlan struct {
 	schema           *expression.Schema
 	TblInfo          *model.TableInfo
 	IndexInfo        *model.IndexInfo
+	PartitionInfo    *model.PartitionDefinition
 	Handle           int64
 	HandleParam      *driver.ParamMarkerExpr
 	IndexValues      []types.Datum
@@ -111,6 +114,9 @@ func (p *PointGetPlan) explainInfo(normalized bool) string {
 	}
 	if p.Lock {
 		fmt.Fprintf(buffer, ", lock")
+	}
+	if p.PartitionInfo != nil {
+		fmt.Fprintf(buffer, ", partition:%s", p.PartitionInfo.Name.L)
 	}
 	return buffer.String()
 }
@@ -552,8 +558,11 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt) *PointGetP
 	// Table partition implementation translates LogicalPlan from `DataSource` to
 	// `Union -> DataSource` in the logical plan optimization pass, since PointGetPlan
 	// bypass the logical plan optimization, it can't support partitioned table.
-	if tbl.GetPartitionInfo() != nil {
-		return nil
+	pi := tbl.GetPartitionInfo()
+	if pi != nil {
+		if pi.Type != model.PartitionTypeHash {
+			return nil
+		}
 	}
 	for _, col := range tbl.Columns {
 		// Do not handle generated columns.
@@ -602,6 +611,19 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt) *PointGetP
 		p.Handle = intDatum.GetInt64()
 		p.UnsignedHandle = mysql.HasUnsignedFlag(fieldType.Flag)
 		p.HandleParam = handlePair.param
+		if pi != nil {
+			partitionSchema, colNames := buildSchemaForPartition(tblName.Schema, tbl, tblAlias)
+			exprs, err := expression.ParseSimpleExprsWithNames(ctx, pi.Expr, partitionSchema, colNames)
+			if err != nil {
+				return nil
+			}
+			pos, ok := locateHashPartition(exprs[0], pairs)
+			if !ok {
+				return nil
+			}
+			partitionIdx := math.Abs(pos) % int64(pi.Num)
+			p.PartitionInfo = &pi.Definitions[partitionIdx]
+		}
 		return p
 	}
 
@@ -628,6 +650,19 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt) *PointGetP
 		p.IndexInfo = idxInfo
 		p.IndexValues = idxValues
 		p.IndexValueParams = idxValueParams
+		if pi != nil {
+			partitionSchema, colNames := buildSchemaForPartition(tblName.Schema, tbl, tblAlias)
+			exprs, err := expression.ParseSimpleExprsWithNames(ctx, pi.Expr, partitionSchema, colNames)
+			if err != nil {
+				return nil
+			}
+			pos, ok := locateHashPartition(exprs[0], pairs)
+			if !ok {
+				return nil
+			}
+			partitionIdx := math.Abs(pos) % int64(pi.Num)
+			p.PartitionInfo = &pi.Definitions[partitionIdx]
+		}
 		return p
 	}
 	return nil
@@ -986,6 +1021,7 @@ func colInfoToColumn(col *model.ColumnInfo, idx int) *expression.Column {
 		ID:       col.ID,
 		UniqueID: int64(col.Offset),
 		Index:    idx,
+		OrigName: col.Name.L,
 	}
 }
 
@@ -1005,4 +1041,74 @@ func (p *PointGetPlan) findHandleCol() *expression.Column {
 		p.schema.Append(handleCol)
 	}
 	return handleCol
+}
+
+func buildSchemaForPartition(dbName model.CIStr, tbl *model.TableInfo, tblName model.CIStr) (*expression.Schema, []*types.FieldName) {
+	columns := make([]*expression.Column, 0, len(tbl.Columns)+1)
+	names := make([]*types.FieldName, 0, len(tbl.Columns)+1)
+	for _, col := range tbl.Columns {
+		names = append(names, &types.FieldName{
+			DBName:      dbName,
+			OrigTblName: tbl.Name,
+			TblName:     tblName,
+			ColName:     col.Name,
+		})
+		columns = append(columns, colInfoToColumn(col, len(columns)))
+	}
+	return expression.NewSchema(columns...), names
+}
+
+func locateHashPartition(piExpr expression.Expression, pairs []nameValuePair) (int64, bool) {
+	switch pi := piExpr.(type) {
+	case *expression.Column:
+		for _, p := range pairs {
+			if p.colName == pi.OrigName {
+				switch p.value.Kind() {
+				case types.KindInt64:
+					return p.value.GetInt64(), true
+				case types.KindUint64:
+					return int64(p.value.GetUint64()), true
+				default:
+					return 0, false
+				}
+			}
+		}
+		return 0, false
+	case *expression.Constant:
+		val, err := pi.Eval(chunk.Row{})
+		if err != nil {
+			return 0, false
+		}
+		switch val.Kind() {
+		case types.KindInt64:
+			return val.GetInt64(), true
+		case types.KindUint64:
+			return int64(val.GetUint64()), true
+		default:
+			return 0, false
+		}
+	case *expression.ScalarFunction:
+		if pi.FuncName.L == ast.Plus || pi.FuncName.L == ast.Minus || pi.FuncName.L == ast.Mul || pi.FuncName.L == ast.Div {
+			left, right := pi.GetArgs()[0], pi.GetArgs()[1]
+			leftVal, ok := locateHashPartition(left, pairs)
+			if !ok {
+				return 0, ok
+			}
+			rightVal, ok := locateHashPartition(right, pairs)
+			if !ok {
+				return 0, ok
+			}
+			switch pi.FuncName.L {
+			case ast.Plus:
+				return rightVal + leftVal, true
+			case ast.Minus:
+				return rightVal - leftVal, true
+			case ast.Mul:
+				return rightVal * leftVal, true
+			case ast.Div:
+				return rightVal / leftVal, true
+			}
+		}
+	}
+	return 0, false
 }

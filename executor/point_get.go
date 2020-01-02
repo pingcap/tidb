@@ -59,6 +59,7 @@ type PointGetExecutor struct {
 	tblInfo      *model.TableInfo
 	handle       int64
 	idxInfo      *model.IndexInfo
+	partInfo     *model.PartitionDefinition
 	idxVals      []types.Datum
 	startTS      uint64
 	snapshot     kv.Snapshot
@@ -80,6 +81,7 @@ func (e *PointGetExecutor) Init(p *plannercore.PointGetPlan, startTs uint64) {
 	e.lock = p.Lock
 	e.lockWaitTime = p.LockWaitTime
 	e.rowDecoder = decoder
+	e.partInfo = p.PartitionInfo
 }
 
 // Open implements the Executor interface.
