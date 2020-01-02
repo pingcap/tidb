@@ -390,10 +390,10 @@ func (s *testEvaluatorSuite) TestBinopNumeric(c *C) {
 		{1, ast.Mul, types.NewDecFromInt(1), 1},
 		{uint64(1), ast.Mul, 1, 1},
 		{uint64(1), ast.Mul, uint64(1), 1},
-		{types.Time{Time: types.FromDate(0, 0, 0, 0, 0, 0, 0)}, ast.Mul, 0, 0},
+		{types.NewTime(types.FromDate(0, 0, 0, 0, 0, 0, 0), 0, 0), ast.Mul, 0, 0},
 		{types.ZeroDuration, ast.Mul, 0, 0},
-		{types.Time{Time: types.FromGoTime(time.Now()), Fsp: 0, Type: mysql.TypeDatetime}, ast.Mul, 0, 0},
-		{types.Time{Time: types.FromGoTime(time.Now()), Fsp: 6, Type: mysql.TypeDatetime}, ast.Mul, 0, 0},
+		{types.NewTime(types.FromGoTime(time.Now()), mysql.TypeDatetime, 0), ast.Mul, 0, 0},
+		{types.NewTime(types.FromGoTime(time.Now()), mysql.TypeDatetime, 6), ast.Mul, 0, 0},
 		{types.Duration{Duration: 100000000, Fsp: 6}, ast.Mul, 0, 0},
 
 		// div
@@ -656,7 +656,7 @@ func (s *testEvaluatorSuite) TestUnaryOp(c *C) {
 	}{
 		{types.NewDecFromInt(1), ast.UnaryMinus, types.NewDecFromInt(-1)},
 		{types.ZeroDuration, ast.UnaryMinus, new(types.MyDecimal)},
-		{types.Time{Time: types.FromGoTime(time.Date(2009, time.November, 10, 23, 0, 0, 0, time.UTC)), Type: mysql.TypeDatetime, Fsp: 0}, ast.UnaryMinus, types.NewDecFromInt(-20091110230000)},
+		{types.NewTime(types.FromGoTime(time.Date(2009, time.November, 10, 23, 0, 0, 0, time.UTC)), mysql.TypeDatetime, 0), ast.UnaryMinus, types.NewDecFromInt(-20091110230000)},
 	}
 
 	for _, t := range tbl {

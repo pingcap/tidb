@@ -773,7 +773,7 @@ func setSnapshotTS(s *SessionVars, sVal string) error {
 	}
 
 	// TODO: Consider time_zone variable.
-	t1, err := t.Time.GoTime(time.Local)
+	t1, err := t.GoTime(time.Local)
 	s.SnapshotTS = GoTimeToTS(t1)
 	return err
 }

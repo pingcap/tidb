@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/memory"
 	"go.uber.org/zap"
 )
 
@@ -41,8 +42,6 @@ type InsertValues struct {
 	curBatchCnt    uint64
 	maxRowsInBatch uint64
 	lastInsertID   uint64
-	hasRefCols     bool
-	hasExtraHandle bool
 
 	SelectExec Executor
 
@@ -55,19 +54,23 @@ type InsertValues struct {
 
 	insertColumns []*table.Column
 
-	allAssignmentsAreConstant bool
-
 	// colDefaultVals is used to store casted default value.
 	// Because not every insert statement needs colDefaultVals, so we will init the buffer lazily.
 	colDefaultVals  []defaultVal
 	evalBuffer      chunk.MutRow
 	evalBufferTypes []*types.FieldType
 
+	allAssignmentsAreConstant bool
+
+	hasRefCols     bool
+	hasExtraHandle bool
+
 	// Fill the autoID lazily to datum. This is used for being compatible with JDBC using getGeneratedKeys().
 	// `insert|replace values` can guarantee consecutive autoID in a batch.
 	// Other statements like `insert select from` don't guarantee consecutive autoID.
 	// https://dev.mysql.com/doc/refman/8.0/en/innodb-auto-increment-handling.html
 	lazyFillAutoID bool
+	memTracker     *memory.Tracker
 }
 
 type defaultVal struct {
@@ -85,7 +88,7 @@ func (e *InsertValues) insertCommon() *InsertValues {
 	return e
 }
 
-func (e *InsertValues) exec(ctx context.Context, rows [][]types.Datum) error {
+func (e *InsertValues) exec(_ context.Context, _ [][]types.Datum) error {
 	panic("derived should overload exec function")
 }
 
@@ -212,6 +215,8 @@ func insertRows(ctx context.Context, base insertCommon) (err error) {
 	}
 
 	rows := make([][]types.Datum, 0, len(e.Lists))
+	memUsageOfRows := int64(0)
+	memTracker := e.memTracker
 	for i, list := range e.Lists {
 		e.rowCount++
 		var row []types.Datum
@@ -221,6 +226,8 @@ func insertRows(ctx context.Context, base insertCommon) (err error) {
 		}
 		rows = append(rows, row)
 		if batchInsert && e.rowCount%uint64(batchSize) == 0 {
+			memUsageOfRows = types.EstimatedMemUsage(rows[0], len(rows))
+			memTracker.Consume(memUsageOfRows)
 			// Before batch insert, fill the batch allocated autoIDs.
 			rows, err = e.lazyAdjustAutoIncrementDatum(ctx, rows)
 			if err != nil {
@@ -230,17 +237,29 @@ func insertRows(ctx context.Context, base insertCommon) (err error) {
 				return err
 			}
 			rows = rows[:0]
+			memTracker.Consume(-memUsageOfRows)
+			memUsageOfRows = 0
 			if err = e.doBatchInsert(ctx); err != nil {
 				return err
 			}
 		}
+	}
+	if len(rows) != 0 {
+		memUsageOfRows = types.EstimatedMemUsage(rows[0], len(rows))
+		memTracker.Consume(memUsageOfRows)
 	}
 	// Fill the batch allocated autoIDs.
 	rows, err = e.lazyAdjustAutoIncrementDatum(ctx, rows)
 	if err != nil {
 		return err
 	}
-	return base.exec(ctx, rows)
+	err = base.exec(ctx, rows)
+	if err != nil {
+		return err
+	}
+	rows = rows[:0]
+	memTracker.Consume(-memUsageOfRows)
+	return nil
 }
 
 func (e *InsertValues) handleErr(col *table.Column, val *types.Datum, rowIdx int, err error) error {
@@ -385,7 +404,8 @@ func insertRowsFromSelect(ctx context.Context, base insertCommon) error {
 	}
 	batchInsert := sessVars.BatchInsert && !sessVars.InTxn() && config.GetGlobalConfig().EnableBatchDML
 	batchSize := sessVars.DMLBatchSize
-
+	memUsageOfRows := int64(0)
+	memTracker := e.memTracker
 	for {
 		err := Next(ctx, selectExec, chk)
 		if err != nil {
@@ -394,7 +414,8 @@ func insertRowsFromSelect(ctx context.Context, base insertCommon) error {
 		if chk.NumRows() == 0 {
 			break
 		}
-
+		chkMemUsage := chk.MemoryUsage()
+		memTracker.Consume(chkMemUsage)
 		for innerChunkRow := iter.Begin(); innerChunkRow != iter.End(); innerChunkRow = iter.Next() {
 			innerRow := innerChunkRow.GetDatumRow(fields)
 			e.rowCount++
@@ -404,28 +425,38 @@ func insertRowsFromSelect(ctx context.Context, base insertCommon) error {
 			}
 			rows = append(rows, row)
 			if batchInsert && e.rowCount%uint64(batchSize) == 0 {
+				memUsageOfRows = types.EstimatedMemUsage(rows[0], len(rows))
+				memTracker.Consume(memUsageOfRows)
 				if err = base.exec(ctx, rows); err != nil {
 					return err
 				}
 				rows = rows[:0]
+				memTracker.Consume(-memUsageOfRows)
+				memUsageOfRows = 0
 				if err = e.doBatchInsert(ctx); err != nil {
 					return err
 				}
 			}
 		}
 
+		if len(rows) != 0 {
+			memUsageOfRows = types.EstimatedMemUsage(rows[0], len(rows))
+			memTracker.Consume(memUsageOfRows)
+		}
 		err = base.exec(ctx, rows)
 		if err != nil {
 			return err
 		}
 		rows = rows[:0]
+		memTracker.Consume(-memUsageOfRows)
+		memTracker.Consume(-chkMemUsage)
 	}
 	return nil
 }
 
 func (e *InsertValues) doBatchInsert(ctx context.Context) error {
 	sessVars := e.ctx.GetSessionVars()
-	if err := e.ctx.StmtCommit(); err != nil {
+	if err := e.ctx.StmtCommit(e.memTracker); err != nil {
 		return err
 	}
 	if err := e.ctx.NewTxn(ctx); err != nil {
