@@ -1051,6 +1051,12 @@ func (s *testPlanSuite) TestVisitInfo(c *C) {
 				{mysql.DropPriv, "test", "t", "", nil},
 			},
 		},
+		{
+			sql: "flush privileges",
+			ans: []visitInfo{
+				{mysql.ReloadPriv, "", "", "", ErrSpecificAccessDenied},
+			},
+		},
 	}
 
 	for _, tt := range tests {
