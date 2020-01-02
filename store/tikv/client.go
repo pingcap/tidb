@@ -169,6 +169,8 @@ func (a *connArray) Init(addr string, security config.Security, dieNotify *uint3
 				closed:        0,
 				tikvClientCfg: cfg.TiKVClient,
 				tikvLoad:      &a.tikvTransportLayerLoad,
+				dieNotify:     a.dieNotify,
+				dieFlag:       &a.die,
 			}
 			a.batchCommandsClients = append(a.batchCommandsClients, batchClient)
 		}

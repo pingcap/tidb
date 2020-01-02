@@ -71,15 +71,6 @@ func (a *batchConn) isDie() bool {
 	return atomic.LoadUint32(&a.die) != 0
 }
 
-var heartBeatEntry = &batchCommandsEntry{
-	ctx:       context.Background(),
-	req:       tikvrpc.NewRequest(tikvrpc.CmdEmpty, &tikvpb.BatchCommandsEmptyRequest{}).ToBatchCommandsRequest(),
-	res:       make(chan *tikvpb.BatchCommandsResponse_Response, 1),
-	canceled:  0,
-	err:       nil,
-	heartbeat: true,
-}
-
 // fetchAllPendingRequests fetches all pending requests from the channel.
 func (a *batchConn) fetchAllPendingRequests(
 	maxBatchSize int,
@@ -97,6 +88,14 @@ func (a *batchConn) fetchAllPendingRequests(
 	case <-a.idleDetect.C:
 		a.idleDetect.Reset(idleTimeout)
 		// send store heartbeat
+		heartBeatEntry := &batchCommandsEntry{
+			ctx:       context.Background(),
+			req:       tikvrpc.NewRequest(tikvrpc.CmdEmpty, &tikvpb.BatchCommandsEmptyRequest{}).ToBatchCommandsRequest(),
+			res:       make(chan *tikvpb.BatchCommandsResponse_Response, 1),
+			canceled:  0,
+			err:       nil,
+			heartbeat: true,
+		}
 		*entries = append(*entries, heartBeatEntry)
 		*requests = append(*requests, heartBeatEntry.req)
 		return
@@ -217,13 +216,16 @@ type batchCommandsClient struct {
 	closed int32
 	// tryLock protects client when re-create the streaming.
 	tryLock
+
+	dieNotify *uint32
+	dieFlag   *uint32
 }
 
 func (c *batchCommandsClient) isStopped() bool {
 	return atomic.LoadInt32(&c.closed) != 0
 }
 
-func (c *batchCommandsClient) send(request *tikvpb.BatchCommandsRequest, entries []*batchCommandsEntry) bool {
+func (c *batchCommandsClient) send(request *tikvpb.BatchCommandsRequest, entries []*batchCommandsEntry) {
 	for i, requestID := range request.RequestIds {
 		c.batched.Store(requestID, entries[i])
 	}
@@ -234,11 +236,13 @@ func (c *batchCommandsClient) send(request *tikvpb.BatchCommandsRequest, entries
 			zap.String("target", c.target),
 			zap.Error(err),
 		)
-		return c.failPendingRequests(err)
+		c.failPendingRequests(err)
+		return
 	}
 	if len(entries) == 1 {
-		failpoint.InjectContext(entries[0].ctx, "failBeforeSend", func() bool {
-			return c.failPendingRequests(errors.New("test err"))
+		failpoint.InjectContext(entries[0].ctx, "failBeforeSend", func() {
+			c.failPendingRequests(errors.New("test err"))
+			failpoint.Return()
 		})
 	}
 	if err := c.client.Send(request); err != nil {
@@ -247,9 +251,10 @@ func (c *batchCommandsClient) send(request *tikvpb.BatchCommandsRequest, entries
 			zap.String("target", c.target),
 			zap.Error(err),
 		)
-		return c.failPendingRequests(err)
+		c.failPendingRequests(err)
+		return
 	}
-	return false
+	return
 }
 
 func (c *batchCommandsClient) recv() (*tikvpb.BatchCommandsResponse, error) {
@@ -261,25 +266,25 @@ func (c *batchCommandsClient) recv() (*tikvpb.BatchCommandsResponse, error) {
 }
 
 // `failPendingRequests` must be called in locked contexts in order to avoid double closing channels.
-func (c *batchCommandsClient) failPendingRequests(err error) bool {
+func (c *batchCommandsClient) failPendingRequests(err error) {
 	failpoint.Inject("panicInFailPendingRequests", nil)
-	var (
-		heartbeatFail bool
-		i             int
-	)
+	var heartbeatFail bool
 	c.batched.Range(func(key, value interface{}) bool {
 		id, _ := key.(uint64)
 		entry, _ := value.(*batchCommandsEntry)
 		entry.err = err
 		c.batched.Delete(id)
 		close(entry.res)
-		if i == 0 && entry.heartbeat {
+		if entry.heartbeat {
 			heartbeatFail = true
 		}
-		i++
 		return true
 	})
-	return heartbeatFail
+	if heartbeatFail {
+		atomic.AddUint32(c.dieFlag, 1)
+		atomic.CompareAndSwapUint32(c.dieNotify, 0, 1)
+	}
+	return
 }
 
 func (c *batchCommandsClient) waitConnReady() (err error) {
@@ -525,11 +530,11 @@ func (a *batchConn) getClientAndSend(entries []*batchCommandsEntry, requests []*
 	if cli == nil {
 		logutil.BgLogger().Warn("no available connections", zap.String("target", target))
 		var heartbeatFail bool
-		for i, entry := range entries {
+		for _, entry := range entries {
 			// Please ensure the error is handled in region cache correctly.
 			entry.err = errors.New("no available connections")
 			close(entry.res)
-			if i == 0 && entry.heartbeat {
+			if entry.heartbeat {
 				heartbeatFail = true
 			}
 		}
@@ -551,11 +556,7 @@ func (a *batchConn) getClientAndSend(entries []*batchCommandsEntry, requests []*
 		RequestIds: requestIDs,
 	}
 
-	heartbeatFail := cli.send(req, entries)
-	if heartbeatFail {
-		atomic.AddUint32(&a.die, 1)
-		atomic.CompareAndSwapUint32(a.dieNotify, 0, 1)
-	}
+	cli.send(req, entries)
 }
 
 func (c *batchCommandsClient) initBatchClient() error {
