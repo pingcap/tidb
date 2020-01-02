@@ -328,7 +328,6 @@ func (p *rowFrameWindowProcessor) appendResult2Chunk(ctx sessionctx.Context, row
 				err = slidingWindowAggFunc.Slide(ctx, rows, lastStart, lastEnd, shiftStart, shiftEnd, p.partialResults[i])
 			} else {
 				err = windowFunc.UpdatePartialResult(ctx, rows[start:end], p.partialResults[i])
-				initializedSlidingWindow = true
 			}
 			if err != nil {
 				return nil, err
@@ -340,6 +339,9 @@ func (p *rowFrameWindowProcessor) appendResult2Chunk(ctx sessionctx.Context, row
 			if slidingWindowAggFunc == nil {
 				windowFunc.ResetPartialResult(p.partialResults[i])
 			}
+		}
+		if !initializedSlidingWindow {
+			initializedSlidingWindow = true
 		}
 		lastStart = start
 		lastEnd = end
