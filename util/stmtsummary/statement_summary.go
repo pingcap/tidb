@@ -31,6 +31,9 @@ import (
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/kvcache"
+	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/plancodec"
+	"go.uber.org/zap"
 )
 
 // There're many types of statement summary tables in MySQL, but we have
@@ -43,6 +46,8 @@ type stmtSummaryByDigestKey struct {
 	digest     string
 	// The digest of the previous statement.
 	prevDigest string
+	// The digest of the plan of this SQL.
+	planDigest string
 	// `hash` is the hash value of this object.
 	hash []byte
 }
@@ -52,10 +57,11 @@ type stmtSummaryByDigestKey struct {
 // `prevSQL` is included in the key To distinguish different transactions.
 func (key *stmtSummaryByDigestKey) Hash() []byte {
 	if len(key.hash) == 0 {
-		key.hash = make([]byte, 0, len(key.schemaName)+len(key.digest)+len(key.prevDigest))
+		key.hash = make([]byte, 0, len(key.schemaName)+len(key.digest)+len(key.prevDigest)+len(key.planDigest))
 		key.hash = append(key.hash, hack.Slice(key.digest)...)
 		key.hash = append(key.hash, hack.Slice(key.schemaName)...)
 		key.hash = append(key.hash, hack.Slice(key.prevDigest)...)
+		key.hash = append(key.hash, hack.Slice(key.planDigest)...)
 	}
 	return key.hash
 }
@@ -106,6 +112,7 @@ type stmtSummaryByDigest struct {
 	// They won't change once this object is created, so locking is not needed.
 	schemaName    string
 	digest        string
+	planDigest    string
 	stmtType      string
 	normalizedSQL string
 	tableNames    string
@@ -120,6 +127,7 @@ type stmtSummaryByDigestElement struct {
 	// basic
 	sampleSQL  string
 	prevSQL    string
+	samplePlan string
 	sampleUser string
 	indexNames []string
 	execCount  int64
@@ -192,6 +200,8 @@ type StmtExecInfo struct {
 	Digest         string
 	PrevSQL        string
 	PrevSQLDigest  string
+	PlanGenerator  func() string
+	PlanDigest     string
 	User           string
 	TotalLatency   time.Duration
 	ParseLatency   time.Duration
@@ -231,6 +241,7 @@ func (ssMap *stmtSummaryByDigestMap) AddStatement(sei *StmtExecInfo) {
 		schemaName: sei.SchemaName,
 		digest:     sei.Digest,
 		prevDigest: sei.PrevSQLDigest,
+		planDigest: sei.PlanDigest,
 	}
 
 	// Enclose the block in a function to ensure the lock will always be released.
@@ -476,14 +487,6 @@ func (ssMap *stmtSummaryByDigestMap) historySize() int {
 
 // newStmtSummaryByDigest creates a stmtSummaryByDigest from StmtExecInfo.
 func newStmtSummaryByDigest(sei *StmtExecInfo, beginTime int64, intervalSeconds int64, historySize int) *stmtSummaryByDigest {
-	// Trim SQL to size MaxSQLLength.
-	maxSQLLength := config.GetGlobalConfig().StmtSummary.MaxSQLLength
-	normalizedSQL := sei.NormalizedSQL
-	if len(normalizedSQL) > int(maxSQLLength) {
-		// Make sure the memory of original `normalizedSQL` will be released.
-		normalizedSQL = string([]byte(normalizedSQL[:maxSQLLength]))
-	}
-
 	// Use "," to separate table names to support FIND_IN_SET.
 	var buffer bytes.Buffer
 	for i, value := range sei.StmtCtx.Tables {
@@ -499,8 +502,9 @@ func newStmtSummaryByDigest(sei *StmtExecInfo, beginTime int64, intervalSeconds 
 	ssbd := &stmtSummaryByDigest{
 		schemaName:    sei.SchemaName,
 		digest:        sei.Digest,
+		planDigest:    sei.PlanDigest,
 		stmtType:      strings.ToLower(sei.StmtCtx.StmtType),
-		normalizedSQL: normalizedSQL,
+		normalizedSQL: formatSQL(sei.NormalizedSQL),
 		tableNames:    tableNames,
 		history:       list.New(),
 	}
@@ -589,8 +593,17 @@ func (ssbd *stmtSummaryByDigest) collectHistorySummaries(historySize int) []*stm
 }
 
 func newStmtSummaryByDigestElement(sei *StmtExecInfo, beginTime int64, intervalSeconds int64) *stmtSummaryByDigestElement {
+	// sampleSQL / sampleUser / samplePlan / prevSQL / indexNames store the values shown at the first time,
+	// because it compacts performance to update every time.
 	ssElement := &stmtSummaryByDigestElement{
-		beginTime:    beginTime,
+		beginTime: beginTime,
+		sampleSQL: formatSQL(sei.OriginalSQL),
+		// PrevSQL is already truncated to cfg.Log.QueryLogMaxLen.
+		prevSQL: sei.PrevSQL,
+		// samplePlan needs to be decoded so it can't be truncated.
+		samplePlan:   sei.PlanGenerator(),
+		sampleUser:   sei.User,
+		indexNames:   sei.StmtCtx.IndexNames,
 		minLatency:   sei.TotalLatency,
 		firstSeen:    sei.StartTime,
 		lastSeen:     sei.StartTime,
@@ -619,28 +632,11 @@ func (ssElement *stmtSummaryByDigestElement) onExpire(intervalSeconds int64) {
 }
 
 func (ssElement *stmtSummaryByDigestElement) add(sei *StmtExecInfo, intervalSeconds int64) {
-	maxSQLLength := config.GetGlobalConfig().StmtSummary.MaxSQLLength
-	sampleSQL := sei.OriginalSQL
-	if len(sampleSQL) > int(maxSQLLength) {
-		// Make sure the memory of original `sampleSQL` will be released.
-		sampleSQL = string([]byte(sampleSQL[:maxSQLLength]))
-	}
-	prevSQL := sei.PrevSQL
-	if len(prevSQL) > int(maxSQLLength) {
-		prevSQL = string([]byte(prevSQL[:maxSQLLength]))
-	}
-
 	ssElement.Lock()
 	defer ssElement.Unlock()
 
 	// refreshInterval may change anytime, update endTime ASAP.
 	ssElement.endTime = ssElement.beginTime + intervalSeconds
-	if sei.User != "" {
-		ssElement.sampleUser = sei.User
-	}
-	ssElement.sampleSQL = sampleSQL
-	ssElement.prevSQL = prevSQL
-	ssElement.indexNames = sei.StmtCtx.IndexNames
 	ssElement.execCount++
 
 	// latency
@@ -768,10 +764,16 @@ func (ssElement *stmtSummaryByDigestElement) toDatum(ssbd *stmtSummaryByDigest) 
 	ssElement.Lock()
 	defer ssElement.Unlock()
 
+	plan, err := plancodec.DecodePlan(ssElement.samplePlan)
+	if err != nil {
+		logutil.BgLogger().Error("decode plan in statement summary failed", zap.String("plan", ssElement.samplePlan), zap.Error(err))
+		plan = ""
+	}
+
 	// Actually, there's a small chance that endTime is out of date, but it's hard to keep it up to date all the time.
 	return types.MakeDatums(
-		types.Time{Time: types.FromGoTime(time.Unix(ssElement.beginTime, 0)), Type: mysql.TypeTimestamp},
-		types.Time{Time: types.FromGoTime(time.Unix(ssElement.endTime, 0)), Type: mysql.TypeTimestamp},
+		types.NewTime(types.FromGoTime(time.Unix(ssElement.beginTime, 0)), mysql.TypeTimestamp, 0),
+		types.NewTime(types.FromGoTime(time.Unix(ssElement.endTime, 0)), mysql.TypeTimestamp, 0),
 		ssbd.stmtType,
 		ssbd.schemaName,
 		ssbd.digest,
@@ -830,11 +832,23 @@ func (ssElement *stmtSummaryByDigestElement) toDatum(ssbd *stmtSummaryByDigest) 
 		avgInt(ssElement.sumMem, ssElement.execCount),
 		ssElement.maxMem,
 		avgFloat(int64(ssElement.sumAffectedRows), ssElement.execCount),
-		types.Time{Time: types.FromGoTime(ssElement.firstSeen), Type: mysql.TypeTimestamp},
-		types.Time{Time: types.FromGoTime(ssElement.lastSeen), Type: mysql.TypeTimestamp},
+		types.NewTime(types.FromGoTime(ssElement.firstSeen), mysql.TypeTimestamp, 0),
+		types.NewTime(types.FromGoTime(ssElement.lastSeen), mysql.TypeTimestamp, 0),
 		ssElement.sampleSQL,
 		ssElement.prevSQL,
+		ssbd.planDigest,
+		plan,
 	)
+}
+
+// Truncate SQL to maxSQLLength.
+func formatSQL(sql string) string {
+	maxSQLLength := config.GetGlobalConfig().StmtSummary.MaxSQLLength
+	length := len(sql)
+	if length > int(maxSQLLength) {
+		sql = fmt.Sprintf("%.*s(len:%d)", maxSQLLength, sql, length)
+	}
+	return sql
 }
 
 // Format the backoffType map to a string or nil.

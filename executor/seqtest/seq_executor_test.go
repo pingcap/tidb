@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/log"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/terror"
@@ -53,7 +54,10 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
+	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 )
 
 func TestT(t *testing.T) {
@@ -65,6 +69,7 @@ func TestT(t *testing.T) {
 
 var _ = Suite(&seqTestSuite{})
 var _ = Suite(&seqTestSuite1{})
+var _ = Suite(&testOOMSuite{})
 
 type seqTestSuite struct {
 	cluster   *mocktikv.Cluster
@@ -1158,4 +1163,200 @@ func (s *seqTestSuite) TestMaxDeltaSchemaCount(c *C) {
 	tk.MustExec("use test")
 	c.Assert(variable.GetMaxDeltaSchemaCount(), Equals, int64(2048))
 	tk.MustQuery("select @@global.tidb_max_delta_schema_count").Check(testkit.Rows("2048"))
+}
+
+type testOOMSuite struct {
+	store kv.Storage
+	do    *domain.Domain
+	oom   *oomCapturer
+}
+
+func (s *testOOMSuite) SetUpSuite(c *C) {
+	testleak.BeforeTest()
+	s.registerHook()
+	var err error
+	s.store, err = mockstore.NewMockTikvStore()
+	c.Assert(err, IsNil)
+	domain.RunAutoAnalyze = false
+	s.do, err = session.BootstrapSession(s.store)
+	c.Assert(err, IsNil)
+}
+
+func (s *testOOMSuite) TearDownSuite(c *C) {
+	s.do.Close()
+	s.store.Close()
+}
+
+func (s *testOOMSuite) registerHook() {
+	conf := &log.Config{Level: os.Getenv("log_level"), File: log.FileLogConfig{}}
+	_, r, _ := log.InitLogger(conf)
+	s.oom = &oomCapturer{r.Core, ""}
+	lg := zap.New(s.oom)
+	log.ReplaceGlobals(lg, r)
+}
+
+func (s *testOOMSuite) TestDistSQLMemoryControl(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (id int, a int, b int, index idx_a(`a`))")
+	tk.MustExec("insert into t values (1,1,1), (2,2,2), (3,3,3)")
+
+	log.SetLevel(zap.WarnLevel)
+	s.oom.tracker = ""
+	tk.MustQuery("select * from t")
+	c.Assert(s.oom.tracker, Equals, "")
+	tk.Se.GetSessionVars().MemQuotaDistSQL = 1
+	tk.MustQuery("select * from t")
+	c.Assert(s.oom.tracker, Equals, "TableReader_5")
+	tk.Se.GetSessionVars().MemQuotaDistSQL = -1
+
+	s.oom.tracker = ""
+	tk.MustQuery("select a from t")
+	c.Assert(s.oom.tracker, Equals, "")
+	tk.Se.GetSessionVars().MemQuotaDistSQL = 1
+	tk.MustQuery("select a from t use index(idx_a)")
+	c.Assert(s.oom.tracker, Equals, "IndexReader_5")
+	tk.Se.GetSessionVars().MemQuotaDistSQL = -1
+
+	s.oom.tracker = ""
+	tk.MustQuery("select * from t")
+	c.Assert(s.oom.tracker, Equals, "")
+	tk.Se.GetSessionVars().MemQuotaIndexLookupReader = 1
+	tk.MustQuery("select * from t use index(idx_a)")
+	c.Assert(s.oom.tracker, Equals, "IndexLookUp_6")
+	tk.Se.GetSessionVars().MemQuotaIndexLookupReader = -1
+}
+
+func (s *testOOMSuite) TestMemTracker4UpdateExec(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_MemTracker4UpdateExec (id int, a int, b int, index idx_a(`a`))")
+
+	log.SetLevel(zap.InfoLevel)
+	s.oom.tracker = ""
+	tk.MustExec("insert into t_MemTracker4UpdateExec values (1,1,1), (2,2,2), (3,3,3)")
+	c.Assert(s.oom.tracker, Equals, "")
+	tk.Se.GetSessionVars().MemQuotaQuery = 244
+	tk.MustExec("update t_MemTracker4UpdateExec set a = 4")
+	c.Assert(s.oom.tracker, Matches, "expensive_query during bootstrap phase")
+}
+
+func (s *testOOMSuite) TestMemTracker4InsertAndReplaceExec(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_MemTracker4InsertAndReplaceExec (id int, a int, b int, index idx_a(`a`))")
+
+	log.SetLevel(zap.InfoLevel)
+	s.oom.tracker = ""
+	tk.MustExec("insert into t_MemTracker4InsertAndReplaceExec values (1,1,1), (2,2,2), (3,3,3)")
+	c.Assert(s.oom.tracker, Equals, "")
+	tk.Se.GetSessionVars().MemQuotaQuery = 1
+	tk.MustExec("insert into t_MemTracker4InsertAndReplaceExec values (1,1,1), (2,2,2), (3,3,3)")
+	c.Assert(s.oom.tracker, Matches, "expensive_query during bootstrap phase")
+	tk.Se.GetSessionVars().MemQuotaQuery = -1
+
+	s.oom.tracker = ""
+	tk.MustExec("replace into t_MemTracker4InsertAndReplaceExec values (1,1,1), (2,2,2), (3,3,3)")
+	c.Assert(s.oom.tracker, Equals, "")
+	tk.Se.GetSessionVars().MemQuotaQuery = 1
+	tk.MustExec("replace into t_MemTracker4InsertAndReplaceExec values (1,1,1), (2,2,2), (3,3,3)")
+	c.Assert(s.oom.tracker, Matches, "expensive_query during bootstrap phase")
+	tk.Se.GetSessionVars().MemQuotaQuery = -1
+
+	s.oom.tracker = ""
+	tk.MustExec("insert into t_MemTracker4InsertAndReplaceExec select * from t")
+	c.Assert(s.oom.tracker, Equals, "")
+	tk.Se.GetSessionVars().MemQuotaQuery = 1
+	tk.MustExec("insert into t_MemTracker4InsertAndReplaceExec select * from t")
+	c.Assert(s.oom.tracker, Matches, "expensive_query during bootstrap phase")
+	tk.Se.GetSessionVars().MemQuotaQuery = -1
+
+	s.oom.tracker = ""
+	tk.MustExec("replace into t_MemTracker4InsertAndReplaceExec select * from t")
+	c.Assert(s.oom.tracker, Equals, "")
+	tk.Se.GetSessionVars().MemQuotaQuery = 1
+	tk.MustExec("replace into t_MemTracker4InsertAndReplaceExec select * from t")
+	c.Assert(s.oom.tracker, Matches, "expensive_query during bootstrap phase")
+	tk.Se.GetSessionVars().MemQuotaQuery = -1
+
+	tk.Se.GetSessionVars().DMLBatchSize = 1
+	tk.Se.GetSessionVars().BatchInsert = true
+	s.oom.tracker = ""
+	tk.MustExec("insert into t_MemTracker4InsertAndReplaceExec values (1,1,1), (2,2,2), (3,3,3)")
+	c.Assert(s.oom.tracker, Equals, "")
+	tk.Se.GetSessionVars().MemQuotaQuery = 1
+	tk.MustExec("insert into t_MemTracker4InsertAndReplaceExec values (1,1,1), (2,2,2), (3,3,3)")
+	c.Assert(s.oom.tracker, Matches, "expensive_query during bootstrap phase")
+	tk.Se.GetSessionVars().MemQuotaQuery = -1
+
+	s.oom.tracker = ""
+	tk.MustExec("replace into t_MemTracker4InsertAndReplaceExec values (1,1,1), (2,2,2), (3,3,3)")
+	c.Assert(s.oom.tracker, Equals, "")
+	tk.Se.GetSessionVars().MemQuotaQuery = 1
+	tk.MustExec("replace into t_MemTracker4InsertAndReplaceExec values (1,1,1), (2,2,2), (3,3,3)")
+	c.Assert(s.oom.tracker, Matches, "expensive_query during bootstrap phase")
+	tk.Se.GetSessionVars().MemQuotaQuery = -1
+}
+
+func (s *testOOMSuite) TestMemTracker4DeleteExec(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table MemTracker4DeleteExec1 (id int, a int, b int, index idx_a(`a`))")
+	tk.MustExec("create table MemTracker4DeleteExec2 (id int, a int, b int, index idx_a(`a`))")
+
+	// delete from single table
+	log.SetLevel(zap.InfoLevel)
+	tk.MustExec("insert into MemTracker4DeleteExec1 values(1,1,1), (2,2,2), (3,3,3), (4,4,4), (5,5,5)")
+	s.oom.tracker = ""
+	tk.MustExec("delete from MemTracker4DeleteExec1")
+	c.Assert(s.oom.tracker, Equals, "")
+	tk.MustExec("insert into MemTracker4DeleteExec1 values (1,1,1), (2,2,2), (3,3,3)")
+	tk.Se.GetSessionVars().MemQuotaQuery = 1
+	tk.MustExec("delete from MemTracker4DeleteExec1")
+	c.Assert(s.oom.tracker, Matches, "expensive_query during bootstrap phase")
+
+	// delete from multiple table
+	tk.Se.GetSessionVars().MemQuotaQuery = 100000
+	tk.MustExec("insert into MemTracker4DeleteExec1 values(1,1,1)")
+	tk.MustExec("insert into MemTracker4DeleteExec2 values(1,1,1)")
+	s.oom.tracker = ""
+	tk.MustExec("delete MemTracker4DeleteExec1, MemTracker4DeleteExec2 from MemTracker4DeleteExec1 join MemTracker4DeleteExec2 on MemTracker4DeleteExec1.a=MemTracker4DeleteExec2.a")
+	c.Assert(s.oom.tracker, Equals, "")
+	tk.MustExec("insert into MemTracker4DeleteExec1 values(1,1,1)")
+	tk.MustExec("insert into MemTracker4DeleteExec2 values(1,1,1)")
+	s.oom.tracker = ""
+	tk.Se.GetSessionVars().MemQuotaQuery = 10000
+	tk.MustExec("delete MemTracker4DeleteExec1, MemTracker4DeleteExec2 from MemTracker4DeleteExec1 join MemTracker4DeleteExec2 on MemTracker4DeleteExec1.a=MemTracker4DeleteExec2.a")
+	c.Assert(s.oom.tracker, Equals, "expensive_query during bootstrap phase")
+}
+
+type oomCapturer struct {
+	zapcore.Core
+	tracker string
+}
+
+func (h *oomCapturer) Write(entry zapcore.Entry, fields []zapcore.Field) error {
+	if strings.Contains(entry.Message, "memory exceeds quota") {
+		err, _ := fields[0].Interface.(error)
+		str := err.Error()
+		begin := strings.Index(str, "8001]")
+		if begin == -1 {
+			panic("begin not found")
+		}
+		end := strings.Index(str, " holds")
+		if end == -1 {
+			panic("end not found")
+		}
+		h.tracker = str[begin+len("8001]") : end]
+		return nil
+	}
+	h.tracker = entry.Message
+	return nil
+}
+
+func (h *oomCapturer) Check(e zapcore.Entry, ce *zapcore.CheckedEntry) *zapcore.CheckedEntry {
+	if h.Enabled(e.Level) {
+		return ce.AddCore(e, h)
+	}
+	return ce
 }

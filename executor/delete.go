@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/memory"
 )
 
 // DeleteExec represents a delete executor.
@@ -35,6 +36,7 @@ type DeleteExec struct {
 	// tblColPosInfos stores relationship between column ordinal to its table handle.
 	// the columns ordinals is present in ordinal range format, @see plannercore.TblColPosInfos
 	tblColPosInfos plannercore.TblColPosInfoSlice
+	memTracker     *memory.Tracker
 }
 
 // Next implements the Executor Next interface.
@@ -78,9 +80,10 @@ func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
 	batchDMLSize := e.ctx.GetSessionVars().DMLBatchSize
 	fields := retTypes(e.children[0])
 	chk := newFirstChunk(e.children[0])
+	memUsageOfChk := int64(0)
 	for {
+		e.memTracker.Consume(-memUsageOfChk)
 		iter := chunk.NewIterator4Chunk(chk)
-
 		err := Next(ctx, e.children[0], chk)
 		if err != nil {
 			return err
@@ -88,10 +91,11 @@ func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
 		if chk.NumRows() == 0 {
 			break
 		}
-
+		memUsageOfChk = chk.MemoryUsage()
+		e.memTracker.Consume(memUsageOfChk)
 		for chunkRow := iter.Begin(); chunkRow != iter.End(); chunkRow = iter.Next() {
 			if batchDelete && rowCount >= batchDMLSize {
-				if err = e.ctx.StmtCommit(); err != nil {
+				if err = e.ctx.StmtCommit(e.memTracker); err != nil {
 					return err
 				}
 				if err = e.ctx.NewTxn(ctx); err != nil {
@@ -131,7 +135,9 @@ func (e *DeleteExec) deleteMultiTablesByChunk(ctx context.Context) error {
 	tblRowMap := make(tableRowMapType)
 	fields := retTypes(e.children[0])
 	chk := newFirstChunk(e.children[0])
+	memUsageOfChk := int64(0)
 	for {
+		e.memTracker.Consume(-memUsageOfChk)
 		iter := chunk.NewIterator4Chunk(chk)
 		err := Next(ctx, e.children[0], chk)
 		if err != nil {
@@ -140,6 +146,8 @@ func (e *DeleteExec) deleteMultiTablesByChunk(ctx context.Context) error {
 		if chk.NumRows() == 0 {
 			break
 		}
+		memUsageOfChk = chk.MemoryUsage()
+		e.memTracker.Consume(memUsageOfChk)
 
 		for joinedChunkRow := iter.Begin(); joinedChunkRow != iter.End(); joinedChunkRow = iter.Next() {
 			joinedDatumRow := joinedChunkRow.GetDatumRow(fields)
@@ -165,10 +173,16 @@ func (e *DeleteExec) removeRowsInTblRowMap(tblRowMap tableRowMapType) error {
 }
 
 func (e *DeleteExec) removeRow(ctx sessionctx.Context, t table.Table, h int64, data []types.Datum) error {
-	err := t.RemoveRecord(ctx, h, data)
+	txnState, err := e.ctx.Txn(false)
 	if err != nil {
 		return err
 	}
+	memUsageOfTxnState := txnState.Size()
+	err = t.RemoveRecord(ctx, h, data)
+	if err != nil {
+		return err
+	}
+	e.memTracker.Consume(int64(txnState.Size() - memUsageOfTxnState))
 	ctx.GetSessionVars().StmtCtx.AddAffectedRows(1)
 	return nil
 }
@@ -180,6 +194,9 @@ func (e *DeleteExec) Close() error {
 
 // Open implements the Executor Open interface.
 func (e *DeleteExec) Open(ctx context.Context) error {
+	e.memTracker = memory.NewTracker(e.id, -1)
+	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
+
 	return e.children[0].Open(ctx)
 }
 

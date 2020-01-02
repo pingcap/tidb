@@ -38,6 +38,7 @@ const promReadTimeout = time.Second * 10
 
 // MetricRetriever uses to read metric data.
 type MetricRetriever struct {
+	dummyCloser
 	table     *model.TableInfo
 	tblDef    *metricschema.MetricTableDef
 	extractor *plannercore.MetricTableExtractor
@@ -135,11 +136,11 @@ func (e *MetricRetriever) genRows(value pmodel.Value, r promQLQueryRange, quanti
 func (e *MetricRetriever) genRecord(metric pmodel.Metric, pair pmodel.SamplePair, r promQLQueryRange, quantile float64) []types.Datum {
 	record := make([]types.Datum, 0, 2+len(e.tblDef.Labels)+1)
 	// Record order should keep same with genColumnInfos.
-	record = append(record, types.NewTimeDatum(types.Time{
-		Time: types.FromGoTime(time.Unix(int64(pair.Timestamp/1000), int64(pair.Timestamp%1000)*1e6)),
-		Type: mysql.TypeDatetime,
-		Fsp:  types.MaxFsp,
-	}))
+	record = append(record, types.NewTimeDatum(types.NewTime(
+		types.FromGoTime(time.Unix(int64(pair.Timestamp/1000), int64(pair.Timestamp%1000)*1e6)),
+		mysql.TypeDatetime,
+		types.MaxFsp,
+	)))
 	record = append(record, types.NewFloat64Datum(float64(pair.Value)))
 	for _, label := range e.tblDef.Labels {
 		v := ""

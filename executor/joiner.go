@@ -279,7 +279,8 @@ func (j *semiJoiner) tryToMatchInners(outer chunk.Row, inners chunk.Iterator, ch
 			return true, false, nil
 		}
 	}
-	return false, false, nil
+	err = inners.Error()
+	return false, false, err
 }
 
 func (j *semiJoiner) tryToMatchOuters(outers chunk.Iterator, inner chunk.Row, chk *chunk.Chunk, outerRowStatus []outerRowStatusFlag) (_ []outerRowStatusFlag, err error) {
@@ -305,7 +306,8 @@ func (j *semiJoiner) tryToMatchOuters(outers chunk.Iterator, inner chunk.Row, ch
 			chk.AppendPartialRow(0, outer)
 		}
 	}
-	return outerRowStatus, nil
+	err = outers.Error()
+	return outerRowStatus, err
 }
 
 func (j *semiJoiner) onMissMatch(_ bool, outer chunk.Row, chk *chunk.Chunk) {
@@ -344,7 +346,8 @@ func (j *antiSemiJoiner) tryToMatchInners(outer chunk.Row, inners chunk.Iterator
 		}
 		hasNull = hasNull || isNull
 	}
-	return false, hasNull, nil
+	err = inners.Error()
+	return false, hasNull, err
 }
 
 func (j *antiSemiJoiner) tryToMatchOuters(outers chunk.Iterator, inner chunk.Row, chk *chunk.Chunk, outerRowStatus []outerRowStatusFlag) (_ []outerRowStatusFlag, err error) {
@@ -370,7 +373,8 @@ func (j *antiSemiJoiner) tryToMatchOuters(outers chunk.Iterator, inner chunk.Row
 			outerRowStatus = append(outerRowStatus, outerRowUnmatched)
 		}
 	}
-	return outerRowStatus, nil
+	err = outers.Error()
+	return outerRowStatus, err
 }
 
 func (j *antiSemiJoiner) onMissMatch(hasNull bool, outer chunk.Row, chk *chunk.Chunk) {
@@ -413,7 +417,8 @@ func (j *leftOuterSemiJoiner) tryToMatchInners(outer chunk.Row, inners chunk.Ite
 		}
 		hasNull = hasNull || isNull
 	}
-	return false, hasNull, nil
+	err = inners.Error()
+	return false, hasNull, err
 }
 
 func (j *leftOuterSemiJoiner) tryToMatchOuters(outers chunk.Iterator, inner chunk.Row, chk *chunk.Chunk, outerRowStatus []outerRowStatusFlag) (_ []outerRowStatusFlag, err error) {
@@ -442,7 +447,8 @@ func (j *leftOuterSemiJoiner) tryToMatchOuters(outers chunk.Iterator, inner chun
 			outerRowStatus = append(outerRowStatus, outerRowUnmatched)
 		}
 	}
-	return outerRowStatus, nil
+	err = outers.Error()
+	return outerRowStatus, err
 }
 
 func (j *leftOuterSemiJoiner) onMatch(outer chunk.Row, chk *chunk.Chunk) {
@@ -493,7 +499,8 @@ func (j *antiLeftOuterSemiJoiner) tryToMatchInners(outer chunk.Row, inners chunk
 		}
 		hasNull = hasNull || isNull
 	}
-	return false, hasNull, nil
+	err = inners.Error()
+	return false, hasNull, err
 }
 
 func (j *antiLeftOuterSemiJoiner) tryToMatchOuters(outers chunk.Iterator, inner chunk.Row, chk *chunk.Chunk, outerRowStatus []outerRowStatusFlag) (_ []outerRowStatusFlag, err error) {
@@ -521,6 +528,10 @@ func (j *antiLeftOuterSemiJoiner) tryToMatchOuters(outers chunk.Iterator, inner 
 		} else {
 			outerRowStatus = append(outerRowStatus, outerRowUnmatched)
 		}
+	}
+	err = outers.Error()
+	if err != nil {
+		return
 	}
 	return outerRowStatus, nil
 }
@@ -563,6 +574,10 @@ func (j *leftOuterJoiner) tryToMatchInners(outer chunk.Row, inners chunk.Iterato
 		j.makeJoinRowToChunk(chkForJoin, outer, inners.Current())
 		inners.Next()
 	}
+	err = inners.Error()
+	if err != nil {
+		return false, false, err
+	}
 	if len(j.conditions) == 0 {
 		return true, false, nil
 	}
@@ -585,6 +600,10 @@ func (j *leftOuterJoiner) tryToMatchOuters(outers chunk.Iterator, inner chunk.Ro
 	outer, numToAppend, cursor := outers.Current(), chk.RequiredRows()-chk.NumRows(), 0
 	for ; outer != outers.End() && cursor < numToAppend; outer, cursor = outers.Next(), cursor+1 {
 		j.makeJoinRowToChunk(chkForJoin, outer, inner)
+	}
+	err = outers.Error()
+	if err != nil {
+		return
 	}
 	outerRowStatus = outerRowStatus[:0]
 	for i := 0; i < cursor; i++ {
@@ -627,6 +646,10 @@ func (j *rightOuterJoiner) tryToMatchInners(outer chunk.Row, inners chunk.Iterat
 		j.makeJoinRowToChunk(chkForJoin, inners.Current(), outer)
 		inners.Next()
 	}
+	err = inners.Error()
+	if err != nil {
+		return false, false, err
+	}
 	if len(j.conditions) == 0 {
 		return true, false, nil
 	}
@@ -649,6 +672,7 @@ func (j *rightOuterJoiner) tryToMatchOuters(outers chunk.Iterator, inner chunk.R
 	for ; outer != outers.End() && cursor < numToAppend; outer, cursor = outers.Next(), cursor+1 {
 		j.makeJoinRowToChunk(chkForJoin, inner, outer)
 	}
+
 	outerRowStatus = outerRowStatus[:0]
 	for i := 0; i < cursor; i++ {
 		outerRowStatus = append(outerRowStatus, outerRowMatched)
@@ -691,6 +715,10 @@ func (j *innerJoiner) tryToMatchInners(outer chunk.Row, inners chunk.Iterator, c
 			j.makeJoinRowToChunk(chkForJoin, outer, inner)
 		}
 	}
+	err = inners.Error()
+	if err != nil {
+		return false, false, err
+	}
 	if len(j.conditions) == 0 {
 		return true, false, nil
 	}
@@ -716,6 +744,10 @@ func (j *innerJoiner) tryToMatchOuters(outers chunk.Iterator, inner chunk.Row, c
 		} else {
 			j.makeJoinRowToChunk(chkForJoin, outer, inner)
 		}
+	}
+	err = outers.Error()
+	if err != nil {
+		return
 	}
 	outerRowStatus = outerRowStatus[:0]
 	for i := 0; i < cursor; i++ {
