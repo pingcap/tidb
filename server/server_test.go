@@ -55,7 +55,6 @@ func genStatusPort() uint {
 
 func TestT(t *testing.T) {
 	CustomVerboseFlag = true
-	*CustomParallelSuiteFlag = true
 	logLevel := os.Getenv("log_level")
 	logutil.InitZapLogger(logutil.NewLogConfig(logLevel, logutil.DefaultLogFormat, "", logutil.EmptyFileLogConfig, false))
 	TestingT(t)
