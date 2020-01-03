@@ -64,7 +64,7 @@ func newTiDBTestSuiteBase() tiDBTestSuiteBase {
 }
 
 var _ = Suite(&tiDBTestSuite{newTiDBTestSuiteBase()})
-var _ = Suite(&tiDBTestSerialSuite{newTiDBTestSuiteBase()})
+var _ = SerialSuites(&tiDBTestSerialSuite{newTiDBTestSuiteBase()})
 
 func (ts *tiDBTestSuiteBase) SetUpSuite(c *C) {
 	metrics.RegisterMetrics()
