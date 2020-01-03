@@ -627,8 +627,6 @@ func (s *testSuite3) TestIssue9111(c *C) {
 	tk.MustExec("revoke create user on *.* from 'user_admin'@'localhost';")
 	tk.MustExec("grant insert, delete on mysql.User to 'user_admin'@'localhost';")
 
-	_, err = se.Execute(ctx, `flush privileges`)
-	c.Check(err, IsNil)
 	_, err = se.Execute(ctx, `create user test_create_user`)
 	c.Check(err, IsNil)
 	_, err = se.Execute(ctx, `drop user test_create_user`)
