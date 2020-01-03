@@ -41,15 +41,15 @@ import (
 	"github.com/pingcap/tidb/util/testkit"
 )
 
-type tiDBTestSuite struct {
-	tiDBTestSuiteBase
+type tidbTestSuite struct {
+	*tidbTestSuiteBase
 }
 
-type tiDBTestSerialSuite struct {
-	tiDBTestSuiteBase
+type tidbTestSerialSuite struct {
+	*tidbTestSuiteBase
 }
 
-type tiDBTestSuiteBase struct {
+type tidbTestSuiteBase struct {
 	*testServerClient
 	tidbdrv *TiDBDriver
 	server  *Server
@@ -57,21 +57,21 @@ type tiDBTestSuiteBase struct {
 	store   kv.Storage
 }
 
-func newTiDBTestSuiteBase() tiDBTestSuiteBase {
-	return tiDBTestSuiteBase{
+func newTiDBTestSuiteBase() *tidbTestSuiteBase {
+	return &tidbTestSuiteBase{
 		testServerClient: newTestServerClient(),
 	}
 }
 
-var _ = Suite(&tiDBTestSuite{newTiDBTestSuiteBase()})
-var _ = SerialSuites(&tiDBTestSerialSuite{newTiDBTestSuiteBase()})
+var _ = Suite(&tidbTestSuite{newTiDBTestSuiteBase()})
+var _ = SerialSuites(&tidbTestSerialSuite{newTiDBTestSuiteBase()})
 
-func (ts *tiDBTestSuite) SetUpSuite(c *C) {
+func (ts *tidbTestSuite) SetUpSuite(c *C) {
 	metrics.RegisterMetrics()
-	ts.tiDBTestSuiteBase.SetUpSuite(c)
+	ts.tidbTestSuiteBase.SetUpSuite(c)
 }
 
-func (ts *tiDBTestSuiteBase) SetUpSuite(c *C) {
+func (ts *tidbTestSuiteBase) SetUpSuite(c *C) {
 	var err error
 	ts.store, err = mockstore.NewMockTikvStore()
 	session.DisableStats4Test()
@@ -95,7 +95,7 @@ func (ts *tiDBTestSuiteBase) SetUpSuite(c *C) {
 	ts.runTestStmtCount(c)
 }
 
-func (ts *tiDBTestSuiteBase) TearDownSuite(c *C) {
+func (ts *tidbTestSuiteBase) TearDownSuite(c *C) {
 	if ts.store != nil {
 		ts.store.Close()
 	}
@@ -107,82 +107,82 @@ func (ts *tiDBTestSuiteBase) TearDownSuite(c *C) {
 	}
 }
 
-func (ts *tiDBTestSuite) TestRegression(c *C) {
+func (ts *tidbTestSuite) TestRegression(c *C) {
 	if regression {
 		c.Parallel()
 		ts.runTestRegression(c, nil, "Regression")
 	}
 }
 
-func (ts *tiDBTestSuite) TestUint64(c *C) {
+func (ts *tidbTestSuite) TestUint64(c *C) {
 	ts.runTestPrepareResultFieldType(c)
 }
 
-func (ts *tiDBTestSuite) TestSpecialType(c *C) {
+func (ts *tidbTestSuite) TestSpecialType(c *C) {
 	c.Parallel()
 	ts.runTestSpecialType(c)
 }
 
-func (ts *tiDBTestSuite) TestPreparedString(c *C) {
+func (ts *tidbTestSuite) TestPreparedString(c *C) {
 	c.Parallel()
 	ts.runTestPreparedString(c)
 }
 
-func (ts *tiDBTestSuite) TestPreparedTimestamp(c *C) {
+func (ts *tidbTestSuite) TestPreparedTimestamp(c *C) {
 	c.Parallel()
 	ts.runTestPreparedTimestamp(c)
 }
 
 // this test will change `kv.TxnTotalSizeLimit` which may affect other test suites,
 // so we must make it running in serial.
-func (ts *tiDBTestSerialSuite) TestLoadData(c *C) {
+func (ts *tidbTestSerialSuite) TestLoadData(c *C) {
 	c.Parallel()
 	ts.runTestLoadData(c, ts.server)
 }
 
-func (ts *tiDBTestSuite) TestConcurrentUpdate(c *C) {
+func (ts *tidbTestSuite) TestConcurrentUpdate(c *C) {
 	c.Parallel()
 	ts.runTestConcurrentUpdate(c)
 }
 
-func (ts *tiDBTestSuite) TestErrorCode(c *C) {
+func (ts *tidbTestSuite) TestErrorCode(c *C) {
 	c.Parallel()
 	ts.runTestErrorCode(c)
 }
 
-func (ts *tiDBTestSuite) TestAuth(c *C) {
+func (ts *tidbTestSuite) TestAuth(c *C) {
 	c.Parallel()
 	ts.runTestAuth(c)
 	ts.runTestIssue3682(c)
 }
 
-func (ts *tiDBTestSuite) TestIssues(c *C) {
+func (ts *tidbTestSuite) TestIssues(c *C) {
 	c.Parallel()
 	ts.runTestIssue3662(c)
 	ts.runTestIssue3680(c)
 }
 
-func (ts *tiDBTestSuite) TestDBNameEscape(c *C) {
+func (ts *tidbTestSuite) TestDBNameEscape(c *C) {
 	c.Parallel()
 	ts.runTestDBNameEscape(c)
 }
 
-func (ts *tiDBTestSuite) TestResultFieldTableIsNull(c *C) {
+func (ts *tidbTestSuite) TestResultFieldTableIsNull(c *C) {
 	c.Parallel()
 	ts.runTestResultFieldTableIsNull(c)
 }
 
-func (ts *tiDBTestSuite) TestStatusAPI(c *C) {
+func (ts *tidbTestSuite) TestStatusAPI(c *C) {
 	c.Parallel()
 	ts.runTestStatusAPI(c)
 }
 
-func (ts *tiDBTestSuite) TestMultiStatements(c *C) {
+func (ts *tidbTestSuite) TestMultiStatements(c *C) {
 	c.Parallel()
 	ts.runTestMultiStatements(c)
 }
 
-func (ts *tiDBTestSuite) TestSocketForwarding(c *C) {
+func (ts *tidbTestSuite) TestSocketForwarding(c *C) {
 	cli := newTestServerClient()
 	cfg := config.NewConfig()
 	cfg.Socket = "/tmp/tidbtest.sock"
@@ -205,7 +205,7 @@ func (ts *tiDBTestSuite) TestSocketForwarding(c *C) {
 	}, "SocketRegression")
 }
 
-func (ts *tiDBTestSuite) TestSocket(c *C) {
+func (ts *tidbTestSuite) TestSocket(c *C) {
 	cfg := config.NewConfig()
 	cfg.Socket = "/tmp/tidbtest.sock"
 	cfg.Port = 0
@@ -319,7 +319,7 @@ func registerTLSConfig(configName string, caCertPath string, clientCertPath stri
 	return nil
 }
 
-func (ts *tiDBTestSuite) TestSystemTimeZone(c *C) {
+func (ts *tidbTestSuite) TestSystemTimeZone(c *C) {
 	tk := testkit.NewTestKit(c, ts.store)
 	cfg := config.NewConfig()
 	cfg.Port = genPort()
@@ -332,7 +332,7 @@ func (ts *tiDBTestSuite) TestSystemTimeZone(c *C) {
 	tk.MustQuery("select @@system_time_zone").Check(tz1)
 }
 
-func (ts *tiDBTestSuite) TestTLS(c *C) {
+func (ts *tidbTestSuite) TestTLS(c *C) {
 	// Generate valid TLS certificates.
 	caCert, caKey, err := generateCert(0, "TiDB CA", nil, nil, "/tmp/ca-key.pem", "/tmp/ca-cert.pem")
 	c.Assert(err, IsNil)
@@ -425,12 +425,12 @@ func (ts *tiDBTestSuite) TestTLS(c *C) {
 	server.Close()
 }
 
-func (ts *tiDBTestSuite) TestClientWithCollation(c *C) {
+func (ts *tidbTestSuite) TestClientWithCollation(c *C) {
 	c.Parallel()
 	ts.runTestClientWithCollation(c)
 }
 
-func (ts *tiDBTestSuite) TestCreateTableFlen(c *C) {
+func (ts *tidbTestSuite) TestCreateTableFlen(c *C) {
 	// issue #4540
 	qctx, err := ts.tidbdrv.OpenCtx(uint64(0), 0, uint8(tmysql.DefaultCollationID), "test", nil)
 	c.Assert(err, IsNil)
@@ -489,7 +489,7 @@ func (ts *tiDBTestSuite) TestCreateTableFlen(c *C) {
 	c.Assert(int(cols[1].ColumnLength), Equals, 22)
 }
 
-func (ts *tiDBTestSuite) TestShowTablesFlen(c *C) {
+func (ts *tidbTestSuite) TestShowTablesFlen(c *C) {
 	qctx, err := ts.tidbdrv.OpenCtx(uint64(0), 0, uint8(tmysql.DefaultCollationID), "test", nil)
 	c.Assert(err, IsNil)
 	_, err = qctx.Execute(context.Background(), "use test;")
@@ -517,7 +517,7 @@ func checkColNames(c *C, columns []*ColumnInfo, names ...string) {
 	}
 }
 
-func (ts *tiDBTestSuite) TestFieldList(c *C) {
+func (ts *tidbTestSuite) TestFieldList(c *C) {
 	qctx, err := ts.tidbdrv.OpenCtx(uint64(0), 0, uint8(tmysql.DefaultCollationID), "test", nil)
 	c.Assert(err, IsNil)
 	_, err = qctx.Execute(context.Background(), "use test;")
@@ -596,12 +596,12 @@ func (ts *tiDBTestSuite) TestFieldList(c *C) {
 	c.Assert(cols[0].Name, Equals, columnAsName)
 }
 
-func (ts *tiDBTestSuite) TestSumAvg(c *C) {
+func (ts *tidbTestSuite) TestSumAvg(c *C) {
 	c.Parallel()
 	ts.runTestSumAvg(c)
 }
 
-func (ts *tiDBTestSuite) TestNullFlag(c *C) {
+func (ts *tidbTestSuite) TestNullFlag(c *C) {
 	// issue #9689
 	qctx, err := ts.tidbdrv.OpenCtx(uint64(0), 0, uint8(tmysql.DefaultCollationID), "test", nil)
 	c.Assert(err, IsNil)

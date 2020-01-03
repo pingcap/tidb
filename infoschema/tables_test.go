@@ -54,11 +54,11 @@ import (
 	"google.golang.org/grpc"
 )
 
-var _ = Suite(&testTableSuite{})
+var _ = Suite(&testTableSuite{&testTableSuiteBase{}})
 var _ = SerialSuites(&testClusterTableSuite{testTableSuiteBase: &testTableSuiteBase{}})
 
 type testTableSuite struct {
-	testTableSuiteBase
+	*testTableSuiteBase
 }
 
 type testTableSuiteBase struct {
