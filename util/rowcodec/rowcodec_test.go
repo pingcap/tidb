@@ -609,7 +609,7 @@ func (s *testSuite) TestCodecUtil(c *C) {
 	}
 	tps[3] = types.NewFieldType(mysql.TypeNull)
 	sc := new(stmtctx.StatementContext)
-	oldRow, err := tablecodec.EncodeRow(sc, types.MakeDatums(1, 2, 3, nil), colIDs, nil, nil)
+	oldRow, err := tablecodec.EncodeOldRow(sc, types.MakeDatums(1, 2, 3, nil), colIDs, nil, nil)
 	c.Check(err, IsNil)
 	var (
 		rb     rowcodec.Encoder
@@ -662,7 +662,7 @@ func (s *testSuite) TestOldRowCodec(c *C) {
 	}
 	tps[3] = types.NewFieldType(mysql.TypeNull)
 	sc := new(stmtctx.StatementContext)
-	oldRow, err := tablecodec.EncodeRow(sc, types.MakeDatums(1, 2, 3, nil), colIDs, nil, nil)
+	oldRow, err := tablecodec.EncodeOldRow(sc, types.MakeDatums(1, 2, 3, nil), colIDs, nil, nil)
 	c.Check(err, IsNil)
 
 	var (

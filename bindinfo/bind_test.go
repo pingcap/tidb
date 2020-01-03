@@ -104,6 +104,7 @@ func (s *testSuite) cleanBindingEnv(tk *testkit.TestKit) {
 
 func (s *testSuite) TestBindParse(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
+	s.cleanBindingEnv(tk)
 	tk.MustExec("use test")
 	tk.MustExec("create table t(i int)")
 	tk.MustExec("create index index_t on t(i)")
@@ -485,7 +486,7 @@ func (s *testSuite) TestCapturePlanBaseline(c *C) {
 	rows := tk.MustQuery("show global bindings").Rows()
 	c.Assert(len(rows), Equals, 1)
 	c.Assert(rows[0][0], Equals, "select count ( ? ) from t where a > ?")
-	c.Assert(rows[0][1], Equals, "SELECT /*+ USE_INDEX(@`sel_1` `test`.`t` ), STREAM_AGG(@`sel_1`)*/ COUNT(1) FROM `test`.`t` WHERE `a`>10")
+	c.Assert(rows[0][1], Equals, "SELECT /*+ USE_INDEX(@`sel_1` `test`.`t` ), STREAM_AGG(@`sel_1`)*/ COUNT(1) FROM `t` WHERE `a`>10")
 }
 
 func (s *testSuite) TestUseMultiplyBindings(c *C) {
@@ -653,4 +654,16 @@ func (s *testSuite) TestDefaultDB(c *C) {
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.IndexNames[0], Equals, "t:idx")
 	tk.MustExec("drop session binding for select * from test.t")
 	tk.MustQuery("show session bindings").Check(testkit.Rows())
+}
+
+func (s *testSuite) TestOutdatedInfoSchema(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	s.cleanBindingEnv(tk)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, index idx(a))")
+	tk.MustExec("create global binding for select * from t using select * from t use index(idx)")
+	c.Assert(s.domain.BindHandle().Update(false), IsNil)
+	tk.MustExec("truncate table mysql.bind_info")
+	tk.MustExec("create global binding for select * from t using select * from t use index(idx)")
 }

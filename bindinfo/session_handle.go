@@ -18,7 +18,6 @@ import (
 
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
@@ -48,8 +47,8 @@ func (h *SessionHandle) appendBindRecord(hash string, meta *BindRecord) {
 }
 
 // AddBindRecord new a BindRecord with BindMeta, add it to the cache.
-func (h *SessionHandle) AddBindRecord(sctx sessionctx.Context, is infoschema.InfoSchema, record *BindRecord) error {
-	err := record.prepareHints(sctx, is)
+func (h *SessionHandle) AddBindRecord(sctx sessionctx.Context, record *BindRecord) error {
+	err := record.prepareHints(sctx)
 	if err != nil {
 		return err
 	}
