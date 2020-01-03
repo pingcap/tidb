@@ -273,15 +273,15 @@ func (s *builtinArithmeticPlusRealSig) Clone() builtinFunc {
 }
 
 func (s *builtinArithmeticPlusRealSig) evalReal(row chunk.Row) (float64, bool, error) {
-	a, isLhsNull, err := s.args[0].EvalReal(s.ctx, row)
+	a, isLHSNull, err := s.args[0].EvalReal(s.ctx, row)
 	if err != nil {
-		return 0, isLhsNull, err
+		return 0, isLHSNull, err
 	}
-	b, isRhsNull, err := s.args[1].EvalReal(s.ctx, row)
+	b, isRHSNull, err := s.args[1].EvalReal(s.ctx, row)
 	if err != nil {
-		return 0, isRhsNull, err
+		return 0, isRHSNull, err
 	}
-	if isLhsNull || isRhsNull {
+	if isLHSNull || isRHSNull {
 		return 0, true, nil
 	}
 	if (a > 0 && b > math.MaxFloat64-a) || (a < 0 && b < -math.MaxFloat64-a) {
