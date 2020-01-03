@@ -20,6 +20,7 @@ import (
 	"io"
 	"io/ioutil"
 	"net/http"
+	"net/url"
 	"os"
 	"regexp"
 	"strconv"
@@ -60,13 +61,6 @@ func TestT(t *testing.T) {
 	TestingT(t)
 }
 
-var defaultDSNConfig = mysql.Config{
-	User:   "root",
-	Net:    "tcp",
-	DBName: "test",
-	Strict: true,
-}
-
 type configOverrider func(*mysql.Config)
 
 // testServerClient config server connect parameters and provider several
@@ -84,21 +78,35 @@ func newTestServerClient() *testServerClient {
 	}
 }
 
+// statusURL return the full URL of a status path
+func (cli *testServerClient) statusURL(path string) string {
+	return fmt.Sprintf("http://localhost:%d%s", cli.statusPort, path)
+}
+
 // fetchStatus exec http.Get to server status port
 func (cli *testServerClient) fetchStatus(path string) (*http.Response, error) {
-	return http.Get(fmt.Sprintf("http://localhost:%d%s", cli.statusPort, path))
+	return http.Get(cli.statusURL(path))
 }
 
 // postStatus exec http.Port to server status port
 func (cli *testServerClient) postStatus(path, contentType string, body io.Reader) (*http.Response, error) {
-	reqURL := fmt.Sprintf("http://localhost:%d%s", cli.statusPort, path)
-	return http.Post(reqURL, contentType, body)
+	return http.Post(cli.statusURL(path), contentType, body)
+}
+
+// formStatus post a form request to server status address
+func (cli *testServerClient) formStatus(path string, data url.Values) (*http.Response, error) {
+	return http.PostForm(cli.statusURL(path), data)
 }
 
 // getDSN generates a DSN string for MySQL connection.
 func (cli *testServerClient) getDSN(overriders ...configOverrider) string {
-	var config = defaultDSNConfig
-	config.Addr = fmt.Sprintf("127.0.0.1:%d", cli.port)
+	var config = mysql.Config{
+		User:   "root",
+		Net:    "tcp",
+		Addr:   fmt.Sprintf("127.0.0.1:%d", cli.port),
+		DBName: "test",
+		Strict: true,
+	}
 	for _, overrider := range overriders {
 		if overrider != nil {
 			overrider(&config)

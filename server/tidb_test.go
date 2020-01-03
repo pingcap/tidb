@@ -316,10 +316,9 @@ func registerTLSConfig(configName string, caCertPath string, clientCertPath stri
 }
 
 func (ts *tiDBTestSuite) TestSystemTimeZone(c *C) {
-	portConf := newTestServerClient()
 	tk := testkit.NewTestKit(c, ts.store)
 	cfg := config.NewConfig()
-	cfg.Port = portConf.port
+	cfg.Port = genPort()
 	cfg.Status.ReportStatus = false
 	server, err := NewServer(cfg, ts.tidbdrv)
 	c.Assert(err, IsNil)

@@ -472,7 +472,7 @@ func (ts *HTTPHandlerTestSuite) TestGetTableMVCC(c *C) {
 	c.Assert(data3["data"], NotNil)
 	c.Assert(data3["decode_error"], IsNil)
 
-	resp, err = http.Get(fmt.Sprintf("http://127.0.0.1:10090/mvcc/key/tidb/pt(p0)/42?decode=true"))
+	resp, err = ts.fetchStatus("/mvcc/key/tidb/pt(p0)/42?decode=true")
 	c.Assert(err, IsNil)
 	defer resp.Body.Close()
 	decoder = json.NewDecoder(resp.Body)
@@ -605,16 +605,16 @@ func (ts *HTTPHandlerTestSuite) TestDecodeColumnValue(c *C) {
 	bin := base64.StdEncoding.EncodeToString(bs)
 
 	unitTest := func(col *column) {
-		url := fmt.Sprintf("http://127.0.0.1:%d/tables/%d/%v/%d/%d?rowBin=%s", ts.statusPort, col.id, col.tp.Tp, col.tp.Flag, col.tp.Flen, bin)
-		resp, err := http.Get(url)
-		c.Assert(err, IsNil, Commentf("url:%s", url))
+		path := fmt.Sprintf("/tables/%d/%v/%d/%d?rowBin=%s", col.id, col.tp.Tp, col.tp.Flag, col.tp.Flen, bin)
+		resp, err := ts.fetchStatus(path)
+		c.Assert(err, IsNil, Commentf("url:%s", ts.statusURL(path)))
 		decoder := json.NewDecoder(resp.Body)
 		var data interface{}
 		err = decoder.Decode(&data)
-		c.Assert(err, IsNil, Commentf("url:%v\ndata%v", url, data))
+		c.Assert(err, IsNil, Commentf("url:%v\ndata%v", ts.statusURL(path), data))
 		colVal, err := types.DatumsToString([]types.Datum{row[col.id-1]}, false)
 		c.Assert(err, IsNil)
-		c.Assert(data, Equals, colVal, Commentf("url:%v", url))
+		c.Assert(data, Equals, colVal, Commentf("url:%v", ts.statusURL(path)))
 	}
 
 	for _, col := range cols {
@@ -690,7 +690,7 @@ func (ts *HTTPHandlerTestSuite) TestGetIndexMVCC(c *C) {
 	err = decoder.Decode(&data2)
 	c.Assert(err, NotNil)
 
-	resp, err = http.Get("http://127.0.0.1:10090/mvcc/index/tidb/pt(p2)/idx/666?a=666&b=def")
+	resp, err = ts.fetchStatus("/mvcc/index/tidb/pt(p2)/idx/666?a=666&b=def")
 	c.Assert(err, IsNil)
 	defer resp.Body.Close()
 	decodeKeyMvcc(resp.Body, c, true)
@@ -842,7 +842,7 @@ func (ts *HTTPHandlerTestSuite) TestPostSettings(c *C) {
 	form := make(url.Values)
 	form.Set("log_level", "error")
 	form.Set("tidb_general_log", "1")
-	resp, err := http.PostForm(fmt.Sprintf("http://127.0.0.1:%d/settings", ts.statusPort), form)
+	resp, err := ts.formStatus("/settings", form)
 	c.Assert(err, IsNil)
 	c.Assert(resp.StatusCode, Equals, http.StatusOK)
 	c.Assert(log.GetLevel(), Equals, log.ErrorLevel)
@@ -852,7 +852,7 @@ func (ts *HTTPHandlerTestSuite) TestPostSettings(c *C) {
 	form = make(url.Values)
 	form.Set("log_level", "fatal")
 	form.Set("tidb_general_log", "0")
-	resp, err = http.PostForm(fmt.Sprintf("http://127.0.0.1:%d/settings", ts.statusPort), form)
+	resp, err = ts.formStatus("/settings", form)
 	c.Assert(err, IsNil)
 	c.Assert(resp.StatusCode, Equals, http.StatusOK)
 	c.Assert(atomic.LoadUint32(&variable.ProcessGeneralLog), Equals, uint32(0))
@@ -864,7 +864,7 @@ func (ts *HTTPHandlerTestSuite) TestPostSettings(c *C) {
 	// test ddl_slow_threshold
 	form = make(url.Values)
 	form.Set("ddl_slow_threshold", "200")
-	resp, err = http.PostForm(fmt.Sprintf("http://127.0.0.1:%d/settings", ts.statusPort), form)
+	resp, err = ts.formStatus("/settings", form)
 	c.Assert(err, IsNil)
 	c.Assert(resp.StatusCode, Equals, http.StatusOK)
 	c.Assert(atomic.LoadUint32(&variable.DDLSlowOprThreshold), Equals, uint32(200))
@@ -880,7 +880,7 @@ func (ts *HTTPHandlerTestSuite) TestPostSettings(c *C) {
 	dbt.mustExec("drop table if exists t2;")
 	dbt.mustExec("create table t2(a varchar(100) charset utf8);")
 	form.Set("check_mb4_value_in_utf8", "1")
-	resp, err = http.PostForm(fmt.Sprintf("http://127.0.0.1:%d/settings", ts.statusPort), form)
+	resp, err = ts.formStatus("/settings", form)
 	c.Assert(err, IsNil)
 	c.Assert(resp.StatusCode, Equals, http.StatusOK)
 	c.Assert(config.GetGlobalConfig().CheckMb4ValueInUTF8, Equals, true)
@@ -893,7 +893,7 @@ func (ts *HTTPHandlerTestSuite) TestPostSettings(c *C) {
 	// Disable CheckMb4ValueInUTF8.
 	form = make(url.Values)
 	form.Set("check_mb4_value_in_utf8", "0")
-	resp, err = http.PostForm(fmt.Sprintf("http://127.0.0.1:%d/settings", ts.statusPort), form)
+	resp, err = ts.formStatus("/settings", form)
 	c.Assert(err, IsNil)
 	c.Assert(resp.StatusCode, Equals, http.StatusOK)
 	c.Assert(config.GetGlobalConfig().CheckMb4ValueInUTF8, Equals, false)
