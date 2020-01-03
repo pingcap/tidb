@@ -445,6 +445,7 @@ func (s *testSuite2) TestAdminCheckPartitionTableFailed(c *C) {
 		_, err = indexOpr.Create(s.ctx, txn, types.MakeDatums(i), int64(i))
 		c.Assert(err, IsNil)
 		err = txn.Commit(context.Background())
+		c.Assert(err, IsNil)
 		tk.MustExec("admin check table admin_test_p")
 	}
 

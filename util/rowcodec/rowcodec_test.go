@@ -442,14 +442,14 @@ func (s *testSuite) TestNilAndDefault(c *C) {
 				Elems:      t.ft.Elems,
 			})
 		}
-		ddf := func(i int) (types.Datum, error) {
+		ddf := func(i int, chk *chunk.Chunk) error {
 			t := testData[i]
 			if t.def == nil {
-				var d types.Datum
-				d.SetNull()
-				return d, nil
+				chk.AppendNull(i)
+				return nil
 			}
-			return *t.def, nil
+			chk.AppendDatum(i, t.def)
+			return nil
 		}
 		bdf := func(i int) ([]byte, error) {
 			t := testData[i]
@@ -609,7 +609,7 @@ func (s *testSuite) TestCodecUtil(c *C) {
 	}
 	tps[3] = types.NewFieldType(mysql.TypeNull)
 	sc := new(stmtctx.StatementContext)
-	oldRow, err := tablecodec.EncodeRow(sc, types.MakeDatums(1, 2, 3, nil), colIDs, nil, nil)
+	oldRow, err := tablecodec.EncodeOldRow(sc, types.MakeDatums(1, 2, 3, nil), colIDs, nil, nil)
 	c.Check(err, IsNil)
 	var (
 		rb     rowcodec.Encoder
@@ -662,7 +662,7 @@ func (s *testSuite) TestOldRowCodec(c *C) {
 	}
 	tps[3] = types.NewFieldType(mysql.TypeNull)
 	sc := new(stmtctx.StatementContext)
-	oldRow, err := tablecodec.EncodeRow(sc, types.MakeDatums(1, 2, 3, nil), colIDs, nil, nil)
+	oldRow, err := tablecodec.EncodeOldRow(sc, types.MakeDatums(1, 2, 3, nil), colIDs, nil, nil)
 	c.Check(err, IsNil)
 
 	var (
