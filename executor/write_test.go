@@ -446,7 +446,7 @@ func (s *testSuite4) TestInsertAutoInc(c *C) {
 	r.Check(testkit.Rows(rowStr4, rowStr1, rowStr2, rowStr3, rowStr5, rowStr6, rowStr7, rowStr8))
 }
 
-func (s *testSuite4) TestInsertIgnore(c *C) {
+func (s *testSuite4) TestAInsertIgnore(c *C) {
 	var cfg kv.InjectionConfig
 	tk := testkit.NewTestKit(c, kv.NewInjectedStore(s.store, &cfg))
 	tk.MustExec("use test")
@@ -560,7 +560,7 @@ commit;`
 	tk.MustQuery(testSQL).Check(testkit.Rows("0"))
 }
 
-func (s *testSuite4) TestInsertOnDup(c *C) {
+func (s *testSuite4) TestAInsertOnDup(c *C) {
 	var cfg kv.InjectionConfig
 	tk := testkit.NewTestKit(c, kv.NewInjectedStore(s.store, &cfg))
 	tk.MustExec("use test")
@@ -1704,7 +1704,7 @@ func (s *testSuite4) fillMultiTableForUpdate(tk *testkit.TestKit) {
 	tk.CheckExecResult(3, 0)
 }
 
-func (s *testSuite4) TestMultipleTableUpdate(c *C) {
+func (s *testSuite4) TestAMultipleTableUpdate(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	s.fillMultiTableForUpdate(tk)
@@ -1931,7 +1931,7 @@ func (s *testSuite4) TestQualifiedDelete(c *C) {
 	c.Assert(err, NotNil)
 }
 
-func (s *testSuite4) TestLoadDataMissingColumn(c *C) {
+func (s *testSuite4) TestALoadDataMissingColumn(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	createSQL := `create table load_data_missing (id int, t timestamp not null)`
@@ -1968,7 +1968,7 @@ func (s *testSuite4) TestLoadDataMissingColumn(c *C) {
 
 }
 
-func (s *testSuite4) TestLoadData(c *C) {
+func (s *testSuite4) TestALoadData(c *C) {
 	trivialMsg := "Records: 1  Deleted: 0  Skipped: 0  Warnings: 0"
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -2272,7 +2272,7 @@ func (s *testSuite4) TestNullDefault(c *C) {
 	tk.MustQuery("select * from test_null_default").Check(testkit.Rows("<nil>", "1970-01-01 08:20:34"))
 }
 
-func (s *testSuite4) TestNotNullDefault(c *C) {
+func (s *testSuite4) TestANotNullDefault(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test; drop table if exists t1,t2;")
 	defer tk.MustExec("drop table t1,t2")
