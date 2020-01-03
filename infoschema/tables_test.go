@@ -886,7 +886,7 @@ func (s *testClusterTableSuite) TestTiDBClusterInfo(c *C) {
 	}
 	tk = testkit.NewTestKit(c, store)
 	tk.MustQuery("select * from information_schema.cluster_info").Check(testkit.Rows(
-		"tidb :4000 :10080 5.7.25-TiDB-None None",
+		"tidb :4000 :"+strconv.FormatUint(uint64(config.GetGlobalConfig().Status.StatusPort), 10)+" 5.7.25-TiDB-None None",
 		"pd "+mockAddr+" "+mockAddr+" 4.0.0-alpha mock-pd-githash",
 		"tikv 127.0.0.1:20160 "+mockAddr+" 4.0.0-alpha mock-tikv-githash",
 	))

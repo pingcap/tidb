@@ -225,8 +225,8 @@ func newRPCClient(security config.Security) *rpcClient {
 }
 
 // NewTestRPCClient is for some external tests.
-func NewTestRPCClient() Client {
-	return newRPCClient(config.Security{})
+func NewTestRPCClient(security config.Security) Client {
+	return newRPCClient(security)
 }
 
 func (c *rpcClient) getConnArray(addr string) (*connArray, error) {

@@ -80,7 +80,7 @@ func (h *CoprocessorDAGHandler) HandleRequest(ctx context.Context, req *coproces
 	return h.buildResponse(totalChunks)
 }
 
-// HandleRequest handles the coprocessor request.
+// HandleStreamRequest handles the coprocessor stream request.
 func (h *CoprocessorDAGHandler) HandleStreamRequest(ctx context.Context, req *coprocessor.Request, stream tikvpb.Tikv_CoprocessorStreamServer) error {
 	e, err := h.buildDAGExecutor(req)
 	if err != nil {
@@ -117,8 +117,7 @@ func (h *CoprocessorDAGHandler) HandleStreamRequest(ctx context.Context, req *co
 func (h *CoprocessorDAGHandler) buildResponseAndSendToStream(chk *chunk.Chunk, tps []*types.FieldType, stream tikvpb.Tikv_CoprocessorStreamServer) error {
 	chunks, err := h.buildChunk(chk, tps)
 	if err != nil {
-		resp := h.buildErrorResponse(err)
-		return stream.Send(resp)
+		return stream.Send(h.buildErrorResponse(err))
 	}
 
 	for _, c := range chunks {

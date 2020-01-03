@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 )
 
@@ -668,6 +667,15 @@ func (h *rpcHandler) handleSplitRegion(req *kvrpcpb.SplitRegionRequest) *kvrpcpb
 	return resp
 }
 
+// Client is a client that sends RPC.
+// It should not be used after calling Close().
+type Client interface {
+	// Close should release all data.
+	Close() error
+	// SendRequest sends Request.
+	SendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error)
+}
+
 // RPCClient sends kv RPC calls to mock cluster. RPCClient mocks the behavior of
 // a rpc client at tikv's side.
 type RPCClient struct {
@@ -675,7 +683,7 @@ type RPCClient struct {
 	MvccStore     MVCCStore
 	streamTimeout chan *tikvrpc.Lease
 	done          chan struct{}
-	rpcCli        tikv.Client
+	rpcCli        Client
 }
 
 // NewRPCClient creates an RPCClient.
@@ -725,9 +733,18 @@ func (c *RPCClient) checkArgs(ctx context.Context, addr string) (*rpcHandler, er
 	return handler, nil
 }
 
-func (c *RPCClient) redirectRequestToRpcServer(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
-	if c.rpcCli == nil {
-		c.rpcCli = tikv.NewTestRPCClient()
+// GRPCClientFactor is the GRPC client factory.
+// Use global variable to avoid circle import.
+// TODO: remove this global variable.
+var GRPCClientFactor func() Client
+
+func (c *RPCClient) redirectRequestToRPCServer(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
+	if c.rpcCli == nil && GRPCClientFactor != nil {
+		if GRPCClientFactor != nil {
+			c.rpcCli = GRPCClientFactor()
+		} else {
+			return nil, errors.Errorf("GRPCClientFactor is nil")
+		}
 	}
 	return c.rpcCli.SendRequest(ctx, addr, req, timeout)
 }
@@ -750,7 +767,7 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 	resp := &tikvrpc.Response{}
 	// When the store type is TiDB, the request should handle over to TiDB rpc server to handle.
 	if req.StoreTp == kv.TiDB {
-		return c.redirectRequestToRpcServer(ctx, addr, req, timeout)
+		return c.redirectRequestToRPCServer(ctx, addr, req, timeout)
 	}
 
 	handler, err := c.checkArgs(ctx, addr)
