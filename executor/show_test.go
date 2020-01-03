@@ -432,7 +432,7 @@ func (s *testSuite5) TestShowSlow(c *C) {
 	tk.MustQuery(`admin show slow top all 3`)
 }
 
-func (s *testSuite5) TestShowOpenTables(c *C) {
+func (s *testSuite5) TestAShowOpenTables(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustQuery("show open tables")
 	tk.MustQuery("show open tables in test")
