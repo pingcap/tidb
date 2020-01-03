@@ -153,6 +153,9 @@ type PhysicalPlan interface {
 
 	// ResolveIndices resolves the indices for columns. After doing this, the columns can evaluate the rows by their indices.
 	ResolveIndices() error
+
+	// ExplainNormalizedInfo returns operator normalized information for generating digest.
+	ExplainNormalizedInfo() string
 }
 
 type baseLogicalPlan struct {
@@ -174,6 +177,11 @@ type basePhysicalPlan struct {
 	childrenReqProps []*property.PhysicalProperty
 	self             PhysicalPlan
 	children         []PhysicalPlan
+}
+
+// ExplainInfo implements Plan interface.
+func (p *basePhysicalPlan) ExplainNormalizedInfo() string {
+	return ""
 }
 
 func (p *basePhysicalPlan) GetChildReqProps(idx int) *property.PhysicalProperty {

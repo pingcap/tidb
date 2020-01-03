@@ -44,6 +44,7 @@ var slowQueryCols = []columnInfo{
 	{variable.SlowLogParseTimeStr, mysql.TypeDouble, 22, 0, nil, nil},
 	{variable.SlowLogCompileTimeStr, mysql.TypeDouble, 22, 0, nil, nil},
 	{execdetails.PreWriteTimeStr, mysql.TypeDouble, 22, 0, nil, nil},
+	{execdetails.BinlogPrewriteTimeStr, mysql.TypeDouble, 22, 0, nil, nil},
 	{execdetails.CommitTimeStr, mysql.TypeDouble, 22, 0, nil, nil},
 	{execdetails.GetCommitTSTimeStr, mysql.TypeDouble, 22, 0, nil, nil},
 	{execdetails.CommitBackoffTimeStr, mysql.TypeDouble, 22, 0, nil, nil},
@@ -57,6 +58,7 @@ var slowQueryCols = []columnInfo{
 	{execdetails.ProcessTimeStr, mysql.TypeDouble, 22, 0, nil, nil},
 	{execdetails.WaitTimeStr, mysql.TypeDouble, 22, 0, nil, nil},
 	{execdetails.BackoffTimeStr, mysql.TypeDouble, 22, 0, nil, nil},
+	{execdetails.LockKeysTimeStr, mysql.TypeDouble, 22, 0, nil, nil},
 	{execdetails.RequestCountStr, mysql.TypeLonglong, 20, mysql.UnsignedFlag, nil, nil},
 	{execdetails.TotalKeysStr, mysql.TypeLonglong, 20, mysql.UnsignedFlag, nil, nil},
 	{execdetails.ProcessKeysStr, mysql.TypeLonglong, 20, mysql.UnsignedFlag, nil, nil},
@@ -76,6 +78,7 @@ var slowQueryCols = []columnInfo{
 	{variable.SlowLogMemMax, mysql.TypeLonglong, 20, 0, nil, nil},
 	{variable.SlowLogSucc, mysql.TypeTiny, 1, 0, nil, nil},
 	{variable.SlowLogPlan, mysql.TypeLongBlob, types.UnspecifiedLength, 0, nil, nil},
+	{variable.SlowLogPlanDigest, mysql.TypeVarchar, 128, 0, nil, nil},
 	{variable.SlowLogPrevStmt, mysql.TypeLongBlob, types.UnspecifiedLength, 0, nil, nil},
 	{variable.SlowLogQuerySQLStr, mysql.TypeLongBlob, types.UnspecifiedLength, 0, nil, nil},
 }
@@ -202,6 +205,7 @@ type slowQueryTuple struct {
 	parseTime          float64
 	compileTime        float64
 	preWriteTime       float64
+	binlogPrewriteTime float64
 	commitTime         float64
 	getCommitTSTime    float64
 	commitBackoffTime  float64
@@ -215,6 +219,7 @@ type slowQueryTuple struct {
 	processTime        float64
 	waitTime           float64
 	backOffTime        float64
+	lockKeysTime       float64
 	requestCount       uint64
 	totalKeys          uint64
 	processKeys        uint64
@@ -236,6 +241,7 @@ type slowQueryTuple struct {
 	isInternal         bool
 	succ               bool
 	plan               string
+	planDigest         string
 }
 
 func (st *slowQueryTuple) setFieldValue(tz *time.Location, field, value string, lineNum int) error {
@@ -269,6 +275,8 @@ func (st *slowQueryTuple) setFieldValue(tz *time.Location, field, value string, 
 		st.compileTime, err = strconv.ParseFloat(value, 64)
 	case execdetails.PreWriteTimeStr:
 		st.preWriteTime, err = strconv.ParseFloat(value, 64)
+	case execdetails.BinlogPrewriteTimeStr:
+		st.binlogPrewriteTime, err = strconv.ParseFloat(value, 64)
 	case execdetails.CommitTimeStr:
 		st.commitTime, err = strconv.ParseFloat(value, 64)
 	case execdetails.GetCommitTSTimeStr:
@@ -295,6 +303,8 @@ func (st *slowQueryTuple) setFieldValue(tz *time.Location, field, value string, 
 		st.waitTime, err = strconv.ParseFloat(value, 64)
 	case execdetails.BackoffTimeStr:
 		st.backOffTime, err = strconv.ParseFloat(value, 64)
+	case execdetails.LockKeysTimeStr:
+		st.lockKeysTime, err = strconv.ParseFloat(value, 64)
 	case execdetails.RequestCountStr:
 		st.requestCount, err = strconv.ParseUint(value, 10, 64)
 	case execdetails.TotalKeysStr:
@@ -333,6 +343,8 @@ func (st *slowQueryTuple) setFieldValue(tz *time.Location, field, value string, 
 		st.succ, err = strconv.ParseBool(value)
 	case variable.SlowLogPlan:
 		st.plan = value
+	case variable.SlowLogPlanDigest:
+		st.planDigest = value
 	case variable.SlowLogQuerySQLStr:
 		st.sql = value
 	}
@@ -357,6 +369,7 @@ func (st *slowQueryTuple) convertToDatumRow() []types.Datum {
 	record = append(record, types.NewFloat64Datum(st.parseTime))
 	record = append(record, types.NewFloat64Datum(st.compileTime))
 	record = append(record, types.NewFloat64Datum(st.preWriteTime))
+	record = append(record, types.NewFloat64Datum(st.binlogPrewriteTime))
 	record = append(record, types.NewFloat64Datum(st.commitTime))
 	record = append(record, types.NewFloat64Datum(st.getCommitTSTime))
 	record = append(record, types.NewFloat64Datum(st.commitBackoffTime))
@@ -370,6 +383,7 @@ func (st *slowQueryTuple) convertToDatumRow() []types.Datum {
 	record = append(record, types.NewFloat64Datum(st.processTime))
 	record = append(record, types.NewFloat64Datum(st.waitTime))
 	record = append(record, types.NewFloat64Datum(st.backOffTime))
+	record = append(record, types.NewFloat64Datum(st.lockKeysTime))
 	record = append(record, types.NewUintDatum(st.requestCount))
 	record = append(record, types.NewUintDatum(st.totalKeys))
 	record = append(record, types.NewUintDatum(st.processKeys))
@@ -393,6 +407,7 @@ func (st *slowQueryTuple) convertToDatumRow() []types.Datum {
 		record = append(record, types.NewIntDatum(0))
 	}
 	record = append(record, types.NewStringDatum(parsePlan(st.plan)))
+	record = append(record, types.NewStringDatum(st.planDigest))
 	record = append(record, types.NewStringDatum(st.prevStmt))
 	record = append(record, types.NewStringDatum(st.sql))
 	return record

@@ -613,9 +613,6 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 		for i, sr := range nh.history {
 			st := sr.st
 			s.sessionVars.StmtCtx = sr.stmtCtx
-			s.sessionVars.StartTime = time.Now()
-			s.sessionVars.DurationCompile = time.Duration(0)
-			s.sessionVars.DurationParse = time.Duration(0)
 			s.sessionVars.StmtCtx.ResetForRetry()
 			s.sessionVars.PreparedParams = s.sessionVars.PreparedParams[:0]
 			schemaVersion, err = st.RebuildPlan(ctx)
@@ -1031,8 +1028,7 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 	charsetInfo, collation := s.sessionVars.GetCharsetInfo()
 
 	// Step1: Compile query string to abstract syntax trees(ASTs).
-	startTS := time.Now()
-	s.GetSessionVars().StartTime = startTS
+	parseStartTime := time.Now()
 	stmtNodes, warns, err := s.ParseSQL(ctx, sql, charsetInfo, collation)
 	if err != nil {
 		s.rollbackOnError(ctx)
@@ -1041,7 +1037,7 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 			zap.String("sql", sql))
 		return nil, util.SyntaxError(err)
 	}
-	durParse := time.Since(startTS)
+	durParse := time.Since(parseStartTime)
 	s.GetSessionVars().DurationParse = durParse
 	isInternal := s.isInternal()
 	if isInternal {
@@ -1054,10 +1050,10 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 	compiler := executor.Compiler{Ctx: s}
 	multiQuery := len(stmtNodes) > 1
 	for idx, stmtNode := range stmtNodes {
+		s.sessionVars.StartTime = time.Now()
 		s.PrepareTxnCtx(ctx)
 
 		// Step2: Transform abstract syntax tree to a physical plan(stored in executor.ExecStmt).
-		startTS = time.Now()
 		// Some executions are done in compile stage, so we reset them before compile.
 		if err := executor.ResetContextOfStmt(s, stmtNode); err != nil {
 			return nil, err
@@ -1081,7 +1077,7 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 			}
 			s.handleInvalidBindRecord(ctx, stmtNode)
 		}
-		durCompile := time.Since(startTS)
+		durCompile := time.Since(s.sessionVars.StartTime)
 		s.GetSessionVars().DurationCompile = durCompile
 		if isInternal {
 			sessionExecuteCompileDurationInternal.Observe(durCompile.Seconds())
@@ -1116,7 +1112,7 @@ func (s *session) handleInvalidBindRecord(ctx context.Context, stmtNode ast.Stmt
 			normalizeExplainSQL := parser.Normalize(x.Text())
 			idx := strings.Index(normalizeExplainSQL, "select")
 			normdOrigSQL = normalizeExplainSQL[idx:]
-			hash = parser.DigestHash(normdOrigSQL)
+			hash = parser.DigestNormalized(normdOrigSQL)
 		default:
 			return
 		}
@@ -1270,6 +1266,9 @@ func (s *session) DropPreparedStmt(stmtID uint32) error {
 }
 
 func (s *session) Txn(active bool) (kv.Transaction, error) {
+	if !s.txn.validOrPending() && active {
+		return &s.txn, kv.ErrInvalidTxn
+	}
 	if s.txn.pending() && active {
 		// Transaction is lazy initialized.
 		// PrepareTxnCtx is called to get a tso future, makes s.txn a pending txn,
@@ -1374,7 +1373,7 @@ func (s *session) Auth(user *auth.UserIdentity, authentication []byte, salt []by
 
 	// Check IP or localhost.
 	var success bool
-	user.AuthUsername, user.AuthHostname, success = pm.ConnectionVerification(user.Username, user.Hostname, authentication, salt)
+	user.AuthUsername, user.AuthHostname, success = pm.ConnectionVerification(user.Username, user.Hostname, authentication, salt, s.sessionVars.TLSConnectionState)
 	if success {
 		s.sessionVars.User = user
 		s.sessionVars.ActiveRoles = pm.GetDefaultRoles(user.AuthUsername, user.AuthHostname)
@@ -1387,7 +1386,7 @@ func (s *session) Auth(user *auth.UserIdentity, authentication []byte, salt []by
 
 	// Check Hostname.
 	for _, addr := range getHostByIP(user.Hostname) {
-		u, h, success := pm.ConnectionVerification(user.Username, addr, authentication, salt)
+		u, h, success := pm.ConnectionVerification(user.Username, addr, authentication, salt, s.sessionVars.TLSConnectionState)
 		if success {
 			s.sessionVars.User = &auth.UserIdentity{
 				Username:     user.Username,
@@ -1637,7 +1636,7 @@ func createSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 
 const (
 	notBootstrapped         = 0
-	currentBootstrapVersion = 35
+	currentBootstrapVersion = version38
 )
 
 func getStoreBootstrapVersion(store kv.Storage) int64 {
@@ -1727,10 +1726,13 @@ var builtinGlobalVariable = []string{
 	variable.TiDBRetryLimit,
 	variable.TiDBDisableTxnAutoRetry,
 	variable.TiDBEnableWindowFunction,
+	variable.TiDBEnableTablePartition,
 	variable.TiDBEnableFastAnalyze,
 	variable.TiDBExpensiveQueryTimeThreshold,
 	variable.TiDBTxnMode,
 	variable.TiDBEnableStmtSummary,
+	variable.TiDBStmtSummaryRefreshInterval,
+	variable.TiDBStmtSummaryHistorySize,
 	variable.TiDBMaxDeltaSchemaCount,
 	variable.TiDBStoreLimit,
 }

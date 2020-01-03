@@ -318,6 +318,7 @@ func (e *LoadDataInfo) addRecordLD(row []types.Datum) (int64, error) {
 	h, err := e.addRecord(row)
 	if err != nil {
 		e.handleWarning(err)
+		return 0, err
 	}
 	return h, nil
 }

@@ -15,8 +15,12 @@ package core
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"fmt"
+	"hash"
 	"sync"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/util/plancodec"
 )
 
@@ -32,10 +36,17 @@ type planEncoder struct {
 }
 
 // EncodePlan is used to encodePlan the plan to the plan tree with compressing.
-func EncodePlan(p PhysicalPlan) string {
+func EncodePlan(p Plan) string {
 	pn := encoderPool.Get().(*planEncoder)
 	defer encoderPool.Put(pn)
-	return pn.encodePlanTree(p)
+	selectPlan := getSelectPlan(p)
+	if selectPlan == nil {
+		return ""
+	}
+	failpoint.Inject("mockPlanRowCount", func(val failpoint.Value) {
+		selectPlan.statsInfo().RowCount = float64(val.(int))
+	})
+	return pn.encodePlanTree(selectPlan)
 }
 
 func (pn *planEncoder) encodePlanTree(p PhysicalPlan) string {
@@ -65,4 +76,80 @@ func (pn *planEncoder) encodePlan(p PhysicalPlan, isRoot bool, depth int) {
 		pn.encodePlan(copPlan.indexPlan, false, depth)
 		pn.encodePlan(copPlan.tablePlan, false, depth)
 	}
+}
+
+var digesterPool = sync.Pool{
+	New: func() interface{} {
+		return &planDigester{
+			hasher: sha256.New(),
+		}
+	},
+}
+
+type planDigester struct {
+	buf          bytes.Buffer
+	encodedPlans map[int]bool
+	hasher       hash.Hash
+}
+
+// NormalizePlan is used to normalize the plan and generate plan digest.
+func NormalizePlan(p Plan) (normalized, digest string) {
+	selectPlan := getSelectPlan(p)
+	if selectPlan == nil {
+		return "", ""
+	}
+	d := digesterPool.Get().(*planDigester)
+	defer digesterPool.Put(d)
+	d.normalizePlanTree(selectPlan)
+	normalized = string(d.buf.Bytes())
+	d.hasher.Write(d.buf.Bytes())
+	d.buf.Reset()
+	digest = fmt.Sprintf("%x", d.hasher.Sum(nil))
+	d.hasher.Reset()
+	return
+}
+
+func (d *planDigester) normalizePlanTree(p PhysicalPlan) {
+	d.encodedPlans = make(map[int]bool)
+	d.buf.Reset()
+	d.normalizePlan(p, true, 0)
+}
+
+func (d *planDigester) normalizePlan(p PhysicalPlan, isRoot bool, depth int) {
+	plancodec.NormalizePlanNode(depth, p.ID(), p.TP(), isRoot, p.ExplainNormalizedInfo(), &d.buf)
+	d.encodedPlans[p.ID()] = true
+
+	depth++
+	for _, child := range p.Children() {
+		if d.encodedPlans[child.ID()] {
+			continue
+		}
+		d.normalizePlan(child.(PhysicalPlan), isRoot, depth)
+	}
+	switch x := p.(type) {
+	case *PhysicalTableReader:
+		d.normalizePlan(x.tablePlan, false, depth)
+	case *PhysicalIndexReader:
+		d.normalizePlan(x.indexPlan, false, depth)
+	case *PhysicalIndexLookUpReader:
+		d.normalizePlan(x.indexPlan, false, depth)
+		d.normalizePlan(x.tablePlan, false, depth)
+	}
+}
+
+func getSelectPlan(p Plan) PhysicalPlan {
+	var selectPlan PhysicalPlan
+	if physicalPlan, ok := p.(PhysicalPlan); ok {
+		selectPlan = physicalPlan
+	} else {
+		switch x := p.(type) {
+		case *Delete:
+			selectPlan = x.SelectPlan
+		case *Update:
+			selectPlan = x.SelectPlan
+		case *Insert:
+			selectPlan = x.SelectPlan
+		}
+	}
+	return selectPlan
 }
