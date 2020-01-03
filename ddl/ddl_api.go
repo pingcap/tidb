@@ -3553,10 +3553,12 @@ func buildHiddenColumnInfo(ctx sessionctx.Context, t table.Table, indexPartSpeci
 			Hidden:              true,
 			FieldType:           *expr.GetType(),
 		}
+		checkDependencies := make(map[string]struct{})
 		for _, colName := range findColumnNamesInExpr(idxPart.Expr) {
 			colInfo.Dependences[colName.Name.O] = struct{}{}
+			checkDependencies[colName.Name.O] = struct{}{}
 		}
-		if err = checkDependedColExist(colInfo.Dependences, t.Cols()); err != nil {
+		if err = checkDependedColExist(checkDependencies, t.Cols()); err != nil {
 			return nil, errors.Trace(err)
 		}
 		if err = checkAutoIncrementRef("", colInfo.Dependences, tblInfo); err != nil {
