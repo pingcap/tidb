@@ -4151,11 +4151,8 @@ func (d *ddl) AlterTableOrderBy(ctx sessionctx.Context, ident ast.Ident) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	for _, item := range tb.Cols() {
-		if item.Flag&mysql.PriKeyFlag != 0 {
-			ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("ORDER BY ignored as there is a user-defined clustered index in the table '%s'", ident.Name))
-			break
-		}
+	if tb.Meta().GetPkColInfo() != nil {
+		ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("ORDER BY ignored as there is a user-defined clustered index in the table '%s'", ident.Name))
 	}
 	return nil
 }

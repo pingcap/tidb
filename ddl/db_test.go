@@ -4243,18 +4243,19 @@ func (s *testDBSuite2) TestDDLWithInvalidTableInfo(c *C) {
 func (s *testDBSuite1) TestAlterOrderBy(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use " + s.schemaName)
-	s.tk.MustExec("create table ob (pk int primary key, c int default 1, c1 int default 1, KEY cl(cl))")
+	s.tk.MustExec("create table ob (pk int primary key, c int default 1, c1 int default 1, KEY cl(c1))")
 
 	// Test order by with primary key
 	s.tk.MustExec("alter table ob order by c")
 	c.Assert(s.tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(1))
 	s.tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1105|ORDER BY ignored as there is a user-defined clustered index in the table '%s'", "ob"))
 
-	//Test order by with no primary key
-	s.tk.MustExec("alter table ob drop primary key")
+	// Test order by with no primary key
+	s.tk.MustExec("drop table if exists ob")
+	s.tk.MustExec("create table ob (c int default 1, c1 int default 1, KEY cl(c1))")
 	s.tk.MustExec("alter table ob order by c")
 	c.Assert(s.tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(0))
-	s.tk.MustExec("drop table ob")
+	s.tk.MustExec("drop table if exists ob")
 }
 
 func init() {
