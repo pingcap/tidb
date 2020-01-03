@@ -2352,7 +2352,7 @@ func (s *testSuite7) TestIssue4067(c *C) {
 	tk.MustQuery("select * from t1").Check(nil)
 }
 
-func (s *testSuite7) TestInsertCalculatedValue(c *C) {
+func (s *testSuite7) TestInsertACalculatedValue(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
