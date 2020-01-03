@@ -31,9 +31,12 @@ var (
 func init() {
 	// Map error codes to mysql error codes.
 	tableMySQLErrCodes := map[terror.ErrCode]uint16{
-		mysql.ErrAutoincReadFailed: mysql.ErrAutoincReadFailed,
-		mysql.ErrWrongAutoKey:      mysql.ErrWrongAutoKey,
-		mysql.ErrInvalidTableID:    mysql.ErrInvalidTableID,
+		mysql.ErrAutoincReadFailed:         mysql.ErrAutoincReadFailed,
+		mysql.ErrWrongAutoKey:              mysql.ErrWrongAutoKey,
+		mysql.ErrInvalidTableID:            mysql.ErrInvalidTableID,
+		mysql.ErrUnknownAllocatorType:      mysql.ErrUnknownAllocatorType,
+		mysql.ErrAutoRandReadFailed:        mysql.ErrAutoRandReadFailed,
+		mysql.ErrInvalidIncrementAndOffset: mysql.ErrInvalidIncrementAndOffset,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassAutoid] = tableMySQLErrCodes
 }

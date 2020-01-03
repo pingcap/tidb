@@ -831,8 +831,10 @@ func (s *testSuite3) TestDMLCast(c *C) {
 	tk.MustQuery(`select * from t`).Check(testkit.Rows())
 }
 
-// TiDB has fixed a issue, when the value of auto_increment_offset is greater than that of auto_increment_increment,
-// the value of auto_increment_offset is ignored in MySQL. https://dev.mysql.com/doc/refman/8.0/en/replication-options-master.html#sysvar_auto_increment_increment
+// There is a potential issue in MySQL: when the value of auto_increment_offset is greater
+// than that of auto_increment_increment, the value of auto_increment_offset is ignored
+// (https://dev.mysql.com/doc/refman/8.0/en/replication-options-master.html#sysvar_auto_increment_increment),
+// This issue is a flaw of the implementation of MySQL and it doesn't exist in TiDB.
 func (s *testSuite3) TestAutoIDIncrementAndOffset(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test`)

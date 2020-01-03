@@ -82,7 +82,7 @@ type Allocator interface {
 	// The consecutive feature is used to insert multiple rows in a statement.
 
 	// increment & offset is used to valid the start position (the allocator's base is not always the last allocated id).
-	// The returned range is still (min, max], you need derive the ids like firstID, firstID + increment * 2... in caller.
+	// The returned range is (min, max], you need derive the ids like firstID, firstID + increment * 2... in the caller.
 	Alloc(tableID int64, n uint64, increment, offset int64) (int64, int64, error)
 
 	// Rebase rebases the autoID base for table with tableID and the new base value.
@@ -315,7 +315,7 @@ func NewAllocatorsFromTblInfo(store kv.Storage, schemaID int64, tblInfo *model.T
 // Alloc implements autoid.Allocator Alloc interface.
 // For autoIncrement allocator, the increment and offset should always be positive in [1, 65535].
 // Attention:
-// When increment and offset is not the default value = 1, the return range (min, max] need to
+// When increment and offset is not the default value(1), the return range (min, max] need to
 // calculate the right start position rather than simply the add 1 to min. Then you can derive
 // the successive autoID by adding increment * cnt to start for (n-1) times.
 //
@@ -349,10 +349,10 @@ func validIncrementAndOffset(increment, offset int64) bool {
 	return (increment >= 1 && increment <= 65535) && (offset >= 1 && offset <= 65535)
 }
 
-// CalcNeededIDLength is used to calculate batch size for autoID allocation.
-// Firstly seek to the first valid position based on increment and offset.
-// Then plus the length remained, which could be (n-1) * increment.
-func CalcNeededIDLength(base, n, increment, offset int64, isUnsigned bool) int64 {
+// CalcNeededBatchSize is used to calculate batch size for autoID allocation.
+// It firstly seeks to the first valid position based on increment and offset,
+// then plus the length remained, which could be (n-1) * increment.
+func CalcNeededBatchSize(base, n, increment, offset int64, isUnsigned bool) int64 {
 	if increment == 1 {
 		return n
 	}
@@ -382,7 +382,7 @@ func (alloc *allocator) alloc4Signed(tableID int64, n uint64, increment, offset 
 		}
 	}
 	// Calculate the total batch size needed.
-	n1 := CalcNeededIDLength(alloc.base, int64(n), increment, offset, alloc.isUnsigned)
+	n1 := CalcNeededBatchSize(alloc.base, int64(n), increment, offset, alloc.isUnsigned)
 
 	// Condition alloc.base+N1 > alloc.end will overflow when alloc.base + N1 > MaxInt64. So need this.
 	if math.MaxInt64-alloc.base <= n1 {
@@ -444,7 +444,7 @@ func (alloc *allocator) alloc4Unsigned(tableID int64, n uint64, increment, offse
 		}
 	}
 	// Calculate the total batch size needed.
-	n1 := CalcNeededIDLength(alloc.base, int64(n), increment, offset, alloc.isUnsigned)
+	n1 := CalcNeededBatchSize(alloc.base, int64(n), increment, offset, alloc.isUnsigned)
 
 	// Condition alloc.base+n1 > alloc.end will overflow when alloc.base + n1 > MaxInt64. So need this.
 	if math.MaxUint64-uint64(alloc.base) <= uint64(n1) {

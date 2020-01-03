@@ -716,7 +716,7 @@ func (e *InsertValues) lazyAdjustAutoIncrementDatum(ctx context.Context, rows []
 				i++
 				cnt++
 			}
-			// Alloc batch N consecutive autoIDs, returning min and increment.
+			// Alloc batch N consecutive autoIDs.
 			// max value can be derived from adding the increment value to min for cnt-1 times.
 			min, increment, err := table.AllocBatchAutoIncrementValue(ctx, e.Table, e.ctx, cnt)
 			if e.handleErr(col, &autoDatum, cnt, err) != nil {
