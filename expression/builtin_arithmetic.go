@@ -273,13 +273,16 @@ func (s *builtinArithmeticPlusRealSig) Clone() builtinFunc {
 }
 
 func (s *builtinArithmeticPlusRealSig) evalReal(row chunk.Row) (float64, bool, error) {
-	a, isNull, err := s.args[0].EvalReal(s.ctx, row)
-	if isNull || err != nil {
-		return 0, isNull, err
+	a, isLhsNull, err := s.args[0].EvalReal(s.ctx, row)
+	if err != nil {
+		return 0, isLhsNull, err
 	}
-	b, isNull, err := s.args[1].EvalReal(s.ctx, row)
-	if isNull || err != nil {
-		return 0, isNull, err
+	b, isRhsNull, err := s.args[1].EvalReal(s.ctx, row)
+	if err != nil {
+		return 0, isRhsNull, err
+	}
+	if isLhsNull || isRhsNull {
+		return 0, true, nil
 	}
 	if (a > 0 && b > math.MaxFloat64-a) || (a < 0 && b < -math.MaxFloat64-a) {
 		return 0, true, types.ErrOverflow.GenWithStackByArgs("DOUBLE", fmt.Sprintf("(%s + %s)", s.args[0].String(), s.args[1].String()))
