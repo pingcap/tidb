@@ -668,7 +668,7 @@ func (h *rpcHandler) handleSplitRegion(req *kvrpcpb.SplitRegionRequest) *kvrpcpb
 }
 
 // Client is a client that sends RPC.
-// It should not be used after calling Close().
+// This is same with tikv.Client, define again for avoid circle import.
 type Client interface {
 	// Close should release all data.
 	Close() error
