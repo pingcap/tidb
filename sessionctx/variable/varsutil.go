@@ -620,6 +620,14 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		default:
 			return value, ErrWrongValueForVar.GenWithStackByArgs(TiDBTxnMode, value)
 		}
+	case TiDBRowFormatVersion:
+		v, err := strconv.Atoi(value)
+		if err != nil {
+			return value, ErrWrongTypeForVar.GenWithStackByArgs(name)
+		}
+		if v != DefTiDBRowFormatV1 && v != DefTiDBRowFormatV2 {
+			return value, errors.Errorf("Unsupported row format version %d", v)
+		}
 	case TiDBAllowRemoveAutoInc, TiDBUsePlanBaselines, TiDBEvolvePlanBaselines:
 		switch {
 		case strings.EqualFold(value, "ON") || value == "1":
