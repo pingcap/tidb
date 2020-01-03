@@ -4248,7 +4248,7 @@ func (s *testDBSuite1) TestAlterOrderBy(c *C) {
 	// Test order by with primary key
 	s.tk.MustExec("alter table ob order by c")
 	c.Assert(s.tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(1))
-	s.tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1105|ORDER BY ignored as there is a user-defined clustered index in the table '%s'", "ob"))
+	s.tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1105|ORDER BY ignored as there is a user-defined clustered index in the table 'ob'"))
 
 	// Test order by with no primary key
 	s.tk.MustExec("drop table if exists ob")
