@@ -136,6 +136,9 @@ const (
 	// tidb_txn_mode is used to control the transaction behavior.
 	TiDBTxnMode = "tidb_txn_mode"
 
+	// tidb_row_format_version is used to control tidb row format version current.
+	TiDBRowFormatVersion = "tidb_row_format_version"
+
 	// tidb_enable_table_partition is used to control table partition feature.
 	// The valid value include auto/on/off:
 	// auto: enable table partition when that feature is implemented.
@@ -424,6 +427,8 @@ const (
 	DefTiDBProjectionConcurrency       = 4
 	DefTiDBOptimizerSelectivityLevel   = 0
 	DefTiDBTxnMode                     = ""
+	DefTiDBRowFormatV1                 = 1
+	DefTiDBRowFormatV2                 = 2
 	DefTiDBDDLReorgWorkerCount         = 4
 	DefTiDBDDLReorgBatchSize           = 256
 	DefTiDBDDLErrorCountLimit          = 512
