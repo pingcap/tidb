@@ -98,6 +98,7 @@ func (s *rpcServer) CoprocessorStream(in *coprocessor.Request, stream tikvpb.Tik
 	}
 	defer se.Close()
 
+	fmt.Printf("handle in cop stream------------------------\n\n")
 	h := executor.NewCoprocessorDAGHandler(se)
 	return h.HandleStreamRequest(context.Background(), in, stream)
 }

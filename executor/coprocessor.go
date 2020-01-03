@@ -33,18 +33,14 @@ import (
 
 // CoprocessorDAGHandler uses to handle cop dag request.
 type CoprocessorDAGHandler struct {
-	sctx    sessionctx.Context
-	resp    *coprocessor.Response
-	selResp *tipb.SelectResponse
-	dagReq  *tipb.DAGRequest
+	sctx   sessionctx.Context
+	dagReq *tipb.DAGRequest
 }
 
 // NewCoprocessorDAGHandler creates a new CoprocessorDAGHandler.
 func NewCoprocessorDAGHandler(sctx sessionctx.Context) *CoprocessorDAGHandler {
 	return &CoprocessorDAGHandler{
-		sctx:    sctx,
-		resp:    &coprocessor.Response{},
-		selResp: &tipb.SelectResponse{},
+		sctx: sctx,
 	}
 }
 
@@ -52,16 +48,17 @@ func NewCoprocessorDAGHandler(sctx sessionctx.Context) *CoprocessorDAGHandler {
 func (h *CoprocessorDAGHandler) HandleRequest(ctx context.Context, req *coprocessor.Request) *coprocessor.Response {
 	e, err := h.buildDAGExecutor(req)
 	if err != nil {
-		return h.buildResponse(err)
+		return h.buildErrorResponse(err)
 	}
 
 	err = e.Open(ctx)
 	if err != nil {
-		return h.buildResponse(err)
+		return h.buildErrorResponse(err)
 	}
 
 	chk := newFirstChunk(e)
 	tps := e.base().retFieldTypes
+	var totalChunks, partChunks []tipb.Chunk
 	for {
 		chk.Reset()
 		err = Next(ctx, e, chk)
@@ -71,26 +68,28 @@ func (h *CoprocessorDAGHandler) HandleRequest(ctx context.Context, req *coproces
 		if chk.NumRows() == 0 {
 			break
 		}
-		err = h.appendChunk(chk, tps)
+		partChunks, err = h.buildChunk(chk, tps)
 		if err != nil {
 			break
 		}
+		totalChunks = append(totalChunks, partChunks...)
 	}
-	return h.buildResponse(err)
+	if err != nil {
+		return h.buildErrorResponse(err)
+	}
+	return h.buildResponse(totalChunks)
 }
 
 // HandleRequest handles the coprocessor request.
 func (h *CoprocessorDAGHandler) HandleStreamRequest(ctx context.Context, req *coprocessor.Request, stream tikvpb.Tikv_CoprocessorStreamServer) error {
 	e, err := h.buildDAGExecutor(req)
 	if err != nil {
-		resp := h.buildResponse(err)
-		return stream.Send(resp)
+		return stream.Send(h.buildErrorResponse(err))
 	}
 
 	err = e.Open(ctx)
 	if err != nil {
-		resp := h.buildResponse(err)
-		return stream.Send(resp)
+		return stream.Send(h.buildErrorResponse(err))
 	}
 
 	chk := newFirstChunk(e)
@@ -104,20 +103,32 @@ func (h *CoprocessorDAGHandler) HandleStreamRequest(ctx context.Context, req *co
 		if chk.NumRows() == 0 {
 			break
 		}
-		err = h.appendChunk(chk, tps)
+		err = h.buildResponseAndSendToStream(chk, tps, stream)
 		if err != nil {
 			break
 		}
-		resp := h.buildResponse(nil)
+	}
+	if err != nil {
+		return stream.Send(h.buildErrorResponse(err))
+	}
+	return h.buildResponseAndSendToStream(chk, tps, stream)
+}
+
+func (h *CoprocessorDAGHandler) buildResponseAndSendToStream(chk *chunk.Chunk, tps []*types.FieldType, stream tikvpb.Tikv_CoprocessorStreamServer) error {
+	chunks, err := h.buildChunk(chk, tps)
+	if err != nil {
+		resp := h.buildErrorResponse(err)
+		return stream.Send(resp)
+	}
+
+	for _, c := range chunks {
+		resp := h.buildStreamResponse(&c)
 		err = stream.Send(resp)
 		if err != nil {
-			break
+			return err
 		}
-		h.selResp.Chunks = h.selResp.Chunks[:0]
-		h.resp = &coprocessor.Response{}
 	}
-	resp := h.buildResponse(nil)
-	return stream.Send(resp)
+	return nil
 }
 
 func (h *CoprocessorDAGHandler) buildDAGExecutor(req *coprocessor.Request) (Executor, error) {
@@ -149,68 +160,84 @@ func (h *CoprocessorDAGHandler) buildDAGExecutor(req *coprocessor.Request) (Exec
 	return b.build(plan), nil
 }
 
-func (h *CoprocessorDAGHandler) appendChunk(chk *chunk.Chunk, tps []*types.FieldType) error {
-	var err error
+func (h *CoprocessorDAGHandler) buildChunk(chk *chunk.Chunk, tps []*types.FieldType) (chunks []tipb.Chunk, err error) {
 	switch h.dagReq.EncodeType {
 	case tipb.EncodeType_TypeDefault:
-		err = h.encodeDefault(chk, tps)
+		chunks, err = h.encodeDefault(chk, tps)
 	case tipb.EncodeType_TypeChunk:
-		err = h.encodeChunk(chk, tps)
+		chunks, err = h.encodeChunk(chk, tps)
 	default:
-		return errors.Errorf("unknown DAG encode type: %v", h.dagReq.EncodeType)
+		return nil, errors.Errorf("unknown DAG encode type: %v", h.dagReq.EncodeType)
 	}
-	return err
+	return chunks, err
 }
 
-func (h *CoprocessorDAGHandler) buildResponse(err error) *coprocessor.Response {
-	if err != nil {
-		h.resp.OtherError = err.Error()
-		return h.resp
+func (h *CoprocessorDAGHandler) buildResponse(chunks []tipb.Chunk) *coprocessor.Response {
+	selResp := tipb.SelectResponse{
+		Chunks:     chunks,
+		EncodeType: h.dagReq.EncodeType,
 	}
-	h.selResp.EncodeType = h.dagReq.EncodeType
-	data, err := proto.Marshal(h.selResp)
+	data, err := proto.Marshal(&selResp)
 	if err != nil {
-		h.resp.OtherError = err.Error()
-		return h.resp
+		return h.buildErrorResponse(err)
 	}
-	h.resp.Data = data
-	return h.resp
+	return &coprocessor.Response{
+		Data: data,
+	}
 }
 
-func (h *CoprocessorDAGHandler) encodeChunk(chk *chunk.Chunk, colTypes []*types.FieldType) error {
+func (h *CoprocessorDAGHandler) buildStreamResponse(chunk *tipb.Chunk) *coprocessor.Response {
+	data, err := chunk.Marshal()
+	if err != nil {
+		return h.buildErrorResponse(err)
+	}
+	streamResponse := tipb.StreamResponse{
+		Data: data,
+	}
+	var resp = &coprocessor.Response{}
+	resp.Data, err = proto.Marshal(&streamResponse)
+	if err != nil {
+		resp.OtherError = err.Error()
+	}
+	return resp
+}
+
+func (h *CoprocessorDAGHandler) buildErrorResponse(err error) *coprocessor.Response {
+	return &coprocessor.Response{
+		OtherError: err.Error(),
+	}
+}
+
+func (h *CoprocessorDAGHandler) encodeChunk(chk *chunk.Chunk, colTypes []*types.FieldType) ([]tipb.Chunk, error) {
 	colOrdinal := h.dagReq.OutputOffsets
-	chunks := h.selResp.Chunks
 	respColTypes := make([]*types.FieldType, 0, len(colOrdinal))
 	for _, ordinal := range colOrdinal {
 		respColTypes = append(respColTypes, colTypes[ordinal])
 	}
 	encoder := chunk.NewCodec(respColTypes)
-	chunks = append(chunks, tipb.Chunk{})
-	cur := &chunks[len(chunks)-1]
+	cur := tipb.Chunk{}
 	cur.RowsData = append(cur.RowsData, encoder.Encode(chk)...)
-	h.selResp.Chunks = chunks
-	return nil
+	return []tipb.Chunk{cur}, nil
 }
 
-func (h *CoprocessorDAGHandler) encodeDefault(chk *chunk.Chunk, tps []*types.FieldType) error {
+func (h *CoprocessorDAGHandler) encodeDefault(chk *chunk.Chunk, tps []*types.FieldType) ([]tipb.Chunk, error) {
 	colOrdinal := h.dagReq.OutputOffsets
-	chunks := h.selResp.Chunks
 	stmtCtx := h.sctx.GetSessionVars().StmtCtx
 	requestedRow := make([]byte, 0)
+	chunks := []tipb.Chunk{}
 	for i := 0; i < chk.NumRows(); i++ {
 		requestedRow = requestedRow[:0]
 		row := chk.GetRow(i)
 		for _, ordinal := range colOrdinal {
 			data, err := codec.EncodeValue(stmtCtx, nil, row.GetDatum(int(ordinal), tps[ordinal]))
 			if err != nil {
-				return err
+				return nil, err
 			}
 			requestedRow = append(requestedRow, data...)
 		}
 		chunks = h.appendRow(chunks, requestedRow, i)
 	}
-	h.selResp.Chunks = chunks
-	return nil
+	return chunks, nil
 }
 
 const rowsPerChunk = 64
