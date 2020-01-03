@@ -68,12 +68,12 @@
       {
         "SQL": "explain select * from t t1 left join t t2 on t1.a = t2.a where cast(t1.b as date) >= '2019-01-01'",
         "Plan": [
-          "HashLeftJoin_9 10000.00 root left outer join, inner:Selection_10 (REVERSED), equal:[eq(test.t.a, test.t.a)]",
-          "├─Selection_10 8000.00 root ge(cast(test.t.b), 2019-01-01 00:00:00.000000)",
-          "│ └─TableReader_12 10000.00 root data:TableScan_11",
-          "│   └─TableScan_11 10000.00 cop[tikv] table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
-          "└─TableReader_14 10000.00 root data:TableScan_13",
-          "  └─TableScan_13 10000.00 cop[tikv] table:t2, range:[-inf,+inf], keep order:false, stats:pseudo"
+          "HashLeftJoin_8 10000.00 root left outer join, inner:TableReader_11 (REVERSED), equal:[eq(test.t.a, test.t.a)]",
+          "├─TableReader_11 8000.00 root data:Selection_10",
+          "│ └─Selection_10 8000.00 cop[tikv] ge(cast(test.t.b), 2019-01-01 00:00:00.000000)",
+          "│   └─TableScan_9 10000.00 cop[tikv] table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
+          "└─TableReader_13 10000.00 root data:TableScan_12",
+          "  └─TableScan_12 10000.00 cop[tikv] table:t2, range:[-inf,+inf], keep order:false, stats:pseudo"
         ]
       }
     ]
