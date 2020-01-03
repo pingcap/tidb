@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/session"
-	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
@@ -58,8 +57,6 @@ func NewRPCServer(config *config.Config, dom *domain.Domain, sm util.SessionMana
 		dom:               dom,
 		sm:                sm,
 	}
-	// For redirection the cop task.
-	mocktikv.TiDBRPCServerCoprocessorHandler = rpcSrv.handleCopRequest
 	diagnosticspb.RegisterDiagnosticsServer(s, rpcSrv)
 	tikvpb.RegisterTikvServer(s, rpcSrv)
 	return s
@@ -98,7 +95,6 @@ func (s *rpcServer) CoprocessorStream(in *coprocessor.Request, stream tikvpb.Tik
 	}
 	defer se.Close()
 
-	fmt.Printf("handle in cop stream------------------------\n\n")
 	h := executor.NewCoprocessorDAGHandler(se)
 	return h.HandleStreamRequest(context.Background(), in, stream)
 }

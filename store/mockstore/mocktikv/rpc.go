@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 )
 
@@ -674,6 +675,7 @@ type RPCClient struct {
 	MvccStore     MVCCStore
 	streamTimeout chan *tikvrpc.Lease
 	done          chan struct{}
+	rpcCli        tikv.Client
 }
 
 // NewRPCClient creates an RPCClient.
@@ -723,9 +725,12 @@ func (c *RPCClient) checkArgs(ctx context.Context, addr string) (*rpcHandler, er
 	return handler, nil
 }
 
-// TiDBRPCServerCoprocessorHandler is the TiDB rpc server coprocessor handler.
-// TODO: remove this global variable.
-var TiDBRPCServerCoprocessorHandler func(context.Context, *coprocessor.Request) *coprocessor.Response
+func (c *RPCClient) redirectRequestToRpcServer(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
+	if c.rpcCli == nil {
+		c.rpcCli = tikv.NewTestRPCClient()
+	}
+	return c.rpcCli.SendRequest(ctx, addr, req, timeout)
+}
 
 // SendRequest sends a request to mock cluster.
 func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
@@ -744,9 +749,8 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 	reqCtx := &req.Context
 	resp := &tikvrpc.Response{}
 	// When the store type is TiDB, the request should handle over to TiDB rpc server to handle.
-	if req.Type == tikvrpc.CmdCop && req.StoreTp == kv.TiDB && TiDBRPCServerCoprocessorHandler != nil {
-		resp.Resp = TiDBRPCServerCoprocessorHandler(context.Background(), req.Cop())
-		return resp, nil
+	if req.StoreTp == kv.TiDB {
+		return c.redirectRequestToRpcServer(ctx, addr, req, timeout)
 	}
 
 	handler, err := c.checkArgs(ctx, addr)
@@ -1047,6 +1051,9 @@ func (c *RPCClient) Close() error {
 	close(c.done)
 	if raw, ok := c.MvccStore.(io.Closer); ok {
 		return raw.Close()
+	}
+	if c.rpcCli != nil {
+		return c.rpcCli.Close()
 	}
 	return nil
 }
