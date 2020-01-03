@@ -442,14 +442,16 @@ func (s *testSuite) TestNilAndDefault(c *C) {
 				Elems:      t.ft.Elems,
 			})
 		}
-		ddf := func(i int) (types.Datum, error) {
+		ddf := func(i int, chk *chunk.Chunk) error {
 			t := testData[i]
 			if t.def == nil {
 				var d types.Datum
 				d.SetNull()
-				return d, nil
+				chk.AppendDatum(i, &d)
+				return nil
 			}
-			return *t.def, nil
+			chk.AppendDatum(i, t.def)
+			return nil
 		}
 		bdf := func(i int) ([]byte, error) {
 			t := testData[i]
