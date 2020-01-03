@@ -300,7 +300,7 @@ func (c *rpcClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 	}
 
 	// TiDB RPC server not support batch RPC now.
-	// TODO: remove this store type check after TiDB RPC Server support stream.
+	// TODO: remove this store type check after TiDB RPC Server support batch.
 	if config.GetGlobalConfig().TiKVClient.MaxBatchSize > 0 && req.StoreTp != kv.TiDB {
 		if batchReq := req.ToBatchCommandsRequest(); batchReq != nil {
 			return sendBatchRequest(ctx, addr, connArray.batchConn, batchReq, timeout)

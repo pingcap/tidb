@@ -89,6 +89,19 @@ func (s *rpcServer) Coprocessor(ctx context.Context, in *coprocessor.Request) (r
 	return resp, nil
 }
 
+func (s *rpcServer) CoprocessorStream(in *coprocessor.Request, stream tikvpb.Tikv_CoprocessorStreamServer) (err error) {
+	resp := &coprocessor.Response{}
+	se, err := s.createSession()
+	if err != nil {
+		resp.OtherError = err.Error()
+		return stream.Send(resp)
+	}
+	defer se.Close()
+
+	h := executor.NewCoprocessorDAGHandler(se)
+	return h.HandleStreamRequest(context.Background(), in, stream)
+}
+
 // handleCopRequest handles the cop dag request.
 func (s *rpcServer) handleCopRequest(ctx context.Context, req *coprocessor.Request) *coprocessor.Response {
 	resp := &coprocessor.Response{}

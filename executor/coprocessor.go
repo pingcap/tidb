@@ -19,6 +19,7 @@ import (
 	"github.com/gogo/protobuf/proto"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
+	"github.com/pingcap/kvproto/pkg/tikvpb"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/planner/core"
@@ -76,6 +77,47 @@ func (h *CoprocessorDAGHandler) HandleRequest(ctx context.Context, req *coproces
 		}
 	}
 	return h.buildResponse(err)
+}
+
+// HandleRequest handles the coprocessor request.
+func (h *CoprocessorDAGHandler) HandleStreamRequest(ctx context.Context, req *coprocessor.Request, stream tikvpb.Tikv_CoprocessorStreamServer) error {
+	e, err := h.buildDAGExecutor(req)
+	if err != nil {
+		resp := h.buildResponse(err)
+		return stream.Send(resp)
+	}
+
+	err = e.Open(ctx)
+	if err != nil {
+		resp := h.buildResponse(err)
+		return stream.Send(resp)
+	}
+
+	chk := newFirstChunk(e)
+	tps := e.base().retFieldTypes
+	for {
+		chk.Reset()
+		err = Next(ctx, e, chk)
+		if err != nil {
+			break
+		}
+		if chk.NumRows() == 0 {
+			break
+		}
+		err = h.appendChunk(chk, tps)
+		if err != nil {
+			break
+		}
+		resp := h.buildResponse(nil)
+		err = stream.Send(resp)
+		if err != nil {
+			break
+		}
+		h.selResp.Chunks = h.selResp.Chunks[:0]
+		h.resp = &coprocessor.Response{}
+	}
+	resp := h.buildResponse(nil)
+	return stream.Send(resp)
 }
 
 func (h *CoprocessorDAGHandler) buildDAGExecutor(req *coprocessor.Request) (Executor, error) {
