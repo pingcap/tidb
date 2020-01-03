@@ -38,7 +38,7 @@ type testBypassSuite struct{}
 func (s *testBypassSuite) SetUpSuite(c *C) {
 }
 
-func (s *testSuite4) TestInsert(c *C) {
+func (s *testSuite) TestInsert(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	testSQL := `drop table if exists insert_test;create table insert_test (id int PRIMARY KEY AUTO_INCREMENT, c1 int, c2 int, c3 int default 1);`
@@ -1812,7 +1812,7 @@ func (s *testSuite) TestDelete(c *C) {
 	tk.MustExec("drop view v")
 }
 
-func (s *testSuite4) TestPartitionedTableDelete(c *C) {
+func (s *testSuite8) TestPartitionedTableDelete(c *C) {
 	createTable := `CREATE TABLE test.t (id int not null default 1, name varchar(255), index(id))
 			  PARTITION BY RANGE ( id ) (
 			  PARTITION p0 VALUES LESS THAN (6),
