@@ -2068,6 +2068,8 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 			}
 		case ast.AlterTableSetTiFlashReplica:
 			err = d.AlterTableSetTiFlashReplica(ctx, ident, spec.TiFlashReplica)
+		case ast.AlterTableOrderByColumns:
+			err = d.OrderByColumns(ctx, ident)
 		default:
 			// Nothing to do now.
 		}
@@ -4200,4 +4202,15 @@ func (d *ddl) RepairTable(ctx sessionctx.Context, table *ast.TableName, createSt
 	}
 	err = d.callHookOnChanged(err)
 	return errors.Trace(err)
+}
+
+func (d *ddl) OrderByColumns(ctx sessionctx.Context, ident ast.Ident) error {
+	_, tb, err := d.getSchemaAndTableByIdent(ctx, ident)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if tb.Meta().GetPkColInfo() != nil {
+		ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("ORDER BY ignored as there is a user-defined clustered index in the table '%s'", ident.Name))
+	}
+	return nil
 }
