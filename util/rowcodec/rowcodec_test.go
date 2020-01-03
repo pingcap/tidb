@@ -445,9 +445,7 @@ func (s *testSuite) TestNilAndDefault(c *C) {
 		ddf := func(i int, chk *chunk.Chunk) error {
 			t := testData[i]
 			if t.def == nil {
-				var d types.Datum
-				d.SetNull()
-				chk.AppendDatum(i, &d)
+				chk.AppendNull(i)
 				return nil
 			}
 			chk.AppendDatum(i, t.def)
