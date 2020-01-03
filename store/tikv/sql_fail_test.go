@@ -52,6 +52,11 @@ func (s *testSQLSuiteBase) SetUpSuite(c *C) {
 	s.OneByOneSuite.SetUpSuite(c)
 	var err error
 	s.store = NewTestStore(c).(Storage)
+	// actual this is better done in `OneByOneSuite.SetUpSuite`, but this would cause circle dependency
+	if *WithTiKV {
+		session.ResetForWithTiKVTest()
+	}
+
 	s.dom, err = session.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
 }

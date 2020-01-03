@@ -15,24 +15,21 @@ package tikv
 
 import (
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/session"
 )
 
 // OneByOneSuite is a suite, When with-tikv flag is true, there is only one storage, so the test suite have to run one by one.
 type OneByOneSuite struct{}
 
 func (s *OneByOneSuite) SetUpSuite(c *C) {
-	if *withTiKV {
+	if *WithTiKV {
 		withTiKVGlobalLock.Lock()
-		// clean up closed dom in domap remain
-		session.ResetForWithTiKVTest()
 	} else {
 		withTiKVGlobalLock.RLock()
 	}
 }
 
 func (s *OneByOneSuite) TearDownSuite(c *C) {
-	if *withTiKV {
+	if *WithTiKV {
 		withTiKVGlobalLock.Unlock()
 	} else {
 		withTiKVGlobalLock.RUnlock()
