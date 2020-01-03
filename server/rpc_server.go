@@ -99,7 +99,10 @@ func (s *rpcServer) CoprocessorStream(in *coprocessor.Request, stream tikvpb.Tik
 		if v := recover(); v != nil {
 			logutil.BgLogger().Error("panic in TiDB RPC server coprocessor", zap.Any("stack", v))
 			resp.OtherError = fmt.Sprintf("rpc coprocessor panic, :%v", v)
-			stream.Send(resp)
+			err = stream.Send(resp)
+			if err != nil {
+				logutil.BgLogger().Error("rpc server handle cop stream panic, send response to stream error", zap.Error(err))
+			}
 		}
 	}()
 
