@@ -185,25 +185,26 @@ func buildJobDependence(t *meta.Meta, curJob *model.Job) error {
 	return nil
 }
 
-func (d *ddl) addBatchDDLJobs() {
+func (d *ddl) limitDDLJobs() {
 	for {
+		tasks := make([]*limitJobTask, 0, batchAddingJobs)
 		select {
 		case task := <-d.limitJobCh:
+			tasks = tasks[:0]
 			jobLen := len(d.limitJobCh)
-			tasks := make([]*limitJobTask, jobLen+1)
-			tasks[0] = task
-			for i := 1; i < jobLen+1; i++ {
-				tasks[i] = <-d.limitJobCh
+			tasks = append(tasks, task)
+			for i := 0; i < jobLen; i++ {
+				tasks = append(tasks, <-d.limitJobCh)
 			}
-			d.addDDLJob(tasks)
+			d.addBatchDDLJobs(tasks)
 		case <-d.quitCh:
 			return
 		}
 	}
 }
 
-// addDDLJob gets a global job ID and puts the DDL job in the DDL queue.
-func (d *ddl) addDDLJob(tasks []*limitJobTask) error {
+// addBatchDDLJobs gets global job IDs and puts the DDL jobs in the DDL queue.
+func (d *ddl) addBatchDDLJobs(tasks []*limitJobTask) {
 	startTime := time.Now()
 	err := kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
@@ -240,7 +241,6 @@ func (d *ddl) addDDLJob(tasks []*limitJobTask) error {
 			metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
 	}
 	logutil.BgLogger().Info("[ddl] add DDL jobs", zap.Int("batch count", len(tasks)), zap.String("jobs", jobs))
-	return errors.Trace(err)
 }
 
 // getHistoryDDLJob gets a DDL job with job's ID from history queue.

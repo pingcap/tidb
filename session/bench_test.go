@@ -18,12 +18,10 @@ import (
 	"fmt"
 	"math/rand"
 	"strconv"
-	"sync"
 	"testing"
 	"time"
 
 	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/mockstore"
@@ -120,53 +118,6 @@ func BenchmarkBasic(b *testing.B) {
 		}
 		readResult(ctx, rs[0], 1)
 	}
-	b.StopTimer()
-}
-
-func BenchmarkAddDDLs(b *testing.B) {
-	ctx := context.Background()
-	se, do, st := prepareBenchSession()
-	se1, err := CreateSession4Test(st)
-	if err != nil {
-		logutil.BgLogger().Fatal(err.Error())
-	}
-	se2, err := CreateSession4Test(st)
-	if err != nil {
-		logutil.BgLogger().Fatal(err.Error())
-	}
-	se3, err := CreateSession4Test(st)
-	if err != nil {
-		logutil.BgLogger().Fatal(err.Error())
-	}
-	mustExecute(se1, "use test")
-	mustExecute(se2, "use test")
-	mustExecute(se3, "use test")
-	defer func() {
-		se.Close()
-		st.Close()
-		do.Close()
-	}()
-
-	ddl.RunWorker = false
-	b.ResetTimer()
-	// count := b .N / 3
-	count := 100
-	log.Error("-------------", zap.Int("count", count))
-	wg := sync.WaitGroup{}
-	runDDLsFunc := func(se Session, start, end int) {
-		defer wg.Done()
-		for i := start; i < end; i++ {
-			se.Execute(ctx, fmt.Sprintf("create table t_%d(a int, b int)", i))
-			// se.Execute(ctx, fmt.Sprintf("alter table t%d add index(a)", i))
-			// se.Execute(ctx, fmt.Sprintf("alter table t%d add column c%d int", i, i))
-		}
-	}
-	wg.Add(4)
-	go runDDLsFunc(se, 0, count)
-	go runDDLsFunc(se1, count, count*2)
-	go runDDLsFunc(se2, count*2, count*3)
-	go runDDLsFunc(se3, count*3, count*4)
-	wg.Wait()
 	b.StopTimer()
 }
 
