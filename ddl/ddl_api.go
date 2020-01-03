@@ -2948,14 +2948,9 @@ func (d *ddl) RenameColumn(ctx sessionctx.Context, ident ast.Ident, spec *ast.Al
 		return nil
 	}
 
-	is := d.infoHandle.Get()
-	schema, ok := is.SchemaByName(ident.Schema)
-	if !ok {
-		return errors.Trace(infoschema.ErrDatabaseNotExists)
-	}
-	tbl, err := is.TableByName(ident.Schema, ident.Name)
+	schema, tbl, err := d.getSchemaAndTableByIdent(ctx, ident)
 	if err != nil {
-		return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ident.Schema, ident.Name))
+		return errors.Trace(err)
 	}
 
 	oldCol := table.FindCol(tbl.VisibleCols(), oldColName.L)
