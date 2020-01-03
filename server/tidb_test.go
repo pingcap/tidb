@@ -66,8 +66,12 @@ func newTiDBTestSuiteBase() tiDBTestSuiteBase {
 var _ = Suite(&tiDBTestSuite{newTiDBTestSuiteBase()})
 var _ = SerialSuites(&tiDBTestSerialSuite{newTiDBTestSuiteBase()})
 
-func (ts *tiDBTestSuiteBase) SetUpSuite(c *C) {
+func (ts *tiDBTestSuite) SetUpSuite(c *C) {
 	metrics.RegisterMetrics()
+	ts.tiDBTestSuiteBase.SetUpSuite(c)
+}
+
+func (ts *tiDBTestSuiteBase) SetUpSuite(c *C) {
 	var err error
 	ts.store, err = mockstore.NewMockTikvStore()
 	session.DisableStats4Test()
