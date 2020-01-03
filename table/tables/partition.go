@@ -78,7 +78,7 @@ func newPartitionedTable(tbl *TableCommon, tblInfo *model.TableInfo) (table.Tabl
 	pi := tblInfo.GetPartitionInfo()
 	for _, p := range pi.Definitions {
 		var t partition
-		err := initTableCommonWithIndices(&t.TableCommon, tblInfo, p.ID, tbl.Columns, tbl.alloc)
+		err := initTableCommonWithIndices(&t.TableCommon, tblInfo, p.ID, tbl.Columns, tbl.allocs)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -229,6 +229,7 @@ func generateHashPartitionExpr(ctx sessionctx.Context, pi *model.PartitionInfo,
 		logutil.BgLogger().Error("wrong table partition expression", zap.String("expression", pi.Expr), zap.Error(err))
 		return nil, errors.Trace(err)
 	}
+	exprs[0].HashCode(ctx.GetSessionVars().StmtCtx)
 	if col, ok := exprs[0].(*expression.Column); ok {
 		column = col
 	}

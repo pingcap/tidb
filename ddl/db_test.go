@@ -107,6 +107,7 @@ func setUpSuite(s *testDBSuite, c *C) {
 
 	_, err = s.s.Execute(context.Background(), "create database test_db")
 	c.Assert(err, IsNil)
+	s.s.Execute(context.Background(), "set @@global.tidb_max_delta_schema_count= 4096")
 
 	s.tk = testkit.NewTestKit(c, s.store)
 }
@@ -825,9 +826,18 @@ func (s *testDBSuite3) TestAddAnonymousIndex(c *C) {
 	s.mustExec(c, "alter table t_anonymous_index add index c3 (C3)")
 	s.mustExec(c, "alter table t_anonymous_index drop index C3")
 	// for anonymous index with column name `primary`
-	s.mustExec(c, "create table t_primary (`primary` int, key (`primary`))")
+	s.mustExec(c, "create table t_primary (`primary` int, b int, key (`primary`))")
 	t = s.testGetTable(c, "t_primary")
 	c.Assert(t.Indices()[0].Meta().Name.String(), Equals, "primary_2")
+	s.mustExec(c, "alter table t_primary add index (`primary`);")
+	t = s.testGetTable(c, "t_primary")
+	c.Assert(t.Indices()[0].Meta().Name.String(), Equals, "primary_2")
+	c.Assert(t.Indices()[1].Meta().Name.String(), Equals, "primary_3")
+	s.mustExec(c, "alter table t_primary add primary key(b);")
+	t = s.testGetTable(c, "t_primary")
+	c.Assert(t.Indices()[0].Meta().Name.String(), Equals, "primary_2")
+	c.Assert(t.Indices()[1].Meta().Name.String(), Equals, "primary_3")
+	c.Assert(t.Indices()[2].Meta().Name.L, Equals, "primary")
 	s.mustExec(c, "create table t_primary_2 (`primary` int, key primary_2 (`primary`), key (`primary`))")
 	t = s.testGetTable(c, "t_primary_2")
 	c.Assert(t.Indices()[0].Meta().Name.String(), Equals, "primary_2")
@@ -3265,7 +3275,7 @@ func (s *testDBSuite4) TestAddColumn2(c *C) {
 	c.Assert(err, IsNil)
 	_, err = writeOnlyTable.AddRecord(s.tk.Se, types.MakeDatums(oldRow[0].GetInt64(), 2, oldRow[2].GetInt64()), table.IsUpdate)
 	c.Assert(err, IsNil)
-	err = s.tk.Se.StmtCommit()
+	err = s.tk.Se.StmtCommit(nil)
 	c.Assert(err, IsNil)
 	err = s.tk.Se.CommitTxn(ctx)
 	c.Assert(err, IsNil)

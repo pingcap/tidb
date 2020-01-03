@@ -191,7 +191,10 @@ type Table interface {
 	AllocHandleIDs(ctx sessionctx.Context, n uint64) (int64, int64, error)
 
 	// Allocator returns Allocator.
-	Allocator(ctx sessionctx.Context) autoid.Allocator
+	Allocator(ctx sessionctx.Context, allocatorType autoid.AllocatorType) autoid.Allocator
+
+	// AllAllocators returns all allocators.
+	AllAllocators(ctx sessionctx.Context) autoid.Allocators
 
 	// RebaseAutoID rebases the auto_increment ID base.
 	// If allocIDs is true, it will allocate some IDs and save to the cache.
@@ -214,7 +217,7 @@ func AllocAutoIncrementValue(ctx context.Context, t Table, sctx sessionctx.Conte
 		span1 := span.Tracer().StartSpan("table.AllocAutoIncrementValue", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
 	}
-	_, max, err := t.Allocator(sctx).Alloc(t.Meta().ID, uint64(1))
+	_, max, err := t.Allocator(sctx, autoid.RowIDAllocType).Alloc(t.Meta().ID, uint64(1))
 	if err != nil {
 		return 0, err
 	}
@@ -227,7 +230,7 @@ func AllocBatchAutoIncrementValue(ctx context.Context, t Table, sctx sessionctx.
 		span1 := span.Tracer().StartSpan("table.AllocBatchAutoIncrementValue", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
 	}
-	return t.Allocator(sctx).Alloc(t.Meta().ID, uint64(N))
+	return t.Allocator(sctx, autoid.RowIDAllocType).Alloc(t.Meta().ID, uint64(N))
 }
 
 // PhysicalTable is an abstraction for two kinds of table representation: partition or non-partitioned table.
@@ -248,7 +251,7 @@ type PartitionedTable interface {
 
 // TableFromMeta builds a table.Table from *model.TableInfo.
 // Currently, it is assigned to tables.TableFromMeta in tidb package's init function.
-var TableFromMeta func(alloc autoid.Allocator, tblInfo *model.TableInfo) (Table, error)
+var TableFromMeta func(allocators autoid.Allocators, tblInfo *model.TableInfo) (Table, error)
 
 // MockTableFromMeta only serves for test.
 var MockTableFromMeta func(tableInfo *model.TableInfo) Table

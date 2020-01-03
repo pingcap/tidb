@@ -34,6 +34,15 @@ import (
 	"github.com/pingcap/tidb/util/testleak"
 )
 
+// ResetForWithTiKVTest is only used in the test code.
+// TODO: Remove domap and storeBootstrapped. Use store.SetOption() to do it.
+func ResetForWithTiKVTest() {
+	domap = &domainMap{
+		domains: map[string]*domain.Domain{},
+	}
+	storeBootstrapped = make(map[string]bool)
+}
+
 func TestT(t *testing.T) {
 	logLevel := os.Getenv("log_level")
 	logutil.InitLogger(logutil.NewLogConfig(logLevel, logutil.DefaultLogFormat, "", logutil.EmptyFileLogConfig, false))
@@ -42,6 +51,7 @@ func TestT(t *testing.T) {
 }
 
 var _ = Suite(&testMainSuite{})
+var _ = SerialSuites(&testBootstrapSuite{})
 
 type testMainSuite struct {
 	dbName string

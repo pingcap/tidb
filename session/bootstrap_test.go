@@ -29,8 +29,6 @@ import (
 	"github.com/pingcap/tidb/util/testleak"
 )
 
-var _ = SerialSuites(&testBootstrapSuite{})
-
 type testBootstrapSuite struct {
 	dbName          string
 	dbNameBootstrap string
@@ -61,6 +59,7 @@ func (s *testBootstrapSuite) TestBootstrap(c *C) {
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "root", Hostname: "anyhost"}, []byte(""), []byte("")), IsTrue)
 	mustExecSQL(c, se, "USE test;")
 	// Check privilege tables.
+	mustExecSQL(c, se, "SELECT * from mysql.global_priv;")
 	mustExecSQL(c, se, "SELECT * from mysql.db;")
 	mustExecSQL(c, se, "SELECT * from mysql.tables_priv;")
 	mustExecSQL(c, se, "SELECT * from mysql.columns_priv;")
@@ -165,6 +164,7 @@ func (s *testBootstrapSuite) TestBootstrapWithError(c *C) {
 
 	mustExecSQL(c, se, "USE test;")
 	// Check privilege tables.
+	mustExecSQL(c, se, "SELECT * from mysql.global_priv;")
 	mustExecSQL(c, se, "SELECT * from mysql.db;")
 	mustExecSQL(c, se, "SELECT * from mysql.tables_priv;")
 	mustExecSQL(c, se, "SELECT * from mysql.columns_priv;")
