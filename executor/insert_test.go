@@ -765,7 +765,7 @@ func (s *testSuite3) TestBit(c *C) {
 
 }
 
-func (s *testSuite6) TestAllocateContinuousRowID(c *C) {
+func (s *testSuite) TestAllocateContinuousRowID(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test`)
 	tk.MustExec(`create table t1 (a int,b int, key I_a(a));`)
