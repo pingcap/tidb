@@ -1308,7 +1308,7 @@ func (s *testSuite4) TestHashPartitionedTableReplace(c *C) {
 	r.Check(testkit.Rows("111 2"))
 }
 
-func (s *testSuite8) TestUpdate(c *C) {
+func (s *testSuite8) TestAUpdate(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	s.fillData(tk, "update_test")

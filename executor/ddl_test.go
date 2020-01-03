@@ -528,7 +528,7 @@ func (s *testSuite6) TestColumnCharsetAndCollate(c *C) {
 	tk.MustExec("drop database " + dbName)
 }
 
-func (s *testSuite6) TestTooLargeIdentifierLength(c *C) {
+func (s *testSuite6) TestATooLargeIdentifierLength(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
 	// for database.

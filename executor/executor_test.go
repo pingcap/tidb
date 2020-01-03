@@ -1081,7 +1081,7 @@ func (s *testSuiteP1) TestIssue5055(c *C) {
 	result.Check(testkit.Rows("1 1"))
 }
 
-func (s *testSuiteP2) TestUnion(c *C) {
+func (s *testSuiteP2) TestAUnion(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
