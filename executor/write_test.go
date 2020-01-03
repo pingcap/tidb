@@ -830,7 +830,7 @@ func (s *testSuite4) TestInsertOnDupUpdateDefault(c *C) {
 	tk.MustExec("drop table t1, t2")
 }
 
-func (s *testSuite4) TestReplace(c *C) {
+func (s *testSuite4) TestAReplace(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	testSQL := `drop table if exists replace_test;
@@ -1052,7 +1052,7 @@ func (s *testSuite2) TestGeneratedColumnForInsert(c *C) {
 	tk.MustQuery(`select * from t`).Check(testkit.Rows("2 3 1", "3 4 2"))
 }
 
-func (s *testSuite4) TestPartitionedTableReplace(c *C) {
+func (s *testSuite4) TestAPartitionedTableReplace(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	testSQL := `drop table if exists replace_test;
@@ -1550,7 +1550,7 @@ func (s *testSuite8) TestUpdate(c *C) {
 	tk.MustExec("drop table t1, t2")
 }
 
-func (s *testSuite4) TestPartitionedTableUpdate(c *C) {
+func (s *testSuite4) TestAPartitionedTableUpdate(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
