@@ -439,14 +439,14 @@ func getColDefaultValueFromNil(ctx sessionctx.Context, col *model.ColumnInfo) (t
 	vars := ctx.GetSessionVars()
 	sc := vars.StmtCtx
 	if sc.BadNullAsWarning {
-		sc.AppendWarning(ErrColumnCantNull.GenWithStackByArgs(col.Name))
+		sc.AppendWarning(ErrColumnCantNull.FastGenByArgs(col.Name))
 		return GetZeroValue(col), nil
 	}
 	if !vars.StrictSQLMode {
-		sc.AppendWarning(ErrNoDefaultValue.GenWithStackByArgs(col.Name))
+		sc.AppendWarning(ErrNoDefaultValue.FastGenByArgs(col.Name))
 		return GetZeroValue(col), nil
 	}
-	return types.Datum{}, ErrNoDefaultValue.GenWithStackByArgs(col.Name)
+	return types.Datum{}, ErrNoDefaultValue.FastGenByArgs(col.Name)
 }
 
 // GetZeroValue gets zero value for given column type.
