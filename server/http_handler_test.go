@@ -56,15 +56,15 @@ import (
 )
 
 type HTTPHandlerTestSuite struct {
+	*testServerClient
 	server  *Server
 	store   kv.Storage
 	domain  *domain.Domain
 	tidbdrv *TiDBDriver
-	testPortConfig
 }
 
 var _ = Suite(&HTTPHandlerTestSuite{
-	testPortConfig: newTestPortConfig(),
+	testServerClient: newTestServerClient(),
 })
 
 func (ts *HTTPHandlerTestSuite) TestRegionIndexRange(c *C) {
@@ -352,7 +352,7 @@ func (ts *HTTPHandlerTestSuite) startServer(c *C) {
 	c.Assert(err, IsNil)
 	ts.server = server
 	go server.Run()
-	waitUntilServerOnline(&ts.testPortConfig)
+	ts.waitUntilServerOnline()
 }
 
 func (ts *HTTPHandlerTestSuite) stopServer(c *C) {

@@ -31,8 +31,8 @@ import (
 	"github.com/pingcap/tidb/util/testkit"
 )
 
-var _ = Suite(new(testSQLSuite))
-var _ = SerialSuites(new(testSQLSerialSuite))
+var _ = Suite(&testSQLSuite{})
+var _ = SerialSuites(&testSQLSerialSuite{})
 
 type testSQLSuite struct {
 	testSQLSuiteBase

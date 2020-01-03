@@ -33,15 +33,15 @@ import (
 )
 
 type testDumpStatsSuite struct {
+	*testServerClient
 	server *Server
 	sh     *StatsHandler
 	store  kv.Storage
 	domain *domain.Domain
-	testPortConfig
 }
 
 var _ = Suite(&testDumpStatsSuite{
-	testPortConfig: newTestPortConfig(),
+	testServerClient: newTestServerClient(),
 })
 
 func (ds *testDumpStatsSuite) startServer(c *C) {
@@ -64,7 +64,7 @@ func (ds *testDumpStatsSuite) startServer(c *C) {
 	c.Assert(err, IsNil)
 	ds.server = server
 	go server.Run()
-	waitUntilServerOnline(&ds.testPortConfig)
+	ds.waitUntilServerOnline()
 
 	do, err := session.GetDomain(ds.store)
 	c.Assert(err, IsNil)
