@@ -983,5 +983,52 @@
         ]
       }
     ]
+  },
+  {
+    "Name": "TestMergeAdjacentTopN",
+    "Cases": [
+      {
+        "SQL": "select b from (select b from t where c > 1 order by b limit 3) as t1 order by b limit 2",
+        "Result": [
+          "Group#0 Schema:[test.t.b]",
+          "    Limit_8 input:[Group#1], offset:0, count:2",
+          "Group#1 Schema:[test.t.b]",
+          "    Sort_7 input:[Group#2], test.t.b:asc",
+          "Group#2 Schema:[test.t.b]",
+          "    Projection_6 input:[Group#3], test.t.b",
+          "Group#3 Schema:[test.t.b]",
+          "    Limit_5 input:[Group#4], offset:0, count:3",
+          "Group#4 Schema:[test.t.b]",
+          "    Sort_4 input:[Group#5], test.t.b:asc",
+          "Group#5 Schema:[test.t.b]",
+          "    Projection_3 input:[Group#6], test.t.b",
+          "Group#6 Schema:[test.t.b,test.t.c]",
+          "    Selection_2 input:[Group#7], gt(test.t.c, 1)",
+          "Group#7 Schema:[test.t.b,test.t.c]",
+          "    TableScan_1 table:t"
+        ]
+      },
+      {
+        "SQL": "select a from (select a from t where b > 2 order by a limit 0, 3) as t1 order by a limit 1, 2",
+        "Result": [
+          "Group#0 Schema:[test.t.a]",
+          "    Limit_8 input:[Group#1], offset:1, count:2",
+          "Group#1 Schema:[test.t.a]",
+          "    Sort_7 input:[Group#2], test.t.a:asc",
+          "Group#2 Schema:[test.t.a]",
+          "    Projection_6 input:[Group#3], test.t.a",
+          "Group#3 Schema:[test.t.a]",
+          "    Limit_5 input:[Group#4], offset:0, count:3",
+          "Group#4 Schema:[test.t.a]",
+          "    Sort_4 input:[Group#5], test.t.a:asc",
+          "Group#5 Schema:[test.t.a]",
+          "    Projection_3 input:[Group#6], test.t.a",
+          "Group#6 Schema:[test.t.a,test.t.b]",
+          "    Selection_2 input:[Group#7], gt(test.t.b, 2)",
+          "Group#7 Schema:[test.t.a,test.t.b]",
+          "    TableScan_1 table:t"
+        ]
+      }
+    ]
   }
 ]
