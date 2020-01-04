@@ -14,12 +14,12 @@
 package cascades
 
 import (
+	"math"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/planner/memo"
 	"github.com/pingcap/tidb/util/ranger"
-	"math"
 )
 
 // Transformation defines the interface for the transformation rules.
@@ -1307,7 +1307,7 @@ func NewRuleMergeAdjacentLimit() Transformation {
 }
 
 // OnTransform implements Transformation interface.
-// This rule tries to merge adjacent limit, with no simplification.
+// This rule tries to merge adjacent limit..
 func (r *MergeAdjacentLimit) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
 	limit := old.GetExpr().ExprNode.(*plannercore.LogicalLimit)
 	child := old.Children[0].GetExpr().ExprNode.(*plannercore.LogicalLimit)
