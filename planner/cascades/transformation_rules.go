@@ -1276,9 +1276,17 @@ func NewRuleEliminateSingleMaxMin() Transformation {
 }
 
 // Match implements Transformation interface.
-// Use appliedRuleSet in GroupExpr to avoid re-apply rules.
 func (r *EliminateSingleMaxMin) Match(expr *memo.ExprIter) bool {
+	// Use appliedRuleSet in GroupExpr to avoid re-apply rules.
+	if expr.GetExpr().HasAppliedRule(r) {
+		return false
+	}
+
 	agg := expr.GetExpr().ExprNode.(*plannercore.LogicalAggregation)
+	// EliminateSingleMaxMin only works on the complete mode.
+	if !agg.IsCompleteModeAgg() {
+		return false
+	}
 	if len(agg.GroupByItems) != 0 {
 		return false
 	}
@@ -1291,7 +1299,7 @@ func (r *EliminateSingleMaxMin) Match(expr *memo.ExprIter) bool {
 	if agg.AggFuncs[0].Name != ast.AggFuncMax && agg.AggFuncs[0].Name != ast.AggFuncMin {
 		return false
 	}
-	return !expr.GetExpr().HasAppliedRule(r)
+	return true
 }
 
 // OnTransform implements Transformation interface.

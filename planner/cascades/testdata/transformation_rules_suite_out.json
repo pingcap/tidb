@@ -964,24 +964,9 @@
           "Group#0 Schema:[Column#15]",
           "    Projection_4 input:[Group#1], Column#15",
           "Group#1 Schema:[Column#15]",
-          "    Aggregation_3 input:[Group#2], funcs:max(Column#14)",
-          "    Aggregation_5 input:[Group#3], funcs:max(plus(test.t.a, test.t.c))",
-          "Group#2 Schema:[Column#14]",
-          "    Limit_8 input:[Group#4], offset:0, count:1",
-          "Group#4 Schema:[Column#14]",
-          "    Sort_7 input:[Group#5], Column#14:desc",
-          "Group#5 Schema:[Column#14]",
-          "    Selection_6 input:[Group#6], not(isnull(Column#14))",
-          "Group#6 Schema:[Column#14]",
-          "    Projection_2 input:[Group#7], plus(test.t.a, test.t.c)->Column#14",
-          "Group#7 Schema:[test.t.a,test.t.c]",
-          "    TableScan_1 table:t1",
-          "Group#3 Schema:[test.t.a,test.t.c]",
-          "    Limit_11 input:[Group#8], offset:0, count:1",
-          "Group#8 Schema:[test.t.a,test.t.c]",
-          "    Sort_10 input:[Group#9], plus(test.t.a, test.t.c):desc",
-          "Group#9 Schema:[test.t.a,test.t.c]",
-          "    Selection_9 input:[Group#7], not(isnull(plus(test.t.a, test.t.c)))"
+          "    Aggregation_5 input:[Group#2], funcs:max(plus(test.t.a, test.t.c))",
+          "Group#2 Schema:[test.t.a,test.t.c]",
+          "    TableScan_1 table:t1"
         ]
       },
       {
@@ -996,7 +981,12 @@
           "Group#3 Schema:[test.t.a,test.t.c,test.t.d]",
           "    TableScan_1 table:t1"
         ]
-      },
+      }
+    ]
+  },
+  {
+    "Name": "TestEliminateMaxMin",
+    "Cases": [
       {
         "SQL": "select max(a) from t;",
         "Result": [
