@@ -194,9 +194,6 @@ func (b *builtinInIntSig) evalInt(row chunk.Row) (int64, bool, error) {
 
 	args := b.args
 	if b.hashSet != nil {
-		args = b.nonConstArgs
-	}
-	if b.hashSet != nil {
 		if isUnsigned, ok := b.hashSet[arg0]; ok {
 			if (isUnsigned0 && isUnsigned) || (!isUnsigned0 && !isUnsigned) {
 				return 1, false, nil
@@ -205,6 +202,7 @@ func (b *builtinInIntSig) evalInt(row chunk.Row) (int64, bool, error) {
 				return 1, false, nil
 			}
 		}
+		args = b.nonConstArgs
 	}
 
 	hasNull := b.hasNull
