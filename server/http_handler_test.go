@@ -51,6 +51,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/printer"
+	"github.com/pingcap/tidb/util/rowcodec"
 	log "github.com/sirupsen/logrus"
 	"go.uber.org/zap"
 )
@@ -225,7 +226,7 @@ func (ts *HTTPHandlerTestSuite) TestListTableRegions(c *C) {
 	c.Assert(err, IsNil)
 
 	region := data[1]
-	resp, err = http.Get(fmt.Sprintf("http://127.0.0.1:10090/regions/%d", region.TableID))
+	_, err = http.Get(fmt.Sprintf("http://127.0.0.1:10090/regions/%d", region.TableID))
 	c.Assert(err, IsNil)
 }
 
@@ -389,10 +390,19 @@ func (ts *HTTPHandlerTestSuite) prepareData(c *C) {
 	dbt.mustExec("alter table tidb.test add index idx1 (a, b);")
 	dbt.mustExec("alter table tidb.test add unique index idx2 (a, b);")
 
-	dbt.mustExec(`create table tidb.pt (a int) partition by range (a)
+	dbt.mustExec(`create table tidb.pt (a int primary key, b varchar(20), key idx(a, b))
+partition by range (a)
 (partition p0 values less than (256),
  partition p1 values less than (512),
  partition p2 values less than (1024))`)
+
+	txn2, err := dbt.db.Begin()
+	c.Assert(err, IsNil)
+	txn2.Exec("insert into tidb.pt values (42, '123')")
+	txn2.Exec("insert into tidb.pt values (256, 'b')")
+	txn2.Exec("insert into tidb.pt values (666, 'def')")
+	err = txn2.Commit()
+	c.Assert(err, IsNil)
 }
 
 func decodeKeyMvcc(closer io.ReadCloser, c *C, valid bool) {
@@ -458,6 +468,18 @@ func (ts *HTTPHandlerTestSuite) TestGetTableMVCC(c *C) {
 	c.Assert(data3["info"], NotNil)
 	c.Assert(data3["data"], NotNil)
 	c.Assert(data3["decode_error"], IsNil)
+
+	resp, err = http.Get(fmt.Sprintf("http://127.0.0.1:10090/mvcc/key/tidb/pt(p0)/42?decode=true"))
+	c.Assert(err, IsNil)
+	defer resp.Body.Close()
+	decoder = json.NewDecoder(resp.Body)
+	var data4 map[string]interface{}
+	err = decoder.Decode(&data4)
+	c.Assert(err, IsNil)
+	c.Assert(data4["key"], NotNil)
+	c.Assert(data4["info"], NotNil)
+	c.Assert(data4["data"], NotNil)
+	c.Assert(data4["decode_error"], IsNil)
 }
 
 func (ts *HTTPHandlerTestSuite) TestGetMVCCNotFound(c *C) {
@@ -565,15 +587,16 @@ func (ts *HTTPHandlerTestSuite) TestDecodeColumnValue(c *C) {
 	row[0] = types.NewIntDatum(100)
 	row[1] = types.NewBytesDatum([]byte("abc"))
 	row[2] = types.NewDecimalDatum(types.NewDecFromInt(1))
-	row[3] = types.NewTimeDatum(types.Time{Time: types.FromGoTime(time.Now()), Fsp: 6, Type: mysql.TypeTimestamp})
+	row[3] = types.NewTimeDatum(types.NewTime(types.FromGoTime(time.Now()), mysql.TypeTimestamp, 6))
 
 	// Encode the row.
 	colIDs := make([]int64, 0, 3)
 	for _, col := range cols {
 		colIDs = append(colIDs, col.id)
 	}
+	rd := rowcodec.Encoder{Enable: true}
 	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
-	bs, err := tablecodec.EncodeRow(sc, row, colIDs, nil, nil)
+	bs, err := tablecodec.EncodeRow(sc, row, colIDs, nil, nil, &rd)
 	c.Assert(err, IsNil)
 	c.Assert(bs, NotNil)
 	bin := base64.StdEncoding.EncodeToString(bs)
@@ -598,13 +621,13 @@ func (ts *HTTPHandlerTestSuite) TestDecodeColumnValue(c *C) {
 	// Test bin has `+`.
 	// 2018-03-08 16:01:00.315313
 	bin = "CAIIyAEIBAIGYWJjCAYGAQCBCAgJsZ+TgISg1M8Z"
-	row[3] = types.NewTimeDatum(types.Time{Time: types.FromGoTime(time.Date(2018, 3, 8, 16, 1, 0, 315313000, time.UTC)), Fsp: 6, Type: mysql.TypeTimestamp})
+	row[3] = types.NewTimeDatum(types.NewTime(types.FromGoTime(time.Date(2018, 3, 8, 16, 1, 0, 315313000, time.UTC)), mysql.TypeTimestamp, 6))
 	unitTest(cols[3])
 
 	// Test bin has `/`.
 	// 2018-03-08 02:44:46.409199
 	bin = "CAIIyAEIBAIGYWJjCAYGAQCBCAgJ7/yY8LKF1M8Z"
-	row[3] = types.NewTimeDatum(types.Time{Time: types.FromGoTime(time.Date(2018, 3, 8, 2, 44, 46, 409199000, time.UTC)), Fsp: 6, Type: mysql.TypeTimestamp})
+	row[3] = types.NewTimeDatum(types.NewTime(types.FromGoTime(time.Date(2018, 3, 8, 2, 44, 46, 409199000, time.UTC)), mysql.TypeTimestamp, 6))
 	unitTest(cols[3])
 }
 
@@ -663,6 +686,11 @@ func (ts *HTTPHandlerTestSuite) TestGetIndexMVCC(c *C) {
 	var data2 mvccKV
 	err = decoder.Decode(&data2)
 	c.Assert(err, NotNil)
+
+	resp, err = http.Get("http://127.0.0.1:10090/mvcc/index/tidb/pt(p2)/idx/666?a=666&b=def")
+	c.Assert(err, IsNil)
+	defer resp.Body.Close()
+	decodeKeyMvcc(resp.Body, c, true)
 }
 
 func (ts *HTTPHandlerTestSuite) TestGetSettings(c *C) {
@@ -767,7 +795,7 @@ func (ts *HTTPHandlerTestSuite) TestGetSchema(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(t.Name.L, Equals, "t1")
 
-	resp, err = http.Get(fmt.Sprintf(fmt.Sprintf("http://127.0.0.1:10090/db-table/%v", t.GetPartitionInfo().Definitions[0].ID)))
+	resp, err = http.Get(fmt.Sprintf("http://127.0.0.1:10090/db-table/%v", t.GetPartitionInfo().Definitions[0].ID))
 	c.Assert(err, IsNil)
 	decoder = json.NewDecoder(resp.Body)
 	err = decoder.Decode(&dbtbl)

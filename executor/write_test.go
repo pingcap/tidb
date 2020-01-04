@@ -2252,7 +2252,7 @@ func (s *testSuite4) TestLoadDataIntoPartitionedTable(c *C) {
 	c.Assert(err, IsNil)
 	ld.SetMaxRowsInBatch(20000)
 	ld.SetMessage()
-	err = ctx.StmtCommit()
+	err = ctx.StmtCommit(nil)
 	c.Assert(err, IsNil)
 	txn, err := ctx.Txn(true)
 	c.Assert(err, IsNil)

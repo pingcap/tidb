@@ -355,11 +355,7 @@ func (st *slowQueryTuple) setFieldValue(tz *time.Location, field, value string, 
 
 func (st *slowQueryTuple) convertToDatumRow() []types.Datum {
 	record := make([]types.Datum, 0, len(slowQueryCols))
-	record = append(record, types.NewTimeDatum(types.Time{
-		Time: types.FromGoTime(st.time),
-		Type: mysql.TypeDatetime,
-		Fsp:  types.MaxFsp,
-	}))
+	record = append(record, types.NewTimeDatum(types.NewTime(types.FromGoTime(st.time), mysql.TypeDatetime, types.MaxFsp)))
 	record = append(record, types.NewUintDatum(st.txnStartTs))
 	record = append(record, types.NewStringDatum(st.user))
 	record = append(record, types.NewStringDatum(st.host))

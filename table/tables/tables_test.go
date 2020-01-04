@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
+	"github.com/pingcap/tidb/util/testutil"
 	binlog "github.com/pingcap/tipb/go-binlog"
 	"google.golang.org/grpc"
 )
@@ -319,7 +320,7 @@ func (ts *testSuite) TestUnsignedPK(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(len(row), Equals, 2)
 	c.Assert(row[0].Kind(), Equals, types.KindUint64)
-	c.Assert(ts.se.StmtCommit(), IsNil)
+	c.Assert(ts.se.StmtCommit(nil), IsNil)
 	txn, err := ts.se.Txn(true)
 	c.Assert(err, IsNil)
 	c.Assert(txn.Commit(context.Background()), IsNil)
@@ -437,6 +438,19 @@ func (ts *testSuite) TestHiddenColumn(c *C) {
 			"  PRIMARY KEY (`a`)\n" +
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 
+	// Test show (extended) columns
+	tk.MustQuery("show columns from t").Check(testutil.RowsWithSep("|",
+		"a|int(11)|NO|PRI|<nil>|",
+		"c|int(11)|YES||<nil>|",
+		"e|int(11)|YES||<nil>|"))
+	tk.MustQuery("show extended columns from t").Check(testutil.RowsWithSep("|",
+		"a|int(11)|NO|PRI|<nil>|",
+		"b|int(11)|YES||<nil>|VIRTUAL GENERATED",
+		"c|int(11)|YES||<nil>|",
+		"d|int(11)|YES||<nil>|STORED GENERATED",
+		"e|int(11)|YES||<nil>|",
+		"f|tinyint(4)|YES||<nil>|VIRTUAL GENERATED"))
+
 	// `SELECT` statement
 	tk.MustQuery("select * from t;").Check(testkit.Rows("1 3 5"))
 	tk.MustQuery("select a, c, e from t;").Check(testkit.Rows("1 3 5"))
@@ -525,4 +539,11 @@ func (ts *testSuite) TestHiddenColumn(c *C) {
 			"  `e` int(11) DEFAULT NULL,\n" +
 			"  PRIMARY KEY (`a`)\n" +
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	tk.MustQuery("show extended columns from t").Check(testutil.RowsWithSep("|",
+		"a|int(11)|NO|PRI|<nil>|",
+		"b|int(11)|YES||<nil>|VIRTUAL GENERATED",
+		"c|int(11)|YES||<nil>|",
+		"d|int(11)|YES||<nil>|STORED GENERATED",
+		"e|int(11)|YES||<nil>|",
+		"f|tinyint(4)|YES||<nil>|VIRTUAL GENERATED"))
 }
