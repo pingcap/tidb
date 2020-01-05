@@ -15,6 +15,7 @@ package cascades
 
 import (
 	"math"
+
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	plannercore "github.com/pingcap/tidb/planner/core"
@@ -1304,6 +1305,14 @@ func NewRuleMergeAdjacentLimit() Transformation {
 		memo.NewPattern(memo.OperandLimit, memo.EngineAll),
 	)
 	return rule
+}
+
+// Match implements Transformation interface.
+// ensure that the two Limit operators are both executed in the same execution engine
+func (r *MergeAdjacentLimit) Match(expr *memo.ExprIter) bool {
+	engine := expr.GetExpr().Group.EngineType
+	childEngine := expr.Children[0].EngineType
+	return engine == childEngine
 }
 
 // OnTransform implements Transformation interface.
