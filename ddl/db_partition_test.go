@@ -19,6 +19,7 @@ import (
 	"math"
 	"math/rand"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -1753,4 +1754,36 @@ func (s *testIntegrationSuite3) TestUnsupportedPartitionManagementDDLs(c *C) {
 
 	_, err = tk.Exec("alter table test_1465 partition by hash(a)")
 	c.Assert(err, ErrorMatches, ".*alter table partition is unsupported")
+}
+
+func (s *testIntegrationSuite3) TestCommitWhenSchemaChange(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table schema_change (a int, b timestamp)
+			partition by range(a) (
+			    partition p0 values less than (4),
+			    partition p1 values less than (7),
+			    partition p2 values less than (11)
+			)`)
+	tk2 := testkit.NewTestKit(c, s.store)
+	tk2.MustExec("use test")
+
+	tk.MustExec("begin")
+	tk.MustExec("insert into schema_change values (1, '2019-12-25 13:27:42')")
+	tk.MustExec("insert into schema_change values (3, '2019-12-25 13:27:43')")
+
+	tk2.MustExec("alter table schema_change add index idx(b)")
+
+	tk.MustExec("insert into schema_change values (5, '2019-12-25 13:27:43')")
+	tk.MustExec("insert into schema_change values (9, '2019-12-25 13:27:44')")
+	atomic.StoreUint32(&session.SchemaChangedWithoutRetry, 1)
+	_, err := tk.Se.Execute(context.Background(), "commit")
+	atomic.StoreUint32(&session.SchemaChangedWithoutRetry, 0)
+	c.Assert(domain.ErrInfoSchemaChanged.Equal(err), IsTrue)
+
+	// Cover a bug that schema validator does not prevent transaction commit when
+	// the schema has changeed on the partitioned table.
+	// That bug will cause data and index inconsistency!
+	tk.MustExec("admin check table schema_change")
+	tk.MustQuery("select * from schema_change").Check(testkit.Rows())
 }

@@ -231,11 +231,7 @@ func (h *BindHandle) AddBindRecord(sctx sessionctx.Context, is infoschema.InfoSc
 		return err1
 	}
 	for i := range record.Bindings {
-		record.Bindings[i].CreateTime = types.Time{
-			Time: types.FromGoTime(oracle.GetTimeFromTS(txn.StartTS())),
-			Type: mysql.TypeTimestamp,
-			Fsp:  3,
-		}
+		record.Bindings[i].CreateTime = types.NewTime(types.FromGoTime(oracle.GetTimeFromTS(txn.StartTS())), mysql.TypeTimestamp, 3)
 		record.Bindings[i].UpdateTime = record.Bindings[0].CreateTime
 
 		// insert the BindRecord to the storage.
@@ -284,11 +280,7 @@ func (h *BindHandle) DropBindRecord(originalSQL, db string, binding *Binding) (e
 		return err1
 	}
 
-	updateTs := types.Time{
-		Time: types.FromGoTime(oracle.GetTimeFromTS(txn.StartTS())),
-		Type: mysql.TypeTimestamp,
-		Fsp:  3,
-	}
+	updateTs := types.NewTime(types.FromGoTime(oracle.GetTimeFromTS(txn.StartTS())), mysql.TypeTimestamp, 3)
 
 	bindSQL := ""
 	if binding != nil {

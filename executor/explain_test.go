@@ -156,7 +156,7 @@ func (s *testSuite1) checkMemoryInfo(c *C, tk *testkit.TestKit, sql string) {
 	}
 }
 
-func (s *testSuite1) TestMemoryUsageAfterClose(c *C) {
+func (s *testSuite1) TestMemoryAndDiskUsageAfterClose(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (v int, k int, key(k))")
@@ -173,20 +173,6 @@ func (s *testSuite1) TestMemoryUsageAfterClose(c *C) {
 		tk.MustQuery(sql)
 		c.Assert(tk.Se.GetSessionVars().StmtCtx.MemTracker.BytesConsumed(), Equals, int64(0))
 		c.Assert(tk.Se.GetSessionVars().StmtCtx.MemTracker.MaxConsumed(), Greater, int64(0))
-	}
-}
-
-func (s *testSuite1) TestDiskUsageAfterClose(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t (v int, k int, key(k))")
-	for i := 0; i < tk.Se.GetSessionVars().MaxChunkSize*5; i++ {
-		tk.MustExec(fmt.Sprintf("insert into t values (%v, %v)", i, i))
-	}
-	SQLs := []string{
-		"select v from t order by v"}
-	for _, sql := range SQLs {
-		tk.MustQuery(sql)
 		c.Assert(tk.Se.GetSessionVars().StmtCtx.DiskTracker.BytesConsumed(), Equals, int64(0))
 	}
 }
