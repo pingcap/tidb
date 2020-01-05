@@ -722,14 +722,42 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 	var cacheKey []byte = nil
 	var cacheValue *coprCacheValue = nil
 
+	logutil.BgLogger().Info("[Cache Debug] handleTaskOnce",
+		zap.Uint64("txnStartTS", worker.req.StartTs),
+		zap.Uint64("regionID", task.region.id),
+		zap.String("storeAddr", task.storeAddr),
+		zap.Any("task.cmdType", task.cmdType),
+		zap.Bool("worker.req.Cacheable", worker.req.Cacheable))
+
 	// If there are many ranges, it is very likely to be a TableLookupRequest. They are not worth to cache since
 	// computing is not the main cost. Ignore such requests directly to avoid slowly building the cache key.
 	if task.cmdType == tikvrpc.CmdCop && worker.store.coprCache != nil && worker.req.Cacheable && len(copReq.Ranges) < 10 {
 		cKey, err := coprCacheBuildKey(&copReq)
+		logutil.BgLogger().Info("[Cache Debug] handleTaskOnce: request is cacheable",
+			zap.Uint64("txnStartTS", worker.req.StartTs),
+			zap.Uint64("regionID", task.region.id),
+			zap.String("storeAddr", task.storeAddr),
+			zap.Any("cKey", cKey))
+
 		if err == nil {
 			cacheKey = cKey
 			cValue := worker.store.coprCache.Get(cKey)
+
+			logutil.BgLogger().Info("[Cache Debug] handleTaskOnce: Cached item",
+				zap.Uint64("txnStartTS", worker.req.StartTs),
+				zap.Uint64("regionID", task.region.id),
+				zap.String("storeAddr", task.storeAddr),
+				zap.Any("cKey", cKey),
+				zap.Any("cValue", cValue))
+
 			if cValue != nil && cValue.RegionID == task.region.id && cValue.TimeStamp <= worker.req.StartTs {
+				logutil.BgLogger().Info("[Cache Debug] handleTaskOnce: Item is in cache, send cache flag to TiKV",
+					zap.Uint64("txnStartTS", worker.req.StartTs),
+					zap.Uint64("regionID", task.region.id),
+					zap.String("storeAddr", task.storeAddr),
+					zap.Any("cKey", cKey),
+					zap.Any("cValue", cValue))
+
 				// Append cache version to the request to skip Coprocessor computation if possible
 				// when request result is cached
 				copReq.IsCacheEnabled = true
@@ -1002,14 +1030,34 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *RPCCon
 		}
 	}
 	if resp.pbResp.IsCacheHit {
+		logutil.BgLogger().Info("[Cache Debug] IsCacheHit = true",
+			zap.Uint64("txnStartTS", worker.req.StartTs),
+			zap.Uint64("regionID", task.region.id),
+			zap.String("storeAddr", task.storeAddr))
+
 		if cacheValue == nil {
 			return nil, errors.New("Internal error: received illegal TiKV response")
 		}
+
 		// Cache hit and is valid: use cached data as response data and we don't update the cache.
-		data := make([]byte, len(cacheValue.Data))
-		copy(data, cacheValue.Data)
-		resp.pbResp.Data = data
+		if bytes.Compare(cacheValue.Data, resp.pbResp.Data) != 0 {
+			logutil.BgLogger().Error("[Cache Debug] Cached data does not match actual data",
+				zap.Uint64("txnStartTS", worker.req.StartTs),
+				zap.Uint64("regionID", task.region.id),
+				zap.String("storeAddr", task.storeAddr),
+				zap.Any("cacheKey", cacheKey),
+				zap.Any("cacheValue", cacheValue),
+				zap.Any("resp.pbResp", resp.pbResp))
+			return nil, errors.New("Internal error: Cached data does not match actual data")
+		}
 	} else {
+		logutil.BgLogger().Info("[Cache Debug] IsCacheHit = false",
+			zap.Uint64("txnStartTS", worker.req.StartTs),
+			zap.Uint64("regionID", task.region.id),
+			zap.String("storeAddr", task.storeAddr),
+			zap.Any("cacheKey", cacheKey),
+			zap.Any("resp.pbResp.CacheLastVersion", resp.pbResp.CacheLastVersion))
+
 		// Cache not hit or cache hit but not valid: update the cache if the response can be cached.
 		if cacheKey != nil && resp.pbResp.CacheLastVersion > 0 {
 			if worker.store.coprCache.CheckAdmission(resp.pbResp.Data.Size(), resp.detail.ProcessTime) {
@@ -1023,6 +1071,13 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *RPCCon
 					RegionDataVersion: resp.pbResp.CacheLastVersion,
 				}
 				worker.store.coprCache.Set(cacheKey, &newCacheValue)
+
+				logutil.BgLogger().Info("[Cache Debug] Put cache",
+					zap.Uint64("txnStartTS", worker.req.StartTs),
+					zap.Uint64("regionID", task.region.id),
+					zap.String("storeAddr", task.storeAddr),
+					zap.Any("cacheKey", cacheKey),
+					zap.Any("cacheValue", newCacheValue))
 			}
 		}
 	}
