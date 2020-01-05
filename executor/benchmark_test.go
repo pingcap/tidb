@@ -77,6 +77,12 @@ func (mp *mockDataPhysicalPlan) Schema() *expression.Schema {
 	return mp.schema
 }
 
+func (mp *mockDataPhysicalPlan) ExplainID() fmt.Stringer {
+	return stringutil.MemoizeStr(func() string {
+		return "mockData_0"
+	})
+}
+
 func (mds *mockDataSource) genColDatums(col int) (results []interface{}) {
 	typ := mds.retFieldTypes[col]
 	order := false
@@ -404,13 +410,13 @@ func BenchmarkAggDistinct(b *testing.B) {
 	}
 }
 
-func buildWindowExecutor(ctx sessionctx.Context, windowFunc string, frame *core.WindowFrame, src Executor, schema *expression.Schema, partitionBy []*expression.Column, isParallel bool, dataSourceSorted bool) Executor {
-	srcPlan := &mockDataPhysicalPlan{
-		schema: src.Schema(),
-		exec:   src,
+func buildWindowExecutor(ctx sessionctx.Context, windowFunc string, frame *core.WindowFrame, srcExec Executor, schema *expression.Schema, partitionBy []*expression.Column, concurrency int, dataSourceSorted bool) Executor {
+	src := &mockDataPhysicalPlan{
+		schema: srcExec.Schema(),
+		exec:   srcExec,
 	}
-	base := core.BasePhysicalWindow{}
 
+	win := new(core.PhysicalWindow)
 	var args []expression.Expression
 	switch windowFunc {
 	case ast.WindowFuncNtile:
@@ -425,31 +431,35 @@ func buildWindowExecutor(ctx sessionctx.Context, windowFunc string, frame *core.
 		args = append(args, partitionBy[0])
 	}
 	desc, _ := aggregation.NewWindowFuncDesc(ctx, windowFunc, args)
-	base.WindowFuncDescs = []*aggregation.WindowFuncDesc{desc}
+	win.WindowFuncDescs = []*aggregation.WindowFuncDesc{desc}
 	for _, col := range partitionBy {
-		base.PartitionBy = append(base.PartitionBy, property.Item{Col: col})
+		win.PartitionBy = append(win.PartitionBy, property.Item{Col: col})
 	}
-	base.Frame = frame
-	base.OrderBy = nil
-	base.SetSchema(schema)
-	var plan core.PhysicalPlan
-	if isParallel {
-		plan = core.PhysicalWindowParallel{BasePhysicalWindow: base}.Init(ctx, nil, 0)
-		plan.SetChildren(srcPlan)
-	} else {
-		plan = core.PhysicalWindow{BasePhysicalWindow: base}.Init(ctx, nil, 0)
-		if !dataSourceSorted {
-			byItems := make([]*core.ByItems, 0, len(partitionBy))
-			for _, col := range partitionBy {
-				byItems = append(byItems, &core.ByItems{Expr: col, Desc: false})
-			}
-			sortPlan := &core.PhysicalSort{ByItems: byItems}
-			sortPlan.SetChildren(srcPlan)
-			plan.SetChildren(sortPlan)
-		} else {
-			plan.SetChildren(srcPlan)
+	win.Frame = frame
+	win.OrderBy = nil
+	win.SetSchema(schema)
+	win.Init(ctx, nil, 0)
+
+	if !dataSourceSorted {
+		byItems := make([]*core.ByItems, 0, len(partitionBy))
+		for _, col := range partitionBy {
+			byItems = append(byItems, &core.ByItems{Expr: col, Desc: false})
 		}
+		sort := &core.PhysicalSort{ByItems: byItems}
+		sort.SetChildren(src)
+		win.SetChildren(sort)
+	} else {
+		win.SetChildren(src)
 	}
+
+	var plan core.PhysicalPlan
+	if concurrency > 1 {
+		plan = core.PhysicalPartition{Concurrency: concurrency}.Init(ctx, nil, 0)
+		plan.SetChildren(win)
+	} else {
+		plan = win
+	}
+
 	b := newExecutorBuilder(ctx, nil)
 	exec := b.build(plan)
 	return exec
@@ -513,7 +523,7 @@ func benchmarkWindowExecWithCase(b *testing.B, casTest *windowTestCase) {
 		b.StopTimer() // prepare a new window-executor
 		childCols := casTest.columns()
 		schema := expression.NewSchema(childCols...)
-		windowExec := buildWindowExecutor(casTest.ctx, casTest.windowFunc, casTest.frame, dataSource, schema, childCols[1:2], casTest.concurrency > 1, casTest.dataSourceSorted)
+		windowExec := buildWindowExecutor(casTest.ctx, casTest.windowFunc, casTest.frame, dataSource, schema, childCols[1:2], casTest.concurrency, casTest.dataSourceSorted)
 		tmpCtx := context.Background()
 		chk := newFirstChunk(windowExec)
 		dataSource.prepareChunks()

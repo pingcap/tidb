@@ -436,7 +436,7 @@ func (p *PhysicalTopN) ExplainNormalizedInfo() string {
 	return buffer.String()
 }
 
-func (p *BasePhysicalWindow) formatFrameBound(buffer *bytes.Buffer, bound *FrameBound) {
+func (p *PhysicalWindow) formatFrameBound(buffer *bytes.Buffer, bound *FrameBound) {
 	if bound.Type == ast.CurrentRow {
 		buffer.WriteString("current row")
 		return
@@ -464,7 +464,7 @@ func (p *BasePhysicalWindow) formatFrameBound(buffer *bytes.Buffer, bound *Frame
 }
 
 // ExplainInfo implements Plan interface.
-func (p *BasePhysicalWindow) ExplainInfo() string {
+func (p *PhysicalWindow) ExplainInfo() string {
 	buffer := bytes.NewBufferString("")
 	formatWindowFuncDescs(buffer, p.WindowFuncDescs, p.schema)
 	buffer.WriteString(" over(")
@@ -511,6 +511,13 @@ func (p *BasePhysicalWindow) ExplainInfo() string {
 		p.formatFrameBound(buffer, p.Frame.End)
 	}
 	buffer.WriteString(")")
+	return buffer.String()
+}
+
+// ExplainInfo implements Plan interface.
+func (p *PhysicalPartition) ExplainInfo() string {
+	buffer := bytes.NewBufferString("")
+	fmt.Fprintf(buffer, "execution info: concurrency:%v, data source:%v", p.Concurrency, p.DataSource.ExplainID())
 	return buffer.String()
 }
 

@@ -14,6 +14,8 @@
 package core
 
 import (
+	"unsafe"
+
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/expression"
@@ -52,7 +54,8 @@ var (
 	_ PhysicalPlan = &PhysicalMergeJoin{}
 	_ PhysicalPlan = &PhysicalUnionScan{}
 	_ PhysicalPlan = &PhysicalWindow{}
-	_ PhysicalPlan = &PhysicalWindowParallel{}
+	_ PhysicalPlan = &PhysicalPartition{}
+	_ PhysicalPlan = &PhysicalPartitionDataSourceStub{}
 	_ PhysicalPlan = &BatchPointGetPlan{}
 )
 
@@ -536,8 +539,8 @@ func (p *PhysicalTableDual) SetOutputNames(names types.NameSlice) {
 	p.names = names
 }
 
-// BasePhysicalWindow is the base physical operator of window function.
-type BasePhysicalWindow struct {
+// PhysicalWindow is the physical operator of window function.
+type PhysicalWindow struct {
 	physicalSchemaProducer
 
 	WindowFuncDescs []*aggregation.WindowFuncDesc
@@ -546,14 +549,20 @@ type BasePhysicalWindow struct {
 	Frame           *WindowFrame
 }
 
-// PhysicalWindow is the physical operator of window function.
-type PhysicalWindow struct {
-	BasePhysicalWindow
+// PhysicalPartition represents a partition plan.
+type PhysicalPartition struct {
+	physicalSchemaProducer
+
+	Concurrency int
+	Tail        PhysicalPlan
+	DataSource  PhysicalPlan
 }
 
-// PhysicalWindowParallel is the physical operator of window function in a parallel manner.
-type PhysicalWindowParallel struct {
-	BasePhysicalWindow
+// PhysicalPartitionDataSourceStub represents a data source stub of partition plan.
+type PhysicalPartitionDataSourceStub struct {
+	physicalSchemaProducer
+
+	Worker unsafe.Pointer
 }
 
 // CollectPlanStatsVersion uses to collect the statistics version of the plan.

@@ -1483,37 +1483,16 @@ func (p *LogicalWindow) exhaustPhysicalPlans(prop *property.PhysicalProperty) []
 	var byItems []property.Item
 	byItems = append(byItems, p.PartitionBy...)
 	byItems = append(byItems, p.OrderBy...)
-
-	concurrency := p.ctx.GetSessionVars().WindowConcurrency
-	if concurrency > 1 && prop.IsEmpty() { //TODO: implement a cost-based strategy
-		return p.getWindowParallel(prop, byItems)
-	}
-	return p.getWindow(prop, byItems)
-}
-
-func (p *LogicalWindow) getWindow(prop *property.PhysicalProperty, byItems []property.Item) []PhysicalPlan {
 	childProperty := &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64, Items: byItems, Enforced: true}
 	if !prop.IsPrefix(childProperty) {
 		return nil
 	}
-	window := PhysicalWindow{BasePhysicalWindow{
+	window := PhysicalWindow{
 		WindowFuncDescs: p.WindowFuncDescs,
 		PartitionBy:     p.PartitionBy,
 		OrderBy:         p.OrderBy,
 		Frame:           p.Frame,
-	}}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), p.blockOffset, childProperty)
-	window.SetSchema(p.Schema())
-	return []PhysicalPlan{window}
-}
-
-func (p *LogicalWindow) getWindowParallel(prop *property.PhysicalProperty, byItems []property.Item) []PhysicalPlan {
-	childProperty := &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64}
-	window := PhysicalWindowParallel{BasePhysicalWindow{
-		WindowFuncDescs: p.WindowFuncDescs,
-		PartitionBy:     p.PartitionBy,
-		OrderBy:         p.OrderBy,
-		Frame:           p.Frame,
-	}}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), p.blockOffset, childProperty)
+	}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), p.blockOffset, childProperty)
 	window.SetSchema(p.Schema())
 	return []PhysicalPlan{window}
 }

@@ -369,7 +369,7 @@ func (p *PhysicalSort) ResolveIndices() (err error) {
 }
 
 // ResolveIndices implements Plan interface.
-func (p *BasePhysicalWindow) ResolveIndices() (err error) {
+func (p *PhysicalWindow) ResolveIndices() (err error) {
 	err = p.physicalSchemaProducer.ResolveIndices()
 	if err != nil {
 		return err
