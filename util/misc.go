@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/uber-go/atomic"
 	"go.uber.org/zap"
 )
 
@@ -39,6 +40,9 @@ const (
 	// GCTimeFormat is the format that gc_worker used to store times.
 	GCTimeFormat = "20060102-15:04:05 -0700"
 )
+
+// EnablePProfSQLCPU control whether collect pprof cpu in SQL level.
+var EnablePProfSQLCPU = atomic.NewBool(false)
 
 // RunWithRetry will run the f with backoff and retry.
 // retryCnt: Max retry count
