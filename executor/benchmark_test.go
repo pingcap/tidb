@@ -83,6 +83,14 @@ func (mp *mockDataPhysicalPlan) ExplainID() fmt.Stringer {
 	})
 }
 
+func (mp *mockDataPhysicalPlan) Stats() *property.StatsInfo {
+	return nil
+}
+
+func (mp *mockDataPhysicalPlan) SelectBlockOffset() int {
+	return 0
+}
+
 func (mds *mockDataSource) genColDatums(col int) (results []interface{}) {
 	typ := mds.retFieldTypes[col]
 	order := false
@@ -440,6 +448,7 @@ func buildWindowExecutor(ctx sessionctx.Context, windowFunc string, frame *core.
 	win.SetSchema(schema)
 	win.Init(ctx, nil, 0)
 
+	var tail core.PhysicalPlan = win
 	if !dataSourceSorted {
 		byItems := make([]*core.ByItems, 0, len(partitionBy))
 		for _, col := range partitionBy {
@@ -448,13 +457,14 @@ func buildWindowExecutor(ctx sessionctx.Context, windowFunc string, frame *core.
 		sort := &core.PhysicalSort{ByItems: byItems}
 		sort.SetChildren(src)
 		win.SetChildren(sort)
+		tail = sort
 	} else {
 		win.SetChildren(src)
 	}
 
 	var plan core.PhysicalPlan
 	if concurrency > 1 {
-		plan = core.PhysicalPartition{Concurrency: concurrency}.Init(ctx, nil, 0)
+		plan = core.PhysicalPartition{Concurrency: concurrency, Tail: tail, DataSource: src}.Init(ctx, nil, 0)
 		plan.SetChildren(win)
 	} else {
 		plan = win

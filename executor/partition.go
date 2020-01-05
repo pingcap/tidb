@@ -77,36 +77,9 @@ type PartitionExec struct {
 
 	splitter   partitionSplitter
 	dataSource Executor
-	//childrenExec []Executor
 
 	finishCh chan struct{}
 	outputCh chan *partitionOutput
-}
-
-type partitionSplitter interface {
-	split(ctx sessionctx.Context, input *chunk.Chunk, workerIndices []int) ([]int, error)
-}
-
-var _ partitionSplitter = &hashPartitionSplitter{}
-
-type hashPartitionSplitter struct {
-	byItems    []expression.Expression
-	numWorkers int
-	hashKeys   [][]byte
-}
-
-func (s *hashPartitionSplitter) split(ctx sessionctx.Context, input *chunk.Chunk, workerIndices []int) ([]int, error) {
-	var err error
-	s.hashKeys, err = getGroupKey(ctx, input, s.hashKeys, s.byItems)
-	if err != nil {
-		return workerIndices, err
-	}
-	workerIndices = workerIndices[:0]
-	numRows := input.NumRows()
-	for i := 0; i < numRows; i++ {
-		workerIndices = append(workerIndices, int(murmur3.Sum32(s.hashKeys[i]))%s.numWorkers)
-	}
-	return workerIndices, nil
 }
 
 type partitionOutput struct {
@@ -369,4 +342,30 @@ func (e *partitionWorker) run(ctx context.Context, waitGroup *sync.WaitGroup) {
 			e.outputCh <- &partitionOutput{chk: chk, giveBackCh: e.outputHolderCh}
 		}
 	}
+}
+
+var _ partitionSplitter = &hashPartitionSplitter{}
+
+type partitionSplitter interface {
+	split(ctx sessionctx.Context, input *chunk.Chunk, workerIndices []int) ([]int, error)
+}
+
+type hashPartitionSplitter struct {
+	byItems    []expression.Expression
+	numWorkers int
+	hashKeys   [][]byte
+}
+
+func (s *hashPartitionSplitter) split(ctx sessionctx.Context, input *chunk.Chunk, workerIndices []int) ([]int, error) {
+	var err error
+	s.hashKeys, err = getGroupKey(ctx, input, s.hashKeys, s.byItems)
+	if err != nil {
+		return workerIndices, err
+	}
+	workerIndices = workerIndices[:0]
+	numRows := input.NumRows()
+	for i := 0; i < numRows; i++ {
+		workerIndices = append(workerIndices, int(murmur3.Sum32(s.hashKeys[i]))%s.numWorkers)
+	}
+	return workerIndices, nil
 }

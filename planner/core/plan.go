@@ -97,8 +97,7 @@ func optimizeByPartition4Window(pp *PhysicalWindow, ctx sessionctx.Context) *Phy
 	if concurrency > 1 {
 		var tail, dataSource PhysicalPlan = pp, pp.Children()[0]
 		if sort, ok := dataSource.(*PhysicalSort); ok {
-			tail = sort
-			dataSource = sort.Children()[0]
+			tail, dataSource = sort, sort.Children()[0]
 		}
 		reqProp := &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64}
 		part := PhysicalPartition{
