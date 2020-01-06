@@ -617,8 +617,8 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt) *PointGetP
 			if err != nil {
 				return nil
 			}
-			pos, ok := locateHashPartition(exprs[0], pairs)
-			if !ok {
+			pos, err := locateHashPartition(ctx, exprs[0], pairs)
+			if err != nil {
 				return nil
 			}
 			partitionIdx := math.Abs(pos) % int64(pi.Num)
@@ -656,8 +656,8 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt) *PointGetP
 			if err != nil {
 				return nil
 			}
-			pos, ok := locateHashPartition(exprs[0], pairs)
-			if !ok {
+			pos, err := locateHashPartition(ctx, exprs[0], pairs)
+			if err != nil {
 				return nil
 			}
 			partitionIdx := math.Abs(pos) % int64(pi.Num)
@@ -1058,57 +1058,20 @@ func buildSchemaForPartition(dbName model.CIStr, tbl *model.TableInfo, tblName m
 	return expression.NewSchema(columns...), names
 }
 
-func locateHashPartition(piExpr expression.Expression, pairs []nameValuePair) (int64, bool) {
-	switch pi := piExpr.(type) {
-	case *expression.Column:
-		for _, p := range pairs {
-			if p.colName == pi.OrigName {
-				switch p.value.Kind() {
-				case types.KindInt64:
-					return p.value.GetInt64(), true
-				case types.KindUint64:
-					return int64(p.value.GetUint64()), true
-				default:
-					return 0, false
-				}
-			}
-		}
-		return 0, false
-	case *expression.Constant:
-		val, err := pi.Eval(chunk.Row{})
-		if err != nil {
-			return 0, false
-		}
-		switch val.Kind() {
-		case types.KindInt64:
-			return val.GetInt64(), true
-		case types.KindUint64:
-			return int64(val.GetUint64()), true
-		default:
-			return 0, false
-		}
-	case *expression.ScalarFunction:
-		if pi.FuncName.L == ast.Plus || pi.FuncName.L == ast.Minus || pi.FuncName.L == ast.Mul || pi.FuncName.L == ast.Div {
-			left, right := pi.GetArgs()[0], pi.GetArgs()[1]
-			leftVal, ok := locateHashPartition(left, pairs)
-			if !ok {
-				return 0, ok
-			}
-			rightVal, ok := locateHashPartition(right, pairs)
-			if !ok {
-				return 0, ok
-			}
-			switch pi.FuncName.L {
-			case ast.Plus:
-				return rightVal + leftVal, true
-			case ast.Minus:
-				return rightVal - leftVal, true
-			case ast.Mul:
-				return rightVal * leftVal, true
-			case ast.Div:
-				return rightVal / leftVal, true
-			}
-		}
+func locateHashPartition(ctx sessionctx.Context, piExpr expression.Expression, pairs []nameValuePair) (int64, error) {
+	r := make([]types.Datum, 0)
+	for _, d := range pairs {
+		r = append(r, d.value)
 	}
-	return 0, false
+	ret, isNull, err := piExpr.EvalInt(ctx, chunk.MutRowFromDatums(r).ToRow())
+	if err != nil {
+		return 0, err
+	}
+	if isNull {
+		return 0, nil
+	}
+	if ret < 0 {
+		ret = 0 - ret
+	}
+	return ret, nil
 }
