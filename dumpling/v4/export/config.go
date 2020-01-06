@@ -21,6 +21,8 @@ type Config struct {
 	OutputDirPath string
 	ServerInfo    ServerInfo
 	SortByPk      bool
+	Tables        DatabaseTables
+	Snapshot      string
 }
 
 func DefaultConfig() *Config {
@@ -36,6 +38,8 @@ func DefaultConfig() *Config {
 		OutputDirPath: ".",
 		ServerInfo:    ServerInfoUnknown,
 		SortByPk:      false,
+		Tables:        nil,
+		Snapshot:      "",
 	}
 }
 
@@ -96,3 +100,9 @@ const (
 
 	ServerTypeAll
 )
+
+type databaseName = string
+
+type tableName = string
+
+type DatabaseTables map[databaseName][]tableName
