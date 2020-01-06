@@ -110,7 +110,7 @@ func (e *ShowExec) histogramToRow(dbName, tblName, partitionName, colName string
 
 func (e *ShowExec) versionToTime(version uint64) types.Time {
 	t := time.Unix(0, oracle.ExtractPhysical(version)*int64(time.Millisecond))
-	return types.Time{Time: types.FromGoTime(t), Type: mysql.TypeDatetime}
+	return types.NewTime(types.FromGoTime(t), mysql.TypeDatetime, 0)
 }
 
 func (e *ShowExec) fetchShowStatsBuckets() error {

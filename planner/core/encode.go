@@ -20,6 +20,7 @@ import (
 	"hash"
 	"sync"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/util/plancodec"
 )
 
@@ -42,6 +43,9 @@ func EncodePlan(p Plan) string {
 	if selectPlan == nil {
 		return ""
 	}
+	failpoint.Inject("mockPlanRowCount", func(val failpoint.Value) {
+		selectPlan.statsInfo().RowCount = float64(val.(int))
+	})
 	return pn.encodePlanTree(selectPlan)
 }
 
