@@ -338,7 +338,7 @@ func (p *basePhysicalAgg) ResolveIndices() (err error) {
 
 // ResolveIndices implements Plan interface.
 func (p *PhysicalSort) ResolveIndices() (err error) {
-	err = p.basePhysicalPlan.ResolveIndices()
+	err = p.physicalSchemaProducer.ResolveIndices()
 	if err != nil {
 		return err
 	}

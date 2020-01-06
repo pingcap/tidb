@@ -15,6 +15,7 @@ package core
 
 import (
 	"context"
+
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -101,6 +102,13 @@ func (p *LogicalSelection) BuildKeyInfo(selfSchema *expression.Schema, childSche
 			}
 		}
 	}
+}
+
+// BuildKeyInfo implements LogicalPlan BuildKeyInfo interface.
+func (p *LogicalSort) BuildKeyInfo(selfSchema *expression.Schema, childSchema []*expression.Schema) {
+	p.logicalSchemaProducer.schema.Keys = make([]expression.KeyInfo, len(childSchema[0].Keys))
+	copy(p.logicalSchemaProducer.schema.Keys, childSchema[0].Keys)
+	p.baseLogicalPlan.BuildKeyInfo(selfSchema, childSchema)
 }
 
 // BuildKeyInfo implements LogicalPlan BuildKeyInfo interface.

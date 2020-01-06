@@ -83,12 +83,15 @@ type logicalSchemaProducer struct {
 // Schema implements the Plan.Schema interface.
 func (s *logicalSchemaProducer) Schema() *expression.Schema {
 	if s.schema == nil {
-		s.schema = expression.NewSchema()
+		s.schema = s.baseLogicalPlan.children[0].Schema().Clone()
 	}
 	return s.schema
 }
 
 func (s *logicalSchemaProducer) OutputNames() types.NameSlice {
+	if s.names == nil {
+		s.names = s.baseLogicalPlan.children[0].OutputNames()
+	}
 	return s.names
 }
 
@@ -115,7 +118,7 @@ type physicalSchemaProducer struct {
 // Schema implements the Plan.Schema interface.
 func (s *physicalSchemaProducer) Schema() *expression.Schema {
 	if s.schema == nil {
-		s.schema = expression.NewSchema()
+		s.schema = s.basePhysicalPlan.children[0].Schema().Clone()
 	}
 	return s.schema
 }

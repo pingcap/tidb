@@ -143,6 +143,14 @@ func (la *LogicalAggregation) PruneColumns(parentUsedCols []*expression.Column) 
 // If any expression can view as a constant in execution stage, such as correlated column, constant,
 // we do prune them. Note that we can't prune the expressions contain non-deterministic functions, such as rand().
 func (ls *LogicalSort) PruneColumns(parentUsedCols []*expression.Column) error {
+	// for inline projection
+	used := getUsedList(parentUsedCols, ls.schema)
+	for i := len(used) - 1; i >= 0; i-- {
+		if !used[i] {
+			ls.schema.Columns = append(ls.schema.Columns[:i], ls.schema.Columns[i+1:]...)
+		}
+	}
+
 	child := ls.children[0]
 	for i := len(ls.ByItems) - 1; i >= 0; i-- {
 		cols := expression.ExtractColumns(ls.ByItems[i].Expr)

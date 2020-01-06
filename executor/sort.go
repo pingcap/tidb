@@ -71,6 +71,28 @@ func (e *SortExec) Open(ctx context.Context) error {
 	return e.children[0].Open(ctx)
 }
 
+func (e *SortExec) inlineProjection(chunks *chunk.List, inputs, outputs []*expression.Column) {
+	if len(inputs) == len(outputs) {
+		return
+	}
+	colIdxs := make([]int, 0, len(outputs))
+	for i, input := range inputs {
+		for _, output := range outputs {
+			if input.Equal(nil, output) {
+				colIdxs = append(colIdxs, i)
+				break
+			}
+		}
+	}
+	if len(colIdxs) > 0 {
+		for i := chunks.NumChunks() - 1; i >= 0; i-- {
+			chk := chunks.GetChunk(i)
+			chk.Prune(colIdxs)
+		}
+	}
+	return
+}
+
 // Next implements the Executor Next interface.
 func (e *SortExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.Reset()
@@ -83,6 +105,11 @@ func (e *SortExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		e.initCompareFuncs()
 		e.buildKeyColumns()
 		sort.Slice(e.rowPtrs, e.keyColumnsLess)
+
+		inputSchema := e.children[0].Schema()
+		outputSchema := e.schema
+		e.inlineProjection(e.rowChunks, inputSchema.Columns, outputSchema.Columns)
+
 		e.fetched = true
 	}
 	for !req.IsFull() && e.Idx < len(e.rowPtrs) {
@@ -94,7 +121,7 @@ func (e *SortExec) Next(ctx context.Context, req *chunk.Chunk) error {
 }
 
 func (e *SortExec) fetchRowChunks(ctx context.Context) error {
-	fields := retTypes(e)
+	fields := retTypes(e.children[0])
 	e.rowChunks = chunk.NewList(fields, e.initCap, e.maxChunkSize)
 	e.rowChunks.GetMemTracker().AttachTo(e.memTracker)
 	e.rowChunks.GetMemTracker().SetLabel(rowChunksLabel)

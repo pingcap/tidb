@@ -167,6 +167,14 @@ func (c *Chunk) IsFull() bool {
 	return c.NumRows() >= c.requiredRows
 }
 
+// Prune prunes Columns and keep the usedColIdxs. usedColIdxs should be ascending.
+func (c *Chunk) Prune(usedColIdxs []int) {
+	for i, idx := range usedColIdxs {
+		c.columns[i] = c.columns[idx]
+	}
+	c.columns = c.columns[:len(usedColIdxs)]
+}
+
 // MakeRef makes Column in "dstColIdx" reference to Column in "srcColIdx".
 func (c *Chunk) MakeRef(srcColIdx, dstColIdx int) {
 	c.columns[dstColIdx] = c.columns[srcColIdx]
@@ -337,7 +345,7 @@ func (c *Chunk) AppendRow(row Row) {
 	c.numVirtualRows++
 }
 
-// AppendPartialRow appends a row to the chunk.
+// AppendPartialRow appends a row to the chunk, with a column offset of colIdx.
 func (c *Chunk) AppendPartialRow(colIdx int, row Row) {
 	c.appendSel(colIdx)
 	for i, rowCol := range row.c.columns {

@@ -467,7 +467,7 @@ type PhysicalStreamAgg struct {
 
 // PhysicalSort is the physical operator of sort, which implements a memory sort.
 type PhysicalSort struct {
-	basePhysicalPlan
+	physicalSchemaProducer
 
 	ByItems []*ByItems
 }

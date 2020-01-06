@@ -1095,3 +1095,85 @@ func BenchmarkIndexJoinExec(b *testing.B) {
 		benchmarkIndexJoinExecWithCase(b, tc, outerDS, innerDS, indexOuterHashJoin)
 	})
 }
+
+type sortCase struct {
+	rows       int
+	orderByIdx []int
+	outputIdx  []int
+	ctx        sessionctx.Context
+}
+
+func (tc sortCase) columns() []*expression.Column {
+	return []*expression.Column{
+		{UniqueID: 0, Index: 0, RetType: types.NewFieldType(mysql.TypeLonglong)},
+		{UniqueID: 1, Index: 1, RetType: types.NewFieldType(mysql.TypeLonglong)},
+	}
+}
+
+func (tc sortCase) String() string {
+	return fmt.Sprintf("(rows:%v, orderBy:%v)", tc.rows, tc.orderByIdx)
+}
+
+func defaultSortTestCase() *sortCase {
+	ctx := mock.NewContext()
+	ctx.GetSessionVars().InitChunkSize = variable.DefInitChunkSize
+	ctx.GetSessionVars().MaxChunkSize = variable.DefMaxChunkSize
+	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(nil, -1)
+	tc := &sortCase{rows: 3000000, orderByIdx: []int{0}, outputIdx: []int{0, 1}, ctx: ctx}
+	return tc
+}
+
+func benchmarkSortExec(b *testing.B, cas *sortCase) {
+	opt := mockDataSourceParameters{
+		schema: expression.NewSchema(cas.columns()...),
+		rows:   cas.rows,
+		ctx:    cas.ctx,
+	}
+	dataSource := buildMockDataSource(opt)
+	exec := &SortExec{
+		baseExecutor: newBaseExecutor(cas.ctx, dataSource.schema, stringutil.StringerStr("sort"), dataSource),
+		ByItems:      make([]*core.ByItems, 0, len(cas.orderByIdx)),
+		schema:       expression.NewSchema(),
+	}
+	for _, idx := range cas.orderByIdx {
+		exec.ByItems = append(exec.ByItems, &core.ByItems{Expr: cas.columns()[idx]})
+	}
+	for _, idx := range cas.outputIdx {
+		exec.schema.Append(dataSource.schema.Columns[idx])
+	}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		b.StopTimer()
+		tmpCtx := context.Background()
+		chk := newFirstChunk(exec)
+		dataSource.prepareChunks()
+
+		b.StartTimer()
+		if err := exec.Open(tmpCtx); err != nil {
+			b.Fatal(err)
+		}
+		for {
+			if err := exec.Next(tmpCtx, chk); err != nil {
+				b.Fatal(err)
+			}
+			if chk.NumRows() == 0 {
+				break
+			}
+		}
+
+		if err := exec.Close(); err != nil {
+			b.Fatal(err)
+		}
+		b.StopTimer()
+	}
+}
+
+func BenchmarkSortExec(b *testing.B) {
+	b.ReportAllocs()
+	cas := defaultSortTestCase()
+	cas.orderByIdx = []int{0}
+	cas.outputIdx = []int{1} // for inline projection.
+	b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
+		benchmarkSortExec(b, cas)
+	})
+}

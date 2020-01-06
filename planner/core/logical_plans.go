@@ -796,7 +796,7 @@ type LogicalUnionAll struct {
 
 // LogicalSort stands for the order by plan.
 type LogicalSort struct {
-	baseLogicalPlan
+	logicalSchemaProducer
 
 	ByItems []*ByItems
 }
