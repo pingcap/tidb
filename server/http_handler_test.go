@@ -1015,7 +1015,7 @@ func (ts *HTTPHandlerTestSuite) TestZipInfoForSQL(c *C) {
 		"sql":        {"select * from t"},
 		"current_db": {"test"},
 	}
-	resp, err := http.PostForm("http://127.0.0.1:10090/debug/sub-optimal-plan", urlValues)
+	resp, err := ts.formStatus("/debug/sub-optimal-plan", urlValues)
 	c.Assert(err, IsNil)
 	c.Assert(resp.StatusCode, Equals, http.StatusOK)
 	b, err := httputil.DumpResponse(resp, true)
@@ -1023,7 +1023,7 @@ func (ts *HTTPHandlerTestSuite) TestZipInfoForSQL(c *C) {
 	c.Assert(len(b), Greater, 0)
 	c.Assert(resp.Body.Close(), IsNil)
 
-	resp, err = http.PostForm("http://127.0.0.1:10090/debug/sub-optimal-plan?pprof_time=5&timeout=0", urlValues)
+	resp, err = ts.formStatus("/debug/sub-optimal-plan?pprof_time=5&timeout=0", urlValues)
 	c.Assert(err, IsNil)
 	c.Assert(resp.StatusCode, Equals, http.StatusOK)
 	b, err = httputil.DumpResponse(resp, true)
@@ -1031,7 +1031,7 @@ func (ts *HTTPHandlerTestSuite) TestZipInfoForSQL(c *C) {
 	c.Assert(len(b), Greater, 0)
 	c.Assert(resp.Body.Close(), IsNil)
 
-	resp, err = http.PostForm("http://127.0.0.1:10090/debug/sub-optimal-plan?pprof_time=5", urlValues)
+	resp, err = ts.formStatus("/debug/sub-optimal-plan?pprof_time=5", urlValues)
 	c.Assert(err, IsNil)
 	c.Assert(resp.StatusCode, Equals, http.StatusOK)
 	b, err = httputil.DumpResponse(resp, true)
@@ -1039,7 +1039,7 @@ func (ts *HTTPHandlerTestSuite) TestZipInfoForSQL(c *C) {
 	c.Assert(len(b), Greater, 0)
 	c.Assert(resp.Body.Close(), IsNil)
 
-	resp, err = http.PostForm("http://127.0.0.1:10090/debug/sub-optimal-plan?timeout=1", urlValues)
+	resp, err = ts.formStatus("/debug/sub-optimal-plan?timeout=1", urlValues)
 	c.Assert(err, IsNil)
 	c.Assert(resp.StatusCode, Equals, http.StatusOK)
 	b, err = httputil.DumpResponse(resp, true)
@@ -1048,7 +1048,7 @@ func (ts *HTTPHandlerTestSuite) TestZipInfoForSQL(c *C) {
 	c.Assert(resp.Body.Close(), IsNil)
 
 	urlValues.Set("current_db", "non_exists_db")
-	resp, err = http.PostForm("http://127.0.0.1:10090/debug/sub-optimal-plan", urlValues)
+	resp, err = ts.formStatus("/debug/sub-optimal-plan", urlValues)
 	c.Assert(err, IsNil)
 	c.Assert(resp.StatusCode, Equals, http.StatusInternalServerError)
 	b, err = ioutil.ReadAll(resp.Body)
