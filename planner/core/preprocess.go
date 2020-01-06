@@ -398,6 +398,12 @@ func (p *preprocessor) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 		}
 	}
 	for _, constraint := range stmt.Constraints {
+		for _, spec := range constraint.Keys {
+			if spec.Expr != nil {
+				p.err = ErrNotSupportedYet.GenWithStackByArgs("create table with expression index")
+				return
+			}
+		}
 		switch tp := constraint.Tp; tp {
 		case ast.ConstraintKey, ast.ConstraintIndex, ast.ConstraintUniq, ast.ConstraintUniqKey, ast.ConstraintUniqIndex:
 			err := checkIndexInfo(constraint.Name, constraint.Keys)
