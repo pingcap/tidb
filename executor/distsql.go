@@ -873,7 +873,10 @@ func (w *tableWorker) compareData(ctx context.Context, task *lookupTableTask, ta
 					vals = append(vals, row.GetDatum(i, &col.FieldType))
 				}
 			}
-			vals = tables.TruncateIndexValuesIfNeeded(tblInfo, w.idxLookup.index, vals)
+			vals, err = tables.TruncateIndexValuesIfNeeded(tblReaderExec.ctx.GetSessionVars().StmtCtx, tblInfo, w.idxLookup.index, vals)
+			if err != nil {
+				return errors.Trace(err)
+			}
 			for i, val := range vals {
 				col := w.idxTblCols[i]
 				tp := &col.FieldType

@@ -125,10 +125,11 @@ func (c *index) getIndexKeyBuf(buf []byte, defaultCap int) []byte {
 }
 
 // TruncateIndexValuesIfNeeded truncates the index values created using only the leading part of column values.
-func TruncateIndexValuesIfNeeded(tblInfo *model.TableInfo, idxInfo *model.IndexInfo, indexedValues []types.Datum) []types.Datum {
+func TruncateIndexValuesIfNeeded(sc *stmtctx.StatementContext, tblInfo *model.TableInfo, idxInfo *model.IndexInfo, indexedValues []types.Datum) ([]types.Datum, error) {
 	for i := 0; i < len(indexedValues); i++ {
 		v := &indexedValues[i]
-		if v.Kind() == types.KindString || v.Kind() == types.KindBytes {
+		switch v.Kind() {
+		case types.KindString, types.KindBytes:
 			ic := idxInfo.Columns[i]
 			colCharset := tblInfo.Columns[ic.Offset].Charset
 			colValue := v.GetBytes()
@@ -151,10 +152,18 @@ func TruncateIndexValuesIfNeeded(tblInfo *model.TableInfo, idxInfo *model.IndexI
 					v.SetString(v.GetString())
 				}
 			}
+		case types.KindMysqlDecimal:
+			col := tblInfo.Columns[idxInfo.Columns[i].Offset]
+			// Always use the column precision.
+			value, err := v.ConvertTo(sc, &col.FieldType)
+			if err != nil {
+				return nil, err
+			}
+			indexedValues[i] = value
 		}
 	}
 
-	return indexedValues
+	return indexedValues, nil
 }
 
 // GenIndexKey generates storage key for index values. Returned distinct indicates whether the
@@ -176,7 +185,10 @@ func (c *index) GenIndexKey(sc *stmtctx.StatementContext, indexedValues []types.
 
 	// For string columns, indexes can be created using only the leading part of column values,
 	// using col_name(length) syntax to specify an index prefix length.
-	indexedValues = TruncateIndexValuesIfNeeded(c.tblInfo, c.idxInfo, indexedValues)
+	indexedValues, err = TruncateIndexValuesIfNeeded(sc, c.tblInfo, c.idxInfo, indexedValues)
+	if err != nil {
+		return nil, false, err
+	}
 	key = c.getIndexKeyBuf(buf, len(c.prefix)+len(indexedValues)*9+9)
 	key = append(key, []byte(c.prefix)...)
 	key, err = codec.EncodeKey(sc, key, indexedValues...)

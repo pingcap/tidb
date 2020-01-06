@@ -2524,7 +2524,8 @@ func modifiableCharsetAndCollation(toCharset, toCollate, origCharset, origCollat
 // change or check existing data in the table.
 // It returns true if the two types has the same Charset and Collation, the same sign, both are
 // integer types or string types, and new Flen and Decimal must be greater than or equal to origin.
-func modifiable(origin *types.FieldType, to *types.FieldType) error {
+func modifiable(tbInfo *model.TableInfo, originalCol *model.ColumnInfo, to *types.FieldType) error {
+	origin := &originalCol.FieldType
 	unsupportedMsg := fmt.Sprintf("type %v not match origin %v", to.CompactStr(), origin.CompactStr())
 	switch origin.Tp {
 	case mysql.TypeVarchar, mysql.TypeString, mysql.TypeVarString,
@@ -2558,9 +2559,21 @@ func modifiable(origin *types.FieldType, to *types.FieldType) error {
 			}
 		}
 	case mysql.TypeNewDecimal:
-		// The root cause is modifying decimal precision needs to rewrite binary representation of that decimal.
-		if to.Flen != origin.Flen || to.Decimal != origin.Decimal {
-			return errUnsupportedModifyColumn.GenWithStackByArgs("can't change decimal column precision")
+		for _, indexInfo := range tbInfo.Indices {
+			containColumn := false
+			for _, col := range indexInfo.Columns {
+				if col.Name.L == originalCol.Name.L {
+					containColumn = true
+					break
+				}
+			}
+			if containColumn {
+				// The root cause is modifying decimal precision needs to rewrite binary representation of that decimal.
+				if to.Flen != origin.Flen || to.Decimal != origin.Decimal {
+					return errUnsupportedModifyColumn.GenWithStackByArgs("can't change decimal column precision with index covered now")
+				}
+				break
+			}
 		}
 	default:
 		if origin.Tp != to.Tp {
@@ -2779,7 +2792,7 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 		return nil, errors.Trace(err)
 	}
 
-	if err = modifiable(&col.FieldType, &newCol.FieldType); err != nil {
+	if err = modifiable(t.Meta(), col.ColumnInfo, &newCol.FieldType); err != nil {
 		return nil, errors.Trace(err)
 	}
 

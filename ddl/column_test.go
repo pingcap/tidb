@@ -937,27 +937,42 @@ func (s *testColumnSuite) TestModifyColumn(c *C) {
 		WithLease(testLease),
 	)
 	defer d.Stop()
+
+	tblInfo := testTableInfo(c, d, "t", 4)
+	idx := &model.IndexInfo{
+		ID:   1,
+		Name: model.NewCIStr("idx"),
+		Columns: []*model.IndexColumn{
+			{
+				Name: tblInfo.Columns[0].Name,
+			},
+		},
+	}
+	tblInfo.Indices = append(tblInfo.Indices, idx)
 	tests := []struct {
 		origin string
 		to     string
 		err    error
+		col    *model.ColumnInfo
 	}{
-		{"int", "bigint", nil},
-		{"int", "int unsigned", errUnsupportedModifyColumn.GenWithStackByArgs("length 10 is less than origin 11")},
-		{"varchar(10)", "text", nil},
-		{"varbinary(10)", "blob", nil},
-		{"text", "blob", errUnsupportedModifyCharset.GenWithStackByArgs("charset from utf8mb4 to binary")},
-		{"varchar(10)", "varchar(8)", errUnsupportedModifyColumn.GenWithStackByArgs("length 8 is less than origin 10")},
-		{"varchar(10)", "varchar(11)", nil},
-		{"varchar(10) character set utf8 collate utf8_bin", "varchar(10) character set utf8", nil},
-		{"decimal(2,1)", "decimal(3,2)", errUnsupportedModifyColumn.GenWithStackByArgs("can't change decimal column precision")},
-		{"decimal(2,1)", "decimal(2,2)", errUnsupportedModifyColumn.GenWithStackByArgs("can't change decimal column precision")},
-		{"decimal(2,1)", "decimal(2,1)", nil},
+		{"int", "bigint", nil, tblInfo.Columns[0]},
+		{"int", "int unsigned", errUnsupportedModifyColumn.GenWithStackByArgs("length 10 is less than origin 11"), tblInfo.Columns[0]},
+		{"varchar(10)", "text", nil, tblInfo.Columns[0]},
+		{"varbinary(10)", "blob", nil, tblInfo.Columns[0]},
+		{"text", "blob", errUnsupportedModifyCharset.GenWithStackByArgs("charset from utf8mb4 to binary"), tblInfo.Columns[0]},
+		{"varchar(10)", "varchar(8)", errUnsupportedModifyColumn.GenWithStackByArgs("length 8 is less than origin 10"), tblInfo.Columns[0]},
+		{"varchar(10)", "varchar(11)", nil, tblInfo.Columns[0]},
+		{"varchar(10) character set utf8 collate utf8_bin", "varchar(10) character set utf8", nil, tblInfo.Columns[0]},
+		{"decimal(2,1)", "decimal(3,2)", errUnsupportedModifyColumn.GenWithStackByArgs("can't change decimal column precision with index covered now"), tblInfo.Columns[0]},
+		{"decimal(2,1)", "decimal(2,2)", errUnsupportedModifyColumn.GenWithStackByArgs("can't change decimal column precision with index covered now"), tblInfo.Columns[0]},
+		{"decimal(2,1)", "decimal(2,2)", nil, tblInfo.Columns[1]},
+		{"decimal(2,1)", "decimal(2,1)", nil, tblInfo.Columns[0]},
 	}
 	for _, tt := range tests {
 		ftA := s.colDefStrToFieldType(c, tt.origin)
 		ftB := s.colDefStrToFieldType(c, tt.to)
-		err := modifiable(ftA, ftB)
+		tt.col.FieldType = *ftA
+		err := modifiable(tblInfo, tt.col, ftB)
 		if err == nil {
 			c.Assert(tt.err, IsNil)
 		} else {

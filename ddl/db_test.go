@@ -3668,7 +3668,68 @@ func (s *testDBSuite1) TestModifyColumnCharset(c *C) {
 			"  `a` varchar(8) DEFAULT NULL,\n" +
 			"  `b` varchar(8) CHARACTER SET utf8 COLLATE utf8_bin DEFAULT NULL\n" +
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+}
 
+func (s *testDBSuite1) TestModifyColumnWithDecimal(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use test_db;")
+	s.tk.MustExec("create table t_decimal (a int,b decimal(10,5),c varchar(10), index idx1(b),index idx2(a,b,c),index idx3(a));")
+	s.tk.MustExec("insert into t_decimal values (1,12345.67891,'a'),(2,123.456,'b'),(4,0.0,'d');")
+	// Test modify decimal column with index covered.
+	s.tk.MustExec("alter table t_decimal modify column b decimal(10,5);")
+	testExecErrorMessage(c, s.tk, "alter table t_decimal modify column b decimal(10,6);",
+		"[ddl:8200]Unsupported modify column: can't change decimal column precision with index covered now")
+	testExecErrorMessage(c, s.tk, "alter table t_decimal modify column b decimal(11,5);",
+		"[ddl:8200]Unsupported modify column: can't change decimal column precision with index covered now")
+	testExecErrorMessage(c, s.tk, "alter table t_decimal modify column b decimal(11,6);",
+		"[ddl:8200]Unsupported modify column: can't change decimal column precision with index covered now")
+	s.tk.MustExec("alter table t_decimal drop index idx1;")
+	testExecErrorMessage(c, s.tk, "alter table t_decimal modify column b decimal(11,6);",
+		"[ddl:8200]Unsupported modify column: can't change decimal column precision with index covered now")
+	s.tk.MustExec("alter table t_decimal drop index idx2;")
+	testExecErrorMessage(c, s.tk, "alter table t_decimal modify column b decimal(9,6);",
+		"[ddl:8200]Unsupported modify column: length 9 is less than origin 10")
+
+	// Test modify column successful when no index covered.
+	s.tk.MustExec("alter table t_decimal modify column b decimal(11,6);")
+	s.tk.MustExec("insert into t_decimal values (3, 12345.678912, 'c');")
+	s.tk.MustQuery("select * from t_decimal order by a").Check(testkit.Rows("1 12345.678910 a", "2 123.456000 b", "3 12345.678912 c", "4 0.000000 d"))
+	s.tk.MustExec("alter table t_decimal add index idx4(b);")
+	s.tk.MustQuery("select * from t_decimal use index(idx4) where b=12345.67891").Check(testkit.Rows("1 12345.678910 a"))
+	s.tk.MustQuery("select * from t_decimal use index(idx4) where b=123.456").Check(testkit.Rows("2 123.456000 b"))
+	s.tk.MustQuery("select * from t_decimal use index(idx4) where b=12345.678912").Check(testkit.Rows("3 12345.678912 c"))
+	s.tk.MustQuery("select * from t_decimal use index(idx4) where b=0").Check(testkit.Rows("4 0.000000 d"))
+	s.tk.MustQuery("select b from t_decimal use index(idx4) where b=12345.67891").Check(testkit.Rows("12345.678910"))
+	s.tk.MustQuery("select b from t_decimal use index(idx4) where b=123.456").Check(testkit.Rows("123.456000"))
+	s.tk.MustQuery("select b from t_decimal use index(idx4) where b=12345.678912").Check(testkit.Rows("12345.678912"))
+	s.tk.MustQuery("select b from t_decimal use index(idx4) where b=0").Check(testkit.Rows("0.000000"))
+	s.tk.MustExec("alter table t_decimal add index idx5(a,b,c);")
+
+	// Test update with decimal.
+	s.tk.MustExec("update t_decimal set a=a+5 where a=1;")
+	s.tk.MustQuery("select * from t_decimal use index(idx4) where b=12345.67891").Check(testkit.Rows("6 12345.678910 a"))
+	s.tk.MustQuery("select b from t_decimal use index(idx4) where b=12345.67891").Check(testkit.Rows("12345.678910"))
+	s.tk.MustExec("update t_decimal set b=b+1 where a=6;")
+	s.tk.MustQuery("select * from t_decimal use index(idx4) where b=12346.67891").Check(testkit.Rows("6 12346.678910 a"))
+	s.tk.MustQuery("select b from t_decimal use index(idx4) where b=12346.67891").Check(testkit.Rows("12346.678910"))
+
+	// Test for add unique index and insert.
+	s.tk.MustExec("insert into t_decimal values (7,123.456,null);")
+	s.tk.MustQuery("select * from t_decimal use index(idx4) where b=123.456 order by b").Check(testkit.Rows("2 123.456000 b", "7 123.456000 <nil>"))
+	testExecErrorMessage(c, s.tk, "alter table t_decimal add unique index idx6(b);",
+		"[kv:1062]Duplicate entry '' for key 'idx6'")
+	s.tk.MustExec("delete from t_decimal where b=123.456")
+	s.tk.MustExec("alter table t_decimal add unique index idx6(b);")
+	s.tk.MustExec("insert into t_decimal values (8,123.456,'bbb');")
+	testExecErrorMessage(c, s.tk, "insert into t_decimal values (9,123.456,'bbb');",
+		"[kv:1062]Duplicate entry '123.456000' for key 'idx6'")
+	s.tk.MustExec("admin check table t_decimal;")
+}
+
+func testExecErrorMessage(c *C, tk *testkit.TestKit, sql, errMsg string) {
+	_, err := tk.Exec(sql)
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, errMsg)
 }
 
 func (s *testDBSuite1) TestSetTableFlashReplica(c *C) {
