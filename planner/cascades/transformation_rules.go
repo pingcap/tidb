@@ -1307,20 +1307,20 @@ func NewRuleMergeAdjacentLimit() Transformation {
 	return rule
 }
 
-// Match implements Transformation interface.
-// ensure that the two Limit operators are both executed in the same execution engine
-func (r *MergeAdjacentLimit) Match(expr *memo.ExprIter) bool {
-	engine := expr.GetExpr().Group.EngineType
-	childEngine := expr.Children[0].EngineType
-	return engine == childEngine
-}
-
 // OnTransform implements Transformation interface.
-// This rule tries to merge adjacent limit..
+// This rule tries to merge adjacent limit.
 func (r *MergeAdjacentLimit) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
 	limit := old.GetExpr().ExprNode.(*plannercore.LogicalLimit)
 	child := old.Children[0].GetExpr().ExprNode.(*plannercore.LogicalLimit)
 	childGroups := old.Children[0].GetExpr().Children
+
+	if child.Count < limit.Offset {
+		tableDual := plannercore.LogicalTableDual{RowCount: 0}.Init(child.SCtx(), child.SelectBlockOffset())
+		tableDual.SetSchema(child.Schema())
+		tableDual.SetOutputNames(child.OutputNames())
+		tableDualExpr := memo.NewGroupExpr(tableDual)
+		return []*memo.GroupExpr{tableDualExpr}, true, false, nil
+	}
 
 	offset := child.Offset + limit.Offset
 	count := uint64(math.Min(float64(child.Count-limit.Offset), float64(limit.Count)))

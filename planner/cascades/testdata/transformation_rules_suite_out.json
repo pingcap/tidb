@@ -1064,6 +1064,17 @@
           "Group#3 Schema:[test.t.b]",
           "    TableScan_1 table:t"
         ]
+      },
+      {
+        "SQL": "select a from (select a from t limit 3 offset 5) t1 limit 3 offset 5",
+        "Result": [
+          "Group#0 Schema:[test.t.a]",
+          "    Projection_4 input:[Group#1], test.t.a",
+          "Group#1 Schema:[test.t.a]",
+          "    Projection_2 input:[Group#2], test.t.a",
+          "Group#2 Schema:[test.t.a]",
+          "    TableDual_6 rowcount:0"
+        ]
       }
     ]
   }
