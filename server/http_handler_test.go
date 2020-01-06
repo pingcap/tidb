@@ -1003,7 +1003,7 @@ func (ts *HTTPHandlerTestSuite) TestZipInfoForSQL(c *C) {
 	ts.startServer(c)
 	defer ts.stopServer(c)
 
-	db, err := sql.Open("mysql", getDSN())
+	db, err := sql.Open("mysql", ts.getDSN())
 	c.Assert(err, IsNil, Commentf("Error connecting"))
 	defer db.Close()
 	dbt := &DBTest{c, db}
