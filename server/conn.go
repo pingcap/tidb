@@ -807,7 +807,7 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 	cc.lastPacket = data
 	cmd := data[0]
 	data = data[1:]
-	if util.EnablePProfSQLCPU.Load() {
+	if true {
 		defer pprof.SetGoroutineLabels(ctx)
 		lastSQL := getLastStmtInConn{cc}.String()
 		ctx = pprof.WithLabels(ctx, pprof.Labels("sql", parser.Normalize(lastSQL)))
