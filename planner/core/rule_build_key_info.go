@@ -104,7 +104,7 @@ func (p *LogicalSelection) BuildKeyInfo(selfSchema *expression.Schema, childSche
 	}
 }
 
-// BuildKeyInfo implements LogicalPlan BuildKeyInfo interface.
+// BuildKeyInfo implements LogicalSort BuildKeyInfo interface.
 func (p *LogicalSort) BuildKeyInfo(selfSchema *expression.Schema, childSchema []*expression.Schema) {
 	p.logicalSchemaProducer.schema.Keys = make([]expression.KeyInfo, len(childSchema[0].Keys))
 	copy(p.logicalSchemaProducer.schema.Keys, childSchema[0].Keys)
