@@ -62,7 +62,7 @@ func SelectVersion(db *sql.DB) (string, error) {
 }
 
 func SelectAllFromTable(conf *Config, db *sql.DB, database, table string) (TableDataIR, error) {
-	colTypes, err := GetColumnTypes(db, table)
+	colTypes, err := GetColumnTypes(db, database, table)
 	if err != nil {
 		return nil, err
 	}
@@ -140,8 +140,8 @@ func SelectTiDBRowID(db *sql.DB, database, table string) (bool, error) {
 	return true, nil
 }
 
-func GetColumnTypes(db *sql.DB, table string) ([]*sql.ColumnType, error) {
-	rows, err := db.Query(fmt.Sprintf("SELECT * FROM %s LIMIT 1", table))
+func GetColumnTypes(db *sql.DB, database, table string) ([]*sql.ColumnType, error) {
+	rows, err := db.Query(fmt.Sprintf("SELECT * FROM %s.%s LIMIT 1", database, table))
 	if err != nil {
 		return nil, withStack(err)
 	}
@@ -170,6 +170,47 @@ func GetPrimaryKeyName(db *sql.DB, database, table string) (string, error) {
 		}
 	}
 	return colName, nil
+}
+
+func FlushTableWithReadLock(db *sql.DB) error {
+	_, err := db.Exec("FLUSH TABLES WITH READ LOCK")
+	return withStack(err)
+}
+
+func LockTables(db *sql.DB, database, table string) error {
+	_, err := db.Exec(fmt.Sprintf("`%s`.`%s`", database, table))
+	return withStack(err)
+}
+
+func UnlockTables(db *sql.DB) error {
+	_, err := db.Exec("UNLOCK TABLES")
+	return withStack(err)
+}
+
+func UseDatabase(db *sql.DB, databaseName string) error {
+	_, err := db.Exec(fmt.Sprintf("USE %s", databaseName))
+	return withStack(err)
+}
+
+func ShowMasterStatus(db *sql.DB, fieldNum int) ([]string, error) {
+	oneRow := make([]string, fieldNum)
+	addr := make([]interface{}, fieldNum)
+	for i := range oneRow {
+		addr[i] = &oneRow[i]
+	}
+	handleOneRow := func(rows *sql.Rows) error {
+		return rows.Scan(addr...)
+	}
+	err := simpleQuery(db, "SHOW MASTER STATUS", handleOneRow)
+	if err != nil {
+		return nil, err
+	}
+	return oneRow, nil
+}
+
+func SetTiDBSnapshot(db *sql.DB, snapshot string) error {
+	_, err := db.Exec("SET SESSION tidb_snapshot = ?", snapshot)
+	return withStack(err)
 }
 
 type oneStrColumnTable struct {
