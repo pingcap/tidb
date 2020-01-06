@@ -88,14 +88,14 @@ func (s *testTimeSuite) TestStrToDate(c *C) {
 		{`May 01, 2013`, `%M %d,%Y`, types.FromDate(2013, 5, 1, 0, 0, 0, 0)},
 		{`a09:30:17`, `a%h:%i:%s`, types.FromDate(0, 0, 0, 9, 30, 17, 0)},
 		{`09:30:17a`, `%h:%i:%s`, types.FromDate(0, 0, 0, 9, 30, 17, 0)},
-		{`abc`, `abc`, types.ZeroTime},
+		{`abc`, `abc`, types.ZeroCoreTime},
 		{`09`, `%m`, types.FromDate(0, 9, 0, 0, 0, 0, 0)},
 		{`09`, `%s`, types.FromDate(0, 0, 0, 0, 0, 9, 0)},
 		{`12:43:24 AM`, `%r`, types.FromDate(0, 0, 0, 12, 43, 24, 0)},
 		{`11:43:24 PM`, `%r`, types.FromDate(0, 0, 0, 23, 43, 24, 0)},
 		{`00:12:13`, `%T`, types.FromDate(0, 0, 0, 0, 12, 13, 0)},
 		{`23:59:59`, `%T`, types.FromDate(0, 0, 0, 23, 59, 59, 0)},
-		{`00/00/0000`, `%m/%d/%Y`, types.ZeroTime},
+		{`00/00/0000`, `%m/%d/%Y`, types.ZeroCoreTime},
 		{`04/30/2004`, `%m/%d/%Y`, types.FromDate(2004, 4, 30, 0, 0, 0, 0)},
 		{`15:35:00`, `%H:%i:%s`, types.FromDate(0, 0, 0, 15, 35, 0, 0)},
 		{`Jul 17 33`, `%b %k %S`, types.FromDate(0, 7, 0, 17, 0, 33, 0)},
@@ -118,7 +118,7 @@ func (s *testTimeSuite) TestStrToDate(c *C) {
 	for i, tt := range tests {
 		var t types.Time
 		c.Assert(t.StrToDate(sc, tt.input, tt.format), IsTrue, Commentf("no.%d failed", i))
-		c.Assert(t.Time, Equals, tt.expect, Commentf("no.%d failed", i))
+		c.Assert(t.CoreTime(), Equals, tt.expect, Commentf("no.%d failed", i))
 	}
 
 	errTests := []struct {
