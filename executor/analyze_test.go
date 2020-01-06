@@ -26,7 +26,7 @@ import (
 	"github.com/pingcap/tidb/util/testkit"
 )
 
-func (s *testSuite) TestAnalyzePartition(c *C) {
+func (s *testSuite1) TestAnalyzePartition(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("set @@session.tidb_enable_table_partition=1")
 	tk.MustExec("use test")
@@ -89,7 +89,7 @@ PARTITION BY RANGE ( a ) (
 	}
 }
 
-func (s *testSuite) TestAnalyzeParameters(c *C) {
+func (s *testSuite1) TestAnalyzeParameters(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -103,15 +103,15 @@ func (s *testSuite) TestAnalyzeParameters(c *C) {
 	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 	tableInfo := table.Meta()
-	tbl := s.domain.StatsHandle().GetTableStats(tableInfo)
+	tbl := s.dom.StatsHandle().GetTableStats(tableInfo)
 	c.Assert(tbl.Columns[1].Len(), Equals, 20)
 
 	tk.MustExec("analyze table t with 4 buckets")
-	tbl = s.domain.StatsHandle().GetTableStats(tableInfo)
+	tbl = s.dom.StatsHandle().GetTableStats(tableInfo)
 	c.Assert(tbl.Columns[1].Len(), Equals, 4)
 }
 
-func (s *testSuite) TestAnalyzeTooLongColumns(c *C) {
+func (s *testSuite1) TestAnalyzeTooLongColumns(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -124,7 +124,7 @@ func (s *testSuite) TestAnalyzeTooLongColumns(c *C) {
 	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 	tableInfo := table.Meta()
-	tbl := s.domain.StatsHandle().GetTableStats(tableInfo)
+	tbl := s.dom.StatsHandle().GetTableStats(tableInfo)
 	c.Assert(tbl.Columns[1].Len(), Equals, 0)
 	c.Assert(tbl.Columns[1].TotColSize, Equals, int64(65559))
 }
