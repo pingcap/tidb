@@ -200,6 +200,17 @@ type Column struct {
 	IsHidden bool
 }
 
+// Nullable implements Expression Nullable interface.
+// It will check if the column is in `notNullCols`.
+func (col *Column) Nullable(notNullCols []*Column) bool {
+	for _, notNullCol := range notNullCols {
+		if col.Equal(nil, notNullCol) {
+			return false
+		}
+	}
+	return true
+}
+
 // Equal implements Expression interface.
 func (col *Column) Equal(_ sessionctx.Context, expr Expression) bool {
 	if newCol, ok := expr.(*Column); ok {

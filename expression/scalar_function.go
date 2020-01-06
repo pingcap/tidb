@@ -41,6 +41,11 @@ type ScalarFunction struct {
 	hashcode []byte
 }
 
+// Nullable checks whether this ScalarFunction can return null values.
+func (sf *ScalarFunction) Nullable(notNullCols []*Column) bool {
+	return sf.Function.nullable(notNullCols)
+}
+
 // VecEvalInt evaluates this expression in a vectorized manner.
 func (sf *ScalarFunction) VecEvalInt(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
 	return sf.Function.vecEvalInt(input, result)

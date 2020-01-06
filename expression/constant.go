@@ -62,6 +62,12 @@ type Constant struct {
 	hashcode    []byte
 }
 
+// Nullable implements Expression Nullable interface.
+// It returns whether this Constant is null.
+func (c *Constant) Nullable(notNullCols []*Column) bool {
+	return c.Value.IsNull()
+}
+
 // ParamMarker indicates param provided by COM_STMT_EXECUTE.
 type ParamMarker struct {
 	ctx   sessionctx.Context

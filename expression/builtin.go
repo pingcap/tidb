@@ -57,6 +57,12 @@ type baseBuiltinFunc struct {
 	childrenReversed     bool
 }
 
+// nullable implements builtinFunc nullable interface.
+// It returns true as default.
+func (b *baseBuiltinFunc) nullable(notNullCols []*Column) bool {
+	return true
+}
+
 func (b *baseBuiltinFunc) PbCode() tipb.ScalarFuncSig {
 	return b.pbCode
 }
@@ -447,6 +453,8 @@ type builtinFunc interface {
 	// metadata means some functions contain extra inner fields which will not
 	// contain in `tipb.Expr.children` but must be pushed down to coprocessor
 	metadata() proto.Message
+	// nullable checks whether this expression can return null values.
+	nullable(notNullCols []*Column) bool
 	// Clone returns a copy of itself.
 	Clone() builtinFunc
 }

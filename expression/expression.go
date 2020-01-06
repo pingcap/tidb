@@ -120,6 +120,9 @@ type Expression interface {
 	// IsCorrelated checks if this expression has correlated key.
 	IsCorrelated() bool
 
+	// Nullable checks if this expression can return `null` values.
+	Nullable(notNullCols []*Column) bool
+
 	// ConstItem checks if this expression is constant item, regardless of query evaluation state.
 	// A constant item can be eval() when build a plan.
 	// An expression is constant item if it:
