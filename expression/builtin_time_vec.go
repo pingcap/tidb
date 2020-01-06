@@ -374,7 +374,10 @@ func (b *builtinTimeFormatSig) vecEvalString(input *chunk.Chunk, result *chunk.C
 	}
 	defer b.bufAllocator.put(buf)
 	if err := b.args[0].VecEvalDuration(b.ctx, input, buf); err != nil {
-		return err
+		// If err != nil, then dur is ZeroDuration, outputs 00:00:00
+		// in this case which follows the behavior of mysql.
+		// Use the non-vectorized method to handle this kind of error.
+		return vecEvalStringByRows(b, input, result)
 	}
 
 	buf1, err1 := b.bufAllocator.get(types.ETString, n)
