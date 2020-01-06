@@ -15,14 +15,12 @@ package planner
 
 import (
 	"context"
-	"fmt"
 	"math"
 	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/format"
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
@@ -34,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/logutil"
-	"go.uber.org/zap"
 )
 
 // Optimize does optimization and creates a Plan.
@@ -189,6 +186,9 @@ func getBindRecord(ctx sessionctx.Context, stmt ast.StmtNode) (*bindinfo.BindRec
 	}
 	sessionHandle := ctx.Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
 	bindRecord := sessionHandle.GetBindRecord(normalizedSQL, ctx.GetSessionVars().CurrentDB)
+	if bindRecord == nil {
+		bindRecord = sessionHandle.GetBindRecord(normalizedSQL, "")
+	}
 	if bindRecord != nil {
 		if bindRecord.HasUsingBinding() {
 			return bindRecord, metrics.ScopeSession
@@ -218,34 +218,13 @@ func handleInvalidBindRecord(ctx context.Context, sctx sessionctx.Context, level
 }
 
 func handleEvolveTasks(ctx context.Context, sctx sessionctx.Context, br *bindinfo.BindRecord, stmtNode ast.StmtNode, planHint string) {
-	// If would be nil for very simple cases such as point get, we do not need to evolve for them.
-	if planHint == "" {
+	bindSQL := bindinfo.GenerateBindSQL(ctx, stmtNode, planHint)
+	if bindSQL == "" {
 		return
 	}
-	paramChecker := &paramMarkerChecker{}
-	stmtNode.Accept(paramChecker)
-	// We need to evolve on current sql, but we cannot restore values for paramMarkers yet,
-	// so just ignore them now.
-	if paramChecker.hasParamMarker {
-		return
-	}
-	// We need to evolve plan based on the current sql, not the original sql which may have different parameters.
-	// So here we would remove the hint and inject the current best plan hint.
-	bindinfo.BindHint(stmtNode, &bindinfo.HintsSet{})
-	var sb strings.Builder
-	restoreCtx := format.NewRestoreCtx(format.DefaultRestoreFlags, &sb)
-	err := stmtNode.Restore(restoreCtx)
-	if err != nil {
-		logutil.Logger(ctx).Info("Restore SQL failed", zap.Error(err))
-	}
-	bindSQL := sb.String()
-	selectIdx := strings.Index(bindSQL, "SELECT")
-	// Remove possible `explain` prefix.
-	bindSQL = bindSQL[selectIdx:]
-	bindsql := strings.Replace(bindSQL, "SELECT", fmt.Sprintf("SELECT /*+ %s*/", planHint), 1)
 	globalHandle := domain.GetDomain(sctx).BindHandle()
 	charset, collation := sctx.GetSessionVars().GetCharsetInfo()
-	binding := bindinfo.Binding{BindSQL: bindsql, Status: bindinfo.PendingVerify, Charset: charset, Collation: collation}
+	binding := bindinfo.Binding{BindSQL: bindSQL, Status: bindinfo.PendingVerify, Charset: charset, Collation: collation}
 	globalHandle.AddEvolvePlanTask(br.OriginalSQL, br.Db, binding, planHint)
 }
 
@@ -296,24 +275,6 @@ func OptimizeExecStmt(ctx context.Context, sctx sessionctx.Context,
 	return nil, err
 }
 
-// GenHintsFromSQL is used to generate hints from SQL and inject the hints into original SQL.
-func GenHintsFromSQL(ctx context.Context, sctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (string, error) {
-	err := plannercore.Preprocess(sctx, node, is)
-	if err != nil {
-		return "", err
-	}
-	oldValue := sctx.GetSessionVars().UsePlanBaselines
-	// Disable baseline to avoid binding hints.
-	sctx.GetSessionVars().UsePlanBaselines = false
-	p, _, err := Optimize(ctx, sctx, node, is)
-	sctx.GetSessionVars().UsePlanBaselines = oldValue
-	if err != nil {
-		return "", err
-	}
-	return plannercore.GenHintsFromPhysicalPlan(p), nil
-}
-
 func init() {
 	plannercore.OptimizeAstNode = Optimize
-	bindinfo.GenHintsFromSQL = GenHintsFromSQL
 }

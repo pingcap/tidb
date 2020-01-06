@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mock"
+	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tidb/util/testleak"
 )
 
@@ -77,10 +78,7 @@ func (s *testDecoderSuite) TestRowDecoder(c *C) {
 
 	timeZoneIn8, err := time.LoadLocation("Asia/Shanghai")
 	c.Assert(err, IsNil)
-	time1 := types.Time{
-		Time: types.FromDate(2019, 01, 01, 8, 01, 01, 0),
-		Type: mysql.TypeTimestamp,
-	}
+	time1 := types.NewTime(types.FromDate(2019, 01, 01, 8, 01, 01, 0), mysql.TypeTimestamp, types.DefaultFsp)
 	t1 := types.NewTimeDatum(time1)
 	d1 := types.NewDurationDatum(types.Duration{
 		Duration: time.Hour + time.Second,
@@ -119,12 +117,13 @@ func (s *testDecoderSuite) TestRowDecoder(c *C) {
 			[]types.Datum{types.NewDatum(nil), types.NewDatum(nil), types.NewDatum(nil), types.NewDatum(nil), types.NewDatum(nil), types.NewDatum(nil)},
 		},
 	}
+	rd := rowcodec.Encoder{Enable: true}
 	for i, row := range testRows {
 		// test case for pk is unsigned.
 		if i > 0 {
 			c7.Flag |= mysql.UnsignedFlag
 		}
-		bs, err := tablecodec.EncodeRow(sc, row.input, row.cols, nil, nil)
+		bs, err := tablecodec.EncodeRow(sc, row.input, row.cols, nil, nil, &rd)
 		c.Assert(err, IsNil)
 		c.Assert(bs, NotNil)
 

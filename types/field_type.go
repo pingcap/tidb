@@ -219,17 +219,17 @@ func DefaultTypeForValue(value interface{}, tp *FieldType) {
 		tp.Flag &= ^mysql.BinaryFlag
 		tp.Flag |= mysql.UnsignedFlag
 	case Time:
-		tp.Tp = x.Type
-		switch x.Type {
+		tp.Tp = x.Type()
+		switch x.Type() {
 		case mysql.TypeDate:
 			tp.Flen = mysql.MaxDateWidth
 			tp.Decimal = UnspecifiedLength
 		case mysql.TypeDatetime, mysql.TypeTimestamp:
 			tp.Flen = mysql.MaxDatetimeWidthNoFsp
-			if x.Fsp > DefaultFsp { // consider point('.') and the fractional part.
-				tp.Flen += int(x.Fsp) + 1
+			if x.Fsp() > DefaultFsp { // consider point('.') and the fractional part.
+				tp.Flen += int(x.Fsp()) + 1
 			}
-			tp.Decimal = int(x.Fsp)
+			tp.Decimal = int(x.Fsp())
 		}
 		SetBinChsClnFlag(tp)
 	case Duration:
