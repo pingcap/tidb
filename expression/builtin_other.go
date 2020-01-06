@@ -137,7 +137,7 @@ func (c *inFunctionClass) getFunction(ctx sessionctx.Context, args []Expression)
 type baseInSig struct {
 	baseBuiltinFunc
 	nonConstArgs []Expression
-	// hashSet will be used when the number of constant arguments is bigger than threshold
+	// hashSet will not be used when the number of constant arguments is smaller than threshold
 	threshold int
 	hasNull   bool
 }
