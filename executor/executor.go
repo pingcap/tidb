@@ -1191,13 +1191,11 @@ func (e *TableScanExec) nextChunk4InfoSchema(ctx context.Context, chk *chunk.Chu
 
 // nextHandle gets the unique handle for next row.
 func (e *TableScanExec) nextHandle() (handle int64, found bool, err error) {
-	for {
-		handle, found, err = e.t.Seek(e.ctx, e.seekHandle)
-		if err != nil || !found {
-			return 0, false, err
-		}
-		return handle, true, nil
+	handle, found, err = e.t.Seek(e.ctx, e.seekHandle)
+	if err != nil || !found {
+		return 0, false, err
 	}
+	return handle, true, nil
 }
 
 func (e *TableScanExec) getRow(handle int64) ([]types.Datum, error) {
