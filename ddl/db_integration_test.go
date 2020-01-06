@@ -1963,3 +1963,29 @@ func (s *testIntegrationSuite6) TestAddExpressionIndex(c *C) {
 	tk.MustGetErrCode("alter table t drop column _V$_expression_index_0;", mysql.ErrCantDropFieldOrKey)
 	tk.MustGetErrCode("alter table t add column e int as (_V$_expression_index_0 + 1);", mysql.ErrBadField)
 }
+
+func (s *testIntegrationSuite6) TestAddExpressionIndexOnPartition(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	s.tk.MustExec(`create table t(
+	a int,
+	b varchar(100),
+	c int,
+	PARTITION BY RANGE ( a ) (
+	PARTITION p0 VALUES LESS THAN (6),
+		PARTITION p1 VALUES LESS THAN (11),
+		PARTITION p2 VALUES LESS THAN (16),
+		PARTITION p3 VALUES LESS THAN (21)
+	);`)
+	tk.MustExec("insert into t values (1, 'test', 2), (12, 'test', 3), (15, 'test', 10), (20, 'test', 20);")
+	tk.MustExec("alter table t add index idx((a+c));")
+
+	tblInfo, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	columns := tblInfo.Meta().Columns
+	c.Assert(len(columns), Equals, 4)
+	c.Assert(columns[3].Hidden, IsTrue)
+
+	tk.MustQuery("select * from t;").Check(testkit.Rows("1 'test' 2", "12 'test' 3", "15 'test' 10", "20 'test' 20"))
+}
