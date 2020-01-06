@@ -136,7 +136,15 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 			geners: []dataGenerator{&rangeInt64Gener{0, 2200}, &rangeInt64Gener{0, 365}},
 		},
 	},
-	ast.MakeTime: {},
+	ast.MakeTime: {
+		{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETInt, types.ETInt, types.ETReal}, geners: []dataGenerator{&rangeInt64Gener{-1000, 1000}}},
+		{
+			retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETInt, types.ETInt, types.ETReal},
+			childrenFieldTypes: []*types.FieldType{{Tp: mysql.TypeLonglong, Flag: mysql.UnsignedFlag}},
+			geners:             []dataGenerator{&rangeInt64Gener{-1000, 1000}},
+		},
+		{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETReal, types.ETReal, types.ETReal}, geners: []dataGenerator{&rangeRealGener{-1000.0, 1000.0, 0.1}}},
+	},
 	ast.PeriodAdd: {
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt}, geners: []dataGenerator{new(periodGener), new(periodGener)}},
 	},
