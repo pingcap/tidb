@@ -1048,7 +1048,10 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *RPCCon
 				zap.Any("cacheKey", cacheKey),
 				zap.Any("cacheValue", cacheValue),
 				zap.Any("resp.pbResp", resp.pbResp))
-			return nil, errors.New("Internal error: Cached data does not match actual data")
+
+			data := make([]byte, len(cacheValue.Data))
+			copy(data, cacheValue.Data)
+			resp.pbResp.Data = data
 		}
 	} else {
 		logutil.BgLogger().Info("[Cache Debug] IsCacheHit = false",
