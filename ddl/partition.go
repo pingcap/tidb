@@ -39,7 +39,7 @@ const (
 )
 
 // buildTablePartitionInfo builds partition info and checks for some errors.
-func buildTablePartitionInfo(ctx sessionctx.Context, d *ddl, s *ast.CreateTableStmt) (*model.PartitionInfo, error) {
+func buildTablePartitionInfo(ctx sessionctx.Context, s *ast.CreateTableStmt) (*model.PartitionInfo, error) {
 	if s.Partition == nil {
 		return nil, nil
 	}
@@ -79,7 +79,7 @@ func buildTablePartitionInfo(ctx sessionctx.Context, d *ddl, s *ast.CreateTableS
 		}
 	}
 	if !enable {
-		ctx.GetSessionVars().StmtCtx.AppendWarning(errUnsupportedCreatePartition)
+		ctx.GetSessionVars().StmtCtx.AppendWarning(errTablePartitionDisabled)
 	}
 
 	pi := &model.PartitionInfo{
@@ -104,25 +104,20 @@ func buildTablePartitionInfo(ctx sessionctx.Context, d *ddl, s *ast.CreateTableS
 	}
 
 	if s.Partition.Tp == model.PartitionTypeRange {
-		if err := buildRangePartitionDefinitions(ctx, d, s, pi); err != nil {
+		if err := buildRangePartitionDefinitions(ctx, s, pi); err != nil {
 			return nil, errors.Trace(err)
 		}
 	} else if s.Partition.Tp == model.PartitionTypeHash {
-		if err := buildHashPartitionDefinitions(ctx, d, s, pi); err != nil {
+		if err := buildHashPartitionDefinitions(ctx, s, pi); err != nil {
 			return nil, errors.Trace(err)
 		}
 	}
 	return pi, nil
 }
 
-func buildHashPartitionDefinitions(ctx sessionctx.Context, d *ddl, s *ast.CreateTableStmt, pi *model.PartitionInfo) error {
-	genIDs, err := d.genGlobalIDs(int(pi.Num))
-	if err != nil {
-		return errors.Trace(err)
-	}
+func buildHashPartitionDefinitions(ctx sessionctx.Context, s *ast.CreateTableStmt, pi *model.PartitionInfo) error {
 	defs := make([]model.PartitionDefinition, pi.Num)
 	for i := 0; i < len(defs); i++ {
-		defs[i].ID = genIDs[i]
 		if len(s.Partition.Definitions) == 0 {
 			defs[i].Name = model.NewCIStr(fmt.Sprintf("p%v", i))
 		} else {
@@ -135,16 +130,11 @@ func buildHashPartitionDefinitions(ctx sessionctx.Context, d *ddl, s *ast.Create
 	return nil
 }
 
-func buildRangePartitionDefinitions(ctx sessionctx.Context, d *ddl, s *ast.CreateTableStmt, pi *model.PartitionInfo) error {
-	genIDs, err := d.genGlobalIDs(len(s.Partition.Definitions))
-	if err != nil {
-		return errors.Trace(err)
-	}
-	for ith, def := range s.Partition.Definitions {
+func buildRangePartitionDefinitions(ctx sessionctx.Context, s *ast.CreateTableStmt, pi *model.PartitionInfo) error {
+	for _, def := range s.Partition.Definitions {
 		comment, _ := def.Comment()
 		piDef := model.PartitionDefinition{
 			Name:    def.Name,
-			ID:      genIDs[ith],
 			Comment: comment,
 		}
 
@@ -687,7 +677,7 @@ func checkRangePartitioningKeysConstraints(sctx sessionctx.Context, s *ast.Creat
 	return nil
 }
 
-func checkPartitionKeysConstraint(pi *model.PartitionInfo, idxColNames []*ast.IndexColName, tblInfo *model.TableInfo, isPK bool) error {
+func checkPartitionKeysConstraint(pi *model.PartitionInfo, idxColNames []*ast.IndexPartSpecification, tblInfo *model.TableInfo, isPK bool) error {
 	var (
 		partCols []*model.ColumnInfo
 		err      error
@@ -772,7 +762,7 @@ type stringSlice interface {
 }
 
 // checkUniqueKeyIncludePartKey checks that the partitioning key is included in the constraint.
-func checkUniqueKeyIncludePartKey(partCols stringSlice, idxCols []*ast.IndexColName) bool {
+func checkUniqueKeyIncludePartKey(partCols stringSlice, idxCols []*ast.IndexPartSpecification) bool {
 	for i := 0; i < partCols.Len(); i++ {
 		partCol := partCols.At(i)
 		if !findColumnInIndexCols(partCol, idxCols) {

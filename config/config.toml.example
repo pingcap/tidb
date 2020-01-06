@@ -316,6 +316,19 @@ region-cache-ttl = 600
 # default 0 means shutting off store limit.
 store-limit = 0
 
+[tikv-client.copr-cache]
+# Whether to enable the copr cache. The copr cache saves the result from TiKV Coprocessor in the memory and
+# reuses the result when corresponding data in TiKV is unchanged, on a region basis.
+enabled = true
+
+# The capacity in MB of the cache.
+capacity-mb = 1000.0
+
+# Only cache requests whose result set is small.
+admission-max-result-mb = 10.0
+# Only cache requests takes notable time to process.
+admission-min-process-ms = 5
+
 [txn-local-latches]
 # Enable local latches for transactions. Enable it when
 # there are lots of conflicts between transactions.
@@ -347,8 +360,23 @@ enable = true
 max-retry-count = 256
 
 [stmt-summary]
+# enable statement summary.
+enable = false
+
 # max number of statements kept in memory.
-max-stmt-count = 100
+max-stmt-count = 200
 
 # max length of displayed normalized sql and sample sql.
 max-sql-length = 4096
+
+# the refresh interval of statement summary, it's counted in seconds.
+refresh-interval = 1800
+
+# the maximum history size of statement summary.
+history-size = 24
+
+# experimental section controls the features that are still experimental: their semantics,
+# interfaces are subject to change, using these features in the production environment is not recommended.
+[experimental]
+# enable column attribute `auto_random` to be defined on the primary key column.
+allow-auto-random = false

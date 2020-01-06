@@ -84,6 +84,9 @@ func init() {
 
 	// Register terror to mysql error map.
 	mySQLErrCodes := map[terror.ErrCode]uint16{
+		mysql.ErrCantGetValidID:              mysql.ErrCantGetValidID,
+		mysql.ErrCantSetToNull:               mysql.ErrCantSetToNull,
+		mysql.ErrSnapshotTooOld:              mysql.ErrSnapshotTooOld,
 		mysql.ErrUnsupportedValueForVar:      mysql.ErrUnsupportedValueForVar,
 		mysql.ErrUnknownSystemVariable:       mysql.ErrUnknownSystemVariable,
 		mysql.ErrIncorrectGlobalLocalVar:     mysql.ErrIncorrectGlobalLocalVar,
@@ -104,6 +107,13 @@ func BoolToIntStr(b bool) string {
 		return "1"
 	}
 	return "0"
+}
+
+func boolToOnOff(b bool) string {
+	if b {
+		return "on"
+	}
+	return "off"
 }
 
 // BoolToInt32 converts bool to int32
@@ -676,7 +686,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeSession, TiDBEnableStreaming, "0"},
 	{ScopeSession, TiDBEnableChunkRPC, "1"},
 	{ScopeSession, TxnIsolationOneShot, ""},
-	{ScopeSession, TiDBEnableTablePartition, "auto"},
+	{ScopeGlobal | ScopeSession, TiDBEnableTablePartition, "auto"},
 	{ScopeGlobal | ScopeSession, TiDBHashJoinConcurrency, strconv.Itoa(DefTiDBHashJoinConcurrency)},
 	{ScopeGlobal | ScopeSession, TiDBProjectionConcurrency, strconv.Itoa(DefTiDBProjectionConcurrency)},
 	{ScopeGlobal | ScopeSession, TiDBHashAggPartialConcurrency, strconv.Itoa(DefTiDBHashAggPartialConcurrency)},
@@ -687,6 +697,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal | ScopeSession, TiDBDisableTxnAutoRetry, BoolToIntStr(DefTiDBDisableTxnAutoRetry)},
 	{ScopeGlobal | ScopeSession, TiDBConstraintCheckInPlace, BoolToIntStr(DefTiDBConstraintCheckInPlace)},
 	{ScopeGlobal | ScopeSession, TiDBTxnMode, DefTiDBTxnMode},
+	{ScopeGlobal, TiDBRowFormatVersion, strconv.Itoa(DefTiDBRowFormatV1)},
 	{ScopeSession, TiDBOptimizerSelectivityLevel, strconv.Itoa(DefTiDBOptimizerSelectivityLevel)},
 	{ScopeGlobal | ScopeSession, TiDBEnableWindowFunction, BoolToIntStr(DefEnableWindowFunction)},
 	{ScopeGlobal | ScopeSession, TiDBEnableVectorizedExpression, BoolToIntStr(DefEnableVectorizedExpression)},
@@ -696,6 +707,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeSession, TiDBGeneralLog, strconv.Itoa(DefTiDBGeneralLog)},
 	{ScopeSession, TiDBSlowLogThreshold, strconv.Itoa(logutil.DefaultSlowThreshold)},
 	{ScopeSession, TiDBRecordPlanInSlowLog, strconv.Itoa(logutil.DefaultRecordPlanInSlowLog)},
+	{ScopeSession, TiDBEnableSlowLog, strconv.Itoa(logutil.DefaultTiDBEnableSlowLog)},
 	{ScopeSession, TiDBDDLSlowOprThreshold, strconv.Itoa(DefTiDBDDLSlowOprThreshold)},
 	{ScopeSession, TiDBQueryLogMaxLen, strconv.Itoa(logutil.DefaultQueryLogMaxLen)},
 	{ScopeSession, TiDBConfig, ""},
@@ -717,16 +729,19 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal | ScopeSession, TiDBEnableNoopFuncs, BoolToIntStr(DefTiDBEnableNoopFuncs)},
 	{ScopeSession, TiDBReplicaRead, "leader"},
 	{ScopeSession, TiDBAllowRemoveAutoInc, BoolToIntStr(DefTiDBAllowRemoveAutoInc)},
-	{ScopeGlobal | ScopeSession, TiDBEnableStmtSummary, "0"},
-	{ScopeGlobal | ScopeSession, TiDBStmtSummaryRefreshInterval, strconv.Itoa(DefTiDBStmtSummaryRefreshInterval)},
-	{ScopeGlobal | ScopeSession, TiDBCapturePlanBaseline, "0"},
-	{ScopeGlobal | ScopeSession, TiDBUsePlanBaselines, BoolToIntStr(DefTiDBUsePlanBaselines)},
-	{ScopeGlobal | ScopeSession, TiDBEvolvePlanBaselines, BoolToIntStr(DefTiDBEvolvePlanBaselines)},
+	{ScopeGlobal | ScopeSession, TiDBEnableStmtSummary, BoolToIntStr(config.GetGlobalConfig().StmtSummary.Enable)},
+	{ScopeGlobal | ScopeSession, TiDBStmtSummaryRefreshInterval, strconv.Itoa(config.GetGlobalConfig().StmtSummary.RefreshInterval)},
+	{ScopeGlobal | ScopeSession, TiDBStmtSummaryHistorySize, strconv.Itoa(config.GetGlobalConfig().StmtSummary.HistorySize)},
+	{ScopeGlobal | ScopeSession, TiDBCapturePlanBaseline, "off"},
+	{ScopeGlobal | ScopeSession, TiDBUsePlanBaselines, boolToOnOff(DefTiDBUsePlanBaselines)},
+	{ScopeGlobal | ScopeSession, TiDBEvolvePlanBaselines, boolToOnOff(DefTiDBEvolvePlanBaselines)},
 	{ScopeGlobal, TiDBEvolvePlanTaskMaxTime, strconv.Itoa(DefTiDBEvolvePlanTaskMaxTime)},
 	{ScopeGlobal, TiDBEvolvePlanTaskStartTime, DefTiDBEvolvePlanTaskStartTime},
 	{ScopeGlobal, TiDBEvolvePlanTaskEndTime, DefTiDBEvolvePlanTaskEndTime},
 	{ScopeGlobal | ScopeSession, TiDBIsolationReadEngines, "tikv,tiflash,tidb"},
 	{ScopeGlobal | ScopeSession, TiDBStoreLimit, strconv.FormatInt(atomic.LoadInt64(&config.GetGlobalConfig().TiKVClient.StoreLimit), 10)},
+	{ScopeSession, TiDBMetricSchemaStep, strconv.Itoa(DefTiDBMetricSchemaStep)},
+	{ScopeSession, TiDBMetricSchemaRangeDuration, strconv.Itoa(DefTiDBMetricSchemaRangeDuration)},
 }
 
 // SynonymsSysVariables is synonyms of system variables.

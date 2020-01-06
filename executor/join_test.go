@@ -1771,6 +1771,41 @@ func (s *testSuiteJoin1) TestIssue11390(c *C) {
 	tk.MustQuery("select /*+ INL_MERGE_JOIN(t1, t2) */ * from 11390t t1, 11390t t2 where t1.k2 > 0 and t1.k2 = t2.k2 and t2.k1=1;").Check(testkit.Rows("1 1 1 1"))
 }
 
+func (s *testSuiteJoin1) TestOuterTableBuildHashTable(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t, s")
+	tk.MustExec("create table t (a int,b int)")
+	tk.MustExec("create table s (a int,b int)")
+	tk.MustExec("insert into t values (11,11),(1,2)")
+	tk.MustExec("insert into s values (1,2),(2,1),(11,11)")
+	// TODO : add hint HASH_JOIN() and SWAP_JOIN_INPUTS() to specify the hash join and its build side
+	tk.MustQuery("select * from t left join s on s.a > t.a").Sort().Check(testkit.Rows("1 2 11 11", "1 2 2 1", "11 11 <nil> <nil>"))
+	tk.MustQuery("explain select * from t left join s on s.a > t.a").Check(testkit.Rows(
+		"HashLeftJoin_6 99900000.00 root CARTESIAN left outer join, inner:TableReader_12, other cond:gt(test.s.a, test.t.a)",
+		"├─TableReader_9 10000.00 root data:TableScan_8",
+		"│ └─TableScan_8 10000.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false, stats:pseudo",
+		"└─TableReader_12 9990.00 root data:Selection_11",
+		"  └─Selection_11 9990.00 cop[tikv] not(isnull(test.s.a))",
+		"    └─TableScan_10 10000.00 cop[tikv] table:s, range:[-inf,+inf], keep order:false, stats:pseudo"))
+
+	tk.MustExec("drop table if exists t, s")
+	tk.MustExec("Create table s (a int, b int, key(b))")
+	tk.MustExec("Create table t (a int, b int, key(b))")
+	tk.MustExec("Insert into s values (1,2),(2,1),(11,11)")
+	tk.MustExec("Insert into t values (11,2),(1,2),(5,2)")
+	tk.MustQuery("select /*+ INL_HASH_JOIN(s)*/ * from t left join s on s.b=t.b and s.a < t.a;").Sort().Check(testkit.Rows("1 2 <nil> <nil>", "11 2 1 2", "5 2 1 2"))
+	tk.MustQuery("explain select /*+ INL_HASH_JOIN(s)*/ * from t left join s on s.b=t.b and s.a < t.a;").Check(testkit.Rows(
+		"IndexHashJoin_22 12475.01 root left outer join, inner:IndexLookUp_11, outer key:test.t.b, inner key:test.s.b, other cond:lt(test.s.a, test.t.a)",
+		"├─TableReader_24 10000.00 root data:TableScan_23",
+		"│ └─TableScan_23 10000.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false, stats:pseudo",
+		"└─IndexLookUp_11 1.25 root ",
+		"  ├─Selection_9 1.25 cop[tikv] not(isnull(test.s.b))",
+		"  │ └─IndexScan_7 1.25 cop[tikv] table:s, index:b, range: decided by [eq(test.s.b, test.t.b)], keep order:false, stats:pseudo",
+		"  └─Selection_10 1.25 cop[tikv] not(isnull(test.s.a))",
+		"    └─TableScan_8 1.25 cop[tikv] table:s, keep order:false, stats:pseudo"))
+}
+
 func (s *testSuiteJoin1) TestIssue13177(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")

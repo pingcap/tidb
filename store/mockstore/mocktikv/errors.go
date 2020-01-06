@@ -70,9 +70,10 @@ func (e ErrAlreadyCommitted) Error() string {
 
 // ErrConflict is returned when the commitTS of key in the DB is greater than startTS.
 type ErrConflict struct {
-	StartTS    uint64
-	ConflictTS uint64
-	Key        []byte
+	StartTS          uint64
+	ConflictTS       uint64
+	ConflictCommitTS uint64
+	Key              []byte
 }
 
 func (e *ErrConflict) Error() string {

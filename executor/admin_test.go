@@ -433,7 +433,7 @@ func (s *testSuite2) TestAdminCheckPartitionTableFailed(c *C) {
 		err = txn.Commit(context.Background())
 		c.Assert(err, IsNil)
 		err = tk.ExecToErr("admin check table admin_test_p")
-		c.Assert(err.Error(), Equals, fmt.Sprintf("[executor:8003]admin_test_p err:[admin:1]index:<nil> != record:&admin.RecordData{Handle:%d, Values:[]types.Datum{types.Datum{k:0x1, collation:0x0, decimal:0x0, length:0x0, i:%d, b:[]uint8(nil), x:interface {}(nil)}}}", i, i))
+		c.Assert(err.Error(), Equals, fmt.Sprintf("[executor:8003]admin_test_p err:[admin:8223]index:<nil> != record:&admin.RecordData{Handle:%d, Values:[]types.Datum{types.Datum{k:0x1, collation:0x0, decimal:0x0, length:0x0, i:%d, b:[]uint8(nil), x:interface {}(nil)}}}", i, i))
 		c.Assert(executor.ErrAdminCheckTable.Equal(err), IsTrue)
 		// TODO: fix admin recover for partition table.
 		//r := tk.MustQuery("admin recover index admin_test_p idx")
@@ -445,6 +445,7 @@ func (s *testSuite2) TestAdminCheckPartitionTableFailed(c *C) {
 		_, err = indexOpr.Create(s.ctx, txn, types.MakeDatums(i), int64(i))
 		c.Assert(err, IsNil)
 		err = txn.Commit(context.Background())
+		c.Assert(err, IsNil)
 		tk.MustExec("admin check table admin_test_p")
 	}
 
@@ -468,6 +469,7 @@ func (s *testSuite2) TestAdminCheckPartitionTableFailed(c *C) {
 		err = indexOpr.Delete(sc, txn, types.MakeDatums(i+8), int64(i+8))
 		c.Assert(err, IsNil)
 		err = txn.Commit(context.Background())
+		c.Assert(err, IsNil)
 		tk.MustExec("admin check table admin_test_p")
 	}
 
@@ -490,6 +492,7 @@ func (s *testSuite2) TestAdminCheckPartitionTableFailed(c *C) {
 		err = indexOpr.Delete(sc, txn, types.MakeDatums(i+8), int64(i))
 		c.Assert(err, IsNil)
 		err = txn.Commit(context.Background())
+		c.Assert(err, IsNil)
 		tk.MustExec("admin check table admin_test_p")
 	}
 }
@@ -527,7 +530,7 @@ func (s *testSuite5) TestAdminCheckTableFailed(c *C) {
 	c.Assert(err, IsNil)
 	err = tk.ExecToErr("admin check table admin_test")
 	c.Assert(err.Error(), Equals,
-		"[executor:8003]admin_test err:[admin:1]index:<nil> != record:&admin.RecordData{Handle:-1, Values:[]types.Datum{types.Datum{k:0x1, collation:0x0, decimal:0x0, length:0x0, i:-10, b:[]uint8(nil), x:interface {}(nil)}}}")
+		"[executor:8003]admin_test err:[admin:8223]index:<nil> != record:&admin.RecordData{Handle:-1, Values:[]types.Datum{types.Datum{k:0x1, collation:0x0, decimal:0x0, length:0x0, i:-10, b:[]uint8(nil), x:interface {}(nil)}}}")
 	c.Assert(executor.ErrAdminCheckTable.Equal(err), IsTrue)
 	r := tk.MustQuery("admin recover index admin_test c2")
 	r.Check(testkit.Rows("1 7"))
