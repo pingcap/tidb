@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/sysutil"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/util/pdapi"
 	"github.com/pingcap/tidb/util/testkit"
 	pmodel "github.com/prometheus/common/model"
@@ -826,4 +827,17 @@ func (s *testClusterReaderSuite) TestTiDBClusterLog(c *C) {
 		}
 		result.Check(testkit.Rows(expected...))
 	}
+}
+
+func (s *testClusterReaderSuite) TestTiDBClusterLogError(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	fpName := "github.com/pingcap/tidb/executor/mockClusterLogServerInfo"
+	c.Assert(failpoint.Enable(fpName, `return("")`), IsNil)
+	defer func() { c.Assert(failpoint.Disable(fpName), IsNil) }()
+
+	rs, err := tk.Exec("select * from information_schema.cluster_log")
+	c.Assert(err, IsNil)
+	_, err = session.ResultSetToStringSlice(context.Background(), tk.Se, rs)
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "denied to scan full logs (use `SELECT * FROM cluster_log WHERE message LIKE '%'` explicitly if intentionally)")
 }
