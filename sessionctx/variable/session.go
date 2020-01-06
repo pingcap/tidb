@@ -112,11 +112,31 @@ type TransactionContext struct {
 	TableDeltaMap map[int64]TableDelta
 	IsPessimistic bool
 
+	// unchangedRowKeys is used to store the unchanged rows that needs to lock for pessimistic transaction.
+	unchangedRowKeys map[string]struct{}
+
 	// CreateTime For metrics.
 	CreateTime     time.Time
 	StatementCount int
 
 	IsBatched bool
+}
+
+// AddUnchangedRowKey adds an unchanged row key in update statement for pessimistic lock.
+func (tc *TransactionContext) AddUnchangedRowKey(key []byte) {
+	if tc.unchangedRowKeys == nil {
+		tc.unchangedRowKeys = map[string]struct{}{}
+	}
+	tc.unchangedRowKeys[string(key)] = struct{}{}
+}
+
+// CollectUnchangedRowKeys collects unchanged row keys for pessimistic lock.
+func (tc *TransactionContext) CollectUnchangedRowKeys(buf []kv.Key) []kv.Key {
+	for key := range tc.unchangedRowKeys {
+		buf = append(buf, kv.Key(key))
+	}
+	tc.unchangedRowKeys = nil
+	return buf
 }
 
 // UpdateDeltaForTable updates the delta info for some table.
@@ -410,6 +430,9 @@ type SessionVars struct {
 
 	// PrevStmt is used to store the previous executed statement in the current session.
 	PrevStmt fmt.Stringer
+
+	// prevStmtDigest is used to store the digest of the previous statement in the current session.
+	prevStmtDigest string
 
 	// AllowRemoveAutoInc indicates whether a user can drop the auto_increment column attribute or not.
 	AllowRemoveAutoInc bool
@@ -880,6 +903,18 @@ func (s *SessionVars) setTxnMode(val string) error {
 	return nil
 }
 
+// SetPrevStmtDigest sets the digest of the previous statement.
+func (s *SessionVars) SetPrevStmtDigest(prevStmtDigest string) {
+	s.prevStmtDigest = prevStmtDigest
+}
+
+// GetPrevStmtDigest returns the digest of the previous statement.
+func (s *SessionVars) GetPrevStmtDigest() string {
+	// Because `prevStmt` may be truncated, so it's senseless to normalize it.
+	// Even if `prevStmtDigest` is empty but `prevStmt` is not, just return it anyway.
+	return s.prevStmtDigest
+}
+
 // SetLocalSystemVar sets values of the local variables which in "server" scope.
 func SetLocalSystemVar(name string, val string) {
 	switch name {
@@ -1063,6 +1098,8 @@ const (
 	SlowLogPrevStmt = "Prev_stmt"
 	// SlowLogPlan is used to record the query plan.
 	SlowLogPlan = "Plan"
+	// SlowLogPlanDigest is used to record the query plan digest.
+	SlowLogPlanDigest = "Plan_digest"
 	// SlowLogPlanPrefix is the prefix of the plan value.
 	SlowLogPlanPrefix = ast.TiDBDecodePlan + "('"
 	// SlowLogPlanSuffix is the suffix of the plan value.
@@ -1090,6 +1127,7 @@ type SlowQueryLogItems struct {
 	HasMoreResults bool
 	PrevStmt       string
 	Plan           string
+	PlanDigest     string
 }
 
 // SlowLogFormat uses for formatting slow log.
@@ -1195,6 +1233,9 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 	writeSlowLogItem(&buf, SlowLogSucc, strconv.FormatBool(logItems.Succ))
 	if len(logItems.Plan) != 0 {
 		writeSlowLogItem(&buf, SlowLogPlan, logItems.Plan)
+	}
+	if len(logItems.PlanDigest) != 0 {
+		writeSlowLogItem(&buf, SlowLogPlanDigest, logItems.PlanDigest)
 	}
 
 	if logItems.PrevStmt != "" {

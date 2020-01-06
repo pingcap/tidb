@@ -44,7 +44,7 @@ func (gvc *GlobalVariableCache) Update(rows []chunk.Row, fields []*ast.ResultFie
 	gvc.fields = fields
 	gvc.Unlock()
 
-	checkEnableStmtSummary(rows, fields)
+	checkEnableServerGlobalVar(rows)
 }
 
 // Get gets the global variables from cache.
@@ -67,24 +67,20 @@ func (gvc *GlobalVariableCache) Disable() {
 	return
 }
 
-// checkEnableStmtSummary looks for TiDBEnableStmtSummary and notifies StmtSummary
-func checkEnableStmtSummary(rows []chunk.Row, fields []*ast.ResultField) {
+// checkEnableServerGlobalVar processes variables that acts in server and global level.
+func checkEnableServerGlobalVar(rows []chunk.Row) {
 	for _, row := range rows {
-		varName := row.GetString(0)
-		if varName == variable.TiDBEnableStmtSummary {
-			varVal := row.GetDatum(1, &fields[1].Column.FieldType)
-
-			sVal := ""
-			if !varVal.IsNull() {
-				var err error
-				sVal, err = varVal.ToString()
-				if err != nil {
-					return
-				}
-			}
-
+		sVal := ""
+		if !row.IsNull(1) {
+			sVal = row.GetString(1)
+		}
+		switch row.GetString(0) {
+		case variable.TiDBEnableStmtSummary:
 			stmtsummary.StmtSummaryByDigestMap.SetEnabled(sVal, false)
-			break
+		case variable.TiDBStmtSummaryRefreshInterval:
+			stmtsummary.StmtSummaryByDigestMap.SetRefreshInterval(sVal, false)
+		case variable.TiDBStmtSummaryHistorySize:
+			stmtsummary.StmtSummaryByDigestMap.SetHistorySize(sVal, false)
 		}
 	}
 }
