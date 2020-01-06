@@ -31,6 +31,8 @@ type Encoder struct {
 	row
 	tempColIDs []int64
 	values     []types.Datum
+	// Enable indicates whether this encoder should be use.
+	Enable bool
 }
 
 // Encode encodes a row from a datums slice.

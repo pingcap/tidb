@@ -32,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
-	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/logutil"
 )
 
@@ -247,22 +246,6 @@ func handleEvolveTasks(ctx context.Context, sctx sessionctx.Context, br *bindinf
 	globalHandle.AddEvolvePlanTask(br.OriginalSQL, br.Db, binding, planHint)
 }
 
-type paramMarkerChecker struct {
-	hasParamMarker bool
-}
-
-func (e *paramMarkerChecker) Enter(in ast.Node) (ast.Node, bool) {
-	if _, ok := in.(*driver.ParamMarkerExpr); ok {
-		e.hasParamMarker = true
-		return in, true
-	}
-	return in, false
-}
-
-func (e *paramMarkerChecker) Leave(in ast.Node) (ast.Node, bool) {
-	return in, true
-}
-
 // isPointGetWithoutDoubleRead returns true when meets following conditions:
 //  1. ctx is auto commit tagged.
 //  2. plan is point get by pk.
@@ -292,23 +275,6 @@ func OptimizeExecStmt(ctx context.Context, sctx sessionctx.Context,
 	}
 	err = errors.Errorf("invalid result plan type, should be Execute")
 	return nil, err
-}
-
-// GenHintsFromSQL is used to generate hints from SQL and inject the hints into original SQL.
-func GenHintsFromSQL(ctx context.Context, sctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (string, error) {
-	err := plannercore.Preprocess(sctx, node, is)
-	if err != nil {
-		return "", err
-	}
-	oldValue := sctx.GetSessionVars().UsePlanBaselines
-	// Disable baseline to avoid binding hints.
-	sctx.GetSessionVars().UsePlanBaselines = false
-	p, _, err := Optimize(ctx, sctx, node, is)
-	sctx.GetSessionVars().UsePlanBaselines = oldValue
-	if err != nil {
-		return "", err
-	}
-	return plannercore.GenHintsFromPhysicalPlan(p), nil
 }
 
 func extractTableHintsFromStmtNode(node ast.Node) []*ast.TableOptimizerHint {
@@ -409,5 +375,4 @@ func handleStmtHints(hints []*ast.TableOptimizerHint) (stmtHints stmtctx.StmtHin
 
 func init() {
 	plannercore.OptimizeAstNode = Optimize
-	bindinfo.GenHintsFromSQL = GenHintsFromSQL
 }
