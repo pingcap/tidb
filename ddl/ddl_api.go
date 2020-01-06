@@ -4257,7 +4257,7 @@ func (d *ddl) CreateSequence(ctx sessionctx.Context, stmt *ast.CreateSequenceStm
 	}
 
 	err = d.doDDLJob(ctx, job)
-	// sequence exists, but if_not_exists flags is true, so it ignore this error.
+	// If the same name sequence exists, but IfNotExists flag is true, then we should ignore the error.
 	if infoschema.ErrTableExists.Equal(err) && stmt.IfNotExists {
 		ctx.GetSessionVars().StmtCtx.AppendNote(err)
 		return nil

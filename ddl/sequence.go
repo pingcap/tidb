@@ -101,13 +101,13 @@ func handleSequenceOptions(SeqOptions []*ast.SequenceOption, sequenceInfo *model
 			sequenceInfo.Cache = false
 		case ast.SequenceCycle:
 			sequenceInfo.Cycle = true
-		case ast.SequenceOrder:
-			// TODO : TiDB don't actually support ORDER option by now.
-		case ast.SequenceNoCycle, ast.SequenceNoOrder:
+		case ast.SequenceNoCycle:
+			sequenceInfo.Cycle = false
+			// TODO: TiDB haven't actually support ORDER option by now.
 		}
 	}
 	// Fill the default value, min/max/start should be adjusted with increment's positive and negative.
-	if !minSetFlag || !maxSetFlag || !startSetFlag {
+	if !(minSetFlag && maxSetFlag && startSetFlag) {
 		if sequenceInfo.Increment >= 0 {
 			if !minSetFlag {
 				sequenceInfo.MinValue = model.DefaultPositiveSequenceMinValue
