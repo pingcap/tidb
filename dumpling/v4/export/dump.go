@@ -3,112 +3,94 @@ package export
 import (
 	"context"
 	"database/sql"
-	"strings"
-	"sync"
+	"golang.org/x/sync/errgroup"
 
 	_ "github.com/go-sql-driver/mysql"
 )
 
-func Dump(conf *Config) error {
-	databases, serverInfo, err := prepareMeta(conf)
+func Dump(conf *Config) (err error) {
+	pool, err := sql.Open("mysql", conf.getDSN(""))
+	if err != nil {
+		return withStack(err)
+	}
+	defer pool.Close()
+
+	conf.ServerInfo, err = detectServerInfo(pool)
 	if err != nil {
 		return err
 	}
 
-	conf.ServerInfo = serverInfo
-	for _, database := range databases {
-		fsWriter, err := NewSimpleWriter(conf)
+	databases, err := prepareDumpingDatabases(conf, pool)
+	if err != nil {
+		return err
+	}
+
+	conf.Tables, err = listAllTables(pool, databases)
+	if err != nil {
+		return err
+	}
+
+	var conCtrl ConsistencyController = &ConsistencyNone{}
+	if err = conCtrl.Setup(); err != nil {
+		return err
+	}
+
+	fsWriter, err := NewSimpleWriter(conf)
+	if err != nil {
+		return err
+	}
+	if err = dumpDatabases(context.Background(), conf, pool, fsWriter); err != nil {
+		return err
+	}
+
+	return conCtrl.TearDown()
+}
+
+func dumpDatabases(ctx context.Context, conf *Config, db *sql.DB, writer Writer) error {
+	allTables := conf.Tables
+	for dbName, tables := range allTables {
+		createDatabaseSQL, err := ShowCreateDatabase(db, dbName)
 		if err != nil {
 			return err
 		}
-		if err := dumpDatabase(context.Background(), conf, database, fsWriter); err != nil {
+		if err := writer.WriteDatabaseMeta(ctx, dbName, createDatabaseSQL); err != nil {
 			return err
 		}
+
+		rateLimit := newRateLimit(conf.Threads)
+		var g errgroup.Group
+		for _, table := range tables {
+			table := table
+			g.Go(func() error {
+				rateLimit.getToken()
+				defer rateLimit.putToken()
+				return dumpTable(ctx, conf, db, dbName, table, writer)
+			})
+		}
+		if err := g.Wait(); err != nil {
+			return err
+		}
+		return nil
 	}
 	return nil
 }
 
-func prepareMeta(conf *Config) (databases []string, info ServerInfo, err error) {
-	pool, err := sql.Open("mysql", conf.getDSN(""))
-	if err != nil {
-		return nil, ServerInfoUnknown, withStack(err)
-	}
-	defer pool.Close()
-
-	if conf.Database == "" {
-		databases, err = ShowDatabases(pool)
-		if err != nil {
-			return nil, ServerInfoUnknown, withStack(err)
-		}
-	} else {
-		databases = strings.Split(conf.Database, ",")
-	}
-
-	versionStr, err := SelectVersion(pool)
-	if err != nil {
-		return databases, ServerInfoUnknown, withStack(err)
-	}
-	info = ParseServerInfo(versionStr)
-	return
-}
-
-func dumpDatabase(ctx context.Context, conf *Config, dbName string, writer Writer) error {
-	dsn := conf.getDSN(dbName)
-	db, err := sql.Open("mysql", dsn)
-	if err != nil {
-		return withStack(err)
-	}
-	defer db.Close()
-
-	createDatabaseSQL, err := ShowCreateDatabase(db, dbName)
+func dumpTable(ctx context.Context, conf *Config, db *sql.DB, dbName, table string, writer Writer) error {
+	createTableSQL, err := ShowCreateTable(db, dbName, table)
 	if err != nil {
 		return err
 	}
-	if err := writer.WriteDatabaseMeta(ctx, dbName, createDatabaseSQL); err != nil {
+	if err := writer.WriteTableMeta(ctx, dbName, table, createTableSQL); err != nil {
 		return err
 	}
 
-	tables, err := ShowTables(db)
+	tableIR, err := SelectAllFromTable(conf, db, dbName, table)
 	if err != nil {
 		return err
 	}
 
-	rateLimit := newRateLimit(conf.Threads)
-	var wg sync.WaitGroup
-	wg.Add(len(tables))
-	res := make([]error, len(tables))
-	for i, table := range tables {
-		go func(ith int, table string, wg *sync.WaitGroup, res []error) {
-			defer wg.Done()
-			createTableSQL, err := ShowCreateTable(db, dbName, table)
-			if err != nil {
-				res[ith] = err
-				return
-			}
-			if err := writer.WriteTableMeta(ctx, dbName, table, createTableSQL); err != nil {
-				res[ith] = err
-				return
-			}
-
-			rateLimit.getToken()
-			tableIR, err := SelectAllFromTable(conf, db, dbName, table)
-			defer rateLimit.putToken()
-			if err != nil {
-				res[ith] = err
-				return
-			}
-
-			if err := writer.WriteTableData(ctx, tableIR); err != nil {
-				res[ith] = err
-				return
-			}
-		}(i, table, &wg, res)
-	}
-	wg.Wait()
-	for _, err := range res {
-		if err != nil {
-			return err
-		}
+	if err := writer.WriteTableData(ctx, tableIR); err != nil {
+		return err
 	}
 	return nil
 }

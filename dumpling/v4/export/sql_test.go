@@ -7,9 +7,9 @@ import (
 	. "github.com/pingcap/check"
 )
 
-var _ = Suite(&testDumpSuite{})
+var _ = Suite(&testSQLSuite{})
 
-type testDumpSuite struct{}
+type testSQLSuite struct{}
 
 func (s *testDumpSuite) TestDetectServerInfo(c *C) {
 	db, mock, err := sqlmock.New()

@@ -27,6 +27,10 @@ func (e errWithStack) Error() string {
 var stackErr errWithStack
 
 func withStack(err error) error {
+	if err == nil {
+		return nil
+	}
+
 	if errors.Is(err, stackErr) {
 		return err
 	}
