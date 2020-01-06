@@ -219,7 +219,7 @@ func (*testSuite) TestT(c *C) {
 	c.Assert(max-min, Equals, autoid.CalcNeededBatchSize(104, 3, increment, offset, false))
 	c.Assert(min, Equals, int64(104))
 	c.Assert(max, Equals, int64(115))
-	firstID := seekToFirstAutoID(104, increment, offset)
+	firstID := autoid.SeekToFirstAutoIDSigned(104, increment, offset)
 	c.Assert(firstID, Equals, int64(105))
 
 	increment = int64(15)
@@ -229,7 +229,7 @@ func (*testSuite) TestT(c *C) {
 	c.Assert(max-min, Equals, autoid.CalcNeededBatchSize(115, 2, increment, offset, false))
 	c.Assert(min, Equals, int64(115))
 	c.Assert(max, Equals, int64(145))
-	firstID = seekToFirstAutoID(115, increment, offset)
+	firstID = autoid.SeekToFirstAutoIDSigned(115, increment, offset)
 	c.Assert(firstID, Equals, int64(130))
 
 	offset = int64(200)
@@ -240,7 +240,7 @@ func (*testSuite) TestT(c *C) {
 	c.Assert(max-min, Equals, autoid.CalcNeededBatchSize(offset-1, 2, increment, offset, false))
 	c.Assert(min, Equals, int64(199))
 	c.Assert(max, Equals, int64(215))
-	firstID = seekToFirstAutoID(offset-1, increment, offset)
+	firstID = autoid.SeekToFirstAutoIDSigned(offset-1, increment, offset)
 	c.Assert(firstID, Equals, int64(200))
 }
 
@@ -399,15 +399,9 @@ func (*testSuite) TestUnsignedAutoid(c *C) {
 	c.Assert(uint64(max), Equals, uint64(math.MaxUint64-98))
 
 	c.Assert(max-min, Equals, autoid.CalcNeededBatchSize(int64(uint64(offset)-1), 2, increment, offset, true))
-	firstID := seekToFirstAutoID(min, increment, offset)
+	firstID := autoid.SeekToFirstAutoIDUnSigned(uint64(min), uint64(increment), uint64(offset))
 	c.Assert(uint64(firstID), Equals, uint64(math.MaxUint64-100))
 
-}
-
-func seekToFirstAutoID(base, increment, offset int64) int64 {
-	nr := (base + increment - offset) / increment
-	nr = nr*increment + offset
-	return nr
 }
 
 // TestConcurrentAlloc is used for the test that

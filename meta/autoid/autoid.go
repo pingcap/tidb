@@ -316,7 +316,7 @@ func NewAllocatorsFromTblInfo(store kv.Storage, schemaID int64, tblInfo *model.T
 // For autoIncrement allocator, the increment and offset should always be positive in [1, 65535].
 // Attention:
 // When increment and offset is not the default value(1), the return range (min, max] need to
-// calculate the right start position rather than simply the add 1 to min. Then you can derive
+// calculate right start position rather than simply the add 1 to min. Then you can derive
 // the successive autoID by adding increment * cnt to start for (n-1) times.
 //
 // Example:
@@ -358,20 +358,29 @@ func CalcNeededBatchSize(base, n, increment, offset int64, isUnsigned bool) int6
 	}
 	if isUnsigned {
 		// seek to the next unsigned valid position.
-		nr := (uint64(base) + uint64(increment) - uint64(offset)) / uint64(increment)
-		nr = nr*uint64(increment) + uint64(offset)
-
+		nr := SeekToFirstAutoIDUnSigned(uint64(base), uint64(increment), uint64(offset))
 		// calc the total batch size needed.
 		nr += (uint64(n) - 1) * uint64(increment)
 		return int64(nr - uint64(base))
 	}
-	// seek to the next signed valid position.
-	nr := (base + increment - offset) / increment
-	nr = nr*increment + offset
-
+	nr := SeekToFirstAutoIDSigned(base, increment, offset)
 	// calc the total batch size needed.
 	nr += (n - 1) * increment
 	return nr - base
+}
+
+// SeekToFirstAutoIDSigned seeks to the next valid signed position.
+func SeekToFirstAutoIDSigned(base, increment, offset int64) int64 {
+	nr := (base + increment - offset) / increment
+	nr = nr*increment + offset
+	return nr
+}
+
+// SeekToFirstAutoIDUnSigned seeks to the next valid unsigned position.
+func SeekToFirstAutoIDUnSigned(base, increment, offset uint64) uint64 {
+	nr := (base + increment - offset) / increment
+	nr = nr*increment + offset
+	return nr
 }
 
 func (alloc *allocator) alloc4Signed(tableID int64, n uint64, increment, offset int64) (int64, int64, error) {
