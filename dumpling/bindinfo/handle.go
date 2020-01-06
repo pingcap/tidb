@@ -753,7 +753,6 @@ func runSQL(ctx context.Context, sctx sessionctx.Context, sql string, resultChan
 	}
 	terror.Call(recordSets[0].Close)
 	resultChan <- err
-	return
 }
 
 // HandleEvolvePlanTask tries to evolve one plan task.
