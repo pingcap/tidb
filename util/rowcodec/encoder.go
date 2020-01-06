@@ -31,6 +31,8 @@ type Encoder struct {
 	row
 	tempColIDs []int64
 	values     []types.Datum
+	// Enable indicates whether this encoder should be use.
+	Enable bool
 }
 
 // Encode encodes a row from a datums slice.
@@ -179,7 +181,7 @@ func EncodeValueDatum(sc *stmtctx.StatementContext, d types.Datum, buffer []byte
 	case types.KindMysqlTime:
 		// for mysql datetime, timestamp and date type
 		t := d.GetMysqlTime()
-		if t.Type == mysql.TypeTimestamp && sc != nil && sc.TimeZone != time.UTC {
+		if t.Type() == mysql.TypeTimestamp && sc != nil && sc.TimeZone != time.UTC {
 			err = t.ConvertTimeZone(sc.TimeZone, time.UTC)
 			if err != nil {
 				return

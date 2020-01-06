@@ -31,7 +31,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/log"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -68,13 +67,12 @@ import (
 	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mock"
+	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pingcap/tipb/go-tipb"
-	"go.uber.org/zap"
-	"go.uber.org/zap/zapcore"
 )
 
 func TestT(t *testing.T) {
@@ -112,7 +110,6 @@ var _ = Suite(&testSuite8{&baseTestSuite{}})
 var _ = SerialSuites(&testShowStatsSuite{&baseTestSuite{}})
 var _ = Suite(&testBypassSuite{})
 var _ = Suite(&testUpdateSuite{})
-var _ = Suite(&testOOMSuite{})
 var _ = Suite(&testPointGetSuite{})
 var _ = Suite(&testBatchPointGetSuite{})
 var _ = SerialSuites(&testRecoverTable{})
@@ -538,7 +535,7 @@ func checkCases(tests []testCase, ld *executor.LoadDataInfo,
 		}
 		ld.SetMessage()
 		tk.CheckLastMessage(tt.expectedMsg)
-		err := ctx.StmtCommit()
+		err := ctx.StmtCommit(nil)
 		c.Assert(err, IsNil)
 		txn, err := ctx.Txn(true)
 		c.Assert(err, IsNil)
@@ -3323,7 +3320,8 @@ func setColValue(c *C, txn kv.Transaction, key kv.Key, v types.Datum) {
 	row := []types.Datum{v, {}}
 	colIDs := []int64{2, 3}
 	sc := &stmtctx.StatementContext{TimeZone: time.Local}
-	value, err := tablecodec.EncodeRow(sc, row, colIDs, nil, nil)
+	rd := rowcodec.Encoder{Enable: true}
+	value, err := tablecodec.EncodeRow(sc, row, colIDs, nil, nil, &rd)
 	c.Assert(err, IsNil)
 	err = txn.Set(key, value)
 	c.Assert(err, IsNil)
@@ -4416,72 +4414,6 @@ func (s *testSuiteP2) TestUnsignedFeedback(c *C) {
 	c.Assert(result.Rows()[2][3], Equals, "table:t, range:[0,+inf], keep order:false")
 }
 
-type testOOMSuite struct {
-	store kv.Storage
-	do    *domain.Domain
-	oom   *oomCapturer
-}
-
-func (s *testOOMSuite) SetUpSuite(c *C) {
-	c.Skip("log.ReplaceGlobals(lg, r) in registerHook() may result in data race")
-	testleak.BeforeTest()
-	s.registerHook()
-	var err error
-	s.store, err = mockstore.NewMockTikvStore()
-	c.Assert(err, IsNil)
-	session.SetSchemaLease(0)
-	domain.RunAutoAnalyze = false
-	s.do, err = session.BootstrapSession(s.store)
-	c.Assert(err, IsNil)
-}
-
-func (s *testOOMSuite) registerHook() {
-	conf := &log.Config{Level: os.Getenv("log_level"), File: log.FileLogConfig{}}
-	_, r, _ := log.InitLogger(conf)
-	s.oom = &oomCapturer{r.Core, ""}
-	lg := zap.New(s.oom)
-	log.ReplaceGlobals(lg, r)
-}
-
-func (s *testOOMSuite) TestDistSQLMemoryControl(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t (id int, a int, b int, index idx_a(`a`))")
-	tk.MustExec("insert into t values (1,1,1), (2,2,2), (3,3,3)")
-
-	s.oom.tracker = ""
-	tk.MustQuery("select * from t")
-	c.Assert(s.oom.tracker, Equals, "")
-	tk.Se.GetSessionVars().MemQuotaDistSQL = 1
-	tk.MustQuery("select * from t")
-	c.Assert(s.oom.tracker, Equals, "TableReaderDistSQLTracker")
-	tk.Se.GetSessionVars().MemQuotaDistSQL = -1
-
-	s.oom.tracker = ""
-	tk.MustQuery("select a from t")
-	c.Assert(s.oom.tracker, Equals, "")
-	tk.Se.GetSessionVars().MemQuotaDistSQL = 1
-	tk.MustQuery("select a from t use index(idx_a)")
-	c.Assert(s.oom.tracker, Equals, "IndexReaderDistSQLTracker")
-	tk.Se.GetSessionVars().MemQuotaDistSQL = -1
-
-	s.oom.tracker = ""
-	tk.MustQuery("select * from t")
-	c.Assert(s.oom.tracker, Equals, "")
-	tk.Se.GetSessionVars().MemQuotaDistSQL = 1
-	tk.MustQuery("select * from t use index(idx_a)")
-	c.Assert(s.oom.tracker, Equals, "IndexLookupDistSQLTracker")
-	tk.Se.GetSessionVars().MemQuotaDistSQL = -1
-}
-
-func setOOMAction(action string) {
-	old := config.GetGlobalConfig()
-	newConf := *old
-	newConf.OOMAction = action
-	config.StoreGlobalConfig(&newConf)
-}
-
 func (s *testSuite) TestOOMPanicAction(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -4507,40 +4439,49 @@ func (s *testSuite) TestOOMPanicAction(c *C) {
 	tk.MustExec("drop table if exists t,t1")
 	tk.MustExec("create table t (a bigint);")
 	tk.MustExec("create table t1 (a bigint);")
+	tk.MustExec("set @@tidb_mem_quota_query=200;")
+	_, err = tk.Exec("insert into t1 values (1),(2),(3),(4),(5);")
+	c.Assert(err.Error(), Matches, "Out Of Memory Quota!.*")
+	_, err = tk.Exec("replace into t1 values (1),(2),(3),(4),(5);")
+	c.Assert(err.Error(), Matches, "Out Of Memory Quota!.*")
+	tk.MustExec("set @@tidb_mem_quota_query=10000")
 	tk.MustExec("insert into t1 values (1),(2),(3),(4),(5);")
 	tk.MustExec("set @@tidb_mem_quota_query=200;")
 	_, err = tk.Exec("insert into t select a from t1 order by a desc;")
-	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Matches, "Out Of Memory Quota!.*")
+	_, err = tk.Exec("replace into t select a from t1 order by a desc;")
+	c.Assert(err.Error(), Matches, "Out Of Memory Quota!.*")
+
+	tk.MustExec("set @@tidb_mem_quota_query=10000")
+	tk.MustExec("insert into t values (1),(2),(3),(4),(5);")
+	// Set the memory quota to 244 to make this SQL panic during the DeleteExec
+	// instead of the TableReaderExec.
+	tk.MustExec("set @@tidb_mem_quota_query=244;")
+	_, err = tk.Exec("delete from t")
+	c.Assert(err.Error(), Matches, "Out Of Memory Quota!.*")
+
+	tk.MustExec("set @@tidb_mem_quota_query=10000;")
+	tk.MustExec("delete from t1")
+	tk.MustExec("insert into t1 values(1)")
+	tk.MustExec("insert into t values (1),(2),(3),(4),(5);")
+	tk.MustExec("set @@tidb_mem_quota_query=244;")
+	_, err = tk.Exec("delete t, t1 from t join t1 on t.a = t1.a")
+
+	tk.MustExec("set @@tidb_mem_quota_query=100000;")
+	tk.MustExec("truncate table t")
+	tk.MustExec("insert into t values(1),(2),(3)")
+	// set the memory to quota to make the SQL panic during UpdateExec instead
+	// of TableReader.
+	tk.MustExec("set @@tidb_mem_quota_query=244;")
+	_, err = tk.Exec("update t set a = 4")
 	c.Assert(err.Error(), Matches, "Out Of Memory Quota!.*")
 }
 
-type oomCapturer struct {
-	zapcore.Core
-	tracker string
-}
-
-func (h *oomCapturer) Write(entry zapcore.Entry, fields []zapcore.Field) error {
-	if strings.Contains(entry.Message, "memory exceeds quota") {
-		err, _ := fields[0].Interface.(error)
-		str := err.Error()
-		begin := strings.Index(str, "8001]")
-		if begin == -1 {
-			panic("begin not found")
-		}
-		end := strings.Index(str, " holds")
-		if end == -1 {
-			panic("end not found")
-		}
-		h.tracker = str[begin+len("8001]") : end]
-	}
-	return nil
-}
-
-func (h *oomCapturer) Check(e zapcore.Entry, ce *zapcore.CheckedEntry) *zapcore.CheckedEntry {
-	if h.Enabled(e.Level) {
-		return ce.AddCore(e, h)
-	}
-	return ce
+func setOOMAction(action string) {
+	old := config.GetGlobalConfig()
+	newConf := *old
+	newConf.OOMAction = action
+	config.StoreGlobalConfig(&newConf)
 }
 
 type testRecoverTable struct {
@@ -5211,4 +5152,15 @@ func (s *testSuite1) TestPartitionHashCode(c *C) {
 		}()
 	}
 	wg.Wait()
+}
+
+func (s *testSuite1) TestAlterDefaultValue(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t(a int, primary key(a))")
+	tk.MustExec("insert into t(a) values(1)")
+	tk.MustExec("alter table t add column b int default 1")
+	tk.MustExec("alter table t alter b set default 2")
+	tk.MustQuery("select b from t where a = 1").Check(testkit.Rows("1"))
 }

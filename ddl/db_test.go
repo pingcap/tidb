@@ -107,6 +107,7 @@ func setUpSuite(s *testDBSuite, c *C) {
 
 	_, err = s.s.Execute(context.Background(), "create database test_db")
 	c.Assert(err, IsNil)
+	s.s.Execute(context.Background(), "set @@global.tidb_max_delta_schema_count= 4096")
 
 	s.tk = testkit.NewTestKit(c, s.store)
 }
@@ -825,9 +826,18 @@ func (s *testDBSuite3) TestAddAnonymousIndex(c *C) {
 	s.mustExec(c, "alter table t_anonymous_index add index c3 (C3)")
 	s.mustExec(c, "alter table t_anonymous_index drop index C3")
 	// for anonymous index with column name `primary`
-	s.mustExec(c, "create table t_primary (`primary` int, key (`primary`))")
+	s.mustExec(c, "create table t_primary (`primary` int, b int, key (`primary`))")
 	t = s.testGetTable(c, "t_primary")
 	c.Assert(t.Indices()[0].Meta().Name.String(), Equals, "primary_2")
+	s.mustExec(c, "alter table t_primary add index (`primary`);")
+	t = s.testGetTable(c, "t_primary")
+	c.Assert(t.Indices()[0].Meta().Name.String(), Equals, "primary_2")
+	c.Assert(t.Indices()[1].Meta().Name.String(), Equals, "primary_3")
+	s.mustExec(c, "alter table t_primary add primary key(b);")
+	t = s.testGetTable(c, "t_primary")
+	c.Assert(t.Indices()[0].Meta().Name.String(), Equals, "primary_2")
+	c.Assert(t.Indices()[1].Meta().Name.String(), Equals, "primary_3")
+	c.Assert(t.Indices()[2].Meta().Name.L, Equals, "primary")
 	s.mustExec(c, "create table t_primary_2 (`primary` int, key primary_2 (`primary`), key (`primary`))")
 	t = s.testGetTable(c, "t_primary_2")
 	c.Assert(t.Indices()[0].Meta().Name.String(), Equals, "primary_2")
@@ -1848,6 +1858,61 @@ func (s *testDBSuite4) TestChangeColumn(c *C) {
 	s.tk.MustGetErrCode(sql, mysql.ErrDupFieldName)
 
 	s.tk.MustExec("drop table t3")
+}
+
+func (s *testDBSuite5) TestRenameColumn(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use " + s.schemaName)
+
+	assertColNames := func(tableName string, colNames ...string) {
+		cols := s.testGetTable(c, tableName).Cols()
+		c.Assert(len(cols), Equals, len(colNames), Commentf("number of columns mismatch"))
+		for i := range cols {
+			c.Assert(cols[i].Name.L, Equals, strings.ToLower(colNames[i]))
+		}
+	}
+
+	s.mustExec(c, "create table test_rename_column (id int not null primary key auto_increment, col1 int)")
+	s.mustExec(c, "alter table test_rename_column rename column col1 to col1")
+	assertColNames("test_rename_column", "id", "col1")
+	s.mustExec(c, "alter table test_rename_column rename column col1 to col2")
+	assertColNames("test_rename_column", "id", "col2")
+
+	// Test renaming non-exist columns.
+	s.tk.MustGetErrCode("alter table test_rename_column rename column non_exist_col to col3", mysql.ErrBadField)
+
+	// Test renaming to an exist column.
+	s.tk.MustGetErrCode("alter table test_rename_column rename column col2 to id", mysql.ErrDupFieldName)
+
+	// Test renaming the column with foreign key.
+	s.tk.MustExec("drop table test_rename_column")
+	s.tk.MustExec("create table test_rename_column_base (base int)")
+	s.tk.MustExec("create table test_rename_column (col int, foreign key (col) references test_rename_column_base(base))")
+
+	s.tk.MustGetErrCode("alter table test_rename_column rename column col to col1", mysql.ErrFKIncompatibleColumns)
+
+	s.tk.MustExec("drop table test_rename_column_base")
+
+	// Test renaming generated columns.
+	s.tk.MustExec("drop table test_rename_column")
+	s.tk.MustExec("create table test_rename_column (id int, col1 int generated always as (id + 1))")
+
+	s.mustExec(c, "alter table test_rename_column rename column col1 to col2")
+	assertColNames("test_rename_column", "id", "col2")
+	s.mustExec(c, "alter table test_rename_column rename column col2 to col1")
+	assertColNames("test_rename_column", "id", "col1")
+	s.tk.MustGetErrCode("alter table test_rename_column rename column id to id1", mysql.ErrBadField)
+
+	// Test renaming view columns.
+	s.tk.MustExec("drop table test_rename_column")
+	s.mustExec(c, "create table test_rename_column (id int, col1 int)")
+	s.mustExec(c, "create view test_rename_column_view as select * from test_rename_column")
+
+	s.mustExec(c, "alter table test_rename_column rename column col1 to col2")
+	s.tk.MustGetErrCode("select * from test_rename_column_view", mysql.ErrViewInvalid)
+
+	s.mustExec(c, "drop view test_rename_column_view")
+	s.tk.MustExec("drop table test_rename_column")
 }
 
 func (s *testDBSuite) mustExec(c *C, query string, args ...interface{}) {
@@ -3265,7 +3330,7 @@ func (s *testDBSuite4) TestAddColumn2(c *C) {
 	c.Assert(err, IsNil)
 	_, err = writeOnlyTable.AddRecord(s.tk.Se, types.MakeDatums(oldRow[0].GetInt64(), 2, oldRow[2].GetInt64()), table.IsUpdate)
 	c.Assert(err, IsNil)
-	err = s.tk.Se.StmtCommit()
+	err = s.tk.Se.StmtCommit(nil)
 	c.Assert(err, IsNil)
 	err = s.tk.Se.CommitTxn(ctx)
 	c.Assert(err, IsNil)
@@ -4228,6 +4293,24 @@ func (s *testDBSuite2) TestDDLWithInvalidTableInfo(c *C) {
 	_, err = tk.Exec("alter table t add column d int GENERATED ALWAYS AS ((case when (a = 0) then 0when (a > 0) then (b / a) end));")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[parser:1064]You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 94 near \"then (b / a) end));\" ")
+}
+
+func (s *testDBSuite1) TestAlterOrderBy(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use " + s.schemaName)
+	s.tk.MustExec("create table ob (pk int primary key, c int default 1, c1 int default 1, KEY cl(c1))")
+
+	// Test order by with primary key
+	s.tk.MustExec("alter table ob order by c")
+	c.Assert(s.tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(1))
+	s.tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1105|ORDER BY ignored as there is a user-defined clustered index in the table 'ob'"))
+
+	// Test order by with no primary key
+	s.tk.MustExec("drop table if exists ob")
+	s.tk.MustExec("create table ob (c int default 1, c1 int default 1, KEY cl(c1))")
+	s.tk.MustExec("alter table ob order by c")
+	c.Assert(s.tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(0))
+	s.tk.MustExec("drop table if exists ob")
 }
 
 func init() {

@@ -581,9 +581,9 @@ func (s *testStmtSummarySuite) TestToDatum(c *C) {
 	s.ssMap.AddStatement(stmtExecInfo1)
 	datums := s.ssMap.ToCurrentDatum()
 	c.Assert(len(datums), Equals, 1)
-	n := types.Time{Time: types.FromGoTime(time.Unix(s.ssMap.beginTimeForCurInterval, 0)), Type: mysql.TypeTimestamp}
-	e := types.Time{Time: types.FromGoTime(time.Unix(s.ssMap.beginTimeForCurInterval+1800, 0)), Type: mysql.TypeTimestamp}
-	t := types.Time{Time: types.FromGoTime(stmtExecInfo1.StartTime), Type: mysql.TypeTimestamp}
+	n := types.NewTime(types.FromGoTime(time.Unix(s.ssMap.beginTimeForCurInterval, 0)), mysql.TypeTimestamp, types.DefaultFsp)
+	e := types.NewTime(types.FromGoTime(time.Unix(s.ssMap.beginTimeForCurInterval+1800, 0)), mysql.TypeTimestamp, types.DefaultFsp)
+	t := types.NewTime(types.FromGoTime(stmtExecInfo1.StartTime), mysql.TypeTimestamp, types.DefaultFsp)
 	expectedDatum := []interface{}{n, e, "select", stmtExecInfo1.SchemaName, stmtExecInfo1.Digest, stmtExecInfo1.NormalizedSQL,
 		"db1.tb1,db2.tb2", "a", stmtExecInfo1.User, 1, int64(stmtExecInfo1.TotalLatency),
 		int64(stmtExecInfo1.TotalLatency), int64(stmtExecInfo1.TotalLatency), int64(stmtExecInfo1.TotalLatency),

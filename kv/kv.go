@@ -266,7 +266,7 @@ type Request struct {
 	IsolationLevel IsoLevel
 	// Priority is the priority of this KV request, its value may be PriorityNormal/PriorityLow/PriorityHigh.
 	Priority int
-	// MemTracker is used to trace and control memory usage in co-processor layer.
+	// memTracker is used to trace and control memory usage in co-processor layer.
 	MemTracker *memory.Tracker
 	// KeepOrder is true, if the response should be returned in order.
 	KeepOrder bool
@@ -283,6 +283,8 @@ type Request struct {
 	ReplicaRead ReplicaReadType
 	// StoreType represents this request is sent to the which type of store.
 	StoreType StoreType
+	// Cacheable is true if the request can be cached. Currently only deterministic DAG requests can be cached.
+	Cacheable bool
 }
 
 // ResultSubset represents a result subset from a single storage unit.

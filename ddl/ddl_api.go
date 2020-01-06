@@ -43,7 +43,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/parser_driver"
+	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/domainutil"
@@ -451,7 +451,7 @@ func checkColumnDefaultValue(ctx sessionctx.Context, col *table.Column, value in
 			if err != nil {
 				return hasDefaultValue, value, errors.Trace(err)
 			}
-			if timeValue.GetMysqlTime().Time == types.ZeroTime {
+			if timeValue.GetMysqlTime().CoreTime() == types.ZeroCoreTime {
 				return hasDefaultValue, value, types.ErrInvalidDefault.GenWithStackByArgs(col.Name.O)
 			}
 		}
@@ -2023,6 +2023,8 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 			err = d.ModifyColumn(ctx, ident, spec)
 		case ast.AlterTableChangeColumn:
 			err = d.ChangeColumn(ctx, ident, spec)
+		case ast.AlterTableRenameColumn:
+			err = d.RenameColumn(ctx, ident, spec)
 		case ast.AlterTableAlterColumn:
 			err = d.AlterColumn(ctx, ident, spec)
 		case ast.AlterTableRenameTable:
@@ -2066,6 +2068,8 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 			}
 		case ast.AlterTableSetTiFlashReplica:
 			err = d.AlterTableSetTiFlashReplica(ctx, ident, spec.TiFlashReplica)
+		case ast.AlterTableOrderByColumns:
+			err = d.OrderByColumns(ctx, ident)
 		default:
 			// Nothing to do now.
 		}
@@ -2938,6 +2942,62 @@ func (d *ddl) ChangeColumn(ctx sessionctx.Context, ident ast.Ident, spec *ast.Al
 	return errors.Trace(err)
 }
 
+// RenameColumn renames an existing column.
+func (d *ddl) RenameColumn(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
+	oldColName := spec.OldColumnName.Name
+	newColName := spec.NewColumnName.Name
+	if oldColName.L == newColName.L {
+		return nil
+	}
+
+	schema, tbl, err := d.getSchemaAndTableByIdent(ctx, ident)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	oldCol := table.FindCol(tbl.VisibleCols(), oldColName.L)
+	if oldCol == nil {
+		return infoschema.ErrColumnNotExists.GenWithStackByArgs(oldColName, ident.Name)
+	}
+
+	allCols := tbl.Cols()
+	colWithNewNameAlreadyExist := table.FindCol(allCols, newColName.L) != nil
+	if colWithNewNameAlreadyExist {
+		return infoschema.ErrColumnExists.GenWithStackByArgs(newColName)
+	}
+
+	if fkInfo := getColumnForeignKeyInfo(oldColName.L, tbl.Meta().ForeignKeys); fkInfo != nil {
+		return errFKIncompatibleColumns.GenWithStackByArgs(oldColName, fkInfo.Name)
+	}
+
+	// Check generated expression.
+	for _, col := range allCols {
+		if col.GeneratedExpr == nil {
+			continue
+		}
+		dependedColNames := findColumnNamesInExpr(col.GeneratedExpr)
+		for _, name := range dependedColNames {
+			if name.Name.L == oldColName.L {
+				return ErrBadField.GenWithStackByArgs(oldColName.O, "generated column function")
+			}
+		}
+	}
+
+	newCol := oldCol.Clone()
+	newCol.Name = newColName
+	job := &model.Job{
+		SchemaID:   schema.ID,
+		TableID:    tbl.Meta().ID,
+		SchemaName: schema.Name.L,
+		Type:       model.ActionModifyColumn,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{&newCol, oldColName, spec.Position, 0},
+	}
+	err = d.doDDLJob(ctx, job)
+	err = d.callHookOnChanged(err)
+	return errors.Trace(err)
+}
+
 // ModifyColumn does modification on an existing column, currently we only support limited kind of changes
 // that do not need to change or check data on the table.
 func (d *ddl) ModifyColumn(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
@@ -3415,6 +3475,10 @@ func getAnonymousIndex(t table.Table, colName model.CIStr) model.CIStr {
 	id := 2
 	l := len(t.Indices())
 	indexName := colName
+	if strings.EqualFold(indexName.L, mysql.PrimaryKeyName) {
+		indexName = model.NewCIStr(fmt.Sprintf("%s_%d", colName.O, id))
+		id = 3
+	}
 	for i := 0; i < l; i++ {
 		if t.Indices()[i].Meta().Name.L == indexName.L {
 			indexName = model.NewCIStr(fmt.Sprintf("%s_%d", colName.O, id))
@@ -4138,4 +4202,15 @@ func (d *ddl) RepairTable(ctx sessionctx.Context, table *ast.TableName, createSt
 	}
 	err = d.callHookOnChanged(err)
 	return errors.Trace(err)
+}
+
+func (d *ddl) OrderByColumns(ctx sessionctx.Context, ident ast.Ident) error {
+	_, tb, err := d.getSchemaAndTableByIdent(ctx, ident)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if tb.Meta().GetPkColInfo() != nil {
+		ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("ORDER BY ignored as there is a user-defined clustered index in the table '%s'", ident.Name))
+	}
+	return nil
 }

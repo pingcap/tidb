@@ -737,7 +737,7 @@ func (p *MySQLPrivilege) decodeColumnsPrivTableRow(row chunk.Row, fs []*ast.Resu
 			value.ColumnName = row.GetString(i)
 		case f.ColumnAsName.L == "timestamp":
 			var err error
-			value.Timestamp, err = row.GetTime(i).Time.GoTime(time.Local)
+			value.Timestamp, err = row.GetTime(i).GoTime(time.Local)
 			if err != nil {
 				return errors.Trace(err)
 			}
