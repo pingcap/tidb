@@ -617,13 +617,16 @@ func (s *builtinArithmeticDivideDecimalSig) Clone() builtinFunc {
 }
 
 func (s *builtinArithmeticDivideRealSig) evalReal(row chunk.Row) (float64, bool, error) {
-	a, isNull, err := s.args[0].EvalReal(s.ctx, row)
-	if isNull || err != nil {
-		return 0, isNull, err
+	a, isLHSNull, err := s.args[0].EvalReal(s.ctx, row)
+	if err != nil {
+		return 0, isLHSNull, err
 	}
-	b, isNull, err := s.args[1].EvalReal(s.ctx, row)
-	if isNull || err != nil {
-		return 0, isNull, err
+	b, isRHSNull, err := s.args[1].EvalReal(s.ctx, row)
+	if err != nil {
+		return 0, isRHSNull, err
+	}
+	if isLHSNull || isRHSNull {
+		return 0, true, nil
 	}
 	if b == 0 {
 		return 0, true, handleDivisionByZeroError(s.ctx)
