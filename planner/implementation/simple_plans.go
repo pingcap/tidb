@@ -162,7 +162,7 @@ func (impl *UnionAllImpl) CalcCost(outCount float64, children ...memo.Implementa
 	selfCost := float64(1+len(children)) * impl.plan.SCtx().GetSessionVars().ConcurrencyFactor
 	// Children of UnionAll are executed in parallel.
 	impl.cost = selfCost + childMaxCost
-	return selfCost
+	return impl.cost
 }
 
 // GetCostLimit implements Implementation interface.
