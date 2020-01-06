@@ -89,7 +89,7 @@ func IsJobRollbackable(job *model.Job) bool {
 	case model.ActionDropIndex, model.ActionDropPrimaryKey:
 		// We can't cancel if index current state is in StateDeleteOnly or StateDeleteReorganization or StateWriteOnly, otherwise there will be an inconsistent issue between record and index.
 		// In WriteOnly state, we can rollback for normal index but can't rollback for expression index(need to drop hidden column). Since we can't
-		// known the type of index here, we consider all indices except primary index as non-rollbackable.
+		// know the type of index here, we consider all indices except primary index as non-rollbackable.
 		// TODO: distinguish normal index and expression index so that we can rollback `DropIndex` for normal index in WriteOnly state.
 		// TODO: make DropPrimaryKey rollbackable in WriteOnly, it need to deal with some tests.
 		if job.SchemaState == model.StateDeleteOnly ||
