@@ -535,8 +535,8 @@ type hashJoinTestCase struct {
 	concurrency     int
 	ctx             sessionctx.Context
 	keyIdx          []int
-	disk            bool
 	joinType        core.JoinType
+	disk            bool
 	useOuterToBuild bool
 }
 
@@ -1094,4 +1094,212 @@ func BenchmarkIndexJoinExec(b *testing.B) {
 	b.Run(fmt.Sprintf("index outer hash join %v", tc), func(b *testing.B) {
 		benchmarkIndexJoinExecWithCase(b, tc, outerDS, innerDS, indexOuterHashJoin)
 	})
+}
+
+type mergeJoinTestCase struct {
+	indexJoinTestCase
+}
+
+func prepare4MergeJoin(tc *mergeJoinTestCase, leftExec, rightExec *mockDataSource) *MergeJoinExec {
+	outerCols, innerCols := tc.columns(), tc.columns()
+	joinSchema := expression.NewSchema(outerCols...)
+	joinSchema.Append(innerCols...)
+
+	outerJoinKeys := make([]*expression.Column, 0, len(tc.outerJoinKeyIdx))
+	innerJoinKeys := make([]*expression.Column, 0, len(tc.innerJoinKeyIdx))
+	for _, keyIdx := range tc.outerJoinKeyIdx {
+		outerJoinKeys = append(outerJoinKeys, outerCols[keyIdx])
+	}
+	for _, keyIdx := range tc.innerJoinKeyIdx {
+		innerJoinKeys = append(innerJoinKeys, innerCols[keyIdx])
+	}
+	compareFuncs := make([]expression.CompareFunc, 0, len(outerJoinKeys))
+	outerCompareFuncs := make([]expression.CompareFunc, 0, len(outerJoinKeys))
+	for i := range outerJoinKeys {
+		compareFuncs = append(compareFuncs, expression.GetCmpFunction(outerJoinKeys[i], innerJoinKeys[i]))
+		outerCompareFuncs = append(outerCompareFuncs, expression.GetCmpFunction(outerJoinKeys[i], outerJoinKeys[i]))
+	}
+
+	defaultValues := make([]types.Datum, len(innerCols))
+
+	// only benchmark inner join
+	e := &MergeJoinExec{
+		stmtCtx:      tc.ctx.GetSessionVars().StmtCtx,
+		baseExecutor: newBaseExecutor(tc.ctx, joinSchema, stringutil.StringerStr("MergeJoin"), leftExec, rightExec),
+		compareFuncs: compareFuncs,
+		joiner: newJoiner(
+			tc.ctx,
+			0,
+			false,
+			defaultValues,
+			nil,
+			retTypes(leftExec),
+			retTypes(rightExec),
+		),
+		isOuterJoin: false,
+	}
+
+	e.outerIdx = 0
+
+	e.innerTable = &mergeJoinInnerTable{
+		reader:   rightExec,
+		joinKeys: innerJoinKeys,
+	}
+
+	e.outerTable = &mergeJoinOuterTable{
+		reader: leftExec,
+		filter: nil,
+		keys:   outerJoinKeys,
+	}
+
+	return e
+}
+
+func defaultMergeJoinTestCase() *mergeJoinTestCase {
+	return &mergeJoinTestCase{*defaultIndexJoinTestCase()}
+}
+
+func newMergeJoinBenchmark(numOuterRows, numInnerDup, numInnerRedundant int) (tc *mergeJoinTestCase, innerDS, outerDS *mockDataSource) {
+	ctx := mock.NewContext()
+	ctx.GetSessionVars().InitChunkSize = variable.DefInitChunkSize
+	ctx.GetSessionVars().MaxChunkSize = variable.DefMaxChunkSize
+	ctx.GetSessionVars().SnapshotTS = 1
+	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(nil, -1)
+	ctx.GetSessionVars().StmtCtx.DiskTracker = disk.NewTracker(nil, -1)
+
+	numInnerRows := numOuterRows*numInnerDup + numInnerRedundant
+	itc := &indexJoinTestCase{
+		outerRows:       numOuterRows,
+		innerRows:       numInnerRows,
+		concurrency:     4,
+		ctx:             ctx,
+		outerJoinKeyIdx: []int{0, 1},
+		innerJoinKeyIdx: []int{0, 1},
+		innerIdx:        []int{0, 1},
+	}
+	tc = &mergeJoinTestCase{*itc}
+	outerOpt := mockDataSourceParameters{
+		schema: expression.NewSchema(tc.columns()...),
+		rows:   numOuterRows,
+		ctx:    tc.ctx,
+		genDataFunc: func(row int, typ *types.FieldType) interface{} {
+			switch typ.Tp {
+			case mysql.TypeLong, mysql.TypeLonglong:
+				return int64(row)
+			case mysql.TypeDouble:
+				return float64(row)
+			case mysql.TypeVarString:
+				return rawData
+			default:
+				panic("not implement")
+			}
+		},
+	}
+
+	innerOpt := mockDataSourceParameters{
+		schema: expression.NewSchema(tc.columns()...),
+		rows:   numInnerRows,
+		ctx:    tc.ctx,
+		genDataFunc: func(row int, typ *types.FieldType) interface{} {
+			row = row / numInnerDup
+			switch typ.Tp {
+			case mysql.TypeLong, mysql.TypeLonglong:
+				return int64(row)
+			case mysql.TypeDouble:
+				return float64(row)
+			case mysql.TypeVarString:
+				return rawData
+			default:
+				panic("not implement")
+			}
+		},
+	}
+
+	innerDS = buildMockDataSource(innerOpt)
+	outerDS = buildMockDataSource(outerOpt)
+
+	return
+}
+
+type mergeJoinType int8
+
+const (
+	innerMergeJoin mergeJoinType = iota
+)
+
+func benchmarkMergeJoinExecWithCase(b *testing.B, tc *mergeJoinTestCase, innerDS, outerDS *mockDataSource, joinType mergeJoinType) {
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		b.StopTimer()
+		var exec Executor
+		switch joinType {
+		case innerMergeJoin:
+			exec = prepare4MergeJoin(tc, innerDS, outerDS)
+		}
+
+		tmpCtx := context.Background()
+		chk := newFirstChunk(exec)
+		outerDS.prepareChunks()
+		innerDS.prepareChunks()
+
+		b.StartTimer()
+		if err := exec.Open(tmpCtx); err != nil {
+			b.Fatal(err)
+		}
+		for {
+			if err := exec.Next(tmpCtx, chk); err != nil {
+				b.Fatal(err)
+			}
+			if chk.NumRows() == 0 {
+				break
+			}
+		}
+
+		if err := exec.Close(); err != nil {
+			b.Fatal(err)
+		}
+		b.StopTimer()
+	}
+}
+
+func BenchmarkMergeJoinExec(b *testing.B) {
+	lvl := log.GetLevel()
+	log.SetLevel(zapcore.ErrorLevel)
+	defer log.SetLevel(lvl)
+	b.ReportAllocs()
+
+	totalRows := 300000
+
+	{
+		numInnerDup := 1
+		tc, innerDS, outerDS := newMergeJoinBenchmark(totalRows/numInnerDup, numInnerDup, 0)
+		b.Run(fmt.Sprintf("merge join %v", tc), func(b *testing.B) {
+			benchmarkMergeJoinExecWithCase(b, tc, outerDS, innerDS, innerMergeJoin)
+		})
+	}
+
+	{
+		numInnerDup := 100
+		tc, innerDS, outerDS := newMergeJoinBenchmark(totalRows/numInnerDup, numInnerDup, 0)
+		b.Run(fmt.Sprintf("merge join %v", tc), func(b *testing.B) {
+			benchmarkMergeJoinExecWithCase(b, tc, outerDS, innerDS, innerMergeJoin)
+		})
+	}
+
+	{
+		numInnerDup := 10000
+		tc, innerDS, outerDS := newMergeJoinBenchmark(totalRows/numInnerDup, numInnerDup, 0)
+		b.Run(fmt.Sprintf("merge join %v", tc), func(b *testing.B) {
+			benchmarkMergeJoinExecWithCase(b, tc, outerDS, innerDS, innerMergeJoin)
+		})
+	}
+
+	{
+		numInnerDup := 1
+		numInnerRedundant := 30000
+		tc, innerDS, outerDS := newMergeJoinBenchmark(totalRows/numInnerDup, numInnerDup, numInnerRedundant)
+		b.Run(fmt.Sprintf("merge join %v", tc), func(b *testing.B) {
+			benchmarkMergeJoinExecWithCase(b, tc, outerDS, innerDS, innerMergeJoin)
+		})
+	}
 }

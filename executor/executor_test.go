@@ -67,6 +67,7 @@ import (
 	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mock"
+	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
@@ -3319,7 +3320,8 @@ func setColValue(c *C, txn kv.Transaction, key kv.Key, v types.Datum) {
 	row := []types.Datum{v, {}}
 	colIDs := []int64{2, 3}
 	sc := &stmtctx.StatementContext{TimeZone: time.Local}
-	value, err := tablecodec.EncodeRow(sc, row, colIDs, nil, nil)
+	rd := rowcodec.Encoder{Enable: true}
+	value, err := tablecodec.EncodeRow(sc, row, colIDs, nil, nil, &rd)
 	c.Assert(err, IsNil)
 	err = txn.Set(key, value)
 	c.Assert(err, IsNil)
@@ -4449,6 +4451,30 @@ func (s *testSuite) TestOOMPanicAction(c *C) {
 	c.Assert(err.Error(), Matches, "Out Of Memory Quota!.*")
 	_, err = tk.Exec("replace into t select a from t1 order by a desc;")
 	c.Assert(err.Error(), Matches, "Out Of Memory Quota!.*")
+
+	tk.MustExec("set @@tidb_mem_quota_query=10000")
+	tk.MustExec("insert into t values (1),(2),(3),(4),(5);")
+	// Set the memory quota to 244 to make this SQL panic during the DeleteExec
+	// instead of the TableReaderExec.
+	tk.MustExec("set @@tidb_mem_quota_query=244;")
+	_, err = tk.Exec("delete from t")
+	c.Assert(err.Error(), Matches, "Out Of Memory Quota!.*")
+
+	tk.MustExec("set @@tidb_mem_quota_query=10000;")
+	tk.MustExec("delete from t1")
+	tk.MustExec("insert into t1 values(1)")
+	tk.MustExec("insert into t values (1),(2),(3),(4),(5);")
+	tk.MustExec("set @@tidb_mem_quota_query=244;")
+	_, err = tk.Exec("delete t, t1 from t join t1 on t.a = t1.a")
+
+	tk.MustExec("set @@tidb_mem_quota_query=100000;")
+	tk.MustExec("truncate table t")
+	tk.MustExec("insert into t values(1),(2),(3)")
+	// set the memory to quota to make the SQL panic during UpdateExec instead
+	// of TableReader.
+	tk.MustExec("set @@tidb_mem_quota_query=244;")
+	_, err = tk.Exec("update t set a = 4")
+	c.Assert(err.Error(), Matches, "Out Of Memory Quota!.*")
 }
 
 func setOOMAction(action string) {
@@ -5126,4 +5152,15 @@ func (s *testSuite1) TestPartitionHashCode(c *C) {
 		}()
 	}
 	wg.Wait()
+}
+
+func (s *testSuite1) TestAlterDefaultValue(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t(a int, primary key(a))")
+	tk.MustExec("insert into t(a) values(1)")
+	tk.MustExec("alter table t add column b int default 1")
+	tk.MustExec("alter table t alter b set default 2")
+	tk.MustQuery("select b from t where a = 1").Check(testkit.Rows("1"))
 }

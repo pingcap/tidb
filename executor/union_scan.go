@@ -73,6 +73,11 @@ func (dt *DirtyTable) DeleteRow(handle int64) {
 	dt.deletedRows[handle] = struct{}{}
 }
 
+// IsEmpty checks whether the table is empty.
+func (dt *DirtyTable) IsEmpty() bool {
+	return len(dt.addedRows)+len(dt.deletedRows) == 0
+}
+
 // GetDirtyDB returns the DirtyDB bind to the context.
 func GetDirtyDB(ctx sessionctx.Context) *DirtyDB {
 	var udb *DirtyDB

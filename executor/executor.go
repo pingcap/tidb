@@ -737,11 +737,7 @@ func (e *ShowSlowExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	for e.cursor < len(e.result) && req.NumRows() < e.maxChunkSize {
 		slow := e.result[e.cursor]
 		req.AppendString(0, slow.SQL)
-		req.AppendTime(1, types.Time{
-			Time: types.FromGoTime(slow.Start),
-			Type: mysql.TypeTimestamp,
-			Fsp:  types.MaxFsp,
-		})
+		req.AppendTime(1, types.NewTime(types.FromGoTime(slow.Start), mysql.TypeTimestamp, types.MaxFsp))
 		req.AppendDuration(2, types.Duration{Duration: slow.Duration, Fsp: types.MaxFsp})
 		req.AppendString(3, slow.Detail.String())
 		if slow.Succ {

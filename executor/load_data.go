@@ -506,9 +506,9 @@ type fieldWriter struct {
 	pos           int
 	ReadBuf       []byte
 	OutputBuf     []byte
+	term          string
 	enclosedChar  byte
 	fieldTermChar byte
-	term          string
 	isEnclosed    bool
 	isLineStart   bool
 	isFieldStart  bool
