@@ -323,7 +323,7 @@ func (helper extractHelper) extractTimeRange(
 				continue
 			}
 
-			mysqlTime := timeDatum.GetMysqlTime().Time
+			mysqlTime := timeDatum.GetMysqlTime()
 			timestamp := time.Date(mysqlTime.Year(),
 				time.Month(mysqlTime.Month()),
 				mysqlTime.Day(),

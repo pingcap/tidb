@@ -5,6 +5,9 @@ create index tc on t (c);
 create index td on t (d);
 # generate a, b, c, d, e, f from 0 to 5000000 and a = b = c = d = e = f
 load stats 's/explain_indexmerge_stats_t.json';
+explain select * from t where a < 50 or b < 50;
+explain select * from t where (a < 50 or b < 50) and f > 100;
+explain select * from t where b < 50 or c < 50;
 set session tidb_enable_index_merge = on;
 # choose the best plan based on cost
 explain select * from t where a < 50 or b < 50;

@@ -790,11 +790,7 @@ func (b *builtinLeastTimeSig) evalString(row chunk.Row) (res string, isNull bool
 		v string
 		t types.Time
 	)
-	min := types.Time{
-		Time: types.MaxDatetime,
-		Type: mysql.TypeDatetime,
-		Fsp:  types.MaxFsp,
-	}
+	min := types.NewTime(types.MaxDatetime, mysql.TypeDatetime, types.MaxFsp)
 	findInvalidTime := false
 	sc := b.ctx.GetSessionVars().StmtCtx
 	for i := 0; i < len(b.args); i++ {
