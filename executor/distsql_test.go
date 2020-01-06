@@ -151,7 +151,7 @@ func (s *testSuite3) TestCorColToRanges(c *C) {
 	tk.MustQuery("select t.c in (select count(*) from t s use index(idx), t t1 where s.b = t.a and s.c = t1.a) from t").Check(testkit.Rows("1", "0", "0", "0", "0", "0", "0", "0", "0"))
 }
 
-func (s *testSuite3) TestUniqueKeyNullValueSelect(c *C) {
+func (s *testSuiteP1) TestUniqueKeyNullValueSelect(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
