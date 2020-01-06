@@ -1107,11 +1107,12 @@ func (tc sortCase) columns() []*expression.Column {
 	return []*expression.Column{
 		{UniqueID: 0, Index: 0, RetType: types.NewFieldType(mysql.TypeLonglong)},
 		{UniqueID: 1, Index: 1, RetType: types.NewFieldType(mysql.TypeLonglong)},
+		{UniqueID: 2, Index: 2, RetType: types.NewFieldType(mysql.TypeLonglong)},
 	}
 }
 
 func (tc sortCase) String() string {
-	return fmt.Sprintf("(rows:%v, orderBy:%v)", tc.rows, tc.orderByIdx)
+	return fmt.Sprintf("(rows:%v, orderBy:%v, output:%v)", tc.rows, tc.orderByIdx, tc.outputIdx)
 }
 
 func defaultSortTestCase() *sortCase {
@@ -1171,6 +1172,14 @@ func benchmarkSortExec(b *testing.B, cas *sortCase) {
 func BenchmarkSortExec(b *testing.B) {
 	b.ReportAllocs()
 	cas := defaultSortTestCase()
+	cas.orderByIdx = []int{0}
+	cas.outputIdx = []int{1, 2} // for inline projection.
+	b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
+		benchmarkSortExec(b, cas)
+	})
+
+	b.ReportAllocs()
+	cas = defaultSortTestCase()
 	cas.orderByIdx = []int{0}
 	cas.outputIdx = []int{1} // for inline projection.
 	b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
