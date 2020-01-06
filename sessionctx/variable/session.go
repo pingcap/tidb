@@ -36,27 +36,23 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tidb/util/storeutil"
 	"github.com/pingcap/tidb/util/timeutil"
-)
-
-const (
-	codeCantGetValidID terror.ErrCode = 1
-	codeCantSetToNull  terror.ErrCode = 2
-	codeSnapshotTooOld terror.ErrCode = 3
 )
 
 var preparedStmtCount int64
 
 // Error instances.
 var (
-	errCantGetValidID = terror.ClassVariable.New(codeCantGetValidID, "cannot get valid auto-increment id in retry")
-	ErrCantSetToNull  = terror.ClassVariable.New(codeCantSetToNull, "cannot set variable to null")
-	ErrSnapshotTooOld = terror.ClassVariable.New(codeSnapshotTooOld, "snapshot is older than GC safe point %s")
+	errCantGetValidID = terror.ClassVariable.New(mysql.ErrCantGetValidID, mysql.MySQLErrName[mysql.ErrCantGetValidID])
+	ErrCantSetToNull  = terror.ClassVariable.New(mysql.ErrCantSetToNull, mysql.MySQLErrName[mysql.ErrCantSetToNull])
+	ErrSnapshotTooOld = terror.ClassVariable.New(mysql.ErrSnapshotTooOld, mysql.MySQLErrName[mysql.ErrSnapshotTooOld])
 )
 
 // RetryInfo saves retry information.
@@ -99,9 +95,16 @@ func (r *RetryInfo) GetCurrAutoIncrementID() (int64, error) {
 	return id, nil
 }
 
+// stmtFuture is used to async get timestamp for statement.
+type stmtFuture struct {
+	future   oracle.Future
+	cachedTS uint64
+}
+
 // TransactionContext is used to store variables that has transaction scope.
 type TransactionContext struct {
 	forUpdateTS   uint64
+	stmtFuture    *stmtFuture
 	DirtyDB       interface{}
 	Binlog        interface{}
 	InfoSchema    interface{}
@@ -109,7 +112,13 @@ type TransactionContext struct {
 	SchemaVersion int64
 	StartTS       uint64
 	Shard         *int64
+	// TableDeltaMap is used in the schema validator for DDL changes in one table not to block others.
+	// It's also used in the statistias updating.
+	// Note: for the partitionted table, it stores all the partition IDs.
 	TableDeltaMap map[int64]TableDelta
+
+	// unchangedRowKeys is used to store the unchanged rows that needs to lock for pessimistic transaction.
+	unchangedRowKeys map[string]struct{}
 
 	// CreateTime For metrics.
 	CreateTime     time.Time
@@ -117,14 +126,32 @@ type TransactionContext struct {
 	ForUpdate      bool
 	CouldRetry     bool
 	IsPessimistic  bool
+	Isolation      string
+}
+
+// AddUnchangedRowKey adds an unchanged row key in update statement for pessimistic lock.
+func (tc *TransactionContext) AddUnchangedRowKey(key []byte) {
+	if tc.unchangedRowKeys == nil {
+		tc.unchangedRowKeys = map[string]struct{}{}
+	}
+	tc.unchangedRowKeys[string(key)] = struct{}{}
+}
+
+// CollectUnchangedRowKeys collects unchanged row keys for pessimistic lock.
+func (tc *TransactionContext) CollectUnchangedRowKeys(buf []kv.Key) []kv.Key {
+	for key := range tc.unchangedRowKeys {
+		buf = append(buf, kv.Key(key))
+	}
+	tc.unchangedRowKeys = nil
+	return buf
 }
 
 // UpdateDeltaForTable updates the delta info for some table.
-func (tc *TransactionContext) UpdateDeltaForTable(tableID int64, delta int64, count int64, colSize map[int64]int64) {
+func (tc *TransactionContext) UpdateDeltaForTable(physicalTableID int64, delta int64, count int64, colSize map[int64]int64) {
 	if tc.TableDeltaMap == nil {
 		tc.TableDeltaMap = make(map[int64]TableDelta)
 	}
-	item := tc.TableDeltaMap[tableID]
+	item := tc.TableDeltaMap[physicalTableID]
 	if item.ColSize == nil && colSize != nil {
 		item.ColSize = make(map[int64]int64)
 	}
@@ -133,7 +160,7 @@ func (tc *TransactionContext) UpdateDeltaForTable(tableID int64, delta int64, co
 	for key, val := range colSize {
 		item.ColSize[key] += val
 	}
-	tc.TableDeltaMap[tableID] = item
+	tc.TableDeltaMap[physicalTableID] = item
 }
 
 // Cleanup clears up transaction info that no longer use.
@@ -165,6 +192,21 @@ func (tc *TransactionContext) SetForUpdateTS(forUpdateTS uint64) {
 	}
 }
 
+// SetStmtFuture sets the stmtFuture .
+func (tc *TransactionContext) SetStmtFuture(future oracle.Future, cachedTS uint64) {
+	tc.stmtFuture = &stmtFuture{future: future, cachedTS: cachedTS}
+}
+
+// GetStmtFuture gets the stmtFuture.
+func (tc *TransactionContext) GetStmtFuture() (oracle.Future, uint64) {
+	if tc.stmtFuture == nil {
+		panic("The statement future is nil, it should not happen." +
+			" The statement future should be set at the beginning of the transaction or" +
+			" at the beginning of each statement in the pessimistic read-committed transaction in PrepareTSFuture.")
+	}
+	return tc.stmtFuture.future, tc.stmtFuture.cachedTS
+}
+
 // WriteStmtBufs can be used by insert/replace/delete/update statement.
 // TODO: use a common memory pool to replace this.
 type WriteStmtBufs struct {
@@ -190,6 +232,23 @@ func (ib *WriteStmtBufs) clean() {
 	ib.IndexKeyBuf = nil
 }
 
+// TableSnapshot represents a data snapshot of the table contained in `inspection_schema`.
+type TableSnapshot struct {
+	Rows [][]types.Datum
+	Err  error
+}
+
+type txnIsolationLevelOneShotState uint
+
+const (
+	// oneShotDef means default, that is tx_isolation_one_shot not set.
+	oneShotDef txnIsolationLevelOneShotState = iota
+	// oneShotSet means it's set in current transaction.
+	oneShotSet
+	// onsShotUse means it should be used in current transaction.
+	oneShotUse
+)
+
 // SessionVars is to handle user-defined or global variables in the current session.
 type SessionVars struct {
 	Concurrency
@@ -203,6 +262,10 @@ type SessionVars struct {
 	Users map[string]string
 	// systems variables, don't modify it directly, use GetSystemVar/SetSystemVar method.
 	systems map[string]string
+	// SysWarningCount is the system variable "warning_count", because it is on the hot path, so we extract it from the systems
+	SysWarningCount int
+	// SysErrorCount is the system variable "error_count", because it is on the hot path, so we extract it from the systems
+	SysErrorCount uint16
 	// PreparedStmts stores prepared statement.
 	PreparedStmts        map[uint32]interface{}
 	PreparedStmtNameToID map[string]uint32
@@ -221,13 +284,10 @@ type SessionVars struct {
 	// KVVars is the variables for KV storage.
 	KVVars *kv.Variables
 
-	// TxnIsolationLevelOneShot is used to implements "set transaction isolation level ..."
-	TxnIsolationLevelOneShot struct {
-		// State 0 means default
-		// State 1 means it's set in current transaction.
-		// State 2 means it should be used in current transaction.
-		State int
-		Value string
+	// txnIsolationLevelOneShot is used to implements "set transaction isolation level ..."
+	txnIsolationLevelOneShot struct {
+		state txnIsolationLevelOneShotState
+		value string
 	}
 
 	// Status stands for the session status. e.g. in transaction or not, auto commit is on or off, and so on.
@@ -430,6 +490,9 @@ type SessionVars struct {
 	// PrevStmt is used to store the previous executed statement in the current session.
 	PrevStmt fmt.Stringer
 
+	// prevStmtDigest is used to store the digest of the previous statement in the current session.
+	prevStmtDigest string
+
 	// AllowRemoveAutoInc indicates whether a user can drop the auto_increment column attribute or not.
 	AllowRemoveAutoInc bool
 
@@ -458,6 +521,20 @@ type SessionVars struct {
 	// LockWaitTimeout is the duration waiting for pessimistic lock in milliseconds
 	// negative value means nowait, 0 means default behavior, others means actual wait time
 	LockWaitTimeout int64
+
+	// MetricSchemaStep indicates the step when query metric schema.
+	MetricSchemaStep int64
+	// MetricSchemaRangeDuration indicates the step when query metric schema.
+	MetricSchemaRangeDuration int64
+
+	// Some data of cluster-level memory tables will be retrieved many times in different inspection rules,
+	// and the cost of retrieving some data is expensive. We use the `TableSnapshot` to cache those data
+	// and obtain them lazily, and provide a consistent view of inspection tables for each inspection rules.
+	// All cached snapshots will be released at the end of retrieving
+	InspectionTableCache map[string]TableSnapshot
+
+	// RowEncoder is reused in session for encode row data.
+	RowEncoder rowcodec.Encoder
 }
 
 // PreparedParams contains the parameters of the current prepared statement when executing it.
@@ -538,6 +615,8 @@ func NewSessionVars() *SessionVars {
 		EvolvePlanBaselines:         DefTiDBEvolvePlanBaselines,
 		isolationReadEngines:        map[kv.StoreType]struct{}{kv.TiKV: {}, kv.TiFlash: {}, kv.TiDB: {}},
 		LockWaitTimeout:             DefInnodbLockWaitTimeout * 1000,
+		MetricSchemaStep:            DefTiDBMetricSchemaStep,
+		MetricSchemaRangeDuration:   DefTiDBMetricSchemaRangeDuration,
 	}
 	vars.Concurrency = Concurrency{
 		IndexLookupConcurrency:     DefIndexLookupConcurrency,
@@ -694,6 +773,38 @@ func (s *SessionVars) IsAutocommit() bool {
 	return s.GetStatusFlag(mysql.ServerStatusAutocommit)
 }
 
+// IsReadConsistencyTxn if true it means the transaction is an read consistency (read committed) transaction.
+func (s *SessionVars) IsReadConsistencyTxn() bool {
+	if s.TxnCtx.Isolation != "" {
+		return s.TxnCtx.Isolation == ast.ReadCommitted
+	}
+	if s.txnIsolationLevelOneShot.state == oneShotUse {
+		s.TxnCtx.Isolation = s.txnIsolationLevelOneShot.value
+	}
+	if s.TxnCtx.Isolation == "" {
+		s.TxnCtx.Isolation, _ = s.GetSystemVar(TxnIsolation)
+	}
+	return s.TxnCtx.Isolation == ast.ReadCommitted
+}
+
+// SetTxnIsolationLevelOneShotStateForNextTxn sets the txnIsolationLevelOneShot.state for next transaction.
+func (s *SessionVars) SetTxnIsolationLevelOneShotStateForNextTxn() {
+	if isoLevelOneShot := &s.txnIsolationLevelOneShot; isoLevelOneShot.state != oneShotDef {
+		switch isoLevelOneShot.state {
+		case oneShotSet:
+			isoLevelOneShot.state = oneShotUse
+		case oneShotUse:
+			isoLevelOneShot.state = oneShotDef
+			isoLevelOneShot.value = ""
+		}
+	}
+}
+
+// IsPessimisticReadConsistency if true it means the statement is in an read consistency pessimistic transaction.
+func (s *SessionVars) IsPessimisticReadConsistency() bool {
+	return s.TxnCtx.IsPessimistic && s.IsReadConsistencyTxn()
+}
+
 // GetNextPreparedStmtID generates and returns the next session scope prepared statement id.
 func (s *SessionVars) GetNextPreparedStmtID() uint32 {
 	s.preparedStmtID++
@@ -711,6 +822,11 @@ func (s *SessionVars) Location() *time.Location {
 
 // GetSystemVar gets the string value of a system variable.
 func (s *SessionVars) GetSystemVar(name string) (string, bool) {
+	if name == WarningCount {
+		return strconv.Itoa(s.SysWarningCount), true
+	} else if name == ErrorCount {
+		return strconv.Itoa(int(s.SysErrorCount)), true
+	}
 	val, ok := s.systems[name]
 	return val, ok
 }
@@ -791,8 +907,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 				s.StmtCtx.AppendWarning(returnErr)
 			}
 		}
-		s.TxnIsolationLevelOneShot.State = 1
-		s.TxnIsolationLevelOneShot.Value = val
+		s.txnIsolationLevelOneShot.state = oneShotSet
+		s.txnIsolationLevelOneShot.value = val
 	case TimeZone:
 		tz, err := parseTimeZone(val)
 		if err != nil {
@@ -918,6 +1034,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		atomic.StoreUint64(&config.GetGlobalConfig().Log.SlowThreshold, uint64(tidbOptInt64(val, logutil.DefaultSlowThreshold)))
 	case TiDBRecordPlanInSlowLog:
 		atomic.StoreUint32(&config.GetGlobalConfig().Log.RecordPlanInSlowLog, uint32(tidbOptInt64(val, logutil.DefaultRecordPlanInSlowLog)))
+	case TiDBEnableSlowLog:
+		atomic.StoreUint32(&config.GetGlobalConfig().Log.EnableSlowLog, uint32(tidbOptInt64(val, logutil.DefaultTiDBEnableSlowLog)))
 	case TiDBDDLSlowOprThreshold:
 		atomic.StoreUint32(&DDLSlowOprThreshold, uint32(tidbOptPositiveInt32(val, DefTiDBDDLSlowOprThreshold)))
 	case TiDBQueryLogMaxLen:
@@ -962,6 +1080,11 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		atomic.StoreUint64(&ExpensiveQueryTimeThreshold, uint64(tidbOptPositiveInt32(val, DefTiDBExpensiveQueryTimeThreshold)))
 	case TiDBTxnMode:
 		s.TxnMode = strings.ToUpper(val)
+	case TiDBRowFormatVersion:
+		formatVersion := int(tidbOptInt64(val, DefTiDBRowFormatV1))
+		if formatVersion == DefTiDBRowFormatV2 {
+			s.RowEncoder.Enable = true
+		}
 	case TiDBLowResolutionTSO:
 		s.LowResolutionTSO = TiDBOptOn(val)
 	case TiDBEnableIndexMerge:
@@ -997,6 +1120,10 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		}
 	case TiDBStoreLimit:
 		storeutil.StoreLimit.Store(tidbOptInt64(val, DefTiDBStoreLimit))
+	case TiDBMetricSchemaStep:
+		s.MetricSchemaStep = tidbOptInt64(val, DefTiDBMetricSchemaStep)
+	case TiDBMetricSchemaRangeDuration:
+		s.MetricSchemaRangeDuration = tidbOptInt64(val, DefTiDBMetricSchemaRangeDuration)
 	}
 	s.systems[name] = val
 	return nil
@@ -1014,6 +1141,18 @@ func (s *SessionVars) setTxnMode(val string) error {
 		return ErrWrongValueForVar.FastGenByArgs(TiDBTxnMode, val)
 	}
 	return nil
+}
+
+// SetPrevStmtDigest sets the digest of the previous statement.
+func (s *SessionVars) SetPrevStmtDigest(prevStmtDigest string) {
+	s.prevStmtDigest = prevStmtDigest
+}
+
+// GetPrevStmtDigest returns the digest of the previous statement.
+func (s *SessionVars) GetPrevStmtDigest() string {
+	// Because `prevStmt` may be truncated, so it's senseless to normalize it.
+	// Even if `prevStmtDigest` is empty but `prevStmt` is not, just return it anyway.
+	return s.prevStmtDigest
 }
 
 // SetLocalSystemVar sets values of the local variables which in "server" scope.
@@ -1056,7 +1195,7 @@ var (
 	}
 )
 
-// TableDelta stands for the changed count for one table.
+// TableDelta stands for the changed count for one table or partition.
 type TableDelta struct {
 	Delta    int64
 	Count    int64
@@ -1203,6 +1342,8 @@ const (
 	SlowLogPrevStmt = "Prev_stmt"
 	// SlowLogPlan is used to record the query plan.
 	SlowLogPlan = "Plan"
+	// SlowLogPlanDigest is used to record the query plan digest.
+	SlowLogPlanDigest = "Plan_digest"
 	// SlowLogPlanPrefix is the prefix of the plan value.
 	SlowLogPlanPrefix = ast.TiDBDecodePlan + "('"
 	// SlowLogPlanSuffix is the suffix of the plan value.
@@ -1230,6 +1371,7 @@ type SlowQueryLogItems struct {
 	HasMoreResults bool
 	PrevStmt       string
 	Plan           string
+	PlanDigest     string
 }
 
 // SlowLogFormat uses for formatting slow log.
@@ -1359,6 +1501,9 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 	writeSlowLogItem(&buf, SlowLogSucc, strconv.FormatBool(logItems.Succ))
 	if len(logItems.Plan) != 0 {
 		writeSlowLogItem(&buf, SlowLogPlan, logItems.Plan)
+	}
+	if len(logItems.PlanDigest) != 0 {
+		writeSlowLogItem(&buf, SlowLogPlanDigest, logItems.PlanDigest)
 	}
 
 	if logItems.PrevStmt != "" {

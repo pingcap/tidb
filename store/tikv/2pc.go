@@ -48,8 +48,7 @@ type actionPrewrite struct{}
 type actionCommit struct{}
 type actionCleanup struct{}
 type actionPessimisticLock struct {
-	killed       *uint32
-	lockWaitTime int64
+	*kv.LockCtx
 }
 type actionPessimisticRollback struct{}
 
@@ -644,6 +643,7 @@ func (tm *ttlManager) keepAlive(c *twoPhaseCommitter) {
 				// the key will not be locked forever.
 				logutil.BgLogger().Info("ttlManager live up to its lifetime",
 					zap.Uint64("txnStartTS", c.startTS))
+				metrics.TiKVTTLLifeTimeReachCounter.Inc()
 				return
 			}
 
@@ -685,19 +685,23 @@ func (action actionPessimisticLock) handleSingleBatch(c *twoPhaseCommitter, bo *
 		ForUpdateTs:  c.forUpdateTS,
 		LockTtl:      elapsed + ManagedLockTTL,
 		IsFirstLock:  c.isFirstLock,
-		WaitTimeout:  action.lockWaitTime,
+		WaitTimeout:  action.LockWaitTime,
 	}, pb.Context{Priority: c.priority, SyncLog: c.syncLog})
-	lockWaitStartTime := time.Now()
+	lockWaitStartTime := action.WaitStartTime
 	for {
 		// if lockWaitTime set, refine the request `WaitTimeout` field based on timeout limit
-		if action.lockWaitTime > 0 {
-			timeLeft := action.lockWaitTime - (time.Since(lockWaitStartTime)).Milliseconds()
+		if action.LockWaitTime > 0 {
+			timeLeft := action.LockWaitTime - (time.Since(lockWaitStartTime)).Milliseconds()
 			if timeLeft <= 0 {
 				req.PessimisticLock().WaitTimeout = kv.LockNoWait
 			} else {
 				req.PessimisticLock().WaitTimeout = timeLeft
 			}
 		}
+		failpoint.Inject("PessimisticLockErrWriteConflict", func() error {
+			time.Sleep(300 * time.Millisecond)
+			return kv.ErrWriteConflict
+		})
 		resp, err := c.store.SendReq(bo, req, batch.region, readTimeoutShort)
 		if err != nil {
 			return errors.Trace(err)
@@ -711,7 +715,7 @@ func (action actionPessimisticLock) handleSingleBatch(c *twoPhaseCommitter, bo *
 			if err != nil {
 				return errors.Trace(err)
 			}
-			err = c.pessimisticLockKeys(bo, action.killed, action.lockWaitTime, batch.keys)
+			err = c.pessimisticLockKeys(bo, action.LockCtx, batch.keys)
 			return errors.Trace(err)
 		}
 		if resp.Resp == nil {
@@ -742,47 +746,42 @@ func (action actionPessimisticLock) handleSingleBatch(c *twoPhaseCommitter, bo *
 			if err1 != nil {
 				return errors.Trace(err1)
 			}
-			// Check lock conflict error for nowait, if nowait set and key locked by others,
-			// report error immediately and do no more resolve locks.
-			// if the lock left behind whose related txn is already committed or rollbacked,
-			// (eg secondary locks not committed or rollbacked yet)
-			// we cant return "nowait conflict" directly
-			if lock.LockType == pb.Op_PessimisticLock {
-				if action.lockWaitTime == kv.LockNoWait {
-					// the pessimistic lock found could be invalid locks which is timeout but not recycled yet
-					if !c.store.oracle.IsExpired(lock.TxnID, lock.TTL) {
-						return ErrLockAcquireFailAndNoWaitSet
-					}
-				} else if action.lockWaitTime == kv.LockAlwaysWait {
-					// do nothing but keep wait
-				} else {
-					// the lockWaitTime is set, check the lock wait timeout or not
-					// the pessimistic lock found could be invalid locks which is timeout but not recycled yet
-					if !c.store.oracle.IsExpired(lock.TxnID, lock.TTL) {
-						if time.Since(lockWaitStartTime).Milliseconds() >= action.lockWaitTime {
-							return ErrLockWaitTimeout
-						}
-					}
-				}
-			}
 			locks = append(locks, lock)
 		}
 		// Because we already waited on tikv, no need to Backoff here.
 		// tikv default will wait 3s(also the maximum wait value) when lock error occurs
-		_, _, err = c.store.lockResolver.ResolveLocks(bo, 0, locks)
+		msBeforeTxnExpired, _, err := c.store.lockResolver.ResolveLocks(bo, 0, locks)
 		if err != nil {
 			return errors.Trace(err)
+		}
+
+		// If msBeforeTxnExpired is not zero, it means there are still locks blocking us acquiring
+		// the pessimistic lock. We should return acquire fail with nowait set or timeout error if necessary.
+		if msBeforeTxnExpired > 0 {
+			if action.LockWaitTime == kv.LockNoWait {
+				return ErrLockAcquireFailAndNoWaitSet
+			} else if action.LockWaitTime == kv.LockAlwaysWait {
+				// do nothing but keep wait
+			} else {
+				// the lockWaitTime is set, we should return wait timeout if we are still blocked by a lock
+				if time.Since(lockWaitStartTime).Milliseconds() >= action.LockWaitTime {
+					return errors.Trace(ErrLockWaitTimeout)
+				}
+			}
+			if action.LockCtx.PessimisticLockWaited != nil {
+				atomic.StoreInt32(action.LockCtx.PessimisticLockWaited, 1)
+			}
 		}
 
 		// Handle the killed flag when waiting for the pessimistic lock.
 		// When a txn runs into LockKeys() and backoff here, it has no chance to call
 		// executor.Next() and check the killed flag.
-		if action.killed != nil {
+		if action.Killed != nil {
 			// Do not reset the killed flag here!
 			// actionPessimisticLock runs on each region parallelly, we have to consider that
 			// the error may be dropped.
-			if atomic.LoadUint32(action.killed) == 1 {
-				return ErrQueryInterrupted
+			if atomic.LoadUint32(action.Killed) == 1 {
+				return errors.Trace(ErrQueryInterrupted)
 			}
 		}
 	}
@@ -1005,9 +1004,8 @@ func (c *twoPhaseCommitter) cleanupKeys(bo *Backoffer, keys [][]byte) error {
 	return c.doActionOnKeys(bo, actionCleanup{}, keys)
 }
 
-func (c *twoPhaseCommitter) pessimisticLockKeys(bo *Backoffer, killed *uint32, lockWaitTime int64,
-	keys [][]byte) error {
-	return c.doActionOnKeys(bo, actionPessimisticLock{killed, lockWaitTime}, keys)
+func (c *twoPhaseCommitter) pessimisticLockKeys(bo *Backoffer, lockCtx *kv.LockCtx, keys [][]byte) error {
+	return c.doActionOnKeys(bo, actionPessimisticLock{lockCtx}, keys)
 }
 
 func (c *twoPhaseCommitter) pessimisticRollbackKeys(bo *Backoffer, keys [][]byte) error {
@@ -1052,6 +1050,7 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 		}
 	}()
 
+	binlogPrewriteStart := time.Now()
 	binlogChan := c.prewriteBinlog(ctx)
 	prewriteBo := NewBackoffer(ctx, PrewriteMaxBackoff).WithVars(c.txn.vars)
 	start := time.Now()
@@ -1074,6 +1073,7 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 			}
 		}
 	}
+	commitDetail.BinlogPrewriteTime = time.Since(binlogPrewriteStart)
 	if err != nil {
 		logutil.Logger(ctx).Debug("2PC failed on prewrite",
 			zap.Error(err),

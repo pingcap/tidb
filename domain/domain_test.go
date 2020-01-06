@@ -117,7 +117,10 @@ func TestInfo(t *testing.T) {
 
 	// Test for GetServerInfo and GetServerInfoByID.
 	ddlID := dom.ddl.GetID()
-	serverInfo := infosync.GetServerInfo()
+	serverInfo, err := infosync.GetServerInfo()
+	if err != nil {
+		t.Fatal(err)
+	}
 	info, err := infosync.GetServerInfoByID(goCtx, ddlID)
 	if err != nil {
 		t.Fatal(err)

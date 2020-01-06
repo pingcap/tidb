@@ -20,7 +20,6 @@ import (
 	"math/rand"
 	"time"
 
-	"github.com/cznic/mathutil"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
@@ -30,8 +29,10 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/disk"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/mock"
 )
@@ -677,67 +678,6 @@ func (s *testExecSuite) TestStreamAggRequiredRows(c *C) {
 	}
 }
 
-func (s *testExecSuite) TestHashAggParallelRequiredRows(c *C) {
-	maxChunkSize := defaultCtx().GetSessionVars().MaxChunkSize
-	testCases := []struct {
-		totalRows      int
-		aggFunc        string
-		requiredRows   []int
-		expectedRows   []int
-		expectedRowsDS []int
-		gen            func(valType *types.FieldType) interface{}
-	}{
-		{
-			totalRows:      maxChunkSize,
-			aggFunc:        ast.AggFuncSum,
-			requiredRows:   []int{1, 2, 3, 4, 5, 6, 7},
-			expectedRows:   []int{1, 2, 3, 4, 5, 6, 7},
-			expectedRowsDS: []int{maxChunkSize, 0},
-			gen:            divGenerator(1),
-		},
-		{
-			totalRows:      maxChunkSize * 3,
-			aggFunc:        ast.AggFuncAvg,
-			requiredRows:   []int{1, 3},
-			expectedRows:   []int{1, 2},
-			expectedRowsDS: []int{maxChunkSize, maxChunkSize, maxChunkSize, 0},
-			gen:            divGenerator(maxChunkSize),
-		},
-		{
-			totalRows:      maxChunkSize * 3,
-			aggFunc:        ast.AggFuncAvg,
-			requiredRows:   []int{maxChunkSize, maxChunkSize},
-			expectedRows:   []int{maxChunkSize, maxChunkSize / 2},
-			expectedRowsDS: []int{maxChunkSize, maxChunkSize, maxChunkSize, 0},
-			gen:            divGenerator(2),
-		},
-	}
-
-	for _, hasDistinct := range []bool{false, true} {
-		for _, testCase := range testCases {
-			sctx := defaultCtx()
-			ctx := context.Background()
-			ds := newRequiredRowsDataSourceWithGenerator(sctx, testCase.totalRows, testCase.expectedRowsDS, testCase.gen)
-			childCols := ds.Schema().Columns
-			schema := expression.NewSchema(childCols...)
-			groupBy := []expression.Expression{childCols[1]}
-			aggFunc, err := aggregation.NewAggFuncDesc(sctx, testCase.aggFunc, []expression.Expression{childCols[0]}, hasDistinct)
-			c.Assert(err, IsNil)
-			aggFuncs := []*aggregation.AggFuncDesc{aggFunc}
-			exec := buildHashAggExecutor(sctx, ds, schema, aggFuncs, groupBy)
-			c.Assert(exec.Open(ctx), IsNil)
-			chk := newFirstChunk(exec)
-			for i := range testCase.requiredRows {
-				chk.SetRequiredRows(testCase.requiredRows[i], maxChunkSize)
-				c.Assert(exec.Next(ctx, chk), IsNil)
-				c.Assert(chk.NumRows(), Equals, testCase.expectedRows[i])
-			}
-			c.Assert(exec.Close(), IsNil)
-			c.Assert(ds.checkNumNextCalled(), IsNil)
-		}
-	}
-}
-
 func (s *testExecSuite) TestMergeJoinRequiredRows(c *C) {
 	justReturn1 := func(valType *types.FieldType) interface{} {
 		switch valType.Tp {
@@ -887,4 +827,68 @@ type mockPlan struct {
 
 func (mp *mockPlan) GetExecutor() Executor {
 	return mp.exec
+}
+
+func (s *testExecSuite) TestVecGroupCheckerDATARACE(c *C) {
+	ctx := mock.NewContext()
+
+	mTypes := []byte{mysql.TypeVarString, mysql.TypeNewDecimal, mysql.TypeJSON}
+	for _, mType := range mTypes {
+		exprs := make([]expression.Expression, 1)
+		exprs[0] = &expression.Column{
+			RetType: &types.FieldType{Tp: mType},
+			Index:   0,
+		}
+		vgc := newVecGroupChecker(ctx, exprs)
+
+		fts := []*types.FieldType{types.NewFieldType(mType)}
+		chk := chunk.New(fts, 1, 1)
+		vgc.allocateBuffer = func(evalType types.EvalType, capacity int) (*chunk.Column, error) {
+			return chk.Column(0), nil
+		}
+		vgc.releaseBuffer = func(column *chunk.Column) {}
+
+		switch mType {
+		case mysql.TypeVarString:
+			chk.Column(0).ReserveString(1)
+			chk.Column(0).AppendString("abc")
+		case mysql.TypeNewDecimal:
+			chk.Column(0).ResizeDecimal(1, false)
+			chk.Column(0).Decimals()[0] = *types.NewDecFromInt(123)
+		case mysql.TypeJSON:
+			chk.Column(0).ReserveJSON(1)
+			j := new(json.BinaryJSON)
+			c.Assert(j.UnmarshalJSON([]byte(fmt.Sprintf(`{"%v":%v}`, 123, 123))), IsNil)
+			chk.Column(0).AppendJSON(*j)
+		}
+
+		_, err := vgc.splitIntoGroups(chk)
+		c.Assert(err, IsNil)
+
+		switch mType {
+		case mysql.TypeVarString:
+			c.Assert(vgc.firstRowDatums[0].GetString(), Equals, "abc")
+			c.Assert(vgc.lastRowDatums[0].GetString(), Equals, "abc")
+			chk.Column(0).ReserveString(1)
+			chk.Column(0).AppendString("edf")
+			c.Assert(vgc.firstRowDatums[0].GetString(), Equals, "abc")
+			c.Assert(vgc.lastRowDatums[0].GetString(), Equals, "abc")
+		case mysql.TypeNewDecimal:
+			c.Assert(vgc.firstRowDatums[0].GetMysqlDecimal().String(), Equals, "123")
+			c.Assert(vgc.lastRowDatums[0].GetMysqlDecimal().String(), Equals, "123")
+			chk.Column(0).ResizeDecimal(1, false)
+			chk.Column(0).Decimals()[0] = *types.NewDecFromInt(456)
+			c.Assert(vgc.firstRowDatums[0].GetMysqlDecimal().String(), Equals, "123")
+			c.Assert(vgc.lastRowDatums[0].GetMysqlDecimal().String(), Equals, "123")
+		case mysql.TypeJSON:
+			c.Assert(vgc.firstRowDatums[0].GetMysqlJSON().String(), Equals, `{"123": 123}`)
+			c.Assert(vgc.lastRowDatums[0].GetMysqlJSON().String(), Equals, `{"123": 123}`)
+			chk.Column(0).ReserveJSON(1)
+			j := new(json.BinaryJSON)
+			c.Assert(j.UnmarshalJSON([]byte(fmt.Sprintf(`{"%v":%v}`, 456, 456))), IsNil)
+			chk.Column(0).AppendJSON(*j)
+			c.Assert(vgc.firstRowDatums[0].GetMysqlJSON().String(), Equals, `{"123": 123}`)
+			c.Assert(vgc.lastRowDatums[0].GetMysqlJSON().String(), Equals, `{"123": 123}`)
+		}
+	}
 }

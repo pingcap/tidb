@@ -4,6 +4,21 @@ create index tb on t (b);
 create index tc on t (c);
 create index td on t (d);
 load stats 's/explain_indexmerge_stats_t.json';
+explain select * from t where a < 50 or b < 50;
+id	count	task	operator info
+TableReader_7	4000000.00	root	data:Selection_6
+└─Selection_6	4000000.00	cop[tikv]	or(lt(test.t.a, 50), lt(test.t.b, 50))
+  └─TableScan_5	5000000.00	cop[tikv]	table:t, range:[-inf,+inf], keep order:false
+explain select * from t where (a < 50 or b < 50) and f > 100;
+id	count	task	operator info
+TableReader_7	4000000.00	root	data:Selection_6
+└─Selection_6	4000000.00	cop[tikv]	gt(test.t.f, 100), or(lt(test.t.a, 50), lt(test.t.b, 50))
+  └─TableScan_5	5000000.00	cop[tikv]	table:t, range:[-inf,+inf], keep order:false
+explain select * from t where b < 50 or c < 50;
+id	count	task	operator info
+TableReader_7	4000000.00	root	data:Selection_6
+└─Selection_6	4000000.00	cop[tikv]	or(lt(test.t.b, 50), lt(test.t.c, 50))
+  └─TableScan_5	5000000.00	cop[tikv]	table:t, range:[-inf,+inf], keep order:false
 set session tidb_enable_index_merge = on;
 explain select * from t where a < 50 or b < 50;
 id	count	task	operator info

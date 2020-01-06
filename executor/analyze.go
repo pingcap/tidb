@@ -25,7 +25,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/debugpb"
@@ -34,6 +33,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
@@ -47,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
@@ -125,7 +126,7 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	if err != nil {
 		return err
 	}
-	return statsHandle.Update(GetInfoSchema(e.ctx))
+	return statsHandle.Update(infoschema.GetInfoSchema(e.ctx))
 }
 
 func getBuildStatsConcurrency(ctx sessionctx.Context) (int, error) {
@@ -607,7 +608,7 @@ type AnalyzeFastExec struct {
 
 func (e *AnalyzeFastExec) getSampRegionsRowCount(bo *tikv.Backoffer, needRebuild *bool, err *error, sampTasks *[]*AnalyzeFastTask) {
 	defer func() {
-		if *needRebuild == true {
+		if *needRebuild {
 			for ok := true; ok; _, ok = <-e.sampLocs {
 				// Do nothing, just clear the channel.
 			}
@@ -1022,7 +1023,7 @@ func (e *AnalyzeFastExec) buildColumnStats(ID int64, collector *statistics.Sampl
 }
 
 func (e *AnalyzeFastExec) buildIndexStats(idxInfo *model.IndexInfo, collector *statistics.SampleCollector, rowCount int64) (*statistics.Histogram, *statistics.CMSketch, error) {
-	data := make([][][]byte, len(idxInfo.Columns), len(idxInfo.Columns))
+	data := make([][][]byte, len(idxInfo.Columns))
 	for _, sample := range collector.Samples {
 		var preLen int
 		remained := sample.Value.GetBytes()

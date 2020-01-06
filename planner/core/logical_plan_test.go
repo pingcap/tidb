@@ -1266,6 +1266,10 @@ func (s *testPlanSuite) TestSelectView(c *C) {
 			sql:  "select * from v",
 			best: "DataScan(t)->Projection",
 		},
+		{
+			sql:  "select v.b, v.c, v.d from v",
+			best: "DataScan(t)->Projection",
+		},
 	}
 	ctx := context.TODO()
 	for i, tt := range tests {
@@ -1349,10 +1353,10 @@ func byItemsToProperty(byItems []*ByItems) *property.PhysicalProperty {
 func pathsName(paths []*candidatePath) string {
 	var names []string
 	for _, path := range paths {
-		if path.path.isTablePath {
+		if path.path.IsTablePath {
 			names = append(names, "PRIMARY_KEY")
 		} else {
-			names = append(names, path.path.index.Name.O)
+			names = append(names, path.path.Index.Name.O)
 		}
 	}
 	return strings.Join(names, ",")

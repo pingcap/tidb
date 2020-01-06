@@ -23,7 +23,6 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
@@ -38,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/planner/property"
+	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
@@ -45,7 +45,9 @@ import (
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
+	util2 "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/plancodec"
 )
 
@@ -452,7 +454,7 @@ func (ds *DataSource) setPreferredStoreType(hintInfo *tableHintInfo) {
 		ds.preferStoreType |= preferTiFlash
 		hasTiFlashPath := false
 		for _, path := range ds.possibleAccessPaths {
-			if path.storeType == kv.TiFlash {
+			if path.StoreType == kv.TiFlash {
 				hasTiFlashPath = true
 				break
 			}
@@ -460,7 +462,7 @@ func (ds *DataSource) setPreferredStoreType(hintInfo *tableHintInfo) {
 		// TODO: For now, if there is a TiFlash hint for a table, we enforce a TiFlash path. But hint is just a suggestion
 		//       for the planner. We can keep it since we need it to debug with PD and TiFlash. In future, this should be removed.
 		if !hasTiFlashPath {
-			ds.possibleAccessPaths = append(ds.possibleAccessPaths, &accessPath{isTablePath: true, storeType: kv.TiFlash})
+			ds.possibleAccessPaths = append(ds.possibleAccessPaths, &util.AccessPath{IsTablePath: true, StoreType: kv.TiFlash})
 		}
 	}
 }
@@ -573,7 +575,7 @@ func (b *PlanBuilder) buildJoin(ctx context.Context, joinNode *ast.Join) (Logica
 			return nil, errors.New("ON condition doesn't support subqueries yet")
 		}
 		onCondition := expression.SplitCNFItems(onExpr)
-		joinPlan.attachOnConds(onCondition)
+		joinPlan.AttachOnConds(onCondition)
 	} else if joinPlan.JoinType == InnerJoin {
 		// If a inner join without "ON" or "USING" clause, it's a cartesian
 		// product over the join tables.
@@ -2501,7 +2503,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	tableInfo := tbl.Meta()
 	var authErr error
 	if b.ctx.GetSessionVars().User != nil {
-		authErr = ErrTableaccessDenied.GenWithStackByArgs("SELECT", b.ctx.GetSessionVars().User.Username, b.ctx.GetSessionVars().User.Hostname, tableInfo.Name.L)
+		authErr = ErrTableaccessDenied.FastGenByArgs("SELECT", b.ctx.GetSessionVars().User.Username, b.ctx.GetSessionVars().User.Hostname, tableInfo.Name.L)
 	}
 	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, dbName.L, tableInfo.Name.L, "", authErr)
 
@@ -2534,7 +2536,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	if err != nil {
 		return nil, err
 	}
-	possiblePaths, err = b.filterPathByIsolationRead(possiblePaths)
+	possiblePaths, err = b.filterPathByIsolationRead(possiblePaths, dbName)
 	if err != nil {
 		return nil, err
 	}
@@ -2550,7 +2552,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		// If we use tbl.Cols() here, the update statement, will ignore the col `c`, and the data `3` will lost.
 		columns = tbl.WritableCols()
 	} else {
-		columns = tbl.Cols()
+		columns = tbl.VisibleCols()
 	}
 	var statisticTable *statistics.Table
 	if _, ok := tbl.(table.PartitionedTable); !ok {
@@ -2597,6 +2599,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 			ID:       col.ID,
 			RetType:  &col.FieldType,
 			OrigName: names[i].String(),
+			IsHidden: col.Hidden,
 		}
 
 		if tableInfo.PKIsHandle && mysql.HasPriKeyFlag(col.Flag) {
@@ -2631,23 +2634,31 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	ds.names = names
 	ds.setPreferredStoreType(b.TableHints())
 
-	// Init fullIdxCols, fullIdxColLens for accessPaths.
+	// Init FullIdxCols, FullIdxColLens for accessPaths.
 	for _, path := range ds.possibleAccessPaths {
-		if !path.isTablePath {
-			path.fullIdxCols, path.fullIdxColLens = expression.IndexInfo2Cols(ds.Columns, ds.schema.Columns, path.index)
+		if !path.IsTablePath {
+			path.FullIdxCols, path.FullIdxColLens = expression.IndexInfo2Cols(ds.Columns, ds.schema.Columns, path.Index)
 		}
 	}
 
 	var result LogicalPlan = ds
 
-	// If this SQL is executed in a non-readonly transaction, we need a
-	// "UnionScan" operator to read the modifications of former SQLs, which is
-	// buffered in tidb-server memory.
-	txn, err := b.ctx.Txn(false)
-	if err != nil {
-		return nil, err
+	needUS := false
+	if pi := tableInfo.GetPartitionInfo(); pi == nil {
+		if b.ctx.HasDirtyContent(tableInfo.ID) {
+			needUS = true
+		}
+	} else {
+		// Currently, we'll add a UnionScan on every partition even though only one partition's data is changed.
+		// This is limited by current implementation of Partition Prune. It'll updated once we modify that part.
+		for _, partition := range pi.Definitions {
+			if b.ctx.HasDirtyContent(partition.ID) {
+				needUS = true
+				break
+			}
+		}
 	}
-	if txn.Valid() && !txn.IsReadOnly() {
+	if needUS {
 		us := LogicalUnionScan{handleCol: handleCol}.Init(b.ctx, b.getSelectOffset())
 		us.SetChildren(ds)
 		result = us
@@ -2713,11 +2724,19 @@ func (b *PlanBuilder) buildMemTable(ctx context.Context, dbName model.CIStr, tab
 	p.names = names
 
 	// Some memory tables can receive some predicates
-	switch tableInfo.Name.L {
-	case strings.ToLower(infoschema.TableTiDBClusterConfig):
-		p.Extractor = &ClusterConfigTableExtractor{}
+	switch dbName.L {
+	case util2.MetricSchemaName.L:
+		p.Extractor = &MetricTableExtractor{}
+	case util2.InformationSchemaName.L:
+		switch strings.ToUpper(tableInfo.Name.O) {
+		case infoschema.TableClusterConfig, infoschema.TableClusterLoad, infoschema.TableClusterHardware, infoschema.TableClusterSystemInfo:
+			p.Extractor = &ClusterTableExtractor{}
+		case infoschema.TableClusterLog:
+			p.Extractor = &ClusterLogTableExtractor{}
+		case infoschema.TableInspectionResult:
+			p.Extractor = &InspectionResultTableExtractor{}
+		}
 	}
-
 	return p, nil
 }
 
@@ -2764,33 +2783,34 @@ func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName model.
 func (b *PlanBuilder) buildProjUponView(ctx context.Context, dbName model.CIStr, tableInfo *model.TableInfo, selectLogicalPlan Plan) (LogicalPlan, error) {
 	columnInfo := tableInfo.Cols()
 	cols := selectLogicalPlan.Schema().Clone().Columns
-	names := selectLogicalPlan.OutputNames().Shallow()
+	outputNamesOfUnderlyingSelect := selectLogicalPlan.OutputNames().Shallow()
 	// In the old version of VIEW implementation, tableInfo.View.Cols is used to
 	// store the origin columns' names of the underlying SelectStmt used when
 	// creating the view.
 	if tableInfo.View.Cols != nil {
 		cols = cols[:0]
-		names = names[:0]
+		outputNamesOfUnderlyingSelect = outputNamesOfUnderlyingSelect[:0]
 		for _, info := range columnInfo {
 			idx := expression.FindFieldNameIdxByColName(selectLogicalPlan.OutputNames(), info.Name.L)
 			if idx == -1 {
 				return nil, ErrViewInvalid.GenWithStackByArgs(dbName.O, tableInfo.Name.O)
 			}
 			cols = append(cols, selectLogicalPlan.Schema().Columns[idx])
-			names = append(names, selectLogicalPlan.OutputNames()[idx])
+			outputNamesOfUnderlyingSelect = append(outputNamesOfUnderlyingSelect, selectLogicalPlan.OutputNames()[idx])
 		}
 	}
 
 	projSchema := expression.NewSchema(make([]*expression.Column, 0, len(tableInfo.Columns))...)
 	projExprs := make([]expression.Expression, 0, len(tableInfo.Columns))
 	projNames := make(types.NameSlice, 0, len(tableInfo.Columns))
-	for i, name := range names {
+	for i, name := range outputNamesOfUnderlyingSelect {
 		origColName := name.ColName
 		if tableInfo.View.Cols != nil {
 			origColName = tableInfo.View.Cols[i]
 		}
 		projNames = append(projNames, &types.FieldName{
-			TblName:     name.TblName,
+			// TblName is the of view instead of the name of the underlying table.
+			TblName:     tableInfo.Name,
 			OrigTblName: name.OrigTblName,
 			ColName:     columnInfo[i].Name,
 			OrigColName: origColName,
@@ -2856,7 +2876,7 @@ func (b *PlanBuilder) buildSemiJoin(outerPlan, innerPlan LogicalPlan, onConditio
 		onCondition[i] = expr.Decorrelate(outerPlan.Schema())
 	}
 	joinPlan.SetChildren(outerPlan, innerPlan)
-	joinPlan.attachOnConds(onCondition)
+	joinPlan.AttachOnConds(onCondition)
 	joinPlan.names = make([]*types.FieldName, outerPlan.Schema().Len(), outerPlan.Schema().Len()+innerPlan.Schema().Len()+1)
 	copy(joinPlan.names, outerPlan.OutputNames())
 	if asScalar {
@@ -3148,9 +3168,13 @@ func (b *PlanBuilder) buildUpdateLists(
 				continue
 			}
 			columnFullName := fmt.Sprintf("%s.%s.%s", tn.Schema.L, tn.Name.L, colInfo.Name.L)
+			isDefault, ok := modifyColumns[columnFullName]
+			if ok && colInfo.Hidden {
+				return nil, nil, false, ErrUnknownColumn.GenWithStackByArgs(colInfo.Name, clauseMsg[fieldList])
+			}
 			// Note: For INSERT, REPLACE, and UPDATE, if a generated column is inserted into, replaced, or updated explicitly, the only permitted value is DEFAULT.
 			// see https://dev.mysql.com/doc/refman/8.0/en/create-table-generated-columns.html
-			if isDefault, ok := modifyColumns[columnFullName]; ok && !isDefault {
+			if ok && !isDefault {
 				return nil, nil, false, ErrBadGeneratedColumn.GenWithStackByArgs(colInfo.Name.O, tableInfo.Name.O)
 			}
 			virtualAssignments = append(virtualAssignments, &ast.Assignment{
@@ -3212,7 +3236,6 @@ func (b *PlanBuilder) buildUpdateLists(
 		if err != nil {
 			return nil, nil, false, err
 		}
-		newExpr = expression.BuildCastFunction(b.ctx, newExpr, col.GetType())
 		if _, isConst := newExpr.(*expression.Constant); !isConst {
 			allAssignmentsAreConstant = false
 		}

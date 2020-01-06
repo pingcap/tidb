@@ -168,7 +168,7 @@ type Transaction interface {
 	// String implements fmt.Stringer interface.
 	String() string
 	// LockKeys tries to lock the entries with the keys in KV store.
-	LockKeys(ctx context.Context, killed *uint32, forUpdateTS uint64, lockWaitTime int64, keys ...Key) error
+	LockKeys(ctx context.Context, lockCtx *LockCtx, keys ...Key) error
 	// SetOption sets an option with a value, when val is nil, uses the default
 	// value of this option.
 	SetOption(opt Option, val interface{})
@@ -190,6 +190,16 @@ type Transaction interface {
 	// If a key doesn't exist, there shouldn't be any corresponding entry in the result map.
 	BatchGet(ctx context.Context, keys []Key) (map[string][]byte, error)
 	IsPessimistic() bool
+}
+
+// LockCtx contains information for LockKeys method.
+type LockCtx struct {
+	Killed                *uint32
+	ForUpdateTS           uint64
+	LockWaitTime          int64
+	WaitStartTime         time.Time
+	PessimisticLockWaited *int32
+	LockKeysDuration      *time.Duration
 }
 
 // Client is used to send request to KV layer.
@@ -256,7 +266,7 @@ type Request struct {
 	IsolationLevel IsoLevel
 	// Priority is the priority of this KV request, its value may be PriorityNormal/PriorityLow/PriorityHigh.
 	Priority int
-	// MemTracker is used to trace and control memory usage in co-processor layer.
+	// memTracker is used to trace and control memory usage in co-processor layer.
 	MemTracker *memory.Tracker
 	// KeepOrder is true, if the response should be returned in order.
 	KeepOrder bool
@@ -273,6 +283,8 @@ type Request struct {
 	ReplicaRead ReplicaReadType
 	// StoreType represents this request is sent to the which type of store.
 	StoreType StoreType
+	// Cacheable is true if the request can be cached. Currently only deterministic DAG requests can be cached.
+	Cacheable bool
 }
 
 // ResultSubset represents a result subset from a single storage unit.

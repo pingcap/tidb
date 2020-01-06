@@ -50,6 +50,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
@@ -287,23 +288,38 @@ func (t *tikvHandlerTool) formValue2DatumRow(sc *stmtctx.StatementContext, value
 }
 
 func (t *tikvHandlerTool) getTableID(dbName, tableName string) (int64, error) {
-	tbInfo, err := t.getTable(dbName, tableName)
+	tbl, err := t.getTable(dbName, tableName)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
-	return tbInfo.ID, nil
+	return tbl.GetPhysicalID(), nil
 }
 
-func (t *tikvHandlerTool) getTable(dbName, tableName string) (*model.TableInfo, error) {
+func (t *tikvHandlerTool) getTable(dbName, tableName string) (table.PhysicalTable, error) {
 	schema, err := t.schema()
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	tableName, partitionName := extractTableAndPartitionName(tableName)
 	tableVal, err := schema.TableByName(model.NewCIStr(dbName), model.NewCIStr(tableName))
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	return tableVal.Meta(), nil
+	if pt, ok := tableVal.(table.PartitionedTable); ok {
+		if partitionName == "" {
+			return nil, errors.New("work on partitioned table, please specify the table name like this: table(partition)")
+		}
+		tblInfo := pt.Meta()
+		pid, err := tables.FindPartitionByName(tblInfo, partitionName)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		return pt.GetPartition(pid), nil
+	}
+	if partitionName != "" {
+		return nil, fmt.Errorf("%s is not a partitionted table", tableName)
+	}
+	return tableVal.(table.PhysicalTable), nil
 }
 
 func (t *tikvHandlerTool) schema() (infoschema.InfoSchema, error) {
@@ -1312,50 +1328,6 @@ func (h regionHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	writeData(w, regionDetail)
 }
 
-// NewFrameItemFromRegionKey creates a FrameItem with region's startKey or endKey,
-// returns err when key is illegal.
-func NewFrameItemFromRegionKey(key []byte) (frame *FrameItem, err error) {
-	frame = &FrameItem{}
-	frame.TableID, frame.IndexID, frame.IsRecord, err = tablecodec.DecodeKeyHead(key)
-	if err == nil {
-		if frame.IsRecord {
-			_, frame.RecordID, err = tablecodec.DecodeRecordKey(key)
-		} else {
-			_, _, frame.IndexValues, err = tablecodec.DecodeIndexKey(key)
-		}
-		log.Warnf("decode region key %q fail: %v", key, err)
-		// Ignore decode errors.
-		err = nil
-		return
-	}
-	if bytes.HasPrefix(key, tablecodec.TablePrefix()) {
-		// If SplitTable is enabled, the key may be `t{id}`.
-		if len(key) == tablecodec.TableSplitKeyLen {
-			frame.TableID = tablecodec.DecodeTableID(key)
-			return frame, nil
-		}
-		return nil, errors.Trace(err)
-	}
-
-	// key start with tablePrefix must be either record key or index key
-	// That's means table's record key and index key are always together
-	// in the continuous interval. And for key with prefix smaller than
-	// tablePrefix, is smaller than all tables. While for key with prefix
-	// bigger than tablePrefix, means is bigger than all tables.
-	err = nil
-	if bytes.Compare(key, tablecodec.TablePrefix()) < 0 {
-		frame.TableID = math.MinInt64
-		frame.IndexID = math.MinInt64
-		frame.IsRecord = false
-		return
-	}
-	// bigger than tablePrefix, means is bigger than all tables.
-	frame.TableID = math.MaxInt64
-	frame.IndexID = math.MaxInt64
-	frame.IsRecord = true
-	return
-}
-
 // parseQuery is used to parse query string in URL with shouldUnescape, due to golang http package can not distinguish
 // query like "?a=" and "?a". We rewrite it to separate these two queries. e.g.
 // "?a=" which means that a is an empty string "";
@@ -1436,20 +1408,31 @@ func (h mvccTxnHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	}
 }
 
+func extractTableAndPartitionName(str string) (string, string) {
+	// extract table name and partition name from this "table(partition)":
+	// A sane person would not let the the table name or partition name contain '('.
+	start := strings.IndexByte(str, '(')
+	if start == -1 {
+		return str, ""
+	}
+	end := strings.IndexByte(str, ')')
+	if end == -1 {
+		return str, ""
+	}
+	return str[:start], str[start+1 : end]
+}
+
 // handleMvccGetByIdx gets MVCC info by an index key.
 func (h mvccTxnHandler) handleMvccGetByIdx(params map[string]string, values url.Values) (interface{}, error) {
 	dbName := params[pDBName]
 	tableName := params[pTableName]
 	handleStr := params[pHandle]
-	schema, err := h.schema()
+
+	t, err := h.getTable(dbName, tableName)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	// get table's schema.
-	t, err := schema.TableByName(model.NewCIStr(dbName), model.NewCIStr(tableName))
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
+
 	var idxCols []*model.ColumnInfo
 	var idx table.Index
 	for _, v := range t.Indices() {
@@ -1477,7 +1460,7 @@ func (h mvccTxnHandler) handleMvccGetByKey(params map[string]string, decodeData 
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	resp, err := h.getMvccByHandle(tb.ID, handle)
+	resp, err := h.getMvccByHandle(tb.GetPhysicalID(), handle)
 	if err != nil {
 		return nil, err
 	}
@@ -1485,7 +1468,7 @@ func (h mvccTxnHandler) handleMvccGetByKey(params map[string]string, decodeData 
 		return resp, nil
 	}
 	colMap := make(map[int64]*types.FieldType, 3)
-	for _, col := range tb.Columns {
+	for _, col := range tb.Meta().Columns {
 		colMap[col.ID] = &col.FieldType
 	}
 
@@ -1495,13 +1478,13 @@ func (h mvccTxnHandler) handleMvccGetByKey(params map[string]string, decodeData 
 		datas := make(map[string][]map[string]string)
 		for _, w := range respValue.Info.Writes {
 			if len(w.ShortValue) > 0 {
-				datas[strconv.FormatUint(w.StartTs, 10)], err = h.decodeMvccData(w.ShortValue, colMap, tb)
+				datas[strconv.FormatUint(w.StartTs, 10)], err = h.decodeMvccData(w.ShortValue, colMap, tb.Meta())
 			}
 		}
 
 		for _, v := range respValue.Info.Values {
 			if len(v.Value) > 0 {
-				datas[strconv.FormatUint(v.StartTs, 10)], err = h.decodeMvccData(v.Value, colMap, tb)
+				datas[strconv.FormatUint(v.StartTs, 10)], err = h.decodeMvccData(v.Value, colMap, tb.Meta())
 			}
 		}
 
@@ -1565,7 +1548,12 @@ func (h serverInfoHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	info := serverInfo{}
-	info.ServerInfo = infosync.GetServerInfo()
+	info.ServerInfo, err = infosync.GetServerInfo()
+	if err != nil {
+		writeError(w, err)
+		log.Error(err)
+		return
+	}
 	info.IsOwner = do.DDL().OwnerManager().IsOwner()
 	writeData(w, info)
 }
