@@ -124,8 +124,10 @@ func (c *index) getIndexKeyBuf(buf []byte, defaultCap int) []byte {
 	return make([]byte, 0, defaultCap)
 }
 
-// TruncateIndexValuesIfNeeded truncates the index values created using only the leading part of column values.
-func TruncateIndexValuesIfNeeded(sc *stmtctx.StatementContext, tblInfo *model.TableInfo, idxInfo *model.IndexInfo, indexedValues []types.Datum) ([]types.Datum, error) {
+// FormatIndexValuesIfNeeded formats the index value if needed.
+// For string column, truncates the index values created using only the leading part of column values.
+// For decimal column, convert to the column info precision.
+func FormatIndexValuesIfNeeded(sc *stmtctx.StatementContext, tblInfo *model.TableInfo, idxInfo *model.IndexInfo, indexedValues []types.Datum) ([]types.Datum, error) {
 	for i := 0; i < len(indexedValues); i++ {
 		v := &indexedValues[i]
 		switch v.Kind() {
@@ -185,7 +187,8 @@ func (c *index) GenIndexKey(sc *stmtctx.StatementContext, indexedValues []types.
 
 	// For string columns, indexes can be created using only the leading part of column values,
 	// using col_name(length) syntax to specify an index prefix length.
-	indexedValues, err = TruncateIndexValuesIfNeeded(sc, c.tblInfo, c.idxInfo, indexedValues)
+	// For decimal column, convert to the column info precision.
+	indexedValues, err = FormatIndexValuesIfNeeded(sc, c.tblInfo, c.idxInfo, indexedValues)
 	if err != nil {
 		return nil, false, err
 	}
