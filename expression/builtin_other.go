@@ -80,7 +80,7 @@ func (c *inFunctionClass) getFunction(ctx sessionctx.Context, args []Expression)
 	bf.tp.Flen = 1
 	switch args[0].GetType().EvalType() {
 	case types.ETInt:
-		inInt := builtinInIntSig{baseBuiltinFunc: bf, threshold: 1}
+		inInt := builtinInIntSig{baseInSig: baseInSig{baseBuiltinFunc: bf, threshold: 1}}
 		err := inInt.buildHashMapForConstArgs(ctx)
 		if err != nil {
 			return &inInt, err
@@ -88,7 +88,7 @@ func (c *inFunctionClass) getFunction(ctx sessionctx.Context, args []Expression)
 		sig = &inInt
 		sig.setPbCode(tipb.ScalarFuncSig_InInt)
 	case types.ETString:
-		inStr := builtinInStringSig{baseBuiltinFunc: bf, threshold: 1}
+		inStr := builtinInStringSig{baseInSig: baseInSig{baseBuiltinFunc: bf, threshold: 1}}
 		err := inStr.buildHashMapForConstArgs(ctx)
 		if err != nil {
 			return &inStr, err
@@ -96,7 +96,7 @@ func (c *inFunctionClass) getFunction(ctx sessionctx.Context, args []Expression)
 		sig = &inStr
 		sig.setPbCode(tipb.ScalarFuncSig_InString)
 	case types.ETReal:
-		inReal := builtinInRealSig{baseBuiltinFunc: bf, threshold: 1}
+		inReal := builtinInRealSig{baseInSig: baseInSig{baseBuiltinFunc: bf, threshold: 1}}
 		err := inReal.buildHashMapForConstArgs(ctx)
 		if err != nil {
 			return &inReal, err
@@ -104,7 +104,7 @@ func (c *inFunctionClass) getFunction(ctx sessionctx.Context, args []Expression)
 		sig = &inReal
 		sig.setPbCode(tipb.ScalarFuncSig_InReal)
 	case types.ETDecimal:
-		inDecimal := builtinInDecimalSig{baseBuiltinFunc: bf, threshold: 2}
+		inDecimal := builtinInDecimalSig{baseInSig: baseInSig{baseBuiltinFunc: bf, threshold: 2}}
 		err := inDecimal.buildHashMapForConstArgs(ctx)
 		if err != nil {
 			return &inDecimal, err
@@ -112,7 +112,7 @@ func (c *inFunctionClass) getFunction(ctx sessionctx.Context, args []Expression)
 		sig = &inDecimal
 		sig.setPbCode(tipb.ScalarFuncSig_InDecimal)
 	case types.ETDatetime, types.ETTimestamp:
-		inTime := builtinInTimeSig{baseBuiltinFunc: bf, threshold: 2}
+		inTime := builtinInTimeSig{baseInSig: baseInSig{baseBuiltinFunc: bf, threshold: 2}}
 		err := inTime.buildHashMapForConstArgs(ctx)
 		if err != nil {
 			return &inTime, err
@@ -120,7 +120,7 @@ func (c *inFunctionClass) getFunction(ctx sessionctx.Context, args []Expression)
 		sig = &inTime
 		sig.setPbCode(tipb.ScalarFuncSig_InTime)
 	case types.ETDuration:
-		inDuration := builtinInDurationSig{baseBuiltinFunc: bf, threshold: 1}
+		inDuration := builtinInDurationSig{baseInSig: baseInSig{baseBuiltinFunc: bf, threshold: 1}}
 		err := inDuration.buildHashMapForConstArgs(ctx)
 		if err != nil {
 			return &inDuration, err
@@ -134,13 +134,18 @@ func (c *inFunctionClass) getFunction(ctx sessionctx.Context, args []Expression)
 	return sig, nil
 }
 
-// builtinInIntSig see https://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_in
-type builtinInIntSig struct {
+type baseInSig struct {
 	baseBuiltinFunc
 	nonConstArgs []Expression
-	hashSet      map[int64]bool
-	threshold    int
-	hasNull      bool
+	// hashSet will be used when the number of constant arguments is bigger than threshold
+	threshold int
+	hasNull   bool
+}
+
+// builtinInIntSig see https://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_in
+type builtinInIntSig struct {
+	baseInSig
+	hashSet map[int64]bool
 }
 
 func (b *builtinInIntSig) buildHashMapForConstArgs(ctx sessionctx.Context) error {
@@ -239,11 +244,8 @@ func (b *builtinInIntSig) evalInt(row chunk.Row) (int64, bool, error) {
 
 // builtinInStringSig see https://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_in
 type builtinInStringSig struct {
-	baseBuiltinFunc
-	nonConstArgs []Expression
-	hashSet      map[string]bool
-	threshold    int
-	hasNull      bool
+	baseInSig
+	hashSet map[string]bool
 }
 
 func (b *builtinInStringSig) buildHashMapForConstArgs(ctx sessionctx.Context) error {
@@ -322,11 +324,8 @@ func (b *builtinInStringSig) evalInt(row chunk.Row) (int64, bool, error) {
 
 // builtinInRealSig see https://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_in
 type builtinInRealSig struct {
-	baseBuiltinFunc
-	nonConstArgs []Expression
-	hashSet      map[float64]bool
-	threshold    int
-	hasNull      bool
+	baseInSig
+	hashSet map[float64]bool
 }
 
 func (b *builtinInRealSig) buildHashMapForConstArgs(ctx sessionctx.Context) error {
@@ -403,11 +402,8 @@ func (b *builtinInRealSig) evalInt(row chunk.Row) (int64, bool, error) {
 
 // builtinInDecimalSig see https://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_in
 type builtinInDecimalSig struct {
-	baseBuiltinFunc
-	nonConstArgs []Expression
-	hashSet      map[string]bool
-	threshold    int
-	hasNull      bool
+	baseInSig
+	hashSet map[string]bool
 }
 
 func (b *builtinInDecimalSig) buildHashMapForConstArgs(ctx sessionctx.Context) error {
@@ -494,11 +490,8 @@ func (b *builtinInDecimalSig) evalInt(row chunk.Row) (int64, bool, error) {
 
 // builtinInTimeSig see https://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_in
 type builtinInTimeSig struct {
-	baseBuiltinFunc
-	nonConstArgs []Expression
-	hashSet      map[types.Time]bool
-	threshold    int
-	hasNull      bool
+	baseInSig
+	hashSet map[types.Time]bool
 }
 
 func (b *builtinInTimeSig) buildHashMapForConstArgs(ctx sessionctx.Context) error {
@@ -575,11 +568,8 @@ func (b *builtinInTimeSig) evalInt(row chunk.Row) (int64, bool, error) {
 
 // builtinInDurationSig see https://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_in
 type builtinInDurationSig struct {
-	baseBuiltinFunc
-	nonConstArgs []Expression
-	hashSet      map[time.Duration]bool
-	threshold    int
-	hasNull      bool
+	baseInSig
+	hashSet map[time.Duration]bool
 }
 
 func (b *builtinInDurationSig) buildHashMapForConstArgs(ctx sessionctx.Context) error {
