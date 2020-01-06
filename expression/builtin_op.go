@@ -309,13 +309,16 @@ func (b *builtinBitXorSig) Clone() builtinFunc {
 }
 
 func (b *builtinBitXorSig) evalInt(row chunk.Row) (int64, bool, error) {
-	arg0, isNull, err := b.args[0].EvalInt(b.ctx, row)
-	if isNull || err != nil {
-		return 0, isNull, err
+	arg0, isLHSNull, err := b.args[0].EvalInt(b.ctx, row)
+	if err != nil {
+		return 0, isLHSNull, err
 	}
-	arg1, isNull, err := b.args[1].EvalInt(b.ctx, row)
-	if isNull || err != nil {
-		return 0, isNull, err
+	arg1, isRHSNull, err := b.args[1].EvalInt(b.ctx, row)
+	if err != nil {
+		return 0, isRHSNull, err
+	}
+	if isLHSNull || isRHSNull {
+		return 0, true, nil
 	}
 	return arg0 ^ arg1, false, nil
 }

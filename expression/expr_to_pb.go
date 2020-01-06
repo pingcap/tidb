@@ -319,6 +319,9 @@ func (pc PbConverter) canFuncBePushed(sf *ScalarFunction) bool {
 		exprs := strings.Split(enabled, ",")
 		for _, expr := range exprs {
 			if strings.ToLower(strings.TrimSpace(expr)) == sf.FuncName.L {
+				if strings.ToLower(strings.TrimSpace(expr)) == ast.Cast {
+					return isCastEnabled(sf.Function.PbCode())
+				}
 				return true
 			}
 		}
@@ -466,14 +469,7 @@ func (pc PbConverter) canFuncBePushed(sf *ScalarFunction) bool {
 			return isPushdownEnabled(sf.FuncName.L)
 		}
 	case ast.Cast:
-		switch sf.Function.PbCode() {
-		case tipb.ScalarFuncSig_CastStringAsInt,
-			tipb.ScalarFuncSig_CastStringAsTime,
-			tipb.ScalarFuncSig_CastTimeAsInt:
-			return false
-		default:
-			return isPushdownEnabled(sf.FuncName.L)
-		}
+		return isCastEnabled(sf.Function.PbCode()) && isPushdownEnabled(sf.FuncName.L)
 	}
 	return false
 }
@@ -481,6 +477,16 @@ func (pc PbConverter) canFuncBePushed(sf *ScalarFunction) bool {
 func isPushdownEnabled(name string) bool {
 	_, disallowPushdown := DefaultExprPushdownBlacklist.Load().(map[string]struct{})[name]
 	return !disallowPushdown
+}
+
+func isCastEnabled(sig tipb.ScalarFuncSig) bool {
+	switch sig {
+	case tipb.ScalarFuncSig_CastStringAsTime,
+		tipb.ScalarFuncSig_CastTimeAsInt:
+		return false
+	default:
+		return true
+	}
 }
 
 // DefaultExprPushdownBlacklist indicates the expressions which can not be pushed down to TiKV.
