@@ -86,7 +86,8 @@ func ToColumn(col *model.ColumnInfo) *Column {
 
 // FindCols finds columns in cols by names.
 // If pkIsHandle is false and name is ExtraHandleName, the extra handle column will be added.
-func FindCols(cols []*Column, names []string, pkIsHandle bool) ([]*Column, error) {
+// If any columns don't match, return nil and the first missing column's name
+func FindCols(cols []*Column, names []string, pkIsHandle bool) ([]*Column, string) {
 	var rcols []*Column
 	for _, name := range names {
 		col := FindCol(cols, name)
@@ -98,11 +99,11 @@ func FindCols(cols []*Column, names []string, pkIsHandle bool) ([]*Column, error
 			col.ColumnInfo.Offset = len(cols)
 			rcols = append(rcols, col)
 		} else {
-			return nil, errUnknownColumn.GenWithStack("unknown column %s", name)
+			return nil, name
 		}
 	}
 
-	return rcols, nil
+	return rcols, ""
 }
 
 // FindOnUpdateCols finds columns which have OnUpdateNow flag.
@@ -438,14 +439,14 @@ func getColDefaultValueFromNil(ctx sessionctx.Context, col *model.ColumnInfo) (t
 	vars := ctx.GetSessionVars()
 	sc := vars.StmtCtx
 	if sc.BadNullAsWarning {
-		sc.AppendWarning(ErrColumnCantNull.GenWithStackByArgs(col.Name))
+		sc.AppendWarning(ErrColumnCantNull.FastGenByArgs(col.Name))
 		return GetZeroValue(col), nil
 	}
 	if !vars.StrictSQLMode {
-		sc.AppendWarning(ErrNoDefaultValue.GenWithStackByArgs(col.Name))
+		sc.AppendWarning(ErrNoDefaultValue.FastGenByArgs(col.Name))
 		return GetZeroValue(col), nil
 	}
-	return types.Datum{}, ErrNoDefaultValue.GenWithStackByArgs(col.Name)
+	return types.Datum{}, ErrNoDefaultValue.FastGenByArgs(col.Name)
 }
 
 // GetZeroValue gets zero value for given column type.

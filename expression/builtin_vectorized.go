@@ -112,3 +112,19 @@ func (r *localSliceBuffer) put(buf *chunk.Column) {
 	r.size++
 	r.Unlock()
 }
+
+// vecEvalIntByRows uses the non-vectorized(row-based) interface `evalInt` to eval the expression.
+func vecEvalIntByRows(sig builtinFunc, input *chunk.Chunk, result *chunk.Column) error {
+	n := input.NumRows()
+	result.ResizeInt64(n, false)
+	i64s := result.Int64s()
+	for i := 0; i < n; i++ {
+		res, isNull, err := sig.evalInt(input.GetRow(i))
+		if err != nil {
+			return err
+		}
+		result.SetNull(i, isNull)
+		i64s[i] = res
+	}
+	return nil
+}

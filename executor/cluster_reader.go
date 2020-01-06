@@ -47,10 +47,15 @@ import (
 	"google.golang.org/grpc/credentials"
 )
 
-const clusterLogBatchSize = 1024
+const clusterLogBatchSize = 256
+
+type dummyCloser struct{}
+
+func (dummyCloser) close() error { return nil }
 
 type clusterRetriever interface {
 	retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error)
+	close() error
 }
 
 // ClusterReaderExec executes cluster information retrieving from the cluster components
@@ -80,7 +85,13 @@ func (e *ClusterReaderExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	return nil
 }
 
+// Close implements the Executor Close interface.
+func (e *ClusterReaderExec) Close() error {
+	return e.retriever.close()
+}
+
 type clusterConfigRetriever struct {
+	dummyCloser
 	retrieved bool
 	extractor *plannercore.ClusterTableExtractor
 }
@@ -207,9 +218,10 @@ func (e *clusterConfigRetriever) retrieve(_ context.Context, sctx sessionctx.Con
 }
 
 type clusterServerInfoRetriever struct {
-	retrieved      bool
+	dummyCloser
 	extractor      *plannercore.ClusterTableExtractor
 	serverInfoType diagnosticspb.ServerInfoType
+	retrieved      bool
 }
 
 // retrieve implements the clusterRetriever interface
@@ -370,6 +382,7 @@ type clusterLogRetriever struct {
 	retrieving bool
 	heap       *logResponseHeap
 	extractor  *plannercore.ClusterLogTableExtractor
+	cancel     context.CancelFunc
 }
 
 type logStreamResult struct {
@@ -412,14 +425,17 @@ func (h *logResponseHeap) Pop() interface{} {
 }
 
 func (e *clusterLogRetriever) startRetrieving(ctx context.Context, sctx sessionctx.Context) ([]chan logStreamResult, error) {
-	isFailpointTestMode := false
+	isFailpointTestModeSkipCheck := false
 	serversInfo, err := infoschema.GetClusterServerInfo(sctx)
 	failpoint.Inject("mockClusterLogServerInfo", func(val failpoint.Value) {
+		// erase the error
+		err = nil
 		if s := val.(string); len(s) > 0 {
-			// erase the error
-			serversInfo, err = parseFailpointServerInfo(s), nil
+			serversInfo = parseFailpointServerInfo(s)
+			isFailpointTestModeSkipCheck = true
+		} else {
+			isFailpointTestModeSkipCheck = false
 		}
-		isFailpointTestMode = true
 	})
 	if err != nil {
 		return nil, err
@@ -455,7 +471,7 @@ func (e *clusterLogRetriever) startRetrieving(ctx context.Context, sctx sessionc
 
 	// There is no performance issue to check this variable because it will
 	// be eliminated in non-failpoint mode.
-	if !isFailpointTestMode {
+	if !isFailpointTestModeSkipCheck {
 		// To avoid search log interface overload, the user should specify at least one pattern
 		// in normally SQL. (But in test mode we should relax this limitation)
 		if len(patterns) == 0 && len(levels) == 0 && len(addresses) == 0 && len(nodeTypes) == 0 {
@@ -479,6 +495,9 @@ func (e *clusterLogRetriever) startRetrieving(ctx context.Context, sctx sessionc
 		Levels:    levels,
 		Patterns:  patterns,
 	}
+
+	// The retrieve progress may be abort
+	ctx, e.cancel = context.WithCancel(ctx)
 
 	var results []chan logStreamResult
 	for _, srv := range serversInfo {
@@ -594,4 +613,11 @@ func (e *clusterLogRetriever) retrieve(ctx context.Context, sctx sessionctx.Cont
 	e.isDrained = e.heap.Len() == 0
 
 	return finalRows, nil
+}
+
+func (e *clusterLogRetriever) close() error {
+	if e.cancel != nil {
+		e.cancel()
+	}
+	return nil
 }

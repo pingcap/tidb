@@ -311,23 +311,23 @@ func (c *Constant) EvalDecimal(ctx sessionctx.Context, _ chunk.Row) (*types.MyDe
 func (c *Constant) EvalTime(ctx sessionctx.Context, _ chunk.Row) (val types.Time, isNull bool, err error) {
 	if dt, lazy, err := c.getLazyDatum(); lazy {
 		if err != nil {
-			return types.Time{}, true, err
+			return types.ZeroTime, true, err
 		}
 		if dt.IsNull() {
-			return types.Time{}, true, nil
+			return types.ZeroTime, true, nil
 		}
 		val, err := dt.ToString()
 		if err != nil {
-			return types.Time{}, true, err
+			return types.ZeroTime, true, err
 		}
 		tim, err := types.ParseDatetime(ctx.GetSessionVars().StmtCtx, val)
 		if err != nil {
-			return types.Time{}, true, err
+			return types.ZeroTime, true, err
 		}
 		c.Value.SetMysqlTime(tim)
 	} else {
 		if c.GetType().Tp == mysql.TypeNull || c.Value.IsNull() {
-			return types.Time{}, true, nil
+			return types.ZeroTime, true, nil
 		}
 	}
 	return c.Value.GetMysqlTime(), false, nil
