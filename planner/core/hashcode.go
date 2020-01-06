@@ -27,11 +27,9 @@ func encodeIntAsUint32(result []byte, value int) []byte {
 
 // HashCode implements LogicalPlan interface.
 func (p *baseLogicalPlan) HashCode() []byte {
-	// PlanType + PlanID
 	// We use PlanID for the default hash, so if two plans do not have
 	// the same id, the hash value will never be the same.
-	result := make([]byte, 0, 8)
-	result = encodeIntAsUint32(result, plancodec.TypeStringToPhysicalID(p.tp))
+	result := make([]byte, 0, 4)
 	result = encodeIntAsUint32(result, p.id)
 	return result
 }
@@ -39,11 +37,14 @@ func (p *baseLogicalPlan) HashCode() []byte {
 // HashCode implements LogicalPlan interface.
 func (p *LogicalProjection) HashCode() []byte {
 	// PlanType + ExprNum + [Exprs]
-	result := make([]byte, 0, 8)
+	// Expressions are commonly `Column`s, whose hashcode has the length 9, so
+	// we pre-alloc 10 bytes for each expr's hashcode.
+	result := make([]byte, 0, 8+len(p.Exprs)*10)
 	result = encodeIntAsUint32(result, plancodec.TypeStringToPhysicalID(p.tp))
 	result = encodeIntAsUint32(result, len(p.Exprs))
 	for _, expr := range p.Exprs {
 		exprHashCode := expr.HashCode(p.ctx.GetSessionVars().StmtCtx)
+		println(len(exprHashCode))
 		result = encodeIntAsUint32(result, len(exprHashCode))
 		result = append(result, exprHashCode...)
 	}
@@ -62,7 +63,9 @@ func (p *LogicalTableDual) HashCode() []byte {
 // HashCode implements LogicalPlan interface.
 func (p *LogicalSelection) HashCode() []byte {
 	// PlanType + ConditionNum + [Conditions]
-	result := make([]byte, 0, 8)
+	// Conditions are commonly `ScalarFunction`s, whose hashcode usually has a
+	// length larger than 20, so we pre-alloc 25 bytes for each expr's hashcode.
+	result := make([]byte, 0, 8+len(p.Conditions)*25)
 	result = encodeIntAsUint32(result, plancodec.TypeStringToPhysicalID(p.tp))
 	result = encodeIntAsUint32(result, len(p.Conditions))
 	for _, expr := range p.Conditions {
