@@ -1286,9 +1286,7 @@ func (b *builtinWeekOfYearSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colu
 	}
 	defer b.bufAllocator.put(buf)
 	if err = b.args[0].VecEvalTime(b.ctx, input, buf); err != nil {
-		if err = handleInvalidTimeError(b.ctx, err); err != nil {
-			return err
-		}
+		return err
 	}
 	result.ResizeInt64(n, false)
 	result.MergeNulls(buf)
@@ -1913,11 +1911,72 @@ func (b *builtinCurrentDateSig) vecEvalTime(input *chunk.Chunk, result *chunk.Co
 }
 
 func (b *builtinMakeTimeSig) vectorized() bool {
-	return false
+	return true
+}
+
+func (b *builtinMakeTimeSig) getVecIntParam(arg Expression, input *chunk.Chunk, col *chunk.Column) (err error) {
+	if arg.GetType().EvalType() == types.ETReal {
+		err = arg.VecEvalReal(b.ctx, input, col)
+		if err != nil {
+			return err
+		}
+		f64s := col.Float64s()
+		i64s := col.Int64s()
+		n := input.NumRows()
+		for i := 0; i < n; i++ {
+			i64s[i] = int64(f64s[i])
+		}
+		return nil
+	}
+	err = arg.VecEvalInt(b.ctx, input, col)
+	return err
 }
 
 func (b *builtinMakeTimeSig) vecEvalDuration(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	result.ResizeInt64(n, false)
+	hoursBuf := result
+	var err error
+	if err = b.getVecIntParam(b.args[0], input, hoursBuf); err != nil {
+		return err
+	}
+	minutesBuf, err := b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(minutesBuf)
+	if err = b.getVecIntParam(b.args[1], input, minutesBuf); err != nil {
+		return err
+	}
+	secondsBuf, err := b.bufAllocator.get(types.ETReal, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(secondsBuf)
+	if err = b.args[2].VecEvalReal(b.ctx, input, secondsBuf); err != nil {
+		return err
+	}
+	hours := hoursBuf.Int64s()
+	minutes := minutesBuf.Int64s()
+	seconds := secondsBuf.Float64s()
+	durs := result.GoDurations()
+	result.MergeNulls(minutesBuf, secondsBuf)
+	hourUnsignedFlag := mysql.HasUnsignedFlag(b.args[0].GetType().Flag)
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		if minutes[i] < 0 || minutes[i] >= 60 || seconds[i] < 0 || seconds[i] >= 60 {
+			result.SetNull(i, true)
+			continue
+		}
+		dur, err := b.makeTime(hours[i], minutes[i], seconds[i], hourUnsignedFlag)
+		if err != nil {
+			return err
+		}
+		durs[i] = dur.Duration
+	}
+	return nil
 }
 
 func (b *builtinDayOfYearSig) vectorized() bool {
@@ -1932,9 +1991,7 @@ func (b *builtinDayOfYearSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colum
 	}
 	defer b.bufAllocator.put(buf)
 	if err := b.args[0].VecEvalTime(b.ctx, input, buf); err != nil {
-		if err := handleInvalidTimeError(b.ctx, err); err != nil {
-			return err
-		}
+		return err
 	}
 	result.ResizeInt64(n, false)
 	result.MergeNulls(buf)
