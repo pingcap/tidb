@@ -14,6 +14,7 @@
 package privileges_test
 
 import (
+	"fmt"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/mysql"
@@ -215,6 +216,60 @@ func (s *testCacheSuite) TestPatternMatch(c *C) {
 	c.Assert(p.RequestVerification(activeRoles, "genius", "127.0.0.1", "test", "", "", mysql.SelectPriv), IsTrue)
 }
 
+func (s *testCacheSuite) TestHostMatch(c *C) {
+	se, err := session.CreateSession4Test(s.store)
+	activeRoles := make([]*auth.RoleIdentity, 0)
+	c.Assert(err, IsNil)
+	defer se.Close()
+
+	// Host name can be IPv4 address + netmask.
+	mustExec(c, se, "USE MYSQL;")
+	mustExec(c, se, "TRUNCATE TABLE mysql.user")
+	mustExec(c, se, `INSERT INTO mysql.user VALUES ("172.0.0.0/255.0.0.0", "root", "", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y")`)
+	var p privileges.MySQLPrivilege
+	err = p.LoadUserTable(se)
+	c.Assert(err, IsNil)
+	c.Assert(p.RequestVerification(activeRoles, "root", "172.0.0.1", "test", "", "", mysql.SelectPriv), IsTrue)
+	c.Assert(p.RequestVerification(activeRoles, "root", "172.1.1.1", "test", "", "", mysql.SelectPriv), IsTrue)
+	c.Assert(p.RequestVerification(activeRoles, "root", "localhost", "test", "", "", mysql.SelectPriv), IsFalse)
+	c.Assert(p.RequestVerification(activeRoles, "root", "127.0.0.1", "test", "", "", mysql.SelectPriv), IsFalse)
+	c.Assert(p.RequestVerification(activeRoles, "root", "198.0.0.1", "test", "", "", mysql.SelectPriv), IsFalse)
+	c.Assert(p.RequestVerification(activeRoles, "root", "198.0.0.1", "test", "", "", mysql.PrivilegeType(0)), IsTrue)
+	c.Assert(p.RequestVerification(activeRoles, "root", "172.0.0.1", "test", "", "", mysql.ShutdownPriv), IsTrue)
+	mustExec(c, se, `TRUNCATE TABLE mysql.user`)
+
+	// Invalid host name, the user can be created, but cannot login.
+	cases := []string{
+		"127.0.0.0/24",
+		"127.0.0.1/255.0.0.0",
+		"127.0.0.0/255.0.0",
+		"127.0.0.0/255.0.0.0.0",
+		"127%/255.0.0.0",
+		"127.0.0.0/%",
+		"127.0.0.%/%",
+		"127%/%",
+	}
+	for _, IPMask := range cases {
+		sql := fmt.Sprintf(`INSERT INTO mysql.user VALUES ("%s", "root", "", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "N")`, IPMask)
+		mustExec(c, se, sql)
+		p = privileges.MySQLPrivilege{}
+		err = p.LoadUserTable(se)
+		c.Assert(err, IsNil)
+		c.Assert(p.RequestVerification(activeRoles, "root", "127.0.0.1", "test", "", "", mysql.SelectPriv), IsFalse, Commentf("test case: %s", IPMask))
+		c.Assert(p.RequestVerification(activeRoles, "root", "127.0.0.0", "test", "", "", mysql.SelectPriv), IsFalse, Commentf("test case: %s", IPMask))
+		c.Assert(p.RequestVerification(activeRoles, "root", "localhost", "test", "", "", mysql.ShutdownPriv), IsFalse, Commentf("test case: %s", IPMask))
+	}
+
+	// Netmask notation cannot be used for IPv6 addresses.
+	mustExec(c, se, `INSERT INTO mysql.user VALUES ("2001:db8::/ffff:ffff::", "root", "", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "N")`)
+	p = privileges.MySQLPrivilege{}
+	err = p.LoadUserTable(se)
+	c.Assert(err, IsNil)
+	c.Assert(p.RequestVerification(activeRoles, "root", "2001:db8::1234", "test", "", "", mysql.SelectPriv), IsFalse)
+	c.Assert(p.RequestVerification(activeRoles, "root", "2001:db8::", "test", "", "", mysql.SelectPriv), IsFalse)
+	c.Assert(p.RequestVerification(activeRoles, "root", "localhost", "test", "", "", mysql.ShutdownPriv), IsFalse)
+}
+
 func (s *testCacheSuite) TestCaseInsensitive(c *C) {
 	se, err := session.CreateSession4Test(s.store)
 	activeRoles := make([]*auth.RoleIdentity, 0)
@@ -384,39 +439,39 @@ func (s *testCacheSuite) TestAbnormalMySQLTable(c *C) {
 func (s *testCacheSuite) TestSortUserTable(c *C) {
 	var p privileges.MySQLPrivilege
 	p.User = []privileges.UserRecord{
-		{Host: `%`, User: "root"},
-		{Host: `%`, User: "jeffrey"},
-		{Host: "localhost", User: "root"},
-		{Host: "localhost", User: ""},
+		privileges.NewUserRecord(`%`, "root"),
+		privileges.NewUserRecord(`%`, "jeffrey"),
+		privileges.NewUserRecord("localhost", "root"),
+		privileges.NewUserRecord("localhost", ""),
 	}
 	p.SortUserTable()
 	result := []privileges.UserRecord{
-		{Host: "localhost", User: "root"},
-		{Host: "localhost", User: ""},
-		{Host: `%`, User: "jeffrey"},
-		{Host: `%`, User: "root"},
+		privileges.NewUserRecord("localhost", "root"),
+		privileges.NewUserRecord("localhost", ""),
+		privileges.NewUserRecord(`%`, "jeffrey"),
+		privileges.NewUserRecord(`%`, "root"),
 	}
 	checkUserRecord(p.User, result, c)
 
 	p.User = []privileges.UserRecord{
-		{Host: `%`, User: "jeffrey"},
-		{Host: "h1.example.net", User: ""},
+		privileges.NewUserRecord(`%`, "jeffrey"),
+		privileges.NewUserRecord("h1.example.net", ""),
 	}
 	p.SortUserTable()
 	result = []privileges.UserRecord{
-		{Host: "h1.example.net", User: ""},
-		{Host: `%`, User: "jeffrey"},
+		privileges.NewUserRecord("h1.example.net", ""),
+		privileges.NewUserRecord(`%`, "jeffrey"),
 	}
 	checkUserRecord(p.User, result, c)
 
 	p.User = []privileges.UserRecord{
-		{Host: `192.168.%`, User: "xxx"},
-		{Host: `192.168.199.%`, User: "xxx"},
+		privileges.NewUserRecord(`192.168.%`, "xxx"),
+		privileges.NewUserRecord(`192.168.199.%`, "xxx"),
 	}
 	p.SortUserTable()
 	result = []privileges.UserRecord{
-		{Host: `192.168.199.%`, User: "xxx"},
-		{Host: `192.168.%`, User: "xxx"},
+		privileges.NewUserRecord(`192.168.199.%`, "xxx"),
+		privileges.NewUserRecord(`192.168.%`, "xxx"),
 	}
 	checkUserRecord(p.User, result, c)
 }

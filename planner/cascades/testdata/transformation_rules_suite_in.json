@@ -32,6 +32,7 @@
     "name": "TestTopNRules",
     "cases": [
       "select b from t order by a limit 2",
+      "select b from t limit 2",
       "select a+b from t order by a limit 1 offset 2",
       "select c from t order by t.a limit 1",
       "select c from t order by t.a + t.b limit 1",
@@ -39,6 +40,8 @@
       "select a, b, c from t t1 where t1.a in (select a from (select t2.a as a, t1.b as b from t t2 where t2.b > t1.b) x order by b limit 1)",
       "select a, b from (select @i as a, @i := @i+1 as b from t) t order by a desc limit 1",
       "(select a from t) union all (select b from t) order by a limit 2;",
+      "(select a from t) union all (select b from t) limit 2;",
+      "(select a from t) union all (select b from t) limit 2 offset 5;",
       "(select a from t) union all (select sum(a) from t where a > 2 group by b) order by a limit 2;",
       "(select a from t) union all (select sum(a) from t where a > 2 group by b) order by a limit 1, 2;",
       "(select a from t where a = 1) union all (select b from t where a = 2) union all (select c from t where a = 3) order by a limit 2;"

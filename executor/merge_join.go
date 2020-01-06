@@ -18,7 +18,10 @@ import (
 	"fmt"
 
 	"github.com/pingcap/errors"
+
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/memory"
@@ -46,7 +49,6 @@ type MergeJoinExec struct {
 	innerTable *mergeJoinInnerTable
 	outerTable *mergeJoinOuterTable
 
-	innerRows     []chunk.Row
 	innerIter4Row chunk.Iterator
 
 	childrenResults []*chunk.Chunk
@@ -77,30 +79,36 @@ type mergeJoinInnerTable struct {
 	ctx      context.Context
 
 	// for chunk executions
-	sameKeyRows    []chunk.Row
-	keyCmpFuncs    []chunk.CompareFunc
-	firstRow4Key   chunk.Row
-	curRow         chunk.Row
-	curResult      *chunk.Chunk
-	curIter        *chunk.Iterator4Chunk
-	curResultInUse bool
-	resultQueue    []*chunk.Chunk
-	resourceQueue  []*chunk.Chunk
+	rowContainer *chunk.RowContainer
+	keyCmpFuncs  []chunk.CompareFunc
+	firstRow4Key chunk.Row
+	curRow       chunk.Row
+	curChk       *chunk.Chunk
+	curSel       []int
+	curIter      *chunk.Iterator4Chunk
+	curChkInUse  bool
 
 	memTracker *memory.Tracker
 }
 
-func (t *mergeJoinInnerTable) init(ctx context.Context, chk4Reader *chunk.Chunk) (err error) {
+func (t *mergeJoinInnerTable) init(ctx context.Context, sctx sessionctx.Context, chk4Reader *chunk.Chunk) (err error) {
 	if t.reader == nil || ctx == nil {
 		return errors.Errorf("Invalid arguments: Empty arguments detected.")
 	}
 	t.ctx = ctx
-	t.curResult = chk4Reader
-	t.curIter = chunk.NewIterator4Chunk(t.curResult)
+	t.curChk = chk4Reader
+	t.curIter = chunk.NewIterator4Chunk(t.curChk)
 	t.curRow = t.curIter.End()
-	t.curResultInUse = false
-	t.resultQueue = append(t.resultQueue, chk4Reader)
+	t.curChkInUse = false
 	t.memTracker.Consume(chk4Reader.MemoryUsage())
+	// t.rowContainer needs to be closed when exit, it is done by the MergeJoinExec, see MergeJoinExec.Close
+	t.rowContainer = chunk.NewRowContainer(t.reader.base().retFieldTypes, t.curChk.Capacity())
+	t.rowContainer.GetMemTracker().AttachTo(sctx.GetSessionVars().StmtCtx.MemTracker)
+	t.rowContainer.GetDiskTracker().AttachTo(sctx.GetSessionVars().StmtCtx.DiskTracker)
+	if config.GetGlobalConfig().OOMUseTmpStorage {
+		actionSpill := t.rowContainer.ActionSpill()
+		sctx.GetSessionVars().StmtCtx.MemTracker.SetActionOnExceed(actionSpill)
+	}
 	t.firstRow4Key, err = t.nextRow()
 	t.keyCmpFuncs = make([]chunk.CompareFunc, 0, len(t.joinKeys))
 	for i := range t.joinKeys {
@@ -109,29 +117,60 @@ func (t *mergeJoinInnerTable) init(ctx context.Context, chk4Reader *chunk.Chunk)
 	return err
 }
 
-func (t *mergeJoinInnerTable) rowsWithSameKey() ([]chunk.Row, error) {
-	lastResultIdx := len(t.resultQueue) - 1
-	t.resourceQueue = append(t.resourceQueue, t.resultQueue[0:lastResultIdx]...)
-	t.resultQueue = t.resultQueue[lastResultIdx:]
+func (t *mergeJoinInnerTable) selectRow(row chunk.Row) {
+	t.curSel = append(t.curSel, row.Idx())
+}
+
+func (t *mergeJoinInnerTable) selectedRowsIter() chunk.Iterator {
+	var iters []chunk.Iterator
+	if t.rowContainer.NumChunks() != 0 {
+		iters = append(iters, chunk.NewIterator4RowContainer(t.rowContainer))
+	}
+	if t.curSel != nil {
+		t.curChk.SetSel(t.curSel)
+		iters = append(iters, chunk.NewIterator4Chunk(t.curChk))
+		t.curSel = nil
+	}
+	if len(iters) == 1 {
+		return iters[0]
+	}
+	// If any of iters has zero length it will be discarded in the following function.
+	// If all of them are empty, the returned iterator is also empty.
+	// Check out the implementation of multiIterator for more details.
+	return chunk.NewMultiIterator(iters...)
+}
+
+func (t *mergeJoinInnerTable) rowsWithSameKeyIter() (chunk.Iterator, error) {
+	// t.curSel sets to nil, so that it won't overwrite Sel in chunks in RowContainer,
+	// it might be unnecessary since merge join only runs single thread. However since we want to hand
+	// over the management of a chunk to the RowContainer, to keep the semantic consistent, we set it
+	// to nil.
+	t.curSel = nil
+	t.curChk.SetSel(nil)
+	err := t.rowContainer.Reset()
+	if err != nil {
+		return nil, err
+	}
+
 	// no more data.
 	if t.firstRow4Key == t.curIter.End() {
-		return nil, nil
+		// the iterator is a blank iterator only as a place holder
+		return chunk.NewIterator4Chunk(t.curChk), nil
 	}
-	t.sameKeyRows = t.sameKeyRows[:0]
-	t.sameKeyRows = append(t.sameKeyRows, t.firstRow4Key)
+	t.selectRow(t.firstRow4Key)
 	for {
 		selectedRow, err := t.nextRow()
 		// error happens or no more data.
 		if err != nil || selectedRow == t.curIter.End() {
 			t.firstRow4Key = t.curIter.End()
-			return t.sameKeyRows, err
+			return t.selectedRowsIter(), err
 		}
 		compareResult := compareChunkRow(t.keyCmpFuncs, selectedRow, t.firstRow4Key, t.joinKeys, t.joinKeys)
 		if compareResult == 0 {
-			t.sameKeyRows = append(t.sameKeyRows, selectedRow)
+			t.selectRow(selectedRow)
 		} else {
 			t.firstRow4Key = selectedRow
-			return t.sameKeyRows, nil
+			return t.selectedRowsIter(), nil
 		}
 	}
 }
@@ -139,21 +178,25 @@ func (t *mergeJoinInnerTable) rowsWithSameKey() ([]chunk.Row, error) {
 func (t *mergeJoinInnerTable) nextRow() (chunk.Row, error) {
 	for {
 		if t.curRow == t.curIter.End() {
-			t.reallocReaderResult()
-			oldMemUsage := t.curResult.MemoryUsage()
-			err := Next(t.ctx, t.reader, t.curResult)
-			// error happens or no more data.
-			if err != nil || t.curResult.NumRows() == 0 {
+			err := t.reallocCurChkForReader()
+			if err != nil {
 				t.curRow = t.curIter.End()
 				return t.curRow, err
 			}
-			newMemUsage := t.curResult.MemoryUsage()
+			oldMemUsage := t.curChk.MemoryUsage()
+			err = Next(t.ctx, t.reader, t.curChk)
+			// error happens or no more data.
+			if err != nil || t.curChk.NumRows() == 0 {
+				t.curRow = t.curIter.End()
+				return t.curRow, err
+			}
+			newMemUsage := t.curChk.MemoryUsage()
 			t.memTracker.Consume(newMemUsage - oldMemUsage)
 			t.curRow = t.curIter.Begin()
 		}
 
 		result := t.curRow
-		t.curResultInUse = true
+		t.curChkInUse = true
 		t.curRow = t.curIter.Next()
 
 		if !t.hasNullInJoinKey(result) {
@@ -172,36 +215,51 @@ func (t *mergeJoinInnerTable) hasNullInJoinKey(row chunk.Row) bool {
 	return false
 }
 
-// reallocReaderResult resets "t.curResult" to an empty Chunk to buffer the result of "t.reader".
-// It pops a Chunk from "t.resourceQueue" and push it into "t.resultQueue" immediately.
-func (t *mergeJoinInnerTable) reallocReaderResult() {
-	if !t.curResultInUse {
+// reallocCurChkForNext resets "t.curChk" to an empty Chunk to buffer the result of "t.reader".
+// It saves the curChk to RowContainer and then allocates a new one from RowContainer.
+func (t *mergeJoinInnerTable) reallocCurChkForReader() (err error) {
+	if !t.curChkInUse || t.curSel == nil {
 		// If "t.curResult" is not in use, we can just reuse it.
-		t.curResult.Reset()
+		// Note: t.curSel should never be nil. There is a case the chunk is in use but curSel is nil,
+		// and it would cause panic, so we add the condition here to avoid it. The case is that when
+		// init is called, and the firstRow4Key is set up by nextRow(), however the first several rows
+		// contain null value and are skipped, and in the next time the reallocCurChkFOrReader is called
+		// the curChkInUse would be set however the curSel is still nil.
+		t.curChk.Reset()
 		return
 	}
 
-	// Create a new Chunk and append it to "resourceQueue" if there is no more
-	// available chunk in "resourceQueue".
-	if len(t.resourceQueue) == 0 {
-		newChunk := newFirstChunk(t.reader)
-		t.memTracker.Consume(newChunk.MemoryUsage())
-		t.resourceQueue = append(t.resourceQueue, newChunk)
-	}
+	newChk := t.rowContainer.AllocChunk()
+	t.memTracker.Consume(newChk.MemoryUsage() - t.curChk.MemoryUsage())
 
-	// NOTE: "t.curResult" is always the last element of "resultQueue".
-	t.curResult = t.resourceQueue[0]
-	t.curIter = chunk.NewIterator4Chunk(t.curResult)
-	t.resourceQueue = t.resourceQueue[1:]
-	t.resultQueue = append(t.resultQueue, t.curResult)
-	t.curResult.Reset()
-	t.curResultInUse = false
+	// hand over the management to the RowContainer, therefore needs to reserve the first row by CopyConstruct
+	t.firstRow4Key = t.firstRow4Key.CopyConstruct()
+	// curSel be never be nil, since the chunk is in use.
+	t.curChk.SetSel(t.curSel)
+	err = t.rowContainer.Add(t.curChk)
+	if err != nil {
+		return err
+	}
+	t.curChk = newChk
+	t.curChk.Reset()
+	t.curSel = nil
+	t.curChkInUse = false
+	t.curIter = chunk.NewIterator4Chunk(t.curChk)
+	return
 }
 
 // Close implements the Executor Close interface.
 func (e *MergeJoinExec) Close() error {
 	e.childrenResults = nil
+	if e.innerTable.curChk != nil {
+		e.innerTable.memTracker.Consume(-e.innerTable.curChk.MemoryUsage())
+	}
 	e.memTracker = nil
+	if e.innerTable.rowContainer != nil {
+		if err := e.innerTable.rowContainer.Close(); err != nil {
+			return err
+		}
+	}
 
 	return e.baseExecutor.Close()
 }
@@ -240,7 +298,7 @@ func compareChunkRow(cmpFuncs []chunk.CompareFunc, lhsRow, rhsRow chunk.Row, lhs
 }
 
 func (e *MergeJoinExec) prepare(ctx context.Context, requiredRows int) error {
-	err := e.innerTable.init(ctx, e.childrenResults[e.outerIdx^1])
+	err := e.innerTable.init(ctx, e.ctx, e.childrenResults[e.outerIdx^1])
 	if err != nil {
 		return err
 	}
@@ -292,7 +350,7 @@ func (e *MergeJoinExec) joinToChunk(ctx context.Context, chk *chunk.Chunk) (hasM
 		}
 
 		cmpResult := -1
-		if e.outerTable.selected[e.outerTable.row.Idx()] && len(e.innerRows) > 0 {
+		if e.outerTable.selected[e.outerTable.row.Idx()] && e.innerIter4Row.Len() > 0 {
 			cmpResult, err = e.compare(e.outerTable.row, e.innerIter4Row.Current())
 			if err != nil {
 				return false, err
@@ -364,11 +422,10 @@ func (e *MergeJoinExec) compare(outerRow, innerRow chunk.Row) (int, error) {
 // fetchNextInnerRows fetches the next join group, within which all the rows
 // have the same join key, from the inner table.
 func (e *MergeJoinExec) fetchNextInnerRows() (err error) {
-	e.innerRows, err = e.innerTable.rowsWithSameKey()
+	e.innerIter4Row, err = e.innerTable.rowsWithSameKeyIter()
 	if err != nil {
 		return err
 	}
-	e.innerIter4Row = chunk.NewIterator4Slice(e.innerRows)
 	e.innerIter4Row.Begin()
 	return nil
 }

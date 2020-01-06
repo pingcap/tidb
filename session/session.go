@@ -82,15 +82,6 @@ var (
 	transactionDurationGeneralCommit     = metrics.TransactionDuration.WithLabelValues(metrics.LblGeneral, metrics.LblCommit)
 	transactionDurationGeneralAbort      = metrics.TransactionDuration.WithLabelValues(metrics.LblGeneral, metrics.LblAbort)
 
-	transactionCounterInternalOK             = metrics.TransactionCounter.WithLabelValues(metrics.LblInternal, metrics.LblOK)
-	transactionCounterInternalErr            = metrics.TransactionCounter.WithLabelValues(metrics.LblInternal, metrics.LblError)
-	transactionCounterGeneralOK              = metrics.TransactionCounter.WithLabelValues(metrics.LblGeneral, metrics.LblOK)
-	transactionCounterGeneralErr             = metrics.TransactionCounter.WithLabelValues(metrics.LblGeneral, metrics.LblError)
-	transactionCounterInternalCommitRollback = metrics.TransactionCounter.WithLabelValues(metrics.LblInternal, metrics.LblComRol)
-	transactionCounterGeneralCommitRollback  = metrics.TransactionCounter.WithLabelValues(metrics.LblGeneral, metrics.LblComRol)
-	transactionRollbackCounterInternal       = metrics.TransactionCounter.WithLabelValues(metrics.LblInternal, metrics.LblRollback)
-	transactionRollbackCounterGeneral        = metrics.TransactionCounter.WithLabelValues(metrics.LblGeneral, metrics.LblRollback)
-
 	sessionExecuteRunDurationInternal = metrics.SessionExecuteRunDuration.WithLabelValues(metrics.LblInternal)
 	sessionExecuteRunDurationGeneral  = metrics.SessionExecuteRunDuration.WithLabelValues(metrics.LblGeneral)
 
@@ -429,14 +420,14 @@ func (s *session) doCommit(ctx context.Context) error {
 		}
 	}
 
-	// Get the related table IDs.
-	relatedTables := s.GetSessionVars().TxnCtx.TableDeltaMap
-	tableIDs := make([]int64, 0, len(relatedTables))
-	for id := range relatedTables {
-		tableIDs = append(tableIDs, id)
+	// Get the related table or partition IDs.
+	relatedPhysicalTables := s.GetSessionVars().TxnCtx.TableDeltaMap
+	physicalTableIDs := make([]int64, 0, len(relatedPhysicalTables))
+	for id := range relatedPhysicalTables {
+		physicalTableIDs = append(physicalTableIDs, id)
 	}
 	// Set this option for 2 phase commit to validate schema lease.
-	s.txn.SetOption(kv.SchemaChecker, domain.NewSchemaChecker(domain.GetDomain(s), s.sessionVars.TxnCtx.SchemaVersion, tableIDs))
+	s.txn.SetOption(kv.SchemaChecker, domain.NewSchemaChecker(domain.GetDomain(s), s.sessionVars.TxnCtx.SchemaVersion, physicalTableIDs))
 
 	return s.txn.Commit(sessionctx.SetCommitCtx(ctx, s))
 }
@@ -529,7 +520,6 @@ func (s *session) CommitTxn(ctx context.Context) error {
 	})
 
 	s.sessionVars.TxnCtx.Cleanup()
-	s.recordTransactionCounter(nil, err)
 	return err
 }
 
@@ -541,11 +531,6 @@ func (s *session) RollbackTxn(ctx context.Context) {
 
 	if s.txn.Valid() {
 		terror.Log(s.txn.Rollback())
-		if s.isInternal() {
-			transactionRollbackCounterInternal.Inc()
-		} else {
-			transactionRollbackCounterGeneral.Inc()
-		}
 	}
 	s.cleanRetryInfo()
 	s.txn.changeToInvalid()
@@ -680,7 +665,10 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 				s.StmtRollback()
 				break
 			}
-			err = s.StmtCommit()
+			// We do not need to pass memTracker here, because that retry
+			// happened after commit, the memory usage was calculated during the
+			// first execution.
+			err = s.StmtCommit(nil)
 			if err != nil {
 				return err
 			}
@@ -688,10 +676,12 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 		logutil.Logger(ctx).Warn("transaction association",
 			zap.Uint64("retrying txnStartTS", s.GetSessionVars().TxnCtx.StartTS),
 			zap.Uint64("original txnStartTS", orgStartTS))
-		if hook := ctx.Value("preCommitHook"); hook != nil {
-			// For testing purpose.
-			hook.(func())()
-		}
+		failpoint.Inject("preCommitHook", func() {
+			hook, ok := ctx.Value("__preCommitHook").(func())
+			if ok {
+				hook()
+			}
+		})
 		if err == nil {
 			err = s.doCommit(ctx)
 			if err == nil {
@@ -1042,7 +1032,6 @@ func (s *session) executeStatement(ctx context.Context, connID uint64, stmtNode 
 		}
 		return nil, err
 	}
-	s.recordTransactionCounter(stmtNode, err)
 	if s.isInternal() {
 		sessionExecuteRunDurationInternal.Observe(time.Since(startTime).Seconds())
 	} else {
@@ -1863,6 +1852,7 @@ var builtinGlobalVariable = []string{
 	variable.TiDBEnableNoopFuncs,
 	variable.TiDBEnableIndexMerge,
 	variable.TiDBTxnMode,
+	variable.TiDBRowFormatVersion,
 	variable.TiDBEnableStmtSummary,
 	variable.TiDBStmtSummaryRefreshInterval,
 	variable.TiDBStmtSummaryHistorySize,
@@ -2077,41 +2067,6 @@ func (s *session) recordOnTransactionExecution(err error, counter int, duration 
 			statementPerTransactionGeneralOK.Observe(float64(counter))
 			transactionDurationGeneralCommit.Observe(duration)
 		}
-	}
-}
-
-func (s *session) recordTransactionCounter(stmtNode ast.StmtNode, err error) {
-	if stmtNode == nil {
-		if s.isInternal() {
-			if err != nil {
-				transactionCounterInternalErr.Inc()
-			} else {
-				transactionCounterInternalOK.Inc()
-			}
-		} else {
-			if err != nil {
-				transactionCounterGeneralErr.Inc()
-			} else {
-				transactionCounterGeneralOK.Inc()
-			}
-		}
-		return
-	}
-
-	var isTxn bool
-	switch stmtNode.(type) {
-	case *ast.CommitStmt:
-		isTxn = true
-	case *ast.RollbackStmt:
-		isTxn = true
-	}
-	if !isTxn {
-		return
-	}
-	if s.isInternal() {
-		transactionCounterInternalCommitRollback.Inc()
-	} else {
-		transactionCounterGeneralCommitRollback.Inc()
 	}
 }
 
