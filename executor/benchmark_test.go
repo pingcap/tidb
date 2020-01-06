@@ -544,8 +544,8 @@ func BenchmarkWindowFunctionsWithSlidingWindow(b *testing.B) {
 	windowFuncs := []string{
 		ast.AggFuncCount,
 	}
-	rows := []int{10}
-	ndvs := []int{2}
+	rows := []int{1000, 100000}
+	ndvs := []int{10, 1000}
 	frames := []*core.WindowFrame{
 		{Type: ast.Rows, Start: &core.FrameBound{Type: ast.Preceding, Num: 10}, End: &core.FrameBound{Type: ast.Following, Num: 10}},
 		{Type: ast.Rows, Start: &core.FrameBound{Type: ast.Preceding, Num: 100}, End: &core.FrameBound{Type: ast.Following, Num: 100}},
