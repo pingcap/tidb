@@ -3592,7 +3592,7 @@ func (s *testSuite3) TestUnionAutoSignedCast(c *C) {
 		Check(testkit.Rows("1 1", "2 -1", "3 -1"))
 }
 
-func (s *testSuite3) TestUpdateJoin(c *C) {
+func (s *testSuite6) TestUpdateJoin(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1, t2, t3, t4, t5, t6, t7")
@@ -3783,7 +3783,7 @@ func (s *testSuite3) TestSelectHashPartitionTable(c *C) {
 	tk.MustQuery(" select * from th where a=5;").Check(testkit.Rows("5 5"))
 }
 
-func (s *testSuite3) TestSelectPartition(c *C) {
+func (s *testSuiteP1) TestSelectPartition(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test`)
 	tk.MustExec(`drop table if exists th, tr`)
