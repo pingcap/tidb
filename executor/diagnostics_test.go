@@ -97,32 +97,32 @@ func (s *diagnosticsSuite) TestInspectionResult(c *C) {
 		{
 			sql: "select * from information_schema.inspection_result where rule in ('config', 'version')",
 			rows: []string{
-				"config coprocessor.high 2 1 P2 select * from information_schema.cluster_config where type='tikv' and `key`='coprocessor.high'",
-				"config ddl.lease 2 1 P2 select * from information_schema.cluster_config where type='tidb' and `key`='ddl.lease'",
-				"version pd 3 1 P1 select * from information_schema.cluster_info where type='pd'",
-				"version tidb 3 1 P1 select * from information_schema.cluster_info where type='tidb'",
-				"version tikv 2 1 P1 select * from information_schema.cluster_info where type='tikv'",
+				"config coprocessor.high inconsistent consistent warning select * from information_schema.cluster_config where type='tikv' and `key`='coprocessor.high'",
+				"config ddl.lease inconsistent consistent warning select * from information_schema.cluster_config where type='tidb' and `key`='ddl.lease'",
+				"version pd inconsistent consistent critical select * from information_schema.cluster_info where type='pd'",
+				"version tidb inconsistent consistent critical select * from information_schema.cluster_info where type='tidb'",
+				"version tikv inconsistent consistent critical select * from information_schema.cluster_info where type='tikv'",
 			},
 		},
 		{
 			sql: "select * from information_schema.inspection_result where rule in ('config', 'version') and item in ('coprocessor.high', 'tikv')",
 			rows: []string{
-				"config coprocessor.high 2 1 P2 select * from information_schema.cluster_config where type='tikv' and `key`='coprocessor.high'",
-				"version tikv 2 1 P1 select * from information_schema.cluster_info where type='tikv'",
+				"config coprocessor.high inconsistent consistent warning select * from information_schema.cluster_config where type='tikv' and `key`='coprocessor.high'",
+				"version tikv inconsistent consistent critical select * from information_schema.cluster_info where type='tikv'",
 			},
 		},
 		{
 			sql: "select * from information_schema.inspection_result where rule='config'",
 			rows: []string{
-				"config coprocessor.high 2 1 P2 select * from information_schema.cluster_config where type='tikv' and `key`='coprocessor.high'",
-				"config ddl.lease 2 1 P2 select * from information_schema.cluster_config where type='tidb' and `key`='ddl.lease'",
+				"config coprocessor.high inconsistent consistent warning select * from information_schema.cluster_config where type='tikv' and `key`='coprocessor.high'",
+				"config ddl.lease inconsistent consistent warning select * from information_schema.cluster_config where type='tidb' and `key`='ddl.lease'",
 			},
 		},
 		{
 			sql: "select * from information_schema.inspection_result where rule='version' and item in ('pd', 'tidb')",
 			rows: []string{
-				"version pd 3 1 P1 select * from information_schema.cluster_info where type='pd'",
-				"version tidb 3 1 P1 select * from information_schema.cluster_info where type='tidb'",
+				"version pd inconsistent consistent critical select * from information_schema.cluster_info where type='pd'",
+				"version tidb inconsistent consistent critical select * from information_schema.cluster_info where type='tidb'",
 			},
 		},
 	}

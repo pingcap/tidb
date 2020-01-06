@@ -25,15 +25,16 @@ import (
 
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/format"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/types"
+	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -108,9 +109,9 @@ func NewBindHandle(ctx sessionctx.Context) *BindHandle {
 	}
 	handle.pendingVerifyBindRecordMap.Value.Store(make(map[string]*bindRecordUpdate))
 	handle.pendingVerifyBindRecordMap.flushFunc = func(record *BindRecord) error {
-		// We do not need the first two parameters because they are only use to generate hint,
+		// We do not need the first parameter because it is only use to generate hint,
 		// and we already have the hint.
-		return handle.AddBindRecord(nil, nil, record)
+		return handle.AddBindRecord(nil, record)
 	}
 	return handle
 }
@@ -168,8 +169,8 @@ func (h *BindHandle) Update(fullLoad bool) (err error) {
 }
 
 // AddBindRecord adds a BindRecord to the storage and BindRecord to the cache.
-func (h *BindHandle) AddBindRecord(sctx sessionctx.Context, is infoschema.InfoSchema, record *BindRecord) (err error) {
-	err = record.prepareHints(sctx, is)
+func (h *BindHandle) AddBindRecord(sctx sessionctx.Context, record *BindRecord) (err error) {
+	err = record.prepareHints(sctx)
 	if err != nil {
 		return err
 	}
@@ -217,6 +218,11 @@ func (h *BindHandle) AddBindRecord(sctx sessionctx.Context, is infoschema.InfoSc
 		h.bindInfo.Unlock()
 	}()
 
+	txn, err1 := h.sctx.Context.Txn(true)
+	if err1 != nil {
+		return err1
+	}
+
 	if duplicateBinding != "" {
 		_, err = exec.Execute(context.TODO(), h.deleteBindInfoSQL(record.OriginalSQL, record.Db, duplicateBinding))
 		if err != nil {
@@ -224,16 +230,8 @@ func (h *BindHandle) AddBindRecord(sctx sessionctx.Context, is infoschema.InfoSc
 		}
 	}
 
-	txn, err1 := h.sctx.Context.Txn(true)
-	if err1 != nil {
-		return err1
-	}
 	for i := range record.Bindings {
-		record.Bindings[i].CreateTime = types.Time{
-			Time: types.FromGoTime(oracle.GetTimeFromTS(txn.StartTS())),
-			Type: mysql.TypeDatetime,
-			Fsp:  3,
-		}
+		record.Bindings[i].CreateTime = types.NewTime(types.FromGoTime(oracle.GetTimeFromTS(txn.StartTS())), mysql.TypeTimestamp, 3)
 		record.Bindings[i].UpdateTime = record.Bindings[0].CreateTime
 
 		// insert the BindRecord to the storage.
@@ -282,11 +280,7 @@ func (h *BindHandle) DropBindRecord(originalSQL, db string, binding *Binding) (e
 		return err1
 	}
 
-	updateTs := types.Time{
-		Time: types.FromGoTime(oracle.GetTimeFromTS(txn.StartTS())),
-		Type: mysql.TypeDatetime,
-		Fsp:  3,
-	}
+	updateTs := types.NewTime(types.FromGoTime(oracle.GetTimeFromTS(txn.StartTS())), mysql.TypeTimestamp, 3)
 
 	bindSQL := ""
 	if binding != nil {
@@ -393,13 +387,8 @@ func (h *BindHandle) newBindRecord(row chunk.Row) (string, *BindRecord, error) {
 	hash := parser.DigestNormalized(bindRecord.OriginalSQL)
 	h.sctx.Lock()
 	defer h.sctx.Unlock()
-	err := h.sctx.RefreshTxnCtx(context.TODO())
-	if err != nil {
-		return "", nil, err
-	}
-	h.sctx.GetSessionVars().StmtCtx.TimeZone = h.sctx.GetSessionVars().TimeZone
 	h.sctx.GetSessionVars().CurrentDB = bindRecord.Db
-	err = bindRecord.prepareHints(h.sctx.Context, h.sctx.GetSessionVars().TxnCtx.InfoSchema.(infoschema.InfoSchema))
+	err := bindRecord.prepareHints(h.sctx.Context)
 	return hash, bindRecord, err
 }
 
@@ -524,10 +513,6 @@ func (h *BindHandle) logicalDeleteBindInfoSQL(originalSQL, db string, updateTs t
 	return sql + fmt.Sprintf(` and bind_sql = %s`, expression.Quote(bindingSQL))
 }
 
-// GenHintsFromSQL is used to generate hints from SQL.
-// It is used to avoid the circle dependence with planner package.
-var GenHintsFromSQL func(ctx context.Context, sctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (string, error)
-
 // CaptureBaselines is used to automatically capture plan baselines.
 func (h *BindHandle) CaptureBaselines() {
 	parser4Capture := parser.New()
@@ -543,34 +528,94 @@ func (h *BindHandle) CaptureBaselines() {
 			continue
 		}
 		h.sctx.Lock()
-		err = h.sctx.RefreshTxnCtx(context.TODO())
-		var hints string
-		if err == nil {
-			h.sctx.GetSessionVars().CurrentDB = schemas[i]
-			hints, err = GenHintsFromSQL(context.TODO(), h.sctx.Context, stmt, h.sctx.GetSessionVars().TxnCtx.InfoSchema.(infoschema.InfoSchema))
-		}
+		h.sctx.GetSessionVars().CurrentDB = schemas[i]
+		hints, err := getHintsForSQL(h.sctx.Context, sqls[i])
 		h.sctx.Unlock()
 		if err != nil {
 			logutil.BgLogger().Info("generate hints failed", zap.String("SQL", sqls[i]), zap.Error(err))
 			continue
 		}
-		// We can skip simple query like point get.
-		if hints == "" {
+		bindSQL := GenerateBindSQL(context.TODO(), stmt, hints)
+		if bindSQL == "" {
 			continue
 		}
-		bindsql := strings.Replace(normalizedSQL, "select", fmt.Sprintf("select /*+ %s*/", hints), 1)
+		charset, collation := h.sctx.GetSessionVars().GetCharsetInfo()
 		binding := Binding{
-			BindSQL: bindsql,
-			Status:  Using,
-			Hint:    CollectHint(stmt),
-			id:      hints,
+			BindSQL:   bindSQL,
+			Status:    Using,
+			Hint:      CollectHint(stmt),
+			id:        hints,
+			Charset:   charset,
+			Collation: collation,
 		}
-		// We don't need to pass the `sctx` and `is` because they are used to generate hints and we already filled hints in.
-		err = h.AddBindRecord(nil, nil, &BindRecord{OriginalSQL: sqls[i], Db: schemas[i], Bindings: []Binding{binding}})
+		// We don't need to pass the `sctx` because they are used to generate hints and we already filled hints in.
+		err = h.AddBindRecord(nil, &BindRecord{OriginalSQL: normalizedSQL, Db: schemas[i], Bindings: []Binding{binding}})
 		if err != nil {
 			logutil.BgLogger().Info("capture baseline failed", zap.String("SQL", sqls[i]), zap.Error(err))
 		}
 	}
+}
+
+func getHintsForSQL(sctx sessionctx.Context, sql string) (string, error) {
+	oriVals := sctx.GetSessionVars().UsePlanBaselines
+	sctx.GetSessionVars().UsePlanBaselines = false
+	recordSets, err := sctx.(sqlexec.SQLExecutor).Execute(context.TODO(), fmt.Sprintf("explain format='hint' %s", sql))
+	sctx.GetSessionVars().UsePlanBaselines = oriVals
+	defer terror.Log(recordSets[0].Close())
+	if err != nil {
+		return "", err
+	}
+	chk := recordSets[0].NewChunk()
+	err = recordSets[0].Next(context.TODO(), chk)
+	if err != nil {
+		return "", err
+	}
+	return chk.GetRow(0).GetString(0), nil
+}
+
+// GenerateBindSQL generates binding sqls from stmt node and plan hints.
+func GenerateBindSQL(ctx context.Context, stmtNode ast.StmtNode, planHint string) string {
+	// If would be nil for very simple cases such as point get, we do not need to evolve for them.
+	if planHint == "" {
+		return ""
+	}
+	paramChecker := &paramMarkerChecker{}
+	stmtNode.Accept(paramChecker)
+	// We need to evolve on current sql, but we cannot restore values for paramMarkers yet,
+	// so just ignore them now.
+	if paramChecker.hasParamMarker {
+		return ""
+	}
+	// We need to evolve plan based on the current sql, not the original sql which may have different parameters.
+	// So here we would remove the hint and inject the current best plan hint.
+	BindHint(stmtNode, &HintsSet{})
+	var sb strings.Builder
+	restoreCtx := format.NewRestoreCtx(format.DefaultRestoreFlags, &sb)
+	err := stmtNode.Restore(restoreCtx)
+	if err != nil {
+		logutil.Logger(ctx).Warn("Restore SQL failed", zap.Error(err))
+	}
+	bindSQL := sb.String()
+	selectIdx := strings.Index(bindSQL, "SELECT")
+	// Remove possible `explain` prefix.
+	bindSQL = bindSQL[selectIdx:]
+	return strings.Replace(bindSQL, "SELECT", fmt.Sprintf("SELECT /*+ %s*/", planHint), 1)
+}
+
+type paramMarkerChecker struct {
+	hasParamMarker bool
+}
+
+func (e *paramMarkerChecker) Enter(in ast.Node) (ast.Node, bool) {
+	if _, ok := in.(*driver.ParamMarkerExpr); ok {
+		e.hasParamMarker = true
+		return in, true
+	}
+	return in, false
+}
+
+func (e *paramMarkerChecker) Leave(in ast.Node) (ast.Node, bool) {
+	return in, true
 }
 
 // AddEvolvePlanTask adds the evolve plan task into memory cache. It would be flushed to store periodically.
@@ -641,13 +686,13 @@ func (h *BindHandle) getOnePendingVerifyJob() (string, string, Binding) {
 				if bind.Status != Rejected {
 					continue
 				}
-				updateTime, err := bind.UpdateTime.Time.GoTime(time.UTC)
+				dur, err := bind.SinceUpdateTime()
 				// Should not happen.
 				if err != nil {
 					continue
 				}
 				// Rejected and retry it now.
-				if time.Since(updateTime) > nextVerifyDuration {
+				if dur > nextVerifyDuration {
 					return bindRecord.OriginalSQL, bindRecord.Db, bind
 				}
 			}
@@ -748,7 +793,7 @@ func (h *BindHandle) HandleEvolvePlanTask(sctx sessionctx.Context) error {
 	} else {
 		binding.Status = Using
 	}
-	return h.AddBindRecord(sctx, sctx.GetSessionVars().TxnCtx.InfoSchema.(infoschema.InfoSchema), &BindRecord{OriginalSQL: originalSQL, Db: db, Bindings: []Binding{binding}})
+	return h.AddBindRecord(sctx, &BindRecord{OriginalSQL: originalSQL, Db: db, Bindings: []Binding{binding}})
 }
 
 // Clear resets the bind handle. It is used for test.

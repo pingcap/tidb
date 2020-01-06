@@ -111,7 +111,7 @@ type dateTimeGenerWithFsp struct {
 func (g *dateTimeGenerWithFsp) gen() interface{} {
 	result := g.defaultGener.gen()
 	if t, ok := result.(types.Time); ok {
-		t.Fsp = g.fsp
+		t.SetFsp(g.fsp)
 		return t
 	}
 	return result
@@ -136,10 +136,11 @@ func (g *datetimeJSONGener) gen() interface{} {
 	minute := rand.Intn(60)
 	second := rand.Intn(60)
 	microsecond := rand.Intn(1000000)
-	d := types.Time{
-		Time: types.FromDate(year, month, day, hour, minute, second, microsecond),
-		Fsp:  3,
-	}
+	d := types.NewTime(
+		types.FromDate(year, month, day, hour, minute, second, microsecond),
+		0,
+		3,
+	)
 	return json.CreateBinary(d.String())
 }
 

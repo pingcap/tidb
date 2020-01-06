@@ -485,12 +485,25 @@
   {
     "name": "TestIndexJoinUnionScan",
     "cases": [
-      // Test Index Join + UnionScan + TableScan.
-      "select /*+ TIDB_INLJ(t2) */ * from t t1, t t2 where t1.a = t2.a",
-      // Test Index Join + UnionScan + DoubleRead.
-      "select /*+ TIDB_INLJ(t1, t2) */ * from t t1, t t2 where t1.a = t2.c",
-      // Test Index Join + UnionScan + IndexScan.
-      "select /*+ TIDB_INLJ(t1, t2) */ t1.a , t2.c from t t1, t t2 where t1.a = t2.c"
+      [
+        "insert into t values(1, 1)",
+        // Test Index Join + UnionScan + TableScan.
+        "explain select /*+ TIDB_INLJ(t2) */ * from t t1, t t2 where t1.a = t2.a"
+      ],
+      [
+        "insert into t values(1, 1)",
+        // Test Index Join + UnionScan + DoubleRead.
+        "explain select /*+ TIDB_INLJ(t2) */ * from t t1, t t2 where t1.a = t2.b"
+      ],
+      [
+        "insert into t values(1, 1)",
+        // Test Index Join + UnionScan + IndexScan.
+        "explain select /*+ TIDB_INLJ(t2) */ t1.a , t2.b from t t1, t t2 where t1.a = t2.b"
+      ],
+      [
+        "insert into tt values(1)",
+        "explain select /*+ TIDB_INLJ(t2) */ * from tt t1, tt t2 where t1.a = t2.a"
+      ]
     ]
   },
   {

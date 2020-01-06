@@ -53,9 +53,7 @@ type HashJoinExec struct {
 	concurrency   uint
 	rowContainer  *hashRowContainer
 	buildFinished chan error
-	// joinWorkerWaitGroup is for sync multiple join workers.
-	joinWorkerWaitGroup sync.WaitGroup
-	finished            atomic.Value
+
 	// closeCh add a lock for closing executor.
 	closeCh      chan struct{}
 	joinType     plannercore.JoinType
@@ -72,11 +70,16 @@ type HashJoinExec struct {
 
 	memTracker  *memory.Tracker // track memory usage.
 	diskTracker *disk.Tracker   // track disk usage.
-	prepared    bool
-	isOuterJoin bool
 
 	outerMatchedStatus []*bitmap.ConcurrentBitmap
 	useOuterToBuild    bool
+
+	prepared    bool
+	isOuterJoin bool
+
+	// joinWorkerWaitGroup is for sync multiple join workers.
+	joinWorkerWaitGroup sync.WaitGroup
+	finished            atomic.Value
 }
 
 // probeChkResource stores the result of the join probe side fetch worker,
@@ -332,9 +335,9 @@ func (e *HashJoinExec) handleUnmatchedRowsFromHashTableInMemory(workerID uint) {
 	if !ok {
 		return
 	}
-	numChks := e.rowContainer.records.NumChunks()
+	numChks := e.rowContainer.NumChunks()
 	for i := int(workerID); i < numChks; i += int(e.concurrency) {
-		chk := e.rowContainer.records.GetChunk(i)
+		chk := e.rowContainer.GetChunk(i)
 		for j := 0; j < chk.NumRows(); j++ {
 			if e.outerMatchedStatus[i].UnsafeIsSet(j) == false { // process unmatched outer rows
 				e.joiners[workerID].onMissMatch(false, chk.GetRow(j), joinResult.chk)
@@ -362,11 +365,11 @@ func (e *HashJoinExec) handleUnmatchedRowsFromHashTableInDisk(workerID uint) {
 	if !ok {
 		return
 	}
-	numChks := e.rowContainer.recordsInDisk.NumChunks()
+	numChks := e.rowContainer.NumChunks()
 	for i := 0; i < numChks; i++ {
-		numOfRows := e.rowContainer.recordsInDisk.NumRowsOfChunk(i)
+		numOfRows := e.rowContainer.NumRowsOfChunk(i)
 		for j := 0; j < numOfRows; j++ {
-			row, err := e.rowContainer.recordsInDisk.GetRow(chunk.RowPtr{ChkIdx: uint32(i), RowIdx: uint32(j)})
+			row, err := e.rowContainer.GetRow(chunk.RowPtr{ChkIdx: uint32(i), RowIdx: uint32(j)})
 			if err != nil {
 				// Catching the error and send it
 				joinResult.err = err
@@ -725,7 +728,6 @@ type NestedLoopApplyExec struct {
 	outerExec   Executor
 	innerFilter expression.CNFExprs
 	outerFilter expression.CNFExprs
-	outer       bool
 
 	joiner joiner
 
@@ -741,6 +743,8 @@ type NestedLoopApplyExec struct {
 	outerRow         *chunk.Row
 	hasMatch         bool
 	hasNull          bool
+
+	outer bool
 
 	memTracker *memory.Tracker // track memory usage.
 }
