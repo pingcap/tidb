@@ -338,6 +338,7 @@ func (pc PbConverter) canFuncBePushed(sf *ScalarFunction) bool {
 		ast.BitNeg,
 		ast.LeftShift,
 		ast.RightShift,
+		ast.UnaryMinus,
 
 		// compare functions.
 		ast.LT,
@@ -371,6 +372,7 @@ func (pc PbConverter) canFuncBePushed(sf *ScalarFunction) bool {
 		ast.Log2,
 		ast.Log10,
 		ast.Exp,
+		ast.Pow,
 		ast.Sin,
 		ast.Asin,
 		ast.Cos,
@@ -381,6 +383,7 @@ func (pc PbConverter) canFuncBePushed(sf *ScalarFunction) bool {
 		ast.Cot,
 		ast.Radians,
 		ast.Degrees,
+		ast.Conv,
 		ast.CRC32,
 
 		// control flow functions.
@@ -393,17 +396,25 @@ func (pc PbConverter) canFuncBePushed(sf *ScalarFunction) bool {
 		ast.Length,
 		ast.BitLength,
 		ast.Concat,
+		ast.ConcatWS,
 		ast.Locate,
+		ast.Replace,
 		ast.ASCII,
+		ast.Hex,
 		ast.Reverse,
 		ast.LTrim,
 		ast.RTrim,
 		ast.Left,
+		ast.Strcmp,
+		ast.Space,
+		ast.Elt,
+		ast.Field,
 
 		// json functions.
 		ast.JSONType,
 		ast.JSONExtract,
-		ast.JSONUnquote,
+		// FIXME: JSONUnquote is incompatible with Coprocessor
+		// ast.JSONUnquote,
 		ast.JSONObject,
 		ast.JSONArray,
 		ast.JSONMerge,
@@ -414,14 +425,53 @@ func (pc PbConverter) canFuncBePushed(sf *ScalarFunction) bool {
 		ast.JSONLength,
 
 		// date functions.
-		ast.DateFormat:
+		ast.DateFormat,
+		ast.FromDays,
+		ast.ToDays,
+		ast.DayOfYear,
+		ast.DayOfMonth,
+		ast.Year,
+		ast.Month,
+		ast.Hour,
+		ast.Minute,
+		ast.Second,
+		ast.MicroSecond,
+		ast.PeriodAdd,
+		ast.PeriodDiff,
+		ast.DayName,
+
+		// encryption functions.
+		ast.MD5,
+		ast.SHA1,
+		ast.UncompressedLength,
+
+		// misc functions.
+		ast.InetNtoa,
+		ast.InetAton,
+		ast.Inet6Ntoa,
+		ast.Inet6Aton,
+		ast.IsIPv4,
+		ast.IsIPv4Compat,
+		ast.IsIPv4Mapped,
+		ast.IsIPv6:
 		return isPushdownEnabled(sf.FuncName.L)
+
+	// A special case: Only push down Round by signature
 	case ast.Round:
 		switch sf.Function.PbCode() {
 		case
 			tipb.ScalarFuncSig_RoundReal,
 			tipb.ScalarFuncSig_RoundInt,
 			tipb.ScalarFuncSig_RoundDec:
+			return isPushdownEnabled(sf.FuncName.L)
+		}
+	case ast.Cast:
+		switch sf.Function.PbCode() {
+		case tipb.ScalarFuncSig_CastStringAsInt,
+			tipb.ScalarFuncSig_CastStringAsTime,
+			tipb.ScalarFuncSig_CastTimeAsInt:
+			return false
+		default:
 			return isPushdownEnabled(sf.FuncName.L)
 		}
 	}

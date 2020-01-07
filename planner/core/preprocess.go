@@ -120,11 +120,17 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 	case *ast.Join:
 		p.checkNonUniqTableAlias(node)
 	case *ast.CreateBindingStmt:
+		EraseLastSemicolon(node.OriginSel)
+		EraseLastSemicolon(node.HintedSel)
 		p.checkBindGrammar(node.OriginSel, node.HintedSel)
+		return in, true
 	case *ast.DropBindingStmt:
+		EraseLastSemicolon(node.OriginSel)
 		if node.HintedSel != nil {
+			EraseLastSemicolon(node.HintedSel)
 			p.checkBindGrammar(node.OriginSel, node.HintedSel)
 		}
+		return in, true
 	case *ast.RecoverTableStmt, *ast.FlashBackTableStmt:
 		// The specified table in recover table statement maybe already been dropped.
 		// So skip check table name here, otherwise, recover table [table_name] syntax will return
@@ -138,6 +144,14 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		p.flag &= ^parentIsJoin
 	}
 	return in, p.err != nil
+}
+
+// EraseLastSemicolon removes last semicolon of sql.
+func EraseLastSemicolon(stmt ast.StmtNode) {
+	sql := stmt.Text()
+	if len(sql) > 0 && sql[len(sql)-1] == ';' {
+		stmt.SetText(sql[:len(sql)-1])
+	}
 }
 
 func (p *preprocessor) checkBindGrammar(originSel, hintedSel ast.StmtNode) {
@@ -384,6 +398,12 @@ func (p *preprocessor) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 		}
 	}
 	for _, constraint := range stmt.Constraints {
+		for _, spec := range constraint.Keys {
+			if spec.Expr != nil {
+				p.err = ErrNotSupportedYet.GenWithStackByArgs("create table with expression index")
+				return
+			}
+		}
 		switch tp := constraint.Tp; tp {
 		case ast.ConstraintKey, ast.ConstraintIndex, ast.ConstraintUniq, ast.ConstraintUniqKey, ast.ConstraintUniqIndex:
 			err := checkIndexInfo(constraint.Name, constraint.Keys)
@@ -581,11 +601,13 @@ func (p *preprocessor) checkAlterTableGrammar(stmt *ast.AlterTableStmt) {
 func checkDuplicateColumnName(IndexPartSpecifications []*ast.IndexPartSpecification) error {
 	colNames := make(map[string]struct{}, len(IndexPartSpecifications))
 	for _, IndexColNameWithExpr := range IndexPartSpecifications {
-		name := IndexColNameWithExpr.Column.Name
-		if _, ok := colNames[name.L]; ok {
-			return infoschema.ErrColumnExists.GenWithStackByArgs(name)
+		if IndexColNameWithExpr.Column != nil {
+			name := IndexColNameWithExpr.Column.Name
+			if _, ok := colNames[name.L]; ok {
+				return infoschema.ErrColumnExists.GenWithStackByArgs(name)
+			}
+			colNames[name.L] = struct{}{}
 		}
-		colNames[name.L] = struct{}{}
 	}
 	return nil
 }
