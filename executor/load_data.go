@@ -241,7 +241,7 @@ func (e *LoadDataInfo) CommitWork(ctx context.Context) error {
 		case <-e.QuitCh:
 			err = errors.New("commit forced to quit")
 			logutil.Logger(ctx).Error("commit forced to quit, possible preparation failed")
-			break
+			return err
 		case commitTask, ok := <-e.commitTaskQueue:
 			if ok {
 				start := time.Now()
@@ -257,7 +257,6 @@ func (e *LoadDataInfo) CommitWork(ctx context.Context) error {
 					zap.Int("tasks in queue", len(e.commitTaskQueue)))
 			} else {
 				end = true
-				break
 			}
 		}
 		if err != nil {
