@@ -1744,6 +1744,12 @@ func NewMysqlEnumDatum(e Enum) (d Datum) {
 	return d
 }
 
+// NewMysqlSetDatum creates a new MysqlSet Datum for a Enum value.
+func NewMysqlSetDatum(e Set) (d Datum) {
+	d.SetMysqlSet(e)
+	return d
+}
+
 // MakeDatums creates datum slice from interfaces.
 func MakeDatums(args ...interface{}) []Datum {
 	datums := make([]Datum, len(args))
