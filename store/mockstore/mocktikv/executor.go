@@ -16,7 +16,6 @@ package mocktikv
 import (
 	"bytes"
 	"context"
-	"encoding/binary"
 	"sort"
 	"time"
 
@@ -246,12 +245,6 @@ func (e *tableScanExec) getRowFromRange(ran kv.KeyRange) ([][]byte, error) {
 	return row, nil
 }
 
-const (
-	pkColNotExists = iota
-	pkColIsSigned
-	pkColIsUnsigned
-)
-
 type indexScanExec struct {
 	*tipb.IndexScan
 	colsLen        int
@@ -261,7 +254,7 @@ type indexScanExec struct {
 	mvccStore      MVCCStore
 	cursor         int
 	seekKey        []byte
-	pkStatus       int
+	pkStatus       tablecodec.PrimaryKeyStatus
 	start          int
 	counts         []int64
 	execDetail     *execDetail
@@ -373,37 +366,7 @@ func (e *indexScanExec) getRowFromPoint(ran kv.KeyRange) ([][]byte, error) {
 	if len(val) == 0 {
 		return nil, nil
 	}
-	return e.decodeIndexKV(Pair{Key: ran.StartKey, Value: val})
-}
-
-func (e *indexScanExec) decodeIndexKV(pair Pair) ([][]byte, error) {
-	values, b, err := tablecodec.CutIndexKeyNew(pair.Key, e.colsLen)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	if len(b) > 0 {
-		if e.pkStatus != pkColNotExists {
-			values = append(values, b)
-		}
-	} else if e.pkStatus != pkColNotExists {
-		handle, err := decodeHandle(pair.Value)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		var handleDatum types.Datum
-		if e.pkStatus == pkColIsUnsigned {
-			handleDatum = types.NewUintDatum(uint64(handle))
-		} else {
-			handleDatum = types.NewIntDatum(handle)
-		}
-		handleBytes, err := codec.EncodeValue(nil, b, handleDatum)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		values = append(values, handleBytes)
-	}
-
-	return values, nil
+	return tablecodec.DecodeIndexKV(ran.StartKey, val, e.colsLen, e.pkStatus)
 }
 
 func (e *indexScanExec) getRowFromRange(ran kv.KeyRange) ([][]byte, error) {
@@ -443,7 +406,7 @@ func (e *indexScanExec) getRowFromRange(ran kv.KeyRange) ([][]byte, error) {
 		e.seekKey = []byte(kv.Key(pair.Key).PrefixNext())
 	}
 
-	return e.decodeIndexKV(pair)
+	return tablecodec.DecodeIndexKV(pair.Key, pair.Value, e.colsLen, e.pkStatus)
 }
 
 type selectionExec struct {
@@ -756,11 +719,4 @@ func convertToExprs(sc *stmtctx.StatementContext, fieldTps []*types.FieldType, p
 		exprs = append(exprs, e)
 	}
 	return exprs, nil
-}
-
-func decodeHandle(data []byte) (int64, error) {
-	var h int64
-	buf := bytes.NewBuffer(data)
-	err := binary.Read(buf, binary.BigEndian, &h)
-	return h, errors.Trace(err)
 }
