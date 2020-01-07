@@ -422,6 +422,21 @@ func (p *PhysicalWindow) ResolveIndices() (err error) {
 }
 
 // ResolveIndices implements Plan interface.
+func (p *PhysicalPartition) ResolveIndices() (err error) {
+	err = p.basePhysicalPlan.ResolveIndices()
+	if err != nil {
+		return err
+	}
+	for i := range p.HashByItems {
+		p.HashByItems[i], err = p.HashByItems[i].ResolveIndices(p.children[0].Schema())
+		if err != nil {
+			return err
+		}
+	}
+	return err
+}
+
+// ResolveIndices implements Plan interface.
 func (p *PhysicalTopN) ResolveIndices() (err error) {
 	err = p.basePhysicalPlan.ResolveIndices()
 	if err != nil {

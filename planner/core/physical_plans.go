@@ -550,15 +550,34 @@ type PhysicalWindow struct {
 }
 
 // PhysicalPartition represents a partition plan.
+// `Tail` and `DataSource` are the last plan within and the first plan following the "partition", respectively,
+//  to build the child executors chain.
+// Take `Window` operator as example:
+//  Partition -> Window -> Sort -> DataSource, will be separated into:
+//    ==> Partition: for main thread
+//    ==> Window -> Sort(:Tail) -> partitionWorker: for workers
+//    ==> DataSource: for `fetchDataAndSplit` thread
 type PhysicalPartition struct {
-	physicalSchemaProducer
+	basePhysicalPlan
 
 	Concurrency int
 	Tail        PhysicalPlan
 	DataSource  PhysicalPlan
+
+	SplitterType PartitionSplitterType
+	HashByItems  []expression.Expression
 }
 
-// PhysicalPartitionDataSourceStub represents a data source stub of partition plan.
+// PartitionSplitterType is the type of `Partition` executor splitter, which splits data source into partitions.
+type PartitionSplitterType int
+
+const (
+	// PartitionHashSplitterType is the splitter splits by hash.
+	PartitionHashSplitterType = iota
+)
+
+// PhysicalPartitionDataSourceStub represents a data source stub of `PhysicalPartition`,
+// and actually, is executed by `executor.partitionWorker`.
 type PhysicalPartitionDataSourceStub struct {
 	physicalSchemaProducer
 

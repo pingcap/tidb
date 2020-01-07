@@ -2640,66 +2640,49 @@ func (b *executorBuilder) buildWindow(v *plannercore.PhysicalWindow) *WindowExec
 
 func (b *executorBuilder) buildPartition(v *plannercore.PhysicalPartition) *PartitionExec {
 	base := newBaseExecutor(b.ctx, v.Schema(), v.ExplainID())
-	part := &PartitionExec{baseExecutor: base,
+	partition := &PartitionExec{baseExecutor: base,
 		concurrency: v.Concurrency,
 	}
 
-	part.workers = make([]*partitionWorker, part.concurrency)
-	for i := range part.workers {
-		part.workers[i] = &partitionWorker{}
-	}
-
-	switch child := v.Children()[0].(type) {
-	case *plannercore.PhysicalWindow:
-		if err := b.buildPartition4Window(v, part, child); err != nil {
-			b.err = err
-			return nil
+	switch v.SplitterType {
+	case plannercore.PartitionHashSplitterType:
+		partition.splitter = &partitionHashSplitter{
+			byItems:    v.HashByItems,
+			numWorkers: partition.concurrency,
 		}
 	default:
 		panic("Not implemented. Should not reach here.")
 	}
 
-	return part
-}
-
-func (b *executorBuilder) buildPartition4Window(partPlan *plannercore.PhysicalPartition, part *PartitionExec, win *plannercore.PhysicalWindow) error {
-	byItems := make([]expression.Expression, 0, len(win.PartitionBy))
-	for _, item := range win.PartitionBy {
-		byItems = append(byItems, item.Col)
-	}
-	part.splitter = &hashPartitionSplitter{
-		byItems:    byItems,
-		numWorkers: part.concurrency,
-	}
-
-	// Partition -> Window -> Sort(optional) -> DataSource
-	//   ==> Partition: for main thread
-	//   ==> DataSource: for data source thread
-	//   ==> Window -> Sort(optional) -> partitionWorker: for worker
-	return b.buildPartitionExecutors(part, win, partPlan.Tail, partPlan.DataSource)
-}
-
-func (b *executorBuilder) buildPartitionExecutors(part *PartitionExec, head, tail, dataSource plannercore.PhysicalPlan) error {
-	part.dataSource = b.build(dataSource)
+	partition.dataSource = b.build(v.DataSource)
 	if b.err != nil {
-		return b.err
+		return nil
 	}
 
-	for _, w := range part.workers {
-		w.baseExecutor = newBaseExecutor(b.ctx, dataSource.Schema(), dataSource.ExplainID())
+	// head & tail of physical plans' chain within "partition".
+	var head, tail plannercore.PhysicalPlan = v.Children()[0], v.Tail
+
+	partition.workers = make([]*partitionWorker, partition.concurrency)
+	for i := range partition.workers {
+		w := &partitionWorker{
+			baseExecutor: newBaseExecutor(b.ctx, v.DataSource.Schema(), v.DataSource.ExplainID()),
+		}
 
 		stub := plannercore.PhysicalPartitionDataSourceStub{
 			Worker: (unsafe.Pointer)(w),
-		}.Init(b.ctx, dataSource.Stats(), dataSource.SelectBlockOffset(), nil)
-		stub.SetSchema(dataSource.Schema())
+		}.Init(b.ctx, v.DataSource.Stats(), v.DataSource.SelectBlockOffset(), nil)
+		stub.SetSchema(v.DataSource.Schema())
 
 		tail.SetChildren(stub)
 		w.childExec = b.build(head)
 		if b.err != nil {
-			return b.err
+			return nil
 		}
+
+		partition.workers[i] = w
 	}
-	return nil
+
+	return partition
 }
 
 func (b *executorBuilder) buildPartitionDataSourceStub(v *plannercore.PhysicalPartitionDataSourceStub) *partitionWorker {

@@ -85,8 +85,8 @@ func optimizeByPartition(pp PhysicalPlan, tsk task, ctx sessionctx.Context) task
 	// Eg., when `pp` is `NominalSort`, `tsk.plan()` would be its child.
 	switch p := pp.(type) {
 	case *PhysicalWindow:
-		if part := optimizeByPartition4Window(p, ctx); part != nil {
-			return part.attach2Task(tsk)
+		if partition := optimizeByPartition4Window(p, ctx); partition != nil {
+			return partition.attach2Task(tsk)
 		}
 	}
 	return tsk
@@ -99,14 +99,21 @@ func optimizeByPartition4Window(pp *PhysicalWindow, ctx sessionctx.Context) *Phy
 		if sort, ok := dataSource.(*PhysicalSort); ok {
 			tail, dataSource = sort, sort.Children()[0]
 		}
+
+		byItems := make([]expression.Expression, 0, len(pp.PartitionBy))
+		for _, item := range pp.PartitionBy {
+			byItems = append(byItems, item.Col)
+		}
+
 		reqProp := &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64}
-		part := PhysicalPartition{
-			Concurrency: concurrency,
-			Tail:        tail,
-			DataSource:  dataSource,
+		partition := PhysicalPartition{
+			Concurrency:  concurrency,
+			Tail:         tail,
+			DataSource:   dataSource,
+			SplitterType: PartitionHashSplitterType,
+			HashByItems:  byItems,
 		}.Init(ctx, pp.statsInfo(), pp.SelectBlockOffset(), reqProp)
-		part.SetSchema(pp.Schema())
-		return part
+		return partition
 	}
 	return nil
 }

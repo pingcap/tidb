@@ -501,8 +501,8 @@ func (a windowTestCase) columns() []*expression.Column {
 }
 
 func (a windowTestCase) String() string {
-	return fmt.Sprintf("(func:%v, ndv:%v, rows:%v, concurrency:%v)",
-		a.windowFunc, a.ndv, a.rows, a.concurrency)
+	return fmt.Sprintf("(func:%v, ndv:%v, rows:%v, sorted:%v, concurrency:%v)",
+		a.windowFunc, a.ndv, a.rows, a.dataSourceSorted, a.concurrency)
 }
 
 func defaultWindowTestCase() *windowTestCase {
@@ -620,21 +620,24 @@ func BenchmarkWindowFunctionsWithFrame(b *testing.B) {
 	frames := []*core.WindowFrame{
 		{Type: ast.Rows, Start: &core.FrameBound{UnBounded: true}, End: &core.FrameBound{Type: ast.CurrentRow}},
 	}
+	sortTypes := []bool{false, true}
 	concs := []int{1, 2, 3, 4, 5, 6}
 	for i, windowFunc := range windowFuncs {
-		for _, con := range concs {
-			cas := defaultWindowTestCase()
-			cas.rows = 100000
-			cas.ndv = 1000
-			cas.concurrency = con
-			cas.dataSourceSorted = false
-			cas.windowFunc = windowFunc
-			if i < len(frames) {
-				cas.frame = frames[i]
+		for _, sorted := range sortTypes {
+			for _, con := range concs {
+				cas := defaultWindowTestCase()
+				cas.rows = 100000
+				cas.ndv = 1000
+				cas.concurrency = con
+				cas.dataSourceSorted = sorted
+				cas.windowFunc = windowFunc
+				if i < len(frames) {
+					cas.frame = frames[i]
+				}
+				b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
+					benchmarkWindowExecWithCase(b, cas)
+				})
 			}
-			b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
-				benchmarkWindowExecWithCase(b, cas)
-			})
 		}
 	}
 }

@@ -27,7 +27,11 @@ import (
 	"go.uber.org/zap"
 )
 
-// PartitionExec is the executor to run other executor in a parallel manner.
+// PartitionExec is the executor to run other executors in a parallel manner.
+//  1. It fetches chunks from `DataSource`.
+//  2. It splits tuples from `DataSource` into N partitions (Only "split by hash" is implemented so far).
+//  3. It invokes N workers in parallel, assign each partition as input to each worker and execute child executors.
+//  4. It collects outputs from each worker, then sends outputs to its parent.
 //
 //                                +-------------+
 //                        +-------| Main Thread |
@@ -58,7 +62,7 @@ import (
 //          |          |      +-----------------+-----+
 //          |          |                              |
 //          |      +---+------------+------------+----+-----------+
-//          |      |             Partition  Execution             |
+//          |      |              Partition Splitter              |
 //          |      +--------------+-+------------+-+--------------+
 //          |                             ^
 //          |                             |
@@ -88,7 +92,7 @@ type partitionOutput struct {
 	giveBackCh chan *chunk.Chunk
 }
 
-// Open implements the Executor Open interface
+// Open implements the Executor Open interface.
 func (e *PartitionExec) Open(ctx context.Context) error {
 	if err := e.dataSource.Open(ctx); err != nil {
 		return err
@@ -120,7 +124,7 @@ func (e *PartitionExec) Open(ctx context.Context) error {
 	return nil
 }
 
-// Close implements the Executor Close interface
+// Close implements the Executor Close interface.
 func (e *PartitionExec) Close() error {
 	if !e.prepared {
 		for _, w := range e.workers {
@@ -135,7 +139,7 @@ func (e *PartitionExec) Close() error {
 		for range w.inputCh {
 		}
 	}
-	for range e.outputCh {
+	for range e.outputCh { // workers exit before `e.outputCh` is closed.
 	}
 	e.executed = false
 
@@ -152,7 +156,7 @@ func (e *PartitionExec) Close() error {
 }
 
 func (e *PartitionExec) prepare4ParallelExec(ctx context.Context) {
-	go e.execDataFetcherThread(ctx)
+	go e.fetchDataAndSplit(ctx)
 
 	waitGroup := &sync.WaitGroup{}
 	waitGroup.Add(len(e.workers))
@@ -185,21 +189,19 @@ func (e *PartitionExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	if e.executed {
 		return nil
 	}
-	for {
-		result, ok := <-e.outputCh
-		if !ok {
-			e.executed = true
-			return nil
-		}
-		if result.err != nil {
-			return result.err
-		}
-		req.SwapColumns(result.chk)
-		result.giveBackCh <- result.chk
-		if req.NumRows() > 0 {
-			return nil
-		}
+
+	result, ok := <-e.outputCh
+	if !ok {
+		e.executed = true
+		return nil
 	}
+	if result.err != nil {
+		return result.err
+	}
+	req.SwapColumns(result.chk) // `partitionWorker` will not send an empty `result.chk` to `e.outputCh`.
+	result.giveBackCh <- result.chk
+
+	return nil
 }
 
 func recoveryPartitionExec(output chan *partitionOutput, r interface{}) {
@@ -208,7 +210,7 @@ func recoveryPartitionExec(output chan *partitionOutput, r interface{}) {
 	logutil.BgLogger().Error("partition panicked", zap.Error(err))
 }
 
-func (e *PartitionExec) execDataFetcherThread(ctx context.Context) {
+func (e *PartitionExec) fetchDataAndSplit(ctx context.Context) {
 	var (
 		err           error
 		workerIndices []int
@@ -270,6 +272,7 @@ func (e *PartitionExec) execDataFetcherThread(ctx context.Context) {
 
 var _ Executor = &partitionWorker{}
 
+// partitionWorker is the multi-thread worker executing child executors within "partition".
 type partitionWorker struct {
 	baseExecutor
 	childExec Executor
@@ -287,6 +290,7 @@ type partitionWorker struct {
 	outputHolderCh chan *chunk.Chunk
 }
 
+// Open implements the Executor Open interface.
 func (e *partitionWorker) Open(ctx context.Context) error {
 	if err := e.baseExecutor.Open(ctx); err != nil {
 		return err
@@ -295,10 +299,13 @@ func (e *partitionWorker) Open(ctx context.Context) error {
 	return nil
 }
 
+// Close implements the Executor Close interface.
 func (e *partitionWorker) Close() error {
 	return errors.Trace(e.baseExecutor.Close())
 }
 
+// Next implements the Executor Next interface.
+// It is called by `Tail` executor within "partition", to fetch data from `DataSource` by `inputCh`.
 func (e *partitionWorker) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.Reset()
 	if e.executed {
@@ -336,6 +343,8 @@ func (e *partitionWorker) run(ctx context.Context, waitGroup *sync.WaitGroup) {
 				e.outputCh <- &partitionOutput{err: err}
 				return
 			}
+
+			// Should not send an empty `chk` to `e.outputCh`.
 			if chk.NumRows() == 0 {
 				return
 			}
@@ -344,19 +353,19 @@ func (e *partitionWorker) run(ctx context.Context, waitGroup *sync.WaitGroup) {
 	}
 }
 
-var _ partitionSplitter = &hashPartitionSplitter{}
+var _ partitionSplitter = &partitionHashSplitter{}
 
 type partitionSplitter interface {
 	split(ctx sessionctx.Context, input *chunk.Chunk, workerIndices []int) ([]int, error)
 }
 
-type hashPartitionSplitter struct {
+type partitionHashSplitter struct {
 	byItems    []expression.Expression
 	numWorkers int
 	hashKeys   [][]byte
 }
 
-func (s *hashPartitionSplitter) split(ctx sessionctx.Context, input *chunk.Chunk, workerIndices []int) ([]int, error) {
+func (s *partitionHashSplitter) split(ctx sessionctx.Context, input *chunk.Chunk, workerIndices []int) ([]int, error) {
 	var err error
 	s.hashKeys, err = getGroupKey(ctx, input, s.hashKeys, s.byItems)
 	if err != nil {
