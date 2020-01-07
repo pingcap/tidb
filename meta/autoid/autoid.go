@@ -80,7 +80,6 @@ type Allocator interface {
 	// Alloc allocs N consecutive autoID for table with tableID, returning (min, max] of the allocated autoID batch.
 	// It gets a batch of autoIDs at a time. So it does not need to access storage for each call.
 	// The consecutive feature is used to insert multiple rows in a statement.
-
 	// increment & offset is used to valid the start position (the allocator's base is not always the last allocated id).
 	// The returned range is (min, max], you need derive the ids like firstID, firstID + increment * 2... in the caller.
 	Alloc(tableID int64, n uint64, increment, offset int64) (int64, int64, error)
