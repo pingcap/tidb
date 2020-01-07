@@ -6733,7 +6733,7 @@ func (s *testEvaluatorSuite) TestVectorizedBuiltinTimeEvalOneVecGenerated(c *C) 
 	testVectorizedEvalOneVec(c, vecBuiltinTimeGeneratedCases)
 }
 
-func (s *testEvaluatorSuite) TestVectorizedBuiltinTimeFuncGenerated(c *C) {
+func (s *testEvaluatorSuite2) TestVectorizedBuiltinTimeFuncGenerated(c *C) {
 	testVectorizedBuiltinFunc(c, vecBuiltinTimeGeneratedCases)
 }
 
