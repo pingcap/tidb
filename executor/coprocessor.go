@@ -94,18 +94,15 @@ func (h *CoprocessorDAGHandler) HandleStreamRequest(ctx context.Context, req *co
 	for {
 		chk.Reset()
 		if err = Next(ctx, e, chk); err != nil {
-			break
+			return stream.Send(h.buildErrorResponse(err))
 		}
 		if chk.NumRows() == 0 {
 			break
 		}
 		err = h.buildResponseAndSendToStream(chk, tps, stream)
 		if err != nil {
-			break
+			return stream.Send(h.buildErrorResponse(err))
 		}
-	}
-	if err != nil {
-		return stream.Send(h.buildErrorResponse(err))
 	}
 	return h.buildResponseAndSendToStream(chk, tps, stream)
 }
