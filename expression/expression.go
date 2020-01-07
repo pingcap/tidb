@@ -127,7 +127,8 @@ type Expression interface {
 	// refers no subqueries that refers any tables.
 	// refers no non-deterministic functions.
 	// refers no statement parameters.
-	ConstItem() bool
+	// refers no param markers when prepare plan cache is enabled.
+	ConstItem(sc *stmtctx.StatementContext) bool
 
 	// Decorrelate try to decorrelate the expression by schema.
 	Decorrelate(schema *Schema) Expression

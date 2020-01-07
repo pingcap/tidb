@@ -723,6 +723,7 @@ func (d *Datum) compareMysqlTime(sc *stmtctx.StatementContext, time Time) (int, 
 }
 
 // ConvertTo converts a datum to the target field type.
+// change this method need sync modification to type2Kind in rowcodec/types.go
 func (d *Datum) ConvertTo(sc *stmtctx.StatementContext, target *FieldType) (Datum, error) {
 	if d.k == KindNull {
 		return Datum{}, nil
@@ -1740,6 +1741,12 @@ func NewMysqlBitDatum(b BinaryLiteral) (d Datum) {
 // NewMysqlEnumDatum creates a new MysqlEnum Datum for a Enum value.
 func NewMysqlEnumDatum(e Enum) (d Datum) {
 	d.SetMysqlEnum(e)
+	return d
+}
+
+// NewMysqlSetDatum creates a new MysqlSet Datum for a Enum value.
+func NewMysqlSetDatum(e Set) (d Datum) {
+	d.SetMysqlSet(e)
 	return d
 }
 

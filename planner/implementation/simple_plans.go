@@ -183,6 +183,11 @@ func (impl *UnionAllImpl) CalcCost(outCount float64, children ...memo.Implementa
 	return impl.cost
 }
 
+// GetCostLimit implements Implementation interface.
+func (impl *UnionAllImpl) GetCostLimit(costLimit float64, children ...memo.Implementation) float64 {
+	return costLimit
+}
+
 // NewUnionAllImpl creates a new UnionAllImpl.
 func NewUnionAllImpl(union *plannercore.PhysicalUnionAll) *UnionAllImpl {
 	return &UnionAllImpl{baseImpl{plan: union}}

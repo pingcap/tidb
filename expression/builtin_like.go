@@ -107,18 +107,18 @@ func (c *regexpFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 
 type builtinRegexpSharedSig struct {
 	baseBuiltinFunc
-	compile        func(string) (*regexp.Regexp, error)
-	memoizedRegexp *regexp.Regexp
-	memoizedErr    error
+	compile         func(string) (*regexp.Regexp, error)
+	memorizedRegexp *regexp.Regexp
+	memorizedErr    error
 }
 
 func (b *builtinRegexpSharedSig) clone(from *builtinRegexpSharedSig) {
 	b.cloneFrom(&from.baseBuiltinFunc)
 	b.compile = from.compile
-	if from.memoizedRegexp != nil {
-		b.memoizedRegexp = from.memoizedRegexp.Copy()
+	if from.memorizedRegexp != nil {
+		b.memorizedRegexp = from.memorizedRegexp.Copy()
 	}
-	b.memoizedErr = from.memoizedErr
+	b.memorizedErr = from.memorizedErr
 }
 
 // evalInt evals `expr REGEXP pat`, or `expr RLIKE pat`.
@@ -134,7 +134,6 @@ func (b *builtinRegexpSharedSig) evalInt(row chunk.Row) (int64, bool, error) {
 		return 0, true, err
 	}
 
-	// TODO: We don't need to compile pattern if it has been compiled or it is static.
 	re, err := b.compile(pat)
 	if err != nil {
 		return 0, true, ErrRegexp.GenWithStackByArgs(err.Error())
