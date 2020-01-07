@@ -733,17 +733,17 @@ func (c *RPCClient) checkArgs(ctx context.Context, addr string) (*rpcHandler, er
 	return handler, nil
 }
 
-// GRPCClientFactor is the GRPC client factory.
+// GRPCClientFactory is the GRPC client factory.
 // Use global variable to avoid circle import.
 // TODO: remove this global variable.
-var GRPCClientFactor func() Client
+var GRPCClientFactory func() Client
 
 func (c *RPCClient) redirectRequestToRPCServer(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
-	if c.rpcCli == nil && GRPCClientFactor != nil {
-		if GRPCClientFactor != nil {
-			c.rpcCli = GRPCClientFactor()
+	if c.rpcCli == nil {
+		if GRPCClientFactory != nil {
+			c.rpcCli = GRPCClientFactory()
 		} else {
-			return nil, errors.Errorf("GRPCClientFactor is nil")
+			return nil, errors.Errorf("GRPCClientFactory is nil")
 		}
 	}
 	return c.rpcCli.SendRequest(ctx, addr, req, timeout)

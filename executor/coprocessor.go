@@ -63,19 +63,16 @@ func (h *CoprocessorDAGHandler) HandleRequest(ctx context.Context, req *coproces
 		chk.Reset()
 		err = Next(ctx, e, chk)
 		if err != nil {
-			break
+			return h.buildErrorResponse(err)
 		}
 		if chk.NumRows() == 0 {
 			break
 		}
 		partChunks, err = h.buildChunk(chk, tps)
 		if err != nil {
-			break
+			return h.buildErrorResponse(err)
 		}
 		totalChunks = append(totalChunks, partChunks...)
-	}
-	if err != nil {
-		return h.buildErrorResponse(err)
 	}
 	return h.buildResponse(totalChunks)
 }
@@ -96,8 +93,7 @@ func (h *CoprocessorDAGHandler) HandleStreamRequest(ctx context.Context, req *co
 	tps := e.base().retFieldTypes
 	for {
 		chk.Reset()
-		err = Next(ctx, e, chk)
-		if err != nil {
+		if err = Next(ctx, e, chk); err != nil {
 			break
 		}
 		if chk.NumRows() == 0 {
@@ -122,8 +118,7 @@ func (h *CoprocessorDAGHandler) buildResponseAndSendToStream(chk *chunk.Chunk, t
 
 	for _, c := range chunks {
 		resp := h.buildStreamResponse(&c)
-		err = stream.Send(resp)
-		if err != nil {
+		if err = stream.Send(resp); err != nil {
 			return err
 		}
 	}

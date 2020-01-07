@@ -60,7 +60,7 @@ func NewRPCServer(config *config.Config, dom *domain.Domain, sm util.SessionMana
 		sm:                sm,
 	}
 	// For redirection the cop task.
-	mocktikv.GRPCClientFactor = func() mocktikv.Client {
+	mocktikv.GRPCClientFactory = func() mocktikv.Client {
 		return tikv.NewTestRPCClient(config.Security)
 	}
 	diagnosticspb.RegisterDiagnosticsServer(s, rpcSrv)
@@ -84,24 +84,24 @@ func (s *rpcServer) Coprocessor(ctx context.Context, in *coprocessor.Request) (r
 	resp = &coprocessor.Response{}
 	defer func() {
 		if v := recover(); v != nil {
-			logutil.BgLogger().Error("panic in TiDB RPC server coprocessor", zap.Any("stack", v))
-			resp.OtherError = fmt.Sprintf("rpc coprocessor panic, :%v", v)
+			logutil.BgLogger().Error("panic when when RPC server handing coprocessor", zap.Any("stack", v))
+			resp.OtherError = fmt.Sprintf("panic when when RPC server handing coprocessor, stack:%v", v)
 		}
 	}()
 	resp = s.handleCopRequest(ctx, in)
 	return resp, nil
 }
 
-// Coprocessor implements the TiKVServer interface.
+// CoprocessorStream implements the TiKVServer interface.
 func (s *rpcServer) CoprocessorStream(in *coprocessor.Request, stream tikvpb.Tikv_CoprocessorStreamServer) (err error) {
 	resp := &coprocessor.Response{}
 	defer func() {
 		if v := recover(); v != nil {
-			logutil.BgLogger().Error("panic in TiDB RPC server coprocessor", zap.Any("stack", v))
-			resp.OtherError = fmt.Sprintf("rpc coprocessor panic, :%v", v)
+			logutil.BgLogger().Error("panic when RPC server handing coprocessor stream", zap.Any("stack", v))
+			resp.OtherError = fmt.Sprintf("panic when when RPC server handing coprocessor stream, stack:%v", v)
 			err = stream.Send(resp)
 			if err != nil {
-				logutil.BgLogger().Error("rpc server handle cop stream panic, send response to stream error", zap.Error(err))
+				logutil.BgLogger().Error("panic when RPC server handing coprocessor stream, send response to stream error", zap.Error(err))
 			}
 		}
 	}()
