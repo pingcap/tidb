@@ -47,6 +47,52 @@ type testData struct {
 	handle bool
 }
 
+func (s *testSuite) TestEncodeLargeSmallReuseBug(c *C) {
+	// reuse one rowcodec.Encoder.
+	var encoder rowcodec.Encoder
+	colFt := types.NewFieldType(mysql.TypeString)
+
+	largeColId := int64(300)
+	b, err := encoder.Encode(&stmtctx.StatementContext{}, []int64{largeColId}, []types.Datum{types.NewBytesDatum([]byte(""))}, nil)
+	c.Assert(err, IsNil)
+
+	bDecoder := rowcodec.NewDatumMapDecoder([]rowcodec.ColInfo{
+		{
+			ID:         largeColId,
+			Tp:         int32(colFt.Tp),
+			Flag:       int32(colFt.Flag),
+			IsPKHandle: false,
+			Flen:       colFt.Flen,
+			Decimal:    colFt.Decimal,
+			Elems:      colFt.Elems,
+		},
+	}, -1, nil)
+	m, err := bDecoder.DecodeToDatumMap(b, -1, nil)
+	c.Assert(err, IsNil)
+	v := m[largeColId]
+
+	colFt = types.NewFieldType(mysql.TypeLonglong)
+	smallColId := int64(1)
+	b, err = encoder.Encode(&stmtctx.StatementContext{}, []int64{smallColId}, []types.Datum{types.NewIntDatum(2)}, nil)
+	c.Assert(err, IsNil)
+
+	bDecoder = rowcodec.NewDatumMapDecoder([]rowcodec.ColInfo{
+		{
+			ID:         smallColId,
+			Tp:         int32(colFt.Tp),
+			Flag:       int32(colFt.Flag),
+			IsPKHandle: false,
+			Flen:       colFt.Flen,
+			Decimal:    colFt.Decimal,
+			Elems:      colFt.Elems,
+		},
+	}, -1, nil)
+	m, err = bDecoder.DecodeToDatumMap(b, -1, nil)
+	c.Assert(err, IsNil)
+	v = m[smallColId]
+	c.Assert(v.GetInt64(), Equals, int64(2))
+}
+
 func (s *testSuite) TestDecodeRowWithHandle(c *C) {
 	handleID := int64(-1)
 	handleValue := int64(10000)
