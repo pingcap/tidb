@@ -52,13 +52,13 @@ func (s *testSuite) TestEncodeLargeSmallReuseBug(c *C) {
 	var encoder rowcodec.Encoder
 	colFt := types.NewFieldType(mysql.TypeString)
 
-	largeColId := int64(300)
-	b, err := encoder.Encode(&stmtctx.StatementContext{}, []int64{largeColId}, []types.Datum{types.NewBytesDatum([]byte(""))}, nil)
+	largeColID := int64(300)
+	b, err := encoder.Encode(&stmtctx.StatementContext{}, []int64{largeColID}, []types.Datum{types.NewBytesDatum([]byte(""))}, nil)
 	c.Assert(err, IsNil)
 
 	bDecoder := rowcodec.NewDatumMapDecoder([]rowcodec.ColInfo{
 		{
-			ID:         largeColId,
+			ID:         largeColID,
 			Tp:         int32(colFt.Tp),
 			Flag:       int32(colFt.Flag),
 			IsPKHandle: false,
@@ -69,16 +69,16 @@ func (s *testSuite) TestEncodeLargeSmallReuseBug(c *C) {
 	}, -1, nil)
 	m, err := bDecoder.DecodeToDatumMap(b, -1, nil)
 	c.Assert(err, IsNil)
-	v := m[largeColId]
+	v := m[largeColID]
 
 	colFt = types.NewFieldType(mysql.TypeLonglong)
-	smallColId := int64(1)
-	b, err = encoder.Encode(&stmtctx.StatementContext{}, []int64{smallColId}, []types.Datum{types.NewIntDatum(2)}, nil)
+	smallColID := int64(1)
+	b, err = encoder.Encode(&stmtctx.StatementContext{}, []int64{smallColID}, []types.Datum{types.NewIntDatum(2)}, nil)
 	c.Assert(err, IsNil)
 
 	bDecoder = rowcodec.NewDatumMapDecoder([]rowcodec.ColInfo{
 		{
-			ID:         smallColId,
+			ID:         smallColID,
 			Tp:         int32(colFt.Tp),
 			Flag:       int32(colFt.Flag),
 			IsPKHandle: false,
@@ -89,7 +89,7 @@ func (s *testSuite) TestEncodeLargeSmallReuseBug(c *C) {
 	}, -1, nil)
 	m, err = bDecoder.DecodeToDatumMap(b, -1, nil)
 	c.Assert(err, IsNil)
-	v = m[smallColId]
+	v = m[smallColID]
 	c.Assert(v.GetInt64(), Equals, int64(2))
 }
 
