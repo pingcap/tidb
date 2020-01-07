@@ -1466,6 +1466,10 @@ func (b *builtinLTIntSig) Clone() builtinFunc {
 	return newSig
 }
 
+func (b *builtinLTIntSig) evalIntWithCtx(ctx sessionctx.Context, row chunk.Row) (val int64, isNull bool, err error) {
+	return resOfLT(CompareInt(ctx, b.args[0], b.args[1], row, row))
+}
+
 func (b *builtinLTIntSig) evalInt(row chunk.Row) (val int64, isNull bool, err error) {
 	return resOfLT(CompareInt(b.ctx, b.args[0], b.args[1], row, row))
 }
