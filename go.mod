@@ -76,5 +76,3 @@ require (
 )
 
 go 1.13
-
-replace github.com/pingcap/pd => github.com/rleungx/pd v1.1.0-beta.0.20191226095457-5d9028d0aa90
