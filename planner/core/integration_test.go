@@ -255,6 +255,11 @@ func (s *testIntegrationSuite) TestNoneAccessPathsFoundByIsolationRead(c *C) {
 
 	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tiflash'")
 
+	// Don't filter mysql.SystemDB by isolation read.
+	tk.MustQuery("explain select * from mysql.stats_meta").Check(testkit.Rows(
+		"TableReader_5 10000.00 root data:TableScan_4",
+		"└─TableScan_4 10000.00 cop[tikv] table:stats_meta, range:[-inf,+inf], keep order:false, stats:pseudo"))
+
 	_, err = tk.Exec("select * from t")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[planner:1815]Internal : Can not find access path matching 'tidb_isolation_read_engines'(value: 'tiflash'). Available values are 'tikv'.")
@@ -291,6 +296,28 @@ func (s *testIntegrationSuite) TestErrNoDB(c *C) {
 	c.Assert(errors.Cause(err), Equals, core.ErrNoDB)
 	tk.MustExec("use test")
 	tk.MustExec("grant select on test1111 to test@'%'")
+}
+
+func (s *testIntegrationSuite) TestMaxMinEliminate(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int primary key)")
+
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+		})
+		tk.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
+	}
 }
 
 func (s *testIntegrationSuite) TestINLJHintSmallTable(c *C) {
