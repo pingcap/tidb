@@ -1,0 +1,96 @@
+use test;
+drop table if exists t;
+create table t(a int, b real, c int as ((a+1)) virtual, e real as ((b+a)));
+insert into t values (1, 2.0, default, default), (2, 2.1, default, default), (5, 3.0, default, default),
+(5, -1.0, default, default), (0, 0.0, default, default), (-1, -2.0, default, default), (0, 0, default, default);
+alter table t add index idx_c(c);
+alter table t add index idx_e(e);
+
+set @@sql_mode=""
+
+# test generate column substitution
+# substitute where
+desc select * from t where a+1>1;
+select * from t where a+1>1;
+desc select a+1 from t where a+1>1;
+select a+1 from t where a+1>1;
+desc select c from t where a+1>1;
+select c from t where a+1>1;
+desc select * from t where b+a>1;
+select * from t where b+a>1;
+desc select b+a from t where b+a>1;
+select b+a from t where b+a>1;
+desc select e from t where b+a>1;
+select e from t where b+a>1;
+
+# substitute group by
+desc select * from t group by a+1;
+select * from t group by a+1;
+desc select a+1 from t group by a+1;
+select a+1 from t group by a+1;
+desc select b, avg(a+1) from t group by a+1;
+select b, avg(a+1) from t group by a+1;
+desc select count(a+1), max(a+1) from t group by a+1;
+select count(a+1), max(a+1) from t group by a+1;
+desc select * from t group by b+a;
+select * from t group by b+a;
+desc select b+a from t group by b+a;
+select b+a from t group by b+a;
+desc select b, avg(b+a) from t group by b+a;
+select b, avg(b+a) from t group by b+a;
+desc select count(b+a), max(b+a) from t group by b+a;
+select count(b+a), max(b+a) from t group by b+a;
+
+# substitute order by
+desc select * from t order by a+1;
+select * from t order by a+1;
+desc select a+1 from t order by a+1;
+select a+1 from t order by a+1;
+desc select b+a from t order by b+a;
+select b+a from t order by b+a;
+
+# test expression index substitution
+alter table t drop index idx_c;
+alter table t drop index idx_e;
+alter table t add index expr_idx_c((a+1));
+alter table t add index expr_idx_e((b+a));
+
+# substitute where
+desc select * from t where a+1>1;
+select * from t where a+1>1;
+desc select a+1 from t where a+1>1;
+select a+1 from t where a+1>1;
+desc select c from t where a+1>1;
+select c from t where a+1>1;
+desc select * from t where b+a>1;
+select * from t where b+a>1;
+desc select b+a from t where b+a>1;
+select b+a from t where b+a>1;
+desc select e from t where b+a>1;
+select e from t where b+a>1;
+
+# substitute group by
+desc select * from t group by a+1;
+select * from t group by a+1;
+desc select a+1 from t group by a+1;
+select a+1 from t group by a+1;
+desc select b, avg(a+1) from t group by a+1;
+select b, avg(a+1) from t group by a+1;
+desc select count(a+1), max(a+1) from t group by a+1;
+select count(a+1), max(a+1) from t group by a+1;
+desc select * from t group by b+a;
+select * from t group by b+a;
+desc select b+a from t group by b+a;
+select b+a from t group by b+a;
+desc select b, avg(b+a) from t group by b+a;
+select b, avg(b+a) from t group by b+a;
+desc select count(b+a), max(b+a) from t group by b+a;
+select count(b+a), max(b+a) from t group by b+a;
+
+# substitute order by
+desc select * from t order by a+1;
+select * from t order by a+1;
+desc select a+1 from t order by a+1;
+select a+1 from t order by a+1;
+desc select b+a from t order by b+a;
+select b+a from t order by b+a;
