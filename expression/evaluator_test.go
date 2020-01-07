@@ -34,7 +34,7 @@ import (
 
 var _ = SerialSuites(&testEvaluatorSerialSuites{})
 var _ = Suite(&testEvaluatorSuite{})
-var _ = Suite(&testEvaluatorSuite2{&testEvaluatorSuite{}})
+var _ = Suite(&testEvaluatorSuite2{})
 
 func TestT(t *testing.T) {
 	testleak.BeforeTest()
@@ -46,6 +46,11 @@ func TestT(t *testing.T) {
 }
 
 type testEvaluatorSuite struct {
+	*parser.Parser
+	ctx sessionctx.Context
+}
+
+type testEvaluatorSuite2 struct {
 	*parser.Parser
 	ctx sessionctx.Context
 }
