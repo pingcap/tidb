@@ -17,7 +17,6 @@ import (
 	"container/heap"
 	"context"
 	"fmt"
-	"go.uber.org/zap"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -31,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/stringutil"
+	"go.uber.org/zap"
 )
 
 var rowChunksLabel fmt.Stringer = stringutil.StringerStr("rowChunks")
@@ -130,9 +130,9 @@ func (e *SortExec) Open(ctx context.Context) error {
 // 1. Read as mush as rows into memory.
 // 2. If memory quota is triggered, sort these rows in memory and put them into disk as partition 1, then reset
 //    the memory quota trigger and return to step 1
-// 3. If memory quota is not triggered and child is consumed, sort these rows in memory as partition N merge sort
-//    if the count of partitions is larger than 1.
-// 4. If there is only one partition in step 4, it works just like in-memory sort before.
+// 3. If memory quota is not triggered and child is consumed, sort these rows in memory as partition N.
+// 4. Merge sort if the count of partitions is larger than 1. If there is only one partition in step 4, it works
+//    just like in-memory sort before.
 func (e *SortExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.Reset()
 	if !e.fetched {
