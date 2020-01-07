@@ -27,6 +27,12 @@
     ]
   },
   {
+    "name": "TestMaxMinEliminate",
+    "cases": [
+      "explain (select max(a) from t) union (select min(a) from t)"
+    ]
+  },
+  {
     "name": "TestIndexJoinUniqueCompositeIndex",
     "cases": [
       // Row count of IndexScan should be 2.

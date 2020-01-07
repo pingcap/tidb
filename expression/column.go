@@ -190,14 +190,15 @@ type Column struct {
 
 	hashcode []byte
 
-	// InOperand indicates whether this column is the inner operand of column equal condition converted
-	// from `[not] in (subq)`.
-	InOperand bool
 	// VirtualExpr is used to save expression for virtual column
 	VirtualExpr Expression
 
 	OrigName string
 	IsHidden bool
+
+	// InOperand indicates whether this column is the inner operand of column equal condition converted
+	// from `[not] in (subq)`.
+	InOperand bool
 }
 
 // Equal implements Expression interface.
