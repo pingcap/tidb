@@ -310,7 +310,7 @@ func (c *RawKVClient) Scan(startKey, endKey []byte, limit int) (keys [][]byte, v
 			values = append(values, pair.Value)
 		}
 		startKey = loc.EndKey
-		if len(startKey) == 0 {
+		if len(startKey) == 0 || bytes.Compare(startKey, endKey) > 0 {
 			break
 		}
 	}
@@ -354,7 +354,7 @@ func (c *RawKVClient) ReverseScan(startKey, endKey []byte, limit int) (keys [][]
 			values = append(values, pair.Value)
 		}
 		startKey = loc.StartKey
-		if len(startKey) == 0 {
+		if len(startKey) == 0 || bytes.Compare(startKey, endKey) < 0 {
 			break
 		}
 	}
