@@ -312,9 +312,6 @@ func (ts *testSuite) TestTimeZoneChange(c *C) {
 	tk.MustExec("use test")
 	createTable := `CREATE TABLE timezone_test (
 	id int(11) NOT NULL,
-	k int(11) NOT NULL DEFAULT '0',
-	c char(120) NOT NULL DEFAULT '',
-	pad char(60) NOT NULL DEFAULT '',
 	creation_dt timestamp DEFAULT CURRENT_TIMESTAMP ) PARTITION BY RANGE ( unix_timestamp(creation_dt) )
 ( PARTITION p5 VALUES LESS THAN ( UNIX_TIMESTAMP('2020-01-03 15:10:00') ),
 	PARTITION p6 VALUES LESS THAN ( UNIX_TIMESTAMP('2020-01-03 15:15:00') ),
@@ -325,9 +322,6 @@ func (ts *testSuite) TestTimeZoneChange(c *C) {
 	tk.MustExec(createTable)
 	tk.MustQuery("SHOW CREATE TABLE timezone_test").Check(testkit.Rows("timezone_test CREATE TABLE `timezone_test` (\n" +
 		"  `id` int(11) NOT NULL,\n" +
-		"  `k` int(11) NOT NULL DEFAULT '0',\n" +
-		"  `c` char(120) NOT NULL DEFAULT '',\n" +
-		"  `pad` char(60) NOT NULL DEFAULT '',\n" +
 		"  `creation_dt` timestamp DEFAULT CURRENT_TIMESTAMP\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
 		"PARTITION BY RANGE ( unix_timestamp(`creation_dt`) ) (\n" +
@@ -343,9 +337,6 @@ func (ts *testSuite) TestTimeZoneChange(c *C) {
 	tk.MustExec(createTable)
 	tk.MustQuery("SHOW CREATE TABLE timezone_test").Check(testkit.Rows("timezone_test CREATE TABLE `timezone_test` (\n" +
 		"  `id` int(11) NOT NULL,\n" +
-		"  `k` int(11) NOT NULL DEFAULT '0',\n" +
-		"  `c` char(120) NOT NULL DEFAULT '',\n" +
-		"  `pad` char(60) NOT NULL DEFAULT '',\n" +
 		"  `creation_dt` timestamp DEFAULT CURRENT_TIMESTAMP\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
 		"PARTITION BY RANGE ( unix_timestamp(`creation_dt`) ) (\n" +
@@ -357,18 +348,18 @@ func (ts *testSuite) TestTimeZoneChange(c *C) {
 
 	// Change time zone and insert data, check the data locates in the correct partition.
 	tk.MustExec("SET @@time_zone = 'Asia/Shanghai'")
-	tk.MustExec("INSERT INTO timezone_test VALUES (1,1,'123','123','2020-01-03 15:16:59')")
-	tk.MustQuery("SELECT * FROM timezone_test PARTITION (p5)").Check(testkit.Rows("1 1 123 123 2020-01-03 15:16:59"))
+	tk.MustExec("INSERT INTO timezone_test VALUES (1,'2020-01-03 15:16:59')")
+	tk.MustQuery("SELECT * FROM timezone_test PARTITION (p5)").Check(testkit.Rows("1 2020-01-03 15:16:59"))
 	tk.MustQuery("SELECT * FROM timezone_test PARTITION (p6)").Check(testkit.Rows())
 	tk.MustQuery("SELECT * FROM timezone_test PARTITION (p7)").Check(testkit.Rows())
 	tk.MustQuery("SELECT * FROM timezone_test PARTITION (p8)").Check(testkit.Rows())
 	tk.MustQuery("SELECT * FROM timezone_test PARTITION (p9)").Check(testkit.Rows())
 
 	tk.MustExec("SET @@time_zone = 'UTC'")
-	tk.MustExec("INSERT INTO timezone_test VALUES (1,1,'123','123','2020-01-03 15:16:59')")
-	tk.MustQuery("SELECT * FROM timezone_test PARTITION (p5)").Check(testkit.Rows("1 1 123 123 2020-01-03 07:16:59"))
+	tk.MustExec("INSERT INTO timezone_test VALUES (1,'2020-01-03 15:16:59')")
+	tk.MustQuery("SELECT * FROM timezone_test PARTITION (p5)").Check(testkit.Rows("1 2020-01-03 07:16:59"))
 	tk.MustQuery("SELECT * FROM timezone_test PARTITION (p6)").Check(testkit.Rows())
-	tk.MustQuery("SELECT * FROM timezone_test PARTITION (p7)").Check(testkit.Rows("1 1 123 123 2020-01-03 15:16:59"))
+	tk.MustQuery("SELECT * FROM timezone_test PARTITION (p7)").Check(testkit.Rows("1 2020-01-03 15:16:59"))
 	tk.MustQuery("SELECT * FROM timezone_test PARTITION (p8)").Check(testkit.Rows())
 	tk.MustQuery("SELECT * FROM timezone_test PARTITION (p9)").Check(testkit.Rows())
 }
