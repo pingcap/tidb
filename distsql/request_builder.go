@@ -150,8 +150,7 @@ func (builder *RequestBuilder) SetSchemaVer(txn kv.Transaction) *RequestBuilder 
 	if txn == nil {
 		return builder
 	}
-	if txnField, hasTxn := reflect.TypeOf(txn).Elem().FieldByName("Transaction");
-	hasTxn && reflect.ValueOf(txn).Elem().Field(txnField.Index[0]).IsNil() {
+	if txnField, hasTxn := reflect.TypeOf(txn).Elem().FieldByName("Transaction"); hasTxn && reflect.ValueOf(txn).Elem().Field(txnField.Index[0]).IsNil() {
 		return builder
 	}
 
