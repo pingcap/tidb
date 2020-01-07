@@ -235,13 +235,13 @@ func AllocBatchAutoIncrementValue(ctx context.Context, t Table, sctx sessionctx.
 	}
 	increment = int64(sctx.GetSessionVars().AutoIncrementIncrement)
 	offset := int64(sctx.GetSessionVars().AutoIncrementOffset)
-	min, max, err := t.Allocator(sctx, autoid.RowIDAllocType).Alloc(t.Meta().ID, uint64(N), int64(increment), int64(offset))
+	min, max, err := t.Allocator(sctx, autoid.RowIDAllocType).Alloc(t.Meta().ID, uint64(N), increment, offset)
 	if err != nil {
 		return min, max, err
 	}
-	// seek to first autoID.
-	nr := (min + increment - offset) / increment
-	nr = nr*increment + offset
+	// Seek to first autoID. Because AutoIncrement always allocate from 1,
+	// signed and unsigned value can be unified as the unsigned handle.
+	nr := int64(autoid.SeekToFirstAutoIDUnSigned(uint64(min), uint64(increment), uint64(offset)))
 	return nr, increment, nil
 }
 

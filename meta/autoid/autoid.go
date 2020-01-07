@@ -51,6 +51,8 @@ const (
 	minStep            = 30000
 	maxStep            = 2000000
 	defaultConsumeTime = 10 * time.Second
+	minIncrement       = 1
+	maxIncrement       = 65535
 )
 
 // RowIDBitLength is the bit number of a row id in TiDB.
@@ -75,12 +77,12 @@ const (
 )
 
 // Allocator is an auto increment id generator.
-// Just keep id unique actually.
+// Just keep id unique cvtually.
 type Allocator interface {
 	// Alloc allocs N consecutive autoID for table with tableID, returning (min, max] of the allocated autoID batch.
 	// It gets a batch of autoIDs at a time. So it does not need to access storage for each call.
 	// The consecutive feature is used to insert multiple rows in a statement.
-	// increment & offset is used to valid the start position (the allocator's base is not always the last allocated id).
+	// increment & offset is used to validate the start position (the allocator's base is not always the last allocated id).
 	// The returned range is (min, max], you need derive the ids like firstID, firstID + increment * 2... in the caller.
 	Alloc(tableID int64, n uint64, increment, offset int64) (int64, int64, error)
 
@@ -315,7 +317,7 @@ func NewAllocatorsFromTblInfo(store kv.Storage, schemaID int64, tblInfo *model.T
 // For autoIncrement allocator, the increment and offset should always be positive in [1, 65535].
 // Attention:
 // When increment and offset is not the default value(1), the return range (min, max] need to
-// calculate right start position rather than simply the add 1 to min. Then you can derive
+// calculate the correct start position rather than simply the add 1 to min. Then you can derive
 // the successive autoID by adding increment * cnt to start for (n-1) times.
 //
 // Example:
@@ -345,7 +347,7 @@ func (alloc *allocator) Alloc(tableID int64, n uint64, increment, offset int64) 
 }
 
 func validIncrementAndOffset(increment, offset int64) bool {
-	return (increment >= 1 && increment <= 65535) && (offset >= 1 && offset <= 65535)
+	return (increment >= minIncrement && increment <= maxIncrement) && (offset >= minIncrement && offset <= maxIncrement)
 }
 
 // CalcNeededBatchSize is used to calculate batch size for autoID allocation.
