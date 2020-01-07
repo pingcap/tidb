@@ -239,7 +239,7 @@ func AllocBatchAutoIncrementValue(ctx context.Context, t Table, sctx sessionctx.
 	if err != nil {
 		return min, max, err
 	}
-	// Seek to first autoID. Because AutoIncrement always allocate from 1,
+	// SeekToFirstAutoIDUnSigned seeks to first autoID. Because AutoIncrement always allocate from 1,
 	// signed and unsigned value can be unified as the unsigned handle.
 	nr := int64(autoid.SeekToFirstAutoIDUnSigned(uint64(min), uint64(increment), uint64(offset)))
 	return nr, increment, nil

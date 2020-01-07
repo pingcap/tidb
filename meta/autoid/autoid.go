@@ -83,7 +83,9 @@ type Allocator interface {
 	// It gets a batch of autoIDs at a time. So it does not need to access storage for each call.
 	// The consecutive feature is used to insert multiple rows in a statement.
 	// increment & offset is used to validate the start position (the allocator's base is not always the last allocated id).
-	// The returned range is (min, max], you need derive the ids like firstID, firstID + increment * 2... in the caller.
+	// The returned range is (min, max]:
+	// case increment=1 & offset=1: you can derive the ids like min+1, min+2... max.
+	// case increment=x & offset=y: you firstly need to seek to firstID by `SeekToFirstAutoIDXXX`, then derive the IDs like firstID, firstID + increment * 2... in the caller.
 	Alloc(tableID int64, n uint64, increment, offset int64) (int64, int64, error)
 
 	// Rebase rebases the autoID base for table with tableID and the new base value.
@@ -318,7 +320,7 @@ func NewAllocatorsFromTblInfo(store kv.Storage, schemaID int64, tblInfo *model.T
 // Attention:
 // When increment and offset is not the default value(1), the return range (min, max] need to
 // calculate the correct start position rather than simply the add 1 to min. Then you can derive
-// the successive autoID by adding increment * cnt to start for (n-1) times.
+// the successive autoID by adding increment * cnt to firstID for (n-1) times.
 //
 // Example:
 // (6, 13] is returned, increment = 4, offset = 1, n = 2.
@@ -358,14 +360,14 @@ func CalcNeededBatchSize(base, n, increment, offset int64, isUnsigned bool) int6
 		return n
 	}
 	if isUnsigned {
-		// seek to the next unsigned valid position.
+		// SeekToFirstAutoIDUnSigned seeks to the next unsigned valid position.
 		nr := SeekToFirstAutoIDUnSigned(uint64(base), uint64(increment), uint64(offset))
-		// calc the total batch size needed.
+		// Calculate the total batch size needed.
 		nr += (uint64(n) - 1) * uint64(increment)
 		return int64(nr - uint64(base))
 	}
 	nr := SeekToFirstAutoIDSigned(base, increment, offset)
-	// calc the total batch size needed.
+	// Calculate the total batch size needed.
 	nr += (n - 1) * increment
 	return nr - base
 }
@@ -391,7 +393,7 @@ func (alloc *allocator) alloc4Signed(tableID int64, n uint64, increment, offset 
 			return 0, 0, err
 		}
 	}
-	// Calculate the total batch size needed.
+	// CalcNeededBatchSize calculates the total batch size needed.
 	n1 := CalcNeededBatchSize(alloc.base, int64(n), increment, offset, alloc.isUnsigned)
 
 	// Condition alloc.base+N1 > alloc.end will overflow when alloc.base + N1 > MaxInt64. So need this.
@@ -453,7 +455,7 @@ func (alloc *allocator) alloc4Unsigned(tableID int64, n uint64, increment, offse
 			return 0, 0, err
 		}
 	}
-	// Calculate the total batch size needed.
+	// CalcNeededBatchSize calculates the total batch size needed.
 	n1 := CalcNeededBatchSize(alloc.base, int64(n), increment, offset, alloc.isUnsigned)
 
 	// Condition alloc.base+n1 > alloc.end will overflow when alloc.base + n1 > MaxInt64. So need this.
