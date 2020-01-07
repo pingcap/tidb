@@ -14,6 +14,7 @@
 package chunk
 
 import (
+	"errors"
 	"sync"
 	"sync/atomic"
 
@@ -122,12 +123,15 @@ func (c *RowContainer) NumChunks() int {
 }
 
 // Add appends a chunk into the RowContainer.
-func (c *RowContainer) Add(chk *Chunk) (err error) {
+func (c *RowContainer) Add(chk *Chunk, callback func()) (err error) {
 	if c.AlreadySpilled() {
 		err = c.recordsInDisk.Add(chk)
 	} else {
 		c.records.Add(chk)
 		if atomic.LoadUint32(&c.exceeded) != 0 {
+			if callback != nil {
+				callback()
+			}
 			err = c.SpillToDisk()
 			if err != nil {
 				return err
@@ -136,6 +140,13 @@ func (c *RowContainer) Add(chk *Chunk) (err error) {
 		}
 	}
 	return
+}
+
+func (c *RowContainer) AppendRow(row Row) (RowPtr, error) {
+	if c.AlreadySpilled() {
+		return RowPtr{}, errors.New("ListInDisk don't support AppendRow")
+	}
+	return c.records.AppendRow(row), nil
 }
 
 // AllocChunk allocates a new chunk from RowContainer.

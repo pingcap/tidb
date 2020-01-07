@@ -47,7 +47,7 @@ func (r *rowContainerTestSuite) TestSel(c *check.C) {
 		if chk.NumRows() == sz {
 			chk.SetSel([]int{0, 2})
 			numRows += 2
-			err := rc.Add(chk)
+			err := rc.Add(chk, nil)
 			c.Assert(err, check.IsNil)
 			chk = NewChunkWithCapacity(fields, sz)
 		}
@@ -96,14 +96,14 @@ func (r *rowContainerTestSuite) TestSpillAction(c *check.C) {
 
 	c.Assert(atomic.LoadUint32(&rc.spilled), check.Equals, uint32(0))
 	c.Assert(atomic.LoadUint32(&rc.exceeded), check.Equals, uint32(0))
-	err = rc.Add(chk)
+	err = rc.Add(chk, nil)
 	c.Assert(err, check.IsNil)
 	c.Assert(atomic.LoadUint32(&rc.spilled), check.Equals, uint32(0))
 	c.Assert(atomic.LoadUint32(&rc.exceeded), check.Equals, uint32(0))
 	c.Assert(rc.GetMemTracker().BytesConsumed(), check.Equals, chk.MemoryUsage())
 	// The following line is erroneous, since chk is already handled by rc, Add it again causes duplicated memory usage account.
 	// It is only for test of spill, do not double-add a chunk elsewhere.
-	err = rc.Add(chk)
+	err = rc.Add(chk, nil)
 	c.Assert(err, check.IsNil)
 	c.Assert(atomic.LoadUint32(&rc.exceeded), check.Equals, uint32(1))
 	c.Assert(atomic.LoadUint32(&rc.spilled), check.Equals, uint32(1))

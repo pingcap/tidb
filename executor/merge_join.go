@@ -236,7 +236,7 @@ func (t *mergeJoinInnerTable) reallocCurChkForReader() (err error) {
 	t.firstRow4Key = t.firstRow4Key.CopyConstruct()
 	// curSel be never be nil, since the chunk is in use.
 	t.curChk.SetSel(t.curSel)
-	err = t.rowContainer.Add(t.curChk)
+	err = t.rowContainer.Add(t.curChk, nil)
 	if err != nil {
 		return err
 	}

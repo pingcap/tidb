@@ -164,7 +164,7 @@ func (c *hashRowContainer) PutChunk(chk *chunk.Chunk) error {
 func (c *hashRowContainer) PutChunkSelected(chk *chunk.Chunk, selected []bool) error {
 	var chkIdx uint32
 	chkIdx = uint32(c.rowContainer.NumChunks())
-	err := c.rowContainer.Add(chk)
+	err := c.rowContainer.Add(chk, nil)
 	if err != nil {
 		return err
 	}
