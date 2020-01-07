@@ -22,6 +22,7 @@ import (
 	"io"
 	"io/ioutil"
 	"net/http"
+	"net/http/httputil"
 	"net/url"
 	"os"
 	"sort"
@@ -989,17 +990,66 @@ func (ts *HTTPHandlerTestSuite) TestDebugZip(c *C) {
 	resp, err := http.Get("http://127.0.0.1:10090/debug/zip?seconds=1")
 	c.Assert(err, IsNil)
 	c.Assert(resp.StatusCode, Equals, http.StatusOK)
-	out, err := os.Create("/tmp/tidb_debug.zip")
+	b, err := httputil.DumpResponse(resp, true)
 	c.Assert(err, IsNil)
-	_, err = io.Copy(out, resp.Body)
+	c.Assert(len(b), Greater, 0)
+	c.Assert(resp.Body.Close(), IsNil)
+}
+
+func (ts *HTTPHandlerTestSuite) TestZipInfoForSQL(c *C) {
+	ts.startServer(c)
+	defer ts.stopServer(c)
+
+	db, err := sql.Open("mysql", getDSN())
+	c.Assert(err, IsNil, Commentf("Error connecting"))
+	defer db.Close()
+	dbt := &DBTest{c, db}
+
+	dbt.mustExec("use test")
+	dbt.mustExec("create table if not exists t (a int)")
+
+	urlValues := url.Values{
+		"sql":        {"select * from t"},
+		"current_db": {"test"},
+	}
+	resp, err := http.PostForm("http://127.0.0.1:10090/debug/sub-optimal-plan", urlValues)
 	c.Assert(err, IsNil)
-	fileInfo, err := out.Stat()
+	c.Assert(resp.StatusCode, Equals, http.StatusOK)
+	b, err := httputil.DumpResponse(resp, true)
 	c.Assert(err, IsNil)
-	c.Assert(fileInfo.Size(), Greater, int64(0))
-	err = out.Close()
+	c.Assert(len(b), Greater, 0)
+	c.Assert(resp.Body.Close(), IsNil)
+
+	resp, err = http.PostForm("http://127.0.0.1:10090/debug/sub-optimal-plan?pprof_time=5&timeout=0", urlValues)
 	c.Assert(err, IsNil)
-	err = os.Remove("/tmp/tidb_debug.zip")
+	c.Assert(resp.StatusCode, Equals, http.StatusOK)
+	b, err = httputil.DumpResponse(resp, true)
 	c.Assert(err, IsNil)
-	err = resp.Body.Close()
+	c.Assert(len(b), Greater, 0)
+	c.Assert(resp.Body.Close(), IsNil)
+
+	resp, err = http.PostForm("http://127.0.0.1:10090/debug/sub-optimal-plan?pprof_time=5", urlValues)
 	c.Assert(err, IsNil)
+	c.Assert(resp.StatusCode, Equals, http.StatusOK)
+	b, err = httputil.DumpResponse(resp, true)
+	c.Assert(err, IsNil)
+	c.Assert(len(b), Greater, 0)
+	c.Assert(resp.Body.Close(), IsNil)
+
+	resp, err = http.PostForm("http://127.0.0.1:10090/debug/sub-optimal-plan?timeout=1", urlValues)
+	c.Assert(err, IsNil)
+	c.Assert(resp.StatusCode, Equals, http.StatusOK)
+	b, err = httputil.DumpResponse(resp, true)
+	c.Assert(err, IsNil)
+	c.Assert(len(b), Greater, 0)
+	c.Assert(resp.Body.Close(), IsNil)
+
+	urlValues.Set("current_db", "non_exists_db")
+	resp, err = http.PostForm("http://127.0.0.1:10090/debug/sub-optimal-plan", urlValues)
+	c.Assert(err, IsNil)
+	c.Assert(resp.StatusCode, Equals, http.StatusInternalServerError)
+	b, err = ioutil.ReadAll(resp.Body)
+	c.Assert(err, IsNil)
+	c.Assert(string(b), Equals, "use database non_exists_db failed, err: [schema:1049]Unknown database 'non_exists_db'\n")
+	c.Assert(resp.Body.Close(), IsNil)
 }

@@ -54,6 +54,8 @@ import (
 	"go.uber.org/zap"
 )
 
+const expressionIndexPrefix = "_V$"
+
 func (d *ddl) CreateSchema(ctx sessionctx.Context, schema model.CIStr, charsetInfo *ast.CharsetOpt) (err error) {
 	is := d.GetInfoSchemaWithInterceptor(ctx)
 	_, ok := is.SchemaByName(schema)
@@ -2023,6 +2025,8 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 			err = d.ModifyColumn(ctx, ident, spec)
 		case ast.AlterTableChangeColumn:
 			err = d.ChangeColumn(ctx, ident, spec)
+		case ast.AlterTableRenameColumn:
+			err = d.RenameColumn(ctx, ident, spec)
 		case ast.AlterTableAlterColumn:
 			err = d.AlterColumn(ctx, ident, spec)
 		case ast.AlterTableRenameTable:
@@ -2066,6 +2070,8 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 			}
 		case ast.AlterTableSetTiFlashReplica:
 			err = d.AlterTableSetTiFlashReplica(ctx, ident, spec.TiFlashReplica)
+		case ast.AlterTableOrderByColumns:
+			err = d.OrderByColumns(ctx, ident)
 		default:
 			// Nothing to do now.
 		}
@@ -2938,6 +2944,62 @@ func (d *ddl) ChangeColumn(ctx sessionctx.Context, ident ast.Ident, spec *ast.Al
 	return errors.Trace(err)
 }
 
+// RenameColumn renames an existing column.
+func (d *ddl) RenameColumn(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
+	oldColName := spec.OldColumnName.Name
+	newColName := spec.NewColumnName.Name
+	if oldColName.L == newColName.L {
+		return nil
+	}
+
+	schema, tbl, err := d.getSchemaAndTableByIdent(ctx, ident)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	oldCol := table.FindCol(tbl.VisibleCols(), oldColName.L)
+	if oldCol == nil {
+		return infoschema.ErrColumnNotExists.GenWithStackByArgs(oldColName, ident.Name)
+	}
+
+	allCols := tbl.Cols()
+	colWithNewNameAlreadyExist := table.FindCol(allCols, newColName.L) != nil
+	if colWithNewNameAlreadyExist {
+		return infoschema.ErrColumnExists.GenWithStackByArgs(newColName)
+	}
+
+	if fkInfo := getColumnForeignKeyInfo(oldColName.L, tbl.Meta().ForeignKeys); fkInfo != nil {
+		return errFKIncompatibleColumns.GenWithStackByArgs(oldColName, fkInfo.Name)
+	}
+
+	// Check generated expression.
+	for _, col := range allCols {
+		if col.GeneratedExpr == nil {
+			continue
+		}
+		dependedColNames := findColumnNamesInExpr(col.GeneratedExpr)
+		for _, name := range dependedColNames {
+			if name.Name.L == oldColName.L {
+				return ErrBadField.GenWithStackByArgs(oldColName.O, "generated column function")
+			}
+		}
+	}
+
+	newCol := oldCol.Clone()
+	newCol.Name = newColName
+	job := &model.Job{
+		SchemaID:   schema.ID,
+		TableID:    tbl.Meta().ID,
+		SchemaName: schema.Name.L,
+		Type:       model.ActionModifyColumn,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{&newCol, oldColName, spec.Position, 0},
+	}
+	err = d.doDDLJob(ctx, job)
+	err = d.callHookOnChanged(err)
+	return errors.Trace(err)
+}
+
 // ModifyColumn does modification on an existing column, currently we only support limited kind of changes
 // that do not need to change or check data on the table.
 func (d *ddl) ModifyColumn(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
@@ -3430,7 +3492,7 @@ func getAnonymousIndex(t table.Table, colName model.CIStr) model.CIStr {
 }
 
 func (d *ddl) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexName model.CIStr,
-	idxColNames []*ast.IndexPartSpecification, indexOption *ast.IndexOption) error {
+	indexPartSpecifications []*ast.IndexPartSpecification, indexOption *ast.IndexOption) error {
 	if !config.GetGlobalConfig().AlterPrimaryKey {
 		return ErrUnsupportedModifyPrimaryKey.GenWithStack("Unsupported add primary key, alter-primary-key is false")
 	}
@@ -3449,22 +3511,30 @@ func (d *ddl) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexName m
 		return infoschema.ErrMultiplePriKey
 	}
 
+	// Primary keys cannot include expression index parts. A primary key requires the generated column to be stored,
+	// but expression index parts are implemented as virtual generated columns, not stored generated columns.
+	for _, idxPart := range indexPartSpecifications {
+		if idxPart.Expr != nil {
+			return ErrFunctionalIndexPrimaryKey
+		}
+	}
+
 	tblInfo := t.Meta()
 	// Check before the job is put to the queue.
 	// This check is redundant, but useful. If DDL check fail before the job is put
 	// to job queue, the fail path logic is super fast.
 	// After DDL job is put to the queue, and if the check fail, TiDB will run the DDL cancel logic.
 	// The recover step causes DDL wait a few seconds, makes the unit test painfully slow.
-	_, err = buildIndexColumns(tblInfo.Columns, idxColNames)
+	_, err = buildIndexColumns(tblInfo.Columns, indexPartSpecifications)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if _, err = checkPKOnGeneratedColumn(tblInfo, idxColNames); err != nil {
+	if _, err = checkPKOnGeneratedColumn(tblInfo, indexPartSpecifications); err != nil {
 		return err
 	}
 
 	if tblInfo.GetPartitionInfo() != nil {
-		if err := checkPartitionKeysConstraint(tblInfo.GetPartitionInfo(), idxColNames, tblInfo, true); err != nil {
+		if err := checkPartitionKeysConstraint(tblInfo.GetPartitionInfo(), indexPartSpecifications, tblInfo, true); err != nil {
 			return err
 		}
 	}
@@ -3482,7 +3552,7 @@ func (d *ddl) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexName m
 		SchemaName: schema.Name.L,
 		Type:       model.ActionAddPrimaryKey,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{unique, indexName, idxColNames, indexOption, sqlMode},
+		Args:       []interface{}{unique, indexName, indexPartSpecifications, indexOption, sqlMode},
 		Priority:   ctx.GetSessionVars().DDLReorgPriority,
 	}
 
@@ -3491,9 +3561,77 @@ func (d *ddl) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexName m
 	return errors.Trace(err)
 }
 
-func (d *ddl) CreateIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.IndexKeyType, indexName model.CIStr,
-	idxColNames []*ast.IndexPartSpecification, indexOption *ast.IndexOption, ifNotExists bool) error {
+func buildHiddenColumnInfo(ctx sessionctx.Context, t table.Table, indexPartSpecifications []*ast.IndexPartSpecification, indexName model.CIStr) ([]*model.ColumnInfo, error) {
+	tblInfo := t.Meta()
+	hiddenCols := make([]*model.ColumnInfo, 0, len(indexPartSpecifications))
+	for i, idxPart := range indexPartSpecifications {
+		if idxPart.Expr == nil {
+			continue
+		}
+		idxPart.Column = &ast.ColumnName{Name: model.NewCIStr(fmt.Sprintf("%s_%s_%d", expressionIndexPrefix, indexName, i))}
+		// Check whether the hidden columns have existed.
+		col := table.FindCol(t.Cols(), idxPart.Column.Name.L)
+		if col != nil {
+			// TODO: Use expression index related error.
+			return nil, infoschema.ErrColumnExists.GenWithStackByArgs(col.Name.String())
+		}
+		idxPart.Length = types.UnspecifiedLength
+		// The index part is an expression, prepare a hidden column for it.
+		if len(idxPart.Column.Name.L) > mysql.MaxColumnNameLength {
+			// TODO: Refine the error message.
+			return nil, ErrTooLongIdent.GenWithStackByArgs("hidden column")
+		}
+		// TODO: refine the error message.
+		if err := checkIllegalFn4GeneratedColumn("expression index", idxPart.Expr); err != nil {
+			return nil, errors.Trace(err)
+		}
 
+		var sb strings.Builder
+		restoreFlags := format.RestoreStringSingleQuotes | format.RestoreKeyWordLowercase | format.RestoreNameBackQuotes |
+			format.RestoreSpacesAroundBinaryOperation
+		restoreCtx := format.NewRestoreCtx(restoreFlags, &sb)
+		sb.Reset()
+		err := idxPart.Expr.Restore(restoreCtx)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		expr, err := expression.RewriteSimpleExprWithTableInfo(ctx, tblInfo, idxPart.Expr)
+		if err != nil {
+			// TODO: refine the error message.
+			return nil, err
+		}
+		if _, ok := expr.(*expression.Column); ok {
+			return nil, ErrFunctionalIndexOnField
+		}
+
+		colInfo := &model.ColumnInfo{
+			Name:                idxPart.Column.Name,
+			GeneratedExprString: sb.String(),
+			GeneratedStored:     false,
+			Version:             model.CurrLatestColumnInfoVersion,
+			Dependences:         make(map[string]struct{}),
+			Hidden:              true,
+			FieldType:           *expr.GetType(),
+		}
+		checkDependencies := make(map[string]struct{})
+		for _, colName := range findColumnNamesInExpr(idxPart.Expr) {
+			colInfo.Dependences[colName.Name.O] = struct{}{}
+			checkDependencies[colName.Name.O] = struct{}{}
+		}
+		if err = checkDependedColExist(checkDependencies, t.Cols()); err != nil {
+			return nil, errors.Trace(err)
+		}
+		if err = checkAutoIncrementRef("", colInfo.Dependences, tblInfo); err != nil {
+			return nil, errors.Trace(err)
+		}
+		idxPart.Expr = nil
+		hiddenCols = append(hiddenCols, colInfo)
+	}
+	return hiddenCols, nil
+}
+
+func (d *ddl) CreateIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.IndexKeyType, indexName model.CIStr,
+	indexPartSpecifications []*ast.IndexPartSpecification, indexOption *ast.IndexOption, ifNotExists bool) error {
 	// not support Spatial and FullText index
 	if keyType == ast.IndexKeyTypeFullText || keyType == ast.IndexKeyTypeSpatial {
 		return errUnsupportedIndexType.GenWithStack("FULLTEXT and SPATIAL index is not supported")
@@ -3506,7 +3644,11 @@ func (d *ddl) CreateIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.Inde
 
 	// Deal with anonymous index.
 	if len(indexName.L) == 0 {
-		indexName = getAnonymousIndex(t, idxColNames[0].Column.Name)
+		colName := model.NewCIStr("expression_index")
+		if indexPartSpecifications[0].Column != nil {
+			colName = indexPartSpecifications[0].Column.Name
+		}
+		indexName = getAnonymousIndex(t, colName)
 	}
 
 	if indexInfo := t.Meta().FindIndexByName(indexName.L); indexInfo != nil {
@@ -3523,17 +3665,27 @@ func (d *ddl) CreateIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.Inde
 	}
 
 	tblInfo := t.Meta()
+
+	// Build hidden columns if necessary.
+	hiddenCols, err := buildHiddenColumnInfo(ctx, t, indexPartSpecifications, indexName)
+	if err != nil {
+		return err
+	}
+	if err = checkAddColumnTooManyColumns(len(t.Cols()) + len(hiddenCols)); err != nil {
+		return errors.Trace(err)
+	}
+
 	// Check before the job is put to the queue.
 	// This check is redundant, but useful. If DDL check fail before the job is put
 	// to job queue, the fail path logic is super fast.
 	// After DDL job is put to the queue, and if the check fail, TiDB will run the DDL cancel logic.
 	// The recover step causes DDL wait a few seconds, makes the unit test painfully slow.
-	_, err = buildIndexColumns(tblInfo.Columns, idxColNames)
+	_, err = buildIndexColumns(append(tblInfo.Columns, hiddenCols...), indexPartSpecifications)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	if unique && tblInfo.GetPartitionInfo() != nil {
-		if err := checkPartitionKeysConstraint(tblInfo.GetPartitionInfo(), idxColNames, tblInfo, false); err != nil {
+		if err := checkPartitionKeysConstraint(tblInfo.GetPartitionInfo(), indexPartSpecifications, tblInfo, false); err != nil {
 			return err
 		}
 	}
@@ -3541,14 +3693,13 @@ func (d *ddl) CreateIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.Inde
 	if _, err = validateCommentLength(ctx.GetSessionVars(), indexName.String(), indexOption); err != nil {
 		return errors.Trace(err)
 	}
-
 	job := &model.Job{
 		SchemaID:   schema.ID,
 		TableID:    t.Meta().ID,
 		SchemaName: schema.Name.L,
 		Type:       model.ActionAddIndex,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{unique, indexName, idxColNames, indexOption},
+		Args:       []interface{}{unique, indexName, indexPartSpecifications, indexOption, hiddenCols},
 		Priority:   ctx.GetSessionVars().DDLReorgPriority,
 	}
 
@@ -4142,4 +4293,15 @@ func (d *ddl) RepairTable(ctx sessionctx.Context, table *ast.TableName, createSt
 	}
 	err = d.callHookOnChanged(err)
 	return errors.Trace(err)
+}
+
+func (d *ddl) OrderByColumns(ctx sessionctx.Context, ident ast.Ident) error {
+	_, tb, err := d.getSchemaAndTableByIdent(ctx, ident)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if tb.Meta().GetPkColInfo() != nil {
+		ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("ORDER BY ignored as there is a user-defined clustered index in the table '%s'", ident.Name))
+	}
+	return nil
 }

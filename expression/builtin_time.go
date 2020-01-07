@@ -5664,6 +5664,34 @@ func (b *builtinMakeTimeSig) getIntParam(arg Expression, row chunk.Row) (int64, 
 	return iRes, isNull, handleInvalidTimeError(b.ctx, err)
 }
 
+func (b *builtinMakeTimeSig) makeTime(hour int64, minute int64, second float64, hourUnsignedFlag bool) (types.Duration, error) {
+	var overflow bool
+	// MySQL TIME datatype: https://dev.mysql.com/doc/refman/5.7/en/time.html
+	// ranges from '-838:59:59.000000' to '838:59:59.000000'
+	if hour < 0 && hourUnsignedFlag {
+		hour = 838
+		overflow = true
+	}
+	if hour < -838 {
+		hour = -838
+		overflow = true
+	} else if hour > 838 {
+		hour = 838
+		overflow = true
+	}
+	if hour == -838 || hour == 838 {
+		if second > 59 {
+			second = 59
+		}
+	}
+	if overflow {
+		minute = 59
+		second = 59
+	}
+	fsp := b.tp.Decimal
+	return types.ParseDuration(b.ctx.GetSessionVars().StmtCtx, fmt.Sprintf("%02d:%02d:%v", hour, minute, second), int8(fsp))
+}
+
 // evalDuration evals a builtinMakeTimeIntSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_maketime
 func (b *builtinMakeTimeSig) evalDuration(row chunk.Row) (types.Duration, bool, error) {
@@ -5687,31 +5715,7 @@ func (b *builtinMakeTimeSig) evalDuration(row chunk.Row) (types.Duration, bool, 
 	if second < 0 || second >= 60 {
 		return dur, true, nil
 	}
-	var overflow bool
-	// MySQL TIME datatype: https://dev.mysql.com/doc/refman/5.7/en/time.html
-	// ranges from '-838:59:59.000000' to '838:59:59.000000'
-	if hour < 0 && mysql.HasUnsignedFlag(b.args[0].GetType().Flag) {
-		hour = 838
-		overflow = true
-	}
-	if hour < -838 {
-		hour = -838
-		overflow = true
-	} else if hour > 838 {
-		hour = 838
-		overflow = true
-	}
-	if hour == -838 || hour == 838 {
-		if second > 59 {
-			second = 59
-		}
-	}
-	if overflow {
-		minute = 59
-		second = 59
-	}
-	fsp := b.tp.Decimal
-	dur, err = types.ParseDuration(b.ctx.GetSessionVars().StmtCtx, fmt.Sprintf("%02d:%02d:%v", hour, minute, second), int8(fsp))
+	dur, err = b.makeTime(hour, minute, second, mysql.HasUnsignedFlag(b.args[0].GetType().Flag))
 	if err != nil {
 		return dur, true, err
 	}

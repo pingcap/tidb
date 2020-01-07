@@ -2536,7 +2536,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	if err != nil {
 		return nil, err
 	}
-	possiblePaths, err = b.filterPathByIsolationRead(possiblePaths)
+	possiblePaths, err = b.filterPathByIsolationRead(possiblePaths, dbName)
 	if err != nil {
 		return nil, err
 	}
@@ -2783,33 +2783,34 @@ func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName model.
 func (b *PlanBuilder) buildProjUponView(ctx context.Context, dbName model.CIStr, tableInfo *model.TableInfo, selectLogicalPlan Plan) (LogicalPlan, error) {
 	columnInfo := tableInfo.Cols()
 	cols := selectLogicalPlan.Schema().Clone().Columns
-	names := selectLogicalPlan.OutputNames().Shallow()
+	outputNamesOfUnderlyingSelect := selectLogicalPlan.OutputNames().Shallow()
 	// In the old version of VIEW implementation, tableInfo.View.Cols is used to
 	// store the origin columns' names of the underlying SelectStmt used when
 	// creating the view.
 	if tableInfo.View.Cols != nil {
 		cols = cols[:0]
-		names = names[:0]
+		outputNamesOfUnderlyingSelect = outputNamesOfUnderlyingSelect[:0]
 		for _, info := range columnInfo {
 			idx := expression.FindFieldNameIdxByColName(selectLogicalPlan.OutputNames(), info.Name.L)
 			if idx == -1 {
 				return nil, ErrViewInvalid.GenWithStackByArgs(dbName.O, tableInfo.Name.O)
 			}
 			cols = append(cols, selectLogicalPlan.Schema().Columns[idx])
-			names = append(names, selectLogicalPlan.OutputNames()[idx])
+			outputNamesOfUnderlyingSelect = append(outputNamesOfUnderlyingSelect, selectLogicalPlan.OutputNames()[idx])
 		}
 	}
 
 	projSchema := expression.NewSchema(make([]*expression.Column, 0, len(tableInfo.Columns))...)
 	projExprs := make([]expression.Expression, 0, len(tableInfo.Columns))
 	projNames := make(types.NameSlice, 0, len(tableInfo.Columns))
-	for i, name := range names {
+	for i, name := range outputNamesOfUnderlyingSelect {
 		origColName := name.ColName
 		if tableInfo.View.Cols != nil {
 			origColName = tableInfo.View.Cols[i]
 		}
 		projNames = append(projNames, &types.FieldName{
-			TblName:     name.TblName,
+			// TblName is the of view instead of the name of the underlying table.
+			TblName:     tableInfo.Name,
 			OrigTblName: name.OrigTblName,
 			ColName:     columnInfo[i].Name,
 			OrigColName: origColName,
