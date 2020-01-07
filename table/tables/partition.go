@@ -234,11 +234,31 @@ func generateHashPartitionExpr(ctx sessionctx.Context, pi *model.PartitionInfo,
 	}, nil
 }
 
+// GetOriginPartitionExpr is used for PointGet plan.
+func (t *partitionedTable) GetOriginPartitionExpr() ast.ExprNode {
+	return t.partitionExpr.OrigExpr
+}
+
 // PartitionExpr returns the partition expression.
 func (t *partitionedTable) PartitionExpr(ctx sessionctx.Context, columns []*expression.Column, names types.NameSlice) (*PartitionExpr, error) {
-	// TODO: a better performance implementation:
+	// TODO: a better performance implementation for range partition:
 	// traverse the Expression, find all columns and rewrite them.
-	return newPartitionExprBySchema(ctx, t.meta, columns, names)
+	// return newPartitionExprBySchema(ctx, t.meta, columns, names)
+	pi := t.meta.GetPartitionInfo()
+	switch pi.Type {
+	case model.PartitionTypeHash:
+		ast := t.partitionExpr.OrigExpr
+		schema := expression.NewSchema(columns...)
+		expr, err := rewritePartitionExpr(ctx, ast, schema, names)
+		if err != nil {
+			return nil, err
+		}
+		t.partitionExpr.Expr = expr
+		return t.partitionExpr, nil
+	case model.PartitionTypeRange:
+		return generatePartitionExpr(ctx, pi, columns, names)
+	}
+	panic("cannot reach here")
 }
 
 func partitionRecordKey(pid int64, handle int64) kv.Key {

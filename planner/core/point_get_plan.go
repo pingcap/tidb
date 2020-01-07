@@ -16,6 +16,8 @@ package core
 import (
 	"bytes"
 	"fmt"
+	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/util/math"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
@@ -31,8 +33,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/parser_driver"
-	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/math"
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tipb/go-tipb"
 )
@@ -559,11 +559,6 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt) *PointGetP
 	// `Union -> DataSource` in the logical plan optimization pass, since PointGetPlan
 	// bypass the logical plan optimization, it can't support partitioned table.
 	pi := tbl.GetPartitionInfo()
-	if pi != nil {
-		if pi.Type != model.PartitionTypeHash {
-			return nil
-		}
-	}
 	for _, col := range tbl.Columns {
 		// Do not handle generated columns.
 		if col.IsGenerated() {
@@ -578,6 +573,17 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt) *PointGetP
 	pairs = getNameValuePairs(pairs, tblAlias, selStmt.Where)
 	if pairs == nil {
 		return nil
+	}
+
+	var partitionInfo *model.PartitionDefinition
+	if pi != nil {
+		if pi.Type != model.PartitionTypeHash {
+			return nil
+		}
+		partitionInfo = getPartitionInfo(ctx, tbl, pairs)
+		if partitionInfo == nil {
+			return nil
+		}
 	}
 	handlePair, fieldType := findPKHandle(tbl, pairs)
 	if handlePair.value.Kind() != types.KindNull && len(pairs) == 1 {
@@ -611,19 +617,7 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt) *PointGetP
 		p.Handle = intDatum.GetInt64()
 		p.UnsignedHandle = mysql.HasUnsignedFlag(fieldType.Flag)
 		p.HandleParam = handlePair.param
-		if pi != nil {
-			partitionSchema, colNames := buildSchemaForPartition(tblName.Schema, tbl, tblAlias)
-			exprs, err := expression.ParseSimpleExprsWithNames(ctx, pi.Expr, partitionSchema, colNames)
-			if err != nil {
-				return nil
-			}
-			pos, err := locateHashPartition(ctx, exprs[0], pairs)
-			if err != nil {
-				return nil
-			}
-			partitionIdx := math.Abs(pos) % int64(pi.Num)
-			p.PartitionInfo = &pi.Definitions[partitionIdx]
-		}
+		p.PartitionInfo = partitionInfo
 		return p
 	}
 
@@ -650,19 +644,7 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt) *PointGetP
 		p.IndexInfo = idxInfo
 		p.IndexValues = idxValues
 		p.IndexValueParams = idxValueParams
-		if pi != nil {
-			partitionSchema, colNames := buildSchemaForPartition(tblName.Schema, tbl, tblAlias)
-			exprs, err := expression.ParseSimpleExprsWithNames(ctx, pi.Expr, partitionSchema, colNames)
-			if err != nil {
-				return nil
-			}
-			pos, err := locateHashPartition(ctx, exprs[0], pairs)
-			if err != nil {
-				return nil
-			}
-			partitionIdx := math.Abs(pos) % int64(pi.Num)
-			p.PartitionInfo = &pi.Definitions[partitionIdx]
-		}
+		p.PartitionInfo = partitionInfo
 		return p
 	}
 	return nil
@@ -1043,35 +1025,24 @@ func (p *PointGetPlan) findHandleCol() *expression.Column {
 	return handleCol
 }
 
-func buildSchemaForPartition(dbName model.CIStr, tbl *model.TableInfo, tblName model.CIStr) (*expression.Schema, []*types.FieldName) {
-	columns := make([]*expression.Column, 0, len(tbl.Columns)+1)
-	names := make([]*types.FieldName, 0, len(tbl.Columns)+1)
-	for _, col := range tbl.Columns {
-		names = append(names, &types.FieldName{
-			DBName:      dbName,
-			OrigTblName: tbl.Name,
-			TblName:     tblName,
-			ColName:     col.Name,
-		})
-		columns = append(columns, colInfoToColumn(col, len(columns)))
+func getPartitionInfo(ctx sessionctx.Context, tbl *model.TableInfo, pairs []nameValuePair) (*model.PartitionDefinition) {
+	is := infoschema.GetInfoSchema(ctx)
+	table, ok := is.TableByID(tbl.ID)
+	if !ok {
+		return nil
 	}
-	return expression.NewSchema(columns...), names
-}
-
-func locateHashPartition(ctx sessionctx.Context, piExpr expression.Expression, pairs []nameValuePair) (int64, error) {
-	r := make([]types.Datum, 0)
-	for _, d := range pairs {
-		r = append(r, d.value)
+	pi := tbl.Partition
+	if partitionTable, ok := table.(partitionTable); ok {
+		expr := partitionTable.GetOriginPartitionExpr()
+		if col, ok := expr.(*ast.ColumnNameExpr); ok {
+			for _, pair := range pairs {
+				if col.Name.Name.L == pair.colName {
+					val := pair.value.GetInt64()
+					pos := math.Abs(val) % int64(pi.Num)
+					return &pi.Definitions[pos]
+				}
+			}
+		}
 	}
-	ret, isNull, err := piExpr.EvalInt(ctx, chunk.MutRowFromDatums(r).ToRow())
-	if err != nil {
-		return 0, err
-	}
-	if isNull {
-		return 0, nil
-	}
-	if ret < 0 {
-		ret = 0 - ret
-	}
-	return ret, nil
+	return nil
 }
