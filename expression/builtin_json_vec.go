@@ -15,6 +15,7 @@ package expression
 
 import (
 	"strconv"
+	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
@@ -847,11 +848,86 @@ func (b *builtinJSONMergeSig) vecEvalJSON(input *chunk.Chunk, result *chunk.Colu
 }
 
 func (b *builtinJSONContainsPathSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinJSONContainsPathSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	jsonBuf, err := b.bufAllocator.get(types.ETJson, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(jsonBuf)
+	if err := b.args[0].VecEvalJSON(b.ctx, input, jsonBuf); err != nil {
+		return err
+	}
+	typeBuf, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(typeBuf)
+	if err := b.args[1].VecEvalString(b.ctx, input, typeBuf); err != nil {
+		return err
+	}
+	pathBufs := make([]*chunk.Column, len(b.args)-2)
+	defer func() {
+		for i := 0; i < len(pathBufs); i++ {
+			if pathBufs[i] != nil {
+				b.bufAllocator.put(pathBufs[i])
+			}
+		}
+	}()
+	for i := 0; i < len(pathBufs); i++ {
+		pathBuf, err := b.bufAllocator.get(types.ETString, n)
+		if err != nil {
+			return err
+		}
+		pathBufs[i] = pathBuf
+		if err := b.args[2+i].VecEvalString(b.ctx, input, pathBuf); err != nil {
+			return err
+		}
+	}
+
+	result.ResizeInt64(n, false)
+	result.MergeNulls(jsonBuf, typeBuf)
+	i64s := result.Int64s()
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		containType := strings.ToLower(typeBuf.GetString(i))
+		if containType != json.ContainsPathAll && containType != json.ContainsPathOne {
+			return json.ErrInvalidJSONContainsPathType
+		}
+		obj := jsonBuf.GetJSON(i)
+		contains := int64(1)
+		var pathExpr json.PathExpression
+		for j := 0; j < len(pathBufs); j++ {
+			if pathBufs[j].IsNull(i) {
+				result.SetNull(i, true)
+				contains = -1
+				break
+			}
+			path := pathBufs[j].GetString(i)
+			if pathExpr, err = json.ParseJSONPathExpr(path); err != nil {
+				return err
+			}
+			_, exists := obj.Extract([]json.PathExpression{pathExpr})
+			if exists && containType == json.ContainsPathOne {
+				contains = 1
+				break
+			} else if !exists && containType == json.ContainsPathOne {
+				contains = 0
+			} else if !exists && containType == json.ContainsPathAll {
+				contains = 0
+				break
+			}
+		}
+		if contains >= 0 {
+			i64s[i] = contains
+		}
+	}
+	return nil
 }
 
 func (b *builtinJSONArrayAppendSig) vectorized() bool {
