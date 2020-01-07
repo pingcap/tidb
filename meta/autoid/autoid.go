@@ -77,7 +77,7 @@ const (
 )
 
 // Allocator is an auto increment id generator.
-// Just keep id unique cvtually.
+// Just keep id unique actually.
 type Allocator interface {
 	// Alloc allocs N consecutive autoID for table with tableID, returning (min, max] of the allocated autoID batch.
 	// It gets a batch of autoIDs at a time. So it does not need to access storage for each call.
