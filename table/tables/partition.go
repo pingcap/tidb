@@ -19,9 +19,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/parser"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/expression"
@@ -30,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mock"
@@ -228,8 +228,8 @@ func generateHashPartitionExpr(ctx sessionctx.Context, pi *model.PartitionInfo,
 		column = col
 	}
 	return &PartitionExpr{
-		Column: column,
-		Expr:   exprs,
+		Column:   column,
+		Expr:     exprs,
 		OrigExpr: origExpr,
 	}, nil
 }

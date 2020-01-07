@@ -1025,7 +1025,7 @@ func (p *PointGetPlan) findHandleCol() *expression.Column {
 	return handleCol
 }
 
-func getPartitionInfo(ctx sessionctx.Context, tbl *model.TableInfo, pairs []nameValuePair) (*model.PartitionDefinition) {
+func getPartitionInfo(ctx sessionctx.Context, tbl *model.TableInfo, pairs []nameValuePair) *model.PartitionDefinition {
 	is := infoschema.GetInfoSchema(ctx)
 	table, ok := is.TableByID(tbl.ID)
 	if !ok {
