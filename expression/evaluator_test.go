@@ -34,7 +34,7 @@ import (
 
 var _ = SerialSuites(&testEvaluatorSerialSuites{})
 var _ = Suite(&testEvaluatorSuite{})
-var _ = Suite(&testEvaluatorSuite2{})
+var _ = Suite(&testEvaluatorSuite2{&testEvaluatorSuite{}})
 
 func TestT(t *testing.T) {
 	testleak.BeforeTest()
