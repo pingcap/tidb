@@ -418,34 +418,47 @@ func BenchmarkAggDistinct(b *testing.B) {
 	}
 }
 
-func buildWindowExecutor(ctx sessionctx.Context, windowFunc string, frame *core.WindowFrame, srcExec Executor, schema *expression.Schema, partitionBy []*expression.Column, concurrency int, dataSourceSorted bool) Executor {
+func buildWindowExecutor(ctx sessionctx.Context, windowFunc string, funcs int, frame *core.WindowFrame, srcExec Executor, schema *expression.Schema, partitionBy []*expression.Column, concurrency int, dataSourceSorted bool) Executor {
 	src := &mockDataPhysicalPlan{
 		schema: srcExec.Schema(),
 		exec:   srcExec,
 	}
 
 	win := new(core.PhysicalWindow)
-	var args []expression.Expression
-	switch windowFunc {
-	case ast.WindowFuncNtile:
-		args = append(args, &expression.Constant{Value: types.NewUintDatum(2)})
-	case ast.WindowFuncNthValue:
-		args = append(args, partitionBy[0], &expression.Constant{Value: types.NewUintDatum(2)})
-	case ast.AggFuncSum:
-		args = append(args, src.Schema().Columns[0])
-	case ast.AggFuncAvg:
-		args = append(args, src.Schema().Columns[0])
-	default:
-		args = append(args, partitionBy[0])
+	win.WindowFuncDescs = make([]*aggregation.WindowFuncDesc, 0)
+	winSchema := schema.Clone()
+	for i := 0; i < funcs; i++ {
+		var args []expression.Expression
+		switch windowFunc {
+		case ast.WindowFuncNtile:
+			args = append(args, &expression.Constant{Value: types.NewUintDatum(2)})
+		case ast.WindowFuncNthValue:
+			args = append(args, partitionBy[0], &expression.Constant{Value: types.NewUintDatum(2)})
+		//case ast.AggFuncSum:
+		//	args = append(args, src.Schema().Columns[0])
+		case ast.AggFuncAvg:
+			args = append(args, src.Schema().Columns[0])
+		case ast.AggFuncBitXor:
+			args = append(args, src.Schema().Columns[0])
+		default:
+			args = append(args, partitionBy[0])
+		}
+		desc, _ := aggregation.NewWindowFuncDesc(ctx, windowFunc, args)
+
+		win.WindowFuncDescs = append(win.WindowFuncDescs, desc)
+		winSchema.Append(&expression.Column{
+			UniqueID: 10 + (int64)(i),
+			RetType:  types.NewFieldType(mysql.TypeLonglong),
+		})
 	}
-	desc, _ := aggregation.NewWindowFuncDesc(ctx, windowFunc, args)
-	win.WindowFuncDescs = []*aggregation.WindowFuncDesc{desc}
+	//win.WindowFuncDescs = []*aggregation.WindowFuncDesc{desc}
 	for _, col := range partitionBy {
 		win.PartitionBy = append(win.PartitionBy, property.Item{Col: col})
 	}
 	win.Frame = frame
 	win.OrderBy = nil
-	win.SetSchema(schema)
+
+	win.SetSchema(winSchema)
 	win.Init(ctx, nil, 0)
 
 	var tail core.PhysicalPlan = win
@@ -464,7 +477,18 @@ func buildWindowExecutor(ctx sessionctx.Context, windowFunc string, frame *core.
 
 	var plan core.PhysicalPlan
 	if concurrency > 1 {
-		plan = core.PhysicalPartition{Concurrency: concurrency, Tail: tail, DataSource: src}.Init(ctx, nil, 0)
+		byItems := make([]expression.Expression, 0, len(win.PartitionBy))
+		for _, item := range win.PartitionBy {
+			byItems = append(byItems, item.Col)
+		}
+
+		plan = core.PhysicalPartition{
+			Concurrency:  concurrency,
+			Tail:         tail,
+			DataSource:   src,
+			SplitterType: core.PartitionHashSplitterType,
+			HashByItems:  byItems,
+		}.Init(ctx, nil, 0)
 		plan.SetChildren(win)
 	} else {
 		plan = win
@@ -478,6 +502,7 @@ func buildWindowExecutor(ctx sessionctx.Context, windowFunc string, frame *core.
 type windowTestCase struct {
 	// The test table's schema is fixed (col Double, partitionBy LongLong, rawData VarString(16), col LongLong).
 	windowFunc       string
+	numFunc          int // The number of windowFuncs. Default: 1.
 	frame            *core.WindowFrame
 	ndv              int // the number of distinct group-by keys
 	rows             int
@@ -501,15 +526,15 @@ func (a windowTestCase) columns() []*expression.Column {
 }
 
 func (a windowTestCase) String() string {
-	return fmt.Sprintf("(func:%v, ndv:%v, rows:%v, sorted:%v, concurrency:%v)",
-		a.windowFunc, a.ndv, a.rows, a.dataSourceSorted, a.concurrency)
+	return fmt.Sprintf("(func:%v, numFunc:%v, ndv:%v, rows:%v, sorted:%v, concurrency:%v)",
+		a.windowFunc, a.numFunc, a.ndv, a.rows, a.dataSourceSorted, a.concurrency)
 }
 
 func defaultWindowTestCase() *windowTestCase {
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().InitChunkSize = variable.DefInitChunkSize
 	ctx.GetSessionVars().MaxChunkSize = variable.DefMaxChunkSize
-	return &windowTestCase{ast.WindowFuncRowNumber, nil, 1000, 10000000, 1, true, ctx}
+	return &windowTestCase{ast.WindowFuncRowNumber, 1, nil, 1000, 10000000, 1, true, ctx}
 }
 
 func benchmarkWindowExecWithCase(b *testing.B, casTest *windowTestCase) {
@@ -533,7 +558,7 @@ func benchmarkWindowExecWithCase(b *testing.B, casTest *windowTestCase) {
 		b.StopTimer() // prepare a new window-executor
 		childCols := casTest.columns()
 		schema := expression.NewSchema(childCols...)
-		windowExec := buildWindowExecutor(casTest.ctx, casTest.windowFunc, casTest.frame, dataSource, schema, childCols[1:2], casTest.concurrency, casTest.dataSourceSorted)
+		windowExec := buildWindowExecutor(casTest.ctx, casTest.windowFunc, casTest.numFunc, casTest.frame, dataSource, schema, childCols[1:2], casTest.concurrency, casTest.dataSourceSorted)
 		tmpCtx := context.Background()
 		chk := newFirstChunk(windowExec)
 		dataSource.prepareChunks()
@@ -614,29 +639,36 @@ func BenchmarkWindowFunctions(b *testing.B) {
 func BenchmarkWindowFunctionsWithFrame(b *testing.B) {
 	b.ReportAllocs()
 	windowFuncs := []string{
-		ast.AggFuncAvg,
+		//ast.AggFuncAvg,
+		//ast.AggFuncSum,
+		//ast.WindowFuncRowNumber,
 		ast.AggFuncBitXor,
 	}
+	numFuncs := []int{1, 2, 3, 4, 5}
 	frames := []*core.WindowFrame{
 		{Type: ast.Rows, Start: &core.FrameBound{UnBounded: true}, End: &core.FrameBound{Type: ast.CurrentRow}},
 	}
-	sortTypes := []bool{false, true}
-	concs := []int{1, 2, 3, 4, 5, 6}
+	sortTypes := []bool{true}
+	concs := []int{1, 2, 3, 4}
+	//concs := []int{1, 4}
 	for i, windowFunc := range windowFuncs {
 		for _, sorted := range sortTypes {
-			for _, con := range concs {
-				cas := defaultWindowTestCase()
-				cas.rows = 100000
-				cas.ndv = 1000
-				cas.concurrency = con
-				cas.dataSourceSorted = sorted
-				cas.windowFunc = windowFunc
-				if i < len(frames) {
-					cas.frame = frames[i]
+			for _, numFunc := range numFuncs {
+				for _, con := range concs {
+					cas := defaultWindowTestCase()
+					cas.rows = 100000
+					cas.ndv = 1000
+					cas.concurrency = con
+					cas.dataSourceSorted = sorted
+					cas.windowFunc = windowFunc
+					cas.numFunc = numFunc
+					if i < len(frames) {
+						cas.frame = frames[i]
+					}
+					b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
+						benchmarkWindowExecWithCase(b, cas)
+					})
 				}
-				b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
-					benchmarkWindowExecWithCase(b, cas)
-				})
 			}
 		}
 	}
