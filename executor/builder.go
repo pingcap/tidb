@@ -2329,7 +2329,6 @@ func buildNoRangeIndexMergeReader(b *executorBuilder, v *plannercore.PhysicalInd
 		startTS:           startTS,
 		table:             table,
 		indexes:           indexes,
-		keepOrders:        keepOrders,
 		descs:             descs,
 		tableRequest:      tableReq,
 		columns:           ts.Columns,
