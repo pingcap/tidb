@@ -15,10 +15,10 @@ package core
 
 import (
 	"context"
-	"github.com/pingcap/tidb/sessionctx/stmtctx"
 
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 )
 
@@ -38,8 +38,11 @@ func collectGenerateColumn(lp LogicalPlan, exprToColumn map[expression.Expressio
 			for _, idxPart := range idx.Columns {
 				colInfo := tblInfo.Columns[idxPart.Offset]
 				if colInfo.IsGenerated() && !colInfo.GeneratedStored {
-					col := expression.ColInfo2Col(ds.schema.Columns, colInfo)
-					exprToColumn[col.VirtualExpr] = col
+					s := ds.schema.Columns
+					col := expression.ColInfo2Col(s, colInfo)
+					if col != nil {
+						exprToColumn[col.VirtualExpr] = col
+					}
 				}
 			}
 		}

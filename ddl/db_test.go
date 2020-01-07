@@ -66,7 +66,7 @@ var _ = Suite(&testDBSuite2{&testDBSuite{}})
 var _ = Suite(&testDBSuite3{&testDBSuite{}})
 var _ = Suite(&testDBSuite4{&testDBSuite{}})
 var _ = Suite(&testDBSuite5{&testDBSuite{}})
-var _ = SerialSuites(&testDBSuite6{&testDBSuite{}})
+var _ = Suite(&testDBSuite6{&testDBSuite{}})
 
 const defaultBatchSize = 1024
 
@@ -229,7 +229,7 @@ func (s *testDBSuite5) TestAddPrimaryKeyRollback1(c *C) {
 	idxName := "PRIMARY"
 	addIdxSQL := "alter table t1 add primary key c3_index (c3);"
 	errMsg := "[kv:1062]Duplicate entry '' for key 'PRIMARY'"
-	testAddIndexRollback(c, s.store, s.lease, idxName, addIdxSQL, errMsg, hasNullValsInKey, false)
+	testAddIndexRollback(c, s.store, s.lease, idxName, addIdxSQL, errMsg, hasNullValsInKey)
 }
 
 // TestAddPrimaryKeyRollback2 is used to test scenarios that will roll back when a null primary key is encountered.
@@ -238,7 +238,7 @@ func (s *testDBSuite1) TestAddPrimaryKeyRollback2(c *C) {
 	idxName := "PRIMARY"
 	addIdxSQL := "alter table t1 add primary key c3_index (c3);"
 	errMsg := "[ddl:1138]Invalid use of NULL value"
-	testAddIndexRollback(c, s.store, s.lease, idxName, addIdxSQL, errMsg, hasNullValsInKey, false)
+	testAddIndexRollback(c, s.store, s.lease, idxName, addIdxSQL, errMsg, hasNullValsInKey)
 }
 
 func (s *testDBSuite2) TestAddUniqueIndexRollback(c *C) {
@@ -246,15 +246,29 @@ func (s *testDBSuite2) TestAddUniqueIndexRollback(c *C) {
 	idxName := "c3_index"
 	addIdxSQL := "create unique index c3_index on t1 (c3)"
 	errMsg := "[kv:1062]Duplicate entry '' for key 'c3_index'"
-	testAddIndexRollback(c, s.store, s.lease, idxName, addIdxSQL, errMsg, hasNullValsInKey, false)
+	testAddIndexRollback(c, s.store, s.lease, idxName, addIdxSQL, errMsg, hasNullValsInKey)
+}
+
+func backgroundDelete(s kv.Storage, c *C, sql string) {
+	// Sleep a while to let ddl in rollback state
+	time.Sleep(50 * time.Millisecond)
+	se, err := session.CreateSession4Test(s)
+	c.Assert(err, IsNil)
+	defer se.Close()
+	_, err = se.Execute(context.Background(), "use test_db")
+	c.Assert(err, IsNil)
+	_, err = se.Execute(context.Background(), sql)
+	c.Assert(err, IsNil)
 }
 
 func (s *testDBSuite6) TestAddExpressionIndexRollback(c *C) {
-	hasNullValsInKey := false
-	idxName := "expr_idx"
-	addIdxSQL := "alter table t1 add index expr_idx ((pow(c1, c2)));"
-	errMsg := "[ddl:8202]Cannot decode index value, because [types:1690]DOUBLE value is out of range in 'pow(144, 144)'"
-	testAddIndexRollback(c, s.store, s.lease, idxName, addIdxSQL, errMsg, hasNullValsInKey, true)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test_db")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (c1 int, c2 int, c3 int, unique key(c1))")
+	tk.MustExec("insert into t1 values (20, 20, 20), (40, 40, 40), (80, 80, 80), (160, 160, 160);")
+	go backgroundDelete(s.store, c, "delete from t1 where c1 = 40;")
+	tk.MustGetErrMsg("alter table t1 add index expr_idx ((pow(c1, c2)));", "[ddl:8202]Cannot decode index value, because [types:1690]DOUBLE value is out of range in 'pow(160, 160)'")
 }
 
 func batchInsert(tk *testkit.TestKit, tbl string, start, end int) {
@@ -268,7 +282,7 @@ func batchInsert(tk *testkit.TestKit, tbl string, start, end int) {
 	tk.MustExec(dml)
 }
 
-func testAddIndexRollback(c *C, store kv.Storage, lease time.Duration, idxName, addIdxSQL, errMsg string, hasNullValsInKey bool, isExpressionIndex bool) {
+func testAddIndexRollback(c *C, store kv.Storage, lease time.Duration, idxName, addIdxSQL, errMsg string, hasNullValsInKey bool) {
 	tk := testkit.NewTestKit(c, store)
 	tk.MustExec("use test_db")
 	tk.MustExec("drop table if exists t1")
@@ -329,9 +343,7 @@ LOOP:
 	for i := base - 10; i < base; i++ {
 		tk.MustExec("delete from t1 where c1 = ?", i+10)
 	}
-	if !isExpressionIndex {
-		sessionExec(c, store, addIdxSQL)
-	}
+	sessionExec(c, store, addIdxSQL)
 	tk.MustExec("drop table t1")
 }
 

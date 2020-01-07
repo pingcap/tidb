@@ -2577,6 +2577,8 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		// TiDB B: update t set a = 2 where b = 2;
 		// If we use tbl.Cols() here, the update statement, will ignore the col `c`, and the data `3` will lost.
 		columns = tbl.WritableCols()
+	} else if b.inDeleteStmt {
+		columns = tbl.DeletableCols()
 	} else {
 		columns = tbl.Cols()
 	}
@@ -3299,6 +3301,8 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, delete *ast.DeleteStmt) (
 		// table hints are only visible in the current DELETE statement.
 		b.popTableHints()
 	}()
+
+	b.inDeleteStmt = true
 
 	p, err := b.buildResultSetNode(ctx, delete.TableRefs.TableRefs)
 	if err != nil {

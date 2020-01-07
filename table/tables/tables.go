@@ -266,6 +266,11 @@ func (t *TableCommon) WritableCols() []*table.Column {
 	return writableColumns
 }
 
+// DeletableCols implements table DeletableCols interface.
+func (t *TableCommon) DeletableCols() []*table.Column {
+	return t.Columns
+}
+
 // RecordPrefix implements table.Table interface.
 func (t *TableCommon) RecordPrefix() kv.Key {
 	return t.recordPrefix
