@@ -234,7 +234,7 @@ func (s *testSuite) TestCancelJobs(c *C) {
 
 	// test can't cancelable job.
 	job.Type = model.ActionDropIndex
-	job.SchemaState = model.StateDeleteOnly
+	job.SchemaState = model.StateWriteOnly
 	job.State = model.JobStateRunning
 	job.ID = 101
 	err = t.EnQueueDDLJob(job)
