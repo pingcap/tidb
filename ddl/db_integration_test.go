@@ -51,6 +51,7 @@ var _ = Suite(&testIntegrationSuite2{&testIntegrationSuite{}})
 var _ = Suite(&testIntegrationSuite3{&testIntegrationSuite{}})
 var _ = Suite(&testIntegrationSuite4{&testIntegrationSuite{}})
 var _ = Suite(&testIntegrationSuite5{&testIntegrationSuite{}})
+var _ = Suite(&testIntegrationSuite6{&testIntegrationSuite{}})
 
 type testIntegrationSuite struct {
 	lease     time.Duration
@@ -121,6 +122,7 @@ func (s *testIntegrationSuite2) TearDownTest(c *C) {
 type testIntegrationSuite3 struct{ *testIntegrationSuite }
 type testIntegrationSuite4 struct{ *testIntegrationSuite }
 type testIntegrationSuite5 struct{ *testIntegrationSuite }
+type testIntegrationSuite6 struct{ *testIntegrationSuite }
 
 func (s *testIntegrationSuite5) TestNoZeroDateMode(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
@@ -148,6 +150,17 @@ func (s *testIntegrationSuite2) TestInvalidDefault(c *C) {
 	_, err = tk.Exec("create table t( c1 varchar(2) default 'TiDB');")
 	c.Assert(err, NotNil)
 	c.Assert(terror.ErrorEqual(err, types.ErrInvalidDefault), IsTrue, Commentf("err %v", err))
+}
+
+// TestKeyWithoutLength for issue #13452
+func (s testIntegrationSuite3) TestKeyWithoutLengthCreateTable(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("USE test")
+
+	_, err := tk.Exec("create table t_without_length (a text primary key)")
+	c.Assert(err, NotNil)
+	c.Assert(err, ErrorMatches, ".*BLOB/TEXT column 'a' used in key specification without a key length")
 }
 
 // TestInvalidNameWhenCreateTable for issue #3848
@@ -1010,7 +1023,7 @@ func (s *testIntegrationSuite5) TestBackwardCompatibility(c *C) {
 
 	unique := false
 	indexName := model.NewCIStr("idx_b")
-	idxColName := &ast.IndexPartSpecification{
+	indexPartSpecification := &ast.IndexPartSpecification{
 		Column: &ast.ColumnName{
 			Schema: schemaName,
 			Table:  tableName,
@@ -1018,14 +1031,14 @@ func (s *testIntegrationSuite5) TestBackwardCompatibility(c *C) {
 		},
 		Length: types.UnspecifiedLength,
 	}
-	idxColNames := []*ast.IndexPartSpecification{idxColName}
+	indexPartSpecifications := []*ast.IndexPartSpecification{indexPartSpecification}
 	var indexOption *ast.IndexOption
 	job := &model.Job{
 		SchemaID:   schema.ID,
 		TableID:    tbl.Meta().ID,
 		Type:       model.ActionAddIndex,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{unique, indexName, idxColNames, indexOption},
+		Args:       []interface{}{unique, indexName, indexPartSpecifications, indexOption},
 	}
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
@@ -1895,4 +1908,98 @@ func (s *testIntegrationSuite3) TestParserIssue284(c *C) {
 
 	tk.MustExec("drop table test.t_parser_issue_284")
 	tk.MustExec("drop table test.t_parser_issue_284_2")
+}
+
+func (s *testIntegrationSuite6) TestAddExpressionIndex(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+
+	tk.MustGetErrCode("create table t(a int, b int, index((a+b)));", mysql.ErrNotSupportedYet)
+
+	tk.MustExec("create table t (a int, b real);")
+	tk.MustExec("insert into t values (1, 2.1);")
+	tk.MustExec("alter table t add index idx((a+b));")
+
+	tblInfo, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	columns := tblInfo.Meta().Columns
+	c.Assert(len(columns), Equals, 3)
+	c.Assert(columns[2].Hidden, IsTrue)
+
+	tk.MustQuery("select * from t;").Check(testkit.Rows("1 2.1"))
+
+	tk.MustExec("alter table t add index idx_multi((a+b),(a+1), b);")
+	tblInfo, err = s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	columns = tblInfo.Meta().Columns
+	c.Assert(len(columns), Equals, 5)
+	c.Assert(columns[3].Hidden, IsTrue)
+	c.Assert(columns[4].Hidden, IsTrue)
+
+	tk.MustQuery("select * from t;").Check(testkit.Rows("1 2.1"))
+
+	tk.MustExec("alter table t drop index idx;")
+	tblInfo, err = s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	columns = tblInfo.Meta().Columns
+	c.Assert(len(columns), Equals, 4)
+
+	tk.MustQuery("select * from t;").Check(testkit.Rows("1 2.1"))
+
+	tk.MustExec("alter table t drop index idx_multi;")
+	tblInfo, err = s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	columns = tblInfo.Meta().Columns
+	c.Assert(len(columns), Equals, 2)
+
+	tk.MustQuery("select * from t;").Check(testkit.Rows("1 2.1"))
+
+	// Test for error
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a int, b real);")
+	tk.MustGetErrCode("alter table t add primary key ((a+b));", mysql.ErrFunctionalIndexPrimaryKey)
+	tk.MustGetErrCode("alter table t add index ((rand()));", mysql.ErrGeneratedColumnFunctionIsNotAllowed)
+	tk.MustGetErrCode("alter table t add index ((now()+1));", mysql.ErrGeneratedColumnFunctionIsNotAllowed)
+
+	tk.MustExec("alter table t add column (_V$_idx_0 int);")
+	tk.MustGetErrCode("alter table t add index idx((a+1));", mysql.ErrDupFieldName)
+	tk.MustExec("alter table t drop column _V$_idx_0;")
+	tk.MustExec("alter table t add index idx((a+1));")
+	tk.MustGetErrCode("alter table t add column (_V$_idx_0 int);", mysql.ErrDupFieldName)
+	tk.MustExec("alter table t drop index idx;")
+	tk.MustExec("alter table t add column (_V$_idx_0 int);")
+
+	tk.MustExec("alter table t add column (_V$_expression_index_0 int);")
+	tk.MustGetErrCode("alter table t add index ((a+1));", mysql.ErrDupFieldName)
+	tk.MustExec("alter table t drop column _V$_expression_index_0;")
+	tk.MustExec("alter table t add index ((a+1));")
+	tk.MustGetErrCode("alter table t drop column _V$_expression_index_0;", mysql.ErrCantDropFieldOrKey)
+	tk.MustGetErrCode("alter table t add column e int as (_V$_expression_index_0 + 1);", mysql.ErrBadField)
+}
+
+func (s *testIntegrationSuite6) TestAddExpressionIndexOnPartition(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	s.tk.MustExec(`create table t(
+	a int,
+	b varchar(100),
+	c int,
+	PARTITION BY RANGE ( a ) (
+	PARTITION p0 VALUES LESS THAN (6),
+		PARTITION p1 VALUES LESS THAN (11),
+		PARTITION p2 VALUES LESS THAN (16),
+		PARTITION p3 VALUES LESS THAN (21)
+	);`)
+	tk.MustExec("insert into t values (1, 'test', 2), (12, 'test', 3), (15, 'test', 10), (20, 'test', 20);")
+	tk.MustExec("alter table t add index idx((a+c));")
+
+	tblInfo, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	columns := tblInfo.Meta().Columns
+	c.Assert(len(columns), Equals, 4)
+	c.Assert(columns[3].Hidden, IsTrue)
+
+	tk.MustQuery("select * from t;").Check(testkit.Rows("1 'test' 2", "12 'test' 3", "15 'test' 10", "20 'test' 20"))
 }

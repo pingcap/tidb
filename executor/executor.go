@@ -1414,104 +1414,13 @@ func (e *UnionExec) Close() error {
 	return e.baseExecutor.Close()
 }
 
-func extractStmtHintsFromStmtNode(stmtNode ast.StmtNode) []*ast.TableOptimizerHint {
-	switch x := stmtNode.(type) {
-	case *ast.SelectStmt:
-		return x.TableHints
-	case *ast.UpdateStmt:
-		return x.TableHints
-	case *ast.DeleteStmt:
-		return x.TableHints
-	// TODO: support hint for InsertStmt
-	case *ast.ExplainStmt:
-		return extractStmtHintsFromStmtNode(x.Stmt)
-	default:
-		return nil
-	}
-}
-
-func handleStmtHints(hints []*ast.TableOptimizerHint) (stmtHints stmtctx.StmtHints, warns []error) {
-	if len(hints) == 0 {
-		return
-	}
-	var memoryQuotaHint, useToJAHint *ast.TableOptimizerHint
-	var memoryQuotaHintCnt, useToJAHintCnt, noIndexMergeHintCnt, readReplicaHintCnt int
-	for _, hint := range hints {
-		switch hint.HintName.L {
-		case "memory_quota":
-			memoryQuotaHint = hint
-			memoryQuotaHintCnt++
-		case "use_toja":
-			useToJAHint = hint
-			useToJAHintCnt++
-		case "no_index_merge":
-			noIndexMergeHintCnt++
-		case "read_consistent_replica":
-			readReplicaHintCnt++
-		}
-	}
-	// Handle MEMORY_QUOTA
-	if memoryQuotaHintCnt != 0 {
-		if memoryQuotaHintCnt > 1 {
-			warn := errors.New("There are multiple MEMORY_QUOTA hints, only the last one will take effect")
-			warns = append(warns, warn)
-		}
-		// Executor use MemoryQuota <= 0 to indicate no memory limit, here use < 0 to handle hint syntax error.
-		if memoryQuotaHint.MemoryQuota < 0 {
-			warn := errors.New("The use of MEMORY_QUOTA hint is invalid, valid usage: MEMORY_QUOTA(10 MB) or MEMORY_QUOTA(10 GB)")
-			warns = append(warns, warn)
-		} else {
-			stmtHints.HasMemQuotaHint = true
-			stmtHints.MemQuotaQuery = memoryQuotaHint.MemoryQuota
-			if memoryQuotaHint.MemoryQuota == 0 {
-				warn := errors.New("Setting the MEMORY_QUOTA to 0 means no memory limit")
-				warns = append(warns, warn)
-			}
-		}
-	}
-	// Handle USE_TOJA
-	if useToJAHintCnt != 0 {
-		if useToJAHintCnt > 1 {
-			warn := errors.New("There are multiple USE_TOJA hints, only the last one will take effect")
-			warns = append(warns, warn)
-		}
-		stmtHints.HasAllowInSubqToJoinAndAggHint = true
-		stmtHints.AllowInSubqToJoinAndAgg = useToJAHint.HintFlag
-	}
-	// Handle NO_INDEX_MERGE
-	if noIndexMergeHintCnt != 0 {
-		if noIndexMergeHintCnt > 1 {
-			warn := errors.New("There are multiple NO_INDEX_MERGE hints, only the last one will take effect")
-			warns = append(warns, warn)
-		}
-		stmtHints.NoIndexMergeHint = true
-	}
-	// Handle READ_CONSISTENT_REPLICA
-	if readReplicaHintCnt != 0 {
-		if readReplicaHintCnt > 1 {
-			warn := errors.New("There are multiple READ_CONSISTENT_REPLICA hints, only the last one will take effect")
-			warns = append(warns, warn)
-		}
-		stmtHints.HasReplicaReadHint = true
-		stmtHints.ReplicaRead = byte(kv.ReplicaReadFollower)
-	}
-	return
-}
-
 // ResetContextOfStmt resets the StmtContext and session variables.
 // Before every execution, we must clear statement context.
 func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
-	hints := extractStmtHintsFromStmtNode(s)
-	stmtHints, hintWarns := handleStmtHints(hints)
 	vars := ctx.GetSessionVars()
-	memQuota := vars.MemQuotaQuery
-	if stmtHints.HasMemQuotaHint {
-		memQuota = stmtHints.MemQuotaQuery
-	}
 	sc := &stmtctx.StatementContext{
-		StmtHints:   stmtHints,
 		TimeZone:    vars.Location(),
-		MemTracker:  memory.NewTracker(stringutil.MemoizeStr(s.Text), memQuota),
+		MemTracker:  memory.NewTracker(stringutil.MemoizeStr(s.Text), vars.MemQuotaQuery),
 		DiskTracker: disk.NewTracker(stringutil.MemoizeStr(s.Text), -1),
 	}
 	switch config.GetGlobalConfig().OOMAction {
@@ -1633,8 +1542,5 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	vars.SysErrorCount = errCount
 	vars.SysWarningCount = warnCount
 	vars.StmtCtx = sc
-	for _, warn := range hintWarns {
-		vars.StmtCtx.AppendWarning(warn)
-	}
 	return
 }
