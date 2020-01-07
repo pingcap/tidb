@@ -947,23 +947,11 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 	case AutoIncrementIncrement:
 		// AutoIncrementIncrement is valid in [1, 65535].
 		temp := tidbOptPositiveInt32(val, DefAutoIncrementIncrement)
-		if temp <= 0 {
-			s.AutoIncrementIncrement = 1
-		} else if temp > math.MaxUint16 {
-			s.AutoIncrementIncrement = math.MaxUint16
-		} else {
-			s.AutoIncrementIncrement = temp
-		}
+		s.AutoIncrementIncrement = adjustAutoIncrementParameter(temp)
 	case AutoIncrementOffset:
 		// AutoIncrementOffset is valid in [1, 65535].
 		temp := tidbOptPositiveInt32(val, DefAutoIncrementOffset)
-		if temp <= 0 {
-			s.AutoIncrementOffset = 1
-		} else if temp > math.MaxUint16 {
-			s.AutoIncrementOffset = math.MaxUint16
-		} else {
-			s.AutoIncrementOffset = temp
-		}
+		s.AutoIncrementOffset = adjustAutoIncrementParameter(temp)
 	case MaxExecutionTime:
 		timeoutMS := tidbOptPositiveInt32(val, 0)
 		s.MaxExecutionTime = uint64(timeoutMS)
@@ -1548,4 +1536,16 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 // writeSlowLogItem writes a slow log item in the form of: "# ${key}:${value}"
 func writeSlowLogItem(buf *bytes.Buffer, key, value string) {
 	buf.WriteString(SlowLogRowPrefixStr + key + SlowLogSpaceMarkStr + value + "\n")
+}
+
+// adjustAutoIncrementParameter adjust the increment and offset of AutoIncrement.
+// AutoIncrementIncrement / AutoIncrementOffset is valid in [1, 65535].
+func adjustAutoIncrementParameter(temp int) int {
+	if temp <= 0 {
+		return 1
+	} else if temp > math.MaxUint16 {
+		return math.MaxUint16
+	} else {
+		return temp
+	}
 }
