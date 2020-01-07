@@ -20,7 +20,6 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/domain"
-	"github.com/pingcap/tidb/infoschema"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/util/chunk"
 )
@@ -89,9 +88,9 @@ func (e *SQLBindExec) createSQLBind() error {
 	}
 	if !e.isGlobal {
 		handle := e.ctx.Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
-		return handle.AddBindRecord(e.ctx, infoschema.GetInfoSchema(e.ctx), record)
+		return handle.AddBindRecord(e.ctx, record)
 	}
-	return domain.GetDomain(e.ctx).BindHandle().AddBindRecord(e.ctx, infoschema.GetInfoSchema(e.ctx), record)
+	return domain.GetDomain(e.ctx).BindHandle().AddBindRecord(e.ctx, record)
 }
 
 func (e *SQLBindExec) flushBindings() error {

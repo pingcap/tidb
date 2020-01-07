@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/execdetails"
+	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tidb/util/storeutil"
 	"github.com/pingcap/tidb/util/timeutil"
 )
@@ -530,6 +531,9 @@ type SessionVars struct {
 	// and obtain them lazily, and provide a consistent view of inspection tables for each inspection rules.
 	// All cached snapshots will be released at the end of retrieving
 	InspectionTableCache map[string]TableSnapshot
+
+	// RowEncoder is reused in session for encode row data.
+	RowEncoder rowcodec.Encoder
 }
 
 // PreparedParams contains the parameters of the current prepared statement when executing it.
@@ -1065,6 +1069,11 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		atomic.StoreUint64(&ExpensiveQueryTimeThreshold, uint64(tidbOptPositiveInt32(val, DefTiDBExpensiveQueryTimeThreshold)))
 	case TiDBTxnMode:
 		s.TxnMode = strings.ToUpper(val)
+	case TiDBRowFormatVersion:
+		formatVersion := int(tidbOptInt64(val, DefTiDBRowFormatV1))
+		if formatVersion == DefTiDBRowFormatV2 {
+			s.RowEncoder.Enable = true
+		}
 	case TiDBLowResolutionTSO:
 		s.LowResolutionTSO = TiDBOptOn(val)
 	case TiDBEnableIndexMerge:
@@ -1107,6 +1116,15 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 	}
 	s.systems[name] = val
 	return nil
+}
+
+// GetReadableTxnMode returns the session variable TxnMode but rewrites it to "OPTIMISTIC" when it's empty.
+func (s *SessionVars) GetReadableTxnMode() string {
+	txnMode := s.TxnMode
+	if txnMode == "" {
+		txnMode = ast.Optimistic
+	}
+	return txnMode
 }
 
 func (s *SessionVars) setTxnMode(val string) error {
