@@ -14,9 +14,10 @@
 package infoschema_test
 
 import (
+	"strings"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/infoschema"
-	"strings"
 )
 
 type metricSchemaSuite struct{}

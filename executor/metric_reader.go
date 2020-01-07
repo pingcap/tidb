@@ -67,12 +67,14 @@ func (e *MetricRetriever) retrieve(ctx context.Context, sctx sessionctx.Context)
 		// Add retry to avoid network error.
 		for i := 0; i < 10; i++ {
 			queryValue, err = e.queryMetric(ctx, sctx, queryRange, quantile)
-			if err == nil {
+			if err == nil || strings.Contains(err.Error(), "parse error") {
 				break
 			}
 			time.Sleep(100 * time.Millisecond)
 		}
-
+		if err != nil {
+			return nil, err
+		}
 		partRows := e.genRows(queryValue, queryRange, quantile)
 		totalRows = append(totalRows, partRows...)
 	}
