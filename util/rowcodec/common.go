@@ -113,8 +113,10 @@ func decodeInt(val []byte) int64 {
 		return int64(int16(binary.LittleEndian.Uint16(val)))
 	case 4:
 		return int64(int32(binary.LittleEndian.Uint32(val)))
-	default:
+	case 8:
 		return int64(binary.LittleEndian.Uint64(val))
+	default:
+		panic("try to decode zero len int")
 	}
 }
 
@@ -143,8 +145,10 @@ func decodeUint(val []byte) uint64 {
 		return uint64(binary.LittleEndian.Uint16(val))
 	case 4:
 		return uint64(binary.LittleEndian.Uint32(val))
-	default:
+	case 8:
 		return binary.LittleEndian.Uint64(val)
+	default:
+		panic("try to decode zero len uint")
 	}
 }
 

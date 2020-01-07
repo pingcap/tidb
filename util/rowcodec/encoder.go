@@ -141,6 +141,9 @@ func (encoder *Encoder) encodeRowCols(sc *stmtctx.StatementContext, numCols, not
 			r.initOffsets32()
 			for j := 0; j <= i; j++ {
 				r.offsets32[j] = uint32(r.offsets[j])
+				if r.offsets[i] == 0 {
+					panic("[DEBUG] set offset with zero")
+				}
 			}
 			r.large = true
 		}
@@ -148,6 +151,9 @@ func (encoder *Encoder) encodeRowCols(sc *stmtctx.StatementContext, numCols, not
 			r.offsets32[i] = uint32(len(r.data))
 		} else {
 			r.offsets[i] = uint16(len(r.data))
+			if r.offsets[i] == 0 {
+				panic("[DEBUG] set offset with zero")
+			}
 		}
 	}
 	// handle convert to large
@@ -162,6 +168,9 @@ func (encoder *Encoder) encodeRowCols(sc *stmtctx.StatementContext, numCols, not
 			r.initOffsets()
 			for i, val := range r.offsets32 {
 				r.offsets[i] = uint16(val)
+				if r.offsets[i] == 0 {
+					panic("[DEBUG] set offset with zero")
+				}
 			}
 		}
 	}
