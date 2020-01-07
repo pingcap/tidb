@@ -95,6 +95,10 @@ type mockPDClient struct {
 	stop   bool
 }
 
+func (c *mockPDClient) ConfigClient() pd.ConfigClient {
+	return nil
+}
+
 func (c *mockPDClient) enable() {
 	c.Lock()
 	defer c.Unlock()
