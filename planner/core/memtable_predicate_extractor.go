@@ -16,6 +16,8 @@ package core
 import (
 	"math"
 	"regexp"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -149,11 +151,12 @@ func (helper extractHelper) extractColOrExpr(extractCols map[int64]*types.FieldN
 func (helper extractHelper) merge(lhs set.StringSet, datums []types.Datum, toLower bool) set.StringSet {
 	tmpNodeTypes := set.NewStringSet()
 	for _, datum := range datums {
-		var s string
+		s, err := datum.ToString()
+		if err != nil {
+			return nil
+		}
 		if toLower {
-			s = strings.ToLower(datum.GetString())
-		} else {
-			s = datum.GetString()
+			s = strings.ToLower(s)
 		}
 		tmpNodeTypes.Insert(s)
 	}
@@ -284,6 +287,7 @@ func (helper extractHelper) extractTimeRange(
 	names []*types.FieldName,
 	predicates []expression.Expression,
 	extractColName string,
+	timezone *time.Location,
 ) (
 	remained []expression.Expression,
 	// unix timestamp in millisecond
@@ -319,7 +323,7 @@ func (helper extractHelper) extractTimeRange(
 				continue
 			}
 
-			mysqlTime := timeDatum.GetMysqlTime().Time
+			mysqlTime := timeDatum.GetMysqlTime()
 			timestamp := time.Date(mysqlTime.Year(),
 				time.Month(mysqlTime.Month()),
 				mysqlTime.Day(),
@@ -327,7 +331,7 @@ func (helper extractHelper) extractTimeRange(
 				mysqlTime.Minute(),
 				mysqlTime.Second(),
 				mysqlTime.Microsecond()*1000,
-				time.Local,
+				timezone,
 			).UnixNano() / int64(time.Millisecond)
 
 			switch fn.FuncName.L {
@@ -450,7 +454,7 @@ func (e *ClusterLogTableExtractor) Extract(
 		return nil
 	}
 
-	remained, startTime, endTime := e.extractTimeRange(ctx, schema, names, remained, "time")
+	remained, startTime, endTime := e.extractTimeRange(ctx, schema, names, remained, "time", time.Local)
 	if endTime == 0 {
 		endTime = math.MaxInt64
 	}
@@ -464,5 +468,137 @@ func (e *ClusterLogTableExtractor) Extract(
 
 	remained, patterns := e.extractLikePatternCol(schema, names, remained, "message")
 	e.Patterns = patterns
+	return remained
+}
+
+// MetricTableExtractor is used to extract some predicates of metric_schema tables.
+type MetricTableExtractor struct {
+	extractHelper
+	// SkipRequest means the where clause always false, we don't need to request any component
+	SkipRequest bool
+	// StartTime represents the beginning time of metric data.
+	StartTime time.Time
+	// EndTime represents the ending time of metric data.
+	EndTime time.Time
+	// LabelConditions represents the label conditions of metric data.
+	LabelConditions map[string]set.StringSet
+	Quantiles       []float64
+}
+
+// Extract implements the MemTablePredicateExtractor Extract interface
+func (e *MetricTableExtractor) Extract(
+	ctx sessionctx.Context,
+	schema *expression.Schema,
+	names []*types.FieldName,
+	predicates []expression.Expression,
+) []expression.Expression {
+	// Extract the `quantile` columns
+	remained, skipRequest, quantileSet := e.extractCol(schema, names, predicates, "quantile", true)
+	e.Quantiles = e.parseQuantiles(quantileSet)
+	e.SkipRequest = skipRequest
+	if e.SkipRequest {
+		return nil
+	}
+
+	// Extract the `time` columns
+	remained, startTime, endTime := e.extractTimeRange(ctx, schema, names, remained, "time", ctx.GetSessionVars().StmtCtx.TimeZone)
+	e.StartTime, e.EndTime = e.getTimeRange(startTime, endTime)
+	e.SkipRequest = e.StartTime.After(e.EndTime)
+	if e.SkipRequest {
+		return nil
+	}
+
+	// Extract the label columns.
+	for _, name := range names {
+		switch name.ColName.L {
+		case "quantile", "time", "value":
+			continue
+		}
+		var values set.StringSet
+		remained, skipRequest, values = e.extractCol(schema, names, remained, name.ColName.L, false)
+		if skipRequest {
+			e.SkipRequest = skipRequest
+			return nil
+		}
+		if len(values) == 0 {
+			continue
+		}
+		if e.LabelConditions == nil {
+			e.LabelConditions = make(map[string]set.StringSet)
+		}
+		e.LabelConditions[name.ColName.L] = values
+	}
+	return remained
+}
+
+func (e *MetricTableExtractor) getTimeRange(start, end int64) (time.Time, time.Time) {
+	const defaultMetricQueryDuration = 10 * time.Minute
+	var startTime, endTime time.Time
+	if start == 0 && end == 0 {
+		endTime = time.Now()
+		return endTime.Add(-defaultMetricQueryDuration), endTime
+	}
+	if start != 0 {
+		startTime = e.convertToTime(start)
+	}
+	if end != 0 {
+		endTime = e.convertToTime(end)
+	}
+	if start == 0 {
+		startTime = endTime.Add(-defaultMetricQueryDuration)
+	}
+	if end == 0 {
+		endTime = startTime.Add(defaultMetricQueryDuration)
+	}
+	return startTime, endTime
+}
+
+func (e *MetricTableExtractor) parseQuantiles(quantileSet set.StringSet) []float64 {
+	quantiles := make([]float64, 0, len(quantileSet))
+	for k := range quantileSet {
+		v, err := strconv.ParseFloat(k, 64)
+		if err != nil {
+			// ignore the parse error won't affect result.
+			continue
+		}
+		quantiles = append(quantiles, v)
+	}
+	sort.Float64s(quantiles)
+	return quantiles
+}
+
+func (e *MetricTableExtractor) convertToTime(t int64) time.Time {
+	if t == 0 || t == math.MaxInt64 {
+		return time.Now()
+	}
+	return time.Unix(t/1000, (t%1000)*int64(time.Millisecond))
+}
+
+// InspectionResultTableExtractor is used to extract some predicates of `inspection_result`
+type InspectionResultTableExtractor struct {
+	extractHelper
+	// SkipInspection means the where clause always false, we don't need to request any component
+	SkipInspection bool
+	// Rules represents rules applied to, and we should apply all inspection rules if there is no rules specified
+	// e.g: SELECT * FROM inspection_result WHERE rule in ('ddl', 'config')
+	Rules set.StringSet
+	// Items represents items applied to, and we should apply all inspection item if there is no rules specified
+	// e.g: SELECT * FROM inspection_result WHERE item in ('ddl.lease', 'raftstore.threadpool')
+	Items set.StringSet
+}
+
+// Extract implements the MemTablePredicateExtractor Extract interface
+func (e *InspectionResultTableExtractor) Extract(
+	ctx sessionctx.Context,
+	schema *expression.Schema,
+	names []*types.FieldName,
+	predicates []expression.Expression,
+) (remained []expression.Expression) {
+	// Extract the `type/address` columns
+	remained, ruleSkip, rules := e.extractCol(schema, names, predicates, "rule", true)
+	remained, itemSkip, items := e.extractCol(schema, names, remained, "item", true)
+	e.SkipInspection = ruleSkip || itemSkip
+	e.Rules = rules
+	e.Items = items
 	return remained
 }

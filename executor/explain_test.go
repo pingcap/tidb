@@ -14,6 +14,7 @@
 package executor_test
 
 import (
+	"bytes"
 	"fmt"
 	"strings"
 
@@ -129,7 +130,7 @@ func (s *testSuite1) TestExplainAnalyzeMemory(c *C) {
 
 func (s *testSuite1) checkMemoryInfo(c *C, tk *testkit.TestKit, sql string) {
 	memCol := 5
-	ops := []string{"Join", "Reader", "Top", "Sort", "LookUp", "Projection", "Selection"}
+	ops := []string{"Join", "Reader", "Top", "Sort", "LookUp", "Projection", "Selection", "Agg"}
 	rows := tk.MustQuery(sql).Rows()
 	for _, row := range rows {
 		strs := make([]string, len(row))
@@ -156,34 +157,37 @@ func (s *testSuite1) checkMemoryInfo(c *C, tk *testkit.TestKit, sql string) {
 	}
 }
 
-func (s *testSuite1) TestMemoryUsageAfterClose(c *C) {
+func (s *testSuite1) TestMemoryAndDiskUsageAfterClose(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (v int, k int, key(k))")
-	for i := 0; i < tk.Se.GetSessionVars().MaxChunkSize*5; i++ {
-		tk.MustExec(fmt.Sprintf("insert into t values (%v, %v)", i, i))
+	batch := 128
+	limit := tk.Se.GetSessionVars().MaxChunkSize*2 + 10
+	var buf bytes.Buffer
+	for i := 0; i < limit; {
+		buf.Reset()
+		_, err := buf.WriteString("insert into t values ")
+		c.Assert(err, IsNil)
+		for j := 0; j < batch && i < limit; i, j = i+1, j+1 {
+			if j > 0 {
+				_, err = buf.WriteString(", ")
+				c.Assert(err, IsNil)
+			}
+			_, err = buf.WriteString(fmt.Sprintf("(%v,%v)", i, i))
+			c.Assert(err, IsNil)
+		}
+		tk.MustExec(buf.String())
 	}
 	SQLs := []string{"select v+abs(k) from t",
 		"select v from t where abs(v) > 0",
-		"select v from t order by v"}
+		"select v from t order by v",
+		"select count(v) from t",            // StreamAgg
+		"select count(v) from t group by v", // HashAgg
+	}
 	for _, sql := range SQLs {
 		tk.MustQuery(sql)
 		c.Assert(tk.Se.GetSessionVars().StmtCtx.MemTracker.BytesConsumed(), Equals, int64(0))
 		c.Assert(tk.Se.GetSessionVars().StmtCtx.MemTracker.MaxConsumed(), Greater, int64(0))
-	}
-}
-
-func (s *testSuite1) TestDiskUsageAfterClose(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t (v int, k int, key(k))")
-	for i := 0; i < tk.Se.GetSessionVars().MaxChunkSize*5; i++ {
-		tk.MustExec(fmt.Sprintf("insert into t values (%v, %v)", i, i))
-	}
-	SQLs := []string{
-		"select v from t order by v"}
-	for _, sql := range SQLs {
-		tk.MustQuery(sql)
 		c.Assert(tk.Se.GetSessionVars().StmtCtx.DiskTracker.BytesConsumed(), Equals, int64(0))
 	}
 }

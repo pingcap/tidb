@@ -43,6 +43,7 @@ import (
 	"io"
 	"net"
 	"runtime"
+	"runtime/pprof"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -51,6 +52,7 @@ import (
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
@@ -60,6 +62,7 @@ import (
 	"github.com/pingcap/tidb/plugin"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/arena"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/hack"
@@ -685,11 +688,16 @@ func (cc *clientConn) Run(ctx context.Context) {
 				}
 				return
 			}
+			var txnMode string
+			if cc.ctx != nil {
+				txnMode = cc.ctx.GetSessionVars().GetReadableTxnMode()
+			}
 			logutil.Logger(ctx).Warn("command dispatched failed",
 				zap.String("connInfo", cc.String()),
 				zap.String("command", mysql.Command2Str[data[0]]),
 				zap.String("status", cc.SessionStatusToString()),
 				zap.Stringer("sql", getLastStmtInConn{cc}),
+				zap.String("txn_mode", txnMode),
 				zap.String("err", errStrForLog(err)),
 			)
 			err1 := cc.writeError(err)
@@ -804,6 +812,12 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 	cc.lastPacket = data
 	cmd := data[0]
 	data = data[1:]
+	if util.EnablePProfSQLCPU.Load() {
+		defer pprof.SetGoroutineLabels(ctx)
+		lastSQL := getLastStmtInConn{cc}.String()
+		ctx = pprof.WithLabels(ctx, pprof.Labels("sql", parser.Normalize(lastSQL)))
+		pprof.SetGoroutineLabels(ctx)
+	}
 	token := cc.server.getToken()
 	defer func() {
 		// if handleChangeUser failed, cc.ctx may be nil

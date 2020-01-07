@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tipb/go-binlog"
 	"go.uber.org/zap"
 )
@@ -59,6 +60,11 @@ type TxnState struct {
 func (st *TxnState) init() {
 	st.buf = kv.NewMemDbBuffer(kv.DefaultTxnMembufCap)
 	st.mutations = make(map[int64]*binlog.TableMutation)
+}
+
+// Size implements the MemBuffer interface.
+func (st *TxnState) Size() int {
+	return st.buf.Size()
 }
 
 // Valid implements the kv.Transaction interface.
@@ -430,10 +436,30 @@ func (s *session) getTxnFuture(ctx context.Context) *txnFuture {
 	return ret
 }
 
+// HasDirtyContent checks whether there's dirty update on the given table.
+// Put this function here is to avoid cycle import.
+func (s *session) HasDirtyContent(tid int64) bool {
+	x := s.GetSessionVars().TxnCtx.DirtyDB
+	if x == nil {
+		return false
+	}
+	return !x.(*executor.DirtyDB).GetDirtyTable(tid).IsEmpty()
+}
+
 // StmtCommit implements the sessionctx.Context interface.
-func (s *session) StmtCommit() error {
-	defer s.txn.cleanup()
+func (s *session) StmtCommit(memTracker *memory.Tracker) error {
+	defer func() {
+		// If StmtCommit is called in batch mode, we need to clear the txn size
+		// in memTracker to avoid double-counting. If it's not batch mode, this
+		// work has no effect because that no more data will be appended into
+		// s.txn.
+		if memTracker != nil {
+			memTracker.Consume(int64(-s.txn.Size()))
+		}
+		s.txn.cleanup()
+	}()
 	st := &s.txn
+	txnSize := st.Transaction.Size()
 	var count int
 	err := kv.WalkMemBuffer(st.buf, func(k kv.Key, v []byte) error {
 		failpoint.Inject("mockStmtCommitError", func(val failpoint.Value) {
@@ -454,6 +480,9 @@ func (s *session) StmtCommit() error {
 	if err != nil {
 		st.doNotCommit = err
 		return err
+	}
+	if memTracker != nil {
+		memTracker.Consume(int64(st.Transaction.Size() - txnSize))
 	}
 
 	// Need to flush binlog.

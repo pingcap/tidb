@@ -14,6 +14,7 @@
 package executor_test
 
 import (
+	"context"
 	"fmt"
 	"io/ioutil"
 	"log"
@@ -33,8 +34,10 @@ import (
 	"github.com/pingcap/sysutil"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/util/pdapi"
 	"github.com/pingcap/tidb/util/testkit"
+	pmodel "github.com/prometheus/common/model"
 	"google.golang.org/grpc"
 )
 
@@ -53,6 +56,44 @@ func (s *testClusterReaderSuite) SetUpSuite(c *C) {
 func (s *testClusterReaderSuite) TearDownSuite(c *C) {
 	s.dom.Close()
 	s.store.Close()
+}
+
+func (s *testClusterReaderSuite) TestMetricTableData(c *C) {
+	failPoint := "github.com/pingcap/tidb/executor/mockMetricRetrieverQueryPromQL"
+	c.Assert(failpoint.Enable(failPoint, "return"), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable(failPoint), IsNil)
+	}()
+	matrix := pmodel.Matrix{}
+	metric := map[pmodel.LabelName]pmodel.LabelValue{
+		"instance": "127.0.0.1:10080",
+	}
+	t, err := time.ParseInLocation("2006-01-02 15:04:05.999", "2019-12-23 20:11:35", time.Local)
+	c.Assert(err, IsNil)
+	v1 := pmodel.SamplePair{
+		Timestamp: pmodel.Time(t.UnixNano() / int64(time.Millisecond)),
+		Value:     pmodel.SampleValue(0.1),
+	}
+	matrix = append(matrix, &pmodel.SampleStream{Metric: metric, Values: []pmodel.SamplePair{v1}})
+	ctx := context.WithValue(context.Background(), "__mockMetricsData", matrix)
+	ctx = failpoint.WithHook(ctx, func(ctx context.Context, fpname string) bool {
+		return fpname == failPoint
+	})
+
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use metric_schema")
+	rs, err := tk.Se.Execute(ctx, "select * from query_duration;")
+	c.Assert(err, IsNil)
+	result := tk.ResultSetToResultWithCtx(ctx, rs[0], Commentf("execute sql fail"))
+	result.Check(testkit.Rows(
+		"2019-12-23 20:11:35.000000 0.1 127.0.0.1:10080  0.9"))
+
+	rs, err = tk.Se.Execute(ctx, "select * from query_duration where quantile in (0.85, 0.95);")
+	c.Assert(err, IsNil)
+	result = tk.ResultSetToResultWithCtx(ctx, rs[0], Commentf("execute sql fail"))
+	result.Check(testkit.Rows(
+		"2019-12-23 20:11:35.000000 0.1 127.0.0.1:10080  0.85",
+		"2019-12-23 20:11:35.000000 0.1 127.0.0.1:10080  0.95"))
 }
 
 func (s *testClusterReaderSuite) TestTiDBClusterConfig(c *C) {
@@ -786,4 +827,17 @@ func (s *testClusterReaderSuite) TestTiDBClusterLog(c *C) {
 		}
 		result.Check(testkit.Rows(expected...))
 	}
+}
+
+func (s *testClusterReaderSuite) TestTiDBClusterLogError(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	fpName := "github.com/pingcap/tidb/executor/mockClusterLogServerInfo"
+	c.Assert(failpoint.Enable(fpName, `return("")`), IsNil)
+	defer func() { c.Assert(failpoint.Disable(fpName), IsNil) }()
+
+	rs, err := tk.Exec("select * from information_schema.cluster_log")
+	c.Assert(err, IsNil)
+	_, err = session.ResultSetToStringSlice(context.Background(), tk.Se, rs)
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "denied to scan full logs (use `SELECT * FROM cluster_log WHERE message LIKE '%'` explicitly if intentionally)")
 }

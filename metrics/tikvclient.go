@@ -17,30 +17,6 @@ import "github.com/prometheus/client_golang/prometheus"
 
 // TiKVClient metrics.
 var (
-	TiKVTxnCounter = prometheus.NewCounter(
-		prometheus.CounterOpts{
-			Namespace: "tidb",
-			Subsystem: "tikvclient",
-			Name:      "txn_total",
-			Help:      "Counter of created txns.",
-		})
-
-	TiKVSnapshotCounter = prometheus.NewCounter(
-		prometheus.CounterOpts{
-			Namespace: "tidb",
-			Subsystem: "tikvclient",
-			Name:      "snapshot_total",
-			Help:      "Counter of snapshots.",
-		})
-
-	TiKVTxnCmdCounter = prometheus.NewCounterVec(
-		prometheus.CounterOpts{
-			Namespace: "tidb",
-			Subsystem: "tikvclient",
-			Name:      "txn_cmd_total",
-			Help:      "Counter of txn commands.",
-		}, []string{LblType})
-
 	TiKVTxnCmdHistogram = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
@@ -239,5 +215,13 @@ var (
 			Name:      "pessimistic_lock_keys_duration",
 			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 24), // 1ms ~ 16777s
 			Help:      "tidb txn pessimistic lock keys duration",
+		})
+
+	TiKVTTLLifeTimeReachCounter = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "tikvclient",
+			Name:      "ttl_lifetime_reach_total",
+			Help:      "Counter of ttlManager live too long.",
 		})
 )
