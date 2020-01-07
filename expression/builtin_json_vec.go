@@ -882,10 +882,10 @@ func (b *builtinJSONContainsPathSig) vecEvalInt(input *chunk.Chunk, result *chun
 		if err != nil {
 			return err
 		}
+		pathBufs[i] = pathBuf
 		if err := b.args[2+i].VecEvalString(b.ctx, input, pathBuf); err != nil {
 			return err
 		}
-		pathBufs[i] = pathBuf
 	}
 
 	result.ResizeInt64(n, false)
