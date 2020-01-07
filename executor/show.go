@@ -787,10 +787,15 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 		}
 
 		cols := make([]string, 0, len(idxInfo.Columns))
+		var colInfo string
 		for _, c := range idxInfo.Columns {
-			colInfo := escape(c.Name, sqlMode)
-			if c.Length != types.UnspecifiedLength {
-				colInfo = fmt.Sprintf("%s(%s)", colInfo, strconv.Itoa(c.Length))
+			if tableInfo.Columns[c.Offset].Hidden {
+				colInfo = fmt.Sprintf("(%s)", tableInfo.Columns[c.Offset].GeneratedExprString)
+			} else {
+				colInfo = escape(c.Name, sqlMode)
+				if c.Length != types.UnspecifiedLength {
+					colInfo = fmt.Sprintf("%s(%s)", colInfo, strconv.Itoa(c.Length))
+				}
 			}
 			cols = append(cols, colInfo)
 		}
