@@ -892,8 +892,7 @@ func (b *builtinJSONContainsPathSig) vecEvalInt(input *chunk.Chunk, result *chun
 	result.MergeNulls(jsonBuf, typeBuf)
 	i64s := result.Int64s()
 	for i := 0; i < n; i++ {
-		if jsonBuf.IsNull(i) || typeBuf.IsNull(i) {
-			result.SetNull(i, true)
+		if result.IsNull(i) {
 			continue
 		}
 		containType := strings.ToLower(typeBuf.GetString(i))
