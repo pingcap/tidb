@@ -14,7 +14,6 @@
 package config
 
 import (
-	"bytes"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
@@ -23,9 +22,7 @@ import (
 	"io/ioutil"
 	"net/url"
 	"os"
-	"reflect"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/BurntSushi/toml"
@@ -602,9 +599,6 @@ var defaultConf = Config{
 
 var (
 	globalConfHandler       ConfHandler
-	reloadConfPath          = ""
-	confReloader            func(nc, c *Config)
-	confReloadLock          sync.Mutex
 	supportedReloadConfigs  = make(map[string]struct{}, 32)
 	supportedReloadConfList = make([]string, 0, 32)
 )
@@ -654,12 +648,14 @@ func InitializeConfig(confPath string, configCheck, configStrict bool, reloadFun
 
 	terror.MustNil(err)
 	if warning != "" {
+		// If configStrict had been specified, and there had been an error, the server would already
+		// have exited by now. If configWarning is not an empty string, write it to the log now that
+		// it's been properly set up.
 		zaplog.Warn(warning)
 	}
 
 	globalConfHandler, err = NewConfHandler(cfg, reloadFunc)
 	terror.MustNil(err)
-	confReloader = reloadFunc
 	globalConfHandler.Start()
 }
 
@@ -667,17 +663,6 @@ func InitializeConfig(confPath string, configCheck, configStrict bool, reloadFun
 func NewConfig() *Config {
 	conf := defaultConf
 	return &conf
-}
-
-// SetConfReloader sets reload config path and a reloader.
-// It should be called only once at start time.
-func SetConfReloader(cpath string, reloader func(nc, c *Config), confItems ...string) {
-	reloadConfPath = cpath
-	confReloader = reloader
-	for _, item := range confItems {
-		supportedReloadConfigs[item] = struct{}{}
-		supportedReloadConfList = append(supportedReloadConfList, item)
-	}
 }
 
 // GetGlobalConfig returns the global configuration for this server.
@@ -693,75 +678,6 @@ func StoreGlobalConfig(config *Config) {
 	if err := globalConfHandler.SetConfig(config); err != nil {
 		logutil.BgLogger().Error("update the global config error", zap.Error(err))
 	}
-}
-
-// ReloadGlobalConfig reloads global configuration for this server.
-func ReloadGlobalConfig() error {
-	confReloadLock.Lock()
-	defer confReloadLock.Unlock()
-
-	nc := NewConfig()
-	if err := nc.Load(reloadConfPath); err != nil {
-		return err
-	}
-	if err := nc.Valid(); err != nil {
-		return err
-	}
-	c := GetGlobalConfig()
-
-	diffs := collectsDiff(*nc, *c, "")
-	if len(diffs) == 0 {
-		return nil
-	}
-	var formattedDiff bytes.Buffer
-	for k, vs := range diffs {
-		formattedDiff.WriteString(fmt.Sprintf(", %v:%v->%v", k, vs[1], vs[0]))
-	}
-	unsupported := make([]string, 0, 2)
-	for k := range diffs {
-		if _, ok := supportedReloadConfigs[k]; !ok {
-			unsupported = append(unsupported, k)
-		}
-	}
-	if len(unsupported) > 0 {
-		return fmt.Errorf("reloading config %v is not supported, only %v are supported now, "+
-			"your changes%s", unsupported, supportedReloadConfList, formattedDiff.String())
-	}
-
-	if err := globalConfHandler.SetConfig(nc); err != nil {
-		return err
-	}
-	confReloader(nc, c)
-	logutil.BgLogger().Info("reload config changes" + formattedDiff.String())
-	return nil
-}
-
-// collectsDiff collects different config items.
-// map[string][]string -> map[field path][]{new value, old value}
-func collectsDiff(i1, i2 interface{}, fieldPath string) map[string][]interface{} {
-	diff := make(map[string][]interface{})
-	t := reflect.TypeOf(i1)
-	if t.Kind() != reflect.Struct {
-		if reflect.DeepEqual(i1, i2) {
-			return diff
-		}
-		diff[fieldPath] = []interface{}{i1, i2}
-		return diff
-	}
-
-	v1 := reflect.ValueOf(i1)
-	v2 := reflect.ValueOf(i2)
-	for i := 0; i < v1.NumField(); i++ {
-		p := t.Field(i).Name
-		if fieldPath != "" {
-			p = fieldPath + "." + p
-		}
-		m := collectsDiff(v1.Field(i).Interface(), v2.Field(i).Interface(), p)
-		for k, v := range m {
-			diff[k] = v
-		}
-	}
-	return diff
 }
 
 // Load loads config options from a toml file.

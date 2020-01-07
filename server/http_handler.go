@@ -674,19 +674,6 @@ func (h settingsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	}
 }
 
-// configReloadHandler is the handler for reloading config online.
-type configReloadHandler struct {
-}
-
-// ServeHTTP handles request of reloading config for this server.
-func (h configReloadHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
-	if err := config.ReloadGlobalConfig(); err != nil {
-		writeError(w, err)
-	} else {
-		writeData(w, "success!")
-	}
-}
-
 // ServeHTTP recovers binlog service.
 func (h binlogRecover) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	op := req.FormValue(qOperation)
