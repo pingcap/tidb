@@ -4228,6 +4228,7 @@ func (d *ddl) CreateSequence(ctx sessionctx.Context, stmt *ast.CreateSequenceStm
 			ctx.GetSessionVars().StmtCtx.AppendNote(infoschema.ErrTableExists.GenWithStackByArgs(ident))
 			return nil
 		}
+		// TODO: refine the error.
 		return infoschema.ErrTableExists.GenWithStackByArgs(ident)
 	}
 	if err := checkTooLongTable(ident.Name); err != nil {

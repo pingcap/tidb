@@ -103,7 +103,6 @@ func handleSequenceOptions(SeqOptions []*ast.SequenceOption, sequenceInfo *model
 			sequenceInfo.Cycle = true
 		case ast.SequenceNoCycle:
 			sequenceInfo.Cycle = false
-			// TODO: TiDB haven't actually support ORDER option by now.
 		}
 	}
 	// Fill the default value, min/max/start should be adjusted with increment's positive and negative.
@@ -155,7 +154,6 @@ func buildSequenceInfo(stmt *ast.CreateSequenceStmt, ident ast.Ident) (*model.Se
 	sequenceInfo := &model.SequenceInfo{
 		Cache:      model.DefaultSequenceCacheBool,
 		Cycle:      model.DefaultSequenceCycleBool,
-		Order:      model.DefaultSequenceOrderBool,
 		CacheValue: model.DefaultSequenceCacheValue,
 		Increment:  model.DefaultSequenceIncrementValue,
 	}
