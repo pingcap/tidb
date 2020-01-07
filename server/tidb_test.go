@@ -21,7 +21,9 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"database/sql"
 	"encoding/pem"
+	"fmt"
 	"io/ioutil"
 	"math/big"
 	"os"
@@ -36,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/testkit"
@@ -74,6 +77,7 @@ func (ts *TidbTestSuite) SetUpSuite(c *C) {
 
 	// Run this test here because parallel would affect the result of it.
 	runTestStmtCount(c)
+	ts.testMaxConnections(c)
 }
 
 func (ts *TidbTestSuite) TearDownSuite(c *C) {
@@ -97,6 +101,40 @@ func (ts *TidbTestSuite) TestRegression(c *C) {
 
 func (ts *TidbTestSuite) TestUint64(c *C) {
 	runTestPrepareResultFieldType(c)
+}
+
+func (ts *TidbTestSuite) testMaxConnections(c *C) {
+	ts.domain.GetGlobalVarsCache().Disable()
+	se, err := session.CreateSession(ts.store)
+	c.Assert(err, IsNil)
+
+	db, err := sql.Open("mysql", getDSN(func(config *mysql.Config) {
+		config.DBName = "test"
+	}))
+	c.Assert(err, IsNil)
+	defer db.Close()
+	dbt := &DBTest{c, db}
+	dbt.mustExec("set global max_connections = 1")
+	rows := dbt.mustQuery("select @@global.max_connections")
+	c.Assert(rows.Next(), IsTrue)
+	var out int
+	err = rows.Scan(&out)
+	c.Assert(err, IsNil)
+	c.Assert(out, Equals, 1)
+
+	db1, err := sql.Open("mysql", getDSN(func(config *mysql.Config) {
+		config.DBName = "test"
+	}))
+	c.Assert(err, IsNil)
+	defer db1.Close()
+	err = db1.Ping()
+	checkErrorCode(c, err, tmysql.ErrConCount)
+
+	// Set original values.
+	se.Execute(context.Background(), fmt.Sprintf("set global max_connections = %d", variable.DefMaxConnections))
+	// Load global variables.
+	se.GetSessionVars().CommonGlobalLoaded = false
+	se.LoadCommonGlobalVariablesIfNeeded()
 }
 
 func (ts *TidbTestSuite) TestSpecialType(c *C) {

@@ -121,6 +121,8 @@ type Session interface {
 	PrepareTxnCtx(context.Context)
 	// FieldList returns fields list of a table.
 	FieldList(tableName string) (fields []*ast.ResultField, err error)
+	// LoadCommonGlobalVariablesIfNeeded loads and applies commonly used global variables for the session.
+	LoadCommonGlobalVariablesIfNeeded() error
 }
 
 var (
@@ -1070,7 +1072,7 @@ func (s *session) Execute(ctx context.Context, sql string) (recordSets []sqlexec
 func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec.RecordSet, err error) {
 	s.PrepareTxnCtx(ctx)
 	connID := s.sessionVars.ConnectionID
-	err = s.loadCommonGlobalVariablesIfNeeded()
+	err = s.LoadCommonGlobalVariablesIfNeeded()
 	if err != nil {
 		return nil, err
 	}
@@ -1154,7 +1156,7 @@ func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields
 		// We don't need to create a transaction for prepare statement, just get information schema will do.
 		s.sessionVars.TxnCtx.InfoSchema = domain.GetDomain(s).InfoSchema()
 	}
-	err = s.loadCommonGlobalVariablesIfNeeded()
+	err = s.LoadCommonGlobalVariablesIfNeeded()
 	if err != nil {
 		return
 	}
@@ -1809,6 +1811,7 @@ var builtinGlobalVariable = []string{
 	variable.NetWriteTimeout,
 	variable.MaxExecutionTime,
 	variable.InnodbLockWaitTimeout,
+	variable.MaxConnections,
 
 	/* TiDB specific global variables: */
 	variable.TiDBSkipUTF8Check,
@@ -1879,8 +1882,8 @@ func initLoadCommonGlobalVarsSQL() {
 	})
 }
 
-// loadCommonGlobalVariablesIfNeeded loads and applies commonly used global variables for the session.
-func (s *session) loadCommonGlobalVariablesIfNeeded() error {
+// LoadCommonGlobalVariablesIfNeeded loads and applies commonly used global variables for the session.
+func (s *session) LoadCommonGlobalVariablesIfNeeded() error {
 	initLoadCommonGlobalVarsSQL()
 	vars := s.sessionVars
 	if vars.CommonGlobalLoaded {
@@ -1988,7 +1991,7 @@ func (s *session) InitTxnWithStartTS(startTS uint64) error {
 	}
 	s.txn.changeInvalidToValid(txn)
 	s.txn.SetCap(s.getMembufCap())
-	err = s.loadCommonGlobalVariablesIfNeeded()
+	err = s.LoadCommonGlobalVariablesIfNeeded()
 	if err != nil {
 		return err
 	}

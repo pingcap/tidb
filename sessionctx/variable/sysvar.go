@@ -136,7 +136,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal | ScopeSession, "ndb_index_stat_option", ""},
 	{ScopeGlobal | ScopeSession, OldPasswords, "0"},
 	{ScopeNone, "innodb_version", "5.6.25"},
-	{ScopeGlobal, MaxConnections, "151"},
+	{ScopeGlobal, MaxConnections, strconv.FormatInt(DefMaxConnections, 10)},
 	{ScopeGlobal | ScopeSession, BigTables, "0"},
 	{ScopeNone, "skip_external_locking", "1"},
 	{ScopeGlobal, "slave_pending_jobs_size_max", "16777216"},

@@ -475,6 +475,9 @@ type SessionVars struct {
 	// ConnectionInfo indicates current connection info used by current session, only be lazy assigned by plugin.
 	ConnectionInfo *ConnectionInfo
 
+	// MaxConnections is the maximum permitted number of simultaneous client connections.
+	MaxConnections int
+
 	// use noop funcs or not
 	EnableNoopFuncs bool
 
@@ -617,6 +620,7 @@ func NewSessionVars() *SessionVars {
 		LockWaitTimeout:             DefInnodbLockWaitTimeout * 1000,
 		MetricSchemaStep:            DefTiDBMetricSchemaStep,
 		MetricSchemaRangeDuration:   DefTiDBMetricSchemaRangeDuration,
+		MaxConnections:              DefMaxConnections,
 	}
 	vars.Concurrency = Concurrency{
 		IndexLookupConcurrency:     DefIndexLookupConcurrency,
@@ -1124,6 +1128,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.MetricSchemaStep = tidbOptInt64(val, DefTiDBMetricSchemaStep)
 	case TiDBMetricSchemaRangeDuration:
 		s.MetricSchemaRangeDuration = tidbOptInt64(val, DefTiDBMetricSchemaRangeDuration)
+	case MaxConnections:
+		s.MaxConnections = tidbOptPositiveInt32(val, DefMaxConnections)
 	}
 	s.systems[name] = val
 	return nil

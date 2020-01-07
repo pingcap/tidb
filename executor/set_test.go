@@ -15,6 +15,7 @@ package executor_test
 
 import (
 	"context"
+	"fmt"
 	"strconv"
 
 	. "github.com/pingcap/check"
@@ -414,6 +415,16 @@ func (s *testSuite5) TestSetVar(c *C) {
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "tidb_metric_query_range_duration(9) cannot be smaller than 10 or larger than 216000")
 	tk.MustQuery("select @@session.tidb_metric_query_range_duration;").Check(testkit.Rows("120"))
+
+	tk.MustQuery("select @@global.max_connections").Check(testkit.Rows(fmt.Sprintf("%d", variable.DefMaxConnections)))
+	tk.MustExec("set global max_connections = 0")
+	tk.MustQuery("select @@global.max_connections").Check(testkit.Rows("1"))
+	tk.MustExec("set global max_connections = 100001")
+	tk.MustQuery("select @@global.max_connections").Check(testkit.Rows("100000"))
+	tk.MustExec("set global max_connections = 999")
+	tk.MustQuery("select @@global.max_connections").Check(testkit.Rows("999"))
+	tk.MustExec(fmt.Sprintf("set global max_connections = %d", variable.DefMaxConnections))
+	tk.MustQuery("select @@global.max_connections").Check(testkit.Rows(fmt.Sprintf("%d", variable.DefMaxConnections)))
 }
 
 func (s *testSuite5) TestSetCharset(c *C) {
