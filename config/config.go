@@ -18,7 +18,6 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"fmt"
-	"github.com/pingcap/parser/terror"
 	"io/ioutil"
 	"net/url"
 	"os"
@@ -29,6 +28,7 @@ import (
 	"github.com/pingcap/errors"
 	zaplog "github.com/pingcap/log"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/util/logutil"
 	tracing "github.com/uber/jaeger-client-go/config"
 	"go.uber.org/zap"
@@ -598,9 +598,7 @@ var defaultConf = Config{
 }
 
 var (
-	globalConfHandler       ConfHandler
-	supportedReloadConfigs  = make(map[string]struct{}, 32)
-	supportedReloadConfList = make([]string, 0, 32)
+	globalConfHandler ConfHandler
 )
 
 var deprecatedConfig = map[string]struct{}{
