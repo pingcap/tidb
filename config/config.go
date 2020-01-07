@@ -28,6 +28,7 @@ import (
 
 	"github.com/BurntSushi/toml"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/util/logutil"
 	tracing "github.com/uber/jaeger-client-go/config"
 	"go.uber.org/atomic"
@@ -74,8 +75,8 @@ type Config struct {
 	TxnLocalLatches  TxnLocalLatches `toml:"txn-local-latches" json:"txn-local-latches"`
 	// Set sys variable lower-case-table-names, ref: https://dev.mysql.com/doc/refman/5.7/en/identifier-case-sensitivity.html.
 	// TODO: We actually only support mode 2, which keeps the original case, but the comparison is case-insensitive.
-	LowerCaseTableNames int `toml:"lower-case-table-names" json:"lower-case-table-names"`
-
+	LowerCaseTableNames int               `toml:"lower-case-table-names" json:"lower-case-table-names"`
+	ServerVersion       string            `toml:"server-version" json:"server-version"`
 	Log                 Log               `toml:"log" json:"log"`
 	Security            Security          `toml:"security" json:"security"`
 	Status              Status            `toml:"status" json:"status"`
@@ -322,10 +323,16 @@ type PessimisticTxn struct {
 
 // StmtSummary is the config for statement summary.
 type StmtSummary struct {
+	// Enable statement summary or not.
+	Enable bool `toml:"enable" json:"enable"`
 	// The maximum number of statements kept in memory.
 	MaxStmtCount uint `toml:"max-stmt-count" json:"max-stmt-count"`
 	// The maximum length of displayed normalized SQL and sample SQL.
 	MaxSQLLength uint `toml:"max-sql-length" json:"max-sql-length"`
+	// The refresh interval of statement summary.
+	RefreshInterval int `toml:"refresh-interval" json:"refresh-interval"`
+	// The maximum history size of statement summary.
+	HistorySize int `toml:"history-size" json:"history-size"`
 }
 
 var defaultConf = Config{
@@ -352,6 +359,7 @@ var defaultConf = Config{
 		Capacity: 2048000,
 	},
 	LowerCaseTableNames: 2,
+	ServerVersion:       "",
 	Log: Log{
 		Level:               "info",
 		Format:              "text",
@@ -426,8 +434,11 @@ var defaultConf = Config{
 		MaxRetryCount: 256,
 	},
 	StmtSummary: StmtSummary{
-		MaxStmtCount: 100,
-		MaxSQLLength: 4096,
+		Enable:          false,
+		MaxStmtCount:    200,
+		MaxSQLLength:    4096,
+		RefreshInterval: 1800,
+		HistorySize:     24,
 	},
 }
 
@@ -542,6 +553,9 @@ func (c *Config) Load(confFile string) error {
 	if c.TokenLimit <= 0 {
 		c.TokenLimit = 1000
 	}
+	if len(c.ServerVersion) > 0 {
+		mysql.ServerVersion = c.ServerVersion
+	}
 
 	// If any items in confFile file are not mapped into the Config struct, issue
 	// an error and stop the server from starting.
@@ -597,6 +611,13 @@ func (c *Config) Valid() error {
 	}
 	if c.TiKVClient.MaxTxnTimeUse == 0 {
 		return fmt.Errorf("max-txn-time-use should be greater than 0")
+	}
+
+	if c.StmtSummary.HistorySize < 0 {
+		return fmt.Errorf("history-size in [stmt-summary] should be greater than or equal to 0")
+	}
+	if c.StmtSummary.RefreshInterval <= 0 {
+		return fmt.Errorf("refresh-interval in [stmt-summary] should be greater than 0")
 	}
 	return nil
 }

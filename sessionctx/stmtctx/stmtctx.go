@@ -65,7 +65,6 @@ type StatementContext struct {
 	OverflowAsWarning      bool
 	InShowWarning          bool
 	UseCache               bool
-	PadCharToFullLength    bool
 	BatchCheck             bool
 	InNullRejectCheck      bool
 	AllowInvalidDate       bool
@@ -133,7 +132,13 @@ type StatementContext struct {
 		normalized string
 		digest     string
 	}
-	Tables []TableEntry
+	Tables                []TableEntry
+	lockWaitStartTime     *time.Time // LockWaitStartTime stores the pessimistic lock wait start time
+	PessimisticLockWaited int32
+	LockKeysDuration      time.Duration
+	// planNormalized use for cache the normalized plan, avoid duplicate builds.
+	planNormalized string
+	planDigest     string
 }
 
 // GetNowTsCached getter for nowTs, if not set get now time and cache it
@@ -158,6 +163,16 @@ func (sc *StatementContext) SQLDigest() (normalized, sqlDigest string) {
 		sc.digestMemo.normalized, sc.digestMemo.digest = parser.NormalizeDigest(sc.OriginalSQL)
 	})
 	return sc.digestMemo.normalized, sc.digestMemo.digest
+}
+
+// GetPlanDigest gets the normalized plan and plan digest.
+func (sc *StatementContext) GetPlanDigest() (normalized, planDigest string) {
+	return sc.planNormalized, sc.planDigest
+}
+
+// SetPlanDigest sets the normalized plan and plan digest.
+func (sc *StatementContext) SetPlanDigest(normalized, planDigest string) {
+	sc.planNormalized, sc.planDigest = normalized, planDigest
 }
 
 // TableEntry presents table in db.
@@ -444,6 +459,7 @@ func (sc *StatementContext) GetExecDetails() execdetails.ExecDetails {
 	var details execdetails.ExecDetails
 	sc.mu.Lock()
 	details = sc.mu.execDetails
+	details.LockKeysDuration = sc.LockKeysDuration
 	sc.mu.Unlock()
 	return details
 }
@@ -492,6 +508,15 @@ func (sc *StatementContext) CopTasksDetails() *CopTasksDetails {
 	d.MaxWaitTime = sc.mu.allExecDetails[n-1].WaitTime
 	d.MaxWaitAddress = sc.mu.allExecDetails[n-1].CalleeAddress
 	return d
+}
+
+// GetLockWaitStartTime returns the statement pessimistic lock wait start time
+func (sc *StatementContext) GetLockWaitStartTime() time.Time {
+	if sc.lockWaitStartTime == nil {
+		curTime := time.Now()
+		sc.lockWaitStartTime = &curTime
+	}
+	return *sc.lockWaitStartTime
 }
 
 //CopTasksDetails collects some useful information of cop-tasks during execution.

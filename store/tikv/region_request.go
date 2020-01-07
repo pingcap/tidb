@@ -110,6 +110,14 @@ func (s *RegionRequestSender) SendReqCtx(bo *Backoffer, req *tikvrpc.Request, re
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
+		var resp *tikvrpc.Response
+		failpoint.Inject("invalidCacheAndRetry", func() {
+			// cooperate with github.com/pingcap/tidb/store/tikv/gcworker/setGcResolveMaxBackoff
+			if c := bo.ctx.Value("injectedBackoff"); c != nil {
+				resp, err = tikvrpc.GenRegionErrorResp(req, &errorpb.Error{EpochNotMatch: &errorpb.EpochNotMatch{}})
+				failpoint.Return(resp, nil, err)
+			}
+		})
 		if ctx == nil {
 			// If the region is not found in cache, it must be out
 			// of date and already be cleaned up. We can skip the

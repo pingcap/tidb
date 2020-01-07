@@ -299,7 +299,7 @@ func (b *PlanBuilder) Build(ctx context.Context, node ast.Node) (Plan, error) {
 	case *ast.BinlogStmt, *ast.FlushStmt, *ast.UseStmt,
 		*ast.BeginStmt, *ast.CommitStmt, *ast.RollbackStmt, *ast.CreateUserStmt, *ast.SetPwdStmt,
 		*ast.GrantStmt, *ast.DropUserStmt, *ast.AlterUserStmt, *ast.RevokeStmt, *ast.KillStmt, *ast.DropStatsStmt,
-		*ast.GrantRoleStmt, *ast.RevokeRoleStmt, *ast.SetRoleStmt, *ast.SetDefaultRoleStmt:
+		*ast.GrantRoleStmt, *ast.RevokeRoleStmt, *ast.SetRoleStmt, *ast.SetDefaultRoleStmt, *ast.ShutdownStmt:
 		return b.buildSimple(node.(ast.StmtNode))
 	case ast.DDLNode:
 		return b.buildDDL(ctx, x)
@@ -1391,14 +1391,20 @@ func (b *PlanBuilder) buildSimple(node ast.StmtNode) (Plan, error) {
 		err := ErrSpecificAccessDenied.GenWithStackByArgs("CREATE USER")
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreateUserPriv, "", "", "", err)
 	case *ast.GrantStmt:
+		if b.ctx.GetSessionVars().CurrentDB == "" && raw.Level.DBName == "" {
+			if raw.Level.Level == ast.GrantLevelTable {
+				return nil, ErrNoDB
+			}
+		}
 		b.visitInfo = collectVisitInfoFromGrantStmt(b.ctx, b.visitInfo, raw)
 	case *ast.GrantRoleStmt:
-		err := ErrSpecificAccessDenied.GenWithStackByArgs("GRANT ROLE")
-		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.GrantPriv, "", "", "", err)
+		err := ErrSpecificAccessDenied.GenWithStackByArgs("SUPER")
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "", err)
 	case *ast.RevokeStmt:
-		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "", nil)
+		b.visitInfo = collectVisitInfoFromRevokeStmt(b.ctx, b.visitInfo, raw)
 	case *ast.RevokeRoleStmt:
-		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "", nil)
+		err := ErrSpecificAccessDenied.GenWithStackByArgs("SUPER")
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "", err)
 	case *ast.KillStmt:
 		// If you have the SUPER privilege, you can kill all threads and statements.
 		// Otherwise, you can kill only your own threads and statements.
@@ -1415,8 +1421,43 @@ func (b *PlanBuilder) buildSimple(node ast.StmtNode) (Plan, error) {
 		if raw.DBName == "" {
 			return nil, ErrNoDB
 		}
+	case *ast.ShutdownStmt:
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.ShutdownPriv, "", "", "", nil)
 	}
 	return p, nil
+}
+
+func collectVisitInfoFromRevokeStmt(sctx sessionctx.Context, vi []visitInfo, stmt *ast.RevokeStmt) []visitInfo {
+	// To use REVOKE, you must have the GRANT OPTION privilege,
+	// and you must have the privileges that you are granting.
+	dbName := stmt.Level.DBName
+	tableName := stmt.Level.TableName
+	if dbName == "" {
+		dbName = sctx.GetSessionVars().CurrentDB
+	}
+	vi = appendVisitInfo(vi, mysql.GrantPriv, dbName, tableName, "", nil)
+
+	var allPrivs []mysql.PrivilegeType
+	for _, item := range stmt.Privs {
+		if item.Priv == mysql.AllPriv {
+			switch stmt.Level.Level {
+			case ast.GrantLevelGlobal:
+				allPrivs = mysql.AllGlobalPrivs
+			case ast.GrantLevelDB:
+				allPrivs = mysql.AllDBPrivs
+			case ast.GrantLevelTable:
+				allPrivs = mysql.AllTablePrivs
+			}
+			break
+		}
+		vi = appendVisitInfo(vi, item.Priv, dbName, tableName, "", nil)
+	}
+
+	for _, priv := range allPrivs {
+		vi = appendVisitInfo(vi, priv, dbName, tableName, "", nil)
+	}
+
+	return vi
 }
 
 func collectVisitInfoFromGrantStmt(sctx sessionctx.Context, vi []visitInfo, stmt *ast.GrantStmt) []visitInfo {
@@ -1581,25 +1622,12 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 	}
 
 	mockTablePlan.SetSchema(insertPlan.Schema4OnDuplicate)
-	columnByName := make(map[string]*table.Column, len(insertPlan.Table.Cols()))
-	for _, col := range insertPlan.Table.Cols() {
-		columnByName[col.Name.L] = col
-	}
-	onDupColSet, dupCols, err := insertPlan.validateOnDup(insert.OnDuplicate, columnByName, tableInfo)
+
+	onDupColSet, err := insertPlan.resolveOnDuplicate(insert.OnDuplicate, tableInfo, func(node ast.ExprNode) (expression.Expression, error) {
+		return b.rewriteInsertOnDuplicateUpdate(ctx, node, mockTablePlan, insertPlan)
+	})
 	if err != nil {
 		return nil, err
-	}
-	for i, assign := range insert.OnDuplicate {
-		// Construct the function which calculates the assign value of the column.
-		expr, err1 := b.rewriteInsertOnDuplicateUpdate(ctx, assign.Expr, mockTablePlan, insertPlan)
-		if err1 != nil {
-			return nil, err1
-		}
-
-		insertPlan.OnDuplicate = append(insertPlan.OnDuplicate, &expression.Assignment{
-			Col:  dupCols[i],
-			Expr: expr,
-		})
 	}
 
 	// Calculate generated columns.
@@ -1613,27 +1641,49 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 	return insertPlan, err
 }
 
-func (p *Insert) validateOnDup(onDup []*ast.Assignment, colMap map[string]*table.Column, tblInfo *model.TableInfo) (map[string]struct{}, []*expression.Column, error) {
+func (p *Insert) resolveOnDuplicate(onDup []*ast.Assignment, tblInfo *model.TableInfo, yield func(ast.ExprNode) (expression.Expression, error)) (map[string]struct{}, error) {
 	onDupColSet := make(map[string]struct{}, len(onDup))
-	dupCols := make([]*expression.Column, 0, len(onDup))
+	colMap := make(map[string]*table.Column, len(p.Table.Cols()))
+	for _, col := range p.Table.Cols() {
+		colMap[col.Name.L] = col
+	}
 	for _, assign := range onDup {
 		// Check whether the column to be updated exists in the source table.
 		col, err := p.tableSchema.FindColumn(assign.Column)
 		if err != nil {
-			return nil, nil, err
+			return nil, err
 		} else if col == nil {
-			return nil, nil, ErrUnknownColumn.GenWithStackByArgs(assign.Column.OrigColName(), "field list")
+			return nil, ErrUnknownColumn.GenWithStackByArgs(assign.Column.OrigColName(), "field list")
 		}
 
 		// Check whether the column to be updated is the generated column.
 		column := colMap[assign.Column.Name.L]
-		if column.IsGenerated() {
-			return nil, nil, ErrBadGeneratedColumn.GenWithStackByArgs(assign.Column.Name.O, tblInfo.Name.O)
+		defaultExpr := extractDefaultExpr(assign.Expr)
+		if defaultExpr != nil {
+			defaultExpr.Name = assign.Column
 		}
+		// Note: For INSERT, REPLACE, and UPDATE, if a generated column is inserted into, replaced, or updated explicitly, the only permitted value is DEFAULT.
+		// see https://dev.mysql.com/doc/refman/8.0/en/create-table-generated-columns.html
+		if column.IsGenerated() {
+			if defaultExpr != nil {
+				continue
+			}
+			return nil, ErrBadGeneratedColumn.GenWithStackByArgs(assign.Column.Name.O, tblInfo.Name.O)
+		}
+
 		onDupColSet[column.Name.L] = struct{}{}
-		dupCols = append(dupCols, col)
+
+		expr, err := yield(assign.Expr)
+		if err != nil {
+			return nil, err
+		}
+
+		p.OnDuplicate = append(p.OnDuplicate, &expression.Assignment{
+			Col:  col,
+			Expr: expr,
+		})
 	}
-	return onDupColSet, dupCols, nil
+	return onDupColSet, nil
 }
 
 func (b *PlanBuilder) getAffectCols(insertStmt *ast.InsertStmt, insertPlan *Insert) (affectedValuesCols []*table.Column, err error) {
@@ -1680,13 +1730,26 @@ func (b *PlanBuilder) buildSetValuesOfInsert(ctx context.Context, insert *ast.In
 	if err != nil {
 		return err
 	}
+	generatedColumns := make(map[string]struct{}, len(tCols))
 	for _, tCol := range tCols {
 		if tCol.IsGenerated() {
-			return ErrBadGeneratedColumn.GenWithStackByArgs(tCol.Name.O, tableInfo.Name.O)
+			generatedColumns[tCol.Name.L] = struct{}{}
 		}
 	}
 
 	for i, assign := range insert.Setlist {
+		defaultExpr := extractDefaultExpr(assign.Expr)
+		if defaultExpr != nil {
+			defaultExpr.Name = assign.Column
+		}
+		// Note: For INSERT, REPLACE, and UPDATE, if a generated column is inserted into, replaced, or updated explicitly, the only permitted value is DEFAULT.
+		// see https://dev.mysql.com/doc/refman/8.0/en/create-table-generated-columns.html
+		if _, ok := generatedColumns[assign.Column.Name.L]; ok {
+			if defaultExpr != nil {
+				continue
+			}
+			return ErrBadGeneratedColumn.GenWithStackByArgs(assign.Column.Name.O, tableInfo.Name.O)
+		}
 		expr, _, err := b.rewriteWithPreprocess(ctx, assign.Expr, mockTablePlan, nil, nil, true, checkRefColumn)
 		if err != nil {
 			return err
@@ -1713,12 +1776,6 @@ func (b *PlanBuilder) buildValuesListOfInsert(ctx context.Context, insert *ast.I
 		if len(insert.Lists[0]) != len(affectedValuesCols) {
 			return ErrWrongValueCountOnRow.GenWithStackByArgs(1)
 		}
-		// No generated column is allowed.
-		for _, col := range affectedValuesCols {
-			if col.IsGenerated() {
-				return ErrBadGeneratedColumn.GenWithStackByArgs(col.Name.O, insertPlan.Table.Meta().Name.O)
-			}
-		}
 	}
 
 	totalTableCols := insertPlan.Table.Cols()
@@ -1735,8 +1792,17 @@ func (b *PlanBuilder) buildValuesListOfInsert(ctx context.Context, insert *ast.I
 		for j, valueItem := range valuesItem {
 			var expr expression.Expression
 			var err error
+			var generatedColumnWithDefaultExpr bool
+			col := affectedValuesCols[j]
 			switch x := valueItem.(type) {
 			case *ast.DefaultExpr:
+				if col.IsGenerated() {
+					if x.Name != nil {
+						return ErrBadGeneratedColumn.GenWithStackByArgs(col.Name.O, insertPlan.Table.Meta().Name.O)
+					}
+					generatedColumnWithDefaultExpr = true
+					break
+				}
 				if x.Name != nil {
 					expr, err = b.findDefaultValue(totalTableCols, x.Name)
 				} else {
@@ -1753,6 +1819,16 @@ func (b *PlanBuilder) buildValuesListOfInsert(ctx context.Context, insert *ast.I
 			if err != nil {
 				return err
 			}
+			// insert value into a generated column is not allowed
+			if col.IsGenerated() {
+				// but there is only one exception:
+				// it is allowed to insert the `default` value into a generated column
+				if generatedColumnWithDefaultExpr {
+					continue
+				}
+				return ErrBadGeneratedColumn.GenWithStackByArgs(col.Name.O, insertPlan.Table.Meta().Name.O)
+			}
+
 			exprList = append(exprList, expr)
 		}
 		insertPlan.Lists = append(insertPlan.Lists, exprList)
@@ -1866,8 +1942,9 @@ func (b *PlanBuilder) buildSplitIndexRegion(node *ast.SplitRegionStmt) (Plan, er
 	mockTablePlan.SetSchema(schema)
 
 	p := &SplitRegion{
-		TableInfo: tblInfo,
-		IndexInfo: indexInfo,
+		TableInfo:      tblInfo,
+		PartitionNames: node.PartitionNames,
+		IndexInfo:      indexInfo,
 	}
 	p.SetSchema(buildSplitRegionsSchema())
 	// Split index regions by user specified value lists.
@@ -1983,7 +2060,8 @@ func (b *PlanBuilder) buildSplitTableRegion(node *ast.SplitRegionStmt) (Plan, er
 	mockTablePlan.SetSchema(schema)
 
 	p := &SplitRegion{
-		TableInfo: tblInfo,
+		TableInfo:      tblInfo,
+		PartitionNames: node.PartitionNames,
 	}
 	p.SetSchema(buildSplitRegionsSchema())
 	if len(node.SplitOpt.ValueLists) > 0 {

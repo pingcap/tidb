@@ -298,6 +298,12 @@ const (
 	// TiDBEnableStmtSummary indicates whether the statement summary is enabled.
 	TiDBEnableStmtSummary = "tidb_enable_stmt_summary"
 
+	// TiDBStmtSummaryRefreshInterval indicates the refresh interval in seconds for each statement summary.
+	TiDBStmtSummaryRefreshInterval = "tidb_stmt_summary_refresh_interval"
+
+	// TiDBStmtSummaryHistorySize indicates the history size of each statement summary.
+	TiDBStmtSummaryHistorySize = "tidb_stmt_summary_history_size"
+
 	// TiDBStoreLimit indicates the limit of sending request to a store, 0 means without limit.
 	TiDBStoreLimit = "tidb_store_limit"
 )

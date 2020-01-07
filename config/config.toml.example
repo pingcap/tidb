@@ -65,6 +65,12 @@ split-region-max-num = 1000
 # In order to support "drop primary key" operation , this flag must be true and the table does not have the pkIsHandle flag.
 alter-primary-key = false
 
+# server-version is used to change the version string of TiDB in the following scenarios:
+# 1. the server version returned by builtin-function `VERSION()`.
+# 2. the server version filled in handshake packets of MySQL Connection Protocol, see https://dev.mysql.com/doc/internals/en/connection-phase-packets.html#packet-Protocol::Handshake for more details.
+# if server-version = "", the default value(original TiDB version string) is used.
+server-version = ""
+
 [log]
 # Log level: debug, info, warn, error, fatal.
 level = "info"
@@ -333,8 +339,17 @@ enable = true
 max-retry-count = 256
 
 [stmt-summary]
+# enable statement summary.
+enable = false
+
 # max number of statements kept in memory.
-max-stmt-count = 100
+max-stmt-count = 200
 
 # max length of displayed normalized sql and sample sql.
 max-sql-length = 4096
+
+# the refresh interval of statement summary, it's counted in seconds.
+refresh-interval = 1800
+
+# the maximum history size of statement summary.
+history-size = 24

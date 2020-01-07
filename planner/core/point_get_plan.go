@@ -80,6 +80,11 @@ func (p *PointGetPlan) ToPB(ctx sessionctx.Context) (*tipb.Executor, error) {
 
 // ExplainInfo returns operator information to be explained.
 func (p *PointGetPlan) ExplainInfo() string {
+	return p.explainInfo(false)
+}
+
+// ExplainInfo returns operator information to be explained.
+func (p *PointGetPlan) explainInfo(normalized bool) string {
 	buffer := bytes.NewBufferString("")
 	tblName := p.TblInfo.Name.O
 	fmt.Fprintf(buffer, "table:%s", tblName)
@@ -92,16 +97,25 @@ func (p *PointGetPlan) ExplainInfo() string {
 			}
 		}
 	} else {
-		if p.UnsignedHandle {
-			fmt.Fprintf(buffer, ", handle:%d", uint64(p.Handle))
+		if normalized {
+			fmt.Fprintf(buffer, ", handle:?")
 		} else {
-			fmt.Fprintf(buffer, ", handle:%d", p.Handle)
+			if p.UnsignedHandle {
+				fmt.Fprintf(buffer, ", handle:%d", uint64(p.Handle))
+			} else {
+				fmt.Fprintf(buffer, ", handle:%d", p.Handle)
+			}
 		}
 	}
 	if p.Lock {
 		fmt.Fprintf(buffer, ", lock")
 	}
 	return buffer.String()
+}
+
+// ExplainNormalizedInfo returns normalized operator information to be explained.
+func (p *PointGetPlan) ExplainNormalizedInfo() string {
+	return p.explainInfo(true)
 }
 
 // GetChildReqProps gets the required property by child index.
