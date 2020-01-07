@@ -554,7 +554,8 @@ var defaultConf = Config{
 		StoreLimit:     0,
 
 		CoprCache: CoprocessorCache{
-			Enabled:               true,
+			// WARNING: Currently Coprocessor Cache may lead to inconsistent result. Do not open it.
+			Enabled:               false,
 			CapacityMB:            1000,
 			AdmissionMaxResultMB:  10,
 			AdmissionMinProcessMs: 5,
