@@ -738,6 +738,8 @@ func (c *RPCClient) checkArgs(ctx context.Context, addr string) (*rpcHandler, er
 // TODO: remove this global variable.
 var GRPCClientFactory func() Client
 
+// redirectRequestToRPCServer redirects RPC request to TiDB rpc server, It is only use for test.
+// Mock TiDB rpc service will have circle import problem, so just use a real RPC client to send this RPC  server.
 func (c *RPCClient) redirectRequestToRPCServer(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
 	if c.rpcCli == nil {
 		if GRPCClientFactory != nil {
