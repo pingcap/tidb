@@ -156,7 +156,7 @@ func (s testIntegrationSuite3) TestKeyWithoutLengthCreateTable(c *C) {
 
 	tk.MustExec("USE test")
 
-	_, err := tk.Exec("create table t (a text primary key)")
+	_, err := tk.Exec("create table t_without_length (a text primary key)")
 	c.Assert(err, NotNil)
 	c.Assert(err, ErrorMatches, ".*BLOB/TEXT column 'a' used in key specification without a key length")
 }
