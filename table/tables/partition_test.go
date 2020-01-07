@@ -338,7 +338,7 @@ func (ts *testSuite) TestTimeZoneChange(c *C) {
 		"  PARTITION p9 VALUES LESS THAN (MAXVALUE)\n)"))
 	tk.MustExec("DROP TABLE timezone_test")
 
-	// Note that the result of "show create table" is different when time zone is different.
+	// Note that the result of "show create table" varies with time_zone.
 	tk.MustExec("SET @@time_zone = 'UTC'")
 	tk.MustExec(createTable)
 	tk.MustQuery("SHOW CREATE TABLE timezone_test").Check(testkit.Rows("timezone_test CREATE TABLE `timezone_test` (\n" +
