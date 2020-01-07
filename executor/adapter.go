@@ -689,6 +689,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	statsInfos := plannercore.GetStatsInfo(a.Plan)
 	memMax := sessVars.StmtCtx.MemTracker.MaxConsumed()
 	_, digest := sessVars.StmtCtx.SQLDigest()
+	_, planDigest := getPlanDigest(a.Ctx, a.Plan)
 	slowItems := &variable.SlowQueryLogItems{
 		TxnTS:          txnTS,
 		SQL:            sql.String(),
@@ -703,6 +704,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		MemMax:         memMax,
 		Succ:           succ,
 		Plan:           getPlanTree(a.Plan),
+		PlanDigest:     planDigest,
 		Prepared:       a.isPreparedStmt,
 		HasMoreResults: hasMoreResults,
 	}
@@ -751,6 +753,17 @@ func getPlanTree(p plannercore.Plan) string {
 	return variable.SlowLogPlanPrefix + planTree + variable.SlowLogPlanSuffix
 }
 
+// getPlanDigest will try to get the select plan tree if the plan is select or the select plan of delete/update/insert statement.
+func getPlanDigest(sctx sessionctx.Context, p plannercore.Plan) (normalized, planDigest string) {
+	normalized, planDigest = sctx.GetSessionVars().StmtCtx.GetPlanDigest()
+	if len(normalized) > 0 {
+		return
+	}
+	normalized, planDigest = plannercore.NormalizePlan(p)
+	sctx.GetSessionVars().StmtCtx.SetPlanDigest(normalized, planDigest)
+	return
+}
+
 // SummaryStmt collects statements for performance_schema.events_statements_summary_by_digest
 func (a *ExecStmt) SummaryStmt() {
 	sessVars := a.Ctx.GetSessionVars()
@@ -774,6 +787,12 @@ func (a *ExecStmt) SummaryStmt() {
 	}
 	sessVars.SetPrevStmtDigest(digest)
 
+	// No need to encode every time, so encode lazily.
+	planGenerator := func() string {
+		return plannercore.EncodePlan(a.Plan)
+	}
+	_, planDigest := getPlanDigest(a.Ctx, a.Plan)
+
 	execDetail := stmtCtx.GetExecDetails()
 	copTaskInfo := stmtCtx.CopTasksDetails()
 	memMax := stmtCtx.MemTracker.MaxConsumed()
@@ -789,6 +808,8 @@ func (a *ExecStmt) SummaryStmt() {
 		Digest:         digest,
 		PrevSQL:        prevSQL,
 		PrevSQLDigest:  prevSQLDigest,
+		PlanGenerator:  planGenerator,
+		PlanDigest:     planDigest,
 		User:           userString,
 		TotalLatency:   costTime,
 		ParseLatency:   sessVars.DurationParse,
