@@ -554,11 +554,16 @@ var defaultConf = Config{
 		StoreLimit:     0,
 
 		CoprCache: CoprocessorCache{
+			//Enabled:               false,
+			//CapacityMB:            1000,
+			//AdmissionMaxResultMB:  10,
+			//AdmissionMinProcessMs: 5,
 			// WARNING: Currently Coprocessor Cache may lead to inconsistent result. Do not open it.
+			// These config items are hidden from user, so that fill them with zero value instead of default value.
 			Enabled:               false,
-			CapacityMB:            1000,
-			AdmissionMaxResultMB:  10,
-			AdmissionMinProcessMs: 5,
+			CapacityMB:            0,
+			AdmissionMaxResultMB:  0,
+			AdmissionMinProcessMs: 0,
 		},
 	},
 	Binlog: Binlog{
