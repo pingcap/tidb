@@ -2046,6 +2046,7 @@ func logQuery(query string, vars *variable.SessionVars) {
 			zap.Int64("schemaVersion", vars.TxnCtx.SchemaVersion),
 			zap.Uint64("txnStartTS", vars.TxnCtx.StartTS),
 			zap.String("current_db", vars.CurrentDB),
+			zap.String("txn_mode", vars.GetReadableTxnMode()),
 			zap.String("sql", query+vars.PreparedParams.String()))
 	}
 }
