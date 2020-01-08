@@ -136,6 +136,11 @@ const (
 	gcModeDistributed = "distributed"
 	gcModeDefault     = gcModeDistributed
 
+	gcScanLockModeKey      = "tikv_gc_scan_lock_mode"
+	gcScanLockModeLegacy   = "legacy"
+	gcScanLockModePhysical = "physical"
+	gcScanLockModeDefault  = gcScanLockModeLegacy
+
 	gcAutoConcurrencyKey     = "tikv_gc_auto_concurrency"
 	gcDefaultAutoConcurrency = true
 )
@@ -812,9 +817,41 @@ func (w *GCWorker) checkUseDistributedGC() (bool, error) {
 	return true, nil
 }
 
+func (w *GCWorker) checkUsePhysicalScanLock() (bool, error) {
+	str, err := w.loadValueFromSysTable(gcScanLockModeKey)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	if str == "" {
+		err = w.saveValueToSysTable(gcScanLockModeKey, gcScanLockModeDefault)
+		if err != nil {
+			return false, errors.Trace(err)
+		}
+		str = gcScanLockModeDefault
+	}
+	if strings.EqualFold(str, gcScanLockModePhysical) {
+		return true, nil
+	}
+	if strings.EqualFold(str, gcScanLockModeLegacy) {
+		return false, nil
+	}
+	logutil.BgLogger().Warn("[gc worker] legacy scan lock mode will be used",
+		zap.String("invalid gc mode", str))
+	return true, nil
+}
+
 func (w *GCWorker) resolveLocks(ctx context.Context, safePoint uint64, concurrency int) error {
+	usePhysical, err := w.checkUsePhysicalScanLock()
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	if !usePhysical {
+		return w.legacyResolveLocks(ctx, safePoint, concurrency)
+	}
+
 	// First try Green GC
-	err := w.greenResolveLocks(ctx, safePoint)
+	err = w.greenResolveLocks(ctx, safePoint)
 
 	if err == nil {
 		return nil
