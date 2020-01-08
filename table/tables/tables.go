@@ -912,7 +912,7 @@ func GetColDefaultValue(ctx sessionctx.Context, col *table.Column, defaultVals [
 
 // AllocHandle implements table.Table AllocHandle interface.
 func (t *tableCommon) AllocHandle(ctx sessionctx.Context) (int64, error) {
-	_, rowID, err := t.Allocator(ctx).Alloc(t.tableID, 1)
+	_, rowID, err := t.Allocator(ctx).Alloc(t.tableID, 1, 1, 1)
 	if err != nil {
 		return 0, err
 	}
