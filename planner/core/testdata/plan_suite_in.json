@@ -537,7 +537,8 @@
   {
     "name": "TestDAGPlanBuilderWindowParallel",
     "cases":[
-      "select lead(a, 1) over (partition by null) as c from t"
+      "select lead(a, 1) over (partition by null) as c from t",
+      "select lead(a, 1) over (partition by b) as c from t"
     ]
   }
 ]

@@ -1417,7 +1417,11 @@
     "Cases": [
       {
         "SQL": "select lead(a, 1) over (partition by null) as c from t",
-        "Best": "IndexReader(Index(t.f)[[NULL,+inf]])->Window(lead(test.t.a, 1)->Column#14 over())->Partition(execution info: concurrency:4, data source:IndexReader_14)->Projection"
+        "Best": "IndexReader(Index(t.f)[[NULL,+inf]])->Window(lead(test.t.a, 1)->Column#14 over())->Projection"
+      },
+      {
+        "SQL": "select lead(a, 1) over (partition by b) as c from t",
+        "Best": "TableReader(Table(t))->Sort->Window(lead(test.t.a, 1)->Column#14 over(partition by test.t.b))->Partition(execution info: concurrency:4, data source:TableReader_10)->Projection"
       }
     ]
   }

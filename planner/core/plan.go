@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tipb/go-tipb"
 )
@@ -94,28 +95,41 @@ func optimizeByPartition(pp PhysicalPlan, tsk task, ctx sessionctx.Context) task
 
 func optimizeByPartition4Window(pp *PhysicalWindow, ctx sessionctx.Context) *PhysicalPartition {
 	concurrency := ctx.GetSessionVars().WindowConcurrency
-	if concurrency > 1 {
-		var tail, dataSource PhysicalPlan = pp, pp.Children()[0]
-		if sort, ok := dataSource.(*PhysicalSort); ok {
-			tail, dataSource = sort, sort.Children()[0]
-		}
-
-		byItems := make([]expression.Expression, 0, len(pp.PartitionBy))
-		for _, item := range pp.PartitionBy {
-			byItems = append(byItems, item.Col)
-		}
-
-		reqProp := &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64}
-		partition := PhysicalPartition{
-			Concurrency:  concurrency,
-			Tail:         tail,
-			DataSource:   dataSource,
-			SplitterType: PartitionHashSplitterType,
-			HashByItems:  byItems,
-		}.Init(ctx, pp.statsInfo(), pp.SelectBlockOffset(), reqProp)
-		return partition
+	if concurrency <= 1 {
+		return nil
 	}
-	return nil
+
+	sort, ok := pp.Children()[0].(*PhysicalSort)
+	if !ok {
+		// Multi-thread executing on SORTED data source is not effective enough by current implementation.
+		// TODO: Implement a better one.
+		return nil
+	}
+	tail, dataSource := sort, sort.Children()[0]
+
+	partitionBy := make([]*expression.Column, 0, len(pp.PartitionBy))
+	for _, item := range pp.PartitionBy {
+		partitionBy = append(partitionBy, item.Col)
+	}
+	NDV := int(getCardinality(partitionBy, dataSource.Schema(), dataSource.statsInfo()))
+	if NDV <= 1 {
+		return nil
+	}
+	concurrency = mathutil.Min(concurrency, NDV)
+
+	byItems := make([]expression.Expression, 0, len(pp.PartitionBy))
+	for _, item := range pp.PartitionBy {
+		byItems = append(byItems, item.Col)
+	}
+	reqProp := &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64}
+	partition := PhysicalPartition{
+		Concurrency:  concurrency,
+		Tail:         tail,
+		DataSource:   dataSource,
+		SplitterType: PartitionHashSplitterType,
+		HashByItems:  byItems,
+	}.Init(ctx, pp.statsInfo(), pp.SelectBlockOffset(), reqProp)
+	return partition
 }
 
 // LogicalPlan is a tree of logical operators.

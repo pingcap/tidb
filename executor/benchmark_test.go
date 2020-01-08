@@ -434,8 +434,8 @@ func buildWindowExecutor(ctx sessionctx.Context, windowFunc string, funcs int, f
 			args = append(args, &expression.Constant{Value: types.NewUintDatum(2)})
 		case ast.WindowFuncNthValue:
 			args = append(args, partitionBy[0], &expression.Constant{Value: types.NewUintDatum(2)})
-		//case ast.AggFuncSum:
-		//	args = append(args, src.Schema().Columns[0])
+		case ast.AggFuncSum:
+			args = append(args, src.Schema().Columns[0])
 		case ast.AggFuncAvg:
 			args = append(args, src.Schema().Columns[0])
 		case ast.AggFuncBitXor:
@@ -451,7 +451,6 @@ func buildWindowExecutor(ctx sessionctx.Context, windowFunc string, funcs int, f
 			RetType:  types.NewFieldType(mysql.TypeLonglong),
 		})
 	}
-	//win.WindowFuncDescs = []*aggregation.WindowFuncDesc{desc}
 	for _, col := range partitionBy {
 		win.PartitionBy = append(win.PartitionBy, property.Item{Col: col})
 	}
@@ -639,18 +638,15 @@ func BenchmarkWindowFunctions(b *testing.B) {
 func BenchmarkWindowFunctionsWithFrame(b *testing.B) {
 	b.ReportAllocs()
 	windowFuncs := []string{
-		//ast.AggFuncAvg,
-		//ast.AggFuncSum,
-		//ast.WindowFuncRowNumber,
+		ast.WindowFuncRowNumber,
 		ast.AggFuncBitXor,
 	}
-	numFuncs := []int{1, 2, 3, 4, 5}
+	numFuncs := []int{1, 5}
 	frames := []*core.WindowFrame{
 		{Type: ast.Rows, Start: &core.FrameBound{UnBounded: true}, End: &core.FrameBound{Type: ast.CurrentRow}},
 	}
-	sortTypes := []bool{true}
-	concs := []int{1, 2, 3, 4}
-	//concs := []int{1, 4}
+	sortTypes := []bool{false, true}
+	concs := []int{1, 2, 3, 4, 5, 6}
 	for i, windowFunc := range windowFuncs {
 		for _, sorted := range sortTypes {
 			for _, numFunc := range numFuncs {

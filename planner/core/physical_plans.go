@@ -581,7 +581,7 @@ const (
 type PhysicalPartitionDataSourceStub struct {
 	physicalSchemaProducer
 
-	// `Worker` points to `executor.partitionWorker`.
+	// Worker points to `executor.partitionWorker`.
 	Worker unsafe.Pointer
 }
 
