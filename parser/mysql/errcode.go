@@ -1030,6 +1030,11 @@ const (
 	ErrUnknownAllocatorType                = 8058
 	ErrAutoRandReadFailed                  = 8059
 	ErrInvalidIncrementAndOffset           = 8060
+	ErrWarnOptimizerHintUnsupportedHint    = 8061
+	ErrWarnOptimizerHintInvalidToken       = 8062
+	ErrWarnMemoryQuotaOverflow             = 8063
+	ErrWarnOptimizerHintParseError         = 8064
+	ErrWarnOptimizerHintInvalidInteger     = 8065
 
 	// Error codes used by TiDB ddl package
 	ErrUnsupportedDDLOperation        = 8200

@@ -42,8 +42,9 @@ type Scanner struct {
 	warns        []error
 	stmtStartPos int
 
-	// For scanning such kind of comment: /*! MySQL-specific code */ or /*+ optimizer hint */
-	specialComment specialCommentScanner
+	// inBangComment is true if we are inside a `/*! ... */` block.
+	// It is used to ignore a stray `*/` when scanning.
+	inBangComment bool
 
 	sqlMode mysql.SQLMode
 
@@ -55,51 +56,13 @@ type Scanner struct {
 	// lastScanOffset indicates last offset returned by scan().
 	// It's used to substring sql in syntax error message.
 	lastScanOffset int
-}
 
-type specialCommentScanner interface {
-	stmtTexter
-	scan() (tok int, pos Pos, lit string)
-}
+	// lastKeyword records the previous keyword returned by scan().
+	// determine whether an optimizer hint should be parsed or ignored.
+	lastKeyword int
 
-type mysqlSpecificCodeScanner struct {
-	*Scanner
-	Pos
-}
-
-func (s *mysqlSpecificCodeScanner) scan() (tok int, pos Pos, lit string) {
-	tok, pos, lit = s.Scanner.scan()
-	pos.Line += s.Pos.Line
-	pos.Col += s.Pos.Col
-	pos.Offset += s.Pos.Offset
-	return
-}
-
-type optimizerHintScanner struct {
-	*Scanner
-	Pos
-	end bool
-}
-
-func (s *optimizerHintScanner) scan() (tok int, pos Pos, lit string) {
-	tok, pos, lit = s.Scanner.scan()
-	pos.Line += s.Pos.Line
-	pos.Col += s.Pos.Col
-	pos.Offset += s.Pos.Offset
-	switch tok {
-	case 0:
-		if !s.end {
-			tok = hintEnd
-			s.end = true
-		}
-	case invalid:
-		// an optimizer hint is allowed to contain invalid characters, the
-		// remaining hints are just ignored.
-		// force advance the lexer even when encountering an invalid character
-		// to prevent infinite parser loop. (see issue #336)
-		s.r.inc()
-	}
-	return
+	// hintPos records the start position of the previous optimizer hint.
+	lastHintPos Pos
 }
 
 // Errors returns the errors and warns during a scan.
@@ -114,14 +77,11 @@ func (s *Scanner) reset(sql string) {
 	s.errs = s.errs[:0]
 	s.warns = s.warns[:0]
 	s.stmtStartPos = 0
-	s.specialComment = nil
+	s.inBangComment = false
+	s.lastKeyword = 0
 }
 
 func (s *Scanner) stmtText() string {
-	if s.specialComment != nil {
-		return s.specialComment.stmtText()
-	}
-
 	endPos := s.r.pos().Offset
 	if s.r.s[endPos-1] == '\n' {
 		endPos = endPos - 1 // trim new line
@@ -168,6 +128,7 @@ func (s *Scanner) AppendError(err error) {
 func (s *Scanner) Lex(v *yySymType) int {
 	tok, pos, lit := s.scan()
 	s.lastScanOffset = pos.Offset
+	s.lastKeyword = 0
 	v.offset = pos.Offset
 	v.ident = lit
 	if tok == identifier {
@@ -176,6 +137,7 @@ func (s *Scanner) Lex(v *yySymType) int {
 	if tok == identifier {
 		if tok1 := s.isTokenIdentifier(lit, pos.Offset); tok1 != 0 {
 			tok = tok1
+			s.lastKeyword = tok1
 		}
 	}
 	if s.sqlMode.HasANSIQuotesMode() &&
@@ -253,19 +215,6 @@ func (s *Scanner) skipWhitespace() rune {
 }
 
 func (s *Scanner) scan() (tok int, pos Pos, lit string) {
-	if s.specialComment != nil {
-		// Enter specialComment scan mode.
-		// for scanning such kind of comment: /*! MySQL-specific code */
-		specialComment := s.specialComment
-		tok, pos, lit = specialComment.scan()
-		if tok != 0 {
-			// return the specialComment scan result as the result
-			return
-		}
-		// leave specialComment scan mode after all stream consumed.
-		s.specialComment = nil
-	}
-
 	ch0 := s.r.peek()
 	if unicode.IsSpace(ch0) {
 		ch0 = s.skipWhitespace()
@@ -388,100 +337,95 @@ func startWithDash(s *Scanner) (tok int, pos Pos, lit string) {
 func startWithSlash(s *Scanner) (tok int, pos Pos, lit string) {
 	pos = s.r.pos()
 	s.r.inc()
-	ch0 := s.r.peek()
-	if ch0 == '*' {
-		s.r.inc()
-		startWithAsterisk := false
-		for {
-			ch0 = s.r.readByte()
-			if startWithAsterisk && ch0 == '/' {
-				// Meets */, means comment end.
-				break
-			} else if ch0 == '*' {
-				startWithAsterisk = true
-			} else {
-				startWithAsterisk = false
-			}
-
-			if ch0 == unicode.ReplacementChar && s.r.eof() {
-				// unclosed comment
-				s.errs = append(s.errs, ParseErrorWith(s.r.data(&pos), s.r.p.Line))
-				return
-			}
-
-		}
-
-		comment := s.r.data(&pos)
-
-		// See https://dev.mysql.com/doc/refman/5.7/en/optimizer-hints.html
-		if strings.HasPrefix(comment, "/*+") {
-			begin := sqlOffsetInComment(comment)
-			end := len(comment) - 2
-			sql := comment[begin:end]
-			s.specialComment = &optimizerHintScanner{
-				Scanner: s.InheritScanner(sql),
-				Pos: Pos{
-					pos.Line,
-					pos.Col,
-					pos.Offset + begin,
-				},
-			}
-
-			tok = hintBegin
-			return
-		}
-
-		// See http://dev.mysql.com/doc/refman/5.7/en/comments.html
-		// Convert "/*!VersionNumber MySQL-specific-code */" to "MySQL-specific-code".
-		if strings.HasPrefix(comment, "/*!") {
-			sql := specCodePattern.ReplaceAllStringFunc(comment, TrimComment)
-			s.specialComment = &mysqlSpecificCodeScanner{
-				Scanner: s.InheritScanner(sql),
-				Pos: Pos{
-					pos.Line,
-					pos.Col,
-					pos.Offset + sqlOffsetInComment(comment),
-				},
-			}
-		}
-
-		if strings.HasPrefix(comment, "/*T!") {
-			commentVersion := extractVersionCodeInComment(comment)
-			if commentVersion != CommentCodeNoVersion && commentVersion <= CommentCodeCurrentVersion {
-				sql := SpecVersionCodePattern.ReplaceAllStringFunc(comment, TrimCodeVersionComment)
-				s.specialComment = &mysqlSpecificCodeScanner{
-					Scanner: s.InheritScanner(sql),
-					Pos: Pos{
-						pos.Line,
-						pos.Col,
-						pos.Offset + sqlOffsetInComment(comment),
-					},
-				}
-			}
-		}
-
-		return s.scan()
+	if s.r.peek() != '*' {
+		tok = int('/')
+		return
 	}
-	tok = int('/')
-	return
+
+	isOptimizerHint := false
+	currentCharIsStar := false
+
+	s.r.inc() // we see '/*' so far.
+	switch s.r.readByte() {
+	case '!': // '/*!' MySQL-specific comments
+		// See http://dev.mysql.com/doc/refman/5.7/en/comments.html
+		// in '/*!', which we always recognize regardless of version.
+		_ = s.scanVersionDigits(5, 5)
+		s.inBangComment = true
+		return s.scan()
+
+	case 'T': // '/*T' maybe TiDB-specific comments
+		if s.r.peek() != '!' {
+			// '/*TX' is just normal comment.
+			break
+		}
+		s.r.inc()
+		// in '/*T!', try to consume the 5 to 6 digit version string.
+		commentVersion := s.scanVersionDigits(5, 6)
+		if commentVersion <= CommentCodeCurrentVersion {
+			s.inBangComment = true
+			return s.scan()
+		}
+
+	case 'M': // '/*M' maybe MariaDB-specific comments
+		// no special treatment for now.
+		break
+
+	case '+': // '/*+' optimizer hints
+		// See https://dev.mysql.com/doc/refman/5.7/en/optimizer-hints.html
+		if _, ok := hintedTokens[s.lastKeyword]; ok {
+			// only recognize optimizers hints directly followed by certain
+			// keywords like SELECT, INSERT, etc.
+			isOptimizerHint = true
+		}
+
+	case '*': // '/**' if the next char is '/' it would close the comment.
+		currentCharIsStar = true
+
+	default:
+		break
+	}
+
+	// standard C-like comment. read until we see '*/' then drop it.
+	for {
+		if currentCharIsStar || s.r.incAsLongAs(func(ch rune) bool { return ch != '*' }) == '*' {
+			switch s.r.readByte() {
+			case '/':
+				// Meets */, means comment end.
+				if isOptimizerHint {
+					s.lastHintPos = pos
+					return hintComment, pos, s.r.data(&pos)
+				} else {
+					return s.scan()
+				}
+			case 0:
+				break
+			case '*':
+				currentCharIsStar = true
+				continue
+			default:
+				currentCharIsStar = false
+				continue
+			}
+		}
+		// unclosed comment or other errors.
+		s.errs = append(s.errs, ParseErrorWith(s.r.data(&pos), s.r.p.Line))
+		return
+	}
 }
 
-func sqlOffsetInComment(comment string) int {
-	// find the first SQL token offset in pattern like "/*!40101 mysql specific code */"
-	offset := 0
-	for i := 0; i < len(comment); i++ {
-		if unicode.IsSpace(rune(comment[i])) {
-			offset = i
-			break
-		}
+func startWithStar(s *Scanner) (tok int, pos Pos, lit string) {
+	pos = s.r.pos()
+	s.r.inc()
+
+	// skip and exit '/*!' if we see '*/'
+	if s.inBangComment && s.r.peek() == '/' {
+		s.inBangComment = false
+		s.r.inc()
+		return s.scan()
 	}
-	for offset < len(comment) {
-		offset++
-		if !unicode.IsSpace(rune(comment[offset])) {
-			break
-		}
-	}
-	return offset
+	// otherwise it is just a normal star.
+	return '*', pos, "*"
 }
 
 func startWithAt(s *Scanner) (tok int, pos Pos, lit string) {
@@ -800,6 +744,33 @@ func (s *Scanner) scanDigits() string {
 	pos := s.r.pos()
 	s.r.incAsLongAs(isDigit)
 	return s.r.data(&pos)
+}
+
+// scanVersionDigits scans for `min` to `max` digits (range inclusive) used in
+// `/*!12345 ... */` comments.
+func (s *Scanner) scanVersionDigits(min, max int) (version CommentCodeVersion) {
+	pos := s.r.pos()
+	for i := 0; i < max; i++ {
+		ch := s.r.peek()
+		if isDigit(ch) {
+			version = version*10 + CommentCodeVersion(ch-'0')
+			s.r.inc()
+		} else if i < min {
+			s.r.p = pos
+			return CommentCodeNoVersion
+		} else {
+			break
+		}
+	}
+	return
+}
+
+func (s *Scanner) lastErrorAsWarn() {
+	if len(s.errs) == 0 {
+		return
+	}
+	s.warns = append(s.warns, s.errs[len(s.errs)-1])
+	s.errs = s.errs[:len(s.errs)-1]
 }
 
 type reader struct {

@@ -26,7 +26,6 @@
 package parser
 
 import (
-	"math"
 	"strings"
 
 	"github.com/pingcap/parser/mysql"
@@ -61,8 +60,7 @@ import (
 	singleAtIdentifier "identifier with single leading at"
 	doubleAtIdentifier "identifier with double leading at"
 	invalid            "a special token never used by parser, used by lexer to indicate error"
-	hintBegin          "hintBegin is a virtual token for optimizer hint grammar"
-	hintEnd            "hintEnd is a virtual token for optimizer hint grammar"
+	hintComment        "an optimizer hint"
 	andand             "&&"
 	pipes              "||"
 
@@ -575,7 +573,6 @@ import (
 	internal              "INTERNAL"
 	min                   "MIN"
 	max                   "MAX"
-	maxExecutionTime      "MAX_EXECUTION_TIME"
 	now                   "NOW"
 	position              "POSITION"
 	recent                "RECENT"
@@ -607,59 +604,34 @@ import (
 	optRuleBlacklist      "OPT_RULE_BLACKLIST"
 
 	/* The following tokens belong to TiDBKeyword. Notice: make sure these tokens are contained in TiDBKeyword. */
-	admin                     "ADMIN"
-	buckets                   "BUCKETS"
-	builtins                  "BUILTINS"
-	cancel                    "CANCEL"
-	cmSketch                  "CMSKETCH"
-	ddl                       "DDL"
-	depth                     "DEPTH"
-	drainer                   "DRAINER"
-	jobs                      "JOBS"
-	job                       "JOB"
-	nodeID                    "NODE_ID"
-	nodeState                 "NODE_STATE"
-	optimistic                "OPTIMISTIC"
-	pessimistic               "PESSIMISTIC"
-	pump                      "PUMP"
-	samples                   "SAMPLES"
-	stats                     "STATS"
-	statsMeta                 "STATS_META"
-	statsHistograms           "STATS_HISTOGRAMS"
-	statsBuckets              "STATS_BUCKETS"
-	statsHealthy              "STATS_HEALTHY"
-	tidb                      "TIDB"
-	hintAggToCop              "AGG_TO_COP"
-	hintHJ                    "HASH_JOIN"
-	hintSMJ                   "SM_JOIN"
-	hintINLJ                  "INL_JOIN"
-	hintINLHJ                 "INL_HASH_JOIN"
-	hintINLMJ                 "INL_MERGE_JOIN"
-	hintSJI                   "SWAP_JOIN_INPUTS"
-	hintNSJI                  "NO_SWAP_JOIN_INPUTS"
-	hintHASHAGG               "HASH_AGG"
-	hintSTREAMAGG             "STREAM_AGG"
-	hintUseIndex              "USE_INDEX"
-	hintIgnoreIndex           "IGNORE_INDEX"
-	hintUseIndexMerge         "USE_INDEX_MERGE"
-	hintNoIndexMerge          "NO_INDEX_MERGE"
-	hintUseToja               "USE_TOJA"
-	hintEnablePlanCache       "ENABLE_PLAN_CACHE"
-	hintUsePlanCache          "USE_PLAN_CACHE"
-	hintReadConsistentReplica "READ_CONSISTENT_REPLICA"
-	hintReadFromStorage       "READ_FROM_STORAGE"
-	hintQBName                "QB_NAME"
-	hintQueryType             "QUERY_TYPE"
-	hintMemoryQuota           "MEMORY_QUOTA"
-	hintOLAP                  "OLAP"
-	hintOLTP                  "OLTP"
-	hintTiKV                  "TIKV"
-	hintTiFlash               "TIFLASH"
-	topn                      "TOPN"
-	split                     "SPLIT"
-	width                     "WIDTH"
-	regions                   "REGIONS"
-	region                    "REGION"
+	admin              "ADMIN"
+	buckets            "BUCKETS"
+	builtins           "BUILTINS"
+	cancel             "CANCEL"
+	cmSketch           "CMSKETCH"
+	ddl                "DDL"
+	depth              "DEPTH"
+	drainer            "DRAINER"
+	jobs               "JOBS"
+	job                "JOB"
+	nodeID             "NODE_ID"
+	nodeState          "NODE_STATE"
+	optimistic         "OPTIMISTIC"
+	pessimistic        "PESSIMISTIC"
+	pump               "PUMP"
+	samples            "SAMPLES"
+	stats              "STATS"
+	statsMeta          "STATS_META"
+	statsHistograms    "STATS_HISTOGRAMS"
+	statsBuckets       "STATS_BUCKETS"
+	statsHealthy       "STATS_HEALTHY"
+	tidb               "TIDB"
+	tiFlash            "TIFLASH"
+	topn               "TOPN"
+	split              "SPLIT"
+	width              "WIDTH"
+	regions            "REGIONS"
+	region             "REGION"
 	builtinAddDate
 	builtinBitAnd
 	builtinBitOr
@@ -954,7 +926,6 @@ import (
 	AlterOrderItem                         "Alter Order item"
 	AlterOrderList                         "Alter Order list"
 	QuickOptional                          "QUICK or empty"
-	QueryBlockOpt                          "Query block identifier optional"
 	PartitionDefinition                    "Partition definition"
 	PartitionDefinitionList                "Partition definition list"
 	PartitionDefinitionListOpt             "Partition definition list option"
@@ -1148,18 +1119,7 @@ import (
 	NumList                                "Some numbers"
 	LengthNum                              "Field length num(uint64)"
 	SignedNum                              "Signed num(int64)"
-	StorageOptimizerHintOpt                "Storage level optimizer hint"
-	TableOptimizerHintOpt                  "Table level optimizer hint"
 	TableOptimizerHints                    "Table level optimizer hints"
-	OptimizerHintList                      "optimizer hint list"
-	HintTable                              "Table in optimizer hint"
-	HintTableList                          "Table list in optimizer hint"
-	HintStorageType                        "storage type in optimizer hint"
-	HintStorageTypeAndTable                "storage type and tables in optimizer hint"
-	HintStorageTypeAndTableList            "storage type and tables list in optimizer hint"
-	HintTrueOrFalse                        "True or false in optimizer hint"
-	HintQueryType                          "Query type in optimizer hint"
-	HintMemoryQuota                        "Memory quota in optimizer hint"
 	EnforcedOrNot                          "{ENFORCED|NOT ENFORCED}"
 	EnforcedOrNotOpt                       "Optional {ENFORCED|NOT ENFORCED}"
 	EnforcedOrNotOrNotNullOpt              "{[ENFORCED|NOT ENFORCED|NOT NULL]}"
@@ -4902,7 +4862,6 @@ UnReservedKeyword:
 
 TiDBKeyword:
 	"ADMIN"
-|	"AGG_TO_COP"
 |	"BUCKETS"
 |	"BUILTINS"
 |	"CANCEL"
@@ -4922,32 +4881,8 @@ TiDBKeyword:
 |	"STATS_BUCKETS"
 |	"STATS_HEALTHY"
 |	"TIDB"
-|	"HASH_JOIN"
-|	"SM_JOIN"
-|	"INL_JOIN"
-|	"INL_HASH_JOIN"
-|	"INL_MERGE_JOIN"
-|	"SWAP_JOIN_INPUTS"
-|	"NO_SWAP_JOIN_INPUTS"
-|	"HASH_AGG"
-|	"STREAM_AGG"
-|	"USE_INDEX"
-|	"IGNORE_INDEX"
-|	"USE_INDEX_MERGE"
-|	"NO_INDEX_MERGE"
-|	"USE_TOJA"
-|	"ENABLE_PLAN_CACHE"
-|	"USE_PLAN_CACHE"
-|	"READ_CONSISTENT_REPLICA"
-|	"READ_FROM_STORAGE"
-|	"QB_NAME"
-|	"QUERY_TYPE"
-|	"MEMORY_QUOTA"
-|	"OLAP"
-|	"OLTP"
-|	"TOPN"
-|	"TIKV"
 |	"TIFLASH"
+|	"TOPN"
 |	"SPLIT"
 |	"OPTIMISTIC"
 |	"PESSIMISTIC"
@@ -4974,7 +4909,6 @@ NotKeywordToken:
 |	"INTERNAL"
 |	"MIN"
 |	"MAX"
-|	"MAX_EXECUTION_TIME"
 |	"NOW"
 |	"RECENT"
 |	"POSITION"
@@ -7294,267 +7228,14 @@ TableOptimizerHints:
 	{
 		$$ = nil
 	}
-|	hintBegin OptimizerHintList hintEnd
+|	hintComment
 	{
-		$$ = $2
-	}
-|	hintBegin error hintEnd
-	{
-		yyerrok()
-		parser.lastErrorAsWarn()
-		$$ = nil
-	}
-
-OptimizerHintList:
-	TableOptimizerHintOpt
-	{
-		$$ = []*ast.TableOptimizerHint{$1.(*ast.TableOptimizerHint)}
-	}
-|	StorageOptimizerHintOpt
-	{
-		$$ = $1.([]*ast.TableOptimizerHint)
-	}
-|	OptimizerHintList TableOptimizerHintOpt
-	{
-		$$ = append($1.([]*ast.TableOptimizerHint), $2.(*ast.TableOptimizerHint))
-	}
-|	OptimizerHintList ',' TableOptimizerHintOpt
-	{
-		$$ = append($1.([]*ast.TableOptimizerHint), $3.(*ast.TableOptimizerHint))
-	}
-|	OptimizerHintList StorageOptimizerHintOpt
-	{
-		$$ = append($1.([]*ast.TableOptimizerHint), $2.([]*ast.TableOptimizerHint)...)
-	}
-|	OptimizerHintList ',' StorageOptimizerHintOpt
-	{
-		$$ = append($1.([]*ast.TableOptimizerHint), $3.([]*ast.TableOptimizerHint)...)
-	}
-
-TableOptimizerHintOpt:
-	hintUseIndex '(' QueryBlockOpt HintTable IndexNameList ')'
-	{
-		$$ = &ast.TableOptimizerHint{
-			HintName: model.NewCIStr($1),
-			QBName:   $3.(model.CIStr),
-			Tables:   []ast.HintTable{$4.(ast.HintTable)},
-			Indexes:  $5.([]model.CIStr),
+		hints, warns := parser.parseHint($1)
+		for _, w := range warns {
+			yylex.AppendError(w)
+			parser.lastErrorAsWarn()
 		}
-	}
-|	hintIgnoreIndex '(' QueryBlockOpt HintTable IndexNameList ')'
-	{
-		$$ = &ast.TableOptimizerHint{
-			HintName: model.NewCIStr($1),
-			QBName:   $3.(model.CIStr),
-			Tables:   []ast.HintTable{$4.(ast.HintTable)},
-			Indexes:  $5.([]model.CIStr),
-		}
-	}
-|	hintSMJ '(' QueryBlockOpt HintTableList ')'
-	{
-		$$ = &ast.TableOptimizerHint{HintName: model.NewCIStr($1), QBName: $3.(model.CIStr), Tables: $4.([]ast.HintTable)}
-	}
-|	hintINLJ '(' QueryBlockOpt HintTableList ')'
-	{
-		$$ = &ast.TableOptimizerHint{HintName: model.NewCIStr($1), QBName: $3.(model.CIStr), Tables: $4.([]ast.HintTable)}
-	}
-|	hintINLHJ '(' QueryBlockOpt HintTableList ')'
-	{
-		$$ = &ast.TableOptimizerHint{HintName: model.NewCIStr($1), QBName: $3.(model.CIStr), Tables: $4.([]ast.HintTable)}
-	}
-|	hintSJI '(' QueryBlockOpt HintTableList ')'
-	{
-		$$ = &ast.TableOptimizerHint{HintName: model.NewCIStr($1), QBName: $3.(model.CIStr), Tables: $4.([]ast.HintTable)}
-	}
-|	hintNSJI '(' QueryBlockOpt HintTableList ')'
-	{
-		$$ = &ast.TableOptimizerHint{HintName: model.NewCIStr($1), QBName: $3.(model.CIStr), Tables: $4.([]ast.HintTable)}
-	}
-|	hintINLMJ '(' QueryBlockOpt HintTableList ')'
-	{
-		$$ = &ast.TableOptimizerHint{HintName: model.NewCIStr($1), QBName: $3.(model.CIStr), Tables: $4.([]ast.HintTable)}
-	}
-|	hintHJ '(' QueryBlockOpt HintTableList ')'
-	{
-		$$ = &ast.TableOptimizerHint{HintName: model.NewCIStr($1), QBName: $3.(model.CIStr), Tables: $4.([]ast.HintTable)}
-	}
-|	hintUseIndexMerge '(' QueryBlockOpt HintTable IndexNameList ')'
-	{
-		$$ = &ast.TableOptimizerHint{
-			HintName: model.NewCIStr($1),
-			QBName:   $3.(model.CIStr),
-			Tables:   []ast.HintTable{$4.(ast.HintTable)},
-			Indexes:  $5.([]model.CIStr),
-		}
-	}
-|	hintUseToja '(' QueryBlockOpt HintTrueOrFalse ')'
-	{
-		$$ = &ast.TableOptimizerHint{HintName: model.NewCIStr($1), QBName: $3.(model.CIStr), HintFlag: $4.(bool)}
-	}
-|	hintEnablePlanCache '(' QueryBlockOpt HintTrueOrFalse ')'
-	{
-		$$ = &ast.TableOptimizerHint{HintName: model.NewCIStr($1), QBName: $3.(model.CIStr), HintFlag: $4.(bool)}
-	}
-|	maxExecutionTime '(' QueryBlockOpt NUM ')'
-	{
-		$$ = &ast.TableOptimizerHint{HintName: model.NewCIStr($1), QBName: $3.(model.CIStr), MaxExecutionTime: getUint64FromNUM($4)}
-	}
-|	hintUsePlanCache '(' QueryBlockOpt ')'
-	{
-		// arguments not decided yet.
-		$$ = &ast.TableOptimizerHint{HintName: model.NewCIStr($1), QBName: $3.(model.CIStr)}
-	}
-|	hintQueryType '(' QueryBlockOpt HintQueryType ')'
-	{
-		$$ = &ast.TableOptimizerHint{HintName: model.NewCIStr($1), QBName: $3.(model.CIStr), QueryType: model.NewCIStr($4.(string))}
-	}
-|	hintMemoryQuota '(' QueryBlockOpt HintMemoryQuota ')'
-	{
-		$$ = &ast.TableOptimizerHint{HintName: model.NewCIStr($1), QBName: $3.(model.CIStr), MemoryQuota: $4.(int64)}
-	}
-|	hintHASHAGG '(' QueryBlockOpt ')'
-	{
-		$$ = &ast.TableOptimizerHint{HintName: model.NewCIStr($1), QBName: $3.(model.CIStr)}
-	}
-|	hintSTREAMAGG '(' QueryBlockOpt ')'
-	{
-		$$ = &ast.TableOptimizerHint{HintName: model.NewCIStr($1), QBName: $3.(model.CIStr)}
-	}
-|	hintAggToCop '(' QueryBlockOpt ')'
-	{
-		$$ = &ast.TableOptimizerHint{HintName: model.NewCIStr($1), QBName: $3.(model.CIStr)}
-	}
-|	hintNoIndexMerge '(' QueryBlockOpt ')'
-	{
-		$$ = &ast.TableOptimizerHint{HintName: model.NewCIStr($1), QBName: $3.(model.CIStr)}
-	}
-|	hintReadConsistentReplica '(' QueryBlockOpt ')'
-	{
-		$$ = &ast.TableOptimizerHint{HintName: model.NewCIStr($1), QBName: $3.(model.CIStr)}
-	}
-|	hintQBName '(' Identifier ')'
-	{
-		$$ = &ast.TableOptimizerHint{HintName: model.NewCIStr($1), QBName: model.NewCIStr($3)}
-	}
-
-StorageOptimizerHintOpt:
-	hintReadFromStorage '(' QueryBlockOpt HintStorageTypeAndTableList ')'
-	{
-		$$ = $4.([]*ast.TableOptimizerHint)
-		for _, hint := range $$.([]*ast.TableOptimizerHint) {
-			hint.HintName = model.NewCIStr($1)
-			hint.QBName = $3.(model.CIStr)
-		}
-	}
-
-HintStorageTypeAndTableList:
-	HintStorageTypeAndTable
-	{
-		$$ = []*ast.TableOptimizerHint{$1.(*ast.TableOptimizerHint)}
-	}
-|	HintStorageTypeAndTableList ',' HintStorageTypeAndTable
-	{
-		$$ = append($1.([]*ast.TableOptimizerHint), $3.(*ast.TableOptimizerHint))
-	}
-
-HintStorageTypeAndTable:
-	HintStorageType '[' HintTableList ']'
-	{
-		$$ = &ast.TableOptimizerHint{
-			StoreType: model.NewCIStr($1.(string)),
-			Tables:    $3.([]ast.HintTable),
-		}
-	}
-
-QueryBlockOpt:
-	{
-		$$ = model.NewCIStr("")
-	}
-|	singleAtIdentifier
-	{
-		$$ = model.NewCIStr($1)
-	}
-
-HintTable:
-	Identifier QueryBlockOpt
-	{
-		$$ = ast.HintTable{TableName: model.NewCIStr($1), QBName: $2.(model.CIStr)}
-	}
-|	Identifier '.' Identifier QueryBlockOpt
-	{
-		$$ = ast.HintTable{DBName: model.NewCIStr($1), TableName: model.NewCIStr($3), QBName: $4.(model.CIStr)}
-	}
-
-HintTableList:
-	HintTable
-	{
-		$$ = []ast.HintTable{$1.(ast.HintTable)}
-	}
-|	HintTableList ',' HintTable
-	{
-		$$ = append($1.([]ast.HintTable), $3.(ast.HintTable))
-	}
-
-HintTrueOrFalse:
-	"TRUE"
-	{
-		$$ = true
-	}
-|	"FALSE"
-	{
-		$$ = false
-	}
-
-HintStorageType:
-	hintTiKV
-	{
-		$$ = $1
-	}
-|	hintTiFlash
-	{
-		$$ = $1
-	}
-
-HintQueryType:
-	hintOLAP
-	{
-		$$ = $1
-	}
-|	hintOLTP
-	{
-		$$ = $1
-	}
-
-HintMemoryQuota:
-	NUM Identifier
-	{
-		switch model.NewCIStr($2).L {
-		case "mb":
-			num := getInt64FromNUM($1)
-			if num > math.MaxInt64/1024/1024 {
-				yylex.AppendError(yylex.Errorf("Max value of MEMORY_QUOTA is 8796093022208 MB, ignore this invalid limit."))
-				parser.lastErrorAsWarn()
-				$$ = int64(-1)
-			} else if num < 0 {
-				$$ = int64(-1)
-			} else {
-				$$ = num * 1024 * 1024
-			}
-		case "gb":
-			num := getInt64FromNUM($1)
-			if num > math.MaxInt64/1024/1024/1024 {
-				yylex.AppendError(yylex.Errorf("Max value of MEMORY_QUOTA is 8589934592 GB, ignore this invalid limit."))
-				parser.lastErrorAsWarn()
-				$$ = int64(-1)
-			} else if num < 0 {
-				$$ = int64(-1)
-			} else {
-				$$ = num * 1024 * 1024 * 1024
-			}
-		default:
-			// Executor handle memory quota < 0 as no memory limit, here use it to trigger warning in TiDB.
-			$$ = int64(-1)
-		}
+		$$ = hints
 	}
 
 SelectStmtCalcFoundRows:

@@ -173,17 +173,7 @@ func (d *sqlDigester) normalize(sql string) {
 
 func (d *sqlDigester) reduceOptimizerHint(tok *token) (reduced bool) {
 	// ignore /*+..*/
-	if tok.tok == hintBegin {
-		for {
-			tok, _, _ := d.lexer.scan()
-			if tok == 0 || (tok == unicode.ReplacementChar && d.lexer.r.eof()) {
-				break
-			}
-			if tok == hintEnd {
-				reduced = true
-				break
-			}
-		}
+	if tok.tok == hintComment {
 		return
 	}
 
