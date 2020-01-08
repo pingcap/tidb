@@ -1392,22 +1392,21 @@ func buildTableInfoWithCheck(ctx sessionctx.Context, s *ast.CreateTableStmt, dbC
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-	}
-
-	if pi != nil {
-		switch pi.Type {
-		case model.PartitionTypeRange:
-			err = checkPartitionByRange(ctx, tbInfo, pi, cols, s)
-		case model.PartitionTypeHash:
-			err = checkPartitionByHash(ctx, pi, s, cols, tbInfo)
+		if pi != nil {
+			switch pi.Type {
+			case model.PartitionTypeRange:
+				err = checkPartitionByRange(ctx, tbInfo, pi, cols, s)
+			case model.PartitionTypeHash:
+				err = checkPartitionByHash(ctx, pi, s, cols, tbInfo)
+			}
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			if err = checkRangePartitioningKeysConstraints(ctx, s, tbInfo, newConstraints); err != nil {
+				return nil, errors.Trace(err)
+			}
+			tbInfo.Partition = pi
 		}
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if err = checkRangePartitioningKeysConstraints(ctx, s, tbInfo, newConstraints); err != nil {
-			return nil, errors.Trace(err)
-		}
-		tbInfo.Partition = pi
 	}
 
 	if err = handleTableOptions(s.Options, tbInfo); err != nil {
