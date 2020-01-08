@@ -31,6 +31,9 @@ func (gc *gcSubstituter) optimize(ctx context.Context, lp LogicalPlan) (LogicalP
 	return gc.substitute(ctx, lp, exprToColumn, lp.SCtx().GetSessionVars().StmtCtx), nil
 }
 
+// collectGenerateColumn collect the generate column and save them to a map from their expressions to themselves.
+// For the sake of simplicity, we don't collect the stored generate column because we can't their expressions directly.
+// TODO: support stored generate column.
 func collectGenerateColumn(lp LogicalPlan, exprToColumn map[expression.Expression]expression.Expression) {
 	if ds, ok := lp.(*DataSource); ok {
 		tblInfo := ds.tableInfo
