@@ -17,6 +17,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -27,7 +28,7 @@ import (
 type mockPDConfigClient struct {
 	status      *configpb.Status
 	version     *configpb.Version
-	confContent string
+	confContent atomic.Value
 	err         error
 }
 
@@ -43,11 +44,11 @@ func (mc *mockPDConfigClient) GetClusterID(ctx context.Context) uint64 {
 }
 
 func (mc *mockPDConfigClient) Create(ctx context.Context, v *configpb.Version, component, componentID, config string) (*configpb.Status, *configpb.Version, string, error) {
-	return mc.status, mc.version, mc.confContent, mc.err
+	return mc.status, mc.version, mc.confContent.Load().(string), mc.err
 }
 
 func (mc *mockPDConfigClient) Get(ctx context.Context, v *configpb.Version, component, componentID string) (*configpb.Status, *configpb.Version, string, error) {
-	return mc.status, mc.version, mc.confContent, mc.err
+	return mc.status, mc.version, mc.confContent.Load().(string), mc.err
 }
 
 func (mc *mockPDConfigClient) Update(ctx context.Context, v *configpb.Version, kind *configpb.ConfigKind, entries []*configpb.ConfigEntry) (*configpb.Status, *configpb.Version, error) {
@@ -88,6 +89,7 @@ func (s *testConfigSuite) TestPDConfHandler(c *C) {
 	// error when registering
 	newMockPDConfigClientErr = nil
 	mockPDConfigClient0.err = fmt.Errorf("")
+	mockPDConfigClient0.confContent.Store("")
 	_, err = newPDConfHandler(&conf, nil, newMockPDConfigClient)
 	c.Assert(err, NotNil)
 
@@ -99,7 +101,8 @@ func (s *testConfigSuite) TestPDConfHandler(c *C) {
 
 	// create client successfully
 	mockPDConfigClient0.status.Code = configpb.StatusCode_OK
-	mockPDConfigClient0.confContent, _ = encodeConfig(&conf)
+	content, _ := encodeConfig(&conf)
+	mockPDConfigClient0.confContent.Store(content)
 	ch, err := newPDConfHandler(&conf, nil, newMockPDConfigClient)
 	c.Assert(err, IsNil)
 	ch.Close()
@@ -119,7 +122,8 @@ func (s *testConfigSuite) TestPDConfHandler(c *C) {
 	c.Assert(ch.GetConfig().Log.Level, Equals, "info")
 	newConf := conf
 	newConf.Log.Level = "debug"
-	mockPDConfigClient0.confContent, _ = encodeConfig(&newConf)
+	newContent, _ := encodeConfig(&newConf)
+	mockPDConfigClient0.confContent.Store(newContent)
 	time.Sleep(time.Second * 2)
 	wg.Wait()
 	c.Assert(ch.GetConfig().Log.Level, Equals, "debug")
