@@ -85,7 +85,6 @@ var (
 	_ AggFunc = (*bitAndUint64)(nil)
 
 	// All the AggFunc implementations for "JSON_OBJECTAGG" are listed here
-	_ AggFunc = (*original4JsonObjectAgg)(nil)
 	_ AggFunc = (*partial4JsonObjectAgg)(nil)
 )
 

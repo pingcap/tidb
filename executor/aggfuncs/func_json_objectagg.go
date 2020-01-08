@@ -91,10 +91,6 @@ func (e *baseJsonObjectAgg) UpdatePartialResult(sctx sessionctx.Context, rowsInG
 	return nil
 }
 
-type original4JsonObjectAgg struct {
-	baseJsonObjectAgg
-}
-
 type partial4JsonObjectAgg struct {
 	baseJsonObjectAgg
 }
