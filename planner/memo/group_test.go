@@ -113,15 +113,19 @@ func (s *testMemoSuite) TestGroupExists(c *C) {
 }
 
 func (s *testMemoSuite) TestGroupFingerPrint(c *C) {
-	stmt1, err := s.ParseOneStmt("select 1 + 3", "", "")
+	stmt1, err := s.ParseOneStmt("select * from t where a > 1 and a < 100", "", "")
 	c.Assert(err, IsNil)
 	p1, _, err := plannercore.BuildLogicalPlan(context.Background(), s.sctx, stmt1, s.is)
 	c.Assert(err, IsNil)
 	logic1, ok := p1.(plannercore.LogicalPlan)
 	c.Assert(ok, IsTrue)
+	// Plan tree should be: DataSource -> Selection -> Projection
+	proj, ok := logic1.(*plannercore.LogicalProjection)
+	c.Assert(ok, IsTrue)
+	sel, ok := logic1.Children()[0].(*plannercore.LogicalSelection)
+	c.Assert(ok, IsTrue)
 	group1 := Convert2Group(logic1)
 	oldGroupExpr := group1.Equivalents.Front().Value.(*GroupExpr)
-	proj := oldGroupExpr.ExprNode
 
 	// Insert a GroupExpr with the same ExprNode.
 	newGroupExpr := NewGroupExpr(proj)
@@ -142,6 +146,20 @@ func (s *testMemoSuite) TestGroupFingerPrint(c *C) {
 	newGroupExpr3.SetChildren(oldGroupExpr.Children[0])
 	group1.Insert(newGroupExpr3)
 	c.Assert(group1.Equivalents.Len(), Equals, 3)
+
+	// Insert two LogicalSelections with same conditions but different order.
+	c.Assert(len(sel.Conditions), Equals, 2)
+	newSelection := plannercore.LogicalSelection{
+		Conditions: make([]expression.Expression, 2)}.Init(sel.SCtx(), sel.SelectBlockOffset())
+	newSelection.Conditions[0], newSelection.Conditions[1] = sel.Conditions[1], sel.Conditions[0]
+	newGroupExpr4 := NewGroupExpr(sel)
+	newGroupExpr5 := NewGroupExpr(newSelection)
+	newGroupExpr4.SetChildren(oldGroupExpr.Children[0])
+	newGroupExpr5.SetChildren(oldGroupExpr.Children[0])
+	group1.Insert(newGroupExpr4)
+	c.Assert(group1.Equivalents.Len(), Equals, 4)
+	group1.Insert(newGroupExpr5)
+	c.Assert(group1.Equivalents.Len(), Equals, 4)
 }
 
 func (s *testMemoSuite) TestGroupGetFirstElem(c *C) {

@@ -35,10 +35,11 @@ func (s *testMemoSuite) TestGroupExprFingerprint(c *C) {
 	expr := NewGroupExpr(p)
 	childGroup := NewGroupWithSchema(nil, expression.NewSchema())
 	expr.SetChildren(childGroup)
-	// ChildNum(2 bytes) + ChildPointer(8 bytes) + LogicalLimit HashCode(20 bytes)
-	buffer := make([]byte, 30)
+	// ChildNum(2 bytes) + ChildPointer(8 bytes) + LogicalLimit HashCode
+	planHash := p.HashCode()
+	buffer := make([]byte, 10+len(planHash))
 	binary.BigEndian.PutUint16(buffer, 1)
 	binary.BigEndian.PutUint64(buffer[2:], uint64(reflect.ValueOf(childGroup).Pointer()))
-	copy(buffer[10:], p.HashCode())
+	copy(buffer[10:], planHash)
 	c.Assert(expr.FingerPrint(), Equals, string(buffer))
 }
