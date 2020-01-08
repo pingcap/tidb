@@ -269,6 +269,8 @@ type Request struct {
 	ReplicaRead ReplicaReadType
 	// StoreType represents this request is sent to the which type of store.
 	StoreType StoreType
+	// SchemaVer is for any schema-ful storage to validate schema correctness if necessary.
+	SchemaVar int64
 }
 
 // ResultSubset represents a result subset from a single storage unit.

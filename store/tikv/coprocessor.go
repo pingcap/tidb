@@ -718,9 +718,10 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 	req := &tikvrpc.Request{
 		Type: task.cmdType,
 		Cop: &coprocessor.Request{
-			Tp:     worker.req.Tp,
-			Data:   worker.req.Data,
-			Ranges: task.ranges.toPBRanges(),
+			Tp:        worker.req.Tp,
+			Data:      worker.req.Data,
+			Ranges:    task.ranges.toPBRanges(),
+			SchemaVer: worker.req.SchemaVar,
 		},
 		Context: kvrpcpb.Context{
 			IsolationLevel: pbIsolationLevel(worker.req.IsolationLevel),
