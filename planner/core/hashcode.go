@@ -44,7 +44,6 @@ func (p *LogicalProjection) HashCode() []byte {
 	result = encodeIntAsUint32(result, len(p.Exprs))
 	for _, expr := range p.Exprs {
 		exprHashCode := expr.HashCode(p.ctx.GetSessionVars().StmtCtx)
-		println(len(exprHashCode))
 		result = encodeIntAsUint32(result, len(exprHashCode))
 		result = append(result, exprHashCode...)
 	}
