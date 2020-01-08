@@ -17,9 +17,9 @@ import (
 	"container/heap"
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/config"
 	"sort"
 
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/expression"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/types"
@@ -56,7 +56,7 @@ type SortExec struct {
 
 	// partitionList is the chunks to store row values for partitions.
 	partitionList []*chunk.RowContainer
-	// partitionRowPtrs
+	// partitionRowPtrs store the sorted RowPtrs for each row for partitions.
 	partitionRowPtrs [][]chunk.RowPtr
 
 	// sortRows is used to maintain a heap.
@@ -175,6 +175,11 @@ func (e *SortExec) generatePartition() {
 	sort.Slice(e.rowPtrs, e.keyColumnsLess)
 	e.partitionList = append(e.partitionList, e.rowChunks)
 	e.partitionRowPtrs = append(e.partitionRowPtrs, e.rowPtrs)
+	e.rowChunks = chunk.NewRowContainer(retTypes(e), e.maxChunkSize)
+	e.rowChunks.GetMemTracker().AttachTo(e.memTracker)
+	e.rowChunks.GetMemTracker().SetLabel(rowChunksLabel)
+	e.spillAction.SetRowContainer(e.rowChunks)
+	e.spillAction.ResetOnce()
 }
 
 type topNChunkHeapWithIndex struct {
@@ -265,13 +270,6 @@ func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 		}
 		if err := e.rowChunks.Add(chk, e.generatePartition); err != nil {
 			return err
-		}
-		if e.rowChunks.AlreadySpilled() {
-			e.rowChunks = chunk.NewRowContainer(retTypes(e), e.maxChunkSize)
-			e.rowChunks.GetMemTracker().AttachTo(e.memTracker)
-			e.rowChunks.GetMemTracker().SetLabel(rowChunksLabel)
-			e.spillAction.SetRowContainer(e.rowChunks)
-			e.spillAction.ResetOnce()
 		}
 	}
 	if e.rowChunks.NumRow() > 0 && len(e.partitionList) > 0 {

@@ -59,8 +59,7 @@ func NewRowContainer(fieldType []*types.FieldType, chunkSize int) *RowContainer 
 	return rc
 }
 
-// SpillToDisk spill RowContainer to disk.
-func (c *RowContainer) SpillToDisk() (err error) {
+func (c *RowContainer) spillToDisk() (err error) {
 	N := c.records.NumChunks()
 	c.recordsInDisk = NewListInDisk(c.records.FieldTypes())
 	c.recordsInDisk.diskTracker.AttachTo(c.diskTracker)
@@ -132,7 +131,7 @@ func (c *RowContainer) Add(chk *Chunk, callback func()) (err error) {
 			if callback != nil {
 				callback()
 			}
-			err = c.SpillToDisk()
+			err = c.spillToDisk()
 			if err != nil {
 				return err
 			}
@@ -201,7 +200,7 @@ type SpillDiskAction struct {
 	fallbackAction memory.ActionOnExceed
 }
 
-// Action sends a signal to trigger SpillToDisk method of RowContainer
+// Action sends a signal to trigger spillToDisk method of RowContainer
 // and if it is already triggered before, call its fallbackAction.
 func (a *SpillDiskAction) Action(t *memory.Tracker) {
 	if a.c.AlreadySpilledSafe() {
