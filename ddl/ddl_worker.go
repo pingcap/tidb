@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/terror"
+	pumpcli "github.com/pingcap/tidb-tools/tidb-binlog/pump_client"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -158,7 +159,7 @@ func buildJobDependence(t *meta.Meta, curJob *model.Job) error {
 	var jobs []*model.Job
 	var err error
 	switch curJob.Type {
-	case model.ActionAddIndex:
+	case model.ActionAddIndex, model.ActionAddPrimaryKey:
 		jobs, err = t.GetAllDDLJobsInQueue(meta.DefaultJobListKey)
 	default:
 		jobs, err = t.GetAllDDLJobsInQueue(meta.AddIndexJobListKey)
@@ -264,7 +265,7 @@ func (w *worker) deleteRange(job *model.Job) error {
 	if job.Version <= currentVersion {
 		err = w.delRangeManager.addDelRangeJob(job)
 	} else {
-		err = errInvalidJobVersion.GenWithStackByArgs(job.Version, currentVersion)
+		err = errInvalidDDLJobVersion.GenWithStackByArgs(job.Version, currentVersion)
 	}
 	return errors.Trace(err)
 }
@@ -279,14 +280,15 @@ func (w *worker) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
 
 	if !job.IsCancelled() {
 		switch job.Type {
-		case model.ActionAddIndex:
+		case model.ActionAddIndex, model.ActionAddPrimaryKey:
 			if job.State != model.JobStateRollbackDone {
 				break
 			}
 
 			// After rolling back an AddIndex operation, we need to use delete-range to delete the half-done index data.
 			err = w.deleteRange(job)
-		case model.ActionDropSchema, model.ActionDropTable, model.ActionTruncateTable, model.ActionDropIndex, model.ActionDropTablePartition, model.ActionTruncateTablePartition:
+		case model.ActionDropSchema, model.ActionDropTable, model.ActionTruncateTable, model.ActionDropIndex, model.ActionDropPrimaryKey,
+			model.ActionDropTablePartition, model.ActionTruncateTablePartition:
 			err = w.deleteRange(job)
 		}
 	}
@@ -305,7 +307,13 @@ func (w *worker) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
 
 	job.BinlogInfo.FinishedTS = t.StartTS
 	logutil.Logger(w.logCtx).Info("[ddl] finish DDL job", zap.String("job", job.String()))
-	err = t.AddHistoryDDLJob(job)
+	updateRawArgs := true
+	if job.Type == model.ActionAddPrimaryKey && !job.IsCancelled() {
+		// ActionAddPrimaryKey needs to check the warnings information in job.Args.
+		// Notice: warnings is used to support non-strict mode.
+		updateRawArgs = false
+	}
+	err = t.AddHistoryDDLJob(job, updateRawArgs)
 	return errors.Trace(err)
 }
 
@@ -344,7 +352,7 @@ func isDependencyJobDone(t *meta.Meta, job *model.Job) (bool, error) {
 }
 
 func newMetaWithQueueTp(txn kv.Transaction, tp string) *meta.Meta {
-	if tp == model.AddIndexStr {
+	if tp == model.AddIndexStr || tp == model.AddPrimaryKeyStr {
 		return meta.NewMeta(txn, meta.AddIndexJobListKey)
 	}
 	return meta.NewMeta(txn)
@@ -419,9 +427,7 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 			if err = w.handleUpdateJobError(t, job, err); err != nil {
 				return errors.Trace(err)
 			}
-			if job.IsDone() || job.IsRollbackDone() {
-				binloginfo.SetDDLBinlog(d.binlogCli, txn, job.ID, job.Query)
-			}
+			writeBinlog(d.binlogCli, txn, job)
 			return nil
 		})
 
@@ -452,6 +458,16 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 		if job.IsSynced() || job.IsCancelled() {
 			asyncNotify(d.ddlJobDoneCh)
 		}
+	}
+}
+
+func writeBinlog(binlogCli *pumpcli.PumpsClient, txn kv.Transaction, job *model.Job) {
+	if job.IsDone() || job.IsRollbackDone() ||
+		// When this column is in the "delete only" and "delete reorg" states, the binlog of "drop column" has not been written yet,
+		// but the column has been removed from the binlog of the write operation.
+		// So we add this binlog to enable downstream components to handle DML correctly in this schema state.
+		(job.Type == model.ActionDropColumn && job.SchemaState == model.StateDeleteOnly) {
+		binloginfo.SetDDLBinlog(binlogCli, txn, job.ID, int32(job.SchemaState), job.Query)
 	}
 }
 
@@ -511,6 +527,8 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 		ver, err = onDropSchema(t, job)
 	case model.ActionCreateTable:
 		ver, err = onCreateTable(d, t, job)
+	case model.ActionRepairTable:
+		ver, err = onRepairTable(d, t, job)
 	case model.ActionCreateView:
 		ver, err = onCreateView(d, t, job)
 	case model.ActionDropTable, model.ActionDropView:
@@ -528,8 +546,10 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 	case model.ActionSetDefaultValue:
 		ver, err = onSetDefaultValue(t, job)
 	case model.ActionAddIndex:
-		ver, err = w.onCreateIndex(d, t, job)
-	case model.ActionDropIndex:
+		ver, err = w.onCreateIndex(d, t, job, false)
+	case model.ActionAddPrimaryKey:
+		ver, err = w.onCreateIndex(d, t, job, true)
+	case model.ActionDropIndex, model.ActionDropPrimaryKey:
 		ver, err = onDropIndex(t, job)
 	case model.ActionRenameIndex:
 		ver, err = onRenameIndex(t, job)

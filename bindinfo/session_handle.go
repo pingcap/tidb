@@ -18,7 +18,6 @@ import (
 
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
@@ -48,46 +47,59 @@ func (h *SessionHandle) appendBindRecord(hash string, meta *BindRecord) {
 }
 
 // AddBindRecord new a BindRecord with BindMeta, add it to the cache.
-func (h *SessionHandle) AddBindRecord(sctx sessionctx.Context, is infoschema.InfoSchema, record *BindRecord) error {
-	for i := range record.Bindings {
-		record.Bindings[i].CreateTime = types.Time{
-			Time: types.FromGoTime(time.Now()),
-			Type: mysql.TypeDatetime,
-			Fsp:  3,
+func (h *SessionHandle) AddBindRecord(sctx sessionctx.Context, record *BindRecord) error {
+	err := record.prepareHints(sctx)
+	if err != nil {
+		return err
+	}
+	br := h.GetBindRecord(record.OriginalSQL, record.Db)
+	var duplicateBinding *Binding
+	if br != nil {
+		binding := br.FindBinding(record.Bindings[0].id)
+		if binding != nil {
+			duplicateBinding = binding
 		}
-		record.Bindings[i].UpdateTime = record.Bindings[i].CreateTime
+	}
+	now := types.NewTime(types.FromGoTime(time.Now().In(sctx.GetSessionVars().StmtCtx.TimeZone)), mysql.TypeTimestamp, 3)
+	for i := range record.Bindings {
+		if duplicateBinding != nil {
+			record.Bindings[i].CreateTime = duplicateBinding.CreateTime
+		} else {
+			record.Bindings[i].CreateTime = now
+		}
+		record.Bindings[i].UpdateTime = now
 	}
 
-	err := record.prepareHintsForUsing(sctx, is)
 	// update the BindMeta to the cache.
-	if err == nil {
-		h.appendBindRecord(parser.DigestHash(record.OriginalSQL), record)
-	}
-	return err
+	h.appendBindRecord(parser.DigestNormalized(record.OriginalSQL), record)
+	return nil
 }
 
 // DropBindRecord drops a BindRecord in the cache.
-func (h *SessionHandle) DropBindRecord(record *BindRecord) {
-	oldRecord := h.GetBindRecord(record.OriginalSQL, record.Db)
+func (h *SessionHandle) DropBindRecord(originalSQL, db string, binding *Binding) error {
+	oldRecord := h.GetBindRecord(originalSQL, db)
 	var newRecord *BindRecord
+	record := &BindRecord{OriginalSQL: originalSQL, Db: db}
+	if binding != nil {
+		record.Bindings = append(record.Bindings, *binding)
+	}
 	if oldRecord != nil {
 		newRecord = oldRecord.remove(record)
 	} else {
 		newRecord = record
 	}
-	h.ch.setBindRecord(parser.DigestHash(record.OriginalSQL), newRecord)
+	h.ch.setBindRecord(parser.DigestNormalized(record.OriginalSQL), newRecord)
 	updateMetrics(metrics.ScopeSession, oldRecord, newRecord, false)
+	return nil
 }
 
 // GetBindRecord return the BindMeta of the (normdOrigSQL,db) if BindMeta exist.
 func (h *SessionHandle) GetBindRecord(normdOrigSQL, db string) *BindRecord {
-	hash := parser.DigestHash(normdOrigSQL)
+	hash := parser.DigestNormalized(normdOrigSQL)
 	bindRecords := h.ch[hash]
-	if bindRecords != nil {
-		for _, bindRecord := range bindRecords {
-			if bindRecord.OriginalSQL == normdOrigSQL && bindRecord.Db == db {
-				return bindRecord
-			}
+	for _, bindRecord := range bindRecords {
+		if bindRecord.OriginalSQL == normdOrigSQL && bindRecord.Db == db {
+			return bindRecord
 		}
 	}
 	return nil

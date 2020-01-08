@@ -331,6 +331,7 @@ func (c *leftShiftFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, types.ETInt, types.ETInt)
 	sig := &builtinLeftShiftSig{bf}
+	sig.setPbCode(tipb.ScalarFuncSig_LeftShift)
 	sig.tp.Flag |= mysql.UnsignedFlag
 	return sig, nil
 }
@@ -368,6 +369,7 @@ func (c *rightShiftFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, types.ETInt, types.ETInt)
 	sig := &builtinRightShiftSig{bf}
+	sig.setPbCode(tipb.ScalarFuncSig_RightShift)
 	sig.tp.Flag |= mysql.UnsignedFlag
 	return sig, nil
 }

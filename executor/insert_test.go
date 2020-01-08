@@ -15,7 +15,9 @@ package executor_test
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
+	"sync"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/terror"
@@ -255,7 +257,7 @@ func (s *testSuite3) TestInsertZeroYear(c *C) {
 	))
 }
 
-func (s *testSuite3) TestAllowInvalidDates(c *C) {
+func (s *testSuiteP1) TestAllowInvalidDates(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test`)
 	tk.MustExec(`drop table if exists t1, t2, t3, t4;`)
@@ -761,4 +763,140 @@ func (s *testSuite3) TestBit(c *C) {
 	_, err = tk.Exec("insert into t64 values(18446744073709551616)") // z^64
 	c.Assert(err.Error(), Matches, ".*Out of range value for column 'a' at.*")
 
+}
+
+func (s *testSuiteP1) TestAllocateContinuousRowID(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table t1 (a int,b int, key I_a(a));`)
+	wg := sync.WaitGroup{}
+	for i := 0; i < 5; i++ {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			tk := testkit.NewTestKitWithInit(c, s.store)
+			for j := 0; j < 10; j++ {
+				k := strconv.Itoa(idx*100 + j)
+				sql := "insert into t1(a,b) values (" + k + ", 2)"
+				for t := 0; t < 20; t++ {
+					sql += ",(" + k + ",2)"
+				}
+				tk.MustExec(sql)
+				q := "select _tidb_rowid from t1 where a=" + k
+				fmt.Printf("query: %v\n", q)
+				rows := tk.MustQuery(q).Rows()
+				c.Assert(len(rows), Equals, 21)
+				last := 0
+				for _, r := range rows {
+					c.Assert(len(r), Equals, 1)
+					v, err := strconv.Atoi(r[0].(string))
+					c.Assert(err, Equals, nil)
+					if last > 0 {
+						c.Assert(last+1, Equals, v)
+					}
+					last = v
+				}
+			}
+		}(i)
+	}
+	wg.Wait()
+}
+
+func (s *testSuite3) TestJiraIssue5366(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table bug (a varchar(100))`)
+	tk.MustExec(` insert into bug select  ifnull(JSON_UNQUOTE(JSON_EXTRACT('[{"amount":2000,"feeAmount":0,"merchantNo":"20190430140319679394","shareBizCode":"20160311162_SECOND"}]', '$[0].merchantNo')),'') merchant_no union SELECT '20180531557' merchant_no;`)
+	tk.MustQuery(`select * from bug`).Sort().Check(testkit.Rows("20180531557", "20190430140319679394"))
+}
+
+func (s *testSuite3) TestDMLCast(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table t (a int, b double)`)
+	tk.MustExec(`insert into t values (ifnull('',0)+0, 0)`)
+	tk.MustExec(`insert into t values (0, ifnull('',0)+0)`)
+	tk.MustQuery(`select * from t`).Check(testkit.Rows("0 0", "0 0"))
+	_, err := tk.Exec(`insert into t values ('', 0)`)
+	c.Assert(err, NotNil)
+	_, err = tk.Exec(`insert into t values (0, '')`)
+	c.Assert(err, NotNil)
+	_, err = tk.Exec(`update t set a = ''`)
+	c.Assert(err, NotNil)
+	_, err = tk.Exec(`update t set b = ''`)
+	c.Assert(err, NotNil)
+	tk.MustExec("update t set a = ifnull('',0)+0")
+	tk.MustExec("update t set b = ifnull('',0)+0")
+	tk.MustExec("delete from t where a = ''")
+	tk.MustQuery(`select * from t`).Check(testkit.Rows())
+}
+
+// There is a potential issue in MySQL: when the value of auto_increment_offset is greater
+// than that of auto_increment_increment, the value of auto_increment_offset is ignored
+// (https://dev.mysql.com/doc/refman/8.0/en/replication-options-master.html#sysvar_auto_increment_increment),
+// This issue is a flaw of the implementation of MySQL and it doesn't exist in TiDB.
+func (s *testSuite3) TestAutoIDIncrementAndOffset(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test`)
+	// Test for offset is larger than increment.
+	tk.Se.GetSessionVars().AutoIncrementIncrement = 5
+	tk.Se.GetSessionVars().AutoIncrementOffset = 10
+	tk.MustExec(`create table io (a int key auto_increment)`)
+	tk.MustExec(`insert into io values (null),(null),(null)`)
+	tk.MustQuery(`select * from io`).Check(testkit.Rows("10", "15", "20"))
+	tk.MustExec(`drop table io`)
+
+	// Test handle is PK.
+	tk.MustExec(`create table io (a int key auto_increment)`)
+	tk.Se.GetSessionVars().AutoIncrementOffset = 10
+	tk.Se.GetSessionVars().AutoIncrementIncrement = 2
+	tk.MustExec(`insert into io values (),(),()`)
+	tk.MustQuery(`select * from io`).Check(testkit.Rows("10", "12", "14"))
+	tk.MustExec(`delete from io`)
+
+	// Test reset the increment.
+	tk.Se.GetSessionVars().AutoIncrementIncrement = 5
+	tk.MustExec(`insert into io values (),(),()`)
+	tk.MustQuery(`select * from io`).Check(testkit.Rows("15", "20", "25"))
+	tk.MustExec(`delete from io`)
+
+	tk.Se.GetSessionVars().AutoIncrementIncrement = 10
+	tk.MustExec(`insert into io values (),(),()`)
+	tk.MustQuery(`select * from io`).Check(testkit.Rows("30", "40", "50"))
+	tk.MustExec(`delete from io`)
+
+	tk.Se.GetSessionVars().AutoIncrementIncrement = 5
+	tk.MustExec(`insert into io values (),(),()`)
+	tk.MustQuery(`select * from io`).Check(testkit.Rows("55", "60", "65"))
+	tk.MustExec(`drop table io`)
+
+	// Test handle is not PK.
+	tk.Se.GetSessionVars().AutoIncrementIncrement = 2
+	tk.Se.GetSessionVars().AutoIncrementOffset = 10
+	tk.MustExec(`create table io (a int, b int auto_increment, key(b))`)
+	tk.MustExec(`insert into io(b) values (null),(null),(null)`)
+	// AutoID allocation will take increment and offset into consideration.
+	tk.MustQuery(`select b from io`).Check(testkit.Rows("10", "12", "14"))
+	// HandleID allocation will ignore the increment and offset.
+	tk.MustQuery(`select _tidb_rowid from io`).Check(testkit.Rows("15", "16", "17"))
+	tk.MustExec(`delete from io`)
+
+	tk.Se.GetSessionVars().AutoIncrementIncrement = 10
+	tk.MustExec(`insert into io(b) values (null),(null),(null)`)
+	tk.MustQuery(`select b from io`).Check(testkit.Rows("20", "30", "40"))
+	tk.MustQuery(`select _tidb_rowid from io`).Check(testkit.Rows("41", "42", "43"))
+
+	// Test invalid value.
+	tk.Se.GetSessionVars().AutoIncrementIncrement = -1
+	tk.Se.GetSessionVars().AutoIncrementOffset = -2
+	_, err := tk.Exec(`insert into io(b) values (null),(null),(null)`)
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[autoid:8060]Invalid auto_increment settings: auto_increment_increment: -1, auto_increment_offset: -2, both of them must be in range [1..65535]")
+	tk.MustExec(`delete from io`)
+
+	tk.Se.GetSessionVars().AutoIncrementIncrement = 65536
+	tk.Se.GetSessionVars().AutoIncrementOffset = 65536
+	_, err = tk.Exec(`insert into io(b) values (null),(null),(null)`)
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[autoid:8060]Invalid auto_increment settings: auto_increment_increment: 65536, auto_increment_offset: 65536, both of them must be in range [1..65535]")
 }

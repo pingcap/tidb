@@ -16,8 +16,6 @@ package executor
 import (
 	"hash"
 	"hash/fnv"
-	"sync"
-	"sync/atomic"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/sessionctx"
@@ -26,9 +24,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/disk"
-	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
-	"go.uber.org/zap"
 )
 
 const (
@@ -85,23 +81,7 @@ type hashRowContainer struct {
 	// hashTable stores the map of hashKey and RowPtr
 	hashTable *rowHashMap
 
-	// memTracker is the reference of records.GetMemTracker().
-	// records would be set to nil for garbage collection when spilling is activated
-	// so we need this reference.
-	memTracker *memory.Tracker
-
-	// records stores the chunks in memory.
-	records *chunk.List
-	// recordsInDisk stores the chunks in disk.
-	recordsInDisk *chunk.ListInDisk
-
-	// exceeded indicates that records have exceeded memQuota during
-	// this PutChunk and we should spill now.
-	// It's for concurrency usage, so access it with atomic.
-	exceeded uint32
-	// spilled indicates that records have spilled out into disk.
-	// It's for concurrency usage, so access it with atomic.
-	spilled uint32
+	rowContainer *chunk.RowContainer
 }
 
 func newHashRowContainer(sCtx sessionctx.Context, estCount int, hCtx *hashContext) *hashRowContainer {
@@ -117,37 +97,32 @@ func newHashRowContainer(sCtx sessionctx.Context, estCount int, hCtx *hashContex
 	if estCount < maxChunkSize*estCountMinFactor {
 		estCount = 0
 	}
-	initList := chunk.NewList(hCtx.allTypes, maxChunkSize, maxChunkSize)
+	rc := chunk.NewRowContainer(hCtx.allTypes, maxChunkSize)
 	c := &hashRowContainer{
-		sc:   sCtx.GetSessionVars().StmtCtx,
-		hCtx: hCtx,
-
-		hashTable:  newRowHashMap(estCount),
-		memTracker: initList.GetMemTracker(),
-		records:    initList,
+		sc:           sCtx.GetSessionVars().StmtCtx,
+		hCtx:         hCtx,
+		hashTable:    newRowHashMap(estCount),
+		rowContainer: rc,
 	}
 
 	return c
 }
 
-// GetMatchedRows get matched rows from probeRow. It can be called
+// GetMatchedRowsAndPtrs get matched rows and Ptrs from probeRow. It can be called
 // in multiple goroutines while each goroutine should keep its own
 // h and buf.
-func (c *hashRowContainer) GetMatchedRows(probeKey uint64, probeRow chunk.Row, hCtx *hashContext) (matched []chunk.Row, err error) {
+func (c *hashRowContainer) GetMatchedRowsAndPtrs(probeKey uint64, probeRow chunk.Row, hCtx *hashContext) (matched []chunk.Row, matchedPtrs []chunk.RowPtr, err error) {
 	innerPtrs := c.hashTable.Get(probeKey)
 	if len(innerPtrs) == 0 {
 		return
 	}
 	matched = make([]chunk.Row, 0, len(innerPtrs))
 	var matchedRow chunk.Row
+	matchedPtrs = make([]chunk.RowPtr, 0, len(innerPtrs))
 	for _, ptr := range innerPtrs {
-		if c.alreadySpilled() {
-			matchedRow, err = c.recordsInDisk.GetRow(ptr)
-			if err != nil {
-				return
-			}
-		} else {
-			matchedRow = c.records.GetRow(ptr)
+		matchedRow, err = c.rowContainer.GetRow(ptr)
+		if err != nil {
+			return
 		}
 		var ok bool
 		ok, err = c.matchJoinKey(matchedRow, probeRow, hCtx)
@@ -158,6 +133,7 @@ func (c *hashRowContainer) GetMatchedRows(probeKey uint64, probeRow chunk.Row, h
 			continue
 		}
 		matched = append(matched, matchedRow)
+		matchedPtrs = append(matchedPtrs, ptr)
 	}
 	return
 }
@@ -169,62 +145,41 @@ func (c *hashRowContainer) matchJoinKey(buildRow, probeRow chunk.Row, probeHCtx 
 		probeRow, probeHCtx.allTypes, probeHCtx.keyColIdx)
 }
 
-func (c *hashRowContainer) spillToDisk() (err error) {
-	N := c.records.NumChunks()
-	c.recordsInDisk = chunk.NewListInDisk(c.hCtx.allTypes)
-	for i := 0; i < N; i++ {
-		chk := c.records.GetChunk(i)
-		err = c.recordsInDisk.Add(chk)
-		if err != nil {
-			return
-		}
-	}
-	return
-}
-
 // alreadySpilled indicates that records have spilled out into disk.
-func (c *hashRowContainer) alreadySpilled() bool { return c.recordsInDisk != nil }
+func (c *hashRowContainer) alreadySpilled() bool { return c.rowContainer.AlreadySpilled() }
 
 // alreadySpilledSafe indicates that records have spilled out into disk. It's thread-safe.
-func (c *hashRowContainer) alreadySpilledSafe() bool { return atomic.LoadUint32(&c.spilled) == 1 }
+func (c *hashRowContainer) alreadySpilledSafe() bool { return c.rowContainer.AlreadySpilledSafe() }
 
 // PutChunk puts a chunk into hashRowContainer and build hash map. It's not thread-safe.
 // key of hash table: hash value of key columns
 // value of hash table: RowPtr of the corresponded row
 func (c *hashRowContainer) PutChunk(chk *chunk.Chunk) error {
+	return c.PutChunkSelected(chk, nil)
+}
+
+// PutChunkSelected selectively puts a chunk into hashRowContainer and build hash map. It's not thread-safe.
+// key of hash table: hash value of key columns
+// value of hash table: RowPtr of the corresponded row
+func (c *hashRowContainer) PutChunkSelected(chk *chunk.Chunk, selected []bool) error {
 	var chkIdx uint32
-	if c.alreadySpilled() {
-		// append chk to disk.
-		chkIdx = uint32(c.recordsInDisk.NumChunks())
-		err := c.recordsInDisk.Add(chk)
-		if err != nil {
-			return err
-		}
-	} else {
-		chkIdx = uint32(c.records.NumChunks())
-		c.records.Add(chk)
-		if atomic.LoadUint32(&c.exceeded) != 0 {
-			err := c.spillToDisk()
-			if err != nil {
-				return err
-			}
-			c.records = nil // GC its internal chunks.
-			c.memTracker.Consume(-c.memTracker.BytesConsumed())
-			atomic.StoreUint32(&c.spilled, 1)
-		}
+	chkIdx = uint32(c.rowContainer.NumChunks())
+	err := c.rowContainer.Add(chk)
+	if err != nil {
+		return err
 	}
 	numRows := chk.NumRows()
 	c.hCtx.initHash(numRows)
 
 	hCtx := c.hCtx
 	for _, colIdx := range c.hCtx.keyColIdx {
-		err := codec.HashChunkColumns(c.sc, hCtx.hashVals, chk, hCtx.allTypes[colIdx], colIdx, hCtx.buf, hCtx.hasNull)
+		err := codec.HashChunkSelected(c.sc, hCtx.hashVals, chk, hCtx.allTypes[colIdx], colIdx, hCtx.buf, hCtx.hasNull, selected)
 		if err != nil {
 			return errors.Trace(err)
 		}
 	}
 	for i := 0; i < numRows; i++ {
-		if c.hCtx.hasNull[i] {
+		if (selected != nil && !selected[i]) || c.hCtx.hasNull[i] {
 			continue
 		}
 		key := c.hCtx.hashVals[i].Sum64()
@@ -246,57 +201,45 @@ func (*hashRowContainer) getJoinKeyFromChkRow(sc *stmtctx.StatementContext, row 
 	return false, hCtx.hashVals[0].Sum64(), err
 }
 
-// Len returns the length of the records in hashRowContainer.
-func (c hashRowContainer) Len() int {
+// NumChunks returns the number of chunks in the rowContainer
+func (c *hashRowContainer) NumChunks() int {
+	return c.rowContainer.NumChunks()
+}
+
+// NumRowsOfChunk returns the number of rows of a chunk
+func (c *hashRowContainer) NumRowsOfChunk(chkID int) int {
+	return c.rowContainer.NumRowsOfChunk(chkID)
+}
+
+// GetChunk returns chkIdx th chunk of in memory records, only works if rowContainer is not spilled
+func (c *hashRowContainer) GetChunk(chkIdx int) *chunk.Chunk {
+	return c.rowContainer.GetChunk(chkIdx)
+}
+
+// GetRow returns the row the ptr pointed to in the rowContainer
+func (c *hashRowContainer) GetRow(ptr chunk.RowPtr) (chunk.Row, error) {
+	return c.rowContainer.GetRow(ptr)
+}
+
+// Len returns number of records in the hash table.
+func (c *hashRowContainer) Len() int {
 	return c.hashTable.Len()
 }
 
 func (c *hashRowContainer) Close() error {
-	if c.recordsInDisk != nil {
-		return c.recordsInDisk.Close()
-	}
-	return nil
+	return c.rowContainer.Close()
 }
 
 // GetMemTracker returns the underlying memory usage tracker in hashRowContainer.
-func (c *hashRowContainer) GetMemTracker() *memory.Tracker { return c.memTracker }
+func (c *hashRowContainer) GetMemTracker() *memory.Tracker { return c.rowContainer.GetMemTracker() }
 
 // GetDiskTracker returns the underlying disk usage tracker in hashRowContainer.
-func (c *hashRowContainer) GetDiskTracker() *disk.Tracker { return c.recordsInDisk.GetDiskTracker() }
+func (c *hashRowContainer) GetDiskTracker() *disk.Tracker { return c.rowContainer.GetDiskTracker() }
 
 // ActionSpill returns a memory.ActionOnExceed for spilling over to disk.
 func (c *hashRowContainer) ActionSpill() memory.ActionOnExceed {
-	return &spillDiskAction{c: c}
+	return c.rowContainer.ActionSpill()
 }
-
-// spillDiskAction implements memory.ActionOnExceed for chunk.List. If
-// the memory quota of a query is exceeded, spillDiskAction.Action is
-// triggered.
-type spillDiskAction struct {
-	once           sync.Once
-	c              *hashRowContainer
-	fallbackAction memory.ActionOnExceed
-}
-
-// Action sends a signal to trigger spillToDisk method of hashRowContainer
-// and if it is already triggered before, call its fallbackAction.
-func (a *spillDiskAction) Action(t *memory.Tracker) {
-	if a.c.alreadySpilledSafe() {
-		if a.fallbackAction != nil {
-			a.fallbackAction.Action(t)
-		}
-	}
-	a.once.Do(func() {
-		atomic.StoreUint32(&a.c.exceeded, 1)
-		logutil.BgLogger().Info("memory exceeds quota, spill to disk now.", zap.String("memory", t.String()))
-	})
-}
-
-func (a *spillDiskAction) SetFallback(fallback memory.ActionOnExceed) {
-	a.fallbackAction = fallback
-}
-
-func (a *spillDiskAction) SetLogHook(hook func(uint64)) {}
 
 const (
 	initialEntrySliceLen = 64

@@ -39,16 +39,22 @@ func (ds DataSource) Init(ctx sessionctx.Context, offset int) *DataSource {
 	return &ds
 }
 
-// Init initializes TableGather.
-func (tg TableGather) Init(ctx sessionctx.Context, offset int) *TableGather {
-	tg.baseLogicalPlan = newBaseLogicalPlan(ctx, plancodec.TypeTableGather, &tg, offset)
-	return &tg
+// Init initializes TiKVSingleGather.
+func (sg TiKVSingleGather) Init(ctx sessionctx.Context, offset int) *TiKVSingleGather {
+	sg.baseLogicalPlan = newBaseLogicalPlan(ctx, plancodec.TypeTiKVSingleGather, &sg, offset)
+	return &sg
 }
 
-// Init initializes TableScan.
-func (ts TableScan) Init(ctx sessionctx.Context, offset int) *TableScan {
+// Init initializes LogicalTableScan.
+func (ts LogicalTableScan) Init(ctx sessionctx.Context, offset int) *LogicalTableScan {
 	ts.baseLogicalPlan = newBaseLogicalPlan(ctx, plancodec.TypeTableScan, &ts, offset)
 	return &ts
+}
+
+// Init initializes LogicalIndexScan.
+func (is LogicalIndexScan) Init(ctx sessionctx.Context, offset int) *LogicalIndexScan {
+	is.baseLogicalPlan = newBaseLogicalPlan(ctx, plancodec.TypeIdxScan, &is, offset)
+	return &is
 }
 
 // Init initializes LogicalApply.
@@ -267,6 +273,12 @@ func (p PhysicalIndexScan) Init(ctx sessionctx.Context, offset int) *PhysicalInd
 	return &p
 }
 
+// Init initializes LogicalMemTable.
+func (p LogicalMemTable) Init(ctx sessionctx.Context, offset int) *LogicalMemTable {
+	p.baseLogicalPlan = newBaseLogicalPlan(ctx, plancodec.TypeMemTableScan, &p, offset)
+	return &p
+}
+
 // Init initializes PhysicalMemTable.
 func (p PhysicalMemTable) Init(ctx sessionctx.Context, stats *property.StatsInfo, offset int) *PhysicalMemTable {
 	p.basePhysicalPlan = newBasePhysicalPlan(ctx, plancodec.TypeMemTableScan, &p, offset)
@@ -387,15 +399,7 @@ func (p PhysicalTableReader) Init(ctx sessionctx.Context, offset int) *PhysicalT
 // Init initializes PhysicalIndexReader.
 func (p PhysicalIndexReader) Init(ctx sessionctx.Context, offset int) *PhysicalIndexReader {
 	p.basePhysicalPlan = newBasePhysicalPlan(ctx, plancodec.TypeIndexReader, &p, offset)
-	p.IndexPlans = flattenPushDownPlan(p.indexPlan)
-	switch p.indexPlan.(type) {
-	case *PhysicalHashAgg, *PhysicalStreamAgg:
-		p.schema = p.indexPlan.Schema()
-	default:
-		is := p.IndexPlans[0].(*PhysicalIndexScan)
-		p.schema = is.dataSourceSchema
-	}
-	p.OutputColumns = p.schema.Clone().Columns
+	p.SetSchema(nil)
 	return &p
 }
 

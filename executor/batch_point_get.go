@@ -24,21 +24,23 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/hack"
+	"github.com/pingcap/tidb/util/rowcodec"
 )
 
 // BatchPointGetExec executes a bunch of point select queries.
 type BatchPointGetExec struct {
 	baseExecutor
 
-	tblInfo  *model.TableInfo
-	idxInfo  *model.IndexInfo
-	handles  []int64
-	idxVals  [][]types.Datum
-	startTS  uint64
-	snapshot kv.Snapshot
-	inited   bool
-	values   [][]byte
-	index    int
+	tblInfo    *model.TableInfo
+	idxInfo    *model.IndexInfo
+	handles    []int64
+	idxVals    [][]types.Datum
+	startTS    uint64
+	snapshot   kv.Snapshot
+	inited     bool
+	values     [][]byte
+	index      int
+	rowDecoder *rowcodec.ChunkDecoder
 }
 
 // Open implements the Executor interface.
@@ -65,7 +67,7 @@ func (e *BatchPointGetExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 	for !req.IsFull() && e.index < len(e.values) {
 		handle, val := e.handles[e.index], e.values[e.index]
-		err := decodeRowValToChunk(e.base(), e.tblInfo, handle, val, req)
+		err := decodeRowValToChunk(e.base(), e.tblInfo, handle, val, req, e.rowDecoder)
 		if err != nil {
 			return err
 		}
@@ -76,14 +78,28 @@ func (e *BatchPointGetExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 	var err error
+	// Select for update is not optimized to BatchPointGetExec, so we can use e.startTS here.
 	e.snapshot, err = e.ctx.GetStore().GetSnapshot(kv.Version{Ver: e.startTS})
 	if err != nil {
 		return err
 	}
 
+	txn, err := e.ctx.Txn(false)
+	if err != nil {
+		return err
+	}
+	var reader kv.Snapshot
+	if !txn.Valid() {
+		// In restricted SQL, !txn.Valid() may happen, we doesn't call PrepareTxnCtx but
+		// call Next() and the code runs here.
+		reader = e.snapshot
+	} else {
+		reader = txn
+	}
+
 	if e.idxInfo != nil {
 		// `SELECT a, b FROM t WHERE (a, b) IN ((1, 2), (1, 2), (2, 1), (1, 2))` should not return duplicated rows
-		dedup := make(map[hack.MutableString]struct{}, 0)
+		dedup := make(map[hack.MutableString]struct{})
 		keys := make([]kv.Key, 0, len(e.idxVals))
 		for _, idxVals := range e.idxVals {
 			idxKey, err1 := encodeIndexKey(e.base(), e.tblInfo, e.idxInfo, idxVals)
@@ -98,8 +114,8 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 			keys = append(keys, idxKey)
 		}
 
-		// Fetch all handles from snapshot
-		handleVals, err1 := e.snapshot.BatchGet(ctx, keys)
+		// Fetch all handles.
+		handleVals, err1 := reader.BatchGet(ctx, keys)
 		if err1 != nil {
 			return err1
 		}
@@ -138,8 +154,8 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 		keys[i] = key
 	}
 
-	// Fetch all values from snapshot
-	values, err1 := e.snapshot.BatchGet(ctx, keys)
+	// Fetch all values.
+	values, err1 := reader.BatchGet(ctx, keys)
 	if err1 != nil {
 		return err1
 	}

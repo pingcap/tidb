@@ -35,7 +35,7 @@ type aggregationPushDownSolver struct {
 // Currently we don't support avg and concat.
 func (a *aggregationPushDownSolver) isDecomposable(fun *aggregation.AggFuncDesc) bool {
 	switch fun.Name {
-	case ast.AggFuncAvg, ast.AggFuncGroupConcat:
+	case ast.AggFuncAvg, ast.AggFuncGroupConcat, ast.AggFuncVarPop:
 		// TODO: Support avg push down.
 		return false
 	case ast.AggFuncMax, ast.AggFuncMin, ast.AggFuncFirstRow:
@@ -354,7 +354,7 @@ func (a *aggregationPushDownSolver) aggPushDown(p LogicalPlan) (_ LogicalPlan, e
 					}
 					join.SetChildren(lChild, rChild)
 					join.SetSchema(expression.MergeSchema(lChild.Schema(), rChild.Schema()))
-					join.BuildKeyInfo()
+					buildKeyInfo(join)
 					proj := a.tryToEliminateAggregation(agg)
 					if proj != nil {
 						p = proj

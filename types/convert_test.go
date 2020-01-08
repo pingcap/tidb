@@ -155,15 +155,15 @@ func (s *testTypeConvertSuite) TestConvertType(c *C) {
 	vv, err := Convert(v, ft)
 	c.Assert(err, IsNil)
 	c.Assert(vv.(Duration).String(), Equals, "10:11:12.1")
-
-	vd, err := ParseTime(nil, "2010-10-10 10:11:11.12345", mysql.TypeDatetime, 2)
+	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
+	vd, err := ParseTime(sc, "2010-10-10 10:11:11.12345", mysql.TypeDatetime, 2)
 	c.Assert(vd.String(), Equals, "2010-10-10 10:11:11.12")
 	c.Assert(err, IsNil)
 	v, err = Convert(vd, ft)
 	c.Assert(err, IsNil)
 	c.Assert(v.(Duration).String(), Equals, "10:11:11.1")
 
-	vt, err := ParseTime(&stmtctx.StatementContext{TimeZone: time.UTC}, "2010-10-10 10:11:11.12345", mysql.TypeTimestamp, 2)
+	vt, err := ParseTime(sc, "2010-10-10 10:11:11.12345", mysql.TypeTimestamp, 2)
 	c.Assert(vt.String(), Equals, "2010-10-10 10:11:11.12")
 	c.Assert(err, IsNil)
 	v, err = Convert(vt, ft)
@@ -200,10 +200,7 @@ func (s *testTypeConvertSuite) TestConvertType(c *C) {
 	v, err = Convert(Duration{Duration: time.Duration(12*time.Hour + 59*time.Minute + 59*time.Second + 555*time.Millisecond), Fsp: 3}, ft)
 	c.Assert(err, IsNil)
 	c.Assert(v, Equals, int64(130000))
-	v, err = Convert(Time{
-		Time: FromDate(2017, 1, 1, 12, 59, 59, 555000),
-		Type: mysql.TypeDatetime,
-		Fsp:  MaxFsp}, ft)
+	v, err = Convert(NewTime(FromDate(2017, 1, 1, 12, 59, 59, 555000), mysql.TypeDatetime, MaxFsp), ft)
 	c.Assert(err, IsNil)
 	c.Assert(v, Equals, int64(20170101130000))
 
@@ -238,7 +235,7 @@ func (s *testTypeConvertSuite) TestConvertType(c *C) {
 	c.Assert(err, IsNil, Commentf(errors.ErrorStack(err)))
 	c.Assert(v.(*MyDecimal).String(), Equals, "3.1416")
 	v, err = Convert("3.1415926", ft)
-	c.Assert(terror.ErrorEqual(err, ErrTruncated), IsTrue, Commentf("err %v", err))
+	c.Assert(terror.ErrorEqual(err, ErrTruncatedWrongVal), IsTrue, Commentf("err %v", err))
 	c.Assert(v.(*MyDecimal).String(), Equals, "3.1416")
 	v, err = Convert("99999", ft)
 	c.Assert(terror.ErrorEqual(err, ErrOverflow), IsTrue, Commentf("err %v", err))
@@ -249,7 +246,6 @@ func (s *testTypeConvertSuite) TestConvertType(c *C) {
 
 	// Test Datum.ToDecimal with bad number.
 	d := NewDatum("hello")
-	sc := new(stmtctx.StatementContext)
 	_, err = d.ToDecimal(sc)
 	c.Assert(terror.ErrorEqual(err, ErrBadNumber), IsTrue, Commentf("err %v", err))
 
@@ -345,7 +341,7 @@ func (s *testTypeConvertSuite) TestConvertToString(c *C) {
 	ft.Flen = 10
 	ft.Decimal = 5
 	v, err := Convert(3.1415926, ft)
-	c.Assert(terror.ErrorEqual(err, ErrTruncated), IsTrue, Commentf("err %v", err))
+	c.Assert(terror.ErrorEqual(err, ErrTruncatedWrongVal), IsTrue, Commentf("err %v", err))
 	testToString(c, v, "3.14159")
 
 	_, err = ToString(&invalidMockType{})
@@ -426,10 +422,10 @@ func (s *testTypeConvertSuite) TestStrToNum(c *C) {
 	testStrToInt(c, "65.0", 65, false, nil)
 	testStrToInt(c, "65.0", 65, true, nil)
 	testStrToInt(c, "", 0, false, nil)
-	testStrToInt(c, "", 0, true, ErrTruncated)
-	testStrToInt(c, "xx", 0, true, ErrTruncated)
+	testStrToInt(c, "", 0, true, ErrTruncatedWrongVal)
+	testStrToInt(c, "xx", 0, true, ErrTruncatedWrongVal)
 	testStrToInt(c, "xx", 0, false, nil)
-	testStrToInt(c, "11xx", 11, true, ErrTruncated)
+	testStrToInt(c, "11xx", 11, true, ErrTruncatedWrongVal)
 	testStrToInt(c, "11xx", 11, false, nil)
 	testStrToInt(c, "xx11", 0, false, nil)
 
@@ -440,20 +436,20 @@ func (s *testTypeConvertSuite) TestStrToNum(c *C) {
 	testStrToUint(c, "100", 100, true, nil)
 	testStrToUint(c, "+100", 100, true, nil)
 	testStrToUint(c, "65.0", 65, true, nil)
-	testStrToUint(c, "xx", 0, true, ErrTruncated)
-	testStrToUint(c, "11xx", 11, true, ErrTruncated)
-	testStrToUint(c, "xx11", 0, true, ErrTruncated)
+	testStrToUint(c, "xx", 0, true, ErrTruncatedWrongVal)
+	testStrToUint(c, "11xx", 11, true, ErrTruncatedWrongVal)
+	testStrToUint(c, "xx11", 0, true, ErrTruncatedWrongVal)
 
 	// TODO: makes StrToFloat return truncated value instead of zero to make it pass.
-	testStrToFloat(c, "", 0, true, ErrTruncated)
+	testStrToFloat(c, "", 0, true, ErrTruncatedWrongVal)
 	testStrToFloat(c, "-1", -1.0, true, nil)
 	testStrToFloat(c, "1.11", 1.11, true, nil)
 	testStrToFloat(c, "1.11.00", 1.11, false, nil)
-	testStrToFloat(c, "1.11.00", 1.11, true, ErrTruncated)
+	testStrToFloat(c, "1.11.00", 1.11, true, ErrTruncatedWrongVal)
 	testStrToFloat(c, "xx", 0.0, false, nil)
 	testStrToFloat(c, "0x00", 0.0, false, nil)
 	testStrToFloat(c, "11.xx", 11.0, false, nil)
-	testStrToFloat(c, "11.xx", 11.0, true, ErrTruncated)
+	testStrToFloat(c, "11.xx", 11.0, true, ErrTruncatedWrongVal)
 	testStrToFloat(c, "xx.11", 0.0, false, nil)
 
 	// for issue #5111
@@ -469,17 +465,15 @@ func (s *testTypeConvertSuite) TestStrToNum(c *C) {
 func testSelectUpdateDeleteEmptyStringError(c *C) {
 	testCases := []struct {
 		inSelect bool
-		inUpdate bool
 		inDelete bool
 	}{
-		{true, false, false},
-		{false, true, false},
-		{false, false, true},
+		{true, false},
+		{false, true},
 	}
 	sc := new(stmtctx.StatementContext)
+	sc.TruncateAsWarning = true
 	for _, tc := range testCases {
 		sc.InSelectStmt = tc.inSelect
-		sc.InUpdateStmt = tc.inUpdate
 		sc.InDeleteStmt = tc.inDelete
 
 		str := ""
@@ -756,7 +750,7 @@ func (s *testTypeConvertSuite) TestGetValidInt(c *C) {
 	}
 	sc := new(stmtctx.StatementContext)
 	sc.TruncateAsWarning = true
-	sc.CastStrToIntStrict = true
+	sc.InSelectStmt = true
 	warningCount := 0
 	for _, tt := range tests {
 		prefix, err := getValidIntPrefix(sc, tt.origin)
@@ -799,11 +793,11 @@ func (s *testTypeConvertSuite) TestGetValidInt(c *C) {
 		{"123de", "123", true},
 	}
 	sc.TruncateAsWarning = false
-	sc.CastStrToIntStrict = false
+	sc.InSelectStmt = false
 	for _, tt := range tests2 {
 		prefix, err := getValidIntPrefix(sc, tt.origin)
 		if tt.warning {
-			c.Assert(terror.ErrorEqual(err, ErrTruncated), IsTrue)
+			c.Assert(terror.ErrorEqual(err, ErrTruncatedWrongVal), IsTrue)
 		} else {
 			c.Assert(err, IsNil)
 		}
@@ -891,24 +885,24 @@ func testConvertTimeTimeZone(c *C, sc *stmtctx.StatementContext) {
 		expect Time
 	}{
 		{
-			input:  Time{Type: mysql.TypeDatetime, Time: raw},
+			input:  NewTime(raw, mysql.TypeDatetime, DefaultFsp),
 			target: NewFieldType(mysql.TypeTimestamp),
-			expect: Time{Type: mysql.TypeTimestamp, Time: raw},
+			expect: NewTime(raw, mysql.TypeTimestamp, DefaultFsp),
 		},
 		{
-			input:  Time{Type: mysql.TypeDatetime, Time: raw},
+			input:  NewTime(raw, mysql.TypeDatetime, DefaultFsp),
 			target: NewFieldType(mysql.TypeTimestamp),
-			expect: Time{Type: mysql.TypeTimestamp, Time: raw},
+			expect: NewTime(raw, mysql.TypeTimestamp, DefaultFsp),
 		},
 		{
-			input:  Time{Type: mysql.TypeDatetime, Time: raw},
+			input:  NewTime(raw, mysql.TypeDatetime, DefaultFsp),
 			target: NewFieldType(mysql.TypeTimestamp),
-			expect: Time{Type: mysql.TypeTimestamp, Time: raw},
+			expect: NewTime(raw, mysql.TypeTimestamp, DefaultFsp),
 		},
 		{
-			input:  Time{Type: mysql.TypeTimestamp, Time: raw},
+			input:  NewTime(raw, mysql.TypeTimestamp, DefaultFsp),
 			target: NewFieldType(mysql.TypeDatetime),
-			expect: Time{Type: mysql.TypeDatetime, Time: raw},
+			expect: NewTime(raw, mysql.TypeDatetime, DefaultFsp),
 		},
 	}
 
@@ -918,8 +912,8 @@ func testConvertTimeTimeZone(c *C, sc *stmtctx.StatementContext) {
 		nd, err := d.ConvertTo(sc, test.target)
 		c.Assert(err, IsNil)
 		t := nd.GetMysqlTime()
-		c.Assert(t.Type, Equals, test.expect.Type)
-		c.Assert(t.Time, Equals, test.expect.Time)
+		c.Assert(t.Type(), Equals, test.expect.Type())
+		c.Assert(t.CoreTime(), Equals, test.expect.CoreTime())
 	}
 }
 
@@ -955,7 +949,7 @@ func (s *testTypeConvertSuite) TestConvertJSONToFloat(c *C) {
 		Out float64
 		ty  json.TypeCode
 	}{
-		{make(map[string]interface{}, 0), 0, json.TypeCodeObject},
+		{make(map[string]interface{}), 0, json.TypeCodeObject},
 		{make([]interface{}, 0), 0, json.TypeCodeArray},
 		{int64(3), 3, json.TypeCodeInt64},
 		{int64(-3), -3, json.TypeCodeInt64},

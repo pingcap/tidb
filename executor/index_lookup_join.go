@@ -211,15 +211,26 @@ func (e *IndexLookUpJoin) newInnerWorker(taskCh chan *lookUpJoinTask) *innerWork
 	for _, ran := range e.indexRanges {
 		copiedRanges = append(copiedRanges, ran.Clone())
 	}
+
 	iw := &innerWorker{
-		innerCtx:              e.innerCtx,
-		outerCtx:              e.outerCtx,
-		taskCh:                taskCh,
-		ctx:                   e.ctx,
-		executorChk:           chunk.NewChunkWithCapacity(e.innerCtx.rowTypes, e.maxChunkSize),
-		indexRanges:           copiedRanges,
-		keyOff2IdxOff:         e.keyOff2IdxOff,
-		nextColCompareFilters: e.lastColHelper,
+		innerCtx:      e.innerCtx,
+		outerCtx:      e.outerCtx,
+		taskCh:        taskCh,
+		ctx:           e.ctx,
+		executorChk:   chunk.NewChunkWithCapacity(e.innerCtx.rowTypes, e.maxChunkSize),
+		indexRanges:   copiedRanges,
+		keyOff2IdxOff: e.keyOff2IdxOff,
+	}
+	if e.lastColHelper != nil {
+		// nextCwf.TmpConstant needs to be reset for every individual
+		// inner worker to avoid data race when the inner workers is running
+		// concurrently.
+		nextCwf := *e.lastColHelper
+		nextCwf.TmpConstant = make([]*expression.Constant, len(e.lastColHelper.TmpConstant))
+		for i := range e.lastColHelper.TmpConstant {
+			nextCwf.TmpConstant[i] = &expression.Constant{RetType: nextCwf.TargetCol.RetType}
+		}
+		iw.nextColCompareFilters = &nextCwf
 	}
 	return iw
 }
@@ -668,5 +679,9 @@ func (e *IndexLookUpJoin) Close() error {
 	}
 	e.workerWg.Wait()
 	e.memTracker = nil
+	if e.runtimeStats != nil {
+		concurrency := cap(e.resultCh)
+		e.runtimeStats.SetConcurrencyInfo("Concurrency", concurrency)
+	}
 	return e.baseExecutor.Close()
 }

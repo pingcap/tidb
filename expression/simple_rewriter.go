@@ -168,13 +168,6 @@ func FindFieldNameIdxByColName(names []*types.FieldName, colName string) int {
 }
 
 func (sr *simpleRewriter) rewriteColumn(nodeColName *ast.ColumnNameExpr) (*Column, error) {
-	if sr.names != nil {
-		idx, err := FindFieldName(sr.names, nodeColName.Name)
-		if idx >= 0 && err == nil {
-			return sr.schema.Columns[idx], nil
-		}
-		return nil, errBadField.GenWithStackByArgs(nodeColName.Name.Name.O, "expression")
-	}
 	idx, err := FindFieldName(sr.names, nodeColName.Name)
 	if idx >= 0 && err == nil {
 		return sr.schema.Columns[idx], nil

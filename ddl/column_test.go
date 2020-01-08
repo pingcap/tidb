@@ -800,7 +800,7 @@ func (s *testColumnSuite) TestAddColumn(c *C) {
 			hookErr = errors.Trace(err1)
 			return
 		}
-		newCol := table.FindCol(t.(*tables.Table).Columns, newColName)
+		newCol := table.FindCol(t.(*tables.TableCommon).Columns, newColName)
 		if newCol == nil {
 			return
 		}
@@ -891,7 +891,7 @@ func (s *testColumnSuite) TestDropColumn(c *C) {
 			hookErr = errors.Trace(err1)
 			return
 		}
-		col := table.FindCol(t.(*tables.Table).Columns, colName)
+		col := table.FindCol(t.(*tables.TableCommon).Columns, colName)
 		if col == nil {
 			checkOK = true
 			return
@@ -950,7 +950,8 @@ func (s *testColumnSuite) TestModifyColumn(c *C) {
 		{"varchar(10)", "varchar(8)", errUnsupportedModifyColumn.GenWithStackByArgs("length 8 is less than origin 10")},
 		{"varchar(10)", "varchar(11)", nil},
 		{"varchar(10) character set utf8 collate utf8_bin", "varchar(10) character set utf8", nil},
-		{"decimal(2,1)", "decimal(3,2)", errUnsupportedModifyColumn.GenWithStack("unsupported modify decimal column precision")},
+		{"decimal(2,1)", "decimal(3,2)", errUnsupportedModifyColumn.GenWithStackByArgs("can't change decimal column precision")},
+		{"decimal(2,1)", "decimal(2,2)", errUnsupportedModifyColumn.GenWithStackByArgs("can't change decimal column precision")},
 		{"decimal(2,1)", "decimal(2,1)", nil},
 	}
 	for _, tt := range tests {

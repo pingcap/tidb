@@ -36,7 +36,7 @@ func addSelection(p LogicalPlan, child LogicalPlan, conditions []expression.Expr
 	}
 	conditions = expression.PropagateConstant(p.SCtx(), conditions)
 	// Return table dual when filter is constant false or null.
-	dual := conds2TableDual(child, conditions)
+	dual := Conds2TableDual(child, conditions)
 	if dual != nil {
 		p.Children()[chIdx] = dual
 		return
@@ -78,7 +78,7 @@ func (p *LogicalSelection) PredicatePushDown(predicates []expression.Expression)
 	if len(retConditions) > 0 {
 		p.Conditions = expression.PropagateConstant(p.ctx, retConditions)
 		// Return table dual when filter is constant false or null.
-		dual := conds2TableDual(p, p.Conditions)
+		dual := Conds2TableDual(p, p.Conditions)
 		if dual != nil {
 			return nil, dual
 		}
@@ -120,7 +120,7 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret
 	switch p.JoinType {
 	case LeftOuterJoin, LeftOuterSemiJoin, AntiLeftOuterSemiJoin:
 		predicates = p.outerJoinPropConst(predicates)
-		dual := conds2TableDual(p, predicates)
+		dual := Conds2TableDual(p, predicates)
 		if dual != nil {
 			return ret, dual
 		}
@@ -130,14 +130,14 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret
 		equalCond, leftPushCond, rightPushCond, otherCond = p.extractOnCondition(predicates, true, false)
 		leftCond = leftPushCond
 		// Handle join conditions, only derive right join condition, because left join condition cannot be pushed down
-		_, derivedRightJoinCond := deriveOtherConditions(p, false, true)
+		_, derivedRightJoinCond := DeriveOtherConditions(p, false, true)
 		rightCond = append(p.RightConditions, derivedRightJoinCond...)
 		p.RightConditions = nil
 		ret = append(expression.ScalarFuncs2Exprs(equalCond), otherCond...)
 		ret = append(ret, rightPushCond...)
 	case RightOuterJoin:
 		predicates = p.outerJoinPropConst(predicates)
-		dual := conds2TableDual(p, predicates)
+		dual := Conds2TableDual(p, predicates)
 		if dual != nil {
 			return ret, dual
 		}
@@ -147,7 +147,7 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret
 		equalCond, leftPushCond, rightPushCond, otherCond = p.extractOnCondition(predicates, false, true)
 		rightCond = rightPushCond
 		// Handle join conditions, only derive left join condition, because right join condition cannot be pushed down
-		derivedLeftJoinCond, _ := deriveOtherConditions(p, true, false)
+		derivedLeftJoinCond, _ := DeriveOtherConditions(p, true, false)
 		leftCond = append(p.LeftConditions, derivedLeftJoinCond...)
 		p.LeftConditions = nil
 		ret = append(expression.ScalarFuncs2Exprs(equalCond), otherCond...)
@@ -162,7 +162,7 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret
 		tempCond = expression.ExtractFiltersFromDNFs(p.ctx, tempCond)
 		tempCond = expression.PropagateConstant(p.ctx, tempCond)
 		// Return table dual when filter is constant false or null.
-		dual := conds2TableDual(p, tempCond)
+		dual := Conds2TableDual(p, tempCond)
 		if dual != nil {
 			return ret, dual
 		}
@@ -176,7 +176,7 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret
 	case AntiSemiJoin:
 		predicates = expression.PropagateConstant(p.ctx, predicates)
 		// Return table dual when filter is constant false or null.
-		dual := conds2TableDual(p, predicates)
+		dual := Conds2TableDual(p, predicates)
 		if dual != nil {
 			return ret, dual
 		}
@@ -204,7 +204,7 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret
 		p.RightJoinKeys = append(p.RightJoinKeys, eqCond.GetArgs()[1].(*expression.Column))
 	}
 	p.mergeSchema()
-	p.BuildKeyInfo()
+	buildKeyInfo(p)
 	return ret, p.self
 }
 
@@ -443,9 +443,9 @@ func (p *LogicalMaxOneRow) PredicatePushDown(predicates []expression.Expression)
 	return predicates, p
 }
 
-// deriveOtherConditions given a LogicalJoin, check the OtherConditions to see if we can derive more
+// DeriveOtherConditions given a LogicalJoin, check the OtherConditions to see if we can derive more
 // conditions for left/right child pushdown.
-func deriveOtherConditions(p *LogicalJoin, deriveLeft bool, deriveRight bool) (leftCond []expression.Expression,
+func DeriveOtherConditions(p *LogicalJoin, deriveLeft bool, deriveRight bool) (leftCond []expression.Expression,
 	rightCond []expression.Expression) {
 	leftPlan, rightPlan := p.children[0], p.children[1]
 	isOuterSemi := (p.JoinType == LeftOuterSemiJoin) || (p.JoinType == AntiLeftOuterSemiJoin)
@@ -508,8 +508,8 @@ func deriveNotNullExpr(expr expression.Expression, schema *expression.Schema) ex
 	return nil
 }
 
-// conds2TableDual builds a LogicalTableDual if cond is constant false or null.
-func conds2TableDual(p LogicalPlan, conds []expression.Expression) LogicalPlan {
+// Conds2TableDual builds a LogicalTableDual if cond is constant false or null.
+func Conds2TableDual(p LogicalPlan, conds []expression.Expression) LogicalPlan {
 	if len(conds) != 1 {
 		return nil
 	}
@@ -545,14 +545,14 @@ func (p *LogicalJoin) outerJoinPropConst(predicates []expression.Expression) []e
 	p.LeftConditions = nil
 	p.RightConditions = nil
 	p.OtherConditions = nil
-	nullSensitive := (p.JoinType == AntiLeftOuterSemiJoin || p.JoinType == LeftOuterSemiJoin)
+	nullSensitive := p.JoinType == AntiLeftOuterSemiJoin || p.JoinType == LeftOuterSemiJoin
 	joinConds, predicates = expression.PropConstOverOuterJoin(p.ctx, joinConds, predicates, outerTable.Schema(), innerTable.Schema(), nullSensitive)
-	p.attachOnConds(joinConds)
+	p.AttachOnConds(joinConds)
 	return predicates
 }
 
-// getPartitionByCols extracts 'partition by' columns from the Window.
-func (p *LogicalWindow) getPartitionByCols() []*expression.Column {
+// GetPartitionByCols extracts 'partition by' columns from the Window.
+func (p *LogicalWindow) GetPartitionByCols() []*expression.Column {
 	partitionCols := make([]*expression.Column, 0, len(p.PartitionBy))
 	for _, partitionItem := range p.PartitionBy {
 		partitionCols = append(partitionCols, partitionItem.Col)
@@ -564,7 +564,7 @@ func (p *LogicalWindow) getPartitionByCols() []*expression.Column {
 func (p *LogicalWindow) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, LogicalPlan) {
 	canBePushed := make([]expression.Expression, 0, len(predicates))
 	canNotBePushed := make([]expression.Expression, 0, len(predicates))
-	partitionCols := expression.NewSchema(p.getPartitionByCols()...)
+	partitionCols := expression.NewSchema(p.GetPartitionByCols()...)
 	for _, cond := range predicates {
 		// We can push predicate beneath Window, only if all of the
 		// extractedCols are part of partitionBy columns.
@@ -576,6 +576,14 @@ func (p *LogicalWindow) PredicatePushDown(predicates []expression.Expression) ([
 	}
 	p.baseLogicalPlan.PredicatePushDown(canBePushed)
 	return canNotBePushed, p
+}
+
+// PredicatePushDown implements LogicalPlan PredicatePushDown interface.
+func (p *LogicalMemTable) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, LogicalPlan) {
+	if p.Extractor != nil {
+		predicates = p.Extractor.Extract(p.ctx, p.schema, p.names, predicates)
+	}
+	return predicates, p.self
 }
 
 func (*ppdSolver) name() string {

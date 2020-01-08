@@ -16,6 +16,7 @@ package expression
 import (
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"
@@ -26,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/mock"
 )
 
@@ -101,7 +103,7 @@ func (s *testUtilSuite) TestClone(c *check.C) {
 		&builtinJSONArraySig{}, &builtinJSONArrayAppendSig{}, &builtinJSONObjectSig{}, &builtinJSONExtractSig{}, &builtinJSONSetSig{},
 		&builtinJSONInsertSig{}, &builtinJSONReplaceSig{}, &builtinJSONRemoveSig{}, &builtinJSONMergeSig{}, &builtinJSONContainsSig{},
 		&builtinJSONDepthSig{}, &builtinJSONSearchSig{}, &builtinJSONKeysSig{}, &builtinJSONKeys2ArgsSig{}, &builtinJSONLengthSig{},
-		&builtinLikeSig{}, &builtinRegexpBinarySig{}, &builtinRegexpSig{}, &builtinAbsRealSig{}, &builtinAbsIntSig{},
+		&builtinLikeSig{}, &builtinRegexpSig{}, &builtinRegexpUTF8Sig{}, &builtinAbsRealSig{}, &builtinAbsIntSig{},
 		&builtinAbsUIntSig{}, &builtinAbsDecSig{}, &builtinRoundRealSig{}, &builtinRoundIntSig{}, &builtinRoundDecSig{},
 		&builtinRoundWithFracRealSig{}, &builtinRoundWithFracIntSig{}, &builtinRoundWithFracDecSig{}, &builtinCeilRealSig{}, &builtinCeilIntToDecSig{},
 		&builtinCeilIntToIntSig{}, &builtinCeilDecToIntSig{}, &builtinCeilDecToDecSig{}, &builtinFloorRealSig{}, &builtinFloorIntToDecSig{},
@@ -124,18 +126,18 @@ func (s *testUtilSuite) TestClone(c *check.C) {
 		&builtinInJSONSig{}, &builtinRowSig{}, &builtinSetVarSig{}, &builtinGetVarSig{}, &builtinLockSig{},
 		&builtinReleaseLockSig{}, &builtinValuesIntSig{}, &builtinValuesRealSig{}, &builtinValuesDecimalSig{}, &builtinValuesStringSig{},
 		&builtinValuesTimeSig{}, &builtinValuesDurationSig{}, &builtinValuesJSONSig{}, &builtinBitCountSig{}, &builtinGetParamStringSig{},
-		&builtinLengthSig{}, &builtinASCIISig{}, &builtinConcatSig{}, &builtinConcatWSSig{}, &builtinLeftBinarySig{},
-		&builtinLeftSig{}, &builtinRightBinarySig{}, &builtinRightSig{}, &builtinRepeatSig{}, &builtinLowerSig{},
-		&builtinReverseSig{}, &builtinReverseBinarySig{}, &builtinSpaceSig{}, &builtinUpperSig{}, &builtinStrcmpSig{},
-		&builtinReplaceSig{}, &builtinConvertSig{}, &builtinSubstringBinary2ArgsSig{}, &builtinSubstringBinary3ArgsSig{}, &builtinSubstring2ArgsSig{},
-		&builtinSubstring3ArgsSig{}, &builtinSubstringIndexSig{}, &builtinLocate2ArgsSig{}, &builtinLocate3ArgsSig{}, &builtinLocateBinary2ArgsSig{},
-		&builtinLocateBinary3ArgsSig{}, &builtinHexStrArgSig{}, &builtinHexIntArgSig{}, &builtinUnHexSig{}, &builtinTrim1ArgSig{},
-		&builtinTrim2ArgsSig{}, &builtinTrim3ArgsSig{}, &builtinLTrimSig{}, &builtinRTrimSig{}, &builtinLpadSig{},
-		&builtinLpadBinarySig{}, &builtinRpadSig{}, &builtinRpadBinarySig{}, &builtinBitLengthSig{}, &builtinCharSig{},
-		&builtinCharLengthSig{}, &builtinFindInSetSig{}, &builtinMakeSetSig{}, &builtinOctIntSig{}, &builtinOctStringSig{},
+		&builtinLengthSig{}, &builtinASCIISig{}, &builtinConcatSig{}, &builtinConcatWSSig{}, &builtinLeftSig{},
+		&builtinLeftUTF8Sig{}, &builtinRightSig{}, &builtinRightUTF8Sig{}, &builtinRepeatSig{}, &builtinLowerSig{},
+		&builtinReverseUTF8Sig{}, &builtinReverseSig{}, &builtinSpaceSig{}, &builtinUpperSig{}, &builtinStrcmpSig{},
+		&builtinReplaceSig{}, &builtinConvertSig{}, &builtinSubstring2ArgsSig{}, &builtinSubstring3ArgsSig{}, &builtinSubstring2ArgsUTF8Sig{},
+		&builtinSubstring3ArgsUTF8Sig{}, &builtinSubstringIndexSig{}, &builtinLocate2ArgsUTF8Sig{}, &builtinLocate3ArgsUTF8Sig{}, &builtinLocate2ArgsSig{},
+		&builtinLocate3ArgsSig{}, &builtinHexStrArgSig{}, &builtinHexIntArgSig{}, &builtinUnHexSig{}, &builtinTrim1ArgSig{},
+		&builtinTrim2ArgsSig{}, &builtinTrim3ArgsSig{}, &builtinLTrimSig{}, &builtinRTrimSig{}, &builtinLpadUTF8Sig{},
+		&builtinLpadSig{}, &builtinRpadUTF8Sig{}, &builtinRpadSig{}, &builtinBitLengthSig{}, &builtinCharSig{},
+		&builtinCharLengthUTF8Sig{}, &builtinFindInSetSig{}, &builtinMakeSetSig{}, &builtinOctIntSig{}, &builtinOctStringSig{},
 		&builtinOrdSig{}, &builtinQuoteSig{}, &builtinBinSig{}, &builtinEltSig{}, &builtinExportSet3ArgSig{},
 		&builtinExportSet4ArgSig{}, &builtinExportSet5ArgSig{}, &builtinFormatWithLocaleSig{}, &builtinFormatSig{}, &builtinFromBase64Sig{},
-		&builtinToBase64Sig{}, &builtinInsertBinarySig{}, &builtinInsertSig{}, &builtinInstrSig{}, &builtinInstrBinarySig{},
+		&builtinToBase64Sig{}, &builtinInsertSig{}, &builtinInsertUTF8Sig{}, &builtinInstrUTF8Sig{}, &builtinInstrSig{},
 		&builtinFieldRealSig{}, &builtinFieldIntSig{}, &builtinFieldStringSig{}, &builtinDateSig{}, &builtinDateLiteralSig{},
 		&builtinDateDiffSig{}, &builtinNullTimeDiffSig{}, &builtinTimeStringTimeDiffSig{}, &builtinDurationStringTimeDiffSig{}, &builtinDurationDurationTimeDiffSig{},
 		&builtinStringTimeTimeDiffSig{}, &builtinStringDurationTimeDiffSig{}, &builtinStringStringTimeDiffSig{}, &builtinTimeTimeTimeDiffSig{}, &builtinDateFormatSig{},
@@ -320,6 +322,48 @@ func (s *testUtilSuite) TestFilterOutInPlace(c *check.C) {
 	c.Assert(filtered[0].(*ScalarFunction).FuncName.L, check.Equals, "or")
 }
 
+func (s *testUtilSuite) TestHashGroupKey(c *check.C) {
+	ctx := mock.NewContext()
+	sc := &stmtctx.StatementContext{TimeZone: time.Local}
+	eTypes := []types.EvalType{types.ETInt, types.ETReal, types.ETDecimal, types.ETString, types.ETTimestamp, types.ETDatetime, types.ETDuration}
+	tNames := []string{"int", "real", "decimal", "string", "timestamp", "datetime", "duration"}
+	for i := 0; i < len(tNames); i++ {
+		ft := eType2FieldType(eTypes[i])
+		if eTypes[i] == types.ETDecimal {
+			ft.Flen = 0
+		}
+		colExpr := &Column{Index: 0, RetType: ft}
+		input := chunk.New([]*types.FieldType{ft}, 1024, 1024)
+		fillColumnWithGener(eTypes[i], input, 0, nil)
+		colBuf := chunk.NewColumn(ft, 1024)
+		bufs := make([][]byte, 1024)
+		for j := 0; j < 1024; j++ {
+			bufs[j] = bufs[j][:0]
+		}
+		var err error
+		err = VecEval(ctx, colExpr, input, colBuf)
+		if err != nil {
+			c.Fatal(err)
+		}
+		if bufs, err = codec.HashGroupKey(sc, 1024, colBuf, bufs, ft); err != nil {
+			c.Fatal(err)
+		}
+
+		var buf []byte
+		for j := 0; j < input.NumRows(); j++ {
+			d, err := colExpr.Eval(input.GetRow(j))
+			if err != nil {
+				c.Fatal(err)
+			}
+			buf, err = codec.EncodeValue(sc, buf[:0], d)
+			if err != nil {
+				c.Fatal(err)
+			}
+			c.Assert(string(bufs[j]), check.Equals, string(buf))
+		}
+	}
+}
+
 func isLogicOrFunction(e Expression) bool {
 	if f, ok := e.(*ScalarFunction); ok {
 		return f.FuncName.L == ast.LogicOr
@@ -443,7 +487,7 @@ func (m *MockExpr) EvalTime(ctx sessionctx.Context, row chunk.Row) (val types.Ti
 	if x, ok := m.i.(types.Time); ok {
 		return x, false, m.err
 	}
-	return types.Time{}, m.i == nil, m.err
+	return types.ZeroTime, m.i == nil, m.err
 }
 func (m *MockExpr) EvalDuration(ctx sessionctx.Context, row chunk.Row) (val types.Duration, isNull bool, err error) {
 	if x, ok := m.i.(types.Duration); ok {
@@ -457,14 +501,19 @@ func (m *MockExpr) EvalJSON(ctx sessionctx.Context, row chunk.Row) (val json.Bin
 	}
 	return json.BinaryJSON{}, m.i == nil, m.err
 }
+func (m *MockExpr) ReverseEval(sc *stmtctx.StatementContext, res types.Datum, rType types.RoundingType) (val types.Datum, err error) {
+	return types.Datum{}, m.err
+}
 func (m *MockExpr) GetType() *types.FieldType                         { return m.t }
 func (m *MockExpr) Clone() Expression                                 { return nil }
 func (m *MockExpr) Equal(ctx sessionctx.Context, e Expression) bool   { return false }
 func (m *MockExpr) IsCorrelated() bool                                { return false }
-func (m *MockExpr) ConstItem() bool                                   { return false }
+func (m *MockExpr) ConstItem(_ *stmtctx.StatementContext) bool        { return false }
 func (m *MockExpr) Decorrelate(schema *Schema) Expression             { return m }
 func (m *MockExpr) ResolveIndices(schema *Schema) (Expression, error) { return m, nil }
 func (m *MockExpr) resolveIndices(schema *Schema) error               { return nil }
 func (m *MockExpr) ExplainInfo() string                               { return "" }
+func (m *MockExpr) ExplainNormalizedInfo() string                     { return "" }
 func (m *MockExpr) HashCode(sc *stmtctx.StatementContext) []byte      { return nil }
 func (m *MockExpr) Vectorized() bool                                  { return false }
+func (m *MockExpr) SupportReverseEval() bool                          { return false }

@@ -17,9 +17,14 @@ import (
 	"testing"
 	"time"
 
+	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/oracle/oracles"
 )
+
+func TestT(t *testing.T) {
+	TestingT(t)
+}
 
 func TestPDOracle_UntilExpired(t *testing.T) {
 	lockAfter, lockExp := 10, 15

@@ -70,9 +70,10 @@ func (e ErrAlreadyCommitted) Error() string {
 
 // ErrConflict is returned when the commitTS of key in the DB is greater than startTS.
 type ErrConflict struct {
-	StartTS    uint64
-	ConflictTS uint64
-	Key        []byte
+	StartTS          uint64
+	ConflictTS       uint64
+	ConflictCommitTS uint64
+	Key              []byte
 }
 
 func (e *ErrConflict) Error() string {
@@ -97,4 +98,13 @@ type ErrCommitTSExpired struct {
 
 func (e *ErrCommitTSExpired) Error() string {
 	return "commit ts expired"
+}
+
+// ErrTxnNotFound is returned when the primary lock of the txn is not found.
+type ErrTxnNotFound struct {
+	kvrpcpb.TxnNotFound
+}
+
+func (e *ErrTxnNotFound) Error() string {
+	return "txn not found"
 }

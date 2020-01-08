@@ -26,4 +26,7 @@ type Implementation interface {
 
 	// AttachChildren is used to attach children implementations and returns it self.
 	AttachChildren(children ...Implementation) Implementation
+
+	// GetCostLimit gets the costLimit for implementing the next childGroup.
+	GetCostLimit(costLimit float64, children ...Implementation) float64
 }

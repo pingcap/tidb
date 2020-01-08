@@ -18,9 +18,11 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
 )
@@ -89,10 +91,9 @@ func (p *PhysicalLimit) ToPB(ctx sessionctx.Context) (*tipb.Executor, error) {
 
 // ToPB implements PhysicalPlan ToPB interface.
 func (p *PhysicalTableScan) ToPB(ctx sessionctx.Context) (*tipb.Executor, error) {
-	columns := p.Columns
 	tsExec := &tipb.TableScan{
 		TableId: p.Table.ID,
-		Columns: model.ColumnsToProto(columns, p.Table.PKIsHandle),
+		Columns: model.ColumnsToProto(p.Columns, p.Table.PKIsHandle),
 		Desc:    p.Desc,
 	}
 	err := SetPBColumnsDefaultValue(ctx, tsExec.Columns, p.Columns)
@@ -148,6 +149,11 @@ func (p *PhysicalIndexScan) ToPB(ctx sessionctx.Context) (*tipb.Executor, error)
 // SetPBColumnsDefaultValue sets the default values of tipb.ColumnInfos.
 func SetPBColumnsDefaultValue(ctx sessionctx.Context, pbColumns []*tipb.ColumnInfo, columns []*model.ColumnInfo) error {
 	for i, c := range columns {
+		// For virtual columns, we set their default values to NULL so that TiKV will return NULL properly,
+		// They real values will be compute later.
+		if c.IsGenerated() && !c.GeneratedStored {
+			pbColumns[i].DefaultVal = []byte{codec.NilFlag}
+		}
 		if c.OriginDefaultValue == nil {
 			continue
 		}
@@ -174,9 +180,12 @@ func SetPBColumnsDefaultValue(ctx sessionctx.Context, pbColumns []*tipb.ColumnIn
 // Some plans are difficult (if possible) to implement streaming, and some are pointless to do so.
 // TODO: Support more kinds of physical plan.
 func SupportStreaming(p PhysicalPlan) bool {
-	switch p.(type) {
-	case *PhysicalTableScan, *PhysicalIndexScan, *PhysicalSelection:
+	switch x := p.(type) {
+	case *PhysicalIndexScan, *PhysicalSelection:
 		return true
+	case *PhysicalTableScan:
+		// TODO: remove this after TiDB coprocessor support stream.
+		return x.StoreType != kv.TiDB
 	}
 	return false
 }

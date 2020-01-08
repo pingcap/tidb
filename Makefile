@@ -1,5 +1,19 @@
+# Copyright 2019 PingCAP, Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 PROJECT=tidb
 GOPATH ?= $(shell go env GOPATH)
+P=8
 
 # Ensure GOPATH is set before running build process.
 ifeq "$(GOPATH)" ""
@@ -12,15 +26,15 @@ path_to_add := $(addsuffix /bin,$(subst :,/bin:,$(GOPATH))):$(PWD)/tools/bin
 export PATH := $(path_to_add):$(PATH)
 
 GO              := GO111MODULE=on go
-GOBUILD         := $(GO) build $(BUILD_FLAG) -tags codes -trimpath
+GOBUILD         := $(GO) build $(BUILD_FLAG) -tags codes
 GOBUILDCOVERAGE := GOPATH=$(GOPATH) cd tidb-server; $(GO) test -coverpkg="../..." -c .
-GOTEST          := $(GO) test -p 8
+GOTEST          := $(GO) test -p $(P)
 OVERALLS        := GO111MODULE=on overalls
 
 ARCH      := "`uname -s`"
 LINUX     := "Linux"
 MAC       := "Darwin"
-PACKAGE_LIST  := go list ./...| grep -vE "cmd" | grep -vE "test"
+PACKAGE_LIST  := go list ./...| grep -vE "cmd"
 PACKAGES  := $$($(PACKAGE_LIST))
 PACKAGE_DIRECTORIES := $(PACKAGE_LIST) | sed 's|github.com/pingcap/$(PROJECT)/||'
 FILES     := $$(find $$($(PACKAGE_DIRECTORIES)) -name "*.go")
@@ -32,7 +46,6 @@ LDFLAGS += -X "github.com/pingcap/parser/mysql.TiDBReleaseVersion=$(shell git de
 LDFLAGS += -X "github.com/pingcap/tidb/util/printer.TiDBBuildTS=$(shell date -u '+%Y-%m-%d %I:%M:%S')"
 LDFLAGS += -X "github.com/pingcap/tidb/util/printer.TiDBGitHash=$(shell git rev-parse HEAD)"
 LDFLAGS += -X "github.com/pingcap/tidb/util/printer.TiDBGitBranch=$(shell git rev-parse --abbrev-ref HEAD)"
-LDFLAGS += -X "github.com/pingcap/tidb/util/printer.GoVersion=$(shell go version)"
 
 TEST_LDFLAGS =  -X "github.com/pingcap/tidb/config.checkBeforeDropLDFlag=1"
 COVERAGE_SERVER_LDFLAGS =  -X "github.com/pingcap/tidb/tidb-server.isCoverageServer=1"
@@ -83,13 +96,10 @@ goword:tools/bin/goword
 gosec:tools/bin/gosec
 	tools/bin/gosec $$($(PACKAGE_DIRECTORIES))
 
-check-static:tools/bin/gometalinter tools/bin/misspell tools/bin/ineffassign
-	@ # TODO: enable megacheck.
-	@ # TODO: gometalinter has been DEPRECATED.
-	@ # https://github.com/alecthomas/gometalinter/issues/590
-	tools/bin/gometalinter --disable-all --deadline 120s \
-	  --enable misspell \
-	  --enable ineffassign \
+check-static: tools/bin/golangci-lint
+	tools/bin/golangci-lint run -v --disable-all --deadline=3m \
+	  --enable=misspell \
+	  --enable=ineffassign \
 	  $$($(PACKAGE_DIRECTORIES))
 
 check-slow:tools/bin/gometalinter tools/bin/gosec
@@ -126,7 +136,13 @@ clean:
 	rm -rf *.out
 	rm -rf parser
 
-test: checklist checkdep gotest explaintest gogenerate
+# Split tests for CI to run `make test` in parallel.
+test: test_part_1 test_part_2
+	@>&2 echo "Great, all tests passed."
+
+test_part_1: checklist explaintest
+
+test_part_2: checkdep gotest gogenerate
 
 explaintest: server
 	@cd cmd/explaintest && ./run-tests.sh -s ../../bin/tidb-server
@@ -155,7 +171,7 @@ ifeq ("$(TRAVIS_COVERAGE)", "1")
 else
 	@echo "Running in native mode."
 	@export log_level=error; export TZ='Asia/Shanghai'; \
-	$(GOTEST) -ldflags '$(TEST_LDFLAGS)' -cover $(PACKAGES) || { $(FAILPOINT_DISABLE); exit 1; }
+	$(GOTEST) -ldflags '$(TEST_LDFLAGS)' -cover $(PACKAGES) -check.timeout 4s || { $(FAILPOINT_DISABLE); exit 1; }
 endif
 	@$(FAILPOINT_DISABLE)
 
@@ -271,6 +287,8 @@ tools/bin/misspell:tools/check/go.mod
 tools/bin/ineffassign:tools/check/go.mod
 	cd tools/check; \
 	$(GO) build -o ../bin/ineffassign github.com/gordonklaus/ineffassign
+tools/bin/golangci-lint:
+	curl -sfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh| sh -s -- -b ./tools/bin v1.21.0
 
 # Usage:
 #

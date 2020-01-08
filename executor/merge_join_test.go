@@ -18,6 +18,8 @@ import (
 	"strings"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
@@ -235,6 +237,39 @@ func checkPlanAndRun(tk *testkit.TestKit, c *C, plan string, sql string) *testki
 	return tk.MustQuery(sql)
 }
 
+func (s *testSuite2) TestMergeJoinInDisk(c *C) {
+	originCfg := config.GetGlobalConfig()
+	newConf := *originCfg
+	newConf.OOMUseTmpStorage = true
+	config.StoreGlobalConfig(&newConf)
+	defer config.StoreGlobalConfig(originCfg)
+
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	sm := &mockSessionManager1{
+		PS: make([]*util.ProcessInfo, 0),
+	}
+	tk.Se.SetSessionManager(sm)
+	s.domain.ExpensiveQueryHandle().SetSessionManager(sm)
+
+	tk.MustExec("set @@tidb_mem_quota_query=1;")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t(c1 int, c2 int)")
+	tk.MustExec("create table t1(c1 int, c2 int)")
+	tk.MustExec("insert into t values(1,1)")
+	tk.MustExec("insert into t1 values(1,3),(4,4)")
+
+	result := checkMergeAndRun(tk, c, "select /*+ TIDB_SMJ(t) */ * from t1 left outer join t on t.c1 = t1.c1 where t.c1 = 1 or t1.c2 > 20")
+	result.Check(testkit.Rows("1 3 1 1"))
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.MemTracker.BytesConsumed(), Equals, int64(0))
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.MemTracker.MaxConsumed(), Greater, int64(0))
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.DiskTracker.BytesConsumed(), Equals, int64(0))
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.DiskTracker.MaxConsumed(), Greater, int64(0))
+	return
+}
+
 func (s *testSuite2) TestMergeJoin(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -328,7 +363,7 @@ func (s *testSuite2) TestMergeJoin(c *C) {
 	tk.MustExec("create table t(a int)")
 	tk.MustExec("insert into t value(1),(2)")
 	tk.MustQuery("explain select /*+ TIDB_SMJ(t1, t2) */ * from t t1 join t t2 order by t1.a, t2.a").Check(testkit.Rows(
-		"Sort_6 100000000.00 root Column#5:asc, Column#6:asc",
+		"Sort_6 100000000.00 root test.t.a:asc, test.t.a:asc",
 		"└─MergeJoin_9 100000000.00 root inner join",
 		"  ├─TableReader_11 10000.00 root data:TableScan_10",
 		"  │ └─TableScan_10 10000.00 cop[tikv] table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
@@ -349,8 +384,8 @@ func (s *testSuite2) TestMergeJoin(c *C) {
 	tk.MustExec("create table s(a int, b int)")
 	tk.MustExec("insert into s values(1,1)")
 	tk.MustQuery("explain select /*+ TIDB_SMJ(t, s) */ a in (select a from s where s.b >= t.b) from t").Check(testkit.Rows(
-		"Projection_7 10000.00 root Column#8",
-		"└─MergeJoin_8 10000.00 root left outer semi join, other cond:eq(Column#1, Column#4), ge(Column#5, Column#2)",
+		"Projection_7 10000.00 root Column#7",
+		"└─MergeJoin_8 10000.00 root left outer semi join, other cond:eq(test.t.a, test.s.a), ge(test.s.b, test.t.b)",
 		"  ├─TableReader_10 10000.00 root data:TableScan_9",
 		"  │ └─TableScan_9 10000.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false, stats:pseudo",
 		"  └─TableReader_12 10000.00 root data:TableScan_11",

@@ -247,13 +247,15 @@ func extractTableAsName(p PhysicalPlan) (*model.CIStr, *model.CIStr) {
 
 func getJoinHints(sctx sessionctx.Context, joinType string, parentOffset int, nodeType nodeType, children ...PhysicalPlan) (res []*ast.TableOptimizerHint) {
 	for _, child := range children {
-		if child.SelectBlockOffset() == -1 {
+		blockOffset := child.SelectBlockOffset()
+		if blockOffset == -1 {
 			continue
 		}
 		var dbName, tableName *model.CIStr
 		if child.SelectBlockOffset() != parentOffset {
 			hintTable := sctx.GetSessionVars().PlannerSelectBlockAsName[child.SelectBlockOffset()]
-			dbName, tableName = &hintTable.DBName, &hintTable.TableName
+			// For sub-queries like `(select * from t) t1`, t1 should belong to its surrounding select block.
+			dbName, tableName, blockOffset = &hintTable.DBName, &hintTable.TableName, parentOffset
 		} else {
 			dbName, tableName = extractTableAsName(child)
 		}
@@ -261,7 +263,7 @@ func getJoinHints(sctx sessionctx.Context, joinType string, parentOffset int, no
 			continue
 		}
 		res = append(res, &ast.TableOptimizerHint{
-			QBName:   generateQBName(nodeType, child.SelectBlockOffset()),
+			QBName:   generateQBName(nodeType, blockOffset),
 			HintName: model.NewCIStr(joinType),
 			Tables:   []ast.HintTable{{DBName: *dbName, TableName: *tableName}},
 		})
@@ -298,6 +300,26 @@ func genHintsFromPhysicalPlan(p PhysicalPlan, nodeType nodeType) (res []*ast.Tab
 			Tables:   []ast.HintTable{{DBName: index.DBName, TableName: getTableName(index.Table.Name, index.TableAsName)}},
 			Indexes:  []model.CIStr{index.Index.Name},
 		})
+	case *PhysicalIndexMergeReader:
+		Indexs := make([]model.CIStr, 0, 2)
+		var tableName model.CIStr
+		var tableAsName *model.CIStr
+		for _, partialPlan := range pp.PartialPlans {
+			if index, ok := partialPlan[0].(*PhysicalIndexScan); ok {
+				Indexs = append(Indexs, index.Index.Name)
+				tableName = index.Table.Name
+				tableAsName = index.TableAsName
+			} else {
+				indexName := model.NewCIStr("PRIMARY")
+				Indexs = append(Indexs, indexName)
+			}
+		}
+		res = append(res, &ast.TableOptimizerHint{
+			QBName:   generateQBName(nodeType, pp.blockOffset),
+			HintName: model.NewCIStr(HintIndexMerge),
+			Tables:   []ast.HintTable{{TableName: getTableName(tableName, tableAsName)}},
+			Indexes:  Indexs,
+		})
 	case *PhysicalHashAgg:
 		res = append(res, &ast.TableOptimizerHint{
 			QBName:   generateQBName(nodeType, pp.blockOffset),
@@ -315,7 +337,9 @@ func genHintsFromPhysicalPlan(p PhysicalPlan, nodeType nodeType) (res []*ast.Tab
 	case *PhysicalIndexJoin:
 		res = append(res, getJoinHints(p.SCtx(), HintINLJ, p.SelectBlockOffset(), nodeType, pp.children[pp.InnerChildIdx])...)
 	case *PhysicalIndexMergeJoin:
-		res = append(res, getJoinHints(p.SCtx(), HintINLJ, p.SelectBlockOffset(), nodeType, pp.children[pp.InnerChildIdx])...)
+		res = append(res, getJoinHints(p.SCtx(), HintINLMJ, p.SelectBlockOffset(), nodeType, pp.children[pp.InnerChildIdx])...)
+	case *PhysicalIndexHashJoin:
+		res = append(res, getJoinHints(p.SCtx(), HintINLHJ, p.SelectBlockOffset(), nodeType, pp.children[pp.InnerChildIdx])...)
 	}
 	return res
 }

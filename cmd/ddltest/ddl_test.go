@@ -77,11 +77,10 @@ type server struct {
 }
 
 type TestDDLSuite struct {
-	store     kv.Storage
-	dom       *domain.Domain
-	storePath string
-	s         session.Session
-	ctx       sessionctx.Context
+	store kv.Storage
+	dom   *domain.Domain
+	s     session.Session
+	ctx   sessionctx.Context
 
 	m     sync.Mutex
 	procs []*server
@@ -256,8 +255,7 @@ func createLogFiles(c *C, length int) {
 }
 
 func (s *TestDDLSuite) startServer(i int, fp *os.File) (*server, error) {
-	var cmd *exec.Cmd
-	cmd = exec.Command("ddltest_tidb-server",
+	cmd := exec.Command("ddltest_tidb-server",
 		"--store=tikv",
 		fmt.Sprintf("-L=%s", *ddlServerLogLevel),
 		fmt.Sprintf("--path=%s%s", *etcd, *tikvPath),
@@ -419,15 +417,6 @@ func (s *TestDDLSuite) query(query string, args ...interface{}) (*sql.Rows, erro
 
 		return r, err
 	}
-}
-
-func (s *TestDDLSuite) mustQuery(c *C, query string, args ...interface{}) *sql.Rows {
-	r, err := s.query(query, args...)
-	if err != nil {
-		log.Fatalf("[mustQuery fail]query - %v %v, error - %v", query, args, err)
-	}
-
-	return r
 }
 
 func (s *TestDDLSuite) getServer() *server {

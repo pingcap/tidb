@@ -31,7 +31,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/log"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -68,13 +67,12 @@ import (
 	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mock"
+	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pingcap/tipb/go-tipb"
-	"go.uber.org/zap"
-	"go.uber.org/zap/zapcore"
 )
 
 func TestT(t *testing.T) {
@@ -105,18 +103,19 @@ var _ = Suite(&testSuite5{&baseTestSuite{}})
 var _ = Suite(&testSuiteJoin1{&baseTestSuite{}})
 var _ = Suite(&testSuiteJoin2{&baseTestSuite{}})
 var _ = Suite(&testSuiteJoin3{&baseTestSuite{}})
-var _ = Suite(&testSuiteAgg{&baseTestSuite{}})
+var _ = Suite(&testSuiteAgg{baseTestSuite: &baseTestSuite{}})
 var _ = Suite(&testSuite6{&baseTestSuite{}})
 var _ = Suite(&testSuite7{&baseTestSuite{}})
 var _ = Suite(&testSuite8{&baseTestSuite{}})
 var _ = SerialSuites(&testShowStatsSuite{&baseTestSuite{}})
 var _ = Suite(&testBypassSuite{})
 var _ = Suite(&testUpdateSuite{})
-var _ = Suite(&testOOMSuite{})
 var _ = Suite(&testPointGetSuite{})
 var _ = Suite(&testBatchPointGetSuite{})
-var _ = Suite(&testRecoverTable{})
+var _ = SerialSuites(&testRecoverTable{})
+var _ = Suite(&testClusterReaderSuite{})
 var _ = Suite(&testFlushSuite{})
+var _ = SerialSuites(&testAutoRandomSuite{&baseTestSuite{}})
 
 type testSuite struct{ *baseTestSuite }
 type testSuiteP1 struct{ *baseTestSuite }
@@ -280,7 +279,7 @@ func (s *testSuiteP1) TestShow(c *C) {
 	c.Assert(len(tk.MustQuery("show table status").Rows()), Equals, 1)
 }
 
-func (s *testSuiteP1) TestAdmin(c *C) {
+func (s *testSuite3) TestAdmin(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists admin_test")
@@ -297,7 +296,7 @@ func (s *testSuiteP1) TestAdmin(c *C) {
 	row := req.GetRow(0)
 	c.Assert(row.Len(), Equals, 2)
 	c.Assert(row.GetString(0), Equals, "1")
-	c.Assert(row.GetString(1), Equals, "error: [admin:4]DDL Job:1 not found")
+	c.Assert(row.GetString(1), Matches, "*DDL Job:1 not found")
 
 	// show ddl test;
 	r, err = tk.Exec("admin show ddl")
@@ -385,7 +384,7 @@ func (s *testSuiteP1) TestAdmin(c *C) {
 	tb, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("admin_test"))
 	c.Assert(err, IsNil)
 	c.Assert(tb.Indices(), HasLen, 1)
-	_, err = tb.Indices()[0].Create(mock.NewContext(), txn, types.MakeDatums(int64(10)), 1, table.WithAssertion(txn))
+	_, err = tb.Indices()[0].Create(mock.NewContext(), txn, types.MakeDatums(int64(10)), 1)
 	c.Assert(err, IsNil)
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
@@ -467,7 +466,7 @@ func (s *testSuiteP2) TestAdminShowDDLJobs(c *C) {
 	// See PR: 11561.
 	job.BinlogInfo = nil
 	job.SchemaName = ""
-	err = t.AddHistoryDDLJob(job)
+	err = t.AddHistoryDDLJob(job, true)
 	c.Assert(err, IsNil)
 	err = tk.Se.CommitTxn(context.Background())
 	c.Assert(err, IsNil)
@@ -536,7 +535,7 @@ func checkCases(tests []testCase, ld *executor.LoadDataInfo,
 		}
 		ld.SetMessage()
 		tk.CheckLastMessage(tt.expectedMsg)
-		err := ctx.StmtCommit()
+		err := ctx.StmtCommit(nil)
 		c.Assert(err, IsNil)
 		txn, err := ctx.Txn(true)
 		c.Assert(err, IsNil)
@@ -1633,19 +1632,21 @@ func (s *testSuiteP1) TestJSON(c *C) {
 	result.Check(testkit.Rows(`3 {} <nil>`))
 
 	// Check cast json to decimal.
-	tk.MustExec("drop table if exists test_json")
-	tk.MustExec("create table test_json ( a decimal(60,2) as (JSON_EXTRACT(b,'$.c')), b json );")
-	tk.MustExec(`insert into test_json (b) values
-		('{"c": "1267.1"}'),
-		('{"c": "1267.01"}'),
-		('{"c": "1267.1234"}'),
-		('{"c": "1267.3456"}'),
-		('{"c": "1234567890123456789012345678901234567890123456789012345"}'),
-		('{"c": "1234567890123456789012345678901234567890123456789012345.12345"}');`)
-
-	tk.MustQuery("select a from test_json;").Check(testkit.Rows("1267.10", "1267.01", "1267.12",
-		"1267.35", "1234567890123456789012345678901234567890123456789012345.00",
-		"1234567890123456789012345678901234567890123456789012345.12"))
+	// NOTE: this test case contains a bug, it should be uncommented after the bug is fixed.
+	// TODO: Fix bug https://github.com/pingcap/tidb/issues/12178
+	//tk.MustExec("drop table if exists test_json")
+	//tk.MustExec("create table test_json ( a decimal(60,2) as (JSON_EXTRACT(b,'$.c')), b json );")
+	//tk.MustExec(`insert into test_json (b) values
+	//	('{"c": "1267.1"}'),
+	//	('{"c": "1267.01"}'),
+	//	('{"c": "1267.1234"}'),
+	//	('{"c": "1267.3456"}'),
+	//	('{"c": "1234567890123456789012345678901234567890123456789012345"}'),
+	//	('{"c": "1234567890123456789012345678901234567890123456789012345.12345"}');`)
+	//
+	//tk.MustQuery("select a from test_json;").Check(testkit.Rows("1267.10", "1267.01", "1267.12",
+	//	"1267.35", "1234567890123456789012345678901234567890123456789012345.00",
+	//	"1234567890123456789012345678901234567890123456789012345.12"))
 }
 
 func (s *testSuiteP1) TestMultiUpdate(c *C) {
@@ -1837,6 +1838,13 @@ func (s *testSuiteP1) TestGeneratedColumnRead(c *C) {
 	tk.MustExec(`UPDATE test_gc_read m, test_gc_read n SET m.a = m.a + 10, n.a = n.a + 10`)
 	result = tk.MustQuery(`SELECT * FROM test_gc_read ORDER BY a`)
 	result.Check(testkit.Rows(`10 <nil> <nil> <nil> <nil>`, `11 2 13 22 26`, `13 4 17 52 34`, `18 8 26 144 52`))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("insert into t values(18)")
+	tk.MustExec("update test_gc_read set a = a+1 where a in (select a from t)")
+	result = tk.MustQuery("select * from test_gc_read order by a")
+	result.Check(testkit.Rows(`10 <nil> <nil> <nil> <nil>`, `11 2 13 22 26`, `13 4 17 52 34`, `19 8 27 152 54`))
 
 	// Test different types between generation expression and generated column.
 	tk.MustExec(`CREATE TABLE test_gc_read_cast(a VARCHAR(255), b VARCHAR(255), c INT AS (JSON_EXTRACT(a, b)), d INT AS (JSON_EXTRACT(a, b)) STORED)`)
@@ -2080,7 +2088,7 @@ func (s *testSuiteP2) TestIsPointGet(c *C) {
 		"select * from help_topic where help_topic_id=1":    true,
 		"select * from help_topic where help_category_id=1": false,
 	}
-	infoSchema := executor.GetInfoSchema(ctx)
+	infoSchema := infoschema.GetInfoSchema(ctx)
 
 	for sqlStr, result := range tests {
 		stmtNode, err := s.ParseOneStmt(sqlStr, "", "")
@@ -2643,7 +2651,7 @@ func (s *testSuite) TestSelectForUpdate(c *C) {
 	tk.MustExec("drop table if exists t, t1")
 
 	txn, err := tk.Se.Txn(true)
-	c.Assert(err, IsNil)
+	c.Assert(kv.ErrInvalidTxn.Equal(err), IsTrue)
 	c.Assert(txn.Valid(), IsFalse)
 	tk.MustExec("create table t (c1 int, c2 int, c3 int)")
 	tk.MustExec("insert t values (11, 2, 3)")
@@ -3230,8 +3238,8 @@ func (s *testSuite) TestCheckIndex(c *C) {
 	c.Assert(err, IsNil)
 	tbInfo := tbl.Meta()
 
-	alloc := autoid.NewAllocator(s.store, dbInfo.ID, false)
-	tb, err := tables.TableFromMeta(alloc, tbInfo)
+	alloc := autoid.NewAllocator(s.store, dbInfo.ID, false, autoid.RowIDAllocType)
+	tb, err := tables.TableFromMeta(autoid.NewAllocators(alloc), tbInfo)
 	c.Assert(err, IsNil)
 
 	_, err = se.Execute(context.Background(), "admin check index t c")
@@ -3266,7 +3274,7 @@ func (s *testSuite) TestCheckIndex(c *C) {
 	// table     data (handle, data): (1, 10), (2, 20), (4, 40)
 	txn, err = s.store.Begin()
 	c.Assert(err, IsNil)
-	_, err = idx.Create(mockCtx, txn, types.MakeDatums(int64(30)), 3, table.WithAssertion(txn))
+	_, err = idx.Create(mockCtx, txn, types.MakeDatums(int64(30)), 3)
 	c.Assert(err, IsNil)
 	key := tablecodec.EncodeRowKey(tb.Meta().ID, codec.EncodeInt(nil, 4))
 	setColValue(c, txn, key, types.NewDatum(int64(40)))
@@ -3281,7 +3289,7 @@ func (s *testSuite) TestCheckIndex(c *C) {
 	// table     data (handle, data): (1, 10), (2, 20), (4, 40)
 	txn, err = s.store.Begin()
 	c.Assert(err, IsNil)
-	_, err = idx.Create(mockCtx, txn, types.MakeDatums(int64(40)), 4, table.WithAssertion(txn))
+	_, err = idx.Create(mockCtx, txn, types.MakeDatums(int64(40)), 4)
 	c.Assert(err, IsNil)
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
@@ -3293,9 +3301,9 @@ func (s *testSuite) TestCheckIndex(c *C) {
 	// table     data (handle, data): (1, 10), (2, 20), (4, 40)
 	txn, err = s.store.Begin()
 	c.Assert(err, IsNil)
-	err = idx.Delete(sc, txn, types.MakeDatums(int64(30)), 3, nil)
+	err = idx.Delete(sc, txn, types.MakeDatums(int64(30)), 3)
 	c.Assert(err, IsNil)
-	err = idx.Delete(sc, txn, types.MakeDatums(int64(20)), 2, nil)
+	err = idx.Delete(sc, txn, types.MakeDatums(int64(20)), 2)
 	c.Assert(err, IsNil)
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
@@ -3312,7 +3320,8 @@ func setColValue(c *C, txn kv.Transaction, key kv.Key, v types.Datum) {
 	row := []types.Datum{v, {}}
 	colIDs := []int64{2, 3}
 	sc := &stmtctx.StatementContext{TimeZone: time.Local}
-	value, err := tablecodec.EncodeRow(sc, row, colIDs, nil, nil)
+	rd := rowcodec.Encoder{Enable: true}
+	value, err := tablecodec.EncodeRow(sc, row, colIDs, nil, nil, &rd)
 	c.Assert(err, IsNil)
 	err = txn.Set(key, value)
 	c.Assert(err, IsNil)
@@ -3543,7 +3552,7 @@ func (s *testSuite3) TestIndexJoinTableDualPanic(c *C) {
 		Check(testkit.Rows("1 a"))
 }
 
-func (s *testSuite3) TestUnionAutoSignedCast(c *C) {
+func (s *testSuiteP1) TestUnionAutoSignedCast(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1,t2")
@@ -3583,7 +3592,7 @@ func (s *testSuite3) TestUnionAutoSignedCast(c *C) {
 		Check(testkit.Rows("1 1", "2 -1", "3 -1"))
 }
 
-func (s *testSuite3) TestUpdateJoin(c *C) {
+func (s *testSuite6) TestUpdateJoin(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1, t2, t3, t4, t5, t6, t7")
@@ -3676,7 +3685,7 @@ func (s *testSuite3) TestMaxOneRow(c *C) {
 	c.Assert(err, IsNil)
 }
 
-func (s *testSuite3) TestCurrentTimestampValueSelection(c *C) {
+func (s *testSuiteP2) TestCurrentTimestampValueSelection(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t,t1")
@@ -3774,7 +3783,7 @@ func (s *testSuite3) TestSelectHashPartitionTable(c *C) {
 	tk.MustQuery(" select * from th where a=5;").Check(testkit.Rows("5 5"))
 }
 
-func (s *testSuite3) TestSelectPartition(c *C) {
+func (s *testSuiteP1) TestSelectPartition(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test`)
 	tk.MustExec(`drop table if exists th, tr`)
@@ -4405,72 +4414,6 @@ func (s *testSuiteP2) TestUnsignedFeedback(c *C) {
 	c.Assert(result.Rows()[2][3], Equals, "table:t, range:[0,+inf], keep order:false")
 }
 
-type testOOMSuite struct {
-	store kv.Storage
-	do    *domain.Domain
-	oom   *oomCapturer
-}
-
-func (s *testOOMSuite) SetUpSuite(c *C) {
-	c.Skip("log.ReplaceGlobals(lg, r) in registerHook() may result in data race")
-	testleak.BeforeTest()
-	s.registerHook()
-	var err error
-	s.store, err = mockstore.NewMockTikvStore()
-	c.Assert(err, IsNil)
-	session.SetSchemaLease(0)
-	domain.RunAutoAnalyze = false
-	s.do, err = session.BootstrapSession(s.store)
-	c.Assert(err, IsNil)
-}
-
-func (s *testOOMSuite) registerHook() {
-	conf := &log.Config{Level: "info", File: log.FileLogConfig{}}
-	_, r, _ := log.InitLogger(conf)
-	s.oom = &oomCapturer{r.Core, ""}
-	lg := zap.New(s.oom)
-	log.ReplaceGlobals(lg, r)
-}
-
-func (s *testOOMSuite) TestDistSQLMemoryControl(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t (id int, a int, b int, index idx_a(`a`))")
-	tk.MustExec("insert into t values (1,1,1), (2,2,2), (3,3,3)")
-
-	s.oom.tracker = ""
-	tk.MustQuery("select * from t")
-	c.Assert(s.oom.tracker, Equals, "")
-	tk.Se.GetSessionVars().MemQuotaDistSQL = 1
-	tk.MustQuery("select * from t")
-	c.Assert(s.oom.tracker, Equals, "TableReaderDistSQLTracker")
-	tk.Se.GetSessionVars().MemQuotaDistSQL = -1
-
-	s.oom.tracker = ""
-	tk.MustQuery("select a from t")
-	c.Assert(s.oom.tracker, Equals, "")
-	tk.Se.GetSessionVars().MemQuotaDistSQL = 1
-	tk.MustQuery("select a from t use index(idx_a)")
-	c.Assert(s.oom.tracker, Equals, "IndexReaderDistSQLTracker")
-	tk.Se.GetSessionVars().MemQuotaDistSQL = -1
-
-	s.oom.tracker = ""
-	tk.MustQuery("select * from t")
-	c.Assert(s.oom.tracker, Equals, "")
-	tk.Se.GetSessionVars().MemQuotaDistSQL = 1
-	tk.MustQuery("select * from t use index(idx_a)")
-	c.Assert(s.oom.tracker, Equals, "IndexLookupDistSQLTracker")
-	tk.Se.GetSessionVars().MemQuotaDistSQL = -1
-}
-
-func setOOMAction(action string) {
-	old := config.GetGlobalConfig()
-	newConf := *old
-	newConf.OOMAction = action
-	config.StoreGlobalConfig(&newConf)
-}
-
 func (s *testSuite) TestOOMPanicAction(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -4496,40 +4439,49 @@ func (s *testSuite) TestOOMPanicAction(c *C) {
 	tk.MustExec("drop table if exists t,t1")
 	tk.MustExec("create table t (a bigint);")
 	tk.MustExec("create table t1 (a bigint);")
+	tk.MustExec("set @@tidb_mem_quota_query=200;")
+	_, err = tk.Exec("insert into t1 values (1),(2),(3),(4),(5);")
+	c.Assert(err.Error(), Matches, "Out Of Memory Quota!.*")
+	_, err = tk.Exec("replace into t1 values (1),(2),(3),(4),(5);")
+	c.Assert(err.Error(), Matches, "Out Of Memory Quota!.*")
+	tk.MustExec("set @@tidb_mem_quota_query=10000")
 	tk.MustExec("insert into t1 values (1),(2),(3),(4),(5);")
 	tk.MustExec("set @@tidb_mem_quota_query=200;")
 	_, err = tk.Exec("insert into t select a from t1 order by a desc;")
-	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Matches, "Out Of Memory Quota!.*")
+	_, err = tk.Exec("replace into t select a from t1 order by a desc;")
+	c.Assert(err.Error(), Matches, "Out Of Memory Quota!.*")
+
+	tk.MustExec("set @@tidb_mem_quota_query=10000")
+	tk.MustExec("insert into t values (1),(2),(3),(4),(5);")
+	// Set the memory quota to 244 to make this SQL panic during the DeleteExec
+	// instead of the TableReaderExec.
+	tk.MustExec("set @@tidb_mem_quota_query=244;")
+	_, err = tk.Exec("delete from t")
+	c.Assert(err.Error(), Matches, "Out Of Memory Quota!.*")
+
+	tk.MustExec("set @@tidb_mem_quota_query=10000;")
+	tk.MustExec("delete from t1")
+	tk.MustExec("insert into t1 values(1)")
+	tk.MustExec("insert into t values (1),(2),(3),(4),(5);")
+	tk.MustExec("set @@tidb_mem_quota_query=244;")
+	_, err = tk.Exec("delete t, t1 from t join t1 on t.a = t1.a")
+
+	tk.MustExec("set @@tidb_mem_quota_query=100000;")
+	tk.MustExec("truncate table t")
+	tk.MustExec("insert into t values(1),(2),(3)")
+	// set the memory to quota to make the SQL panic during UpdateExec instead
+	// of TableReader.
+	tk.MustExec("set @@tidb_mem_quota_query=244;")
+	_, err = tk.Exec("update t set a = 4")
 	c.Assert(err.Error(), Matches, "Out Of Memory Quota!.*")
 }
 
-type oomCapturer struct {
-	zapcore.Core
-	tracker string
-}
-
-func (h *oomCapturer) Write(entry zapcore.Entry, fields []zapcore.Field) error {
-	if strings.Contains(entry.Message, "memory exceeds quota") {
-		err, _ := fields[0].Interface.(error)
-		str := err.Error()
-		begin := strings.Index(str, "8001]")
-		if begin == -1 {
-			panic("begin not found")
-		}
-		end := strings.Index(str, " holds")
-		if end == -1 {
-			panic("end not found")
-		}
-		h.tracker = str[begin+len("8001]") : end]
-	}
-	return nil
-}
-
-func (h *oomCapturer) Check(e zapcore.Entry, ce *zapcore.CheckedEntry) *zapcore.CheckedEntry {
-	if h.Enabled(e.Level) {
-		return ce.AddCore(e, h)
-	}
-	return ce
+func setOOMAction(action string) {
+	old := config.GetGlobalConfig()
+	newConf := *old
+	newConf.OOMAction = action
+	config.StoreGlobalConfig(&newConf)
 }
 
 type testRecoverTable struct {
@@ -4661,6 +4613,131 @@ func (s *testRecoverTable) TestRecoverTable(c *C) {
 	gcEnable, err := gcutil.CheckGCEnable(tk.Se)
 	c.Assert(err, IsNil)
 	c.Assert(gcEnable, Equals, false)
+}
+
+func (s *testRecoverTable) TestFlashbackTable(c *C) {
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange", `return(true)`), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange"), IsNil)
+	}()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create database if not exists test_flashback")
+	tk.MustExec("use test_flashback")
+	tk.MustExec("drop table if exists t_flashback")
+	tk.MustExec("create table t_flashback (a int);")
+	defer func(originGC bool) {
+		if originGC {
+			ddl.EmulatorGCEnable()
+		} else {
+			ddl.EmulatorGCDisable()
+		}
+	}(ddl.IsEmulatorGCEnable())
+
+	// Disable emulator GC.
+	// Otherwise emulator GC will delete table record as soon as possible after execute drop table ddl.
+	ddl.EmulatorGCDisable()
+	gcTimeFormat := "20060102-15:04:05 -0700 MST"
+	timeBeforeDrop := time.Now().Add(0 - time.Duration(48*60*60*time.Second)).Format(gcTimeFormat)
+	safePointSQL := `INSERT HIGH_PRIORITY INTO mysql.tidb VALUES ('tikv_gc_safe_point', '%[1]s', '')
+			       ON DUPLICATE KEY
+			       UPDATE variable_value = '%[1]s'`
+	// Clear GC variables first.
+	tk.MustExec("delete from mysql.tidb where variable_name in ( 'tikv_gc_safe_point','tikv_gc_enable' )")
+	// Set GC safe point
+	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
+	// Set GC enable.
+	err := gcutil.EnableGC(tk.Se)
+	c.Assert(err, IsNil)
+
+	tk.MustExec("insert into t_flashback values (1),(2),(3)")
+	tk.MustExec("drop table t_flashback")
+
+	// Test flash table with wrong time.
+	_, err = tk.Exec(fmt.Sprintf("flashback table t_flashback until timestamp '%v'", time.Now().String()))
+	c.Assert(err.Error(), Equals, "Can't find dropped table: t_flashback in ddl history jobs")
+
+	// Test flashback table failed by there is already a new table with the same name.
+	ts := getDDLJobStartTime(tk, "test_flashback", "t_flashback")
+	// If there is a new table with the same name, should return failed.
+	tk.MustExec("create table t_flashback (a int);")
+	_, err = tk.Exec(fmt.Sprintf("flashback table t_flashback until timestamp '%v'", ts))
+	c.Assert(err.Error(), Equals, infoschema.ErrTableExists.GenWithStackByArgs("t_flashback").Error())
+
+	// Drop the new table with the same name, then flashback table.
+	tk.MustExec("drop table t_flashback")
+
+	// Test for flashback table.
+	tk.MustExec(fmt.Sprintf("flashback table t_flashback until timestamp '%v'", ts))
+	// Check flashback table meta and data record.
+	tk.MustQuery("select * from t_flashback;").Check(testkit.Rows("1", "2", "3"))
+	// Check flashback table autoID.
+	tk.MustExec("insert into t_flashback values (4),(5),(6)")
+	tk.MustQuery("select * from t_flashback;").Check(testkit.Rows("1", "2", "3", "4", "5", "6"))
+	// Check rebase auto id.
+	tk.MustQuery("select a,_tidb_rowid from t_flashback;").Check(testkit.Rows("1 1", "2 2", "3 3", "4 5001", "5 5002", "6 5003"))
+
+	// Test for flashback to new table.
+	tk.MustExec("drop table t_flashback")
+	ts = getDDLJobStartTime(tk, "test_flashback", "t_flashback")
+	tk.MustExec("create table t_flashback (a int);")
+	tk.MustExec(fmt.Sprintf("flashback table t_flashback until timestamp '%v' to t_flashback2", ts))
+	// Check flashback table meta and data record.
+	tk.MustQuery("select * from t_flashback2;").Check(testkit.Rows("1", "2", "3", "4", "5", "6"))
+	// Check flashback table autoID.
+	tk.MustExec("insert into t_flashback2 values (7),(8),(9)")
+	tk.MustQuery("select * from t_flashback2;").Check(testkit.Rows("1", "2", "3", "4", "5", "6", "7", "8", "9"))
+	// Check rebase auto id.
+	tk.MustQuery("select a,_tidb_rowid from t_flashback2;").Check(testkit.Rows("1 1", "2 2", "3 3", "4 5001", "5 5002", "6 5003", "7 10001", "8 10002", "9 10003"))
+
+	// Test for flashback one table multiple time.
+	_, err = tk.Exec(fmt.Sprintf("flashback table t_flashback until timestamp '%v' to t_flashback4", ts))
+	c.Assert(infoschema.ErrTableExists.Equal(err), IsTrue)
+
+	// Test for flashback truncated table to new table.
+	tk.MustExec("truncate table t_flashback2")
+	ts = getDDLJobStartTime(tk, "test_flashback", "t_flashback2")
+	tk.MustExec(fmt.Sprintf("flashback table t_flashback2 until timestamp '%v' to t_flashback3", ts))
+	// Check flashback table meta and data record.
+	tk.MustQuery("select * from t_flashback3;").Check(testkit.Rows("1", "2", "3", "4", "5", "6", "7", "8", "9"))
+	// Check flashback table autoID.
+	tk.MustExec("insert into t_flashback3 values (10),(11)")
+	tk.MustQuery("select * from t_flashback3;").Check(testkit.Rows("1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11"))
+	// Check rebase auto id.
+	tk.MustQuery("select a,_tidb_rowid from t_flashback3;").Check(testkit.Rows("1 1", "2 2", "3 3", "4 5001", "5 5002", "6 5003", "7 10001", "8 10002", "9 10003", "10 15001", "11 15002"))
+
+	// Test for flashback drop partition table.
+	tk.MustExec("drop table if exists t_p_flashback")
+	tk.MustExec("create table t_p_flashback (a int) partition by hash(a) partitions 4;")
+	tk.MustExec("insert into t_p_flashback values (1),(2),(3)")
+	tk.MustExec("drop table t_p_flashback")
+	ts = getDDLJobStartTime(tk, "test_flashback", "t_p_flashback")
+	tk.MustExec(fmt.Sprintf("flashback table t_p_flashback until timestamp '%v'", ts))
+	// Check flashback table meta and data record.
+	tk.MustQuery("select * from t_p_flashback order by a;").Check(testkit.Rows("1", "2", "3"))
+	// Check flashback table autoID.
+	tk.MustExec("insert into t_p_flashback values (4),(5)")
+	tk.MustQuery("select a,_tidb_rowid from t_p_flashback order by a;").Check(testkit.Rows("1 1", "2 2", "3 3", "4 5001", "5 5002"))
+
+	// Test for flashback truncate partition table.
+	tk.MustExec("truncate table t_p_flashback")
+	ts = getDDLJobStartTime(tk, "test_flashback", "t_p_flashback")
+	tk.MustExec(fmt.Sprintf("flashback table t_p_flashback until timestamp '%v' to t_p_flashback1", ts))
+	// Check flashback table meta and data record.
+	tk.MustQuery("select * from t_p_flashback1 order by a;").Check(testkit.Rows("1", "2", "3", "4", "5"))
+	// Check flashback table autoID.
+	tk.MustExec("insert into t_p_flashback1 values (6)")
+	tk.MustQuery("select a,_tidb_rowid from t_p_flashback1 order by a;").Check(testkit.Rows("1 1", "2 2", "3 3", "4 5001", "5 5002", "6 10001"))
+}
+
+func getDDLJobStartTime(tk *testkit.TestKit, dbName, tblName string) string {
+	re := tk.MustQuery("admin show ddl jobs 100")
+	rows := re.Rows()
+	for _, row := range rows {
+		if row[1] == dbName && row[2] == tblName && (row[3] == "drop table" || row[3] == "truncate table") {
+			return row[8].(string)
+		}
+	}
+	return ""
 }
 
 func (s *testSuiteP2) TestPointGetPreparedPlan(c *C) {
@@ -5057,4 +5134,33 @@ func (s *testSuiteP2) TestPointUpdatePreparedPlanWithCommitMode(c *C) {
 	tk1.MustExec("commit")
 
 	tk2.MustQuery("select * from t where a = 3").Check(testkit.Rows("3 3 11"))
+}
+
+func (s *testSuite1) TestPartitionHashCode(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec(`create table t(c1 bigint, c2 bigint, c3 bigint, primary key(c1))
+			      partition by hash (c1) partitions 4;`)
+	wg := sync.WaitGroup{}
+	for i := 0; i < 5; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			tk1 := testkit.NewTestKitWithInit(c, s.store)
+			for i := 0; i < 5; i++ {
+				tk1.MustExec("select * from t")
+			}
+		}()
+	}
+	wg.Wait()
+}
+
+func (s *testSuite1) TestAlterDefaultValue(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t(a int, primary key(a))")
+	tk.MustExec("insert into t(a) values(1)")
+	tk.MustExec("alter table t add column b int default 1")
+	tk.MustExec("alter table t alter b set default 2")
+	tk.MustQuery("select b from t where a = 1").Check(testkit.Rows("1"))
 }

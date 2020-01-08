@@ -22,7 +22,7 @@ import (
 
 func (s *testCascadesSuite) TestGetEnforcerRules(c *C) {
 	prop := &property.PhysicalProperty{}
-	group := memo.NewGroupWithSchema(nil, nil)
+	group := memo.NewGroupWithSchema(nil, expression.NewSchema())
 	enforcers := GetEnforcerRules(group, prop)
 	c.Assert(enforcers, IsNil)
 	col := &expression.Column{}
@@ -37,7 +37,7 @@ func (s *testCascadesSuite) TestGetEnforcerRules(c *C) {
 func (s *testCascadesSuite) TestNewProperties(c *C) {
 	prop := &property.PhysicalProperty{}
 	col := &expression.Column{}
-	group := memo.NewGroupWithSchema(nil, nil)
+	group := memo.NewGroupWithSchema(nil, expression.NewSchema())
 	prop.Items = append(prop.Items, property.Item{Col: col})
 	enforcers := GetEnforcerRules(group, prop)
 	orderEnforcer, _ := enforcers[0].(*OrderEnforcer)

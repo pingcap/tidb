@@ -33,24 +33,28 @@ var CommitDetailCtxKey = commitDetailCtxKeyType{}
 
 // ExecDetails contains execution detail information.
 type ExecDetails struct {
-	CalleeAddress string
-	ProcessTime   time.Duration
-	WaitTime      time.Duration
-	BackoffTime   time.Duration
-	RequestCount  int
-	TotalKeys     int64
-	ProcessedKeys int64
-	CommitDetail  *CommitDetails
+	CalleeAddress    string
+	ProcessTime      time.Duration
+	WaitTime         time.Duration
+	BackoffTime      time.Duration
+	LockKeysDuration time.Duration
+	BackoffSleep     map[string]time.Duration
+	BackoffTimes     map[string]int
+	RequestCount     int
+	TotalKeys        int64
+	ProcessedKeys    int64
+	CommitDetail     *CommitDetails
 }
 
 // CommitDetails contains commit detail information.
 type CommitDetails struct {
-	GetCommitTsTime   time.Duration
-	PrewriteTime      time.Duration
-	CommitTime        time.Duration
-	LocalLatchTime    time.Duration
-	CommitBackoffTime int64
-	Mu                struct {
+	GetCommitTsTime    time.Duration
+	PrewriteTime       time.Duration
+	BinlogPrewriteTime time.Duration
+	CommitTime         time.Duration
+	LocalLatchTime     time.Duration
+	CommitBackoffTime  int64
+	Mu                 struct {
 		sync.Mutex
 		BackoffTypes []fmt.Stringer
 	}
@@ -68,6 +72,8 @@ const (
 	WaitTimeStr = "Wait_time"
 	// BackoffTimeStr means the time of all back-off.
 	BackoffTimeStr = "Backoff_time"
+	// LockKeysTimeStr means the time interval between pessimistic lock wait start and lock got obtain
+	LockKeysTimeStr = "LockKeys_time"
 	// RequestCountStr means the request count.
 	RequestCountStr = "Request_count"
 	// TotalKeysStr means the total scan keys.
@@ -76,6 +82,8 @@ const (
 	ProcessKeysStr = "Process_keys"
 	// PreWriteTimeStr means the time of pre-write.
 	PreWriteTimeStr = "Prewrite_time"
+	// BinlogPrewriteTimeStr means the time of binlog prewrite
+	BinlogPrewriteTimeStr = "Binlog_prewrite_time"
 	// CommitTimeStr means the time of commit.
 	CommitTimeStr = "Commit_time"
 	// GetCommitTSTimeStr means the time of getting commit ts.
@@ -110,6 +118,9 @@ func (d ExecDetails) String() string {
 	if d.BackoffTime > 0 {
 		parts = append(parts, BackoffTimeStr+": "+strconv.FormatFloat(d.BackoffTime.Seconds(), 'f', -1, 64))
 	}
+	if d.LockKeysDuration > 0 {
+		parts = append(parts, LockKeysTimeStr+": "+strconv.FormatFloat(d.LockKeysDuration.Seconds(), 'f', -1, 64))
+	}
 	if d.RequestCount > 0 {
 		parts = append(parts, RequestCountStr+": "+strconv.FormatInt(int64(d.RequestCount), 10))
 	}
@@ -123,6 +134,9 @@ func (d ExecDetails) String() string {
 	if commitDetails != nil {
 		if commitDetails.PrewriteTime > 0 {
 			parts = append(parts, PreWriteTimeStr+": "+strconv.FormatFloat(commitDetails.PrewriteTime.Seconds(), 'f', -1, 64))
+		}
+		if commitDetails.BinlogPrewriteTime > 0 {
+			parts = append(parts, BinlogPrewriteTimeStr+": "+strconv.FormatFloat(commitDetails.BinlogPrewriteTime.Seconds(), 'f', -1, 64))
 		}
 		if commitDetails.CommitTime > 0 {
 			parts = append(parts, CommitTimeStr+": "+strconv.FormatFloat(commitDetails.CommitTime.Seconds(), 'f', -1, 64))
@@ -245,7 +259,9 @@ func (crs *CopRuntimeStats) RecordOneCopTask(address string, summary *tipb.Execu
 	crs.Lock()
 	defer crs.Unlock()
 	crs.stats[address] = append(crs.stats[address],
-		&RuntimeStats{int32(*summary.NumIterations), int64(*summary.TimeProcessedNs), int64(*summary.NumProducedRows)})
+		&RuntimeStats{loop: int32(*summary.NumIterations),
+			consume: int64(*summary.TimeProcessedNs),
+			rows:    int64(*summary.NumProducedRows)})
 }
 
 func (crs *CopRuntimeStats) String() string {
@@ -280,13 +296,15 @@ type ReaderRuntimeStats struct {
 	sync.Mutex
 
 	copRespTime []time.Duration
+	procKeys    []int64
 }
 
 // recordOneCopTask record once cop response time to update maxcopRespTime
-func (rrs *ReaderRuntimeStats) recordOneCopTask(t time.Duration) {
+func (rrs *ReaderRuntimeStats) recordOneCopTask(t time.Duration, detail *ExecDetails) {
 	rrs.Lock()
 	defer rrs.Unlock()
 	rrs.copRespTime = append(rrs.copRespTime, t)
+	rrs.procKeys = append(rrs.procKeys, detail.ProcessedKeys)
 }
 
 func (rrs *ReaderRuntimeStats) String() string {
@@ -295,7 +313,7 @@ func (rrs *ReaderRuntimeStats) String() string {
 		return ""
 	}
 	if size == 1 {
-		return fmt.Sprintf("rpc time:%v", rrs.copRespTime[0])
+		return fmt.Sprintf("rpc num: 1, rpc time:%v, proc keys:%v", rrs.copRespTime[0], rrs.procKeys[0])
 	}
 	sort.Slice(rrs.copRespTime, func(i, j int) bool {
 		return rrs.copRespTime[i] < rrs.copRespTime[j]
@@ -307,7 +325,13 @@ func (rrs *ReaderRuntimeStats) String() string {
 		sum += float64(t)
 	}
 	vAvg := time.Duration(sum / float64(size))
-	return fmt.Sprintf("rpc max:%v, min:%v, avg:%v, p80:%v, p95:%v", vMax, vMin, vAvg, vP80, vP95)
+
+	sort.Slice(rrs.procKeys, func(i, j int) bool {
+		return rrs.procKeys[i] < rrs.procKeys[j]
+	})
+	keyMax := rrs.procKeys[size-1]
+	keyP95 := rrs.procKeys[size*19/20]
+	return fmt.Sprintf("rpc num: %v, rpc max:%v, min:%v, avg:%v, p80:%v, p95:%v, proc keys max:%v, p95:%v", size, vMax, vMin, vAvg, vP80, vP95, keyMax, keyP95)
 }
 
 // RuntimeStatsColl collects executors's execution info.
@@ -318,6 +342,12 @@ type RuntimeStatsColl struct {
 	readerStats map[string]*ReaderRuntimeStats
 }
 
+// concurrencyInfo is used to save the concurrency information of the executor operator
+type concurrencyInfo struct {
+	concurrencyName string
+	concurrencyNum  int
+}
+
 // RuntimeStats collects one executor's execution info.
 type RuntimeStats struct {
 	// executor's Next() called times.
@@ -326,6 +356,10 @@ type RuntimeStats struct {
 	consume int64
 	// executor return row count.
 	rows int64
+
+	mu sync.Mutex
+	// executor concurrency information
+	concurrency []concurrencyInfo
 }
 
 // NewRuntimeStatsColl creates new executor collector.
@@ -365,9 +399,9 @@ func (e *RuntimeStatsColl) RecordOneCopTask(planID, address string, summary *tip
 }
 
 // RecordOneReaderStats records a specific stats for TableReader, IndexReader and IndexLookupReader.
-func (e *RuntimeStatsColl) RecordOneReaderStats(planID string, copRespTime time.Duration) {
+func (e *RuntimeStatsColl) RecordOneReaderStats(planID string, copRespTime time.Duration, detail *ExecDetails) {
 	readerStats := e.GetReaderStats(planID)
-	readerStats.recordOneCopTask(copRespTime)
+	readerStats.recordOneCopTask(copRespTime, detail)
 }
 
 // ExistsRootStats checks if the planID exists in the rootStats collection.
@@ -410,6 +444,24 @@ func (e *RuntimeStats) SetRowNum(rowNum int64) {
 	atomic.StoreInt64(&e.rows, rowNum)
 }
 
+// SetConcurrencyInfo sets the concurrency information.
+// When the num <= 0, it means the exector operator is not executed parallel.
+func (e *RuntimeStats) SetConcurrencyInfo(name string, num int) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.concurrency = append(e.concurrency, concurrencyInfo{concurrencyName: name, concurrencyNum: num})
+}
+
 func (e *RuntimeStats) String() string {
-	return fmt.Sprintf("time:%v, loops:%d, rows:%d", time.Duration(e.consume), e.loop, e.rows)
+	result := fmt.Sprintf("time:%v, loops:%d, rows:%d", time.Duration(e.consume), e.loop, e.rows)
+	if len(e.concurrency) > 0 {
+		for _, concurrency := range e.concurrency {
+			if concurrency.concurrencyNum > 0 {
+				result += fmt.Sprintf(", %s:%d", concurrency.concurrencyName, concurrency.concurrencyNum)
+			} else {
+				result += fmt.Sprintf(", %s:OFF", concurrency.concurrencyName)
+			}
+		}
+	}
+	return result
 }

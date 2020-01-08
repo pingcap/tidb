@@ -263,7 +263,7 @@ func (s *testFailDBSuite) TestFailSchemaSyncer(c *C) {
 	c.Assert(s.dom.SchemaValidator.IsStarted(), IsFalse)
 	_, err := tk.Exec("insert into t values(1)")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[domain:1]Information schema is out of date.")
+	c.Assert(err.Error(), Equals, "[domain:8027]Information schema is out of date: schema failed to update in 1 lease, please make sure TiDB can connect to TiKV")
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/domain/ErrorMockReloadFailed"), IsNil)
 	// wait the schemaValidator is started.
 	for i := 0; i < 50; i++ {
@@ -407,5 +407,26 @@ func (s *testFailDBSuite) TestRunDDLJobPanic(c *C) {
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/mockPanicInRunDDLJob", `1*panic("panic test")`), IsNil)
 	_, err := tk.Exec("create table t(c1 int, c2 int)")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[ddl:12]cancelled DDL job")
+	c.Assert(err.Error(), Equals, "[ddl:8214]Cancelled DDL job")
+}
+
+func (s *testFailDBSuite) TestPartitionAddIndexGC(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table partition_add_idx (
+	id int not null,
+	hired date not null
+	)
+	partition by range( year(hired) ) (
+	partition p1 values less than (1991),
+	partition p5 values less than (2008),
+	partition p7 values less than (2018)
+	);`)
+	tk.MustExec("insert into partition_add_idx values(1, '2010-01-01'), (2, '1990-01-01'), (3, '2001-01-01')")
+
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/mockUpdateCachedSafePoint", `return(true)`), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/ddl/mockUpdateCachedSafePoint"), IsNil)
+	}()
+	tk.MustExec("alter table partition_add_idx add index idx (id, hired)")
 }

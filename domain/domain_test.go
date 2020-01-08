@@ -117,7 +117,10 @@ func TestInfo(t *testing.T) {
 
 	// Test for GetServerInfo and GetServerInfoByID.
 	ddlID := dom.ddl.GetID()
-	serverInfo := infosync.GetServerInfo()
+	serverInfo, err := infosync.GetServerInfo()
+	if err != nil {
+		t.Fatal(err)
+	}
 	info, err := infosync.GetServerInfoByID(goCtx, ddlID)
 	if err != nil {
 		t.Fatal(err)
@@ -147,7 +150,7 @@ func TestInfo(t *testing.T) {
 	<-dom.ddl.SchemaSyncer().Done()
 	time.Sleep(15 * time.Millisecond)
 	syncerStarted := false
-	for i := 0; i < 20; i++ {
+	for i := 0; i < 200; i++ {
 		if dom.SchemaValidator.IsStarted() {
 			syncerStarted = true
 			break
@@ -268,7 +271,7 @@ func (*testSuite) TestT(c *C) {
 	m, err := dom.GetSnapshotMeta(snapTS)
 	c.Assert(err, IsNil)
 	tblInfo1, err := m.GetTable(dbInfo.ID, tbl.Meta().ID)
-	c.Assert(err.Error(), Equals, meta.ErrDBNotExists.Error())
+	c.Assert(meta.ErrDBNotExists.Equal(err), IsTrue)
 	c.Assert(tblInfo1, IsNil)
 	m, err = dom.GetSnapshotMeta(currSnapTS)
 	c.Assert(err, IsNil)
@@ -283,7 +286,7 @@ func (*testSuite) TestT(c *C) {
 	c.Assert(err, IsNil)
 
 	// for schemaValidator
-	schemaVer := dom.SchemaValidator.(*schemaValidator).latestSchemaVer
+	schemaVer := dom.SchemaValidator.(*schemaValidator).LatestSchemaVersion()
 	ver, err := store.CurrentVersion()
 	c.Assert(err, IsNil)
 	ts := ver.Ver
@@ -317,23 +320,33 @@ func (*testSuite) TestT(c *C) {
 
 	res := dom.ShowSlowQuery(&ast.ShowSlow{Tp: ast.ShowSlowTop, Count: 2})
 	c.Assert(res, HasLen, 2)
-	c.Assert(*res[0], Equals, SlowQueryInfo{SQL: "bbb", Duration: 3 * time.Second})
-	c.Assert(*res[1], Equals, SlowQueryInfo{SQL: "ccc", Duration: 2 * time.Second})
+	c.Assert(res[0].SQL, Equals, "bbb")
+	c.Assert(res[0].Duration, Equals, 3*time.Second)
+	c.Assert(res[1].SQL, Equals, "ccc")
+	c.Assert(res[1].Duration, Equals, 2*time.Second)
 
 	res = dom.ShowSlowQuery(&ast.ShowSlow{Tp: ast.ShowSlowTop, Count: 2, Kind: ast.ShowSlowKindInternal})
 	c.Assert(res, HasLen, 1)
-	c.Assert(*res[0], Equals, SlowQueryInfo{SQL: "aaa", Duration: time.Second, Internal: true})
+	c.Assert(res[0].SQL, Equals, "aaa")
+	c.Assert(res[0].Duration, Equals, time.Second)
+	c.Assert(res[0].Internal, Equals, true)
 
 	res = dom.ShowSlowQuery(&ast.ShowSlow{Tp: ast.ShowSlowTop, Count: 4, Kind: ast.ShowSlowKindAll})
 	c.Assert(res, HasLen, 3)
-	c.Assert(*res[0], Equals, SlowQueryInfo{SQL: "bbb", Duration: 3 * time.Second})
-	c.Assert(*res[1], Equals, SlowQueryInfo{SQL: "ccc", Duration: 2 * time.Second})
-	c.Assert(*res[2], Equals, SlowQueryInfo{SQL: "aaa", Duration: time.Second, Internal: true})
+	c.Assert(res[0].SQL, Equals, "bbb")
+	c.Assert(res[0].Duration, Equals, 3*time.Second)
+	c.Assert(res[1].SQL, Equals, "ccc")
+	c.Assert(res[1].Duration, Equals, 2*time.Second)
+	c.Assert(res[2].SQL, Equals, "aaa")
+	c.Assert(res[2].Duration, Equals, time.Second)
+	c.Assert(res[2].Internal, Equals, true)
 
 	res = dom.ShowSlowQuery(&ast.ShowSlow{Tp: ast.ShowSlowRecent, Count: 2})
 	c.Assert(res, HasLen, 2)
-	c.Assert(*res[0], Equals, SlowQueryInfo{SQL: "ccc", Duration: 2 * time.Second})
-	c.Assert(*res[1], Equals, SlowQueryInfo{SQL: "bbb", Duration: 3 * time.Second})
+	c.Assert(res[0].SQL, Equals, "ccc")
+	c.Assert(res[0].Duration, Equals, 2*time.Second)
+	c.Assert(res[1].SQL, Equals, "bbb")
+	c.Assert(res[1].Duration, Equals, 3*time.Second)
 
 	metrics.PanicCounter.Reset()
 	// Since the stats lease is 0 now, so create a new ticker will panic.
@@ -422,6 +435,6 @@ func (*testSuite) TestSessionPool(c *C) {
 }
 
 func (*testSuite) TestErrorCode(c *C) {
-	c.Assert(int(ErrInfoSchemaExpired.ToSQLError().Code), Equals, mysql.ErrUnknown)
-	c.Assert(int(ErrInfoSchemaChanged.ToSQLError().Code), Equals, mysql.ErrUnknown)
+	c.Assert(int(ErrInfoSchemaExpired.ToSQLError().Code), Equals, mysql.ErrInfoSchemaExpired)
+	c.Assert(int(ErrInfoSchemaChanged.ToSQLError().Code), Equals, mysql.ErrInfoSchemaChanged)
 }
