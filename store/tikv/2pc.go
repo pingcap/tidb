@@ -218,6 +218,9 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 	}
 	err := txn.us.WalkBuffer(func(k kv.Key, v []byte) error {
 		if len(v) > 0 {
+			if tablecodec.IsUntouchedIndexKValue(k, v) {
+				return nil
+			}
 			op := pb.Op_Put
 			if c := txn.us.LookupConditionPair(k); c != nil && c.ShouldNotExist() {
 				op = pb.Op_Insert
