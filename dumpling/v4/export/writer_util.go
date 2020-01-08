@@ -17,7 +17,7 @@ func WriteMeta(meta MetaIR, w io.StringWriter, cfg *Config) error {
 		}
 	}
 
-	if err := write(w, fmt.Sprintf("%s\n", meta.MetaSQL()), log); err != nil {
+	if err := write(w, fmt.Sprintf("%s;\n", meta.MetaSQL()), log); err != nil {
 		return err
 	}
 
@@ -40,11 +40,8 @@ func WriteInsert(tblIR TableDataIR, w io.StringWriter, cfg *Config) error {
 		}
 	}
 
-	tblName := tblIR.TableName()
-	if !strings.HasPrefix(tblName, "`") && !strings.HasSuffix(tblName, "`") {
-		tblName = wrapStringWith(tblName, "`")
-	}
-	if err := write(w, fmt.Sprintf("INSERT INTO %s VALUES \n", tblName), log); err != nil {
+	tblName := wrapBackTicks(tblIR.TableName())
+	if err := write(w, fmt.Sprintf("INSERT INTO %s VALUES\n", tblName), log); err != nil {
 		return err
 	}
 
@@ -79,6 +76,13 @@ func write(writer io.StringWriter, str string, logger Logger) error {
 		logger.Error("writing failed, string: `%s`, error: %s", str, err.Error())
 	}
 	return err
+}
+
+func wrapBackTicks(identifier string) string {
+	if !strings.HasPrefix(identifier, "`") && !strings.HasSuffix(identifier, "`") {
+		return wrapStringWith(identifier, "`")
+	}
+	return identifier
 }
 
 func wrapStringWith(str string, wrapper string) string {

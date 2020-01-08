@@ -29,7 +29,7 @@ func (s *testUtilSuite) SetUpSuite(c *C) {
 func (s *testUtilSuite) TestWriteMeta(c *C) {
 	createTableStmt := "CREATE TABLE `t1` (\n" +
 		"  `a` int(11) DEFAULT NULL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;"
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci"
 	specCmts := []string{"/*!40103 SET TIME_ZONE='+00:00' */;"}
 	meta := newMockMetaIR("t1", createTableStmt, specCmts)
 	strCollector := &mockStringCollector{}
@@ -62,7 +62,7 @@ func (s *testUtilSuite) TestWriteInsert(c *C) {
 	c.Assert(err, IsNil)
 	expected := "/*!40101 SET NAMES binary*/;\n" +
 		"/*!40014 SET FOREIGN_KEY_CHECKS=0*/;\n" +
-		"INSERT INTO `employee` VALUES \n" +
+		"INSERT INTO `employee` VALUES\n" +
 		"(1, 'male', 'bob@mail.com', '020-1234', NULL),\n" +
 		"(2, 'female', 'sarah@mail.com', '020-1253', 'healthy'),\n" +
 		"(3, 'male', 'john@mail.com', '020-1256', 'healthy'),\n" +

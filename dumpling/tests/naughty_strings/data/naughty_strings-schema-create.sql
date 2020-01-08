@@ -1,0 +1,1 @@
+CREATE DATABASE `naughty_strings` /*!40100 DEFAULT CHARACTER SET utf8mb4 */;
