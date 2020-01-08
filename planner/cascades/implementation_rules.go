@@ -339,6 +339,9 @@ type ImplTopN struct {
 // Match implements ImplementationRule Match interface.
 func (r *ImplTopN) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) (matched bool) {
 	topN := expr.ExprNode.(*plannercore.LogicalTopN)
+	if expr.Group.EngineType != memo.EngineTiDB {
+		return prop.IsEmpty()
+	}
 	return plannercore.MatchItems(prop, topN.ByItems)
 }
 
@@ -354,8 +357,9 @@ func (r *ImplTopN) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalP
 	switch expr.Group.EngineType {
 	case memo.EngineTiDB:
 		return impl.NewTiDBTopNImpl(topN), nil
+	case memo.EngineTiKV:
+		return impl.NewTiKVTopNImpl(topN), nil
 	default:
-		// TODO: return TiKVTopNImpl after we have implemented push topN down gather.
 		return nil, plannercore.ErrInternal.GenWithStack("Unsupported EngineType '%s' for TopN.", expr.Group.EngineType.String())
 	}
 }

@@ -712,12 +712,6 @@ var tableTiKVRegionStatusCols = []columnInfo{
 
 var tableTiKVRegionPeersCols = []columnInfo{
 	{"REGION_ID", mysql.TypeLonglong, 21, 0, nil, nil},
-	{"TABLE_ID", mysql.TypeLonglong, 21, 0, nil, nil},
-	{"DB_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
-	{"TABLE_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
-	{"IS_INDEX", mysql.TypeTiny, 1, mysql.NotNullFlag, 0, nil},
-	{"INDEX_ID", mysql.TypeLonglong, 21, 0, nil, nil},
-	{"INDEX_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"PEER_ID", mysql.TypeLonglong, 21, 0, nil, nil},
 	{"STORE_ID", mysql.TypeLonglong, 21, 0, nil, nil},
 	{"IS_LEARNER", mysql.TypeTiny, 1, mysql.NotNullFlag, 0, nil},
@@ -852,22 +846,14 @@ func dataForTikVRegionPeers(ctx sessionctx.Context) (records [][]types.Datum, er
 	if err != nil {
 		return nil, err
 	}
-	allSchemas := ctx.GetSessionVars().TxnCtx.InfoSchema.(InfoSchema).AllSchemas()
-	tableInfos := tikvHelper.GetRegionsTableInfo(regionsInfo, allSchemas)
 	for _, region := range regionsInfo.Regions {
-		tableList := tableInfos[region.ID]
-		if len(tableList) == 0 {
-			records = append(records, newTiKVRegionPeersCols(&region, nil)...)
-		}
-		for _, table := range tableList {
-			rows := newTiKVRegionPeersCols(&region, &table)
-			records = append(records, rows...)
-		}
+		rows := newTiKVRegionPeersCols(&region)
+		records = append(records, rows...)
 	}
 	return records, nil
 }
 
-func newTiKVRegionPeersCols(region *helper.RegionInfo, table *helper.TableInfo) [][]types.Datum {
+func newTiKVRegionPeersCols(region *helper.RegionInfo) [][]types.Datum {
 	records := make([][]types.Datum, 0, len(region.Peers))
 	pendingPeerIDSet := set.NewInt64Set()
 	for _, peer := range region.PendingPeers {
@@ -877,42 +863,28 @@ func newTiKVRegionPeersCols(region *helper.RegionInfo, table *helper.TableInfo) 
 	for _, peerStat := range region.DownPeers {
 		downPeerMap[peerStat.ID] = peerStat.DownSec
 	}
-	template := make([]types.Datum, 7)
-	template[0].SetInt64(region.ID)
-	if table != nil {
-		template[1].SetInt64(table.Table.ID)
-		template[2].SetString(table.DB.Name.O)
-		template[3].SetString(table.Table.Name.O)
-		if table.IsIndex {
-			template[4].SetInt64(1)
-			template[5].SetInt64(table.Index.ID)
-			template[6].SetString(table.Index.Name.O)
-		} else {
-			template[4].SetInt64(0)
-		}
-	}
 	for _, peer := range region.Peers {
 		row := make([]types.Datum, len(tableTiKVRegionPeersCols))
-		copy(row, template)
-		row[7].SetInt64(peer.ID)
-		row[8].SetInt64(peer.StoreID)
+		row[0].SetInt64(region.ID)
+		row[1].SetInt64(peer.ID)
+		row[2].SetInt64(peer.StoreID)
 		if peer.IsLearner {
-			row[9].SetInt64(1)
+			row[3].SetInt64(1)
 		} else {
-			row[9].SetInt64(0)
+			row[3].SetInt64(0)
 		}
 		if peer.ID == region.Leader.ID {
-			row[10].SetInt64(1)
+			row[4].SetInt64(1)
 		} else {
-			row[10].SetInt64(0)
+			row[4].SetInt64(0)
 		}
 		if pendingPeerIDSet.Exist(peer.ID) {
-			row[11].SetString(pendingPeer)
+			row[5].SetString(pendingPeer)
 		} else if downSec, ok := downPeerMap[peer.ID]; ok {
-			row[11].SetString(downPeer)
-			row[12].SetInt64(downSec)
+			row[5].SetString(downPeer)
+			row[6].SetInt64(downSec)
 		} else {
-			row[11].SetString(normalPeer)
+			row[5].SetString(normalPeer)
 		}
 		records = append(records, row)
 	}
@@ -958,17 +930,9 @@ func dataForTiKVStoreStatus(ctx sessionctx.Context) (records [][]types.Datum, er
 		row[13].SetFloat64(storeStat.Status.RegionWeight)
 		row[14].SetFloat64(storeStat.Status.RegionScore)
 		row[15].SetInt64(storeStat.Status.RegionSize)
-		startTs := types.Time{
-			Time: types.FromGoTime(storeStat.Status.StartTs),
-			Type: mysql.TypeDatetime,
-			Fsp:  types.DefaultFsp,
-		}
+		startTs := types.NewTime(types.FromGoTime(storeStat.Status.StartTs), mysql.TypeDatetime, types.DefaultFsp)
 		row[16].SetMysqlTime(startTs)
-		lastHeartbeatTs := types.Time{
-			Time: types.FromGoTime(storeStat.Status.LastHeartbeatTs),
-			Type: mysql.TypeDatetime,
-			Fsp:  types.DefaultFsp,
-		}
+		lastHeartbeatTs := types.NewTime(types.FromGoTime(storeStat.Status.LastHeartbeatTs), mysql.TypeDatetime, types.DefaultFsp)
 		row[17].SetMysqlTime(lastHeartbeatTs)
 		row[18].SetString(storeStat.Status.Uptime)
 		records = append(records, row)
@@ -1372,10 +1336,7 @@ func dataForTables(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.D
 			if collation == "" {
 				collation = mysql.DefaultCollationName
 			}
-			createTime := types.Time{
-				Time: types.FromGoTime(table.GetUpdateTime()),
-				Type: createTimeTp,
-			}
+			createTime := types.NewTime(types.FromGoTime(table.GetUpdateTime()), createTimeTp, types.DefaultFsp)
 
 			createOptions := ""
 
@@ -1984,7 +1945,7 @@ func DataForAnalyzeStatus(ctx sessionctx.Context) (rows [][]types.Datum) {
 		if job.StartTime.IsZero() {
 			startTime = nil
 		} else {
-			startTime = types.Time{Time: types.FromGoTime(job.StartTime), Type: mysql.TypeDatetime}
+			startTime = types.NewTime(types.FromGoTime(job.StartTime), mysql.TypeDatetime, 0)
 		}
 		if checker == nil || checker.RequestVerification(ctx.GetSessionVars().ActiveRoles, job.DBName, job.TableName, "", mysql.AllPrivMask) {
 			rows = append(rows, types.MakeDatums(

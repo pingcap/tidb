@@ -2044,7 +2044,12 @@ func (s *testSchemaSuite) TestRetrySchemaChange(c *C) {
 	// Step2: during retry, hook() is called, tk update primary key.
 	// Step3: tk1 continue commit in retry() meet a retryable error(write conflict), retry again.
 	// Step4: tk1 retry() success, if it use the stale statement, data and index will inconsistent.
-	err := tk1.Se.CommitTxn(context.WithValue(context.Background(), "preCommitHook", hook))
+	fpName := "github.com/pingcap/tidb/session/preCommitHook"
+	c.Assert(failpoint.Enable(fpName, "return"), IsNil)
+	defer func() { c.Assert(failpoint.Disable(fpName), IsNil) }()
+
+	ctx := context.WithValue(context.Background(), "__preCommitHook", hook)
+	err := tk1.Se.CommitTxn(ctx)
 	c.Assert(err, IsNil)
 	tk.MustQuery("select * from t where t.b = 5").Check(testkit.Rows("1 5"))
 }
