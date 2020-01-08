@@ -643,6 +643,7 @@ func (tm *ttlManager) keepAlive(c *twoPhaseCommitter) {
 				// the key will not be locked forever.
 				logutil.BgLogger().Info("ttlManager live up to its lifetime",
 					zap.Uint64("txnStartTS", c.startTS))
+				metrics.TiKVTTLLifeTimeReachCounter.Inc()
 				return
 			}
 
@@ -764,8 +765,11 @@ func (action actionPessimisticLock) handleSingleBatch(c *twoPhaseCommitter, bo *
 			} else {
 				// the lockWaitTime is set, we should return wait timeout if we are still blocked by a lock
 				if time.Since(lockWaitStartTime).Milliseconds() >= action.LockWaitTime {
-					return ErrLockWaitTimeout
+					return errors.Trace(ErrLockWaitTimeout)
 				}
+			}
+			if action.LockCtx.PessimisticLockWaited != nil {
+				atomic.StoreInt32(action.LockCtx.PessimisticLockWaited, 1)
 			}
 		}
 
@@ -777,7 +781,7 @@ func (action actionPessimisticLock) handleSingleBatch(c *twoPhaseCommitter, bo *
 			// actionPessimisticLock runs on each region parallelly, we have to consider that
 			// the error may be dropped.
 			if atomic.LoadUint32(action.Killed) == 1 {
-				return ErrQueryInterrupted
+				return errors.Trace(ErrQueryInterrupted)
 			}
 		}
 	}
@@ -1046,6 +1050,7 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 		}
 	}()
 
+	binlogPrewriteStart := time.Now()
 	binlogChan := c.prewriteBinlog(ctx)
 	prewriteBo := NewBackoffer(ctx, PrewriteMaxBackoff).WithVars(c.txn.vars)
 	start := time.Now()
@@ -1068,6 +1073,7 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 			}
 		}
 	}
+	commitDetail.BinlogPrewriteTime = time.Since(binlogPrewriteStart)
 	if err != nil {
 		logutil.Logger(ctx).Debug("2PC failed on prewrite",
 			zap.Error(err),

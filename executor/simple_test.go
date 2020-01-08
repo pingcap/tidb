@@ -140,7 +140,7 @@ func inTxn(ctx sessionctx.Context) bool {
 	return (ctx.GetSessionVars().Status & mysql.ServerStatusInTrans) > 0
 }
 
-func (s *testSuite3) TestRole(c *C) {
+func (s *testSuite6) TestRole(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	// Make sure user test not in mysql.User.
 	result := tk.MustQuery(`SELECT Password FROM mysql.User WHERE User="test" and Host="localhost"`)
@@ -311,7 +311,7 @@ func (s *testSuite3) TestDefaultRole(c *C) {
 	tk.MustExec(dropRoleSQL)
 }
 
-func (s *testSuite3) TestUser(c *C) {
+func (s *testSuite7) TestUser(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	// Make sure user test not in mysql.User.
 	result := tk.MustQuery(`SELECT Password FROM mysql.User WHERE User="test" and Host="localhost"`)
@@ -395,9 +395,9 @@ func (s *testSuite3) TestUser(c *C) {
 	dropUserSQL = `DROP USER 'test1'@'localhost', 'test2'@'localhost', 'test3'@'localhost';`
 	tk.MustGetErrCode(dropUserSQL, mysql.ErrCannotUser)
 	dropUserSQL = `DROP USER 'test3'@'localhost';`
-	tk.MustGetErrCode(dropUserSQL, mysql.ErrCannotUser)
+	tk.MustExec(dropUserSQL)
 	dropUserSQL = `DROP USER 'test1'@'localhost';`
-	tk.MustGetErrCode(dropUserSQL, mysql.ErrCannotUser)
+	tk.MustExec(dropUserSQL)
 	// Test positive cases without IF EXISTS.
 	createUserSQL = `CREATE USER 'test1'@'localhost', 'test3'@'localhost';`
 	tk.MustExec(createUserSQL)
@@ -640,4 +640,21 @@ func (s *testSuite3) TestIssue9111(c *C) {
 	c.Check(err, IsNil)
 
 	tk.MustExec("drop user 'user_admin'@'localhost';")
+}
+
+func (s *testSuite3) TestRoleAtomic(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("create role r2;")
+	_, err := tk.Exec("create role r1, r2, r3")
+	c.Check(err, NotNil)
+	// Check atomic create role.
+	result := tk.MustQuery(`SELECT user FROM mysql.User WHERE user in ('r1', 'r2', 'r3')`)
+	result.Check(testkit.Rows("r2"))
+	// Check atomic drop role.
+	_, err = tk.Exec("drop role r1, r2, r3")
+	c.Check(err, NotNil)
+	result = tk.MustQuery(`SELECT user FROM mysql.User WHERE user in ('r1', 'r2', 'r3')`)
+	result.Check(testkit.Rows("r2"))
+	tk.MustExec("drop role r2;")
 }

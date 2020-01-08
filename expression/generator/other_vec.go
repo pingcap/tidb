@@ -97,7 +97,7 @@ var builtinInTmpl = template.Must(template.New("builtinInTmpl").Parse(`
 		}
 	{{- else if eq .Input.TypeName "Decimal" -}}
 		compareResult = 1
-		if arg0 == arg1 {
+		if arg0.Compare(&arg1) == 0 {
 			compareResult = 0
 		}
 	{{- else if eq .Input.TypeName "Time" -}}
@@ -235,7 +235,7 @@ func (g inGener) gen() interface{} {
 		return d
 	case types.ETDatetime, types.ETTimestamp:
 		gt := types.FromDate(2019, 11, 2, 22, 00, int(randNum), rand.Intn(1000000))
-		t := types.Time{Time: gt, Type: convertETType(g.eType)}
+		t := types.NewTime(gt, convertETType(g.eType), 0)
 		return t
 	case types.ETDuration:
 		return types.Duration{ Duration: time.Duration(randNum) }

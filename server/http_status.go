@@ -257,7 +257,7 @@ func (s *Server) startHTTPServer() {
 	httpRouterPage.WriteString("<tr><td><a href='/debug/pprof/'>Debug</a><td></tr>")
 	httpRouterPage.WriteString("</table></body></html>")
 	router.HandleFunc("/", func(responseWriter http.ResponseWriter, request *http.Request) {
-		_, err = responseWriter.Write([]byte(httpRouterPage.String()))
+		_, err = responseWriter.Write(httpRouterPage.Bytes())
 		if err != nil {
 			logutil.BgLogger().Error("write HTTP index page failed", zap.Error(err))
 		}
@@ -280,7 +280,7 @@ func (s *Server) setupStatuServerAndRPCServer(addr string, serverMux *http.Serve
 	grpcL := m.Match(cmux.Any())
 
 	s.statusServer = &http.Server{Addr: addr, Handler: CorsHandler{handler: serverMux, cfg: s.cfg}}
-	s.grpcServer = NewRPCServer(s.cfg.Security, s.dom, s)
+	s.grpcServer = NewRPCServer(s.cfg, s.dom, s)
 
 	go util.WithRecovery(func() {
 		err := s.grpcServer.Serve(grpcL)

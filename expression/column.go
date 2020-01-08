@@ -106,10 +106,6 @@ func (col *CorrelatedColumn) EvalString(ctx sessionctx.Context, row chunk.Row) (
 		return "", true, nil
 	}
 	res, err := col.Data.ToString()
-	resLen := len([]rune(res))
-	if resLen < col.RetType.Flen && ctx.GetSessionVars().StmtCtx.PadCharToFullLength {
-		res = res + strings.Repeat(" ", col.RetType.Flen-resLen)
-	}
 	return res, err != nil, err
 }
 
@@ -124,7 +120,7 @@ func (col *CorrelatedColumn) EvalDecimal(ctx sessionctx.Context, row chunk.Row) 
 // EvalTime returns DATE/DATETIME/TIMESTAMP representation of CorrelatedColumn.
 func (col *CorrelatedColumn) EvalTime(ctx sessionctx.Context, row chunk.Row) (types.Time, bool, error) {
 	if col.Data.IsNull() {
-		return types.Time{}, true, nil
+		return types.ZeroTime, true, nil
 	}
 	return col.Data.GetMysqlTime(), false, nil
 }
@@ -159,7 +155,7 @@ func (col *CorrelatedColumn) IsCorrelated() bool {
 }
 
 // ConstItem implements Expression interface.
-func (col *CorrelatedColumn) ConstItem() bool {
+func (col *CorrelatedColumn) ConstItem(_ *stmtctx.StatementContext) bool {
 	return false
 }
 
@@ -194,13 +190,15 @@ type Column struct {
 
 	hashcode []byte
 
-	// InOperand indicates whether this column is the inner operand of column equal condition converted
-	// from `[not] in (subq)`.
-	InOperand bool
 	// VirtualExpr is used to save expression for virtual column
 	VirtualExpr Expression
 
 	OrigName string
+	IsHidden bool
+
+	// InOperand indicates whether this column is the inner operand of column equal condition converted
+	// from `[not] in (subq)`.
+	InOperand bool
 }
 
 // Equal implements Expression interface.
@@ -268,7 +266,7 @@ func (col *Column) VecEvalReal(ctx sessionctx.Context, input *chunk.Chunk, resul
 
 // VecEvalString evaluates this expression in a vectorized manner.
 func (col *Column) VecEvalString(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
-	if col.RetType.Hybrid() || ctx.GetSessionVars().StmtCtx.PadCharToFullLength {
+	if col.RetType.Hybrid() {
 		it := chunk.NewIterator4Chunk(input)
 		result.ReserveString(input.NumRows())
 		for row := it.Begin(); row != it.End(); row = it.Next() {
@@ -380,12 +378,6 @@ func (col *Column) EvalString(ctx sessionctx.Context, row chunk.Row) (string, bo
 	}
 
 	val := row.GetString(col.Index)
-	if ctx.GetSessionVars().StmtCtx.PadCharToFullLength && col.GetType().Tp == mysql.TypeString {
-		valLen := len([]rune(val))
-		if valLen < col.RetType.Flen {
-			val = val + strings.Repeat(" ", col.RetType.Flen-valLen)
-		}
-	}
 	return val, false, nil
 }
 
@@ -400,7 +392,7 @@ func (col *Column) EvalDecimal(ctx sessionctx.Context, row chunk.Row) (*types.My
 // EvalTime returns DATE/DATETIME/TIMESTAMP representation of Column.
 func (col *Column) EvalTime(ctx sessionctx.Context, row chunk.Row) (types.Time, bool, error) {
 	if row.IsNull(col.Index) {
-		return types.Time{}, true, nil
+		return types.ZeroTime, true, nil
 	}
 	return row.GetTime(col.Index), false, nil
 }
@@ -434,7 +426,7 @@ func (col *Column) IsCorrelated() bool {
 }
 
 // ConstItem implements Expression interface.
-func (col *Column) ConstItem() bool {
+func (col *Column) ConstItem(_ *stmtctx.StatementContext) bool {
 	return false
 }
 

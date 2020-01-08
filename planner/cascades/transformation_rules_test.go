@@ -44,6 +44,7 @@ func (s *testTransformationRuleSuite) SetUpSuite(c *C) {
 	var err error
 	s.testData, err = testutil.LoadTestSuiteData("testdata", "transformation_rules_suite")
 	c.Assert(err, IsNil)
+	s.Parser.EnableWindowFunc(true)
 }
 
 func (s *testTransformationRuleSuite) TearDownSuite(c *C) {
@@ -125,6 +126,8 @@ func (s *testTransformationRuleSuite) TestPredicatePushDown(c *C) {
 			NewRulePushSelDownJoin(),
 			NewRulePushSelDownIndexScan(),
 			NewRulePushSelDownUnionAll(),
+			NewRulePushSelDownWindow(),
+			NewRuleMergeAdjacentSelection(),
 		},
 		memo.OperandDataSource: {
 			NewRuleEnumeratePaths(),
@@ -146,12 +149,16 @@ func (s *testTransformationRuleSuite) TestTopNRules(c *C) {
 	s.optimizer.ResetTransformationRules(map[memo.Operand][]Transformation{
 		memo.OperandLimit: {
 			NewRuleTransformLimitToTopN(),
+			NewRulePushLimitDownProjection(),
+			NewRulePushLimitDownUnionAll(),
 		},
 		memo.OperandDataSource: {
 			NewRuleEnumeratePaths(),
 		},
 		memo.OperandTopN: {
 			NewRulePushTopNDownProjection(),
+			NewRulePushTopNDownUnionAll(),
+			NewRulePushTopNDownTiKVSingleGather(),
 		},
 	})
 	var input []string

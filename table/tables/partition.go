@@ -78,7 +78,7 @@ func newPartitionedTable(tbl *TableCommon, tblInfo *model.TableInfo) (table.Tabl
 	pi := tblInfo.GetPartitionInfo()
 	for _, p := range pi.Definitions {
 		var t partition
-		err := initTableCommonWithIndices(&t.TableCommon, tblInfo, p.ID, tbl.Columns, tbl.alloc)
+		err := initTableCommonWithIndices(&t.TableCommon, tblInfo, p.ID, tbl.Columns, tbl.allocs)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -229,6 +229,7 @@ func generateHashPartitionExpr(ctx sessionctx.Context, pi *model.PartitionInfo,
 		logutil.BgLogger().Error("wrong table partition expression", zap.String("expression", pi.Expr), zap.Error(err))
 		return nil, errors.Trace(err)
 	}
+	exprs[0].HashCode(ctx.GetSessionVars().StmtCtx)
 	if col, ok := exprs[0].(*expression.Column); ok {
 		column = col
 	}
@@ -292,16 +293,20 @@ func (t *partitionedTable) locateRangePartition(ctx sessionctx.Context, pi *mode
 	}
 	if idx < 0 || idx >= len(partitionExprs) {
 		// The data does not belong to any of the partition returns `table has no partition for value %s`.
-		e, err := expression.ParseSimpleExprWithTableInfo(ctx, pi.Expr, t.meta)
-		if err != nil {
-			return 0, errors.Trace(err)
+		var valueMsg string
+		if pi.Expr != "" {
+			e, err := expression.ParseSimpleExprWithTableInfo(ctx, pi.Expr, t.meta)
+			if err == nil {
+				val, _, err := e.EvalInt(ctx, chunk.MutRowFromDatums(r).ToRow())
+				if err == nil {
+					valueMsg = fmt.Sprintf("%d", val)
+				}
+			}
+		} else {
+			// When the table is partitioned by range columns.
+			valueMsg = "from column_list"
 		}
-
-		ret, _, err2 := e.EvalInt(ctx, chunk.MutRowFromDatums(r).ToRow())
-		if err2 != nil {
-			return 0, errors.Trace(err2)
-		}
-		return 0, errors.Trace(table.ErrNoPartitionForGivenValue.GenWithStackByArgs(fmt.Sprintf("%d", ret)))
+		return 0, table.ErrNoPartitionForGivenValue.GenWithStackByArgs(valueMsg)
 	}
 	return idx, nil
 }

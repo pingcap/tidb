@@ -358,7 +358,7 @@ func NumberToDuration(number int64, fsp int8) (Duration, error) {
 	if number/10000 > TimeMaxHour || number%100 >= 60 || (number/100)%100 >= 60 {
 		return ZeroDuration, errors.Trace(ErrWrongValue.GenWithStackByArgs(TimeStr, strconv.FormatInt(number, 10)))
 	}
-	t := Time{Time: FromDate(0, 0, 0, int(number/10000), int((number/100)%100), int(number%100), 0), Type: mysql.TypeDuration, Fsp: fsp}
+	t := NewTime(FromDate(0, 0, 0, int(number/10000), int((number/100)%100), int(number%100), 0), mysql.TypeDuration, fsp)
 	dur, err := t.ConvertToDuration()
 	if err != nil {
 		return ZeroDuration, errors.Trace(err)
@@ -371,7 +371,7 @@ func NumberToDuration(number int64, fsp int8) (Duration, error) {
 
 // getValidIntPrefix gets prefix of the string which can be successfully parsed as int.
 func getValidIntPrefix(sc *stmtctx.StatementContext, str string) (string, error) {
-	if !sc.CastStrToIntStrict {
+	if !sc.InSelectStmt {
 		floatPrefix, err := getValidFloatPrefix(sc, str)
 		if err != nil {
 			return floatPrefix, errors.Trace(err)
