@@ -206,10 +206,6 @@ func (e *TableReaderExecutor) Close() error {
 // to fetch all results.
 func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Range) (distsql.SelectResult, error) {
 	var builder distsql.RequestBuilder
-	txn, err := e.ctx.Txn(false)
-	if err != nil {
-		return nil, err
-	}
 	kvReq, err := builder.SetTableRanges(getPhysicalTableID(e.table), ranges, e.feedback).
 		SetDAGRequest(e.dagPB).
 		SetStartTS(e.startTS).
@@ -219,7 +215,7 @@ func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Ra
 		SetFromSessionVars(e.ctx.GetSessionVars()).
 		SetMemTracker(e.memTracker).
 		SetStoreType(e.storeType).
-		SetSchemaVer(txn).
+		SetSchemaVer(e.ctx.GetSessionVars().TxnCtx.SchemaVersion).
 		Build()
 	if err != nil {
 		return nil, err

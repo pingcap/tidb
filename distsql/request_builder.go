@@ -15,15 +15,12 @@ package distsql
 
 import (
 	"math"
-	"reflect"
 
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
-	"github.com/pingcap/tidb/structure"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
@@ -141,25 +138,8 @@ func (builder *RequestBuilder) SetStoreType(storeType kv.StoreType) *RequestBuil
 }
 
 // SetSchemaVer sets "SchemaVer" for "kv.Request".
-func (builder *RequestBuilder) SetSchemaVer(txn kv.Transaction) *RequestBuilder {
-	// Avoid panic by situation:
-	//		struct wrapTxn {
-	//			kv.Transaction
-	//		}
-	// And the `Transaction` is nil in `wrapTxn`
-	if txn == nil {
-		return builder
-	}
-	if txnField, hasTxn := reflect.TypeOf(txn).Elem().FieldByName("Transaction"); hasTxn && reflect.ValueOf(txn).Elem().Field(txnField.Index[0]).IsNil() {
-		return builder
-	}
-
-	txnStruct := structure.NewStructure(txn, txn, []byte("m"))
-	var err error
-	builder.Request.SchemaVar, err = txnStruct.GetInt64([]byte("SchemaVersionKey"))
-	if err != nil {
-		terror.Log(err)
-	}
+func (builder *RequestBuilder) SetSchemaVer(schemaVer int64) *RequestBuilder {
+	builder.Request.SchemaVar = schemaVer
 	return builder
 }
 
