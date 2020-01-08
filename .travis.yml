@@ -5,6 +5,10 @@ go:
 
 script:
   - make test WITH_RACE=1
+  - make integration_test
 
 after_success:
   - bash <(curl -s https://codecov.io/bash)
+
+services:
+  - mysql

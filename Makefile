@@ -19,3 +19,6 @@ bin/%: cmd/%/main.go $(wildcard v4/**/*.go)
 
 test:
 	$(GO) list ./... | xargs $(GO) test $(GOLDFLAGS) -coverprofile=coverage.txt -covermode=atomic
+
+integration_test: bin/dumpling
+	./tests/run.sh
