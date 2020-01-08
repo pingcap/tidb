@@ -44,7 +44,7 @@ func DefaultConfig() *Config {
 }
 
 func (conf *Config) getDSN(db string) string {
-	return fmt.Sprintf("%s:%s@tcp(%s:%d)/%s", conf.User, conf.Password, conf.Host, conf.Port, db)
+	return fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?charset=utf8mb4", conf.User, conf.Password, conf.Host, conf.Port, db)
 }
 
 const UnspecifiedSize = 0

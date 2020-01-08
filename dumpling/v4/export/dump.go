@@ -35,11 +35,11 @@ func Dump(conf *Config) (err error) {
 		return err
 	}
 
-	fsWriter, err := NewSimpleWriter(conf)
+	writer, err := NewSimpleWriter(conf)
 	if err != nil {
 		return err
 	}
-	if err = dumpDatabases(context.Background(), conf, pool, fsWriter); err != nil {
+	if err = dumpDatabases(context.Background(), conf, pool, writer); err != nil {
 		return err
 	}
 

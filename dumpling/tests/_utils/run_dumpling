@@ -1,0 +1,9 @@
+#!/bin/sh
+
+set -e
+
+echo "[$(date)] Executing bin/dumpling..."
+
+bin/dumpling -u "$DUMPLING_TEST_USER" -h "$DUMPLING_TEST_HOST" \
+    -P "$DUMPLING_TEST_PORT" -B "$DUMPLING_TEST_DATABASE" \
+    -p "$DUMPLING_TEST_PASSWORD" -o "$DUMPLING_OUTPUT_DIR"
