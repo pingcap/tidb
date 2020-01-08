@@ -299,7 +299,6 @@ type Performance struct {
 	TCPKeepAlive        bool    `toml:"tcp-keep-alive" json:"tcp-keep-alive"`
 	CrossJoin           bool    `toml:"cross-join" json:"cross-join"`
 	RunAutoAnalyze      bool    `toml:"run-auto-analyze" json:"run-auto-analyze"`
-	PProfSQLCPU         bool    `toml:"pprof-sql-cpu" json:"pprof-sql-cpu"`
 }
 
 // PlanCache is the PlanCache section of the config.
