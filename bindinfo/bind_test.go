@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/stmtsummary"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	dto "github.com/prometheus/client_model/go"
@@ -469,10 +470,9 @@ func (s *testSuite) TestPreparedStmt(c *C) {
 func (s *testSuite) TestCapturePlanBaseline(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	s.cleanBindingEnv(tk)
-	tk.MustExec("set @@tidb_enable_stmt_summary = on")
+	stmtsummary.StmtSummaryByDigestMap.Clear()
 	tk.MustExec(" set @@tidb_capture_plan_baselines = on")
 	defer func() {
-		tk.MustExec("set @@tidb_enable_stmt_summary = off")
 		tk.MustExec(" set @@tidb_capture_plan_baselines = off")
 	}()
 	tk.MustExec("use test")
