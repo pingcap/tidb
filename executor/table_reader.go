@@ -215,7 +215,6 @@ func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Ra
 		SetFromSessionVars(e.ctx.GetSessionVars()).
 		SetMemTracker(e.memTracker).
 		SetStoreType(e.storeType).
-		SetSchemaVer(e.ctx.GetSessionVars().TxnCtx.SchemaVersion).
 		Build()
 	if err != nil {
 		return nil, err

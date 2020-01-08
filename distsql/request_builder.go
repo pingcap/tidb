@@ -137,12 +137,6 @@ func (builder *RequestBuilder) SetStoreType(storeType kv.StoreType) *RequestBuil
 	return builder
 }
 
-// SetSchemaVer sets "SchemaVer" for "kv.Request".
-func (builder *RequestBuilder) SetSchemaVer(schemaVer int64) *RequestBuilder {
-	builder.Request.SchemaVar = schemaVer
-	return builder
-}
-
 func (builder *RequestBuilder) getIsolationLevel() kv.IsoLevel {
 	switch builder.Tp {
 	case kv.ReqTypeAnalyze:
@@ -171,6 +165,7 @@ func (builder *RequestBuilder) SetFromSessionVars(sv *variable.SessionVars) *Req
 	builder.Request.NotFillCache = sv.StmtCtx.NotFillCache
 	builder.Request.Priority = builder.getKVPriority(sv)
 	builder.Request.ReplicaRead = sv.GetReplicaRead()
+	builder.Request.SchemaVar = sv.TxnCtx.SchemaVersion
 	return builder
 }
 
