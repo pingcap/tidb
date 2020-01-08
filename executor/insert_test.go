@@ -189,6 +189,15 @@ func (s *testSuite8) TestInsertOnDuplicateKey(c *C) {
 	tk.MustExec(`insert into t1 values(4,14),(5,15),(6,16),(7,17),(8,18) on duplicate key update b=b+10`)
 	c.Assert(tk.Se.AffectedRows(), Equals, uint64(7))
 	tk.CheckLastMessage("Records: 5  Duplicates: 2  Warnings: 0")
+
+	tk.MustExec("drop table if exists a, b")
+	tk.MustExec("create table a(x int primary key)")
+	tk.MustExec("create table b(x int, y int)")
+	tk.MustExec("insert into a values(1)")
+	tk.MustExec("insert into b values(1, 2)")
+	tk.MustExec("insert into a select x from b ON DUPLICATE KEY UPDATE a.x=b.y")
+	c.Assert(tk.Se.AffectedRows(), Equals, uint64(2))
+	tk.MustQuery("select * from a").Check(testkit.Rows("2"))
 }
 
 func (s *testSuite3) TestUpdateDuplicateKey(c *C) {

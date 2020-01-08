@@ -709,6 +709,7 @@ func (b *executorBuilder) buildInsert(v *plannercore.Insert) Executor {
 		allAssignmentsAreConstant: v.AllAssignmentsAreConstant,
 		hasRefCols:                v.NeedFillDefaultValue,
 		SelectExec:                selectExec,
+		origSelectOutputLen:       v.OrigSelectOutputLen,
 	}
 	err := ivs.initInsertColumns()
 	if err != nil {

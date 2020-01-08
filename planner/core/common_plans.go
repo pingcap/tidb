@@ -543,6 +543,8 @@ type Insert struct {
 	SelectPlan PhysicalPlan
 
 	AllAssignmentsAreConstant bool
+
+	OrigSelectOutputLen int
 }
 
 // Update represents Update plan.

@@ -2116,10 +2116,71 @@ func (b *PlanBuilder) buildValuesListOfInsert(ctx context.Context, insert *ast.I
 	return nil
 }
 
+type colNameExtractor struct {
+	colNameMap map[types.FieldName]*ast.ColumnNameExpr
+}
+
+func (c *colNameExtractor) Enter(node ast.Node) (ast.Node, bool) {
+	if colName, ok := node.(*ast.ColumnNameExpr); ok {
+		fieldName := types.FieldName{
+			DBName:  colName.Name.Schema,
+			TblName: colName.Name.Table,
+			ColName: colName.Name.Name,
+		}
+		c.colNameMap[fieldName] = colName
+		return node, true
+	}
+	return node, false
+}
+
+func (c *colNameExtractor) Leave(node ast.Node) (ast.Node, bool) {
+	return node, true
+}
+
 func (b *PlanBuilder) buildSelectPlanOfInsert(ctx context.Context, insert *ast.InsertStmt, insertPlan *Insert) error {
 	affectedValuesCols, err := b.getAffectCols(insert, insertPlan)
 	if err != nil {
 		return err
+	}
+	actualColLen := -1
+	// For MYSQL, it accept the case that the columns in ON DUPLICATE UPDATE is not the project column of the SELECT CLAUSE
+	// but just in the table occurs in the SELECT CLAUSE.
+	//   e.g. insert into a select x from b ON DUPLICATE KEY UPDATE  a.x=b.y; the `y` is not one column of select' output,
+	//        just one column the the table b holds. MySQL won't throw error and will execute this SQL successfully.
+	// To make compatible with this strange feature, we add the variable `actualColLen` and the following IF branch.
+	if len(insert.OnDuplicate) > 0 {
+		if sel, ok := insert.Select.(*ast.SelectStmt); ok {
+			hasWildCard := false
+			for _, field := range sel.Fields.Fields {
+				if field.WildCard != nil {
+					hasWildCard = true
+					break
+				}
+			}
+			if !hasWildCard {
+				colExtractor := &colNameExtractor{colNameMap: make(map[types.FieldName]*ast.ColumnNameExpr)}
+				for _, assign := range insert.OnDuplicate {
+					colExtractor.Enter(assign.Expr)
+				}
+				actualColLen = len(sel.Fields.Fields)
+				for _, colName := range colExtractor.colNameMap {
+					found := false
+					for _, field := range sel.Fields.Fields {
+						if colField, ok := field.Expr.(*ast.ColumnNameExpr); ok &&
+							(colName.Name.Schema.L == "" || colField.Name.Schema.L == "" || colName.Name.Schema.L == colField.Name.Schema.L) &&
+							(colName.Name.Table.L == "" || colField.Name.Table.L == "" || colName.Name.Table.L == colField.Name.Table.L) &&
+							colName.Name.Name.L == colField.Name.Name.L {
+							found = true
+							break
+						}
+					}
+					if found {
+						continue
+					}
+					sel.Fields.Fields = append(sel.Fields.Fields, &ast.SelectField{Expr: colName, Offset: len(sel.Fields.Fields)})
+				}
+			}
+		}
 	}
 	selectPlan, err := b.Build(ctx, insert.Select)
 	if err != nil {
@@ -2127,7 +2188,7 @@ func (b *PlanBuilder) buildSelectPlanOfInsert(ctx context.Context, insert *ast.I
 	}
 
 	// Check to guarantee that the length of the row returned by select is equal to that of affectedValuesCols.
-	if selectPlan.Schema().Len() != len(affectedValuesCols) {
+	if (actualColLen == -1 && selectPlan.Schema().Len() != len(affectedValuesCols)) || (actualColLen != -1 && actualColLen != len(affectedValuesCols)) {
 		return ErrWrongValueCountOnRow.GenWithStackByArgs(1)
 	}
 
@@ -2150,12 +2211,17 @@ func (b *PlanBuilder) buildSelectPlanOfInsert(ctx context.Context, insert *ast.I
 		return err
 	}
 
+	if actualColLen == -1 {
+		actualColLen = selectPlan.Schema().Len()
+	}
+	insertPlan.OrigSelectOutputLen = actualColLen
 	// schema4NewRow is the schema for the newly created data record based on
 	// the result of the select statement.
 	schema4NewRow := expression.NewSchema(make([]*expression.Column, len(insertPlan.Table.Cols()))...)
 	names4NewRow := make(types.NameSlice, len(insertPlan.Table.Cols()))
 	// TODO: don't clone it.
-	for i, selCol := range insertPlan.SelectPlan.Schema().Columns {
+	for i := 0; i < actualColLen; i++ {
+		selCol := insertPlan.SelectPlan.Schema().Columns[i]
 		ordinal := affectedValuesCols[i].Offset
 		schema4NewRow.Columns[ordinal] = &expression.Column{}
 		*schema4NewRow.Columns[ordinal] = *selCol
@@ -2171,8 +2237,11 @@ func (b *PlanBuilder) buildSelectPlanOfInsert(ctx context.Context, insert *ast.I
 			names4NewRow[i] = types.EmptyName
 		}
 	}
-	insertPlan.Schema4OnDuplicate = expression.MergeSchema(insertPlan.tableSchema, schema4NewRow)
-	insertPlan.names4OnDuplicate = append(insertPlan.tableColNames.Shallow(), names4NewRow...)
+	insertPlan.Schema4OnDuplicate = expression.NewSchema(insertPlan.tableSchema.Columns...)
+	insertPlan.Schema4OnDuplicate.Append(insertPlan.SelectPlan.Schema().Columns[actualColLen:]...)
+	insertPlan.Schema4OnDuplicate.Append(schema4NewRow.Columns...)
+	insertPlan.names4OnDuplicate = append(insertPlan.tableColNames.Shallow(), names[actualColLen:]...)
+	insertPlan.names4OnDuplicate = append(insertPlan.names4OnDuplicate, names4NewRow...)
 	return nil
 }
 
