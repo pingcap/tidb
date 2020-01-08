@@ -97,14 +97,13 @@ func (h *CoprocessorDAGHandler) HandleStreamRequest(ctx context.Context, req *co
 			return stream.Send(h.buildErrorResponse(err))
 		}
 		if chk.NumRows() == 0 {
-			break
+			return h.buildResponseAndSendToStream(chk, tps, stream)
 		}
 		err = h.buildResponseAndSendToStream(chk, tps, stream)
 		if err != nil {
 			return stream.Send(h.buildErrorResponse(err))
 		}
 	}
-	return h.buildResponseAndSendToStream(chk, tps, stream)
 }
 
 func (h *CoprocessorDAGHandler) buildResponseAndSendToStream(chk *chunk.Chunk, tps []*types.FieldType, stream tikvpb.Tikv_CoprocessorStreamServer) error {

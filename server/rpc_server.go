@@ -84,8 +84,8 @@ func (s *rpcServer) Coprocessor(ctx context.Context, in *coprocessor.Request) (r
 	resp = &coprocessor.Response{}
 	defer func() {
 		if v := recover(); v != nil {
-			logutil.BgLogger().Error("panic when when RPC server handing coprocessor", zap.Any("stack", v))
-			resp.OtherError = fmt.Sprintf("panic when when RPC server handing coprocessor, stack:%v", v)
+			logutil.BgLogger().Error("panic when RPC server handing coprocessor", zap.Any("stack", v))
+			resp.OtherError = fmt.Sprintf("panic when RPC server handing coprocessor, stack:%v", v)
 		}
 	}()
 	resp = s.handleCopRequest(ctx, in)

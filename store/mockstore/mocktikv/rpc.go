@@ -20,6 +20,7 @@ import (
 	"io"
 	"math"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/golang/protobuf/proto"
@@ -683,7 +684,8 @@ type RPCClient struct {
 	MvccStore     MVCCStore
 	streamTimeout chan *tikvrpc.Lease
 	done          chan struct{}
-	rpcCli        Client
+	sync.Once
+	rpcCli Client
 }
 
 // NewRPCClient creates an RPCClient.
@@ -741,12 +743,13 @@ var GRPCClientFactory func() Client
 // redirectRequestToRPCServer redirects RPC request to TiDB rpc server, It is only use for test.
 // Mock TiDB rpc service will have circle import problem, so just use a real RPC client to send this RPC  server.
 func (c *RPCClient) redirectRequestToRPCServer(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
-	if c.rpcCli == nil {
+	c.Once.Do(func() {
 		if GRPCClientFactory != nil {
 			c.rpcCli = GRPCClientFactory()
-		} else {
-			return nil, errors.Errorf("GRPCClientFactory is nil")
 		}
+	})
+	if c.rpcCli == nil {
+		return nil, errors.Errorf("GRPCClientFactory is nil")
 	}
 	return c.rpcCli.SendRequest(ctx, addr, req, timeout)
 }
