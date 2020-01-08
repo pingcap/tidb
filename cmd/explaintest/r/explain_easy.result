@@ -472,11 +472,9 @@ begin;
 insert tb values ('1');
 explain select * from ta where a = 1;
 id	count	task	operator info
-Projection_5	8000.00	root	test.ta.a
-└─Selection_6	8000.00	root	eq(cast(test.ta.a), 1)
-  └─UnionScan_7	10000.00	root	eq(cast(test.ta.a), 1)
-    └─TableReader_9	10000.00	root	data:TableScan_8
-      └─TableScan_8	10000.00	cop	table:ta, range:[-inf,+inf], keep order:false, stats:pseudo
+Selection_5	8000.00	root	eq(cast(test.ta.a), 1)
+└─TableReader_7	10000.00	root	data:TableScan_6
+  └─TableScan_6	10000.00	cop	table:ta, range:[-inf,+inf], keep order:false, stats:pseudo
 rollback;
 drop table if exists t1, t2;
 create table t1(a int, b int, c int, primary key(a, b));
@@ -489,6 +487,37 @@ explain select distinct t1.a, t1.b from t1 left outer join t2 on t1.a = t2.a;
 id	count	task	operator info
 IndexReader_9	10000.00	root	index:IndexScan_8
 └─IndexScan_8	10000.00	cop	table:t1, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
+CREATE TABLE `test01` (
+`id` bigint(20) NOT NULL AUTO_INCREMENT,
+`stat_date` int(11) NOT NULL DEFAULT '0',
+`show_date` varchar(20) NOT NULL DEFAULT '',
+`region_id` bigint(20) unsigned NOT NULL DEFAULT '0',
+`period` tinyint(3) unsigned NOT NULL DEFAULT '0',
+`registration_num` bigint(20) unsigned NOT NULL DEFAULT '0',
+PRIMARY KEY (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+CREATE TABLE `test02` (
+`id` bigint(20) NOT NULL AUTO_INCREMENT,
+`region_name` varchar(128) DEFAULT NULL,
+PRIMARY KEY (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+EXPLAIN SELECT COUNT(1) FROM (SELECT COALESCE(b.region_name, '不详') region_name, SUM(a.registration_num) registration_num FROM (SELECT stat_date, show_date, region_id, 0 registration_num FROM test01 WHERE period = 1 AND stat_date >= 20191202 AND stat_date <= 20191202 UNION ALL SELECT stat_date, show_date, region_id, registration_num registration_num FROM test01 WHERE period = 1 AND stat_date >= 20191202 AND stat_date <= 20191202) a LEFT JOIN test02 b ON a.region_id = b.id WHERE registration_num > 0 AND a.stat_date >= '20191202' AND a.stat_date <= '20191202' GROUP BY a.stat_date , a.show_date , COALESCE(b.region_name, '不详') ) JLS;
+id	count	task	operator info
+StreamAgg_22	1.00	root	funcs:count(1)
+└─HashAgg_25	1.00	root	group by:col_0, col_1, col_2, funcs:firstrow(1)
+  └─Projection_41	0.01	root	a.stat_date, a.show_date, coalesce(test.b.region_name, "不详")
+    └─IndexJoin_28	0.01	root	left outer join, inner:TableReader_27, outer key:a.region_id, inner key:test.b.id
+      ├─Union_30	0.01	root	
+      │ ├─Projection_31	0.00	root	test.test01.stat_date, test.test01.show_date, test.test01.region_id, cast(registration_num)
+      │ │ └─Projection_32	0.00	root	test.test01.stat_date, test.test01.show_date, test.test01.region_id, 0
+      │ │   └─TableDual_33	0.00	root	rows:0
+      │ └─Projection_34	0.01	root	test.test01.stat_date, test.test01.show_date, test.test01.region_id, cast(test.test01.registration_num)
+      │   └─Selection_35	0.01	root	gt(cast(test.test01.registration_num), 0)
+      │     └─TableReader_38	0.01	root	data:Selection_37
+      │       └─Selection_37	0.01	cop	eq(test.test01.period, 1), ge(test.test01.stat_date, 20191202), ge(test.test01.stat_date, 20191202), le(test.test01.stat_date, 20191202), le(test.test01.stat_date, 20191202)
+      │         └─TableScan_36	10000.00	cop	table:test01, range:[-inf,+inf], keep order:false, stats:pseudo
+      └─TableReader_27	1.00	root	data:TableScan_26
+        └─TableScan_26	1.00	cop	table:b, range: decided by [a.region_id], keep order:false, stats:pseudo
 drop table if exists t;
 create table t(a int, nb int not null, nc int not null);
 explain select ifnull(a, 0) from t;

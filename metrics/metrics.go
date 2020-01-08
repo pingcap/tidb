@@ -154,5 +154,7 @@ func RegisterMetrics() {
 	prometheus.MustRegister(TiKVRangeTaskPushDuration)
 	prometheus.MustRegister(HandleSchemaValidate)
 	prometheus.MustRegister(TiKVTxnHeartBeatHistogram)
+	prometheus.MustRegister(TiKVPessimisticLockKeysDuration)
 	prometheus.MustRegister(GRPCConnTransientFailureCounter)
+	prometheus.MustRegister(TiKVTTLLifeTimeReachCounter)
 }

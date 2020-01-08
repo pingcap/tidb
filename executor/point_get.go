@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tidb/util/ranger"
 )
 
 func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) Executor {
@@ -147,7 +146,7 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 
 func (e *PointGetExecutor) lockKeyIfNeeded(ctx context.Context, key []byte) error {
 	if e.lock {
-		return doLockKeys(ctx, e.ctx, e.lockWaitTime, key)
+		return doLockKeys(ctx, e.ctx, newLockCtx(e.ctx.GetSessionVars(), e.lockWaitTime), key)
 	}
 	return nil
 }
@@ -157,7 +156,9 @@ func (e *PointGetExecutor) encodeIndexKey() (_ []byte, err error) {
 	for i := range e.idxVals {
 		colInfo := e.tblInfo.Columns[e.idxInfo.Columns[i].Offset]
 		if colInfo.Tp == mysql.TypeString || colInfo.Tp == mysql.TypeVarString || colInfo.Tp == mysql.TypeVarchar {
-			e.idxVals[i], err = ranger.HandlePadCharToFullLength(sc, &colInfo.FieldType, e.idxVals[i])
+			var str string
+			str, err = e.idxVals[i].ToString()
+			e.idxVals[i].SetString(str)
 		} else {
 			e.idxVals[i], err = table.CastValue(e.ctx, e.idxVals[i], colInfo)
 		}
@@ -174,7 +175,7 @@ func (e *PointGetExecutor) encodeIndexKey() (_ []byte, err error) {
 }
 
 func (e *PointGetExecutor) get(key kv.Key) (val []byte, err error) {
-	txn, err := e.ctx.Txn(true)
+	txn, err := e.ctx.Txn(false)
 	if err != nil {
 		return nil, err
 	}

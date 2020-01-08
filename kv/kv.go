@@ -15,6 +15,7 @@ package kv
 
 import (
 	"context"
+	"time"
 
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/store/tikv/oracle"
@@ -58,6 +59,15 @@ const (
 	PriorityLow
 	PriorityHigh
 )
+
+// UnCommitIndexKVFlag uses to indicate the index key/value is no need to commit.
+// This is used in the situation of the index key/value was unchanged when do update.
+// Usage:
+// 1. For non-unique index: normally, the index value is '0'.
+// Change the value to '1' indicate the index key/value is no need to commit.
+// 2. For unique index: normally, the index value is the record handle ID, 8 bytes.
+// Append UnCommitIndexKVFlag to the value indicate the index key/value is no need to commit.
+const UnCommitIndexKVFlag byte = '1'
 
 // IsoLevel is the transaction's isolation level.
 type IsoLevel int
@@ -137,7 +147,7 @@ type Transaction interface {
 	// String implements fmt.Stringer interface.
 	String() string
 	// LockKeys tries to lock the entries with the keys in KV store.
-	LockKeys(ctx context.Context, killed *uint32, forUpdateTS uint64, lockWaitTime int64, keys ...Key) error
+	LockKeys(ctx context.Context, lockCtx *LockCtx, keys ...Key) error
 	// SetOption sets an option with a value, when val is nil, uses the default
 	// value of this option.
 	SetOption(opt Option, val interface{})
@@ -161,6 +171,16 @@ type Transaction interface {
 	// If a key doesn't exist, there shouldn't be any corresponding entry in the result map.
 	BatchGet(keys []Key) (map[string][]byte, error)
 	IsPessimistic() bool
+}
+
+// LockCtx contains information for LockKeys method.
+type LockCtx struct {
+	Killed                *uint32
+	ForUpdateTS           uint64
+	LockWaitTime          int64
+	WaitStartTime         time.Time
+	PessimisticLockWaited *int32
+	LockKeysDuration      *time.Duration
 }
 
 // Client is used to send request to KV layer.

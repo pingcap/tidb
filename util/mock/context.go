@@ -25,11 +25,10 @@ import (
 	"github.com/pingcap/tidb/owner"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/sqlexec"
-	binlog "github.com/pingcap/tipb/go-binlog"
+	"github.com/pingcap/tipb/go-binlog"
 )
 
 var _ sessionctx.Context = (*Context)(nil)
@@ -80,6 +79,11 @@ func (c *Context) Value(key fmt.Stringer) interface{} {
 // ClearValue implements sessionctx.Context ClearValue interface.
 func (c *Context) ClearValue(key fmt.Stringer) {
 	delete(c.values, key)
+}
+
+// HasDirtyContent implements sessionctx.Context ClearValue interface.
+func (c *Context) HasDirtyContent(tid int64) bool {
+	return false
 }
 
 // GetSessionVars implements the sessionctx.Context GetSessionVars interface.
@@ -212,7 +216,7 @@ func (c *Context) StmtGetMutation(tableID int64) *binlog.TableMutation {
 }
 
 // StmtAddDirtyTableOP implements the sessionctx.Context interface.
-func (c *Context) StmtAddDirtyTableOP(op int, tid int64, handle int64, row []types.Datum) {
+func (c *Context) StmtAddDirtyTableOP(op int, tid int64, handle int64) {
 }
 
 // NewContext creates a new mocked sessionctx.Context.

@@ -316,7 +316,8 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal | ScopeSession, "sql_buffer_result", "OFF"},
 	{ScopeGlobal | ScopeSession, "character_set_filesystem", "binary"},
 	{ScopeGlobal | ScopeSession, "collation_database", mysql.DefaultCollationName},
-	{ScopeGlobal | ScopeSession, "auto_increment_increment", "1"},
+	{ScopeGlobal | ScopeSession, AutoIncrementIncrement, strconv.FormatInt(DefAutoIncrementIncrement, 10)},
+	{ScopeGlobal | ScopeSession, AutoIncrementOffset, strconv.FormatInt(DefAutoIncrementOffset, 10)},
 	{ScopeGlobal | ScopeSession, "max_heap_table_size", "16777216"},
 	{ScopeGlobal | ScopeSession, "div_precision_increment", "4"},
 	{ScopeGlobal, "innodb_lru_scan_depth", "1024"},
@@ -676,7 +677,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeSession, TIDBMemQuotaNestedLoopApply, strconv.FormatInt(DefTiDBMemQuotaNestedLoopApply, 10)},
 	{ScopeSession, TiDBEnableStreaming, "0"},
 	{ScopeSession, TxnIsolationOneShot, ""},
-	{ScopeSession, TiDBEnableTablePartition, "auto"},
+	{ScopeGlobal | ScopeSession, TiDBEnableTablePartition, "auto"},
 	{ScopeGlobal | ScopeSession, TiDBHashJoinConcurrency, strconv.Itoa(DefTiDBHashJoinConcurrency)},
 	{ScopeGlobal | ScopeSession, TiDBProjectionConcurrency, strconv.Itoa(DefTiDBProjectionConcurrency)},
 	{ScopeGlobal | ScopeSession, TiDBHashAggPartialConcurrency, strconv.Itoa(DefTiDBHashAggPartialConcurrency)},
@@ -714,7 +715,9 @@ var defaultSysVars = []*SysVar{
 	{ScopeSession, TiDBLowResolutionTSO, "0"},
 	{ScopeSession, TiDBExpensiveQueryTimeThreshold, strconv.Itoa(DefTiDBExpensiveQueryTimeThreshold)},
 	{ScopeSession, TiDBAllowRemoveAutoInc, BoolToIntStr(DefTiDBAllowRemoveAutoInc)},
-	{ScopeGlobal | ScopeSession, TiDBEnableStmtSummary, "0"},
+	{ScopeGlobal | ScopeSession, TiDBEnableStmtSummary, BoolToIntStr(config.GetGlobalConfig().StmtSummary.Enable)},
+	{ScopeGlobal | ScopeSession, TiDBStmtSummaryRefreshInterval, strconv.Itoa(config.GetGlobalConfig().StmtSummary.RefreshInterval)},
+	{ScopeGlobal | ScopeSession, TiDBStmtSummaryHistorySize, strconv.Itoa(config.GetGlobalConfig().StmtSummary.HistorySize)},
 	{ScopeGlobal | ScopeSession, TiDBStoreLimit, strconv.FormatInt(atomic.LoadInt64(&config.GetGlobalConfig().TiKVClient.StoreLimit), 10)},
 }
 
@@ -952,6 +955,10 @@ const (
 	InnodbTableLocks = "innodb_table_locks"
 	// InnodbStatusOutput is the name for 'innodb_status_output' system variable.
 	InnodbStatusOutput = "innodb_status_output"
+	// AutoIncrementIncrement is the name of 'auto_increment_increment' system variable.
+	AutoIncrementIncrement = "auto_increment_increment"
+	// AutoIncrementOffset is the name of 'auto_increment_offset' system variable.
+	AutoIncrementOffset = "auto_increment_offset"
 	// ThreadPoolSize is the name of 'thread_pool_size' variable.
 	ThreadPoolSize = "thread_pool_size"
 )

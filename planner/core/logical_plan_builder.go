@@ -164,7 +164,6 @@ func (b *PlanBuilder) buildResultSetNode(ctx context.Context, node ast.ResultSet
 			v.TableAsName = &x.AsName
 		}
 		for _, col := range p.Schema().Columns {
-			col.OrigTblName = col.TblName
 			if x.AsName.L != "" {
 				col.TblName = x.AsName
 			}
@@ -480,7 +479,7 @@ func (b *PlanBuilder) buildUsingClause(p *LogicalJoin, leftPlan, rightPlan Logic
 	for _, col := range join.Using {
 		filter[col.Name.L] = true
 	}
-	return b.coalesceCommonColumns(p, leftPlan, rightPlan, join.Tp == ast.RightJoin, filter)
+	return b.coalesceCommonColumns(p, leftPlan, rightPlan, join.Tp, filter)
 }
 
 // buildNaturalJoin builds natural join output schema. It finds out all the common columns
@@ -490,15 +489,20 @@ func (b *PlanBuilder) buildUsingClause(p *LogicalJoin, leftPlan, rightPlan Logic
 // 	Every column in the first (left) table that is not a common column
 // 	Every column in the second (right) table that is not a common column
 func (b *PlanBuilder) buildNaturalJoin(p *LogicalJoin, leftPlan, rightPlan LogicalPlan, join *ast.Join) error {
-	return b.coalesceCommonColumns(p, leftPlan, rightPlan, join.Tp == ast.RightJoin, nil)
+	return b.coalesceCommonColumns(p, leftPlan, rightPlan, join.Tp, nil)
 }
 
 // coalesceCommonColumns is used by buildUsingClause and buildNaturalJoin. The filter is used by buildUsingClause.
-func (b *PlanBuilder) coalesceCommonColumns(p *LogicalJoin, leftPlan, rightPlan LogicalPlan, rightJoin bool, filter map[string]bool) error {
+func (b *PlanBuilder) coalesceCommonColumns(p *LogicalJoin, leftPlan, rightPlan LogicalPlan, joinTp ast.JoinType, filter map[string]bool) error {
 	lsc := leftPlan.Schema().Clone()
 	rsc := rightPlan.Schema().Clone()
+	if joinTp == ast.LeftJoin {
+		resetNotNullFlag(rsc, 0, rsc.Len())
+	} else if joinTp == ast.RightJoin {
+		resetNotNullFlag(lsc, 0, lsc.Len())
+	}
 	lColumns, rColumns := lsc.Columns, rsc.Columns
-	if rightJoin {
+	if joinTp == ast.RightJoin {
 		lColumns, rColumns = rsc.Columns, lsc.Columns
 	}
 
@@ -603,19 +607,18 @@ func (b *PlanBuilder) buildSelection(ctx context.Context, p LogicalPlan, where a
 
 // buildProjectionFieldNameFromColumns builds the field name, table name and database name when field expression is a column reference.
 func (b *PlanBuilder) buildProjectionFieldNameFromColumns(origField *ast.SelectField, colNameField *ast.ColumnNameExpr, c *expression.Column) (colName, origColName, tblName, origTblName, dbName model.CIStr) {
-	origColName, tblName, dbName = colNameField.Name.Name, colNameField.Name.Table, colNameField.Name.Schema
-	if origField.AsName.L != "" {
-		colName = origField.AsName
+	origTblName, origColName, dbName = c.OrigTblName, c.OrigColName, c.DBName
+	if origField.AsName.L == "" {
+		colName = colNameField.Name.Name
 	} else {
-		colName = origColName
+		colName = origField.AsName
 	}
 	if tblName.L == "" {
 		tblName = c.TblName
+	} else {
+		tblName = colNameField.Name.Table
 	}
-	if dbName.L == "" {
-		dbName = c.DBName
-	}
-	return colName, origColName, tblName, c.OrigTblName, c.DBName
+	return
 }
 
 // buildProjectionFieldNameFromExpressions builds the field name when field expression is a normal expression.
@@ -1734,14 +1737,15 @@ func (b *PlanBuilder) checkOnlyFullGroupByWithGroupClause(p LogicalPlan, sel *as
 	gbyExprs := make([]ast.ExprNode, 0, len(sel.Fields.Fields))
 	schema := p.Schema()
 	for _, byItem := range sel.GroupBy.Items {
-		if colExpr, ok := byItem.Expr.(*ast.ColumnNameExpr); ok {
+		expr := getInnerFromParenthesesAndUnaryPlus(byItem.Expr)
+		if colExpr, ok := expr.(*ast.ColumnNameExpr); ok {
 			col, err := schema.FindColumn(colExpr.Name)
 			if err != nil || col == nil {
 				continue
 			}
 			gbyCols[col] = struct{}{}
 		} else {
-			gbyExprs = append(gbyExprs, byItem.Expr)
+			gbyExprs = append(gbyExprs, expr)
 		}
 	}
 
@@ -2225,7 +2229,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName) (L
 	tableInfo := tbl.Meta()
 	var authErr error
 	if b.ctx.GetSessionVars().User != nil {
-		authErr = ErrTableaccessDenied.GenWithStackByArgs("SELECT", b.ctx.GetSessionVars().User.Username, b.ctx.GetSessionVars().User.Hostname, tableInfo.Name.L)
+		authErr = ErrTableaccessDenied.FastGenByArgs("SELECT", b.ctx.GetSessionVars().User.Username, b.ctx.GetSessionVars().User.Hostname, tableInfo.Name.L)
 	}
 	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, dbName.L, tableInfo.Name.L, "", authErr)
 
@@ -2290,6 +2294,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName) (L
 			DBName:      dbName,
 			TblName:     tableInfo.Name,
 			ColName:     col.Name,
+			OrigTblName: tableInfo.Name,
 			OrigColName: col.Name,
 			ID:          col.ID,
 			RetType:     &col.FieldType,
@@ -2319,14 +2324,22 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName) (L
 
 	var result LogicalPlan = ds
 
-	// If this SQL is executed in a non-readonly transaction, we need a
-	// "UnionScan" operator to read the modifications of former SQLs, which is
-	// buffered in tidb-server memory.
-	txn, err := b.ctx.Txn(false)
-	if err != nil {
-		return nil, err
+	needUS := false
+	if pi := tableInfo.GetPartitionInfo(); pi == nil {
+		if b.ctx.HasDirtyContent(tableInfo.ID) {
+			needUS = true
+		}
+	} else {
+		// Currently, we'll add a UnionScan on every partition even though only one partition's data is changed.
+		// This is limited by current implementation of Partition Prune. It'll updated once we modify that part.
+		for _, partition := range pi.Definitions {
+			if b.ctx.HasDirtyContent(partition.ID) {
+				needUS = true
+				break
+			}
+		}
 	}
-	if txn.Valid() && !txn.IsReadOnly() {
+	if needUS {
 		us := LogicalUnionScan{}.Init(b.ctx)
 		us.SetChildren(ds)
 		result = us
@@ -2669,14 +2682,22 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 
 func (b *PlanBuilder) buildUpdateLists(ctx context.Context, tableList []*ast.TableName, list []*ast.Assignment, p LogicalPlan) ([]*expression.Assignment, LogicalPlan, error) {
 	b.curClause = fieldList
-	modifyColumns := make(map[string]struct{}, p.Schema().Len()) // Which columns are in set list.
+	// modifyColumns indicates which columns are in set list,
+	// and if it is set to `DEFAULT`
+	modifyColumns := make(map[string]bool, p.Schema().Len())
 	for _, assign := range list {
 		col, _, err := p.findColumn(assign.Column)
 		if err != nil {
 			return nil, nil, err
 		}
 		columnFullName := fmt.Sprintf("%s.%s.%s", col.DBName.L, col.TblName.L, col.ColName.L)
-		modifyColumns[columnFullName] = struct{}{}
+		// We save a flag for the column in map `modifyColumns`
+		// This flag indicated if assign keyword `DEFAULT` to the column
+		if extractDefaultExpr(assign.Expr) != nil {
+			modifyColumns[columnFullName] = true
+		} else {
+			modifyColumns[columnFullName] = false
+		}
 	}
 
 	// If columns in set list contains generated columns, raise error.
@@ -2694,9 +2715,12 @@ func (b *PlanBuilder) buildUpdateLists(ctx context.Context, tableList []*ast.Tab
 				continue
 			}
 			columnFullName := fmt.Sprintf("%s.%s.%s", tn.Schema.L, tn.Name.L, colInfo.Name.L)
-			if _, ok := modifyColumns[columnFullName]; ok {
+			// Note: For INSERT, REPLACE, and UPDATE, if a generated column is inserted into, replaced, or updated explicitly, the only permitted value is DEFAULT.
+			// see https://dev.mysql.com/doc/refman/8.0/en/create-table-generated-columns.html
+			if isDefault, ok := modifyColumns[columnFullName]; ok && !isDefault {
 				return nil, nil, ErrBadGeneratedColumn.GenWithStackByArgs(colInfo.Name.O, tableInfo.Name.O)
 			}
+
 			virtualAssignments = append(virtualAssignments, &ast.Assignment{
 				Column: &ast.ColumnName{Schema: tn.Schema, Table: tn.Name, Name: colInfo.Name},
 				Expr:   tableVal.Cols()[i].GeneratedExpr,
@@ -2714,6 +2738,10 @@ func (b *PlanBuilder) buildUpdateLists(ctx context.Context, tableList []*ast.Tab
 		var newExpr expression.Expression
 		var np LogicalPlan
 		if i < len(list) {
+			// If assign `DEFAULT` to column, fill the `defaultExpr.Name` before rewrite expression
+			if expr := extractDefaultExpr(assign.Expr); expr != nil {
+				expr.Name = assign.Column
+			}
 			newExpr, np, err = b.rewrite(ctx, assign.Expr, p, nil, false)
 		} else {
 			// rewrite with generation expression
@@ -2734,7 +2762,6 @@ func (b *PlanBuilder) buildUpdateLists(ctx context.Context, tableList []*ast.Tab
 		if err != nil {
 			return nil, nil, err
 		}
-		newExpr = expression.BuildCastFunction(b.ctx, newExpr, col.GetType())
 		p = np
 		newList = append(newList, &expression.Assignment{Col: col, Expr: newExpr})
 	}
@@ -2757,6 +2784,16 @@ func (b *PlanBuilder) buildUpdateLists(ctx context.Context, tableList []*ast.Tab
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.UpdatePriv, dbName, col.OrigTblName.L, "", nil)
 	}
 	return newList, p, nil
+}
+
+// extractDefaultExpr extract a `DefaultExpr` from `ExprNode`,
+// If it is a `DEFAULT` function like `DEFAULT(a)`, return nil.
+// Only if it is `DEFAULT` keyword, it will return the `DefaultExpr`.
+func extractDefaultExpr(node ast.ExprNode) *ast.DefaultExpr {
+	if expr, ok := node.(*ast.DefaultExpr); ok && expr.Name == nil {
+		return expr
+	}
+	return nil
 }
 
 func (b *PlanBuilder) buildDelete(ctx context.Context, delete *ast.DeleteStmt) (Plan, error) {

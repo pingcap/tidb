@@ -20,6 +20,7 @@ import (
 	"testing"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/util/logutil"
 	tracing "github.com/uber/jaeger-client-go/config"
 )
@@ -65,6 +66,7 @@ unrecognized-option-test = true
 token-limit = 0
 alter-primary-key = true
 split-region-max-num=10000
+server-version = "test_version"
 [performance]
 txn-entry-count-limit=2000
 txn-total-size-limit=2000
@@ -74,8 +76,11 @@ max-batch-size=128
 region-cache-ttl=6000
 store-limit=0
 [stmt-summary]
+enable=true
 max-stmt-count=1000
 max-sql-length=1024
+refresh-interval=100
+history-size=100
 `)
 
 	c.Assert(err, IsNil)
@@ -83,6 +88,8 @@ max-sql-length=1024
 
 	c.Assert(conf.Load(configFile), IsNil)
 
+	c.Assert(conf.ServerVersion, Equals, "test_version")
+	c.Assert(mysql.ServerVersion, Equals, conf.ServerVersion)
 	// Test that the original value will not be clear by load the config file that does not contain the option.
 	c.Assert(conf.Binlog.Enable, Equals, true)
 	c.Assert(conf.Binlog.Strategy, Equals, "hash")
@@ -100,8 +107,11 @@ max-sql-length=1024
 	c.Assert(conf.TiKVClient.StoreLimit, Equals, int64(0))
 	c.Assert(conf.TokenLimit, Equals, uint(1000))
 	c.Assert(conf.SplitRegionMaxNum, Equals, uint64(10000))
+	c.Assert(conf.StmtSummary.Enable, Equals, true)
 	c.Assert(conf.StmtSummary.MaxStmtCount, Equals, uint(1000))
 	c.Assert(conf.StmtSummary.MaxSQLLength, Equals, uint(1024))
+	c.Assert(conf.StmtSummary.RefreshInterval, Equals, 100)
+	c.Assert(conf.StmtSummary.HistorySize, Equals, 100)
 	c.Assert(f.Close(), IsNil)
 	c.Assert(os.Remove(configFile), IsNil)
 
@@ -111,7 +121,7 @@ max-sql-length=1024
 	// Make sure the example config is the same as default config.
 	c.Assert(conf, DeepEquals, GetGlobalConfig())
 
-	// Test for lof config.
+	// Test for log config.
 	c.Assert(conf.Log.ToLogConfig(), DeepEquals, logutil.NewLogConfig("info", "text", "tidb-slow.log", conf.Log.File, false))
 
 	// Test for tracing config.

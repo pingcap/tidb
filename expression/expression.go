@@ -100,6 +100,9 @@ type Expression interface {
 	// ExplainInfo returns operator information to be explained.
 	ExplainInfo() string
 
+	// ExplainNormalizedInfo returns operator normalized information for generating digest.
+	ExplainNormalizedInfo() string
+
 	// HashCode creates the hashcode for expression which can be used to identify itself from other expression.
 	// It generated as the following:
 	// Constant: ConstantFlag+encoded value
@@ -347,13 +350,15 @@ func ColumnInfos2ColumnsWithDBName(ctx sessionctx.Context, dbName, tblName model
 			continue
 		}
 		newCol := &Column{
-			ColName:  col.Name,
-			TblName:  tblName,
-			DBName:   dbName,
-			RetType:  &col.FieldType,
-			ID:       col.ID,
-			UniqueID: ctx.GetSessionVars().AllocPlanColumnID(),
-			Index:    col.Offset,
+			OrigColName: col.Name,
+			OrigTblName: tblName,
+			ColName:     col.Name,
+			TblName:     tblName,
+			DBName:      dbName,
+			RetType:     &col.FieldType,
+			ID:          col.ID,
+			UniqueID:    ctx.GetSessionVars().AllocPlanColumnID(),
+			Index:       col.Offset,
 		}
 		columns = append(columns, newCol)
 	}

@@ -295,6 +295,12 @@ const (
 	// TiDBEnableStmtSummary indicates whether the statement summary is enabled.
 	TiDBEnableStmtSummary = "tidb_enable_stmt_summary"
 
+	// TiDBStmtSummaryRefreshInterval indicates the refresh interval in seconds for each statement summary.
+	TiDBStmtSummaryRefreshInterval = "tidb_stmt_summary_refresh_interval"
+
+	// TiDBStmtSummaryHistorySize indicates the history size of each statement summary.
+	TiDBStmtSummaryHistorySize = "tidb_stmt_summary_history_size"
+
 	// TiDBStoreLimit indicates the limit of sending request to a store, 0 means without limit.
 	TiDBStoreLimit = "tidb_store_limit"
 )
@@ -312,6 +318,8 @@ const (
 	DefAutoAnalyzeRatio                = 0.5
 	DefAutoAnalyzeStartTime            = "00:00 +0000"
 	DefAutoAnalyzeEndTime              = "23:59 +0000"
+	DefAutoIncrementIncrement          = 1
+	DefAutoIncrementOffset             = 1
 	DefChecksumTableConcurrency        = 4
 	DefSkipUTF8Check                   = false
 	DefOptAggPushDown                  = false

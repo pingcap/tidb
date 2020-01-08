@@ -776,6 +776,7 @@ func (b *executorBuilder) buildGrant(grant *ast.GrantStmt) Executor {
 		Level:        grant.Level,
 		Users:        grant.Users,
 		WithGrant:    grant.WithGrant,
+		TLSOptions:   grant.TLSOptions,
 		is:           b.is,
 	}
 	return e
@@ -832,25 +833,20 @@ func (b *executorBuilder) buildUnionScanExec(v *plannercore.PhysicalUnionScan) E
 	if b.err != nil {
 		return nil
 	}
-	us, err := b.buildUnionScanFromReader(reader, v)
-	if err != nil {
-		b.err = err
-		return nil
-	}
-	return us
+	return b.buildUnionScanFromReader(reader, v)
 }
 
 // buildUnionScanFromReader builds union scan executor from child executor.
 // Note that this function may be called by inner workers of index lookup join concurrently.
 // Be careful to avoid data race.
-func (b *executorBuilder) buildUnionScanFromReader(reader Executor, v *plannercore.PhysicalUnionScan) (Executor, error) {
-	var err error
+func (b *executorBuilder) buildUnionScanFromReader(reader Executor, v *plannercore.PhysicalUnionScan) Executor {
 	us := &UnionScanExec{baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), reader)}
 	// Get the handle column index of the below plannercore.
 	// We can guarantee that there must be only one col in the map.
 	for _, cols := range v.Children()[0].Schema().TblID2Handle {
 		us.belowHandleIndex = cols[0].Index
 	}
+	us.mutableRow = chunk.MutRowFromTypes(retTypes(us))
 	switch x := reader.(type) {
 	case *TableReaderExecutor:
 		us.desc = x.desc
@@ -865,7 +861,7 @@ func (b *executorBuilder) buildUnionScanFromReader(reader Executor, v *plannerco
 		us.dirty = GetDirtyDB(b.ctx).GetDirtyTable(physicalTableID)
 		us.conditions = v.Conditions
 		us.columns = x.columns
-		err = us.buildAndSortAddedRows(x.table)
+		us.table = x.table
 	case *IndexReaderExecutor:
 		us.desc = x.desc
 		for _, ic := range x.index.Columns {
@@ -880,7 +876,7 @@ func (b *executorBuilder) buildUnionScanFromReader(reader Executor, v *plannerco
 		us.dirty = GetDirtyDB(b.ctx).GetDirtyTable(physicalTableID)
 		us.conditions = v.Conditions
 		us.columns = x.columns
-		err = us.buildAndSortAddedRows(x.table)
+		us.table = x.table
 	case *IndexLookUpExecutor:
 		us.desc = x.desc
 		for _, ic := range x.index.Columns {
@@ -895,15 +891,12 @@ func (b *executorBuilder) buildUnionScanFromReader(reader Executor, v *plannerco
 		us.dirty = GetDirtyDB(b.ctx).GetDirtyTable(physicalTableID)
 		us.conditions = v.Conditions
 		us.columns = x.columns
-		err = us.buildAndSortAddedRows(x.table)
+		us.table = x.table
 	default:
 		// The mem table will not be written by sql directly, so we can omit the union scan to avoid err reporting.
-		return reader, nil
+		return reader
 	}
-	if err != nil {
-		return nil, err
-	}
-	return us, nil
+	return us
 }
 
 // buildMergeJoin builds MergeJoinExec executor.
@@ -1214,7 +1207,7 @@ func (b *executorBuilder) getStartTS() (uint64, error) {
 	if err != nil {
 		return 0, err
 	}
-	if startTS == 0 && txn.Valid() {
+	if startTS == 0 {
 		startTS = txn.StartTS()
 	}
 	b.startTS = startTS
@@ -1335,28 +1328,31 @@ func (b *executorBuilder) buildSplitRegion(v *plannercore.SplitRegion) Executor 
 	base.maxChunkSize = 1
 	if v.IndexInfo != nil {
 		return &SplitIndexRegionExec{
-			baseExecutor: base,
-			tableInfo:    v.TableInfo,
-			indexInfo:    v.IndexInfo,
-			lower:        v.Lower,
-			upper:        v.Upper,
-			num:          v.Num,
-			valueLists:   v.ValueLists,
+			baseExecutor:   base,
+			tableInfo:      v.TableInfo,
+			partitionNames: v.PartitionNames,
+			indexInfo:      v.IndexInfo,
+			lower:          v.Lower,
+			upper:          v.Upper,
+			num:            v.Num,
+			valueLists:     v.ValueLists,
 		}
 	}
 	if len(v.ValueLists) > 0 {
 		return &SplitTableRegionExec{
-			baseExecutor: base,
-			tableInfo:    v.TableInfo,
-			valueLists:   v.ValueLists,
+			baseExecutor:   base,
+			tableInfo:      v.TableInfo,
+			partitionNames: v.PartitionNames,
+			valueLists:     v.ValueLists,
 		}
 	}
 	return &SplitTableRegionExec{
-		baseExecutor: base,
-		tableInfo:    v.TableInfo,
-		lower:        v.Lower[0],
-		upper:        v.Upper[0],
-		num:          v.Num,
+		baseExecutor:   base,
+		tableInfo:      v.TableInfo,
+		partitionNames: v.PartitionNames,
+		lower:          v.Lower[0],
+		upper:          v.Upper[0],
+		num:            v.Num,
 	}
 }
 
@@ -1956,6 +1952,7 @@ func buildNoRangeIndexReader(b *executorBuilder, v *plannercore.PhysicalIndexRea
 		idxCols:         is.IdxCols,
 		colLens:         is.IdxColLens,
 		plans:           v.IndexPlans,
+		outputColumns:   v.OutputColumns,
 	}
 	if containsLimit(dagReq.Executors) {
 		e.feedback = statistics.NewQueryFeedback(0, nil, 0, is.Desc)
@@ -2104,13 +2101,9 @@ func (builder *dataReaderBuilder) buildUnionScanForIndexJoin(ctx context.Context
 	if err != nil {
 		return nil, err
 	}
-	e, err := builder.buildUnionScanFromReader(reader, v)
-	if err != nil {
-		return nil, err
-	}
-	us := e.(*UnionScanExec)
-	us.snapshotChunkBuffer = newFirstChunk(us)
-	return us, nil
+	us := builder.buildUnionScanFromReader(reader, v).(*UnionScanExec)
+	err = us.open(ctx)
+	return us, err
 }
 
 func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Context, v *plannercore.PhysicalTableReader, lookUpContents []*indexJoinLookUpContent) (Executor, error) {
@@ -2143,6 +2136,7 @@ func (builder *dataReaderBuilder) buildTableReaderFromHandles(ctx context.Contex
 	if err != nil {
 		return nil, err
 	}
+	e.kvRanges = append(e.kvRanges, kvReq.KeyRanges...)
 	e.resultHandler = &tableResultHandler{}
 	result, err := builder.SelectResult(ctx, builder.ctx, kvReq, retTypes(e), e.feedback, getPhysicalPlanIDs(e.plans))
 	if err != nil {

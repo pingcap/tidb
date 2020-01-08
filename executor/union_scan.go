@@ -15,7 +15,6 @@ package executor
 
 import (
 	"context"
-	"sort"
 	"sync"
 	"time"
 
@@ -25,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 )
@@ -64,11 +62,10 @@ type DirtyTable struct {
 	// the key is handle.
 	addedRows   map[int64]struct{}
 	deletedRows map[int64]struct{}
-	truncated   bool
 }
 
 // AddRow adds a row to the DirtyDB.
-func (dt *DirtyTable) AddRow(handle int64, row []types.Datum) {
+func (dt *DirtyTable) AddRow(handle int64) {
 	dt.addedRows[handle] = struct{}{}
 }
 
@@ -78,10 +75,9 @@ func (dt *DirtyTable) DeleteRow(handle int64) {
 	dt.deletedRows[handle] = struct{}{}
 }
 
-// TruncateTable truncates a table.
-func (dt *DirtyTable) TruncateTable() {
-	dt.addedRows = make(map[int64]struct{})
-	dt.truncated = true
+// IsEmpty checks whether the table is empty.
+func (dt *DirtyTable) IsEmpty() bool {
+	return len(dt.addedRows)+len(dt.deletedRows) == 0
 }
 
 // GetDirtyDB returns the DirtyDB bind to the context.
@@ -107,7 +103,7 @@ type UnionScanExec struct {
 	desc       bool
 	conditions []expression.Expression
 	columns    []*model.ColumnInfo
-
+	table      table.Table
 	// belowHandleIndex is the handle's position of the below scan plan.
 	belowHandleIndex int
 
@@ -117,11 +113,31 @@ type UnionScanExec struct {
 	snapshotRows        [][]types.Datum
 	cursor4SnapshotRows int
 	snapshotChunkBuffer *chunk.Chunk
+	mutableRow          chunk.MutRow
 }
 
 // Open implements the Executor Open interface.
 func (us *UnionScanExec) Open(ctx context.Context) error {
 	if err := us.baseExecutor.Open(ctx); err != nil {
+		return err
+	}
+	return us.open(ctx)
+}
+
+func (us *UnionScanExec) open(ctx context.Context) error {
+	var err error
+	reader := us.children[0]
+	switch x := reader.(type) {
+	case *TableReaderExecutor:
+		us.addedRows, err = buildMemTableReader(us, x).getMemRows()
+	case *IndexReaderExecutor:
+		mIdxReader := buildMemIndexReader(us, x)
+		us.addedRows, err = mIdxReader.getMemRows()
+	case *IndexLookUpExecutor:
+		idxLookup := buildMemIndexLookUpReader(us, x)
+		us.addedRows, err = idxLookup.getMemRows()
+	}
+	if err != nil {
 		return err
 	}
 	us.snapshotChunkBuffer = newFirstChunk(us)
@@ -196,9 +212,6 @@ func (us *UnionScanExec) getOneRow(ctx context.Context) ([]types.Datum, error) {
 }
 
 func (us *UnionScanExec) getSnapshotRow(ctx context.Context) ([]types.Datum, error) {
-	if us.dirty.truncated {
-		return nil, nil
-	}
 	if us.cursor4SnapshotRows < len(us.snapshotRows) {
 		return us.snapshotRows[us.cursor4SnapshotRows], nil
 	}
@@ -280,62 +293,6 @@ func (us *UnionScanExec) compare(a, b []types.Datum) (int, error) {
 		cmp = -1
 	}
 	return cmp, nil
-}
-
-// rowWithColsInTxn gets the row from the transaction buffer.
-func (us *UnionScanExec) rowWithColsInTxn(t table.Table, h int64, cols []*table.Column) ([]types.Datum, error) {
-	key := t.RecordKey(h)
-	txn, err := us.ctx.Txn(true)
-	if err != nil {
-		return nil, err
-	}
-	value, err := txn.GetMemBuffer().Get(key)
-	if err != nil {
-		return nil, err
-	}
-	v, _, err := tables.DecodeRawRowData(us.ctx, t.Meta(), h, cols, value)
-	if err != nil {
-		return nil, err
-	}
-	return v, nil
-}
-
-func (us *UnionScanExec) buildAndSortAddedRows(t table.Table) error {
-	us.addedRows = make([][]types.Datum, 0, len(us.dirty.addedRows))
-	mutableRow := chunk.MutRowFromTypes(retTypes(us))
-	cols := t.WritableCols()
-	for h := range us.dirty.addedRows {
-		newData := make([]types.Datum, 0, us.schema.Len())
-		data, err := us.rowWithColsInTxn(t, h, cols)
-		if err != nil {
-			return err
-		}
-		for _, col := range us.columns {
-			if col.ID == model.ExtraHandleID {
-				newData = append(newData, types.NewIntDatum(h))
-			} else {
-				newData = append(newData, data[col.Offset])
-			}
-		}
-		mutableRow.SetDatums(newData...)
-		matched, _, err := expression.EvalBool(us.ctx, us.conditions, mutableRow.ToRow())
-		if err != nil {
-			return err
-		}
-		if !matched {
-			continue
-		}
-		us.addedRows = append(us.addedRows, newData)
-	}
-	if us.desc {
-		sort.Sort(sort.Reverse(us))
-	} else {
-		sort.Sort(us)
-	}
-	if us.sortErr != nil {
-		return errors.Trace(us.sortErr)
-	}
-	return nil
 }
 
 // Len implements sort.Interface interface.
