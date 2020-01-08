@@ -153,9 +153,11 @@ type PhysicalIndexMergeReader struct {
 	// PartialPlans flats the partialPlans to construct executor pb.
 	PartialPlans [][]PhysicalPlan
 	// TablePlans flats the tablePlan to construct executor pb.
-	TablePlans   []PhysicalPlan
+	TablePlans []PhysicalPlan
+	// partialPlans are the partial plans that have not been flatted. The type of each element is permitted PhysicalIndexScan or PhysicalTableScan.
 	partialPlans []PhysicalPlan
-	tablePlan    PhysicalPlan
+	// tablePlan is a PhysicalTableScan to get the table tuples. Current, it must be not nil.
+	tablePlan PhysicalPlan
 }
 
 // PhysicalIndexScan represents an index scan plan.
@@ -202,8 +204,10 @@ type PhysicalIndexScan struct {
 type PhysicalMemTable struct {
 	physicalSchemaProducer
 
-	Table   *model.TableInfo
-	Columns []*model.ColumnInfo
+	DBName    model.CIStr
+	Table     *model.TableInfo
+	Columns   []*model.ColumnInfo
+	Extractor MemTablePredicateExtractor
 }
 
 // PhysicalTableScan represents a table scan plan.
@@ -365,13 +369,13 @@ type PhysicalIndexMergeJoin struct {
 
 	// KeyOff2KeyOffOrderByIdx maps the offsets in join keys to the offsets in join keys order by index.
 	KeyOff2KeyOffOrderByIdx []int
-	// NeedOuterSort means whether outer rows should be sorted to build range.
-	NeedOuterSort bool
 	// CompareFuncs store the compare functions for outer join keys and inner join key.
 	CompareFuncs []expression.CompareFunc
 	// OuterCompareFuncs store the compare functions for outer join keys and outer join
 	// keys, it's for outer rows sort's convenience.
 	OuterCompareFuncs []expression.CompareFunc
+	// NeedOuterSort means whether outer rows should be sorted to build range.
+	NeedOuterSort bool
 	// Desc means whether inner child keep desc order.
 	Desc bool
 }

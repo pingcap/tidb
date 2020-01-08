@@ -63,13 +63,13 @@ func (ts *LogicalTableScan) PreparePossibleProperties(schema *expression.Schema,
 
 // PreparePossibleProperties implements LogicalPlan PreparePossibleProperties interface.
 func (is *LogicalIndexScan) PreparePossibleProperties(schema *expression.Schema, childrenProperties ...[][]*expression.Column) [][]*expression.Column {
-	if len(is.idxCols) == 0 {
+	if len(is.IdxCols) == 0 {
 		return nil
 	}
 	result := make([][]*expression.Column, 0, is.EqCondCount+1)
 	for i := 0; i <= is.EqCondCount; i++ {
-		result = append(result, make([]*expression.Column, len(is.idxCols)-i))
-		copy(result[i], is.idxCols[i:])
+		result = append(result, make([]*expression.Column, len(is.IdxCols)-i))
+		copy(result[i], is.IdxCols[i:])
 	}
 	return result
 }

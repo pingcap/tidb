@@ -24,10 +24,13 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/memory"
 	"go.uber.org/zap"
 )
 
@@ -39,8 +42,6 @@ type InsertValues struct {
 	curBatchCnt    uint64
 	maxRowsInBatch uint64
 	lastInsertID   uint64
-	hasRefCols     bool
-	hasExtraHandle bool
 
 	SelectExec Executor
 
@@ -53,19 +54,23 @@ type InsertValues struct {
 
 	insertColumns []*table.Column
 
-	allAssignmentsAreConstant bool
-
 	// colDefaultVals is used to store casted default value.
 	// Because not every insert statement needs colDefaultVals, so we will init the buffer lazily.
 	colDefaultVals  []defaultVal
 	evalBuffer      chunk.MutRow
 	evalBufferTypes []*types.FieldType
 
+	allAssignmentsAreConstant bool
+
+	hasRefCols     bool
+	hasExtraHandle bool
+
 	// Fill the autoID lazily to datum. This is used for being compatible with JDBC using getGeneratedKeys().
 	// `insert|replace values` can guarantee consecutive autoID in a batch.
 	// Other statements like `insert select from` don't guarantee consecutive autoID.
 	// https://dev.mysql.com/doc/refman/8.0/en/innodb-auto-increment-handling.html
 	lazyFillAutoID bool
+	memTracker     *memory.Tracker
 }
 
 type defaultVal struct {
@@ -83,7 +88,7 @@ func (e *InsertValues) insertCommon() *InsertValues {
 	return e
 }
 
-func (e *InsertValues) exec(ctx context.Context, rows [][]types.Datum) error {
+func (e *InsertValues) exec(_ context.Context, _ [][]types.Datum) error {
 	panic("derived should overload exec function")
 }
 
@@ -95,6 +100,7 @@ func (e *InsertValues) exec(ctx context.Context, rows [][]types.Datum) error {
 // See https://dev.mysql.com/doc/refman/5.7/en/insert.html
 func (e *InsertValues) initInsertColumns() error {
 	var cols []*table.Column
+	var missingColName string
 	var err error
 
 	tableCols := e.Table.Cols()
@@ -105,9 +111,9 @@ func (e *InsertValues) initInsertColumns() error {
 		for _, v := range e.SetList {
 			columns = append(columns, v.ColName.O)
 		}
-		cols, err = table.FindCols(tableCols, columns, e.Table.Meta().PKIsHandle)
-		if err != nil {
-			return errors.Errorf("INSERT INTO %s: %s", e.Table.Meta().Name.O, err)
+		cols, missingColName = table.FindCols(tableCols, columns, e.Table.Meta().PKIsHandle)
+		if missingColName != "" {
+			return errors.Errorf("INSERT INTO %s: unknown column %s", e.Table.Meta().Name.O, missingColName)
 		}
 		if len(cols) == 0 {
 			return errors.Errorf("INSERT INTO %s: empty column", e.Table.Meta().Name.O)
@@ -118,9 +124,9 @@ func (e *InsertValues) initInsertColumns() error {
 		for _, v := range e.Columns {
 			columns = append(columns, v.Name.O)
 		}
-		cols, err = table.FindCols(tableCols, columns, e.Table.Meta().PKIsHandle)
-		if err != nil {
-			return errors.Errorf("INSERT INTO %s: %s", e.Table.Meta().Name.O, err)
+		cols, missingColName = table.FindCols(tableCols, columns, e.Table.Meta().PKIsHandle)
+		if missingColName != "" {
+			return errors.Errorf("INSERT INTO %s: unknown column %s", e.Table.Meta().Name.O, missingColName)
 		}
 	} else {
 		// If e.Columns are empty, use all columns instead.
@@ -209,6 +215,8 @@ func insertRows(ctx context.Context, base insertCommon) (err error) {
 	}
 
 	rows := make([][]types.Datum, 0, len(e.Lists))
+	memUsageOfRows := int64(0)
+	memTracker := e.memTracker
 	for i, list := range e.Lists {
 		e.rowCount++
 		var row []types.Datum
@@ -218,6 +226,8 @@ func insertRows(ctx context.Context, base insertCommon) (err error) {
 		}
 		rows = append(rows, row)
 		if batchInsert && e.rowCount%uint64(batchSize) == 0 {
+			memUsageOfRows = types.EstimatedMemUsage(rows[0], len(rows))
+			memTracker.Consume(memUsageOfRows)
 			// Before batch insert, fill the batch allocated autoIDs.
 			rows, err = e.lazyAdjustAutoIncrementDatum(ctx, rows)
 			if err != nil {
@@ -227,17 +237,29 @@ func insertRows(ctx context.Context, base insertCommon) (err error) {
 				return err
 			}
 			rows = rows[:0]
+			memTracker.Consume(-memUsageOfRows)
+			memUsageOfRows = 0
 			if err = e.doBatchInsert(ctx); err != nil {
 				return err
 			}
 		}
+	}
+	if len(rows) != 0 {
+		memUsageOfRows = types.EstimatedMemUsage(rows[0], len(rows))
+		memTracker.Consume(memUsageOfRows)
 	}
 	// Fill the batch allocated autoIDs.
 	rows, err = e.lazyAdjustAutoIncrementDatum(ctx, rows)
 	if err != nil {
 		return err
 	}
-	return base.exec(ctx, rows)
+	err = base.exec(ctx, rows)
+	if err != nil {
+		return err
+	}
+	rows = rows[:0]
+	memTracker.Consume(-memUsageOfRows)
+	return nil
 }
 
 func (e *InsertValues) handleErr(col *table.Column, val *types.Datum, rowIdx int, err error) error {
@@ -382,7 +404,8 @@ func insertRowsFromSelect(ctx context.Context, base insertCommon) error {
 	}
 	batchInsert := sessVars.BatchInsert && !sessVars.InTxn() && config.GetGlobalConfig().EnableBatchDML
 	batchSize := sessVars.DMLBatchSize
-
+	memUsageOfRows := int64(0)
+	memTracker := e.memTracker
 	for {
 		err := Next(ctx, selectExec, chk)
 		if err != nil {
@@ -391,7 +414,8 @@ func insertRowsFromSelect(ctx context.Context, base insertCommon) error {
 		if chk.NumRows() == 0 {
 			break
 		}
-
+		chkMemUsage := chk.MemoryUsage()
+		memTracker.Consume(chkMemUsage)
 		for innerChunkRow := iter.Begin(); innerChunkRow != iter.End(); innerChunkRow = iter.Next() {
 			innerRow := innerChunkRow.GetDatumRow(fields)
 			e.rowCount++
@@ -401,28 +425,38 @@ func insertRowsFromSelect(ctx context.Context, base insertCommon) error {
 			}
 			rows = append(rows, row)
 			if batchInsert && e.rowCount%uint64(batchSize) == 0 {
+				memUsageOfRows = types.EstimatedMemUsage(rows[0], len(rows))
+				memTracker.Consume(memUsageOfRows)
 				if err = base.exec(ctx, rows); err != nil {
 					return err
 				}
 				rows = rows[:0]
+				memTracker.Consume(-memUsageOfRows)
+				memUsageOfRows = 0
 				if err = e.doBatchInsert(ctx); err != nil {
 					return err
 				}
 			}
 		}
 
+		if len(rows) != 0 {
+			memUsageOfRows = types.EstimatedMemUsage(rows[0], len(rows))
+			memTracker.Consume(memUsageOfRows)
+		}
 		err = base.exec(ctx, rows)
 		if err != nil {
 			return err
 		}
 		rows = rows[:0]
+		memTracker.Consume(-memUsageOfRows)
+		memTracker.Consume(-chkMemUsage)
 	}
 	return nil
 }
 
 func (e *InsertValues) doBatchInsert(ctx context.Context) error {
 	sessVars := e.ctx.GetSessionVars()
-	if err := e.ctx.StmtCommit(); err != nil {
+	if err := e.ctx.StmtCommit(e.memTracker); err != nil {
 		return err
 	}
 	if err := e.ctx.NewTxn(ctx); err != nil {
@@ -502,6 +536,14 @@ func (e *InsertValues) fillColValue(ctx context.Context, datum types.Datum, idx 
 			return datum, nil
 		}
 		d, err := e.adjustAutoIncrementDatum(ctx, datum, hasValue, column)
+		if err != nil {
+			return types.Datum{}, err
+		}
+		return d, nil
+	}
+	tblInfo := e.Table.Meta()
+	if tblInfo.PKIsHandle && tblInfo.ContainsAutoRandomBits() && column.ID == tblInfo.GetPkColInfo().ID {
+		d, err := e.adjustAutoRandomDatum(ctx, datum, hasValue, column)
 		if err != nil {
 			return types.Datum{}, err
 		}
@@ -674,23 +716,23 @@ func (e *InsertValues) lazyAdjustAutoIncrementDatum(ctx context.Context, rows []
 				i++
 				cnt++
 			}
-			// Alloc batch N consecutive (min, max] autoIDs.
-			// max value can be derived from adding one for cnt times.
-			min, _, err := table.AllocBatchAutoIncrementValue(ctx, e.Table, e.ctx, cnt)
+			// AllocBatchAutoIncrementValue allocates batch N consecutive autoIDs.
+			// The max value can be derived from adding the increment value to min for cnt-1 times.
+			min, increment, err := table.AllocBatchAutoIncrementValue(ctx, e.Table, e.ctx, cnt)
 			if e.handleErr(col, &autoDatum, cnt, err) != nil {
 				return nil, err
 			}
 			// It's compatible with mysql setting the first allocated autoID to lastInsertID.
 			// Cause autoID may be specified by user, judge only the first row is not suitable.
 			if e.lastInsertID == 0 {
-				e.lastInsertID = uint64(min) + 1
+				e.lastInsertID = uint64(min)
 			}
 			// Assign autoIDs to rows.
 			for j := 0; j < cnt; j++ {
 				offset := j + start
 				d := rows[offset][colIdx]
 
-				id := int64(uint64(min) + uint64(j) + 1)
+				id := int64(uint64(min) + uint64(j)*uint64(increment))
 				d.SetAutoID(id, col.Flag)
 				retryInfo.AddAutoIncrementID(id)
 
@@ -793,6 +835,66 @@ func getAutoRecordID(d types.Datum, target *types.FieldType, isInsert bool) (int
 	}
 
 	return recordID, nil
+}
+
+func (e *InsertValues) adjustAutoRandomDatum(ctx context.Context, d types.Datum, hasValue bool, c *table.Column) (types.Datum, error) {
+	if !hasValue || d.IsNull() {
+		_, err := e.ctx.Txn(true)
+		if err != nil {
+			return types.Datum{}, errors.Trace(err)
+		}
+		autoRandomID, err := e.allocAutoRandomID(&c.FieldType)
+		if err != nil {
+			return types.Datum{}, err
+		}
+		d.SetAutoID(autoRandomID, c.Flag)
+	} else {
+		recordID, err := getAutoRecordID(d, &c.FieldType, true)
+		if err != nil {
+			return types.Datum{}, err
+		}
+		err = e.rebaseAutoRandomID(recordID, &c.FieldType)
+		if err != nil {
+			return types.Datum{}, err
+		}
+		d.SetAutoID(recordID, c.Flag)
+	}
+
+	casted, err := table.CastValue(e.ctx, d, c.ToInfo())
+	if err != nil {
+		return types.Datum{}, err
+	}
+	return casted, nil
+}
+
+// allocAutoRandomID allocates a random id for primary key column. It assumes tableInfo.AutoRandomBits > 0.
+func (e *InsertValues) allocAutoRandomID(fieldType *types.FieldType) (int64, error) {
+	alloc := e.Table.Allocator(e.ctx, autoid.AutoRandomType)
+	tableInfo := e.Table.Meta()
+	_, autoRandomID, err := alloc.Alloc(tableInfo.ID, 1, 1, 1)
+	if err != nil {
+		return 0, err
+	}
+
+	typeBitsLength := uint64(mysql.DefaultLengthOfMysqlTypes[fieldType.Tp] * 8)
+	if tables.OverflowShardBits(autoRandomID, tableInfo.AutoRandomBits, typeBitsLength) {
+		return 0, autoid.ErrAutoRandReadFailed
+	}
+	shard := tables.CalcShard(tableInfo.AutoRandomBits, e.ctx.GetSessionVars().TxnCtx.StartTS, typeBitsLength)
+	autoRandomID |= shard
+	return autoRandomID, nil
+}
+
+func (e *InsertValues) rebaseAutoRandomID(recordID int64, fieldType *types.FieldType) error {
+	alloc := e.Table.Allocator(e.ctx, autoid.AutoRandomType)
+	tableInfo := e.Table.Meta()
+
+	typeBitsLength := uint64(mysql.DefaultLengthOfMysqlTypes[fieldType.Tp] * 8)
+	signBit := uint64(1)
+	mask := (1 << (typeBitsLength - tableInfo.AutoRandomBits - signBit)) - 1
+	autoRandomID := int64(mask) & recordID
+
+	return alloc.Rebase(tableInfo.ID, autoRandomID, true)
 }
 
 func (e *InsertValues) handleWarning(err error) {

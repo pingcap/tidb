@@ -47,8 +47,8 @@ func init() {
 			continue
 		}
 		cols := make([]columnInfo, 0, len(memTableCols)+1)
-		cols = append(cols, memTableCols...)
 		cols = append(cols, addrCol)
+		cols = append(cols, memTableCols...)
 		tableNameToColumns[clusterMemTableName] = cols
 	}
 }
@@ -57,7 +57,7 @@ func init() {
 func isClusterTableByName(dbName, tableName string) bool {
 	dbName = strings.ToUpper(dbName)
 	switch dbName {
-	case util.InformationSchemaName, util.PerformanceSchemaName:
+	case util.InformationSchemaName.O, util.PerformanceSchemaName.O:
 		break
 	default:
 		return false
@@ -85,14 +85,21 @@ func getClusterMemTableRows(ctx sessionctx.Context, tableName string) (rows [][]
 	if err != nil {
 		return nil, err
 	}
-	return appendHostInfoToRows(rows), nil
+	return AppendHostInfoToRows(rows)
 }
 
-func appendHostInfoToRows(rows [][]types.Datum) [][]types.Datum {
-	serverInfo := infosync.GetServerInfo()
+// AppendHostInfoToRows appends host info to the rows.
+func AppendHostInfoToRows(rows [][]types.Datum) ([][]types.Datum, error) {
+	serverInfo, err := infosync.GetServerInfo()
+	if err != nil {
+		return nil, err
+	}
 	addr := serverInfo.IP + ":" + strconv.FormatUint(uint64(serverInfo.StatusPort), 10)
 	for i := range rows {
-		rows[i] = append(rows[i], types.NewStringDatum(addr))
+		row := make([]types.Datum, 0, len(rows[i])+1)
+		row = append(row, types.NewStringDatum(addr))
+		row = append(row, rows[i]...)
+		rows[i] = row
 	}
-	return rows
+	return rows, nil
 }

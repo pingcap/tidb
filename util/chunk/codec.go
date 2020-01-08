@@ -18,9 +18,9 @@ import (
 	"reflect"
 	"unsafe"
 
-	"github.com/cznic/mathutil"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/mathutil"
 )
 
 // Codec is used to:
@@ -195,7 +195,7 @@ func GetFixedLen(colType *types.FieldType) int {
 // it's OK (and expected) to guess if we don't know for sure.
 //
 // mostly study from https://github.com/postgres/postgres/blob/REL_12_STABLE/src/backend/utils/cache/lsyscache.c#L2356
-func EstimateTypeWidth(padChar bool, colType *types.FieldType) int {
+func EstimateTypeWidth(colType *types.FieldType) int {
 	colLen := getFixedLen(colType)
 	// Easy if it's a fixed-width type
 	if colLen != varElemLen {
@@ -204,13 +204,6 @@ func EstimateTypeWidth(padChar bool, colType *types.FieldType) int {
 
 	colLen = colType.Flen
 	if colLen > 0 {
-		/*
-		 * If PAD_CHAR_TO_FULL_LENGTH is enabled, and type is CHAR,
-		 * the colType.Flen is also the only width.
-		 */
-		if padChar && colType.Tp == mysql.TypeString {
-			return colLen
-		}
 		if colLen <= 32 {
 			return colLen
 		}
