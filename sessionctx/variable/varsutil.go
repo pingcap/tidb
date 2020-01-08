@@ -16,6 +16,7 @@ package variable
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/pingcap/tidb/util"
 	"math"
 	"strconv"
 	"strings"
@@ -116,6 +117,12 @@ func GetSessionOnlySysVars(s *SessionVars, key string) (string, bool, error) {
 		return fmt.Sprintf("%d", s.TxnCtx.StartTS), true, nil
 	case TiDBGeneralLog:
 		return fmt.Sprintf("%d", atomic.LoadUint32(&ProcessGeneralLog)), true, nil
+	case TiDBPProfSQLCPU:
+		val := "0"
+		if util.EnablePProfSQLCPU.Load() {
+			val = "1"
+		}
+		return val, true, nil
 	case TiDBExpensiveQueryTimeThreshold:
 		return fmt.Sprintf("%d", atomic.LoadUint64(&ExpensiveQueryTimeThreshold)), true, nil
 	case TiDBConfig:
@@ -398,7 +405,7 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 	case TiDBSkipUTF8Check, TiDBOptAggPushDown,
 		TiDBOptInSubqToJoinAndAgg, TiDBEnableFastAnalyze,
 		TiDBBatchInsert, TiDBDisableTxnAutoRetry, TiDBEnableStreaming, TiDBEnableChunkRPC,
-		TiDBBatchDelete, TiDBBatchCommit, TiDBEnableCascadesPlanner, TiDBEnableWindowFunction,
+		TiDBBatchDelete, TiDBBatchCommit, TiDBEnableCascadesPlanner, TiDBEnableWindowFunction, TiDBPProfSQLCPU,
 		TiDBCheckMb4ValueInUTF8, TiDBLowResolutionTSO, TiDBEnableIndexMerge, TiDBEnableNoopFuncs, TiDBEnableSlowLog,
 		TiDBScatterRegion, TiDBGeneralLog, TiDBConstraintCheckInPlace, TiDBEnableVectorizedExpression, TiDBRecordPlanInSlowLog:
 		fallthrough
