@@ -2769,7 +2769,11 @@ func (du *baseDateArithmitical) add(ctx sessionctx.Context, date types.Time, int
 		return types.ZeroTime, true, handleInvalidTimeError(ctx, types.ErrDatetimeFunctionOverflow.GenWithStackByArgs("datetime"))
 	}
 
-	date.SetCoreTime(types.FromGoTime(goTime))
+	ct, ok := types.FromGoTimeChecked(goTime)
+	if !ok {
+		return types.ZeroTime, true, handleInvalidTimeError(ctx, types.ErrDatetimeFunctionOverflow.GenWithStackByArgs("datetime"))
+	}
+	date.SetCoreTime(ct)
 	overflow, err := types.DateTimeIsOverflow(ctx.GetSessionVars().StmtCtx, date)
 	if err := handleInvalidTimeError(ctx, err); err != nil {
 		return types.ZeroTime, true, err
@@ -6446,10 +6450,7 @@ func (b *builtinTimeFormatSig) evalString(row chunk.Row) (string, bool, error) {
 
 // formatTime see https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_time-format
 func (b *builtinTimeFormatSig) formatTime(ctx sessionctx.Context, t types.Duration, formatMask string) (res string, err error) {
-	t2 := types.NewTime(types.FromDate(0, 0, 0, t.Hour(), t.Minute(), t.Second(), t.MicroSecond()), mysql.TypeDate, 0)
-
-	str, err := t2.DateFormat(formatMask)
-	return str, err
+	return t.DateFormat(formatMask)
 }
 
 type timeToSecFunctionClass struct {

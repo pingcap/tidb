@@ -200,7 +200,7 @@ func BenchmarkScalarFunctionClone(b *testing.B) {
 	b.ReportAllocs()
 }
 
-func getRandomTime() types.MysqlTime {
+func getRandomTime() types.CoreTime {
 	return types.FromDate(rand.Intn(2200), rand.Intn(10)+1, rand.Intn(20)+1,
 		rand.Intn(12), rand.Intn(60), rand.Intn(60), rand.Intn(1000000))
 
@@ -605,7 +605,7 @@ func (g *dateTimeGener) gen() interface{} {
 	if g.Day == 0 {
 		g.Day = rand.Intn(20) + 1
 	}
-	var gt types.MysqlTime
+	var gt types.CoreTime
 	if g.Fsp > 0 && g.Fsp <= 6 {
 		gt = types.FromDate(g.Year, g.Month, g.Day, rand.Intn(12), rand.Intn(60), rand.Intn(60), rand.Intn(1000000))
 	} else {

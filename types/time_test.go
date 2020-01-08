@@ -17,6 +17,7 @@ import (
 	"math"
 	"testing"
 	"time"
+	"unsafe"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
@@ -31,6 +32,35 @@ import (
 var _ = Suite(&testTimeSuite{})
 
 type testTimeSuite struct {
+}
+
+func (s *testTimeSuite) TestTimeEncoding(c *C) {
+	tests := []struct {
+		Year, Month, Day, Hour, Minute, Second, Microsecond int
+		Type                                                uint8
+		Fsp                                                 int8
+		Expect                                              uint64
+	}{
+		{2019, 9, 16, 0, 0, 0, 0, mysql.TypeDatetime, 0, 0b1111110001110011000000000000000000000000000000000000000000000},
+		{2019, 12, 31, 23, 59, 59, 999999, mysql.TypeTimestamp, 3, 0b1111110001111001111110111111011111011111101000010001111110111},
+		{2020, 1, 5, 0, 0, 0, 0, mysql.TypeDate, 0, 0b1111110010000010010100000000000000000000000000000000000001110},
+	}
+
+	for ith, tt := range tests {
+		ct := types.FromDate(tt.Year, tt.Month, tt.Day, tt.Hour, tt.Minute, tt.Second, tt.Microsecond)
+		t := types.NewTime(ct, tt.Type, tt.Fsp)
+		c.Check(*((*uint64)(unsafe.Pointer(&t))), Equals, tt.Expect, Commentf("%d failed.", ith))
+		c.Check(t.CoreTime(), Equals, ct, Commentf("%d core time failed.", ith))
+		c.Check(t.Type(), Equals, tt.Type, Commentf("%d type failed.", ith))
+		c.Check(t.Fsp(), Equals, tt.Fsp, Commentf("%d fsp failed.", ith))
+		c.Check(t.Year(), Equals, tt.Year, Commentf("%d year failed.", ith))
+		c.Check(t.Month(), Equals, tt.Month, Commentf("%d month failed.", ith))
+		c.Check(t.Day(), Equals, tt.Day, Commentf("%d day failed.", ith))
+		c.Check(t.Hour(), Equals, tt.Hour, Commentf("%d hour failed.", ith))
+		c.Check(t.Minute(), Equals, tt.Minute, Commentf("%d minute failed.", ith))
+		c.Check(t.Second(), Equals, tt.Second, Commentf("%d second failed.", ith))
+		c.Check(t.Microsecond(), Equals, tt.Microsecond, Commentf("%d microsecond failed.", ith))
+	}
 }
 
 func (s *testTimeSuite) TestDateTime(c *C) {
@@ -932,8 +962,8 @@ func (s *testTimeSuite) TestParseDateFormat(c *C) {
 func (s *testTimeSuite) TestTamestampDiff(c *C) {
 	tests := []struct {
 		unit   string
-		t1     types.MysqlTime
-		t2     types.MysqlTime
+		t1     types.CoreTime
+		t2     types.CoreTime
 		expect int64
 	}{
 		{"MONTH", types.FromDate(2002, 5, 30, 0, 0, 0, 0), types.FromDate(2001, 1, 1, 0, 0, 0, 0), -16},
@@ -971,10 +1001,10 @@ func (s *testTimeSuite) TestDateFSP(c *C) {
 func (s *testTimeSuite) TestConvertTimeZone(c *C) {
 	loc, _ := time.LoadLocation("Asia/Shanghai")
 	tests := []struct {
-		input  types.MysqlTime
+		input  types.CoreTime
 		from   *time.Location
 		to     *time.Location
-		expect types.MysqlTime
+		expect types.CoreTime
 	}{
 		{types.FromDate(2017, 1, 1, 0, 0, 0, 0), time.UTC, loc, types.FromDate(2017, 1, 1, 8, 0, 0, 0)},
 		{types.FromDate(2017, 1, 1, 8, 0, 0, 0), loc, time.UTC, types.FromDate(2017, 1, 1, 0, 0, 0, 0)},
@@ -1056,7 +1086,7 @@ func (s *testTimeSuite) TestCheckTimestamp(c *C) {
 
 	tests := []struct {
 		tz             *time.Location
-		input          types.MysqlTime
+		input          types.CoreTime
 		expectRetError bool
 	}{{
 		tz:             shanghaiTz,
@@ -1109,7 +1139,7 @@ func (s *testTimeSuite) TestCheckTimestamp(c *C) {
 
 	tests = []struct {
 		tz             *time.Location
-		input          types.MysqlTime
+		input          types.CoreTime
 		expectRetError bool
 	}{{
 		tz:             losAngelesTz,
@@ -1643,7 +1673,7 @@ func (s *testTimeSuite) TestTimeSub(c *C) {
 
 func (s *testTimeSuite) TestCheckMonthDay(c *C) {
 	dates := []struct {
-		date        types.MysqlTime
+		date        types.CoreTime
 		isValidDate bool
 	}{
 		{types.FromDate(1900, 2, 29, 0, 0, 0, 0), false},
