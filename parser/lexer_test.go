@@ -163,7 +163,6 @@ func (s *testLexerSuite) TestComment(c *C) {
 	table := []testCaseItem{
 		{"-- select --\n1", intLit},
 		{"/*!40101 SET character_set_client = utf8 */;", set},
-		{"/*+ BKA(t1) */", hintBegin},
 		{"/* SET character_set_client = utf8 */;", int(';')},
 		{"/* some comments */ SELECT ", selectKwd},
 		{`-- comment continues to the end of line
@@ -176,6 +175,11 @@ SELECT`, selectKwd},
 		{"--\tSELECT", 0},
 		{"--\r\nSELECT", selectKwd},
 		{"--", 0},
+
+		// The odd behavior of '*/' inside conditional comment is the same as
+		// that of MySQL.
+		{"/*T!99999 '*/0 -- ' */", intLit},    // equivalent to 0
+		{"/*T!00000 '*/0 -- ' */", stringLit}, // equivalent to '*/0 -- '
 	}
 	runTest(c, table)
 }
@@ -260,7 +264,7 @@ func (s *testLexerSuite) TestSpecialComment(c *C) {
 	tok, pos, lit := l.scan()
 	c.Assert(tok, Equals, identifier)
 	c.Assert(lit, Equals, "select")
-	c.Assert(pos, Equals, Pos{0, 0, 9})
+	c.Assert(pos, Equals, Pos{0, 9, 9})
 
 	tok, pos, lit = l.scan()
 	c.Assert(tok, Equals, intLit)
@@ -269,21 +273,16 @@ func (s *testLexerSuite) TestSpecialComment(c *C) {
 }
 
 func (s *testLexerSuite) TestSpecialCodeComment(c *C) {
-	specCmt := "/*T!123456 auto_random(5) */"
-	c.Assert(extractVersionCodeInComment(specCmt), Equals, CommentCodeVersion(123456))
-
-	specCmt = "/*T!40000 auto_random(5) */"
-	c.Assert(extractVersionCodeInComment(specCmt), Equals, CommentCodeAutoRandom)
-	l := NewScanner(specCmt)
+	l := NewScanner("/*T!40000 auto_random(5) */")
 	tok, pos, lit := l.scan()
 	c.Assert(tok, Equals, identifier)
 	c.Assert(lit, Equals, "auto_random")
-	c.Assert(pos, Equals, Pos{0, 0, 10})
+	c.Assert(pos, Equals, Pos{0, 10, 10})
 	tok, pos, lit = l.scan()
 	c.Assert(tok, Equals, int('('))
 	tok, pos, lit = l.scan()
 	c.Assert(lit, Equals, "5")
-	c.Assert(pos, Equals, Pos{0, 12, 22})
+	c.Assert(pos, Equals, Pos{0, 22, 22})
 	tok, pos, lit = l.scan()
 	c.Assert(tok, Equals, int(')'))
 
@@ -293,27 +292,106 @@ func (s *testLexerSuite) TestSpecialCodeComment(c *C) {
 }
 
 func (s *testLexerSuite) TestOptimizerHint(c *C) {
-	l := NewScanner("  /*+ BKA(t1) */")
+	l := NewScanner("SELECT /*+ BKA(t1) */ 0;")
 	tokens := []struct {
-		tok int
-		lit string
-		pos int
+		tok   int
+		ident string
+		pos   int
 	}{
-		{hintBegin, "", 2},
-		{identifier, "BKA", 6},
-		{int('('), "(", 9},
-		{identifier, "t1", 10},
-		{int(')'), ")", 12},
-		{hintEnd, "", 14},
+		{selectKwd, "SELECT", 0},
+		{hintComment, "/*+ BKA(t1) */", 7},
+		{intLit, "0", 22},
+		{';', ";", 23},
 	}
 	for i := 0; ; i++ {
-		tok, pos, lit := l.scan()
+		var sym yySymType
+		tok := l.Lex(&sym)
 		if tok == 0 {
 			return
 		}
 		c.Assert(tok, Equals, tokens[i].tok, Commentf("%d", i))
-		c.Assert(lit, Equals, tokens[i].lit, Commentf("%d", i))
-		c.Assert(pos.Offset, Equals, tokens[i].pos, Commentf("%d", i))
+		c.Assert(sym.ident, Equals, tokens[i].ident, Commentf("%d", i))
+		c.Assert(sym.offset, Equals, tokens[i].pos, Commentf("%d", i))
+	}
+}
+
+func (s *testLexerSuite) TestOptimizerHintAfterCertainKeywordOnly(c *C) {
+	tests := []struct {
+		input  string
+		tokens []int
+	}{
+		{
+			input:  "SELECT /*+ hint */ *",
+			tokens: []int{selectKwd, hintComment, '*', 0},
+		},
+		{
+			input:  "UPDATE /*+ hint */",
+			tokens: []int{update, hintComment, 0},
+		},
+		{
+			input:  "INSERT /*+ hint */",
+			tokens: []int{insert, hintComment, 0},
+		},
+		{
+			input:  "REPLACE /*+ hint */",
+			tokens: []int{replace, hintComment, 0},
+		},
+		{
+			input:  "DELETE /*+ hint */",
+			tokens: []int{deleteKwd, hintComment, 0},
+		},
+		{
+			input:  "CREATE /*+ hint */",
+			tokens: []int{create, hintComment, 0},
+		},
+		{
+			input:  "/*+ hint */ SELECT *",
+			tokens: []int{selectKwd, '*', 0},
+		},
+		{
+			input:  "SELECT /* comment */ /*+ hint */ *",
+			tokens: []int{selectKwd, hintComment, '*', 0},
+		},
+		{
+			input:  "SELECT * /*+ hint */",
+			tokens: []int{selectKwd, '*', 0},
+		},
+		{
+			input:  "SELECT /*T!000000 * */ /*+ hint */",
+			tokens: []int{selectKwd, '*', 0},
+		},
+		{
+			input:  "SELECT /*T!999999 * */ /*+ hint */",
+			tokens: []int{selectKwd, hintComment, 0},
+		},
+		{
+			input:  "SELECT /*+ hint1 */ /*+ hint2 */ *",
+			tokens: []int{selectKwd, hintComment, '*', 0},
+		},
+		{
+			input:  "SELECT * FROM /*+ hint */",
+			tokens: []int{selectKwd, '*', from, 0},
+		},
+		{
+			input:  "`SELECT` /*+ hint */",
+			tokens: []int{identifier, 0},
+		},
+		{
+			input:  "'SELECT' /*+ hint */",
+			tokens: []int{stringLit, 0},
+		},
+	}
+
+	for _, tc := range tests {
+		scanner := NewScanner(tc.input)
+		var sym yySymType
+		for i := 0; ; i++ {
+			tok := scanner.Lex(&sym)
+			c.Assert(tok, Equals, tc.tokens[i], Commentf("input = [%s], i = %d", tc.input, i))
+			if tok == 0 {
+				break
+			}
+		}
 	}
 }
 
@@ -394,4 +472,95 @@ func (s *testLexerSuite) TestIllegal(c *C) {
 		{"@@global.`", invalid},
 	}
 	runTest(c, table)
+}
+
+func (s *testLexerSuite) TestVersionDigits(c *C) {
+	tests := []struct {
+		input    string
+		min      int
+		max      int
+		version  CommentCodeVersion
+		nextChar rune
+	}{
+		{
+			input:    "12345",
+			min:      5,
+			max:      5,
+			version:  12345,
+			nextChar: unicode.ReplacementChar,
+		},
+		{
+			input:    "12345xyz",
+			min:      5,
+			max:      5,
+			version:  12345,
+			nextChar: 'x',
+		},
+		{
+			input:    "1234xyz",
+			min:      5,
+			max:      5,
+			version:  CommentCodeNoVersion,
+			nextChar: '1',
+		},
+		{
+			input:    "123456",
+			min:      5,
+			max:      5,
+			version:  12345,
+			nextChar: '6',
+		},
+		{
+			input:    "1234",
+			min:      5,
+			max:      5,
+			version:  CommentCodeNoVersion,
+			nextChar: '1',
+		},
+		{
+			input:    "",
+			min:      5,
+			max:      5,
+			version:  CommentCodeNoVersion,
+			nextChar: unicode.ReplacementChar,
+		},
+		{
+			input:    "1234567xyz",
+			min:      5,
+			max:      6,
+			version:  123456,
+			nextChar: '7',
+		},
+		{
+			input:    "12345xyz",
+			min:      5,
+			max:      6,
+			version:  12345,
+			nextChar: 'x',
+		},
+		{
+			input:    "12345",
+			min:      5,
+			max:      6,
+			version:  12345,
+			nextChar: unicode.ReplacementChar,
+		},
+		{
+			input:    "1234xyz",
+			min:      5,
+			max:      6,
+			version:  CommentCodeNoVersion,
+			nextChar: '1',
+		},
+	}
+
+	scanner := NewScanner("")
+	for _, t := range tests {
+		comment := Commentf("input = %s", t.input)
+		scanner.reset(t.input)
+		version := scanner.scanVersionDigits(t.min, t.max)
+		c.Assert(version, Equals, t.version, comment)
+		nextChar := scanner.r.readByte()
+		c.Assert(nextChar, Equals, t.nextChar, comment)
+	}
 }
