@@ -141,6 +141,7 @@ func (c *RowContainer) Add(chk *Chunk, callback func()) (err error) {
 	return
 }
 
+// AppendRow appends a row to the RowContainer, the row is copied to the RowContainer.
 func (c *RowContainer) AppendRow(row Row) (RowPtr, error) {
 	if c.AlreadySpilled() {
 		return RowPtr{}, errors.New("ListInDisk don't support AppendRow")
