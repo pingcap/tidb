@@ -63,7 +63,7 @@ func (mc *mockPDConfigClient) Close() {}
 func (s *testConfigSuite) TestConstantConfHandler(c *C) {
 	conf := defaultConf
 	conf.Store = "mock"
-	ch, err := NewConfHandler(&conf, nil)
+	ch, err := NewConfHandler(&conf, nil, nil)
 	c.Assert(err, IsNil)
 	_, ok := ch.(*constantConfHandler)
 	c.Assert(ok, IsTrue)
@@ -76,31 +76,31 @@ func (s *testConfigSuite) TestPDConfHandler(c *C) {
 	// wrong path
 	conf.Store = "tikv"
 	conf.Path = "WRONGPATH"
-	_, err := newPDConfHandler(&conf, nil, newMockPDConfigClient)
+	_, err := newPDConfHandler(&conf, nil, nil, newMockPDConfigClient)
 	c.Assert(err, NotNil)
 
 	// error when creating PD config client
 	conf.Path = "tikv://node1:2379"
 	newMockPDConfigClientErr = fmt.Errorf("")
-	_, err = newPDConfHandler(&conf, nil, newMockPDConfigClient)
+	_, err = newPDConfHandler(&conf, nil, nil, newMockPDConfigClient)
 	c.Assert(err, NotNil)
 
 	// error when registering
 	newMockPDConfigClientErr = nil
 	mockPDConfigClient0.err = fmt.Errorf("")
-	_, err = newPDConfHandler(&conf, nil, newMockPDConfigClient)
+	_, err = newPDConfHandler(&conf, nil, nil, newMockPDConfigClient)
 	c.Assert(err, NotNil)
 
 	// wrong response when registering
 	mockPDConfigClient0.err = nil
 	mockPDConfigClient0.status = &configpb.Status{Code: configpb.StatusCode_UNKNOWN}
-	_, err = newPDConfHandler(&conf, nil, newMockPDConfigClient)
+	_, err = newPDConfHandler(&conf, nil, nil, newMockPDConfigClient)
 	c.Assert(err, NotNil)
 
 	// create client successfully
 	mockPDConfigClient0.status.Code = configpb.StatusCode_OK
 	mockPDConfigClient0.confContent, _ = encodeConfig(&conf)
-	ch, err := newPDConfHandler(&conf, nil, newMockPDConfigClient)
+	ch, err := newPDConfHandler(&conf, nil, nil, newMockPDConfigClient)
 	c.Assert(err, IsNil)
 	ch.Close()
 
@@ -112,7 +112,7 @@ func (s *testConfigSuite) TestPDConfHandler(c *C) {
 		c.Assert(oldConf.Log.Level, Equals, "info")
 		c.Assert(newConf.Log.Level, Equals, "debug")
 	}
-	ch, err = newPDConfHandler(&conf, mockReloadFunc, newMockPDConfigClient)
+	ch, err = newPDConfHandler(&conf, mockReloadFunc, nil, newMockPDConfigClient)
 	c.Assert(err, IsNil)
 	ch.interval = time.Second
 	ch.Start()

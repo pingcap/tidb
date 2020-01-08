@@ -41,11 +41,15 @@ type ConfHandler interface {
 // ConfReloadFunc is used to reload the config to make it work.
 type ConfReloadFunc func(oldConf, newConf *Config)
 
+// OverwriteFunc is used to overwrite some config items which are initialized from commend and
+// shouldn't be updated during runtime.
+type OverwriteFunc func(conf *Config)
+
 // NewConfHandler creates a new ConfHandler according to the local config.
-func NewConfHandler(localConf *Config, reloadFunc ConfReloadFunc) (ConfHandler, error) {
+func NewConfHandler(localConf *Config, reloadFunc ConfReloadFunc, overwriteFunc OverwriteFunc) (ConfHandler, error) {
 	switch defaultConf.Store {
 	case "tikv":
-		return newPDConfHandler(localConf, reloadFunc, nil)
+		return newPDConfHandler(localConf, reloadFunc, overwriteFunc, nil)
 	default:
 		return &constantConfHandler{localConf}, nil
 	}
@@ -72,17 +76,18 @@ const (
 )
 
 type pdConfHandler struct {
-	id         string // ip:port
-	version    *configpb.Version
-	curConf    atomic.Value
-	interval   time.Duration
-	wg         sync.WaitGroup
-	exit       chan struct{}
-	pdConfCli  pd.ConfigClient
-	reloadFunc func(oldConf, newConf *Config)
+	id            string // ip:port
+	version       *configpb.Version
+	curConf       atomic.Value
+	interval      time.Duration
+	wg            sync.WaitGroup
+	exit          chan struct{}
+	pdConfCli     pd.ConfigClient
+	reloadFunc    ConfReloadFunc
+	overwriteFunc OverwriteFunc
 }
 
-func newPDConfHandler(localConf *Config, reloadFunc ConfReloadFunc,
+func newPDConfHandler(localConf *Config, reloadFunc ConfReloadFunc, overwriteFunc OverwriteFunc,
 	newPDCliFunc func([]string, pd.SecurityOption) (pd.ConfigClient, error), // for test
 ) (*pdConfHandler, error) {
 	addresses, _, err := ParsePath(localConf.Path)
@@ -131,12 +136,13 @@ func newPDConfHandler(localConf *Config, reloadFunc ConfReloadFunc,
 	}
 
 	ch := &pdConfHandler{
-		id:         id,
-		version:    version,
-		interval:   pdConfHandlerRefreshInterval,
-		exit:       make(chan struct{}),
-		pdConfCli:  pdCli,
-		reloadFunc: reloadFunc,
+		id:            id,
+		version:       version,
+		interval:      pdConfHandlerRefreshInterval,
+		exit:          make(chan struct{}),
+		pdConfCli:     pdCli,
+		reloadFunc:    reloadFunc,
+		overwriteFunc: overwriteFunc,
 	}
 	ch.curConf.Store(newConf)
 	return ch, nil
@@ -189,6 +195,9 @@ func (ch *pdConfHandler) run() {
 			if err != nil {
 				logutil.Logger(context.Background()).Error("[PDConfHandler] decode config error", zap.Error(err))
 				continue
+			}
+			if ch.overwriteFunc != nil {
+				ch.overwriteFunc(newConf)
 			}
 			if err := newConf.Valid(); err != nil {
 				logutil.Logger(context.Background()).Error("[PDConfHandler] invalid config", zap.Error(err))

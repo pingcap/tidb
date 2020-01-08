@@ -144,7 +144,6 @@ var (
 )
 
 var (
-	cfg      *config.Config
 	storage  kv.Storage
 	dom      *domain.Domain
 	svr      *server.Server
@@ -159,9 +158,8 @@ func main() {
 	}
 	registerStores()
 	registerMetrics()
-	config.InitializeConfig(*configPath, *configCheck, *configStrict, reloadConfig)
-	overrideConfig()
-	if err := cfg.Valid(); err != nil {
+	config.InitializeConfig(*configPath, *configCheck, *configStrict, reloadConfig, overrideConfig)
+	if err := config.GetGlobalConfig().Valid(); err != nil {
 		fmt.Fprintln(os.Stderr, "invalid config", err)
 		os.Exit(1)
 	}
@@ -233,6 +231,7 @@ func registerMetrics() {
 }
 
 func createStoreAndDomain() {
+	cfg := config.GetGlobalConfig()
 	fullPath := fmt.Sprintf("%s://%s", cfg.Store, cfg.Path)
 	var err error
 	storage, err = kvstore.New(fullPath)
@@ -243,6 +242,7 @@ func createStoreAndDomain() {
 }
 
 func setupBinlogClient() {
+	cfg := config.GetGlobalConfig()
 	if !cfg.Binlog.Enable {
 		return
 	}
@@ -307,6 +307,7 @@ func prometheusPushClient(addr string, interval time.Duration) {
 }
 
 func instanceName() string {
+	cfg := config.GetGlobalConfig()
 	hostname, err := os.Hostname()
 	if err != nil {
 		return "unknown"
@@ -364,7 +365,7 @@ func reloadConfig(nc, c *config.Config) {
 	}
 }
 
-func overrideConfig() {
+func overrideConfig(cfg *config.Config) {
 	actualFlags := make(map[string]bool)
 	flag.Visit(func(f *flag.Flag) {
 		actualFlags[f.Name] = true
@@ -468,6 +469,7 @@ func overrideConfig() {
 }
 
 func setGlobalVars() {
+	cfg := config.GetGlobalConfig()
 	ddlLeaseDuration := parseDuration(cfg.Lease)
 	session.SetSchemaLease(ddlLeaseDuration)
 	runtime.GOMAXPROCS(int(cfg.Performance.MaxProcs))
@@ -523,6 +525,7 @@ func setGlobalVars() {
 }
 
 func setupLog() {
+	cfg := config.GetGlobalConfig()
 	err := logutil.InitZapLogger(cfg.Log.ToLogConfig())
 	terror.MustNil(err)
 
@@ -549,6 +552,7 @@ func printInfo() {
 }
 
 func createServer() {
+	cfg := config.GetGlobalConfig()
 	driver := server.NewTiDBDriver(storage)
 	var err error
 	svr, err = server.NewServer(cfg, driver)
@@ -567,6 +571,7 @@ func serverShutdown(isgraceful bool) {
 }
 
 func setupMetrics() {
+	cfg := config.GetGlobalConfig()
 	// Enable the mutex profile, 1/10 of mutex blocking event sampling.
 	runtime.SetMutexProfileFraction(10)
 	systimeErrHandler := func() {
@@ -587,6 +592,7 @@ func setupMetrics() {
 }
 
 func setupTracing() {
+	cfg := config.GetGlobalConfig()
 	tracingCfg := cfg.OpenTracing.ToTracingConfig()
 	tracingCfg.ServiceName = "TiDB"
 	tracer, _, err := tracingCfg.NewTracer()

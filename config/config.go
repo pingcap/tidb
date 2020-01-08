@@ -18,7 +18,6 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"fmt"
-	"github.com/pingcap/parser/terror"
 	"io/ioutil"
 	"net/url"
 	"os"
@@ -29,6 +28,7 @@ import (
 	"github.com/pingcap/errors"
 	zaplog "github.com/pingcap/log"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/util/logutil"
 	tracing "github.com/uber/jaeger-client-go/config"
 	"go.uber.org/zap"
@@ -637,43 +637,42 @@ func isDeprecatedConfigItem(items []string) bool {
 }
 
 // InitializeConfig initialize the global config handler.
-func InitializeConfig(confPath string, configCheck, configStrict bool, reloadFunc ConfReloadFunc) {
-	if confPath == "" {
-		zaplog.Fatal("config check failed", zap.Error(errors.New("no config file specified for config-check")))
-		os.Exit(1)
-	}
+func InitializeConfig(confPath string, configCheck, configStrict bool, reloadFunc ConfReloadFunc, overwriteFunc OverwriteFunc) {
+	cfg := GetGlobalConfig()
+	var err error
+	if confPath != "" {
+		err = cfg.Load(confPath)
+		if err == nil {
+			return
+		}
 
-	cfgVal := defaultConf // copy to avoid changing the original default config
-	cfg := &cfgVal
-	err := cfg.Load(confPath)
-	warning := ""
-	if err != nil {
 		// Unused config item erro turns to warnings.
-		if confErr, ok := err.(*ErrConfigValidationFailed); ok {
-			if isDeprecatedConfigItem(confErr.UndecodedItems) {
-				warning = err.Error()
+		if tmp, ok := err.(*ErrConfigValidationFailed); ok {
+			if isDeprecatedConfigItem(tmp.UndecodedItems) {
+				fmt.Fprintln(os.Stderr, err.Error())
+				err = nil
+			}
+			// This block is to accommodate an interim situation where strict config checking
+			// is not the default behavior of TiDB. The warning message must be deferred until
+			// logging has been set up. After strict config checking is the default behavior,
+			// This should all be removed.
+			if !configCheck && !configStrict {
+				fmt.Fprintln(os.Stderr, err.Error())
 				err = nil
 			}
 		}
-		// This block is to accommodate an interim situation where strict config checking
-		// is not the default behavior of TiDB. The warning message must be deferred until
-		// logging has been set up. After strict config checking is the default behavior,
-		// This should all be removed.
-		if !configCheck && !configStrict {
-			warning = err.Error()
-			err = nil
+
+		terror.MustNil(err)
+	} else {
+		// configCheck should have the config file specified.
+		if configCheck {
+			fmt.Fprintln(os.Stderr, "config check failed", errors.New("no config file specified for config-check"))
+			os.Exit(1)
 		}
 	}
 
-	terror.MustNil(err)
-	if warning != "" {
-		// If configStrict had been specified, and there had been an error, the server would already
-		// have exited by now. If configWarning is not an empty string, write it to the log now that
-		// it's been properly set up.
-		zaplog.Warn(warning)
-	}
-
-	globalConfHandler, err = NewConfHandler(cfg, reloadFunc)
+	overwriteFunc(cfg)
+	globalConfHandler, err = NewConfHandler(cfg, reloadFunc, overwriteFunc)
 	terror.MustNil(err)
 	globalConfHandler.Start()
 }
