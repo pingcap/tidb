@@ -850,14 +850,14 @@ func (w *GCWorker) resolveLocks(ctx context.Context, safePoint uint64, concurren
 		return w.legacyResolveLocks(ctx, safePoint, concurrency)
 	}
 
-	// First try Green GC
-	err = w.greenResolveLocks(ctx, safePoint)
+	// First try resolve locks with physical scan
+	err = w.resolveLocksWithPhysicalScan(ctx, safePoint)
 
 	if err == nil {
 		return nil
 	}
 
-	logutil.Logger(ctx).Error("[gc worker] green resolve locks failed, trying fallback to legacy resolve lock",
+	logutil.Logger(ctx).Error("[gc worker] resolve locks with physical scan failed, trying fallback to legacy resolve lock",
 		zap.String("uuid", w.uuid),
 		zap.Uint64("safePoint", safePoint),
 		zap.Error(err))
@@ -989,9 +989,9 @@ func (w *GCWorker) resolveLocksForRange(ctx context.Context, safePoint uint64, s
 	return stat, nil
 }
 
-func (w *GCWorker) greenResolveLocks(ctx context.Context, safePoint uint64) error {
-	metrics.GCWorkerCounter.WithLabelValues("green_resolve_locks").Inc()
-	logutil.Logger(ctx).Info("[gc worker] start green resolve locks",
+func (w *GCWorker) resolveLocksWithPhysicalScan(ctx context.Context, safePoint uint64) error {
+	metrics.GCWorkerCounter.WithLabelValues("resolve_locks_physical").Inc()
+	logutil.Logger(ctx).Info("[gc worker] start resolve locks with physical scan locks",
 		zap.String("uuid", w.uuid),
 		zap.Uint64("safePoint", safePoint))
 	startTime := time.Now()
@@ -1044,7 +1044,7 @@ func (w *GCWorker) greenResolveLocks(ctx context.Context, safePoint uint64) erro
 		return errors.Trace(err)
 	}
 
-	logutil.Logger(ctx).Info("[gc worker] finish resolve locks in green mode",
+	logutil.Logger(ctx).Info("[gc worker] finish resolve locks with physical scan locks",
 		zap.String("uuid", w.uuid),
 		zap.Uint64("safePoint", safePoint),
 		zap.Duration("takes", time.Since(startTime)))
