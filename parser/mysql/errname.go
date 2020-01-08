@@ -1039,6 +1039,12 @@ var MySQLErrName = map[uint16]string{
 	ErrAutoRandReadFailed:         "Failed to read auto-random value from storage engine",
 	ErrInvalidIncrementAndOffset:  "Invalid auto_increment settings: auto_increment_increment: %d, auto_increment_offset: %d, both of them must be in range [1..65535]",
 
+	ErrWarnOptimizerHintInvalidInteger:  "integer value is out of range in '%s'",
+	ErrWarnOptimizerHintUnsupportedHint: "Optimizer hint %s is not supported by TiDB and is ignored",
+	ErrWarnOptimizerHintInvalidToken:    "Cannot use %s '%s' (tok = %d) in an optimizer hint",
+	ErrWarnMemoryQuotaOverflow:          "Max value of MEMORY_QUOTA is %d bytes, ignore this invalid limit",
+	ErrWarnOptimizerHintParseError:      "Optimizer hint syntax error at %v",
+
 	ErrSequenceUnsupportedTableOption:      "Unsupported sequence table-option %s",
 	ErrUnsupportedType:                     "Unsupported type %T",
 	ErrAnalyzeMissIndex:                    "Index '%s' in field list does not exist in table '%s'",
