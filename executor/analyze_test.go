@@ -242,10 +242,8 @@ func (s *testFastAnalyze) TestAnalyzeFastSample(c *C) {
 	}
 	err = mockExec.TestFastSample()
 	c.Assert(err, IsNil)
-	vals := make([][]string, 0)
 	c.Assert(len(mockExec.Collectors), Equals, 3)
 	for i := 0; i < 2; i++ {
-		vals = append(vals, make([]string, 0))
 		samples := mockExec.Collectors[i].Samples
 		c.Assert(len(samples), Equals, 20)
 		for j := 1; j < 20; j++ {

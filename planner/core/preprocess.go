@@ -398,6 +398,12 @@ func (p *preprocessor) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 		}
 	}
 	for _, constraint := range stmt.Constraints {
+		for _, spec := range constraint.Keys {
+			if spec.Expr != nil {
+				p.err = ErrNotSupportedYet.GenWithStackByArgs("create table with expression index")
+				return
+			}
+		}
 		switch tp := constraint.Tp; tp {
 		case ast.ConstraintKey, ast.ConstraintIndex, ast.ConstraintUniq, ast.ConstraintUniqKey, ast.ConstraintUniqIndex:
 			err := checkIndexInfo(constraint.Name, constraint.Keys)
@@ -595,11 +601,13 @@ func (p *preprocessor) checkAlterTableGrammar(stmt *ast.AlterTableStmt) {
 func checkDuplicateColumnName(IndexPartSpecifications []*ast.IndexPartSpecification) error {
 	colNames := make(map[string]struct{}, len(IndexPartSpecifications))
 	for _, IndexColNameWithExpr := range IndexPartSpecifications {
-		name := IndexColNameWithExpr.Column.Name
-		if _, ok := colNames[name.L]; ok {
-			return infoschema.ErrColumnExists.GenWithStackByArgs(name)
+		if IndexColNameWithExpr.Column != nil {
+			name := IndexColNameWithExpr.Column.Name
+			if _, ok := colNames[name.L]; ok {
+				return infoschema.ErrColumnExists.GenWithStackByArgs(name)
+			}
+			colNames[name.L] = struct{}{}
 		}
-		colNames[name.L] = struct{}{}
 	}
 	return nil
 }
