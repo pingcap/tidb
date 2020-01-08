@@ -125,6 +125,36 @@ func (sf *ScalarFunction) MarshalJSON() ([]byte, error) {
 	return []byte(fmt.Sprintf("\"%s\"", sf)), nil
 }
 
+// typeInferForNull infers the NULL datums field type and set the field type
+// of NULL datum same as other non-null operands.
+func typeInferForNull(args []Expression) {
+	if len(args) < 2 {
+		return
+	}
+	// Inference the actual field type of NULL datum.
+	var retFieldTp *types.FieldType
+	var hasNullArg bool
+	for _, arg := range args {
+		cons, ok := arg.(*Constant)
+		isNullArg := ok && cons.Value.IsNull()
+		hasNullArg = hasNullArg || isNullArg
+		if !isNullArg && retFieldTp == nil {
+			retFieldTp = arg.GetType()
+		}
+		if hasNullArg && retFieldTp != nil {
+			break
+		}
+	}
+	if !hasNullArg || retFieldTp == nil {
+		return
+	}
+	for _, arg := range args {
+		if cons, ok := arg.(*Constant); ok && cons.RetType.Tp == mysql.TypeNull && cons.Value.IsNull() {
+			*cons.RetType = *retFieldTp
+		}
+	}
+}
+
 // newFunctionImpl creates a new scalar function or constant.
 func newFunctionImpl(ctx sessionctx.Context, fold bool, funcName string, retType *types.FieldType, args ...Expression) (Expression, error) {
 	if retType == nil {
@@ -149,6 +179,7 @@ func newFunctionImpl(ctx sessionctx.Context, fold bool, funcName string, retType
 	}
 	funcArgs := make([]Expression, len(args))
 	copy(funcArgs, args)
+	typeInferForNull(funcArgs)
 	f, err := fc.getFunction(ctx, funcArgs)
 	if err != nil {
 		return nil, err
