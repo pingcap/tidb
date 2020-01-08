@@ -47,7 +47,7 @@ type RowContainer struct {
 
 	memTracker  *memory.Tracker
 	diskTracker *disk.Tracker
-	actionSpill *spillDiskAction
+	actionSpill *SpillDiskAction
 }
 
 // NewRowContainer creates a new RowContainer in memory.
@@ -85,7 +85,7 @@ func (c *RowContainer) Reset() error {
 		}
 		atomic.StoreUint32(&c.exceeded, 0)
 		atomic.StoreUint32(&c.spilled, 0)
-		c.actionSpill.reset()
+		c.actionSpill.ResetOnce()
 	} else {
 		c.records.Reset()
 	}
@@ -186,16 +186,16 @@ func (c *RowContainer) Close() (err error) {
 	return
 }
 
-// ActionSpill returns a memory.ActionOnExceed for spilling over to disk.
-func (c *RowContainer) ActionSpill() memory.ActionOnExceed {
-	c.actionSpill = &spillDiskAction{c: c}
+// ActionSpill returns a SpillDiskAction for spilling over to disk.
+func (c *RowContainer) ActionSpill() *SpillDiskAction {
+	c.actionSpill = &SpillDiskAction{c: c}
 	return c.actionSpill
 }
 
-// spillDiskAction implements memory.ActionOnExceed for chunk.List. If
-// the memory quota of a query is exceeded, spillDiskAction.Action is
+// SpillDiskAction implements memory.ActionOnExceed for chunk.List. If
+// the memory quota of a query is exceeded, SpillDiskAction.Action is
 // triggered.
-type spillDiskAction struct {
+type SpillDiskAction struct {
 	once           sync.Once
 	c              *RowContainer
 	fallbackAction memory.ActionOnExceed
@@ -203,7 +203,7 @@ type spillDiskAction struct {
 
 // Action sends a signal to trigger SpillToDisk method of RowContainer
 // and if it is already triggered before, call its fallbackAction.
-func (a *spillDiskAction) Action(t *memory.Tracker) {
+func (a *SpillDiskAction) Action(t *memory.Tracker) {
 	if a.c.AlreadySpilledSafe() {
 		if a.fallbackAction != nil {
 			a.fallbackAction.Action(t)
@@ -216,14 +216,19 @@ func (a *spillDiskAction) Action(t *memory.Tracker) {
 }
 
 // SetFallback sets the fallback action.
-func (a *spillDiskAction) SetFallback(fallback memory.ActionOnExceed) {
+func (a *SpillDiskAction) SetFallback(fallback memory.ActionOnExceed) {
 	a.fallbackAction = fallback
 }
 
 // SetLogHook sets the hook, it does nothing just to form the memory.ActionOnExceed interface.
-func (a *spillDiskAction) SetLogHook(hook func(uint64)) {}
+func (a *SpillDiskAction) SetLogHook(hook func(uint64)) {}
 
-// reset resets the spill action so that it can be triggered next time.
-func (a *spillDiskAction) reset() {
+// ResetOnce resets the spill action so that it can be triggered next time.
+func (a *SpillDiskAction) ResetOnce() {
 	a.once = sync.Once{}
+}
+
+// SetRowContainer sets the RowContainer for the SpillDiskAction.
+func (a *SpillDiskAction) SetRowContainer(c *RowContainer) {
+	a.c = c
 }

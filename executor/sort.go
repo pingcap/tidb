@@ -67,6 +67,8 @@ type SortExec struct {
 	partitionConsumedNum []int
 	// heapSort use heap sort for spill disk.
 	heapSort *topNChunkHeapWithIndex
+	// spillAction save the Action for spill disk.
+	spillAction *chunk.SpillDiskAction
 
 	// exceeded indicates that records have exceeded memQuota during
 	// adding this chunk and we should spill now.
@@ -77,7 +79,7 @@ type SortExec struct {
 
 // Close implements the Executor Close interface.
 func (e *SortExec) Close() error {
-	if len(e.partitionList) > 1 {
+	if len(e.partitionList) > 0 {
 		for _, chunkInDisk := range e.partitionList {
 			if chunkInDisk != nil {
 				if err := chunkInDisk.Close(); err != nil {
@@ -86,6 +88,13 @@ func (e *SortExec) Close() error {
 			}
 		}
 		e.partitionList = e.partitionList[:0]
+
+		for _, chunkPtr := range e.partitionRowPtrs {
+			if chunkPtr != nil {
+				e.memTracker.Consume(int64(-8 * cap(chunkPtr)))
+			}
+		}
+		e.partitionRowPtrs = e.partitionRowPtrs[:0]
 
 		e.memTracker.Consume(int64(-8 * cap(e.sortRowsIndex)))
 		e.memTracker.Consume(int64(-8 * cap(e.partitionConsumedNum)))
@@ -166,13 +175,6 @@ func (e *SortExec) generatePartition() {
 	sort.Slice(e.rowPtrs, e.keyColumnsLess)
 	e.partitionList = append(e.partitionList, e.rowChunks)
 	e.partitionRowPtrs = append(e.partitionRowPtrs, e.rowPtrs)
-	e.rowChunks = chunk.NewRowContainer(retTypes(e), e.maxChunkSize)
-	e.rowChunks.GetMemTracker().AttachTo(e.memTracker)
-	e.rowChunks.GetMemTracker().SetLabel(rowChunksLabel)
-	if config.GetGlobalConfig().OOMUseTmpStorage {
-		actionSpill := e.rowChunks.ActionSpill()
-		e.ctx.GetSessionVars().StmtCtx.MemTracker.FallbackOldAndSetNewAction(actionSpill)
-	}
 }
 
 type topNChunkHeapWithIndex struct {
@@ -242,26 +244,14 @@ func (e *SortExec) externalSorting(req *chunk.Chunk) (err error) {
 	return nil
 }
 
-func getNextRowPtr(l *chunk.RowContainer, ptr chunk.RowPtr) (chunk.RowPtr, bool) {
-	ptr.RowIdx++
-	if ptr.RowIdx == uint32(l.NumRowsOfChunk(int(ptr.ChkIdx))) {
-		ptr.ChkIdx++
-		ptr.RowIdx = 0
-	}
-	if ptr.ChkIdx == uint32(l.NumChunks()) {
-		return ptr, false
-	}
-	return ptr, true
-}
-
 func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 	fields := retTypes(e)
 	e.rowChunks = chunk.NewRowContainer(fields, e.maxChunkSize)
 	e.rowChunks.GetMemTracker().AttachTo(e.memTracker)
 	e.rowChunks.GetMemTracker().SetLabel(rowChunksLabel)
 	if config.GetGlobalConfig().OOMUseTmpStorage {
-		actionSpill := e.rowChunks.ActionSpill()
-		e.ctx.GetSessionVars().StmtCtx.MemTracker.FallbackOldAndSetNewAction(actionSpill)
+		e.spillAction = e.rowChunks.ActionSpill()
+		e.ctx.GetSessionVars().StmtCtx.MemTracker.FallbackOldAndSetNewAction(e.spillAction)
 	}
 	for {
 		chk := newFirstChunk(e.children[0])
@@ -275,6 +265,13 @@ func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 		}
 		if err := e.rowChunks.Add(chk, e.generatePartition); err != nil {
 			return err
+		}
+		if e.rowChunks.AlreadySpilled() {
+			e.rowChunks = chunk.NewRowContainer(retTypes(e), e.maxChunkSize)
+			e.rowChunks.GetMemTracker().AttachTo(e.memTracker)
+			e.rowChunks.GetMemTracker().SetLabel(rowChunksLabel)
+			e.spillAction.SetRowContainer(e.rowChunks)
+			e.spillAction.ResetOnce()
 		}
 	}
 	if e.rowChunks.NumRow() > 0 && len(e.partitionList) > 0 {
