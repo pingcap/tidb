@@ -74,7 +74,7 @@ func (h *CoprocessorDAGHandler) HandleRequest(ctx context.Context, req *coproces
 		}
 		totalChunks = append(totalChunks, partChunks...)
 	}
-	return h.buildResponse(totalChunks)
+	return h.buildUnaryResponse(totalChunks)
 }
 
 // HandleStreamRequest handles the coprocessor stream request.
@@ -161,7 +161,7 @@ func (h *CoprocessorDAGHandler) buildChunk(chk *chunk.Chunk, tps []*types.FieldT
 	return chunks, err
 }
 
-func (h *CoprocessorDAGHandler) buildResponse(chunks []tipb.Chunk) *coprocessor.Response {
+func (h *CoprocessorDAGHandler) buildUnaryResponse(chunks []tipb.Chunk) *coprocessor.Response {
 	selResp := tipb.SelectResponse{
 		Chunks:     chunks,
 		EncodeType: h.dagReq.EncodeType,
