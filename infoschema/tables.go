@@ -293,6 +293,7 @@ var statisticsCols = []columnInfo{
 	{"NULLABLE", mysql.TypeVarchar, 3, 0, nil, nil},
 	{"INDEX_TYPE", mysql.TypeVarchar, 16, 0, nil, nil},
 	{"COMMENT", mysql.TypeVarchar, 16, 0, nil, nil},
+	{"Expression", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"INDEX_COMMENT", mysql.TypeVarchar, 1024, 0, nil, nil},
 }
 
@@ -644,6 +645,7 @@ var tableTiDBIndexesCols = []columnInfo{
 	{"COLUMN_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"SUB_PART", mysql.TypeLonglong, 21, 0, nil, nil},
 	{"INDEX_COMMENT", mysql.TypeVarchar, 2048, 0, nil, nil},
+	{"Expression", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"INDEX_ID", mysql.TypeLonglong, 21, 0, nil, nil},
 }
 
@@ -1482,6 +1484,7 @@ func dataForIndexes(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.
 					pkCol.Name.O,  // COLUMN_NAME
 					nil,           // SUB_PART
 					"",            // INDEX_COMMENT
+					"NULL",        // Expression
 					0,             // INDEX_ID
 				)
 				rows = append(rows, record)
@@ -1499,15 +1502,23 @@ func dataForIndexes(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.
 					if col.Length != types.UnspecifiedLength {
 						subPart = col.Length
 					}
+					colName := col.Name.O
+					expression := "NULL"
+					tblCol := tb.Columns[col.Offset]
+					if tblCol.Hidden {
+						colName = "NULL"
+						expression = fmt.Sprintf("(%s)", tblCol.GeneratedExprString)
+					}
 					record := types.MakeDatums(
 						schema.Name.O,   // TABLE_SCHEMA
 						tb.Name.O,       // TABLE_NAME
 						nonUniq,         // NON_UNIQUE
 						idxInfo.Name.O,  // KEY_NAME
 						i+1,             // SEQ_IN_INDEX
-						col.Name.O,      // COLUMN_NAME
+						colName,         // COLUMN_NAME
 						subPart,         // SUB_PART
 						idxInfo.Comment, // INDEX_COMMENT
+						expression,      // Expression
 						idxInfo.ID,      // INDEX_ID
 					)
 					rows = append(rows, record)
@@ -1652,12 +1663,13 @@ func dataForStatisticsInTable(schema *model.DBInfo, table *model.TableInfo) [][]
 					1,             // SEQ_IN_INDEX
 					col.Name.O,    // COLUMN_NAME
 					"A",           // COLLATION
-					nil,           // CARDINALITY
+					0,             // CARDINALITY
 					nil,           // SUB_PART
 					nil,           // PACKED
 					"",            // NULLABLE
 					"BTREE",       // INDEX_TYPE
 					"",            // COMMENT
+					"NULL",        // Expression
 					"",            // INDEX_COMMENT
 				)
 				rows = append(rows, record)
@@ -1679,6 +1691,13 @@ func dataForStatisticsInTable(schema *model.DBInfo, table *model.TableInfo) [][]
 			if mysql.HasNotNullFlag(col.Flag) {
 				nullable = ""
 			}
+			colName := col.Name.O
+			expression := "NULL"
+			tblCol := table.Columns[col.Offset]
+			if tblCol.Hidden {
+				colName = "NULL"
+				expression = fmt.Sprintf("(%s)", tblCol.GeneratedExprString)
+			}
 			record := types.MakeDatums(
 				catalogVal,    // TABLE_CATALOG
 				schema.Name.O, // TABLE_SCHEMA
@@ -1687,14 +1706,15 @@ func dataForStatisticsInTable(schema *model.DBInfo, table *model.TableInfo) [][]
 				schema.Name.O, // INDEX_SCHEMA
 				index.Name.O,  // INDEX_NAME
 				i+1,           // SEQ_IN_INDEX
-				key.Name.O,    // COLUMN_NAME
+				colName,       // COLUMN_NAME
 				"A",           // COLLATION
-				nil,           // CARDINALITY
+				0,             // CARDINALITY
 				nil,           // SUB_PART
 				nil,           // PACKED
 				nullable,      // NULLABLE
 				"BTREE",       // INDEX_TYPE
 				"",            // COMMENT
+				expression,    // Expression
 				"",            // INDEX_COMMENT
 			)
 			rows = append(rows, record)

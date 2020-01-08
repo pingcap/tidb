@@ -289,15 +289,15 @@ func (s *seqTestSuite) TestShow(c *C) {
 	tk.MustExec(`create index idx7 on show_index (id);`)
 	testSQL = "SHOW index from show_index;"
 	tk.MustQuery(testSQL).Check(testutil.RowsWithSep("|",
-		"show_index|0|PRIMARY|1|id|A|0|<nil>|<nil>||BTREE||",
-		"show_index|1|cIdx|1|c|A|0|<nil>|<nil>|YES|HASH||index_comment_for_cIdx",
-		"show_index|1|idx1|1|id|A|0|<nil>|<nil>|YES|HASH||",
-		"show_index|1|idx2|1|id|A|0|<nil>|<nil>|YES|BTREE||idx",
-		"show_index|1|idx3|1|id|A|0|<nil>|<nil>|YES|HASH||idx",
-		"show_index|1|idx4|1|id|A|0|<nil>|<nil>|YES|BTREE||idx",
-		"show_index|1|idx5|1|id|A|0|<nil>|<nil>|YES|BTREE||idx",
-		"show_index|1|idx6|1|id|A|0|<nil>|<nil>|YES|HASH||",
-		"show_index|1|idx7|1|id|A|0|<nil>|<nil>|YES|BTREE||",
+		"show_index|0|PRIMARY|1|id|A|0|<nil>|<nil>||BTREE| |NULL",
+		"show_index|1|cIdx|1|c|A|0|<nil>|<nil>|YES|HASH||index_comment_for_cIdx|NULL",
+		"show_index|1|idx1|1|id|A|0|<nil>|<nil>|YES|HASH| |NULL",
+		"show_index|1|idx2|1|id|A|0|<nil>|<nil>|YES|BTREE||idx|NULL",
+		"show_index|1|idx3|1|id|A|0|<nil>|<nil>|YES|HASH||idx|NULL",
+		"show_index|1|idx4|1|id|A|0|<nil>|<nil>|YES|BTREE||idx|NULL",
+		"show_index|1|idx5|1|id|A|0|<nil>|<nil>|YES|BTREE||idx|NULL",
+		"show_index|1|idx6|1|id|A|0|<nil>|<nil>|YES|HASH| |NULL",
+		"show_index|1|idx7|1|id|A|0|<nil>|<nil>|YES|BTREE| |NULL",
 	))
 
 	// For show like with escape
