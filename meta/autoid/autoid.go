@@ -287,8 +287,16 @@ func (alloc *allocator) Alloc(tableID int64, n uint64, increment, offset int64) 
 	if n == 0 {
 		return 0, 0, nil
 	}
-	if !validIncrementAndOffset(increment, offset) {
-		return 0, 0, errInvalidIncrementAndOffset.GenWithStackByArgs(increment, offset)
+	var skipValid bool
+	failpoint.Inject("unValidIncrementAndOffset", func(val failpoint.Value) {
+		if val.(bool) {
+			skipValid = true
+		}
+	})
+	if !skipValid {
+		if !validIncrementAndOffset(increment, offset) {
+			return 0, 0, errInvalidIncrementAndOffset.GenWithStackByArgs(increment, offset)
+		}
 	}
 	alloc.mu.Lock()
 	defer alloc.mu.Unlock()

@@ -245,8 +245,10 @@ func (*testSuite) TestT(c *C) {
 
 func (*testSuite) TestUnsignedAutoid(c *C) {
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange", `return(true)`), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/meta/autoid/unValidIncrementAndOffset", `return(true)`), IsNil)
 	defer func() {
 		c.Assert(failpoint.Disable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange"), IsNil)
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/meta/autoid/unValidIncrementAndOffset"), IsNil)
 	}()
 
 	store, err := mockstore.NewMockTikvStore()
@@ -399,7 +401,7 @@ func (*testSuite) TestUnsignedAutoid(c *C) {
 
 	c.Assert(max-min, Equals, autoid.CalcNeededBatchSize(int64(uint64(offset)-1), 2, increment, offset, true))
 	firstID := autoid.SeekToFirstAutoIDUnSigned(uint64(min), uint64(increment), uint64(offset))
-	c.Assert(uint64(firstID), Equals, uint64(math.MaxUint64-100))
+	c.Assert(firstID, Equals, uint64(math.MaxUint64-100))
 
 }
 
