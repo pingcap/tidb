@@ -35,6 +35,9 @@ import (
 )
 
 const (
+	// SelectionFactor is the default factor of the selectivity.
+	// For example, If we have no idea how to estimate the selectivity
+	// of a Selection or a JoinCondition, we can use this default value.
 	SelectionFactor = 0.8
 	distinctFactor  = 0.8
 )
