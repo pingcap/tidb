@@ -18,6 +18,7 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"fmt"
+	"github.com/pingcap/parser/terror"
 	"io/ioutil"
 	"net/url"
 	"os"
@@ -28,7 +29,6 @@ import (
 	"github.com/pingcap/errors"
 	zaplog "github.com/pingcap/log"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/util/logutil"
 	tracing "github.com/uber/jaeger-client-go/config"
 	"go.uber.org/zap"
@@ -601,6 +601,27 @@ var (
 	globalConfHandler ConfHandler
 )
 
+// NewConfig creates a new config instance with default value.
+func NewConfig() *Config {
+	conf := defaultConf
+	return &conf
+}
+
+// GetGlobalConfig returns the global configuration for this server.
+// It should store configuration from command line and configuration file.
+// Other parts of the system can read the global configuration use this function.
+// NOTE: the returned config is read-only.
+func GetGlobalConfig() *Config {
+	return globalConfHandler.GetConfig()
+}
+
+// StoreGlobalConfig stores a new config to the globalConf. It mostly uses in the test to avoid some data races.
+func StoreGlobalConfig(config *Config) {
+	if err := globalConfHandler.SetConfig(config); err != nil {
+		logutil.BgLogger().Error("update the global config error", zap.Error(err))
+	}
+}
+
 var deprecatedConfig = map[string]struct{}{
 	"pessimistic-txn.ttl": {},
 	"log.rotate":          {},
@@ -655,27 +676,6 @@ func InitializeConfig(confPath string, configCheck, configStrict bool, reloadFun
 	globalConfHandler, err = NewConfHandler(cfg, reloadFunc)
 	terror.MustNil(err)
 	globalConfHandler.Start()
-}
-
-// NewConfig creates a new config instance with default value.
-func NewConfig() *Config {
-	conf := defaultConf
-	return &conf
-}
-
-// GetGlobalConfig returns the global configuration for this server.
-// It should store configuration from command line and configuration file.
-// Other parts of the system can read the global configuration use this function.
-// NOTE: the returned config is read-only.
-func GetGlobalConfig() *Config {
-	return globalConfHandler.GetConfig()
-}
-
-// StoreGlobalConfig stores a new config to the globalConf. It mostly uses in the test to avoid some data races.
-func StoreGlobalConfig(config *Config) {
-	if err := globalConfHandler.SetConfig(config); err != nil {
-		logutil.BgLogger().Error("update the global config error", zap.Error(err))
-	}
 }
 
 // Load loads config options from a toml file.
