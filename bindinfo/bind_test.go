@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/stmtsummary"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	dto "github.com/prometheus/client_model/go"
@@ -469,10 +470,9 @@ func (s *testSuite) TestPreparedStmt(c *C) {
 func (s *testSuite) TestCapturePlanBaseline(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	s.cleanBindingEnv(tk)
-	tk.MustExec("set @@tidb_enable_stmt_summary = on")
+	stmtsummary.StmtSummaryByDigestMap.Clear()
 	tk.MustExec(" set @@tidb_capture_plan_baselines = on")
 	defer func() {
-		tk.MustExec("set @@tidb_enable_stmt_summary = off")
 		tk.MustExec(" set @@tidb_capture_plan_baselines = off")
 	}()
 	tk.MustExec("use test")
@@ -631,6 +631,21 @@ func (s *testSuite) TestDuplicateBindings(c *C) {
 	rows = tk.MustQuery("show session bindings").Rows()
 	c.Assert(len(rows), Equals, 1)
 	c.Assert(createTime, Equals, rows[0][4])
+}
+
+func (s *testSuite) TestStmtHints(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	s.cleanBindingEnv(tk)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, index idx(a))")
+	tk.MustExec("create global binding for select * from t using select /*+ MAX_EXECUTION_TIME(100), MEMORY_QUOTA(1 GB) */ * from t use index(idx)")
+	tk.MustQuery("select * from t")
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.MemQuotaQuery, Equals, int64(1073741824))
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.MaxExecutionTime, Equals, uint64(100))
+	tk.MustQuery("select a, b from t")
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.MemQuotaQuery, Equals, int64(0))
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.MaxExecutionTime, Equals, uint64(0))
 }
 
 func (s *testSuite) TestDefaultDB(c *C) {
