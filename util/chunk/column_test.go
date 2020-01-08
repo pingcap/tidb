@@ -830,7 +830,7 @@ func (s *testChunkSuite) TestResize(c *check.C) {
 	col = NewColumn(types.NewFieldType(mysql.TypeDatetime), 1024)
 	for i := 0; i < 1024; i++ {
 		gt := types.FromDate(rand.Intn(2200), rand.Intn(10)+1, rand.Intn(20)+1, rand.Intn(12), rand.Intn(60), rand.Intn(60), rand.Intn(1000000))
-		t := types.Time{Time: gt}
+		t := types.NewTime(gt, 0, 0)
 		col.AppendTime(t)
 	}
 	col.ResizeTime(1024, false)

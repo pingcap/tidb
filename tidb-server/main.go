@@ -17,6 +17,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"io/ioutil"
 	"os"
 	"runtime"
 	"strconv"
@@ -50,6 +51,7 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/gcworker"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/domainutil"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
@@ -60,9 +62,9 @@ import (
 	"github.com/pingcap/tidb/util/systimemon"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/push"
-	"github.com/struCoder/pidusage"
 	"go.uber.org/automaxprocs/maxprocs"
 	"go.uber.org/zap"
+	"google.golang.org/grpc/grpclog"
 )
 
 // Flag Names
@@ -393,7 +395,7 @@ func loadConfig() string {
 var hotReloadConfigItems = []string{"Performance.MaxProcs", "Performance.MaxMemory", "Performance.CrossJoin",
 	"Performance.FeedbackProbability", "Performance.QueryFeedbackLimit", "Performance.PseudoEstimateRatio",
 	"OOMUseTmpStorage", "OOMAction", "MemQuotaQuery", "StmtSummary.MaxStmtCount", "StmtSummary.MaxSQLLength", "Log.QueryLogMaxLen",
-	"TiKVClient.EnableChunkRPC", "TiKVClient.StoreLimit"}
+	"TiKVClient.EnableChunkRPC", "TiKVClient.StoreLimit", "Performance.PProfSQLCPU"}
 
 func reloadConfig(nc, c *config.Config) {
 	// Just a part of config items need to be reload explicitly.
@@ -415,6 +417,9 @@ func reloadConfig(nc, c *config.Config) {
 	}
 	if nc.Performance.PseudoEstimateRatio != c.Performance.PseudoEstimateRatio {
 		statistics.RatioOfPseudoEstimate.Store(nc.Performance.PseudoEstimateRatio)
+	}
+	if nc.Performance.PProfSQLCPU != c.Performance.PProfSQLCPU {
+		util.EnablePProfSQLCPU.Store(nc.Performance.PProfSQLCPU)
 	}
 	if nc.TiKVClient.StoreLimit != c.TiKVClient.StoreLimit {
 		storeutil.StoreLimit.Store(nc.TiKVClient.StoreLimit)
@@ -535,6 +540,7 @@ func setGlobalVars() {
 	statistics.FeedbackProbability.Store(cfg.Performance.FeedbackProbability)
 	handle.MaxQueryFeedbackCount.Store(int64(cfg.Performance.QueryFeedbackLimit))
 	statistics.RatioOfPseudoEstimate.Store(cfg.Performance.PseudoEstimateRatio)
+	util.EnablePProfSQLCPU.Store(cfg.Performance.PProfSQLCPU)
 	ddl.RunWorker = cfg.RunDDL
 	if cfg.SplitTable {
 		atomic.StoreUint32(&ddl.EnableSplitTableRegion, 1)
@@ -588,6 +594,12 @@ func setupLog() {
 	nopLog := func(string, ...interface{}) {}
 	_, err = maxprocs.Set(maxprocs.Logger(nopLog))
 	terror.MustNil(err)
+
+	if len(os.Getenv("GRPC_DEBUG")) > 0 {
+		grpclog.SetLoggerV2(grpclog.NewLoggerV2WithVerbosity(os.Stderr, os.Stderr, os.Stderr, 999))
+	} else {
+		grpclog.SetLoggerV2(grpclog.NewLoggerV2(ioutil.Discard, ioutil.Discard, os.Stderr))
+	}
 }
 
 func printInfo() {
@@ -629,20 +641,11 @@ func setupMetrics() {
 		if callBackCount >= 5 {
 			callBackCount = 0
 			metrics.KeepAliveCounter.Inc()
-			updateCPUUsageMetrics()
 		}
 	}
 	go systimemon.StartMonitor(time.Now, systimeErrHandler, sucessCallBack)
 
 	pushMetric(cfg.Status.MetricsAddr, time.Duration(cfg.Status.MetricsInterval)*time.Second)
-}
-
-func updateCPUUsageMetrics() {
-	sysInfo, err := pidusage.GetStat(os.Getpid())
-	if err != nil {
-		return
-	}
-	metrics.CPUUsagePercentageGauge.Set(sysInfo.CPU)
 }
 
 func setupTracing() {

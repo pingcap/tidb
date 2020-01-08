@@ -105,8 +105,10 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 	},
 	ast.Now: {
 		{retEvalType: types.ETDatetime},
-		{retEvalType: types.ETDatetime, childrenTypes: []types.EvalType{types.ETInt},
-			geners: []dataGenerator{&rangeInt64Gener{0, 7}},
+		{
+			retEvalType:   types.ETDatetime,
+			childrenTypes: []types.EvalType{types.ETInt},
+			geners:        []dataGenerator{&rangeInt64Gener{0, 7}},
 		},
 	},
 	ast.DayOfWeek: {
@@ -134,7 +136,15 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 			geners: []dataGenerator{&rangeInt64Gener{0, 2200}, &rangeInt64Gener{0, 365}},
 		},
 	},
-	ast.MakeTime: {},
+	ast.MakeTime: {
+		{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETInt, types.ETInt, types.ETReal}, geners: []dataGenerator{&rangeInt64Gener{-1000, 1000}}},
+		{
+			retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETInt, types.ETInt, types.ETReal},
+			childrenFieldTypes: []*types.FieldType{{Tp: mysql.TypeLonglong, Flag: mysql.UnsignedFlag}},
+			geners:             []dataGenerator{&rangeInt64Gener{-1000, 1000}},
+		},
+		{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETReal, types.ETReal, types.ETReal}, geners: []dataGenerator{&rangeRealGener{-1000.0, 1000.0, 0.1}}},
+	},
 	ast.PeriodAdd: {
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt}, geners: []dataGenerator{new(periodGener), new(periodGener)}},
 	},
@@ -162,6 +172,23 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 	//		geners:        []dataGenerator{&unitStrGener{}, nil, nil},
 	//	},
 	//},
+	ast.UnixTimestamp: {
+		{
+			retEvalType:   types.ETInt,
+			childrenTypes: []types.EvalType{types.ETDatetime},
+			childrenFieldTypes: []*types.FieldType{
+				{
+					Tp:      mysql.TypeDatetime,
+					Flen:    types.UnspecifiedLength,
+					Decimal: 0,
+					Flag:    mysql.BinaryFlag,
+				},
+			},
+			geners: []dataGenerator{&dateTimeGener{Fsp: 0}},
+		},
+		{retEvalType: types.ETDecimal, childrenTypes: []types.EvalType{types.ETTimestamp}},
+		{retEvalType: types.ETInt},
+	},
 	ast.TimestampDiff: {
 		{
 			retEvalType:   types.ETInt,
@@ -258,9 +285,6 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 		{retEvalType: types.ETTimestamp},
 		{retEvalType: types.ETTimestamp, childrenTypes: []types.EvalType{types.ETInt}, geners: []dataGenerator{&rangeInt64Gener{begin: 0, end: 7}}},
 	},
-	ast.UnixTimestamp: {
-		{retEvalType: types.ETInt},
-	},
 	ast.UTCTime: {
 		{retEvalType: types.ETDuration},
 		{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETInt}, geners: []dataGenerator{&rangeInt64Gener{begin: 0, end: 7}}},
@@ -344,6 +368,36 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 	},
 	ast.Extract: {
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString, types.ETDatetime}, geners: []dataGenerator{&dateTimeUnitStrGener{}, nil}},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString, types.ETDuration},
+			constants: []*Constant{{Value: types.NewStringDatum("MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+		},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString, types.ETDuration},
+			constants: []*Constant{{Value: types.NewStringDatum("SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+		},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString, types.ETDuration},
+			constants: []*Constant{{Value: types.NewStringDatum("MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+		},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString, types.ETDuration},
+			constants: []*Constant{{Value: types.NewStringDatum("HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
+		},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString, types.ETDuration},
+			constants: []*Constant{{Value: types.NewStringDatum("SECOND_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+		},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString, types.ETDuration},
+			constants: []*Constant{{Value: types.NewStringDatum("MINUTE_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+		},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString, types.ETDuration},
+			constants: []*Constant{{Value: types.NewStringDatum("MINUTE_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+		},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString, types.ETDuration},
+			constants: []*Constant{{Value: types.NewStringDatum("HOUR_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+		},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString, types.ETDuration},
+			constants: []*Constant{{Value: types.NewStringDatum("HOUR_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+		},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString, types.ETDuration},
+			constants: []*Constant{{Value: types.NewStringDatum("HOUR_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+		},
 	},
 }
 

@@ -87,6 +87,11 @@ func (c *Context) ClearValue(key fmt.Stringer) {
 	delete(c.values, key)
 }
 
+// HasDirtyContent implements sessionctx.Context ClearValue interface.
+func (c *Context) HasDirtyContent(tid int64) bool {
+	return false
+}
+
 // GetSessionVars implements the sessionctx.Context GetSessionVars interface.
 func (c *Context) GetSessionVars() *variable.SessionVars {
 	return c.sessionVars
@@ -199,7 +204,7 @@ func (c *Context) GoCtx() context.Context {
 func (c *Context) StoreQueryFeedback(_ interface{}) {}
 
 // StmtCommit implements the sessionctx.Context interface.
-func (c *Context) StmtCommit() error {
+func (c *Context) StmtCommit(tracker *memory.Tracker) error {
 	return nil
 }
 
@@ -247,8 +252,8 @@ func (c *Context) HasLockedTables() bool {
 	return false
 }
 
-// PrepareTxnFuture implements the sessionctx.Context interface.
-func (c *Context) PrepareTxnFuture(ctx context.Context) {
+// PrepareTSFuture implements the sessionctx.Context interface.
+func (c *Context) PrepareTSFuture(ctx context.Context) {
 }
 
 // Close implements the sessionctx.Context interface.

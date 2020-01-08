@@ -814,7 +814,7 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, v *ast.Patte
 		join.names = make([]*types.FieldName, er.p.Schema().Len()+agg.Schema().Len())
 		copy(join.names, er.p.OutputNames())
 		copy(join.names[er.p.Schema().Len():], agg.OutputNames())
-		join.attachOnConds(expression.SplitCNFItems(checkCondition))
+		join.AttachOnConds(expression.SplitCNFItems(checkCondition))
 		// Set join hint for this join.
 		if er.b.TableHints() != nil {
 			join.setPreferredJoinType(er.b.TableHints())
@@ -1499,6 +1499,10 @@ func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
 	}
 	if idx >= 0 {
 		column := er.schema.Columns[idx]
+		if column.IsHidden {
+			er.err = ErrUnknownColumn.GenWithStackByArgs(v.Name, clauseMsg[er.b.curClause])
+			return
+		}
 		er.ctxStackAppend(column, er.names[idx])
 		return
 	}
@@ -1591,11 +1595,7 @@ func (er *expressionRewriter) evalDefaultExpr(v *ast.DefaultExpr) {
 		val = expression.Null
 	case isCurrentTimestamp && col.Tp == mysql.TypeTimestamp:
 		// for TIMESTAMP column with current_timestamp, use 0 to be compatible with MySQL 5.7
-		zero := types.Time{
-			Time: types.ZeroTime,
-			Type: mysql.TypeTimestamp,
-			Fsp:  int8(col.Decimal),
-		}
+		zero := types.NewTime(types.ZeroCoreTime, mysql.TypeTimestamp, int8(col.Decimal))
 		val = &expression.Constant{
 			Value:   types.NewDatum(zero),
 			RetType: types.NewFieldType(mysql.TypeTimestamp),

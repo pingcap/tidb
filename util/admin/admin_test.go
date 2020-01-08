@@ -18,6 +18,8 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/store/mockstore"
@@ -232,7 +234,7 @@ func (s *testSuite) TestCancelJobs(c *C) {
 
 	// test can't cancelable job.
 	job.Type = model.ActionDropIndex
-	job.SchemaState = model.StateDeleteOnly
+	job.SchemaState = model.StateWriteOnly
 	job.State = model.JobStateRunning
 	job.ID = 101
 	err = t.EnQueueDDLJob(job)
@@ -341,5 +343,18 @@ func (s *testSuite) TestIsJobRollbackable(c *C) {
 		job.SchemaState = ca.state
 		re := IsJobRollbackable(job)
 		c.Assert(re == ca.result, IsTrue)
+	}
+}
+
+func (s *testSuite) TestError(c *C) {
+	kvErrs := []*terror.Error{
+		ErrDataInConsistent,
+		ErrDDLJobNotFound,
+		ErrCancelFinishedDDLJob,
+		ErrCannotCancelDDLJob,
+	}
+	for _, err := range kvErrs {
+		code := err.ToSQLError().Code
+		c.Assert(code != mysql.ErrUnknown && code == uint16(err.Code()), IsTrue, Commentf("err: %v", err))
 	}
 }
