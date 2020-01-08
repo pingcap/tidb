@@ -422,7 +422,7 @@ func (p *PhysicalWindow) ResolveIndices() (err error) {
 }
 
 // ResolveIndices implements Plan interface.
-func (p *PhysicalPartition) ResolveIndices() (err error) {
+func (p *PhysicalShuffle) ResolveIndices() (err error) {
 	err = p.basePhysicalPlan.ResolveIndices()
 	if err != nil {
 		return err

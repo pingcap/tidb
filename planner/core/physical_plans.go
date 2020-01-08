@@ -54,8 +54,8 @@ var (
 	_ PhysicalPlan = &PhysicalMergeJoin{}
 	_ PhysicalPlan = &PhysicalUnionScan{}
 	_ PhysicalPlan = &PhysicalWindow{}
-	_ PhysicalPlan = &PhysicalPartition{}
-	_ PhysicalPlan = &PhysicalPartitionDataSourceStub{}
+	_ PhysicalPlan = &PhysicalShuffle{}
+	_ PhysicalPlan = &PhysicalShuffleDataSourceStub{}
 	_ PhysicalPlan = &BatchPointGetPlan{}
 )
 
@@ -549,15 +549,15 @@ type PhysicalWindow struct {
 	Frame           *WindowFrame
 }
 
-// PhysicalPartition represents a partition plan.
-// `Tail` and `DataSource` are the last plan within and the first plan following the "partition", respectively,
+// PhysicalShuffle represents a shuffle plan.
+// `Tail` and `DataSource` are the last plan within and the first plan following the "shuffle", respectively,
 //  to build the child executors chain.
-// Take `Window` operator as example:
-//  Partition -> Window -> Sort -> DataSource, will be separated into:
-//    ==> Partition: for main thread
-//    ==> Window -> Sort(:Tail) -> partitionWorker: for workers
+// Take `Window` operator for example:
+//  Shuffle -> Window -> Sort -> DataSource, will be separated into:
+//    ==> Shuffle: for main thread
+//    ==> Window -> Sort(:Tail) -> shuffleWorker: for workers
 //    ==> DataSource: for `fetchDataAndSplit` thread
-type PhysicalPartition struct {
+type PhysicalShuffle struct {
 	basePhysicalPlan
 
 	Concurrency int
@@ -568,7 +568,7 @@ type PhysicalPartition struct {
 	HashByItems  []expression.Expression
 }
 
-// PartitionSplitterType is the type of `Partition` executor splitter, which splits data source into partitions.
+// PartitionSplitterType is the type of `Shuffle` executor splitter, which splits data source into partitions.
 type PartitionSplitterType int
 
 const (
@@ -576,12 +576,12 @@ const (
 	PartitionHashSplitterType = iota
 )
 
-// PhysicalPartitionDataSourceStub represents a data source stub of `PhysicalPartition`,
-// and actually, is executed by `executor.partitionWorker`.
-type PhysicalPartitionDataSourceStub struct {
+// PhysicalShuffleDataSourceStub represents a data source stub of `PhysicalShuffle`,
+// and actually, is executed by `executor.shuffleWorker`.
+type PhysicalShuffleDataSourceStub struct {
 	physicalSchemaProducer
 
-	// Worker points to `executor.partitionWorker`.
+	// Worker points to `executor.shuffleWorker`.
 	Worker unsafe.Pointer
 }
 

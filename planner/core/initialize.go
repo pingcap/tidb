@@ -201,17 +201,17 @@ func (p PhysicalWindow) Init(ctx sessionctx.Context, stats *property.StatsInfo, 
 	return &p
 }
 
-// Init initializes PhysicalPartition.
-func (p PhysicalPartition) Init(ctx sessionctx.Context, stats *property.StatsInfo, offset int, props ...*property.PhysicalProperty) *PhysicalPartition {
-	p.basePhysicalPlan = newBasePhysicalPlan(ctx, plancodec.TypePartition, &p, offset)
+// Init initializes PhysicalShuffle.
+func (p PhysicalShuffle) Init(ctx sessionctx.Context, stats *property.StatsInfo, offset int, props ...*property.PhysicalProperty) *PhysicalShuffle {
+	p.basePhysicalPlan = newBasePhysicalPlan(ctx, plancodec.TypeShuffle, &p, offset)
 	p.childrenReqProps = props
 	p.stats = stats
 	return &p
 }
 
-// Init initializes PhysicalPartitionDataSourceStub.
-func (p PhysicalPartitionDataSourceStub) Init(ctx sessionctx.Context, stats *property.StatsInfo, offset int, props ...*property.PhysicalProperty) *PhysicalPartitionDataSourceStub {
-	p.basePhysicalPlan = newBasePhysicalPlan(ctx, plancodec.TypePartitionDataSourceStub, &p, offset)
+// Init initializes PhysicalShuffleDataSourceStub.
+func (p PhysicalShuffleDataSourceStub) Init(ctx sessionctx.Context, stats *property.StatsInfo, offset int, props ...*property.PhysicalProperty) *PhysicalShuffleDataSourceStub {
+	p.basePhysicalPlan = newBasePhysicalPlan(ctx, plancodec.TypeShuffleDataSourceStub, &p, offset)
 	p.childrenReqProps = props
 	p.stats = stats
 	return &p

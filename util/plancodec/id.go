@@ -84,10 +84,10 @@ const (
 	TypeIndexReader = "IndexReader"
 	// TypeWindow is the type of Window.
 	TypeWindow = "Window"
-	// TypePartition is the type of Partition.
-	TypePartition = "Partition"
-	// TypePartitionDataSourceStub is the type of Partition.
-	TypePartitionDataSourceStub = "PartitionDataSourceStub"
+	// TypeShuffle is the type of Shuffle.
+	TypeShuffle = "Shuffle"
+	// TypeShuffleDataSourceStub is the type of Shuffle.
+	TypeShuffleDataSourceStub = "ShuffleDataSourceStub"
 	// TypeTiKVSingleGather is the type of TiKVSingleGather.
 	TypeTiKVSingleGather = "TiKVSingleGather"
 	// TypeIndexMerge is the type of IndexMergeReader

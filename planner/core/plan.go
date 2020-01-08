@@ -76,8 +76,8 @@ func enforceProperty(p *property.PhysicalProperty, tsk task, ctx sessionctx.Cont
 	return sort.attach2Task(tsk)
 }
 
-// optimizeByPartition insert `PhysicalPartition` to optimize performance by running in a parallel manner.
-func optimizeByPartition(pp PhysicalPlan, tsk task, ctx sessionctx.Context) task {
+// optimizeByShuffle insert `PhysicalShuffle` to optimize performance by running in a parallel manner.
+func optimizeByShuffle(pp PhysicalPlan, tsk task, ctx sessionctx.Context) task {
 	if tsk.plan() == nil {
 		return tsk
 	}
@@ -86,14 +86,14 @@ func optimizeByPartition(pp PhysicalPlan, tsk task, ctx sessionctx.Context) task
 	// Eg., when `pp` is `NominalSort`, `tsk.plan()` would be its child.
 	switch p := pp.(type) {
 	case *PhysicalWindow:
-		if partition := optimizeByPartition4Window(p, ctx); partition != nil {
-			return partition.attach2Task(tsk)
+		if shuffle := optimizeByShuffle4Window(p, ctx); shuffle != nil {
+			return shuffle.attach2Task(tsk)
 		}
 	}
 	return tsk
 }
 
-func optimizeByPartition4Window(pp *PhysicalWindow, ctx sessionctx.Context) *PhysicalPartition {
+func optimizeByShuffle4Window(pp *PhysicalWindow, ctx sessionctx.Context) *PhysicalShuffle {
 	concurrency := ctx.GetSessionVars().WindowConcurrency
 	if concurrency <= 1 {
 		return nil
@@ -122,14 +122,14 @@ func optimizeByPartition4Window(pp *PhysicalWindow, ctx sessionctx.Context) *Phy
 		byItems = append(byItems, item.Col)
 	}
 	reqProp := &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64}
-	partition := PhysicalPartition{
+	shuffle := PhysicalShuffle{
 		Concurrency:  concurrency,
 		Tail:         tail,
 		DataSource:   dataSource,
 		SplitterType: PartitionHashSplitterType,
 		HashByItems:  byItems,
 	}.Init(ctx, pp.statsInfo(), pp.SelectBlockOffset(), reqProp)
-	return partition
+	return shuffle
 }
 
 // LogicalPlan is a tree of logical operators.

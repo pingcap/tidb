@@ -211,10 +211,10 @@ func (b *executorBuilder) build(p plannercore.Plan) Executor {
 		return b.buildIndexLookUpReader(v)
 	case *plannercore.PhysicalWindow:
 		return b.buildWindow(v)
-	case *plannercore.PhysicalPartition:
-		return b.buildPartition(v)
-	case *plannercore.PhysicalPartitionDataSourceStub:
-		return b.buildPartitionDataSourceStub(v)
+	case *plannercore.PhysicalShuffle:
+		return b.buildShuffle(v)
+	case *plannercore.PhysicalShuffleDataSourceStub:
+		return b.buildShuffleDataSourceStub(v)
 	case *plannercore.SQLBindPlan:
 		return b.buildSQLBindExec(v)
 	case *plannercore.SplitRegion:
@@ -2638,23 +2638,23 @@ func (b *executorBuilder) buildWindow(v *plannercore.PhysicalWindow) *WindowExec
 	}
 }
 
-func (b *executorBuilder) buildPartition(v *plannercore.PhysicalPartition) *PartitionExec {
+func (b *executorBuilder) buildShuffle(v *plannercore.PhysicalShuffle) *ShuffleExec {
 	base := newBaseExecutor(b.ctx, v.Schema(), v.ExplainID())
-	partition := &PartitionExec{baseExecutor: base,
+	shuffle := &ShuffleExec{baseExecutor: base,
 		concurrency: v.Concurrency,
 	}
 
 	switch v.SplitterType {
 	case plannercore.PartitionHashSplitterType:
-		partition.splitter = &partitionHashSplitter{
+		shuffle.splitter = &partitionHashSplitter{
 			byItems:    v.HashByItems,
-			numWorkers: partition.concurrency,
+			numWorkers: shuffle.concurrency,
 		}
 	default:
 		panic("Not implemented. Should not reach here.")
 	}
 
-	partition.dataSource = b.build(v.DataSource)
+	shuffle.dataSource = b.build(v.DataSource)
 	if b.err != nil {
 		return nil
 	}
@@ -2662,13 +2662,13 @@ func (b *executorBuilder) buildPartition(v *plannercore.PhysicalPartition) *Part
 	// head & tail of physical plans' chain within "partition".
 	var head, tail plannercore.PhysicalPlan = v.Children()[0], v.Tail
 
-	partition.workers = make([]*partitionWorker, partition.concurrency)
-	for i := range partition.workers {
-		w := &partitionWorker{
+	shuffle.workers = make([]*shuffleWorker, shuffle.concurrency)
+	for i := range shuffle.workers {
+		w := &shuffleWorker{
 			baseExecutor: newBaseExecutor(b.ctx, v.DataSource.Schema(), v.DataSource.ExplainID()),
 		}
 
-		stub := plannercore.PhysicalPartitionDataSourceStub{
+		stub := plannercore.PhysicalShuffleDataSourceStub{
 			Worker: (unsafe.Pointer)(w),
 		}.Init(b.ctx, v.DataSource.Stats(), v.DataSource.SelectBlockOffset(), nil)
 		stub.SetSchema(v.DataSource.Schema())
@@ -2679,14 +2679,14 @@ func (b *executorBuilder) buildPartition(v *plannercore.PhysicalPartition) *Part
 			return nil
 		}
 
-		partition.workers[i] = w
+		shuffle.workers[i] = w
 	}
 
-	return partition
+	return shuffle
 }
 
-func (b *executorBuilder) buildPartitionDataSourceStub(v *plannercore.PhysicalPartitionDataSourceStub) *partitionWorker {
-	return (*partitionWorker)(v.Worker)
+func (b *executorBuilder) buildShuffleDataSourceStub(v *plannercore.PhysicalShuffleDataSourceStub) *shuffleWorker {
+	return (*shuffleWorker)(v.Worker)
 }
 
 func (b *executorBuilder) buildSQLBindExec(v *plannercore.SQLBindPlan) Executor {

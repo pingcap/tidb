@@ -27,7 +27,7 @@ import (
 	"go.uber.org/zap"
 )
 
-// PartitionExec is the executor to run other executors in a parallel manner.
+// ShuffleExec is the executor to run other executors in a parallel manner.
 //  1. It fetches chunks from `DataSource`.
 //  2. It splits tuples from `DataSource` into N partitions (Only "split by hash" is implemented so far).
 //  3. It invokes N workers in parallel, assign each partition as input to each worker and execute child executors.
@@ -71,10 +71,10 @@ import (
 //                        +---------------------------------+
 //
 ////////////////////////////////////////////////////////////////////////////////////////
-type PartitionExec struct {
+type ShuffleExec struct {
 	baseExecutor
 	concurrency int
-	workers     []*partitionWorker
+	workers     []*shuffleWorker
 
 	prepared bool
 	executed bool
@@ -83,17 +83,17 @@ type PartitionExec struct {
 	dataSource Executor
 
 	finishCh chan struct{}
-	outputCh chan *partitionOutput
+	outputCh chan *shuffleOutput
 }
 
-type partitionOutput struct {
+type shuffleOutput struct {
 	chk        *chunk.Chunk
 	err        error
 	giveBackCh chan *chunk.Chunk
 }
 
 // Open implements the Executor Open interface.
-func (e *PartitionExec) Open(ctx context.Context) error {
+func (e *ShuffleExec) Open(ctx context.Context) error {
 	if err := e.dataSource.Open(ctx); err != nil {
 		return err
 	}
@@ -103,7 +103,7 @@ func (e *PartitionExec) Open(ctx context.Context) error {
 
 	e.prepared = false
 	e.finishCh = make(chan struct{}, 1)
-	e.outputCh = make(chan *partitionOutput, e.concurrency)
+	e.outputCh = make(chan *shuffleOutput, e.concurrency)
 
 	for _, w := range e.workers {
 		w.finishCh = e.finishCh
@@ -125,7 +125,7 @@ func (e *PartitionExec) Open(ctx context.Context) error {
 }
 
 // Close implements the Executor Close interface.
-func (e *PartitionExec) Close() error {
+func (e *ShuffleExec) Close() error {
 	if !e.prepared {
 		for _, w := range e.workers {
 			close(w.inputHolderCh)
@@ -144,7 +144,7 @@ func (e *PartitionExec) Close() error {
 	e.executed = false
 
 	if e.runtimeStats != nil {
-		e.runtimeStats.SetConcurrencyInfo("PartitionConcurrency", e.concurrency)
+		e.runtimeStats.SetConcurrencyInfo("ShuffleConcurrency", e.concurrency)
 	}
 
 	err := e.dataSource.Close()
@@ -155,7 +155,7 @@ func (e *PartitionExec) Close() error {
 	return errors.Trace(err1)
 }
 
-func (e *PartitionExec) prepare4ParallelExec(ctx context.Context) {
+func (e *ShuffleExec) prepare4ParallelExec(ctx context.Context) {
 	go e.fetchDataAndSplit(ctx)
 
 	waitGroup := &sync.WaitGroup{}
@@ -167,22 +167,22 @@ func (e *PartitionExec) prepare4ParallelExec(ctx context.Context) {
 	go e.waitWorkerAndCloseOutput(waitGroup)
 }
 
-func (e *PartitionExec) waitWorkerAndCloseOutput(waitGroup *sync.WaitGroup) {
+func (e *ShuffleExec) waitWorkerAndCloseOutput(waitGroup *sync.WaitGroup) {
 	waitGroup.Wait()
 	close(e.outputCh)
 }
 
 // Next implements the Executor Next interface.
-func (e *PartitionExec) Next(ctx context.Context, req *chunk.Chunk) error {
+func (e *ShuffleExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.Reset()
 	if !e.prepared {
 		e.prepare4ParallelExec(ctx)
 		e.prepared = true
 	}
 
-	failpoint.Inject("partitionError", func(val failpoint.Value) {
+	failpoint.Inject("shuffleError", func(val failpoint.Value) {
 		if val.(bool) {
-			failpoint.Return(errors.New("PartitionExec.Next error"))
+			failpoint.Return(errors.New("ShuffleExec.Next error"))
 		}
 	})
 
@@ -198,19 +198,19 @@ func (e *PartitionExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	if result.err != nil {
 		return result.err
 	}
-	req.SwapColumns(result.chk) // `partitionWorker` will not send an empty `result.chk` to `e.outputCh`.
+	req.SwapColumns(result.chk) // `shuffleWorker` will not send an empty `result.chk` to `e.outputCh`.
 	result.giveBackCh <- result.chk
 
 	return nil
 }
 
-func recoveryPartitionExec(output chan *partitionOutput, r interface{}) {
+func recoveryShuffleExec(output chan *shuffleOutput, r interface{}) {
 	err := errors.Errorf("%v", r)
-	output <- &partitionOutput{err: errors.Errorf("%v", r)}
-	logutil.BgLogger().Error("partition panicked", zap.Error(err))
+	output <- &shuffleOutput{err: errors.Errorf("%v", r)}
+	logutil.BgLogger().Error("shuffle panicked", zap.Error(err))
 }
 
-func (e *PartitionExec) fetchDataAndSplit(ctx context.Context) {
+func (e *ShuffleExec) fetchDataAndSplit(ctx context.Context) {
 	var (
 		err           error
 		workerIndices []int
@@ -220,7 +220,7 @@ func (e *PartitionExec) fetchDataAndSplit(ctx context.Context) {
 
 	defer func() {
 		if r := recover(); r != nil {
-			recoveryPartitionExec(e.outputCh, r)
+			recoveryShuffleExec(e.outputCh, r)
 		}
 		for _, w := range e.workers {
 			close(w.inputCh)
@@ -230,7 +230,7 @@ func (e *PartitionExec) fetchDataAndSplit(ctx context.Context) {
 	for {
 		err = Next(ctx, e.dataSource, chk)
 		if err != nil {
-			e.outputCh <- &partitionOutput{err: err}
+			e.outputCh <- &shuffleOutput{err: err}
 			return
 		}
 		if chk.NumRows() == 0 {
@@ -239,7 +239,7 @@ func (e *PartitionExec) fetchDataAndSplit(ctx context.Context) {
 
 		workerIndices, err = e.splitter.split(e.ctx, chk, workerIndices)
 		if err != nil {
-			e.outputCh <- &partitionOutput{err: err}
+			e.outputCh <- &shuffleOutput{err: err}
 			return
 		}
 		numRows := chk.NumRows()
@@ -270,10 +270,10 @@ func (e *PartitionExec) fetchDataAndSplit(ctx context.Context) {
 	}
 }
 
-var _ Executor = &partitionWorker{}
+var _ Executor = &shuffleWorker{}
 
-// partitionWorker is the multi-thread worker executing child executors within "partition".
-type partitionWorker struct {
+// shuffleWorker is the multi-thread worker executing child executors within "partition".
+type shuffleWorker struct {
 	baseExecutor
 	childExec Executor
 
@@ -286,12 +286,12 @@ type partitionWorker struct {
 	//   which give the `*Chunk` back, to implement the data transport in a streaming manner.
 	inputCh        chan *chunk.Chunk
 	inputHolderCh  chan *chunk.Chunk
-	outputCh       chan *partitionOutput
+	outputCh       chan *shuffleOutput
 	outputHolderCh chan *chunk.Chunk
 }
 
 // Open implements the Executor Open interface.
-func (e *partitionWorker) Open(ctx context.Context) error {
+func (e *shuffleWorker) Open(ctx context.Context) error {
 	if err := e.baseExecutor.Open(ctx); err != nil {
 		return err
 	}
@@ -300,13 +300,13 @@ func (e *partitionWorker) Open(ctx context.Context) error {
 }
 
 // Close implements the Executor Close interface.
-func (e *partitionWorker) Close() error {
+func (e *shuffleWorker) Close() error {
 	return errors.Trace(e.baseExecutor.Close())
 }
 
 // Next implements the Executor Next interface.
-// It is called by `Tail` executor within "partition", to fetch data from `DataSource` by `inputCh`.
-func (e *partitionWorker) Next(ctx context.Context, req *chunk.Chunk) error {
+// It is called by `Tail` executor within "shuffle", to fetch data from `DataSource` by `inputCh`.
+func (e *shuffleWorker) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.Reset()
 	if e.executed {
 		return nil
@@ -326,10 +326,10 @@ func (e *partitionWorker) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 }
 
-func (e *partitionWorker) run(ctx context.Context, waitGroup *sync.WaitGroup) {
+func (e *shuffleWorker) run(ctx context.Context, waitGroup *sync.WaitGroup) {
 	defer func() {
 		if r := recover(); r != nil {
-			recoveryPartitionExec(e.outputCh, r)
+			recoveryShuffleExec(e.outputCh, r)
 		}
 		waitGroup.Done()
 	}()
@@ -340,7 +340,7 @@ func (e *partitionWorker) run(ctx context.Context, waitGroup *sync.WaitGroup) {
 			return
 		case chk := <-e.outputHolderCh:
 			if err := Next(ctx, e.childExec, chk); err != nil {
-				e.outputCh <- &partitionOutput{err: err}
+				e.outputCh <- &shuffleOutput{err: err}
 				return
 			}
 
@@ -348,7 +348,7 @@ func (e *partitionWorker) run(ctx context.Context, waitGroup *sync.WaitGroup) {
 			if chk.NumRows() == 0 {
 				return
 			}
-			e.outputCh <- &partitionOutput{chk: chk, giveBackCh: e.outputHolderCh}
+			e.outputCh <- &shuffleOutput{chk: chk, giveBackCh: e.outputHolderCh}
 		}
 	}
 }

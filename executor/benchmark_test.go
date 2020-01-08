@@ -481,7 +481,7 @@ func buildWindowExecutor(ctx sessionctx.Context, windowFunc string, funcs int, f
 			byItems = append(byItems, item.Col)
 		}
 
-		plan = core.PhysicalPartition{
+		plan = core.PhysicalShuffle{
 			Concurrency:  concurrency,
 			Tail:         tail,
 			DataSource:   src,
