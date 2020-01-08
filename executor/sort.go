@@ -175,11 +175,6 @@ func (e *SortExec) generatePartition() {
 	sort.Slice(e.rowPtrs, e.keyColumnsLess)
 	e.partitionList = append(e.partitionList, e.rowChunks)
 	e.partitionRowPtrs = append(e.partitionRowPtrs, e.rowPtrs)
-	e.rowChunks = chunk.NewRowContainer(retTypes(e), e.maxChunkSize)
-	e.rowChunks.GetMemTracker().AttachTo(e.memTracker)
-	e.rowChunks.GetMemTracker().SetLabel(rowChunksLabel)
-	e.spillAction.SetRowContainer(e.rowChunks)
-	e.spillAction.ResetOnce()
 }
 
 type topNChunkHeapWithIndex struct {
@@ -270,6 +265,13 @@ func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 		}
 		if err := e.rowChunks.Add(chk, e.generatePartition); err != nil {
 			return err
+		}
+		if e.rowChunks.AlreadySpilled() {
+			e.rowChunks = chunk.NewRowContainer(retTypes(e), e.maxChunkSize)
+			e.rowChunks.GetMemTracker().AttachTo(e.memTracker)
+			e.rowChunks.GetMemTracker().SetLabel(rowChunksLabel)
+			e.spillAction.SetRowContainer(e.rowChunks)
+			e.spillAction.ResetOnce()
 		}
 	}
 	if e.rowChunks.NumRow() > 0 && len(e.partitionList) > 0 {
