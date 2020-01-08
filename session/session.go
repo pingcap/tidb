@@ -1686,6 +1686,8 @@ var builtinGlobalVariable = []string{
 	variable.WaitTimeout,
 	variable.InteractiveTimeout,
 	variable.MaxPreparedStmtCount,
+	variable.AutoIncrementIncrement,
+	variable.AutoIncrementOffset,
 	variable.MaxExecutionTime,
 	variable.InnodbLockWaitTimeout,
 	/* TiDB specific global variables: */
