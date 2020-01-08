@@ -1034,7 +1034,10 @@ func getPartitionInfo(ctx sessionctx.Context, tbl *model.TableInfo, pairs []name
 	pi := tbl.Partition
 	if partitionTable, ok := table.(partitionTable); ok {
 		// PartitionExpr don't need columns and names for hash partition.
-		partitionExpr, _ := partitionTable.PartitionExpr(ctx, nil, nil)
+		partitionExpr, err := partitionTable.PartitionExpr(ctx, nil, nil)
+		if err != nil {
+			return nil
+		}
 		expr := partitionExpr.OrigExpr
 		if col, ok := expr.(*ast.ColumnNameExpr); ok {
 			for _, pair := range pairs {
