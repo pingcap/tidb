@@ -247,13 +247,6 @@ func (t *partitionedTable) PartitionExpr(ctx sessionctx.Context, columns []*expr
 	pi := t.meta.GetPartitionInfo()
 	switch pi.Type {
 	case model.PartitionTypeHash:
-		ast := t.partitionExpr.OrigExpr
-		schema := expression.NewSchema(columns...)
-		expr, err := rewritePartitionExpr(ctx, ast, schema, names)
-		if err != nil {
-			return nil, err
-		}
-		t.partitionExpr.Expr = expr
 		return t.partitionExpr, nil
 	case model.PartitionTypeRange:
 		return generatePartitionExpr(ctx, pi, columns, names)

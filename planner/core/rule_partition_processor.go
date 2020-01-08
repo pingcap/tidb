@@ -16,11 +16,11 @@ import (
 	"context"
 	"errors"
 
-	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -95,20 +95,36 @@ func (s *partitionProcessor) rewriteDataSource(lp LogicalPlan) (LogicalPlan, err
 // partitionTable is for those tables which implement partition.
 type partitionTable interface {
 	PartitionExpr(ctx sessionctx.Context, columns []*expression.Column, names types.NameSlice) (*tables.PartitionExpr, error)
-	GetOriginPartitionExpr() ast.ExprNode
+}
+
+func generateHashPartitionExpr(t table.Table, ctx sessionctx.Context, columns []*expression.Column, names types.NameSlice) (*tables.PartitionExpr, error) {
+	tblInfo := t.Meta()
+	pi := tblInfo.Partition
+	var column *expression.Column
+	schema := expression.NewSchema(columns...)
+	exprs, err := expression.ParseSimpleExprsWithNames(ctx, pi.Expr, schema, names)
+	if err != nil {
+		return nil, err
+	}
+	exprs[0].HashCode(ctx.GetSessionVars().StmtCtx)
+	if col, ok := exprs[0].(*expression.Column); ok {
+		column = col
+	}
+	return &tables.PartitionExpr{
+		Column: column,
+		Expr:   exprs[0],
+		Ranges: nil,
+	}, nil
 }
 
 func (s *partitionProcessor) pruneHashPartition(ds *DataSource, pi *model.PartitionInfo) (LogicalPlan, error) {
-	var partitionExprs expression.Expression
-	if table, ok := ds.table.(partitionTable); ok {
-		pExpr, err := table.PartitionExpr(ds.ctx, ds.TblCols, ds.names)
-		if err != nil {
-			return nil, err
-		}
-		partitionExprs = pExpr.Expr
+	pExpr, err := generateHashPartitionExpr(ds.table, ds.ctx, ds.TblCols, ds.names)
+	if err != nil {
+		return nil, err
 	}
+	pe := pExpr.Expr
 	filterConds := ds.allConds
-	val, ok, hasConflict := expression.FastLocateHashPartition(ds.SCtx(), filterConds, partitionExprs)
+	val, ok, hasConflict := expression.FastLocateHashPartition(ds.SCtx(), filterConds, pe)
 	if hasConflict {
 		// For condition like `a = 1 and a = 5`, return TableDual directly.
 		tableDual := LogicalTableDual{RowCount: 0}.Init(ds.SCtx(), ds.blockOffset)
