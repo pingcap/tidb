@@ -343,7 +343,7 @@ func (e *ShowExec) fetchShowTableStatus() error {
                FROM information_schema.tables
 	       WHERE table_schema='%s' ORDER BY table_name`, e.DBName)
 
-	rows, _, err := e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(e.ctx, sql)
+	rows, _, err := e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQLWithSnapshot(e.ctx, sql)
 
 	if err != nil {
 		return errors.Trace(err)
