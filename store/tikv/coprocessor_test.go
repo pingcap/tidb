@@ -47,6 +47,24 @@ func (s *testCoprocessorSuite) TestBuildTasks(c *C) {
 	c.Assert(tasks, HasLen, 1)
 	s.taskEqual(c, tasks[0], regionIDs[0], "a", "c")
 
+	tasksCh, err := buildCopTasksChan(bo, cache, buildCopRanges("a", "c"), req)
+	tasks = []*copTask{}
+	c.Assert(err, IsNil)
+	for t := range tasksCh {
+		tasks = append(tasks, t)
+	}
+	c.Assert(tasks, HasLen, 1)
+	s.taskEqual(c, tasks[0], regionIDs[0], "a", "c")
+
+	tasksCh, err = buildCopTasksChan(bo, cache, buildCopRanges("a", "c"), flashReq)
+	c.Assert(err, IsNil)
+	tasks = []*copTask{}
+	for t := range tasksCh {
+		tasks = append(tasks, t)
+	}
+	c.Assert(tasks, HasLen, 1)
+	s.taskEqual(c, tasks[0], regionIDs[0], "t\x80\x00\x00\x00\x00\x00\x00\x00_r\x00\x00\x00\x00\x00\x00\x00\x00", "g")
+
 	tasks, err = buildCopTasks(bo, cache, buildCopRanges("a", "c"), flashReq)
 	c.Assert(err, IsNil)
 	c.Assert(tasks, HasLen, 1)
@@ -86,6 +104,18 @@ func (s *testCoprocessorSuite) TestBuildTasks(c *C) {
 
 	tasks, err = buildCopTasks(bo, cache, buildCopRanges("a", "x"), req)
 	c.Assert(err, IsNil)
+	c.Assert(tasks, HasLen, 4)
+	s.taskEqual(c, tasks[0], regionIDs[0], "a", "g")
+	s.taskEqual(c, tasks[1], regionIDs[1], "g", "n")
+	s.taskEqual(c, tasks[2], regionIDs[2], "n", "t")
+	s.taskEqual(c, tasks[3], regionIDs[3], "t", "x")
+
+	tasksCh, err = buildCopTasksChan(bo, cache, buildCopRanges("a", "x"), req)
+	c.Assert(err, IsNil)
+	tasks = []*copTask{}
+	for t := range tasksCh {
+		tasks = append(tasks, t)
+	}
 	c.Assert(tasks, HasLen, 4)
 	s.taskEqual(c, tasks[0], regionIDs[0], "a", "g")
 	s.taskEqual(c, tasks[1], regionIDs[1], "g", "n")
@@ -215,6 +245,16 @@ func (s *testCoprocessorSuite) TestRebuild(c *C) {
 	s.taskEqual(c, tasks[0], regionIDs[0], "a", "m")
 	s.taskEqual(c, tasks[1], regionIDs[1], "m", "z")
 
+	tasksCh, err := buildCopTasksChan(bo, cache, buildCopRanges("a", "z"), req)
+	c.Assert(err, IsNil)
+	tasks = []*copTask{}
+	for t := range tasksCh {
+		tasks = append(tasks, t)
+	}
+	c.Assert(tasks, HasLen, 2)
+	s.taskEqual(c, tasks[0], regionIDs[0], "a", "m")
+	s.taskEqual(c, tasks[1], regionIDs[1], "m", "z")
+
 	// nil -- 'm' -- 'q' -- nil
 	// <-  0 -> <--1-> <-2-->
 	regionIDs = append(regionIDs, cluster.AllocID())
@@ -225,6 +265,17 @@ func (s *testCoprocessorSuite) TestRebuild(c *C) {
 	req.Desc = true
 	tasks, err = buildCopTasks(bo, cache, buildCopRanges("a", "z"), req)
 	c.Assert(err, IsNil)
+	c.Assert(tasks, HasLen, 3)
+	s.taskEqual(c, tasks[2], regionIDs[0], "a", "m")
+	s.taskEqual(c, tasks[1], regionIDs[1], "m", "q")
+	s.taskEqual(c, tasks[0], regionIDs[2], "q", "z")
+
+	tasksCh, err = buildCopTasksChan(bo, cache, buildCopRanges("a", "z"), req)
+	c.Assert(err, IsNil)
+	tasks = []*copTask{}
+	for t := range tasksCh {
+		tasks = append(tasks, t)
+	}
 	c.Assert(tasks, HasLen, 3)
 	s.taskEqual(c, tasks[2], regionIDs[0], "a", "m")
 	s.taskEqual(c, tasks[1], regionIDs[1], "m", "q")
