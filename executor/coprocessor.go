@@ -99,8 +99,7 @@ func (h *CoprocessorDAGHandler) HandleStreamRequest(ctx context.Context, req *co
 		if chk.NumRows() == 0 {
 			return h.buildResponseAndSendToStream(chk, tps, stream)
 		}
-		err = h.buildResponseAndSendToStream(chk, tps, stream)
-		if err != nil {
+		if err = h.buildResponseAndSendToStream(chk, tps, stream); err != nil {
 			return stream.Send(h.buildErrorResponse(err))
 		}
 	}
