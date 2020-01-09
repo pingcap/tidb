@@ -705,6 +705,8 @@ func (h *Handle) statsMetaByTableIDFromStorage(tableID int64, historyStatsExec s
 	return
 }
 
+// statsReader is used for simplify code that needs to read system tables in different sqls
+// but requires the same transactions.
 type statsReader struct {
 	ctx     sessionctx.Context
 	history sqlexec.RestrictedSQLExecutor
