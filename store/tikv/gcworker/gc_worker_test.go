@@ -217,7 +217,7 @@ func (s *testGCWorkerSuite) TestMinStartTS(c *C) {
 		strconv.FormatUint(variable.GoTimeToTS(now.Add(-20*time.Second)), 10))
 	c.Assert(err, IsNil)
 	sp = s.gcWorker.calSafePointByMinStartTS(now.Add(-10 * time.Second))
-	c.Assert(sp.Second(), Equals, now.Add(-20 * time.Second).Second())
+	c.Assert(sp.Second(), Equals, now.Add(-20*time.Second).Second())
 }
 
 func (s *testGCWorkerSuite) TestPrepareGC(c *C) {
