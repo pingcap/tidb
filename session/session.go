@@ -1805,6 +1805,7 @@ var builtinGlobalVariable = []string{
 	variable.QueryCacheSize,
 	variable.CharacterSetServer,
 	variable.AutoIncrementIncrement,
+	variable.AutoIncrementOffset,
 	variable.CollationServer,
 	variable.NetWriteTimeout,
 	variable.MaxExecutionTime,

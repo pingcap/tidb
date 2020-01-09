@@ -79,6 +79,28 @@
     ]
   },
   {
+    "Name": "TestMaxMinEliminate",
+    "Cases": [
+      {
+        "SQL": "explain (select max(a) from t) union (select min(a) from t)",
+        "Plan": [
+          "HashAgg_19 2.00 root group by:Column#5, funcs:firstrow(Column#5)->Column#5",
+          "└─Union_20 2.00 root ",
+          "  ├─StreamAgg_26 1.00 root funcs:max(test.t.a)->Column#4",
+          "  │ └─Limit_30 1.00 root offset:0, count:1",
+          "  │   └─TableReader_40 1.00 root data:Limit_39",
+          "  │     └─Limit_39 1.00 cop[tikv] offset:0, count:1",
+          "  │       └─TableScan_38 1.00 cop[tikv] table:t, range:[-inf,+inf], keep order:true, desc, stats:pseudo",
+          "  └─StreamAgg_48 1.00 root funcs:min(test.t.a)->Column#2",
+          "    └─Limit_52 1.00 root offset:0, count:1",
+          "      └─TableReader_62 1.00 root data:Limit_61",
+          "        └─Limit_61 1.00 cop[tikv] offset:0, count:1",
+          "          └─TableScan_60 1.00 cop[tikv] table:t, range:[-inf,+inf], keep order:true, stats:pseudo"
+        ]
+      }
+    ]
+  },
+  {
     "Name": "TestIndexJoinUniqueCompositeIndex",
     "Cases": [
       {
@@ -166,6 +188,20 @@
           "15 5",
           "21 1",
           "22 2"
+        ]
+      }
+    ]
+  },
+  {
+    "Name": "TestIndexMerge",
+    "Cases": [
+      {
+        "SQL": "explain select /*+ USE_INDEX_MERGE(t, a, b) */ * from t where a = 1 or b = 2",
+        "Plan": [
+          "IndexMerge_8 2.00 root ",
+          "├─IndexScan_5 1.00 cop[tikv] table:t, index:a, range:[1,1], keep order:false, stats:pseudo",
+          "├─IndexScan_6 1.00 cop[tikv] table:t, index:b, range:[2,2], keep order:false, stats:pseudo",
+          "└─TableScan_7 2.00 cop[tikv] table:t, keep order:false, stats:pseudo"
         ]
       }
     ]

@@ -32,17 +32,26 @@ import (
 var errStopped = errors.New("stopped")
 
 type testStoreSuite struct {
+	testStoreSuiteBase
+}
+
+type testStoreFailedSuite struct {
+	testStoreSuiteBase
+}
+
+type testStoreSuiteBase struct {
 	OneByOneSuite
 	store *tikvStore
 }
 
 var _ = Suite(&testStoreSuite{})
+var _ = SerialSuites(&testStoreFailedSuite{})
 
-func (s *testStoreSuite) SetUpTest(c *C) {
+func (s *testStoreSuiteBase) SetUpTest(c *C) {
 	s.store = NewTestStore(c).(*tikvStore)
 }
 
-func (s *testStoreSuite) TearDownTest(c *C) {
+func (s *testStoreSuiteBase) TearDownTest(c *C) {
 	c.Assert(s.store.Close(), IsNil)
 }
 

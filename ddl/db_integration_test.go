@@ -152,6 +152,17 @@ func (s *testIntegrationSuite2) TestInvalidDefault(c *C) {
 	c.Assert(terror.ErrorEqual(err, types.ErrInvalidDefault), IsTrue, Commentf("err %v", err))
 }
 
+// TestKeyWithoutLength for issue #13452
+func (s testIntegrationSuite3) TestKeyWithoutLengthCreateTable(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("USE test")
+
+	_, err := tk.Exec("create table t_without_length (a text primary key)")
+	c.Assert(err, NotNil)
+	c.Assert(err, ErrorMatches, ".*BLOB/TEXT column 'a' used in key specification without a key length")
+}
+
 // TestInvalidNameWhenCreateTable for issue #3848
 func (s *testIntegrationSuite3) TestInvalidNameWhenCreateTable(c *C) {
 	tk := testkit.NewTestKit(c, s.store)

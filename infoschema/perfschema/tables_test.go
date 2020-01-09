@@ -82,11 +82,6 @@ func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b varchar(10), key k(a))")
 
-	// Statement summary is disabled by default.
-	tk.MustQuery("select @@global.tidb_enable_stmt_summary").Check(testkit.Rows("0"))
-	tk.MustExec("insert into t values(1, 'a')")
-	tk.MustQuery("select * from performance_schema.events_statements_summary_by_digest").Check(testkit.Rows())
-
 	tk.MustExec("set global tidb_enable_stmt_summary = 1")
 	tk.MustQuery("select @@global.tidb_enable_stmt_summary").Check(testkit.Rows("1"))
 
@@ -147,6 +142,9 @@ func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 
 	// Disable it again.
 	tk.MustExec("set global tidb_enable_stmt_summary = false")
+	tk.MustExec("set session tidb_enable_stmt_summary = false")
+	defer tk.MustExec("set global tidb_enable_stmt_summary = 1")
+	defer tk.MustExec("set session tidb_enable_stmt_summary = 1")
 	tk.MustQuery("select @@global.tidb_enable_stmt_summary").Check(testkit.Rows("0"))
 
 	// Create a new session to test
@@ -227,11 +225,6 @@ func (s *testTableSuite) TestStmtSummaryHistoryTable(c *C) {
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b varchar(10), key k(a))")
-
-	// Statement summary is disabled by default.
-	tk.MustQuery("select @@global.tidb_enable_stmt_summary").Check(testkit.Rows("0"))
-	tk.MustExec("insert into t values(1, 'a')")
-	tk.MustQuery("select * from performance_schema.events_statements_summary_by_digest_history").Check(testkit.Rows())
 
 	tk.MustExec("set global tidb_enable_stmt_summary = 1")
 	tk.MustQuery("select @@global.tidb_enable_stmt_summary").Check(testkit.Rows("1"))
