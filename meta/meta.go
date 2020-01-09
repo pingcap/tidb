@@ -212,7 +212,7 @@ func (m *Meta) GetAutoRandomID(dbID int64, tableID int64) (int64, error) {
 	return m.txn.HGetInt64(m.dbKey(dbID), m.autoRandomTableIDKey(tableID))
 }
 
-// GenSequenceID adds step to the sequence value and returns the sum.
+// GenSequenceValue adds step to the sequence value and returns the sum.
 func (m *Meta) GenSequenceValue(dbID, sequenceID, step int64) (int64, error) {
 	// Check if DB exists.
 	dbKey := m.dbKey(dbID)
@@ -227,7 +227,7 @@ func (m *Meta) GenSequenceValue(dbID, sequenceID, step int64) (int64, error) {
 	return m.txn.HInc(dbKey, m.sequenceKey(sequenceID), step)
 }
 
-// GetSequenceID gets current sequence value with sequence id.
+// GetSequenceValue gets current sequence value with sequence id.
 func (m *Meta) GetSequenceValue(dbID int64, sequenceID int64) (int64, error) {
 	return m.txn.HGetInt64(m.dbKey(dbID), m.sequenceKey(sequenceID))
 }
