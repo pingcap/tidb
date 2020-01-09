@@ -31,7 +31,6 @@ var _ = Suite(&testCoprocessorCacheSuite{})
 func (s *testCoprocessorSuite) TestBuildCacheKey(c *C) {
 	req := coprocessor.Request{
 		Tp:      0xAB,
-		StartTs: 0xAABBCC,
 		Data:    []uint8{0x18, 0x0, 0x20, 0x0, 0x40, 0x0, 0x5a, 0x0},
 		Ranges: []*coprocessor.KeyRange{
 			{
@@ -63,7 +62,6 @@ func (s *testCoprocessorSuite) TestBuildCacheKey(c *C) {
 
 	req = coprocessor.Request{
 		Tp:      0xABCC, // Tp too big
-		StartTs: 0xAABBCC,
 		Data:    []uint8{0x18},
 		Ranges:  []*coprocessor.KeyRange{},
 	}

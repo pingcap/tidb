@@ -16,6 +16,7 @@ package tikv
 import (
 	"context"
 	"fmt"
+	goctx "golang.org/x/net/context"
 	"net"
 	"sync"
 	"time"
@@ -252,6 +253,18 @@ func (c *cancelContextClient) SendRequest(ctx context.Context, addr string, req 
 // mockTikvGrpcServer mock a tikv gprc server for testing.
 type mockTikvGrpcServer struct{}
 
+func (s *mockTikvGrpcServer) RegisterLockObserver(goctx.Context, *kvrpcpb.RegisterLockObserverRequest) (*kvrpcpb.RegisterLockObserverResponse, error) {
+	return nil, errors.New("unreachable")
+}
+
+func (s *mockTikvGrpcServer) RemoveLockObserver(goctx.Context, *kvrpcpb.RemoveLockObserverRequest) (*kvrpcpb.RemoveLockObserverResponse, error) {
+	return nil, errors.New("unreachable")
+}
+
+func (s *mockTikvGrpcServer) PhysicalScanLock(*kvrpcpb.PhysicalScanLockRequest, tikvpb.Tikv_PhysicalScanLockServer) error {
+	return errors.New("unreachable")
+}
+
 // KvGet commands with mvcc/txn supported.
 func (s *mockTikvGrpcServer) KvGet(context.Context, *kvrpcpb.GetRequest) (*kvrpcpb.GetResponse, error) {
 	return nil, errors.New("unreachable")
@@ -362,6 +375,10 @@ func (s *mockTikvGrpcServer) BatchCommands(tikvpb.Tikv_BatchCommandsServer) erro
 }
 
 func (s *mockTikvGrpcServer) ReadIndex(context.Context, *kvrpcpb.ReadIndexRequest) (*kvrpcpb.ReadIndexResponse, error) {
+	return nil, errors.New("unreachable")
+}
+
+func (s *mockTikvGrpcServer) CheckLockObserver(context.Context, *kvrpcpb.CheckLockObserverRequest) (*kvrpcpb.CheckLockObserverResponse, error) {
 	return nil, errors.New("unreachable")
 }
 
