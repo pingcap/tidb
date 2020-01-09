@@ -31,7 +31,7 @@ func (f *SimpleWriter) WriteDatabaseMeta(ctx context.Context, db, createSQL stri
 		target:  db,
 		metaSQL: createSQL,
 	}
-	return WriteMeta(meta, fsStringWriter, f.cfg)
+	return WriteMeta(meta, fsStringWriter)
 }
 
 func (f *SimpleWriter) WriteTableMeta(ctx context.Context, db, table, createSQL string) error {
@@ -41,21 +41,21 @@ func (f *SimpleWriter) WriteTableMeta(ctx context.Context, db, table, createSQL 
 		target:  table,
 		metaSQL: createSQL,
 	}
-	return WriteMeta(meta, fsStringWriter, f.cfg)
+	return WriteMeta(meta, fsStringWriter)
 }
 
 func (f *SimpleWriter) WriteTableData(ctx context.Context, ir TableDataIR) error {
 	if f.cfg.FileSize == UnspecifiedSize {
 		fileName := path.Join(f.cfg.OutputDirPath, fmt.Sprintf("%s.%s.sql", ir.DatabaseName(), ir.TableName()))
 		fsStringWriter := NewFileSystemStringWriter(fileName, true)
-		return WriteInsert(ir, fsStringWriter, f.cfg)
+		return WriteInsert(ir, fsStringWriter)
 	}
 
 	ir = splitTableDataIntoChunks(ir, f.cfg.FileSize)
 	for chunkCount := 0; ; /* loop */ chunkCount += 1 {
 		fileName := path.Join(f.cfg.OutputDirPath, fmt.Sprintf("%s.%s.%3d.sql", ir.DatabaseName(), ir.TableName(), chunkCount))
 		fsStringWriter := newInterceptStringWriter(NewFileSystemStringWriter(fileName, true))
-		err := WriteInsert(ir, fsStringWriter, f.cfg)
+		err := WriteInsert(ir, fsStringWriter)
 		if err != nil {
 			return err
 		}
