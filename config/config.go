@@ -299,7 +299,6 @@ type Performance struct {
 	TCPKeepAlive        bool    `toml:"tcp-keep-alive" json:"tcp-keep-alive"`
 	CrossJoin           bool    `toml:"cross-join" json:"cross-join"`
 	RunAutoAnalyze      bool    `toml:"run-auto-analyze" json:"run-auto-analyze"`
-	PProfSQLCPU         bool    `toml:"pprof-sql-cpu" json:"pprof-sql-cpu"`
 }
 
 // PlanCache is the PlanCache section of the config.
@@ -554,10 +553,18 @@ var defaultConf = Config{
 		StoreLimit:     0,
 
 		CoprCache: CoprocessorCache{
-			Enabled:               true,
-			CapacityMB:            1000,
-			AdmissionMaxResultMB:  10,
-			AdmissionMinProcessMs: 5,
+			// WARNING: Currently Coprocessor Cache may lead to inconsistent result. Do not open it.
+			// These config items are hidden from user, so that fill them with zero value instead of default value.
+			Enabled:               false,
+			CapacityMB:            0,
+			AdmissionMaxResultMB:  0,
+			AdmissionMinProcessMs: 0,
+
+			// If you still want to use Coprocessor Cache, here are some recommended configurations:
+			// Enabled:               true,
+			// CapacityMB:            1000,
+			// AdmissionMaxResultMB:  10,
+			// AdmissionMinProcessMs: 5,
 		},
 	},
 	Binlog: Binlog{
@@ -569,7 +576,7 @@ var defaultConf = Config{
 		MaxRetryCount: 256,
 	},
 	StmtSummary: StmtSummary{
-		Enable:          false,
+		Enable:          true,
 		MaxStmtCount:    200,
 		MaxSQLLength:    4096,
 		RefreshInterval: 1800,
