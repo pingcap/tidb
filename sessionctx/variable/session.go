@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"crypto/tls"
 	"fmt"
+	"math"
 	"sort"
 	"strconv"
 	"strings"
@@ -41,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tidb/util/storeutil"
 	"github.com/pingcap/tidb/util/timeutil"
 )
@@ -385,6 +387,11 @@ type SessionVars struct {
 
 	SQLMode mysql.SQLMode
 
+	// AutoIncrementIncrement and AutoIncrementOffset indicates the autoID's start value and increment.
+	AutoIncrementIncrement int
+
+	AutoIncrementOffset int
+
 	/* TiDB system variables */
 
 	// SkipUTF8Check check on input value.
@@ -533,6 +540,9 @@ type SessionVars struct {
 	// and obtain them lazily, and provide a consistent view of inspection tables for each inspection rules.
 	// All cached snapshots will be released at the end of retrieving
 	InspectionTableCache map[string]TableSnapshot
+
+	// RowEncoder is reused in session for encode row data.
+	RowEncoder rowcodec.Encoder
 }
 
 // PreparedParams contains the parameters of the current prepared statement when executing it.
@@ -578,6 +588,8 @@ func NewSessionVars() *SessionVars {
 		RetryInfo:                   &RetryInfo{},
 		ActiveRoles:                 make([]*auth.RoleIdentity, 0, 10),
 		StrictSQLMode:               true,
+		AutoIncrementIncrement:      DefAutoIncrementIncrement,
+		AutoIncrementOffset:         DefAutoIncrementOffset,
 		Status:                      mysql.ServerStatusAutocommit,
 		StmtCtx:                     new(stmtctx.StatementContext),
 		AllowAggPushDown:            false,
@@ -934,6 +946,14 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		if isAutocommit {
 			s.SetStatusFlag(mysql.ServerStatusInTrans, false)
 		}
+	case AutoIncrementIncrement:
+		// AutoIncrementIncrement is valid in [1, 65535].
+		temp := tidbOptPositiveInt32(val, DefAutoIncrementIncrement)
+		s.AutoIncrementIncrement = adjustAutoIncrementParameter(temp)
+	case AutoIncrementOffset:
+		// AutoIncrementOffset is valid in [1, 65535].
+		temp := tidbOptPositiveInt32(val, DefAutoIncrementOffset)
+		s.AutoIncrementOffset = adjustAutoIncrementParameter(temp)
 	case MaxExecutionTime:
 		timeoutMS := tidbOptPositiveInt32(val, 0)
 		s.MaxExecutionTime = uint64(timeoutMS)
@@ -1028,6 +1048,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.MemQuotaNestedLoopApply = tidbOptInt64(val, DefTiDBMemQuotaNestedLoopApply)
 	case TiDBGeneralLog:
 		atomic.StoreUint32(&ProcessGeneralLog, uint32(tidbOptPositiveInt32(val, DefTiDBGeneralLog)))
+	case TiDBPProfSQLCPU:
+		EnablePProfSQLCPU.Store(uint32(tidbOptPositiveInt32(val, DefTiDBPProfSQLCPU)) > 0)
 	case TiDBSlowLogThreshold:
 		atomic.StoreUint64(&config.GetGlobalConfig().Log.SlowThreshold, uint64(tidbOptInt64(val, logutil.DefaultSlowThreshold)))
 	case TiDBRecordPlanInSlowLog:
@@ -1078,6 +1100,11 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		atomic.StoreUint64(&ExpensiveQueryTimeThreshold, uint64(tidbOptPositiveInt32(val, DefTiDBExpensiveQueryTimeThreshold)))
 	case TiDBTxnMode:
 		s.TxnMode = strings.ToUpper(val)
+	case TiDBRowFormatVersion:
+		formatVersion := int(tidbOptInt64(val, DefTiDBRowFormatV1))
+		if formatVersion == DefTiDBRowFormatV2 {
+			s.RowEncoder.Enable = true
+		}
 	case TiDBLowResolutionTSO:
 		s.LowResolutionTSO = TiDBOptOn(val)
 	case TiDBEnableIndexMerge:
@@ -1120,6 +1147,15 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 	}
 	s.systems[name] = val
 	return nil
+}
+
+// GetReadableTxnMode returns the session variable TxnMode but rewrites it to "OPTIMISTIC" when it's empty.
+func (s *SessionVars) GetReadableTxnMode() string {
+	txnMode := s.TxnMode
+	if txnMode == "" {
+		txnMode = ast.Optimistic
+	}
+	return txnMode
 }
 
 func (s *SessionVars) setTxnMode(val string) error {
@@ -1513,4 +1549,16 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 // writeSlowLogItem writes a slow log item in the form of: "# ${key}:${value}"
 func writeSlowLogItem(buf *bytes.Buffer, key, value string) {
 	buf.WriteString(SlowLogRowPrefixStr + key + SlowLogSpaceMarkStr + value + "\n")
+}
+
+// adjustAutoIncrementParameter adjust the increment and offset of AutoIncrement.
+// AutoIncrementIncrement / AutoIncrementOffset is valid in [1, 65535].
+func adjustAutoIncrementParameter(temp int) int {
+	if temp <= 0 {
+		return 1
+	} else if temp > math.MaxUint16 {
+		return math.MaxUint16
+	} else {
+		return temp
+	}
 }

@@ -353,6 +353,36 @@ func (s *testSuiteAgg) TestAggregation(c *C) {
 	tk.MustExec("insert into t value(0), (-0.9871), (-0.9871)")
 	tk.MustQuery("select 10 from t group by a").Check(testkit.Rows("10", "10"))
 	tk.MustQuery("select sum(a) from (select a from t union all select a from t) tmp").Check(testkit.Rows("-3.9484"))
+
+	tk.MustExec("drop table t")
+	tk.MustExec("create table t(a tinyint, b smallint, c mediumint, d int, e bigint, f float, g double, h decimal)")
+	tk.MustExec("insert into t values(1, 2, 3, 4, 5, 6.1, 7.2, 8.3), (1, 3, 4, 5, 6, 7.1, 8.2, 9.3)")
+	result = tk.MustQuery("select var_pop(b), var_pop(c), var_pop(d), var_pop(e), var_pop(f), var_pop(g), var_pop(h) from t group by a")
+	result.Check(testkit.Rows("0.25 0.25 0.25 0.25 0.25 0.25 0.25"))
+
+	tk.MustExec("insert into t values(2, 3, 4, 5, 6, 7.2, 8.3, 9)")
+	result = tk.MustQuery("select a, var_pop(b) over w, var_pop(c) over w from t window w as (partition by a)")
+	result.Check(testkit.Rows("1 0.25 0.25", "1 0.25 0.25", "2 0 0"))
+
+	tk.MustExec("delete from t where t.a = 2")
+	tk.MustExec("insert into t values(1, 2, 4, 5, 6, 6.1, 7.2, 9)")
+	result = tk.MustQuery("select a, var_pop(distinct b), var_pop(distinct c), var_pop(distinct d), var_pop(distinct e), var_pop(distinct f), var_pop(distinct g), var_pop(distinct h) from t group by a")
+	result.Check(testkit.Rows("1 0.25 0.25 0.25 0.25 0.25 0.25 0.25"))
+
+	tk.MustExec("drop table t")
+	tk.MustExec("create table t(a int, b bigint, c float, d double, e decimal)")
+	tk.MustExec("insert into t values(1, 1000, 6.8, 3.45, 8.3), (1, 3998, -3.4, 5.12, 9.3),(1, 288, 9.2, 6.08, 1)")
+	result = tk.MustQuery("select variance(b), variance(c), variance(d), variance(e) from t group by a")
+	result.Check(testkit.Rows("2584338.6666666665 29.840000178019228 1.1808222222222229 12.666666666666666"))
+
+	tk.MustExec("insert into t values(1, 255, 6.8, 6.08, 1)")
+	result = tk.MustQuery("select variance(distinct b), variance(distinct c), variance(distinct d), variance(distinct e) from t group by a")
+	result.Check(testkit.Rows("2364075.6875 29.840000178019228 1.1808222222222229 12.666666666666666"))
+
+	tk.MustExec("insert into t values(2, 322, 0.8, 2.22, 6)")
+	result = tk.MustQuery("select a, variance(b) over w from t window w as (partition by a)")
+	result.Check(testkit.Rows("1 2364075.6875", "1 2364075.6875", "1 2364075.6875", "1 2364075.6875", "2 0"))
+
 	_, err = tk.Exec("select std(a) from t")
 	c.Assert(errors.Cause(err).Error(), Equals, "unsupported agg function: std")
 	_, err = tk.Exec("select stddev(a) from t")
@@ -362,11 +392,6 @@ func (s *testSuiteAgg) TestAggregation(c *C) {
 	_, err = tk.Exec("select std_samp(a) from t")
 	// TODO: Fix this error message.
 	c.Assert(errors.Cause(err).Error(), Equals, "[expression:1305]FUNCTION test.std_samp does not exist")
-	_, err = tk.Exec("select variance(a) from t")
-	// TODO: Fix this error message.
-	c.Assert(errors.Cause(err).Error(), Equals, "unsupported agg function: var_pop")
-	_, err = tk.Exec("select var_pop(a) from t")
-	c.Assert(errors.Cause(err).Error(), Equals, "unsupported agg function: var_pop")
 	_, err = tk.Exec("select var_samp(a) from t")
 	c.Assert(errors.Cause(err).Error(), Equals, "unsupported agg function: var_samp")
 

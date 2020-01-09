@@ -54,15 +54,19 @@ import (
 	"google.golang.org/grpc"
 )
 
-var _ = Suite(&testTableSuite{})
-var _ = SerialSuites(&testClusterTableSuite{testTableSuite: &testTableSuite{}})
+var _ = Suite(&testTableSuite{&testTableSuiteBase{}})
+var _ = SerialSuites(&testClusterTableSuite{testTableSuiteBase: &testTableSuiteBase{}})
 
 type testTableSuite struct {
+	*testTableSuiteBase
+}
+
+type testTableSuiteBase struct {
 	store kv.Storage
 	dom   *domain.Domain
 }
 
-func (s *testTableSuite) SetUpSuite(c *C) {
+func (s *testTableSuiteBase) SetUpSuite(c *C) {
 	testleak.BeforeTest()
 
 	var err error
@@ -73,14 +77,14 @@ func (s *testTableSuite) SetUpSuite(c *C) {
 	c.Assert(err, IsNil)
 }
 
-func (s *testTableSuite) TearDownSuite(c *C) {
+func (s *testTableSuiteBase) TearDownSuite(c *C) {
 	s.dom.Close()
 	s.store.Close()
 	testleak.AfterTest(c)()
 }
 
 type testClusterTableSuite struct {
-	*testTableSuite
+	*testTableSuiteBase
 	rpcserver  *grpc.Server
 	httpServer *httptest.Server
 	mockAddr   string
@@ -88,7 +92,7 @@ type testClusterTableSuite struct {
 }
 
 func (s *testClusterTableSuite) SetUpSuite(c *C) {
-	s.testTableSuite.SetUpSuite(c)
+	s.testTableSuiteBase.SetUpSuite(c)
 	s.rpcserver, s.listenAddr = s.setUpRPCService(c, ":0")
 	s.httpServer, s.mockAddr = s.setUpMockPDHTTPServer()
 }
@@ -177,7 +181,7 @@ func (s *testClusterTableSuite) TearDownSuite(c *C) {
 	if s.httpServer != nil {
 		s.httpServer.Close()
 	}
-	s.testTableSuite.TearDownSuite(c)
+	s.testTableSuiteBase.TearDownSuite(c)
 }
 
 func (s *testTableSuite) TestInfoschemaFieldValue(c *C) {
