@@ -105,7 +105,7 @@ func handleSequenceOptions(SeqOptions []*ast.SequenceOption, sequenceInfo *model
 			sequenceInfo.Cycle = false
 		}
 	}
-	// Fill the default value, min/max/start should be adjusted with increment's positive and negative.
+	// Fill the default value, min/max/start should be adjusted with the sign of sequenceInfo.Increment.
 	if !(minSetFlag && maxSetFlag && startSetFlag) {
 		if sequenceInfo.Increment >= 0 {
 			if !minSetFlag {
@@ -131,7 +131,7 @@ func handleSequenceOptions(SeqOptions []*ast.SequenceOption, sequenceInfo *model
 	}
 }
 
-func validSequenceOptions(seqInfo *model.SequenceInfo) bool {
+func validateSequenceOptions(seqInfo *model.SequenceInfo) bool {
 	// To ensure that cache * increment will never overflows.
 	var maxIncrement int64
 	if seqInfo.Increment != 0 {
@@ -139,15 +139,12 @@ func validSequenceOptions(seqInfo *model.SequenceInfo) bool {
 	} else {
 		maxIncrement = math.MaxInt16
 	}
-	if seqInfo.MaxValue >= seqInfo.Start &&
+	return seqInfo.MaxValue >= seqInfo.Start &&
 		seqInfo.MaxValue > seqInfo.MinValue &&
 		seqInfo.Start >= seqInfo.MinValue &&
 		seqInfo.MaxValue != math.MaxInt64 &&
 		seqInfo.MinValue != math.MinInt64 &&
-		seqInfo.CacheValue < (math.MaxInt64-maxIncrement)/maxIncrement {
-		return true
-	}
-	return false
+		seqInfo.CacheValue < (math.MaxInt64-maxIncrement)/maxIncrement
 }
 
 func buildSequenceInfo(stmt *ast.CreateSequenceStmt, ident ast.Ident) (*model.SequenceInfo, error) {
@@ -168,8 +165,7 @@ func buildSequenceInfo(stmt *ast.CreateSequenceStmt, ident ast.Ident) (*model.Se
 		}
 	}
 	handleSequenceOptions(stmt.SeqOptions, sequenceInfo)
-	// Validate the sequence value.
-	if !validSequenceOptions(sequenceInfo) {
+	if !validateSequenceOptions(sequenceInfo) {
 		return nil, ErrSequenceInvalidData.GenWithStackByArgs(ident.Schema.L, ident.Name.L)
 	}
 	return sequenceInfo, nil

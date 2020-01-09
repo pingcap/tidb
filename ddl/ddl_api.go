@@ -4238,7 +4238,7 @@ func (d *ddl) CreateSequence(ctx sessionctx.Context, stmt *ast.CreateSequenceStm
 	if err != nil {
 		return err
 	}
-
+	// TiDB describe the sequence within a tableInfo, as a same-level object of a table and view.
 	tbInfo, err := buildTableInfo(ctx, ident.Name, nil, nil)
 	if err != nil {
 		return err
