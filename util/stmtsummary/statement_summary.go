@@ -607,7 +607,7 @@ func newStmtSummaryByDigestElement(sei *StmtExecInfo, beginTime int64, intervalS
 		minLatency:   sei.TotalLatency,
 		firstSeen:    sei.StartTime,
 		lastSeen:     sei.StartTime,
-		backoffTypes: make(map[fmt.Stringer]int, 0),
+		backoffTypes: make(map[fmt.Stringer]int),
 	}
 	ssElement.add(sei, intervalSeconds)
 	return ssElement
