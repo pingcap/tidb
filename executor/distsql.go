@@ -208,7 +208,7 @@ type IndexReaderExecutor struct {
 	index           *model.IndexInfo
 	physicalTableID int64
 	ranges          []*ranger.Range
-	StartTs			uint64
+	StartTs         uint64
 	// kvRanges are only used for union scan.
 	kvRanges []kv.KeyRange
 	dagPB    *tipb.DAGRequest
