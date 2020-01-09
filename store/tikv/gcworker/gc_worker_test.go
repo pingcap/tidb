@@ -445,7 +445,9 @@ const (
 
 func (s *testGCWorkerSuite) testDeleteRangesFailureImpl(c *C, failType int) {
 	// Put some delete range tasks.
-	_, err := s.gcWorker.session.Execute(context.Background(), `INSERT INTO mysql.gc_delete_range VALUES
+	se := createSession(s.gcWorker.store)
+	defer se.Close()
+	_, err := se.Execute(context.Background(), `INSERT INTO mysql.gc_delete_range VALUES
 		("1", "2", "31", "32", "10"),
 		("3", "4", "33", "34", "10"),
 		("5", "6", "35", "36", "10")`)
@@ -473,7 +475,6 @@ func (s *testGCWorkerSuite) testDeleteRangesFailureImpl(c *C, failType int) {
 	}
 
 	// Check the delete range tasks.
-	se := createSession(s.gcWorker.store)
 	preparedRanges, err := util.LoadDeleteRanges(se, 20)
 	se.Close()
 	c.Assert(err, IsNil)
