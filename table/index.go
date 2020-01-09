@@ -31,6 +31,7 @@ type IndexIterator interface {
 type CreateIdxOpt struct {
 	SkipHandleCheck bool // If true, skip the handle constraint check.
 	SkipCheck       bool // If true, skip all the unique indices constraint check.
+	Untouched       bool // If true, the index key/value is no need to commit.
 }
 
 // Index is the interface for index data on KV store.

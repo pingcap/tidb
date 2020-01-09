@@ -381,14 +381,14 @@ func (s *session) doCommit(ctx context.Context) error {
 		}
 	}
 
-	// Get the related table IDs.
-	relatedTables := s.GetSessionVars().TxnCtx.TableDeltaMap
-	tableIDs := make([]int64, 0, len(relatedTables))
-	for id := range relatedTables {
-		tableIDs = append(tableIDs, id)
+	// Get the related table or partition IDs.
+	relatedPhysicalTables := s.GetSessionVars().TxnCtx.TableDeltaMap
+	physicalTableIDs := make([]int64, 0, len(relatedPhysicalTables))
+	for id := range relatedPhysicalTables {
+		physicalTableIDs = append(physicalTableIDs, id)
 	}
 	// Set this option for 2 phase commit to validate schema lease.
-	s.txn.SetOption(kv.SchemaChecker, domain.NewSchemaChecker(domain.GetDomain(s), s.sessionVars.TxnCtx.SchemaVersion, tableIDs))
+	s.txn.SetOption(kv.SchemaChecker, domain.NewSchemaChecker(domain.GetDomain(s), s.sessionVars.TxnCtx.SchemaVersion, physicalTableIDs))
 
 	return s.txn.Commit(sessionctx.SetCommitCtx(ctx, s))
 }
@@ -544,7 +544,7 @@ func (s *session) String() string {
 const sqlLogMaxLen = 1024
 
 // SchemaChangedWithoutRetry is used for testing.
-var SchemaChangedWithoutRetry bool
+var SchemaChangedWithoutRetry uint32
 
 func (s *session) getSQLLabel() string {
 	if s.sessionVars.InRestrictedSQL {
@@ -558,7 +558,7 @@ func (s *session) isInternal() bool {
 }
 
 func (s *session) isTxnRetryableError(err error) bool {
-	if SchemaChangedWithoutRetry {
+	if atomic.LoadUint32(&SchemaChangedWithoutRetry) == 1 {
 		return kv.IsTxnRetryableError(err)
 	}
 	return kv.IsTxnRetryableError(err) || domain.ErrInfoSchemaChanged.Equal(err)
@@ -1686,6 +1686,8 @@ var builtinGlobalVariable = []string{
 	variable.WaitTimeout,
 	variable.InteractiveTimeout,
 	variable.MaxPreparedStmtCount,
+	variable.AutoIncrementIncrement,
+	variable.AutoIncrementOffset,
 	variable.MaxExecutionTime,
 	variable.InnodbLockWaitTimeout,
 	/* TiDB specific global variables: */
