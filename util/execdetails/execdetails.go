@@ -357,9 +357,13 @@ type RuntimeStats struct {
 	// executor return row count.
 	rows int64
 
+	// protect concurrency
 	mu sync.Mutex
 	// executor concurrency information
 	concurrency []concurrencyInfo
+
+	// custom information for executors
+	customInfo string
 }
 
 // NewRuntimeStatsColl creates new executor collector.
@@ -452,6 +456,10 @@ func (e *RuntimeStats) SetConcurrencyInfo(name string, num int) {
 	e.concurrency = append(e.concurrency, concurrencyInfo{concurrencyName: name, concurrencyNum: num})
 }
 
+func (e *RuntimeStats) SetCustomInfo(info string) {
+	e.customInfo = info
+}
+
 func (e *RuntimeStats) String() string {
 	result := fmt.Sprintf("time:%v, loops:%d, rows:%d", time.Duration(e.consume), e.loop, e.rows)
 	if len(e.concurrency) > 0 {
@@ -462,6 +470,9 @@ func (e *RuntimeStats) String() string {
 				result += fmt.Sprintf(", %s:OFF", concurrency.concurrencyName)
 			}
 		}
+	}
+	if len(e.customInfo) > 0 {
+		result += ", " + e.customInfo
 	}
 	return result
 }
