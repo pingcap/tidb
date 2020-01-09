@@ -19,15 +19,14 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/testleak"
 )
 
 func (s *testEvaluatorSuite) TestCompareFunctionWithRefine(c *C) {
-	defer testleak.AfterTest(c)()
 	tblInfo := newTestTableBuilder("").add("a", mysql.TypeLong).build()
 	tests := []struct {
 		exprStr string
@@ -71,19 +70,18 @@ func (s *testEvaluatorSuite) TestCompareFunctionWithRefine(c *C) {
 		// since converting "aaaa" to an int will cause DataTruncate error.
 		{"'aaaa'=a", "eq(cast(aaaa), cast(a))"},
 	}
-
+	cols, names := ColumnInfos2ColumnsAndNames(s.ctx, model.NewCIStr(""), tblInfo.Name, tblInfo.Columns)
+	schema := NewSchema(cols...)
 	for _, t := range tests {
-		f, err := ParseSimpleExprWithTableInfo(s.ctx, t.exprStr, tblInfo)
+		f, err := ParseSimpleExprsWithNames(s.ctx, t.exprStr, schema, names)
 		c.Assert(err, IsNil)
-		c.Assert(f.String(), Equals, t.result)
+		c.Assert(f[0].String(), Equals, t.result)
 	}
 }
 
 func (s *testEvaluatorSuite) TestCompare(c *C) {
-	defer testleak.AfterTest(c)()
-
 	intVal, uintVal, realVal, stringVal, decimalVal := 1, uint64(1), 1.1, "123", types.NewDecFromFloatForTest(123.123)
-	timeVal := types.Time{Time: types.FromGoTime(time.Now()), Fsp: 6, Type: mysql.TypeDatetime}
+	timeVal := types.NewTime(types.FromGoTime(time.Now()), mysql.TypeDatetime, 6)
 	durationVal := types.Duration{Duration: time.Duration(12*time.Hour + 1*time.Minute + 1*time.Second)}
 	jsonVal := json.CreateBinary("123")
 	// test cases for generating function signatures.
@@ -165,8 +163,6 @@ func (s *testEvaluatorSuite) TestCompare(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestCoalesce(c *C) {
-	defer testleak.AfterTest(c)()
-
 	cases := []struct {
 		args     []interface{}
 		expected interface{}
@@ -210,7 +206,6 @@ func (s *testEvaluatorSuite) TestCoalesce(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestIntervalFunc(c *C) {
-	defer testleak.AfterTest(c)()
 	sc := s.ctx.GetSessionVars().StmtCtx
 	origin := sc.IgnoreTruncate
 	sc.IgnoreTruncate = true
@@ -219,33 +214,41 @@ func (s *testEvaluatorSuite) TestIntervalFunc(c *C) {
 	}()
 
 	for _, t := range []struct {
-		args []types.Datum
-		ret  int64
+		args   []types.Datum
+		ret    int64
+		getErr bool
 	}{
-		{types.MakeDatums(nil, 1, 2), -1},
-		{types.MakeDatums(1, 2, 3), 0},
-		{types.MakeDatums(2, 1, 3), 1},
-		{types.MakeDatums(3, 1, 2), 2},
-		{types.MakeDatums(0, "b", "1", "2"), 1},
-		{types.MakeDatums("a", "b", "1", "2"), 1},
-		{types.MakeDatums(23, 1, 23, 23, 23, 30, 44, 200), 4},
-		{types.MakeDatums(23, 1.7, 15.3, 23.1, 30, 44, 200), 2},
-		{types.MakeDatums(9007199254740992, 9007199254740993), 0},
-		{types.MakeDatums(uint64(9223372036854775808), uint64(9223372036854775809)), 0},
-		{types.MakeDatums(9223372036854775807, uint64(9223372036854775808)), 0},
-		{types.MakeDatums(-9223372036854775807, uint64(9223372036854775808)), 0},
-		{types.MakeDatums(uint64(9223372036854775806), 9223372036854775807), 0},
-		{types.MakeDatums(uint64(9223372036854775806), -9223372036854775807), 1},
-		{types.MakeDatums("9007199254740991", "9007199254740992"), 0},
+		{types.MakeDatums(nil, 1, 2), -1, false},
+		{types.MakeDatums(1, 2, 3), 0, false},
+		{types.MakeDatums(2, 1, 3), 1, false},
+		{types.MakeDatums(3, 1, 2), 2, false},
+		{types.MakeDatums(0, "b", "1", "2"), 1, false},
+		{types.MakeDatums("a", "b", "1", "2"), 1, false},
+		{types.MakeDatums(23, 1, 23, 23, 23, 30, 44, 200), 4, false},
+		{types.MakeDatums(23, 1.7, 15.3, 23.1, 30, 44, 200), 2, false},
+		{types.MakeDatums(9007199254740992, 9007199254740993), 0, false},
+		{types.MakeDatums(uint64(9223372036854775808), uint64(9223372036854775809)), 0, false},
+		{types.MakeDatums(9223372036854775807, uint64(9223372036854775808)), 0, false},
+		{types.MakeDatums(-9223372036854775807, uint64(9223372036854775808)), 0, false},
+		{types.MakeDatums(uint64(9223372036854775806), 9223372036854775807), 0, false},
+		{types.MakeDatums(uint64(9223372036854775806), -9223372036854775807), 1, false},
+		{types.MakeDatums("9007199254740991", "9007199254740992"), 0, false},
+		{types.MakeDatums(1, uint32(1), uint32(1)), 0, true},
 
 		// tests for appropriate precision loss
-		{types.MakeDatums(9007199254740992, "9007199254740993"), 1},
-		{types.MakeDatums("9007199254740992", 9007199254740993), 1},
-		{types.MakeDatums("9007199254740992", "9007199254740993"), 1},
+		{types.MakeDatums(9007199254740992, "9007199254740993"), 1, false},
+		{types.MakeDatums("9007199254740992", 9007199254740993), 1, false},
+		{types.MakeDatums("9007199254740992", "9007199254740993"), 1, false},
 	} {
 		fc := funcs[ast.Interval]
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants(t.args))
 		c.Assert(err, IsNil)
+		if t.getErr {
+			v, err := evalBuiltinFunc(f, chunk.Row{})
+			c.Assert(err, NotNil)
+			c.Assert(v.GetInt64(), Equals, t.ret)
+			continue
+		}
 		v, err := evalBuiltinFunc(f, chunk.Row{})
 		c.Assert(err, IsNil)
 		c.Assert(v.GetInt64(), Equals, t.ret)
@@ -253,8 +256,6 @@ func (s *testEvaluatorSuite) TestIntervalFunc(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestGreatestLeastFuncs(c *C) {
-	defer testleak.AfterTest(c)()
-
 	sc := s.ctx.GetSessionVars().StmtCtx
 	originIgnoreTruncate := sc.IgnoreTruncate
 	sc.IgnoreTruncate = true

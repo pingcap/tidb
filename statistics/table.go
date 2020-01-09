@@ -24,27 +24,36 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/ranger"
 	"go.uber.org/atomic"
 )
 
 const (
-	// When we haven't analyzed a table, we use pseudo statistics to estimate costs.
-	// It has row count 10000, equal condition selects 1/1000 of total rows, less condition selects 1/3 of total rows,
-	// between condition selects 1/40 of total rows.
-	pseudoRowCount    = 10000
 	pseudoEqualRate   = 1000
 	pseudoLessRate    = 3
 	pseudoBetweenRate = 40
+	pseudoColSize     = 8.0
 
 	outOfRangeBetweenRate = 100
 )
 
-// PseudoVersion means the pseudo statistics version is 0.
-const PseudoVersion uint64 = 0
+const (
+	// PseudoVersion means the pseudo statistics version is 0.
+	PseudoVersion uint64 = 0
+
+	// PseudoRowCount export for other pkg to use.
+	// When we haven't analyzed a table, we use pseudo statistics to estimate costs.
+	// It has row count 10000, equal condition selects 1/1000 of total rows, less condition selects 1/3 of total rows,
+	// between condition selects 1/40 of total rows.
+	PseudoRowCount = 10000
+)
 
 // Table represents statistics for a table.
 type Table struct {
@@ -56,18 +65,19 @@ type Table struct {
 // HistColl is a collection of histogram. It collects enough information for plan to calculate the selectivity.
 type HistColl struct {
 	PhysicalID int64
-	// HavePhysicalID is true means this HistColl is from single table and have its ID's information.
-	// The physical id is used when try to load column stats from storage.
-	HavePhysicalID bool
-	Columns        map[int64]*Column
-	Indices        map[int64]*Index
+	Columns    map[int64]*Column
+	Indices    map[int64]*Index
 	// Idx2ColumnIDs maps the index id to its column ids. It's used to calculate the selectivity in planner.
 	Idx2ColumnIDs map[int64][]int64
 	// ColID2IdxID maps the column id to index id whose first column is it. It's used to calculate the selectivity in planner.
 	ColID2IdxID map[int64]int64
-	Pseudo      bool
 	Count       int64
 	ModifyCount int64 // Total modify count in a table.
+
+	// HavePhysicalID is true means this HistColl is from single table and have its ID's information.
+	// The physical id is used when try to load column stats from storage.
+	HavePhysicalID bool
+	Pseudo         bool
 }
 
 // Copy copies the current table.
@@ -236,7 +246,7 @@ func (coll *HistColl) GetRowCountByIntColumnRanges(sc *stmtctx.StatementContext,
 		}
 		return getPseudoRowCountByUnsignedIntRanges(intRanges, float64(coll.Count)), nil
 	}
-	result, err := c.GetColumnRowCount(sc, intRanges, coll.ModifyCount)
+	result, err := c.GetColumnRowCount(sc, intRanges, coll.ModifyCount, true)
 	result *= c.GetIncreaseFactor(coll.Count)
 	return result, errors.Trace(err)
 }
@@ -247,7 +257,7 @@ func (coll *HistColl) GetRowCountByColumnRanges(sc *stmtctx.StatementContext, co
 	if !ok || c.IsInvalid(sc, coll.Pseudo) {
 		return GetPseudoRowCountByColumnRanges(sc, float64(coll.Count), colRanges, 0)
 	}
-	result, err := c.GetColumnRowCount(sc, colRanges, coll.ModifyCount)
+	result, err := c.GetColumnRowCount(sc, colRanges, coll.ModifyCount, false)
 	result *= c.GetIncreaseFactor(coll.Count)
 	return result, errors.Trace(err)
 }
@@ -292,6 +302,26 @@ func GetOrdinalOfRangeCond(sc *stmtctx.StatementContext, ran *ranger.Range) int 
 		}
 	}
 	return len(ran.LowVal)
+}
+
+// ID2UniqueID generates a new HistColl whose `Columns` is built from UniqueID of given columns.
+func (coll *HistColl) ID2UniqueID(columns []*expression.Column) *HistColl {
+	cols := make(map[int64]*Column)
+	for _, col := range columns {
+		colHist, ok := coll.Columns[col.ID]
+		if ok {
+			cols[col.UniqueID] = colHist
+		}
+	}
+	newColl := &HistColl{
+		PhysicalID:     coll.PhysicalID,
+		HavePhysicalID: coll.HavePhysicalID,
+		Pseudo:         coll.Pseudo,
+		Count:          coll.Count,
+		ModifyCount:    coll.ModifyCount,
+		Columns:        cols,
+	}
+	return newColl
 }
 
 // GenerateHistCollFromColumnInfo generates a new HistColl whose ColID2IdxID and IdxID2ColIDs is built from the given parameter.
@@ -361,11 +391,40 @@ func isSingleColIdxNullRange(idx *Index, ran *ranger.Range) bool {
 	return false
 }
 
+// getEqualCondSelectivity gets the selectivity of the equal conditions. `coverAll` means if the conditions
+// have covered all the index columns.
+func (coll *HistColl) getEqualCondSelectivity(idx *Index, bytes []byte, coverAll bool, unique bool) float64 {
+	// In this case, the row count is at most 1.
+	if unique && coverAll {
+		return 1.0 / float64(idx.TotalRowCount())
+	}
+	val := types.NewBytesDatum(bytes)
+	if idx.outOfRange(val) {
+		// When the value is out of range, we could not found this value in the CM Sketch,
+		// so we use heuristic methods to estimate the selectivity.
+		if idx.NDV > 0 && coverAll {
+			// for equality queries
+			return float64(coll.ModifyCount) / float64(idx.NDV) / idx.TotalRowCount()
+		}
+		// for range queries
+		return float64(coll.ModifyCount) / outOfRangeBetweenRate / idx.TotalRowCount()
+	}
+	return float64(idx.CMSketch.QueryBytes(bytes)) / float64(idx.TotalRowCount())
+}
+
 func (coll *HistColl) getIndexRowCount(sc *stmtctx.StatementContext, idxID int64, indexRanges []*ranger.Range) (float64, error) {
 	idx := coll.Indices[idxID]
 	totalCount := float64(0)
 	for _, ran := range indexRanges {
 		rangePosition := GetOrdinalOfRangeCond(sc, ran)
+		var rangeVals []types.Datum
+		// Try to enum the last range values.
+		if rangePosition != len(ran.LowVal) {
+			rangeVals = enumRangeValues(ran.LowVal[rangePosition], ran.HighVal[rangePosition], ran.LowExclude, ran.HighExclude)
+			if rangeVals != nil {
+				rangePosition++
+			}
+		}
 		// If first one is range, just use the previous way to estimate; if it is [NULL, NULL] range
 		// on single-column index, use previous way as well, because CMSketch does not contain null
 		// values in this case.
@@ -378,24 +437,28 @@ func (coll *HistColl) getIndexRowCount(sc *stmtctx.StatementContext, idxID int64
 			continue
 		}
 		var selectivity float64
+		coverAll := len(ran.LowVal) == len(idx.Info.Columns) && rangePosition == len(ran.LowVal)
 		// use CM Sketch to estimate the equal conditions
-		bytes, err := codec.EncodeKey(sc, nil, ran.LowVal[:rangePosition]...)
-		if err != nil {
-			return 0, errors.Trace(err)
-		}
-		val := types.NewBytesDatum(bytes)
-		if idx.outOfRange(val) {
-			// When the value is out of range, we could not found this value in the CM Sketch,
-			// so we use heuristic methods to estimate the selectivity.
-			if idx.NDV > 0 && len(ran.LowVal) == len(idx.Info.Columns) && rangePosition == len(ran.LowVal) {
-				// for equality queries
-				selectivity = float64(coll.ModifyCount) / float64(idx.NDV) / idx.TotalRowCount()
-			} else {
-				// for range queries
-				selectivity = float64(coll.ModifyCount) / outOfRangeBetweenRate / idx.TotalRowCount()
+		if rangeVals == nil {
+			bytes, err := codec.EncodeKey(sc, nil, ran.LowVal[:rangePosition]...)
+			if err != nil {
+				return 0, errors.Trace(err)
 			}
+			selectivity = coll.getEqualCondSelectivity(idx, bytes, coverAll, idx.Info.Unique)
 		} else {
-			selectivity = float64(idx.CMSketch.QueryBytes(bytes)) / float64(idx.TotalRowCount())
+			bytes, err := codec.EncodeKey(sc, nil, ran.LowVal[:rangePosition-1]...)
+			if err != nil {
+				return 0, errors.Trace(err)
+			}
+			prefixLen := len(bytes)
+			for _, val := range rangeVals {
+				bytes = bytes[:prefixLen]
+				bytes, err = codec.EncodeKey(sc, bytes, val)
+				if err != nil {
+					return 0, err
+				}
+				selectivity += coll.getEqualCondSelectivity(idx, bytes, coverAll, idx.Info.Unique)
+			}
 		}
 		// use histogram to estimate the range condition
 		if rangePosition != len(ran.LowVal) {
@@ -438,7 +501,7 @@ const fakePhysicalID int64 = -1
 // PseudoTable creates a pseudo table statistics.
 func PseudoTable(tblInfo *model.TableInfo) *Table {
 	pseudoHistColl := HistColl{
-		Count:          pseudoRowCount,
+		Count:          PseudoRowCount,
 		PhysicalID:     tblInfo.ID,
 		HavePhysicalID: true,
 		Columns:        make(map[int64]*Column, len(tblInfo.Columns)),
@@ -613,4 +676,86 @@ func getPseudoRowCountByUnsignedIntRanges(intRanges []*ranger.Range, tableRowCou
 		rowCount = tableRowCount
 	}
 	return rowCount
+}
+
+// GetAvgRowSize computes average row size for given columns.
+func (coll *HistColl) GetAvgRowSize(ctx sessionctx.Context, cols []*expression.Column, isEncodedKey bool, isForScan bool) (size float64) {
+	sessionVars := ctx.GetSessionVars()
+	if coll.Pseudo || len(coll.Columns) == 0 || coll.Count == 0 {
+		size = pseudoColSize * float64(len(cols))
+	} else {
+		for _, col := range cols {
+			colHist, ok := coll.Columns[col.UniqueID]
+			// Normally this would not happen, it is for compatibility with old version stats which
+			// does not include TotColSize.
+			if !ok || (!colHist.IsHandle && colHist.TotColSize == 0 && (colHist.NullCount != coll.Count)) {
+				size += pseudoColSize
+				continue
+			}
+			// We differentiate if the column is encoded as key or value, because the resulted size
+			// is different.
+			if sessionVars.EnableChunkRPC && !isForScan {
+				size += colHist.AvgColSizeChunkFormat(coll.Count)
+			} else {
+				size += colHist.AvgColSize(coll.Count, isEncodedKey)
+			}
+		}
+	}
+	if sessionVars.EnableChunkRPC && !isForScan {
+		// Add 1/8 byte for each column's nullBitMap byte.
+		return size + float64(len(cols))/8
+	}
+	// Add 1 byte for each column's flag byte. See `encode` for details.
+	return size + float64(len(cols))
+}
+
+// GetAvgRowSizeListInDisk computes average row size for given columns.
+func (coll *HistColl) GetAvgRowSizeListInDisk(cols []*expression.Column) (size float64) {
+	if coll.Pseudo || len(coll.Columns) == 0 || coll.Count == 0 {
+		for _, col := range cols {
+			size += float64(chunk.EstimateTypeWidth(col.GetType()))
+		}
+	} else {
+		for _, col := range cols {
+			colHist, ok := coll.Columns[col.UniqueID]
+			// Normally this would not happen, it is for compatibility with old version stats which
+			// does not include TotColSize.
+			if !ok || (!colHist.IsHandle && colHist.TotColSize == 0 && (colHist.NullCount != coll.Count)) {
+				size += float64(chunk.EstimateTypeWidth(col.GetType()))
+				continue
+			}
+			size += colHist.AvgColSizeListInDisk(coll.Count)
+		}
+	}
+	// Add 8 byte for each column's size record. See `ListInDisk` for details.
+	return size + float64(8*len(cols))
+}
+
+// GetTableAvgRowSize computes average row size for a table scan, exclude the index key-value pairs.
+func (coll *HistColl) GetTableAvgRowSize(ctx sessionctx.Context, cols []*expression.Column, storeType kv.StoreType, handleInCols bool) (size float64) {
+	size = coll.GetAvgRowSize(ctx, cols, false, true)
+	switch storeType {
+	case kv.TiKV:
+		size += tablecodec.RecordRowKeyLen
+		// The `cols` for TiKV always contain the row_id, so prefix row size subtract its length.
+		size -= 8
+	case kv.TiFlash:
+		if !handleInCols {
+			size += 8 /* row_id length */
+		}
+	}
+	return
+}
+
+// GetIndexAvgRowSize computes average row size for a index scan.
+func (coll *HistColl) GetIndexAvgRowSize(ctx sessionctx.Context, cols []*expression.Column, isUnique bool) (size float64) {
+	size = coll.GetAvgRowSize(ctx, cols, true, true)
+	// tablePrefix(1) + tableID(8) + indexPrefix(2) + indexID(8)
+	// Because the cols for index scan always contain the handle, so we don't add the rowID here.
+	size += 19
+	if !isUnique {
+		// add the len("_")
+		size++
+	}
+	return
 }

@@ -22,12 +22,9 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/testleak"
 )
 
 func (s *testEvaluatorSuite) TestNewValuesFunc(c *C) {
-	defer testleak.AfterTest(c)()
-
 	res := NewValuesFunc(s.ctx, 0, types.NewFieldType(mysql.TypeLonglong))
 	c.Assert(res.FuncName.O, Equals, "values")
 	c.Assert(res.RetType.Tp, Equals, mysql.TypeLonglong)
@@ -36,7 +33,6 @@ func (s *testEvaluatorSuite) TestNewValuesFunc(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestEvaluateExprWithNull(c *C) {
-	defer testleak.AfterTest(c)()
 	tblInfo := newTestTableBuilder("").add("col0", mysql.TypeLonglong).add("col1", mysql.TypeLonglong).build()
 	schema := tableInfoToSchemaForTest(tblInfo)
 	col0 := schema.Columns[0]
@@ -48,7 +44,7 @@ func (s *testEvaluatorSuite) TestEvaluateExprWithNull(c *C) {
 	c.Assert(err, IsNil)
 
 	res := EvaluateExprWithNull(s.ctx, schema, outerIfNull)
-	c.Assert(res.String(), Equals, "ifnull(col1, 1)")
+	c.Assert(res.String(), Equals, "ifnull(Column#1, 1)")
 
 	schema.Columns = append(schema.Columns, col1)
 	// ifnull(null, ifnull(null, 1))
@@ -57,11 +53,9 @@ func (s *testEvaluatorSuite) TestEvaluateExprWithNull(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestConstant(c *C) {
-	defer testleak.AfterTest(c)()
-
 	sc := &stmtctx.StatementContext{TimeZone: time.Local}
 	c.Assert(Zero.IsCorrelated(), IsFalse)
-	c.Assert(Zero.ConstItem(), IsTrue)
+	c.Assert(Zero.ConstItem(sc), IsTrue)
 	c.Assert(Zero.Decorrelate(nil).Equal(s.ctx, Zero), IsTrue)
 	c.Assert(Zero.HashCode(sc), DeepEquals, []byte{0x0, 0x8, 0x0})
 	c.Assert(Zero.Equal(s.ctx, One), IsFalse)
@@ -87,16 +81,14 @@ func (s *testEvaluatorSuite) TestIsBinaryLiteral(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestConstItem(c *C) {
-	defer testleak.AfterTest(c)()
-
 	sf := newFunction(ast.Rand)
-	c.Assert(sf.ConstItem(), Equals, false)
+	c.Assert(sf.ConstItem(s.ctx.GetSessionVars().StmtCtx), Equals, false)
 	sf = newFunction(ast.UUID)
-	c.Assert(sf.ConstItem(), Equals, false)
+	c.Assert(sf.ConstItem(s.ctx.GetSessionVars().StmtCtx), Equals, false)
 	sf = newFunction(ast.GetParam, One)
-	c.Assert(sf.ConstItem(), Equals, false)
+	c.Assert(sf.ConstItem(s.ctx.GetSessionVars().StmtCtx), Equals, false)
 	sf = newFunction(ast.Abs, One)
-	c.Assert(sf.ConstItem(), Equals, true)
+	c.Assert(sf.ConstItem(s.ctx.GetSessionVars().StmtCtx), Equals, true)
 }
 
 type testTableBuilder struct {
@@ -143,8 +135,6 @@ func tableInfoToSchemaForTest(tableInfo *model.TableInfo) *Schema {
 	for i, col := range columns {
 		schema.Append(&Column{
 			UniqueID: int64(i),
-			TblName:  tableInfo.Name,
-			ColName:  col.Name,
 			ID:       col.ID,
 			RetType:  &col.FieldType,
 		})

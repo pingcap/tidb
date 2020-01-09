@@ -25,9 +25,6 @@ import (
 	"go.uber.org/zap"
 )
 
-// ContextKey is the type of context's key
-type ContextKey string
-
 // RunInNewTxn will run the f in a new transaction environment.
 func RunInNewTxn(store Storage, retryable bool, f func(txn Transaction) error) error {
 	var (

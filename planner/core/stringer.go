@@ -93,9 +93,9 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 			id = "MergeInnerJoin"
 		}
 		str = id + "{" + strings.Join(children, "->") + "}"
-		for i := range x.LeftKeys {
-			l := x.LeftKeys[i].String()
-			r := x.RightKeys[i].String()
+		for i := range x.LeftJoinKeys {
+			l := x.LeftJoinKeys[i].String()
+			r := x.RightJoinKeys[i].String()
 			str += fmt.Sprintf("(%s,%s)", l, r)
 		}
 	case *LogicalApply, *PhysicalApply:
@@ -113,8 +113,10 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 		str = "Lock"
 	case *ShowDDL:
 		str = "ShowDDL"
-	case *Show:
+	case *LogicalShow, *PhysicalShow:
 		str = "Show"
+	case *LogicalShowDDLJobs, *PhysicalShowDDLJobs:
+		str = "ShowDDLJobs"
 	case *LogicalSort, *PhysicalSort:
 		str = "Sort"
 	case *LogicalJoin:
@@ -177,6 +179,15 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 		str = fmt.Sprintf("IndexReader(%s)", ToString(x.indexPlan))
 	case *PhysicalIndexLookUpReader:
 		str = fmt.Sprintf("IndexLookUp(%s, %s)", ToString(x.indexPlan), ToString(x.tablePlan))
+	case *PhysicalIndexMergeReader:
+		str = "IndexMergeReader(PartialPlans->["
+		for i, paritalPlan := range x.partialPlans {
+			if i > 0 {
+				str += ", "
+			}
+			str += ToString(paritalPlan)
+		}
+		str += "], TablePlan->" + ToString(x.tablePlan) + ")"
 	case *PhysicalUnionScan:
 		str = fmt.Sprintf("UnionScan(%s)", x.Conditions)
 	case *PhysicalIndexJoin:
@@ -186,6 +197,30 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 		strs = strs[:idx]
 		idxs = idxs[:last]
 		str = "IndexJoin{" + strings.Join(children, "->") + "}"
+		for i := range x.OuterJoinKeys {
+			l := x.OuterJoinKeys[i]
+			r := x.InnerJoinKeys[i]
+			str += fmt.Sprintf("(%s,%s)", l, r)
+		}
+	case *PhysicalIndexMergeJoin:
+		last := len(idxs) - 1
+		idx := idxs[last]
+		children := strs[idx:]
+		strs = strs[:idx]
+		idxs = idxs[:last]
+		str = "IndexMergeJoin{" + strings.Join(children, "->") + "}"
+		for i := range x.OuterJoinKeys {
+			l := x.OuterJoinKeys[i]
+			r := x.InnerJoinKeys[i]
+			str += fmt.Sprintf("(%s,%s)", l, r)
+		}
+	case *PhysicalIndexHashJoin:
+		last := len(idxs) - 1
+		idx := idxs[last]
+		children := strs[idx:]
+		strs = strs[:idx]
+		idxs = idxs[:last]
+		str = "IndexHashJoin{" + strings.Join(children, "->") + "}"
 		for i := range x.OuterJoinKeys {
 			l := x.OuterJoinKeys[i]
 			r := x.InnerJoinKeys[i]
@@ -219,7 +254,7 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 		}
 	case *LogicalWindow:
 		buffer := bytes.NewBufferString("")
-		formatWindowFuncDescs(buffer, x.WindowFuncDescs)
+		formatWindowFuncDescs(buffer, x.WindowFuncDescs, x.schema)
 		str = fmt.Sprintf("Window(%s)", buffer.String())
 	case *PhysicalWindow:
 		str = fmt.Sprintf("Window(%s)", x.ExplainInfo())

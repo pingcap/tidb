@@ -39,7 +39,7 @@ func (t *mockTxn) String() string {
 	return ""
 }
 
-func (t *mockTxn) LockKeys(_ context.Context, _ uint64, _ ...Key) error {
+func (t *mockTxn) LockKeys(_ context.Context, _ *LockCtx, _ ...Key) error {
 	return nil
 }
 
@@ -62,11 +62,11 @@ func (t *mockTxn) IsReadOnly() bool {
 func (t *mockTxn) StartTS() uint64 {
 	return uint64(0)
 }
-func (t *mockTxn) Get(k Key) ([]byte, error) {
+func (t *mockTxn) Get(ctx context.Context, k Key) ([]byte, error) {
 	return nil, nil
 }
 
-func (t *mockTxn) BatchGet(keys []Key) (map[string][]byte, error) {
+func (t *mockTxn) BatchGet(ctx context.Context, keys []Key) (map[string][]byte, error) {
 	return nil, nil
 }
 
@@ -112,9 +112,6 @@ func (t *mockTxn) Reset() {
 func (t *mockTxn) SetVars(vars *Variables) {
 
 }
-
-func (t *mockTxn) SetAssertion(key Key, assertion AssertionType) {}
-func (t *mockTxn) ConfirmAssertions(succ bool)                   {}
 
 // NewMockTxn new a mockTxn.
 func NewMockTxn() Transaction {
@@ -199,18 +196,18 @@ type mockSnapshot struct {
 	store MemBuffer
 }
 
-func (s *mockSnapshot) Get(k Key) ([]byte, error) {
-	return s.store.Get(k)
+func (s *mockSnapshot) Get(ctx context.Context, k Key) ([]byte, error) {
+	return s.store.Get(ctx, k)
 }
 
 func (s *mockSnapshot) SetPriority(priority int) {
 
 }
 
-func (s *mockSnapshot) BatchGet(keys []Key) (map[string][]byte, error) {
+func (s *mockSnapshot) BatchGet(ctx context.Context, keys []Key) (map[string][]byte, error) {
 	m := make(map[string][]byte)
 	for _, k := range keys {
-		v, err := s.store.Get(k)
+		v, err := s.store.Get(ctx, k)
 		if IsErrNotFound(err) {
 			continue
 		}
@@ -229,3 +226,6 @@ func (s *mockSnapshot) Iter(k Key, upperBound Key) (Iterator, error) {
 func (s *mockSnapshot) IterReverse(k Key) (Iterator, error) {
 	return s.store.IterReverse(k)
 }
+
+func (s *mockSnapshot) SetOption(opt Option, val interface{}) {}
+func (s *mockSnapshot) DelOption(opt Option)                  {}

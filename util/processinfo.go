@@ -24,22 +24,23 @@ import (
 
 // ProcessInfo is a struct used for show processlist statement.
 type ProcessInfo struct {
-	ID                        uint64
-	User                      string
-	Host                      string
-	DB                        string
-	Command                   byte
-	Plan                      interface{}
-	Time                      time.Time
-	State                     uint16
-	Info                      string
-	CurTxnStartTS             uint64
-	StmtCtx                   *stmtctx.StatementContext
-	StatsInfo                 func(interface{}) map[string]uint64
-	ExceedExpensiveTimeThresh bool
+	ID            uint64
+	User          string
+	Host          string
+	DB            string
+	Plan          interface{}
+	Time          time.Time
+	Info          string
+	CurTxnStartTS uint64
+	StmtCtx       *stmtctx.StatementContext
+	StatsInfo     func(interface{}) map[string]uint64
 	// MaxExecutionTime is the timeout for select statement, in milliseconds.
 	// If the query takes too long, kill it.
 	MaxExecutionTime uint64
+
+	State                     uint16
+	Command                   byte
+	ExceedExpensiveTimeThresh bool
 }
 
 // ToRowForShow returns []interface{} for the row data of "SHOW [FULL] PROCESSLIST".
@@ -80,7 +81,11 @@ func (pi *ProcessInfo) txnStartTs(tz *time.Location) (txnStart string) {
 // ToRow returns []interface{} for the row data of
 // "SELECT * FROM INFORMATION_SCHEMA.PROCESSLIST".
 func (pi *ProcessInfo) ToRow(tz *time.Location) []interface{} {
-	return append(pi.ToRowForShow(true), pi.StmtCtx.MemTracker.BytesConsumed(), pi.txnStartTs(tz))
+	bytesConsumed := int64(0)
+	if pi.StmtCtx != nil && pi.StmtCtx.MemTracker != nil {
+		bytesConsumed = pi.StmtCtx.MemTracker.BytesConsumed()
+	}
+	return append(pi.ToRowForShow(true), bytesConsumed, pi.txnStartTs(tz))
 }
 
 // SessionManager is an interface for session manage. Show processlist and

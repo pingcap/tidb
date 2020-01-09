@@ -14,6 +14,7 @@
 package structure
 
 import (
+	"context"
 	"encoding/binary"
 
 	"github.com/pingcap/errors"
@@ -48,7 +49,7 @@ func (t *TxStructure) RPush(key []byte, values ...[]byte) error {
 
 func (t *TxStructure) listPush(key []byte, left bool, values ...[]byte) error {
 	if t.readWriter == nil {
-		return errWriteOnSnapshot
+		return ErrWriteOnSnapshot
 	}
 	if len(values) == 0 {
 		return nil
@@ -91,7 +92,7 @@ func (t *TxStructure) RPop(key []byte) ([]byte, error) {
 
 func (t *TxStructure) listPop(key []byte, left bool) ([]byte, error) {
 	if t.readWriter == nil {
-		return nil, errWriteOnSnapshot
+		return nil, ErrWriteOnSnapshot
 	}
 	metaKey := t.encodeListMetaKey(key)
 	meta, err := t.loadListMeta(metaKey)
@@ -111,7 +112,7 @@ func (t *TxStructure) listPop(key []byte, left bool) ([]byte, error) {
 	dataKey := t.encodeListDataKey(key, index)
 
 	var data []byte
-	data, err = t.reader.Get(dataKey)
+	data, err = t.reader.Get(context.TODO(), dataKey)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -147,7 +148,7 @@ func (t *TxStructure) LGetAll(key []byte) ([][]byte, error) {
 	length := int(meta.RIndex - meta.LIndex)
 	elements := make([][]byte, 0, length)
 	for index := meta.RIndex - 1; index >= meta.LIndex; index-- {
-		e, err := t.reader.Get(t.encodeListDataKey(key, index))
+		e, err := t.reader.Get(context.TODO(), t.encodeListDataKey(key, index))
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -167,7 +168,7 @@ func (t *TxStructure) LIndex(key []byte, index int64) ([]byte, error) {
 	index = adjustIndex(index, meta.LIndex, meta.RIndex)
 
 	if index >= meta.LIndex && index < meta.RIndex {
-		return t.reader.Get(t.encodeListDataKey(key, index))
+		return t.reader.Get(context.TODO(), t.encodeListDataKey(key, index))
 	}
 	return nil, nil
 }
@@ -175,7 +176,7 @@ func (t *TxStructure) LIndex(key []byte, index int64) ([]byte, error) {
 // LSet updates an element in the list by its index.
 func (t *TxStructure) LSet(key []byte, index int64, value []byte) error {
 	if t.readWriter == nil {
-		return errWriteOnSnapshot
+		return ErrWriteOnSnapshot
 	}
 	metaKey := t.encodeListMetaKey(key)
 	meta, err := t.loadListMeta(metaKey)
@@ -188,13 +189,13 @@ func (t *TxStructure) LSet(key []byte, index int64, value []byte) error {
 	if index >= meta.LIndex && index < meta.RIndex {
 		return t.readWriter.Set(t.encodeListDataKey(key, index), value)
 	}
-	return errInvalidListIndex.GenWithStack("invalid list index %d", index)
+	return ErrInvalidListIndex.GenWithStack("invalid list index %d", index)
 }
 
 // LClear removes the list of the key.
 func (t *TxStructure) LClear(key []byte) error {
 	if t.readWriter == nil {
-		return errWriteOnSnapshot
+		return ErrWriteOnSnapshot
 	}
 	metaKey := t.encodeListMetaKey(key)
 	meta, err := t.loadListMeta(metaKey)
@@ -213,7 +214,7 @@ func (t *TxStructure) LClear(key []byte) error {
 }
 
 func (t *TxStructure) loadListMeta(metaKey []byte) (listMeta, error) {
-	v, err := t.reader.Get(metaKey)
+	v, err := t.reader.Get(context.TODO(), metaKey)
 	if kv.ErrNotExist.Equal(err) {
 		err = nil
 	}
@@ -227,7 +228,7 @@ func (t *TxStructure) loadListMeta(metaKey []byte) (listMeta, error) {
 	}
 
 	if len(v) != 16 {
-		return meta, errInvalidListMetaData
+		return meta, ErrInvalidListMetaData
 	}
 
 	meta.LIndex = int64(binary.BigEndian.Uint64(v[0:8]))

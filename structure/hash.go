@@ -15,6 +15,7 @@ package structure
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"strconv"
 
@@ -45,7 +46,7 @@ func (meta hashMeta) IsEmpty() bool {
 // HSet sets the string value of a hash field.
 func (t *TxStructure) HSet(key []byte, field []byte, value []byte) error {
 	if t.readWriter == nil {
-		return errWriteOnSnapshot
+		return ErrWriteOnSnapshot
 	}
 	return t.updateHash(key, field, func([]byte) ([]byte, error) {
 		return value, nil
@@ -55,7 +56,7 @@ func (t *TxStructure) HSet(key []byte, field []byte, value []byte) error {
 // HGet gets the value of a hash field.
 func (t *TxStructure) HGet(key []byte, field []byte) ([]byte, error) {
 	dataKey := t.encodeHashDataKey(key, field)
-	value, err := t.reader.Get(dataKey)
+	value, err := t.reader.Get(context.TODO(), dataKey)
 	if kv.ErrNotExist.Equal(err) {
 		err = nil
 	}
@@ -75,7 +76,7 @@ func (t *TxStructure) EncodeHashAutoIDKeyValue(key []byte, field []byte, val int
 // the value after the increment.
 func (t *TxStructure) HInc(key []byte, field []byte, step int64) (int64, error) {
 	if t.readWriter == nil {
-		return 0, errWriteOnSnapshot
+		return 0, ErrWriteOnSnapshot
 	}
 	base := int64(0)
 	err := t.updateHash(key, field, func(oldValue []byte) ([]byte, error) {
@@ -155,7 +156,7 @@ func (t *TxStructure) HLen(key []byte) (int64, error) {
 // HDel deletes one or more hash fields.
 func (t *TxStructure) HDel(key []byte, fields ...[]byte) error {
 	if t.readWriter == nil {
-		return errWriteOnSnapshot
+		return ErrWriteOnSnapshot
 	}
 	metaKey := t.encodeHashMetaKey(key)
 	meta, err := t.loadHashMeta(metaKey)
@@ -317,7 +318,7 @@ func (t *TxStructure) iterReverseHash(key []byte, fn func(k []byte, v []byte) (b
 }
 
 func (t *TxStructure) loadHashMeta(metaKey []byte) (hashMeta, error) {
-	v, err := t.reader.Get(metaKey)
+	v, err := t.reader.Get(context.TODO(), metaKey)
 	if kv.ErrNotExist.Equal(err) {
 		err = nil
 	}
@@ -331,7 +332,7 @@ func (t *TxStructure) loadHashMeta(metaKey []byte) (hashMeta, error) {
 	}
 
 	if len(v) != 8 {
-		return meta, errInvalidListMetaData
+		return meta, ErrInvalidListMetaData
 	}
 
 	meta.FieldCount = int64(binary.BigEndian.Uint64(v[0:8]))
@@ -339,7 +340,7 @@ func (t *TxStructure) loadHashMeta(metaKey []byte) (hashMeta, error) {
 }
 
 func (t *TxStructure) loadHashValue(dataKey []byte) ([]byte, error) {
-	v, err := t.reader.Get(dataKey)
+	v, err := t.reader.Get(context.TODO(), dataKey)
 	if kv.ErrNotExist.Equal(err) {
 		err = nil
 		v = nil

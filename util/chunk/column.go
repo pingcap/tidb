@@ -14,6 +14,7 @@
 package chunk
 
 import (
+	"fmt"
 	"math/bits"
 	"reflect"
 	"time"
@@ -91,8 +92,31 @@ func (c *Column) isFixed() bool {
 	return c.elemBuf != nil
 }
 
-// Reset resets this Column.
-func (c *Column) Reset() {
+// Reset resets this Column according to the EvalType.
+// Different from reset, Reset will reset the elemBuf.
+func (c *Column) Reset(eType types.EvalType) {
+	switch eType {
+	case types.ETInt:
+		c.ResizeInt64(0, false)
+	case types.ETReal:
+		c.ResizeFloat64(0, false)
+	case types.ETDecimal:
+		c.ResizeDecimal(0, false)
+	case types.ETString:
+		c.ReserveString(0)
+	case types.ETDatetime, types.ETTimestamp:
+		c.ResizeTime(0, false)
+	case types.ETDuration:
+		c.ResizeGoDuration(0, false)
+	case types.ETJson:
+		c.ReserveJSON(0)
+	default:
+		panic(fmt.Sprintf("invalid EvalType %v", eType))
+	}
+}
+
+// reset resets the underlying data of this Column but doesn't modify its data type.
+func (c *Column) reset() {
 	c.length = 0
 	c.nullBitmap = c.nullBitmap[:0]
 	if len(c.offsets) > 0 {
@@ -224,7 +248,7 @@ func (c *Column) AppendBytes(b []byte) {
 
 // AppendTime appends a time value into this Column.
 func (c *Column) AppendTime(t types.Time) {
-	writeTime(c.elemBuf, t)
+	*(*types.Time)(unsafe.Pointer(&c.elemBuf[0])) = t
 	c.finishAppendFixed()
 }
 
@@ -234,40 +258,86 @@ func (c *Column) AppendEnum(enum types.Enum) {
 }
 
 const (
-	sizeInt64     = int(unsafe.Sizeof(int64(0)))
-	sizeUint64    = int(unsafe.Sizeof(uint64(0)))
-	sizeFloat32   = int(unsafe.Sizeof(float32(0)))
-	sizeFloat64   = int(unsafe.Sizeof(float64(0)))
-	sizeMyDecimal = int(unsafe.Sizeof(types.MyDecimal{}))
+	sizeInt64      = int(unsafe.Sizeof(int64(0)))
+	sizeUint64     = int(unsafe.Sizeof(uint64(0)))
+	sizeFloat32    = int(unsafe.Sizeof(float32(0)))
+	sizeFloat64    = int(unsafe.Sizeof(float64(0)))
+	sizeMyDecimal  = int(unsafe.Sizeof(types.MyDecimal{}))
+	sizeGoDuration = int(unsafe.Sizeof(time.Duration(0)))
+	sizeTime       = int(unsafe.Sizeof(types.ZeroTime))
 )
 
-// preAlloc allocates space for a fixed-length-type slice and resets all slots to null.
-func (c *Column) preAlloc(length, typeSize int) {
-	nData := length * typeSize
-	if len(c.data) >= nData {
-		c.data = c.data[:nData]
-	} else {
-		c.data = make([]byte, nData)
-	}
+var (
+	emptyBuf = make([]byte, 4*1024)
+)
 
-	nBitmap := (length + 7) >> 3
-	if len(c.nullBitmap) >= nBitmap {
-		c.nullBitmap = c.nullBitmap[:nBitmap]
-		for i := range c.nullBitmap {
-			// resets all slots to null.
-			c.nullBitmap[i] = 0
+// resize resizes the column so that it contains n elements, only valid for fixed-length types.
+func (c *Column) resize(n, typeSize int, isNull bool) {
+	sizeData := n * typeSize
+	if cap(c.data) >= sizeData {
+		(*reflect.SliceHeader)(unsafe.Pointer(&c.data)).Len = sizeData
+	} else {
+		c.data = make([]byte, sizeData)
+	}
+	if !isNull {
+		for j := 0; j < sizeData; j += len(emptyBuf) {
+			copy(c.data[j:], emptyBuf)
 		}
-	} else {
-		c.nullBitmap = make([]byte, nBitmap)
 	}
 
-	if c.elemBuf != nil && len(c.elemBuf) >= typeSize {
-		c.elemBuf = c.elemBuf[:typeSize]
+	newNulls := false
+	sizeNulls := (n + 7) >> 3
+	if cap(c.nullBitmap) >= sizeNulls {
+		(*reflect.SliceHeader)(unsafe.Pointer(&c.nullBitmap)).Len = sizeNulls
+	} else {
+		c.nullBitmap = make([]byte, sizeNulls)
+		newNulls = true
+	}
+	if !isNull || !newNulls {
+		var nullVal byte
+		if !isNull {
+			nullVal = 0xFF
+		}
+		for i := range c.nullBitmap {
+			c.nullBitmap[i] = nullVal
+		}
+	}
+
+	if cap(c.elemBuf) >= typeSize {
+		(*reflect.SliceHeader)(unsafe.Pointer(&c.elemBuf)).Len = typeSize
 	} else {
 		c.elemBuf = make([]byte, typeSize)
 	}
 
-	c.length = length
+	c.length = n
+}
+
+// reserve makes the column capacity be at least enough to contain n elements.
+// this method is only valid for var-length types and estElemSize is the estimated size of this type.
+func (c *Column) reserve(n, estElemSize int) {
+	sizeData := n * estElemSize
+	if cap(c.data) >= sizeData {
+		c.data = c.data[:0]
+	} else {
+		c.data = make([]byte, 0, sizeData)
+	}
+
+	sizeNulls := (n + 7) >> 3
+	if cap(c.nullBitmap) >= sizeNulls {
+		c.nullBitmap = c.nullBitmap[:0]
+	} else {
+		c.nullBitmap = make([]byte, 0, sizeNulls)
+	}
+
+	sizeOffs := n + 1
+	if cap(c.offsets) >= sizeOffs {
+		c.offsets = c.offsets[:1]
+	} else {
+		c.offsets = make([]int64, 1, sizeOffs)
+	}
+
+	c.elemBuf = nil
+	c.length = 0
 }
 
 // SetNull sets the rowIdx to null.
@@ -312,33 +382,68 @@ func (c *Column) nullCount() int {
 	return cnt
 }
 
-// PreAllocInt64 allocates space for an int64 slice and resets all slots to null.
-func (c *Column) PreAllocInt64(length int) {
-	c.preAlloc(length, sizeInt64)
+// ResizeInt64 resizes the column so that it contains n int64 elements.
+func (c *Column) ResizeInt64(n int, isNull bool) {
+	c.resize(n, sizeInt64, isNull)
 }
 
-// PreAllocUint64 allocates space for a uint64 slice and resets all slots to null.
-func (c *Column) PreAllocUint64(length int) {
-	c.preAlloc(length, sizeUint64)
+// ResizeUint64 resizes the column so that it contains n uint64 elements.
+func (c *Column) ResizeUint64(n int, isNull bool) {
+	c.resize(n, sizeUint64, isNull)
 }
 
-// PreAllocFloat32 allocates space for a float32 slice and resets all slots to null.
-func (c *Column) PreAllocFloat32(length int) {
-	c.preAlloc(length, sizeFloat32)
+// ResizeFloat32 resizes the column so that it contains n float32 elements.
+func (c *Column) ResizeFloat32(n int, isNull bool) {
+	c.resize(n, sizeFloat32, isNull)
 }
 
-// PreAllocFloat64 allocates space for a float64 slice and resets all slots to null.
-func (c *Column) PreAllocFloat64(length int) {
-	c.preAlloc(length, sizeFloat64)
+// ResizeFloat64 resizes the column so that it contains n float64 elements.
+func (c *Column) ResizeFloat64(n int, isNull bool) {
+	c.resize(n, sizeFloat64, isNull)
 }
 
-// PreAllocDecimal allocates space for a decimal slice and resets all slots to null.
-func (c *Column) PreAllocDecimal(length int) {
-	c.preAlloc(length, sizeMyDecimal)
+// ResizeDecimal resizes the column so that it contains n decimal elements.
+func (c *Column) ResizeDecimal(n int, isNull bool) {
+	c.resize(n, sizeMyDecimal, isNull)
+}
+
+// ResizeGoDuration resizes the column so that it contains n duration elements.
+func (c *Column) ResizeGoDuration(n int, isNull bool) {
+	c.resize(n, sizeGoDuration, isNull)
+}
+
+// ResizeTime resizes the column so that it contains n Time elements.
+func (c *Column) ResizeTime(n int, isNull bool) {
+	c.resize(n, sizeTime, isNull)
+}
+
+// ReserveString changes the column capacity to store n string elements and set the length to zero.
+func (c *Column) ReserveString(n int) {
+	c.reserve(n, 8)
+}
+
+// ReserveBytes changes the column capacity to store n bytes elements and set the length to zero.
+func (c *Column) ReserveBytes(n int) {
+	c.reserve(n, 8)
+}
+
+// ReserveJSON changes the column capacity to store n JSON elements and set the length to zero.
+func (c *Column) ReserveJSON(n int) {
+	c.reserve(n, 8)
+}
+
+// ReserveSet changes the column capacity to store n set elements and set the length to zero.
+func (c *Column) ReserveSet(n int) {
+	c.reserve(n, 8)
+}
+
+// ReserveEnum changes the column capacity to store n enum elements and set the length to zero.
+func (c *Column) ReserveEnum(n int) {
+	c.reserve(n, 8)
 }
 
 func (c *Column) castSliceHeader(header *reflect.SliceHeader, typeSize int) {
-	header.Data = uintptr(unsafe.Pointer(&c.data[0]))
+	header.Data = (*reflect.SliceHeader)(unsafe.Pointer(&c.data)).Data
 	header.Len = c.length
 	header.Cap = cap(c.data) / typeSize
 }
@@ -371,10 +476,25 @@ func (c *Column) Float64s() []float64 {
 	return res
 }
 
+// GoDurations returns a Golang time.Duration slice stored in this Column.
+// Different from the Row.GetDuration method, the argument Fsp is ignored, so the user should handle it outside.
+func (c *Column) GoDurations() []time.Duration {
+	var res []time.Duration
+	c.castSliceHeader((*reflect.SliceHeader)(unsafe.Pointer(&res)), sizeGoDuration)
+	return res
+}
+
 // Decimals returns a MyDecimal slice stored in this Column.
 func (c *Column) Decimals() []types.MyDecimal {
 	var res []types.MyDecimal
 	c.castSliceHeader((*reflect.SliceHeader)(unsafe.Pointer(&res)), sizeMyDecimal)
+	return res
+}
+
+// Times returns a Time slice stored in this Column.
+func (c *Column) Times() []types.Time {
+	var res []types.Time
+	c.castSliceHeader((*reflect.SliceHeader)(unsafe.Pointer(&res)), sizeTime)
 	return res
 }
 
@@ -433,13 +553,13 @@ func (c *Column) GetSet(rowID int) types.Set {
 
 // GetTime returns the Time in the specific row.
 func (c *Column) GetTime(rowID int) types.Time {
-	return readTime(c.data[rowID*16:])
+	return *(*types.Time)(unsafe.Pointer(&c.data[rowID*sizeTime]))
 }
 
 // GetDuration returns the Duration in the specific row.
 func (c *Column) GetDuration(rowID int, fillFsp int) types.Duration {
 	dur := *(*int64)(unsafe.Pointer(&c.data[rowID*8]))
-	return types.Duration{Duration: time.Duration(dur), Fsp: fillFsp}
+	return types.Duration{Duration: time.Duration(dur), Fsp: int8(fillFsp)}
 }
 
 func (c *Column) getNameValue(rowID int) (string, uint64) {
@@ -448,6 +568,26 @@ func (c *Column) getNameValue(rowID int) (string, uint64) {
 		return "", 0
 	}
 	return string(hack.String(c.data[start+8 : end])), *(*uint64)(unsafe.Pointer(&c.data[start]))
+}
+
+// GetRaw returns the underlying raw bytes in the specific row.
+func (c *Column) GetRaw(rowID int) []byte {
+	var data []byte
+	if c.isFixed() {
+		elemLen := len(c.elemBuf)
+		data = c.data[rowID*elemLen : rowID*elemLen+elemLen]
+	} else {
+		data = c.data[c.offsets[rowID]:c.offsets[rowID+1]]
+	}
+	return data
+}
+
+// SetRaw sets the raw bytes for the rowIdx-th element.
+// NOTE: Two conditions must be satisfied before calling this function:
+// 1. The column should be stored with variable-length elements.
+// 2. The length of the new element should be exactly the same as the old one.
+func (c *Column) SetRaw(rowID int, bs []byte) {
+	copy(c.data[c.offsets[rowID]:c.offsets[rowID+1]], bs)
 }
 
 // reconstruct reconstructs this Column by removing all filtered rows in it according to sel.
@@ -505,20 +645,40 @@ func (c *Column) CopyReconstruct(sel []int, dst *Column) *Column {
 		return c.CopyConstruct(dst)
 	}
 
+	selLength := len(sel)
+	if selLength == c.length {
+		// The variable 'ascend' is used to check if the sel array is in ascending order
+		ascend := true
+		for i := 1; i < selLength; i++ {
+			if sel[i] < sel[i-1] {
+				ascend = false
+				break
+			}
+		}
+		if ascend {
+			return c.CopyConstruct(dst)
+		}
+	}
+
 	if dst == nil {
 		dst = newColumn(c.typeSize(), len(sel))
 	} else {
-		dst.Reset()
+		dst.reset()
 	}
 
 	if c.isFixed() {
 		elemLen := len(c.elemBuf)
+		dst.elemBuf = make([]byte, elemLen)
 		for _, i := range sel {
 			dst.appendNullBitmap(!c.IsNull(i))
 			dst.data = append(dst.data, c.data[i*elemLen:i*elemLen+elemLen]...)
 			dst.length++
 		}
 	} else {
+		dst.elemBuf = nil
+		if len(dst.offsets) == 0 {
+			dst.offsets = append(dst.offsets, 0)
+		}
 		for _, i := range sel {
 			dst.appendNullBitmap(!c.IsNull(i))
 			start, end := c.offsets[i], c.offsets[i+1]
@@ -528,4 +688,26 @@ func (c *Column) CopyReconstruct(sel []int, dst *Column) *Column {
 		}
 	}
 	return dst
+}
+
+// MergeNulls merges these columns' null bitmaps.
+// For a row, if any column of it is null, the result is null.
+// It works like: if col1.IsNull || col2.IsNull || col3.IsNull.
+// The caller should ensure that all these columns have the same
+// length, and data stored in the result column is fixed-length type.
+func (c *Column) MergeNulls(cols ...*Column) {
+	if !c.isFixed() {
+		panic("result column should be fixed-length type")
+	}
+	for _, col := range cols {
+		if c.length != col.length {
+			panic("should ensure all columns have the same length")
+		}
+	}
+	for _, col := range cols {
+		for i := range c.nullBitmap {
+			// bit 0 is null, 1 is not null, so do AND operations here.
+			c.nullBitmap[i] &= col.nullBitmap[i]
+		}
+	}
 }

@@ -15,6 +15,9 @@ package codec
 
 import (
 	"bytes"
+	"hash"
+	"hash/crc32"
+	"hash/fnv"
 	"math"
 	"testing"
 	"time"
@@ -90,10 +93,25 @@ func (s *testCodecSuite) TestCodecKey(c *C) {
 
 		b, err = EncodeValue(sc, nil, t.Input...)
 		c.Assert(err, IsNil)
+		size, err := estimateValuesSize(sc, t.Input)
+		c.Assert(err, IsNil)
+		c.Assert(len(b), Equals, size)
 		args, err = Decode(b, 1)
 		c.Assert(err, IsNil)
 		c.Assert(args, DeepEquals, t.Expect)
 	}
+}
+
+func estimateValuesSize(sc *stmtctx.StatementContext, vals []types.Datum) (int, error) {
+	size := 0
+	for _, val := range vals {
+		length, err := EstimateValueSize(sc, val)
+		if err != nil {
+			return 0, err
+		}
+		size += length
+	}
+	return size, nil
 }
 
 func (s *testCodecSuite) TestCodecKeyCompare(c *C) {
@@ -512,7 +530,8 @@ func (s *testCodecSuite) TestBytes(c *C) {
 }
 
 func parseTime(c *C, s string) types.Time {
-	m, err := types.ParseTime(nil, s, mysql.TypeDatetime, types.DefaultFsp)
+	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
+	m, err := types.ParseTime(sc, s, mysql.TypeDatetime, types.DefaultFsp)
 	c.Assert(err, IsNil)
 	return m
 }
@@ -539,7 +558,7 @@ func (s *testCodecSuite) TestTime(c *C) {
 		v, err := Decode(b, 1)
 		c.Assert(err, IsNil)
 		var t types.Time
-		t.Type = mysql.TypeDatetime
+		t.SetType(mysql.TypeDatetime)
 		t.FromPackedUint(v[0].GetUint64())
 		c.Assert(types.NewDatum(t), DeepEquals, m)
 	}
@@ -729,6 +748,13 @@ func (s *testCodecSuite) TestDecimal(c *C) {
 
 		ret := bytes.Compare(b1, b2)
 		c.Assert(ret, Equals, t.Ret, Commentf("%v %x %x", t, b1, b2))
+
+		b1, err = EncodeValue(sc, b1[:0], d1)
+		c.Assert(err, IsNil)
+		size, err := EstimateValueSize(sc, d1)
+		c.Assert(err, IsNil)
+		c.Assert(len(b1), Equals, size)
+
 	}
 
 	floats := []float64{-123.45, -123.40, -23.45, -1.43, -0.93, -0.4333, -0.068,
@@ -743,6 +769,10 @@ func (s *testCodecSuite) TestDecimal(c *C) {
 		b, err := EncodeDecimal(nil, d.GetMysqlDecimal(), d.Length(), d.Frac())
 		c.Assert(err, IsNil)
 		decs = append(decs, b)
+		size, err := EstimateValueSize(sc, d)
+		c.Assert(err, IsNil)
+		// size - 1 because the flag occupy 1 bit.
+		c.Assert(len(b), Equals, size-1)
 	}
 	for i := 0; i < len(decs)-1; i++ {
 		cmp := bytes.Compare(decs[i], decs[i+1])
@@ -786,7 +816,7 @@ func (s *testCodecSuite) TestJSON(c *C) {
 	}
 
 	buf := make([]byte, 0, 4096)
-	buf, err := encode(nil, buf, datums, false, false)
+	buf, err := encode(nil, buf, datums, false)
 	c.Assert(err, IsNil)
 
 	datums1, err := Decode(buf, 2)
@@ -949,10 +979,7 @@ func datumsForTest(sc *stmtctx.StatementContext) ([]types.Datum, []*types.FieldT
 		{[]byte("abc"), types.NewFieldType(mysql.TypeLongBlob)},
 		{types.CurrentTime(mysql.TypeDatetime), types.NewFieldType(mysql.TypeDatetime)},
 		{types.CurrentTime(mysql.TypeDate), types.NewFieldType(mysql.TypeDate)},
-		{types.Time{
-			Time: types.FromGoTime(time.Now()),
-			Type: mysql.TypeTimestamp,
-		}, types.NewFieldType(mysql.TypeTimestamp)},
+		{types.NewTime(types.FromGoTime(time.Now()), mysql.TypeTimestamp, types.DefaultFsp), types.NewFieldType(mysql.TypeTimestamp)},
 		{types.Duration{Duration: time.Second, Fsp: 1}, types.NewFieldType(mysql.TypeDuration)},
 		{types.Enum{Name: "a", Value: 0}, &types.FieldType{Tp: mysql.TypeEnum, Elems: []string{"a"}}},
 		{types.Set{Name: "a", Value: 0}, &types.FieldType{Tp: mysql.TypeSet, Elems: []string{"a"}}},
@@ -985,14 +1012,14 @@ func chunkForTest(c *C, sc *stmtctx.StatementContext, datums []types.Datum, tps 
 }
 
 func (s *testCodecSuite) TestDecodeRange(c *C) {
-	_, err := DecodeRange(nil, 0)
+	_, _, err := DecodeRange(nil, 0)
 	c.Assert(err, NotNil)
 
 	datums := types.MakeDatums(1, "abc", 1.1, []byte("def"))
 	rowData, err := EncodeValue(nil, nil, datums...)
 	c.Assert(err, IsNil)
 
-	datums1, err := DecodeRange(rowData, len(datums))
+	datums1, _, err := DecodeRange(rowData, len(datums))
 	c.Assert(err, IsNil)
 	for i, datum := range datums1 {
 		cmp, err := datum.CompareDatum(nil, &datums[i])
@@ -1002,13 +1029,57 @@ func (s *testCodecSuite) TestDecodeRange(c *C) {
 
 	for _, b := range []byte{NilFlag, bytesFlag, maxFlag, maxFlag + 1} {
 		newData := append(rowData, b)
-		_, err := DecodeRange(newData, len(datums)+1)
+		_, _, err := DecodeRange(newData, len(datums)+1)
 		c.Assert(err, IsNil)
+	}
+}
+
+func testHashChunkRowEqual(c *C, a, b interface{}, equal bool) {
+	sc := &stmtctx.StatementContext{TimeZone: time.Local}
+	buf1 := make([]byte, 1)
+	buf2 := make([]byte, 1)
+
+	tp1 := new(types.FieldType)
+	types.DefaultTypeForValue(a, tp1)
+	chk1 := chunk.New([]*types.FieldType{tp1}, 1, 1)
+	d := types.Datum{}
+	d.SetValue(a)
+	chk1.AppendDatum(0, &d)
+
+	tp2 := new(types.FieldType)
+	types.DefaultTypeForValue(b, tp2)
+	chk2 := chunk.New([]*types.FieldType{tp2}, 1, 1)
+	d = types.Datum{}
+	d.SetValue(b)
+	chk2.AppendDatum(0, &d)
+
+	h := crc32.NewIEEE()
+	err1 := HashChunkRow(sc, h, chk1.GetRow(0), []*types.FieldType{tp1}, []int{0}, buf1)
+	sum1 := h.Sum32()
+	h.Reset()
+	err2 := HashChunkRow(sc, h, chk2.GetRow(0), []*types.FieldType{tp2}, []int{0}, buf2)
+	sum2 := h.Sum32()
+	c.Assert(err1, IsNil)
+	c.Assert(err2, IsNil)
+	if equal {
+		c.Assert(sum1, Equals, sum2)
+	} else {
+		c.Assert(sum1, Not(Equals), sum2)
+	}
+	e, err := EqualChunkRow(sc,
+		chk1.GetRow(0), []*types.FieldType{tp1}, []int{0},
+		chk2.GetRow(0), []*types.FieldType{tp2}, []int{0})
+	c.Assert(err, IsNil)
+	if equal {
+		c.Assert(e, IsTrue)
+	} else {
+		c.Assert(e, IsFalse)
 	}
 }
 
 func (s *testCodecSuite) TestHashChunkRow(c *C) {
 	sc := &stmtctx.StatementContext{TimeZone: time.Local}
+	buf := make([]byte, 1)
 	datums, tps := datumsForTest(sc)
 	chk := chunkForTest(c, sc, datums, tps, 1)
 
@@ -1016,10 +1087,132 @@ func (s *testCodecSuite) TestHashChunkRow(c *C) {
 	for i := 0; i < len(tps); i++ {
 		colIdx[i] = i
 	}
-	b1, err1 := HashChunkRow(sc, nil, chk.GetRow(0), tps, colIdx)
-	b2, err2 := HashValues(sc, nil, datums...)
+	h := crc32.NewIEEE()
+	err1 := HashChunkRow(sc, h, chk.GetRow(0), tps, colIdx, buf)
+	sum1 := h.Sum32()
+	h.Reset()
+	err2 := HashChunkRow(sc, h, chk.GetRow(0), tps, colIdx, buf)
+	sum2 := h.Sum32()
 
 	c.Assert(err1, IsNil)
 	c.Assert(err2, IsNil)
-	c.Assert(b1, BytesEquals, b2)
+	c.Assert(sum1, Equals, sum2)
+	e, err := EqualChunkRow(sc,
+		chk.GetRow(0), tps, colIdx,
+		chk.GetRow(0), tps, colIdx)
+	c.Assert(err, IsNil)
+	c.Assert(e, IsTrue)
+
+	testHashChunkRowEqual(c, uint64(1), int64(1), true)
+	testHashChunkRowEqual(c, uint64(18446744073709551615), int64(-1), false)
+
+	dec1 := types.NewDecFromStringForTest("1.1")
+	dec2 := types.NewDecFromStringForTest("01.100")
+	testHashChunkRowEqual(c, dec1, dec2, true)
+	dec1 = types.NewDecFromStringForTest("1.1")
+	dec2 = types.NewDecFromStringForTest("01.200")
+	testHashChunkRowEqual(c, dec1, dec2, false)
+
+	testHashChunkRowEqual(c, float32(1.0), float64(1.0), true)
+	testHashChunkRowEqual(c, float32(1.0), float64(1.1), false)
+
+	testHashChunkRowEqual(c, "x", []byte("x"), true)
+	testHashChunkRowEqual(c, "x", []byte("y"), false)
+}
+
+func (s *testCodecSuite) TestValueSizeOfSignedInt(c *C) {
+	testCase := []int64{64, 8192, 1048576, 134217728, 17179869184, 2199023255552, 281474976710656, 36028797018963968, 4611686018427387904}
+	var b []byte
+	for _, v := range testCase {
+		b := encodeSignedInt(b[:0], v-10, false)
+		c.Assert(len(b), Equals, valueSizeOfSignedInt(v-10))
+
+		b = encodeSignedInt(b[:0], v, false)
+		c.Assert(len(b), Equals, valueSizeOfSignedInt(v))
+
+		b = encodeSignedInt(b[:0], v+10, false)
+		c.Assert(len(b), Equals, valueSizeOfSignedInt(v+10))
+
+		// Test for negative value.
+		b = encodeSignedInt(b[:0], 0-v, false)
+		c.Assert(len(b), Equals, valueSizeOfSignedInt(0-v))
+
+		b = encodeSignedInt(b[:0], 0-v+10, false)
+		c.Assert(len(b), Equals, valueSizeOfSignedInt(0-v+10))
+
+		b = encodeSignedInt(b[:0], 0-v-10, false)
+		c.Assert(len(b), Equals, valueSizeOfSignedInt(0-v-10))
+	}
+}
+
+func (s *testCodecSuite) TestValueSizeOfUnsignedInt(c *C) {
+	testCase := []uint64{128, 16384, 2097152, 268435456, 34359738368, 4398046511104, 562949953421312, 72057594037927936, 9223372036854775808}
+	var b []byte
+	for _, v := range testCase {
+		b := encodeUnsignedInt(b[:0], v-10, false)
+		c.Assert(len(b), Equals, valueSizeOfUnsignedInt(v-10))
+
+		b = encodeUnsignedInt(b[:0], v, false)
+		c.Assert(len(b), Equals, valueSizeOfUnsignedInt(v))
+
+		b = encodeUnsignedInt(b[:0], v+10, false)
+		c.Assert(len(b), Equals, valueSizeOfUnsignedInt(v+10))
+	}
+}
+
+func (s *testCodecSuite) TestHashChunkColumns(c *C) {
+	sc := &stmtctx.StatementContext{TimeZone: time.Local}
+	buf := make([]byte, 1)
+	datums, tps := datumsForTest(sc)
+	chk := chunkForTest(c, sc, datums, tps, 3)
+
+	colIdx := make([]int, len(tps))
+	for i := 0; i < len(tps); i++ {
+		colIdx[i] = i
+	}
+	hasNull := []bool{false, false, false}
+	vecHash := []hash.Hash64{fnv.New64(), fnv.New64(), fnv.New64()}
+	rowHash := []hash.Hash64{fnv.New64(), fnv.New64(), fnv.New64()}
+
+	// Test hash value of the first `Null` column
+	c.Assert(chk.GetRow(0).IsNull(0), Equals, true)
+	err1 := HashChunkColumns(sc, vecHash, chk, tps[0], 0, buf, hasNull)
+	err2 := HashChunkRow(sc, rowHash[0], chk.GetRow(0), tps, colIdx[0:1], buf)
+	err3 := HashChunkRow(sc, rowHash[1], chk.GetRow(1), tps, colIdx[0:1], buf)
+	err4 := HashChunkRow(sc, rowHash[2], chk.GetRow(2), tps, colIdx[0:1], buf)
+	c.Assert(err1, IsNil)
+	c.Assert(err2, IsNil)
+	c.Assert(err3, IsNil)
+	c.Assert(err4, IsNil)
+
+	c.Assert(hasNull[0], Equals, true)
+	c.Assert(hasNull[1], Equals, true)
+	c.Assert(hasNull[2], Equals, true)
+	c.Assert(vecHash[0].Sum64(), Equals, rowHash[0].Sum64())
+	c.Assert(vecHash[1].Sum64(), Equals, rowHash[1].Sum64())
+	c.Assert(vecHash[2].Sum64(), Equals, rowHash[2].Sum64())
+
+	// Test hash value of every single column that is not `Null`
+	for i := 1; i < len(tps); i++ {
+		hasNull = []bool{false, false, false}
+		vecHash = []hash.Hash64{fnv.New64(), fnv.New64(), fnv.New64()}
+		rowHash = []hash.Hash64{fnv.New64(), fnv.New64(), fnv.New64()}
+
+		c.Assert(chk.GetRow(0).IsNull(i), Equals, false)
+		err1 = HashChunkColumns(sc, vecHash, chk, tps[i], i, buf, hasNull)
+		err2 = HashChunkRow(sc, rowHash[0], chk.GetRow(0), tps, colIdx[i:i+1], buf)
+		err3 = HashChunkRow(sc, rowHash[1], chk.GetRow(1), tps, colIdx[i:i+1], buf)
+		err4 = HashChunkRow(sc, rowHash[2], chk.GetRow(2), tps, colIdx[i:i+1], buf)
+		c.Assert(err1, IsNil)
+		c.Assert(err2, IsNil)
+		c.Assert(err3, IsNil)
+		c.Assert(err4, IsNil)
+
+		c.Assert(hasNull[0], Equals, false)
+		c.Assert(hasNull[1], Equals, false)
+		c.Assert(hasNull[2], Equals, false)
+		c.Assert(vecHash[0].Sum64(), Equals, rowHash[0].Sum64())
+		c.Assert(vecHash[1].Sum64(), Equals, rowHash[1].Sum64())
+		c.Assert(vecHash[2].Sum64(), Equals, rowHash[2].Sum64())
+	}
 }

@@ -19,12 +19,15 @@ import (
 	"math"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/timeutil"
 )
@@ -73,6 +76,16 @@ func GetDDLErrorCountLimit() int64 {
 	return atomic.LoadInt64(&ddlErrorCountlimit)
 }
 
+// SetMaxDeltaSchemaCount sets maxDeltaSchemaCount size.
+func SetMaxDeltaSchemaCount(cnt int64) {
+	atomic.StoreInt64(&maxDeltaSchemaCount, cnt)
+}
+
+// GetMaxDeltaSchemaCount gets maxDeltaSchemaCount size.
+func GetMaxDeltaSchemaCount() int64 {
+	return atomic.LoadInt64(&maxDeltaSchemaCount)
+}
+
 // GetSessionSystemVar gets a system variable.
 // If it is a session only variable, use the default value defined in code.
 // Returns error if there is no such variable.
@@ -95,7 +108,7 @@ func GetSessionSystemVar(s *SessionVars, key string) (string, error) {
 func GetSessionOnlySysVars(s *SessionVars, key string) (string, bool, error) {
 	sysVar := SysVars[key]
 	if sysVar == nil {
-		return "", false, UnknownSystemVar.GenWithStackByArgs(key)
+		return "", false, ErrUnknownSystemVar.GenWithStackByArgs(key)
 	}
 	// For virtual system variables:
 	switch sysVar.Name {
@@ -103,6 +116,12 @@ func GetSessionOnlySysVars(s *SessionVars, key string) (string, bool, error) {
 		return fmt.Sprintf("%d", s.TxnCtx.StartTS), true, nil
 	case TiDBGeneralLog:
 		return fmt.Sprintf("%d", atomic.LoadUint32(&ProcessGeneralLog)), true, nil
+	case TiDBPProfSQLCPU:
+		val := "0"
+		if EnablePProfSQLCPU.Load() {
+			val = "1"
+		}
+		return val, true, nil
 	case TiDBExpensiveQueryTimeThreshold:
 		return fmt.Sprintf("%d", atomic.LoadUint64(&ExpensiveQueryTimeThreshold)), true, nil
 	case TiDBConfig:
@@ -116,6 +135,10 @@ func GetSessionOnlySysVars(s *SessionVars, key string) (string, bool, error) {
 		return mysql.Priority2Str[mysql.PriorityEnum(atomic.LoadInt32(&ForcePriority))], true, nil
 	case TiDBSlowLogThreshold:
 		return strconv.FormatUint(atomic.LoadUint64(&config.GetGlobalConfig().Log.SlowThreshold), 10), true, nil
+	case TiDBRecordPlanInSlowLog:
+		return strconv.FormatUint(uint64(atomic.LoadUint32(&config.GetGlobalConfig().Log.RecordPlanInSlowLog)), 10), true, nil
+	case TiDBEnableSlowLog:
+		return strconv.FormatUint(uint64(atomic.LoadUint32(&config.GetGlobalConfig().Log.EnableSlowLog)), 10), true, nil
 	case TiDBDDLSlowOprThreshold:
 		return strconv.FormatUint(uint64(atomic.LoadUint32(&DDLSlowOprThreshold)), 10), true, nil
 	case TiDBQueryLogMaxLen:
@@ -127,7 +150,7 @@ func GetSessionOnlySysVars(s *SessionVars, key string) (string, bool, error) {
 	case TiDBCheckMb4ValueInUTF8:
 		return BoolToIntStr(config.GetGlobalConfig().CheckMb4ValueInUTF8), true, nil
 	}
-	sVal, ok := s.systems[key]
+	sVal, ok := s.GetSystemVar(key)
 	if ok {
 		return sVal, true, nil
 	}
@@ -157,7 +180,7 @@ func GetGlobalSystemVar(s *SessionVars, key string) (string, error) {
 func GetScopeNoneSystemVar(key string) (string, bool, error) {
 	sysVar := SysVars[key]
 	if sysVar == nil {
-		return "", false, UnknownSystemVar.GenWithStackByArgs(key)
+		return "", false, ErrUnknownSystemVar.GenWithStackByArgs(key)
 	}
 	if sysVar.Scope == ScopeNone {
 		return sysVar.Value, true, nil
@@ -173,7 +196,7 @@ func SetSessionSystemVar(vars *SessionVars, name string, value types.Datum) erro
 	name = strings.ToLower(name)
 	sysVar := SysVars[name]
 	if sysVar == nil {
-		return UnknownSystemVar
+		return ErrUnknownSystemVar
 	}
 	sVal := ""
 	var err error
@@ -194,7 +217,7 @@ func SetSessionSystemVar(vars *SessionVars, name string, value types.Datum) erro
 func ValidateGetSystemVar(name string, isGlobal bool) error {
 	sysVar, exists := SysVars[name]
 	if !exists {
-		return UnknownSystemVar.GenWithStackByArgs(name)
+		return ErrUnknownSystemVar.GenWithStackByArgs(name)
 	}
 	switch sysVar.Scope {
 	case ScopeGlobal, ScopeNone:
@@ -265,7 +288,7 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		if val := GetSysVar(name); val != nil {
 			return val.Value, nil
 		}
-		return value, UnknownSystemVar.GenWithStackByArgs(name)
+		return value, ErrUnknownSystemVar.GenWithStackByArgs(name)
 	}
 	switch name {
 	case ConnectTimeout:
@@ -320,6 +343,8 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		return checkUInt64SystemVar(name, value, 0, 4294967295, vars)
 	case OldPasswords:
 		return checkUInt64SystemVar(name, value, 0, 2, vars)
+	case TiDBMaxDeltaSchemaCount:
+		return checkInt64SystemVar(name, value, 100, 16384, vars)
 	case SessionTrackGtids:
 		if strings.EqualFold(value, "OFF") || value == "0" {
 			return "OFF", nil
@@ -331,6 +356,8 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
 	case SQLSelectLimit:
 		return checkUInt64SystemVar(name, value, 0, math.MaxUint64, vars)
+	case TiDBStoreLimit:
+		return checkInt64SystemVar(name, value, 0, math.MaxInt64, vars)
 	case SyncBinlog:
 		return checkUInt64SystemVar(name, value, 0, 4294967295, vars)
 	case TableDefinitionCache:
@@ -376,10 +403,10 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
 	case TiDBSkipUTF8Check, TiDBOptAggPushDown,
 		TiDBOptInSubqToJoinAndAgg, TiDBEnableFastAnalyze,
-		TiDBBatchInsert, TiDBDisableTxnAutoRetry, TiDBEnableStreaming,
-		TiDBBatchDelete, TiDBBatchCommit, TiDBEnableCascadesPlanner, TiDBEnableWindowFunction,
-		TiDBCheckMb4ValueInUTF8, TiDBLowResolutionTSO, TiDBEnableIndexMerge, TiDBEnableNoopFuncs,
-		TiDBScatterRegion, TiDBGeneralLog, TiDBConstraintCheckInPlace:
+		TiDBBatchInsert, TiDBDisableTxnAutoRetry, TiDBEnableStreaming, TiDBEnableChunkRPC,
+		TiDBBatchDelete, TiDBBatchCommit, TiDBEnableCascadesPlanner, TiDBEnableWindowFunction, TiDBPProfSQLCPU,
+		TiDBCheckMb4ValueInUTF8, TiDBLowResolutionTSO, TiDBEnableIndexMerge, TiDBEnableNoopFuncs, TiDBEnableSlowLog,
+		TiDBScatterRegion, TiDBGeneralLog, TiDBConstraintCheckInPlace, TiDBEnableVectorizedExpression, TiDBRecordPlanInSlowLog:
 		fallthrough
 	case GeneralLog, AvoidTemporalUpgrade, BigTables, CheckProxyUsers, LogBin,
 		CoreFile, EndMakersInJSON, SQLLogBin, OfflineMode, PseudoSlaveMode, LowPriorityUpdates,
@@ -424,6 +451,8 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
 	case MaxExecutionTime:
 		return checkUInt64SystemVar(name, value, 0, math.MaxUint64, vars)
+	case ThreadPoolSize:
+		return checkUInt64SystemVar(name, value, 1, 64, vars)
 	case TiDBEnableTablePartition:
 		switch {
 		case strings.EqualFold(value, "ON") || value == "1":
@@ -475,6 +504,23 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 			return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
 		}
 		return value, nil
+	case TiDBOptCPUFactor,
+		TiDBOptCopCPUFactor,
+		TiDBOptNetworkFactor,
+		TiDBOptScanFactor,
+		TiDBOptDescScanFactor,
+		TiDBOptSeekFactor,
+		TiDBOptMemoryFactor,
+		TiDBOptDiskFactor,
+		TiDBOptConcurrencyFactor:
+		v, err := strconv.ParseFloat(value, 64)
+		if err != nil {
+			return value, ErrWrongTypeForVar.GenWithStackByArgs(name)
+		}
+		if v < 0 {
+			return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
+		}
+		return value, nil
 	case TiDBProjectionConcurrency,
 		TIDBMemQuotaQuery,
 		TIDBMemQuotaHashJoin,
@@ -486,18 +532,25 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		TIDBMemQuotaNestedLoopApply,
 		TiDBRetryLimit,
 		TiDBSlowLogThreshold,
-		TiDBQueryLogMaxLen:
+		TiDBQueryLogMaxLen,
+		TiDBEvolvePlanTaskMaxTime:
 		_, err := strconv.ParseInt(value, 10, 64)
 		if err != nil {
 			return value, ErrWrongValueForVar.GenWithStackByArgs(name)
 		}
 		return value, nil
-	case TiDBAutoAnalyzeStartTime, TiDBAutoAnalyzeEndTime:
-		v, err := setAnalyzeTime(vars, value)
+	case TiDBAutoAnalyzeStartTime, TiDBAutoAnalyzeEndTime, TiDBEvolvePlanTaskStartTime, TiDBEvolvePlanTaskEndTime:
+		v, err := setDayTime(vars, value)
 		if err != nil {
 			return "", err
 		}
 		return v, nil
+	case TiDBAutoAnalyzeRatio:
+		v, err := strconv.ParseFloat(value, 64)
+		if err != nil || v < 0 {
+			return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
+		}
+		return value, nil
 	case TxnIsolation, TransactionIsolation:
 		upVal := strings.ToUpper(value)
 		_, exists := TxIsolationNames[upVal]
@@ -560,6 +613,94 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		if v <= 0 {
 			return value, errors.Errorf("tidb_wait_split_region_timeout(%d) cannot be smaller than 1", v)
 		}
+	case TiDBReplicaRead:
+		if strings.EqualFold(value, "follower") {
+			return "follower", nil
+		} else if strings.EqualFold(value, "leader") || len(value) == 0 {
+			return "leader", nil
+		}
+		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
+	case TiDBTxnMode:
+		switch strings.ToUpper(value) {
+		case ast.Pessimistic, ast.Optimistic, "":
+		default:
+			return value, ErrWrongValueForVar.GenWithStackByArgs(TiDBTxnMode, value)
+		}
+	case TiDBRowFormatVersion:
+		v, err := strconv.Atoi(value)
+		if err != nil {
+			return value, ErrWrongTypeForVar.GenWithStackByArgs(name)
+		}
+		if v != DefTiDBRowFormatV1 && v != DefTiDBRowFormatV2 {
+			return value, errors.Errorf("Unsupported row format version %d", v)
+		}
+	case TiDBAllowRemoveAutoInc, TiDBUsePlanBaselines, TiDBEvolvePlanBaselines:
+		switch {
+		case strings.EqualFold(value, "ON") || value == "1":
+			return "on", nil
+		case strings.EqualFold(value, "OFF") || value == "0":
+			return "off", nil
+		}
+		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
+	case TiDBCapturePlanBaseline:
+		switch {
+		case strings.EqualFold(value, "ON") || value == "1":
+			return "on", nil
+		case strings.EqualFold(value, "OFF") || value == "0":
+			return "off", nil
+		case value == "":
+			return "", nil
+		}
+		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
+	case TiDBEnableStmtSummary:
+		switch {
+		case strings.EqualFold(value, "ON") || value == "1":
+			return "1", nil
+		case strings.EqualFold(value, "OFF") || value == "0":
+			return "0", nil
+		case value == "":
+			return "", nil
+		}
+		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
+	case TiDBStmtSummaryRefreshInterval:
+		if value == "" {
+			return "", nil
+		}
+		return checkUInt64SystemVar(name, value, 1, math.MaxUint32, vars)
+	case TiDBStmtSummaryHistorySize:
+		if value == "" {
+			return "", nil
+		}
+		return checkUInt64SystemVar(name, value, 0, math.MaxUint8, vars)
+	case TiDBIsolationReadEngines:
+		engines := strings.Split(value, ",")
+		var formatVal string
+		for i, engine := range engines {
+			engine = strings.TrimSpace(engine)
+			if i != 0 {
+				formatVal += ","
+			}
+			switch {
+			case strings.EqualFold(engine, kv.TiKV.Name()):
+				formatVal += kv.TiKV.Name()
+			case strings.EqualFold(engine, kv.TiFlash.Name()):
+				formatVal += kv.TiFlash.Name()
+			case strings.EqualFold(engine, kv.TiDB.Name()):
+				formatVal += kv.TiDB.Name()
+			default:
+				return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
+			}
+		}
+		return formatVal, nil
+	case TiDBMetricSchemaStep, TiDBMetricSchemaRangeDuration:
+		v, err := strconv.ParseInt(value, 10, 64)
+		if err != nil {
+			return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
+		}
+		if v < 10 || v > 60*60*60 {
+			return value, errors.Errorf("%v(%d) cannot be smaller than %v or larger than %v", name, v, 10, 60*60*60)
+		}
+		return value, nil
 	}
 	return value, nil
 }
@@ -646,7 +787,7 @@ func setSnapshotTS(s *SessionVars, sVal string) error {
 	}
 
 	// TODO: Consider time_zone variable.
-	t1, err := t.Time.GoTime(time.Local)
+	t1, err := t.GoTime(time.Local)
 	s.SnapshotTS = GoTimeToTS(t1)
 	return err
 }
@@ -658,21 +799,49 @@ func GoTimeToTS(t time.Time) uint64 {
 }
 
 const (
-	analyzeLocalTimeFormat = "15:04"
-	// AnalyzeFullTimeFormat is the full format of analyze start time and end time.
-	AnalyzeFullTimeFormat = "15:04 -0700"
+	localDayTimeFormat = "15:04"
+	// FullDayTimeFormat is the full format of analyze start time and end time.
+	FullDayTimeFormat = "15:04 -0700"
 )
 
-func setAnalyzeTime(s *SessionVars, val string) (string, error) {
+func setDayTime(s *SessionVars, val string) (string, error) {
 	var t time.Time
 	var err error
-	if len(val) <= len(analyzeLocalTimeFormat) {
-		t, err = time.ParseInLocation(analyzeLocalTimeFormat, val, s.TimeZone)
+	if len(val) <= len(localDayTimeFormat) {
+		t, err = time.ParseInLocation(localDayTimeFormat, val, s.TimeZone)
 	} else {
-		t, err = time.ParseInLocation(AnalyzeFullTimeFormat, val, s.TimeZone)
+		t, err = time.ParseInLocation(FullDayTimeFormat, val, s.TimeZone)
 	}
 	if err != nil {
 		return "", err
 	}
-	return t.Format(AnalyzeFullTimeFormat), nil
+	return t.Format(FullDayTimeFormat), nil
+}
+
+// serverGlobalVariable is used to handle variables that acts in server and global scope.
+type serverGlobalVariable struct {
+	sync.Mutex
+	serverVal string
+	globalVal string
+}
+
+// Set sets the value according to variable scope.
+func (v *serverGlobalVariable) Set(val string, isServer bool) {
+	v.Lock()
+	if isServer {
+		v.serverVal = val
+	} else {
+		v.globalVal = val
+	}
+	v.Unlock()
+}
+
+// GetVal gets the value.
+func (v *serverGlobalVariable) GetVal() string {
+	v.Lock()
+	defer v.Unlock()
+	if v.serverVal != "" {
+		return v.serverVal
+	}
+	return v.globalVal
 }

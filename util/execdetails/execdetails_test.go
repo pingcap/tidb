@@ -14,11 +14,19 @@
 package execdetails
 
 import (
+	"fmt"
+	"sync"
 	"testing"
 	"time"
 
+	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tipb/go-tipb"
 )
+
+func TestT(t *testing.T) {
+	TestingT(t)
+}
 
 func TestString(t *testing.T) {
 	detail := &ExecDetails{
@@ -33,7 +41,18 @@ func TestString(t *testing.T) {
 			PrewriteTime:      time.Second,
 			CommitTime:        time.Second,
 			LocalLatchTime:    time.Second,
-			TotalBackoffTime:  time.Second,
+			CommitBackoffTime: int64(time.Second),
+			Mu: struct {
+				sync.Mutex
+				BackoffTypes []fmt.Stringer
+			}{BackoffTypes: []fmt.Stringer{
+				stringutil.MemoizeStr(func() string {
+					return "backoff1"
+				}),
+				stringutil.MemoizeStr(func() string {
+					return "backoff2"
+				}),
+			}},
 			ResolveLockTime:   1000000000, // 10^9 ns = 1s
 			WriteKeys:         1,
 			WriteSize:         1,
@@ -42,7 +61,7 @@ func TestString(t *testing.T) {
 		},
 	}
 	expected := "Process_time: 2.005 Wait_time: 1 Backoff_time: 1 Request_count: 1 Total_keys: 100 Process_keys: 10 Prewrite_time: 1 Commit_time: 1 " +
-		"Get_commit_ts_time: 1 Total_backoff_time: 1 Resolve_lock_time: 1 Local_latch_wait_time: 1 Write_keys: 1 Write_size: 1 Prewrite_region: 1 Txn_retry: 1"
+		"Get_commit_ts_time: 1 Commit_backoff_time: 1 Backoff_types: [backoff1 backoff2] Resolve_lock_time: 1 Local_latch_wait_time: 1 Write_keys: 1 Write_size: 1 Prewrite_region: 1 Txn_retry: 1"
 	if str := detail.String(); str != expected {
 		t.Errorf("got:\n%s\nexpected:\n%s", str, expected)
 	}
@@ -89,5 +108,26 @@ func TestCopRuntimeStats(t *testing.T) {
 	}
 	if stats.ExistsRootStats("table_reader") == false {
 		t.Fatal("table_reader not exists")
+	}
+}
+
+func TestReaderStats(t *testing.T) {
+	r := new(ReaderRuntimeStats)
+	if r.String() != "" {
+		t.Fatal()
+	}
+
+	r.procKeys = append(r.procKeys, 100)
+	r.copRespTime = append(r.copRespTime, time.Millisecond*100)
+	if r.String() != "rpc num: 1, rpc time:100ms, proc keys:100" {
+		t.Fatal()
+	}
+
+	for i := 0; i < 100; i++ {
+		r.procKeys = append(r.procKeys, int64(i))
+		r.copRespTime = append(r.copRespTime, time.Millisecond*time.Duration(i))
+	}
+	if r.String() != "rpc num: 101, rpc max:100ms, min:0s, avg:50ms, p80:80ms, p95:95ms, proc keys max:100, p95:95" {
+		t.Fatal()
 	}
 }

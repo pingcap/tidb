@@ -30,6 +30,13 @@ func EncodeDecimal(b []byte, dec *types.MyDecimal, precision, frac int) ([]byte,
 	return b, errors.Trace(err)
 }
 
+func valueSizeOfDecimal(dec *types.MyDecimal, precision, frac int) int {
+	if precision == 0 {
+		precision, frac = dec.PrecisionAndFrac()
+	}
+	return types.DecimalBinSize(precision, frac) + 2
+}
+
 // DecodeDecimal decodes bytes to decimal.
 func DecodeDecimal(b []byte) ([]byte, *types.MyDecimal, int, int, error) {
 	failpoint.Inject("errorInDecodeDecimal", func(val failpoint.Value) {

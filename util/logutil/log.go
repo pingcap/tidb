@@ -18,16 +18,19 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"path"
+	"path/filepath"
 	"runtime"
 	"sort"
 	"strings"
 	"time"
 
+	"github.com/opentracing/opentracing-go"
+	tlog "github.com/opentracing/opentracing-go/log"
 	"github.com/pingcap/errors"
 	zaplog "github.com/pingcap/log"
 	log "github.com/sirupsen/logrus"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 	"gopkg.in/natefinch/lumberjack.v2"
 )
 
@@ -41,7 +44,11 @@ const (
 	// DefaultSlowThreshold is the default slow log threshold in millisecond.
 	DefaultSlowThreshold = 300
 	// DefaultQueryLogMaxLen is the default max length of the query in the log.
-	DefaultQueryLogMaxLen = 2048
+	DefaultQueryLogMaxLen = 4096
+	// DefaultRecordPlanInSlowLog is the default value for whether enable log query plan in the slow log.
+	DefaultRecordPlanInSlowLog = 1
+	// DefaultTiDBEnableSlowLog enables TiDB to log slow queries.
+	DefaultTiDBEnableSlowLog = 1
 )
 
 // EmptyFileLogConfig is an empty FileLogConfig.
@@ -53,10 +60,9 @@ type FileLogConfig struct {
 }
 
 // NewFileLogConfig creates a FileLogConfig.
-func NewFileLogConfig(rotate bool, maxSize uint) FileLogConfig {
+func NewFileLogConfig(maxSize uint) FileLogConfig {
 	return FileLogConfig{FileLogConfig: zaplog.FileLogConfig{
-		LogRotate: rotate,
-		MaxSize:   int(maxSize),
+		MaxSize: int(maxSize),
 	},
 	}
 }
@@ -70,8 +76,8 @@ type LogConfig struct {
 }
 
 // NewLogConfig creates a LogConfig.
-func NewLogConfig(level, format, slowQueryFile string, fileCfg FileLogConfig, disableTimestamp bool) *LogConfig {
-	return &LogConfig{
+func NewLogConfig(level, format, slowQueryFile string, fileCfg FileLogConfig, disableTimestamp bool, opts ...func(*zaplog.Config)) *LogConfig {
+	c := &LogConfig{
 		Config: zaplog.Config{
 			Level:            level,
 			Format:           format,
@@ -80,6 +86,10 @@ func NewLogConfig(level, format, slowQueryFile string, fileCfg FileLogConfig, di
 		},
 		SlowQueryFile: slowQueryFile,
 	}
+	for _, opt := range opts {
+		opt(&c.Config)
+	}
+	return c
 }
 
 // isSKippedPackageName tests wether path name is on log library calling stack.
@@ -102,7 +112,7 @@ func (hook *contextHook) Fire(entry *log.Entry) error {
 		name := fu.Name()
 		if !isSkippedPackageName(name) {
 			file, line := fu.FileLine(pc[i] - 1)
-			entry.Data["file"] = path.Base(file)
+			entry.Data["file"] = filepath.Base(file)
 			entry.Data["line"] = line
 			break
 		}
@@ -277,7 +287,7 @@ func InitLogger(cfg *LogConfig) error {
 
 // InitZapLogger initializes a zap logger with cfg.
 func InitZapLogger(cfg *LogConfig) error {
-	gl, props, err := zaplog.InitLogger(&cfg.Config)
+	gl, props, err := zaplog.InitLogger(&cfg.Config, zap.AddStacktrace(zapcore.FatalLevel))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -285,9 +295,8 @@ func InitZapLogger(cfg *LogConfig) error {
 
 	if len(cfg.SlowQueryFile) != 0 {
 		sqfCfg := zaplog.FileLogConfig{
-			LogRotate: cfg.File.LogRotate,
-			MaxSize:   cfg.File.MaxSize,
-			Filename:  cfg.SlowQueryFile,
+			MaxSize:  cfg.File.MaxSize,
+			Filename: cfg.SlowQueryFile,
 		}
 		sqCfg := &zaplog.Config{
 			Level:            cfg.Level,
@@ -317,9 +326,9 @@ func SetLevel(level string) error {
 	return nil
 }
 
-type ctxKeyType int
+type ctxLogKeyType struct{}
 
-const ctxLogKey ctxKeyType = iota
+var ctxLogKey = ctxLogKeyType{}
 
 // Logger gets a contextual logger from current context.
 // contextual logger will output common fields from context.
@@ -355,4 +364,28 @@ func WithKeyValue(ctx context.Context, key, value string) context.Context {
 		logger = zaplog.L()
 	}
 	return context.WithValue(ctx, ctxLogKey, logger.With(zap.String(key, value)))
+}
+
+// TraceEventKey presents the TraceEventKey in span log.
+const TraceEventKey = "event"
+
+// Event records event in current tracing span.
+func Event(ctx context.Context, event string) {
+	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
+		span.LogFields(tlog.String(TraceEventKey, event))
+	}
+}
+
+// Eventf records event in current tracing span with format support.
+func Eventf(ctx context.Context, format string, args ...interface{}) {
+	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
+		span.LogFields(tlog.String(TraceEventKey, fmt.Sprintf(format, args...)))
+	}
+}
+
+// SetTag sets tag kv-pair in current tracing span
+func SetTag(ctx context.Context, key string, value interface{}) {
+	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
+		span.SetTag(key, value)
+	}
 }

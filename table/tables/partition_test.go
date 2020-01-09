@@ -18,11 +18,14 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/model"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
@@ -83,10 +86,10 @@ PARTITION BY RANGE ( id ) (
 	// Check that add record writes to the partition, rather than the table.
 	txn, err := ts.se.Txn(true)
 	c.Assert(err, IsNil)
-	val, err := txn.Get(tables.PartitionRecordKey(p0.ID, rid))
+	val, err := txn.Get(context.TODO(), tables.PartitionRecordKey(p0.ID, rid))
 	c.Assert(err, IsNil)
 	c.Assert(len(val), Greater, 0)
-	_, err = txn.Get(tables.PartitionRecordKey(tbInfo.ID, rid))
+	_, err = txn.Get(context.TODO(), tables.PartitionRecordKey(tbInfo.ID, rid))
 	c.Assert(kv.ErrNotExist.Equal(err), IsTrue)
 
 	// Cover more code.
@@ -174,10 +177,10 @@ func (ts *testSuite) TestHashPartitionAddRecord(c *C) {
 	// Check that add record writes to the partition, rather than the table.
 	txn, err := ts.se.Txn(true)
 	c.Assert(err, IsNil)
-	val, err := txn.Get(tables.PartitionRecordKey(p0.ID, rid))
+	val, err := txn.Get(context.TODO(), tables.PartitionRecordKey(p0.ID, rid))
 	c.Assert(err, IsNil)
 	c.Assert(len(val), Greater, 0)
-	_, err = txn.Get(tables.PartitionRecordKey(tbInfo.ID, rid))
+	_, err = txn.Get(context.TODO(), tables.PartitionRecordKey(tbInfo.ID, rid))
 	c.Assert(kv.ErrNotExist.Equal(err), IsTrue)
 
 	// Cover more code.
@@ -210,10 +213,10 @@ func (ts *testSuite) TestHashPartitionAddRecord(c *C) {
 		c.Assert(err, IsNil)
 		txn, err = ts.se.Txn(true)
 		c.Assert(err, IsNil)
-		val, err = txn.Get(tables.PartitionRecordKey(tbInfo.Partition.Definitions[i].ID, rid))
+		val, err = txn.Get(context.TODO(), tables.PartitionRecordKey(tbInfo.Partition.Definitions[i].ID, rid))
 		c.Assert(err, IsNil)
 		c.Assert(len(val), Greater, 0)
-		_, err = txn.Get(tables.PartitionRecordKey(tbInfo.ID, rid))
+		_, err = txn.Get(context.TODO(), tables.PartitionRecordKey(tbInfo.ID, rid))
 		c.Assert(kv.ErrNotExist.Equal(err), IsTrue)
 	}
 	_, err = ts.se.Execute(context.Background(), "drop table if exists t1, t2;")
@@ -262,20 +265,22 @@ func (ts *testSuite) TestGeneratePartitionExpr(c *C) {
 	tbl, err := ts.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
 	c.Assert(err, IsNil)
 	type partitionExpr interface {
-		PartitionExpr() *tables.PartitionExpr
+		PartitionExpr(ctx sessionctx.Context, columns []*expression.Column, names types.NameSlice) (*tables.PartitionExpr, error)
 	}
-	pe := tbl.(partitionExpr).PartitionExpr()
-	c.Assert(pe.Column.TblName.L, Equals, "t1")
-	c.Assert(pe.Column.ColName.L, Equals, "id")
+	ctx := mock.NewContext()
+	columns, names := expression.ColumnInfos2ColumnsAndNames(ctx, model.NewCIStr("test"), tbl.Meta().Name, tbl.Meta().Columns)
+	pe, err := tbl.(partitionExpr).PartitionExpr(ctx, columns, names)
+	c.Assert(err, IsNil)
+	c.Assert(pe.Column.ID, Equals, int64(1))
 
 	ranges := []string{
-		"or(lt(t1.id, 4), isnull(t1.id))",
-		"and(lt(t1.id, 7), ge(t1.id, 4))",
-		"and(1, ge(t1.id, 7))",
+		"or(lt(test.t1.id, 4), isnull(test.t1.id))",
+		"and(lt(test.t1.id, 7), ge(test.t1.id, 4))",
+		"and(1, ge(test.t1.id, 7))",
 	}
 	upperBounds := []string{
-		"lt(t1.id, 4)",
-		"lt(t1.id, 7)",
+		"lt(test.t1.id, 4)",
+		"lt(test.t1.id, 7)",
 		"1",
 	}
 	for i, expr := range pe.Ranges {
@@ -284,4 +289,20 @@ func (ts *testSuite) TestGeneratePartitionExpr(c *C) {
 	for i, expr := range pe.UpperBounds {
 		c.Assert(expr.String(), Equals, upperBounds[i])
 	}
+}
+
+func (ts *testSuite) TestLocateRangePartitionErr(c *C) {
+	tk := testkit.NewTestKitWithInit(c, ts.store)
+	tk.MustExec("use test")
+	tk.MustExec(`CREATE TABLE t_month_data_monitor (
+		id int(20) NOT NULL AUTO_INCREMENT,
+		data_date date NOT NULL,
+		PRIMARY KEY (id, data_date)
+	) PARTITION BY RANGE COLUMNS(data_date) (
+		PARTITION p20190401 VALUES LESS THAN ('2019-04-02'),
+		PARTITION p20190402 VALUES LESS THAN ('2019-04-03')
+	)`)
+
+	_, err := tk.Exec("INSERT INTO t_month_data_monitor VALUES (4, '2019-04-04')")
+	c.Assert(table.ErrNoPartitionForGivenValue.Equal(err), IsTrue)
 }

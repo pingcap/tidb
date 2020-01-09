@@ -16,6 +16,7 @@ package executor
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"sort"
 	"time"
 
@@ -23,9 +24,15 @@ import (
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"go.uber.org/zap"
 	"sourcegraph.com/sourcegraph/appdash"
 	traceImpl "sourcegraph.com/sourcegraph/appdash/opentracing"
 )
@@ -59,25 +66,36 @@ func (e *TraceExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		return nil
 	}
 
+	switch e.format {
+	case core.TraceFormatLog:
+		return e.nextTraceLog(ctx, se, req)
+	default:
+		return e.nextRowJSON(ctx, se, req)
+	}
+}
+
+func (e *TraceExec) nextTraceLog(ctx context.Context, se sqlexec.SQLExecutor, req *chunk.Chunk) error {
+	recorder := basictracer.NewInMemoryRecorder()
+	tracer := basictracer.New(recorder)
+	span := tracer.StartSpan("trace")
+	ctx = opentracing.ContextWithSpan(ctx, span)
+
+	e.executeChild(ctx, se)
+	span.Finish()
+
+	generateLogResult(recorder.GetSpans(), req)
+	e.exhausted = true
+	return nil
+}
+
+func (e *TraceExec) nextRowJSON(ctx context.Context, se sqlexec.SQLExecutor, req *chunk.Chunk) error {
 	store := appdash.NewMemoryStore()
 	tracer := traceImpl.NewTracer(store)
 	span := tracer.StartSpan("trace")
-	defer span.Finish()
 	ctx = opentracing.ContextWithSpan(ctx, span)
-	recordSets, err := se.Execute(ctx, e.stmtNode.Text())
-	if err != nil {
-		return errors.Trace(err)
-	}
 
-	for _, rs := range recordSets {
-		_, err = drainRecordSet(ctx, e.ctx, rs)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if err = rs.Close(); err != nil {
-			return errors.Trace(err)
-		}
-	}
+	e.executeChild(ctx, se)
+	span.Finish()
 
 	traces, err := store.Traces(appdash.TracesOpts{})
 	if err != nil {
@@ -85,13 +103,12 @@ func (e *TraceExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 
 	// Row format.
-	if e.format != "json" {
+	if e.format != core.TraceFormatJSON {
 		if len(traces) < 1 {
 			e.exhausted = true
 			return nil
 		}
 		trace := traces[0]
-		sortTraceByStartTime(trace)
 		dfsTree(trace, "", false, req)
 		e.exhausted = true
 		return nil
@@ -114,42 +131,46 @@ func (e *TraceExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	return nil
 }
 
-func drainRecordSet(ctx context.Context, sctx sessionctx.Context, rs sqlexec.RecordSet) ([]chunk.Row, error) {
-	var rows []chunk.Row
-	req := rs.NewChunk()
+func (e *TraceExec) executeChild(ctx context.Context, se sqlexec.SQLExecutor) {
+	recordSets, err := se.Execute(ctx, e.stmtNode.Text())
+	if len(recordSets) == 0 {
+		if err != nil {
+			var errCode uint16
+			if te, ok := err.(*terror.Error); ok {
+				errCode = te.ToSQLError().Code
+			}
+			logutil.Eventf(ctx, "execute with error(%d): %s", errCode, err.Error())
+		} else {
+			logutil.Eventf(ctx, "execute done, modify row: %d", e.ctx.GetSessionVars().StmtCtx.AffectedRows())
+		}
+	}
+	for _, rs := range recordSets {
+		drainRecordSet(ctx, e.ctx, rs)
+		if err = rs.Close(); err != nil {
+			logutil.Logger(ctx).Error("run trace close result with error", zap.Error(err))
+		}
+	}
+}
 
+func drainRecordSet(ctx context.Context, sctx sessionctx.Context, rs sqlexec.RecordSet) {
+	req := rs.NewChunk()
+	var rowCount int
 	for {
 		err := rs.Next(ctx, req)
 		if err != nil || req.NumRows() == 0 {
-			return rows, errors.Trace(err)
+			if err != nil {
+				var errCode uint16
+				if te, ok := err.(*terror.Error); ok {
+					errCode = te.ToSQLError().Code
+				}
+				logutil.Eventf(ctx, "execute with error(%d): %s", errCode, err.Error())
+			} else {
+				logutil.Eventf(ctx, "execute done, ReturnRow: %d, ModifyRow: %d", rowCount, sctx.GetSessionVars().StmtCtx.AffectedRows())
+			}
+			return
 		}
-		iter := chunk.NewIterator4Chunk(req)
-		for r := iter.Begin(); r != iter.End(); r = iter.Next() {
-			rows = append(rows, r)
-		}
-		req = chunk.Renew(req, sctx.GetSessionVars().MaxChunkSize)
-	}
-}
-
-type sortByStartTime []*appdash.Trace
-
-func (t sortByStartTime) Len() int { return len(t) }
-func (t sortByStartTime) Less(i, j int) bool {
-	return getStartTime(t[j]).After(getStartTime(t[i]))
-}
-func (t sortByStartTime) Swap(i, j int) { t[i], t[j] = t[j], t[i] }
-
-func getStartTime(trace *appdash.Trace) (t time.Time) {
-	if e, err := trace.TimespanEvent(); err == nil {
-		t = e.Start()
-	}
-	return
-}
-
-func sortTraceByStartTime(trace *appdash.Trace) {
-	sort.Sort(sortByStartTime(trace.Sub))
-	for _, t := range trace.Sub {
-		sortTraceByStartTime(t)
+		rowCount += req.NumRows()
+		req.Reset()
 	}
 }
 
@@ -179,7 +200,45 @@ func dfsTree(t *appdash.Trace, prefix string, isLast bool, chk *chunk.Chunk) {
 	chk.AppendString(1, start.Format("15:04:05.000000"))
 	chk.AppendString(2, duration.String())
 
+	// Sort events by their start time
+	sort.Slice(t.Sub, func(i, j int) bool {
+		var istart, jstart time.Time
+		if ievent, err := t.Sub[i].TimespanEvent(); err == nil {
+			istart = ievent.Start()
+		}
+		if jevent, err := t.Sub[j].TimespanEvent(); err == nil {
+			jstart = jevent.Start()
+		}
+		return istart.Before(jstart)
+	})
+
 	for i, sp := range t.Sub {
 		dfsTree(sp, newPrefix, i == (len(t.Sub))-1 /*last element of array*/, chk)
+	}
+}
+
+func generateLogResult(allSpans []basictracer.RawSpan, chk *chunk.Chunk) {
+	for rIdx := range allSpans {
+		span := &allSpans[rIdx]
+
+		chk.AppendTime(0, types.NewTime(types.FromGoTime(span.Start), mysql.TypeTimestamp, 6))
+		chk.AppendString(1, "--- start span "+span.Operation+" ----")
+		chk.AppendString(2, "")
+		chk.AppendString(3, span.Operation)
+
+		var tags string
+		if len(span.Tags) > 0 {
+			tags = fmt.Sprintf("%v", span.Tags)
+		}
+		for _, l := range span.Logs {
+			for _, field := range l.Fields {
+				if field.Key() == logutil.TraceEventKey {
+					chk.AppendTime(0, types.NewTime(types.FromGoTime(l.Timestamp), mysql.TypeTimestamp, 6))
+					chk.AppendString(1, field.Value().(string))
+					chk.AppendString(2, tags)
+					chk.AppendString(3, span.Operation)
+				}
+			}
+		}
 	}
 }

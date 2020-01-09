@@ -85,7 +85,7 @@ type AuditManifest struct {
 	OnParseEvent func(ctx context.Context, sctx *variable.SessionVars, event ParseEvent) error
 }
 
-const (
-	// ExecStartTimeCtxKey indicates stmt start execution time.
-	ExecStartTimeCtxKey = "ExecStartTime"
-)
+type execStartTimeCtxKeyType struct{}
+
+// ExecStartTimeCtxKey indicates stmt start execution time.
+var ExecStartTimeCtxKey = execStartTimeCtxKeyType{}

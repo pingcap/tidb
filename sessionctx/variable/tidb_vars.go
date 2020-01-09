@@ -17,6 +17,7 @@ import (
 	"os"
 
 	"github.com/pingcap/parser/mysql"
+	"github.com/uber-go/atomic"
 )
 
 /*
@@ -29,7 +30,8 @@ import (
 	5. Update the `NewSessionVars` function to set the field to its default value.
 	6. Update the `variable.SetSessionSystemVar` function to use the new value when SET statement is executed.
 	7. If it is a global variable, add it in `session.loadCommonGlobalVarsSQL`.
-	8. Use this variable to control the behavior in code.
+	8. Update ValidateSetSystemVar if the variable's value need to be validated.
+	9. Use this variable to control the behavior in code.
 */
 
 // TiDB system variable names that only in session scope.
@@ -92,7 +94,8 @@ const (
 	// "tidb_mem_quota_indexlookupreader":	control the memory quota of "IndexLookUpExecutor".
 	// "tidb_mem_quota_indexlookupjoin":	control the memory quota of "IndexLookUpJoin".
 	// "tidb_mem_quota_nestedloopapply": 	control the memory quota of "NestedLoopApplyExec".
-	TIDBMemQuotaQuery             = "tidb_mem_quota_query"             // Bytes.
+	TIDBMemQuotaQuery = "tidb_mem_quota_query" // Bytes.
+	// TODO: remove them below sometime, it should have only one Quota(TIDBMemQuotaQuery).
 	TIDBMemQuotaHashJoin          = "tidb_mem_quota_hashjoin"          // Bytes.
 	TIDBMemQuotaMergeJoin         = "tidb_mem_quota_mergejoin"         // Bytes.
 	TIDBMemQuotaSort              = "tidb_mem_quota_sort"              // Bytes.
@@ -104,8 +107,17 @@ const (
 	// tidb_general_log is used to log every query in the server in info level.
 	TiDBGeneralLog = "tidb_general_log"
 
+	// tidb_pprof_sql_cpu is used to add label sql label to pprof result.
+	TiDBPProfSQLCPU = "tidb_pprof_sql_cpu"
+
 	// tidb_slow_log_threshold is used to set the slow log threshold in the server.
 	TiDBSlowLogThreshold = "tidb_slow_log_threshold"
+
+	// tidb_record_plan_in_slow_log is used to log the plan of the slow query.
+	TiDBRecordPlanInSlowLog = "tidb_record_plan_in_slow_log"
+
+	// tidb_enable_slow_log enables TiDB to log slow queries.
+	TiDBEnableSlowLog = "tidb_enable_slow_log"
 
 	// tidb_query_log_max_len is used to set the max length of the query in the log.
 	TiDBQueryLogMaxLen = "tidb_query_log_max_len"
@@ -119,11 +131,17 @@ const (
 	// tidb_enable_streaming enables TiDB to use streaming API for coprocessor requests.
 	TiDBEnableStreaming = "tidb_enable_streaming"
 
+	// tidb_enable_chunk_rpc enables TiDB to use Chunk format for coprocessor requests.
+	TiDBEnableChunkRPC = "tidb_enable_chunk_rpc"
+
 	// tidb_optimizer_selectivity_level is used to control the selectivity estimation level.
 	TiDBOptimizerSelectivityLevel = "tidb_optimizer_selectivity_level"
 
 	// tidb_txn_mode is used to control the transaction behavior.
 	TiDBTxnMode = "tidb_txn_mode"
+
+	// tidb_row_format_version is used to control tidb row format version current.
+	TiDBRowFormatVersion = "tidb_row_format_version"
 
 	// tidb_enable_table_partition is used to control table partition feature.
 	// The valid value include auto/on/off:
@@ -141,6 +159,20 @@ const (
 
 	// TiDBLowResolutionTSO is used for reading data with low resolution TSO which is updated once every two seconds
 	TiDBLowResolutionTSO = "tidb_low_resolution_tso"
+
+	// TiDBReplicaRead is used for reading data from replicas, followers for example.
+	TiDBReplicaRead = "tidb_replica_read"
+
+	// TiDBAllowRemoveAutoInc indicates whether a user can drop the auto_increment column attribute or not.
+	TiDBAllowRemoveAutoInc = "tidb_allow_remove_auto_inc"
+
+	// TiDBEvolvePlanTaskMaxTime controls the max time of a single evolution task.
+	TiDBEvolvePlanTaskMaxTime = "tidb_evolve_plan_task_max_time"
+
+	// TiDBEvolvePlanTaskStartTime is the start time of evolution task.
+	TiDBEvolvePlanTaskStartTime = "tidb_evolve_plan_task_start_time"
+	// TiDBEvolvePlanTaskEndTime is the end time of evolution task.
+	TiDBEvolvePlanTaskEndTime = "tidb_evolve_plan_task_end_time"
 )
 
 // TiDB system variable names that both in session and global scope.
@@ -163,6 +195,25 @@ const (
 
 	// tidb_opt_correlation_exp_factor is an exponential factor to control heuristic approach when tidb_opt_correlation_threshold is not satisfied.
 	TiDBOptCorrelationExpFactor = "tidb_opt_correlation_exp_factor"
+
+	// tidb_opt_cpu_factor is the CPU cost of processing one expression for one row.
+	TiDBOptCPUFactor = "tidb_opt_cpu_factor"
+	// tidb_opt_copcpu_factor is the CPU cost of processing one expression for one row in coprocessor.
+	TiDBOptCopCPUFactor = "tidb_opt_copcpu_factor"
+	// tidb_opt_network_factor is the network cost of transferring 1 byte data.
+	TiDBOptNetworkFactor = "tidb_opt_network_factor"
+	// tidb_opt_scan_factor is the IO cost of scanning 1 byte data on TiKV.
+	TiDBOptScanFactor = "tidb_opt_scan_factor"
+	// tidb_opt_desc_factor is the IO cost of scanning 1 byte data on TiKV in desc order.
+	TiDBOptDescScanFactor = "tidb_opt_desc_factor"
+	// tidb_opt_seek_factor is the IO cost of seeking the start value in a range on TiKV or TiFlash.
+	TiDBOptSeekFactor = "tidb_opt_seek_factor"
+	// tidb_opt_memory_factor is the memory cost of storing one tuple.
+	TiDBOptMemoryFactor = "tidb_opt_memory_factor"
+	// tidb_opt_disk_factor is the IO cost of reading/writing one byte to temporary disk.
+	TiDBOptDiskFactor = "tidb_opt_disk_factor"
+	// tidb_opt_concurrency_factor is the CPU cost of additional one goroutine.
+	TiDBOptConcurrencyFactor = "tidb_opt_concurrency_factor"
 
 	// tidb_index_join_batch_size is used to set the batch size of a index lookup join.
 	// The index lookup join fetches batches of data from outer executor and constructs ranges for inner executor.
@@ -225,11 +276,11 @@ const (
 	// tidb_backoff_lock_fast is used for tikv backoff base time in milliseconds.
 	TiDBBackoffLockFast = "tidb_backoff_lock_fast"
 
-	// tidb_back_off_weight is used to control the max back off time in TiDB.
+	// tidb_backoff_weight is used to control the max back off time in TiDB.
 	// The default maximum back off time is a small value.
 	// BackOffWeight could multiply it to let the user adjust the maximum time for retrying.
 	// Only positive integers can be accepted, which means that the maximum back off time can only grow.
-	TiDBBackOffWeight = "tidb_back_off_weight"
+	TiDBBackOffWeight = "tidb_backoff_weight"
 
 	// tidb_ddl_reorg_worker_cnt defines the count of ddl reorg workers.
 	TiDBDDLReorgWorkerCount = "tidb_ddl_reorg_worker_cnt"
@@ -243,6 +294,10 @@ const (
 	// tidb_ddl_reorg_priority defines the operations priority of adding indices.
 	// It can be: PRIORITY_LOW, PRIORITY_NORMAL, PRIORITY_HIGH
 	TiDBDDLReorgPriority = "tidb_ddl_reorg_priority"
+
+	// tidb_max_delta_schema_count defines the max length of deltaSchemaInfos.
+	// deltaSchemaInfos is a queue that maintains the history of schema changes.
+	TiDBMaxDeltaSchemaCount = "tidb_max_delta_schema_count"
 
 	// tidb_scatter_region will scatter the regions for DDLs when it is ON.
 	TiDBScatterRegion = "tidb_scatter_region"
@@ -268,6 +323,9 @@ const (
 	// tidb_enable_window_function is used to control whether to enable the window function.
 	TiDBEnableWindowFunction = "tidb_enable_window_function"
 
+	// tidb_enable_vectorized_expression is used to control whether to enable the vectorized expression evaluation.
+	TiDBEnableVectorizedExpression = "tidb_enable_vectorized_expression"
+
 	// TIDBOptJoinReorderThreshold defines the threshold less than which
 	// we'll choose a rather time consuming algorithm to calculate the join order.
 	TiDBOptJoinReorderThreshold = "tidb_opt_join_reorder_threshold"
@@ -286,6 +344,37 @@ const (
 
 	// TiDBEnableNoopFuncs set true will enable using fake funcs(like get_lock release_lock)
 	TiDBEnableNoopFuncs = "tidb_enable_noop_functions"
+
+	// TiDBEnableStmtSummary indicates whether the statement summary is enabled.
+	TiDBEnableStmtSummary = "tidb_enable_stmt_summary"
+
+	// TiDBStmtSummaryRefreshInterval indicates the refresh interval in seconds for each statement summary.
+	TiDBStmtSummaryRefreshInterval = "tidb_stmt_summary_refresh_interval"
+
+	// TiDBStmtSummaryHistorySize indicates the history size of each statement summary.
+	TiDBStmtSummaryHistorySize = "tidb_stmt_summary_history_size"
+
+	// TiDBCapturePlanBaseline indicates whether the capture of plan baselines is enabled.
+	TiDBCapturePlanBaseline = "tidb_capture_plan_baselines"
+
+	// TiDBUsePlanBaselines indicates whether the use of plan baselines is enabled.
+	TiDBUsePlanBaselines = "tidb_use_plan_baselines"
+
+	// TiDBEvolvePlanBaselines indicates whether the evolution of plan baselines is enabled.
+	TiDBEvolvePlanBaselines = "tidb_evolve_plan_baselines"
+
+	// TiDBIsolationReadEngines indicates the tidb only read from the stores whose engine type is involved in IsolationReadEngines.
+	// Now, only support TiKV and TiFlash.
+	TiDBIsolationReadEngines = "tidb_isolation_read_engines"
+
+	// TiDBStoreLimit indicates the limit of sending request to a store, 0 means without limit.
+	TiDBStoreLimit = "tidb_store_limit"
+
+	// TiDBMetricSchemaStep indicates the step when query metric schema.
+	TiDBMetricSchemaStep = "tidb_metric_query_step"
+
+	// TiDBMetricSchemaRangeDuration indicates the range duration when query metric schema.
+	TiDBMetricSchemaRangeDuration = "tidb_metric_query_range_duration"
 )
 
 // Default TiDB system variable values.
@@ -301,12 +390,23 @@ const (
 	DefAutoAnalyzeRatio                = 0.5
 	DefAutoAnalyzeStartTime            = "00:00 +0000"
 	DefAutoAnalyzeEndTime              = "23:59 +0000"
+	DefAutoIncrementIncrement          = 1
+	DefAutoIncrementOffset             = 1
 	DefChecksumTableConcurrency        = 4
 	DefSkipUTF8Check                   = false
 	DefOptAggPushDown                  = false
 	DefOptWriteRowID                   = false
 	DefOptCorrelationThreshold         = 0.9
 	DefOptCorrelationExpFactor         = 1
+	DefOptCPUFactor                    = 3.0
+	DefOptCopCPUFactor                 = 3.0
+	DefOptNetworkFactor                = 1.0
+	DefOptScanFactor                   = 1.5
+	DefOptDescScanFactor               = 3.0
+	DefOptSeekFactor                   = 20.0
+	DefOptMemoryFactor                 = 0.001
+	DefOptDiskFactor                   = 1.5
+	DefOptConcurrencyFactor            = 3.0
 	DefOptInSubqToJoinAndAgg           = true
 	DefBatchInsert                     = false
 	DefBatchDelete                     = false
@@ -326,6 +426,7 @@ const (
 	DefTiDBMemQuotaNestedLoopApply     = 32 << 30 // 32GB.
 	DefTiDBMemQuotaDistSQL             = 32 << 30 // 32GB.
 	DefTiDBGeneralLog                  = 0
+	DefTiDBPProfSQLCPU                 = 0
 	DefTiDBRetryLimit                  = 10
 	DefTiDBDisableTxnAutoRetry         = true
 	DefTiDBConstraintCheckInPlace      = false
@@ -333,14 +434,18 @@ const (
 	DefTiDBProjectionConcurrency       = 4
 	DefTiDBOptimizerSelectivityLevel   = 0
 	DefTiDBTxnMode                     = ""
-	DefTiDBDDLReorgWorkerCount         = 16
-	DefTiDBDDLReorgBatchSize           = 1024
+	DefTiDBRowFormatV1                 = 1
+	DefTiDBRowFormatV2                 = 2
+	DefTiDBDDLReorgWorkerCount         = 4
+	DefTiDBDDLReorgBatchSize           = 256
 	DefTiDBDDLErrorCountLimit          = 512
+	DefTiDBMaxDeltaSchemaCount         = 1024
 	DefTiDBHashAggPartialConcurrency   = 4
 	DefTiDBHashAggFinalConcurrency     = 4
 	DefTiDBForcePriority               = mysql.NoPriority
 	DefTiDBUseRadixJoin                = false
 	DefEnableWindowFunction            = true
+	DefEnableVectorizedExpression      = true
 	DefTiDBOptJoinReorderThreshold     = 0
 	DefTiDBDDLSlowOprThreshold         = 300
 	DefTiDBUseFastAnalyze              = false
@@ -350,15 +455,28 @@ const (
 	DefTiDBWaitSplitRegionFinish       = true
 	DefWaitSplitRegionTimeout          = 300 // 300s
 	DefTiDBEnableNoopFuncs             = false
+	DefTiDBAllowRemoveAutoInc          = false
+	DefTiDBUsePlanBaselines            = true
+	DefTiDBEvolvePlanBaselines         = false
+	DefTiDBEvolvePlanTaskMaxTime       = 600 // 600s
+	DefTiDBEvolvePlanTaskStartTime     = "00:00 +0000"
+	DefTiDBEvolvePlanTaskEndTime       = "23:59 +0000"
+	DefInnodbLockWaitTimeout           = 50 // 50s
+	DefTiDBStoreLimit                  = 0
+	DefTiDBMetricSchemaStep            = 60 // 60s
+	DefTiDBMetricSchemaRangeDuration   = 60 // 60s
+
 )
 
 // Process global variables.
 var (
 	ProcessGeneralLog      uint32
+	EnablePProfSQLCPU            = atomic.NewBool(false)
 	ddlReorgWorkerCounter  int32 = DefTiDBDDLReorgWorkerCount
 	maxDDLReorgWorkerCount int32 = 128
 	ddlReorgBatchSize      int32 = DefTiDBDDLReorgBatchSize
 	ddlErrorCountlimit     int64 = DefTiDBDDLErrorCountLimit
+	maxDeltaSchemaCount    int64 = DefTiDBMaxDeltaSchemaCount
 	// Export for testing.
 	MaxDDLReorgBatchSize int32 = 10240
 	MinDDLReorgBatchSize int32 = 32
@@ -369,4 +487,5 @@ var (
 	MaxOfMaxAllowedPacket          uint64 = 1073741824
 	ExpensiveQueryTimeThreshold    uint64 = DefTiDBExpensiveQueryTimeThreshold
 	MinExpensiveQueryTimeThreshold uint64 = 10 //10s
+	CapturePlanBaseline                   = serverGlobalVariable{globalVal: "0"}
 )

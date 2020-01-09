@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -64,10 +65,14 @@ func (h *rpcHandler) handleAnalyzeIndexReq(req *coprocessor.Request, analyzeReq 
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	startTS := req.StartTs
+	if startTS == 0 {
+		startTS = analyzeReq.GetStartTsFallback()
+	}
 	e := &indexScanExec{
 		colsLen:        int(analyzeReq.IdxReq.NumColumns),
 		kvRanges:       ranges,
-		startTS:        analyzeReq.StartTs,
+		startTS:        startTS,
 		isolationLevel: h.isolationLevel,
 		mvccStore:      h.mvccStore,
 		IndexScan:      &tipb.IndexScan{Desc: false},
@@ -131,15 +136,42 @@ func (h *rpcHandler) handleAnalyzeColumnsReq(req *coprocessor.Request, analyzeRe
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	startTS := req.StartTs
+	if startTS == 0 {
+		startTS = analyzeReq.GetStartTsFallback()
+	}
+	colInfos := make([]rowcodec.ColInfo, len(columns))
+	for i := range columns {
+		col := columns[i]
+		colInfos[i] = rowcodec.ColInfo{
+			ID:         col.ColumnId,
+			Tp:         col.Tp,
+			Flag:       col.Flag,
+			IsPKHandle: col.GetPkHandle(),
+		}
+	}
+	defVal := func(i int) ([]byte, error) {
+		col := columns[i]
+		if col.DefaultVal == nil {
+			return nil, nil
+		}
+		// col.DefaultVal always be  varint `[flag]+[value]`.
+		if len(col.DefaultVal) < 1 {
+			panic("invalid default value")
+		}
+		return col.DefaultVal, nil
+	}
+	rd := rowcodec.NewByteDecoder(colInfos, -1, defVal, nil)
 	e := &analyzeColumnsExec{
 		tblExec: &tableScanExec{
 			TableScan:      &tipb.TableScan{Columns: columns},
 			kvRanges:       ranges,
 			colIDs:         evalCtx.colIDs,
-			startTS:        analyzeReq.GetStartTs(),
+			startTS:        startTS,
 			isolationLevel: h.isolationLevel,
 			mvccStore:      h.mvccStore,
 			execDetail:     new(execDetail),
+			rd:             rd,
 		},
 	}
 	e.fields = make([]*ast.ResultField, len(columns))

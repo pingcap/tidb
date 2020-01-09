@@ -14,6 +14,7 @@
 package kv
 
 import (
+	"context"
 	"strconv"
 
 	"github.com/pingcap/errors"
@@ -21,7 +22,7 @@ import (
 
 // IncInt64 increases the value for key k in kv store by step.
 func IncInt64(rm RetrieverMutator, k Key, step int64) (int64, error) {
-	val, err := rm.Get(k)
+	val, err := rm.Get(context.TODO(), k)
 	if IsErrNotFound(err) {
 		err = rm.Set(k, []byte(strconv.FormatInt(step, 10)))
 		if err != nil {
@@ -47,8 +48,8 @@ func IncInt64(rm RetrieverMutator, k Key, step int64) (int64, error) {
 }
 
 // GetInt64 get int64 value which created by IncInt64 method.
-func GetInt64(r Retriever, k Key) (int64, error) {
-	val, err := r.Get(k)
+func GetInt64(ctx context.Context, r Retriever, k Key) (int64, error) {
+	val, err := r.Get(ctx, k)
 	if IsErrNotFound(err) {
 		return 0, nil
 	}

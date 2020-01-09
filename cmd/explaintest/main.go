@@ -140,11 +140,11 @@ LOOP:
 				break LOOP
 			default:
 				if strings.HasPrefix(s, "--error") {
-					t.expectedErrs = strings.Split(strings.TrimSpace(strings.TrimLeft(s, "--error")), ",")
+					t.expectedErrs = strings.Split(strings.TrimSpace(strings.TrimPrefix(s, "--error")), ",")
 				} else if strings.HasPrefix(s, "-- error") {
-					t.expectedErrs = strings.Split(strings.TrimSpace(strings.TrimLeft(s, "-- error")), ",")
+					t.expectedErrs = strings.Split(strings.TrimSpace(strings.TrimPrefix(s, "-- error")), ",")
 				} else if strings.HasPrefix(s, "--echo") {
-					echo := strings.TrimSpace(strings.TrimLeft(s, "--echo"))
+					echo := strings.TrimSpace(strings.TrimPrefix(s, "--echo"))
 					t.buf.WriteString(echo)
 					t.buf.WriteString("\n")
 				}
@@ -357,10 +357,9 @@ func (t *tester) execute(query query) error {
 			gotBuf := t.buf.Bytes()[offset:]
 
 			buf := make([]byte, t.buf.Len()-offset)
-			if _, err = t.resultFD.ReadAt(buf, int64(offset)); err != nil {
+			if _, err = t.resultFD.ReadAt(buf, int64(offset)); !(err == nil || err == io.EOF) {
 				return errors.Trace(errors.Errorf("run \"%v\" at line %d err, we got \n%s\nbut read result err %s", st.Text(), query.Line, gotBuf, err))
 			}
-
 			if !bytes.Equal(gotBuf, buf) {
 				return errors.Trace(errors.Errorf("run \"%v\" at line %d err, we need:\n%s\nbut got:\n%s\n", query.Query, query.Line, buf, gotBuf))
 			}
@@ -579,17 +578,6 @@ func loadAllTests() ([]string, error) {
 	return tests, nil
 }
 
-func resultExists(name string) bool {
-	resultFile := fmt.Sprintf("./r/%s.result", name)
-
-	if _, err := os.Stat(resultFile); err != nil {
-		if os.IsNotExist(err) {
-			return false
-		}
-	}
-	return true
-}
-
 // openDBWithRetry opens a database specified by its database driver name and a
 // driver-specific data source name. And it will do some retries if the connection fails.
 func openDBWithRetry(driverName, dataSourceName string) (mdb *sql.DB, err error) {
@@ -694,7 +682,7 @@ func main() {
 		log.Info("run test ok", zap.String("test", t))
 	}
 
-	println("\nGreat, All tests passed")
+	log.Info("Explain test passed")
 }
 
 var queryStmtTable = []string{"explain", "select", "show", "execute", "describe", "desc", "admin"}

@@ -22,10 +22,12 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tidb/util/testleak"
 )
 
@@ -81,8 +83,9 @@ func (s *testTableCodecSuite) TestRowCodec(c *C) {
 	for _, col := range cols {
 		colIDs = append(colIDs, col.id)
 	}
+	rd := rowcodec.Encoder{Enable: true}
 	sc := &stmtctx.StatementContext{TimeZone: time.Local}
-	bs, err := EncodeRow(sc, row, colIDs, nil, nil)
+	bs, err := EncodeRow(sc, row, colIDs, nil, nil, &rd)
 	c.Assert(err, IsNil)
 	c.Assert(bs, NotNil)
 
@@ -105,7 +108,7 @@ func (s *testTableCodecSuite) TestRowCodec(c *C) {
 	}
 
 	// colMap may contains more columns than encoded row.
-	colMap[4] = types.NewFieldType(mysql.TypeFloat)
+	//colMap[4] = types.NewFieldType(mysql.TypeFloat)
 	r, err = DecodeRow(bs, colMap, time.UTC)
 	c.Assert(err, IsNil)
 	c.Assert(r, NotNil)
@@ -137,7 +140,7 @@ func (s *testTableCodecSuite) TestRowCodec(c *C) {
 	}
 
 	// Make sure empty row return not nil value.
-	bs, err = EncodeRow(sc, []types.Datum{}, []int64{}, nil, nil)
+	bs, err = EncodeOldRow(sc, []types.Datum{}, []int64{}, nil, nil)
 	c.Assert(err, IsNil)
 	c.Assert(bs, HasLen, 1)
 
@@ -148,11 +151,8 @@ func (s *testTableCodecSuite) TestRowCodec(c *C) {
 
 func (s *testTableCodecSuite) TestDecodeColumnValue(c *C) {
 	sc := &stmtctx.StatementContext{TimeZone: time.Local}
-	d := types.NewTimeDatum(types.Time{
-		Time: types.FromGoTime(time.Now()),
-		Type: mysql.TypeTimestamp,
-	})
-	bs, err := EncodeRow(sc, []types.Datum{d}, []int64{1}, nil, nil)
+	d := types.NewTimeDatum(types.NewTime(types.FromGoTime(time.Now()), mysql.TypeTimestamp, types.DefaultFsp))
+	bs, err := EncodeOldRow(sc, []types.Datum{d}, []int64{1}, nil, nil)
 	c.Assert(err, IsNil)
 	c.Assert(bs, NotNil)
 	_, bs, err = codec.CutOne(bs) // ignore colID
@@ -203,8 +203,9 @@ func (s *testTableCodecSuite) TestTimeCodec(c *C) {
 	for _, col := range cols {
 		colIDs = append(colIDs, col.id)
 	}
+	rd := rowcodec.Encoder{Enable: true}
 	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
-	bs, err := EncodeRow(sc, row, colIDs, nil, nil)
+	bs, err := EncodeRow(sc, row, colIDs, nil, nil, &rd)
 	c.Assert(err, IsNil)
 	c.Assert(bs, NotNil)
 
@@ -254,7 +255,7 @@ func (s *testTableCodecSuite) TestCutRow(c *C) {
 	for _, col := range cols {
 		colIDs = append(colIDs, col.id)
 	}
-	bs, err := EncodeRow(sc, row, colIDs, nil, nil)
+	bs, err := EncodeOldRow(sc, row, colIDs, nil, nil)
 	c.Assert(err, IsNil)
 	c.Assert(bs, NotNil)
 
@@ -390,7 +391,7 @@ func (s *testTableCodecSuite) TestPrefix(c *C) {
 	prefixKey := GenTableIndexPrefix(tableID)
 	c.Assert(DecodeTableID(prefixKey), Equals, tableID)
 
-	c.Assert(TruncateToRowKeyLen(append(indexPrefix, "xyz"...)), HasLen, recordRowKeyLen)
+	c.Assert(TruncateToRowKeyLen(append(indexPrefix, "xyz"...)), HasLen, RecordRowKeyLen)
 	c.Assert(TruncateToRowKeyLen(key), HasLen, len(key))
 }
 
@@ -477,6 +478,14 @@ func (s *testTableCodecSuite) TestRange(c *C) {
 	c.Assert([]byte(s2), Less, []byte(e2))
 }
 
+func (s *testTableCodecSuite) TestDecodeAutoIDMeta(c *C) {
+	keyBytes := []byte{0x6d, 0x44, 0x42, 0x3a, 0x35, 0x36, 0x0, 0x0, 0x0, 0xfc, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x68, 0x54, 0x49, 0x44, 0x3a, 0x31, 0x30, 0x38, 0x0, 0xfe}
+	key, field, err := DecodeMetaKey(kv.Key(keyBytes))
+	c.Assert(err, IsNil)
+	c.Assert(string(key), Equals, "DB:56")
+	c.Assert(string(field), Equals, "TID:108")
+}
+
 func BenchmarkHasTablePrefix(b *testing.B) {
 	k := kv.Key("foobar")
 	for i := 0; i < b.N; i++ {
@@ -509,5 +518,17 @@ func BenchmarkEncodeValue(b *testing.B) {
 			encodedCol = encodedCol[:0]
 			EncodeValue(nil, encodedCol, d)
 		}
+	}
+}
+
+func (s *testTableCodecSuite) TestError(c *C) {
+	kvErrs := []*terror.Error{
+		errInvalidKey,
+		errInvalidRecordKey,
+		errInvalidIndexKey,
+	}
+	for _, err := range kvErrs {
+		code := err.ToSQLError().Code
+		c.Assert(code != mysql.ErrUnknown && code == uint16(err.Code()), IsTrue, Commentf("err: %v", err))
 	}
 }

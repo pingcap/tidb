@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/encrypt"
+	"github.com/pingcap/tipb/go-tipb"
 )
 
 var (
@@ -72,9 +73,6 @@ var (
 	_ builtinFunc = &builtinUncompressSig{}
 	_ builtinFunc = &builtinUncompressedLengthSig{}
 )
-
-// ivSize indicates the initialization vector supplied to aes_decrypt
-const ivSize = aes.BlockSize
 
 // aesModeAttr indicates that the key length and iv attribute for specific block_encryption_mode.
 // keySize is the key length in bits and mode is the encryption mode.
@@ -126,9 +124,13 @@ func (c *aesDecryptFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 		if len(args) != 3 {
 			return nil, ErrIncorrectParameterCount.GenWithStackByArgs("aes_decrypt")
 		}
-		return &builtinAesDecryptIVSig{bf, mode}, nil
+		sig := &builtinAesDecryptIVSig{bf, mode}
+		sig.setPbCode(tipb.ScalarFuncSig_AesDecryptIV)
+		return sig, nil
 	}
-	return &builtinAesDecryptSig{bf, mode}, nil
+	sig := &builtinAesDecryptSig{bf, mode}
+	sig.setPbCode(tipb.ScalarFuncSig_AesDecrypt)
+	return sig, nil
 }
 
 type builtinAesDecryptSig struct {
@@ -253,9 +255,13 @@ func (c *aesEncryptFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 		if len(args) != 3 {
 			return nil, ErrIncorrectParameterCount.GenWithStackByArgs("aes_encrypt")
 		}
-		return &builtinAesEncryptIVSig{bf, mode}, nil
+		sig := &builtinAesEncryptIVSig{bf, mode}
+		sig.setPbCode(tipb.ScalarFuncSig_AesEncryptIV)
+		return sig, nil
 	}
-	return &builtinAesEncryptSig{bf, mode}, nil
+	sig := &builtinAesEncryptSig{bf, mode}
+	sig.setPbCode(tipb.ScalarFuncSig_AesEncrypt)
+	return sig, nil
 }
 
 type builtinAesEncryptSig struct {
@@ -368,6 +374,7 @@ func (c *decodeFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 
 	bf.tp.Flen = args[0].GetType().Flen
 	sig := &builtinDecodeSig{bf}
+	sig.setPbCode(tipb.ScalarFuncSig_Decode)
 	return sig, nil
 }
 
@@ -427,6 +434,7 @@ func (c *encodeFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 
 	bf.tp.Flen = args[0].GetType().Flen
 	sig := &builtinEncodeSig{bf}
+	sig.setPbCode(tipb.ScalarFuncSig_Encode)
 	return sig, nil
 }
 
@@ -484,6 +492,7 @@ func (c *passwordFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETString)
 	bf.tp.Flen = mysql.PWDHashLen + 1
 	sig := &builtinPasswordSig{bf}
+	sig.setPbCode(tipb.ScalarFuncSig_Password)
 	return sig, nil
 }
 
@@ -571,6 +580,7 @@ func (c *md5FunctionClass) getFunction(ctx sessionctx.Context, args []Expression
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETString)
 	bf.tp.Flen = 32
 	sig := &builtinMD5Sig{bf}
+	sig.setPbCode(tipb.ScalarFuncSig_MD5)
 	return sig, nil
 }
 
@@ -607,6 +617,7 @@ func (c *sha1FunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETString)
 	bf.tp.Flen = 40
 	sig := &builtinSHA1Sig{bf}
+	sig.setPbCode(tipb.ScalarFuncSig_SHA1)
 	return sig, nil
 }
 
@@ -647,6 +658,7 @@ func (c *sha2FunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETString, types.ETInt)
 	bf.tp.Flen = 128 // sha512
 	sig := &builtinSHA2Sig{bf}
+	sig.setPbCode(tipb.ScalarFuncSig_SHA2)
 	return sig, nil
 }
 
@@ -747,6 +759,7 @@ func (c *compressFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	bf.tp.Flen = compressBound
 	types.SetBinChsClnFlag(bf.tp)
 	sig := &builtinCompressSig{bf}
+	sig.setPbCode(tipb.ScalarFuncSig_Compress)
 	return sig, nil
 }
 
@@ -809,6 +822,7 @@ func (c *uncompressFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 	bf.tp.Flen = mysql.MaxBlobWidth
 	types.SetBinChsClnFlag(bf.tp)
 	sig := &builtinUncompressSig{bf}
+	sig.setPbCode(tipb.ScalarFuncSig_Uncompress)
 	return sig, nil
 }
 
@@ -862,6 +876,7 @@ func (c *uncompressedLengthFunctionClass) getFunction(ctx sessionctx.Context, ar
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, types.ETString)
 	bf.tp.Flen = 10
 	sig := &builtinUncompressedLengthSig{bf}
+	sig.setPbCode(tipb.ScalarFuncSig_UncompressedLength)
 	return sig, nil
 }
 

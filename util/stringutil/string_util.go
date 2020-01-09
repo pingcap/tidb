@@ -14,6 +14,7 @@
 package stringutil
 
 import (
+	"bytes"
 	"fmt"
 	"strings"
 	"unicode/utf8"
@@ -163,9 +164,6 @@ func CompilePattern(pattern string, escape byte) (patChars, patTypes []byte) {
 			}
 		case '_':
 			if lastAny {
-				patChars[patLen-1], patTypes[patLen-1] = c, patOne
-				patChars[patLen], patTypes[patLen] = '%', patAny
-				patLen++
 				continue
 			}
 			tp = patOne
@@ -188,8 +186,6 @@ func CompilePattern(pattern string, escape byte) (patChars, patTypes []byte) {
 	return
 }
 
-const caseDiff = 'a' - 'A'
-
 // NOTE: Currently tikv's like function is case sensitive, so we keep its behavior here.
 func matchByteCI(a, b byte) bool {
 	return a == b
@@ -205,36 +201,75 @@ func matchByteCI(a, b byte) bool {
 	*/
 }
 
-// DoMatch matches the string with patChars and patTypes.
-func DoMatch(str string, patChars, patTypes []byte) bool {
-	var sIdx int
+// CompileLike2Regexp convert a like `lhs` to a regular expression
+func CompileLike2Regexp(str string) string {
+	patChars, patTypes := CompilePattern(str, '\\')
+	var result []byte
 	for i := 0; i < len(patChars); i++ {
 		switch patTypes[i] {
 		case patMatch:
-			if sIdx >= len(str) || !matchByteCI(str[sIdx], patChars[i]) {
-				return false
-			}
-			sIdx++
+			result = append(result, patChars[i])
 		case patOne:
-			sIdx++
-			if sIdx > len(str) {
-				return false
+			// .*. == .*
+			if !bytes.HasSuffix(result, []byte{'.', '*'}) {
+				result = append(result, '.')
 			}
 		case patAny:
-			i++
-			if i == len(patChars) {
-				return true
+			// ..* == .*
+			if bytes.HasSuffix(result, []byte{'.'}) {
+				result = append(result, '*')
+				continue
 			}
-			for sIdx < len(str) {
-				if matchByteCI(patChars[i], str[sIdx]) && DoMatch(str[sIdx:], patChars[i:], patTypes[i:]) {
-					return true
-				}
-				sIdx++
+			// .*.* == .*
+			if !bytes.HasSuffix(result, []byte{'.', '*'}) {
+				result = append(result, '.')
+				result = append(result, '*')
 			}
-			return false
 		}
 	}
-	return sIdx == len(str)
+	return string(result)
+}
+
+// DoMatch matches the string with patChars and patTypes.
+// The algorithm has linear time complexity.
+// https://research.swtch.com/glob
+func DoMatch(str string, patChars, patTypes []byte) bool {
+	var sIdx, pIdx, nextSIdx, nextPIdx int
+	for pIdx < len(patChars) || sIdx < len(str) {
+		if pIdx < len(patChars) {
+			switch patTypes[pIdx] {
+			case patMatch:
+				if sIdx < len(str) && matchByteCI(str[sIdx], patChars[pIdx]) {
+					pIdx++
+					sIdx++
+					continue
+				}
+			case patOne:
+				if sIdx < len(str) {
+					pIdx++
+					sIdx++
+					continue
+				}
+			case patAny:
+				// Try to match at sIdx.
+				// If that doesn't work out,
+				// restart at sIdx+1 next.
+				nextPIdx = pIdx
+				nextSIdx = sIdx + 1
+				pIdx++
+				continue
+			}
+		}
+		// Mismatch. Maybe restart.
+		if 0 < nextSIdx && nextSIdx <= len(str) {
+			pIdx = nextPIdx
+			sIdx = nextSIdx
+			continue
+		}
+		return false
+	}
+	// Matched all of pattern to all of name. Success.
+	return true
 }
 
 // IsExactMatch return true if no wildcard character
@@ -252,17 +287,17 @@ func Copy(src string) string {
 	return string(hack.Slice(src))
 }
 
-// stringerFunc defines string func implement fmt.Stringer.
-type stringerFunc func() string
+// StringerFunc defines string func implement fmt.Stringer.
+type StringerFunc func() string
 
 // String implements fmt.Stringer
-func (l stringerFunc) String() string {
+func (l StringerFunc) String() string {
 	return l()
 }
 
 // MemoizeStr returns memoized version of stringFunc.
 func MemoizeStr(l func() string) fmt.Stringer {
-	return stringerFunc(func() string {
+	return StringerFunc(func() string {
 		return l()
 	})
 }

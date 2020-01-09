@@ -14,6 +14,8 @@
 package kv
 
 import (
+	"context"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/util/testleak"
@@ -35,12 +37,12 @@ func (s *testUnionStoreSuite) TestGetSet(c *C) {
 	defer testleak.AfterTest(c)()
 	err := s.store.Set([]byte("1"), []byte("1"))
 	c.Assert(err, IsNil)
-	v, err := s.us.Get([]byte("1"))
+	v, err := s.us.Get(context.TODO(), []byte("1"))
 	c.Assert(err, IsNil)
 	c.Assert(v, BytesEquals, []byte("1"))
 	err = s.us.Set([]byte("1"), []byte("2"))
 	c.Assert(err, IsNil)
-	v, err = s.us.Get([]byte("1"))
+	v, err = s.us.Get(context.TODO(), []byte("1"))
 	c.Assert(err, IsNil)
 	c.Assert(v, BytesEquals, []byte("2"))
 	c.Assert(s.us.Size(), Equals, 2)
@@ -53,12 +55,12 @@ func (s *testUnionStoreSuite) TestDelete(c *C) {
 	c.Assert(err, IsNil)
 	err = s.us.Delete([]byte("1"))
 	c.Assert(err, IsNil)
-	_, err = s.us.Get([]byte("1"))
+	_, err = s.us.Get(context.TODO(), []byte("1"))
 	c.Assert(IsErrNotFound(err), IsTrue)
 
 	err = s.us.Set([]byte("1"), []byte("2"))
 	c.Assert(err, IsNil)
-	v, err := s.us.Get([]byte("1"))
+	v, err := s.us.Get(context.TODO(), []byte("1"))
 	c.Assert(err, IsNil)
 	c.Assert(v, BytesEquals, []byte("2"))
 }
@@ -130,24 +132,24 @@ func (s *testUnionStoreSuite) TestLazyConditionCheck(c *C) {
 	err = s.store.Set([]byte("2"), []byte("2"))
 	c.Assert(err, IsNil)
 
-	v, err := s.us.Get([]byte("1"))
+	v, err := s.us.Get(context.TODO(), []byte("1"))
 	c.Assert(err, IsNil)
 	c.Assert(v, BytesEquals, []byte("1"))
 
 	s.us.SetOption(PresumeKeyNotExists, nil)
-	s.us.SetOption(PresumeKeyNotExistsError, ErrNotExist)
-	_, err = s.us.Get([]byte("2"))
+	s.us.SetOption(PresumeKeyNotExistsError, NewExistErrInfo("name", "value"))
+	_, err = s.us.Get(context.TODO(), []byte("2"))
 	c.Assert(terror.ErrorEqual(err, ErrNotExist), IsTrue, Commentf("err %v", err))
 
-	condionPair1 := s.us.LookupConditionPair([]byte("1"))
-	c.Assert(condionPair1, IsNil)
+	existErr1 := s.us.GetKeyExistErrInfo([]byte("1"))
+	c.Assert(existErr1, IsNil)
 
-	condionPair2 := s.us.LookupConditionPair([]byte("2"))
-	c.Assert(condionPair2, NotNil)
-	c.Assert(condionPair2.ShouldNotExist(), IsTrue)
+	existErr2 := s.us.GetKeyExistErrInfo([]byte("2"))
+	c.Assert(existErr2, NotNil)
 
-	err2 := s.us.LookupConditionPair([]byte("2")).Err()
-	c.Assert(terror.ErrorEqual(err2, ErrNotExist), IsTrue, Commentf("err %v", err2))
+	err2 := s.us.GetKeyExistErrInfo([]byte("2"))
+	c.Assert(err2.GetIdxName(), Equals, "name", Commentf("err %v", err2))
+	c.Assert(err2.GetValue(), Equals, "value", Commentf("err %v", err2))
 }
 
 func checkIterator(c *C, iter Iterator, keys [][]byte, values [][]byte) {

@@ -55,7 +55,7 @@ type jrNode struct {
 }
 
 func (s *joinReOrderSolver) optimize(ctx context.Context, p LogicalPlan) (LogicalPlan, error) {
-	return s.optimizeRecursive(p.context(), p)
+	return s.optimizeRecursive(p.SCtx(), p)
 }
 
 // optimizeRecursive recursively collects join groups and applies join reorder algorithm for each group.
@@ -144,10 +144,14 @@ func (s *baseSingleGroupJoinOrderSolver) makeBushyJoin(cartesianJoinGroup []Logi
 }
 
 func (s *baseSingleGroupJoinOrderSolver) newCartesianJoin(lChild, rChild LogicalPlan) *LogicalJoin {
+	offset := lChild.SelectBlockOffset()
+	if offset != rChild.SelectBlockOffset() {
+		offset = -1
+	}
 	join := LogicalJoin{
 		JoinType:  InnerJoin,
 		reordered: true,
-	}.Init(s.ctx)
+	}.Init(s.ctx, offset)
 	join.SetSchema(expression.MergeSchema(lChild.Schema(), rChild.Schema()))
 	join.SetChildren(lChild, rChild)
 	return join

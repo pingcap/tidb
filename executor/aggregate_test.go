@@ -19,9 +19,27 @@ import (
 	"github.com/pingcap/parser/terror"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/util/testkit"
+	"github.com/pingcap/tidb/util/testutil"
 )
 
-func (s *testSuite1) TestAggregation(c *C) {
+type testSuiteAgg struct {
+	*baseTestSuite
+	testData testutil.TestData
+}
+
+func (s *testSuiteAgg) SetUpSuite(c *C) {
+	s.baseTestSuite.SetUpSuite(c)
+	var err error
+	s.testData, err = testutil.LoadTestSuiteData("testdata", "agg_suite")
+	c.Assert(err, IsNil)
+}
+
+func (s *testSuiteAgg) TearDownSuite(c *C) {
+	s.baseTestSuite.TearDownSuite(c)
+	c.Assert(s.testData.GenerateOutputIfNeeded(), IsNil)
+}
+
+func (s *testSuiteAgg) TestAggregation(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("set @@tidb_hash_join_concurrency=1")
 	tk.MustExec("use test")
@@ -273,7 +291,7 @@ func (s *testSuite1) TestAggregation(c *C) {
 	tk.MustQuery("select 11 from idx_agg group by a").Check(testkit.Rows("11", "11"))
 
 	tk.MustExec("set @@tidb_init_chunk_size=1;")
-	tk.MustQuery("select group_concat(b) from idx_agg group by b;").Check(testkit.Rows("1", "2,2"))
+	tk.MustQuery("select group_concat(b) from idx_agg group by b;").Sort().Check(testkit.Rows("1", "2,2"))
 	tk.MustExec("set @@tidb_init_chunk_size=2;")
 
 	tk.MustExec("drop table if exists t")
@@ -335,6 +353,36 @@ func (s *testSuite1) TestAggregation(c *C) {
 	tk.MustExec("insert into t value(0), (-0.9871), (-0.9871)")
 	tk.MustQuery("select 10 from t group by a").Check(testkit.Rows("10", "10"))
 	tk.MustQuery("select sum(a) from (select a from t union all select a from t) tmp").Check(testkit.Rows("-3.9484"))
+
+	tk.MustExec("drop table t")
+	tk.MustExec("create table t(a tinyint, b smallint, c mediumint, d int, e bigint, f float, g double, h decimal)")
+	tk.MustExec("insert into t values(1, 2, 3, 4, 5, 6.1, 7.2, 8.3), (1, 3, 4, 5, 6, 7.1, 8.2, 9.3)")
+	result = tk.MustQuery("select var_pop(b), var_pop(c), var_pop(d), var_pop(e), var_pop(f), var_pop(g), var_pop(h) from t group by a")
+	result.Check(testkit.Rows("0.25 0.25 0.25 0.25 0.25 0.25 0.25"))
+
+	tk.MustExec("insert into t values(2, 3, 4, 5, 6, 7.2, 8.3, 9)")
+	result = tk.MustQuery("select a, var_pop(b) over w, var_pop(c) over w from t window w as (partition by a)")
+	result.Check(testkit.Rows("1 0.25 0.25", "1 0.25 0.25", "2 0 0"))
+
+	tk.MustExec("delete from t where t.a = 2")
+	tk.MustExec("insert into t values(1, 2, 4, 5, 6, 6.1, 7.2, 9)")
+	result = tk.MustQuery("select a, var_pop(distinct b), var_pop(distinct c), var_pop(distinct d), var_pop(distinct e), var_pop(distinct f), var_pop(distinct g), var_pop(distinct h) from t group by a")
+	result.Check(testkit.Rows("1 0.25 0.25 0.25 0.25 0.25 0.25 0.25"))
+
+	tk.MustExec("drop table t")
+	tk.MustExec("create table t(a int, b bigint, c float, d double, e decimal)")
+	tk.MustExec("insert into t values(1, 1000, 6.8, 3.45, 8.3), (1, 3998, -3.4, 5.12, 9.3),(1, 288, 9.2, 6.08, 1)")
+	result = tk.MustQuery("select variance(b), variance(c), variance(d), variance(e) from t group by a")
+	result.Check(testkit.Rows("2584338.6666666665 29.840000178019228 1.1808222222222229 12.666666666666666"))
+
+	tk.MustExec("insert into t values(1, 255, 6.8, 6.08, 1)")
+	result = tk.MustQuery("select variance(distinct b), variance(distinct c), variance(distinct d), variance(distinct e) from t group by a")
+	result.Check(testkit.Rows("2364075.6875 29.840000178019228 1.1808222222222229 12.666666666666666"))
+
+	tk.MustExec("insert into t values(2, 322, 0.8, 2.22, 6)")
+	result = tk.MustQuery("select a, variance(b) over w from t window w as (partition by a)")
+	result.Check(testkit.Rows("1 2364075.6875", "1 2364075.6875", "1 2364075.6875", "1 2364075.6875", "2 0"))
+
 	_, err = tk.Exec("select std(a) from t")
 	c.Assert(errors.Cause(err).Error(), Equals, "unsupported agg function: std")
 	_, err = tk.Exec("select stddev(a) from t")
@@ -343,37 +391,23 @@ func (s *testSuite1) TestAggregation(c *C) {
 	c.Assert(errors.Cause(err).Error(), Equals, "unsupported agg function: stddev_pop")
 	_, err = tk.Exec("select std_samp(a) from t")
 	// TODO: Fix this error message.
-	c.Assert(errors.Cause(err).Error(), Equals, "[expression:1305]FUNCTION std_samp does not exist")
-	_, err = tk.Exec("select variance(a) from t")
-	// TODO: Fix this error message.
-	c.Assert(errors.Cause(err).Error(), Equals, "unsupported agg function: var_pop")
-	_, err = tk.Exec("select var_pop(a) from t")
-	c.Assert(errors.Cause(err).Error(), Equals, "unsupported agg function: var_pop")
+	c.Assert(errors.Cause(err).Error(), Equals, "[expression:1305]FUNCTION test.std_samp does not exist")
 	_, err = tk.Exec("select var_samp(a) from t")
 	c.Assert(errors.Cause(err).Error(), Equals, "unsupported agg function: var_samp")
+
+	// For issue #14072: wrong result when using generated column with aggregate statement
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1 (a int, b int generated always as (-a) virtual, c int generated always as (-a) stored);")
+	tk.MustExec("insert into t1 (a) values (2), (1), (1), (3), (NULL);")
+	tk.MustQuery("select sum(a) from t1 group by b order by b;").Check(testkit.Rows("<nil>", "3", "2", "2"))
+	tk.MustQuery("select sum(a) from t1 group by c order by c;").Check(testkit.Rows("<nil>", "3", "2", "2"))
+	tk.MustQuery("select sum(b) from t1 group by a order by a;").Check(testkit.Rows("<nil>", "-2", "-2", "-3"))
+	tk.MustQuery("select sum(b) from t1 group by c order by c;").Check(testkit.Rows("<nil>", "-3", "-2", "-2"))
+	tk.MustQuery("select sum(c) from t1 group by a order by a;").Check(testkit.Rows("<nil>", "-2", "-2", "-3"))
+	tk.MustQuery("select sum(c) from t1 group by b order by b;").Check(testkit.Rows("<nil>", "-3", "-2", "-2"))
 }
 
-func (s *testSuite1) TestStreamAggPushDown(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t (a int, b int, c int)")
-	tk.MustExec("alter table t add index idx(a, b, c)")
-	// test for empty table
-	tk.MustQuery("select count(a) from t group by a;").Check(testkit.Rows())
-	tk.MustQuery("select count(a) from t;").Check(testkit.Rows("0"))
-	// test for one row
-	tk.MustExec("insert t values(0,0,0)")
-	tk.MustQuery("select distinct b from t").Check(testkit.Rows("0"))
-	tk.MustQuery("select count(b) from t group by a;").Check(testkit.Rows("1"))
-	// test for rows
-	tk.MustExec("insert t values(1,1,1),(3,3,6),(3,2,5),(2,1,4),(1,1,3),(1,1,2);")
-	tk.MustQuery("select count(a) from t where b>0 group by a, b;").Check(testkit.Rows("3", "1", "1", "1"))
-	tk.MustQuery("select count(a) from t where b>0 group by a, b order by a;").Check(testkit.Rows("3", "1", "1", "1"))
-	tk.MustQuery("select count(a) from t where b>0 group by a, b order by a limit 1;").Check(testkit.Rows("3"))
-}
-
-func (s *testSuite1) TestAggPrune(c *C) {
+func (s *testSuiteAgg) TestAggPrune(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -397,7 +431,7 @@ func (s *testSuite1) TestAggPrune(c *C) {
 	tk.MustQuery("SELECT a, MIN(b), MAX(b) FROM t GROUP BY a").Check(testkit.Rows("1 11 11", "3 <nil> <nil>"))
 }
 
-func (s *testSuite1) TestGroupConcatAggr(c *C) {
+func (s *testSuiteAgg) TestGroupConcatAggr(c *C) {
 	// issue #5411
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -430,7 +464,7 @@ func (s *testSuite1) TestGroupConcatAggr(c *C) {
 	tk.MustQuery("select group_concat(123, null)").Check(testkit.Rows("<nil>"))
 }
 
-func (s *testSuite) TestSelectDistinct(c *C) {
+func (s *testSuiteAgg) TestSelectDistinct(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	s.fillData(tk, "select_distinct_test")
@@ -442,9 +476,25 @@ func (s *testSuite) TestSelectDistinct(c *C) {
 
 }
 
-func (s *testSuite1) TestAggPushDown(c *C) {
+func (s *testSuiteAgg) TestAggPushDown(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int, c int)")
+	tk.MustExec("alter table t add index idx(a, b, c)")
+	// test for empty table
+	tk.MustQuery("select count(a) from t group by a;").Check(testkit.Rows())
+	tk.MustQuery("select count(a) from t;").Check(testkit.Rows("0"))
+	// test for one row
+	tk.MustExec("insert t values(0,0,0)")
+	tk.MustQuery("select distinct b from t").Check(testkit.Rows("0"))
+	tk.MustQuery("select count(b) from t group by a;").Check(testkit.Rows("1"))
+	// test for rows
+	tk.MustExec("insert t values(1,1,1),(3,3,6),(3,2,5),(2,1,4),(1,1,3),(1,1,2);")
+	tk.MustQuery("select count(a) from t where b>0 group by a, b;").Sort().Check(testkit.Rows("1", "1", "1", "3"))
+	tk.MustQuery("select count(a) from t where b>0 group by a, b order by a;").Check(testkit.Rows("3", "1", "1", "1"))
+	tk.MustQuery("select count(a) from t where b>0 group by a, b order by a limit 1;").Check(testkit.Rows("3"))
+
 	tk.MustExec("drop table if exists t, tt")
 	tk.MustExec("create table t(a int primary key, b int, c int)")
 	tk.MustExec("create table tt(a int primary key, b int, c int)")
@@ -454,7 +504,7 @@ func (s *testSuite1) TestAggPushDown(c *C) {
 	tk.MustQuery("select a, count(b) from (select * from t union all select * from tt) k group by a order by a").Check(testkit.Rows("1 2", "2 1"))
 }
 
-func (s *testSuite1) TestOnlyFullGroupBy(c *C) {
+func (s *testSuiteAgg) TestOnlyFullGroupBy(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("set sql_mode = 'ONLY_FULL_GROUP_BY'")
@@ -566,7 +616,21 @@ func (s *testSuite1) TestOnlyFullGroupBy(c *C) {
 	c.Assert(terror.ErrorEqual(err, plannercore.ErrAmbiguous), IsTrue, Commentf("err %v", err))
 }
 
-func (s *testSuite1) TestHaving(c *C) {
+func (s *testSuiteAgg) TestIssue13652(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("set sql_mode = 'ONLY_FULL_GROUP_BY'")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a real)")
+	tk.MustQuery("select a from t group by (a)")
+	tk.MustQuery("select a from t group by ((a))")
+	tk.MustQuery("select a from t group by +a")
+	tk.MustQuery("select a from t group by ((+a))")
+	_, err := tk.Exec("select a from t group by (-a)")
+	c.Assert(err.Error(), Equals, "[planner:1055]Expression #1 of SELECT list is not in GROUP BY clause and contains nonaggregated column 'test.t.a' which is not functionally dependent on columns in GROUP BY clause; this is incompatible with sql_mode=only_full_group_by")
+}
+
+func (s *testSuiteAgg) TestHaving(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 
 	tk.MustExec("set sql_mode = 'STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION'")
@@ -591,7 +655,7 @@ func (s *testSuite1) TestHaving(c *C) {
 	tk.MustQuery("select 1 from t group by c1 having sum(abs(c2 + c3)) = c1").Check(testkit.Rows("1"))
 }
 
-func (s *testSuite1) TestAggEliminator(c *C) {
+func (s *testSuiteAgg) TestAggEliminator(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 
 	tk.MustExec("create table t(a int primary key, b int)")
@@ -601,10 +665,10 @@ func (s *testSuite1) TestAggEliminator(c *C) {
 	tk.MustQuery("select min(b) from t").Check(testkit.Rows("-2"))
 	tk.MustQuery("select max(b*b) from t").Check(testkit.Rows("4"))
 	tk.MustQuery("select min(b*b) from t").Check(testkit.Rows("1"))
-	tk.MustQuery("select group_concat(b, b) from t group by a").Check(testkit.Rows("-1-1", "-2-2", "11", "<nil>"))
+	tk.MustQuery("select group_concat(b, b) from t group by a").Sort().Check(testkit.Rows("-1-1", "-2-2", "11", "<nil>"))
 }
 
-func (s *testSuite1) TestMaxMinFloatScalaFunc(c *C) {
+func (s *testSuiteAgg) TestMaxMinFloatScalaFunc(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 
 	tk.MustExec(`DROP TABLE IF EXISTS T;`)
@@ -614,7 +678,7 @@ func (s *testSuite1) TestMaxMinFloatScalaFunc(c *C) {
 	tk.MustQuery(`SELECT MIN(CASE B WHEN 'val_b'  THEN C ELSE 0 END) val_b FROM T WHERE cast(A as signed) = 0 GROUP BY a;`).Check(testkit.Rows("12.190999984741211"))
 }
 
-func (s *testSuite1) TestBuildProjBelowAgg(c *C) {
+func (s *testSuiteAgg) TestBuildProjBelowAgg(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t (i int);")
@@ -626,33 +690,25 @@ func (s *testSuite1) TestBuildProjBelowAgg(c *C) {
 		"4 3 18 7,7,7 8"))
 }
 
-func (s *testSuite1) TestInjectProjBelowTopN(c *C) {
+func (s *testSuiteAgg) TestInjectProjBelowTopN(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t (i int);")
 	tk.MustExec("insert into t values (1), (1), (1),(2),(3),(2),(3),(2),(3);")
-	tk.MustQuery("explain select * from t order by i + 1").Check(testkit.Rows(
-		"Projection_8 10000.00 root test.t.i",
-		"└─Sort_4 10000.00 root col_1:asc",
-		"  └─Projection_9 10000.00 root test.t.i, plus(test.t.i, 1)",
-		"    └─TableReader_7 10000.00 root data:TableScan_6",
-		"      └─TableScan_6 10000.00 cop table:t, range:[-inf,+inf], keep order:false, stats:pseudo"))
-	rs := tk.MustQuery("select * from t order by i + 1 ")
-	rs.Check(testkit.Rows(
-		"1", "1", "1", "2", "2", "2", "3", "3", "3"))
-	tk.MustQuery("explain select * from t order by i + 1 limit 2").Check(testkit.Rows(
-		"Projection_15 2.00 root test.t.i",
-		"└─TopN_7 2.00 root col_1:asc, offset:0, count:2",
-		"  └─Projection_16 2.00 root test.t.i, plus(test.t.i, 1)",
-		"    └─TableReader_12 2.00 root data:TopN_11",
-		"      └─TopN_11 2.00 cop plus(test.t.i, 1):asc, offset:0, count:2",
-		"        └─TableScan_10 10000.00 cop table:t, range:[-inf,+inf], keep order:false, stats:pseudo"))
-	rs = tk.MustQuery("select * from t order by i + 1 limit 2")
-	rs.Check(testkit.Rows("1", "1"))
-	tk.MustQuery("select i, i, i from t order by i + 1").Check(testkit.Rows("1 1 1", "1 1 1", "1 1 1", "2 2 2", "2 2 2", "2 2 2", "3 3 3", "3 3 3", "3 3 3"))
+	var (
+		input  []string
+		output [][]string
+	)
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i] = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+		})
+		tk.MustQuery(tt).Check(testkit.Rows(output[i]...))
+	}
 }
 
-func (s *testSuite1) TestFirstRowEnum(c *C) {
+func (s *testSuiteAgg) TestFirstRowEnum(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec(`use test;`)
 	tk.MustExec(`drop table if exists t;`)
@@ -663,7 +719,7 @@ func (s *testSuite1) TestFirstRowEnum(c *C) {
 	))
 }
 
-func (s *testSuite1) TestAggJSON(c *C) {
+func (s *testSuiteAgg) TestAggJSON(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec(`drop table if exists t;`)
 	tk.MustExec(`create table t(a datetime, b json, index idx(a));`)
@@ -712,7 +768,7 @@ func (s *testSuite1) TestAggJSON(c *C) {
 	))
 }
 
-func (s *testSuite1) TestIssue10099(c *C) {
+func (s *testSuiteAgg) TestIssue10099(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a char(10), b char(10))")
@@ -720,7 +776,7 @@ func (s *testSuite1) TestIssue10099(c *C) {
 	tk.MustQuery("select count(distinct a, b) from t").Check(testkit.Rows("2"))
 }
 
-func (s *testSuite1) TestIssue10098(c *C) {
+func (s *testSuiteAgg) TestIssue10098(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec(`drop table if exists t;`)
 	tk.MustExec("create table t(a char(10), b char(10))")
@@ -728,13 +784,40 @@ func (s *testSuite1) TestIssue10098(c *C) {
 	tk.MustQuery("select group_concat(distinct a, b) from t").Check(testkit.Rows("1222,1222"))
 }
 
-func (s *testSuite1) TestIssue10608(c *C) {
+func (s *testSuiteAgg) TestIssue10608(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec(`drop table if exists t, s;`)
 	tk.MustExec("create table t(a int)")
 	tk.MustExec("create table s(a int, b int)")
 	tk.MustExec("insert into s values(100292, 508931), (120002, 508932)")
 	tk.MustExec("insert into t values(508931), (508932)")
-	tk.MustQuery("select (select group_concat(concat(123,'-')) from t where t.a = s.b group by t.a) as t from s;").Check(testkit.Rows("123-", "123-"))
+	tk.MustQuery("select (select  /*+ stream_agg() */ group_concat(concat(123,'-')) from t where t.a = s.b group by t.a) as t from s;").Check(testkit.Rows("123-", "123-"))
+	tk.MustQuery("select (select  /*+ hash_agg() */ group_concat(concat(123,'-')) from t where t.a = s.b group by t.a) as t from s;").Check(testkit.Rows("123-", "123-"))
 
+}
+
+func (s *testSuiteAgg) TestIssue12759HashAggCalledByApply(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.Se.GetSessionVars().HashAggFinalConcurrency = 4
+	tk.MustExec(`insert into mysql.opt_rule_blacklist value("decorrelate");`)
+	defer func() {
+		tk.MustExec(`delete from mysql.opt_rule_blacklist where name = "decorrelate";`)
+		tk.MustExec(`admin reload opt_rule_blacklist;`)
+	}()
+	tk.MustExec(`drop table if exists test;`)
+	tk.MustExec("create table test (a int);")
+	tk.MustExec("insert into test value(1);")
+	tk.MustQuery("select /*+ hash_agg() */ sum(a), (select NULL from test where tt.a = test.a limit 1),(select NULL from test where tt.a = test.a limit 1),(select NULL from test where tt.a = test.a limit 1) from test tt;").Check(testkit.Rows("1 <nil> <nil> <nil>"))
+
+	var (
+		input  []string
+		output [][]string
+	)
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i] = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+		})
+		tk.MustQuery(tt).Check(testkit.Rows(output[i]...))
+	}
 }

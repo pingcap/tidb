@@ -17,6 +17,7 @@ import (
 	"context"
 	"math"
 	"strconv"
+	"sync"
 	"testing"
 	"time"
 
@@ -57,6 +58,24 @@ func (s *testSuite) TestMeta(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(n, Equals, int64(1))
 
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		ids, err := t.GenGlobalIDs(3)
+		c.Assert(err, IsNil)
+		anyMatch(c, ids, []int64{2, 3, 4}, []int64{6, 7, 8})
+	}()
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		ids, err := t.GenGlobalIDs(4)
+		c.Assert(err, IsNil)
+		anyMatch(c, ids, []int64{5, 6, 7, 8}, []int64{2, 3, 4, 5})
+	}()
+	wg.Wait()
+
 	n, err = t.GetSchemaVersion()
 	c.Assert(err, IsNil)
 	c.Assert(n, Equals, int64(0))
@@ -78,6 +97,7 @@ func (s *testSuite) TestMeta(c *C) {
 
 	err = t.CreateDatabase(dbInfo)
 	c.Assert(err, NotNil)
+	c.Assert(meta.ErrDBExists.Equal(err), IsTrue)
 
 	v, err := t.GetDatabase(1)
 	c.Assert(err, IsNil)
@@ -112,6 +132,7 @@ func (s *testSuite) TestMeta(c *C) {
 
 	err = t.CreateTableOrView(1, tbInfo)
 	c.Assert(err, NotNil)
+	c.Assert(meta.ErrTableExists.Equal(err), IsTrue)
 
 	tbInfo.Name = model.NewCIStr("tt")
 	err = t.UpdateTable(1, tbInfo)
@@ -174,11 +195,13 @@ func (s *testSuite) TestMeta(c *C) {
 	nonExistentID := int64(1234)
 	_, err = t.GenAutoTableID(currentDBID, nonExistentID, 10)
 	c.Assert(err, NotNil)
+	c.Assert(meta.ErrTableNotExists.Equal(err), IsTrue)
 	// Fail to update auto ID.
 	// The current database ID doesn't exist.
 	currentDBID = nonExistentID
 	_, err = t.GenAutoTableID(currentDBID, tid, 10)
 	c.Assert(err, NotNil)
+	c.Assert(meta.ErrDBNotExists.Equal(err), IsTrue)
 	// Test case for CreateTableAndSetAutoID.
 	tbInfo3 := &model.TableInfo{
 		ID:   3,
@@ -271,6 +294,7 @@ func (s *testSuite) TestSnapshot(c *C) {
 	c.Assert(n, Equals, int64(1))
 	_, err = snapMeta.GenGlobalID()
 	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[structure:8220]write on snapshot")
 }
 
 func (s *testSuite) TestDDL(c *C) {
@@ -339,18 +363,21 @@ func (s *testSuite) TestDDL(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(v, DeepEquals, job)
 
-	err = t.AddHistoryDDLJob(job)
+	err = t.AddHistoryDDLJob(job, true)
 	c.Assert(err, IsNil)
 	v, err = t.GetHistoryDDLJob(2)
 	c.Assert(err, IsNil)
 	c.Assert(v, DeepEquals, job)
 
 	// Add multiple history jobs.
+	arg := "test arg"
 	historyJob1 := &model.Job{ID: 1234}
-	err = t.AddHistoryDDLJob(historyJob1)
+	historyJob1.Args = append(job.Args, arg)
+	err = t.AddHistoryDDLJob(historyJob1, true)
 	c.Assert(err, IsNil)
 	historyJob2 := &model.Job{ID: 123}
-	err = t.AddHistoryDDLJob(historyJob2)
+	historyJob2.Args = append(job.Args, arg)
+	err = t.AddHistoryDDLJob(historyJob2, false)
 	c.Assert(err, IsNil)
 	all, err := t.GetAllHistoryDDLJobs()
 	c.Assert(err, IsNil)
@@ -358,6 +385,13 @@ func (s *testSuite) TestDDL(c *C) {
 	for _, job := range all {
 		c.Assert(job.ID, Greater, lastID)
 		lastID = job.ID
+		arg1 := ""
+		job.DecodeArgs(&arg1)
+		if job.ID == historyJob1.ID {
+			c.Assert(*(job.Args[0].(*string)), Equals, historyJob1.Args[0])
+		} else {
+			c.Assert(job.Args, IsNil)
+		}
 	}
 
 	// Test for get last N history ddl jobs.
@@ -405,4 +439,65 @@ func (s *testSuite) TestDDL(c *C) {
 
 	err = txn1.Commit(context.Background())
 	c.Assert(err, IsNil)
+}
+
+func (s *testSuite) BenchmarkGenGlobalIDs(c *C) {
+	defer testleak.AfterTest(c)()
+	store, err := mockstore.NewMockTikvStore()
+	c.Assert(err, IsNil)
+	defer store.Close()
+
+	txn, err := store.Begin()
+	c.Assert(err, IsNil)
+	defer txn.Rollback()
+
+	t := meta.NewMeta(txn)
+
+	c.ResetTimer()
+	var ids []int64
+	for i := 0; i < c.N; i++ {
+		ids, _ = t.GenGlobalIDs(10)
+	}
+	c.Assert(ids, HasLen, 10)
+	c.Assert(ids[9], Equals, int64(c.N)*10)
+}
+
+func (s *testSuite) BenchmarkGenGlobalIDOneByOne(c *C) {
+	defer testleak.AfterTest(c)()
+	store, err := mockstore.NewMockTikvStore()
+	c.Assert(err, IsNil)
+	defer store.Close()
+
+	txn, err := store.Begin()
+	c.Assert(err, IsNil)
+	defer txn.Rollback()
+
+	t := meta.NewMeta(txn)
+
+	c.ResetTimer()
+	var id int64
+	for i := 0; i < c.N; i++ {
+		for j := 0; j < 10; j++ {
+			id, _ = t.GenGlobalID()
+		}
+	}
+	c.Assert(id, Equals, int64(c.N)*10)
+}
+
+func anyMatch(c *C, ids []int64, candidates ...[]int64) {
+	var match bool
+OUTER:
+	for _, cand := range candidates {
+		if len(ids) != len(cand) {
+			continue
+		}
+		for i, v := range cand {
+			if ids[i] != v {
+				continue OUTER
+			}
+		}
+		match = true
+		break
+	}
+	c.Assert(match, IsTrue)
 }

@@ -71,6 +71,16 @@ func (l *List) NumChunks() int {
 	return len(l.chunks)
 }
 
+// FieldTypes returns the fieldTypes of the list
+func (l *List) FieldTypes() []*types.FieldType {
+	return l.fieldTypes
+}
+
+// NumRowsOfChunk returns the number of rows of a chunk in the ListInDisk.
+func (l *List) NumRowsOfChunk(chkID int) int {
+	return l.chunks[chkID].NumRows()
+}
+
 // GetChunk gets the Chunk by ChkIdx.
 func (l *List) GetChunk(chkIdx int) *Chunk {
 	return l.chunks[chkIdx]
@@ -100,6 +110,7 @@ func (l *List) AppendRow(row Row) RowPtr {
 func (l *List) Add(chk *Chunk) {
 	// FixMe: we should avoid add a Chunk that chk.NumRows() > list.maxChunkSize.
 	if chk.NumRows() == 0 {
+		// TODO: return error here.
 		panic("chunk appended to List should have at least 1 row")
 	}
 	if chkIdx := len(l.chunks) - 1; l.consumedIdx != chkIdx {
@@ -110,7 +121,6 @@ func (l *List) Add(chk *Chunk) {
 	l.consumedIdx++
 	l.chunks = append(l.chunks, chk)
 	l.length += chk.NumRows()
-	return
 }
 
 func (l *List) allocChunk() (chk *Chunk) {
@@ -141,6 +151,15 @@ func (l *List) Reset() {
 	}
 	l.freelist = append(l.freelist, l.chunks...)
 	l.chunks = l.chunks[:0]
+	l.length = 0
+	l.consumedIdx = -1
+}
+
+// Clear triggers GC for all the allocated chunks and reset the list
+func (l *List) Clear() {
+	l.memTracker.Consume(-l.memTracker.BytesConsumed())
+	l.freelist = nil
+	l.chunks = nil
 	l.length = 0
 	l.consumedIdx = -1
 }

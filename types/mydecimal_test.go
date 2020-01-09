@@ -893,6 +893,21 @@ func (s *testMyDecimalSuite) TestMaxOrMin(c *C) {
 	}
 }
 
+func (s *testMyDecimalSuite) TestReset(c *C) {
+	var x1, y1, z1 MyDecimal
+	c.Assert(x1.FromString([]byte("38520.130741106671")), IsNil)
+	c.Assert(y1.FromString([]byte("9863.944799797851")), IsNil)
+	c.Assert(DecimalAdd(&x1, &y1, &z1), IsNil)
+
+	var x2, y2, z2 MyDecimal
+	c.Assert(x2.FromString([]byte("121519.080207244")), IsNil)
+	c.Assert(y2.FromString([]byte("54982.444519146")), IsNil)
+	c.Assert(DecimalAdd(&x2, &y2, &z2), IsNil)
+
+	c.Assert(DecimalAdd(&x2, &y2, &z1), IsNil)
+	c.Assert(z1, Equals, z2)
+}
+
 func benchmarkMyDecimalToBinOrHashCases() []string {
 	return []string{
 		"1.000000000000", "3", "12.000000000", "120",

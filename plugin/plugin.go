@@ -22,12 +22,12 @@ import (
 	"sync/atomic"
 	"unsafe"
 
-	"github.com/coreos/etcd/clientv3"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
+	"go.etcd.io/etcd/clientv3"
 	"go.uber.org/zap"
 )
 
@@ -59,9 +59,7 @@ func (p *plugins) clone() *plugins {
 	for key, value := range p.versions {
 		np.versions[key] = value
 	}
-	for key, value := range p.dyingPlugins {
-		np.dyingPlugins[key] = value
-	}
+	copy(np.dyingPlugins, p.dyingPlugins)
 	return np
 }
 
@@ -96,9 +94,9 @@ type Config struct {
 type Plugin struct {
 	*Manifest
 	library  *gplugin.Plugin
-	State    State
 	Path     string
 	Disabled uint32
+	State    State
 }
 
 // StateValue returns readable state string.

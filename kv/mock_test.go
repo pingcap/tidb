@@ -15,7 +15,6 @@ package kv
 
 import (
 	"context"
-
 	. "github.com/pingcap/check"
 )
 
@@ -32,13 +31,13 @@ func (s testMockSuite) TestInterface(c *C) {
 	c.Check(err, IsNil)
 	snapshot, err := storage.GetSnapshot(version)
 	c.Check(err, IsNil)
-	_, err = snapshot.BatchGet([]Key{Key("abc"), Key("def")})
+	_, err = snapshot.BatchGet(context.Background(), []Key{Key("abc"), Key("def")})
 	c.Check(err, IsNil)
-	snapshot.SetPriority(0)
+	snapshot.SetOption(Priority, PriorityNormal)
 
 	transaction, err := storage.Begin()
 	c.Check(err, IsNil)
-	err = transaction.LockKeys(context.Background(), 0, Key("lock"))
+	err = transaction.LockKeys(context.Background(), new(LockCtx), Key("lock"))
 	c.Check(err, IsNil)
 	transaction.SetOption(Option(23), struct{}{})
 	if mock, ok := transaction.(*mockTxn); ok {
@@ -47,7 +46,7 @@ func (s testMockSuite) TestInterface(c *C) {
 	transaction.StartTS()
 	transaction.DelOption(Option(23))
 	if transaction.IsReadOnly() {
-		_, err = transaction.Get(Key("lock"))
+		_, err = transaction.Get(context.TODO(), Key("lock"))
 		c.Check(err, IsNil)
 		err = transaction.Set(Key("lock"), []byte{})
 		c.Check(err, IsNil)

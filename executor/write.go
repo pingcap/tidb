@@ -14,16 +14,21 @@
 package executor
 
 import (
+	"context"
+	"github.com/pingcap/tidb/meta/autoid"
 	"strings"
 
+	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
+	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/memory"
 	"go.uber.org/zap"
 )
 
@@ -43,9 +48,20 @@ var (
 //     2. handleChanged (bool) : is the handle changed after the update.
 //     3. newHandle (int64) : if handleChanged == true, the newHandle means the new handle after update.
 //     4. err (error) : error in the update.
-func updateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datum, modified []bool, t table.Table,
-	onDup bool) (bool, bool, int64, error) {
-	sc := ctx.GetSessionVars().StmtCtx
+func updateRecord(ctx context.Context, sctx sessionctx.Context, h int64, oldData, newData []types.Datum, modified []bool, t table.Table,
+	onDup bool, memTracker *memory.Tracker) (bool, bool, int64, error) {
+	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
+		span1 := span.Tracer().StartSpan("executor.updateRecord", opentracing.ChildOf(span.Context()))
+		defer span1.Finish()
+		ctx = opentracing.ContextWithSpan(ctx, span1)
+	}
+	txn, err := sctx.Txn(false)
+	if err != nil {
+		return false, false, 0, err
+	}
+	memUsageOfTxnState := txn.Size()
+	defer memTracker.Consume(int64(txn.Size() - memUsageOfTxnState))
+	sc := sctx.GetSessionVars().StmtCtx
 	changed, handleChanged := false, false
 	// onUpdateSpecified is for "UPDATE SET ts_field = old_value", the
 	// timestamp field is explicitly set, but not changed in fact.
@@ -60,7 +76,7 @@ func updateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datu
 	for i, col := range t.Cols() {
 		if modified[i] {
 			// Cast changed fields with respective columns.
-			v, err := table.CastValue(ctx, newData[i], col.ToInfo())
+			v, err := table.CastValue(sctx, newData[i], col.ToInfo())
 			if err != nil {
 				return false, false, 0, err
 			}
@@ -91,13 +107,17 @@ func updateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datu
 				if err != nil {
 					return false, false, 0, err
 				}
-				if err = t.RebaseAutoID(ctx, recordID, true); err != nil {
+				if err = t.RebaseAutoID(sctx, recordID, true); err != nil {
 					return false, false, 0, err
 				}
 			}
 			if col.IsPKHandleColumn(t.Meta()) {
 				handleChanged = true
 				newHandle = newData[i].GetInt64()
+				// Rebase auto random id if the field is changed.
+				if err := rebaseAutoRandomValue(sctx, t, &newData[i], col); err != nil {
+					return false, false, 0, err
+				}
 			}
 		} else {
 			if mysql.HasOnUpdateNowFlag(col.Flag) && modified[i] {
@@ -112,8 +132,13 @@ func updateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datu
 	// If no changes, nothing to do, return directly.
 	if !changed {
 		// See https://dev.mysql.com/doc/refman/5.7/en/mysql-real-connect.html  CLIENT_FOUND_ROWS
-		if ctx.GetSessionVars().ClientCapability&mysql.ClientFoundRows > 0 {
+		if sctx.GetSessionVars().ClientCapability&mysql.ClientFoundRows > 0 {
 			sc.AddAffectedRows(1)
+		}
+		unchangedRowKey := tablecodec.EncodeRowKeyWithHandle(t.Meta().ID, h)
+		txnCtx := sctx.GetSessionVars().TxnCtx
+		if txnCtx.IsPessimistic {
+			txnCtx.AddUnchangedRowKey(unchangedRowKey)
 		}
 		return false, false, 0, nil
 	}
@@ -121,7 +146,7 @@ func updateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datu
 	// 4. Fill values into on-update-now fields, only if they are really changed.
 	for i, col := range t.Cols() {
 		if mysql.HasOnUpdateNowFlag(col.Flag) && !modified[i] && !onUpdateSpecified[i] {
-			if v, err := expression.GetTimeValue(ctx, strings.ToUpper(ast.CurrentTimestamp), col.Tp, col.Decimal); err == nil {
+			if v, err := expression.GetTimeValue(sctx, strings.ToUpper(ast.CurrentTimestamp), col.Tp, int8(col.Decimal)); err == nil {
 				newData[i] = v
 				modified[i] = true
 			} else {
@@ -131,24 +156,23 @@ func updateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datu
 	}
 
 	// 5. If handle changed, remove the old then add the new record, otherwise update the record.
-	var err error
 	if handleChanged {
 		if sc.DupKeyAsWarning {
 			// For `UPDATE IGNORE`/`INSERT IGNORE ON DUPLICATE KEY UPDATE`
 			// If the new handle exists, this will avoid to remove the record.
-			err = tables.CheckHandleExists(ctx, t, newHandle, newData)
+			err = tables.CheckHandleExists(ctx, sctx, t, newHandle, newData)
 			if err != nil {
 				return false, handleChanged, newHandle, err
 			}
 		}
-		if err = t.RemoveRecord(ctx, h, oldData); err != nil {
+		if err = t.RemoveRecord(sctx, h, oldData); err != nil {
 			return false, false, 0, err
 		}
 		// the `affectedRows` is increased when adding new record.
 		if sc.DupKeyAsWarning {
-			newHandle, err = t.AddRecord(ctx, newData, table.IsUpdate, table.SkipHandleCheck)
+			newHandle, err = t.AddRecord(sctx, newData, table.IsUpdate, table.SkipHandleCheck, table.WithCtx(ctx))
 		} else {
-			newHandle, err = t.AddRecord(ctx, newData, table.IsUpdate)
+			newHandle, err = t.AddRecord(sctx, newData, table.IsUpdate, table.WithCtx(ctx))
 		}
 
 		if err != nil {
@@ -159,7 +183,7 @@ func updateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datu
 		}
 	} else {
 		// Update record to new value and update index.
-		if err = t.UpdateRecord(ctx, h, oldData, newData, modified); err != nil {
+		if err = t.UpdateRecord(sctx, h, oldData, newData, modified); err != nil {
 			return false, false, 0, err
 		}
 		if onDup {
@@ -172,6 +196,20 @@ func updateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datu
 	sc.AddCopiedRows(1)
 
 	return true, handleChanged, newHandle, nil
+}
+
+func rebaseAutoRandomValue(sctx sessionctx.Context, t table.Table, newData *types.Datum, col *table.Column) error {
+	tableInfo := t.Meta()
+	if !tableInfo.ContainsAutoRandomBits() {
+		return nil
+	}
+	recordID, err := getAutoRecordID(*newData, &col.FieldType, false)
+	if err != nil {
+		return err
+	}
+	shardBits := tableInfo.AutoRandomBits + 1 // sign bit is reserved.
+	recordID = recordID << shardBits >> shardBits
+	return t.Allocator(sctx, autoid.AutoRandomType).Rebase(tableInfo.ID, recordID, true)
 }
 
 // resetErrDataTooLong reset ErrDataTooLong error msg.

@@ -32,6 +32,9 @@ type ActionOnExceed interface {
 	// SetLogHook binds a log hook which will be triggered and log an detailed
 	// message for the out-of-memory sql.
 	SetLogHook(hook func(uint64))
+	// SetFallback sets a fallback action which will be triggered if itself has
+	// already been triggered.
+	SetFallback(a ActionOnExceed)
 }
 
 // LogOnExceed logs a warning only once when memory usage exceeds memory quota.
@@ -62,6 +65,9 @@ func (a *LogOnExceed) Action(t *Tracker) {
 	}
 }
 
+// SetFallback sets a fallback action.
+func (a *LogOnExceed) SetFallback(ActionOnExceed) {}
+
 // PanicOnExceed panics when memory usage exceeds memory quota.
 type PanicOnExceed struct {
 	mutex   sync.Mutex // For synchronization.
@@ -90,13 +96,21 @@ func (a *PanicOnExceed) Action(t *Tracker) {
 	panic(PanicMemoryExceed + fmt.Sprintf("[conn_id=%d]", a.ConnID))
 }
 
+// SetFallback sets a fallback action.
+func (a *PanicOnExceed) SetFallback(ActionOnExceed) {}
+
 var (
-	errMemExceedThreshold = terror.ClassExecutor.New(codeMemExceedThreshold, mysql.MySQLErrName[mysql.ErrMemExceedThreshold])
+	errMemExceedThreshold = terror.ClassUtil.New(mysql.ErrMemExceedThreshold, mysql.MySQLErrName[mysql.ErrMemExceedThreshold])
 )
 
 const (
-	codeMemExceedThreshold terror.ErrCode = 8001
-
 	// PanicMemoryExceed represents the panic message when out of memory quota.
 	PanicMemoryExceed string = "Out Of Memory Quota!"
 )
+
+func init() {
+	errCodes := map[terror.ErrCode]uint16{
+		mysql.ErrMemExceedThreshold: mysql.ErrMemExceedThreshold,
+	}
+	terror.ErrClassToMySQLCodes[terror.ClassUtil] = errCodes
+}

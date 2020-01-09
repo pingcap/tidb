@@ -17,19 +17,19 @@ import (
 	"bytes"
 	"fmt"
 
-	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/mathutil"
 )
 
 type concatFunction struct {
 	aggFunction
 	separator string
-	sepInited bool
 	maxLen    uint64
+	sepInited bool
 	// truncated according to MySQL, a 'group_concat' function generates exactly one 'truncated' warning during its life time, no matter
 	// how many group actually truncated. 'truncated' acts as a sentinel to indicate whether this warning has already been
 	// generated.

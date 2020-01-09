@@ -27,10 +27,16 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tidb/util/ranger"
+	"github.com/pingcap/tidb/util/rowcodec"
 )
 
 func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) Executor {
+	if b.ctx.GetSessionVars().IsPessimisticReadConsistency() {
+		if err := b.refreshForUpdateTS(); err != nil {
+			b.err = err
+			return nil
+		}
+	}
 	startTS, err := b.getStartTS()
 	if err != nil {
 		b.err = err
@@ -38,16 +44,11 @@ func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) Executor {
 	}
 	e := &PointGetExecutor{
 		baseExecutor: newBaseExecutor(b.ctx, p.Schema(), p.ExplainID()),
-		tblInfo:      p.TblInfo,
-		idxInfo:      p.IndexInfo,
-		idxVals:      p.IndexValues,
-		handle:       p.Handle,
-		startTS:      startTS,
-		lock:         p.Lock,
 	}
-	b.isSelectForUpdate = p.IsForUpdate
 	e.base().initCap = 1
 	e.base().maxChunkSize = 1
+	b.isSelectForUpdate = p.IsForUpdate
+	e.Init(p, startTS)
 	return e
 }
 
@@ -55,14 +56,30 @@ func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) Executor {
 type PointGetExecutor struct {
 	baseExecutor
 
-	tblInfo  *model.TableInfo
-	handle   int64
-	idxInfo  *model.IndexInfo
-	idxVals  []types.Datum
-	startTS  uint64
-	snapshot kv.Snapshot
-	done     bool
-	lock     bool
+	tblInfo      *model.TableInfo
+	handle       int64
+	idxInfo      *model.IndexInfo
+	idxVals      []types.Datum
+	startTS      uint64
+	snapshot     kv.Snapshot
+	done         bool
+	lock         bool
+	lockWaitTime int64
+	rowDecoder   *rowcodec.ChunkDecoder
+}
+
+// Init set fields needed for PointGetExecutor reuse, this does NOT change baseExecutor field
+func (e *PointGetExecutor) Init(p *plannercore.PointGetPlan, startTs uint64) {
+	decoder := newRowDecoder(e.ctx, p.Schema(), p.TblInfo)
+	e.tblInfo = p.TblInfo
+	e.handle = p.Handle
+	e.idxInfo = p.IndexInfo
+	e.idxVals = p.IndexValues
+	e.startTS = startTs
+	e.done = false
+	e.lock = p.Lock
+	e.lockWaitTime = p.LockWaitTime
+	e.rowDecoder = decoder
 }
 
 // Open implements the Executor interface.
@@ -91,13 +108,16 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 	if err != nil {
 		return err
 	}
+	if e.ctx.GetSessionVars().GetReplicaRead().IsFollowerRead() {
+		e.snapshot.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
+	}
 	if e.idxInfo != nil {
-		idxKey, err1 := e.encodeIndexKey()
+		idxKey, err1 := encodeIndexKey(e.base(), e.tblInfo, e.idxInfo, e.idxVals)
 		if err1 != nil && !kv.ErrNotExist.Equal(err1) {
 			return err1
 		}
 
-		handleVal, err1 := e.get(idxKey)
+		handleVal, err1 := e.get(ctx, idxKey)
 		if err1 != nil && !kv.ErrNotExist.Equal(err1) {
 			return err1
 		}
@@ -125,7 +145,7 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 
 	key := tablecodec.EncodeRowKeyWithHandle(e.tblInfo.ID, e.handle)
-	val, err := e.get(key)
+	val, err := e.get(ctx, key)
 	if err != nil && !kv.ErrNotExist.Equal(err) {
 		return err
 	}
@@ -140,50 +160,25 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 		}
 		return nil
 	}
-	return e.decodeRowValToChunk(val, req)
+	return decodeRowValToChunk(e.base(), e.tblInfo, e.handle, val, req, e.rowDecoder)
 }
 
 func (e *PointGetExecutor) lockKeyIfNeeded(ctx context.Context, key []byte) error {
 	if e.lock {
-		txn, err := e.ctx.Txn(true)
-		if err != nil {
-			return err
-		}
-		return txn.LockKeys(ctx, e.ctx.GetSessionVars().TxnCtx.GetForUpdateTS(), kv.Key(key))
+		return doLockKeys(ctx, e.ctx, newLockCtx(e.ctx.GetSessionVars(), e.lockWaitTime), key)
 	}
 	return nil
 }
 
-func (e *PointGetExecutor) encodeIndexKey() (_ []byte, err error) {
-	sc := e.ctx.GetSessionVars().StmtCtx
-	for i := range e.idxVals {
-		colInfo := e.tblInfo.Columns[e.idxInfo.Columns[i].Offset]
-		if colInfo.Tp == mysql.TypeString || colInfo.Tp == mysql.TypeVarString || colInfo.Tp == mysql.TypeVarchar {
-			e.idxVals[i], err = ranger.HandlePadCharToFullLength(sc, &colInfo.FieldType, e.idxVals[i])
-		} else {
-			e.idxVals[i], err = table.CastValue(e.ctx, e.idxVals[i], colInfo)
-		}
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	encodedIdxVals, err := codec.EncodeKey(sc, nil, e.idxVals...)
-	if err != nil {
-		return nil, err
-	}
-	return tablecodec.EncodeIndexSeekKey(e.tblInfo.ID, e.idxInfo.ID, encodedIdxVals), nil
-}
-
-func (e *PointGetExecutor) get(key kv.Key) (val []byte, err error) {
-	txn, err := e.ctx.Txn(true)
+func (e *PointGetExecutor) get(ctx context.Context, key kv.Key) (val []byte, err error) {
+	txn, err := e.ctx.Txn(false)
 	if err != nil {
 		return nil, err
 	}
 	if txn != nil && txn.Valid() && !txn.IsReadOnly() {
 		// We cannot use txn.Get directly here because the snapshot in txn and the snapshot of e.snapshot may be
 		// different for pessimistic transaction.
-		val, err = txn.GetMemBuffer().Get(key)
+		val, err = txn.GetMemBuffer().Get(ctx, key)
 		if err == nil {
 			return val, err
 		}
@@ -192,10 +187,43 @@ func (e *PointGetExecutor) get(key kv.Key) (val []byte, err error) {
 		}
 		// fallthrough to snapshot get.
 	}
-	return e.snapshot.Get(key)
+	return e.snapshot.Get(ctx, key)
 }
 
-func (e *PointGetExecutor) decodeRowValToChunk(rowVal []byte, chk *chunk.Chunk) error {
+func encodeIndexKey(e *baseExecutor, tblInfo *model.TableInfo, idxInfo *model.IndexInfo, idxVals []types.Datum) (_ []byte, err error) {
+	sc := e.ctx.GetSessionVars().StmtCtx
+	for i := range idxVals {
+		colInfo := tblInfo.Columns[idxInfo.Columns[i].Offset]
+		// table.CastValue will append 0x0 if the string value's length is smaller than the BINARY column's length.
+		// So we don't use CastValue for string value for now.
+		// TODO: merge two if branch.
+		if colInfo.Tp == mysql.TypeString || colInfo.Tp == mysql.TypeVarString || colInfo.Tp == mysql.TypeVarchar {
+			var str string
+			str, err = idxVals[i].ToString()
+			idxVals[i].SetString(str)
+		} else {
+			idxVals[i], err = table.CastValue(e.ctx, idxVals[i], colInfo)
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	encodedIdxVals, err := codec.EncodeKey(sc, nil, idxVals...)
+	if err != nil {
+		return nil, err
+	}
+	return tablecodec.EncodeIndexSeekKey(tblInfo.ID, idxInfo.ID, encodedIdxVals), nil
+}
+
+func decodeRowValToChunk(e *baseExecutor, tblInfo *model.TableInfo, handle int64, rowVal []byte, chk *chunk.Chunk, rd *rowcodec.ChunkDecoder) error {
+	if rowcodec.IsNewFormat(rowVal) {
+		return rd.DecodeToChunk(rowVal, handle, chk)
+	}
+	return decodeOldRowValToChunk(e, tblInfo, handle, rowVal, chk)
+}
+
+func decodeOldRowValToChunk(e *baseExecutor, tblInfo *model.TableInfo, handle int64, rowVal []byte, chk *chunk.Chunk) error {
 	colID2CutPos := make(map[int64]int, e.schema.Len())
 	for _, col := range e.schema.Columns {
 		if _, ok := colID2CutPos[col.ID]; !ok {
@@ -211,17 +239,17 @@ func (e *PointGetExecutor) decodeRowValToChunk(rowVal []byte, chk *chunk.Chunk) 
 	}
 	decoder := codec.NewDecoder(chk, e.ctx.GetSessionVars().Location())
 	for i, col := range e.schema.Columns {
-		if e.tblInfo.PKIsHandle && mysql.HasPriKeyFlag(col.RetType.Flag) {
-			chk.AppendInt64(i, e.handle)
+		if tblInfo.PKIsHandle && mysql.HasPriKeyFlag(col.RetType.Flag) {
+			chk.AppendInt64(i, handle)
 			continue
 		}
 		if col.ID == model.ExtraHandleID {
-			chk.AppendInt64(i, e.handle)
+			chk.AppendInt64(i, handle)
 			continue
 		}
 		cutPos := colID2CutPos[col.ID]
 		if len(cutVals[cutPos]) == 0 {
-			colInfo := getColInfoByID(e.tblInfo, col.ID)
+			colInfo := getColInfoByID(tblInfo, col.ID)
 			d, err1 := table.GetColOriginDefaultValue(e.ctx, colInfo)
 			if err1 != nil {
 				return err1

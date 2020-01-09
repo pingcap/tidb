@@ -12,26 +12,8 @@ explain select a, b from access_path_selection where a < 3;
 # In this query, IDX_ab can't be used, so IDX_b is the best.
 explain select a, b from access_path_selection where b < 3;
 explain select a, b from access_path_selection where a < 3 and b < 3;
-
-CREATE TABLE `outdated_statistics` (
-`a` int,
-`b` int,
-`c` int,
-INDEX idx_a(a),
-INDEX idx_ab(a,b)
-);
-insert into outdated_statistics values (2, 2, 2);
-insert into outdated_statistics values (3, 3, 3);
-insert into outdated_statistics values (4, 4, 4);
-analyze table outdated_statistics;
-insert into outdated_statistics values (1, 1, 1);
-insert into outdated_statistics values (1, 2, 2);
-insert into outdated_statistics values (1, 3, 3);
-# Only update idx_ab and leave idx_a outdated.
-# Then the estimated number of rows on idx_ab is 1 while it's 0 on idx_a.
-# But for this query, idx_ab is always better than idx_a,
-# because idx_a can't take column b into account while idx_ab can.
-# This wrong case can be solved by Skyline Pruning, so we may update its
-# result after Skyline Pruning is introduced.
-analyze table outdated_statistics index idx_ab;
-explain select * from outdated_statistics where a=1 and b=1 and c=1;
+# _tidb_rowid should also be considered as PK.
+explain select a, b from access_path_selection where a > 10 order by _tidb_rowid;
+explain select max(_tidb_rowid) from access_path_selection;
+# Use indexPath in this query.
+explain select count(1) from access_path_selection;
