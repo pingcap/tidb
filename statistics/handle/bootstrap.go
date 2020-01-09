@@ -171,7 +171,7 @@ func (h *Handle) initStatsTopN4Chunk(cache *statsCache, iter *chunk.Iterator4Chu
 			continue
 		}
 		data := make([]byte, len(row.GetBytes(2)))
-		copy(data, row.GetBytes(0))
+		copy(data, row.GetBytes(2))
 		idx.CMSketch.AppendTopN(data, row.GetUint64(3))
 	}
 }
