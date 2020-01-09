@@ -36,7 +36,7 @@ type Allocator struct {
 }
 
 // Alloc allocs a next autoID for table with tableID.
-func (alloc *Allocator) Alloc(tableID int64, n uint64) (int64, int64, error) {
+func (alloc *Allocator) Alloc(tableID int64, n uint64, increment, offset int64) (int64, int64, error) {
 	min := alloc.base
 	return min, atomic.AddInt64(&alloc.base, int64(n)), nil
 }

@@ -325,8 +325,8 @@ func (t *tableCommon) UpdateRecord(ctx sessionctx.Context, h int64, oldData, new
 	if err = bs.SaveTo(txn); err != nil {
 		return err
 	}
-	ctx.StmtAddDirtyTableOP(table.DirtyTableDeleteRow, t.physicalTableID, h, nil)
-	ctx.StmtAddDirtyTableOP(table.DirtyTableAddRow, t.physicalTableID, h, newData)
+	ctx.StmtAddDirtyTableOP(table.DirtyTableDeleteRow, t.physicalTableID, h)
+	ctx.StmtAddDirtyTableOP(table.DirtyTableAddRow, t.physicalTableID, h)
 	if shouldWriteBinlog(ctx) {
 		if !t.meta.PKIsHandle {
 			binlogColIDs = append(binlogColIDs, model.ExtraHandleID)
@@ -370,18 +370,20 @@ func (t *tableCommon) rebuildIndices(ctx sessionctx.Context, rm kv.RetrieverMuta
 		}
 	}
 	for _, idx := range t.WritableIndices() {
+		untouched := true
 		for _, ic := range idx.Meta().Columns {
 			if !touched[ic.Offset] {
 				continue
 			}
-			newVs, err := idx.FetchValues(newData, nil)
-			if err != nil {
-				return err
-			}
-			if err := t.buildIndexForRow(ctx, rm, h, newVs, idx); err != nil {
-				return err
-			}
+			untouched = false
 			break
+		}
+		newVs, err := idx.FetchValues(newData, nil)
+		if err != nil {
+			return err
+		}
+		if err := t.buildIndexForRow(ctx, rm, h, newVs, idx, txn, untouched); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -510,11 +512,9 @@ func (t *tableCommon) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ..
 		if err = rm.(*kv.BufferStore).SaveTo(txn); err != nil {
 			return 0, err
 		}
+		ctx.StmtAddDirtyTableOP(table.DirtyTableAddRow, t.physicalTableID, recordID)
 	}
 
-	if !ctx.GetSessionVars().LightningMode {
-		ctx.StmtAddDirtyTableOP(table.DirtyTableAddRow, t.physicalTableID, recordID, r)
-	}
 	if shouldWriteBinlog(ctx) {
 		// For insert, TiDB and Binlog can use same row and schema.
 		binlogRow = row
@@ -679,7 +679,7 @@ func (t *tableCommon) RemoveRecord(ctx sessionctx.Context, h int64, r []types.Da
 		return err
 	}
 
-	ctx.StmtAddDirtyTableOP(table.DirtyTableDeleteRow, t.physicalTableID, h, nil)
+	ctx.StmtAddDirtyTableOP(table.DirtyTableDeleteRow, t.physicalTableID, h)
 	if shouldWriteBinlog(ctx) {
 		cols := t.Cols()
 		colIDs := make([]int64, 0, len(cols)+1)
@@ -798,8 +798,12 @@ func (t *tableCommon) removeRowIndex(sc *stmtctx.StatementContext, rm kv.Retriev
 }
 
 // buildIndexForRow implements table.Table BuildIndexForRow interface.
-func (t *tableCommon) buildIndexForRow(ctx sessionctx.Context, rm kv.RetrieverMutator, h int64, vals []types.Datum, idx table.Index) error {
-	if _, err := idx.Create(ctx, rm, vals, h); err != nil {
+func (t *tableCommon) buildIndexForRow(ctx sessionctx.Context, rm kv.RetrieverMutator, h int64, vals []types.Datum, idx table.Index, txn kv.Transaction, untouched bool) error {
+	var opt *table.CreateIdxOpt
+	if untouched {
+		opt = &table.CreateIdxOpt{Untouched: true}
+	}
+	if _, err := idx.Create(ctx, rm, vals, h, opt); err != nil {
 		if kv.ErrKeyExists.Equal(err) {
 			// Make error message consistent with MySQL.
 			entryKey, err1 := t.genIndexKeyStr(vals)
@@ -912,7 +916,7 @@ func GetColDefaultValue(ctx sessionctx.Context, col *table.Column, defaultVals [
 
 // AllocHandle implements table.Table AllocHandle interface.
 func (t *tableCommon) AllocHandle(ctx sessionctx.Context) (int64, error) {
-	_, rowID, err := t.Allocator(ctx).Alloc(t.tableID, 1)
+	_, rowID, err := t.Allocator(ctx).Alloc(t.tableID, 1, 1, 1)
 	if err != nil {
 		return 0, err
 	}
