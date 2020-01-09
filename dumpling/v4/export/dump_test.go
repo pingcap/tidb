@@ -3,6 +3,7 @@ package export
 import (
 	"context"
 	"fmt"
+
 	"github.com/DATA-DOG/go-sqlmock"
 	. "github.com/pingcap/check"
 )

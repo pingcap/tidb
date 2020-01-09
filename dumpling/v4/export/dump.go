@@ -30,7 +30,10 @@ func Dump(conf *Config) (err error) {
 		return err
 	}
 
-	var conCtrl ConsistencyController = &ConsistencyNone{}
+	conCtrl, err := NewConsistencyController(conf, pool)
+	if err != nil {
+		return err
+	}
 	if err = conCtrl.Setup(); err != nil {
 		return err
 	}

@@ -24,6 +24,7 @@ type Config struct {
 	SortByPk      bool
 	Tables        DatabaseTables
 	Snapshot      string
+	Consistency   string
 }
 
 func DefaultConfig() *Config {
@@ -40,6 +41,7 @@ func DefaultConfig() *Config {
 		SortByPk:      false,
 		Tables:        nil,
 		Snapshot:      "",
+		Consistency:   "auto",
 	}
 }
 

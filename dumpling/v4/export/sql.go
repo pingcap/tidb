@@ -178,7 +178,7 @@ func FlushTableWithReadLock(db *sql.DB) error {
 }
 
 func LockTables(db *sql.DB, database, table string) error {
-	_, err := db.Exec(fmt.Sprintf("`%s`.`%s`", database, table))
+	_, err := db.Exec(fmt.Sprintf("LOCK TABLES `%s`.`%s` READ", database, table))
 	return withStack(err)
 }
 
