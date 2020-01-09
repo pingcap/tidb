@@ -1222,5 +1222,17 @@
         ]
       }
     ]
+  },
+  {
+    "Name": "TestTransformLimitToTableDual",
+    "Cases": [
+      {
+        "SQL": "select a from t limit 0 offset 1",
+        "Result": [
+          "Group#0 Schema:[test.t.a]",
+          "    TableDual_4 rowcount:0"
+        ]
+      }
+    ]
   }
 ]
