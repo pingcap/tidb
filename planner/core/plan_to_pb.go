@@ -18,7 +18,6 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
@@ -180,12 +179,9 @@ func SetPBColumnsDefaultValue(ctx sessionctx.Context, pbColumns []*tipb.ColumnIn
 // Some plans are difficult (if possible) to implement streaming, and some are pointless to do so.
 // TODO: Support more kinds of physical plan.
 func SupportStreaming(p PhysicalPlan) bool {
-	switch x := p.(type) {
-	case *PhysicalIndexScan, *PhysicalSelection:
+	switch p.(type) {
+	case *PhysicalIndexScan, *PhysicalSelection, *PhysicalTableScan:
 		return true
-	case *PhysicalTableScan:
-		// TODO: remove this after TiDB coprocessor support stream.
-		return x.StoreType != kv.TiDB
 	}
 	return false
 }
