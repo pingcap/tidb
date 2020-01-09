@@ -823,10 +823,7 @@ func (w *GCWorker) checkUsePhysicalScanLock() (bool, error) {
 		return false, errors.Trace(err)
 	}
 	if str == "" {
-		err = w.saveValueToSysTable(gcScanLockModeKey, gcScanLockModeDefault)
-		if err != nil {
-			return false, errors.Trace(err)
-		}
+		// Do not save it here, so that this config is hidden.
 		str = gcScanLockModeDefault
 	}
 	if strings.EqualFold(str, gcScanLockModePhysical) {
