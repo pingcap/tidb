@@ -17,6 +17,7 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
+	"github.com/pingcap/tidb/meta"
 	"net"
 	"net/http/httptest"
 	"os"
@@ -1078,4 +1079,29 @@ func (s *testTableSuite) TestSelectHiddenColumn(c *C) {
 	colInfo[1].Hidden = true
 	colInfo[2].Hidden = true
 	tk.MustQuery("select count(*) from INFORMATION_SCHEMA.COLUMNS where table_name = 'hidden'").Check(testkit.Rows("0"))
+}
+
+func (s *testTableSuite) TestForDDLJobs(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create database if not exists test_admin_show_ddl_jobs")
+	tk.MustExec("use test_admin_show_ddl_jobs")
+	tk.MustExec("create table t (a int);")
+
+	re := tk.MustQuery("admin show ddl jobs 1")
+	row := re.Rows()[0]
+	c.Assert(row[1], Equals, "test_admin_show_ddl_jobs")
+	jobID, err := strconv.Atoi(row[0].(string))
+	c.Assert(err, IsNil)
+
+	c.Assert(tk.Se.NewTxn(context.Background()), IsNil)
+	txn, err := tk.Se.Txn(true)
+	c.Assert(err, IsNil)
+	t := meta.NewMeta(txn)
+	job, err := t.GetHistoryDDLJob(int64(jobID))
+	c.Assert(err, IsNil)
+	c.Assert(job, NotNil)
+
+	//test select for DDL_JOBS
+	result := tk.MustQuery("select * from INFORMATION_SCHEMA.DDL_JOBS")
+	c.Assert(len(result.Rows()), Greater, 0)
 }

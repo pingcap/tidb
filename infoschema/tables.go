@@ -17,6 +17,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/pingcap/tidb/util/admin"
 	"io/ioutil"
 	"net/http"
 	"sort"
@@ -91,6 +92,7 @@ const (
 	tableTiKVRegionStatus                   = "TIKV_REGION_STATUS"
 	tableTiKVRegionPeers                    = "TIKV_REGION_PEERS"
 	tableTiDBServersInfo                    = "TIDB_SERVERS_INFO"
+	tableDDLJobs                            = "DDL_JOBS"
 	// TableClusterInfo is the string constant of cluster info memory table
 	TableClusterInfo = "CLUSTER_INFO"
 	// TableClusterConfig is the string constant of cluster configuration memory table
@@ -106,6 +108,7 @@ const (
 	tableTiFlashReplica    = "TIFLASH_REPLICA"
 	// TableInspectionResult is the string constant of inspection result table
 	TableInspectionResult = "INSPECTION_RESULT"
+
 )
 
 var tableIDMap = map[string]int64{
@@ -160,6 +163,7 @@ var tableIDMap = map[string]int64{
 	TableClusterHardware:                    autoid.InformationSchemaDBID + 49,
 	TableClusterSystemInfo:                  autoid.InformationSchemaDBID + 50,
 	TableInspectionResult:                   autoid.InformationSchemaDBID + 51,
+	tableDDLJobs:                            autoid.InformationSchemaDBID + 52,
 }
 
 type columnInfo struct {
@@ -729,6 +733,20 @@ var tableTiDBServersInfoCols = []columnInfo{
 	{"VERSION", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"GIT_HASH", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"BINLOG_STATUS", mysql.TypeVarchar, 64, 0, nil, nil},
+}
+
+var tableDDLJobsCols = []columnInfo{
+	{"JOB_ID", mysql.TypeLonglong, 4, 0, nil, nil},
+	{"DB_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"TABLE_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"JOB_TYPE", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"SCHEMA_STATE", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"SCHEMA_ID", mysql.TypeLonglong, 4, 0, nil, nil},
+	{"TABLE_ID", mysql.TypeLonglong, 4, 0, nil, nil},
+	{"ROW_COUNT", mysql.TypeLonglong, 4, 0, nil, nil},
+	{"START_TIME", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"END_TIME", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"STATE", mysql.TypeVarchar, 64, 0, nil, nil},
 }
 
 var tableClusterConfigCols = []columnInfo{
@@ -2138,6 +2156,52 @@ func GetTiKVServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 	return servers, nil
 }
 
+func dataForDDLJobs(ctx sessionctx.Context) (rows [][]types.Datum, err error) {
+	txn, err := ctx.Txn(true)
+	if err != nil {
+		return nil, err
+	}
+	jobs, err := admin.GetDDLJobs(txn)
+	if err != nil {
+		return nil, err
+	}
+	historyJobs, err := admin.GetHistoryDDLJobs(txn, admin.DefNumHistoryJobs)
+	if err != nil {
+		return nil, err
+	}
+	jobs = append(jobs, jobs...)
+	jobs = append(jobs, historyJobs...)
+	for i := 0; i< len(jobs); i++ {
+		schemaName := jobs[i].SchemaName
+		tableName := ""
+		finishTS := uint64(0)
+		if jobs[i].BinlogInfo != nil {
+			finishTS = jobs[i].BinlogInfo.FinishedTS
+			if jobs[i].BinlogInfo.TableInfo != nil {
+				tableName = jobs[i].BinlogInfo.TableInfo.Name.L
+			}
+			if len(schemaName) == 0 && jobs[i].BinlogInfo.DBInfo != nil {
+				schemaName = jobs[i].BinlogInfo.DBInfo.Name.L
+			}
+		}
+		row := types.MakeDatums(
+			jobs[i].ID,
+			schemaName,
+			tableName,
+			jobs[i].Type.String(),
+			jobs[i].SchemaState.String(),
+			jobs[i].SchemaID,
+			jobs[i].TableID,
+			jobs[i].RowCount,
+			model.TSConvert2Time(jobs[i].StartTS).String(),
+			model.TSConvert2Time(finishTS).String(),
+			jobs[i].State.String(),
+		)
+		rows = append(rows, row)
+	}
+	return
+}
+
 func dataForTiDBClusterInfo(ctx sessionctx.Context) ([][]types.Datum, error) {
 	servers, err := GetClusterServerInfo(ctx)
 	if err != nil {
@@ -2228,6 +2292,7 @@ var tableNameToColumns = map[string][]columnInfo{
 	TableClusterHardware:                    tableClusterHardwareCols,
 	TableClusterSystemInfo:                  tableClusterSystemInfoCols,
 	TableInspectionResult:                   tableInspectionResultCols,
+	tableDDLJobs:                            tableDDLJobsCols,
 }
 
 func createInfoSchemaTable(_ autoid.Allocators, meta *model.TableInfo) (table.Table, error) {
@@ -2332,6 +2397,8 @@ func (it *infoschemaTable) getRows(ctx sessionctx.Context, cols []*table.Column)
 		fullRows, err = dataForTikVRegionPeers(ctx)
 	case tableTiDBServersInfo:
 		fullRows, err = dataForServersInfo()
+	case tableDDLJobs:
+		fullRows, err = dataForDDLJobs(ctx)
 	case TableClusterInfo:
 		fullRows, err = dataForTiDBClusterInfo(ctx)
 	case tableTiFlashReplica:
