@@ -873,7 +873,7 @@ func (s *testGCWorkerSuite) TestMergeLockScanner(c *C) {
 
 	scanner, sendCh, resCh = makeMergedChannel(c, 2)
 	sendLocks(sendCh[0], "a", "c", "e")
-	time.Sleep(time.Second)
+	time.Sleep(time.Millisecond * 100)
 	sendLocks(sendCh[1], "b", "d", "f")
 	close(sendCh[0])
 	close(sendCh[1])
@@ -882,9 +882,9 @@ func (s *testGCWorkerSuite) TestMergeLockScanner(c *C) {
 
 	scanner, sendCh, resCh = makeMergedChannel(c, 3)
 	sendLocks(sendCh[0], "a", "d", "g", "h")
-	time.Sleep(time.Second)
+	time.Sleep(time.Millisecond * 100)
 	sendLocks(sendCh[1], "a", "d", "f", "h")
-	time.Sleep(time.Second)
+	time.Sleep(time.Millisecond * 100)
 	sendLocks(sendCh[2], "b", "c", "e", "h")
 	close(sendCh[0])
 	close(sendCh[1])
@@ -894,9 +894,9 @@ func (s *testGCWorkerSuite) TestMergeLockScanner(c *C) {
 
 	scanner, sendCh, resCh = makeMergedChannel(c, 3)
 	sendLocks(sendCh[0], "a", "d", "g", "h")
-	time.Sleep(time.Second)
+	time.Sleep(time.Millisecond * 100)
 	sendLocks(sendCh[1], "a", "d", "f", "h")
-	time.Sleep(time.Second)
+	time.Sleep(time.Millisecond * 100)
 	sendLocks(sendCh[2], "b", "c", "e", "h")
 	sendErr(sendCh[0])
 	close(sendCh[0])
@@ -907,13 +907,11 @@ func (s *testGCWorkerSuite) TestMergeLockScanner(c *C) {
 
 	scanner, sendCh, resCh = makeMergedChannel(c, 3)
 	sendLocks(sendCh[0], "a\x00", "a\x00\x00", "b", "b\x00")
-	time.Sleep(time.Second)
 	sendLocks(sendCh[1], "a", "a\x00\x00", "a\x00\x00\x00", "c")
-	time.Sleep(time.Second)
 	sendLocks(sendCh[2], "1", "a\x00", "a\x00\x00", "b")
 	close(sendCh[0])
 	close(sendCh[1])
 	close(sendCh[2])
 	c.Assert(<-resCh, DeepEquals, makeLockList("1", "a", "a\x00", "a\x00\x00", "a\x00\x00\x00", "b", "b\x00", "c"))
-	c.Assert(scanner.GetSucceededStores(), DeepEquals, makeIDSet(1, 2, 3))
+	c.Assert(scanner.GetSucceededStores(), DeepEquals, makeIDSet(0, 1, 2))
 }

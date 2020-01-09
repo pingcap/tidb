@@ -497,7 +497,11 @@ func (w *GCWorker) calculateNewSafePoint(now time.Time) (*time.Time, error) {
 
 func (w *GCWorker) runGCJob(ctx context.Context, safePoint uint64, concurrency int) error {
 	metrics.GCWorkerCounter.WithLabelValues("run_job").Inc()
-	err := w.resolveLocks(ctx, safePoint, concurrency)
+	usePhysical, err := w.checkUsePhysicalScanLock()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	err = w.resolveLocks(ctx, safePoint, concurrency, usePhysical)
 	if err != nil {
 		logutil.Logger(ctx).Error("[gc worker] resolve locks returns an error",
 			zap.String("uuid", w.uuid),
@@ -505,6 +509,7 @@ func (w *GCWorker) runGCJob(ctx context.Context, safePoint uint64, concurrency i
 		metrics.GCJobFailureCounter.WithLabelValues("resolve_lock").Inc()
 		return errors.Trace(err)
 	}
+
 	// Save safe point to pd.
 	err = w.saveSafePoint(w.store.GetSafePointKV(), safePoint)
 	if err != nil {
@@ -837,18 +842,13 @@ func (w *GCWorker) checkUsePhysicalScanLock() (bool, error) {
 	return true, nil
 }
 
-func (w *GCWorker) resolveLocks(ctx context.Context, safePoint uint64, concurrency int) error {
-	usePhysical, err := w.checkUsePhysicalScanLock()
-	if err != nil {
-		return errors.Trace(err)
-	}
-
+func (w *GCWorker) resolveLocks(ctx context.Context, safePoint uint64, concurrency int, usePhysical bool) error {
 	if !usePhysical {
 		return w.legacyResolveLocks(ctx, safePoint, concurrency)
 	}
 
 	// First try resolve locks with physical scan
-	err = w.resolveLocksWithPhysicalScan(ctx, safePoint)
+	err := w.resolveLocksWithPhysicalScan(ctx, safePoint)
 
 	if err == nil {
 		return nil
@@ -1724,7 +1724,7 @@ func RunGCJob(ctx context.Context, s tikv.Storage, safePoint uint64, identifier 
 		uuid:  identifier,
 	}
 
-	err := gcWorker.resolveLocks(ctx, safePoint, concurrency)
+	err := gcWorker.resolveLocks(ctx, safePoint, concurrency, false)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1757,7 +1757,7 @@ func RunDistributedGCJob(ctx context.Context, s tikv.Storage, pd pd.Client, safe
 		pdClient: pd,
 	}
 
-	err := gcWorker.resolveLocks(ctx, safePoint, concurrency)
+	err := gcWorker.resolveLocks(ctx, safePoint, concurrency, false)
 	if err != nil {
 		return errors.Trace(err)
 	}
