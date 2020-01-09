@@ -146,10 +146,45 @@ var vecBuiltinArithmeticCases = map[string][]vecExprBenchCase{
 	ast.NE: {},
 }
 
+var nullableBuiltinArithmeticCases = map[string][]exprNullableTestCase{
+	ast.Minus: {
+		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETReal, types.ETReal}},
+		{retEvalType: types.ETDecimal, childrenTypes: []types.EvalType{types.ETDecimal, types.ETDecimal}},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt}},
+	},
+	ast.Div: {
+		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETReal, types.ETReal}, alwaysNullable: true},
+		{retEvalType: types.ETDecimal, childrenTypes: []types.EvalType{types.ETDecimal, types.ETDecimal}, alwaysNullable: true},
+	},
+	ast.IntDiv: {
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDecimal, types.ETDecimal}},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt}},
+	},
+	ast.Mod: {
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt}},
+		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETReal, types.ETReal}, alwaysNullable: true},
+		{retEvalType: types.ETDecimal, childrenTypes: []types.EvalType{types.ETDecimal, types.ETDecimal}, alwaysNullable: true},
+	},
+	ast.Mul: {
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt}, alwaysNullable: true},
+		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETReal, types.ETReal}},
+		{retEvalType: types.ETDecimal, childrenTypes: []types.EvalType{types.ETDecimal, types.ETDecimal}, alwaysNullable: true},
+	},
+	ast.Plus: {
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt}},
+		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETReal, types.ETReal}},
+		{retEvalType: types.ETDecimal, childrenTypes: []types.EvalType{types.ETDecimal, types.ETDecimal}},
+	},
+}
+
 func (s *testEvaluatorSuite) TestVectorizedBuiltinArithmeticFunc(c *C) {
 	testVectorizedBuiltinFunc(c, vecBuiltinArithmeticCases)
 }
 
 func BenchmarkVectorizedBuiltinArithmeticFunc(b *testing.B) {
 	benchmarkVectorizedBuiltinFunc(b, vecBuiltinArithmeticCases)
+}
+
+func (s *testEvaluatorSuite) TestNullableBuiltinArithmeticFunc(c *C) {
+	testExpressionNullable(c, nullableBuiltinArithmeticCases)
 }

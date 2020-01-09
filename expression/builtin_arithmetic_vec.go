@@ -28,6 +28,10 @@ func (b *builtinArithmeticMultiplyRealSig) vectorized() bool {
 	return true
 }
 
+func (b *builtinArithmeticMultiplyRealSig) nullable(notNullCols []*Column) bool {
+	return b.existsNullableChild(notNullCols)
+}
+
 func (b *builtinArithmeticMultiplyRealSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) error {
 	if err := b.args[0].VecEvalReal(b.ctx, input, result); err != nil {
 		return err
@@ -58,6 +62,10 @@ func (b *builtinArithmeticMultiplyRealSig) vecEvalReal(input *chunk.Chunk, resul
 }
 
 func (b *builtinArithmeticDivideDecimalSig) vectorized() bool {
+	return true
+}
+
+func (b *builtinArithmeticDivideDecimalSig) nullable(notNullCols []*Column) bool {
 	return true
 }
 
@@ -108,6 +116,10 @@ func (b *builtinArithmeticDivideDecimalSig) vecEvalDecimal(input *chunk.Chunk, r
 
 func (b *builtinArithmeticModIntSig) vectorized() bool {
 	return true
+}
+
+func (b *builtinArithmeticModIntSig) nullable(notNullCols []*Column) bool {
+	return b.existsNullableChild(notNullCols)
 }
 
 func (b *builtinArithmeticModIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
@@ -251,6 +263,10 @@ func (b *builtinArithmeticMinusRealSig) vectorized() bool {
 	return true
 }
 
+func (b *builtinArithmeticMinusRealSig) nullable(notNullCols []*Column) bool {
+	return b.existsNullableChild(notNullCols)
+}
+
 func (b *builtinArithmeticMinusRealSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) error {
 	if err := b.args[0].VecEvalReal(b.ctx, input, result); err != nil {
 		return err
@@ -282,6 +298,10 @@ func (b *builtinArithmeticMinusRealSig) vecEvalReal(input *chunk.Chunk, result *
 
 func (b *builtinArithmeticMinusDecimalSig) vectorized() bool {
 	return true
+}
+
+func (b *builtinArithmeticMinusDecimalSig) nullable(notNullCols []*Column) bool {
+	return b.existsNullableChild(notNullCols)
 }
 
 func (b *builtinArithmeticMinusDecimalSig) vecEvalDecimal(input *chunk.Chunk, result *chunk.Column) error {
@@ -316,6 +336,10 @@ func (b *builtinArithmeticMinusDecimalSig) vecEvalDecimal(input *chunk.Chunk, re
 
 func (b *builtinArithmeticMinusIntSig) vectorized() bool {
 	return true
+}
+
+func (b *builtinArithmeticMinusIntSig) nullable(notNullCols []*Column) bool {
+	return b.existsNullableChild(notNullCols)
 }
 
 func (b *builtinArithmeticMinusIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
@@ -498,6 +522,10 @@ func (b *builtinArithmeticModRealSig) vectorized() bool {
 	return true
 }
 
+func (b *builtinArithmeticModRealSig) nullable(notNullCols []*Column) bool {
+	return true
+}
+
 func (b *builtinArithmeticModRealSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf, err := b.bufAllocator.get(types.ETReal, n)
@@ -535,6 +563,10 @@ func (b *builtinArithmeticModRealSig) vecEvalReal(input *chunk.Chunk, result *ch
 }
 
 func (b *builtinArithmeticModDecimalSig) vectorized() bool {
+	return true
+}
+
+func (b *builtinArithmeticModDecimalSig) nullable(notNullCols []*Column) bool {
 	return true
 }
 
@@ -580,6 +612,10 @@ func (b *builtinArithmeticPlusRealSig) vectorized() bool {
 	return true
 }
 
+func (b *builtinArithmeticPlusRealSig) nullable(notNullCols []*Column) bool {
+	return b.existsNullableChild(notNullCols)
+}
+
 func (b *builtinArithmeticPlusRealSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) error {
 	if err := b.args[0].VecEvalReal(b.ctx, input, result); err != nil {
 		return err
@@ -611,6 +647,10 @@ func (b *builtinArithmeticPlusRealSig) vecEvalReal(input *chunk.Chunk, result *c
 
 func (b *builtinArithmeticMultiplyDecimalSig) vectorized() bool {
 	return true
+}
+
+func (b *builtinArithmeticMultiplyDecimalSig) nullable(notNullCols []*Column) bool {
+	return b.existsNullableChild(notNullCols)
 }
 
 func (b *builtinArithmeticMultiplyDecimalSig) vecEvalDecimal(input *chunk.Chunk, result *chunk.Column) error {
@@ -646,6 +686,10 @@ func (b *builtinArithmeticMultiplyDecimalSig) vecEvalDecimal(input *chunk.Chunk,
 
 func (b *builtinArithmeticIntDivideDecimalSig) vectorized() bool {
 	return true
+}
+
+func (b *builtinArithmeticIntDivideDecimalSig) nullable(notNullCols []*Column) bool {
+	return b.existsNullableChild(notNullCols)
 }
 
 func (b *builtinArithmeticIntDivideDecimalSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
@@ -736,6 +780,10 @@ func (b *builtinArithmeticMultiplyIntSig) vectorized() bool {
 	return true
 }
 
+func (b *builtinArithmeticMultiplyIntSig) nullable(notNullCols []*Column) bool {
+	return true
+}
+
 func (b *builtinArithmeticMultiplyIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	if err := b.args[0].VecEvalInt(b.ctx, input, result); err != nil {
 		return err
@@ -817,12 +865,20 @@ func (b *builtinArithmeticIntDivideIntSig) vectorized() bool {
 	return false
 }
 
+func (b *builtinArithmeticIntDivideIntSig) nullable(notNullCols []*Column) bool {
+	return b.existsNullableChild(notNullCols)
+}
+
 func (b *builtinArithmeticIntDivideIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	return errors.Errorf("not implemented")
 }
 
 func (b *builtinArithmeticPlusIntSig) vectorized() bool {
 	return true
+}
+
+func (b *builtinArithmeticPlusIntSig) nullable(notNullCols []*Column) bool {
+	return b.existsNullableChild(notNullCols)
 }
 
 func (b *builtinArithmeticPlusIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
@@ -935,6 +991,10 @@ func (b *builtinArithmeticPlusIntSig) plusSS(result *chunk.Column, lhi64s, rhi64
 
 func (b *builtinArithmeticPlusDecimalSig) vectorized() bool {
 	return true
+}
+
+func (b *builtinArithmeticPlusDecimalSig) nullable(notNullCols []*Column) bool {
+	return b.existsNullableChild(notNullCols)
 }
 
 func (b *builtinArithmeticPlusDecimalSig) vecEvalDecimal(input *chunk.Chunk, result *chunk.Column) error {

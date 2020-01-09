@@ -511,6 +511,7 @@ func (m *MockExpr) IsCorrelated() bool                                { return f
 func (m *MockExpr) ConstItem() bool                                   { return false }
 func (m *MockExpr) Decorrelate(schema *Schema) Expression             { return m }
 func (m *MockExpr) ResolveIndices(schema *Schema) (Expression, error) { return m, nil }
+func (m *MockExpr) Nullable(notNullCols []*Column) bool               { return true }
 func (m *MockExpr) resolveIndices(schema *Schema) error               { return nil }
 func (m *MockExpr) ExplainInfo() string                               { return "" }
 func (m *MockExpr) ExplainNormalizedInfo() string                     { return "" }

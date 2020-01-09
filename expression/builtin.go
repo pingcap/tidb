@@ -63,6 +63,15 @@ func (b *baseBuiltinFunc) nullable(notNullCols []*Column) bool {
 	return true
 }
 
+func (b *baseBuiltinFunc) existsNullableChild(notNullCols []*Column) bool {
+	for _, expr := range b.args {
+		if expr.Nullable(notNullCols) {
+			return true
+		}
+	}
+	return false
+}
+
 func (b *baseBuiltinFunc) PbCode() tipb.ScalarFuncSig {
 	return b.pbCode
 }
