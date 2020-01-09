@@ -559,7 +559,8 @@ func signedDeny(c *C, tp byte, value interface{}, expected string) {
 	deny(c, tp, value, false, expected)
 }
 
-func signedDenyNoyInInsert(c *C, tp byte, value interface{}, expected string) {
+// The ConvertTo in this function is caused by cast()/convert() function
+func signedDenyCastFunction(c *C, tp byte, value interface{}, expected string) {
 	ft := NewFieldType(tp)
 	d := NewDatum(value)
 	sc := new(stmtctx.StatementContext)
@@ -631,7 +632,7 @@ func (s *testTypeConvertSuite) TestConvert(c *C) {
 	signedDeny(c, mysql.TypeLong, "1343545435346432587475", strvalue(int64(math.MaxInt32)))
 	signedAccept(c, mysql.TypeLong, NewBinaryLiteralFromUint(math.MaxInt32, -1), strvalue(int64(math.MaxInt32)))
 	signedDeny(c, mysql.TypeLong, NewBinaryLiteralFromUint(math.MaxUint64, -1), strvalue(int64(math.MaxInt32)))
-	signedDenyNoyInInsert(c, mysql.TypeLong, NewBinaryLiteralFromUint(math.MaxUint64, -1), strvalue(-1))
+	signedDenyCastFunction(c, mysql.TypeLong, NewBinaryLiteralFromUint(math.MaxUint64, -1), strvalue(-1))
 	signedDeny(c, mysql.TypeLong, NewBinaryLiteralFromUint(math.MaxInt32+1, -1), strvalue(int64(math.MaxInt32)))
 	unsignedDeny(c, mysql.TypeLong, -1, "4294967295")
 	unsignedAccept(c, mysql.TypeLong, 0, "0")
@@ -647,7 +648,7 @@ func (s *testTypeConvertSuite) TestConvert(c *C) {
 	signedDeny(c, mysql.TypeLonglong, math.MaxInt64*1.1, strvalue(int64(math.MaxInt64)))
 	signedAccept(c, mysql.TypeLonglong, NewBinaryLiteralFromUint(math.MaxInt64, -1), strvalue(int64(math.MaxInt64)))
 	signedDeny(c, mysql.TypeLonglong, NewBinaryLiteralFromUint(math.MaxInt64+1, -1), strvalue(int64(math.MaxInt64)))
-	signedDenyNoyInInsert(c, mysql.TypeLonglong, NewBinaryLiteralFromUint(math.MaxInt64+1, -1), strvalue(math.MinInt64))
+	signedDenyCastFunction(c, mysql.TypeLonglong, NewBinaryLiteralFromUint(math.MaxInt64+1, -1), strvalue(math.MinInt64))
 	unsignedAccept(c, mysql.TypeLonglong, -1, "18446744073709551615")
 	unsignedAccept(c, mysql.TypeLonglong, 0, "0")
 	unsignedAccept(c, mysql.TypeLonglong, uint64(math.MaxUint64), strvalue(uint64(math.MaxUint64)))
