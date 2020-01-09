@@ -4307,3 +4307,55 @@ func (d *ddl) OrderByColumns(ctx sessionctx.Context, ident ast.Ident) error {
 	}
 	return nil
 }
+
+func (d *ddl) CreateSequence(ctx sessionctx.Context, stmt *ast.CreateSequenceStmt) error {
+	ident := ast.Ident{Name: stmt.Name.Name, Schema: stmt.Name.Schema}
+	is := d.GetInfoSchemaWithInterceptor(ctx)
+	schema, ok := is.SchemaByName(ident.Schema)
+	if !ok {
+		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(ident.Schema)
+	}
+	ok = is.TableExists(ident.Schema, ident.Name)
+	if ok {
+		if stmt.IfNotExists {
+			ctx.GetSessionVars().StmtCtx.AppendNote(infoschema.ErrTableExists.GenWithStackByArgs(ident))
+			return nil
+		}
+		// TODO: refine the error.
+		return infoschema.ErrTableExists.GenWithStackByArgs(ident)
+	}
+	if err := checkTooLongTable(ident.Name); err != nil {
+		return err
+	}
+	sequenceInfo, err := buildSequenceInfo(stmt, ident)
+	if err != nil {
+		return err
+	}
+	// TiDB describe the sequence within a tableInfo, as a same-level object of a table and view.
+	tbInfo, err := buildTableInfo(ctx, ident.Name, nil, nil)
+	if err != nil {
+		return err
+	}
+	if err := d.assignTableID(tbInfo); err != nil {
+		return err
+	}
+	tbInfo.Sequence = sequenceInfo
+
+	job := &model.Job{
+		SchemaID:   schema.ID,
+		TableID:    tbInfo.ID,
+		SchemaName: schema.Name.L,
+		Type:       model.ActionCreateSequence,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{tbInfo},
+	}
+
+	err = d.doDDLJob(ctx, job)
+	// If the same name sequence exists, but IfNotExists flag is true, then we should ignore the error.
+	if infoschema.ErrTableExists.Equal(err) && stmt.IfNotExists {
+		ctx.GetSessionVars().StmtCtx.AppendNote(err)
+		return nil
+	}
+	err = d.callHookOnChanged(err)
+	return errors.Trace(err)
+}

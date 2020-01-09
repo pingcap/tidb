@@ -29,7 +29,7 @@ import (
 
 var (
 	withTiKVGlobalLock sync.RWMutex
-	withTiKV           = flag.Bool("with-tikv", false, "run tests with TiKV cluster started. (not use the mock server)")
+	WithTiKV           = flag.Bool("with-tikv", false, "run tests with TiKV cluster started. (not use the mock server)")
 	pdAddrs            = flag.String("pd-addrs", "127.0.0.1:2379", "pd addrs")
 )
 
@@ -39,7 +39,7 @@ func NewTestStore(c *C) kv.Storage {
 		flag.Parse()
 	}
 
-	if *withTiKV {
+	if *WithTiKV {
 		var d Driver
 		store, err := d.Open(fmt.Sprintf("tikv://%s", *pdAddrs))
 		c.Assert(err, IsNil)
