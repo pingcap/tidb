@@ -38,9 +38,9 @@ func (a *maxMinEliminator) optimize(ctx context.Context, p LogicalPlan) (Logical
 // composeAggsByInnerJoin composes the scalar aggregations by cartesianJoin.
 func (a *maxMinEliminator) composeAggsByInnerJoin(aggs []*LogicalAggregation) (plan LogicalPlan) {
 	plan = aggs[0]
-	sctx := plan.SCtx()
+	sctx := plan.context()
 	for i := 1; i < len(aggs); i++ {
-		join := LogicalJoin{JoinType: InnerJoin}.Init(sctx, plan.SelectBlockOffset())
+		join := LogicalJoin{JoinType: InnerJoin}.Init(sctx)
 		join.SetChildren(plan, aggs[i])
 		join.schema = buildLogicalJoinSchema(InnerJoin, join)
 		join.cartesianJoin = true
@@ -64,7 +64,8 @@ func (a *maxMinEliminator) checkColCanUseIndex(plan LogicalPlan, col *expression
 				// Since table path can contain accessConds of at most one column,
 				// we only need to check if all of the conditions can be pushed down as accessConds
 				// and `col` is the handle column.
-				if p.handleCol != nil && col.Equal(nil, p.handleCol) {
+				pkCol := p.getPKIsHandleCol()
+				if pkCol != nil && pkCol.Equal(nil, col) {
 					if _, filterConds := ranger.DetachCondsForColumn(p.ctx, conditions, col); len(filterConds) != 0 {
 						return false
 					}
@@ -74,12 +75,16 @@ func (a *maxMinEliminator) checkColCanUseIndex(plan LogicalPlan, col *expression
 				// For index paths, we have to check:
 				// 1. whether all of the conditions can be pushed down as accessConds.
 				// 2. whether the accessPath can satisfy the order property of `col` with these accessConds.
-				result, err := ranger.DetachCondAndBuildRangeForIndex(p.ctx, conditions, path.fullIdxCols, path.fullIdxColLens)
+				idxCols, idxColLens := expression.IndexInfo2Cols(p.schema.Columns, path.index)
+				if len(idxCols) == 0 {
+					continue
+				}
+				result, err := ranger.DetachCondAndBuildRangeForIndex(p.ctx, conditions, idxCols, idxColLens)
 				if err != nil || len(result.RemainedConds) != 0 {
 					continue
 				}
 				for i := 0; i <= result.EqCondCount; i++ {
-					if i < len(path.fullIdxCols) && col.Equal(nil, path.fullIdxCols[i]) {
+					if i < len(idxCols) && col.Equal(nil, idxCols[i]) {
 						return true
 					}
 				}
@@ -98,14 +103,14 @@ func (a *maxMinEliminator) cloneSubPlans(plan LogicalPlan) LogicalPlan {
 	case *LogicalSelection:
 		newConditions := make([]expression.Expression, len(p.Conditions))
 		copy(newConditions, p.Conditions)
-		sel := LogicalSelection{Conditions: newConditions}.Init(p.ctx, p.blockOffset)
+		sel := LogicalSelection{Conditions: newConditions}.Init(p.ctx)
 		sel.SetChildren(a.cloneSubPlans(p.children[0]))
 		return sel
 	case *DataSource:
 		// Quick clone a DataSource.
 		// ReadOnly fields uses a shallow copy, while the fields which will be overwritten must use a deep copy.
 		newDs := *p
-		newDs.baseLogicalPlan = newBaseLogicalPlan(p.ctx, p.tp, &newDs, p.blockOffset)
+		newDs.baseLogicalPlan = newBaseLogicalPlan(p.ctx, p.tp, &newDs)
 		newDs.schema = p.schema.Clone()
 		newDs.Columns = make([]*model.ColumnInfo, len(p.Columns))
 		copy(newDs.Columns, p.Columns)
@@ -140,7 +145,7 @@ func (a *maxMinEliminator) splitAggFuncAndCheckIndices(agg *LogicalAggregation) 
 	aggs = make([]*LogicalAggregation, 0, len(agg.AggFuncs))
 	// we can split the aggregation only if all of the aggFuncs pass the check.
 	for i, f := range agg.AggFuncs {
-		newAgg := LogicalAggregation{AggFuncs: []*aggregation.AggFuncDesc{f}}.Init(agg.ctx, agg.blockOffset)
+		newAgg := LogicalAggregation{AggFuncs: []*aggregation.AggFuncDesc{f}}.Init(agg.ctx)
 		newAgg.SetChildren(a.cloneSubPlans(agg.children[0]))
 		newAgg.schema = expression.NewSchema(agg.schema.Columns[i])
 		newAgg.PruneColumns([]*expression.Column{newAgg.schema.Columns[0]})
@@ -153,13 +158,13 @@ func (a *maxMinEliminator) splitAggFuncAndCheckIndices(agg *LogicalAggregation) 
 func (a *maxMinEliminator) eliminateSingleMaxMin(agg *LogicalAggregation) *LogicalAggregation {
 	f := agg.AggFuncs[0]
 	child := agg.Children()[0]
-	ctx := agg.SCtx()
+	ctx := agg.context()
 
 	// If there's no column in f.GetArgs()[0], we still need limit and read data from real table because the result should be NULL if the input is empty.
 	if len(expression.ExtractColumns(f.Args[0])) > 0 {
 		// If it can be NULL, we need to filter NULL out first.
 		if !mysql.HasNotNullFlag(f.Args[0].GetType().Flag) {
-			sel := LogicalSelection{}.Init(ctx, agg.blockOffset)
+			sel := LogicalSelection{}.Init(ctx)
 			isNullFunc := expression.NewFunctionInternal(ctx, ast.IsNull, types.NewFieldType(mysql.TypeTiny), f.Args[0])
 			notNullFunc := expression.NewFunctionInternal(ctx, ast.UnaryNot, types.NewFieldType(mysql.TypeTiny), isNullFunc)
 			sel.Conditions = []expression.Expression{notNullFunc}
@@ -171,14 +176,14 @@ func (a *maxMinEliminator) eliminateSingleMaxMin(agg *LogicalAggregation) *Logic
 		// For max function, the sort order should be desc.
 		desc := f.Name == ast.AggFuncMax
 		// Compose Sort operator.
-		sort := LogicalSort{}.Init(ctx, agg.blockOffset)
+		sort := LogicalSort{}.Init(ctx)
 		sort.ByItems = append(sort.ByItems, &ByItems{f.Args[0], desc})
 		sort.SetChildren(child)
 		child = sort
 	}
 
 	// Compose Limit operator.
-	li := LogicalLimit{Count: 1}.Init(ctx, agg.blockOffset)
+	li := LogicalLimit{Count: 1}.Init(ctx)
 	li.SetChildren(child)
 
 	// If no data in the child, we need to return NULL instead of empty. This cannot be done by sort and limit themselves.

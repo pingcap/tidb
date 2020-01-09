@@ -477,14 +477,7 @@ func (ds *DataSource) deriveIndexPathStats(path *accessPath) (bool, error) {
 	sc := ds.ctx.GetSessionVars().StmtCtx
 	path.ranges = ranger.FullRange()
 	path.countAfterAccess = float64(ds.statisticTable.Count)
-	path.idxCols, path.idxColLens = expression.IndexInfo2PrefixCols(ds.schema.Columns, path.index)
-	if !path.index.Unique && !path.index.Primary && len(path.index.Columns) == len(path.idxCols) {
-		handleCol := ds.getPKIsHandleCol()
-		if handleCol != nil && !mysql.HasUnsignedFlag(handleCol.RetType.Flag) {
-			path.idxCols = append(path.idxCols, handleCol)
-			path.idxColLens = append(path.idxColLens, types.UnspecifiedLength)
-		}
-	}
+	path.idxCols, path.idxColLens = expression.IndexInfo2Cols(ds.schema.Columns, path.index)
 	eqOrInCount := 0
 	if len(path.idxCols) != 0 {
 		res, err := ranger.DetachCondAndBuildRangeForIndex(ds.ctx, ds.pushedDownConds, path.idxCols, path.idxColLens)
