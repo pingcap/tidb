@@ -1316,8 +1316,7 @@ func (r *MergeAdjacentLimit) OnTransform(old *memo.ExprIter) (newExprs []*memo.G
 
 	if child.Count <= limit.Offset {
 		tableDual := plannercore.LogicalTableDual{RowCount: 0}.Init(child.SCtx(), child.SelectBlockOffset())
-		tableDual.SetSchema(child.Schema())
-		tableDual.SetOutputNames(child.OutputNames())
+		tableDual.SetSchema(old.GetExpr().Schema())
 		tableDualExpr := memo.NewGroupExpr(tableDual)
 		return []*memo.GroupExpr{tableDualExpr}, true, true, nil
 	}
