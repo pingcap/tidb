@@ -1,7 +1,7 @@
 # Shuffle Executor
 
-- Author(s):         [pingyu](https://github.com/pingyu)  (Ping Yu)
-- Last updated:  2020-01-09
+- Author:             [pingyu](https://github.com/pingyu)  (Ping Yu)
+- Last updated:  2020-01-10
 
 ## Abstract
 This article will describe the design of Shuffle Executor in TiDB.
@@ -16,41 +16,42 @@ Furthmore, the Shuffle Executor is designed be a general purpose executor, which
 The implementation consists of 3 parts:
 1. Planning.
 2. Building executor.
-3. Excuting.
+3. Executing.
 
 ### Planning
 In CBO procedure (to be specific, in `(*baseLogicalPlan).findBestTask`), we inserts a new physical plan `PhysicalShuffle`, which represents the executing plan of Shuffle Executor, on the top of the very executor to be "shuffled".
 
-Take window operator as example, when table `t` was created as `create table t (i int, j int)`, the plan of `select j, sum(i) over w from tt4 window w as (partition by j)` would be:
+Take window operator as example, when table `t` was created as `create table t (i int, j int)`, the plan of `select j, sum(i) over w from t window w as (partition by j)` would be:
 ```
-mysql> explain select j, sum(i) over w from tt4 window w as (partition by j);
-+--------------------------+-------+-----------+---------------------------------------------------------------+
-| id                       | count | task      | operator info                                                 |
-+--------------------------+-------+-----------+---------------------------------------------------------------+
-| Projection_7             | 16.00 | root      | test.tt4.j, Column#6                                          |
-| └─Window_8               | 16.00 | root      | sum(cast(test.tt4.i))->Column#6 over(partition by test.tt4.j) |
-|   └─Sort_11              | 16.00 | root      | test.tt4.j:asc                                                |
-|     └─TableReader_10     | 16.00 | root      | data:TableScan_9                                              |
-|       └─TableScan_9      | 16.00 | cop[tikv] | table:tt4, range:[-inf,+inf], keep order:false, stats:pseudo  |
-+--------------------------+-------+-----------+---------------------------------------------------------------+
+mysql> explain select j, sum(i) over w from t window w as (partition by j);
++--------------------------+----------+-----------+------------------------------------------------------------+
+| id                       | count    | task      | operator info                                              |
++--------------------------+----------+-----------+------------------------------------------------------------+
+| Projection_7             | 10000.00 | root      | test.t.j, Column#5                                         |
+| └─Window_8               | 10000.00 | root      | sum(cast(test.t.i))->Column#5 over(partition by test.t.j)  |
+|   └─Sort_11              | 10000.00 | root      | test.t.j:asc                                               |
+|     └─TableReader_10     | 10000.00 | root      | data:TableScan_9                                           |
+|       └─TableScan_9      | 10000.00 | cop[tikv] | table:t, range:[-inf,+inf], keep order:false, stats:pseudo |
++--------------------------+----------+-----------+------------------------------------------------------------+
 ```
 To "shuffle" the window operator, the plan would changed to:
 ```
-mysql> explain select j, sum(i) over w from tt4 window w as (partition by j);
-+----------------------------+-------+-----------+---------------------------------------------------------------+
-| id                         | count | task      | operator info                                                 |
-+----------------------------+-------+-----------+---------------------------------------------------------------+
-| Projection_7               | 16.00 | root      | test.tt4.j, Column#6                                          |
-| └─Shuffle_12               | 16.00 | root      | execution info: concurrency:4, data source:TableReader_10     |
-|   └─Window_8               | 16.00 | root      | sum(cast(test.tt4.i))->Column#6 over(partition by test.tt4.j) |
-|     └─Sort_11              | 16.00 | root      | test.tt4.j:asc                                                |
-|       └─TableReader_10     | 16.00 | root      | data:TableScan_9                                              |
-|         └─TableScan_9      | 16.00 | cop[tikv] | table:tt4, range:[-inf,+inf], keep order:false, stats:pseudo  |
-+----------------------------+-------+-----------+---------------------------------------------------------------+
+mysql> explain select j, sum(i) over w from t window w as (partition by j);
++----------------------------+----------+-----------+------------------------------------------------------------+
+| id                         | count    | task      | operator info                                              |
++----------------------------+----------+-----------+------------------------------------------------------------+
+| Projection_7               | 10000.00 | root      | test.t.j, Column#5                                         |
+| └─Shuffle_12               | 10000.00 | root      | execution info: concurrency:4, data source:TableReader_10  |
+|   └─Window_8               | 10000.00 | root      | sum(cast(test.t.i))->Column#5 over(partition by test.t.j)  |
+|     └─Sort_11              | 10000.00 | root      | test.t.j:asc                                               |
+|       └─TableReader_10     | 10000.00 | root      | data:TableScan_9                                           |
+|         └─TableScan_9      | 10000.00 | cop[tikv] | table:t, range:[-inf,+inf], keep order:false, stats:pseudo |
++----------------------------+----------+-----------+------------------------------------------------------------+
 ```
 (_See "Building Executor" for what `data source` means_)
 
-The `PhysicalShuffle` is inserted when the following is met:
+The `PhysicalShuffle` is inserted when the following conditions are met:
+
 - The variable for the operator to be executing in parallel manner is enable. As to window operator, the value of variable `tidb_window_concurreny` should be more than 1.
 - The NDV (number of dinstict value) of "partition by" row(s) should be more than 1.
 - The parallel should be effective enough. As to window operator, when the child of window operator meets the property requirement (i.e. enforced sorting is not necessary), the parallel is not effective enough. See "Benchmarks" for detail.
@@ -107,3 +108,4 @@ The executing steps of Shuffle Executor:
 
 ## Benchmarks
 TODO
+
