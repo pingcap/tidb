@@ -16,7 +16,8 @@
       "select a, f from t where g > 1 and f > 1",
       "select t1.a, t1.b from t t1, t t2 where t1.a = t2.a and t1.a = 10 and t2.a = 5",
       "select a, b from ((select a, b from t) union all(select c as a, d as b from t)) as t1 where a > 1",
-      "select a, b from (select a, b, min(a) over(partition by b) as min_a from t)as tt where a < 10 and b > 10 and b = min_a"
+      "select a, b from (select a, b, min(a) over(partition by b) as min_a from t)as tt where a < 10 and b > 10 and b = min_a",
+      "select b, c from (select b, c from t where b > 1 and c > 1) as t1 where b > 2 and c > 2"
     ]
   },
   {
@@ -31,12 +32,19 @@
     "name": "TestTopNRules",
     "cases": [
       "select b from t order by a limit 2",
+      "select b from t limit 2",
       "select a+b from t order by a limit 1 offset 2",
       "select c from t order by t.a limit 1",
       "select c from t order by t.a + t.b limit 1",
       "select a, b, c from t t1 where t1.a in (select t2.a as a from t t2 where t2.b > t1.b order by t1.b limit 1)",
       "select a, b, c from t t1 where t1.a in (select a from (select t2.a as a, t1.b as b from t t2 where t2.b > t1.b) x order by b limit 1)",
-      "select a, b from (select @i as a, @i := @i+1 as b from t) t order by a desc limit 1"
+      "select a, b from (select @i as a, @i := @i+1 as b from t) t order by a desc limit 1",
+      "(select a from t) union all (select b from t) order by a limit 2;",
+      "(select a from t) union all (select b from t) limit 2;",
+      "(select a from t) union all (select b from t) limit 2 offset 5;",
+      "(select a from t) union all (select sum(a) from t where a > 2 group by b) order by a limit 2;",
+      "(select a from t) union all (select sum(a) from t where a > 2 group by b) order by a limit 1, 2;",
+      "(select a from t where a = 1) union all (select b from t where a = 2) union all (select c from t where a = 3) order by a limit 2;"
     ]
   },
   {
@@ -55,6 +63,18 @@
       "select b, max(a) from (select a, c+d as b from t as t1) as t2 group by b",
       "select max(a) from (select c+d as b, a+c as a from t as t1) as t2",
       "select b, max(a) from (select a, c+d as b, @i:=0 from t as t1) as t2 group by b"
+    ]
+  },
+  {
+    "name": "TestMergeAdjacentLimit",
+    "cases": [
+      "select b from (select b from t limit 5) as t1 limit 10",
+      "select b from (select b from t limit 20) as t1 limit 10",
+      "select b from (select b from t limit 10) as t1 limit 10",
+      "select b from (select b from t limit 10 offset 10) as t1 limit 10 offset 5",
+      "select b from (select b from t limit 10 offset 2) as t1 limit 3 offset 5",
+      "select b from (select b from t limit 10 offset 5) as t1 limit 5 offset 5",
+      "select a from (select a from t limit 3 offset 5) t1 limit 3 offset 5"
     ]
   }
 ]

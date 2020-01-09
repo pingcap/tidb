@@ -16,14 +16,17 @@ package executor
 import (
 	"context"
 	"fmt"
+	"math"
 	"net/url"
 	"strings"
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/tidb/infoschema/metricschema"
+	"github.com/pingcap/tidb/infoschema"
+	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/types"
@@ -36,45 +39,53 @@ const promReadTimeout = time.Second * 10
 
 // MetricRetriever uses to read metric data.
 type MetricRetriever struct {
-	table      *model.TableInfo
-	tblDef     *metricschema.MetricTableDef
-	outputCols []*model.ColumnInfo
-	retrieved  bool
+	dummyCloser
+	table     *model.TableInfo
+	tblDef    *infoschema.MetricTableDef
+	extractor *plannercore.MetricTableExtractor
+	retrieved bool
 }
 
-func (e *MetricRetriever) retrieve(ctx context.Context, sctx sessionctx.Context) (fullRows [][]types.Datum, err error) {
-	if e.retrieved {
+func (e *MetricRetriever) retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
+	if e.retrieved || e.extractor.SkipRequest {
 		return nil, nil
 	}
 	e.retrieved = true
-	tblDef, err := metricschema.GetMetricTableDef(e.table.Name.L)
+	tblDef, err := infoschema.GetMetricTableDef(e.table.Name.L)
 	if err != nil {
 		return nil, err
 	}
 	e.tblDef = tblDef
-	// TODO: Get query range from plan instead of use default range.
-	queryRange := e.getDefaultQueryRange(sctx)
-	queryValue, err := e.queryMetric(ctx, sctx, queryRange)
-	if err != nil {
-		return nil, err
+	queryRange := e.getQueryRange(sctx)
+	totalRows := make([][]types.Datum, 0)
+	quantiles := e.extractor.Quantiles
+	if len(quantiles) == 0 {
+		quantiles = []float64{tblDef.Quantile}
 	}
-
-	fullRows = e.genRows(queryValue, queryRange)
-	if len(e.outputCols) == len(e.table.Columns) {
-		return
-	}
-	rows := make([][]types.Datum, len(fullRows))
-	for i, fullRow := range fullRows {
-		row := make([]types.Datum, len(e.outputCols))
-		for j, col := range e.outputCols {
-			row[j] = fullRow[col.Offset]
+	for _, quantile := range quantiles {
+		var queryValue pmodel.Value
+		// Add retry to avoid network error.
+		for i := 0; i < 10; i++ {
+			queryValue, err = e.queryMetric(ctx, sctx, queryRange, quantile)
+			if err == nil || strings.Contains(err.Error(), "parse error") {
+				break
+			}
+			time.Sleep(100 * time.Millisecond)
 		}
-		rows[i] = row
+		if err != nil {
+			return nil, err
+		}
+		partRows := e.genRows(queryValue, queryRange, quantile)
+		totalRows = append(totalRows, partRows...)
 	}
-	return rows, nil
+	return totalRows, nil
 }
 
-func (e *MetricRetriever) queryMetric(ctx context.Context, sctx sessionctx.Context, queryRange promv1.Range) (pmodel.Value, error) {
+func (e *MetricRetriever) queryMetric(ctx context.Context, sctx sessionctx.Context, queryRange promv1.Range, quantile float64) (pmodel.Value, error) {
+	failpoint.InjectContext(ctx, "mockMetricRetrieverQueryPromQL", func() {
+		failpoint.Return(ctx.Value("__mockMetricsData").(pmodel.Matrix), nil)
+	})
+
 	addr, err := e.getMetricAddr(sctx)
 	if err != nil {
 		return nil, err
@@ -89,8 +100,7 @@ func (e *MetricRetriever) queryMetric(ctx context.Context, sctx sessionctx.Conte
 	ctx, cancel := context.WithTimeout(ctx, promReadTimeout)
 	defer cancel()
 
-	// TODO: add label condition.
-	promQL := e.tblDef.GenPromQL(sctx, nil)
+	promQL := e.tblDef.GenPromQL(sctx, e.extractor.LabelConditions, quantile)
 	result, _, err := promQLAPI.QueryRange(ctx, promQL, queryRange)
 	return result, err
 }
@@ -110,18 +120,20 @@ func (e *MetricRetriever) getMetricAddr(sctx sessionctx.Context) (string, error)
 
 type promQLQueryRange = promv1.Range
 
-func (e *MetricRetriever) getDefaultQueryRange(sctx sessionctx.Context) promQLQueryRange {
-	return promQLQueryRange{Start: time.Now(), End: time.Now(), Step: time.Second * time.Duration(sctx.GetSessionVars().MetricSchemaStep)}
+func (e *MetricRetriever) getQueryRange(sctx sessionctx.Context) promQLQueryRange {
+	startTime, endTime := e.extractor.StartTime, e.extractor.EndTime
+	step := time.Second * time.Duration(sctx.GetSessionVars().MetricSchemaStep)
+	return promQLQueryRange{Start: startTime, End: endTime, Step: step}
 }
 
-func (e *MetricRetriever) genRows(value pmodel.Value, r promQLQueryRange) [][]types.Datum {
+func (e *MetricRetriever) genRows(value pmodel.Value, r promQLQueryRange, quantile float64) [][]types.Datum {
 	var rows [][]types.Datum
 	switch value.Type() {
 	case pmodel.ValMatrix:
 		matrix := value.(pmodel.Matrix)
 		for _, m := range matrix {
 			for _, v := range m.Values {
-				record := e.genRecord(m.Metric, v, r)
+				record := e.genRecord(m.Metric, v, r, quantile)
 				rows = append(rows, record)
 			}
 		}
@@ -129,24 +141,31 @@ func (e *MetricRetriever) genRows(value pmodel.Value, r promQLQueryRange) [][]ty
 	return rows
 }
 
-func (e *MetricRetriever) genRecord(metric pmodel.Metric, pair pmodel.SamplePair, r promQLQueryRange) []types.Datum {
+func (e *MetricRetriever) genRecord(metric pmodel.Metric, pair pmodel.SamplePair, r promQLQueryRange, quantile float64) []types.Datum {
 	record := make([]types.Datum, 0, 2+len(e.tblDef.Labels)+1)
 	// Record order should keep same with genColumnInfos.
-	record = append(record, types.NewTimeDatum(types.Time{
-		Time: types.FromGoTime(time.Unix(int64(pair.Timestamp/1000), int64(pair.Timestamp%1000)*1e6)),
-		Type: mysql.TypeDatetime,
-		Fsp:  types.MaxFsp,
-	}))
-	record = append(record, types.NewFloat64Datum(float64(pair.Value)))
+	record = append(record, types.NewTimeDatum(types.NewTime(
+		types.FromGoTime(time.Unix(int64(pair.Timestamp/1000), int64(pair.Timestamp%1000)*1e6)),
+		mysql.TypeDatetime,
+		types.MaxFsp,
+	)))
+	if math.IsNaN(float64(pair.Value)) {
+		record = append(record, types.NewDatum(nil))
+	} else {
+		record = append(record, types.NewFloat64Datum(float64(pair.Value)))
+	}
 	for _, label := range e.tblDef.Labels {
 		v := ""
 		if metric != nil {
 			v = string(metric[pmodel.LabelName(label)])
 		}
+		if len(v) == 0 {
+			v = infoschema.GenLabelConditionValues(e.extractor.LabelConditions[strings.ToLower(label)])
+		}
 		record = append(record, types.NewStringDatum(v))
 	}
 	if e.tblDef.Quantile > 0 {
-		record = append(record, types.NewFloat64Datum(e.tblDef.Quantile))
+		record = append(record, types.NewFloat64Datum(quantile))
 	}
 	return record
 }

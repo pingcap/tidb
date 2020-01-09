@@ -45,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
+	util2 "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/plancodec"
@@ -2502,7 +2503,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	tableInfo := tbl.Meta()
 	var authErr error
 	if b.ctx.GetSessionVars().User != nil {
-		authErr = ErrTableaccessDenied.GenWithStackByArgs("SELECT", b.ctx.GetSessionVars().User.Username, b.ctx.GetSessionVars().User.Hostname, tableInfo.Name.L)
+		authErr = ErrTableaccessDenied.FastGenByArgs("SELECT", b.ctx.GetSessionVars().User.Username, b.ctx.GetSessionVars().User.Hostname, tableInfo.Name.L)
 	}
 	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, dbName.L, tableInfo.Name.L, "", authErr)
 
@@ -2535,7 +2536,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	if err != nil {
 		return nil, err
 	}
-	possiblePaths, err = b.filterPathByIsolationRead(possiblePaths)
+	possiblePaths, err = b.filterPathByIsolationRead(possiblePaths, dbName)
 	if err != nil {
 		return nil, err
 	}
@@ -2642,14 +2643,22 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 
 	var result LogicalPlan = ds
 
-	// If this SQL is executed in a non-readonly transaction, we need a
-	// "UnionScan" operator to read the modifications of former SQLs, which is
-	// buffered in tidb-server memory.
-	txn, err := b.ctx.Txn(false)
-	if err != nil {
-		return nil, err
+	needUS := false
+	if pi := tableInfo.GetPartitionInfo(); pi == nil {
+		if b.ctx.HasDirtyContent(tableInfo.ID) {
+			needUS = true
+		}
+	} else {
+		// Currently, we'll add a UnionScan on every partition even though only one partition's data is changed.
+		// This is limited by current implementation of Partition Prune. It'll updated once we modify that part.
+		for _, partition := range pi.Definitions {
+			if b.ctx.HasDirtyContent(partition.ID) {
+				needUS = true
+				break
+			}
+		}
 	}
-	if txn.Valid() && !txn.IsReadOnly() {
+	if needUS {
 		us := LogicalUnionScan{handleCol: handleCol}.Init(b.ctx, b.getSelectOffset())
 		us.SetChildren(ds)
 		result = us
@@ -2715,13 +2724,19 @@ func (b *PlanBuilder) buildMemTable(ctx context.Context, dbName model.CIStr, tab
 	p.names = names
 
 	// Some memory tables can receive some predicates
-	switch strings.ToUpper(tableInfo.Name.O) {
-	case infoschema.TableClusterConfig, infoschema.TableClusterLoad, infoschema.TableClusterHardware, infoschema.TableClusterSystemInfo:
-		p.Extractor = &ClusterTableExtractor{}
-	case infoschema.TableClusterLog:
-		p.Extractor = &ClusterLogTableExtractor{}
+	switch dbName.L {
+	case util2.MetricSchemaName.L:
+		p.Extractor = newMetricTableExtractor()
+	case util2.InformationSchemaName.L:
+		switch strings.ToUpper(tableInfo.Name.O) {
+		case infoschema.TableClusterConfig, infoschema.TableClusterLoad, infoschema.TableClusterHardware, infoschema.TableClusterSystemInfo:
+			p.Extractor = &ClusterTableExtractor{}
+		case infoschema.TableClusterLog:
+			p.Extractor = &ClusterLogTableExtractor{}
+		case infoschema.TableInspectionResult:
+			p.Extractor = &InspectionResultTableExtractor{}
+		}
 	}
-
 	return p, nil
 }
 
@@ -2768,33 +2783,34 @@ func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName model.
 func (b *PlanBuilder) buildProjUponView(ctx context.Context, dbName model.CIStr, tableInfo *model.TableInfo, selectLogicalPlan Plan) (LogicalPlan, error) {
 	columnInfo := tableInfo.Cols()
 	cols := selectLogicalPlan.Schema().Clone().Columns
-	names := selectLogicalPlan.OutputNames().Shallow()
+	outputNamesOfUnderlyingSelect := selectLogicalPlan.OutputNames().Shallow()
 	// In the old version of VIEW implementation, tableInfo.View.Cols is used to
 	// store the origin columns' names of the underlying SelectStmt used when
 	// creating the view.
 	if tableInfo.View.Cols != nil {
 		cols = cols[:0]
-		names = names[:0]
+		outputNamesOfUnderlyingSelect = outputNamesOfUnderlyingSelect[:0]
 		for _, info := range columnInfo {
 			idx := expression.FindFieldNameIdxByColName(selectLogicalPlan.OutputNames(), info.Name.L)
 			if idx == -1 {
 				return nil, ErrViewInvalid.GenWithStackByArgs(dbName.O, tableInfo.Name.O)
 			}
 			cols = append(cols, selectLogicalPlan.Schema().Columns[idx])
-			names = append(names, selectLogicalPlan.OutputNames()[idx])
+			outputNamesOfUnderlyingSelect = append(outputNamesOfUnderlyingSelect, selectLogicalPlan.OutputNames()[idx])
 		}
 	}
 
 	projSchema := expression.NewSchema(make([]*expression.Column, 0, len(tableInfo.Columns))...)
 	projExprs := make([]expression.Expression, 0, len(tableInfo.Columns))
 	projNames := make(types.NameSlice, 0, len(tableInfo.Columns))
-	for i, name := range names {
+	for i, name := range outputNamesOfUnderlyingSelect {
 		origColName := name.ColName
 		if tableInfo.View.Cols != nil {
 			origColName = tableInfo.View.Cols[i]
 		}
 		projNames = append(projNames, &types.FieldName{
-			TblName:     name.TblName,
+			// TblName is the of view instead of the name of the underlying table.
+			TblName:     tableInfo.Name,
 			OrigTblName: name.OrigTblName,
 			ColName:     columnInfo[i].Name,
 			OrigColName: origColName,
@@ -3154,7 +3170,7 @@ func (b *PlanBuilder) buildUpdateLists(
 			columnFullName := fmt.Sprintf("%s.%s.%s", tn.Schema.L, tn.Name.L, colInfo.Name.L)
 			isDefault, ok := modifyColumns[columnFullName]
 			if ok && colInfo.Hidden {
-				return nil, nil, false, ErrUnknownColumn.GenWithStackByArgs(colInfo.Name, "field_list")
+				return nil, nil, false, ErrUnknownColumn.GenWithStackByArgs(colInfo.Name, clauseMsg[fieldList])
 			}
 			// Note: For INSERT, REPLACE, and UPDATE, if a generated column is inserted into, replaced, or updated explicitly, the only permitted value is DEFAULT.
 			// see https://dev.mysql.com/doc/refman/8.0/en/create-table-generated-columns.html

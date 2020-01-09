@@ -135,17 +135,20 @@ type StatementContext struct {
 		digest     string
 	}
 	// planNormalized use for cache the normalized plan, avoid duplicate builds.
-	planNormalized    string
-	planDigest        string
-	Tables            []TableEntry
-	PointExec         bool       // for point update cached execution, Constant expression need to set "paramMarker"
-	lockWaitStartTime *time.Time // LockWaitStartTime stores the pessimistic lock wait start time
+	planNormalized        string
+	planDigest            string
+	Tables                []TableEntry
+	PointExec             bool       // for point update cached execution, Constant expression need to set "paramMarker"
+	lockWaitStartTime     *time.Time // LockWaitStartTime stores the pessimistic lock wait start time
+	PessimisticLockWaited int32
+	LockKeysDuration      time.Duration
 }
 
 // StmtHints are SessionVars related sql hints.
 type StmtHints struct {
 	// Hint Information
 	MemQuotaQuery           int64
+	MaxExecutionTime        uint64
 	ReplicaRead             byte
 	AllowInSubqToJoinAndAgg bool
 	NoIndexMergeHint        bool
@@ -154,6 +157,7 @@ type StmtHints struct {
 	HasAllowInSubqToJoinAndAggHint bool
 	HasMemQuotaHint                bool
 	HasReplicaReadHint             bool
+	HasMaxExecutionTime            bool
 }
 
 // GetNowTsCached getter for nowTs, if not set get now time and cache it
@@ -450,6 +454,7 @@ func (sc *StatementContext) GetExecDetails() execdetails.ExecDetails {
 	var details execdetails.ExecDetails
 	sc.mu.Lock()
 	details = sc.mu.execDetails
+	details.LockKeysDuration = sc.LockKeysDuration
 	sc.mu.Unlock()
 	return details
 }

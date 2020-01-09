@@ -10,6 +10,8 @@
 // distributed under the License is distributed on an "AS IS" BASIS,
 // See the License for the specific language governing permissions and
 // limitations under the License.
+//
+// +build darwin linux windows
 
 package mathutil
 
@@ -19,7 +21,7 @@ import (
 )
 
 const (
-	// MaxInt presents the minimum number of Int
+	// MaxInt presents the maximum number of Int
 	MaxInt = mathutil.MaxInt
 	// MinInt presents the minimum number of Int
 	MinInt = mathutil.MinInt

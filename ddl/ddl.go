@@ -226,6 +226,10 @@ var (
 	ErrFieldNotFoundPart = terror.ClassDDL.New(mysql.ErrFieldNotFoundPart, mysql.MySQLErrName[mysql.ErrFieldNotFoundPart])
 	// ErrWrongTypeColumnValue returns 'Partition column values of incorrect type'
 	ErrWrongTypeColumnValue = terror.ClassDDL.New(mysql.ErrWrongTypeColumnValue, mysql.MySQLErrName[mysql.ErrWrongTypeColumnValue])
+	// ErrFunctionalIndexPrimaryKey returns 'The primary key cannot be a functional index'
+	ErrFunctionalIndexPrimaryKey = terror.ClassDDL.New(mysql.ErrFunctionalIndexPrimaryKey, mysql.MySQLErrName[mysql.ErrFunctionalIndexPrimaryKey])
+	// ErrFunctionalIndexOnField returns 'Functional index on a column is not supported. Consider using a regular index instead'
+	ErrFunctionalIndexOnField = terror.ClassDDL.New(mysql.ErrFunctionalIndexOnField, mysql.MySQLErrName[mysql.ErrFunctionalIndexOnField])
 	// ErrInvalidAutoRandom returns when auto_random is used incorrectly.
 	ErrInvalidAutoRandom = terror.ClassDDL.New(mysql.ErrInvalidAutoRandom, mysql.MySQLErrName[mysql.ErrInvalidAutoRandom])
 )
@@ -669,6 +673,7 @@ func init() {
 		mysql.ErrFieldNotFoundPart:                    mysql.ErrFieldNotFoundPart,
 		mysql.ErrFieldTypeNotAllowedAsPartitionField:  mysql.ErrFieldTypeNotAllowedAsPartitionField,
 		mysql.ErrFileNotFound:                         mysql.ErrFileNotFound,
+		mysql.ErrFunctionalIndexPrimaryKey:            mysql.ErrFunctionalIndexPrimaryKey,
 		mysql.ErrGeneratedColumnFunctionIsNotAllowed:  mysql.ErrGeneratedColumnFunctionIsNotAllowed,
 		mysql.ErrGeneratedColumnNonPrior:              mysql.ErrGeneratedColumnNonPrior,
 		mysql.ErrGeneratedColumnRefAutoInc:            mysql.ErrGeneratedColumnRefAutoInc,
@@ -733,6 +738,7 @@ func init() {
 		mysql.ErrWrongTableName:                       mysql.ErrWrongTableName,
 		mysql.ErrWrongTypeColumnValue:                 mysql.ErrWrongTypeColumnValue,
 		mysql.WarnDataTruncated:                       mysql.WarnDataTruncated,
+		mysql.ErrFunctionalIndexOnField:               mysql.ErrFunctionalIndexOnField,
 		mysql.ErrFkColumnCannotDrop:                   mysql.ErrFkColumnCannotDrop,
 		mysql.ErrFKIncompatibleColumns:                mysql.ErrFKIncompatibleColumns,
 	}

@@ -107,6 +107,8 @@ func (a *baseFuncDesc) typeInfer(ctx sessionctx.Context) error {
 		a.typeInfer4PercentRank()
 	case ast.WindowFuncLead, ast.WindowFuncLag:
 		a.typeInfer4LeadLag(ctx)
+	case ast.AggFuncVarPop:
+		a.typeInfer4VarPop(ctx)
 	default:
 		return errors.Errorf("unsupported agg function: %s", a.Name)
 	}
@@ -188,7 +190,8 @@ func (a *baseFuncDesc) typeInfer4MaxMin(ctx sessionctx.Context) {
 		a.RetTp = a.Args[0].GetType().Clone()
 		a.RetTp.Flag &^= mysql.NotNullFlag
 	}
-	if a.RetTp.Tp == mysql.TypeEnum || a.RetTp.Tp == mysql.TypeSet {
+	// TODO: fix other aggFuncs for TypeEnum & TypeSet
+	if (a.RetTp.Tp == mysql.TypeEnum || a.RetTp.Tp == mysql.TypeSet) && a.Name != ast.AggFuncFirstRow {
 		a.RetTp = &types.FieldType{Tp: mysql.TypeString, Flen: mysql.MaxFieldCharLength}
 	}
 }
@@ -231,6 +234,12 @@ func (a *baseFuncDesc) typeInfer4LeadLag(ctx sessionctx.Context) {
 		// Merge the type of first and third argument.
 		a.RetTp = expression.InferType4ControlFuncs(a.Args[0].GetType(), a.Args[2].GetType())
 	}
+}
+
+func (a *baseFuncDesc) typeInfer4VarPop(ctx sessionctx.Context) {
+	//var_pop's return value type is double
+	a.RetTp = types.NewFieldType(mysql.TypeDouble)
+	a.RetTp.Flen, a.RetTp.Decimal = mysql.MaxRealWidth, types.UnspecifiedLength
 }
 
 // GetDefaultValue gets the default value when the function's input is null.

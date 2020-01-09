@@ -34,7 +34,6 @@ import (
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/infoschema/metricschema"
 	"github.com/pingcap/tidb/infoschema/perfschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -234,7 +233,7 @@ func isTooOldSchema(usedVersion, newVersion int64) bool {
 // tryLoadSchemaDiffs tries to only load latest schema changes.
 // Return true if the schema is loaded successfully.
 // Return false if the schema can not be loaded by schema diff, then we need to do full load.
-// The second returned value is the delta updated table IDs.
+// The second returned value is the delta updated table and partition IDs.
 func (do *Domain) tryLoadSchemaDiffs(m *meta.Meta, usedVersion, newVersion int64) (bool, []int64, error) {
 	// If there isn't any used version, or used version is too old, we do full load.
 	// And when users use history read feature, we will set usedVersion to initialVersion, then full load is needed.
@@ -354,10 +353,10 @@ func (do *Domain) Reload() error {
 	}
 
 	var (
-		fullLoad        bool
-		changedTableIDs []int64
+		fullLoad                bool
+		changedPhysicalTableIDs []int64
 	)
-	neededSchemaVersion, changedTableIDs, fullLoad, err = do.loadInfoSchema(do.infoHandle, schemaVersion, ver.Ver)
+	neededSchemaVersion, changedPhysicalTableIDs, fullLoad, err = do.loadInfoSchema(do.infoHandle, schemaVersion, ver.Ver)
 	metrics.LoadSchemaDuration.Observe(time.Since(startTime).Seconds())
 	if err != nil {
 		metrics.LoadSchemaCounter.WithLabelValues("failed").Inc()
@@ -369,7 +368,7 @@ func (do *Domain) Reload() error {
 		logutil.BgLogger().Info("full load and reset schema validator")
 		do.SchemaValidator.Reset()
 	}
-	do.SchemaValidator.Update(ver.Ver, schemaVersion, neededSchemaVersion, changedTableIDs)
+	do.SchemaValidator.Update(ver.Ver, schemaVersion, neededSchemaVersion, changedPhysicalTableIDs)
 
 	lease := do.DDL().GetLease()
 	sub := time.Since(startTime)
@@ -621,7 +620,6 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 // Init initializes a domain.
 func (do *Domain) Init(ddlLease time.Duration, sysFactory func(*Domain) (pools.Resource, error)) error {
 	perfschema.Init()
-	metricschema.Init()
 	if ebd, ok := do.store.(tikv.EtcdBackend); ok {
 		if addrs := ebd.EtcdAddrs(); addrs != nil {
 			cfg := config.GetGlobalConfig()
@@ -866,11 +864,10 @@ func (do *Domain) globalBindHandleWorkerLoop() {
 				if err != nil {
 					logutil.BgLogger().Error("update bindinfo failed", zap.Error(err))
 				}
-				if !variable.TiDBOptOn(variable.CapturePlanBaseline.GetVal()) {
-					continue
-				}
 				do.bindHandle.DropInvalidBindRecord()
-				do.bindHandle.CaptureBaselines()
+				if variable.TiDBOptOn(variable.CapturePlanBaseline.GetVal()) {
+					do.bindHandle.CaptureBaselines()
+				}
 				do.bindHandle.SaveEvolveTasksToStore()
 			}
 		}

@@ -757,7 +757,7 @@ func resetStmtContext(ctx sessionctx.Context) {
 
 func (s *testEvaluatorSuite) TestNowAndUTCTimestamp(c *C) {
 	gotime := func(t types.Time, l *time.Location) time.Time {
-		tt, err := t.Time.GoTime(l)
+		tt, err := t.GoTime(l)
 		c.Assert(err, IsNil)
 		return tt
 	}
@@ -876,7 +876,7 @@ func (s *testEvaluatorSuite) TestAddTimeSig(c *C) {
 	c.Assert(err, IsNil)
 	res, _, err := du.add(s.ctx, now, "1", "MICROSECOND")
 	c.Assert(err, IsNil)
-	c.Assert(res.Fsp, Equals, int8(6))
+	c.Assert(res.Fsp(), Equals, int8(6))
 
 	tbl = []struct {
 		Input         string
@@ -1350,7 +1350,7 @@ func (s *testEvaluatorSuite) TestStrToDate(c *C) {
 		}
 		c.Assert(result.Kind(), Equals, types.KindMysqlTime)
 		value := result.GetMysqlTime()
-		t1, _ := value.Time.GoTime(time.Local)
+		t1, _ := value.GoTime(time.Local)
 		c.Assert(t1, Equals, test.Expect)
 	}
 }
@@ -2692,12 +2692,12 @@ func (s *testEvaluatorSuite) TestWithTimeZone(c *C) {
 	}()
 
 	timeToGoTime := func(d types.Datum, loc *time.Location) time.Time {
-		result, _ := d.GetMysqlTime().Time.GoTime(loc)
+		result, _ := d.GetMysqlTime().GoTime(loc)
 		return result
 	}
 	durationToGoTime := func(d types.Datum, loc *time.Location) time.Time {
 		t, _ := d.GetMysqlDuration().ConvertToTime(sv.StmtCtx, mysql.TypeDatetime)
-		result, _ := t.Time.GoTime(sv.TimeZone)
+		result, _ := t.GoTime(sv.TimeZone)
 		return result
 	}
 
