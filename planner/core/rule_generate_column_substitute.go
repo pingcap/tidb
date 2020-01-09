@@ -25,7 +25,7 @@ import (
 type gcSubstituter struct {
 }
 
-// ExprColumnMap is a map from Expression to *Column
+// ExprColumnMap is a map from Expression to *Column.
 type ExprColumnMap map[expression.Expression]*expression.Column
 
 func (gc *gcSubstituter) optimize(ctx context.Context, lp LogicalPlan) (LogicalPlan, error) {
