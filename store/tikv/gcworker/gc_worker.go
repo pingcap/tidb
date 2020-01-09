@@ -1067,42 +1067,39 @@ func (w *GCWorker) doGC(ctx context.Context, safePoint uint64, concurrency int) 
 
 func (w *GCWorker) checkLeader() (bool, error) {
 	metrics.GCWorkerCounter.WithLabelValues("check_leader").Inc()
-	se := createSession(w.store)
-	defer se.Close()
-
 	ctx := context.Background()
-	_, err := se.Execute(ctx, "BEGIN")
+	_, err := w.session.Execute(ctx, "BEGIN")
 	if err != nil {
 		return false, errors.Trace(err)
 	}
-	w.session = se
 	leader, err := w.loadValueFromSysTable(gcLeaderUUIDKey)
 	if err != nil {
-		se.RollbackTxn(ctx)
+		w.session.RollbackTxn(ctx)
 		return false, errors.Trace(err)
 	}
 	logutil.BgLogger().Debug("[gc worker] got leader", zap.String("uuid", leader))
 	if leader == w.uuid {
 		err = w.saveTime(gcLeaderLeaseKey, time.Now().Add(gcWorkerLease))
 		if err != nil {
-			se.RollbackTxn(ctx)
+			w.session.RollbackTxn(ctx)
 			return false, errors.Trace(err)
 		}
-		err = se.CommitTxn(ctx)
+		err = w.session.CommitTxn(ctx)
 		if err != nil {
 			return false, errors.Trace(err)
 		}
 		return true, nil
 	}
 
-	se.RollbackTxn(ctx)
+	w.session.RollbackTxn(ctx)
 
-	_, err = se.Execute(ctx, "BEGIN")
+	_, err = w.session.Execute(ctx, "BEGIN")
 	if err != nil {
 		return false, errors.Trace(err)
 	}
 	lease, err := w.loadTime(gcLeaderLeaseKey)
 	if err != nil {
+		w.session.RollbackTxn(ctx)
 		return false, errors.Trace(err)
 	}
 	if lease == nil || lease.Before(time.Now()) {
@@ -1112,26 +1109,26 @@ func (w *GCWorker) checkLeader() (bool, error) {
 
 		err = w.saveValueToSysTable(gcLeaderUUIDKey, w.uuid)
 		if err != nil {
-			se.RollbackTxn(ctx)
+			w.session.RollbackTxn(ctx)
 			return false, errors.Trace(err)
 		}
 		err = w.saveValueToSysTable(gcLeaderDescKey, w.desc)
 		if err != nil {
-			se.RollbackTxn(ctx)
+			w.session.RollbackTxn(ctx)
 			return false, errors.Trace(err)
 		}
 		err = w.saveTime(gcLeaderLeaseKey, time.Now().Add(gcWorkerLease))
 		if err != nil {
-			se.RollbackTxn(ctx)
+			w.session.RollbackTxn(ctx)
 			return false, errors.Trace(err)
 		}
-		err = se.CommitTxn(ctx)
+		err = w.session.CommitTxn(ctx)
 		if err != nil {
 			return false, errors.Trace(err)
 		}
 		return true, nil
 	}
-	se.RollbackTxn(ctx)
+	w.session.RollbackTxn(ctx)
 	return false, nil
 }
 
