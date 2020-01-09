@@ -232,6 +232,19 @@ var (
 	ErrFunctionalIndexOnField = terror.ClassDDL.New(mysql.ErrFunctionalIndexOnField, mysql.MySQLErrName[mysql.ErrFunctionalIndexOnField])
 	// ErrInvalidAutoRandom returns when auto_random is used incorrectly.
 	ErrInvalidAutoRandom = terror.ClassDDL.New(mysql.ErrInvalidAutoRandom, mysql.MySQLErrName[mysql.ErrInvalidAutoRandom])
+
+	// ErrSequenceRunOut returns when the sequence has been run out.
+	ErrSequenceRunOut = terror.ClassDDL.New(mysql.ErrSequenceRunOut, mysql.MySQLErrName[mysql.ErrSequenceRunOut])
+	// ErrSequenceInvalidData returns when sequence values are conflicting.
+	ErrSequenceInvalidData = terror.ClassDDL.New(mysql.ErrSequenceInvalidData, mysql.MySQLErrName[mysql.ErrSequenceInvalidData])
+	// ErrSequenceAccessFail returns when sequences are not able to access.
+	ErrSequenceAccessFail = terror.ClassDDL.New(mysql.ErrSequenceAccessFail, mysql.MySQLErrName[mysql.ErrSequenceAccessFail])
+	// ErrNotSequence returns when object is not a sequence.
+	ErrNotSequence = terror.ClassDDL.New(mysql.ErrNotSequence, mysql.MySQLErrName[mysql.ErrNotSequence])
+	// ErrUnknownSequence returns when drop / alter unknown sequence.
+	ErrUnknownSequence = terror.ClassDDL.New(mysql.ErrUnknownSequence, mysql.MySQLErrName[mysql.ErrUnknownSequence])
+	// ErrSequenceUnsupportedTableOption returns when unsupported table option exists in sequence.
+	ErrSequenceUnsupportedTableOption = terror.ClassDDL.New(mysql.ErrSequenceUnsupportedTableOption, mysql.MySQLErrName[mysql.ErrSequenceUnsupportedTableOption])
 )
 
 // DDL is responsible for updating schema in data store and maintaining in-memory InfoSchema cache.
@@ -256,6 +269,7 @@ type DDL interface {
 	CleanupTableLock(ctx sessionctx.Context, tables []*ast.TableName) error
 	UpdateTableReplicaInfo(ctx sessionctx.Context, tid int64, available bool) error
 	RepairTable(ctx sessionctx.Context, table *ast.TableName, createStmt *ast.CreateTableStmt) error
+	CreateSequence(ctx sessionctx.Context, stmt *ast.CreateSequenceStmt) error
 
 	// GetLease returns current schema lease time.
 	GetLease() time.Duration
@@ -741,6 +755,14 @@ func init() {
 		mysql.ErrFunctionalIndexOnField:               mysql.ErrFunctionalIndexOnField,
 		mysql.ErrFkColumnCannotDrop:                   mysql.ErrFkColumnCannotDrop,
 		mysql.ErrFKIncompatibleColumns:                mysql.ErrFKIncompatibleColumns,
+		mysql.ErrSequenceRunOut:                       mysql.ErrSequenceRunOut,
+		mysql.ErrSequenceInvalidData:                  mysql.ErrSequenceInvalidData,
+		mysql.ErrSequenceAccessFail:                   mysql.ErrSequenceAccessFail,
+		mysql.ErrNotSequence:                          mysql.ErrNotSequence,
+		mysql.ErrUnknownSequence:                      mysql.ErrUnknownSequence,
+		mysql.ErrWrongInsertIntoSequence:              mysql.ErrWrongInsertIntoSequence,
+		mysql.ErrSequenceInvalidTableStructure:        mysql.ErrSequenceInvalidTableStructure,
+		mysql.ErrSequenceUnsupportedTableOption:       mysql.ErrSequenceUnsupportedTableOption,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassDDL] = ddlMySQLErrCodes
 }
