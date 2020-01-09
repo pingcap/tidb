@@ -561,11 +561,17 @@ func (t *Time) check(sc *stmtctx.StatementContext) error {
 	var err error
 	switch t.Type {
 	case mysql.TypeTimestamp:
+<<<<<<< HEAD
 		err = checkTimestampType(sc, t.Time)
 	case mysql.TypeDatetime:
 		err = checkDatetimeType(t.Time, allowZeroInDate, allowInvalidDate)
 	case mysql.TypeDate:
 		err = checkDateType(t.Time, allowZeroInDate, allowInvalidDate)
+=======
+		err = checkTimestampType(sc, t.time)
+	case mysql.TypeDatetime, mysql.TypeDate:
+		err = checkDatetimeType(t.time, allowZeroInDate, allowInvalidDate)
+>>>>>>> 667f2d7... types: fix parse date inconsistent with MySQL (#14405)
 	}
 	return errors.Trace(err)
 }
