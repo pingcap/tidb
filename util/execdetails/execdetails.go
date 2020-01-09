@@ -362,8 +362,8 @@ type RuntimeStats struct {
 	// executor concurrency information
 	concurrency []concurrencyInfo
 
-	// custom information for executors
-	customInfo string
+	// additional information for executors
+	additionalInfo string
 }
 
 // NewRuntimeStatsColl creates new executor collector.
@@ -456,8 +456,10 @@ func (e *RuntimeStats) SetConcurrencyInfo(name string, num int) {
 	e.concurrency = append(e.concurrency, concurrencyInfo{concurrencyName: name, concurrencyNum: num})
 }
 
-func (e *RuntimeStats) SetCustomInfo(info string) {
-	e.customInfo = info
+func (e *RuntimeStats) SetAdditionalInfo(info string) {
+	e.mu.Lock()
+	e.additionalInfo = info
+	e.mu.Unlock()
 }
 
 func (e *RuntimeStats) String() string {
@@ -471,8 +473,8 @@ func (e *RuntimeStats) String() string {
 			}
 		}
 	}
-	if len(e.customInfo) > 0 {
-		result += ", " + e.customInfo
+	if len(e.additionalInfo) > 0 {
+		result += ", " + e.additionalInfo
 	}
 	return result
 }
