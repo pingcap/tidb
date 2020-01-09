@@ -91,9 +91,15 @@ func (s *testSerialSuite) TestPrimaryKey(c *C) {
 	tk.MustExec("use test")
 
 	tk.MustExec("create table primary_key_test (a int, b varchar(10))")
+	tk.MustExec("create table primary_key_test_1 (a int, b varchar(10), primary key(a))")
 	_, err := tk.Exec("alter table primary_key_test add primary key(a)")
 	c.Assert(ddl.ErrUnsupportedModifyPrimaryKey.Equal(err), IsTrue)
 	_, err = tk.Exec("alter table primary_key_test drop primary key")
+	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported drop primary key when alter-primary-key is false")
+	// for "drop index `primary` on ..." syntax
+	_, err = tk.Exec("drop index `primary` on primary_key_test")
+	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported drop primary key when alter-primary-key is false")
+	_, err = tk.Exec("drop index `primary` on primary_key_test_1")
 	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported drop primary key when alter-primary-key is false")
 
 	// Change the value of AlterPrimaryKey.
@@ -115,6 +121,18 @@ func (s *testSerialSuite) TestPrimaryKey(c *C) {
 	tk.MustExec("alter table primary_key_test2 drop primary key")
 	_, err = tk.Exec("alter table primary_key_test3 drop primary key")
 	c.Assert(err.Error(), Equals, "[ddl:1091]Can't DROP 'PRIMARY'; check that column/key exists")
+
+	// for "drop index `primary` on ..." syntax
+	tk.MustExec("create table primary_key_test4 (a int, b varchar(10), primary key(a))")
+	newCfg.AlterPrimaryKey = false
+	config.StoreGlobalConfig(&newCfg)
+	_, err = tk.Exec("drop index `primary` on primary_key_test4")
+	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported drop primary key when alter-primary-key is false")
+	// for the index name is `primary`
+	tk.MustExec("create table tt(`primary` int);")
+	tk.MustExec("alter table tt add index (`primary`);")
+	_, err = tk.Exec("drop index `primary` on tt")
+	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported drop primary key when alter-primary-key is false")
 }
 
 func (s *testSerialSuite) TestMultiRegionGetTableEndHandle(c *C) {

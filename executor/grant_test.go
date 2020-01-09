@@ -24,7 +24,7 @@ import (
 	"github.com/pingcap/tidb/util/testkit"
 )
 
-func (s *testSuite3) TestGrantGlobal(c *C) {
+func (s *testSuiteP1) TestGrantGlobal(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	// Create a new user.
 	createUserSQL := `CREATE USER 'testGlobal'@'localhost' IDENTIFIED BY '123';`
@@ -111,7 +111,7 @@ func (s *testSuite3) TestWithGrantOption(c *C) {
 	tk.MustQuery("SELECT grant_priv FROM mysql.user WHERE User=\"testWithGrant1\"").Check(testkit.Rows("Y"))
 }
 
-func (s *testSuite3) TestTableScope(c *C) {
+func (s *testSuiteP1) TestTableScope(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	// Create a new user.
 	createUserSQL := `CREATE USER 'testTbl'@'localhost' IDENTIFIED BY '123';`

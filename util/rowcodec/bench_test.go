@@ -43,7 +43,7 @@ func BenchmarkEncode(b *testing.B) {
 func BenchmarkEncodeFromOldRow(b *testing.B) {
 	b.ReportAllocs()
 	oldRow := types.MakeDatums(1, "abc", 1.1)
-	oldRowData, err := tablecodec.EncodeRow(new(stmtctx.StatementContext), oldRow, []int64{1, 2, 3}, nil, nil)
+	oldRowData, err := tablecodec.EncodeOldRow(new(stmtctx.StatementContext), oldRow, []int64{1, 2, 3}, nil, nil)
 	if err != nil {
 		b.Fatal(err)
 	}
