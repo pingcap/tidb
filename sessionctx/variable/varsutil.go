@@ -16,7 +16,6 @@ package variable
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/pingcap/tidb/util"
 	"math"
 	"strconv"
 	"strings"
@@ -119,7 +118,7 @@ func GetSessionOnlySysVars(s *SessionVars, key string) (string, bool, error) {
 		return fmt.Sprintf("%d", atomic.LoadUint32(&ProcessGeneralLog)), true, nil
 	case TiDBPProfSQLCPU:
 		val := "0"
-		if util.EnablePProfSQLCPU.Load() {
+		if EnablePProfSQLCPU.Load() {
 			val = "1"
 		}
 		return val, true, nil
