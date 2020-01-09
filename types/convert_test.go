@@ -510,7 +510,7 @@ func accept(c *C, tp byte, value interface{}, unsigned bool, expected string) {
 	}
 	d := NewDatum(value)
 	sc := new(stmtctx.StatementContext)
-	sc.CastInToTable = true
+	sc.SetCastIntoTable(true)
 	sc.TimeZone = time.UTC
 	sc.IgnoreTruncate = true
 	casted, err := d.ConvertTo(sc, ft)
@@ -539,7 +539,7 @@ func deny(c *C, tp byte, value interface{}, unsigned bool, expected string) {
 	}
 	d := NewDatum(value)
 	sc := new(stmtctx.StatementContext)
-	sc.CastInToTable = true
+	sc.SetCastIntoTable(true)
 	casted, err := d.ConvertTo(sc, ft)
 	c.Assert(err, NotNil)
 	if casted.IsNull() {

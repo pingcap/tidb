@@ -71,9 +71,6 @@ type StatementContext struct {
 	BatchCheck             bool
 	InNullRejectCheck      bool
 	AllowInvalidDate       bool
-	// CastInToTable is used to indicate the cast is caused by inserting.
-	// Using cast() and inserting a value into a table may behave differently.
-	CastInToTable bool
 
 	// mu struct holds variables that change during execution.
 	mu struct {
@@ -106,6 +103,10 @@ type StatementContext struct {
 		histogramsNotLoad bool
 		execDetails       execdetails.ExecDetails
 		allExecDetails    []*execdetails.ExecDetails
+
+		// castIntoTable is used to indicate the cast is caused by inserting.
+		// Using cast() and inserting a value into a table may behave differently.
+		castIntoTable bool
 	}
 	// PrevAffectedRows is the affected-rows value(DDL is 0, DML is the number of affected rows).
 	PrevAffectedRows int64
@@ -382,6 +383,21 @@ func (sc *StatementContext) SetHistogramsNotLoad() {
 	sc.mu.Lock()
 	sc.mu.histogramsNotLoad = true
 	sc.mu.Unlock()
+}
+
+// SetCastIntoTable sets castIntoTable
+func (sc *StatementContext) SetCastIntoTable(isCastIntoTable bool) {
+	sc.mu.Lock()
+	sc.mu.castIntoTable = isCastIntoTable
+	sc.mu.Unlock()
+}
+
+// IsCastInToTable gets castIntoTable
+func (sc *StatementContext) IsCastInToTable() bool {
+	sc.mu.Lock()
+	isCastInToTable := sc.mu.castIntoTable
+	sc.mu.Unlock()
+	return isCastInToTable
 }
 
 // HandleTruncate ignores or returns the error based on the StatementContext state.

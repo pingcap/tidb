@@ -174,13 +174,13 @@ func ConvertFloatToUint(sc *stmtctx.StatementContext, fval float64, upperBound u
 	// which can not be represented by 64bit integer.
 	// So `uint64(float64(math.MaxUint64))` is undefined behavior.
 	if val == ubf {
-		if sc.CastInToTable {
+		if sc.IsCastInToTable() {
 			return math.MaxUint64, nil
 		}
 		return uint64(math.MaxInt64), nil
 	}
 	if val > ubf {
-		if sc.CastInToTable {
+		if sc.IsCastInToTable() {
 			return math.MaxUint64, overflow(val, tp)
 		}
 		return uint64(math.MaxInt64), overflow(val, tp)
