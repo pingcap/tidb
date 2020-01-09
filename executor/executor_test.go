@@ -5153,3 +5153,14 @@ func (s *testSuite1) TestPartitionHashCode(c *C) {
 	}
 	wg.Wait()
 }
+
+func (s *testSuite1) TestAlterDefaultValue(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t(a int, primary key(a))")
+	tk.MustExec("insert into t(a) values(1)")
+	tk.MustExec("alter table t add column b int default 1")
+	tk.MustExec("alter table t alter b set default 2")
+	tk.MustQuery("select b from t where a = 1").Check(testkit.Rows("1"))
+}

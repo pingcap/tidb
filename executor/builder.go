@@ -2329,7 +2329,6 @@ func buildNoRangeIndexMergeReader(b *executorBuilder, v *plannercore.PhysicalInd
 		startTS:           startTS,
 		table:             table,
 		indexes:           indexes,
-		keepOrders:        keepOrders,
 		descs:             descs,
 		tableRequest:      tableReq,
 		columns:           ts.Columns,
@@ -2678,9 +2677,14 @@ func newRowDecoder(ctx sessionctx.Context, schema *expression.Schema, tbl *model
 			Elems:   col.RetType.Elems,
 		}
 	}
-	defVal := func(i int) (types.Datum, error) {
+	defVal := func(i int, chk *chunk.Chunk) error {
 		ci := getColInfoByID(tbl, reqCols[i].ID)
-		return table.GetColDefaultValue(ctx, ci)
+		d, err := table.GetColOriginDefaultValue(ctx, ci)
+		if err != nil {
+			return err
+		}
+		chk.AppendDatum(i, &d)
+		return nil
 	}
 	return rowcodec.NewChunkDecoder(reqCols, handleColID, defVal, ctx.GetSessionVars().TimeZone)
 }
