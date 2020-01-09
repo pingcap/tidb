@@ -29,7 +29,7 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
-	"github.com/pingcap/pd/client"
+	pd "github.com/pingcap/pd/client"
 	pumpcli "github.com/pingcap/tidb-tools/tidb-binlog/pump_client"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
@@ -51,7 +51,7 @@ import (
 	"github.com/pingcap/tidb/util/printer"
 	"github.com/pingcap/tidb/util/signal"
 	"github.com/pingcap/tidb/util/systimemon"
-	"github.com/pingcap/tidb/x-server"
+	xserver "github.com/pingcap/tidb/x-server"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/push"
 	"go.uber.org/zap"
@@ -454,7 +454,7 @@ func setGlobalVars() {
 		atomic.StoreUint32(&ddl.EnableSplitTableRegion, 1)
 	}
 
-	plannercore.AllowCartesianProduct = cfg.Performance.CrossJoin
+	plannercore.AllowCartesianProduct.Store(cfg.Performance.CrossJoin)
 	privileges.SkipWithGrant = cfg.Security.SkipGrantTable
 	kv.TxnEntryCountLimit = cfg.Performance.TxnEntryCountLimit
 	kv.TxnTotalSizeLimit = cfg.Performance.TxnTotalSizeLimit

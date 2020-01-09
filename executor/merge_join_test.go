@@ -301,14 +301,14 @@ func (s *testSuite2) TestMergeJoin(c *C) {
 	result.Check(testkit.Rows("1", "2", "3", "4", "5", "6", "7"))
 	tk.MustExec("rollback;")
 
-	plannercore.AllowCartesianProduct = false
+	plannercore.AllowCartesianProduct.Store(false)
 	_, err := tk.Exec("select /*+ TIDB_SMJ(t,t1) */ * from t, t1")
 	c.Check(plannercore.ErrCartesianProductUnsupported.Equal(err), IsTrue)
 	_, err = tk.Exec("select /*+ TIDB_SMJ(t,t1) */ * from t left join t1 on 1")
 	c.Check(plannercore.ErrCartesianProductUnsupported.Equal(err), IsTrue)
 	_, err = tk.Exec("select /*+ TIDB_SMJ(t,t1) */ * from t right join t1 on 1")
 	c.Check(plannercore.ErrCartesianProductUnsupported.Equal(err), IsTrue)
-	plannercore.AllowCartesianProduct = true
+	plannercore.AllowCartesianProduct.Store(true)
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t(c1 int)")
