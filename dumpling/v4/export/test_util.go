@@ -130,25 +130,3 @@ func newMockTableIR(databaseName, tableName string, data [][]driver.Value, speci
 		colTypes: colTypes,
 	}
 }
-
-type DummyLogger struct{}
-
-func (d *DummyLogger) Debug(format string, args ...interface{}) {
-	fmt.Printf(format, args...)
-	fmt.Println()
-}
-
-func (d *DummyLogger) Info(format string, args ...interface{}) {
-	fmt.Printf(format, args...)
-	fmt.Println()
-}
-
-func (d *DummyLogger) Warn(format string, args ...interface{}) {
-	fmt.Printf(format, args...)
-	fmt.Println()
-}
-
-func (d *DummyLogger) Error(format string, args ...interface{}) {
-	fmt.Printf(format, args...)
-	fmt.Println()
-}

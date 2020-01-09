@@ -21,7 +21,6 @@ type testUtilSuite struct {
 
 func (s *testUtilSuite) SetUpSuite(c *C) {
 	s.mockCfg = &Config{
-		Logger:   &DummyLogger{},
 		FileSize: UnspecifiedSize,
 	}
 }
@@ -34,7 +33,7 @@ func (s *testUtilSuite) TestWriteMeta(c *C) {
 	meta := newMockMetaIR("t1", createTableStmt, specCmts)
 	strCollector := &mockStringCollector{}
 
-	err := WriteMeta(meta, strCollector, s.mockCfg)
+	err := WriteMeta(meta, strCollector)
 	c.Assert(err, IsNil)
 	expected := "/*!40103 SET TIME_ZONE='+00:00' */;\n" +
 		"CREATE TABLE `t1` (\n" +
@@ -58,7 +57,7 @@ func (s *testUtilSuite) TestWriteInsert(c *C) {
 	tableIR := newMockTableIR("test", "employee", data, specCmts, colTypes)
 	strCollector := &mockStringCollector{}
 
-	err := WriteInsert(tableIR, strCollector, s.mockCfg)
+	err := WriteInsert(tableIR, strCollector)
 	c.Assert(err, IsNil)
 	expected := "/*!40101 SET NAMES binary*/;\n" +
 		"/*!40014 SET FOREIGN_KEY_CHECKS=0*/;\n" +
@@ -85,7 +84,7 @@ func (s *testUtilSuite) TestSQLDataTypes(c *C) {
 		tableIR := newMockTableIR("test", "t", tableData, nil, colType)
 		strCollector := &mockStringCollector{}
 
-		err := WriteInsert(tableIR, strCollector, s.mockCfg)
+		err := WriteInsert(tableIR, strCollector)
 		c.Assert(err, IsNil)
 		lines := strings.Split(strCollector.buf, "\n")
 		c.Assert(len(lines), Equals, 3)
@@ -99,7 +98,7 @@ func (s *testUtilSuite) TestWrite(c *C) {
 	exp := []string{"test", "loooooooooooooooooooong", "poison_error"}
 
 	for i, s := range src {
-		err := write(mocksw, s, nil)
+		err := write(mocksw, s)
 		if err != nil {
 			c.Assert(err.Error(), Equals, exp[i])
 		} else {
@@ -107,6 +106,6 @@ func (s *testUtilSuite) TestWrite(c *C) {
 			c.Assert(mocksw.buf, Equals, exp[i])
 		}
 	}
-	err := write(mocksw, "test", nil)
+	err := write(mocksw, "test")
 	c.Assert(err, IsNil)
 }

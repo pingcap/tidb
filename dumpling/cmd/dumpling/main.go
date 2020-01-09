@@ -22,6 +22,8 @@ import (
 
 	"github.com/pingcap/dumpling/v4/cli"
 	"github.com/pingcap/dumpling/v4/export"
+	"github.com/pingcap/dumpling/v4/log"
+	"go.uber.org/zap"
 )
 
 var (
@@ -33,6 +35,7 @@ var (
 	threads   int
 	outputDir string
 	fileSize  uint64
+	logLevel  string
 )
 
 func init() {
@@ -59,6 +62,8 @@ func init() {
 
 	flag.StringVar(&outputDir, "output", defaultOutputDir, "Output directory")
 	flag.StringVar(&outputDir, "o", defaultOutputDir, "Output directory")
+
+	flag.StringVar(&logLevel, "loglevel", "info", "Log level {debug|info|warn|error|dpanic|panic|fatal}")
 }
 
 var defaultOutputDir = timestampDirName()
@@ -71,6 +76,12 @@ func main() {
 	flag.Parse()
 	println(cli.LongVersion())
 
+	err := log.InitAppLogger(&log.Config{Level: logLevel})
+	if err != nil {
+		_, _ = fmt.Fprintf(os.Stderr, "initialize logger failed: %s", err.Error())
+		os.Exit(1)
+	}
+
 	conf := export.DefaultConfig()
 	conf.Database = database
 	conf.Host = host
@@ -81,9 +92,9 @@ func main() {
 	conf.FileSize = fileSize
 	conf.OutputDirPath = outputDir
 
-	err := export.Dump(conf)
+	err = export.Dump(conf)
 	if err != nil {
-		fmt.Println(err)
+		log.Zap().Error("dump failed", zap.String("error", err.Error()))
 		os.Exit(1)
 	}
 	return
