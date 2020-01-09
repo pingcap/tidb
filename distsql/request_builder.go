@@ -89,10 +89,10 @@ func (builder *RequestBuilder) SetAnalyzeRequest(ana *tipb.AnalyzeReq) *RequestB
 	if builder.err == nil {
 		builder.Request.Tp = kv.ReqTypeAnalyze
 		builder.Request.StartTs = ana.StartTs
-		builder.Request.Data, builder.err = ana.Marshal()
-		builder.Request.NotFillCache = true
 		builder.Request.IsolationLevel = kv.RC
 		builder.Request.Priority = kv.PriorityLow
+		builder.Request.Data, builder.err = ana.Marshal()
+		builder.Request.NotFillCache = true
 	}
 
 	return builder
