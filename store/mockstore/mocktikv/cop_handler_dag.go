@@ -50,7 +50,6 @@ var dummySlice = make([]byte, 0)
 type dagContext struct {
 	dagReq    *tipb.DAGRequest
 	keyRanges []*coprocessor.KeyRange
-	startTS   uint64
 	evalCtx   *evalContext
 }
 
@@ -118,7 +117,6 @@ func (h *rpcHandler) buildDAGExecutor(req *coprocessor.Request) (*dagContext, ex
 	ctx := &dagContext{
 		dagReq:    dagReq,
 		keyRanges: req.Ranges,
-		startTS:   req.StartTs,
 		evalCtx:   &evalContext{sc: sc},
 	}
 	e, err := h.buildDAG(ctx, dagReq.Executors)
@@ -196,10 +194,6 @@ func (h *rpcHandler) buildTableScan(ctx *dagContext, executor *tipb.Executor) (*
 		return nil, errors.Trace(err)
 	}
 
-	startTS := ctx.startTS
-	if startTS == 0 {
-		startTS = ctx.dagReq.GetStartTsFallback()
-	}
 	colInfos := make([]rowcodec.ColInfo, len(columns))
 	for i := range colInfos {
 		col := columns[i]
@@ -226,7 +220,7 @@ func (h *rpcHandler) buildTableScan(ctx *dagContext, executor *tipb.Executor) (*
 		TableScan:      executor.TblScan,
 		kvRanges:       ranges,
 		colIDs:         ctx.evalCtx.colIDs,
-		startTS:        startTS,
+		startTS:        ctx.dagReq.GetStartTs(),
 		isolationLevel: h.isolationLevel,
 		resolvedLocks:  h.resolvedLocks,
 		mvccStore:      h.mvccStore,
@@ -263,15 +257,11 @@ func (h *rpcHandler) buildIndexScan(ctx *dagContext, executor *tipb.Executor) (*
 		return nil, errors.Trace(err)
 	}
 
-	startTS := ctx.startTS
-	if startTS == 0 {
-		startTS = ctx.dagReq.GetStartTsFallback()
-	}
 	e := &indexScanExec{
 		IndexScan:      executor.IdxScan,
 		kvRanges:       ranges,
 		colsLen:        len(columns),
-		startTS:        startTS,
+		startTS:        ctx.dagReq.GetStartTs(),
 		isolationLevel: h.isolationLevel,
 		resolvedLocks:  h.resolvedLocks,
 		mvccStore:      h.mvccStore,

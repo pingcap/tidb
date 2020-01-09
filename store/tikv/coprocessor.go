@@ -714,7 +714,6 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 
 	copReq := coprocessor.Request{
 		Tp:        worker.req.Tp,
-		StartTs:   worker.req.StartTs,
 		Data:      worker.req.Data,
 		Ranges:    task.ranges.toPBRanges(),
 		SchemaVer: worker.req.SchemaVar,

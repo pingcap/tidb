@@ -160,7 +160,6 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 	var builder distsql.RequestBuilder
 	kvReq, err := builder.SetKeyRanges(kvRanges).
 		SetDAGRequest(e.dagPBs[workID]).
-		SetStartTS(e.startTS).
 		SetDesc(e.descs[workID]).
 		SetKeepOrder(false).
 		SetStreaming(e.partialStreamings[workID]).
@@ -208,7 +207,6 @@ func (e *IndexMergeReaderExecutor) buildPartialTableReader(ctx context.Context, 
 		baseExecutor: newBaseExecutor(e.ctx, e.schema, stringutil.MemoizeStr(func() string { return e.id.String() + "_tableReader" })),
 		table:        e.table,
 		dagPB:        e.dagPBs[workID],
-		startTS:      e.startTS,
 		streaming:    e.partialStreamings[workID],
 		feedback:     statistics.NewQueryFeedback(0, nil, 0, false),
 		plans:        e.partialPlans[workID],
@@ -385,7 +383,6 @@ func (e *IndexMergeReaderExecutor) buildFinalTableReader(ctx context.Context, ha
 		baseExecutor: newBaseExecutor(e.ctx, e.schema, stringutil.MemoizeStr(func() string { return e.id.String() + "_tableReader" })),
 		table:        e.table,
 		dagPB:        e.tableRequest,
-		startTS:      e.startTS,
 		streaming:    e.tableStreaming,
 		feedback:     statistics.NewQueryFeedback(0, nil, 0, false),
 		plans:        e.tblPlans,
