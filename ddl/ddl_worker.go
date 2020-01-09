@@ -221,7 +221,7 @@ func (d *ddl) addBatchDDLJobs(tasks []*limitJobTask) {
 				return errors.Trace(err)
 			}
 
-			if job.Type.String() == model.AddIndexStr || job.Type.String() == model.AddPrimaryKeyStr {
+			if job.Type == model.ActionAddIndex || job.Type == model.ActionAddPrimaryKey {
 				jobKey := meta.AddIndexJobListKey
 				err = t.EnQueueDDLJob(job, jobKey)
 			} else {
