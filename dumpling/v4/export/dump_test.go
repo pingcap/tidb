@@ -43,6 +43,7 @@ func (m *mockWriter) WriteTableData(ctx context.Context, ir TableDataIR) error {
 
 func (s *testDumpSuite) TestDumpTable(c *C) {
 	mockConfig := DefaultConfig()
+	mockConfig.SortByPk = false
 	db, mock, err := sqlmock.New()
 	c.Assert(err, IsNil)
 

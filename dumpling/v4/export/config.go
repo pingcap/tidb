@@ -38,7 +38,7 @@ func DefaultConfig() *Config {
 		FileSize:      UnspecifiedSize,
 		OutputDirPath: ".",
 		ServerInfo:    ServerInfoUnknown,
-		SortByPk:      false,
+		SortByPk:      true,
 		Tables:        nil,
 		Snapshot:      "",
 		Consistency:   "auto",
