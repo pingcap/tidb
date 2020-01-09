@@ -23,10 +23,11 @@ import (
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
+	"go.uber.org/atomic"
 )
 
 // AllowCartesianProduct means whether tidb allows cartesian join without equal conditions.
-var AllowCartesianProduct = true
+var AllowCartesianProduct = atomic.NewBool(true)
 
 const (
 	flagPrunColumns uint64 = 1 << iota
@@ -126,7 +127,7 @@ func doOptimize(flag uint64, logic LogicalPlan) (PhysicalPlan, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	if !AllowCartesianProduct && existsCartesianProduct(logic) {
+	if !AllowCartesianProduct.Load() && existsCartesianProduct(logic) {
 		return nil, errors.Trace(ErrCartesianProductUnsupported)
 	}
 	physical, err := physicalOptimize(logic)

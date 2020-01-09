@@ -119,14 +119,14 @@ func (s *testSuite2) TestJoin(c *C) {
 	result = tk.MustQuery("select a.c1 from t a , (select * from t1 limit 3) b where a.c1 = b.c1 order by b.c1;")
 	result.Check(testkit.Rows("1", "2", "3"))
 
-	plannercore.AllowCartesianProduct = false
+	plannercore.AllowCartesianProduct.Store(false)
 	_, err := tk.Exec("select * from t, t1")
 	c.Check(plannercore.ErrCartesianProductUnsupported.Equal(err), IsTrue)
 	_, err = tk.Exec("select * from t left join t1 on 1")
 	c.Check(plannercore.ErrCartesianProductUnsupported.Equal(err), IsTrue)
 	_, err = tk.Exec("select * from t right join t1 on 1")
 	c.Check(plannercore.ErrCartesianProductUnsupported.Equal(err), IsTrue)
-	plannercore.AllowCartesianProduct = true
+	plannercore.AllowCartesianProduct.Store(true)
 	tk.MustExec("drop table if exists t,t2,t1")
 	tk.MustExec("create table t(c1 int)")
 	tk.MustExec("create table t1(c1 int, c2 int)")
