@@ -1906,6 +1906,8 @@ func newMergeLockScanner(safePoint uint64, client tikv.Client, stores map[uint64
 }
 
 func (s *mergeLockScanner) Start(ctx context.Context) error {
+	receivers := make([]*receiver, 0, len(s.stores))
+
 	for storeID, store := range s.stores {
 		ch := make(chan scanLockResult, scanLockResultBufferSize)
 		go func() {
@@ -1918,12 +1920,17 @@ func (s *mergeLockScanner) Start(ctx context.Context) error {
 				ch <- scanLockResult{Err: err}
 			}
 		}()
-		s.receivers = append(s.receivers, &receiver{Ch: ch, StoreID: storeID})
+		receivers = append(receivers, &receiver{Ch: ch, StoreID: storeID})
 	}
 
-	heap.Init(&s.receivers)
+	s.startWithReceivers(receivers)
 
 	return nil
+}
+
+func (s *mergeLockScanner) startWithReceivers(receivers []*receiver) {
+	s.receivers = receivers
+	heap.Init(&s.receivers)
 }
 
 func (s *mergeLockScanner) Next() *tikv.Lock {
