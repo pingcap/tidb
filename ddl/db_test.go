@@ -249,26 +249,32 @@ func (s *testDBSuite2) TestAddUniqueIndexRollback(c *C) {
 	testAddIndexRollback(c, s.store, s.lease, idxName, addIdxSQL, errMsg, hasNullValsInKey)
 }
 
-func backgroundDelete(s kv.Storage, c *C, sql string) {
-	// Sleep a while to let ddl in rollback state
-	time.Sleep(50 * time.Millisecond)
-	se, err := session.CreateSession4Test(s)
-	c.Assert(err, IsNil)
-	defer se.Close()
-	_, err = se.Execute(context.Background(), "use test_db")
-	c.Assert(err, IsNil)
-	_, err = se.Execute(context.Background(), sql)
-	c.Assert(err, IsNil)
-}
-
 func (s *testDBSuite6) TestAddExpressionIndexRollback(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test_db")
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1 (c1 int, c2 int, c3 int, unique key(c1))")
 	tk.MustExec("insert into t1 values (20, 20, 20), (40, 40, 40), (80, 80, 80), (160, 160, 160);")
-	go backgroundDelete(s.store, c, "delete from t1 where c1 = 40;")
+
+	var checkErr error
+	tk1 := testkit.NewTestKit(c, s.store)
+	_, checkErr = tk1.Exec("use test_db")
+
+	d := s.dom.DDL()
+	hook := &ddl.TestDDLCallback{}
+	hook.OnJobUpdatedExported = func(job *model.Job) {
+		if job.SchemaState == model.StateDeleteOnly {
+			if checkErr != nil {
+				return
+			}
+			_, checkErr = tk1.Exec("delete from t1 where c1 = 40;")
+		}
+	}
+	d.(ddl.DDLForTest).SetHook(hook)
+
 	tk.MustGetErrMsg("alter table t1 add index expr_idx ((pow(c1, c2)));", "[ddl:8202]Cannot decode index value, because [types:1690]DOUBLE value is out of range in 'pow(160, 160)'")
+	c.Assert(checkErr, IsNil)
+	tk.MustQuery("select * from t1;").Check(testkit.Rows("20 20 20", "80 80 80", "160 160 160"))
 }
 
 func batchInsert(tk *testkit.TestKit, tbl string, start, end int) {

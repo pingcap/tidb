@@ -25,16 +25,22 @@ import (
 type gcSubstituter struct {
 }
 
+// ExprColumnMap is a map from Expression to *Column
+type ExprColumnMap map[expression.Expression]*expression.Column
+
 func (gc *gcSubstituter) optimize(ctx context.Context, lp LogicalPlan) (LogicalPlan, error) {
-	exprToColumn := make(map[expression.Expression]expression.Expression)
+	exprToColumn := make(ExprColumnMap)
 	collectGenerateColumn(lp, exprToColumn)
+	if len(exprToColumn) == 0 {
+		return lp, nil
+	}
 	return gc.substitute(ctx, lp, exprToColumn, lp.SCtx().GetSessionVars().StmtCtx), nil
 }
 
 // collectGenerateColumn collect the generate column and save them to a map from their expressions to themselves.
 // For the sake of simplicity, we don't collect the stored generate column because we can't their expressions directly.
 // TODO: support stored generate column.
-func collectGenerateColumn(lp LogicalPlan, exprToColumn map[expression.Expression]expression.Expression) {
+func collectGenerateColumn(lp LogicalPlan, exprToColumn ExprColumnMap) {
 	if ds, ok := lp.(*DataSource); ok {
 		tblInfo := ds.tableInfo
 		for _, idx := range tblInfo.Indices {
@@ -56,7 +62,7 @@ func collectGenerateColumn(lp LogicalPlan, exprToColumn map[expression.Expressio
 	}
 }
 
-func (gc *gcSubstituter) substitute(ctx context.Context, lp LogicalPlan, exprToColumn map[expression.Expression]expression.Expression, sctx *stmtctx.StatementContext) LogicalPlan {
+func (gc *gcSubstituter) substitute(ctx context.Context, lp LogicalPlan, exprToColumn ExprColumnMap, sctx *stmtctx.StatementContext) LogicalPlan {
 	var expr *expression.Expression
 	var tp types.EvalType
 	switch x := lp.(type) {
@@ -79,7 +85,7 @@ func (gc *gcSubstituter) substitute(ctx context.Context, lp LogicalPlan, exprToC
 				}
 				for candidateExpr, column := range exprToColumn {
 					if (*expr).Equal(lp.SCtx(), candidateExpr) && candidateExpr.GetType().EvalType() == tp &&
-						x.Schema().ColumnIndex(column.(*expression.Column)) != -1 {
+						x.Schema().ColumnIndex(column) != -1 {
 						*expr = column
 					}
 				}
@@ -98,7 +104,7 @@ func (gc *gcSubstituter) substitute(ctx context.Context, lp LogicalPlan, exprToC
 				if canSubstitute {
 					for candidateExpr, column := range exprToColumn {
 						if (*expr).Equal(lp.SCtx(), candidateExpr) && candidateExpr.GetType().EvalType() == tp &&
-							x.Schema().ColumnIndex(column.(*expression.Column)) != -1 {
+							x.Schema().ColumnIndex(column) != -1 {
 							*expr = column
 						}
 					}
@@ -106,14 +112,12 @@ func (gc *gcSubstituter) substitute(ctx context.Context, lp LogicalPlan, exprToC
 			}
 		}
 	case *LogicalProjection:
-		{
-			for i := 0; i < len(x.Exprs); i++ {
-				tp = x.Exprs[i].GetType().EvalType()
-				for candidateExpr, column := range exprToColumn {
-					if x.Exprs[i].Equal(lp.SCtx(), candidateExpr) && candidateExpr.GetType().EvalType() == tp &&
-						x.children[0].Schema().ColumnIndex(column.(*expression.Column)) != -1 {
-						x.Exprs[i] = column
-					}
+		for i := 0; i < len(x.Exprs); i++ {
+			tp = x.Exprs[i].GetType().EvalType()
+			for candidateExpr, column := range exprToColumn {
+				if x.Exprs[i].Equal(lp.SCtx(), candidateExpr) && candidateExpr.GetType().EvalType() == tp &&
+					x.children[0].Schema().ColumnIndex(column) != -1 {
+					x.Exprs[i] = column
 				}
 			}
 		}
@@ -122,7 +126,7 @@ func (gc *gcSubstituter) substitute(ctx context.Context, lp LogicalPlan, exprToC
 			tp = x.ByItems[i].Expr.GetType().EvalType()
 			for candidateExpr, column := range exprToColumn {
 				if x.ByItems[i].Expr.Equal(lp.SCtx(), candidateExpr) && candidateExpr.GetType().EvalType() == tp &&
-					x.Schema().ColumnIndex(column.(*expression.Column)) != -1 {
+					x.Schema().ColumnIndex(column) != -1 {
 					x.ByItems[i].Expr = column
 				}
 			}
@@ -133,7 +137,7 @@ func (gc *gcSubstituter) substitute(ctx context.Context, lp LogicalPlan, exprToC
 				tp = aggFunc.Args[i].GetType().EvalType()
 				for candidateExpr, column := range exprToColumn {
 					if aggFunc.Args[i].Equal(lp.SCtx(), candidateExpr) && candidateExpr.GetType().EvalType() == tp &&
-						x.Schema().ColumnIndex(column.(*expression.Column)) != -1 {
+						x.Schema().ColumnIndex(column) != -1 {
 						aggFunc.Args[i] = column
 					}
 				}
@@ -143,9 +147,9 @@ func (gc *gcSubstituter) substitute(ctx context.Context, lp LogicalPlan, exprToC
 			tp = x.GroupByItems[i].GetType().EvalType()
 			for candidateExpr, column := range exprToColumn {
 				if x.GroupByItems[i].Equal(lp.SCtx(), candidateExpr) && candidateExpr.GetType().EvalType() == tp &&
-					x.Schema().ColumnIndex(column.(*expression.Column)) != -1 {
+					x.Schema().ColumnIndex(column) != -1 {
 					x.GroupByItems[i] = column
-					x.groupByCols = append(x.groupByCols, column.(*expression.Column))
+					x.groupByCols = append(x.groupByCols, column)
 				}
 			}
 		}

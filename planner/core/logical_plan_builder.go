@@ -938,17 +938,17 @@ func (b *PlanBuilder) buildProjection(ctx context.Context, p LogicalPlan, fields
 		// Sometimes we need to add some fields to the projection so that we can use generate column substitute
 		// optimization. For example: select a+1 from t order by a+1, with a virtual generate column c as (a+1) and
 		// an index on c. We need to add c into the projection so that we can replace a+1 with c.
-		exprToColumn := make(map[expression.Expression]expression.Expression)
+		exprToColumn := make(ExprColumnMap)
 		collectGenerateColumn(p, exprToColumn)
 		for expr, col := range exprToColumn {
-			idx := p.Schema().ColumnIndex(col.(*expression.Column))
+			idx := p.Schema().ColumnIndex(col)
 			if idx == -1 {
 				continue
 			}
-			if proj.schema.Contains(col.(*expression.Column)) {
+			if proj.schema.Contains(col) {
 				continue
 			}
-			proj.schema.Columns = append(proj.schema.Columns, col.(*expression.Column))
+			proj.schema.Columns = append(proj.schema.Columns, col)
 			proj.Exprs = append(proj.Exprs, expr)
 			proj.names = append(proj.names, p.OutputNames()[idx])
 		}
