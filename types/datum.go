@@ -1535,7 +1535,7 @@ func (d *Datum) toSignedInteger(sc *stmtctx.StatementContext, tp byte) (int64, e
 		return ConvertJSONToInt(sc, d.GetMysqlJSON(), false)
 	case KindBinaryLiteral, KindMysqlBit:
 		val, err := d.GetBinaryLiteral().ToInt(sc)
-		if sc.CastInInsert {
+		if sc.CastInToTable {
 			ival, err2 := ConvertUintToInt(val, upperBound, tp)
 			if err == nil {
 				err = err2

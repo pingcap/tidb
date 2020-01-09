@@ -2257,7 +2257,7 @@ func (s *testIntegrationSuite2) TestBuiltin(c *C) {
 	tk.MustQuery(`select convert(t.a1, signed int) from (select convert(a, json) as a1 from tb5) as t`)
 	tk.MustExec(`drop table tb5;`)
 
-	tk.MustExec(`create table tb5(a double(64));`)
+	tk.MustExec(`create table tb5(a double);`)
 	tk.MustExec(`insert into test.tb5 (a) values (18446744073709551616);`)
 	tk.MustExec(`insert into test.tb5 (a) values (184467440737095516160);`)
 	result = tk.MustQuery(`select cast(a as unsigned) from test.tb5;`)
