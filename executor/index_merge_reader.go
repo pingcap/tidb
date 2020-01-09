@@ -63,13 +63,12 @@ var (
 type IndexMergeReaderExecutor struct {
 	baseExecutor
 
-	table      table.Table
-	indexes    []*model.IndexInfo
-	keepOrders []bool
-	descs      []bool
-	ranges     [][]*ranger.Range
-	dagPBs     []*tipb.DAGRequest
-	startTS    uint64
+	table   table.Table
+	indexes []*model.IndexInfo
+	descs   []bool
+	ranges  [][]*ranger.Range
+	dagPBs  []*tipb.DAGRequest
+	startTS uint64
 	// handleIdx is the index of handle, which is only used for case of keeping order.
 	handleIdx    int
 	tableRequest *tipb.DAGRequest
@@ -144,9 +143,7 @@ func (e *IndexMergeReaderExecutor) Open(ctx context.Context) error {
 }
 
 func (e *IndexMergeReaderExecutor) startIndexMergeProcessWorker(ctx context.Context, workCh chan<- *lookupTableTask, fetch <-chan *lookupTableTask, partialWorkerCount int) {
-	idxMergeProcessWorker := &indexMergeProcessWorker{
-		maps: make(map[int64]byte),
-	}
+	idxMergeProcessWorker := &indexMergeProcessWorker{}
 	e.processWokerWg.Add(1)
 	go func() {
 		idxMergeProcessWorker.fetchLoop(ctx, partialWorkerCount, fetch, workCh, e.resultCh, e.finished)
@@ -165,7 +162,7 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 		SetDAGRequest(e.dagPBs[workID]).
 		SetStartTS(e.startTS).
 		SetDesc(e.descs[workID]).
-		SetKeepOrder(e.keepOrders[workID]).
+		SetKeepOrder(false).
 		SetStreaming(e.partialStreamings[workID]).
 		SetFromSessionVars(e.ctx.GetSessionVars()).
 		Build()
@@ -180,7 +177,6 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 
 	result.Fetch(ctx)
 	worker := &partialIndexWorker{
-		keepOrder:    e.keepOrders[workID],
 		batchSize:    e.maxChunkSize,
 		maxBatchSize: e.ctx.GetSessionVars().IndexLookupSize,
 		maxChunkSize: e.maxChunkSize,
@@ -229,7 +225,6 @@ func (e *IndexMergeReaderExecutor) startPartialTableWorker(ctx context.Context, 
 	}
 	tableInfo := e.partialPlans[workID][0].(*plannercore.PhysicalTableScan).Table
 	worker := &partialTableWorker{
-		keepOrder:    e.keepOrders[workID],
 		batchSize:    e.maxChunkSize,
 		maxBatchSize: e.ctx.GetSessionVars().IndexLookupSize,
 		maxChunkSize: e.maxChunkSize,
@@ -257,7 +252,6 @@ func (e *IndexMergeReaderExecutor) startPartialTableWorker(ctx context.Context, 
 }
 
 type partialTableWorker struct {
-	keepOrder    bool
 	batchSize    int
 	maxBatchSize int
 	maxChunkSize int
@@ -353,12 +347,6 @@ func (w *partialTableWorker) extractTaskHandles(ctx context.Context, chk *chunk.
 func (w *partialTableWorker) buildTableTask(handles []int64, retChk *chunk.Chunk) *lookupTableTask {
 	var indexOrder map[int64]int
 	var duplicatedIndexOrder map[int64]int
-	if w.keepOrder {
-		indexOrder = make(map[int64]int, len(handles))
-		for i, h := range handles {
-			indexOrder[h] = i
-		}
-	}
 	task := &lookupTableTask{
 		handles:              handles,
 		indexOrder:           indexOrder,
@@ -466,7 +454,6 @@ func (e *IndexMergeReaderExecutor) Close() error {
 }
 
 type indexMergeProcessWorker struct {
-	maps map[int64]byte
 }
 
 func (w *indexMergeProcessWorker) fetchLoop(ctx context.Context, partialWorkerCount int,
@@ -488,6 +475,8 @@ func (w *indexMergeProcessWorker) fetchLoop(ctx context.Context, partialWorkerCo
 
 	var task *lookupTableTask
 	var ok bool
+	maps := make(map[int64]byte)
+
 	for {
 		if partialWorkerCount == 0 {
 			close(workCh)
@@ -507,9 +496,9 @@ func (w *indexMergeProcessWorker) fetchLoop(ctx context.Context, partialWorkerCo
 			}
 			fhs := make([]int64, 0, 8)
 			for i := 0; i < hc; i++ {
-				if _, ok := w.maps[handles[i]]; !ok {
+				if _, ok := maps[handles[i]]; !ok {
 					fhs = append(fhs, handles[i])
-					w.maps[handles[i]] = 0
+					maps[handles[i]] = 0
 				}
 			}
 			if len(fhs) == 0 {
@@ -532,7 +521,6 @@ func (w *indexMergeProcessWorker) fetchLoop(ctx context.Context, partialWorkerCo
 }
 
 type partialIndexWorker struct {
-	keepOrder    bool
 	batchSize    int
 	maxBatchSize int
 	maxChunkSize int
@@ -613,13 +601,6 @@ func (w *partialIndexWorker) extractTaskHandles(ctx context.Context, chk *chunk.
 func (w *partialIndexWorker) buildTableTask(handles []int64, retChk *chunk.Chunk) *lookupTableTask {
 	var indexOrder map[int64]int
 	var duplicatedIndexOrder map[int64]int
-	if w.keepOrder {
-		// Save the index order.
-		indexOrder = make(map[int64]int, len(handles))
-		for i, h := range handles {
-			indexOrder[h] = i
-		}
-	}
 	task := &lookupTableTask{
 		handles:              handles,
 		indexOrder:           indexOrder,
