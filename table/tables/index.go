@@ -238,8 +238,11 @@ func (c *index) Create(ctx sessionctx.Context, rm kv.RetrieverMutator, indexedVa
 		return 0, err
 	}
 
-	if skipCheck {
+	if skipCheck || opt.Untouched {
 		value := EncodeHandle(h)
+		// If index is untouched and fetch here means the key is exists in TiKV, but not in txn mem-buffer,
+		// then should also write the untouched index key/value to mem-buffer to make sure the data
+		// is consistent with the index in txn mem-buffer.
 		if opt.Untouched {
 			value = append(value, kv.UnCommitIndexKVFlag)
 		}
@@ -249,14 +252,8 @@ func (c *index) Create(ctx sessionctx.Context, rm kv.RetrieverMutator, indexedVa
 
 	var value []byte
 	value, err = rm.Get(key)
-	// If (opt.Untouched && err == nil) is true, means the key is exists and exists in TiKV, not in txn mem-buffer,
-	// then should also write the untouched index key/value to mem-buffer to make sure the data
-	// is consistent with the index in txn mem-buffer.
-	if kv.IsErrNotFound(err) || (opt.Untouched && err == nil) {
+	if kv.IsErrNotFound(err) {
 		v := EncodeHandle(h)
-		if opt.Untouched {
-			v = append(v, kv.UnCommitIndexKVFlag)
-		}
 		err = rm.Set(key, v)
 		return 0, err
 	}

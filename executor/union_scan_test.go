@@ -233,4 +233,12 @@ func (s *testSuite4) TestUnionScanForMemBufferReader(c *C) {
 	tk.MustQuery("select * from t1 use index(idx);").Check(testkit.Rows("1 1 2", "2 2 2"))
 	tk.MustExec("commit")
 	tk.MustExec("admin check table t1;")
+
+	// Test update with 2 index, one untouched, the other index is touched.
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (a int,b int,c int,unique index idx1(a), index idx2(b));")
+	tk.MustExec("insert into t1 values (1, 1, 1);")
+	tk.MustExec("update t1 set b=b+1 where a=1;")
+	tk.MustQuery("select * from t1 use index(idx2);").Check(testkit.Rows("1 2 1"))
+	tk.MustExec("admin check table t1;")
 }

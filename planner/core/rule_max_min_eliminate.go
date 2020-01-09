@@ -34,6 +34,9 @@ func (a *maxMinEliminator) optimize(ctx context.Context, p LogicalPlan) (Logical
 
 // Try to convert max/min to Limit+Sort operators.
 func (a *maxMinEliminator) eliminateMaxMin(p LogicalPlan) {
+	for _, child := range p.Children() {
+		a.eliminateMaxMin(child)
+	}
 	// We don't need to guarantee that the child of it is a data source. This transformation won't be worse than previous.
 	if agg, ok := p.(*LogicalAggregation); ok {
 		// We only consider case with single max/min function.
@@ -78,10 +81,6 @@ func (a *maxMinEliminator) eliminateMaxMin(p LogicalPlan) {
 		// Since now it's almost one row returned, a agg operator is okay to do this.
 		p.SetChildren(li)
 		return
-	}
-
-	for _, child := range p.Children() {
-		a.eliminateMaxMin(child)
 	}
 }
 
