@@ -812,10 +812,10 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 	cmd := data[0]
 	data = data[1:]
 	if variable.EnablePProfSQLCPU.Load() {
-		lastSQL := getLastStmtInConn{cc}.PProfLabel()
-		if len(lastSQL) > 0 {
+		label := getLastStmtInConn{cc}.PProfLabel()
+		if len(label) > 0 {
 			defer pprof.SetGoroutineLabels(ctx)
-			ctx = pprof.WithLabels(ctx, pprof.Labels("sql", parser.Normalize(lastSQL)))
+			ctx = pprof.WithLabels(ctx, pprof.Labels("sql", label))
 			pprof.SetGoroutineLabels(ctx)
 		}
 	}
@@ -1560,6 +1560,7 @@ func (cc getLastStmtInConn) String() string {
 	}
 }
 
+// PProfLabel return sql label used to tag pprof.
 func (cc getLastStmtInConn) PProfLabel() string {
 	if len(cc.lastPacket) == 0 {
 		return ""
@@ -1575,7 +1576,7 @@ func (cc getLastStmtInConn) PProfLabel() string {
 	case mysql.ComStmtReset:
 		return "ResetStmt"
 	case mysql.ComQuery, mysql.ComStmtPrepare:
-		return queryStrForLog(string(hack.String(data)))
+		return parser.Normalize(queryStrForLog(string(hack.String(data))))
 	case mysql.ComStmtExecute, mysql.ComStmtFetch:
 		stmtID := binary.LittleEndian.Uint32(data[0:4])
 		return queryStrForLog(cc.preparedStmt2StringNoArgs(stmtID))
