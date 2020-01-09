@@ -50,11 +50,11 @@ type baseBuiltinFunc struct {
 	tp           *types.FieldType
 	pbCode       tipb.ScalarFuncSig
 
-	childrenVectorizedOnce *sync.Once
-	childrenVectorized     bool
+	childrenVectorized bool
+	childrenReversed   bool
 
-	childrenReversedOnce *sync.Once
-	childrenReversed     bool
+	childrenVectorizedOnce *sync.Once
+	childrenReversedOnce   *sync.Once
 }
 
 // nullable implements builtinFunc nullable interface.
@@ -259,7 +259,7 @@ func (b *baseBuiltinFunc) evalDecimal(row chunk.Row) (*types.MyDecimal, bool, er
 }
 
 func (b *baseBuiltinFunc) evalTime(row chunk.Row) (types.Time, bool, error) {
-	return types.Time{}, false, errors.Errorf("baseBuiltinFunc.evalTime() should never be called, please contact the TiDB team for help")
+	return types.ZeroTime, false, errors.Errorf("baseBuiltinFunc.evalTime() should never be called, please contact the TiDB team for help")
 }
 
 func (b *baseBuiltinFunc) evalDuration(row chunk.Row) (types.Duration, bool, error) {

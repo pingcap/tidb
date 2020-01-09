@@ -74,6 +74,9 @@ type Context interface {
 	// StoreQueryFeedback stores the query feedback.
 	StoreQueryFeedback(feedback interface{})
 
+	// HasDirtyContent checks whether there's dirty update on the given table.
+	HasDirtyContent(tid int64) bool
+
 	// StmtCommit flush all changes by the statement to the underlying transaction.
 	StmtCommit(tracker *memory.Tracker) error
 	// StmtRollback provides statement level rollback.

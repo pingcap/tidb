@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/rowcodec"
 )
 
 // Column contains the info and generated expr of column.
@@ -77,7 +78,12 @@ func NewRowDecoder(tbl table.Table, decodeColMap map[int64]Column) *RowDecoder {
 
 // DecodeAndEvalRowWithMap decodes a byte slice into datums and evaluates the generated column value.
 func (rd *RowDecoder) DecodeAndEvalRowWithMap(ctx sessionctx.Context, handle int64, b []byte, decodeLoc, sysLoc *time.Location, row map[int64]types.Datum) (map[int64]types.Datum, error) {
-	row, err := tablecodec.DecodeRowWithMap(b, rd.colTypes, decodeLoc, row)
+	var err error
+	if rowcodec.IsNewFormat(b) {
+		row, err = tablecodec.DecodeRowWithMapNew(b, rd.colTypes, decodeLoc, row)
+	} else {
+		row, err = tablecodec.DecodeRowWithMap(b, rd.colTypes, decodeLoc, row)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -124,7 +130,7 @@ func (rd *RowDecoder) DecodeAndEvalRowWithMap(ctx sessionctx.Context, handle int
 
 		if val.Kind() == types.KindMysqlTime && sysLoc != time.UTC {
 			t := val.GetMysqlTime()
-			if t.Type == mysql.TypeTimestamp {
+			if t.Type() == mysql.TypeTimestamp {
 				err := t.ConvertTimeZone(sysLoc, time.UTC)
 				if err != nil {
 					return nil, err
@@ -184,7 +190,7 @@ func SubstituteGenColsInDecodeColMap(decodeColMap map[int64]Column) {
 		colID     int64
 		colOffset int
 	}
-	var orderedCols []Pair
+	orderedCols := make([]Pair, 0, len(decodeColMap))
 	for colID, col := range decodeColMap {
 		orderedCols = append(orderedCols, Pair{colID, col.Col.Offset})
 	}

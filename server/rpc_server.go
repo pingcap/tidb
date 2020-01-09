@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
+	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
@@ -59,7 +60,9 @@ func NewRPCServer(config *config.Config, dom *domain.Domain, sm util.SessionMana
 		sm:                sm,
 	}
 	// For redirection the cop task.
-	mocktikv.TiDBRPCServerCoprocessorHandler = rpcSrv.handleCopRequest
+	mocktikv.GRPCClientFactory = func() mocktikv.Client {
+		return tikv.NewTestRPCClient(config.Security)
+	}
 	diagnosticspb.RegisterDiagnosticsServer(s, rpcSrv)
 	tikvpb.RegisterTikvServer(s, rpcSrv)
 	return s
@@ -81,12 +84,37 @@ func (s *rpcServer) Coprocessor(ctx context.Context, in *coprocessor.Request) (r
 	resp = &coprocessor.Response{}
 	defer func() {
 		if v := recover(); v != nil {
-			logutil.BgLogger().Error("panic in TiDB RPC server coprocessor", zap.Any("stack", v))
-			resp.OtherError = fmt.Sprintf("rpc coprocessor panic, :%v", v)
+			logutil.BgLogger().Error("panic when RPC server handing coprocessor", zap.Any("stack", v))
+			resp.OtherError = fmt.Sprintf("panic when RPC server handing coprocessor, stack:%v", v)
 		}
 	}()
 	resp = s.handleCopRequest(ctx, in)
 	return resp, nil
+}
+
+// CoprocessorStream implements the TiKVServer interface.
+func (s *rpcServer) CoprocessorStream(in *coprocessor.Request, stream tikvpb.Tikv_CoprocessorStreamServer) (err error) {
+	resp := &coprocessor.Response{}
+	defer func() {
+		if v := recover(); v != nil {
+			logutil.BgLogger().Error("panic when RPC server handing coprocessor stream", zap.Any("stack", v))
+			resp.OtherError = fmt.Sprintf("panic when when RPC server handing coprocessor stream, stack:%v", v)
+			err = stream.Send(resp)
+			if err != nil {
+				logutil.BgLogger().Error("panic when RPC server handing coprocessor stream, send response to stream error", zap.Error(err))
+			}
+		}
+	}()
+
+	se, err := s.createSession()
+	if err != nil {
+		resp.OtherError = err.Error()
+		return stream.Send(resp)
+	}
+	defer se.Close()
+
+	h := executor.NewCoprocessorDAGHandler(se)
+	return h.HandleStreamRequest(context.Background(), in, stream)
 }
 
 // handleCopRequest handles the cop dag request.

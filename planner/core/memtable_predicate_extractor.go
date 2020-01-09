@@ -323,7 +323,7 @@ func (helper extractHelper) extractTimeRange(
 				continue
 			}
 
-			mysqlTime := timeDatum.GetMysqlTime().Time
+			mysqlTime := timeDatum.GetMysqlTime()
 			timestamp := time.Date(mysqlTime.Year(),
 				time.Month(mysqlTime.Month()),
 				mysqlTime.Day(),
@@ -483,6 +483,12 @@ type MetricTableExtractor struct {
 	// LabelConditions represents the label conditions of metric data.
 	LabelConditions map[string]set.StringSet
 	Quantiles       []float64
+}
+
+func newMetricTableExtractor() *MetricTableExtractor {
+	e := &MetricTableExtractor{}
+	e.StartTime, e.EndTime = e.getTimeRange(0, 0)
+	return e
 }
 
 // Extract implements the MemTablePredicateExtractor Extract interface

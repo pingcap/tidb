@@ -67,9 +67,9 @@ func TestT(t *testing.T) {
 	TestingT(t)
 }
 
-var _ = Suite(&seqTestSuite{})
-var _ = Suite(&seqTestSuite1{})
-var _ = Suite(&testOOMSuite{})
+var _ = SerialSuites(&seqTestSuite{})
+var _ = SerialSuites(&seqTestSuite1{})
+var _ = SerialSuites(&testOOMSuite{})
 
 type seqTestSuite struct {
 	cluster   *mocktikv.Cluster
@@ -1227,62 +1227,107 @@ func (s *testOOMSuite) TestDistSQLMemoryControl(c *C) {
 	tk.Se.GetSessionVars().MemQuotaIndexLookupReader = -1
 }
 
-func (s *testOOMSuite) TestMemTracker4InsertAndReplaceExec(c *C) {
-	//log.SetLevel(zap.FatalLevel)
+func (s *testOOMSuite) TestMemTracker4UpdateExec(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("create table t1 (id int, a int, b int, index idx_a(`a`))")
+	tk.MustExec("create table t_MemTracker4UpdateExec (id int, a int, b int, index idx_a(`a`))")
 
 	log.SetLevel(zap.InfoLevel)
 	s.oom.tracker = ""
-	tk.MustExec("insert into t1 values (1,1,1), (2,2,2), (3,3,3)")
+	tk.MustExec("insert into t_MemTracker4UpdateExec values (1,1,1), (2,2,2), (3,3,3)")
+	c.Assert(s.oom.tracker, Equals, "")
+	tk.Se.GetSessionVars().MemQuotaQuery = 244
+	tk.MustExec("update t_MemTracker4UpdateExec set a = 4")
+	c.Assert(s.oom.tracker, Matches, "expensive_query during bootstrap phase")
+}
+
+func (s *testOOMSuite) TestMemTracker4InsertAndReplaceExec(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_MemTracker4InsertAndReplaceExec (id int, a int, b int, index idx_a(`a`))")
+
+	log.SetLevel(zap.InfoLevel)
+	s.oom.tracker = ""
+	tk.MustExec("insert into t_MemTracker4InsertAndReplaceExec values (1,1,1), (2,2,2), (3,3,3)")
 	c.Assert(s.oom.tracker, Equals, "")
 	tk.Se.GetSessionVars().MemQuotaQuery = 1
-	tk.MustExec("insert into t1 values (1,1,1), (2,2,2), (3,3,3)")
+	tk.MustExec("insert into t_MemTracker4InsertAndReplaceExec values (1,1,1), (2,2,2), (3,3,3)")
 	c.Assert(s.oom.tracker, Matches, "expensive_query during bootstrap phase")
 	tk.Se.GetSessionVars().MemQuotaQuery = -1
 
 	s.oom.tracker = ""
-	tk.MustExec("replace into t1 values (1,1,1), (2,2,2), (3,3,3)")
+	tk.MustExec("replace into t_MemTracker4InsertAndReplaceExec values (1,1,1), (2,2,2), (3,3,3)")
 	c.Assert(s.oom.tracker, Equals, "")
 	tk.Se.GetSessionVars().MemQuotaQuery = 1
-	tk.MustExec("replace into t1 values (1,1,1), (2,2,2), (3,3,3)")
+	tk.MustExec("replace into t_MemTracker4InsertAndReplaceExec values (1,1,1), (2,2,2), (3,3,3)")
 	c.Assert(s.oom.tracker, Matches, "expensive_query during bootstrap phase")
 	tk.Se.GetSessionVars().MemQuotaQuery = -1
 
 	s.oom.tracker = ""
-	tk.MustExec("insert into t1 select * from t")
+	tk.MustExec("insert into t_MemTracker4InsertAndReplaceExec select * from t")
 	c.Assert(s.oom.tracker, Equals, "")
 	tk.Se.GetSessionVars().MemQuotaQuery = 1
-	tk.MustExec("insert into t1 select * from t")
+	tk.MustExec("insert into t_MemTracker4InsertAndReplaceExec select * from t")
 	c.Assert(s.oom.tracker, Matches, "expensive_query during bootstrap phase")
 	tk.Se.GetSessionVars().MemQuotaQuery = -1
 
 	s.oom.tracker = ""
-	tk.MustExec("replace into t1 select * from t")
+	tk.MustExec("replace into t_MemTracker4InsertAndReplaceExec select * from t")
 	c.Assert(s.oom.tracker, Equals, "")
 	tk.Se.GetSessionVars().MemQuotaQuery = 1
-	tk.MustExec("replace into t1 select * from t")
+	tk.MustExec("replace into t_MemTracker4InsertAndReplaceExec select * from t")
 	c.Assert(s.oom.tracker, Matches, "expensive_query during bootstrap phase")
 	tk.Se.GetSessionVars().MemQuotaQuery = -1
 
 	tk.Se.GetSessionVars().DMLBatchSize = 1
 	tk.Se.GetSessionVars().BatchInsert = true
 	s.oom.tracker = ""
-	tk.MustExec("insert into t1 values (1,1,1), (2,2,2), (3,3,3)")
+	tk.MustExec("insert into t_MemTracker4InsertAndReplaceExec values (1,1,1), (2,2,2), (3,3,3)")
 	c.Assert(s.oom.tracker, Equals, "")
 	tk.Se.GetSessionVars().MemQuotaQuery = 1
-	tk.MustExec("insert into t1 values (1,1,1), (2,2,2), (3,3,3)")
+	tk.MustExec("insert into t_MemTracker4InsertAndReplaceExec values (1,1,1), (2,2,2), (3,3,3)")
 	c.Assert(s.oom.tracker, Matches, "expensive_query during bootstrap phase")
 	tk.Se.GetSessionVars().MemQuotaQuery = -1
 
 	s.oom.tracker = ""
-	tk.MustExec("replace into t1 values (1,1,1), (2,2,2), (3,3,3)")
+	tk.MustExec("replace into t_MemTracker4InsertAndReplaceExec values (1,1,1), (2,2,2), (3,3,3)")
 	c.Assert(s.oom.tracker, Equals, "")
 	tk.Se.GetSessionVars().MemQuotaQuery = 1
-	tk.MustExec("replace into t1 values (1,1,1), (2,2,2), (3,3,3)")
+	tk.MustExec("replace into t_MemTracker4InsertAndReplaceExec values (1,1,1), (2,2,2), (3,3,3)")
 	c.Assert(s.oom.tracker, Matches, "expensive_query during bootstrap phase")
 	tk.Se.GetSessionVars().MemQuotaQuery = -1
+}
+
+func (s *testOOMSuite) TestMemTracker4DeleteExec(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table MemTracker4DeleteExec1 (id int, a int, b int, index idx_a(`a`))")
+	tk.MustExec("create table MemTracker4DeleteExec2 (id int, a int, b int, index idx_a(`a`))")
+
+	// delete from single table
+	log.SetLevel(zap.InfoLevel)
+	tk.MustExec("insert into MemTracker4DeleteExec1 values(1,1,1), (2,2,2), (3,3,3), (4,4,4), (5,5,5)")
+	s.oom.tracker = ""
+	tk.MustExec("delete from MemTracker4DeleteExec1")
+	c.Assert(s.oom.tracker, Equals, "")
+	tk.MustExec("insert into MemTracker4DeleteExec1 values (1,1,1), (2,2,2), (3,3,3)")
+	tk.Se.GetSessionVars().MemQuotaQuery = 1
+	tk.MustExec("delete from MemTracker4DeleteExec1")
+	c.Assert(s.oom.tracker, Matches, "expensive_query during bootstrap phase")
+
+	// delete from multiple table
+	tk.Se.GetSessionVars().MemQuotaQuery = 100000
+	tk.MustExec("insert into MemTracker4DeleteExec1 values(1,1,1)")
+	tk.MustExec("insert into MemTracker4DeleteExec2 values(1,1,1)")
+	s.oom.tracker = ""
+	tk.MustExec("delete MemTracker4DeleteExec1, MemTracker4DeleteExec2 from MemTracker4DeleteExec1 join MemTracker4DeleteExec2 on MemTracker4DeleteExec1.a=MemTracker4DeleteExec2.a")
+	c.Assert(s.oom.tracker, Equals, "")
+	tk.MustExec("insert into MemTracker4DeleteExec1 values(1,1,1)")
+	tk.MustExec("insert into MemTracker4DeleteExec2 values(1,1,1)")
+	s.oom.tracker = ""
+	tk.Se.GetSessionVars().MemQuotaQuery = 10000
+	tk.MustExec("delete MemTracker4DeleteExec1, MemTracker4DeleteExec2 from MemTracker4DeleteExec1 join MemTracker4DeleteExec2 on MemTracker4DeleteExec1.a=MemTracker4DeleteExec2.a")
+	c.Assert(s.oom.tracker, Equals, "expensive_query during bootstrap phase")
 }
 
 type oomCapturer struct {

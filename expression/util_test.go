@@ -487,7 +487,7 @@ func (m *MockExpr) EvalTime(ctx sessionctx.Context, row chunk.Row) (val types.Ti
 	if x, ok := m.i.(types.Time); ok {
 		return x, false, m.err
 	}
-	return types.Time{}, m.i == nil, m.err
+	return types.ZeroTime, m.i == nil, m.err
 }
 func (m *MockExpr) EvalDuration(ctx sessionctx.Context, row chunk.Row) (val types.Duration, isNull bool, err error) {
 	if x, ok := m.i.(types.Duration); ok {
@@ -508,7 +508,7 @@ func (m *MockExpr) GetType() *types.FieldType                         { return m
 func (m *MockExpr) Clone() Expression                                 { return nil }
 func (m *MockExpr) Equal(ctx sessionctx.Context, e Expression) bool   { return false }
 func (m *MockExpr) IsCorrelated() bool                                { return false }
-func (m *MockExpr) ConstItem() bool                                   { return false }
+func (m *MockExpr) ConstItem(_ *stmtctx.StatementContext) bool        { return false }
 func (m *MockExpr) Decorrelate(schema *Schema) Expression             { return m }
 func (m *MockExpr) ResolveIndices(schema *Schema) (Expression, error) { return m, nil }
 func (m *MockExpr) Nullable(notNullCols []*Column) bool               { return true }
