@@ -983,5 +983,99 @@
         ]
       }
     ]
+  },
+  {
+    "Name": "TestMergeAdjacentLimit",
+    "Cases": [
+      {
+        "SQL": "select b from (select b from t limit 5) as t1 limit 10",
+        "Result": [
+          "Group#0 Schema:[test.t.b]",
+          "    Projection_4 input:[Group#1], test.t.b",
+          "Group#1 Schema:[test.t.b]",
+          "    Projection_2 input:[Group#2], test.t.b",
+          "Group#2 Schema:[test.t.b]",
+          "    Limit_6 input:[Group#3], offset:0, count:5",
+          "Group#3 Schema:[test.t.b]",
+          "    TableScan_1 table:t"
+        ]
+      },
+      {
+        "SQL": "select b from (select b from t limit 20) as t1 limit 10",
+        "Result": [
+          "Group#0 Schema:[test.t.b]",
+          "    Projection_4 input:[Group#1], test.t.b",
+          "Group#1 Schema:[test.t.b]",
+          "    Projection_2 input:[Group#2], test.t.b",
+          "Group#2 Schema:[test.t.b]",
+          "    Limit_6 input:[Group#3], offset:0, count:10",
+          "Group#3 Schema:[test.t.b]",
+          "    TableScan_1 table:t"
+        ]
+      },
+      {
+        "SQL": "select b from (select b from t limit 10) as t1 limit 10",
+        "Result": [
+          "Group#0 Schema:[test.t.b]",
+          "    Projection_4 input:[Group#1], test.t.b",
+          "Group#1 Schema:[test.t.b]",
+          "    Projection_2 input:[Group#2], test.t.b",
+          "Group#2 Schema:[test.t.b]",
+          "    Limit_6 input:[Group#3], offset:0, count:10",
+          "Group#3 Schema:[test.t.b]",
+          "    TableScan_1 table:t"
+        ]
+      },
+      {
+        "SQL": "select b from (select b from t limit 10 offset 10) as t1 limit 10 offset 5",
+        "Result": [
+          "Group#0 Schema:[test.t.b]",
+          "    Projection_4 input:[Group#1], test.t.b",
+          "Group#1 Schema:[test.t.b]",
+          "    Projection_2 input:[Group#2], test.t.b",
+          "Group#2 Schema:[test.t.b]",
+          "    Limit_6 input:[Group#3], offset:15, count:5",
+          "Group#3 Schema:[test.t.b]",
+          "    TableScan_1 table:t"
+        ]
+      },
+      {
+        "SQL": "select b from (select b from t limit 10 offset 2) as t1 limit 3 offset 5",
+        "Result": [
+          "Group#0 Schema:[test.t.b]",
+          "    Projection_4 input:[Group#1], test.t.b",
+          "Group#1 Schema:[test.t.b]",
+          "    Projection_2 input:[Group#2], test.t.b",
+          "Group#2 Schema:[test.t.b]",
+          "    Limit_6 input:[Group#3], offset:7, count:3",
+          "Group#3 Schema:[test.t.b]",
+          "    TableScan_1 table:t"
+        ]
+      },
+      {
+        "SQL": "select b from (select b from t limit 10 offset 5) as t1 limit 5 offset 5",
+        "Result": [
+          "Group#0 Schema:[test.t.b]",
+          "    Projection_4 input:[Group#1], test.t.b",
+          "Group#1 Schema:[test.t.b]",
+          "    Projection_2 input:[Group#2], test.t.b",
+          "Group#2 Schema:[test.t.b]",
+          "    Limit_6 input:[Group#3], offset:10, count:5",
+          "Group#3 Schema:[test.t.b]",
+          "    TableScan_1 table:t"
+        ]
+      },
+      {
+        "SQL": "select a from (select a from t limit 3 offset 5) t1 limit 3 offset 5",
+        "Result": [
+          "Group#0 Schema:[test.t.a]",
+          "    Projection_4 input:[Group#1], test.t.a",
+          "Group#1 Schema:[test.t.a]",
+          "    Projection_2 input:[Group#2], test.t.a",
+          "Group#2 Schema:[test.t.a]",
+          "    TableDual_6 rowcount:0"
+        ]
+      }
+    ]
   }
 ]
