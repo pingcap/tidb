@@ -235,7 +235,7 @@ func checkPlanAndRun(tk *testkit.TestKit, c *C, plan string, sql string) *testki
 	return tk.MustQuery(sql)
 }
 
-func (s *testSuite) TestMergeJoin(c *C) {
+func (s *testSuite2) TestMergeJoin(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
@@ -370,7 +370,7 @@ func (s *testSuite) TestMergeJoin(c *C) {
 	))
 }
 
-func (s *testSuite) Test3WaysMergeJoin(c *C) {
+func (s *testSuite2) Test3WaysMergeJoin(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
@@ -395,7 +395,7 @@ func (s *testSuite) Test3WaysMergeJoin(c *C) {
 	result.Check(testkit.Rows("2 2 2 3 2 4", "3 3 3 4 3 10"))
 }
 
-func (s *testSuite) TestMergeJoinDifferentTypes(c *C) {
+func (s *testSuite2) TestMergeJoinDifferentTypes(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test`)
 	tk.MustExec(`drop table if exists t1;`)

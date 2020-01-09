@@ -22,7 +22,7 @@ import (
 	"github.com/pingcap/tidb/util/testkit"
 )
 
-func (s *testSuite) TestGrantGlobal(c *C) {
+func (s *testSuite3) TestGrantGlobal(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	// Create a new user.
 	createUserSQL := `CREATE USER 'testGlobal'@'localhost' IDENTIFIED BY '123';`
@@ -53,7 +53,7 @@ func (s *testSuite) TestGrantGlobal(c *C) {
 	}
 }
 
-func (s *testSuite) TestGrantDBScope(c *C) {
+func (s *testSuite3) TestGrantDBScope(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	// Create a new user.
 	createUserSQL := `CREATE USER 'testDB'@'localhost' IDENTIFIED BY '123';`
@@ -82,7 +82,7 @@ func (s *testSuite) TestGrantDBScope(c *C) {
 	}
 }
 
-func (s *testSuite) TestWithGrantOption(c *C) {
+func (s *testSuite3) TestWithGrantOption(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	// Create a new user.
 	createUserSQL := `CREATE USER 'testWithGrant'@'localhost' IDENTIFIED BY '123';`
@@ -96,7 +96,7 @@ func (s *testSuite) TestWithGrantOption(c *C) {
 	tk.MustQuery("SELECT grant_priv FROM mysql.DB WHERE User=\"testWithGrant\" and host=\"localhost\" and db=\"test\"").Check(testkit.Rows("Y"))
 }
 
-func (s *testSuite) TestTableScope(c *C) {
+func (s *testSuite3) TestTableScope(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	// Create a new user.
 	createUserSQL := `CREATE USER 'testTbl'@'localhost' IDENTIFIED BY '123';`
@@ -134,7 +134,7 @@ func (s *testSuite) TestTableScope(c *C) {
 	}
 }
 
-func (s *testSuite) TestColumnScope(c *C) {
+func (s *testSuite3) TestColumnScope(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	// Create a new user.
 	createUserSQL := `CREATE USER 'testCol'@'localhost' IDENTIFIED BY '123';`
@@ -174,14 +174,14 @@ func (s *testSuite) TestColumnScope(c *C) {
 	}
 }
 
-func (s *testSuite) TestIssue2456(c *C) {
+func (s *testSuite3) TestIssue2456(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("CREATE USER 'dduser'@'%' IDENTIFIED by '123456';")
 	tk.MustExec("GRANT ALL PRIVILEGES ON `dddb_%`.* TO 'dduser'@'%';")
 	tk.MustExec("GRANT ALL PRIVILEGES ON `dddb_%`.`te%` to 'dduser'@'%';")
 }
 
-func (s *testSuite) TestCreateUserWhenGrant(c *C) {
+func (s *testSuite3) TestCreateUserWhenGrant(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`DROP USER IF EXISTS 'test'@'%'`)
 	tk.MustExec(`GRANT ALL PRIVILEGES ON *.* to 'test'@'%' IDENTIFIED BY 'xxx'`)
@@ -191,7 +191,7 @@ func (s *testSuite) TestCreateUserWhenGrant(c *C) {
 	)
 }
 
-func (s *testSuite) TestIssue2654(c *C) {
+func (s *testSuite3) TestIssue2654(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`DROP USER IF EXISTS 'test'@'%'`)
 	tk.MustExec(`CREATE USER 'test'@'%' IDENTIFIED BY 'test'`)
@@ -200,7 +200,7 @@ func (s *testSuite) TestIssue2654(c *C) {
 	rows.Check(testkit.Rows(`test %`))
 }
 
-func (s *testSuite) TestGrantUnderANSIQuotes(c *C) {
+func (s *testSuite3) TestGrantUnderANSIQuotes(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	// Fix a bug that the GrantExec fails in ANSI_QUOTES sql mode
 	// The bug is caused by the improper usage of double quotes like:

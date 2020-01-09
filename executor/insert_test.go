@@ -25,7 +25,7 @@ import (
 	"github.com/pingcap/tidb/util/testkit"
 )
 
-func (s *testSuite) TestInsertOnDuplicateKey(c *C) {
+func (s *testSuite8) TestInsertOnDuplicateKey(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
@@ -130,7 +130,7 @@ func (s *testSuite) TestInsertOnDuplicateKey(c *C) {
 	tk.MustQuery(`select * from t2 order by a;`).Check(testkit.Rows(`1 1 1`, `3 2 2`))
 }
 
-func (s *testSuite) TestUpdateDuplicateKey(c *C) {
+func (s *testSuite3) TestUpdateDuplicateKey(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
@@ -142,7 +142,7 @@ func (s *testSuite) TestUpdateDuplicateKey(c *C) {
 	c.Assert(err.Error(), Equals, "[kv:1062]Duplicate entry '1-2-4' for key 'PRIMARY'")
 }
 
-func (s *testSuite) TestInsertWrongValueForField(c *C) {
+func (s *testSuite3) TestInsertWrongValueForField(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec(`drop table if exists t1;`)
@@ -151,7 +151,7 @@ func (s *testSuite) TestInsertWrongValueForField(c *C) {
 	c.Assert(terror.ErrorEqual(err, table.ErrTruncatedWrongValueForField), IsTrue)
 }
 
-func (s *testSuite) TestInsertDateTimeWithTimeZone(c *C) {
+func (s *testSuite3) TestInsertDateTimeWithTimeZone(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
 	tk.MustExec(`use test;`)
@@ -166,7 +166,7 @@ func (s *testSuite) TestInsertDateTimeWithTimeZone(c *C) {
 	))
 }
 
-func (s *testSuite) TestInsertZeroYear(c *C) {
+func (s *testSuite3) TestInsertZeroYear(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec(`drop table if exists t1;`)
@@ -180,7 +180,7 @@ func (s *testSuite) TestInsertZeroYear(c *C) {
 	))
 }
 
-func (s *testSuite) TestAllowInvalidDates(c *C) {
+func (s *testSuite3) TestAllowInvalidDates(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test`)
 	tk.MustExec(`drop table if exists t1, t2, t3, t4;`)
@@ -215,7 +215,7 @@ func (s *testSuite) TestAllowInvalidDates(c *C) {
 	runWithMode("ALLOW_INVALID_DATES")
 }
 
-func (s *testSuite) TestInsertWithAutoidSchema(c *C) {
+func (s *testSuite3) TestInsertWithAutoidSchema(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test`)
 	tk.MustExec(`create table t1(id int primary key auto_increment, n int);`)
@@ -644,7 +644,7 @@ func (s *testSuite) TestInsertWithAutoidSchema(c *C) {
 
 }
 
-func (s *testSuite) TestPartitionInsertOnDuplicate(c *C) {
+func (s *testSuite3) TestPartitionInsertOnDuplicate(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test`)
 	tk.MustExec(`create table t1 (a int,b int,primary key(a,b)) partition by range(a) (partition p0 values less than (100),partition p1 values less than (1000))`)
@@ -676,7 +676,7 @@ func (s *testSuite3) TestBit(c *C) {
 	c.Assert(err.Error(), Matches, ".*Out of range value for column 'a' at.*")
 }
 
-func (s *testSuite) TestJiraIssue5366(c *C) {
+func (s *testSuite3) TestJiraIssue5366(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test`)
 	tk.MustExec(`create table bug (a varchar(100))`)

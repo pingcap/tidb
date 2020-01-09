@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/BurntSushi/toml"
@@ -370,7 +371,7 @@ var defaultConf = Config{
 	},
 }
 
-var globalConf = defaultConf
+var globalConf = atomic.Value{}
 
 // NewConfig creates a new config instance with default value.
 func NewConfig() *Config {
@@ -382,7 +383,12 @@ func NewConfig() *Config {
 // It should store configuration from command line and configuration file.
 // Other parts of the system can read the global configuration use this function.
 func GetGlobalConfig() *Config {
-	return &globalConf
+	return globalConf.Load().(*Config)
+}
+
+// StoreGlobalConfig stores a new config to the globalConf. It mostly uses in the test to avoid some data races.
+func StoreGlobalConfig(config *Config) {
+	globalConf.Store(config)
 }
 
 // Load loads config options from a toml file.
@@ -436,6 +442,7 @@ func (t *OpenTracing) ToTracingConfig() *tracing.Configuration {
 }
 
 func init() {
+	globalConf.Store(&defaultConf)
 	if checkBeforeDropLDFlag == "1" {
 		CheckTableBeforeDrop = true
 	}

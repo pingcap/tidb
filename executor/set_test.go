@@ -26,7 +26,7 @@ import (
 	"golang.org/x/net/context"
 )
 
-func (s *testSuite) TestSetVar(c *C) {
+func (s *testSuite5) TestSetVar(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	testSQL := "SET @a = 1;"
 	tk.MustExec(testSQL)
@@ -289,7 +289,7 @@ func (s *testSuite) TestSetVar(c *C) {
 	tk.MustQuery(`select @@session.tidb_wait_split_region_timeout;`).Check(testkit.Rows("1"))
 }
 
-func (s *testSuite) TestSetCharset(c *C) {
+func (s *testSuite5) TestSetCharset(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`SET NAMES latin1`)
 
@@ -314,7 +314,7 @@ func (s *testSuite) TestSetCharset(c *C) {
 	tk.MustExec(`SET NAMES binary`)
 }
 
-func (s *testSuite) TestValidateSetVar(c *C) {
+func (s *testSuite5) TestValidateSetVar(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
 	_, err := tk.Exec("set global tidb_distsql_scan_concurrency='fff';")
@@ -582,7 +582,7 @@ func (s *testSuite) TestValidateSetVar(c *C) {
 	result.Check(testkit.Rows("SERIALIZABLE"))
 }
 
-func (s *testSuite) TestSelectGlobalVar(c *C) {
+func (s *testSuite5) TestSelectGlobalVar(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
 	tk.MustQuery("select @@global.max_connections;").Check(testkit.Rows("151"))
