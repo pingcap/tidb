@@ -413,7 +413,8 @@ func (pc PbConverter) canFuncBePushed(sf *ScalarFunction) bool {
 		// json functions.
 		ast.JSONType,
 		ast.JSONExtract,
-		ast.JSONUnquote,
+		// FIXME: JSONUnquote is incompatible with Coprocessor
+		// ast.JSONUnquote,
 		ast.JSONObject,
 		ast.JSONArray,
 		ast.JSONMerge,
@@ -462,6 +463,15 @@ func (pc PbConverter) canFuncBePushed(sf *ScalarFunction) bool {
 			tipb.ScalarFuncSig_RoundReal,
 			tipb.ScalarFuncSig_RoundInt,
 			tipb.ScalarFuncSig_RoundDec:
+			return isPushdownEnabled(sf.FuncName.L)
+		}
+	case ast.Cast:
+		switch sf.Function.PbCode() {
+		case tipb.ScalarFuncSig_CastStringAsInt,
+			tipb.ScalarFuncSig_CastStringAsTime,
+			tipb.ScalarFuncSig_CastTimeAsInt:
+			return false
+		default:
 			return isPushdownEnabled(sf.FuncName.L)
 		}
 	}
