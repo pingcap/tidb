@@ -36,7 +36,7 @@ type testCommitterSuite struct {
 	store   *tikvStore
 }
 
-var _ = Suite(&testCommitterSuite{})
+var _ = SerialSuites(&testCommitterSuite{})
 
 func (s *testCommitterSuite) SetUpSuite(c *C) {
 	ManagedLockTTL = 3000 // 3s
@@ -51,11 +51,11 @@ func (s *testCommitterSuite) SetUpTest(c *C) {
 	client := mocktikv.NewRPCClient(s.cluster, mvccStore)
 	pdCli := &codecPDClient{mocktikv.NewPDClient(s.cluster)}
 	spkv := NewMockSafePointKV()
-	store, err := newTikvStore("mocktikv-store", pdCli, spkv, client, false)
+	store, err := newTikvStore("mocktikv-store", pdCli, spkv, client, false, nil)
 	c.Assert(err, IsNil)
 	store.EnableTxnLocalLatches(1024000)
 	s.store = store
-	CommitMaxBackoff = 2000
+	CommitMaxBackoff = 1000
 }
 
 func (s *testCommitterSuite) TearDownSuite(c *C) {
