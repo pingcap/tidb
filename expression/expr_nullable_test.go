@@ -71,6 +71,16 @@ func testExpressionNullable(c *C, testCases map[string][]exprNullableTestCase) {
 			expr, err := NewFunction(ctx, funcName, eType2FieldType(testCase.retEvalType), Column2Exprs(cols)...)
 			c.Assert(err, IsNil)
 
+			commentf := func(checkCase int, answer bool) CommentInterface {
+				childrenNullable := make([]bool, len(testCase.childrenTypes))
+				for i := range testCase.childrenTypes {
+					if checkCase&(1<<i) != 0 {
+						childrenNullable[i] = true
+					}
+				}
+				return Commentf("func: %v, case %+v, checkCase: %v, answer: %v", funcName, testCase, childrenNullable, answer)
+			}
+
 			// Totally 2^(len(children)) check cases.
 			n := 1 << len(testCase.childrenTypes)
 			for i := 0; i < n; i++ {
@@ -82,15 +92,15 @@ func testExpressionNullable(c *C, testCases map[string][]exprNullableTestCase) {
 				}
 				result := expr.Nullable(notNullCols)
 				if testCase.alwaysNullable {
-					c.Assert(result, IsTrue)
+					c.Assert(result, IsTrue, commentf(i, true))
 				} else {
 					// check special cases.
 					if answer, ok := specialCases[i]; ok {
-						c.Assert(result, Equals, answer)
+						c.Assert(result, Equals, answer, commentf(i, answer))
 					} else {
 						// If i == 0, all of the children are `NotNull`, so `Nullable` usually returns `false`.
 						// If i != 0, at least one child is `Nullable`, so `Nullable` usually returns `true`.
-						c.Assert(result, Equals, i != 0)
+						c.Assert(result, Equals, i != 0, commentf(i, i != 0))
 					}
 				}
 			}

@@ -168,7 +168,7 @@ var nullableBuiltinArithmeticCases = map[string][]exprNullableTestCase{
 	ast.Mul: {
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt}, alwaysNullable: true},
 		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETReal, types.ETReal}},
-		{retEvalType: types.ETDecimal, childrenTypes: []types.EvalType{types.ETDecimal, types.ETDecimal}, alwaysNullable: true},
+		{retEvalType: types.ETDecimal, childrenTypes: []types.EvalType{types.ETDecimal, types.ETDecimal}},
 	},
 	ast.Plus: {
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt}},
