@@ -44,6 +44,8 @@ var (
 	tablePrivMask          = computePrivMask(mysql.AllTablePrivs)
 )
 
+const globalDBVisible = mysql.CreatePriv | mysql.SelectPriv | mysql.InsertPriv | mysql.UpdatePriv | mysql.DeletePriv | mysql.ShowDBPriv | mysql.DropPriv | mysql.AlterPriv | mysql.IndexPriv | mysql.CreateViewPriv | mysql.ShowViewPriv | mysql.GrantPriv
+
 func computePrivMask(privs []mysql.PrivilegeType) mysql.PrivilegeType {
 	var mask mysql.PrivilegeType
 	for _, p := range privs {
@@ -737,7 +739,7 @@ func (p *MySQLPrivilege) decodeColumnsPrivTableRow(row chunk.Row, fs []*ast.Resu
 			value.ColumnName = row.GetString(i)
 		case f.ColumnAsName.L == "timestamp":
 			var err error
-			value.Timestamp, err = row.GetTime(i).Time.GoTime(time.Local)
+			value.Timestamp, err = row.GetTime(i).GoTime(time.Local)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -942,7 +944,7 @@ func (p *MySQLPrivilege) RequestVerification(activeRoles []*auth.RoleIdentity, u
 // DBIsVisible checks whether the user can see the db.
 func (p *MySQLPrivilege) DBIsVisible(user, host, db string) bool {
 	if record := p.matchUser(user, host); record != nil {
-		if record.Privileges != 0 {
+		if record.Privileges&globalDBVisible > 0 {
 			return true
 		}
 	}

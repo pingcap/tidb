@@ -14,6 +14,8 @@
 package cascades
 
 import (
+	"math"
+
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	plannercore "github.com/pingcap/tidb/planner/core"
@@ -65,6 +67,8 @@ var defaultTransformationMap = map[memo.Operand][]Transformation{
 	memo.OperandLimit: {
 		NewRuleTransformLimitToTopN(),
 		NewRulePushLimitDownProjection(),
+		NewRulePushLimitDownUnionAll(),
+		NewRuleMergeAdjacentLimit(),
 	},
 	memo.OperandProjection: {
 		NewRuleEliminateProjection(),
@@ -710,6 +714,56 @@ func (r *PushLimitDownProjection) OnTransform(old *memo.ExprIter) (newExprs []*m
 	return []*memo.GroupExpr{projExpr}, true, false, nil
 }
 
+// PushLimitDownUnionAll pushes limit to union all.
+type PushLimitDownUnionAll struct {
+	baseRule
+}
+
+// NewRulePushLimitDownUnionAll creates a new Transformation PushLimitDownUnionAll.
+// The pattern of this rule is `Limit->UnionAll->X`.
+func NewRulePushLimitDownUnionAll() Transformation {
+	rule := &PushLimitDownUnionAll{}
+	rule.pattern = memo.BuildPattern(
+		memo.OperandLimit,
+		memo.EngineTiDBOnly,
+		memo.NewPattern(memo.OperandUnionAll, memo.EngineTiDBOnly),
+	)
+	return rule
+}
+
+// Match implements Transformation interface.
+// Use appliedRuleSet in GroupExpr to avoid re-apply rules.
+func (r *PushLimitDownUnionAll) Match(expr *memo.ExprIter) bool {
+	return !expr.GetExpr().HasAppliedRule(r)
+}
+
+// OnTransform implements Transformation interface.
+// It will transform `Limit->UnionAll->X` to `Limit->UnionAll->Limit->X`.
+func (r *PushLimitDownUnionAll) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
+	limit := old.GetExpr().ExprNode.(*plannercore.LogicalLimit)
+	unionAll := old.Children[0].GetExpr().ExprNode.(*plannercore.LogicalUnionAll)
+	unionAllSchema := old.Children[0].Group.Prop.Schema
+
+	newLimit := plannercore.LogicalLimit{
+		Count: limit.Count + limit.Offset,
+	}.Init(limit.SCtx(), limit.SelectBlockOffset())
+
+	newUnionAllExpr := memo.NewGroupExpr(unionAll)
+	for _, childGroup := range old.Children[0].GetExpr().Children {
+		newLimitExpr := memo.NewGroupExpr(newLimit)
+		newLimitExpr.Children = append(newLimitExpr.Children, childGroup)
+		newLimitGroup := memo.NewGroupWithSchema(newLimitExpr, childGroup.Prop.Schema)
+
+		newUnionAllExpr.Children = append(newUnionAllExpr.Children, newLimitGroup)
+	}
+
+	newLimitExpr := memo.NewGroupExpr(limit)
+	newUnionAllGroup := memo.NewGroupWithSchema(newUnionAllExpr, unionAllSchema)
+	newLimitExpr.SetChildren(newUnionAllGroup)
+	newLimitExpr.AddAppliedRule(r)
+	return []*memo.GroupExpr{newLimitExpr}, true, false, nil
+}
+
 // PushSelDownJoin pushes Selection through Join.
 type PushSelDownJoin struct {
 	baseRule
@@ -1234,4 +1288,46 @@ func (r *MergeAdjacentSelection) OnTransform(old *memo.ExprIter) (newExprs []*me
 	newSelExpr := memo.NewGroupExpr(newSel)
 	newSelExpr.SetChildren(childGroups...)
 	return []*memo.GroupExpr{newSelExpr}, true, false, nil
+}
+
+// MergeAdjacentLimit merge the adjacent limit.
+type MergeAdjacentLimit struct {
+	baseRule
+}
+
+// NewRuleMergeAdjacentLimit creates a new Transformation MergeAdjacentLimit.
+// The pattern of this rule is `Limit->Limit->X`.
+func NewRuleMergeAdjacentLimit() Transformation {
+	rule := &MergeAdjacentLimit{}
+	rule.pattern = memo.BuildPattern(
+		memo.OperandLimit,
+		memo.EngineAll,
+		memo.NewPattern(memo.OperandLimit, memo.EngineAll),
+	)
+	return rule
+}
+
+// OnTransform implements Transformation interface.
+// This rule tries to merge adjacent limit.
+func (r *MergeAdjacentLimit) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
+	limit := old.GetExpr().ExprNode.(*plannercore.LogicalLimit)
+	child := old.Children[0].GetExpr().ExprNode.(*plannercore.LogicalLimit)
+	childGroups := old.Children[0].GetExpr().Children
+
+	if child.Count <= limit.Offset {
+		tableDual := plannercore.LogicalTableDual{RowCount: 0}.Init(child.SCtx(), child.SelectBlockOffset())
+		tableDual.SetSchema(old.GetExpr().Schema())
+		tableDualExpr := memo.NewGroupExpr(tableDual)
+		return []*memo.GroupExpr{tableDualExpr}, true, true, nil
+	}
+
+	offset := child.Offset + limit.Offset
+	count := uint64(math.Min(float64(child.Count-limit.Offset), float64(limit.Count)))
+	newLimit := plannercore.LogicalLimit{
+		Offset: offset,
+		Count:  count,
+	}.Init(limit.SCtx(), limit.SelectBlockOffset())
+	newLimitExpr := memo.NewGroupExpr(newLimit)
+	newLimitExpr.SetChildren(childGroups...)
+	return []*memo.GroupExpr{newLimitExpr}, true, false, nil
 }
