@@ -1416,7 +1416,7 @@ func (s *testDBSuite5) TestAlterPrimaryKey(c *C) {
 	s.tk.MustGetErrCode("alter table test_add_pk add primary key(d);", mysql.ErrUnsupportedOnGeneratedColumn)
 	// The primary key name is the same as the existing index name.
 	s.tk.MustExec("alter table test_add_pk add primary key idx(e)")
-	s.tk.MustExec("alter table test_add_pk drop primary key")
+	s.tk.MustExec("drop index `primary` on test_add_pk")
 
 	// for describing table
 	s.tk.MustExec("create table test_add_pk1(a int, index idx(a))")
@@ -1456,6 +1456,7 @@ func (s *testDBSuite5) TestAlterPrimaryKey(c *C) {
 	s.tk.MustExec("alter table test_add_pk drop primary key")
 	// for not existing primary key
 	s.tk.MustGetErrCode("alter table test_add_pk drop primary key", mysql.ErrCantDropFieldOrKey)
+	s.tk.MustGetErrCode("drop index `primary` on test_add_pk", mysql.ErrCantDropFieldOrKey)
 
 	// for too many key parts specified
 	s.tk.MustGetErrCode("alter table test_add_pk add primary key idx_test(f1,f2,f3,f4,f5,f6,f7,f8,f9,f10,f11,f12,f13,f14,f15,f16,f17);",
