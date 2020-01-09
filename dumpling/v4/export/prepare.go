@@ -4,6 +4,8 @@ import (
 	"database/sql"
 	"errors"
 	"strings"
+
+	"github.com/pingcap/dumpling/v4/log"
 )
 
 func detectServerInfo(db *sql.DB) (ServerInfo, error) {
@@ -23,6 +25,7 @@ func prepareDumpingDatabases(conf *Config, db *sql.DB) ([]string, error) {
 }
 
 func listAllTables(db *sql.DB, databaseNames []string) (DatabaseTables, error) {
+	log.Zap().Debug("list all the tables")
 	dbTables := DatabaseTables{}
 	for _, dbName := range databaseNames {
 		err := UseDatabase(db, dbName)
