@@ -310,6 +310,7 @@ var tokenMap = map[string]int{
 	"FALSE":                    falseKwd,
 	"FAULTS":                   faultsSym,
 	"FIELDS":                   fields,
+	"FILE":                     file,
 	"FIRST":                    first,
 	"FIXED":                    fixed,
 	"FLOAT":                    floatType,

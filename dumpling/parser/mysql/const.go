@@ -244,6 +244,10 @@ const (
 
 	// ShutdownPriv the privilege to shutdown a server.
 	ShutdownPriv
+	// ReloadPriv is the privilege to enable the use of the FLUSH statement.
+	ReloadPriv
+	// FilePriv is the privilege to enable the use of LOAD DATA and SELECT ... INTO OUTFILE.
+	FilePriv
 
 	// AllPriv is the privilege for all actions.
 	AllPriv
@@ -252,9 +256,6 @@ const (
 // AllPrivMask is the mask for PrivilegeType with all bits set to 1.
 // If it's passed to RequestVerification, it means any privilege would be OK.
 const AllPrivMask = AllPriv - 1
-
-// GlobalDBVisible is a collection of global privileges which allow user to see all databases name.
-const GlobalDBVisible = CreatePriv | SelectPriv | InsertPriv | UpdatePriv | DeletePriv | ShowDBPriv | DropPriv | AlterPriv | IndexPriv | CreateViewPriv | ShowViewPriv | GrantPriv
 
 // MySQL type maximum length.
 const (
@@ -320,6 +321,8 @@ var Priv2UserCol = map[PrivilegeType]string{
 	AlterRoutinePriv:   "Alter_routine_priv",
 	EventPriv:          "Event_priv",
 	ShutdownPriv:       "Shutdown_priv",
+	ReloadPriv:         "Reload_priv",
+	FilePriv:           "File_priv",
 }
 
 // Col2PrivType is the privilege tables column name to privilege type.
@@ -350,6 +353,8 @@ var Col2PrivType = map[string]PrivilegeType{
 	"Alter_routine_priv":    AlterRoutinePriv,
 	"Event_priv":            EventPriv,
 	"Shutdown_priv":         ShutdownPriv,
+	"Reload_priv":           ReloadPriv,
+	"File_priv":             FilePriv,
 }
 
 // Command2Str is the command information to command name.
@@ -416,6 +421,8 @@ var Priv2Str = map[PrivilegeType]string{
 	AlterRoutinePriv:   "ALTER ROUTINE",
 	EventPriv:          "EVENT",
 	ShutdownPriv:       "SHUTDOWN",
+	ReloadPriv:         "RELOAD",
+	FilePriv:           "FILE",
 }
 
 // Priv2SetStr is the map for privilege to string.
@@ -454,7 +461,7 @@ var SetStr2Priv = map[string]PrivilegeType{
 }
 
 // AllGlobalPrivs is all the privileges in global scope.
-var AllGlobalPrivs = []PrivilegeType{SelectPriv, InsertPriv, UpdatePriv, DeletePriv, CreatePriv, DropPriv, ProcessPriv, ReferencesPriv, AlterPriv, ShowDBPriv, SuperPriv, ExecutePriv, IndexPriv, CreateUserPriv, TriggerPriv, CreateViewPriv, ShowViewPriv, CreateRolePriv, DropRolePriv, CreateTMPTablePriv, LockTablesPriv, CreateRoutinePriv, AlterRoutinePriv, EventPriv, ShutdownPriv}
+var AllGlobalPrivs = []PrivilegeType{SelectPriv, InsertPriv, UpdatePriv, DeletePriv, CreatePriv, DropPriv, ProcessPriv, ReferencesPriv, AlterPriv, ShowDBPriv, SuperPriv, ExecutePriv, IndexPriv, CreateUserPriv, TriggerPriv, CreateViewPriv, ShowViewPriv, CreateRolePriv, DropRolePriv, CreateTMPTablePriv, LockTablesPriv, CreateRoutinePriv, AlterRoutinePriv, EventPriv, ShutdownPriv, ReloadPriv, FilePriv}
 
 // AllDBPrivs is all the privileges in database scope.
 var AllDBPrivs = []PrivilegeType{SelectPriv, InsertPriv, UpdatePriv, DeletePriv, CreatePriv, DropPriv, AlterPriv, ExecutePriv, IndexPriv, CreateViewPriv, ShowViewPriv}
