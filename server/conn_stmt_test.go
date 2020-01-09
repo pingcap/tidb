@@ -21,7 +21,7 @@ import (
 	"github.com/pingcap/tidb/types"
 )
 
-func (ts ConnTestSuite) TestParseExecArgs(c *C) {
+func (ts *ConnTestSuite) TestParseExecArgs(c *C) {
 	type args struct {
 		args        []types.Datum
 		boundParams [][]byte
@@ -200,7 +200,7 @@ func (ts ConnTestSuite) TestParseExecArgs(c *C) {
 	}
 }
 
-func (ts ConnTestSuite) TestParseStmtFetchCmd(c *C) {
+func (ts *ConnTestSuite) TestParseStmtFetchCmd(c *C) {
 	tests := []struct {
 		arg       []byte
 		stmtID    uint32
