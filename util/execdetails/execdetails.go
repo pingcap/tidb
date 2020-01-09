@@ -456,6 +456,7 @@ func (e *RuntimeStats) SetConcurrencyInfo(name string, num int) {
 	e.concurrency = append(e.concurrency, concurrencyInfo{concurrencyName: name, concurrencyNum: num})
 }
 
+// SetAdditionalInfo sets the additional information.
 func (e *RuntimeStats) SetAdditionalInfo(info string) {
 	e.mu.Lock()
 	e.additionalInfo = info
