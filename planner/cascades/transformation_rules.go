@@ -1319,7 +1319,7 @@ func (r *MergeAdjacentLimit) OnTransform(old *memo.ExprIter) (newExprs []*memo.G
 		tableDual.SetSchema(child.Schema())
 		tableDual.SetOutputNames(child.OutputNames())
 		tableDualExpr := memo.NewGroupExpr(tableDual)
-		return []*memo.GroupExpr{tableDualExpr}, true, false, nil
+		return []*memo.GroupExpr{tableDualExpr}, true, true, nil
 	}
 
 	offset := child.Offset + limit.Offset
