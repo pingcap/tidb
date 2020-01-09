@@ -362,6 +362,7 @@ import (
 	extended              "EXTENDED"
 	faultsSym             "FAULTS"
 	fields                "FIELDS"
+	file                  "FILE"
 	first                 "FIRST"
 	fixed                 "FIXED"
 	flush                 "FLUSH"
@@ -4638,6 +4639,7 @@ UnReservedKeyword:
 |	"EXECUTE"
 |	"EXTENDED"
 |	"FIELDS"
+|	"FILE"
 |	"FIRST"
 |	"FIXED"
 |	"FLUSH"
@@ -10433,7 +10435,11 @@ PrivType:
 	}
 |	"RELOAD"
 	{
-		$$ = mysql.PrivilegeType(0)
+		$$ = mysql.ReloadPriv
+	}
+|	"FILE"
+	{
+		$$ = mysql.FilePriv
 	}
 |	"CREATE" "TEMPORARY" "TABLES"
 	{
