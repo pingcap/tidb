@@ -238,19 +238,19 @@ func (h *Helper) FindTableIndexOfRegion(allSchemas []*model.DBInfo, hotRange *Re
 func findRangeInTable(hotRange *RegionFrameRange, db *model.DBInfo, tbl *model.TableInfo) *FrameItem {
 	pi := tbl.GetPartitionInfo()
 	if pi == nil {
-		return findRangeInPartition(hotRange, tbl.ID, db.Name.O, tbl.Name.O, tbl.Indices)
+		return findRangeInPhysicalTable(hotRange, tbl.ID, db.Name.O, tbl.Name.O, tbl.Indices)
 	}
 
 	for _, def := range pi.Definitions {
 		tablePartition := fmt.Sprintf("%s(%s)", tbl.Name.O, def.Name)
-		if f := findRangeInPartition(hotRange, def.ID, db.Name.O, tablePartition, tbl.Indices); f != nil {
+		if f := findRangeInPhysicalTable(hotRange, def.ID, db.Name.O, tablePartition, tbl.Indices); f != nil {
 			return f
 		}
 	}
 	return nil
 }
 
-func findRangeInPartition(hotRange *RegionFrameRange, physicalID int64, dbName, tblName string, indices []*model.IndexInfo) *FrameItem {
+func findRangeInPhysicalTable(hotRange *RegionFrameRange, physicalID int64, dbName, tblName string, indices []*model.IndexInfo) *FrameItem {
 	if f := hotRange.GetRecordFrame(physicalID, dbName, tblName); f != nil {
 		return f
 	}
