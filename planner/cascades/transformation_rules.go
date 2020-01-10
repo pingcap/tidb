@@ -1417,7 +1417,7 @@ func (r *MergeAdjacentLimit) OnTransform(old *memo.ExprIter) (newExprs []*memo.G
 	return []*memo.GroupExpr{newLimitExpr}, true, false, nil
 }
 
-// PushSelDownJoin pushes Limit through Join.
+// PushLimitDownOuterJoin pushes Limit through Join.
 type PushLimitDownOuterJoin struct {
 	baseRule
 }
