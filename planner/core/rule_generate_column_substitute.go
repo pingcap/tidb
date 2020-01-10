@@ -25,7 +25,9 @@ import (
 type gcSubstituter struct {
 }
 
-// ExprColumnMap is a map from Expression to *Column.
+// ExprColumnMap is used to store all expressions of indexed generated columns in a table,
+// and map them to the generated columns,
+// thus we can substitute the expression in a query to an indexed generated column.
 type ExprColumnMap map[expression.Expression]*expression.Column
 
 func (gc *gcSubstituter) optimize(ctx context.Context, lp LogicalPlan) (LogicalPlan, error) {
