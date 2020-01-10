@@ -754,7 +754,7 @@ func (b *PlanBuilder) filterPathByIsolationRead(paths []*util.AccessPath, dbName
 	var err error
 	if len(paths) == 0 {
 		engineVals, _ := b.ctx.GetSessionVars().GetSystemVar(variable.TiDBIsolationReadEngines)
-		err = ErrInternal.GenWithStackByArgs(fmt.Sprintf("Can not find access path matching '%v'(value: '%v') " +
+		err = ErrInternal.GenWithStackByArgs(fmt.Sprintf("Can not find access path matching '%v'(value: '%v') "+
 			"and tidb-server config isolation-read(engines: '%v'). Available values are '%v'.",
 			variable.TiDBIsolationReadEngines, config.GetGlobalConfig().IsolationRead.Engines, engineVals, availableEngineStr))
 	}

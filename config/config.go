@@ -453,7 +453,7 @@ type IsolationRead struct {
 	// Engines filters tidb-server access paths by engine type.
 	Engines []string `toml:"engines" json:"engines"`
 	// TODO: Labels filters tidb-server access paths by store label.
-	Labels	[]string `toml:"labels" json:"labels"`
+	Labels []string `toml:"labels" json:"labels"`
 }
 
 // Experimental controls the features that are still experimental: their semantics, interfaces are subject to change.
