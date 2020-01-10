@@ -131,7 +131,7 @@ func (t CmdType) String() string {
 	case CmdRemoveLockObserver:
 		return "RemoveLockObserver"
 	case CmdPhysicalScanLock:
-		return "PhysicalLockObserver"
+		return "PhysicalScanLock"
 	case CmdCop:
 		return "Cop"
 	case CmdCopStream:
