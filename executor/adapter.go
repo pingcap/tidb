@@ -443,6 +443,9 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e Executor) error {
 	txnCtx := sctx.GetSessionVars().TxnCtx
 	for {
 		_, err = a.handleNoDelayExecutor(ctx, e)
+		if !txn.Valid() {
+			return err
+		}
 		if err != nil {
 			// It is possible the DML has point get plan that locks the key.
 			e, err = a.handlePessimisticLockError(ctx, err)
