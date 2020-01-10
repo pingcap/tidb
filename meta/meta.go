@@ -752,9 +752,14 @@ func (m *Meta) GetLastNHistoryDDLJobs(num int) ([]*model.Job, error) {
 	return decodeJob(pairs)
 }
 
-// GetLastNHistoryDDLJobs gets latest N history ddl jobs.
+// LastJobIterator is the iterator for gets latest history.
+type LastJobIterator struct {
+	iter *structure.ReverseHashIterator
+}
+
+// GetLastNHistoryDDLJobsIterator gets latest N history ddl jobs iterator.
 func (m *Meta) GetLastNHistoryDDLJobsIterator() (*LastJobIterator, error) {
-	iter, err := m.txn.GetHashReverseIter(mDDLJobHistoryKey)
+	iter, err := m.txn.NewHashReverseIter(mDDLJobHistoryKey)
 	if err != nil {
 		return nil, err
 	}
@@ -763,11 +768,8 @@ func (m *Meta) GetLastNHistoryDDLJobsIterator() (*LastJobIterator, error) {
 	}, nil
 }
 
-type LastJobIterator struct {
-	iter *structure.ReverseHashIterator
-}
-
-func (i *LastJobIterator) GetJobs(num int, jobs []*model.Job) ([]*model.Job, error) {
+// GetLastJobs gets last N jobs.
+func (i *LastJobIterator) GetLastJobs(num int, jobs []*model.Job) ([]*model.Job, error) {
 	if len(jobs) < num {
 		jobs = make([]*model.Job, 0, num)
 	}

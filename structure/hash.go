@@ -286,6 +286,7 @@ func (t *TxStructure) iterateHash(key []byte, fn func(k []byte, v []byte) error)
 	return nil
 }
 
+// ReverseHashIterator is the reverse hash iterator.
 type ReverseHashIterator struct {
 	t      *TxStructure
 	iter   kv.Iterator
@@ -332,7 +333,8 @@ func (i *ReverseHashIterator) Value() []byte {
 func (i *ReverseHashIterator) Close() {
 }
 
-func (t *TxStructure) GetHashReverseIter(key []byte) (*ReverseHashIterator, error) {
+// NewHashReverseIter creates a reverse hash iterator.
+func (t *TxStructure) NewHashReverseIter(key []byte) (*ReverseHashIterator, error) {
 	dataPrefix := t.hashDataKeyPrefix(key)
 	it, err := t.reader.IterReverse(dataPrefix.PrefixNext())
 	if err != nil {
