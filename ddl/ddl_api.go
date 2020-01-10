@@ -1382,13 +1382,12 @@ func buildTableInfoWithCheck(ctx sessionctx.Context, s *ast.CreateTableStmt, dbC
 		return nil, errors.Trace(err)
 	}
 
-	var pi *model.PartitionInfo
 	if s.Partition != nil {
 		err := checkPartitionExprValid(ctx, tbInfo, s.Partition.Expr)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		pi, err = buildTablePartitionInfo(ctx, s)
+		pi, err := buildTablePartitionInfo(ctx, s)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
