@@ -14,18 +14,20 @@
 package core
 
 import (
-	"fmt"
 	"math"
 
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/charset"
-	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/plancodec"
 )
 
 // task is a new version of `PhysicalPlanInfo`. It stores cost information for a task.
@@ -61,6 +63,9 @@ type copTask struct {
 	// is used to compute average row width when computing scan cost.
 	tblCols           []*expression.Column
 	idxMergePartPlans []PhysicalPlan
+	// rootTaskConds stores select conditions containing virtual columns.
+	// These conditions can't push to TiKV, so we have to add a selection for rootTask
+	rootTaskConds []expression.Expression
 }
 
 func (t *copTask) invalid() bool {
@@ -122,15 +127,35 @@ func (t *copTask) finishIndexPlan() {
 	}
 	cnt := t.count()
 	t.indexPlanFinished = true
+	sessVars := t.indexPlan.SCtx().GetSessionVars()
 	// Network cost of transferring rows of index scan to TiDB.
-	t.cst += cnt * NetworkFactor * t.tblColHists.GetAvgRowSize(t.indexPlan.Schema().Columns, true)
+	t.cst += cnt * sessVars.NetworkFactor * t.tblColHists.GetAvgRowSize(t.indexPlan.SCtx(), t.indexPlan.Schema().Columns, true, false)
+
 	if t.tablePlan == nil {
 		return
 	}
 	// Calculate the IO cost of table scan here because we cannot know its stats until we finish index plan.
 	t.tablePlan.(*PhysicalTableScan).stats = t.indexPlan.statsInfo()
-	rowSize := t.tblColHists.GetAvgRowSize(t.tblCols, false)
-	t.cst += cnt * rowSize * ScanFactor
+	var p PhysicalPlan
+	for p = t.indexPlan; len(p.Children()) > 0; p = p.Children()[0] {
+	}
+	rowSize := t.tblColHists.GetIndexAvgRowSize(t.indexPlan.SCtx(), t.tblCols, p.(*PhysicalIndexScan).Index.Unique)
+
+	t.cst += cnt * rowSize * sessVars.ScanFactor
+}
+
+func (t *copTask) getStoreType() kv.StoreType {
+	if t.tablePlan == nil {
+		return kv.TiKV
+	}
+	tp := t.tablePlan
+	for len(tp.Children()) > 0 {
+		tp = tp.Children()[0]
+	}
+	if ts, ok := tp.(*PhysicalTableScan); ok {
+		return ts.StoreType
+	}
+	return kv.TiKV
 }
 
 func (p *basePhysicalPlan) attach2Task(tasks ...task) task {
@@ -138,29 +163,38 @@ func (p *basePhysicalPlan) attach2Task(tasks ...task) task {
 	return attachPlan2Task(p.self, t)
 }
 
+func (p *PhysicalUnionScan) attach2Task(tasks ...task) task {
+	p.stats = tasks[0].plan().statsInfo()
+	return p.basePhysicalPlan.attach2Task(tasks...)
+}
+
 func (p *PhysicalApply) attach2Task(tasks ...task) task {
 	lTask := finishCopTask(p.ctx, tasks[0].copy())
 	rTask := finishCopTask(p.ctx, tasks[1].copy())
 	p.SetChildren(lTask.plan(), rTask.plan())
-	p.schema = buildPhysicalJoinSchema(p.JoinType, p)
+	p.schema = BuildPhysicalJoinSchema(p.JoinType, p)
+	return &rootTask{
+		p:   p,
+		cst: p.GetCost(lTask.count(), rTask.count()) + lTask.cost(),
+	}
+}
+
+// GetCost computes the cost of apply operator.
+func (p *PhysicalApply) GetCost(lCount float64, rCount float64) float64 {
 	var cpuCost float64
-	lCount := lTask.count()
+	sessVars := p.ctx.GetSessionVars()
 	if len(p.LeftConditions) > 0 {
-		cpuCost += lCount * CPUFactor
+		cpuCost += lCount * sessVars.CPUFactor
 		lCount *= selectionFactor
 	}
-	rCount := rTask.count()
 	if len(p.RightConditions) > 0 {
-		cpuCost += lCount * rCount * CPUFactor
+		cpuCost += lCount * rCount * sessVars.CPUFactor
 		rCount *= selectionFactor
 	}
 	if len(p.EqualConditions)+len(p.OtherConditions) > 0 {
-		cpuCost += lCount * rCount * CPUFactor
+		cpuCost += lCount * rCount * sessVars.CPUFactor
 	}
-	return &rootTask{
-		p:   p,
-		cst: cpuCost + lTask.cost(),
-	}
+	return cpuCost
 }
 
 func (p *PhysicalIndexMergeJoin) attach2Task(tasks ...task) task {
@@ -171,7 +205,7 @@ func (p *PhysicalIndexMergeJoin) attach2Task(tasks ...task) task {
 	} else {
 		p.SetChildren(innerTask.plan(), outerTask.plan())
 	}
-	p.schema = buildPhysicalJoinSchema(p.JoinType, p)
+	p.schema = BuildPhysicalJoinSchema(p.JoinType, p)
 	return &rootTask{
 		p:   p,
 		cst: p.GetCost(outerTask, innerTask),
@@ -182,15 +216,16 @@ func (p *PhysicalIndexMergeJoin) attach2Task(tasks ...task) task {
 func (p *PhysicalIndexMergeJoin) GetCost(outerTask, innerTask task) float64 {
 	var cpuCost float64
 	outerCnt, innerCnt := outerTask.count(), innerTask.count()
+	sessVars := p.ctx.GetSessionVars()
 	// Add the cost of evaluating outer filter, since inner filter of index join
 	// is always empty, we can simply tell whether outer filter is empty using the
 	// summed length of left/right conditions.
 	if len(p.LeftConditions)+len(p.RightConditions) > 0 {
-		cpuCost += CPUFactor * outerCnt
+		cpuCost += sessVars.CPUFactor * outerCnt
 		outerCnt *= selectionFactor
 	}
 	// Cost of extracting lookup keys.
-	innerCPUCost := CPUFactor * outerCnt
+	innerCPUCost := sessVars.CPUFactor * outerCnt
 	// Cost of sorting and removing duplicate lookup keys:
 	// (outerCnt / batchSize) * (sortFactor + 1.0) * batchSize * cpuFactor
 	// If `p.NeedOuterSort` is true, the sortFactor is batchSize * Log2(batchSize).
@@ -201,12 +236,12 @@ func (p *PhysicalIndexMergeJoin) GetCost(outerTask, innerTask task) float64 {
 		sortFactor = math.Log2(float64(batchSize))
 	}
 	if batchSize > 2 {
-		innerCPUCost += outerCnt * (sortFactor + 1.0) * CPUFactor
+		innerCPUCost += outerCnt * (sortFactor + 1.0) * sessVars.CPUFactor
 	}
 	// Add cost of building inner executors. CPU cost of building copTasks:
 	// (outerCnt / batchSize) * (batchSize * distinctFactor) * cpuFactor
 	// Since we don't know the number of copTasks built, ignore these network cost now.
-	innerCPUCost += outerCnt * distinctFactor * CPUFactor
+	innerCPUCost += outerCnt * distinctFactor * sessVars.CPUFactor
 	innerConcurrency := float64(p.ctx.GetSessionVars().IndexLookupJoinConcurrency)
 	cpuCost += innerCPUCost / innerConcurrency
 	// Cost of merge join in inner worker.
@@ -226,15 +261,15 @@ func (p *PhysicalIndexMergeJoin) GetCost(outerTask, innerTask task) float64 {
 	// linear execution. In a word, the merge join only run in parallel for the first
 	// `innerConcurrency` number of inner tasks.
 	if outerCnt/batchSize >= innerConcurrency {
-		probeCost = (numPairs - batchSize*avgProbeCnt*(innerConcurrency-1)) * CPUFactor
+		probeCost = (numPairs - batchSize*avgProbeCnt*(innerConcurrency-1)) * sessVars.CPUFactor
 	} else {
-		probeCost = batchSize * avgProbeCnt * CPUFactor
+		probeCost = batchSize * avgProbeCnt * sessVars.CPUFactor
 	}
-	cpuCost += probeCost + (innerConcurrency+1.0)*concurrencyFactor
+	cpuCost += probeCost + (innerConcurrency+1.0)*sessVars.ConcurrencyFactor
 
 	// Index merge join save the join results in inner worker.
 	// So the memory cost consider the results size for each batch.
-	memoryCost := innerConcurrency * (batchSize * avgProbeCnt) * memoryFactor
+	memoryCost := innerConcurrency * (batchSize * avgProbeCnt) * sessVars.MemoryFactor
 
 	innerPlanCost := outerCnt * innerTask.cost()
 	return outerTask.cost() + innerPlanCost + cpuCost + memoryCost
@@ -248,7 +283,7 @@ func (p *PhysicalIndexHashJoin) attach2Task(tasks ...task) task {
 	} else {
 		p.SetChildren(innerTask.plan(), outerTask.plan())
 	}
-	p.schema = buildPhysicalJoinSchema(p.JoinType, p)
+	p.schema = BuildPhysicalJoinSchema(p.JoinType, p)
 	return &rootTask{
 		p:   p,
 		cst: p.GetCost(outerTask, innerTask),
@@ -259,30 +294,31 @@ func (p *PhysicalIndexHashJoin) attach2Task(tasks ...task) task {
 func (p *PhysicalIndexHashJoin) GetCost(outerTask, innerTask task) float64 {
 	var cpuCost float64
 	outerCnt, innerCnt := outerTask.count(), innerTask.count()
+	sessVars := p.ctx.GetSessionVars()
 	// Add the cost of evaluating outer filter, since inner filter of index join
 	// is always empty, we can simply tell whether outer filter is empty using the
 	// summed length of left/right conditions.
 	if len(p.LeftConditions)+len(p.RightConditions) > 0 {
-		cpuCost += CPUFactor * outerCnt
+		cpuCost += sessVars.CPUFactor * outerCnt
 		outerCnt *= selectionFactor
 	}
 	// Cost of extracting lookup keys.
-	innerCPUCost := CPUFactor * outerCnt
+	innerCPUCost := sessVars.CPUFactor * outerCnt
 	// Cost of sorting and removing duplicate lookup keys:
 	// (outerCnt / batchSize) * (batchSize * Log2(batchSize) + batchSize) * CPUFactor
-	batchSize := math.Min(float64(p.ctx.GetSessionVars().IndexJoinBatchSize), outerCnt)
+	batchSize := math.Min(float64(sessVars.IndexJoinBatchSize), outerCnt)
 	if batchSize > 2 {
-		innerCPUCost += outerCnt * (math.Log2(batchSize) + 1) * CPUFactor
+		innerCPUCost += outerCnt * (math.Log2(batchSize) + 1) * sessVars.CPUFactor
 	}
 	// Add cost of building inner executors. CPU cost of building copTasks:
 	// (outerCnt / batchSize) * (batchSize * distinctFactor) * CPUFactor
 	// Since we don't know the number of copTasks built, ignore these network cost now.
-	innerCPUCost += outerCnt * distinctFactor * CPUFactor
-	concurrency := float64(p.ctx.GetSessionVars().IndexLookupJoinConcurrency)
+	innerCPUCost += outerCnt * distinctFactor * sessVars.CPUFactor
+	concurrency := float64(sessVars.IndexLookupJoinConcurrency)
 	cpuCost += innerCPUCost / concurrency
 	// CPU cost of building hash table for outer results concurrently.
 	// (outerCnt / batchSize) * (batchSize * CPUFactor)
-	outerCPUCost := outerCnt * CPUFactor
+	outerCPUCost := outerCnt * sessVars.CPUFactor
 	cpuCost += outerCPUCost / concurrency
 	// Cost of probing hash table concurrently.
 	numPairs := outerCnt * innerCnt
@@ -300,16 +336,16 @@ func (p *PhysicalIndexHashJoin) GetCost(outerTask, innerTask task) float64 {
 	// in parallel for the first `innerConcurrency` number of inner tasks.
 	var probeCost float64
 	if outerCnt/batchSize >= concurrency {
-		probeCost = (numPairs - batchSize*innerCnt*(concurrency-1)) * CPUFactor
+		probeCost = (numPairs - batchSize*innerCnt*(concurrency-1)) * sessVars.CPUFactor
 	} else {
-		probeCost = batchSize * innerCnt * CPUFactor
+		probeCost = batchSize * innerCnt * sessVars.CPUFactor
 	}
 	cpuCost += probeCost
 	// Cost of additional concurrent goroutines.
-	cpuCost += (concurrency + 1.0) * concurrencyFactor
+	cpuCost += (concurrency + 1.0) * sessVars.ConcurrencyFactor
 	// Memory cost of hash tables for outer rows. The computed result is the upper bound,
 	// since the executor is pipelined and not all workers are always in full load.
-	memoryCost := concurrency * (batchSize * distinctFactor) * innerCnt * memoryFactor
+	memoryCost := concurrency * (batchSize * distinctFactor) * innerCnt * sessVars.MemoryFactor
 	// Cost of inner child plan, i.e, mainly I/O and network cost.
 	innerPlanCost := outerCnt * innerTask.cost()
 	return outerTask.cost() + innerPlanCost + cpuCost + memoryCost
@@ -323,7 +359,7 @@ func (p *PhysicalIndexJoin) attach2Task(tasks ...task) task {
 	} else {
 		p.SetChildren(innerTask.plan(), outerTask.plan())
 	}
-	p.schema = buildPhysicalJoinSchema(p.JoinType, p)
+	p.schema = BuildPhysicalJoinSchema(p.JoinType, p)
 	return &rootTask{
 		p:   p,
 		cst: p.GetCost(outerTask, innerTask),
@@ -334,28 +370,29 @@ func (p *PhysicalIndexJoin) attach2Task(tasks ...task) task {
 func (p *PhysicalIndexJoin) GetCost(outerTask, innerTask task) float64 {
 	var cpuCost float64
 	outerCnt, innerCnt := outerTask.count(), innerTask.count()
+	sessVars := p.ctx.GetSessionVars()
 	// Add the cost of evaluating outer filter, since inner filter of index join
 	// is always empty, we can simply tell whether outer filter is empty using the
 	// summed length of left/right conditions.
 	if len(p.LeftConditions)+len(p.RightConditions) > 0 {
-		cpuCost += CPUFactor * outerCnt
+		cpuCost += sessVars.CPUFactor * outerCnt
 		outerCnt *= selectionFactor
 	}
 	// Cost of extracting lookup keys.
-	innerCPUCost := CPUFactor * outerCnt
+	innerCPUCost := sessVars.CPUFactor * outerCnt
 	// Cost of sorting and removing duplicate lookup keys:
 	// (outerCnt / batchSize) * (batchSize * Log2(batchSize) + batchSize) * CPUFactor
 	batchSize := math.Min(float64(p.ctx.GetSessionVars().IndexJoinBatchSize), outerCnt)
 	if batchSize > 2 {
-		innerCPUCost += outerCnt * (math.Log2(batchSize) + 1) * CPUFactor
+		innerCPUCost += outerCnt * (math.Log2(batchSize) + 1) * sessVars.CPUFactor
 	}
 	// Add cost of building inner executors. CPU cost of building copTasks:
 	// (outerCnt / batchSize) * (batchSize * distinctFactor) * CPUFactor
 	// Since we don't know the number of copTasks built, ignore these network cost now.
-	innerCPUCost += outerCnt * distinctFactor * CPUFactor
+	innerCPUCost += outerCnt * distinctFactor * sessVars.CPUFactor
 	// CPU cost of building hash table for inner results:
 	// (outerCnt / batchSize) * (batchSize * distinctFactor) * innerCnt * CPUFactor
-	innerCPUCost += outerCnt * distinctFactor * innerCnt * CPUFactor
+	innerCPUCost += outerCnt * distinctFactor * innerCnt * sessVars.CPUFactor
 	innerConcurrency := float64(p.ctx.GetSessionVars().IndexLookupJoinConcurrency)
 	cpuCost += innerCPUCost / innerConcurrency
 	// Cost of probing hash table in main thread.
@@ -368,26 +405,48 @@ func (p *PhysicalIndexJoin) GetCost(outerTask, innerTask task) float64 {
 			numPairs = 0
 		}
 	}
-	probeCost := numPairs * CPUFactor
+	probeCost := numPairs * sessVars.CPUFactor
 	// Cost of additional concurrent goroutines.
-	cpuCost += probeCost + (innerConcurrency+1.0)*concurrencyFactor
+	cpuCost += probeCost + (innerConcurrency+1.0)*sessVars.ConcurrencyFactor
 	// Memory cost of hash tables for inner rows. The computed result is the upper bound,
 	// since the executor is pipelined and not all workers are always in full load.
-	memoryCost := innerConcurrency * (batchSize * distinctFactor) * innerCnt * memoryFactor
+	memoryCost := innerConcurrency * (batchSize * distinctFactor) * innerCnt * sessVars.MemoryFactor
 	// Cost of inner child plan, i.e, mainly I/O and network cost.
 	innerPlanCost := outerCnt * innerTask.cost()
 	return outerTask.cost() + innerPlanCost + cpuCost + memoryCost
 }
 
+func (p *PhysicalHashJoin) avgRowSize(inner PhysicalPlan) (size float64) {
+	if inner.statsInfo().HistColl != nil {
+		size = inner.statsInfo().HistColl.GetAvgRowSizeListInDisk(inner.Schema().Columns)
+	} else {
+		// Estimate using just the type info.
+		cols := inner.Schema().Columns
+		for _, col := range cols {
+			size += float64(chunk.EstimateTypeWidth(col.GetType()))
+		}
+	}
+	return
+}
+
 // GetCost computes cost of hash join operator itself.
 func (p *PhysicalHashJoin) GetCost(lCnt, rCnt float64) float64 {
-	innerCnt, outerCnt := lCnt, rCnt
-	if p.InnerChildIdx == 1 {
-		innerCnt, outerCnt = rCnt, lCnt
+	buildCnt, probeCnt := lCnt, rCnt
+	build := p.children[0]
+	// Taking the right as the inner for right join or using the outer to build a hash table.
+	if (p.InnerChildIdx == 1 && !p.UseOuterToBuild) || (p.InnerChildIdx == 0 && p.UseOuterToBuild) {
+		buildCnt, probeCnt = rCnt, lCnt
+		build = p.children[1]
 	}
+	sessVars := p.ctx.GetSessionVars()
+	oomUseTmpStorage := config.GetGlobalConfig().OOMUseTmpStorage
+	memQuota := sessVars.StmtCtx.MemTracker.GetBytesLimit() // sessVars.MemQuotaQuery && hint
+	rowSize := p.avgRowSize(build)
+	spill := oomUseTmpStorage && memQuota > 0 && rowSize*buildCnt > float64(memQuota)
 	// Cost of building hash table.
-	cpuCost := innerCnt * CPUFactor
-	memoryCost := innerCnt * memoryFactor
+	cpuCost := buildCnt * sessVars.CPUFactor
+	memoryCost := buildCnt * sessVars.MemoryFactor
+	diskCost := buildCnt * sessVars.DiskFactor * rowSize
 	// Number of matched row pairs regarding the equal join conditions.
 	helper := &fullJoinRowCountHelper{
 		cartesian:     false,
@@ -415,26 +474,45 @@ func (p *PhysicalHashJoin) GetCost(lCnt, rCnt float64) float64 {
 			numPairs = 0
 		}
 	}
-	// Cost of quering hash table is cheap actually, so we just compute the cost of
+	// Cost of querying hash table is cheap actually, so we just compute the cost of
 	// evaluating `OtherConditions` and joining row pairs.
-	probeCost := numPairs * CPUFactor
+	probeCost := numPairs * sessVars.CPUFactor
+	probeDiskCost := numPairs * sessVars.DiskFactor * rowSize
 	// Cost of evaluating outer filter.
 	if len(p.LeftConditions)+len(p.RightConditions) > 0 {
 		// Input outer count for the above compution should be adjusted by selectionFactor.
 		probeCost *= selectionFactor
-		probeCost += outerCnt * CPUFactor
+		probeDiskCost *= selectionFactor
+		probeCost += probeCnt * sessVars.CPUFactor
 	}
+	diskCost += probeDiskCost
 	probeCost /= float64(p.Concurrency)
 	// Cost of additional concurrent goroutines.
-	cpuCost += probeCost + float64(p.Concurrency+1)*concurrencyFactor
-	return cpuCost + memoryCost
+	cpuCost += probeCost + float64(p.Concurrency+1)*sessVars.ConcurrencyFactor
+	// Cost of traveling the hash table to resolve missing matched cases when building the hash table from the outer table
+	if p.UseOuterToBuild {
+		if spill {
+			// It runs in sequence when build data is on disk. See handleUnmatchedRowsFromHashTableInDisk
+			cpuCost += buildCnt * sessVars.CPUFactor
+		} else {
+			cpuCost += buildCnt * sessVars.CPUFactor / float64(p.Concurrency)
+		}
+		diskCost += buildCnt * sessVars.DiskFactor * rowSize
+	}
+
+	if spill {
+		memoryCost *= float64(memQuota) / (rowSize * buildCnt)
+	} else {
+		diskCost = 0
+	}
+	return cpuCost + memoryCost + diskCost
 }
 
 func (p *PhysicalHashJoin) attach2Task(tasks ...task) task {
 	lTask := finishCopTask(p.ctx, tasks[0].copy())
 	rTask := finishCopTask(p.ctx, tasks[1].copy())
 	p.SetChildren(lTask.plan(), rTask.plan())
-	p.schema = buildPhysicalJoinSchema(p.JoinType, p)
+	p.schema = BuildPhysicalJoinSchema(p.JoinType, p)
 	return &rootTask{
 		p:   p,
 		cst: lTask.cost() + rTask.cost() + p.GetCost(lTask.count(), rTask.count()),
@@ -471,18 +549,19 @@ func (p *PhysicalMergeJoin) GetCost(lCnt, rCnt float64) float64 {
 			numPairs = 0
 		}
 	}
-	probeCost := numPairs * CPUFactor
+	sessVars := p.ctx.GetSessionVars()
+	probeCost := numPairs * sessVars.CPUFactor
 	// Cost of evaluating outer filters.
 	var cpuCost float64
 	if len(p.LeftConditions)+len(p.RightConditions) > 0 {
 		probeCost *= selectionFactor
-		cpuCost += outerCnt * CPUFactor
+		cpuCost += outerCnt * sessVars.CPUFactor
 	}
 	cpuCost += probeCost
 	// For merge join, only one group of rows with same join key(not null) are cached,
 	// we compute averge memory cost using estimated group size.
 	NDV := getCardinality(innerKeys, innerSchema, innerStats)
-	memoryCost := (innerStats.RowCount / NDV) * memoryFactor
+	memoryCost := (innerStats.RowCount / NDV) * sessVars.MemoryFactor
 	return cpuCost + memoryCost
 }
 
@@ -490,7 +569,7 @@ func (p *PhysicalMergeJoin) attach2Task(tasks ...task) task {
 	lTask := finishCopTask(p.ctx, tasks[0].copy())
 	rTask := finishCopTask(p.ctx, tasks[1].copy())
 	p.SetChildren(lTask.plan(), rTask.plan())
-	p.schema = buildPhysicalJoinSchema(p.JoinType, p)
+	p.schema = BuildPhysicalJoinSchema(p.JoinType, p)
 	return &rootTask{
 		p:   p,
 		cst: lTask.cost() + rTask.cost() + p.GetCost(lTask.count(), rTask.count()),
@@ -535,6 +614,7 @@ func finishCopTask(ctx sessionctx.Context, task task) task {
 	if !ok {
 		return task
 	}
+	sessVars := ctx.GetSessionVars()
 	// copTasks are run in parallel, to make the estimated cost closer to execution time, we amortize
 	// the cost to cop iterator workers. According to `CopClient::Send`, the concurrency
 	// is Min(DistSQLScanConcurrency, numRegionsInvolvedInScan), since we cannot infer
@@ -543,7 +623,7 @@ func finishCopTask(ctx sessionctx.Context, task task) task {
 	t.finishIndexPlan()
 	// Network cost of transferring rows of table scan to TiDB.
 	if t.tablePlan != nil {
-		t.cst += t.count() * NetworkFactor * t.tblColHists.GetAvgRowSize(t.tablePlan.Schema().Columns, false)
+		t.cst += t.count() * sessVars.NetworkFactor * t.tblColHists.GetAvgRowSize(ctx, t.tablePlan.Schema().Columns, false, false)
 	}
 	t.cst /= copIterWorkers
 	newTask := &rootTask{
@@ -566,17 +646,17 @@ func finishCopTask(ctx sessionctx.Context, task task) task {
 		// (indexRows / batchSize) * batchSize * CPUFactor
 		// Since we don't know the number of copTasks built, ignore these network cost now.
 		indexRows := t.indexPlan.statsInfo().RowCount
-		newTask.cst += indexRows * CPUFactor
+		newTask.cst += indexRows * sessVars.CPUFactor
 		// Add cost of worker goroutines in index lookup.
-		numTblWorkers := float64(t.indexPlan.SCtx().GetSessionVars().IndexLookupConcurrency)
-		newTask.cst += (numTblWorkers + 1) * concurrencyFactor
+		numTblWorkers := float64(sessVars.IndexLookupConcurrency)
+		newTask.cst += (numTblWorkers + 1) * sessVars.ConcurrencyFactor
 		// When building table reader executor for each batch, we would sort the handles. CPU
 		// cost of sort is:
 		// CPUFactor * batchSize * Log2(batchSize) * (indexRows / batchSize)
-		indexLookupSize := float64(t.indexPlan.SCtx().GetSessionVars().IndexLookupSize)
+		indexLookupSize := float64(sessVars.IndexLookupSize)
 		batchSize := math.Min(indexLookupSize, indexRows)
 		if batchSize > 2 {
-			sortCPUCost := (indexRows * math.Log2(batchSize) * CPUFactor) / numTblWorkers
+			sortCPUCost := (indexRows * math.Log2(batchSize) * sessVars.CPUFactor) / numTblWorkers
 			newTask.cst += sortCPUCost
 		}
 		// Also, we need to sort the retrieved rows if index lookup reader is expected to return
@@ -586,7 +666,7 @@ func finishCopTask(ctx sessionctx.Context, task task) task {
 		selectivity := tableRows / indexRows
 		batchSize = math.Min(indexLookupSize*selectivity, tableRows)
 		if t.keepOrder && batchSize > 2 {
-			sortCPUCost := (tableRows * math.Log2(batchSize) * CPUFactor) / numTblWorkers
+			sortCPUCost := (tableRows * math.Log2(batchSize) * sessVars.CPUFactor) / numTblWorkers
 			newTask.cst += sortCPUCost
 		}
 		if t.doubleReadNeedProj {
@@ -603,11 +683,27 @@ func finishCopTask(ctx sessionctx.Context, task task) task {
 		p.stats = t.indexPlan.statsInfo()
 		newTask.p = p
 	} else {
-		splitCopAvg2CountAndSum(t.tablePlan)
-		p := PhysicalTableReader{tablePlan: t.tablePlan}.Init(ctx, t.tablePlan.SelectBlockOffset())
+		tp := t.tablePlan
+		splitCopAvg2CountAndSum(tp)
+		for len(tp.Children()) > 0 {
+			tp = tp.Children()[0]
+		}
+		ts := tp.(*PhysicalTableScan)
+		p := PhysicalTableReader{
+			tablePlan: t.tablePlan,
+			StoreType: ts.StoreType,
+		}.Init(ctx, t.tablePlan.SelectBlockOffset())
 		p.stats = t.tablePlan.statsInfo()
+		ts.ExpandVirtualColumn()
 		newTask.p = p
 	}
+
+	if len(t.rootTaskConds) > 0 {
+		sel := PhysicalSelection{Conditions: t.rootTaskConds}.Init(ctx, newTask.p.statsInfo(), newTask.p.SelectBlockOffset())
+		sel.SetChildren(newTask.p)
+		newTask.p = sel
+	}
+
 	return newTask
 }
 
@@ -701,6 +797,7 @@ func (p *PhysicalTopN) GetCost(count float64, isRoot bool) float64 {
 	if heapSize < 2.0 {
 		heapSize = 2.0
 	}
+	sessVars := p.ctx.GetSessionVars()
 	// Ignore the cost of `doCompaction` in current implementation of `TopNExec`, since it is the
 	// special side-effect of our Chunk format in TiDB layer, which may not exist in coprocessor's
 	// implementation, or may be removed in the future if we change data format.
@@ -709,11 +806,11 @@ func (p *PhysicalTopN) GetCost(count float64, isRoot bool) float64 {
 	// row.
 	var cpuCost float64
 	if isRoot {
-		cpuCost = count * math.Log2(heapSize) * CPUFactor
+		cpuCost = count * math.Log2(heapSize) * sessVars.CPUFactor
 	} else {
-		cpuCost = count * math.Log2(heapSize) * CopCPUFactor
+		cpuCost = count * math.Log2(heapSize) * sessVars.CopCPUFactor
 	}
-	memoryCost := heapSize * memoryFactor
+	memoryCost := heapSize * sessVars.MemoryFactor
 	return cpuCost + memoryCost
 }
 
@@ -740,7 +837,8 @@ func (p *PhysicalSort) GetCost(count float64) float64 {
 	if count < 2.0 {
 		count = 2.0
 	}
-	return count*math.Log2(count)*CPUFactor + count*memoryFactor
+	sessVars := p.ctx.GetSessionVars()
+	return count*math.Log2(count)*sessVars.CPUFactor + count*sessVars.MemoryFactor
 }
 
 func (p *PhysicalSort) attach2Task(tasks ...task) task {
@@ -797,13 +895,14 @@ func (p *PhysicalTopN) attach2Task(tasks ...task) task {
 
 // GetCost computes the cost of projection operator itself.
 func (p *PhysicalProjection) GetCost(count float64) float64 {
-	cpuCost := count * CPUFactor
-	concurrency := float64(p.ctx.GetSessionVars().ProjectionConcurrency)
+	sessVars := p.ctx.GetSessionVars()
+	cpuCost := count * sessVars.CPUFactor
+	concurrency := float64(sessVars.ProjectionConcurrency)
 	if concurrency <= 0 {
 		return cpuCost
 	}
 	cpuCost /= concurrency
-	concurrencyCost := (1 + concurrency) * concurrencyFactor
+	concurrencyCost := (1 + concurrency) * sessVars.ConcurrencyFactor
 	return cpuCost + concurrencyCost
 }
 
@@ -831,42 +930,64 @@ func (p *PhysicalUnionAll) attach2Task(tasks ...task) task {
 		childPlans = append(childPlans, task.plan())
 	}
 	p.SetChildren(childPlans...)
+	sessVars := p.ctx.GetSessionVars()
 	// Children of UnionExec are executed in parallel.
-	t.cst = childMaxCost + float64(1+len(tasks))*concurrencyFactor
+	t.cst = childMaxCost + float64(1+len(tasks))*sessVars.ConcurrencyFactor
 	return t
 }
 
 func (sel *PhysicalSelection) attach2Task(tasks ...task) task {
+	sessVars := sel.ctx.GetSessionVars()
 	t := finishCopTask(sel.ctx, tasks[0].copy())
-	t.addCost(t.count() * CPUFactor)
+	t.addCost(t.count() * sessVars.CPUFactor)
 	t = attachPlan2Task(sel, t)
 	return t
 }
 
-func (p *basePhysicalAgg) newPartialAggregate() (partial, final PhysicalPlan) {
-	// Check if this aggregation can push down.
-	sc := p.ctx.GetSessionVars().StmtCtx
-	client := p.ctx.GetClient()
-	for _, aggFunc := range p.AggFuncs {
+// CheckAggCanPushCop checks whether the aggFuncs and groupByItems can
+// be pushed down to coprocessor.
+func CheckAggCanPushCop(sctx sessionctx.Context, aggFuncs []*aggregation.AggFuncDesc, groupByItems []expression.Expression, copToFlash bool) bool {
+	sc := sctx.GetSessionVars().StmtCtx
+	client := sctx.GetClient()
+	for _, aggFunc := range aggFuncs {
+		if expression.ContainVirtualColumn(aggFunc.Args) {
+			return false
+		}
+		if copToFlash {
+			if !aggregation.CheckAggPushFlash(aggFunc) {
+				return false
+			}
+			if _, remain := expression.CheckExprPushFlash(append(aggFunc.Args, groupByItems...)); len(remain) > 0 {
+				return false
+			}
+		}
 		pb := aggregation.AggFuncToPBExpr(sc, client, aggFunc)
 		if pb == nil {
-			return nil, p.self
+			return false
 		}
 	}
-	_, _, remained := expression.ExpressionsToPB(sc, p.GroupByItems, client)
-	if len(remained) > 0 {
-		return nil, p.self
+	if expression.ContainVirtualColumn(groupByItems) {
+		return false
 	}
+	_, _, remained := expression.ExpressionsToPB(sc, groupByItems, client)
+	if len(remained) > 0 {
+		return false
+	}
+	return true
+}
 
-	finalSchema := p.schema
-	partialSchema := expression.NewSchema()
-	p.schema = partialSchema
-	partialAgg := p.self
-
+// BuildFinalModeAggregation splits either LogicalAggregation or PhysicalAggregation to finalAgg and partial1Agg,
+// returns the body of finalAgg and the schema of partialAgg.
+func BuildFinalModeAggregation(
+	sctx sessionctx.Context,
+	aggFuncs []*aggregation.AggFuncDesc,
+	groupByItems []expression.Expression,
+	finalSchema *expression.Schema) (finalAggFuncs []*aggregation.AggFuncDesc, finalGbyItems []expression.Expression, partialSchema *expression.Schema) {
 	// TODO: Refactor the way of constructing aggregation functions.
+	partialSchema = expression.NewSchema()
 	partialCursor := 0
-	finalAggFuncs := make([]*aggregation.AggFuncDesc, len(p.AggFuncs))
-	for i, aggFunc := range p.AggFuncs {
+	finalAggFuncs = make([]*aggregation.AggFuncDesc, len(aggFuncs))
+	for i, aggFunc := range aggFuncs {
 		finalAggFunc := &aggregation.AggFuncDesc{HasDistinct: false}
 		finalAggFunc.Name = aggFunc.Name
 		args := make([]expression.Expression, 0, len(aggFunc.Args))
@@ -874,8 +995,7 @@ func (p *basePhysicalAgg) newPartialAggregate() (partial, final PhysicalPlan) {
 			ft := types.NewFieldType(mysql.TypeLonglong)
 			ft.Flen, ft.Charset, ft.Collate = 21, charset.CharsetBin, charset.CollationBin
 			partialSchema.Append(&expression.Column{
-				UniqueID: p.ctx.GetSessionVars().AllocPlanColumnID(),
-				ColName:  model.NewCIStr(fmt.Sprintf("col_%d", partialCursor)),
+				UniqueID: sctx.GetSessionVars().AllocPlanColumnID(),
 				RetType:  ft,
 			})
 			args = append(args, partialSchema.Columns[partialCursor])
@@ -883,8 +1003,7 @@ func (p *basePhysicalAgg) newPartialAggregate() (partial, final PhysicalPlan) {
 		}
 		if aggregation.NeedValue(finalAggFunc.Name) {
 			partialSchema.Append(&expression.Column{
-				UniqueID: p.ctx.GetSessionVars().AllocPlanColumnID(),
-				ColName:  model.NewCIStr(fmt.Sprintf("col_%d", partialCursor)),
+				UniqueID: sctx.GetSessionVars().AllocPlanColumnID(),
 				RetType:  finalSchema.Columns[i].GetType(),
 			})
 			args = append(args, partialSchema.Columns[partialCursor])
@@ -895,27 +1014,50 @@ func (p *basePhysicalAgg) newPartialAggregate() (partial, final PhysicalPlan) {
 		finalAggFunc.RetTp = aggFunc.RetTp
 		finalAggFuncs[i] = finalAggFunc
 	}
-
 	// add group by columns
-	groupByItems := make([]expression.Expression, 0, len(p.GroupByItems))
-	for i, gbyExpr := range p.GroupByItems {
-		gbyCol := &expression.Column{
-			UniqueID: p.ctx.GetSessionVars().AllocPlanColumnID(),
-			ColName:  model.NewCIStr(fmt.Sprintf("col_%d", partialCursor+i)),
-			RetType:  gbyExpr.GetType(),
+	finalGbyItems = make([]expression.Expression, 0, len(groupByItems))
+	for _, gbyExpr := range groupByItems {
+		var gbyCol *expression.Column
+		if col, ok := gbyExpr.(*expression.Column); ok {
+			gbyCol = col
+		} else {
+			gbyCol = &expression.Column{
+				UniqueID: sctx.GetSessionVars().AllocPlanColumnID(),
+				RetType:  gbyExpr.GetType(),
+			}
 		}
 		partialSchema.Append(gbyCol)
-		groupByItems = append(groupByItems, gbyCol)
+		finalGbyItems = append(finalGbyItems, gbyCol)
 	}
+	return
+}
 
+func (p *basePhysicalAgg) newPartialAggregate(copTaskType kv.StoreType) (partial, final PhysicalPlan) {
+	// Check if this aggregation can push down.
+	if !CheckAggCanPushCop(p.ctx, p.AggFuncs, p.GroupByItems, copTaskType == kv.TiFlash) {
+		return nil, p.self
+	}
+	finalAggFuncs, finalGbyItems, partialSchema := BuildFinalModeAggregation(p.ctx, p.AggFuncs, p.GroupByItems, p.schema)
 	// Remove unnecessary FirstRow.
-	p.removeUnnecessaryFirstRow(finalAggFuncs, groupByItems)
-
+	p.AggFuncs = RemoveUnnecessaryFirstRow(p.ctx, finalAggFuncs, finalGbyItems, p.AggFuncs, p.GroupByItems, partialSchema)
+	if copTaskType == kv.TiDB {
+		// For partial agg of TiDB cop task, since TiDB coprocessor reuse the TiDB executor,
+		// and TiDB aggregation executor won't output the group by value,
+		// so we need add `firstrow` aggregation function to output the group by value.
+		aggFuncs, err := genFirstRowAggForGroupBy(p.ctx, p.GroupByItems)
+		if err != nil {
+			return nil, p.self
+		}
+		p.AggFuncs = append(p.AggFuncs, aggFuncs...)
+	}
+	finalSchema := p.schema
+	p.schema = partialSchema
+	partialAgg := p.self
 	// Create physical "final" aggregation.
-	if p.tp == TypeStreamAgg {
+	if p.tp == plancodec.TypeStreamAgg {
 		finalAgg := basePhysicalAgg{
 			AggFuncs:     finalAggFuncs,
-			GroupByItems: groupByItems,
+			GroupByItems: finalGbyItems,
 		}.initForStream(p.ctx, p.stats, p.blockOffset)
 		finalAgg.schema = finalSchema
 		return partialAgg, finalAgg
@@ -923,33 +1065,52 @@ func (p *basePhysicalAgg) newPartialAggregate() (partial, final PhysicalPlan) {
 
 	finalAgg := basePhysicalAgg{
 		AggFuncs:     finalAggFuncs,
-		GroupByItems: groupByItems,
+		GroupByItems: finalGbyItems,
 	}.initForHash(p.ctx, p.stats, p.blockOffset)
 	finalAgg.schema = finalSchema
 	return partialAgg, finalAgg
 }
 
-// Remove unnecessary FirstRow.
+func genFirstRowAggForGroupBy(ctx sessionctx.Context, groupByItems []expression.Expression) ([]*aggregation.AggFuncDesc, error) {
+	aggFuncs := make([]*aggregation.AggFuncDesc, 0, len(groupByItems))
+	for _, groupBy := range groupByItems {
+		agg, err := aggregation.NewAggFuncDesc(ctx, ast.AggFuncFirstRow, []expression.Expression{groupBy}, false)
+		if err != nil {
+			return nil, err
+		}
+		aggFuncs = append(aggFuncs, agg)
+	}
+	return aggFuncs, nil
+}
+
+// RemoveUnnecessaryFirstRow removes unnecessary FirstRow of the aggregation. This function can be
+// used for both LogicalAggregation and PhysicalAggregation.
 // When the select column is same with the group by key, the column can be removed and gets value from the group by key.
 // e.g
 // select a, count(b) from t group by a;
 // The schema is [firstrow(a), count(b), a]. The column firstrow(a) is unnecessary.
 // Can optimize the schema to [count(b), a] , and change the index to get value.
-func (p *basePhysicalAgg) removeUnnecessaryFirstRow(finalAggFuncs []*aggregation.AggFuncDesc, groupByItems []expression.Expression) {
+func RemoveUnnecessaryFirstRow(
+	sctx sessionctx.Context,
+	finalAggFuncs []*aggregation.AggFuncDesc,
+	finalGbyItems []expression.Expression,
+	partialAggFuncs []*aggregation.AggFuncDesc,
+	partialGbyItems []expression.Expression,
+	partialSchema *expression.Schema) []*aggregation.AggFuncDesc {
 	partialCursor := 0
-	partialAggFuncs := make([]*aggregation.AggFuncDesc, 0, len(p.AggFuncs))
-	for i, aggFunc := range p.AggFuncs {
+	newAggFuncs := make([]*aggregation.AggFuncDesc, 0, len(partialAggFuncs))
+	for i, aggFunc := range partialAggFuncs {
 		if aggFunc.Name == ast.AggFuncFirstRow {
 			canOptimize := false
-			for j, gbyExpr := range p.GroupByItems {
-				if gbyExpr.Equal(p.ctx, aggFunc.Args[0]) {
+			for j, gbyExpr := range partialGbyItems {
+				if gbyExpr.Equal(sctx, aggFunc.Args[0]) {
 					canOptimize = true
-					finalAggFuncs[i].Args[0] = groupByItems[j]
+					finalAggFuncs[i].Args[0] = finalGbyItems[j]
 					break
 				}
 			}
 			if canOptimize {
-				p.schema.Columns = append(p.schema.Columns[:partialCursor], p.schema.Columns[partialCursor+1:]...)
+				partialSchema.Columns = append(partialSchema.Columns[:partialCursor], partialSchema.Columns[partialCursor+1:]...)
 				continue
 			}
 		}
@@ -959,30 +1120,40 @@ func (p *basePhysicalAgg) removeUnnecessaryFirstRow(finalAggFuncs []*aggregation
 		if aggregation.NeedValue(aggFunc.Name) {
 			partialCursor++
 		}
-		partialAggFuncs = append(partialAggFuncs, aggFunc)
+		newAggFuncs = append(newAggFuncs, aggFunc)
 	}
-	p.AggFuncs = partialAggFuncs
+	return newAggFuncs
 }
 
 func (p *PhysicalStreamAgg) attach2Task(tasks ...task) task {
 	t := tasks[0].copy()
 	inputRows := t.count()
 	if cop, ok := t.(*copTask); ok {
-		partialAgg, finalAgg := p.newPartialAggregate()
-		if partialAgg != nil {
-			if cop.tablePlan != nil {
-				cop.finishIndexPlan()
-				partialAgg.SetChildren(cop.tablePlan)
-				cop.tablePlan = partialAgg
-			} else {
-				partialAgg.SetChildren(cop.indexPlan)
-				cop.indexPlan = partialAgg
+		// We should not push agg down across double read, since the data of second read is ordered by handle instead of index.
+		// The `extraHandleCol` is added if the double read needs to keep order. So we just use it to decided
+		// whether the following plan is double read with order reserved.
+		if cop.extraHandleCol == nil {
+			copTaskType := cop.getStoreType()
+			partialAgg, finalAgg := p.newPartialAggregate(copTaskType)
+			if partialAgg != nil {
+				if cop.tablePlan != nil {
+					cop.finishIndexPlan()
+					partialAgg.SetChildren(cop.tablePlan)
+					cop.tablePlan = partialAgg
+				} else {
+					partialAgg.SetChildren(cop.indexPlan)
+					cop.indexPlan = partialAgg
+				}
+				cop.addCost(p.GetCost(inputRows, false))
 			}
-			cop.addCost(p.GetCost(inputRows, false))
+			t = finishCopTask(p.ctx, cop)
+			inputRows = t.count()
+			attachPlan2Task(finalAgg, t)
+		} else {
+			t = finishCopTask(p.ctx, cop)
+			inputRows = t.count()
+			attachPlan2Task(p, t)
 		}
-		t = finishCopTask(p.ctx, cop)
-		inputRows = t.count()
-		attachPlan2Task(finalAgg, t)
 	} else {
 		attachPlan2Task(p, t)
 	}
@@ -994,13 +1165,14 @@ func (p *PhysicalStreamAgg) attach2Task(tasks ...task) task {
 func (p *PhysicalStreamAgg) GetCost(inputRows float64, isRoot bool) float64 {
 	aggFuncFactor := p.getAggFuncCostFactor()
 	var cpuCost float64
+	sessVars := p.ctx.GetSessionVars()
 	if isRoot {
-		cpuCost = inputRows * CPUFactor * aggFuncFactor
+		cpuCost = inputRows * sessVars.CPUFactor * aggFuncFactor
 	} else {
-		cpuCost = inputRows * CopCPUFactor * aggFuncFactor
+		cpuCost = inputRows * sessVars.CopCPUFactor * aggFuncFactor
 	}
 	rowsPerGroup := inputRows / p.statsInfo().RowCount
-	memoryCost := rowsPerGroup * distinctFactor * memoryFactor * float64(p.numDistinctFunc())
+	memoryCost := rowsPerGroup * distinctFactor * sessVars.MemoryFactor * float64(p.numDistinctFunc())
 	return cpuCost + memoryCost
 }
 
@@ -1026,7 +1198,8 @@ func (p *PhysicalHashAgg) attach2Task(tasks ...task) task {
 	t := tasks[0].copy()
 	inputRows := t.count()
 	if cop, ok := t.(*copTask); ok {
-		partialAgg, finalAgg := p.newPartialAggregate()
+		copTaskType := cop.getStoreType()
+		partialAgg, finalAgg := p.newPartialAggregate(copTaskType)
 		if partialAgg != nil {
 			if cop.tablePlan != nil {
 				cop.finishIndexPlan()
@@ -1072,20 +1245,21 @@ func (p *PhysicalHashAgg) GetCost(inputRows float64, isRoot bool) float64 {
 	numDistinctFunc := p.numDistinctFunc()
 	aggFuncFactor := p.getAggFuncCostFactor()
 	var cpuCost float64
+	sessVars := p.ctx.GetSessionVars()
 	if isRoot {
-		cpuCost = inputRows * CPUFactor * aggFuncFactor
+		cpuCost = inputRows * sessVars.CPUFactor * aggFuncFactor
 		divisor, con := p.cpuCostDivisor(numDistinctFunc > 0)
 		if divisor > 0 {
 			cpuCost /= divisor
 			// Cost of additional goroutines.
-			cpuCost += (con + 1) * concurrencyFactor
+			cpuCost += (con + 1) * sessVars.ConcurrencyFactor
 		}
 	} else {
-		cpuCost = inputRows * CopCPUFactor * aggFuncFactor
+		cpuCost = inputRows * sessVars.CopCPUFactor * aggFuncFactor
 	}
-	memoryCost := cardinality * memoryFactor * float64(len(p.AggFuncs))
+	memoryCost := cardinality * sessVars.MemoryFactor * float64(len(p.AggFuncs))
 	// When aggregation has distinct flag, we would allocate a map for each group to
 	// check duplication.
-	memoryCost += inputRows * distinctFactor * memoryFactor * float64(numDistinctFunc)
+	memoryCost += inputRows * distinctFactor * sessVars.MemoryFactor * float64(numDistinctFunc)
 	return cpuCost + memoryCost
 }

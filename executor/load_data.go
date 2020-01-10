@@ -18,8 +18,10 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
@@ -200,7 +202,10 @@ func (e *LoadDataInfo) CommitOneTask(ctx context.Context, task CommitTask) error
 		logutil.Logger(ctx).Error("commit error CheckAndInsert", zap.Error(err))
 		return err
 	}
-	if err = e.Ctx.StmtCommit(); err != nil {
+	failpoint.Inject("commitOneTaskErr", func() error {
+		return errors.New("mock commit one task error")
+	})
+	if err = e.Ctx.StmtCommit(nil); err != nil {
 		logutil.Logger(ctx).Error("commit error commit", zap.Error(err))
 		return err
 	}
@@ -229,24 +234,29 @@ func (e *LoadDataInfo) CommitWork(ctx context.Context) error {
 			e.ctx.StmtRollback()
 		}
 	}()
-	var tasks uint64 = 0
+	var tasks uint64
 	var end = false
 	for !end {
 		select {
 		case <-e.QuitCh:
 			err = errors.New("commit forced to quit")
 			logutil.Logger(ctx).Error("commit forced to quit, possible preparation failed")
-			break
+			return err
 		case commitTask, ok := <-e.commitTaskQueue:
 			if ok {
+				start := time.Now()
 				err = e.CommitOneTask(ctx, commitTask)
 				if err != nil {
 					break
 				}
 				tasks++
+				logutil.Logger(ctx).Info("commit one task success",
+					zap.Duration("commit time usage", time.Since(start)),
+					zap.Uint64("keys processed", commitTask.cnt),
+					zap.Uint64("tasks processed", tasks),
+					zap.Int("tasks in queue", len(e.commitTaskQueue)))
 			} else {
 				end = true
-				break
 			}
 		}
 		if err != nil {
@@ -481,6 +491,7 @@ func (e *LoadDataInfo) addRecordLD(ctx context.Context, row []types.Datum) (int6
 	h, err := e.addRecord(ctx, row)
 	if err != nil {
 		e.handleWarning(err)
+		return 0, err
 	}
 	return h, nil
 }
@@ -495,9 +506,9 @@ type fieldWriter struct {
 	pos           int
 	ReadBuf       []byte
 	OutputBuf     []byte
+	term          string
 	enclosedChar  byte
 	fieldTermChar byte
-	term          string
 	isEnclosed    bool
 	isLineStart   bool
 	isFieldStart  bool

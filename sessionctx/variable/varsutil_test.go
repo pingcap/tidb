@@ -296,6 +296,78 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	c.Assert(val, Equals, "0")
 	c.Assert(v.CorrelationThreshold, Equals, float64(0))
 
+	c.Assert(v.CPUFactor, Equals, 3.0)
+	err = SetSessionSystemVar(v, TiDBOptCPUFactor, types.NewStringDatum("5.0"))
+	c.Assert(err, IsNil)
+	val, err = GetSessionSystemVar(v, TiDBOptCPUFactor)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, "5.0")
+	c.Assert(v.CPUFactor, Equals, 5.0)
+
+	c.Assert(v.CopCPUFactor, Equals, 3.0)
+	err = SetSessionSystemVar(v, TiDBOptCopCPUFactor, types.NewStringDatum("5.0"))
+	c.Assert(err, IsNil)
+	val, err = GetSessionSystemVar(v, TiDBOptCopCPUFactor)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, "5.0")
+	c.Assert(v.CopCPUFactor, Equals, 5.0)
+
+	c.Assert(v.NetworkFactor, Equals, 1.0)
+	err = SetSessionSystemVar(v, TiDBOptNetworkFactor, types.NewStringDatum("3.0"))
+	c.Assert(err, IsNil)
+	val, err = GetSessionSystemVar(v, TiDBOptNetworkFactor)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, "3.0")
+	c.Assert(v.NetworkFactor, Equals, 3.0)
+
+	c.Assert(v.ScanFactor, Equals, 1.5)
+	err = SetSessionSystemVar(v, TiDBOptScanFactor, types.NewStringDatum("3.0"))
+	c.Assert(err, IsNil)
+	val, err = GetSessionSystemVar(v, TiDBOptScanFactor)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, "3.0")
+	c.Assert(v.ScanFactor, Equals, 3.0)
+
+	c.Assert(v.DescScanFactor, Equals, 3.0)
+	err = SetSessionSystemVar(v, TiDBOptDescScanFactor, types.NewStringDatum("5.0"))
+	c.Assert(err, IsNil)
+	val, err = GetSessionSystemVar(v, TiDBOptDescScanFactor)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, "5.0")
+	c.Assert(v.DescScanFactor, Equals, 5.0)
+
+	c.Assert(v.SeekFactor, Equals, 20.0)
+	err = SetSessionSystemVar(v, TiDBOptSeekFactor, types.NewStringDatum("50.0"))
+	c.Assert(err, IsNil)
+	val, err = GetSessionSystemVar(v, TiDBOptSeekFactor)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, "50.0")
+	c.Assert(v.SeekFactor, Equals, 50.0)
+
+	c.Assert(v.MemoryFactor, Equals, 0.001)
+	err = SetSessionSystemVar(v, TiDBOptMemoryFactor, types.NewStringDatum("1.0"))
+	c.Assert(err, IsNil)
+	val, err = GetSessionSystemVar(v, TiDBOptMemoryFactor)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, "1.0")
+	c.Assert(v.MemoryFactor, Equals, 1.0)
+
+	c.Assert(v.DiskFactor, Equals, 1.5)
+	err = SetSessionSystemVar(v, TiDBOptDiskFactor, types.NewStringDatum("1.1"))
+	c.Assert(err, IsNil)
+	val, err = GetSessionSystemVar(v, TiDBOptDiskFactor)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, "1.1")
+	c.Assert(v.DiskFactor, Equals, 1.1)
+
+	c.Assert(v.ConcurrencyFactor, Equals, 3.0)
+	err = SetSessionSystemVar(v, TiDBOptConcurrencyFactor, types.NewStringDatum("5.0"))
+	c.Assert(err, IsNil)
+	val, err = GetSessionSystemVar(v, TiDBOptConcurrencyFactor)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, "5.0")
+	c.Assert(v.ConcurrencyFactor, Equals, 5.0)
+
 	SetSessionSystemVar(v, TiDBReplicaRead, types.NewStringDatum("follower"))
 	val, err = GetSessionSystemVar(v, TiDBReplicaRead)
 	c.Assert(err, IsNil)
@@ -306,6 +378,21 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(val, Equals, "leader")
 	c.Assert(v.GetReplicaRead(), Equals, kv.ReplicaReadLeader)
+
+	SetSessionSystemVar(v, TiDBEnableStmtSummary, types.NewStringDatum("on"))
+	val, err = GetSessionSystemVar(v, TiDBEnableStmtSummary)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, "1")
+
+	SetSessionSystemVar(v, TiDBStmtSummaryRefreshInterval, types.NewStringDatum("10"))
+	val, err = GetSessionSystemVar(v, TiDBStmtSummaryRefreshInterval)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, "10")
+
+	SetSessionSystemVar(v, TiDBStmtSummaryHistorySize, types.NewStringDatum("10"))
+	val, err = GetSessionSystemVar(v, TiDBStmtSummaryHistorySize)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, "10")
 }
 
 func (s *testVarsutilSuite) TestSetOverflowBehave(c *C) {
@@ -367,6 +454,24 @@ func (s *testVarsutilSuite) TestValidate(c *C) {
 		{TiDBOptCorrelationExpFactor, "-10", true},
 		{TiDBOptCorrelationThreshold, "a", true},
 		{TiDBOptCorrelationThreshold, "-2", true},
+		{TiDBOptCPUFactor, "a", true},
+		{TiDBOptCPUFactor, "-2", true},
+		{TiDBOptCopCPUFactor, "a", true},
+		{TiDBOptCopCPUFactor, "-2", true},
+		{TiDBOptNetworkFactor, "a", true},
+		{TiDBOptNetworkFactor, "-2", true},
+		{TiDBOptScanFactor, "a", true},
+		{TiDBOptScanFactor, "-2", true},
+		{TiDBOptDescScanFactor, "a", true},
+		{TiDBOptDescScanFactor, "-2", true},
+		{TiDBOptSeekFactor, "a", true},
+		{TiDBOptSeekFactor, "-2", true},
+		{TiDBOptMemoryFactor, "a", true},
+		{TiDBOptMemoryFactor, "-2", true},
+		{TiDBOptDiskFactor, "a", true},
+		{TiDBOptDiskFactor, "-2", true},
+		{TiDBOptConcurrencyFactor, "a", true},
+		{TiDBOptConcurrencyFactor, "-2", true},
 		{TxnIsolation, "READ-UNCOMMITTED", true},
 		{TiDBInitChunkSize, "a", true},
 		{TiDBInitChunkSize, "-1", true},
@@ -379,6 +484,17 @@ func (s *testVarsutilSuite) TestValidate(c *C) {
 		{TiDBTxnMode, "pessimistic", false},
 		{TiDBTxnMode, "optimistic", false},
 		{TiDBTxnMode, "", false},
+		{TiDBIsolationReadEngines, "", true},
+		{TiDBIsolationReadEngines, "tikv", false},
+		{TiDBIsolationReadEngines, "TiKV,tiflash", false},
+		{TiDBIsolationReadEngines, "   tikv,   tiflash  ", false},
+		{TiDBEnableStmtSummary, "a", true},
+		{TiDBEnableStmtSummary, "-1", true},
+		{TiDBEnableStmtSummary, "", false},
+		{TiDBStmtSummaryRefreshInterval, "a", true},
+		{TiDBStmtSummaryRefreshInterval, "", false},
+		{TiDBStmtSummaryHistorySize, "a", true},
+		{TiDBStmtSummaryHistorySize, "", false},
 	}
 
 	for _, t := range tests {

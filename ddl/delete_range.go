@@ -49,7 +49,7 @@ type delRangeManager interface {
 	addDelRangeJob(job *model.Job) error
 	// removeFromGCDeleteRange removes the deleting table job from gc_delete_range table by jobID and tableID.
 	// It's use for recover the table that was mistakenly deleted.
-	removeFromGCDeleteRange(jobID, tableID int64) error
+	removeFromGCDeleteRange(jobID int64, tableID []int64) error
 	start()
 	clear()
 }
@@ -100,13 +100,13 @@ func (dr *delRange) addDelRangeJob(job *model.Job) error {
 }
 
 // removeFromGCDeleteRange implements delRangeManager interface.
-func (dr *delRange) removeFromGCDeleteRange(jobID, tableID int64) error {
+func (dr *delRange) removeFromGCDeleteRange(jobID int64, tableIDs []int64) error {
 	ctx, err := dr.sessPool.get()
 	if err != nil {
 		return errors.Trace(err)
 	}
 	defer dr.sessPool.put(ctx)
-	err = util.RemoveFromGCDeleteRange(ctx, jobID, tableID)
+	err = util.RemoveMultiFromGCDeleteRange(ctx, jobID, tableIDs)
 	return errors.Trace(err)
 }
 
@@ -287,8 +287,8 @@ func insertJobIntoDeleteRangeTable(ctx sessionctx.Context, job *model.Job) error
 		startKey := tablecodec.EncodeTablePrefix(physicalTableID)
 		endKey := tablecodec.EncodeTablePrefix(physicalTableID + 1)
 		return doInsert(s, job.ID, physicalTableID, startKey, endKey, now)
-	// ActionAddIndex needs do it, because it needs to be rolled back when it's canceled.
-	case model.ActionAddIndex:
+	// ActionAddIndex, ActionAddPrimaryKey needs do it, because it needs to be rolled back when it's canceled.
+	case model.ActionAddIndex, model.ActionAddPrimaryKey:
 		tableID := job.TableID
 		var indexID int64
 		var partitionIDs []int64
@@ -308,7 +308,7 @@ func insertJobIntoDeleteRangeTable(ctx sessionctx.Context, job *model.Job) error
 			endKey := tablecodec.EncodeTableIndexPrefix(tableID, indexID+1)
 			return doInsert(s, job.ID, indexID, startKey, endKey, now)
 		}
-	case model.ActionDropIndex:
+	case model.ActionDropIndex, model.ActionDropPrimaryKey:
 		tableID := job.TableID
 		var indexName interface{}
 		var indexID int64

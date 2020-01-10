@@ -15,15 +15,19 @@ package executor_test
 
 import (
 	"fmt"
+	"strconv"
+	"strings"
+	"sync"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
-func (s *testSuite3) TestInsertOnDuplicateKey(c *C) {
+func (s *testSuite8) TestInsertOnDuplicateKey(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
@@ -253,7 +257,7 @@ func (s *testSuite3) TestInsertZeroYear(c *C) {
 	))
 }
 
-func (s *testSuite3) TestAllowInvalidDates(c *C) {
+func (s *testSuiteP1) TestAllowInvalidDates(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test`)
 	tk.MustExec(`drop table if exists t1, t2, t3, t4;`)
@@ -298,6 +302,8 @@ func (s *testSuite3) TestInsertWithAutoidSchema(c *C) {
 	tk.MustExec(`create table t5(id int primary key, n float unsigned auto_increment, key I_n(n));`)
 	tk.MustExec(`create table t6(id int primary key, n double auto_increment, key I_n(n));`)
 	tk.MustExec(`create table t7(id int primary key, n double unsigned auto_increment, key I_n(n));`)
+	// test for inserting multiple values
+	tk.MustExec(`create table t8(id int primary key auto_increment, n int);`)
 
 	tests := []struct {
 		insert string
@@ -540,11 +546,177 @@ func (s *testSuite3) TestInsertWithAutoidSchema(c *C) {
 			`select * from t7 where id = 3`,
 			testkit.Rows(`3 3`),
 		},
+
+		// the following is test for insert multiple values.
+		{
+			`insert into t8(n) values(1),(2)`,
+			`select * from t8 where id = 1`,
+			testkit.Rows(`1 1`),
+		},
+		{
+			`;`,
+			`select * from t8 where id = 2`,
+			testkit.Rows(`2 2`),
+		},
+		{
+			`;`,
+			`select last_insert_id();`,
+			testkit.Rows(`1`),
+		},
+		// test user rebase and auto alloc mixture.
+		{
+			`insert into t8 values(null, 3),(-1, -1),(null,4),(null, 5)`,
+			`select * from t8 where id = 3`,
+			testkit.Rows(`3 3`),
+		},
+		// -1 won't rebase allocator here cause -1 < base.
+		{
+			`;`,
+			`select * from t8 where id = -1`,
+			testkit.Rows(`-1 -1`),
+		},
+		{
+			`;`,
+			`select * from t8 where id = 4`,
+			testkit.Rows(`4 4`),
+		},
+		{
+			`;`,
+			`select * from t8 where id = 5`,
+			testkit.Rows(`5 5`),
+		},
+		{
+			`;`,
+			`select last_insert_id();`,
+			testkit.Rows(`3`),
+		},
+		{
+			`insert into t8 values(null, 6),(10, 7),(null, 8)`,
+			`select * from t8 where id = 6`,
+			testkit.Rows(`6 6`),
+		},
+		// 10 will rebase allocator here.
+		{
+			`;`,
+			`select * from t8 where id = 10`,
+			testkit.Rows(`10 7`),
+		},
+		{
+			`;`,
+			`select * from t8 where id = 11`,
+			testkit.Rows(`11 8`),
+		},
+		{
+			`;`,
+			`select last_insert_id()`,
+			testkit.Rows(`6`),
+		},
+		// fix bug for last_insert_id should be first allocated id in insert rows (skip the rebase id).
+		{
+			`insert into t8 values(100, 9),(null,10),(null,11)`,
+			`select * from t8 where id = 100`,
+			testkit.Rows(`100 9`),
+		},
+		{
+			`;`,
+			`select * from t8 where id = 101`,
+			testkit.Rows(`101 10`),
+		},
+		{
+			`;`,
+			`select * from t8 where id = 102`,
+			testkit.Rows(`102 11`),
+		},
+		{
+			`;`,
+			`select last_insert_id()`,
+			testkit.Rows(`101`),
+		},
+		// test with sql_mode: NO_AUTO_VALUE_ON_ZERO.
+		{
+			`;`,
+			`select @@sql_mode`,
+			testkit.Rows(`ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION`),
+		},
+		{
+			`;`,
+			"set session sql_mode = `ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION,NO_AUTO_VALUE_ON_ZERO`",
+			nil,
+		},
+		{
+			`insert into t8 values (0, 12), (null, 13)`,
+			`select * from t8 where id = 0`,
+			testkit.Rows(`0 12`),
+		},
+		{
+			`;`,
+			`select * from t8 where id = 103`,
+			testkit.Rows(`103 13`),
+		},
+		{
+			`;`,
+			`select last_insert_id()`,
+			testkit.Rows(`103`),
+		},
+		// test without sql_mode: NO_AUTO_VALUE_ON_ZERO.
+		{
+			`;`,
+			"set session sql_mode = `ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION`",
+			nil,
+		},
+		// value 0 will be substitute by autoid.
+		{
+			`insert into t8 values (0, 14), (null, 15)`,
+			`select * from t8 where id = 104`,
+			testkit.Rows(`104 14`),
+		},
+		{
+			`;`,
+			`select * from t8 where id = 105`,
+			testkit.Rows(`105 15`),
+		},
+		{
+			`;`,
+			`select last_insert_id()`,
+			testkit.Rows(`104`),
+		},
+		// last test : auto increment allocation can find in retryInfo.
+		{
+			`retry : insert into t8 values (null, 16), (null, 17)`,
+			`select * from t8 where id = 1000`,
+			testkit.Rows(`1000 16`),
+		},
+		{
+			`;`,
+			`select * from t8 where id = 1001`,
+			testkit.Rows(`1001 17`),
+		},
+		{
+			`;`,
+			`select last_insert_id()`,
+			// this insert doesn't has the last_insert_id, should be same as the last insert case.
+			testkit.Rows(`104`),
+		},
 	}
 
 	for _, tt := range tests {
-		tk.MustExec(tt.insert)
-		tk.MustQuery(tt.query).Check(tt.result)
+		if strings.HasPrefix(tt.insert, "retry : ") {
+			// it's the last retry insert case, change the sessionVars.
+			retryInfo := &variable.RetryInfo{Retrying: true}
+			retryInfo.AddAutoIncrementID(1000)
+			retryInfo.AddAutoIncrementID(1001)
+			tk.Se.GetSessionVars().RetryInfo = retryInfo
+			tk.MustExec(tt.insert[8:])
+			tk.Se.GetSessionVars().RetryInfo = &variable.RetryInfo{}
+		} else {
+			tk.MustExec(tt.insert)
+		}
+		if tt.query == "set session sql_mode = `ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION,NO_AUTO_VALUE_ON_ZERO`" ||
+			tt.query == "set session sql_mode = `ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION`" {
+			tk.MustExec(tt.query)
+		} else {
+			tk.MustQuery(tt.query).Check(tt.result)
+		}
 	}
 
 }
@@ -591,4 +763,140 @@ func (s *testSuite3) TestBit(c *C) {
 	_, err = tk.Exec("insert into t64 values(18446744073709551616)") // z^64
 	c.Assert(err.Error(), Matches, ".*Out of range value for column 'a' at.*")
 
+}
+
+func (s *testSuiteP1) TestAllocateContinuousRowID(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table t1 (a int,b int, key I_a(a));`)
+	wg := sync.WaitGroup{}
+	for i := 0; i < 5; i++ {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			tk := testkit.NewTestKitWithInit(c, s.store)
+			for j := 0; j < 10; j++ {
+				k := strconv.Itoa(idx*100 + j)
+				sql := "insert into t1(a,b) values (" + k + ", 2)"
+				for t := 0; t < 20; t++ {
+					sql += ",(" + k + ",2)"
+				}
+				tk.MustExec(sql)
+				q := "select _tidb_rowid from t1 where a=" + k
+				fmt.Printf("query: %v\n", q)
+				rows := tk.MustQuery(q).Rows()
+				c.Assert(len(rows), Equals, 21)
+				last := 0
+				for _, r := range rows {
+					c.Assert(len(r), Equals, 1)
+					v, err := strconv.Atoi(r[0].(string))
+					c.Assert(err, Equals, nil)
+					if last > 0 {
+						c.Assert(last+1, Equals, v)
+					}
+					last = v
+				}
+			}
+		}(i)
+	}
+	wg.Wait()
+}
+
+func (s *testSuite3) TestJiraIssue5366(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table bug (a varchar(100))`)
+	tk.MustExec(` insert into bug select  ifnull(JSON_UNQUOTE(JSON_EXTRACT('[{"amount":2000,"feeAmount":0,"merchantNo":"20190430140319679394","shareBizCode":"20160311162_SECOND"}]', '$[0].merchantNo')),'') merchant_no union SELECT '20180531557' merchant_no;`)
+	tk.MustQuery(`select * from bug`).Sort().Check(testkit.Rows("20180531557", "20190430140319679394"))
+}
+
+func (s *testSuite3) TestDMLCast(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table t (a int, b double)`)
+	tk.MustExec(`insert into t values (ifnull('',0)+0, 0)`)
+	tk.MustExec(`insert into t values (0, ifnull('',0)+0)`)
+	tk.MustQuery(`select * from t`).Check(testkit.Rows("0 0", "0 0"))
+	_, err := tk.Exec(`insert into t values ('', 0)`)
+	c.Assert(err, NotNil)
+	_, err = tk.Exec(`insert into t values (0, '')`)
+	c.Assert(err, NotNil)
+	_, err = tk.Exec(`update t set a = ''`)
+	c.Assert(err, NotNil)
+	_, err = tk.Exec(`update t set b = ''`)
+	c.Assert(err, NotNil)
+	tk.MustExec("update t set a = ifnull('',0)+0")
+	tk.MustExec("update t set b = ifnull('',0)+0")
+	tk.MustExec("delete from t where a = ''")
+	tk.MustQuery(`select * from t`).Check(testkit.Rows())
+}
+
+// There is a potential issue in MySQL: when the value of auto_increment_offset is greater
+// than that of auto_increment_increment, the value of auto_increment_offset is ignored
+// (https://dev.mysql.com/doc/refman/8.0/en/replication-options-master.html#sysvar_auto_increment_increment),
+// This issue is a flaw of the implementation of MySQL and it doesn't exist in TiDB.
+func (s *testSuite3) TestAutoIDIncrementAndOffset(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test`)
+	// Test for offset is larger than increment.
+	tk.Se.GetSessionVars().AutoIncrementIncrement = 5
+	tk.Se.GetSessionVars().AutoIncrementOffset = 10
+	tk.MustExec(`create table io (a int key auto_increment)`)
+	tk.MustExec(`insert into io values (null),(null),(null)`)
+	tk.MustQuery(`select * from io`).Check(testkit.Rows("10", "15", "20"))
+	tk.MustExec(`drop table io`)
+
+	// Test handle is PK.
+	tk.MustExec(`create table io (a int key auto_increment)`)
+	tk.Se.GetSessionVars().AutoIncrementOffset = 10
+	tk.Se.GetSessionVars().AutoIncrementIncrement = 2
+	tk.MustExec(`insert into io values (),(),()`)
+	tk.MustQuery(`select * from io`).Check(testkit.Rows("10", "12", "14"))
+	tk.MustExec(`delete from io`)
+
+	// Test reset the increment.
+	tk.Se.GetSessionVars().AutoIncrementIncrement = 5
+	tk.MustExec(`insert into io values (),(),()`)
+	tk.MustQuery(`select * from io`).Check(testkit.Rows("15", "20", "25"))
+	tk.MustExec(`delete from io`)
+
+	tk.Se.GetSessionVars().AutoIncrementIncrement = 10
+	tk.MustExec(`insert into io values (),(),()`)
+	tk.MustQuery(`select * from io`).Check(testkit.Rows("30", "40", "50"))
+	tk.MustExec(`delete from io`)
+
+	tk.Se.GetSessionVars().AutoIncrementIncrement = 5
+	tk.MustExec(`insert into io values (),(),()`)
+	tk.MustQuery(`select * from io`).Check(testkit.Rows("55", "60", "65"))
+	tk.MustExec(`drop table io`)
+
+	// Test handle is not PK.
+	tk.Se.GetSessionVars().AutoIncrementIncrement = 2
+	tk.Se.GetSessionVars().AutoIncrementOffset = 10
+	tk.MustExec(`create table io (a int, b int auto_increment, key(b))`)
+	tk.MustExec(`insert into io(b) values (null),(null),(null)`)
+	// AutoID allocation will take increment and offset into consideration.
+	tk.MustQuery(`select b from io`).Check(testkit.Rows("10", "12", "14"))
+	// HandleID allocation will ignore the increment and offset.
+	tk.MustQuery(`select _tidb_rowid from io`).Check(testkit.Rows("15", "16", "17"))
+	tk.MustExec(`delete from io`)
+
+	tk.Se.GetSessionVars().AutoIncrementIncrement = 10
+	tk.MustExec(`insert into io(b) values (null),(null),(null)`)
+	tk.MustQuery(`select b from io`).Check(testkit.Rows("20", "30", "40"))
+	tk.MustQuery(`select _tidb_rowid from io`).Check(testkit.Rows("41", "42", "43"))
+
+	// Test invalid value.
+	tk.Se.GetSessionVars().AutoIncrementIncrement = -1
+	tk.Se.GetSessionVars().AutoIncrementOffset = -2
+	_, err := tk.Exec(`insert into io(b) values (null),(null),(null)`)
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[autoid:8060]Invalid auto_increment settings: auto_increment_increment: -1, auto_increment_offset: -2, both of them must be in range [1..65535]")
+	tk.MustExec(`delete from io`)
+
+	tk.Se.GetSessionVars().AutoIncrementIncrement = 65536
+	tk.Se.GetSessionVars().AutoIncrementOffset = 65536
+	_, err = tk.Exec(`insert into io(b) values (null),(null),(null)`)
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[autoid:8060]Invalid auto_increment settings: auto_increment_increment: 65536, auto_increment_offset: 65536, both of them must be in range [1..65535]")
 }

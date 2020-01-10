@@ -168,8 +168,16 @@ func ConvertFloatToUint(sc *stmtctx.StatementContext, fval float64, upperBound u
 		return uint64(int64(val)), overflow(val, tp)
 	}
 
-	if val > float64(upperBound) {
-		return upperBound, overflow(val, tp)
+	ubf := float64(upperBound)
+	// Because math.MaxUint64 can not be represented precisely in iee754(64bit),
+	// so `float64(math.MaxUint64)` will make a num bigger than math.MaxUint64,
+	// which can not be represented by 64bit integer.
+	// So `uint64(float64(math.MaxUint64))` is undefined behavior.
+	if val == ubf {
+		return uint64(math.MaxInt64), nil
+	}
+	if val > ubf {
+		return uint64(math.MaxInt64), overflow(val, tp)
 	}
 	return uint64(val), nil
 }
@@ -348,9 +356,9 @@ func NumberToDuration(number int64, fsp int8) (Duration, error) {
 	}
 
 	if number/10000 > TimeMaxHour || number%100 >= 60 || (number/100)%100 >= 60 {
-		return ZeroDuration, errors.Trace(ErrInvalidTimeFormat.GenWithStackByArgs(number))
+		return ZeroDuration, errors.Trace(ErrWrongValue.GenWithStackByArgs(TimeStr, strconv.FormatInt(number, 10)))
 	}
-	t := Time{Time: FromDate(0, 0, 0, int(number/10000), int((number/100)%100), int(number%100), 0), Type: mysql.TypeDuration, Fsp: fsp}
+	t := NewTime(FromDate(0, 0, 0, int(number/10000), int((number/100)%100), int(number%100), 0), mysql.TypeDuration, fsp)
 	dur, err := t.ConvertToDuration()
 	if err != nil {
 		return ZeroDuration, errors.Trace(err)
@@ -363,7 +371,7 @@ func NumberToDuration(number int64, fsp int8) (Duration, error) {
 
 // getValidIntPrefix gets prefix of the string which can be successfully parsed as int.
 func getValidIntPrefix(sc *stmtctx.StatementContext, str string) (string, error) {
-	if !sc.CastStrToIntStrict {
+	if !sc.InSelectStmt {
 		floatPrefix, err := getValidFloatPrefix(sc, str)
 		if err != nil {
 			return floatPrefix, errors.Trace(err)
@@ -561,18 +569,20 @@ func ConvertJSONToInt(sc *stmtctx.StatementContext, j json.BinaryJSON, unsigned 
 		if !unsigned {
 			lBound := IntergerSignedLowerBound(mysql.TypeLonglong)
 			uBound := IntergerSignedUpperBound(mysql.TypeLonglong)
-			return ConvertFloatToInt(f, lBound, uBound, mysql.TypeLonglong)
+			u, e := ConvertFloatToInt(f, lBound, uBound, mysql.TypeLonglong)
+			return u, sc.HandleOverflow(e, e)
 		}
 		bound := IntergerUnsignedUpperBound(mysql.TypeLonglong)
 		u, err := ConvertFloatToUint(sc, f, bound, mysql.TypeLonglong)
-		return int64(u), errors.Trace(err)
+		return int64(u), sc.HandleOverflow(err, err)
 	case json.TypeCodeString:
 		str := string(hack.String(j.GetString()))
 		if !unsigned {
-			return StrToInt(sc, str)
+			r, e := StrToInt(sc, str)
+			return r, sc.HandleOverflow(e, e)
 		}
 		u, err := StrToUint(sc, str)
-		return int64(u), errors.Trace(err)
+		return int64(u), sc.HandleOverflow(err, err)
 	}
 	return 0, errors.New("Unknown type code in JSON")
 }
@@ -619,7 +629,7 @@ func ConvertJSONToDecimal(sc *stmtctx.StatementContext, j json.BinaryJSON) (*MyD
 
 // getValidFloatPrefix gets prefix of string which can be successfully parsed as float.
 func getValidFloatPrefix(sc *stmtctx.StatementContext, s string) (valid string, err error) {
-	if (sc.InDeleteStmt || sc.InSelectStmt || sc.InUpdateStmt) && s == "" {
+	if (sc.InDeleteStmt || sc.InSelectStmt) && s == "" {
 		return "0", nil
 	}
 
@@ -663,7 +673,7 @@ func getValidFloatPrefix(sc *stmtctx.StatementContext, s string) (valid string, 
 		valid = "0"
 	}
 	if validLen == 0 || validLen != len(s) {
-		err = errors.Trace(handleTruncateError(sc, ErrTruncated))
+		err = errors.Trace(handleTruncateError(sc, ErrTruncatedWrongVal.GenWithStackByArgs("FLOAT", s)))
 	}
 	return valid, err
 }

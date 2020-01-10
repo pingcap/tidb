@@ -31,46 +31,43 @@ import (
 	"github.com/pingcap/tidb/util/testkit"
 )
 
-var _ = Suite(new(testSQLSuite))
+var _ = Suite(&testSQLSuite{})
+var _ = SerialSuites(&testSQLSerialSuite{})
 
 type testSQLSuite struct {
+	testSQLSuiteBase
+}
+
+type testSQLSerialSuite struct {
+	testSQLSuiteBase
+}
+
+type testSQLSuiteBase struct {
 	OneByOneSuite
 	store Storage
 	dom   *domain.Domain
 }
 
-func (s *testSQLSuite) SetUpSuite(c *C) {
+func (s *testSQLSuiteBase) SetUpSuite(c *C) {
 	s.OneByOneSuite.SetUpSuite(c)
 	var err error
 	s.store = NewTestStore(c).(Storage)
+	// actual this is better done in `OneByOneSuite.SetUpSuite`, but this would cause circle dependency
+	if *WithTiKV {
+		session.ResetForWithTiKVTest()
+	}
+
 	s.dom, err = session.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
 }
 
-func (s *testSQLSuite) TearDownSuite(c *C) {
+func (s *testSQLSuiteBase) TearDownSuite(c *C) {
 	s.dom.Close()
 	s.store.Close()
 	s.OneByOneSuite.TearDownSuite(c)
 }
 
-func (s *testSQLSuite) TestInsertSleepOverMaxTxnTime(c *C) {
-	defer func() {
-		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tmpMaxTxnTime"), IsNil)
-	}()
-	se, err := session.CreateSession4Test(s.store)
-	c.Assert(err, IsNil)
-	_, err = se.Execute(context.Background(), "drop table if exists test.t")
-	c.Assert(err, IsNil)
-	_, err = se.Execute(context.Background(), "create table test.t(a int)")
-	c.Assert(err, IsNil)
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tmpMaxTxnTime", `return(2)->return(0)`), IsNil)
-	start := time.Now()
-	_, err = se.Execute(context.Background(), "insert into test.t (a) select sleep(3)")
-	c.Assert(err, IsNil)
-	c.Assert(time.Since(start) < time.Second*5, IsTrue)
-}
-
-func (s *testSQLSuite) TestFailBusyServerCop(c *C) {
+func (s *testSQLSerialSuite) TestFailBusyServerCop(c *C) {
 	se, err := session.CreateSession4Test(s.store)
 	c.Assert(err, IsNil)
 

@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/mock"
-	"github.com/pingcap/tidb/util/testleak"
 )
 
 type mockVecPlusIntBuiltinFunc struct {
@@ -333,11 +332,11 @@ func (p *mockBuiltinDouble) evalDecimal(row chunk.Row) (*types.MyDecimal, bool, 
 func (p *mockBuiltinDouble) evalTime(row chunk.Row) (types.Time, bool, error) {
 	v, isNull, err := p.args[0].EvalTime(p.ctx, row)
 	if err != nil {
-		return types.Time{}, false, err
+		return types.ZeroTime, false, err
 	}
 	d, err := v.ConvertToDuration()
 	if err != nil {
-		return types.Time{}, false, err
+		return types.ZeroTime, false, err
 	}
 	v, err = v.Add(p.ctx.GetSessionVars().StmtCtx, d)
 	return v, isNull, err
@@ -428,7 +427,7 @@ func genMockRowDouble(eType types.EvalType, enableVec bool) (builtinFunc, *chunk
 			input.AppendString(0, fmt.Sprintf("%v", i))
 		case types.ETDatetime:
 			t := types.FromDate(i, 0, 0, 0, 0, 0, 0)
-			input.AppendTime(0, types.Time{Time: t, Type: mysqlType})
+			input.AppendTime(0, types.NewTime(t, mysqlType, 0))
 		}
 	}
 	return rowDouble, input, buf, nil
@@ -474,7 +473,7 @@ func (s *testEvaluatorSuite) checkVecEval(c *C, eType types.EvalType, sel []int,
 		c.Assert(len(ds), Equals, len(sel))
 		for i, j := range sel {
 			gt := types.FromDate(j, 0, 0, 0, 0, 0, 0)
-			t := types.Time{Time: gt, Type: convertETType(eType)}
+			t := types.NewTime(gt, convertETType(eType), 0)
 			d, err := t.ConvertToDuration()
 			c.Assert(err, IsNil)
 			v, err := t.Add(mock.NewContext().GetSessionVars().StmtCtx, d)
@@ -517,7 +516,6 @@ func vecEvalType(f builtinFunc, eType types.EvalType, input *chunk.Chunk, result
 }
 
 func (s *testEvaluatorSuite) TestDoubleRow2Vec(c *C) {
-	defer testleak.AfterTest(c)()
 	eTypes := []types.EvalType{types.ETInt, types.ETReal, types.ETDecimal, types.ETDuration, types.ETString, types.ETDatetime, types.ETJson}
 	for _, eType := range eTypes {
 		rowDouble, input, result, err := genMockRowDouble(eType, false)
@@ -542,11 +540,10 @@ func (s *testEvaluatorSuite) TestDoubleRow2Vec(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestDoubleVec2Row(c *C) {
-	defer testleak.AfterTest(c)()
 	eTypes := []types.EvalType{types.ETInt, types.ETReal, types.ETDecimal, types.ETDuration, types.ETString, types.ETDatetime, types.ETJson}
 	for _, eType := range eTypes {
 		rowDouble, input, result, err := genMockRowDouble(eType, true)
-		result.Reset()
+		result.Reset(eType)
 		c.Assert(err, IsNil)
 		it := chunk.NewIterator4Chunk(input)
 		for row := it.Begin(); row != it.End(); row = it.Next() {
@@ -589,7 +586,7 @@ func evalRows(b *testing.B, it *chunk.Iterator4Chunk, eType types.EvalType, resu
 	switch eType {
 	case types.ETInt:
 		for i := 0; i < b.N; i++ {
-			result.Reset()
+			result.Reset(eType)
 			for r := it.Begin(); r != it.End(); r = it.Next() {
 				v, isNull, err := rowDouble.evalInt(r)
 				if err != nil {
@@ -604,7 +601,7 @@ func evalRows(b *testing.B, it *chunk.Iterator4Chunk, eType types.EvalType, resu
 		}
 	case types.ETReal:
 		for i := 0; i < b.N; i++ {
-			result.Reset()
+			result.Reset(eType)
 			for r := it.Begin(); r != it.End(); r = it.Next() {
 				v, isNull, err := rowDouble.evalReal(r)
 				if err != nil {
@@ -619,7 +616,7 @@ func evalRows(b *testing.B, it *chunk.Iterator4Chunk, eType types.EvalType, resu
 		}
 	case types.ETDecimal:
 		for i := 0; i < b.N; i++ {
-			result.Reset()
+			result.Reset(eType)
 			for r := it.Begin(); r != it.End(); r = it.Next() {
 				v, isNull, err := rowDouble.evalDecimal(r)
 				if err != nil {
@@ -634,7 +631,7 @@ func evalRows(b *testing.B, it *chunk.Iterator4Chunk, eType types.EvalType, resu
 		}
 	case types.ETDuration:
 		for i := 0; i < b.N; i++ {
-			result.Reset()
+			result.Reset(eType)
 			for r := it.Begin(); r != it.End(); r = it.Next() {
 				v, isNull, err := rowDouble.evalDuration(r)
 				if err != nil {
@@ -649,7 +646,7 @@ func evalRows(b *testing.B, it *chunk.Iterator4Chunk, eType types.EvalType, resu
 		}
 	case types.ETString:
 		for i := 0; i < b.N; i++ {
-			result.Reset()
+			result.Reset(eType)
 			for r := it.Begin(); r != it.End(); r = it.Next() {
 				v, isNull, err := rowDouble.evalString(r)
 				if err != nil {
@@ -664,7 +661,7 @@ func evalRows(b *testing.B, it *chunk.Iterator4Chunk, eType types.EvalType, resu
 		}
 	case types.ETDatetime:
 		for i := 0; i < b.N; i++ {
-			result.Reset()
+			result.Reset(eType)
 			for r := it.Begin(); r != it.End(); r = it.Next() {
 				v, isNull, err := rowDouble.evalTime(r)
 				if err != nil {
@@ -679,7 +676,7 @@ func evalRows(b *testing.B, it *chunk.Iterator4Chunk, eType types.EvalType, resu
 		}
 	case types.ETJson:
 		for i := 0; i < b.N; i++ {
-			result.Reset()
+			result.Reset(eType)
 			for r := it.Begin(); r != it.End(); r = it.Next() {
 				v, isNull, err := rowDouble.evalJSON(r)
 				if err != nil {
@@ -764,6 +761,26 @@ func (s *testEvaluatorSuite) TestFloat32ColVec(c *C) {
 		c.Assert(v, Equals, result.GetFloat64(i))
 		i++
 	}
+
+	// set Sel
+	n := chk.NumRows()
+	sel := make([]int, n/2)
+	for i := 0; i < n; i += 2 {
+		sel = append(sel, i)
+	}
+	chk.SetSel(sel)
+	c.Assert(col.VecEvalReal(ctx, chk, result), IsNil)
+	i = 0
+	for row := it.Begin(); row != it.End(); row = it.Next() {
+		v, _, err := col.EvalReal(ctx, row)
+		c.Assert(err, IsNil)
+		c.Assert(v, Equals, result.GetFloat64(i))
+		i++
+	}
+
+	// set an empty Sel
+	sel = sel[:0]
+	c.Assert(col.VecEvalReal(ctx, chk, result), IsNil)
 }
 
 func BenchmarkFloat32ColRow(b *testing.B) {

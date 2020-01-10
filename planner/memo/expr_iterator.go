@@ -24,13 +24,14 @@ type ExprIter struct {
 	*Group
 	*list.Element
 
-	// matched indicates whether the current Group expression binded by the
+	// matched indicates whether the current Group expression bound by the
 	// iterator matches the pattern after the creation or iteration.
 	matched bool
 
-	// Operand is the node of the pattern tree. The Operand type of the Group
-	// expression must be matched with it.
-	Operand
+	// Pattern describes the node of pattern tree.
+	// The Operand type of the Group expression and the EngineType of the Group
+	// must be matched with it.
+	*Pattern
 
 	// Children is used to iterate the child expressions.
 	Children []*ExprIter
@@ -62,15 +63,18 @@ func (iter *ExprIter) Next() (found bool) {
 	// Otherwise, iterate itself to find more matched equivalent expressions.
 	for elem := iter.Element.Next(); elem != nil; elem = elem.Next() {
 		expr := elem.Value.(*GroupExpr)
-		exprOperand := GetOperand(expr.ExprNode)
 
-		if !iter.Operand.Match(exprOperand) {
+		if !iter.Operand.Match(GetOperand(expr.ExprNode)) {
 			// All the Equivalents which have the same Operand are continuously
 			// stored in the list. Once the current equivalent can not Match
 			// the Operand, the rest can not, either.
 			return false
 		}
 
+		if len(iter.Children) == 0 {
+			iter.Element = elem
+			return true
+		}
 		if len(iter.Children) != len(expr.Children) {
 			continue
 		}
@@ -102,17 +106,34 @@ func (iter *ExprIter) Matched() bool {
 func (iter *ExprIter) Reset() (findMatch bool) {
 	defer func() { iter.matched = findMatch }()
 
-	if iter.Operand == OperandAny {
+	if iter.Pattern.MatchOperandAny(iter.Group.EngineType) {
 		return true
 	}
 
 	for elem := iter.Group.GetFirstElem(iter.Operand); elem != nil; elem = elem.Next() {
 		expr := elem.Value.(*GroupExpr)
-		exprOperand := GetOperand(expr.ExprNode)
-		if !iter.Operand.Match(exprOperand) {
+
+		if !iter.Pattern.Match(GetOperand(expr.ExprNode), expr.Group.EngineType) {
 			break
 		}
 
+		// The leaf node of the pattern tree might not be an OperandAny or a XXXScan.
+		// We allow the patterns like: Selection -> Projection.
+		// For example, we have such a memo:
+		// Group#1
+		//     Selection_0 input:[Group#2]
+		// Group#2
+		//     Projection_1 input:[Group#3]
+		//     Projection_2 input:[Group#4]
+		// Group#3
+		//     .....
+		// For the pattern above, we will match it twice: `Selection_0->Projection_1`
+		// and `Selection_0->Projection_2`. So if the iterator has no children, we can safely return
+		// the element here.
+		if len(iter.Children) == 0 {
+			iter.Element = elem
+			return true
+		}
 		if len(expr.Children) != len(iter.Children) {
 			continue
 		}
@@ -141,7 +162,7 @@ func (iter *ExprIter) GetExpr() *GroupExpr {
 // NewExprIterFromGroupElem creates the iterator on the Group Element.
 func NewExprIterFromGroupElem(elem *list.Element, p *Pattern) *ExprIter {
 	expr := elem.Value.(*GroupExpr)
-	if !p.Operand.Match(GetOperand(expr.ExprNode)) {
+	if !p.Match(GetOperand(expr.ExprNode), expr.Group.EngineType) {
 		return nil
 	}
 	iter := newExprIterFromGroupExpr(expr, p)
@@ -153,10 +174,10 @@ func NewExprIterFromGroupElem(elem *list.Element, p *Pattern) *ExprIter {
 
 // newExprIterFromGroupExpr creates the iterator on the Group expression.
 func newExprIterFromGroupExpr(expr *GroupExpr, p *Pattern) *ExprIter {
-	if len(p.Children) != len(expr.Children) {
+	if len(p.Children) != 0 && len(p.Children) != len(expr.Children) {
 		return nil
 	}
-	iter := &ExprIter{Operand: p.Operand, matched: true}
+	iter := &ExprIter{Pattern: p, matched: true}
 	for i := range p.Children {
 		childIter := newExprIterFromGroup(expr.Children[i], p.Children[i])
 		if childIter == nil {
@@ -169,12 +190,12 @@ func newExprIterFromGroupExpr(expr *GroupExpr, p *Pattern) *ExprIter {
 
 // newExprIterFromGroup creates the iterator on the Group.
 func newExprIterFromGroup(g *Group, p *Pattern) *ExprIter {
-	if p.Operand == OperandAny {
-		return &ExprIter{Group: g, Operand: OperandAny, matched: true}
+	if p.MatchOperandAny(g.EngineType) {
+		return &ExprIter{Group: g, Pattern: p, matched: true}
 	}
 	for elem := g.GetFirstElem(p.Operand); elem != nil; elem = elem.Next() {
 		expr := elem.Value.(*GroupExpr)
-		if !p.Operand.Match(GetOperand(expr.ExprNode)) {
+		if !p.Match(GetOperand(expr.ExprNode), g.EngineType) {
 			return nil
 		}
 		iter := newExprIterFromGroupExpr(expr, p)

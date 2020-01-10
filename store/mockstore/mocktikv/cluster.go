@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/tablecodec"
+	"go.uber.org/atomic"
 )
 
 // Cluster simulates a TiKV cluster. It focuses on management and the change of
@@ -370,13 +371,15 @@ func (c *Cluster) Split(regionID, newRegionID uint64, key []byte, peerIDs []uint
 }
 
 // SplitRaw splits a Region at the key (not encoded) and creates new Region.
-func (c *Cluster) SplitRaw(regionID, newRegionID uint64, rawKey []byte, peerIDs []uint64, leaderPeerID uint64) *Region {
+func (c *Cluster) SplitRaw(regionID, newRegionID uint64, rawKey []byte, peerIDs []uint64, leaderPeerID uint64) *metapb.Region {
 	c.Lock()
 	defer c.Unlock()
 
 	newRegion := c.regions[regionID].split(newRegionID, rawKey, peerIDs, leaderPeerID)
 	c.regions[newRegionID] = newRegion
-	return newRegion
+	// The mocktikv should return a deep copy of meta info to avoid data race
+	meta := proto.Clone(newRegion.Meta)
+	return meta.(*metapb.Region)
 }
 
 // Merge merges 2 regions, their key ranges should be adjacent.
@@ -442,7 +445,7 @@ func (c *Cluster) splitRange(mvccStore MVCCStore, start, end MvccKey, count int)
 func (c *Cluster) getEntriesGroupByRegions(mvccStore MVCCStore, start, end MvccKey, count int) [][]Pair {
 	startTS := uint64(math.MaxUint64)
 	limit := int(math.MaxInt32)
-	pairs := mvccStore.Scan(start.Raw(), end.Raw(), limit, startTS, kvrpcpb.IsolationLevel_SI)
+	pairs := mvccStore.Scan(start.Raw(), end.Raw(), limit, startTS, kvrpcpb.IsolationLevel_SI, nil)
 	regionEntriesSlice := make([][]Pair, 0, count)
 	quotient := len(pairs) / count
 	remainder := len(pairs) % count
@@ -637,8 +640,9 @@ func (r *Region) incVersion() {
 
 // Store is the Store's meta data.
 type Store struct {
-	meta   *metapb.Store
-	cancel bool // return context.Cancelled error when cancel is true.
+	meta       *metapb.Store
+	cancel     bool // return context.Cancelled error when cancel is true.
+	tokenCount atomic.Int64
 }
 
 func newStore(storeID uint64, addr string) *Store {

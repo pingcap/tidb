@@ -23,7 +23,7 @@ import (
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/pdpb"
-	"github.com/pingcap/pd/client"
+	pd "github.com/pingcap/pd/client"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/mockoracle"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
@@ -32,17 +32,26 @@ import (
 var errStopped = errors.New("stopped")
 
 type testStoreSuite struct {
+	testStoreSuiteBase
+}
+
+type testStoreFailedSuite struct {
+	testStoreSuiteBase
+}
+
+type testStoreSuiteBase struct {
 	OneByOneSuite
 	store *tikvStore
 }
 
 var _ = Suite(&testStoreSuite{})
+var _ = SerialSuites(&testStoreFailedSuite{})
 
-func (s *testStoreSuite) SetUpTest(c *C) {
+func (s *testStoreSuiteBase) SetUpTest(c *C) {
 	s.store = NewTestStore(c).(*tikvStore)
 }
 
-func (s *testStoreSuite) TearDownTest(c *C) {
+func (s *testStoreSuiteBase) TearDownTest(c *C) {
 	c.Assert(s.store.Close(), IsNil)
 }
 
@@ -211,6 +220,8 @@ func (c *mockPDClient) ScatterRegion(ctx context.Context, regionID uint64) error
 func (c *mockPDClient) GetOperator(ctx context.Context, regionID uint64) (*pdpb.GetOperatorResponse, error) {
 	return &pdpb.GetOperatorResponse{Status: pdpb.OperatorStatus_SUCCESS}, nil
 }
+
+func (c *mockPDClient) GetLeaderAddr() string { return "mockpd" }
 
 type checkRequestClient struct {
 	Client

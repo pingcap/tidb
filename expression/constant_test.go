@@ -21,13 +21,11 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/mock"
-	"github.com/pingcap/tidb/util/testleak"
 )
 
 var _ = Suite(&testExpressionSuite{})
@@ -41,9 +39,6 @@ func newColumn(id int) *Column {
 func newColumnWithType(id int, t *types.FieldType) *Column {
 	return &Column{
 		UniqueID: int64(id),
-		ColName:  model.NewCIStr(fmt.Sprint(id)),
-		TblName:  model.NewCIStr("t"),
-		DBName:   model.NewCIStr("test"),
 		RetType:  t,
 	}
 }
@@ -65,10 +60,7 @@ func newTimestamp(yy, mm, dd, hh, min, ss int) *Constant {
 
 func newTimeConst(yy, mm, dd, hh, min, ss int, tp uint8) *Constant {
 	var tmp types.Datum
-	tmp.SetMysqlTime(types.Time{
-		Time: types.FromDate(yy, mm, dd, 0, 0, 0, 0),
-		Type: tp,
-	})
+	tmp.SetMysqlTime(types.NewTime(types.FromDate(yy, mm, dd, 0, 0, 0, 0), tp, types.DefaultFsp))
 	return &Constant{
 		Value:   tmp,
 		RetType: types.NewFieldType(tp),
@@ -81,7 +73,6 @@ func newFunction(funcName string, args ...Expression) Expression {
 }
 
 func (*testExpressionSuite) TestConstantPropagation(c *C) {
-	defer testleak.AfterTest(c)()
 	tests := []struct {
 		solver     []PropagateConstantSolver
 		conditions []Expression
@@ -208,7 +199,6 @@ func (*testExpressionSuite) TestConstantPropagation(c *C) {
 }
 
 func (*testExpressionSuite) TestConstraintPropagation(c *C) {
-	defer testleak.AfterTest(c)()
 	col1 := newColumnWithType(1, types.NewFieldType(mysql.TypeDate))
 	col2 := newColumnWithType(2, types.NewFieldType(mysql.TypeTimestamp))
 	tests := []struct {
@@ -303,7 +293,6 @@ func (*testExpressionSuite) TestConstraintPropagation(c *C) {
 }
 
 func (*testExpressionSuite) TestConstantFolding(c *C) {
-	defer testleak.AfterTest(c)()
 	tests := []struct {
 		condition Expression
 		result    string
@@ -340,7 +329,6 @@ func (*testExpressionSuite) TestConstantFolding(c *C) {
 }
 
 func (*testExpressionSuite) TestDeferredExprNullConstantFold(c *C) {
-	defer testleak.AfterTest(c)()
 	nullConst := &Constant{
 		Value:        types.NewDatum(nil),
 		RetType:      types.NewFieldType(mysql.TypeTiny),
@@ -368,13 +356,12 @@ func (*testExpressionSuite) TestDeferredExprNullConstantFold(c *C) {
 }
 
 func (*testExpressionSuite) TestDeferredParamNotNull(c *C) {
-	defer testleak.AfterTest(c)()
 	ctx := mock.NewContext()
 	testTime := time.Now()
 	ctx.GetSessionVars().PreparedParams = []types.Datum{
 		types.NewIntDatum(1),
 		types.NewDecimalDatum(types.NewDecFromStringForTest("20170118123950.123")),
-		types.NewTimeDatum(types.Time{Time: types.FromGoTime(testTime), Fsp: 6, Type: mysql.TypeTimestamp}),
+		types.NewTimeDatum(types.NewTime(types.FromGoTime(testTime), mysql.TypeTimestamp, 6)),
 		types.NewDurationDatum(types.ZeroDuration),
 		types.NewStringDatum("{}"),
 		types.NewBinaryLiteralDatum(types.BinaryLiteral([]byte{1})),
@@ -435,7 +422,6 @@ func (*testExpressionSuite) TestDeferredParamNotNull(c *C) {
 }
 
 func (*testExpressionSuite) TestDeferredExprNotNull(c *C) {
-	defer testleak.AfterTest(c)()
 	m := &MockExpr{}
 	ctx := mock.NewContext()
 	cst := &Constant{DeferredExpr: m, RetType: newIntFieldType()}
@@ -494,7 +480,7 @@ func (*testExpressionSuite) TestDeferredExprNotNull(c *C) {
 	xDec, _, _ := cst.EvalDecimal(ctx, chunk.Row{})
 	c.Assert(xDec.Compare(m.i.(*types.MyDecimal)), Equals, 0)
 
-	m.i = types.Time{}
+	m.i = types.ZeroTime
 	xTim, _, _ := cst.EvalTime(ctx, chunk.Row{})
 	c.Assert(xTim.Compare(m.i.(types.Time)), Equals, 0)
 

@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/planner"
@@ -190,7 +191,7 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		return err
 	}
 	if _, ok := stmt.(*ast.SelectStmt); ok {
-		e.Fields = schema2ResultFields(p.Schema(), vars.CurrentDB)
+		e.Fields = colNames2ResultFields(p.Schema(), p.OutputNames(), vars.CurrentDB)
 	}
 	if e.ID == 0 {
 		e.ID = vars.GetNextPreparedStmtID()
@@ -248,7 +249,9 @@ func (e *ExecuteExec) Build(b *executorBuilder) error {
 	}
 	e.stmtExec = stmtExec
 	CountStmtNode(e.stmt, e.ctx.GetSessionVars().InRestrictedSQL)
-	e.lowerPriority = needLowerPriority(e.plan)
+	if e.ctx.GetSessionVars().StmtCtx.Priority == mysql.NoPriority {
+		e.lowerPriority = needLowerPriority(e.plan)
+	}
 	return nil
 }
 
@@ -294,8 +297,8 @@ func CompileExecutePreparedStmt(ctx context.Context, sctx sessionctx.Context,
 		return nil, err
 	}
 	execStmt.BinaryArgs = args
-	is := GetInfoSchema(sctx)
-	execPlan, err := planner.Optimize(ctx, sctx, execStmt, is)
+	is := infoschema.GetInfoSchema(sctx)
+	execPlan, names, err := planner.Optimize(ctx, sctx, execStmt, is)
 	if err != nil {
 		return nil, err
 	}
@@ -305,7 +308,7 @@ func CompileExecutePreparedStmt(ctx context.Context, sctx sessionctx.Context,
 		Plan:        execPlan,
 		StmtNode:    execStmt,
 		Ctx:         sctx,
-		OutputNames: execPlan.OutputNames(),
+		OutputNames: names,
 	}
 	if preparedPointer, ok := sctx.GetSessionVars().PreparedStmts[ID]; ok {
 		preparedObj, ok := preparedPointer.(*plannercore.CachedPrepareStmt)

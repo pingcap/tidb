@@ -17,6 +17,8 @@ import (
 	"strings"
 	"sync/atomic"
 
+	"github.com/gogo/protobuf/proto"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/charset"
@@ -159,7 +161,7 @@ func (pc *PbConverter) encodeDatum(ft *types.FieldType, d types.Datum) (tipb.Exp
 	case types.KindMysqlTime:
 		if pc.client.IsRequestTypeSupported(kv.ReqTypeDAG, int64(tipb.ExprType_MysqlTime)) {
 			tp = tipb.ExprType_MysqlTime
-			val, err := codec.EncodeMySQLTime(pc.sc, d, ft.Tp, nil)
+			val, err := codec.EncodeMySQLTime(pc.sc, d.GetMysqlTime(), ft.Tp, nil)
 			if err != nil {
 				logutil.BgLogger().Error("encode mysql time", zap.Error(err))
 				return tp, nil, false
@@ -185,12 +187,32 @@ func ToPBFieldType(ft *types.FieldType) *tipb.FieldType {
 	}
 }
 
+// FieldTypeFromPB converts *tipb.FieldType to *types.FieldType.
+func FieldTypeFromPB(ft *tipb.FieldType) *types.FieldType {
+	return &types.FieldType{
+		Tp:      byte(ft.Tp),
+		Flag:    uint(ft.Flag),
+		Flen:    int(ft.Flen),
+		Decimal: int(ft.Decimal),
+		Charset: ft.Charset,
+		Collate: protoToCollation(ft.Collate),
+	}
+}
+
 func collationToProto(c string) int32 {
 	v, ok := mysql.CollationNames[c]
 	if ok {
 		return int32(v)
 	}
 	return int32(mysql.DefaultCollationID)
+}
+
+func protoToCollation(c int32) string {
+	v, ok := mysql.Collations[uint8(c)]
+	if ok {
+		return v
+	}
+	return mysql.DefaultCollationName
 }
 
 func (pc PbConverter) columnToPBExpr(column *Column) *tipb.Expr {
@@ -221,18 +243,21 @@ func (pc PbConverter) columnToPBExpr(column *Column) *tipb.Expr {
 }
 
 func (pc PbConverter) scalarFuncToPBExpr(expr *ScalarFunction) *tipb.Expr {
-	// check whether this function can be pushed.
+	// Check whether this function has ProtoBuf signature.
+	pbCode := expr.Function.PbCode()
+	if pbCode <= tipb.ScalarFuncSig_Unspecified {
+		failpoint.Inject("PanicIfPbCodeUnspecified", func() {
+			panic(errors.Errorf("unspecified PbCode: %T", expr.Function))
+		})
+		return nil
+	}
+
+	// Check whether this function can be pushed.
 	if !pc.canFuncBePushed(expr) {
 		return nil
 	}
 
-	// check whether this function has ProtoBuf signature.
-	pbCode := expr.Function.PbCode()
-	if pbCode < 0 {
-		return nil
-	}
-
-	// check whether all of its parameters can be pushed.
+	// Check whether all of its parameters can be pushed.
 	children := make([]*tipb.Expr, 0, len(expr.GetArgs()))
 	for _, arg := range expr.GetArgs() {
 		pbArg := pc.ExprToPB(arg)
@@ -242,20 +267,20 @@ func (pc PbConverter) scalarFuncToPBExpr(expr *ScalarFunction) *tipb.Expr {
 		children = append(children, pbArg)
 	}
 
-	var implicitArgs []byte
-	if args := expr.Function.implicitArgs(); len(args) > 0 {
-		encoded, err := codec.EncodeValue(pc.sc, nil, args...)
+	var encoded []byte
+	if metadata := expr.Function.metadata(); metadata != nil {
+		var err error
+		encoded, err = proto.Marshal(metadata)
 		if err != nil {
-			logutil.BgLogger().Error("encode implicit parameters", zap.Any("datums", args), zap.Error(err))
+			logutil.BgLogger().Error("encode metadata", zap.Any("metadata", metadata), zap.Error(err))
 			return nil
 		}
-		implicitArgs = encoded
 	}
 
-	// construct expression ProtoBuf.
+	// Construct expression ProtoBuf.
 	return &tipb.Expr{
 		Tp:        tipb.ExprType_ScalarFunc,
-		Val:       implicitArgs,
+		Val:       encoded,
 		Sig:       pbCode,
 		Children:  children,
 		FieldType: ToPBFieldType(expr.RetType),
@@ -302,10 +327,18 @@ func (pc PbConverter) canFuncBePushed(sf *ScalarFunction) bool {
 
 	switch sf.FuncName.L {
 	case
-		// logical functions.
+		// op functions.
 		ast.LogicAnd,
 		ast.LogicOr,
+		ast.LogicXor,
 		ast.UnaryNot,
+		ast.And,
+		ast.Or,
+		ast.Xor,
+		ast.BitNeg,
+		ast.LeftShift,
+		ast.RightShift,
+		ast.UnaryMinus,
 
 		// compare functions.
 		ast.LT,
@@ -327,9 +360,31 @@ func (pc PbConverter) canFuncBePushed(sf *ScalarFunction) bool {
 		ast.Mul,
 		ast.Div,
 		ast.Abs,
+
+		// math functions.
 		ast.Ceil,
 		ast.Ceiling,
 		ast.Floor,
+		ast.Sqrt,
+		ast.Sign,
+		ast.Ln,
+		ast.Log,
+		ast.Log2,
+		ast.Log10,
+		ast.Exp,
+		ast.Pow,
+		ast.Sin,
+		ast.Asin,
+		ast.Cos,
+		ast.Acos,
+		ast.Tan,
+		ast.Atan,
+		ast.Atan2,
+		ast.Cot,
+		ast.Radians,
+		ast.Degrees,
+		ast.Conv,
+		ast.CRC32,
 
 		// control flow functions.
 		ast.Case,
@@ -337,10 +392,29 @@ func (pc PbConverter) canFuncBePushed(sf *ScalarFunction) bool {
 		ast.Ifnull,
 		ast.Coalesce,
 
+		// string functions.
+		ast.Length,
+		ast.BitLength,
+		ast.Concat,
+		ast.ConcatWS,
+		ast.Locate,
+		ast.Replace,
+		ast.ASCII,
+		ast.Hex,
+		ast.Reverse,
+		ast.LTrim,
+		ast.RTrim,
+		ast.Left,
+		ast.Strcmp,
+		ast.Space,
+		ast.Elt,
+		ast.Field,
+
 		// json functions.
 		ast.JSONType,
 		ast.JSONExtract,
-		ast.JSONUnquote,
+		// FIXME: JSONUnquote is incompatible with Coprocessor
+		// ast.JSONUnquote,
 		ast.JSONObject,
 		ast.JSONArray,
 		ast.JSONMerge,
@@ -348,13 +422,65 @@ func (pc PbConverter) canFuncBePushed(sf *ScalarFunction) bool {
 		ast.JSONInsert,
 		ast.JSONReplace,
 		ast.JSONRemove,
+		ast.JSONLength,
 
 		// date functions.
-		ast.DateFormat:
-		_, disallowPushdown := DefaultExprPushdownBlacklist.Load().(map[string]struct{})[sf.FuncName.L]
-		return true && !disallowPushdown
+		ast.DateFormat,
+		ast.FromDays,
+		ast.ToDays,
+		ast.DayOfYear,
+		ast.DayOfMonth,
+		ast.Year,
+		ast.Month,
+		ast.Hour,
+		ast.Minute,
+		ast.Second,
+		ast.MicroSecond,
+		ast.PeriodAdd,
+		ast.PeriodDiff,
+		ast.DayName,
+
+		// encryption functions.
+		ast.MD5,
+		ast.SHA1,
+		ast.UncompressedLength,
+
+		// misc functions.
+		ast.InetNtoa,
+		ast.InetAton,
+		ast.Inet6Ntoa,
+		ast.Inet6Aton,
+		ast.IsIPv4,
+		ast.IsIPv4Compat,
+		ast.IsIPv4Mapped,
+		ast.IsIPv6:
+		return isPushdownEnabled(sf.FuncName.L)
+
+	// A special case: Only push down Round by signature
+	case ast.Round:
+		switch sf.Function.PbCode() {
+		case
+			tipb.ScalarFuncSig_RoundReal,
+			tipb.ScalarFuncSig_RoundInt,
+			tipb.ScalarFuncSig_RoundDec:
+			return isPushdownEnabled(sf.FuncName.L)
+		}
+	case ast.Cast:
+		switch sf.Function.PbCode() {
+		case tipb.ScalarFuncSig_CastStringAsInt,
+			tipb.ScalarFuncSig_CastStringAsTime,
+			tipb.ScalarFuncSig_CastTimeAsInt:
+			return false
+		default:
+			return isPushdownEnabled(sf.FuncName.L)
+		}
 	}
 	return false
+}
+
+func isPushdownEnabled(name string) bool {
+	_, disallowPushdown := DefaultExprPushdownBlacklist.Load().(map[string]struct{})[name]
+	return !disallowPushdown
 }
 
 // DefaultExprPushdownBlacklist indicates the expressions which can not be pushed down to TiKV.

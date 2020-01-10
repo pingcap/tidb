@@ -64,6 +64,7 @@ type Histogram struct {
 	// For some types like `Int`, we do not build it because we can get them directly from `Bounds`.
 	scalars []scalar
 	// TotColSize is the total column size for the histogram.
+	// For unfixed-len types, it includes LEN and BYTE.
 	TotColSize int64
 
 	// Correlation is the statistical correlation between physical row ordering and logical ordering of
@@ -138,6 +139,50 @@ func (c *Column) AvgColSize(count int64, isKey bool) float64 {
 	}
 	// Keep two decimal place.
 	return math.Round(float64(c.TotColSize)/float64(count)*100) / 100
+}
+
+// AvgColSizeChunkFormat is the average column size of the histogram. These sizes are derived from function `Encode`
+// and `DecodeToChunk`, so we need to update them if those 2 functions are changed.
+func (c *Column) AvgColSizeChunkFormat(count int64) float64 {
+	if count == 0 {
+		return 0
+	}
+	fixedLen := chunk.GetFixedLen(c.Histogram.Tp)
+	if fixedLen != -1 {
+		return float64(fixedLen)
+	}
+	// Keep two decimal place.
+	// Add 8 bytes for unfixed-len type's offsets.
+	// Minus Log2(avgSize) for unfixed-len type LEN.
+	avgSize := float64(c.TotColSize) / float64(count)
+	if avgSize < 1 {
+		return math.Round(avgSize*100)/100 + 8
+	}
+	return math.Round((avgSize-math.Log2(avgSize))*100)/100 + 8
+}
+
+// AvgColSizeListInDisk is the average column size of the histogram. These sizes are derived
+// from `chunk.ListInDisk` so we need to update them if those 2 functions are changed.
+func (c *Column) AvgColSizeListInDisk(count int64) float64 {
+	if count == 0 {
+		return 0
+	}
+	histCount := c.TotalRowCount()
+	notNullRatio := 1.0
+	if histCount > 0 {
+		notNullRatio = 1.0 - float64(c.NullCount)/histCount
+	}
+	size := chunk.GetFixedLen(c.Histogram.Tp)
+	if size != -1 {
+		return float64(size) * notNullRatio
+	}
+	// Keep two decimal place.
+	// Minus Log2(avgSize) for unfixed-len type LEN.
+	avgSize := float64(c.TotColSize) / float64(count)
+	if avgSize < 1 {
+		return math.Round((avgSize)*100) / 100
+	}
+	return math.Round((avgSize-math.Log2(avgSize))*100) / 100
 }
 
 // AppendBucket appends a bucket into `hg`.
@@ -364,7 +409,6 @@ func (hg *Histogram) mergeBuckets(bucketIdx int) {
 	}
 	hg.Bounds = c
 	hg.Buckets = hg.Buckets[:curBuck]
-	return
 }
 
 // GetIncreaseFactor will return a factor of data increasing after the last analysis.
@@ -624,9 +668,7 @@ func (hg *Histogram) Copy() *Histogram {
 	newHist := *hg
 	newHist.Bounds = hg.Bounds.CopyConstruct()
 	newHist.Buckets = make([]Bucket, 0, len(hg.Buckets))
-	for _, bkt := range hg.Buckets {
-		newHist.Buckets = append(newHist.Buckets, bkt)
-	}
+	newHist.Buckets = append(newHist.Buckets, hg.Buckets...)
 	return &newHist
 }
 
@@ -731,7 +773,7 @@ func (c *Column) equalRowCount(sc *stmtctx.StatementContext, val types.Datum, mo
 }
 
 // GetColumnRowCount estimates the row count by a slice of Range.
-func (c *Column) GetColumnRowCount(sc *stmtctx.StatementContext, ranges []*ranger.Range, modifyCount int64) (float64, error) {
+func (c *Column) GetColumnRowCount(sc *stmtctx.StatementContext, ranges []*ranger.Range, modifyCount int64, pkIsHandle bool) (float64, error) {
 	var rowCount float64
 	for _, rg := range ranges {
 		cmp, err := rg.LowVal[0].CompareDatum(sc, &rg.HighVal[0])
@@ -741,6 +783,11 @@ func (c *Column) GetColumnRowCount(sc *stmtctx.StatementContext, ranges []*range
 		if cmp == 0 {
 			// the point case.
 			if !rg.LowExclude && !rg.HighExclude {
+				// In this case, the row count is at most 1.
+				if pkIsHandle {
+					rowCount += 1
+					continue
+				}
 				var cnt float64
 				cnt, err = c.equalRowCount(sc, rg.LowVal[0], modifyCount)
 				if err != nil {
@@ -855,6 +902,11 @@ func (idx *Index) GetRowCount(sc *stmtctx.StatementContext, indexRanges []*range
 				continue
 			}
 			if fullLen {
+				// At most 1 in this case.
+				if idx.Info.Unique {
+					totalCount += 1
+					continue
+				}
 				count, err := idx.equalRowCount(sc, lb, modifyCount)
 				if err != nil {
 					return 0, err

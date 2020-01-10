@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/kv"
@@ -37,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	mockpkg "github.com/pingcap/tidb/util/mock"
+	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pingcap/tipb/go-tipb"
 	"google.golang.org/grpc"
@@ -48,6 +50,7 @@ var dummySlice = make([]byte, 0)
 type dagContext struct {
 	dagReq    *tipb.DAGRequest
 	keyRanges []*coprocessor.KeyRange
+	startTS   uint64
 	evalCtx   *evalContext
 }
 
@@ -86,7 +89,9 @@ func (h *rpcHandler) handleCopDAGRequest(req *coprocessor.Request) *coprocessor.
 	if err == nil {
 		err = h.fillUpData4SelectResponse(selResp, dagReq, dagCtx, rows)
 	}
-
+	// FIXME: some err such as (overflow) will be include in Response.OtherError with calling this buildResp.
+	//  Such err should only be marshal in the data but not in OtherError.
+	//  However, we can not distinguish such err now.
 	return buildResp(selResp, execDetails, err)
 }
 
@@ -113,6 +118,7 @@ func (h *rpcHandler) buildDAGExecutor(req *coprocessor.Request) (*dagContext, ex
 	ctx := &dagContext{
 		dagReq:    dagReq,
 		keyRanges: req.Ranges,
+		startTS:   req.StartTs,
 		evalCtx:   &evalContext{sc: sc},
 	}
 	e, err := h.buildDAG(ctx, dagReq.Executors)
@@ -126,11 +132,7 @@ func (h *rpcHandler) buildDAGExecutor(req *coprocessor.Request) (*dagContext, ex
 // is set, the daylight saving problem must be considered. Otherwise the
 // timezone offset in seconds east of UTC is used to constructed the timezone.
 func constructTimeZone(name string, offset int) (*time.Location, error) {
-	if name != "" {
-		return timeutil.LoadLocation(name)
-	}
-
-	return time.FixedZone("", offset), nil
+	return timeutil.ConstructTimeZone(name, offset)
 }
 
 func (h *rpcHandler) handleCopStream(ctx context.Context, req *coprocessor.Request) (tikvpb.Tikv_CoprocessorStreamClient, error) {
@@ -194,15 +196,44 @@ func (h *rpcHandler) buildTableScan(ctx *dagContext, executor *tipb.Executor) (*
 		return nil, errors.Trace(err)
 	}
 
+	startTS := ctx.startTS
+	if startTS == 0 {
+		startTS = ctx.dagReq.GetStartTsFallback()
+	}
+	colInfos := make([]rowcodec.ColInfo, len(columns))
+	for i := range colInfos {
+		col := columns[i]
+		colInfos[i] = rowcodec.ColInfo{
+			ID:         col.ColumnId,
+			Tp:         col.Tp,
+			Flag:       col.Flag,
+			IsPKHandle: col.GetPkHandle(),
+		}
+	}
+	defVal := func(i int) ([]byte, error) {
+		col := columns[i]
+		if col.DefaultVal == nil {
+			return nil, nil
+		}
+		// col.DefaultVal always be  varint `[flag]+[value]`.
+		if len(col.DefaultVal) < 1 {
+			panic("invalid default value")
+		}
+		return col.DefaultVal, nil
+	}
+	rd := rowcodec.NewByteDecoder(colInfos, -1, defVal, nil)
 	e := &tableScanExec{
 		TableScan:      executor.TblScan,
 		kvRanges:       ranges,
 		colIDs:         ctx.evalCtx.colIDs,
-		startTS:        ctx.dagReq.GetStartTs(),
+		startTS:        startTS,
 		isolationLevel: h.isolationLevel,
+		resolvedLocks:  h.resolvedLocks,
 		mvccStore:      h.mvccStore,
 		execDetail:     new(execDetail),
+		rd:             rd,
 	}
+
 	if ctx.dagReq.CollectRangeCounts != nil && *ctx.dagReq.CollectRangeCounts {
 		e.counts = make([]int64, len(ranges))
 	}
@@ -232,12 +263,17 @@ func (h *rpcHandler) buildIndexScan(ctx *dagContext, executor *tipb.Executor) (*
 		return nil, errors.Trace(err)
 	}
 
+	startTS := ctx.startTS
+	if startTS == 0 {
+		startTS = ctx.dagReq.GetStartTsFallback()
+	}
 	e := &indexScanExec{
 		IndexScan:      executor.IdxScan,
 		kvRanges:       ranges,
 		colsLen:        len(columns),
-		startTS:        ctx.dagReq.GetStartTs(),
+		startTS:        startTS,
 		isolationLevel: h.isolationLevel,
+		resolvedLocks:  h.resolvedLocks,
 		mvccStore:      h.mvccStore,
 		pkStatus:       pkStatus,
 		execDetail:     new(execDetail),
@@ -415,7 +451,12 @@ func flagsToStatementContext(flags uint64) *stmtctx.StatementContext {
 	sc := new(stmtctx.StatementContext)
 	sc.IgnoreTruncate = (flags & model.FlagIgnoreTruncate) > 0
 	sc.TruncateAsWarning = (flags & model.FlagTruncateAsWarning) > 0
-	sc.PadCharToFullLength = (flags & model.FlagPadCharToFullLength) > 0
+	sc.InInsertStmt = (flags & model.FlagInInsertStmt) > 0
+	sc.InSelectStmt = (flags & model.FlagInSelectStmt) > 0
+	sc.OverflowAsWarning = (flags & model.FlagOverflowAsWarning) > 0
+	sc.IgnoreZeroInDate = (flags & model.FlagIgnoreZeroInDate) > 0
+	sc.DividedByZeroAsWarning = (flags & model.FlagDividedByZeroAsWarning) > 0
+	// TODO set FlagInUpdateOrDeleteStmt, FlagInUnionStmt,
 	return sc
 }
 
@@ -563,10 +604,13 @@ func (h *rpcHandler) fillUpData4SelectResponse(selResp *tipb.SelectResponse, dag
 	switch dagReq.EncodeType {
 	case tipb.EncodeType_TypeDefault:
 		h.encodeDefault(selResp, rows, dagReq.OutputOffsets)
-	case tipb.EncodeType_TypeArrow:
+	case tipb.EncodeType_TypeChunk:
+		if dagReq.GetChunkMemoryLayout().GetEndian() != distsql.GetSystemEndian() {
+			return errors.Errorf("Mocktikv endian must be the same as TiDB system endian.")
+		}
 		colTypes := h.constructRespSchema(dagCtx)
 		loc := dagCtx.evalCtx.sc.TimeZone
-		err := h.encodeArrow(selResp, rows, colTypes, dagReq.OutputOffsets, loc)
+		err := h.encodeChunk(selResp, rows, colTypes, dagReq.OutputOffsets, loc)
 		if err != nil {
 			return err
 		}
@@ -609,10 +653,11 @@ func (h *rpcHandler) encodeDefault(selResp *tipb.SelectResponse, rows [][][]byte
 		chunks = appendRow(chunks, requestedRow, i)
 	}
 	selResp.Chunks = chunks
+	selResp.EncodeType = tipb.EncodeType_TypeDefault
 }
 
-func (h *rpcHandler) encodeArrow(selResp *tipb.SelectResponse, rows [][][]byte, colTypes []*types.FieldType, colOrdinal []uint32, loc *time.Location) error {
-	rowBatchData := make([]byte, 0, 1024)
+func (h *rpcHandler) encodeChunk(selResp *tipb.SelectResponse, rows [][][]byte, colTypes []*types.FieldType, colOrdinal []uint32, loc *time.Location) error {
+	var chunks []tipb.Chunk
 	respColTypes := make([]*types.FieldType, 0, len(colOrdinal))
 	for _, ordinal := range colOrdinal {
 		respColTypes = append(respColTypes, colTypes[ordinal])
@@ -628,15 +673,20 @@ func (h *rpcHandler) encodeArrow(selResp *tipb.SelectResponse, rows [][][]byte, 
 			}
 		}
 		if i%rowsPerChunk == rowsPerChunk-1 {
-			rowBatchData = append(rowBatchData, encoder.Encode(chk)...)
+			chunks = append(chunks, tipb.Chunk{})
+			cur := &chunks[len(chunks)-1]
+			cur.RowsData = append(cur.RowsData, encoder.Encode(chk)...)
 			chk.Reset()
 		}
 	}
 	if chk.NumRows() > 0 {
-		rowBatchData = append(rowBatchData, encoder.Encode(chk)...)
+		chunks = append(chunks, tipb.Chunk{})
+		cur := &chunks[len(chunks)-1]
+		cur.RowsData = append(cur.RowsData, encoder.Encode(chk)...)
 		chk.Reset()
 	}
-	selResp.RowBatchData = rowBatchData
+	selResp.Chunks = chunks
+	selResp.EncodeType = tipb.EncodeType_TypeChunk
 	return nil
 }
 
@@ -690,8 +740,16 @@ func toPBError(err error) *tipb.Error {
 		perr.Code = int32(sqlErr.Code)
 		perr.Msg = sqlErr.Message
 	default:
-		perr.Code = int32(1)
-		perr.Msg = err.Error()
+		e := errors.Cause(err)
+		switch y := e.(type) {
+		case *terror.Error:
+			tmp := y.ToSQLError()
+			perr.Code = int32(tmp.Code)
+			perr.Msg = tmp.Message
+		default:
+			perr.Code = int32(1)
+			perr.Msg = err.Error()
+		}
 	}
 	return perr
 }

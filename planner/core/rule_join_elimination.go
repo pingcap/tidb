@@ -107,12 +107,7 @@ func (o *outerJoinEliminator) isInnerJoinKeysContainUniqueKey(innerPlan LogicalP
 	for _, keyInfo := range innerPlan.Schema().Keys {
 		joinKeysContainKeyInfo := true
 		for _, col := range keyInfo {
-			columnName := &ast.ColumnName{Schema: col.DBName, Table: col.TblName, Name: col.ColName}
-			c, err := joinKeys.FindColumn(columnName)
-			if err != nil {
-				return false, err
-			}
-			if c == nil {
+			if !joinKeys.Contains(col) {
 				joinKeysContainKeyInfo = false
 				break
 			}
@@ -131,21 +126,15 @@ func (o *outerJoinEliminator) isInnerJoinKeysContainIndex(innerPlan LogicalPlan,
 		return false, nil
 	}
 	for _, path := range ds.possibleAccessPaths {
-		if path.isTablePath {
+		if path.IsTablePath {
 			continue
 		}
-		idx := path.index
-		if !idx.Unique {
+		if !path.Index.Unique {
 			continue
 		}
 		joinKeysContainIndex := true
-		for _, idxCol := range idx.Columns {
-			columnName := &ast.ColumnName{Schema: ds.DBName, Table: ds.tableInfo.Name, Name: idxCol.Name}
-			c, err := joinKeys.FindColumn(columnName)
-			if err != nil {
-				return false, err
-			}
-			if c == nil {
+		for _, idxCol := range path.IdxCols {
+			if !joinKeys.Contains(idxCol) {
 				joinKeysContainIndex = false
 				break
 			}
@@ -210,7 +199,10 @@ func (o *outerJoinEliminator) doOptimize(p LogicalPlan, aggCols []*expression.Co
 			parentCols = append(parentCols, expression.ExtractColumns(expr)...)
 		}
 	case *LogicalAggregation:
-		parentCols = append(parentCols[:0], x.groupByCols...)
+		parentCols = parentCols[:0]
+		for _, groupByItem := range x.GroupByItems {
+			parentCols = append(parentCols, expression.ExtractColumns(groupByItem)...)
+		}
 		for _, aggDesc := range x.AggFuncs {
 			for _, expr := range aggDesc.Args {
 				parentCols = append(parentCols, expression.ExtractColumns(expr)...)

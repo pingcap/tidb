@@ -115,7 +115,7 @@ func (e *SetExecutor) setSysVariable(name string, v *expression.VarAssignment) e
 	sessionVars := e.ctx.GetSessionVars()
 	sysVar := variable.GetSysVar(name)
 	if sysVar == nil {
-		return variable.UnknownSystemVar.GenWithStackByArgs(name)
+		return variable.ErrUnknownSystemVar.GenWithStackByArgs(name)
 	}
 	if sysVar.Scope == variable.ScopeNone {
 		return errors.Errorf("Variable '%s' is a read only variable", name)
@@ -188,11 +188,24 @@ func (e *SetExecutor) setSysVariable(name string, v *expression.VarAssignment) e
 			valStr, err = value.ToString()
 			terror.Log(err)
 		}
-		logutil.BgLogger().Info("set session var", zap.Uint64("conn", sessionVars.ConnectionID), zap.String("name", name), zap.String("val", valStr))
+		if name != variable.AutoCommit {
+			logutil.BgLogger().Info("set session var", zap.Uint64("conn", sessionVars.ConnectionID), zap.String("name", name), zap.String("val", valStr))
+		} else {
+			// Some applications will set `autocommit` variable before query.
+			// This will print too many unnecessary log info.
+			logutil.BgLogger().Debug("set session var", zap.Uint64("conn", sessionVars.ConnectionID), zap.String("name", name), zap.String("val", valStr))
+		}
 	}
 
-	if name == variable.TiDBEnableStmtSummary {
+	switch name {
+	case variable.TiDBEnableStmtSummary:
 		stmtsummary.StmtSummaryByDigestMap.SetEnabled(valStr, !v.IsGlobal)
+	case variable.TiDBStmtSummaryRefreshInterval:
+		stmtsummary.StmtSummaryByDigestMap.SetRefreshInterval(valStr, !v.IsGlobal)
+	case variable.TiDBStmtSummaryHistorySize:
+		stmtsummary.StmtSummaryByDigestMap.SetHistorySize(valStr, !v.IsGlobal)
+	case variable.TiDBCapturePlanBaseline:
+		variable.CapturePlanBaseline.Set(valStr, !v.IsGlobal)
 	}
 
 	return nil

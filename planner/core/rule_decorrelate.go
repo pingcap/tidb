@@ -102,8 +102,8 @@ func (s *decorrelateSolver) optimize(ctx context.Context, p LogicalPlan) (Logica
 	if apply, ok := p.(*LogicalApply); ok {
 		outerPlan := apply.children[0]
 		innerPlan := apply.children[1]
-		apply.corCols = extractCorColumnsBySchema(apply.children[1], apply.children[0].Schema())
-		if len(apply.corCols) == 0 {
+		apply.CorCols = extractCorColumnsBySchema(apply.children[1], apply.children[0].Schema())
+		if len(apply.CorCols) == 0 {
 			// If the inner plan is non-correlated, the apply will be simplified to join.
 			join := &apply.LogicalJoin
 			join.self = join
@@ -115,7 +115,7 @@ func (s *decorrelateSolver) optimize(ctx context.Context, p LogicalPlan) (Logica
 			for _, cond := range sel.Conditions {
 				newConds = append(newConds, cond.Decorrelate(outerPlan.Schema()))
 			}
-			apply.attachOnConds(newConds)
+			apply.AttachOnConds(newConds)
 			innerPlan = sel.children[0]
 			apply.SetChildren(outerPlan, innerPlan)
 			return s.optimize(ctx, p)
@@ -196,13 +196,14 @@ func (s *decorrelateSolver) optimize(ctx context.Context, p LogicalPlan) (Logica
 				if len(eqCondWithCorCol) > 0 {
 					originalExpr := sel.Conditions
 					sel.Conditions = remainedExpr
-					apply.corCols = extractCorColumnsBySchema(apply.children[1], apply.children[0].Schema())
+					apply.CorCols = extractCorColumnsBySchema(apply.children[1], apply.children[0].Schema())
 					// There's no other correlated column.
-					if len(apply.corCols) == 0 {
+					groupByCols := expression.NewSchema(agg.groupByCols...)
+					if len(apply.CorCols) == 0 {
 						join := &apply.LogicalJoin
 						join.EqualConditions = append(join.EqualConditions, eqCondWithCorCol...)
 						for _, eqCond := range eqCondWithCorCol {
-							clonedCol := eqCond.GetArgs()[1]
+							clonedCol := eqCond.GetArgs()[1].(*expression.Column)
 							// If the join key is not in the aggregation's schema, add first row function.
 							if agg.schema.ColumnIndex(eqCond.GetArgs()[1].(*expression.Column)) == -1 {
 								newFunc, err := aggregation.NewAggFuncDesc(apply.ctx, ast.AggFuncFirstRow, []expression.Expression{clonedCol}, false)
@@ -210,12 +211,13 @@ func (s *decorrelateSolver) optimize(ctx context.Context, p LogicalPlan) (Logica
 									return nil, err
 								}
 								agg.AggFuncs = append(agg.AggFuncs, newFunc)
-								agg.schema.Append(clonedCol.(*expression.Column))
+								agg.schema.Append(clonedCol)
 								agg.schema.Columns[agg.schema.Len()-1].RetType = newFunc.RetTp
 							}
 							// If group by cols don't contain the join key, add it into this.
-							if agg.getGbyColIndex(eqCond.GetArgs()[1].(*expression.Column)) == -1 {
+							if !groupByCols.Contains(clonedCol) {
 								agg.GroupByItems = append(agg.GroupByItems, clonedCol)
+								groupByCols.Append(clonedCol)
 							}
 						}
 						agg.collectGroupByColumns()
@@ -240,7 +242,7 @@ func (s *decorrelateSolver) optimize(ctx context.Context, p LogicalPlan) (Logica
 						return s.optimize(ctx, p)
 					}
 					sel.Conditions = originalExpr
-					apply.corCols = extractCorColumnsBySchema(apply.children[1], apply.children[0].Schema())
+					apply.CorCols = extractCorColumnsBySchema(apply.children[1], apply.children[0].Schema())
 				}
 			}
 		} else if sort, ok := innerPlan.(*LogicalSort); ok {

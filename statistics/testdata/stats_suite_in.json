@@ -1,0 +1,48 @@
+[
+  {
+    "name": "TestUniqCompEqualEst",
+    "cases": [
+      "explain select * from t where a = 1 and b = 5 and 1 = 1"
+    ]
+  },
+  {
+    "name": "TestColumnIndexNullEstimation",
+    "cases": [
+      "explain select b from t where b is null",
+      "explain select b from t where b is not null",
+      "explain select b from t where b is null or b > 3",
+      "explain select b from t use index(idx_b)",
+      "explain select b from t where b < 4",
+      "explain select * from t where a is null",
+      "explain select * from t where a is not null",
+      "explain select * from t where a is null or a > 3",
+      "explain select * from t",
+      "explain select * from t where a < 4"
+    ]
+  },
+  {
+    "name": "TestDiscreteDistribution",
+    "cases": [
+      "explain select * from t where a = 'tw' and b < 0"
+    ]
+  },
+  {
+    "name": "TestPrimaryKeySelectivity",
+    "cases": [
+      [
+        "explain select * from t where a > \"t\""
+      ],
+      [
+        "drop table t",
+        "create table t(a int primary key, b int)",
+        "explain select * from t where a > 1"
+      ]
+    ]
+  },
+  {
+    "name": "TestSelectCombinedLowBound",
+    "cases": [
+      "explain select * from t where kid = 1"
+    ]
+  }
+]

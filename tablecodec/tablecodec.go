@@ -24,15 +24,16 @@ import (
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/structure"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/rowcodec"
 )
 
 var (
-	errInvalidKey         = terror.ClassXEval.New(codeInvalidKey, "invalid key")
-	errInvalidRecordKey   = terror.ClassXEval.New(codeInvalidRecordKey, "invalid record key")
-	errInvalidIndexKey    = terror.ClassXEval.New(codeInvalidIndexKey, "invalid index key")
-	errInvalidColumnCount = terror.ClassXEval.New(codeInvalidColumnCount, "invalid column count")
+	errInvalidKey       = terror.ClassXEval.New(mysql.ErrInvalidKey, mysql.MySQLErrName[mysql.ErrInvalidKey])
+	errInvalidRecordKey = terror.ClassXEval.New(mysql.ErrInvalidRecordKey, mysql.MySQLErrName[mysql.ErrInvalidRecordKey])
+	errInvalidIndexKey  = terror.ClassXEval.New(mysql.ErrInvalidIndexKey, mysql.MySQLErrName[mysql.ErrInvalidIndexKey])
 )
 
 var (
@@ -42,9 +43,10 @@ var (
 )
 
 const (
-	idLen                 = 8
-	prefixLen             = 1 + idLen /*tableID*/ + 2
-	recordRowKeyLen       = prefixLen + idLen /*handle*/
+	idLen     = 8
+	prefixLen = 1 + idLen /*tableID*/ + 2
+	// RecordRowKeyLen is public for calculating avgerage row size.
+	RecordRowKeyLen       = prefixLen + idLen /*handle*/
 	tablePrefixLength     = 1
 	recordPrefixSepLength = 2
 )
@@ -59,7 +61,7 @@ func TablePrefix() []byte {
 
 // EncodeRowKey encodes the table id and record handle into a kv.Key
 func EncodeRowKey(tableID int64, encodedHandle []byte) kv.Key {
-	buf := make([]byte, 0, recordRowKeyLen)
+	buf := make([]byte, 0, RecordRowKeyLen)
 	buf = appendTableRecordPrefix(buf, tableID)
 	buf = append(buf, encodedHandle...)
 	return buf
@@ -67,7 +69,7 @@ func EncodeRowKey(tableID int64, encodedHandle []byte) kv.Key {
 
 // EncodeRowKeyWithHandle encodes the table id, row handle into a kv.Key
 func EncodeRowKeyWithHandle(tableID int64, handle int64) kv.Key {
-	buf := make([]byte, 0, recordRowKeyLen)
+	buf := make([]byte, 0, RecordRowKeyLen)
 	buf = appendTableRecordPrefix(buf, tableID)
 	buf = codec.EncodeInt(buf, handle)
 	return buf
@@ -149,6 +151,28 @@ func DecodeIndexKey(key kv.Key) (tableID int64, indexID int64, indexValues []str
 	return
 }
 
+// DecodeMetaKey decodes the key and get the meta key and meta field.
+func DecodeMetaKey(ek kv.Key) (key []byte, field []byte, err error) {
+	var tp uint64
+	prefix := []byte("m")
+	if !bytes.HasPrefix(ek, prefix) {
+		return nil, nil, errors.New("invalid encoded hash data key prefix")
+	}
+	ek = ek[len(prefix):]
+	ek, key, err = codec.DecodeBytes(ek, nil)
+	if err != nil {
+		return nil, nil, errors.Trace(err)
+	}
+	ek, tp, err = codec.DecodeUint(ek)
+	if err != nil {
+		return nil, nil, errors.Trace(err)
+	} else if structure.TypeFlag(tp) != structure.HashData {
+		return nil, nil, errors.Errorf("invalid encoded hash data key flag %c", byte(tp))
+	}
+	_, field, err = codec.DecodeBytes(ek, nil)
+	return key, field, errors.Trace(err)
+}
+
 // DecodeIndexKeyPrefix decodes the key and gets the tableID, indexID, indexValues.
 func DecodeIndexKeyPrefix(key kv.Key) (tableID int64, indexID int64, indexValues []byte, err error) {
 	k := key
@@ -214,7 +238,7 @@ func DecodeTableID(key kv.Key) int64 {
 
 // DecodeRowKey decodes the key and gets the handle.
 func DecodeRowKey(key kv.Key) (int64, error) {
-	if len(key) != recordRowKeyLen || !hasTablePrefix(key) || !hasRecordPrefixSep(key[prefixLen-2:]) {
+	if len(key) != RecordRowKeyLen || !hasTablePrefix(key) || !hasRecordPrefixSep(key[prefixLen-2:]) {
 		return 0, errInvalidKey.GenWithStack("invalid key - %q", key)
 	}
 	u := binary.BigEndian.Uint64(key[prefixLen:])
@@ -232,10 +256,23 @@ func EncodeValue(sc *stmtctx.StatementContext, b []byte, raw types.Datum) ([]byt
 }
 
 // EncodeRow encode row data and column ids into a slice of byte.
-// Row layout: colID1, value1, colID2, value2, .....
 // valBuf and values pass by caller, for reducing EncodeRow allocates temporary bufs. If you pass valBuf and values as nil,
 // EncodeRow will allocate it.
-func EncodeRow(sc *stmtctx.StatementContext, row []types.Datum, colIDs []int64, valBuf []byte, values []types.Datum) ([]byte, error) {
+func EncodeRow(sc *stmtctx.StatementContext, row []types.Datum, colIDs []int64, valBuf []byte, values []types.Datum, e *rowcodec.Encoder) ([]byte, error) {
+	if len(row) != len(colIDs) {
+		return nil, errors.Errorf("EncodeRow error: data and columnID count not match %d vs %d", len(row), len(colIDs))
+	}
+	if e.Enable {
+		return e.Encode(sc, colIDs, row, valBuf)
+	}
+	return EncodeOldRow(sc, row, colIDs, valBuf, values)
+}
+
+// EncodeOldRow encode row data and column ids into a slice of byte.
+// Row layout: colID1, value1, colID2, value2, .....
+// valBuf and values pass by caller, for reducing EncodeOldRow allocates temporary bufs. If you pass valBuf and values as nil,
+// EncodeOldRow will allocate it.
+func EncodeOldRow(sc *stmtctx.StatementContext, row []types.Datum, colIDs []int64, valBuf []byte, values []types.Datum) ([]byte, error) {
 	if len(row) != len(colIDs) {
 		return nil, errors.Errorf("EncodeRow error: data and columnID count not match %d vs %d", len(row), len(colIDs))
 	}
@@ -263,7 +300,7 @@ func flatten(sc *stmtctx.StatementContext, data types.Datum, ret *types.Datum) e
 	case types.KindMysqlTime:
 		// for mysql datetime, timestamp and date type
 		t := data.GetMysqlTime()
-		if t.Type == mysql.TypeTimestamp && sc.TimeZone != time.UTC {
+		if t.Type() == mysql.TypeTimestamp && sc.TimeZone != time.UTC {
 			err := t.ConvertTimeZone(sc.TimeZone, time.UTC)
 			if err != nil {
 				return errors.Trace(err)
@@ -307,6 +344,38 @@ func DecodeColumnValue(data []byte, ft *types.FieldType, loc *time.Location) (ty
 		return types.Datum{}, errors.Trace(err)
 	}
 	return colDatum, nil
+}
+
+// DecodeRowWithMapNew decode a row top datum map.
+func DecodeRowWithMapNew(b []byte, cols map[int64]*types.FieldType, loc *time.Location, row map[int64]types.Datum) (map[int64]types.Datum, error) {
+	if row == nil {
+		row = make(map[int64]types.Datum, len(cols))
+	}
+	if b == nil {
+		return row, nil
+	}
+	if len(b) == 1 && b[0] == codec.NilFlag {
+		return row, nil
+	}
+
+	reqCols := make([]rowcodec.ColInfo, len(cols))
+	var idx int
+	for id, tp := range cols {
+		reqCols[idx] = rowcodec.ColInfo{
+			ID:      id,
+			Tp:      int32(tp.Tp),
+			Flag:    int32(tp.Flag),
+			Flen:    tp.Flen,
+			Decimal: tp.Decimal,
+			Elems:   tp.Elems,
+		}
+		idx++
+	}
+	// for decodeToMap:
+	// - no need handle
+	// - no need get default value
+	rd := rowcodec.NewDatumMapDecoder(reqCols, -1, loc)
+	return rd.DecodeToDatumMap(b, -1, row)
 }
 
 // DecodeRowWithMap decodes a byte slice into datums with a existing row map.
@@ -366,7 +435,10 @@ func DecodeRowWithMap(b []byte, cols map[int64]*types.FieldType, loc *time.Locat
 // DecodeRow decodes a byte slice into datums.
 // Row layout: colID1, value1, colID2, value2, .....
 func DecodeRow(b []byte, cols map[int64]*types.FieldType, loc *time.Location) (map[int64]types.Datum, error) {
-	return DecodeRowWithMap(b, cols, loc, nil)
+	if !rowcodec.IsNewFormat(b) {
+		return DecodeRowWithMap(b, cols, loc, nil)
+	}
+	return DecodeRowWithMapNew(b, cols, loc, nil)
 }
 
 // CutRowNew cuts encoded row into byte slices and return columns' byte slice.
@@ -436,9 +508,7 @@ func unflatten(datum types.Datum, ft *types.FieldType, loc *time.Location) (type
 		mysql.TypeString:
 		return datum, nil
 	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
-		var t types.Time
-		t.Type = ft.Tp
-		t.Fsp = int8(ft.Decimal)
+		t := types.NewTime(types.ZeroCoreTime, ft.Tp, int8(ft.Decimal))
 		var err error
 		err = t.FromPackedUint(datum.GetUint64())
 		if err != nil {
@@ -655,11 +725,16 @@ func GenTableIndexPrefix(tableID int64) kv.Key {
 	return appendTableIndexPrefix(buf, tableID)
 }
 
+// IsIndexKey is used to check whether the key is an index key.
+func IsIndexKey(k []byte) bool {
+	return len(k) > 11 && k[0] == 't' && k[10] == 'i'
+}
+
 // IsUntouchedIndexKValue uses to check whether the key is index key, and the value is untouched,
 // since the untouched index key/value is no need to commit.
 func IsUntouchedIndexKValue(k, v []byte) bool {
 	vLen := len(v)
-	return (len(k) > 11 && k[0] == 't' && k[10] == 'i') &&
+	return IsIndexKey(k) &&
 		((vLen == 1 || vLen == 9) && v[vLen-1] == kv.UnCommitIndexKVFlag)
 }
 
@@ -673,8 +748,8 @@ func GenTablePrefix(tableID int64) kv.Key {
 
 // TruncateToRowKeyLen truncates the key to row key length if the key is longer than row key.
 func TruncateToRowKeyLen(key kv.Key) kv.Key {
-	if len(key) > recordRowKeyLen {
-		return key[:recordRowKeyLen]
+	if len(key) > RecordRowKeyLen {
+		return key[:RecordRowKeyLen]
 	}
 	return key
 }
@@ -693,9 +768,11 @@ func GetTableIndexKeyRange(tableID, indexID int64) (startKey, endKey []byte) {
 	return
 }
 
-const (
-	codeInvalidRecordKey   = 4
-	codeInvalidColumnCount = 5
-	codeInvalidKey         = 6
-	codeInvalidIndexKey    = 7
-)
+func init() {
+	mySQLErrCodes := map[terror.ErrCode]uint16{
+		mysql.ErrInvalidKey:       mysql.ErrInvalidKey,
+		mysql.ErrInvalidRecordKey: mysql.ErrInvalidRecordKey,
+		mysql.ErrInvalidIndexKey:  mysql.ErrInvalidIndexKey,
+	}
+	terror.ErrClassToMySQLCodes[terror.ClassXEval] = mySQLErrCodes
+}

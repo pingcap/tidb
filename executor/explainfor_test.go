@@ -67,7 +67,7 @@ func (s *testSuite) TestExplainFor(c *C) {
 	tkUser.Se.SetSessionManager(&mockSessionManager1{PS: ps})
 	tkRoot.MustQuery(fmt.Sprintf("explain for connection %d", tkRootProcess.ID)).Check(testkit.Rows(
 		"TableReader_5 10000.00 root data:TableScan_4",
-		"└─TableScan_4 10000.00 cop table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
+		"└─TableScan_4 10000.00 cop[tikv] table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
 	))
 	err := tkUser.ExecToErr(fmt.Sprintf("explain for connection %d", tkRootProcess.ID))
 	c.Check(core.ErrAccessDenied.Equal(err), IsTrue)
@@ -83,6 +83,8 @@ func (s *testSuite) TestExplainFor(c *C) {
 func (s *testSuite) TestIssue11124(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk2 := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists kankan1")
+	tk.MustExec("drop table if exists kankan2")
 	tk.MustExec("create table kankan1(id int, name text);")
 	tk.MustExec("create table kankan2(id int, h1 text);")
 	tk.MustExec("insert into kankan1 values(1, 'a'), (2, 'a');")
@@ -98,4 +100,12 @@ func (s *testSuite) TestIssue11124(c *C) {
 	for i := range rs {
 		c.Assert(rs[i], DeepEquals, rs2[i])
 	}
+}
+
+func (s *testSuite) TestExplainMetricTable(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustQuery(fmt.Sprintf("desc select * from METRIC_SCHEMA.query_duration where time >= '2019-12-23 16:10:13' and time <= '2019-12-23 16:30:13' ")).Check(testkit.Rows(
+		"MemTableScan_5 10000.00 root PromQL:histogram_quantile(0.9, sum(rate(tidb_server_handle_query_duration_seconds_bucket{}[60s])) by (le,sql_type,instance)), start_time:2019-12-23 16:10:13, end_time:2019-12-23 16:30:13, step:1m0s"))
+	tk.MustQuery(fmt.Sprintf("desc select * from METRIC_SCHEMA.up where time >= '2019-12-23 16:10:13' and time <= '2019-12-23 16:30:13' ")).Check(testkit.Rows(
+		"MemTableScan_5 10000.00 root PromQL:up{}, start_time:2019-12-23 16:10:13, end_time:2019-12-23 16:30:13, step:1m0s"))
 }

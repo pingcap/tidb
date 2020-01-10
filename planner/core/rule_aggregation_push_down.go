@@ -14,10 +14,8 @@ package core
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
@@ -37,7 +35,7 @@ type aggregationPushDownSolver struct {
 // Currently we don't support avg and concat.
 func (a *aggregationPushDownSolver) isDecomposable(fun *aggregation.AggFuncDesc) bool {
 	switch fun.Name {
-	case ast.AggFuncAvg, ast.AggFuncGroupConcat:
+	case ast.AggFuncAvg, ast.AggFuncGroupConcat, ast.AggFuncVarPop:
 		// TODO: Support avg push down.
 		return false
 	case ast.AggFuncMax, ast.AggFuncMin, ast.AggFuncFirstRow:
@@ -176,7 +174,6 @@ func (a *aggregationPushDownSolver) decompose(ctx sessionctx.Context, aggFunc *a
 	result := []*aggregation.AggFuncDesc{aggFunc.Clone()}
 	for _, aggFunc := range result {
 		schema.Append(&expression.Column{
-			ColName:  model.NewCIStr(fmt.Sprintf("join_agg_%d", schema.Len())), // useless but for debug
 			UniqueID: ctx.GetSessionVars().AllocPlanColumnID(),
 			RetType:  aggFunc.RetTp,
 		})
@@ -357,7 +354,7 @@ func (a *aggregationPushDownSolver) aggPushDown(p LogicalPlan) (_ LogicalPlan, e
 					}
 					join.SetChildren(lChild, rChild)
 					join.SetSchema(expression.MergeSchema(lChild.Schema(), rChild.Schema()))
-					join.buildKeyInfo()
+					buildKeyInfo(join)
 					proj := a.tryToEliminateAggregation(agg)
 					if proj != nil {
 						p = proj

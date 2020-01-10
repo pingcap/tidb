@@ -14,9 +14,11 @@
 package util
 
 import (
+	"bytes"
 	"context"
 	"encoding/hex"
 	"fmt"
+	"strconv"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/terror"
@@ -28,13 +30,14 @@ import (
 )
 
 const (
-	deleteRangesTable         = `gc_delete_range`
-	doneDeleteRangesTable     = `gc_delete_range_done`
-	loadDeleteRangeSQL        = `SELECT HIGH_PRIORITY job_id, element_id, start_key, end_key FROM mysql.%s WHERE ts < %v`
-	recordDoneDeletedRangeSQL = `INSERT IGNORE INTO mysql.gc_delete_range_done SELECT * FROM mysql.gc_delete_range WHERE job_id = %d AND element_id = %d`
-	completeDeleteRangeSQL    = `DELETE FROM mysql.gc_delete_range WHERE job_id = %d AND element_id = %d`
-	updateDeleteRangeSQL      = `UPDATE mysql.gc_delete_range SET start_key = "%s" WHERE job_id = %d AND element_id = %d AND start_key = "%s"`
-	deleteDoneRecordSQL       = `DELETE FROM mysql.gc_delete_range_done WHERE job_id = %d AND element_id = %d`
+	deleteRangesTable            = `gc_delete_range`
+	doneDeleteRangesTable        = `gc_delete_range_done`
+	loadDeleteRangeSQL           = `SELECT HIGH_PRIORITY job_id, element_id, start_key, end_key FROM mysql.%s WHERE ts < %v`
+	recordDoneDeletedRangeSQL    = `INSERT IGNORE INTO mysql.gc_delete_range_done SELECT * FROM mysql.gc_delete_range WHERE job_id = %d AND element_id = %d`
+	completeDeleteRangeSQL       = `DELETE FROM mysql.gc_delete_range WHERE job_id = %d AND element_id = %d`
+	completeDeleteMultiRangesSQL = `DELETE FROM mysql.gc_delete_range WHERE job_id = %d AND element_id in (%v)`
+	updateDeleteRangeSQL         = `UPDATE mysql.gc_delete_range SET start_key = "%s" WHERE job_id = %d AND element_id = %d AND start_key = "%s"`
+	deleteDoneRecordSQL          = `DELETE FROM mysql.gc_delete_range_done WHERE job_id = %d AND element_id = %d`
 )
 
 // DelRangeTask is for run delete-range command in gc_worker.
@@ -115,6 +118,20 @@ func CompleteDeleteRange(ctx sessionctx.Context, dr DelRangeTask) error {
 // RemoveFromGCDeleteRange is exported for ddl pkg to use.
 func RemoveFromGCDeleteRange(ctx sessionctx.Context, jobID, elementID int64) error {
 	sql := fmt.Sprintf(completeDeleteRangeSQL, jobID, elementID)
+	_, err := ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sql)
+	return errors.Trace(err)
+}
+
+// RemoveMultiFromGCDeleteRange is exported for ddl pkg to use.
+func RemoveMultiFromGCDeleteRange(ctx sessionctx.Context, jobID int64, elementIDs []int64) error {
+	var buf bytes.Buffer
+	for i, elementID := range elementIDs {
+		if i > 0 {
+			buf.WriteString(", ")
+		}
+		buf.WriteString(strconv.FormatInt(elementID, 10))
+	}
+	sql := fmt.Sprintf(completeDeleteMultiRangesSQL, jobID, buf.String())
 	_, err := ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sql)
 	return errors.Trace(err)
 }

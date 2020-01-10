@@ -51,6 +51,8 @@ func Build(ctx sessionctx.Context, aggFuncDesc *aggregation.AggFuncDesc, ordinal
 		return buildBitXor(aggFuncDesc, ordinal)
 	case ast.AggFuncBitAnd:
 		return buildBitAnd(aggFuncDesc, ordinal)
+	case ast.AggFuncVarPop:
+		return buildVarPop(aggFuncDesc, ordinal)
 	}
 	return nil
 }
@@ -211,6 +213,13 @@ func buildFirstRow(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 	switch aggFuncDesc.Mode {
 	case aggregation.DedupMode:
 	default:
+		switch fieldType.Tp {
+		case mysql.TypeEnum:
+			return &firstRow4Enum{base}
+		case mysql.TypeSet:
+			return &firstRow4Set{base}
+		}
+
 		switch evalType {
 		case types.ETInt:
 			return &firstRow4Int{base}
@@ -343,6 +352,25 @@ func buildBitAnd(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 	return &bitAndUint64{baseBitAggFunc{base}}
 }
 
+// buildVarPop builds the AggFunc implementation for function "VAR_POP".
+func buildVarPop(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
+	base := baseVarPopAggFunc{
+		baseAggFunc{
+			args:    aggFuncDesc.Args,
+			ordinal: ordinal,
+		},
+	}
+	switch aggFuncDesc.Mode {
+	case aggregation.DedupMode:
+		return nil
+	default:
+		if aggFuncDesc.HasDistinct {
+			return &varPop4DistinctFloat64{base}
+		}
+		return &varPop4Float64{base}
+	}
+}
+
 // buildRowNumber builds the AggFunc implementation for function "ROW_NUMBER".
 func buildRowNumber(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 	base := baseAggFunc{
@@ -424,7 +452,7 @@ func buildLeadLag(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) baseLeadLag
 		args:    aggFuncDesc.Args,
 		ordinal: ordinal,
 	}
-	return baseLeadLag{baseAggFunc: base, offset: offset, defaultExpr: defaultExpr, retTp: aggFuncDesc.RetTp}
+	return baseLeadLag{baseAggFunc: base, offset: offset, defaultExpr: defaultExpr, valueEvaluator: buildValueEvaluator(aggFuncDesc.RetTp)}
 }
 
 func buildLead(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {

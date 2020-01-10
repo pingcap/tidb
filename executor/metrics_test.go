@@ -20,13 +20,14 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/planner"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
-func (s *testSuite4) TestStmtLabel(c *C) {
+func (s *testSuite7) TestStmtLabel(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table label (c1 int primary key, c2 int, c3 int, index (c2))")
@@ -61,10 +62,10 @@ func (s *testSuite4) TestStmtLabel(c *C) {
 	for _, tt := range tests {
 		stmtNode, err := parser.New().ParseOneStmt(tt.sql, "", "")
 		c.Check(err, IsNil)
-		is := executor.GetInfoSchema(tk.Se)
+		is := infoschema.GetInfoSchema(tk.Se)
 		err = plannercore.Preprocess(tk.Se.(sessionctx.Context), stmtNode, is)
 		c.Assert(err, IsNil)
-		_, err = planner.Optimize(context.TODO(), tk.Se, stmtNode, is)
+		_, _, err = planner.Optimize(context.TODO(), tk.Se, stmtNode, is)
 		c.Assert(err, IsNil)
 		c.Assert(executor.GetStmtLabel(stmtNode), Equals, tt.label)
 	}

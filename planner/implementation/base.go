@@ -23,10 +23,10 @@ type baseImpl struct {
 	plan plannercore.PhysicalPlan
 }
 
-func (impl *baseImpl) CalcCost(outCount float64, childCosts []float64, children ...*memo.Group) float64 {
+func (impl *baseImpl) CalcCost(outCount float64, children ...memo.Implementation) float64 {
 	impl.cost = 0
-	for _, childCost := range childCosts {
-		impl.cost += childCost
+	for _, child := range children {
+		impl.cost += child.GetCost()
 	}
 	return impl.cost
 }
@@ -41,4 +41,25 @@ func (impl *baseImpl) GetCost() float64 {
 
 func (impl *baseImpl) GetPlan() plannercore.PhysicalPlan {
 	return impl.plan
+}
+
+func (impl *baseImpl) AttachChildren(children ...memo.Implementation) memo.Implementation {
+	childrenPlan := make([]plannercore.PhysicalPlan, len(children))
+	for i, child := range children {
+		childrenPlan[i] = child.GetPlan()
+	}
+	impl.plan.SetChildren(childrenPlan...)
+	return impl
+}
+
+func (impl *baseImpl) ScaleCostLimit(costLimit float64) float64 {
+	return costLimit
+}
+
+func (impl *baseImpl) GetCostLimit(costLimit float64, children ...memo.Implementation) float64 {
+	childrenCost := 0.0
+	for _, child := range children {
+		childrenCost += child.GetCost()
+	}
+	return costLimit - childrenCost
 }

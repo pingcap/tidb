@@ -40,8 +40,6 @@ var (
 		supported:    []ast.AlgorithmType{ast.AlgorithmTypeInplace},
 		defAlgorithm: ast.AlgorithmTypeInplace,
 	}
-
-	defaultAlgorithm = ast.AlgorithmTypeInstant
 )
 
 func getProperAlgorithm(specify ast.AlgorithmType, algorithm *AlterAlgorithm) (ast.AlgorithmType, error) {

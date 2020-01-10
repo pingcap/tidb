@@ -3,8 +3,13 @@ create table t (a int primary key, b int, c int, d int, e int, f int);
 create index tb on t (b);
 create index tc on t (c);
 create index td on t (d);
+# generate a, b, c, d, e, f from 0 to 5000000 and a = b = c = d = e = f
 load stats 's/explain_indexmerge_stats_t.json';
+explain select * from t where a < 50 or b < 50;
+explain select * from t where (a < 50 or b < 50) and f > 100;
+explain select * from t where b < 50 or c < 50;
 set session tidb_enable_index_merge = on;
+# choose the best plan based on cost
 explain select * from t where a < 50 or b < 50;
 explain select * from t where (a < 50 or b < 50) and f > 100;
 explain select * from t where a < 50 or b < 5000000;
@@ -13,3 +18,12 @@ explain select * from t where b < 50 or c < 5000000;
 explain select * from t where a < 50 or b < 50 or c < 50;
 explain select * from t where (b < 10000 or c < 10000) and (a < 10 or d < 10) and f < 10;
 explain format="dot" select * from t where (a < 50 or b < 50) and f > 100;
+set session tidb_enable_index_merge = off;
+# be forced to use IndexMerge
+explain select /*+ use_index_merge(t, tb, tc) */ * from t where b < 50 or c < 5000000;
+explain select /*+ use_index_merge(t, tb, tc) */ * from t where (b < 10000 or c < 10000) and (a < 10 or d < 10) and f < 10;
+explain select /*+ use_index_merge(t, tb) */ * from t where b < 50 or c < 5000000;
+# no_index_merge hint
+explain select /*+ no_index_merge(), use_index_merge(t, tb, tc) */ * from t where b < 50 or c < 5000000;
+# tableScan can be a partial path to fetch handle
+explain select /*+ use_index_merge(t, primary, tb) */ * from t where a < 50 or b < 5000000;

@@ -15,6 +15,7 @@ package executor
 
 import (
 	"context"
+	"sync"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
@@ -28,12 +29,17 @@ import (
 // DirtyDB stores uncommitted write operations for a transaction.
 // It is stored and retrieved by context.Value and context.SetValue method.
 type DirtyDB struct {
+	sync.Mutex
+
 	// tables is a map whose key is tableID.
 	tables map[int64]*DirtyTable
 }
 
 // GetDirtyTable gets the DirtyTable by id from the DirtyDB.
 func (udb *DirtyDB) GetDirtyTable(tid int64) *DirtyTable {
+	// The index join access the tables map parallelly.
+	// But the map throws panic in this case. So it's locked.
+	udb.Lock()
 	dt, ok := udb.tables[tid]
 	if !ok {
 		dt = &DirtyTable{
@@ -43,6 +49,7 @@ func (udb *DirtyDB) GetDirtyTable(tid int64) *DirtyTable {
 		}
 		udb.tables[tid] = dt
 	}
+	udb.Unlock()
 	return dt
 }
 
@@ -64,6 +71,11 @@ func (dt *DirtyTable) AddRow(handle int64) {
 func (dt *DirtyTable) DeleteRow(handle int64) {
 	delete(dt.addedRows, handle)
 	dt.deletedRows[handle] = struct{}{}
+}
+
+// IsEmpty checks whether the table is empty.
+func (dt *DirtyTable) IsEmpty() bool {
+	return len(dt.addedRows)+len(dt.deletedRows) == 0
 }
 
 // GetDirtyDB returns the DirtyDB bind to the context.
@@ -151,41 +163,39 @@ func (us *UnionScanExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 // getOneRow gets one result row from dirty table or child.
 func (us *UnionScanExec) getOneRow(ctx context.Context) ([]types.Datum, error) {
-	for {
-		snapshotRow, err := us.getSnapshotRow(ctx)
+	snapshotRow, err := us.getSnapshotRow(ctx)
+	if err != nil {
+		return nil, err
+	}
+	addedRow := us.getAddedRow()
+	var row []types.Datum
+	var isSnapshotRow bool
+	if addedRow == nil {
+		row = snapshotRow
+		isSnapshotRow = true
+	} else if snapshotRow == nil {
+		row = addedRow
+	} else {
+		isSnapshotRow, err = us.shouldPickFirstRow(snapshotRow, addedRow)
 		if err != nil {
 			return nil, err
 		}
-		addedRow := us.getAddedRow()
-		var row []types.Datum
-		var isSnapshotRow bool
-		if addedRow == nil {
-			row = snapshotRow
-			isSnapshotRow = true
-		} else if snapshotRow == nil {
-			row = addedRow
-		} else {
-			isSnapshotRow, err = us.shouldPickFirstRow(snapshotRow, addedRow)
-			if err != nil {
-				return nil, err
-			}
-			if isSnapshotRow {
-				row = snapshotRow
-			} else {
-				row = addedRow
-			}
-		}
-		if row == nil {
-			return nil, nil
-		}
-
 		if isSnapshotRow {
-			us.cursor4SnapshotRows++
+			row = snapshotRow
 		} else {
-			us.cursor4AddRows++
+			row = addedRow
 		}
-		return row, nil
 	}
+	if row == nil {
+		return nil, nil
+	}
+
+	if isSnapshotRow {
+		us.cursor4SnapshotRows++
+	} else {
+		us.cursor4AddRows++
+	}
+	return row, nil
 }
 
 func (us *UnionScanExec) getSnapshotRow(ctx context.Context) ([]types.Datum, error) {

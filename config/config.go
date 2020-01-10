@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/json"
 	"fmt"
 	"io/ioutil"
 	"os"
@@ -28,6 +29,7 @@ import (
 	"github.com/BurntSushi/toml"
 	"github.com/pingcap/errors"
 	zaplog "github.com/pingcap/log"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/util/logutil"
 	tracing "github.com/uber/jaeger-client-go/config"
 	"go.uber.org/atomic"
@@ -35,11 +37,9 @@ import (
 
 // Config number limitations
 const (
-	MaxLogFileSize    = 4096 // MB
-	MinPessimisticTTL = time.Second * 15
-	MaxPessimisticTTL = time.Second * 120
+	MaxLogFileSize = 4096 // MB
 	// DefTxnTotalSizeLimit is the default value of TxnTxnTotalSizeLimit.
-	DefTxnTotalSizeLimit = 100 * 1024 * 1024
+	DefTxnTotalSizeLimit = 1024 * 1024 * 1024
 )
 
 // Valid config maps
@@ -71,11 +71,12 @@ type Config struct {
 	OOMAction        string          `toml:"oom-action" json:"oom-action"`
 	MemQuotaQuery    int64           `toml:"mem-quota-query" json:"mem-quota-query"`
 	EnableStreaming  bool            `toml:"enable-streaming" json:"enable-streaming"`
+	EnableBatchDML   bool            `toml:"enable-batch-dml" json:"enable-batch-dml"`
 	TxnLocalLatches  TxnLocalLatches `toml:"txn-local-latches" json:"txn-local-latches"`
 	// Set sys variable lower-case-table-names, ref: https://dev.mysql.com/doc/refman/5.7/en/identifier-case-sensitivity.html.
 	// TODO: We actually only support mode 2, which keeps the original case, but the comparison is case-insensitive.
-	LowerCaseTableNames int `toml:"lower-case-table-names" json:"lower-case-table-names"`
-
+	LowerCaseTableNames int               `toml:"lower-case-table-names" json:"lower-case-table-names"`
+	ServerVersion       string            `toml:"server-version" json:"server-version"`
 	Log                 Log               `toml:"log" json:"log"`
 	Security            Security          `toml:"security" json:"security"`
 	Status              Status            `toml:"status" json:"status"`
@@ -89,6 +90,8 @@ type Config struct {
 	Plugin              Plugin            `toml:"plugin" json:"plugin"`
 	PessimisticTxn      PessimisticTxn    `toml:"pessimistic-txn" json:"pessimistic-txn"`
 	CheckMb4ValueInUTF8 bool              `toml:"check-mb4-value-in-utf8" json:"check-mb4-value-in-utf8"`
+	// AlterPrimaryKey is used to control alter primary key feature.
+	AlterPrimaryKey bool `toml:"alter-primary-key" json:"alter-primary-key"`
 	// TreatOldVersionUTF8AsUTF8MB4 is use to treat old version table/column UTF8 charset as UTF8MB4. This is for compatibility.
 	// Currently not support dynamic modify, because this need to reload all old version schema.
 	TreatOldVersionUTF8AsUTF8MB4 bool `toml:"treat-old-version-utf8-as-utf8mb4" json:"treat-old-version-utf8-as-utf8mb4"`
@@ -98,6 +101,71 @@ type Config struct {
 	DelayCleanTableLock uint64      `toml:"delay-clean-table-lock" json:"delay-clean-table-lock"`
 	SplitRegionMaxNum   uint64      `toml:"split-region-max-num" json:"split-region-max-num"`
 	StmtSummary         StmtSummary `toml:"stmt-summary" json:"stmt-summary"`
+	// RepairMode indicates that the TiDB is in the repair mode for table meta.
+	RepairMode      bool     `toml:"repair-mode" json:"repair-mode"`
+	RepairTableList []string `toml:"repair-table-list" json:"repair-table-list"`
+
+	Experimental Experimental `toml:"experimental" json:"experimental"`
+}
+
+// nullableBool defaults unset bool options to unset instead of false, which enables us to know if the user has set 2
+// conflict options at the same time.
+type nullableBool struct {
+	IsValid bool
+	IsTrue  bool
+}
+
+var (
+	nbUnset = nullableBool{false, false}
+	nbFalse = nullableBool{true, false}
+	nbTrue  = nullableBool{true, true}
+)
+
+func (b *nullableBool) toBool() bool {
+	return b.IsValid && b.IsTrue
+}
+
+func (b nullableBool) MarshalJSON() ([]byte, error) {
+	switch b {
+	case nbTrue:
+		return json.Marshal(true)
+	case nbFalse:
+		return json.Marshal(false)
+	default:
+		return json.Marshal(nil)
+	}
+}
+
+func (b *nullableBool) UnmarshalText(text []byte) error {
+	str := string(text)
+	switch str {
+	case "", "null":
+		*b = nbUnset
+		return nil
+	case "true":
+		*b = nbTrue
+	case "false":
+		*b = nbFalse
+	default:
+		*b = nbUnset
+		return errors.New("Invalid value for bool type: " + str)
+	}
+	return nil
+}
+
+func (b *nullableBool) UnmarshalJSON(data []byte) error {
+	var err error
+	var v interface{}
+	if err = json.Unmarshal(data, &v); err != nil {
+		return err
+	}
+	switch raw := v.(type) {
+	case bool:
+		*b = nullableBool{true, raw}
+	default:
+		*b = nbUnset
+	}
+	return err
 }
 
 // Log is the log section of config.
@@ -106,18 +174,45 @@ type Log struct {
 	Level string `toml:"level" json:"level"`
 	// Log format. one of json, text, or console.
 	Format string `toml:"format" json:"format"`
-	// Disable automatic timestamps in output.
-	DisableTimestamp bool `toml:"disable-timestamp" json:"disable-timestamp"`
+	// Disable automatic timestamps in output. Deprecated: use EnableTimestamp instead.
+	DisableTimestamp nullableBool `toml:"disable-timestamp" json:"disable-timestamp"`
+	// EnableTimestamp enables automatic timestamps in log output.
+	EnableTimestamp nullableBool `toml:"enable-timestamp" json:"enable-timestamp"`
 	// DisableErrorStack stops annotating logs with the full stack error
+	// message. Deprecated: use EnableErrorStack instead.
+	DisableErrorStack nullableBool `toml:"disable-error-stack" json:"disable-error-stack"`
+	// EnableErrorStack enables annotating logs with the full stack error
 	// message.
-	DisableErrorStack bool `toml:"disable-error-stack" json:"disable-error-stack"`
+	EnableErrorStack nullableBool `toml:"enable-error-stack" json:"enable-error-stack"`
 	// File log config.
 	File logutil.FileLogConfig `toml:"file" json:"file"`
 
-	SlowQueryFile      string `toml:"slow-query-file" json:"slow-query-file"`
-	SlowThreshold      uint64 `toml:"slow-threshold" json:"slow-threshold"`
-	ExpensiveThreshold uint   `toml:"expensive-threshold" json:"expensive-threshold"`
-	QueryLogMaxLen     uint64 `toml:"query-log-max-len" json:"query-log-max-len"`
+	SlowQueryFile       string `toml:"slow-query-file" json:"slow-query-file"`
+	SlowThreshold       uint64 `toml:"slow-threshold" json:"slow-threshold"`
+	ExpensiveThreshold  uint   `toml:"expensive-threshold" json:"expensive-threshold"`
+	QueryLogMaxLen      uint64 `toml:"query-log-max-len" json:"query-log-max-len"`
+	EnableSlowLog       uint32 `toml:"enable-slow-log" json:"enable-slow-log"`
+	RecordPlanInSlowLog uint32 `toml:"record-plan-in-slow-log" json:"record-plan-in-slow-log"`
+}
+
+func (l *Log) getDisableTimestamp() bool {
+	if l.EnableTimestamp == nbUnset && l.DisableTimestamp == nbUnset {
+		return false
+	}
+	if l.EnableTimestamp == nbUnset {
+		return l.DisableTimestamp.toBool()
+	}
+	return !l.EnableTimestamp.toBool()
+}
+
+func (l *Log) getDisableErrorStack() bool {
+	if l.EnableErrorStack == nbUnset && l.DisableErrorStack == nbUnset {
+		return true
+	}
+	if l.EnableErrorStack == nbUnset {
+		return l.DisableErrorStack.toBool()
+	}
+	return !l.EnableErrorStack.toBool()
 }
 
 // Security is the security section of the config.
@@ -136,11 +231,12 @@ type Security struct {
 // This is needed only because logging hasn't been set up at the time we parse the config file.
 // This should all be ripped out once strict config checking is made the default behavior.
 type ErrConfigValidationFailed struct {
-	err string
+	confFile       string
+	UndecodedItems []string
 }
 
 func (e *ErrConfigValidationFailed) Error() string {
-	return e.err
+	return fmt.Sprintf("config file %s contained unknown configuration options: %s", e.confFile, strings.Join(e.UndecodedItems, ", "))
 }
 
 // ToTLSConfig generates tls's config based on security section of the config.
@@ -276,9 +372,6 @@ type TiKVClient struct {
 	// CommitTimeout is the max time which command 'commit' will wait.
 	CommitTimeout string `toml:"commit-timeout" json:"commit-timeout"`
 
-	// MaxTxnTimeUse is the max time a Txn may use (in seconds) from its startTS to commitTS.
-	MaxTxnTimeUse uint `toml:"max-txn-time-use" json:"max-txn-time-use"`
-
 	// MaxBatchSize is the max batch size when calling batch commands API.
 	MaxBatchSize uint `toml:"max-batch-size" json:"max-batch-size"`
 	// If TiKV load is greater than this, TiDB will wait for a while to avoid little batch.
@@ -287,8 +380,29 @@ type TiKVClient struct {
 	MaxBatchWaitTime time.Duration `toml:"max-batch-wait-time" json:"max-batch-wait-time"`
 	// BatchWaitSize is the max wait size for batch.
 	BatchWaitSize uint `toml:"batch-wait-size" json:"batch-wait-size"`
-	// EnableArrow indicate the data encode in arrow format.
-	EnableArrow bool `toml:"enable-arrow" json:"enable-arrow"`
+	// EnableChunkRPC indicate the data encode in chunk format for coprocessor requests.
+	EnableChunkRPC bool `toml:"enable-chunk-rpc" json:"enable-chunk-rpc"`
+	// If a Region has not been accessed for more than the given duration (in seconds), it
+	// will be reloaded from the PD.
+	RegionCacheTTL uint `toml:"region-cache-ttl" json:"region-cache-ttl"`
+	// If a store has been up to the limit, it will return error for successive request to
+	// prevent the store occupying too much token in dispatching level.
+	StoreLimit int64 `toml:"store-limit" json:"store-limit"`
+
+	CoprCache CoprocessorCache `toml:"copr-cache" json:"copr-cache"`
+}
+
+// CoprocessorCache is the config for coprocessor cache.
+type CoprocessorCache struct {
+	// Whether to enable the copr cache. The copr cache saves the result from TiKV Coprocessor in the memory and
+	// reuses the result when corresponding data in TiKV is unchanged, on a region basis.
+	Enabled bool `toml:"enabled" json:"enabled"`
+	// The capacity in MB of the cache.
+	CapacityMB float64 `toml:"capacity-mb" json:"capacity-mb"`
+	// Only cache requests whose result set is small.
+	AdmissionMaxResultMB float64 `toml:"admission-max-result-mb" json:"admission-max-result-mb"`
+	// Only cache requests takes notable time to process.
+	AdmissionMinProcessMs uint64 `toml:"admission-min-process-ms" json:"admission-min-process-ms"`
 }
 
 // Binlog is the config for binlog.
@@ -316,16 +430,27 @@ type PessimisticTxn struct {
 	Enable bool `toml:"enable" json:"enable"`
 	// The max count of retry for a single statement in a pessimistic transaction.
 	MaxRetryCount uint `toml:"max-retry-count" json:"max-retry-count"`
-	// The pessimistic lock ttl.
-	TTL string `toml:"ttl" json:"ttl"`
 }
 
 // StmtSummary is the config for statement summary.
 type StmtSummary struct {
+	// Enable statement summary or not.
+	Enable bool `toml:"enable" json:"enable"`
 	// The maximum number of statements kept in memory.
 	MaxStmtCount uint `toml:"max-stmt-count" json:"max-stmt-count"`
 	// The maximum length of displayed normalized SQL and sample SQL.
 	MaxSQLLength uint `toml:"max-sql-length" json:"max-sql-length"`
+	// The refresh interval of statement summary.
+	RefreshInterval int `toml:"refresh-interval" json:"refresh-interval"`
+	// The maximum history size of statement summary.
+	HistorySize int `toml:"history-size" json:"history-size"`
+}
+
+// Experimental controls the features that are still experimental: their semantics, interfaces are subject to change.
+// Using these features in the production environment is not recommended.
+type Experimental struct {
+	// Whether enable the syntax like `auto_random(3)` on the primary key column.
+	AllowAutoRandom bool `toml:"allow-auto-random" json:"allow-auto-random"`
 }
 
 var defaultConf = Config{
@@ -343,25 +468,35 @@ var defaultConf = Config{
 	OOMAction:                    "log",
 	MemQuotaQuery:                32 << 30,
 	EnableStreaming:              false,
+	EnableBatchDML:               false,
 	CheckMb4ValueInUTF8:          true,
+	AlterPrimaryKey:              false,
 	TreatOldVersionUTF8AsUTF8MB4: true,
 	EnableTableLock:              false,
 	DelayCleanTableLock:          0,
 	SplitRegionMaxNum:            1000,
+	RepairMode:                   false,
+	RepairTableList:              []string{},
 	TxnLocalLatches: TxnLocalLatches{
 		Enabled:  false,
 		Capacity: 2048000,
 	},
 	LowerCaseTableNames: 2,
+	ServerVersion:       "",
 	Log: Log{
-		Level:              "info",
-		Format:             "text",
-		File:               logutil.NewFileLogConfig(true, logutil.DefaultLogMaxSize),
-		SlowQueryFile:      "tidb-slow.log",
-		SlowThreshold:      logutil.DefaultSlowThreshold,
-		ExpensiveThreshold: 10000,
-		DisableErrorStack:  true,
-		QueryLogMaxLen:     logutil.DefaultQueryLogMaxLen,
+		Level:               "info",
+		Format:              "text",
+		File:                logutil.NewFileLogConfig(logutil.DefaultLogMaxSize),
+		SlowQueryFile:       "tidb-slow.log",
+		SlowThreshold:       logutil.DefaultSlowThreshold,
+		ExpensiveThreshold:  10000,
+		DisableErrorStack:   nbUnset,
+		EnableErrorStack:    nbUnset, // If both options are nbUnset, getDisableErrorStack() returns true
+		EnableTimestamp:     nbUnset,
+		DisableTimestamp:    nbUnset, // If both options are nbUnset, getDisableTimestamp() returns false
+		QueryLogMaxLen:      logutil.DefaultQueryLogMaxLen,
+		RecordPlanInSlowLog: logutil.DefaultRecordPlanInSlowLog,
+		EnableSlowLog:       logutil.DefaultTiDBEnableSlowLog,
 	},
 	Status: Status{
 		ReportStatus:    true,
@@ -402,19 +537,35 @@ var defaultConf = Config{
 		Reporter: OpenTracingReporter{},
 	},
 	TiKVClient: TiKVClient{
-		GrpcConnectionCount:  16,
+		GrpcConnectionCount:  4,
 		GrpcKeepAliveTime:    10,
 		GrpcKeepAliveTimeout: 3,
 		CommitTimeout:        "41s",
-
-		MaxTxnTimeUse: 590,
 
 		MaxBatchSize:      128,
 		OverloadThreshold: 200,
 		MaxBatchWaitTime:  0,
 		BatchWaitSize:     8,
 
-		EnableArrow: true,
+		EnableChunkRPC: true,
+
+		RegionCacheTTL: 600,
+		StoreLimit:     0,
+
+		CoprCache: CoprocessorCache{
+			// WARNING: Currently Coprocessor Cache may lead to inconsistent result. Do not open it.
+			// These config items are hidden from user, so that fill them with zero value instead of default value.
+			Enabled:               false,
+			CapacityMB:            0,
+			AdmissionMaxResultMB:  0,
+			AdmissionMinProcessMs: 0,
+
+			// If you still want to use Coprocessor Cache, here are some recommended configurations:
+			// Enabled:               true,
+			// CapacityMB:            1000,
+			// AdmissionMaxResultMB:  10,
+			// AdmissionMinProcessMs: 5,
+		},
 	},
 	Binlog: Binlog{
 		WriteTimeout: "15s",
@@ -423,11 +574,16 @@ var defaultConf = Config{
 	PessimisticTxn: PessimisticTxn{
 		Enable:        true,
 		MaxRetryCount: 256,
-		TTL:           "40s",
 	},
 	StmtSummary: StmtSummary{
-		MaxStmtCount: 100,
-		MaxSQLLength: 4096,
+		Enable:          true,
+		MaxStmtCount:    200,
+		MaxSQLLength:    4096,
+		RefreshInterval: 1800,
+		HistorySize:     24,
+	},
+	Experimental: Experimental{
+		AllowAutoRandom: false,
 	},
 }
 
@@ -539,10 +695,12 @@ func collectsDiff(i1, i2 interface{}, fieldPath string) map[string][]interface{}
 // Load loads config options from a toml file.
 func (c *Config) Load(confFile string) error {
 	metaData, err := toml.DecodeFile(confFile, c)
-	if c.TokenLimit <= 0 {
+	if c.TokenLimit == 0 {
 		c.TokenLimit = 1000
 	}
-
+	if len(c.ServerVersion) > 0 {
+		mysql.ServerVersion = c.ServerVersion
+	}
 	// If any items in confFile file are not mapped into the Config struct, issue
 	// an error and stop the server from starting.
 	undecoded := metaData.Undecoded()
@@ -551,7 +709,7 @@ func (c *Config) Load(confFile string) error {
 		for _, item := range undecoded {
 			undecodedItems = append(undecodedItems, item.String())
 		}
-		err = &ErrConfigValidationFailed{fmt.Sprintf("config file %s contained unknown configuration options: %s", confFile, strings.Join(undecodedItems, ", "))}
+		err = &ErrConfigValidationFailed{confFile, undecodedItems}
 	}
 
 	return err
@@ -559,6 +717,16 @@ func (c *Config) Load(confFile string) error {
 
 // Valid checks if this config is valid.
 func (c *Config) Valid() error {
+	if c.Log.EnableErrorStack == c.Log.DisableErrorStack && c.Log.EnableErrorStack != nbUnset {
+		logutil.BgLogger().Warn(fmt.Sprintf("\"enable-error-stack\" (%v) conflicts \"disable-error-stack\" (%v). \"disable-error-stack\" is deprecated, please use \"enable-error-stack\" instead. disable-error-stack is ignored.", c.Log.EnableErrorStack, c.Log.DisableErrorStack))
+		// if two options conflict, we will use the value of EnableErrorStack
+		c.Log.DisableErrorStack = nbUnset
+	}
+	if c.Log.EnableTimestamp == c.Log.DisableTimestamp && c.Log.EnableTimestamp != nbUnset {
+		logutil.BgLogger().Warn(fmt.Sprintf("\"enable-timestamp\" (%v) conflicts \"disable-timestamp\" (%v). \"disable-timestamp\" is deprecated, please use \"enable-timestamp\" instead", c.Log.EnableTimestamp, c.Log.DisableTimestamp))
+		// if two options conflict, we will use the value of EnableTimestamp
+		c.Log.DisableTimestamp = nbUnset
+	}
 	if c.Security.SkipGrantTable && !hasRootPrivilege() {
 		return fmt.Errorf("TiDB run with skip-grant-table need root privilege")
 	}
@@ -595,18 +763,26 @@ func (c *Config) Valid() error {
 	if c.TiKVClient.GrpcConnectionCount == 0 {
 		return fmt.Errorf("grpc-connection-count should be greater than 0")
 	}
-	if c.TiKVClient.MaxTxnTimeUse == 0 {
-		return fmt.Errorf("max-txn-time-use should be greater than 0")
+
+	if c.Performance.TxnTotalSizeLimit > 100<<20 && c.Binlog.Enable {
+		return fmt.Errorf("txn-total-size-limit should be less than %d with binlog enabled", 100<<20)
 	}
-	if c.PessimisticTxn.TTL != "" {
-		dur, err := time.ParseDuration(c.PessimisticTxn.TTL)
-		if err != nil {
-			return err
-		}
-		if dur < MinPessimisticTTL || dur > MaxPessimisticTTL {
-			return fmt.Errorf("pessimistic transaction ttl %s out of range [%s, %s]",
-				dur, MinPessimisticTTL, MaxPessimisticTTL)
-		}
+	if c.Performance.TxnTotalSizeLimit > 10<<30 {
+		return fmt.Errorf("txn-total-size-limit should be less than %d", 10<<30)
+	}
+
+	if c.StmtSummary.HistorySize < 0 {
+		return fmt.Errorf("history-size in [stmt-summary] should be greater than or equal to 0")
+	}
+	if c.StmtSummary.RefreshInterval <= 0 {
+		return fmt.Errorf("refresh-interval in [stmt-summary] should be greater than 0")
+	}
+
+	if c.AlterPrimaryKey && c.Experimental.AllowAutoRandom {
+		return fmt.Errorf("allow-auto-random is unavailable when alter-primary-key is enabled")
+	}
+	if c.PreparedPlanCache.Capacity < 1 {
+		return fmt.Errorf("capacity in [prepared-plan-cache] should be at least 1")
 	}
 	return nil
 }
@@ -627,7 +803,7 @@ var TableLockDelayClean = func() uint64 {
 
 // ToLogConfig converts *Log to *logutil.LogConfig.
 func (l *Log) ToLogConfig() *logutil.LogConfig {
-	return logutil.NewLogConfig(l.Level, l.Format, l.SlowQueryFile, l.File, l.DisableTimestamp, func(config *zaplog.Config) { config.DisableErrorVerbose = l.DisableErrorStack })
+	return logutil.NewLogConfig(l.Level, l.Format, l.SlowQueryFile, l.File, l.getDisableTimestamp(), func(config *zaplog.Config) { config.DisableErrorVerbose = l.getDisableErrorStack() })
 }
 
 // ToTracingConfig converts *OpenTracing to *tracing.Configuration.

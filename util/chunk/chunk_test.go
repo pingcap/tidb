@@ -24,12 +24,12 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/cznic/mathutil"
 	"github.com/pingcap/check"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
+	"github.com/pingcap/tidb/util/mathutil"
 )
 
 func TestT(t *testing.T) {
@@ -100,7 +100,7 @@ func (s *testChunkSuite) TestChunk(c *check.C) {
 	row := chk.GetRow(0)
 	c.Assert(row.GetFloat32(0), check.Equals, f32Val)
 	c.Assert(row.GetTime(2).Compare(tVal), check.Equals, 0)
-	// fsp no longer maintain in arrow
+	// fsp is no longer maintained in chunk
 	c.Assert(row.GetDuration(3, 0).Duration, check.DeepEquals, durVal.Duration)
 	c.Assert(row.GetEnum(4), check.DeepEquals, enumVal)
 	c.Assert(row.GetSet(5), check.DeepEquals, setVal)
@@ -538,11 +538,11 @@ func (s *testChunkSuite) TestChunkMemoryUsage(c *check.C) {
 
 	//cap(c.nullBitmap) + cap(c.offsets)*4 + cap(c.data) + cap(c.elemBuf)
 	colUsage := make([]int, len(fieldTypes))
-	colUsage[0] = initCap>>3 + 0 + initCap*4 + 4
-	colUsage[1] = initCap>>3 + (initCap+1)*4 + initCap*8 + 0
-	colUsage[2] = initCap>>3 + (initCap+1)*4 + initCap*8 + 0
-	colUsage[3] = initCap>>3 + 0 + initCap*sizeTime + sizeTime
-	colUsage[4] = initCap>>3 + 0 + initCap*8 + 8
+	colUsage[0] = (initCap+7)>>3 + 0 + initCap*4 + 4
+	colUsage[1] = (initCap+7)>>3 + (initCap+1)*4 + initCap*8 + 0
+	colUsage[2] = (initCap+7)>>3 + (initCap+1)*4 + initCap*8 + 0
+	colUsage[3] = (initCap+7)>>3 + 0 + initCap*sizeTime + sizeTime
+	colUsage[4] = (initCap+7)>>3 + 0 + initCap*8 + 8
 
 	expectedUsage := 0
 	for i := range colUsage {
@@ -553,7 +553,7 @@ func (s *testChunkSuite) TestChunkMemoryUsage(c *check.C) {
 
 	jsonObj, err := json.ParseBinaryFromString("1")
 	c.Assert(err, check.IsNil)
-	timeObj := types.Time{Time: types.FromGoTime(time.Now()), Fsp: 0, Type: mysql.TypeDatetime}
+	timeObj := types.NewTime(types.FromGoTime(time.Now()), mysql.TypeDatetime, 0)
 	durationObj := types.Duration{Duration: math.MaxInt64, Fsp: 0}
 
 	chk.AppendFloat32(0, 12.4)
@@ -572,7 +572,7 @@ func (s *testChunkSuite) TestChunkMemoryUsage(c *check.C) {
 	chk.AppendDuration(4, durationObj)
 
 	memUsage = chk.MemoryUsage()
-	colUsage[1] = initCap>>3 + (initCap+1)*4 + cap(chk.columns[1].data) + 0
+	colUsage[1] = (initCap+7)>>3 + (initCap+1)*4 + cap(chk.columns[1].data) + 0
 	expectedUsage = 0
 	for i := range colUsage {
 		expectedUsage += colUsage[i] + int(unsafe.Sizeof(*chk.columns[i]))
@@ -933,7 +933,7 @@ func BenchmarkChunkMemoryUsage(b *testing.B) {
 
 	initCap := 10
 	chk := NewChunkWithCapacity(fieldTypes, initCap)
-	timeObj := types.Time{Time: types.FromGoTime(time.Now()), Fsp: 0, Type: mysql.TypeDatetime}
+	timeObj := types.NewTime(types.FromGoTime(time.Now()), mysql.TypeDatetime, 0)
 	durationObj := types.Duration{Duration: math.MaxInt64, Fsp: 0}
 
 	for i := 0; i < initCap; i++ {

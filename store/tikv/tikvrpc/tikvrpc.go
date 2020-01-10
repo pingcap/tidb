@@ -145,6 +145,7 @@ type Request struct {
 	req  interface{}
 	kvrpcpb.Context
 	ReplicaReadSeed uint32
+	StoreTp         kv.StoreType
 }
 
 // NewRequest returns new kv rpc request.
@@ -442,6 +443,8 @@ func FromBatchCommandsResponse(res *tikvpb.BatchCommandsResponse_Response) *Resp
 		return &Response{Resp: res.Empty}
 	case *tikvpb.BatchCommandsResponse_Response_TxnHeartBeat:
 		return &Response{Resp: res.TxnHeartBeat}
+	case *tikvpb.BatchCommandsResponse_Response_CheckTxnStatus:
+		return &Response{Resp: res.CheckTxnStatus}
 	}
 	return nil
 }
@@ -459,8 +462,10 @@ type CopStreamResponse struct {
 // SetContext set the Context field for the given req to the specified ctx.
 func SetContext(req *Request, region *metapb.Region, peer *metapb.Peer) error {
 	ctx := &req.Context
-	ctx.RegionId = region.Id
-	ctx.RegionEpoch = region.RegionEpoch
+	if region != nil {
+		ctx.RegionId = region.Id
+		ctx.RegionEpoch = region.RegionEpoch
+	}
 	ctx.Peer = peer
 
 	switch req.Type {
@@ -649,6 +654,10 @@ func GenRegionErrorResp(req *Request, e *errorpb.Error) (*Response, error) {
 	case CmdEmpty:
 	case CmdTxnHeartBeat:
 		p = &kvrpcpb.TxnHeartBeatResponse{
+			RegionError: e,
+		}
+	case CmdCheckTxnStatus:
+		p = &kvrpcpb.CheckTxnStatusResponse{
 			RegionError: e,
 		}
 	default:

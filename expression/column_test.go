@@ -22,12 +22,9 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/mock"
-	"github.com/pingcap/tidb/util/testleak"
 )
 
 func (s *testEvaluatorSuite) TestColumn(c *C) {
-	defer testleak.AfterTest(c)()
-
 	col := &Column{RetType: types.NewFieldType(mysql.TypeLonglong), UniqueID: 1}
 
 	c.Assert(col.Equal(nil, col), IsTrue)
@@ -46,7 +43,7 @@ func (s *testEvaluatorSuite) TestColumn(c *C) {
 	c.Assert(corCol.Equal(nil, corCol), IsTrue)
 	c.Assert(corCol.Equal(nil, invalidCorCol), IsFalse)
 	c.Assert(corCol.IsCorrelated(), IsTrue)
-	c.Assert(corCol.ConstItem(), IsFalse)
+	c.Assert(corCol.ConstItem(nil), IsFalse)
 	c.Assert(corCol.Decorrelate(schema).Equal(nil, col), IsTrue)
 	c.Assert(invalidCorCol.Decorrelate(schema).Equal(nil, invalidCorCol), IsTrue)
 
@@ -98,8 +95,6 @@ func (s *testEvaluatorSuite) TestColumn(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestColumnHashCode(c *C) {
-	defer testleak.AfterTest(c)()
-
 	col1 := &Column{
 		UniqueID: 12,
 	}
@@ -112,8 +107,6 @@ func (s *testEvaluatorSuite) TestColumnHashCode(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestColumn2Expr(c *C) {
-	defer testleak.AfterTest(c)()
-
 	cols := make([]*Column, 0, 5)
 	for i := 0; i < 5; i++ {
 		cols = append(cols, &Column{UniqueID: int64(i)})
@@ -126,40 +119,41 @@ func (s *testEvaluatorSuite) TestColumn2Expr(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestColInfo2Col(c *C) {
-	defer testleak.AfterTest(c)()
-
-	col0, col1 := &Column{ColName: model.NewCIStr("col0")}, &Column{ColName: model.NewCIStr("col1")}
+	col0, col1 := &Column{ID: 0}, &Column{ID: 1}
 	cols := []*Column{col0, col1}
-	colInfo := &model.ColumnInfo{Name: model.NewCIStr("col1")}
+	colInfo := &model.ColumnInfo{ID: 0}
 	res := ColInfo2Col(cols, colInfo)
 	c.Assert(res.Equal(nil, col1), IsTrue)
 
-	colInfo.Name = model.NewCIStr("col2")
+	colInfo.ID = 3
 	res = ColInfo2Col(cols, colInfo)
 	c.Assert(res, IsNil)
 }
 
 func (s *testEvaluatorSuite) TestIndexInfo2Cols(c *C) {
-	defer testleak.AfterTest(c)()
-
-	col0 := &Column{UniqueID: 0, ID: 0, ColName: model.NewCIStr("col0"), RetType: types.NewFieldType(mysql.TypeLonglong)}
-	col1 := &Column{UniqueID: 1, ID: 1, ColName: model.NewCIStr("col1"), RetType: types.NewFieldType(mysql.TypeLonglong)}
-	indexCol0, indexCol1 := &model.IndexColumn{Name: model.NewCIStr("col0")}, &model.IndexColumn{Name: model.NewCIStr("col1")}
+	col0 := &Column{UniqueID: 0, ID: 0, RetType: types.NewFieldType(mysql.TypeLonglong)}
+	col1 := &Column{UniqueID: 1, ID: 1, RetType: types.NewFieldType(mysql.TypeLonglong)}
+	colInfo0 := &model.ColumnInfo{ID: 0, Name: model.NewCIStr("0")}
+	colInfo1 := &model.ColumnInfo{ID: 1, Name: model.NewCIStr("1")}
+	indexCol0, indexCol1 := &model.IndexColumn{Name: model.NewCIStr("0")}, &model.IndexColumn{Name: model.NewCIStr("1")}
 	indexInfo := &model.IndexInfo{Columns: []*model.IndexColumn{indexCol0, indexCol1}}
 
 	cols := []*Column{col0}
-	resCols, lengths := IndexInfo2PrefixCols(cols, indexInfo)
+	colInfos := []*model.ColumnInfo{colInfo0}
+	resCols, lengths := IndexInfo2PrefixCols(colInfos, cols, indexInfo)
 	c.Assert(len(resCols), Equals, 1)
 	c.Assert(len(lengths), Equals, 1)
 	c.Assert(resCols[0].Equal(nil, col0), IsTrue)
 
 	cols = []*Column{col1}
-	resCols, lengths = IndexInfo2PrefixCols(cols, indexInfo)
+	colInfos = []*model.ColumnInfo{colInfo1}
+	resCols, lengths = IndexInfo2PrefixCols(colInfos, cols, indexInfo)
 	c.Assert(len(resCols), Equals, 0)
 	c.Assert(len(lengths), Equals, 0)
 
 	cols = []*Column{col0, col1}
-	resCols, lengths = IndexInfo2PrefixCols(cols, indexInfo)
+	colInfos = []*model.ColumnInfo{colInfo0, colInfo1}
+	resCols, lengths = IndexInfo2PrefixCols(colInfos, cols, indexInfo)
 	c.Assert(len(resCols), Equals, 2)
 	c.Assert(len(lengths), Equals, 2)
 	c.Assert(resCols[0].Equal(nil, col0), IsTrue)
@@ -167,7 +161,6 @@ func (s *testEvaluatorSuite) TestIndexInfo2Cols(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestColHybird(c *C) {
-	defer testleak.AfterTest(c)()
 	ctx := mock.NewContext()
 
 	// bit
@@ -184,6 +177,16 @@ func (s *testEvaluatorSuite) TestColHybird(c *C) {
 	c.Assert(col.VecEvalInt(ctx, input, result), IsNil)
 
 	it := chunk.NewIterator4Chunk(input)
+	for row, i := it.Begin(), 0; row != it.End(); row, i = it.Next(), i+1 {
+		v, _, err := col.EvalInt(ctx, row)
+		c.Assert(err, IsNil)
+		c.Assert(v, Equals, result.GetInt64(i))
+	}
+
+	// use a container which has the different field type with bit
+	result, err = newBuffer(types.ETString, 1024)
+	c.Assert(err, IsNil)
+	c.Assert(col.VecEvalInt(ctx, input, result), IsNil)
 	for row, i := it.Begin(), 0; row != it.End(); row, i = it.Next(), i+1 {
 		v, _, err := col.EvalInt(ctx, row)
 		c.Assert(err, IsNil)

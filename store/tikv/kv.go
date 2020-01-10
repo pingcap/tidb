@@ -24,7 +24,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/coreos/etcd/clientv3"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -37,7 +36,10 @@ import (
 	"github.com/pingcap/tidb/store/tikv/oracle/oracles"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/util/logutil"
+	"go.etcd.io/etcd/clientv3"
 	"go.uber.org/zap"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/keepalive"
 )
 
 type storeCache struct {
@@ -52,11 +54,15 @@ type Driver struct {
 }
 
 func createEtcdKV(addrs []string, tlsConfig *tls.Config) (*clientv3.Client, error) {
+	cfg := config.GetGlobalConfig()
 	cli, err := clientv3.New(clientv3.Config{
-		Endpoints:        addrs,
-		AutoSyncInterval: 30 * time.Second,
-		DialTimeout:      5 * time.Second,
-		TLS:              tlsConfig,
+		Endpoints:            addrs,
+		AutoSyncInterval:     30 * time.Second,
+		DialTimeout:          5 * time.Second,
+		TLS:                  tlsConfig,
+		DialKeepAliveTime:    time.Second * time.Duration(cfg.TiKVClient.GrpcKeepAliveTime),
+		DialKeepAliveTimeout: time.Second * time.Duration(cfg.TiKVClient.GrpcKeepAliveTimeout),
+		PermitWithoutStream:  true,
 	})
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -71,6 +77,7 @@ func (d Driver) Open(path string) (kv.Storage, error) {
 	defer mc.Unlock()
 
 	security := config.GetGlobalConfig().Security
+	tikvConfig := config.GetGlobalConfig().TiKVClient
 	txnLocalLatches := config.GetGlobalConfig().TxnLocalLatches
 	etcdAddrs, disableGC, err := parsePath(path)
 	if err != nil {
@@ -81,7 +88,13 @@ func (d Driver) Open(path string) (kv.Storage, error) {
 		CAPath:   security.ClusterSSLCA,
 		CertPath: security.ClusterSSLCert,
 		KeyPath:  security.ClusterSSLKey,
-	})
+	}, pd.WithGRPCDialOptions(
+		grpc.WithKeepaliveParams(keepalive.ClientParameters{
+			Time:                time.Duration(tikvConfig.GrpcKeepAliveTime) * time.Second,
+			Timeout:             time.Duration(tikvConfig.GrpcKeepAliveTimeout) * time.Second,
+			PermitWithoutStream: true,
+		}),
+	))
 
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -103,7 +116,8 @@ func (d Driver) Open(path string) (kv.Storage, error) {
 		return nil, errors.Trace(err)
 	}
 
-	s, err := newTikvStore(uuid, &codecPDClient{pdCli}, spkv, newRPCClient(security), !disableGC)
+	coprCacheConfig := &config.GetGlobalConfig().TiKVClient.CoprCache
+	s, err := newTikvStore(uuid, &codecPDClient{pdCli}, spkv, newRPCClient(security), !disableGC, coprCacheConfig)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -134,6 +148,7 @@ type tikvStore struct {
 	client       Client
 	pdClient     pd.Client
 	regionCache  *RegionCache
+	coprCache    *coprCache
 	lockResolver *LockResolver
 	txnLatches   *latch.LatchesScheduler
 	gcWorker     GCHandler
@@ -178,7 +193,7 @@ func (s *tikvStore) CheckVisibility(startTime uint64) error {
 	return nil
 }
 
-func newTikvStore(uuid string, pdClient pd.Client, spkv SafePointKV, client Client, enableGC bool) (*tikvStore, error) {
+func newTikvStore(uuid string, pdClient pd.Client, spkv SafePointKV, client Client, enableGC bool, coprCacheConfig *config.CoprocessorCache) (*tikvStore, error) {
 	o, err := oracles.NewPdOracle(pdClient, time.Duration(oracleUpdateInterval)*time.Millisecond)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -190,6 +205,7 @@ func newTikvStore(uuid string, pdClient pd.Client, spkv SafePointKV, client Clie
 		client:          client,
 		pdClient:        pdClient,
 		regionCache:     NewRegionCache(pdClient),
+		coprCache:       nil,
 		kv:              spkv,
 		safePoint:       0,
 		spTime:          time.Now(),
@@ -198,6 +214,12 @@ func newTikvStore(uuid string, pdClient pd.Client, spkv SafePointKV, client Clie
 	}
 	store.lockResolver = newLockResolver(store)
 	store.enableGC = enableGC
+
+	coprCache, err := newCoprCache(coprCacheConfig)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	store.coprCache = coprCache
 
 	go store.runSafePointChecker()
 
@@ -262,7 +284,6 @@ func (s *tikvStore) Begin() (kv.Transaction, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	metrics.TiKVTxnCounter.Inc()
 	return txn, nil
 }
 
@@ -272,13 +293,11 @@ func (s *tikvStore) BeginWithStartTS(startTS uint64) (kv.Transaction, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	metrics.TiKVTxnCounter.Inc()
 	return txn, nil
 }
 
 func (s *tikvStore) GetSnapshot(ver kv.Version) (kv.Snapshot, error) {
 	snapshot := newTiKVSnapshot(s, ver, s.nextReplicaReadSeed())
-	metrics.TiKVSnapshotCounter.Inc()
 	return snapshot, nil
 }
 

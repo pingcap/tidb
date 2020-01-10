@@ -16,6 +16,9 @@ package privileges_test
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"fmt"
 	"strings"
 	"testing"
@@ -31,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
@@ -221,7 +225,6 @@ func (s *testPrivilegeSuite) TestCheckPrivilegeWithRoles(c *C) {
 	mustExec(c, rootSe, `GRANT UPDATE ON test.* TO r_2;`)
 	c.Assert(pc.RequestVerification(activeRoles, "test", "", "", mysql.UpdatePriv), IsTrue)
 
-	mustExec(c, se, `flush privileges`)
 	mustExec(c, se, `SET ROLE NONE;`)
 	c.Assert(len(se.GetSessionVars().ActiveRoles), Equals, 0)
 	mustExec(c, se, `SET ROLE DEFAULT;`)
@@ -259,6 +262,20 @@ func (s *testPrivilegeSuite) TestShowGrants(c *C) {
 
 	// All privileges
 	mustExec(c, se, `GRANT ALL ON *.* TO  'show'@'localhost';`)
+	gs, err = pc.ShowGrants(se, &auth.UserIdentity{Username: "show", Hostname: "localhost"}, nil)
+	c.Assert(err, IsNil)
+	c.Assert(gs, HasLen, 1)
+	c.Assert(gs[0], Equals, `GRANT ALL PRIVILEGES ON *.* TO 'show'@'localhost'`)
+
+	// All privileges with grant option
+	mustExec(c, se, `GRANT ALL ON *.* TO 'show'@'localhost' WITH GRANT OPTION;`)
+	gs, err = pc.ShowGrants(se, &auth.UserIdentity{Username: "show", Hostname: "localhost"}, nil)
+	c.Assert(err, IsNil)
+	c.Assert(gs, HasLen, 1)
+	c.Assert(gs[0], Equals, `GRANT ALL PRIVILEGES ON *.* TO 'show'@'localhost' WITH GRANT OPTION`)
+
+	// Revoke grant option
+	mustExec(c, se, `REVOKE GRANT OPTION ON *.* FROM 'show'@'localhost';`)
 	gs, err = pc.ShowGrants(se, &auth.UserIdentity{Username: "show", Hostname: "localhost"}, nil)
 	c.Assert(err, IsNil)
 	c.Assert(gs, HasLen, 1)
@@ -433,16 +450,238 @@ func (s *testPrivilegeSuite) TestSelectViewSecurity(c *C) {
 
 func (s *testPrivilegeSuite) TestRoleAdminSecurity(c *C) {
 	se := newSession(c, s.store, s.dbName)
-	mustExec(c, se, `CREATE USER 'r1'@'localhost';`)
-	mustExec(c, se, `CREATE USER 'r2'@'localhost';`)
-	mustExec(c, se, `GRANT ALL ON *.* to r1@localhost`)
+	mustExec(c, se, `CREATE USER 'ar1'@'localhost';`)
+	mustExec(c, se, `CREATE USER 'ar2'@'localhost';`)
+	mustExec(c, se, `GRANT ALL ON *.* to ar1@localhost`)
+	defer func() {
+		c.Assert(se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil), IsTrue)
+		mustExec(c, se, "drop user 'ar1'@'localhost'")
+		mustExec(c, se, "drop user 'ar2'@'localhost'")
+	}()
 
-	c.Assert(se.Auth(&auth.UserIdentity{Username: "r1", Hostname: "localhost"}, nil, nil), IsTrue)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "ar1", Hostname: "localhost"}, nil, nil), IsTrue)
 	mustExec(c, se, `create role r_test1@localhost`)
 
-	c.Assert(se.Auth(&auth.UserIdentity{Username: "r2", Hostname: "localhost"}, nil, nil), IsTrue)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "ar2", Hostname: "localhost"}, nil, nil), IsTrue)
 	_, err := se.Execute(context.Background(), `create role r_test2@localhost`)
 	c.Assert(terror.ErrorEqual(err, core.ErrSpecificAccessDenied), IsTrue)
+}
+
+func (s *testPrivilegeSuite) TestCheckCertBasedAuth(c *C) {
+	se := newSession(c, s.store, s.dbName)
+	mustExec(c, se, `CREATE USER 'r1'@'localhost';`)
+	mustExec(c, se, `CREATE USER 'r2'@'localhost' require none;`)
+	mustExec(c, se, `CREATE USER 'r3'@'localhost' require ssl;`)
+	mustExec(c, se, `CREATE USER 'r4'@'localhost' require x509;`)
+	mustExec(c, se, `CREATE USER 'r5'@'localhost' require issuer '/C=US/ST=California/L=San Francisco/O=PingCAP/OU=TiDB/CN=TiDB admin'
+		subject '/C=ZH/ST=Beijing/L=Haidian/O=PingCAP.Inc/OU=TiDB/CN=tester1' cipher 'TLS_AES_128_GCM_SHA256'`)
+	mustExec(c, se, `CREATE USER 'r6'@'localhost' require issuer '/C=US/ST=California/L=San Francisco/O=PingCAP/OU=TiDB/CN=TiDB admin'
+		subject '/C=ZH/ST=Beijing/L=Haidian/O=PingCAP.Inc/OU=TiDB/CN=tester1'`)
+	mustExec(c, se, `CREATE USER 'r7_issuer_only'@'localhost' require issuer '/C=US/ST=California/L=San Francisco/O=PingCAP/OU=TiDB/CN=TiDB admin'`)
+	mustExec(c, se, `CREATE USER 'r8_subject_only'@'localhost' require subject '/C=ZH/ST=Beijing/L=Haidian/O=PingCAP.Inc/OU=TiDB/CN=tester1'`)
+	mustExec(c, se, `CREATE USER 'r9_subject_disorder'@'localhost' require subject '/ST=Beijing/C=ZH/L=Haidian/O=PingCAP.Inc/OU=TiDB/CN=tester1'`)
+	mustExec(c, se, `CREATE USER 'r10_issuer_disorder'@'localhost' require issuer '/ST=California/C=US/L=San Francisco/O=PingCAP/OU=TiDB/CN=TiDB admin'`)
+	mustExec(c, se, `CREATE USER 'r11_cipher_only'@'localhost' require cipher 'TLS_AES_256_GCM_SHA384'`)
+	mustExec(c, se, `CREATE USER 'r12_old_tidb_user'@'localhost'`)
+	mustExec(c, se, "DELETE FROM mysql.global_priv WHERE `user` = 'r12_old_tidb_user' and `host` = 'localhost'")
+	mustExec(c, se, `CREATE USER 'r13_broken_user'@'localhost'require issuer '/C=US/ST=California/L=San Francisco/O=PingCAP/OU=TiDB/CN=TiDB admin'
+		subject '/C=ZH/ST=Beijing/L=Haidian/O=PingCAP.Inc/OU=TiDB/CN=tester1'`)
+	mustExec(c, se, "UPDATE mysql.global_priv set priv = 'abc' where `user` = 'r13_broken_user' and `host` = 'localhost'")
+	mustExec(c, se, "flush privileges")
+
+	defer func() {
+		c.Assert(se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil), IsTrue)
+		mustExec(c, se, "drop user 'r1'@'localhost'")
+		mustExec(c, se, "drop user 'r2'@'localhost'")
+		mustExec(c, se, "drop user 'r3'@'localhost'")
+		mustExec(c, se, "drop user 'r4'@'localhost'")
+		mustExec(c, se, "drop user 'r5'@'localhost'")
+		mustExec(c, se, "drop user 'r6'@'localhost'")
+		mustExec(c, se, "drop user 'r7_issuer_only'@'localhost'")
+		mustExec(c, se, "drop user 'r8_subject_only'@'localhost'")
+		mustExec(c, se, "drop user 'r9_subject_disorder'@'localhost'")
+		mustExec(c, se, "drop user 'r10_issuer_disorder'@'localhost'")
+		mustExec(c, se, "drop user 'r11_cipher_only'@'localhost'")
+		mustExec(c, se, "drop user 'r12_old_tidb_user'@'localhost'")
+		mustExec(c, se, "drop user 'r13_broken_user'@'localhost'")
+	}()
+
+	// test without ssl or ca
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "r1", Hostname: "localhost"}, nil, nil), IsTrue)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "r2", Hostname: "localhost"}, nil, nil), IsTrue)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "r3", Hostname: "localhost"}, nil, nil), IsFalse)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "r4", Hostname: "localhost"}, nil, nil), IsFalse)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "r5", Hostname: "localhost"}, nil, nil), IsFalse)
+
+	// test use ssl without ca
+	se.GetSessionVars().TLSConnectionState = &tls.ConnectionState{VerifiedChains: nil}
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "r1", Hostname: "localhost"}, nil, nil), IsTrue)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "r2", Hostname: "localhost"}, nil, nil), IsTrue)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "r3", Hostname: "localhost"}, nil, nil), IsTrue)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "r4", Hostname: "localhost"}, nil, nil), IsFalse)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "r5", Hostname: "localhost"}, nil, nil), IsFalse)
+
+	// test use ssl with signed but info wrong ca.
+	se.GetSessionVars().TLSConnectionState = &tls.ConnectionState{VerifiedChains: [][]*x509.Certificate{{{}}}}
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "r1", Hostname: "localhost"}, nil, nil), IsTrue)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "r2", Hostname: "localhost"}, nil, nil), IsTrue)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "r3", Hostname: "localhost"}, nil, nil), IsTrue)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "r4", Hostname: "localhost"}, nil, nil), IsTrue)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "r5", Hostname: "localhost"}, nil, nil), IsFalse)
+
+	// test a all pass case
+	se.GetSessionVars().TLSConnectionState = connectionState(
+		pkix.Name{
+			Names: []pkix.AttributeTypeAndValue{
+				util.MockPkixAttribute(util.Country, "US"),
+				util.MockPkixAttribute(util.Province, "California"),
+				util.MockPkixAttribute(util.Locality, "San Francisco"),
+				util.MockPkixAttribute(util.Organization, "PingCAP"),
+				util.MockPkixAttribute(util.OrganizationalUnit, "TiDB"),
+				util.MockPkixAttribute(util.CommonName, "TiDB admin"),
+			},
+		},
+		pkix.Name{
+			Names: []pkix.AttributeTypeAndValue{
+				util.MockPkixAttribute(util.Country, "ZH"),
+				util.MockPkixAttribute(util.Province, "Beijing"),
+				util.MockPkixAttribute(util.Locality, "Haidian"),
+				util.MockPkixAttribute(util.Organization, "PingCAP.Inc"),
+				util.MockPkixAttribute(util.OrganizationalUnit, "TiDB"),
+				util.MockPkixAttribute(util.CommonName, "tester1"),
+			},
+		},
+		tls.TLS_AES_128_GCM_SHA256)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "r1", Hostname: "localhost"}, nil, nil), IsTrue)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "r2", Hostname: "localhost"}, nil, nil), IsTrue)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "r3", Hostname: "localhost"}, nil, nil), IsTrue)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "r4", Hostname: "localhost"}, nil, nil), IsTrue)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "r5", Hostname: "localhost"}, nil, nil), IsTrue)
+
+	// test require but give nothing
+	se.GetSessionVars().TLSConnectionState = nil
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "r5", Hostname: "localhost"}, nil, nil), IsFalse)
+
+	// test mismatch cipher
+	se.GetSessionVars().TLSConnectionState = connectionState(
+		pkix.Name{
+			Names: []pkix.AttributeTypeAndValue{
+				util.MockPkixAttribute(util.Country, "US"),
+				util.MockPkixAttribute(util.Province, "California"),
+				util.MockPkixAttribute(util.Locality, "San Francisco"),
+				util.MockPkixAttribute(util.Organization, "PingCAP"),
+				util.MockPkixAttribute(util.OrganizationalUnit, "TiDB"),
+				util.MockPkixAttribute(util.CommonName, "TiDB admin"),
+			},
+		},
+		pkix.Name{
+			Names: []pkix.AttributeTypeAndValue{
+				util.MockPkixAttribute(util.Country, "ZH"),
+				util.MockPkixAttribute(util.Province, "Beijing"),
+				util.MockPkixAttribute(util.Locality, "Haidian"),
+				util.MockPkixAttribute(util.Organization, "PingCAP.Inc"),
+				util.MockPkixAttribute(util.OrganizationalUnit, "TiDB"),
+				util.MockPkixAttribute(util.CommonName, "tester1"),
+			},
+		},
+		tls.TLS_AES_256_GCM_SHA384)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "r5", Hostname: "localhost"}, nil, nil), IsFalse)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "r6", Hostname: "localhost"}, nil, nil), IsTrue) // not require cipher
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "r11_cipher_only", Hostname: "localhost"}, nil, nil), IsTrue)
+
+	// test only subject or only issuer
+	se.GetSessionVars().TLSConnectionState = connectionState(
+		pkix.Name{
+			Names: []pkix.AttributeTypeAndValue{
+				util.MockPkixAttribute(util.Country, "US"),
+				util.MockPkixAttribute(util.Province, "California"),
+				util.MockPkixAttribute(util.Locality, "San Francisco"),
+				util.MockPkixAttribute(util.Organization, "PingCAP"),
+				util.MockPkixAttribute(util.OrganizationalUnit, "TiDB"),
+				util.MockPkixAttribute(util.CommonName, "TiDB admin"),
+			},
+		},
+		pkix.Name{
+			Names: []pkix.AttributeTypeAndValue{
+				util.MockPkixAttribute(util.Country, "AZ"),
+				util.MockPkixAttribute(util.Province, "Beijing"),
+				util.MockPkixAttribute(util.Locality, "Shijingshang"),
+				util.MockPkixAttribute(util.Organization, "CAPPing.Inc"),
+				util.MockPkixAttribute(util.OrganizationalUnit, "TiDB"),
+				util.MockPkixAttribute(util.CommonName, "tester2"),
+			},
+		},
+		tls.TLS_AES_128_GCM_SHA256)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "r7_issuer_only", Hostname: "localhost"}, nil, nil), IsTrue)
+	se.GetSessionVars().TLSConnectionState = connectionState(
+		pkix.Name{
+			Names: []pkix.AttributeTypeAndValue{
+				util.MockPkixAttribute(util.Country, "AU"),
+				util.MockPkixAttribute(util.Province, "California"),
+				util.MockPkixAttribute(util.Locality, "San Francisco"),
+				util.MockPkixAttribute(util.Organization, "PingCAP"),
+				util.MockPkixAttribute(util.OrganizationalUnit, "TiDB"),
+				util.MockPkixAttribute(util.CommonName, "TiDB admin2"),
+			},
+		},
+		pkix.Name{
+			Names: []pkix.AttributeTypeAndValue{
+				util.MockPkixAttribute(util.Country, "ZH"),
+				util.MockPkixAttribute(util.Province, "Beijing"),
+				util.MockPkixAttribute(util.Locality, "Haidian"),
+				util.MockPkixAttribute(util.Organization, "PingCAP.Inc"),
+				util.MockPkixAttribute(util.OrganizationalUnit, "TiDB"),
+				util.MockPkixAttribute(util.CommonName, "tester1"),
+			},
+		},
+		tls.TLS_AES_128_GCM_SHA256)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "r8_subject_only", Hostname: "localhost"}, nil, nil), IsTrue)
+
+	// test disorder issuer or subject
+	se.GetSessionVars().TLSConnectionState = connectionState(
+		pkix.Name{
+			Names: []pkix.AttributeTypeAndValue{},
+		},
+		pkix.Name{
+			Names: []pkix.AttributeTypeAndValue{
+				util.MockPkixAttribute(util.Country, "ZH"),
+				util.MockPkixAttribute(util.Province, "Beijing"),
+				util.MockPkixAttribute(util.Locality, "Haidian"),
+				util.MockPkixAttribute(util.Organization, "PingCAP.Inc"),
+				util.MockPkixAttribute(util.OrganizationalUnit, "TiDB"),
+				util.MockPkixAttribute(util.CommonName, "tester1"),
+			},
+		},
+		tls.TLS_AES_128_GCM_SHA256)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "r9_subject_disorder", Hostname: "localhost"}, nil, nil), IsFalse)
+	se.GetSessionVars().TLSConnectionState = connectionState(
+		pkix.Name{
+			Names: []pkix.AttributeTypeAndValue{
+				util.MockPkixAttribute(util.Country, "US"),
+				util.MockPkixAttribute(util.Province, "California"),
+				util.MockPkixAttribute(util.Locality, "San Francisco"),
+				util.MockPkixAttribute(util.Organization, "PingCAP"),
+				util.MockPkixAttribute(util.OrganizationalUnit, "TiDB"),
+				util.MockPkixAttribute(util.CommonName, "TiDB admin"),
+			},
+		},
+		pkix.Name{
+			Names: []pkix.AttributeTypeAndValue{},
+		},
+		tls.TLS_AES_128_GCM_SHA256)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "r10_issuer_disorder", Hostname: "localhost"}, nil, nil), IsFalse)
+
+	// test old data and broken data
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "r12_old_tidb_user", Hostname: "localhost"}, nil, nil), IsTrue)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "r13_broken_user", Hostname: "localhost"}, nil, nil), IsFalse)
+
+}
+
+func connectionState(issuer, subject pkix.Name, cipher uint16) *tls.ConnectionState {
+	return &tls.ConnectionState{
+		VerifiedChains: [][]*x509.Certificate{{{Issuer: issuer, Subject: subject}}},
+		CipherSuite:    cipher,
+	}
 }
 
 func (s *testPrivilegeSuite) TestCheckAuthenticate(c *C) {
@@ -492,6 +731,14 @@ func (s *testPrivilegeSuite) TestUseDB(c *C) {
 	mustExec(c, se, "CREATE USER 'usesuper'")
 	mustExec(c, se, "CREATE USER 'usenobody'")
 	mustExec(c, se, "GRANT ALL ON *.* TO 'usesuper'")
+	//without grant option
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "usesuper", Hostname: "localhost", AuthUsername: "usesuper", AuthHostname: "%"}, nil, nil), IsTrue)
+	_, e := se.Execute(context.Background(), "GRANT SELECT ON mysql.* TO 'usenobody'")
+	c.Assert(e, NotNil)
+	//with grant option
+	se = newSession(c, s.store, s.dbName)
+	// high privileged user
+	mustExec(c, se, "GRANT ALL ON *.* TO 'usesuper' WITH GRANT OPTION")
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "usesuper", Hostname: "localhost", AuthUsername: "usesuper", AuthHostname: "%"}, nil, nil), IsTrue)
 	mustExec(c, se, "use mysql")
 	// low privileged user
@@ -521,6 +768,24 @@ func (s *testPrivilegeSuite) TestUseDB(c *C) {
 	c.Assert(err, NotNil)
 }
 
+func (s *testPrivilegeSuite) TestRevokePrivileges(c *C) {
+	se := newSession(c, s.store, s.dbName)
+	mustExec(c, se, "CREATE USER 'hasgrant'")
+	mustExec(c, se, "CREATE USER 'withoutgrant'")
+	mustExec(c, se, "GRANT ALL ON *.* TO 'hasgrant'")
+	mustExec(c, se, "GRANT ALL ON mysql.* TO 'withoutgrant'")
+	// Without grant option
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "hasgrant", Hostname: "localhost", AuthUsername: "hasgrant", AuthHostname: "%"}, nil, nil), IsTrue)
+	_, e := se.Execute(context.Background(), "REVOKE SELECT ON mysql.* FROM 'withoutgrant'")
+	c.Assert(e, NotNil)
+	// With grant option
+	se = newSession(c, s.store, s.dbName)
+	mustExec(c, se, "GRANT ALL ON *.* TO 'hasgrant' WITH GRANT OPTION")
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "hasgrant", Hostname: "localhost", AuthUsername: "hasgrant", AuthHostname: "%"}, nil, nil), IsTrue)
+	mustExec(c, se, "REVOKE SELECT ON mysql.* FROM 'withoutgrant'")
+	mustExec(c, se, "REVOKE ALL ON mysql.* FROM withoutgrant")
+}
+
 func (s *testPrivilegeSuite) TestSetGlobal(c *C) {
 	se := newSession(c, s.store, s.dbName)
 	mustExec(c, se, `CREATE USER setglobal_a@localhost`)
@@ -538,7 +803,7 @@ func (s *testPrivilegeSuite) TestSetGlobal(c *C) {
 func (s *testPrivilegeSuite) TestCreateDropUser(c *C) {
 	se := newSession(c, s.store, s.dbName)
 	mustExec(c, se, `CREATE USER tcd1, tcd2`)
-	mustExec(c, se, `GRANT ALL ON *.* to tcd2`)
+	mustExec(c, se, `GRANT ALL ON *.* to tcd2 WITH GRANT OPTION`)
 
 	// should fail
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "tcd1", Hostname: "localhost", AuthUsername: "tcd1", AuthHostname: "%"}, nil, nil), IsTrue)
@@ -581,7 +846,7 @@ func (s *testPrivilegeSuite) TestAnalyzeTable(c *C) {
 	// high privileged user
 	mustExec(c, se, "CREATE USER 'asuper'")
 	mustExec(c, se, "CREATE USER 'anobody'")
-	mustExec(c, se, "GRANT ALL ON *.* TO 'asuper'")
+	mustExec(c, se, "GRANT ALL ON *.* TO 'asuper' WITH GRANT OPTION")
 	mustExec(c, se, "CREATE DATABASE atest")
 	mustExec(c, se, "use atest")
 	mustExec(c, se, "CREATE TABLE t1 (a int)")
@@ -621,6 +886,12 @@ func (s *testPrivilegeSuite) TestInformationSchema(c *C) {
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "u1", Hostname: "localhost"}, nil, nil), IsTrue)
 	mustExec(c, se, `select * from information_schema.tables`)
 	mustExec(c, se, `select * from information_schema.key_column_usage`)
+	_, err := se.Execute(context.Background(), "create table information_schema.t(a int)")
+	c.Assert(strings.Contains(err.Error(), "denied to user"), IsTrue)
+	_, err = se.Execute(context.Background(), "drop table information_schema.tables")
+	c.Assert(strings.Contains(err.Error(), "denied to user"), IsTrue)
+	_, err = se.Execute(context.Background(), "update information_schema.tables set table_name = 'tst' where table_name = 'mysql'")
+	c.Assert(strings.Contains(err.Error(), "privilege check fail"), IsTrue)
 }
 
 func (s *testPrivilegeSuite) TestAdminCommand(c *C) {
@@ -645,6 +916,24 @@ func (s *testPrivilegeSuite) TestGetEncodedPassword(c *C) {
 	mustExec(c, se, `CREATE USER 'test_encode_u'@'localhost' identified by 'root';`)
 	pc := privilege.GetPrivilegeManager(se)
 	c.Assert(pc.GetEncodedPassword("test_encode_u", "localhost"), Equals, "*81F5E21E35407D884A6CD4A731AEBFB6AF209E1B")
+}
+
+func (s *testPrivilegeSuite) TestAuthHost(c *C) {
+	rootSe := newSession(c, s.store, s.dbName)
+	se := newSession(c, s.store, s.dbName)
+	mustExec(c, rootSe, `CREATE USER 'test_auth_host'@'%';`)
+	mustExec(c, rootSe, `GRANT ALL ON *.* TO 'test_auth_host'@'%' WITH GRANT OPTION;`)
+
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "test_auth_host", Hostname: "192.168.0.10"}, nil, nil), IsTrue)
+	mustExec(c, se, "CREATE USER 'test_auth_host'@'192.168.%';")
+	mustExec(c, se, "GRANT SELECT ON *.* TO 'test_auth_host'@'192.168.%';")
+
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "test_auth_host", Hostname: "192.168.0.10"}, nil, nil), IsTrue)
+	_, err := se.Execute(context.Background(), "create user test_auth_host_a")
+	c.Assert(err, NotNil)
+
+	mustExec(c, rootSe, "DROP USER 'test_auth_host'@'192.168.%';")
+	mustExec(c, rootSe, "DROP USER 'test_auth_host'@'%';")
 }
 
 func (s *testPrivilegeSuite) TestDefaultRoles(c *C) {
@@ -675,18 +964,19 @@ func (s *testPrivilegeSuite) TestUserTableConsistency(c *C) {
 	tk.MustExec("create user superadmin")
 	tk.MustExec("grant all privileges on *.* to 'superadmin'")
 
-	c.Assert(len(mysql.Priv2UserCol), Equals, len(mysql.AllGlobalPrivs))
+	// GrantPriv is not in AllGlobalPrivs any more, see pingcap/parser#581
+	c.Assert(len(mysql.Priv2UserCol), Equals, len(mysql.AllGlobalPrivs)+1)
 
 	var buf bytes.Buffer
 	var res bytes.Buffer
 	buf.WriteString("select ")
 	i := 0
-	for _, priv := range mysql.Priv2UserCol {
+	for _, priv := range mysql.AllGlobalPrivs {
 		if i != 0 {
 			buf.WriteString(", ")
 			res.WriteString(" ")
 		}
-		buf.WriteString(priv)
+		buf.WriteString(mysql.Priv2UserCol[priv])
 		res.WriteString("Y")
 		i++
 	}
