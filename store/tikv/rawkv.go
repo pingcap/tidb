@@ -291,7 +291,7 @@ func (c *RawKVClient) Scan(startKey, endKey []byte, limit int) (keys [][]byte, v
 		return nil, nil, errors.Trace(ErrMaxScanLimitExceeded)
 	}
 
-	for len(keys) < limit {
+	for len(keys) < limit && (len(endKey) == 0 || bytes.Compare(startKey, endKey) < 0) {
 		req := tikvrpc.NewRequest(tikvrpc.CmdRawScan, &kvrpcpb.RawScanRequest{
 			StartKey: startKey,
 			EndKey:   endKey,
@@ -311,10 +311,6 @@ func (c *RawKVClient) Scan(startKey, endKey []byte, limit int) (keys [][]byte, v
 		}
 		startKey = loc.EndKey
 		if len(startKey) == 0 {
-			break
-		}
-
-		if len(endKey) > 0 && bytes.Compare(startKey, endKey) > 0 {
 			break
 		}
 	}
@@ -338,7 +334,7 @@ func (c *RawKVClient) ReverseScan(startKey, endKey []byte, limit int) (keys [][]
 		return nil, nil, errors.Trace(ErrMaxScanLimitExceeded)
 	}
 
-	for len(keys) < limit {
+	for len(keys) < limit && bytes.Compare(startKey, endKey) > 0 {
 		req := tikvrpc.NewRequest(tikvrpc.CmdRawScan, &kvrpcpb.RawScanRequest{
 			StartKey: startKey,
 			EndKey:   endKey,
@@ -359,10 +355,6 @@ func (c *RawKVClient) ReverseScan(startKey, endKey []byte, limit int) (keys [][]
 		}
 		startKey = loc.StartKey
 		if len(startKey) == 0 {
-			break
-		}
-
-		if len(endKey) > 0 && bytes.Compare(startKey, endKey) < 0 {
 			break
 		}
 	}
