@@ -1265,6 +1265,8 @@ func (w *GCWorker) resolveLocksAcrossRegions(ctx context.Context, locks []*tikv.
 		for _, lock := range locks {
 			if loc.Contains(lock.Key) {
 				locksInRegion = append(locksInRegion, lock)
+			} else {
+				break
 			}
 		}
 
