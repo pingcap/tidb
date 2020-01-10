@@ -2726,7 +2726,7 @@ func (b *PlanBuilder) buildMemTable(ctx context.Context, dbName model.CIStr, tab
 	// Some memory tables can receive some predicates
 	switch dbName.L {
 	case util2.MetricSchemaName.L:
-		p.Extractor = &MetricTableExtractor{}
+		p.Extractor = newMetricTableExtractor()
 	case util2.InformationSchemaName.L:
 		switch strings.ToUpper(tableInfo.Name.O) {
 		case infoschema.TableClusterConfig, infoschema.TableClusterLoad, infoschema.TableClusterHardware, infoschema.TableClusterSystemInfo:
