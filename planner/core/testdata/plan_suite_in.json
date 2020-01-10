@@ -362,8 +362,20 @@
       "select max(a), b from t;",
       // If max/min contains scalar function, we can still do transformation.
       "select max(a+1) from t;",
-      // Do nothing to max+min.
+      // Min + Max to Limit + Sort + Join.
       "select max(a), min(a) from t;",
+      // Min + Max with range condition.
+      "select max(a), min(a) from t where a > 10",
+      // Min + Max with unified index range condition.
+      "select max(d), min(d) from t where c = 1 and d > 10",
+      // Min + Max with multiple columns
+      "select max(a), max(c), min(f) from t",
+      // Do nothing if any column has no index.
+      "select max(a), max(b) from t",
+      // Do nothing if any column has a non-range condition.
+      "select max(a), max(c) from t where c > 10",
+      // Do nothing if the condition cannot be pushed down to range.
+      "select max(a), min(a) from t where a * 3 + 10 < 100",
       // Do nothing to max with groupby.
       "select max(a) from t group by b;",
       // If inner is not a data source, we can still do transformation.
