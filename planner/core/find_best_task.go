@@ -249,7 +249,7 @@ func compareBool(l, r bool) int {
 	if l == r {
 		return 0
 	}
-	if l == false {
+	if !l {
 		return -1
 	}
 	return 1
