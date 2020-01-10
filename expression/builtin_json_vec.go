@@ -152,7 +152,7 @@ func (b *builtinJSONKeysSig) vecEvalJSON(input *chunk.Chunk, result *chunk.Colum
 
 		j = buf.GetJSON(i)
 		if j.TypeCode != json.TypeCodeObject {
-			return json.ErrInvalidJSONData
+			return json.ErrInvalidJSONData.GenWithStackByArgs(1, "json_keys")
 		}
 		result.AppendJSON(j.GetKeys())
 	}
@@ -524,7 +524,7 @@ func (b *builtinJSONKeys2ArgsSig) vecEvalJSON(input *chunk.Chunk, result *chunk.
 
 		jsonItem := jsonBuf.GetJSON(i)
 		if jsonItem.TypeCode != json.TypeCodeObject {
-			return json.ErrInvalidJSONData
+			return json.ErrInvalidJSONData.GenWithStackByArgs(1, "json_keys")
 		}
 		pathExpr, err := json.ParseJSONPathExpr(pathBuf.GetString(i))
 		if err != nil {
