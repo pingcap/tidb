@@ -15,6 +15,7 @@ package core
 import (
 	"context"
 	"errors"
+
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/planner/util"
@@ -153,7 +154,7 @@ func (s *partitionProcessor) pruneHashPartition(ds *DataSource, pi *model.Partit
 		// Constant false.
 		if con, ok := filterConds[0].(*expression.Constant); ok && con.DeferredExpr == nil && con.ParamMarker == nil {
 			ret, _, err := expression.EvalBool(sctx, expression.CNFExprs{con}, chunk.Row{})
-			if err == nil && ret == false {
+			if err == nil && !ret {
 				alwaysFalse = true
 			}
 		}
@@ -165,6 +166,12 @@ func (s *partitionProcessor) pruneHashPartition(ds *DataSource, pi *model.Partit
 	}
 	children := make([]LogicalPlan, 0, len(pi.Definitions))
 	for i := 0; i < len(pi.Definitions); i++ {
+		// This is for `table partition (p0,p1)` syntax, only union the specified partition if has specified partitions.
+		if len(ds.partitionNames) != 0 {
+			if !s.findByName(ds.partitionNames, pi.Definitions[i].Name.L) {
+				continue
+			}
+		}
 		// Not a deep copy.
 		newDataSource := *ds
 		newDataSource.baseLogicalPlan = newBaseLogicalPlan(ds.SCtx(), plancodec.TypeTableScan, &newDataSource, ds.blockOffset)
@@ -197,7 +204,7 @@ func (s *partitionProcessor) prune(ds *DataSource) (LogicalPlan, error) {
 	filterConds := ds.allConds
 
 	// Try to locate partition directly for hash partition.
-	if pi.Type == model.PartitionTypeHash && len(filterConds) > 0 {
+	if pi.Type == model.PartitionTypeHash {
 		return s.pruneHashPartition(ds, pi)
 	}
 
@@ -227,7 +234,7 @@ func (s *partitionProcessor) prune(ds *DataSource) (LogicalPlan, error) {
 			// Constant false.
 			if con, ok := filterConds[0].(*expression.Constant); ok && con.DeferredExpr == nil && con.ParamMarker == nil {
 				ret, _, err := expression.EvalBool(sctx, expression.CNFExprs{con}, chunk.Row{})
-				if err == nil && ret == false {
+				if err == nil && !ret {
 					alwaysFalse = true
 				}
 			}
@@ -306,7 +313,7 @@ func (s *partitionProcessor) canBePruned(sctx sessionctx.Context, partCol *expre
 		// Constant false.
 		if con, ok := conds[0].(*expression.Constant); ok && con.DeferredExpr == nil && con.ParamMarker == nil {
 			ret, _, err := expression.EvalBool(sctx, expression.CNFExprs{con}, chunk.Row{})
-			if err == nil && ret == false {
+			if err == nil && !ret {
 				return true, nil
 			}
 		}
