@@ -59,6 +59,7 @@ type PointGetExecutor struct {
 	tblInfo      *model.TableInfo
 	handle       int64
 	idxInfo      *model.IndexInfo
+	partInfo     *model.PartitionDefinition
 	idxVals      []types.Datum
 	startTS      uint64
 	snapshot     kv.Snapshot
@@ -80,6 +81,7 @@ func (e *PointGetExecutor) Init(p *plannercore.PointGetPlan, startTs uint64) {
 	e.lock = p.Lock
 	e.lockWaitTime = p.LockWaitTime
 	e.rowDecoder = decoder
+	e.partInfo = p.PartitionInfo
 }
 
 // Open implements the Executor interface.
@@ -111,8 +113,14 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 	if e.ctx.GetSessionVars().GetReplicaRead().IsFollowerRead() {
 		e.snapshot.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
 	}
+	var tblID int64
+	if e.partInfo != nil {
+		tblID = e.partInfo.ID
+	} else {
+		tblID = e.tblInfo.ID
+	}
 	if e.idxInfo != nil {
-		idxKey, err1 := encodeIndexKey(e.base(), e.tblInfo, e.idxInfo, e.idxVals)
+		idxKey, err1 := encodeIndexKey(e.base(), e.tblInfo, e.idxInfo, e.idxVals, tblID)
 		if err1 != nil && !kv.ErrNotExist.Equal(err1) {
 			return err1
 		}
@@ -144,7 +152,7 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 		})
 	}
 
-	key := tablecodec.EncodeRowKeyWithHandle(e.tblInfo.ID, e.handle)
+	key := tablecodec.EncodeRowKeyWithHandle(tblID, e.handle)
 	val, err := e.get(ctx, key)
 	if err != nil && !kv.ErrNotExist.Equal(err) {
 		return err
@@ -190,7 +198,7 @@ func (e *PointGetExecutor) get(ctx context.Context, key kv.Key) (val []byte, err
 	return e.snapshot.Get(ctx, key)
 }
 
-func encodeIndexKey(e *baseExecutor, tblInfo *model.TableInfo, idxInfo *model.IndexInfo, idxVals []types.Datum) (_ []byte, err error) {
+func encodeIndexKey(e *baseExecutor, tblInfo *model.TableInfo, idxInfo *model.IndexInfo, idxVals []types.Datum, tID int64) (_ []byte, err error) {
 	sc := e.ctx.GetSessionVars().StmtCtx
 	for i := range idxVals {
 		colInfo := tblInfo.Columns[idxInfo.Columns[i].Offset]
@@ -213,7 +221,7 @@ func encodeIndexKey(e *baseExecutor, tblInfo *model.TableInfo, idxInfo *model.In
 	if err != nil {
 		return nil, err
 	}
-	return tablecodec.EncodeIndexSeekKey(tblInfo.ID, idxInfo.ID, encodedIdxVals), nil
+	return tablecodec.EncodeIndexSeekKey(tID, idxInfo.ID, encodedIdxVals), nil
 }
 
 func decodeRowValToChunk(e *baseExecutor, tblInfo *model.TableInfo, handle int64, rowVal []byte, chk *chunk.Chunk, rd *rowcodec.ChunkDecoder) error {
