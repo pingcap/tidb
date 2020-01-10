@@ -158,6 +158,7 @@ func (s *testTransformationRuleSuite) TestTopNRules(c *C) {
 		},
 		memo.OperandTopN: {
 			NewRulePushTopNDownProjection(),
+			NewRulePushTopNDownOuterJoin(),
 			NewRulePushTopNDownUnionAll(),
 			NewRulePushTopNDownTiKVSingleGather(),
 		},
