@@ -161,7 +161,6 @@ type MemBuffer interface {
 // This is not thread safe.
 type Transaction interface {
 	MemBuffer
-	AssertionProto
 	// Commit commits the transaction operations to KV store.
 	Commit(context.Context) error
 	// Rollback undoes the transaction operations to KV store.
@@ -169,7 +168,7 @@ type Transaction interface {
 	// String implements fmt.Stringer interface.
 	String() string
 	// LockKeys tries to lock the entries with the keys in KV store.
-	LockKeys(ctx context.Context, killed *uint32, forUpdateTS uint64, lockWaitTime int64, keys ...Key) error
+	LockKeys(ctx context.Context, lockCtx *LockCtx, keys ...Key) error
 	// SetOption sets an option with a value, when val is nil, uses the default
 	// value of this option.
 	SetOption(opt Option, val interface{})
@@ -193,12 +192,14 @@ type Transaction interface {
 	IsPessimistic() bool
 }
 
-// AssertionProto is an interface defined for the assertion protocol.
-type AssertionProto interface {
-	// SetAssertion sets an assertion for an operation on the key.
-	SetAssertion(key Key, assertion AssertionType)
-	// Confirm assertions to current position if `succ` is true, reset position otherwise.
-	ConfirmAssertions(succ bool)
+// LockCtx contains information for LockKeys method.
+type LockCtx struct {
+	Killed                *uint32
+	ForUpdateTS           uint64
+	LockWaitTime          int64
+	WaitStartTime         time.Time
+	PessimisticLockWaited *int32
+	LockKeysDuration      *time.Duration
 }
 
 // Client is used to send request to KV layer.
@@ -235,12 +236,16 @@ const (
 	TiKV StoreType = iota
 	// TiFlash means the type of a store is TiFlash.
 	TiFlash
+	// TiDB means the type of a store is TiDB.
+	TiDB
 )
 
 // Name returns the name of store type.
 func (t StoreType) Name() string {
 	if t == TiFlash {
 		return "tiflash"
+	} else if t == TiDB {
+		return "tidb"
 	}
 	return "tikv"
 }
@@ -261,7 +266,7 @@ type Request struct {
 	IsolationLevel IsoLevel
 	// Priority is the priority of this KV request, its value may be PriorityNormal/PriorityLow/PriorityHigh.
 	Priority int
-	// MemTracker is used to trace and control memory usage in co-processor layer.
+	// memTracker is used to trace and control memory usage in co-processor layer.
 	MemTracker *memory.Tracker
 	// KeepOrder is true, if the response should be returned in order.
 	KeepOrder bool
@@ -278,6 +283,10 @@ type Request struct {
 	ReplicaRead ReplicaReadType
 	// StoreType represents this request is sent to the which type of store.
 	StoreType StoreType
+	// Cacheable is true if the request can be cached. Currently only deterministic DAG requests can be cached.
+	Cacheable bool
+	// SchemaVer is for any schema-ful storage to validate schema correctness if necessary.
+	SchemaVar int64
 }
 
 // ResultSubset represents a result subset from a single storage unit.
@@ -365,8 +374,8 @@ type Iterator interface {
 	Close()
 }
 
-// SplitableStore is the kv store which supports split regions.
-type SplitableStore interface {
+// SplittableStore is the kv store which supports split regions.
+type SplittableStore interface {
 	SplitRegions(ctx context.Context, splitKey [][]byte, scatter bool) (regionID []uint64, err error)
 	WaitScatterRegionFinish(regionID uint64, backOff int) error
 	CheckRegionInScattering(regionID uint64) (bool, error)

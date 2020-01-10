@@ -30,7 +30,7 @@ var DefaultOptimizer = NewOptimizer()
 
 // Optimizer is the struct for cascades optimizer.
 type Optimizer struct {
-	transformationRuleMap map[memo.Operand][]TransformationID
+	transformationRuleMap map[memo.Operand][]Transformation
 	implementationRuleMap map[memo.Operand][]ImplementationRule
 }
 
@@ -44,7 +44,7 @@ func NewOptimizer() *Optimizer {
 }
 
 // ResetTransformationRules resets the transformationRuleMap of the optimizer, and returns the optimizer.
-func (opt *Optimizer) ResetTransformationRules(rules map[memo.Operand][]TransformationID) *Optimizer {
+func (opt *Optimizer) ResetTransformationRules(rules map[memo.Operand][]Transformation) *Optimizer {
 	opt.transformationRuleMap = rules
 	return opt
 }
@@ -55,9 +55,9 @@ func (opt *Optimizer) ResetImplementationRules(rules map[memo.Operand][]Implemen
 	return opt
 }
 
-// GetTransformationIDs gets the all the candidate TransformationIDs of the optimizer
+// GetTransformationRules gets the all the candidate Transformation rules of the optimizer
 // based on the logical plan node.
-func (opt *Optimizer) GetTransformationIDs(node plannercore.LogicalPlan) []TransformationID {
+func (opt *Optimizer) GetTransformationRules(node plannercore.LogicalPlan) []Transformation {
 	return opt.transformationRuleMap[memo.GetOperand(node)]
 }
 
@@ -107,7 +107,7 @@ func (opt *Optimizer) FindBestPlan(sctx sessionctx.Context, logical plannercore.
 	if err != nil {
 		return nil, 0, err
 	}
-	rootGroup := convert2Group(logical)
+	rootGroup := memo.Convert2Group(logical)
 	err = opt.onPhaseExploration(sctx, rootGroup)
 	if err != nil {
 		return nil, 0, err
@@ -120,32 +120,11 @@ func (opt *Optimizer) FindBestPlan(sctx sessionctx.Context, logical plannercore.
 	return p, cost, err
 }
 
-// convert2GroupExpr converts a logical plan to a GroupExpr.
-func convert2GroupExpr(node plannercore.LogicalPlan) *memo.GroupExpr {
-	e := memo.NewGroupExpr(node)
-	e.Children = make([]*memo.Group, 0, len(node.Children()))
-	for _, child := range node.Children() {
-		childGroup := convert2Group(child)
-		e.Children = append(e.Children, childGroup)
-	}
-	return e
-}
-
-// convert2Group converts a logical plan to a Group.
-func convert2Group(node plannercore.LogicalPlan) *memo.Group {
-	e := convert2GroupExpr(node)
-	g := memo.NewGroupWithSchema(e, node.Schema())
-	// Stats property for `Group` would be computed after exploration phase.
-	return g
-}
-
 func (opt *Optimizer) onPhasePreprocessing(sctx sessionctx.Context, plan plannercore.LogicalPlan) (plannercore.LogicalPlan, error) {
 	err := plan.PruneColumns(plan.Schema().Columns)
 	if err != nil {
 		return nil, err
 	}
-	// TODO: Build key info when convert LogicalPlan to GroupExpr.
-	plan.BuildKeyInfo()
 	return plan, nil
 }
 
@@ -195,9 +174,8 @@ func (opt *Optimizer) exploreGroup(g *memo.Group) error {
 // findMoreEquiv finds and applies the matched transformation rules.
 func (opt *Optimizer) findMoreEquiv(g *memo.Group, elem *list.Element) (eraseCur bool, err error) {
 	expr := elem.Value.(*memo.GroupExpr)
-	for _, ruleID := range opt.GetTransformationIDs(expr.ExprNode) {
-		rule := GetTransformationRule(ruleID)
-		pattern := GetPattern(ruleID)
+	for _, rule := range opt.GetTransformationRules(expr.ExprNode) {
+		pattern := rule.GetPattern()
 		if !pattern.Operand.Match(memo.GetOperand(expr.ExprNode)) {
 			continue
 		}
@@ -268,6 +246,7 @@ func (opt *Optimizer) onPhaseImplementation(sctx sessionctx.Context, g *memo.Gro
 	prop := &property.PhysicalProperty{
 		ExpectedCnt: math.MaxFloat64,
 	}
+	preparePossibleProperties(g, make(map[*memo.Group][][]*expression.Column))
 	// TODO replace MaxFloat64 costLimit by variable from sctx, or other sources.
 	impl, err := opt.implGroup(g, prop, math.MaxFloat64)
 	if err != nil {
@@ -295,7 +274,6 @@ func (opt *Optimizer) implGroup(g *memo.Group, reqPhysProp *property.PhysicalPro
 		return nil, nil
 	}
 	// Handle implementation rules for each equivalent GroupExpr.
-	var cumCost float64
 	var childImpls []memo.Implementation
 	err := opt.fillGroupStats(g)
 	if err != nil {
@@ -309,10 +287,9 @@ func (opt *Optimizer) implGroup(g *memo.Group, reqPhysProp *property.PhysicalPro
 			return nil, err
 		}
 		for _, impl := range impls {
-			cumCost = 0.0
 			childImpls = childImpls[:0]
 			for i, childGroup := range curExpr.Children {
-				childImpl, err := opt.implGroup(childGroup, impl.GetPlan().GetChildReqProps(i), impl.ScaleCostLimit(costLimit)-cumCost)
+				childImpl, err := opt.implGroup(childGroup, impl.GetPlan().GetChildReqProps(i), impl.GetCostLimit(costLimit, childImpls...))
 				if err != nil {
 					return nil, err
 				}
@@ -320,19 +297,18 @@ func (opt *Optimizer) implGroup(g *memo.Group, reqPhysProp *property.PhysicalPro
 					impl.SetCost(math.MaxFloat64)
 					break
 				}
-				cumCost += childImpl.GetCost()
 				childImpls = append(childImpls, childImpl)
 			}
 			if impl.GetCost() == math.MaxFloat64 {
 				continue
 			}
-			cumCost = impl.CalcCost(outCount, childImpls...)
-			if cumCost > costLimit {
+			implCost := impl.CalcCost(outCount, childImpls...)
+			if implCost > costLimit {
 				continue
 			}
-			if groupImpl == nil || groupImpl.GetCost() > cumCost {
+			if groupImpl == nil || groupImpl.GetCost() > implCost {
 				groupImpl = impl.AttachChildren(childImpls...)
-				costLimit = cumCost
+				costLimit = implCost
 			}
 		}
 	}
@@ -348,11 +324,11 @@ func (opt *Optimizer) implGroup(g *memo.Group, reqPhysProp *property.PhysicalPro
 			continue
 		}
 		impl := rule.OnEnforce(reqPhysProp, childImpl)
-		cumCost = enforceCost + childImpl.GetCost()
-		impl.SetCost(cumCost)
-		if groupImpl == nil || groupImpl.GetCost() > cumCost {
+		implCost := enforceCost + childImpl.GetCost()
+		impl.SetCost(implCost)
+		if groupImpl == nil || groupImpl.GetCost() > implCost {
 			groupImpl = impl
-			costLimit = cumCost
+			costLimit = implCost
 		}
 	}
 	if groupImpl == nil || groupImpl.GetCost() == math.MaxFloat64 {
@@ -376,4 +352,36 @@ func (opt *Optimizer) implGroupExpr(cur *memo.GroupExpr, reqPhysProp *property.P
 		}
 	}
 	return impls, nil
+}
+
+// preparePossibleProperties recursively calls LogicalPlan PreparePossibleProperties
+// interface. It will fulfill the the possible properties fields of LogicalAggregation
+// and LogicalJoin.
+func preparePossibleProperties(g *memo.Group, propertyMap map[*memo.Group][][]*expression.Column) [][]*expression.Column {
+	if prop, ok := propertyMap[g]; ok {
+		return prop
+	}
+	groupPropertyMap := make(map[string][]*expression.Column)
+	for elem := g.Equivalents.Front(); elem != nil; elem = elem.Next() {
+		expr := elem.Value.(*memo.GroupExpr)
+		childrenProperties := make([][][]*expression.Column, len(expr.Children))
+		for i, child := range expr.Children {
+			childrenProperties[i] = preparePossibleProperties(child, propertyMap)
+		}
+		exprProperties := expr.ExprNode.PreparePossibleProperties(expr.Schema(), childrenProperties...)
+		for _, newPropCols := range exprProperties {
+			// Check if the prop has already been in `groupPropertyMap`.
+			newProp := property.PhysicalProperty{Items: property.ItemsFromCols(newPropCols, true)}
+			key := newProp.HashCode()
+			if _, ok := groupPropertyMap[string(key)]; !ok {
+				groupPropertyMap[string(key)] = newPropCols
+			}
+		}
+	}
+	resultProps := make([][]*expression.Column, 0, len(groupPropertyMap))
+	for _, prop := range groupPropertyMap {
+		resultProps = append(resultProps, prop)
+	}
+	propertyMap[g] = resultProps
+	return resultProps
 }

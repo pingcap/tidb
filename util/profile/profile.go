@@ -16,6 +16,7 @@ package profile
 import (
 	"bytes"
 	"io"
+	"io/ioutil"
 	"runtime/pprof"
 	"strconv"
 	"strings"
@@ -33,7 +34,8 @@ var CPUProfileInterval = 30 * time.Second
 // Collector is used to collect the profile results
 type Collector struct{}
 
-func (c *Collector) profileReaderToDatums(f io.Reader) ([][]types.Datum, error) {
+// ProfileReaderToDatums reads data from reader and returns the flamegraph which is organized by tree form.
+func (c *Collector) ProfileReaderToDatums(f io.Reader) ([][]types.Datum, error) {
 	p, err := profile.Parse(f)
 	if err != nil {
 		return nil, err
@@ -65,7 +67,7 @@ func (c *Collector) cpuProfileGraph() ([][]types.Datum, error) {
 	}
 	time.Sleep(CPUProfileInterval)
 	pprof.StopCPUProfile()
-	return c.profileReaderToDatums(buffer)
+	return c.ProfileReaderToDatums(buffer)
 }
 
 // ProfileGraph returns the CPU/memory/mutex/allocs/block profile flamegraph which is organized by tree form
@@ -78,27 +80,27 @@ func (c *Collector) ProfileGraph(name string) ([][]types.Datum, error) {
 	if p == nil {
 		return nil, errors.Errorf("cannot retrieve %s profile", name)
 	}
+	debug := 0
+	if name == "goroutine" {
+		debug = 2
+	}
 	buffer := &bytes.Buffer{}
-	if err := p.WriteTo(buffer, 0); err != nil {
+	if err := p.WriteTo(buffer, debug); err != nil {
 		return nil, err
 	}
-	return c.profileReaderToDatums(buffer)
+	if name == "goroutine" {
+		return c.ParseGoroutines(buffer)
+	}
+	return c.ProfileReaderToDatums(buffer)
 }
 
-// Goroutines returns the groutine list which alive in runtime
-func (c *Collector) Goroutines() ([][]types.Datum, error) {
-	p := pprof.Lookup("goroutine")
-	if p == nil {
-		return nil, errors.Errorf("cannot retrieve goroutine profile")
-	}
-
-	buffer := bytes.Buffer{}
-	err := p.WriteTo(&buffer, 2)
+// ParseGoroutines returns the groutine list for given string representation
+func (c *Collector) ParseGoroutines(reader io.Reader) ([][]types.Datum, error) {
+	content, err := ioutil.ReadAll(reader)
 	if err != nil {
 		return nil, err
 	}
-
-	goroutines := strings.Split(buffer.String(), "\n\n")
+	goroutines := strings.Split(string(content), "\n\n")
 	var rows [][]types.Datum
 	for _, goroutine := range goroutines {
 		colIndex := strings.Index(goroutine, ":")

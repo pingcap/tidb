@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
@@ -62,7 +63,7 @@ PARTITION BY RANGE ( a ) (
 	}
 	tk.MustExec("analyze table t")
 
-	is := executor.GetInfoSchema(tk.Se.(sessionctx.Context))
+	is := infoschema.GetInfoSchema(tk.Se.(sessionctx.Context))
 	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 	pi := table.Meta().GetPartitionInfo()
@@ -89,7 +90,7 @@ PARTITION BY RANGE ( a ) (
 		tk.MustExec(fmt.Sprintf(`insert into t values (%d, %d, "hello")`, i, i))
 	}
 	tk.MustExec("alter table t analyze partition p0")
-	is = executor.GetInfoSchema(tk.Se.(sessionctx.Context))
+	is = infoschema.GetInfoSchema(tk.Se.(sessionctx.Context))
 	table, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 	pi = table.Meta().GetPartitionInfo()
@@ -139,7 +140,7 @@ func (s *testSuite1) TestAnalyzeParameters(c *C) {
 
 	tk.MustExec("set @@tidb_enable_fast_analyze = 1")
 	tk.MustExec("analyze table t with 30 samples")
-	is := executor.GetInfoSchema(tk.Se.(sessionctx.Context))
+	is := infoschema.GetInfoSchema(tk.Se.(sessionctx.Context))
 	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 	tableInfo := table.Meta()
@@ -170,7 +171,7 @@ func (s *testSuite1) TestAnalyzeTooLongColumns(c *C) {
 	tk.MustExec(fmt.Sprintf("insert into t values ('%s')", value))
 
 	tk.MustExec("analyze table t")
-	is := executor.GetInfoSchema(tk.Se.(sessionctx.Context))
+	is := infoschema.GetInfoSchema(tk.Se.(sessionctx.Context))
 	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 	tableInfo := table.Meta()
@@ -186,11 +187,13 @@ func (s *testFastAnalyze) TestAnalyzeFastSample(c *C) {
 		mockstore.WithCluster(cluster),
 	)
 	c.Assert(err, IsNil)
+	defer store.Close()
 	var dom *domain.Domain
 	session.DisableStats4Test()
 	session.SetSchemaLease(0)
 	dom, err = session.BootstrapSession(store)
 	c.Assert(err, IsNil)
+	defer dom.Close()
 	tk := testkit.NewTestKit(c, store)
 	executor.RandSeed = 123
 
@@ -239,10 +242,8 @@ func (s *testFastAnalyze) TestAnalyzeFastSample(c *C) {
 	}
 	err = mockExec.TestFastSample()
 	c.Assert(err, IsNil)
-	vals := make([][]string, 0)
 	c.Assert(len(mockExec.Collectors), Equals, 3)
 	for i := 0; i < 2; i++ {
-		vals = append(vals, make([]string, 0))
 		samples := mockExec.Collectors[i].Samples
 		c.Assert(len(samples), Equals, 20)
 		for j := 1; j < 20; j++ {
@@ -279,11 +280,13 @@ func (s *testFastAnalyze) TestFastAnalyze(c *C) {
 		mockstore.WithCluster(cluster),
 	)
 	c.Assert(err, IsNil)
+	defer store.Close()
 	var dom *domain.Domain
 	session.DisableStats4Test()
 	session.SetSchemaLease(0)
 	dom, err = session.BootstrapSession(store)
 	c.Assert(err, IsNil)
+	defer dom.Close()
 	tk := testkit.NewTestKit(c, store)
 	executor.RandSeed = 123
 
@@ -307,7 +310,7 @@ func (s *testFastAnalyze) TestFastAnalyze(c *C) {
 	}
 	tk.MustExec("analyze table t with 5 buckets, 6 samples")
 
-	is := executor.GetInfoSchema(tk.Se.(sessionctx.Context))
+	is := infoschema.GetInfoSchema(tk.Se.(sessionctx.Context))
 	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 	tableInfo := table.Meta()
@@ -453,8 +456,10 @@ func (s *testFastAnalyze) TestFastAnalyzeRetryRowCount(c *C) {
 		mockstore.WithMVCCStore(mvccStore),
 	)
 	c.Assert(err, IsNil)
+	defer store.Close()
 	dom, err := session.BootstrapSession(store)
 	c.Assert(err, IsNil)
+	defer dom.Close()
 
 	tk := testkit.NewTestKit(c, store)
 	tk.MustExec("use test")

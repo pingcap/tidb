@@ -20,6 +20,7 @@ import (
 	"io"
 	"math"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/golang/protobuf/proto"
@@ -73,9 +74,10 @@ func convertToKeyError(err error) *kvrpcpb.KeyError {
 	if writeConflict, ok := errors.Cause(err).(*ErrConflict); ok {
 		return &kvrpcpb.KeyError{
 			Conflict: &kvrpcpb.WriteConflict{
-				Key:        writeConflict.Key,
-				ConflictTs: writeConflict.ConflictTS,
-				StartTs:    writeConflict.StartTS,
+				Key:              writeConflict.Key,
+				ConflictTs:       writeConflict.ConflictTS,
+				ConflictCommitTs: writeConflict.ConflictCommitTS,
+				StartTs:          writeConflict.StartTS,
 			},
 		}
 	}
@@ -258,7 +260,7 @@ func (h *rpcHandler) handleKvGet(req *kvrpcpb.GetRequest) *kvrpcpb.GetResponse {
 		panic("KvGet: key not in region")
 	}
 
-	val, err := h.mvccStore.Get(req.Key, req.GetVersion(), h.isolationLevel)
+	val, err := h.mvccStore.Get(req.Key, req.GetVersion(), h.isolationLevel, req.Context.GetResolvedLocks())
 	if err != nil {
 		return &kvrpcpb.GetResponse{
 			Error: convertToKeyError(err),
@@ -417,7 +419,7 @@ func (h *rpcHandler) handleKvBatchGet(req *kvrpcpb.BatchGetRequest) *kvrpcpb.Bat
 			panic("KvBatchGet: key not in region")
 		}
 	}
-	pairs := h.mvccStore.BatchGet(req.Keys, req.GetVersion(), h.isolationLevel)
+	pairs := h.mvccStore.BatchGet(req.Keys, req.GetVersion(), h.isolationLevel, req.Context.GetResolvedLocks())
 	return &kvrpcpb.BatchGetResponse{
 		Pairs: convertToPbPairs(pairs),
 	}
@@ -666,6 +668,15 @@ func (h *rpcHandler) handleSplitRegion(req *kvrpcpb.SplitRegionRequest) *kvrpcpb
 	return resp
 }
 
+// Client is a client that sends RPC.
+// This is same with tikv.Client, define again for avoid circle import.
+type Client interface {
+	// Close should release all data.
+	Close() error
+	// SendRequest sends Request.
+	SendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error)
+}
+
 // RPCClient sends kv RPC calls to mock cluster. RPCClient mocks the behavior of
 // a rpc client at tikv's side.
 type RPCClient struct {
@@ -673,6 +684,11 @@ type RPCClient struct {
 	MvccStore     MVCCStore
 	streamTimeout chan *tikvrpc.Lease
 	done          chan struct{}
+	// rpcCli uses to redirects RPC request to TiDB rpc server, It is only use for test.
+	// Mock TiDB rpc service will have circle import problem, so just use a real RPC client to send this RPC  server.
+	// sync.Once uses to avoid concurrency initialize rpcCli.
+	sync.Once
+	rpcCli Client
 }
 
 // NewRPCClient creates an RPCClient.
@@ -722,6 +738,25 @@ func (c *RPCClient) checkArgs(ctx context.Context, addr string) (*rpcHandler, er
 	return handler, nil
 }
 
+// GRPCClientFactory is the GRPC client factory.
+// Use global variable to avoid circle import.
+// TODO: remove this global variable.
+var GRPCClientFactory func() Client
+
+// redirectRequestToRPCServer redirects RPC request to TiDB rpc server, It is only use for test.
+// Mock TiDB rpc service will have circle import problem, so just use a real RPC client to send this RPC  server.
+func (c *RPCClient) redirectRequestToRPCServer(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
+	c.Once.Do(func() {
+		if GRPCClientFactory != nil {
+			c.rpcCli = GRPCClientFactory()
+		}
+	})
+	if c.rpcCli == nil {
+		return nil, errors.Errorf("GRPCClientFactory is nil")
+	}
+	return c.rpcCli.SendRequest(ctx, addr, req, timeout)
+}
+
 // SendRequest sends a request to mock cluster.
 func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
@@ -736,12 +771,17 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 		}
 	})
 
+	reqCtx := &req.Context
+	resp := &tikvrpc.Response{}
+	// When the store type is TiDB, the request should handle over to TiDB rpc server to handle.
+	if req.StoreTp == kv.TiDB {
+		return c.redirectRequestToRPCServer(ctx, addr, req, timeout)
+	}
+
 	handler, err := c.checkArgs(ctx, addr)
 	if err != nil {
 		return nil, err
 	}
-	reqCtx := &req.Context
-	resp := &tikvrpc.Response{}
 	switch req.Type {
 	case tikvrpc.CmdGet:
 		r := req.Get()
@@ -935,6 +975,14 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 		resp.Resp = handler.handleKvRawScan(r)
 	case tikvrpc.CmdUnsafeDestroyRange:
 		panic("unimplemented")
+	case tikvrpc.CmdRegisterLockObserver:
+		panic("unimplemented")
+	case tikvrpc.CmdCheckLockObserver:
+		panic("unimplemented")
+	case tikvrpc.CmdRemoveLockObserver:
+		panic("unimplemented")
+	case tikvrpc.CmdPhysicalScanLock:
+		panic("unimplemented")
 	case tikvrpc.CmdCop:
 		r := req.Cop()
 		if err := handler.checkRequestContext(reqCtx); err != nil {
@@ -1036,6 +1084,9 @@ func (c *RPCClient) Close() error {
 	close(c.done)
 	if raw, ok := c.MvccStore.(io.Closer); ok {
 		return raw.Close()
+	}
+	if c.rpcCli != nil {
+		return c.rpcCli.Close()
 	}
 	return nil
 }

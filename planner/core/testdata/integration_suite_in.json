@@ -27,12 +27,35 @@
     ]
   },
   {
+    "name": "TestMaxMinEliminate",
+    "cases": [
+      "explain (select max(a) from t) union (select min(a) from t)"
+    ]
+  },
+  {
+    "name": "TestIndexJoinUniqueCompositeIndex",
+    "cases": [
+      // Row count of IndexScan should be 2.
+      "explain select /*+ TIDB_INLJ(t2) */ * from t1 join t2 on t1.a = t2.a and t1.c = t2.c",
+      // Row count of IndexScan should be 2.
+	  "explain select /*+ TIDB_INLJ(t2) */ * from t1 join t2 on t1.a = t2.a and t1.c <= t2.b",
+      // Row count of IndexScan should be 1.
+	  "explain select /*+ TIDB_INLJ(t2) */ * from t1 join t2 on t1.a = t2.a and t2.b = 1"
+    ]
+  },
+  {
     "name": "TestPartitionTableStats",
     "cases": [
       "explain select * from t order by a",
       "select * from t order by a",
       "explain select * from t order by a limit 3",
       "select * from t order by a limit 3"
+    ]
+  },
+  {
+    "name": "TestIndexMerge",
+    "cases": [
+      "explain select /*+ USE_INDEX_MERGE(t, a, b) */ * from t where a = 1 or b = 2"
     ]
   }
 ]

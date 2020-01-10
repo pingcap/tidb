@@ -188,7 +188,7 @@ func (b *builtinInDecimalSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colum
 			arg0 := args0[i]
 			arg1 := args1[i]
 			compareResult = 1
-			if arg0 == arg1 {
+			if arg0.Compare(&arg1) == 0 {
 				compareResult = 0
 			}
 			if compareResult == 0 {

@@ -274,13 +274,13 @@ func (ts *testSuite) TestGeneratePartitionExpr(c *C) {
 	c.Assert(pe.Column.ID, Equals, int64(1))
 
 	ranges := []string{
-		"or(lt(Column#1, 4), isnull(Column#1))",
-		"and(lt(Column#1, 7), ge(Column#1, 4))",
-		"and(1, ge(Column#1, 7))",
+		"or(lt(test.t1.id, 4), isnull(test.t1.id))",
+		"and(lt(test.t1.id, 7), ge(test.t1.id, 4))",
+		"and(1, ge(test.t1.id, 7))",
 	}
 	upperBounds := []string{
-		"lt(Column#1, 4)",
-		"lt(Column#1, 7)",
+		"lt(test.t1.id, 4)",
+		"lt(test.t1.id, 7)",
 		"1",
 	}
 	for i, expr := range pe.Ranges {
@@ -289,4 +289,20 @@ func (ts *testSuite) TestGeneratePartitionExpr(c *C) {
 	for i, expr := range pe.UpperBounds {
 		c.Assert(expr.String(), Equals, upperBounds[i])
 	}
+}
+
+func (ts *testSuite) TestLocateRangePartitionErr(c *C) {
+	tk := testkit.NewTestKitWithInit(c, ts.store)
+	tk.MustExec("use test")
+	tk.MustExec(`CREATE TABLE t_month_data_monitor (
+		id int(20) NOT NULL AUTO_INCREMENT,
+		data_date date NOT NULL,
+		PRIMARY KEY (id, data_date)
+	) PARTITION BY RANGE COLUMNS(data_date) (
+		PARTITION p20190401 VALUES LESS THAN ('2019-04-02'),
+		PARTITION p20190402 VALUES LESS THAN ('2019-04-03')
+	)`)
+
+	_, err := tk.Exec("INSERT INTO t_month_data_monitor VALUES (4, '2019-04-04')")
+	c.Assert(table.ErrNoPartitionForGivenValue.Equal(err), IsTrue)
 }

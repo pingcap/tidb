@@ -15,9 +15,11 @@ package core_test
 
 import (
 	. "github.com/pingcap/check"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
 )
@@ -155,7 +157,7 @@ func (s *testIntegrationSuite) runTestsWithTestData(caseName string, tk *testkit
 	}
 }
 
-func (s *testIntegrationSuite) TestApplyNotNullFlag(c *C) {
+func (s *testIntegrationSuite) TestJoinNotNullFlag(c *C) {
 	store, dom, err := newStoreWithBootstrap()
 	c.Assert(err, IsNil)
 	tk := testkit.NewTestKit(c, store)
@@ -170,6 +172,8 @@ func (s *testIntegrationSuite) TestApplyNotNullFlag(c *C) {
 	tk.MustExec("insert into t2 values (1)")
 
 	tk.MustQuery("select IFNULL((select t1.x from t1 where t1.x = t2.x), 'xxx') as col1 from t2").Check(testkit.Rows("xxx"))
+	tk.MustQuery("select ifnull(t1.x, 'xxx') from t2 left join t1 using(x)").Check(testkit.Rows("xxx"))
+	tk.MustQuery("select ifnull(t1.x, 'xxx') from t2 natural left join t1").Check(testkit.Rows("xxx"))
 }
 
 func (s *testIntegrationSuite) TestAntiJoinConstProp(c *C) {
@@ -251,6 +255,11 @@ func (s *testIntegrationSuite) TestNoneAccessPathsFoundByIsolationRead(c *C) {
 
 	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tiflash'")
 
+	// Don't filter mysql.SystemDB by isolation read.
+	tk.MustQuery("explain select * from mysql.stats_meta").Check(testkit.Rows(
+		"TableReader_5 10000.00 root data:TableScan_4",
+		"└─TableScan_4 10000.00 cop[tikv] table:stats_meta, range:[-inf,+inf], keep order:false, stats:pseudo"))
+
 	_, err = tk.Exec("select * from t")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[planner:1815]Internal : Can not find access path matching 'tidb_isolation_read_engines'(value: 'tiflash'). Available values are 'tikv'.")
@@ -277,5 +286,96 @@ func (s *testIntegrationSuite) TestPartitionTableStats(c *C) {
 			output[i].Result = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
 		})
 		tk.MustQuery(tt).Check(testkit.Rows(output[i].Result...))
+	}
+}
+
+func (s *testIntegrationSuite) TestErrNoDB(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create user test")
+	_, err := tk.Exec("grant select on test1111 to test@'%'")
+	c.Assert(errors.Cause(err), Equals, core.ErrNoDB)
+	tk.MustExec("use test")
+	tk.MustExec("grant select on test1111 to test@'%'")
+}
+
+func (s *testIntegrationSuite) TestMaxMinEliminate(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int primary key)")
+
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+		})
+		tk.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
+	}
+}
+
+func (s *testIntegrationSuite) TestINLJHintSmallTable(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1(a int not null, b int, key(a))")
+	tk.MustExec("insert into t1 values(1,1),(2,2)")
+	tk.MustExec("create table t2(a int not null, b int, key(a))")
+	tk.MustExec("insert into t2 values(1,1),(2,2),(3,3),(4,4),(5,5)")
+	tk.MustExec("analyze table t1, t2")
+	tk.MustExec("explain select /*+ TIDB_INLJ(t1) */ * from t1 join t2 on t1.a = t2.a")
+}
+
+func (s *testIntegrationSuite) TestIndexJoinUniqueCompositeIndex(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1(a int not null, c int not null)")
+	tk.MustExec("create table t2(a int not null, b int not null, c int not null, primary key(a,b))")
+	tk.MustExec("insert into t1 values(1,1)")
+	tk.MustExec("insert into t2 values(1,1,1),(1,2,1)")
+	tk.MustExec("analyze table t1,t2")
+
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+		})
+		tk.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
+	}
+}
+
+func (s *testIntegrationSuite) TestIndexMerge(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, unique index(a), unique index(b))")
+
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+		})
+		tk.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
 	}
 }

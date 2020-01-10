@@ -90,10 +90,9 @@ func (p *PhysicalLimit) ToPB(ctx sessionctx.Context) (*tipb.Executor, error) {
 
 // ToPB implements PhysicalPlan ToPB interface.
 func (p *PhysicalTableScan) ToPB(ctx sessionctx.Context) (*tipb.Executor, error) {
-	columns := p.Columns
 	tsExec := &tipb.TableScan{
 		TableId: p.Table.ID,
-		Columns: model.ColumnsToProto(columns, p.Table.PKIsHandle),
+		Columns: model.ColumnsToProto(p.Columns, p.Table.PKIsHandle),
 		Desc:    p.Desc,
 	}
 	err := SetPBColumnsDefaultValue(ctx, tsExec.Columns, p.Columns)
@@ -181,7 +180,7 @@ func SetPBColumnsDefaultValue(ctx sessionctx.Context, pbColumns []*tipb.ColumnIn
 // TODO: Support more kinds of physical plan.
 func SupportStreaming(p PhysicalPlan) bool {
 	switch p.(type) {
-	case *PhysicalTableScan, *PhysicalIndexScan, *PhysicalSelection:
+	case *PhysicalIndexScan, *PhysicalSelection, *PhysicalTableScan:
 		return true
 	}
 	return false

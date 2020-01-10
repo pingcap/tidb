@@ -61,6 +61,11 @@ const (
 
 	CmdUnsafeDestroyRange
 
+	CmdRegisterLockObserver
+	CmdCheckLockObserver
+	CmdRemoveLockObserver
+	CmdPhysicalScanLock
+
 	CmdCop CmdType = 512 + iota
 	CmdCopStream
 
@@ -119,6 +124,14 @@ func (t CmdType) String() string {
 		return "RawScan"
 	case CmdUnsafeDestroyRange:
 		return "UnsafeDestroyRange"
+	case CmdRegisterLockObserver:
+		return "RegisterLockObserver"
+	case CmdCheckLockObserver:
+		return "CheckLockObserver"
+	case CmdRemoveLockObserver:
+		return "RemoveLockObserver"
+	case CmdPhysicalScanLock:
+		return "PhysicalScanLock"
 	case CmdCop:
 		return "Cop"
 	case CmdCopStream:
@@ -145,6 +158,7 @@ type Request struct {
 	req  interface{}
 	kvrpcpb.Context
 	ReplicaReadSeed uint32
+	StoreTp         kv.StoreType
 }
 
 // NewRequest returns new kv rpc request.
@@ -268,6 +282,26 @@ func (req *Request) RawScan() *kvrpcpb.RawScanRequest {
 // UnsafeDestroyRange returns UnsafeDestroyRangeRequest in request.
 func (req *Request) UnsafeDestroyRange() *kvrpcpb.UnsafeDestroyRangeRequest {
 	return req.req.(*kvrpcpb.UnsafeDestroyRangeRequest)
+}
+
+// RegisterLockObserver returns RegisterLockObserverRequest in request.
+func (req *Request) RegisterLockObserver() *kvrpcpb.RegisterLockObserverRequest {
+	return req.req.(*kvrpcpb.RegisterLockObserverRequest)
+}
+
+// CheckLockObserver returns CheckLockObserverRequest in request.
+func (req *Request) CheckLockObserver() *kvrpcpb.CheckLockObserverRequest {
+	return req.req.(*kvrpcpb.CheckLockObserverRequest)
+}
+
+// RemoveLockObserver returns RemoveLockObserverRequest in request.
+func (req *Request) RemoveLockObserver() *kvrpcpb.RemoveLockObserverRequest {
+	return req.req.(*kvrpcpb.RemoveLockObserverRequest)
+}
+
+// PhysicalScanLock returns PhysicalScanLockRequest in request.
+func (req *Request) PhysicalScanLock() *kvrpcpb.PhysicalScanLockRequest {
+	return req.req.(*kvrpcpb.PhysicalScanLockRequest)
 }
 
 // Cop returns coprocessor request in request.
@@ -461,8 +495,10 @@ type CopStreamResponse struct {
 // SetContext set the Context field for the given req to the specified ctx.
 func SetContext(req *Request, region *metapb.Region, peer *metapb.Peer) error {
 	ctx := &req.Context
-	ctx.RegionId = region.Id
-	ctx.RegionEpoch = region.RegionEpoch
+	if region != nil {
+		ctx.RegionId = region.Id
+		ctx.RegionEpoch = region.RegionEpoch
+	}
 	ctx.Peer = peer
 
 	switch req.Type {
@@ -510,6 +546,14 @@ func SetContext(req *Request, region *metapb.Region, peer *metapb.Peer) error {
 		req.RawScan().Context = ctx
 	case CmdUnsafeDestroyRange:
 		req.UnsafeDestroyRange().Context = ctx
+	case CmdRegisterLockObserver:
+		req.RegisterLockObserver().Context = ctx
+	case CmdCheckLockObserver:
+		req.CheckLockObserver().Context = ctx
+	case CmdRemoveLockObserver:
+		req.RemoveLockObserver().Context = ctx
+	case CmdPhysicalScanLock:
+		req.PhysicalScanLock().Context = ctx
 	case CmdCop:
 		req.Cop().Context = ctx
 	case CmdCopStream:
@@ -653,6 +697,10 @@ func GenRegionErrorResp(req *Request, e *errorpb.Error) (*Response, error) {
 		p = &kvrpcpb.TxnHeartBeatResponse{
 			RegionError: e,
 		}
+	case CmdCheckTxnStatus:
+		p = &kvrpcpb.CheckTxnStatusResponse{
+			RegionError: e,
+		}
 	default:
 		return nil, fmt.Errorf("invalid request type %v", req.Type)
 	}
@@ -730,6 +778,14 @@ func CallRPC(ctx context.Context, client tikvpb.TikvClient, req *Request) (*Resp
 		resp.Resp, err = client.RawScan(ctx, req.RawScan())
 	case CmdUnsafeDestroyRange:
 		resp.Resp, err = client.UnsafeDestroyRange(ctx, req.UnsafeDestroyRange())
+	case CmdRegisterLockObserver:
+		resp.Resp, err = client.RegisterLockObserver(ctx, req.RegisterLockObserver())
+	case CmdCheckLockObserver:
+		resp.Resp, err = client.CheckLockObserver(ctx, req.CheckLockObserver())
+	case CmdRemoveLockObserver:
+		resp.Resp, err = client.RemoveLockObserver(ctx, req.RemoveLockObserver())
+	case CmdPhysicalScanLock:
+		resp.Resp, err = client.PhysicalScanLock(ctx, req.PhysicalScanLock())
 	case CmdCop:
 		resp.Resp, err = client.Coprocessor(ctx, req.Cop())
 	case CmdCopStream:

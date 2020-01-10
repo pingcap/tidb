@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/util/bitmap"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/stringutil"
 )
@@ -52,9 +53,7 @@ type HashJoinExec struct {
 	concurrency   uint
 	rowContainer  *hashRowContainer
 	buildFinished chan error
-	// joinWorkerWaitGroup is for sync multiple join workers.
-	joinWorkerWaitGroup sync.WaitGroup
-	finished            atomic.Value
+
 	// closeCh add a lock for closing executor.
 	closeCh      chan struct{}
 	joinType     plannercore.JoinType
@@ -70,11 +69,17 @@ type HashJoinExec struct {
 	joinResultCh       chan *hashjoinWorkerResult
 
 	memTracker  *memory.Tracker // track memory usage.
-	prepared    bool
-	isOuterJoin bool
+	diskTracker *disk.Tracker   // track disk usage.
 
 	outerMatchedStatus []*bitmap.ConcurrentBitmap
 	useOuterToBuild    bool
+
+	prepared    bool
+	isOuterJoin bool
+
+	// joinWorkerWaitGroup is for sync multiple join workers.
+	joinWorkerWaitGroup sync.WaitGroup
+	finished            atomic.Value
 }
 
 // probeChkResource stores the result of the join probe side fetch worker,
@@ -127,6 +132,10 @@ func (e *HashJoinExec) Close() error {
 		terror.Call(e.rowContainer.Close)
 	}
 
+	if e.runtimeStats != nil {
+		concurrency := cap(e.joiners)
+		e.runtimeStats.SetConcurrencyInfo("Concurrency", concurrency)
+	}
 	err := e.baseExecutor.Close()
 	return err
 }
@@ -140,6 +149,9 @@ func (e *HashJoinExec) Open(ctx context.Context) error {
 	e.prepared = false
 	e.memTracker = memory.NewTracker(e.id, -1)
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
+
+	e.diskTracker = disk.NewTracker(e.id, -1)
+	e.diskTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.DiskTracker)
 
 	e.closeCh = make(chan struct{})
 	e.finished.Store(false)
@@ -323,11 +335,11 @@ func (e *HashJoinExec) handleUnmatchedRowsFromHashTableInMemory(workerID uint) {
 	if !ok {
 		return
 	}
-	numChks := e.rowContainer.records.NumChunks()
+	numChks := e.rowContainer.NumChunks()
 	for i := int(workerID); i < numChks; i += int(e.concurrency) {
-		chk := e.rowContainer.records.GetChunk(i)
+		chk := e.rowContainer.GetChunk(i)
 		for j := 0; j < chk.NumRows(); j++ {
-			if e.outerMatchedStatus[i].UnsafeIsSet(j) == false { // process unmatched outer rows
+			if !e.outerMatchedStatus[i].UnsafeIsSet(j) { // process unmatched outer rows
 				e.joiners[workerID].onMissMatch(false, chk.GetRow(j), joinResult.chk)
 			}
 			if joinResult.chk.IsFull() {
@@ -353,18 +365,18 @@ func (e *HashJoinExec) handleUnmatchedRowsFromHashTableInDisk(workerID uint) {
 	if !ok {
 		return
 	}
-	numChks := e.rowContainer.recordsInDisk.NumChunks()
+	numChks := e.rowContainer.NumChunks()
 	for i := 0; i < numChks; i++ {
-		numOfRows := e.rowContainer.recordsInDisk.NumRowsOfChunk(i)
+		numOfRows := e.rowContainer.NumRowsOfChunk(i)
 		for j := 0; j < numOfRows; j++ {
-			row, err := e.rowContainer.recordsInDisk.GetRow(chunk.RowPtr{ChkIdx: uint32(i), RowIdx: uint32(j)})
+			row, err := e.rowContainer.GetRow(chunk.RowPtr{ChkIdx: uint32(i), RowIdx: uint32(j)})
 			if err != nil {
 				// Catching the error and send it
 				joinResult.err = err
 				e.joinResultCh <- joinResult
 				return
 			}
-			if e.outerMatchedStatus[i].UnsafeIsSet(j) == false { // process unmatched outer rows
+			if !e.outerMatchedStatus[i].UnsafeIsSet(j) { // process unmatched outer rows
 				e.joiners[workerID].onMissMatch(false, row, joinResult.chk)
 			}
 			if joinResult.chk.IsFull() {
@@ -673,6 +685,8 @@ func (e *HashJoinExec) buildHashTableForList(buildSideResultCh <-chan *chunk.Chu
 	e.rowContainer = newHashRowContainer(e.ctx, int(e.buildSideEstCount), hCtx)
 	e.rowContainer.GetMemTracker().AttachTo(e.memTracker)
 	e.rowContainer.GetMemTracker().SetLabel(buildSideResultLabel)
+	e.rowContainer.GetDiskTracker().AttachTo(e.diskTracker)
+	e.rowContainer.GetDiskTracker().SetLabel(buildSideResultLabel)
 	if config.GetGlobalConfig().OOMUseTmpStorage {
 		actionSpill := e.rowContainer.ActionSpill()
 		e.ctx.GetSessionVars().StmtCtx.MemTracker.FallbackOldAndSetNewAction(actionSpill)
@@ -714,7 +728,6 @@ type NestedLoopApplyExec struct {
 	outerExec   Executor
 	innerFilter expression.CNFExprs
 	outerFilter expression.CNFExprs
-	outer       bool
 
 	joiner joiner
 
@@ -730,6 +743,8 @@ type NestedLoopApplyExec struct {
 	outerRow         *chunk.Row
 	hasMatch         bool
 	hasNull          bool
+
+	outer bool
 
 	memTracker *memory.Tracker // track memory usage.
 }

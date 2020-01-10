@@ -17,6 +17,7 @@ import (
 	"os"
 
 	"github.com/pingcap/parser/mysql"
+	"github.com/uber-go/atomic"
 )
 
 /*
@@ -106,11 +107,17 @@ const (
 	// tidb_general_log is used to log every query in the server in info level.
 	TiDBGeneralLog = "tidb_general_log"
 
+	// tidb_pprof_sql_cpu is used to add label sql label to pprof result.
+	TiDBPProfSQLCPU = "tidb_pprof_sql_cpu"
+
 	// tidb_slow_log_threshold is used to set the slow log threshold in the server.
 	TiDBSlowLogThreshold = "tidb_slow_log_threshold"
 
 	// tidb_record_plan_in_slow_log is used to log the plan of the slow query.
 	TiDBRecordPlanInSlowLog = "tidb_record_plan_in_slow_log"
+
+	// tidb_enable_slow_log enables TiDB to log slow queries.
+	TiDBEnableSlowLog = "tidb_enable_slow_log"
 
 	// tidb_query_log_max_len is used to set the max length of the query in the log.
 	TiDBQueryLogMaxLen = "tidb_query_log_max_len"
@@ -132,6 +139,9 @@ const (
 
 	// tidb_txn_mode is used to control the transaction behavior.
 	TiDBTxnMode = "tidb_txn_mode"
+
+	// tidb_row_format_version is used to control tidb row format version current.
+	TiDBRowFormatVersion = "tidb_row_format_version"
 
 	// tidb_enable_table_partition is used to control table partition feature.
 	// The valid value include auto/on/off:
@@ -200,6 +210,8 @@ const (
 	TiDBOptSeekFactor = "tidb_opt_seek_factor"
 	// tidb_opt_memory_factor is the memory cost of storing one tuple.
 	TiDBOptMemoryFactor = "tidb_opt_memory_factor"
+	// tidb_opt_disk_factor is the IO cost of reading/writing one byte to temporary disk.
+	TiDBOptDiskFactor = "tidb_opt_disk_factor"
 	// tidb_opt_concurrency_factor is the CPU cost of additional one goroutine.
 	TiDBOptConcurrencyFactor = "tidb_opt_concurrency_factor"
 
@@ -336,6 +348,12 @@ const (
 	// TiDBEnableStmtSummary indicates whether the statement summary is enabled.
 	TiDBEnableStmtSummary = "tidb_enable_stmt_summary"
 
+	// TiDBStmtSummaryRefreshInterval indicates the refresh interval in seconds for each statement summary.
+	TiDBStmtSummaryRefreshInterval = "tidb_stmt_summary_refresh_interval"
+
+	// TiDBStmtSummaryHistorySize indicates the history size of each statement summary.
+	TiDBStmtSummaryHistorySize = "tidb_stmt_summary_history_size"
+
 	// TiDBCapturePlanBaseline indicates whether the capture of plan baselines is enabled.
 	TiDBCapturePlanBaseline = "tidb_capture_plan_baselines"
 
@@ -351,6 +369,12 @@ const (
 
 	// TiDBStoreLimit indicates the limit of sending request to a store, 0 means without limit.
 	TiDBStoreLimit = "tidb_store_limit"
+
+	// TiDBMetricSchemaStep indicates the step when query metric schema.
+	TiDBMetricSchemaStep = "tidb_metric_query_step"
+
+	// TiDBMetricSchemaRangeDuration indicates the range duration when query metric schema.
+	TiDBMetricSchemaRangeDuration = "tidb_metric_query_range_duration"
 )
 
 // Default TiDB system variable values.
@@ -366,6 +390,8 @@ const (
 	DefAutoAnalyzeRatio                = 0.5
 	DefAutoAnalyzeStartTime            = "00:00 +0000"
 	DefAutoAnalyzeEndTime              = "23:59 +0000"
+	DefAutoIncrementIncrement          = 1
+	DefAutoIncrementOffset             = 1
 	DefChecksumTableConcurrency        = 4
 	DefSkipUTF8Check                   = false
 	DefOptAggPushDown                  = false
@@ -379,6 +405,7 @@ const (
 	DefOptDescScanFactor               = 3.0
 	DefOptSeekFactor                   = 20.0
 	DefOptMemoryFactor                 = 0.001
+	DefOptDiskFactor                   = 1.5
 	DefOptConcurrencyFactor            = 3.0
 	DefOptInSubqToJoinAndAgg           = true
 	DefBatchInsert                     = false
@@ -399,6 +426,7 @@ const (
 	DefTiDBMemQuotaNestedLoopApply     = 32 << 30 // 32GB.
 	DefTiDBMemQuotaDistSQL             = 32 << 30 // 32GB.
 	DefTiDBGeneralLog                  = 0
+	DefTiDBPProfSQLCPU                 = 0
 	DefTiDBRetryLimit                  = 10
 	DefTiDBDisableTxnAutoRetry         = true
 	DefTiDBConstraintCheckInPlace      = false
@@ -406,6 +434,8 @@ const (
 	DefTiDBProjectionConcurrency       = 4
 	DefTiDBOptimizerSelectivityLevel   = 0
 	DefTiDBTxnMode                     = ""
+	DefTiDBRowFormatV1                 = 1
+	DefTiDBRowFormatV2                 = 2
 	DefTiDBDDLReorgWorkerCount         = 4
 	DefTiDBDDLReorgBatchSize           = 256
 	DefTiDBDDLErrorCountLimit          = 512
@@ -433,11 +463,15 @@ const (
 	DefTiDBEvolvePlanTaskEndTime       = "23:59 +0000"
 	DefInnodbLockWaitTimeout           = 50 // 50s
 	DefTiDBStoreLimit                  = 0
+	DefTiDBMetricSchemaStep            = 60 // 60s
+	DefTiDBMetricSchemaRangeDuration   = 60 // 60s
+
 )
 
 // Process global variables.
 var (
 	ProcessGeneralLog      uint32
+	EnablePProfSQLCPU            = atomic.NewBool(false)
 	ddlReorgWorkerCounter  int32 = DefTiDBDDLReorgWorkerCount
 	maxDDLReorgWorkerCount int32 = 128
 	ddlReorgBatchSize      int32 = DefTiDBDDLReorgBatchSize

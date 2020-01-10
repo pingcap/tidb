@@ -630,7 +630,7 @@ func (s *testColumnSuite) checkReorganizationColumn(ctx sessionctx.Context, d *d
 	return nil
 }
 
-func (s *testColumnSuite) checkPublicColumn(ctx sessionctx.Context, d *ddl, tblInfo *model.TableInfo, handle int64, newCol *table.Column, oldRow []types.Datum, columnValue interface{}) error {
+func (s *testColumnSuite) checkPublicColumn(ctx sessionctx.Context, d *ddl, tblInfo *model.TableInfo, _ int64, newCol *table.Column, oldRow []types.Datum, columnValue interface{}) error {
 	t, err := testGetTableWithError(d, s.dbInfo.ID, tblInfo.ID)
 	if err != nil {
 		return errors.Trace(err)
@@ -663,7 +663,7 @@ func (s *testColumnSuite) checkPublicColumn(ctx sessionctx.Context, d *ddl, tblI
 	}
 
 	newRow := types.MakeDatums(int64(11), int64(22), int64(33), int64(44))
-	handle, err = t.AddRecord(ctx, newRow)
+	handle, err := t.AddRecord(ctx, newRow)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -800,7 +800,7 @@ func (s *testColumnSuite) TestAddColumn(c *C) {
 			hookErr = errors.Trace(err1)
 			return
 		}
-		newCol := table.FindCol(t.(*tables.Table).Columns, newColName)
+		newCol := table.FindCol(t.(*tables.TableCommon).Columns, newColName)
 		if newCol == nil {
 			return
 		}
@@ -891,7 +891,7 @@ func (s *testColumnSuite) TestDropColumn(c *C) {
 			hookErr = errors.Trace(err1)
 			return
 		}
-		col := table.FindCol(t.(*tables.Table).Columns, colName)
+		col := table.FindCol(t.(*tables.TableCommon).Columns, colName)
 		if col == nil {
 			checkOK = true
 			return
@@ -951,6 +951,7 @@ func (s *testColumnSuite) TestModifyColumn(c *C) {
 		{"varchar(10)", "varchar(11)", nil},
 		{"varchar(10) character set utf8 collate utf8_bin", "varchar(10) character set utf8", nil},
 		{"decimal(2,1)", "decimal(3,2)", errUnsupportedModifyColumn.GenWithStackByArgs("can't change decimal column precision")},
+		{"decimal(2,1)", "decimal(2,2)", errUnsupportedModifyColumn.GenWithStackByArgs("can't change decimal column precision")},
 		{"decimal(2,1)", "decimal(2,1)", nil},
 	}
 	for _, tt := range tests {

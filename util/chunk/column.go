@@ -264,7 +264,7 @@ const (
 	sizeFloat64    = int(unsafe.Sizeof(float64(0)))
 	sizeMyDecimal  = int(unsafe.Sizeof(types.MyDecimal{}))
 	sizeGoDuration = int(unsafe.Sizeof(time.Duration(0)))
-	sizeTime       = int(unsafe.Sizeof(types.Time{}))
+	sizeTime       = int(unsafe.Sizeof(types.ZeroTime))
 )
 
 var (
@@ -294,7 +294,7 @@ func (c *Column) resize(n, typeSize int, isNull bool) {
 		newNulls = true
 	}
 	if !isNull || !newNulls {
-		var nullVal byte = 0
+		var nullVal byte
 		if !isNull {
 			nullVal = 0xFF
 		}
