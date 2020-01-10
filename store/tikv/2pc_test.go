@@ -37,7 +37,7 @@ type testCommitterSuite struct {
 	store   *tikvStore
 }
 
-var _ = Suite(&testCommitterSuite{})
+var _ = SerialSuites(&testCommitterSuite{})
 
 func (s *testCommitterSuite) SetUpSuite(c *C) {
 	atomic.StoreUint64(&ManagedLockTTL, 3000) // 3s
@@ -56,7 +56,7 @@ func (s *testCommitterSuite) SetUpTest(c *C) {
 	c.Assert(err, IsNil)
 	store.EnableTxnLocalLatches(1024000)
 	s.store = store
-	CommitMaxBackoff = 2000
+	CommitMaxBackoff = 1000
 }
 
 func (s *testCommitterSuite) TearDownSuite(c *C) {
