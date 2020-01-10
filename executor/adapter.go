@@ -516,7 +516,10 @@ func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, e Executor) (sqlex
 
 func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e Executor) error {
 	sctx := a.Ctx
-	txn, err := sctx.Txn(true)
+	// Do not active the transaction here.
+	// When autocommit = 0 and transaction in pessimistic mode,
+	// statements like set xxx = xxx; should not active the transaction.
+	txn, err := sctx.Txn(false)
 	if err != nil {
 		return err
 	}
