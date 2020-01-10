@@ -1447,8 +1447,7 @@ func (r *PushLimitDownOuterJoin) Match(expr *memo.ExprIter) bool {
 // This rule tries to pushes the Limit through outer Join.
 func (r *PushLimitDownOuterJoin) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
 	limit := old.GetExpr().ExprNode.(*plannercore.LogicalLimit)
-	joinExpr := old.Children[0].GetExpr()
-	join := joinExpr.ExprNode.(*plannercore.LogicalJoin)
+	join := old.Children[0].GetExpr().ExprNode.(*plannercore.LogicalJoin)
 	joinSchema := old.Children[0].Group.Prop.Schema
 	leftGroup := old.Children[0].GetExpr().Children[0]
 	rightGroup := old.Children[0].GetExpr().Children[1]
