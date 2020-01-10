@@ -1418,7 +1418,7 @@ func (r *MergeAdjacentLimit) OnTransform(old *memo.ExprIter) (newExprs []*memo.G
 }
 
 // TransformLimitToTableDual convert limit to TableDual.
-type TransformLimitToTableDual  struct {
+type TransformLimitToTableDual struct {
 	baseRule
 }
 
