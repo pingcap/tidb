@@ -104,6 +104,8 @@ type Config struct {
 	// RepairMode indicates that the TiDB is in the repair mode for table meta.
 	RepairMode      bool     `toml:"repair-mode" json:"repair-mode"`
 	RepairTableList []string `toml:"repair-table-list" json:"repair-table-list"`
+	// IsolationRead indicates that the TiDB reads data from which isolation level(engine and label).
+	IsolationRead IsolationRead `toml:"isolation-read" json:"isolation-read"`
 
 	Experimental Experimental `toml:"experimental" json:"experimental"`
 }
@@ -446,6 +448,14 @@ type StmtSummary struct {
 	HistorySize int `toml:"history-size" json:"history-size"`
 }
 
+// IsolationRead is the config for isolation read.
+type IsolationRead struct {
+	// Engines filters tidb-server access paths by engine type.
+	Engines []string `toml:"engines" json:"engines"`
+	// TODO: Labels filters tidb-server access paths by store label.
+	Labels	[]string `toml:"labels" json:"labels"`
+}
+
 // Experimental controls the features that are still experimental: their semantics, interfaces are subject to change.
 // Using these features in the production environment is not recommended.
 type Experimental struct {
@@ -581,6 +591,10 @@ var defaultConf = Config{
 		MaxSQLLength:    4096,
 		RefreshInterval: 1800,
 		HistorySize:     24,
+	},
+	IsolationRead: IsolationRead{
+		Engines: []string{"tikv", "tiflash", "tidb"},
+		Labels:  []string{},
 	},
 	Experimental: Experimental{
 		AllowAutoRandom: false,
