@@ -1039,10 +1039,7 @@ func (w *GCWorker) resolveLocksPhysical(ctx context.Context, safePoint uint64) e
 		}
 	}
 
-	err = w.removeLockObservers(ctx, safePoint, stores)
-	if err != nil {
-		return errors.Trace(err)
-	}
+	w.removeLockObservers(ctx, safePoint, stores)
 
 	logutil.Logger(ctx).Info("[gc worker] finish resolve locks with physical scan locks",
 		zap.String("uuid", w.uuid),
@@ -1149,7 +1146,7 @@ func (w *GCWorker) checkLockObservers(ctx context.Context, safePoint uint64, sto
 	return cleanStores, nil
 }
 
-func (w *GCWorker) removeLockObservers(ctx context.Context, safePoint uint64, stores map[uint64]*metapb.Store) error {
+func (w *GCWorker) removeLockObservers(ctx context.Context, safePoint uint64, stores map[uint64]*metapb.Store) {
 	logutil.Logger(ctx).Info("[gc worker] removing lock observers",
 		zap.String("uuid", w.uuid),
 		zap.Uint64("safePoint", safePoint))
@@ -1179,8 +1176,6 @@ func (w *GCWorker) removeLockObservers(ctx context.Context, safePoint uint64, st
 				zap.Error(err))
 		}
 	}
-
-	return nil
 }
 
 // physicalScanAndResolveLocks performs physical scan lock and resolves these locks. Returns successful stores
