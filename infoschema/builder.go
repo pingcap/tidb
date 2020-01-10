@@ -56,7 +56,7 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 	}
 	var oldTableID, newTableID int64
 	switch diff.Type {
-	case model.ActionCreateTable, model.ActionRecoverTable, model.ActionRepairTable:
+	case model.ActionCreateTable, model.ActionCreateSequence, model.ActionRecoverTable, model.ActionRepairTable:
 		newTableID = diff.TableID
 	case model.ActionDropTable, model.ActionDropView:
 		oldTableID = diff.TableID

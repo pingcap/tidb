@@ -316,7 +316,7 @@ func (ssMap *stmtSummaryByDigestMap) ToHistoryDatum() [][]types.Datum {
 	return rows
 }
 
-// GetMoreThanOnceSelect gets select SQLs that occurred more than once.
+// GetMoreThanOnceSelect gets users' select SQLs that occurred more than once.
 func (ssMap *stmtSummaryByDigestMap) GetMoreThanOnceSelect() ([]string, []string) {
 	ssMap.Lock()
 	values := ssMap.summaryMap.Values()
@@ -332,7 +332,8 @@ func (ssMap *stmtSummaryByDigestMap) GetMoreThanOnceSelect() ([]string, []string
 			if ssbd.history.Len() > 0 {
 				ssElement := ssbd.history.Back().Value.(*stmtSummaryByDigestElement)
 				ssElement.Lock()
-				if ssbd.history.Len() > 1 || ssElement.execCount > 1 {
+				// Empty sample users means that it is an internal queries.
+				if ssElement.sampleUser != "" && (ssbd.history.Len() > 1 || ssElement.execCount > 1) {
 					schemas = append(schemas, ssbd.schemaName)
 					sqls = append(sqls, ssElement.sampleSQL)
 				}
@@ -607,7 +608,7 @@ func newStmtSummaryByDigestElement(sei *StmtExecInfo, beginTime int64, intervalS
 		minLatency:   sei.TotalLatency,
 		firstSeen:    sei.StartTime,
 		lastSeen:     sei.StartTime,
-		backoffTypes: make(map[fmt.Stringer]int, 0),
+		backoffTypes: make(map[fmt.Stringer]int),
 	}
 	ssElement.add(sei, intervalSeconds)
 	return ssElement

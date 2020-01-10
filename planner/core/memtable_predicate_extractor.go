@@ -485,6 +485,12 @@ type MetricTableExtractor struct {
 	Quantiles       []float64
 }
 
+func newMetricTableExtractor() *MetricTableExtractor {
+	e := &MetricTableExtractor{}
+	e.StartTime, e.EndTime = e.getTimeRange(0, 0)
+	return e
+}
+
 // Extract implements the MemTablePredicateExtractor Extract interface
 func (e *MetricTableExtractor) Extract(
 	ctx sessionctx.Context,
