@@ -78,6 +78,12 @@ func doTestWindowFunctions(tk *testkit.TestKit) {
 	result.Check(testkit.Rows("5 2019-02-05 8", "3 2019-02-03 6", "2 2019-02-02 6", "1 2019-02-01 3", "<nil> <nil> <nil>"))
 
 	tk.MustExec("drop table t")
+	tk.MustExec("CREATE TABLE t (id INTEGER, sex CHAR(1))")
+	tk.MustExec("insert into t values (1, 'M'), (2, 'F'), (3, 'F'), (4, 'F'), (5, 'M'), (10, NULL), (11, NULL)")
+	result = tk.MustQuery("SELECT sex, id, RANK() OVER (PARTITION BY sex ORDER BY id DESC) FROM t").Sort()
+	result.Check(testkit.Rows("<nil> 10 2", "<nil> 11 1", "F 2 3", "F 3 2", "F 4 1", "M 1 2", "M 5 1"))
+
+	tk.MustExec("drop table t")
 	tk.MustExec("create table t(a int, b int)")
 	tk.MustExec("insert into t values (1,1),(1,2),(2,1),(2,2)")
 	result = tk.MustQuery("select a, b, rank() over() from t")
