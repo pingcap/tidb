@@ -19,6 +19,7 @@ import (
 	"math"
 	"math/rand"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -39,7 +40,7 @@ type testCommitterSuite struct {
 var _ = SerialSuites(&testCommitterSuite{})
 
 func (s *testCommitterSuite) SetUpSuite(c *C) {
-	ManagedLockTTL = 3000 // 3s
+	atomic.StoreUint64(&ManagedLockTTL, 3000) // 3s
 	s.OneByOneSuite.SetUpSuite(c)
 }
 
@@ -616,7 +617,7 @@ func (s *testCommitterSuite) TestPessimisticTTL(c *C) {
 			expire := oracle.ExtractPhysical(txn.startTS) + int64(lockInfoNew.LockTtl)
 			now := oracle.ExtractPhysical(currentTS)
 			c.Assert(expire > now, IsTrue)
-			c.Assert(uint64(expire-now) <= ManagedLockTTL, IsTrue)
+			c.Assert(uint64(expire-now) <= atomic.LoadUint64(&ManagedLockTTL), IsTrue)
 			return
 		}
 		time.Sleep(100 * time.Millisecond)
@@ -638,8 +639,8 @@ func (s *testCommitterSuite) TestElapsedTTL(c *C) {
 	err := txn.LockKeys(context.Background(), lockCtx, key)
 	c.Assert(err, IsNil)
 	lockInfo := s.getLockInfo(c, key)
-	c.Assert(lockInfo.LockTtl-ManagedLockTTL, GreaterEqual, uint64(100))
-	c.Assert(lockInfo.LockTtl-ManagedLockTTL, Less, uint64(150))
+	c.Assert(lockInfo.LockTtl-atomic.LoadUint64(&ManagedLockTTL), GreaterEqual, uint64(100))
+	c.Assert(lockInfo.LockTtl-atomic.LoadUint64(&ManagedLockTTL), Less, uint64(150))
 }
 
 // TestAcquireFalseTimeoutLock tests acquiring a key which is a secondary key of another transaction.
@@ -664,7 +665,7 @@ func (s *testCommitterSuite) TestAcquireFalseTimeoutLock(c *C) {
 	// Heartbeats will increase the TTL of the primary key
 
 	// wait until secondary key exceeds its own TTL
-	time.Sleep(time.Duration(ManagedLockTTL) * time.Millisecond)
+	time.Sleep(time.Duration(atomic.LoadUint64(&ManagedLockTTL)) * time.Millisecond)
 	txn2 := s.begin(c)
 	txn2.SetOption(kv.Pessimistic, true)
 

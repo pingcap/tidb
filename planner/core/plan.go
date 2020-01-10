@@ -80,6 +80,10 @@ func enforceProperty(p *property.PhysicalProperty, tsk task, ctx sessionctx.Cont
 type LogicalPlan interface {
 	Plan
 
+	// HashCode encodes a LogicalPlan to fast compare whether a LogicalPlan equals to another.
+	// We use a strict encode method here which ensures there is no conflict.
+	HashCode() []byte
+
 	// PredicatePushDown pushes down the predicates in the where/on/having clauses as deeply as possible.
 	// It will accept a predicate that is an expression slice, and return the expressions that can't be pushed.
 	// Because it might change the root if the having clause exists, we need to return a plan that represents a new root.
