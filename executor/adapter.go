@@ -464,12 +464,16 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e Executor) error {
 		}
 		seVars := sctx.GetSessionVars()
 		lockCtx := newLockCtx(seVars, seVars.LockWaitTimeout)
+		startLocking := time.Now()
 		err = txn.LockKeys(ctx, lockCtx, keys...)
 		if err == nil {
 			return nil
 		}
 		e, err = a.handlePessimisticLockError(ctx, err)
 		if err != nil {
+			if ErrDeadlock.Equal(err) {
+				metrics.StatementDeadlockDetectDuration.Observe(time.Since(startLocking).Seconds())
+			}
 			return err
 		}
 	}
