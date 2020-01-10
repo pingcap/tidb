@@ -153,9 +153,6 @@ func (w *GCWorker) start(ctx context.Context, wg *sync.WaitGroup) {
 	logutil.Logger(ctx).Info("[gc worker] start",
 		zap.String("uuid", w.uuid))
 
-	se := createSession(w.store)
-	defer se.Close()
-
 	w.tick(ctx) // Immediately tick once to initialize configs.
 	wg.Done()
 
