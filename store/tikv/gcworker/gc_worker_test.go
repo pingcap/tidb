@@ -437,6 +437,34 @@ func (s *testGCWorkerSuite) TestCheckGCMode(c *C) {
 	c.Assert(useDistributedGC, Equals, true)
 }
 
+func (s *testGCWorkerSuite) TestCheckScanLockMode(c *C) {
+	usePhysical, err := s.gcWorker.checkUsePhysicalScanLock()
+	c.Assert(err, IsNil)
+	c.Assert(usePhysical, Equals, false)
+	// This is a hidden config, so default value will not be inserted to table.
+	str, err := s.gcWorker.loadValueFromSysTable(gcScanLockModeKey)
+	c.Assert(err, IsNil)
+	c.Assert(str, Equals, "")
+
+	err = s.gcWorker.saveValueToSysTable(gcScanLockModeKey, gcScanLockModePhysical)
+	c.Assert(err, IsNil)
+	usePhysical, err = s.gcWorker.checkUsePhysicalScanLock()
+	c.Assert(err, IsNil)
+	c.Assert(usePhysical, Equals, true)
+
+	err = s.gcWorker.saveValueToSysTable(gcScanLockModeKey, gcScanLockModeLegacy)
+	c.Assert(err, IsNil)
+	usePhysical, err = s.gcWorker.checkUsePhysicalScanLock()
+	c.Assert(err, IsNil)
+	c.Assert(usePhysical, Equals, false)
+
+	err = s.gcWorker.saveValueToSysTable(gcScanLockModeKey, "invalid_mode")
+	c.Assert(err, IsNil)
+	usePhysical, err = s.gcWorker.checkUsePhysicalScanLock()
+	c.Assert(err, IsNil)
+	c.Assert(usePhysical, Equals, false)
+}
+
 const (
 	failRPCErr  = 0
 	failNilResp = 1

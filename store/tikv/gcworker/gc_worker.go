@@ -838,8 +838,8 @@ func (w *GCWorker) checkUsePhysicalScanLock() (bool, error) {
 		return false, nil
 	}
 	logutil.BgLogger().Warn("[gc worker] legacy scan lock mode will be used",
-		zap.String("invalid gc mode", str))
-	return true, nil
+		zap.String("invalid scan lock mode", str))
+	return false, nil
 }
 
 func (w *GCWorker) resolveLocks(ctx context.Context, safePoint uint64, concurrency int, usePhysical bool) error {
