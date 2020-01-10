@@ -796,7 +796,7 @@ var MetricTableMap = map[string]MetricTableDef{
 		Comment:  "The time consumed when the operator step is finished",
 	},
 	"pd_scheduler_store_status": {
-		PromQL: `pd_scheduler_store_status{}`,
+		PromQL: `pd_scheduler_store_status{$LABEL_CONDITIONS}`,
 		Labels: []string{"address", "instance", "store", "type"},
 	},
 	"store_available_ratio": {
@@ -870,12 +870,12 @@ var MetricTableMap = map[string]MetricTableDef{
 		Comment:  "The time consumed of completing each kind of gRPC commands",
 	},
 	"pd_handle_transactions_rate": {
-		PromQL:  `sum(rate(pd_txn_handle_txns_duration_seconds_count[$RANGE_DURATION])) by (instance, result)`,
+		PromQL:  `sum(rate(pd_txn_handle_txns_duration_seconds_count{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (instance, result)`,
 		Labels:  []string{"instance", "result"},
 		Comment: "The rate of handling etcd transactions",
 	},
 	"pd_handle_transactions_duration": {
-		PromQL:   `histogram_quantile($QUANTILE, sum(rate(pd_txn_handle_txns_duration_seconds_bucket[$RANGE_DURATION])) by (le, instance, result))`,
+		PromQL:   `histogram_quantile($QUANTILE, sum(rate(pd_txn_handle_txns_duration_seconds_bucket{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (le, instance, result))`,
 		Labels:   []string{"instance", "result"},
 		Quantile: 0.99,
 		Comment:  "The time consumed of handling etcd transactions",
@@ -887,7 +887,7 @@ var MetricTableMap = map[string]MetricTableDef{
 		Comment:  "The time consumed of writing WAL into the persistent storage",
 	},
 	"pd_peer_round_trip_time_seconds": {
-		PromQL:   `histogram_quantile($QUANTILE, sum(rate(etcd_network_peer_round_trip_time_seconds_bucket[$RANGE_DURATION])) by (le,instance,To))`,
+		PromQL:   `histogram_quantile($QUANTILE, sum(rate(etcd_network_peer_round_trip_time_seconds_bucket{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (le,instance,To))`,
 		Labels:   []string{"To", "instance"},
 		Quantile: 0.99,
 		Comment:  "The latency of the network in .99",
@@ -903,12 +903,12 @@ var MetricTableMap = map[string]MetricTableDef{
 		Comment: "The current term of Raft",
 	},
 	"pd_handle_requests_duration": {
-		PromQL:   `histogram_quantile($QUANTILE, sum(rate(pd_client_request_handle_requests_duration_seconds_bucket[$RANGE_DURATION])) by (type, le))`,
+		PromQL:   `histogram_quantile($QUANTILE, sum(rate(pd_client_request_handle_requests_duration_seconds_bucket{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (type, le))`,
 		Labels:   []string{"type"},
 		Quantile: 0.98,
 	},
 	"pd_handle_requests_duration_avg": {
-		PromQL: `avg(rate(pd_client_request_handle_requests_duration_seconds_sum[$RANGE_DURATION])) by (type) /  avg(rate(pd_client_request_handle_requests_duration_seconds_count[$RANGE_DURATION])) by (type)`,
+		PromQL: `avg(rate(pd_client_request_handle_requests_duration_seconds_sum{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (type) /  avg(rate(pd_client_request_handle_requests_duration_seconds_count{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (type)`,
 		Labels: []string{"type"},
 	},
 	"pd_region_heartbeat_latency": {

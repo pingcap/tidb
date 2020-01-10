@@ -37,6 +37,17 @@ func (s *inspectionSuite) TestMetricSchemaDef(c *C) {
 		} else {
 			c.Assert(def.Quantile == 0, IsTrue, Commentf("metric table %v has quantile, but doesn't contain $QUANTILE in promQL ", name))
 		}
+		if strings.Contains(def.PromQL, "$LABEL_CONDITIONS") {
+			c.Assert(len(def.Labels) > 0, IsTrue, Commentf("the labels of metric table %v should not be nil", name))
+		} else {
+			li := strings.Index(def.PromQL, "{")
+			ri := strings.Index(def.PromQL, "}")
+			// ri - li > 1 means already has label conditions, so no need $LABEL_CONDITIONS any more.
+			if !(ri-li > 1) {
+				c.Assert(len(def.Labels) == 0, IsTrue, Commentf("metric table %v has labels, but doesn't contain $LABEL_CONDITIONS in promQL", name))
+			}
+		}
+
 		if strings.Contains(def.PromQL, " by (") {
 			for _, label := range def.Labels {
 				c.Assert(strings.Contains(def.PromQL, label), IsTrue, Commentf("metric table %v has labels, but doesn't contain label %v in promQL", name, label))
