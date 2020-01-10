@@ -522,11 +522,15 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e Executor) error {
 	}
 	txnCtx := sctx.GetSessionVars().TxnCtx
 	for {
+		startPointGetLocking := time.Now()
 		_, err = a.handleNoDelayExecutor(ctx, e)
 		if err != nil {
 			// It is possible the DML has point get plan that locks the key.
 			e, err = a.handlePessimisticLockError(ctx, err)
 			if err != nil {
+				if ErrDeadlock.Equal(err) {
+					metrics.StatementDeadlockDetectDuration.Observe(time.Since(startPointGetLocking).Seconds())
+				}
 				return err
 			}
 			continue
