@@ -84,3 +84,36 @@ func (s *testSequenceSuite) TestCreateSequence(c *C) {
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[planner:1142]CREATE command denied to user 'localhost'@'myuser' for table 'my_seq'")
 }
+
+func (s *testSequenceSuite) TestDropSequence(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use test")
+
+	// Test sequence is unknown.
+	s.tk.MustGetErrCode("drop sequence seq", mysql.ErrUnknownSequence)
+
+	// Test non-existed sequence can't drop successfully.
+	s.tk.MustExec("create sequence seq")
+	_, err := s.tk.Exec("drop sequence seq, seq2")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[schema:4139]Unknown SEQUENCE: 'test.seq2'")
+
+	// Test the specified object is not sequence.
+	s.tk.MustExec("create table seq3 (a int)")
+	_, err = s.tk.Exec("drop sequence seq3")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:1347]'test.seq3' is not SEQUENCE")
+
+	// Test schema is not exist.
+	_, err = s.tk.Exec("drop sequence unknown.seq")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[schema:4139]Unknown SEQUENCE: 'unknown.seq'")
+
+	// Test drop sequence successfully.
+	s.tk.MustExec("create sequence seq")
+	_, err = s.tk.Exec("drop sequence seq")
+	c.Assert(err, IsNil)
+	_, err = s.tk.Exec("drop sequence seq")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[schema:4139]Unknown SEQUENCE: 'test.seq'")
+}

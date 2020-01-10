@@ -400,6 +400,9 @@ func (m *Meta) DropTableOrView(dbID int64, tblID int64, delAutoID bool) error {
 			return errors.Trace(err)
 		}
 	}
+	if err := m.txn.HDel(dbKey, m.sequenceKey(tblID)); err != nil {
+		return errors.Trace(err)
+	}
 	return nil
 }
 
