@@ -68,7 +68,7 @@ func (s *testConsistencySuite) TestConsistencyController(c *C) {
 		"db1": {"t1", "t2", "t3"},
 		"db2": {"t4"},
 	}
-	for i := 0; i < 4; i += 1 {
+	for i := 0; i < 4; i++ {
 		mock.ExpectExec("LOCK TABLES").WillReturnResult(resultOk)
 	}
 	mock.ExpectExec("UNLOCK TABLES").WillReturnResult(resultOk)

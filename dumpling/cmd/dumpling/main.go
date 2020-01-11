@@ -100,7 +100,7 @@ func main() {
 
 	err = export.Dump(conf)
 	if err != nil {
-		log.Zap().Error("dump failed", zap.String("error", err.Error()))
+		log.Zap().Error("dump failed", zap.Error(err))
 		os.Exit(1)
 	}
 	return

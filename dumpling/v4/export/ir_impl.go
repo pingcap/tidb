@@ -48,7 +48,7 @@ func (s *sizedRowIter) Next(row RowReceiver) error {
 }
 
 func (s *sizedRowIter) HasNext() bool {
-	if s.currentSize > s.sizeLimit {
+	if s.currentSize >= s.sizeLimit {
 		return false
 	}
 	return s.rowIter.HasNext()
@@ -117,12 +117,16 @@ func (td *tableData) SpecialComments() StringIter {
 
 type tableDataChunks struct {
 	TableDataIR
+	rows      SQLRowIter
 	sizeLimit uint64
 }
 
 func (t *tableDataChunks) Rows() SQLRowIter {
+	if t.rows == nil {
+		t.rows = t.TableDataIR.Rows()
+	}
 	return &sizedRowIter{
-		rowIter:   t.Rows(),
+		rowIter:   t.rows,
 		sizeLimit: t.sizeLimit,
 	}
 }
