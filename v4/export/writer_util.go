@@ -1,9 +1,12 @@
 package export
 
 import (
+	"bufio"
 	"fmt"
 	"io"
+	"os"
 	"strings"
+	"sync"
 
 	"github.com/pingcap/dumpling/v4/log"
 	"go.uber.org/zap"
@@ -33,7 +36,6 @@ func WriteInsert(tblIR TableDataIR, w io.StringWriter) error {
 		return nil
 	}
 
-	log.Zap().Debug("start dumping for table", zap.String("table", tblIR.TableName()))
 	specCmtIter := tblIR.SpecialComments()
 	for specCmtIter.HasNext() {
 		if err := write(w, fmt.Sprintf("%s\n", specCmtIter.Next())); err != nil {
@@ -46,16 +48,18 @@ func WriteInsert(tblIR TableDataIR, w io.StringWriter) error {
 		return err
 	}
 
+	counter := 0
 	for rowIter.HasNext() {
 		row := MakeRowReceiver(tblIR.ColumnTypes())
 		if err := rowIter.Next(row); err != nil {
-			log.Zap().Error("scanning from sql.Row failed", zap.String("error", err.Error()))
+			log.Zap().Error("scanning from sql.Row failed", zap.Error(err))
 			return err
 		}
 
 		if err := write(w, row.ToString()); err != nil {
 			return err
 		}
+		counter += 1
 
 		var splitter string
 		if rowIter.HasNext() {
@@ -67,7 +71,9 @@ func WriteInsert(tblIR TableDataIR, w io.StringWriter) error {
 			return err
 		}
 	}
-	log.Zap().Debug("finish dumping for table", zap.String("table", tblIR.TableName()))
+	log.Zap().Debug("dumping table",
+		zap.String("table", tblIR.TableName()),
+		zap.Int("record counts", counter))
 	return nil
 }
 
@@ -76,9 +82,95 @@ func write(writer io.StringWriter, str string) error {
 	if err != nil {
 		log.Zap().Error("writing failed",
 			zap.String("string", str),
-			zap.String("error", err.Error()))
+			zap.Error(err))
 	}
 	return err
+}
+
+func buildFileWriter(path string) (io.StringWriter, func(), error) {
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0755)
+	if err != nil {
+		log.Zap().Error("open file failed",
+			zap.String("path", path),
+			zap.Error(err))
+		return nil, nil, err
+	}
+	log.Zap().Debug("opened file", zap.String("path", path))
+	buf := bufio.NewWriter(file)
+	tearDownRoutine := func() {
+		_ = buf.Flush()
+		err := file.Close()
+		if err == nil {
+			return
+		}
+		log.Zap().Error("close file failed",
+			zap.String("path", path),
+			zap.Error(err))
+	}
+	return buf, tearDownRoutine, nil
+}
+
+func buildLazyFileWriter(path string) (io.StringWriter, func()) {
+	var file *os.File
+	var buf *bufio.Writer
+	lazyStringWriter := &LazyStringWriter{}
+	initRoutine := func() error {
+		f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0755)
+		file = f
+		if err != nil {
+			log.Zap().Error("open file failed",
+				zap.String("path", path),
+				zap.Error(err))
+		}
+		log.Zap().Debug("opened file", zap.String("path", path))
+		buf = bufio.NewWriter(file)
+		lazyStringWriter.StringWriter = buf
+		return err
+	}
+	lazyStringWriter.initRoutine = initRoutine
+
+	tearDownRoutine := func() {
+		if file == nil {
+			return
+		}
+		log.Zap().Debug("tear down lazy file writer...")
+		_ = buf.Flush()
+		err := file.Close()
+		if err == nil {
+			return
+		}
+		log.Zap().Error("close file failed", zap.String("path", path))
+	}
+	return lazyStringWriter, tearDownRoutine
+}
+
+type LazyStringWriter struct {
+	initRoutine func() error
+	sync.Once
+	io.StringWriter
+	err error
+}
+
+func (l *LazyStringWriter) WriteString(str string) (int, error) {
+	l.Do(func() { l.err = l.initRoutine() })
+	if l.err != nil {
+		return 0, fmt.Errorf("open file error: %s", l.err.Error())
+	}
+	return l.StringWriter.WriteString(str)
+}
+
+// InterceptStringWriter is an interceptor of io.StringWriter,
+// tracking whether a StringWriter has written something.
+type InterceptStringWriter struct {
+	io.StringWriter
+	SomethingIsWritten bool
+}
+
+func (w *InterceptStringWriter) WriteString(str string) (int, error) {
+	if len(str) > 0 {
+		w.SomethingIsWritten = true
+	}
+	return w.StringWriter.WriteString(str)
 }
 
 func wrapBackTicks(identifier string) string {
