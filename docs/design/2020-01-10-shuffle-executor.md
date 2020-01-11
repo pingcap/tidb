@@ -8,12 +8,14 @@ This article will describe the design of Shuffle Executor in TiDB.
 
 ## Background
 As described in [#12966](https://github.com/pingcap/tidb/issues/12966), the performance of Window operator in TiDB has much space to improve.
+
 So we designed a Shuffle Executor, which is proposed [here](https://github.com/pingcap/tidb/pull/14238#issuecomment-569880893) by [SunRunAway](https://github.com/SunRunAway) (Feng Liyuan) , using multi-thread hash grouping, to run each Window partition in parallel.
+
 Furthmore, the Shuffle Executor is designed to be a general purpose executor, which can also be used for other scenario, such as Parallel Sort-Merge Join, in the future.
 
 
 ## Rationale
-[Window operator](https://dev.mysql.com/doc/refman/8.0/en/window-functions.html) separated data into independent groups by `PARTITION BY` clause, and the independency makes parallel computing possible.
+[Window operator](https://dev.mysql.com/doc/refman/8.0/en/window-functions.html) separates data into independent groups by `PARTITION BY` clause, and the independency makes parallel executing possible.
 
 The rationale of Shuffle Exector is simple: It splits and shuffles data into partitions by columns in `PARTITION BY` clause, executes Window functions on partitions in a parallel manner, and finally merges the results.
 
@@ -23,7 +25,7 @@ The rationale of Shuffle Exector is simple: It splits and shuffles data into par
 
 The implementation consists of 3 parts:
 1. Planning.
-2. Building executor.
+2. Building Executors.
 3. Executing.
 
 ### Planning
@@ -32,11 +34,11 @@ We find the very position and very moment in Planning, to be specific, in CBO (_
 
 The very position is on top of the operator which can be "shuffled", i.e. Window operator so far.
 
-The very moment, means the following conditions should be met:
+The very moment, means all of the following conditions should be met:
 
 - The corresponding parallelism switch variable is on. As to Window operator, the value of variable `tidb_window_concurreny` should be more than 1.
 - The NDV (Number of Dinstict Values) of `PARTITION BY` columns should be more than 1.
-- The parallel should be effective enough. As to Window operator, when the child of Window operator meets the property requirement (i.e. enforced sorting is not necessary), the parallelism is not effective enough. See "Benchmarks" section for detail.
+- The parallelism should be effective enough. As to Window operator, when the child of Window operator meets the sorted property requirement (i.e. enforced sorting is not necessary), the parallelism is not effective enough. See "Benchmarks" section for detail.
 
 (_Notice that Window operator implements grouping in a "streaming" manner. So if data source is not sorted on the `PARTITION BY` columns, a Sorting would be enforced. Moreover, `SORT BY` clause in Window operator requires sorted property of data source too._)
 
@@ -85,20 +87,23 @@ mysql> explain select j, sum(i) over w from t window w as (partition by j);
 At the same time, imporant information is collected for later steps:
 
 - Data source to be spited on. Saves reference to Physical Plan of data source in `PhysicalShuffle.DataSource`.
-- Children plans to execute in parallel manner. Saves reference to tail of children plans chain in `PhysicalShuffle.Tail`.
-- Splitter type and arguments.
+- Children plans to execute in parallel manner. Saves reference to tail of children plans chain in `PhysicalShuffle.Tail`. (_Head of children plans chain can be retrieved from child of `PhysicalShuffle`_.)
+- Splitter type and arguments, which will be saved to `PhysicalShuffle.SplitterType` and `PhysicalShuffle.HashByItems`.
 
 
-### Building Executor
+### Building Executors
 
 Using the information saved in `PhysicalShuffle`, we build the executors and members (e.g. the Splitter) of `ShuffleExec`.
 
-The original `Shuffle -> Window -> Sort -> DataSource`, will be separated for multi-threading executing:
-    ==> `Shuffle`: for main thread
-    ==> `Window -> Sort -> shuffleWorker`: for worker threads
-    ==> `DataSource`: for `fetchDataAndSplit` thread
+The original executors chain `-> Shuffle -> Window -> Sort -> DataSource`, will be separated into 3 parts for multi-threading executing:
 
-(_The `shuffleWorker` also acts as the child of `Sort`, fetches tuples from `fetchDataAndSplit` thread, and feeds to Window and Sort executor in the same partition_).
+- `-> Shuffle`: for main thread
+
+- `-> Window -> Sort -> shuffleWorker`: for worker threads
+
+- `-> DataSource`: for `fetchDataAndSplit` thread
+
+(_The `shuffleWorker` is the multi-thread worker itself, which also acts as the child of `Sort`, fetching tuples from `fetchDataAndSplit` thread, and feeding to Window and Sort executor in the same partition_).
 
 
 ### Executing
@@ -152,8 +157,7 @@ The steps of Shuffle Executor `ShuffleExec`:
 ## Benchmarks
 
 #### Window On Unsorted Data
-It gets faster about __57%__ in 4 threads.
-Performance increases nearly linearly with number of threads.
+It gets faster about __57%__ in 4 threads. QPS increases nearly linearly with number of threads.
 
 _bit_xor(...) over window as (... rows between unbounded preceding and current row)._
 
@@ -183,10 +187,10 @@ ok  	github.com/pingcap/tidb/executor	15.996s
 ```
 
 #### Window On Sorted Data
-It is not effective enough.
-QPS is not increasing linearly by concurrency.
+It is not effective enough. QPS is not increasing linearly by concurrency.
 
 _bit_xor(...) over window as (... rows between unbounded preceding and current row)._
+
 _100000 rows, 1000 ndv, MacBook Pro with 6 cores CPU, 16GB memory._
 
 ![shuffle-benchmark-sorted](imgs/shuffle-benchmark-sorted.png)
@@ -203,6 +207,7 @@ BenchmarkWindowFunctionsWithFrame/(func:bit_xor,_numFunc:1,_ndv:1000,_rows:10000
 ```
 
 Performance profiling shows that the low performance is due to multi-thread overhead.
+
 _72.81% of cpu time was consumed by `pthread_cond_signal` and `pthread_cond_wait`._
 
 Top 10 of 4 concurrency:
