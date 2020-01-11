@@ -1307,7 +1307,7 @@ func (r *MergeAdjacentTopN) Match(expr *memo.ExprIter) bool {
 		return false
 	}
 	for i := 0; i < len(topN.ByItems); i++ {
-		if topN.ByItems[i] != child.ByItems[i] {
+		if (*topN.ByItems[i]) != (*child.ByItems[i]) {
 			return false
 		}
 	}
