@@ -22,7 +22,6 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
@@ -91,13 +90,19 @@ func dataForSlowLog(ctx sessionctx.Context) ([][]types.Datum, error) {
 			hasProcessPriv = true
 		}
 	}
-	return parseSlowLogFile(ctx.GetSessionVars().Location(), ctx.GetSessionVars().SlowQueryFile,
-		ctx.GetSessionVars().User, hasProcessPriv)
+	user := ctx.GetSessionVars().User
+	checkValid := func(userName string) bool {
+		if !hasProcessPriv && user != nil && userName != user.Username {
+			return false
+		}
+		return true
+	}
+	return parseSlowLogFile(ctx.GetSessionVars().Location(), ctx.GetSessionVars().SlowQueryFile, checkValid)
 }
 
 // parseSlowLogFile uses to parse slow log file.
 // TODO: Support parse multiple log-files.
-func parseSlowLogFile(tz *time.Location, filePath string, user *auth.UserIdentity, hasProcessPriv bool) ([][]types.Datum, error) {
+func parseSlowLogFile(tz *time.Location, filePath string, checkValid checkValidFunc) ([][]types.Datum, error) {
 	file, err := os.Open(filePath)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -108,12 +113,6 @@ func parseSlowLogFile(tz *time.Location, filePath string, user *auth.UserIdentit
 		}
 	}()
 
-	checkValid := func(userName string) bool {
-		if !hasProcessPriv && user != nil && userName != user.Username {
-			return false
-		}
-		return true
-	}
 	return ParseSlowLog(tz, bufio.NewReader(file), checkValid)
 }
 

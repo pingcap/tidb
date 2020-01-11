@@ -45,6 +45,7 @@ func Select(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request, fie
 	if !sctx.GetSessionVars().EnableStreaming {
 		kvReq.Streaming = false
 	}
+	// For TiDB cluster table reader, need add user info to do privilege check.
 	if kvReq.StoreType == kv.TiDB && sctx.GetSessionVars().User != nil {
 		kvReq.User = &kv.UserIdentity{
 			Username: sctx.GetSessionVars().User.Username,

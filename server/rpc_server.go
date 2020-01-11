@@ -146,14 +146,14 @@ func (s *rpcServer) createSession(user *kvrpcpb.User) (session.Session, error) {
 			Handle: do.PrivilegeHandle(),
 		}
 		privilege.BindPrivilegeManager(se, pm)
-		authName, authHost, sucess := pm.GetAuthWithoutVerification(user.Name, user.Host)
-		if sucess {
-			se.GetSessionVars().User = &auth.UserIdentity{
-				Username:     user.Name,
-				Hostname:     user.Host,
-				AuthUsername: authName,
-				AuthHostname: authHost,
-			}
+		se.GetSessionVars().User = &auth.UserIdentity{
+			Username: user.Name,
+			Hostname: user.Host,
+		}
+		authName, authHost, success := pm.GetAuthWithoutVerification(user.Name, user.Host)
+		if success {
+			se.GetSessionVars().User.AuthUsername = authName
+			se.GetSessionVars().User.AuthHostname = authHost
 			se.GetSessionVars().ActiveRoles = pm.GetDefaultRoles(authName, authHost)
 		}
 	}
