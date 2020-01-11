@@ -375,8 +375,12 @@ func (ds *DataSource) accessPathsForConds(conditions []expression.Expression, us
 			}
 			// If we have point or empty range, just remove other possible paths.
 			if noIntervalRanges || len(path.Ranges) == 0 {
-				results[0] = path
-				results = results[:1]
+				if len(results) == 0 {
+					results = append(results, path)
+				} else {
+					results[0] = path
+					results = results[:1]
+				}
 				break
 			}
 		} else {
@@ -392,8 +396,12 @@ func (ds *DataSource) accessPathsForConds(conditions []expression.Expression, us
 			noIntervalRanges := ds.deriveIndexPathStats(path, conditions, true)
 			// If we have empty range, or point range on unique index, just remove other possible paths.
 			if (noIntervalRanges && path.Index.Unique) || len(path.Ranges) == 0 {
-				results[0] = path
-				results = results[:1]
+				if len(results) == 0 {
+					results = append(results, path)
+				} else {
+					results[0] = path
+					results = results[:1]
+				}
 				break
 			}
 		}

@@ -1055,7 +1055,8 @@ func (s *testSuite6) TestTimestampMinDefaultValue(c *C) {
 	tk.MustExec("ALTER TABLE tdv ADD COLUMN ts timestamp DEFAULT '1970-01-01 08:00:01';")
 }
 
-func (s *testSuite3) TestRenameTable(c *C) {
+// this test will change the fail-point `mockAutoIDChange`, so we move it to the `testRecoverTable` suite
+func (s *testRecoverTable) TestRenameTable(c *C) {
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange", `return(true)`), IsNil)
 	defer func() {
 		c.Assert(failpoint.Disable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange"), IsNil)
