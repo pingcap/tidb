@@ -212,6 +212,8 @@ func (s *testTransformationRuleSuite) TestMergeAggregationProjection(c *C) {
 func (s *testTransformationRuleSuite) TestMergeAdjacentTopN(c *C) {
 	s.optimizer.ResetTransformationRules(map[memo.Operand][]Transformation{
 		memo.OperandAggregation: {
+			NewRuleTransformLimitToTopN(),
+			NewRulePushTopNDownProjection(),
 			NewRuleMergeAdjacentTopN(),
 		},
 	})

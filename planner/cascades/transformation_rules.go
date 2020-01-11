@@ -1317,11 +1317,13 @@ func (r *MergeAdjacentTopN) Match(expr *memo.ExprIter) bool {
 // OnTransform implements Transformation interface.
 // This rule tries to merge adjacent TopN.
 func (r *MergeAdjacentTopN) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
+	topN := old.GetExpr().ExprNode.(*plannercore.LogicalTopN)
 	child := old.Children[0].GetExpr().ExprNode.(*plannercore.LogicalTopN)
 	childGroups := old.Children[0].GetExpr().Children
 
 	newTopN := plannercore.LogicalTopN{
-		Count:   child.Count + child.Offset,
+		Count:   topN.Count,
+		Offset:  topN.Offset + child.Offset,
 		ByItems: child.ByItems,
 	}.Init(child.SCtx(), child.SelectBlockOffset())
 	newTopNExpr := memo.NewGroupExpr(newTopN)
