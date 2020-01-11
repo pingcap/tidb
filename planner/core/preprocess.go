@@ -385,6 +385,10 @@ func (p *preprocessor) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 		p.err = ddl.ErrWrongTableName.GenWithStackByArgs(tName)
 		return
 	}
+	if stmt.IsTemporary {
+		p.err = ddl.ErrUnsupportedTempTable.GenWithStackByArgs()
+		return
+	}
 	countPrimaryKey := 0
 	for _, colDef := range stmt.Cols {
 		if err := checkColumn(colDef); err != nil {
@@ -459,6 +463,10 @@ func (p *preprocessor) checkDropTableGrammar(stmt *ast.DropTableStmt) {
 			p.err = ddl.ErrWrongTableName.GenWithStackByArgs(t.Name.String())
 			return
 		}
+	}
+	if stmt.IsTemporary {
+		p.err = ddl.ErrUnsupportedTempTable.GenWithStackByArgs()
+		return
 	}
 }
 
