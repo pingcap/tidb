@@ -343,12 +343,14 @@ func (opt *Optimizer) implGroupExpr(cur *memo.GroupExpr, reqPhysProp *property.P
 		if !rule.Match(cur, reqPhysProp) {
 			continue
 		}
-		impl, err := rule.OnImplement(cur, reqPhysProp)
+		implementations, err := rule.OnImplement(cur, reqPhysProp)
 		if err != nil {
 			return nil, err
 		}
-		if impl != nil {
-			impls = append(impls, impl)
+		for _, impl := range implementations {
+			if impl != nil {
+				impls = append(impls, impl)
+			}
 		}
 	}
 	return impls, nil
