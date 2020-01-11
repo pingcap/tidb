@@ -212,10 +212,10 @@
       {
         "SQL": "select max(a+b) from t",
         "Plan": [
-          "HashAgg_21 1.00 root funcs:max(Column#4)->Column#3",
-          "└─TableReader_22 1.00 root data:HashAgg_23",
-          "  └─HashAgg_23 1.00 cop[tikv] funcs:max(plus(test.t.a, test.t.b))->Column#4",
-          "    └─TableScan_19 10000.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false, stats:pseudo"
+          "HashAgg_19 1.00 root funcs:max(Column#4)->Column#3",
+          "└─TableReader_20 1.00 root data:HashAgg_21",
+          "  └─HashAgg_21 1.00 cop[tikv] funcs:max(plus(test.t.a, test.t.b))->Column#4",
+          "    └─TableScan_17 10000.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false, stats:pseudo"
         ],
         "Result": [
           "48"

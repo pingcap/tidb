@@ -1411,32 +1411,35 @@ func (r *EliminateSingleMaxMin) OnTransform(old *memo.ExprIter) (newExprs []*mem
 			childGroup = selGroup
 		}
 
-		// Add Sort and Limit operators.
+		// Add top(1) operators.
 		// For max function, the sort order should be desc.
 		desc := f.Name == ast.AggFuncMax
-		// Compose Sort operator.
-		sort := plannercore.LogicalSort{}.Init(ctx, agg.SelectBlockOffset())
-		sort.ByItems = append(sort.ByItems, &plannercore.ByItems{
+		var byItems []*plannercore.ByItems
+		byItems = append(byItems, &plannercore.ByItems{
 			Expr: f.Args[0],
 			Desc: desc,
 		})
-		sortExpr := memo.NewGroupExpr(sort)
-		sortExpr.SetChildren(childGroup)
-		sortGroup := memo.NewGroupWithSchema(sortExpr, childGroup.Prop.Schema)
-		childGroup = sortGroup
+		top1 := plannercore.LogicalTopN{
+			ByItems: byItems,
+			Count:   1,
+		}.Init(ctx, agg.SelectBlockOffset())
+		top1Expr := memo.NewGroupExpr(top1)
+		top1Expr.SetChildren(childGroup)
+		top1Group := memo.NewGroupWithSchema(top1Expr, childGroup.Prop.Schema)
+		childGroup = top1Group
+	} else {
+		li := plannercore.LogicalLimit{Count: 1}.Init(ctx, agg.SelectBlockOffset())
+		liExpr := memo.NewGroupExpr(li)
+		liExpr.SetChildren(childGroup)
+		liGroup := memo.NewGroupWithSchema(liExpr, childGroup.Prop.Schema)
+		childGroup = liGroup
 	}
-
-	// Compose Limit operator.
-	li := plannercore.LogicalLimit{Count: 1}.Init(ctx, agg.SelectBlockOffset())
-	liExpr := memo.NewGroupExpr(li)
-	liExpr.SetChildren(childGroup)
-	liGroup := memo.NewGroupWithSchema(liExpr, childGroup.Prop.Schema)
 
 	newAgg := agg
 	newAggExpr := memo.NewGroupExpr(newAgg)
 	// If no data in the child, we need to return NULL instead of empty. This cannot be done by sort and limit themselves.
 	// Since now there would be at most one row returned, the remained agg operator is not expensive anymore.
-	newAggExpr.SetChildren(liGroup)
+	newAggExpr.SetChildren(childGroup)
 	newAggExpr.AddAppliedRule(r)
 	return []*memo.GroupExpr{newAggExpr}, true, false, nil
 }
