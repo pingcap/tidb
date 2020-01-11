@@ -24,13 +24,13 @@ The rationale of Shuffle Exector is simple: It splits and shuffles data into par
 ## Implementation
 
 The implementation consists of 3 parts:
-1. Planning.
+1. Physical Planning.
 2. Building Executors.
 3. Executing.
 
 ### Planning
 
-We find the very position and very moment in Planning, to be specific, in CBO (_cost based optimization_) procedure.
+We find the very position and very moment for "shuffle" in Physical Planning procedure.
 
 The very position is on top of the operator which can be "shuffled", i.e. Window operator so far.
 
@@ -86,16 +86,16 @@ mysql> explain select j, sum(i) over w from t window w as (partition by j);
 ```
 At the same time, imporant information is collected for later steps:
 
-- Data source to be spited on. Saves reference to Physical Plan of data source in `PhysicalShuffle.DataSource`.
-- Children plans to execute in parallel manner. Saves reference to tail of children plans chain in `PhysicalShuffle.Tail`. (_Head of children plans chain can be retrieved from child of `PhysicalShuffle`_.)
-- Splitter type and arguments, which will be saved to `PhysicalShuffle.SplitterType` and `PhysicalShuffle.HashByItems`.
+- Data source to be spited on. Whose reference would be stored in `PhysicalShuffle.DataSource`.
+- Children plans to execute in parallel manner. Tail of children plans chain would be stored in `PhysicalShuffle.Tail`. (_Head of children plans chain can be retrieved from child of `PhysicalShuffle`_.)
+- Splitter type and arguments, which would be stored in `PhysicalShuffle.SplitterType` and `PhysicalShuffle.HashByItems`.
 
 
 ### Building Executors
 
-Using the information saved in `PhysicalShuffle`, we build the executors and members (e.g. the Splitter) of `ShuffleExec`.
+Using the information stored in `PhysicalShuffle`, we build the executors and members (e.g. the Splitter) of `ShuffleExec`.
 
-The original executors chain `-> Shuffle -> Window -> Sort -> DataSource`, will be separated into 3 parts for multi-threading executing:
+The original executors chain `-> Shuffle -> Window -> Sort -> DataSource`, will be separated into 3 parts for multi-thread executing:
 
 - `-> Shuffle`: for main thread
 
@@ -110,10 +110,10 @@ The original executors chain `-> Shuffle -> Window -> Sort -> DataSource`, will 
 
 The steps of Shuffle Executor `ShuffleExec`:
 
-1. It fetches chunks from `DataSource`.
-2. It splits tuples from `DataSource` into N partitions (only "split by hash" is implemented so far).
-3. It invokes N workers in parallel, assign each partition as input to each worker and execute child executors.
-4. It collects outputs from each worker, then sends outputs to its parent.
+1. Fetches chunks from `DataSource`.
+2. Splits tuples from `DataSource` into N partitions (only "split by hash" is implemented so far).
+3. Invokes N workers in parallel, assigns each partition as input to each worker and executes child executors.
+4. Collects outputs from each worker, then sends outputs to its parent.
 ```
                                 +-------------+
                         +-------| Main Thread |
@@ -163,6 +163,8 @@ _bit_xor(...) over window as (... rows between unbounded preceding and current r
 
 _100000 rows, 1000 ndv, MacBook Pro with 6 cores CPU, 16GB memory._
 
+_`worker = 1` means serial executing._
+
 ![shuffle-benchmark-unsorted](imgs/shuffle-benchmark-unsorted.png)
 
 ```
@@ -187,11 +189,13 @@ ok  	github.com/pingcap/tidb/executor	15.996s
 ```
 
 #### Window On Sorted Data
-It is not effective enough. QPS is not increasing linearly by concurrency.
+It is not effective enough. QPS is not increasing linearly by concurrency (_decreasing actually_).
 
 _bit_xor(...) over window as (... rows between unbounded preceding and current row)._
 
 _100000 rows, 1000 ndv, MacBook Pro with 6 cores CPU, 16GB memory._
+
+_`worker = 1` means serial executing._
 
 ![shuffle-benchmark-sorted](imgs/shuffle-benchmark-sorted.png)
 
