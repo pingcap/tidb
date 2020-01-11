@@ -302,13 +302,17 @@ func buildTiDBMemCopTasks(ranges *copRanges, req *kv.Request) ([]*copTask, error
 	if err != nil {
 		return nil, err
 	}
+	cmdType := tikvrpc.CmdCop
+	if req.Streaming {
+		cmdType = tikvrpc.CmdCopStream
+	}
 	tasks := make([]*copTask, 0, len(servers))
 	for _, ser := range servers {
 		addr := ser.IP + ":" + strconv.FormatUint(uint64(ser.StatusPort), 10)
 		tasks = append(tasks, &copTask{
 			ranges:    ranges,
 			respChan:  make(chan *copResponse, 2),
-			cmdType:   tikvrpc.CmdCop,
+			cmdType:   cmdType,
 			storeType: req.StoreType,
 			storeAddr: addr,
 		})
@@ -713,10 +717,11 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 	})
 
 	copReq := coprocessor.Request{
-		Tp:      worker.req.Tp,
-		StartTs: worker.req.StartTs,
-		Data:    worker.req.Data,
-		Ranges:  task.ranges.toPBRanges(),
+		Tp:        worker.req.Tp,
+		StartTs:   worker.req.StartTs,
+		Data:      worker.req.Data,
+		Ranges:    task.ranges.toPBRanges(),
+		SchemaVer: worker.req.SchemaVar,
 	}
 
 	var cacheKey []byte = nil

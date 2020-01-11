@@ -81,8 +81,8 @@ func (b *builtinRegexpUTF8Sig) vectorized() bool {
 	return true
 }
 
-func (b *builtinRegexpSharedSig) isMemoizedRegexpInitialized() bool {
-	return !(b.memoizedRegexp == nil && b.memoizedErr == nil)
+func (b *builtinRegexpSharedSig) isMemorizedRegexpInitialized() bool {
+	return !(b.memorizedRegexp == nil && b.memorizedErr == nil)
 }
 
 func (b *builtinRegexpSharedSig) initMemoizedRegexp(patterns *chunk.Column, n int) {
@@ -92,15 +92,15 @@ func (b *builtinRegexpSharedSig) initMemoizedRegexp(patterns *chunk.Column, n in
 			continue
 		}
 		re, err := b.compile(patterns.GetString(i))
-		b.memoizedRegexp = re
-		b.memoizedErr = err
+		b.memorizedRegexp = re
+		b.memorizedErr = err
 		break
 	}
-	if !b.isMemoizedRegexpInitialized() {
-		b.memoizedErr = errors.New("No valid regexp pattern found")
+	if !b.isMemorizedRegexpInitialized() {
+		b.memorizedErr = errors.New("No valid regexp pattern found")
 	}
-	if b.memoizedErr != nil {
-		b.memoizedRegexp = nil
+	if b.memorizedErr != nil {
+		b.memorizedRegexp = nil
 	}
 }
 
@@ -124,12 +124,12 @@ func (b *builtinRegexpSharedSig) vecEvalInt(input *chunk.Chunk, result *chunk.Co
 		return err
 	}
 
-	if b.args[1].ConstItem() && !b.isMemoizedRegexpInitialized() {
+	if b.args[1].ConstItem(b.ctx.GetSessionVars().StmtCtx) && !b.isMemorizedRegexpInitialized() {
 		b.initMemoizedRegexp(bufPat, n)
 	}
 	getRegexp := func(pat string) (*regexp.Regexp, error) {
-		if b.isMemoizedRegexpInitialized() {
-			return b.memoizedRegexp, b.memoizedErr
+		if b.isMemorizedRegexpInitialized() {
+			return b.memorizedRegexp, b.memorizedErr
 		}
 		return b.compile(pat)
 	}
