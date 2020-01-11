@@ -97,6 +97,7 @@ type copTask struct {
 	storeAddr string
 	cmdType   tikvrpc.CmdType
 	storeType kv.StoreType
+	user      *kv.UserIdentity
 }
 
 func (r *copTask) String() string {
@@ -315,6 +316,7 @@ func buildTiDBMemCopTasks(ranges *copRanges, req *kv.Request) ([]*copTask, error
 			cmdType:   cmdType,
 			storeType: req.StoreType,
 			storeAddr: addr,
+			user:      req.User,
 		})
 	}
 	return tasks, nil
@@ -754,6 +756,7 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 		ScanDetail:     true,
 	})
 	req.StoreTp = task.storeType
+	req.User = task.user
 	startTime := time.Now()
 	resp, rpcCtx, storeAddr, err := worker.SendReqCtx(bo, req, task.region, ReadTimeoutMedium, task.storeType, task.storeAddr)
 	if err != nil {

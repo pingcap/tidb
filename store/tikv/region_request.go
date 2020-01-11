@@ -123,6 +123,7 @@ func (s *RegionRequestSender) SendReqCtx(
 		case kv.TiDB:
 			rpcCtx = &RPCContext{
 				Addr: s.storeAddr,
+				User: req.User,
 			}
 		default:
 			err = errors.Errorf("unsupported storage type: %v", sType)
@@ -178,7 +179,7 @@ func (s *RegionRequestSender) SendReqCtx(
 }
 
 func (s *RegionRequestSender) sendReqToRegion(bo *Backoffer, ctx *RPCContext, req *tikvrpc.Request, timeout time.Duration) (resp *tikvrpc.Response, retry bool, err error) {
-	if e := tikvrpc.SetContext(req, ctx.Meta, ctx.Peer); e != nil {
+	if e := tikvrpc.SetContext(req, ctx.Meta, ctx.Peer, ctx.User); e != nil {
 		return nil, false, errors.Trace(e)
 	}
 	// judge the store limit switch.

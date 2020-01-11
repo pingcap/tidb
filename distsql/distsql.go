@@ -45,6 +45,12 @@ func Select(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request, fie
 	if !sctx.GetSessionVars().EnableStreaming {
 		kvReq.Streaming = false
 	}
+	if kvReq.StoreType == kv.TiDB && sctx.GetSessionVars().User != nil {
+		kvReq.User = &kv.UserIdentity{
+			Username: sctx.GetSessionVars().User.Username,
+			Hostname: sctx.GetSessionVars().User.Hostname,
+		}
+	}
 	resp := sctx.GetClient().Send(ctx, kvReq, sctx.GetSessionVars().KVVars)
 	if resp == nil {
 		err := errors.New("client returns nil response")

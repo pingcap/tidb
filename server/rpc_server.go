@@ -19,11 +19,15 @@ import (
 
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/diagnosticspb"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/tikvpb"
+	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/sysutil"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/privilege"
+	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/store/tikv"
@@ -106,7 +110,7 @@ func (s *rpcServer) CoprocessorStream(in *coprocessor.Request, stream tikvpb.Tik
 		}
 	}()
 
-	se, err := s.createSession()
+	se, err := s.createSession(in.Context.User)
 	if err != nil {
 		resp.OtherError = err.Error()
 		return stream.Send(resp)
@@ -120,25 +124,40 @@ func (s *rpcServer) CoprocessorStream(in *coprocessor.Request, stream tikvpb.Tik
 // handleCopRequest handles the cop dag request.
 func (s *rpcServer) handleCopRequest(ctx context.Context, req *coprocessor.Request) *coprocessor.Response {
 	resp := &coprocessor.Response{}
-	se, err := s.createSession()
+	se, err := s.createSession(req.Context.User)
 	if err != nil {
 		resp.OtherError = err.Error()
 		return resp
 	}
 	defer se.Close()
-
 	h := executor.NewCoprocessorDAGHandler(se)
 	return h.HandleRequest(ctx, req)
 }
 
-func (s *rpcServer) createSession() (session.Session, error) {
+func (s *rpcServer) createSession(user *kvrpcpb.User) (session.Session, error) {
 	se, err := session.CreateSessionWithDomain(s.dom.Store(), s.dom)
 	if err != nil {
 		return nil, err
 	}
 	do := domain.GetDomain(se)
 	is := do.InfoSchema()
-	// TODO: Need user and host to do privilege check.
+	if user != nil {
+		pm := &privileges.UserPrivileges{
+			Handle: do.PrivilegeHandle(),
+		}
+		privilege.BindPrivilegeManager(se, pm)
+		authName, authHost, sucess := pm.GetAuthWithoutVerification(user.Name, user.Host)
+		if sucess {
+			se.GetSessionVars().User = &auth.UserIdentity{
+				Username:     user.Name,
+				Hostname:     user.Host,
+				AuthUsername: authName,
+				AuthHostname: authHost,
+			}
+			se.GetSessionVars().ActiveRoles = pm.GetDefaultRoles(authName, authHost)
+		}
+	}
+
 	se.GetSessionVars().TxnCtx.InfoSchema = is
 	// This is for disable parallel hash agg.
 	// TODO: remove this.
