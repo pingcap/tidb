@@ -50,11 +50,11 @@ type baseBuiltinFunc struct {
 	tp           *types.FieldType
 	pbCode       tipb.ScalarFuncSig
 
-	childrenVectorizedOnce *sync.Once
-	childrenVectorized     bool
+	childrenVectorized bool
+	childrenReversed   bool
 
-	childrenReversedOnce *sync.Once
-	childrenReversed     bool
+	childrenVectorizedOnce *sync.Once
+	childrenReversedOnce   *sync.Once
 }
 
 func (b *baseBuiltinFunc) PbCode() tipb.ScalarFuncSig {

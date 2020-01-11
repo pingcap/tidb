@@ -142,7 +142,7 @@ func checkIndexColumn(col *model.ColumnInfo, ic *ast.IndexPartSpecification) err
 
 	// Length must be specified for BLOB and TEXT column indexes.
 	if types.IsTypeBlob(col.FieldType.Tp) && ic.Length == types.UnspecifiedLength {
-		return errors.Trace(errBlobKeyWithoutLength)
+		return errors.Trace(errBlobKeyWithoutLength.GenWithStackByArgs(col.Name.O))
 	}
 
 	// Length can only be specified for specifiable types.
