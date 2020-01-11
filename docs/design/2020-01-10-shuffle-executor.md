@@ -8,14 +8,14 @@ This article will describe the design of Shuffle Executor in TiDB.
 
 ## Background
 As described in [#12966](https://github.com/pingcap/tidb/issues/12966), the performance of Window operator in TiDB has much space to improve.
-So we designed a Shuffle Executor, which is proposed [here](https://github.com/pingcap/tidb/pull/14238#issuecomment-569880893) by [SunRunAway](https://github.com/SunRunAway) (Feng Liyuan) , using multi-thread hash grouping, to run each window partition in parallel.
+So we designed a Shuffle Executor, which is proposed [here](https://github.com/pingcap/tidb/pull/14238#issuecomment-569880893) by [SunRunAway](https://github.com/SunRunAway) (Feng Liyuan) , using multi-thread hash grouping, to run each Window partition in parallel.
 Furthmore, the Shuffle Executor is designed to be a general purpose executor, which can also be used for other scenario, such as Parallel Sort-Merge Join, in the future.
 
 
 ## Rationale
 [Window operator](https://dev.mysql.com/doc/refman/8.0/en/window-functions.html) separated data into independent groups by `PARTITION BY` clause, and the independency makes parallel computing possible.
 
-The rationale of Shuffle Exector is simple: It splits and shuffles data into partitions by columns in `PARTITION BY` clause, executes window functions on partitions in a parallel manner, and finally merges the results.
+The rationale of Shuffle Exector is simple: It splits and shuffles data into partitions by columns in `PARTITION BY` clause, executes Window functions on partitions in a parallel manner, and finally merges the results.
 
 ![shuffle-rationale](imgs/shuffle-rationale.png)
 
@@ -28,7 +28,32 @@ The implementation consists of 3 parts:
 
 ### Planning
 
-In CBO procedure (to be specific, in `(*baseLogicalPlan).findBestTask`), we inserts a new physical plan `PhysicalShuffle`, which represents the executing plan of Shuffle Executor, on the top of the very executor to be "shuffled".
+We find the very position and very moment in Planning, to be specific, in CBO (_cost based optimization_) procedure.
+
+The very position is on top of the operator which can be "shuffled", i.e. Window operator so far.
+
+The very moment, means the following conditions should be met:
+
+- The corresponding parallelism switch variable is on. As to Window operator, the value of variable `tidb_window_concurreny` should be more than 1.
+- The NDV (Number of Dinstict Values) of `PARTITION BY` columns should be more than 1.
+- The parallel should be effective enough. As to Window operator, when the child of Window operator meets the property requirement (i.e. enforced sorting is not necessary), the parallelism is not effective enough. See "Benchmarks" section for detail.
+
+(_Notice that Window operator implements grouping in a "streaming" manner. So if data source is not sorted on the `PARTITION BY` columns, a Sorting would be enforced. Moreover, `SORT BY` clause in Window operator requires sorted property of data source too._)
+
+When the very position and very moment is found, we inserts a new physical plan `PhysicalShuffle`, which represents the executing plan of Shuffle Executor.
+
+```go
+type PhysicalShuffle struct {
+	basePhysicalPlan
+
+	Concurrency int
+	Tail        PhysicalPlan
+	DataSource  PhysicalPlan
+
+	SplitterType PartitionSplitterType
+	HashByItems  []expression.Expression
+}
+```
 
 For example, when table `t` was created as `create table t (i int, j int)`, the plan of `select j, sum(i) over w from t window w as (partition by j)` would be:
 ```
@@ -43,7 +68,7 @@ mysql> explain select j, sum(i) over w from t window w as (partition by j);
 |       └─TableScan_9      | 10000.00 | cop[tikv] | table:t, range:[-inf,+inf], keep order:false, stats:pseudo |
 +--------------------------+----------+-----------+------------------------------------------------------------+
 ```
-To "shuffle" the window operator, the plan would changed to:
+To "shuffle" the Window operator, the plan would changed to:
 ```
 mysql> explain select j, sum(i) over w from t window w as (partition by j);
 +----------------------------+----------+-----------+------------------------------------------------------------+
@@ -57,24 +82,28 @@ mysql> explain select j, sum(i) over w from t window w as (partition by j);
 |         └─TableScan_9      | 10000.00 | cop[tikv] | table:t, range:[-inf,+inf], keep order:false, stats:pseudo |
 +----------------------------+----------+-----------+------------------------------------------------------------+
 ```
-Notice that WindowExec implements grouping in a "streaming" manner. So if data source is not sorted on the `PARTITION BY` columns, a `SortExec` would be enforced. Moreover, `SORT BY` clause in window operator requires similar property of data source.
+At the same time, imporant information is collected for later steps:
 
-The `PhysicalShuffle` is inserted when the following conditions are met:
+- Data source to be spited on. Saves reference to Physical Plan of data source in `PhysicalShuffle.DataSource`.
+- Children plans to execute in parallel manner. Saves reference to tail of children plans chain in `PhysicalShuffle.Tail`.
+- Splitter type and arguments.
 
-- The variable for the operator to be executing in parallel manner is enable. As to window operator, the value of variable `tidb_window_concurreny` should be more than 1.
-- The NDV (number of dinstict value) of `PARTITION BY` columns should be more than 1.
-- The parallel should be effective enough. As to window operator, when the child of window operator meets the property requirement (i.e. enforced sorting is not necessary), the parallel is not effective enough. See "Benchmarks" for detail.
 
 ### Building Executor
 
-In this step, the Shuffle Executor and important members are constructed. Important members include: Window executors and Sort executors in each partition,  Partition Splitter.
+Using the information saved in `PhysicalShuffle`, we build the executors and members (e.g. the Splitter) of `ShuffleExec`.
 
-Moveover, a special stub executor is built to be child of Window executor (or Sort executor if exists). This stub executor is actually the shuffle worker in the same partition, which fetches tuples from data source, and feeds to Window and Sort executor.
+The original `Shuffle -> Window -> Sort -> DataSource`, will be separated for multi-threading executing:
+    ==> `Shuffle`: for main thread
+    ==> `Window -> Sort -> shuffleWorker`: for worker threads
+    ==> `DataSource`: for `fetchDataAndSplit` thread
+
+(_The `shuffleWorker` also acts as the child of `Sort`, fetches tuples from `fetchDataAndSplit` thread, and feeds to Window and Sort executor in the same partition_).
 
 
 ### Executing
 
-The steps of Shuffle Executor:
+The steps of Shuffle Executor `ShuffleExec`:
 
 1. It fetches chunks from `DataSource`.
 2. It splits tuples from `DataSource` into N partitions (only "split by hash" is implemented so far).
