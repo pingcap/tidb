@@ -1065,7 +1065,6 @@
         "SQL": "select a from (select floor(a) as a from t) as t2",
         "Result": [
           "Group#0 Schema:[Column#13]",
-          "    Projection_4 input:[Group#1], floor(test.t.a)->Column#13",
           "    Projection_2 input:[Group#1], floor(test.t.a)->Column#13",
           "Group#1 Schema:[test.t.a]",
           "    TableScan_1 table:t"
