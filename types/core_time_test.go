@@ -19,11 +19,11 @@ import (
 	. "github.com/pingcap/check"
 )
 
-type testMyTimeSuite struct{}
+type testCoreTimeSuite struct{}
 
-var _ = Suite(&testMyTimeSuite{})
+var _ = Suite(&testCoreTimeSuite{})
 
-func (s *testMyTimeSuite) TestWeekBehaviour(c *C) {
+func (s *testCoreTimeSuite) TestWeekBehaviour(c *C) {
 	c.Assert(weekBehaviourMondayFirst, Equals, weekBehaviour(1))
 	c.Assert(weekBehaviourYear, Equals, weekBehaviour(2))
 	c.Assert(weekBehaviourFirstWeekday, Equals, weekBehaviour(4))
@@ -33,7 +33,7 @@ func (s *testMyTimeSuite) TestWeekBehaviour(c *C) {
 	c.Check(weekBehaviour(4).test(weekBehaviourFirstWeekday), IsTrue)
 }
 
-func (s *testMyTimeSuite) TestWeek(c *C) {
+func (s *testCoreTimeSuite) TestWeek(c *C) {
 	tests := []struct {
 		Input  CoreTime
 		Mode   int
@@ -50,7 +50,7 @@ func (s *testMyTimeSuite) TestWeek(c *C) {
 	}
 }
 
-func (s *testMyTimeSuite) TestCalcDaynr(c *C) {
+func (s *testCoreTimeSuite) TestCalcDaynr(c *C) {
 	c.Assert(calcDaynr(0, 0, 0), Equals, 0)
 	c.Assert(calcDaynr(9999, 12, 31), Equals, 3652424)
 	c.Assert(calcDaynr(1970, 1, 1), Equals, 719528)
@@ -59,7 +59,7 @@ func (s *testMyTimeSuite) TestCalcDaynr(c *C) {
 	c.Assert(calcDaynr(2008, 2, 20), Equals, 733457)
 }
 
-func (s *testMyTimeSuite) TestCalcTimeTimeDiff(c *C) {
+func (s *testCoreTimeSuite) TestCalcTimeTimeDiff(c *C) {
 	tests := []struct {
 		T1           CoreTime
 		T2           CoreTime
@@ -98,7 +98,7 @@ func (s *testMyTimeSuite) TestCalcTimeTimeDiff(c *C) {
 	}
 }
 
-func (s *testMyTimeSuite) TestCompareTime(c *C) {
+func (s *testCoreTimeSuite) TestCompareTime(c *C) {
 	tests := []struct {
 		T1     CoreTime
 		T2     CoreTime
@@ -117,7 +117,7 @@ func (s *testMyTimeSuite) TestCompareTime(c *C) {
 	}
 }
 
-func (s *testMyTimeSuite) TestGetDateFromDaynr(c *C) {
+func (s *testCoreTimeSuite) TestGetDateFromDaynr(c *C) {
 	tests := []struct {
 		daynr uint
 		year  uint
@@ -146,7 +146,7 @@ func (s *testMyTimeSuite) TestGetDateFromDaynr(c *C) {
 	}
 }
 
-func (s *testMyTimeSuite) TestMixDateAndTime(c *C) {
+func (s *testCoreTimeSuite) TestMixDateAndTime(c *C) {
 	tests := []struct {
 		date   CoreTime
 		dur    Duration
@@ -195,7 +195,7 @@ func (s *testMyTimeSuite) TestMixDateAndTime(c *C) {
 	}
 }
 
-func (s *testMyTimeSuite) TestIsLeapYear(c *C) {
+func (s *testCoreTimeSuite) TestIsLeapYear(c *C) {
 	tests := []struct {
 		T      CoreTime
 		Expect bool
@@ -219,7 +219,7 @@ func (s *testMyTimeSuite) TestIsLeapYear(c *C) {
 		c.Assert(tt.T.IsLeapYear(), Equals, tt.Expect)
 	}
 }
-func (s *testMyTimeSuite) TestGetLastDay(c *C) {
+func (s *testCoreTimeSuite) TestGetLastDay(c *C) {
 	tests := []struct {
 		year        int
 		month       int
@@ -238,7 +238,7 @@ func (s *testMyTimeSuite) TestGetLastDay(c *C) {
 	}
 }
 
-func (s *testMyTimeSuite) TestgetFixDays(c *C) {
+func (s *testCoreTimeSuite) TestgetFixDays(c *C) {
 	tests := []struct {
 		year        int
 		month       int
@@ -259,7 +259,7 @@ func (s *testMyTimeSuite) TestgetFixDays(c *C) {
 	}
 }
 
-func (s *testMyTimeSuite) TestAddDate(c *C) {
+func (s *testCoreTimeSuite) TestAddDate(c *C) {
 	tests := []struct {
 		year  int
 		month int
@@ -279,7 +279,7 @@ func (s *testMyTimeSuite) TestAddDate(c *C) {
 	}
 }
 
-func (s *testMyTimeSuite) TestWeekday(c *C) {
+func (s *testCoreTimeSuite) TestWeekday(c *C) {
 	tests := []struct {
 		Input  CoreTime
 		Expect string
