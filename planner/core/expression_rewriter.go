@@ -1595,11 +1595,7 @@ func (er *expressionRewriter) evalDefaultExpr(v *ast.DefaultExpr) {
 		val = expression.Null
 	case isCurrentTimestamp && col.Tp == mysql.TypeTimestamp:
 		// for TIMESTAMP column with current_timestamp, use 0 to be compatible with MySQL 5.7
-		zero := types.Time{
-			Time: types.ZeroTime,
-			Type: mysql.TypeTimestamp,
-			Fsp:  int8(col.Decimal),
-		}
+		zero := types.NewTime(types.ZeroCoreTime, mysql.TypeTimestamp, int8(col.Decimal))
 		val = &expression.Constant{
 			Value:   types.NewDatum(zero),
 			RetType: types.NewFieldType(mysql.TypeTimestamp),

@@ -58,7 +58,7 @@
       "DataScan(t)->Projection->Projection",
       "DataScan(t)->Projection->Projection",
       "Join{DataScan(ta)->DataScan(tb)}(test.t.d,test.t.b)(test.t.a,test.t.c)->Projection",
-      "Join{DataScan(t1)->Sel([like(cast(test.t.d), abc, 92)])->DataScan(t2)->Sel([like(cast(test.t.d), abc, 92)])}(test.t.a,test.t.b)(test.t.d,test.t.d)->Projection",
+      "Join{DataScan(t1)->DataScan(t2)}(test.t.a,test.t.b)(test.t.d,test.t.d)->Projection",
       "Join{DataScan(ta)->DataScan(tb)}(test.t.d,test.t.d)->Projection",
       "Join{DataScan(ta)->DataScan(tb)}(test.t.d,test.t.d)->Projection",
       "Join{DataScan(ta)->DataScan(tb)}(test.t.d,test.t.d)->Projection",

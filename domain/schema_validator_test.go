@@ -173,7 +173,7 @@ func (*testSuite) TestEnqueue(c *C) {
 		{9, []int64{1, 2, 3}},
 	}
 	for _, d := range ds {
-		validator.enqueue(d.schemaVersion, d.relatedTableIDs)
+		validator.enqueue(d.schemaVersion, d.relatedIDs)
 	}
 	validator.enqueue(10, []int64{1})
 	ret := []deltaSchemaInfo{
