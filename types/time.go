@@ -252,22 +252,17 @@ const (
 	// 1. `type` bit 0 represent `DateTime`
 	// 2. `type` bit 1 represent `Timestamp`
 	//
-	// Since `Date` does not require `fsp`, we could use `fspTt` == 0b1110 to represent it.
+	// Since s`Date` does not require `fsp`, we could use `fspTt` == 0b1110 to represent it.
 	fspTtBitFieldStart, fspTtBitFieldEnd uint64 = 3, 0
-)
 
-var (
-	// Precalculate all masks.
-	// Declare all masks as variable to disable constant overflow check.
-	maskBase                = ^uint64(0)
-	yearBitFieldMask        = maskBase << (64 - yearBitFieldStart - 1) >> (64 - yearBitFieldStart - 1 + yearBitFieldEnd) << yearBitFieldEnd
-	monthBitFieldMask       = maskBase << (64 - monthBitFieldStart - 1) >> (64 - monthBitFieldStart - 1 + monthBitFieldEnd) << monthBitFieldEnd
-	dayBitFieldMask         = maskBase << (64 - dayBitFieldStart - 1) >> (64 - dayBitFieldStart - 1 + dayBitFieldEnd) << dayBitFieldEnd
-	hourBitFieldMask        = maskBase << (64 - hourBitFieldStart - 1) >> (64 - hourBitFieldStart - 1 + hourBitFieldEnd) << hourBitFieldEnd
-	minuteBitFieldMask      = maskBase << (64 - minuteBitFieldStart - 1) >> (64 - minuteBitFieldStart - 1 + minuteBitFieldEnd) << minuteBitFieldEnd
-	secondBitFieldMask      = maskBase << (64 - secondBitFieldStart - 1) >> (64 - secondBitFieldStart - 1 + secondBitFieldEnd) << secondBitFieldEnd
-	microsecondBitFieldMask = maskBase << (64 - microsecondBitFieldStart - 1) >> (64 - microsecondBitFieldStart - 1 + microsecondBitFieldEnd) << microsecondBitFieldEnd
-	fspTtBitFieldMask       = maskBase << (64 - fspTtBitFieldStart - 1) >> (64 - fspTtBitFieldStart - 1 + fspTtBitFieldEnd) << fspTtBitFieldEnd
+	yearBitFieldMask        uint64 = 0b1111111111111100000000000000000000000000000000000000000000000000
+	monthBitFieldMask       uint64 = 0b0000000000000011110000000000000000000000000000000000000000000000
+	dayBitFieldMask         uint64 = 0b0000000000000000001111100000000000000000000000000000000000000000
+	hourBitFieldMask        uint64 = 0b0000000000000000000000011111000000000000000000000000000000000000
+	minuteBitFieldMask      uint64 = 0b0000000000000000000000000000111111000000000000000000000000000000
+	secondBitFieldMask      uint64 = 0b0000000000000000000000000000000000111111000000000000000000000000
+	microsecondBitFieldMask uint64 = 0b0000000000000000000000000000000000000000111111111111111111110000
+	fspTtBitFieldMask       uint64 = 0b0000000000000000000000000000000000000000000000000000000000001111
 
 	fspTtForDate         uint8  = 0b1110
 	fspBitFieldMask      uint64 = 0b1110
