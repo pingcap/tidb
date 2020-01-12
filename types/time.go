@@ -1055,10 +1055,10 @@ func (d Duration) Sub(v Duration) (Duration, error) {
 	return Duration{Duration: gotime.Duration(dsum), Fsp: v.Fsp}, nil
 }
 
-// DateFormat returns a textual representation of the duration value formatted
+// DurationFormat returns a textual representation of the duration value formatted
 // according to layout.
 // See http://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_date-format
-func (d Duration) DateFormat(layout string) (string, error) {
+func (d Duration) DurationFormat(layout string) (string, error) {
 	var buf bytes.Buffer
 	inPatternMatch := false
 	for _, b := range layout {

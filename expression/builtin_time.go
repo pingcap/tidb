@@ -6450,7 +6450,7 @@ func (b *builtinTimeFormatSig) evalString(row chunk.Row) (string, bool, error) {
 
 // formatTime see https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_time-format
 func (b *builtinTimeFormatSig) formatTime(ctx sessionctx.Context, t types.Duration, formatMask string) (res string, err error) {
-	return t.DateFormat(formatMask)
+	return t.DurationFormat(formatMask)
 }
 
 type timeToSecFunctionClass struct {
