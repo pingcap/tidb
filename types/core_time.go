@@ -14,6 +14,7 @@
 package types
 
 import (
+	"fmt"
 	gotime "time"
 
 	"github.com/pingcap/errors"
@@ -24,6 +25,11 @@ type CoreTime uint64
 
 // ZeroCoreTime is the zero value for TimeInternal type.
 var ZeroCoreTime = CoreTime(0)
+
+// String implements fmt.Stringer.
+func (t CoreTime) String() string {
+	return fmt.Sprintf("{%d %d %d %d %d %d %d}", t.getYear(), t.getMonth(), t.getDay(), t.getHour(), t.getMinute(), t.getSecond(), t.getMicrosecond())
+}
 
 func (t CoreTime) getYear() uint16 {
 	return uint16((uint64(t) >> yearBitFieldEnd) & ((1 << (yearBitFieldStart - yearBitFieldEnd + 1)) - 1))
