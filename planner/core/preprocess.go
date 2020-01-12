@@ -386,7 +386,7 @@ func (p *preprocessor) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 		return
 	}
 	if stmt.IsTemporary {
-		p.err = ddl.ErrUnsupportedTempTable.GenWithStackByArgs()
+		p.err = ddl.ErrUnsupportedTempTable.GenWithStack("'CREATE TEMPORARY TABLE' is currently unsupported")
 		return
 	}
 	countPrimaryKey := 0
@@ -465,7 +465,7 @@ func (p *preprocessor) checkDropTableGrammar(stmt *ast.DropTableStmt) {
 		}
 	}
 	if stmt.IsTemporary {
-		p.err = ddl.ErrUnsupportedTempTable.GenWithStackByArgs()
+		p.err = ddl.ErrUnsupportedTempTable.GenWithStack("'DROP TEMPORARY TABLE' is currently unsupported")
 		return
 	}
 }
