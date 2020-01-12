@@ -226,8 +226,25 @@ var (
 	ErrFieldNotFoundPart = terror.ClassDDL.New(mysql.ErrFieldNotFoundPart, mysql.MySQLErrName[mysql.ErrFieldNotFoundPart])
 	// ErrWrongTypeColumnValue returns 'Partition column values of incorrect type'
 	ErrWrongTypeColumnValue = terror.ClassDDL.New(mysql.ErrWrongTypeColumnValue, mysql.MySQLErrName[mysql.ErrWrongTypeColumnValue])
+	// ErrFunctionalIndexPrimaryKey returns 'The primary key cannot be a functional index'
+	ErrFunctionalIndexPrimaryKey = terror.ClassDDL.New(mysql.ErrFunctionalIndexPrimaryKey, mysql.MySQLErrName[mysql.ErrFunctionalIndexPrimaryKey])
+	// ErrFunctionalIndexOnField returns 'Functional index on a column is not supported. Consider using a regular index instead'
+	ErrFunctionalIndexOnField = terror.ClassDDL.New(mysql.ErrFunctionalIndexOnField, mysql.MySQLErrName[mysql.ErrFunctionalIndexOnField])
 	// ErrInvalidAutoRandom returns when auto_random is used incorrectly.
 	ErrInvalidAutoRandom = terror.ClassDDL.New(mysql.ErrInvalidAutoRandom, mysql.MySQLErrName[mysql.ErrInvalidAutoRandom])
+
+	// ErrSequenceRunOut returns when the sequence has been run out.
+	ErrSequenceRunOut = terror.ClassDDL.New(mysql.ErrSequenceRunOut, mysql.MySQLErrName[mysql.ErrSequenceRunOut])
+	// ErrSequenceInvalidData returns when sequence values are conflicting.
+	ErrSequenceInvalidData = terror.ClassDDL.New(mysql.ErrSequenceInvalidData, mysql.MySQLErrName[mysql.ErrSequenceInvalidData])
+	// ErrSequenceAccessFail returns when sequences are not able to access.
+	ErrSequenceAccessFail = terror.ClassDDL.New(mysql.ErrSequenceAccessFail, mysql.MySQLErrName[mysql.ErrSequenceAccessFail])
+	// ErrNotSequence returns when object is not a sequence.
+	ErrNotSequence = terror.ClassDDL.New(mysql.ErrNotSequence, mysql.MySQLErrName[mysql.ErrNotSequence])
+	// ErrUnknownSequence returns when drop / alter unknown sequence.
+	ErrUnknownSequence = terror.ClassDDL.New(mysql.ErrUnknownSequence, mysql.MySQLErrName[mysql.ErrUnknownSequence])
+	// ErrSequenceUnsupportedTableOption returns when unsupported table option exists in sequence.
+	ErrSequenceUnsupportedTableOption = terror.ClassDDL.New(mysql.ErrSequenceUnsupportedTableOption, mysql.MySQLErrName[mysql.ErrSequenceUnsupportedTableOption])
 )
 
 // DDL is responsible for updating schema in data store and maintaining in-memory InfoSchema cache.
@@ -252,6 +269,7 @@ type DDL interface {
 	CleanupTableLock(ctx sessionctx.Context, tables []*ast.TableName) error
 	UpdateTableReplicaInfo(ctx sessionctx.Context, tid int64, available bool) error
 	RepairTable(ctx sessionctx.Context, table *ast.TableName, createStmt *ast.CreateTableStmt) error
+	CreateSequence(ctx sessionctx.Context, stmt *ast.CreateSequenceStmt) error
 
 	// GetLease returns current schema lease time.
 	GetLease() time.Duration
@@ -669,6 +687,7 @@ func init() {
 		mysql.ErrFieldNotFoundPart:                    mysql.ErrFieldNotFoundPart,
 		mysql.ErrFieldTypeNotAllowedAsPartitionField:  mysql.ErrFieldTypeNotAllowedAsPartitionField,
 		mysql.ErrFileNotFound:                         mysql.ErrFileNotFound,
+		mysql.ErrFunctionalIndexPrimaryKey:            mysql.ErrFunctionalIndexPrimaryKey,
 		mysql.ErrGeneratedColumnFunctionIsNotAllowed:  mysql.ErrGeneratedColumnFunctionIsNotAllowed,
 		mysql.ErrGeneratedColumnNonPrior:              mysql.ErrGeneratedColumnNonPrior,
 		mysql.ErrGeneratedColumnRefAutoInc:            mysql.ErrGeneratedColumnRefAutoInc,
@@ -733,8 +752,17 @@ func init() {
 		mysql.ErrWrongTableName:                       mysql.ErrWrongTableName,
 		mysql.ErrWrongTypeColumnValue:                 mysql.ErrWrongTypeColumnValue,
 		mysql.WarnDataTruncated:                       mysql.WarnDataTruncated,
+		mysql.ErrFunctionalIndexOnField:               mysql.ErrFunctionalIndexOnField,
 		mysql.ErrFkColumnCannotDrop:                   mysql.ErrFkColumnCannotDrop,
 		mysql.ErrFKIncompatibleColumns:                mysql.ErrFKIncompatibleColumns,
+		mysql.ErrSequenceRunOut:                       mysql.ErrSequenceRunOut,
+		mysql.ErrSequenceInvalidData:                  mysql.ErrSequenceInvalidData,
+		mysql.ErrSequenceAccessFail:                   mysql.ErrSequenceAccessFail,
+		mysql.ErrNotSequence:                          mysql.ErrNotSequence,
+		mysql.ErrUnknownSequence:                      mysql.ErrUnknownSequence,
+		mysql.ErrWrongInsertIntoSequence:              mysql.ErrWrongInsertIntoSequence,
+		mysql.ErrSequenceInvalidTableStructure:        mysql.ErrSequenceInvalidTableStructure,
+		mysql.ErrSequenceUnsupportedTableOption:       mysql.ErrSequenceUnsupportedTableOption,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassDDL] = ddlMySQLErrCodes
 }

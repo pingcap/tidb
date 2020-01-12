@@ -55,7 +55,7 @@ func (s *testEvaluatorSuite) TestEvaluateExprWithNull(c *C) {
 func (s *testEvaluatorSuite) TestConstant(c *C) {
 	sc := &stmtctx.StatementContext{TimeZone: time.Local}
 	c.Assert(Zero.IsCorrelated(), IsFalse)
-	c.Assert(Zero.ConstItem(), IsTrue)
+	c.Assert(Zero.ConstItem(sc), IsTrue)
 	c.Assert(Zero.Decorrelate(nil).Equal(s.ctx, Zero), IsTrue)
 	c.Assert(Zero.HashCode(sc), DeepEquals, []byte{0x0, 0x8, 0x0})
 	c.Assert(Zero.Equal(s.ctx, One), IsFalse)
@@ -82,13 +82,13 @@ func (s *testEvaluatorSuite) TestIsBinaryLiteral(c *C) {
 
 func (s *testEvaluatorSuite) TestConstItem(c *C) {
 	sf := newFunction(ast.Rand)
-	c.Assert(sf.ConstItem(), Equals, false)
+	c.Assert(sf.ConstItem(s.ctx.GetSessionVars().StmtCtx), Equals, false)
 	sf = newFunction(ast.UUID)
-	c.Assert(sf.ConstItem(), Equals, false)
+	c.Assert(sf.ConstItem(s.ctx.GetSessionVars().StmtCtx), Equals, false)
 	sf = newFunction(ast.GetParam, One)
-	c.Assert(sf.ConstItem(), Equals, false)
+	c.Assert(sf.ConstItem(s.ctx.GetSessionVars().StmtCtx), Equals, false)
 	sf = newFunction(ast.Abs, One)
-	c.Assert(sf.ConstItem(), Equals, true)
+	c.Assert(sf.ConstItem(s.ctx.GetSessionVars().StmtCtx), Equals, true)
 }
 
 type testTableBuilder struct {
