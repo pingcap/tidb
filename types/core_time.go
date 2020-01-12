@@ -32,7 +32,7 @@ func (t CoreTime) String() string {
 }
 
 func (t CoreTime) getYear() uint16 {
-	return uint16((uint64(t) >> yearBitFieldEnd) & ((1 << (yearBitFieldStart - yearBitFieldEnd + 1)) - 1))
+	return uint16((uint64(t) & yearBitFieldMask) >> yearBitFieldEnd)
 }
 
 func (t *CoreTime) setYear(year uint16) {
@@ -46,7 +46,7 @@ func (t CoreTime) Year() int {
 }
 
 func (t CoreTime) getMonth() uint8 {
-	return uint8((uint64(t) >> monthBitFieldEnd) & ((1 << (monthBitFieldStart - monthBitFieldEnd + 1)) - 1))
+	return uint8((uint64(t) & monthBitFieldMask) >> monthBitFieldEnd)
 }
 
 func (t *CoreTime) setMonth(month uint8) {
@@ -60,7 +60,7 @@ func (t CoreTime) Month() int {
 }
 
 func (t CoreTime) getDay() uint8 {
-	return uint8((uint64(t) >> dayBitFieldEnd) & ((1 << (dayBitFieldStart - dayBitFieldEnd + 1)) - 1))
+	return uint8((uint64(t) & dayBitFieldMask) >> dayBitFieldEnd)
 }
 
 func (t *CoreTime) setDay(day uint8) {
@@ -74,7 +74,7 @@ func (t CoreTime) Day() int {
 }
 
 func (t CoreTime) getHour() uint8 {
-	return uint8((uint64(t) >> hourBitFieldEnd) & ((1 << (hourBitFieldStart - hourBitFieldEnd + 1)) - 1))
+	return uint8((uint64(t) & hourBitFieldMask) >> hourBitFieldEnd)
 }
 
 func (t *CoreTime) setHour(hour uint8) {
@@ -88,7 +88,7 @@ func (t CoreTime) Hour() int {
 }
 
 func (t CoreTime) getMinute() uint8 {
-	return uint8((uint64(t) >> minuteBitFieldEnd) & ((1 << (minuteBitFieldStart - minuteBitFieldEnd + 1)) - 1))
+	return uint8((uint64(t) & minuteBitFieldMask) >> minuteBitFieldEnd)
 }
 
 func (t *CoreTime) setMinute(minute uint8) {
@@ -102,7 +102,7 @@ func (t CoreTime) Minute() int {
 }
 
 func (t CoreTime) getSecond() uint8 {
-	return uint8((uint64(t) >> secondBitFieldEnd) & ((1 << (secondBitFieldStart - secondBitFieldEnd + 1)) - 1))
+	return uint8((uint64(t) & secondBitFieldMask) >> secondBitFieldEnd)
 }
 
 func (t *CoreTime) setSecond(second uint8) {
@@ -116,7 +116,7 @@ func (t CoreTime) Second() int {
 }
 
 func (t CoreTime) getMicrosecond() uint32 {
-	return uint32((uint64(t) >> microsecondBitFieldEnd) & ((1 << (microsecondBitFieldStart - microsecondBitFieldEnd + 1)) - 1))
+	return uint32((uint64(t) & microsecondBitFieldMask) >> microsecondBitFieldEnd)
 }
 
 func (t *CoreTime) setMicrosecond(microsecond uint32) {
