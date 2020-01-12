@@ -2329,7 +2329,7 @@ func abbrDayOfMonth(day int) string {
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_date-format
 func (t *Time) StrToDate(sc *stmtctx.StatementContext, date, format string) bool {
 	ctx := make(map[string]int)
-	var tm Time
+	var tm CoreTime
 	if !strToDate(&tm, date, format, ctx) {
 		t.SetCoreTime(ZeroCoreTime)
 		t.SetType(mysql.TypeDatetime)
@@ -2340,13 +2340,13 @@ func (t *Time) StrToDate(sc *stmtctx.StatementContext, date, format string) bool
 		return false
 	}
 
-	t.SetCoreTime(tm.coreTime)
+	t.SetCoreTime(tm)
 	t.SetType(mysql.TypeDatetime)
 	return t.check(sc) == nil
 }
 
 // mysqlTimeFix fixes the Time use the values in the context.
-func mysqlTimeFix(t *Time, ctx map[string]int) error {
+func mysqlTimeFix(t *CoreTime, ctx map[string]int) error {
 	// Key of the ctx is the format char, such as `%j` `%p` and so on.
 	if yearOfDay, ok := ctx["%j"]; ok {
 		// TODO: Implement the function that converts day of year to yy:mm:dd.
@@ -2378,7 +2378,7 @@ func mysqlTimeFix(t *Time, ctx map[string]int) error {
 
 // strToDate converts date string according to format, returns true on success,
 // the value will be stored in argument t or ctx.
-func strToDate(t *Time, date string, format string, ctx map[string]int) bool {
+func strToDate(t *CoreTime, date string, format string, ctx map[string]int) bool {
 	date = skipWhiteSpace(date)
 	format = skipWhiteSpace(format)
 
@@ -2452,7 +2452,7 @@ var monthAbbrev = map[string]gotime.Month{
 	"Dec": gotime.December,
 }
 
-type dateFormatParser func(t *Time, date string, ctx map[string]int) (remain string, succ bool)
+type dateFormatParser func(t *CoreTime, date string, ctx map[string]int) (remain string, succ bool)
 
 var dateFormatParserTable = map[string]dateFormatParser{
 	"%b": abbreviatedMonth,      // Abbreviated month name (Jan..Dec)
@@ -2519,7 +2519,7 @@ func GetFormatType(format string) (isDuration, isDate bool) {
 	return
 }
 
-func matchDateWithToken(t *Time, date string, token string, ctx map[string]int) (remain string, succ bool) {
+func matchDateWithToken(t *CoreTime, date string, token string, ctx map[string]int) (remain string, succ bool) {
 	if parse, ok := dateFormatParserTable[token]; ok {
 		return parse(t, date, ctx)
 	}
@@ -2542,7 +2542,7 @@ func parseDigits(input string, count int) (int, bool) {
 	return int(v), true
 }
 
-func hour24TwoDigits(t *Time, input string, ctx map[string]int) (string, bool) {
+func hour24TwoDigits(t *CoreTime, input string, ctx map[string]int) (string, bool) {
 	v, succ := parseDigits(input, 2)
 	if !succ || v >= 24 {
 		return input, false
@@ -2551,7 +2551,7 @@ func hour24TwoDigits(t *Time, input string, ctx map[string]int) (string, bool) {
 	return input[2:], true
 }
 
-func secondsNumeric(t *Time, input string, ctx map[string]int) (string, bool) {
+func secondsNumeric(t *CoreTime, input string, ctx map[string]int) (string, bool) {
 	result := oneOrTwoDigitRegex.FindString(input)
 	length := len(result)
 
@@ -2563,7 +2563,7 @@ func secondsNumeric(t *Time, input string, ctx map[string]int) (string, bool) {
 	return input[length:], true
 }
 
-func minutesNumeric(t *Time, input string, ctx map[string]int) (string, bool) {
+func minutesNumeric(t *CoreTime, input string, ctx map[string]int) (string, bool) {
 	result := oneOrTwoDigitRegex.FindString(input)
 	length := len(result)
 
@@ -2577,7 +2577,7 @@ func minutesNumeric(t *Time, input string, ctx map[string]int) (string, bool) {
 
 const time12HourLen = len("hh:mm:ssAM")
 
-func time12Hour(t *Time, input string, ctx map[string]int) (string, bool) {
+func time12Hour(t *CoreTime, input string, ctx map[string]int) (string, bool) {
 	// hh:mm:ss AM
 	if len(input) < time12HourLen {
 		return input, false
@@ -2614,7 +2614,7 @@ func time12Hour(t *Time, input string, ctx map[string]int) (string, bool) {
 
 const time24HourLen = len("hh:mm:ss")
 
-func time24Hour(t *Time, input string, ctx map[string]int) (string, bool) {
+func time24Hour(t *CoreTime, input string, ctx map[string]int) (string, bool) {
 	// hh:mm:ss
 	if len(input) < time24HourLen {
 		return input, false
@@ -2646,7 +2646,7 @@ const (
 	constForPM
 )
 
-func isAMOrPM(t *Time, input string, ctx map[string]int) (string, bool) {
+func isAMOrPM(t *CoreTime, input string, ctx map[string]int) (string, bool) {
 	if len(input) < 2 {
 		return input, false
 	}
@@ -2672,7 +2672,7 @@ var oneToSixDigitRegex = regexp.MustCompile("^[0-9]{0,6}")
 // numericRegex: it was for any numeric characters
 var numericRegex = regexp.MustCompile("[0-9]+")
 
-func dayOfMonthNumeric(t *Time, input string, ctx map[string]int) (string, bool) {
+func dayOfMonthNumeric(t *CoreTime, input string, ctx map[string]int) (string, bool) {
 	result := oneOrTwoDigitRegex.FindString(input) // 0..31
 	length := len(result)
 
@@ -2685,7 +2685,7 @@ func dayOfMonthNumeric(t *Time, input string, ctx map[string]int) (string, bool)
 	return input[length:], true
 }
 
-func hour24Numeric(t *Time, input string, ctx map[string]int) (string, bool) {
+func hour24Numeric(t *CoreTime, input string, ctx map[string]int) (string, bool) {
 	result := oneOrTwoDigitRegex.FindString(input) // 0..23
 	length := len(result)
 
@@ -2699,7 +2699,7 @@ func hour24Numeric(t *Time, input string, ctx map[string]int) (string, bool) {
 	return input[length:], true
 }
 
-func hour12Numeric(t *Time, input string, ctx map[string]int) (string, bool) {
+func hour12Numeric(t *CoreTime, input string, ctx map[string]int) (string, bool) {
 	result := oneOrTwoDigitRegex.FindString(input) // 1..12
 	length := len(result)
 
@@ -2712,7 +2712,7 @@ func hour12Numeric(t *Time, input string, ctx map[string]int) (string, bool) {
 	return input[length:], true
 }
 
-func microSeconds(t *Time, input string, ctx map[string]int) (string, bool) {
+func microSeconds(t *CoreTime, input string, ctx map[string]int) (string, bool) {
 	result := oneToSixDigitRegex.FindString(input)
 	length := len(result)
 	if length == 0 {
@@ -2732,15 +2732,15 @@ func microSeconds(t *Time, input string, ctx map[string]int) (string, bool) {
 	return input[length:], true
 }
 
-func yearNumericFourDigits(t *Time, input string, ctx map[string]int) (string, bool) {
+func yearNumericFourDigits(t *CoreTime, input string, ctx map[string]int) (string, bool) {
 	return yearNumericNDigits(t, input, ctx, 4)
 }
 
-func yearNumericTwoDigits(t *Time, input string, ctx map[string]int) (string, bool) {
+func yearNumericTwoDigits(t *CoreTime, input string, ctx map[string]int) (string, bool) {
 	return yearNumericNDigits(t, input, ctx, 2)
 }
 
-func yearNumericNDigits(t *Time, input string, ctx map[string]int, n int) (string, bool) {
+func yearNumericNDigits(t *CoreTime, input string, ctx map[string]int, n int) (string, bool) {
 	effectiveCount, effectiveValue := 0, 0
 	for effectiveCount+1 <= n {
 		value, succeed := parseDigits(input, effectiveCount+1)
@@ -2760,7 +2760,7 @@ func yearNumericNDigits(t *Time, input string, ctx map[string]int, n int) (strin
 	return input[effectiveCount:], true
 }
 
-func dayOfYearThreeDigits(t *Time, input string, ctx map[string]int) (string, bool) {
+func dayOfYearThreeDigits(t *CoreTime, input string, ctx map[string]int) (string, bool) {
 	v, succ := parseDigits(input, 3)
 	if !succ || v == 0 || v > 366 {
 		return input, false
@@ -2769,7 +2769,7 @@ func dayOfYearThreeDigits(t *Time, input string, ctx map[string]int) (string, bo
 	return input[3:], true
 }
 
-func abbreviatedMonth(t *Time, input string, ctx map[string]int) (string, bool) {
+func abbreviatedMonth(t *CoreTime, input string, ctx map[string]int) (string, bool) {
 	if len(input) >= 3 {
 		monthName := input[:3]
 		if month, ok := monthAbbrev[monthName]; ok {
@@ -2780,7 +2780,7 @@ func abbreviatedMonth(t *Time, input string, ctx map[string]int) (string, bool) 
 	return input, false
 }
 
-func fullNameMonth(t *Time, input string, ctx map[string]int) (string, bool) {
+func fullNameMonth(t *CoreTime, input string, ctx map[string]int) (string, bool) {
 	for i, month := range MonthNames {
 		if strings.HasPrefix(input, month) {
 			t.setMonth(uint8(i + 1))
@@ -2790,7 +2790,7 @@ func fullNameMonth(t *Time, input string, ctx map[string]int) (string, bool) {
 	return input, false
 }
 
-func monthNumeric(t *Time, input string, ctx map[string]int) (string, bool) {
+func monthNumeric(t *CoreTime, input string, ctx map[string]int) (string, bool) {
 	result := oneOrTwoDigitRegex.FindString(input) // 1..12
 	length := len(result)
 
