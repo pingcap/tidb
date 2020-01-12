@@ -33,7 +33,8 @@ func (e *baseJsonObjectAgg) AppendFinalResult2Chunk(sctx sessionctx.Context, pr 
 		chk.AppendNull(e.ordinal)
 		return nil
 	}
-	// json_objectagg's key is string, so it needs to convert the first arg to string
+
+	// appendBinary does not support some type such as uint8、types.time，so convert is needed here
 	for key, val := range p.entries {
 		switch x := val.(type) {
 		case *types.MyDecimal:
@@ -43,8 +44,6 @@ func (e *baseJsonObjectAgg) AppendFinalResult2Chunk(sctx sessionctx.Context, pr 
 			}
 			p.entries[key] = float64Val
 		case []uint8:
-			//p.entries[key] = types.NewDatum(x).GetString()
-			//v, err := types.NewDatum(x).ToString()
 			byteVal, err := types.ToString(x)
 			if err != nil {
 				return errors.Trace(err)
@@ -60,6 +59,7 @@ func (e *baseJsonObjectAgg) AppendFinalResult2Chunk(sctx sessionctx.Context, pr 
 			p.entries[key] = val
 		}
 	}
+
 	chk.AppendJSON(e.ordinal, json.CreateBinary(p.entries))
 	return nil
 }
@@ -72,21 +72,24 @@ func (e *baseJsonObjectAgg) UpdatePartialResult(sctx sessionctx.Context, rowsInG
 			return errors.Trace(err)
 		}
 
-		var value types.Datum
-		value, err = e.args[1].Eval(row)
+		value, err := e.args[1].Eval(row)
 		if err != nil {
 			return errors.Trace(err)
 		}
+
 		if key.IsNull() {
 			err = errors.New("JSON documents may not contain NULL member names")
 			return errors.Trace(err)
 		}
-		// if not to use key.ToString() instead of key.GetString(), the result may be null, because the key can be any types
+
+		// the result json's key is string, so it needs to convert the first arg to string
 		keyString, err := key.ToString()
 		if err != nil {
 			return errors.Trace(err)
 		}
+
 		p.entries[keyString] = value.GetValue()
+		//p.entries[keyString] = value
 	}
 	return nil
 }

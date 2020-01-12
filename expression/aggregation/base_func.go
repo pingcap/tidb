@@ -97,8 +97,6 @@ func (a *baseFuncDesc) typeInfer(ctx sessionctx.Context) error {
 		a.typeInfer4MaxMin(ctx)
 	case ast.AggFuncBitAnd, ast.AggFuncBitOr, ast.AggFuncBitXor:
 		a.typeInfer4BitFuncs(ctx)
-	case ast.AggFuncJsonObjectAgg:
-		a.typeInfer4JsonFuncs(ctx)
 	case ast.WindowFuncRowNumber, ast.WindowFuncRank, ast.WindowFuncDenseRank:
 		a.typeInfer4NumberFuncs()
 	case ast.WindowFuncCumeDist:
@@ -111,6 +109,8 @@ func (a *baseFuncDesc) typeInfer(ctx sessionctx.Context) error {
 		a.typeInfer4LeadLag(ctx)
 	case ast.AggFuncVarPop:
 		a.typeInfer4VarPop(ctx)
+	case ast.AggFuncJsonObjectAgg:
+		a.typeInfer4JsonFuncs(ctx)
 	default:
 		return errors.Errorf("unsupported agg function: %s", a.Name)
 	}
