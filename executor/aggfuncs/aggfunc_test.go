@@ -72,11 +72,11 @@ type aggTest struct {
 
 type multiArgsAggTest struct {
 	dataTypes []*types.FieldType
-	retType *types.FieldType
-	numRows  int
+	retType   *types.FieldType
+	numRows   int
 	dataGens  []func(i int) types.Datum
-	funcName string
-	results  []types.Datum
+	funcName  string
+	results   []types.Datum
 }
 
 func (s *testSuite) testMergePartialResult(c *C, p aggTest) {
@@ -231,20 +231,20 @@ func buildMultiArgsAggTester(funcName string, tps []byte, rt byte, numRows int, 
 	for i := 0; i < len(tps); i++ {
 		fts[i] = types.NewFieldType(tps[i])
 	}
-    return buildMultiArgsAggTesterWithFieldType(funcName, fts, types.NewFieldType(rt), numRows, results...)
+	return buildMultiArgsAggTesterWithFieldType(funcName, fts, types.NewFieldType(rt), numRows, results...)
 }
 
 func buildMultiArgsAggTesterWithFieldType(funcName string, fts []*types.FieldType, rt *types.FieldType, numRows int, results ...interface{}) multiArgsAggTest {
-    dataGens := make([]func(i int) types.Datum, len(fts))
-    for i := 0; i < len(fts); i++ {
+	dataGens := make([]func(i int) types.Datum, len(fts))
+	for i := 0; i < len(fts); i++ {
 		dataGens[i] = getDataGenFunc(fts[i])
 	}
 	mt := multiArgsAggTest{
-    	dataTypes: fts,
-    	retType: rt,
-    	numRows: numRows,
-    	funcName: funcName,
-    	dataGens: dataGens,
+		dataTypes: fts,
+		retType:   rt,
+		numRows:   numRows,
+		funcName:  funcName,
+		dataGens:  dataGens,
 	}
 	for _, result := range results {
 		mt.results = append(mt.results, types.NewDatum(result))

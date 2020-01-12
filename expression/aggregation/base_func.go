@@ -282,11 +282,11 @@ func (a *baseFuncDesc) GetDefaultValue() (v types.Datum) {
 // We do not need to wrap cast upon these functions,
 // since the EvalXXX method called by the arg is determined by the corresponding arg type.
 var noNeedCastAggFuncs = map[string]struct{}{
-	ast.AggFuncCount:    {},
-	ast.AggFuncMax:      {},
-	ast.AggFuncMin:      {},
-	ast.AggFuncFirstRow: {},
-	ast.WindowFuncNtile: {},
+	ast.AggFuncCount:         {},
+	ast.AggFuncMax:           {},
+	ast.AggFuncMin:           {},
+	ast.AggFuncFirstRow:      {},
+	ast.WindowFuncNtile:      {},
 	ast.AggFuncJsonObjectAgg: {},
 }
 
