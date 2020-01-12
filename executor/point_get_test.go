@@ -14,7 +14,9 @@
 package executor_test
 
 import (
+	"context"
 	"fmt"
+	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/domain"
@@ -444,4 +446,32 @@ func (s *testPointGetSuite) TestPointGetByRowID(c *C) {
 	tk.MustQuery("explain select * from t where t._tidb_rowid = 1").Check(testkit.Rows(
 		"Point_Get_1 1.00 root table:t, handle:1"))
 	tk.MustQuery("select * from t where t._tidb_rowid = 1").Check(testkit.Rows("aaa 12"))
+}
+
+func (s *testPointGetSuite) TestPointGetCheckVisibility(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a varchar(10) key, b int)")
+	tk.MustExec("insert into t values('1',1)")
+	tk.MustExec("begin")
+	txn, err := tk.Se.Txn(false)
+	c.Assert(err, IsNil)
+	ts := txn.StartTS()
+	store := tk.Se.GetStore().(tikv.Storage)
+	// Update gc safe time for check data visibility.
+	store.UpdateSPCache(ts+1, time.Now())
+	// Test point get.
+	re, err := tk.Exec("select * from t where a='1'")
+	c.Assert(err, IsNil)
+	_, err = session.ResultSetToStringSlice(context.Background(), tk.Se, re)
+	c.Assert(err, NotNil)
+	c.Assert(tikv.ErrGCTooEarly.Equal(err), IsTrue)
+	// Test batch point get.
+	re, err = tk.Exec("select * from t where a in ('1','2') ")
+	c.Assert(err, IsNil)
+	_, err = session.ResultSetToStringSlice(context.Background(), tk.Se, re)
+	c.Assert(err, NotNil)
+	c.Assert(tikv.ErrGCTooEarly.Equal(err), IsTrue)
+
 }
