@@ -183,17 +183,6 @@ func FromGoTime(t gotime.Time) CoreTime {
 	return FromDate(year, int(month), day, hour, minute, second, microsecond)
 }
 
-// FromGoTimeChecked translates time.Time to mysql time internal representation with field overflow check.
-func FromGoTimeChecked(t gotime.Time) (CoreTime, bool) {
-	// Plus 500 nanosecond for rounding of the millisecond part.
-	t = t.Add(500 * gotime.Nanosecond)
-
-	year, month, day := t.Date()
-	hour, minute, second := t.Clock()
-	microsecond := t.Nanosecond() / 1000
-	return FromDateChecked(year, int(month), day, hour, minute, second, microsecond)
-}
-
 // FromDate makes a internal time representation from the given date.
 func FromDate(year int, month int, day int, hour int, minute int, second int, microsecond int) CoreTime {
 	t := ZeroCoreTime
@@ -1644,8 +1633,11 @@ func TimeFromDays(num int64) Time {
 		return NewTime(FromDate(0, 0, 0, 0, 0, 0, 0), mysql.TypeDate, 0)
 	}
 	year, month, day := getDateFromDaynr(uint(num))
-
-	return NewTime(FromDate(int(year), int(month), int(day), 0, 0, 0, 0), mysql.TypeDate, 0)
+	ct, ok := FromDateChecked(int(year), int(month), int(day), 0, 0, 0, 0)
+	if !ok {
+		return NewTime(FromDate(0, 0, 0, 0, 0, 0, 0), mysql.TypeDate, 0)
+	}
+	return NewTime(ct, mysql.TypeDate, 0)
 }
 
 func checkDateType(t CoreTime, allowZeroInDate, allowInvalidDate bool) error {
