@@ -773,6 +773,16 @@ func (s *testStateChangeSuite) TestParallelAlterAddIndex(c *C) {
 	s.testControlParallelExecSQL(c, sql1, sql2, f)
 }
 
+func (s *testStateChangeSuite) TestParallelAlterAddExpressionIndex(c *C) {
+	sql1 := "ALTER TABLE t add index expr_index_b((b+1));"
+	sql2 := "CREATE INDEX expr_index_b ON t ((c+1));"
+	f := func(c *C, err1, err2 error) {
+		c.Assert(err1, IsNil)
+		c.Assert(err2.Error(), Equals, "[ddl:1061]index already exist expr_index_b")
+	}
+	s.testControlParallelExecSQL(c, sql1, sql2, f)
+}
+
 func (s *testStateChangeSuite) TestParallelAddPrimaryKey(c *C) {
 	sql1 := "ALTER TABLE t add primary key index_b(b);"
 	sql2 := "ALTER TABLE t add primary key index_b(c);"

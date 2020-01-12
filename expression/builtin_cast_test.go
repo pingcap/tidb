@@ -827,57 +827,57 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 	castToTimeCases2 := []struct {
 		before *Column
 		after  types.Time
-		row    chunk.MutRow
 		fsp    int8
 		tp     byte
+		row    chunk.MutRow
 	}{
 		// cast real as Time(0).
 		{
 			&Column{RetType: types.NewFieldType(mysql.TypeDouble), Index: 0},
 			dt,
-			chunk.MutRowFromDatums([]types.Datum{types.NewFloat64Datum(float64(curTimeInt))}),
 			types.DefaultFsp,
 			mysql.TypeDate,
+			chunk.MutRowFromDatums([]types.Datum{types.NewFloat64Datum(float64(curTimeInt))}),
 		},
 		// cast decimal as Date.
 		{
 			&Column{RetType: types.NewFieldType(mysql.TypeNewDecimal), Index: 0},
 			dt,
-			chunk.MutRowFromDatums([]types.Datum{types.NewDecimalDatum(types.NewDecFromInt(curTimeInt))}),
 			types.DefaultFsp,
 			mysql.TypeDate,
+			chunk.MutRowFromDatums([]types.Datum{types.NewDecimalDatum(types.NewDecFromInt(curTimeInt))}),
 		},
 		// cast int as Datetime(6).
 		{
 			&Column{RetType: types.NewFieldType(mysql.TypeLonglong), Index: 0},
 			tm,
-			chunk.MutRowFromDatums([]types.Datum{types.NewIntDatum(curTimeInt)}),
 			types.MaxFsp,
 			mysql.TypeDatetime,
+			chunk.MutRowFromDatums([]types.Datum{types.NewIntDatum(curTimeInt)}),
 		},
 		// cast string as Datetime(6).
 		{
 			&Column{RetType: types.NewFieldType(mysql.TypeString), Index: 0},
 			tm,
-			chunk.MutRowFromDatums([]types.Datum{types.NewStringDatum(curTimeString)}),
 			types.MaxFsp,
 			mysql.TypeDatetime,
+			chunk.MutRowFromDatums([]types.Datum{types.NewStringDatum(curTimeString)}),
 		},
 		// cast Duration as Date.
 		{
 			&Column{RetType: types.NewFieldType(mysql.TypeDuration), Index: 0},
 			dt,
-			chunk.MutRowFromDatums([]types.Datum{durationDatum}),
 			types.DefaultFsp,
 			mysql.TypeDate,
+			chunk.MutRowFromDatums([]types.Datum{durationDatum}),
 		},
 		// cast Time as Date.
 		{
 			&Column{RetType: types.NewFieldType(mysql.TypeDatetime), Index: 0},
 			dt,
-			chunk.MutRowFromDatums([]types.Datum{timeDatum}),
 			types.DefaultFsp,
 			mysql.TypeDate,
+			chunk.MutRowFromDatums([]types.Datum{timeDatum}),
 		},
 	}
 	for i, t := range castToTimeCases2 {

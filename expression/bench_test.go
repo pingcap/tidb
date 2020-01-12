@@ -1256,8 +1256,7 @@ func testVectorizedBuiltinFunc(c *C, vecExprCases vecExprBenchCases) {
 					c.Assert(err, IsNil, commentf(i))
 					c.Assert(isNull, Equals, output.IsNull(i), commentf(i))
 					if !isNull {
-						var cmp int
-						cmp = json.CompareBinary(val, output.GetJSON(i))
+						cmp := json.CompareBinary(val, output.GetJSON(i))
 						c.Assert(cmp, Equals, 0, commentf(i))
 					}
 					i++

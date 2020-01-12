@@ -22,6 +22,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser"
+	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
@@ -31,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/stmtsummary"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	dto "github.com/prometheus/client_model/go"
@@ -410,6 +412,7 @@ func (s *testSuite) TestErrorBind(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	s.cleanBindingEnv(tk)
 	tk.MustExec("use test")
+	tk.MustGetErrMsg("create global binding for select * from t using select * from t", "[schema:1146]Table 'test.t' doesn't exist")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t(i int, s varchar(20))")
@@ -469,10 +472,9 @@ func (s *testSuite) TestPreparedStmt(c *C) {
 func (s *testSuite) TestCapturePlanBaseline(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	s.cleanBindingEnv(tk)
-	tk.MustExec("set @@tidb_enable_stmt_summary = on")
+	stmtsummary.StmtSummaryByDigestMap.Clear()
 	tk.MustExec(" set @@tidb_capture_plan_baselines = on")
 	defer func() {
-		tk.MustExec("set @@tidb_enable_stmt_summary = off")
 		tk.MustExec(" set @@tidb_capture_plan_baselines = off")
 	}()
 	tk.MustExec("use test")
@@ -484,9 +486,16 @@ func (s *testSuite) TestCapturePlanBaseline(c *C) {
 	tk.MustExec("select count(*) from t where a > 10")
 	tk.MustExec("admin capture bindings")
 	rows := tk.MustQuery("show global bindings").Rows()
+	c.Assert(len(rows), Equals, 0)
+
+	c.Assert(tk.Se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil), IsTrue)
+	tk.MustExec("select * from t where a > 10")
+	tk.MustExec("select * from t where a > 10")
+	tk.MustExec("admin capture bindings")
+	rows = tk.MustQuery("show global bindings").Rows()
 	c.Assert(len(rows), Equals, 1)
-	c.Assert(rows[0][0], Equals, "select count ( ? ) from t where a > ?")
-	c.Assert(rows[0][1], Equals, "SELECT /*+ USE_INDEX(@`sel_1` `test`.`t` ), STREAM_AGG(@`sel_1`)*/ COUNT(1) FROM `t` WHERE `a`>10")
+	c.Assert(rows[0][0], Equals, "select * from t where a > ?")
+	c.Assert(rows[0][1], Equals, "SELECT /*+ USE_INDEX(@`sel_1` `test`.`t` )*/ * FROM `t` WHERE `a`>10")
 }
 
 func (s *testSuite) TestUseMultiplyBindings(c *C) {
@@ -606,6 +615,46 @@ func (s *testSuite) TestDefaultSessionVars(c *C) {
 		"tidb_capture_plan_baselines off",
 		"tidb_evolve_plan_baselines off",
 		"tidb_use_plan_baselines on"))
+}
+
+func (s *testSuite) TestDuplicateBindings(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	s.cleanBindingEnv(tk)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, index idx(a))")
+	tk.MustExec("create global binding for select * from t using select * from t use index(idx);")
+	rows := tk.MustQuery("show global bindings").Rows()
+	c.Assert(len(rows), Equals, 1)
+	createTime := rows[0][4]
+	tk.MustExec("create global binding for select * from t using select * from t use index(idx);")
+	rows = tk.MustQuery("show global bindings").Rows()
+	c.Assert(len(rows), Equals, 1)
+	c.Assert(createTime, Equals, rows[0][4])
+
+	tk.MustExec("create session binding for select * from t using select * from t use index(idx);")
+	rows = tk.MustQuery("show session bindings").Rows()
+	c.Assert(len(rows), Equals, 1)
+	createTime = rows[0][4]
+	tk.MustExec("create session binding for select * from t using select * from t use index(idx);")
+	rows = tk.MustQuery("show session bindings").Rows()
+	c.Assert(len(rows), Equals, 1)
+	c.Assert(createTime, Equals, rows[0][4])
+}
+
+func (s *testSuite) TestStmtHints(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	s.cleanBindingEnv(tk)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, index idx(a))")
+	tk.MustExec("create global binding for select * from t using select /*+ MAX_EXECUTION_TIME(100), MEMORY_QUOTA(1 GB) */ * from t use index(idx)")
+	tk.MustQuery("select * from t")
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.MemQuotaQuery, Equals, int64(1073741824))
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.MaxExecutionTime, Equals, uint64(100))
+	tk.MustQuery("select a, b from t")
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.MemQuotaQuery, Equals, int64(0))
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.MaxExecutionTime, Equals, uint64(0))
 }
 
 func (s *testSuite) TestDefaultDB(c *C) {

@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"math"
 	"sort"
 	"strconv"
 	"strings"
@@ -4404,9 +4405,9 @@ func (s *testIntegrationSuite) TestUnknowHintIgnore(c *C) {
 	tk.MustExec("USE test")
 	tk.MustExec("create table t(a int)")
 	tk.MustQuery("select /*+ unknown_hint(c1)*/ 1").Check(testkit.Rows("1"))
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1064 You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 29 near \"unknown_hint(c1)*/ 1\" "))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1064 You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use [parser:8064]Optimizer hint syntax error at line 1 column 23 near \"unknown_hint(c1)*/\" "))
 	_, err := tk.Exec("select 1 from /*+ test1() */ t")
-	c.Assert(err, NotNil)
+	c.Assert(err, IsNil)
 }
 
 func (s *testIntegrationSuite) TestValuesInNonInsertStmt(c *C) {
@@ -5246,4 +5247,33 @@ func (s *testIntegrationSuite) TestIssue14146(c *C) {
 	tk.MustExec("insert into tt values(NULL)")
 	tk.MustExec("analyze table tt;")
 	tk.MustQuery("select * from tt").Check(testkit.Rows("<nil>"))
+}
+
+func (s *testIntegrationSuite) TestCacheRegexpr(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	orgEnable := plannercore.PreparedPlanCacheEnabled()
+	orgCapacity := plannercore.PreparedPlanCacheCapacity
+	orgMemGuardRatio := plannercore.PreparedPlanCacheMemoryGuardRatio
+	orgMaxMemory := plannercore.PreparedPlanCacheMaxMemory
+	defer func() {
+		plannercore.SetPreparedPlanCache(orgEnable)
+		plannercore.PreparedPlanCacheCapacity = orgCapacity
+		plannercore.PreparedPlanCacheMemoryGuardRatio = orgMemGuardRatio
+		plannercore.PreparedPlanCacheMaxMemory = orgMaxMemory
+	}()
+	plannercore.SetPreparedPlanCache(true)
+	plannercore.PreparedPlanCacheCapacity = 100
+	plannercore.PreparedPlanCacheMemoryGuardRatio = 0.1
+	// PreparedPlanCacheMaxMemory is set to MAX_UINT64 to make sure the cache
+	// behavior would not be effected by the uncertain memory utilization.
+	plannercore.PreparedPlanCacheMaxMemory.Store(math.MaxUint64)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (a varchar(40))")
+	tk.MustExec("insert into t1 values ('C1'),('R1')")
+	tk.MustExec("prepare stmt1 from 'select a from t1 where a rlike ?'")
+	tk.MustExec("set @a='^C.*'")
+	tk.MustQuery("execute stmt1 using @a").Check(testkit.Rows("C1"))
+	tk.MustExec("set @a='^R.*'")
+	tk.MustQuery("execute stmt1 using @a").Check(testkit.Rows("R1"))
 }

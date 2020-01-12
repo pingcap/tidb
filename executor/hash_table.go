@@ -162,8 +162,7 @@ func (c *hashRowContainer) PutChunk(chk *chunk.Chunk) error {
 // key of hash table: hash value of key columns
 // value of hash table: RowPtr of the corresponded row
 func (c *hashRowContainer) PutChunkSelected(chk *chunk.Chunk, selected []bool) error {
-	var chkIdx uint32
-	chkIdx = uint32(c.rowContainer.NumChunks())
+	chkIdx := uint32(c.rowContainer.NumChunks())
 	err := c.rowContainer.Add(chk)
 	if err != nil {
 		return err
