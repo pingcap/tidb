@@ -1174,13 +1174,13 @@ func (ijHelper *indexJoinBuildHelper) buildTemplateRange(matchedKeyCnt int, eqAn
 	} else if haveExtraCol {
 		// Reserve a position for the last col.
 		ranges = append(ranges, &ranger.Range{
-			LowVal:  make([]types.Datum, pointLength+1, pointLength+1),
-			HighVal: make([]types.Datum, pointLength+1, pointLength+1),
+			LowVal:  make([]types.Datum, pointLength+1),
+			HighVal: make([]types.Datum, pointLength+1),
 		})
 	} else {
 		ranges = append(ranges, &ranger.Range{
-			LowVal:  make([]types.Datum, pointLength, pointLength),
-			HighVal: make([]types.Datum, pointLength, pointLength),
+			LowVal:  make([]types.Datum, pointLength),
+			HighVal: make([]types.Datum, pointLength),
 		})
 	}
 	sc := ijHelper.join.ctx.GetSessionVars().StmtCtx
