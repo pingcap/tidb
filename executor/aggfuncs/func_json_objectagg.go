@@ -8,7 +8,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 )
 
-type baseJsonObjectAgg struct {
+type baseJSONObjectAgg struct {
 	baseAggFunc
 }
 
@@ -16,18 +16,18 @@ type partialResult4JsonObjectAgg struct {
 	entries map[string]interface{}
 }
 
-func (e *baseJsonObjectAgg) AllocPartialResult() PartialResult {
+func (e *baseJSONObjectAgg) AllocPartialResult() PartialResult {
 	p := partialResult4JsonObjectAgg{}
 	p.entries = make(map[string]interface{})
 	return PartialResult(&p)
 }
 
-func (e *baseJsonObjectAgg) ResetPartialResult(pr PartialResult) {
+func (e *baseJSONObjectAgg) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4JsonObjectAgg)(pr)
 	p.entries = make(map[string]interface{})
 }
 
-func (e *baseJsonObjectAgg) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
+func (e *baseJSONObjectAgg) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4JsonObjectAgg)(pr)
 	if len(p.entries) == 0 {
 		chk.AppendNull(e.ordinal)
@@ -64,7 +64,7 @@ func (e *baseJsonObjectAgg) AppendFinalResult2Chunk(sctx sessionctx.Context, pr 
 	return nil
 }
 
-func (e *baseJsonObjectAgg) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) error {
+func (e *baseJSONObjectAgg) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) error {
 	p := (*partialResult4JsonObjectAgg)(pr)
 	for _, row := range rowsInGroup {
 		key, err := e.args[0].Eval(row)
@@ -95,7 +95,7 @@ func (e *baseJsonObjectAgg) UpdatePartialResult(sctx sessionctx.Context, rowsInG
 }
 
 type partial4JsonObjectAgg struct {
-	baseJsonObjectAgg
+	baseJSONObjectAgg
 }
 
 func (e *partial4JsonObjectAgg) MergePartialResult(sctx sessionctx.Context, src PartialResult, dst PartialResult) error {
