@@ -54,7 +54,7 @@ func Build(ctx sessionctx.Context, aggFuncDesc *aggregation.AggFuncDesc, ordinal
 	case ast.AggFuncVarPop:
 		return buildVarPop(aggFuncDesc, ordinal)
 	case ast.AggFuncJsonObjectAgg:
-		return buildJsonObjectAgg(aggFuncDesc, ordinal)
+		return buildJSONObjectAgg(aggFuncDesc, ordinal)
 	}
 	return nil
 }
@@ -373,8 +373,8 @@ func buildVarPop(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 	}
 }
 
-// buildJsonObjectAgg builds the AggFunc implementation for function "json_objectagg".
-func buildJsonObjectAgg(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
+// buildJSONObjectAgg builds the AggFunc implementation for function "json_objectagg".
+func buildJSONObjectAgg(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 	base := baseAggFunc{
 		args:    aggFuncDesc.Args,
 		ordinal: ordinal,
