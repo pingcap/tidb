@@ -287,7 +287,6 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 	sctx.GetSessionVars().StmtCtx.UseCache = prepared.UseCache
 	if prepared.UseCache {
 		cacheKey = NewPSTMTPlanCacheKey(sctx.GetSessionVars(), e.ExecID, prepared.SchemaVersion)
-		fmt.Println(cacheKey.Hash())
 		if cacheValue, exists := sctx.PreparedPlanCache().Get(cacheKey); exists {
 			if err := e.checkPreparedPriv(ctx, sctx, preparedStmt, is); err != nil {
 				return err
