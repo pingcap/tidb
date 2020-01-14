@@ -413,7 +413,7 @@ func (e *ShowDDLJobsExec) Open(ctx context.Context) error {
 	}
 
 	m := meta.NewMeta(txn)
-	historyJobIter, err := m.GetLastNHistoryDDLJobsIterator()
+	historyJobIter, err := m.GetLastHistoryDDLJobsIterator()
 
 	//historyJobs, err := admin.GetHistoryDDLJobs(txn, int(e.jobNumber))
 	if err != nil {

@@ -757,7 +757,7 @@ type LastJobIterator struct {
 	iter *structure.ReverseHashIterator
 }
 
-// GetLastNHistoryDDLJobsIterator gets latest N history ddl jobs iterator.
+// GetLastHistoryDDLJobsIterator gets latest N history ddl jobs iterator.
 func (m *Meta) GetLastHistoryDDLJobsIterator() (*LastJobIterator, error) {
 	iter, err := m.txn.NewHashReverseIter(mDDLJobHistoryKey)
 	if err != nil {
@@ -768,7 +768,7 @@ func (m *Meta) GetLastHistoryDDLJobsIterator() (*LastJobIterator, error) {
 	}, nil
 }
 
-// GetLastJobs gets last N jobs.
+// GetLastJobs gets last several jobs.
 func (i *LastJobIterator) GetLastJobs(num int, jobs []*model.Job) ([]*model.Job, error) {
 	if len(jobs) < num {
 		jobs = make([]*model.Job, 0, num)
