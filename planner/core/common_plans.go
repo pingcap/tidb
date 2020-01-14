@@ -287,6 +287,7 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 	sctx.GetSessionVars().StmtCtx.UseCache = prepared.UseCache
 	if prepared.UseCache {
 		cacheKey = NewPSTMTPlanCacheKey(sctx.GetSessionVars(), e.ExecID, prepared.SchemaVersion)
+		fmt.Println(cacheKey.Hash())
 		if cacheValue, exists := sctx.PreparedPlanCache().Get(cacheKey); exists {
 			if err := e.checkPreparedPriv(ctx, sctx, preparedStmt, is); err != nil {
 				return err
@@ -458,6 +459,11 @@ func (e *Execute) rebuildRange(p Plan) error {
 			if param != nil {
 				x.IndexValues[i] = param.Datum
 			}
+		}
+		if x.PartitionInfo != nil {
+			val := x.IndexValues[x.partitionColumnPos].GetInt64()
+			partitionID := val % int64(x.TblInfo.Partition.Num)
+			x.PartitionInfo = &x.TblInfo.Partition.Definitions[partitionID]
 		}
 		return nil
 	case *BatchPointGetPlan:
@@ -1037,7 +1043,7 @@ func buildSchemaAndNameFromIndex(cols []*expression.Column, dbName model.CIStr, 
 	return schema, names
 }
 
-func buildSchemaAndNameFromPKCol(pkCol *expression.Column, dbName model.CIStr, tblInfo *model.TableInfo) (*expression.Schema, types.NameSlice)  {
+func buildSchemaAndNameFromPKCol(pkCol *expression.Column, dbName model.CIStr, tblInfo *model.TableInfo) (*expression.Schema, types.NameSlice) {
 	schema := expression.NewSchema([]*expression.Column{pkCol}...)
 	names := make([]*types.FieldName, 0, 1)
 	tblName := tblInfo.Name
