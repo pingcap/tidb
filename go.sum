@@ -126,6 +126,7 @@ github.com/grpc-ecosystem/grpc-gateway v1.9.5 h1:UImYN5qQ8tuGpGE16ZmjvcTtTw24zw1
 github.com/grpc-ecosystem/grpc-gateway v1.9.5/go.mod h1:vNeuVxBJEsws4ogUvrchl83t/GYV9WGTSLVdBhOQFDY=
 github.com/hg2990656/parser v0.0.0-20200108015846-01f6b277783b h1:mNg2Q45fOIJgg1kJ7YCK80vfpNnz6LSBNl5YA2FgQ0E=
 github.com/hg2990656/parser v0.0.0-20200108015846-01f6b277783b/go.mod h1:9v0Edh8IbgjGYW2ArJr19E+bvL8zKahsFp+ixWeId+4=
+github.com/hg2990656/parser v0.0.0-20200113113213-99ee8c9ad673 h1:yCqOhoUW5VIeYHYY0OE5NWYa3dzn1gUiD3uuHokhWSQ=
 github.com/hg2990656/parser v0.0.0-20200113113213-99ee8c9ad673/go.mod h1:9v0Edh8IbgjGYW2ArJr19E+bvL8zKahsFp+ixWeId+4=
 github.com/hpcloud/tail v1.0.0 h1:nfCOvKYfkgYP8hkirhJocXT2+zOD8yUNjXaWfTlyFKI=
 github.com/hpcloud/tail v1.0.0/go.mod h1:ab1qPbhIpdTxEkNHXyeSf5vhxWSCs/tWer42PpOxQnU=

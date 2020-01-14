@@ -1,11 +1,13 @@
 package aggfuncs
 
 import (
+	"fmt"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
+	"reflect"
 )
 
 type baseJSONObjectAgg struct {
@@ -43,18 +45,12 @@ func (e *baseJSONObjectAgg) AppendFinalResult2Chunk(sctx sessionctx.Context, pr 
 				return errors.Trace(err)
 			}
 			p.entries[key] = float64Val
-		case []uint8:
-			byteVal, err := types.ToString(x)
+		case []uint8, types.Time, types.Duration:
+			strVal, err := types.ToString(x)
 			if err != nil {
 				return errors.Trace(err)
 			}
-			p.entries[key] = byteVal
-		case types.Time:
-			timeVal, err := types.ToString(x)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			p.entries[key] = timeVal
+			p.entries[key] = strVal
 		default:
 			p.entries[key] = val
 		}
@@ -88,8 +84,16 @@ func (e *baseJSONObjectAgg) UpdatePartialResult(sctx sessionctx.Context, rowsInG
 			return errors.Trace(err)
 		}
 
-		p.entries[keyString] = value.GetValue()
-		//p.entries[keyString] = value
+		//p.entries[keyString] = value.GetValue()
+		realVal := value.GetValue()
+		switch realVal.(type) {
+		case nil, bool, int64, uint64, float64, string, json.BinaryJSON, *types.MyDecimal, []uint8, types.Time, types.Duration:
+			p.entries[keyString] = realVal
+		default:
+			msg := fmt.Sprintf("unsupported second argument type: %s", reflect.TypeOf(realVal))
+			err = errors.New(msg)
+			return errors.Trace(err)
+		}
 	}
 	return nil
 }
