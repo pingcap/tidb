@@ -172,7 +172,7 @@ func GetAllServerInfo(ctx context.Context) (map[string]*ServerInfo, error) {
 func (is *InfoSyncer) getAllServerInfo(ctx context.Context) (map[string]*ServerInfo, error) {
 	allInfo := make(map[string]*ServerInfo)
 	if is.etcdCli == nil {
-		allInfo[is.info.ID] = is.info
+		allInfo[is.info.ID] = getServerInfo(is.info.ID)
 		return allInfo, nil
 	}
 	allInfo, err := getInfo(ctx, is.etcdCli, ServerInformationPath, keyOpDefaultRetryCnt, keyOpDefaultTimeout, clientv3.WithPrefix())
