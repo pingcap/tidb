@@ -447,6 +447,11 @@ func (e *Execute) rebuildRange(p Plan) error {
 			if err != nil {
 				return err
 			}
+			if x.PartitionInfo != nil {
+				num := x.TblInfo.Partition.Num
+				pos := x.Handle % int64(num)
+				x.PartitionInfo = &x.TblInfo.Partition.Definitions[pos]
+			}
 			return nil
 		}
 		for i, param := range x.IndexValueParams {
