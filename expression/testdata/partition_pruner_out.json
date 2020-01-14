@@ -11,11 +11,9 @@
         ]
       },
       {
-        "SQL": "explain select * from t2 where id = 9 and a = 1",
+        "SQL": "explain select * from t3 where id = 9 and a = 1",
         "Result": [
-          "IndexLookUp_8 1.00 root ",
-          "├─IndexScan_6 1.00 cop[tikv] table:t2, partition:p0, index:id, a, range:[9 1,9 1], keep order:false, stats:pseudo",
-          "└─TableScan_7 1.00 cop[tikv] table:t2, partition:p0, keep order:false, stats:pseudo"
+          "Point_Get_1 1.00 root table:t3, index:id a, partition:p9"
         ]
       },
       {

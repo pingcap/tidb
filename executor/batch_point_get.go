@@ -102,7 +102,7 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 		dedup := make(map[hack.MutableString]struct{})
 		keys := make([]kv.Key, 0, len(e.idxVals))
 		for _, idxVals := range e.idxVals {
-			idxKey, err1 := encodeIndexKey(e.base(), e.tblInfo, e.idxInfo, idxVals)
+			idxKey, err1 := encodeIndexKey(e.base(), e.tblInfo, e.idxInfo, idxVals, e.tblInfo.ID)
 			if err1 != nil && !kv.ErrNotExist.Equal(err1) {
 				return err1
 			}
