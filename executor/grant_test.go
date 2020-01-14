@@ -228,7 +228,7 @@ func (s *testSuite3) TestGrantPrivilegeAtomic(c *C) {
 	tk.MustExec(`create table test.testatomic(x int);`)
 
 	_, err := tk.Exec(`grant update, select, insert, delete on *.* to r1, r2, r4;`)
-	c.Check(err, NotNil)
+	c.Assert(terror.ErrorEqual(err, executor.ErrCantCreateUserWithGrant), IsTrue)
 	tk.MustQuery(`select Update_priv, Select_priv, Insert_priv, Delete_priv from mysql.user where user in ('r1', 'r2', 'r3', 'r4') and host = "%";`).Check(testkit.Rows(
 		"N N N N",
 		"N N N N",
@@ -244,7 +244,7 @@ func (s *testSuite3) TestGrantPrivilegeAtomic(c *C) {
 	))
 
 	_, err = tk.Exec(`grant update, select, insert, delete on test.* to r1, r2, r4;`)
-	c.Check(err, NotNil)
+	c.Assert(terror.ErrorEqual(err, executor.ErrCantCreateUserWithGrant), IsTrue)
 	tk.MustQuery(`select Update_priv, Select_priv, Insert_priv, Delete_priv from mysql.db where user in ('r1', 'r2', 'r3', 'r4') and host = "%";`).Check(testkit.Rows())
 	tk.MustExec(`grant update, select, insert, delete on test.* to r1, r2, r3;`)
 	_, err = tk.Exec(`revoke all on *.* from r1, r2, r4, r3;`)
@@ -256,7 +256,7 @@ func (s *testSuite3) TestGrantPrivilegeAtomic(c *C) {
 	))
 
 	_, err = tk.Exec(`grant update, select, insert, delete on test.testatomic to r1, r2, r4;`)
-	c.Check(err, NotNil)
+	c.Assert(terror.ErrorEqual(err, executor.ErrCantCreateUserWithGrant), IsTrue)
 	tk.MustQuery(`select Table_priv from mysql.tables_priv where user in ('r1', 'r2', 'r3', 'r4') and host = "%";`).Check(testkit.Rows())
 	tk.MustExec(`grant update, select, insert, delete on test.testatomic to r1, r2, r3;`)
 	_, err = tk.Exec(`revoke all on *.* from r1, r2, r4, r3;`)
