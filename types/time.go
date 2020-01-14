@@ -671,10 +671,8 @@ func (t *Time) check(sc *stmtctx.StatementContext) error {
 	switch t.tp {
 	case mysql.TypeTimestamp:
 		err = checkTimestampType(sc, t.time)
-	case mysql.TypeDatetime:
+	case mysql.TypeDatetime, mysql.TypeDate:
 		err = checkDatetimeType(t.time, allowZeroInDate, allowInvalidDate)
-	case mysql.TypeDate:
-		err = checkDateType(t.time, allowZeroInDate, allowInvalidDate)
 	}
 	return errors.Trace(err)
 }

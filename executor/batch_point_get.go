@@ -99,10 +99,10 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 
 	if e.idxInfo != nil {
 		// `SELECT a, b FROM t WHERE (a, b) IN ((1, 2), (1, 2), (2, 1), (1, 2))` should not return duplicated rows
-		dedup := make(map[hack.MutableString]struct{}, 0)
+		dedup := make(map[hack.MutableString]struct{})
 		keys := make([]kv.Key, 0, len(e.idxVals))
 		for _, idxVals := range e.idxVals {
-			idxKey, err1 := encodeIndexKey(e.base(), e.tblInfo, e.idxInfo, idxVals)
+			idxKey, err1 := encodeIndexKey(e.base(), e.tblInfo, e.idxInfo, idxVals, e.tblInfo.ID)
 			if err1 != nil && !kv.ErrNotExist.Equal(err1) {
 				return err1
 			}
