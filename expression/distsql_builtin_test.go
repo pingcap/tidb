@@ -437,6 +437,11 @@ func (s *testEvalSuite) TestEval(c *C) {
 			types.NewIntDatum(1),
 		},
 		{
+			scalarFunctionExpr(tipb.ScalarFuncSig_LeftShift,
+				ToPBFieldType(newIntFieldType()), datumExpr(c, types.NewDatum(1)), datumExpr(c, types.NewIntDatum(1))),
+			types.NewIntDatum(2),
+		},
+		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_AbsInt,
 				toPBFieldType(newIntFieldType()), datumExpr(c, types.NewIntDatum(-1))),
 			types.NewIntDatum(1),

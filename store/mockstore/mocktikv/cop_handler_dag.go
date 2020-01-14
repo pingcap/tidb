@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	mockpkg "github.com/pingcap/tidb/util/mock"
+	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pingcap/tipb/go-tipb"
 	"google.golang.org/grpc"
@@ -199,6 +200,28 @@ func (h *rpcHandler) buildTableScan(ctx *dagContext, executor *tipb.Executor) (*
 	if startTS == 0 {
 		startTS = ctx.dagReq.GetStartTsFallback()
 	}
+	colInfos := make([]rowcodec.ColInfo, len(columns))
+	for i := range colInfos {
+		col := columns[i]
+		colInfos[i] = rowcodec.ColInfo{
+			ID:         col.ColumnId,
+			Tp:         col.Tp,
+			Flag:       col.Flag,
+			IsPKHandle: col.GetPkHandle(),
+		}
+	}
+	defVal := func(i int) ([]byte, error) {
+		col := columns[i]
+		if col.DefaultVal == nil {
+			return nil, nil
+		}
+		// col.DefaultVal always be  varint `[flag]+[value]`.
+		if len(col.DefaultVal) < 1 {
+			panic("invalid default value")
+		}
+		return col.DefaultVal, nil
+	}
+	rd := rowcodec.NewByteDecoder(colInfos, -1, defVal, nil)
 	e := &tableScanExec{
 		TableScan:      executor.TblScan,
 		kvRanges:       ranges,
@@ -208,7 +231,9 @@ func (h *rpcHandler) buildTableScan(ctx *dagContext, executor *tipb.Executor) (*
 		resolvedLocks:  h.resolvedLocks,
 		mvccStore:      h.mvccStore,
 		execDetail:     new(execDetail),
+		rd:             rd,
 	}
+
 	if ctx.dagReq.CollectRangeCounts != nil && *ctx.dagReq.CollectRangeCounts {
 		e.counts = make([]int64, len(ranges))
 	}
@@ -426,7 +451,6 @@ func flagsToStatementContext(flags uint64) *stmtctx.StatementContext {
 	sc := new(stmtctx.StatementContext)
 	sc.IgnoreTruncate = (flags & model.FlagIgnoreTruncate) > 0
 	sc.TruncateAsWarning = (flags & model.FlagTruncateAsWarning) > 0
-	sc.PadCharToFullLength = (flags & model.FlagPadCharToFullLength) > 0
 	sc.InInsertStmt = (flags & model.FlagInInsertStmt) > 0
 	sc.InSelectStmt = (flags & model.FlagInSelectStmt) > 0
 	sc.OverflowAsWarning = (flags & model.FlagOverflowAsWarning) > 0

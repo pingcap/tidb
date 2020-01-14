@@ -80,6 +80,9 @@ var defaultImplementationMap = map[memo.Operand][]ImplementationRule{
 	memo.OperandMaxOneRow: {
 		&ImplMaxOneRow{},
 	},
+	memo.OperandWindow: {
+		&ImplWindow{},
+	},
 }
 
 // ImplTableDual implements LogicalTableDual as PhysicalTableDual.
@@ -336,6 +339,9 @@ type ImplTopN struct {
 // Match implements ImplementationRule Match interface.
 func (r *ImplTopN) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) (matched bool) {
 	topN := expr.ExprNode.(*plannercore.LogicalTopN)
+	if expr.Group.EngineType != memo.EngineTiDB {
+		return prop.IsEmpty()
+	}
 	return plannercore.MatchItems(prop, topN.ByItems)
 }
 
@@ -351,8 +357,9 @@ func (r *ImplTopN) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalP
 	switch expr.Group.EngineType {
 	case memo.EngineTiDB:
 		return impl.NewTiDBTopNImpl(topN), nil
+	case memo.EngineTiKV:
+		return impl.NewTiKVTopNImpl(topN), nil
 	default:
-		// TODO: return TiKVTopNImpl after we have implemented push topN down gather.
 		return nil, plannercore.ErrInternal.GenWithStack("Unsupported EngineType '%s' for TopN.", expr.Group.EngineType.String())
 	}
 }
@@ -406,12 +413,11 @@ type ImplHashJoinBuildLeft struct {
 
 // Match implements ImplementationRule Match interface.
 func (r *ImplHashJoinBuildLeft) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) (matched bool) {
-	join := expr.ExprNode.(*plannercore.LogicalJoin)
-	switch join.JoinType {
-	case plannercore.SemiJoin, plannercore.AntiSemiJoin, plannercore.LeftOuterSemiJoin, plannercore.AntiLeftOuterSemiJoin:
-		return false
-	default:
+	switch expr.ExprNode.(*plannercore.LogicalJoin).JoinType {
+	case plannercore.InnerJoin, plannercore.LeftOuterJoin, plannercore.RightOuterJoin:
 		return prop.IsEmpty()
+	default:
+		return false
 	}
 }
 
@@ -421,8 +427,11 @@ func (r *ImplHashJoinBuildLeft) OnImplement(expr *memo.GroupExpr, reqProp *prope
 	switch join.JoinType {
 	case plannercore.InnerJoin:
 		return getImplForHashJoin(expr, reqProp, 0, false), nil
+	case plannercore.LeftOuterJoin:
+		return getImplForHashJoin(expr, reqProp, 1, true), nil
+	case plannercore.RightOuterJoin:
+		return getImplForHashJoin(expr, reqProp, 0, false), nil
 	default:
-		// TODO: deal with other join type.
 		return nil, nil
 	}
 }
@@ -440,12 +449,17 @@ func (r *ImplHashJoinBuildRight) Match(expr *memo.GroupExpr, prop *property.Phys
 func (r *ImplHashJoinBuildRight) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) (memo.Implementation, error) {
 	join := expr.ExprNode.(*plannercore.LogicalJoin)
 	switch join.JoinType {
+	case plannercore.SemiJoin, plannercore.AntiSemiJoin,
+		plannercore.LeftOuterSemiJoin, plannercore.AntiLeftOuterSemiJoin:
+		return getImplForHashJoin(expr, reqProp, 1, false), nil
 	case plannercore.InnerJoin:
 		return getImplForHashJoin(expr, reqProp, 1, false), nil
-	default:
-		// TODO: deal with other join type.
-		return nil, nil
+	case plannercore.LeftOuterJoin:
+		return getImplForHashJoin(expr, reqProp, 1, false), nil
+	case plannercore.RightOuterJoin:
+		return getImplForHashJoin(expr, reqProp, 0, true), nil
 	}
+	return nil, nil
 }
 
 // ImplUnionAll implements LogicalUnionAll to PhysicalUnionAll.
@@ -518,4 +532,39 @@ func (r *ImplMaxOneRow) OnImplement(expr *memo.GroupExpr, reqProp *property.Phys
 		mor.SelectBlockOffset(),
 		&property.PhysicalProperty{ExpectedCnt: 2})
 	return impl.NewMaxOneRowImpl(physicalMaxOneRow), nil
+}
+
+// ImplWindow implements LogicalWindow to PhysicalWindow.
+type ImplWindow struct {
+}
+
+// Match implements ImplementationRule Match interface.
+func (w *ImplWindow) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) (matched bool) {
+	lw := expr.ExprNode.(*plannercore.LogicalWindow)
+	var byItems []property.Item
+	byItems = append(byItems, lw.PartitionBy...)
+	byItems = append(byItems, lw.OrderBy...)
+	childProperty := &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64, Items: byItems}
+	return prop.IsPrefix(childProperty)
+}
+
+// OnImplement implements ImplementationRule OnImplement interface.
+func (w *ImplWindow) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) (memo.Implementation, error) {
+	lw := expr.ExprNode.(*plannercore.LogicalWindow)
+	var byItems []property.Item
+	byItems = append(byItems, lw.PartitionBy...)
+	byItems = append(byItems, lw.OrderBy...)
+	physicalWindow := plannercore.PhysicalWindow{
+		WindowFuncDescs: lw.WindowFuncDescs,
+		PartitionBy:     lw.PartitionBy,
+		OrderBy:         lw.OrderBy,
+		Frame:           lw.Frame,
+	}.Init(
+		lw.SCtx(),
+		expr.Group.Prop.Stats.ScaleByExpectCnt(reqProp.ExpectedCnt),
+		lw.SelectBlockOffset(),
+		&property.PhysicalProperty{ExpectedCnt: math.MaxFloat64, Items: byItems},
+	)
+	physicalWindow.SetSchema(expr.Group.Prop.Schema)
+	return impl.NewWindowImpl(physicalWindow), nil
 }

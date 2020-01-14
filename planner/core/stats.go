@@ -211,6 +211,16 @@ func (ds *DataSource) DeriveStats(childStats []*property.StatsInfo, selfSchema *
 			break
 		}
 	}
+
+	// TODO: implement UnionScan + IndexMerge
+	isReadOnlyTxn := true
+	txn, err := ds.ctx.Txn(false)
+	if err != nil {
+		return nil, err
+	}
+	if txn.Valid() && !txn.IsReadOnly() {
+		isReadOnlyTxn = false
+	}
 	// Consider the IndexMergePath. Now, we just generate `IndexMergePath` in DNF case.
 	isPossibleIdxMerge := len(ds.pushedDownConds) > 0 && len(ds.possibleAccessPaths) > 1
 	sessionAndStmtPermission := (ds.ctx.GetSessionVars().GetEnableIndexMerge() || ds.indexMergeHints != nil) && !ds.ctx.GetSessionVars().StmtCtx.NoIndexMergeHint
@@ -222,8 +232,8 @@ func (ds *DataSource) DeriveStats(childStats []*property.StatsInfo, selfSchema *
 			break
 		}
 	}
-	if isPossibleIdxMerge && sessionAndStmtPermission && needConsiderIndexMerge {
-		ds.generateAndPruneIndexMergePath()
+	if isPossibleIdxMerge && sessionAndStmtPermission && needConsiderIndexMerge && isReadOnlyTxn {
+		ds.generateAndPruneIndexMergePath(ds.indexMergeHints != nil)
 	} else if ds.indexMergeHints != nil {
 		ds.indexMergeHints = nil
 		ds.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("IndexMerge is inapplicable or disabled"))
@@ -231,7 +241,7 @@ func (ds *DataSource) DeriveStats(childStats []*property.StatsInfo, selfSchema *
 	return ds.stats, nil
 }
 
-func (ds *DataSource) generateAndPruneIndexMergePath() {
+func (ds *DataSource) generateAndPruneIndexMergePath(needPrune bool) {
 	regularPathCount := len(ds.possibleAccessPaths)
 	ds.generateIndexMergeOrPaths()
 	// If without hints, it means that `enableIndexMerge` is true
@@ -245,7 +255,9 @@ func (ds *DataSource) generateAndPruneIndexMergePath() {
 		return
 	}
 	// Do not need to consider the regular paths in find_best_task().
-	ds.possibleAccessPaths = ds.possibleAccessPaths[regularPathCount:]
+	if needPrune {
+		ds.possibleAccessPaths = ds.possibleAccessPaths[regularPathCount:]
+	}
 }
 
 // DeriveStats implements LogicalPlan DeriveStats interface.
@@ -285,15 +297,13 @@ func (is *LogicalIndexScan) DeriveStats(childStats []*property.StatsInfo, selfSc
 	if len(is.AccessConds) == 0 {
 		is.Ranges = ranger.FullRange()
 	}
-	// TODO: If the AccessConds is not empty, we have set the range when push down the selection.
-
-	is.idxCols, is.idxColLens = expression.IndexInfo2PrefixCols(is.Columns, is.schema.Columns, is.Index)
-	is.fullIdxCols, is.fullIdxColLens = expression.IndexInfo2Cols(is.Columns, is.schema.Columns, is.Index)
-	if !is.Index.Unique && !is.Index.Primary && len(is.Index.Columns) == len(is.idxCols) {
-		handleCol := is.getPKIsHandleCol()
+	is.IdxCols, is.IdxColLens = expression.IndexInfo2PrefixCols(is.Columns, selfSchema.Columns, is.Index)
+	is.FullIdxCols, is.FullIdxColLens = expression.IndexInfo2Cols(is.Columns, selfSchema.Columns, is.Index)
+	if !is.Index.Unique && !is.Index.Primary && len(is.Index.Columns) == len(is.IdxCols) {
+		handleCol := is.getPKIsHandleCol(selfSchema)
 		if handleCol != nil && !mysql.HasUnsignedFlag(handleCol.RetType.Flag) {
-			is.idxCols = append(is.idxCols, handleCol)
-			is.idxColLens = append(is.idxColLens, types.UnspecifiedLength)
+			is.IdxCols = append(is.IdxCols, handleCol)
+			is.IdxColLens = append(is.IdxColLens, types.UnspecifiedLength)
 		}
 	}
 	return is.stats, nil
@@ -365,8 +375,12 @@ func (ds *DataSource) accessPathsForConds(conditions []expression.Expression, us
 			}
 			// If we have point or empty range, just remove other possible paths.
 			if noIntervalRanges || len(path.Ranges) == 0 {
-				results[0] = path
-				results = results[:1]
+				if len(results) == 0 {
+					results = append(results, path)
+				} else {
+					results[0] = path
+					results = results[:1]
+				}
 				break
 			}
 		} else {
@@ -382,8 +396,12 @@ func (ds *DataSource) accessPathsForConds(conditions []expression.Expression, us
 			noIntervalRanges := ds.deriveIndexPathStats(path, conditions, true)
 			// If we have empty range, or point range on unique index, just remove other possible paths.
 			if (noIntervalRanges && path.Index.Unique) || len(path.Ranges) == 0 {
-				results[0] = path
-				results = results[:1]
+				if len(results) == 0 {
+					results = append(results, path)
+				} else {
+					results[0] = path
+					results = results[:1]
+				}
 				break
 			}
 		}

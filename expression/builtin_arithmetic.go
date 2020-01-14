@@ -17,12 +17,12 @@ import (
 	"fmt"
 	"math"
 
-	"github.com/cznic/mathutil"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -355,13 +355,16 @@ func (s *builtinArithmeticPlusRealSig) Clone() builtinFunc {
 }
 
 func (s *builtinArithmeticPlusRealSig) evalReal(row chunk.Row) (float64, bool, error) {
-	a, isNull, err := s.args[0].EvalReal(s.ctx, row)
-	if isNull || err != nil {
-		return 0, isNull, err
+	a, isLHSNull, err := s.args[0].EvalReal(s.ctx, row)
+	if err != nil {
+		return 0, isLHSNull, err
 	}
-	b, isNull, err := s.args[1].EvalReal(s.ctx, row)
-	if isNull || err != nil {
-		return 0, isNull, err
+	b, isRHSNull, err := s.args[1].EvalReal(s.ctx, row)
+	if err != nil {
+		return 0, isRHSNull, err
+	}
+	if isLHSNull || isRHSNull {
+		return 0, true, nil
 	}
 	if (a > 0 && b > math.MaxFloat64-a) || (a < 0 && b < -math.MaxFloat64-a) {
 		return 0, true, types.ErrOverflow.GenWithStackByArgs("DOUBLE", fmt.Sprintf("(%s + %s)", s.args[0].String(), s.args[1].String()))

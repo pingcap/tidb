@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/stringutil"
 	"go.uber.org/zap"
 )
@@ -86,6 +87,7 @@ func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum) error {
 			}
 		}
 	}
+	e.memTracker.Consume(int64(txn.Size()))
 	return nil
 }
 
@@ -266,6 +268,9 @@ func (e *InsertExec) Close() error {
 
 // Open implements the Executor Open interface.
 func (e *InsertExec) Open(ctx context.Context) error {
+	e.memTracker = memory.NewTracker(e.id, -1)
+	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
+
 	if e.OnDuplicate != nil {
 		e.initEvalBuffer4Dup()
 	}
@@ -332,7 +337,7 @@ func (e *InsertExec) doDupRowUpdate(ctx context.Context, handle int64, oldRow []
 	}
 
 	newData := e.row4Update[:len(oldRow)]
-	_, handleChanged, newHandle, err := updateRecord(ctx, e.ctx, handle, oldRow, newData, assignFlag, e.Table, true)
+	_, handleChanged, newHandle, err := updateRecord(ctx, e.ctx, handle, oldRow, newData, assignFlag, e.Table, true, e.memTracker)
 	if err != nil {
 		return nil, false, 0, err
 	}

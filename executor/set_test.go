@@ -247,6 +247,9 @@ func (s *testSuite5) TestSetVar(c *C) {
 	tk.MustExec("set @@tidb_general_log = 1")
 	tk.MustExec("set @@tidb_general_log = 0")
 
+	tk.MustExec("set @@tidb_pprof_sql_cpu = 1")
+	tk.MustExec("set @@tidb_pprof_sql_cpu = 0")
+
 	tk.MustExec(`set tidb_force_priority = "no_priority"`)
 	tk.MustQuery(`select @@tidb_force_priority;`).Check(testkit.Rows("NO_PRIORITY"))
 	tk.MustExec(`set tidb_force_priority = "low_priority"`)
@@ -400,6 +403,20 @@ func (s *testSuite5) TestSetVar(c *C) {
 	tk.MustQuery("select @@tidb_store_limit;").Check(testkit.Rows("0"))
 	tk.MustQuery("select @@session.tidb_store_limit;").Check(testkit.Rows("0"))
 	tk.MustQuery("select @@global.tidb_store_limit;").Check(testkit.Rows("100"))
+
+	tk.MustQuery("select @@session.tidb_metric_query_step;").Check(testkit.Rows("60"))
+	tk.MustExec("set @@session.tidb_metric_query_step = 120")
+	_, err = tk.Exec("set @@session.tidb_metric_query_step = 9")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "tidb_metric_query_step(9) cannot be smaller than 10 or larger than 216000")
+	tk.MustQuery("select @@session.tidb_metric_query_step;").Check(testkit.Rows("120"))
+
+	tk.MustQuery("select @@session.tidb_metric_query_range_duration;").Check(testkit.Rows("60"))
+	tk.MustExec("set @@session.tidb_metric_query_range_duration = 120")
+	_, err = tk.Exec("set @@session.tidb_metric_query_range_duration = 9")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "tidb_metric_query_range_duration(9) cannot be smaller than 10 or larger than 216000")
+	tk.MustQuery("select @@session.tidb_metric_query_range_duration;").Check(testkit.Rows("120"))
 }
 
 func (s *testSuite5) TestSetCharset(c *C) {
@@ -462,6 +479,11 @@ func (s *testSuite5) TestValidateSetVar(c *C) {
 
 	tk.MustExec("set @@tidb_general_log=0;")
 	tk.MustQuery("select @@tidb_general_log;").Check(testkit.Rows("0"))
+
+	tk.MustExec("set @@tidb_pprof_sql_cpu=1;")
+	tk.MustQuery("select @@tidb_pprof_sql_cpu;").Check(testkit.Rows("1"))
+	tk.MustExec("set @@tidb_pprof_sql_cpu=0;")
+	tk.MustQuery("select @@tidb_pprof_sql_cpu;").Check(testkit.Rows("0"))
 
 	tk.MustExec("set @@tidb_enable_streaming=1;")
 	tk.MustQuery("select @@tidb_enable_streaming;").Check(testkit.Rows("1"))

@@ -498,6 +498,7 @@ type SQLBindPlan struct {
 	BindSQL      string
 	IsGlobal     bool
 	BindStmt     ast.StmtNode
+	Db           string
 	Charset      string
 	Collation    string
 }
@@ -532,14 +533,14 @@ type Insert struct {
 	Schema4OnDuplicate *expression.Schema
 	names4OnDuplicate  types.NameSlice
 
+	GenCols InsertGeneratedColumns
+
+	SelectPlan PhysicalPlan
+
 	IsReplace bool
 
 	// NeedFillDefaultValue is true when expr in value list reference other column.
 	NeedFillDefaultValue bool
-
-	GenCols InsertGeneratedColumns
-
-	SelectPlan PhysicalPlan
 
 	AllAssignmentsAreConstant bool
 }
@@ -623,6 +624,17 @@ type LoadStats struct {
 	baseSchemaProducer
 
 	Path string
+}
+
+// IndexAdvise represents a index advise plan.
+type IndexAdvise struct {
+	baseSchemaProducer
+
+	IsLocal     bool
+	Path        string
+	MaxMinutes  uint64
+	MaxIndexNum *ast.MaxIndexNumClause
+	LinesInfo   *ast.LinesClause
 }
 
 // SplitRegion represents a split regions plan.
@@ -904,7 +916,7 @@ func (e *Explain) prepareTaskDot(p PhysicalPlan, taskTp string, buffer *bytes.Bu
 //  2. session is not InTxn
 //  3. plan is point get by pk, or point get by unique index (no double read)
 func IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx sessionctx.Context, p Plan) (bool, error) {
-	if !isAutoCommitTxn(ctx) {
+	if !IsAutoCommitTxn(ctx) {
 		return false, nil
 	}
 
@@ -930,15 +942,15 @@ func IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx sessionctx.Context, p Plan) (bo
 	}
 }
 
-// isAutoCommitTxn checks if session is in autocommit mode and not InTxn
+// IsAutoCommitTxn checks if session is in autocommit mode and not InTxn
 // used for fast plan like point get
-func isAutoCommitTxn(ctx sessionctx.Context) bool {
+func IsAutoCommitTxn(ctx sessionctx.Context) bool {
 	return ctx.GetSessionVars().IsAutocommit() && !ctx.GetSessionVars().InTxn()
 }
 
 // IsPointUpdateByAutoCommit checks if plan p is point update and is in autocommit context
 func IsPointUpdateByAutoCommit(ctx sessionctx.Context, p Plan) (bool, error) {
-	if !isAutoCommitTxn(ctx) {
+	if !IsAutoCommitTxn(ctx) {
 		return false, nil
 	}
 

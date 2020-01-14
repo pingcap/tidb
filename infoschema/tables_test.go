@@ -47,21 +47,26 @@ import (
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/pdapi"
+	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
 	"google.golang.org/grpc"
 )
 
-var _ = Suite(&testTableSuite{})
-var _ = SerialSuites(&testClusterTableSuite{testTableSuite: &testTableSuite{}})
+var _ = Suite(&testTableSuite{&testTableSuiteBase{}})
+var _ = SerialSuites(&testClusterTableSuite{testTableSuiteBase: &testTableSuiteBase{}})
 
 type testTableSuite struct {
+	*testTableSuiteBase
+}
+
+type testTableSuiteBase struct {
 	store kv.Storage
 	dom   *domain.Domain
 }
 
-func (s *testTableSuite) SetUpSuite(c *C) {
+func (s *testTableSuiteBase) SetUpSuite(c *C) {
 	testleak.BeforeTest()
 
 	var err error
@@ -72,26 +77,27 @@ func (s *testTableSuite) SetUpSuite(c *C) {
 	c.Assert(err, IsNil)
 }
 
-func (s *testTableSuite) TearDownSuite(c *C) {
+func (s *testTableSuiteBase) TearDownSuite(c *C) {
 	s.dom.Close()
 	s.store.Close()
 	testleak.AfterTest(c)()
 }
 
 type testClusterTableSuite struct {
-	*testTableSuite
+	*testTableSuiteBase
 	rpcserver  *grpc.Server
 	httpServer *httptest.Server
 	mockAddr   string
+	listenAddr string
 }
 
 func (s *testClusterTableSuite) SetUpSuite(c *C) {
-	s.testTableSuite.SetUpSuite(c)
-	s.rpcserver = s.setUpRPCService(c, "0.0.0.0:10080")
-	s.httpServer, s.mockAddr = setUpMockPDHTTPSercer()
+	s.testTableSuiteBase.SetUpSuite(c)
+	s.rpcserver, s.listenAddr = s.setUpRPCService(c, ":0")
+	s.httpServer, s.mockAddr = s.setUpMockPDHTTPServer()
 }
 
-func (s *testClusterTableSuite) setUpRPCService(c *C, addr string) *grpc.Server {
+func (s *testClusterTableSuite) setUpRPCService(c *C, addr string) (*grpc.Server, string) {
 	lis, err := net.Listen("tcp", addr)
 	c.Assert(err, IsNil)
 	// Fix issue 9836
@@ -102,15 +108,20 @@ func (s *testClusterTableSuite) setUpRPCService(c *C, addr string) *grpc.Server 
 		Host:    "127.0.0.1",
 		Command: mysql.ComQuery,
 	}
-	srv := server.NewRPCServer(config.GetGlobalConfig().Security, s.dom, sm)
+	srv := server.NewRPCServer(config.GetGlobalConfig(), s.dom, sm)
+	port := lis.Addr().(*net.TCPAddr).Port
+	addr = fmt.Sprintf("127.0.0.1:%d", port)
 	go func() {
 		err = srv.Serve(lis)
 		c.Assert(err, IsNil)
 	}()
-	return srv
+	cfg := config.GetGlobalConfig()
+	cfg.Status.StatusPort = uint(port)
+	config.StoreGlobalConfig(cfg)
+	return srv, addr
 }
 
-func setUpMockPDHTTPSercer() (*httptest.Server, string) {
+func (s *testClusterTableSuite) setUpMockPDHTTPServer() (*httptest.Server, string) {
 	// mock PD http server
 	router := mux.NewRouter()
 	server := httptest.NewServer(router)
@@ -174,7 +185,7 @@ func (s *testClusterTableSuite) TearDownSuite(c *C) {
 	if s.httpServer != nil {
 		s.httpServer.Close()
 	}
-	s.testTableSuite.TearDownSuite(c)
+	s.testTableSuiteBase.TearDownSuite(c)
 }
 
 func (s *testTableSuite) TestInfoschemaFieldValue(c *C) {
@@ -445,11 +456,73 @@ func (s *testTableSuite) TestSomeTables(c *C) {
 	tk.MustQuery("select * from information_schema.SESSION_VARIABLES where VARIABLE_NAME='tidb_retry_limit';").Check(testkit.Rows("tidb_retry_limit 10"))
 	tk.MustQuery("select * from information_schema.ENGINES;").Check(testkit.Rows("InnoDB DEFAULT Supports transactions, row-level locking, and foreign keys YES YES YES"))
 	tk.MustQuery("select * from information_schema.TABLE_CONSTRAINTS where TABLE_NAME='gc_delete_range';").Check(testkit.Rows("def mysql delete_range_index mysql gc_delete_range UNIQUE"))
+
+	//test the privilege of new user for information_schema.table_constraints
+	tk.MustExec("create user constraints_tester")
+	constraintsTester := testkit.NewTestKit(c, s.store)
+	constraintsTester.MustExec("use information_schema")
+	c.Assert(constraintsTester.Se.Auth(&auth.UserIdentity{
+		Username: "constraints_tester",
+		Hostname: "127.0.0.1",
+	}, nil, nil), IsTrue)
+	constraintsTester.MustQuery("select * from information_schema.TABLE_CONSTRAINTS;").Check([][]interface{}{})
+
+	//test the privilege of user with privilege of mysql.gc_delete_range for information_schema.table_constraints
+	tk.MustExec("CREATE ROLE r_gc_delete_range ;")
+	tk.MustExec("GRANT ALL PRIVILEGES ON mysql.gc_delete_range TO r_gc_delete_range;")
+	tk.MustExec("GRANT r_gc_delete_range TO constraints_tester;")
+	constraintsTester.MustExec("set role r_gc_delete_range")
+	c.Assert(len(constraintsTester.MustQuery("select * from information_schema.TABLE_CONSTRAINTS where TABLE_NAME='gc_delete_range';").Rows()), Greater, 0)
+	constraintsTester.MustQuery("select * from information_schema.TABLE_CONSTRAINTS where TABLE_NAME='tables_priv';").Check([][]interface{}{})
+
 	tk.MustQuery("select * from information_schema.KEY_COLUMN_USAGE where TABLE_NAME='stats_meta' and COLUMN_NAME='table_id';").Check(
 		testkit.Rows("def mysql tbl def mysql stats_meta table_id 1 <nil> <nil> <nil> <nil>"))
+
+	//test the privilege of new user for information_schema.table_constraints
+	tk.MustExec("create user key_column_tester")
+	keyColumnTester := testkit.NewTestKit(c, s.store)
+	keyColumnTester.MustExec("use information_schema")
+	c.Assert(keyColumnTester.Se.Auth(&auth.UserIdentity{
+		Username: "key_column_tester",
+		Hostname: "127.0.0.1",
+	}, nil, nil), IsTrue)
+	keyColumnTester.MustQuery("select * from information_schema.KEY_COLUMN_USAGE;").Check([][]interface{}{})
+
+	//test the privilege of user with privilege of mysql.gc_delete_range for information_schema.table_constraints
+	tk.MustExec("CREATE ROLE r_stats_meta ;")
+	tk.MustExec("GRANT ALL PRIVILEGES ON mysql.stats_meta TO r_stats_meta;")
+	tk.MustExec("GRANT r_stats_meta TO key_column_tester;")
+	keyColumnTester.MustExec("set role r_stats_meta")
+	c.Assert(len(keyColumnTester.MustQuery("select * from information_schema.KEY_COLUMN_USAGE where TABLE_NAME='stats_meta';").Rows()), Greater, 0)
+
+	tk.MustQuery("select * from information_schema.SCHEMATA where schema_name='mysql';").Check(
+		testkit.Rows("def mysql utf8mb4 utf8mb4_bin <nil>"))
+
+	//test the privilege of new user for information_schema.schemata
+	tk.MustExec("create user schemata_tester")
+	schemataTester := testkit.NewTestKit(c, s.store)
+	schemataTester.MustExec("use information_schema")
+	c.Assert(schemataTester.Se.Auth(&auth.UserIdentity{
+		Username: "schemata_tester",
+		Hostname: "127.0.0.1",
+	}, nil, nil), IsTrue)
+	schemataTester.MustQuery("select count(*) from information_schema.SCHEMATA;").Check(testkit.Rows("1"))
+	schemataTester.MustQuery("select * from information_schema.SCHEMATA where schema_name='mysql';").Check(
+		[][]interface{}{})
+	schemataTester.MustQuery("select * from information_schema.SCHEMATA where schema_name='INFORMATION_SCHEMA';").Check(
+		testkit.Rows("def INFORMATION_SCHEMA utf8mb4 utf8mb4_bin <nil>"))
+
+	//test the privilege of user with privilege of mysql for information_schema.schemata
+	tk.MustExec("CREATE ROLE r_mysql_priv;")
+	tk.MustExec("GRANT ALL PRIVILEGES ON mysql.* TO r_mysql_priv;")
+	tk.MustExec("GRANT r_mysql_priv TO schemata_tester;")
+	schemataTester.MustExec("set role r_mysql_priv")
+	schemataTester.MustQuery("select count(*) from information_schema.SCHEMATA;").Check(testkit.Rows("2"))
+	schemataTester.MustQuery("select * from information_schema.SCHEMATA;").Check(
+		testkit.Rows("def INFORMATION_SCHEMA utf8mb4 utf8mb4_bin <nil>", "def mysql utf8mb4 utf8mb4_bin <nil>"))
+
 	tk.MustQuery("select * from information_schema.STATISTICS where TABLE_NAME='columns_priv' and COLUMN_NAME='Host';").Check(
 		testkit.Rows("def mysql columns_priv 0 mysql PRIMARY 1 Host A <nil> <nil> <nil>  BTREE  "))
-
 	//test the privilege of new user for information_schema
 	tk.MustExec("create user tester1")
 	tk1 := testkit.NewTestKit(c, s.store)
@@ -621,7 +694,7 @@ func prepareSlowLogfile(c *C, slowLogFileName string) {
 # Query_time: 4.895492
 # Parse_time: 0.4
 # Compile_time: 0.2
-# Request_count: 1 Prewrite_time: 0.19 Commit_time: 0.01 Commit_backoff_time: 0.18 Backoff_types: [txnLock] Resolve_lock_time: 0.03 Write_keys: 15 Write_size: 480 Prewrite_region: 1 Txn_retry: 8
+# LockKeys_time: 1.71 Request_count: 1 Prewrite_time: 0.19 Binlog_prewrite_time: 0.21 Commit_time: 0.01 Commit_backoff_time: 0.18 Backoff_types: [txnLock] Resolve_lock_time: 0.03 Write_keys: 15 Write_size: 480 Prewrite_region: 1 Txn_retry: 8
 # Process_time: 0.161 Request_count: 1 Total_keys: 100001 Process_keys: 100000
 # Wait_time: 0.101
 # Backoff_time: 0.092
@@ -694,10 +767,10 @@ func (s *testTableSuite) TestSlowQuery(c *C) {
 	tk.MustExec("set time_zone = '+08:00';")
 	re := tk.MustQuery("select * from information_schema.slow_query")
 	re.Check(testutil.RowsWithSep("|",
-		"2019-02-12 19:33:56.571953|406315658548871171|root|127.0.0.1|6|4.895492|0.4|0.2|0.19|0.01|0|0.18|[txnLock]|0.03|0|15|480|1|8|0.161|0.101|0.092|1|100001|100000|test||0|42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772|t1:1,t2:2|0.1|0.2|0.03|127.0.0.1:20160|0.05|0.6|0.8|0.0.0.0:20160|70724|1|abcd|60e9378c746d9a2be1c791047e008967cf252eb6de9167ad3aa6098fa2d523f4|update t set i = 2;|select * from t_slim;"))
+		"2019-02-12 19:33:56.571953|406315658548871171|root|127.0.0.1|6|4.895492|0.4|0.2|0.19|0.21|0.01|0|0.18|[txnLock]|0.03|0|15|480|1|8|0.161|0.101|0.092|1.71|1|100001|100000|test||0|42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772|t1:1,t2:2|0.1|0.2|0.03|127.0.0.1:20160|0.05|0.6|0.8|0.0.0.0:20160|70724|1|abcd|60e9378c746d9a2be1c791047e008967cf252eb6de9167ad3aa6098fa2d523f4|update t set i = 2;|select * from t_slim;"))
 	tk.MustExec("set time_zone = '+00:00';")
 	re = tk.MustQuery("select * from information_schema.slow_query")
-	re.Check(testutil.RowsWithSep("|", "2019-02-12 11:33:56.571953|406315658548871171|root|127.0.0.1|6|4.895492|0.4|0.2|0.19|0.01|0|0.18|[txnLock]|0.03|0|15|480|1|8|0.161|0.101|0.092|1|100001|100000|test||0|42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772|t1:1,t2:2|0.1|0.2|0.03|127.0.0.1:20160|0.05|0.6|0.8|0.0.0.0:20160|70724|1|abcd|60e9378c746d9a2be1c791047e008967cf252eb6de9167ad3aa6098fa2d523f4|update t set i = 2;|select * from t_slim;"))
+	re.Check(testutil.RowsWithSep("|", "2019-02-12 11:33:56.571953|406315658548871171|root|127.0.0.1|6|4.895492|0.4|0.2|0.19|0.21|0.01|0|0.18|[txnLock]|0.03|0|15|480|1|8|0.161|0.101|0.092|1.71|1|100001|100000|test||0|42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772|t1:1,t2:2|0.1|0.2|0.03|127.0.0.1:20160|0.05|0.6|0.8|0.0.0.0:20160|70724|1|abcd|60e9378c746d9a2be1c791047e008967cf252eb6de9167ad3aa6098fa2d523f4|update t set i = 2;|select * from t_slim;"))
 
 	// Test for long query.
 	f, err := os.OpenFile(slowLogFileName, os.O_CREATE|os.O_WRONLY, 0644)
@@ -748,6 +821,28 @@ func (s *testTableSuite) TestForAnalyzeStatus(c *C) {
 	c.Assert(result.Rows()[1][4], Equals, "2")
 	c.Assert(result.Rows()[1][5], NotNil)
 	c.Assert(result.Rows()[1][6], Equals, "finished")
+
+	//test the privilege of new user for information_schema.analyze_status
+	tk.MustExec("create user analyze_tester")
+	analyzeTester := testkit.NewTestKit(c, s.store)
+	analyzeTester.MustExec("use information_schema")
+	c.Assert(analyzeTester.Se.Auth(&auth.UserIdentity{
+		Username: "analyze_tester",
+		Hostname: "127.0.0.1",
+	}, nil, nil), IsTrue)
+	analyzeTester.MustQuery("show analyze status").Check([][]interface{}{})
+	analyzeTester.MustQuery("select * from information_schema.ANALYZE_STATUS;").Check([][]interface{}{})
+
+	//test the privilege of user with privilege of test.t1 for information_schema.analyze_status
+	tk.MustExec("create table t1 (a int, b int, index idx(a))")
+	tk.MustExec("insert into t values (1,2),(3,4)")
+	tk.MustExec("analyze table t1")
+	tk.MustExec("CREATE ROLE r_t1 ;")
+	tk.MustExec("GRANT ALL PRIVILEGES ON test.t1 TO r_t1;")
+	tk.MustExec("GRANT r_t1 TO analyze_tester;")
+	analyzeTester.MustExec("set role r_t1")
+	resultT1 := tk.MustQuery("select * from information_schema.analyze_status where TABLE_NAME='t1'").Sort()
+	c.Assert(len(resultT1.Rows()), Greater, 0)
 }
 
 func (s *testTableSuite) TestForServersInfo(c *C) {
@@ -795,7 +890,7 @@ func (s *testClusterTableSuite) TestTiDBClusterInfo(c *C) {
 	}
 	tk = testkit.NewTestKit(c, store)
 	tk.MustQuery("select * from information_schema.cluster_info").Check(testkit.Rows(
-		"tidb :4000 :10080 5.7.25-TiDB-None None",
+		"tidb :4000 :"+strconv.FormatUint(uint64(config.GetGlobalConfig().Status.StatusPort), 10)+" 5.7.25-TiDB-None None",
 		"pd "+mockAddr+" "+mockAddr+" 4.0.0-alpha mock-pd-githash",
 		"tikv 127.0.0.1:20160 "+mockAddr+" 4.0.0-alpha mock-tikv-githash",
 	))
@@ -872,51 +967,50 @@ func (s *testTableSuite) TestForTableTiFlashReplica(c *C) {
 
 func (s *testClusterTableSuite) TestForClusterServerInfo(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	mockAddr := "127.0.0.1:10080"
 	instances := []string{
-		"pd,127.0.0.1:11080," + mockAddr + ",mock-version,mock-githash",
-		"tidb,127.0.0.1:11080," + mockAddr + ",mock-version,mock-githash",
-		"tikv,127.0.0.1:11080," + mockAddr + ",mock-version,mock-githash",
+		"tidb," + s.listenAddr + "," + s.listenAddr + ",mock-version,mock-githash",
+		"pd," + s.listenAddr + "," + s.listenAddr + ",mock-version,mock-githash",
+		"tikv," + s.listenAddr + "," + s.listenAddr + ",mock-version,mock-githash",
 	}
 	fpExpr := `return("` + strings.Join(instances, ";") + `")`
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/infoschema/mockClusterInfo", fpExpr), IsNil)
 	defer func() { c.Assert(failpoint.Disable("github.com/pingcap/tidb/infoschema/mockClusterInfo"), IsNil) }()
 
-	re := tk.MustQuery("select * from information_schema.CLUSTER_LOAD;")
-	rows := re.Rows()
-	c.Assert(len(rows), Greater, 0)
+	checkInfoRows := func(re *testkit.Result, types, addrs, names set.StringSet) {
+		rows := re.Rows()
+		c.Assert(len(rows), Greater, 0)
 
-	// Currently only TiDB implement this.
-	// TODO: fix me after tikv/pd server support this.
-	typeMap := map[string]struct{}{
-		"tidb": {},
+		for _, row := range rows {
+			tp := row[0].(string)
+			addr := row[1].(string)
+			name := row[2].(string)
+			delete(types, tp)
+			delete(addrs, addr)
+			delete(names, name)
+		}
+		c.Assert(len(types), Equals, 0)
+		c.Assert(len(addrs), Equals, 0)
+		c.Assert(len(names), Equals, 0)
 	}
-	addrMap := map[string]struct{}{
-		"127.0.0.1:10080": {},
-	}
-	nameMap := map[string]struct{}{
-		"cpu":  {},
-		"mem":  {},
-		"net":  {},
-		"disk": {},
-	}
-	for _, row := range rows {
-		tp := row[0].(string)
-		addr := row[1].(string)
-		name := row[2].(string)
-		delete(typeMap, tp)
-		delete(addrMap, addr)
-		delete(nameMap, name)
-	}
-	c.Assert(len(typeMap), Equals, 0)
-	c.Assert(len(addrMap), Equals, 0)
-	c.Assert(len(nameMap), Equals, 0)
+
+	types := set.NewStringSet("tidb")
+	addrs := set.NewStringSet(s.listenAddr)
+	names := set.NewStringSet("cpu", "mem", "net", "disk")
+	re := tk.MustQuery("select * from information_schema.CLUSTER_LOAD;")
+	checkInfoRows(re, types, addrs, names)
+	re = tk.MustQuery("select * from information_schema.CLUSTER_HARDWARE;")
+	checkInfoRows(re, types, addrs, names)
+	re = tk.MustQuery("select * from information_schema.CLUSTER_SYSTEMINFO;")
+	names = set.NewStringSet("system")
+	checkInfoRows(re, types, addrs, names)
 }
 
 func (s *testTableSuite) TestSystemSchemaID(c *C) {
 	uniqueIDMap := make(map[int64]string)
-	s.checkSystemSchemaTableID(c, "information_schema", autoid.SystemSchemaIDFlag|1, 1, 10000, uniqueIDMap)
-	s.checkSystemSchemaTableID(c, "performance_schema", autoid.SystemSchemaIDFlag|10000, 10000, 20000, uniqueIDMap)
+	s.checkSystemSchemaTableID(c, "information_schema", autoid.InformationSchemaDBID, 1, 10000, uniqueIDMap)
+	s.checkSystemSchemaTableID(c, "performance_schema", autoid.PerformanceSchemaDBID, 10000, 20000, uniqueIDMap)
+	s.checkSystemSchemaTableID(c, "metric_schema", autoid.MetricSchemaDBID, 20000, 30000, uniqueIDMap)
+	s.checkSystemSchemaTableID(c, "inspection_schema", autoid.InspectionSchemaDBID, 30000, 40000, uniqueIDMap)
 }
 
 func (s *testTableSuite) checkSystemSchemaTableID(c *C, dbName string, dbID, start, end int64, uniqueIDMap map[int64]string) {
@@ -945,14 +1039,32 @@ func (s *testClusterTableSuite) TestSelectClusterTable(c *C) {
 	slowLogFileName := "tidb-slow.log"
 	prepareSlowLogfile(c, slowLogFileName)
 	defer os.Remove(slowLogFileName)
-	tk.MustExec("use information_schema")
-	tk.MustQuery("select count(*) from `CLUSTER_SLOW_QUERY`").Check(testkit.Rows("1"))
-	tk.MustQuery("select count(*) from `CLUSTER_PROCESSLIST`").Check(testkit.Rows("1"))
-	tk.MustQuery("select * from `CLUSTER_PROCESSLIST`").Check(testkit.Rows("1 root 127.0.0.1 <nil> Query 9223372036 0 <nil> 0  :10080"))
-	tk.MustQuery("select query_time, conn_id from `CLUSTER_SLOW_QUERY` order by time limit 1").Check(testkit.Rows("4.895492 6"))
-	tk.MustQuery("select count(*) from `CLUSTER_SLOW_QUERY` group by digest").Check(testkit.Rows("1"))
-	tk.MustQuery("select digest, count(*) from `CLUSTER_SLOW_QUERY` group by digest").Check(testkit.Rows("42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772 1"))
-	tk.MustQuery("select count(*) from `CLUSTER_SLOW_QUERY` where time > now() group by digest").Check(testkit.Rows())
+	for i := 0; i < 2; i++ {
+		tk.MustExec("use information_schema")
+		tk.MustExec(fmt.Sprintf("set @@tidb_enable_streaming=%d", i))
+		tk.MustExec("set @@global.tidb_enable_stmt_summary=1")
+		tk.MustQuery("select count(*) from `CLUSTER_SLOW_QUERY`").Check(testkit.Rows("1"))
+		tk.MustQuery("select count(*) from `CLUSTER_PROCESSLIST`").Check(testkit.Rows("1"))
+		tk.MustQuery("select * from `CLUSTER_PROCESSLIST`").Check(testkit.Rows(":10080 1 root 127.0.0.1 <nil> Query 9223372036 0 <nil> 0 "))
+		tk.MustQuery("select query_time, conn_id from `CLUSTER_SLOW_QUERY` order by time limit 1").Check(testkit.Rows("4.895492 6"))
+		tk.MustQuery("select count(*) from `CLUSTER_SLOW_QUERY` group by digest").Check(testkit.Rows("1"))
+		tk.MustQuery("select digest, count(*) from `CLUSTER_SLOW_QUERY` group by digest").Check(testkit.Rows("42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772 1"))
+		tk.MustQuery("select count(*) from `CLUSTER_SLOW_QUERY` where time > now() group by digest").Check(testkit.Rows())
+		tk.MustExec("use performance_schema")
+		re := tk.MustQuery("select * from `CLUSTER_events_statements_summary_by_digest`")
+		c.Assert(re, NotNil)
+		c.Assert(len(re.Rows()) > 0, IsTrue)
+		tk.MustQuery("select * from `CLUSTER_events_statements_summary_by_digest_history`")
+		c.Assert(re, NotNil)
+		c.Assert(len(re.Rows()) > 0, IsTrue)
+		tk.MustExec("set @@global.tidb_enable_stmt_summary=0")
+		re = tk.MustQuery("select * from `CLUSTER_events_statements_summary_by_digest`")
+		c.Assert(re, NotNil)
+		c.Assert(len(re.Rows()) == 0, IsTrue)
+		tk.MustQuery("select * from `CLUSTER_events_statements_summary_by_digest_history`")
+		c.Assert(re, NotNil)
+		c.Assert(len(re.Rows()) == 0, IsTrue)
+	}
 }
 
 func (s *testTableSuite) TestSelectHiddenColumn(c *C) {
