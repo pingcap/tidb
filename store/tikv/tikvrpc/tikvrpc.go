@@ -159,7 +159,6 @@ type Request struct {
 	kvrpcpb.Context
 	ReplicaReadSeed uint32
 	StoreTp         kv.StoreType
-	User            *kv.UserIdentity
 }
 
 // NewRequest returns new kv rpc request.
@@ -494,17 +493,11 @@ type CopStreamResponse struct {
 }
 
 // SetContext set the Context field for the given req to the specified ctx.
-func SetContext(req *Request, region *metapb.Region, peer *metapb.Peer, user *kv.UserIdentity) error {
+func SetContext(req *Request, region *metapb.Region, peer *metapb.Peer) error {
 	ctx := &req.Context
 	if region != nil {
 		ctx.RegionId = region.Id
 		ctx.RegionEpoch = region.RegionEpoch
-	}
-	if user != nil {
-		ctx.User = &kvrpcpb.User{
-			Name: user.Username,
-			Host: user.Hostname,
-		}
 	}
 	ctx.Peer = peer
 

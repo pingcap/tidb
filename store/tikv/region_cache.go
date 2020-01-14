@@ -269,7 +269,6 @@ type RPCContext struct {
 	PeerIdx int
 	Store   *Store
 	Addr    string
-	User    *kv.UserIdentity
 }
 
 // GetStoreID returns StoreID.

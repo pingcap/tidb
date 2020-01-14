@@ -19,9 +19,7 @@ import (
 
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/diagnosticspb"
-	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/tikvpb"
-	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/sysutil"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
@@ -110,7 +108,7 @@ func (s *rpcServer) CoprocessorStream(in *coprocessor.Request, stream tikvpb.Tik
 		}
 	}()
 
-	se, err := s.createSession(in.Context.User)
+	se, err := s.createSession()
 	if err != nil {
 		resp.OtherError = err.Error()
 		return stream.Send(resp)
@@ -124,7 +122,7 @@ func (s *rpcServer) CoprocessorStream(in *coprocessor.Request, stream tikvpb.Tik
 // handleCopRequest handles the cop dag request.
 func (s *rpcServer) handleCopRequest(ctx context.Context, req *coprocessor.Request) *coprocessor.Response {
 	resp := &coprocessor.Response{}
-	se, err := s.createSession(req.Context.User)
+	se, err := s.createSession()
 	if err != nil {
 		resp.OtherError = err.Error()
 		return resp
@@ -134,30 +132,17 @@ func (s *rpcServer) handleCopRequest(ctx context.Context, req *coprocessor.Reque
 	return h.HandleRequest(ctx, req)
 }
 
-func (s *rpcServer) createSession(user *kvrpcpb.User) (session.Session, error) {
+func (s *rpcServer) createSession() (session.Session, error) {
 	se, err := session.CreateSessionWithDomain(s.dom.Store(), s.dom)
 	if err != nil {
 		return nil, err
 	}
 	do := domain.GetDomain(se)
 	is := do.InfoSchema()
-	if user != nil {
-		pm := &privileges.UserPrivileges{
-			Handle: do.PrivilegeHandle(),
-		}
-		privilege.BindPrivilegeManager(se, pm)
-		se.GetSessionVars().User = &auth.UserIdentity{
-			Username: user.Name,
-			Hostname: user.Host,
-		}
-		authName, authHost, success := pm.GetAuthWithoutVerification(user.Name, user.Host)
-		if success {
-			se.GetSessionVars().User.AuthUsername = authName
-			se.GetSessionVars().User.AuthHostname = authHost
-			se.GetSessionVars().ActiveRoles = pm.GetDefaultRoles(authName, authHost)
-		}
+	pm := &privileges.UserPrivileges{
+		Handle: do.PrivilegeHandle(),
 	}
-
+	privilege.BindPrivilegeManager(se, pm)
 	se.GetSessionVars().TxnCtx.InfoSchema = is
 	// This is for disable parallel hash agg.
 	// TODO: remove this.

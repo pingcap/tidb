@@ -15,10 +15,12 @@ package core
 
 import (
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tipb/go-tipb"
@@ -80,6 +82,21 @@ func (b *PBPlanBuilder) pbToTableScan(e *tipb.Executor) (PhysicalPlan, error) {
 	// Currently only support cluster table.
 	if !tbl.Type().IsClusterTable() {
 		return nil, errors.Errorf("table %s is not a cluster table", tbl.Meta().Name.L)
+	}
+	if tblScan.User != nil {
+		pm := privilege.GetPrivilegeManager(b.sctx)
+		if pm != nil {
+			b.sctx.GetSessionVars().User = &auth.UserIdentity{
+				Username: tblScan.User.UserName,
+				Hostname: tblScan.User.UserHost,
+			}
+			authName, authHost, success := pm.GetAuthWithoutVerification(tblScan.User.UserName, tblScan.User.UserHost)
+			if success {
+				b.sctx.GetSessionVars().User.AuthUsername = authName
+				b.sctx.GetSessionVars().User.AuthHostname = authHost
+				b.sctx.GetSessionVars().ActiveRoles = pm.GetDefaultRoles(authName, authHost)
+			}
+		}
 	}
 	columns, err := b.convertColumnInfo(tbl.Meta(), tblScan.Columns)
 	if err != nil {

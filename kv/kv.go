@@ -288,13 +288,6 @@ type Request struct {
 	// SchemaVer is for any schema-ful storage to validate schema correctness if necessary.
 	SchemaVar int64
 	// User uses to do privilege check. It is only used in TiDB cluster memory table.
-	User *UserIdentity
-}
-
-// UserIdentity represents username and hostname.
-type UserIdentity struct {
-	Username string
-	Hostname string
 }
 
 // ResultSubset represents a result subset from a single storage unit.
