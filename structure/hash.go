@@ -334,7 +334,7 @@ func (i *ReverseHashIterator) Close() {
 }
 
 // NewHashReverseIter creates a reverse hash iterator.
-func (t *TxStructure) NewHashReverseIter(key []byte) (*ReverseHashIterator, error) {
+func NewHashReverseIter(t *TxStructure, key []byte) (*ReverseHashIterator, error) {
 	dataPrefix := t.hashDataKeyPrefix(key)
 	it, err := t.reader.IterReverse(dataPrefix.PrefixNext())
 	if err != nil {
