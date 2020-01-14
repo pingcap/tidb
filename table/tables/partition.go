@@ -20,6 +20,8 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser"
+	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
@@ -27,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mock"
@@ -122,6 +125,8 @@ type PartitionExpr struct {
 	Column      *expression.Column
 	Ranges      []expression.Expression
 	UpperBounds []expression.Expression
+	// OrigExpr is the partition expression ast.
+	OrigExpr ast.ExprNode
 	// Expr is the hash partition expression.
 	Expr expression.Expression
 }
@@ -207,44 +212,41 @@ func generateHashPartitionExpr(ctx sessionctx.Context, pi *model.PartitionInfo,
 	columns []*expression.Column, names types.NameSlice) (*PartitionExpr, error) {
 	var column *expression.Column
 	// The caller should assure partition info is not nil.
-	partitionPruneExprs := make([]expression.Expression, 0, len(pi.Definitions))
-	var buf bytes.Buffer
 	schema := expression.NewSchema(columns...)
-	for i := 0; i < int(pi.Num); i++ {
-		fmt.Fprintf(&buf, "MOD(ABS(%s),(%d))=%d", pi.Expr, pi.Num, i)
-		exprs, err := expression.ParseSimpleExprsWithNames(ctx, buf.String(), schema, names)
-		if err != nil {
-			// If it got an error here, ddl may hang forever, so this error log is important.
-			logutil.BgLogger().Error("wrong table partition expression", zap.String("expression", buf.String()), zap.Error(err))
-			return nil, errors.Trace(err)
-		}
-		// Get a hash code in advance to prevent data race afterwards.
-		exprs[0].HashCode(ctx.GetSessionVars().StmtCtx)
-		partitionPruneExprs = append(partitionPruneExprs, exprs[0])
-		buf.Reset()
+	origExpr, err := parsePartitionExpr(ctx, pi.Expr, schema, names)
+	if err != nil {
+		return nil, err
 	}
-	exprs, err := expression.ParseSimpleExprsWithNames(ctx, pi.Expr, schema, names)
+	exprs, err := rewritePartitionExpr(ctx, origExpr, schema, names)
 	if err != nil {
 		// If it got an error here, ddl may hang forever, so this error log is important.
 		logutil.BgLogger().Error("wrong table partition expression", zap.String("expression", pi.Expr), zap.Error(err))
 		return nil, errors.Trace(err)
 	}
-	exprs[0].HashCode(ctx.GetSessionVars().StmtCtx)
-	if col, ok := exprs[0].(*expression.Column); ok {
+	exprs.HashCode(ctx.GetSessionVars().StmtCtx)
+	if col, ok := exprs.(*expression.Column); ok {
 		column = col
 	}
 	return &PartitionExpr{
-		Column: column,
-		Expr:   exprs[0],
-		Ranges: partitionPruneExprs,
+		Column:   column,
+		Expr:     exprs,
+		OrigExpr: origExpr,
 	}, nil
 }
 
 // PartitionExpr returns the partition expression.
 func (t *partitionedTable) PartitionExpr(ctx sessionctx.Context, columns []*expression.Column, names types.NameSlice) (*PartitionExpr, error) {
-	// TODO: a better performance implementation:
+	// TODO: a better performance implementation for range partition:
 	// traverse the Expression, find all columns and rewrite them.
-	return newPartitionExprBySchema(ctx, t.meta, columns, names)
+	// return newPartitionExprBySchema(ctx, t.meta, columns, names)
+	pi := t.meta.GetPartitionInfo()
+	switch pi.Type {
+	case model.PartitionTypeHash:
+		return t.partitionExpr, nil
+	case model.PartitionTypeRange:
+		return generatePartitionExpr(ctx, pi, columns, names)
+	}
+	panic("cannot reach here")
 }
 
 func partitionRecordKey(pid int64, handle int64) kv.Key {
@@ -419,4 +421,22 @@ func FindPartitionByName(meta *model.TableInfo, parName string) (int64, error) {
 		}
 	}
 	return -1, errors.Trace(table.ErrUnknownPartition.GenWithStackByArgs(parName, meta.Name.O))
+}
+
+func parsePartitionExpr(ctx sessionctx.Context, exprStr string, schema *expression.Schema, names types.NameSlice) (ast.ExprNode, error) {
+	exprStr = "select " + exprStr
+	stmts, warns, err := parser.New().Parse(exprStr, "", "")
+	for _, warn := range warns {
+		ctx.GetSessionVars().StmtCtx.AppendWarning(util.SyntaxWarn(warn))
+	}
+	if err != nil {
+		return nil, util.SyntaxWarn(err)
+	}
+	fields := stmts[0].(*ast.SelectStmt).Fields.Fields
+	return fields[0].Expr, nil
+}
+
+func rewritePartitionExpr(ctx sessionctx.Context, field ast.ExprNode, schema *expression.Schema, names types.NameSlice) (expression.Expression, error) {
+	expr, err := expression.RewriteSimpleExprWithNames(ctx, field, schema, names)
+	return expr, err
 }

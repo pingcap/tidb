@@ -247,6 +247,9 @@ func (s *testSuite5) TestSetVar(c *C) {
 	tk.MustExec("set @@tidb_general_log = 1")
 	tk.MustExec("set @@tidb_general_log = 0")
 
+	tk.MustExec("set @@tidb_pprof_sql_cpu = 1")
+	tk.MustExec("set @@tidb_pprof_sql_cpu = 0")
+
 	tk.MustExec(`set tidb_force_priority = "no_priority"`)
 	tk.MustQuery(`select @@tidb_force_priority;`).Check(testkit.Rows("NO_PRIORITY"))
 	tk.MustExec(`set tidb_force_priority = "low_priority"`)
@@ -476,6 +479,11 @@ func (s *testSuite5) TestValidateSetVar(c *C) {
 
 	tk.MustExec("set @@tidb_general_log=0;")
 	tk.MustQuery("select @@tidb_general_log;").Check(testkit.Rows("0"))
+
+	tk.MustExec("set @@tidb_pprof_sql_cpu=1;")
+	tk.MustQuery("select @@tidb_pprof_sql_cpu;").Check(testkit.Rows("1"))
+	tk.MustExec("set @@tidb_pprof_sql_cpu=0;")
+	tk.MustQuery("select @@tidb_pprof_sql_cpu;").Check(testkit.Rows("0"))
 
 	tk.MustExec("set @@tidb_enable_streaming=1;")
 	tk.MustQuery("select @@tidb_enable_streaming;").Check(testkit.Rows("1"))

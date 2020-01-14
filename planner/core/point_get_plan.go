@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/parser/opcode"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/privilege"
@@ -31,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/parser_driver"
+	"github.com/pingcap/tidb/util/math"
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tipb/go-tipb"
 )
@@ -44,6 +46,7 @@ type PointGetPlan struct {
 	schema           *expression.Schema
 	TblInfo          *model.TableInfo
 	IndexInfo        *model.IndexInfo
+	PartitionInfo    *model.PartitionDefinition
 	Handle           int64
 	HandleParam      *driver.ParamMarkerExpr
 	IndexValues      []types.Datum
@@ -111,6 +114,9 @@ func (p *PointGetPlan) explainInfo(normalized bool) string {
 	}
 	if p.Lock {
 		fmt.Fprintf(buffer, ", lock")
+	}
+	if p.PartitionInfo != nil {
+		fmt.Fprintf(buffer, ", partition:%s", p.PartitionInfo.Name.L)
 	}
 	return buffer.String()
 }
@@ -552,9 +558,7 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt) *PointGetP
 	// Table partition implementation translates LogicalPlan from `DataSource` to
 	// `Union -> DataSource` in the logical plan optimization pass, since PointGetPlan
 	// bypass the logical plan optimization, it can't support partitioned table.
-	if tbl.GetPartitionInfo() != nil {
-		return nil
-	}
+	pi := tbl.GetPartitionInfo()
 	for _, col := range tbl.Columns {
 		// Do not handle generated columns.
 		if col.IsGenerated() {
@@ -569,6 +573,17 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt) *PointGetP
 	pairs = getNameValuePairs(pairs, tblAlias, selStmt.Where)
 	if pairs == nil {
 		return nil
+	}
+
+	var partitionInfo *model.PartitionDefinition
+	if pi != nil {
+		if pi.Type != model.PartitionTypeHash {
+			return nil
+		}
+		partitionInfo = getPartitionInfo(ctx, tbl, pairs)
+		if partitionInfo == nil {
+			return nil
+		}
 	}
 	handlePair, fieldType := findPKHandle(tbl, pairs)
 	if handlePair.value.Kind() != types.KindNull && len(pairs) == 1 {
@@ -602,6 +617,7 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt) *PointGetP
 		p.Handle = intDatum.GetInt64()
 		p.UnsignedHandle = mysql.HasUnsignedFlag(fieldType.Flag)
 		p.HandleParam = handlePair.param
+		p.PartitionInfo = partitionInfo
 		return p
 	}
 
@@ -628,6 +644,7 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt) *PointGetP
 		p.IndexInfo = idxInfo
 		p.IndexValues = idxValues
 		p.IndexValueParams = idxValueParams
+		p.PartitionInfo = partitionInfo
 		return p
 	}
 	return nil
@@ -986,6 +1003,7 @@ func colInfoToColumn(col *model.ColumnInfo, idx int) *expression.Column {
 		ID:       col.ID,
 		UniqueID: int64(col.Offset),
 		Index:    idx,
+		OrigName: col.Name.L,
 	}
 }
 
@@ -1005,4 +1023,31 @@ func (p *PointGetPlan) findHandleCol() *expression.Column {
 		p.schema.Append(handleCol)
 	}
 	return handleCol
+}
+
+func getPartitionInfo(ctx sessionctx.Context, tbl *model.TableInfo, pairs []nameValuePair) *model.PartitionDefinition {
+	is := infoschema.GetInfoSchema(ctx)
+	table, ok := is.TableByID(tbl.ID)
+	if !ok {
+		return nil
+	}
+	pi := tbl.Partition
+	if partitionTable, ok := table.(partitionTable); ok {
+		// PartitionExpr don't need columns and names for hash partition.
+		partitionExpr, err := partitionTable.PartitionExpr(ctx, nil, nil)
+		if err != nil {
+			return nil
+		}
+		expr := partitionExpr.OrigExpr
+		if col, ok := expr.(*ast.ColumnNameExpr); ok {
+			for _, pair := range pairs {
+				if col.Name.Name.L == pair.colName {
+					val := pair.value.GetInt64()
+					pos := math.Abs(val) % int64(pi.Num)
+					return &pi.Definitions[pos]
+				}
+			}
+		}
+	}
+	return nil
 }
