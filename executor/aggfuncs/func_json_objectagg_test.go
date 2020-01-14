@@ -9,7 +9,7 @@ import (
 )
 
 func (s *testSuite) TestMergePartialResult4JsonObjectagg(c *C) {
-	typeList := []byte{mysql.TypeString, mysql.TypeJSON}
+	typeList := []byte{mysql.TypeLonglong, mysql.TypeDouble, mysql.TypeString, mysql.TypeJSON}
 	var argCombines [][]byte
 	for i := 0; i < len(typeList); i++ {
 		for j := 0; j < len(typeList); j++ {
@@ -54,7 +54,7 @@ func (s *testSuite) TestMergePartialResult4JsonObjectagg(c *C) {
 }
 
 func (s *testSuite) TestJsonObjectagg(c *C) {
-	typeList := []byte{mysql.TypeString, mysql.TypeJSON}
+	typeList := []byte{mysql.TypeLonglong, mysql.TypeDouble, mysql.TypeString, mysql.TypeJSON}
 	var argCombines [][]byte
 	for i := 0; i < len(typeList); i++ {
 		for j := 0; j < len(typeList); j++ {
