@@ -752,8 +752,8 @@ var MetricTableMap = map[string]MetricTableDef{
 		Comment: "The available/capacity size of each TiKV instance",
 	},
 	"tikv_cpu": {
-		PromQL:  `sum(rate(tikv_thread_cpu_seconds_total{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (instance)`,
-		Labels:  []string{"instance"},
+		PromQL:  `sum(rate(tikv_thread_cpu_seconds_total{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (instance,name)`,
+		Labels:  []string{"instance", "name"},
 		Comment: "The CPU usage of each TiKV instance",
 	},
 	"tikv_memory": {
@@ -884,5 +884,176 @@ var MetricTableMap = map[string]MetricTableDef{
 	"tikv_region_written_keys": {
 		PromQL: `sum(rate(tikv_region_written_keys_bucket{}[$RANGE_DURATION]))`,
 		Labels: []string{"instance"},
+	},
+	"tikv_request_batch_avg": {
+		PromQL:  `sum(rate(tikv_server_request_batch_ratio_sum{}[$RANGE_DURATION])) by (type,instance) / sum(rate(tikv_server_request_batch_ratio_count{}[$RANGE_DURATION])) by (type,instance)`,
+		Labels:  []string{"instance", "type"},
+		Comment: "The ratio of request batch output to input per TiKV instance",
+	},
+	"tikv_request_batch_ratio": {
+		PromQL:   `histogram_quantile($QUANTILE, sum(rate(tikv_server_request_batch_ratio_bucket{}[$RANGE_DURATION])) by (le,type,instance))`,
+		Labels:   []string{"instance", "type"},
+		Quantile: 0.99,
+		Comment:  "The ratio of request batch output to input per TiKV instance",
+	},
+	"tikv_request_batch_size_avg": {
+		PromQL:  `sum(rate(tikv_server_request_batch_size_sum{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (type,instance) / sum(rate(tikv_server_request_batch_size_count{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (type,instance)`,
+		Labels:  []string{"instance", "type"},
+		Comment: "The avg size of requests into request batch per TiKV instance",
+	},
+	"tikv_request_batch_size": {
+		PromQL:   `histogram_quantile($QUANTILE, sum(rate(tikv_server_request_batch_size_bucket{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (le,type,instance))`,
+		Labels:   []string{"instance", "type"},
+		Quantile: 0.99,
+		Comment:  "The size of requests into request batch per TiKV instance",
+	},
+
+	"tikv_grpc_messge_duration": {
+		PromQL:   `histogram_quantile($QUANTILE, sum(rate(tikv_grpc_msg_duration_seconds_bucket{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (le,type,instance))`,
+		Labels:   []string{"instance", "type"},
+		Quantile: 0.99,
+		Comment:  "The execution time of gRPC message",
+	},
+	"tikv_average_grpc_messge_duration": {
+		PromQL: `sum(rate(tikv_grpc_msg_duration_seconds_sum{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (type,instance) / sum(rate(tikv_grpc_msg_duration_seconds_count{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (type,instance)`,
+		Labels: []string{"instance", "type"},
+	},
+	"tikv_grpc_req_batch_size": {
+		PromQL:   `histogram_quantile($QUANTILE, sum(rate(tikv_server_grpc_req_batch_size_bucket{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (le,instance))`,
+		Labels:   []string{"instance"},
+		Quantile: 0.99,
+	},
+	"tikv_grpc_resp_batch_size": {
+		PromQL:   `histogram_quantile($QUANTILE, sum(rate(tikv_server_grpc_resp_batch_size_bucket{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (le,instance))`,
+		Labels:   []string{"instance"},
+		Quantile: 0.99,
+	},
+	"tikv_grpc_avg_req_batch_size": {
+		PromQL: `sum(rate(tikv_server_grpc_req_batch_size_sum{$LABEL_CONDITIONS}[$RANGE_DURATION])) / sum(rate(tikv_server_grpc_req_batch_size_count{$LABEL_CONDITIONS}[$RANGE_DURATION]))`,
+	},
+	"tikv_grpc_avg_resp_batch_size": {
+		PromQL: `sum(rate(tikv_server_grpc_resp_batch_size_sum{$LABEL_CONDITIONS}[$RANGE_DURATION])) / sum(rate(tikv_server_grpc_resp_batch_size_count{$LABEL_CONDITIONS}[$RANGE_DURATION]))`,
+	},
+	"tikv_raft_message_batch_size": {
+		PromQL:   `histogram_quantile($QUANTILE, sum(rate(tikv_server_raft_message_batch_size_bucket{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (le,instance))`,
+		Labels:   []string{"instance"},
+		Quantile: 0.99,
+	},
+	"tikv_raft_message_avg_batch_size": {
+		PromQL: `sum(rate(tikv_server_raft_message_batch_size_sum{$LABEL_CONDITIONS}[$RANGE_DURATION])) / sum(rate(tikv_server_raft_message_batch_size_count{$LABEL_CONDITIONS}[$RANGE_DURATION]))`,
+	},
+	"tikv_pd_requests": {
+		PromQL:  `sum(rate(tikv_pd_request_duration_seconds_count{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (type,instance)`,
+		Labels:  []string{"type", "instance"},
+		Comment: "The count of requests that TiKV sends to PD",
+	},
+	"tikv_pd_request_avg_duration": {
+		PromQL:  `sum(rate(tikv_pd_request_duration_seconds_sum{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (type ,instance) / sum(rate(tikv_pd_request_duration_seconds_count{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (type,instance)`,
+		Labels:  []string{"instance", "type"},
+		Comment: "The time consumed by requests that TiKV sends to PD",
+	},
+	"tikv_pd_heartbeats": {
+		PromQL:  `sum(rate(tikv_pd_heartbeat_message_total{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (type ,instance)`,
+		Labels:  []string{"instance", "type"},
+		Comment: " \tThe total number of PD heartbeat messages",
+	},
+	"tikv_pd_validate_peers": {
+		PromQL:  `sum(rate(tikv_pd_validate_peer_total{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (type ,instance)`,
+		Labels:  []string{"instance", "type"},
+		Comment: "The total number of peers validated by the PD worker",
+	},
+	"tikv_apply_log_avg_duration": {
+		PromQL:   `sum(rate(tikv_raftstore_apply_log_duration_seconds_sum{}[$RANGE_DURATION])) / sum(rate(tikv_raftstore_apply_log_duration_seconds_count{}[$RANGE_DURATION])) `,
+		Labels:   []string{"instance"},
+		Quantile: 0.99,
+		Comment:  "The average time consumed when Raft applies log",
+	},
+	"tikv_apply_log_duration": {
+		PromQL:   `histogram_quantile($QUANTILE, sum(rate(tikv_raftstore_apply_log_duration_seconds_bucket{}[$RANGE_DURATION])) by (le,instance))`,
+		Labels:   []string{"instance"},
+		Quantile: 0.99,
+		Comment:  "The time consumed when Raft applies log",
+	},
+	"tikv_apply_log_duration_per_server": {
+		PromQL:   `histogram_quantile($QUANTILE, sum(rate(tikv_raftstore_apply_log_duration_seconds_bucket{}[$RANGE_DURATION])) by (le, instance))`,
+		Labels:   []string{"instance"},
+		Quantile: 0.99,
+		Comment:  "The time consumed for Raft to apply logs per TiKV instance",
+	},
+	"tikv_append_log_avg_duration": {
+		PromQL:   `sum(rate(tikv_raftstore_append_log_duration_seconds_sum{}[$RANGE_DURATION])) / sum(rate(tikv_raftstore_append_log_duration_seconds_count{}[$RANGE_DURATION]))`,
+		Labels:   []string{"instance"},
+		Quantile: 0.99,
+		Comment:  "The avg time consumed when Raft appends log",
+	},
+	"tikv_append_log_duration": {
+		PromQL:   `histogram_quantile($QUANTILE, sum(rate(tikv_raftstore_append_log_duration_seconds_bucket{}[$RANGE_DURATION])) by (le,instance))`,
+		Labels:   []string{"instance"},
+		Quantile: 0.99,
+		Comment:  "The time consumed when Raft appends log",
+	},
+	"tikv_append_log_duration_per_server": {
+		PromQL:   `histogram_quantile($QUANTILE, sum(rate(tikv_raftstore_append_log_duration_seconds_bucket{}[$RANGE_DURATION])) by (le, instance))`,
+		Labels:   []string{"instance"},
+		Quantile: 0.99,
+		Comment:  "The time consumed when Raft appends log on each TiKV instance",
+	},
+	"tikv_commit_log_avg_duration": {
+		PromQL:  `sum(rate(tikv_raftstore_commit_log_duration_seconds_sum{}[$RANGE_DURATION])) / sum(rate(tikv_raftstore_commit_log_duration_seconds_count{}[$RANGE_DURATION]))`,
+		Comment: "The time consumed when Raft commits log",
+	},
+	"tikv_commit_log_duration": {
+		PromQL:   `histogram_quantile($QUANTILE, sum(rate(tikv_raftstore_commit_log_duration_seconds_bucket{}[$RANGE_DURATION])) by (le,instance))`,
+		Labels:   []string{"instance"},
+		Quantile: 0.99,
+		Comment:  "The time consumed when Raft commits log",
+	},
+	"tikv_commit_log_duration_per_server": {
+		PromQL:   `histogram_quantile($QUANTILE, sum(rate(tikv_raftstore_commit_log_duration_seconds_bucket{}[$RANGE_DURATION])) by (le, instance))`,
+		Labels:   []string{"instance"},
+		Quantile: 0.99,
+		Comment:  "The time consumed when Raft commits log on each TiKV instance",
+	},
+	"tikv_ready_handled": {
+		PromQL:  `sum(rate(tikv_raftstore_raft_ready_handled_total{}[$RANGE_DURATION])) by (type,instance)`,
+		Labels:  []string{"instance"},
+		Comment: "The count of ready handled of Raft",
+	},
+	"tikv_process_handled": {
+		PromQL:  `sum(rate(tikv_raftstore_raft_process_duration_secs_count{}[$RANGE_DURATION]))`,
+		Labels:  []string{"instance", "type"},
+		Comment: "The count of different process type of Raft",
+	},
+	"tikv_process_ready_duration_per_server": {
+		PromQL:   `histogram_quantile($QUANTILE, sum(rate(tikv_raftstore_raft_process_duration_secs_bucket{ type='ready'}[$RANGE_DURATION])) by (le,instance,type))`,
+		Labels:   []string{"instance", "type"},
+		Quantile: 0.99,
+		Comment:  "The time consumed for peer processes to be ready in Raft",
+	},
+	"tikv_duration_of_raft_store_events": {
+		PromQL:   `histogram_quantile($QUANTILE, sum(rate(tikv_raftstore_event_duration_bucket{}[$RANGE_DURATION])) by (le,type,instance))`,
+		Labels:   []string{"instance", "type"},
+		Quantile: 0.99,
+		Comment:  "The time consumed by raftstore events (P99).99",
+	},
+	"tikv_raft_sent_messages_per_server": {
+		PromQL:  `sum(rate(tikv_raftstore_raft_sent_message_total{}[$RANGE_DURATION])) by (instance,type)`,
+		Labels:  []string{"instance", "type"},
+		Comment: "The number of Raft messages sent by each TiKV instance",
+	},
+	"tikv_flush_messages_per_server": {
+		PromQL:  `sum(rate(tikv_server_raft_message_flush_total{}[$RANGE_DURATION])) by (instance)`,
+		Labels:  []string{"instance"},
+		Comment: "The number of Raft messages flushed by each TiKV instance",
+	},
+	"tikv_receive_messages_per_server": {
+		PromQL:  `sum(rate(tikv_server_raft_message_recv_total{}[$RANGE_DURATION])) by (instance)`,
+		Labels:  []string{"instance"},
+		Comment: "The number of Raft messages received by each TiKV instance",
+	},
+	"tikv_raft_dropped_messages": {
+		PromQL:  `sum(rate(tikv_raftstore_raft_dropped_message_total{}[$RANGE_DURATION])) by (type,instance)`,
+		Labels:  []string{"instance", "type"},
+		Comment: "The number of dropped Raft messages per type",
 	},
 }
