@@ -225,7 +225,6 @@ func (s *testPrivilegeSuite) TestCheckPrivilegeWithRoles(c *C) {
 	mustExec(c, rootSe, `GRANT UPDATE ON test.* TO r_2;`)
 	c.Assert(pc.RequestVerification(activeRoles, "test", "", "", mysql.UpdatePriv), IsTrue)
 
-	mustExec(c, se, `flush privileges`)
 	mustExec(c, se, `SET ROLE NONE;`)
 	c.Assert(len(se.GetSessionVars().ActiveRoles), Equals, 0)
 	mustExec(c, se, `SET ROLE DEFAULT;`)
