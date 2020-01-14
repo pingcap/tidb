@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/memory"
 	"go.uber.org/zap"
 )
 
@@ -48,13 +49,18 @@ var (
 //     3. newHandle (int64) : if handleChanged == true, the newHandle means the new handle after update.
 //     4. err (error) : error in the update.
 func updateRecord(ctx context.Context, sctx sessionctx.Context, h int64, oldData, newData []types.Datum, modified []bool, t table.Table,
-	onDup bool) (bool, bool, int64, error) {
+	onDup bool, memTracker *memory.Tracker) (bool, bool, int64, error) {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("executor.updateRecord", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
-
+	txn, err := sctx.Txn(false)
+	if err != nil {
+		return false, false, 0, err
+	}
+	memUsageOfTxnState := txn.Size()
+	defer memTracker.Consume(int64(txn.Size() - memUsageOfTxnState))
 	sc := sctx.GetSessionVars().StmtCtx
 	changed, handleChanged := false, false
 	// onUpdateSpecified is for "UPDATE SET ts_field = old_value", the
@@ -150,7 +156,6 @@ func updateRecord(ctx context.Context, sctx sessionctx.Context, h int64, oldData
 	}
 
 	// 5. If handle changed, remove the old then add the new record, otherwise update the record.
-	var err error
 	if handleChanged {
 		if sc.DupKeyAsWarning {
 			// For `UPDATE IGNORE`/`INSERT IGNORE ON DUPLICATE KEY UPDATE`

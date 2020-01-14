@@ -420,14 +420,14 @@ func (s *session) doCommit(ctx context.Context) error {
 		}
 	}
 
-	// Get the related table IDs.
-	relatedTables := s.GetSessionVars().TxnCtx.TableDeltaMap
-	tableIDs := make([]int64, 0, len(relatedTables))
-	for id := range relatedTables {
-		tableIDs = append(tableIDs, id)
+	// Get the related table or partition IDs.
+	relatedPhysicalTables := s.GetSessionVars().TxnCtx.TableDeltaMap
+	physicalTableIDs := make([]int64, 0, len(relatedPhysicalTables))
+	for id := range relatedPhysicalTables {
+		physicalTableIDs = append(physicalTableIDs, id)
 	}
 	// Set this option for 2 phase commit to validate schema lease.
-	s.txn.SetOption(kv.SchemaChecker, domain.NewSchemaChecker(domain.GetDomain(s), s.sessionVars.TxnCtx.SchemaVersion, tableIDs))
+	s.txn.SetOption(kv.SchemaChecker, domain.NewSchemaChecker(domain.GetDomain(s), s.sessionVars.TxnCtx.SchemaVersion, physicalTableIDs))
 
 	return s.txn.Commit(sessionctx.SetCommitCtx(ctx, s))
 }
@@ -1736,7 +1736,7 @@ func CreateSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 
 const (
 	notBootstrapped         = 0
-	currentBootstrapVersion = version38
+	currentBootstrapVersion = version39
 )
 
 func getStoreBootstrapVersion(store kv.Storage) int64 {
@@ -1805,6 +1805,7 @@ var builtinGlobalVariable = []string{
 	variable.QueryCacheSize,
 	variable.CharacterSetServer,
 	variable.AutoIncrementIncrement,
+	variable.AutoIncrementOffset,
 	variable.CollationServer,
 	variable.NetWriteTimeout,
 	variable.MaxExecutionTime,
@@ -1852,6 +1853,7 @@ var builtinGlobalVariable = []string{
 	variable.TiDBEnableNoopFuncs,
 	variable.TiDBEnableIndexMerge,
 	variable.TiDBTxnMode,
+	variable.TiDBRowFormatVersion,
 	variable.TiDBEnableStmtSummary,
 	variable.TiDBStmtSummaryRefreshInterval,
 	variable.TiDBStmtSummaryHistorySize,
@@ -2045,6 +2047,7 @@ func logQuery(query string, vars *variable.SessionVars) {
 			zap.Int64("schemaVersion", vars.TxnCtx.SchemaVersion),
 			zap.Uint64("txnStartTS", vars.TxnCtx.StartTS),
 			zap.String("current_db", vars.CurrentDB),
+			zap.String("txn_mode", vars.GetReadableTxnMode()),
 			zap.String("sql", query+vars.PreparedParams.String()))
 	}
 }

@@ -369,13 +369,13 @@ type PhysicalIndexMergeJoin struct {
 
 	// KeyOff2KeyOffOrderByIdx maps the offsets in join keys to the offsets in join keys order by index.
 	KeyOff2KeyOffOrderByIdx []int
-	// NeedOuterSort means whether outer rows should be sorted to build range.
-	NeedOuterSort bool
 	// CompareFuncs store the compare functions for outer join keys and inner join key.
 	CompareFuncs []expression.CompareFunc
 	// OuterCompareFuncs store the compare functions for outer join keys and outer join
 	// keys, it's for outer rows sort's convenience.
 	OuterCompareFuncs []expression.CompareFunc
+	// NeedOuterSort means whether outer rows should be sorted to build range.
+	NeedOuterSort bool
 	// Desc means whether inner child keep desc order.
 	Desc bool
 }

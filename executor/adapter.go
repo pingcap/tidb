@@ -313,6 +313,10 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 		}()
 	}
 
+	if sctx.GetSessionVars().StmtCtx.HasMemQuotaHint {
+		sctx.GetSessionVars().StmtCtx.MemTracker.SetBytesLimit(sctx.GetSessionVars().StmtCtx.MemQuotaQuery)
+	}
+
 	e, err := a.buildExecutor()
 	if err != nil {
 		return nil, err
@@ -335,7 +339,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 				sql = ss.SecureText()
 			}
 		}
-		maxExecutionTime := getMaxExecutionTime(sctx, a.StmtNode)
+		maxExecutionTime := getMaxExecutionTime(sctx)
 		// Update processinfo, ShowProcess() will use it.
 		pi.SetProcessInfo(sql, time.Now(), cmd, maxExecutionTime)
 		if a.Ctx.GetSessionVars().StmtCtx.StmtType == "" {
@@ -396,17 +400,11 @@ func (a *ExecStmt) handleNoDelay(ctx context.Context, e Executor, isPessimistic 
 }
 
 // getMaxExecutionTime get the max execution timeout value.
-func getMaxExecutionTime(sctx sessionctx.Context, stmtNode ast.StmtNode) uint64 {
-	ret := sctx.GetSessionVars().MaxExecutionTime
-	if sel, ok := stmtNode.(*ast.SelectStmt); ok {
-		for _, hint := range sel.TableHints {
-			if hint.HintName.L == variable.MaxExecutionTime {
-				ret = hint.MaxExecutionTime
-				break
-			}
-		}
+func getMaxExecutionTime(sctx sessionctx.Context) uint64 {
+	if sctx.GetSessionVars().StmtCtx.HasMaxExecutionTime {
+		return sctx.GetSessionVars().StmtCtx.MaxExecutionTime
 	}
-	return ret
+	return sctx.GetSessionVars().MaxExecutionTime
 }
 
 type chunkRowRecordSet struct {
@@ -518,13 +516,19 @@ func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, e Executor) (sqlex
 
 func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e Executor) error {
 	sctx := a.Ctx
-	txn, err := sctx.Txn(true)
+	// Do not active the transaction here.
+	// When autocommit = 0 and transaction in pessimistic mode,
+	// statements like set xxx = xxx; should not active the transaction.
+	txn, err := sctx.Txn(false)
 	if err != nil {
 		return err
 	}
 	txnCtx := sctx.GetSessionVars().TxnCtx
 	for {
 		_, err = a.handleNoDelayExecutor(ctx, e)
+		if !txn.Valid() {
+			return err
+		}
 		if err != nil {
 			// It is possible the DML has point get plan that locks the key.
 			e, err = a.handlePessimisticLockError(ctx, err)

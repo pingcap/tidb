@@ -54,15 +54,19 @@ import (
 	"google.golang.org/grpc"
 )
 
-var _ = Suite(&testTableSuite{})
-var _ = SerialSuites(&testClusterTableSuite{testTableSuite: &testTableSuite{}})
+var _ = Suite(&testTableSuite{&testTableSuiteBase{}})
+var _ = SerialSuites(&testClusterTableSuite{testTableSuiteBase: &testTableSuiteBase{}})
 
 type testTableSuite struct {
+	*testTableSuiteBase
+}
+
+type testTableSuiteBase struct {
 	store kv.Storage
 	dom   *domain.Domain
 }
 
-func (s *testTableSuite) SetUpSuite(c *C) {
+func (s *testTableSuiteBase) SetUpSuite(c *C) {
 	testleak.BeforeTest()
 
 	var err error
@@ -73,14 +77,14 @@ func (s *testTableSuite) SetUpSuite(c *C) {
 	c.Assert(err, IsNil)
 }
 
-func (s *testTableSuite) TearDownSuite(c *C) {
+func (s *testTableSuiteBase) TearDownSuite(c *C) {
 	s.dom.Close()
 	s.store.Close()
 	testleak.AfterTest(c)()
 }
 
 type testClusterTableSuite struct {
-	*testTableSuite
+	*testTableSuiteBase
 	rpcserver  *grpc.Server
 	httpServer *httptest.Server
 	mockAddr   string
@@ -88,7 +92,7 @@ type testClusterTableSuite struct {
 }
 
 func (s *testClusterTableSuite) SetUpSuite(c *C) {
-	s.testTableSuite.SetUpSuite(c)
+	s.testTableSuiteBase.SetUpSuite(c)
 	s.rpcserver, s.listenAddr = s.setUpRPCService(c, ":0")
 	s.httpServer, s.mockAddr = s.setUpMockPDHTTPServer()
 }
@@ -105,11 +109,15 @@ func (s *testClusterTableSuite) setUpRPCService(c *C, addr string) (*grpc.Server
 		Command: mysql.ComQuery,
 	}
 	srv := server.NewRPCServer(config.GetGlobalConfig(), s.dom, sm)
-	addr = fmt.Sprintf("127.0.0.1:%d", lis.Addr().(*net.TCPAddr).Port)
+	port := lis.Addr().(*net.TCPAddr).Port
+	addr = fmt.Sprintf("127.0.0.1:%d", port)
 	go func() {
 		err = srv.Serve(lis)
 		c.Assert(err, IsNil)
 	}()
+	cfg := config.GetGlobalConfig()
+	cfg.Status.StatusPort = uint(port)
+	config.StoreGlobalConfig(cfg)
 	return srv, addr
 }
 
@@ -177,7 +185,7 @@ func (s *testClusterTableSuite) TearDownSuite(c *C) {
 	if s.httpServer != nil {
 		s.httpServer.Close()
 	}
-	s.testTableSuite.TearDownSuite(c)
+	s.testTableSuiteBase.TearDownSuite(c)
 }
 
 func (s *testTableSuite) TestInfoschemaFieldValue(c *C) {
@@ -882,7 +890,7 @@ func (s *testClusterTableSuite) TestTiDBClusterInfo(c *C) {
 	}
 	tk = testkit.NewTestKit(c, store)
 	tk.MustQuery("select * from information_schema.cluster_info").Check(testkit.Rows(
-		"tidb :4000 :10080 5.7.25-TiDB-None None",
+		"tidb :4000 :"+strconv.FormatUint(uint64(config.GetGlobalConfig().Status.StatusPort), 10)+" 5.7.25-TiDB-None None",
 		"pd "+mockAddr+" "+mockAddr+" 4.0.0-alpha mock-pd-githash",
 		"tikv 127.0.0.1:20160 "+mockAddr+" 4.0.0-alpha mock-tikv-githash",
 	))
@@ -1031,29 +1039,32 @@ func (s *testClusterTableSuite) TestSelectClusterTable(c *C) {
 	slowLogFileName := "tidb-slow.log"
 	prepareSlowLogfile(c, slowLogFileName)
 	defer os.Remove(slowLogFileName)
-	tk.MustExec("use information_schema")
-	tk.MustExec("set @@global.tidb_enable_stmt_summary=1")
-	tk.MustQuery("select count(*) from `CLUSTER_SLOW_QUERY`").Check(testkit.Rows("1"))
-	tk.MustQuery("select count(*) from `CLUSTER_PROCESSLIST`").Check(testkit.Rows("1"))
-	tk.MustQuery("select * from `CLUSTER_PROCESSLIST`").Check(testkit.Rows(":10080 1 root 127.0.0.1 <nil> Query 9223372036 0 <nil> 0 "))
-	tk.MustQuery("select query_time, conn_id from `CLUSTER_SLOW_QUERY` order by time limit 1").Check(testkit.Rows("4.895492 6"))
-	tk.MustQuery("select count(*) from `CLUSTER_SLOW_QUERY` group by digest").Check(testkit.Rows("1"))
-	tk.MustQuery("select digest, count(*) from `CLUSTER_SLOW_QUERY` group by digest").Check(testkit.Rows("42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772 1"))
-	tk.MustQuery("select count(*) from `CLUSTER_SLOW_QUERY` where time > now() group by digest").Check(testkit.Rows())
-	tk.MustExec("use performance_schema")
-	re := tk.MustQuery("select * from `CLUSTER_events_statements_summary_by_digest`")
-	c.Assert(re, NotNil)
-	c.Assert(len(re.Rows()) > 0, IsTrue)
-	tk.MustQuery("select * from `CLUSTER_events_statements_summary_by_digest_history`")
-	c.Assert(re, NotNil)
-	c.Assert(len(re.Rows()) > 0, IsTrue)
-	tk.MustExec("set @@global.tidb_enable_stmt_summary=0")
-	re = tk.MustQuery("select * from `CLUSTER_events_statements_summary_by_digest`")
-	c.Assert(re, NotNil)
-	c.Assert(len(re.Rows()) == 0, IsTrue)
-	tk.MustQuery("select * from `CLUSTER_events_statements_summary_by_digest_history`")
-	c.Assert(re, NotNil)
-	c.Assert(len(re.Rows()) == 0, IsTrue)
+	for i := 0; i < 2; i++ {
+		tk.MustExec("use information_schema")
+		tk.MustExec(fmt.Sprintf("set @@tidb_enable_streaming=%d", i))
+		tk.MustExec("set @@global.tidb_enable_stmt_summary=1")
+		tk.MustQuery("select count(*) from `CLUSTER_SLOW_QUERY`").Check(testkit.Rows("1"))
+		tk.MustQuery("select count(*) from `CLUSTER_PROCESSLIST`").Check(testkit.Rows("1"))
+		tk.MustQuery("select * from `CLUSTER_PROCESSLIST`").Check(testkit.Rows(":10080 1 root 127.0.0.1 <nil> Query 9223372036 0 <nil> 0 "))
+		tk.MustQuery("select query_time, conn_id from `CLUSTER_SLOW_QUERY` order by time limit 1").Check(testkit.Rows("4.895492 6"))
+		tk.MustQuery("select count(*) from `CLUSTER_SLOW_QUERY` group by digest").Check(testkit.Rows("1"))
+		tk.MustQuery("select digest, count(*) from `CLUSTER_SLOW_QUERY` group by digest").Check(testkit.Rows("42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772 1"))
+		tk.MustQuery("select count(*) from `CLUSTER_SLOW_QUERY` where time > now() group by digest").Check(testkit.Rows())
+		tk.MustExec("use performance_schema")
+		re := tk.MustQuery("select * from `CLUSTER_events_statements_summary_by_digest`")
+		c.Assert(re, NotNil)
+		c.Assert(len(re.Rows()) > 0, IsTrue)
+		tk.MustQuery("select * from `CLUSTER_events_statements_summary_by_digest_history`")
+		c.Assert(re, NotNil)
+		c.Assert(len(re.Rows()) > 0, IsTrue)
+		tk.MustExec("set @@global.tidb_enable_stmt_summary=0")
+		re = tk.MustQuery("select * from `CLUSTER_events_statements_summary_by_digest`")
+		c.Assert(re, NotNil)
+		c.Assert(len(re.Rows()) == 0, IsTrue)
+		tk.MustQuery("select * from `CLUSTER_events_statements_summary_by_digest_history`")
+		c.Assert(re, NotNil)
+		c.Assert(len(re.Rows()) == 0, IsTrue)
+	}
 }
 
 func (s *testTableSuite) TestSelectHiddenColumn(c *C) {
