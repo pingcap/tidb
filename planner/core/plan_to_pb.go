@@ -96,13 +96,13 @@ func (p *PhysicalTableScan) ToPB(ctx sessionctx.Context) (*tipb.Executor, error)
 		Columns: model.ColumnsToProto(p.Columns, p.Table.PKIsHandle),
 		Desc:    p.Desc,
 	}
-	err := SetPBColumnsDefaultValue(ctx, tsExec.Columns, p.Columns)
-	if p.StoreType == kv.TiDB {
+	if p.StoreType == kv.TiDB && ctx.GetSessionVars().User != nil {
 		tsExec.User = &tipb.UserIdentity{
 			UserName: ctx.GetSessionVars().User.Username,
 			UserHost: ctx.GetSessionVars().User.Hostname,
 		}
 	}
+	err := SetPBColumnsDefaultValue(ctx, tsExec.Columns, p.Columns)
 	return &tipb.Executor{Tp: tipb.ExecType_TypeTableScan, TblScan: tsExec}, err
 }
 

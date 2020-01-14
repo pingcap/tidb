@@ -287,7 +287,6 @@ type Request struct {
 	Cacheable bool
 	// SchemaVer is for any schema-ful storage to validate schema correctness if necessary.
 	SchemaVar int64
-	// User uses to do privilege check. It is only used in TiDB cluster memory table.
 }
 
 // ResultSubset represents a result subset from a single storage unit.
