@@ -182,21 +182,25 @@ func (c *arithmeticPlusFunctionClass) getFunction(ctx sessionctx.Context, args [
 			bf.tp.Flag |= mysql.UnsignedFlag
 		}
 		setFlenDecimal4Int(bf.tp, args[0].GetType(), args[1].GetType())
-		var sig builtinFunc
 		switch {
 		case isLHSUnsigned && isRHSUnsigned:
-			sig = &builtinArithmeticPlusIntUnsignedUnsignedSig{bf}
+			sig := &builtinArithmeticPlusIntUnsignedUnsignedSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_PlusIntUnsignedUnsigned)
+			return sig, nil
 		case isLHSUnsigned && !isRHSUnsigned:
-			sig = &builtinArithmeticPlusIntUnsignedSignedSig{bf}
+			sig := &builtinArithmeticPlusIntUnsignedSignedSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_PlusIntUnsignedSigned)
+			return sig, nil
 		case !isLHSUnsigned && isRHSUnsigned:
-			sig = &builtinArithmeticPlusIntSignedUnsignedSig{bf}
+			sig := &builtinArithmeticPlusIntSignedUnsignedSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_PlusIntSignedUnsigned)
+			return sig, nil
 		case !isLHSUnsigned && !isRHSUnsigned:
-			sig = &builtinArithmeticPlusIntSignedSignedSig{bf}
+			sig := &builtinArithmeticPlusIntSignedSignedSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_PlusIntSignedSigned)
+			return sig, nil
 		}
+		var sig builtinFunc
 		return sig, nil
 	}
 }
