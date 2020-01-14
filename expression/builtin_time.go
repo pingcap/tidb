@@ -4325,8 +4325,6 @@ func (b *builtinUnixTimestampIntSig) evalInt(row chunk.Row) (int64, bool, error)
 func (b *builtinUnixTimestampIntSig) evalIntWithCtx(ctx sessionctx.Context, row chunk.Row) (int64, bool, error) {
 	val, isNull, err := b.args[0].EvalTime(ctx, row)
 	if err != nil && terror.ErrorEqual(types.ErrInvalidTimeFormat.GenWithStackByArgs(val), err) {
-		// if err != nil && terror.ErrorEqual(types.ErrWrongValue.GenWithStackByArgs(types.TimeStr, val), err) {
-		// Return 0 for invalid date time.
 		return 0, false, nil
 	}
 	if isNull {
