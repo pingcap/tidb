@@ -176,6 +176,8 @@ func (r *ImplTiKVDoubleReadGather) OnImplement(expr *memo.GroupExpr, reqProp *pr
 	tableScanProp := reqProp.Clone()
 	tableScanProp.Items = nil
 	reader = dg.GetPhysicalIndexLookUpReader(logicProp.Schema, logicProp.Stats.ScaleByExpectCnt(reqProp.ExpectedCnt), indexScanProp, tableScanProp)
+	// Since the handle column is not primary key and double read need to keep order. Then we need to inject a projection
+	// to filter the tidb_rowid.
 	if reader.Schema().ColumnIndex(dg.HandleCol) == -1 && !reqProp.IsEmpty() {
 		reader.Schema().Append(dg.HandleCol)
 		reader.(*plannercore.PhysicalIndexLookUpReader).ExtraHandleCol = dg.HandleCol

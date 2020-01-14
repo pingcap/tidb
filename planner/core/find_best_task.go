@@ -996,25 +996,25 @@ func (s *LogicalTableScan) GetPhysicalScan(schema *expression.Schema, stats *pro
 }
 
 // GetPhysicalIndexScan returns PhysicalIndexScan for the logical IndexScan.
-func (s *LogicalIndexScan) GetPhysicalIndexScan(schema *expression.Schema, stats *property.StatsInfo) *PhysicalIndexScan {
-	ds := s.Source
-	is := PhysicalIndexScan{
+func (is *LogicalIndexScan) GetPhysicalIndexScan(schema *expression.Schema, stats *property.StatsInfo) *PhysicalIndexScan {
+	ds := is.Source
+	physicalIndexScan := PhysicalIndexScan{
 		Table:            ds.tableInfo,
 		TableAsName:      ds.TableAsName,
 		DBName:           ds.DBName,
-		Columns:          s.Columns,
-		Index:            s.Index,
-		IdxCols:          s.IdxCols,
-		IdxColLens:       s.IdxColLens,
-		AccessCondition:  s.AccessConds,
-		Ranges:           s.Ranges,
+		Columns:          is.Columns,
+		Index:            is.Index,
+		IdxCols:          is.IdxCols,
+		IdxColLens:       is.IdxColLens,
+		AccessCondition:  is.AccessConds,
+		Ranges:           is.Ranges,
 		dataSourceSchema: ds.schema,
 		isPartition:      ds.isPartition,
 		physicalTableID:  ds.physicalTableID,
 	}.Init(ds.ctx, ds.blockOffset)
-	is.stats = stats
-	is.initSchema(s.Index, s.FullIdxCols, s.IsDoubleRead)
-	return is
+	physicalIndexScan.stats = stats
+	physicalIndexScan.initSchema(is.Index, is.FullIdxCols, is.IsDoubleRead)
+	return physicalIndexScan
 }
 
 // convertToTableScan converts the DataSource to table scan.

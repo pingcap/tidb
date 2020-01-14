@@ -668,9 +668,9 @@ func (p *LogicalTableScan) ExplainInfo() string {
 }
 
 // ExplainInfo implements Plan interface.
-func (s *LogicalIndexScan) ExplainInfo() string {
-	buffer := bytes.NewBufferString(s.Source.ExplainInfo())
-	index := s.Index
+func (is *LogicalIndexScan) ExplainInfo() string {
+	buffer := bytes.NewBufferString(is.Source.ExplainInfo())
+	index := is.Index
 	if len(index.Columns) > 0 {
 		buffer.WriteString(", index:")
 		for i, idxCol := range index.Columns {
@@ -680,8 +680,8 @@ func (s *LogicalIndexScan) ExplainInfo() string {
 			}
 		}
 	}
-	if len(s.AccessConds) > 0 {
-		fmt.Fprintf(buffer, ", cond:%v", s.AccessConds)
+	if len(is.AccessConds) > 0 {
+		fmt.Fprintf(buffer, ", cond:%v", is.AccessConds)
 	}
 	return buffer.String()
 }

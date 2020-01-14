@@ -250,17 +250,17 @@ func (ts *LogicalTableScan) BuildKeyInfo(selfSchema *expression.Schema, childSch
 }
 
 // BuildKeyInfo implements LogicalPlan BuildKeyInfo interface.
-func (s *LogicalIndexScan) BuildKeyInfo(selfSchema *expression.Schema, childSchema []*expression.Schema) {
+func (is *LogicalIndexScan) BuildKeyInfo(selfSchema *expression.Schema, childSchema []*expression.Schema) {
 	selfSchema.Keys = nil
-	for _, path := range s.Source.possibleAccessPaths {
+	for _, path := range is.Source.possibleAccessPaths {
 		if path.IsTablePath {
 			continue
 		}
-		if newKey := checkIndexCanBeKey(path.Index, s.Columns, selfSchema); newKey != nil {
+		if newKey := checkIndexCanBeKey(path.Index, is.Columns, selfSchema); newKey != nil {
 			selfSchema.Keys = append(selfSchema.Keys, newKey)
 		}
 	}
-	handle := s.getPKIsHandleCol(selfSchema)
+	handle := is.getPKIsHandleCol(selfSchema)
 	if handle != nil {
 		selfSchema.Keys = append(selfSchema.Keys, []*expression.Column{handle})
 	}

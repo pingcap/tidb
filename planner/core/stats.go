@@ -289,24 +289,24 @@ func (ts *LogicalTableScan) DeriveStats(childStats []*property.StatsInfo, selfSc
 }
 
 // DeriveStats implements LogicalPlan DeriveStats interface.
-func (s *LogicalIndexScan) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema) (*property.StatsInfo, error) {
-	for i, expr := range s.AccessConds {
-		s.AccessConds[i] = expression.PushDownNot(s.ctx, expr)
+func (is *LogicalIndexScan) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema) (*property.StatsInfo, error) {
+	for i, expr := range is.AccessConds {
+		is.AccessConds[i] = expression.PushDownNot(is.ctx, expr)
 	}
-	s.stats = s.Source.deriveStatsByFilter(s.AccessConds, nil)
-	if len(s.AccessConds) == 0 {
-		s.Ranges = ranger.FullRange()
+	is.stats = is.Source.deriveStatsByFilter(is.AccessConds, nil)
+	if len(is.AccessConds) == 0 {
+		is.Ranges = ranger.FullRange()
 	}
-	s.IdxCols, s.IdxColLens = expression.IndexInfo2PrefixCols(s.Columns, selfSchema.Columns, s.Index)
-	s.FullIdxCols, s.FullIdxColLens = expression.IndexInfo2Cols(s.Columns, selfSchema.Columns, s.Index)
-	if !s.Index.Unique && !s.Index.Primary && len(s.Index.Columns) == len(s.IdxCols) {
-		handleCol := s.getPKIsHandleCol(selfSchema)
+	is.IdxCols, is.IdxColLens = expression.IndexInfo2PrefixCols(is.Columns, selfSchema.Columns, is.Index)
+	is.FullIdxCols, is.FullIdxColLens = expression.IndexInfo2Cols(is.Columns, selfSchema.Columns, is.Index)
+	if !is.Index.Unique && !is.Index.Primary && len(is.Index.Columns) == len(is.IdxCols) {
+		handleCol := is.getPKIsHandleCol(selfSchema)
 		if handleCol != nil && !mysql.HasUnsignedFlag(handleCol.RetType.Flag) {
-			s.IdxCols = append(s.IdxCols, handleCol)
-			s.IdxColLens = append(s.IdxColLens, types.UnspecifiedLength)
+			is.IdxCols = append(is.IdxCols, handleCol)
+			is.IdxColLens = append(is.IdxColLens, types.UnspecifiedLength)
 		}
 	}
-	return s.stats, nil
+	return is.stats, nil
 }
 
 // getIndexMergeOrPath generates all possible IndexMergeOrPaths.
@@ -669,7 +669,7 @@ func (p *LogicalWindow) DeriveStats(childStats []*property.StatsInfo, selfSchema
 // DeriveStats implement LogicalPlan DeriveStats interface.
 func (p *TiKVDoubleGather) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema) (*property.StatsInfo, error) {
 	if len(childStats) != 2 {
-		err := ErrInternal.GenWithStack("TiKVDoubleGather doesn't exactly have two children should implement their own DeriveStats().")
+		err := ErrInternal.GenWithStack("There are no enough children stats during deriving stats for TiKVDoubleGather.")
 		return nil, err
 	}
 	p.stats = childStats[1]

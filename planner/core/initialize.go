@@ -58,9 +58,9 @@ func (ts LogicalTableScan) Init(ctx sessionctx.Context, offset int) *LogicalTabl
 }
 
 // Init initializes LogicalIndexScan.
-func (s LogicalIndexScan) Init(ctx sessionctx.Context, offset int) *LogicalIndexScan {
-	s.baseLogicalPlan = newBaseLogicalPlan(ctx, plancodec.TypeIdxScan, &s, offset)
-	return &s
+func (is LogicalIndexScan) Init(ctx sessionctx.Context, offset int) *LogicalIndexScan {
+	is.baseLogicalPlan = newBaseLogicalPlan(ctx, plancodec.TypeIdxScan, &is, offset)
+	return &is
 }
 
 // Init initializes LogicalApply.
