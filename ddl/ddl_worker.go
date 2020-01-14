@@ -186,8 +186,8 @@ func buildJobDependence(t *meta.Meta, curJob *model.Job) error {
 }
 
 func (d *ddl) limitDDLJobs() {
+	tasks := make([]*limitJobTask, 0, batchAddingJobs)
 	for {
-		tasks := make([]*limitJobTask, 0, batchAddingJobs)
 		select {
 		case task := <-d.limitJobCh:
 			tasks = tasks[:0]
