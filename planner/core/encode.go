@@ -108,7 +108,7 @@ func NormalizePlan(p Plan) (normalized, digest string) {
 	d := digesterPool.Get().(*planDigester)
 	defer digesterPool.Put(d)
 	d.normalizePlanTree(selectPlan)
-	normalized = string(d.buf.Bytes())
+	normalized = d.buf.String()
 	d.hasher.Write(d.buf.Bytes())
 	d.buf.Reset()
 	digest = fmt.Sprintf("%x", d.hasher.Sum(nil))
