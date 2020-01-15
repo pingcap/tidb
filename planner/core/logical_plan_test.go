@@ -16,6 +16,7 @@ package core
 import (
 	"context"
 	"fmt"
+	tterror "github.com/pingcap/tidb/terror"
 	"sort"
 	"strings"
 	"testing"
@@ -619,7 +620,7 @@ func (s *testPlanSuite) TestValidate(c *C) {
 	defer testleak.AfterTest(c)()
 	tests := []struct {
 		sql string
-		err *terror.Error
+		err *tterror.TError
 	}{
 		{
 			sql: "select date_format((1,2), '%H');",

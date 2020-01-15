@@ -26,11 +26,12 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
+	pterror "github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/structure"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
@@ -69,14 +70,15 @@ var (
 )
 
 var (
+
 	// ErrDBExists is the error for db exists.
-	ErrDBExists = terror.ClassMeta.New(mysql.ErrDBCreateExists, mysql.MySQLErrName[mysql.ErrDBCreateExists])
+	ErrDBExists = terror.New(pterror.ClassMeta, mysql.ErrDBCreateExists, mysql.MySQLErrName[mysql.ErrDBCreateExists])
 	// ErrDBNotExists is the error for db not exists.
-	ErrDBNotExists = terror.ClassMeta.New(mysql.ErrBadDB, mysql.MySQLErrName[mysql.ErrBadDB])
+	ErrDBNotExists = terror.New(pterror.ClassMeta, mysql.ErrBadDB, mysql.MySQLErrName[mysql.ErrBadDB])
 	// ErrTableExists is the error for table exists.
-	ErrTableExists = terror.ClassMeta.New(mysql.ErrTableExists, mysql.MySQLErrName[mysql.ErrTableExists])
+	ErrTableExists = terror.New(pterror.ClassMeta, mysql.ErrTableExists, mysql.MySQLErrName[mysql.ErrTableExists])
 	// ErrTableNotExists is the error for table not exists.
-	ErrTableNotExists = terror.ClassMeta.New(mysql.ErrNoSuchTable, mysql.MySQLErrName[mysql.ErrNoSuchTable])
+	ErrTableNotExists = terror.New(pterror.ClassMeta, mysql.ErrNoSuchTable, mysql.MySQLErrName[mysql.ErrNoSuchTable])
 )
 
 // Meta is for handling meta information in a transaction.
@@ -891,11 +893,11 @@ func (m *Meta) SetSchemaDiff(diff *model.SchemaDiff) error {
 }
 
 func init() {
-	metaMySQLErrCodes := map[terror.ErrCode]uint16{
+	metaMySQLErrCodes := map[pterror.ErrCode]uint16{
 		mysql.ErrDBCreateExists: mysql.ErrDBCreateExists,
 		mysql.ErrBadDB:          mysql.ErrBadDB,
 		mysql.ErrNoSuchTable:    mysql.ErrNoSuchTable,
 		mysql.ErrTableExists:    mysql.ErrTableExists,
 	}
-	terror.ErrClassToMySQLCodes[terror.ClassMeta] = metaMySQLErrCodes
+	terror.ErrClassToMySQLCodes[pterror.ClassMeta] = metaMySQLErrCodes
 }

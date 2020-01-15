@@ -15,6 +15,7 @@ package session_test
 
 import (
 	"fmt"
+	tterror "github.com/pingcap/tidb/terror"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -22,9 +23,9 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
+	tmysql "github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/tablecodec"
@@ -170,9 +171,9 @@ func (s *testPessimisticSuite) TestDeadlock(c *C) {
 	syncCh <- struct{}{}
 	time.Sleep(time.Millisecond * 10)
 	_, err := tk.Exec("update deadlock set v = v + 1 where k = 2")
-	e, ok := errors.Cause(err).(*terror.Error)
+	e, ok := errors.Cause(err).(*tterror.TError)
 	c.Assert(ok, IsTrue)
-	c.Assert(int(e.Code()), Equals, mysql.ErrLockDeadlock)
+	c.Assert(int(e.Code()), Equals, tmysql.ErrLockDeadlock)
 	syncCh <- struct{}{}
 }
 

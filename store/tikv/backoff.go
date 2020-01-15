@@ -23,10 +23,11 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
+	pterror "github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
@@ -198,7 +199,7 @@ func (t backoffType) TError() error {
 	case boServerBusy:
 		return ErrTiKVServerBusy
 	}
-	return terror.ClassTiKV.New(mysql.ErrUnknown, mysql.MySQLErrName[mysql.ErrUnknown])
+	return terror.New(pterror.ClassTiKV, mysql.ErrUnknown, mysql.MySQLErrName[mysql.ErrUnknown])
 }
 
 // Maximum total sleep time(in ms) for kv/cop commands.

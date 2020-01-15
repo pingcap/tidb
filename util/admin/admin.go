@@ -22,14 +22,16 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
+	pmysql "github.com/pingcap/parser/mysql"
+	pterror "github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
@@ -326,7 +328,7 @@ func CheckRecordAndIndex(sessCtx sessionctx.Context, txn kv.Transaction, t table
 		for i, val := range vals1 {
 			col := cols[i]
 			if val.IsNull() {
-				if mysql.HasNotNullFlag(col.Flag) && col.ToInfo().OriginDefaultValue == nil {
+				if pmysql.HasNotNullFlag(col.Flag) && col.ToInfo().OriginDefaultValue == nil {
 					return false, errors.Errorf("Column %v define as not null, but can't find the value where handle is %v", col.Name, h1)
 				}
 				// NULL value is regarded as its default value.
@@ -413,7 +415,7 @@ func iterRecords(sessCtx sessionctx.Context, retriever kv.Retriever, t table.Tab
 		data := make([]types.Datum, 0, len(cols))
 		for _, col := range cols {
 			if col.IsPKHandleColumn(t.Meta()) {
-				if mysql.HasUnsignedFlag(col.Flag) {
+				if pmysql.HasUnsignedFlag(col.Flag) {
 					data = append(data, types.NewUintDatum(uint64(handle)))
 				} else {
 					data = append(data, types.NewIntDatum(handle))
@@ -439,22 +441,22 @@ func iterRecords(sessCtx sessionctx.Context, retriever kv.Retriever, t table.Tab
 
 var (
 	// ErrDataInConsistent indicate that meets inconsistent data.
-	ErrDataInConsistent = terror.ClassAdmin.New(mysql.ErrDataInConsistent, mysql.MySQLErrName[mysql.ErrDataInConsistent])
+	ErrDataInConsistent = terror.New(pterror.ClassAdmin, mysql.ErrDataInConsistent, mysql.MySQLErrName[mysql.ErrDataInConsistent])
 	// ErrDDLJobNotFound indicates the job id was not found.
-	ErrDDLJobNotFound = terror.ClassAdmin.New(mysql.ErrDDLJobNotFound, mysql.MySQLErrName[mysql.ErrDDLJobNotFound])
+	ErrDDLJobNotFound = terror.New(pterror.ClassAdmin, mysql.ErrDDLJobNotFound, mysql.MySQLErrName[mysql.ErrDDLJobNotFound])
 	// ErrCancelFinishedDDLJob returns when cancel a finished ddl job.
-	ErrCancelFinishedDDLJob = terror.ClassAdmin.New(mysql.ErrCancelFinishedDDLJob, mysql.MySQLErrName[mysql.ErrCancelFinishedDDLJob])
+	ErrCancelFinishedDDLJob = terror.New(pterror.ClassAdmin, mysql.ErrCancelFinishedDDLJob, mysql.MySQLErrName[mysql.ErrCancelFinishedDDLJob])
 	// ErrCannotCancelDDLJob returns when cancel a almost finished ddl job, because cancel in now may cause data inconsistency.
-	ErrCannotCancelDDLJob = terror.ClassAdmin.New(mysql.ErrCannotCancelDDLJob, mysql.MySQLErrName[mysql.ErrCannotCancelDDLJob])
+	ErrCannotCancelDDLJob = terror.New(pterror.ClassAdmin, mysql.ErrCannotCancelDDLJob, mysql.MySQLErrName[mysql.ErrCannotCancelDDLJob])
 )
 
 func init() {
 	// Register terror to mysql error map.
-	mySQLErrCodes := map[terror.ErrCode]uint16{
+	mySQLErrCodes := map[pterror.ErrCode]uint16{
 		mysql.ErrDataInConsistent:     mysql.ErrDataInConsistent,
 		mysql.ErrDDLJobNotFound:       mysql.ErrDDLJobNotFound,
 		mysql.ErrCancelFinishedDDLJob: mysql.ErrCancelFinishedDDLJob,
 		mysql.ErrCannotCancelDDLJob:   mysql.ErrCannotCancelDDLJob,
 	}
-	terror.ErrClassToMySQLCodes[terror.ClassAdmin] = mySQLErrCodes
+	terror.ErrClassToMySQLCodes[pterror.ClassAdmin] = mySQLErrCodes
 }

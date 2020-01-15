@@ -20,10 +20,12 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
+	pmysql "github.com/pingcap/parser/mysql"
+	pterror "github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
@@ -89,8 +91,8 @@ func (sf *ScalarFunction) Vectorized() bool {
 // SupportReverseEval returns if this expression supports reversed evaluation.
 func (sf *ScalarFunction) SupportReverseEval() bool {
 	switch sf.RetType.Tp {
-	case mysql.TypeShort, mysql.TypeLong, mysql.TypeLonglong,
-		mysql.TypeFloat, mysql.TypeDouble, mysql.TypeNewDecimal:
+	case pmysql.TypeShort, pmysql.TypeLong, pmysql.TypeLonglong,
+		pmysql.TypeFloat, pmysql.TypeDouble, pmysql.TypeNewDecimal:
 		return sf.Function.supportReverseEval() && sf.Function.isChildrenReversed()
 	}
 	return false
@@ -137,7 +139,7 @@ func newFunctionImpl(ctx sessionctx.Context, fold bool, funcName string, retType
 	if !ok {
 		db := ctx.GetSessionVars().CurrentDB
 		if db == "" {
-			return nil, terror.ClassOptimizer.New(mysql.ErrNoDB, mysql.MySQLErrName[mysql.ErrNoDB])
+			return nil, terror.New(pterror.ClassOptimizer, mysql.ErrNoDB, mysql.MySQLErrName[mysql.ErrNoDB])
 		}
 
 		return nil, errFunctionNotExists.GenWithStackByArgs("FUNCTION", db+"."+funcName)
@@ -153,7 +155,7 @@ func newFunctionImpl(ctx sessionctx.Context, fold bool, funcName string, retType
 	if err != nil {
 		return nil, err
 	}
-	if builtinRetTp := f.getRetTp(); builtinRetTp.Tp != mysql.TypeUnspecified || retType.Tp == mysql.TypeUnspecified {
+	if builtinRetTp := f.getRetTp(); builtinRetTp.Tp != pmysql.TypeUnspecified || retType.Tp == pmysql.TypeUnspecified {
 		retType = builtinRetTp
 	}
 	sf := &ScalarFunction{
@@ -180,7 +182,7 @@ func NewFunctionBase(ctx sessionctx.Context, funcName string, retType *types.Fie
 // NewFunctionInternal is similar to NewFunction, but do not returns error, should only be used internally.
 func NewFunctionInternal(ctx sessionctx.Context, funcName string, retType *types.FieldType, args ...Expression) Expression {
 	expr, err := NewFunction(ctx, funcName, retType, args...)
-	terror.Log(err)
+	pterror.Log(err)
 	return expr
 }
 
@@ -262,7 +264,7 @@ func (sf *ScalarFunction) Eval(row chunk.Row) (d types.Datum, err error) {
 	case types.ETInt:
 		var intRes int64
 		intRes, isNull, err = sf.EvalInt(sf.GetCtx(), row)
-		if mysql.HasUnsignedFlag(tp.Flag) {
+		if pmysql.HasUnsignedFlag(tp.Flag) {
 			res = uint64(intRes)
 		} else {
 			res = intRes

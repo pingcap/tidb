@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/kvproto/pkg/tikvpb"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
@@ -734,23 +733,19 @@ func toPBError(err error) *tipb.Error {
 		return nil
 	}
 	perr := new(tipb.Error)
-	switch x := err.(type) {
-	case *terror.Error:
-		sqlErr := x.ToSQLError()
-		perr.Code = int32(sqlErr.Code)
-		perr.Msg = sqlErr.Message
-	default:
-		e := errors.Cause(err)
-		switch y := e.(type) {
-		case *terror.Error:
-			tmp := y.ToSQLError()
-			perr.Code = int32(tmp.Code)
-			perr.Msg = tmp.Message
-		default:
-			perr.Code = int32(1)
-			perr.Msg = err.Error()
-		}
+	if sqlErr, ok := err.(mysql.SQLErrorConvertible); ok {
+		perr.Code = int32(sqlErr.ToSQLError().Code)
+		perr.Msg = sqlErr.ToSQLError().Message
+		return perr
 	}
+	e := errors.Cause(err)
+	if tmp, ok := e.(mysql.SQLErrorConvertible); ok {
+		perr.Code = int32(tmp.ToSQLError().Code)
+		perr.Msg = tmp.ToSQLError().Message
+		return perr
+	}
+	perr.Code = int32(1)
+	perr.Msg = e.Error()
 	return perr
 }
 

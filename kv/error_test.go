@@ -16,7 +16,6 @@ package kv
 import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 )
 
 type testErrorSuite struct{}
@@ -24,7 +23,7 @@ type testErrorSuite struct{}
 var _ = Suite(testErrorSuite{})
 
 func (s testErrorSuite) TestError(c *C) {
-	kvErrs := []*terror.Error{
+	kvErrs := []mysql.SQLErrorConvertible{
 		ErrNotExist,
 		ErrTxnRetryable,
 		ErrCannotSetNilValue,
@@ -38,6 +37,6 @@ func (s testErrorSuite) TestError(c *C) {
 	}
 	for _, err := range kvErrs {
 		code := err.ToSQLError().Code
-		c.Assert(code != mysql.ErrUnknown && code == uint16(err.Code()), IsTrue, Commentf("err: %v", err))
+		c.Assert(code != mysql.ErrUnknown && code == uint16(err.ToSQLError().Code), IsTrue, Commentf("err: %v", err))
 	}
 }

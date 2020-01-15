@@ -14,8 +14,9 @@
 package plugin
 
 import (
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
+	pterror "github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/terror"
 )
 
 var (
@@ -28,12 +29,12 @@ var (
 	errRequireVersionCheckFail = createPluginError(mysql.ErrRequireVersionCheckFail)
 )
 
-func createPluginError(code terror.ErrCode) *terror.Error {
-	return terror.ClassPlugin.New(code, mysql.MySQLErrName[uint16(code)])
+func createPluginError(code pterror.ErrCode) *terror.TError {
+	return terror.New(pterror.ClassPlugin, code, mysql.MySQLErrName[uint16(code)])
 }
 
 func init() {
-	pluginMySQLErrCodes := map[terror.ErrCode]uint16{
+	pluginMySQLErrCodes := map[pterror.ErrCode]uint16{
 		mysql.ErrInvalidPluginID:            mysql.ErrInvalidPluginID,
 		mysql.ErrInvalidPluginManifest:      mysql.ErrInvalidPluginManifest,
 		mysql.ErrInvalidPluginName:          mysql.ErrInvalidPluginName,
@@ -44,5 +45,5 @@ func init() {
 		mysql.ErrUnsupportedReloadPlugin:    mysql.ErrUnsupportedReloadPlugin,
 		mysql.ErrUnsupportedReloadPluginVar: mysql.ErrUnsupportedReloadPluginVar,
 	}
-	terror.ErrClassToMySQLCodes[terror.ClassPlugin] = pluginMySQLErrCodes
+	terror.ErrClassToMySQLCodes[pterror.ClassPlugin] = pluginMySQLErrCodes
 }

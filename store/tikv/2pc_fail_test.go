@@ -15,12 +15,13 @@ package tikv
 
 import (
 	"context"
+	pterror "github.com/pingcap/parser/terror"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/terror"
 )
 
 // TestFailCommitPrimaryRpcErrors tests rpc errors are handled properly when
@@ -36,7 +37,7 @@ func (s *testCommitterSuite) TestFailCommitPrimaryRpcErrors(c *C) {
 	c.Assert(err, IsNil)
 	err = t1.Commit(context.Background())
 	c.Assert(err, NotNil)
-	c.Assert(terror.ErrorEqual(err, terror.ErrResultUndetermined), IsTrue, Commentf("%s", errors.ErrorStack(err)))
+	c.Assert(pterror.ErrorEqual(err, terror.ErrResultUndetermined), IsTrue, Commentf("%s", errors.ErrorStack(err)))
 
 	// We don't need to call "Rollback" after "Commit" fails.
 	err = t1.Rollback()
@@ -57,7 +58,7 @@ func (s *testCommitterSuite) TestFailCommitPrimaryRegionError(c *C) {
 	c.Assert(err, IsNil)
 	err = t2.Commit(context.Background())
 	c.Assert(err, NotNil)
-	c.Assert(terror.ErrorNotEqual(err, terror.ErrResultUndetermined), IsTrue)
+	c.Assert(pterror.ErrorNotEqual(err, terror.ErrResultUndetermined), IsTrue)
 }
 
 // TestFailCommitPrimaryRPCErrorThenRegionError tests the case when commit first
@@ -73,7 +74,7 @@ func (s *testCommitterSuite) TestFailCommitPrimaryRPCErrorThenRegionError(c *C) 
 	c.Assert(err, IsNil)
 	err = t1.Commit(context.Background())
 	c.Assert(err, NotNil)
-	c.Assert(terror.ErrorEqual(err, terror.ErrResultUndetermined), IsTrue, Commentf("%s", errors.ErrorStack(err)))
+	c.Assert(pterror.ErrorEqual(err, terror.ErrResultUndetermined), IsTrue, Commentf("%s", errors.ErrorStack(err)))
 }
 
 // TestFailCommitPrimaryKeyError tests KeyError is handled properly when
@@ -90,7 +91,7 @@ func (s *testCommitterSuite) TestFailCommitPrimaryKeyError(c *C) {
 	c.Assert(err, IsNil)
 	err = t3.Commit(context.Background())
 	c.Assert(err, NotNil)
-	c.Assert(terror.ErrorNotEqual(err, terror.ErrResultUndetermined), IsTrue)
+	c.Assert(pterror.ErrorNotEqual(err, terror.ErrResultUndetermined), IsTrue)
 }
 
 func (s *testCommitterSuite) TestFailCommitTimeout(c *C) {

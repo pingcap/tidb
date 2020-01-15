@@ -40,6 +40,7 @@ import (
 	"crypto/tls"
 	"encoding/binary"
 	"fmt"
+	pterror "github.com/pingcap/parser/terror"
 	"io"
 	"net"
 	"runtime"
@@ -55,13 +56,13 @@ import (
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/plugin"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/arena"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/hack"
@@ -209,7 +210,7 @@ func (cc *clientConn) Close() error {
 func closeConn(cc *clientConn, connections int) error {
 	metrics.ConnGauge.Set(float64(connections))
 	err := cc.bufReadConn.Close()
-	terror.Log(err)
+	pterror.Log(err)
 	if cc.ctx != nil {
 		return cc.ctx.Close()
 	}
@@ -627,7 +628,7 @@ func (cc *clientConn) Run(ctx context.Context) {
 		}
 		if atomic.LoadInt32(&cc.status) != connStatusShutdown {
 			err := cc.Close()
-			terror.Log(err)
+			pterror.Log(err)
 		}
 	}()
 	// Usually, client connection status changes between [dispatching] <=> [reading].
@@ -647,7 +648,7 @@ func (cc *clientConn) Run(ctx context.Context) {
 		start := time.Now()
 		data, err := cc.readPacket()
 		if err != nil {
-			if terror.ErrorNotEqual(err, io.EOF) {
+			if pterror.ErrorNotEqual(err, io.EOF) {
 				if netErr, isNetErr := errors.Cause(err).(net.Error); isNetErr && netErr.Timeout() {
 					idleTime := time.Since(start)
 					logutil.Logger(ctx).Info("read packet timeout, close this connection",
@@ -672,7 +673,7 @@ func (cc *clientConn) Run(ctx context.Context) {
 
 		startTime := time.Now()
 		if err = cc.dispatch(ctx, data); err != nil {
-			if terror.ErrorEqual(err, io.EOF) {
+			if pterror.ErrorEqual(err, io.EOF) {
 				cc.addMetrics(data[0], startTime, nil)
 				return
 			} else if terror.ErrResultUndetermined.Equal(err) {
@@ -700,7 +701,7 @@ func (cc *clientConn) Run(ctx context.Context) {
 				zap.String("err", errStrForLog(err)),
 			)
 			err1 := cc.writeError(err)
-			terror.Log(err1)
+			pterror.Log(err1)
 		}
 		cc.addMetrics(data[0], startTime, err)
 		cc.pkt.sequence = 0
@@ -947,18 +948,17 @@ func (cc *clientConn) writeOkWith(msg string, affectedRows, lastInsertID uint64,
 func (cc *clientConn) writeError(e error) error {
 	var (
 		m  *mysql.SQLError
-		te *terror.Error
+		te mysql.SQLErrorConvertible
 		ok bool
 	)
 	originErr := errors.Cause(e)
-	if te, ok = originErr.(*terror.Error); ok {
+	if te, ok = originErr.(mysql.SQLErrorConvertible); ok {
 		m = te.ToSQLError()
 	} else {
 		e := errors.Cause(originErr)
-		switch y := e.(type) {
-		case *terror.Error:
-			m = y.ToSQLError()
-		default:
+		if te, ok = e.(mysql.SQLErrorConvertible); ok {
+			m = te.ToSQLError()
+		} else {
 			m = mysql.NewErrf(mysql.ErrUnknown, "%s", e.Error())
 		}
 	}
@@ -1058,7 +1058,7 @@ func processStream(ctx context.Context, cc *clientConn, loadDataInfo *executor.L
 	for {
 		curData, err = cc.readPacket()
 		if err != nil {
-			if terror.ErrorNotEqual(err, io.EOF) {
+			if pterror.ErrorNotEqual(err, io.EOF) {
 				logutil.Logger(ctx).Error("read packet failed", zap.Error(err))
 				break
 			}
@@ -1135,7 +1135,7 @@ func (cc *clientConn) getDataFromPath(path string) ([]byte, error) {
 	var prevData, curData []byte
 	for {
 		curData, err = cc.readPacket()
-		if err != nil && terror.ErrorNotEqual(err, io.EOF) {
+		if err != nil && pterror.ErrorNotEqual(err, io.EOF) {
 			return nil, err
 		}
 		if len(curData) == 0 {
@@ -1204,7 +1204,7 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 	status := atomic.LoadInt32(&cc.status)
 	if rss != nil && (status == connStatusShutdown || status == connStatusWaitShutdown) {
 		for _, rs := range rss {
-			terror.Call(rs.Close)
+			pterror.Call(rs.Close)
 		}
 		return executor.ErrQueryInterrupted
 	}
@@ -1282,7 +1282,7 @@ func (cc *clientConn) writeResultset(ctx context.Context, rs ResultSet, binary b
 	defer func() {
 		// close ResultSet when cursor doesn't exist
 		if !mysql.HasCursorExistsFlag(serverStatus) {
-			terror.Call(rs.Close)
+			pterror.Call(rs.Close)
 		}
 		r := recover()
 		if r == nil {
@@ -1402,7 +1402,7 @@ func (cc *clientConn) writeChunksWithFetchSize(ctx context.Context, rs ResultSet
 	// and close ResultSet.
 	if len(fetchedRows) == 0 {
 		serverStatus |= mysql.ServerStatusLastRowSend
-		terror.Call(rs.Close)
+		pterror.Call(rs.Close)
 		return cc.writeEOF(serverStatus)
 	}
 

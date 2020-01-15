@@ -19,6 +19,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
+	tmysql "github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
@@ -105,7 +106,7 @@ func (s *testIntegrationSuite) TestBitColErrorMessage(c *C) {
 	tk.MustExec("drop table bit_col_t")
 	tk.MustExec("create table bit_col_t (a bit(1))")
 	tk.MustExec("drop table bit_col_t")
-	tk.MustGetErrCode("create table bit_col_t (a bit(0))", mysql.ErrInvalidFieldSize)
+	tk.MustGetErrCode("create table bit_col_t (a bit(0))", tmysql.ErrInvalidFieldSize)
 	tk.MustGetErrCode("create table bit_col_t (a bit(65))", mysql.ErrTooBigDisplaywidth)
 }
 

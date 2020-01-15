@@ -14,11 +14,9 @@
 package types
 
 import (
-	"io"
 	"testing"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
@@ -102,14 +100,6 @@ func (s *testTypeEtcSuite) TestTypeToStr(c *C) {
 	testTypeToStr(c, mysql.TypeBit, "binary", "bit")
 	testTypeToStr(c, mysql.TypeEnum, "binary", "enum")
 	testTypeToStr(c, mysql.TypeSet, "binary", "set")
-}
-
-func (s *testTypeEtcSuite) TestEOFAsNil(c *C) {
-	defer testleak.AfterTest(c)()
-	err := EOFAsNil(io.EOF)
-	c.Assert(err, IsNil)
-	err = EOFAsNil(errors.New("test"))
-	c.Assert(err, ErrorMatches, "test")
 }
 
 func (s *testTypeEtcSuite) TestMaxFloat(c *C) {

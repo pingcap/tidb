@@ -17,6 +17,7 @@ import (
 	"crypto/tls"
 	"crypto/x509/pkix"
 	"fmt"
+	terror2 "github.com/pingcap/parser/terror"
 	"runtime"
 	"strconv"
 	"strings"
@@ -26,7 +27,6 @@ import (
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
@@ -121,7 +121,7 @@ func SyntaxError(err error) error {
 	// If the error is already a terror with stack, pass it through.
 	if errors.HasStack(err) {
 		cause := errors.Cause(err)
-		if _, ok := cause.(*terror.Error); ok {
+		if _, ok := cause.(terror2.BaseErrorConvertible); ok {
 			return err
 		}
 	}

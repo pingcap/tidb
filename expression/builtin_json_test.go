@@ -16,7 +16,7 @@ package expression
 import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/terror"
+	tterror "github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
@@ -424,7 +424,7 @@ func (s *testEvaluatorSuite) TestJSONContains(c *C) {
 				c.Assert(d.GetInt64(), Equals, int64(t.expected.(int)))
 			}
 		} else {
-			c.Assert(t.err.(*terror.Error).Equal(err), IsTrue)
+			c.Assert(t.err.(*tterror.TError).Equal(err), IsTrue)
 		}
 	}
 	// For issue 9957: test 'argument 1 and 2 as valid json object'
@@ -706,7 +706,7 @@ func (s *testEvaluatorSuite) TestJSONArrayAppend(c *C) {
 	tbl := []struct {
 		input    []interface{}
 		expected interface{}
-		err      *terror.Error
+		err      *tterror.TError
 	}{
 		{[]interface{}{`{"a": 1, "b": [2, 3], "c": 4}`, `$.d`, `z`}, `{"a": 1, "b": [2, 3], "c": 4}`, nil},
 		{[]interface{}{`{"a": 1, "b": [2, 3], "c": 4}`, `$`, `w`}, `[{"a": 1, "b": [2, 3], "c": 4}, "w"]`, nil},
@@ -856,7 +856,7 @@ func (s *testEvaluatorSuite) TestJSONArrayInsert(c *C) {
 		input    []interface{}
 		expected interface{}
 		success  bool
-		err      *terror.Error
+		err      *tterror.TError
 	}{
 		// Success
 		{[]interface{}{`{"a": 1, "b": [2, 3], "c": 4}`, `$.b[1]`, `z`}, `{"a": 1, "b": [2, "z", 3], "c": 4}`, true, nil},

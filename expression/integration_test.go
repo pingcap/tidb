@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	tterror "github.com/pingcap/tidb/terror"
 	"math"
 	"sort"
 	"strconv"
@@ -32,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
+	tmysql "github.com/pingcap/tidb/mysql"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
@@ -413,8 +415,8 @@ func (s *testIntegrationSuite2) TestMathBuiltin(c *C) {
 	c.Assert(err, IsNil)
 	_, err = session.GetRows4Test(ctx, tk.Se, rs)
 	c.Assert(err, NotNil)
-	terr := errors.Cause(err).(*terror.Error)
-	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrDataOutOfRange))
+	terr := errors.Cause(err).(*tterror.TError)
+	c.Assert(terr.Code(), Equals, terror.ErrCode(tmysql.ErrDataOutOfRange))
 	c.Assert(rs.Close(), IsNil)
 
 	//for exp
@@ -426,8 +428,8 @@ func (s *testIntegrationSuite2) TestMathBuiltin(c *C) {
 	c.Assert(err, IsNil)
 	_, err = session.GetRows4Test(ctx, tk.Se, rs)
 	c.Assert(err, NotNil)
-	terr = errors.Cause(err).(*terror.Error)
-	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrDataOutOfRange))
+	terr = errors.Cause(err).(*tterror.TError)
+	c.Assert(terr.Code(), Equals, terror.ErrCode(tmysql.ErrDataOutOfRange))
 	c.Assert(rs.Close(), IsNil)
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a float)")
@@ -436,8 +438,8 @@ func (s *testIntegrationSuite2) TestMathBuiltin(c *C) {
 	c.Assert(err, IsNil)
 	_, err = session.GetRows4Test(ctx, tk.Se, rs)
 	c.Assert(err, NotNil)
-	terr = errors.Cause(err).(*terror.Error)
-	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrDataOutOfRange))
+	terr = errors.Cause(err).(*tterror.TError)
+	c.Assert(terr.Code(), Equals, terror.ErrCode(tmysql.ErrDataOutOfRange))
 	c.Assert(err.Error(), Equals, "[types:1690]DOUBLE value is out of range in 'exp(test.t.a)'")
 	c.Assert(rs.Close(), IsNil)
 
@@ -476,8 +478,8 @@ func (s *testIntegrationSuite2) TestMathBuiltin(c *C) {
 	c.Assert(err, IsNil)
 	_, err = session.GetRows4Test(ctx, tk.Se, rs)
 	c.Assert(err, NotNil)
-	terr = errors.Cause(err).(*terror.Error)
-	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrDataOutOfRange))
+	terr = errors.Cause(err).(*tterror.TError)
+	c.Assert(terr.Code(), Equals, terror.ErrCode(tmysql.ErrDataOutOfRange))
 	c.Assert(rs.Close(), IsNil)
 
 	// for round
@@ -540,8 +542,8 @@ func (s *testIntegrationSuite2) TestMathBuiltin(c *C) {
 	c.Assert(err, IsNil)
 	_, err = session.GetRows4Test(ctx, tk.Se, rs)
 	c.Assert(err, NotNil)
-	terr = errors.Cause(err).(*terror.Error)
-	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrDataOutOfRange))
+	terr = errors.Cause(err).(*tterror.TError)
+	c.Assert(terr.Code(), Equals, terror.ErrCode(tmysql.ErrDataOutOfRange))
 	c.Assert(rs.Close(), IsNil)
 
 	// for sign
@@ -1154,8 +1156,8 @@ func (s *testIntegrationSuite2) TestEncryptionBuiltin(c *C) {
 		c.Assert(err, IsNil, Commentf("%v", len))
 		_, err = session.GetRows4Test(ctx, tk.Se, rs)
 		c.Assert(err, NotNil, Commentf("%v", len))
-		terr := errors.Cause(err).(*terror.Error)
-		c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrDataOutOfRange), Commentf("%v", len))
+		terr := errors.Cause(err).(*tterror.TError)
+		c.Assert(terr.Code(), Equals, terror.ErrCode(tmysql.ErrDataOutOfRange), Commentf("%v", len))
 		c.Assert(rs.Close(), IsNil)
 	}
 	tk.MustQuery("SELECT RANDOM_BYTES('1');")
@@ -3582,7 +3584,7 @@ func (s *testIntegrationSuite) TestAggregationBuiltinGroupConcat(c *C) {
 	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning 1260 Some rows were cut by GROUPCONCAT(test.t.a)"))
 
 	_, err := tk.Exec("insert into d select group_concat(a) from t")
-	c.Assert(errors.Cause(err).(*terror.Error).Code(), Equals, terror.ErrCode(mysql.ErrCutValueGroupConcat))
+	c.Assert(errors.Cause(err).(*tterror.TError).Code(), Equals, terror.ErrCode(tmysql.ErrCutValueGroupConcat))
 
 	tk.Exec("set sql_mode=''")
 	tk.MustExec("insert into d select group_concat(a) from t")
@@ -3918,15 +3920,15 @@ func (s *testIntegrationSuite) TestFuncJSON(c *C) {
 	r := tk.MustQuery(`select json_type(a), json_type(b) from table_json`)
 	r.Check(testkit.Rows("OBJECT OBJECT", "ARRAY ARRAY"))
 
-	tk.MustGetErrCode("select json_quote();", mysql.ErrWrongParamcountToNativeFct)
-	tk.MustGetErrCode("select json_quote('abc', 'def');", mysql.ErrWrongParamcountToNativeFct)
-	tk.MustGetErrCode("select json_quote(NULL, 'def');", mysql.ErrWrongParamcountToNativeFct)
-	tk.MustGetErrCode("select json_quote('abc', NULL);", mysql.ErrWrongParamcountToNativeFct)
+	tk.MustGetErrCode("select json_quote();", tmysql.ErrWrongParamcountToNativeFct)
+	tk.MustGetErrCode("select json_quote('abc', 'def');", tmysql.ErrWrongParamcountToNativeFct)
+	tk.MustGetErrCode("select json_quote(NULL, 'def');", tmysql.ErrWrongParamcountToNativeFct)
+	tk.MustGetErrCode("select json_quote('abc', NULL);", tmysql.ErrWrongParamcountToNativeFct)
 
-	tk.MustGetErrCode("select json_unquote();", mysql.ErrWrongParamcountToNativeFct)
-	tk.MustGetErrCode("select json_unquote('abc', 'def');", mysql.ErrWrongParamcountToNativeFct)
-	tk.MustGetErrCode("select json_unquote(NULL, 'def');", mysql.ErrWrongParamcountToNativeFct)
-	tk.MustGetErrCode("select json_unquote('abc', NULL);", mysql.ErrWrongParamcountToNativeFct)
+	tk.MustGetErrCode("select json_unquote();", tmysql.ErrWrongParamcountToNativeFct)
+	tk.MustGetErrCode("select json_unquote('abc', 'def');", tmysql.ErrWrongParamcountToNativeFct)
+	tk.MustGetErrCode("select json_unquote(NULL, 'def');", tmysql.ErrWrongParamcountToNativeFct)
+	tk.MustGetErrCode("select json_unquote('abc', NULL);", tmysql.ErrWrongParamcountToNativeFct)
 
 	tk.MustQuery("select json_quote(NULL);").Check(testkit.Rows("<nil>"))
 	tk.MustQuery("select json_unquote(NULL);").Check(testkit.Rows("<nil>"))
@@ -3964,27 +3966,27 @@ func (s *testIntegrationSuite) TestFuncJSON(c *C) {
 	tk.MustQuery(`select json_quote(json_quote(json_quote('abc')));`).Check(testkit.Rows(`"\"\\\"abc\\\"\""`))
 	tk.MustQuery(`select json_unquote(json_unquote(json_unquote(json_quote(json_quote(json_quote('abc'))))));`).Check(testkit.Rows("abc"))
 
-	tk.MustGetErrCode("select json_quote(123)", mysql.ErrIncorrectType)
-	tk.MustGetErrCode("select json_quote(-100)", mysql.ErrIncorrectType)
-	tk.MustGetErrCode("select json_quote(123.123)", mysql.ErrIncorrectType)
-	tk.MustGetErrCode("select json_quote(-100.000)", mysql.ErrIncorrectType)
-	tk.MustGetErrCode(`select json_quote(true);`, mysql.ErrIncorrectType)
-	tk.MustGetErrCode(`select json_quote(false);`, mysql.ErrIncorrectType)
-	tk.MustGetErrCode(`select json_quote(cast("{}" as JSON));`, mysql.ErrIncorrectType)
-	tk.MustGetErrCode(`select json_quote(cast("[]" as JSON));`, mysql.ErrIncorrectType)
-	tk.MustGetErrCode(`select json_quote(cast("2015-07-29" as date));`, mysql.ErrIncorrectType)
-	tk.MustGetErrCode(`select json_quote(cast("12:18:29.000000" as time));`, mysql.ErrIncorrectType)
-	tk.MustGetErrCode(`select json_quote(cast("2015-07-29 12:18:29.000000" as datetime));`, mysql.ErrIncorrectType)
+	tk.MustGetErrCode("select json_quote(123)", tmysql.ErrIncorrectType)
+	tk.MustGetErrCode("select json_quote(-100)", tmysql.ErrIncorrectType)
+	tk.MustGetErrCode("select json_quote(123.123)", tmysql.ErrIncorrectType)
+	tk.MustGetErrCode("select json_quote(-100.000)", tmysql.ErrIncorrectType)
+	tk.MustGetErrCode(`select json_quote(true);`, tmysql.ErrIncorrectType)
+	tk.MustGetErrCode(`select json_quote(false);`, tmysql.ErrIncorrectType)
+	tk.MustGetErrCode(`select json_quote(cast("{}" as JSON));`, tmysql.ErrIncorrectType)
+	tk.MustGetErrCode(`select json_quote(cast("[]" as JSON));`, tmysql.ErrIncorrectType)
+	tk.MustGetErrCode(`select json_quote(cast("2015-07-29" as date));`, tmysql.ErrIncorrectType)
+	tk.MustGetErrCode(`select json_quote(cast("12:18:29.000000" as time));`, tmysql.ErrIncorrectType)
+	tk.MustGetErrCode(`select json_quote(cast("2015-07-29 12:18:29.000000" as datetime));`, tmysql.ErrIncorrectType)
 
-	tk.MustGetErrCode("select json_unquote(123)", mysql.ErrIncorrectType)
-	tk.MustGetErrCode("select json_unquote(-100)", mysql.ErrIncorrectType)
-	tk.MustGetErrCode("select json_unquote(123.123)", mysql.ErrIncorrectType)
-	tk.MustGetErrCode("select json_unquote(-100.000)", mysql.ErrIncorrectType)
-	tk.MustGetErrCode(`select json_unquote(true);`, mysql.ErrIncorrectType)
-	tk.MustGetErrCode(`select json_unquote(false);`, mysql.ErrIncorrectType)
-	tk.MustGetErrCode(`select json_unquote(cast("2015-07-29" as date));`, mysql.ErrIncorrectType)
-	tk.MustGetErrCode(`select json_unquote(cast("12:18:29.000000" as time));`, mysql.ErrIncorrectType)
-	tk.MustGetErrCode(`select json_unquote(cast("2015-07-29 12:18:29.000000" as datetime));`, mysql.ErrIncorrectType)
+	tk.MustGetErrCode("select json_unquote(123)", tmysql.ErrIncorrectType)
+	tk.MustGetErrCode("select json_unquote(-100)", tmysql.ErrIncorrectType)
+	tk.MustGetErrCode("select json_unquote(123.123)", tmysql.ErrIncorrectType)
+	tk.MustGetErrCode("select json_unquote(-100.000)", tmysql.ErrIncorrectType)
+	tk.MustGetErrCode(`select json_unquote(true);`, tmysql.ErrIncorrectType)
+	tk.MustGetErrCode(`select json_unquote(false);`, tmysql.ErrIncorrectType)
+	tk.MustGetErrCode(`select json_unquote(cast("2015-07-29" as date));`, tmysql.ErrIncorrectType)
+	tk.MustGetErrCode(`select json_unquote(cast("12:18:29.000000" as time));`, tmysql.ErrIncorrectType)
+	tk.MustGetErrCode(`select json_unquote(cast("2015-07-29 12:18:29.000000" as datetime));`, tmysql.ErrIncorrectType)
 
 	r = tk.MustQuery(`select json_extract(a, '$.a[1]'), json_extract(b, '$.b') from table_json`)
 	r.Check(testkit.Rows("\"2\" true", "<nil> <nil>"))

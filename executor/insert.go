@@ -19,9 +19,10 @@ import (
 	"fmt"
 
 	"github.com/opentracing/opentracing-go"
-	"github.com/pingcap/parser/mysql"
+	pmysql "github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
@@ -41,7 +42,7 @@ type InsertExec struct {
 	curInsertVals  chunk.MutRow
 	row4Update     []types.Datum
 
-	Priority mysql.PriorityEnum
+	Priority pmysql.PriorityEnum
 }
 
 func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum) error {
@@ -299,7 +300,7 @@ func (e *InsertExec) initEvalBuffer4Dup() {
 		evalBufferTypes = append(evalBufferTypes, &col.FieldType)
 	}
 	if e.hasExtraHandle {
-		evalBufferTypes = append(evalBufferTypes, types.NewFieldType(mysql.TypeLonglong))
+		evalBufferTypes = append(evalBufferTypes, types.NewFieldType(pmysql.TypeLonglong))
 	}
 	e.evalBuffer4Dup = chunk.MutRowFromTypes(evalBufferTypes)
 	e.curInsertVals = chunk.MutRowFromTypes(evalBufferTypes[numWritableCols:])
@@ -355,7 +356,7 @@ func (e *InsertExec) setMessage() {
 			// if ignoreErr
 			numDuplicates = numRecords - stmtCtx.CopiedRows()
 		} else {
-			if e.ctx.GetSessionVars().ClientCapability&mysql.ClientFoundRows > 0 {
+			if e.ctx.GetSessionVars().ClientCapability&pmysql.ClientFoundRows > 0 {
 				numDuplicates = stmtCtx.TouchedRows()
 			} else {
 				numDuplicates = stmtCtx.UpdatedRows()

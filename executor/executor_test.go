@@ -45,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
+	tmysql "github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/planner"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
@@ -60,6 +61,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
+	tterror "github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/admin"
@@ -1226,13 +1228,13 @@ func (s *testSuiteP2) TestUnion(c *C) {
 
 	err := tk.ExecToErr("select 1 from (select a from t limit 1 union all select a from t limit 1) tmp")
 	c.Assert(err, NotNil)
-	terr := errors.Cause(err).(*terror.Error)
-	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrWrongUsage))
+	terr := errors.Cause(err).(*tterror.TError)
+	c.Assert(terr.Code(), Equals, terror.ErrCode(tmysql.ErrWrongUsage))
 
 	err = tk.ExecToErr("select 1 from (select a from t order by a union all select a from t limit 1) tmp")
 	c.Assert(err, NotNil)
-	terr = errors.Cause(err).(*terror.Error)
-	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrWrongUsage))
+	terr = errors.Cause(err).(*tterror.TError)
+	c.Assert(terr.Code(), Equals, terror.ErrCode(tmysql.ErrWrongUsage))
 
 	_, err = tk.Exec("(select a from t order by a) union all select a from t limit 1 union all select a from t limit 1")
 	c.Assert(terror.ErrorEqual(err, plannercore.ErrWrongUsage), IsTrue, Commentf("err %v", err))
@@ -1604,28 +1606,28 @@ func (s *testSuiteP1) TestJSON(c *C) {
 
 	// Check some DDL limits for TEXT/BLOB/JSON column.
 	var err error
-	var terr *terror.Error
+	var terr *tterror.TError
 
 	_, err = tk.Exec(`create table test_bad_json(a json default '{}')`)
 	c.Assert(err, NotNil)
-	terr = errors.Cause(err).(*terror.Error)
-	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrBlobCantHaveDefault))
+	terr = errors.Cause(err).(*tterror.TError)
+	c.Assert(terr.Code(), Equals, terror.ErrCode(tmysql.ErrBlobCantHaveDefault))
 
 	_, err = tk.Exec(`create table test_bad_json(a blob default 'hello')`)
 	c.Assert(err, NotNil)
-	terr = errors.Cause(err).(*terror.Error)
-	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrBlobCantHaveDefault))
+	terr = errors.Cause(err).(*tterror.TError)
+	c.Assert(terr.Code(), Equals, terror.ErrCode(tmysql.ErrBlobCantHaveDefault))
 
 	_, err = tk.Exec(`create table test_bad_json(a text default 'world')`)
 	c.Assert(err, NotNil)
-	terr = errors.Cause(err).(*terror.Error)
-	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrBlobCantHaveDefault))
+	terr = errors.Cause(err).(*tterror.TError)
+	c.Assert(terr.Code(), Equals, terror.ErrCode(tmysql.ErrBlobCantHaveDefault))
 
 	// check json fields cannot be used as key.
 	_, err = tk.Exec(`create table test_bad_json(id int, a json, key (a))`)
 	c.Assert(err, NotNil)
-	terr = errors.Cause(err).(*terror.Error)
-	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrJSONUsedAsKey))
+	terr = errors.Cause(err).(*tterror.TError)
+	c.Assert(terr.Code(), Equals, terror.ErrCode(tmysql.ErrJSONUsedAsKey))
 
 	// check CAST AS JSON.
 	result = tk.MustQuery(`select CAST('3' AS JSON), CAST('{}' AS JSON), CAST(null AS JSON)`)
@@ -1691,18 +1693,18 @@ func (s *testSuiteP1) TestGeneratedColumnWrite(c *C) {
 		err  int
 	}{
 		// Can't modify generated column by values.
-		{`insert into test_gc_write (a, b, c) values (1, 1, 1)`, mysql.ErrBadGeneratedColumn},
-		{`insert into test_gc_write values (1, 1, 1)`, mysql.ErrBadGeneratedColumn},
+		{`insert into test_gc_write (a, b, c) values (1, 1, 1)`, tmysql.ErrBadGeneratedColumn},
+		{`insert into test_gc_write values (1, 1, 1)`, tmysql.ErrBadGeneratedColumn},
 		// Can't modify generated column by select clause.
-		{`insert into test_gc_write select 1, 1, 1`, mysql.ErrBadGeneratedColumn},
+		{`insert into test_gc_write select 1, 1, 1`, tmysql.ErrBadGeneratedColumn},
 		// Can't modify generated column by on duplicate clause.
-		{`insert into test_gc_write (a, b) values (1, 1) on duplicate key update c = 1`, mysql.ErrBadGeneratedColumn},
+		{`insert into test_gc_write (a, b) values (1, 1) on duplicate key update c = 1`, tmysql.ErrBadGeneratedColumn},
 		// Can't modify generated column by set.
-		{`insert into test_gc_write set a = 1, b = 1, c = 1`, mysql.ErrBadGeneratedColumn},
+		{`insert into test_gc_write set a = 1, b = 1, c = 1`, tmysql.ErrBadGeneratedColumn},
 		// Can't modify generated column by update clause.
-		{`update test_gc_write set c = 1`, mysql.ErrBadGeneratedColumn},
+		{`update test_gc_write set c = 1`, tmysql.ErrBadGeneratedColumn},
 		// Can't modify generated column by multi-table update clause.
-		{`update test_gc_write, test_gc_write_1 set test_gc_write.c = 1`, mysql.ErrBadGeneratedColumn},
+		{`update test_gc_write, test_gc_write_1 set test_gc_write.c = 1`, tmysql.ErrBadGeneratedColumn},
 
 		// Can insert without generated columns.
 		{`insert into test_gc_write (a, b) values (1, 1)`, 0},
@@ -1713,16 +1715,16 @@ func (s *testSuiteP1) TestGeneratedColumnWrite(c *C) {
 		{`update test_gc_write t1, test_gc_write_1 t2 set t1.b = 3, t2.b = 4`, 0},
 
 		// But now we can't do this, just as same with MySQL 5.7:
-		{`insert into test_gc_write values (1, 1)`, mysql.ErrWrongValueCountOnRow},
-		{`insert into test_gc_write select 1, 1`, mysql.ErrWrongValueCountOnRow},
-		{`insert into test_gc_write (c) select a, b from test_gc_write`, mysql.ErrWrongValueCountOnRow},
-		{`insert into test_gc_write (b, c) select a, b from test_gc_write`, mysql.ErrBadGeneratedColumn},
+		{`insert into test_gc_write values (1, 1)`, tmysql.ErrWrongValueCountOnRow},
+		{`insert into test_gc_write select 1, 1`, tmysql.ErrWrongValueCountOnRow},
+		{`insert into test_gc_write (c) select a, b from test_gc_write`, tmysql.ErrWrongValueCountOnRow},
+		{`insert into test_gc_write (b, c) select a, b from test_gc_write`, tmysql.ErrBadGeneratedColumn},
 	}
 	for _, tt := range tests {
 		_, err := tk.Exec(tt.stmt)
 		if tt.err != 0 {
 			c.Assert(err, NotNil, Commentf("sql is `%v`", tt.stmt))
-			terr := errors.Cause(err).(*terror.Error)
+			terr := errors.Cause(err).(*tterror.TError)
 			c.Assert(terr.Code(), Equals, terror.ErrCode(tt.err), Commentf("sql is %v", tt.stmt))
 		} else {
 			c.Assert(err, IsNil)
@@ -1886,14 +1888,14 @@ func (s *testSuiteP1) TestGeneratedColumnRead(c *C) {
 		err  int
 	}{
 		// Can't insert these records, because generated columns are not null.
-		{`insert into test_gc_read_1(a, b) values (1, null)`, mysql.ErrBadNull},
-		{`insert into test_gc_read_2(a, b) values (1, null)`, mysql.ErrBadNull},
+		{`insert into test_gc_read_1(a, b) values (1, null)`, tmysql.ErrBadNull},
+		{`insert into test_gc_read_2(a, b) values (1, null)`, tmysql.ErrBadNull},
 	}
 	for _, tt := range tests {
 		_, err := tk.Exec(tt.stmt)
 		if tt.err != 0 {
 			c.Assert(err, NotNil)
-			terr := errors.Cause(err).(*terror.Error)
+			terr := errors.Cause(err).(*tterror.TError)
 			c.Assert(terr.Code(), Equals, terror.ErrCode(tt.err))
 		} else {
 			c.Assert(err, IsNil)
@@ -3212,8 +3214,8 @@ func (s *testSuite) TestContainDotColumn(c *C) {
 
 	tk.MustExec("drop table if exists t3")
 	_, err := tk.Exec("create table t3(s.a char);")
-	terr := errors.Cause(err).(*terror.Error)
-	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrWrongTableName))
+	terr := errors.Cause(err).(*tterror.TError)
+	c.Assert(terr.Code(), Equals, terror.ErrCode(tmysql.ErrWrongTableName))
 }
 
 func (s *testSuite) TestCheckIndex(c *C) {
@@ -4061,8 +4063,8 @@ func (s *testSuiteP2) TestSplitRegion(c *C) {
 	tk.MustExec(`split table t index idx1 by (10000,"abcd"),(10000000);`)
 	_, err := tk.Exec(`split table t index idx1 by ("abcd");`)
 	c.Assert(err, NotNil)
-	terr := errors.Cause(err).(*terror.Error)
-	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.WarnDataTruncated))
+	terr := errors.Cause(err).(*tterror.TError)
+	c.Assert(terr.Code(), Equals, terror.ErrCode(tmysql.WarnDataTruncated))
 
 	// Test for split index region.
 	// Check min value is more than max value.

@@ -20,20 +20,22 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
+	pmysql "github.com/pingcap/parser/mysql"
+	pterror "github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/structure"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/rowcodec"
 )
 
 var (
-	errInvalidKey       = terror.ClassXEval.New(mysql.ErrInvalidKey, mysql.MySQLErrName[mysql.ErrInvalidKey])
-	errInvalidRecordKey = terror.ClassXEval.New(mysql.ErrInvalidRecordKey, mysql.MySQLErrName[mysql.ErrInvalidRecordKey])
-	errInvalidIndexKey  = terror.ClassXEval.New(mysql.ErrInvalidIndexKey, mysql.MySQLErrName[mysql.ErrInvalidIndexKey])
+	errInvalidKey       = terror.New(pterror.ClassXEval, mysql.ErrInvalidKey, mysql.MySQLErrName[mysql.ErrInvalidKey])
+	errInvalidRecordKey = terror.New(pterror.ClassXEval, mysql.ErrInvalidRecordKey, mysql.MySQLErrName[mysql.ErrInvalidRecordKey])
+	errInvalidIndexKey  = terror.New(pterror.ClassXEval, mysql.ErrInvalidIndexKey, mysql.MySQLErrName[mysql.ErrInvalidIndexKey])
 )
 
 var (
@@ -232,7 +234,7 @@ func DecodeTableID(key kv.Key) int64 {
 	key = key[len(tablePrefix):]
 	_, tableID, err := codec.DecodeInt(key)
 	// TODO: return error.
-	terror.Log(errors.Trace(err))
+	pterror.Log(errors.Trace(err))
 	return tableID
 }
 
@@ -300,7 +302,7 @@ func flatten(sc *stmtctx.StatementContext, data types.Datum, ret *types.Datum) e
 	case types.KindMysqlTime:
 		// for mysql datetime, timestamp and date type
 		t := data.GetMysqlTime()
-		if t.Type() == mysql.TypeTimestamp && sc.TimeZone != time.UTC {
+		if t.Type() == pmysql.TypeTimestamp && sc.TimeZone != time.UTC {
 			err := t.ConvertTimeZone(sc.TimeZone, time.UTC)
 			if err != nil {
 				return errors.Trace(err)
@@ -499,22 +501,22 @@ func unflatten(datum types.Datum, ft *types.FieldType, loc *time.Location) (type
 		return datum, nil
 	}
 	switch ft.Tp {
-	case mysql.TypeFloat:
+	case pmysql.TypeFloat:
 		datum.SetFloat32(float32(datum.GetFloat64()))
 		return datum, nil
-	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeYear, mysql.TypeInt24,
-		mysql.TypeLong, mysql.TypeLonglong, mysql.TypeDouble, mysql.TypeTinyBlob,
-		mysql.TypeMediumBlob, mysql.TypeBlob, mysql.TypeLongBlob, mysql.TypeVarchar,
-		mysql.TypeString:
+	case pmysql.TypeTiny, pmysql.TypeShort, pmysql.TypeYear, pmysql.TypeInt24,
+		pmysql.TypeLong, pmysql.TypeLonglong, pmysql.TypeDouble, pmysql.TypeTinyBlob,
+		pmysql.TypeMediumBlob, pmysql.TypeBlob, pmysql.TypeLongBlob, pmysql.TypeVarchar,
+		pmysql.TypeString:
 		return datum, nil
-	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
+	case pmysql.TypeDate, pmysql.TypeDatetime, pmysql.TypeTimestamp:
 		t := types.NewTime(types.ZeroCoreTime, ft.Tp, int8(ft.Decimal))
 		var err error
 		err = t.FromPackedUint(datum.GetUint64())
 		if err != nil {
 			return datum, errors.Trace(err)
 		}
-		if ft.Tp == mysql.TypeTimestamp && !t.IsZero() {
+		if ft.Tp == pmysql.TypeTimestamp && !t.IsZero() {
 			err = t.ConvertTimeZone(time.UTC, loc)
 			if err != nil {
 				return datum, errors.Trace(err)
@@ -523,11 +525,11 @@ func unflatten(datum types.Datum, ft *types.FieldType, loc *time.Location) (type
 		datum.SetUint64(0)
 		datum.SetMysqlTime(t)
 		return datum, nil
-	case mysql.TypeDuration: //duration should read fsp from column meta data
+	case pmysql.TypeDuration: //duration should read fsp from column meta data
 		dur := types.Duration{Duration: time.Duration(datum.GetInt64()), Fsp: int8(ft.Decimal)}
 		datum.SetValue(dur)
 		return datum, nil
-	case mysql.TypeEnum:
+	case pmysql.TypeEnum:
 		// ignore error deliberately, to read empty enum value.
 		enum, err := types.ParseEnumValue(ft.Elems, datum.GetUint64())
 		if err != nil {
@@ -535,14 +537,14 @@ func unflatten(datum types.Datum, ft *types.FieldType, loc *time.Location) (type
 		}
 		datum.SetValue(enum)
 		return datum, nil
-	case mysql.TypeSet:
+	case pmysql.TypeSet:
 		set, err := types.ParseSetValue(ft.Elems, datum.GetUint64())
 		if err != nil {
 			return datum, errors.Trace(err)
 		}
 		datum.SetValue(set)
 		return datum, nil
-	case mysql.TypeBit:
+	case pmysql.TypeBit:
 		val := datum.GetUint64()
 		byteSize := (ft.Flen + 7) >> 3
 		datum.SetUint64(0)
@@ -769,10 +771,10 @@ func GetTableIndexKeyRange(tableID, indexID int64) (startKey, endKey []byte) {
 }
 
 func init() {
-	mySQLErrCodes := map[terror.ErrCode]uint16{
+	mySQLErrCodes := map[pterror.ErrCode]uint16{
 		mysql.ErrInvalidKey:       mysql.ErrInvalidKey,
 		mysql.ErrInvalidRecordKey: mysql.ErrInvalidRecordKey,
 		mysql.ErrInvalidIndexKey:  mysql.ErrInvalidIndexKey,
 	}
-	terror.ErrClassToMySQLCodes[terror.ClassXEval] = mySQLErrCodes
+	terror.ErrClassToMySQLCodes[pterror.ClassXEval] = mySQLErrCodes
 }

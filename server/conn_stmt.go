@@ -44,6 +44,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
+	tmysql "github.com/pingcap/tidb/mysql"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
@@ -117,7 +118,7 @@ func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err e
 
 	stmt := cc.ctx.GetStatement(int(stmtID))
 	if stmt == nil {
-		return mysql.NewErr(mysql.ErrUnknownStmtHandler,
+		return tmysql.NewErr(tmysql.ErrUnknownStmtHandler,
 			strconv.FormatUint(uint64(stmtID), 10), "stmt_execute")
 	}
 
@@ -226,7 +227,7 @@ func (cc *clientConn) handleStmtFetch(ctx context.Context, data []byte) (err err
 
 	stmt := cc.ctx.GetStatement(int(stmtID))
 	if stmt == nil {
-		return errors.Annotate(mysql.NewErr(mysql.ErrUnknownStmtHandler,
+		return errors.Annotate(tmysql.NewErr(tmysql.ErrUnknownStmtHandler,
 			strconv.FormatUint(uint64(stmtID), 10), "stmt_fetch"), cc.preparedStmt2String(stmtID))
 	}
 	sql := ""
@@ -236,7 +237,7 @@ func (cc *clientConn) handleStmtFetch(ctx context.Context, data []byte) (err err
 	cc.ctx.SetProcessInfo(sql, time.Now(), mysql.ComStmtExecute, 0)
 	rs := stmt.GetResultSet()
 	if rs == nil {
-		return errors.Annotate(mysql.NewErr(mysql.ErrUnknownStmtHandler,
+		return errors.Annotate(tmysql.NewErr(tmysql.ErrUnknownStmtHandler,
 			strconv.FormatUint(uint64(stmtID), 10), "stmt_fetch_rs"), cc.preparedStmt2String(stmtID))
 	}
 
@@ -581,7 +582,7 @@ func (cc *clientConn) handleStmtSendLongData(data []byte) (err error) {
 
 	stmt := cc.ctx.GetStatement(stmtID)
 	if stmt == nil {
-		return mysql.NewErr(mysql.ErrUnknownStmtHandler,
+		return tmysql.NewErr(tmysql.ErrUnknownStmtHandler,
 			strconv.Itoa(stmtID), "stmt_send_longdata")
 	}
 
@@ -597,7 +598,7 @@ func (cc *clientConn) handleStmtReset(data []byte) (err error) {
 	stmtID := int(binary.LittleEndian.Uint32(data[0:4]))
 	stmt := cc.ctx.GetStatement(stmtID)
 	if stmt == nil {
-		return mysql.NewErr(mysql.ErrUnknownStmtHandler,
+		return tmysql.NewErr(tmysql.ErrUnknownStmtHandler,
 			strconv.Itoa(stmtID), "stmt_reset")
 	}
 	stmt.Reset()

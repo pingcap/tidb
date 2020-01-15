@@ -16,6 +16,7 @@ package filesort
 import (
 	"container/heap"
 	"encoding/binary"
+	pterror "github.com/pingcap/parser/terror"
 	"io"
 	"os"
 	"path/filepath"
@@ -26,7 +27,6 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
@@ -582,7 +582,7 @@ func (w *Worker) flushToFile() {
 		w.err = errors.Trace(err)
 		return
 	}
-	defer terror.Call(outputFile.Close)
+	defer pterror.Call(outputFile.Close)
 	sc := &stmtctx.StatementContext{TimeZone: time.Local}
 	for _, row := range w.buf {
 		prevLen = len(outputByte)

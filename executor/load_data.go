@@ -23,7 +23,8 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/mysql"
+	pmysql "github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
@@ -461,7 +462,7 @@ func (e *LoadDataInfo) colsToRow(ctx context.Context, cols []field) []types.Datu
 	for i := 0; i < len(e.row); i++ {
 		if i >= len(cols) {
 			// If some columns is missing and their type is time and has not null flag, they should be set as current time.
-			if types.IsTypeTime(totalCols[i].Tp) && mysql.HasNotNullFlag(totalCols[i].Flag) {
+			if types.IsTypeTime(totalCols[i].Tp) && pmysql.HasNotNullFlag(totalCols[i].Flag) {
 				e.row[i].SetMysqlTime(types.CurrentTime(totalCols[i].Tp))
 				continue
 			}

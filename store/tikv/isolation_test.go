@@ -23,8 +23,9 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/parser/terror"
+	pterror "github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/terror"
 )
 
 // testIsolationSuite represents test isolation suite.
@@ -72,7 +73,7 @@ func (s *testIsolationSuite) SetWithRetry(c *C, k, v []byte) writeRecord {
 				commitTS: txn.(*tikvTxn).commitTS,
 			}
 		}
-		c.Assert(kv.IsTxnRetryableError(err) || terror.ErrorEqual(err, terror.ErrResultUndetermined), IsTrue)
+		c.Assert(kv.IsTxnRetryableError(err) || pterror.ErrorEqual(err, terror.ErrResultUndetermined), IsTrue)
 	}
 }
 

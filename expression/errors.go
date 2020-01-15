@@ -14,41 +14,42 @@
 package expression
 
 import (
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
+	pterror "github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 )
 
 // Error instances.
 var (
 	// All the exported errors are defined here:
-	ErrIncorrectParameterCount = terror.ClassExpression.New(mysql.ErrWrongParamcountToNativeFct, mysql.MySQLErrName[mysql.ErrWrongParamcountToNativeFct])
-	ErrDivisionByZero          = terror.ClassExpression.New(mysql.ErrDivisionByZero, mysql.MySQLErrName[mysql.ErrDivisionByZero])
-	ErrRegexp                  = terror.ClassExpression.New(mysql.ErrRegexp, mysql.MySQLErrName[mysql.ErrRegexp])
-	ErrOperandColumns          = terror.ClassExpression.New(mysql.ErrOperandColumns, mysql.MySQLErrName[mysql.ErrOperandColumns])
-	ErrCutValueGroupConcat     = terror.ClassExpression.New(mysql.ErrCutValueGroupConcat, mysql.MySQLErrName[mysql.ErrCutValueGroupConcat])
-	ErrFunctionsNoopImpl       = terror.ClassExpression.New(mysql.ErrNotSupportedYet, "function %s has only noop implementation in tidb now, use tidb_enable_noop_functions to enable these functions")
-	ErrIncorrectType           = terror.ClassExpression.New(mysql.ErrIncorrectType, mysql.MySQLErrName[mysql.ErrIncorrectType])
+	ErrIncorrectParameterCount = terror.New(pterror.ClassExpression, mysql.ErrWrongParamcountToNativeFct, mysql.MySQLErrName[mysql.ErrWrongParamcountToNativeFct])
+	ErrDivisionByZero          = terror.New(pterror.ClassExpression, mysql.ErrDivisionByZero, mysql.MySQLErrName[mysql.ErrDivisionByZero])
+	ErrRegexp                  = terror.New(pterror.ClassExpression, mysql.ErrRegexp, mysql.MySQLErrName[mysql.ErrRegexp])
+	ErrOperandColumns          = terror.New(pterror.ClassExpression, mysql.ErrOperandColumns, mysql.MySQLErrName[mysql.ErrOperandColumns])
+	ErrCutValueGroupConcat     = terror.New(pterror.ClassExpression, mysql.ErrCutValueGroupConcat, mysql.MySQLErrName[mysql.ErrCutValueGroupConcat])
+	ErrFunctionsNoopImpl       = terror.New(pterror.ClassExpression, mysql.ErrNotSupportedYet, "function %s has only noop implementation in tidb now, use tidb_enable_noop_functions to enable these functions")
+	ErrIncorrectType           = terror.New(pterror.ClassExpression, mysql.ErrIncorrectType, mysql.MySQLErrName[mysql.ErrIncorrectType])
 
 	// All the un-exported errors are defined here:
-	errFunctionNotExists             = terror.ClassExpression.New(mysql.ErrSpDoesNotExist, mysql.MySQLErrName[mysql.ErrSpDoesNotExist])
-	errZlibZData                     = terror.ClassExpression.New(mysql.ErrZlibZData, mysql.MySQLErrName[mysql.ErrZlibZData])
-	errZlibZBuf                      = terror.ClassExpression.New(mysql.ErrZlibZBuf, mysql.MySQLErrName[mysql.ErrZlibZBuf])
-	errIncorrectArgs                 = terror.ClassExpression.New(mysql.ErrWrongArguments, mysql.MySQLErrName[mysql.ErrWrongArguments])
-	errUnknownCharacterSet           = terror.ClassExpression.New(mysql.ErrUnknownCharacterSet, mysql.MySQLErrName[mysql.ErrUnknownCharacterSet])
-	errDefaultValue                  = terror.ClassExpression.New(mysql.ErrInvalidDefault, "invalid default value")
-	errDeprecatedSyntaxNoReplacement = terror.ClassExpression.New(mysql.ErrWarnDeprecatedSyntaxNoReplacement, mysql.MySQLErrName[mysql.ErrWarnDeprecatedSyntaxNoReplacement])
-	errBadField                      = terror.ClassExpression.New(mysql.ErrBadField, mysql.MySQLErrName[mysql.ErrBadField])
-	errWarnAllowedPacketOverflowed   = terror.ClassExpression.New(mysql.ErrWarnAllowedPacketOverflowed, mysql.MySQLErrName[mysql.ErrWarnAllowedPacketOverflowed])
-	errWarnOptionIgnored             = terror.ClassExpression.New(mysql.WarnOptionIgnored, mysql.MySQLErrName[mysql.WarnOptionIgnored])
-	errTruncatedWrongValue           = terror.ClassExpression.New(mysql.ErrTruncatedWrongValue, mysql.MySQLErrName[mysql.ErrTruncatedWrongValue])
-	errUnknownLocale                 = terror.ClassExpression.New(mysql.ErrUnknownLocale, mysql.MySQLErrName[mysql.ErrUnknownLocale])
-	errNonUniq                       = terror.ClassExpression.New(mysql.ErrNonUniq, mysql.MySQLErrName[mysql.ErrNonUniq])
+	errFunctionNotExists             = terror.New(pterror.ClassExpression, mysql.ErrSpDoesNotExist, mysql.MySQLErrName[mysql.ErrSpDoesNotExist])
+	errZlibZData                     = terror.New(pterror.ClassExpression, mysql.ErrZlibZData, mysql.MySQLErrName[mysql.ErrZlibZData])
+	errZlibZBuf                      = terror.New(pterror.ClassExpression, mysql.ErrZlibZBuf, mysql.MySQLErrName[mysql.ErrZlibZBuf])
+	errIncorrectArgs                 = terror.New(pterror.ClassExpression, mysql.ErrWrongArguments, mysql.MySQLErrName[mysql.ErrWrongArguments])
+	errUnknownCharacterSet           = terror.New(pterror.ClassExpression, mysql.ErrUnknownCharacterSet, mysql.MySQLErrName[mysql.ErrUnknownCharacterSet])
+	errDefaultValue                  = terror.New(pterror.ClassExpression, mysql.ErrInvalidDefault, "invalid default value")
+	errDeprecatedSyntaxNoReplacement = terror.New(pterror.ClassExpression, mysql.ErrWarnDeprecatedSyntaxNoReplacement, mysql.MySQLErrName[mysql.ErrWarnDeprecatedSyntaxNoReplacement])
+	errBadField                      = terror.New(pterror.ClassExpression, mysql.ErrBadField, mysql.MySQLErrName[mysql.ErrBadField])
+	errWarnAllowedPacketOverflowed   = terror.New(pterror.ClassExpression, mysql.ErrWarnAllowedPacketOverflowed, mysql.MySQLErrName[mysql.ErrWarnAllowedPacketOverflowed])
+	errWarnOptionIgnored             = terror.New(pterror.ClassExpression, mysql.WarnOptionIgnored, mysql.MySQLErrName[mysql.WarnOptionIgnored])
+	errTruncatedWrongValue           = terror.New(pterror.ClassExpression, mysql.ErrTruncatedWrongValue, mysql.MySQLErrName[mysql.ErrTruncatedWrongValue])
+	errUnknownLocale                 = terror.New(pterror.ClassExpression, mysql.ErrUnknownLocale, mysql.MySQLErrName[mysql.ErrUnknownLocale])
+	errNonUniq                       = terror.New(pterror.ClassExpression, mysql.ErrNonUniq, mysql.MySQLErrName[mysql.ErrNonUniq])
 )
 
 func init() {
-	expressionMySQLErrCodes := map[terror.ErrCode]uint16{
+	expressionMySQLErrCodes := map[pterror.ErrCode]uint16{
 		mysql.ErrWrongParamcountToNativeFct:        mysql.ErrWrongParamcountToNativeFct,
 		mysql.ErrDivisionByZero:                    mysql.ErrDivisionByZero,
 		mysql.ErrSpDoesNotExist:                    mysql.ErrSpDoesNotExist,
@@ -70,7 +71,7 @@ func init() {
 		mysql.ErrNonUniq:                           mysql.ErrNonUniq,
 		mysql.ErrIncorrectType:                     mysql.ErrIncorrectType,
 	}
-	terror.ErrClassToMySQLCodes[terror.ClassExpression] = expressionMySQLErrCodes
+	terror.ErrClassToMySQLCodes[pterror.ClassExpression] = expressionMySQLErrCodes
 }
 
 // handleInvalidTimeError reports error or warning depend on the context.

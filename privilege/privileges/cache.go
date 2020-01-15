@@ -27,7 +27,8 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
+	pterror "github.com/pingcap/parser/terror"
+	tmysql "github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -329,8 +330,8 @@ func (p *MySQLPrivilege) LoadAll(ctx sessionctx.Context) error {
 
 func noSuchTable(err error) bool {
 	e1 := errors.Cause(err)
-	if e2, ok := e1.(*terror.Error); ok {
-		if e2.Code() == terror.ErrCode(mysql.ErrNoSuchTable) {
+	if e2, ok := e1.(pterror.BaseErrorConvertible); ok {
+		if e2.ToBaseError().Code() == pterror.ErrCode(tmysql.ErrNoSuchTable) {
 			return true
 		}
 	}
@@ -517,7 +518,7 @@ func (p *MySQLPrivilege) loadTable(sctx sessionctx.Context, sql string,
 		return errors.Trace(err)
 	}
 	rs := tmp[0]
-	defer terror.Call(rs.Close)
+	defer pterror.Call(rs.Close)
 
 	fs := rs.Fields()
 	req := rs.NewChunk()

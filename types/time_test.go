@@ -21,8 +21,8 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
@@ -1434,7 +1434,7 @@ func (s *testTimeSuite) TestParseDurationValue(c *C) {
 		res2   int64
 		res3   int64
 		res4   int64
-		err    *terror.Error
+		err    *terror.TError
 	}{
 		{"52", "WEEK", 0, 0, 52 * 7, 0, nil},
 		{"12", "DAY", 0, 0, 12, 0, nil},

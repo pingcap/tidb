@@ -15,10 +15,11 @@ package json
 
 import (
 	"encoding/binary"
+	pterror "github.com/pingcap/parser/terror"
 	"unicode/utf8"
 
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/terror"
 )
 
 // TypeCode indicates JSON type.
@@ -207,21 +208,21 @@ const (
 
 var (
 	// ErrInvalidJSONText means invalid JSON text.
-	ErrInvalidJSONText = terror.ClassJSON.New(mysql.ErrInvalidJSONText, mysql.MySQLErrName[mysql.ErrInvalidJSONText])
+	ErrInvalidJSONText = terror.New(pterror.ClassJSON, mysql.ErrInvalidJSONText, mysql.MySQLErrName[mysql.ErrInvalidJSONText])
 	// ErrInvalidJSONPath means invalid JSON path.
-	ErrInvalidJSONPath = terror.ClassJSON.New(mysql.ErrInvalidJSONPath, mysql.MySQLErrName[mysql.ErrInvalidJSONPath])
+	ErrInvalidJSONPath = terror.New(pterror.ClassJSON, mysql.ErrInvalidJSONPath, mysql.MySQLErrName[mysql.ErrInvalidJSONPath])
 	// ErrInvalidJSONData means invalid JSON data.
-	ErrInvalidJSONData = terror.ClassJSON.New(mysql.ErrInvalidJSONData, mysql.MySQLErrName[mysql.ErrInvalidJSONData])
+	ErrInvalidJSONData = terror.New(pterror.ClassJSON, mysql.ErrInvalidJSONData, mysql.MySQLErrName[mysql.ErrInvalidJSONData])
 	// ErrInvalidJSONPathWildcard means invalid JSON path that contain wildcard characters.
-	ErrInvalidJSONPathWildcard = terror.ClassJSON.New(mysql.ErrInvalidJSONPathWildcard, mysql.MySQLErrName[mysql.ErrInvalidJSONPathWildcard])
+	ErrInvalidJSONPathWildcard = terror.New(pterror.ClassJSON, mysql.ErrInvalidJSONPathWildcard, mysql.MySQLErrName[mysql.ErrInvalidJSONPathWildcard])
 	// ErrInvalidJSONContainsPathType means invalid JSON contains path type.
-	ErrInvalidJSONContainsPathType = terror.ClassJSON.New(mysql.ErrInvalidJSONContainsPathType, mysql.MySQLErrName[mysql.ErrInvalidJSONContainsPathType])
+	ErrInvalidJSONContainsPathType = terror.New(pterror.ClassJSON, mysql.ErrInvalidJSONContainsPathType, mysql.MySQLErrName[mysql.ErrInvalidJSONContainsPathType])
 	// ErrInvalidJSONPathArrayCell means invalid JSON path for an array cell.
-	ErrInvalidJSONPathArrayCell = terror.ClassJSON.New(mysql.ErrInvalidJSONPathArrayCell, mysql.MySQLErrName[mysql.ErrInvalidJSONPathArrayCell])
+	ErrInvalidJSONPathArrayCell = terror.New(pterror.ClassJSON, mysql.ErrInvalidJSONPathArrayCell, mysql.MySQLErrName[mysql.ErrInvalidJSONPathArrayCell])
 )
 
 func init() {
-	terror.ErrClassToMySQLCodes[terror.ClassJSON] = map[terror.ErrCode]uint16{
+	terror.ErrClassToMySQLCodes[pterror.ClassJSON] = map[pterror.ErrCode]uint16{
 		mysql.ErrInvalidJSONText:             mysql.ErrInvalidJSONText,
 		mysql.ErrInvalidJSONPath:             mysql.ErrInvalidJSONPath,
 		mysql.ErrInvalidJSONData:             mysql.ErrInvalidJSONData,

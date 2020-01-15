@@ -26,14 +26,16 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
+	pterror "github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
+	tmysql "github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
@@ -148,9 +150,9 @@ func (s *testPrivilegeSuite) TestCheckPointGetDBPrivilege(c *C) {
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "tester", Hostname: "localhost"}, nil, nil), IsTrue)
 	mustExec(c, se, `use test;`)
 	_, err := se.Execute(context.Background(), `select * from test2.t where id = 1`)
-	c.Assert(terror.ErrorEqual(err, core.ErrTableaccessDenied), IsTrue)
+	c.Assert(pterror.ErrorEqual(err, core.ErrTableaccessDenied), IsTrue)
 	_, err = se.Execute(context.Background(), "update test2.t set v = 2 where id = 1")
-	c.Assert(terror.ErrorEqual(err, core.ErrTableaccessDenied), IsTrue)
+	c.Assert(pterror.ErrorEqual(err, core.ErrTableaccessDenied), IsTrue)
 }
 
 func (s *testPrivilegeSuite) TestCheckTablePrivilege(c *C) {
@@ -338,8 +340,8 @@ func (s *testPrivilegeSuite) TestShowGrants(c *C) {
 	_, err = pc.ShowGrants(se, &auth.UserIdentity{Username: "show", Hostname: "localhost"}, nil)
 	c.Assert(err, NotNil)
 	// cant show grants for non-existent
-	errNonexistingGrant := terror.ClassPrivilege.New(mysql.ErrNonexistingGrant, mysql.MySQLErrName[mysql.ErrNonexistingGrant])
-	c.Assert(terror.ErrorEqual(err, errNonexistingGrant), IsTrue)
+	errNonexistingGrant := terror.New(pterror.ClassPrivilege, tmysql.ErrNonexistingGrant, tmysql.MySQLErrName[tmysql.ErrNonexistingGrant])
+	c.Assert(pterror.ErrorEqual(err, errNonexistingGrant), IsTrue)
 
 	// Test SHOW GRANTS with USING roles.
 	mustExec(c, se, `CREATE ROLE 'r1', 'r2'`)
@@ -464,7 +466,7 @@ func (s *testPrivilegeSuite) TestRoleAdminSecurity(c *C) {
 
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "ar2", Hostname: "localhost"}, nil, nil), IsTrue)
 	_, err := se.Execute(context.Background(), `create role r_test2@localhost`)
-	c.Assert(terror.ErrorEqual(err, core.ErrSpecificAccessDenied), IsTrue)
+	c.Assert(pterror.ErrorEqual(err, core.ErrSpecificAccessDenied), IsTrue)
 }
 
 func (s *testPrivilegeSuite) TestCheckCertBasedAuth(c *C) {
@@ -797,7 +799,7 @@ func (s *testPrivilegeSuite) TestSetGlobal(c *C) {
 
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "setglobal_b", Hostname: "localhost"}, nil, nil), IsTrue)
 	_, err := se.Execute(context.Background(), `set global innodb_commit_concurrency=16`)
-	c.Assert(terror.ErrorEqual(err, core.ErrSpecificAccessDenied), IsTrue)
+	c.Assert(pterror.ErrorEqual(err, core.ErrSpecificAccessDenied), IsTrue)
 }
 
 func (s *testPrivilegeSuite) TestCreateDropUser(c *C) {
@@ -808,9 +810,9 @@ func (s *testPrivilegeSuite) TestCreateDropUser(c *C) {
 	// should fail
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "tcd1", Hostname: "localhost", AuthUsername: "tcd1", AuthHostname: "%"}, nil, nil), IsTrue)
 	_, err := se.Execute(context.Background(), `CREATE USER acdc`)
-	c.Assert(terror.ErrorEqual(err, core.ErrSpecificAccessDenied), IsTrue)
+	c.Assert(pterror.ErrorEqual(err, core.ErrSpecificAccessDenied), IsTrue)
 	_, err = se.Execute(context.Background(), `DROP USER tcd2`)
-	c.Assert(terror.ErrorEqual(err, core.ErrSpecificAccessDenied), IsTrue)
+	c.Assert(pterror.ErrorEqual(err, core.ErrSpecificAccessDenied), IsTrue)
 
 	// should pass
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "tcd2", Hostname: "localhost", AuthUsername: "tcd2", AuthHostname: "%"}, nil, nil), IsTrue)
@@ -833,7 +835,7 @@ func (s *testPrivilegeSuite) TestShowCreateTable(c *C) {
 	// should fail
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "tsct1", Hostname: "localhost", AuthUsername: "tsct1", AuthHostname: "%"}, nil, nil), IsTrue)
 	_, err := se.Execute(context.Background(), `SHOW CREATE TABLE mysql.user`)
-	c.Assert(terror.ErrorEqual(err, core.ErrTableaccessDenied), IsTrue)
+	c.Assert(pterror.ErrorEqual(err, core.ErrTableaccessDenied), IsTrue)
 
 	// should pass
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "tsct2", Hostname: "localhost", AuthUsername: "tsct2", AuthHostname: "%"}, nil, nil), IsTrue)
@@ -856,7 +858,7 @@ func (s *testPrivilegeSuite) TestAnalyzeTable(c *C) {
 	// low privileged user
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "anobody", Hostname: "localhost", AuthUsername: "anobody", AuthHostname: "%"}, nil, nil), IsTrue)
 	_, err := se.Execute(context.Background(), "analyze table t1")
-	c.Assert(terror.ErrorEqual(err, core.ErrTableaccessDenied), IsTrue)
+	c.Assert(pterror.ErrorEqual(err, core.ErrTableaccessDenied), IsTrue)
 	c.Assert(err.Error(), Equals, "[planner:1142]INSERT command denied to user 'anobody'@'%' for table 't1'")
 
 	_, err = se.Execute(context.Background(), "select * from t1")
@@ -867,7 +869,7 @@ func (s *testPrivilegeSuite) TestAnalyzeTable(c *C) {
 	mustExec(c, se, "GRANT SELECT ON atest.* TO 'anobody'")
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "anobody", Hostname: "localhost", AuthUsername: "anobody", AuthHostname: "%"}, nil, nil), IsTrue)
 	_, err = se.Execute(context.Background(), "analyze table t1")
-	c.Assert(terror.ErrorEqual(err, core.ErrTableaccessDenied), IsTrue)
+	c.Assert(pterror.ErrorEqual(err, core.ErrTableaccessDenied), IsTrue)
 	c.Assert(err.Error(), Equals, "[planner:1142]INSERT command denied to user 'anobody'@'%' for table 't1'")
 	// Add INSERT privilege and it should work.
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "asuper", Hostname: "localhost", AuthUsername: "asuper", AuthHostname: "%"}, nil, nil), IsTrue)

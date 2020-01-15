@@ -27,8 +27,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
+	pterror "github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
@@ -38,12 +37,14 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/owner"
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/domainutil"
 	"github.com/pingcap/tidb/util/expensivequery"
@@ -565,7 +566,7 @@ func (do *Domain) isClose() bool {
 func (do *Domain) Close() {
 	startTime := time.Now()
 	if do.ddl != nil {
-		terror.Log(do.ddl.Stop())
+		pterror.Log(do.ddl.Stop())
 	}
 	if do.info != nil {
 		do.info.RemoveServerInfo()
@@ -573,7 +574,7 @@ func (do *Domain) Close() {
 	}
 	close(do.exit)
 	if do.etcdClient != nil {
-		terror.Log(errors.Trace(do.etcdClient.Close()))
+		pterror.Log(errors.Trace(do.etcdClient.Close()))
 	}
 
 	do.sysSessionPool.Close()
@@ -1129,17 +1130,17 @@ func recoverInDomain(funcName string, quit bool) {
 
 var (
 	// ErrInfoSchemaExpired returns the error that information schema is out of date.
-	ErrInfoSchemaExpired = terror.ClassDomain.New(mysql.ErrInfoSchemaExpired, mysql.MySQLErrName[mysql.ErrInfoSchemaExpired])
+	ErrInfoSchemaExpired = terror.New(pterror.ClassDomain, mysql.ErrInfoSchemaExpired, mysql.MySQLErrName[mysql.ErrInfoSchemaExpired])
 	// ErrInfoSchemaChanged returns the error that information schema is changed.
-	ErrInfoSchemaChanged = terror.ClassDomain.New(mysql.ErrInfoSchemaChanged,
+	ErrInfoSchemaChanged = terror.New(pterror.ClassDomain, mysql.ErrInfoSchemaChanged,
 		mysql.MySQLErrName[mysql.ErrInfoSchemaChanged]+". "+kv.TxnRetryableMark)
 )
 
 func init() {
 	// Map error codes to mysql error codes.
-	domainMySQLErrCodes := map[terror.ErrCode]uint16{
+	domainMySQLErrCodes := map[pterror.ErrCode]uint16{
 		mysql.ErrInfoSchemaExpired: mysql.ErrInfoSchemaExpired,
 		mysql.ErrInfoSchemaChanged: mysql.ErrInfoSchemaChanged,
 	}
-	terror.ErrClassToMySQLCodes[terror.ClassDomain] = domainMySQLErrCodes
+	terror.ErrClassToMySQLCodes[pterror.ClassDomain] = domainMySQLErrCodes
 }
