@@ -656,8 +656,8 @@ func (c *rpcClient) recycleDieConnArray() {
 	}
 	c.RUnlock()
 
-	if c.dieListener != nil {
-		c.dieListener(addrs)
+	if c.dieEventListener != nil {
+		c.dieEventListener(addrs)
 	}
 
 	for _, addr := range addrs {

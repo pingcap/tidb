@@ -175,7 +175,7 @@ func (s *testClientSuite) TestIdleHeartbeat(c *C) {
 		return false
 	})
 	var dieNode []string
-	rpcClient.dieListener = func(addr []string) {
+	rpcClient.dieEventListener = func(addr []string) {
 		dieNode = append(dieNode, addr...)
 	}
 	_, err = sendBatchRequest(ctx, addr, conn.batchConn, req, 100*time.Second)
@@ -196,7 +196,7 @@ func (s *testClientSuite) TestIdleHeartbeat(c *C) {
 		return false
 	})
 	dieNode = dieNode[:0]
-	rpcClient.dieListener = func(addr []string) {
+	rpcClient.dieEventListener = func(addr []string) {
 		dieNode = append(dieNode, addr...)
 	}
 	_, err = sendBatchRequest(ctx, addr, conn.batchConn, req, 100*time.Second)

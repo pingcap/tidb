@@ -217,16 +217,8 @@ type rpcClient struct {
 	dieNotify uint32
 	// Periodically check whether there is any connection that is die and then close and remove these connections.
 	// Implement background cleanup.
-	isClosed    bool
-	dieListener func(addr []string)
-}
-
-var _ ListenableRPCClient = &rpcClient{}
-
-// ListenableRPCClient present a RPCClient can be listen.
-type ListenableRPCClient interface {
-	// SetListener sets listener to rpc client.
-	SetListener(dieListener func(addr []string))
+	isClosed         bool
+	dieEventListener func(addr []string)
 }
 
 func newRPCClient(security config.Security) *rpcClient {
@@ -234,11 +226,6 @@ func newRPCClient(security config.Security) *rpcClient {
 		conns:    make(map[string]*connArray),
 		security: security,
 	}
-}
-
-// SetListener implements ListenableRPCClient interface.
-func (c *rpcClient) SetListener(dieHook func(addr []string)) {
-	c.dieListener = dieHook
 }
 
 // NewTestRPCClient is for some external tests.
