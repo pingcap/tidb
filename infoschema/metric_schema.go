@@ -739,4 +739,190 @@ var MetricTableMap = map[string]MetricTableDef{
 		Labels:  []string{"instance", "job"},
 		Comment: "whether the instance is up. 1 is up, 0 is down(off-line)",
 	},
+	"pd_role": {
+		PromQL:  `delta(pd_tso_events{type="save"}[$RANGE_DURATION]) > bool 0`,
+		Labels:  []string{"instance"},
+		Comment: "It indicates whether the current PD is the leader or a follower.",
+	},
+	"normal_stores": {
+		PromQL:  `sum(pd_cluster_status{type="store_up_count"}) by (instance)`,
+		Labels:  []string{"instance"},
+		Comment: "The count of healthy stores",
+	},
+	"abnormal_stores": {
+		PromQL: `sum(pd_cluster_status{ type=~"store_disconnected_count|store_unhealth_count|store_low_space_count|store_down_count|store_offline_count|store_tombstone_count"})`,
+		Labels: []string{"instance", "type"},
+	},
+	"pd_scheduler_config": {
+		PromQL: `pd_config_status{$LABEL_CONDITIONS}`,
+		Labels: []string{"type"},
+	},
+	"region_label_isolation_level": {
+		PromQL: `pd_regions_label_level{$LABEL_CONDITIONS}`,
+		Labels: []string{"instance", "type"},
+	},
+	"label_distribution": {
+		PromQL: `pd_cluster_placement_status{$LABEL_CONDITIONS}`,
+		Labels: []string{"name"},
+	},
+	"pd_cluster_status": {
+		PromQL: `sum(pd_cluster_status{$LABEL_CONDITIONS}) by (instance, type)`,
+		Labels: []string{"instance", "type"},
+	},
+	"pd_cluster_metadata": {
+		PromQL: `pd_cluster_metadata{$LABEL_CONDITIONS}`,
+		Labels: []string{"instance", "type"},
+	},
+	"region_health": {
+		PromQL:  `sum(pd_regions_status{$LABEL_CONDITIONS}) by (instance, type)`,
+		Labels:  []string{"instance", "type"},
+		Comment: "It records the unusual Regions' count which may include pending peers, down peers, extra peers, offline peers, missing peers or learner peers",
+	},
+	"pd_schedule_operator": {
+		PromQL:  `sum(delta(pd_schedule_operators_count{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (type,event,instance)`,
+		Labels:  []string{"instance", "type", "event"},
+		Comment: "The number of different operators",
+	},
+	"pd_operator_finish_duration": {
+		PromQL:   `histogram_quantile($QUANTILE, sum(rate(pd_schedule_finish_operators_duration_seconds_bucket{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (le,type))`,
+		Labels:   []string{"type"},
+		Quantile: 0.99,
+		Comment:  "The time consumed when the operator is finished",
+	},
+	"pd_operator_step_finish_duration": {
+		PromQL:   `histogram_quantile($QUANTILE, sum(rate(pd_schedule_finish_operator_steps_duration_seconds_bucket{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (le,type))`,
+		Labels:   []string{"type"},
+		Quantile: 0.99,
+		Comment:  "The time consumed when the operator step is finished",
+	},
+	"pd_scheduler_store_status": {
+		PromQL: `pd_scheduler_store_status{$LABEL_CONDITIONS}`,
+		Labels: []string{"address", "instance", "store", "type"},
+	},
+	"store_available_ratio": {
+		PromQL:  `sum(pd_scheduler_store_status{type="store_available"}) by (address, store) / sum(pd_scheduler_store_status{type="store_capacity"}) by (address, store)`,
+		Labels:  []string{"address", "store"},
+		Comment: "It is equal to Store available capacity size over Store capacity size for each TiKV instance",
+	},
+	"size_amplification": {
+		PromQL:  `sum(pd_scheduler_store_status{type="region_size"}) by (address, store) / sum(pd_scheduler_store_status{type="store_used"}) by (address, store) * 2^20`,
+		Labels:  []string{"address", "store"},
+		Comment: "The size amplification, which is equal to Store Region size over Store used capacity size, of each TiKV instance",
+	},
+	"pd_scheduler_op_influence": {
+		PromQL: `pd_scheduler_op_influence{$LABEL_CONDITIONS}`,
+		Labels: []string{"instance", "scheduler", "store", "type"},
+	},
+	"pd_scheduler_tolerant_resource": {
+		PromQL: `pd_scheduler_tolerant_resource{$LABEL_CONDITIONS}`,
+		Labels: []string{"instance", "scheduler", "source", "target"},
+	},
+	"pd_hotspot_status": {
+		PromQL: `pd_hotspot_status{$LABEL_CONDITIONS}`,
+		Labels: []string{"address", "instance", "store", "type"},
+	},
+	"pd_scheduler_status": {
+		PromQL: `pd_scheduler_status{$LABEL_CONDITIONS}`,
+		Labels: []string{"instance", "kind", "type"},
+	},
+	"pd_scheduler_balance_leader": {
+		PromQL:  `sum(delta(pd_scheduler_balance_leader{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (address,store,instance,type)`,
+		Labels:  []string{"instance", "address", "store", "type"},
+		Comment: "The leader movement details among TiKV instances",
+	},
+	"pd_balance_region_movement": {
+		PromQL:  `sum(delta(pd_scheduler_balance_region{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (address,store,instance,type)`,
+		Labels:  []string{"instance", "address", "store", "type"},
+		Comment: "The Region movement details among TiKV instances",
+	},
+	"pd_balance_scheduler_status": {
+		PromQL:  `sum(delta(pd_scheduler_event_count{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (instance,type,name)`,
+		Labels:  []string{"instance", "name", "type"},
+		Comment: "The inner status of balance leader scheduler",
+	},
+	"pd_checker_event_count": {
+		PromQL:  `sum(delta(pd_checker_event_count{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (name,instance,type)`,
+		Labels:  []string{"instance", "name", "type"},
+		Comment: "The replica/region checker's status",
+	},
+	"pd_schedule_filter": {
+		PromQL: `sum(delta(pd_schedule_filter{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (store, type, scope, instance)`,
+		Labels: []string{"instance", "scope", "store", "type"},
+	},
+	"pd_scheduler_balance_direction": {
+		PromQL: `sum(delta(pd_scheduler_balance_direction{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (type,source,target,instance)`,
+		Labels: []string{"instance", "source", "target", "type"},
+	},
+	"pd_schedule_store_limit": {
+		PromQL: `pd_schedule_store_limit{$LABEL_CONDITIONS}`,
+		Labels: []string{"instance", "store", "type"},
+	},
+
+	"pd_grpc_completed_commands_rate": {
+		PromQL:  `sum(rate(grpc_server_handling_seconds_count{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (grpc_method,instance)`,
+		Labels:  []string{"grpc_method", "instance"},
+		Comment: "The rate of completing each kind of gRPC commands",
+	},
+	"pd_grpc_completed_commands_duration": {
+		PromQL:   `histogram_quantile($QUANTILE, sum(rate(grpc_server_handling_seconds_bucket{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (le,grpc_method,instance))`,
+		Labels:   []string{"grpc_method", "instance"},
+		Quantile: 0.99,
+		Comment:  "The time consumed of completing each kind of gRPC commands",
+	},
+	"pd_handle_transactions_rate": {
+		PromQL:  `sum(rate(pd_txn_handle_txns_duration_seconds_count{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (instance, result)`,
+		Labels:  []string{"instance", "result"},
+		Comment: "The rate of handling etcd transactions",
+	},
+	"pd_handle_transactions_duration": {
+		PromQL:   `histogram_quantile($QUANTILE, sum(rate(pd_txn_handle_txns_duration_seconds_bucket{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (le, instance, result))`,
+		Labels:   []string{"instance", "result"},
+		Quantile: 0.99,
+		Comment:  "The time consumed of handling etcd transactions",
+	},
+	"etcd_wal_fsync_duration": {
+		PromQL:   `histogram_quantile($QUANTILE, sum(rate(etcd_disk_wal_fsync_duration_seconds_bucket{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (le,instance))`,
+		Labels:   []string{"instance"},
+		Quantile: 0.99,
+		Comment:  "The time consumed of writing WAL into the persistent storage",
+	},
+	"pd_peer_round_trip_time_seconds": {
+		PromQL:   `histogram_quantile($QUANTILE, sum(rate(etcd_network_peer_round_trip_time_seconds_bucket{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (le,instance,To))`,
+		Labels:   []string{"To", "instance"},
+		Quantile: 0.99,
+		Comment:  "The latency of the network in .99",
+	},
+	"etcd_disk_wal_fsync_rate": {
+		PromQL:  `delta(etcd_disk_wal_fsync_duration_seconds_count{$LABEL_CONDITIONS}[$RANGE_DURATION])`,
+		Labels:  []string{"instance"},
+		Comment: "The rate of writing WAL into the persistent storage",
+	},
+	"pd_server_etcd_state": {
+		PromQL:  `pd_server_etcd_state{$LABEL_CONDITIONS}`,
+		Labels:  []string{"instance", "type"},
+		Comment: "The current term of Raft",
+	},
+	"pd_handle_requests_duration": {
+		PromQL:   `histogram_quantile($QUANTILE, sum(rate(pd_client_request_handle_requests_duration_seconds_bucket{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (type, le))`,
+		Labels:   []string{"type"},
+		Quantile: 0.98,
+	},
+	"pd_handle_requests_duration_avg": {
+		PromQL: `avg(rate(pd_client_request_handle_requests_duration_seconds_sum{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (type) /  avg(rate(pd_client_request_handle_requests_duration_seconds_count{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (type)`,
+		Labels: []string{"type"},
+	},
+	"pd_region_heartbeat_latency": {
+		PromQL:   `round(histogram_quantile($QUANTILE, sum(rate(pd_scheduler_region_heartbeat_latency_seconds_bucket{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (le,address, store)), 1000)`,
+		Labels:   []string{"address", "store"},
+		Quantile: 0.99,
+		Comment:  "The heartbeat latency of each TiKV instance in",
+	},
+	"pd_scheduler_region_heartbeat": {
+		PromQL: `sum(rate(pd_scheduler_region_heartbeat{$LABEL_CONDITIONS}[$RANGE_DURATION])*60) by (address,instance, store, status,type)`,
+		Labels: []string{"address", "instance", "status", "store", "type"},
+	},
+	"pd_region_syncer_status": {
+		PromQL: `pd_region_syncer_status{$LABEL_CONDITIONS}`,
+		Labels: []string{"instance", "type"},
+	},
 }
