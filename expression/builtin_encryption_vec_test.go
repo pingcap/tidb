@@ -74,7 +74,7 @@ var vecBuiltinEncryptionCases = map[string][]vecExprBenchCase{
 	},
 }
 
-func (s *testEvaluatorSuite) TestVectorizedBuiltinEncryptionFunc(c *C) {
+func (s *testEvaluatorSuite1) TestVectorizedBuiltinEncryptionFunc(c *C) {
 	testVectorizedBuiltinFunc(c, vecBuiltinEncryptionCases)
 }
 
