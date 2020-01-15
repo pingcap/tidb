@@ -163,7 +163,7 @@ func (ds *DataSource) deriveStatsByFilter(conds expression.CNFExprs, filledPaths
 	selectivity, nodes, err := ds.tableStats.HistColl.Selectivity(ds.ctx, conds, filledPaths)
 	if err != nil {
 		logutil.BgLogger().Debug("something wrong happened, use the default selectivity", zap.Error(err))
-		selectivity = selectionFactor
+		selectivity = SelectionFactor
 	}
 	stats := ds.tableStats.Scale(selectivity)
 	if ds.ctx.GetSessionVars().OptimizerSelectivityLevel >= 1 {
@@ -451,7 +451,7 @@ func (ds *DataSource) buildIndexMergeOrPath(partialPaths []*util.AccessPath, cur
 
 // DeriveStats implement LogicalPlan DeriveStats interface.
 func (p *LogicalSelection) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema) (*property.StatsInfo, error) {
-	p.stats = childStats[0].Scale(selectionFactor)
+	p.stats = childStats[0].Scale(SelectionFactor)
 	return p.stats, nil
 }
 
@@ -564,11 +564,11 @@ func (p *LogicalJoin) DeriveStats(childStats []*property.StatsInfo, selfSchema *
 	p.equalCondOutCnt = helper.estimate()
 	if p.JoinType == SemiJoin || p.JoinType == AntiSemiJoin {
 		p.stats = &property.StatsInfo{
-			RowCount:    leftProfile.RowCount * selectionFactor,
+			RowCount:    leftProfile.RowCount * SelectionFactor,
 			Cardinality: make([]float64, len(leftProfile.Cardinality)),
 		}
 		for i := range p.stats.Cardinality {
-			p.stats.Cardinality[i] = leftProfile.Cardinality[i] * selectionFactor
+			p.stats.Cardinality[i] = leftProfile.Cardinality[i] * SelectionFactor
 		}
 		return p.stats, nil
 	}
