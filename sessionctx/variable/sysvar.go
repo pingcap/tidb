@@ -316,7 +316,8 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal | ScopeSession, "sql_buffer_result", "OFF"},
 	{ScopeGlobal | ScopeSession, "character_set_filesystem", "binary"},
 	{ScopeGlobal | ScopeSession, "collation_database", mysql.DefaultCollationName},
-	{ScopeGlobal | ScopeSession, "auto_increment_increment", "1"},
+	{ScopeGlobal | ScopeSession, AutoIncrementIncrement, strconv.FormatInt(DefAutoIncrementIncrement, 10)},
+	{ScopeGlobal | ScopeSession, AutoIncrementOffset, strconv.FormatInt(DefAutoIncrementOffset, 10)},
 	{ScopeGlobal | ScopeSession, "max_heap_table_size", "16777216"},
 	{ScopeGlobal | ScopeSession, "div_precision_increment", "4"},
 	{ScopeGlobal, "innodb_lru_scan_depth", "1024"},
@@ -693,6 +694,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal | ScopeSession, TiDBSkipIsolationLevelCheck, BoolToIntStr(DefTiDBSkipIsolationLevelCheck)},
 	/* The following variable is defined as session scope but is actually server scope. */
 	{ScopeSession, TiDBGeneralLog, strconv.Itoa(DefTiDBGeneralLog)},
+	{ScopeSession, TiDBPProfSQLCPU, strconv.Itoa(DefTiDBPProfSQLCPU)},
 	{ScopeSession, TiDBSlowLogThreshold, strconv.Itoa(logutil.DefaultSlowThreshold)},
 	{ScopeSession, TiDBRecordPlanInSlowLog, strconv.Itoa(logutil.DefaultRecordPlanInSlowLog)},
 	{ScopeSession, TiDBDDLSlowOprThreshold, strconv.Itoa(DefTiDBDDLSlowOprThreshold)},
@@ -954,6 +956,10 @@ const (
 	InnodbTableLocks = "innodb_table_locks"
 	// InnodbStatusOutput is the name for 'innodb_status_output' system variable.
 	InnodbStatusOutput = "innodb_status_output"
+	// AutoIncrementIncrement is the name of 'auto_increment_increment' system variable.
+	AutoIncrementIncrement = "auto_increment_increment"
+	// AutoIncrementOffset is the name of 'auto_increment_offset' system variable.
+	AutoIncrementOffset = "auto_increment_offset"
 	// ThreadPoolSize is the name of 'thread_pool_size' variable.
 	ThreadPoolSize = "thread_pool_size"
 )

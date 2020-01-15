@@ -49,7 +49,6 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/gcworker"
-	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/printer"
@@ -358,7 +357,7 @@ func loadConfig() string {
 // hotReloadConfigItems lists all config items which support hot-reload.
 var hotReloadConfigItems = []string{"Performance.MaxProcs", "Performance.MaxMemory", "Performance.CrossJoin",
 	"Performance.FeedbackProbability", "Performance.QueryFeedbackLimit", "Performance.PseudoEstimateRatio",
-	"OOMAction", "MemQuotaQuery", "StmtSummary.MaxStmtCount", "StmtSummary.MaxSQLLength", "TiKVClient.StoreLimit", "Performance.PProfSQLCPU"}
+	"OOMAction", "MemQuotaQuery", "StmtSummary.MaxStmtCount", "StmtSummary.MaxSQLLength", "TiKVClient.StoreLimit"}
 
 func reloadConfig(nc, c *config.Config) {
 	// Just a part of config items need to be reload explicitly.
@@ -383,9 +382,6 @@ func reloadConfig(nc, c *config.Config) {
 	}
 	if nc.Performance.PseudoEstimateRatio != c.Performance.PseudoEstimateRatio {
 		statistics.RatioOfPseudoEstimate.Store(nc.Performance.PseudoEstimateRatio)
-	}
-	if nc.Performance.PProfSQLCPU != c.Performance.PProfSQLCPU {
-		util.EnablePProfSQLCPU.Store(nc.Performance.PProfSQLCPU)
 	}
 	if nc.TiKVClient.StoreLimit != c.TiKVClient.StoreLimit {
 		storeutil.StoreLimit.Store(nc.TiKVClient.StoreLimit)
@@ -495,7 +491,6 @@ func setGlobalVars() {
 	statistics.FeedbackProbability.Store(cfg.Performance.FeedbackProbability)
 	handle.MaxQueryFeedbackCount.Store(int64(cfg.Performance.QueryFeedbackLimit))
 	statistics.RatioOfPseudoEstimate.Store(cfg.Performance.PseudoEstimateRatio)
-	util.EnablePProfSQLCPU.Store(cfg.Performance.PProfSQLCPU)
 	ddl.RunWorker = cfg.RunDDL
 	if cfg.SplitTable {
 		atomic.StoreUint32(&ddl.EnableSplitTableRegion, 1)

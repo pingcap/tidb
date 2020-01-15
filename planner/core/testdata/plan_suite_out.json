@@ -848,7 +848,31 @@
       },
       {
         "SQL": "select max(a), min(a) from t;",
-        "Best": "IndexReader(Index(t.c_d_e)[[NULL,+inf]]->StreamAgg)->StreamAgg"
+        "Best": "LeftHashJoin{TableReader(Table(t)->Limit)->Limit->StreamAgg->TableReader(Table(t)->Limit)->Limit->StreamAgg}"
+      },
+      {
+        "SQL": "select max(a), min(a) from t where a > 10",
+        "Best": "LeftHashJoin{TableReader(Table(t)->Limit)->Limit->StreamAgg->TableReader(Table(t)->Limit)->Limit->StreamAgg}"
+      },
+      {
+        "SQL": "select max(d), min(d) from t where c = 1 and d > 10",
+        "Best": "LeftHashJoin{IndexReader(Index(t.c_d_e)[(1 10,1 +inf]]->Limit)->Limit->StreamAgg->IndexReader(Index(t.c_d_e)[(1 10,1 +inf]]->Limit)->Limit->StreamAgg}"
+      },
+      {
+        "SQL": "select max(a), max(c), min(f) from t",
+        "Best": "LeftHashJoin{LeftHashJoin{TableReader(Table(t)->Limit)->Limit->StreamAgg->IndexReader(Index(t.c_d_e)[[NULL,+inf]]->Limit)->Limit->StreamAgg}->IndexReader(Index(t.f)[[NULL,+inf]]->Limit)->Limit->StreamAgg}"
+      },
+      {
+        "SQL": "select max(a), max(b) from t",
+        "Best": "TableReader(Table(t)->StreamAgg)->StreamAgg"
+      },
+      {
+        "SQL": "select max(a), max(c) from t where c > 10",
+        "Best": "IndexReader(Index(t.c_d_e)[(10,+inf]]->StreamAgg)->StreamAgg"
+      },
+      {
+        "SQL": "select max(a), min(a) from t where a * 3 + 10 < 100",
+        "Best": "IndexReader(Index(t.c_d_e)[[NULL,+inf]]->Sel([lt(plus(mul(test.t.a, 3), 10), 100)])->StreamAgg)->StreamAgg"
       },
       {
         "SQL": "select max(a) from t group by b;",
