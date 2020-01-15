@@ -1795,12 +1795,19 @@ func dataForPartitions(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]typ
 	createTimeTp := partitionsCols[18].tp
 	for _, schema := range schemas {
 		for _, table := range schema.Tables {
-			if checker != nil && !checker.RequestVerification(ctx.GetSessionVars().ActiveRoles, schema.Name.L, table.Name.L, "", mysql.AllPrivMask) {
+			if checker != nil && !checker.RequestVerification(ctx.GetSessionVars().ActiveRoles, schema.Name.L, table.Name.L, "", mysql.SelectPriv) {
 				continue
 			}
 			createTime := types.NewTime(types.FromGoTime(table.GetUpdateTime()), createTimeTp, types.DefaultFsp)
 
+			var rowCount, dataLength, indexLength uint64
 			if table.GetPartitionInfo() == nil {
+				rowCount = tableRowsMap[table.ID]
+				dataLength, indexLength = getDataAndIndexLength(table, table.ID, rowCount, colLengthMap)
+				avgRowLength := uint64(0)
+				if rowCount != 0 {
+					avgRowLength = dataLength / rowCount
+				}
 				record := types.MakeDatums(
 					catalogVal,    // TABLE_CATALOG
 					schema.Name.O, // TABLE_SCHEMA
@@ -1814,11 +1821,11 @@ func dataForPartitions(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]typ
 					nil,           // PARTITION_EXPRESSION
 					nil,           // SUBPARTITION_EXPRESSION
 					nil,           // PARTITION_DESCRIPTION
-					nil,           // TABLE_ROWS
-					nil,           // AVG_ROW_LENGTH
-					nil,           // DATA_LENGTH
+					rowCount,      // TABLE_ROWS
+					avgRowLength,  // AVG_ROW_LENGTH
+					dataLength,    // DATA_LENGTH
 					nil,           // MAX_DATA_LENGTH
-					nil,           // INDEX_LENGTH
+					indexLength,   // INDEX_LENGTH
 					nil,           // DATA_FREE
 					createTime,    // CREATE_TIME
 					nil,           // UPDATE_TIME
@@ -1830,13 +1837,18 @@ func dataForPartitions(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]typ
 				)
 				rows = append(rows, record)
 			} else {
-				for _, pi := range table.GetPartitionInfo().Definitions {
-					rowCount := tableRowsMap[pi.ID]
-					dataLength, indexLength := getDataAndIndexLength(table, pi.ID, tableRowsMap[pi.ID], colLengthMap)
+				for i, pi := range table.GetPartitionInfo().Definitions {
+					rowCount = tableRowsMap[pi.ID]
+					dataLength, indexLength = getDataAndIndexLength(table, pi.ID, tableRowsMap[pi.ID], colLengthMap)
 
 					avgRowLength := uint64(0)
 					if rowCount != 0 {
 						avgRowLength = dataLength / rowCount
+					}
+
+					var partitionDesc string
+					if table.Partition.Type == 1 {
+						partitionDesc = pi.LessThan[0]
 					}
 
 					record := types.MakeDatums(
@@ -1845,13 +1857,13 @@ func dataForPartitions(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]typ
 						table.Name.O,                  // TABLE_NAME
 						pi.Name.O,                     // PARTITION_NAME
 						nil,                           // SUBPARTITION_NAME
-						nil,                           // PARTITION_ORDINAL_POSITION
+						i+1,                           // PARTITION_ORDINAL_POSITION
 						nil,                           // SUBPARTITION_ORDINAL_POSITION
 						table.Partition.Type.String(), // PARTITION_METHOD
 						nil,                           // SUBPARTITION_METHOD
 						table.Partition.Expr,          // PARTITION_EXPRESSION
 						nil,                           // SUBPARTITION_EXPRESSION
-						nil,                           // PARTITION_DESCRIPTION
+						partitionDesc,                 // PARTITION_DESCRIPTION
 						rowCount,                      // TABLE_ROWS
 						avgRowLength,                  // AVG_ROW_LENGTH
 						dataLength,                    // DATA_LENGTH
