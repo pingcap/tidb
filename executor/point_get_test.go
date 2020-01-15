@@ -14,9 +14,12 @@
 package executor_test
 
 import (
+	"context"
 	"fmt"
+	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
@@ -341,4 +344,36 @@ func (s *testPointGetSuite) TestIndexLookupBinaryPK(c *C) {
 	tk.MustIndexLookup(`select * from t tmp where a = "a";`).Check(testkit.Rows())
 	tk.MustIndexLookup(`select * from t tmp where a = "a ";`).Check(testkit.Rows(`a  b `))
 	tk.MustIndexLookup(`select * from t tmp where a = "a  ";`).Check(testkit.Rows())
+}
+
+func (s *testPointGetSuite) TestSelectCheckVisibility(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a varchar(10) key, b int,index idx(b))")
+	tk.MustExec("insert into t values('1',1)")
+	tk.MustExec("begin")
+	txn, err := tk.Se.Txn(false)
+	c.Assert(err, IsNil)
+	ts := txn.StartTS()
+	store := tk.Se.GetStore().(tikv.Storage)
+	// Update gc safe time for check data visibility.
+	store.UpdateSPCache(ts+1, time.Now())
+	checkSelectResultError := func(sql string, expectErr *terror.Error) {
+		re, err := tk.Exec(sql)
+		c.Assert(err, IsNil)
+		_, err = session.GetRows4Test(context.Background(), tk.Se, re)
+		c.Assert(err, NotNil)
+		c.Assert(expectErr.Equal(err), IsTrue)
+	}
+	// Test point get.
+	checkSelectResultError("select * from t where a='1'", tikv.ErrGCTooEarly)
+	// Test batch point get.
+	checkSelectResultError("select * from t where a in ('1','2')", tikv.ErrGCTooEarly)
+	// Test Index look up read.
+	checkSelectResultError("select * from t where b > 0 ", tikv.ErrGCTooEarly)
+	// Test Index read.
+	checkSelectResultError("select b from t where b > 0 ", tikv.ErrGCTooEarly)
+	// Test table read.
+	checkSelectResultError("select * from t", tikv.ErrGCTooEarly)
 }

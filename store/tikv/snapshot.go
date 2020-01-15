@@ -217,6 +217,11 @@ func (s *tikvSnapshot) Get(k kv.Key) ([]byte, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	err = s.store.CheckVisibility(s.version.Ver)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
 	if len(val) == 0 {
 		return nil, kv.ErrNotExist
 	}
