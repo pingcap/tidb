@@ -479,7 +479,7 @@ var defaultConf = Config{
 	SplitRegionMaxNum:            1000,
 	RepairMode:                   false,
 	RepairTableList:              []string{},
-	MaxServerConnections:         1024,
+	MaxServerConnections:         4096,
 	TxnLocalLatches: TxnLocalLatches{
 		Enabled:  false,
 		Capacity: 2048000,
