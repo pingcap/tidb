@@ -703,3 +703,40 @@ func GetUint64FromConstant(expr Expression) (uint64, bool, bool) {
 	}
 	return 0, false, false
 }
+<<<<<<< HEAD
+=======
+
+// ContainVirtualColumn checks if the expressions contain a virtual column
+func ContainVirtualColumn(exprs []Expression) bool {
+	for _, expr := range exprs {
+		switch v := expr.(type) {
+		case *Column:
+			if v.VirtualExpr != nil {
+				return true
+			}
+		case *ScalarFunction:
+			if ContainVirtualColumn(v.GetArgs()) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// ContainLazyConst checks if the expressions contain a lazy constant.
+func ContainLazyConst(exprs []Expression) bool {
+	for _, expr := range exprs {
+		switch v := expr.(type) {
+		case *Constant:
+			if v.ParamMarker != nil || v.DeferredExpr != nil {
+				return true
+			}
+		case *ScalarFunction:
+			if ContainLazyConst(v.GetArgs()) {
+				return true
+			}
+		}
+	}
+	return false
+}
+>>>>>>> 1d64195... expression: disable `int_col <cmp> non-int const` folding for plan cache (#14120)
