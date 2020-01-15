@@ -437,6 +437,34 @@ func (s *testGCWorkerSuite) TestCheckGCMode(c *C) {
 	c.Assert(useDistributedGC, Equals, true)
 }
 
+func (s *testGCWorkerSuite) TestCheckScanLockMode(c *C) {
+	usePhysical, err := s.gcWorker.checkUsePhysicalScanLock()
+	c.Assert(err, IsNil)
+	c.Assert(usePhysical, Equals, false)
+	// This is a hidden config, so default value will not be inserted to table.
+	str, err := s.gcWorker.loadValueFromSysTable(gcScanLockModeKey)
+	c.Assert(err, IsNil)
+	c.Assert(str, Equals, "")
+
+	err = s.gcWorker.saveValueToSysTable(gcScanLockModeKey, gcScanLockModePhysical)
+	c.Assert(err, IsNil)
+	usePhysical, err = s.gcWorker.checkUsePhysicalScanLock()
+	c.Assert(err, IsNil)
+	c.Assert(usePhysical, Equals, true)
+
+	err = s.gcWorker.saveValueToSysTable(gcScanLockModeKey, gcScanLockModeLegacy)
+	c.Assert(err, IsNil)
+	usePhysical, err = s.gcWorker.checkUsePhysicalScanLock()
+	c.Assert(err, IsNil)
+	c.Assert(usePhysical, Equals, false)
+
+	err = s.gcWorker.saveValueToSysTable(gcScanLockModeKey, "invalid_mode")
+	c.Assert(err, IsNil)
+	usePhysical, err = s.gcWorker.checkUsePhysicalScanLock()
+	c.Assert(err, IsNil)
+	c.Assert(usePhysical, Equals, false)
+}
+
 const (
 	failRPCErr  = 0
 	failNilResp = 1
@@ -445,7 +473,9 @@ const (
 
 func (s *testGCWorkerSuite) testDeleteRangesFailureImpl(c *C, failType int) {
 	// Put some delete range tasks.
-	_, err := s.gcWorker.session.Execute(context.Background(), `INSERT INTO mysql.gc_delete_range VALUES
+	se := createSession(s.gcWorker.store)
+	defer se.Close()
+	_, err := se.Execute(context.Background(), `INSERT INTO mysql.gc_delete_range VALUES
 		("1", "2", "31", "32", "10"),
 		("3", "4", "33", "34", "10"),
 		("5", "6", "35", "36", "10")`)
@@ -473,7 +503,6 @@ func (s *testGCWorkerSuite) testDeleteRangesFailureImpl(c *C, failType int) {
 	}
 
 	// Check the delete range tasks.
-	se := createSession(s.gcWorker.store)
 	preparedRanges, err := util.LoadDeleteRanges(se, 20)
 	se.Close()
 	c.Assert(err, IsNil)
@@ -790,4 +819,128 @@ func (s *testGCWorkerSuite) loadEtcdSafePoint(c *C) uint64 {
 	res, err := strconv.ParseUint(val, 10, 64)
 	c.Assert(err, IsNil)
 	return res
+}
+
+func makeMergedChannel(c *C, count int) (*mergeLockScanner, []chan<- scanLockResult, <-chan []*tikv.Lock) {
+	scanner := &mergeLockScanner{}
+	channels := make([]chan<- scanLockResult, 0, count)
+	receivers := make([]*receiver, 0, count)
+
+	for i := 0; i < count; i++ {
+		ch := make(chan scanLockResult, 10)
+		receiver := &receiver{
+			Ch:      ch,
+			StoreID: uint64(i),
+		}
+
+		channels = append(channels, ch)
+		receivers = append(receivers, receiver)
+	}
+
+	resultCh := make(chan []*tikv.Lock)
+	// Initializing and getting result from scanner is blocking operations. Collect the result in a separated thread.
+	go func() {
+		scanner.startWithReceivers(receivers)
+		// Get a batch of a enough-large size to get all results.
+		result := scanner.NextBatch(1000)
+		c.Assert(len(result), Less, 1000)
+		resultCh <- result
+	}()
+
+	return scanner, channels, resultCh
+}
+
+func (s *testGCWorkerSuite) TestMergeLockScanner(c *C) {
+	// Shortcuts to make the following test code simpler
+	makeIDSet := func(id ...uint64) map[uint64]interface{} {
+		res := make(map[uint64]interface{})
+		for _, id := range id {
+			res[id] = nil
+		}
+		return res
+	}
+
+	makeLock := func(key string) *tikv.Lock {
+		return &tikv.Lock{Key: []byte(key)}
+	}
+
+	makeLockList := func(keys ...string) []*tikv.Lock {
+		res := make([]*tikv.Lock, 0, len(keys))
+		for _, k := range keys {
+			res = append(res, makeLock(k))
+		}
+		return res
+	}
+
+	sendLocks := func(ch chan<- scanLockResult, keys ...string) {
+		for _, k := range keys {
+			ch <- scanLockResult{Lock: makeLock(k)}
+		}
+	}
+
+	sendErr := func(ch chan<- scanLockResult) {
+		ch <- scanLockResult{Err: errors.New("error")}
+	}
+
+	scanner, sendCh, resCh := makeMergedChannel(c, 1)
+	close(sendCh[0])
+	c.Assert(len(<-resCh), Equals, 0)
+	c.Assert(scanner.GetSucceededStores(), DeepEquals, makeIDSet(0))
+
+	scanner, sendCh, resCh = makeMergedChannel(c, 1)
+	sendLocks(sendCh[0], "a", "b", "c")
+	close(sendCh[0])
+	c.Assert(<-resCh, DeepEquals, makeLockList("a", "b", "c"))
+	c.Assert(scanner.GetSucceededStores(), DeepEquals, makeIDSet(0))
+
+	scanner, sendCh, resCh = makeMergedChannel(c, 1)
+	sendLocks(sendCh[0], "a", "b", "c")
+	sendErr(sendCh[0])
+	close(sendCh[0])
+	c.Assert(<-resCh, DeepEquals, makeLockList("a", "b", "c"))
+	c.Assert(scanner.GetSucceededStores(), DeepEquals, makeIDSet())
+
+	scanner, sendCh, resCh = makeMergedChannel(c, 2)
+	sendLocks(sendCh[0], "a", "c", "e")
+	time.Sleep(time.Millisecond * 100)
+	sendLocks(sendCh[1], "b", "d", "f")
+	close(sendCh[0])
+	close(sendCh[1])
+	c.Assert(<-resCh, DeepEquals, makeLockList("a", "b", "c", "d", "e", "f"))
+	c.Assert(scanner.GetSucceededStores(), DeepEquals, makeIDSet(0, 1))
+
+	scanner, sendCh, resCh = makeMergedChannel(c, 3)
+	sendLocks(sendCh[0], "a", "d", "g", "h")
+	time.Sleep(time.Millisecond * 100)
+	sendLocks(sendCh[1], "a", "d", "f", "h")
+	time.Sleep(time.Millisecond * 100)
+	sendLocks(sendCh[2], "b", "c", "e", "h")
+	close(sendCh[0])
+	close(sendCh[1])
+	close(sendCh[2])
+	c.Assert(<-resCh, DeepEquals, makeLockList("a", "b", "c", "d", "e", "f", "g", "h"))
+	c.Assert(scanner.GetSucceededStores(), DeepEquals, makeIDSet(0, 1, 2))
+
+	scanner, sendCh, resCh = makeMergedChannel(c, 3)
+	sendLocks(sendCh[0], "a", "d", "g", "h")
+	time.Sleep(time.Millisecond * 100)
+	sendLocks(sendCh[1], "a", "d", "f", "h")
+	time.Sleep(time.Millisecond * 100)
+	sendLocks(sendCh[2], "b", "c", "e", "h")
+	sendErr(sendCh[0])
+	close(sendCh[0])
+	close(sendCh[1])
+	close(sendCh[2])
+	c.Assert(<-resCh, DeepEquals, makeLockList("a", "b", "c", "d", "e", "f", "g", "h"))
+	c.Assert(scanner.GetSucceededStores(), DeepEquals, makeIDSet(1, 2))
+
+	scanner, sendCh, resCh = makeMergedChannel(c, 3)
+	sendLocks(sendCh[0], "a\x00", "a\x00\x00", "b", "b\x00")
+	sendLocks(sendCh[1], "a", "a\x00\x00", "a\x00\x00\x00", "c")
+	sendLocks(sendCh[2], "1", "a\x00", "a\x00\x00", "b")
+	close(sendCh[0])
+	close(sendCh[1])
+	close(sendCh[2])
+	c.Assert(<-resCh, DeepEquals, makeLockList("1", "a", "a\x00", "a\x00\x00", "a\x00\x00\x00", "b", "b\x00", "c"))
+	c.Assert(scanner.GetSucceededStores(), DeepEquals, makeIDSet(0, 1, 2))
 }

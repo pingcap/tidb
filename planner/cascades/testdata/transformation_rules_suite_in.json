@@ -39,6 +39,13 @@
       "select a, b, c from t t1 where t1.a in (select t2.a as a from t t2 where t2.b > t1.b order by t1.b limit 1)",
       "select a, b, c from t t1 where t1.a in (select a from (select t2.a as a, t1.b as b from t t2 where t2.b > t1.b) x order by b limit 1)",
       "select a, b from (select @i as a, @i := @i+1 as b from t) t order by a desc limit 1",
+      "select * from t t1 left join t t2 on t1.b = t2.b order by t1.b limit 1",
+      "select * from t t1 left join t t2 on t1.b = t2.b order by t1.a, t1.c limit 1",
+      "select * from t t1 left join t t2 on t1.b = t2.b order by t2.a, t2.c limit 1",
+      "select * from t t1 left join t t2 on t1.b = t2.b order by t1.a, t2.c limit 1",
+      "select * from t t1 right join t t2 on t1.b = t2.b order by t1.a, t1.c limit 1",
+      "select * from t t1 right join t t2 on t1.b = t2.b order by t2.a, t2.c limit 1",
+      "select * from t t1 right join t t2 on t1.b = t2.b order by t1.a, t2.c limit 1",
       "(select a from t) union all (select b from t) order by a limit 2;",
       "(select a from t) union all (select b from t) limit 2;",
       "(select a from t) union all (select b from t) limit 2 offset 5;",
@@ -63,6 +70,26 @@
       "select b, max(a) from (select a, c+d as b from t as t1) as t2 group by b",
       "select max(a) from (select c+d as b, a+c as a from t as t1) as t2",
       "select b, max(a) from (select a, c+d as b, @i:=0 from t as t1) as t2 group by b"
+    ]
+  },
+  {
+    "name": "TestMergeAdjacentLimit",
+    "cases": [
+      "select b from (select b from t limit 5) as t1 limit 10",
+      "select b from (select b from t limit 20) as t1 limit 10",
+      "select b from (select b from t limit 10) as t1 limit 10",
+      "select b from (select b from t limit 10 offset 10) as t1 limit 10 offset 5",
+      "select b from (select b from t limit 10 offset 2) as t1 limit 3 offset 5",
+      "select b from (select b from t limit 10 offset 5) as t1 limit 5 offset 5",
+      "select a from (select a from t limit 3 offset 5) t1 limit 3 offset 5"
+    ]
+  },
+  {
+    "name": "TestTransformLimitToTableDual",
+    "cases": [
+      "select a from t limit 0 offset 1",
+      "select * from t as t1 left join (select * from t limit 0 offset 1) as t2 on t1.a = t2.a;",
+      "select a, b from ((select a, b from t) union all(select c as a, d as b from t limit 0 offset 5)) as t1 where a > 1"
     ]
   }
 ]
