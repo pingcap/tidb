@@ -32,12 +32,12 @@ func (t CoreTime) String() string {
 }
 
 func (t CoreTime) getYear() uint16 {
-	return uint16((uint64(t) & yearBitFieldMask) >> yearBitFieldEnd)
+	return uint16((uint64(t) & yearBitFieldMask) >> yearBitFieldOffset)
 }
 
 func (t *CoreTime) setYear(year uint16) {
 	*(*uint64)(t) &= ^yearBitFieldMask
-	*(*uint64)(t) |= (uint64(year) << yearBitFieldEnd) & yearBitFieldMask
+	*(*uint64)(t) |= (uint64(year) << yearBitFieldOffset) & yearBitFieldMask
 }
 
 // Year returns the year value.
@@ -46,12 +46,12 @@ func (t CoreTime) Year() int {
 }
 
 func (t CoreTime) getMonth() uint8 {
-	return uint8((uint64(t) & monthBitFieldMask) >> monthBitFieldEnd)
+	return uint8((uint64(t) & monthBitFieldMask) >> monthBitFieldOffset)
 }
 
 func (t *CoreTime) setMonth(month uint8) {
 	*(*uint64)(t) &= ^monthBitFieldMask
-	*(*uint64)(t) |= (uint64(month) << monthBitFieldEnd) & monthBitFieldMask
+	*(*uint64)(t) |= (uint64(month) << monthBitFieldOffset) & monthBitFieldMask
 }
 
 // Month returns the month value.
@@ -60,12 +60,12 @@ func (t CoreTime) Month() int {
 }
 
 func (t CoreTime) getDay() uint8 {
-	return uint8((uint64(t) & dayBitFieldMask) >> dayBitFieldEnd)
+	return uint8((uint64(t) & dayBitFieldMask) >> dayBitFieldOffset)
 }
 
 func (t *CoreTime) setDay(day uint8) {
 	*(*uint64)(t) &= ^dayBitFieldMask
-	*(*uint64)(t) |= (uint64(day) << dayBitFieldEnd) & dayBitFieldMask
+	*(*uint64)(t) |= (uint64(day) << dayBitFieldOffset) & dayBitFieldMask
 }
 
 // Day returns the day value.
@@ -74,12 +74,12 @@ func (t CoreTime) Day() int {
 }
 
 func (t CoreTime) getHour() uint8 {
-	return uint8((uint64(t) & hourBitFieldMask) >> hourBitFieldEnd)
+	return uint8((uint64(t) & hourBitFieldMask) >> hourBitFieldOffset)
 }
 
 func (t *CoreTime) setHour(hour uint8) {
 	*(*uint64)(t) &= ^hourBitFieldMask
-	*(*uint64)(t) |= (uint64(hour) << hourBitFieldEnd) & hourBitFieldMask
+	*(*uint64)(t) |= (uint64(hour) << hourBitFieldOffset) & hourBitFieldMask
 }
 
 // Hour returns the hour value.
@@ -88,12 +88,12 @@ func (t CoreTime) Hour() int {
 }
 
 func (t CoreTime) getMinute() uint8 {
-	return uint8((uint64(t) & minuteBitFieldMask) >> minuteBitFieldEnd)
+	return uint8((uint64(t) & minuteBitFieldMask) >> minuteBitFieldOffset)
 }
 
 func (t *CoreTime) setMinute(minute uint8) {
 	*(*uint64)(t) &= ^minuteBitFieldMask
-	*(*uint64)(t) |= (uint64(minute) << minuteBitFieldEnd) & minuteBitFieldMask
+	*(*uint64)(t) |= (uint64(minute) << minuteBitFieldOffset) & minuteBitFieldMask
 }
 
 // Minute returns the minute value.
@@ -102,12 +102,12 @@ func (t CoreTime) Minute() int {
 }
 
 func (t CoreTime) getSecond() uint8 {
-	return uint8((uint64(t) & secondBitFieldMask) >> secondBitFieldEnd)
+	return uint8((uint64(t) & secondBitFieldMask) >> secondBitFieldOffset)
 }
 
 func (t *CoreTime) setSecond(second uint8) {
 	*(*uint64)(t) &= ^secondBitFieldMask
-	*(*uint64)(t) |= (uint64(second) << secondBitFieldEnd) & secondBitFieldMask
+	*(*uint64)(t) |= (uint64(second) << secondBitFieldOffset) & secondBitFieldMask
 }
 
 // Second returns the second value.
@@ -116,12 +116,12 @@ func (t CoreTime) Second() int {
 }
 
 func (t CoreTime) getMicrosecond() uint32 {
-	return uint32((uint64(t) & microsecondBitFieldMask) >> microsecondBitFieldEnd)
+	return uint32((uint64(t) & microsecondBitFieldMask) >> microsecondBitFieldOffset)
 }
 
 func (t *CoreTime) setMicrosecond(microsecond uint32) {
 	*(*uint64)(t) &= ^microsecondBitFieldMask
-	*(*uint64)(t) |= (uint64(microsecond) << microsecondBitFieldEnd) & microsecondBitFieldMask
+	*(*uint64)(t) |= (uint64(microsecond) << microsecondBitFieldOffset) & microsecondBitFieldMask
 }
 
 // Microsecond returns the microsecond value.

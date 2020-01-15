@@ -198,25 +198,25 @@ func FromDate(year int, month int, day int, hour int, minute int, second int, mi
 
 // FromDateChecked makes a internal time representation from the given date with field overflow check.
 func FromDateChecked(year, month, day, hour, minute, second, microsecond int) (CoreTime, bool) {
-	if uint64(year) >= (1 << (yearBitFieldStart - yearBitFieldEnd + 1)) {
+	if uint64(year) >= (1 << yearBitFieldWidth) {
 		return ZeroCoreTime, false
 	}
-	if uint64(month) >= (1 << (monthBitFieldStart - monthBitFieldEnd + 1)) {
+	if uint64(month) >= (1 << monthBitFieldWidth) {
 		return ZeroCoreTime, false
 	}
-	if uint64(day) >= (1 << (dayBitFieldStart - dayBitFieldEnd + 1)) {
+	if uint64(day) >= (1 << dayBitFieldWidth) {
 		return ZeroCoreTime, false
 	}
-	if uint64(hour) >= (1 << (hourBitFieldStart - hourBitFieldEnd + 1)) {
+	if uint64(hour) >= (1 << hourBitFieldWidth) {
 		return ZeroCoreTime, false
 	}
-	if uint64(minute) >= (1 << (minuteBitFieldStart - minuteBitFieldEnd + 1)) {
+	if uint64(minute) >= (1 << minuteBitFieldWidth) {
 		return ZeroCoreTime, false
 	}
-	if uint64(second) >= (1 << (secondBitFieldStart - secondBitFieldEnd + 1)) {
+	if uint64(second) >= (1 << secondBitFieldWidth) {
 		return ZeroCoreTime, false
 	}
-	if uint64(microsecond) >= (1 << (microsecondBitFieldStart - microsecondBitFieldEnd + 1)) {
+	if uint64(microsecond) >= (1 << microsecondBitFieldWidth) {
 		return ZeroCoreTime, false
 	}
 	return FromDate(year, month, day, hour, minute, second, microsecond), true
@@ -237,13 +237,13 @@ func (t Time) Clock() (hour int, minute int, second int) {
 
 const (
 	// Core time bit fields.
-	yearBitFieldStart, yearBitFieldEnd               uint64 = 63, 50
-	monthBitFieldStart, monthBitFieldEnd             uint64 = 49, 46
-	dayBitFieldStart, dayBitFieldEnd                 uint64 = 45, 41
-	hourBitFieldStart, hourBitFieldEnd               uint64 = 40, 36
-	minuteBitFieldStart, minuteBitFieldEnd           uint64 = 35, 30
-	secondBitFieldStart, secondBitFieldEnd           uint64 = 29, 24
-	microsecondBitFieldStart, microsecondBitFieldEnd uint64 = 23, 4
+	yearBitFieldOffset, yearBitFieldWidth               uint64 = 50, 14
+	monthBitFieldOffset, monthBitFieldWidth             uint64 = 46, 4
+	dayBitFieldOffset, dayBitFieldWidth                 uint64 = 41, 5
+	hourBitFieldOffset, hourBitFieldWidth               uint64 = 36, 5
+	minuteBitFieldOffset, minuteBitFieldWidth           uint64 = 30, 6
+	secondBitFieldOffset, secondBitFieldWidth           uint64 = 24, 6
+	microsecondBitFieldOffset, microsecondBitFieldWidth uint64 = 4, 20
 
 	// fspTt bit field.
 	// `fspTt` format:
@@ -253,16 +253,16 @@ const (
 	// 2. `type` bit 1 represent `Timestamp`
 	//
 	// Since s`Date` does not require `fsp`, we could use `fspTt` == 0b1110 to represent it.
-	fspTtBitFieldStart, fspTtBitFieldEnd uint64 = 3, 0
+	fspTtBitFieldOffset, fspTtBitFieldWidth uint64 = 0, 4
 
-	yearBitFieldMask        uint64 = 0b1111111111111100000000000000000000000000000000000000000000000000
-	monthBitFieldMask       uint64 = 0b0000000000000011110000000000000000000000000000000000000000000000
-	dayBitFieldMask         uint64 = 0b0000000000000000001111100000000000000000000000000000000000000000
-	hourBitFieldMask        uint64 = 0b0000000000000000000000011111000000000000000000000000000000000000
-	minuteBitFieldMask      uint64 = 0b0000000000000000000000000000111111000000000000000000000000000000
-	secondBitFieldMask      uint64 = 0b0000000000000000000000000000000000111111000000000000000000000000
-	microsecondBitFieldMask uint64 = 0b0000000000000000000000000000000000000000111111111111111111110000
-	fspTtBitFieldMask       uint64 = 0b0000000000000000000000000000000000000000000000000000000000001111
+	yearBitFieldMask        uint64 = ((1 << yearBitFieldWidth) - 1) << yearBitFieldOffset
+	monthBitFieldMask       uint64 = ((1 << monthBitFieldWidth) - 1) << monthBitFieldOffset
+	dayBitFieldMask         uint64 = ((1 << dayBitFieldWidth) - 1) << dayBitFieldOffset
+	hourBitFieldMask        uint64 = ((1 << hourBitFieldWidth) - 1) << hourBitFieldOffset
+	minuteBitFieldMask      uint64 = ((1 << minuteBitFieldWidth) - 1) << minuteBitFieldOffset
+	secondBitFieldMask      uint64 = ((1 << secondBitFieldWidth) - 1) << secondBitFieldOffset
+	microsecondBitFieldMask uint64 = ((1 << microsecondBitFieldWidth) - 1) << microsecondBitFieldOffset
+	fspTtBitFieldMask       uint64 = ((1 << fspTtBitFieldWidth) - 1) << fspTtBitFieldOffset
 
 	fspTtForDate         uint8  = 0b1110
 	fspBitFieldMask      uint64 = 0b1110
