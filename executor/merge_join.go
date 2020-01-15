@@ -254,12 +254,12 @@ func (e *MergeJoinExec) Close() error {
 	if e.innerTable.curChk != nil {
 		e.innerTable.memTracker.Consume(-e.innerTable.curChk.MemoryUsage())
 	}
-	e.memTracker = nil
 	if e.innerTable.rowContainer != nil {
 		if err := e.innerTable.rowContainer.Close(); err != nil {
 			return err
 		}
 	}
+	e.memTracker = nil
 
 	return e.baseExecutor.Close()
 }
