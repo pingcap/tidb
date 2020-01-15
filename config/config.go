@@ -104,6 +104,8 @@ type Config struct {
 	// RepairMode indicates that the TiDB is in the repair mode for table meta.
 	RepairMode      bool     `toml:"repair-mode" json:"repair-mode"`
 	RepairTableList []string `toml:"repair-table-list" json:"repair-table-list"`
+	// MaxServerConnections is the maximum permitted number of simultaneous client connections.
+	MaxServerConnections uint32 `toml:"max-server-connections" json:"max-server-connections"`
 
 	Experimental Experimental `toml:"experimental" json:"experimental"`
 }
@@ -299,7 +301,6 @@ type Performance struct {
 	TCPKeepAlive        bool    `toml:"tcp-keep-alive" json:"tcp-keep-alive"`
 	CrossJoin           bool    `toml:"cross-join" json:"cross-join"`
 	RunAutoAnalyze      bool    `toml:"run-auto-analyze" json:"run-auto-analyze"`
-	PProfSQLCPU         bool    `toml:"pprof-sql-cpu" json:"pprof-sql-cpu"`
 }
 
 // PlanCache is the PlanCache section of the config.
@@ -478,6 +479,7 @@ var defaultConf = Config{
 	SplitRegionMaxNum:            1000,
 	RepairMode:                   false,
 	RepairTableList:              []string{},
+	MaxServerConnections:         4096,
 	TxnLocalLatches: TxnLocalLatches{
 		Enabled:  false,
 		Capacity: 2048000,
@@ -577,7 +579,7 @@ var defaultConf = Config{
 		MaxRetryCount: 256,
 	},
 	StmtSummary: StmtSummary{
-		Enable:          false,
+		Enable:          true,
 		MaxStmtCount:    200,
 		MaxSQLLength:    4096,
 		RefreshInterval: 1800,

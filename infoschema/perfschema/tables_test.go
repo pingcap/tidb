@@ -82,11 +82,6 @@ func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b varchar(10), key k(a))")
 
-	// Statement summary is disabled by default.
-	tk.MustQuery("select @@global.tidb_enable_stmt_summary").Check(testkit.Rows("0"))
-	tk.MustExec("insert into t values(1, 'a')")
-	tk.MustQuery("select * from performance_schema.events_statements_summary_by_digest").Check(testkit.Rows())
-
 	tk.MustExec("set global tidb_enable_stmt_summary = 1")
 	tk.MustQuery("select @@global.tidb_enable_stmt_summary").Check(testkit.Rows("1"))
 
@@ -110,6 +105,18 @@ func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 		from performance_schema.events_statements_summary_by_digest
 		where digest_text like 'insert into t%'`,
 	).Check(testkit.Rows("insert test test.t <nil> 4 0 0 0 0 0 2 2 1 1 1 insert into t values(1, 'a') "))
+
+	// Test point get.
+	tk.MustExec("drop table if exists p")
+	tk.MustExec("create table p(a int primary key, b int)")
+	for i := 1; i < 3; i++ {
+		tk.MustQuery("select b from p where a=1")
+		expectedResult := fmt.Sprintf("%d \tPoint_Get_1\troot\t1\ttable:p, handle:1", i)
+		tk.MustQuery(`select exec_count, plan
+			from performance_schema.events_statements_summary_by_digest
+			where digest_text like 'select b from p%'`,
+		).Check(testkit.Rows(expectedResult))
+	}
 
 	// Test SELECT.
 	const failpointName = "github.com/pingcap/tidb/planner/core/mockPlanRowCount"
@@ -147,6 +154,9 @@ func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 
 	// Disable it again.
 	tk.MustExec("set global tidb_enable_stmt_summary = false")
+	tk.MustExec("set session tidb_enable_stmt_summary = false")
+	defer tk.MustExec("set global tidb_enable_stmt_summary = 1")
+	defer tk.MustExec("set session tidb_enable_stmt_summary = 1")
 	tk.MustQuery("select @@global.tidb_enable_stmt_summary").Check(testkit.Rows("0"))
 
 	// Create a new session to test
@@ -227,11 +237,6 @@ func (s *testTableSuite) TestStmtSummaryHistoryTable(c *C) {
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b varchar(10), key k(a))")
-
-	// Statement summary is disabled by default.
-	tk.MustQuery("select @@global.tidb_enable_stmt_summary").Check(testkit.Rows("0"))
-	tk.MustExec("insert into t values(1, 'a')")
-	tk.MustQuery("select * from performance_schema.events_statements_summary_by_digest_history").Check(testkit.Rows())
 
 	tk.MustExec("set global tidb_enable_stmt_summary = 1")
 	tk.MustQuery("select @@global.tidb_enable_stmt_summary").Check(testkit.Rows("1"))

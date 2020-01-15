@@ -4405,9 +4405,9 @@ func (s *testIntegrationSuite) TestUnknowHintIgnore(c *C) {
 	tk.MustExec("USE test")
 	tk.MustExec("create table t(a int)")
 	tk.MustQuery("select /*+ unknown_hint(c1)*/ 1").Check(testkit.Rows("1"))
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1064 You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 29 near \"unknown_hint(c1)*/ 1\" "))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1064 You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use [parser:8064]Optimizer hint syntax error at line 1 column 23 near \"unknown_hint(c1)*/\" "))
 	_, err := tk.Exec("select 1 from /*+ test1() */ t")
-	c.Assert(err, NotNil)
+	c.Assert(err, IsNil)
 }
 
 func (s *testIntegrationSuite) TestValuesInNonInsertStmt(c *C) {
@@ -5276,4 +5276,39 @@ func (s *testIntegrationSuite) TestCacheRegexpr(c *C) {
 	tk.MustQuery("execute stmt1 using @a").Check(testkit.Rows("C1"))
 	tk.MustExec("set @a='^R.*'")
 	tk.MustQuery("execute stmt1 using @a").Check(testkit.Rows("R1"))
+}
+
+func (s *testIntegrationSuite) TestCacheRefineArgs(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	orgEnable := plannercore.PreparedPlanCacheEnabled()
+	orgCapacity := plannercore.PreparedPlanCacheCapacity
+	orgMemGuardRatio := plannercore.PreparedPlanCacheMemoryGuardRatio
+	orgMaxMemory := plannercore.PreparedPlanCacheMaxMemory
+	defer func() {
+		plannercore.SetPreparedPlanCache(orgEnable)
+		plannercore.PreparedPlanCacheCapacity = orgCapacity
+		plannercore.PreparedPlanCacheMemoryGuardRatio = orgMemGuardRatio
+		plannercore.PreparedPlanCacheMaxMemory = orgMaxMemory
+	}()
+	plannercore.SetPreparedPlanCache(true)
+	plannercore.PreparedPlanCacheCapacity = 100
+	plannercore.PreparedPlanCacheMemoryGuardRatio = 0.1
+	// PreparedPlanCacheMaxMemory is set to MAX_UINT64 to make sure the cache
+	// behavior would not be effected by the uncertain memory utilization.
+	plannercore.PreparedPlanCacheMaxMemory.Store(math.MaxUint64)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(col_int int)")
+	tk.MustExec("insert into t values(null)")
+	tk.MustExec("prepare stmt from 'SELECT ((col_int is true) = ?) AS res FROM t'")
+	tk.MustExec("set @p0='0.8'")
+	tk.MustQuery("execute stmt using @p0").Check(testkit.Rows("0"))
+	tk.MustExec("set @p0='0'")
+	tk.MustQuery("execute stmt using @p0").Check(testkit.Rows("1"))
+
+	tk.MustExec("delete from t")
+	tk.MustExec("insert into t values(1)")
+	tk.MustExec("prepare stmt from 'SELECT col_int < ? FROM t'")
+	tk.MustExec("set @p0='-184467440737095516167.1'")
+	tk.MustQuery("execute stmt using @p0").Check(testkit.Rows("0"))
 }

@@ -507,6 +507,151 @@
         ]
       },
       {
+        "SQL": "select * from t t1 left join t t2 on t1.b = t2.b order by t1.b limit 1",
+        "Result": [
+          "Group#0 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,test.t.e,test.t.c_str,test.t.d_str,test.t.e_str,test.t.f,test.t.g,test.t.h,test.t.i_date,test.t.a,test.t.b,test.t.c,test.t.d,test.t.e,test.t.c_str,test.t.d_str,test.t.e_str,test.t.f,test.t.g,test.t.h,test.t.i_date]",
+          "    Projection_4 input:[Group#1], test.t.a, test.t.b, test.t.c, test.t.d, test.t.e, test.t.c_str, test.t.d_str, test.t.e_str, test.t.f, test.t.g, test.t.h, test.t.i_date, test.t.a, test.t.b, test.t.c, test.t.d, test.t.e, test.t.c_str, test.t.d_str, test.t.e_str, test.t.f, test.t.g, test.t.h, test.t.i_date",
+          "Group#1 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,test.t.e,test.t.c_str,test.t.d_str,test.t.e_str,test.t.f,test.t.g,test.t.h,test.t.i_date,test.t.a,test.t.b,test.t.c,test.t.d,test.t.e,test.t.c_str,test.t.d_str,test.t.e_str,test.t.f,test.t.g,test.t.h,test.t.i_date]",
+          "    TopN_12 input:[Group#2], test.t.b:asc, offset:0, count:1",
+          "Group#2 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,test.t.e,test.t.c_str,test.t.d_str,test.t.e_str,test.t.f,test.t.g,test.t.h,test.t.i_date,test.t.a,test.t.b,test.t.c,test.t.d,test.t.e,test.t.c_str,test.t.d_str,test.t.e_str,test.t.f,test.t.g,test.t.h,test.t.i_date]",
+          "    Join_3 input:[Group#3,Group#4], left outer join, equal:[eq(test.t.b, test.t.b)]",
+          "Group#3 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,test.t.e,test.t.c_str,test.t.d_str,test.t.e_str,test.t.f,test.t.g,test.t.h,test.t.i_date]",
+          "    TopN_13 input:[Group#5], test.t.b:asc, offset:0, count:1",
+          "Group#5 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,test.t.e,test.t.c_str,test.t.d_str,test.t.e_str,test.t.f,test.t.g,test.t.h,test.t.i_date]",
+          "    TiKVSingleGather_8 input:[Group#6], table:t1",
+          "Group#6 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,test.t.e,test.t.c_str,test.t.d_str,test.t.e_str,test.t.f,test.t.g,test.t.h,test.t.i_date]",
+          "    TopN_14 input:[Group#7], test.t.b:asc, offset:0, count:1",
+          "Group#7 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,test.t.e,test.t.c_str,test.t.d_str,test.t.e_str,test.t.f,test.t.g,test.t.h,test.t.i_date]",
+          "    TableScan_7 table:t1, pk col:test.t.a",
+          "Group#4 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,test.t.e,test.t.c_str,test.t.d_str,test.t.e_str,test.t.f,test.t.g,test.t.h,test.t.i_date]",
+          "    TiKVSingleGather_10 input:[Group#8], table:t2",
+          "Group#8 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,test.t.e,test.t.c_str,test.t.d_str,test.t.e_str,test.t.f,test.t.g,test.t.h,test.t.i_date]",
+          "    TableScan_9 table:t2, pk col:test.t.a"
+        ]
+      },
+      {
+        "SQL": "select * from t t1 left join t t2 on t1.b = t2.b order by t1.a, t1.c limit 1",
+        "Result": [
+          "Group#0 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,test.t.e,test.t.c_str,test.t.d_str,test.t.e_str,test.t.f,test.t.g,test.t.h,test.t.i_date,test.t.a,test.t.b,test.t.c,test.t.d,test.t.e,test.t.c_str,test.t.d_str,test.t.e_str,test.t.f,test.t.g,test.t.h,test.t.i_date]",
+          "    Projection_4 input:[Group#1], test.t.a, test.t.b, test.t.c, test.t.d, test.t.e, test.t.c_str, test.t.d_str, test.t.e_str, test.t.f, test.t.g, test.t.h, test.t.i_date, test.t.a, test.t.b, test.t.c, test.t.d, test.t.e, test.t.c_str, test.t.d_str, test.t.e_str, test.t.f, test.t.g, test.t.h, test.t.i_date",
+          "Group#1 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,test.t.e,test.t.c_str,test.t.d_str,test.t.e_str,test.t.f,test.t.g,test.t.h,test.t.i_date,test.t.a,test.t.b,test.t.c,test.t.d,test.t.e,test.t.c_str,test.t.d_str,test.t.e_str,test.t.f,test.t.g,test.t.h,test.t.i_date]",
+          "    TopN_12 input:[Group#2], test.t.a:asc, test.t.c:asc, offset:0, count:1",
+          "Group#2 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,test.t.e,test.t.c_str,test.t.d_str,test.t.e_str,test.t.f,test.t.g,test.t.h,test.t.i_date,test.t.a,test.t.b,test.t.c,test.t.d,test.t.e,test.t.c_str,test.t.d_str,test.t.e_str,test.t.f,test.t.g,test.t.h,test.t.i_date]",
+          "    Join_3 input:[Group#3,Group#4], left outer join, equal:[eq(test.t.b, test.t.b)]",
+          "Group#3 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,test.t.e,test.t.c_str,test.t.d_str,test.t.e_str,test.t.f,test.t.g,test.t.h,test.t.i_date]",
+          "    TopN_13 input:[Group#5], test.t.a:asc, test.t.c:asc, offset:0, count:1",
+          "Group#5 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,test.t.e,test.t.c_str,test.t.d_str,test.t.e_str,test.t.f,test.t.g,test.t.h,test.t.i_date]",
+          "    TiKVSingleGather_8 input:[Group#6], table:t1",
+          "Group#6 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,test.t.e,test.t.c_str,test.t.d_str,test.t.e_str,test.t.f,test.t.g,test.t.h,test.t.i_date]",
+          "    TopN_14 input:[Group#7], test.t.a:asc, test.t.c:asc, offset:0, count:1",
+          "Group#7 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,test.t.e,test.t.c_str,test.t.d_str,test.t.e_str,test.t.f,test.t.g,test.t.h,test.t.i_date]",
+          "    TableScan_7 table:t1, pk col:test.t.a",
+          "Group#4 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,test.t.e,test.t.c_str,test.t.d_str,test.t.e_str,test.t.f,test.t.g,test.t.h,test.t.i_date]",
+          "    TiKVSingleGather_10 input:[Group#8], table:t2",
+          "Group#8 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,test.t.e,test.t.c_str,test.t.d_str,test.t.e_str,test.t.f,test.t.g,test.t.h,test.t.i_date]",
+          "    TableScan_9 table:t2, pk col:test.t.a"
+        ]
+      },
+      {
+        "SQL": "select * from t t1 left join t t2 on t1.b = t2.b order by t2.a, t2.c limit 1",
+        "Result": [
+          "Group#0 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,test.t.e,test.t.c_str,test.t.d_str,test.t.e_str,test.t.f,test.t.g,test.t.h,test.t.i_date,test.t.a,test.t.b,test.t.c,test.t.d,test.t.e,test.t.c_str,test.t.d_str,test.t.e_str,test.t.f,test.t.g,test.t.h,test.t.i_date]",
+          "    Projection_4 input:[Group#1], test.t.a, test.t.b, test.t.c, test.t.d, test.t.e, test.t.c_str, test.t.d_str, test.t.e_str, test.t.f, test.t.g, test.t.h, test.t.i_date, test.t.a, test.t.b, test.t.c, test.t.d, test.t.e, test.t.c_str, test.t.d_str, test.t.e_str, test.t.f, test.t.g, test.t.h, test.t.i_date",
+          "Group#1 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,test.t.e,test.t.c_str,test.t.d_str,test.t.e_str,test.t.f,test.t.g,test.t.h,test.t.i_date,test.t.a,test.t.b,test.t.c,test.t.d,test.t.e,test.t.c_str,test.t.d_str,test.t.e_str,test.t.f,test.t.g,test.t.h,test.t.i_date]",
+          "    TopN_12 input:[Group#2], test.t.a:asc, test.t.c:asc, offset:0, count:1",
+          "Group#2 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,test.t.e,test.t.c_str,test.t.d_str,test.t.e_str,test.t.f,test.t.g,test.t.h,test.t.i_date,test.t.a,test.t.b,test.t.c,test.t.d,test.t.e,test.t.c_str,test.t.d_str,test.t.e_str,test.t.f,test.t.g,test.t.h,test.t.i_date]",
+          "    Join_3 input:[Group#3,Group#4], left outer join, equal:[eq(test.t.b, test.t.b)]",
+          "Group#3 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,test.t.e,test.t.c_str,test.t.d_str,test.t.e_str,test.t.f,test.t.g,test.t.h,test.t.i_date]",
+          "    TiKVSingleGather_8 input:[Group#5], table:t1",
+          "Group#5 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,test.t.e,test.t.c_str,test.t.d_str,test.t.e_str,test.t.f,test.t.g,test.t.h,test.t.i_date]",
+          "    TableScan_7 table:t1, pk col:test.t.a",
+          "Group#4 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,test.t.e,test.t.c_str,test.t.d_str,test.t.e_str,test.t.f,test.t.g,test.t.h,test.t.i_date]",
+          "    TiKVSingleGather_10 input:[Group#6], table:t2",
+          "Group#6 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,test.t.e,test.t.c_str,test.t.d_str,test.t.e_str,test.t.f,test.t.g,test.t.h,test.t.i_date]",
+          "    TableScan_9 table:t2, pk col:test.t.a"
+        ]
+      },
+      {
+        "SQL": "select * from t t1 left join t t2 on t1.b = t2.b order by t1.a, t2.c limit 1",
+        "Result": [
+          "Group#0 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,test.t.e,test.t.c_str,test.t.d_str,test.t.e_str,test.t.f,test.t.g,test.t.h,test.t.i_date,test.t.a,test.t.b,test.t.c,test.t.d,test.t.e,test.t.c_str,test.t.d_str,test.t.e_str,test.t.f,test.t.g,test.t.h,test.t.i_date]",
+          "    Projection_4 input:[Group#1], test.t.a, test.t.b, test.t.c, test.t.d, test.t.e, test.t.c_str, test.t.d_str, test.t.e_str, test.t.f, test.t.g, test.t.h, test.t.i_date, test.t.a, test.t.b, test.t.c, test.t.d, test.t.e, test.t.c_str, test.t.d_str, test.t.e_str, test.t.f, test.t.g, test.t.h, test.t.i_date",
+          "Group#1 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,test.t.e,test.t.c_str,test.t.d_str,test.t.e_str,test.t.f,test.t.g,test.t.h,test.t.i_date,test.t.a,test.t.b,test.t.c,test.t.d,test.t.e,test.t.c_str,test.t.d_str,test.t.e_str,test.t.f,test.t.g,test.t.h,test.t.i_date]",
+          "    TopN_12 input:[Group#2], test.t.a:asc, test.t.c:asc, offset:0, count:1",
+          "Group#2 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,test.t.e,test.t.c_str,test.t.d_str,test.t.e_str,test.t.f,test.t.g,test.t.h,test.t.i_date,test.t.a,test.t.b,test.t.c,test.t.d,test.t.e,test.t.c_str,test.t.d_str,test.t.e_str,test.t.f,test.t.g,test.t.h,test.t.i_date]",
+          "    Join_3 input:[Group#3,Group#4], left outer join, equal:[eq(test.t.b, test.t.b)]",
+          "Group#3 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,test.t.e,test.t.c_str,test.t.d_str,test.t.e_str,test.t.f,test.t.g,test.t.h,test.t.i_date]",
+          "    TiKVSingleGather_8 input:[Group#5], table:t1",
+          "Group#5 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,test.t.e,test.t.c_str,test.t.d_str,test.t.e_str,test.t.f,test.t.g,test.t.h,test.t.i_date]",
+          "    TableScan_7 table:t1, pk col:test.t.a",
+          "Group#4 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,test.t.e,test.t.c_str,test.t.d_str,test.t.e_str,test.t.f,test.t.g,test.t.h,test.t.i_date]",
+          "    TiKVSingleGather_10 input:[Group#6], table:t2",
+          "Group#6 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,test.t.e,test.t.c_str,test.t.d_str,test.t.e_str,test.t.f,test.t.g,test.t.h,test.t.i_date]",
+          "    TableScan_9 table:t2, pk col:test.t.a"
+        ]
+      },
+      {
+        "SQL": "select * from t t1 right join t t2 on t1.b = t2.b order by t1.a, t1.c limit 1",
+        "Result": [
+          "Group#0 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,test.t.e,test.t.c_str,test.t.d_str,test.t.e_str,test.t.f,test.t.g,test.t.h,test.t.i_date,test.t.a,test.t.b,test.t.c,test.t.d,test.t.e,test.t.c_str,test.t.d_str,test.t.e_str,test.t.f,test.t.g,test.t.h,test.t.i_date]",
+          "    Projection_4 input:[Group#1], test.t.a, test.t.b, test.t.c, test.t.d, test.t.e, test.t.c_str, test.t.d_str, test.t.e_str, test.t.f, test.t.g, test.t.h, test.t.i_date, test.t.a, test.t.b, test.t.c, test.t.d, test.t.e, test.t.c_str, test.t.d_str, test.t.e_str, test.t.f, test.t.g, test.t.h, test.t.i_date",
+          "Group#1 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,test.t.e,test.t.c_str,test.t.d_str,test.t.e_str,test.t.f,test.t.g,test.t.h,test.t.i_date,test.t.a,test.t.b,test.t.c,test.t.d,test.t.e,test.t.c_str,test.t.d_str,test.t.e_str,test.t.f,test.t.g,test.t.h,test.t.i_date]",
+          "    TopN_12 input:[Group#2], test.t.a:asc, test.t.c:asc, offset:0, count:1",
+          "Group#2 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,test.t.e,test.t.c_str,test.t.d_str,test.t.e_str,test.t.f,test.t.g,test.t.h,test.t.i_date,test.t.a,test.t.b,test.t.c,test.t.d,test.t.e,test.t.c_str,test.t.d_str,test.t.e_str,test.t.f,test.t.g,test.t.h,test.t.i_date]",
+          "    Join_3 input:[Group#3,Group#4], right outer join, equal:[eq(test.t.b, test.t.b)]",
+          "Group#3 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,test.t.e,test.t.c_str,test.t.d_str,test.t.e_str,test.t.f,test.t.g,test.t.h,test.t.i_date]",
+          "    TiKVSingleGather_8 input:[Group#5], table:t1",
+          "Group#5 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,test.t.e,test.t.c_str,test.t.d_str,test.t.e_str,test.t.f,test.t.g,test.t.h,test.t.i_date]",
+          "    TableScan_7 table:t1, pk col:test.t.a",
+          "Group#4 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,test.t.e,test.t.c_str,test.t.d_str,test.t.e_str,test.t.f,test.t.g,test.t.h,test.t.i_date]",
+          "    TiKVSingleGather_10 input:[Group#6], table:t2",
+          "Group#6 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,test.t.e,test.t.c_str,test.t.d_str,test.t.e_str,test.t.f,test.t.g,test.t.h,test.t.i_date]",
+          "    TableScan_9 table:t2, pk col:test.t.a"
+        ]
+      },
+      {
+        "SQL": "select * from t t1 right join t t2 on t1.b = t2.b order by t2.a, t2.c limit 1",
+        "Result": [
+          "Group#0 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,test.t.e,test.t.c_str,test.t.d_str,test.t.e_str,test.t.f,test.t.g,test.t.h,test.t.i_date,test.t.a,test.t.b,test.t.c,test.t.d,test.t.e,test.t.c_str,test.t.d_str,test.t.e_str,test.t.f,test.t.g,test.t.h,test.t.i_date]",
+          "    Projection_4 input:[Group#1], test.t.a, test.t.b, test.t.c, test.t.d, test.t.e, test.t.c_str, test.t.d_str, test.t.e_str, test.t.f, test.t.g, test.t.h, test.t.i_date, test.t.a, test.t.b, test.t.c, test.t.d, test.t.e, test.t.c_str, test.t.d_str, test.t.e_str, test.t.f, test.t.g, test.t.h, test.t.i_date",
+          "Group#1 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,test.t.e,test.t.c_str,test.t.d_str,test.t.e_str,test.t.f,test.t.g,test.t.h,test.t.i_date,test.t.a,test.t.b,test.t.c,test.t.d,test.t.e,test.t.c_str,test.t.d_str,test.t.e_str,test.t.f,test.t.g,test.t.h,test.t.i_date]",
+          "    TopN_12 input:[Group#2], test.t.a:asc, test.t.c:asc, offset:0, count:1",
+          "Group#2 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,test.t.e,test.t.c_str,test.t.d_str,test.t.e_str,test.t.f,test.t.g,test.t.h,test.t.i_date,test.t.a,test.t.b,test.t.c,test.t.d,test.t.e,test.t.c_str,test.t.d_str,test.t.e_str,test.t.f,test.t.g,test.t.h,test.t.i_date]",
+          "    Join_3 input:[Group#3,Group#4], right outer join, equal:[eq(test.t.b, test.t.b)]",
+          "Group#3 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,test.t.e,test.t.c_str,test.t.d_str,test.t.e_str,test.t.f,test.t.g,test.t.h,test.t.i_date]",
+          "    TiKVSingleGather_8 input:[Group#5], table:t1",
+          "Group#5 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,test.t.e,test.t.c_str,test.t.d_str,test.t.e_str,test.t.f,test.t.g,test.t.h,test.t.i_date]",
+          "    TableScan_7 table:t1, pk col:test.t.a",
+          "Group#4 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,test.t.e,test.t.c_str,test.t.d_str,test.t.e_str,test.t.f,test.t.g,test.t.h,test.t.i_date]",
+          "    TopN_13 input:[Group#6], test.t.a:asc, test.t.c:asc, offset:0, count:1",
+          "Group#6 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,test.t.e,test.t.c_str,test.t.d_str,test.t.e_str,test.t.f,test.t.g,test.t.h,test.t.i_date]",
+          "    TiKVSingleGather_10 input:[Group#7], table:t2",
+          "Group#7 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,test.t.e,test.t.c_str,test.t.d_str,test.t.e_str,test.t.f,test.t.g,test.t.h,test.t.i_date]",
+          "    TopN_14 input:[Group#8], test.t.a:asc, test.t.c:asc, offset:0, count:1",
+          "Group#8 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,test.t.e,test.t.c_str,test.t.d_str,test.t.e_str,test.t.f,test.t.g,test.t.h,test.t.i_date]",
+          "    TableScan_9 table:t2, pk col:test.t.a"
+        ]
+      },
+      {
+        "SQL": "select * from t t1 right join t t2 on t1.b = t2.b order by t1.a, t2.c limit 1",
+        "Result": [
+          "Group#0 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,test.t.e,test.t.c_str,test.t.d_str,test.t.e_str,test.t.f,test.t.g,test.t.h,test.t.i_date,test.t.a,test.t.b,test.t.c,test.t.d,test.t.e,test.t.c_str,test.t.d_str,test.t.e_str,test.t.f,test.t.g,test.t.h,test.t.i_date]",
+          "    Projection_4 input:[Group#1], test.t.a, test.t.b, test.t.c, test.t.d, test.t.e, test.t.c_str, test.t.d_str, test.t.e_str, test.t.f, test.t.g, test.t.h, test.t.i_date, test.t.a, test.t.b, test.t.c, test.t.d, test.t.e, test.t.c_str, test.t.d_str, test.t.e_str, test.t.f, test.t.g, test.t.h, test.t.i_date",
+          "Group#1 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,test.t.e,test.t.c_str,test.t.d_str,test.t.e_str,test.t.f,test.t.g,test.t.h,test.t.i_date,test.t.a,test.t.b,test.t.c,test.t.d,test.t.e,test.t.c_str,test.t.d_str,test.t.e_str,test.t.f,test.t.g,test.t.h,test.t.i_date]",
+          "    TopN_12 input:[Group#2], test.t.a:asc, test.t.c:asc, offset:0, count:1",
+          "Group#2 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,test.t.e,test.t.c_str,test.t.d_str,test.t.e_str,test.t.f,test.t.g,test.t.h,test.t.i_date,test.t.a,test.t.b,test.t.c,test.t.d,test.t.e,test.t.c_str,test.t.d_str,test.t.e_str,test.t.f,test.t.g,test.t.h,test.t.i_date]",
+          "    Join_3 input:[Group#3,Group#4], right outer join, equal:[eq(test.t.b, test.t.b)]",
+          "Group#3 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,test.t.e,test.t.c_str,test.t.d_str,test.t.e_str,test.t.f,test.t.g,test.t.h,test.t.i_date]",
+          "    TiKVSingleGather_8 input:[Group#5], table:t1",
+          "Group#5 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,test.t.e,test.t.c_str,test.t.d_str,test.t.e_str,test.t.f,test.t.g,test.t.h,test.t.i_date]",
+          "    TableScan_7 table:t1, pk col:test.t.a",
+          "Group#4 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,test.t.e,test.t.c_str,test.t.d_str,test.t.e_str,test.t.f,test.t.g,test.t.h,test.t.i_date]",
+          "    TiKVSingleGather_10 input:[Group#6], table:t2",
+          "Group#6 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,test.t.e,test.t.c_str,test.t.d_str,test.t.e_str,test.t.f,test.t.g,test.t.h,test.t.i_date]",
+          "    TableScan_9 table:t2, pk col:test.t.a"
+        ]
+      },
+      {
         "SQL": "(select a from t) union all (select b from t) order by a limit 2;",
         "Result": [
           "Group#0 Schema:[Column#25]",
@@ -920,7 +1065,6 @@
         "SQL": "select a from (select floor(a) as a from t) as t2",
         "Result": [
           "Group#0 Schema:[Column#13]",
-          "    Projection_4 input:[Group#1], floor(test.t.a)->Column#13",
           "    Projection_2 input:[Group#1], floor(test.t.a)->Column#13",
           "Group#1 Schema:[test.t.a]",
           "    TableScan_1 table:t"
@@ -980,6 +1124,146 @@
           "    Projection_2 input:[Group#3], test.t.a, plus(test.t.c, test.t.d)->Column#13, setvar(i, 0)->Column#14",
           "Group#3 Schema:[test.t.a,test.t.c,test.t.d]",
           "    TableScan_1 table:t1"
+        ]
+      }
+    ]
+  },
+  {
+    "Name": "TestMergeAdjacentLimit",
+    "Cases": [
+      {
+        "SQL": "select b from (select b from t limit 5) as t1 limit 10",
+        "Result": [
+          "Group#0 Schema:[test.t.b]",
+          "    Projection_4 input:[Group#1], test.t.b",
+          "Group#1 Schema:[test.t.b]",
+          "    Projection_2 input:[Group#2], test.t.b",
+          "Group#2 Schema:[test.t.b]",
+          "    Limit_6 input:[Group#3], offset:0, count:5",
+          "Group#3 Schema:[test.t.b]",
+          "    TableScan_1 table:t"
+        ]
+      },
+      {
+        "SQL": "select b from (select b from t limit 20) as t1 limit 10",
+        "Result": [
+          "Group#0 Schema:[test.t.b]",
+          "    Projection_4 input:[Group#1], test.t.b",
+          "Group#1 Schema:[test.t.b]",
+          "    Projection_2 input:[Group#2], test.t.b",
+          "Group#2 Schema:[test.t.b]",
+          "    Limit_6 input:[Group#3], offset:0, count:10",
+          "Group#3 Schema:[test.t.b]",
+          "    TableScan_1 table:t"
+        ]
+      },
+      {
+        "SQL": "select b from (select b from t limit 10) as t1 limit 10",
+        "Result": [
+          "Group#0 Schema:[test.t.b]",
+          "    Projection_4 input:[Group#1], test.t.b",
+          "Group#1 Schema:[test.t.b]",
+          "    Projection_2 input:[Group#2], test.t.b",
+          "Group#2 Schema:[test.t.b]",
+          "    Limit_6 input:[Group#3], offset:0, count:10",
+          "Group#3 Schema:[test.t.b]",
+          "    TableScan_1 table:t"
+        ]
+      },
+      {
+        "SQL": "select b from (select b from t limit 10 offset 10) as t1 limit 10 offset 5",
+        "Result": [
+          "Group#0 Schema:[test.t.b]",
+          "    Projection_4 input:[Group#1], test.t.b",
+          "Group#1 Schema:[test.t.b]",
+          "    Projection_2 input:[Group#2], test.t.b",
+          "Group#2 Schema:[test.t.b]",
+          "    Limit_6 input:[Group#3], offset:15, count:5",
+          "Group#3 Schema:[test.t.b]",
+          "    TableScan_1 table:t"
+        ]
+      },
+      {
+        "SQL": "select b from (select b from t limit 10 offset 2) as t1 limit 3 offset 5",
+        "Result": [
+          "Group#0 Schema:[test.t.b]",
+          "    Projection_4 input:[Group#1], test.t.b",
+          "Group#1 Schema:[test.t.b]",
+          "    Projection_2 input:[Group#2], test.t.b",
+          "Group#2 Schema:[test.t.b]",
+          "    Limit_6 input:[Group#3], offset:7, count:3",
+          "Group#3 Schema:[test.t.b]",
+          "    TableScan_1 table:t"
+        ]
+      },
+      {
+        "SQL": "select b from (select b from t limit 10 offset 5) as t1 limit 5 offset 5",
+        "Result": [
+          "Group#0 Schema:[test.t.b]",
+          "    Projection_4 input:[Group#1], test.t.b",
+          "Group#1 Schema:[test.t.b]",
+          "    Projection_2 input:[Group#2], test.t.b",
+          "Group#2 Schema:[test.t.b]",
+          "    Limit_6 input:[Group#3], offset:10, count:5",
+          "Group#3 Schema:[test.t.b]",
+          "    TableScan_1 table:t"
+        ]
+      },
+      {
+        "SQL": "select a from (select a from t limit 3 offset 5) t1 limit 3 offset 5",
+        "Result": [
+          "Group#0 Schema:[test.t.a]",
+          "    Projection_4 input:[Group#1], test.t.a",
+          "Group#1 Schema:[test.t.a]",
+          "    Projection_2 input:[Group#2], test.t.a",
+          "Group#2 Schema:[test.t.a]",
+          "    TableDual_6 rowcount:0"
+        ]
+      }
+    ]
+  },
+  {
+    "Name": "TestTransformLimitToTableDual",
+    "Cases": [
+      {
+        "SQL": "select a from t limit 0 offset 1",
+        "Result": [
+          "Group#0 Schema:[test.t.a]",
+          "    TableDual_4 rowcount:0"
+        ]
+      },
+      {
+        "SQL": "select * from t as t1 left join (select * from t limit 0 offset 1) as t2 on t1.a = t2.a;",
+        "Result": [
+          "Group#0 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,test.t.e,test.t.c_str,test.t.d_str,test.t.e_str,test.t.f,test.t.g,test.t.h,test.t.i_date,test.t.a,test.t.b,test.t.c,test.t.d,test.t.e,test.t.c_str,test.t.d_str,test.t.e_str,test.t.f,test.t.g,test.t.h,test.t.i_date]",
+          "    Projection_6 input:[Group#1], test.t.a, test.t.b, test.t.c, test.t.d, test.t.e, test.t.c_str, test.t.d_str, test.t.e_str, test.t.f, test.t.g, test.t.h, test.t.i_date, test.t.a, test.t.b, test.t.c, test.t.d, test.t.e, test.t.c_str, test.t.d_str, test.t.e_str, test.t.f, test.t.g, test.t.h, test.t.i_date",
+          "Group#1 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,test.t.e,test.t.c_str,test.t.d_str,test.t.e_str,test.t.f,test.t.g,test.t.h,test.t.i_date,test.t.a,test.t.b,test.t.c,test.t.d,test.t.e,test.t.c_str,test.t.d_str,test.t.e_str,test.t.f,test.t.g,test.t.h,test.t.i_date]",
+          "    Join_5 input:[Group#2,Group#3], left outer join, equal:[eq(test.t.a, test.t.a)]",
+          "Group#2 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,test.t.e,test.t.c_str,test.t.d_str,test.t.e_str,test.t.f,test.t.g,test.t.h,test.t.i_date]",
+          "    TableScan_1 table:t1",
+          "Group#3 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,test.t.e,test.t.c_str,test.t.d_str,test.t.e_str,test.t.f,test.t.g,test.t.h,test.t.i_date]",
+          "    TableDual_7 rowcount:0"
+        ]
+      },
+      {
+        "SQL": "select a, b from ((select a, b from t) union all(select c as a, d as b from t limit 0 offset 5)) as t1 where a > 1",
+        "Result": [
+          "Group#0 Schema:[Column#25,Column#26]",
+          "    Projection_10 input:[Group#1], Column#25, Column#26",
+          "Group#1 Schema:[Column#25,Column#26]",
+          "    Selection_9 input:[Group#2], gt(Column#25, 1)",
+          "Group#2 Schema:[Column#25,Column#26]",
+          "    Union_6 input:[Group#3,Group#4]",
+          "Group#3 Schema:[Column#25,Column#26]",
+          "    Projection_7 input:[Group#5], test.t.a, test.t.b",
+          "Group#5 Schema:[test.t.a,test.t.b]",
+          "    Projection_5 input:[Group#6], test.t.a, test.t.b",
+          "Group#6 Schema:[test.t.a,test.t.b]",
+          "    TableScan_4 table:t",
+          "Group#4 Schema:[Column#25,Column#26]",
+          "    Projection_8 input:[Group#7], test.t.c, test.t.d",
+          "Group#7 Schema:[test.t.c,test.t.d]",
+          "    TableDual_11 rowcount:0"
         ]
       }
     ]

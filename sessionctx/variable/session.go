@@ -1046,6 +1046,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.MemQuotaNestedLoopApply = tidbOptInt64(val, DefTiDBMemQuotaNestedLoopApply)
 	case TiDBGeneralLog:
 		atomic.StoreUint32(&ProcessGeneralLog, uint32(tidbOptPositiveInt32(val, DefTiDBGeneralLog)))
+	case TiDBPProfSQLCPU:
+		EnablePProfSQLCPU.Store(uint32(tidbOptPositiveInt32(val, DefTiDBPProfSQLCPU)) > 0)
 	case TiDBSlowLogThreshold:
 		atomic.StoreUint64(&config.GetGlobalConfig().Log.SlowThreshold, uint64(tidbOptInt64(val, logutil.DefaultSlowThreshold)))
 	case TiDBRecordPlanInSlowLog:

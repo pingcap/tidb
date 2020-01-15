@@ -38,14 +38,13 @@ import (
 	"math/rand"
 	"net"
 	"net/http"
+	// For pprof
+	_ "net/http/pprof"
 	"os"
 	"os/user"
 	"sync"
 	"sync/atomic"
 	"time"
-
-	// For pprof
-	_ "net/http/pprof"
 
 	"github.com/blacktear23/go-proxyprotocol"
 	"github.com/pingcap/errors"
@@ -91,6 +90,7 @@ var (
 	errInvalidType       = terror.ClassServer.New(mysql.ErrInvalidType, mysql.MySQLErrName[mysql.ErrInvalidType])
 	errNotAllowedCommand = terror.ClassServer.New(mysql.ErrNotAllowedCommand, mysql.MySQLErrName[mysql.ErrNotAllowedCommand])
 	errAccessDenied      = terror.ClassServer.New(mysql.ErrAccessDenied, mysql.MySQLErrName[mysql.ErrAccessDenied])
+	errConCount          = terror.ClassServer.New(mysql.ErrConCount, mysql.MySQLErrName[mysql.ErrConCount])
 )
 
 // DefaultCapability is the capability of the server when it is created using the default configuration.
@@ -432,13 +432,13 @@ func (s *Server) onConn(conn *clientConn) {
 	s.rwlock.Unlock()
 	metrics.ConnGauge.Set(float64(connections))
 
+	sessionVars := conn.ctx.GetSessionVars()
 	if plugin.IsEnable(plugin.Audit) {
-		conn.ctx.GetSessionVars().ConnectionInfo = conn.connectInfo()
+		sessionVars.ConnectionInfo = conn.connectInfo()
 	}
 	err := plugin.ForeachPlugin(plugin.Audit, func(p *plugin.Plugin) error {
 		authPlugin := plugin.DeclareAuditManifest(p.Manifest)
 		if authPlugin.OnConnectionEvent != nil {
-			sessionVars := conn.ctx.GetSessionVars()
 			return authPlugin.OnConnectionEvent(context.Background(), plugin.Connected, sessionVars.ConnectionInfo)
 		}
 		return nil
@@ -453,7 +453,6 @@ func (s *Server) onConn(conn *clientConn) {
 	err = plugin.ForeachPlugin(plugin.Audit, func(p *plugin.Plugin) error {
 		authPlugin := plugin.DeclareAuditManifest(p.Manifest)
 		if authPlugin.OnConnectionEvent != nil {
-			sessionVars := conn.ctx.GetSessionVars()
 			sessionVars.ConnectionInfo.Duration = float64(time.Since(connectedTime)) / float64(time.Millisecond)
 			err := authPlugin.OnConnectionEvent(context.Background(), plugin.Disconnect, sessionVars.ConnectionInfo)
 			if err != nil {
@@ -491,6 +490,19 @@ func (cc *clientConn) connectInfo() *variable.ConnectionInfo {
 		DB:                cc.dbname,
 	}
 	return connInfo
+}
+
+func (s *Server) checkConnectionCount() error {
+	s.rwlock.RLock()
+	conns := len(s.clients)
+	s.rwlock.RUnlock()
+
+	if conns >= int(s.cfg.MaxServerConnections) {
+		logutil.BgLogger().Error("too many connections",
+			zap.Uint32("max connections", s.cfg.MaxServerConnections), zap.Error(errConCount))
+		return errConCount
+	}
+	return nil
 }
 
 // ShowProcessList implements the SessionManager interface.
@@ -624,16 +636,22 @@ func (s *Server) kickIdleConnection() {
 	}
 }
 
+// setSysTimeZoneOnce is used for parallel run tests. When several servers are running,
+// only the first will actually do setSystemTimeZoneVariable, thus we can avoid data race.
+var setSysTimeZoneOnce = &sync.Once{}
+
 func setSystemTimeZoneVariable() {
-	tz, err := timeutil.GetSystemTZ()
-	if err != nil {
-		logutil.BgLogger().Error(
-			"Error getting SystemTZ, use default value instead",
-			zap.Error(err),
-			zap.String("default system_time_zone", variable.SysVars["system_time_zone"].Value))
-		return
-	}
-	variable.SysVars["system_time_zone"].Value = tz
+	setSysTimeZoneOnce.Do(func() {
+		tz, err := timeutil.GetSystemTZ()
+		if err != nil {
+			logutil.BgLogger().Error(
+				"Error getting SystemTZ, use default value instead",
+				zap.Error(err),
+				zap.String("default system_time_zone", variable.SysVars["system_time_zone"].Value))
+			return
+		}
+		variable.SysVars["system_time_zone"].Value = tz
+	})
 }
 
 // Server error codes.
@@ -650,6 +668,7 @@ func init() {
 		mysql.ErrUnknownFieldType:  mysql.ErrUnknownFieldType,
 		mysql.ErrInvalidSequence:   mysql.ErrInvalidSequence,
 		mysql.ErrInvalidType:       mysql.ErrInvalidType,
+		mysql.ErrConCount:          mysql.ErrConCount,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassServer] = serverMySQLErrCodes
 }
