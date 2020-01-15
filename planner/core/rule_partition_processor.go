@@ -154,7 +154,7 @@ func (s *partitionProcessor) pruneHashPartition(ds *DataSource, pi *model.Partit
 		// Constant false.
 		if con, ok := filterConds[0].(*expression.Constant); ok && con.DeferredExpr == nil && con.ParamMarker == nil {
 			ret, _, err := expression.EvalBool(sctx, expression.CNFExprs{con}, chunk.Row{})
-			if err == nil && ret == false {
+			if err == nil && !ret {
 				alwaysFalse = true
 			}
 		}
@@ -234,7 +234,7 @@ func (s *partitionProcessor) prune(ds *DataSource) (LogicalPlan, error) {
 			// Constant false.
 			if con, ok := filterConds[0].(*expression.Constant); ok && con.DeferredExpr == nil && con.ParamMarker == nil {
 				ret, _, err := expression.EvalBool(sctx, expression.CNFExprs{con}, chunk.Row{})
-				if err == nil && ret == false {
+				if err == nil && !ret {
 					alwaysFalse = true
 				}
 			}
@@ -313,7 +313,7 @@ func (s *partitionProcessor) canBePruned(sctx sessionctx.Context, partCol *expre
 		// Constant false.
 		if con, ok := conds[0].(*expression.Constant); ok && con.DeferredExpr == nil && con.ParamMarker == nil {
 			ret, _, err := expression.EvalBool(sctx, expression.CNFExprs{con}, chunk.Row{})
-			if err == nil && ret == false {
+			if err == nil && !ret {
 				return true, nil
 			}
 		}

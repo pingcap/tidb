@@ -69,6 +69,7 @@ var defaultTransformationMap = map[memo.Operand][]Transformation{
 		NewRulePushLimitDownProjection(),
 		NewRulePushLimitDownUnionAll(),
 		NewRuleMergeAdjacentLimit(),
+		NewRuleTransformLimitToTableDual(),
 	},
 	memo.OperandProjection: {
 		NewRuleEliminateProjection(),
@@ -1414,4 +1415,36 @@ func (r *MergeAdjacentLimit) OnTransform(old *memo.ExprIter) (newExprs []*memo.G
 	newLimitExpr := memo.NewGroupExpr(newLimit)
 	newLimitExpr.SetChildren(childGroups...)
 	return []*memo.GroupExpr{newLimitExpr}, true, false, nil
+}
+
+// TransformLimitToTableDual convert limit to TableDual.
+type TransformLimitToTableDual struct {
+	baseRule
+}
+
+// NewRuleTransformLimitToTableDual creates a new Transformation TransformLimitToTableDual.
+// The pattern of this rule is `Limit->X`.
+func NewRuleTransformLimitToTableDual() Transformation {
+	rule := &TransformLimitToTableDual{}
+	rule.pattern = memo.BuildPattern(
+		memo.OperandLimit,
+		memo.EngineAll,
+	)
+	return rule
+}
+
+// Match implements Transformation interface.
+func (r *TransformLimitToTableDual) Match(expr *memo.ExprIter) bool {
+	limit := expr.GetExpr().ExprNode.(*plannercore.LogicalLimit)
+	return 0 == limit.Count
+}
+
+// OnTransform implements Transformation interface.
+// This rule tries to convert limit to tableDual.
+func (r *TransformLimitToTableDual) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
+	limit := old.GetExpr().ExprNode.(*plannercore.LogicalLimit)
+	tableDual := plannercore.LogicalTableDual{RowCount: 0}.Init(limit.SCtx(), limit.SelectBlockOffset())
+	tableDual.SetSchema(old.GetExpr().Schema())
+	tableDualExpr := memo.NewGroupExpr(tableDual)
+	return []*memo.GroupExpr{tableDualExpr}, true, true, nil
 }
