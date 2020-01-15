@@ -508,7 +508,7 @@ func (ssbd *stmtSummaryByDigest) init(sei *StmtExecInfo, beginTime int64, interv
 		}
 	}
 	tableNames := buffer.String()
-
+	
 	planDigest := sei.PlanDigest
 	if sei.PlanDigestGen != nil && len(planDigest) == 0 {
 		// It comes here only when the plan is 'Point_Get'.
