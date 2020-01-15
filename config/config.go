@@ -104,8 +104,8 @@ type Config struct {
 	// RepairMode indicates that the TiDB is in the repair mode for table meta.
 	RepairMode      bool     `toml:"repair-mode" json:"repair-mode"`
 	RepairTableList []string `toml:"repair-table-list" json:"repair-table-list"`
-	// MaxConnections is the maximum permitted number of simultaneous client connections.
-	MaxConnections uint32 `toml:"max-connections" json:"max-connections"`
+	// MaxServerConnections is the maximum permitted number of simultaneous client connections.
+	MaxServerConnections uint32 `toml:"max-server-connections" json:"max-server-connections"`
 
 	Experimental Experimental `toml:"experimental" json:"experimental"`
 }
@@ -479,7 +479,7 @@ var defaultConf = Config{
 	SplitRegionMaxNum:            1000,
 	RepairMode:                   false,
 	RepairTableList:              []string{},
-	MaxConnections:               151,
+	MaxServerConnections:         1024,
 	TxnLocalLatches: TxnLocalLatches{
 		Enabled:  false,
 		Capacity: 2048000,

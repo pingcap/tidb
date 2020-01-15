@@ -2912,7 +2912,7 @@ func (s *testSessionSuite2) TestLoadClientInteractive(c *C) {
 		connectionID uint64
 	)
 	tk := testkit.NewTestKit(c, s.store)
-	tk.Se, err = session.CreateSession(s.store)
+	tk.Se, err = session.CreateSession4Test(s.store)
 	c.Assert(err, IsNil)
 	id := atomic.AddUint64(&connectionID, 1)
 	tk.Se.SetConnectionID(id)

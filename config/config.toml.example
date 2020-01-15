@@ -88,7 +88,7 @@ repair-mode = false
 repair-table-list = []
 
 # The maximum permitted number of simultaneous client connections.
-max-connections = 151
+max-server-connections = 1024
 
 [log]
 # Log level: debug, info, warn, error, fatal.

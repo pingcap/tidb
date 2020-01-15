@@ -352,11 +352,6 @@ func (tc *TiDBContext) GetSessionVars() *variable.SessionVars {
 	return tc.session.GetSessionVars()
 }
 
-// LoadCommonGlobalVariablesIfNeeded implements QueryCtx LoadCommonGlobalVariablesIfNeeded method.
-func (tc *TiDBContext) LoadCommonGlobalVariablesIfNeeded() error {
-	return tc.session.LoadCommonGlobalVariablesIfNeeded()
-}
-
 type tidbResultSet struct {
 	recordSet    sqlexec.RecordSet
 	columns      []*ColumnInfo

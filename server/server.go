@@ -493,18 +493,14 @@ func (cc *clientConn) connectInfo() *variable.ConnectionInfo {
 	return connInfo
 }
 
-func (s *Server) checkConnectionCount(ctx QueryCtx) error {
+func (s *Server) checkConnectionCount() error {
 	s.rwlock.RLock()
 	conns := len(s.clients)
 	s.rwlock.RUnlock()
 
-	if err := ctx.LoadCommonGlobalVariablesIfNeeded(); err != nil {
-		return err
-	}
-	sessionVars := ctx.GetSessionVars()
-	if conns >= sessionVars.MaxConnections {
+	if conns >= int(s.cfg.MaxServerConnections) {
 		logutil.BgLogger().Error("too many connections",
-			zap.Int("max connections", sessionVars.MaxConnections), zap.Error(errConCount))
+			zap.Uint32("max connections", s.cfg.MaxServerConnections), zap.Error(errConCount))
 		return errConCount
 	}
 	return nil

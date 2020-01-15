@@ -96,9 +96,6 @@ type QueryCtx interface {
 	SetCommandValue(command byte)
 
 	SetSessionManager(util.SessionManager)
-
-	// LoadCommonGlobalVariablesIfNeeded loads and applies commonly used global variables for the session.
-	LoadCommonGlobalVariablesIfNeeded() error
 }
 
 // PreparedStatement is the interface to use a prepared statement.

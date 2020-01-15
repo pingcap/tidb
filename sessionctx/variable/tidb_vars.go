@@ -465,7 +465,6 @@ const (
 	DefTiDBStoreLimit                  = 0
 	DefTiDBMetricSchemaStep            = 60 // 60s
 	DefTiDBMetricSchemaRangeDuration   = 60 // 60s
-	DefMaxConnections                  = 151
 )
 
 // Process global variables.
