@@ -1070,8 +1070,10 @@ func tryToConvertConstantInt(ctx sessionctx.Context, targetFieldType *types.Fiel
 	if err != nil {
 		if terror.ErrorEqual(err, types.ErrOverflow) {
 			return &Constant{
-				Value:   dt,
-				RetType: targetFieldType,
+				Value:        dt,
+				RetType:      targetFieldType,
+				DeferredExpr: con.DeferredExpr,
+				ParamMarker:  con.ParamMarker,
 			}, true
 		}
 		return con, false
@@ -1105,8 +1107,10 @@ func RefineComparedConstant(ctx sessionctx.Context, targetFieldType types.FieldT
 	if err != nil {
 		if terror.ErrorEqual(err, types.ErrOverflow) {
 			return &Constant{
-				Value:   intDatum,
-				RetType: &targetFieldType,
+				Value:        intDatum,
+				RetType:      &targetFieldType,
+				DeferredExpr: con.DeferredExpr,
+				ParamMarker:  con.ParamMarker,
 			}, true
 		}
 		return con, false
@@ -1170,6 +1174,9 @@ func RefineComparedConstant(ctx sessionctx.Context, targetFieldType types.FieldT
 // refineArgs will rewrite the arguments if the compare expression is `int column <cmp> non-int constant` or
 // `non-int constant <cmp> int column`. E.g., `a < 1.1` will be rewritten to `a < 2`.
 func (c *compareFunctionClass) refineArgs(ctx sessionctx.Context, args []Expression) []Expression {
+	if ctx.GetSessionVars().StmtCtx.UseCache && ContainLazyConst(args) {
+		return args
+	}
 	arg0Type, arg1Type := args[0].GetType(), args[1].GetType()
 	arg0IsInt := arg0Type.EvalType() == types.ETInt
 	arg1IsInt := arg1Type.EvalType() == types.ETInt
@@ -1208,24 +1215,23 @@ func (c *compareFunctionClass) refineArgs(ctx sessionctx.Context, args []Express
 			}
 		}
 	}
-
 	if isExceptional && (c.op == opcode.EQ || c.op == opcode.NullEQ) {
 		// This will always be false.
-		return []Expression{Zero.Clone(), One.Clone()}
+		return []Expression{Zero, One}
 	}
 	if isPositiveInfinite {
 		// If the op is opcode.LT, opcode.LE
 		// This will always be true.
 		// If the op is opcode.GT, opcode.GE
 		// This will always be false.
-		return []Expression{Zero.Clone(), One.Clone()}
+		return []Expression{Zero, One}
 	}
 	if isNegativeInfinite {
 		// If the op is opcode.GT, opcode.GE
 		// This will always be true.
 		// If the op is opcode.LT, opcode.LE
 		// This will always be false.
-		return []Expression{One.Clone(), Zero.Clone()}
+		return []Expression{One, Zero}
 	}
 
 	return []Expression{finalArg0, finalArg1}

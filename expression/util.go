@@ -627,3 +627,117 @@ func GetIntFromConstant(ctx sessionctx.Context, value Expression) (int, bool, er
 	}
 	return intNum, false, nil
 }
+<<<<<<< HEAD
+=======
+
+// BuildNotNullExpr wraps up `not(isnull())` for given expression.
+func BuildNotNullExpr(ctx sessionctx.Context, expr Expression) Expression {
+	isNull := NewFunctionInternal(ctx, ast.IsNull, types.NewFieldType(mysql.TypeTiny), expr)
+	notNull := NewFunctionInternal(ctx, ast.UnaryNot, types.NewFieldType(mysql.TypeTiny), isNull)
+	return notNull
+}
+
+// IsMutableEffectsExpr checks if expr contains function which is mutable or has side effects.
+func IsMutableEffectsExpr(expr Expression) bool {
+	switch x := expr.(type) {
+	case *ScalarFunction:
+		if _, ok := mutableEffectsFunctions[x.FuncName.L]; ok {
+			return true
+		}
+		for _, arg := range x.GetArgs() {
+			if IsMutableEffectsExpr(arg) {
+				return true
+			}
+		}
+	case *Column:
+	case *Constant:
+		if x.DeferredExpr != nil {
+			return IsMutableEffectsExpr(x.DeferredExpr)
+		}
+	}
+	return false
+}
+
+// RemoveDupExprs removes identical exprs. Not that if expr contains functions which
+// are mutable or have side effects, we cannot remove it even if it has duplicates.
+func RemoveDupExprs(ctx sessionctx.Context, exprs []Expression) []Expression {
+	res := make([]Expression, 0, len(exprs))
+	exists := make(map[string]struct{}, len(exprs))
+	sc := ctx.GetSessionVars().StmtCtx
+	for _, expr := range exprs {
+		key := string(expr.HashCode(sc))
+		if _, ok := exists[key]; !ok || IsMutableEffectsExpr(expr) {
+			res = append(res, expr)
+			exists[key] = struct{}{}
+		}
+	}
+	return res
+}
+
+// GetUint64FromConstant gets a uint64 from constant expression.
+func GetUint64FromConstant(expr Expression) (uint64, bool, bool) {
+	con, ok := expr.(*Constant)
+	if !ok {
+		logutil.BgLogger().Warn("not a constant expression", zap.String("expression", expr.ExplainInfo()))
+		return 0, false, false
+	}
+	dt := con.Value
+	if con.ParamMarker != nil {
+		dt = con.ParamMarker.GetUserVar()
+	} else if con.DeferredExpr != nil {
+		var err error
+		dt, err = con.DeferredExpr.Eval(chunk.Row{})
+		if err != nil {
+			logutil.BgLogger().Warn("eval deferred expr failed", zap.Error(err))
+			return 0, false, false
+		}
+	}
+	switch dt.Kind() {
+	case types.KindNull:
+		return 0, true, true
+	case types.KindInt64:
+		val := dt.GetInt64()
+		if val < 0 {
+			return 0, false, false
+		}
+		return uint64(val), false, true
+	case types.KindUint64:
+		return dt.GetUint64(), false, true
+	}
+	return 0, false, false
+}
+
+// ContainVirtualColumn checks if the expressions contain a virtual column
+func ContainVirtualColumn(exprs []Expression) bool {
+	for _, expr := range exprs {
+		switch v := expr.(type) {
+		case *Column:
+			if v.VirtualExpr != nil {
+				return true
+			}
+		case *ScalarFunction:
+			if ContainVirtualColumn(v.GetArgs()) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// ContainLazyConst checks if the expressions contain a lazy constant.
+func ContainLazyConst(exprs []Expression) bool {
+	for _, expr := range exprs {
+		switch v := expr.(type) {
+		case *Constant:
+			if v.ParamMarker != nil || v.DeferredExpr != nil {
+				return true
+			}
+		case *ScalarFunction:
+			if ContainLazyConst(v.GetArgs()) {
+				return true
+			}
+		}
+	}
+	return false
+}
+>>>>>>> 1d64195... expression: disable `int_col <cmp> non-int const` folding for plan cache (#14120)
