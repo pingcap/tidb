@@ -660,6 +660,8 @@ const (
 	AggFuncStddevPop = "stddev_pop"
 	// AggFuncStddevSamp is the name of stddev_samp function
 	AggFuncStddevSamp = "stddev_samp"
+	// AggFuncJsonObjectAgg is the name of json_objectagg function
+	AggFuncJsonObjectAgg = "json_objectagg"
 )
 
 // AggregateFuncExpr represents aggregate function expression.
