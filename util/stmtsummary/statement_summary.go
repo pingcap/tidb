@@ -106,6 +106,7 @@ type stmtSummaryByDigest struct {
 	// It's rare to read concurrently, so RWMutex is not needed.
 	// Mutex is only used to lock `history`.
 	sync.Mutex
+	initialized bool
 	// Each element in history is a summary in one interval.
 	history *list.List
 	// Following fields are common for each summary element.
@@ -243,15 +244,17 @@ func (ssMap *stmtSummaryByDigestMap) AddStatement(sei *StmtExecInfo) {
 		prevDigest: sei.PrevSQLDigest,
 		planDigest: sei.PlanDigest,
 	}
+	// Calculate hash value in advance.
+	key.Hash()
 
 	// Enclose the block in a function to ensure the lock will always be released.
-	value, beginTime, ok := func() (kvcache.Value, int64, bool) {
+	summary, beginTime := func() (*stmtSummaryByDigest, int64) {
 		ssMap.Lock()
 		defer ssMap.Unlock()
 
 		// Check again. Statements could be added before disabling the flag and after Clear().
 		if !ssMap.Enabled() {
-			return nil, 0, false
+			return nil, 0
 		}
 
 		if ssMap.beginTimeForCurInterval+intervalSeconds <= now {
@@ -262,16 +265,20 @@ func (ssMap *stmtSummaryByDigestMap) AddStatement(sei *StmtExecInfo) {
 
 		beginTime := ssMap.beginTimeForCurInterval
 		value, ok := ssMap.summaryMap.Get(key)
+		var summary *stmtSummaryByDigest
 		if !ok {
-			newSummary := newStmtSummaryByDigest(sei, beginTime, intervalSeconds, historySize)
-			ssMap.summaryMap.Put(key, newSummary)
+			// Lazy initialize it to release ssMap.mutex ASAP.
+			summary = new(stmtSummaryByDigest)
+			ssMap.summaryMap.Put(key, summary)
+		} else {
+			summary = value.(*stmtSummaryByDigest)
 		}
-		return value, beginTime, ok
+		return summary, beginTime
 	}()
 
 	// Lock a single entry, not the whole cache.
-	if ok {
-		value.(*stmtSummaryByDigest).add(sei, beginTime, intervalSeconds, historySize)
+	if summary != nil {
+		summary.add(sei, beginTime, intervalSeconds, historySize)
 	}
 }
 
@@ -487,7 +494,7 @@ func (ssMap *stmtSummaryByDigestMap) historySize() int {
 }
 
 // newStmtSummaryByDigest creates a stmtSummaryByDigest from StmtExecInfo.
-func newStmtSummaryByDigest(sei *StmtExecInfo, beginTime int64, intervalSeconds int64, historySize int) *stmtSummaryByDigest {
+func (ssbd *stmtSummaryByDigest) init(sei *StmtExecInfo, beginTime int64, intervalSeconds int64, historySize int) {
 	// Use "," to separate table names to support FIND_IN_SET.
 	var buffer bytes.Buffer
 	for i, value := range sei.StmtCtx.Tables {
@@ -500,17 +507,14 @@ func newStmtSummaryByDigest(sei *StmtExecInfo, beginTime int64, intervalSeconds 
 	}
 	tableNames := buffer.String()
 
-	ssbd := &stmtSummaryByDigest{
-		schemaName:    sei.SchemaName,
-		digest:        sei.Digest,
-		planDigest:    sei.PlanDigest,
-		stmtType:      strings.ToLower(sei.StmtCtx.StmtType),
-		normalizedSQL: formatSQL(sei.NormalizedSQL),
-		tableNames:    tableNames,
-		history:       list.New(),
-	}
-	ssbd.add(sei, beginTime, intervalSeconds, historySize)
-	return ssbd
+	ssbd.schemaName = sei.SchemaName
+	ssbd.digest = sei.Digest
+	ssbd.planDigest = sei.PlanDigest
+	ssbd.stmtType = strings.ToLower(sei.StmtCtx.StmtType)
+	ssbd.normalizedSQL = formatSQL(sei.NormalizedSQL)
+	ssbd.tableNames = tableNames
+	ssbd.history = list.New()
+	ssbd.initialized = true
 }
 
 func (ssbd *stmtSummaryByDigest) add(sei *StmtExecInfo, beginTime int64, intervalSeconds int64, historySize int) {
@@ -518,6 +522,10 @@ func (ssbd *stmtSummaryByDigest) add(sei *StmtExecInfo, beginTime int64, interva
 	ssElement, isElementNew := func() (*stmtSummaryByDigestElement, bool) {
 		ssbd.Lock()
 		defer ssbd.Unlock()
+
+		if !ssbd.initialized {
+			ssbd.init(sei, beginTime, intervalSeconds, historySize)
+		}
 
 		var ssElement *stmtSummaryByDigestElement
 		isElementNew := true
@@ -556,7 +564,7 @@ func (ssbd *stmtSummaryByDigest) toCurrentDatum(beginTimeForCurInterval int64) [
 	var ssElement *stmtSummaryByDigestElement
 
 	ssbd.Lock()
-	if ssbd.history.Len() > 0 {
+	if ssbd.initialized && ssbd.history.Len() > 0 {
 		ssElement = ssbd.history.Back().Value.(*stmtSummaryByDigestElement)
 	}
 	ssbd.Unlock()
@@ -585,6 +593,9 @@ func (ssbd *stmtSummaryByDigest) collectHistorySummaries(historySize int) []*stm
 	ssbd.Lock()
 	defer ssbd.Unlock()
 
+	if !ssbd.initialized {
+		return nil
+	}
 	ssElements := make([]*stmtSummaryByDigestElement, 0, ssbd.history.Len())
 	for listElement := ssbd.history.Front(); listElement != nil && len(ssElements) < historySize; listElement = listElement.Next() {
 		ssElement := listElement.Value.(*stmtSummaryByDigestElement)
