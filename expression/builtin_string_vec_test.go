@@ -483,11 +483,11 @@ var vecBuiltinStringCases = map[string][]vecExprBenchCase{
 	},
 }
 
-func (s *testVectorizeSuite2) TestVectorizedBuiltinStringEvalOneVec(c *C) {
+func (s *testVectorizeSuite1) TestVectorizedBuiltinStringEvalOneVec(c *C) {
 	testVectorizedEvalOneVec(c, vecBuiltinStringCases)
 }
 
-func (s *testVectorizeSuite2) TestVectorizedBuiltinStringFunc(c *C) {
+func (s *testVectorizeSuite1) TestVectorizedBuiltinStringFunc(c *C) {
 	testVectorizedBuiltinFunc(c, vecBuiltinStringCases)
 }
 
