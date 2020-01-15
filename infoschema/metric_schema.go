@@ -1463,4 +1463,190 @@ var MetricTableMap = map[string]MetricTableDef{
 		Labels:  []string{"instance"},
 		Comment: "The interval of TiDB GC",
 	},
+	"tikv_send_snapshot_duration": {
+		PromQL:   `histogram_quantile($QUANTILE, sum(rate(tikv_server_send_snapshot_duration_seconds_bucket{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (le,instance))`,
+		Labels:   []string{"instance"},
+		Quantile: 0.99,
+		Comment:  "The time consumed when sending snapshots",
+	},
+	"tikv_handle_snapshot_duration": {
+		PromQL:   `histogram_quantile($QUANTILE, sum(rate(tikv_raftstore_snapshot_duration_seconds_bucket{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (le,instance,type))`,
+		Labels:   []string{"instance", "type"},
+		Quantile: 0.99,
+		Comment:  "The time consumed when handling snapshots",
+	},
+	"tikv_snapshot_state_count": {
+		PromQL:  `sum(tikv_raftstore_snapshot_traffic_total{$LABEL_CONDITIONS}) by (type,instance)`,
+		Labels:  []string{"instance", "type"},
+		Comment: "The number of snapshots in different states",
+	},
+	"tikv_snapshot_size": {
+		PromQL:   `histogram_quantile($QUANTILE, sum(rate(tikv_snapshot_size_bucket{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (le,instance))`,
+		Labels:   []string{"instance"},
+		Quantile: 0.9999,
+		Comment:  "The snapshot size",
+	},
+	"tikv_snapshot_kv_count": {
+		PromQL:   `histogram_quantile($QUANTILE, sum(rate(tikv_snapshot_kv_count_bucket{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (le,instance))`,
+		Labels:   []string{"instance"},
+		Quantile: 0.9999,
+		Comment:  "The number of KV within a snapshot",
+	},
+
+	"tikv_worker_handled_tasks": {
+		PromQL:  `sum(rate(tikv_worker_handled_task_total{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (name,instance)`,
+		Labels:  []string{"instance", "name"},
+		Comment: "The number of tasks handled by worker",
+	},
+	"tikv_worker_pending_tasks": {
+		PromQL:  `sum(rate(tikv_worker_pending_task_total{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (name,instance)`,
+		Labels:  []string{"instance", "name"},
+		Comment: "Current pending and running tasks of worker",
+	},
+	"tikv_futurepool_handled_tasks": {
+		PromQL:  `sum(rate(tikv_futurepool_handled_task_total{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (name,instance)`,
+		Labels:  []string{"instance", "name"},
+		Comment: "The number of tasks handled by future_pool",
+	},
+	"tikv_futurepool_pending_tasks": {
+		PromQL:  `sum(rate(tikv_futurepool_pending_task_total{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (name,instance)`,
+		Labels:  []string{"instance", "name"},
+		Comment: "Current pending and running tasks of future_pool",
+	},
+	"tikv_cop_request_durations": {
+		PromQL:  `sum(rate(tikv_coprocessor_request_duration_seconds_bucket{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (le,instance,req)`,
+		Labels:  []string{"instance", "req"},
+		Comment: "The time consumed to handle coprocessor read requests",
+	},
+	"tikv_cop_request_duration": {
+		PromQL:   `histogram_quantile($QUANTILE, sum(rate(tikv_coprocessor_request_duration_seconds_bucket{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (le,req,instance))`,
+		Labels:   []string{"instance", "req"},
+		Quantile: 1,
+		Comment:  "The time consumed to handle coprocessor read requests",
+	},
+	"tikv_cop_total_requests": {
+		PromQL: `sum(rate(tikv_coprocessor_request_duration_seconds_count{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (req,instance)`,
+		Labels: []string{"instance", "req"},
+	},
+
+	"tikv_cop_total_request_errors": {
+		PromQL: `sum(rate(tikv_coprocessor_request_error{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (reason,instance)`,
+		Labels: []string{"instance", "reason"},
+	},
+	"tikv_cop_total_kv_cursor_operations": {
+		PromQL: `sum(rate(tikv_coprocessor_scan_keys_sum{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (req,instance)`,
+		Labels: []string{"instance", "req"},
+	},
+	"tikv_cop_kv_cursor_operations": {
+		PromQL:   `histogram_quantile($QUANTILE, avg(rate(tikv_coprocessor_scan_keys_bucket{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (le,req,instance))  `,
+		Labels:   []string{"instance", "req"},
+		Quantile: 1,
+	},
+	"tikv_cop_total_rocksdb_perf_statistics": {
+		PromQL: `sum(rate(tikv_coprocessor_rocksdb_perf{$LABEL_CONDITIONS[$RANGE_DURATION])) by (req,metric,instance)`,
+		Labels: []string{"instance", "req", "metric"},
+	},
+	"tikv_cop_total_response_size": {
+		PromQL: `sum(rate(tikv_coprocessor_response_bytes{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (instance)`,
+		Labels: []string{"instance"},
+	},
+
+	"tikv_cop_handle_duration": {
+		PromQL:   `histogram_quantile($QUANTILE, sum(rate(tikv_coprocessor_request_handle_seconds_bucket{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (le,req,instance))`,
+		Labels:   []string{"instance", "req"},
+		Quantile: 1,
+		Comment:  "The time consumed when handling coprocessor requests",
+	},
+	"tikv_cop_wait_duration": {
+		PromQL:   `histogram_quantile($QUANTILE, sum(rate(tikv_coprocessor_request_wait_seconds_bucket{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (le,req,instance))`,
+		Labels:   []string{"instance", "req"},
+		Quantile: 1,
+		Comment:  "The time consumed when coprocessor requests are wait for being handled",
+	},
+	"tikv_cop_total_dag_requests": {
+		PromQL: `sum(rate(tikv_coprocessor_dag_request_count{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (vec_type,instance)`,
+		Labels: []string{"instance", "vec_type"},
+	},
+	"tikv_cop_total_dag_executors": {
+		PromQL:  `sum(rate(tikv_coprocessor_executor_count{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (type,instance)`,
+		Labels:  []string{"instance", "type"},
+		Comment: "The total number of DAG executors",
+	},
+	"tikv_cop_scan_details": {
+		PromQL: `sum(rate(tikv_coprocessor_scan_details{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (tag,req,cf,instance)`,
+		Labels: []string{"instance", "tag", "req", "cf"},
+	},
+
+	"tikv_threads_state": {
+		PromQL: `sum(tikv_threads_state{$LABEL_CONDITIONS}) by (instance,state)`,
+		Labels: []string{"instance", "state"},
+	},
+	"tikv_threads_io": {
+		PromQL: `sum(rate(tikv_threads_io_bytes_total{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (name,io,instance)`,
+		Labels: []string{"instance", "io", "name"},
+	},
+	"tikv_thread_voluntary_context_switches": {
+		PromQL: `sum(rate(tikv_thread_voluntary_context_switches{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (instance, name)`,
+		Labels: []string{"instance", "name"},
+	},
+	"tikv_thread_nonvoluntary_context_switches": {
+		PromQL: `sum(rate(tikv_thread_nonvoluntary_context_switches{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (instance, name)`,
+		Labels: []string{"instance", "name"},
+	},
+	"tikv_engine_get_cpu_cache_operations": {
+		PromQL:  `sum(rate(tikv_engine_get_served{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (db,type,instance)`,
+		Labels:  []string{"instance", "type", "db"},
+		Comment: "The count of get l0/l1/l2 operations",
+	},
+	"tikv_engine_get_block_cache_operations": {
+		PromQL:  `sum(rate(tikv_engine_cache_efficiency{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (db,type,instance)`,
+		Labels:  []string{"instance", "type", "db"},
+		Comment: "The count of get memtable operations",
+	},
+
+	"tikv_engine_get_memtable_operations": {
+		PromQL:  `sum(rate(tikv_engine_memtable_efficiency{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (db,type,instance)`,
+		Labels:  []string{"instance", "type", "db"},
+		Comment: "The count of get memtable operations",
+	},
+	"tikv_engine_max_get_duration": {
+		PromQL:  `max(tikv_engine_get_micro_seconds{$LABEL_CONDITIONS}) by (db,type,instance)`,
+		Labels:  []string{"instance", "type", "db"},
+		Comment: "The max time consumed when executing get operations",
+	},
+	"tikv_engine_avg_get_duration": {
+		PromQL:  `avg(tikv_engine_get_micro_seconds{$LABEL_CONDITIONS}) by (db,type,instance)`,
+		Labels:  []string{"instance", "type", "db"},
+		Comment: "The average time consumed when executing get operations",
+	},
+	"tikv_engine_seek_operations": {
+		PromQL:  `sum(rate(tikv_engine_locate{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (db,type,instance)`,
+		Labels:  []string{"instance", "type", "db"},
+		Comment: "The count of seek operations",
+	},
+	"tikv_engine_max_seek_duration": {
+		PromQL:  `max(tikv_engine_seek_micro_seconds{$LABEL_CONDITIONS}) by (db,type,instance)`,
+		Labels:  []string{"instance", "type", "db"},
+		Comment: "The time consumed when executing seek operation",
+	},
+	"tikv_engine_avg_seek_duration": {
+		PromQL:  `avg(tikv_engine_seek_micro_seconds{$LABEL_CONDITIONS}) by (db,type,instance)`,
+		Labels:  []string{"instance", "type", "db"},
+		Comment: "The time consumed when executing seek operation",
+	},
+	"tikv_engine_write_operations": {
+		PromQL:  `sum(rate(tikv_engine_write_served{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (db,type,instance)`,
+		Labels:  []string{"instance", "type", "db"},
+		Comment: "The count of write operations",
+	},
+	"tikv_engine_write_duration": {
+		PromQL:  `max(tikv_engine_write_micro_seconds{$LABEL_CONDITIONS}) by (db,type,instance)`,
+		Labels:  []string{"instance", "type", "db"},
+		Comment: "The time consumed when executing write operation",
+	},
+	"tikv_engine_wal_sync_operations": {
+		PromQL:  `sum(rate(tikv_engine_wal_file_synced{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (db,instance)`,
+		Labels:  []string{"instance", "db"},
+		Comment: "The count of WAL sync operations",
+	},
 }
