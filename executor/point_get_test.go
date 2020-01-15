@@ -465,7 +465,7 @@ func (s *testPointGetSuite) TestSelectCheckVisibility(c *C) {
 	checkSelectResultError := func(sql string, expectErr *terror.Error) {
 		re, err := tk.Exec(sql)
 		c.Assert(err, IsNil)
-		_, err = session.ResultSetToStringSlice(context.Background(), tk.Se, re)
+		_, err = session.GetRows4Test(context.Background(), tk.Se, re)
 		c.Assert(err, NotNil)
 		c.Assert(expectErr.Equal(err), IsTrue)
 	}
