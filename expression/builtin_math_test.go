@@ -181,10 +181,7 @@ func (s *testEvaluatorSuite) TestFloor(c *C) {
 	}
 
 	genTime := func(y, m, d int) types.Time {
-		return types.Time{
-			Time: types.FromDate(y, m, d, 0, 0, 0, 0),
-			Type: mysql.TypeDatetime,
-			Fsp:  types.DefaultFsp}
+		return types.NewTime(types.FromDate(y, m, d, 0, 0, 0, 0), mysql.TypeDatetime, types.DefaultFsp)
 	}
 
 	for _, test := range []struct {

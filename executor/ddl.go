@@ -113,6 +113,8 @@ func (e *DDLExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 		err = e.executeCleanupTableLock(x)
 	case *ast.RepairTableStmt:
 		err = e.executeRepairTable(x)
+	case *ast.CreateSequenceStmt:
+		err = e.executeCreateSequence(x)
 
 	}
 	if err != nil {
@@ -195,7 +197,7 @@ func (e *DDLExec) executeCreateView(s *ast.CreateViewStmt) error {
 func (e *DDLExec) executeCreateIndex(s *ast.CreateIndexStmt) error {
 	ident := ast.Ident{Schema: s.Table.Schema, Name: s.Table.Name}
 	err := domain.GetDomain(e.ctx).DDL().CreateIndex(e.ctx, ident, s.KeyType, model.NewCIStr(s.IndexName),
-		s.IndexColNames, s.IndexOption, s.IfNotExists)
+		s.IndexPartSpecifications, s.IndexOption, s.IfNotExists)
 	return err
 }
 
@@ -514,4 +516,8 @@ func (e *DDLExec) executeCleanupTableLock(s *ast.CleanupTableLockStmt) error {
 
 func (e *DDLExec) executeRepairTable(s *ast.RepairTableStmt) error {
 	return domain.GetDomain(e.ctx).DDL().RepairTable(e.ctx, s.Table, s.CreateStmt)
+}
+
+func (e *DDLExec) executeCreateSequence(s *ast.CreateSequenceStmt) error {
+	return domain.GetDomain(e.ctx).DDL().CreateSequence(e.ctx, s)
 }

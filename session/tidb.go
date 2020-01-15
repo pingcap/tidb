@@ -118,6 +118,15 @@ var (
 	statsLease = int64(3 * time.Second)
 )
 
+// ResetForWithTiKVTest is only used in the test code.
+// TODO: Remove domap and storeBootstrapped. Use store.SetOption() to do it.
+func ResetForWithTiKVTest() {
+	domap = &domainMap{
+		domains: map[string]*domain.Domain{},
+	}
+	storeBootstrapped = make(map[string]bool)
+}
+
 func setStoreBootstrapped(storeUUID string) {
 	storeBootstrappedLock.Lock()
 	defer storeBootstrappedLock.Unlock()
@@ -251,6 +260,7 @@ func runStmt(ctx context.Context, sctx sessionctx.Context, s sqlexec.Statement) 
 		// If it is not a select statement, we record its slow log here,
 		// then it could include the transaction commit time.
 		if rs == nil {
+			// `LowSlowQuery` and `SummaryStmt` must be called before recording `PrevStmt`.
 			s.(*executor.ExecStmt).LogSlowQuery(origTxnCtx.StartTS, err == nil, false)
 			s.(*executor.ExecStmt).SummaryStmt()
 			pps := types.CloneRow(sessVars.PreparedParams)
@@ -276,7 +286,7 @@ func runStmt(ctx context.Context, sctx sessionctx.Context, s sqlexec.Statement) 
 				if err != nil {
 					sctx.StmtRollback()
 				} else {
-					err = sctx.StmtCommit()
+					err = sctx.StmtCommit(sctx.GetSessionVars().StmtCtx.MemTracker)
 				}
 			}
 		} else {

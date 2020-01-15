@@ -1051,6 +1051,12 @@ func (s *testPlanSuite) TestVisitInfo(c *C) {
 				{mysql.DropPriv, "test", "t", "", nil},
 			},
 		},
+		{
+			sql: "flush privileges",
+			ans: []visitInfo{
+				{mysql.ReloadPriv, "", "", "", ErrSpecificAccessDenied},
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -1264,6 +1270,10 @@ func (s *testPlanSuite) TestSelectView(c *C) {
 	}{
 		{
 			sql:  "select * from v",
+			best: "DataScan(t)->Projection",
+		},
+		{
+			sql:  "select v.b, v.c, v.d from v",
 			best: "DataScan(t)->Projection",
 		},
 	}

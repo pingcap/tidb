@@ -13,19 +13,19 @@ IndexJoin_25	5.00	root	inner join, inner:IndexLookUp_24, outer key:test.t2.a, in
 │ ├─Selection_23	5.00	cop[tikv]	not(isnull(test.t1.a))
 │ │ └─IndexScan_21	5.00	cop[tikv]	table:t1, index:a, range: decided by [eq(test.t1.a, test.t2.a)], keep order:false
 │ └─TableScan_22	5.00	cop[tikv]	table:t1, keep order:false
-└─TableReader_37	1.00	root	data:Selection_36
-  └─Selection_36	1.00	cop[tikv]	not(isnull(test.t2.a))
-    └─TableScan_35	1.00	cop[tikv]	table:t2, range:[-inf,+inf], keep order:false
+└─TableReader_43	1.00	root	data:Selection_42
+  └─Selection_42	1.00	cop[tikv]	not(isnull(test.t2.a))
+    └─TableScan_41	1.00	cop[tikv]	table:t2, range:[-inf,+inf], keep order:false
 explain select * from t1 join t2 on t1.a=t2.a;
 id	count	task	operator info
 Projection_6	5.00	root	test.t1.a, test.t1.b, test.t2.a, test.t2.b
-└─HashRightJoin_23	5.00	root	inner join, inner:TableReader_34, equal:[eq(test.t2.a, test.t1.a)]
-  ├─TableReader_34	1.00	root	data:Selection_33
-  │ └─Selection_33	1.00	cop[tikv]	not(isnull(test.t2.a))
-  │   └─TableScan_32	1.00	cop[tikv]	table:t2, range:[-inf,+inf], keep order:false
-  └─TableReader_40	5.00	root	data:Selection_39
-    └─Selection_39	5.00	cop[tikv]	not(isnull(test.t1.a))
-      └─TableScan_38	5.00	cop[tikv]	table:t1, range:[-inf,+inf], keep order:false
+└─HashRightJoin_37	5.00	root	inner join, inner:TableReader_48, equal:[eq(test.t2.a, test.t1.a)]
+  ├─TableReader_48	1.00	root	data:Selection_47
+  │ └─Selection_47	1.00	cop[tikv]	not(isnull(test.t2.a))
+  │   └─TableScan_46	1.00	cop[tikv]	table:t2, range:[-inf,+inf], keep order:false
+  └─TableReader_54	5.00	root	data:Selection_53
+    └─Selection_53	5.00	cop[tikv]	not(isnull(test.t1.a))
+      └─TableScan_52	5.00	cop[tikv]	table:t1, range:[-inf,+inf], keep order:false
 drop table if exists t1, t2;
 create table t1(a int not null, b int not null);
 create table t2(a int not null, b int not null, key a(a));

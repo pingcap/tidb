@@ -14,6 +14,7 @@
 package stringutil
 
 import (
+	"bytes"
 	"fmt"
 	"strings"
 	"unicode/utf8"
@@ -163,9 +164,6 @@ func CompilePattern(pattern string, escape byte) (patChars, patTypes []byte) {
 			}
 		case '_':
 			if lastAny {
-				patChars[patLen-1], patTypes[patLen-1] = c, patOne
-				patChars[patLen], patTypes[patLen] = '%', patAny
-				patLen++
 				continue
 			}
 			tp = patOne
@@ -201,6 +199,35 @@ func matchByteCI(a, b byte) bool {
 		}
 		return a >= 'A' && a <= 'Z' && a+caseDiff == b
 	*/
+}
+
+// CompileLike2Regexp convert a like `lhs` to a regular expression
+func CompileLike2Regexp(str string) string {
+	patChars, patTypes := CompilePattern(str, '\\')
+	var result []byte
+	for i := 0; i < len(patChars); i++ {
+		switch patTypes[i] {
+		case patMatch:
+			result = append(result, patChars[i])
+		case patOne:
+			// .*. == .*
+			if !bytes.HasSuffix(result, []byte{'.', '*'}) {
+				result = append(result, '.')
+			}
+		case patAny:
+			// ..* == .*
+			if bytes.HasSuffix(result, []byte{'.'}) {
+				result = append(result, '*')
+				continue
+			}
+			// .*.* == .*
+			if !bytes.HasSuffix(result, []byte{'.', '*'}) {
+				result = append(result, '.')
+				result = append(result, '*')
+			}
+		}
+	}
+	return string(result)
 }
 
 // DoMatch matches the string with patChars and patTypes.

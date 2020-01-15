@@ -790,11 +790,7 @@ func (b *builtinLeastTimeSig) evalString(row chunk.Row) (res string, isNull bool
 		v string
 		t types.Time
 	)
-	min := types.Time{
-		Time: types.MaxDatetime,
-		Type: mysql.TypeDatetime,
-		Fsp:  types.MaxFsp,
-	}
+	min := types.NewTime(types.MaxDatetime, mysql.TypeDatetime, types.MaxFsp)
 	findInvalidTime := false
 	sc := b.ctx.GetSessionVars().StmtCtx
 	for i := 0; i < len(b.args); i++ {
@@ -1468,6 +1464,10 @@ func (b *builtinLTIntSig) Clone() builtinFunc {
 	newSig := &builtinLTIntSig{}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
 	return newSig
+}
+
+func (b *builtinLTIntSig) evalIntWithCtx(ctx sessionctx.Context, row chunk.Row) (val int64, isNull bool, err error) {
+	return resOfLT(CompareInt(ctx, b.args[0], b.args[1], row, row))
 }
 
 func (b *builtinLTIntSig) evalInt(row chunk.Row) (val int64, isNull bool, err error) {

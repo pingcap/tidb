@@ -257,18 +257,14 @@ func getDbFromResultNode(resultNode ast.ResultSetNode) []string { //may have dup
 		if x.Left != nil {
 			dbs := getDbFromResultNode(x.Left)
 			if dbs != nil {
-				for _, db := range dbs {
-					dbLabels = append(dbLabels, db)
-				}
+				dbLabels = append(dbLabels, dbs...)
 			}
 		}
 
 		if x.Right != nil {
 			dbs := getDbFromResultNode(x.Right)
 			if dbs != nil {
-				for _, db := range dbs {
-					dbLabels = append(dbLabels, db)
-				}
+				dbLabels = append(dbLabels, dbs...)
 			}
 		}
 	}
@@ -342,6 +338,8 @@ func GetStmtLabel(stmtNode ast.StmtNode) string {
 		return "Use"
 	case *ast.CreateBindingStmt:
 		return "CreateBinding"
+	case *ast.IndexAdviseStmt:
+		return "IndexAdvise"
 	}
 	return "other"
 }

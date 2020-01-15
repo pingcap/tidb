@@ -231,13 +231,13 @@ func (sf *ScalarFunction) IsCorrelated() bool {
 }
 
 // ConstItem implements Expression interface.
-func (sf *ScalarFunction) ConstItem() bool {
+func (sf *ScalarFunction) ConstItem(sc *stmtctx.StatementContext) bool {
 	// Note: some unfoldable functions are deterministic, we use unFoldableFunctions here for simplification.
 	if _, ok := unFoldableFunctions[sf.FuncName.L]; ok {
 		return false
 	}
 	for _, arg := range sf.GetArgs() {
-		if !arg.ConstItem() {
+		if !arg.ConstItem(sc) {
 			return false
 		}
 	}
@@ -291,6 +291,9 @@ func (sf *ScalarFunction) Eval(row chunk.Row) (d types.Datum, err error) {
 
 // EvalInt implements Expression interface.
 func (sf *ScalarFunction) EvalInt(ctx sessionctx.Context, row chunk.Row) (int64, bool, error) {
+	if f, ok := sf.Function.(builtinFuncNew); ok {
+		return f.evalIntWithCtx(ctx, row)
+	}
 	return sf.Function.evalInt(row)
 }
 

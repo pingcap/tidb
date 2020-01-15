@@ -24,21 +24,23 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/hack"
+	"github.com/pingcap/tidb/util/rowcodec"
 )
 
 // BatchPointGetExec executes a bunch of point select queries.
 type BatchPointGetExec struct {
 	baseExecutor
 
-	tblInfo  *model.TableInfo
-	idxInfo  *model.IndexInfo
-	handles  []int64
-	idxVals  [][]types.Datum
-	startTS  uint64
-	snapshot kv.Snapshot
-	inited   bool
-	values   [][]byte
-	index    int
+	tblInfo    *model.TableInfo
+	idxInfo    *model.IndexInfo
+	handles    []int64
+	idxVals    [][]types.Datum
+	startTS    uint64
+	snapshot   kv.Snapshot
+	inited     bool
+	values     [][]byte
+	index      int
+	rowDecoder *rowcodec.ChunkDecoder
 }
 
 // Open implements the Executor interface.
@@ -65,7 +67,7 @@ func (e *BatchPointGetExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 	for !req.IsFull() && e.index < len(e.values) {
 		handle, val := e.handles[e.index], e.values[e.index]
-		err := decodeRowValToChunk(e.base(), e.tblInfo, handle, val, req)
+		err := decodeRowValToChunk(e.base(), e.tblInfo, handle, val, req, e.rowDecoder)
 		if err != nil {
 			return err
 		}
@@ -97,10 +99,10 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 
 	if e.idxInfo != nil {
 		// `SELECT a, b FROM t WHERE (a, b) IN ((1, 2), (1, 2), (2, 1), (1, 2))` should not return duplicated rows
-		dedup := make(map[hack.MutableString]struct{}, 0)
+		dedup := make(map[hack.MutableString]struct{})
 		keys := make([]kv.Key, 0, len(e.idxVals))
 		for _, idxVals := range e.idxVals {
-			idxKey, err1 := encodeIndexKey(e.base(), e.tblInfo, e.idxInfo, idxVals)
+			idxKey, err1 := encodeIndexKey(e.base(), e.tblInfo, e.idxInfo, idxVals, e.tblInfo.ID)
 			if err1 != nil && !kv.ErrNotExist.Equal(err1) {
 				return err1
 			}

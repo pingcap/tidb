@@ -86,9 +86,9 @@ func init() {
 }
 
 var (
-	errUnknownFieldType  = terror.ClassServer.New(codeUnknownFieldType, "unknown field type")
-	errInvalidSequence   = terror.ClassServer.New(codeInvalidSequence, "invalid sequence")
-	errInvalidType       = terror.ClassServer.New(codeInvalidType, "invalid type")
+	errUnknownFieldType  = terror.ClassServer.New(mysql.ErrUnknownFieldType, mysql.MySQLErrName[mysql.ErrUnknownFieldType])
+	errInvalidSequence   = terror.ClassServer.New(mysql.ErrInvalidSequence, mysql.MySQLErrName[mysql.ErrInvalidSequence])
+	errInvalidType       = terror.ClassServer.New(mysql.ErrInvalidType, mysql.MySQLErrName[mysql.ErrInvalidType])
 	errNotAllowedCommand = terror.ClassServer.New(mysql.ErrNotAllowedCommand, mysql.MySQLErrName[mysql.ErrNotAllowedCommand])
 	errAccessDenied      = terror.ClassServer.New(mysql.ErrAccessDenied, mysql.MySQLErrName[mysql.ErrAccessDenied])
 )
@@ -624,16 +624,22 @@ func (s *Server) kickIdleConnection() {
 	}
 }
 
+// setSysTimeZoneOnce is used for parallel run tests. When several servers are running,
+// only the first will actually do setSystemTimeZoneVariable, thus we can avoid data race.
+var setSysTimeZoneOnce = &sync.Once{}
+
 func setSystemTimeZoneVariable() {
-	tz, err := timeutil.GetSystemTZ()
-	if err != nil {
-		logutil.BgLogger().Error(
-			"Error getting SystemTZ, use default value instead",
-			zap.Error(err),
-			zap.String("default system_time_zone", variable.SysVars["system_time_zone"].Value))
-		return
-	}
-	variable.SysVars["system_time_zone"].Value = tz
+	setSysTimeZoneOnce.Do(func() {
+		tz, err := timeutil.GetSystemTZ()
+		if err != nil {
+			logutil.BgLogger().Error(
+				"Error getting SystemTZ, use default value instead",
+				zap.Error(err),
+				zap.String("default system_time_zone", variable.SysVars["system_time_zone"].Value))
+			return
+		}
+		variable.SysVars["system_time_zone"].Value = tz
+	})
 }
 
 // Server error codes.
@@ -647,6 +653,9 @@ func init() {
 	serverMySQLErrCodes := map[terror.ErrCode]uint16{
 		mysql.ErrNotAllowedCommand: mysql.ErrNotAllowedCommand,
 		mysql.ErrAccessDenied:      mysql.ErrAccessDenied,
+		mysql.ErrUnknownFieldType:  mysql.ErrUnknownFieldType,
+		mysql.ErrInvalidSequence:   mysql.ErrInvalidSequence,
+		mysql.ErrInvalidType:       mysql.ErrInvalidType,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassServer] = serverMySQLErrCodes
 }

@@ -205,7 +205,7 @@ func (e *LoadDataInfo) CommitOneTask(ctx context.Context, task CommitTask) error
 	failpoint.Inject("commitOneTaskErr", func() error {
 		return errors.New("mock commit one task error")
 	})
-	if err = e.Ctx.StmtCommit(); err != nil {
+	if err = e.Ctx.StmtCommit(nil); err != nil {
 		logutil.Logger(ctx).Error("commit error commit", zap.Error(err))
 		return err
 	}
@@ -234,14 +234,14 @@ func (e *LoadDataInfo) CommitWork(ctx context.Context) error {
 			e.ctx.StmtRollback()
 		}
 	}()
-	var tasks uint64 = 0
+	var tasks uint64
 	var end = false
 	for !end {
 		select {
 		case <-e.QuitCh:
 			err = errors.New("commit forced to quit")
 			logutil.Logger(ctx).Error("commit forced to quit, possible preparation failed")
-			break
+			return err
 		case commitTask, ok := <-e.commitTaskQueue:
 			if ok {
 				start := time.Now()
@@ -257,7 +257,6 @@ func (e *LoadDataInfo) CommitWork(ctx context.Context) error {
 					zap.Int("tasks in queue", len(e.commitTaskQueue)))
 			} else {
 				end = true
-				break
 			}
 		}
 		if err != nil {
@@ -507,9 +506,9 @@ type fieldWriter struct {
 	pos           int
 	ReadBuf       []byte
 	OutputBuf     []byte
+	term          string
 	enclosedChar  byte
 	fieldTermChar byte
-	term          string
 	isEnclosed    bool
 	isLineStart   bool
 	isFieldStart  bool
