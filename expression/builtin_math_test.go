@@ -426,6 +426,8 @@ func (s *testEvaluatorSuite) TestRound(c *C) {
 		{[]interface{}{newDec("1.58"), 1}, newDec("1.6")},
 		{[]interface{}{newDec("23.298"), -1}, newDec("20")},
 		{[]interface{}{nil, 2}, nil},
+		{[]interface{}{1, -2012}, 0},
+		{[]interface{}{1, -201299999999999}, 0},
 	}
 
 	Dtbl := tblToDtbl(tbl)
