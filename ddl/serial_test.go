@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
+	tmysql "github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -309,15 +310,15 @@ func (s *testSerialSuite) TestCreateTableWithLike(c *C) {
 
 	// for failure cases
 	failSQL := fmt.Sprintf("create table t1 like test_not_exist.t")
-	tk.MustGetErrCode(failSQL, mysql.ErrNoSuchTable)
+	tk.MustGetErrCode(failSQL, tmysql.ErrNoSuchTable)
 	failSQL = fmt.Sprintf("create table t1 like test.t_not_exist")
-	tk.MustGetErrCode(failSQL, mysql.ErrNoSuchTable)
+	tk.MustGetErrCode(failSQL, tmysql.ErrNoSuchTable)
 	failSQL = fmt.Sprintf("create table t1 (like test_not_exist.t)")
-	tk.MustGetErrCode(failSQL, mysql.ErrNoSuchTable)
+	tk.MustGetErrCode(failSQL, tmysql.ErrNoSuchTable)
 	failSQL = fmt.Sprintf("create table test_not_exis.t1 like ctwl_db.t")
-	tk.MustGetErrCode(failSQL, mysql.ErrBadDB)
+	tk.MustGetErrCode(failSQL, tmysql.ErrBadDB)
 	failSQL = fmt.Sprintf("create table t1 like ctwl_db.t")
-	tk.MustGetErrCode(failSQL, mysql.ErrTableExists)
+	tk.MustGetErrCode(failSQL, tmysql.ErrTableExists)
 
 	tk.MustExec("drop database ctwl_db")
 	tk.MustExec("drop database ctwl_db1")
@@ -669,7 +670,7 @@ func (s *testSerialSuite) TestCanceledJobTakeTime(c *C) {
 	ddl.WaitTimeWhenErrorOccured = 1 * time.Second
 	defer func() { ddl.WaitTimeWhenErrorOccured = originalWT }()
 	startTime := time.Now()
-	tk.MustGetErrCode("alter table t_cjtt add column b int", mysql.ErrNoSuchTable)
+	tk.MustGetErrCode("alter table t_cjtt add column b int", tmysql.ErrNoSuchTable)
 	sub := time.Since(startTime)
 	c.Assert(sub, Less, ddl.WaitTimeWhenErrorOccured)
 }

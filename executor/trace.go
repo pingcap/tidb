@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
@@ -136,7 +135,7 @@ func (e *TraceExec) executeChild(ctx context.Context, se sqlexec.SQLExecutor) {
 	if len(recordSets) == 0 {
 		if err != nil {
 			var errCode uint16
-			if te, ok := err.(*terror.Error); ok {
+			if te, ok := err.(mysql.SQLErrorConvertible); ok {
 				errCode = te.ToSQLError().Code
 			}
 			logutil.Eventf(ctx, "execute with error(%d): %s", errCode, err.Error())
@@ -160,7 +159,7 @@ func drainRecordSet(ctx context.Context, sctx sessionctx.Context, rs sqlexec.Rec
 		if err != nil || req.NumRows() == 0 {
 			if err != nil {
 				var errCode uint16
-				if te, ok := err.(*terror.Error); ok {
+				if te, ok := err.(mysql.SQLErrorConvertible); ok {
 					errCode = te.ToSQLError().Code
 				}
 				logutil.Eventf(ctx, "execute with error(%d): %s", errCode, err.Error())

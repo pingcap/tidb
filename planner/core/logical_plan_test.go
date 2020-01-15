@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/sessionctx"
+	tterror "github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
 )
@@ -619,7 +620,7 @@ func (s *testPlanSuite) TestValidate(c *C) {
 	defer testleak.AfterTest(c)()
 	tests := []struct {
 		sql string
-		err *terror.Error
+		err *tterror.TError
 	}{
 		{
 			sql: "select date_format((1,2), '%H');",

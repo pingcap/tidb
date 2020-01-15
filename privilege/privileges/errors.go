@@ -14,21 +14,22 @@
 package privileges
 
 import (
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
+	pterror "github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/terror"
 )
 
 var (
-	errInvalidPrivilegeType = terror.ClassPrivilege.New(mysql.ErrInvalidPrivilegeType, mysql.MySQLErrName[mysql.ErrInvalidPrivilegeType])
-	errNonexistingGrant     = terror.ClassPrivilege.New(mysql.ErrNonexistingGrant, mysql.MySQLErrName[mysql.ErrNonexistingGrant])
-	errLoadPrivilege        = terror.ClassPrivilege.New(mysql.ErrLoadPrivilege, mysql.MySQLErrName[mysql.ErrLoadPrivilege])
+	errInvalidPrivilegeType = terror.New(pterror.ClassPrivilege, mysql.ErrInvalidPrivilegeType, mysql.MySQLErrName[mysql.ErrInvalidPrivilegeType])
+	errNonexistingGrant     = terror.New(pterror.ClassPrivilege, mysql.ErrNonexistingGrant, mysql.MySQLErrName[mysql.ErrNonexistingGrant])
+	errLoadPrivilege        = terror.New(pterror.ClassPrivilege, mysql.ErrLoadPrivilege, mysql.MySQLErrName[mysql.ErrLoadPrivilege])
 )
 
 func init() {
-	privilegeMySQLErrCodes := map[terror.ErrCode]uint16{
+	privilegeMySQLErrCodes := map[pterror.ErrCode]uint16{
 		mysql.ErrNonexistingGrant:     mysql.ErrNonexistingGrant,
 		mysql.ErrLoadPrivilege:        mysql.ErrLoadPrivilege,
 		mysql.ErrInvalidPrivilegeType: mysql.ErrInvalidPrivilegeType,
 	}
-	terror.ErrClassToMySQLCodes[terror.ClassPrivilege] = privilegeMySQLErrCodes
+	terror.ErrClassToMySQLCodes[pterror.ClassPrivilege] = privilegeMySQLErrCodes
 }

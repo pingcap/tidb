@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
+	tmysql "github.com/pingcap/tidb/mysql"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/session"
@@ -1351,51 +1352,51 @@ func (s *testSessionSuite2) TestIndexMaxLength(c *C) {
 	tk.MustExec("use test_index_max_length")
 
 	// create simple index at table creation
-	tk.MustGetErrCode("create table t (c1 varchar(3073), index(c1)) charset = ascii;", mysql.ErrTooLongKey)
+	tk.MustGetErrCode("create table t (c1 varchar(3073), index(c1)) charset = ascii;", tmysql.ErrTooLongKey)
 
 	// create simple index after table creation
 	tk.MustExec("create table t (c1 varchar(3073)) charset = ascii;")
-	tk.MustGetErrCode("create index idx_c1 on t(c1) ", mysql.ErrTooLongKey)
+	tk.MustGetErrCode("create index idx_c1 on t(c1) ", tmysql.ErrTooLongKey)
 	tk.MustExec("drop table t;")
 
 	// create compound index at table creation
-	tk.MustGetErrCode("create table t (c1 varchar(3072), c2 varchar(1), index(c1, c2)) charset = ascii;", mysql.ErrTooLongKey)
-	tk.MustGetErrCode("create table t (c1 varchar(3072), c2 char(1), index(c1, c2)) charset = ascii;", mysql.ErrTooLongKey)
-	tk.MustGetErrCode("create table t (c1 varchar(3072), c2 char, index(c1, c2)) charset = ascii;", mysql.ErrTooLongKey)
-	tk.MustGetErrCode("create table t (c1 varchar(3072), c2 date, index(c1, c2)) charset = ascii;", mysql.ErrTooLongKey)
-	tk.MustGetErrCode("create table t (c1 varchar(3069), c2 timestamp(1), index(c1, c2)) charset = ascii;", mysql.ErrTooLongKey)
+	tk.MustGetErrCode("create table t (c1 varchar(3072), c2 varchar(1), index(c1, c2)) charset = ascii;", tmysql.ErrTooLongKey)
+	tk.MustGetErrCode("create table t (c1 varchar(3072), c2 char(1), index(c1, c2)) charset = ascii;", tmysql.ErrTooLongKey)
+	tk.MustGetErrCode("create table t (c1 varchar(3072), c2 char, index(c1, c2)) charset = ascii;", tmysql.ErrTooLongKey)
+	tk.MustGetErrCode("create table t (c1 varchar(3072), c2 date, index(c1, c2)) charset = ascii;", tmysql.ErrTooLongKey)
+	tk.MustGetErrCode("create table t (c1 varchar(3069), c2 timestamp(1), index(c1, c2)) charset = ascii;", tmysql.ErrTooLongKey)
 
 	tk.MustExec("create table t (c1 varchar(3068), c2 bit(26), index(c1, c2)) charset = ascii;") // 26 bit = 4 bytes
 	tk.MustExec("drop table t;")
 	tk.MustExec("create table t (c1 varchar(3068), c2 bit(32), index(c1, c2)) charset = ascii;") // 32 bit = 4 bytes
 	tk.MustExec("drop table t;")
-	tk.MustGetErrCode("create table t (c1 varchar(3068), c2 bit(33), index(c1, c2)) charset = ascii;", mysql.ErrTooLongKey)
+	tk.MustGetErrCode("create table t (c1 varchar(3068), c2 bit(33), index(c1, c2)) charset = ascii;", tmysql.ErrTooLongKey)
 
 	// create compound index after table creation
 	tk.MustExec("create table t (c1 varchar(3072), c2 varchar(1)) charset = ascii;")
-	tk.MustGetErrCode("create index idx_c1_c2 on t(c1, c2);", mysql.ErrTooLongKey)
+	tk.MustGetErrCode("create index idx_c1_c2 on t(c1, c2);", tmysql.ErrTooLongKey)
 	tk.MustExec("drop table t;")
 
 	tk.MustExec("create table t (c1 varchar(3072), c2 char(1)) charset = ascii;")
-	tk.MustGetErrCode("create index idx_c1_c2 on t(c1, c2);", mysql.ErrTooLongKey)
+	tk.MustGetErrCode("create index idx_c1_c2 on t(c1, c2);", tmysql.ErrTooLongKey)
 	tk.MustExec("drop table t;")
 
 	tk.MustExec("create table t (c1 varchar(3072), c2 char) charset = ascii;")
-	tk.MustGetErrCode("create index idx_c1_c2 on t(c1, c2);", mysql.ErrTooLongKey)
+	tk.MustGetErrCode("create index idx_c1_c2 on t(c1, c2);", tmysql.ErrTooLongKey)
 	tk.MustExec("drop table t;")
 
 	tk.MustExec("create table t (c1 varchar(3072), c2 date) charset = ascii;")
-	tk.MustGetErrCode("create index idx_c1_c2 on t(c1, c2);", mysql.ErrTooLongKey)
+	tk.MustGetErrCode("create index idx_c1_c2 on t(c1, c2);", tmysql.ErrTooLongKey)
 	tk.MustExec("drop table t;")
 
 	tk.MustExec("create table t (c1 varchar(3069), c2 timestamp(1)) charset = ascii;")
-	tk.MustGetErrCode("create index idx_c1_c2 on t(c1, c2);", mysql.ErrTooLongKey)
+	tk.MustGetErrCode("create index idx_c1_c2 on t(c1, c2);", tmysql.ErrTooLongKey)
 	tk.MustExec("drop table t;")
 
 	// Test charsets other than `ascii`.
 	assertCharsetLimit := func(charset string, bytesPerChar int) {
 		base := 3072 / bytesPerChar
-		tk.MustGetErrCode(fmt.Sprintf("create table t (a varchar(%d) primary key) charset=%s", base+1, charset), mysql.ErrTooLongKey)
+		tk.MustGetErrCode(fmt.Sprintf("create table t (a varchar(%d) primary key) charset=%s", base+1, charset), tmysql.ErrTooLongKey)
 		tk.MustExec(fmt.Sprintf("create table t (a varchar(%d) primary key) charset=%s", base, charset))
 		tk.MustExec("drop table if exists t")
 	}
@@ -1407,7 +1408,7 @@ func (s *testSessionSuite2) TestIndexMaxLength(c *C) {
 	// Test types bit length limit.
 	assertTypeLimit := func(tp string, limitBitLength int) {
 		base := 3072 - limitBitLength
-		tk.MustGetErrCode(fmt.Sprintf("create table t (a blob(10000), b %s, index idx(a(%d), b))", tp, base+1), mysql.ErrTooLongKey)
+		tk.MustGetErrCode(fmt.Sprintf("create table t (a blob(10000), b %s, index idx(a(%d), b))", tp, base+1), tmysql.ErrTooLongKey)
 		tk.MustExec(fmt.Sprintf("create table t (a blob(10000), b %s, index idx(a(%d), b))", tp, base))
 		tk.MustExec("drop table if exists t")
 	}

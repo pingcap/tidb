@@ -17,7 +17,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
+	tmysql "github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/util/testkit"
 )
@@ -29,27 +29,27 @@ type testSequenceSuite struct{ *testDBSuite }
 func (s *testSequenceSuite) TestCreateSequence(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use test")
-	s.tk.MustGetErrCode("create sequence `seq  `", mysql.ErrWrongTableName)
+	s.tk.MustGetErrCode("create sequence `seq  `", tmysql.ErrWrongTableName)
 
 	// maxvalue should be larger than minvalue.
-	s.tk.MustGetErrCode("create sequence seq maxvalue 1 minvalue 2", mysql.ErrSequenceInvalidData)
+	s.tk.MustGetErrCode("create sequence seq maxvalue 1 minvalue 2", tmysql.ErrSequenceInvalidData)
 
 	// maxvalue should be larger than minvalue.
-	s.tk.MustGetErrCode("create sequence seq maxvalue 1 minvalue 1", mysql.ErrSequenceInvalidData)
+	s.tk.MustGetErrCode("create sequence seq maxvalue 1 minvalue 1", tmysql.ErrSequenceInvalidData)
 
 	// maxvalue shouldn't be equal to MaxInt64.
-	s.tk.MustGetErrCode("create sequence seq maxvalue 9223372036854775807 minvalue 1", mysql.ErrSequenceInvalidData)
+	s.tk.MustGetErrCode("create sequence seq maxvalue 9223372036854775807 minvalue 1", tmysql.ErrSequenceInvalidData)
 
 	// TODO : minvalue shouldn't be equal to MinInt64.
 
 	// maxvalue should be larger than start.
-	s.tk.MustGetErrCode("create sequence seq maxvalue 1 start with 2", mysql.ErrSequenceInvalidData)
+	s.tk.MustGetErrCode("create sequence seq maxvalue 1 start with 2", tmysql.ErrSequenceInvalidData)
 
 	// cacheVal should be less than (math.MaxInt64-maxIncrement)/maxIncrement.
-	s.tk.MustGetErrCode("create sequence seq increment 100000 cache 922337203685477", mysql.ErrSequenceInvalidData)
+	s.tk.MustGetErrCode("create sequence seq increment 100000 cache 922337203685477", tmysql.ErrSequenceInvalidData)
 
 	// test unsupported table option in sequence.
-	s.tk.MustGetErrCode("create sequence seq ENGINE=InnoDB", mysql.ErrSequenceUnsupportedTableOption)
+	s.tk.MustGetErrCode("create sequence seq ENGINE=InnoDB", tmysql.ErrSequenceUnsupportedTableOption)
 
 	_, err := s.tk.Exec("create sequence seq comment=\"test\"")
 	c.Assert(err, IsNil)

@@ -22,11 +22,12 @@ import (
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
+	pterror "github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 )
 
@@ -66,39 +67,39 @@ const (
 
 var (
 	// ErrColumnCantNull is used for inserting null to a not null column.
-	ErrColumnCantNull  = terror.ClassTable.New(mysql.ErrBadNull, mysql.MySQLErrName[mysql.ErrBadNull])
-	errUnknownColumn   = terror.ClassTable.New(mysql.ErrBadField, mysql.MySQLErrName[mysql.ErrBadField])
-	errDuplicateColumn = terror.ClassTable.New(mysql.ErrFieldSpecifiedTwice, mysql.MySQLErrName[mysql.ErrFieldSpecifiedTwice])
+	ErrColumnCantNull  = terror.New(pterror.ClassTable, mysql.ErrBadNull, mysql.MySQLErrName[mysql.ErrBadNull])
+	errUnknownColumn   = terror.New(pterror.ClassTable, mysql.ErrBadField, mysql.MySQLErrName[mysql.ErrBadField])
+	errDuplicateColumn = terror.New(pterror.ClassTable, mysql.ErrFieldSpecifiedTwice, mysql.MySQLErrName[mysql.ErrFieldSpecifiedTwice])
 
-	errGetDefaultFailed = terror.ClassTable.New(mysql.ErrFieldGetDefaultFailed, mysql.MySQLErrName[mysql.ErrFieldGetDefaultFailed])
+	errGetDefaultFailed = terror.New(pterror.ClassTable, mysql.ErrFieldGetDefaultFailed, mysql.MySQLErrName[mysql.ErrFieldGetDefaultFailed])
 
 	// ErrNoDefaultValue is used when insert a row, the column value is not given, and the column has not null flag
 	// and it doesn't have a default value.
-	ErrNoDefaultValue = terror.ClassTable.New(mysql.ErrNoDefaultForField, mysql.MySQLErrName[mysql.ErrNoDefaultForField])
+	ErrNoDefaultValue = terror.New(pterror.ClassTable, mysql.ErrNoDefaultForField, mysql.MySQLErrName[mysql.ErrNoDefaultForField])
 	// ErrIndexOutBound returns for index column offset out of bound.
-	ErrIndexOutBound = terror.ClassTable.New(mysql.ErrIndexOutBound, mysql.MySQLErrName[mysql.ErrIndexOutBound])
+	ErrIndexOutBound = terror.New(pterror.ClassTable, mysql.ErrIndexOutBound, mysql.MySQLErrName[mysql.ErrIndexOutBound])
 	// ErrUnsupportedOp returns for unsupported operation.
-	ErrUnsupportedOp = terror.ClassTable.New(mysql.ErrUnsupportedOp, mysql.MySQLErrName[mysql.ErrUnsupportedOp])
+	ErrUnsupportedOp = terror.New(pterror.ClassTable, mysql.ErrUnsupportedOp, mysql.MySQLErrName[mysql.ErrUnsupportedOp])
 	// ErrRowNotFound returns for row not found.
-	ErrRowNotFound = terror.ClassTable.New(mysql.ErrRowNotFound, mysql.MySQLErrName[mysql.ErrRowNotFound])
+	ErrRowNotFound = terror.New(pterror.ClassTable, mysql.ErrRowNotFound, mysql.MySQLErrName[mysql.ErrRowNotFound])
 	// ErrTableStateCantNone returns for table none state.
-	ErrTableStateCantNone = terror.ClassTable.New(mysql.ErrTableStateCantNone, mysql.MySQLErrName[mysql.ErrTableStateCantNone])
+	ErrTableStateCantNone = terror.New(pterror.ClassTable, mysql.ErrTableStateCantNone, mysql.MySQLErrName[mysql.ErrTableStateCantNone])
 	// ErrColumnStateCantNone returns for column none state.
-	ErrColumnStateCantNone = terror.ClassTable.New(mysql.ErrColumnStateCantNone, mysql.MySQLErrName[mysql.ErrColumnStateCantNone])
+	ErrColumnStateCantNone = terror.New(pterror.ClassTable, mysql.ErrColumnStateCantNone, mysql.MySQLErrName[mysql.ErrColumnStateCantNone])
 	// ErrColumnStateNonPublic returns for column non-public state.
-	ErrColumnStateNonPublic = terror.ClassTable.New(mysql.ErrColumnStateNonPublic, mysql.MySQLErrName[mysql.ErrColumnStateNonPublic])
+	ErrColumnStateNonPublic = terror.New(pterror.ClassTable, mysql.ErrColumnStateNonPublic, mysql.MySQLErrName[mysql.ErrColumnStateNonPublic])
 	// ErrIndexStateCantNone returns for index none state.
-	ErrIndexStateCantNone = terror.ClassTable.New(mysql.ErrIndexStateCantNone, mysql.MySQLErrName[mysql.ErrIndexStateCantNone])
+	ErrIndexStateCantNone = terror.New(pterror.ClassTable, mysql.ErrIndexStateCantNone, mysql.MySQLErrName[mysql.ErrIndexStateCantNone])
 	// ErrInvalidRecordKey returns for invalid record key.
-	ErrInvalidRecordKey = terror.ClassTable.New(mysql.ErrInvalidRecordKey, mysql.MySQLErrName[mysql.ErrInvalidRecordKey])
+	ErrInvalidRecordKey = terror.New(pterror.ClassTable, mysql.ErrInvalidRecordKey, mysql.MySQLErrName[mysql.ErrInvalidRecordKey])
 	// ErrTruncatedWrongValueForField returns for truncate wrong value for field.
-	ErrTruncatedWrongValueForField = terror.ClassTable.New(mysql.ErrTruncatedWrongValueForField, mysql.MySQLErrName[mysql.ErrTruncatedWrongValueForField])
+	ErrTruncatedWrongValueForField = terror.New(pterror.ClassTable, mysql.ErrTruncatedWrongValueForField, mysql.MySQLErrName[mysql.ErrTruncatedWrongValueForField])
 	// ErrUnknownPartition returns unknown partition error.
-	ErrUnknownPartition = terror.ClassTable.New(mysql.ErrUnknownPartition, mysql.MySQLErrName[mysql.ErrUnknownPartition])
+	ErrUnknownPartition = terror.New(pterror.ClassTable, mysql.ErrUnknownPartition, mysql.MySQLErrName[mysql.ErrUnknownPartition])
 	// ErrNoPartitionForGivenValue returns table has no partition for value.
-	ErrNoPartitionForGivenValue = terror.ClassTable.New(mysql.ErrNoPartitionForGivenValue, mysql.MySQLErrName[mysql.ErrNoPartitionForGivenValue])
+	ErrNoPartitionForGivenValue = terror.New(pterror.ClassTable, mysql.ErrNoPartitionForGivenValue, mysql.MySQLErrName[mysql.ErrNoPartitionForGivenValue])
 	// ErrLockOrActiveTransaction returns when execute unsupported statement in a lock session or an active transaction.
-	ErrLockOrActiveTransaction = terror.ClassTable.New(mysql.ErrLockOrActiveTransaction, mysql.MySQLErrName[mysql.ErrLockOrActiveTransaction])
+	ErrLockOrActiveTransaction = terror.New(pterror.ClassTable, mysql.ErrLockOrActiveTransaction, mysql.MySQLErrName[mysql.ErrLockOrActiveTransaction])
 )
 
 // RecordIterFunc is used for low-level record iteration.
@@ -280,7 +281,7 @@ func (s Slice) Less(i, j int) bool {
 func (s Slice) Swap(i, j int) { s[i], s[j] = s[j], s[i] }
 
 func init() {
-	tableMySQLErrCodes := map[terror.ErrCode]uint16{
+	tableMySQLErrCodes := map[pterror.ErrCode]uint16{
 		mysql.ErrBadNull:                     mysql.ErrBadNull,
 		mysql.ErrBadField:                    mysql.ErrBadField,
 		mysql.ErrFieldSpecifiedTwice:         mysql.ErrFieldSpecifiedTwice,
@@ -299,5 +300,5 @@ func init() {
 		mysql.ErrIndexStateCantNone:          mysql.ErrIndexStateCantNone,
 		mysql.ErrInvalidRecordKey:            mysql.ErrInvalidRecordKey,
 	}
-	terror.ErrClassToMySQLCodes[terror.ClassTable] = tableMySQLErrCodes
+	terror.ErrClassToMySQLCodes[pterror.ClassTable] = tableMySQLErrCodes
 }

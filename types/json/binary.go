@@ -26,7 +26,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/terror"
+	pterror "github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/util/hack"
 )
 
@@ -108,7 +108,7 @@ type BinaryJSON struct {
 // String implements fmt.Stringer interface.
 func (bj BinaryJSON) String() string {
 	out, err := bj.MarshalJSON()
-	terror.Log(err)
+	pterror.Log(err)
 	return string(out)
 }
 

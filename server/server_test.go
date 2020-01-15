@@ -32,8 +32,9 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
-	tmysql "github.com/pingcap/parser/mysql"
+	pmysql "github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/kv"
+	tmysql "github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/printer"
 	"go.uber.org/zap"
@@ -722,7 +723,7 @@ func (cli *testServerClient) runTestLoadData(c *C, server *Server) {
 	})
 
 	// unsupport ClientLocalFiles capability
-	server.capability ^= tmysql.ClientLocalFiles
+	server.capability ^= pmysql.ClientLocalFiles
 	cli.runTestsOnNewDB(c, func(config *mysql.Config) {
 		config.AllowAllFiles = true
 	}, "LoadData", func(dbt *DBTest) {
@@ -732,7 +733,7 @@ func (cli *testServerClient) runTestLoadData(c *C, server *Server) {
 		dbt.Assert(err, NotNil)
 		checkErrorCode(c, err, tmysql.ErrNotAllowedCommand)
 	})
-	server.capability |= tmysql.ClientLocalFiles
+	server.capability |= pmysql.ClientLocalFiles
 
 	err = fp.Close()
 	c.Assert(err, IsNil)
@@ -1027,7 +1028,7 @@ func (cli *testServerClient) runTestStatusAPI(c *C) {
 	var data status
 	err = decoder.Decode(&data)
 	c.Assert(err, IsNil)
-	c.Assert(data.Version, Equals, tmysql.ServerVersion)
+	c.Assert(data.Version, Equals, pmysql.ServerVersion)
 	c.Assert(data.GitHash, Equals, printer.TiDBGitHash)
 }
 

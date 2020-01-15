@@ -22,9 +22,9 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/rowcodec"
@@ -522,7 +522,7 @@ func BenchmarkEncodeValue(b *testing.B) {
 }
 
 func (s *testTableCodecSuite) TestError(c *C) {
-	kvErrs := []*terror.Error{
+	kvErrs := []*terror.TError{
 		errInvalidKey,
 		errInvalidRecordKey,
 		errInvalidIndexKey,

@@ -49,13 +49,15 @@ import (
 
 	"github.com/blacktear23/go-proxyprotocol"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
+	pmysql "github.com/pingcap/parser/mysql"
+	pterror "github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/plugin"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sys/linux"
@@ -86,20 +88,20 @@ func init() {
 }
 
 var (
-	errUnknownFieldType  = terror.ClassServer.New(mysql.ErrUnknownFieldType, mysql.MySQLErrName[mysql.ErrUnknownFieldType])
-	errInvalidSequence   = terror.ClassServer.New(mysql.ErrInvalidSequence, mysql.MySQLErrName[mysql.ErrInvalidSequence])
-	errInvalidType       = terror.ClassServer.New(mysql.ErrInvalidType, mysql.MySQLErrName[mysql.ErrInvalidType])
-	errNotAllowedCommand = terror.ClassServer.New(mysql.ErrNotAllowedCommand, mysql.MySQLErrName[mysql.ErrNotAllowedCommand])
-	errAccessDenied      = terror.ClassServer.New(mysql.ErrAccessDenied, mysql.MySQLErrName[mysql.ErrAccessDenied])
+	errUnknownFieldType  = terror.New(pterror.ClassServer, mysql.ErrUnknownFieldType, mysql.MySQLErrName[mysql.ErrUnknownFieldType])
+	errInvalidSequence   = terror.New(pterror.ClassServer, mysql.ErrInvalidSequence, mysql.MySQLErrName[mysql.ErrInvalidSequence])
+	errInvalidType       = terror.New(pterror.ClassServer, mysql.ErrInvalidType, mysql.MySQLErrName[mysql.ErrInvalidType])
+	errNotAllowedCommand = terror.New(pterror.ClassServer, mysql.ErrNotAllowedCommand, mysql.MySQLErrName[mysql.ErrNotAllowedCommand])
+	errAccessDenied      = terror.New(pterror.ClassServer, mysql.ErrAccessDenied, mysql.MySQLErrName[mysql.ErrAccessDenied])
 )
 
 // DefaultCapability is the capability of the server when it is created using the default configuration.
 // When server is configured with SSL, the server will have extra capabilities compared to DefaultCapability.
-const defaultCapability = mysql.ClientLongPassword | mysql.ClientLongFlag |
-	mysql.ClientConnectWithDB | mysql.ClientProtocol41 |
-	mysql.ClientTransactions | mysql.ClientSecureConnection | mysql.ClientFoundRows |
-	mysql.ClientMultiStatements | mysql.ClientMultiResults | mysql.ClientLocalFiles |
-	mysql.ClientConnectAtts | mysql.ClientPluginAuth | mysql.ClientInteractive
+const defaultCapability = pmysql.ClientLongPassword | pmysql.ClientLongFlag |
+	pmysql.ClientConnectWithDB | pmysql.ClientProtocol41 |
+	pmysql.ClientTransactions | pmysql.ClientSecureConnection | pmysql.ClientFoundRows |
+	pmysql.ClientMultiStatements | pmysql.ClientMultiResults | pmysql.ClientLocalFiles |
+	pmysql.ClientConnectAtts | pmysql.ClientPluginAuth | pmysql.ClientInteractive
 
 // Server is the MySQL protocol server
 type Server struct {
@@ -185,7 +187,7 @@ func (s *Server) forwardUnixSocketToTCP() {
 }
 
 func (s *Server) handleForwardedConnection(uconn net.Conn, addr string) {
-	defer terror.Call(uconn.Close)
+	defer pterror.Call(uconn.Close)
 	if tconn, err := net.Dial("tcp", addr); err == nil {
 		go func() {
 			if _, err := io.Copy(uconn, tconn); err != nil {
@@ -214,7 +216,7 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 
 	s.capability = defaultCapability
 	if s.tlsConfig != nil {
-		s.capability |= mysql.ClientSSL
+		s.capability |= pmysql.ClientSSL
 	}
 
 	var err error
@@ -333,7 +335,7 @@ func (s *Server) Run() error {
 		}
 		if s.shouldStopListener() {
 			err = conn.Close()
-			terror.Log(errors.Trace(err))
+			pterror.Log(errors.Trace(err))
 			break
 		}
 
@@ -345,13 +347,13 @@ func (s *Server) Run() error {
 				host, err := clientConn.PeerHost("")
 				if err != nil {
 					logutil.BgLogger().Error("get peer host failed", zap.Error(err))
-					terror.Log(clientConn.Close())
+					pterror.Log(clientConn.Close())
 					return errors.Trace(err)
 				}
 				err = authPlugin.OnConnectionEvent(context.Background(), plugin.PreAuth, &variable.ConnectionInfo{Host: host})
 				if err != nil {
 					logutil.BgLogger().Info("do connection event failed", zap.Error(err))
-					terror.Log(clientConn.Close())
+					pterror.Log(clientConn.Close())
 					return errors.Trace(err)
 				}
 			}
@@ -364,7 +366,7 @@ func (s *Server) Run() error {
 		go s.onConn(clientConn)
 	}
 	err := s.listener.Close()
-	terror.Log(errors.Trace(err))
+	pterror.Log(errors.Trace(err))
 	s.listener = nil
 	for {
 		metrics.ServerEventCounter.WithLabelValues(metrics.EventHang).Inc()
@@ -389,17 +391,17 @@ func (s *Server) Close() {
 
 	if s.listener != nil {
 		err := s.listener.Close()
-		terror.Log(errors.Trace(err))
+		pterror.Log(errors.Trace(err))
 		s.listener = nil
 	}
 	if s.socket != nil {
 		err := s.socket.Close()
-		terror.Log(errors.Trace(err))
+		pterror.Log(errors.Trace(err))
 		s.socket = nil
 	}
 	if s.statusServer != nil {
 		err := s.statusServer.Close()
-		terror.Log(errors.Trace(err))
+		pterror.Log(errors.Trace(err))
 		s.statusServer = nil
 	}
 	if s.grpcServer != nil {
@@ -417,7 +419,7 @@ func (s *Server) onConn(conn *clientConn) {
 		// So we only record metrics.
 		metrics.HandShakeErrorCounter.Inc()
 		err = conn.Close()
-		terror.Log(errors.Trace(err))
+		pterror.Log(errors.Trace(err))
 		return
 	}
 
@@ -485,7 +487,7 @@ func (cc *clientConn) connectInfo() *variable.ConnectionInfo {
 		User:              cc.user,
 		ServerOSLoginUser: osUser,
 		OSVersion:         osVersion,
-		ServerVersion:     mysql.TiDBReleaseVersion,
+		ServerVersion:     pmysql.TiDBReleaseVersion,
 		SSLVersion:        "v1.2.0", // for current go version
 		PID:               serverPID,
 		DB:                cc.dbname,
@@ -554,7 +556,7 @@ func (s *Server) KillAllConnections() {
 	for _, conn := range s.clients {
 		atomic.StoreInt32(&conn.status, connStatusShutdown)
 		if err := conn.closeWithoutLock(); err != nil {
-			terror.Log(err)
+			pterror.Log(err)
 		}
 		killConn(conn)
 	}
@@ -642,20 +644,13 @@ func setSystemTimeZoneVariable() {
 	})
 }
 
-// Server error codes.
-const (
-	codeUnknownFieldType = 1
-	codeInvalidSequence  = 3
-	codeInvalidType      = 4
-)
-
 func init() {
-	serverMySQLErrCodes := map[terror.ErrCode]uint16{
+	serverMySQLErrCodes := map[pterror.ErrCode]uint16{
 		mysql.ErrNotAllowedCommand: mysql.ErrNotAllowedCommand,
 		mysql.ErrAccessDenied:      mysql.ErrAccessDenied,
 		mysql.ErrUnknownFieldType:  mysql.ErrUnknownFieldType,
 		mysql.ErrInvalidSequence:   mysql.ErrInvalidSequence,
 		mysql.ErrInvalidType:       mysql.ErrInvalidType,
 	}
-	terror.ErrClassToMySQLCodes[terror.ClassServer] = serverMySQLErrCodes
+	terror.ErrClassToMySQLCodes[pterror.ClassServer] = serverMySQLErrCodes
 }

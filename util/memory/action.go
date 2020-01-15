@@ -17,8 +17,9 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
+	pterror "github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
@@ -100,7 +101,7 @@ func (a *PanicOnExceed) Action(t *Tracker) {
 func (a *PanicOnExceed) SetFallback(ActionOnExceed) {}
 
 var (
-	errMemExceedThreshold = terror.ClassUtil.New(mysql.ErrMemExceedThreshold, mysql.MySQLErrName[mysql.ErrMemExceedThreshold])
+	errMemExceedThreshold = terror.New(pterror.ClassUtil, mysql.ErrMemExceedThreshold, mysql.MySQLErrName[mysql.ErrMemExceedThreshold])
 )
 
 const (
@@ -109,8 +110,8 @@ const (
 )
 
 func init() {
-	errCodes := map[terror.ErrCode]uint16{
+	errCodes := map[pterror.ErrCode]uint16{
 		mysql.ErrMemExceedThreshold: mysql.ErrMemExceedThreshold,
 	}
-	terror.ErrClassToMySQLCodes[terror.ClassUtil] = errCodes
+	terror.ErrClassToMySQLCodes[pterror.ClassUtil] = errCodes
 }

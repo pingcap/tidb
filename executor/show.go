@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb-tools/pkg/etcd"
 	"github.com/pingcap/tidb-tools/pkg/utils"
 	"github.com/pingcap/tidb-tools/tidb-binlog/node"
@@ -1136,11 +1135,9 @@ func (e *ShowExec) fetchShowWarnings(errOnly bool) error {
 			continue
 		}
 		warn := errors.Cause(w.Err)
-		switch x := warn.(type) {
-		case *terror.Error:
-			sqlErr := x.ToSQLError()
-			e.appendRow([]interface{}{w.Level, int64(sqlErr.Code), sqlErr.Message})
-		default:
+		if sqlErr, ok := warn.(mysql.SQLErrorConvertible); ok {
+			e.appendRow([]interface{}{w.Level, int64(sqlErr.ToSQLError().Code), sqlErr.ToSQLError().Message})
+		} else {
 			e.appendRow([]interface{}{w.Level, int64(mysql.ErrUnknown), warn.Error()})
 		}
 	}

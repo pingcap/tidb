@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	tterror "github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/mock"
@@ -924,7 +925,7 @@ func (s *testEvaluatorSuite) TestAddTimeSig(c *C) {
 	tblWarning := []struct {
 		Input         interface{}
 		InputDuration interface{}
-		warning       *terror.Error
+		warning       *tterror.TError
 	}{
 		{"0", "-32073", types.ErrTruncatedWrongVal},
 		{"-32073", "0", types.ErrTruncatedWrongVal},
@@ -1016,7 +1017,7 @@ func (s *testEvaluatorSuite) TestSubTimeSig(c *C) {
 	tblWarning := []struct {
 		Input         interface{}
 		InputDuration interface{}
-		warning       *terror.Error
+		warning       *tterror.TError
 	}{
 		{"0", "-32073", types.ErrTruncatedWrongVal},
 		{"-32073", "0", types.ErrTruncatedWrongVal},

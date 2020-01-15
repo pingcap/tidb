@@ -23,7 +23,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/terror"
+	pterror "github.com/pingcap/parser/terror"
 	pumpcli "github.com/pingcap/tidb-tools/tidb-binlog/pump_client"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/kv"
@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/terror"
 	tidbutil "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/logutil"
@@ -625,15 +626,15 @@ func loadDDLVars(w *worker) error {
 	return util.LoadDDLVars(ctx)
 }
 
-func toTError(err error) *terror.Error {
+func toTError(err error) *pterror.BaseError {
 	originErr := errors.Cause(err)
-	tErr, ok := originErr.(*terror.Error)
+	tErr, ok := originErr.(pterror.BaseErrorConvertible)
 	if ok {
-		return tErr
+		return tErr.ToBaseError()
 	}
 
 	// TODO: Add the error code.
-	return terror.ClassDDL.New(terror.CodeUnknown, err.Error())
+	return terror.New(pterror.ClassDDL, pterror.CodeUnknown, err.Error()).ToBaseError()
 }
 
 // waitSchemaChanged waits for the completion of updating all servers' schema. In order to make sure that happens,
@@ -665,7 +666,7 @@ func (w *worker) waitSchemaChanged(ctx context.Context, d *ddlCtx, waitTime time
 	err = d.schemaSyncer.OwnerUpdateGlobalVersion(ctx, latestSchemaVersion)
 	if err != nil {
 		logutil.Logger(w.logCtx).Info("[ddl] update latest schema version failed", zap.Int64("ver", latestSchemaVersion), zap.Error(err))
-		if terror.ErrorEqual(err, context.DeadlineExceeded) {
+		if pterror.ErrorEqual(err, context.DeadlineExceeded) {
 			// If err is context.DeadlineExceeded, it means waitTime(2 * lease) is elapsed. So all the schemas are synced by ticker.
 			// There is no need to use etcd to sync. The function returns directly.
 			return
@@ -676,7 +677,7 @@ func (w *worker) waitSchemaChanged(ctx context.Context, d *ddlCtx, waitTime time
 	err = d.schemaSyncer.OwnerCheckAllVersions(ctx, latestSchemaVersion)
 	if err != nil {
 		logutil.Logger(w.logCtx).Info("[ddl] wait latest schema version to deadline", zap.Int64("ver", latestSchemaVersion), zap.Error(err))
-		if terror.ErrorEqual(err, context.DeadlineExceeded) {
+		if pterror.ErrorEqual(err, context.DeadlineExceeded) {
 			return
 		}
 		d.schemaSyncer.NotifyCleanExpiredPaths()

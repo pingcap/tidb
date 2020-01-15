@@ -19,10 +19,10 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/structure"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/testleak"
 )
 
@@ -399,7 +399,7 @@ func (s *testTxStructureSuite) TestHash(c *C) {
 }
 
 func (*testTxStructureSuite) TestError(c *C) {
-	kvErrs := []*terror.Error{
+	kvErrs := []*terror.TError{
 		structure.ErrInvalidHashKeyFlag,
 		structure.ErrInvalidListIndex,
 		structure.ErrInvalidListMetaData,

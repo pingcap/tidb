@@ -20,17 +20,19 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
+	pmysql "github.com/pingcap/parser/mysql"
+	pterror "github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 )
 
 // Error instances.
 var (
-	ErrUnsupportedType = terror.ClassOptimizer.New(mysql.ErrUnsupportedType, mysql.MySQLErrName[mysql.ErrUnsupportedType])
+	ErrUnsupportedType = terror.New(pterror.ClassOptimizer, mysql.ErrUnsupportedType, mysql.MySQLErrName[mysql.ErrUnsupportedType])
 )
 
 // RangeType is alias for int.
@@ -277,8 +279,8 @@ func (r *builder) buildFormBinOp(expr *expression.ScalarFunction) []point {
 // The three returned values are: fixed constant value, fixed operator, and a boolean
 // which indicates whether the range is valid or not.
 func handleUnsignedIntCol(ft *types.FieldType, val types.Datum, op string) (types.Datum, string, bool) {
-	isUnsigned := mysql.HasUnsignedFlag(ft.Flag)
-	isIntegerType := mysql.IsIntegerType(ft.Tp)
+	isUnsigned := pmysql.HasUnsignedFlag(ft.Flag)
+	isIntegerType := pmysql.IsIntegerType(ft.Tp)
 	isNegativeInteger := (val.Kind() == types.KindInt64 && val.GetInt64() < 0)
 
 	if !isUnsigned || !isIntegerType || !isNegativeInteger {
@@ -475,7 +477,7 @@ func (r *builder) buildFromNot(expr *expression.ScalarFunction) []point {
 			return nil
 		}
 		if x, ok := expr.GetArgs()[0].(*expression.Column); ok {
-			isUnsignedIntCol = mysql.HasUnsignedFlag(x.RetType.Flag) && mysql.IsIntegerType(x.RetType.Tp)
+			isUnsignedIntCol = pmysql.HasUnsignedFlag(x.RetType.Flag) && pmysql.IsIntegerType(x.RetType.Tp)
 		}
 		// negative ranges can be directly ignored for unsigned int columns.
 		if isUnsignedIntCol {

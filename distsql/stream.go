@@ -18,11 +18,12 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/terror"
+	pterror "github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
@@ -89,7 +90,7 @@ func (r *streamResult) readDataFromResponse(ctx context.Context, resp kv.Respons
 		return false, errors.Errorf("stream response error: [%d]%s\n", stream.Error.Code, stream.Error.Msg)
 	}
 	for _, warning := range stream.Warnings {
-		r.ctx.GetSessionVars().StmtCtx.AppendWarning(terror.ClassTiKV.New(terror.ErrCode(warning.Code), warning.Msg))
+		r.ctx.GetSessionVars().StmtCtx.AppendWarning(terror.New(pterror.ClassTiKV, pterror.ErrCode(warning.Code), warning.Msg))
 	}
 
 	err = result.Unmarshal(stream.Data)

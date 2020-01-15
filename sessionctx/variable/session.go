@@ -29,15 +29,17 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/auth"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
+	pmysql "github.com/pingcap/parser/mysql"
+	pterror "github.com/pingcap/parser/terror"
 	pumpcli "github.com/pingcap/tidb-tools/tidb-binlog/pump_client"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/store/tikv/oracle"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/execdetails"
@@ -51,9 +53,9 @@ var preparedStmtCount int64
 
 // Error instances.
 var (
-	errCantGetValidID = terror.ClassVariable.New(mysql.ErrCantGetValidID, mysql.MySQLErrName[mysql.ErrCantGetValidID])
-	ErrCantSetToNull  = terror.ClassVariable.New(mysql.ErrCantSetToNull, mysql.MySQLErrName[mysql.ErrCantSetToNull])
-	ErrSnapshotTooOld = terror.ClassVariable.New(mysql.ErrSnapshotTooOld, mysql.MySQLErrName[mysql.ErrSnapshotTooOld])
+	errCantGetValidID = terror.New(pterror.ClassVariable, mysql.ErrCantGetValidID, mysql.MySQLErrName[mysql.ErrCantGetValidID])
+	ErrCantSetToNull  = terror.New(pterror.ClassVariable, mysql.ErrCantSetToNull, mysql.MySQLErrName[mysql.ErrCantSetToNull])
+	ErrSnapshotTooOld = terror.New(pterror.ClassVariable, mysql.ErrSnapshotTooOld, mysql.MySQLErrName[mysql.ErrSnapshotTooOld])
 )
 
 // RetryInfo saves retry information.
@@ -383,7 +385,7 @@ type SessionVars struct {
 	// See https://dev.mysql.com/doc/refman/5.7/en/time-zone-support.html
 	TimeZone *time.Location
 
-	SQLMode mysql.SQLMode
+	SQLMode pmysql.SQLMode
 
 	// AutoIncrementIncrement and AutoIncrementOffset indicates the autoID's start value and increment.
 	AutoIncrementIncrement int
@@ -588,7 +590,7 @@ func NewSessionVars() *SessionVars {
 		StrictSQLMode:               true,
 		AutoIncrementIncrement:      DefAutoIncrementIncrement,
 		AutoIncrementOffset:         DefAutoIncrementOffset,
-		Status:                      mysql.ServerStatusAutocommit,
+		Status:                      pmysql.ServerStatusAutocommit,
 		StmtCtx:                     new(stmtctx.StatementContext),
 		AllowAggPushDown:            false,
 		OptimizerSelectivityLevel:   DefTiDBOptimizerSelectivityLevel,
@@ -610,7 +612,7 @@ func NewSessionVars() *SessionVars {
 		EnableRadixJoin:             false,
 		EnableVectorizedExpression:  DefEnableVectorizedExpression,
 		L2CacheSize:                 cpuid.CPU.Cache.L2,
-		CommandValue:                uint32(mysql.ComSleep),
+		CommandValue:                uint32(pmysql.ComSleep),
 		TiDBOptJoinReorderThreshold: DefTiDBOptJoinReorderThreshold,
 		SlowQueryFile:               config.GetGlobalConfig().Log.SlowQueryFile,
 		WaitSplitRegionFinish:       DefTiDBWaitSplitRegionFinish,
@@ -660,7 +662,7 @@ func NewSessionVars() *SessionVars {
 	} else {
 		enableStreaming = "0"
 	}
-	terror.Log(vars.SetSystemVar(TiDBEnableStreaming, enableStreaming))
+	pterror.Log(vars.SetSystemVar(TiDBEnableStreaming, enableStreaming))
 
 	var enableChunkRPC string
 	if config.GetGlobalConfig().TiKVClient.EnableChunkRPC {
@@ -668,7 +670,7 @@ func NewSessionVars() *SessionVars {
 	} else {
 		enableChunkRPC = "0"
 	}
-	terror.Log(vars.SetSystemVar(TiDBEnableChunkRPC, enableChunkRPC))
+	pterror.Log(vars.SetSystemVar(TiDBEnableChunkRPC, enableChunkRPC))
 	return vars
 }
 
@@ -773,12 +775,12 @@ func (s *SessionVars) GetStatusFlag(flag uint16) bool {
 
 // InTxn returns if the session is in transaction.
 func (s *SessionVars) InTxn() bool {
-	return s.GetStatusFlag(mysql.ServerStatusInTrans)
+	return s.GetStatusFlag(pmysql.ServerStatusInTrans)
 }
 
 // IsAutocommit returns if the session is set to autocommit.
 func (s *SessionVars) IsAutocommit() bool {
-	return s.GetStatusFlag(mysql.ServerStatusAutocommit)
+	return s.GetStatusFlag(pmysql.ServerStatusAutocommit)
 }
 
 // IsReadConsistencyTxn if true it means the transaction is an read consistency (read committed) transaction.
@@ -924,7 +926,7 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		}
 		s.TimeZone = tz
 	case SQLModeVar:
-		val = mysql.FormatSQLModeStr(val)
+		val = pmysql.FormatSQLModeStr(val)
 		// Modes is a list of different modes separated by commas.
 		sqlMode, err2 := mysql.GetSQLMode(val)
 		if err2 != nil {
@@ -932,7 +934,7 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		}
 		s.StrictSQLMode = sqlMode.HasStrictMode()
 		s.SQLMode = sqlMode
-		s.SetStatusFlag(mysql.ServerStatusNoBackslashEscaped, sqlMode.HasNoBackslashEscapesMode())
+		s.SetStatusFlag(pmysql.ServerStatusNoBackslashEscaped, sqlMode.HasNoBackslashEscapesMode())
 	case TiDBSnapshot:
 		err := setSnapshotTS(s, val)
 		if err != nil {
@@ -940,9 +942,9 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		}
 	case AutoCommit:
 		isAutocommit := TiDBOptOn(val)
-		s.SetStatusFlag(mysql.ServerStatusAutocommit, isAutocommit)
+		s.SetStatusFlag(pmysql.ServerStatusAutocommit, isAutocommit)
 		if isAutocommit {
-			s.SetStatusFlag(mysql.ServerStatusInTrans, false)
+			s.SetStatusFlag(pmysql.ServerStatusInTrans, false)
 		}
 	case AutoIncrementIncrement:
 		// AutoIncrementIncrement is valid in [1, 65535].
@@ -1075,7 +1077,7 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 	case TiDBDDLReorgPriority:
 		s.setDDLReorgPriority(val)
 	case TiDBForcePriority:
-		atomic.StoreInt32(&ForcePriority, int32(mysql.Str2Priority(val)))
+		atomic.StoreInt32(&ForcePriority, int32(pmysql.Str2Priority(val)))
 	case TiDBEnableRadixJoin:
 		s.EnableRadixJoin = TiDBOptOn(val)
 	case TiDBEnableWindowFunction:

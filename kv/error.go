@@ -14,8 +14,9 @@
 package kv
 
 import (
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
+	pterror "github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/terror"
 )
 
 // TxnRetryableMark is used to uniform the commit error messages which could retry the transaction.
@@ -24,34 +25,34 @@ const TxnRetryableMark = "[try again later]"
 
 var (
 	// ErrNotExist is used when try to get an entry with an unexist key from KV store.
-	ErrNotExist = terror.ClassKV.New(mysql.ErrNotExist, mysql.MySQLErrName[mysql.ErrNotExist])
+	ErrNotExist = terror.New(pterror.ClassKV, mysql.ErrNotExist, mysql.MySQLErrName[mysql.ErrNotExist])
 	// ErrTxnRetryable is used when KV store occurs retryable error which SQL layer can safely retry the transaction.
 	// When using TiKV as the storage node, the error is returned ONLY when lock not found (txnLockNotFound) in Commit,
 	// subject to change it in the future.
-	ErrTxnRetryable = terror.ClassKV.New(mysql.ErrTxnRetryable,
+	ErrTxnRetryable = terror.New(pterror.ClassKV, mysql.ErrTxnRetryable,
 		mysql.MySQLErrName[mysql.ErrTxnRetryable]+TxnRetryableMark)
 	// ErrCannotSetNilValue is the error when sets an empty value.
-	ErrCannotSetNilValue = terror.ClassKV.New(mysql.ErrCannotSetNilValue, mysql.MySQLErrName[mysql.ErrCannotSetNilValue])
+	ErrCannotSetNilValue = terror.New(pterror.ClassKV, mysql.ErrCannotSetNilValue, mysql.MySQLErrName[mysql.ErrCannotSetNilValue])
 	// ErrInvalidTxn is the error when commits or rollbacks in an invalid transaction.
-	ErrInvalidTxn = terror.ClassKV.New(mysql.ErrInvalidTxn, mysql.MySQLErrName[mysql.ErrInvalidTxn])
+	ErrInvalidTxn = terror.New(pterror.ClassKV, mysql.ErrInvalidTxn, mysql.MySQLErrName[mysql.ErrInvalidTxn])
 	// ErrTxnTooLarge is the error when transaction is too large, lock time reached the maximum value.
-	ErrTxnTooLarge = terror.ClassKV.New(mysql.ErrTxnTooLarge, mysql.MySQLErrName[mysql.ErrTxnTooLarge])
+	ErrTxnTooLarge = terror.New(pterror.ClassKV, mysql.ErrTxnTooLarge, mysql.MySQLErrName[mysql.ErrTxnTooLarge])
 	// ErrEntryTooLarge is the error when a key value entry is too large.
-	ErrEntryTooLarge = terror.ClassKV.New(mysql.ErrEntryTooLarge, mysql.MySQLErrName[mysql.ErrEntryTooLarge])
+	ErrEntryTooLarge = terror.New(pterror.ClassKV, mysql.ErrEntryTooLarge, mysql.MySQLErrName[mysql.ErrEntryTooLarge])
 	// ErrKeyExists returns when key is already exist.
-	ErrKeyExists = terror.ClassKV.New(mysql.ErrDupEntry, mysql.MySQLErrName[mysql.ErrDupEntry])
+	ErrKeyExists = terror.New(pterror.ClassKV, mysql.ErrDupEntry, mysql.MySQLErrName[mysql.ErrDupEntry])
 	// ErrNotImplemented returns when a function is not implemented yet.
-	ErrNotImplemented = terror.ClassKV.New(mysql.ErrNotImplemented, mysql.MySQLErrName[mysql.ErrNotImplemented])
+	ErrNotImplemented = terror.New(pterror.ClassKV, mysql.ErrNotImplemented, mysql.MySQLErrName[mysql.ErrNotImplemented])
 	// ErrWriteConflict is the error when the commit meets an write conflict error.
-	ErrWriteConflict = terror.ClassKV.New(mysql.ErrWriteConflict,
+	ErrWriteConflict = terror.New(pterror.ClassKV, mysql.ErrWriteConflict,
 		mysql.MySQLErrName[mysql.ErrWriteConflict]+" "+TxnRetryableMark)
 	// ErrWriteConflictInTiDB is the error when the commit meets an write conflict error when local latch is enabled.
-	ErrWriteConflictInTiDB = terror.ClassKV.New(mysql.ErrWriteConflictInTiDB,
+	ErrWriteConflictInTiDB = terror.New(pterror.ClassKV, mysql.ErrWriteConflictInTiDB,
 		mysql.MySQLErrName[mysql.ErrWriteConflictInTiDB]+" "+TxnRetryableMark)
 )
 
 func init() {
-	kvMySQLErrCodes := map[terror.ErrCode]uint16{
+	kvMySQLErrCodes := map[pterror.ErrCode]uint16{
 		mysql.ErrNotExist:            mysql.ErrNotExist,
 		mysql.ErrDupEntry:            mysql.ErrDupEntry,
 		mysql.ErrTooBigRowsize:       mysql.ErrTooBigRowsize,
@@ -64,7 +65,7 @@ func init() {
 		mysql.ErrEntryTooLarge:       mysql.ErrEntryTooLarge,
 		mysql.ErrNotImplemented:      mysql.ErrNotImplemented,
 	}
-	terror.ErrClassToMySQLCodes[terror.ClassKV] = kvMySQLErrCodes
+	terror.ErrClassToMySQLCodes[pterror.ClassKV] = kvMySQLErrCodes
 }
 
 // IsTxnRetryableError checks if the error could safely retry the transaction.

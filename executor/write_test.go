@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
+	tmysql "github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
@@ -788,10 +789,10 @@ func (s *testSuite4) TestInsertSetWithDefault(c *C) {
 	tk.MustExec("insert into t2 set a=default(a), b=default, c=default;")
 	tk.MustQuery("select * from t2;").Check(testkit.Rows("10 -10 -10"))
 	tk.MustExec("delete from t2;")
-	tk.MustGetErrCode("insert into t2 set b=default(a);", mysql.ErrBadGeneratedColumn)
-	tk.MustGetErrCode("insert into t2 set a=default(b), b=default(b);", mysql.ErrBadGeneratedColumn)
-	tk.MustGetErrCode("insert into t2 set a=default(a), c=default(c);", mysql.ErrBadGeneratedColumn)
-	tk.MustGetErrCode("insert into t2 set a=default(a), c=default(a);", mysql.ErrBadGeneratedColumn)
+	tk.MustGetErrCode("insert into t2 set b=default(a);", tmysql.ErrBadGeneratedColumn)
+	tk.MustGetErrCode("insert into t2 set a=default(b), b=default(b);", tmysql.ErrBadGeneratedColumn)
+	tk.MustGetErrCode("insert into t2 set a=default(a), c=default(c);", tmysql.ErrBadGeneratedColumn)
+	tk.MustGetErrCode("insert into t2 set a=default(a), c=default(a);", tmysql.ErrBadGeneratedColumn)
 	tk.MustExec("drop table t1, t2")
 }
 
@@ -823,10 +824,10 @@ func (s *testSuite4) TestInsertOnDupUpdateDefault(c *C) {
 	tk.MustQuery("select * from t2").Check(testkit.Rows("4 -4 -4"))
 	tk.MustExec("insert into t2 values (10,default,default) on duplicate key update b=default, a=20, c=default;")
 	tk.MustQuery("select * from t2").Check(testkit.Rows("4 -4 -4", "10 -10 -10"))
-	tk.MustGetErrCode("insert into t2 values (4,default,default) on duplicate key update b=default(a);", mysql.ErrBadGeneratedColumn)
-	tk.MustGetErrCode("insert into t2 values (4,default,default) on duplicate key update a=default(b), b=default(b);", mysql.ErrBadGeneratedColumn)
-	tk.MustGetErrCode("insert into t2 values (4,default,default) on duplicate key update a=default(a), c=default(c);", mysql.ErrBadGeneratedColumn)
-	tk.MustGetErrCode("insert into t2 values (4,default,default) on duplicate key update a=default(a), c=default(a);", mysql.ErrBadGeneratedColumn)
+	tk.MustGetErrCode("insert into t2 values (4,default,default) on duplicate key update b=default(a);", tmysql.ErrBadGeneratedColumn)
+	tk.MustGetErrCode("insert into t2 values (4,default,default) on duplicate key update a=default(b), b=default(b);", tmysql.ErrBadGeneratedColumn)
+	tk.MustGetErrCode("insert into t2 values (4,default,default) on duplicate key update a=default(a), c=default(c);", tmysql.ErrBadGeneratedColumn)
+	tk.MustGetErrCode("insert into t2 values (4,default,default) on duplicate key update a=default(a), c=default(a);", tmysql.ErrBadGeneratedColumn)
 	tk.MustExec("drop table t1, t2")
 }
 
@@ -1004,10 +1005,10 @@ func (s *testSuite6) TestReplace(c *C) {
 	tk.MustQuery("select * from t2;").Check(testkit.Rows("1 1 -1 -1", "2 1 -1 -1"))
 	tk.MustExec("replace t2 set pk=3, a=default(a), b=default, c=default;")
 	tk.MustQuery("select * from t2;").Check(testkit.Rows("1 1 -1 -1", "2 1 -1 -1", "3 1 -1 -1"))
-	tk.MustGetErrCode("replace t2 set b=default(a);", mysql.ErrBadGeneratedColumn)
-	tk.MustGetErrCode("replace t2 set a=default(b), b=default(b);", mysql.ErrBadGeneratedColumn)
-	tk.MustGetErrCode("replace t2 set a=default(a), c=default(c);", mysql.ErrBadGeneratedColumn)
-	tk.MustGetErrCode("replace t2 set a=default(a), c=default(a);", mysql.ErrBadGeneratedColumn)
+	tk.MustGetErrCode("replace t2 set b=default(a);", tmysql.ErrBadGeneratedColumn)
+	tk.MustGetErrCode("replace t2 set a=default(b), b=default(b);", tmysql.ErrBadGeneratedColumn)
+	tk.MustGetErrCode("replace t2 set a=default(a), c=default(c);", tmysql.ErrBadGeneratedColumn)
+	tk.MustGetErrCode("replace t2 set a=default(a), c=default(a);", tmysql.ErrBadGeneratedColumn)
 	tk.MustExec("drop table t1, t2")
 }
 
@@ -1543,10 +1544,10 @@ func (s *testSuite8) TestUpdate(c *C) {
 	tk.MustQuery("select * from t2;").Check(testkit.Rows("1 -1 -1", "40 -40 -40"))
 	tk.MustExec("update t2 set a=default(a), b=default, c=default;")
 	tk.MustQuery("select * from t2;").Check(testkit.Rows("1 -1 -1", "1 -1 -1"))
-	tk.MustGetErrCode("update t2 set b=default(a);", mysql.ErrBadGeneratedColumn)
-	tk.MustGetErrCode("update t2 set a=default(b), b=default(b);", mysql.ErrBadGeneratedColumn)
-	tk.MustGetErrCode("update t2 set a=default(a), c=default(c);", mysql.ErrBadGeneratedColumn)
-	tk.MustGetErrCode("update t2 set a=default(a), c=default(a);", mysql.ErrBadGeneratedColumn)
+	tk.MustGetErrCode("update t2 set b=default(a);", tmysql.ErrBadGeneratedColumn)
+	tk.MustGetErrCode("update t2 set a=default(b), b=default(b);", tmysql.ErrBadGeneratedColumn)
+	tk.MustGetErrCode("update t2 set a=default(a), c=default(c);", tmysql.ErrBadGeneratedColumn)
+	tk.MustGetErrCode("update t2 set a=default(a), c=default(a);", tmysql.ErrBadGeneratedColumn)
 	tk.MustExec("drop table t1, t2")
 }
 

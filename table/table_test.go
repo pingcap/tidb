@@ -15,7 +15,7 @@ package table
 
 import (
 	. "github.com/pingcap/check"
-	"github.com/pingcap/parser/mysql"
+	tmysql "github.com/pingcap/tidb/mysql"
 )
 
 var _ = Suite(&testTableSuite{})
@@ -30,21 +30,21 @@ func (t *testTableSuite) TestSlice(c *C) {
 }
 
 func (t *testTableSuite) TestErrorCode(c *C) {
-	c.Assert(int(ErrColumnCantNull.ToSQLError().Code), Equals, mysql.ErrBadNull)
-	c.Assert(int(errUnknownColumn.ToSQLError().Code), Equals, mysql.ErrBadField)
-	c.Assert(int(errDuplicateColumn.ToSQLError().Code), Equals, mysql.ErrFieldSpecifiedTwice)
-	c.Assert(int(errGetDefaultFailed.ToSQLError().Code), Equals, mysql.ErrFieldGetDefaultFailed)
-	c.Assert(int(ErrNoDefaultValue.ToSQLError().Code), Equals, mysql.ErrNoDefaultForField)
-	c.Assert(int(ErrIndexOutBound.ToSQLError().Code), Equals, mysql.ErrIndexOutBound)
-	c.Assert(int(ErrUnsupportedOp.ToSQLError().Code), Equals, mysql.ErrUnsupportedOp)
-	c.Assert(int(ErrRowNotFound.ToSQLError().Code), Equals, mysql.ErrRowNotFound)
-	c.Assert(int(ErrTableStateCantNone.ToSQLError().Code), Equals, mysql.ErrTableStateCantNone)
-	c.Assert(int(ErrColumnStateCantNone.ToSQLError().Code), Equals, mysql.ErrColumnStateCantNone)
-	c.Assert(int(ErrColumnStateNonPublic.ToSQLError().Code), Equals, mysql.ErrColumnStateNonPublic)
-	c.Assert(int(ErrIndexStateCantNone.ToSQLError().Code), Equals, mysql.ErrIndexStateCantNone)
-	c.Assert(int(ErrInvalidRecordKey.ToSQLError().Code), Equals, mysql.ErrInvalidRecordKey)
-	c.Assert(int(ErrTruncatedWrongValueForField.ToSQLError().Code), Equals, mysql.ErrTruncatedWrongValueForField)
-	c.Assert(int(ErrUnknownPartition.ToSQLError().Code), Equals, mysql.ErrUnknownPartition)
-	c.Assert(int(ErrNoPartitionForGivenValue.ToSQLError().Code), Equals, mysql.ErrNoPartitionForGivenValue)
-	c.Assert(int(ErrLockOrActiveTransaction.ToSQLError().Code), Equals, mysql.ErrLockOrActiveTransaction)
+	c.Assert(int(ErrColumnCantNull.ToSQLError().Code), Equals, tmysql.ErrBadNull)
+	c.Assert(int(errUnknownColumn.ToSQLError().Code), Equals, tmysql.ErrBadField)
+	c.Assert(int(errDuplicateColumn.ToSQLError().Code), Equals, tmysql.ErrFieldSpecifiedTwice)
+	c.Assert(int(errGetDefaultFailed.ToSQLError().Code), Equals, tmysql.ErrFieldGetDefaultFailed)
+	c.Assert(int(ErrNoDefaultValue.ToSQLError().Code), Equals, tmysql.ErrNoDefaultForField)
+	c.Assert(int(ErrIndexOutBound.ToSQLError().Code), Equals, tmysql.ErrIndexOutBound)
+	c.Assert(int(ErrUnsupportedOp.ToSQLError().Code), Equals, tmysql.ErrUnsupportedOp)
+	c.Assert(int(ErrRowNotFound.ToSQLError().Code), Equals, tmysql.ErrRowNotFound)
+	c.Assert(int(ErrTableStateCantNone.ToSQLError().Code), Equals, tmysql.ErrTableStateCantNone)
+	c.Assert(int(ErrColumnStateCantNone.ToSQLError().Code), Equals, tmysql.ErrColumnStateCantNone)
+	c.Assert(int(ErrColumnStateNonPublic.ToSQLError().Code), Equals, tmysql.ErrColumnStateNonPublic)
+	c.Assert(int(ErrIndexStateCantNone.ToSQLError().Code), Equals, tmysql.ErrIndexStateCantNone)
+	c.Assert(int(ErrInvalidRecordKey.ToSQLError().Code), Equals, tmysql.ErrInvalidRecordKey)
+	c.Assert(int(ErrTruncatedWrongValueForField.ToSQLError().Code), Equals, tmysql.ErrTruncatedWrongValueForField)
+	c.Assert(int(ErrUnknownPartition.ToSQLError().Code), Equals, tmysql.ErrUnknownPartition)
+	c.Assert(int(ErrNoPartitionForGivenValue.ToSQLError().Code), Equals, tmysql.ErrNoPartitionForGivenValue)
+	c.Assert(int(ErrLockOrActiveTransaction.ToSQLError().Code), Equals, tmysql.ErrLockOrActiveTransaction)
 }

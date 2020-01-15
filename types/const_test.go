@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
+	tmysql "github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
@@ -82,7 +83,7 @@ func (s *testMySQLConstSuite) TestGetSQLMode(c *C) {
 	}
 
 	for _, t := range positiveCases {
-		_, err := mysql.GetSQLMode(mysql.FormatSQLModeStr(t.arg))
+		_, err := tmysql.GetSQLMode(mysql.FormatSQLModeStr(t.arg))
 		c.Assert(err, IsNil)
 	}
 
@@ -96,7 +97,7 @@ func (s *testMySQLConstSuite) TestGetSQLMode(c *C) {
 	}
 
 	for _, t := range negativeCases {
-		_, err := mysql.GetSQLMode(mysql.FormatSQLModeStr(t.arg))
+		_, err := tmysql.GetSQLMode(mysql.FormatSQLModeStr(t.arg))
 		c.Assert(err, NotNil)
 	}
 }
@@ -120,7 +121,7 @@ func (s *testMySQLConstSuite) TestSQLMode(c *C) {
 	}
 
 	for _, t := range tests {
-		sqlMode, _ := mysql.GetSQLMode(t.arg)
+		sqlMode, _ := tmysql.GetSQLMode(t.arg)
 		c.Assert(sqlMode.HasNoZeroDateMode(), Equals, t.hasNoZeroDateMode)
 		c.Assert(sqlMode.HasNoZeroInDateMode(), Equals, t.hasNoZeroInDateMode)
 		c.Assert(sqlMode.HasErrorForDivisionByZeroMode(), Equals, t.hasErrorForDivisionByZeroMode)

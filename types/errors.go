@@ -14,9 +14,10 @@
 package types
 
 import (
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
+	pterror "github.com/pingcap/parser/terror"
 	parser_types "github.com/pingcap/parser/types"
+	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/terror"
 )
 
 // const strings for ErrWrongValue
@@ -29,56 +30,56 @@ var (
 	// ErrInvalidDefault is returned when meet a invalid default value.
 	ErrInvalidDefault = parser_types.ErrInvalidDefault
 	// ErrDataTooLong is returned when converts a string value that is longer than field type length.
-	ErrDataTooLong = terror.ClassTypes.New(mysql.ErrDataTooLong, mysql.MySQLErrName[mysql.ErrDataTooLong])
+	ErrDataTooLong = terror.New(pterror.ClassTypes, mysql.ErrDataTooLong, mysql.MySQLErrName[mysql.ErrDataTooLong])
 	// ErrIllegalValueForType is returned when value of type is illegal.
-	ErrIllegalValueForType = terror.ClassTypes.New(mysql.ErrIllegalValueForType, mysql.MySQLErrName[mysql.ErrIllegalValueForType])
+	ErrIllegalValueForType = terror.New(pterror.ClassTypes, mysql.ErrIllegalValueForType, mysql.MySQLErrName[mysql.ErrIllegalValueForType])
 	// ErrTruncated is returned when data has been truncated during conversion.
-	ErrTruncated = terror.ClassTypes.New(mysql.WarnDataTruncated, mysql.MySQLErrName[mysql.WarnDataTruncated])
+	ErrTruncated = terror.New(pterror.ClassTypes, mysql.WarnDataTruncated, mysql.MySQLErrName[mysql.WarnDataTruncated])
 	// ErrOverflow is returned when data is out of range for a field type.
-	ErrOverflow = terror.ClassTypes.New(mysql.ErrDataOutOfRange, mysql.MySQLErrName[mysql.ErrDataOutOfRange])
+	ErrOverflow = terror.New(pterror.ClassTypes, mysql.ErrDataOutOfRange, mysql.MySQLErrName[mysql.ErrDataOutOfRange])
 	// ErrDivByZero is return when do division by 0.
-	ErrDivByZero = terror.ClassTypes.New(mysql.ErrDivisionByZero, mysql.MySQLErrName[mysql.ErrDivisionByZero])
+	ErrDivByZero = terror.New(pterror.ClassTypes, mysql.ErrDivisionByZero, mysql.MySQLErrName[mysql.ErrDivisionByZero])
 	// ErrTooBigDisplayWidth is return when display width out of range for column.
-	ErrTooBigDisplayWidth = terror.ClassTypes.New(mysql.ErrTooBigDisplaywidth, mysql.MySQLErrName[mysql.ErrTooBigDisplaywidth])
+	ErrTooBigDisplayWidth = terror.New(pterror.ClassTypes, mysql.ErrTooBigDisplaywidth, mysql.MySQLErrName[mysql.ErrTooBigDisplaywidth])
 	// ErrTooBigFieldLength is return when column length too big for column.
-	ErrTooBigFieldLength = terror.ClassTypes.New(mysql.ErrTooBigFieldlength, mysql.MySQLErrName[mysql.ErrTooBigFieldlength])
+	ErrTooBigFieldLength = terror.New(pterror.ClassTypes, mysql.ErrTooBigFieldlength, mysql.MySQLErrName[mysql.ErrTooBigFieldlength])
 	// ErrTooBigSet is returned when too many strings for column.
-	ErrTooBigSet = terror.ClassTypes.New(mysql.ErrTooBigSet, mysql.MySQLErrName[mysql.ErrTooBigSet])
+	ErrTooBigSet = terror.New(pterror.ClassTypes, mysql.ErrTooBigSet, mysql.MySQLErrName[mysql.ErrTooBigSet])
 	// ErrTooBigScale is returned when type DECIMAL/NUMERIC scale is bigger than mysql.MaxDecimalScale.
-	ErrTooBigScale = terror.ClassTypes.New(mysql.ErrTooBigScale, mysql.MySQLErrName[mysql.ErrTooBigScale])
+	ErrTooBigScale = terror.New(pterror.ClassTypes, mysql.ErrTooBigScale, mysql.MySQLErrName[mysql.ErrTooBigScale])
 	// ErrTooBigPrecision is returned when type DECIMAL/NUMERIC precision is bigger than mysql.MaxDecimalWidth
-	ErrTooBigPrecision = terror.ClassTypes.New(mysql.ErrTooBigPrecision, mysql.MySQLErrName[mysql.ErrTooBigPrecision])
+	ErrTooBigPrecision = terror.New(pterror.ClassTypes, mysql.ErrTooBigPrecision, mysql.MySQLErrName[mysql.ErrTooBigPrecision])
 	// ErrBadNumber is return when parsing an invalid binary decimal number.
-	ErrBadNumber = terror.ClassTypes.New(mysql.ErrBadNumber, mysql.MySQLErrName[mysql.ErrBadNumber])
+	ErrBadNumber = terror.New(pterror.ClassTypes, mysql.ErrBadNumber, mysql.MySQLErrName[mysql.ErrBadNumber])
 	// ErrInvalidFieldSize is returned when the precision of a column is out of range.
-	ErrInvalidFieldSize = terror.ClassTypes.New(mysql.ErrInvalidFieldSize, mysql.MySQLErrName[mysql.ErrInvalidFieldSize])
+	ErrInvalidFieldSize = terror.New(pterror.ClassTypes, mysql.ErrInvalidFieldSize, mysql.MySQLErrName[mysql.ErrInvalidFieldSize])
 	// ErrMBiggerThanD is returned when precision less than the scale.
-	ErrMBiggerThanD = terror.ClassTypes.New(mysql.ErrMBiggerThanD, mysql.MySQLErrName[mysql.ErrMBiggerThanD])
+	ErrMBiggerThanD = terror.New(pterror.ClassTypes, mysql.ErrMBiggerThanD, mysql.MySQLErrName[mysql.ErrMBiggerThanD])
 	// ErrWarnDataOutOfRange is returned when the value in a numeric column that is outside the permissible range of the column data type.
 	// See https://dev.mysql.com/doc/refman/5.5/en/out-of-range-and-overflow.html for details
-	ErrWarnDataOutOfRange = terror.ClassTypes.New(mysql.ErrWarnDataOutOfRange, mysql.MySQLErrName[mysql.ErrWarnDataOutOfRange])
+	ErrWarnDataOutOfRange = terror.New(pterror.ClassTypes, mysql.ErrWarnDataOutOfRange, mysql.MySQLErrName[mysql.ErrWarnDataOutOfRange])
 	// ErrDuplicatedValueInType is returned when enum column has duplicated value.
-	ErrDuplicatedValueInType = terror.ClassTypes.New(mysql.ErrDuplicatedValueInType, mysql.MySQLErrName[mysql.ErrDuplicatedValueInType])
+	ErrDuplicatedValueInType = terror.New(pterror.ClassTypes, mysql.ErrDuplicatedValueInType, mysql.MySQLErrName[mysql.ErrDuplicatedValueInType])
 	// ErrDatetimeFunctionOverflow is returned when the calculation in datetime function cause overflow.
-	ErrDatetimeFunctionOverflow = terror.ClassTypes.New(mysql.ErrDatetimeFunctionOverflow, mysql.MySQLErrName[mysql.ErrDatetimeFunctionOverflow])
+	ErrDatetimeFunctionOverflow = terror.New(pterror.ClassTypes, mysql.ErrDatetimeFunctionOverflow, mysql.MySQLErrName[mysql.ErrDatetimeFunctionOverflow])
 	// ErrCastAsSignedOverflow is returned when positive out-of-range integer, and convert to it's negative complement.
-	ErrCastAsSignedOverflow = terror.ClassTypes.New(mysql.ErrCastAsSignedOverflow, mysql.MySQLErrName[mysql.ErrCastAsSignedOverflow])
+	ErrCastAsSignedOverflow = terror.New(pterror.ClassTypes, mysql.ErrCastAsSignedOverflow, mysql.MySQLErrName[mysql.ErrCastAsSignedOverflow])
 	// ErrCastNegIntAsUnsigned is returned when a negative integer be casted to an unsigned int.
-	ErrCastNegIntAsUnsigned = terror.ClassTypes.New(mysql.ErrCastNegIntAsUnsigned, mysql.MySQLErrName[mysql.ErrCastNegIntAsUnsigned])
+	ErrCastNegIntAsUnsigned = terror.New(pterror.ClassTypes, mysql.ErrCastNegIntAsUnsigned, mysql.MySQLErrName[mysql.ErrCastNegIntAsUnsigned])
 	// ErrInvalidYearFormat is returned when the input is not a valid year format.
-	ErrInvalidYearFormat = terror.ClassTypes.New(mysql.ErrInvalidYearFormat, mysql.MySQLErrName[mysql.ErrInvalidYearFormat])
+	ErrInvalidYearFormat = terror.New(pterror.ClassTypes, mysql.ErrInvalidYearFormat, mysql.MySQLErrName[mysql.ErrInvalidYearFormat])
 	// ErrInvalidYear is returned when the input value is not a valid year.
-	ErrInvalidYear = terror.ClassTypes.New(mysql.ErrInvalidYear, mysql.MySQLErrName[mysql.ErrInvalidYear])
+	ErrInvalidYear = terror.New(pterror.ClassTypes, mysql.ErrInvalidYear, mysql.MySQLErrName[mysql.ErrInvalidYear])
 	// ErrTruncatedWrongVal is returned when data has been truncated during conversion.
-	ErrTruncatedWrongVal = terror.ClassTypes.New(mysql.ErrTruncatedWrongValue, mysql.MySQLErrName[mysql.ErrTruncatedWrongValue])
+	ErrTruncatedWrongVal = terror.New(pterror.ClassTypes, mysql.ErrTruncatedWrongValue, mysql.MySQLErrName[mysql.ErrTruncatedWrongValue])
 	// ErrInvalidWeekModeFormat is returned when the week mode is wrong.
-	ErrInvalidWeekModeFormat = terror.ClassTypes.New(mysql.ErrInvalidWeekModeFormat, mysql.MySQLErrName[mysql.ErrInvalidWeekModeFormat])
+	ErrInvalidWeekModeFormat = terror.New(pterror.ClassTypes, mysql.ErrInvalidWeekModeFormat, mysql.MySQLErrName[mysql.ErrInvalidWeekModeFormat])
 	// ErrWrongValue is returned when the input value is in wrong format.
-	ErrWrongValue = terror.ClassTypes.New(mysql.ErrWrongValue, mysql.MySQLErrName[mysql.ErrWrongValue])
+	ErrWrongValue = terror.New(pterror.ClassTypes, mysql.ErrWrongValue, mysql.MySQLErrName[mysql.ErrWrongValue])
 )
 
 func init() {
-	typesMySQLErrCodes := map[terror.ErrCode]uint16{
+	typesMySQLErrCodes := map[pterror.ErrCode]uint16{
 		mysql.ErrInvalidDefault:           mysql.ErrInvalidDefault,
 		mysql.ErrDataTooLong:              mysql.ErrDataTooLong,
 		mysql.ErrIllegalValueForType:      mysql.ErrIllegalValueForType,
@@ -105,5 +106,17 @@ func init() {
 		mysql.ErrInvalidWeekModeFormat:    mysql.ErrInvalidWeekModeFormat,
 		mysql.ErrWrongValue:               mysql.ErrWrongValue,
 	}
-	terror.ErrClassToMySQLCodes[terror.ClassTypes] = typesMySQLErrCodes
+	for cls, code := range pterror.ErrClassToMySQLCodes[pterror.ClassTypes] {
+		if _, ok := typesMySQLErrCodes[cls]; !ok {
+			typesMySQLErrCodes[cls] = code
+		}
+	}
+	terror.ErrClassToMySQLCodes[pterror.ClassTypes] = typesMySQLErrCodes
+
+	for cls, code := range pterror.ErrClassToMySQLCodes[pterror.ClassParser] {
+		if _, ok := typesMySQLErrCodes[cls]; !ok {
+			typesMySQLErrCodes[cls] = code
+		}
+	}
+	terror.ErrClassToMySQLCodes[pterror.ClassParser] = typesMySQLErrCodes
 }

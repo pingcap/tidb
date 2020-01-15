@@ -18,10 +18,12 @@ import (
 	"strings"
 	"sync/atomic"
 
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
+	pmysql "github.com/pingcap/parser/mysql"
+	pterror "github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/logutil"
 )
 
@@ -63,16 +65,16 @@ var PluginVarNames []string
 
 // Variable errors
 var (
-	ErrUnsupportedValueForVar      = terror.ClassVariable.New(mysql.ErrUnsupportedValueForVar, mysql.MySQLErrName[mysql.ErrUnsupportedValueForVar])
-	ErrUnknownSystemVar            = terror.ClassVariable.New(mysql.ErrUnknownSystemVariable, mysql.MySQLErrName[mysql.ErrUnknownSystemVariable])
-	ErrIncorrectScope              = terror.ClassVariable.New(mysql.ErrIncorrectGlobalLocalVar, mysql.MySQLErrName[mysql.ErrIncorrectGlobalLocalVar])
-	ErrUnknownTimeZone             = terror.ClassVariable.New(mysql.ErrUnknownTimeZone, mysql.MySQLErrName[mysql.ErrUnknownTimeZone])
-	ErrReadOnly                    = terror.ClassVariable.New(mysql.ErrVariableIsReadonly, mysql.MySQLErrName[mysql.ErrVariableIsReadonly])
-	ErrWrongValueForVar            = terror.ClassVariable.New(mysql.ErrWrongValueForVar, mysql.MySQLErrName[mysql.ErrWrongValueForVar])
-	ErrWrongTypeForVar             = terror.ClassVariable.New(mysql.ErrWrongTypeForVar, mysql.MySQLErrName[mysql.ErrWrongTypeForVar])
-	ErrTruncatedWrongValue         = terror.ClassVariable.New(mysql.ErrTruncatedWrongValue, mysql.MySQLErrName[mysql.ErrTruncatedWrongValue])
-	ErrMaxPreparedStmtCountReached = terror.ClassVariable.New(mysql.ErrMaxPreparedStmtCountReached, mysql.MySQLErrName[mysql.ErrMaxPreparedStmtCountReached])
-	ErrUnsupportedIsolationLevel   = terror.ClassVariable.New(mysql.ErrUnsupportedIsolationLevel, mysql.MySQLErrName[mysql.ErrUnsupportedIsolationLevel])
+	ErrUnsupportedValueForVar      = terror.New(pterror.ClassVariable, mysql.ErrUnsupportedValueForVar, mysql.MySQLErrName[mysql.ErrUnsupportedValueForVar])
+	ErrUnknownSystemVar            = terror.New(pterror.ClassVariable, mysql.ErrUnknownSystemVariable, mysql.MySQLErrName[mysql.ErrUnknownSystemVariable])
+	ErrIncorrectScope              = terror.New(pterror.ClassVariable, mysql.ErrIncorrectGlobalLocalVar, mysql.MySQLErrName[mysql.ErrIncorrectGlobalLocalVar])
+	ErrUnknownTimeZone             = terror.New(pterror.ClassVariable, mysql.ErrUnknownTimeZone, mysql.MySQLErrName[mysql.ErrUnknownTimeZone])
+	ErrReadOnly                    = terror.New(pterror.ClassVariable, mysql.ErrVariableIsReadonly, mysql.MySQLErrName[mysql.ErrVariableIsReadonly])
+	ErrWrongValueForVar            = terror.New(pterror.ClassVariable, mysql.ErrWrongValueForVar, mysql.MySQLErrName[mysql.ErrWrongValueForVar])
+	ErrWrongTypeForVar             = terror.New(pterror.ClassVariable, mysql.ErrWrongTypeForVar, mysql.MySQLErrName[mysql.ErrWrongTypeForVar])
+	ErrTruncatedWrongValue         = terror.New(pterror.ClassVariable, mysql.ErrTruncatedWrongValue, mysql.MySQLErrName[mysql.ErrTruncatedWrongValue])
+	ErrMaxPreparedStmtCountReached = terror.New(pterror.ClassVariable, mysql.ErrMaxPreparedStmtCountReached, mysql.MySQLErrName[mysql.ErrMaxPreparedStmtCountReached])
+	ErrUnsupportedIsolationLevel   = terror.New(pterror.ClassVariable, mysql.ErrUnsupportedIsolationLevel, mysql.MySQLErrName[mysql.ErrUnsupportedIsolationLevel])
 )
 
 func init() {
@@ -83,7 +85,7 @@ func init() {
 	initSynonymsSysVariables()
 
 	// Register terror to mysql error map.
-	mySQLErrCodes := map[terror.ErrCode]uint16{
+	mySQLErrCodes := map[pterror.ErrCode]uint16{
 		mysql.ErrCantGetValidID:              mysql.ErrCantGetValidID,
 		mysql.ErrCantSetToNull:               mysql.ErrCantSetToNull,
 		mysql.ErrSnapshotTooOld:              mysql.ErrSnapshotTooOld,
@@ -98,7 +100,7 @@ func init() {
 		mysql.ErrMaxPreparedStmtCountReached: mysql.ErrMaxPreparedStmtCountReached,
 		mysql.ErrUnsupportedIsolationLevel:   mysql.ErrUnsupportedIsolationLevel,
 	}
-	terror.ErrClassToMySQLCodes[terror.ClassVariable] = mySQLErrCodes
+	terror.ErrClassToMySQLCodes[pterror.ClassVariable] = mySQLErrCodes
 }
 
 // BoolToIntStr converts bool to int string, for example "0" or "1".
@@ -167,7 +169,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeNone, SkipNameResolve, "0"},
 	{ScopeNone, "performance_schema_max_file_handles", "32768"},
 	{ScopeSession, "transaction_allow_batching", ""},
-	{ScopeGlobal | ScopeSession, SQLModeVar, mysql.DefaultSQLMode},
+	{ScopeGlobal | ScopeSession, SQLModeVar, pmysql.DefaultSQLMode},
 	{ScopeNone, "performance_schema_max_statement_classes", "168"},
 	{ScopeGlobal, "server_id", "0"},
 	{ScopeGlobal, "innodb_flushing_avg_loops", "30"},
@@ -182,7 +184,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal | ScopeSession, "range_alloc_block_size", "4096"},
 	{ScopeGlobal, ConnectTimeout, "10"},
 	{ScopeGlobal | ScopeSession, MaxExecutionTime, "0"},
-	{ScopeGlobal | ScopeSession, CollationServer, mysql.DefaultCollationName},
+	{ScopeGlobal | ScopeSession, CollationServer, pmysql.DefaultCollationName},
 	{ScopeNone, "have_rtree_keys", "YES"},
 	{ScopeGlobal, "innodb_old_blocks_pct", "37"},
 	{ScopeGlobal, "innodb_file_format", "Antelope"},
@@ -313,7 +315,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal | ScopeSession, QueryCacheWlockInvalidate, "0"},
 	{ScopeGlobal | ScopeSession, "sql_buffer_result", "OFF"},
 	{ScopeGlobal | ScopeSession, "character_set_filesystem", "binary"},
-	{ScopeGlobal | ScopeSession, "collation_database", mysql.DefaultCollationName},
+	{ScopeGlobal | ScopeSession, "collation_database", pmysql.DefaultCollationName},
 	{ScopeGlobal | ScopeSession, AutoIncrementIncrement, strconv.FormatInt(DefAutoIncrementIncrement, 10)},
 	{ScopeGlobal | ScopeSession, AutoIncrementOffset, strconv.FormatInt(DefAutoIncrementOffset, 10)},
 	{ScopeGlobal | ScopeSession, "max_heap_table_size", "16777216"},
@@ -336,7 +338,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal, "innodb_purge_batch_size", "300"},
 	{ScopeNone, "have_profiling", "NO"},
 	{ScopeGlobal, "slave_checkpoint_group", "512"},
-	{ScopeGlobal | ScopeSession, "character_set_client", mysql.DefaultCharset},
+	{ScopeGlobal | ScopeSession, "character_set_client", pmysql.DefaultCharset},
 	{ScopeNone, "slave_load_tmpdir", "/var/tmp/"},
 	{ScopeGlobal, InnodbBufferPoolDumpNow, "0"},
 	{ScopeGlobal, RelayLogPurge, "1"},
@@ -410,7 +412,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal | ScopeSession, BinlogDirectNonTransactionalUpdates, "0"},
 	{ScopeGlobal, "innodb_change_buffering", "all"},
 	{ScopeGlobal | ScopeSession, SQLBigSelects, "1"},
-	{ScopeGlobal | ScopeSession, CharacterSetResults, mysql.DefaultCharset},
+	{ScopeGlobal | ScopeSession, CharacterSetResults, pmysql.DefaultCharset},
 	{ScopeGlobal, "innodb_max_purge_lag_delay", "0"},
 	{ScopeGlobal | ScopeSession, "session_track_schema", ""},
 	{ScopeGlobal, "innodb_io_capacity_max", "2000"},
@@ -423,7 +425,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal, InnodbBufferPoolLoadAbort, "0"},
 	{ScopeGlobal | ScopeSession, TxnIsolation, "REPEATABLE-READ"},
 	{ScopeGlobal | ScopeSession, TransactionIsolation, "REPEATABLE-READ"},
-	{ScopeGlobal | ScopeSession, "collation_connection", mysql.DefaultCollationName},
+	{ScopeGlobal | ScopeSession, "collation_connection", pmysql.DefaultCollationName},
 	{ScopeGlobal, "rpl_semi_sync_master_timeout", ""},
 	{ScopeGlobal | ScopeSession, "transaction_prealloc_size", "4096"},
 	{ScopeNone, "slave_skip_errors", "OFF"},
@@ -452,7 +454,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeNone, "innodb_read_only", "0"},
 	{ScopeNone, "datetime_format", "%Y-%m-%d %H:%i:%s"},
 	{ScopeGlobal, "log_syslog", ""},
-	{ScopeNone, "version", mysql.ServerVersion},
+	{ScopeNone, "version", pmysql.ServerVersion},
 	{ScopeGlobal | ScopeSession, "transaction_alloc_block_size", "8192"},
 	{ScopeGlobal, "sql_slave_skip_counter", "0"},
 	{ScopeGlobal, "innodb_large_prefix", "OFF"},
@@ -518,7 +520,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal, "max_points_in_geometry", ""},
 	{ScopeGlobal, "innodb_stats_sample_pages", "8"},
 	{ScopeGlobal | ScopeSession, "profiling_history_size", "15"},
-	{ScopeGlobal | ScopeSession, "character_set_database", mysql.DefaultCharset},
+	{ScopeGlobal | ScopeSession, "character_set_database", pmysql.DefaultCharset},
 	{ScopeNone, "have_symlink", "YES"},
 	{ScopeGlobal | ScopeSession, "storage_engine", "InnoDB"},
 	{ScopeGlobal | ScopeSession, "sql_log_off", "0"},
@@ -599,10 +601,10 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal, Flush, "0"},
 	{ScopeGlobal | ScopeSession, "eq_range_index_dive_limit", "10"},
 	{ScopeNone, "performance_schema_events_stages_history_size", "10"},
-	{ScopeGlobal | ScopeSession, "character_set_connection", mysql.DefaultCharset},
+	{ScopeGlobal | ScopeSession, "character_set_connection", pmysql.DefaultCharset},
 	{ScopeGlobal, MyISAMUseMmap, "0"},
 	{ScopeGlobal | ScopeSession, "ndb_join_pushdown", ""},
-	{ScopeGlobal | ScopeSession, CharacterSetServer, mysql.DefaultCharset},
+	{ScopeGlobal | ScopeSession, CharacterSetServer, pmysql.DefaultCharset},
 	{ScopeGlobal, "validate_password_special_char_count", "1"},
 	{ScopeNone, "performance_schema_max_thread_instances", "402"},
 	{ScopeGlobal, "slave_rows_search_algorithms", "TABLE_SCAN,INDEX_SCAN"},
@@ -718,7 +720,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal, TiDBDDLErrorCountLimit, strconv.Itoa(DefTiDBDDLErrorCountLimit)},
 	{ScopeSession, TiDBDDLReorgPriority, "PRIORITY_LOW"},
 	{ScopeGlobal, TiDBMaxDeltaSchemaCount, strconv.Itoa(DefTiDBMaxDeltaSchemaCount)},
-	{ScopeSession, TiDBForcePriority, mysql.Priority2Str[DefTiDBForcePriority]},
+	{ScopeSession, TiDBForcePriority, pmysql.Priority2Str[DefTiDBForcePriority]},
 	{ScopeSession, TiDBEnableRadixJoin, BoolToIntStr(DefTiDBUseRadixJoin)},
 	{ScopeGlobal | ScopeSession, TiDBOptJoinReorderThreshold, strconv.Itoa(DefTiDBOptJoinReorderThreshold)},
 	{ScopeSession, TiDBCheckMb4ValueInUTF8, BoolToIntStr(config.GetGlobalConfig().CheckMb4ValueInUTF8)},

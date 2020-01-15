@@ -18,13 +18,10 @@
 package types
 
 import (
-	"io"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/opcode"
-	"github.com/pingcap/parser/terror"
 	ast "github.com/pingcap/parser/types"
 )
 
@@ -138,15 +135,6 @@ func KindStr(kind byte) (r string) {
 //	tp: type enum
 //	cs: charset
 var TypeToStr = ast.TypeToStr
-
-// EOFAsNil filtrates errors,
-// If err is equal to io.EOF returns nil.
-func EOFAsNil(err error) error {
-	if terror.ErrorEqual(err, io.EOF) {
-		return nil
-	}
-	return errors.Trace(err)
-}
 
 // InvOp2 returns an invalid operation error.
 func InvOp2(x, y interface{}, o opcode.Op) (interface{}, error) {

@@ -121,7 +121,7 @@ func SyntaxError(err error) error {
 	// If the error is already a terror with stack, pass it through.
 	if errors.HasStack(err) {
 		cause := errors.Cause(err)
-		if _, ok := cause.(*terror.Error); ok {
+		if _, ok := cause.(terror.BaseErrorConvertible); ok {
 			return err
 		}
 	}

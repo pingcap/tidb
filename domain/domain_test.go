@@ -26,12 +26,12 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/metrics"
+	tmysql "github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/tikv/oracle"
@@ -435,6 +435,6 @@ func (*testSuite) TestSessionPool(c *C) {
 }
 
 func (*testSuite) TestErrorCode(c *C) {
-	c.Assert(int(ErrInfoSchemaExpired.ToSQLError().Code), Equals, mysql.ErrInfoSchemaExpired)
-	c.Assert(int(ErrInfoSchemaChanged.ToSQLError().Code), Equals, mysql.ErrInfoSchemaChanged)
+	c.Assert(int(ErrInfoSchemaExpired.ToSQLError().Code), Equals, tmysql.ErrInfoSchemaExpired)
+	c.Assert(int(ErrInfoSchemaChanged.ToSQLError().Code), Equals, tmysql.ErrInfoSchemaChanged)
 }

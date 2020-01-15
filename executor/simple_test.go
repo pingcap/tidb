@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
+	tmysql "github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
@@ -328,7 +329,7 @@ func (s *testSuite7) TestUser(c *C) {
 
 	// Create duplicate user without IfNotExists will cause error.
 	createUserSQL = `CREATE USER 'test'@'localhost' IDENTIFIED BY '123';`
-	tk.MustGetErrCode(createUserSQL, mysql.ErrCannotUser)
+	tk.MustGetErrCode(createUserSQL, tmysql.ErrCannotUser)
 	createUserSQL = `CREATE USER IF NOT EXISTS 'test'@'localhost' IDENTIFIED BY '123';`
 	tk.MustExec(createUserSQL)
 	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Note|3163|User 'test'@'localhost' already exists."))
@@ -351,9 +352,9 @@ func (s *testSuite7) TestUser(c *C) {
 	result = tk.MustQuery(`SELECT Password FROM mysql.User WHERE User="test1" and Host="localhost"`)
 	result.Check(testkit.Rows(auth.EncodePassword("111")))
 	alterUserSQL = `ALTER USER 'test_not_exist'@'localhost' IDENTIFIED BY '111';`
-	tk.MustGetErrCode(alterUserSQL, mysql.ErrCannotUser)
+	tk.MustGetErrCode(alterUserSQL, tmysql.ErrCannotUser)
 	alterUserSQL = `ALTER USER 'test1'@'localhost' IDENTIFIED BY '222', 'test_not_exist'@'localhost' IDENTIFIED BY '111';`
-	tk.MustGetErrCode(alterUserSQL, mysql.ErrCannotUser)
+	tk.MustGetErrCode(alterUserSQL, tmysql.ErrCannotUser)
 	result = tk.MustQuery(`SELECT Password FROM mysql.User WHERE User="test1" and Host="localhost"`)
 	result.Check(testkit.Rows(auth.EncodePassword("222")))
 
@@ -393,7 +394,7 @@ func (s *testSuite7) TestUser(c *C) {
 	createUserSQL = `CREATE USER 'test1'@'localhost', 'test3'@'localhost';`
 	tk.MustExec(createUserSQL)
 	dropUserSQL = `DROP USER 'test1'@'localhost', 'test2'@'localhost', 'test3'@'localhost';`
-	tk.MustGetErrCode(dropUserSQL, mysql.ErrCannotUser)
+	tk.MustGetErrCode(dropUserSQL, tmysql.ErrCannotUser)
 	dropUserSQL = `DROP USER 'test3'@'localhost';`
 	tk.MustExec(dropUserSQL)
 	dropUserSQL = `DROP USER 'test1'@'localhost';`

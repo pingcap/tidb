@@ -19,10 +19,10 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/terror"
 	. "github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
@@ -347,7 +347,7 @@ func (s *testSuite) TestIsJobRollbackable(c *C) {
 }
 
 func (s *testSuite) TestError(c *C) {
-	kvErrs := []*terror.Error{
+	kvErrs := []*terror.TError{
 		ErrDataInConsistent,
 		ErrDDLJobNotFound,
 		ErrCancelFinishedDDLJob,
