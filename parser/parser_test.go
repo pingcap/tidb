@@ -1765,6 +1765,14 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{`select var_pop(c1, c2) from t`, false, ""},
 		{`select var_samp(c1), var_samp(all c1), var_samp(distinct c1) from t`, true, "SELECT VAR_SAMP(`c1`),VAR_SAMP(`c1`),VAR_SAMP(DISTINCT `c1`) FROM `t`"},
 		{`select var_samp(c1, c2) from t`, false, ""},
+		{`select json_objectagg(c1, c2) from t group by c1`, true, "SELECT JSON_OBJECTAGG(`c1`, `c2`) FROM `t` GROUP BY `c1`"},
+		{`select json_objectagg(c1, c2, c3) from t group by c1`, false, ""},
+		{`select json_objectagg(distinct c1, c2) from t group by c1`, false, "SELECT JSON_OBJECTAGG(DISTINCT `c1`, `c2`) FROM `t` GROUP BY `c1`"},
+		{`select json_objectagg(c1, distinct c2) from t group by c1`, false, "SELECT JSON_OBJECTAGG(`c1`, DISTINCT `c2`) FROM `t` GROUP BY `c1`"},
+		{`select json_objectagg(distinct c1, distinct c2) from t group by c1`, false, "SELECT JSON_OBJECTAGG(DISTINCT `c1`, DISTINCT `c2`) FROM `t` GROUP BY `c1`"},
+		{`select json_objectagg(all c1, c2) from t group by c1`, true, "SELECT JSON_OBJECTAGG(`c1`, `c2`) FROM `t` GROUP BY `c1`"},
+		{`select json_objectagg(c1, all c2) from t group by c1`, true, "SELECT JSON_OBJECTAGG(`c1`, `c2`) FROM `t` GROUP BY `c1`"},
+		{`select json_objectagg(all c1, all c2) from t group by c1`, true, "SELECT JSON_OBJECTAGG(`c1`, `c2`) FROM `t` GROUP BY `c1`"},
 
 		// for encryption and compression functions
 		{`select AES_ENCRYPT('text',UNHEX('F3229A0B371ED2D9441B830D21A390C3'))`, true, "SELECT AES_ENCRYPT('text', UNHEX('F3229A0B371ED2D9441B830D21A390C3'))"},
