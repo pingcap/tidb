@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"crypto/tls"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 	"sync"
@@ -109,6 +110,9 @@ type TransactionContext struct {
 	SchemaVersion int64
 	StartTS       uint64
 	Shard         *int64
+	// TableDeltaMap is used in the schema validator for DDL changes in one table not to block others.
+	// It's also used in the statistias updating.
+	// Note: for the partitionted table, it stores all the partition IDs.
 	TableDeltaMap map[int64]TableDelta
 	IsPessimistic bool
 
@@ -140,11 +144,11 @@ func (tc *TransactionContext) CollectUnchangedRowKeys(buf []kv.Key) []kv.Key {
 }
 
 // UpdateDeltaForTable updates the delta info for some table.
-func (tc *TransactionContext) UpdateDeltaForTable(tableID int64, delta int64, count int64, colSize map[int64]int64) {
+func (tc *TransactionContext) UpdateDeltaForTable(physicalTableID int64, delta int64, count int64, colSize map[int64]int64) {
 	if tc.TableDeltaMap == nil {
 		tc.TableDeltaMap = make(map[int64]TableDelta)
 	}
-	item := tc.TableDeltaMap[tableID]
+	item := tc.TableDeltaMap[physicalTableID]
 	if item.ColSize == nil && colSize != nil {
 		item.ColSize = make(map[int64]int64)
 	}
@@ -153,7 +157,7 @@ func (tc *TransactionContext) UpdateDeltaForTable(tableID int64, delta int64, co
 	for key, val := range colSize {
 		item.ColSize[key] += val
 	}
-	tc.TableDeltaMap[tableID] = item
+	tc.TableDeltaMap[physicalTableID] = item
 }
 
 // Cleanup clears up transaction info that no longer use.
@@ -328,6 +332,11 @@ type SessionVars struct {
 
 	SQLMode mysql.SQLMode
 
+	// AutoIncrementIncrement and AutoIncrementOffset indicates the autoID's start value and increment.
+	AutoIncrementIncrement int
+
+	AutoIncrementOffset int
+
 	/* TiDB system variables */
 
 	// LightningMode is true when the lightning use the kvencoder to transfer sql to raw kv.
@@ -482,6 +491,8 @@ func NewSessionVars() *SessionVars {
 		RetryInfo:                   &RetryInfo{},
 		ActiveRoles:                 make([]*auth.RoleIdentity, 0, 10),
 		StrictSQLMode:               true,
+		AutoIncrementIncrement:      DefAutoIncrementIncrement,
+		AutoIncrementOffset:         DefAutoIncrementOffset,
 		Status:                      mysql.ServerStatusAutocommit,
 		StmtCtx:                     new(stmtctx.StatementContext),
 		AllowAggPushDown:            false,
@@ -745,6 +756,14 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		if isAutocommit {
 			s.SetStatusFlag(mysql.ServerStatusInTrans, false)
 		}
+	case AutoIncrementIncrement:
+		// AutoIncrementIncrement is valid in [1, 65535].
+		temp := tidbOptPositiveInt32(val, DefAutoIncrementIncrement)
+		s.AutoIncrementIncrement = adjustAutoIncrementParameter(temp)
+	case AutoIncrementOffset:
+		// AutoIncrementOffset is valid in [1, 65535].
+		temp := tidbOptPositiveInt32(val, DefAutoIncrementOffset)
+		s.AutoIncrementOffset = adjustAutoIncrementParameter(temp)
 	case MaxExecutionTime:
 		timeoutMS := tidbOptPositiveInt32(val, 0)
 		s.MaxExecutionTime = uint64(timeoutMS)
@@ -821,6 +840,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.MemQuotaNestedLoopApply = tidbOptInt64(val, DefTiDBMemQuotaNestedLoopApply)
 	case TiDBGeneralLog:
 		atomic.StoreUint32(&ProcessGeneralLog, uint32(tidbOptPositiveInt32(val, DefTiDBGeneralLog)))
+	case TiDBPProfSQLCPU:
+		EnablePProfSQLCPU.Store(uint32(tidbOptPositiveInt32(val, DefTiDBPProfSQLCPU)) > 0)
 	case TiDBSlowLogThreshold:
 		atomic.StoreUint64(&config.GetGlobalConfig().Log.SlowThreshold, uint64(tidbOptInt64(val, logutil.DefaultSlowThreshold)))
 	case TiDBRecordPlanInSlowLog:
@@ -945,7 +966,7 @@ var (
 	}
 )
 
-// TableDelta stands for the changed count for one table.
+// TableDelta stands for the changed count for one table or partition.
 type TableDelta struct {
 	Delta    int64
 	Count    int64
@@ -1088,6 +1109,8 @@ const (
 	SlowLogPrevStmt = "Prev_stmt"
 	// SlowLogPlan is used to record the query plan.
 	SlowLogPlan = "Plan"
+	// SlowLogPlanDigest is used to record the query plan digest.
+	SlowLogPlanDigest = "Plan_digest"
 	// SlowLogPlanPrefix is the prefix of the plan value.
 	SlowLogPlanPrefix = ast.TiDBDecodePlan + "('"
 	// SlowLogPlanSuffix is the suffix of the plan value.
@@ -1115,6 +1138,7 @@ type SlowQueryLogItems struct {
 	HasMoreResults bool
 	PrevStmt       string
 	Plan           string
+	PlanDigest     string
 }
 
 // SlowLogFormat uses for formatting slow log.
@@ -1221,6 +1245,9 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 	if len(logItems.Plan) != 0 {
 		writeSlowLogItem(&buf, SlowLogPlan, logItems.Plan)
 	}
+	if len(logItems.PlanDigest) != 0 {
+		writeSlowLogItem(&buf, SlowLogPlanDigest, logItems.PlanDigest)
+	}
 
 	if logItems.PrevStmt != "" {
 		writeSlowLogItem(&buf, SlowLogPrevStmt, logItems.PrevStmt)
@@ -1236,4 +1263,16 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 // writeSlowLogItem writes a slow log item in the form of: "# ${key}:${value}"
 func writeSlowLogItem(buf *bytes.Buffer, key, value string) {
 	buf.WriteString(SlowLogRowPrefixStr + key + SlowLogSpaceMarkStr + value + "\n")
+}
+
+// adjustAutoIncrementParameter adjust the increment and offset of AutoIncrement.
+// AutoIncrementIncrement / AutoIncrementOffset is valid in [1, 65535].
+func adjustAutoIncrementParameter(temp int) int {
+	if temp <= 0 {
+		return 1
+	} else if temp > math.MaxUint16 {
+		return math.MaxUint16
+	} else {
+		return temp
+	}
 }

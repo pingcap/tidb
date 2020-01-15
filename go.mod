@@ -38,7 +38,7 @@ require (
 	github.com/pingcap/goleveldb v0.0.0-20171020122428-b9ff6c35079e
 	github.com/pingcap/kvproto v0.0.0-20191106014506-c5d88d699a8d
 	github.com/pingcap/log v0.0.0-20190715063458-479153f07ebd
-	github.com/pingcap/parser v0.0.0-20191224043251-93f4d5ec2623
+	github.com/pingcap/parser v0.0.0-20200108075733-73763c7a9133
 	github.com/pingcap/pd v1.1.0-beta.0.20191223090411-ea2b748f6ee2
 	github.com/pingcap/tidb-tools v3.0.6-0.20191119150227-ff0a3c6e5763+incompatible
 	github.com/pingcap/tipb v0.0.0-20191120045257-1b9900292ab6
@@ -54,7 +54,7 @@ require (
 	github.com/spaolacci/murmur3 v0.0.0-20180118202830-f09979ecbc72
 	github.com/struCoder/pidusage v0.1.2
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
-	github.com/uber-go/atomic v1.3.2 // indirect
+	github.com/uber-go/atomic v1.3.2
 	github.com/uber/jaeger-client-go v2.15.0+incompatible
 	github.com/uber/jaeger-lib v1.5.0 // indirect
 	github.com/unrolled/render v0.0.0-20180914162206-b9786414de4d // indirect

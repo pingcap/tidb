@@ -85,10 +85,17 @@ func (s *testSessionSuite) TearDownSuite(c *C) {
 
 func (s *testSessionSuite) TearDownTest(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
-	r := tk.MustQuery("show tables")
+	r := tk.MustQuery("show full tables")
 	for _, tb := range r.Rows() {
 		tableName := tb[0]
-		tk.MustExec(fmt.Sprintf("drop table %v", tableName))
+		tableType := tb[1]
+		if tableType == "VIEW" {
+			tk.MustExec(fmt.Sprintf("drop view %v", tableName))
+		} else if tableType == "BASE TABLE" {
+			tk.MustExec(fmt.Sprintf("drop table %v", tableName))
+		} else {
+			panic(fmt.Sprintf("Unexpected table '%s' with type '%s'.", tableName, tableType))
+		}
 	}
 }
 
@@ -370,9 +377,17 @@ func (s *testSessionSuite) TestAutocommit(c *C) {
 // TestTxnLazyInitialize tests that when autocommit = 0, not all statement starts
 // a new transaction.
 func (s *testSessionSuite) TestTxnLazyInitialize(c *C) {
+	testTxnLazyInitialize(s, c, false)
+	testTxnLazyInitialize(s, c, true)
+}
+
+func testTxnLazyInitialize(s *testSessionSuite, c *C, isPessimistic bool) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (id int)")
+	if isPessimistic {
+		tk.MustExec("set tidb_txn_mode = 'pessimistic'")
+	}
 
 	tk.MustExec("set @@autocommit = 0")
 	txn, err := tk.Se.Txn(true)
@@ -1809,9 +1824,9 @@ func (s *testSchemaSuite) TestSchemaCheckerSQL(c *C) {
 	tk.MustExec(`commit;`)
 
 	// The schema version is out of date in the first transaction, and the SQL can't be retried.
-	session.SchemaChangedWithoutRetry = true
+	atomic.StoreUint32(&session.SchemaChangedWithoutRetry, 1)
 	defer func() {
-		session.SchemaChangedWithoutRetry = false
+		atomic.StoreUint32(&session.SchemaChangedWithoutRetry, 0)
 	}()
 	tk.MustExec(`begin;`)
 	tk1.MustExec(`alter table t modify column c bigint;`)

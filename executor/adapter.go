@@ -433,13 +433,19 @@ func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, e Executor) (sqlex
 
 func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e Executor) error {
 	sctx := a.Ctx
-	txn, err := sctx.Txn(true)
+	// Do not active the transaction here.
+	// When autocommit = 0 and transaction in pessimistic mode,
+	// statements like set xxx = xxx; should not active the transaction.
+	txn, err := sctx.Txn(false)
 	if err != nil {
 		return err
 	}
 	txnCtx := sctx.GetSessionVars().TxnCtx
 	for {
 		_, err = a.handleNoDelayExecutor(ctx, e)
+		if !txn.Valid() {
+			return err
+		}
 		if err != nil {
 			// It is possible the DML has point get plan that locks the key.
 			e, err = a.handlePessimisticLockError(ctx, err)
@@ -689,6 +695,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	statsInfos := plannercore.GetStatsInfo(a.Plan)
 	memMax := sessVars.StmtCtx.MemTracker.MaxConsumed()
 	_, digest := sessVars.StmtCtx.SQLDigest()
+	_, planDigest := getPlanDigest(a.Ctx, a.Plan)
 	slowItems := &variable.SlowQueryLogItems{
 		TxnTS:          txnTS,
 		SQL:            sql.String(),
@@ -703,6 +710,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		MemMax:         memMax,
 		Succ:           succ,
 		Plan:           getPlanTree(a.Plan),
+		PlanDigest:     planDigest,
 		Prepared:       a.isPreparedStmt,
 		HasMoreResults: hasMoreResults,
 	}
@@ -744,27 +752,22 @@ func getPlanTree(p plannercore.Plan) string {
 	if atomic.LoadUint32(&cfg.Log.RecordPlanInSlowLog) == 0 {
 		return ""
 	}
-	var selectPlan plannercore.PhysicalPlan
-	if physicalPlan, ok := p.(plannercore.PhysicalPlan); ok {
-		selectPlan = physicalPlan
-	} else {
-		switch x := p.(type) {
-		case *plannercore.Delete:
-			selectPlan = x.SelectPlan
-		case *plannercore.Update:
-			selectPlan = x.SelectPlan
-		case *plannercore.Insert:
-			selectPlan = x.SelectPlan
-		}
-	}
-	if selectPlan == nil {
-		return ""
-	}
-	planTree := plannercore.EncodePlan(selectPlan)
+	planTree := plannercore.EncodePlan(p)
 	if len(planTree) == 0 {
 		return planTree
 	}
 	return variable.SlowLogPlanPrefix + planTree + variable.SlowLogPlanSuffix
+}
+
+// getPlanDigest will try to get the select plan tree if the plan is select or the select plan of delete/update/insert statement.
+func getPlanDigest(sctx sessionctx.Context, p plannercore.Plan) (normalized, planDigest string) {
+	normalized, planDigest = sctx.GetSessionVars().StmtCtx.GetPlanDigest()
+	if len(normalized) > 0 {
+		return
+	}
+	normalized, planDigest = plannercore.NormalizePlan(p)
+	sctx.GetSessionVars().StmtCtx.SetPlanDigest(normalized, planDigest)
+	return
 }
 
 // SummaryStmt collects statements for performance_schema.events_statements_summary_by_digest
@@ -790,6 +793,12 @@ func (a *ExecStmt) SummaryStmt() {
 	}
 	sessVars.SetPrevStmtDigest(digest)
 
+	// No need to encode every time, so encode lazily.
+	planGenerator := func() string {
+		return plannercore.EncodePlan(a.Plan)
+	}
+	_, planDigest := getPlanDigest(a.Ctx, a.Plan)
+
 	execDetail := stmtCtx.GetExecDetails()
 	copTaskInfo := stmtCtx.CopTasksDetails()
 	memMax := stmtCtx.MemTracker.MaxConsumed()
@@ -805,6 +814,8 @@ func (a *ExecStmt) SummaryStmt() {
 		Digest:         digest,
 		PrevSQL:        prevSQL,
 		PrevSQLDigest:  prevSQLDigest,
+		PlanGenerator:  planGenerator,
+		PlanDigest:     planDigest,
 		User:           userString,
 		TotalLatency:   costTime,
 		ParseLatency:   sessVars.DurationParse,
