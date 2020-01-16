@@ -788,11 +788,11 @@ var vecBuiltin{{.Category}}GeneratedCases = map[string][]vecExprBenchCase{
 {{ end }}
 }
 
-func (s *testEvaluatorSuite) TestVectorizedBuiltin{{.Category}}EvalOneVecGenerated(c *C) {
+func (s *testVectorizeSuite1) TestVectorizedBuiltin{{.Category}}EvalOneVecGenerated(c *C) {
 	testVectorizedEvalOneVec(c, vecBuiltin{{.Category}}GeneratedCases)
 }
 
-func (s *testEvaluatorSuite) TestVectorizedBuiltin{{.Category}}FuncGenerated(c *C) {
+func (s *testVectorizeSuite1) TestVectorizedBuiltin{{.Category}}FuncGenerated(c *C) {
 	testVectorizedBuiltinFunc(c, vecBuiltin{{.Category}}GeneratedCases)
 }
 
