@@ -398,6 +398,40 @@ func (s *testSuite2) TestMergeJoin(c *C) {
 		"1",
 		"0",
 	))
+
+	// Test TIDB_SMJ for join with order by desc, see https://github.com/pingcap/tidb/issues/14483
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t (a int, key(a))")
+	tk.MustExec("create table t1 (a int, key(a))")
+	tk.MustExec("insert into t values (1), (2), (3)")
+	tk.MustExec("insert into t1 values (1), (2), (3)")
+	tk.MustQuery("select /*+ TIDB_SMJ(t1, t2) */ t.a from t, t1 where t.a = t1.a order by t1.a desc").Check(testkit.Rows(
+		"3", "2", "1"))
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int, key(a), key(b))")
+	tk.MustExec("insert into t values (1,1),(1,2),(1,3),(2,1),(2,2),(3,1),(3,2),(3,3)")
+	tk.MustQuery("select /*+ TIDB_SMJ(t1, t2) */ t1.a from t t1, t t2 where t1.a = t2.b order by t1.a desc").Check(testkit.Rows(
+		"3", "3", "3", "3", "3", "3",
+		"2", "2", "2", "2", "2", "2",
+		"1", "1", "1", "1", "1", "1", "1", "1", "1"))
+
+	tk.MustExec("drop table if exists s")
+	tk.MustExec("create table s (a int)")
+	tk.MustExec("insert into s values (4), (1), (3), (2)")
+	tk.MustQuery("explain select s1.a1 from (select a as a1 from s order by s.a desc) as s1 join (select a as a2 from s order by s.a desc) as s2 on s1.a1 = s2.a2 order by s1.a1 desc").Check(testkit.Rows(
+		"Projection_27 12487.50 root test.s.a",
+		"└─MergeJoin_28 12487.50 root inner join, left key:test.s.a, right key:test.s.a",
+		"  ├─Sort_29 9990.00 root test.s.a:desc",
+		"  │ └─TableReader_21 9990.00 root data:Selection_20",
+		"  │   └─Selection_20 9990.00 cop[tikv] not(isnull(test.s.a))",
+		"  │     └─TableScan_19 10000.00 cop[tikv] table:s, range:[-inf,+inf], keep order:false, stats:pseudo",
+		"  └─Sort_31 9990.00 root test.s.a:desc",
+		"    └─TableReader_26 9990.00 root data:Selection_25",
+		"      └─Selection_25 9990.00 cop[tikv] not(isnull(test.s.a))",
+		"        └─TableScan_24 10000.00 cop[tikv] table:s, range:[-inf,+inf], keep order:false, stats:pseudo"))
+	tk.MustQuery("select s1.a1 from (select a as a1 from s order by s.a desc) as s1 join (select a as a2 from s order by s.a desc) as s2 on s1.a1 = s2.a2 order by s1.a1 desc").Check(testkit.Rows(
+		"4", "3", "2", "1"))
 }
 
 func (s *testSuite2) Test3WaysMergeJoin(c *C) {
