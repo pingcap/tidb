@@ -163,7 +163,7 @@ func (p *hashPartitionPruner) solve(ctx sessionctx.Context, conds []Expression, 
 	for _, col := range ExtractColumns(piExpr) {
 		p.insertCol(col)
 	}
-	p.constantMap = make([]*Constant, p.numColumn, p.numColumn)
+	p.constantMap = make([]*Constant, p.numColumn)
 	conflict := p.reduceConstantEQ()
 	if conflict {
 		return 0, false, conflict
