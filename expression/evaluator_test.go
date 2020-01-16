@@ -35,6 +35,7 @@ import (
 var _ = SerialSuites(&testEvaluatorSerialSuites{})
 var _ = Suite(&testEvaluatorSuite{})
 var _ = Suite(&testVectorizeSuite1{})
+
 //var _ = Suite(&testVectorizeSuite2{})
 
 func TestT(t *testing.T) {

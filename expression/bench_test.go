@@ -214,30 +214,39 @@ type dataGenerator interface {
 type defaultGener struct {
 	nullRation float64
 	eType      types.EvalType
+	rander     *rand.Rand
+}
+
+func newDefaultGener(nullRation float64, eType types.EvalType) *defaultGener {
+	return &defaultGener{
+		nullRation: nullRation,
+		eType:      eType,
+		rander:     rand.New(rand.NewSource(int64(rand.Uint64()))),
+	}
 }
 
 func (g *defaultGener) gen() interface{} {
-	if rand.Float64() < g.nullRation {
+	if g.rander.Float64() < g.nullRation {
 		return nil
 	}
 	switch g.eType {
 	case types.ETInt:
-		if rand.Float64() < 0.5 {
-			return -rand.Int63()
+		if g.rander.Float64() < 0.5 {
+			return -g.rander.Int63()
 		}
-		return rand.Int63()
+		return g.rander.Int63()
 	case types.ETReal:
-		if rand.Float64() < 0.5 {
-			return -rand.Float64() * 1000000
+		if g.rander.Float64() < 0.5 {
+			return -g.rander.Float64() * 1000000
 		}
-		return rand.Float64() * 1000000
+		return g.rander.Float64() * 1000000
 	case types.ETDecimal:
 		d := new(types.MyDecimal)
 		var f float64
-		if rand.Float64() < 0.5 {
-			f = rand.Float64() * 100000
+		if g.rander.Float64() < 0.5 {
+			f = g.rander.Float64() * 100000
 		} else {
-			f = -rand.Float64() * 100000
+			f = -g.rander.Float64() * 100000
 		}
 		if err := d.FromFloat64(f); err != nil {
 			panic(err)
@@ -250,12 +259,12 @@ func (g *defaultGener) gen() interface{} {
 	case types.ETDuration:
 		d := types.Duration{
 			// use rand.Int32() to make it not overflow when AddDuration
-			Duration: time.Duration(rand.Int31()),
+			Duration: time.Duration(g.rander.Int31()),
 		}
 		return d
 	case types.ETJson:
 		j := new(json.BinaryJSON)
-		if err := j.UnmarshalJSON([]byte(fmt.Sprintf(`{"key":%v}`, rand.Int()))); err != nil {
+		if err := j.UnmarshalJSON([]byte(fmt.Sprintf(`{"key":%v}`, g.rander.Int()))); err != nil {
 			panic(err)
 		}
 		return *j
@@ -333,7 +342,8 @@ func (g *decimalJSONGener) gen() interface{} {
 	return json.CreateBinary(f)
 }
 
-type jsonStringGener struct{}
+type jsonStringGener struct {
+}
 
 func (g *jsonStringGener) gen() interface{} {
 	j := new(json.BinaryJSON)
@@ -343,7 +353,8 @@ func (g *jsonStringGener) gen() interface{} {
 	return j.String()
 }
 
-type decimalStringGener struct{}
+type decimalStringGener struct {
+}
 
 func (g *decimalStringGener) gen() interface{} {
 	tempDecimal := new(types.MyDecimal)
@@ -353,7 +364,8 @@ func (g *decimalStringGener) gen() interface{} {
 	return tempDecimal.String()
 }
 
-type realStringGener struct{}
+type realStringGener struct {
+}
 
 func (g *realStringGener) gen() interface{} {
 	return fmt.Sprintf("%f", rand.Float64())
@@ -821,7 +833,7 @@ func fillColumn(eType types.EvalType, chk *chunk.Chunk, colIdx int, testCase vec
 func fillColumnWithGener(eType types.EvalType, chk *chunk.Chunk, colIdx int, gen dataGenerator) {
 	batchSize := chk.Capacity()
 	if gen == nil {
-		gen = &defaultGener{0.2, eType}
+		gen = newDefaultGener(0.2, eType)
 	}
 
 	col := chk.Column(colIdx)
@@ -1548,7 +1560,7 @@ func genVecEvalBool(numCols int, colTypes, eTypes []types.EvalType) (CNFExprs, *
 		if eType == types.ETString {
 			gens = append(gens, &numStrGener{rangeInt64Gener{0, 10}})
 		} else {
-			gens = append(gens, &defaultGener{nullRation: 0.05, eType: eType})
+			gens = append(gens, newDefaultGener(0.05, eType))
 		}
 	}
 

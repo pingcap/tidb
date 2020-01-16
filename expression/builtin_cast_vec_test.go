@@ -59,7 +59,7 @@ var vecBuiltinCastCases = map[string][]vecExprBenchCase{
 		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETDuration}, geners: []dataGenerator{&rangeDurationGener{nullRation: 0.5}}},
 		{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETDatetime},
 			geners: []dataGenerator{&dateTimeGenerWithFsp{
-				defaultGener: defaultGener{nullRation: 0.2, eType: types.ETDatetime},
+				defaultGener: *newDefaultGener(0.2, types.ETDatetime),
 				fsp:          1,
 			}},
 		},

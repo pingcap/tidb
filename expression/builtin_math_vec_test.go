@@ -120,7 +120,7 @@ var vecBuiltinMathCases = map[string][]vecExprBenchCase{
 		{retEvalType: types.ETDecimal, childrenTypes: []types.EvalType{types.ETDecimal, types.ETInt}},
 	},
 	ast.Rand: {
-		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETInt}, geners: []dataGenerator{&defaultGener{0, types.ETInt}}},
+		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETInt}, geners: []dataGenerator{newDefaultGener(0, types.ETInt)}},
 	},
 	ast.CRC32: {
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString}},

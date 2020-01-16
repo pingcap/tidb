@@ -658,7 +658,7 @@ type gener struct {
 func (g gener) gen() interface{} {
 	result := g.defaultGener.gen()
 	if _, ok := result.(string); ok {
-		dg := &defaultGener{eType: types.ETDuration, nullRation: 0}
+		dg := newDefaultGener(types.ETDuration, 0)
 		d := dg.gen().(types.Duration)
 		if int8(d.Duration)%2 == 0 {
 			d.Fsp = 0
@@ -684,13 +684,13 @@ func (g gener) gen() interface{} {
 					{{- else if eq $sig.TypeA.ETName "Int"}}
 						&dateTimeIntGener{nullRation: 0.2},
 					{{- else }}
-						&defaultGener{eType: types.ET{{$sig.TypeA.ETName}}, nullRation: 0.2},
+						newDefaultGener(types.ET{{$sig.TypeA.ETName}}, 0.2),
 					{{- end }}
 
 					{{- if eq $sig.TypeB.ETName "String" }}
 						&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
 					{{- else }}
-						&defaultGener{eType: types.ET{{$sig.TypeB.ETName}}, nullRation: 0.2},
+						newDefaultGener(types.ET{{$sig.TypeB.ETName}}, 0.2),
 					{{- end }}
 				},
 				constants: []*Constant{nil, nil, {Value: types.NewStringDatum("{{$unit}}"), RetType: types.NewFieldType(mysql.TypeString)}},
