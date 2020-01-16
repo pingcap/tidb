@@ -176,6 +176,11 @@ func (p *baseLogicalPlan) findBestTask(prop *property.PhysicalProperty) (bestTas
 			curTask = enforceProperty(prop, curTask, p.basePlan.ctx)
 		}
 
+		// optimize by shuffle executor to running in parallel manner.
+		if prop.IsEmpty() {
+			curTask = optimizeByShuffle(pp, curTask, p.basePlan.ctx)
+		}
+
 		// get the most efficient one.
 		if curTask.cost() < bestTask.cost() {
 			bestTask = curTask
