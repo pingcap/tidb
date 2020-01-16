@@ -203,6 +203,7 @@ type StmtExecInfo struct {
 	PrevSQLDigest  string
 	PlanGenerator  func() string
 	PlanDigest     string
+	PlanDigestGen  func() string
 	User           string
 	TotalLatency   time.Duration
 	ParseLatency   time.Duration
@@ -508,9 +509,14 @@ func (ssbd *stmtSummaryByDigest) init(sei *StmtExecInfo, beginTime int64, interv
 	}
 	tableNames := buffer.String()
 
+	planDigest := sei.PlanDigest
+	if sei.PlanDigestGen != nil && len(planDigest) == 0 {
+		// It comes here only when the plan is 'Point_Get'.
+		planDigest = sei.PlanDigestGen()
+	}
 	ssbd.schemaName = sei.SchemaName
 	ssbd.digest = sei.Digest
-	ssbd.planDigest = sei.PlanDigest
+	ssbd.planDigest = planDigest
 	ssbd.stmtType = strings.ToLower(sei.StmtCtx.StmtType)
 	ssbd.normalizedSQL = formatSQL(sei.NormalizedSQL)
 	ssbd.tableNames = tableNames
