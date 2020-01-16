@@ -82,7 +82,7 @@ func (decoder *DatumMapDecoder) DecodeToDatumMap(rowData []byte, handle int64, r
 		if col.ID == decoder.handleColID {
 			if mysql.HasUnsignedFlag(uint(col.Flag)) {
 				row[col.ID] = types.NewUintDatum(uint64(handle))
-			}else{
+			} else {
 				row[col.ID] = types.NewIntDatum(handle)
 			}
 			continue
