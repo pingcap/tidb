@@ -60,6 +60,8 @@ type copTask struct {
 	// tableCols store the original columns of DataSource before being pruned, it
 	// is used to compute average row width when computing scan cost.
 	tableCols []*expression.Column
+
+	rootTaskConds []expression.Expression
 }
 
 func (t *copTask) invalid() bool {
@@ -468,6 +470,13 @@ func finishCopTask(ctx sessionctx.Context, task task) task {
 		p.stats = t.tablePlan.statsInfo()
 		newTask.p = p
 	}
+
+	if len(t.rootTaskConds) > 0 {
+		sel := PhysicalSelection{Conditions: t.rootTaskConds}.Init(ctx, newTask.p.statsInfo())
+		sel.SetChildren(newTask.p)
+		newTask.p = sel
+	}
+
 	return newTask
 }
 

@@ -848,12 +848,6 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 		filterCondition: path.tableFilters,
 		StoreType:       path.storeType,
 	}.Init(ds.ctx)
-	if ts.StoreType == kv.TiFlash {
-		// Append the AccessCondition to filterCondition because TiFlash only support full range scan for each
-		// region, do not reset ts.Ranges as it will help prune regions during `buildCopTasks`
-		ts.filterCondition = append(ts.filterCondition, ts.AccessCondition...)
-		ts.AccessCondition = nil
-	}
 	ts.SetSchema(ds.schema)
 	if ts.Table.PKIsHandle {
 		if pkColInfo := ts.Table.GetPkColInfo(); pkColInfo != nil {
@@ -867,6 +861,13 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 		tablePlan:         ts,
 		indexPlanFinished: true,
 		tableStats:        ds.tableStats,
+	}
+	if ts.StoreType == kv.TiFlash {
+		// Append the AccessCondition to filterCondition because TiFlash only support full range scan for each
+		// region, do not reset ts.Ranges as it will help prune regions during `buildCopTasks`
+		ts.filterCondition = append(ts.filterCondition, ts.AccessCondition...)
+		ts.AccessCondition = nil
+		ts.filterCondition, copTask.rootTaskConds = expression.CheckExprPushFlash(ts.filterCondition)
 	}
 	task = copTask
 	// Adjust number of rows we actually need to scan if prop.ExpectedCnt is smaller than the count we calculated.
