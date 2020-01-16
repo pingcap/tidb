@@ -133,6 +133,7 @@ func RegisterMetrics() {
 	prometheus.MustRegister(TimeJumpBackCounter)
 	prometheus.MustRegister(TransactionCounter)
 	prometheus.MustRegister(TransactionDuration)
+	prometheus.MustRegister(StatementDeadlockDetectDuration)
 	prometheus.MustRegister(UpdateSelfVersionHistogram)
 	prometheus.MustRegister(UpdateStatsCounter)
 	prometheus.MustRegister(WatchOwnerCounter)
