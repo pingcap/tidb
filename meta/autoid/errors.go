@@ -20,11 +20,11 @@ import (
 
 // Error instances.
 var (
-	ErrAutoincReadFailed = terror.ClassAutoid.New(mysql.ErrAutoincReadFailed, mysql.MySQLErrName[mysql.ErrAutoincReadFailed])
-	ErrWrongAutoKey      = terror.ClassAutoid.New(mysql.ErrWrongAutoKey, mysql.MySQLErrName[mysql.ErrWrongAutoKey])
+	ErrAutoincReadFailed    = terror.ClassAutoid.New(mysql.ErrAutoincReadFailed, mysql.MySQLErrName[mysql.ErrAutoincReadFailed])
+	ErrWrongAutoKey         = terror.ClassAutoid.New(mysql.ErrWrongAutoKey, mysql.MySQLErrName[mysql.ErrWrongAutoKey])
 	errInvalidTableID       = terror.ClassAutoid.New(codeInvalidTableID, "invalid TableID")
 	errInvalidAllocatorType = terror.ClassAutoid.New(mysql.ErrUnknownAllocatorType, mysql.MySQLErrName[mysql.ErrUnknownAllocatorType])
-	ErrAutoRandReadFailed = terror.ClassAutoid.New(mysql.ErrAutoRandReadFailed, mysql.MySQLErrName[mysql.ErrAutoRandReadFailed])
+	ErrAutoRandReadFailed   = terror.ClassAutoid.New(mysql.ErrAutoRandReadFailed, mysql.MySQLErrName[mysql.ErrAutoRandReadFailed])
 )
 
 // codeInvalidTableID is the code of autoid error.

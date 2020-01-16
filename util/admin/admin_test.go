@@ -353,8 +353,8 @@ func (s *testSuite) TestScan(c *C) {
 	c.Assert(err, IsNil)
 	tbInfo := tbl.Meta()
 
-	alloc := autoid.NewAllocator(s.store, dbInfo.ID, false)
-	tb, err := tables.TableFromMeta(alloc, tbInfo)
+	allocs := autoid.NewAllocatorsFromTblInfo(s.store, dbInfo.ID, tbInfo)
+	tb, err := tables.TableFromMeta(allocs, tbInfo)
 	c.Assert(err, IsNil)
 	indices := tb.Indices()
 	c.Assert(s.ctx.NewTxn(context.Background()), IsNil)

@@ -94,10 +94,10 @@ type Config struct {
 	AlterPrimaryKey bool `toml:"alter-primary-key" json:"alter-primary-key"`
 	// TreatOldVersionUTF8AsUTF8MB4 is use to treat old version table/column UTF8 charset as UTF8MB4. This is for compatibility.
 	// Currently not support dynamic modify, because this need to reload all old version schema.
-	TreatOldVersionUTF8AsUTF8MB4 bool        `toml:"treat-old-version-utf8-as-utf8mb4" json:"treat-old-version-utf8-as-utf8mb4"`
-	SplitRegionMaxNum            uint64      `toml:"split-region-max-num" json:"split-region-max-num"`
-	StmtSummary                  StmtSummary `toml:"stmt-summary" json:"stmt-summary"`
-	Experimental Experimental `toml:"experimental" json:"experimental"`
+	TreatOldVersionUTF8AsUTF8MB4 bool         `toml:"treat-old-version-utf8-as-utf8mb4" json:"treat-old-version-utf8-as-utf8mb4"`
+	SplitRegionMaxNum            uint64       `toml:"split-region-max-num" json:"split-region-max-num"`
+	StmtSummary                  StmtSummary  `toml:"stmt-summary" json:"stmt-summary"`
+	Experimental                 Experimental `toml:"experimental" json:"experimental"`
 }
 
 // Log is the log section of config.

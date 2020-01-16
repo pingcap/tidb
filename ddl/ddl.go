@@ -759,7 +759,7 @@ const (
 	codeSystemVersioningWrongPartitions        = terror.ErrCode(mysql.ErrSystemVersioningWrongPartitions)
 	codeWrongPartitionTypeExpectedSystemTime   = terror.ErrCode(mysql.ErrWrongPartitionTypeExpectedSystemTime)
 	codeWrongTypeColumnValue                   = terror.ErrCode(mysql.ErrWrongTypeColumnValue)
-	codeInvalidAutoRandom = terror.ErrCode(mysql.ErrInvalidAutoRandom)
+	codeInvalidAutoRandom                      = terror.ErrCode(mysql.ErrInvalidAutoRandom)
 )
 
 func init() {
