@@ -44,6 +44,7 @@ type Transformation interface {
 	OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error)
 }
 
+// TransformationRuleBatch is a batch of transformation rules.
 type TransformationRuleBatch map[memo.Operand][]Transformation
 
 var mainTransformationBatch = TransformationRuleBatch{
