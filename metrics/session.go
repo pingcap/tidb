@@ -90,6 +90,16 @@ var (
 			Help:      "Bucketed histogram of a transaction execution duration, including retry.",
 			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 20), // 1ms ~ 1049s
 		}, []string{LblSQLType, LblType})
+
+	StatementDeadlockDetectDuration = prometheus.NewHistogram(
+		prometheus.HistogramOpts{
+			Namespace: "tidb",
+			Subsystem: "session",
+			Name:      "statement_deadlock_detect_duration_seconds",
+			Help:      "Bucketed histogram of a statement deadlock detect duration.",
+			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 20), // 1ms ~ 1049s
+		},
+	)
 )
 
 // Label constants.
