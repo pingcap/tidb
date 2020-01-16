@@ -451,6 +451,10 @@ type builtinFunc interface {
 	Clone() builtinFunc
 }
 
+type builtinFuncNew interface {
+	evalIntWithCtx(ctx sessionctx.Context, row chunk.Row) (val int64, isNull bool, err error)
+}
+
 // baseFunctionClass will be contained in every struct that implement functionClass interface.
 type baseFunctionClass struct {
 	funcName string
