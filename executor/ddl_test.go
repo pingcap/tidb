@@ -650,7 +650,7 @@ func (s *testSuite8) TestShardRowIDBits(c *C) {
 	// Test shard_row_id_bits with auto_increment column
 	tk.MustExec("create table auto (a int, b int auto_increment unique) shard_row_id_bits = 15")
 	for i := 0; i < 100; i++ {
-		tk.MustExec("insert into t values (?)", i)
+		tk.MustExec("insert into auto(a) values (?)", i)
 	}
 	tbl, err = dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("auto"))
 	assertCountAndShard(tbl, 100)
@@ -699,7 +699,7 @@ func (s *testAutoRandomSuite) TestAutoRandomBitsData(c *C) {
 
 	tk.MustExec("create table t (a bigint primary key auto_random(15), b int)")
 	for i := 0; i < 100; i++ {
-		tk.MustExec("insert into t values (?)", i)
+		tk.MustExec("insert into t(b) values (?)", i)
 	}
 	dom := domain.GetDomain(tk.Se)
 	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr("test_auto_random_bits"), model.NewCIStr("t"))
