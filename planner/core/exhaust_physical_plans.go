@@ -121,6 +121,7 @@ func (p *PhysicalMergeJoin) tryToGetChildReqProp(prop *property.PhysicalProperty
 	return []*property.PhysicalProperty{lProp, rProp}, true
 }
 
+// GetMergeJoin convert the logical join to physical merge join based on the physical property.
 func (p *LogicalJoin) GetMergeJoin(prop *property.PhysicalProperty) []PhysicalPlan {
 	joins := make([]PhysicalPlan, 0, len(p.leftProperties)+1)
 	// The leftProperties caches all the possible properties that are provided by its children.

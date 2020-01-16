@@ -104,9 +104,7 @@ func (r *ImplTableDual) OnImplement(expr *memo.GroupExpr, reqProp *property.Phys
 	logicDual := expr.ExprNode.(*plannercore.LogicalTableDual)
 	dual := plannercore.PhysicalTableDual{RowCount: logicDual.RowCount}.Init(logicDual.SCtx(), logicProp.Stats, logicDual.SelectBlockOffset())
 	dual.SetSchema(logicProp.Schema)
-	var duals []memo.Implementation
-	duals = append(duals, impl.NewTableDualImpl(dual))
-	return duals, nil
+	return []memo.Implementation{impl.NewTableDualImpl(dual)}, nil
 }
 
 // ImplProjection implements LogicalProjection as PhysicalProjection.
@@ -132,9 +130,7 @@ func (r *ImplProjection) OnImplement(expr *memo.GroupExpr, reqProp *property.Phy
 		AvoidColumnEvaluator: logicProj.AvoidColumnEvaluator,
 	}.Init(logicProj.SCtx(), logicProp.Stats.ScaleByExpectCnt(reqProp.ExpectedCnt), logicProj.SelectBlockOffset(), childProp)
 	proj.SetSchema(logicProp.Schema)
-	var projs []memo.Implementation
-	projs = append(projs, impl.NewProjectionImpl(proj))
-	return projs, nil
+	return []memo.Implementation{impl.NewProjectionImpl(proj)}, nil
 }
 
 // ImplTiKVSingleReadGather implements TiKVSingleGather
@@ -151,15 +147,12 @@ func (r *ImplTiKVSingleReadGather) Match(expr *memo.GroupExpr, prop *property.Ph
 func (r *ImplTiKVSingleReadGather) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) ([]memo.Implementation, error) {
 	logicProp := expr.Group.Prop
 	sg := expr.ExprNode.(*plannercore.TiKVSingleGather)
-	var readers []memo.Implementation
 	if sg.IsIndexGather {
 		reader := sg.GetPhysicalIndexReader(logicProp.Schema, logicProp.Stats.ScaleByExpectCnt(reqProp.ExpectedCnt), reqProp)
-		readers = append(readers, impl.NewIndexReaderImpl(reader, sg.Source.TblColHists))
-		return readers, nil
+		return []memo.Implementation{impl.NewIndexReaderImpl(reader, sg.Source.TblColHists)}, nil
 	}
 	reader := sg.GetPhysicalTableReader(logicProp.Schema, logicProp.Stats.ScaleByExpectCnt(reqProp.ExpectedCnt), reqProp)
-	readers = append(readers, impl.NewTableReaderImpl(reader, sg.Source.TblColHists))
-	return readers, nil
+	return []memo.Implementation{impl.NewTableReaderImpl(reader, sg.Source.TblColHists)}, nil
 }
 
 // ImplTableScan implements TableScan as PhysicalTableScan.
@@ -182,9 +175,7 @@ func (r *ImplTableScan) OnImplement(expr *memo.GroupExpr, reqProp *property.Phys
 		ts.Desc = reqProp.Items[0].Desc
 	}
 	tblCols, tblColHists := logicalScan.Source.TblCols, logicalScan.Source.TblColHists
-	var tableScanImpls []memo.Implementation
-	tableScanImpls = append(tableScanImpls, impl.NewTableScanImpl(ts, tblCols, tblColHists))
-	return tableScanImpls, nil
+	return []memo.Implementation{impl.NewTableScanImpl(ts, tblCols, tblColHists)}, nil
 }
 
 // ImplIndexScan implements IndexScan as PhysicalIndexScan.
@@ -207,9 +198,7 @@ func (r *ImplIndexScan) OnImplement(expr *memo.GroupExpr, reqProp *property.Phys
 			is.Desc = true
 		}
 	}
-	var indexScanImpls []memo.Implementation
-	indexScanImpls = append(indexScanImpls, impl.NewIndexScanImpl(is, logicalScan.Source.TblColHists))
-	return indexScanImpls, nil
+	return []memo.Implementation{impl.NewIndexScanImpl(is, logicalScan.Source.TblColHists)}, nil
 }
 
 // ImplShow is the implementation rule which implements LogicalShow to
@@ -233,9 +222,7 @@ func (r *ImplShow) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalP
 	// overall performance.
 	showPhys := plannercore.PhysicalShow{ShowContents: show.ShowContents}.Init(show.SCtx())
 	showPhys.SetSchema(logicProp.Schema)
-	var showImpls []memo.Implementation
-	showImpls = append(showImpls, impl.NewShowImpl(showPhys))
-	return showImpls, nil
+	return []memo.Implementation{impl.NewShowImpl(showPhys)}, nil
 }
 
 // ImplSelection is the implementation rule which implements LogicalSelection
@@ -254,14 +241,11 @@ func (r *ImplSelection) OnImplement(expr *memo.GroupExpr, reqProp *property.Phys
 	physicalSel := plannercore.PhysicalSelection{
 		Conditions: logicalSel.Conditions,
 	}.Init(logicalSel.SCtx(), expr.Group.Prop.Stats.ScaleByExpectCnt(reqProp.ExpectedCnt), logicalSel.SelectBlockOffset(), reqProp.Clone())
-	var selImpls []memo.Implementation
 	switch expr.Group.EngineType {
 	case memo.EngineTiDB:
-		selImpls = append(selImpls, impl.NewTiDBSelectionImpl(physicalSel))
-		return selImpls, nil
+		return []memo.Implementation{impl.NewTiDBSelectionImpl(physicalSel)}, nil
 	case memo.EngineTiKV:
-		selImpls = append(selImpls, impl.NewTiKVSelectionImpl(physicalSel))
-		return selImpls, nil
+		return []memo.Implementation{impl.NewTiKVSelectionImpl(physicalSel)}, nil
 	default:
 		return nil, plannercore.ErrInternal.GenWithStack("Unsupported EngineType '%s' for Selection.", expr.Group.EngineType.String())
 	}
@@ -283,12 +267,10 @@ func (r *ImplSort) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) 
 // generate a PhysicalSort.
 func (r *ImplSort) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) ([]memo.Implementation, error) {
 	ls := expr.ExprNode.(*plannercore.LogicalSort)
-	var sortImpls []memo.Implementation
 	if newProp, canUseNominal := plannercore.GetPropByOrderByItems(ls.ByItems); canUseNominal {
 		newProp.ExpectedCnt = reqProp.ExpectedCnt
 		ns := plannercore.NominalSort{}.Init(ls.SCtx(), ls.SelectBlockOffset(), newProp)
-		sortImpls = append(sortImpls, impl.NewNominalSortImpl(ns))
-		return sortImpls, nil
+		return []memo.Implementation{impl.NewNominalSortImpl(ns)}, nil
 	}
 	ps := plannercore.PhysicalSort{ByItems: ls.ByItems}.Init(
 		ls.SCtx(),
@@ -296,8 +278,7 @@ func (r *ImplSort) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalP
 		ls.SelectBlockOffset(),
 		&property.PhysicalProperty{ExpectedCnt: math.MaxFloat64},
 	)
-	sortImpls = append(sortImpls, impl.NewSortImpl(ps))
-	return sortImpls, nil
+	return []memo.Implementation{impl.NewSortImpl(ps)}, nil
 }
 
 // ImplHashAgg is the implementation rule which implements LogicalAggregation
@@ -320,14 +301,11 @@ func (r *ImplHashAgg) OnImplement(expr *memo.GroupExpr, reqProp *property.Physic
 		&property.PhysicalProperty{ExpectedCnt: math.MaxFloat64},
 	)
 	hashAgg.SetSchema(expr.Group.Prop.Schema.Clone())
-	var hashAggImpls []memo.Implementation
 	switch expr.Group.EngineType {
 	case memo.EngineTiDB:
-		hashAggImpls = append(hashAggImpls, impl.NewTiDBHashAggImpl(hashAgg))
-		return hashAggImpls, nil
+		return []memo.Implementation{impl.NewTiDBHashAggImpl(hashAgg)}, nil
 	case memo.EngineTiKV:
-		hashAggImpls = append(hashAggImpls, impl.NewTiKVHashAggImpl(hashAgg))
-		return hashAggImpls, nil
+		return []memo.Implementation{impl.NewTiKVHashAggImpl(hashAgg)}, nil
 	default:
 		return nil, plannercore.ErrInternal.GenWithStack("Unsupported EngineType '%s' for HashAggregation.", expr.Group.EngineType.String())
 	}
@@ -351,9 +329,7 @@ func (r *ImplLimit) OnImplement(expr *memo.GroupExpr, reqProp *property.Physical
 		Offset: logicalLimit.Offset,
 		Count:  logicalLimit.Count,
 	}.Init(logicalLimit.SCtx(), expr.Group.Prop.Stats, logicalLimit.SelectBlockOffset(), newProp)
-	var limitLmpls []memo.Implementation
-	limitLmpls = append(limitLmpls, impl.NewLimitImpl(physicalLimit))
-	return limitLmpls, nil
+	return []memo.Implementation{impl.NewLimitImpl(physicalLimit)}, nil
 }
 
 // ImplTopN is the implementation rule which implements LogicalTopN
@@ -379,14 +355,11 @@ func (r *ImplTopN) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalP
 		Count:   lt.Count,
 		Offset:  lt.Offset,
 	}.Init(lt.SCtx(), expr.Group.Prop.Stats, lt.SelectBlockOffset(), resultProp)
-	var topNImpls []memo.Implementation
 	switch expr.Group.EngineType {
 	case memo.EngineTiDB:
-		topNImpls = append(topNImpls, impl.NewTiDBTopNImpl(topN))
-		return topNImpls, nil
+		return []memo.Implementation{impl.NewTiDBTopNImpl(topN)}, nil
 	case memo.EngineTiKV:
-		topNImpls = append(topNImpls, impl.NewTiKVTopNImpl(topN))
-		return topNImpls, nil
+		return []memo.Implementation{impl.NewTiKVTopNImpl(topN)}, nil
 	default:
 		return nil, plannercore.ErrInternal.GenWithStack("Unsupported EngineType '%s' for TopN.", expr.Group.EngineType.String())
 	}
@@ -417,9 +390,7 @@ func (r *ImplTopNAsLimit) OnImplement(expr *memo.GroupExpr, reqProp *property.Ph
 		Offset: lt.Offset,
 		Count:  lt.Count,
 	}.Init(lt.SCtx(), expr.Group.Prop.Stats, lt.SelectBlockOffset(), newProp)
-	var impls []memo.Implementation
-	impls = append(impls, impl.NewLimitImpl(physicalLimit))
-	return impls, nil
+	return []memo.Implementation{impl.NewLimitImpl(physicalLimit)}, nil
 }
 
 func getImplForHashJoin(expr *memo.GroupExpr, prop *property.PhysicalProperty, innerIdx int, useOuterToBuild bool) memo.Implementation {
@@ -454,17 +425,13 @@ func (r *ImplHashJoinBuildLeft) Match(expr *memo.GroupExpr, prop *property.Physi
 // OnImplement implements ImplementationRule OnImplement interface.
 func (r *ImplHashJoinBuildLeft) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) ([]memo.Implementation, error) {
 	join := expr.ExprNode.(*plannercore.LogicalJoin)
-	var joinImpls []memo.Implementation
 	switch join.JoinType {
 	case plannercore.InnerJoin:
-		joinImpls = append(joinImpls, getImplForHashJoin(expr, reqProp, 0, false))
-		return joinImpls, nil
+		return []memo.Implementation{getImplForHashJoin(expr, reqProp, 0, false)}, nil
 	case plannercore.LeftOuterJoin:
-		joinImpls = append(joinImpls, getImplForHashJoin(expr, reqProp, 1, true))
-		return joinImpls, nil
+		return []memo.Implementation{getImplForHashJoin(expr, reqProp, 1, true)}, nil
 	case plannercore.RightOuterJoin:
-		joinImpls = append(joinImpls, getImplForHashJoin(expr, reqProp, 0, false))
-		return joinImpls, nil
+		return []memo.Implementation{getImplForHashJoin(expr, reqProp, 0, false)}, nil
 	default:
 		return nil, nil
 	}
@@ -482,21 +449,16 @@ func (r *ImplHashJoinBuildRight) Match(expr *memo.GroupExpr, prop *property.Phys
 // OnImplement implements ImplementationRule OnImplement interface.
 func (r *ImplHashJoinBuildRight) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) ([]memo.Implementation, error) {
 	join := expr.ExprNode.(*plannercore.LogicalJoin)
-	var joinImpls []memo.Implementation
 	switch join.JoinType {
 	case plannercore.SemiJoin, plannercore.AntiSemiJoin,
 		plannercore.LeftOuterSemiJoin, plannercore.AntiLeftOuterSemiJoin:
-		joinImpls = append(joinImpls, getImplForHashJoin(expr, reqProp, 1, false))
-		return joinImpls, nil
+		return []memo.Implementation{getImplForHashJoin(expr, reqProp, 1, false)}, nil
 	case plannercore.InnerJoin:
-		joinImpls = append(joinImpls, getImplForHashJoin(expr, reqProp, 1, false))
-		return joinImpls, nil
+		return []memo.Implementation{getImplForHashJoin(expr, reqProp, 1, false)}, nil
 	case plannercore.LeftOuterJoin:
-		joinImpls = append(joinImpls, getImplForHashJoin(expr, reqProp, 1, false))
-		return joinImpls, nil
+		return []memo.Implementation{getImplForHashJoin(expr, reqProp, 1, false)}, nil
 	case plannercore.RightOuterJoin:
-		joinImpls = append(joinImpls, getImplForHashJoin(expr, reqProp, 0, true))
-		return joinImpls, nil
+		return []memo.Implementation{getImplForHashJoin(expr, reqProp, 0, true)}, nil
 	}
 	return nil, nil
 }
@@ -545,9 +507,7 @@ func (r *ImplUnionAll) OnImplement(expr *memo.GroupExpr, reqProp *property.Physi
 		chReqProps...,
 	)
 	physicalUnion.SetSchema(expr.Group.Prop.Schema)
-	var unionAllImpls []memo.Implementation
-	unionAllImpls = append(unionAllImpls, impl.NewUnionAllImpl(physicalUnion))
-	return unionAllImpls, nil
+	return []memo.Implementation{impl.NewUnionAllImpl(physicalUnion)}, nil
 }
 
 // ImplApply implements LogicalApply to PhysicalApply
@@ -573,9 +533,7 @@ func (r *ImplApply) OnImplement(expr *memo.GroupExpr, reqProp *property.Physical
 		&property.PhysicalProperty{ExpectedCnt: math.MaxFloat64, Items: reqProp.Items},
 		&property.PhysicalProperty{ExpectedCnt: math.MaxFloat64})
 	physicalApply.SetSchema(expr.Group.Prop.Schema)
-	var applyImpls []memo.Implementation
-	applyImpls = append(applyImpls, impl.NewApplyImpl(physicalApply))
-	return applyImpls, nil
+	return []memo.Implementation{impl.NewApplyImpl(physicalApply)}, nil
 }
 
 // ImplMaxOneRow implements LogicalMaxOneRow to PhysicalMaxOneRow.
@@ -595,9 +553,7 @@ func (r *ImplMaxOneRow) OnImplement(expr *memo.GroupExpr, reqProp *property.Phys
 		expr.Group.Prop.Stats,
 		mor.SelectBlockOffset(),
 		&property.PhysicalProperty{ExpectedCnt: 2})
-	var impls []memo.Implementation
-	impls = append(impls, impl.NewMaxOneRowImpl(physicalMaxOneRow))
-	return impls, nil
+	return []memo.Implementation{impl.NewMaxOneRowImpl(physicalMaxOneRow)}, nil
 }
 
 // ImplWindow implements LogicalWindow to PhysicalWindow.
@@ -632,7 +588,5 @@ func (w *ImplWindow) OnImplement(expr *memo.GroupExpr, reqProp *property.Physica
 		&property.PhysicalProperty{ExpectedCnt: math.MaxFloat64, Items: byItems},
 	)
 	physicalWindow.SetSchema(expr.Group.Prop.Schema)
-	var windowImpls []memo.Implementation
-	windowImpls = append(windowImpls, impl.NewWindowImpl(physicalWindow))
-	return windowImpls, nil
+	return []memo.Implementation{impl.NewWindowImpl(physicalWindow)}, nil
 }
