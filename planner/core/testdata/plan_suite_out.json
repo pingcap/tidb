@@ -342,10 +342,6 @@
         "Best": "TableReader(Table(t))->Projection"
       },
       {
-        "SQL": "select lead(a, 1) over (partition by null) as c from t",
-        "Best": "IndexReader(Index(t.f)[[NULL,+inf]])->Window(lead(test.t.a, 1)->Column#14 over())->Projection"
-      },
-      {
         "SQL": "select * from t use index(f) where f = 1 and a = 1",
         "Best": "IndexLookUp(Index(t.f)[[1,1]]->Sel([eq(test.t.a, 1)]), Table(t))"
       },
@@ -1404,6 +1400,28 @@
       {
         "Best": "LeftHashJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t.a,test.t.b)->Projection->HashAgg",
         "Warning": "[planner:1815]Optimizer Hint AGG_TO_COP is inapplicable"
+      }
+    ]
+  },
+  {
+    "Name": "TestDAGPlanBuilderWindow",
+    "Cases": [
+      {
+        "SQL": "select lead(a, 1) over (partition by null) as c from t",
+        "Best": "IndexReader(Index(t.f)[[NULL,+inf]])->Window(lead(test.t.a, 1)->Column#14 over())->Projection"
+      }
+    ]
+  },
+  {
+    "Name": "TestDAGPlanBuilderWindowParallel",
+    "Cases": [
+      {
+        "SQL": "select lead(a, 1) over (partition by null) as c from t",
+        "Best": "IndexReader(Index(t.f)[[NULL,+inf]])->Window(lead(test.t.a, 1)->Column#14 over())->Projection"
+      },
+      {
+        "SQL": "select lead(a, 1) over (partition by b) as c from t",
+        "Best": "TableReader(Table(t))->Sort->Window(lead(test.t.a, 1)->Column#14 over(partition by test.t.b))->Partition(execution info: concurrency:4, data source:TableReader_10)->Projection"
       }
     ]
   }
