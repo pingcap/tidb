@@ -38,7 +38,7 @@ func genVecBuiltinRegexpBenchCaseForConstants() (baseFunc builtinFunc, childrenF
 
 	input = chunk.New(childrenFieldTypes, batchSz, batchSz)
 	// Fill the first arg with some random string
-	fillColumnWithGener(types.ETString, input, 0, &randLenStrGener{lenBegin: 10, lenEnd: 20})
+	fillColumnWithGener(types.ETString, input, 0, newRandLenStrGener(10, 20))
 	// It seems like we still need to fill this column, otherwise row.GetDatumRow() will crash
 	fillColumnWithGener(types.ETString, input, 1, &constStrGener{s: rePat})
 
