@@ -30,6 +30,11 @@ type gcSubstituter struct {
 // thus we can substitute the expression in a query to an indexed generated column.
 type ExprColumnMap map[expression.Expression]*expression.Column
 
+// optimize try to replace the expression to indexed virtual generate column in where, group by, order by, and field clause
+// so that we can use the index on expression.
+// For example: select a+1 from t order by a+1, with a virtual generate column c as (a+1) and
+// an index on c. We need to replace a+1 with c so that we can use the index on c.
+// See also https://dev.mysql.com/doc/refman/8.0/en/generated-column-index-optimizations.html
 func (gc *gcSubstituter) optimize(ctx context.Context, lp LogicalPlan) (LogicalPlan, error) {
 	exprToColumn := make(ExprColumnMap)
 	collectGenerateColumn(lp, exprToColumn)
@@ -40,7 +45,7 @@ func (gc *gcSubstituter) optimize(ctx context.Context, lp LogicalPlan) (LogicalP
 }
 
 // collectGenerateColumn collect the generate column and save them to a map from their expressions to themselves.
-// For the sake of simplicity, we don't collect the stored generate column because we can't their expressions directly.
+// For the sake of simplicity, we don't collect the stored generate column because we can't get their expressions directly.
 // TODO: support stored generate column.
 func collectGenerateColumn(lp LogicalPlan, exprToColumn ExprColumnMap) {
 	if ds, ok := lp.(*DataSource); ok {
