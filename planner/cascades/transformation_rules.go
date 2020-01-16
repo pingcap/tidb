@@ -1378,20 +1378,28 @@ func (r *EliminateSingleMaxMin) Match(expr *memo.ExprIter) bool {
 	if len(agg.GroupByItems) != 0 {
 		return false
 	}
-	if len(agg.AggFuncs) != 1 {
-		return false
-	}
-	// If there is only one aggFunc, we don't need to guarantee that the child of it is a data
-	// source, or whether the sort can be eliminated. This transformation won't be worse than previous.
-	// Make sure that the aggFunc are Max or Min.
-	if agg.AggFuncs[0].Name != ast.AggFuncMax && agg.AggFuncs[0].Name != ast.AggFuncMin {
-		return false
+
+	// Only one max() or min() in the AggFuncs slice, and
+	// the other aggregate functions in the AggFuncs slice should be FirstRow().
+	maxMinFlag := false
+	for _, aggFunc := range agg.AggFuncs {
+		if aggFunc.Name == ast.AggFuncMax || aggFunc.Name == ast.AggFuncMin {
+			if maxMinFlag {
+				return false
+			} else {
+				maxMinFlag = true
+			}
+		} else {
+			if aggFunc.Name != ast.AggFuncFirstRow {
+				return false
+			}
+		}
 	}
 	return true
 }
 
 // OnTransform implements Transformation interface.
-// It will transform `max/min->X` to `max/min->limit->sort->sel->X`.
+// It will transform `max/min->X` to `max/min->top1->sel->X`.
 func (r *EliminateSingleMaxMin) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
 	agg := old.GetExpr().ExprNode.(*plannercore.LogicalAggregation)
 	childGroup := old.GetExpr().Children[0]
@@ -1442,7 +1450,7 @@ func (r *EliminateSingleMaxMin) OnTransform(old *memo.ExprIter) (newExprs []*mem
 	// Since now there would be at most one row returned, the remained agg operator is not expensive anymore.
 	newAggExpr.SetChildren(childGroup)
 	newAggExpr.AddAppliedRule(r)
-	return []*memo.GroupExpr{newAggExpr}, true, false, nil
+	return []*memo.GroupExpr{newAggExpr}, false, false, nil
 }
 
 // MergeAdjacentSelection merge adjacent selection.
