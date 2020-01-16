@@ -800,11 +800,10 @@ func (c *Config) Valid() error {
 	}
 	if len(c.IsolationRead.Engines) < 1 {
 		return fmt.Errorf("the number of [isolation-read]engines for isolation read should be at least 1")
-	} else {
-		for _, engine := range c.IsolationRead.Engines {
-			if engine != "tidb" && engine != "tikv" && engine != "tiflash" {
-				return fmt.Errorf("type of [isolation-read]engines can't be %v should be one of tidb or tikv or tiflash", engine)
-			}
+	}
+	for _, engine := range c.IsolationRead.Engines {
+		if engine != "tidb" && engine != "tikv" && engine != "tiflash" {
+			return fmt.Errorf("type of [isolation-read]engines can't be %v should be one of tidb or tikv or tiflash", engine)
 		}
 	}
 	return nil
