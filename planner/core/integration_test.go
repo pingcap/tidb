@@ -293,14 +293,14 @@ func (s *testIntegrationSuite) TestSelPushDownTiFlash(c *C) {
 		"TableReader_7 8000.00 root data:Selection_6",
 		"└─Selection_6 8000.00 cop[tiflash] or(and(gt(test.t.a, 1), eq(test.t.b, \"flash\")), eq(plus(test.t.a, mul(3, test.t.a)), 5))",
 		"  └─TableScan_5 10000.00 cop[tiflash] table:t, range:[-inf,+inf], keep order:false, stats:pseudo",
-		))
+	))
 
 	// Part of conditions should push tiflash.
 	tk.MustQuery(`explain select * from t where cast(t.a as float) + 3 = 5.1`).Check(testkit.Rows(
 		"Selection_7 10000.00 root eq(plus(cast(test.t.a), 3), 5.1)",
 		"└─TableReader_6 10000.00 root data:TableScan_5",
 		"  └─TableScan_5 10000.00 cop[tiflash] table:t, range:[-inf,+inf], keep order:false, stats:pseudo",
-		))
+	))
 }
 
 func (s *testIntegrationSuite) TestPartitionTableStats(c *C) {
