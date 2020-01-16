@@ -200,7 +200,7 @@ func (s *testSuite) TestDecodeRowWithHandle(c *C) {
 		{
 			handleID,
 			withUnsigned(types.NewFieldType(mysql.TypeLonglong)),
-			types.NewIntDatum(handleValue),          // decode as chunk & map, always encode it as int
+			types.NewUintDatum(uint64(handleValue)),
 			types.NewUintDatum(uint64(handleValue)), // decode as bytes will uint if unsigned.
 			nil,
 			true,
