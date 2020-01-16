@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/prometheus/client_golang/api"
 	promv1 "github.com/prometheus/client_golang/api/prometheus/v1"
 	pmodel "github.com/prometheus/common/model"
@@ -192,4 +193,54 @@ func (c *queryClient) URL(ep string, args map[string]string) *url.URL {
 	// FIXME: add `PD-Allow-follower-handle: true` in http header, let pd follower can handle this request too.
 	ep = strings.Replace(ep, "api/v1", "pd/api/v1/metric", 1)
 	return c.Client.URL(ep, args)
+}
+
+// MetricRetriever uses to read metric data.
+type MetricSummaryRetriever struct {
+	dummyCloser
+	table     *model.TableInfo
+	extractor *plannercore.MetricTableExtractor
+	quantiles []float64
+	retrieved bool
+}
+
+func (e *MetricSummaryRetriever) retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
+	if e.retrieved || e.extractor.SkipRequest {
+		return nil, nil
+	}
+	e.retrieved = true
+	totalRows := make([][]types.Datum, 0, len(infoschema.MetricTableMap))
+	e.quantiles = []float64{0.999, 0.99, 0.90, 0.80}
+	tps := make([]*types.FieldType, 0, len(e.table.Columns))
+	for _, col := range e.table.Columns {
+		tps = append(tps, &col.FieldType)
+	}
+	startTime := e.extractor.StartTime.Format("2006-01-02 15:04:05.999")
+	endTime := e.extractor.EndTime.Format("2006-01-02 15:04:05.999")
+	for name, def := range infoschema.MetricTableMap {
+		sqls := e.genMetricQuerySQLS(name, startTime, endTime, def.Quantile)
+		for _, sql := range sqls {
+			rows, _, err := sctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			for _, row := range rows {
+				totalRows = append(totalRows, row.GetDatumRow(tps))
+			}
+		}
+	}
+	return totalRows, nil
+}
+
+func (e *MetricSummaryRetriever) genMetricQuerySQLS(name, startTime, endTime string, quantile float64) []string {
+	if quantile == 0 {
+		sql := fmt.Sprintf(`select "%s",min(time),sum(value),avg(value),min(value),max(value) from metric_schema.%s where time > '%s' and time < '%s'`, name, name, startTime, endTime)
+		return []string{sql}
+	}
+	sqls := []string{}
+	for _, quantile := range e.quantiles {
+		sql := fmt.Sprintf(`select "%s_%v",min(time),sum(value),avg(value),min(value),max(value) from metric_schema.%s where time > '%s' and time < '%s' and quantile=%v`, name, quantile, name, startTime, endTime, quantile)
+		sqls = append(sqls, sql)
+	}
+	return sqls
 }
