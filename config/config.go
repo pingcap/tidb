@@ -106,6 +106,8 @@ type Config struct {
 	RepairTableList []string `toml:"repair-table-list" json:"repair-table-list"`
 	// IsolationRead indicates that the TiDB reads data from which isolation level(engine and label).
 	IsolationRead IsolationRead `toml:"isolation-read" json:"isolation-read"`
+	// MaxServerConnections is the maximum permitted number of simultaneous client connections.
+	MaxServerConnections uint32 `toml:"max-server-connections" json:"max-server-connections"`
 
 	Experimental Experimental `toml:"experimental" json:"experimental"`
 }
@@ -452,7 +454,7 @@ type StmtSummary struct {
 type IsolationRead struct {
 	// Engines filters tidb-server access paths by engine type.
 	Engines []string `toml:"engines" json:"engines"`
-	// TODO: Labels filters tidb-server access paths by store label.
+	// TODO: Labels filters tidb-server access paths by store label. Will be realized in the future.
 	Labels []string `toml:"labels" json:"labels"`
 }
 
@@ -487,6 +489,7 @@ var defaultConf = Config{
 	SplitRegionMaxNum:            1000,
 	RepairMode:                   false,
 	RepairTableList:              []string{},
+	MaxServerConnections:         4096,
 	TxnLocalLatches: TxnLocalLatches{
 		Enabled:  false,
 		Capacity: 2048000,
