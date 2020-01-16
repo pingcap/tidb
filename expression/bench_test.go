@@ -1734,7 +1734,7 @@ func generateRandomSel() []int {
 	return sel
 }
 
-func (s *testEvaluatorSuite) TestVecEvalBool(c *C) {
+func (s *testVectorizeSuite2) TestVecEvalBool(c *C) {
 	ctx := mock.NewContext()
 	eTypes := []types.EvalType{types.ETReal, types.ETDecimal, types.ETString, types.ETTimestamp, types.ETDatetime, types.ETDuration}
 	for numCols := 1; numCols <= 5; numCols++ {
@@ -1755,7 +1755,7 @@ func (s *testEvaluatorSuite) TestVecEvalBool(c *C) {
 	}
 }
 
-func (s *testEvaluatorSuite) TestVecToBool(c *C) {
+func (s *testVectorizeSuite2) TestVecToBool(c *C) {
 	ctx := mock.NewContext()
 	buf := chunk.NewColumn(eType2FieldType(types.ETString), 2)
 	buf.ReserveString(1)
@@ -1823,7 +1823,7 @@ func BenchmarkVecEvalBool(b *testing.B) {
 	}
 }
 
-func (s *testEvaluatorSuite) TestRowBasedFilterAndVectorizedFilter(c *C) {
+func (s *testVectorizeSuite2) TestRowBasedFilterAndVectorizedFilter(c *C) {
 	ctx := mock.NewContext()
 	eTypes := []types.EvalType{types.ETInt, types.ETReal, types.ETDecimal, types.ETString, types.ETTimestamp, types.ETDatetime, types.ETDuration}
 	for numCols := 1; numCols <= 5; numCols++ {
@@ -1920,7 +1920,7 @@ func BenchmarkRowBasedFilterAndVectorizedFilter(b *testing.B) {
 	})
 }
 
-func (s *testEvaluatorSuite) TestVectorizedFilterConsiderNull(c *C) {
+func (s *testVectorizeSuite2) TestVectorizedFilterConsiderNull(c *C) {
 	ctx := mock.NewContext()
 	dafaultEnableVectorizedExpressionVar := ctx.GetSessionVars().EnableVectorizedExpression
 	eTypes := []types.EvalType{types.ETInt, types.ETReal, types.ETDecimal, types.ETString, types.ETTimestamp, types.ETDatetime, types.ETDuration}
