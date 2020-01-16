@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/errors"
 	zaplog "github.com/pingcap/log"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/util/logutil"
 	tracing "github.com/uber/jaeger-client-go/config"
 	"go.uber.org/atomic"
@@ -797,6 +798,16 @@ func (c *Config) Valid() error {
 	}
 	if c.PreparedPlanCache.Capacity < 1 {
 		return fmt.Errorf("capacity in [prepared-plan-cache] should be at least 1")
+	}
+	if len(c.IsolationRead.Engines) < 1 {
+		return fmt.Errorf("the number of engines for isolation read should be at least 1")
+	} else {
+		for _, engine := range c.IsolationRead.Engines {
+			if engine != kv.TiDB.Name() && engine != kv.TiKV.Name() && engine != kv.TiFlash.Name() {
+				return fmt.Errorf("type of isolation read engines can't be %v should be one of %v or %v or %v",
+					engine, kv.TiDB.Name(), kv.TiKV.Name(), kv.TiFlash.Name())
+			}
+		}
 	}
 	return nil
 }
