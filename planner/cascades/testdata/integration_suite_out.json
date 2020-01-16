@@ -485,6 +485,21 @@
         "Result": [
           "3 333"
         ]
+      },
+      {
+        "SQL": "select * from t1 join t2 on t1.a = t2.a",
+        "Plan": [
+          "HashRightJoin_9 12500.00 root inner join, inner:TableReader_11, equal:[eq(test.t1.a, test.t2.a)]",
+          "├─TableReader_11 10000.00 root data:TableScan_12",
+          "│ └─TableScan_12 10000.00 cop[tikv] table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
+          "└─TableReader_13 10000.00 root data:TableScan_14",
+          "  └─TableScan_14 10000.00 cop[tikv] table:t2, range:[-inf,+inf], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 11 1 111",
+          "2 22 2 222",
+          "3 33 3 333"
+        ]
       }
     ]
   },
