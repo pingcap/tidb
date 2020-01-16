@@ -1322,9 +1322,18 @@ func (r *MergeAdjacentTopN) OnTransform(old *memo.ExprIter) (newExprs []*memo.Gr
 	child := old.Children[0].GetExpr().ExprNode.(*plannercore.LogicalTopN)
 	childGroups := old.Children[0].GetExpr().Children
 
+	if child.Count <= topN.Offset {
+		tableDual := plannercore.LogicalTableDual{RowCount: 0}.Init(child.SCtx(), child.SelectBlockOffset())
+		tableDual.SetSchema(old.GetExpr().Schema())
+		tableDualExpr := memo.NewGroupExpr(tableDual)
+		return []*memo.GroupExpr{tableDualExpr}, true, true, nil
+	}
+
+	offset := child.Offset + topN.Offset
+	count := uint64(math.Min(float64(child.Count-topN.Offset), float64(topN.Count)))
 	newTopN := plannercore.LogicalTopN{
-		Count:   topN.Count,
-		Offset:  topN.Offset + child.Offset,
+		Count:   count,
+		Offset:  offset,
 		ByItems: child.ByItems,
 	}.Init(child.SCtx(), child.SelectBlockOffset())
 	newTopNExpr := memo.NewGroupExpr(newTopN)
