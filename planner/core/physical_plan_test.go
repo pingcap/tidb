@@ -1130,3 +1130,30 @@ func (s *testPlanSuite) TestIndexJoinHint(c *C) {
 		c.Assert(core.ToString(p), Equals, output[i].Plan, comment)
 	}
 }
+
+func (s *testPlanSuite) TestNominalSort(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+
+	tk.MustExec("use test")
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+	}
+	tk.MustExec("create table t (a int, b int, index idx_a(a), index idx_b(b))")
+	s.testData.GetTestCases(c, &input, &output)
+	for i, ts := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = ts
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery(ts).Rows())
+		})
+		tk.MustQuery(ts).Check(testkit.Rows(output[i].Plan...))
+	}
+}

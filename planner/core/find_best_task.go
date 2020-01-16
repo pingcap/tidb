@@ -71,11 +71,18 @@ var invalidTask = &rootTask{cst: math.MaxFloat64}
 func GetPropByOrderByItems(items []*ByItems) (*property.PhysicalProperty, bool) {
 	propItems := make([]property.Item, 0, len(items))
 	for _, item := range items {
-		col, ok := item.Expr.(*expression.Column)
-		if !ok {
+		switch tp := item.Expr.(type) {
+		case *expression.Column:
+			propItems = append(propItems, property.Item{Col: tp, Desc: item.Desc})
+		case *expression.ScalarFunction:
+			col, desc, err := tp.GetSingleColumn(item.Desc)
+			if err != nil {
+				return nil, false
+			}
+			propItems = append(propItems, property.Item{Col: col, Desc: desc})
+		default:
 			return nil, false
 		}
-		propItems = append(propItems, property.Item{Col: col, Desc: item.Desc})
 	}
 	return &property.PhysicalProperty{Items: propItems}, true
 }

@@ -356,3 +356,69 @@ func (sf *ScalarFunction) resolveIndices(schema *Schema) error {
 	}
 	return nil
 }
+
+// GetSingleColumn returns (Col, Desc, nil) when the ScalarFunction is equivalent to (Col, Desc)
+// when used as a sort key, otherwise returns (nil, false, err).
+//
+// Can only handle:
+// - ast.Plus
+// - ast.Minus
+// - ast.UnaryMinus
+func (sf *ScalarFunction) GetSingleColumn(reverse bool) (*Column, bool, error) {
+	switch sf.FuncName.String() {
+	case ast.Plus:
+		args := sf.GetArgs()
+		switch tp := args[0].(type) {
+		case *Column:
+			if _, ok := args[1].(*Constant); !ok {
+				return nil, false, errors.New("More than one column")
+			}
+			return tp, reverse, nil
+		case *ScalarFunction:
+			if _, ok := args[1].(*Constant); !ok {
+				return nil, false, errors.New("More than one column")
+			}
+			return tp.GetSingleColumn(reverse)
+		case *Constant:
+			switch rtp := args[1].(type) {
+			case *Column:
+				return rtp, reverse, nil
+			case *ScalarFunction:
+				return rtp.GetSingleColumn(reverse)
+			}
+		}
+		return nil, false, errors.New("Unprocessed type")
+	case ast.Minus:
+		args := sf.GetArgs()
+		switch tp := args[0].(type) {
+		case *Column:
+			if _, ok := args[1].(*Constant); !ok {
+				return nil, false, errors.New("More than one column")
+			}
+			return tp, reverse, nil
+		case *ScalarFunction:
+			if _, ok := args[1].(*Constant); !ok {
+				return nil, false, errors.New("More than one column")
+			}
+			return tp.GetSingleColumn(reverse)
+		case *Constant:
+			switch rtp := args[1].(type) {
+			case *Column:
+				return rtp, !reverse, nil
+			case *ScalarFunction:
+				return rtp.GetSingleColumn(!reverse)
+			}
+		}
+		return nil, false, errors.New("Unprocessed type")
+	case ast.UnaryMinus:
+		args := sf.GetArgs()
+		switch tp := args[0].(type) {
+		case *Column:
+			return tp, !reverse, nil
+		case *ScalarFunction:
+			return tp.GetSingleColumn(!reverse)
+		}
+		return nil, false, errors.New("Unprocessed type")
+	}
+	return nil, false, errors.New("Unprocessed type")
+}
