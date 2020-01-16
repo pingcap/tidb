@@ -237,8 +237,8 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 				Flag:    mysql.BinaryFlag,
 			}},
 			geners: []dataGenerator{
-				gener{defaultGener{eType: types.ETString, nullRation: 0.2}},
-				gener{defaultGener{eType: types.ETString, nullRation: 0.2}},
+				gener{*newDefaultGener(0.2, types.ETString)},
+				gener{*newDefaultGener(0.2, types.ETString)},
 			},
 		},
 	},
@@ -291,7 +291,7 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 	},
 	ast.Weekday: {
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDatetime}},
-		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDatetime}, geners: []dataGenerator{gener{defaultGener{eType: types.ETDatetime, nullRation: 0.2}}}},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDatetime}, geners: []dataGenerator{gener{*newDefaultGener(0.2, types.ETDatetime)}}},
 	},
 	ast.YearWeek: {
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDatetime}},
@@ -305,7 +305,7 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 	},
 	ast.FromUnixTime: {
 		{retEvalType: types.ETDatetime, childrenTypes: []types.EvalType{types.ETDecimal},
-			geners: []dataGenerator{gener{defaultGener{eType: types.ETDecimal, nullRation: 0.9}}},
+			geners: []dataGenerator{gener{*newDefaultGener(0.9, types.ETDecimal)}},
 		},
 	},
 	ast.StrToDate: {

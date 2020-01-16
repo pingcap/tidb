@@ -109,7 +109,7 @@ func (g *givenValsGener) gen() interface{} {
 func makeGivenValsOrDefaultGener(vals []interface{}, eType types.EvalType) *givenValsGener {
 	g := &givenValsGener{}
 	g.given = vals
-	g.fallback = &defaultGener{0.2, eType}
+	g.fallback = newDefaultGener(0.2, eType)
 	return g
 }
 

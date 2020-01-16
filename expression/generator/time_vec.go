@@ -658,7 +658,7 @@ type gener struct {
 func (g gener) gen() interface{} {
 	result := g.defaultGener.gen()
 	if _, ok := result.(string); ok {
-		dg := newDefaultGener(types.ETDuration, 0)
+		dg := newDefaultGener(0, types.ETDuration)
 		d := dg.gen().(types.Duration)
 		if int8(d.Duration)%2 == 0 {
 			d.Fsp = 0
@@ -684,13 +684,13 @@ func (g gener) gen() interface{} {
 					{{- else if eq $sig.TypeA.ETName "Int"}}
 						&dateTimeIntGener{nullRation: 0.2},
 					{{- else }}
-						newDefaultGener(types.ET{{$sig.TypeA.ETName}}, 0.2),
+						newDefaultGener(0.2, types.ET{{$sig.TypeA.ETName}}),
 					{{- end }}
 
 					{{- if eq $sig.TypeB.ETName "String" }}
 						&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
 					{{- else }}
-						newDefaultGener(types.ET{{$sig.TypeB.ETName}}, 0.2),
+						newDefaultGener(0.2, types.ET{{$sig.TypeB.ETName}}),
 					{{- end }}
 				},
 				constants: []*Constant{nil, nil, {Value: types.NewStringDatum("{{$unit}}"), RetType: types.NewFieldType(mysql.TypeString)}},
@@ -715,11 +715,11 @@ func (g gener) gen() interface{} {
 				{{- end }}
 				geners: []dataGenerator{
 					{{- if eq .TestTypeA "" }}
-					gener{defaultGener{eType: types.ET{{.TypeA.ETName}}, nullRation: 0.2}},
-					gener{defaultGener{eType: types.ET{{.TypeB.ETName}}, nullRation: 0.2}},
+					gener{*newDefaultGener(0.2, types.ET{{.TypeA.ETName}})},
+					gener{*newDefaultGener(0.2, types.ET{{.TypeB.ETName}})},
 					{{- else }}
-					gener{defaultGener{eType: types.ET{{ .TestTypeA }}, nullRation: 0.2}},
-					gener{defaultGener{eType: types.ET{{ .TestTypeB }}, nullRation: 0.2}},
+					gener{*newDefaultGener(0.2, types.ET{{ .TestTypeA }})},
+					gener{*newDefaultGener(0.2, types.ET{{ .TestTypeB }})},
 					{{- end }}
 				},
 			},

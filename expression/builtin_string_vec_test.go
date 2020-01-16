@@ -49,10 +49,10 @@ func (g *randSpaceStrGener) gen() interface{} {
 
 var vecBuiltinStringCases = map[string][]vecExprBenchCase{
 	ast.Length: {
-		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{&defaultGener{0.2, types.ETString}}},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{newDefaultGener(0.2, types.ETString)}},
 	},
 	ast.ASCII: {
-		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{&defaultGener{0.2, types.ETString}}},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{newDefaultGener(0.2, types.ETString)}},
 	},
 	ast.Concat: {
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString, types.ETString, types.ETString}},
@@ -66,7 +66,7 @@ var vecBuiltinStringCases = map[string][]vecExprBenchCase{
 		{
 			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETString, types.ETString, types.ETString},
-			geners:        []dataGenerator{&defaultGener{1, types.ETString}},
+			geners:        []dataGenerator{newDefaultGener(1, types.ETString)},
 		},
 		{
 			retEvalType:   types.ETString,
@@ -268,7 +268,7 @@ var vecBuiltinStringCases = map[string][]vecExprBenchCase{
 		{
 			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETInt, types.ETString},
-			geners:        []dataGenerator{&defaultGener{0.2, types.ETString}, &defaultGener{0.2, types.ETInt}, &defaultGener{0.2, types.ETString}},
+			geners:        []dataGenerator{newDefaultGener(0.2, types.ETString), newDefaultGener(0.2, types.ETInt), newDefaultGener(0.2, types.ETString)},
 		},
 		{
 			retEvalType:        types.ETString,
@@ -280,7 +280,7 @@ var vecBuiltinStringCases = map[string][]vecExprBenchCase{
 			retEvalType:        types.ETString,
 			childrenTypes:      []types.EvalType{types.ETString, types.ETInt, types.ETString},
 			childrenFieldTypes: []*types.FieldType{{Tp: mysql.TypeString, Flag: mysql.BinaryFlag, Collate: charset.CollationBin}},
-			geners:             []dataGenerator{&defaultGener{0.2, types.ETString}, &defaultGener{0.2, types.ETInt}, &defaultGener{0.2, types.ETString}},
+			geners:             []dataGenerator{newDefaultGener(0.2, types.ETString), newDefaultGener(0.2, types.ETInt), newDefaultGener(0.2, types.ETString)},
 		},
 	},
 	ast.Rpad: {
@@ -292,7 +292,7 @@ var vecBuiltinStringCases = map[string][]vecExprBenchCase{
 		{
 			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETInt, types.ETString},
-			geners:        []dataGenerator{&defaultGener{0.2, types.ETString}, &defaultGener{0.2, types.ETInt}, &defaultGener{0.2, types.ETString}},
+			geners:        []dataGenerator{newDefaultGener(0.2, types.ETString), newDefaultGener(0.2, types.ETInt), newDefaultGener(0.2, types.ETString)},
 		},
 		{
 			retEvalType:        types.ETString,
@@ -304,7 +304,7 @@ var vecBuiltinStringCases = map[string][]vecExprBenchCase{
 			retEvalType:        types.ETString,
 			childrenTypes:      []types.EvalType{types.ETString, types.ETInt, types.ETString},
 			childrenFieldTypes: []*types.FieldType{{Tp: mysql.TypeString, Flag: mysql.BinaryFlag, Collate: charset.CollationBin}},
-			geners:             []dataGenerator{&defaultGener{0.2, types.ETString}, &defaultGener{0.2, types.ETInt}, &defaultGener{0.2, types.ETString}},
+			geners:             []dataGenerator{newDefaultGener(0.2, types.ETString), newDefaultGener(0.2, types.ETInt), newDefaultGener(0.2, types.ETString)},
 		},
 	},
 	ast.CharLength: {
@@ -375,7 +375,7 @@ var vecBuiltinStringCases = map[string][]vecExprBenchCase{
 	},
 	ast.IsNull: {
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{&randLenStrGener{10, 20}}},
-		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{&defaultGener{0.2, types.ETString}}},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{newDefaultGener(0.2, types.ETString)}},
 	},
 	ast.Upper: {
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString}},
@@ -410,7 +410,7 @@ var vecBuiltinStringCases = map[string][]vecExprBenchCase{
 	},
 	ast.Reverse: {
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{&randLenStrGener{10, 20}}},
-		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{&defaultGener{0.2, types.ETString}}},
+		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{newDefaultGener(0.2, types.ETString)}},
 		// need to add BinaryFlag for the Binary func
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString},
 			childrenFieldTypes: []*types.FieldType{{Tp: mysql.TypeString, Flag: mysql.BinaryFlag, Collate: charset.CollationBin}},
@@ -461,7 +461,7 @@ var vecBuiltinStringCases = map[string][]vecExprBenchCase{
 	ast.FromUnixTime: {
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETDecimal, types.ETString},
 			geners: []dataGenerator{
-				gener{defaultGener{eType: types.ETDecimal, nullRation: 0.9}},
+				gener{*newDefaultGener(0.9, types.ETDecimal)},
 				&constStrGener{"%y-%m-%d"},
 			},
 		},
