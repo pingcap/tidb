@@ -329,6 +329,23 @@
           "3 33 2",
           "4 44 3"
         ]
+      },
+      {
+        "SQL": "select * from (select a+1 as c, a+b as d from t) as t1 order by c+d limit 10",
+        "Plan": [
+          "Projection_22 10.00 root plus(test.t.a, 1)->Column#3, plus(test.t.a, test.t.b)->Column#4",
+          "└─TopN_23 10.00 root Column#5:asc, offset:0, count:10",
+          "  └─Projection_25 10.00 root test.t.a, test.t.b, plus(plus(test.t.a, 1), plus(test.t.a, test.t.b))->Column#5",
+          "    └─TableReader_26 10.00 root data:TopN_27",
+          "      └─TopN_27 10.00 cop[tikv] plus(plus(test.t.a, 1), plus(test.t.a, test.t.b)):asc, offset:0, count:10",
+          "        └─TableScan_28 10000.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "2 12",
+          "3 24",
+          "4 36",
+          "5 48"
+        ]
       }
     ]
   },

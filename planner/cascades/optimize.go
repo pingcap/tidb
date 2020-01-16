@@ -30,22 +30,25 @@ var DefaultOptimizer = NewOptimizer()
 
 // Optimizer is the struct for cascades optimizer.
 type Optimizer struct {
-	transformationRuleMap map[memo.Operand][]Transformation
-	implementationRuleMap map[memo.Operand][]ImplementationRule
+	transformationRuleBatches []TransformationRuleBatch
+	implementationRuleMap     map[memo.Operand][]ImplementationRule
 }
 
 // NewOptimizer returns a cascades optimizer with default transformation
 // rules and implementation rules.
 func NewOptimizer() *Optimizer {
 	return &Optimizer{
-		transformationRuleMap: defaultTransformationMap,
+		transformationRuleBatches: []TransformationRuleBatch{
+			mainTransformationBatch,
+			postTransformationBatch,
+		},
 		implementationRuleMap: defaultImplementationMap,
 	}
 }
 
-// ResetTransformationRules resets the transformationRuleMap of the optimizer, and returns the optimizer.
-func (opt *Optimizer) ResetTransformationRules(rules map[memo.Operand][]Transformation) *Optimizer {
-	opt.transformationRuleMap = rules
+// ResetTransformationRules resets the transformationRuleBatches of the optimizer, and returns the optimizer.
+func (opt *Optimizer) ResetTransformationRules(ruleBatches ...TransformationRuleBatch) *Optimizer {
+	opt.transformationRuleBatches = ruleBatches
 	return opt
 }
 
@@ -53,12 +56,6 @@ func (opt *Optimizer) ResetTransformationRules(rules map[memo.Operand][]Transfor
 func (opt *Optimizer) ResetImplementationRules(rules map[memo.Operand][]ImplementationRule) *Optimizer {
 	opt.implementationRuleMap = rules
 	return opt
-}
-
-// GetTransformationRules gets the all the candidate Transformation rules of the optimizer
-// based on the logical plan node.
-func (opt *Optimizer) GetTransformationRules(node plannercore.LogicalPlan) []Transformation {
-	return opt.transformationRuleMap[memo.GetOperand(node)]
 }
 
 // GetImplementationRules gets all the candidate implementation rules of the optimizer
@@ -129,16 +126,23 @@ func (opt *Optimizer) onPhasePreprocessing(sctx sessionctx.Context, plan planner
 }
 
 func (opt *Optimizer) onPhaseExploration(sctx sessionctx.Context, g *memo.Group) error {
-	for !g.Explored {
-		err := opt.exploreGroup(g)
-		if err != nil {
-			return err
+	for i, ruleBatch := range opt.transformationRuleBatches {
+		if i > 0 {
+			// If this is not the first batch, we need to reset
+			// the `Explored` field for the new batch.
+			g.ResetExplored()
+		}
+		for !g.Explored {
+			err := opt.exploreGroup(g, ruleBatch)
+			if err != nil {
+				return err
+			}
 		}
 	}
 	return nil
 }
 
-func (opt *Optimizer) exploreGroup(g *memo.Group) error {
+func (opt *Optimizer) exploreGroup(g *memo.Group, ruleBatch TransformationRuleBatch) error {
 	if g.Explored {
 		return nil
 	}
@@ -154,13 +158,13 @@ func (opt *Optimizer) exploreGroup(g *memo.Group) error {
 		// Explore child groups firstly.
 		for _, childGroup := range curExpr.Children {
 			for !childGroup.Explored {
-				if err := opt.exploreGroup(childGroup); err != nil {
+				if err := opt.exploreGroup(childGroup, ruleBatch); err != nil {
 					return err
 				}
 			}
 		}
 
-		eraseCur, err := opt.findMoreEquiv(g, elem)
+		eraseCur, err := opt.findMoreEquiv(g, elem, ruleBatch)
 		if err != nil {
 			return err
 		}
@@ -172,11 +176,12 @@ func (opt *Optimizer) exploreGroup(g *memo.Group) error {
 }
 
 // findMoreEquiv finds and applies the matched transformation rules.
-func (opt *Optimizer) findMoreEquiv(g *memo.Group, elem *list.Element) (eraseCur bool, err error) {
+func (opt *Optimizer) findMoreEquiv(g *memo.Group, elem *list.Element, ruleBatch TransformationRuleBatch) (eraseCur bool, err error) {
 	expr := elem.Value.(*memo.GroupExpr)
-	for _, rule := range opt.GetTransformationRules(expr.ExprNode) {
+	operand := memo.GetOperand(expr.ExprNode)
+	for _, rule := range ruleBatch[operand] {
 		pattern := rule.GetPattern()
-		if !pattern.Operand.Match(memo.GetOperand(expr.ExprNode)) {
+		if !pattern.Operand.Match(operand) {
 			continue
 		}
 		// Create a binding of the current Group expression and the pattern of

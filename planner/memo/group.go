@@ -205,6 +205,18 @@ func (g *Group) InsertImpl(prop *property.PhysicalProperty, impl Implementation)
 	g.ImplMap[string(key)] = impl
 }
 
+// ResetExplored recursively resets the `Explored` field of Group and GroupExpr.
+func (g *Group) ResetExplored() {
+	g.Explored = false
+	for iter := g.Equivalents.Front(); iter != nil; iter = iter.Next() {
+		expr := iter.Value.(*GroupExpr)
+		expr.Explored = false
+		for _, childGroup := range expr.Children {
+			childGroup.ResetExplored()
+		}
+	}
+}
+
 // Convert2GroupExpr converts a logical plan to a GroupExpr.
 func Convert2GroupExpr(node plannercore.LogicalPlan) *GroupExpr {
 	e := NewGroupExpr(node)

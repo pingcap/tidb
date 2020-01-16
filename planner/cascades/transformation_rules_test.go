@@ -76,7 +76,7 @@ func testGroupToString(input []string, output []struct {
 }
 
 func (s *testTransformationRuleSuite) TestAggPushDownGather(c *C) {
-	s.optimizer.ResetTransformationRules(map[memo.Operand][]Transformation{
+	s.optimizer.ResetTransformationRules(TransformationRuleBatch{
 		memo.OperandAggregation: {
 			NewRulePushAggDownGather(),
 		},
@@ -85,7 +85,7 @@ func (s *testTransformationRuleSuite) TestAggPushDownGather(c *C) {
 		},
 	})
 	defer func() {
-		s.optimizer.ResetTransformationRules(defaultTransformationMap)
+		s.optimizer.ResetTransformationRules(mainTransformationBatch, postTransformationBatch)
 	}()
 	var input []string
 	var output []struct {
@@ -116,7 +116,7 @@ func (s *testTransformationRuleSuite) TestAggPushDownGather(c *C) {
 }
 
 func (s *testTransformationRuleSuite) TestPredicatePushDown(c *C) {
-	s.optimizer.ResetTransformationRules(map[memo.Operand][]Transformation{
+	s.optimizer.ResetTransformationRules(TransformationRuleBatch{
 		memo.OperandSelection: {
 			NewRulePushSelDownTableScan(),
 			NewRulePushSelDownTiKVSingleGather(),
@@ -134,7 +134,7 @@ func (s *testTransformationRuleSuite) TestPredicatePushDown(c *C) {
 		},
 	})
 	defer func() {
-		s.optimizer.ResetTransformationRules(defaultTransformationMap)
+		s.optimizer.ResetTransformationRules(mainTransformationBatch, postTransformationBatch)
 	}()
 	var input []string
 	var output []struct {
@@ -146,7 +146,7 @@ func (s *testTransformationRuleSuite) TestPredicatePushDown(c *C) {
 }
 
 func (s *testTransformationRuleSuite) TestTopNRules(c *C) {
-	s.optimizer.ResetTransformationRules(map[memo.Operand][]Transformation{
+	s.optimizer.ResetTransformationRules(TransformationRuleBatch{
 		memo.OperandLimit: {
 			NewRuleTransformLimitToTopN(),
 			NewRulePushLimitDownProjection(),
@@ -173,14 +173,14 @@ func (s *testTransformationRuleSuite) TestTopNRules(c *C) {
 }
 
 func (s *testTransformationRuleSuite) TestProjectionElimination(c *C) {
-	s.optimizer.ResetTransformationRules(map[memo.Operand][]Transformation{
+	s.optimizer.ResetTransformationRules(TransformationRuleBatch{
 		memo.OperandProjection: {
 			NewRuleEliminateProjection(),
 			NewRuleMergeAdjacentProjection(),
 		},
 	})
 	defer func() {
-		s.optimizer.ResetTransformationRules(defaultTransformationMap)
+		s.optimizer.ResetTransformationRules(mainTransformationBatch, postTransformationBatch)
 	}()
 	var input []string
 	var output []struct {
@@ -192,13 +192,13 @@ func (s *testTransformationRuleSuite) TestProjectionElimination(c *C) {
 }
 
 func (s *testTransformationRuleSuite) TestMergeAggregationProjection(c *C) {
-	s.optimizer.ResetTransformationRules(map[memo.Operand][]Transformation{
+	s.optimizer.ResetTransformationRules(TransformationRuleBatch{
 		memo.OperandAggregation: {
 			NewRuleMergeAggregationProjection(),
 		},
 	})
 	defer func() {
-		s.optimizer.ResetTransformationRules(defaultTransformationMap)
+		s.optimizer.ResetTransformationRules(mainTransformationBatch, postTransformationBatch)
 	}()
 	var input []string
 	var output []struct {
@@ -210,14 +210,14 @@ func (s *testTransformationRuleSuite) TestMergeAggregationProjection(c *C) {
 }
 
 func (s *testTransformationRuleSuite) TestMergeAdjacentLimit(c *C) {
-	s.optimizer.ResetTransformationRules(map[memo.Operand][]Transformation{
+	s.optimizer.ResetTransformationRules(TransformationRuleBatch{
 		memo.OperandLimit: {
 			NewRulePushLimitDownProjection(),
 			NewRuleMergeAdjacentLimit(),
 		},
 	})
 	defer func() {
-		s.optimizer.ResetTransformationRules(defaultTransformationMap)
+		s.optimizer.ResetTransformationRules(mainTransformationBatch, postTransformationBatch)
 	}()
 	var input []string
 	var output []struct {
@@ -229,13 +229,31 @@ func (s *testTransformationRuleSuite) TestMergeAdjacentLimit(c *C) {
 }
 
 func (s *testTransformationRuleSuite) TestTransformLimitToTableDual(c *C) {
-	s.optimizer.ResetTransformationRules(map[memo.Operand][]Transformation{
+	s.optimizer.ResetTransformationRules(TransformationRuleBatch{
 		memo.OperandLimit: {
 			NewRuleTransformLimitToTableDual(),
 		},
 	})
 	defer func() {
-		s.optimizer.ResetTransformationRules(defaultTransformationMap)
+		s.optimizer.ResetTransformationRules(mainTransformationBatch, postTransformationBatch)
+	}()
+	var input []string
+	var output []struct {
+		SQL    string
+		Result []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	testGroupToString(input, output, s, c)
+}
+
+func (s *testTransformationRuleSuite) TestPostTransformationRules(c *C) {
+	s.optimizer.ResetTransformationRules(TransformationRuleBatch{
+		memo.OperandLimit: {
+			NewRuleTransformLimitToTopN(),
+		},
+	}, postTransformationBatch)
+	defer func() {
+		s.optimizer.ResetTransformationRules(mainTransformationBatch, postTransformationBatch)
 	}()
 	var input []string
 	var output []struct {
