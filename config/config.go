@@ -454,8 +454,6 @@ type StmtSummary struct {
 type IsolationRead struct {
 	// Engines filters tidb-server access paths by engine type.
 	Engines []string `toml:"engines" json:"engines"`
-	// TODO: Labels filters tidb-server access paths by store label. Will be realized in the future.
-	Labels []string `toml:"labels" json:"labels"`
 }
 
 // Experimental controls the features that are still experimental: their semantics, interfaces are subject to change.
@@ -597,7 +595,6 @@ var defaultConf = Config{
 	},
 	IsolationRead: IsolationRead{
 		Engines: []string{"tikv", "tiflash", "tidb"},
-		Labels:  []string{},
 	},
 	Experimental: Experimental{
 		AllowAutoRandom: false,

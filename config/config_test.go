@@ -236,7 +236,6 @@ engines = ["tiflash"]
 	c.Assert(conf.MaxServerConnections, Equals, uint32(200))
 	c.Assert(conf.Experimental.AllowAutoRandom, IsTrue)
 	c.Assert(conf.IsolationRead.Engines, DeepEquals, []string{"tiflash"})
-	c.Assert(len(conf.IsolationRead.Labels), Equals, 0)
 	c.Assert(f.Close(), IsNil)
 	c.Assert(os.Remove(configFile), IsNil)
 
