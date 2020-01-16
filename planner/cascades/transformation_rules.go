@@ -1386,9 +1386,8 @@ func (r *EliminateSingleMaxMin) Match(expr *memo.ExprIter) bool {
 		if aggFunc.Name == ast.AggFuncMax || aggFunc.Name == ast.AggFuncMin {
 			if maxMinFlag {
 				return false
-			} else {
-				maxMinFlag = true
 			}
+			maxMinFlag = true
 		} else {
 			if aggFunc.Name != ast.AggFuncFirstRow {
 				return false
