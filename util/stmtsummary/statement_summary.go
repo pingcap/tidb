@@ -333,21 +333,22 @@ func (ssMap *stmtSummaryByDigestMap) GetMoreThanOnceSelect() ([]string, []string
 	sqls := make([]string, 0, len(values))
 	for _, value := range values {
 		ssbd := value.(*stmtSummaryByDigest)
-		// `stmtType` won't change once created, so locking is not needed.
-		if ssbd.stmtType == "select" {
+		func() {
 			ssbd.Lock()
-			if ssbd.history.Len() > 0 {
-				ssElement := ssbd.history.Back().Value.(*stmtSummaryByDigestElement)
-				ssElement.Lock()
-				// Empty sample users means that it is an internal queries.
-				if ssElement.sampleUser != "" && (ssbd.history.Len() > 1 || ssElement.execCount > 1) {
-					schemas = append(schemas, ssbd.schemaName)
-					sqls = append(sqls, ssElement.sampleSQL)
+			defer ssbd.Unlock()
+			if ssbd.initialized && ssbd.stmtType == "select" {
+				if ssbd.history.Len() > 0 {
+					ssElement := ssbd.history.Back().Value.(*stmtSummaryByDigestElement)
+					ssElement.Lock()
+					// Empty sample users means that it is an internal queries.
+					if ssElement.sampleUser != "" && (ssbd.history.Len() > 1 || ssElement.execCount > 1) {
+						schemas = append(schemas, ssbd.schemaName)
+						sqls = append(sqls, ssElement.sampleSQL)
+					}
+					ssElement.Unlock()
 				}
-				ssElement.Unlock()
 			}
-			ssbd.Unlock()
-		}
+		}()
 	}
 	return schemas, sqls
 }
