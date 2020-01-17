@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tipb/go-tipb"
 )
@@ -73,6 +74,62 @@ func enforceProperty(p *property.PhysicalProperty, tsk task, ctx sessionctx.Cont
 		sort.ByItems = append(sort.ByItems, &ByItems{col.Col, col.Desc})
 	}
 	return sort.attach2Task(tsk)
+}
+
+// optimizeByShuffle insert `PhysicalShuffle` to optimize performance by running in a parallel manner.
+func optimizeByShuffle(pp PhysicalPlan, tsk task, ctx sessionctx.Context) task {
+	if tsk.plan() == nil {
+		return tsk
+	}
+
+	// Don't use `tsk.plan()` here, which will probably be different from `pp`.
+	// Eg., when `pp` is `NominalSort`, `tsk.plan()` would be its child.
+	switch p := pp.(type) {
+	case *PhysicalWindow:
+		if shuffle := optimizeByShuffle4Window(p, ctx); shuffle != nil {
+			return shuffle.attach2Task(tsk)
+		}
+	}
+	return tsk
+}
+
+func optimizeByShuffle4Window(pp *PhysicalWindow, ctx sessionctx.Context) *PhysicalShuffle {
+	concurrency := ctx.GetSessionVars().WindowConcurrency
+	if concurrency <= 1 {
+		return nil
+	}
+
+	sort, ok := pp.Children()[0].(*PhysicalSort)
+	if !ok {
+		// Multi-thread executing on SORTED data source is not effective enough by current implementation.
+		// TODO: Implement a better one.
+		return nil
+	}
+	tail, dataSource := sort, sort.Children()[0]
+
+	partitionBy := make([]*expression.Column, 0, len(pp.PartitionBy))
+	for _, item := range pp.PartitionBy {
+		partitionBy = append(partitionBy, item.Col)
+	}
+	NDV := int(getCardinality(partitionBy, dataSource.Schema(), dataSource.statsInfo()))
+	if NDV <= 1 {
+		return nil
+	}
+	concurrency = mathutil.Min(concurrency, NDV)
+
+	byItems := make([]expression.Expression, 0, len(pp.PartitionBy))
+	for _, item := range pp.PartitionBy {
+		byItems = append(byItems, item.Col)
+	}
+	reqProp := &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64}
+	shuffle := PhysicalShuffle{
+		Concurrency:  concurrency,
+		Tail:         tail,
+		DataSource:   dataSource,
+		SplitterType: PartitionHashSplitterType,
+		HashByItems:  byItems,
+	}.Init(ctx, pp.statsInfo(), pp.SelectBlockOffset(), reqProp)
+	return shuffle
 }
 
 // LogicalPlan is a tree of logical operators.

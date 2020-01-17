@@ -698,7 +698,7 @@ func (p *LogicalJoin) constructInnerTableScanTask(
 		selectivity, _, err = ds.tableStats.HistColl.Selectivity(ds.ctx, ts.filterCondition, ds.possibleAccessPaths)
 		if err != nil || selectivity <= 0 {
 			logutil.BgLogger().Debug("unexpected selectivity, use selection factor", zap.Float64("selectivity", selectivity), zap.String("table", ts.TableAsName.L))
-			selectivity = selectionFactor
+			selectivity = SelectionFactor
 		}
 		// rowCount is computed from result row count of join, which has already accounted the filters on DataSource,
 		// i.e, rowCount equals to `countAfterAccess * selectivity`.
@@ -821,7 +821,7 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 		selectivity, _, err := ds.tableStats.HistColl.Selectivity(ds.ctx, tblConds, ds.possibleAccessPaths)
 		if err != nil || selectivity <= 0 {
 			logutil.BgLogger().Debug("unexpected selectivity, use selection factor", zap.Float64("selectivity", selectivity), zap.String("table", ds.TableAsName.L))
-			selectivity = selectionFactor
+			selectivity = SelectionFactor
 		}
 		// rowCount is computed from result row count of join, which has already accounted the filters on DataSource,
 		// i.e, rowCount equals to `countAfterIndex * selectivity`.
@@ -836,7 +836,7 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 		selectivity, _, err := ds.tableStats.HistColl.Selectivity(ds.ctx, indexConds, ds.possibleAccessPaths)
 		if err != nil || selectivity <= 0 {
 			logutil.BgLogger().Debug("unexpected selectivity, use selection factor", zap.Float64("selectivity", selectivity), zap.String("table", ds.TableAsName.L))
-			selectivity = selectionFactor
+			selectivity = SelectionFactor
 		}
 		cnt := tmpPath.CountAfterIndex / selectivity
 		if maxOneRow {
