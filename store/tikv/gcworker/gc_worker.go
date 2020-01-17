@@ -890,7 +890,10 @@ func (w *GCWorker) checkLeader() (bool, error) {
 	}
 	lease, err := w.loadTime(gcLeaderLeaseKey)
 	if err != nil {
-		se.RollbackTxn(ctx)
+		rollbackErr := se.RollbackTxn(ctx)
+		if rollbackErr != nil {
+			return false, errors.Trace(rollbackErr)
+		}
 		return false, errors.Trace(err)
 	}
 	if lease == nil || lease.Before(time.Now()) {
