@@ -972,18 +972,20 @@ func (b *executorBuilder) buildMergeJoin(v *plannercore.PhysicalMergeJoin) Execu
 		stmtCtx:      b.ctx.GetSessionVars().StmtCtx,
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), leftExec, rightExec),
 		compareFuncs: v.CompareFuncs,
-		joiner: newJoiner(
-			b.ctx,
-			v.JoinType,
-			v.JoinType == plannercore.RightOuterJoin,
-			defaultValues,
-			v.OtherConditions,
-			retTypes(leftExec),
-			retTypes(rightExec),
-		),
-		isOuterJoin: v.JoinType.IsOuterJoin(),
-		desc:        v.Desc,
+		isOuterJoin:  v.JoinType.IsOuterJoin(),
+		desc:         v.Desc,
 	}
+	e.joiner = newJoiner(
+		b.ctx,
+		v.JoinType,
+		v.JoinType == plannercore.RightOuterJoin,
+		defaultValues,
+		v.OtherConditions,
+		retTypes(leftExec),
+		retTypes(rightExec),
+		retTypes(e),
+		nil,
+	)
 
 	leftTable := &mergeJoinTable{
 		childIndex: 0,
@@ -1037,6 +1039,7 @@ func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) Executo
 	}
 	defaultValues := v.DefaultValues
 	lhsTypes, rhsTypes := retTypes(leftExec), retTypes(rightExec)
+	outputTypes := retTypes(e)
 	if v.InnerChildIdx == 1 {
 		if len(v.RightConditions) > 0 {
 			b.err = errors.Annotate(ErrBuildExecutor, "join's inner condition should be empty")
@@ -1077,10 +1080,11 @@ func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) Executo
 			defaultValues = make([]types.Datum, e.buildSideExec.Schema().Len())
 		}
 	}
+	childrenUsedSchema := e.baseExecutor.inlineProjection()
 	e.joiners = make([]joiner, e.concurrency)
 	for i := uint(0); i < e.concurrency; i++ {
 		e.joiners[i] = newJoiner(b.ctx, v.JoinType, v.InnerChildIdx == 0, defaultValues,
-			v.OtherConditions, lhsTypes, rhsTypes)
+			v.OtherConditions, lhsTypes, rhsTypes, outputTypes, childrenUsedSchema)
 	}
 	executorCountHashJoinExec.Inc()
 	return e
@@ -1384,8 +1388,6 @@ func (b *executorBuilder) buildApply(v *plannercore.PhysicalApply) *NestedLoopAp
 	if defaultValues == nil {
 		defaultValues = make([]types.Datum, v.Children()[v.InnerChildIdx].Schema().Len())
 	}
-	tupleJoiner := newJoiner(b.ctx, v.JoinType, v.InnerChildIdx == 0,
-		defaultValues, otherConditions, retTypes(leftChild), retTypes(rightChild))
 	outerExec, innerExec := leftChild, rightChild
 	outerFilter, innerFilter := v.LeftConditions, v.RightConditions
 	if v.InnerChildIdx == 0 {
@@ -1399,9 +1401,10 @@ func (b *executorBuilder) buildApply(v *plannercore.PhysicalApply) *NestedLoopAp
 		outerFilter:  outerFilter,
 		innerFilter:  innerFilter,
 		outer:        v.JoinType != plannercore.InnerJoin,
-		joiner:       tupleJoiner,
 		outerSchema:  v.OuterSchema,
 	}
+	e.joiner = newJoiner(b.ctx, v.JoinType, v.InnerChildIdx == 0,
+		defaultValues, otherConditions, retTypes(leftChild), retTypes(rightChild), retTypes(e), nil)
 	executorCounterNestedLoopApplyExec.Inc()
 	return e
 }
@@ -1907,12 +1910,12 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin)
 			hasPrefixCol:  hasPrefixCol,
 		},
 		workerWg:      new(sync.WaitGroup),
-		joiner:        newJoiner(b.ctx, v.JoinType, v.InnerChildIdx == 0, defaultValues, v.OtherConditions, leftTypes, rightTypes),
 		isOuterJoin:   v.JoinType.IsOuterJoin(),
 		indexRanges:   v.Ranges,
 		keyOff2IdxOff: v.KeyOff2IdxOff,
 		lastColHelper: v.CompareFilters,
 	}
+	e.joiner = newJoiner(b.ctx, v.JoinType, v.InnerChildIdx == 0, defaultValues, v.OtherConditions, leftTypes, rightTypes, retTypes(e), nil)
 	outerKeyCols := make([]int, len(v.OuterJoinKeys))
 	for i := 0; i < len(v.OuterJoinKeys); i++ {
 		outerKeyCols[i] = v.OuterJoinKeys[i].Index
@@ -1998,9 +2001,10 @@ func (b *executorBuilder) buildIndexLookUpMergeJoin(v *plannercore.PhysicalIndex
 		keyOff2IdxOff: v.KeyOff2IdxOff,
 		lastColHelper: v.CompareFilters,
 	}
+	outputTypes := retTypes(e)
 	joiners := make([]joiner, e.ctx.GetSessionVars().IndexLookupJoinConcurrency)
 	for i := 0; i < e.ctx.GetSessionVars().IndexLookupJoinConcurrency; i++ {
-		joiners[i] = newJoiner(b.ctx, v.JoinType, v.InnerChildIdx == 0, defaultValues, v.OtherConditions, leftTypes, rightTypes)
+		joiners[i] = newJoiner(b.ctx, v.JoinType, v.InnerChildIdx == 0, defaultValues, v.OtherConditions, leftTypes, rightTypes, outputTypes, nil)
 	}
 	e.joiners = joiners
 	return e

@@ -32,15 +32,6 @@ func (s *columnPruner) optimize(ctx context.Context, lp LogicalPlan) (LogicalPla
 	return lp, err
 }
 
-func getUsedList(usedCols []*expression.Column, schema *expression.Schema) []bool {
-	tmpSchema := expression.NewSchema(usedCols...)
-	used := make([]bool, schema.Len())
-	for i, col := range schema.Columns {
-		used[i] = tmpSchema.Contains(col)
-	}
-	return used
-}
-
 // ExprsHasSideEffects checks if any of the expressions has side effects.
 func ExprsHasSideEffects(exprs []expression.Expression) bool {
 	for _, expr := range exprs {
@@ -72,7 +63,7 @@ func exprHasSetVarOrSleep(expr expression.Expression) bool {
 // If any expression has SetVar function or Sleep function, we do not prune it.
 func (p *LogicalProjection) PruneColumns(parentUsedCols []*expression.Column) error {
 	child := p.children[0]
-	used := getUsedList(parentUsedCols, p.schema)
+	used := expression.GetUsedList(parentUsedCols, p.schema)
 
 	for i := len(used) - 1; i >= 0; i-- {
 		if !used[i] && !exprHasSetVarOrSleep(p.Exprs[i]) {
@@ -95,7 +86,7 @@ func (p *LogicalSelection) PruneColumns(parentUsedCols []*expression.Column) err
 // PruneColumns implements LogicalPlan interface.
 func (la *LogicalAggregation) PruneColumns(parentUsedCols []*expression.Column) error {
 	child := la.children[0]
-	used := getUsedList(parentUsedCols, la.Schema())
+	used := expression.GetUsedList(parentUsedCols, la.Schema())
 
 	for i := len(used) - 1; i >= 0; i-- {
 		if !used[i] {
@@ -162,7 +153,7 @@ func (ls *LogicalSort) PruneColumns(parentUsedCols []*expression.Column) error {
 
 // PruneColumns implements LogicalPlan interface.
 func (p *LogicalUnionAll) PruneColumns(parentUsedCols []*expression.Column) error {
-	used := getUsedList(parentUsedCols, p.schema)
+	used := expression.GetUsedList(parentUsedCols, p.schema)
 
 	hasBeenUsed := false
 	for i := range used {
@@ -199,7 +190,7 @@ func (p *LogicalUnionScan) PruneColumns(parentUsedCols []*expression.Column) err
 
 // PruneColumns implements LogicalPlan interface.
 func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column) error {
-	used := getUsedList(parentUsedCols, ds.schema)
+	used := expression.GetUsedList(parentUsedCols, ds.schema)
 
 	var (
 		handleCol     *expression.Column
@@ -239,7 +230,7 @@ func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column) error {
 
 // PruneColumns implements LogicalPlan interface.
 func (p *LogicalTableDual) PruneColumns(parentUsedCols []*expression.Column) error {
-	used := getUsedList(parentUsedCols, p.Schema())
+	used := expression.GetUsedList(parentUsedCols, p.Schema())
 
 	for i := len(used) - 1; i >= 0; i-- {
 		if !used[i] {
@@ -277,7 +268,6 @@ func (p *LogicalJoin) extractUsedCols(parentUsedCols []*expression.Column) (left
 func (p *LogicalJoin) mergeSchema() {
 	lChild := p.children[0]
 	rChild := p.children[1]
-	composedSchema := expression.MergeSchema(lChild.Schema(), rChild.Schema())
 	if p.JoinType == SemiJoin || p.JoinType == AntiSemiJoin {
 		p.schema = lChild.Schema().Clone()
 	} else if p.JoinType == LeftOuterSemiJoin || p.JoinType == AntiLeftOuterSemiJoin {
@@ -285,7 +275,7 @@ func (p *LogicalJoin) mergeSchema() {
 		p.schema = lChild.Schema().Clone()
 		p.schema.Append(joinCol)
 	} else {
-		p.schema = composedSchema
+		p.schema = expression.MergeSchema(lChild.Schema(), rChild.Schema())
 	}
 }
 
@@ -304,6 +294,7 @@ func (p *LogicalJoin) PruneColumns(parentUsedCols []*expression.Column) error {
 	}
 
 	p.mergeSchema()
+	p.inlineProjection(parentUsedCols)
 	return nil
 }
 

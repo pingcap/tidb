@@ -85,7 +85,7 @@ var (
 type baseExecutor struct {
 	ctx           sessionctx.Context
 	id            fmt.Stringer
-	schema        *expression.Schema
+	schema        *expression.Schema // output schema
 	initCap       int
 	maxChunkSize  int
 	children      []Executor
@@ -126,6 +126,15 @@ func (e *baseExecutor) Schema() *expression.Schema {
 		return expression.NewSchema()
 	}
 	return e.schema
+}
+
+// inlineProjection supports to prune unneeded columns for outputs of a executor.
+func (e *baseExecutor) inlineProjection() (childrenUsedSchema [][]bool) {
+	for _, child := range e.children {
+		used := expression.GetUsedList(e.schema.Columns, child.Schema())
+		childrenUsedSchema = append(childrenUsedSchema, used)
+	}
+	return
 }
 
 // newFirstChunk creates a new chunk to buffer current executor's result.

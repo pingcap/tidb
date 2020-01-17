@@ -53,13 +53,16 @@ func (s *testSuiteJoiner) TestRequiredRows(c *C) {
 				maxChunkSize := defaultCtx().GetSessionVars().MaxChunkSize
 				lfields := convertTypes(ltype)
 				rfields := convertTypes(rtype)
+				outputFields := make([]*types.FieldType, len(lfields)+len(rfields))
+				copy(outputFields, lfields)
+				copy(outputFields[len(lfields):], rfields)
 				outerRow := genTestChunk(maxChunkSize, 1, lfields).GetRow(0)
 				innerChk := genTestChunk(maxChunkSize, maxChunkSize, rfields)
 				var defaultInner []types.Datum
 				for i, f := range rfields {
 					defaultInner = append(defaultInner, innerChk.GetRow(0).GetDatum(i, f))
 				}
-				joiner := newJoiner(defaultCtx(), joinType, false, defaultInner, nil, lfields, rfields)
+				joiner := newJoiner(defaultCtx(), joinType, false, defaultInner, nil, lfields, rfields, outputFields, nil)
 
 				fields := make([]*types.FieldType, 0, len(lfields)+len(rfields))
 				fields = append(fields, rfields...)

@@ -347,24 +347,43 @@ func setMutRowJSON(col *Column, j json.BinaryJSON) {
 }
 
 // ShallowCopyPartialRow shallow copies the data of `row` to MutRow.
-func (mr MutRow) ShallowCopyPartialRow(colIdx int, row Row) {
+func (mr MutRow) ShallowCopyPartialRow(colOff int, row Row) {
 	for i, srcCol := range row.c.columns {
-		dstCol := mr.c.columns[colIdx+i]
-		if !srcCol.IsNull(row.idx) {
-			// MutRow only contains one row, so we can directly set the whole byte.
-			dstCol.nullBitmap[0] = 1
-		} else {
-			dstCol.nullBitmap[0] = 0
-		}
+		dstCol := mr.c.columns[colOff+i]
+		setMutRowCell(dstCol, srcCol, row.idx)
+	}
+}
 
-		if srcCol.isFixed() {
-			elemLen := len(srcCol.elemBuf)
-			offset := row.idx * elemLen
-			dstCol.data = srcCol.data[offset : offset+elemLen]
-		} else {
-			start, end := srcCol.offsets[row.idx], srcCol.offsets[row.idx+1]
-			dstCol.data = srcCol.data[start:end]
-			dstCol.offsets[1] = int64(len(dstCol.data))
-		}
+// ShallowCopyPartialRowByColIdxs shallow copies the data of `row` by its colIdxs to MutRow.
+func (mr MutRow) ShallowCopyPartialRowByColIdxs(colOff int, row Row, colIdxs []int) (wide int) {
+	if colIdxs == nil {
+		mr.ShallowCopyPartialRow(colOff, row)
+		return len(row.c.columns)
+	}
+
+	for i, colIdx := range colIdxs {
+		srcCol := row.c.columns[colIdx]
+		dstCol := mr.c.columns[colOff+i]
+		setMutRowCell(dstCol, srcCol, row.idx)
+	}
+	return len(colIdxs)
+}
+
+func setMutRowCell(dst *Column, src *Column, rowIdx int) {
+	if !src.IsNull(rowIdx) {
+		// MutRow only contains one row, so we can directly set the whole byte.
+		dst.nullBitmap[0] = 1
+	} else {
+		dst.nullBitmap[0] = 0
+	}
+
+	if src.isFixed() {
+		elemLen := len(src.elemBuf)
+		offset := rowIdx * elemLen
+		dst.data = src.data[offset : offset+elemLen]
+	} else {
+		start, end := src.offsets[rowIdx], src.offsets[rowIdx+1]
+		dst.data = src.data[start:end]
+		dst.offsets[1] = int64(len(dst.data))
 	}
 }

@@ -671,20 +671,21 @@ func BenchmarkWindowFunctionsWithFrame(b *testing.B) {
 }
 
 type hashJoinTestCase struct {
-	rows            int
-	cols            []*types.FieldType
-	concurrency     int
-	ctx             sessionctx.Context
-	keyIdx          []int
-	joinType        core.JoinType
-	disk            bool
-	useOuterToBuild bool
+	rows               int
+	cols               []*types.FieldType
+	concurrency        int
+	ctx                sessionctx.Context
+	keyIdx             []int
+	joinType           core.JoinType
+	disk               bool
+	useOuterToBuild    bool
+	childrenUsedSchema [][]bool
 }
 
 func (tc hashJoinTestCase) columns() []*expression.Column {
 	ret := make([]*expression.Column, 0)
 	for i, t := range tc.cols {
-		column := &expression.Column{Index: i, RetType: t}
+		column := &expression.Column{Index: i, RetType: t, UniqueID: tc.ctx.GetSessionVars().AllocPlanColumnID()}
 		ret = append(ret, column)
 	}
 	return ret
@@ -713,10 +714,26 @@ func prepare4HashJoin(testCase *hashJoinTestCase, innerExec, outerExec Executor)
 	if testCase.useOuterToBuild {
 		innerExec, outerExec = outerExec, innerExec
 	}
-	cols0 := testCase.columns()
-	cols1 := testCase.columns()
-	joinSchema := expression.NewSchema(cols0...)
-	joinSchema.Append(cols1...)
+	cols0 := innerExec.Schema().Columns
+	cols1 := outerExec.Schema().Columns
+
+	joinSchema := expression.NewSchema()
+	if testCase.childrenUsedSchema != nil {
+		for i, used := range testCase.childrenUsedSchema[0] {
+			if used {
+				joinSchema.Append(cols0[i])
+			}
+		}
+		for i, used := range testCase.childrenUsedSchema[1] {
+			if used {
+				joinSchema.Append(cols1[i])
+			}
+		}
+	} else {
+		joinSchema.Append(cols0...)
+		joinSchema.Append(cols1...)
+	}
+
 	joinKeys := make([]*expression.Column, 0, len(testCase.keyIdx))
 	for _, keyIdx := range testCase.keyIdx {
 		joinKeys = append(joinKeys, cols0[keyIdx])
@@ -733,12 +750,14 @@ func prepare4HashJoin(testCase *hashJoinTestCase, innerExec, outerExec Executor)
 		buildSideEstCount: float64(testCase.rows),
 		useOuterToBuild:   testCase.useOuterToBuild,
 	}
+
+	childrenUsedSchema := e.inlineProjection()
 	defaultValues := make([]types.Datum, e.buildSideExec.Schema().Len())
 	lhsTypes, rhsTypes := retTypes(innerExec), retTypes(outerExec)
 	e.joiners = make([]joiner, e.concurrency)
 	for i := uint(0); i < e.concurrency; i++ {
 		e.joiners[i] = newJoiner(testCase.ctx, e.joinType, true, defaultValues,
-			nil, lhsTypes, rhsTypes)
+			nil, lhsTypes, rhsTypes, retTypes(e), childrenUsedSchema)
 	}
 	memLimit := int64(-1)
 	if testCase.disk {
@@ -753,10 +772,9 @@ func prepare4HashJoin(testCase *hashJoinTestCase, innerExec, outerExec Executor)
 }
 
 func benchmarkHashJoinExecWithCase(b *testing.B, casTest *hashJoinTestCase) {
-	opt := mockDataSourceParameters{
-		schema: expression.NewSchema(casTest.columns()...),
-		rows:   casTest.rows,
-		ctx:    casTest.ctx,
+	opt1 := mockDataSourceParameters{
+		rows: casTest.rows,
+		ctx:  casTest.ctx,
 		genDataFunc: func(row int, typ *types.FieldType) interface{} {
 			switch typ.Tp {
 			case mysql.TypeLong, mysql.TypeLonglong:
@@ -770,8 +788,11 @@ func benchmarkHashJoinExecWithCase(b *testing.B, casTest *hashJoinTestCase) {
 			}
 		},
 	}
-	dataSource1 := buildMockDataSource(opt)
-	dataSource2 := buildMockDataSource(opt)
+	opt2 := opt1
+	opt1.schema = expression.NewSchema(casTest.columns()...)
+	opt2.schema = expression.NewSchema(casTest.columns()...)
+	dataSource1 := buildMockDataSource(opt1)
+	dataSource2 := buildMockDataSource(opt2)
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -802,6 +823,35 @@ func benchmarkHashJoinExecWithCase(b *testing.B, casTest *hashJoinTestCase) {
 		if exec.rowContainer.alreadySpilled() != casTest.disk {
 			b.Fatal("wrong usage with disk")
 		}
+	}
+}
+
+func BenchmarkHashJoinInlineProjection(b *testing.B) {
+	cols := []*types.FieldType{
+		types.NewFieldType(mysql.TypeLonglong),
+		types.NewFieldType(mysql.TypeVarString),
+	}
+
+	b.ReportAllocs()
+
+	{
+		cas := defaultHashJoinTestCase(cols, 0, false)
+		cas.keyIdx = []int{0}
+		cas.childrenUsedSchema = [][]bool{
+			{false, true},
+			{false, false},
+		}
+		b.Run("InlineProjection:ON", func(b *testing.B) {
+			benchmarkHashJoinExecWithCase(b, cas)
+		})
+	}
+
+	{
+		cas := defaultHashJoinTestCase(cols, 0, false)
+		cas.keyIdx = []int{0}
+		b.Run("InlineProjection:OFF", func(b *testing.B) {
+			benchmarkHashJoinExecWithCase(b, cas)
+		})
 	}
 }
 
@@ -1074,11 +1124,11 @@ func prepare4IndexInnerHashJoin(tc *indexJoinTestCase, outerDS *mockDataSource, 
 			keyCols:       tc.innerJoinKeyIdx,
 		},
 		workerWg:      new(sync.WaitGroup),
-		joiner:        newJoiner(tc.ctx, 0, false, defaultValues, nil, leftTypes, rightTypes),
 		isOuterJoin:   false,
 		keyOff2IdxOff: keyOff2IdxOff,
 		lastColHelper: nil,
 	}
+	e.joiner = newJoiner(tc.ctx, 0, false, defaultValues, nil, leftTypes, rightTypes, retTypes(e), nil)
 	e.joinResult = newFirstChunk(e)
 	return e
 }
@@ -1147,7 +1197,7 @@ func prepare4IndexMergeJoin(tc *indexJoinTestCase, outerDS *mockDataSource, inne
 	}
 	joiners := make([]joiner, e.ctx.GetSessionVars().IndexLookupJoinConcurrency)
 	for i := 0; i < e.ctx.GetSessionVars().IndexLookupJoinConcurrency; i++ {
-		joiners[i] = newJoiner(tc.ctx, 0, false, defaultValues, nil, leftTypes, rightTypes)
+		joiners[i] = newJoiner(tc.ctx, 0, false, defaultValues, nil, leftTypes, rightTypes, retTypes(e), nil)
 	}
 	e.joiners = joiners
 	return e
@@ -1268,17 +1318,19 @@ func prepare4MergeJoin(tc *mergeJoinTestCase, leftExec, rightExec *mockDataSourc
 		stmtCtx:      tc.ctx.GetSessionVars().StmtCtx,
 		baseExecutor: newBaseExecutor(tc.ctx, joinSchema, stringutil.StringerStr("MergeJoin"), leftExec, rightExec),
 		compareFuncs: compareFuncs,
-		joiner: newJoiner(
-			tc.ctx,
-			0,
-			false,
-			defaultValues,
-			nil,
-			retTypes(leftExec),
-			retTypes(rightExec),
-		),
-		isOuterJoin: false,
+		isOuterJoin:  false,
 	}
+	e.joiner = newJoiner(
+		tc.ctx,
+		0,
+		false,
+		defaultValues,
+		nil,
+		retTypes(leftExec),
+		retTypes(rightExec),
+		retTypes(e),
+		nil,
+	)
 
 	e.innerTable = &mergeJoinTable{
 		isInner:    true,
