@@ -291,6 +291,9 @@ func (sf *ScalarFunction) Eval(row chunk.Row) (d types.Datum, err error) {
 
 // EvalInt implements Expression interface.
 func (sf *ScalarFunction) EvalInt(ctx sessionctx.Context, row chunk.Row) (int64, bool, error) {
+	if f, ok := sf.Function.(builtinFuncNew); ok {
+		return f.evalIntWithCtx(ctx, row)
+	}
 	return sf.Function.evalInt(row)
 }
 

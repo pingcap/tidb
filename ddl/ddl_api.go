@@ -1384,25 +1384,30 @@ func buildTableInfoWithCheck(ctx sessionctx.Context, s *ast.CreateTableStmt, dbC
 		return nil, errors.Trace(err)
 	}
 
-	pi, err := buildTablePartitionInfo(ctx, s)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	if pi != nil {
-		switch pi.Type {
-		case model.PartitionTypeRange:
-			err = checkPartitionByRange(ctx, tbInfo, pi, cols, s)
-		case model.PartitionTypeHash:
-			err = checkPartitionByHash(ctx, pi, s, cols, tbInfo)
-		}
+	if s.Partition != nil {
+		err := checkPartitionExprValid(ctx, tbInfo, s.Partition.Expr)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		if err = checkRangePartitioningKeysConstraints(ctx, s, tbInfo, newConstraints); err != nil {
+		pi, err := buildTablePartitionInfo(ctx, s)
+		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		tbInfo.Partition = pi
+		if pi != nil {
+			switch pi.Type {
+			case model.PartitionTypeRange:
+				err = checkPartitionByRange(ctx, tbInfo, pi, cols, s)
+			case model.PartitionTypeHash:
+				err = checkPartitionByHash(ctx, pi, s, cols, tbInfo)
+			}
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			if err = checkRangePartitioningKeysConstraints(ctx, s, tbInfo, newConstraints); err != nil {
+				return nil, errors.Trace(err)
+			}
+			tbInfo.Partition = pi
+		}
 	}
 
 	if err = handleTableOptions(s.Options, tbInfo); err != nil {
