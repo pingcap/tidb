@@ -138,14 +138,14 @@ var vecBuiltinCompareCases = map[string][]vecExprBenchCase{
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString, types.ETString, types.ETString}},
 	},
 	ast.Interval: {
-		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETReal, types.ETReal}, geners: []dataGenerator{nil, &rangeRealGener{0, 10, 0}}},
-		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETReal, types.ETReal, types.ETReal}, geners: []dataGenerator{nil, &rangeRealGener{0, 10, 0}, &rangeRealGener{10, 20, 0}}},
-		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETReal, types.ETReal, types.ETReal, types.ETReal}, geners: []dataGenerator{nil, &rangeRealGener{0, 10, 0}, &rangeRealGener{10, 20, 0}, &rangeRealGener{20, 30, 0}}},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETReal, types.ETReal}, geners: []dataGenerator{nil, newRangeRealGener(0, 10, 0)}},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETReal, types.ETReal, types.ETReal}, geners: []dataGenerator{nil, newRangeRealGener(0, 10, 0), newRangeRealGener(10, 20, 0)}},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETReal, types.ETReal, types.ETReal, types.ETReal}, geners: []dataGenerator{nil, newRangeRealGener(0, 10, 0), newRangeRealGener(10, 20, 0), newRangeRealGener(20, 30, 0)}},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt}},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt, types.ETInt}},
-		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt, types.ETInt}, geners: []dataGenerator{nil, &rangeInt64Gener{0, 10}, &rangeInt64Gener{10, 20}}},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt, types.ETInt}, geners: []dataGenerator{nil, newRangeInt64Gener(0, 10), newRangeInt64Gener(10, 20)}},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt, types.ETInt, types.ETInt}},
-		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt, types.ETInt, types.ETInt}, geners: []dataGenerator{nil, &rangeInt64Gener{0, 10}, &rangeInt64Gener{10, 20}, &rangeInt64Gener{20, 30}}},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt, types.ETInt, types.ETInt}, geners: []dataGenerator{nil, newRangeInt64Gener(0, 10), newRangeInt64Gener(10, 20), newRangeInt64Gener(20, 30)}},
 	},
 }
 

@@ -20,6 +20,17 @@ import (
 
 func (s *testSuite7) TestWindowFunctions(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set @@tidb_window_concurrency = 1")
+	doTestWindowFunctions(tk)
+}
+
+func (s *testSuite7) TestWindowParallelFunctions(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set @@tidb_window_concurrency = 4")
+	doTestWindowFunctions(tk)
+}
+
+func doTestWindowFunctions(tk *testkit.TestKit) {
 	var result *testkit.Result
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -33,7 +44,7 @@ func (s *testSuite7) TestWindowFunctions(c *C) {
 	result.Check(testkit.Rows("3", "3", "3"))
 	result = tk.MustQuery("select sum(a) over () + count(a) over () from t")
 	result.Check(testkit.Rows("10", "10", "10"))
-	result = tk.MustQuery("select sum(a) over (partition by a) from t")
+	result = tk.MustQuery("select sum(a) over (partition by a) from t").Sort()
 	result.Check(testkit.Rows("1", "2", "4"))
 	result = tk.MustQuery("select 1 + sum(a) over (), count(a) over () from t")
 	result.Check(testkit.Rows("8 3", "8 3", "8 3"))
@@ -44,7 +55,7 @@ func (s *testSuite7) TestWindowFunctions(c *C) {
 
 	result = tk.MustQuery("select a, row_number() over() from t")
 	result.Check(testkit.Rows("1 1", "4 2", "2 3"))
-	result = tk.MustQuery("select a, row_number() over(partition by a) from t")
+	result = tk.MustQuery("select a, row_number() over(partition by a) from t").Sort()
 	result.Check(testkit.Rows("1 1", "2 1", "4 1"))
 
 	result = tk.MustQuery("select a, sum(a) over(rows between unbounded preceding and 1 following) from t")
@@ -65,6 +76,12 @@ func (s *testSuite7) TestWindowFunctions(c *C) {
 	result.Check(testkit.Rows("<nil> <nil> <nil>", "1 2019-02-01 6", "2 2019-02-02 6", "3 2019-02-03 10", "5 2019-02-05 5"))
 	result = tk.MustQuery("select a, b, sum(a) over(order by b desc range between interval 1 day preceding and interval 2 day following) from t")
 	result.Check(testkit.Rows("5 2019-02-05 8", "3 2019-02-03 6", "2 2019-02-02 6", "1 2019-02-01 3", "<nil> <nil> <nil>"))
+
+	tk.MustExec("drop table t")
+	tk.MustExec("CREATE TABLE t (id INTEGER, sex CHAR(1))")
+	tk.MustExec("insert into t values (1, 'M'), (2, 'F'), (3, 'F'), (4, 'F'), (5, 'M'), (10, NULL), (11, NULL)")
+	result = tk.MustQuery("SELECT sex, id, RANK() OVER (PARTITION BY sex ORDER BY id DESC) FROM t").Sort()
+	result.Check(testkit.Rows("<nil> 10 2", "<nil> 11 1", "F 2 3", "F 3 2", "F 4 1", "M 1 2", "M 5 1"))
 
 	tk.MustExec("drop table t")
 	tk.MustExec("create table t(a int, b int)")
@@ -147,7 +164,7 @@ func (s *testSuite7) TestWindowFunctions(c *C) {
 	result = tk.MustQuery("SELECT CUME_DIST() OVER (ORDER BY null);")
 	result.Check(testkit.Rows("1"))
 
-	tk.MustQuery("select lead(a) over(partition by null) from t").Check(testkit.Rows("1", "2", "2", "<nil>"))
+	tk.MustQuery("select lead(a) over(partition by null) from t").Sort().Check(testkit.Rows("1", "2", "2", "<nil>"))
 
 	tk.MustExec("create table issue10494(a INT, b CHAR(1), c DATETIME, d BLOB)")
 	tk.MustExec("insert into issue10494 VALUES (1,'x','2010-01-01','blob'), (2, 'y', '2011-01-01', ''), (3, 'y', '2012-01-01', ''), (4, 't', '2012-01-01', 'blob'), (5, null, '2013-01-01', null)")
@@ -175,7 +192,7 @@ func (s *testSuite7) TestWindowFunctions(c *C) {
 	result.Check(testkit.Rows("1 3", "2 4", "3 5", "4 3"))
 
 	tk.Se.GetSessionVars().MaxChunkSize = 1
-	result = tk.MustQuery("select a, row_number() over (partition by a) from t")
+	result = tk.MustQuery("select a, row_number() over (partition by a) from t").Sort()
 	result.Check(testkit.Rows("1 1", "1 2", "2 1", "2 2"))
 }
 

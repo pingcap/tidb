@@ -565,6 +565,10 @@ func (cc *clientConn) openSessionAndDoAuth(authData []byte) error {
 	if err != nil {
 		return err
 	}
+
+	if err = cc.server.checkConnectionCount(); err != nil {
+		return err
+	}
 	hasPassword := "YES"
 	if len(authData) == 0 {
 		hasPassword = "NO"
