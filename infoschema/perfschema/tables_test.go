@@ -280,6 +280,7 @@ func (s *testTableSuite) TestTiKVProfileCPU(c *C) {
 	router := http.NewServeMux()
 	mockServer := httptest.NewServer(router)
 	mockAddr := strings.TrimPrefix(mockServer.URL, "http://")
+	defer mockServer.Close()
 
 	copyHandler := func(filename string) http.HandlerFunc {
 		return func(w http.ResponseWriter, _ *http.Request) {
