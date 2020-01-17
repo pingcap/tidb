@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
@@ -389,7 +390,8 @@ func (p *preprocessor) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 		p.err = ddl.ErrWrongTableName.GenWithStackByArgs(tName)
 		return
 	}
-	if stmt.IsTemporary {
+	conf := config.GetGlobalConfig()
+	if !conf.IgnoreDDLTemporaryKeyword && stmt.IsTemporary {
 		p.err = ddl.ErrUnsupportedDDLTemporaryKeyword.GenWithStack("'CREATE TEMPORARY TABLE' is currently unsupported")
 		return
 	}
@@ -468,7 +470,8 @@ func (p *preprocessor) checkDropTableGrammar(stmt *ast.DropTableStmt) {
 			return
 		}
 	}
-	if stmt.IsTemporary {
+	conf := config.GetGlobalConfig()
+	if !conf.IgnoreDDLTemporaryKeyword && stmt.IsTemporary {
 		p.err = ddl.ErrUnsupportedDDLTemporaryKeyword.GenWithStack("'DROP TEMPORARY TABLE' is currently unsupported")
 		return
 	}
@@ -890,14 +893,16 @@ func (p *preprocessor) resolveCreateSequenceStmt(stmt *ast.CreateSequenceStmt) {
 }
 
 func (p *preprocessor) checkCreateSequenceGrammar(stmt *ast.CreateSequenceStmt) {
-	if stmt.IsTemporary {
+	conf := config.GetGlobalConfig()
+	if !conf.IgnoreDDLTemporaryKeyword && stmt.IsTemporary {
 		p.err = ddl.ErrUnsupportedDDLTemporaryKeyword.GenWithStack("'CREATE TEMPORARY SEQUENCE' is currently unsupported")
 		return
 	}
 }
 
 func (p *preprocessor) checkDropSequenceGrammar(stmt *ast.DropSequenceStmt) {
-	if stmt.IsTemporary {
+	conf := config.GetGlobalConfig()
+	if !conf.IgnoreDDLTemporaryKeyword && stmt.IsTemporary {
 		p.err = ddl.ErrUnsupportedDDLTemporaryKeyword.GenWithStack("'DROP TEMPORARY SEQUENCE' is currently unsupported")
 		return
 	}

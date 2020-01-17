@@ -105,7 +105,8 @@ type Config struct {
 	RepairMode      bool     `toml:"repair-mode" json:"repair-mode"`
 	RepairTableList []string `toml:"repair-table-list" json:"repair-table-list"`
 
-	Experimental Experimental `toml:"experimental" json:"experimental"`
+	Experimental              Experimental `toml:"experimental" json:"experimental"`
+	IgnoreDDLTemporaryKeyword bool         `toml:"ignore-ddl-temporary-keyword" json:"ignore-ddl-temporary-keyword"`
 }
 
 // nullableBool defaults unset bool options to unset instead of false, which enables us to know if the user has set 2

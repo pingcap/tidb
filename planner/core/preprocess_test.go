@@ -207,8 +207,10 @@ func (s *testValidatorSuite) TestValidator(c *C) {
 		{"CREATE TABLE t1 (id INT NOT NULL, c1 VARCHAR(20) AS ('foo') VIRTUAL KEY NOT NULL, PRIMARY KEY (id));", false, core.ErrUnsupportedOnGeneratedColumn},
 		{"create table t (a DOUBLE NULL, b_sto DOUBLE GENERATED ALWAYS AS (a + 2) STORED UNIQUE KEY NOT NULL PRIMARY KEY);", false, nil},
 
-		{"CREATE TEMPORARY TABLE t (a INT);", false, ddl.ErrUnsupportedTempTable},
-		{"DROP TEMPORARY TABLE t;", false, ddl.ErrUnsupportedTempTable},
+		{"CREATE TEMPORARY TABLE t (a INT);", false, ddl.ErrUnsupportedDDLTemporaryKeyword},
+		{"DROP TEMPORARY TABLE t;", false, ddl.ErrUnsupportedDDLTemporaryKeyword},
+		{"CREATE TEMPORARY SEQUENCE seq START WITH 100;", false, ddl.ErrUnsupportedDDLTemporaryKeyword},
+		{"DROP TEMPORARY SEQUENCE seq;", false, ddl.ErrUnsupportedDDLTemporaryKeyword},
 	}
 
 	store, dom, err := newStoreWithBootstrap()
