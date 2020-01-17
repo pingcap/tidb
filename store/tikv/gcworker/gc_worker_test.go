@@ -853,7 +853,7 @@ func (s *mockPhysicalScanLockStream) Recv() (*kvrpcpb.PhysicalScanLockResponse, 
 	}, res.Err
 }
 
-func makeMergedChannel(c *C, count int) (*mergeLockScanner, []chan scanLockResult, <-chan []*tikv.Lock) {
+func makeMergedChannel(c *C, count int) (*mergeLockScanner, []chan scanLockResult, []uint64, <-chan []*tikv.Lock) {
 	scanner := &mergeLockScanner{}
 	channels := make([]chan scanLockResult, 0, count)
 	receivers := make([]*receiver, 0, count)
@@ -879,12 +879,21 @@ func makeMergedChannel(c *C, count int) (*mergeLockScanner, []chan scanLockResul
 		resultCh <- result
 	}()
 
-	return scanner, channels, resultCh
+	storeIDs := make([]uint64, count)
+	for i := 0; i < count; i++ {
+		storeIDs[i] = uint64(i)
+	}
+
+	return scanner, channels, storeIDs, resultCh
 }
 
-func (s *testGCWorkerSuite) makeMergedMockClient(c *C, count int) (*mergeLockScanner, []chan scanLockResult, <-chan []*tikv.Lock) {
+func (s *testGCWorkerSuite) makeMergedMockClient(c *C, count int) (*mergeLockScanner, []chan scanLockResult, []uint64, <-chan []*tikv.Lock) {
 	stores := s.cluster.GetAllStores()
 	c.Assert(count, Equals, len(stores))
+	storeIDs := make([]uint64, count)
+	for i := 0; i < count; i++ {
+		storeIDs[i] = stores[i].Id
+	}
 
 	storesMap, err := s.gcWorker.getUpStoresMap(context.Background())
 	c.Assert(err, IsNil)
@@ -921,25 +930,17 @@ func (s *testGCWorkerSuite) makeMergedMockClient(c *C, count int) (*mergeLockSca
 		resultCh <- result
 	}()
 
-	return scanner, channels, resultCh
+	return scanner, channels, storeIDs, resultCh
 }
 
 func (s *testGCWorkerSuite) TestMergeLockScanner(c *C) {
 	// Shortcuts to make the following test code simpler
-	makeIDSet := func(ids ...uint64) map[uint64]interface{} {
-		res := make(map[uint64]interface{})
-		for _, id := range ids {
-			res[id] = nil
-		}
-		return res
-	}
 
 	// Get stores by index, and get their store IDs.
-	getMockIDSet := func(indices ...uint64) map[uint64]interface{} {
-		stores := s.cluster.GetAllStores()
+	makeIDSet := func(storeIDs []uint64, indices ...uint64) map[uint64]interface{} {
 		res := make(map[uint64]interface{})
 		for _, i := range indices {
-			res[stores[i].Id] = nil
+			res[storeIDs[i]] = nil
 		}
 		return res
 	}
@@ -966,42 +967,40 @@ func (s *testGCWorkerSuite) TestMergeLockScanner(c *C) {
 		ch <- scanLockResult{Err: errors.New("error")}
 	}
 
-	scanner, sendCh, resCh := makeMergedChannel(c, 1)
+	scanner, sendCh, storeIDs, resCh := makeMergedChannel(c, 1)
 	close(sendCh[0])
 	c.Assert(len(<-resCh), Equals, 0)
-	c.Assert(scanner.GetSucceededStores(), DeepEquals, makeIDSet(0))
+	c.Assert(scanner.GetSucceededStores(), DeepEquals, makeIDSet(storeIDs, 0))
 
-	scanner, sendCh, resCh = makeMergedChannel(c, 1)
+	scanner, sendCh, storeIDs, resCh = makeMergedChannel(c, 1)
 	sendLocks(sendCh[0], "a", "b", "c")
 	close(sendCh[0])
 	c.Assert(<-resCh, DeepEquals, makeLockList("a", "b", "c"))
-	c.Assert(scanner.GetSucceededStores(), DeepEquals, makeIDSet(0))
+	c.Assert(scanner.GetSucceededStores(), DeepEquals, makeIDSet(storeIDs, 0))
 
-	scanner, sendCh, resCh = makeMergedChannel(c, 1)
+	scanner, sendCh, storeIDs, resCh = makeMergedChannel(c, 1)
 	sendLocks(sendCh[0], "a", "b", "c")
 	sendErr(sendCh[0])
 	close(sendCh[0])
 	c.Assert(<-resCh, DeepEquals, makeLockList("a", "b", "c"))
-	c.Assert(scanner.GetSucceededStores(), DeepEquals, makeIDSet())
+	c.Assert(scanner.GetSucceededStores(), DeepEquals, makeIDSet(storeIDs))
 
-	scanner, sendCh, resCh = makeMergedChannel(c, 2)
+	scanner, sendCh, storeIDs, resCh = makeMergedChannel(c, 2)
 	sendLocks(sendCh[0], "a", "c", "e")
 	time.Sleep(time.Millisecond * 100)
 	sendLocks(sendCh[1], "b", "d", "f")
 	close(sendCh[0])
 	close(sendCh[1])
 	c.Assert(<-resCh, DeepEquals, makeLockList("a", "b", "c", "d", "e", "f"))
-	c.Assert(scanner.GetSucceededStores(), DeepEquals, makeIDSet(0, 1))
+	c.Assert(scanner.GetSucceededStores(), DeepEquals, makeIDSet(storeIDs, 0, 1))
 
 	for _, useMock := range []bool{false, true} {
 		channel := makeMergedChannel
-		idSet := makeIDSet
 		if useMock == true {
 			channel = s.makeMergedMockClient
-			idSet = getMockIDSet
 		}
 
-		scanner, sendCh, resCh = channel(c, 3)
+		scanner, sendCh, storeIDs, resCh = channel(c, 3)
 		sendLocks(sendCh[0], "a", "d", "g", "h")
 		time.Sleep(time.Millisecond * 100)
 		sendLocks(sendCh[1], "a", "d", "f", "h")
@@ -1011,9 +1010,9 @@ func (s *testGCWorkerSuite) TestMergeLockScanner(c *C) {
 		close(sendCh[1])
 		close(sendCh[2])
 		c.Assert(<-resCh, DeepEquals, makeLockList("a", "b", "c", "d", "e", "f", "g", "h"))
-		c.Assert(scanner.GetSucceededStores(), DeepEquals, idSet(0, 1, 2))
+		c.Assert(scanner.GetSucceededStores(), DeepEquals, makeIDSet(storeIDs, 0, 1, 2))
 
-		scanner, sendCh, resCh = channel(c, 3)
+		scanner, sendCh, storeIDs, resCh = channel(c, 3)
 		sendLocks(sendCh[0], "a", "d", "g", "h")
 		time.Sleep(time.Millisecond * 100)
 		sendLocks(sendCh[1], "a", "d", "f", "h")
@@ -1024,9 +1023,9 @@ func (s *testGCWorkerSuite) TestMergeLockScanner(c *C) {
 		close(sendCh[1])
 		close(sendCh[2])
 		c.Assert(<-resCh, DeepEquals, makeLockList("a", "b", "c", "d", "e", "f", "g", "h"))
-		c.Assert(scanner.GetSucceededStores(), DeepEquals, idSet(1, 2))
+		c.Assert(scanner.GetSucceededStores(), DeepEquals, makeIDSet(storeIDs, 1, 2))
 
-		scanner, sendCh, resCh = channel(c, 3)
+		scanner, sendCh, storeIDs, resCh = channel(c, 3)
 		sendLocks(sendCh[0], "a\x00", "a\x00\x00", "b", "b\x00")
 		sendLocks(sendCh[1], "a", "a\x00\x00", "a\x00\x00\x00", "c")
 		sendLocks(sendCh[2], "1", "a\x00", "a\x00\x00", "b")
@@ -1034,6 +1033,6 @@ func (s *testGCWorkerSuite) TestMergeLockScanner(c *C) {
 		close(sendCh[1])
 		close(sendCh[2])
 		c.Assert(<-resCh, DeepEquals, makeLockList("1", "a", "a\x00", "a\x00\x00", "a\x00\x00\x00", "b", "b\x00", "c"))
-		c.Assert(scanner.GetSucceededStores(), DeepEquals, idSet(0, 1, 2))
+		c.Assert(scanner.GetSucceededStores(), DeepEquals, makeIDSet(storeIDs, 0, 1, 2))
 	}
 }
