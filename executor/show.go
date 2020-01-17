@@ -213,7 +213,6 @@ func (v *visibleChecker) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 			schema = v.defaultDB
 		}
 		if !v.is.TableExists(model.NewCIStr(schema), x.Name) {
-			v.ok = false
 			return in, true
 		}
 		activeRoles := v.ctx.GetSessionVars().ActiveRoles
