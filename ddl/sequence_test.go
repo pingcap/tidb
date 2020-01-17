@@ -131,6 +131,7 @@ func (s *testSequenceSuite) TestDropSequence(c *C) {
 	s.tk.MustExec("drop sequence seq")
 
 	// Test drop privilege.
+	s.tk.MustExec("drop user if exists myuser@localhost")
 	s.tk.MustExec("create user myuser@localhost")
 	s.tk.MustExec("flush privileges")
 
