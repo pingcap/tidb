@@ -193,8 +193,8 @@ func (s *testSuite) TestReplaceChild(c *C) {
 	node3.Consume(100)
 	c.Assert(node1.BytesConsumed(), Equals, int64(100))
 	node2.ReplaceChild(node3, nil)
-	c.Assert(node2.BytesConsumed(), Equals, int64(100))
-	c.Assert(node1.BytesConsumed(), Equals, int64(100))
+	c.Assert(node2.BytesConsumed(), Equals, int64(0))
+	c.Assert(node1.BytesConsumed(), Equals, int64(0))
 }
 
 func (s *testSuite) TestToString(c *C) {
