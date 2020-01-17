@@ -3334,6 +3334,9 @@ func (d *ddl) DropTable(ctx sessionctx.Context, ti ast.Ident) (err error) {
 	if tb.Meta().IsView() {
 		return infoschema.ErrTableNotExists.GenWithStackByArgs(ti.Schema, ti.Name)
 	}
+	if tb.Meta().IsSequence() {
+		return infoschema.ErrTableNotExists.GenWithStackByArgs(ti.Schema, ti.Name)
+	}
 
 	job := &model.Job{
 		SchemaID:   schema.ID,

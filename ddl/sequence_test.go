@@ -117,4 +117,36 @@ func (s *testSequenceSuite) TestDropSequence(c *C) {
 	_, err = s.tk.Exec("drop sequence seq")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[schema:4139]Unknown SEQUENCE: 'test.seq'")
+
+	// Test drop table when the object is a sequence.
+	s.tk.MustExec("create sequence seq")
+	_, err = s.tk.Exec("drop table seq")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[schema:1051]Unknown table 'test.seq'")
+
+	// Test drop view when the object is a sequence.
+	_, err = s.tk.Exec("drop view seq")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:1347]'test.seq' is not VIEW")
+	s.tk.MustExec("drop sequence seq")
+
+	// Test drop privilege.
+	s.tk.MustExec("create user myuser@localhost")
+	s.tk.MustExec("flush privileges")
+
+	tk1 := testkit.NewTestKit(c, s.store)
+	se, err := session.CreateSession4Test(s.store)
+	c.Assert(err, IsNil)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "myuser", Hostname: "localhost"}, nil, nil), IsTrue)
+	tk1.Se = se
+
+	// grant the myuser the access to database test.
+	s.tk.MustExec("create sequence my_seq")
+	s.tk.MustExec("grant select on test.* to 'myuser'@'localhost'")
+	s.tk.MustExec("flush privileges")
+
+	tk1.MustExec("use test")
+	_, err = tk1.Exec("drop sequence my_seq")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[planner:1142]DROP command denied to user 'localhost'@'myuser' for table 'my_seq'")
 }

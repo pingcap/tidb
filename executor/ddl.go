@@ -96,7 +96,11 @@ func (e *DDLExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 	case *ast.DropDatabaseStmt:
 		err = e.executeDropDatabase(x)
 	case *ast.DropTableStmt:
-		err = e.executeDropTableOrView(x)
+		if x.IsView {
+			err = e.executeDropView(x)
+		} else {
+			err = e.executeDropTable(x)
+		}
 	case *ast.RecoverTableStmt:
 		err = e.executeRecoverTable(x)
 	case *ast.FlashBackTableStmt:
@@ -261,16 +265,19 @@ const (
 	sequenceObject
 )
 
-func (e *DDLExec) executeDropTableOrView(s *ast.DropTableStmt) error {
-	obt := tableObject
-	if s.IsView {
-		obt = viewObject
-	}
-	return e.dropTableViewSequence(s.Tables, obt, s.IfExists)
-
+func (e *DDLExec) executeDropTable(s *ast.DropTableStmt) error {
+	return e.dropTableObject(s.Tables, tableObject, s.IfExists)
 }
 
-func (e *DDLExec) dropTableViewSequence(objects []*ast.TableName, obt objectType, ifExists bool) error {
+func (e *DDLExec) executeDropView(s *ast.DropTableStmt) error {
+	return e.dropTableObject(s.Tables, viewObject, s.IfExists)
+}
+
+func (e *DDLExec) executeDropSequence(s *ast.DropSequenceStmt) error {
+	return e.dropTableObject(s.Sequences, sequenceObject, s.IfExists)
+}
+
+func (e *DDLExec) dropTableObject(objects []*ast.TableName, obt objectType, ifExists bool) error {
 	var notExistTables []string
 	for _, tn := range objects {
 		fullti := ast.Ident{Schema: tn.Schema, Name: tn.Name}
@@ -544,8 +551,4 @@ func (e *DDLExec) executeRepairTable(s *ast.RepairTableStmt) error {
 
 func (e *DDLExec) executeCreateSequence(s *ast.CreateSequenceStmt) error {
 	return domain.GetDomain(e.ctx).DDL().CreateSequence(e.ctx, s)
-}
-
-func (e *DDLExec) executeDropSequence(s *ast.DropSequenceStmt) error {
-	return e.dropTableViewSequence(s.Sequences, sequenceObject, s.IfExists)
 }
