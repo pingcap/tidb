@@ -73,7 +73,7 @@ func buildIndexColumns(columns []*model.ColumnInfo, idxColNames []*ast.IndexColN
 
 		// Length must be specified for BLOB and TEXT column indexes.
 		if types.IsTypeBlob(col.FieldType.Tp) && ic.Length == types.UnspecifiedLength {
-			return nil, errors.Trace(errBlobKeyWithoutLength)
+			return nil, errors.Trace(errBlobKeyWithoutLength.GenWithStackByArgs(col.Name.O))
 		}
 
 		// Length can only be specified for specifiable types.
