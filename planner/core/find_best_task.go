@@ -183,6 +183,11 @@ func (p *baseLogicalPlan) findBestTask(prop *property.PhysicalProperty) (bestTas
 			curTask = enforceProperty(prop, curTask, p.basePlan.ctx)
 		}
 
+		// optimize by shuffle executor to running in parallel manner.
+		if prop.IsEmpty() {
+			curTask = optimizeByShuffle(pp, curTask, p.basePlan.ctx)
+		}
+
 		// get the most efficient one.
 		if curTask.cost() < bestTask.cost() {
 			bestTask = curTask
@@ -1055,6 +1060,11 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 
 func (ts *PhysicalTableScan) addPushedDownSelection(copTask *copTask, stats *property.StatsInfo) {
 	ts.filterCondition, copTask.rootTaskConds = splitSelCondsWithVirtualColumn(ts.filterCondition)
+	if ts.StoreType == kv.TiFlash {
+		var newRootConds []expression.Expression
+		ts.filterCondition, newRootConds = expression.CheckExprPushFlash(ts.filterCondition)
+		copTask.rootTaskConds = append(copTask.rootTaskConds, newRootConds...)
+	}
 
 	// Add filter condition to table plan now.
 	sessVars := ts.ctx.GetSessionVars()
