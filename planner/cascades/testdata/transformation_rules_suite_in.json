@@ -83,5 +83,13 @@
       "select b from (select b from t limit 10 offset 5) as t1 limit 5 offset 5",
       "select a from (select a from t limit 3 offset 5) t1 limit 3 offset 5"
     ]
+  },
+  {
+    "name": "TestTransformLimitToTableDual",
+    "cases": [
+      "select a from t limit 0 offset 1",
+      "select * from t as t1 left join (select * from t limit 0 offset 1) as t2 on t1.a = t2.a;",
+      "select a, b from ((select a, b from t) union all(select c as a, d as b from t limit 0 offset 5)) as t1 where a > 1"
+    ]
   }
 ]
