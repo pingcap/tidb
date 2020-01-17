@@ -1427,3 +1427,11 @@ func (s *testSuite2) TestIssue11390(c *C) {
 	tk.MustExec("insert into 11390t values(1, 1)")
 	tk.MustQuery("select /*+ TIDB_INLJ(t1, t2) */ * from 11390t t1, 11390t t2 where t1.k2 > 0 and t1.k2 = t2.k2 and t2.k1=1;").Check(testkit.Rows("1 1 1 1"))
 }
+
+func (s *testSuiteJoin1) TestIssue14514(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (pk varchar(14) primary key, a varchar(12));")
+	tk.MustQuery("select * from (select t1.pk or '/' as c from t as t1 left join t as t2 on t1.a = t2.pk) as t where t.c = 1;").Check(testkit.Rows())
+}
