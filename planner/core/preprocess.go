@@ -143,6 +143,10 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 	case *ast.CreateSequenceStmt:
 		p.flag |= inCreateOrDropTable
 		p.resolveCreateSequenceStmt(node)
+		p.checkCreateSequenceGrammar(node)
+	case *ast.DropSequenceStmt:
+		p.flag |= inCreateOrDropTable
+		p.checkDropSequenceGrammar(node)
 	default:
 		p.flag &= ^parentIsJoin
 	}
@@ -881,6 +885,20 @@ func (p *preprocessor) resolveCreateSequenceStmt(stmt *ast.CreateSequenceStmt) {
 	sName := stmt.Name.Name.String()
 	if isIncorrectName(sName) {
 		p.err = ddl.ErrWrongTableName.GenWithStackByArgs(sName)
+		return
+	}
+}
+
+func (p *preprocessor) checkCreateSequenceGrammar(stmt *ast.CreateSequenceStmt) {
+	if stmt.IsTemporary {
+		p.err = ddl.ErrUnsupportedDDLTemporaryKeyword.GenWithStack("'CREATE TEMPORARY SEQUENCE' is currently unsupported")
+		return
+	}
+}
+
+func (p *preprocessor) checkDropSequenceGrammar(stmt *ast.DropSequenceStmt) {
+	if stmt.IsTemporary {
+		p.err = ddl.ErrUnsupportedDDLTemporaryKeyword.GenWithStack("'DROP TEMPORARY SEQUENCE' is currently unsupported")
 		return
 	}
 }
