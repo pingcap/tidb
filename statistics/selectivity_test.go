@@ -542,8 +542,8 @@ func (s *testStatsSuite) TestColumnIndexNullEstimation(c *C) {
 	))
 	testKit.MustQuery(`explain select * from t where a is not null`).Check(testkit.Rows(
 		"TableReader_7 4.00 root data:Selection_6",
-		"└─Selection_6 4.00 cop not(isnull(test.t.a))",
-		"  └─TableScan_5 5.00 cop table:t, range:[-inf,+inf], keep order:false",
+		"└─Selection_6 4.00 cop[tikv] not(isnull(test.t.a))",
+		"  └─TableScan_5 5.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false",
 	))
 	testKit.MustQuery(`explain select * from t where a is null or a > 3`).Check(testkit.Rows(
 		"TableReader_7 2.00 root data:Selection_6",

@@ -703,7 +703,7 @@ func (s *testAnalyzeSuite) TestCorrelatedEstimation(c *C) {
 			"Projection_11 10.00 root 9_aux_0",
 			"└─Apply_13 10.00 root CARTESIAN left outer semi join, inner:StreamAgg_20, other cond:eq(test.t.c, 7_col_0)",
 			"  ├─TableReader_15 10.00 root data:TableScan_14",
-			"  │ └─TableScan_14 10.00 cop table:t, range:[-inf,+inf], keep order:false",
+			"  │ └─TableScan_14 10.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false",
 			"  └─StreamAgg_20 1.00 root funcs:count(1)",
 			"    └─HashLeftJoin_21 1.00 root inner join, inner:TableReader_28, equal:[eq(test.s.a, test.t1.a)]",
 			"      ├─TableReader_25 1.00 root data:Selection_24",
@@ -917,11 +917,11 @@ func (s *testAnalyzeSuite) TestIssue9562(c *C) {
 	tk.MustQuery("explain select /*+ TIDB_INLJ(t2) */ * from t1 join t2 on t2.a=t1.a and t2.b>t1.b-1 and t2.b<t1.b+1 and t2.c=t1.c;").Check(testkit.Rows(
 		"IndexJoin_9 12475.01 root inner join, inner:IndexReader_8, outer key:test.t1.a, inner key:test.t2.a, other cond:eq(test.t1.c, test.t2.c), gt(test.t2.b, minus(test.t1.b, 1)), lt(test.t2.b, plus(test.t1.b, 1))",
 		"├─TableReader_12 9980.01 root data:Selection_11",
-		"│ └─Selection_11 9980.01 cop not(isnull(test.t1.a)), not(isnull(test.t1.c))",
-		"│   └─TableScan_10 10000.00 cop table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
+		"│ └─Selection_11 9980.01 cop[tikv] not(isnull(test.t1.a)), not(isnull(test.t1.c))",
+		"│   └─TableScan_10 10000.00 cop[tikv] table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
 		"└─IndexReader_8 9.98 root index:Selection_7",
-		"  └─Selection_7 9.98 cop not(isnull(test.t2.a)), not(isnull(test.t2.c))",
-		"    └─IndexScan_6 10.00 cop table:t2, index:a, b, c, range: decided by [eq(test.t2.a, test.t1.a) gt(test.t2.b, minus(test.t1.b, 1)) lt(test.t2.b, plus(test.t1.b, 1))], keep order:false, stats:pseudo",
+		"  └─Selection_7 9.98 cop[tikv] not(isnull(test.t2.a)), not(isnull(test.t2.c))",
+		"    └─IndexScan_6 10.00 cop[tikv] table:t2, index:a, b, c, range: decided by [eq(test.t2.a, test.t1.a) gt(test.t2.b, minus(test.t1.b, 1)) lt(test.t2.b, plus(test.t1.b, 1))], keep order:false, stats:pseudo",
 	))
 
 	tk.MustExec("create table t(a int, b int, index idx_ab(a, b))")
@@ -929,11 +929,11 @@ func (s *testAnalyzeSuite) TestIssue9562(c *C) {
 		"Projection_7 0.00 root test.t1.a, test.t1.b, test.t2.a, test.t2.b",
 		"└─HashRightJoin_9 0.00 root inner join, inner:IndexReader_12, equal:[eq(test.t2.b, test.t1.b)]",
 		"  ├─IndexReader_12 0.00 root index:Selection_11",
-		"  │ └─Selection_11 0.00 cop isnull(test.t2.b), not(isnull(test.t2.b))",
-		"  │   └─IndexScan_10 10000.00 cop table:t2, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo",
+		"  │ └─Selection_11 0.00 cop[tikv] isnull(test.t2.b), not(isnull(test.t2.b))",
+		"  │   └─IndexScan_10 10000.00 cop[tikv] table:t2, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo",
 		"  └─IndexReader_15 9990.00 root index:Selection_14",
-		"    └─Selection_14 9990.00 cop not(isnull(test.t1.b))",
-		"      └─IndexScan_13 10000.00 cop table:t1, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo",
+		"    └─Selection_14 9990.00 cop[tikv] not(isnull(test.t1.b))",
+		"      └─IndexScan_13 10000.00 cop[tikv] table:t1, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo",
 	))
 }
 
@@ -979,11 +979,11 @@ func (s *testAnalyzeSuite) TestIssue9805(c *C) {
 	// |   ├─Projection_16              | 8.00     | root | test.t1.id, test.t1.a, test.t1.b, cast(mod(test.t1.a, 30))                       | time:164.587µs, loops:1, rows:0  |
 	// |   │ └─Selection_17             | 8.00     | root | eq(cast(mod(test.t1.a, 30)), 4)                                                  | time:157.768µs, loops:1, rows:0  |
 	// |   │   └─TableReader_20         | 10.00    | root | data:Selection_19                                                                | time:154.61µs, loops:1, rows:0   |
-	// |   │     └─Selection_19         | 10.00    | cop  | eq(test.t1.b, "t2")                                                              | time:28.824µs, loops:1, rows:0   |
-	// |   │       └─TableScan_18       | 10000.00 | cop  | table:t1, range:[-inf,+inf], keep order:false, stats:pseudo                      | time:27.654µs, loops:1, rows:0   |
+	// |   │     └─Selection_19         | 10.00    | cop[tikv]  | eq(test.t1.b, "t2")                                                              | time:28.824µs, loops:1, rows:0   |
+	// |   │       └─TableScan_18       | 10000.00 | cop[tikv]  | table:t1, range:[-inf,+inf], keep order:false, stats:pseudo                      | time:27.654µs, loops:1, rows:0   |
 	// |   └─IndexLookUp_12             | 10.00    | root |                                                                                  | time:0ns, loops:0, rows:0        |
-	// |     ├─IndexScan_10             | 10.00    | cop  | table:t2, index:d, range: decided by [test.t1.a], keep order:false, stats:pseudo | time:0ns, loops:0, rows:0        |
-	// |     └─TableScan_11             | 10.00    | cop  | table:t2, keep order:false, stats:pseudo                                         | time:0ns, loops:0, rows:0        |
+	// |     ├─IndexScan_10             | 10.00    | cop[tikv]  | table:t2, index:d, range: decided by [test.t1.a], keep order:false, stats:pseudo | time:0ns, loops:0, rows:0        |
+	// |     └─TableScan_11             | 10.00    | cop[tikv]  | table:t2, keep order:false, stats:pseudo                                         | time:0ns, loops:0, rows:0        |
 	// +--------------------------------+----------+------+----------------------------------------------------------------------------------+----------------------------------+
 	// 10 rows in set (0.00 sec)
 	//

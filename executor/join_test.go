@@ -896,11 +896,11 @@ func (s *testSuite2) TestIndexLookupJoin(c *C) {
 		"StreamAgg_11 1.00 root funcs:count(1)",
 		"└─IndexJoin_24 64.00 root inner join, inner:IndexReader_23, outer key:test.t.a, inner key:test.s.a, other cond:lt(test.s.b, test.t.b)",
 		"  ├─TableReader_19 64.00 root data:Selection_18",
-		"  │ └─Selection_18 64.00 cop not(isnull(test.t.b))",
-		"  │   └─TableScan_17 64.00 cop table:t, range:[-inf,+inf], keep order:false",
+		"  │ └─Selection_18 64.00 cop[tikv] not(isnull(test.t.b))",
+		"  │   └─TableScan_17 64.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false",
 		"  └─IndexReader_23 1.00 root index:Selection_22",
-		"    └─Selection_22 1.00 cop not(isnull(test.s.a)), not(isnull(test.s.b))",
-		"      └─IndexScan_21 1.00 cop table:s, index:a, b, range: decided by [eq(test.s.a, test.t.a) lt(test.s.b, test.t.b)], keep order:false"))
+		"    └─Selection_22 1.00 cop[tikv] not(isnull(test.s.a)), not(isnull(test.s.b))",
+		"      └─IndexScan_21 1.00 cop[tikv] table:s, index:a, b, range: decided by [eq(test.s.a, test.t.a) lt(test.s.b, test.t.b)], keep order:false"))
 	tk.MustQuery("select /*+ TIDB_INLJ(s) */ count(*) from t join s use index(idx) on s.a = t.a and s.b < t.b").Check(testkit.Rows("64"))
 	tk.MustExec("set @@tidb_index_lookup_join_concurrency=1;")
 	tk.MustQuery("select /*+ TIDB_INLJ(s) */ count(*) from t join s use index(idx) on s.a = t.a and s.b < t.b").Check(testkit.Rows("64"))

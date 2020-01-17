@@ -775,7 +775,7 @@ func (s *testRegionCacheSuite) TestReplaceNewAddrAndOldOfflineImmediately(c *C) 
 	s.cluster.ChangeLeader(s.region1, s.peer2)
 	loc, err = client.regionCache.LocateKey(s.bo, testKey)
 	c.Assert(err, IsNil)
-	fctx, err := client.regionCache.GetRPCContext(s.bo, loc.Region, kv.ReplicaReadLeader, 0)
+	fctx, err := client.regionCache.GetTiKVRPCContext(s.bo, loc.Region, kv.ReplicaReadLeader, 0)
 	c.Assert(err, IsNil)
 	c.Assert(fctx.Store.storeID, Equals, s.store2)
 	c.Assert(fctx.Addr, Equals, "store2")
@@ -862,7 +862,7 @@ func (s *testRegionCacheSuite) TestFollowerMeetEpochNotMatch(c *C) {
 
 	// follower read failed on store2
 	followReqSeed := uint32(0)
-	ctxFollower1, err := s.cache.GetRPCContext(s.bo, loc1.Region, kv.ReplicaReadFollower, followReqSeed)
+	ctxFollower1, err := s.cache.GetTiKVRPCContext(s.bo, loc1.Region, kv.ReplicaReadFollower, followReqSeed)
 	c.Assert(err, IsNil)
 	c.Assert(ctxFollower1.Peer.Id, Equals, s.peer2)
 	c.Assert(ctxFollower1.Store.storeID, Equals, s.store2)

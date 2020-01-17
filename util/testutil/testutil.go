@@ -123,12 +123,12 @@ func RowsWithSep(sep string, args ...string) [][]interface{} {
 var record bool
 
 func init() {
-	flag.BoolVar(&record, "record", false, "to generate test result")
+	flag.BoolVar(&record, "record", true, "to generate test result")
 }
 
 type testCases struct {
 	Name       string
-	Cases      *json.RawMessage // For delayed parse.
+	Cases      *json.RawMessage // For delaed parse.
 	decodedOut interface{}      // For generate output.
 }
 
