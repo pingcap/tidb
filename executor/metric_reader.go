@@ -195,7 +195,7 @@ func (c *queryClient) URL(ep string, args map[string]string) *url.URL {
 	return c.Client.URL(ep, args)
 }
 
-// MetricRetriever uses to read metric data.
+// MetricSummaryRetriever uses to read metric data.
 type MetricSummaryRetriever struct {
 	dummyCloser
 	table     *model.TableInfo
