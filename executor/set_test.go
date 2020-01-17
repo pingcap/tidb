@@ -420,8 +420,7 @@ func (s *testSuite5) TestSetVar(c *C) {
 }
 
 func (s *testSuite5) TestSetCharset(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
+	tk := testkit.NewTestKitWithInit(c, s.store)
 	ctx := tk.Se.(sessionctx.Context)
 	sessionVars := ctx.GetSessionVars()
 
