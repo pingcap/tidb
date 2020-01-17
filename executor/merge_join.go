@@ -111,7 +111,7 @@ func (t *mergeJoinTable) init(exec *MergeJoinExec) {
 	t.memTracker.Consume(t.childChunk.MemoryUsage())
 }
 
-func (t *mergeJoinTable) fini() error {
+func (t *mergeJoinTable) finish() error {
 	t.memTracker.Consume(-t.childChunk.MemoryUsage())
 
 	if t.isInner {
@@ -271,10 +271,10 @@ func (t *mergeJoinTable) hasNullInJoinKey(row chunk.Row) bool {
 
 // Close implements the Executor Close interface.
 func (e *MergeJoinExec) Close() error {
-	if err := e.innerTable.fini(); err != nil {
+	if err := e.innerTable.finish(); err != nil {
 		return err
 	}
-	if err := e.outerTable.fini(); err != nil {
+	if err := e.outerTable.finish(); err != nil {
 		return err
 	}
 
