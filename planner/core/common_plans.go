@@ -629,13 +629,13 @@ func (e *Explain) explainPlanInRowFormat(p PhysicalPlan, taskType, indent string
 		}
 		err = e.explainPlanInRowFormat(copPlan.tablePlan, "cop["+storeType+"]", childIndent, true)
 	case *PhysicalIndexReader:
-		err = e.explainPlanInRowFormat(copPlan.indexPlan, "cop", childIndent, true)
+		err = e.explainPlanInRowFormat(copPlan.indexPlan, "cop[tikv]", childIndent, true)
 	case *PhysicalIndexLookUpReader:
-		err = e.explainPlanInRowFormat(copPlan.indexPlan, "cop", childIndent, false)
+		err = e.explainPlanInRowFormat(copPlan.indexPlan, "cop[tikv]", childIndent, false)
 		if err != nil {
 			return
 		}
-		err = e.explainPlanInRowFormat(copPlan.tablePlan, "cop", childIndent, true)
+		err = e.explainPlanInRowFormat(copPlan.tablePlan, "cop[tikv]", childIndent, true)
 	}
 	return
 }

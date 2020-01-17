@@ -2045,7 +2045,7 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, nodeType n
 			hashJoinTables:            hashJoinTables,
 			indexHintList:             indexHintList,
 			aggHints:                  aggHints,
-			flashTables: tiflashTables,
+			flashTables:               tiflashTables,
 		})
 		return true
 	}
@@ -2410,7 +2410,6 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	if handleCol != nil {
 		schema.TblID2Handle[tableInfo.ID] = []*expression.Column{handleCol}
 	}
-
 
 	var result LogicalPlan = ds
 
