@@ -1053,26 +1053,26 @@ func (s *testIntegrationSuite5) TestBackwardCompatibility(c *C) {
 	job.SnapshotVer = txn.StartTS()
 	err = t.EnQueueDDLJob(job)
 	c.Assert(err, IsNil)
-	// err = txn.Commit(context.Background())
-	// c.Assert(err, IsNil)
-	// ticker := time.NewTicker(s.lease)
-	// defer ticker.Stop()
-	// for range ticker.C {
-	// 	historyJob, err := s.getHistoryDDLJob(job.ID)
-	// 	c.Assert(err, IsNil)
-	// 	if historyJob == nil {
+	err = txn.Commit(context.Background())
+	c.Assert(err, IsNil)
+	ticker := time.NewTicker(s.lease)
+	defer ticker.Stop()
+	for range ticker.C {
+		historyJob, err := s.getHistoryDDLJob(job.ID)
+		c.Assert(err, IsNil)
+		if historyJob == nil {
 
-	// 		continue
-	// 	}
-	// 	c.Assert(historyJob.Error, IsNil)
+			continue
+		}
+		c.Assert(historyJob.Error, IsNil)
 
-	// 	if historyJob.IsSynced() {
-	// 		break
-	// 	}
-	// }
+		if historyJob.IsSynced() {
+			break
+		}
+	}
 
 	// finished add index
-	// tk.MustExec("admin check index t idx_b")
+	tk.MustExec("admin check index t idx_b")
 }
 
 func (s *testIntegrationSuite3) TestMultiRegionGetTableEndHandle(c *C) {
@@ -1104,9 +1104,9 @@ func (s *testIntegrationSuite3) TestMultiRegionGetTableEndHandle(c *C) {
 	c.Assert(maxID, Equals, int64(1000))
 
 	tk.MustExec("insert into t values(10000, 1000)")
-	// maxID, emptyTable = getMaxTableRowID(testCtx, s.store)
-	// c.Assert(emptyTable, IsFalse)
-	// c.Assert(maxID, Equals, int64(1001))
+	maxID, emptyTable = getMaxTableRowID(testCtx, s.store)
+	c.Assert(emptyTable, IsFalse)
+	c.Assert(maxID, Equals, int64(1001))
 }
 
 type testMaxTableRowIDContext struct {

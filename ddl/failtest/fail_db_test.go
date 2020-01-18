@@ -18,16 +18,22 @@ import (
 	"fmt"
 	"math/rand"
 	"os"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser"
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/ddl/testutil"
+	ddlutil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/util/logutil"
@@ -196,35 +202,35 @@ func (s *testFailDBSuite) TestUpdateHandleFailed(c *C) {
 	tk.MustExec("admin check index t idx_b")
 }
 
-// func (s *testFailDBSuite) TestAddIndexFailed(c *C) {
-// 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/mockAddIndexErr", `1*return`), IsNil)
-// 	defer func() {
-// 		c.Assert(failpoint.Disable("github.com/pingcap/tidb/ddl/mockAddIndexErr"), IsNil)
-// 	}()
-// 	tk := testkit.NewTestKit(c, s.store)
-// 	tk.MustExec("create database if not exists test_add_index_failed")
-// 	defer tk.MustExec("drop database test_add_index_failed")
-// 	tk.MustExec("use test_add_index_failed")
+func (s *testFailDBSuite) TestAddIndexFailed(c *C) {
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/mockAddIndexErr", `1*return`), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/ddl/mockAddIndexErr"), IsNil)
+	}()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create database if not exists test_add_index_failed")
+	defer tk.MustExec("drop database test_add_index_failed")
+	tk.MustExec("use test_add_index_failed")
 
-// 	tk.MustExec("create table t(a bigint PRIMARY KEY, b int)")
-// 	for i := 0; i < 1000; i++ {
-// 		tk.MustExec(fmt.Sprintf("insert into t values(%v, %v)", i, i))
-// 	}
+	tk.MustExec("create table t(a bigint PRIMARY KEY, b int)")
+	for i := 0; i < 1000; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t values(%v, %v)", i, i))
+	}
 
-// 	// Get table ID for split.
-// 	dom := domain.GetDomain(tk.Se)
-// 	is := dom.InfoSchema()
-// 	tbl, err := is.TableByName(model.NewCIStr("test_add_index_failed"), model.NewCIStr("t"))
-// 	c.Assert(err, IsNil)
-// 	tblID := tbl.Meta().ID
+	// Get table ID for split.
+	dom := domain.GetDomain(tk.Se)
+	is := dom.InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test_add_index_failed"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tblID := tbl.Meta().ID
 
-// 	// Split the table.
-// 	s.cluster.SplitTable(s.mvccStore, tblID, 100)
+	// Split the table.
+	s.cluster.SplitTable(s.mvccStore, tblID, 100)
 
-// 	tk.MustExec("alter table t add index idx_b(b)")
-// 	tk.MustExec("admin check index t idx_b")
-// 	tk.MustExec("admin check table t")
-// }
+	tk.MustExec("alter table t add index idx_b(b)")
+	tk.MustExec("admin check index t idx_b")
+	tk.MustExec("admin check table t")
+}
 
 // TestFailSchemaSyncer test when the schema syncer is done,
 // should prohibit DML executing until the syncer is restartd by loadSchemaInLoop.
@@ -330,65 +336,65 @@ func batchInsert(tk *testkit.TestKit, tbl string, start, end int) {
 	tk.MustExec(dml)
 }
 
-// func (s *testFailDBSuite) TestAddIndexWorkerNum(c *C) {
-// 	tk := testkit.NewTestKit(c, s.store)
-// 	tk.MustExec("create database if not exists test_db")
-// 	tk.MustExec("use test_db")
-// 	tk.MustExec("drop table if exists test_add_index")
-// 	tk.MustExec("create table test_add_index (c1 bigint, c2 bigint, c3 bigint, primary key(c1))")
+func (s *testFailDBSuite) TestAddIndexWorkerNum(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create database if not exists test_db")
+	tk.MustExec("use test_db")
+	tk.MustExec("drop table if exists test_add_index")
+	tk.MustExec("create table test_add_index (c1 bigint, c2 bigint, c3 bigint, primary key(c1))")
 
-// 	done := make(chan error, 1)
-// 	start := -10
-// 	// first add some rows
-// 	for i := start; i < 4090; i += 100 {
-// 		batchInsert(tk, "test_add_index", i, i+100)
-// 	}
+	done := make(chan error, 1)
+	start := -10
+	// first add some rows
+	for i := start; i < 4090; i += 100 {
+		batchInsert(tk, "test_add_index", i, i+100)
+	}
 
-// 	is := s.dom.InfoSchema()
-// 	schemaName := model.NewCIStr("test_db")
-// 	tableName := model.NewCIStr("test_add_index")
-// 	tbl, err := is.TableByName(schemaName, tableName)
-// 	c.Assert(err, IsNil)
+	is := s.dom.InfoSchema()
+	schemaName := model.NewCIStr("test_db")
+	tableName := model.NewCIStr("test_add_index")
+	tbl, err := is.TableByName(schemaName, tableName)
+	c.Assert(err, IsNil)
 
-// 	splitCount := 100
-// 	// Split table to multi region.
-// 	s.cluster.SplitTable(s.mvccStore, tbl.Meta().ID, splitCount)
+	splitCount := 100
+	// Split table to multi region.
+	s.cluster.SplitTable(s.mvccStore, tbl.Meta().ID, splitCount)
 
-// 	err = ddlutil.LoadDDLReorgVars(tk.Se)
-// 	c.Assert(err, IsNil)
-// 	originDDLAddIndexWorkerCnt := variable.GetDDLReorgWorkerCounter()
-// 	lastSetWorkerCnt := originDDLAddIndexWorkerCnt
-// 	atomic.StoreInt32(&ddl.TestCheckWorkerNumber, lastSetWorkerCnt)
-// 	ddl.TestCheckWorkerNumber = lastSetWorkerCnt
-// 	defer tk.MustExec(fmt.Sprintf("set @@global.tidb_ddl_reorg_worker_cnt=%d", originDDLAddIndexWorkerCnt))
+	err = ddlutil.LoadDDLReorgVars(tk.Se)
+	c.Assert(err, IsNil)
+	originDDLAddIndexWorkerCnt := variable.GetDDLReorgWorkerCounter()
+	lastSetWorkerCnt := originDDLAddIndexWorkerCnt
+	atomic.StoreInt32(&ddl.TestCheckWorkerNumber, lastSetWorkerCnt)
+	ddl.TestCheckWorkerNumber = lastSetWorkerCnt
+	defer tk.MustExec(fmt.Sprintf("set @@global.tidb_ddl_reorg_worker_cnt=%d", originDDLAddIndexWorkerCnt))
 
-// 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/checkIndexWorkerNum", `return(true)`), IsNil)
-// 	defer func() {
-// 		c.Assert(failpoint.Disable("github.com/pingcap/tidb/ddl/checkIndexWorkerNum"), IsNil)
-// 	}()
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/checkIndexWorkerNum", `return(true)`), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/ddl/checkIndexWorkerNum"), IsNil)
+	}()
 
-// 	testutil.SessionExecInGoroutine(c, s.store, "create index c3_index on test_add_index (c3)", done)
-// 	checkNum := 0
+	testutil.SessionExecInGoroutine(c, s.store, "create index c3_index on test_add_index (c3)", done)
+	checkNum := 0
 
-// LOOP:
-// 	for {
-// 		select {
-// 		case err = <-done:
-// 			if err == nil {
-// 				break LOOP
-// 			}
-// 			c.Assert(err, IsNil, Commentf("err:%v", errors.ErrorStack(err)))
-// 		case <-ddl.TestCheckWorkerNumCh:
-// 			lastSetWorkerCnt = int32(rand.Intn(8) + 8)
-// 			tk.MustExec(fmt.Sprintf("set @@global.tidb_ddl_reorg_worker_cnt=%d", lastSetWorkerCnt))
-// 			atomic.StoreInt32(&ddl.TestCheckWorkerNumber, lastSetWorkerCnt)
-// 			checkNum++
-// 		}
-// 	}
-// 	c.Assert(checkNum, Greater, 5)
-// 	tk.MustExec("admin check table test_add_index")
-// 	tk.MustExec("drop table test_add_index")
-// }
+LOOP:
+	for {
+		select {
+		case err = <-done:
+			if err == nil {
+				break LOOP
+			}
+			c.Assert(err, IsNil, Commentf("err:%v", errors.ErrorStack(err)))
+		case <-ddl.TestCheckWorkerNumCh:
+			lastSetWorkerCnt = int32(rand.Intn(8) + 8)
+			tk.MustExec(fmt.Sprintf("set @@global.tidb_ddl_reorg_worker_cnt=%d", lastSetWorkerCnt))
+			atomic.StoreInt32(&ddl.TestCheckWorkerNumber, lastSetWorkerCnt)
+			checkNum++
+		}
+	}
+	c.Assert(checkNum, Greater, 5)
+	tk.MustExec("admin check table test_add_index")
+	tk.MustExec("drop table test_add_index")
+}
 
 // TestRunDDLJobPanic tests recover panic when run ddl job panic.
 func (s *testFailDBSuite) TestRunDDLJobPanic(c *C) {

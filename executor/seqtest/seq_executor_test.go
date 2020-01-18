@@ -36,6 +36,7 @@ import (
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/parser"
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
@@ -109,53 +110,53 @@ func (s *seqTestSuite) TearDownSuite(c *C) {
 	s.store.Close()
 }
 
-// func (s *seqTestSuite) TestEarlyClose(c *C) {
-// 	tk := testkit.NewTestKit(c, s.store)
-// 	tk.MustExec("use test")
-// 	tk.MustExec("create table earlyclose (id int primary key)")
+func (s *seqTestSuite) TestEarlyClose(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table earlyclose (id int primary key)")
 
-// 	N := 100
-// 	// Insert N rows.
-// 	var values []string
-// 	for i := 0; i < N; i++ {
-// 		values = append(values, fmt.Sprintf("(%d)", i))
-// 	}
-// 	tk.MustExec("insert earlyclose values " + strings.Join(values, ","))
+	N := 100
+	// Insert N rows.
+	var values []string
+	for i := 0; i < N; i++ {
+		values = append(values, fmt.Sprintf("(%d)", i))
+	}
+	tk.MustExec("insert earlyclose values " + strings.Join(values, ","))
 
-// 	// Get table ID for split.
-// 	dom := domain.GetDomain(tk.Se)
-// 	is := dom.InfoSchema()
-// 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("earlyclose"))
-// 	c.Assert(err, IsNil)
-// 	tblID := tbl.Meta().ID
+	// Get table ID for split.
+	dom := domain.GetDomain(tk.Se)
+	is := dom.InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("earlyclose"))
+	c.Assert(err, IsNil)
+	tblID := tbl.Meta().ID
 
-// 	// Split the table.
-// 	s.cluster.SplitTable(s.mvccStore, tblID, N/2)
+	// Split the table.
+	s.cluster.SplitTable(s.mvccStore, tblID, N/2)
 
-// 	ctx := context.Background()
-// 	for i := 0; i < N/2; i++ {
-// 		rss, err1 := tk.Se.Execute(ctx, "select * from earlyclose order by id")
-// 		c.Assert(err1, IsNil)
-// 		rs := rss[0]
-// 		req := rs.NewChunk()
-// 		err = rs.Next(ctx, req)
-// 		c.Assert(err, IsNil)
-// 		rs.Close()
-// 	}
+	ctx := context.Background()
+	for i := 0; i < N/2; i++ {
+		rss, err1 := tk.Se.Execute(ctx, "select * from earlyclose order by id")
+		c.Assert(err1, IsNil)
+		rs := rss[0]
+		req := rs.NewChunk()
+		err = rs.Next(ctx, req)
+		c.Assert(err, IsNil)
+		rs.Close()
+	}
 
-// 	// Goroutine should not leak when error happen.
-// 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/handleTaskOnceError", `return(true)`), IsNil)
-// 	defer func() {
-// 		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/handleTaskOnceError"), IsNil)
-// 	}()
-// 	rss, err := tk.Se.Execute(ctx, "select * from earlyclose")
-// 	c.Assert(err, IsNil)
-// 	rs := rss[0]
-// 	req := rs.NewChunk()
-// 	err = rs.Next(ctx, req)
-// 	c.Assert(err, NotNil)
-// 	rs.Close()
-// }
+	// Goroutine should not leak when error happen.
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/handleTaskOnceError", `return(true)`), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/handleTaskOnceError"), IsNil)
+	}()
+	rss, err := tk.Se.Execute(ctx, "select * from earlyclose")
+	c.Assert(err, IsNil)
+	rs := rss[0]
+	req := rs.NewChunk()
+	err = rs.Next(ctx, req)
+	c.Assert(err, NotNil)
+	rs.Close()
+}
 
 type stats struct {
 }
