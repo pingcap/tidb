@@ -2932,6 +2932,9 @@ func (s *testParserSuite) TestErrorMsg(c *C) {
 	_, _, err = parser.Parse("ALTER DATABASE CHARSET = 'utf8mb4' COLLATE = 'utf8_bin'", "", "")
 	c.Assert(err.Error(), Equals, "line 1 column 24 near \"= 'utf8mb4' COLLATE = 'utf8_bin'\" ")
 
+	_, _, err = parser.Parse("ALTER DATABASE t ENCRYPTION = ''", "", "")
+	c.Assert(err.Error(), Equals, "[parser:1525]Incorrect argument (should be Y or N) value: ''")
+
 	_, _, err = parser.Parse("ALTER DATABASE", "", "")
 	c.Assert(err.Error(), Equals, "line 1 column 14 near \"\" ")
 

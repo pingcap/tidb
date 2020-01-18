@@ -1167,6 +1167,7 @@ import (
 	LinearOpt         "linear or empty"
 	FieldsOrColumns   "Fields or columns"
 	StorageMedia      "{DISK|MEMORY|DEFAULT}"
+	EncryptionOpt     "Encryption option 'Y' or 'N'"
 
 %type	<ident>
 	ODBCDateTimeType                "ODBC type keywords for date and time literals"
@@ -3121,7 +3122,7 @@ DatabaseOption:
 	{
 		$$ = &ast.DatabaseOption{Tp: ast.DatabaseOptionCollate, Value: $4.(string)}
 	}
-|	DefaultKwdOpt "ENCRYPTION" EqOpt stringLit
+|	DefaultKwdOpt "ENCRYPTION" EqOpt EncryptionOpt
 	{
 		$$ = &ast.DatabaseOption{Tp: ast.DatabaseOptionEncryption, Value: $4}
 	}
@@ -9091,12 +9092,10 @@ TableOption:
 		yylex.AppendError(yylex.Errorf("The UNION option is parsed but ignored by all storage engines."))
 		parser.lastErrorAsWarn()
 	}
-|	"ENCRYPTION" EqOpt stringLit
+|	"ENCRYPTION" EqOpt EncryptionOpt
 	{
 		// Parse it but will ignore it
 		$$ = &ast.TableOption{Tp: ast.TableOptionEncryption, StrValue: $3}
-		yylex.AppendError(yylex.Errorf("The ENCRYPTION clause is parsed but ignored by all storage engines."))
-		parser.lastErrorAsWarn()
 	}
 
 StatsPersistentVal:
@@ -11140,5 +11139,22 @@ PerDB:
 |	"PER_DB" NUM
 	{
 		$$ = getUint64FromNUM($2)
+	}
+
+EncryptionOpt:
+	stringLit
+	{
+		// Parse it but will ignore it
+		switch $1 {
+		case "Y", "y":
+			yylex.AppendError(yylex.Errorf("The ENCRYPTION clause is parsed but ignored by all storage engines."))
+			parser.lastErrorAsWarn()
+		case "N", "n":
+			break
+		default:
+			yylex.AppendError(ErrWrongValue.GenWithStackByArgs("argument (should be Y or N)", $1))
+			return 1
+		}
+		$$ = $1
 	}
 %%
