@@ -87,6 +87,11 @@ repair-mode = false
 # In repair mode, repairing table which is not in repair list will get wrong database or wrong table error.
 repair-table-list = []
 
+# ignore-ddl-temporary-keyword is used to make ddl TEMPORARY keyword compatible with previous version TiDB.
+# turn on this option, 'TEMPORARY' will ignored by TiDB. Please make sure you fully understand the negative impact.
+# turn off this option, use 'CREATE/DROP TEMPORARY TABLE' or 'CREATE/DROP TEMPORARY SEQUENCE' will reported an error.
+ignore-ddl-temporary-keyword = false
+
 [log]
 # Log level: debug, info, warn, error, fatal.
 level = "info"

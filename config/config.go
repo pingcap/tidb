@@ -586,6 +586,7 @@ var defaultConf = Config{
 	Experimental: Experimental{
 		AllowAutoRandom: false,
 	},
+	IgnoreDDLTemporaryKeyword: false,
 }
 
 var (
