@@ -1403,14 +1403,22 @@ func (r *EliminateSingleMaxMin) OnTransform(old *memo.ExprIter) (newExprs []*mem
 	agg := old.GetExpr().ExprNode.(*plannercore.LogicalAggregation)
 	childGroup := old.GetExpr().Children[0]
 	ctx := agg.SCtx()
-	f := agg.AggFuncs[0]
+
+	var maxMinPos int
+	for i, aggFunc := range agg.AggFuncs {
+		if aggFunc.Name == ast.AggFuncMax || aggFunc.Name == ast.AggFuncMin {
+			maxMinPos = i
+			break
+		}
+	}
+	f := agg.AggFuncs[maxMinPos]
 
 	// If there's no column in f.GetArgs()[0], we still need limit and read data from real table because the result should be NULL if the input is empty.
-	if len(expression.ExtractColumns(f.Args[0])) > 0 {
+	if len(expression.ExtractColumns(f.Args[maxMinPos])) > 0 {
 		// If it can be NULL, we need to filter NULL out first.
-		if !mysql.HasNotNullFlag(f.Args[0].GetType().Flag) {
+		if !mysql.HasNotNullFlag(f.Args[maxMinPos].GetType().Flag) {
 			sel := plannercore.LogicalSelection{}.Init(ctx, agg.SelectBlockOffset())
-			isNullFunc := expression.NewFunctionInternal(ctx, ast.IsNull, types.NewFieldType(mysql.TypeTiny), f.Args[0])
+			isNullFunc := expression.NewFunctionInternal(ctx, ast.IsNull, types.NewFieldType(mysql.TypeTiny), f.Args[maxMinPos])
 			notNullFunc := expression.NewFunctionInternal(ctx, ast.UnaryNot, types.NewFieldType(mysql.TypeTiny), isNullFunc)
 			sel.Conditions = []expression.Expression{notNullFunc}
 			selExpr := memo.NewGroupExpr(sel)
@@ -1424,7 +1432,7 @@ func (r *EliminateSingleMaxMin) OnTransform(old *memo.ExprIter) (newExprs []*mem
 		desc := f.Name == ast.AggFuncMax
 		var byItems []*plannercore.ByItems
 		byItems = append(byItems, &plannercore.ByItems{
-			Expr: f.Args[0],
+			Expr: f.Args[maxMinPos],
 			Desc: desc,
 		})
 		top1 := plannercore.LogicalTopN{

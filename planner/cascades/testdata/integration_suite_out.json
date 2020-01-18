@@ -263,6 +263,32 @@
         "Result": [
           "4 44"
         ]
+      },
+      {
+        "SQL": "select min(a) from t",
+        "Plan": [
+          "HashAgg_16 1.00 root funcs:min(test.t.a)->Column#3",
+          "└─Limit_18 1.00 root offset:0, count:1",
+          "  └─TableReader_23 1.00 root data:Limit_24",
+          "    └─Limit_24 1.00 cop[tikv] offset:0, count:1",
+          "      └─TableScan_22 1.00 cop[tikv] table:t, range:[-inf,+inf], keep order:true, stats:pseudo"
+        ],
+        "Result": [
+          "1"
+        ]
+      },
+      {
+        "SQL": "select a, min(b) from t",
+        "Plan": [
+          "Projection_12 1.00 root test.t.a, Column#3",
+          "└─HashAgg_28 1.00 root funcs:min(Column#4)->Column#3, funcs:firstrow(Column#5)->test.t.a",
+          "  └─TableReader_29 1.00 root data:HashAgg_30",
+          "    └─HashAgg_30 1.00 cop[tikv] funcs:min(test.t.b)->Column#4, funcs:firstrow(test.t.a)->Column#5",
+          "      └─TableScan_15 10000.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 11"
+        ]
       }
     ]
   },
