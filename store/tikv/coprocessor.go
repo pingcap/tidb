@@ -608,7 +608,7 @@ func (worker *copIteratorWorker) run(ctx context.Context) {
 		respCh := worker.respChan
 		// If we need to keep order tasks will be coming
 		// via individual channel (in task)
-		if worker.req.KeepOrder || respCh == nil {
+		if respCh == nil {
 			respCh = task.respChan
 		}
 
