@@ -63,7 +63,7 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variable
 		vars:            vars,
 		memTracker:      req.MemTracker,
 		replicaReadSeed: c.replicaReadSeed,
-		tasksFilled:     make(chan struct{}, 1),
+		tasksFilledCh:   make(chan struct{}, 1),
 		tasks:           []*copTask{},
 	}
 	it.minCommitTSPushed.data = make(map[uint64]struct{}, 5)
@@ -492,7 +492,7 @@ type copIterator struct {
 
 	// Channel for sending a signal that all tasks are filled
 	// (initially tasks is an empty slice, it is filled in copIteratorTaskSender.run)
-	tasksFilled chan struct{}
+	tasksFilledCh chan struct{}
 	// If keepOrder, results are stored in copTask.respChan, read them out one by one.
 	tasks []*copTask
 	curr  int
@@ -536,7 +536,7 @@ type copIteratorWorker struct {
 
 // copIteratorTaskSender sends tasks to taskCh then wait for the workers to exit.
 type copIteratorTaskSender struct {
-	iter       *copIterator
+	iterator   *copIterator
 	newTasksCh <-chan *copTask
 	taskCh     chan<- *copTask
 	wg         *sync.WaitGroup
@@ -656,7 +656,7 @@ func (it *copIterator) open(ctx context.Context) error {
 	}
 
 	taskSender := &copIteratorTaskSender{
-		iter:       it,
+		iterator:   it,
 		newTasksCh: newTasksCh,
 		taskCh:     taskCh,
 		wg:         &it.wg,
@@ -671,15 +671,15 @@ func (it *copIterator) open(ctx context.Context) error {
 func (sender *copIteratorTaskSender) run() {
 	// Send tasks to feed the worker goroutines.
 	for t := range sender.newTasksCh {
-		sender.iter.tasks = append(sender.iter.tasks, t)
+		sender.iterator.tasks = append(sender.iterator.tasks, t)
 		exit := sender.sendToTaskCh(t)
 		if exit {
 			break
 		}
 	}
 	close(sender.taskCh)
-	sender.iter.tasksFilled <- struct{}{}
-	close(sender.iter.tasksFilled)
+	sender.iterator.tasksFilledCh <- struct{}{}
+	close(sender.iterator.tasksFilledCh)
 
 	// Wait for worker goroutines to exit.
 	sender.wg.Wait()
@@ -745,7 +745,7 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 		}
 	} else {
 		// first, we need to be sure that all tasks are received
-		<-it.tasksFilled
+		<-it.tasksFilledCh
 		// then we can start to iterate over tasks
 		for {
 			if it.curr >= len(it.tasks) {
