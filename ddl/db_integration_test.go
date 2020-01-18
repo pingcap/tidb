@@ -152,7 +152,7 @@ func (s *testIntegrationSuite2) TestInvalidDefault(c *C) {
 	c.Assert(terror.ErrorEqual(err, types.ErrInvalidDefault), IsTrue, Commentf("err %v", err))
 }
 
-// TestKeyWithoutLength for issue #13452
+// TestKeyWithoutLengthCreateTable for issue #13452
 func (s testIntegrationSuite3) TestKeyWithoutLengthCreateTable(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
@@ -207,7 +207,7 @@ func (s *testIntegrationSuite3) TestCreateTableIfNotExists(c *C) {
 	c.Assert(terror.ErrorEqual(infoschema.ErrTableExists, lastWarn.Err), IsTrue)
 }
 
-// for issue #9910
+// TestCreateTableWithKeyWord for issue #9910
 func (s *testIntegrationSuite2) TestCreateTableWithKeyWord(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
