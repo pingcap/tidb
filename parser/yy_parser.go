@@ -47,6 +47,8 @@ var (
 	ErrUnknownAlterLock = terror.ClassParser.New(mysql.ErrUnknownAlterLock, mysql.MySQLErrName[mysql.ErrUnknownAlterLock])
 	// ErrUnknownAlterAlgorithm returns for no alter algorithm found error.
 	ErrUnknownAlterAlgorithm = terror.ClassParser.New(mysql.ErrUnknownAlterAlgorithm, mysql.MySQLErrName[mysql.ErrUnknownAlterAlgorithm])
+	// ErrWrongValue returns for wrong value
+	ErrWrongValue = terror.ClassParser.New(mysql.ErrWrongValue, mysql.MySQLErrName[mysql.ErrWrongValue])
 	// SpecFieldPattern special result field pattern
 	SpecFieldPattern = regexp.MustCompile(`(\/\*!(M?[0-9]{5,6})?|\*\/)`)
 	specCodePattern  = regexp.MustCompile(`\/\*!(M?[0-9]{5,6})?([^*]|\*+[^*/])*\*+\/`)
@@ -70,6 +72,7 @@ func init() {
 		mysql.ErrUnknownAlterLock:        mysql.ErrUnknownAlterLock,
 		mysql.ErrUnknownAlterAlgorithm:   mysql.ErrUnknownAlterAlgorithm,
 		mysql.ErrTooBigPrecision:         mysql.ErrTooBigPrecision,
+		mysql.ErrWrongValue:              mysql.ErrWrongValue,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassParser] = parserMySQLErrCodes
 }
