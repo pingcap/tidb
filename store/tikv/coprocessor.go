@@ -543,7 +543,6 @@ type copIteratorTaskSender struct {
 	finishCh   <-chan struct{}
 	respChan   chan<- *copResponse
 	sendRate   *rateLimit
-	keepOrder  bool
 }
 
 type copResponse struct {
@@ -664,7 +663,6 @@ func (it *copIterator) open(ctx context.Context) error {
 		finishCh:   it.finishCh,
 		sendRate:   it.sendRate,
 		respChan:   it.respChan,
-		keepOrder:  it.req.KeepOrder,
 	}
 	go taskSender.run()
 	return nil
@@ -674,17 +672,6 @@ func (sender *copIteratorTaskSender) run() {
 	// Send tasks to feed the worker goroutines.
 	for t := range sender.newTasksCh {
 		sender.iter.tasks = append(sender.iter.tasks, t)
-		// for _, t := range sender.tasks {
-		// If keepOrder, we must control the sending rate to prevent all tasks
-		// being done (aka. all of the responses are buffered) by copIteratorWorker.
-		// We keep the number of inflight tasks within the number of concurrency * 2.
-		// It sends one more task if a task has been finished in copIterator.Next.
-		if sender.keepOrder && sender.sendRate != nil {
-			exit := sender.sendRate.getToken(sender.finishCh)
-			if exit {
-				break
-			}
-		}
 		exit := sender.sendToTaskCh(t)
 		if exit {
 			break
@@ -777,7 +764,6 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 			// Switch to next task.
 			it.tasks[it.curr] = nil
 			it.curr++
-			it.sendRate.putToken()
 		}
 	}
 
