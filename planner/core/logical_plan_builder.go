@@ -1148,6 +1148,11 @@ func (by *ByItems) Clone() *ByItems {
 	return &ByItems{Expr: by.Expr.Clone(), Desc: by.Desc}
 }
 
+// Equal checks whether two ByItems are equal.
+func (by *ByItems) Equal(ctx sessionctx.Context, other *ByItems) bool {
+	return by.Expr.Equal(ctx, other.Expr) && by.Desc == other.Desc
+}
+
 // itemTransformer transforms ParamMarkerExpr to PositionExpr in the context of ByItem
 type itemTransformer struct {
 }
