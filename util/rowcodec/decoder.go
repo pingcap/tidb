@@ -80,7 +80,11 @@ func (decoder *DatumMapDecoder) DecodeToDatumMap(rowData []byte, handle int64, r
 	}
 	for _, col := range decoder.columns {
 		if col.ID == decoder.handleColID {
-			row[col.ID] = types.NewIntDatum(handle)
+			if mysql.HasUnsignedFlag(uint(col.Flag)) {
+				row[col.ID] = types.NewUintDatum(uint64(handle))
+			} else {
+				row[col.ID] = types.NewIntDatum(handle)
+			}
 			continue
 		}
 		idx, isNil, notFound := decoder.row.findColID(col.ID)
