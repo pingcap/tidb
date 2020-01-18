@@ -267,10 +267,10 @@ var vecBuiltin{{ .Category }}GeneratedCases = map[string][]vecExprBenchCase {
 				types.ET{{ .Input.ETName }},
 			},
 			geners: []dataGenerator{
-				inGener{defaultGener{eType: types.ET{{.Input.ETName}}, nullRation: 0.2}},
-				inGener{defaultGener{eType: types.ET{{.Input.ETName}}, nullRation: 0.2}},
-				inGener{defaultGener{eType: types.ET{{.Input.ETName}}, nullRation: 0.2}},
-				inGener{defaultGener{eType: types.ET{{.Input.ETName}}, nullRation: 0.2}},
+				inGener{*newDefaultGener(0.2, types.ET{{.Input.ETName}})},
+				inGener{*newDefaultGener(0.2, types.ET{{.Input.ETName}})},
+				inGener{*newDefaultGener(0.2, types.ET{{.Input.ETName}})},
+				inGener{*newDefaultGener(0.2, types.ET{{.Input.ETName}})},
 			},
 		}, 
 	{{- end }}
