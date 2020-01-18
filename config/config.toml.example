@@ -216,6 +216,7 @@ bind-info-lease = "3s"
 # The limitation of the size in byte for the entries in one transaction.
 # If using TiKV as the storage, the entry represents a key/value pair.
 # NOTE: If binlog is enabled, this value should be less than 104857600 because the two configurations conflict with each other.
+# If binlog is disabled, this value is restrict by the RAM size, the recommended value should be at most 1/6 of the RAM size.
 txn-total-size-limit = 104857599
 
 [proxy-protocol]
