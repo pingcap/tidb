@@ -133,8 +133,6 @@ type LogicalJoin struct {
 	RightConditions expression.CNFExprs
 	OtherConditions expression.CNFExprs
 
-	LeftJoinKeys    []*expression.Column
-	RightJoinKeys   []*expression.Column
 	leftProperties  [][]*expression.Column
 	rightProperties [][]*expression.Column
 
@@ -151,6 +149,15 @@ type LogicalJoin struct {
 
 	// equalCondOutCnt indicates the estimated count of joined rows after evaluating `EqualConditions`.
 	equalCondOutCnt float64
+}
+
+// GetJoinKeys extracts join keys(columns) from EqualConditions.
+func (p *LogicalJoin) GetJoinKeys() (leftKeys, rightKeys []*expression.Column) {
+	for _, expr := range p.EqualConditions {
+		leftKeys = append(leftKeys, expr.GetArgs()[0].(*expression.Column))
+		rightKeys = append(rightKeys, expr.GetArgs()[1].(*expression.Column))
+	}
+	return
 }
 
 func (p *LogicalJoin) columnSubstitute(schema *expression.Schema, exprs []expression.Expression) {
