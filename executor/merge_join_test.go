@@ -510,11 +510,15 @@ func (s *testSuite2) TestVectorizedMergeJoin(c *C) {
 		r1 := tk.MustQuery("select /*+ TIDB_SMJ(t1, t2) */ * from t1, t2 where t1.a=t2.a and t1.b>5 and t2.b<5").Sort()
 		r2 := tk.MustQuery("select /*+ TIDB_HJ(t1, t2) */ * from t1, t2 where t1.a=t2.a and t1.b>5 and t2.b<5").Sort()
 		c.Assert(len(r1.Rows()), Equals, len(r2.Rows()))
-		for i := range r1.Rows() {
+
+		i := 0
+		n := len(r1.Rows())
+		for i < n {
 			c.Assert(len(r1.Rows()[i]), Equals, len(r2.Rows()[i]))
 			for j := range r1.Rows()[i] {
 				c.Assert(r1.Rows()[i][j], Equals, r2.Rows()[i][j])
 			}
+			i += rand.Intn((n-i)/5+1) + 1 // just compare parts of results to speed up
 		}
 	}
 
