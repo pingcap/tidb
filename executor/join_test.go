@@ -1428,7 +1428,7 @@ func (s *testSuite2) TestIssue11390(c *C) {
 	tk.MustQuery("select /*+ TIDB_INLJ(t1, t2) */ * from 11390t t1, 11390t t2 where t1.k2 > 0 and t1.k2 = t2.k2 and t2.k1=1;").Check(testkit.Rows("1 1 1 1"))
 }
 
-func (s *testSuiteJoin1) TestIssue14514(c *C) {
+func (s *testSuite2) TestIssue14514(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
