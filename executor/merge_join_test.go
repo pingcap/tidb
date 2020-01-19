@@ -522,7 +522,7 @@ func (s *testSuite2) TestVectorizedMergeJoin(c *C) {
 		}
 	}
 
-	tk.Se.GetSessionVars().MaxChunkSize = 16
+	tk.Se.GetSessionVars().MaxChunkSize = 8
 	chunkSize := tk.Se.GetSessionVars().MaxChunkSize
 	cases := []struct {
 		t1 []int
@@ -543,27 +543,12 @@ func (s *testSuite2) TestVectorizedMergeJoin(c *C) {
 		{[]int{chunkSize + 1}, []int{chunkSize}},
 		{[]int{chunkSize + 1}, []int{chunkSize - 1}},
 		{[]int{chunkSize + 1}, []int{chunkSize + 1}},
-		{[]int{1, 1, 1}, []int{chunkSize + 1, chunkSize*5 + 10, chunkSize - 10}},
-		{[]int{0, 0, chunkSize}, []int{chunkSize + 1, chunkSize*5 + 10, chunkSize - 10}},
-		{[]int{chunkSize + 1, 0, chunkSize}, []int{chunkSize + 1, chunkSize*5 + 10, chunkSize - 10}},
+		{[]int{1, 1, 1}, []int{chunkSize + 1, chunkSize*5 + 5, chunkSize - 5}},
+		{[]int{0, 0, chunkSize}, []int{chunkSize + 1, chunkSize*5 + 5, chunkSize - 5}},
+		{[]int{chunkSize + 1, 0, chunkSize}, []int{chunkSize + 1, chunkSize*5 + 5, chunkSize - 5}},
 	}
 	for _, ca := range cases {
 		runTest(ca.t1, ca.t2)
 		runTest(ca.t2, ca.t1)
-	}
-
-	// random complex cases
-	genCase := func() []int {
-		n := rand.Intn(32) + 32
-		ts := make([]int, n)
-		for i := 0; i < n; i++ {
-			ts[i] = rand.Intn(chunkSize * 2)
-		}
-		return ts
-	}
-	for i := 0; i < 16; i++ {
-		t1 := genCase()
-		t2 := genCase()
-		runTest(t1, t2)
 	}
 }
