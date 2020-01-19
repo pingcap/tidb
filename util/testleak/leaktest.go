@@ -59,8 +59,8 @@ func interestingGoroutines() (gs []string) {
 			// these go routines are async terminated, so they may still alive after test end, thus cause
 			// false positive leak failures
 			strings.Contains(stack, "google.golang.org/grpc.(*addrConn).resetTransport") ||
-			strings.Contains(stack, "github.com/pingcap/goleveldb/leveldb/util.(*BufferPool).drain") ||
 			strings.Contains(stack, "google.golang.org/grpc.(*ccBalancerWrapper).watcher") ||
+			strings.Contains(stack, "github.com/pingcap/goleveldb/leveldb/util.(*BufferPool).drain") ||
 			strings.Contains(stack, "github.com/pingcap/goleveldb/leveldb.(*DB).compactionError") ||
 			strings.Contains(stack, "github.com/pingcap/goleveldb/leveldb.(*DB).mpoolDrain") {
 			continue
