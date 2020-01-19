@@ -18,7 +18,6 @@ import (
 
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 )
 
@@ -41,7 +40,7 @@ func (gc *gcSubstituter) optimize(ctx context.Context, lp LogicalPlan) (LogicalP
 	if len(exprToColumn) == 0 {
 		return lp, nil
 	}
-	return gc.substitute(ctx, lp, exprToColumn, lp.SCtx().GetSessionVars().StmtCtx), nil
+	return gc.substitute(ctx, lp, exprToColumn), nil
 }
 
 // collectGenerateColumn collect the generate column and save them to a map from their expressions to themselves.
@@ -69,7 +68,8 @@ func collectGenerateColumn(lp LogicalPlan, exprToColumn ExprColumnMap) {
 	}
 }
 
-func (gc *gcSubstituter) substitute(ctx context.Context, lp LogicalPlan, exprToColumn ExprColumnMap, sctx *stmtctx.StatementContext) LogicalPlan {
+func (gc *gcSubstituter) substitute(ctx context.Context, lp LogicalPlan, exprToColumn ExprColumnMap) LogicalPlan {
+	sctx := lp.SCtx().GetSessionVars().StmtCtx
 	var expr *expression.Expression
 	var tp types.EvalType
 	switch x := lp.(type) {
@@ -138,32 +138,32 @@ func (gc *gcSubstituter) substitute(ctx context.Context, lp LogicalPlan, exprToC
 				}
 			}
 		}
-	// TODO: Uncomment these code after we support virtual generate column push down.
-	//case *LogicalAggregation:
-	//	for _, aggFunc := range x.AggFuncs {
-	//		for i := 0; i < len(aggFunc.Args); i++ {
-	//			tp = aggFunc.Args[i].GetType().EvalType()
-	//			for candidateExpr, column := range exprToColumn {
-	//				if aggFunc.Args[i].Equal(lp.SCtx(), candidateExpr) && candidateExpr.GetType().EvalType() == tp &&
-	//					x.Schema().ColumnIndex(column) != -1 {
-	//					aggFunc.Args[i] = column
-	//				}
-	//			}
-	//		}
-	//	}
-	//	for i := 0; i < len(x.GroupByItems); i++ {
-	//		tp = x.GroupByItems[i].GetType().EvalType()
-	//		for candidateExpr, column := range exprToColumn {
-	//			if x.GroupByItems[i].Equal(lp.SCtx(), candidateExpr) && candidateExpr.GetType().EvalType() == tp &&
-	//				x.Schema().ColumnIndex(column) != -1 {
-	//				x.GroupByItems[i] = column
-	//				x.groupByCols = append(x.groupByCols, column)
-	//			}
-	//		}
-	//	}
+		// TODO: Uncomment these code after we support virtual generate column push down.
+		//case *LogicalAggregation:
+		//	for _, aggFunc := range x.AggFuncs {
+		//		for i := 0; i < len(aggFunc.Args); i++ {
+		//			tp = aggFunc.Args[i].GetType().EvalType()
+		//			for candidateExpr, column := range exprToColumn {
+		//				if aggFunc.Args[i].Equal(lp.SCtx(), candidateExpr) && candidateExpr.GetType().EvalType() == tp &&
+		//					x.Schema().ColumnIndex(column) != -1 {
+		//					aggFunc.Args[i] = column
+		//				}
+		//			}
+		//		}
+		//	}
+		//	for i := 0; i < len(x.GroupByItems); i++ {
+		//		tp = x.GroupByItems[i].GetType().EvalType()
+		//		for candidateExpr, column := range exprToColumn {
+		//			if x.GroupByItems[i].Equal(lp.SCtx(), candidateExpr) && candidateExpr.GetType().EvalType() == tp &&
+		//				x.Schema().ColumnIndex(column) != -1 {
+		//				x.GroupByItems[i] = column
+		//				x.groupByCols = append(x.groupByCols, column)
+		//			}
+		//		}
+		//	}
 	}
 	for _, child := range lp.Children() {
-		gc.substitute(ctx, child, exprToColumn, sctx)
+		gc.substitute(ctx, child, exprToColumn)
 	}
 	return lp
 }
