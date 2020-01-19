@@ -186,6 +186,7 @@ fetchNext:
 			t.groupRowsSelected = nil
 
 			t.childChunk = t.rowContainer.AllocChunk()
+			t.childChunkIter = chunk.NewIterator4Chunk(t.childChunk)
 			t.memTracker.Consume(t.childChunk.MemoryUsage())
 		}
 
@@ -342,8 +343,6 @@ func (e *MergeJoinExec) Next(ctx context.Context, req *chunk.Chunk) (err error) 
 		}
 
 		if (cmpResult < 0 && !e.desc) || (cmpResult > 0 && e.desc) {
-			e.hasMatch = false
-			e.hasNull = false
 			for row := outerIter.Current(); row != outerIter.End() && !req.IsFull(); row = outerIter.Next() {
 				e.joiner.onMissMatch(false, row, req)
 			}
@@ -352,8 +351,6 @@ func (e *MergeJoinExec) Next(ctx context.Context, req *chunk.Chunk) (err error) 
 
 		for row := outerIter.Current(); row != outerIter.End() && !req.IsFull(); row = outerIter.Next() {
 			if !e.outerTable.filtersSelected[row.Idx()] {
-				e.hasMatch = false
-				e.hasNull = false
 				e.joiner.onMissMatch(false, row, req)
 				continue
 			}
@@ -365,14 +362,18 @@ func (e *MergeJoinExec) Next(ctx context.Context, req *chunk.Chunk) (err error) 
 			e.hasMatch = e.hasMatch || matched
 			e.hasNull = e.hasNull || isNull
 
-			if innerIter.Current() == innerIter.End() {
-				if !e.hasMatch {
-					e.joiner.onMissMatch(e.hasNull, row, req)
-				}
-				e.hasMatch = false
-				e.hasNull = false
-				innerIter.Begin()
+			// The inner rows is not exhausted, which means the result chunk is full.
+			// We should keep match context, so return directly.
+			if innerIter.Current() != innerIter.End() {
+				return nil
 			}
+
+			if !e.hasMatch {
+				e.joiner.onMissMatch(e.hasNull, row, req)
+			}
+			e.hasMatch = false
+			e.hasNull = false
+			innerIter.Begin()
 		}
 	}
 	return nil
