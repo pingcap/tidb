@@ -818,128 +818,128 @@ func (b *builtinArithmeticIntDivideIntSig) vectorized() bool {
 
 func (b *builtinArithmeticIntDivideIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	lh, err := b.bufAllocator.get(types.ETInt, n)
+	lhsBuf, err := b.bufAllocator.get(types.ETInt, n)
 	if err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(lh)
+	defer b.bufAllocator.put(lhsBuf)
 
-	if err := b.args[0].VecEvalInt(b.ctx, input, lh); err != nil {
+	if err := b.args[0].VecEvalInt(b.ctx, input, lhsBuf); err != nil {
 		return err
 	}
 
-	// reuse result as rh to avoid buf allocate
+	// reuse result as rhsBuf to avoid buf allocate
 	if err := b.args[1].VecEvalInt(b.ctx, input, result); err != nil {
 		return err
 	}
 
-	result.MergeNulls(lh)
+	result.MergeNulls(lhsBuf)
 
-	rh := result
-	lhi64s := lh.Int64s()
-	rhi64s := rh.Int64s()
-	resulti64s := result.Int64s()
+	rhsBuf := result
+	lhsI64s := lhsBuf.Int64s()
+	rhsI64s := rhsBuf.Int64s()
+	resultI64s := result.Int64s()
 
 	isLHSUnsigned := mysql.HasUnsignedFlag(b.args[0].GetType().Flag)
 	isRHSUnsigned := mysql.HasUnsignedFlag(b.args[1].GetType().Flag)
 
 	switch {
 	case isLHSUnsigned && isRHSUnsigned:
-		err = b.divideUU(result, lhi64s, rhi64s, resulti64s)
+		err = b.divideUU(result, lhsI64s, rhsI64s, resultI64s)
 	case isLHSUnsigned && !isRHSUnsigned:
-		err = b.divideUS(result, lhi64s, rhi64s, resulti64s)
+		err = b.divideUS(result, lhsI64s, rhsI64s, resultI64s)
 	case !isLHSUnsigned && isRHSUnsigned:
-		err = b.divideSU(result, lhi64s, rhi64s, resulti64s)
+		err = b.divideSU(result, lhsI64s, rhsI64s, resultI64s)
 	case !isLHSUnsigned && !isRHSUnsigned:
-		err = b.divideSS(result, lhi64s, rhi64s, resulti64s)
+		err = b.divideSS(result, lhsI64s, rhsI64s, resultI64s)
 	}
 	return err
 }
 
-func (b *builtinArithmeticIntDivideIntSig) divideUU(result *chunk.Column, lhi64s, rhi64s, resulti64s []int64) error {
-	for i := 0; i < len(lhi64s); i++ {
+func (b *builtinArithmeticIntDivideIntSig) divideUU(result *chunk.Column, lhsI64s, rhsI64s, resultI64s []int64) error {
+	for i := 0; i < len(lhsI64s); i++ {
 		if result.IsNull(i) {
 			continue
 		}
-		lh, rh := lhi64s[i], rhi64s[i]
+		lhs, rhs := lhsI64s[i], rhsI64s[i]
 
-		if rh == 0 {
+		if rhs == 0 {
 			if err := handleDivisionByZeroError(b.ctx); err != nil {
 				return err
 			}
 			result.SetNull(i, true)
 		} else {
-			resulti64s[i] = int64(uint64(lh) / uint64(rh))
+			resultI64s[i] = int64(uint64(lhs) / uint64(rhs))
 		}
 
 	}
 	return nil
 }
 
-func (b *builtinArithmeticIntDivideIntSig) divideUS(result *chunk.Column, lhi64s, rhi64s, resulti64s []int64) error {
-	for i := 0; i < len(lhi64s); i++ {
+func (b *builtinArithmeticIntDivideIntSig) divideUS(result *chunk.Column, lhsI64s, rhi64s, resultI64s []int64) error {
+	for i := 0; i < len(lhsI64s); i++ {
 		if result.IsNull(i) {
 			continue
 		}
-		lh, rh := lhi64s[i], rhi64s[i]
+		lhs, rhs := lhsI64s[i], rhi64s[i]
 
-		if rh == 0 {
+		if rhs == 0 {
 			if err := handleDivisionByZeroError(b.ctx); err != nil {
 				return err
 			}
 			result.SetNull(i, true)
 		} else {
-			val, err := types.DivUintWithInt(uint64(lh), rh)
+			val, err := types.DivUintWithInt(uint64(lhs), rhs)
 			if err != nil {
 				return err
 			}
-			resulti64s[i] = int64(val)
+			resultI64s[i] = int64(val)
 		}
 	}
 	return nil
 }
 
-func (b *builtinArithmeticIntDivideIntSig) divideSU(result *chunk.Column, lhi64s, rhi64s, resulti64s []int64) error {
-	for i := 0; i < len(lhi64s); i++ {
+func (b *builtinArithmeticIntDivideIntSig) divideSU(result *chunk.Column, lhsI64s, rhi64s, resultI64s []int64) error {
+	for i := 0; i < len(lhsI64s); i++ {
 		if result.IsNull(i) {
 			continue
 		}
-		lh, rh := lhi64s[i], rhi64s[i]
+		lhs, rhs := lhsI64s[i], rhi64s[i]
 
-		if rh == 0 {
+		if rhs == 0 {
 			if err := handleDivisionByZeroError(b.ctx); err != nil {
 				return err
 			}
 			result.SetNull(i, true)
 		} else {
-			val, err := types.DivIntWithUint(lh, uint64(rh))
+			val, err := types.DivIntWithUint(lhs, uint64(rhs))
 			if err != nil {
 				return err
 			}
-			resulti64s[i] = int64(val)
+			resultI64s[i] = int64(val)
 		}
 	}
 	return nil
 }
 
-func (b *builtinArithmeticIntDivideIntSig) divideSS(result *chunk.Column, lhi64s, rhi64s, resulti64s []int64) error {
-	for i := 0; i < len(lhi64s); i++ {
+func (b *builtinArithmeticIntDivideIntSig) divideSS(result *chunk.Column, lhsI64s, rhi64s, resultI64s []int64) error {
+	for i := 0; i < len(lhsI64s); i++ {
 		if result.IsNull(i) {
 			continue
 		}
-		lh, rh := lhi64s[i], rhi64s[i]
+		lhs, rhs := lhsI64s[i], rhi64s[i]
 
-		if rh == 0 {
+		if rhs == 0 {
 			if err := handleDivisionByZeroError(b.ctx); err != nil {
 				return err
 			}
 			result.SetNull(i, true)
 		} else {
-			val, err := types.DivInt64(lh, rh)
+			val, err := types.DivInt64(lhs, rhs)
 			if err != nil {
 				return err
 			}
-			resulti64s[i] = val
+			resultI64s[i] = val
 		}
 	}
 	return nil
