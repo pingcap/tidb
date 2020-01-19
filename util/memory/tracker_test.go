@@ -184,6 +184,17 @@ func (s *testSuite) TestReplaceChild(c *C) {
 	c.Assert(len(parent.mu.children), Equals, 0)
 	c.Assert(newChild.parent, IsNil)
 	c.Assert(oldChild.parent, IsNil)
+
+	node1 := NewTracker(stringutil.StringerStr("Node1"), -1)
+	node2 := NewTracker(stringutil.StringerStr("Node2"), -1)
+	node3 := NewTracker(stringutil.StringerStr("Node3"), -1)
+	node2.AttachTo(node1)
+	node3.AttachTo(node2)
+	node3.Consume(100)
+	c.Assert(node1.BytesConsumed(), Equals, int64(100))
+	node2.ReplaceChild(node3, nil)
+	c.Assert(node2.BytesConsumed(), Equals, int64(0))
+	c.Assert(node1.BytesConsumed(), Equals, int64(0))
 }
 
 func (s *testSuite) TestToString(c *C) {
