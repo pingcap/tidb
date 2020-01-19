@@ -18,7 +18,7 @@ import (
 	"fmt"
 	"math/rand"
 	"strings"
-	
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/util"
