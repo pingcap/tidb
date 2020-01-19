@@ -16,12 +16,13 @@ package executor_test
 import (
 	"bytes"
 	"fmt"
+	"math/rand"
+	"strings"
+	
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/testkit"
-	"math/rand"
-	"strings"
 )
 
 const plan1 = `[[TableScan_12 {
