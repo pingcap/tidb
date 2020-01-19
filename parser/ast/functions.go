@@ -325,6 +325,11 @@ const (
 
 	// TiDB internal function.
 	TiDBDecodeKey = "tidb_decode_key"
+
+	// Sequence function.
+	NextVal = "nextval"
+	LastVal = "lastval"
+	SetVal  = "setval"
 )
 
 // FuncCallExpr is for function expression.

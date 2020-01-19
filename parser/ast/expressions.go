@@ -30,6 +30,7 @@ var (
 	_ ExprNode = &BinaryOperationExpr{}
 	_ ExprNode = &CaseExpr{}
 	_ ExprNode = &ColumnNameExpr{}
+	_ ExprNode = &TableNameExpr{}
 	_ ExprNode = &CompareSubqueryExpr{}
 	_ ExprNode = &DefaultExpr{}
 	_ ExprNode = &ExistsSubqueryExpr{}
@@ -440,6 +441,47 @@ func (n *CompareSubqueryExpr) Accept(v Visitor) (Node, bool) {
 		return n, false
 	}
 	n.R = node.(ExprNode)
+	return v.Leave(n)
+}
+
+// TableNameExpr represents a table-level object name expression, such as sequence/table/view etc.
+type TableNameExpr struct {
+	exprNode
+
+	// Name is the referenced object name expression.
+	Name *TableName
+}
+
+// Restore implements Node interface.
+func (n *TableNameExpr) Restore(ctx *RestoreCtx) error {
+	if err := n.Name.Restore(ctx); err != nil {
+		return errors.Trace(err)
+	}
+	return nil
+}
+
+// Format the ExprNode into a Writer.
+func (n *TableNameExpr) Format(w io.Writer) {
+	dbName, tbName := n.Name.Schema.L, n.Name.Name.L
+	if dbName == "" {
+		fmt.Fprintf(w, "`%s`", tbName)
+	} else {
+		fmt.Fprintf(w, "`%s`.`%s`", dbName, tbName)
+	}
+}
+
+// Accept implements Node Accept interface.
+func (n *TableNameExpr) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*TableNameExpr)
+	node, ok := n.Name.Accept(v)
+	if !ok {
+		return n, false
+	}
+	n.Name = node.(*TableName)
 	return v.Leave(n)
 }
 
