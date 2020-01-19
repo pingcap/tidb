@@ -16,13 +16,12 @@ package executor_test
 import (
 	"bytes"
 	"fmt"
-	"math/rand"
-	"strings"
-
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/testkit"
+	"math/rand"
+	"strings"
 )
 
 const plan1 = `[[TableScan_12 {
@@ -461,12 +460,13 @@ func (s *testSuite2) TestMergeJoinDifferentTypes(c *C) {
 func (s *testSuite2) TestVectorizedMergeJoin(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("drop table if exists t2")
+	tk.MustExec("create table t1 (a int, b int)")
+	tk.MustExec("create table t2 (a int, b int)")
 	runTest := func(t1, t2 []int) {
-		tk.MustExec("create table t1 (a int, b int)")
-		defer tk.MustExec("drop table t1")
-		tk.MustExec("create table t2 (a int, b int)")
-		defer tk.MustExec("drop table t2")
-
+		tk.MustExec("truncate table t1")
+		tk.MustExec("truncate table t2")
 		insert := func(tName string, ts []int) {
 			for i, n := range ts {
 				if n == 0 {
