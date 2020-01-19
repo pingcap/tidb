@@ -138,28 +138,29 @@ func (gc *gcSubstituter) substitute(ctx context.Context, lp LogicalPlan, exprToC
 				}
 			}
 		}
-	case *LogicalAggregation:
-		for _, aggFunc := range x.AggFuncs {
-			for i := 0; i < len(aggFunc.Args); i++ {
-				tp = aggFunc.Args[i].GetType().EvalType()
-				for candidateExpr, column := range exprToColumn {
-					if aggFunc.Args[i].Equal(lp.SCtx(), candidateExpr) && candidateExpr.GetType().EvalType() == tp &&
-						x.Schema().ColumnIndex(column) != -1 {
-						aggFunc.Args[i] = column
-					}
-				}
-			}
-		}
-		for i := 0; i < len(x.GroupByItems); i++ {
-			tp = x.GroupByItems[i].GetType().EvalType()
-			for candidateExpr, column := range exprToColumn {
-				if x.GroupByItems[i].Equal(lp.SCtx(), candidateExpr) && candidateExpr.GetType().EvalType() == tp &&
-					x.Schema().ColumnIndex(column) != -1 {
-					x.GroupByItems[i] = column
-					x.groupByCols = append(x.groupByCols, column)
-				}
-			}
-		}
+	// TODO: Uncomment these code after we support virtual generate column push down.
+	//case *LogicalAggregation:
+	//	for _, aggFunc := range x.AggFuncs {
+	//		for i := 0; i < len(aggFunc.Args); i++ {
+	//			tp = aggFunc.Args[i].GetType().EvalType()
+	//			for candidateExpr, column := range exprToColumn {
+	//				if aggFunc.Args[i].Equal(lp.SCtx(), candidateExpr) && candidateExpr.GetType().EvalType() == tp &&
+	//					x.Schema().ColumnIndex(column) != -1 {
+	//					aggFunc.Args[i] = column
+	//				}
+	//			}
+	//		}
+	//	}
+	//	for i := 0; i < len(x.GroupByItems); i++ {
+	//		tp = x.GroupByItems[i].GetType().EvalType()
+	//		for candidateExpr, column := range exprToColumn {
+	//			if x.GroupByItems[i].Equal(lp.SCtx(), candidateExpr) && candidateExpr.GetType().EvalType() == tp &&
+	//				x.Schema().ColumnIndex(column) != -1 {
+	//				x.GroupByItems[i] = column
+	//				x.groupByCols = append(x.groupByCols, column)
+	//			}
+	//		}
+	//	}
 	}
 	for _, child := range lp.Children() {
 		gc.substitute(ctx, child, exprToColumn, sctx)

@@ -33,22 +33,23 @@ desc select * from t where a+1 between 1 and 4;
 select * from t where a+1 between 1 and 4;
 
 # substitute group by
-desc select * from t group by a+1;
-select * from t group by a+1;
-desc select a+1 from t group by a+1;
-select a+1 from t group by a+1;
-desc select b, avg(a+1) from t group by a+1;
-select b, avg(a+1) from t group by a+1;
-desc select count(a+1), max(a+1) from t group by a+1;
-select count(a+1), max(a+1) from t group by a+1;
-desc select * from t group by b+a;
-select * from t group by b+a;
-desc select b+a from t group by b+a;
-select b+a from t group by b+a;
-desc select b, avg(b+a) from t group by b+a;
-select b, avg(b+a) from t group by b+a;
-desc select count(b+a), max(b+a) from t group by b+a;
-select count(b+a), max(b+a) from t group by b+a;
+# uncomment these test case after we support virtual generate column push down
+#desc select * from t group by a+1;
+#select * from t group by a+1;
+#desc select a+1 from t group by a+1;
+#select a+1 from t group by a+1;
+#desc select b, avg(a+1) from t group by a+1;
+#select b, avg(a+1) from t group by a+1;
+#desc select count(a+1), max(a+1) from t group by a+1;
+#select count(a+1), max(a+1) from t group by a+1;
+#desc select * from t group by b+a;
+#select * from t group by b+a;
+#desc select b+a from t group by b+a;
+#select b+a from t group by b+a;
+#desc select b, avg(b+a) from t group by b+a;
+#select b, avg(b+a) from t group by b+a;
+#desc select count(b+a), max(b+a) from t group by b+a;
+#select count(b+a), max(b+a) from t group by b+a;
 
 # substitute order by
 desc select * from t order by a+1;
@@ -98,22 +99,23 @@ desc select * from t where a+1 between 1 and 4;
 select * from t where a+1 between 1 and 4;
 
 # substitute group by
-desc select * from t group by a+1;
-select * from t group by a+1;
-desc select a+1 from t group by a+1;
-select a+1 from t group by a+1;
-desc select b, avg(a+1) from t group by a+1;
-select b, avg(a+1) from t group by a+1;
-desc select count(a+1), max(a+1) from t group by a+1;
-select count(a+1), max(a+1) from t group by a+1;
-desc select * from t group by b+a;
-select * from t group by b+a;
-desc select b+a from t group by b+a;
-select b+a from t group by b+a;
-desc select b, avg(b+a) from t group by b+a;
-select b, avg(b+a) from t group by b+a;
-desc select count(b+a), max(b+a) from t group by b+a;
-select count(b+a), max(b+a) from t group by b+a;
+# uncomment these test case after we support virtual generate column push down
+#desc select * from t group by a+1;
+#select * from t group by a+1;
+#desc select a+1 from t group by a+1;
+#select a+1 from t group by a+1;
+#desc select b, avg(a+1) from t group by a+1;
+#select b, avg(a+1) from t group by a+1;
+#desc select count(a+1), max(a+1) from t group by a+1;
+#select count(a+1), max(a+1) from t group by a+1;
+#desc select * from t group by b+a;
+#select * from t group by b+a;
+#desc select b+a from t group by b+a;
+#select b+a from t group by b+a;
+#desc select b, avg(b+a) from t group by b+a;
+#select b, avg(b+a) from t group by b+a;
+#desc select count(b+a), max(b+a) from t group by b+a;
+#select count(b+a), max(b+a) from t group by b+a;
 
 # substitute order by
 desc select * from t order by a+1;
