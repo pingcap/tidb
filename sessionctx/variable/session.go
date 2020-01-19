@@ -635,6 +635,7 @@ func NewSessionVars() *SessionVars {
 		DistSQLScanConcurrency:     DefDistSQLScanConcurrency,
 		HashAggPartialConcurrency:  DefTiDBHashAggPartialConcurrency,
 		HashAggFinalConcurrency:    DefTiDBHashAggFinalConcurrency,
+		WindowConcurrency:          DefTiDBWindowConcurrency,
 	}
 	vars.MemQuota = MemQuota{
 		MemQuotaQuery:             config.GetGlobalConfig().MemQuotaQuery,
@@ -1004,6 +1005,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.HashAggPartialConcurrency = tidbOptPositiveInt32(val, DefTiDBHashAggPartialConcurrency)
 	case TiDBHashAggFinalConcurrency:
 		s.HashAggFinalConcurrency = tidbOptPositiveInt32(val, DefTiDBHashAggFinalConcurrency)
+	case TiDBWindowConcurrency:
+		s.WindowConcurrency = tidbOptPositiveInt32(val, DefTiDBWindowConcurrency)
 	case TiDBDistSQLScanConcurrency:
 		s.DistSQLScanConcurrency = tidbOptPositiveInt32(val, DefDistSQLScanConcurrency)
 	case TiDBIndexSerialScanConcurrency:
@@ -1252,6 +1255,9 @@ type Concurrency struct {
 
 	// HashAggFinalConcurrency is the number of concurrent hash aggregation final worker.
 	HashAggFinalConcurrency int
+
+	// WindowConcurrency is the number of concurrent window worker.
+	WindowConcurrency int
 
 	// IndexSerialScanConcurrency is the number of concurrent index serial scan worker.
 	IndexSerialScanConcurrency int

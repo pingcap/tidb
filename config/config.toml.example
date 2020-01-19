@@ -370,3 +370,8 @@ history-size = 24
 [experimental]
 # enable column attribute `auto_random` to be defined on the primary key column.
 allow-auto-random = false
+
+# server level isolation read by engines and labels
+[isolation-read]
+# engines means allow the tidb server read data from which types of engines. options: "tikv", "tiflash", "tidb".
+engines = ["tikv", "tiflash", "tidb"]
