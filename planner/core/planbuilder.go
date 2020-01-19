@@ -730,9 +730,9 @@ func (b *PlanBuilder) filterPathByIsolationRead(paths []*util.AccessPath, dbName
 	if dbName.L == mysql.SystemDB {
 		return paths, nil
 	}
-	cfgIsolationEngines := make(map[string]struct{})
+	cfgIsolationEngines := set.StringSet{}
 	for _, engine := range config.GetGlobalConfig().IsolationRead.Engines {
-		cfgIsolationEngines[engine] = struct{}{}
+		cfgIsolationEngines.Insert(engine)
 	}
 	isolationReadEngines := b.ctx.GetSessionVars().GetIsolationReadEngines()
 	availableEngine := map[kv.StoreType]struct{}{}
