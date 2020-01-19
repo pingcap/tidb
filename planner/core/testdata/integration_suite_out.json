@@ -75,9 +75,10 @@
           "  ├─TopN_34 1.00 root test.t.a:asc, offset:0, count:3",
           "  │ └─TableReader_42 1.00 root data:TableScan_41",
           "  │   └─TableScan_41 1.00 cop[tikv] table:t, partition:p1, range:[-inf,+inf], keep order:false",
-          "  └─TopN_45 3.00 root test.t.a:asc, offset:0, count:3",
-          "    └─TableReader_53 4.00 root data:TableScan_52",
-          "      └─TableScan_52 4.00 cop[tikv] table:t, partition:p2, range:[-inf,+inf], keep order:false"
+          "  └─TopN_43 3.00 root test.t.a:asc, offset:0, count:3",
+          "    └─TableReader_51 3.00 root data:TopN_50",
+          "      └─TopN_50 3.00 cop[tikv] test.t.a:asc, offset:0, count:3",
+          "        └─TableScan_49 4.00 cop[tikv] table:t, partition:p2, range:[-inf,+inf], keep order:false"
         ]
       },
       {

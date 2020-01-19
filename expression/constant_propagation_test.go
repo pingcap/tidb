@@ -96,7 +96,7 @@ func (s *testSuite) TestOuterJoinPropConst(c *C) {
 		"│ └─Selection_9 3333.33 cop[tikv] gt(test.t1.a, 1)",
 		"│   └─TableScan_8 10000.00 cop[tikv] table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
 		"└─TableReader_13 3333.33 root data:Selection_12",
-		"  └─Selection_12 3333.33 cop[tikv] gt(test.t2.a, 1), not(isnull(Column#5))",
+		"  └─Selection_12 3333.33 cop[tikv] gt(test.t2.a, 1), not(isnull(test.t2.a))",
 		"    └─TableScan_11 10000.00 cop[tikv] table:t2, range:[-inf,+inf], keep order:false, stats:pseudo",
 	))
 	tk.MustQuery("explain select * from t1 right join t2 on t1.a > t2.a where t2.a = 1;").Check(testkit.Rows(

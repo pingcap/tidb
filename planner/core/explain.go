@@ -142,7 +142,9 @@ func (p *PhysicalTableScan) explainInfo(normalized bool) string {
 			fmt.Fprintf(buffer, ", range: decided by %v", p.AccessCondition)
 		}
 	} else if len(p.Ranges) > 0 {
-		if p.StoreType == kv.TiFlash {
+		if normalized {
+			fmt.Fprintf(buffer, ", range:[?:?]")
+		} else if p.StoreType == kv.TiFlash {
 			// TiFlash table always use full range scan for each region,
 			// the ranges in p.Ranges is used to prune cop task
 			fmt.Fprintf(buffer, ", range:"+ranger.FullIntRange(false)[0].String())

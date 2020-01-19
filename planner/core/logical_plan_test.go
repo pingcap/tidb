@@ -953,7 +953,7 @@ func (s *testPlanSuite) TestPlanBuilder(c *C) {
 		},
 		{
 			sql:  "update t set a = 2 where b in (select c from t)",
-			plan: "LeftHashJoin{TableReader(Table(t))->IndexReader(Index(t.c_d_e)[[NULL,+inf]])->StreamAgg}(test.t.b,test.t.c)->Projection->Update",
+			plan: "LeftHashJoin{TableReader(Table(t))->IndexReader(Index(t.c_d_e)[[NULL,+inf]])->HashAgg}(test.t.b,test.t.c)->Projection->Update",
 		},
 	}
 
@@ -2268,7 +2268,7 @@ func (s *testPlanSuite) TestWindowFunction(c *C) {
 		},
 		{
 			sql:    "select a, avg(a+1) over(partition by (a+1)) from t",
-			result: "IndexReader(Index(t.c_d_e)[[NULL,+inf]])->Projection->Sort->Window(avg(cast(2_proj_window_3)) over(partition by 2_proj_window_2))->Projection",
+			result: "IndexReader(Index(t.f)[[NULL,+inf]])->Projection->Sort->Window(avg(cast(2_proj_window_3)) over(partition by 2_proj_window_2))->Projection",
 		},
 		{
 			sql:    "select a, avg(a) over(order by a asc, b desc) from t order by a asc, b desc",
@@ -2296,11 +2296,11 @@ func (s *testPlanSuite) TestWindowFunction(c *C) {
 		},
 		{
 			sql:    "select b from t order by(sum(avg(a)) over())",
-			result: "TableReader(Table(t)->HashAgg)->HashAgg->Window(sum(sel_agg_2) over())->Sort->Projection",
+			result: "TableReader(Table(t)->StreamAgg)->StreamAgg->Window(sum(sel_agg_2) over())->Sort->Projection",
 		},
 		{
 			sql:    "select a from t having (select sum(a) over() as w from t tt where a > t.a)",
-			result: "Apply{IndexReader(Index(t.c_d_e)[[NULL,+inf]])->IndexReader(Index(t.c_d_e)[[NULL,+inf]]->Sel([gt(test.tt.a, test.t.a)]))->Window(sum(cast(test.tt.a)) over())->MaxOneRow->Sel([w])}->Projection",
+			result: "Apply{IndexReader(Index(t.f)[[NULL,+inf]])->IndexReader(Index(t.f)[[NULL,+inf]]->Sel([gt(test.tt.a, test.t.a)]))->Window(sum(cast(test.tt.a)) over())->MaxOneRow->Sel([w])}->Projection",
 		},
 		{
 			sql:    "select avg(a) over() as w from t having w > 1",
@@ -2332,7 +2332,7 @@ func (s *testPlanSuite) TestWindowFunction(c *C) {
 		},
 		{
 			sql:    "select sum(a) over w from t window w as (rows between 1 preceding AND 1 following)",
-			result: "IndexReader(Index(t.c_d_e)[[NULL,+inf]])->Window(sum(cast(test.t.a)) over(rows between 1 preceding and 1 following))->Projection",
+			result: "IndexReader(Index(t.f)[[NULL,+inf]])->Window(sum(cast(test.t.a)) over(rows between 1 preceding and 1 following))->Projection",
 		},
 		{
 			sql:    "select sum(a) over(w order by b) from t window w as (order by a)",
@@ -2400,7 +2400,7 @@ func (s *testPlanSuite) TestWindowFunction(c *C) {
 		},
 		{
 			sql:    "select row_number() over(rows between 1 preceding and 1 following) from t",
-			result: "IndexReader(Index(t.c_d_e)[[NULL,+inf]])->Window(row_number() over())->Projection",
+			result: "IndexReader(Index(t.f)[[NULL,+inf]])->Window(row_number() over())->Projection",
 		},
 		{
 			sql:    "select avg(b), max(avg(b)) over(rows between 1 preceding and 1 following) max from t group by c",
@@ -2424,7 +2424,7 @@ func (s *testPlanSuite) TestWindowFunction(c *C) {
 		},
 		{
 			sql:    "select ntile(null) over() from t",
-			result: "IndexReader(Index(t.c_d_e)[[NULL,+inf]])->Window(ntile(<nil>) over())->Projection",
+			result: "IndexReader(Index(t.f)[[NULL,+inf]])->Window(ntile(<nil>) over())->Projection",
 		},
 		{
 			sql:    "select avg(a) over w from t window w as(partition by b)",

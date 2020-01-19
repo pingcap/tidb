@@ -6,21 +6,21 @@
         "SQL": "select * from t1;",
         "Plan": [
           " TableReader_5 root data:TableScan_4",
-          " └─TableScan_4 cop  table:t1, range:[?,?], keep order:false"
+          " └─TableScan_4 cop  table:t1, range:[?:?], keep order:false"
         ]
       },
       {
         "SQL": "select * from t1 where a<1;",
         "Plan": [
           " TableReader_6 root data:TableScan_5",
-          " └─TableScan_5 cop  table:t1, range:[?,?], keep order:false"
+          " └─TableScan_5 cop  table:t1, range:[?:?], keep order:false"
         ]
       },
       {
         "SQL": "select * from t1 where a>1",
         "Plan": [
           " TableReader_6 root data:TableScan_5",
-          " └─TableScan_5 cop  table:t1, range:[?,?], keep order:false"
+          " └─TableScan_5 cop  table:t1, range:[?:?], keep order:false"
         ]
       },
       {
@@ -33,7 +33,7 @@
         "SQL": "select * from t1 where a in (1,2,3)",
         "Plan": [
           " TableReader_6 root data:TableScan_5",
-          " └─TableScan_5 cop  table:t1, range:[?,?], keep order:false"
+          " └─TableScan_5 cop  table:t1, range:[?:?], keep order:false"
         ]
       },
       {
@@ -58,9 +58,9 @@
           " Projection_11            root test.t1.a, test.t1.b, test.t1.c",
           " └─Apply_13               root semi join, inner:StreamAgg_36, equal:eq(cast(test.t1.a), 5_col_0)",
           "   ├─Projection_14        root cast(test.t1.a), test.t1.a, test.t1.b, test.t1.c",
-          "   │ └─IndexLookUp_20     root ",
-          "   │   ├─IndexScan_18     cop  table:t1, index:b, range:[?,?], keep order:false",
-          "   │   └─TableScan_19     cop  table:t1, keep order:false",
+          "   │ └─TableReader_17     root data:Selection_16",
+          "   │   └─Selection_16     cop  gt(test.t1.b, ?)",
+          "   │     └─TableScan_15   cop  table:t1, range:[?:?], keep order:false",
           "   └─StreamAgg_36         root funcs:sum(col_0)",
           "     └─TableReader_37     root data:StreamAgg_25",
           "       └─StreamAgg_25     cop  funcs:sum(test.t2.b)",
@@ -74,7 +74,7 @@
           " TopN_8             root test.t1.c:asc",
           " └─TableReader_16   root data:TopN_15",
           "   └─TopN_15        cop  test.t1.c:asc",
-          "     └─TableScan_14 cop  table:t1, range:[?,?], keep order:false"
+          "     └─TableScan_14 cop  table:t1, range:[?:?], keep order:false"
         ]
       },
       {
@@ -83,9 +83,9 @@
           " MergeJoin_7       root inner join, left key:test.t1.a, right key:test.t2.a",
           " ├─TableReader_11  root data:Selection_10",
           " │ └─Selection_10  cop  gt(test.t1.c, ?)",
-          " │   └─TableScan_9 cop  table:t1, range:[?,?], keep order:true",
+          " │   └─TableScan_9 cop  table:t1, range:[?:?], keep order:true",
           " └─TableReader_13  root data:TableScan_12",
-          "   └─TableScan_12  cop  table:t2, range:[?,?], keep order:true"
+          "   └─TableScan_12  cop  table:t2, range:[?:?], keep order:true"
         ]
       },
       {
@@ -94,7 +94,7 @@
           " IndexJoin_10       root inner join, inner:TableReader_9, outer key:test.t1.a, inner key:test.t2.a",
           " ├─TableReader_17   root data:Selection_16",
           " │ └─Selection_16   cop  gt(test.t1.c, ?)",
-          " │   └─TableScan_15 cop  table:t1, range:[?,?], keep order:false",
+          " │   └─TableScan_15 cop  table:t1, range:[?:?], keep order:false",
           " └─TableReader_9    root data:TableScan_8",
           "   └─TableScan_8    cop  table:t2, range: decided by [test.t1.a], keep order:false"
         ]
@@ -105,9 +105,9 @@
           " HashRightJoin_16   root inner join, inner:TableReader_19, equal:eq(test.t1.a, test.t2.a)",
           " ├─TableReader_19   root data:Selection_18",
           " │ └─Selection_18   cop  gt(test.t1.c, ?)",
-          " │   └─TableScan_17 cop  table:t1, range:[?,?], keep order:false",
+          " │   └─TableScan_17 cop  table:t1, range:[?:?], keep order:false",
           " └─TableReader_21   root data:TableScan_20",
-          "   └─TableScan_20   cop  table:t2, range:[?,?], keep order:false"
+          "   └─TableScan_20   cop  table:t2, range:[?:?], keep order:false"
         ]
       },
       {
@@ -116,9 +116,9 @@
           " HashRightJoin_16   root inner join, inner:TableReader_19, equal:eq(test.t1.a, test.t2.a)",
           " ├─TableReader_19   root data:Selection_18",
           " │ └─Selection_18   cop  gt(test.t1.c, ?)",
-          " │   └─TableScan_17 cop  table:t1, range:[?,?], keep order:false",
+          " │   └─TableScan_17 cop  table:t1, range:[?:?], keep order:false",
           " └─TableReader_21   root data:TableScan_20",
-          "   └─TableScan_20   cop  table:t2, range:[?,?], keep order:false"
+          "   └─TableScan_20   cop  table:t2, range:[?:?], keep order:false"
         ]
       },
       {
@@ -127,7 +127,7 @@
           " IndexJoin_10       root inner join, inner:TableReader_9, outer key:test.t1.a, inner key:test.t2.a",
           " ├─TableReader_17   root data:Selection_16",
           " │ └─Selection_16   cop  gt(test.t1.c, ?)",
-          " │   └─TableScan_15 cop  table:t1, range:[?,?], keep order:false",
+          " │   └─TableScan_15 cop  table:t1, range:[?:?], keep order:false",
           " └─TableReader_9    root data:TableScan_8",
           "   └─TableScan_8    cop  table:t2, range: decided by [test.t1.a], keep order:false"
         ]
@@ -143,28 +143,28 @@
         "Plan": [
           " TableReader_9   root data:Selection_8",
           " └─Selection_8   cop  ne(test.t2.b, ?)",
-          "   └─TableScan_7 cop  table:t2, range:[?,?], keep order:false"
+          "   └─TableScan_7 cop  table:t2, range:[?:?], keep order:false"
         ]
       },
       {
         "SQL": "update t1 set a=a+1",
         "Plan": [
           " TableReader_4 root data:TableScan_3",
-          " └─TableScan_3 cop  table:t1, range:[?,?], keep order:false"
+          " └─TableScan_3 cop  table:t1, range:[?:?], keep order:false"
         ]
       },
       {
         "SQL": "update t1 set a=a+1 where a>0",
         "Plan": [
           " TableReader_5 root data:TableScan_4",
-          " └─TableScan_4 cop  table:t1, range:[?,?], keep order:false"
+          " └─TableScan_4 cop  table:t1, range:[?:?], keep order:false"
         ]
       },
       {
         "SQL": "delete from t1",
         "Plan": [
           " TableReader_4 root data:TableScan_3",
-          " └─TableScan_3 cop  table:t1, range:[?,?], keep order:false"
+          " └─TableScan_3 cop  table:t1, range:[?:?], keep order:false"
         ]
       },
       {

@@ -510,7 +510,7 @@ func (s *testAnalyzeSuite) TestAnalyze(c *C) {
 		},
 		{
 			sql:  "select * from t where t.b < 2",
-			best: "IndexLookUp(Index(t.b)[[-inf,2)], Table(t))",
+			best: "TableReader(Table(t)->Sel([lt(test.t.b, 2)]))",
 		},
 		{
 			sql:  "select * from t where t.a = 1 and t.b <= 2",
@@ -542,7 +542,7 @@ func (s *testAnalyzeSuite) TestAnalyze(c *C) {
 		},
 		{
 			sql:  "select * from t4 where t4.b < 2",
-			best: "UnionAll{IndexLookUp(Index(t4.b)[[-inf,2)], Table(t4))->IndexLookUp(Index(t4.b)[[-inf,2)], Table(t4))}",
+			best: "UnionAll{TableReader(Table(t4)->Sel([lt(test.t4.b, 2)]))->TableReader(Table(t4)->Sel([lt(test.t4.b, 2)]))}",
 		},
 		{
 			sql:  "select * from t4 where t4.a = 1 and t4.b <= 2",
@@ -1091,7 +1091,7 @@ func (s *testAnalyzeSuite) TestTiFlashCostModel(c *C) {
 	tk.MustExec("set @@session.tidb_isolation_read_engines='tiflash'")
 	tk.MustQuery("desc select * from t where t.a = 1 or t.a = 2").Check(testkit.Rows(
 		"TableReader_7 2.00 root data:Selection_6",
-		"└─Selection_6 2.00 cop[tiflash] or(eq(Column#1, 1), eq(Column#1, 2))",
+		"└─Selection_6 2.00 cop[tiflash] or(eq(test.t.a, 1), eq(test.t.a, 2))",
 		"  └─TableScan_5 2.00 cop[tiflash] table:t, range:[-inf,+inf], keep order:false, stats:pseudo",
 	))
 }
