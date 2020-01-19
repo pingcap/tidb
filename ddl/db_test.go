@@ -2244,7 +2244,7 @@ func (s *testDBSuite5) TestRepairTable(c *C) {
 }
 
 func turnRepairModeAndInit(on bool) {
-	list := make([]string, 0, 0)
+	list := make([]string, 0)
 	if on {
 		list = append(list, "test.origin")
 	}

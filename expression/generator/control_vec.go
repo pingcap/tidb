@@ -336,7 +336,7 @@ import (
 	"github.com/pingcap/tidb/types"
 )
 
-var defaultControlIntGener = &controlIntGener{zeroRation: 0.3, defaultGener: defaultGener{0.3, types.ETInt}}
+var defaultControlIntGener = &controlIntGener{zeroRation: 0.3, defaultGener: *newDefaultGener(0.3, types.ETInt)}
 
 type controlIntGener struct {
 	zeroRation float64
