@@ -35,6 +35,7 @@ import (
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/kvcache"
+	"github.com/pingcap/tidb/util/math"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/texttree"
 )
@@ -380,15 +381,10 @@ func (e *Execute) rebuildRange(p Plan) error {
 				pi := ts.Table.Partition
 				if pi.Type == model.PartitionTypeHash && len(ts.Ranges) == 1 && ts.Ranges[0].IsPoint(sc) {
 					schema, names := buildSchemaAndNameFromPKCol(pkCol, ts.DBName, ts.Table)
-					expr, err := expression.ParseSimpleExprsWithNames(e.ctx, pi.Expr, schema, names)
+					pID, err := getPhysicalTableIDForPartition(e.ctx, pi, schema, names, ts.Ranges[0].LowVal)
 					if err != nil {
 						return err
 					}
-					pos, err := locateHashPartition(e.ctx, expr[0], pi, ts.Ranges[0].LowVal)
-					if err != nil {
-						return err
-					}
-					pID := pi.Definitions[pos].ID
 					ts.physicalTableID = pID
 				}
 			}
@@ -405,15 +401,10 @@ func (e *Execute) rebuildRange(p Plan) error {
 			pi := is.Table.Partition
 			if pi.Type == model.PartitionTypeHash && len(is.Ranges) == 1 && is.Ranges[0].IsPoint(sc) {
 				schema, names := buildSchemaAndNameFromIndex(is.IdxCols, is.DBName, is.Table, is.Index)
-				expr, err := expression.ParseSimpleExprsWithNames(e.ctx, pi.Expr, schema, names)
+				pID, err := getPhysicalTableIDForPartition(e.ctx, pi, schema, names, is.Ranges[0].LowVal)
 				if err != nil {
 					return err
 				}
-				pos, err := locateHashPartition(e.ctx, expr[0], pi, is.Ranges[0].LowVal)
-				if err != nil {
-					return err
-				}
-				pID := pi.Definitions[pos].ID
 				is.physicalTableID = pID
 			}
 		}
@@ -427,15 +418,10 @@ func (e *Execute) rebuildRange(p Plan) error {
 			pi := is.Table.Partition
 			if pi.Type == model.PartitionTypeHash && len(is.Ranges) == 1 && is.Ranges[0].IsPoint(sc) {
 				schema, names := buildSchemaAndNameFromIndex(is.IdxCols, is.DBName, is.Table, is.Index)
-				expr, err := expression.ParseSimpleExprsWithNames(e.ctx, pi.Expr, schema, names)
+				pID, err := getPhysicalTableIDForPartition(e.ctx, pi, schema, names, is.Ranges[0].LowVal)
 				if err != nil {
 					return err
 				}
-				pos, err := locateHashPartition(e.ctx, expr[0], pi, is.Ranges[0].LowVal)
-				if err != nil {
-					return err
-				}
-				pID := pi.Definitions[pos].ID
 				is.physicalTableID = pID
 				tblScan := x.TablePlans[0].(*PhysicalTableScan)
 				tblScan.physicalTableID = pID
@@ -449,7 +435,7 @@ func (e *Execute) rebuildRange(p Plan) error {
 			}
 			if x.PartitionInfo != nil {
 				num := x.TblInfo.Partition.Num
-				pos := x.Handle % int64(num)
+				pos := math.Abs(x.Handle) % int64(num)
 				x.PartitionInfo = &x.TblInfo.Partition.Definitions[pos]
 			}
 			return nil
@@ -1069,4 +1055,17 @@ func locateHashPartition(ctx sessionctx.Context, expr expression.Expression, pi 
 		ret = 0 - ret
 	}
 	return int(ret % int64(pi.Num)), nil
+}
+
+func getPhysicalTableIDForPartition(ctx sessionctx.Context, pi *model.PartitionInfo, schema *expression.Schema, names types.NameSlice, val []types.Datum) (int64, error) {
+	expr, err := expression.ParseSimpleExprsWithNames(ctx, pi.Expr, schema, names)
+	if err != nil {
+		return 0, err
+	}
+	pos, err := locateHashPartition(ctx, expr[0], pi, val)
+	if err != nil {
+		return 0, err
+	}
+	pID := pi.Definitions[pos].ID
+	return pID, nil
 }
