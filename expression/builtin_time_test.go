@@ -1074,7 +1074,7 @@ func (s *testEvaluatorSuite) TestSysDate(c *C) {
 			vecExprBenchCase{
 				retEvalType:   types.ETDatetime,
 				childrenTypes: []types.EvalType{types.ETInt},
-				geners:        []dataGenerator{&rangeInt64Gener{begin: 0, end: 7}},
+				geners:        []dataGenerator{newRangeInt64Gener(0, 7)},
 			})
 		resetStmtContext(s.ctx)
 		loc := ctx.GetSessionVars().Location()
