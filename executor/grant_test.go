@@ -193,6 +193,8 @@ func (s *testSuite3) TestColumnScope(c *C) {
 func (s *testSuite3) TestIssue2456(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("CREATE USER 'dduser'@'%' IDENTIFIED by '123456';")
+	tk.MustExec("CREATE DATABASE `dddb_%`;")
+	tk.MustExec("CREATE table `dddb_%`.`te%` (id int);")
 	tk.MustExec("GRANT ALL PRIVILEGES ON `dddb_%`.* TO 'dduser'@'%';")
 	tk.MustExec("GRANT ALL PRIVILEGES ON `dddb_%`.`te%` to 'dduser'@'%';")
 }
