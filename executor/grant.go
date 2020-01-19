@@ -67,6 +67,20 @@ func (e *GrantExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	if len(dbName) == 0 {
 		dbName = e.ctx.GetSessionVars().CurrentDB
 	}
+
+	// Make sure the table exist.
+	if e.Level.Level == ast.GrantLevelTable {
+		schema := infoschema.GetInfoSchema(e.ctx)
+		t, err := schema.TableByName(model.NewCIStr(dbName), model.NewCIStr(e.Level.TableName))
+		if err != nil {
+			return err
+		}
+		// Note the table name compare is case sensitive here.
+		if t.Meta().Name.String() != e.Level.TableName {
+			return infoschema.ErrTableNotExists.GenWithStackByArgs(dbName, e.Level.TableName)
+		}
+	}
+
 	// Grant for each user
 	for idx, user := range e.Users {
 		// Check if user exists.
