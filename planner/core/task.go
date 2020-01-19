@@ -362,16 +362,23 @@ func (p *PhysicalMergeJoin) attach2Task(tasks ...task) task {
 // splitCopAvg2CountAndSum splits the cop avg function to count and sum.
 // Now it's only used for TableReader.
 func splitCopAvg2CountAndSum(p PhysicalPlan) {
-	var baseAgg *basePhysicalAgg
+	var baseAgg basePhysicalAgg
 	if agg, ok := p.(*PhysicalStreamAgg); ok {
-		baseAgg = &agg.basePhysicalAgg
-	}
-	if agg, ok := p.(*PhysicalHashAgg); ok {
-		baseAgg = &agg.basePhysicalAgg
-	}
-	if baseAgg == nil {
+		baseAgg = agg.basePhysicalAgg
+		defer func() {
+			agg.basePhysicalAgg = baseAgg
+		}()
+	} else if agg, ok := p.(*PhysicalHashAgg); ok {
+		baseAgg = agg.basePhysicalAgg
+		defer func() {
+			agg.basePhysicalAgg = baseAgg
+		}()
+	} else {
 		return
 	}
+	oldAggFuncs := baseAgg.AggFuncs
+	baseAgg.AggFuncs = make([]*aggregation.AggFuncDesc, len(oldAggFuncs))
+	copy(baseAgg.AggFuncs, oldAggFuncs)
 
 	schemaCursor := len(baseAgg.Schema().Columns) - len(baseAgg.GroupByItems)
 	for i := len(baseAgg.AggFuncs) - 1; i >= 0; i-- {

@@ -526,6 +526,7 @@ func (p *LogicalJoin) constructInnerTableScanTask(ds *DataSource, pk *expression
 		indexPlanFinished: true,
 		cst:               sessVars.ScanFactor * rowSize * ts.stats.RowCount,
 		keepOrder:         ts.KeepOrder,
+		tableStats:        ds.tableStats,
 	}
 	selStats := ts.stats.Scale(selectionFactor)
 	ts.addPushedDownSelection(copTask, selStats)

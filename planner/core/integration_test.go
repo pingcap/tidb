@@ -262,7 +262,7 @@ func (s *testIntegrationSuite) TestSelPushDownTiFlash(c *C) {
 	))
 
 	// Part of conditions should push tiflash.
-	tk.MustQuery(`explain select * from t where cast(t.a as float) + 3 = 5.1`).Check(testkit.Rows(
+	tk.MustQuery(`explain select * from t where cast(t.a as decimal(30, 5)) + 3 = 5.1`).Check(testkit.Rows(
 		"Selection_7 10000.00 root eq(plus(cast(test.t.a), 3), 5.1)",
 		"└─TableReader_6 10000.00 root data:TableScan_5",
 		"  └─TableScan_5 10000.00 cop[tiflash] table:t, range:[-inf,+inf], keep order:false, stats:pseudo",
