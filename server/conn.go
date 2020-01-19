@@ -62,7 +62,6 @@ import (
 	"github.com/pingcap/tidb/plugin"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/arena"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/hack"
@@ -566,6 +565,10 @@ func (cc *clientConn) openSessionAndDoAuth(authData []byte) error {
 	if err != nil {
 		return err
 	}
+
+	if err = cc.server.checkConnectionCount(); err != nil {
+		return err
+	}
 	hasPassword := "YES"
 	if len(authData) == 0 {
 		hasPassword = "NO"
@@ -812,7 +815,7 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 	cc.lastPacket = data
 	cmd := data[0]
 	data = data[1:]
-	if util.EnablePProfSQLCPU.Load() {
+	if variable.EnablePProfSQLCPU.Load() {
 		defer pprof.SetGoroutineLabels(ctx)
 		lastSQL := getLastStmtInConn{cc}.String()
 		ctx = pprof.WithLabels(ctx, pprof.Labels("sql", parser.Normalize(lastSQL)))

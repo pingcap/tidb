@@ -152,6 +152,17 @@ func (s *testIntegrationSuite2) TestInvalidDefault(c *C) {
 	c.Assert(terror.ErrorEqual(err, types.ErrInvalidDefault), IsTrue, Commentf("err %v", err))
 }
 
+// TestKeyWithoutLength for issue #13452
+func (s testIntegrationSuite3) TestKeyWithoutLengthCreateTable(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("USE test")
+
+	_, err := tk.Exec("create table t_without_length (a text primary key)")
+	c.Assert(err, NotNil)
+	c.Assert(err, ErrorMatches, ".*BLOB/TEXT column 'a' used in key specification without a key length")
+}
+
 // TestInvalidNameWhenCreateTable for issue #3848
 func (s *testIntegrationSuite3) TestInvalidNameWhenCreateTable(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
@@ -1871,8 +1882,8 @@ func (s *testIntegrationSuite3) TestSqlFunctionsInGeneratedColumns(c *C) {
 	tk.MustGetErrCode("create table t (a int, b int as (@x))", mysql.ErrGeneratedColumnFunctionIsNotAllowed)
 	tk.MustGetErrCode("create table t (a int, b int as (@@max_connections))", mysql.ErrGeneratedColumnFunctionIsNotAllowed)
 	tk.MustGetErrCode("create table t (a int, b int as (@y:=1))", mysql.ErrGeneratedColumnFunctionIsNotAllowed)
-	tk.MustGetErrCode(`create table t (a int, b int as (getval("x")))`, mysql.ErrGeneratedColumnFunctionIsNotAllowed)
-	tk.MustGetErrCode(`create table t (a int, b int as (setval("y", 1)))`, mysql.ErrGeneratedColumnFunctionIsNotAllowed)
+	tk.MustGetErrCode(`create table t (a int, b int as (getvalue("x")))`, mysql.ErrGeneratedColumnFunctionIsNotAllowed)
+	tk.MustGetErrCode(`create table t (a int, b int as (setvalue("y", 1)))`, mysql.ErrGeneratedColumnFunctionIsNotAllowed)
 	// 6. Aggregate function
 	tk.MustGetErrCode("create table t1 (a int, b int as (avg(a)));", mysql.ErrInvalidGroupFuncUse)
 

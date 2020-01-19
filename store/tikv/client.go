@@ -54,6 +54,7 @@ var (
 	ReadTimeoutLong           = 150 * time.Second // For requests that may need scan region multiple times.
 	GCTimeout                 = 5 * time.Minute
 	UnsafeDestroyRangeTimeout = 5 * time.Minute
+	AccessLockObserverTimeout = 10 * time.Second
 )
 
 const (
@@ -225,8 +226,8 @@ func newRPCClient(security config.Security) *rpcClient {
 }
 
 // NewTestRPCClient is for some external tests.
-func NewTestRPCClient() Client {
-	return newRPCClient(config.Security{})
+func NewTestRPCClient(security config.Security) Client {
+	return newRPCClient(security)
 }
 
 func (c *rpcClient) getConnArray(addr string) (*connArray, error) {
@@ -300,7 +301,7 @@ func (c *rpcClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 	}
 
 	// TiDB RPC server not support batch RPC now.
-	// TODO: remove this store type check after TiDB RPC Server support stream.
+	// TODO: remove this store type check after TiDB RPC Server support batch.
 	if config.GetGlobalConfig().TiKVClient.MaxBatchSize > 0 && req.StoreTp != kv.TiDB {
 		if batchReq := req.ToBatchCommandsRequest(); batchReq != nil {
 			return sendBatchRequest(ctx, addr, connArray.batchConn, batchReq, timeout)
@@ -320,6 +321,11 @@ func (c *rpcClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 	}
 
 	client := tikvpb.NewTikvClient(clientConn)
+
+	// Do not set timeout and cancel for physical scan lock, which is a streaming request.
+	if req.Type == tikvrpc.CmdPhysicalScanLock {
+		return tikvrpc.CallRPC(ctx, client, req)
+	}
 
 	if req.Type != tikvrpc.CmdCopStream {
 		ctx1, cancel := context.WithTimeout(ctx, timeout)

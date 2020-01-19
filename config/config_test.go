@@ -183,6 +183,7 @@ split-region-max-num=10000
 enable-batch-dml = true
 server-version = "test_version"
 repair-mode = true
+max-server-connections = 200
 [performance]
 txn-total-size-limit=2000
 [tikv-client]
@@ -191,13 +192,15 @@ max-batch-size=128
 region-cache-ttl=6000
 store-limit=0
 [stmt-summary]
-enable=true
+enable=false
 max-stmt-count=1000
 max-sql-length=1024
 refresh-interval=100
 history-size=100
 [experimental]
 allow-auto-random = true
+[isolation-read]
+engines = ["tiflash"]
 `)
 
 	c.Assert(err, IsNil)
@@ -223,14 +226,16 @@ allow-auto-random = true
 	c.Assert(conf.EnableTableLock, IsTrue)
 	c.Assert(conf.DelayCleanTableLock, Equals, uint64(5))
 	c.Assert(conf.SplitRegionMaxNum, Equals, uint64(10000))
-	c.Assert(conf.StmtSummary.Enable, Equals, true)
+	c.Assert(conf.StmtSummary.Enable, Equals, false)
 	c.Assert(conf.StmtSummary.MaxStmtCount, Equals, uint(1000))
 	c.Assert(conf.StmtSummary.MaxSQLLength, Equals, uint(1024))
 	c.Assert(conf.StmtSummary.RefreshInterval, Equals, 100)
 	c.Assert(conf.StmtSummary.HistorySize, Equals, 100)
 	c.Assert(conf.EnableBatchDML, Equals, true)
 	c.Assert(conf.RepairMode, Equals, true)
+	c.Assert(conf.MaxServerConnections, Equals, uint32(200))
 	c.Assert(conf.Experimental.AllowAutoRandom, IsTrue)
+	c.Assert(conf.IsolationRead.Engines, DeepEquals, []string{"tiflash"})
 	c.Assert(f.Close(), IsNil)
 	c.Assert(os.Remove(configFile), IsNil)
 
