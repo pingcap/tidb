@@ -73,6 +73,17 @@ func (ts *testFunctionsSuite) TestFuncCallExprRestore(c *C) {
 		{"MASTER_POS_WAIT(@log_name, @log_pos, @timeout, @channel_name)", "MASTER_POS_WAIT(@`log_name`, @`log_pos`, @`timeout`, @`channel_name`)"},
 		{"JSON_TYPE('[123]')", "JSON_TYPE('[123]')"},
 		{"bit_and(all c1)", "BIT_AND(`c1`)"},
+		{"nextval(seq)", "NEXTVAL(`seq`)"},
+		{"nextval(test.seq)", "NEXTVAL(`test`.`seq`)"},
+		{"lastval(seq)", "LASTVAL(`seq`)"},
+		{"lastval(test.seq)", "LASTVAL(`test`.`seq`)"},
+		{"setval(seq, 100)", "SETVAL(`seq`, 100)"},
+		{"setval(test.seq, 100)", "SETVAL(`test`.`seq`, 100)"},
+		{"next value for seq", "NEXTVAL(`seq`)"},
+		{"next value for test.seq", "NEXTVAL(`test`.`seq`)"},
+		{"next value for sequence", "NEXTVAL(`sequence`)"},
+		{"NeXt vAluE for seQuEncE2", "NEXTVAL(`seQuEncE2`)"},
+		{"NeXt vAluE for test.seQuEncE2", "NEXTVAL(`test`.`seQuEncE2`)"},
 	}
 	extractNodeFunc := func(node Node) Node {
 		return node.(*SelectStmt).Fields.Fields[0].Expr
