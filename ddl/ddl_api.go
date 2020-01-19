@@ -4368,14 +4368,19 @@ func (d *ddl) CreateSequence(ctx sessionctx.Context, stmt *ast.CreateSequenceStm
 	return errors.Trace(err)
 }
 
-func (d *ddl) DropSequence(ctx sessionctx.Context, ti ast.Ident) (err error) {
+func (d *ddl) DropSequence(ctx sessionctx.Context, ti ast.Ident, ifExists bool) (err error) {
 	schema, tbl, err := d.getSchemaAndTableByIdent(ctx, ti)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
 	if !tbl.Meta().IsSequence() {
-		return ErrWrongObject.GenWithStackByArgs(ti.Schema, ti.Name, "SEQUENCE")
+		err = ErrWrongObject.GenWithStackByArgs(ti.Schema, ti.Name, "SEQUENCE")
+		if ifExists {
+			ctx.GetSessionVars().StmtCtx.AppendNote(err)
+			return nil
+		}
+		return err
 	}
 
 	job := &model.Job{

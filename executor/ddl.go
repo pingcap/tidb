@@ -277,6 +277,7 @@ func (e *DDLExec) executeDropSequence(s *ast.DropSequenceStmt) error {
 	return e.dropTableObject(s.Sequences, sequenceObject, s.IfExists)
 }
 
+// dropTableObject actually applies to `tableObject`, `viewObject` and `sequenceObject`.
 func (e *DDLExec) dropTableObject(objects []*ast.TableName, obt objectType, ifExists bool) error {
 	var notExistTables []string
 	for _, tn := range objects {
@@ -319,7 +320,7 @@ func (e *DDLExec) dropTableObject(objects []*ast.TableName, obt objectType, ifEx
 		case viewObject:
 			err = domain.GetDomain(e.ctx).DDL().DropView(e.ctx, fullti)
 		case sequenceObject:
-			err = domain.GetDomain(e.ctx).DDL().DropSequence(e.ctx, fullti)
+			err = domain.GetDomain(e.ctx).DDL().DropSequence(e.ctx, fullti, ifExists)
 		}
 		if infoschema.ErrDatabaseNotExists.Equal(err) || infoschema.ErrTableNotExists.Equal(err) {
 			notExistTables = append(notExistTables, fullti.String())

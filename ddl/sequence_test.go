@@ -18,6 +18,8 @@ import (
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/util/testkit"
 )
@@ -103,7 +105,7 @@ func (s *testSequenceSuite) TestDropSequence(c *C) {
 	s.tk.MustExec("create table seq3 (a int)")
 	_, err = s.tk.Exec("drop sequence seq3")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[ddl:1347]'test.seq3' is not SEQUENCE")
+	c.Assert(terror.ErrorEqual(err, ddl.ErrWrongObject), IsTrue)
 
 	// Test schema is not exist.
 	_, err = s.tk.Exec("drop sequence unknown.seq")
@@ -127,7 +129,7 @@ func (s *testSequenceSuite) TestDropSequence(c *C) {
 	// Test drop view when the object is a sequence.
 	_, err = s.tk.Exec("drop view seq")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[ddl:1347]'test.seq' is not VIEW")
+	c.Assert(terror.ErrorEqual(err, ddl.ErrWrongObject), IsTrue)
 	s.tk.MustExec("drop sequence seq")
 
 	// Test drop privilege.
