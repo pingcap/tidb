@@ -171,6 +171,7 @@ func (c *RowContainer) Close() (err error) {
 		err = c.recordsInDisk.Close()
 		c.recordsInDisk = nil
 	}
+	c.records.Clear()
 	return
 }
 
