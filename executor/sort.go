@@ -59,12 +59,6 @@ type SortExec struct {
 	// partitionRowPtrs store the sorted RowPtrs for each row for partitions.
 	partitionRowPtrs [][]chunk.RowPtr
 
-	// sortRows is used to maintain a heap.
-	sortRows []chunk.Row
-	// sortRowsIndex store the partition index for each row.
-	sortRowsIndex []int
-	// partitionConsumedRows store the consumed rows num for each partition.
-	partitionConsumedNum []int
 	// heapSort use heap sort for spill disk.
 	heapSort *multiWayMerge
 	// spillAction save the Action for spill disk.
@@ -95,11 +89,6 @@ func (e *SortExec) Close() error {
 			}
 		}
 		e.partitionRowPtrs = e.partitionRowPtrs[:0]
-
-		e.memTracker.Consume(int64(-8 * cap(e.sortRowsIndex)))
-		e.memTracker.Consume(int64(-8 * cap(e.partitionConsumedNum)))
-		e.sortRowsIndex = nil
-		e.partitionConsumedNum = nil
 	}
 	if e.rowChunks != nil {
 		e.memTracker.Consume(-e.rowChunks.GetMemTracker().BytesConsumed())
@@ -177,18 +166,25 @@ func (e *SortExec) generatePartition() {
 	e.partitionRowPtrs = append(e.partitionRowPtrs, e.rowPtrs)
 }
 
+type partitionPointer struct {
+	row         chunk.Row
+	partitionId int
+	consumed    int
+}
+
 type multiWayMerge struct {
-	*SortExec
+	lessRowFunction func(rowI chunk.Row, rowJ chunk.Row) bool
+	elements        []partitionPointer
 }
 
 func (h *multiWayMerge) Less(i, j int) bool {
-	rowI := h.sortRows[i]
-	rowJ := h.sortRows[j]
-	return h.lessRow(rowI, rowJ)
+	rowI := h.elements[i].row
+	rowJ := h.elements[j].row
+	return h.lessRowFunction(rowI, rowJ)
 }
 
 func (h *multiWayMerge) Len() int {
-	return len(h.sortRows)
+	return len(h.elements)
 }
 
 func (h *multiWayMerge) Push(x interface{}) {
@@ -196,49 +192,40 @@ func (h *multiWayMerge) Push(x interface{}) {
 }
 
 func (h *multiWayMerge) Pop() interface{} {
-	h.sortRows = h.sortRows[:len(h.sortRows)-1]
-	h.sortRowsIndex = h.sortRowsIndex[:len(h.sortRowsIndex)-1]
+	h.elements = h.elements[:len(h.elements)-1]
 	return nil
 }
 
 func (h *multiWayMerge) Swap(i, j int) {
-	h.sortRows[i], h.sortRows[j] = h.sortRows[j], h.sortRows[i]
-	h.sortRowsIndex[i], h.sortRowsIndex[j] = h.sortRowsIndex[j], h.sortRowsIndex[i]
+	h.elements[i], h.elements[j] = h.elements[j], h.elements[i]
 }
 
 func (e *SortExec) externalSorting(req *chunk.Chunk) (err error) {
 	if e.heapSort == nil {
-		e.sortRowsIndex = make([]int, 0, len(e.partitionList))
-		e.partitionConsumedNum = make([]int, len(e.partitionList))
-		e.memTracker.Consume(int64(8 * cap(e.sortRowsIndex)))
-		e.memTracker.Consume(int64(8 * cap(e.partitionConsumedNum)))
-		e.heapSort = &multiWayMerge{e}
+		e.heapSort = &multiWayMerge{e.lessRow, make([]partitionPointer, 0, len(e.partitionList))}
 		for i := 0; i < len(e.partitionList); i++ {
-			e.partitionConsumedNum[i] = 0
 			row, err := e.partitionList[i].GetRow(e.partitionRowPtrs[i][0])
 			if err != nil {
 				return err
 			}
-			e.sortRows = append(e.sortRows, row)
-			e.sortRowsIndex = append(e.sortRowsIndex, i)
+			e.heapSort.elements = append(e.heapSort.elements, partitionPointer{row: row, partitionId: i, consumed: 0})
 		}
 		heap.Init(e.heapSort)
 	}
 
 	for !req.IsFull() && e.heapSort.Len() > 0 {
-		row, partIdx := e.sortRows[0], e.sortRowsIndex[0]
-		req.AppendRow(row)
-		rowIdx := e.partitionConsumedNum[partIdx] + 1
-		if rowIdx >= len(e.partitionRowPtrs[partIdx]) {
+		partitionPtr := e.heapSort.elements[0]
+		req.AppendRow(partitionPtr.row)
+		partitionPtr.consumed++
+		if partitionPtr.consumed >= len(e.partitionRowPtrs[partitionPtr.partitionId]) {
 			heap.Remove(e.heapSort, 0)
 			continue
 		}
-		e.partitionConsumedNum[partIdx] = rowIdx
-		row, err = e.partitionList[partIdx].GetRow(e.partitionRowPtrs[partIdx][rowIdx])
+		partitionPtr.row, err = e.partitionList[partitionPtr.partitionId].GetRow(e.partitionRowPtrs[partitionPtr.partitionId][partitionPtr.consumed])
 		if err != nil {
 			return err
 		}
-		e.sortRows[0] = row
+		e.heapSort.elements[0] = partitionPtr
 		heap.Fix(e.heapSort, 0)
 	}
 	return nil
