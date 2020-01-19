@@ -66,7 +66,7 @@ type SortExec struct {
 	// partitionConsumedRows store the consumed rows num for each partition.
 	partitionConsumedNum []int
 	// heapSort use heap sort for spill disk.
-	heapSort *topNChunkHeapWithIndex
+	heapSort *multiWayMerge
 	// spillAction save the Action for spill disk.
 	spillAction *chunk.SpillDiskAction
 
@@ -177,31 +177,31 @@ func (e *SortExec) generatePartition() {
 	e.partitionRowPtrs = append(e.partitionRowPtrs, e.rowPtrs)
 }
 
-type topNChunkHeapWithIndex struct {
+type multiWayMerge struct {
 	*SortExec
 }
 
-func (h *topNChunkHeapWithIndex) Less(i, j int) bool {
+func (h *multiWayMerge) Less(i, j int) bool {
 	rowI := h.sortRows[i]
 	rowJ := h.sortRows[j]
 	return h.lessRow(rowI, rowJ)
 }
 
-func (h *topNChunkHeapWithIndex) Len() int {
+func (h *multiWayMerge) Len() int {
 	return len(h.sortRows)
 }
 
-func (h *topNChunkHeapWithIndex) Push(x interface{}) {
+func (h *multiWayMerge) Push(x interface{}) {
 	// Should never be called.
 }
 
-func (h *topNChunkHeapWithIndex) Pop() interface{} {
+func (h *multiWayMerge) Pop() interface{} {
 	h.sortRows = h.sortRows[:len(h.sortRows)-1]
 	h.sortRowsIndex = h.sortRowsIndex[:len(h.sortRowsIndex)-1]
 	return nil
 }
 
-func (h *topNChunkHeapWithIndex) Swap(i, j int) {
+func (h *multiWayMerge) Swap(i, j int) {
 	h.sortRows[i], h.sortRows[j] = h.sortRows[j], h.sortRows[i]
 	h.sortRowsIndex[i], h.sortRowsIndex[j] = h.sortRowsIndex[j], h.sortRowsIndex[i]
 }
@@ -212,7 +212,7 @@ func (e *SortExec) externalSorting(req *chunk.Chunk) (err error) {
 		e.partitionConsumedNum = make([]int, len(e.partitionList))
 		e.memTracker.Consume(int64(8 * cap(e.sortRowsIndex)))
 		e.memTracker.Consume(int64(8 * cap(e.partitionConsumedNum)))
-		e.heapSort = &topNChunkHeapWithIndex{e}
+		e.heapSort = &multiWayMerge{e}
 		for i := 0; i < len(e.partitionList); i++ {
 			e.partitionConsumedNum[i] = 0
 			row, err := e.partitionList[i].GetRow(e.partitionRowPtrs[i][0])
