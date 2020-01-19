@@ -75,8 +75,8 @@ func GetPropByOrderByItems(items []*ByItems) (*property.PhysicalProperty, bool) 
 		case *expression.Column:
 			propItems = append(propItems, property.Item{Col: tp, Desc: item.Desc})
 		case *expression.ScalarFunction:
-			col, desc, err := tp.GetSingleColumn(item.Desc)
-			if err != nil {
+			col, desc := tp.GetSingleColumn(item.Desc)
+			if col == nil {
 				return nil, false
 			}
 			propItems = append(propItems, property.Item{Col: col, Desc: desc})

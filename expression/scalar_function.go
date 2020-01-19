@@ -364,61 +364,61 @@ func (sf *ScalarFunction) resolveIndices(schema *Schema) error {
 // - ast.Plus
 // - ast.Minus
 // - ast.UnaryMinus
-func (sf *ScalarFunction) GetSingleColumn(reverse bool) (*Column, bool, error) {
+func (sf *ScalarFunction) GetSingleColumn(reverse bool) (*Column, bool) {
 	switch sf.FuncName.String() {
 	case ast.Plus:
 		args := sf.GetArgs()
 		switch tp := args[0].(type) {
 		case *Column:
 			if _, ok := args[1].(*Constant); !ok {
-				return nil, false, errors.New("More than one column")
+				return nil, false
 			}
-			return tp, reverse, nil
+			return tp, reverse
 		case *ScalarFunction:
 			if _, ok := args[1].(*Constant); !ok {
-				return nil, false, errors.New("More than one column")
+				return nil, false
 			}
 			return tp.GetSingleColumn(reverse)
 		case *Constant:
 			switch rtp := args[1].(type) {
 			case *Column:
-				return rtp, reverse, nil
+				return rtp, reverse
 			case *ScalarFunction:
 				return rtp.GetSingleColumn(reverse)
 			}
 		}
-		return nil, false, errors.New("Unprocessed type")
+		return nil, false
 	case ast.Minus:
 		args := sf.GetArgs()
 		switch tp := args[0].(type) {
 		case *Column:
 			if _, ok := args[1].(*Constant); !ok {
-				return nil, false, errors.New("More than one column")
+				return nil, false
 			}
-			return tp, reverse, nil
+			return tp, reverse
 		case *ScalarFunction:
 			if _, ok := args[1].(*Constant); !ok {
-				return nil, false, errors.New("More than one column")
+				return nil, false
 			}
 			return tp.GetSingleColumn(reverse)
 		case *Constant:
 			switch rtp := args[1].(type) {
 			case *Column:
-				return rtp, !reverse, nil
+				return rtp, !reverse
 			case *ScalarFunction:
 				return rtp.GetSingleColumn(!reverse)
 			}
 		}
-		return nil, false, errors.New("Unprocessed type")
+		return nil, false
 	case ast.UnaryMinus:
 		args := sf.GetArgs()
 		switch tp := args[0].(type) {
 		case *Column:
-			return tp, !reverse, nil
+			return tp, !reverse
 		case *ScalarFunction:
 			return tp.GetSingleColumn(!reverse)
 		}
-		return nil, false, errors.New("Unprocessed type")
+		return nil, false
 	}
-	return nil, false, errors.New("Unprocessed type")
+	return nil, false
 }
