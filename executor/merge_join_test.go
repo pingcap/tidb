@@ -16,6 +16,7 @@ package executor_test
 import (
 	"bytes"
 	"fmt"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"math/rand"
 	"strings"
 
@@ -523,7 +524,7 @@ func (s *testSuite2) TestVectorizedMergeJoin(c *C) {
 		}
 	}
 
-	tk.Se.GetSessionVars().MaxChunkSize = 8
+	tk.Se.GetSessionVars().MaxChunkSize = variable.DefInitChunkSize
 	chunkSize := tk.Se.GetSessionVars().MaxChunkSize
 	cases := []struct {
 		t1 []int
