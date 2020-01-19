@@ -2072,7 +2072,7 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, nodeType n
 			hashJoinTables:            hashJoinTables,
 			indexHintList:             indexHintList,
 			aggHints:                  aggHints,
-			tiflashTables:               tiflashTables,
+			tiflashTables:             tiflashTables,
 			tikvTables:                tikvTables,
 		})
 		return true

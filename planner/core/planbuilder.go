@@ -60,8 +60,8 @@ type tableHintInfo struct {
 	sortMergeJoinTables       []hintTableInfo
 	hashJoinTables            []hintTableInfo
 	indexHintList             []indexHintInfo
-	tiflashTables       	  []hintTableInfo
-	tikvTables          	  []hintTableInfo
+	tiflashTables             []hintTableInfo
+	tikvTables                []hintTableInfo
 	aggHints                  aggHintInfo
 }
 
