@@ -501,6 +501,21 @@
           "2 22",
           "3 33"
         ]
+      },
+      {
+        "SQL": "select * from t1 join t2 on t1.a = t2.a",
+        "Plan": [
+          "MergeJoin_11 12500.00 root inner join, left key:test.t1.a, right key:test.t2.a",
+          "├─TableReader_16 10000.00 root data:TableScan_17",
+          "│ └─TableScan_17 10000.00 cop[tikv] table:t1, range:[-inf,+inf], keep order:true, stats:pseudo",
+          "└─TableReader_19 10000.00 root data:TableScan_20",
+          "  └─TableScan_20 10000.00 cop[tikv] table:t2, range:[-inf,+inf], keep order:true, stats:pseudo"
+        ],
+        "Result": [
+          "1 11 1 111",
+          "2 22 2 222",
+          "3 33 3 333"
+        ]
       }
     ]
   },

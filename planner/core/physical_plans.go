@@ -327,12 +327,13 @@ type PhysicalHashJoin struct {
 
 // NewPhysicalHashJoin creates a new PhysicalHashJoin from LogicalJoin.
 func NewPhysicalHashJoin(p *LogicalJoin, innerIdx int, useOuterToBuild bool, newStats *property.StatsInfo, prop ...*property.PhysicalProperty) *PhysicalHashJoin {
+	leftJoinKeys, rightJoinKeys := p.GetJoinKeys()
 	baseJoin := basePhysicalJoin{
 		LeftConditions:  p.LeftConditions,
 		RightConditions: p.RightConditions,
 		OtherConditions: p.OtherConditions,
-		LeftJoinKeys:    p.LeftJoinKeys,
-		RightJoinKeys:   p.RightJoinKeys,
+		LeftJoinKeys:    leftJoinKeys,
+		RightJoinKeys:   rightJoinKeys,
 		JoinType:        p.JoinType,
 		DefaultValues:   p.DefaultValues,
 		InnerChildIdx:   innerIdx,
