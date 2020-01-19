@@ -1845,3 +1845,11 @@ func (s *testSuiteJoin1) TestIssue13177(c *C) {
 		"abcd 1 1",
 	))
 }
+
+func (s *testSuiteJoin1) TestIssue14514(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (pk varchar(14) primary key, a varchar(12));")
+	tk.MustQuery("select * from (select t1.pk or '/' as c from t as t1 left join t as t2 on t1.a = t2.pk) as t where t.c = 1;").Check(testkit.Rows())
+}
