@@ -14,7 +14,9 @@
 package executor_test
 
 import (
+	"bytes"
 	"fmt"
+	"math/rand"
 	"strings"
 
 	. "github.com/pingcap/check"
@@ -453,4 +455,115 @@ func (s *testSuite2) TestMergeJoinDifferentTypes(c *C) {
 		`0 0`,
 		`0 0`,
 	))
+}
+
+// TestVectorizedMergeJoin is used to test vectorized merge join with some corner cases.
+func (s *testSuite2) TestVectorizedMergeJoin(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	runTest := func(t1, t2 []int) {
+		tk.MustExec("create table t1 (a int, b int)")
+		defer tk.MustExec("drop table t1")
+		tk.MustExec("create table t2 (a int, b int)")
+		defer tk.MustExec("drop table t2")
+
+		insert := func(tName string, ts []int) {
+			for i, n := range ts {
+				if n == 0 {
+					continue
+				}
+				var buf bytes.Buffer
+				buf.WriteString(fmt.Sprintf("insert into %v values ", tName))
+				for j := 0; j < n; j++ {
+					if j > 0 {
+						buf.WriteString(", ")
+					}
+					buf.WriteString(fmt.Sprintf("(%v, %v)", i, rand.Intn(10)))
+				}
+				tk.MustExec(buf.String())
+			}
+		}
+		insert("t1", t1)
+		insert("t2", t2)
+
+		tk.MustQuery("explain select /*+ TIDB_SMJ(t1, t2) */ * from t1, t2 where t1.a=t2.a and t1.b>5 and t2.b<5").Check(testkit.Rows(
+			`MergeJoin_7 4150.01 root inner join, left key:test.t1.a, right key:test.t2.a`,
+			`├─Sort_11 3330.00 root test.t1.a:asc`,
+			`│ └─TableReader_10 3330.00 root data:Selection_9`,
+			`│   └─Selection_9 3330.00 cop[tikv] gt(test.t1.b, 5), not(isnull(test.t1.a))`,
+			`│     └─TableScan_8 10000.00 cop[tikv] table:t1, range:[-inf,+inf], keep order:false, stats:pseudo`,
+			`└─Sort_15 3320.01 root test.t2.a:asc`,
+			`  └─TableReader_14 3320.01 root data:Selection_13`,
+			`    └─Selection_13 3320.01 cop[tikv] lt(test.t2.b, 5), not(isnull(test.t2.a))`,
+			`      └─TableScan_12 10000.00 cop[tikv] table:t2, range:[-inf,+inf], keep order:false, stats:pseudo`,
+		))
+		tk.MustQuery("explain select /*+ TIDB_HJ(t1, t2) */ * from t1, t2 where t1.a=t2.a and t1.b>5 and t2.b<5").Check(testkit.Rows(
+			`HashLeftJoin_7 4150.01 root inner join, inner:TableReader_14, equal:[eq(test.t1.a, test.t2.a)]`,
+			`├─TableReader_11 3330.00 root data:Selection_10`,
+			`│ └─Selection_10 3330.00 cop[tikv] gt(test.t1.b, 5), not(isnull(test.t1.a))`,
+			`│   └─TableScan_9 10000.00 cop[tikv] table:t1, range:[-inf,+inf], keep order:false, stats:pseudo`,
+			`└─TableReader_14 3320.01 root data:Selection_13`,
+			`  └─Selection_13 3320.01 cop[tikv] lt(test.t2.b, 5), not(isnull(test.t2.a))`,
+			`    └─TableScan_12 10000.00 cop[tikv] table:t2, range:[-inf,+inf], keep order:false, stats:pseudo`,
+		))
+
+		r1 := tk.MustQuery("select /*+ TIDB_SMJ(t1, t2) */ * from t1, t2 where t1.a=t2.a and t1.b>5 and t2.b<5").Sort()
+		r2 := tk.MustQuery("select /*+ TIDB_HJ(t1, t2) */ * from t1, t2 where t1.a=t2.a and t1.b>5 and t2.b<5").Sort()
+		c.Assert(len(r1.Rows()), Equals, len(r2.Rows()))
+
+		i := 0
+		n := len(r1.Rows())
+		for i < n {
+			c.Assert(len(r1.Rows()[i]), Equals, len(r2.Rows()[i]))
+			for j := range r1.Rows()[i] {
+				c.Assert(r1.Rows()[i][j], Equals, r2.Rows()[i][j])
+			}
+			i += rand.Intn((n-i)/5+1) + 1 // just compare parts of results to speed up
+		}
+	}
+
+	tk.Se.GetSessionVars().MaxChunkSize = 16
+	chunkSize := tk.Se.GetSessionVars().MaxChunkSize
+	cases := []struct {
+		t1 []int
+		t2 []int
+	}{
+		{[]int{0}, []int{chunkSize}},
+		{[]int{0}, []int{chunkSize - 1}},
+		{[]int{0}, []int{chunkSize + 1}},
+		{[]int{1}, []int{chunkSize}},
+		{[]int{1}, []int{chunkSize - 1}},
+		{[]int{1}, []int{chunkSize + 1}},
+		{[]int{chunkSize - 1}, []int{chunkSize}},
+		{[]int{chunkSize - 1}, []int{chunkSize - 1}},
+		{[]int{chunkSize - 1}, []int{chunkSize + 1}},
+		{[]int{chunkSize}, []int{chunkSize}},
+		{[]int{chunkSize}, []int{chunkSize - 1}},
+		{[]int{chunkSize}, []int{chunkSize + 1}},
+		{[]int{chunkSize + 1}, []int{chunkSize}},
+		{[]int{chunkSize + 1}, []int{chunkSize - 1}},
+		{[]int{chunkSize + 1}, []int{chunkSize + 1}},
+		{[]int{1, 1, 1}, []int{chunkSize + 1, chunkSize*5 + 10, chunkSize - 10}},
+		{[]int{0, 0, chunkSize}, []int{chunkSize + 1, chunkSize*5 + 10, chunkSize - 10}},
+		{[]int{chunkSize + 1, 0, chunkSize}, []int{chunkSize + 1, chunkSize*5 + 10, chunkSize - 10}},
+	}
+	for _, ca := range cases {
+		runTest(ca.t1, ca.t2)
+		runTest(ca.t2, ca.t1)
+	}
+
+	// random complex cases
+	genCase := func() []int {
+		n := rand.Intn(32) + 32
+		ts := make([]int, n)
+		for i := 0; i < n; i++ {
+			ts[i] = rand.Intn(chunkSize * 2)
+		}
+		return ts
+	}
+	for i := 0; i < 16; i++ {
+		t1 := genCase()
+		t2 := genCase()
+		runTest(t1, t2)
+	}
 }
