@@ -876,12 +876,12 @@ func (b *builtinArithmeticIntDivideIntSig) divideUU(result *chunk.Column, lhsI64
 	return nil
 }
 
-func (b *builtinArithmeticIntDivideIntSig) divideUS(result *chunk.Column, lhsI64s, rhi64s, resultI64s []int64) error {
+func (b *builtinArithmeticIntDivideIntSig) divideUS(result *chunk.Column, lhsI64s, rhsI64s, resultI64s []int64) error {
 	for i := 0; i < len(lhsI64s); i++ {
 		if result.IsNull(i) {
 			continue
 		}
-		lhs, rhs := lhsI64s[i], rhi64s[i]
+		lhs, rhs := lhsI64s[i], rhsI64s[i]
 
 		if rhs == 0 {
 			if err := handleDivisionByZeroError(b.ctx); err != nil {
@@ -899,12 +899,12 @@ func (b *builtinArithmeticIntDivideIntSig) divideUS(result *chunk.Column, lhsI64
 	return nil
 }
 
-func (b *builtinArithmeticIntDivideIntSig) divideSU(result *chunk.Column, lhsI64s, rhi64s, resultI64s []int64) error {
+func (b *builtinArithmeticIntDivideIntSig) divideSU(result *chunk.Column, lhsI64s, rhsI64s, resultI64s []int64) error {
 	for i := 0; i < len(lhsI64s); i++ {
 		if result.IsNull(i) {
 			continue
 		}
-		lhs, rhs := lhsI64s[i], rhi64s[i]
+		lhs, rhs := lhsI64s[i], rhsI64s[i]
 
 		if rhs == 0 {
 			if err := handleDivisionByZeroError(b.ctx); err != nil {
@@ -922,12 +922,12 @@ func (b *builtinArithmeticIntDivideIntSig) divideSU(result *chunk.Column, lhsI64
 	return nil
 }
 
-func (b *builtinArithmeticIntDivideIntSig) divideSS(result *chunk.Column, lhsI64s, rhi64s, resultI64s []int64) error {
+func (b *builtinArithmeticIntDivideIntSig) divideSS(result *chunk.Column, lhsI64s, rhsI64s, resultI64s []int64) error {
 	for i := 0; i < len(lhsI64s); i++ {
 		if result.IsNull(i) {
 			continue
 		}
-		lhs, rhs := lhsI64s[i], rhi64s[i]
+		lhs, rhs := lhsI64s[i], rhsI64s[i]
 
 		if rhs == 0 {
 			if err := handleDivisionByZeroError(b.ctx); err != nil {
