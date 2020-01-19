@@ -322,6 +322,12 @@ func (s *testSuite3) TestGrantOnNonExistTable(c *C) {
 	// Case sensitive
 	_, err = tk.Exec("grant Select,Insert on XX to 'genius'")
 	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableNotExists), IsTrue)
+	// The database name should also case sensitive match.
+	_, err = tk.Exec("grant Select,Insert on Test.xx to 'genius'")
+	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableNotExists), IsTrue)
 
 	_, err = tk.Exec("grant Select,Insert on xx to 'genius'")
+	c.Assert(err, IsNil)
+	_, err = tk.Exec("grant Select,Update on test.xx to 'genius'")
+	c.Assert(err, IsNil)
 }

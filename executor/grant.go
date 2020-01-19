@@ -70,14 +70,23 @@ func (e *GrantExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 	// Make sure the table exist.
 	if e.Level.Level == ast.GrantLevelTable {
+		dbNameStr := model.NewCIStr(dbName)
 		schema := infoschema.GetInfoSchema(e.ctx)
-		t, err := schema.TableByName(model.NewCIStr(dbName), model.NewCIStr(e.Level.TableName))
+		tbl, err := schema.TableByName(dbNameStr, model.NewCIStr(e.Level.TableName))
 		if err != nil {
 			return err
 		}
+		err = infoschema.ErrTableNotExists.GenWithStackByArgs(dbName, e.Level.TableName)
 		// Note the table name compare is case sensitive here.
-		if t.Meta().Name.String() != e.Level.TableName {
-			return infoschema.ErrTableNotExists.GenWithStackByArgs(dbName, e.Level.TableName)
+		if tbl.Meta().Name.String() != e.Level.TableName {
+			return err
+		}
+		if len(e.Level.DBName) > 0 {
+			// The database name should also match.
+			db, succ := schema.SchemaByName(dbNameStr)
+			if !succ || db.Name.String() != dbName {
+				return err
+			}
 		}
 	}
 
