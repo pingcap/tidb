@@ -215,8 +215,8 @@ bind-info-lease = "3s"
 
 # The limitation of the size in byte for the entries in one transaction.
 # If using TiKV as the storage, the entry represents a key/value pair.
-# NOTE: If binlog is enabled, this value should be less than 104857600 because the two configurations conflict with each other, otherwise this value is restrict by the RAM size.
-# The recommended value should be at most 1/6 of the RAM size, there is also a 10G limitation of this value.
+# NOTE: If binlog is enabled, this value should be less than 104857600(10M) because this is the maximum size that can be handled by Pumper.
+# If binlog is not enabled, this value should be less than 10737418240(10G).
 txn-total-size-limit = 104857600
 
 [proxy-protocol]
@@ -327,7 +327,7 @@ capacity = 2048000
 
 [binlog]
 # enable to write binlog.
-# NOTE: If binlog is enabled, txn-total-size-limit should be less than 104857600 because the two configurations conflict with each other.
+# NOTE: If binlog is enabled, txn-total-size-limit should be less than 104857600(10M).
 enable = false
 
 # WriteTimeout specifies how long it will wait for writing binlog to pump.
