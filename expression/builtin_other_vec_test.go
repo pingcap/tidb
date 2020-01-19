@@ -36,7 +36,7 @@ var vecBuiltinOtherCases = map[string][]vecExprBenchCase{
 	ast.GetParam: {
 		{
 			retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETInt},
-			geners: []dataGenerator{&rangeInt64Gener{0, 10}},
+			geners: []dataGenerator{newRangeInt64Gener(0, 10)},
 		},
 	},
 }

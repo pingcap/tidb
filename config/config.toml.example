@@ -87,6 +87,9 @@ repair-mode = false
 # In repair mode, repairing table which is not in repair list will get wrong database or wrong table error.
 repair-table-list = []
 
+# The maximum permitted number of simultaneous client connections.
+max-server-connections = 4096
+
 # ignore-ddl-temporary-keyword is used to make ddl TEMPORARY keyword compatible with previous version TiDB.
 # turn on this option, 'TEMPORARY' will ignored by TiDB. Please make sure you fully understand the negative impact.
 # turn off this option, use 'CREATE/DROP TEMPORARY TABLE' or 'CREATE/DROP TEMPORARY SEQUENCE' will reported an error.
@@ -372,3 +375,8 @@ history-size = 24
 [experimental]
 # enable column attribute `auto_random` to be defined on the primary key column.
 allow-auto-random = false
+
+# server level isolation read by engines and labels
+[isolation-read]
+# engines means allow the tidb server read data from which types of engines. options: "tikv", "tiflash", "tidb".
+engines = ["tikv", "tiflash", "tidb"]
