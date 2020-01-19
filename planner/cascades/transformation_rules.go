@@ -1381,17 +1381,15 @@ func (r *EliminateSingleMaxMin) Match(expr *memo.ExprIter) bool {
 
 	// Only one max() or min() in the AggFuncs slice, and
 	// the other aggregate functions in the AggFuncs slice should be FirstRow().
-	maxMinFlag := false
+	numMaxMin := 0
 	for _, aggFunc := range agg.AggFuncs {
 		if aggFunc.Name == ast.AggFuncMax || aggFunc.Name == ast.AggFuncMin {
-			if maxMinFlag {
+			numMaxMin++
+			if numMaxMin > 1 {
 				return false
 			}
-			maxMinFlag = true
-		} else {
-			if aggFunc.Name != ast.AggFuncFirstRow {
-				return false
-			}
+		} else if aggFunc.Name != ast.AggFuncFirstRow {
+			return false
 		}
 	}
 	return true
@@ -1404,21 +1402,21 @@ func (r *EliminateSingleMaxMin) OnTransform(old *memo.ExprIter) (newExprs []*mem
 	childGroup := old.GetExpr().Children[0]
 	ctx := agg.SCtx()
 
-	var maxMinPos int
+	var posMaxMin int
 	for i, aggFunc := range agg.AggFuncs {
 		if aggFunc.Name == ast.AggFuncMax || aggFunc.Name == ast.AggFuncMin {
-			maxMinPos = i
+			posMaxMin = i
 			break
 		}
 	}
-	f := agg.AggFuncs[maxMinPos]
+	f := agg.AggFuncs[posMaxMin]
 
 	// If there's no column in f.GetArgs()[0], we still need limit and read data from real table because the result should be NULL if the input is empty.
-	if len(expression.ExtractColumns(f.Args[maxMinPos])) > 0 {
+	if len(expression.ExtractColumns(f.Args[posMaxMin])) > 0 {
 		// If it can be NULL, we need to filter NULL out first.
-		if !mysql.HasNotNullFlag(f.Args[maxMinPos].GetType().Flag) {
+		if !mysql.HasNotNullFlag(f.Args[posMaxMin].GetType().Flag) {
 			sel := plannercore.LogicalSelection{}.Init(ctx, agg.SelectBlockOffset())
-			isNullFunc := expression.NewFunctionInternal(ctx, ast.IsNull, types.NewFieldType(mysql.TypeTiny), f.Args[maxMinPos])
+			isNullFunc := expression.NewFunctionInternal(ctx, ast.IsNull, types.NewFieldType(mysql.TypeTiny), f.Args[posMaxMin])
 			notNullFunc := expression.NewFunctionInternal(ctx, ast.UnaryNot, types.NewFieldType(mysql.TypeTiny), isNullFunc)
 			sel.Conditions = []expression.Expression{notNullFunc}
 			selExpr := memo.NewGroupExpr(sel)
@@ -1432,7 +1430,7 @@ func (r *EliminateSingleMaxMin) OnTransform(old *memo.ExprIter) (newExprs []*mem
 		desc := f.Name == ast.AggFuncMax
 		var byItems []*plannercore.ByItems
 		byItems = append(byItems, &plannercore.ByItems{
-			Expr: f.Args[maxMinPos],
+			Expr: f.Args[posMaxMin],
 			Desc: desc,
 		})
 		top1 := plannercore.LogicalTopN{
