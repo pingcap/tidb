@@ -669,17 +669,32 @@ func (it *copIterator) open(ctx context.Context) error {
 }
 
 func (sender *copIteratorTaskSender) run() {
-	// Send tasks to feed the worker goroutines.
+	// Fill iterator's list of tasks
 	for t := range sender.newTasksCh {
 		sender.iterator.tasks = append(sender.iterator.tasks, t)
+	}
+	// Notify iterator about it
+	sender.iterator.tasksFilledCh <- struct{}{}
+	close(sender.iterator.tasksFilledCh)
+
+	// Send tasks to feed the worker goroutines.
+	for _, t := range sender.iterator.tasks {
+		// If keepOrder, we must control the sending rate to prevent all tasks
+		// being done (aka. all of the responses are buffered) by copIteratorWorker.
+		// We keep the number of inflight tasks within the number of concurrency * 2.
+		// It sends one more task if a task has been finished in copIterator.Next.
+		if sender.sendRate != nil {
+			exit := sender.sendRate.getToken(sender.finishCh)
+			if exit {
+				break
+			}
+		}
 		exit := sender.sendToTaskCh(t)
 		if exit {
 			break
 		}
 	}
 	close(sender.taskCh)
-	sender.iterator.tasksFilledCh <- struct{}{}
-	close(sender.iterator.tasksFilledCh)
 
 	// Wait for worker goroutines to exit.
 	sender.wg.Wait()
@@ -744,7 +759,7 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 			return nil, nil
 		}
 	} else {
-		// first, we need to be sure that all tasks are received
+		// first, we need to be sure that all tasks are received from copIteratorTaskSender
 		<-it.tasksFilledCh
 		// then we can start to iterate over tasks
 		for {
@@ -764,6 +779,7 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 			// Switch to next task.
 			it.tasks[it.curr] = nil
 			it.curr++
+			it.sendRate.putToken()
 		}
 	}
 
