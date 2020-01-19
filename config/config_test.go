@@ -83,6 +83,8 @@ max-stmt-count=1000
 max-sql-length=1024
 refresh-interval=100
 history-size=100
+[isolation-read]
+engines = ["tiflash"]
 `)
 
 	c.Assert(err, IsNil)
@@ -116,6 +118,7 @@ history-size=100
 	c.Assert(conf.StmtSummary.HistorySize, Equals, 100)
 	c.Assert(conf.EnableTableLock, IsTrue)
 	c.Assert(conf.DelayCleanTableLock, Equals, uint64(5))
+	c.Assert(conf.IsolationRead.Engines, DeepEquals, []string{"tiflash"})
 	c.Assert(f.Close(), IsNil)
 	c.Assert(os.Remove(configFile), IsNil)
 

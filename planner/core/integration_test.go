@@ -18,6 +18,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/planner/core"
@@ -230,6 +231,37 @@ func (s *testIntegrationSuite) TestBitColErrorMessage(c *C) {
 	tk.MustExec("drop table bit_col_t")
 	tk.MustGetErrCode("create table bit_col_t (a bit(0))", mysql.ErrInvalidFieldSize)
 	tk.MustGetErrCode("create table bit_col_t (a bit(65))", mysql.ErrTooBigDisplaywidth)
+}
+
+func (s *testIntegrationSuite) TestIsolationRead(c *C) {
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+
+	tk.MustExec("use test")
+	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tiflash'")
+
+	// Don't filter mysql.SystemDB by isolation read.
+	tk.MustQuery("explain select * from mysql.stats_meta").Check(testkit.Rows(
+		"TableReader_5 10000.00 root data:TableScan_4",
+		"└─TableScan_4 10000.00 cop[tikv] table:stats_meta, range:[-inf,+inf], keep order:false, stats:pseudo"))
+
+	_, err = tk.Exec("select * from t")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[planner:1815]Internal : Can not find access path matching 'tidb_isolation_read_engines'(value: '[tikv tiflash tidb]') and tidb-server config isolation-read(engines: 'tiflash'). Available values are 'tikv'.")
+
+	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tikv, tiflash'")
+	config.GetGlobalConfig().IsolationRead.Engines = []string{"tiflash"}
+	defer func() {
+		config.GetGlobalConfig().IsolationRead.Engines = []string{"tikv", "tiflash", "tidb"}
+	}()
+	_, err = tk.Exec("select * from t")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[planner:1815]Internal : Can not find access path matching 'tidb_isolation_read_engines'(value: '[tiflash]') and tidb-server config isolation-read(engines: 'tikv,tiflash'). Available values are 'tikv'.")
 }
 
 func (s *testIntegrationSuite) TestSelPushDownTiFlash(c *C) {

@@ -101,6 +101,8 @@ type Config struct {
 	// TODO: remove this after table lock features stable.
 	EnableTableLock     bool   `toml:"enable-table-lock" json:"enable-table-lock"`
 	DelayCleanTableLock uint64 `toml:"delay-clean-table-lock" json:"delay-clean-table-lock"`
+	// IsolationRead indicates that the TiDB reads data from which isolation level(engine and label).
+	IsolationRead IsolationRead `toml:"isolation-read" json:"isolation-read"`
 }
 
 // Log is the log section of config.
@@ -339,6 +341,12 @@ type StmtSummary struct {
 	HistorySize int `toml:"history-size" json:"history-size"`
 }
 
+// IsolationRead is the config for isolation read.
+type IsolationRead struct {
+	// Engines filters tidb-server access paths by engine type.
+	Engines []string `toml:"engines" json:"engines"`
+}
+
 var defaultConf = Config{
 	Host:                         "0.0.0.0",
 	AdvertiseAddress:             "",
@@ -445,6 +453,9 @@ var defaultConf = Config{
 		MaxSQLLength:    4096,
 		RefreshInterval: 1800,
 		HistorySize:     24,
+	},
+	IsolationRead: IsolationRead{
+		Engines: []string{"tikv", "tiflash", "tidb"},
 	},
 }
 
@@ -624,6 +635,14 @@ func (c *Config) Valid() error {
 	}
 	if c.StmtSummary.RefreshInterval <= 0 {
 		return fmt.Errorf("refresh-interval in [stmt-summary] should be greater than 0")
+	}
+	if len(c.IsolationRead.Engines) < 1 {
+		return fmt.Errorf("the number of [isolation-read]engines for isolation read should be at least 1")
+	}
+	for _, engine := range c.IsolationRead.Engines {
+		if engine != "tidb" && engine != "tikv" && engine != "tiflash" {
+			return fmt.Errorf("type of [isolation-read]engines can't be %v should be one of tidb or tikv or tiflash", engine)
+		}
 	}
 	return nil
 }
