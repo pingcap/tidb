@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"math/rand"
 	"strings"
+	"sync"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/config"
@@ -459,13 +460,13 @@ func (s *testSuite2) TestMergeJoinDifferentTypes(c *C) {
 
 // TestVectorizedMergeJoin is used to test vectorized merge join with some corner cases.
 func (s *testSuite2) TestVectorizedMergeJoin(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	runTest := func(t1, t2 []int) {
-		tk.MustExec("create table t1 (a int, b int)")
-		defer tk.MustExec("drop table t1")
-		tk.MustExec("create table t2 (a int, b int)")
-		defer tk.MustExec("drop table t2")
+	runTest := func(tk *testkit.TestKit, prefix string, t1, t2 []int) {
+		tn1 := prefix + "t1"
+		tn2 := prefix + "t2"
+		tk.MustExec("create table " + tn1 + " (a int, b int)")
+		defer tk.MustExec("drop table " + tn1)
+		tk.MustExec("create table " + tn2 + " (a int, b int)")
+		defer tk.MustExec("drop table " + tn2)
 
 		insert := func(tName string, ts []int) {
 			for i, n := range ts {
@@ -483,32 +484,37 @@ func (s *testSuite2) TestVectorizedMergeJoin(c *C) {
 				tk.MustExec(buf.String())
 			}
 		}
-		insert("t1", t1)
-		insert("t2", t2)
+		insert(tn1, t1)
+		insert(tn2, t2)
 
-		tk.MustQuery("explain select /*+ TIDB_SMJ(t1, t2) */ * from t1, t2 where t1.a=t2.a and t1.b>5 and t2.b<5").Check(testkit.Rows(
-			`MergeJoin_7 4150.01 root inner join, left key:test.t1.a, right key:test.t2.a`,
-			`├─Sort_11 3330.00 root test.t1.a:asc`,
+		selSQL := func(hint string) string {
+			return fmt.Sprintf("select /*+ %v(%v, %v) */ * from %v, %v where %v.a=%v.a and %v.b>5 and %v.b<5",
+				hint, tn1, tn2, tn1, tn2, tn1, tn2, tn1, tn2)
+		}
+
+		tk.MustQuery("explain " + selSQL("TIDB_SMJ")).Check(testkit.Rows(
+			fmt.Sprintf(`MergeJoin_7 4150.01 root inner join, left key:test.%v.a, right key:test.%v.a`, tn1, tn2),
+			fmt.Sprintf(`├─Sort_11 3330.00 root test.%v.a:asc`, tn1),
 			`│ └─TableReader_10 3330.00 root data:Selection_9`,
-			`│   └─Selection_9 3330.00 cop[tikv] gt(test.t1.b, 5), not(isnull(test.t1.a))`,
-			`│     └─TableScan_8 10000.00 cop[tikv] table:t1, range:[-inf,+inf], keep order:false, stats:pseudo`,
-			`└─Sort_15 3320.01 root test.t2.a:asc`,
+			fmt.Sprintf(`│   └─Selection_9 3330.00 cop[tikv] gt(test.%v.b, 5), not(isnull(test.%v.a))`, tn1, tn1),
+			fmt.Sprintf(`│     └─TableScan_8 10000.00 cop[tikv] table:%v, range:[-inf,+inf], keep order:false, stats:pseudo`, tn1),
+			fmt.Sprintf(`└─Sort_15 3320.01 root test.%v.a:asc`, tn2),
 			`  └─TableReader_14 3320.01 root data:Selection_13`,
-			`    └─Selection_13 3320.01 cop[tikv] lt(test.t2.b, 5), not(isnull(test.t2.a))`,
-			`      └─TableScan_12 10000.00 cop[tikv] table:t2, range:[-inf,+inf], keep order:false, stats:pseudo`,
+			fmt.Sprintf(`    └─Selection_13 3320.01 cop[tikv] lt(test.%v.b, 5), not(isnull(test.%v.a))`, tn2, tn2),
+			fmt.Sprintf(`      └─TableScan_12 10000.00 cop[tikv] table:%v, range:[-inf,+inf], keep order:false, stats:pseudo`, tn2),
 		))
-		tk.MustQuery("explain select /*+ TIDB_HJ(t1, t2) */ * from t1, t2 where t1.a=t2.a and t1.b>5 and t2.b<5").Check(testkit.Rows(
-			`HashLeftJoin_7 4150.01 root inner join, inner:TableReader_14, equal:[eq(test.t1.a, test.t2.a)]`,
+		tk.MustQuery("explain " + selSQL("TIDB_HJ")).Check(testkit.Rows(
+			fmt.Sprintf(`HashLeftJoin_7 4150.01 root inner join, inner:TableReader_14, equal:[eq(test.%v.a, test.%v.a)]`, tn1, tn2),
 			`├─TableReader_11 3330.00 root data:Selection_10`,
-			`│ └─Selection_10 3330.00 cop[tikv] gt(test.t1.b, 5), not(isnull(test.t1.a))`,
-			`│   └─TableScan_9 10000.00 cop[tikv] table:t1, range:[-inf,+inf], keep order:false, stats:pseudo`,
+			fmt.Sprintf(`│ └─Selection_10 3330.00 cop[tikv] gt(test.%v.b, 5), not(isnull(test.%v.a))`, tn1, tn1),
+			fmt.Sprintf(`│   └─TableScan_9 10000.00 cop[tikv] table:%v, range:[-inf,+inf], keep order:false, stats:pseudo`, tn1),
 			`└─TableReader_14 3320.01 root data:Selection_13`,
-			`  └─Selection_13 3320.01 cop[tikv] lt(test.t2.b, 5), not(isnull(test.t2.a))`,
-			`    └─TableScan_12 10000.00 cop[tikv] table:t2, range:[-inf,+inf], keep order:false, stats:pseudo`,
+			fmt.Sprintf(`  └─Selection_13 3320.01 cop[tikv] lt(test.%v.b, 5), not(isnull(test.%v.a))`, tn2, tn2),
+			fmt.Sprintf(`    └─TableScan_12 10000.00 cop[tikv] table:%v, range:[-inf,+inf], keep order:false, stats:pseudo`, tn2),
 		))
 
-		r1 := tk.MustQuery("select /*+ TIDB_SMJ(t1, t2) */ * from t1, t2 where t1.a=t2.a and t1.b>5 and t2.b<5").Sort()
-		r2 := tk.MustQuery("select /*+ TIDB_HJ(t1, t2) */ * from t1, t2 where t1.a=t2.a and t1.b>5 and t2.b<5").Sort()
+		r1 := tk.MustQuery(selSQL("TIDB_SMJ")).Sort()
+		r2 := tk.MustQuery(selSQL("TIDB_HJ")).Sort()
 		c.Assert(len(r1.Rows()), Equals, len(r2.Rows()))
 
 		i := 0
@@ -522,8 +528,7 @@ func (s *testSuite2) TestVectorizedMergeJoin(c *C) {
 		}
 	}
 
-	tk.Se.GetSessionVars().MaxChunkSize = 16
-	chunkSize := tk.Se.GetSessionVars().MaxChunkSize
+	chunkSize := 16
 	cases := []struct {
 		t1 []int
 		t2 []int
@@ -547,10 +552,6 @@ func (s *testSuite2) TestVectorizedMergeJoin(c *C) {
 		{[]int{0, 0, chunkSize}, []int{chunkSize + 1, chunkSize*5 + 10, chunkSize - 10}},
 		{[]int{chunkSize + 1, 0, chunkSize}, []int{chunkSize + 1, chunkSize*5 + 10, chunkSize - 10}},
 	}
-	for _, ca := range cases {
-		runTest(ca.t1, ca.t2)
-		runTest(ca.t2, ca.t1)
-	}
 
 	// random complex cases
 	genCase := func() []int {
@@ -561,9 +562,39 @@ func (s *testSuite2) TestVectorizedMergeJoin(c *C) {
 		}
 		return ts
 	}
-	for i := 0; i < 16; i++ {
+	for i := 0; i < 10; i++ {
 		t1 := genCase()
 		t2 := genCase()
-		runTest(t1, t2)
+		cases = append(cases, struct {
+			t1 []int
+			t2 []int
+		}{t1, t2})
 	}
+
+	ch := make(chan [][]int)
+	var wg sync.WaitGroup
+	for i := 0; i < 3; i++ {
+		wg.Add(1)
+		go func(id int) {
+			tk := testkit.NewTestKit(c, s.store)
+			tk.MustExec("use test")
+			tk.Se.GetSessionVars().MaxChunkSize = chunkSize
+			defer wg.Done()
+			for {
+				select {
+				case ts, ok := <-ch:
+					if !ok {
+						return
+					}
+					runTest(tk, fmt.Sprintf("pre%v", id), ts[0], ts[1])
+					runTest(tk, fmt.Sprintf("pre%v", id), ts[1], ts[0])
+				}
+			}
+		}(i + 1)
+	}
+	for _, ca := range cases {
+		ch <- [][]int{ca.t1, ca.t2}
+	}
+	close(ch)
+	wg.Wait()
 }
