@@ -473,7 +473,7 @@ func (s *testSuite2) TestVectorizedMergeJoin(c *C) {
 					continue
 				}
 				var buf bytes.Buffer
-				buf.WriteString("insert into %v values ", tName)
+				buf.WriteString(fmt.Sprintf("insert into %v values ", tName))
 				for j := 0; j < n; j++ {
 					if j > 0 {
 						buf.WriteString(", ")
