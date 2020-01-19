@@ -168,7 +168,7 @@ func (e *SortExec) generatePartition() {
 
 type partitionPointer struct {
 	row         chunk.Row
-	partitionId int
+	partitionID int
 	consumed    int
 }
 
@@ -208,7 +208,7 @@ func (e *SortExec) externalSorting(req *chunk.Chunk) (err error) {
 			if err != nil {
 				return err
 			}
-			e.heapSort.elements = append(e.heapSort.elements, partitionPointer{row: row, partitionId: i, consumed: 0})
+			e.heapSort.elements = append(e.heapSort.elements, partitionPointer{row: row, partitionID: i, consumed: 0})
 		}
 		heap.Init(e.heapSort)
 	}
@@ -217,11 +217,11 @@ func (e *SortExec) externalSorting(req *chunk.Chunk) (err error) {
 		partitionPtr := e.heapSort.elements[0]
 		req.AppendRow(partitionPtr.row)
 		partitionPtr.consumed++
-		if partitionPtr.consumed >= len(e.partitionRowPtrs[partitionPtr.partitionId]) {
+		if partitionPtr.consumed >= len(e.partitionRowPtrs[partitionPtr.partitionID]) {
 			heap.Remove(e.heapSort, 0)
 			continue
 		}
-		partitionPtr.row, err = e.partitionList[partitionPtr.partitionId].GetRow(e.partitionRowPtrs[partitionPtr.partitionId][partitionPtr.consumed])
+		partitionPtr.row, err = e.partitionList[partitionPtr.partitionID].GetRow(e.partitionRowPtrs[partitionPtr.partitionID][partitionPtr.consumed])
 		if err != nil {
 			return err
 		}
