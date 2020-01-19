@@ -54,8 +54,8 @@ var vecBuiltinArithmeticCases = map[string][]vecExprBenchCase{
 		},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt},
 			geners: []dataGenerator{
-				&rangeInt64Gener{begin: math.MinInt64 / 2, end: math.MaxInt64 / 2},
-				&rangeInt64Gener{begin: math.MinInt64 / 2, end: math.MaxInt64 / 2},
+				newRangeInt64Gener(math.MinInt64/2, math.MaxInt64/2),
+				newRangeInt64Gener(math.MinInt64/2, math.MaxInt64/2),
 			},
 		},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt},
@@ -63,8 +63,8 @@ var vecBuiltinArithmeticCases = map[string][]vecExprBenchCase{
 				{Tp: mysql.TypeLonglong, Flag: mysql.UnsignedFlag},
 				{Tp: mysql.TypeLonglong, Flag: mysql.UnsignedFlag}},
 			geners: []dataGenerator{
-				&rangeInt64Gener{begin: 0, end: math.MaxInt64},
-				&rangeInt64Gener{begin: 0, end: math.MaxInt64},
+				newRangeInt64Gener(0, math.MaxInt64),
+				newRangeInt64Gener(0, math.MaxInt64),
 			},
 		},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt},
@@ -72,8 +72,8 @@ var vecBuiltinArithmeticCases = map[string][]vecExprBenchCase{
 				{Tp: mysql.TypeLonglong},
 				{Tp: mysql.TypeLonglong, Flag: mysql.UnsignedFlag}},
 			geners: []dataGenerator{
-				&rangeInt64Gener{begin: 0, end: math.MaxInt64},
-				&rangeInt64Gener{begin: 0, end: math.MaxInt64},
+				newRangeInt64Gener(0, math.MaxInt64),
+				newRangeInt64Gener(0, math.MaxInt64),
 			},
 		},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt},
@@ -81,8 +81,8 @@ var vecBuiltinArithmeticCases = map[string][]vecExprBenchCase{
 				{Tp: mysql.TypeLonglong, Flag: mysql.UnsignedFlag},
 				{Tp: mysql.TypeLonglong}},
 			geners: []dataGenerator{
-				&rangeInt64Gener{begin: 0, end: math.MaxInt64},
-				&rangeInt64Gener{begin: 0, end: math.MaxInt64},
+				newRangeInt64Gener(0, math.MaxInt64),
+				newRangeInt64Gener(0, math.MaxInt64),
 			},
 		},
 	},
