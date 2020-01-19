@@ -45,9 +45,10 @@ type RowContainer struct {
 	// It's for concurrency usage, so access it with atomic.
 	spilled uint32
 
-	memTracker  *memory.Tracker
-	diskTracker *disk.Tracker
-	actionSpill *SpillDiskAction
+	memTracker         *memory.Tracker
+	diskTracker        *disk.Tracker
+	actionSpill        *SpillDiskAction
+	onExceededCallback func(chk *Chunk)
 }
 
 // NewRowContainer creates a new RowContainer in memory.
@@ -122,14 +123,14 @@ func (c *RowContainer) NumChunks() int {
 }
 
 // Add appends a chunk into the RowContainer.
-func (c *RowContainer) Add(chk *Chunk, callback func()) (err error) {
+func (c *RowContainer) Add(chk *Chunk) (err error) {
 	if c.AlreadySpilled() {
 		err = c.recordsInDisk.Add(chk)
 	} else {
 		c.records.Add(chk)
 		if atomic.LoadUint32(&c.exceeded) != 0 {
-			if callback != nil {
-				callback()
+			if c.onExceededCallback != nil {
+				c.onExceededCallback(chk)
 			}
 			err = c.spillToDisk()
 			if err != nil {
@@ -191,6 +192,11 @@ func (c *RowContainer) Close() (err error) {
 func (c *RowContainer) ActionSpill() *SpillDiskAction {
 	c.actionSpill = &SpillDiskAction{c: c}
 	return c.actionSpill
+}
+
+// SetOnExceededCallback set a callback function for exceeded memory limit.
+func (c *RowContainer) SetOnExceededCallback(f func(chk *Chunk)) {
+	c.onExceededCallback = f
 }
 
 // SpillDiskAction implements memory.ActionOnExceed for chunk.List. If

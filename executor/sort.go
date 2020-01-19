@@ -249,9 +249,14 @@ func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 	e.rowChunks = chunk.NewRowContainer(fields, e.maxChunkSize)
 	e.rowChunks.GetMemTracker().AttachTo(e.memTracker)
 	e.rowChunks.GetMemTracker().SetLabel(rowChunksLabel)
+	var onExceededCallback func(chk *chunk.Chunk)
 	if config.GetGlobalConfig().OOMUseTmpStorage {
 		e.spillAction = e.rowChunks.ActionSpill()
 		e.ctx.GetSessionVars().StmtCtx.MemTracker.FallbackOldAndSetNewAction(e.spillAction)
+		onExceededCallback = func(chk *chunk.Chunk) {
+			e.generatePartition()
+		}
+		e.rowChunks.SetOnExceededCallback(onExceededCallback)
 	}
 	for {
 		chk := newFirstChunk(e.children[0])
@@ -263,13 +268,14 @@ func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 		if rowCount == 0 {
 			break
 		}
-		if err := e.rowChunks.Add(chk, e.generatePartition); err != nil {
+		if err := e.rowChunks.Add(chk); err != nil {
 			return err
 		}
 		if e.rowChunks.AlreadySpilled() {
 			e.rowChunks = chunk.NewRowContainer(retTypes(e), e.maxChunkSize)
 			e.rowChunks.GetMemTracker().AttachTo(e.memTracker)
 			e.rowChunks.GetMemTracker().SetLabel(rowChunksLabel)
+			e.rowChunks.SetOnExceededCallback(onExceededCallback)
 			e.spillAction.SetRowContainer(e.rowChunks)
 			e.spillAction.ResetOnce()
 		}
@@ -452,7 +458,7 @@ func (e *TopNExec) loadChunksUntilTotalLimit(ctx context.Context) error {
 		if srcChk.NumRows() == 0 {
 			break
 		}
-		if err := e.rowChunks.Add(srcChk, nil); err != nil {
+		if err := e.rowChunks.Add(srcChk); err != nil {
 			return err
 		}
 	}
