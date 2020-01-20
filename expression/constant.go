@@ -16,6 +16,7 @@ package expression
 import (
 	"fmt"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
@@ -232,7 +233,10 @@ func (c *Constant) EvalInt(ctx sessionctx.Context, _ chunk.Row) (int64, bool, er
 			return 0, true, nil
 		}
 	}
-	if c.GetType().Hybrid() || c.Value.Kind() == types.KindBinaryLiteral || c.Value.Kind() == types.KindString {
+	if c.Value.Kind() == types.KindBinaryLiteral {
+		val, err := c.Value.GetBinaryLiteral().ToInt(ctx.GetSessionVars().StmtCtx)
+		return int64(val), err != nil, errors.Trace(err)
+	} else if c.GetType().Hybrid() || c.Value.Kind() == types.KindString {
 		res, err := c.Value.ToInt64(ctx.GetSessionVars().StmtCtx)
 		return res, err != nil, err
 	}

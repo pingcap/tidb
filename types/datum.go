@@ -1535,15 +1535,11 @@ func (d *Datum) toSignedInteger(sc *stmtctx.StatementContext, tp byte) (int64, e
 		return ConvertJSONToInt(sc, d.GetMysqlJSON(), false)
 	case KindBinaryLiteral, KindMysqlBit:
 		val, err := d.GetBinaryLiteral().ToInt(sc)
-		if sc.IsCastInToTable() {
-			ival, err2 := ConvertUintToInt(val, upperBound, tp)
-			if err == nil {
-				err = err2
-			}
-			return ival, errors.Trace(err)
+		if err != nil {
+			return 0, errors.Trace(err)
 		}
-		// Only cast(0x`xx` as signed) can get here, we don't need to consider upper bound.
-		return int64(val), errors.Trace(err)
+		ival, err := ConvertUintToInt(val, upperBound, tp)
+		return ival, errors.Trace(err)
 	default:
 		return 0, errors.Errorf("cannot convert %v(type %T) to int64", d.GetValue(), d.GetValue())
 	}

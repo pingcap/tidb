@@ -510,7 +510,6 @@ func accept(c *C, tp byte, value interface{}, unsigned bool, expected string) {
 	}
 	d := NewDatum(value)
 	sc := new(stmtctx.StatementContext)
-	sc.SetCastIntoTable(true)
 	sc.TimeZone = time.UTC
 	sc.IgnoreTruncate = true
 	casted, err := d.ConvertTo(sc, ft)
@@ -539,7 +538,6 @@ func deny(c *C, tp byte, value interface{}, unsigned bool, expected string) {
 	}
 	d := NewDatum(value)
 	sc := new(stmtctx.StatementContext)
-	sc.SetCastIntoTable(true)
 	casted, err := d.ConvertTo(sc, ft)
 	c.Assert(err, NotNil)
 	if casted.IsNull() {
@@ -557,22 +555,6 @@ func unsignedDeny(c *C, tp byte, value interface{}, expected string) {
 
 func signedDeny(c *C, tp byte, value interface{}, expected string) {
 	deny(c, tp, value, false, expected)
-}
-
-// The ConvertTo in this function is caused by cast()/convert() function
-func signedDenyCastFunction(c *C, tp byte, value interface{}, expected string) {
-	ft := NewFieldType(tp)
-	d := NewDatum(value)
-	sc := new(stmtctx.StatementContext)
-	casted, err := d.ConvertTo(sc, ft)
-	c.Assert(err, IsNil)
-	if casted.IsNull() {
-		c.Assert(expected, Equals, "<nil>")
-	} else {
-		str, err := casted.ToString()
-		c.Assert(err, IsNil)
-		c.Assert(str, Equals, expected)
-	}
 }
 
 func strvalue(v interface{}) string {
@@ -632,7 +614,6 @@ func (s *testTypeConvertSuite) TestConvert(c *C) {
 	signedDeny(c, mysql.TypeLong, "1343545435346432587475", strvalue(int64(math.MaxInt32)))
 	signedAccept(c, mysql.TypeLong, NewBinaryLiteralFromUint(math.MaxInt32, -1), strvalue(int64(math.MaxInt32)))
 	signedDeny(c, mysql.TypeLong, NewBinaryLiteralFromUint(math.MaxUint64, -1), strvalue(int64(math.MaxInt32)))
-	signedDenyCastFunction(c, mysql.TypeLong, NewBinaryLiteralFromUint(math.MaxUint64, -1), strvalue(-1))
 	signedDeny(c, mysql.TypeLong, NewBinaryLiteralFromUint(math.MaxInt32+1, -1), strvalue(int64(math.MaxInt32)))
 	unsignedDeny(c, mysql.TypeLong, -1, "4294967295")
 	unsignedAccept(c, mysql.TypeLong, 0, "0")
@@ -648,7 +629,6 @@ func (s *testTypeConvertSuite) TestConvert(c *C) {
 	signedDeny(c, mysql.TypeLonglong, math.MaxInt64*1.1, strvalue(int64(math.MaxInt64)))
 	signedAccept(c, mysql.TypeLonglong, NewBinaryLiteralFromUint(math.MaxInt64, -1), strvalue(int64(math.MaxInt64)))
 	signedDeny(c, mysql.TypeLonglong, NewBinaryLiteralFromUint(math.MaxInt64+1, -1), strvalue(int64(math.MaxInt64)))
-	signedDenyCastFunction(c, mysql.TypeLonglong, NewBinaryLiteralFromUint(math.MaxInt64+1, -1), strvalue(math.MinInt64))
 	unsignedAccept(c, mysql.TypeLonglong, -1, "18446744073709551615")
 	unsignedAccept(c, mysql.TypeLonglong, 0, "0")
 	unsignedAccept(c, mysql.TypeLonglong, uint64(math.MaxUint64), strvalue(uint64(math.MaxUint64)))

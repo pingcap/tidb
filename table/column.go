@@ -167,10 +167,7 @@ func handleWrongUtf8Value(ctx sessionctx.Context, col *model.ColumnInfo, casted 
 // TODO: change the third arg to TypeField. Not pass ColumnInfo.
 func CastValue(ctx sessionctx.Context, val types.Datum, col *model.ColumnInfo) (casted types.Datum, err error) {
 	sc := ctx.GetSessionVars().StmtCtx
-	saveCastIntoTable := sc.IsCastInToTable()
-	sc.SetCastIntoTable(true)
 	casted, err = val.ConvertTo(sc, &col.FieldType)
-	sc.SetCastIntoTable(saveCastIntoTable)
 	// TODO: make sure all truncate errors are handled by ConvertTo.
 	if types.ErrTruncated.Equal(err) {
 		str, err1 := val.ToString()
