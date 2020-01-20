@@ -22,6 +22,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unsafe"
 
 	"github.com/cznic/sortutil"
 	"github.com/pingcap/errors"
@@ -210,6 +211,10 @@ func (b *executorBuilder) build(p plannercore.Plan) Executor {
 		return b.buildIndexLookUpReader(v)
 	case *plannercore.PhysicalWindow:
 		return b.buildWindow(v)
+	case *plannercore.PhysicalShuffle:
+		return b.buildShuffle(v)
+	case *plannercore.PhysicalShuffleDataSourceStub:
+		return b.buildShuffleDataSourceStub(v)
 	case *plannercore.SQLBindPlan:
 		return b.buildSQLBindExec(v)
 	case *plannercore.SplitRegion:
@@ -2631,6 +2636,57 @@ func (b *executorBuilder) buildWindow(v *plannercore.PhysicalWindow) *WindowExec
 		groupChecker:   newVecGroupChecker(b.ctx, groupByItems),
 		numWindowFuncs: len(v.WindowFuncDescs),
 	}
+}
+
+func (b *executorBuilder) buildShuffle(v *plannercore.PhysicalShuffle) *ShuffleExec {
+	base := newBaseExecutor(b.ctx, v.Schema(), v.ExplainID())
+	shuffle := &ShuffleExec{baseExecutor: base,
+		concurrency: v.Concurrency,
+	}
+
+	switch v.SplitterType {
+	case plannercore.PartitionHashSplitterType:
+		shuffle.splitter = &partitionHashSplitter{
+			byItems:    v.HashByItems,
+			numWorkers: shuffle.concurrency,
+		}
+	default:
+		panic("Not implemented. Should not reach here.")
+	}
+
+	shuffle.dataSource = b.build(v.DataSource)
+	if b.err != nil {
+		return nil
+	}
+
+	// head & tail of physical plans' chain within "partition".
+	var head, tail plannercore.PhysicalPlan = v.Children()[0], v.Tail
+
+	shuffle.workers = make([]*shuffleWorker, shuffle.concurrency)
+	for i := range shuffle.workers {
+		w := &shuffleWorker{
+			baseExecutor: newBaseExecutor(b.ctx, v.DataSource.Schema(), v.DataSource.ExplainID()),
+		}
+
+		stub := plannercore.PhysicalShuffleDataSourceStub{
+			Worker: (unsafe.Pointer)(w),
+		}.Init(b.ctx, v.DataSource.Stats(), v.DataSource.SelectBlockOffset(), nil)
+		stub.SetSchema(v.DataSource.Schema())
+
+		tail.SetChildren(stub)
+		w.childExec = b.build(head)
+		if b.err != nil {
+			return nil
+		}
+
+		shuffle.workers[i] = w
+	}
+
+	return shuffle
+}
+
+func (b *executorBuilder) buildShuffleDataSourceStub(v *plannercore.PhysicalShuffleDataSourceStub) *shuffleWorker {
+	return (*shuffleWorker)(v.Worker)
 }
 
 func (b *executorBuilder) buildSQLBindExec(v *plannercore.SQLBindPlan) Executor {

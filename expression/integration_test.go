@@ -4058,13 +4058,13 @@ func (s *testIntegrationSuite) TestFuncJSON(c *C) {
 	r.Check(testkit.Rows("1 0 1 0"))
 
 	r = tk.MustQuery(`select
-
+		json_keys('[]'),
 		json_keys('{}'),
 		json_keys('{"a": 1, "b": 2}'),
 		json_keys('{"a": {"c": 3}, "b": 2}'),
 		json_keys('{"a": {"c": 3}, "b": 2}', "$.a")
 	`)
-	r.Check(testkit.Rows(`[] ["a", "b"] ["a", "b"] ["c"]`))
+	r.Check(testkit.Rows(`<nil> [] ["a", "b"] ["a", "b"] ["c"]`))
 
 	r = tk.MustQuery(`select
 		json_length('1'),
@@ -5276,4 +5276,77 @@ func (s *testIntegrationSuite) TestCacheRegexpr(c *C) {
 	tk.MustQuery("execute stmt1 using @a").Check(testkit.Rows("C1"))
 	tk.MustExec("set @a='^R.*'")
 	tk.MustQuery("execute stmt1 using @a").Check(testkit.Rows("R1"))
+}
+
+func (s *testIntegrationSuite) TestCacheRefineArgs(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	orgEnable := plannercore.PreparedPlanCacheEnabled()
+	orgCapacity := plannercore.PreparedPlanCacheCapacity
+	orgMemGuardRatio := plannercore.PreparedPlanCacheMemoryGuardRatio
+	orgMaxMemory := plannercore.PreparedPlanCacheMaxMemory
+	defer func() {
+		plannercore.SetPreparedPlanCache(orgEnable)
+		plannercore.PreparedPlanCacheCapacity = orgCapacity
+		plannercore.PreparedPlanCacheMemoryGuardRatio = orgMemGuardRatio
+		plannercore.PreparedPlanCacheMaxMemory = orgMaxMemory
+	}()
+	plannercore.SetPreparedPlanCache(true)
+	plannercore.PreparedPlanCacheCapacity = 100
+	plannercore.PreparedPlanCacheMemoryGuardRatio = 0.1
+	// PreparedPlanCacheMaxMemory is set to MAX_UINT64 to make sure the cache
+	// behavior would not be effected by the uncertain memory utilization.
+	plannercore.PreparedPlanCacheMaxMemory.Store(math.MaxUint64)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(col_int int)")
+	tk.MustExec("insert into t values(null)")
+	tk.MustExec("prepare stmt from 'SELECT ((col_int is true) = ?) AS res FROM t'")
+	tk.MustExec("set @p0='0.8'")
+	tk.MustQuery("execute stmt using @p0").Check(testkit.Rows("0"))
+	tk.MustExec("set @p0='0'")
+	tk.MustQuery("execute stmt using @p0").Check(testkit.Rows("1"))
+
+	tk.MustExec("delete from t")
+	tk.MustExec("insert into t values(1)")
+	tk.MustExec("prepare stmt from 'SELECT col_int < ? FROM t'")
+	tk.MustExec("set @p0='-184467440737095516167.1'")
+	tk.MustQuery("execute stmt using @p0").Check(testkit.Rows("0"))
+}
+
+func (s *testIntegrationSuite) TestCacheConstEval(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	orgEnable := plannercore.PreparedPlanCacheEnabled()
+	orgCapacity := plannercore.PreparedPlanCacheCapacity
+	orgMemGuardRatio := plannercore.PreparedPlanCacheMemoryGuardRatio
+	orgMaxMemory := plannercore.PreparedPlanCacheMaxMemory
+	defer func() {
+		plannercore.SetPreparedPlanCache(orgEnable)
+		plannercore.PreparedPlanCacheCapacity = orgCapacity
+		plannercore.PreparedPlanCacheMemoryGuardRatio = orgMemGuardRatio
+		plannercore.PreparedPlanCacheMaxMemory = orgMaxMemory
+	}()
+	plannercore.SetPreparedPlanCache(true)
+	plannercore.PreparedPlanCacheCapacity = 100
+	plannercore.PreparedPlanCacheMemoryGuardRatio = 0.1
+	// PreparedPlanCacheMaxMemory is set to MAX_UINT64 to make sure the cache
+	// behavior would not be effected by the uncertain memory utilization.
+	plannercore.PreparedPlanCacheMaxMemory.Store(math.MaxUint64)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(col_double double)")
+	tk.MustExec("insert into t values (1)")
+	tk.Se.GetSessionVars().EnableVectorizedExpression = false
+	tk.MustExec("insert into mysql.expr_pushdown_blacklist values('cast')")
+	tk.MustExec("admin reload expr_pushdown_blacklist")
+	tk.MustExec("prepare stmt from 'SELECT * FROM (SELECT col_double AS c0 FROM t) t WHERE (ABS((REPEAT(?, ?) OR 5617780767323292672)) < LN(EXP(c0)) + (? ^ ?))'")
+	tk.MustExec("set @a1 = 'JuvkBX7ykVux20zQlkwDK2DFelgn7'")
+	tk.MustExec("set @a2 = 1")
+	tk.MustExec("set @a3 = -112990.35179796701")
+	tk.MustExec("set @a4 = 87997.92704840179")
+	// Main purpose here is checking no error is reported. 1 is the result when plan cache is disabled, it is
+	// incompatible with MySQL actually, update the result after fixing it.
+	tk.MustQuery("execute stmt using @a1, @a2, @a3, @a4").Check(testkit.Rows("1"))
+	tk.Se.GetSessionVars().EnableVectorizedExpression = true
+	tk.MustExec("delete from mysql.expr_pushdown_blacklist")
+	tk.MustExec("admin reload expr_pushdown_blacklist")
 }
