@@ -133,6 +133,7 @@ func (t *mergeJoinTable) finish() error {
 }
 
 func (t *mergeJoinTable) selectNextGroup() {
+	t.groupRowsSelected = t.groupRowsSelected[:0]
 	begin, end := t.groupChecker.getNextGroup()
 	if t.isInner && t.hasNullInJoinKey(t.childChunk.GetRow(begin)) {
 		return
@@ -156,7 +157,6 @@ func (t *mergeJoinTable) fetchNextChunk(ctx context.Context, exec *MergeJoinExec
 }
 
 func (t *mergeJoinTable) fetchNextInnerGroup(ctx context.Context, exec *MergeJoinExec) error {
-	t.groupRowsSelected = t.groupRowsSelected[:0]
 	t.childChunk.SetSel(nil)
 	if err := t.rowContainer.Reset(); err != nil {
 		return err
@@ -169,11 +169,12 @@ fetchNext:
 		return nil
 	}
 
+	isEmpty := true
 	// For inner table, rows have null in join keys should be skip by selectNextGroup.
-	for len(t.groupRowsSelected) == 0 && !t.groupChecker.isExhausted() {
+	for isEmpty && !t.groupChecker.isExhausted() {
 		t.selectNextGroup()
+		isEmpty = len(t.groupRowsSelected) == 0
 	}
-	isEmpty := len(t.groupRowsSelected) == 0
 
 	// For inner table, all the rows have the same join keys should be put into one group.
 	for !t.executed && t.groupChecker.isExhausted() {
@@ -254,7 +255,6 @@ func (t *mergeJoinTable) fetchNextOuterGroup(ctx context.Context, exec *MergeJoi
 		}
 	}
 
-	t.groupRowsSelected = t.groupRowsSelected[:0]
 	t.selectNextGroup()
 	t.groupRowsIter.Begin()
 	return nil
@@ -320,8 +320,7 @@ func (e *MergeJoinExec) Next(ctx context.Context, req *chunk.Chunk) (err error) 
 				return err
 			}
 			outerIter = e.outerTable.groupRowsIter
-			// no more data to execute
-			if outerIter.Current() == outerIter.End() {
+			if e.outerTable.executed {
 				return nil
 			}
 		}
@@ -364,7 +363,7 @@ func (e *MergeJoinExec) Next(ctx context.Context, req *chunk.Chunk) (err error) 
 
 			// The inner rows is not exhausted, which means the result chunk is full.
 			// We should keep match context, so return directly.
-			if innerIter.Current() != innerIter.End() {
+			if innerIter.Current() != innerIter.End() && req.IsFull() {
 				return nil
 			}
 
