@@ -894,10 +894,6 @@ func (r *PushSelDownJoin) OnTransform(old *memo.ExprIter) (newExprs []*memo.Grou
 	}
 	leftCond = expression.RemoveDupExprs(sctx, leftCond)
 	rightCond = expression.RemoveDupExprs(sctx, rightCond)
-	for _, eqCond := range join.EqualConditions {
-		join.LeftJoinKeys = append(join.LeftJoinKeys, eqCond.GetArgs()[0].(*expression.Column))
-		join.RightJoinKeys = append(join.RightJoinKeys, eqCond.GetArgs()[1].(*expression.Column))
-	}
 	// TODO: Update EqualConditions like what we have done in the method join.updateEQCond() before.
 	leftGroup = buildChildSelectionGroup(sel, leftCond, leftGroup)
 	rightGroup = buildChildSelectionGroup(sel, rightCond, rightGroup)
