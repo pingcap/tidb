@@ -83,7 +83,7 @@ func (e *baseJSONObjectAgg) UpdatePartialResult(sctx sessionctx.Context, rowsInG
 
 		realVal := value.GetValue()
 		switch x := realVal.(type) {
-		case nil, bool, int64, uint64, float64, string, json.BinaryJSON, types.Time, types.Duration:
+		case nil, bool, int64, uint64, float64, string, json.BinaryJSON, *types.MyDecimal, []uint8, types.Time, types.Duration:
 			p.entries[keyString] = realVal
 		default:
 			return json.ErrUnsupportedSecondArgumentType.GenWithStack("The second argument type %T is not supported now", x)
