@@ -294,10 +294,10 @@ func defaultTimezoneDependent(ctx sessionctx.Context, tblInfo *model.TableInfo, 
 	return !v, nil
 }
 
-// checkPartitionFuncValid checks partition function validly.
-func checkPartitionFuncValid(ctx sessionctx.Context, tblInfo *model.TableInfo, expr ast.ExprNode) error {
+// checkPartitionExprValid checks partition expression validly.
+func checkPartitionExprValid(ctx sessionctx.Context, tblInfo *model.TableInfo, expr ast.ExprNode) error {
 	switch v := expr.(type) {
-	case *ast.FuncCastExpr, *ast.CaseExpr:
+	case *ast.FuncCastExpr, *ast.CaseExpr, *ast.SubqueryExpr, *ast.WindowFuncExpr, *ast.RowExpr, *ast.DefaultExpr, *ast.ValuesExpr:
 		return errors.Trace(ErrPartitionFunctionIsNotAllowed)
 	case *ast.FuncCallExpr:
 		// check function which allowed in partitioning expressions
@@ -326,17 +326,35 @@ func checkPartitionFuncValid(ctx sessionctx.Context, tblInfo *model.TableInfo, e
 		switch v.Op {
 		case opcode.Or, opcode.And, opcode.Xor, opcode.LeftShift, opcode.RightShift, opcode.BitNeg, opcode.Div:
 			return errors.Trace(ErrPartitionFunctionIsNotAllowed)
+		default:
+			if err := checkPartitionExprValid(ctx, tblInfo, v.L); err != nil {
+				return errors.Trace(err)
+			}
+			if err := checkPartitionExprValid(ctx, tblInfo, v.R); err != nil {
+				return errors.Trace(err)
+			}
 		}
 		return nil
 	case *ast.UnaryOperationExpr:
 		if v.Op == opcode.BitNeg {
 			return errors.Trace(ErrPartitionFunctionIsNotAllowed)
 		}
+		if err := checkPartitionExprValid(ctx, tblInfo, v.V); err != nil {
+			return errors.Trace(err)
+		}
 		return nil
 	}
+	return nil
+}
 
+// checkPartitionFuncValid checks partition function validly.
+func checkPartitionFuncValid(ctx sessionctx.Context, tblInfo *model.TableInfo, expr ast.ExprNode) error {
+	err := checkPartitionExprValid(ctx, tblInfo, expr)
+	if err != nil {
+		return err
+	}
 	// check constant.
-	_, err := checkPartitionColumns(tblInfo, expr)
+	_, err = checkPartitionColumns(tblInfo, expr)
 	return err
 }
 

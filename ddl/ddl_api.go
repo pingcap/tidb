@@ -1384,25 +1384,30 @@ func buildTableInfoWithCheck(ctx sessionctx.Context, s *ast.CreateTableStmt, dbC
 		return nil, errors.Trace(err)
 	}
 
-	pi, err := buildTablePartitionInfo(ctx, s)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	if pi != nil {
-		switch pi.Type {
-		case model.PartitionTypeRange:
-			err = checkPartitionByRange(ctx, tbInfo, pi, cols, s)
-		case model.PartitionTypeHash:
-			err = checkPartitionByHash(ctx, pi, s, cols, tbInfo)
-		}
+	if s.Partition != nil {
+		err := checkPartitionExprValid(ctx, tbInfo, s.Partition.Expr)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		if err = checkRangePartitioningKeysConstraints(ctx, s, tbInfo, newConstraints); err != nil {
+		pi, err := buildTablePartitionInfo(ctx, s)
+		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		tbInfo.Partition = pi
+		if pi != nil {
+			switch pi.Type {
+			case model.PartitionTypeRange:
+				err = checkPartitionByRange(ctx, tbInfo, pi, cols, s)
+			case model.PartitionTypeHash:
+				err = checkPartitionByHash(ctx, pi, s, cols, tbInfo)
+			}
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			if err = checkRangePartitioningKeysConstraints(ctx, s, tbInfo, newConstraints); err != nil {
+				return nil, errors.Trace(err)
+			}
+			tbInfo.Partition = pi
+		}
 	}
 
 	if err = handleTableOptions(s.Options, tbInfo); err != nil {
@@ -4306,4 +4311,56 @@ func (d *ddl) OrderByColumns(ctx sessionctx.Context, ident ast.Ident) error {
 		ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("ORDER BY ignored as there is a user-defined clustered index in the table '%s'", ident.Name))
 	}
 	return nil
+}
+
+func (d *ddl) CreateSequence(ctx sessionctx.Context, stmt *ast.CreateSequenceStmt) error {
+	ident := ast.Ident{Name: stmt.Name.Name, Schema: stmt.Name.Schema}
+	is := d.GetInfoSchemaWithInterceptor(ctx)
+	schema, ok := is.SchemaByName(ident.Schema)
+	if !ok {
+		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(ident.Schema)
+	}
+	ok = is.TableExists(ident.Schema, ident.Name)
+	if ok {
+		if stmt.IfNotExists {
+			ctx.GetSessionVars().StmtCtx.AppendNote(infoschema.ErrTableExists.GenWithStackByArgs(ident))
+			return nil
+		}
+		// TODO: refine the error.
+		return infoschema.ErrTableExists.GenWithStackByArgs(ident)
+	}
+	if err := checkTooLongTable(ident.Name); err != nil {
+		return err
+	}
+	sequenceInfo, err := buildSequenceInfo(stmt, ident)
+	if err != nil {
+		return err
+	}
+	// TiDB describe the sequence within a tableInfo, as a same-level object of a table and view.
+	tbInfo, err := buildTableInfo(ctx, ident.Name, nil, nil)
+	if err != nil {
+		return err
+	}
+	if err := d.assignTableID(tbInfo); err != nil {
+		return err
+	}
+	tbInfo.Sequence = sequenceInfo
+
+	job := &model.Job{
+		SchemaID:   schema.ID,
+		TableID:    tbInfo.ID,
+		SchemaName: schema.Name.L,
+		Type:       model.ActionCreateSequence,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{tbInfo},
+	}
+
+	err = d.doDDLJob(ctx, job)
+	// If the same name sequence exists, but IfNotExists flag is true, then we should ignore the error.
+	if infoschema.ErrTableExists.Equal(err) && stmt.IfNotExists {
+		ctx.GetSessionVars().StmtCtx.AppendNote(err)
+		return nil
+	}
+	err = d.callHookOnChanged(err)
+	return errors.Trace(err)
 }
