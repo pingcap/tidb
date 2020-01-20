@@ -1411,7 +1411,7 @@ func (r *EliminateSingleMaxMin) OnTransform(old *memo.ExprIter) (newExprs []*mem
 	}
 	f := agg.AggFuncs[posMaxMin]
 
-	// If there's no column in f.GetArgs()[0], we still need limit and read data from real table because the result should be NULL if the input is empty.
+	// If there's no column in f.GetArgs()[posMaxMin], we still need limit and read data from real table because the result should be NULL if the input is empty.
 	if len(expression.ExtractColumns(f.Args[posMaxMin])) > 0 {
 		// If it can be NULL, we need to filter NULL out first.
 		if !mysql.HasNotNullFlag(f.Args[posMaxMin].GetType().Flag) {
