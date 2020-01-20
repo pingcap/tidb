@@ -2566,6 +2566,8 @@ func (b *builtinFormatSig) vectorized() bool {
 	return true
 }
 
+// evalString evals FORMAT(X,D).
+// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_format
 func (b *builtinFormatSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 
