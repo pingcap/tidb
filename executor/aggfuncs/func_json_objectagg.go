@@ -1,13 +1,11 @@
 package aggfuncs
 
 import (
-	"fmt"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
-	"reflect"
 )
 
 type baseJSONObjectAgg struct {
@@ -74,8 +72,7 @@ func (e *baseJSONObjectAgg) UpdatePartialResult(sctx sessionctx.Context, rowsInG
 		}
 
 		if key.IsNull() {
-			err = errors.New("JSON documents may not contain NULL member names")
-			return errors.Trace(err)
+			return json.ErrJSONDocumentNULLKey
 		}
 
 		// the result json's key is string, so it needs to convert the first arg to string
@@ -84,15 +81,12 @@ func (e *baseJSONObjectAgg) UpdatePartialResult(sctx sessionctx.Context, rowsInG
 			return errors.Trace(err)
 		}
 
-		//p.entries[keyString] = value.GetValue()
 		realVal := value.GetValue()
-		switch realVal.(type) {
-		case nil, bool, int64, uint64, float64, string, json.BinaryJSON, *types.MyDecimal, []uint8, types.Time, types.Duration:
+		switch x := realVal.(type) {
+		case nil, bool, int64, uint64, float64, string, json.BinaryJSON, types.Time, types.Duration:
 			p.entries[keyString] = realVal
 		default:
-			msg := fmt.Sprintf("unsupported second argument type: %s", reflect.TypeOf(realVal))
-			err = errors.New(msg)
-			return errors.Trace(err)
+			return json.ErrUnsupportedSecondArgumentType.GenWithStack("The second argument type %T is not supported now", x)
 		}
 	}
 	return nil

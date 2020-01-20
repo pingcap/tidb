@@ -209,7 +209,6 @@ func (a *baseFuncDesc) typeInfer4BitFuncs(ctx sessionctx.Context) {
 func (a *baseFuncDesc) typeInfer4JsonFuncs(ctx sessionctx.Context) {
 	a.RetTp = types.NewFieldType(mysql.TypeJSON)
 	types.SetBinChsClnFlag(a.RetTp)
-	a.RetTp.Flag |= mysql.NotNullFlag
 }
 
 func (a *baseFuncDesc) typeInfer4NumberFuncs() {
