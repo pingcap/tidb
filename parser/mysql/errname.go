@@ -1063,6 +1063,7 @@ var MySQLErrName = map[uint16]string{
 	ErrPrivilegeCheckFail:                  "privilege check fail", // this error message should begin lowercased to be compatible with the test
 	ErrInvalidWildCard:                     "Wildcard fields without any table name appears in wrong place",
 	ErrMixOfGroupFuncAndFieldsIncompatible: "In aggregated query without GROUP BY, expression #%d of SELECT list contains nonaggregated column '%s'; this is incompatible with sql_mode=only_full_group_by",
+	ErrUnsupportedSecondArgumentType:       "JSON_OBJECTAGG: unsupported second argument type %v",
 
 	// TiKV/PD errors.
 	ErrPDServerTimeout:    "PD server timeout",

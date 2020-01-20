@@ -1036,6 +1036,7 @@ const (
 	ErrWarnMemoryQuotaOverflow             = 8063
 	ErrWarnOptimizerHintParseError         = 8064
 	ErrWarnOptimizerHintInvalidInteger     = 8065
+	ErrUnsupportedSecondArgumentType       = 8066
 
 	// Error codes used by TiDB ddl package
 	ErrUnsupportedDDLOperation        = 8200
