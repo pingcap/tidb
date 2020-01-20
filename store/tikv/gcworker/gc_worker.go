@@ -1810,7 +1810,7 @@ func (s *mergeLockScanner) Start(ctx context.Context) error {
 			if err != nil {
 				logutil.Logger(ctx).Error("physical scan lock for store encountered error",
 					zap.Uint64("safePoint", s.safePoint),
-					zap.Any("store", store),
+					zap.Any("store", store1),
 					zap.Error(err))
 				ch <- scanLockResult{Err: err}
 			}
