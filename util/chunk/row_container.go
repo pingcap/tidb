@@ -48,7 +48,7 @@ type RowContainer struct {
 	memTracker         *memory.Tracker
 	diskTracker        *disk.Tracker
 	actionSpill        *SpillDiskAction
-	onExceededCallback func(chk *Chunk)
+	onExceededCallback func(rowContainer *RowContainer)
 }
 
 // NewRowContainer creates a new RowContainer in memory.
@@ -130,7 +130,7 @@ func (c *RowContainer) Add(chk *Chunk) (err error) {
 		c.records.Add(chk)
 		if atomic.LoadUint32(&c.exceeded) != 0 {
 			if c.onExceededCallback != nil {
-				c.onExceededCallback(chk)
+				c.onExceededCallback(c)
 			}
 			err = c.spillToDisk()
 			if err != nil {
@@ -195,7 +195,7 @@ func (c *RowContainer) ActionSpill() *SpillDiskAction {
 }
 
 // SetOnExceededCallback set a callback function for exceeded memory limit.
-func (c *RowContainer) SetOnExceededCallback(f func(chk *Chunk)) {
+func (c *RowContainer) SetOnExceededCallback(f func(rowContainer *RowContainer)) {
 	c.onExceededCallback = f
 }
 
