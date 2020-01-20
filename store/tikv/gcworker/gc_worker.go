@@ -1802,19 +1802,18 @@ func (s *mergeLockScanner) Start(ctx context.Context) error {
 
 	for storeID, store := range s.stores {
 		ch := make(chan scanLockResult, scanLockResultBufferSize)
-		store1 := store
-		go func() {
+		go func(store1 *metapb.Store) {
 			defer close(ch)
 
 			err := s.physicalScanLocksForStore(ctx, s.safePoint, store1, ch)
 			if err != nil {
 				logutil.Logger(ctx).Error("physical scan lock for store encountered error",
 					zap.Uint64("safePoint", s.safePoint),
-					zap.Any("store", store),
+					zap.Any("store", store1),
 					zap.Error(err))
 				ch <- scanLockResult{Err: err}
 			}
-		}()
+		}(store)
 		receivers = append(receivers, &receiver{Ch: ch, StoreID: storeID})
 	}
 
