@@ -2260,6 +2260,7 @@ func (s *testIntegrationSuite2) TestBuiltin(c *C) {
 	// test builtinCastIntAsIntSig
 	// Cast MaxUint64 to unsigned should be -1
 	tk.MustQuery("select cast(0xffffffffffffffff as signed);").Check(testkit.Rows("-1"))
+	tk.MustQuery("select cast(0x9999999999999999999999999999999999999999999 as signed);").Check(testkit.Rows("-1"))
 	tk.MustExec("create table tb5(a bigint);")
 	tk.MustExec("set sql_mode=''")
 	tk.MustExec("insert into tb5(a) values (0xfffffffffffffffffffffffff);")
