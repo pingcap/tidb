@@ -531,7 +531,7 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 		ver, err = onRepairTable(d, t, job)
 	case model.ActionCreateView:
 		ver, err = onCreateView(d, t, job)
-	case model.ActionDropTable, model.ActionDropView:
+	case model.ActionDropTable, model.ActionDropView, model.ActionDropSequence:
 		ver, err = onDropTableOrView(t, job)
 	case model.ActionDropTablePartition:
 		ver, err = onDropTablePartition(t, job)
@@ -581,6 +581,8 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 		ver, err = onSetTableFlashReplica(t, job)
 	case model.ActionUpdateTiFlashReplicaStatus:
 		ver, err = onUpdateFlashReplicaStatus(t, job)
+	case model.ActionCreateSequence:
+		ver, err = onCreateSequence(d, t, job)
 	default:
 		// Invalid job, cancel it.
 		job.State = model.JobStateCancelled

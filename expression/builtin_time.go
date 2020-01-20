@@ -123,6 +123,10 @@ var (
 )
 
 var (
+	_ builtinFuncNew = &builtinUnixTimestampIntSig{}
+)
+
+var (
 	_ builtinFunc = &builtinDateSig{}
 	_ builtinFunc = &builtinDateLiteralSig{}
 	_ builtinFunc = &builtinDateDiffSig{}
@@ -4657,7 +4661,11 @@ func (b *builtinUnixTimestampIntSig) Clone() builtinFunc {
 // evalInt evals a UNIX_TIMESTAMP(time).
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_unix-timestamp
 func (b *builtinUnixTimestampIntSig) evalInt(row chunk.Row) (int64, bool, error) {
-	val, isNull, err := b.args[0].EvalTime(b.ctx, row)
+	return b.evalIntWithCtx(b.ctx, row)
+}
+
+func (b *builtinUnixTimestampIntSig) evalIntWithCtx(ctx sessionctx.Context, row chunk.Row) (int64, bool, error) {
+	val, isNull, err := b.args[0].EvalTime(ctx, row)
 	if err != nil && terror.ErrorEqual(types.ErrWrongValue.GenWithStackByArgs(types.TimeStr, val), err) {
 		// Return 0 for invalid date time.
 		return 0, false, nil
@@ -4665,7 +4673,9 @@ func (b *builtinUnixTimestampIntSig) evalInt(row chunk.Row) (int64, bool, error)
 	if isNull {
 		return 0, true, nil
 	}
-	t, err := val.GoTime(getTimeZone(b.ctx))
+
+	tz := ctx.GetSessionVars().Location()
+	t, err := val.GoTime(tz)
 	if err != nil {
 		return 0, false, nil
 	}

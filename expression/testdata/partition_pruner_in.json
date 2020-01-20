@@ -4,7 +4,7 @@
     "cases": [
       // Point Select.
       "explain select * from t1 where id = 7 and a = 6",
-      "explain select * from t2 where id = 9 and a = 1",
+      "explain select * from t3 where id = 9 and a = 1",
       "explain select * from t2 where id = 9 and a = -110",
       "explain select * from t1 where id = -17",
       "explain select * from t2 where id = a and a = b and b = 2",
