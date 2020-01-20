@@ -102,6 +102,7 @@ func optimizeByShuffle4Window(pp *PhysicalWindow, ctx sessionctx.Context) *Physi
 	sort, ok := pp.Children()[0].(*PhysicalSort)
 	if !ok {
 		// Multi-thread executing on SORTED data source is not effective enough by current implementation.
+		// See https://github.com/pingcap/tidb/blob/master/docs/design/2020-01-10-shuffle-executor.md#benchmarks for detail.
 		// TODO: Implement a better one.
 		return nil
 	}
