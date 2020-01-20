@@ -2571,8 +2571,6 @@ func (b *builtinFormatSig) vectorized() bool {
 func (b *builtinFormatSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 
-	result.ReserveString(n)
-
 	dBuf, err := b.bufAllocator.get(types.ETInt, n)
 	if err != nil {
 		return err
@@ -2594,6 +2592,7 @@ func (b *builtinFormatSig) vecEvalString(input *chunk.Chunk, result *chunk.Colum
 			return err
 		}
 
+		result.ReserveString(n)
 		xBuf.MergeNulls(dBuf)
 		xDecimals := xBuf.Decimals()
 
@@ -2610,6 +2609,7 @@ func (b *builtinFormatSig) vecEvalString(input *chunk.Chunk, result *chunk.Colum
 		return err
 	}
 
+	result.ReserveString(n)
 	xBuf.MergeNulls(dBuf)
 	xFloat64s := xBuf.Float64s()
 
