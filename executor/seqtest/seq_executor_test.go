@@ -287,6 +287,7 @@ func (s *seqTestSuite) TestShow(c *C) {
 	tk.MustExec(`create index idx5 using hash on show_index (id) using btree comment 'idx';`)
 	tk.MustExec(`create index idx6 using hash on show_index (id);`)
 	tk.MustExec(`create index idx7 on show_index (id);`)
+	tk.MustExec(`create index expr_idx on show_index ((id*2+1))`)
 	testSQL = "SHOW index from show_index;"
 	tk.MustQuery(testSQL).Check(testutil.RowsWithSep("|",
 		"show_index|0|PRIMARY|1|id|A|0|<nil>|<nil>||BTREE| |NULL",
@@ -298,6 +299,7 @@ func (s *seqTestSuite) TestShow(c *C) {
 		"show_index|1|idx5|1|id|A|0|<nil>|<nil>|YES|BTREE||idx|NULL",
 		"show_index|1|idx6|1|id|A|0|<nil>|<nil>|YES|HASH| |NULL",
 		"show_index|1|idx7|1|id|A|0|<nil>|<nil>|YES|BTREE| |NULL",
+		"show_index|1|expr_idx|1|NULL|A|0|<nil>|<nil>|YES|BTREE| |(`id` * 2 + 1)",
 	))
 
 	// For show like with escape
