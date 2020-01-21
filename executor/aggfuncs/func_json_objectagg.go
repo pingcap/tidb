@@ -8,7 +8,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 )
 
-type baseJSONObjectAgg struct {
+type partial4JsonObjectAgg struct {
 	baseAggFunc
 }
 
@@ -16,18 +16,18 @@ type partialResult4JsonObjectAgg struct {
 	entries map[string]interface{}
 }
 
-func (e *baseJSONObjectAgg) AllocPartialResult() PartialResult {
+func (e *partial4JsonObjectAgg) AllocPartialResult() PartialResult {
 	p := partialResult4JsonObjectAgg{}
 	p.entries = make(map[string]interface{})
 	return PartialResult(&p)
 }
 
-func (e *baseJSONObjectAgg) ResetPartialResult(pr PartialResult) {
+func (e *partial4JsonObjectAgg) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4JsonObjectAgg)(pr)
 	p.entries = make(map[string]interface{})
 }
 
-func (e *baseJSONObjectAgg) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
+func (e *partial4JsonObjectAgg) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4JsonObjectAgg)(pr)
 	if len(p.entries) == 0 {
 		chk.AppendNull(e.ordinal)
@@ -58,7 +58,7 @@ func (e *baseJSONObjectAgg) AppendFinalResult2Chunk(sctx sessionctx.Context, pr 
 	return nil
 }
 
-func (e *baseJSONObjectAgg) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) error {
+func (e *partial4JsonObjectAgg) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) error {
 	p := (*partialResult4JsonObjectAgg)(pr)
 	for _, row := range rowsInGroup {
 		key, err := e.args[0].Eval(row)
@@ -86,14 +86,10 @@ func (e *baseJSONObjectAgg) UpdatePartialResult(sctx sessionctx.Context, rowsInG
 		case nil, bool, int64, uint64, float64, string, json.BinaryJSON, *types.MyDecimal, []uint8, types.Time, types.Duration:
 			p.entries[keyString] = realVal
 		default:
-			return json.ErrUnsupportedSecondArgumentType.GenWithStack("The second argument type %T is not supported now", x)
+			return json.ErrUnsupportedSecondArgumentType.GenWithStackByArgs(x)
 		}
 	}
 	return nil
-}
-
-type partial4JsonObjectAgg struct {
-	baseJSONObjectAgg
 }
 
 func (e *partial4JsonObjectAgg) MergePartialResult(sctx sessionctx.Context, src PartialResult, dst PartialResult) error {

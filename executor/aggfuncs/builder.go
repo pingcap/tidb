@@ -383,7 +383,7 @@ func buildJSONObjectAgg(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFu
 	case aggregation.DedupMode:
 		return nil
 	default:
-		return &partial4JsonObjectAgg{baseJSONObjectAgg{base}}
+		return &partial4JsonObjectAgg{base}
 	}
 }
 
