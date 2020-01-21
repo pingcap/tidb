@@ -39,7 +39,7 @@ import (
 const (
 	MaxLogFileSize = 4096 // MB
 	// DefTxnTotalSizeLimit is the default value of TxnTxnTotalSizeLimit.
-	DefTxnTotalSizeLimit = 1024 * 1024 * 1024
+	DefTxnTotalSizeLimit = 100 * 1024 * 1024
 )
 
 // Valid config maps
