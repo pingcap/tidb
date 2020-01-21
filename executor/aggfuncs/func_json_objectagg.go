@@ -94,8 +94,8 @@ func (e *jsonObjectAgg) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup
 
 func (e *jsonObjectAgg) MergePartialResult(sctx sessionctx.Context, src PartialResult, dst PartialResult) error {
 	p1, p2 := (*partialResult4JsonObjectAgg)(src), (*partialResult4JsonObjectAgg)(dst)
-	// get the last value for the same key, eg: [id = 1, name = "a"],[id = 1, name = "b"]
-	// json_objectagg(id, name) will get only {"1": "b"} instead of {"1": "a", "1": "b"}
+	// When the result of this function is normalized, values having duplicate keys are discarded,
+	// and only the last value encountered is used with that key in the returned object
 	for k, v := range p1.entries {
 		p2.entries[k] = v
 	}
