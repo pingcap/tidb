@@ -114,13 +114,13 @@ func (h *BindHandle) Update(fullLoad bool) (err error) {
 
 	for _, row := range rows {
 		hash, meta, err := h.newBindMeta(newBindRecord(row))
-		// Update lastUpdateTime to the newest one.
-		if meta.UpdateTime.Compare(h.lastUpdateTime) > 0 {
-			h.lastUpdateTime = meta.UpdateTime
-		}
 		if err != nil {
 			logutil.Logger(context.Background()).Error("update bindinfo failed", zap.Error(err))
 			continue
+		}
+		// Update lastUpdateTime to the newest one.
+		if meta.UpdateTime.Compare(h.lastUpdateTime) > 0 {
+			h.lastUpdateTime = meta.UpdateTime
 		}
 
 		newCache.removeStaleBindMetas(hash, meta, metrics.ScopeGlobal)
