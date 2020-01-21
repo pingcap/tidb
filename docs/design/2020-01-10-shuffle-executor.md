@@ -152,8 +152,8 @@ mysql> explain select j, sum(i) over w from t window w as (partition by j);
 |   └─Window_8               | 10000.00 | root      | sum(cast(test.t.i))->Column#5 over(partition by test.t.j)                                  |
 |     └─Sort_11              | 10000.00 | root      | test.t.j:asc                                                                               |
 |       └─Shuffle_13         | 10000.00 | root      | execution info: concurrency:0, next: Nil, downstream:Serial, upstream:HashSplitter         |
-|       └─TableReader_10     | 10000.00 | root      | data:TableScan_9                                                                           |
-|         └─TableScan_9      | 10000.00 | cop[tikv] | table:t, range:[-inf,+inf], keep order:false, stats:pseudo                                 |
+|         └─TableReader_10   | 10000.00 | root      | data:TableScan_9                                                                           |
+|           └─TableScan_9    | 10000.00 | cop[tikv] | table:t, range:[-inf,+inf], keep order:false, stats:pseudo                                 |
 +----------------------------+----------+-----------+--------------------------------------------------------------------------------------------+
 ```
 At the same time, imporant information is collected for later steps:
