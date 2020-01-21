@@ -17,11 +17,11 @@ Furthmore, the Shuffle Executor is designed to be a general purpose executor, wh
 ## Rationale
 [Window operator](https://dev.mysql.com/doc/refman/8.0/en/window-functions.html) separates data into independent groups by `PARTITION BY` clause, and the independency makes parallel executing possible.
 
-Shuffle is used to redistributed data: it changes the data property from one distribution to another, to meet the requirements of parallel executing. (Also see "shuffle" in [MapReduce](https://en.wikipedia.org/wiki/MapReduce)).
+Shuffle is used to redistributed data: it changes the data property from one distribution to another, to meet the requirements of parallel executing. (See also "shuffle" in [MapReduce](https://en.wikipedia.org/wiki/MapReduce)).
 
 As to Window operator, it splits and shuffles data into partitions by columns in `PARTITION BY` clause, executes Window functions on partitions in a parallel manner, and finally merges the results.
 
-As to Sort operator, it splits data into partitions of equal size, executes Sort on each partition parallelly, and finally merges results by [Multi-way Merge Sort](https://en.wikipedia.org/wiki/K-way_merge_algorithm).
+As to Sort operator, it splits data into partitions of equal size, executes Sort executor on each partition parallelly, and finally merges results by [Multi-way Merge Sort](https://en.wikipedia.org/wiki/K-way_merge_algorithm).
 
 ![shuffle-rationale](imgs/shuffle-rationale.png)
 
@@ -39,7 +39,7 @@ The implementation consists of 3 parts:
 The steps of Shuffle Executor `ShuffleExec` (take Window operator as example):
 
 1. Lower Shuffle: Fetches chunks from `DataSource`.
-2. Lower Shuffle: Splits tuples from `DataSource` into N partitions, using upstream splitter type (i.e. the `partitionHashSplitter`).
+2. Lower Shuffle: Splits tuples from `DataSource` into N partitions by upstream splitter (i.e. the `partitionHashSplitter`).
 3. Upper Shuffle: Invokes N workers in parallel, assigns each partition as input to each worker and executes child executors.
 4. Upper Shuffle: Collects outputs from each worker by simple merge, then sends outputs to its parent.
 ```
@@ -90,6 +90,10 @@ The steps of Shuffle Executor `ShuffleExec` (take Window operator as example):
                         |    fetch data from DataSource   |
                         +---------------------------------+
 ```
+
+_Future work:_
+
+_It is the Shuffle who driving the parallel executing now. [zz-jason](https://github.com/zz-jason) (Zhang Jian) has a better solution: a new Parallel Framework. It splits plan tree into stages, and invokes parallel executing in each stage. Shuffle exists between stages, in charge of redistributing data to meet parallel requirements._
 
 ### Planning
 
