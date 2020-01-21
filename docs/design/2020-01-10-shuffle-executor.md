@@ -118,11 +118,11 @@ type PhysicalShuffle struct {
 	Concurrency int
 	Tail        PhysicalPlan
 	NextShuffle *PhysicalShuffle
-  
-  // downstream
-  MergerType       PartitionMergerType
+
+	// downstream
+	MergerType       PartitionMergerType
 	MergeSortByItems []expression.Expression
-  // upstream
+	// upstream
 	SplitterType PartitionSplitterType
 	HashByItems  []expression.Expression
 }
