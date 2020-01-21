@@ -498,6 +498,10 @@ var vecBuiltinStringCases = map[string][]vecExprBenchCase{
 			newRangeRealGener(-10000, 10000, 1),
 			newRangeInt64Gener(-10, 40),
 		}},
+		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString, types.ETString}, geners: []dataGenerator{
+			newRealStringGener(),
+			&numStrGener{*newRangeInt64Gener(-10, 40)},
+		}},
 	},
 }
 
