@@ -8,7 +8,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 )
 
-type partial4JsonObjectAgg struct {
+type jsonObjectAgg struct {
 	baseAggFunc
 }
 
@@ -16,18 +16,18 @@ type partialResult4JsonObjectAgg struct {
 	entries map[string]interface{}
 }
 
-func (e *partial4JsonObjectAgg) AllocPartialResult() PartialResult {
+func (e *jsonObjectAgg) AllocPartialResult() PartialResult {
 	p := partialResult4JsonObjectAgg{}
 	p.entries = make(map[string]interface{})
 	return PartialResult(&p)
 }
 
-func (e *partial4JsonObjectAgg) ResetPartialResult(pr PartialResult) {
+func (e *jsonObjectAgg) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4JsonObjectAgg)(pr)
 	p.entries = make(map[string]interface{})
 }
 
-func (e *partial4JsonObjectAgg) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
+func (e *jsonObjectAgg) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4JsonObjectAgg)(pr)
 	if len(p.entries) == 0 {
 		chk.AppendNull(e.ordinal)
@@ -58,7 +58,7 @@ func (e *partial4JsonObjectAgg) AppendFinalResult2Chunk(sctx sessionctx.Context,
 	return nil
 }
 
-func (e *partial4JsonObjectAgg) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) error {
+func (e *jsonObjectAgg) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) error {
 	p := (*partialResult4JsonObjectAgg)(pr)
 	for _, row := range rowsInGroup {
 		key, err := e.args[0].Eval(row)
@@ -92,7 +92,7 @@ func (e *partial4JsonObjectAgg) UpdatePartialResult(sctx sessionctx.Context, row
 	return nil
 }
 
-func (e *partial4JsonObjectAgg) MergePartialResult(sctx sessionctx.Context, src PartialResult, dst PartialResult) error {
+func (e *jsonObjectAgg) MergePartialResult(sctx sessionctx.Context, src PartialResult, dst PartialResult) error {
 	p1, p2 := (*partialResult4JsonObjectAgg)(src), (*partialResult4JsonObjectAgg)(dst)
 	// get the last value for the same key, eg: [id = 1, name = "a"],[id = 1, name = "b"]
 	// json_objectagg(id, name) will get only {"1": "b"} instead of {"1": "a", "1": "b"}
