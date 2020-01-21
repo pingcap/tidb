@@ -963,3 +963,16 @@ insert into t values(201);
 explain select * from t;
 rollback;
 explain select * from t;
+
+drop table if exists t;
+CREATE TABLE `t` (
+  `a` int(11) DEFAULT NULL,
+  `b` int(11) DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY RANGE COLUMNS(a) (
+  PARTITION p0 VALUES LESS THAN (1),
+  PARTITION p1 VALUES LESS THAN (10),
+  PARTITION p2 VALUES LESS THAN (100)
+);
+
+desc select * from t where a = 11 and b = 1 or a = 12 and b = 1;

@@ -178,8 +178,14 @@ func onDropTableOrView(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-		if err = t.DropTableOrView(job.SchemaID, job.TableID, true); err != nil {
-			break
+		if tblInfo.IsSequence() {
+			if err = t.DropSequence(job.SchemaID, job.TableID, true); err != nil {
+				break
+			}
+		} else {
+			if err = t.DropTableOrView(job.SchemaID, job.TableID, true); err != nil {
+				break
+			}
 		}
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
