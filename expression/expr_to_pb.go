@@ -385,6 +385,7 @@ func (pc PbConverter) canFuncBePushed(sf *ScalarFunction) bool {
 		ast.Degrees,
 		ast.Conv,
 		ast.CRC32,
+		ast.Rand,
 
 		// control flow functions.
 		ast.Case,

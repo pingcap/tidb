@@ -15,16 +15,13 @@ package expression
 
 import (
 	"fmt"
-	"hash/crc32"
-	"math"
-	"math/rand"
-	"strconv"
-	"time"
-
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/mathutil"
+	"hash/crc32"
+	"math"
+	"strconv"
 )
 
 func (b *builtinLog1ArgSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) error {
@@ -708,17 +705,17 @@ func (b *builtinRandSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) e
 	f64s := result.Float64s()
 	b.mu.Lock()
 	for i := range f64s {
-		f64s[i] = b.randGen.Float64()
+		f64s[i] = b.mysqlRng.Gen()
 	}
 	b.mu.Unlock()
 	return nil
 }
 
-func (b *builtinRandWithSeedSig) vectorized() bool {
+func (b *builtinRandWithSeedFirstGenSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinRandWithSeedSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinRandWithSeedFirstGenSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf, err := b.bufAllocator.get(types.ETInt, n)
 	if err != nil {
@@ -732,13 +729,12 @@ func (b *builtinRandWithSeedSig) vecEvalReal(input *chunk.Chunk, result *chunk.C
 	result.ResizeFloat64(n, false)
 	i64s := buf.Int64s()
 	f64s := result.Float64s()
-	rander := rand.NewSource(time.Now().UnixNano())
-	randGen := rand.New(rander)
+	rng := NewWithTime()
 	for i := 0; i < n; i++ {
 		if !buf.IsNull(i) {
-			randGen = rand.New(rand.NewSource(i64s[i]))
+			rng = NewWithSeed(i64s[i])
 		}
-		f64s[i] = randGen.Float64()
+		f64s[i] = rng.Gen()
 	}
 	return nil
 }
