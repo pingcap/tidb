@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/memory"
 	"go.uber.org/zap"
 )
@@ -214,7 +215,9 @@ func insertRows(ctx context.Context, base insertCommon) (err error) {
 		evalRowFunc = e.evalRow
 	}
 
-	rows := make([][]types.Datum, 0, len(e.Lists))
+	rowLen := mathutil.Min(len(e.Lists), batchSize)
+	rows := make([][]types.Datum, 0, rowLen)
+
 	memUsageOfRows := int64(0)
 	memTracker := e.memTracker
 	for i, list := range e.Lists {
@@ -225,8 +228,8 @@ func insertRows(ctx context.Context, base insertCommon) (err error) {
 			return err
 		}
 		rows = append(rows, row)
-		if batchInsert && e.rowCount%uint64(batchSize) == 0 {
-			memUsageOfRows = types.EstimatedMemUsage(rows[0], len(rows))
+		if e.rowCount%uint64(batchSize) == 0 {
+			memUsageOfRows = types.EstimatedMemUsage(rows[0], cap(rows))
 			memTracker.Consume(memUsageOfRows)
 			// Before batch insert, fill the batch allocated autoIDs.
 			rows, err = e.lazyAdjustAutoIncrementDatum(ctx, rows)
@@ -239,13 +242,15 @@ func insertRows(ctx context.Context, base insertCommon) (err error) {
 			rows = rows[:0]
 			memTracker.Consume(-memUsageOfRows)
 			memUsageOfRows = 0
-			if err = e.doBatchInsert(ctx); err != nil {
-				return err
+			if batchInsert {
+				if err = e.doBatchInsert(ctx); err != nil {
+					return err
+				}
 			}
 		}
 	}
 	if len(rows) != 0 {
-		memUsageOfRows = types.EstimatedMemUsage(rows[0], len(rows))
+		memUsageOfRows = types.EstimatedMemUsage(rows[0], cap(rows))
 		memTracker.Consume(memUsageOfRows)
 	}
 	// Fill the batch allocated autoIDs.
