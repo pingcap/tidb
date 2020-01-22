@@ -16,7 +16,7 @@ package ast
 import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/auth"
-	. "github.com/pingcap/parser/format"
+	"github.com/pingcap/parser/format"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
@@ -71,7 +71,7 @@ type DatabaseOption struct {
 }
 
 // Restore implements Node interface.
-func (n *DatabaseOption) Restore(ctx *RestoreCtx) error {
+func (n *DatabaseOption) Restore(ctx *format.RestoreCtx) error {
 	switch n.Tp {
 	case DatabaseOptionCharset:
 		ctx.WriteKeyWord("CHARACTER SET")
@@ -102,7 +102,7 @@ type CreateDatabaseStmt struct {
 }
 
 // Restore implements Node interface.
-func (n *CreateDatabaseStmt) Restore(ctx *RestoreCtx) error {
+func (n *CreateDatabaseStmt) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("CREATE DATABASE ")
 	if n.IfNotExists {
 		ctx.WriteKeyWord("IF NOT EXISTS ")
@@ -139,7 +139,7 @@ type AlterDatabaseStmt struct {
 }
 
 // Restore implements Node interface.
-func (n *AlterDatabaseStmt) Restore(ctx *RestoreCtx) error {
+func (n *AlterDatabaseStmt) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("ALTER DATABASE")
 	if !n.AlterDefaultDatabase {
 		ctx.WritePlain(" ")
@@ -175,7 +175,7 @@ type DropDatabaseStmt struct {
 }
 
 // Restore implements Node interface.
-func (n *DropDatabaseStmt) Restore(ctx *RestoreCtx) error {
+func (n *DropDatabaseStmt) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("DROP DATABASE ")
 	if n.IfExists {
 		ctx.WriteKeyWord("IF EXISTS ")
@@ -204,7 +204,7 @@ type IndexPartSpecification struct {
 }
 
 // Restore implements Node interface.
-func (n *IndexPartSpecification) Restore(ctx *RestoreCtx) error {
+func (n *IndexPartSpecification) Restore(ctx *format.RestoreCtx) error {
 	if n.Expr != nil {
 		ctx.WritePlain("(")
 		if err := n.Expr.Restore(ctx); err != nil {
@@ -269,7 +269,7 @@ type ReferenceDef struct {
 }
 
 // Restore implements Node interface.
-func (n *ReferenceDef) Restore(ctx *RestoreCtx) error {
+func (n *ReferenceDef) Restore(ctx *format.RestoreCtx) error {
 	if n.Table != nil {
 		ctx.WriteKeyWord("REFERENCES ")
 		if err := n.Table.Restore(ctx); err != nil {
@@ -385,7 +385,7 @@ type OnDeleteOpt struct {
 }
 
 // Restore implements Node interface.
-func (n *OnDeleteOpt) Restore(ctx *RestoreCtx) error {
+func (n *OnDeleteOpt) Restore(ctx *format.RestoreCtx) error {
 	if n.ReferOpt != ReferOptionNoOption {
 		ctx.WriteKeyWord("ON DELETE ")
 		ctx.WriteKeyWord(n.ReferOpt.String())
@@ -410,7 +410,7 @@ type OnUpdateOpt struct {
 }
 
 // Restore implements Node interface.
-func (n *OnUpdateOpt) Restore(ctx *RestoreCtx) error {
+func (n *OnUpdateOpt) Restore(ctx *format.RestoreCtx) error {
 	if n.ReferOpt != ReferOptionNoOption {
 		ctx.WriteKeyWord("ON UPDATE ")
 		ctx.WriteKeyWord(n.ReferOpt.String())
@@ -480,7 +480,7 @@ type ColumnOption struct {
 }
 
 // Restore implements Node interface.
-func (n *ColumnOption) Restore(ctx *RestoreCtx) error {
+func (n *ColumnOption) Restore(ctx *format.RestoreCtx) error {
 	switch n.Tp {
 	case ColumnOptionNoOption:
 		return nil
@@ -606,7 +606,7 @@ type IndexOption struct {
 }
 
 // Restore implements Node interface.
-func (n *IndexOption) Restore(ctx *RestoreCtx) error {
+func (n *IndexOption) Restore(ctx *format.RestoreCtx) error {
 	hasPrevOption := false
 	if n.KeyBlockSize > 0 {
 		ctx.WriteKeyWord("KEY_BLOCK_SIZE")
@@ -705,7 +705,7 @@ type Constraint struct {
 }
 
 // Restore implements Node interface.
-func (n *Constraint) Restore(ctx *RestoreCtx) error {
+func (n *Constraint) Restore(ctx *format.RestoreCtx) error {
 	switch n.Tp {
 	case ConstraintNoConstraint:
 		return nil
@@ -833,7 +833,7 @@ type ColumnDef struct {
 }
 
 // Restore implements Node interface.
-func (n *ColumnDef) Restore(ctx *RestoreCtx) error {
+func (n *ColumnDef) Restore(ctx *format.RestoreCtx) error {
 	if err := n.Name.Restore(ctx); err != nil {
 		return errors.Annotate(err, "An error occurred while splicing ColumnDef Name")
 	}
@@ -909,7 +909,7 @@ type CreateTableStmt struct {
 }
 
 // Restore implements Node interface.
-func (n *CreateTableStmt) Restore(ctx *RestoreCtx) error {
+func (n *CreateTableStmt) Restore(ctx *format.RestoreCtx) error {
 	if n.IsTemporary {
 		ctx.WriteKeyWord("CREATE TEMPORARY TABLE ")
 	} else {
@@ -1047,7 +1047,7 @@ type DropTableStmt struct {
 }
 
 // Restore implements Node interface.
-func (n *DropTableStmt) Restore(ctx *RestoreCtx) error {
+func (n *DropTableStmt) Restore(ctx *format.RestoreCtx) error {
 	if n.IsView {
 		ctx.WriteKeyWord("DROP VIEW ")
 	} else {
@@ -1100,7 +1100,7 @@ type DropSequenceStmt struct {
 }
 
 // Restore implements Node interface.
-func (n *DropSequenceStmt) Restore(ctx *RestoreCtx) error {
+func (n *DropSequenceStmt) Restore(ctx *format.RestoreCtx) error {
 	if n.IsTemporary {
 		ctx.WriteKeyWord("DROP TEMPORARY SEQUENCE ")
 	} else {
@@ -1152,7 +1152,7 @@ type RenameTableStmt struct {
 }
 
 // Restore implements Node interface.
-func (n *RenameTableStmt) Restore(ctx *RestoreCtx) error {
+func (n *RenameTableStmt) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("RENAME TABLE ")
 	for index, table2table := range n.TableToTables {
 		if index != 0 {
@@ -1202,7 +1202,7 @@ type TableToTable struct {
 }
 
 // Restore implements Node interface.
-func (n *TableToTable) Restore(ctx *RestoreCtx) error {
+func (n *TableToTable) Restore(ctx *format.RestoreCtx) error {
 	if err := n.OldTable.Restore(ctx); err != nil {
 		return errors.Annotate(err, "An error occurred while restore TableToTable.OldTable")
 	}
@@ -1250,7 +1250,7 @@ type CreateViewStmt struct {
 }
 
 // Restore implements Node interface.
-func (n *CreateViewStmt) Restore(ctx *RestoreCtx) error {
+func (n *CreateViewStmt) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("CREATE ")
 	if n.OrReplace {
 		ctx.WriteKeyWord("OR REPLACE ")
@@ -1340,7 +1340,7 @@ type CreateSequenceStmt struct {
 }
 
 // Restore implements Node interface.
-func (n *CreateSequenceStmt) Restore(ctx *RestoreCtx) error {
+func (n *CreateSequenceStmt) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("CREATE ")
 	if n.OrReplace {
 		ctx.WriteKeyWord("OR REPLACE ")
@@ -1394,7 +1394,7 @@ type IndexLockAndAlgorithm struct {
 }
 
 // Restore implements Node interface.
-func (n *IndexLockAndAlgorithm) Restore(ctx *RestoreCtx) error {
+func (n *IndexLockAndAlgorithm) Restore(ctx *format.RestoreCtx) error {
 	hasPrevOption := false
 	if n.AlgorithmTp != AlgorithmTypeDefault {
 		ctx.WriteKeyWord("ALGORITHM")
@@ -1453,7 +1453,7 @@ type CreateIndexStmt struct {
 }
 
 // Restore implements Node interface.
-func (n *CreateIndexStmt) Restore(ctx *RestoreCtx) error {
+func (n *CreateIndexStmt) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("CREATE ")
 	switch n.KeyType {
 	case IndexKeyTypeUnique:
@@ -1549,7 +1549,7 @@ type DropIndexStmt struct {
 }
 
 // Restore implements Node interface.
-func (n *DropIndexStmt) Restore(ctx *RestoreCtx) error {
+func (n *DropIndexStmt) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("DROP INDEX ")
 	if n.IfExists {
 		ctx.WriteKeyWord("IF EXISTS ")
@@ -1624,7 +1624,7 @@ func (n *LockTablesStmt) Accept(v Visitor) (Node, bool) {
 }
 
 // Restore implements Node interface.
-func (n *LockTablesStmt) Restore(ctx *RestoreCtx) error {
+func (n *LockTablesStmt) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("LOCK TABLES ")
 	for i, tl := range n.TableLocks {
 		if i != 0 {
@@ -1650,7 +1650,7 @@ func (n *UnlockTablesStmt) Accept(v Visitor) (Node, bool) {
 }
 
 // Restore implements Node interface.
-func (n *UnlockTablesStmt) Restore(ctx *RestoreCtx) error {
+func (n *UnlockTablesStmt) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("UNLOCK TABLES")
 	return nil
 }
@@ -1680,7 +1680,7 @@ func (n *CleanupTableLockStmt) Accept(v Visitor) (Node, bool) {
 }
 
 // Restore implements Node interface.
-func (n *CleanupTableLockStmt) Restore(ctx *RestoreCtx) error {
+func (n *CleanupTableLockStmt) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("ADMIN CLEANUP TABLE LOCK ")
 	for i, v := range n.Tables {
 		if i != 0 {
@@ -1721,7 +1721,7 @@ func (n *RepairTableStmt) Accept(v Visitor) (Node, bool) {
 }
 
 // Restore implements Node interface.
-func (n *RepairTableStmt) Restore(ctx *RestoreCtx) error {
+func (n *RepairTableStmt) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("ADMIN REPAIR TABLE ")
 	if err := n.Table.Restore(ctx); err != nil {
 		return errors.Annotatef(err, "An error occurred while restore RepairTableStmt.table : [%v]", n.Table)
@@ -1817,7 +1817,7 @@ type TableOption struct {
 	TableNames []*TableName
 }
 
-func (n *TableOption) Restore(ctx *RestoreCtx) error {
+func (n *TableOption) Restore(ctx *format.RestoreCtx) error {
 	switch n.Tp {
 	case TableOptionEngine:
 		ctx.WriteKeyWord("ENGINE ")
@@ -2039,7 +2039,7 @@ type SequenceOption struct {
 	IntValue int64
 }
 
-func (n *SequenceOption) Restore(ctx *RestoreCtx) error {
+func (n *SequenceOption) Restore(ctx *format.RestoreCtx) error {
 	switch n.Tp {
 	case SequenceOptionIncrementBy:
 		ctx.WriteKeyWord("INCREMENT BY ")
@@ -2096,7 +2096,7 @@ type ColumnPosition struct {
 }
 
 // Restore implements Node interface.
-func (n *ColumnPosition) Restore(ctx *RestoreCtx) error {
+func (n *ColumnPosition) Restore(ctx *format.RestoreCtx) error {
 	switch n.Tp {
 	case ColumnPositionNone:
 		// do nothing
@@ -2290,7 +2290,7 @@ type AlterOrderItem struct {
 }
 
 // Restore implements Node interface.
-func (n *AlterOrderItem) Restore(ctx *RestoreCtx) error {
+func (n *AlterOrderItem) Restore(ctx *format.RestoreCtx) error {
 	if err := n.Column.Restore(ctx); err != nil {
 		return errors.Annotate(err, "An error occurred while restore AlterOrderItem.Column")
 	}
@@ -2301,7 +2301,7 @@ func (n *AlterOrderItem) Restore(ctx *RestoreCtx) error {
 }
 
 // Restore implements Node interface.
-func (n *AlterTableSpec) Restore(ctx *RestoreCtx) error {
+func (n *AlterTableSpec) Restore(ctx *format.RestoreCtx) error {
 	switch n.Tp {
 	case AlterTableSetTiFlashReplica:
 		ctx.WriteKeyWord("SET TIFLASH REPLICA ")
@@ -2697,7 +2697,7 @@ func (n *AlterTableSpec) Restore(ctx *RestoreCtx) error {
 	case AlterTableAlterCheck:
 		ctx.WriteKeyWord("ALTER CHECK ")
 		ctx.WriteName(n.Constraint.Name)
-		if n.Constraint.Enforced == false {
+		if !n.Constraint.Enforced {
 			ctx.WriteKeyWord(" NOT")
 		}
 		ctx.WriteKeyWord(" ENFORCED")
@@ -2786,7 +2786,7 @@ type AlterTableStmt struct {
 }
 
 // Restore implements Node interface.
-func (n *AlterTableStmt) Restore(ctx *RestoreCtx) error {
+func (n *AlterTableStmt) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("ALTER TABLE ")
 	if err := n.Table.Restore(ctx); err != nil {
 		return errors.Annotate(err, "An error occurred while restore AlterTableStmt.Table")
@@ -2835,7 +2835,7 @@ type TruncateTableStmt struct {
 }
 
 // Restore implements Node interface.
-func (n *TruncateTableStmt) Restore(ctx *RestoreCtx) error {
+func (n *TruncateTableStmt) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("TRUNCATE TABLE ")
 	if err := n.Table.Restore(ctx); err != nil {
 		return errors.Annotate(err, "An error occurred while restore TruncateTableStmt.Table")
@@ -2878,7 +2878,7 @@ type SubPartitionDefinition struct {
 	Options []*TableOption
 }
 
-func (spd *SubPartitionDefinition) Restore(ctx *RestoreCtx) error {
+func (spd *SubPartitionDefinition) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("SUBPARTITION ")
 	ctx.WriteName(spd.Name.O)
 	for i, opt := range spd.Options {
@@ -2891,7 +2891,7 @@ func (spd *SubPartitionDefinition) Restore(ctx *RestoreCtx) error {
 }
 
 type PartitionDefinitionClause interface {
-	restore(ctx *RestoreCtx) error
+	restore(ctx *format.RestoreCtx) error
 	acceptInPlace(v Visitor) bool
 	// Validate checks if the clause is consistent with the given options.
 	// `pt` can be 0 and `columns` can be -1 to skip checking the clause against
@@ -2901,7 +2901,7 @@ type PartitionDefinitionClause interface {
 
 type PartitionDefinitionClauseNone struct{}
 
-func (n *PartitionDefinitionClauseNone) restore(ctx *RestoreCtx) error {
+func (n *PartitionDefinitionClauseNone) restore(ctx *format.RestoreCtx) error {
 	return nil
 }
 
@@ -2926,7 +2926,7 @@ type PartitionDefinitionClauseLessThan struct {
 	Exprs []ExprNode
 }
 
-func (n *PartitionDefinitionClauseLessThan) restore(ctx *RestoreCtx) error {
+func (n *PartitionDefinitionClauseLessThan) restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord(" VALUES LESS THAN ")
 	ctx.WritePlain("(")
 	for i, expr := range n.Exprs {
@@ -2972,7 +2972,7 @@ type PartitionDefinitionClauseIn struct {
 	Values [][]ExprNode
 }
 
-func (n *PartitionDefinitionClauseIn) restore(ctx *RestoreCtx) error {
+func (n *PartitionDefinitionClauseIn) restore(ctx *format.RestoreCtx) error {
 	// we special-case an empty list of values to mean MariaDB's "DEFAULT" clause.
 	if len(n.Values) == 0 {
 		ctx.WriteKeyWord(" DEFAULT")
@@ -3050,7 +3050,7 @@ type PartitionDefinitionClauseHistory struct {
 	Current bool
 }
 
-func (n *PartitionDefinitionClauseHistory) restore(ctx *RestoreCtx) error {
+func (n *PartitionDefinitionClauseHistory) restore(ctx *format.RestoreCtx) error {
 	if n.Current {
 		ctx.WriteKeyWord(" CURRENT")
 	} else {
@@ -3097,7 +3097,7 @@ func (n *PartitionDefinition) acceptInPlace(v Visitor) bool {
 }
 
 // Restore implements Node interface.
-func (n *PartitionDefinition) Restore(ctx *RestoreCtx) error {
+func (n *PartitionDefinition) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("PARTITION ")
 	ctx.WriteName(n.Name.O)
 
@@ -3151,7 +3151,7 @@ type PartitionMethod struct {
 }
 
 // Restore implements the Node interface
-func (n *PartitionMethod) Restore(ctx *RestoreCtx) error {
+func (n *PartitionMethod) Restore(ctx *format.RestoreCtx) error {
 	if n.Linear {
 		ctx.WriteKeyWord("LINEAR ")
 	}
@@ -3282,7 +3282,7 @@ func (n *PartitionOptions) Validate() error {
 	return nil
 }
 
-func (n *PartitionOptions) Restore(ctx *RestoreCtx) error {
+func (n *PartitionOptions) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("PARTITION BY ")
 	if err := n.PartitionMethod.Restore(ctx); err != nil {
 		return errors.Annotate(err, "An error occurred while restore PartitionOptions.PartitionMethod")
@@ -3351,7 +3351,7 @@ type RecoverTableStmt struct {
 }
 
 // Restore implements Node interface.
-func (n *RecoverTableStmt) Restore(ctx *RestoreCtx) error {
+func (n *RecoverTableStmt) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("RECOVER TABLE ")
 	if n.JobID != 0 {
 		ctx.WriteKeyWord("BY JOB ")
@@ -3395,7 +3395,7 @@ type FlashBackTableStmt struct {
 }
 
 // Restore implements Node interface.
-func (n *FlashBackTableStmt) Restore(ctx *RestoreCtx) error {
+func (n *FlashBackTableStmt) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("FLASHBACK TABLE ")
 	if err := n.Table.Restore(ctx); err != nil {
 		return errors.Annotate(err, "An error occurred while splicing RecoverTableStmt Table")

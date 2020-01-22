@@ -20,7 +20,7 @@ import (
 	"fmt"
 
 	"github.com/pingcap/errors"
-	. "github.com/pingcap/parser/format"
+	"github.com/pingcap/parser/format"
 	"github.com/pingcap/parser/terror"
 )
 
@@ -34,7 +34,7 @@ type UserIdentity struct {
 }
 
 // Restore implements Node interface.
-func (user *UserIdentity) Restore(ctx *RestoreCtx) error {
+func (user *UserIdentity) Restore(ctx *format.RestoreCtx) error {
 	if user.CurrentUser {
 		ctx.WriteKeyWord("CURRENT_USER")
 	} else {
@@ -67,7 +67,7 @@ type RoleIdentity struct {
 	Hostname string
 }
 
-func (role *RoleIdentity) Restore(ctx *RestoreCtx) error {
+func (role *RoleIdentity) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteName(role.Username)
 	if role.Hostname != "" {
 		ctx.WritePlain("@")

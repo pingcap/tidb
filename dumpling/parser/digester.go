@@ -114,14 +114,14 @@ func (d *sqlDigester) doDigest(sql string) (result string) {
 
 func (d *sqlDigester) doNormalize(sql string) (result string) {
 	d.normalize(sql)
-	result = string(d.buffer.Bytes())
+	result = d.buffer.String()
 	d.buffer.Reset()
 	return
 }
 
 func (d *sqlDigester) doNormalizeDigest(sql string) (normalized, digest string) {
 	d.normalize(sql)
-	normalized = string(d.buffer.Bytes())
+	normalized = d.buffer.String()
 	d.hasher.Write(d.buffer.Bytes())
 	d.buffer.Reset()
 	digest = fmt.Sprintf("%x", d.hasher.Sum(nil))

@@ -18,7 +18,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
-	. "github.com/pingcap/parser/format"
+	"github.com/pingcap/parser/format"
 )
 
 func newInvalidModeErr(s string) error {
@@ -779,7 +779,7 @@ func Str2Priority(val string) PriorityEnum {
 }
 
 // Restore implements Node interface.
-func (n *PriorityEnum) Restore(ctx *RestoreCtx) error {
+func (n *PriorityEnum) Restore(ctx *format.RestoreCtx) error {
 	switch *n {
 	case NoPriority:
 		return nil

@@ -21,7 +21,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/auth"
-	. "github.com/pingcap/parser/format"
+	"github.com/pingcap/parser/format"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 )
@@ -108,7 +108,7 @@ type AuthOption struct {
 }
 
 // Restore implements Node interface.
-func (n *AuthOption) Restore(ctx *RestoreCtx) error {
+func (n *AuthOption) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("IDENTIFIED BY ")
 	if n.ByAuthString {
 		ctx.WriteString(n.AuthString)
@@ -128,7 +128,7 @@ type TraceStmt struct {
 }
 
 // Restore implements Node interface.
-func (n *TraceStmt) Restore(ctx *RestoreCtx) error {
+func (n *TraceStmt) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("TRACE ")
 	if n.Format != "json" {
 		ctx.WriteKeyWord("FORMAT")
@@ -168,7 +168,7 @@ type ExplainForStmt struct {
 }
 
 // Restore implements Node interface.
-func (n *ExplainForStmt) Restore(ctx *RestoreCtx) error {
+func (n *ExplainForStmt) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("EXPLAIN ")
 	ctx.WriteKeyWord("FORMAT ")
 	ctx.WritePlain("= ")
@@ -202,7 +202,7 @@ type ExplainStmt struct {
 }
 
 // Restore implements Node interface.
-func (n *ExplainStmt) Restore(ctx *RestoreCtx) error {
+func (n *ExplainStmt) Restore(ctx *format.RestoreCtx) error {
 	if showStmt, ok := n.Stmt.(*ShowStmt); ok {
 		ctx.WriteKeyWord("DESC ")
 		if err := showStmt.Table.Restore(ctx); err != nil {
@@ -258,7 +258,7 @@ type PrepareStmt struct {
 }
 
 // Restore implements Node interface.
-func (n *PrepareStmt) Restore(ctx *RestoreCtx) error {
+func (n *PrepareStmt) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("PREPARE ")
 	ctx.WriteName(n.Name)
 	ctx.WriteKeyWord(" FROM ")
@@ -301,7 +301,7 @@ type DeallocateStmt struct {
 }
 
 // Restore implements Node interface.
-func (n *DeallocateStmt) Restore(ctx *RestoreCtx) error {
+func (n *DeallocateStmt) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("DEALLOCATE PREPARE ")
 	ctx.WriteName(n.Name)
 	return nil
@@ -341,7 +341,7 @@ type ExecuteStmt struct {
 }
 
 // Restore implements Node interface.
-func (n *ExecuteStmt) Restore(ctx *RestoreCtx) error {
+func (n *ExecuteStmt) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("EXECUTE ")
 	ctx.WriteName(n.Name)
 	if len(n.UsingVars) > 0 {
@@ -385,7 +385,7 @@ type BeginStmt struct {
 }
 
 // Restore implements Node interface.
-func (n *BeginStmt) Restore(ctx *RestoreCtx) error {
+func (n *BeginStmt) Restore(ctx *format.RestoreCtx) error {
 	if n.Mode == "" {
 		if n.ReadOnly {
 			ctx.WriteKeyWord("START TRANSACTION READ ONLY")
@@ -443,7 +443,7 @@ type BinlogStmt struct {
 }
 
 // Restore implements Node interface.
-func (n *BinlogStmt) Restore(ctx *RestoreCtx) error {
+func (n *BinlogStmt) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("BINLOG ")
 	ctx.WriteString(n.Str)
 	return nil
@@ -466,7 +466,7 @@ type CommitStmt struct {
 }
 
 // Restore implements Node interface.
-func (n *CommitStmt) Restore(ctx *RestoreCtx) error {
+func (n *CommitStmt) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("COMMIT")
 	return nil
 }
@@ -488,7 +488,7 @@ type RollbackStmt struct {
 }
 
 // Restore implements Node interface.
-func (n *RollbackStmt) Restore(ctx *RestoreCtx) error {
+func (n *RollbackStmt) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("ROLLBACK")
 	return nil
 }
@@ -512,7 +512,7 @@ type UseStmt struct {
 }
 
 // Restore implements Node interface.
-func (n *UseStmt) Restore(ctx *RestoreCtx) error {
+func (n *UseStmt) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("USE ")
 	ctx.WriteName(n.DBName)
 	return nil
@@ -550,7 +550,7 @@ type VariableAssignment struct {
 }
 
 // Restore implements Node interface.
-func (n *VariableAssignment) Restore(ctx *RestoreCtx) error {
+func (n *VariableAssignment) Restore(ctx *format.RestoreCtx) error {
 	if n.IsSystem {
 		ctx.WritePlain("@@")
 		if n.IsGlobal {
@@ -634,7 +634,7 @@ type FlushStmt struct {
 }
 
 // Restore implements Node interface.
-func (n *FlushStmt) Restore(ctx *RestoreCtx) error {
+func (n *FlushStmt) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("FLUSH ")
 	if n.NoWriteToBinLog {
 		ctx.WriteKeyWord("NO_WRITE_TO_BINLOG ")
@@ -725,7 +725,7 @@ type KillStmt struct {
 }
 
 // Restore implements Node interface.
-func (n *KillStmt) Restore(ctx *RestoreCtx) error {
+func (n *KillStmt) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("KILL")
 	if n.TiDBExtension {
 		ctx.WriteKeyWord(" TIDB")
@@ -755,7 +755,7 @@ type SetStmt struct {
 }
 
 // Restore implements Node interface.
-func (n *SetStmt) Restore(ctx *RestoreCtx) error {
+func (n *SetStmt) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("SET ")
 	for i, v := range n.Variables {
 		if i != 0 {
@@ -816,7 +816,7 @@ type SetPwdStmt struct {
 }
 
 // Restore implements Node interface.
-func (n *SetPwdStmt) Restore(ctx *RestoreCtx) error {
+func (n *SetPwdStmt) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("SET PASSWORD")
 	if n.User != nil {
 		ctx.WriteKeyWord(" FOR ")
@@ -853,7 +853,7 @@ type ChangeStmt struct {
 }
 
 // Restore implements Node interface.
-func (n *ChangeStmt) Restore(ctx *RestoreCtx) error {
+func (n *ChangeStmt) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("CHANGE ")
 	ctx.WriteKeyWord(n.NodeType)
 	ctx.WriteKeyWord(" TO NODE_STATE ")
@@ -898,7 +898,7 @@ type SetRoleStmt struct {
 	RoleList   []*auth.RoleIdentity
 }
 
-func (n *SetRoleStmt) Restore(ctx *RestoreCtx) error {
+func (n *SetRoleStmt) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("SET ROLE")
 	switch n.SetRoleOpt {
 	case SetRoleDefault:
@@ -941,7 +941,7 @@ type SetDefaultRoleStmt struct {
 	UserList   []*auth.UserIdentity
 }
 
-func (n *SetDefaultRoleStmt) Restore(ctx *RestoreCtx) error {
+func (n *SetDefaultRoleStmt) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("SET DEFAULT ROLE")
 	switch n.SetRoleOpt {
 	case SetRoleNone:
@@ -992,7 +992,7 @@ type UserSpec struct {
 }
 
 // Restore implements Node interface.
-func (n *UserSpec) Restore(ctx *RestoreCtx) error {
+func (n *UserSpec) Restore(ctx *format.RestoreCtx) error {
 	if err := n.User.Restore(ctx); err != nil {
 		return errors.Annotate(err, "An error occurred while restore UserSpec.User")
 	}
@@ -1052,7 +1052,7 @@ type TLSOption struct {
 	Value string
 }
 
-func (t *TLSOption) Restore(ctx *RestoreCtx) error {
+func (t *TLSOption) Restore(ctx *format.RestoreCtx) error {
 	switch t.Type {
 	case TslNone:
 		ctx.WriteKeyWord("NONE")
@@ -1087,7 +1087,7 @@ type ResourceOption struct {
 	Count int64
 }
 
-func (r *ResourceOption) Restore(ctx *RestoreCtx) error {
+func (r *ResourceOption) Restore(ctx *format.RestoreCtx) error {
 	switch r.Type {
 	case MaxQueriesPerHour:
 		ctx.WriteKeyWord("MAX_QUERIES_PER_HOUR ")
@@ -1118,7 +1118,7 @@ type PasswordOrLockOption struct {
 	Count int64
 }
 
-func (p *PasswordOrLockOption) Restore(ctx *RestoreCtx) error {
+func (p *PasswordOrLockOption) Restore(ctx *format.RestoreCtx) error {
 	switch p.Type {
 	case PasswordExpire:
 		ctx.WriteKeyWord("PASSWORD EXPIRE")
@@ -1154,7 +1154,7 @@ type CreateUserStmt struct {
 }
 
 // Restore implements Node interface.
-func (n *CreateUserStmt) Restore(ctx *RestoreCtx) error {
+func (n *CreateUserStmt) Restore(ctx *format.RestoreCtx) error {
 	if n.IsCreateRole {
 		ctx.WriteKeyWord("CREATE ROLE ")
 	} else {
@@ -1240,7 +1240,7 @@ type AlterUserStmt struct {
 }
 
 // Restore implements Node interface.
-func (n *AlterUserStmt) Restore(ctx *RestoreCtx) error {
+func (n *AlterUserStmt) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("ALTER USER ")
 	if n.IfExists {
 		ctx.WriteKeyWord("IF EXISTS ")
@@ -1326,7 +1326,7 @@ type DropUserStmt struct {
 }
 
 // Restore implements Node interface.
-func (n *DropUserStmt) Restore(ctx *RestoreCtx) error {
+func (n *DropUserStmt) Restore(ctx *format.RestoreCtx) error {
 	if n.IsDropRole {
 		ctx.WriteKeyWord("DROP ROLE ")
 	} else {
@@ -1365,7 +1365,7 @@ type CreateBindingStmt struct {
 	HintedSel   StmtNode
 }
 
-func (n *CreateBindingStmt) Restore(ctx *RestoreCtx) error {
+func (n *CreateBindingStmt) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("CREATE ")
 	if n.GlobalScope {
 		ctx.WriteKeyWord("GLOBAL ")
@@ -1411,7 +1411,7 @@ type DropBindingStmt struct {
 	HintedSel   StmtNode
 }
 
-func (n *DropBindingStmt) Restore(ctx *RestoreCtx) error {
+func (n *DropBindingStmt) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("DROP ")
 	if n.GlobalScope {
 		ctx.WriteKeyWord("GLOBAL ")
@@ -1460,7 +1460,7 @@ type DoStmt struct {
 }
 
 // Restore implements Node interface.
-func (n *DoStmt) Restore(ctx *RestoreCtx) error {
+func (n *DoStmt) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("DO ")
 	for i, v := range n.Exprs {
 		if i != 0 {
@@ -1554,7 +1554,7 @@ type ShowSlow struct {
 }
 
 // Restore implements Node interface.
-func (n *ShowSlow) Restore(ctx *RestoreCtx) error {
+func (n *ShowSlow) Restore(ctx *format.RestoreCtx) error {
 	switch n.Tp {
 	case ShowSlowRecent:
 		ctx.WriteKeyWord("RECENT ")
@@ -1594,7 +1594,7 @@ type AdminStmt struct {
 }
 
 // Restore implements Node interface.
-func (n *AdminStmt) Restore(ctx *RestoreCtx) error {
+func (n *AdminStmt) Restore(ctx *format.RestoreCtx) error {
 	restoreTables := func() error {
 		for i, v := range n.Tables {
 			if i != 0 {
@@ -1754,7 +1754,7 @@ type PrivElem struct {
 }
 
 // Restore implements Node interface.
-func (n *PrivElem) Restore(ctx *RestoreCtx) error {
+func (n *PrivElem) Restore(ctx *format.RestoreCtx) error {
 	if n.Priv == 0 {
 		ctx.WritePlain("/* UNSUPPORTED TYPE */")
 	} else if n.Priv == mysql.AllPriv {
@@ -1810,7 +1810,7 @@ const (
 )
 
 // Restore implements Node interface.
-func (n ObjectTypeType) Restore(ctx *RestoreCtx) error {
+func (n ObjectTypeType) Restore(ctx *format.RestoreCtx) error {
 	switch n {
 	case ObjectTypeNone:
 		// do nothing
@@ -1844,7 +1844,7 @@ type GrantLevel struct {
 }
 
 // Restore implements Node interface.
-func (n *GrantLevel) Restore(ctx *RestoreCtx) error {
+func (n *GrantLevel) Restore(ctx *format.RestoreCtx) error {
 	switch n.Level {
 	case GrantLevelDB:
 		if n.DBName == "" {
@@ -1876,7 +1876,7 @@ type RevokeStmt struct {
 }
 
 // Restore implements Node interface.
-func (n *RevokeStmt) Restore(ctx *RestoreCtx) error {
+func (n *RevokeStmt) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("REVOKE ")
 	for i, v := range n.Privs {
 		if i != 0 {
@@ -1934,7 +1934,7 @@ type RevokeRoleStmt struct {
 }
 
 // Restore implements Node interface.
-func (n *RevokeRoleStmt) Restore(ctx *RestoreCtx) error {
+func (n *RevokeRoleStmt) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("REVOKE ")
 	for i, role := range n.Roles {
 		if i != 0 {
@@ -1979,7 +1979,7 @@ type GrantStmt struct {
 }
 
 // Restore implements Node interface.
-func (n *GrantStmt) Restore(ctx *RestoreCtx) error {
+func (n *GrantStmt) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("GRANT ")
 	for i, v := range n.Privs {
 		if i != 0 && v.Priv != 0 {
@@ -2076,7 +2076,7 @@ func (n *GrantRoleStmt) Accept(v Visitor) (Node, bool) {
 }
 
 // Restore implements Node interface.
-func (n *GrantRoleStmt) Restore(ctx *RestoreCtx) error {
+func (n *GrantRoleStmt) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("GRANT ")
 	if len(n.Roles) > 0 {
 		for i, role := range n.Roles {
@@ -2118,7 +2118,7 @@ type ShutdownStmt struct {
 }
 
 // Restore implements Node interface.
-func (n *ShutdownStmt) Restore(ctx *RestoreCtx) error {
+func (n *ShutdownStmt) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("SHUTDOWN")
 	return nil
 }
@@ -2187,7 +2187,7 @@ type HintTable struct {
 	QBName    model.CIStr
 }
 
-func (ht *HintTable) Restore(ctx *RestoreCtx) {
+func (ht *HintTable) Restore(ctx *format.RestoreCtx) {
 	if ht.DBName.L != "" {
 		ctx.WriteName(ht.DBName.String())
 		ctx.WriteKeyWord(".")
@@ -2200,7 +2200,7 @@ func (ht *HintTable) Restore(ctx *RestoreCtx) {
 }
 
 // Restore implements Node interface.
-func (n *TableOptimizerHint) Restore(ctx *RestoreCtx) error {
+func (n *TableOptimizerHint) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord(n.HintName.String())
 	ctx.WritePlain("(")
 	if n.QBName.L != "" {

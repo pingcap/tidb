@@ -18,7 +18,7 @@ import (
 	"io"
 
 	"github.com/pingcap/errors"
-	. "github.com/pingcap/parser/format"
+	"github.com/pingcap/parser/format"
 )
 
 // Op is opcode type.
@@ -141,7 +141,7 @@ func (o Op) Format(w io.Writer) {
 }
 
 // Restore the Op into a Writer
-func (o Op) Restore(ctx *RestoreCtx) error {
+func (o Op) Restore(ctx *format.RestoreCtx) error {
 	if v, ok := opsLiteral[o]; ok {
 		ctx.WriteKeyWord(v)
 		return nil

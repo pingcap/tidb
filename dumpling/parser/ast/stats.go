@@ -15,7 +15,7 @@ package ast
 
 import (
 	"github.com/pingcap/errors"
-	. "github.com/pingcap/parser/format"
+	"github.com/pingcap/parser/format"
 	"github.com/pingcap/parser/model"
 )
 
@@ -67,7 +67,7 @@ type AnalyzeOpt struct {
 }
 
 // Restore implements Node interface.
-func (n *AnalyzeTableStmt) Restore(ctx *RestoreCtx) error {
+func (n *AnalyzeTableStmt) Restore(ctx *format.RestoreCtx) error {
 	if n.Incremental {
 		ctx.WriteKeyWord("ANALYZE INCREMENTAL TABLE ")
 	} else {
@@ -139,7 +139,7 @@ type DropStatsStmt struct {
 }
 
 // Restore implements Node interface.
-func (n *DropStatsStmt) Restore(ctx *RestoreCtx) error {
+func (n *DropStatsStmt) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("DROP STATS ")
 	if err := n.Table.Restore(ctx); err != nil {
 		return errors.Annotate(err, "An error occurred while add table")
@@ -171,7 +171,7 @@ type LoadStatsStmt struct {
 }
 
 // Restore implements Node interface.
-func (n *LoadStatsStmt) Restore(ctx *RestoreCtx) error {
+func (n *LoadStatsStmt) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("LOAD STATS ")
 	ctx.WriteString(n.Path)
 	return nil

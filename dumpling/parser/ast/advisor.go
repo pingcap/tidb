@@ -14,7 +14,7 @@
 package ast
 
 import (
-	. "github.com/pingcap/parser/format"
+	"github.com/pingcap/parser/format"
 )
 
 var _ StmtNode = &IndexAdviseStmt{}
@@ -31,7 +31,7 @@ type IndexAdviseStmt struct {
 }
 
 // Restore implements Node Accept interface.
-func (n *IndexAdviseStmt) Restore(ctx *RestoreCtx) error {
+func (n *IndexAdviseStmt) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("INDEX ADVISE ")
 	if n.IsLocal {
 		ctx.WriteKeyWord("LOCAL ")
@@ -66,7 +66,7 @@ type MaxIndexNumClause struct {
 }
 
 // Restore for max index num clause
-func (n *MaxIndexNumClause) Restore(ctx *RestoreCtx) error {
+func (n *MaxIndexNumClause) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord(" MAX_IDXNUM")
 	if n.PerTable != UnspecifiedSize {
 		ctx.WriteKeyWord(" PER_TABLE ")
