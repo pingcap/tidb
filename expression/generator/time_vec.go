@@ -26,7 +26,9 @@ import (
 	. "github.com/pingcap/tidb/expression/generator/helper"
 )
 
-var addTime = template.Must(template.New("").Parse(`// Copyright 2019 PingCAP, Inc.
+var addOrSubTime = template.Must(template.New("").Parse(`
+{{ if eq $.FuncName "AddTime" }}
+// Copyright 2019 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -49,10 +51,10 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 )
-
+{{ end }}
 {{ define "SetNull" }}{{if .Output.Fixed}}result.SetNull(i, true){{else}}result.AppendNull(){{end}} // fixed: {{.Output.Fixed }}{{ end }}
 {{ define "ConvertStringToDuration" }}
-		{{ if ne .SigName "builtinAddStringAndStringSig" }}
+		{{ if and (ne .SigName "builtinAddStringAndStringSig") (ne .SigName "builtinSubStringAndStringSig") }}
 		if !isDuration(arg1) {
 			{{ template "SetNull" . }}
 			continue
@@ -68,27 +70,8 @@ import (
 			return err
 		}
 {{ end }}
-{{ define "strDurationAddDuration" }}
-		var output string
-		if isDuration(arg0) {
-			output, err = strDurationAddDuration(sc, arg0, arg1Duration)
-			if err != nil {
-				if terror.ErrorEqual(err, types.ErrTruncatedWrongVal) {
-					sc.AppendWarning(err)
-					{{ template "SetNull" . }}
-					continue
-				}
-				return err
-			}
-		} else {
-			output, err = strDatetimeAddDuration(sc, arg0, arg1Duration)
-			if err != nil {
-				return err
-			}
-		}
-{{ end }}
 
-{{ range . }}
+{{ range .Sigs }}
 {{ if .AllNull}}
 func (b *{{.SigName}}) vecEval{{ .Output.TypeName }}(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
@@ -120,7 +103,7 @@ func (b *{{.SigName}}) vecEval{{ .Output.TypeName }}(input *chunk.Chunk, result 
 	}
 {{ end }}
 
-{{ if eq .SigName "builtinAddStringAndStringSig" }}
+{{ if or (eq .SigName "builtinAddStringAndStringSig") (eq .SigName "builtinSubStringAndStringSig") }}
 	arg1Type := b.args[1].GetType()
 	if mysql.HasBinaryFlag(arg1Type.Flag) {
 		result.Reserve{{ .Output.TypeNameInColumn }}(n)
@@ -183,49 +166,154 @@ func (b *{{.SigName}}) vecEval{{ .Output.TypeName }}(input *chunk.Chunk, result 
 		{{ end }}
 
 		// calculate
-	{{ if eq .SigName "builtinAddDatetimeAndDurationSig" }}
+	{{ if or (eq .SigName "builtinAddDatetimeAndDurationSig") (eq .SigName "builtinSubDatetimeAndDurationSig") }}
+		{{ if eq $.FuncName "AddTime" }}
 		output, err := arg0.Add(b.ctx.GetSessionVars().StmtCtx, types.Duration{Duration: arg1, Fsp: -1})
+		{{ else }}
+		sc := b.ctx.GetSessionVars().StmtCtx
+		arg1Duration := types.Duration{Duration: arg1, Fsp: -1}
+		arg1time, err := arg1Duration.ConvertToTime(sc, mysql.TypeDatetime)
 		if err != nil {
 			return err
 		}
-	{{ else if eq .SigName "builtinAddDatetimeAndStringSig" }}
+		tmpDuration := arg0.Sub(sc, &arg1time)
+		output, err := tmpDuration.ConvertToTime(sc, arg0.Type())
+		{{ end }}
+		if err != nil {
+			return err
+		}
+		
+	{{ else if or (eq .SigName "builtinAddDatetimeAndStringSig") (eq .SigName "builtinSubDatetimeAndStringSig") }}
+		{{ if eq $.FuncName "AddTime" }}
 		{{ template "ConvertStringToDuration" . }}
 		output, err := arg0.Add(sc, arg1Duration)
+		{{ else }}
+		if !isDuration(arg1) {
+			result.SetNull(i, true) // fixed: true
+			continue
+		}
+		sc := b.ctx.GetSessionVars().StmtCtx
+		arg1Duration, err := types.ParseDuration(sc, arg1, types.GetFsp(arg1))
+		if err != nil {
+			if terror.ErrorEqual(err, types.ErrTruncatedWrongVal) {
+				sc.AppendWarning(err)
+				result.SetNull(i, true) // fixed: true
+				continue
+			}
+			return err
+		}
+		arg1time, err := arg1Duration.ConvertToTime(sc, mysql.TypeDatetime)
 		if err != nil {
 			return err
 		}
-	{{ else if eq .SigName "builtinAddDurationAndDurationSig" }}
+		tmpDuration := arg0.Sub(sc, &arg1time)
+		output, err := tmpDuration.ConvertToTime(sc, mysql.TypeDatetime)
+		{{ end }}
+		if err != nil {
+			return err
+		}
+	{{ else if or (eq .SigName "builtinAddDurationAndDurationSig") (eq .SigName "builtinSubDurationAndDurationSig") }}
+		{{ if eq $.FuncName "AddTime" }}
 		output, err := types.AddDuration(arg0, arg1)
 		if err != nil {
 			return err
 		}
-	{{ else if eq .SigName "builtinAddDurationAndStringSig" }}
+		{{ else }}
+		output, err := types.SubDuration(arg0, arg1)
+		if err != nil {
+			return err
+		}
+		{{ end }}
+	{{ else if or (eq .SigName "builtinAddDurationAndStringSig") (eq .SigName "builtinSubDurationAndStringSig") }}
 		{{ template "ConvertStringToDuration" . }}
+		{{ if eq $.FuncName "AddTime" }}
 		output, err := types.AddDuration(arg0, arg1Duration.Duration)
 		if err != nil {
 			return err
 		}
-	{{ else if eq .SigName "builtinAddStringAndDurationSig" }}
+		{{ else }}
+		output, err := types.SubDuration(arg0, arg1Duration.Duration)
+		if err != nil {
+			return err
+		}
+		{{ end }}
+	{{ else if or (eq .SigName "builtinAddStringAndDurationSig") (eq .SigName "builtinSubStringAndDurationSig") }}
 		sc := b.ctx.GetSessionVars().StmtCtx
 		fsp1 := int8(b.args[1].GetType().Decimal)
 		arg1Duration := types.Duration{Duration: arg1, Fsp: fsp1}
-		{{ template "strDurationAddDuration" . }}
-	{{ else if eq .SigName "builtinAddStringAndStringSig" }}
+		var output string
+		if isDuration(arg0) {
+			{{ if eq $.FuncName "AddTime" }}
+			output, err = strDurationAddDuration(sc, arg0, arg1Duration)
+			{{ else }}
+			output, err = strDurationSubDuration(sc, arg0, arg1Duration)
+			{{ end }}
+			if err != nil {
+				if terror.ErrorEqual(err, types.ErrTruncatedWrongVal) {
+					sc.AppendWarning(err)
+					{{ template "SetNull" . }}
+					continue
+				}
+				return err
+			}
+		} else {
+			{{ if eq $.FuncName "AddTime" }}
+			output, err = strDatetimeAddDuration(sc, arg0, arg1Duration)
+			{{ else }}
+			output, err = strDatetimeSubDuration(sc, arg0, arg1Duration)
+			{{ end }}
+			if err != nil {
+				return err
+			}
+		}
+	{{ else if or (eq .SigName "builtinAddStringAndStringSig") (eq .SigName "builtinSubStringAndStringSig") }}
 		{{ template "ConvertStringToDuration" . }}
-		{{ template "strDurationAddDuration" . }}
-	{{ else if eq .SigName "builtinAddDateAndDurationSig" }}
+		var output string
+		if isDuration(arg0) {
+			{{ if eq $.FuncName "AddTime" }}
+			output, err = strDurationAddDuration(sc, arg0, arg1Duration)
+			{{ else }}
+			output, err = strDurationSubDuration(sc, arg0, arg1Duration)
+			{{ end }}
+			if err != nil {
+				if terror.ErrorEqual(err, types.ErrTruncatedWrongVal) {
+					sc.AppendWarning(err)
+					{{ template "SetNull" . }}
+					continue
+				}
+				return err
+			}
+		} else {
+			{{ if eq $.FuncName "AddTime" }}
+			output, err = strDatetimeAddDuration(sc, arg0, arg1Duration)
+			{{ else }}
+			output, err = strDatetimeSubDuration(sc, arg0, arg1Duration)
+			{{ end }}
+			if err != nil {
+				return err
+			}
+		}
+	{{ else if or (eq .SigName "builtinAddDateAndDurationSig") (eq .SigName "builtinSubDateAndDurationSig") }}
 		fsp0 := int8(b.args[0].GetType().Decimal)
 		fsp1 := int8(b.args[1].GetType().Decimal)
 		arg1Duration := types.Duration{Duration: arg1, Fsp: fsp1}
+		{{ if eq $.FuncName "AddTime" }}
 		sum, err := types.Duration{Duration: arg0, Fsp: fsp0}.Add(arg1Duration)
+		{{ else }}
+		sum, err := types.Duration{Duration: arg0, Fsp: fsp0}.Sub(arg1Duration)
+		{{ end }}
 		if err != nil {
 			return err
 		}
 		output := sum.String()
-	{{ else if eq .SigName "builtinAddDateAndStringSig" }}
+	{{ else if or (eq .SigName "builtinAddDateAndStringSig") (eq .SigName "builtinSubDateAndStringSig") }}
 		{{ template "ConvertStringToDuration" . }}
 		fsp0 := int8(b.args[0].GetType().Decimal)
+		{{ if eq $.FuncName "AddTime" }}
 		sum, err := types.Duration{Duration: arg0, Fsp: fsp0}.Add(arg1Duration)
+		{{ else }}
+		sum, err := types.Duration{Duration: arg0, Fsp: fsp0}.Sub(arg1Duration)
+		{{ end }}
 		if err != nil {
 			return err
 		}
@@ -570,7 +658,7 @@ type gener struct {
 func (g gener) gen() interface{} {
 	result := g.defaultGener.gen()
 	if _, ok := result.(string); ok {
-		dg := &defaultGener{eType: types.ETDuration, nullRation: 0}
+		dg := newDefaultGener(0, types.ETDuration)
 		d := dg.gen().(types.Duration)
 		if int8(d.Duration)%2 == 0 {
 			d.Fsp = 0
@@ -592,17 +680,17 @@ func (g gener) gen() interface{} {
 				childrenTypes: []types.EvalType{types.ET{{ $sig.TypeA.ETName }}, types.ET{{ $sig.TypeB.ETName }}, types.ETString},
 				geners: []dataGenerator{
 					{{- if eq $sig.TypeA.ETName "String"}}
-						&dateStrGener{NullRation: 0.2},
+						&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 					{{- else if eq $sig.TypeA.ETName "Int"}}
-						&dateTimeIntGener{nullRation: 0.2},
+						&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 					{{- else }}
-						&defaultGener{eType: types.ET{{$sig.TypeA.ETName}}, nullRation: 0.2},
+						newDefaultGener(0.2, types.ET{{$sig.TypeA.ETName}}),
 					{{- end }}
 
 					{{- if eq $sig.TypeB.ETName "String" }}
-						&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32}},
+						&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 					{{- else }}
-						&defaultGener{eType: types.ET{{$sig.TypeB.ETName}}, nullRation: 0.2},
+						newDefaultGener(0.2, types.ET{{$sig.TypeB.ETName}}),
 					{{- end }}
 				},
 				constants: []*Constant{nil, nil, {Value: types.NewStringDatum("{{$unit}}"), RetType: types.NewFieldType(mysql.TypeString)}},
@@ -612,12 +700,9 @@ func (g gener) gen() interface{} {
 	{{- end }}
 {{ end }}
 
-{{/* Add more test cases here if we have more functions in this file */}}
-var vecBuiltin{{.Category}}GeneratedCases = map[string][]vecExprBenchCase{
-{{- range .Functions }}
-	{{- if eq .FuncName "AddTime" }}
-		ast.AddTime: {
-		{{ range .Sigs }} // {{ .SigName }}
+{{ define "addOrSubTimeCases" }}
+	{{- range $sig := .Sigs }}
+		// {{ $sig.SigName }}
 			{
 				retEvalType: types.ET{{ .Output.ETName }},
 				{{- if eq .TestTypeA "" }}
@@ -630,15 +715,28 @@ var vecBuiltin{{.Category}}GeneratedCases = map[string][]vecExprBenchCase{
 				{{- end }}
 				geners: []dataGenerator{
 					{{- if eq .TestTypeA "" }}
-					gener{defaultGener{eType: types.ET{{.TypeA.ETName}}, nullRation: 0.2}},
-					gener{defaultGener{eType: types.ET{{.TypeB.ETName}}, nullRation: 0.2}},
+					gener{*newDefaultGener(0.2, types.ET{{.TypeA.ETName}})},
+					gener{*newDefaultGener(0.2, types.ET{{.TypeB.ETName}})},
 					{{- else }}
-					gener{defaultGener{eType: types.ET{{ .TestTypeA }}, nullRation: 0.2}},
-					gener{defaultGener{eType: types.ET{{ .TestTypeB }}, nullRation: 0.2}},
+					gener{*newDefaultGener(0.2, types.ET{{ .TestTypeA }})},
+					gener{*newDefaultGener(0.2, types.ET{{ .TestTypeB }})},
 					{{- end }}
 				},
 			},
-		{{ end }}
+	{{- end }}
+{{ end }}
+
+{{/* Add more test cases here if we have more functions in this file */}}
+var vecBuiltin{{.Category}}GeneratedCases = map[string][]vecExprBenchCase{
+{{- range .Functions }}
+	{{- if eq .FuncName "AddTime" }}
+		ast.AddTime: {
+			{{- template "addOrSubTimeCases" . -}}
+		},
+	{{ end }}
+	{{- if eq .FuncName "SubTime" }}
+		ast.SubTime: {
+			{{- template "addOrSubTimeCases" . -}}
 		},
 	{{ end }}
 	{{- if eq .FuncName "TimeDiff" }}
@@ -651,30 +749,30 @@ var vecBuiltin{{.Category}}GeneratedCases = map[string][]vecExprBenchCase{
 			// builtinDurationDurationTimeDiffSig
 			{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETDuration, types.ETDuration}},
 			// builtinDurationStringTimeDiffSig
-			{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETDuration, types.ETString}, geners: []dataGenerator{nil, &dateStrGener{Year: 2019, Month: 10}}},
-			{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETDuration, types.ETString}, geners: []dataGenerator{nil, &dateTimeStrGener{Year: 2019, Month: 10}}},
-			{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETDuration, types.ETString}, geners: []dataGenerator{nil, &dateTimeStrGener{Year: 2019, Month: 10, Fsp: 4}}},
+			{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETDuration, types.ETString}, geners: []dataGenerator{nil, &dateStrGener{Year: 2019, Month: 10, randGen: newDefaultRandGen()}}},
+			{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETDuration, types.ETString}, geners: []dataGenerator{nil, &dateTimeStrGener{Year: 2019, Month: 10, randGen: newDefaultRandGen()}}},
+			{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETDuration, types.ETString}, geners: []dataGenerator{nil, &dateTimeStrGener{Year: 2019, Month: 10, Fsp: 4, randGen: newDefaultRandGen()}}},
 			// builtinTimeTimeTimeDiffSig
-			{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETDatetime, types.ETDatetime}, geners: []dataGenerator{&dateTimeGener{Year: 2019, Month: 10}, &dateTimeGener{Year: 2019, Month: 10}}},
-			{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETDatetime, types.ETTimestamp}, geners: []dataGenerator{&dateTimeGener{Year: 2019, Month: 10}, &dateTimeGener{Year: 2019, Month: 10}}},
-			{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETTimestamp, types.ETTimestamp}, geners: []dataGenerator{&dateTimeGener{Year: 2019, Month: 10}, &dateTimeGener{Year: 2019, Month: 10}}},
-			{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETTimestamp, types.ETDatetime}, geners: []dataGenerator{&dateTimeGener{Year: 2019, Month: 10}, &dateTimeGener{Year: 2019, Month: 10}}},
+			{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETDatetime, types.ETDatetime}, geners: []dataGenerator{&dateTimeGener{Year: 2019, Month: 10, randGen: newDefaultRandGen()}, &dateTimeGener{Year: 2019, Month: 10, randGen: newDefaultRandGen()}}},
+			{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETDatetime, types.ETTimestamp}, geners: []dataGenerator{&dateTimeGener{Year: 2019, Month: 10, randGen: newDefaultRandGen()}, &dateTimeGener{Year: 2019, Month: 10, randGen: newDefaultRandGen()}}},
+			{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETTimestamp, types.ETTimestamp}, geners: []dataGenerator{&dateTimeGener{Year: 2019, Month: 10, randGen: newDefaultRandGen()}, &dateTimeGener{Year: 2019, Month: 10, randGen: newDefaultRandGen()}}},
+			{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETTimestamp, types.ETDatetime}, geners: []dataGenerator{&dateTimeGener{Year: 2019, Month: 10, randGen: newDefaultRandGen()}, &dateTimeGener{Year: 2019, Month: 10, randGen: newDefaultRandGen()}}},
 			// builtinTimeStringTimeDiffSig
-			{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETDatetime, types.ETString}, geners: []dataGenerator{&dateTimeGener{Year: 2019, Month: 10}, &dateStrGener{Year: 2019, Month: 10}}},
-			{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETDatetime, types.ETString}, geners: []dataGenerator{&dateTimeGener{Year: 2019, Month: 10}, &dateTimeStrGener{Year: 2019, Month: 10}}},
-			{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETTimestamp, types.ETString}, geners: []dataGenerator{&dateTimeGener{Year: 2019, Month: 10}, &dateStrGener{Year: 2019, Month: 10}}},
-			{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETTimestamp, types.ETString}, geners: []dataGenerator{&dateTimeGener{Year: 2019, Month: 10}, &dateTimeStrGener{Year: 2019, Month: 10}}},
+			{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETDatetime, types.ETString}, geners: []dataGenerator{&dateTimeGener{Year: 2019, Month: 10, randGen: newDefaultRandGen()}, &dateStrGener{Year: 2019, Month: 10, randGen: newDefaultRandGen()}}},
+			{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETDatetime, types.ETString}, geners: []dataGenerator{&dateTimeGener{Year: 2019, Month: 10, randGen: newDefaultRandGen()}, &dateTimeStrGener{Year: 2019, Month: 10, randGen: newDefaultRandGen()}}},
+			{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETTimestamp, types.ETString}, geners: []dataGenerator{&dateTimeGener{Year: 2019, Month: 10, randGen: newDefaultRandGen()}, &dateStrGener{Year: 2019, Month: 10, randGen: newDefaultRandGen()}}},
+			{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETTimestamp, types.ETString}, geners: []dataGenerator{&dateTimeGener{Year: 2019, Month: 10, randGen: newDefaultRandGen()}, &dateTimeStrGener{Year: 2019, Month: 10, randGen: newDefaultRandGen()}}},
 			// builtinStringDurationTimeDiffSig
-			{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETString, types.ETDuration}, geners: []dataGenerator{&dateStrGener{Year: 2019, Month: 10}, nil}},
-			{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETString, types.ETDuration}, geners: []dataGenerator{&dateTimeStrGener{Year: 2019, Month: 10}, nil}},
+			{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETString, types.ETDuration}, geners: []dataGenerator{&dateStrGener{Year: 2019, Month: 10, randGen: newDefaultRandGen()}, nil}},
+			{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETString, types.ETDuration}, geners: []dataGenerator{&dateTimeStrGener{Year: 2019, Month: 10, randGen: newDefaultRandGen()}, nil}},
 			// builtinStringTimeTimeDiffSig
-			{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETString, types.ETDatetime}, geners: []dataGenerator{&dateStrGener{Year: 2019, Month: 10}, &dateTimeGener{Year: 2019, Month: 10}}},
-			{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETString, types.ETDatetime}, geners: []dataGenerator{&dateTimeStrGener{Year: 2019, Month: 10}, &dateTimeGener{Year: 2019, Month: 10}}},
-			{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETString, types.ETTimestamp}, geners: []dataGenerator{&dateStrGener{Year: 2019, Month: 10}, &dateTimeGener{Year: 2019, Month: 10}}},
-			{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETString, types.ETTimestamp}, geners: []dataGenerator{&dateTimeStrGener{Year: 2019, Month: 10}, &dateTimeGener{Year: 2019, Month: 10}}},
+			{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETString, types.ETDatetime}, geners: []dataGenerator{&dateStrGener{Year: 2019, Month: 10, randGen: newDefaultRandGen()}, &dateTimeGener{Year: 2019, Month: 10, randGen: newDefaultRandGen()}}},
+			{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETString, types.ETDatetime}, geners: []dataGenerator{&dateTimeStrGener{Year: 2019, Month: 10, randGen: newDefaultRandGen()}, &dateTimeGener{Year: 2019, Month: 10, randGen: newDefaultRandGen()}}},
+			{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETString, types.ETTimestamp}, geners: []dataGenerator{&dateStrGener{Year: 2019, Month: 10, randGen: newDefaultRandGen()}, &dateTimeGener{Year: 2019, Month: 10, randGen: newDefaultRandGen()}}},
+			{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETString, types.ETTimestamp}, geners: []dataGenerator{&dateTimeStrGener{Year: 2019, Month: 10, randGen: newDefaultRandGen()}, &dateTimeGener{Year: 2019, Month: 10, randGen: newDefaultRandGen()}}},
 			// builtinStringStringTimeDiffSig
-			{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETString, types.ETString}, geners: []dataGenerator{&dateStrGener{Year: 2019, Month: 10}, &dateTimeStrGener{Year: 2019, Month: 10}}},
-			{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETString, types.ETString}, geners: []dataGenerator{&dateTimeStrGener{Year: 2019, Month: 10}, &dateStrGener{Year: 2019, Month: 10}}},
+			{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETString, types.ETString}, geners: []dataGenerator{&dateStrGener{Year: 2019, Month: 10, randGen: newDefaultRandGen()}, &dateTimeStrGener{Year: 2019, Month: 10, randGen: newDefaultRandGen()}}},
+			{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETString, types.ETString}, geners: []dataGenerator{&dateTimeStrGener{Year: 2019, Month: 10, randGen: newDefaultRandGen()}, &dateStrGener{Year: 2019, Month: 10, randGen: newDefaultRandGen()}}},
 		},
 	{{ end }}
 	{{- if eq .FuncName "AddDate" }}
@@ -690,11 +788,11 @@ var vecBuiltin{{.Category}}GeneratedCases = map[string][]vecExprBenchCase{
 {{ end }}
 }
 
-func (s *testEvaluatorSuite) TestVectorizedBuiltin{{.Category}}EvalOneVecGenerated(c *C) {
+func (s *testVectorizeSuite1) TestVectorizedBuiltin{{.Category}}EvalOneVecGenerated(c *C) {
 	testVectorizedEvalOneVec(c, vecBuiltin{{.Category}}GeneratedCases)
 }
 
-func (s *testEvaluatorSuite) TestVectorizedBuiltin{{.Category}}FuncGenerated(c *C) {
+func (s *testVectorizeSuite1) TestVectorizedBuiltin{{.Category}}FuncGenerated(c *C) {
 	testVectorizedBuiltinFunc(c, vecBuiltin{{.Category}}GeneratedCases)
 }
 
@@ -720,6 +818,21 @@ var addTimeSigsTmpl = []sig{
 	{SigName: "builtinAddTimeDateTimeNullSig", TypeA: TypeDatetime, TypeB: TypeDatetime, Output: TypeDatetime, AllNull: true},
 	{SigName: "builtinAddTimeStringNullSig", TypeA: TypeDatetime, TypeB: TypeDatetime, Output: TypeString, AllNull: true, FieldTypeA: "Date", FieldTypeB: "Datetime"},
 	{SigName: "builtinAddTimeDurationNullSig", TypeA: TypeDuration, TypeB: TypeDatetime, Output: TypeDuration, AllNull: true},
+}
+
+var subTimeSigsTmpl = []sig{
+	{SigName: "builtinSubDatetimeAndDurationSig", TypeA: TypeDatetime, TypeB: TypeDuration, Output: TypeDatetime},
+	{SigName: "builtinSubDatetimeAndStringSig", TypeA: TypeDatetime, TypeB: TypeString, Output: TypeDatetime},
+	{SigName: "builtinSubDurationAndDurationSig", TypeA: TypeDuration, TypeB: TypeDuration, Output: TypeDuration},
+	{SigName: "builtinSubDurationAndStringSig", TypeA: TypeDuration, TypeB: TypeString, Output: TypeDuration},
+	{SigName: "builtinSubStringAndDurationSig", TypeA: TypeString, TypeB: TypeDuration, Output: TypeString},
+	{SigName: "builtinSubStringAndStringSig", TypeA: TypeString, TypeB: TypeString, Output: TypeString},
+	{SigName: "builtinSubDateAndDurationSig", TypeA: TypeDuration, TypeB: TypeDuration, Output: TypeString, FieldTypeA: "Date", FieldTypeB: "Duration", TestTypeA: "Datetime", TestTypeB: "Duration"},
+	{SigName: "builtinSubDateAndStringSig", TypeA: TypeDuration, TypeB: TypeString, Output: TypeString, FieldTypeA: "Date", FieldTypeB: "String", TestTypeA: "Datetime", TestTypeB: "String"},
+
+	{SigName: "builtinSubTimeDateTimeNullSig", TypeA: TypeDatetime, TypeB: TypeDatetime, Output: TypeDatetime, AllNull: true},
+	{SigName: "builtinSubTimeStringNullSig", TypeA: TypeDatetime, TypeB: TypeDatetime, Output: TypeString, AllNull: true, FieldTypeA: "Date", FieldTypeB: "Datetime"},
+	{SigName: "builtinSubTimeDurationNullSig", TypeA: TypeDuration, TypeB: TypeDatetime, Output: TypeDuration, AllNull: true},
 }
 
 var timeDiffSigsTmpl = []sig{
@@ -791,6 +904,7 @@ var tmplVal = struct {
 	Category: "Time",
 	Functions: []function{
 		{FuncName: "AddTime", Sigs: addTimeSigsTmpl},
+		{FuncName: "SubTime", Sigs: subTimeSigsTmpl},
 		{FuncName: "TimeDiff", Sigs: timeDiffSigsTmpl},
 		{FuncName: "AddDate", Sigs: addDataSigsTmpl},
 		{FuncName: "SubDate", Sigs: subDataSigsTmpl},
@@ -799,7 +913,11 @@ var tmplVal = struct {
 
 func generateDotGo(fileName string) error {
 	w := new(bytes.Buffer)
-	err := addTime.Execute(w, addTimeSigsTmpl)
+	err := addOrSubTime.Execute(w, function{FuncName: "AddTime", Sigs: addTimeSigsTmpl})
+	if err != nil {
+		return err
+	}
+	err = addOrSubTime.Execute(w, function{FuncName: "SubTime", Sigs: subTimeSigsTmpl})
 	if err != nil {
 		return err
 	}

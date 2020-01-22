@@ -129,7 +129,8 @@ func (t *copTask) finishIndexPlan() {
 	t.indexPlanFinished = true
 	sessVars := t.indexPlan.SCtx().GetSessionVars()
 	// Network cost of transferring rows of index scan to TiDB.
-	t.cst += cnt * sessVars.NetworkFactor * t.tblColHists.GetAvgRowSize(t.indexPlan.Schema().Columns, true)
+	t.cst += cnt * sessVars.NetworkFactor * t.tblColHists.GetAvgRowSize(t.indexPlan.SCtx(), t.indexPlan.Schema().Columns, true, false)
+
 	if t.tablePlan == nil {
 		return
 	}
@@ -138,7 +139,8 @@ func (t *copTask) finishIndexPlan() {
 	var p PhysicalPlan
 	for p = t.indexPlan; len(p.Children()) > 0; p = p.Children()[0] {
 	}
-	rowSize := t.tblColHists.GetIndexAvgRowSize(t.tblCols, p.(*PhysicalIndexScan).Index.Unique)
+	rowSize := t.tblColHists.GetIndexAvgRowSize(t.indexPlan.SCtx(), t.tblCols, p.(*PhysicalIndexScan).Index.Unique)
+
 	t.cst += cnt * rowSize * sessVars.ScanFactor
 }
 
@@ -161,6 +163,11 @@ func (p *basePhysicalPlan) attach2Task(tasks ...task) task {
 	return attachPlan2Task(p.self, t)
 }
 
+func (p *PhysicalUnionScan) attach2Task(tasks ...task) task {
+	p.stats = tasks[0].plan().statsInfo()
+	return p.basePhysicalPlan.attach2Task(tasks...)
+}
+
 func (p *PhysicalApply) attach2Task(tasks ...task) task {
 	lTask := finishCopTask(p.ctx, tasks[0].copy())
 	rTask := finishCopTask(p.ctx, tasks[1].copy())
@@ -168,26 +175,35 @@ func (p *PhysicalApply) attach2Task(tasks ...task) task {
 	p.schema = BuildPhysicalJoinSchema(p.JoinType, p)
 	return &rootTask{
 		p:   p,
-		cst: p.GetCost(lTask.count(), rTask.count()) + lTask.cost(),
+		cst: p.GetCost(lTask.count(), rTask.count(), lTask.cost(), rTask.cost()),
 	}
 }
 
 // GetCost computes the cost of apply operator.
-func (p *PhysicalApply) GetCost(lCount float64, rCount float64) float64 {
+func (p *PhysicalApply) GetCost(lCount, rCount, lCost, rCost float64) float64 {
 	var cpuCost float64
 	sessVars := p.ctx.GetSessionVars()
 	if len(p.LeftConditions) > 0 {
 		cpuCost += lCount * sessVars.CPUFactor
-		lCount *= selectionFactor
+		lCount *= SelectionFactor
 	}
 	if len(p.RightConditions) > 0 {
 		cpuCost += lCount * rCount * sessVars.CPUFactor
-		rCount *= selectionFactor
+		rCount *= SelectionFactor
 	}
 	if len(p.EqualConditions)+len(p.OtherConditions) > 0 {
-		cpuCost += lCount * rCount * sessVars.CPUFactor
+		if p.JoinType == SemiJoin || p.JoinType == AntiSemiJoin ||
+			p.JoinType == LeftOuterSemiJoin || p.JoinType == AntiLeftOuterSemiJoin {
+			cpuCost += lCount * rCount * sessVars.CPUFactor * 0.5
+		} else {
+			cpuCost += lCount * rCount * sessVars.CPUFactor
+		}
 	}
-	return cpuCost
+	// Apply uses a NestedLoop method for execution.
+	// For every row from the left(outer) side, it executes
+	// the whole right(inner) plan tree. So the cost of apply
+	// should be : apply cost + left cost + left count * right cost
+	return cpuCost + lCost + lCount*rCost
 }
 
 func (p *PhysicalIndexMergeJoin) attach2Task(tasks ...task) task {
@@ -215,7 +231,7 @@ func (p *PhysicalIndexMergeJoin) GetCost(outerTask, innerTask task) float64 {
 	// summed length of left/right conditions.
 	if len(p.LeftConditions)+len(p.RightConditions) > 0 {
 		cpuCost += sessVars.CPUFactor * outerCnt
-		outerCnt *= selectionFactor
+		outerCnt *= SelectionFactor
 	}
 	// Cost of extracting lookup keys.
 	innerCPUCost := sessVars.CPUFactor * outerCnt
@@ -293,7 +309,7 @@ func (p *PhysicalIndexHashJoin) GetCost(outerTask, innerTask task) float64 {
 	// summed length of left/right conditions.
 	if len(p.LeftConditions)+len(p.RightConditions) > 0 {
 		cpuCost += sessVars.CPUFactor * outerCnt
-		outerCnt *= selectionFactor
+		outerCnt *= SelectionFactor
 	}
 	// Cost of extracting lookup keys.
 	innerCPUCost := sessVars.CPUFactor * outerCnt
@@ -369,7 +385,7 @@ func (p *PhysicalIndexJoin) GetCost(outerTask, innerTask task) float64 {
 	// summed length of left/right conditions.
 	if len(p.LeftConditions)+len(p.RightConditions) > 0 {
 		cpuCost += sessVars.CPUFactor * outerCnt
-		outerCnt *= selectionFactor
+		outerCnt *= SelectionFactor
 	}
 	// Cost of extracting lookup keys.
 	innerCPUCost := sessVars.CPUFactor * outerCnt
@@ -410,14 +426,13 @@ func (p *PhysicalIndexJoin) GetCost(outerTask, innerTask task) float64 {
 }
 
 func (p *PhysicalHashJoin) avgRowSize(inner PhysicalPlan) (size float64) {
-	padChar := p.ctx.GetSessionVars().StmtCtx.PadCharToFullLength
 	if inner.statsInfo().HistColl != nil {
-		size = inner.statsInfo().HistColl.GetAvgRowSizeListInDisk(inner.Schema().Columns, padChar)
+		size = inner.statsInfo().HistColl.GetAvgRowSizeListInDisk(inner.Schema().Columns)
 	} else {
 		// Estimate using just the type info.
 		cols := inner.Schema().Columns
 		for _, col := range cols {
-			size += float64(chunk.EstimateTypeWidth(padChar, col.GetType()))
+			size += float64(chunk.EstimateTypeWidth(col.GetType()))
 		}
 	}
 	return
@@ -474,9 +489,9 @@ func (p *PhysicalHashJoin) GetCost(lCnt, rCnt float64) float64 {
 	probeDiskCost := numPairs * sessVars.DiskFactor * rowSize
 	// Cost of evaluating outer filter.
 	if len(p.LeftConditions)+len(p.RightConditions) > 0 {
-		// Input outer count for the above compution should be adjusted by selectionFactor.
-		probeCost *= selectionFactor
-		probeDiskCost *= selectionFactor
+		// Input outer count for the above compution should be adjusted by SelectionFactor.
+		probeCost *= SelectionFactor
+		probeDiskCost *= SelectionFactor
 		probeCost += probeCnt * sessVars.CPUFactor
 	}
 	diskCost += probeDiskCost
@@ -548,7 +563,7 @@ func (p *PhysicalMergeJoin) GetCost(lCnt, rCnt float64) float64 {
 	// Cost of evaluating outer filters.
 	var cpuCost float64
 	if len(p.LeftConditions)+len(p.RightConditions) > 0 {
-		probeCost *= selectionFactor
+		probeCost *= SelectionFactor
 		cpuCost += outerCnt * sessVars.CPUFactor
 	}
 	cpuCost += probeCost
@@ -617,7 +632,7 @@ func finishCopTask(ctx sessionctx.Context, task task) task {
 	t.finishIndexPlan()
 	// Network cost of transferring rows of table scan to TiDB.
 	if t.tablePlan != nil {
-		t.cst += t.count() * sessVars.NetworkFactor * t.tblColHists.GetAvgRowSize(t.tablePlan.Schema().Columns, false)
+		t.cst += t.count() * sessVars.NetworkFactor * t.tblColHists.GetAvgRowSize(ctx, t.tablePlan.Schema().Columns, false, false)
 	}
 	t.cst /= copIterWorkers
 	newTask := &rootTask{
@@ -938,7 +953,7 @@ func (sel *PhysicalSelection) attach2Task(tasks ...task) task {
 	return t
 }
 
-// CheckAggCanPushCop checks whether the aggFuncs with groupByItems can
+// CheckAggCanPushCop checks whether the aggFuncs and groupByItems can
 // be pushed down to coprocessor.
 func CheckAggCanPushCop(sctx sessionctx.Context, aggFuncs []*aggregation.AggFuncDesc, groupByItems []expression.Expression, copToFlash bool) bool {
 	sc := sctx.GetSessionVars().StmtCtx
@@ -959,6 +974,9 @@ func CheckAggCanPushCop(sctx sessionctx.Context, aggFuncs []*aggregation.AggFunc
 		if pb == nil {
 			return false
 		}
+	}
+	if expression.ContainVirtualColumn(groupByItems) {
+		return false
 	}
 	_, _, remained := expression.ExpressionsToPB(sc, groupByItems, client)
 	if len(remained) > 0 {

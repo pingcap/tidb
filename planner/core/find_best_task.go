@@ -35,7 +35,10 @@ import (
 )
 
 const (
-	selectionFactor = 0.8
+	// SelectionFactor is the default factor of the selectivity.
+	// For example, If we have no idea how to estimate the selectivity
+	// of a Selection or a JoinCondition, we can use this default value.
+	SelectionFactor = 0.8
 	distinctFactor  = 0.8
 )
 
@@ -173,6 +176,11 @@ func (p *baseLogicalPlan) findBestTask(prop *property.PhysicalProperty) (bestTas
 			curTask = enforceProperty(prop, curTask, p.basePlan.ctx)
 		}
 
+		// optimize by shuffle executor to running in parallel manner.
+		if prop.IsEmpty() {
+			curTask = optimizeByShuffle(pp, curTask, p.basePlan.ctx)
+		}
+
 		// get the most efficient one.
 		if curTask.cost() < bestTask.cost() {
 			bestTask = curTask
@@ -188,8 +196,10 @@ func (p *LogicalMemTable) findBestTask(prop *property.PhysicalProperty) (t task,
 		return invalidTask, nil
 	}
 	memTable := PhysicalMemTable{
-		Table:   p.tableInfo,
-		Columns: p.tableInfo.Columns,
+		DBName:    p.dbName,
+		Table:     p.tableInfo,
+		Columns:   p.tableInfo.Columns,
+		Extractor: p.Extractor,
 	}.Init(p.ctx, p.stats, p.blockOffset)
 	memTable.SetSchema(p.schema)
 	return &rootTask{p: memTable}, nil
@@ -247,7 +257,7 @@ func compareBool(l, r bool) int {
 	if l == r {
 		return 0
 	}
-	if l == false {
+	if !l {
 		return -1
 	}
 	return 1
@@ -513,7 +523,7 @@ func (ds *DataSource) convertToPartialIndexScan(prop *property.PhysicalProperty,
 	idx := path.Index
 	is, partialCost, rowCount := ds.getOriginalPhysicalIndexScan(prop, path, false, false)
 	rowSize := is.indexScanRowSize(idx, ds, false)
-	isCovered = isCoveringIndex(ds.schema.Columns, path.FullIdxCols, path.FullIdxColLens, ds.tableInfo.PKIsHandle)
+	// TODO: Consider using isCoveringIndex() to avoid another TableRead
 	indexConds := path.IndexFilters
 	sessVars := ds.ctx.GetSessionVars()
 	if indexConds != nil {
@@ -531,11 +541,11 @@ func (ds *DataSource) convertToPartialIndexScan(prop *property.PhysicalProperty,
 		indexPlan := PhysicalSelection{Conditions: indexConds}.Init(is.ctx, stats, ds.blockOffset)
 		indexPlan.SetChildren(is)
 		partialCost += rowCount * rowSize * sessVars.NetworkFactor
-		return indexPlan, partialCost, rowCount, isCovered
+		return indexPlan, partialCost, rowCount, false
 	}
 	partialCost += rowCount * rowSize * sessVars.NetworkFactor
 	indexPlan = is
-	return indexPlan, partialCost, rowCount, isCovered
+	return indexPlan, partialCost, rowCount, false
 }
 
 func (ds *DataSource) convertToPartialTableScan(prop *property.PhysicalProperty, path *util.AccessPath) (
@@ -544,13 +554,13 @@ func (ds *DataSource) convertToPartialTableScan(prop *property.PhysicalProperty,
 	rowCount float64,
 	isCovered bool) {
 	ts, partialCost, rowCount := ds.getOriginalPhysicalTableScan(prop, path, false)
-	rowSize := ds.TblColHists.GetAvgRowSize(ds.TblCols, false)
+	rowSize := ds.TblColHists.GetAvgRowSize(ds.ctx, ds.TblCols, false, false)
 	sessVars := ds.ctx.GetSessionVars()
 	if len(ts.filterCondition) > 0 {
 		selectivity, _, err := ds.tableStats.HistColl.Selectivity(ds.ctx, ts.filterCondition, nil)
 		if err != nil {
 			logutil.BgLogger().Debug("calculate selectivity failed, use selection factor", zap.Error(err))
-			selectivity = selectionFactor
+			selectivity = SelectionFactor
 		}
 		tablePlan = PhysicalSelection{Conditions: ts.filterCondition}.Init(ts.ctx, ts.stats.ScaleByExpectCnt(selectivity*rowCount), ds.blockOffset)
 		tablePlan.SetChildren(ts)
@@ -582,7 +592,7 @@ func (ds *DataSource) buildIndexMergeTableScan(prop *property.PhysicalProperty, 
 			}
 		}
 	}
-	rowSize := ds.TblColHists.GetTableAvgRowSize(ds.TblCols, ts.StoreType, true)
+	rowSize := ds.TblColHists.GetTableAvgRowSize(ds.ctx, ds.TblCols, ts.StoreType, true)
 	partialCost += totalRowCount * rowSize * sessVars.ScanFactor
 	ts.stats = ds.tableStats.ScaleByExpectCnt(totalRowCount)
 	if ds.statisticTable.Pseudo {
@@ -593,7 +603,7 @@ func (ds *DataSource) buildIndexMergeTableScan(prop *property.PhysicalProperty, 
 		selectivity, _, err := ds.tableStats.HistColl.Selectivity(ds.ctx, tableFilters, nil)
 		if err != nil {
 			logutil.BgLogger().Debug("calculate selectivity failed, use selection factor", zap.Error(err))
-			selectivity = selectionFactor
+			selectivity = SelectionFactor
 		}
 		sel := PhysicalSelection{Conditions: tableFilters}.Init(ts.ctx, ts.stats.ScaleByExpectCnt(selectivity*totalRowCount), ts.blockOffset)
 		sel.SetChildren(ts)
@@ -708,9 +718,9 @@ func (is *PhysicalIndexScan) indexScanRowSize(idx *model.IndexInfo, ds *DataSour
 		scanCols = is.schema.Columns
 	}
 	if isForScan {
-		return ds.TblColHists.GetIndexAvgRowSize(scanCols, is.Index.Unique)
+		return ds.TblColHists.GetIndexAvgRowSize(is.ctx, scanCols, is.Index.Unique)
 	}
-	return ds.TblColHists.GetAvgRowSize(scanCols, true)
+	return ds.TblColHists.GetAvgRowSize(is.ctx, scanCols, true, false)
 }
 
 func (is *PhysicalIndexScan) initSchema(idx *model.IndexInfo, idxExprCols []*expression.Column, isDoubleRead bool) {
@@ -959,7 +969,7 @@ func (ds *DataSource) crossEstimateRowCount(path *util.AccessPath, expectedCnt f
 	}
 	scanCount := rangeCount + expectedCnt - count
 	if len(remained) > 0 {
-		scanCount = scanCount / selectionFactor
+		scanCount = scanCount / SelectionFactor
 	}
 	scanCount = math.Min(scanCount, path.CountAfterAccess)
 	return scanCount, true, 0
@@ -999,8 +1009,8 @@ func (s *LogicalIndexScan) GetPhysicalIndexScan(schema *expression.Schema, stats
 		DBName:           ds.DBName,
 		Columns:          s.Columns,
 		Index:            s.Index,
-		IdxCols:          s.idxCols,
-		IdxColLens:       s.idxColLens,
+		IdxCols:          s.IdxCols,
+		IdxColLens:       s.IdxColLens,
 		AccessCondition:  s.AccessConds,
 		Ranges:           s.Ranges,
 		dataSourceSchema: ds.schema,
@@ -1008,7 +1018,7 @@ func (s *LogicalIndexScan) GetPhysicalIndexScan(schema *expression.Schema, stats
 		physicalTableID:  ds.physicalTableID,
 	}.Init(ds.ctx, ds.blockOffset)
 	is.stats = stats
-	is.initSchema(s.Index, s.fullIdxCols, s.IsDoubleRead)
+	is.initSchema(s.Index, s.FullIdxCols, s.IsDoubleRead)
 	return is
 }
 
@@ -1043,6 +1053,11 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 
 func (ts *PhysicalTableScan) addPushedDownSelection(copTask *copTask, stats *property.StatsInfo) {
 	ts.filterCondition, copTask.rootTaskConds = splitSelCondsWithVirtualColumn(ts.filterCondition)
+	if ts.StoreType == kv.TiFlash {
+		var newRootConds []expression.Expression
+		ts.filterCondition, newRootConds = expression.CheckExprPushFlash(ts.filterCondition)
+		copTask.rootTaskConds = append(copTask.rootTaskConds, newRootConds...)
+	}
 
 	// Add filter condition to table plan now.
 	sessVars := ts.ctx.GetSessionVars()
@@ -1107,11 +1122,11 @@ func (ds *DataSource) getOriginalPhysicalTableScan(prop *property.PhysicalProper
 	ts.stats = ds.tableStats.ScaleByExpectCnt(rowCount)
 	var rowSize float64
 	if ts.StoreType == kv.TiKV {
-		rowSize = ds.TblColHists.GetTableAvgRowSize(ds.TblCols, ts.StoreType, true)
+		rowSize = ds.TblColHists.GetTableAvgRowSize(ds.ctx, ds.TblCols, ts.StoreType, true)
 	} else {
 		// If `ds.handleCol` is nil, then the schema of tableScan doesn't have handle column.
 		// This logic can be ensured in column pruning.
-		rowSize = ds.TblColHists.GetTableAvgRowSize(ts.Schema().Columns, ts.StoreType, ds.handleCol != nil)
+		rowSize = ds.TblColHists.GetTableAvgRowSize(ds.ctx, ts.Schema().Columns, ts.StoreType, ds.handleCol != nil)
 	}
 	sessVars := ds.ctx.GetSessionVars()
 	cost := rowCount * rowSize * sessVars.ScanFactor

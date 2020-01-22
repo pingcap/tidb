@@ -20,6 +20,7 @@ import (
 	"hash"
 	"sync"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/util/plancodec"
 )
 
@@ -42,6 +43,9 @@ func EncodePlan(p Plan) string {
 	if selectPlan == nil {
 		return ""
 	}
+	failpoint.Inject("mockPlanRowCount", func(val failpoint.Value) {
+		selectPlan.statsInfo().RowCount = float64(val.(int))
+	})
 	return pn.encodePlanTree(selectPlan)
 }
 
@@ -104,7 +108,7 @@ func NormalizePlan(p Plan) (normalized, digest string) {
 	d := digesterPool.Get().(*planDigester)
 	defer digesterPool.Put(d)
 	d.normalizePlanTree(selectPlan)
-	normalized = string(d.buf.Bytes())
+	normalized = d.buf.String()
 	d.hasher.Write(d.buf.Bytes())
 	d.buf.Reset()
 	digest = fmt.Sprintf("%x", d.hasher.Sum(nil))

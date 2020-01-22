@@ -43,6 +43,8 @@ var (
 	ErrTableExists = terror.ClassSchema.New(mysql.ErrTableExists, mysql.MySQLErrName[mysql.ErrTableExists])
 	// ErrTableDropExists returns for dropping a non-existent table.
 	ErrTableDropExists = terror.ClassSchema.New(mysql.ErrBadTable, mysql.MySQLErrName[mysql.ErrBadTable])
+	// ErrSequenceDropExists returns for dropping a non-exist sequence.
+	ErrSequenceDropExists = terror.ClassSchema.New(mysql.ErrUnknownSequence, mysql.MySQLErrName[mysql.ErrUnknownSequence])
 	// ErrColumnNotExists returns for column not exists.
 	ErrColumnNotExists = terror.ClassSchema.New(mysql.ErrBadField, mysql.MySQLErrName[mysql.ErrBadField])
 	// ErrColumnExists returns for column already exists.
@@ -91,7 +93,7 @@ type InfoSchema interface {
 	SchemaByID(id int64) (*model.DBInfo, bool)
 	SchemaByTable(tableInfo *model.TableInfo) (*model.DBInfo, bool)
 	TableByID(id int64) (table.Table, bool)
-	AllocByID(id int64) (autoid.Allocator, bool)
+	AllocByID(id int64) (autoid.Allocators, bool)
 	AllSchemaNames() []string
 	AllSchemas() []*model.DBInfo
 	Clone() (result []*model.DBInfo)
@@ -100,12 +102,6 @@ type InfoSchema interface {
 	// TableIsView indicates whether the schema.table is a view.
 	TableIsView(schema, table model.CIStr) bool
 }
-
-// Information Schema Name.
-const (
-	Name      = util.InformationSchemaName
-	LowerName = util.InformationSchemaLowerName
-)
 
 type sortedTables []table.Table
 
@@ -249,12 +245,12 @@ func (is *infoSchema) TableByID(id int64) (val table.Table, ok bool) {
 	return slice[idx], true
 }
 
-func (is *infoSchema) AllocByID(id int64) (autoid.Allocator, bool) {
+func (is *infoSchema) AllocByID(id int64) (autoid.Allocators, bool) {
 	tbl, ok := is.TableByID(id)
 	if !ok {
 		return nil, false
 	}
-	return tbl.Allocator(nil), true
+	return tbl.AllAllocators(nil), true
 }
 
 func (is *infoSchema) AllSchemaNames() (names []string) {
@@ -348,6 +344,7 @@ func init() {
 		mysql.ErrBadUser:                mysql.ErrBadUser,
 		mysql.ErrUserAlreadyExists:      mysql.ErrUserAlreadyExists,
 		mysql.ErrTableLocked:            mysql.ErrTableLocked,
+		mysql.ErrUnknownSequence:        mysql.ErrUnknownSequence,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassSchema] = schemaMySQLErrCodes
 
@@ -368,22 +365,12 @@ func init() {
 	}
 	infoSchemaDB := &model.DBInfo{
 		ID:      dbID,
-		Name:    model.NewCIStr(Name),
+		Name:    util.InformationSchemaName,
 		Charset: mysql.DefaultCharset,
 		Collate: mysql.DefaultCollationName,
 		Tables:  infoSchemaTables,
 	}
 	RegisterVirtualTable(infoSchemaDB, createInfoSchemaTable)
-}
-
-// IsMemoryDB checks if the db is in memory.
-func IsMemoryDB(dbName string) bool {
-	for _, driver := range drivers {
-		if driver.DBInfo.Name.L == dbName {
-			return true
-		}
-	}
-	return false
 }
 
 // HasAutoIncrementColumn checks whether the table has auto_increment columns, if so, return true and the column name.

@@ -63,12 +63,12 @@ type RawKVClient struct {
 }
 
 // NewRawKVClient creates a client with PD cluster addrs.
-func NewRawKVClient(pdAddrs []string, security config.Security) (*RawKVClient, error) {
+func NewRawKVClient(pdAddrs []string, security config.Security, opts ...pd.ClientOption) (*RawKVClient, error) {
 	pdCli, err := pd.NewClient(pdAddrs, pd.SecurityOption{
 		CAPath:   security.ClusterSSLCA,
 		CertPath: security.ClusterSSLCert,
 		KeyPath:  security.ClusterSSLKey,
-	})
+	}, opts...)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -291,7 +291,7 @@ func (c *RawKVClient) Scan(startKey, endKey []byte, limit int) (keys [][]byte, v
 		return nil, nil, errors.Trace(ErrMaxScanLimitExceeded)
 	}
 
-	for len(keys) < limit {
+	for len(keys) < limit && (len(endKey) == 0 || bytes.Compare(startKey, endKey) < 0) {
 		req := tikvrpc.NewRequest(tikvrpc.CmdRawScan, &kvrpcpb.RawScanRequest{
 			StartKey: startKey,
 			EndKey:   endKey,
@@ -334,7 +334,7 @@ func (c *RawKVClient) ReverseScan(startKey, endKey []byte, limit int) (keys [][]
 		return nil, nil, errors.Trace(ErrMaxScanLimitExceeded)
 	}
 
-	for len(keys) < limit {
+	for len(keys) < limit && bytes.Compare(startKey, endKey) > 0 {
 		req := tikvrpc.NewRequest(tikvrpc.CmdRawScan, &kvrpcpb.RawScanRequest{
 			StartKey: startKey,
 			EndKey:   endKey,

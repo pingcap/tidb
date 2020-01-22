@@ -67,6 +67,7 @@ func (s *testVarsutilSuite) TestNewSessionVars(c *C) {
 	c.Assert(vars.ProjectionConcurrency, Equals, int64(DefTiDBProjectionConcurrency))
 	c.Assert(vars.HashAggPartialConcurrency, Equals, DefTiDBHashAggPartialConcurrency)
 	c.Assert(vars.HashAggFinalConcurrency, Equals, DefTiDBHashAggFinalConcurrency)
+	c.Assert(vars.WindowConcurrency, Equals, DefTiDBWindowConcurrency)
 	c.Assert(vars.DistSQLScanConcurrency, Equals, DefDistSQLScanConcurrency)
 	c.Assert(vars.MaxChunkSize, Equals, DefMaxChunkSize)
 	c.Assert(vars.DMLBatchSize, Equals, DefDMLBatchSize)
@@ -388,6 +389,11 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	val, err = GetSessionSystemVar(v, TiDBStmtSummaryRefreshInterval)
 	c.Assert(err, IsNil)
 	c.Assert(val, Equals, "10")
+
+	SetSessionSystemVar(v, TiDBStmtSummaryHistorySize, types.NewStringDatum("10"))
+	val, err = GetSessionSystemVar(v, TiDBStmtSummaryHistorySize)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, "10")
 }
 
 func (s *testVarsutilSuite) TestSetOverflowBehave(c *C) {
@@ -488,6 +494,8 @@ func (s *testVarsutilSuite) TestValidate(c *C) {
 		{TiDBEnableStmtSummary, "", false},
 		{TiDBStmtSummaryRefreshInterval, "a", true},
 		{TiDBStmtSummaryRefreshInterval, "", false},
+		{TiDBStmtSummaryHistorySize, "a", true},
+		{TiDBStmtSummaryHistorySize, "", false},
 	}
 
 	for _, t := range tests {

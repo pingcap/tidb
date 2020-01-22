@@ -87,12 +87,17 @@ func GetDDLInfo(txn kv.Transaction) (*DDLInfo, error) {
 func IsJobRollbackable(job *model.Job) bool {
 	switch job.Type {
 	case model.ActionDropIndex, model.ActionDropPrimaryKey:
-		// We can't cancel if index current state is in StateDeleteOnly or StateDeleteReorganization, otherwise will cause inconsistent between record and index.
+		// We can't cancel if index current state is in StateDeleteOnly or StateDeleteReorganization or StateWriteOnly, otherwise there will be an inconsistent issue between record and index.
+		// In WriteOnly state, we can rollback for normal index but can't rollback for expression index(need to drop hidden column). Since we can't
+		// know the type of index here, we consider all indices except primary index as non-rollbackable.
+		// TODO: distinguish normal index and expression index so that we can rollback `DropIndex` for normal index in WriteOnly state.
+		// TODO: make DropPrimaryKey rollbackable in WriteOnly, it need to deal with some tests.
 		if job.SchemaState == model.StateDeleteOnly ||
-			job.SchemaState == model.StateDeleteReorganization {
+			job.SchemaState == model.StateDeleteReorganization ||
+			job.SchemaState == model.StateWriteOnly {
 			return false
 		}
-	case model.ActionDropSchema, model.ActionDropTable:
+	case model.ActionDropSchema, model.ActionDropTable, model.ActionDropSequence:
 		// To simplify the rollback logic, cannot be canceled in the following states.
 		if job.SchemaState == model.StateWriteOnly ||
 			job.SchemaState == model.StateDeleteOnly {
@@ -432,21 +437,24 @@ func iterRecords(sessCtx sessionctx.Context, retriever kv.Retriever, t table.Tab
 	return nil
 }
 
-// admin error codes.
-const (
-	codeDataNotEqual terror.ErrCode = iota + 1
-	codeDDLJobNotFound
-	codeCancelFinishedJob
-	codeCannotCancelDDLJob
-)
-
 var (
 	// ErrDataInConsistent indicate that meets inconsistent data.
-	ErrDataInConsistent = terror.ClassAdmin.New(codeDataNotEqual, "data isn't equal")
+	ErrDataInConsistent = terror.ClassAdmin.New(mysql.ErrDataInConsistent, mysql.MySQLErrName[mysql.ErrDataInConsistent])
 	// ErrDDLJobNotFound indicates the job id was not found.
-	ErrDDLJobNotFound = terror.ClassAdmin.New(codeDDLJobNotFound, "DDL Job:%v not found")
+	ErrDDLJobNotFound = terror.ClassAdmin.New(mysql.ErrDDLJobNotFound, mysql.MySQLErrName[mysql.ErrDDLJobNotFound])
 	// ErrCancelFinishedDDLJob returns when cancel a finished ddl job.
-	ErrCancelFinishedDDLJob = terror.ClassAdmin.New(codeCancelFinishedJob, "This job:%v is finished, so can't be cancelled")
+	ErrCancelFinishedDDLJob = terror.ClassAdmin.New(mysql.ErrCancelFinishedDDLJob, mysql.MySQLErrName[mysql.ErrCancelFinishedDDLJob])
 	// ErrCannotCancelDDLJob returns when cancel a almost finished ddl job, because cancel in now may cause data inconsistency.
-	ErrCannotCancelDDLJob = terror.ClassAdmin.New(codeCannotCancelDDLJob, "This job:%v is almost finished, can't be cancelled now")
+	ErrCannotCancelDDLJob = terror.ClassAdmin.New(mysql.ErrCannotCancelDDLJob, mysql.MySQLErrName[mysql.ErrCannotCancelDDLJob])
 )
+
+func init() {
+	// Register terror to mysql error map.
+	mySQLErrCodes := map[terror.ErrCode]uint16{
+		mysql.ErrDataInConsistent:     mysql.ErrDataInConsistent,
+		mysql.ErrDDLJobNotFound:       mysql.ErrDDLJobNotFound,
+		mysql.ErrCancelFinishedDDLJob: mysql.ErrCancelFinishedDDLJob,
+		mysql.ErrCannotCancelDDLJob:   mysql.ErrCannotCancelDDLJob,
+	}
+	terror.ErrClassToMySQLCodes[terror.ClassAdmin] = mySQLErrCodes
+}

@@ -178,8 +178,14 @@ func onDropTableOrView(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-		if err = t.DropTableOrView(job.SchemaID, job.TableID, true); err != nil {
-			break
+		if tblInfo.IsSequence() {
+			if err = t.DropSequence(job.SchemaID, job.TableID, true); err != nil {
+				break
+			}
+		} else {
+			if err = t.DropTableOrView(job.SchemaID, job.TableID, true); err != nil {
+				break
+			}
 		}
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
@@ -355,8 +361,8 @@ func checkSafePoint(w *worker, snapshotTS uint64) error {
 }
 
 func getTable(store kv.Storage, schemaID int64, tblInfo *model.TableInfo) (table.Table, error) {
-	alloc := autoid.NewAllocator(store, tblInfo.GetDBID(schemaID), tblInfo.IsAutoIncColUnsigned())
-	tbl, err := table.TableFromMeta(alloc, tblInfo)
+	allocs := autoid.NewAllocatorsFromTblInfo(store, schemaID, tblInfo)
+	tbl, err := table.TableFromMeta(allocs, tblInfo)
 	return tbl, errors.Trace(err)
 }
 
@@ -544,11 +550,11 @@ func verifyNoOverflowShardBits(s *sessionPool, tbl table.Table, shardRowIDBits u
 	defer s.put(ctx)
 
 	// Check next global max auto ID first.
-	autoIncID, err := tbl.Allocator(ctx).NextGlobalAutoID(tbl.Meta().ID)
+	autoIncID, err := tbl.Allocator(ctx, autoid.RowIDAllocType).NextGlobalAutoID(tbl.Meta().ID)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if tables.OverflowShardBits(autoIncID, shardRowIDBits) {
+	if tables.OverflowShardBits(autoIncID, shardRowIDBits, autoid.RowIDBitLength) {
 		return autoid.ErrAutoincReadFailed.GenWithStack("shard_row_id_bits %d will cause next global auto ID %v overflow", shardRowIDBits, autoIncID)
 	}
 	return nil

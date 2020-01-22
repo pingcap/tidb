@@ -299,6 +299,23 @@ func (p *PhysicalIndexLookUpReader) ResolveIndices() (err error) {
 }
 
 // ResolveIndices implements Plan interface.
+func (p *PhysicalIndexMergeReader) ResolveIndices() (err error) {
+	if p.tablePlan != nil {
+		err = p.tablePlan.ResolveIndices()
+		if err != nil {
+			return err
+		}
+	}
+	for i := 0; i < len(p.partialPlans); i++ {
+		err = p.partialPlans[i].ResolveIndices()
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// ResolveIndices implements Plan interface.
 func (p *PhysicalSelection) ResolveIndices() (err error) {
 	err = p.basePhysicalPlan.ResolveIndices()
 	if err != nil {
@@ -402,6 +419,22 @@ func (p *PhysicalWindow) ResolveIndices() (err error) {
 		}
 	}
 	return nil
+}
+
+// ResolveIndices implements Plan interface.
+func (p *PhysicalShuffle) ResolveIndices() (err error) {
+	err = p.basePhysicalPlan.ResolveIndices()
+	if err != nil {
+		return err
+	}
+	for i := range p.HashByItems {
+		// "Shuffle" get value of items from `DataSource`, other than children[0].
+		p.HashByItems[i], err = p.HashByItems[i].ResolveIndices(p.DataSource.Schema())
+		if err != nil {
+			return err
+		}
+	}
+	return err
 }
 
 // ResolveIndices implements Plan interface.

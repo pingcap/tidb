@@ -60,10 +60,7 @@ func newTimestamp(yy, mm, dd, hh, min, ss int) *Constant {
 
 func newTimeConst(yy, mm, dd, hh, min, ss int, tp uint8) *Constant {
 	var tmp types.Datum
-	tmp.SetMysqlTime(types.Time{
-		Time: types.FromDate(yy, mm, dd, 0, 0, 0, 0),
-		Type: tp,
-	})
+	tmp.SetMysqlTime(types.NewTime(types.FromDate(yy, mm, dd, 0, 0, 0, 0), tp, types.DefaultFsp))
 	return &Constant{
 		Value:   tmp,
 		RetType: types.NewFieldType(tp),
@@ -364,7 +361,7 @@ func (*testExpressionSuite) TestDeferredParamNotNull(c *C) {
 	ctx.GetSessionVars().PreparedParams = []types.Datum{
 		types.NewIntDatum(1),
 		types.NewDecimalDatum(types.NewDecFromStringForTest("20170118123950.123")),
-		types.NewTimeDatum(types.Time{Time: types.FromGoTime(testTime), Fsp: 6, Type: mysql.TypeTimestamp}),
+		types.NewTimeDatum(types.NewTime(types.FromGoTime(testTime), mysql.TypeTimestamp, 6)),
 		types.NewDurationDatum(types.ZeroDuration),
 		types.NewStringDatum("{}"),
 		types.NewBinaryLiteralDatum(types.BinaryLiteral([]byte{1})),
@@ -404,15 +401,15 @@ func (*testExpressionSuite) TestDeferredParamNotNull(c *C) {
 	d, _, err := cstInt.EvalInt(ctx, chunk.Row{})
 	c.Assert(err, IsNil)
 	c.Assert(d, Equals, int64(1))
-	r, _, err := cstInt.EvalReal(ctx, chunk.Row{})
+	r, _, err := cstFloat64.EvalReal(ctx, chunk.Row{})
 	c.Assert(err, IsNil)
-	c.Assert(r, Equals, float64(1))
+	c.Assert(r, Equals, float64(2.1))
 	de, _, err := cstDec.EvalDecimal(ctx, chunk.Row{})
 	c.Assert(err, IsNil)
 	c.Assert(de.String(), Equals, "20170118123950.123")
-	s, _, err := cstInt.EvalString(ctx, chunk.Row{})
+	s, _, err := cstBytes.EvalString(ctx, chunk.Row{})
 	c.Assert(err, IsNil)
-	c.Assert(s, Equals, "1")
+	c.Assert(s, Equals, "b")
 	t, _, err := cstTime.EvalTime(ctx, chunk.Row{})
 	c.Assert(err, IsNil)
 	c.Assert(t.Compare(ctx.GetSessionVars().PreparedParams[2].GetMysqlTime()), Equals, 0)
@@ -483,7 +480,7 @@ func (*testExpressionSuite) TestDeferredExprNotNull(c *C) {
 	xDec, _, _ := cst.EvalDecimal(ctx, chunk.Row{})
 	c.Assert(xDec.Compare(m.i.(*types.MyDecimal)), Equals, 0)
 
-	m.i = types.Time{}
+	m.i = types.ZeroTime
 	xTim, _, _ := cst.EvalTime(ctx, chunk.Row{})
 	c.Assert(xTim.Compare(m.i.(types.Time)), Equals, 0)
 

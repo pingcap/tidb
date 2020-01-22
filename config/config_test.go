@@ -154,6 +154,7 @@ func (s *testConfigSuite) TestConfig(c *C) {
 	conf.Performance.TxnTotalSizeLimit = 1000
 	conf.TiKVClient.CommitTimeout = "10s"
 	conf.TiKVClient.RegionCacheTTL = 600
+	conf.Log.EnableSlowLog = logutil.DefaultTiDBEnableSlowLog
 	configFile := "config.toml"
 	_, localFile, _, _ := runtime.Caller(0)
 	configFile = filepath.Join(filepath.Dir(localFile), configFile)
@@ -182,6 +183,7 @@ split-region-max-num=10000
 enable-batch-dml = true
 server-version = "test_version"
 repair-mode = true
+max-server-connections = 200
 [performance]
 txn-total-size-limit=2000
 [tikv-client]
@@ -190,8 +192,15 @@ max-batch-size=128
 region-cache-ttl=6000
 store-limit=0
 [stmt-summary]
+enable=false
 max-stmt-count=1000
 max-sql-length=1024
+refresh-interval=100
+history-size=100
+[experimental]
+allow-auto-random = true
+[isolation-read]
+engines = ["tiflash"]
 `)
 
 	c.Assert(err, IsNil)
@@ -217,10 +226,16 @@ max-sql-length=1024
 	c.Assert(conf.EnableTableLock, IsTrue)
 	c.Assert(conf.DelayCleanTableLock, Equals, uint64(5))
 	c.Assert(conf.SplitRegionMaxNum, Equals, uint64(10000))
+	c.Assert(conf.StmtSummary.Enable, Equals, false)
 	c.Assert(conf.StmtSummary.MaxStmtCount, Equals, uint(1000))
 	c.Assert(conf.StmtSummary.MaxSQLLength, Equals, uint(1024))
+	c.Assert(conf.StmtSummary.RefreshInterval, Equals, 100)
+	c.Assert(conf.StmtSummary.HistorySize, Equals, 100)
 	c.Assert(conf.EnableBatchDML, Equals, true)
 	c.Assert(conf.RepairMode, Equals, true)
+	c.Assert(conf.MaxServerConnections, Equals, uint32(200))
+	c.Assert(conf.Experimental.AllowAutoRandom, IsTrue)
+	c.Assert(conf.IsolationRead.Engines, DeepEquals, []string{"tiflash"})
 	c.Assert(f.Close(), IsNil)
 	c.Assert(os.Remove(configFile), IsNil)
 
@@ -371,4 +386,21 @@ func (s *testConfigSuite) TestTxnTotalSizeLimitValid(c *C) {
 		conf.Performance.TxnTotalSizeLimit = tt.limit
 		c.Assert(conf.Valid() == nil, Equals, tt.valid)
 	}
+
+	conf.Binlog.Enable = true
+	conf.Performance.TxnTotalSizeLimit = 100<<20 + 1
+	c.Assert(conf.Valid(), NotNil)
+}
+
+func (s *testConfigSuite) TestAllowAutoRandomValid(c *C) {
+	conf := NewConfig()
+	checkValid := func(allowAlterPK, allowAutoRand, shouldBeValid bool) {
+		conf.AlterPrimaryKey = allowAlterPK
+		conf.Experimental.AllowAutoRandom = allowAutoRand
+		c.Assert(conf.Valid() == nil, Equals, shouldBeValid)
+	}
+	checkValid(true, true, false)
+	checkValid(true, false, true)
+	checkValid(false, true, true)
+	checkValid(false, false, true)
 }

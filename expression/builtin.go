@@ -28,6 +28,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/gogo/protobuf/proto"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/charset"
@@ -49,21 +50,21 @@ type baseBuiltinFunc struct {
 	tp           *types.FieldType
 	pbCode       tipb.ScalarFuncSig
 
-	childrenVectorizedOnce *sync.Once
-	childrenVectorized     bool
+	childrenVectorized bool
+	childrenReversed   bool
 
-	childrenReversedOnce *sync.Once
-	childrenReversed     bool
+	childrenVectorizedOnce *sync.Once
+	childrenReversedOnce   *sync.Once
 }
 
 func (b *baseBuiltinFunc) PbCode() tipb.ScalarFuncSig {
 	return b.pbCode
 }
 
-// implicitArgs returns the implicit arguments of this function.
-// implicit arguments means some functions contain extra inner fields which will not
+// metadata returns the metadata of a function.
+// metadata means some functions contain extra inner fields which will not
 // contain in `tipb.Expr.children` but must be pushed down to coprocessor
-func (b *baseBuiltinFunc) implicitArgs() []types.Datum {
+func (b *baseBuiltinFunc) metadata() proto.Message {
 	// We will not use a field to store them because of only
 	// a few functions contain implicit parameters
 	return nil
@@ -243,7 +244,7 @@ func (b *baseBuiltinFunc) evalDecimal(row chunk.Row) (*types.MyDecimal, bool, er
 }
 
 func (b *baseBuiltinFunc) evalTime(row chunk.Row) (types.Time, bool, error) {
-	return types.Time{}, false, errors.Errorf("baseBuiltinFunc.evalTime() should never be called, please contact the TiDB team for help")
+	return types.ZeroTime, false, errors.Errorf("baseBuiltinFunc.evalTime() should never be called, please contact the TiDB team for help")
 }
 
 func (b *baseBuiltinFunc) evalDuration(row chunk.Row) (types.Duration, bool, error) {
@@ -349,13 +350,10 @@ type baseBuiltinCastFunc struct {
 	inUnion bool
 }
 
-// implicitArgs returns the implicit arguments of cast functions
-func (b *baseBuiltinCastFunc) implicitArgs() []types.Datum {
-	args := b.baseBuiltinFunc.implicitArgs()
-	if b.inUnion {
-		args = append(args, types.NewIntDatum(1))
-	} else {
-		args = append(args, types.NewIntDatum(0))
+// metadata returns the metadata of cast functions
+func (b *baseBuiltinCastFunc) metadata() proto.Message {
+	args := &tipb.InUnionMetadata{
+		InUnion: b.inUnion,
 	}
 	return args
 }
@@ -445,12 +443,16 @@ type builtinFunc interface {
 	setPbCode(tipb.ScalarFuncSig)
 	// PbCode returns PbCode of this signature.
 	PbCode() tipb.ScalarFuncSig
-	// implicitArgs returns the implicit parameters of a function.
-	// implicit arguments means some functions contain extra inner fields which will not
+	// metadata returns the metadata of a function.
+	// metadata means some functions contain extra inner fields which will not
 	// contain in `tipb.Expr.children` but must be pushed down to coprocessor
-	implicitArgs() []types.Datum
+	metadata() proto.Message
 	// Clone returns a copy of itself.
 	Clone() builtinFunc
+}
+
+type builtinFuncNew interface {
+	evalIntWithCtx(ctx sessionctx.Context, row chunk.Row) (val int64, isNull bool, err error)
 }
 
 // baseFunctionClass will be contained in every struct that implement functionClass interface.

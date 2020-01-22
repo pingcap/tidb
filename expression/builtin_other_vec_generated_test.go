@@ -56,7 +56,7 @@ func (g inGener) gen() interface{} {
 		return d
 	case types.ETDatetime, types.ETTimestamp:
 		gt := types.FromDate(2019, 11, 2, 22, 00, int(randNum), rand.Intn(1000000))
-		t := types.Time{Time: gt, Type: convertETType(g.eType)}
+		t := types.NewTime(gt, convertETType(g.eType), 0)
 		return t
 	case types.ETDuration:
 		return types.Duration{Duration: time.Duration(randNum)}
@@ -85,10 +85,10 @@ var vecBuiltinOtherGeneratedCases = map[string][]vecExprBenchCase{
 				types.ETInt,
 			},
 			geners: []dataGenerator{
-				inGener{defaultGener{eType: types.ETInt, nullRation: 0.2}},
-				inGener{defaultGener{eType: types.ETInt, nullRation: 0.2}},
-				inGener{defaultGener{eType: types.ETInt, nullRation: 0.2}},
-				inGener{defaultGener{eType: types.ETInt, nullRation: 0.2}},
+				inGener{*newDefaultGener(0.2, types.ETInt)},
+				inGener{*newDefaultGener(0.2, types.ETInt)},
+				inGener{*newDefaultGener(0.2, types.ETInt)},
+				inGener{*newDefaultGener(0.2, types.ETInt)},
 			},
 		},
 		// builtinInStringSig
@@ -101,10 +101,10 @@ var vecBuiltinOtherGeneratedCases = map[string][]vecExprBenchCase{
 				types.ETString,
 			},
 			geners: []dataGenerator{
-				inGener{defaultGener{eType: types.ETString, nullRation: 0.2}},
-				inGener{defaultGener{eType: types.ETString, nullRation: 0.2}},
-				inGener{defaultGener{eType: types.ETString, nullRation: 0.2}},
-				inGener{defaultGener{eType: types.ETString, nullRation: 0.2}},
+				inGener{*newDefaultGener(0.2, types.ETString)},
+				inGener{*newDefaultGener(0.2, types.ETString)},
+				inGener{*newDefaultGener(0.2, types.ETString)},
+				inGener{*newDefaultGener(0.2, types.ETString)},
 			},
 		},
 		// builtinInDecimalSig
@@ -117,10 +117,10 @@ var vecBuiltinOtherGeneratedCases = map[string][]vecExprBenchCase{
 				types.ETDecimal,
 			},
 			geners: []dataGenerator{
-				inGener{defaultGener{eType: types.ETDecimal, nullRation: 0.2}},
-				inGener{defaultGener{eType: types.ETDecimal, nullRation: 0.2}},
-				inGener{defaultGener{eType: types.ETDecimal, nullRation: 0.2}},
-				inGener{defaultGener{eType: types.ETDecimal, nullRation: 0.2}},
+				inGener{*newDefaultGener(0.2, types.ETDecimal)},
+				inGener{*newDefaultGener(0.2, types.ETDecimal)},
+				inGener{*newDefaultGener(0.2, types.ETDecimal)},
+				inGener{*newDefaultGener(0.2, types.ETDecimal)},
 			},
 		},
 		// builtinInRealSig
@@ -133,10 +133,10 @@ var vecBuiltinOtherGeneratedCases = map[string][]vecExprBenchCase{
 				types.ETReal,
 			},
 			geners: []dataGenerator{
-				inGener{defaultGener{eType: types.ETReal, nullRation: 0.2}},
-				inGener{defaultGener{eType: types.ETReal, nullRation: 0.2}},
-				inGener{defaultGener{eType: types.ETReal, nullRation: 0.2}},
-				inGener{defaultGener{eType: types.ETReal, nullRation: 0.2}},
+				inGener{*newDefaultGener(0.2, types.ETReal)},
+				inGener{*newDefaultGener(0.2, types.ETReal)},
+				inGener{*newDefaultGener(0.2, types.ETReal)},
+				inGener{*newDefaultGener(0.2, types.ETReal)},
 			},
 		},
 		// builtinInTimeSig
@@ -149,10 +149,10 @@ var vecBuiltinOtherGeneratedCases = map[string][]vecExprBenchCase{
 				types.ETDatetime,
 			},
 			geners: []dataGenerator{
-				inGener{defaultGener{eType: types.ETDatetime, nullRation: 0.2}},
-				inGener{defaultGener{eType: types.ETDatetime, nullRation: 0.2}},
-				inGener{defaultGener{eType: types.ETDatetime, nullRation: 0.2}},
-				inGener{defaultGener{eType: types.ETDatetime, nullRation: 0.2}},
+				inGener{*newDefaultGener(0.2, types.ETDatetime)},
+				inGener{*newDefaultGener(0.2, types.ETDatetime)},
+				inGener{*newDefaultGener(0.2, types.ETDatetime)},
+				inGener{*newDefaultGener(0.2, types.ETDatetime)},
 			},
 		},
 		// builtinInDurationSig
@@ -165,10 +165,10 @@ var vecBuiltinOtherGeneratedCases = map[string][]vecExprBenchCase{
 				types.ETDuration,
 			},
 			geners: []dataGenerator{
-				inGener{defaultGener{eType: types.ETDuration, nullRation: 0.2}},
-				inGener{defaultGener{eType: types.ETDuration, nullRation: 0.2}},
-				inGener{defaultGener{eType: types.ETDuration, nullRation: 0.2}},
-				inGener{defaultGener{eType: types.ETDuration, nullRation: 0.2}},
+				inGener{*newDefaultGener(0.2, types.ETDuration)},
+				inGener{*newDefaultGener(0.2, types.ETDuration)},
+				inGener{*newDefaultGener(0.2, types.ETDuration)},
+				inGener{*newDefaultGener(0.2, types.ETDuration)},
 			},
 		},
 		// builtinInJSONSig
@@ -181,10 +181,10 @@ var vecBuiltinOtherGeneratedCases = map[string][]vecExprBenchCase{
 				types.ETJson,
 			},
 			geners: []dataGenerator{
-				inGener{defaultGener{eType: types.ETJson, nullRation: 0.2}},
-				inGener{defaultGener{eType: types.ETJson, nullRation: 0.2}},
-				inGener{defaultGener{eType: types.ETJson, nullRation: 0.2}},
-				inGener{defaultGener{eType: types.ETJson, nullRation: 0.2}},
+				inGener{*newDefaultGener(0.2, types.ETJson)},
+				inGener{*newDefaultGener(0.2, types.ETJson)},
+				inGener{*newDefaultGener(0.2, types.ETJson)},
+				inGener{*newDefaultGener(0.2, types.ETJson)},
 			},
 		},
 	},

@@ -82,11 +82,6 @@ func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b varchar(10), key k(a))")
 
-	// Statement summary is disabled by default.
-	tk.MustQuery("select @@global.tidb_enable_stmt_summary").Check(testkit.Rows("0"))
-	tk.MustExec("insert into t values(1, 'a')")
-	tk.MustQuery("select * from performance_schema.events_statements_summary_by_digest").Check(testkit.Rows())
-
 	tk.MustExec("set global tidb_enable_stmt_summary = 1")
 	tk.MustQuery("select @@global.tidb_enable_stmt_summary").Check(testkit.Rows("1"))
 
@@ -106,30 +101,62 @@ func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 	tk.MustExec("/**/insert into t values(4, 'd')")
 	tk.MustQuery(`select stmt_type, schema_name, table_names, index_names, exec_count, cop_task_num, avg_total_keys, 
 		max_total_keys, avg_processed_keys, max_processed_keys, avg_write_keys, max_write_keys, avg_prewrite_regions, 
-		max_prewrite_regions, avg_affected_rows, query_sample_text 
+		max_prewrite_regions, avg_affected_rows, query_sample_text, plan 
 		from performance_schema.events_statements_summary_by_digest
 		where digest_text like 'insert into t%'`,
-	).Check(testkit.Rows("insert test test.t <nil> 4 0 0 0 0 0 2 2 1 1 1 /**/insert into t values(4, 'd')"))
+	).Check(testkit.Rows("insert test test.t <nil> 4 0 0 0 0 0 2 2 1 1 1 insert into t values(1, 'a') "))
+
+	// Test point get.
+	tk.MustExec("drop table if exists p")
+	tk.MustExec("create table p(a int primary key, b int)")
+	for i := 1; i < 3; i++ {
+		tk.MustQuery("select b from p where a=1")
+		expectedResult := fmt.Sprintf("%d \tPoint_Get_1\troot\t1\ttable:p, handle:1", i)
+		tk.MustQuery(`select exec_count, plan
+			from performance_schema.events_statements_summary_by_digest
+			where digest_text like 'select b from p%'`,
+		).Check(testkit.Rows(expectedResult))
+	}
 
 	// Test SELECT.
+	const failpointName = "github.com/pingcap/tidb/planner/core/mockPlanRowCount"
+	c.Assert(failpoint.Enable(failpointName, "return(100)"), IsNil)
+	defer func() { c.Assert(failpoint.Disable(failpointName), IsNil) }()
 	tk.MustQuery("select * from t where a=2")
 	tk.MustQuery(`select stmt_type, schema_name, table_names, index_names, exec_count, cop_task_num, avg_total_keys, 
 		max_total_keys, avg_processed_keys, max_processed_keys, avg_write_keys, max_write_keys, avg_prewrite_regions, 
-		max_prewrite_regions, avg_affected_rows, query_sample_text 
+		max_prewrite_regions, avg_affected_rows, query_sample_text, plan 
 		from performance_schema.events_statements_summary_by_digest
 		where digest_text like 'select * from t%'`,
-	).Check(testkit.Rows("select test test.t t:k 1 2 0 0 0 0 0 0 0 0 0 select * from t where a=2"))
+	).Check(testkit.Rows("select test test.t t:k 1 2 0 0 0 0 0 0 0 0 0 select * from t where a=2 \tIndexLookUp_10\troot\t100\t\n" +
+		"\t├─IndexScan_8 \tcop \t100\ttable:t, index:a, range:[2,2], keep order:false, stats:pseudo\n" +
+		"\t└─TableScan_9 \tcop \t100\ttable:t, keep order:false, stats:pseudo"))
 
 	// select ... order by
 	tk.MustQuery(`select stmt_type, schema_name, table_names, index_names, exec_count, cop_task_num, avg_total_keys, 
 		max_total_keys, avg_processed_keys, max_processed_keys, avg_write_keys, max_write_keys, avg_prewrite_regions, 
-		max_prewrite_regions, avg_affected_rows, query_sample_text 
+		max_prewrite_regions, avg_affected_rows, query_sample_text, plan 
 		from performance_schema.events_statements_summary_by_digest
 		order by exec_count desc limit 1`,
-	).Check(testkit.Rows("insert test test.t <nil> 4 0 0 0 0 0 2 2 1 1 1 /**/insert into t values(4, 'd')"))
+	).Check(testkit.Rows("insert test test.t <nil> 4 0 0 0 0 0 2 2 1 1 1 insert into t values(1, 'a') "))
+
+	// Test different plans with same digest.
+	c.Assert(failpoint.Enable(failpointName, "return(1000)"), IsNil)
+	tk.MustQuery("select * from t where a=3")
+	tk.MustQuery(`select stmt_type, schema_name, table_names, index_names, exec_count, cop_task_num, avg_total_keys, 
+		max_total_keys, avg_processed_keys, max_processed_keys, avg_write_keys, max_write_keys, avg_prewrite_regions, 
+		max_prewrite_regions, avg_affected_rows, query_sample_text, plan 
+		from performance_schema.events_statements_summary_by_digest
+		where digest_text like 'select * from t%'`,
+	).Check(testkit.Rows("select test test.t t:k 2 4 0 0 0 0 0 0 0 0 0 select * from t where a=2 \tIndexLookUp_10\troot\t100\t\n" +
+		"\t├─IndexScan_8 \tcop \t100\ttable:t, index:a, range:[2,2], keep order:false, stats:pseudo\n" +
+		"\t└─TableScan_9 \tcop \t100\ttable:t, keep order:false, stats:pseudo"))
 
 	// Disable it again.
 	tk.MustExec("set global tidb_enable_stmt_summary = false")
+	tk.MustExec("set session tidb_enable_stmt_summary = false")
+	defer tk.MustExec("set global tidb_enable_stmt_summary = 1")
+	defer tk.MustExec("set session tidb_enable_stmt_summary = 1")
 	tk.MustQuery("select @@global.tidb_enable_stmt_summary").Check(testkit.Rows("0"))
 
 	// Create a new session to test
@@ -141,7 +168,7 @@ func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 	// The table should be cleared.
 	tk.MustQuery(`select stmt_type, schema_name, table_names, index_names, exec_count, cop_task_num, avg_total_keys, 
 		max_total_keys, avg_processed_keys, max_processed_keys, avg_write_keys, max_write_keys, avg_prewrite_regions, 
-		max_prewrite_regions, avg_affected_rows, query_sample_text 
+		max_prewrite_regions, avg_affected_rows, query_sample_text, plan 
 		from performance_schema.events_statements_summary_by_digest`,
 	).Check(testkit.Rows())
 
@@ -153,24 +180,26 @@ func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 	tk.MustExec("commit")
 	tk.MustQuery(`select stmt_type, schema_name, table_names, index_names, exec_count, cop_task_num, avg_total_keys, 
 		max_total_keys, avg_processed_keys, max_processed_keys, avg_write_keys, max_write_keys, avg_prewrite_regions, 
-		max_prewrite_regions, avg_affected_rows, query_sample_text 
+		max_prewrite_regions, avg_affected_rows, query_sample_text, prev_sample_text, plan 
 		from performance_schema.events_statements_summary_by_digest
 		where digest_text like 'insert into t%'`,
-	).Check(testkit.Rows("insert test test.t <nil> 1 0 0 0 0 0 0 0 0 0 1 insert into t values(1, 'a')"))
+	).Check(testkit.Rows("insert test test.t <nil> 1 0 0 0 0 0 0 0 0 0 1 insert into t values(1, 'a')  "))
 	tk.MustQuery(`select stmt_type, schema_name, table_names, index_names, exec_count, cop_task_num, avg_total_keys, 
 		max_total_keys, avg_processed_keys, max_processed_keys, avg_write_keys, max_write_keys, avg_prewrite_regions, 
-		max_prewrite_regions, avg_affected_rows, query_sample_text 
+		max_prewrite_regions, avg_affected_rows, query_sample_text, prev_sample_text, plan 
 		from performance_schema.events_statements_summary_by_digest
 		where digest_text='commit'`,
-	).Check(testkit.Rows("commit test <nil> <nil> 1 0 0 0 0 0 2 2 1 1 0 commit"))
+	).Check(testkit.Rows("commit test <nil> <nil> 1 0 0 0 0 0 2 2 1 1 0 commit insert into t values(1, 'a') "))
 
 	tk.MustQuery("select * from t where a=2")
 	tk.MustQuery(`select stmt_type, schema_name, table_names, index_names, exec_count, cop_task_num, avg_total_keys, 
 		max_total_keys, avg_processed_keys, max_processed_keys, avg_write_keys, max_write_keys, avg_prewrite_regions, 
-		max_prewrite_regions, avg_affected_rows, query_sample_text 
+		max_prewrite_regions, avg_affected_rows, query_sample_text, plan 
 		from performance_schema.events_statements_summary_by_digest
 		where digest_text like 'select * from t%'`,
-	).Check(testkit.Rows("select test test.t t:k 1 2 0 0 0 0 0 0 0 0 0 select * from t where a=2"))
+	).Check(testkit.Rows("select test test.t t:k 1 2 0 0 0 0 0 0 0 0 0 select * from t where a=2 \tIndexLookUp_10\troot\t1000\t\n" +
+		"\t├─IndexScan_8 \tcop \t1000\ttable:t, index:a, range:[2,2], keep order:false, stats:pseudo\n" +
+		"\t└─TableScan_9 \tcop \t1000\ttable:t, keep order:false, stats:pseudo"))
 
 	// Disable it in global scope.
 	tk.MustExec("set global tidb_enable_stmt_summary = off")
@@ -183,10 +212,12 @@ func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 	// Statement summary is still enabled.
 	tk.MustQuery(`select stmt_type, schema_name, table_names, index_names, exec_count, cop_task_num, avg_total_keys, 
 		max_total_keys, avg_processed_keys, max_processed_keys, avg_write_keys, max_write_keys, avg_prewrite_regions, 
-		max_prewrite_regions, avg_affected_rows, query_sample_text 
+		max_prewrite_regions, avg_affected_rows, query_sample_text, plan 
 		from performance_schema.events_statements_summary_by_digest
 		where digest_text like 'select * from t%'`,
-	).Check(testkit.Rows("select test test.t t:k 2 4 0 0 0 0 0 0 0 0 0 select * from t where a=2"))
+	).Check(testkit.Rows("select test test.t t:k 2 4 0 0 0 0 0 0 0 0 0 select * from t where a=2 \tIndexLookUp_10\troot\t1000\t\n" +
+		"\t├─IndexScan_8 \tcop \t1000\ttable:t, index:a, range:[2,2], keep order:false, stats:pseudo\n" +
+		"\t└─TableScan_9 \tcop \t1000\ttable:t, keep order:false, stats:pseudo"))
 
 	// Unset session variable.
 	tk.MustExec("set session tidb_enable_stmt_summary = ''")
@@ -195,8 +226,48 @@ func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 	// Statement summary is disabled.
 	tk.MustQuery(`select stmt_type, schema_name, table_names, index_names, exec_count, cop_task_num, avg_total_keys, 
 		max_total_keys, avg_processed_keys, max_processed_keys, avg_write_keys, max_write_keys, avg_prewrite_regions, 
-		max_prewrite_regions, avg_affected_rows, query_sample_text 
+		max_prewrite_regions, avg_affected_rows, query_sample_text, plan 
 		from performance_schema.events_statements_summary_by_digest`,
+	).Check(testkit.Rows())
+}
+
+// Test events_statements_summary_by_digest_history.
+func (s *testTableSuite) TestStmtSummaryHistoryTable(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b varchar(10), key k(a))")
+
+	tk.MustExec("set global tidb_enable_stmt_summary = 1")
+	tk.MustQuery("select @@global.tidb_enable_stmt_summary").Check(testkit.Rows("1"))
+	defer tk.MustExec("set global tidb_enable_stmt_summary = false")
+
+	// Invalidate the cache manually so that tidb_enable_stmt_summary works immediately.
+	s.dom.GetGlobalVarsCache().Disable()
+	// Disable refreshing summary.
+	tk.MustExec("set global tidb_stmt_summary_refresh_interval = 999999999")
+	tk.MustQuery("select @@global.tidb_stmt_summary_refresh_interval").Check(testkit.Rows("999999999"))
+
+	// Create a new session to test.
+	tk = testkit.NewTestKitWithInit(c, s.store)
+
+	// Test INSERT
+	tk.MustExec("insert into t values(1, 'a')")
+	tk.MustExec("insert into t    values(2, 'b')")
+	tk.MustExec("insert into t VALUES(3, 'c')")
+	tk.MustExec("/**/insert into t values(4, 'd')")
+	tk.MustQuery(`select stmt_type, schema_name, table_names, index_names, exec_count, cop_task_num, avg_total_keys, 
+		max_total_keys, avg_processed_keys, max_processed_keys, avg_write_keys, max_write_keys, avg_prewrite_regions, 
+		max_prewrite_regions, avg_affected_rows, query_sample_text, plan 
+		from performance_schema.events_statements_summary_by_digest_history
+		where digest_text like 'insert into t%'`,
+	).Check(testkit.Rows("insert test test.t <nil> 4 0 0 0 0 0 2 2 1 1 1 insert into t values(1, 'a') "))
+
+	tk.MustExec("set global tidb_stmt_summary_history_size = 0")
+	tk.MustQuery(`select stmt_type, schema_name, table_names, index_names, exec_count, cop_task_num, avg_total_keys, 
+		max_total_keys, avg_processed_keys, max_processed_keys, avg_write_keys, max_write_keys, avg_prewrite_regions, 
+		max_prewrite_regions, avg_affected_rows, query_sample_text, plan 
+		from performance_schema.events_statements_summary_by_digest_history`,
 	).Check(testkit.Rows())
 }
 
@@ -209,6 +280,7 @@ func (s *testTableSuite) TestTiKVProfileCPU(c *C) {
 	router := http.NewServeMux()
 	mockServer := httptest.NewServer(router)
 	mockAddr := strings.TrimPrefix(mockServer.URL, "http://")
+	defer mockServer.Close()
 
 	copyHandler := func(filename string) http.HandlerFunc {
 		return func(w http.ResponseWriter, _ *http.Request) {

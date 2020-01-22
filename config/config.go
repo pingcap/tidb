@@ -39,7 +39,7 @@ import (
 const (
 	MaxLogFileSize = 4096 // MB
 	// DefTxnTotalSizeLimit is the default value of TxnTxnTotalSizeLimit.
-	DefTxnTotalSizeLimit = 1024 * 1024 * 1024
+	DefTxnTotalSizeLimit = 100 * 1024 * 1024
 )
 
 // Valid config maps
@@ -104,6 +104,12 @@ type Config struct {
 	// RepairMode indicates that the TiDB is in the repair mode for table meta.
 	RepairMode      bool     `toml:"repair-mode" json:"repair-mode"`
 	RepairTableList []string `toml:"repair-table-list" json:"repair-table-list"`
+	// IsolationRead indicates that the TiDB reads data from which isolation level(engine and label).
+	IsolationRead IsolationRead `toml:"isolation-read" json:"isolation-read"`
+	// MaxServerConnections is the maximum permitted number of simultaneous client connections.
+	MaxServerConnections uint32 `toml:"max-server-connections" json:"max-server-connections"`
+
+	Experimental Experimental `toml:"experimental" json:"experimental"`
 }
 
 // nullableBool defaults unset bool options to unset instead of false, which enables us to know if the user has set 2
@@ -189,6 +195,7 @@ type Log struct {
 	SlowThreshold       uint64 `toml:"slow-threshold" json:"slow-threshold"`
 	ExpensiveThreshold  uint   `toml:"expensive-threshold" json:"expensive-threshold"`
 	QueryLogMaxLen      uint64 `toml:"query-log-max-len" json:"query-log-max-len"`
+	EnableSlowLog       uint32 `toml:"enable-slow-log" json:"enable-slow-log"`
 	RecordPlanInSlowLog uint32 `toml:"record-plan-in-slow-log" json:"record-plan-in-slow-log"`
 }
 
@@ -385,6 +392,21 @@ type TiKVClient struct {
 	// If a store has been up to the limit, it will return error for successive request to
 	// prevent the store occupying too much token in dispatching level.
 	StoreLimit int64 `toml:"store-limit" json:"store-limit"`
+
+	CoprCache CoprocessorCache `toml:"copr-cache" json:"copr-cache"`
+}
+
+// CoprocessorCache is the config for coprocessor cache.
+type CoprocessorCache struct {
+	// Whether to enable the copr cache. The copr cache saves the result from TiKV Coprocessor in the memory and
+	// reuses the result when corresponding data in TiKV is unchanged, on a region basis.
+	Enabled bool `toml:"enabled" json:"enabled"`
+	// The capacity in MB of the cache.
+	CapacityMB float64 `toml:"capacity-mb" json:"capacity-mb"`
+	// Only cache requests whose result set is small.
+	AdmissionMaxResultMB float64 `toml:"admission-max-result-mb" json:"admission-max-result-mb"`
+	// Only cache requests takes notable time to process.
+	AdmissionMinProcessMs uint64 `toml:"admission-min-process-ms" json:"admission-min-process-ms"`
 }
 
 // Binlog is the config for binlog.
@@ -416,10 +438,29 @@ type PessimisticTxn struct {
 
 // StmtSummary is the config for statement summary.
 type StmtSummary struct {
+	// Enable statement summary or not.
+	Enable bool `toml:"enable" json:"enable"`
 	// The maximum number of statements kept in memory.
 	MaxStmtCount uint `toml:"max-stmt-count" json:"max-stmt-count"`
 	// The maximum length of displayed normalized SQL and sample SQL.
 	MaxSQLLength uint `toml:"max-sql-length" json:"max-sql-length"`
+	// The refresh interval of statement summary.
+	RefreshInterval int `toml:"refresh-interval" json:"refresh-interval"`
+	// The maximum history size of statement summary.
+	HistorySize int `toml:"history-size" json:"history-size"`
+}
+
+// IsolationRead is the config for isolation read.
+type IsolationRead struct {
+	// Engines filters tidb-server access paths by engine type.
+	Engines []string `toml:"engines" json:"engines"`
+}
+
+// Experimental controls the features that are still experimental: their semantics, interfaces are subject to change.
+// Using these features in the production environment is not recommended.
+type Experimental struct {
+	// Whether enable the syntax like `auto_random(3)` on the primary key column.
+	AllowAutoRandom bool `toml:"allow-auto-random" json:"allow-auto-random"`
 }
 
 var defaultConf = Config{
@@ -446,6 +487,7 @@ var defaultConf = Config{
 	SplitRegionMaxNum:            1000,
 	RepairMode:                   false,
 	RepairTableList:              []string{},
+	MaxServerConnections:         4096,
 	TxnLocalLatches: TxnLocalLatches{
 		Enabled:  false,
 		Capacity: 2048000,
@@ -465,6 +507,7 @@ var defaultConf = Config{
 		DisableTimestamp:    nbUnset, // If both options are nbUnset, getDisableTimestamp() returns false
 		QueryLogMaxLen:      logutil.DefaultQueryLogMaxLen,
 		RecordPlanInSlowLog: logutil.DefaultRecordPlanInSlowLog,
+		EnableSlowLog:       logutil.DefaultTiDBEnableSlowLog,
 	},
 	Status: Status{
 		ReportStatus:    true,
@@ -519,6 +562,21 @@ var defaultConf = Config{
 
 		RegionCacheTTL: 600,
 		StoreLimit:     0,
+
+		CoprCache: CoprocessorCache{
+			// WARNING: Currently Coprocessor Cache may lead to inconsistent result. Do not open it.
+			// These config items are hidden from user, so that fill them with zero value instead of default value.
+			Enabled:               false,
+			CapacityMB:            0,
+			AdmissionMaxResultMB:  0,
+			AdmissionMinProcessMs: 0,
+
+			// If you still want to use Coprocessor Cache, here are some recommended configurations:
+			// Enabled:               true,
+			// CapacityMB:            1000,
+			// AdmissionMaxResultMB:  10,
+			// AdmissionMinProcessMs: 5,
+		},
 	},
 	Binlog: Binlog{
 		WriteTimeout: "15s",
@@ -529,8 +587,17 @@ var defaultConf = Config{
 		MaxRetryCount: 256,
 	},
 	StmtSummary: StmtSummary{
-		MaxStmtCount: 100,
-		MaxSQLLength: 4096,
+		Enable:          true,
+		MaxStmtCount:    200,
+		MaxSQLLength:    4096,
+		RefreshInterval: 1800,
+		HistorySize:     24,
+	},
+	IsolationRead: IsolationRead{
+		Engines: []string{"tikv", "tiflash", "tidb"},
+	},
+	Experimental: Experimental{
+		AllowAutoRandom: false,
 	},
 }
 
@@ -711,8 +778,33 @@ func (c *Config) Valid() error {
 		return fmt.Errorf("grpc-connection-count should be greater than 0")
 	}
 
-	if c.Performance.TxnTotalSizeLimit > (10 << 30) {
+	if c.Performance.TxnTotalSizeLimit > 100<<20 && c.Binlog.Enable {
+		return fmt.Errorf("txn-total-size-limit should be less than %d with binlog enabled", 100<<20)
+	}
+	if c.Performance.TxnTotalSizeLimit > 10<<30 {
 		return fmt.Errorf("txn-total-size-limit should be less than %d", 10<<30)
+	}
+
+	if c.StmtSummary.HistorySize < 0 {
+		return fmt.Errorf("history-size in [stmt-summary] should be greater than or equal to 0")
+	}
+	if c.StmtSummary.RefreshInterval <= 0 {
+		return fmt.Errorf("refresh-interval in [stmt-summary] should be greater than 0")
+	}
+
+	if c.AlterPrimaryKey && c.Experimental.AllowAutoRandom {
+		return fmt.Errorf("allow-auto-random is unavailable when alter-primary-key is enabled")
+	}
+	if c.PreparedPlanCache.Capacity < 1 {
+		return fmt.Errorf("capacity in [prepared-plan-cache] should be at least 1")
+	}
+	if len(c.IsolationRead.Engines) < 1 {
+		return fmt.Errorf("the number of [isolation-read]engines for isolation read should be at least 1")
+	}
+	for _, engine := range c.IsolationRead.Engines {
+		if engine != "tidb" && engine != "tikv" && engine != "tiflash" {
+			return fmt.Errorf("type of [isolation-read]engines can't be %v should be one of tidb or tikv or tiflash", engine)
+		}
 	}
 	return nil
 }

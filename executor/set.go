@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/charset"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
@@ -54,6 +55,13 @@ func (e *SetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 		// Variable is case insensitive, we use lower case.
 		if v.Name == ast.SetNames {
 			// This is set charset stmt.
+			if v.IsDefault {
+				err := e.setCharset(mysql.DefaultCharset, "")
+				if err != nil {
+					return err
+				}
+				continue
+			}
 			dt, err := v.Expr.(*expression.Constant).Eval(chunk.Row{})
 			if err != nil {
 				return err
@@ -202,6 +210,8 @@ func (e *SetExecutor) setSysVariable(name string, v *expression.VarAssignment) e
 		stmtsummary.StmtSummaryByDigestMap.SetEnabled(valStr, !v.IsGlobal)
 	case variable.TiDBStmtSummaryRefreshInterval:
 		stmtsummary.StmtSummaryByDigestMap.SetRefreshInterval(valStr, !v.IsGlobal)
+	case variable.TiDBStmtSummaryHistorySize:
+		stmtsummary.StmtSummaryByDigestMap.SetHistorySize(valStr, !v.IsGlobal)
 	case variable.TiDBCapturePlanBaseline:
 		variable.CapturePlanBaseline.Set(valStr, !v.IsGlobal)
 	}
