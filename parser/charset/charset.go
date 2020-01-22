@@ -105,11 +105,7 @@ func ValidCharsetAndCollation(cs string, co string) bool {
 	}
 	co = strings.ToLower(co)
 	_, ok = c.Collations[co]
-	if !ok {
-		return false
-	}
-
-	return true
+	return ok
 }
 
 // GetDefaultCollation returns the default collation for charset.
