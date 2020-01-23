@@ -385,7 +385,6 @@ func (pc PbConverter) canFuncBePushed(sf *ScalarFunction) bool {
 		ast.Degrees,
 		ast.Conv,
 		ast.CRC32,
-		ast.Rand,
 
 		// control flow functions.
 		ast.Case,
@@ -473,6 +472,12 @@ func (pc PbConverter) canFuncBePushed(sf *ScalarFunction) bool {
 			tipb.ScalarFuncSig_CastTimeAsInt:
 			return false
 		default:
+			return isPushdownEnabled(sf.FuncName.L)
+		}
+	case ast.Rand:
+		switch sf.Function.PbCode() {
+		case
+			tipb.ScalarFuncSig_RandWithSeedFirstGen:
 			return isPushdownEnabled(sf.FuncName.L)
 		}
 	}
