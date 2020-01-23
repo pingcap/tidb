@@ -1778,3 +1778,38 @@ func BenchmarkTimeAdd(b *testing.B) {
 		arg1.Add(sc, arg2)
 	}
 }
+
+func BenchmarkTimeCompare(b *testing.B) {
+	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
+	mustParse := func(str string) types.Time {
+		t, err := types.ParseDatetime(sc, str)
+		if err != nil {
+			b.Fatal(err)
+		}
+		return t
+	}
+	tbl := []struct {
+		Arg1 types.Time
+		Arg2 types.Time
+	}{
+		{
+			mustParse("2011-10-10 11:11:11"),
+			mustParse("2011-10-10 11:11:11"),
+		},
+		{
+			mustParse("2011-10-10 11:11:11.123456"),
+			mustParse("2011-10-10 11:11:11.1"),
+		},
+		{
+			mustParse("2011-10-10 11:11:11"),
+			mustParse("2011-10-10 11:11:11.123"),
+		},
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		for _, c := range tbl {
+			c.Arg1.Compare(c.Arg2)
+		}
+	}
+}
