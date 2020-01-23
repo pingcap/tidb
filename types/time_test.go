@@ -70,6 +70,7 @@ func (s *testTimeSuite) TestDateTime(c *C) {
 		{"2018.01.01", "2018-01-01 00:00:00.00"},
 		{"2018.01.01 00:00:00", "2018-01-01 00:00:00"},
 		{"2018/01/01-00:00:00", "2018-01-01 00:00:00"},
+		{"4710072", "2047-10-07 02:00:00"},
 	}
 
 	for _, test := range table {
@@ -253,6 +254,10 @@ func (s *testTimeSuite) TestTime(c *C) {
 		_, err := types.ParseDuration(sc, test, types.DefaultFsp)
 		c.Assert(err, NotNil)
 	}
+
+	t, err := types.ParseDuration(sc, "4294967295 0:59:59", types.DefaultFsp)
+	c.Assert(err, NotNil)
+	c.Assert(t.String(), Equals, "838:59:59")
 
 	// test time compare
 	cmpTable := []struct {
