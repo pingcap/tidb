@@ -1361,7 +1361,7 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool
 		for i := 0; i < rowCount; i++ {
 			data = data[0:4]
 			if binary {
-				data, err = dumpBinaryRow(data, rs.Columns(), req.GetRow(i))
+				data, err = dumpBinaryRow(data, rs.Columns(), req.GetRow(i), cc.ctx.GetSessionVars().TimeZone)
 			} else {
 				data, err = dumpTextRow(data, rs.Columns(), req.GetRow(i))
 			}
@@ -1425,7 +1425,7 @@ func (cc *clientConn) writeChunksWithFetchSize(ctx context.Context, rs ResultSet
 	var err error
 	for _, row := range curRows {
 		data = data[0:4]
-		data, err = dumpBinaryRow(data, rs.Columns(), row)
+		data, err = dumpBinaryRow(data, rs.Columns(), row, cc.ctx.GetSessionVars().TimeZone)
 		if err != nil {
 			return err
 		}

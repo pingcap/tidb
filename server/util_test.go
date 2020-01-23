@@ -63,6 +63,13 @@ func (s *testUtilSuite) TearDownSuite(c *C) {
 }
 
 func (s *testUtilSuite) TestDumpBinaryTime(c *C) {
+	sc := mock.NewContext().GetSessionVars().StmtCtx
+	sc.IgnoreZeroInDate = true
+	londonTz, err := time.LoadLocation("Europe/London")
+	c.Assert(err, IsNil)
+	sc.TimeZone = londonTz
+	defer testleak.AfterTest(c)()
+
 	t, err := types.ParseTimestamp(nil, "0000-00-00 00:00:00.0000000")
 	c.Assert(err, IsNil)
 	d, err := dumpBinaryDateTime(nil, t, nil)
@@ -85,6 +92,24 @@ func (s *testUtilSuite) TestDumpBinaryTime(c *C) {
 	d, err = dumpBinaryDateTime(nil, t, nil)
 	c.Assert(err, IsNil)
 	c.Assert(d, DeepEquals, []byte{4, 0, 0, 0, 0})
+
+	t, err = types.ParseTimestamp(sc, "2011-03-13 02:15:00")
+	c.Assert(err, IsNil)
+	d, err = dumpBinaryDateTime(nil, t, sc.TimeZone)
+	c.Assert(err, IsNil)
+	c.Assert(d, DeepEquals, []byte{0xb, 0xdb, 0x7, 0x3, 0xd, 0x2, 0xf, 0x0, 0x0, 0x0, 0x0, 0x0})
+	// Tests whether the loc variable takes effect.
+	// In the United States, March 13, 2011 2:15am never occurred so it will return convert timestamp failed error.
+	losAngelesTz, err := time.LoadLocation("America/Los_Angeles")
+	c.Assert(err, IsNil)
+	sc.TimeZone = losAngelesTz
+	_, err = dumpBinaryDateTime(nil, t, sc.TimeZone)
+	c.Assert(err, NotNil)
+	t, err = types.ParseTimestamp(sc, "2020-01-27 04:00:00")
+	c.Assert(err, IsNil)
+	d, err = dumpBinaryDateTime(nil, t, sc.TimeZone)
+	c.Assert(err, IsNil)
+	c.Assert(d, DeepEquals, []byte{0xb, 0xe4, 0x7, 0x1, 0x1b, 0x4, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0})
 
 	myDuration, err := types.ParseDuration(nil, "0000-00-00 00:00:00.0000000", 6)
 	c.Assert(err, IsNil)

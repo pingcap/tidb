@@ -206,8 +206,7 @@ func dumpBinaryTime(dur time.Duration) (data []byte) {
 
 func dumpBinaryDateTime(data []byte, t types.Time, loc *time.Location) ([]byte, error) {
 	if t.Type() == mysql.TypeTimestamp && loc != nil {
-		// TODO: Consider time_zone variable.
-		t1, err := t.GoTime(time.Local)
+		t1, err := t.GoTime(loc)
 		if err != nil {
 			return nil, errors.Errorf("FATAL: convert timestamp %v go time return error!", t.CoreTime())
 		}
@@ -229,7 +228,7 @@ func dumpBinaryDateTime(data []byte, t types.Time, loc *time.Location) ([]byte, 
 	return data, nil
 }
 
-func dumpBinaryRow(buffer []byte, columns []*ColumnInfo, row chunk.Row) ([]byte, error) {
+func dumpBinaryRow(buffer []byte, columns []*ColumnInfo, row chunk.Row, loc *time.Location) ([]byte, error) {
 	buffer = append(buffer, mysql.OKHeader)
 	nullBitmapOff := len(buffer)
 	numBytes4Null := (len(columns) + 7 + 2) / 8
@@ -263,7 +262,7 @@ func dumpBinaryRow(buffer []byte, columns []*ColumnInfo, row chunk.Row) ([]byte,
 			buffer = dumpLengthEncodedString(buffer, row.GetBytes(i))
 		case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
 			var err error
-			buffer, err = dumpBinaryDateTime(buffer, row.GetTime(i), nil)
+			buffer, err = dumpBinaryDateTime(buffer, row.GetTime(i), loc)
 			if err != nil {
 				return buffer, err
 			}
