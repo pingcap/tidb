@@ -1767,3 +1767,14 @@ func BenchmarkFormat(b *testing.B) {
 		t1.DateFormat("%Y-%m-%d %H:%i:%s")
 	}
 }
+
+func BenchmarkTimeAdd(b *testing.B) {
+	sc := &stmtctx.StatementContext{
+		TimeZone: time.UTC,
+	}
+	arg1, _ := types.ParseTime(sc, "2017-01-18", mysql.TypeDatetime, types.MaxFsp)
+	arg2, _ := types.ParseDuration(sc, "12:30:59", types.MaxFsp)
+	for i := 0; i < b.N; i++ {
+		arg1.Add(sc, arg2)
+	}
+}
