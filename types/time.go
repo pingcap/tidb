@@ -186,13 +186,14 @@ func FromGoTime(t gotime.Time) CoreTime {
 // FromDate makes a internal time representation from the given date.
 func FromDate(year int, month int, day int, hour int, minute int, second int, microsecond int) CoreTime {
 	t := ZeroCoreTime
-	t.setYear(uint16(year))
-	t.setMonth(uint8(month))
-	t.setDay(uint8(day))
-	t.setHour(uint8(hour))
-	t.setMinute(uint8(minute))
-	t.setSecond(uint8(second))
-	t.setMicrosecond(uint32(microsecond))
+	p := (*uint64)(&t)
+	*p |= (uint64(microsecond) << microsecondBitFieldOffset) & microsecondBitFieldMask
+	*p |= (uint64(second) << secondBitFieldOffset) & secondBitFieldMask
+	*p |= (uint64(minute) << minuteBitFieldOffset) & minuteBitFieldMask
+	*p |= (uint64(hour) << hourBitFieldOffset) & hourBitFieldMask
+	*p |= (uint64(day) << dayBitFieldOffset) & dayBitFieldMask
+	*p |= (uint64(month) << monthBitFieldOffset) & monthBitFieldMask
+	*p |= (uint64(year) << yearBitFieldOffset) & yearBitFieldMask
 	return t
 }
 
@@ -272,9 +273,19 @@ const (
 // NewTime constructs time from core time, type and fsp.
 func NewTime(coreTime CoreTime, tp uint8, fsp int8) Time {
 	t := ZeroTime
-	t.SetCoreTime(coreTime)
-	t.SetType(tp)
-	t.SetFsp(fsp)
+	p := (*uint64)(&t.coreTime)
+	*p |= (uint64(coreTime) & coreTimeBitFieldMask)
+	if tp == mysql.TypeDate {
+		*p |= uint64(fspTtForDate)
+		return t
+	}
+	if fsp == UnspecifiedFsp {
+		fsp = DefaultFsp
+	}
+	*p |= uint64(fsp) << 1
+	if tp == mysql.TypeTimestamp {
+		*p |= 1
+	}
 	return t
 }
 
