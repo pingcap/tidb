@@ -353,7 +353,7 @@ func (e *shuffleWorker) run(ctx context.Context, waitGroup *sync.WaitGroup) {
 	}
 }
 
-var _ partitionSplitter = &partitionHashSplitter{}
+var _ partitionSplitter = (*partitionHashSplitter)(nil)
 
 type partitionSplitter interface {
 	split(ctx sessionctx.Context, input *chunk.Chunk, workerIndices []int) ([]int, error)

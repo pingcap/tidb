@@ -587,6 +587,18 @@ const (
 	PartitionHashSplitterType = iota
 )
 
+// ShuffleMergerType is the type of `Shuffle` executor merger, which merges results from partitions.
+type ShuffleMergerType int
+
+const (
+	// ShuffleSerialMergerType is the stub merger for serial executing.
+	ShuffleSerialMergerType = iota
+	// ShuffleSimpleMergerType is the merger merging results without any other process.
+	ShuffleSimpleMergerType
+	// ShuffleMergeSortMergerType is the merger merging results by `Merge-Sort`
+	ShuffleMergeSortMergerType
+)
+
 // PhysicalShuffleDataSourceStub represents a data source stub of `PhysicalShuffle`,
 // and actually, is executed by `executor.shuffleWorker`.
 type PhysicalShuffleDataSourceStub struct {
