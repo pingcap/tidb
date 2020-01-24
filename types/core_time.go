@@ -308,20 +308,11 @@ func calcTimeDurationDiff(t CoreTime, d Duration) (seconds, microseconds int, ne
 
 // datetimeToUint64 converts time value to integer in YYYYMMDDHHMMSS format.
 func datetimeToUint64(t CoreTime) uint64 {
-	return dateToUint64(t)*1e6 + timeToUint64(t)
-}
-
-// dateToUint64 converts time value to integer in YYYYMMDD format.
-func dateToUint64(t CoreTime) uint64 {
-	return uint64(t.Year())*10000 +
-		uint64(t.Month())*100 +
-		uint64(t.Day())
-}
-
-// timeToUint64 converts time value to integer in HHMMSS format.
-func timeToUint64(t CoreTime) uint64 {
-	return uint64(t.Hour())*10000 +
-		uint64(t.Minute())*100 +
+	return uint64(t.Year())*1e10 +
+		uint64(t.Month())*1e8 +
+		uint64(t.Day())*1e6 +
+		uint64(t.Hour())*1e4 +
+		uint64(t.Minute())*1e2 +
 		uint64(t.Second())
 }
 
