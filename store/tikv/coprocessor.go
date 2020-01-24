@@ -213,18 +213,15 @@ func (r *copRanges) split(key []byte) (*copRanges, *copRanges) {
 const rangesPerTask = 25000
 
 func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, req *kv.Request) ([]*copTask, error) {
-	// fmt.Println(">> buildCopTasks: started.")
 	start := time.Now()
 	rangesLen := ranges.len()
 
 	tasksCh := make(chan *copTask, 2048)
 
-	// fmt.Println(">> buildCopTasks: call buildCopTasksChan ...")
 	errCh, err := buildCopTasksChan(bo, cache, ranges, req, tasksCh, nil)
 	if err != nil {
 		return nil, err
 	}
-	// fmt.Println(">> buildCopTasks: called buildCopTasksChan, no errors")
 
 	var tasks []*copTask
 	for task := range tasksCh {
@@ -237,7 +234,6 @@ func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, req *kv
 		default:
 		}
 	}
-	// fmt.Println(">> buildCopTasks: read channel, no errors, tasks: ", len(tasks))
 
 	if elapsed := time.Since(start); elapsed > time.Millisecond*500 {
 		logutil.BgLogger().Warn("buildCopTasks takes too much time",
@@ -246,16 +242,11 @@ func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, req *kv
 			zap.Int("task len", len(tasks)))
 	}
 	tikvTxnRegionsNumHistogramWithCoprocessor.Observe(float64(len(tasks)))
-	// fmt.Println(">> buildCopTasks: done.")
 	return tasks, nil
 }
 
 // shouldStop reads finishCh and returns a boolean value about should we stop to do our work or not
 func shouldStop(finishCh <-chan struct{}) bool {
-	if finishCh == nil {
-		return false
-	}
-
 	select {
 	case <-finishCh:
 		return true
@@ -266,7 +257,6 @@ func shouldStop(finishCh <-chan struct{}) bool {
 
 // buildCopTasksChan returns a channel to get tasks
 func buildCopTasksChan(bo *Backoffer, cache *RegionCache, ranges *copRanges, req *kv.Request, tasksCh chan *copTask, finishCh <-chan struct{}) (errCh chan error, err error) {
-	// fmt.Println(">>>> buildCopTasksChan: started.")
 	errCh = make(chan error, 2048)
 	cmdType := tikvrpc.CmdCop
 	if req.Streaming {
@@ -287,7 +277,6 @@ func buildCopTasksChan(bo *Backoffer, cache *RegionCache, ranges *copRanges, req
 	}
 
 	if req.StoreType == kv.TiDB {
-		// fmt.Println(">>>> buildCopTasksChan: req store ty.")
 		go func() {
 			defer close(tasksCh)
 			defer close(errCh)
