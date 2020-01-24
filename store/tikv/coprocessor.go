@@ -63,7 +63,6 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variable
 		vars:            vars,
 		memTracker:      req.MemTracker,
 		replicaReadSeed: c.replicaReadSeed,
-		tasksFilledCh:   make(chan struct{}, 1),
 		tasks:           []*copTask{},
 	}
 	it.minCommitTSPushed.data = make(map[uint64]struct{}, 5)
@@ -478,9 +477,6 @@ type copIterator struct {
 	concurrency int
 	finishCh    chan struct{}
 
-	// Channel for sending a signal that all tasks are filled
-	// (initially tasks is an empty slice, it is filled in copIteratorTaskSender.run)
-	tasksFilledCh chan struct{}
 	// If keepOrder, results are stored in copTask.respChan, read them out one by one.
 	tasks []*copTask
 	curr  int
@@ -655,32 +651,24 @@ func (it *copIterator) open(ctx context.Context) error {
 }
 
 func (sender *copIteratorTaskSender) run() {
-	// Fill iterator's list of tasks
-	for t := range sender.newTasksCh {
-		sender.iterator.tasks = append(sender.iterator.tasks, t)
-	}
-	// Notify iterator about it
-	sender.iterator.tasksFilledCh <- struct{}{}
-	close(sender.iterator.tasksFilledCh)
-
-	// Send tasks to feed the worker goroutines.
-	for _, t := range sender.iterator.tasks {
-		// If keepOrder, we must control the sending rate to prevent all tasks
-		// being done (aka. all of the responses are buffered) by copIteratorWorker.
-		// We keep the number of inflight tasks within the number of concurrency * 2.
-		// It sends one more task if a task has been finished in copIterator.Next.
-		if sender.sendRate != nil {
-			exit := sender.sendRate.getToken(sender.finishCh)
-			if exit {
-				break
-			}
-		}
-		exit := sender.sendToTaskCh(t)
-		if exit {
-			break
-		}
-	}
-	close(sender.taskCh)
+	// // Send tasks to feed the worker goroutines.
+	// for _, t := range sender.iterator.tasks {
+	// 	// If keepOrder, we must control the sending rate to prevent all tasks
+	// 	// being done (aka. all of the responses are buffered) by copIteratorWorker.
+	// 	// We keep the number of inflight tasks within the number of concurrency * 2.
+	// 	// It sends one more task if a task has been finished in copIterator.Next.
+	// 	if sender.sendRate != nil {
+	// 		exit := sender.sendRate.getToken(sender.finishCh)
+	// 		if exit {
+	// 			break
+	// 		}
+	// 	}
+	// 	exit := sender.sendToTaskCh(t)
+	// 	if exit {
+	// 		break
+	// 	}
+	// }
+	// close(sender.taskCh)
 
 	// Wait for worker goroutines to exit.
 	sender.wg.Wait()
@@ -745,8 +733,6 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 			return nil, nil
 		}
 	} else {
-		// first, we need to be sure that all tasks are received from copIteratorTaskSender
-		<-it.tasksFilledCh
 		// then we can start to iterate over tasks
 		for {
 			if it.curr >= len(it.tasks) {
@@ -765,7 +751,7 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 			// Switch to next task.
 			it.tasks[it.curr] = nil
 			it.curr++
-			it.sendRate.putToken()
+			// it.sendRate.putToken()
 		}
 	}
 
