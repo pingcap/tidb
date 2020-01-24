@@ -833,7 +833,7 @@ func updateVersionAndTableInfo(t *meta.Meta, job *model.Job, tblInfo *model.Tabl
 }
 
 // TODO: It may have the issue when two clients concurrently add partitions to a table.
-func onAddTablePartition(t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func onAddTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	partInfo := &model.PartitionInfo{}
 	err := job.DecodeArgs(&partInfo)
 	if err != nil {
@@ -871,6 +871,7 @@ func onAddTablePartition(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	}
 	// Finish this job.
 	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
+	asyncNotifyEvent(d, &util.Event{Tp: model.ActionAddTablePartition, TableInfo: tblInfo, PartInfo: partInfo})
 	return ver, errors.Trace(err)
 }
 
