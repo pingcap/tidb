@@ -733,7 +733,6 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 			return nil, nil
 		}
 	} else {
-		// then we can start to iterate over tasks
 		for {
 			if it.curr >= len(it.tasks) {
 				// Resp will be nil if iterator is finishCh.
