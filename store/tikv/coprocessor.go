@@ -212,20 +212,106 @@ func (r *copRanges) split(key []byte) (*copRanges, *copRanges) {
 // rangesPerTask limits the length of the ranges slice sent in one copTask.
 const rangesPerTask = 25000
 
-func buildSplitRangesCallback(
-	req *kv.Request, cmdType tikvrpc.CmdType,
-	tableStart kv.Key, tableEnd kv.Key,
-	tasks *[]*copTask, tasksCh chan *copTask,
-) splitRangesCallback {
-	return func(regionWithRangeInfo *KeyLocation, ranges *copRanges) {
-		var currTasks []*copTask
+func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, req *kv.Request) ([]*copTask, error) {
+	// fmt.Println(">> buildCopTasks: started.")
+	start := time.Now()
+	rangesLen := ranges.len()
+
+	tasksCh := make(chan *copTask, 2048)
+
+	// fmt.Println(">> buildCopTasks: call buildCopTasksChan ...")
+	errCh, err := buildCopTasksChan(bo, cache, ranges, req, tasksCh, nil)
+	if err != nil {
+		return nil, err
+	}
+	// fmt.Println(">> buildCopTasks: called buildCopTasksChan, no errors")
+
+	var tasks []*copTask
+	for task := range tasksCh {
+		tasks = append(tasks, task)
+		select {
+		case err = <-errCh:
+			if err != nil {
+				return nil, err
+			}
+		default:
+		}
+	}
+	// fmt.Println(">> buildCopTasks: read channel, no errors, tasks: ", len(tasks))
+
+	if elapsed := time.Since(start); elapsed > time.Millisecond*500 {
+		logutil.BgLogger().Warn("buildCopTasks takes too much time",
+			zap.Duration("elapsed", elapsed),
+			zap.Int("range len", rangesLen),
+			zap.Int("task len", len(tasks)))
+	}
+	tikvTxnRegionsNumHistogramWithCoprocessor.Observe(float64(len(tasks)))
+	// fmt.Println(">> buildCopTasks: done.")
+	return tasks, nil
+}
+
+// shouldStop reads finishCh and returns a boolean value about should we stop to do our work or not
+func shouldStop(finishCh <-chan struct{}) bool {
+	if finishCh == nil {
+		return false
+	}
+
+	select {
+	case <-finishCh:
+		return true
+	default:
+		return false
+	}
+}
+
+// buildCopTasksChan returns a channel to get tasks
+func buildCopTasksChan(bo *Backoffer, cache *RegionCache, ranges *copRanges, req *kv.Request, tasksCh chan *copTask, finishCh <-chan struct{}) (errCh chan error, err error) {
+	// fmt.Println(">>>> buildCopTasksChan: started.")
+	errCh = make(chan error, 2048)
+	cmdType := tikvrpc.CmdCop
+	if req.Streaming {
+		cmdType = tikvrpc.CmdCopStream
+	}
+	var tableStart, tableEnd kv.Key
+	if req.StoreType == kv.TiFlash {
+		tableID := tablecodec.DecodeTableID(ranges.at(0).StartKey)
+		fullRange := ranger.FullIntRange(false)
+		keyRange := distsql.TableRangesToKVRanges(tableID, fullRange, nil)
+		tableStart, tableEnd = keyRange[0].StartKey, keyRange[0].EndKey
+	}
+
+	if shouldStop(finishCh) {
+		close(errCh)
+		close(tasksCh)
+		return
+	}
+
+	if req.StoreType == kv.TiDB {
+		// fmt.Println(">>>> buildCopTasksChan: req store ty.")
+		go func() {
+			defer close(tasksCh)
+			defer close(errCh)
+			if err := buildTiDBMemCopTasksChan(ranges, req, tasksCh); err != nil {
+				errCh <- err
+				return
+			}
+		}()
+		return
+	}
+
+	reciever := tasksCh
+	if req.Desc {
+		reciever = make(chan *copTask, 1)
+	}
+
+	appendTask := func(regionWithRangeInfo *KeyLocation, ranges *copRanges) {
 		if req.StoreType == kv.TiKV {
 			// TiKV will return gRPC error if the message is too large. So we need to limit the length of the ranges slice
 			// to make sure the message can be sent successfully.
 			rLen := ranges.len()
 			for i := 0; i < rLen; {
 				nextI := mathutil.Min(i+rangesPerTask, rLen)
-				currTasks = append(currTasks, &copTask{
+				reciever <- &copTask{
 					region: regionWithRangeInfo.Region,
 					ranges: ranges.slice(i, nextI),
 					// Channel buffer is 2 for handling region split.
@@ -233,7 +319,7 @@ func buildSplitRangesCallback(
 					respChan:  make(chan *copResponse, 2),
 					cmdType:   cmdType,
 					storeType: req.StoreType,
-				})
+				}
 				i = nextI
 			}
 		} else if req.StoreType == kv.TiFlash {
@@ -245,7 +331,7 @@ func buildSplitRangesCallback(
 				right = tableEnd
 			}
 			fullRange := kv.KeyRange{StartKey: left, EndKey: right}
-			currTasks = append(currTasks, &copTask{
+			reciever <- &copTask{
 				region: regionWithRangeInfo.Region,
 				// TiFlash only support full range scan for the region, ignore the real ranges
 				// does not affect the correctness because we already merge the access range condition
@@ -256,122 +342,35 @@ func buildSplitRangesCallback(
 				respChan:  make(chan *copResponse, 2),
 				cmdType:   cmdType,
 				storeType: req.StoreType,
-			})
-		}
-
-		if len(currTasks) > 0 {
-			if tasksCh != nil {
-				for _, t := range currTasks {
-					tasksCh <- t
-				}
-			} else {
-				*tasks = append(*tasks, currTasks...)
 			}
 		}
 	}
-}
-
-func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, req *kv.Request) ([]*copTask, error) {
-	start := time.Now()
-	cmdType := tikvrpc.CmdCop
-	if req.Streaming {
-		cmdType = tikvrpc.CmdCopStream
-	}
-	var tableStart, tableEnd kv.Key
-	if req.StoreType == kv.TiFlash {
-		tableID := tablecodec.DecodeTableID(ranges.at(0).StartKey)
-		fullRange := ranger.FullIntRange(false)
-		keyRange := distsql.TableRangesToKVRanges(tableID, fullRange, nil)
-		tableStart, tableEnd = keyRange[0].StartKey, keyRange[0].EndKey
-	}
-
-	if req.StoreType == kv.TiDB {
-		return buildTiDBMemCopTasks(ranges, req)
-	}
-
-	rangesLen := ranges.len()
-	var tasks []*copTask
-	appendTask := buildSplitRangesCallback(req, cmdType, tableStart, tableEnd, &tasks, nil)
-	err := splitRanges(bo, cache, ranges, appendTask)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	if req.Desc {
-		reverseTasks(tasks)
-	}
-	if elapsed := time.Since(start); elapsed > time.Millisecond*500 {
-		logutil.BgLogger().Warn("buildCopTasks takes too much time",
-			zap.Duration("elapsed", elapsed),
-			zap.Int("range len", rangesLen),
-			zap.Int("task len", len(tasks)))
-	}
-	tikvTxnRegionsNumHistogramWithCoprocessor.Observe(float64(len(tasks)))
-	return tasks, nil
-}
-
-// buildCopTasksChan returns a channel to get tasks
-func buildCopTasksChan(
-	bo *Backoffer,
-	cache *RegionCache,
-	ranges *copRanges,
-	req *kv.Request,
-) (chan *copTask, error) {
-
-	tasksCh := make(chan *copTask, 2048)
-
-	if req.StoreType == kv.TiDB {
-		go func() {
-			defer close(tasksCh)
-			if err := buildTiDBMemCopTasksChan(ranges, req, tasksCh); err != nil {
-				logutil.BgLogger().Error(err.Error())
-			}
-		}()
-		return tasksCh, nil
-	}
-
-	// Desc order is a special case.
-	// In this case we need to read all tasks and reverse them
-	if req.Desc {
-		go func() {
-			defer close(tasksCh)
-			tasks, err := buildCopTasks(bo, cache, ranges, req)
-			if err != nil {
-				logutil.BgLogger().Error(err.Error())
-				return
-			}
-			for _, t := range tasks {
-				tasksCh <- t
-			}
-		}()
-		return tasksCh, nil
-	}
-
-	cmdType := tikvrpc.CmdCop
-	if req.Streaming {
-		cmdType = tikvrpc.CmdCopStream
-	}
-	var tableStart, tableEnd kv.Key
-	if req.StoreType == kv.TiFlash {
-		tableID := tablecodec.DecodeTableID(ranges.at(0).StartKey)
-		fullRange := ranger.FullIntRange(false)
-		keyRange := distsql.TableRangesToKVRanges(tableID, fullRange, nil)
-		tableStart, tableEnd = keyRange[0].StartKey, keyRange[0].EndKey
-	}
-
-	appendTask := buildSplitRangesCallback(req, cmdType, tableStart, tableEnd, &[]*copTask{}, tasksCh)
 	go func() {
-		defer close(tasksCh)
-		err := splitRanges(bo, cache, ranges, appendTask)
-		if err != nil {
-			logutil.BgLogger().Error(err.Error())
+		defer close(reciever)
+		defer close(errCh)
+		if err := splitRanges(bo, cache, ranges, appendTask); err != nil {
+			errCh <- err
 		}
 	}()
 
-	return tasksCh, nil
+	if req.Desc {
+		var tasks []*copTask
+		for task := range reciever {
+			tasks = append(tasks, task)
+		}
+		reverseTasks(tasks)
+		// tasksCh = make(chan *copTask, 1)
+		go func() {
+			defer close(tasksCh)
+			for _, task := range tasks {
+				tasksCh <- task
+			}
+		}()
+	}
+	return
 }
 
-func buildTiDBMemCopTasksChan(ranges *copRanges, req *kv.Request, tasksCh chan *copTask) error {
+func buildTiDBMemCopTasksChan(ranges *copRanges, req *kv.Request, tasksCh chan<- *copTask) error {
 	servers, err := infosync.GetAllServerInfo(context.Background())
 	if err != nil {
 		return err
@@ -649,20 +648,18 @@ func (it *copIterator) open(ctx context.Context) error {
 		go worker.run(ctx)
 	}
 	bo := NewBackoffer(ctx, copBuildTaskMaxBackoff).WithVars(it.vars)
-	newTasksCh, err := buildCopTasksChan(bo, it.store.regionCache,
-		&copRanges{mid: it.req.KeyRanges}, it.req)
+	_, err := buildCopTasksChan(bo, it.store.regionCache,
+		&copRanges{mid: it.req.KeyRanges}, it.req, taskCh, it.finishCh)
 	if err != nil {
 		return err
 	}
-
 	taskSender := &copIteratorTaskSender{
-		iterator:   it,
-		newTasksCh: newTasksCh,
-		taskCh:     taskCh,
-		wg:         &it.wg,
-		finishCh:   it.finishCh,
-		sendRate:   it.sendRate,
-		respChan:   it.respChan,
+		iterator: it,
+		taskCh:   taskCh,
+		wg:       &it.wg,
+		finishCh: it.finishCh,
+		sendRate: it.sendRate,
+		respChan: it.respChan,
 	}
 	go taskSender.run()
 	return nil

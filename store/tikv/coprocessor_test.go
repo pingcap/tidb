@@ -47,7 +47,8 @@ func (s *testCoprocessorSuite) TestBuildTasks(c *C) {
 	c.Assert(tasks, HasLen, 1)
 	s.taskEqual(c, tasks[0], regionIDs[0], "a", "c")
 
-	tasksCh, err := buildCopTasksChan(bo, cache, buildCopRanges("a", "c"), req)
+	tasksCh := make(chan *copTask, 2048)
+	_, err = buildCopTasksChan(bo, cache, buildCopRanges("a", "c"), req, tasksCh, nil)
 	tasks = []*copTask{}
 	c.Assert(err, IsNil)
 	for t := range tasksCh {
@@ -56,7 +57,8 @@ func (s *testCoprocessorSuite) TestBuildTasks(c *C) {
 	c.Assert(tasks, HasLen, 1)
 	s.taskEqual(c, tasks[0], regionIDs[0], "a", "c")
 
-	tasksCh, err = buildCopTasksChan(bo, cache, buildCopRanges("a", "c"), flashReq)
+	tasksCh = make(chan *copTask, 2048)
+	_, err = buildCopTasksChan(bo, cache, buildCopRanges("a", "c"), flashReq, tasksCh, nil)
 	c.Assert(err, IsNil)
 	tasks = []*copTask{}
 	for t := range tasksCh {
@@ -110,7 +112,8 @@ func (s *testCoprocessorSuite) TestBuildTasks(c *C) {
 	s.taskEqual(c, tasks[2], regionIDs[2], "n", "t")
 	s.taskEqual(c, tasks[3], regionIDs[3], "t", "x")
 
-	tasksCh, err = buildCopTasksChan(bo, cache, buildCopRanges("a", "x"), req)
+	tasksCh = make(chan *copTask, 2048)
+	_, err = buildCopTasksChan(bo, cache, buildCopRanges("a", "x"), req, tasksCh, nil)
 	c.Assert(err, IsNil)
 	tasks = []*copTask{}
 	for t := range tasksCh {
@@ -245,7 +248,8 @@ func (s *testCoprocessorSuite) TestRebuild(c *C) {
 	s.taskEqual(c, tasks[0], regionIDs[0], "a", "m")
 	s.taskEqual(c, tasks[1], regionIDs[1], "m", "z")
 
-	tasksCh, err := buildCopTasksChan(bo, cache, buildCopRanges("a", "z"), req)
+	tasksCh := make(chan *copTask, 2048)
+	_, err = buildCopTasksChan(bo, cache, buildCopRanges("a", "z"), req, tasksCh, nil)
 	c.Assert(err, IsNil)
 	tasks = []*copTask{}
 	for t := range tasksCh {
@@ -270,7 +274,8 @@ func (s *testCoprocessorSuite) TestRebuild(c *C) {
 	s.taskEqual(c, tasks[1], regionIDs[1], "m", "q")
 	s.taskEqual(c, tasks[0], regionIDs[2], "q", "z")
 
-	tasksCh, err = buildCopTasksChan(bo, cache, buildCopRanges("a", "z"), req)
+	tasksCh = make(chan *copTask, 2048)
+	_, err = buildCopTasksChan(bo, cache, buildCopRanges("a", "z"), req, tasksCh, nil)
 	c.Assert(err, IsNil)
 	tasks = []*copTask{}
 	for t := range tasksCh {
