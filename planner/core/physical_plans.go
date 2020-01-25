@@ -577,6 +577,9 @@ type PhysicalShuffle struct {
 
 	SplitterType PartitionSplitterType
 	HashByItems  []expression.Expression
+
+	MergerType ShuffleMergerType
+	MergerArgs interface{}
 }
 
 // PartitionSplitterType is the type of `Shuffle` executor splitter, which splits data source into partitions.

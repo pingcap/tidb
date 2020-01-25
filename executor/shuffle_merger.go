@@ -23,14 +23,14 @@ import (
 type ShuffleMerger interface {
 	// Open initializes merger.
 	Open(ctx context.Context, finishCh <-chan struct{}) error
-	// WorkersPrepared signals workers are running.
+	// WorkersPrepared signals workers are prepared (i.e. running).
 	WorkersPrepared(ctx context.Context)
 	// Close de-initializes merger.
 	Close() error
 	// Next retrievals next result. Each merger should implement `Next` for different merge algorithm.
 	Next(ctx context.Context, chk *chunk.Chunk) error
-	// WorkerRuturn is called by workers to return results to merger.
-	WorkerReturn(workerIdx int, chk *chunk.Chunk, err error)
+	// WorkerOutput is called by workers to return results or error to merger.
+	WorkerOutput(workerIdx int, chk *chunk.Chunk, err error)
 	// WorkerGetHolderChunk is called by workers to get holder chunk.
 	WorkerGetHolderChunk(workerIdx int) (chk *chunk.Chunk, finished bool)
 	// WorkerFinished signals that a worker is finished. Notice that it would not be called if not prepared.
@@ -39,13 +39,13 @@ type ShuffleMerger interface {
 	WorkersAllFinished()
 }
 
-var _ ShuffleMerger = (*ShuffleSimpleMerger)(nil)
-
 type baseShuffleMerger struct {
-	// FanIn is number of input channels. Should be equal to number of workers.
-	FanIn int
-	// IsSingleOutputCh indicates the merger need single(e.g ShuffleSimpleMerger) or multiple(e.g ShuffleMergeSortMerger) output channels.
-	IsSingleOutputCh bool
+	// shuffle is the parent Shuffle executor.
+	shuffle *ShuffleExec
+	// fanIn is number of input channels. Should be equal to number of workers.
+	fanIn int
+	// isSingleOutputCh indicates the merger need single(e.g ShuffleSimpleMerger) or multiple(e.g ShuffleMergeSortMerger) output channels.
+	isSingleOutputCh bool
 
 	prepared bool
 	executed bool
@@ -59,18 +59,19 @@ func (m *baseShuffleMerger) Open(ctx context.Context, finishCh <-chan struct{}) 
 	m.prepared = false
 
 	m.finishCh = finishCh
-	if m.IsSingleOutputCh {
+	if m.isSingleOutputCh {
 		m.outputCh = make([]chan *shuffleOutput, 1)
-		m.outputCh[0] = make(chan *shuffleOutput, m.FanIn)
+		m.outputCh[0] = make(chan *shuffleOutput, m.fanIn)
 	} else {
-		m.outputCh = make([]chan *shuffleOutput, m.FanIn)
+		m.outputCh = make([]chan *shuffleOutput, m.fanIn)
 		for i := range m.outputCh {
 			m.outputCh[i] = make(chan *shuffleOutput, 1)
 		}
 	}
-	m.outputHolderCh = make([]chan *chunk.Chunk, m.FanIn)
+	m.outputHolderCh = make([]chan *chunk.Chunk, m.fanIn)
 	for i := range m.outputHolderCh {
 		m.outputHolderCh[i] = make(chan *chunk.Chunk, 1)
+		m.outputHolderCh[i] <- newFirstChunk(m.shuffle)
 	}
 
 	return nil
@@ -89,7 +90,7 @@ func (m *baseShuffleMerger) Close() error {
 			close(ch)
 		}
 	}
-	for _, ch := range m.outputCh {
+	for _, ch := range m.outputCh { // workers exit before `outputCh` is closed.
 		for range ch {
 		}
 	}
@@ -98,7 +99,7 @@ func (m *baseShuffleMerger) Close() error {
 	return nil
 }
 
-func (m *baseShuffleMerger) WorkerReturn(workerIdx int, chk *chunk.Chunk, err error) {
+func (m *baseShuffleMerger) WorkerOutput(workerIdx int, chk *chunk.Chunk, err error) {
 	var out *shuffleOutput
 	if err != nil {
 		out = &shuffleOutput{err: err}
@@ -106,7 +107,7 @@ func (m *baseShuffleMerger) WorkerReturn(workerIdx int, chk *chunk.Chunk, err er
 		out = &shuffleOutput{chk: chk, giveBackCh: m.outputHolderCh[workerIdx]}
 	}
 
-	if m.IsSingleOutputCh {
+	if m.isSingleOutputCh {
 		m.outputCh[0] <- out
 	} else {
 		m.outputCh[workerIdx] <- out
@@ -123,16 +124,20 @@ func (m *baseShuffleMerger) WorkerGetHolderChunk(workerIdx int) (chk *chunk.Chun
 }
 
 func (m *baseShuffleMerger) WorkerFinished(workerIdx int) {
-	if !m.IsSingleOutputCh {
+	if !m.isSingleOutputCh {
 		close(m.outputCh[workerIdx])
 	}
 }
 
 func (m *baseShuffleMerger) WorkersAllFinished() {
-	if m.IsSingleOutputCh {
+	if m.isSingleOutputCh {
 		close(m.outputCh[0])
 	}
 }
+
+var (
+	_ ShuffleMerger = (*ShuffleSimpleMerger)(nil)
+)
 
 // ShuffleSimpleMerger merges results without any other process.
 type ShuffleSimpleMerger struct {
@@ -140,10 +145,11 @@ type ShuffleSimpleMerger struct {
 }
 
 // NewShuffleSimpleMerger creates ShuffleSimpleMerger.
-func NewShuffleSimpleMerger(fanIn int) *ShuffleSimpleMerger {
+func NewShuffleSimpleMerger(shuffle *ShuffleExec, fanIn int) *ShuffleSimpleMerger {
 	return &ShuffleSimpleMerger{baseShuffleMerger{
-		FanIn:            fanIn,
-		IsSingleOutputCh: true,
+		shuffle:          shuffle,
+		fanIn:            fanIn,
+		isSingleOutputCh: true,
 	},
 	}
 }

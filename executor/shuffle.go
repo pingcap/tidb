@@ -77,13 +77,12 @@ type ShuffleExec struct {
 	workers     []*shuffleWorker
 
 	prepared bool
-	executed bool
 
 	splitter   partitionSplitter
+	merger     ShuffleMerger
 	dataSource Executor
 
 	finishCh chan struct{}
-	outputCh chan *shuffleOutput
 }
 
 type shuffleOutput struct {
@@ -100,25 +99,25 @@ func (e *ShuffleExec) Open(ctx context.Context) error {
 	if err := e.baseExecutor.Open(ctx); err != nil {
 		return err
 	}
+	e.finishCh = make(chan struct{}, 1)
+	if err := e.merger.Open(ctx, e.finishCh); err != nil {
+		return err
+	}
 
 	e.prepared = false
-	e.finishCh = make(chan struct{}, 1)
-	e.outputCh = make(chan *shuffleOutput, e.concurrency)
 
 	for _, w := range e.workers {
 		w.finishCh = e.finishCh
 
 		w.inputCh = make(chan *chunk.Chunk, 1)
 		w.inputHolderCh = make(chan *chunk.Chunk, 1)
-		w.outputCh = e.outputCh
-		w.outputHolderCh = make(chan *chunk.Chunk, 1)
+		w.merger = e.merger
 
 		if err := w.childExec.Open(ctx); err != nil {
 			return err
 		}
 
 		w.inputHolderCh <- newFirstChunk(e.dataSource)
-		w.outputHolderCh <- newFirstChunk(e)
 	}
 
 	return nil
@@ -130,29 +129,25 @@ func (e *ShuffleExec) Close() error {
 		for _, w := range e.workers {
 			close(w.inputHolderCh)
 			close(w.inputCh)
-			close(w.outputHolderCh)
 		}
-		close(e.outputCh)
 	}
 	close(e.finishCh)
 	for _, w := range e.workers {
 		for range w.inputCh {
 		}
 	}
-	for range e.outputCh { // workers exit before `e.outputCh` is closed.
-	}
-	e.executed = false
 
 	if e.runtimeStats != nil {
 		e.runtimeStats.SetConcurrencyInfo("ShuffleConcurrency", e.concurrency)
 	}
 
-	err := e.dataSource.Close()
-	err1 := e.baseExecutor.Close()
-	if err != nil {
-		return errors.Trace(err)
+	errs := []error{e.merger.Close(), e.dataSource.Close(), e.baseExecutor.Close()}
+	for _, err := range errs {
+		if err != nil {
+			return errors.Trace(err)
+		}
 	}
-	return errors.Trace(err1)
+	return nil
 }
 
 func (e *ShuffleExec) prepare4ParallelExec(ctx context.Context) {
@@ -164,17 +159,17 @@ func (e *ShuffleExec) prepare4ParallelExec(ctx context.Context) {
 		go w.run(ctx, waitGroup)
 	}
 
-	go e.waitWorkerAndCloseOutput(waitGroup)
+	go e.waitWorker(waitGroup)
+	e.merger.WorkersPrepared(ctx)
 }
 
-func (e *ShuffleExec) waitWorkerAndCloseOutput(waitGroup *sync.WaitGroup) {
+func (e *ShuffleExec) waitWorker(waitGroup *sync.WaitGroup) {
 	waitGroup.Wait()
-	close(e.outputCh)
+	e.merger.WorkersAllFinished()
 }
 
 // Next implements the Executor Next interface.
 func (e *ShuffleExec) Next(ctx context.Context, req *chunk.Chunk) error {
-	req.Reset()
 	if !e.prepared {
 		e.prepare4ParallelExec(ctx)
 		e.prepared = true
@@ -186,27 +181,12 @@ func (e *ShuffleExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		}
 	})
 
-	if e.executed {
-		return nil
-	}
-
-	result, ok := <-e.outputCh
-	if !ok {
-		e.executed = true
-		return nil
-	}
-	if result.err != nil {
-		return result.err
-	}
-	req.SwapColumns(result.chk) // `shuffleWorker` will not send an empty `result.chk` to `e.outputCh`.
-	result.giveBackCh <- result.chk
-
-	return nil
+	return e.merger.Next(ctx, req)
 }
 
-func recoveryShuffleExec(output chan *shuffleOutput, r interface{}) {
+func recoveryShuffleExec(merger ShuffleMerger, r interface{}) {
 	err := errors.Errorf("%v", r)
-	output <- &shuffleOutput{err: errors.Errorf("%v", r)}
+	merger.WorkerOutput(0, nil, err) // workerIdx is not cared for.
 	logutil.BgLogger().Error("shuffle panicked", zap.Error(err))
 }
 
@@ -220,7 +200,7 @@ func (e *ShuffleExec) fetchDataAndSplit(ctx context.Context) {
 
 	defer func() {
 		if r := recover(); r != nil {
-			recoveryShuffleExec(e.outputCh, r)
+			recoveryShuffleExec(e.merger, r)
 		}
 		for _, w := range e.workers {
 			close(w.inputCh)
@@ -230,7 +210,7 @@ func (e *ShuffleExec) fetchDataAndSplit(ctx context.Context) {
 	for {
 		err = Next(ctx, e.dataSource, chk)
 		if err != nil {
-			e.outputCh <- &shuffleOutput{err: err}
+			e.merger.WorkerOutput(0, nil, err)
 			return
 		}
 		if chk.NumRows() == 0 {
@@ -239,7 +219,7 @@ func (e *ShuffleExec) fetchDataAndSplit(ctx context.Context) {
 
 		workerIndices, err = e.splitter.split(e.ctx, chk, workerIndices)
 		if err != nil {
-			e.outputCh <- &shuffleOutput{err: err}
+			e.merger.WorkerOutput(0, nil, err)
 			return
 		}
 		numRows := chk.NumRows()
@@ -270,10 +250,11 @@ func (e *ShuffleExec) fetchDataAndSplit(ctx context.Context) {
 	}
 }
 
-var _ Executor = &shuffleWorker{}
+var _ Executor = (*shuffleWorker)(nil)
 
 // shuffleWorker is the multi-thread worker executing child executors within "partition".
 type shuffleWorker struct {
+	workerIdx int
 	baseExecutor
 	childExec Executor
 
@@ -281,13 +262,13 @@ type shuffleWorker struct {
 	executed bool
 
 	// Workers get inputs from dataFetcherThread by `inputCh`,
-	//   and output results to main thread by `outputCh`.
+	//   and output results to merger.
 	// `inputHolderCh` and `outputHolderCh` are "Chunk Holder" channels of `inputCh` and `outputCh` respectively,
 	//   which give the `*Chunk` back, to implement the data transport in a streaming manner.
-	inputCh        chan *chunk.Chunk
-	inputHolderCh  chan *chunk.Chunk
-	outputCh       chan *shuffleOutput
-	outputHolderCh chan *chunk.Chunk
+	inputCh       chan *chunk.Chunk
+	inputHolderCh chan *chunk.Chunk
+
+	merger ShuffleMerger
 }
 
 // Open implements the Executor Open interface.
@@ -329,27 +310,27 @@ func (e *shuffleWorker) Next(ctx context.Context, req *chunk.Chunk) error {
 func (e *shuffleWorker) run(ctx context.Context, waitGroup *sync.WaitGroup) {
 	defer func() {
 		if r := recover(); r != nil {
-			recoveryShuffleExec(e.outputCh, r)
+			recoveryShuffleExec(e.merger, r)
 		}
+		e.merger.WorkerFinished(e.workerIdx)
 		waitGroup.Done()
 	}()
 
 	for {
-		select {
-		case <-e.finishCh:
+		chk, finished := e.merger.WorkerGetHolderChunk(e.workerIdx)
+		if finished {
 			return
-		case chk := <-e.outputHolderCh:
-			if err := Next(ctx, e.childExec, chk); err != nil {
-				e.outputCh <- &shuffleOutput{err: err}
-				return
-			}
-
-			// Should not send an empty `chk` to `e.outputCh`.
-			if chk.NumRows() == 0 {
-				return
-			}
-			e.outputCh <- &shuffleOutput{chk: chk, giveBackCh: e.outputHolderCh}
 		}
+
+		if err := Next(ctx, e.childExec, chk); err != nil {
+			e.merger.WorkerOutput(e.workerIdx, nil, err)
+			return
+		}
+		// Should not send an empty `chk` to merger.
+		if chk.NumRows() == 0 {
+			return
+		}
+		e.merger.WorkerOutput(e.workerIdx, chk, nil)
 	}
 }
 

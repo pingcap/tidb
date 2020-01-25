@@ -2730,6 +2730,13 @@ func (b *executorBuilder) buildShuffle(v *plannercore.PhysicalShuffle) *ShuffleE
 		panic("Not implemented. Should not reach here.")
 	}
 
+	switch v.MergerType {
+	case plannercore.ShuffleSimpleMergerType:
+		shuffle.merger = NewShuffleSimpleMerger(shuffle, v.Concurrency)
+	default:
+		panic("Not implemented. Should not reach here.")
+	}
+
 	shuffle.dataSource = b.build(v.DataSource)
 	if b.err != nil {
 		return nil
@@ -2741,6 +2748,7 @@ func (b *executorBuilder) buildShuffle(v *plannercore.PhysicalShuffle) *ShuffleE
 	shuffle.workers = make([]*shuffleWorker, shuffle.concurrency)
 	for i := range shuffle.workers {
 		w := &shuffleWorker{
+			workerIdx:    i,
 			baseExecutor: newBaseExecutor(b.ctx, v.DataSource.Schema(), v.DataSource.ExplainID()),
 		}
 

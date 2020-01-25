@@ -128,6 +128,7 @@ func optimizeByShuffle4Window(pp *PhysicalWindow, ctx sessionctx.Context) *Physi
 		DataSource:   dataSource,
 		SplitterType: PartitionHashSplitterType,
 		HashByItems:  byItems,
+		MergerType:   ShuffleSimpleMergerType,
 	}.Init(ctx, pp.statsInfo(), pp.SelectBlockOffset(), reqProp)
 	return shuffle
 }
