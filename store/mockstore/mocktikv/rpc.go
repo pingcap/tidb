@@ -975,6 +975,14 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 		resp.Resp = handler.handleKvRawScan(r)
 	case tikvrpc.CmdUnsafeDestroyRange:
 		panic("unimplemented")
+	case tikvrpc.CmdRegisterLockObserver:
+		panic("unimplemented")
+	case tikvrpc.CmdCheckLockObserver:
+		panic("unimplemented")
+	case tikvrpc.CmdRemoveLockObserver:
+		panic("unimplemented")
+	case tikvrpc.CmdPhysicalScanLock:
+		panic("unimplemented")
 	case tikvrpc.CmdCop:
 		r := req.Cop()
 		if err := handler.checkRequestContext(reqCtx); err != nil {
