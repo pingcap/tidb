@@ -1102,7 +1102,7 @@
       },
       {
         "SQL": "select max(a) from (select t1.a from t t1 join t t2 on t1.a=t2.a) t",
-        "Best": "IndexMergeJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t.a,test.t.a)->Limit->StreamAgg"
+        "Best": "MergeInnerJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t.a,test.t.a)->Limit->StreamAgg"
       }
     ]
   },
