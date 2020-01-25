@@ -520,9 +520,9 @@ type copIteratorWorker struct {
 
 // copIteratorTaskSender sends tasks to taskCh then wait for the workers to exit.
 type copIteratorTaskSender struct {
-	// new tasks
+	// newTaskCh is a channel with tasks we need to process
 	newTaskCh <-chan *copTask
-	// tasks for worker
+	// taskCh is a channel with tasks for a worker
 	taskCh   chan<- *copTask
 	wg       *sync.WaitGroup
 	finishCh <-chan struct{}
