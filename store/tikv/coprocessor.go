@@ -63,7 +63,6 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variable
 		vars:            vars,
 		memTracker:      req.MemTracker,
 		replicaReadSeed: c.replicaReadSeed,
-		tasks:           []*copTask{},
 	}
 	it.minCommitTSPushed.data = make(map[uint64]struct{}, 5)
 	if it.concurrency < 1 {
@@ -71,6 +70,7 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variable
 		it.concurrency = 1
 	}
 	if it.req.KeepOrder {
+		it.tasks = make(chan *copTask, 1)
 		it.sendRate = newRateLimit(2 * it.concurrency)
 	} else {
 		it.respChan = make(chan *copResponse, it.concurrency)
@@ -478,8 +478,8 @@ type copIterator struct {
 	finishCh    chan struct{}
 
 	// If keepOrder, results are stored in copTask.respChan, read them out one by one.
-	tasks []*copTask
-	curr  int
+	tasks chan *copTask
+
 	// sendRate controls the sending rate of copIteratorTaskSender, if keepOrder,
 	// to prevent all tasks being done (aka. all of the responses are buffered)
 	sendRate *rateLimit
@@ -520,13 +520,16 @@ type copIteratorWorker struct {
 
 // copIteratorTaskSender sends tasks to taskCh then wait for the workers to exit.
 type copIteratorTaskSender struct {
-	iterator   *copIterator
-	newTasksCh <-chan *copTask
-	taskCh     chan<- *copTask
-	wg         *sync.WaitGroup
-	finishCh   <-chan struct{}
-	respChan   chan<- *copResponse
-	sendRate   *rateLimit
+	// new tasks
+	newTaskCh <-chan *copTask
+	// tasks for worker
+	taskCh   chan<- *copTask
+	wg       *sync.WaitGroup
+	finishCh <-chan struct{}
+	respChan chan<- *copResponse
+	sendRate *rateLimit
+	// tasks for copIterator.Next (if needed)
+	tasks chan<- *copTask
 }
 
 type copResponse struct {
@@ -610,6 +613,7 @@ func (worker *copIteratorWorker) run(ctx context.Context) {
 // open starts workers and sender goroutines.
 func (it *copIterator) open(ctx context.Context) error {
 	taskCh := make(chan *copTask, 1)
+	newTaskCh := make(chan *copTask, 1)
 	it.wg.Add(it.concurrency)
 	// Start it.concurrency number of workers to handle cop requests.
 	for i := 0; i < it.concurrency; i++ {
@@ -634,41 +638,45 @@ func (it *copIterator) open(ctx context.Context) error {
 	}
 	bo := NewBackoffer(ctx, copBuildTaskMaxBackoff).WithVars(it.vars)
 	_, err := buildCopTasksChan(bo, it.store.regionCache,
-		&copRanges{mid: it.req.KeyRanges}, it.req, taskCh, it.finishCh)
+		&copRanges{mid: it.req.KeyRanges}, it.req, newTaskCh, it.finishCh)
 	if err != nil {
 		return err
 	}
 	taskSender := &copIteratorTaskSender{
-		iterator: it,
-		taskCh:   taskCh,
-		wg:       &it.wg,
-		finishCh: it.finishCh,
-		sendRate: it.sendRate,
-		respChan: it.respChan,
+		newTaskCh: newTaskCh,
+		taskCh:    taskCh,
+		wg:        &it.wg,
+		finishCh:  it.finishCh,
+		sendRate:  it.sendRate,
+		respChan:  it.respChan,
+		tasks:     it.tasks,
 	}
 	go taskSender.run()
 	return nil
 }
 
 func (sender *copIteratorTaskSender) run() {
-	// // Send tasks to feed the worker goroutines.
-	// for _, t := range sender.iterator.tasks {
-	// 	// If keepOrder, we must control the sending rate to prevent all tasks
-	// 	// being done (aka. all of the responses are buffered) by copIteratorWorker.
-	// 	// We keep the number of inflight tasks within the number of concurrency * 2.
-	// 	// It sends one more task if a task has been finished in copIterator.Next.
-	// 	if sender.sendRate != nil {
-	// 		exit := sender.sendRate.getToken(sender.finishCh)
-	// 		if exit {
-	// 			break
-	// 		}
-	// 	}
-	// 	exit := sender.sendToTaskCh(t)
-	// 	if exit {
-	// 		break
-	// 	}
-	// }
-	// close(sender.taskCh)
+	// Send tasks to feed the worker goroutines.
+	for t := range sender.newTaskCh {
+		// If keepOrder, we must control the sending rate to prevent all tasks
+		// being done (aka. all of the responses are buffered) by copIteratorWorker.
+		// We keep the number of inflight tasks within the number of concurrency * 2.
+		// It sends one more task if a task has been finished in copIterator.Next.
+		if sender.sendRate != nil {
+			exit := sender.sendRate.getToken(sender.finishCh)
+			if exit {
+				break
+			}
+		}
+		exit := sender.sendToTaskCh(t)
+		if exit {
+			break
+		}
+	}
+	close(sender.taskCh)
+	if sender.sendRate != nil {
+		close(sender.tasks)
+	}
 
 	// Wait for worker goroutines to exit.
 	sender.wg.Wait()
@@ -696,10 +704,20 @@ func (it *copIterator) recvFromRespCh(ctx context.Context, respCh <-chan *copRes
 }
 
 func (sender *copIteratorTaskSender) sendToTaskCh(t *copTask) (exit bool) {
+	// send to the worker
 	select {
 	case sender.taskCh <- t:
 	case <-sender.finishCh:
 		exit = true
+	}
+
+	// send to the iteratoror (if we need to keep an order)
+	if sender.sendRate != nil {
+		select {
+		case sender.tasks <- t:
+		case <-sender.finishCh:
+			exit = true
+		}
 	}
 	return
 }
@@ -733,12 +751,7 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 			return nil, nil
 		}
 	} else {
-		for {
-			if it.curr >= len(it.tasks) {
-				// Resp will be nil if iterator is finishCh.
-				return nil, nil
-			}
-			task := it.tasks[it.curr]
+		for task := range it.tasks {
 			resp, ok, closed = it.recvFromRespCh(ctx, task.respChan)
 			if closed {
 				// Close() is already called, so Next() is invalid.
@@ -748,9 +761,7 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 				break
 			}
 			// Switch to next task.
-			it.tasks[it.curr] = nil
-			it.curr++
-			// it.sendRate.putToken()
+			it.sendRate.putToken()
 		}
 	}
 
