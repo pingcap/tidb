@@ -391,9 +391,9 @@ func calcWeek(t CoreTime, wb weekBehaviour) (year int, week int) {
 
 	weekday := calcWeekday(firstDaynr, !mondayFirst)
 
-	year = int(ty)
+	year = ty
 
-	if tm == 1 && int(td) <= 7-weekday {
+	if tm == 1 && td <= 7-weekday {
 		if !weekYear &&
 			((firstWeekday && weekday != 0) || (!firstWeekday && weekday >= 4)) {
 			week = 0

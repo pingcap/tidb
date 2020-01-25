@@ -327,7 +327,7 @@ func (t *Time) SetType(tp uint8) {
 	}
 	switch tp {
 	case mysql.TypeDate:
-		fspTt = uint8(fspTtForDate)
+		fspTt = fspTtForDate
 	case mysql.TypeTimestamp:
 		fspTt |= 1
 	case mysql.TypeDatetime:
