@@ -99,12 +99,12 @@ func (p *LogicalJoin) moveEqualToOtherConditions(offsets []int) []expression.Exp
 
 // Only if the input required prop is the prefix fo join keys, we can pass through this property.
 func (p *PhysicalMergeJoin) tryToGetChildReqProp(prop *property.PhysicalProperty) ([]*property.PhysicalProperty, bool) {
-	lProp := property.NewPhysicalProperty(property.RootTaskType, p.LeftJoinKeys, false, math.MaxFloat64, false)
-	rProp := property.NewPhysicalProperty(property.RootTaskType, p.RightJoinKeys, false, math.MaxFloat64, false)
+	all, desc := prop.AllSameOrder()
+	lProp := property.NewPhysicalProperty(property.RootTaskType, p.LeftJoinKeys, desc, math.MaxFloat64, false)
+	rProp := property.NewPhysicalProperty(property.RootTaskType, p.RightJoinKeys, desc, math.MaxFloat64, false)
 	if !prop.IsEmpty() {
 		// sort merge join fits the cases of massive ordered data, so desc scan is always expensive.
-		all, desc := prop.AllSameOrder()
-		if !all || desc {
+		if !all {
 			return nil, false
 		}
 		if !prop.IsPrefix(lProp) && !prop.IsPrefix(rProp) {
@@ -163,6 +163,8 @@ func (p *LogicalJoin) GetMergeJoin(prop *property.PhysicalProperty, schema *expr
 				reqProps[1].ExpectedCnt = p.children[1].statsInfo().RowCount * expCntScale
 			}
 			mergeJoin.childrenReqProps = reqProps
+			_, desc := prop.AllSameOrder()
+			mergeJoin.Desc = desc
 			joins = append(joins, mergeJoin)
 		}
 	}
@@ -248,7 +250,7 @@ func (p *LogicalJoin) getEnforcedMergeJoin(prop *property.PhysicalProperty) []Ph
 		RightJoinKeys:   rightKeys,
 		OtherConditions: p.OtherConditions,
 	}
-	enforcedPhysicalMergeJoin := PhysicalMergeJoin{basePhysicalJoin: baseJoin}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), p.blockOffset)
+	enforcedPhysicalMergeJoin := PhysicalMergeJoin{basePhysicalJoin: baseJoin, Desc: desc}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), p.blockOffset)
 	enforcedPhysicalMergeJoin.SetSchema(p.schema)
 	enforcedPhysicalMergeJoin.childrenReqProps = []*property.PhysicalProperty{lProp, rProp}
 	enforcedPhysicalMergeJoin.initCompareFuncs()
