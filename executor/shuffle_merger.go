@@ -19,17 +19,21 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 )
 
+var (
+	_ ShuffleMerger = (*ShuffleSimpleMerger)(nil)
+)
+
 // ShuffleMerger is the results merger of Shuffle executor.
 type ShuffleMerger interface {
 	// Open initializes merger.
 	Open(ctx context.Context, finishCh <-chan struct{}) error
-	// WorkersPrepared signals workers are prepared (i.e. running).
-	WorkersPrepared(ctx context.Context)
+	// Prepare for executing. It also signals that workers are running.
+	Prepare(ctx context.Context)
 	// Close de-initializes merger.
 	Close() error
 	// Next retrievals next result. Each merger should implement `Next` for different merge algorithm.
 	Next(ctx context.Context, chk *chunk.Chunk) error
-	// WorkerOutput is called by workers to return results or error to merger.
+	// WorkerOutput is called by workers to output results or error to merger.
 	WorkerOutput(workerIdx int, chk *chunk.Chunk, err error)
 	// WorkerGetHolderChunk is called by workers to get holder chunk.
 	WorkerGetHolderChunk(workerIdx int) (chk *chunk.Chunk, finished bool)
@@ -77,7 +81,7 @@ func (m *baseShuffleMerger) Open(ctx context.Context, finishCh <-chan struct{}) 
 	return nil
 }
 
-func (m *baseShuffleMerger) WorkersPrepared(ctx context.Context) {
+func (m *baseShuffleMerger) Prepare(ctx context.Context) {
 	m.prepared = true
 }
 
@@ -134,10 +138,6 @@ func (m *baseShuffleMerger) WorkersAllFinished() {
 		close(m.outputCh[0])
 	}
 }
-
-var (
-	_ ShuffleMerger = (*ShuffleSimpleMerger)(nil)
-)
 
 // ShuffleSimpleMerger merges results without any other process.
 type ShuffleSimpleMerger struct {

@@ -2720,26 +2720,23 @@ func (b *executorBuilder) buildShuffle(v *plannercore.PhysicalShuffle) *ShuffleE
 		concurrency: v.Concurrency,
 	}
 
+	shuffle.dataSource = b.build(v.DataSource)
+	if b.err != nil {
+		return nil
+	}
+
 	switch v.SplitterType {
 	case plannercore.PartitionHashSplitterType:
-		shuffle.splitter = &partitionHashSplitter{
-			byItems:    v.HashByItems,
-			numWorkers: shuffle.concurrency,
-		}
+		shuffle.splitter = NewShuffleHashSplitter(shuffle, shuffle.concurrency, shuffle.dataSource, v.HashByItems)
 	default:
 		panic("Not implemented. Should not reach here.")
 	}
 
 	switch v.MergerType {
 	case plannercore.ShuffleSimpleMergerType:
-		shuffle.merger = NewShuffleSimpleMerger(shuffle, v.Concurrency)
+		shuffle.merger = NewShuffleSimpleMerger(shuffle, shuffle.concurrency)
 	default:
 		panic("Not implemented. Should not reach here.")
-	}
-
-	shuffle.dataSource = b.build(v.DataSource)
-	if b.err != nil {
-		return nil
 	}
 
 	// head & tail of physical plans' chain within "partition".

@@ -19,11 +19,8 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
-	"github.com/spaolacci/murmur3"
 	"go.uber.org/zap"
 )
 
@@ -78,7 +75,7 @@ type ShuffleExec struct {
 
 	prepared bool
 
-	splitter   partitionSplitter
+	splitter   ShuffleSplitter
 	merger     ShuffleMerger
 	dataSource Executor
 
@@ -99,49 +96,41 @@ func (e *ShuffleExec) Open(ctx context.Context) error {
 	if err := e.baseExecutor.Open(ctx); err != nil {
 		return err
 	}
+
 	e.finishCh = make(chan struct{}, 1)
+	if err := e.splitter.Open(ctx, e.ctx, e.finishCh); err != nil {
+		return err
+	}
 	if err := e.merger.Open(ctx, e.finishCh); err != nil {
 		return err
 	}
 
-	e.prepared = false
-
 	for _, w := range e.workers {
-		w.finishCh = e.finishCh
-
-		w.inputCh = make(chan *chunk.Chunk, 1)
-		w.inputHolderCh = make(chan *chunk.Chunk, 1)
+		w.splitter = e.splitter
 		w.merger = e.merger
-
 		if err := w.childExec.Open(ctx); err != nil {
 			return err
 		}
-
-		w.inputHolderCh <- newFirstChunk(e.dataSource)
 	}
 
+	e.prepared = false
 	return nil
 }
 
 // Close implements the Executor Close interface.
 func (e *ShuffleExec) Close() error {
-	if !e.prepared {
-		for _, w := range e.workers {
-			close(w.inputHolderCh)
-			close(w.inputCh)
-		}
-	}
 	close(e.finishCh)
-	for _, w := range e.workers {
-		for range w.inputCh {
-		}
-	}
 
 	if e.runtimeStats != nil {
 		e.runtimeStats.SetConcurrencyInfo("ShuffleConcurrency", e.concurrency)
 	}
 
-	errs := []error{e.merger.Close(), e.dataSource.Close(), e.baseExecutor.Close()}
+	errs := []error{
+		e.splitter.Close(),
+		e.merger.Close(),
+		e.dataSource.Close(),
+		e.baseExecutor.Close(),
+	}
 	for _, err := range errs {
 		if err != nil {
 			return errors.Trace(err)
@@ -151,16 +140,16 @@ func (e *ShuffleExec) Close() error {
 }
 
 func (e *ShuffleExec) prepare4ParallelExec(ctx context.Context) {
-	go e.fetchDataAndSplit(ctx)
+	e.splitter.Prepare(ctx)
 
 	waitGroup := &sync.WaitGroup{}
 	waitGroup.Add(len(e.workers))
 	for _, w := range e.workers {
 		go w.run(ctx, waitGroup)
 	}
-
 	go e.waitWorker(waitGroup)
-	e.merger.WorkersPrepared(ctx)
+
+	e.merger.Prepare(ctx)
 }
 
 func (e *ShuffleExec) waitWorker(waitGroup *sync.WaitGroup) {
@@ -184,75 +173,7 @@ func (e *ShuffleExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	return e.merger.Next(ctx, req)
 }
 
-func recoveryShuffleExec(merger ShuffleMerger, r interface{}) {
-	err := errors.Errorf("%v", r)
-	merger.WorkerOutput(0, nil, err) // workerIdx is not cared for.
-	logutil.BgLogger().Error("shuffle panicked", zap.Error(err))
-}
-
-func (e *ShuffleExec) fetchDataAndSplit(ctx context.Context) {
-	var (
-		err           error
-		workerIndices []int
-	)
-	results := make([]*chunk.Chunk, len(e.workers))
-	chk := newFirstChunk(e.dataSource)
-
-	defer func() {
-		if r := recover(); r != nil {
-			recoveryShuffleExec(e.merger, r)
-		}
-		for _, w := range e.workers {
-			close(w.inputCh)
-		}
-	}()
-
-	for {
-		err = Next(ctx, e.dataSource, chk)
-		if err != nil {
-			e.merger.WorkerOutput(0, nil, err)
-			return
-		}
-		if chk.NumRows() == 0 {
-			break
-		}
-
-		workerIndices, err = e.splitter.split(e.ctx, chk, workerIndices)
-		if err != nil {
-			e.merger.WorkerOutput(0, nil, err)
-			return
-		}
-		numRows := chk.NumRows()
-		for i := 0; i < numRows; i++ {
-			workerIdx := workerIndices[i]
-			w := e.workers[workerIdx]
-
-			if results[workerIdx] == nil {
-				select {
-				case <-e.finishCh:
-					return
-				case results[workerIdx] = <-w.inputHolderCh:
-					break
-				}
-			}
-			results[workerIdx].AppendRow(chk.GetRow(i))
-			if results[workerIdx].IsFull() {
-				w.inputCh <- results[workerIdx]
-				results[workerIdx] = nil
-			}
-		}
-	}
-	for i, w := range e.workers {
-		if results[i] != nil {
-			w.inputCh <- results[i]
-			results[i] = nil
-		}
-	}
-}
-
-var _ Executor = (*shuffleWorker)(nil)
-
-// shuffleWorker is the multi-thread worker executing child executors within "partition".
+// shuffleWorker is the multi-thread worker executing child executors within "shuffle".
 type shuffleWorker struct {
 	workerIdx int
 	baseExecutor
@@ -261,15 +182,12 @@ type shuffleWorker struct {
 	finishCh <-chan struct{}
 	executed bool
 
-	// Workers get inputs from dataFetcherThread by `inputCh`,
-	//   and output results to merger.
-	// `inputHolderCh` and `outputHolderCh` are "Chunk Holder" channels of `inputCh` and `outputCh` respectively,
-	//   which give the `*Chunk` back, to implement the data transport in a streaming manner.
-	inputCh       chan *chunk.Chunk
-	inputHolderCh chan *chunk.Chunk
-
-	merger ShuffleMerger
+	// Workers get input from splitter, and output results to merger.
+	splitter ShuffleSplitter
+	merger   ShuffleMerger
 }
+
+var _ Executor = (*shuffleWorker)(nil)
 
 // Open implements the Executor Open interface.
 func (e *shuffleWorker) Open(ctx context.Context) error {
@@ -286,31 +204,36 @@ func (e *shuffleWorker) Close() error {
 }
 
 // Next implements the Executor Next interface.
-// It is called by `Tail` executor within "shuffle", to fetch data from `DataSource` by `inputCh`.
+// It is called by `Tail` executor within "shuffle", to fetch data from splitter.
 func (e *shuffleWorker) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.Reset()
 	if e.executed {
 		return nil
 	}
-	select {
-	case <-e.finishCh:
+
+	result, finished, err := e.splitter.WorkerGetInput(e.workerIdx)
+	if err != nil {
+		return err
+	}
+	if finished {
 		e.executed = true
 		return nil
-	case result, ok := <-e.inputCh:
-		if !ok || result.NumRows() == 0 {
-			e.executed = true
-			return nil
-		}
-		req.SwapColumns(result)
-		e.inputHolderCh <- result
-		return nil
 	}
+	req.SwapColumns(result)
+	e.splitter.WorkerReturnHolderChunk(e.workerIdx, result)
+	return nil
+}
+
+func recoveryShuffleWorker(merger ShuffleMerger, r interface{}) {
+	err := errors.Errorf("%v", r)
+	merger.WorkerOutput(0, nil, err) // workerIdx is not cared for.
+	logutil.BgLogger().Error("shuffle panicked", zap.Error(err))
 }
 
 func (e *shuffleWorker) run(ctx context.Context, waitGroup *sync.WaitGroup) {
 	defer func() {
 		if r := recover(); r != nil {
-			recoveryShuffleExec(e.merger, r)
+			recoveryShuffleWorker(e.merger, r)
 		}
 		e.merger.WorkerFinished(e.workerIdx)
 		waitGroup.Done()
@@ -332,30 +255,4 @@ func (e *shuffleWorker) run(ctx context.Context, waitGroup *sync.WaitGroup) {
 		}
 		e.merger.WorkerOutput(e.workerIdx, chk, nil)
 	}
-}
-
-var _ partitionSplitter = (*partitionHashSplitter)(nil)
-
-type partitionSplitter interface {
-	split(ctx sessionctx.Context, input *chunk.Chunk, workerIndices []int) ([]int, error)
-}
-
-type partitionHashSplitter struct {
-	byItems    []expression.Expression
-	numWorkers int
-	hashKeys   [][]byte
-}
-
-func (s *partitionHashSplitter) split(ctx sessionctx.Context, input *chunk.Chunk, workerIndices []int) ([]int, error) {
-	var err error
-	s.hashKeys, err = getGroupKey(ctx, input, s.hashKeys, s.byItems)
-	if err != nil {
-		return workerIndices, err
-	}
-	workerIndices = workerIndices[:0]
-	numRows := input.NumRows()
-	for i := 0; i < numRows; i++ {
-		workerIndices = append(workerIndices, int(murmur3.Sum32(s.hashKeys[i]))%s.numWorkers)
-	}
-	return workerIndices, nil
 }
