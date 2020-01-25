@@ -92,13 +92,9 @@ func (p *LogicalJoin) moveEqualToOtherConditions(offsets []int) []expression.Exp
 
 // Only if the input required prop is the prefix fo join keys, we can pass through this property.
 func (p *PhysicalMergeJoin) tryToGetChildReqProp(prop *property.PhysicalProperty) ([]*property.PhysicalProperty, bool) {
-	lProp := &property.PhysicalProperty{TaskTp: property.RootTaskType, Cols: p.LeftKeys, ExpectedCnt: math.MaxFloat64}
-	rProp := &property.PhysicalProperty{TaskTp: property.RootTaskType, Cols: p.RightKeys, ExpectedCnt: math.MaxFloat64}
+	lProp := &property.PhysicalProperty{TaskTp: property.RootTaskType, Cols: p.LeftKeys, Desc: prop.Desc, ExpectedCnt: math.MaxFloat64}
+	rProp := &property.PhysicalProperty{TaskTp: property.RootTaskType, Cols: p.RightKeys, Desc: prop.Desc, ExpectedCnt: math.MaxFloat64}
 	if !prop.IsEmpty() {
-		// sort merge join fits the cases of massive ordered data, so desc scan is always expensive.
-		if prop.Desc {
-			return nil, false
-		}
 		if !prop.IsPrefix(lProp) && !prop.IsPrefix(rProp) {
 			return nil, false
 		}
@@ -152,6 +148,7 @@ func (p *LogicalJoin) getMergeJoin(prop *property.PhysicalProperty) []PhysicalPl
 				reqProps[1].ExpectedCnt = p.children[1].statsInfo().RowCount * expCntScale
 			}
 			mergeJoin.childrenReqProps = reqProps
+			mergeJoin.Desc = prop.Desc
 			joins = append(joins, mergeJoin)
 		}
 	}
@@ -253,6 +250,7 @@ func (p *LogicalJoin) getEnforcedMergeJoin(prop *property.PhysicalProperty) []Ph
 		LeftKeys:        leftKeys,
 		RightKeys:       rightKeys,
 		OtherConditions: p.OtherConditions,
+		Desc: prop.Desc,
 	}.init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt))
 	enforcedPhysicalMergeJoin.SetSchema(p.schema)
 	enforcedPhysicalMergeJoin.childrenReqProps = []*property.PhysicalProperty{lProp, rProp}

@@ -37,6 +37,7 @@ type MergeJoinExec struct {
 	stmtCtx      *stmtctx.StatementContext
 	compareFuncs []expression.CompareFunc
 	joiner       joiner
+	desc         bool
 
 	prepared bool
 	outerIdx int
@@ -293,6 +294,9 @@ func (e *MergeJoinExec) joinToChunk(ctx context.Context, chk *chunk.Chunk) (hasM
 		}
 
 		cmpResult := -1
+		if e.desc {
+			cmpResult = 1
+		}
 		if e.outerTable.selected[e.outerTable.row.Idx()] && len(e.innerRows) > 0 {
 			cmpResult, err = e.compare(e.outerTable.row, e.innerIter4Row.Current())
 			if err != nil {
@@ -300,14 +304,14 @@ func (e *MergeJoinExec) joinToChunk(ctx context.Context, chk *chunk.Chunk) (hasM
 			}
 		}
 
-		if cmpResult > 0 {
+		if (cmpResult > 0 && !e.desc) || (cmpResult < 0 && e.desc) {
 			if err = e.fetchNextInnerRows(); err != nil {
 				return false, errors.Trace(err)
 			}
 			continue
 		}
 
-		if cmpResult < 0 {
+		if (cmpResult < 0 && !e.desc) || (cmpResult > 0 && e.desc) {
 			e.joiner.onMissMatch(false, e.outerTable.row, chk)
 			if err != nil {
 				return false, errors.Trace(err)
