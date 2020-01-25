@@ -982,6 +982,7 @@ func (b *executorBuilder) buildMergeJoin(v *plannercore.PhysicalMergeJoin) Execu
 			retTypes(rightExec),
 		),
 		isOuterJoin: v.JoinType.IsOuterJoin(),
+		desc:        v.Desc,
 	}
 
 	leftKeys := v.LeftJoinKeys
