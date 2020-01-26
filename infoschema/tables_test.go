@@ -1081,7 +1081,6 @@ func (s *testTableSuite) TestSelectHiddenColumn(c *C) {
 }
 
 func (s *testTableSuite) TestPartitionsTable(c *C) {
-	s.dom.SetStatsUpdating(true)
 	oldExpiryTime := infoschema.TableStatsCacheExpiry
 	infoschema.TableStatsCacheExpiry = 0
 	defer func() { infoschema.TableStatsCacheExpiry = oldExpiryTime }()
@@ -1096,7 +1095,8 @@ func (s *testTableSuite) TestPartitionsTable(c *C) {
 	tk.MustExec("USE test;")
 	tk.MustExec("DROP TABLE IF EXISTS `test_partitions`;")
 	tk.MustExec(`CREATE TABLE test_partitions (a int, b int, c varchar(5), primary key(a), index idx(c)) PARTITION BY RANGE (a) (PARTITION p0 VALUES LESS THAN (6), PARTITION p1 VALUES LESS THAN (11), PARTITION p2 VALUES LESS THAN (16));`)
-	h.HandleDDLEvent(<-h.DDLEventCh())
+	err := h.HandleDDLEvent(<-h.DDLEventCh())
+	c.Assert(err, IsNil)
 	tk.MustExec(`insert into test_partitions(a, b, c) values(1, 2, "c"), (7, 3, "d"), (12, 4, "e");`)
 
 	tk.MustQuery("select PARTITION_NAME, PARTITION_DESCRIPTION from information_schema.PARTITIONS where table_name='test_partitions';").Check(
@@ -1121,7 +1121,8 @@ func (s *testTableSuite) TestPartitionsTable(c *C) {
 	// Test for table has no partitions.
 	tk.MustExec("DROP TABLE IF EXISTS `test_partitions_1`;")
 	tk.MustExec(`CREATE TABLE test_partitions_1 (a int, b int, c varchar(5), primary key(a), index idx(c));`)
-	h.HandleDDLEvent(<-h.DDLEventCh())
+	err = h.HandleDDLEvent(<-h.DDLEventCh())
+	c.Assert(err, IsNil)
 	tk.MustExec(`insert into test_partitions_1(a, b, c) values(1, 2, "c"), (7, 3, "d"), (12, 4, "e");`)
 	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
 	c.Assert(h.Update(is), IsNil)

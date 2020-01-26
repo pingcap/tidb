@@ -1847,7 +1847,7 @@ func dataForPartitions(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]typ
 					}
 
 					var partitionDesc string
-					if table.Partition.Type == 1 {
+					if table.Partition.Type == model.PartitionTypeRange {
 						partitionDesc = pi.LessThan[0]
 					}
 
