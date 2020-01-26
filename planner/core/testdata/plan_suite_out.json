@@ -1425,7 +1425,7 @@
       },
       {
         "SQL": "select lead(a, 1) over (partition by b) as c from t",
-        "Best": "TableReader(Table(t))->Sort->Window(lead(test.t.a, 1)->Column#14 over(partition by test.t.b))->Partition(execution info: concurrency:4, data source:TableReader_10)->Projection"
+        "Best": "TableReader(Table(t))->Shuffle(execution info: concurrency:0, splitter:hash, merger:serial)->Sort->Window(lead(test.t.a, 1)->Column#14 over(partition by test.t.b))->Shuffle(execution info: concurrency:4, child:Shuffle_12, splitter:serial, merger:simple)->Projection"
       }
     ]
   }

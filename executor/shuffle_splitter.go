@@ -180,7 +180,7 @@ func (s *baseShuffleSplitter) fetchDataAndSplit(ctx context.Context) {
 	}
 }
 
-// ShuffleHashSplitter splits data source by hash
+// shuffleHashSplitter splits data source by hash
 type shuffleHashSplitter struct {
 	baseShuffleSplitter
 	byItems  []expression.Expression

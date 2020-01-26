@@ -259,9 +259,9 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 	case *PhysicalWindow:
 		str = fmt.Sprintf("Window(%s)", x.ExplainInfo())
 	case *PhysicalShuffle:
-		str = fmt.Sprintf("Partition(%s)", x.ExplainInfo())
+		str = fmt.Sprintf("Shuffle(%s)", x.ExplainInfo())
 	case *PhysicalShuffleDataSourceStub:
-		str = fmt.Sprintf("PartitionDataSourceStub(%s)", x.ExplainInfo())
+		str = fmt.Sprintf("ShuffleDataSourceStub(%s)", x.ExplainInfo())
 	default:
 		str = fmt.Sprintf("%T", in)
 	}
