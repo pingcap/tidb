@@ -70,7 +70,7 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variable
 		it.concurrency = 1
 	}
 	if it.req.KeepOrder {
-		it.tasks = make(chan *copTask, 1)
+		it.tasks = make(chan *copTask, 2048)
 		it.sendRate = newRateLimit(2 * it.concurrency)
 	} else {
 		it.respChan = make(chan *copResponse, it.concurrency)
@@ -751,18 +751,18 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 			return nil, nil
 		}
 	} else {
-		for task := range it.tasks {
-			resp, ok, closed = it.recvFromRespCh(ctx, task.respChan)
-			if closed {
-				// Close() is already called, so Next() is invalid.
-				return nil, nil
-			}
-			if ok {
-				break
-			}
-			// Switch to next task.
-			it.sendRate.putToken()
+		task, ok := <-it.tasks
+		if !ok {
+			// Resp will be nil if iterator is finishCh.
+			return nil, nil
 		}
+		resp, ok, closed = it.recvFromRespCh(ctx, task.respChan)
+		if closed {
+			// Close() is already called, so Next() is invalid.
+			return nil, nil
+		}
+		// Switch to next task.
+		it.sendRate.putToken()
 	}
 
 	if resp.err != nil {
