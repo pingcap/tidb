@@ -2717,8 +2717,8 @@ func (b *PlanBuilder) buildMemTable(ctx context.Context, dbName model.CIStr, tab
 
 	// NOTE: Add a `LogicalUnionScan` if we support update memory table in the future
 	p := LogicalMemTable{
-		dbName:    dbName,
-		tableInfo: tableInfo,
+		DBName:    dbName,
+		TableInfo: tableInfo,
 	}.Init(b.ctx, b.getSelectOffset())
 	p.SetSchema(schema)
 	p.names = names
