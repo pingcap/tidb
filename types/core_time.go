@@ -169,14 +169,15 @@ func (t CoreTime) YearDay() int {
 func (t CoreTime) GoTime(loc *gotime.Location) (gotime.Time, error) {
 	// gotime.Time can't represent month 0 or day 0, date contains 0 would be converted to a nearest date,
 	// For example, 2006-12-00 00:00:00 would become 2015-11-30 23:59:59.
-	tm := gotime.Date(t.Year(), gotime.Month(t.Month()), t.Day(), t.Hour(), t.Minute(), t.Second(), t.Microsecond()*1000, loc)
-	year, month, day := tm.Date()
-	hour, minute, second := tm.Clock()
-	microsec := tm.Nanosecond() / 1000
-	// This function will check the result, and return an error if it's not the same with the origin input.
-	if year != t.Year() || int(month) != t.Month() || day != t.Day() ||
-		hour != t.Hour() || minute != t.Minute() || second != t.Second() ||
-		microsec != t.Microsecond() {
+	year, month, day, hour, minute, second, microsecond := t.Year(), t.Month(), t.Day(), t.Hour(), t.Minute(), t.Second(), t.Microsecond()
+	tm := gotime.Date(year, gotime.Month(month), day, hour, minute, second, microsecond*1000, loc)
+	year2, month2, day2 := tm.Date()
+	hour2, minute2, second2 := tm.Clock()
+	microsec2 := tm.Nanosecond() / 1000
+	// This function will check the result, and return an error if it's not the same with the origin input .
+	if year2 != year || int(month2) != month || day2 != day ||
+		hour2 != hour || minute2 != minute || second2 != second ||
+		microsec2 != microsecond {
 		return tm, errors.Trace(ErrWrongValue.GenWithStackByArgs(TimeStr, t))
 	}
 	return tm, nil
