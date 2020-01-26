@@ -1813,3 +1813,13 @@ func BenchmarkTimeCompare(b *testing.B) {
 		}
 	}
 }
+
+func BenchmarkParseDatetime(b *testing.B) {
+	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
+	str := "2011-10-10 11:11:11.123456"
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		types.ParseDatetime(sc, str)
+	}
+}
