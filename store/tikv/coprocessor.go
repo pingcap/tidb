@@ -757,7 +757,7 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 			return nil, nil
 		}
 		resp, ok, closed = it.recvFromRespCh(ctx, task.respChan)
-		if closed {
+		if !ok || closed {
 			// Close() is already called, so Next() is invalid.
 			return nil, nil
 		}
