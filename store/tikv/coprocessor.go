@@ -287,9 +287,9 @@ func buildCopTasksChan(bo *Backoffer, cache *RegionCache, ranges *copRanges, req
 		return
 	}
 
-	reciever := tasksCh
+	receiver := tasksCh
 	if req.Desc {
-		reciever = make(chan *copTask, 1)
+		receiver = make(chan *copTask, 1)
 	}
 
 	appendTask := func(regionWithRangeInfo *KeyLocation, ranges *copRanges) {
@@ -299,7 +299,7 @@ func buildCopTasksChan(bo *Backoffer, cache *RegionCache, ranges *copRanges, req
 			rLen := ranges.len()
 			for i := 0; i < rLen; {
 				nextI := mathutil.Min(i+rangesPerTask, rLen)
-				reciever <- &copTask{
+				receiver <- &copTask{
 					region: regionWithRangeInfo.Region,
 					ranges: ranges.slice(i, nextI),
 					// Channel buffer is 2 for handling region split.
@@ -319,7 +319,7 @@ func buildCopTasksChan(bo *Backoffer, cache *RegionCache, ranges *copRanges, req
 				right = tableEnd
 			}
 			fullRange := kv.KeyRange{StartKey: left, EndKey: right}
-			reciever <- &copTask{
+			receiver <- &copTask{
 				region: regionWithRangeInfo.Region,
 				// TiFlash only support full range scan for the region, ignore the real ranges
 				// does not affect the correctness because we already merge the access range condition
@@ -334,7 +334,7 @@ func buildCopTasksChan(bo *Backoffer, cache *RegionCache, ranges *copRanges, req
 		}
 	}
 	go func() {
-		defer close(reciever)
+		defer close(receiver)
 		defer close(errCh)
 		if err := splitRanges(bo, cache, ranges, appendTask); err != nil {
 			errCh <- err
@@ -343,7 +343,7 @@ func buildCopTasksChan(bo *Backoffer, cache *RegionCache, ranges *copRanges, req
 
 	if req.Desc {
 		var tasks []*copTask
-		for task := range reciever {
+		for task := range receiver {
 			tasks = append(tasks, task)
 		}
 		reverseTasks(tasks)
