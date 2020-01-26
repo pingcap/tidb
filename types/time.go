@@ -185,16 +185,15 @@ func FromGoTime(t gotime.Time) CoreTime {
 
 // FromDate makes a internal time representation from the given date.
 func FromDate(year int, month int, day int, hour int, minute int, second int, microsecond int) CoreTime {
-	t := ZeroCoreTime
-	p := (*uint64)(&t)
-	*p |= (uint64(microsecond) << microsecondBitFieldOffset) & microsecondBitFieldMask
-	*p |= (uint64(second) << secondBitFieldOffset) & secondBitFieldMask
-	*p |= (uint64(minute) << minuteBitFieldOffset) & minuteBitFieldMask
-	*p |= (uint64(hour) << hourBitFieldOffset) & hourBitFieldMask
-	*p |= (uint64(day) << dayBitFieldOffset) & dayBitFieldMask
-	*p |= (uint64(month) << monthBitFieldOffset) & monthBitFieldMask
-	*p |= (uint64(year) << yearBitFieldOffset) & yearBitFieldMask
-	return t
+	v := uint64(ZeroCoreTime)
+	v |= (uint64(microsecond) << microsecondBitFieldOffset) & microsecondBitFieldMask
+	v |= (uint64(second) << secondBitFieldOffset) & secondBitFieldMask
+	v |= (uint64(minute) << minuteBitFieldOffset) & minuteBitFieldMask
+	v |= (uint64(hour) << hourBitFieldOffset) & hourBitFieldMask
+	v |= (uint64(day) << dayBitFieldOffset) & dayBitFieldMask
+	v |= (uint64(month) << monthBitFieldOffset) & monthBitFieldMask
+	v |= (uint64(year) << yearBitFieldOffset) & yearBitFieldMask
+	return CoreTime(v)
 }
 
 // FromDateChecked makes a internal time representation from the given date with field overflow check.
