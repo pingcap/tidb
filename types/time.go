@@ -199,25 +199,13 @@ func FromDate(year int, month int, day int, hour int, minute int, second int, mi
 
 // FromDateChecked makes a internal time representation from the given date with field overflow check.
 func FromDateChecked(year, month, day, hour, minute, second, microsecond int) (CoreTime, bool) {
-	if uint64(year) >= (1 << yearBitFieldWidth) {
-		return ZeroCoreTime, false
-	}
-	if uint64(month) >= (1 << monthBitFieldWidth) {
-		return ZeroCoreTime, false
-	}
-	if uint64(day) >= (1 << dayBitFieldWidth) {
-		return ZeroCoreTime, false
-	}
-	if uint64(hour) >= (1 << hourBitFieldWidth) {
-		return ZeroCoreTime, false
-	}
-	if uint64(minute) >= (1 << minuteBitFieldWidth) {
-		return ZeroCoreTime, false
-	}
-	if uint64(second) >= (1 << secondBitFieldWidth) {
-		return ZeroCoreTime, false
-	}
-	if uint64(microsecond) >= (1 << microsecondBitFieldWidth) {
+	if uint64(year) >= (1<<yearBitFieldWidth) ||
+		uint64(month) >= (1<<monthBitFieldWidth) ||
+		uint64(day) >= (1<<dayBitFieldWidth) ||
+		uint64(hour) >= (1<<hourBitFieldWidth) ||
+		uint64(minute) >= (1<<minuteBitFieldWidth) ||
+		uint64(second) >= (1<<secondBitFieldWidth) ||
+		uint64(microsecond) >= (1<<microsecondBitFieldWidth) {
 		return ZeroCoreTime, false
 	}
 	return FromDate(year, month, day, hour, minute, second, microsecond), true
