@@ -106,7 +106,8 @@ func getOrCreateChildShuffle(tail, dataSource PhysicalPlan, ctx sessionctx.Conte
 }
 
 func optimizeByShuffle4Window(pp *PhysicalWindow, prop *property.PhysicalProperty, ctx sessionctx.Context) *PhysicalShuffle {
-	if !prop.IsEmpty() {
+	if !prop.IsEmpty() && !prop.Enforced {
+		// Shuffle of Window will "shuffle" result to any order, so do not meet any property requirement.
 		return nil
 	}
 	concurrency := ctx.GetSessionVars().WindowConcurrency

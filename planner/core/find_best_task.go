@@ -171,13 +171,14 @@ func (p *baseLogicalPlan) findBestTask(prop *property.PhysicalProperty) (bestTas
 		// combine best child tasks with parent physical plan.
 		curTask := pp.attach2Task(childTasks...)
 
+		// optimize by shuffle executor to running in parallel manner.
+		// Must before `enforceProperty`, otherwise Shuffle would be between `pp` and `Enforced Sort`.
+		curTask = optimizeByShuffle(pp, prop, curTask, p.basePlan.ctx)
+
 		// enforce curTask property
 		if prop.Enforced {
 			curTask = enforceProperty(prop, curTask, p.basePlan.ctx)
 		}
-
-		// optimize by shuffle executor to running in parallel manner.
-		curTask = optimizeByShuffle(pp, prop, curTask, p.basePlan.ctx)
 
 		// get the most efficient one.
 		if curTask.cost() < bestTask.cost() {

@@ -19,6 +19,7 @@ explain select sum(a) over(partition by a order by b rows unbounded preceding) f
 explain select sum(a) over(partition by a order by b rows between 1 preceding and 1 following) from t;
 explain select sum(a) over(partition by a order by b range between 1 preceding and 1 following) from t;
 explain select sum(a) over(partition by a order by c range between interval '2:30' minute_second preceding and interval '2:30' minute_second following) from t;
+explain select sum(a) over(partition by a order by b), avg(a) over(partition by a+1 order by b) from t;
 
 drop table if exists t1;
 create table t1(a int primary key, b int);
