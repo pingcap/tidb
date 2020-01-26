@@ -26,11 +26,11 @@ import (
 )
 
 var (
-	_ ShuffleSplitter = (*ShuffleHashSplitter)(nil)
+	_ shuffleSplitter = (*shuffleHashSplitter)(nil)
 )
 
-// ShuffleSplitter is the input splitter of Shuffle executor.
-type ShuffleSplitter interface {
+// shuffleSplitter is the input splitter of Shuffle executor.
+type shuffleSplitter interface {
 	// Open initializes splitter.
 	Open(ctx context.Context, sctx sessionctx.Context, finishCh <-chan struct{}) error
 	// Prepare for executing. It also signals that workers will be running right after now.
@@ -50,10 +50,8 @@ type baseShuffleSplitter struct {
 	shuffle *ShuffleExec
 	// fanOut is number of shuffle worker input channels. Should be equal to number of workers.
 	fanOut int
-	// dataSource is the data source executor.
-	dataSource Executor
-	// self is the concrete ShuffleSplitter itself.
-	self ShuffleSplitter
+	// self is the concrete shuffleSplitter itself.
+	self shuffleSplitter
 
 	prepared bool
 
@@ -73,7 +71,7 @@ func (s *baseShuffleSplitter) Open(ctx context.Context, sctx sessionctx.Context,
 	for i := range s.inputCh {
 		s.inputCh[i] = make(chan *shuffleOutput, 1)
 		s.inputHolderCh[i] = make(chan *chunk.Chunk, 1)
-		s.inputHolderCh[i] <- newFirstChunk(s.dataSource)
+		s.inputHolderCh[i] <- newFirstChunk(s.shuffle)
 	}
 
 	return nil
@@ -127,7 +125,7 @@ func (s *baseShuffleSplitter) fetchDataAndSplit(ctx context.Context) {
 		workerIndices []int
 	)
 	results := make([]*chunk.Chunk, s.fanOut)
-	chk := newFirstChunk(s.dataSource)
+	chk := newFirstChunk(s.shuffle)
 
 	defer func() {
 		if r := recover(); r != nil {
@@ -141,7 +139,7 @@ func (s *baseShuffleSplitter) fetchDataAndSplit(ctx context.Context) {
 	}()
 
 	for {
-		err = Next(ctx, s.dataSource, chk)
+		err = Next(ctx, s.shuffle, chk)
 		if err != nil {
 			s.sendError(err)
 			return
@@ -183,26 +181,25 @@ func (s *baseShuffleSplitter) fetchDataAndSplit(ctx context.Context) {
 }
 
 // ShuffleHashSplitter splits data source by hash
-type ShuffleHashSplitter struct {
+type shuffleHashSplitter struct {
 	baseShuffleSplitter
 	byItems  []expression.Expression
 	hashKeys [][]byte
 }
 
-// NewShuffleHashSplitter creates ShuffleHashSplitter
-func NewShuffleHashSplitter(shuffle *ShuffleExec, fanOut int, dataSource Executor, byItems []expression.Expression) *ShuffleHashSplitter {
-	splitter := &ShuffleHashSplitter{byItems: byItems}
+// newShuffleHashSplitter creates shuffleHashSplitter
+func newShuffleHashSplitter(shuffle *ShuffleExec, fanOut int, byItems []expression.Expression) *shuffleHashSplitter {
+	splitter := &shuffleHashSplitter{byItems: byItems}
 	splitter.baseShuffleSplitter = baseShuffleSplitter{
-		shuffle:    shuffle,
-		fanOut:     fanOut,
-		dataSource: dataSource,
-		self:       splitter,
+		shuffle: shuffle,
+		fanOut:  fanOut,
+		self:    splitter,
 	}
 	return splitter
 }
 
-// Split implements ShuffleSplitter Split interface.
-func (s *ShuffleHashSplitter) Split(ctx sessionctx.Context, input *chunk.Chunk, workerIndices []int) ([]int, error) {
+// Split implements shuffleSplitter Split interface.
+func (s *shuffleHashSplitter) Split(ctx sessionctx.Context, input *chunk.Chunk, workerIndices []int) ([]int, error) {
 	var err error
 	s.hashKeys, err = getGroupKey(ctx, input, s.hashKeys, s.byItems)
 	if err != nil {

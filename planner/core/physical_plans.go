@@ -560,47 +560,77 @@ type PhysicalWindow struct {
 	Frame           *WindowFrame
 }
 
-// PhysicalShuffle represents a shuffle plan.
-// `Tail` and `DataSource` are the last plan within and the first plan following the "shuffle", respectively,
-//  to build the child executors chain.
+// PhysicalShuffle represents a Shuffle plan.
+// Between this Shuffle and `ChildShuffle`, executors are running in a parallel manner.
+// `Tail` is the last plan within.
 // Take `Window` operator for example:
-//  Shuffle -> Window -> Sort -> DataSource, will be separated into:
-//    ==> Shuffle: for main thread
-//    ==> Window -> Sort(:Tail) -> shuffleWorker: for workers
-//    ==> DataSource: for `fetchDataAndSplit` thread
+//  Window -> Sort -> DataSource
+//  ==> Shuffle(this) -> Window -> Sort -> Shuffle(child) -> DataSource, will be separated into:
+//      └─> Shuffle(this): for main thread
+//      └─> Window -> Sort(:Tail) -> shuffleWorker: for workers
+//      └─> Shuffle(child) -> DataSource: for `fetchDataAndSplit` thread
 type PhysicalShuffle struct {
 	basePhysicalPlan
 
 	Concurrency int
-	Tail        PhysicalPlan
-	DataSource  PhysicalPlan
 
-	SplitterType PartitionSplitterType
+	// the following fields are for parellel executing.
+	Tail         PhysicalPlan
+	ChildShuffle *PhysicalShuffle
+	MergerType   ShuffleMergerType
+	MergerArgs   interface{}
+
+	// the following fields are for parent "Shuffle" to running in parallel.
+	SplitterType ShuffleSplitterType
+	FanOut       int
 	HashByItems  []expression.Expression
-
-	MergerType ShuffleMergerType
-	MergerArgs interface{}
 }
 
-// PartitionSplitterType is the type of `Shuffle` executor splitter, which splits data source into partitions.
-type PartitionSplitterType int
+// ShuffleSplitterType is the type of `Shuffle` executor splitter, which splits data source into partitions.
+type ShuffleSplitterType int
 
 const (
-	// PartitionHashSplitterType is the splitter splits by hash.
-	PartitionHashSplitterType = iota
+	// ShuffleSerialSplitterType is the splitter for serial executing. Should be 0 as default value.
+	ShuffleSerialSplitterType = 0
+	// ShuffleHashSplitterType is the splitter splits by hash.
+	ShuffleHashSplitterType = iota + 10
 )
+
+func getShuffleSplitterName4Explain(tp ShuffleSplitterType) string {
+	switch tp {
+	case ShuffleSerialSplitterType:
+		return "serial"
+	case ShuffleHashSplitterType:
+		return "hash"
+	default:
+		return "<unknown>"
+	}
+}
 
 // ShuffleMergerType is the type of `Shuffle` executor merger, which merges results from partitions.
 type ShuffleMergerType int
 
 const (
-	// ShuffleSerialMergerType is the stub merger for serial executing.
-	ShuffleSerialMergerType = iota
+	// ShuffleSerialMergerType is the stub merger for serial executing. Should be 0 as default value.
+	ShuffleSerialMergerType = 0
 	// ShuffleSimpleMergerType is the merger merging results without any other process.
-	ShuffleSimpleMergerType
+	ShuffleSimpleMergerType = iota + 10
 	// ShuffleMergeSortMergerType is the merger merging results by `Merge-Sort`
 	ShuffleMergeSortMergerType
 )
+
+func getShuffleMergerName4Explain(tp ShuffleMergerType) string {
+	switch tp {
+	case ShuffleSerialMergerType:
+		return "serial"
+	case ShuffleSimpleMergerType:
+		return "simple"
+	case ShuffleMergeSortMergerType:
+		return "merge-sort"
+	default:
+		return "<unknown>"
+	}
+}
 
 // PhysicalShuffleDataSourceStub represents a data source stub of `PhysicalShuffle`,
 // and actually, is executed by `executor.shuffleWorker`.

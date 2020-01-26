@@ -2715,44 +2715,56 @@ func (b *executorBuilder) buildWindow(v *plannercore.PhysicalWindow) *WindowExec
 }
 
 func (b *executorBuilder) buildShuffle(v *plannercore.PhysicalShuffle) *ShuffleExec {
-	base := newBaseExecutor(b.ctx, v.Schema(), v.ExplainID())
+	var childExec Executor
+	if v.Concurrency > 1 {
+		childExec = b.build(v.ChildShuffle)
+	} else {
+		childExec = b.build(v.Children()[0])
+	}
+	if b.err != nil {
+		return nil
+	}
+	base := newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), childExec)
 	shuffle := &ShuffleExec{baseExecutor: base,
 		concurrency: v.Concurrency,
 	}
 
-	shuffle.dataSource = b.build(v.DataSource)
-	if b.err != nil {
-		return nil
-	}
-
 	switch v.SplitterType {
-	case plannercore.PartitionHashSplitterType:
-		shuffle.splitter = NewShuffleHashSplitter(shuffle, shuffle.concurrency, shuffle.dataSource, v.HashByItems)
+	case plannercore.ShuffleSerialSplitterType:
+		shuffle.splitter = nil
+	case plannercore.ShuffleHashSplitterType:
+		shuffle.splitter = newShuffleHashSplitter(shuffle, v.FanOut, v.HashByItems)
 	default:
 		panic("Not implemented. Should not reach here.")
 	}
+
+	if !shuffle.IsParallel() {
+		return shuffle
+	}
+
+	shuffle.child = shuffle.children[0].(*ShuffleExec)
 
 	switch v.MergerType {
 	case plannercore.ShuffleSimpleMergerType:
-		shuffle.merger = NewShuffleSimpleMerger(shuffle, shuffle.concurrency)
+		shuffle.merger = newShuffleSimpleMerger(shuffle, shuffle.concurrency)
 	default:
 		panic("Not implemented. Should not reach here.")
 	}
 
-	// head & tail of physical plans' chain within "partition".
+	// head & tail of physical plans' chain between "shuffle".
 	var head, tail plannercore.PhysicalPlan = v.Children()[0], v.Tail
 
 	shuffle.workers = make([]*shuffleWorker, shuffle.concurrency)
 	for i := range shuffle.workers {
 		w := &shuffleWorker{
 			workerIdx:    i,
-			baseExecutor: newBaseExecutor(b.ctx, v.DataSource.Schema(), v.DataSource.ExplainID()),
+			baseExecutor: newBaseExecutor(b.ctx, v.ChildShuffle.Schema(), v.ChildShuffle.ExplainID()),
 		}
 
 		stub := plannercore.PhysicalShuffleDataSourceStub{
 			Worker: (unsafe.Pointer)(w),
-		}.Init(b.ctx, v.DataSource.Stats(), v.DataSource.SelectBlockOffset(), nil)
-		stub.SetSchema(v.DataSource.Schema())
+		}.Init(b.ctx, v.ChildShuffle.Stats(), v.ChildShuffle.SelectBlockOffset(), nil)
+		stub.SetSchema(v.ChildShuffle.Schema())
 
 		tail.SetChildren(stub)
 		w.childExec = b.build(head)

@@ -20,11 +20,11 @@ import (
 )
 
 var (
-	_ ShuffleMerger = (*ShuffleSimpleMerger)(nil)
+	_ shuffleMerger = (*shuffleSimpleMerger)(nil)
 )
 
-// ShuffleMerger is the results merger of Shuffle executor.
-type ShuffleMerger interface {
+// shuffleMerger is the results merger of Shuffle executor.
+type shuffleMerger interface {
 	// Open initializes merger.
 	Open(ctx context.Context, finishCh <-chan struct{}) error
 	// Prepare for executing. It also signals that workers are running.
@@ -48,7 +48,7 @@ type baseShuffleMerger struct {
 	shuffle *ShuffleExec
 	// fanIn is number of input channels. Should be equal to number of workers.
 	fanIn int
-	// isSingleOutputCh indicates the merger need single(e.g ShuffleSimpleMerger) or multiple(e.g ShuffleMergeSortMerger) output channels.
+	// isSingleOutputCh indicates the merger need single(e.g shuffleSimpleMerger) or multiple(e.g ShuffleMergeSortMerger) output channels.
 	isSingleOutputCh bool
 
 	prepared bool
@@ -139,14 +139,14 @@ func (m *baseShuffleMerger) WorkersAllFinished() {
 	}
 }
 
-// ShuffleSimpleMerger merges results without any other process.
-type ShuffleSimpleMerger struct {
+// shuffleSimpleMerger merges results without any other process.
+type shuffleSimpleMerger struct {
 	baseShuffleMerger
 }
 
-// NewShuffleSimpleMerger creates ShuffleSimpleMerger.
-func NewShuffleSimpleMerger(shuffle *ShuffleExec, fanIn int) *ShuffleSimpleMerger {
-	return &ShuffleSimpleMerger{baseShuffleMerger{
+// newShuffleSimpleMerger creates shuffleSimpleMerger.
+func newShuffleSimpleMerger(shuffle *ShuffleExec, fanIn int) *shuffleSimpleMerger {
+	return &shuffleSimpleMerger{baseShuffleMerger{
 		shuffle:          shuffle,
 		fanIn:            fanIn,
 		isSingleOutputCh: true,
@@ -154,16 +154,16 @@ func NewShuffleSimpleMerger(shuffle *ShuffleExec, fanIn int) *ShuffleSimpleMerge
 	}
 }
 
-// Next implements ShuffleMerger Next interface.
-func (sm *ShuffleSimpleMerger) Next(ctx context.Context, chk *chunk.Chunk) error {
+// Next implements shuffleMerger Next interface.
+func (m *shuffleSimpleMerger) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
-	if sm.executed {
+	if m.executed {
 		return nil
 	}
 
-	result, ok := <-sm.outputCh[0]
+	result, ok := <-m.outputCh[0]
 	if !ok {
-		sm.executed = true
+		m.executed = true
 		return nil
 	}
 	if result.err != nil {

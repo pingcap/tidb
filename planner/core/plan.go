@@ -77,28 +77,44 @@ func enforceProperty(p *property.PhysicalProperty, tsk task, ctx sessionctx.Cont
 }
 
 // optimizeByShuffle insert `PhysicalShuffle` to optimize performance by running in a parallel manner.
-func optimizeByShuffle(pp PhysicalPlan, tsk task, ctx sessionctx.Context) task {
+func optimizeByShuffle(pp PhysicalPlan, prop *property.PhysicalProperty, tsk task, ctx sessionctx.Context) task {
 	if tsk.plan() == nil {
 		return tsk
 	}
 
 	// Don't use `tsk.plan()` here, which will probably be different from `pp`.
 	// Eg., when `pp` is `NominalSort`, `tsk.plan()` would be its child.
-	switch p := pp.(type) {
+	switch pp := pp.(type) {
 	case *PhysicalWindow:
-		if shuffle := optimizeByShuffle4Window(p, ctx); shuffle != nil {
+		if shuffle := optimizeByShuffle4Window(pp, prop, ctx); shuffle != nil {
 			return shuffle.attach2Task(tsk)
 		}
 	}
 	return tsk
 }
 
-func optimizeByShuffle4Window(pp *PhysicalWindow, ctx sessionctx.Context) *PhysicalShuffle {
+// getOrCreateChildShuffle get the existed child shuffle, or create a new one, to provide the data source splitter.
+func getOrCreateChildShuffle(tail, dataSource PhysicalPlan, ctx sessionctx.Context) *PhysicalShuffle {
+	if dataSource, ok := dataSource.(*PhysicalShuffle); ok {
+		return dataSource
+	}
+	reqProp := &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64}
+	shuffle := PhysicalShuffle{}.Init(ctx, dataSource.statsInfo(), dataSource.SelectBlockOffset(), reqProp)
+	tail.SetChildren(shuffle)
+	shuffle.SetChildren(dataSource)
+	return shuffle
+}
+
+func optimizeByShuffle4Window(pp *PhysicalWindow, prop *property.PhysicalProperty, ctx sessionctx.Context) *PhysicalShuffle {
+	if !prop.IsEmpty() {
+		return nil
+	}
 	concurrency := ctx.GetSessionVars().WindowConcurrency
 	if concurrency <= 1 {
 		return nil
 	}
 
+	// child shuffle
 	sort, ok := pp.Children()[0].(*PhysicalSort)
 	if !ok {
 		// Multi-thread executing on SORTED data source is not effective enough by current implementation.
@@ -121,13 +137,17 @@ func optimizeByShuffle4Window(pp *PhysicalWindow, ctx sessionctx.Context) *Physi
 	for _, item := range pp.PartitionBy {
 		byItems = append(byItems, item.Col)
 	}
+	childShuffle := getOrCreateChildShuffle(tail, dataSource, ctx)
+	childShuffle.SplitterType = ShuffleHashSplitterType
+	childShuffle.FanOut = concurrency
+	childShuffle.HashByItems = byItems
+
+	// this shuffle
 	reqProp := &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64}
 	shuffle := PhysicalShuffle{
 		Concurrency:  concurrency,
 		Tail:         tail,
-		DataSource:   dataSource,
-		SplitterType: PartitionHashSplitterType,
-		HashByItems:  byItems,
+		ChildShuffle: childShuffle,
 		MergerType:   ShuffleSimpleMergerType,
 	}.Init(ctx, pp.statsInfo(), pp.SelectBlockOffset(), reqProp)
 	return shuffle

@@ -480,12 +480,19 @@ func buildWindowExecutor(ctx sessionctx.Context, windowFunc string, funcs int, f
 			byItems = append(byItems, item.Col)
 		}
 
+		child := core.PhysicalShuffle{
+			SplitterType: core.ShuffleHashSplitterType,
+			FanOut:       concurrency,
+			HashByItems:  byItems,
+		}.Init(ctx, nil, 0)
+		tail.SetChildren(child)
+		child.SetChildren(src)
+
 		plan = core.PhysicalShuffle{
 			Concurrency:  concurrency,
 			Tail:         tail,
-			DataSource:   src,
-			SplitterType: core.PartitionHashSplitterType,
-			HashByItems:  byItems,
+			ChildShuffle: child,
+			MergerType:   core.ShuffleSimpleMergerType,
 		}.Init(ctx, nil, 0)
 		plan.SetChildren(win)
 	} else {
