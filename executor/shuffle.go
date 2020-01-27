@@ -25,47 +25,56 @@ import (
 )
 
 // ShuffleExec is the executor to run other executors in a parallel manner.
-//  1. It fetches chunks from `DataSource`.
-//  2. It splits tuples from `DataSource` into N partitions (Only "split by hash" is implemented so far).
-//  3. It invokes N workers in parallel, assign each partition as input to each worker and execute child executors.
-//  4. It collects outputs from each worker, then sends outputs to its parent.
+// (Takes Window operator as example)
+// 1. Shuffle(child): Fetches chunks from data source.
+// 2. Shuffle(child): Splits tuples from data source into N partitions by `shuffleHashSplitter`.
+// 3. Shuffle(the upper one): Invokes N workers in parallel, assigns each partition as input to each worker and executes child executors.
+// 4. Shuffle(the upper one): Collects outputs from each worker by `shuffleSimpleMerger`, then sends outputs to its parent.
 //
-//                                +-------------+
-//                        +-------| Main Thread |
-//                        |       +------+------+
-//                        |              ^
-//                        |              |
-//                        |              +
-//                        v             +++
-//                 outputHolderCh       | | outputCh (1 x Concurrency)
-//                        v             +++
-//                        |              ^
-//                        |              |
-//                        |      +-------+-------+
-//                        v      |               |
-//                 +--------------+             +--------------+
-//          +----- |    worker    |   .......   |    worker    |  worker (N Concurrency): child executor, eg. WindowExec (+SortExec)
-//          |      +------------+-+             +-+------------+
-//          |                 ^                 ^
-//          |                 |                 |
-//          |                +-+  +-+  ......  +-+
-//          |                | |  | |          | |
-//          |                ...  ...          ...  inputCh (Concurrency x 1)
-//          v                | |  | |          | |
-//    inputHolderCh          +++  +++          +++
-//          v                 ^    ^            ^
-//          |                 |    |            |
-//          |          +------o----+            |
-//          |          |      +-----------------+-----+
-//          |          |                              |
-//          |      +---+------------+------------+----+-----------+
-//          |      |              Partition Splitter              |
-//          |      +--------------+-+------------+-+--------------+
-//          |                             ^
-//          |                             |
-//          |             +---------------v-----------------+
-//          +---------->  |    fetch data from DataSource   |
-//                        +---------------------------------+
+//                                              Parent
+//                                                |
+//                                 +--------------v--------------+
+//                                 |   Shuffle.Splitter(serial)  |
+//                                 +--------------^--------------+
+//                                                |
+//                                 +--------------v--------------+
+//                         +-------|    Shuffle.Merger(simple)   |
+//                         |       +--------------+--------------+
+//                         |                      ^
+//                         |                      |
+//                         |              +-------+
+//                         v             +++
+//                  outputHolderCh       | | outputCh (1 x Concurrency)
+//                         v             +++
+//                         |              ^
+//                         |              |
+//                         |      +-------+-------+
+//                         v      |               |
+//                  +--------------+             +--------------+
+//           +----- |    worker    |   .......   |    worker    |  workers (N Concurrency)
+//           |      +----------+---+             +--------------+   i.e. WindowExec (+SortExec)
+//           |                 ^                 ^
+//           |                 |                 |
+//           |                +-+  +-+  ......  +-+
+//           |                | |  | |          | |
+//           |                ...  ...          ...  inputCh (Concurrency x 1)
+//           v                | |  | |          | |
+//     inputHolderCh          +++  +++          +++
+//           v                 ^    ^            ^
+//           |                 |    |            |
+//           |          +------o----+            |
+//           |          |      +-----------------+-----+
+//           |          |                              |
+//           |      +---+------------+------------+----+-----------+
+//           +----> |         Shuffle(child).Splitter(hash)        |
+//                  |           Splits Partitions by Hash          |
+//                  +--------------+-+------------+-+--------------+
+//                                         ^
+//                                         |
+//                         +---------------v-----------------+
+//                         |  Shuffle(child).Merger(serial)  |
+//                         |   fetch data from data source   |
+//                         +---------------------------------+
 //
 ////////////////////////////////////////////////////////////////////////////////////////
 type ShuffleExec struct {
