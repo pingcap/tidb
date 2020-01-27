@@ -2732,6 +2732,8 @@ func (b *executorBuilder) buildShuffle(v *plannercore.PhysicalShuffle) *ShuffleE
 	switch v.SplitterType {
 	case plannercore.ShuffleSerialSplitterType:
 		shuffle.splitter = nil
+	case plannercore.ShuffleSimpleSplitterType:
+		shuffle.splitter = newShuffleSimpleSplitter(shuffle, v.FanOut)
 	case plannercore.ShuffleHashSplitterType:
 		shuffle.splitter = newShuffleHashSplitter(shuffle, v.FanOut, v.HashByItems)
 	default:

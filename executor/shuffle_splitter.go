@@ -26,6 +26,7 @@ import (
 )
 
 var (
+	_ shuffleSplitter = (*shuffleSimpleSplitter)(nil)
 	_ shuffleSplitter = (*shuffleHashSplitter)(nil)
 )
 
@@ -184,6 +185,56 @@ func (s *baseShuffleSplitter) Split(ctx context.Context) {
 			results[i] = nil
 		}
 	}
+}
+
+// shuffleSimpleSplitter splits data source by the whole chunk, without any process.
+type shuffleSimpleSplitter struct {
+	baseShuffleSplitter
+}
+
+// newShuffleSimpleSplitter creates shuffleSimpleSplitter
+func newShuffleSimpleSplitter(shuffle *ShuffleExec, fanOut int) *shuffleSimpleSplitter {
+	splitter := &shuffleSimpleSplitter{}
+	splitter.baseShuffleSplitter = baseShuffleSplitter{
+		shuffle: shuffle,
+		fanOut:  fanOut,
+		self:    splitter,
+	}
+	return splitter
+}
+
+// Split implements shuffleSplitter Split interface.
+func (s *shuffleSimpleSplitter) Split(ctx context.Context) {
+	var (
+		err       error
+		workerIdx int
+		chk       *chunk.Chunk
+	)
+
+	for {
+		select {
+		case <-s.finishCh:
+			return
+		case chk = <-s.inputHolderCh[workerIdx]:
+			break
+		}
+		err = Next(ctx, s.shuffle, chk)
+		if err != nil {
+			s.sendError(err)
+			return
+		}
+		if chk.NumRows() == 0 { // Should not send an empty chunk to worker.
+			break
+		}
+		s.inputCh[workerIdx] <- &shuffleOutput{chk: chk}
+
+		workerIdx = (workerIdx + 1) % s.fanOut
+	}
+}
+
+// SplitByRow is just a placeholder.
+func (s *shuffleSimpleSplitter) SplitByRow(ctx context.Context, input *chunk.Chunk, workerIndices []int) ([]int, error) {
+	panic("Should not reach here")
 }
 
 // shuffleHashSplitter splits data source by hash

@@ -592,14 +592,18 @@ type ShuffleSplitterType int
 const (
 	// ShuffleSerialSplitterType is the splitter for serial executing. Should be 0 as default value.
 	ShuffleSerialSplitterType = 0
+	// ShuffleSimpleSplitterType is the splitter splits data source by the whole chunk, without any process.
+	ShuffleSimpleSplitterType = iota + 10
 	// ShuffleHashSplitterType is the splitter splits by hash.
-	ShuffleHashSplitterType = iota + 10
+	ShuffleHashSplitterType
 )
 
 func getShuffleSplitterName4Explain(tp ShuffleSplitterType) string {
 	switch tp {
 	case ShuffleSerialSplitterType:
 		return "serial"
+	case ShuffleSimpleSplitterType:
+		return "simple"
 	case ShuffleHashSplitterType:
 		return "hash"
 	default:
