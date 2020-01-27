@@ -37,12 +37,14 @@ type shuffleSplitter interface {
 	Prepare(ctx context.Context)
 	// Close de-initializes splitter.
 	Close() error
-	// Split input into partitions. Each splitter should implement `Split` for different spliting algorithm.
-	Split(ctx sessionctx.Context, input *chunk.Chunk, workerIndices []int) ([]int, error)
 	// WorkerInput is called by workers to get input from splitter.
 	WorkerGetInput(workerIdx int) (chk *chunk.Chunk, finished bool, err error)
 	// WorkerReturnHolderChunk is called by workers to return holder chunk.
 	WorkerReturnHolderChunk(workerIdx int, chk *chunk.Chunk)
+	// Split input into partitions. Each splitter should implement `Split` or `SplitByRow` for different spliting algorithm.
+	Split(ctx context.Context)
+	// SplitByRow splits input into partitions row by row.
+	SplitByRow(ctx context.Context, input *chunk.Chunk, workerIndices []int) ([]int, error)
 }
 
 type baseShuffleSplitter struct {
@@ -120,13 +122,6 @@ func (s *baseShuffleSplitter) sendError(err error) {
 }
 
 func (s *baseShuffleSplitter) fetchDataAndSplit(ctx context.Context) {
-	var (
-		err           error
-		workerIndices []int
-	)
-	results := make([]*chunk.Chunk, s.fanOut)
-	chk := newFirstChunk(s.shuffle)
-
 	defer func() {
 		if r := recover(); r != nil {
 			err := errors.Errorf("%v", r)
@@ -138,6 +133,17 @@ func (s *baseShuffleSplitter) fetchDataAndSplit(ctx context.Context) {
 		}
 	}()
 
+	s.self.Split(ctx)
+}
+
+func (s *baseShuffleSplitter) Split(ctx context.Context) {
+	var (
+		err           error
+		workerIndices []int
+	)
+	results := make([]*chunk.Chunk, s.fanOut)
+	chk := newFirstChunk(s.shuffle)
+
 	for {
 		err = Next(ctx, s.shuffle, chk)
 		if err != nil {
@@ -148,7 +154,7 @@ func (s *baseShuffleSplitter) fetchDataAndSplit(ctx context.Context) {
 			break
 		}
 
-		workerIndices, err = s.self.Split(s.sctx, chk, workerIndices)
+		workerIndices, err = s.self.SplitByRow(ctx, chk, workerIndices)
 		if err != nil {
 			s.sendError(err)
 			return
@@ -198,10 +204,10 @@ func newShuffleHashSplitter(shuffle *ShuffleExec, fanOut int, byItems []expressi
 	return splitter
 }
 
-// Split implements shuffleSplitter Split interface.
-func (s *shuffleHashSplitter) Split(ctx sessionctx.Context, input *chunk.Chunk, workerIndices []int) ([]int, error) {
+// SplitByRow implements shuffleSplitter SplitByRow interface.
+func (s *shuffleHashSplitter) SplitByRow(ctx context.Context, input *chunk.Chunk, workerIndices []int) ([]int, error) {
 	var err error
-	s.hashKeys, err = getGroupKey(ctx, input, s.hashKeys, s.byItems)
+	s.hashKeys, err = getGroupKey(s.sctx, input, s.hashKeys, s.byItems)
 	if err != nil {
 		return workerIndices, err
 	}
