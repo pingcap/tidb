@@ -68,7 +68,6 @@ func (s *testUtilSuite) TestDumpBinaryTime(c *C) {
 	londonTz, err := time.LoadLocation("Europe/London")
 	c.Assert(err, IsNil)
 	sc.TimeZone = londonTz
-	defer testleak.AfterTest(c)()
 
 	t, err := types.ParseTimestamp(nil, "0000-00-00 00:00:00.0000000")
 	c.Assert(err, IsNil)
