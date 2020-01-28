@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tipb/go-tipb"
 )
@@ -80,7 +81,7 @@ func (c *inFunctionClass) getFunction(ctx sessionctx.Context, args []Expression)
 	bf.tp.Flen = 1
 	switch args[0].GetType().EvalType() {
 	case types.ETInt:
-		inInt := builtinInIntSig{baseInSig: baseInSig{baseBuiltinFunc: bf, threshold: 1}}
+		inInt := builtinInIntSig{baseInSig: baseInSig{baseBuiltinFunc: bf}}
 		err := inInt.buildHashMapForConstArgs(ctx)
 		if err != nil {
 			return &inInt, err
@@ -88,7 +89,7 @@ func (c *inFunctionClass) getFunction(ctx sessionctx.Context, args []Expression)
 		sig = &inInt
 		sig.setPbCode(tipb.ScalarFuncSig_InInt)
 	case types.ETString:
-		inStr := builtinInStringSig{baseInSig: baseInSig{baseBuiltinFunc: bf, threshold: 1}}
+		inStr := builtinInStringSig{baseInSig: baseInSig{baseBuiltinFunc: bf}}
 		err := inStr.buildHashMapForConstArgs(ctx)
 		if err != nil {
 			return &inStr, err
@@ -96,7 +97,7 @@ func (c *inFunctionClass) getFunction(ctx sessionctx.Context, args []Expression)
 		sig = &inStr
 		sig.setPbCode(tipb.ScalarFuncSig_InString)
 	case types.ETReal:
-		inReal := builtinInRealSig{baseInSig: baseInSig{baseBuiltinFunc: bf, threshold: 1}}
+		inReal := builtinInRealSig{baseInSig: baseInSig{baseBuiltinFunc: bf}}
 		err := inReal.buildHashMapForConstArgs(ctx)
 		if err != nil {
 			return &inReal, err
@@ -104,7 +105,7 @@ func (c *inFunctionClass) getFunction(ctx sessionctx.Context, args []Expression)
 		sig = &inReal
 		sig.setPbCode(tipb.ScalarFuncSig_InReal)
 	case types.ETDecimal:
-		inDecimal := builtinInDecimalSig{baseInSig: baseInSig{baseBuiltinFunc: bf, threshold: 2}}
+		inDecimal := builtinInDecimalSig{baseInSig: baseInSig{baseBuiltinFunc: bf}}
 		err := inDecimal.buildHashMapForConstArgs(ctx)
 		if err != nil {
 			return &inDecimal, err
@@ -112,7 +113,7 @@ func (c *inFunctionClass) getFunction(ctx sessionctx.Context, args []Expression)
 		sig = &inDecimal
 		sig.setPbCode(tipb.ScalarFuncSig_InDecimal)
 	case types.ETDatetime, types.ETTimestamp:
-		inTime := builtinInTimeSig{baseInSig: baseInSig{baseBuiltinFunc: bf, threshold: 2}}
+		inTime := builtinInTimeSig{baseInSig: baseInSig{baseBuiltinFunc: bf}}
 		err := inTime.buildHashMapForConstArgs(ctx)
 		if err != nil {
 			return &inTime, err
@@ -120,7 +121,7 @@ func (c *inFunctionClass) getFunction(ctx sessionctx.Context, args []Expression)
 		sig = &inTime
 		sig.setPbCode(tipb.ScalarFuncSig_InTime)
 	case types.ETDuration:
-		inDuration := builtinInDurationSig{baseInSig: baseInSig{baseBuiltinFunc: bf, threshold: 1}}
+		inDuration := builtinInDurationSig{baseInSig: baseInSig{baseBuiltinFunc: bf}}
 		err := inDuration.buildHashMapForConstArgs(ctx)
 		if err != nil {
 			return &inDuration, err
@@ -137,9 +138,7 @@ func (c *inFunctionClass) getFunction(ctx sessionctx.Context, args []Expression)
 type baseInSig struct {
 	baseBuiltinFunc
 	nonConstArgs []Expression
-	// hashSet will not be used when the number of constant arguments is smaller than threshold
-	threshold int
-	hasNull   bool
+	hasNull      bool
 }
 
 // builtinInIntSig see https://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_in
@@ -149,8 +148,7 @@ type builtinInIntSig struct {
 }
 
 func (b *builtinInIntSig) buildHashMapForConstArgs(ctx sessionctx.Context) error {
-	b.nonConstArgs = make([]Expression, 0, len(b.args))
-	b.nonConstArgs = append(b.nonConstArgs, b.args[0])
+	b.nonConstArgs = []Expression{b.args[0]}
 	b.hashSet = make(map[int64]bool, len(b.args)-1)
 	count := 0
 	for i := 1; i < len(b.args); i++ {
@@ -169,10 +167,8 @@ func (b *builtinInIntSig) buildHashMapForConstArgs(ctx sessionctx.Context) error
 			b.nonConstArgs = append(b.nonConstArgs, b.args[i])
 		}
 	}
-	if count < b.threshold {
-		b.nonConstArgs = b.args
+	if count == 0 {
 		b.hashSet = nil
-		b.hasNull = false
 	}
 	return nil
 }
@@ -185,7 +181,6 @@ func (b *builtinInIntSig) Clone() builtinFunc {
 		newSig.nonConstArgs = append(newSig.nonConstArgs, arg.Clone())
 	}
 	newSig.hashSet = b.hashSet
-	newSig.threshold = b.threshold
 	newSig.hasNull = b.hasNull
 	return newSig
 }
@@ -245,13 +240,12 @@ func (b *builtinInIntSig) evalInt(row chunk.Row) (int64, bool, error) {
 // builtinInStringSig see https://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_in
 type builtinInStringSig struct {
 	baseInSig
-	hashSet map[string]bool
+	hashSet set.StringSet
 }
 
 func (b *builtinInStringSig) buildHashMapForConstArgs(ctx sessionctx.Context) error {
-	b.nonConstArgs = make([]Expression, 0, len(b.args))
-	b.nonConstArgs = append(b.nonConstArgs, b.args[0])
-	b.hashSet = make(map[string]bool, len(b.args)-1)
+	b.nonConstArgs = []Expression{b.args[0]}
+	b.hashSet = set.NewStringSet()
 	count := 0
 	for i := 1; i < len(b.args); i++ {
 		if b.args[i].ConstItem(b.ctx.GetSessionVars().StmtCtx) {
@@ -263,16 +257,14 @@ func (b *builtinInStringSig) buildHashMapForConstArgs(ctx sessionctx.Context) er
 				b.hasNull = true
 				continue
 			}
-			b.hashSet[val] = true
+			b.hashSet.Insert(val)
 			count++
 		} else {
 			b.nonConstArgs = append(b.nonConstArgs, b.args[i])
 		}
 	}
-	if count < b.threshold {
-		b.nonConstArgs = b.args
+	if count == 0 {
 		b.hashSet = nil
-		b.hasNull = false
 	}
 
 	return nil
@@ -286,7 +278,6 @@ func (b *builtinInStringSig) Clone() builtinFunc {
 		newSig.nonConstArgs = append(newSig.nonConstArgs, arg.Clone())
 	}
 	newSig.hashSet = b.hashSet
-	newSig.threshold = b.threshold
 	newSig.hasNull = b.hasNull
 	return newSig
 }
@@ -300,7 +291,7 @@ func (b *builtinInStringSig) evalInt(row chunk.Row) (int64, bool, error) {
 	args := b.args
 	if b.hashSet != nil {
 		args = b.nonConstArgs
-		if _, ok := b.hashSet[arg0]; ok {
+		if b.hashSet.Exist(arg0) {
 			return 1, false, nil
 		}
 	}
@@ -325,13 +316,12 @@ func (b *builtinInStringSig) evalInt(row chunk.Row) (int64, bool, error) {
 // builtinInRealSig see https://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_in
 type builtinInRealSig struct {
 	baseInSig
-	hashSet map[float64]bool
+	hashSet set.Float64Set
 }
 
 func (b *builtinInRealSig) buildHashMapForConstArgs(ctx sessionctx.Context) error {
-	b.nonConstArgs = make([]Expression, 0, len(b.args))
-	b.nonConstArgs = append(b.nonConstArgs, b.args[0])
-	b.hashSet = make(map[float64]bool, len(b.args)-1)
+	b.nonConstArgs = []Expression{b.args[0]}
+	b.hashSet = set.NewFloat64Set()
 	count := 0
 	for i := 1; i < len(b.args); i++ {
 		if b.args[i].ConstItem(b.ctx.GetSessionVars().StmtCtx) {
@@ -343,16 +333,14 @@ func (b *builtinInRealSig) buildHashMapForConstArgs(ctx sessionctx.Context) erro
 				b.hasNull = true
 				continue
 			}
-			b.hashSet[val] = true
+			b.hashSet.Insert(val)
 			count++
 		} else {
 			b.nonConstArgs = append(b.nonConstArgs, b.args[i])
 		}
 	}
-	if count < b.threshold {
-		b.nonConstArgs = b.args
+	if count == 0 {
 		b.hashSet = nil
-		b.hasNull = false
 	}
 
 	return nil
@@ -366,7 +354,6 @@ func (b *builtinInRealSig) Clone() builtinFunc {
 		newSig.nonConstArgs = append(newSig.nonConstArgs, arg.Clone())
 	}
 	newSig.hashSet = b.hashSet
-	newSig.threshold = b.threshold
 	newSig.hasNull = b.hasNull
 	return newSig
 }
@@ -379,7 +366,7 @@ func (b *builtinInRealSig) evalInt(row chunk.Row) (int64, bool, error) {
 	args := b.args
 	if b.hashSet != nil {
 		args = b.nonConstArgs
-		if _, ok := b.hashSet[arg0]; ok {
+		if b.hashSet.Exist(arg0) {
 			return 1, false, nil
 		}
 	}
@@ -431,10 +418,8 @@ func (b *builtinInDecimalSig) buildHashMapForConstArgs(ctx sessionctx.Context) e
 			b.nonConstArgs = append(b.nonConstArgs, b.args[i])
 		}
 	}
-	if count < b.threshold {
-		b.nonConstArgs = b.args
+	if count == 0 {
 		b.hashSet = nil
-		b.hasNull = false
 	}
 
 	return nil
@@ -448,7 +433,6 @@ func (b *builtinInDecimalSig) Clone() builtinFunc {
 		newSig.nonConstArgs = append(newSig.nonConstArgs, arg.Clone())
 	}
 	newSig.hashSet = b.hashSet
-	newSig.threshold = b.threshold
 	newSig.hasNull = b.hasNull
 	return newSig
 }
@@ -515,10 +499,8 @@ func (b *builtinInTimeSig) buildHashMapForConstArgs(ctx sessionctx.Context) erro
 			b.nonConstArgs = append(b.nonConstArgs, b.args[i])
 		}
 	}
-	if count < b.threshold {
-		b.nonConstArgs = b.args
+	if count == 0 {
 		b.hashSet = nil
-		b.hasNull = false
 	}
 
 	return nil
@@ -532,7 +514,6 @@ func (b *builtinInTimeSig) Clone() builtinFunc {
 		newSig.nonConstArgs = append(newSig.nonConstArgs, arg.Clone())
 	}
 	newSig.hashSet = b.hashSet
-	newSig.threshold = b.threshold
 	newSig.hasNull = b.hasNull
 	return newSig
 }
@@ -593,10 +574,8 @@ func (b *builtinInDurationSig) buildHashMapForConstArgs(ctx sessionctx.Context) 
 			b.nonConstArgs = append(b.nonConstArgs, b.args[i])
 		}
 	}
-	if count < b.threshold {
-		b.nonConstArgs = b.args
+	if count == 0 {
 		b.hashSet = nil
-		b.hasNull = false
 	}
 
 	return nil
@@ -610,7 +589,6 @@ func (b *builtinInDurationSig) Clone() builtinFunc {
 		newSig.nonConstArgs = append(newSig.nonConstArgs, arg.Clone())
 	}
 	newSig.hashSet = b.hashSet
-	newSig.threshold = b.threshold
 	newSig.hasNull = b.hasNull
 	return newSig
 }
