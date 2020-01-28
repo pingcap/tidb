@@ -189,12 +189,14 @@ func (b *builtinInIntSig) evalInt(row chunk.Row) (int64, bool, error) {
 	isUnsigned0 := mysql.HasUnsignedFlag(b.args[0].GetType().Flag)
 
 	args := b.nonConstArgs
-	if isUnsigned, ok := b.hashSet[arg0]; ok {
-		if (isUnsigned0 && isUnsigned) || (!isUnsigned0 && !isUnsigned) {
-			return 1, false, nil
-		}
-		if arg0 >= 0 {
-			return 1, false, nil
+	if len(b.hashSet) != 0 {
+		if isUnsigned, ok := b.hashSet[arg0]; ok {
+			if (isUnsigned0 && isUnsigned) || (!isUnsigned0 && !isUnsigned) {
+				return 1, false, nil
+			}
+			if arg0 >= 0 {
+				return 1, false, nil
+			}
 		}
 	}
 
@@ -277,7 +279,7 @@ func (b *builtinInStringSig) evalInt(row chunk.Row) (int64, bool, error) {
 	}
 
 	args := b.nonConstArgs
-	if b.hashSet.Exist(arg0) {
+	if len(b.hashSet) != 0 && b.hashSet.Exist(arg0) {
 		return 1, false, nil
 	}
 
@@ -344,7 +346,7 @@ func (b *builtinInRealSig) evalInt(row chunk.Row) (int64, bool, error) {
 		return 0, isNull0, err
 	}
 	args := b.nonConstArgs
-	if b.hashSet.Exist(arg0) {
+	if len(b.hashSet) != 0 && b.hashSet.Exist(arg0) {
 		return 1, false, nil
 	}
 	hasNull := b.hasNull
@@ -419,7 +421,7 @@ func (b *builtinInDecimalSig) evalInt(row chunk.Row) (int64, bool, error) {
 	if err != nil {
 		return 0, true, err
 	}
-	if b.hashSet.Exist(string(key)) {
+	if len(b.hashSet) != 0 && b.hashSet.Exist(string(key)) {
 		return 1, false, nil
 	}
 
@@ -486,8 +488,10 @@ func (b *builtinInTimeSig) evalInt(row chunk.Row) (int64, bool, error) {
 		return 0, isNull0, err
 	}
 	args := b.nonConstArgs
-	if _, ok := b.hashSet[arg0]; ok {
-		return 1, false, nil
+	if len(b.hashSet) != 0 {
+		if _, ok := b.hashSet[arg0]; ok {
+			return 1, false, nil
+		}
 	}
 	hasNull := b.hasNull
 	for _, arg := range args[1:] {
@@ -552,8 +556,10 @@ func (b *builtinInDurationSig) evalInt(row chunk.Row) (int64, bool, error) {
 		return 0, isNull0, err
 	}
 	args := b.nonConstArgs
-	if _, ok := b.hashSet[arg0.Duration]; ok {
-		return 1, false, nil
+	if len(b.hashSet) != 0 {
+		if _, ok := b.hashSet[arg0.Duration]; ok {
+			return 1, false, nil
+		}
 	}
 	hasNull := b.hasNull
 	for _, arg := range args[1:] {

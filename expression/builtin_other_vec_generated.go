@@ -53,7 +53,7 @@ func (b *builtinInIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) e
 	isUnsigned0 := mysql.HasUnsignedFlag(b.args[0].GetType().Flag)
 	var compareResult int
 	args := b.args
-	if b.hashSet != nil {
+	if len(b.hashSet) != 0 {
 		args = b.nonConstArgs
 		for i := 0; i < n; i++ {
 			if buf0.IsNull(i) {
@@ -153,7 +153,7 @@ func (b *builtinInStringSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column
 	}
 	var compareResult int
 	args := b.args
-	if b.hashSet != nil {
+	if len(b.hashSet) != 0 {
 		args = b.nonConstArgs
 		for i := 0; i < n; i++ {
 			if buf0.IsNull(i) {
@@ -231,7 +231,7 @@ func (b *builtinInDecimalSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colum
 	}
 	var compareResult int
 	args := b.args
-	if b.hashSet != nil {
+	if len(b.hashSet) != 0 {
 		args = b.nonConstArgs
 		for i := 0; i < n; i++ {
 			if buf0.IsNull(i) {
@@ -318,7 +318,7 @@ func (b *builtinInRealSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 	}
 	var compareResult int
 	args := b.args
-	if b.hashSet != nil {
+	if len(b.hashSet) != 0 {
 		args = b.nonConstArgs
 		for i := 0; i < n; i++ {
 			if buf0.IsNull(i) {
@@ -398,7 +398,7 @@ func (b *builtinInTimeSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 	}
 	var compareResult int
 	args := b.args
-	if b.hashSet != nil {
+	if len(b.hashSet) != 0 {
 		args = b.nonConstArgs
 		for i := 0; i < n; i++ {
 			if buf0.IsNull(i) {
@@ -478,7 +478,7 @@ func (b *builtinInDurationSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colu
 	}
 	var compareResult int
 	args := b.args
-	if b.hashSet != nil {
+	if len(b.hashSet) != 0 {
 		args = b.nonConstArgs
 		for i := 0; i < n; i++ {
 			if buf0.IsNull(i) {
