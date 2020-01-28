@@ -14,6 +14,7 @@
 package expression
 
 import (
+	"fmt"
 	"strings"
 	"time"
 
@@ -172,12 +173,14 @@ func (b *builtinInIntSig) buildHashMapForConstArgs(ctx sessionctx.Context) error
 func (b *builtinInIntSig) Clone() builtinFunc {
 	newSig := &builtinInIntSig{}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
+	fmt.Println("clone 176 : ", len(b.nonConstArgs))
 	newSig.nonConstArgs = make([]Expression, 0, len(b.nonConstArgs))
 	for _, arg := range b.nonConstArgs {
 		newSig.nonConstArgs = append(newSig.nonConstArgs, arg.Clone())
 	}
 	newSig.hashSet = b.hashSet
 	newSig.hasNull = b.hasNull
+	fmt.Println("clone 183 : ", len(newSig.nonConstArgs))
 	return newSig
 }
 
@@ -188,8 +191,11 @@ func (b *builtinInIntSig) evalInt(row chunk.Row) (int64, bool, error) {
 	}
 	isUnsigned0 := mysql.HasUnsignedFlag(b.args[0].GetType().Flag)
 
-	args := b.nonConstArgs
+	fmt.Println("194: ", len(b.nonConstArgs))
+
+	args := b.args
 	if len(b.hashSet) != 0 {
+		args = b.nonConstArgs
 		if isUnsigned, ok := b.hashSet[arg0]; ok {
 			if (isUnsigned0 && isUnsigned) || (!isUnsigned0 && !isUnsigned) {
 				return 1, false, nil
@@ -201,6 +207,7 @@ func (b *builtinInIntSig) evalInt(row chunk.Row) (int64, bool, error) {
 	}
 
 	hasNull := b.hasNull
+	fmt.Println("204: ", len(args))
 	for _, arg := range args[1:] {
 		evaledArg, isNull, err := arg.EvalInt(b.ctx, row)
 		if err != nil {
@@ -278,9 +285,12 @@ func (b *builtinInStringSig) evalInt(row chunk.Row) (int64, bool, error) {
 		return 0, isNull0, err
 	}
 
-	args := b.nonConstArgs
-	if len(b.hashSet) != 0 && b.hashSet.Exist(arg0) {
-		return 1, false, nil
+	args := b.args
+	if len(b.hashSet) != 0 {
+		args = b.nonConstArgs
+		if b.hashSet.Exist(arg0) {
+			return 1, false, nil
+		}
 	}
 
 	hasNull := b.hasNull
@@ -345,9 +355,12 @@ func (b *builtinInRealSig) evalInt(row chunk.Row) (int64, bool, error) {
 	if isNull0 || err != nil {
 		return 0, isNull0, err
 	}
-	args := b.nonConstArgs
-	if len(b.hashSet) != 0 && b.hashSet.Exist(arg0) {
-		return 1, false, nil
+	args := b.args
+	if len(b.hashSet) != 0 {
+		args = b.nonConstArgs
+		if b.hashSet.Exist(arg0) {
+			return 1, false, nil
+		}
 	}
 	hasNull := b.hasNull
 	for _, arg := range args[1:] {
@@ -416,13 +429,16 @@ func (b *builtinInDecimalSig) evalInt(row chunk.Row) (int64, bool, error) {
 		return 0, isNull0, err
 	}
 
-	args := b.nonConstArgs
+	args := b.args
 	key, err := arg0.ToHashKey()
 	if err != nil {
 		return 0, true, err
 	}
-	if len(b.hashSet) != 0 && b.hashSet.Exist(string(key)) {
-		return 1, false, nil
+	if len(b.hashSet) != 0 {
+		args = b.nonConstArgs
+		if b.hashSet.Exist(string(key)) {
+			return 1, false, nil
+		}
 	}
 
 	hasNull := b.hasNull
@@ -487,8 +503,9 @@ func (b *builtinInTimeSig) evalInt(row chunk.Row) (int64, bool, error) {
 	if isNull0 || err != nil {
 		return 0, isNull0, err
 	}
-	args := b.nonConstArgs
+	args := b.args
 	if len(b.hashSet) != 0 {
+		args = b.nonConstArgs
 		if _, ok := b.hashSet[arg0]; ok {
 			return 1, false, nil
 		}
@@ -555,8 +572,9 @@ func (b *builtinInDurationSig) evalInt(row chunk.Row) (int64, bool, error) {
 	if isNull0 || err != nil {
 		return 0, isNull0, err
 	}
-	args := b.nonConstArgs
+	args := b.args
 	if len(b.hashSet) != 0 {
+		args = b.nonConstArgs
 		if _, ok := b.hashSet[arg0.Duration]; ok {
 			return 1, false, nil
 		}
