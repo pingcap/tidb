@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"crypto/tls"
 	"fmt"
+	"math"
 	"sort"
 	"strconv"
 	"strings"
@@ -384,6 +385,11 @@ type SessionVars struct {
 
 	SQLMode mysql.SQLMode
 
+	// AutoIncrementIncrement and AutoIncrementOffset indicates the autoID's start value and increment.
+	AutoIncrementIncrement int
+
+	AutoIncrementOffset int
+
 	/* TiDB system variables */
 
 	// SkipUTF8Check check on input value.
@@ -580,6 +586,8 @@ func NewSessionVars() *SessionVars {
 		RetryInfo:                   &RetryInfo{},
 		ActiveRoles:                 make([]*auth.RoleIdentity, 0, 10),
 		StrictSQLMode:               true,
+		AutoIncrementIncrement:      DefAutoIncrementIncrement,
+		AutoIncrementOffset:         DefAutoIncrementOffset,
 		Status:                      mysql.ServerStatusAutocommit,
 		StmtCtx:                     new(stmtctx.StatementContext),
 		AllowAggPushDown:            false,
@@ -627,6 +635,7 @@ func NewSessionVars() *SessionVars {
 		DistSQLScanConcurrency:     DefDistSQLScanConcurrency,
 		HashAggPartialConcurrency:  DefTiDBHashAggPartialConcurrency,
 		HashAggFinalConcurrency:    DefTiDBHashAggFinalConcurrency,
+		WindowConcurrency:          DefTiDBWindowConcurrency,
 	}
 	vars.MemQuota = MemQuota{
 		MemQuotaQuery:             config.GetGlobalConfig().MemQuotaQuery,
@@ -936,6 +945,14 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		if isAutocommit {
 			s.SetStatusFlag(mysql.ServerStatusInTrans, false)
 		}
+	case AutoIncrementIncrement:
+		// AutoIncrementIncrement is valid in [1, 65535].
+		temp := tidbOptPositiveInt32(val, DefAutoIncrementIncrement)
+		s.AutoIncrementIncrement = adjustAutoIncrementParameter(temp)
+	case AutoIncrementOffset:
+		// AutoIncrementOffset is valid in [1, 65535].
+		temp := tidbOptPositiveInt32(val, DefAutoIncrementOffset)
+		s.AutoIncrementOffset = adjustAutoIncrementParameter(temp)
 	case MaxExecutionTime:
 		timeoutMS := tidbOptPositiveInt32(val, 0)
 		s.MaxExecutionTime = uint64(timeoutMS)
@@ -988,6 +1005,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.HashAggPartialConcurrency = tidbOptPositiveInt32(val, DefTiDBHashAggPartialConcurrency)
 	case TiDBHashAggFinalConcurrency:
 		s.HashAggFinalConcurrency = tidbOptPositiveInt32(val, DefTiDBHashAggFinalConcurrency)
+	case TiDBWindowConcurrency:
+		s.WindowConcurrency = tidbOptPositiveInt32(val, DefTiDBWindowConcurrency)
 	case TiDBDistSQLScanConcurrency:
 		s.DistSQLScanConcurrency = tidbOptPositiveInt32(val, DefDistSQLScanConcurrency)
 	case TiDBIndexSerialScanConcurrency:
@@ -1030,6 +1049,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.MemQuotaNestedLoopApply = tidbOptInt64(val, DefTiDBMemQuotaNestedLoopApply)
 	case TiDBGeneralLog:
 		atomic.StoreUint32(&ProcessGeneralLog, uint32(tidbOptPositiveInt32(val, DefTiDBGeneralLog)))
+	case TiDBPProfSQLCPU:
+		EnablePProfSQLCPU.Store(uint32(tidbOptPositiveInt32(val, DefTiDBPProfSQLCPU)) > 0)
 	case TiDBSlowLogThreshold:
 		atomic.StoreUint64(&config.GetGlobalConfig().Log.SlowThreshold, uint64(tidbOptInt64(val, logutil.DefaultSlowThreshold)))
 	case TiDBRecordPlanInSlowLog:
@@ -1234,6 +1255,9 @@ type Concurrency struct {
 
 	// HashAggFinalConcurrency is the number of concurrent hash aggregation final worker.
 	HashAggFinalConcurrency int
+
+	// WindowConcurrency is the number of concurrent window worker.
+	WindowConcurrency int
 
 	// IndexSerialScanConcurrency is the number of concurrent index serial scan worker.
 	IndexSerialScanConcurrency int
@@ -1529,4 +1553,16 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 // writeSlowLogItem writes a slow log item in the form of: "# ${key}:${value}"
 func writeSlowLogItem(buf *bytes.Buffer, key, value string) {
 	buf.WriteString(SlowLogRowPrefixStr + key + SlowLogSpaceMarkStr + value + "\n")
+}
+
+// adjustAutoIncrementParameter adjust the increment and offset of AutoIncrement.
+// AutoIncrementIncrement / AutoIncrementOffset is valid in [1, 65535].
+func adjustAutoIncrementParameter(temp int) int {
+	if temp <= 0 {
+		return 1
+	} else if temp > math.MaxUint16 {
+		return math.MaxUint16
+	} else {
+		return temp
+	}
 }

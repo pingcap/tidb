@@ -163,7 +163,7 @@ func (ds *DataSource) deriveStatsByFilter(conds expression.CNFExprs, filledPaths
 	selectivity, nodes, err := ds.tableStats.HistColl.Selectivity(ds.ctx, conds, filledPaths)
 	if err != nil {
 		logutil.BgLogger().Debug("something wrong happened, use the default selectivity", zap.Error(err))
-		selectivity = selectionFactor
+		selectivity = SelectionFactor
 	}
 	stats := ds.tableStats.Scale(selectivity)
 	if ds.ctx.GetSessionVars().OptimizerSelectivityLevel >= 1 {
@@ -375,8 +375,12 @@ func (ds *DataSource) accessPathsForConds(conditions []expression.Expression, us
 			}
 			// If we have point or empty range, just remove other possible paths.
 			if noIntervalRanges || len(path.Ranges) == 0 {
-				results[0] = path
-				results = results[:1]
+				if len(results) == 0 {
+					results = append(results, path)
+				} else {
+					results[0] = path
+					results = results[:1]
+				}
 				break
 			}
 		} else {
@@ -392,8 +396,12 @@ func (ds *DataSource) accessPathsForConds(conditions []expression.Expression, us
 			noIntervalRanges := ds.deriveIndexPathStats(path, conditions, true)
 			// If we have empty range, or point range on unique index, just remove other possible paths.
 			if (noIntervalRanges && path.Index.Unique) || len(path.Ranges) == 0 {
-				results[0] = path
-				results = results[:1]
+				if len(results) == 0 {
+					results = append(results, path)
+				} else {
+					results[0] = path
+					results = results[:1]
+				}
 				break
 			}
 		}
@@ -443,7 +451,7 @@ func (ds *DataSource) buildIndexMergeOrPath(partialPaths []*util.AccessPath, cur
 
 // DeriveStats implement LogicalPlan DeriveStats interface.
 func (p *LogicalSelection) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema) (*property.StatsInfo, error) {
-	p.stats = childStats[0].Scale(selectionFactor)
+	p.stats = childStats[0].Scale(SelectionFactor)
 	return p.stats, nil
 }
 
@@ -544,23 +552,24 @@ func (la *LogicalAggregation) DeriveStats(childStats []*property.StatsInfo, self
 // every matched bucket.
 func (p *LogicalJoin) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema) (*property.StatsInfo, error) {
 	leftProfile, rightProfile := childStats[0], childStats[1]
+	leftJoinKeys, rightJoinKeys := p.GetJoinKeys()
 	helper := &fullJoinRowCountHelper{
 		cartesian:     0 == len(p.EqualConditions),
 		leftProfile:   leftProfile,
 		rightProfile:  rightProfile,
-		leftJoinKeys:  p.LeftJoinKeys,
-		rightJoinKeys: p.RightJoinKeys,
+		leftJoinKeys:  leftJoinKeys,
+		rightJoinKeys: rightJoinKeys,
 		leftSchema:    childSchema[0],
 		rightSchema:   childSchema[1],
 	}
 	p.equalCondOutCnt = helper.estimate()
 	if p.JoinType == SemiJoin || p.JoinType == AntiSemiJoin {
 		p.stats = &property.StatsInfo{
-			RowCount:    leftProfile.RowCount * selectionFactor,
+			RowCount:    leftProfile.RowCount * SelectionFactor,
 			Cardinality: make([]float64, len(leftProfile.Cardinality)),
 		}
 		for i := range p.stats.Cardinality {
-			p.stats.Cardinality[i] = leftProfile.Cardinality[i] * selectionFactor
+			p.stats.Cardinality[i] = leftProfile.Cardinality[i] * SelectionFactor
 		}
 		return p.stats, nil
 	}

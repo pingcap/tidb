@@ -671,10 +671,8 @@ func (t *Time) check(sc *stmtctx.StatementContext) error {
 	switch t.tp {
 	case mysql.TypeTimestamp:
 		err = checkTimestampType(sc, t.time)
-	case mysql.TypeDatetime:
+	case mysql.TypeDatetime, mysql.TypeDate:
 		err = checkDatetimeType(t.time, allowZeroInDate, allowInvalidDate)
-	case mysql.TypeDate:
-		err = checkDateType(t.time, allowZeroInDate, allowInvalidDate)
 	}
 	return errors.Trace(err)
 }
@@ -833,6 +831,9 @@ func parseDatetime(sc *stmtctx.StatementContext, str string, fsp int8, isFloat b
 			year = adjustYear(year)
 		case 8: // YYYYMMDD
 			_, err = fmt.Sscanf(seps[0], "%4d%2d%2d", &year, &month, &day)
+		case 7: // YYMMDDH
+			_, err = fmt.Sscanf(seps[0], "%2d%2d%2d%1d", &year, &month, &day, &hour)
+			year = adjustYear(year)
 		case 6, 5:
 			// YYMMDD && YYMMD
 			_, err = fmt.Sscanf(seps[0], "%2d%2d%2d", &year, &month, &day)
@@ -1305,6 +1306,17 @@ func ParseDuration(sc *stmtctx.StatementContext, str string, fsp int8) (Duration
 	if minute >= 60 || second > 60 || (!overflow && second == 60) {
 		return ZeroDuration, ErrTruncatedWrongVal.GenWithStackByArgs("time", origStr)
 	}
+
+	if day*24+hour > TimeMaxHour {
+		var t gotime.Duration
+		if sign == -1 {
+			t = MinTime
+		} else {
+			t = MaxTime
+		}
+		return Duration{Duration: t, Fsp: fsp}, ErrTruncatedWrongVal.GenWithStackByArgs("time", origStr)
+	}
+
 	d := gotime.Duration(day*24*3600+hour*3600+minute*60+second)*gotime.Second + gotime.Duration(fracPart)*gotime.Microsecond
 	if sign == -1 {
 		d = -d
