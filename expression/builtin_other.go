@@ -14,7 +14,6 @@
 package expression
 
 import (
-	"fmt"
 	"strings"
 	"time"
 
@@ -173,14 +172,12 @@ func (b *builtinInIntSig) buildHashMapForConstArgs(ctx sessionctx.Context) error
 func (b *builtinInIntSig) Clone() builtinFunc {
 	newSig := &builtinInIntSig{}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
-	fmt.Println("clone 176 : ", len(b.nonConstArgs))
 	newSig.nonConstArgs = make([]Expression, 0, len(b.nonConstArgs))
 	for _, arg := range b.nonConstArgs {
 		newSig.nonConstArgs = append(newSig.nonConstArgs, arg.Clone())
 	}
 	newSig.hashSet = b.hashSet
 	newSig.hasNull = b.hasNull
-	fmt.Println("clone 183 : ", len(newSig.nonConstArgs))
 	return newSig
 }
 
@@ -190,8 +187,6 @@ func (b *builtinInIntSig) evalInt(row chunk.Row) (int64, bool, error) {
 		return 0, isNull0, err
 	}
 	isUnsigned0 := mysql.HasUnsignedFlag(b.args[0].GetType().Flag)
-
-	fmt.Println("194: ", len(b.nonConstArgs))
 
 	args := b.args
 	if len(b.hashSet) != 0 {
@@ -207,7 +202,6 @@ func (b *builtinInIntSig) evalInt(row chunk.Row) (int64, bool, error) {
 	}
 
 	hasNull := b.hasNull
-	fmt.Println("204: ", len(args))
 	for _, arg := range args[1:] {
 		evaledArg, isNull, err := arg.EvalInt(b.ctx, row)
 		if err != nil {
