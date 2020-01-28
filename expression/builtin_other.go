@@ -144,13 +144,13 @@ type baseInSig struct {
 // builtinInIntSig see https://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_in
 type builtinInIntSig struct {
 	baseInSig
+	// the bool value in the map is used to identify whether the constant stored in key is signed or unsigned
 	hashSet map[int64]bool
 }
 
 func (b *builtinInIntSig) buildHashMapForConstArgs(ctx sessionctx.Context) error {
 	b.nonConstArgs = []Expression{b.args[0]}
 	b.hashSet = make(map[int64]bool, len(b.args)-1)
-	count := 0
 	for i := 1; i < len(b.args); i++ {
 		if b.args[i].ConstItem(b.ctx.GetSessionVars().StmtCtx) {
 			val, isNull, err := b.args[i].EvalInt(ctx, chunk.Row{})
@@ -162,13 +162,9 @@ func (b *builtinInIntSig) buildHashMapForConstArgs(ctx sessionctx.Context) error
 				continue
 			}
 			b.hashSet[val] = mysql.HasUnsignedFlag(b.args[i].GetType().Flag)
-			count++
 		} else {
 			b.nonConstArgs = append(b.nonConstArgs, b.args[i])
 		}
-	}
-	if count == 0 {
-		b.hashSet = nil
 	}
 	return nil
 }
@@ -192,17 +188,14 @@ func (b *builtinInIntSig) evalInt(row chunk.Row) (int64, bool, error) {
 	}
 	isUnsigned0 := mysql.HasUnsignedFlag(b.args[0].GetType().Flag)
 
-	args := b.args
-	if b.hashSet != nil {
-		if isUnsigned, ok := b.hashSet[arg0]; ok {
-			if (isUnsigned0 && isUnsigned) || (!isUnsigned0 && !isUnsigned) {
-				return 1, false, nil
-			}
-			if arg0 >= 0 {
-				return 1, false, nil
-			}
+	args := b.nonConstArgs
+	if isUnsigned, ok := b.hashSet[arg0]; ok {
+		if (isUnsigned0 && isUnsigned) || (!isUnsigned0 && !isUnsigned) {
+			return 1, false, nil
 		}
-		args = b.nonConstArgs
+		if arg0 >= 0 {
+			return 1, false, nil
+		}
 	}
 
 	hasNull := b.hasNull
@@ -246,7 +239,6 @@ type builtinInStringSig struct {
 func (b *builtinInStringSig) buildHashMapForConstArgs(ctx sessionctx.Context) error {
 	b.nonConstArgs = []Expression{b.args[0]}
 	b.hashSet = set.NewStringSet()
-	count := 0
 	for i := 1; i < len(b.args); i++ {
 		if b.args[i].ConstItem(b.ctx.GetSessionVars().StmtCtx) {
 			val, isNull, err := b.args[i].EvalString(ctx, chunk.Row{})
@@ -258,13 +250,9 @@ func (b *builtinInStringSig) buildHashMapForConstArgs(ctx sessionctx.Context) er
 				continue
 			}
 			b.hashSet.Insert(val)
-			count++
 		} else {
 			b.nonConstArgs = append(b.nonConstArgs, b.args[i])
 		}
-	}
-	if count == 0 {
-		b.hashSet = nil
 	}
 
 	return nil
@@ -288,12 +276,9 @@ func (b *builtinInStringSig) evalInt(row chunk.Row) (int64, bool, error) {
 		return 0, isNull0, err
 	}
 
-	args := b.args
-	if b.hashSet != nil {
-		args = b.nonConstArgs
-		if b.hashSet.Exist(arg0) {
-			return 1, false, nil
-		}
+	args := b.nonConstArgs
+	if b.hashSet.Exist(arg0) {
+		return 1, false, nil
 	}
 
 	hasNull := b.hasNull
@@ -322,7 +307,6 @@ type builtinInRealSig struct {
 func (b *builtinInRealSig) buildHashMapForConstArgs(ctx sessionctx.Context) error {
 	b.nonConstArgs = []Expression{b.args[0]}
 	b.hashSet = set.NewFloat64Set()
-	count := 0
 	for i := 1; i < len(b.args); i++ {
 		if b.args[i].ConstItem(b.ctx.GetSessionVars().StmtCtx) {
 			val, isNull, err := b.args[i].EvalReal(ctx, chunk.Row{})
@@ -334,13 +318,9 @@ func (b *builtinInRealSig) buildHashMapForConstArgs(ctx sessionctx.Context) erro
 				continue
 			}
 			b.hashSet.Insert(val)
-			count++
 		} else {
 			b.nonConstArgs = append(b.nonConstArgs, b.args[i])
 		}
-	}
-	if count == 0 {
-		b.hashSet = nil
 	}
 
 	return nil
@@ -363,12 +343,9 @@ func (b *builtinInRealSig) evalInt(row chunk.Row) (int64, bool, error) {
 	if isNull0 || err != nil {
 		return 0, isNull0, err
 	}
-	args := b.args
-	if b.hashSet != nil {
-		args = b.nonConstArgs
-		if b.hashSet.Exist(arg0) {
-			return 1, false, nil
-		}
+	args := b.nonConstArgs
+	if b.hashSet.Exist(arg0) {
+		return 1, false, nil
 	}
 	hasNull := b.hasNull
 	for _, arg := range args[1:] {
@@ -390,14 +367,12 @@ func (b *builtinInRealSig) evalInt(row chunk.Row) (int64, bool, error) {
 // builtinInDecimalSig see https://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_in
 type builtinInDecimalSig struct {
 	baseInSig
-	hashSet map[string]bool
+	hashSet set.StringSet
 }
 
 func (b *builtinInDecimalSig) buildHashMapForConstArgs(ctx sessionctx.Context) error {
-	b.nonConstArgs = make([]Expression, 0, len(b.args))
-	b.nonConstArgs = append(b.nonConstArgs, b.args[0])
-	b.hashSet = make(map[string]bool, len(b.args)-1)
-	count := 0
+	b.nonConstArgs = []Expression{b.args[0]}
+	b.hashSet = set.NewStringSet()
 	for i := 1; i < len(b.args); i++ {
 		if b.args[i].ConstItem(b.ctx.GetSessionVars().StmtCtx) {
 			val, isNull, err := b.args[i].EvalDecimal(ctx, chunk.Row{})
@@ -412,14 +387,10 @@ func (b *builtinInDecimalSig) buildHashMapForConstArgs(ctx sessionctx.Context) e
 			if err != nil {
 				return err
 			}
-			b.hashSet[string(key)] = true
-			count++
+			b.hashSet.Insert(string(key))
 		} else {
 			b.nonConstArgs = append(b.nonConstArgs, b.args[i])
 		}
-	}
-	if count == 0 {
-		b.hashSet = nil
 	}
 
 	return nil
@@ -443,16 +414,13 @@ func (b *builtinInDecimalSig) evalInt(row chunk.Row) (int64, bool, error) {
 		return 0, isNull0, err
 	}
 
-	args := b.args
-	if b.hashSet != nil {
-		args = b.nonConstArgs
-		key, err := arg0.ToHashKey()
-		if err != nil {
-			return 0, true, err
-		}
-		if _, ok := b.hashSet[string(key)]; ok {
-			return 1, false, nil
-		}
+	args := b.nonConstArgs
+	key, err := arg0.ToHashKey()
+	if err != nil {
+		return 0, true, err
+	}
+	if b.hashSet.Exist(string(key)) {
+		return 1, false, nil
 	}
 
 	hasNull := b.hasNull
@@ -475,14 +443,12 @@ func (b *builtinInDecimalSig) evalInt(row chunk.Row) (int64, bool, error) {
 // builtinInTimeSig see https://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_in
 type builtinInTimeSig struct {
 	baseInSig
-	hashSet map[types.Time]bool
+	hashSet map[types.Time]struct{}
 }
 
 func (b *builtinInTimeSig) buildHashMapForConstArgs(ctx sessionctx.Context) error {
-	b.nonConstArgs = make([]Expression, 0, len(b.args))
-	b.nonConstArgs = append(b.nonConstArgs, b.args[0])
-	b.hashSet = make(map[types.Time]bool, len(b.args)-1)
-	count := 0
+	b.nonConstArgs = []Expression{b.args[0]}
+	b.hashSet = make(map[types.Time]struct{}, len(b.args)-1)
 	for i := 1; i < len(b.args); i++ {
 		if b.args[i].ConstItem(b.ctx.GetSessionVars().StmtCtx) {
 			val, isNull, err := b.args[i].EvalTime(ctx, chunk.Row{})
@@ -493,14 +459,10 @@ func (b *builtinInTimeSig) buildHashMapForConstArgs(ctx sessionctx.Context) erro
 				b.hasNull = true
 				continue
 			}
-			b.hashSet[val] = true
-			count++
+			b.hashSet[val] = struct{}{}
 		} else {
 			b.nonConstArgs = append(b.nonConstArgs, b.args[i])
 		}
-	}
-	if count == 0 {
-		b.hashSet = nil
 	}
 
 	return nil
@@ -523,12 +485,9 @@ func (b *builtinInTimeSig) evalInt(row chunk.Row) (int64, bool, error) {
 	if isNull0 || err != nil {
 		return 0, isNull0, err
 	}
-	args := b.args
-	if b.hashSet != nil {
-		args = b.nonConstArgs
-		if _, ok := b.hashSet[arg0]; ok {
-			return 1, false, nil
-		}
+	args := b.nonConstArgs
+	if _, ok := b.hashSet[arg0]; ok {
+		return 1, false, nil
 	}
 	hasNull := b.hasNull
 	for _, arg := range args[1:] {
@@ -550,14 +509,12 @@ func (b *builtinInTimeSig) evalInt(row chunk.Row) (int64, bool, error) {
 // builtinInDurationSig see https://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_in
 type builtinInDurationSig struct {
 	baseInSig
-	hashSet map[time.Duration]bool
+	hashSet map[time.Duration]struct{}
 }
 
 func (b *builtinInDurationSig) buildHashMapForConstArgs(ctx sessionctx.Context) error {
-	b.nonConstArgs = make([]Expression, 0, len(b.args))
-	b.nonConstArgs = append(b.nonConstArgs, b.args[0])
-	b.hashSet = make(map[time.Duration]bool, len(b.args)-1)
-	count := 0
+	b.nonConstArgs = []Expression{b.args[0]}
+	b.hashSet = make(map[time.Duration]struct{}, len(b.args)-1)
 	for i := 1; i < len(b.args); i++ {
 		if b.args[i].ConstItem(b.ctx.GetSessionVars().StmtCtx) {
 			val, isNull, err := b.args[i].EvalDuration(ctx, chunk.Row{})
@@ -568,14 +525,10 @@ func (b *builtinInDurationSig) buildHashMapForConstArgs(ctx sessionctx.Context) 
 				b.hasNull = true
 				continue
 			}
-			b.hashSet[val.Duration] = true
-			count++
+			b.hashSet[val.Duration] = struct{}{}
 		} else {
 			b.nonConstArgs = append(b.nonConstArgs, b.args[i])
 		}
-	}
-	if count == 0 {
-		b.hashSet = nil
 	}
 
 	return nil
@@ -598,12 +551,9 @@ func (b *builtinInDurationSig) evalInt(row chunk.Row) (int64, bool, error) {
 	if isNull0 || err != nil {
 		return 0, isNull0, err
 	}
-	args := b.args
-	if b.hashSet != nil {
-		args = b.nonConstArgs
-		if _, ok := b.hashSet[arg0.Duration]; ok {
-			return 1, false, nil
-		}
+	args := b.nonConstArgs
+	if _, ok := b.hashSet[arg0.Duration]; ok {
+		return 1, false, nil
 	}
 	hasNull := b.hasNull
 	for _, arg := range args[1:] {

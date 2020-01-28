@@ -16,7 +16,6 @@ package expression
 import (
 	"bytes"
 	"fmt"
-	"reflect"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
@@ -350,28 +349,20 @@ func (sf *ScalarFunction) ResolveIndices(schema *Schema) (Expression, error) {
 
 func (sf *ScalarFunction) resolveIndices(schema *Schema) error {
 	if sf.FuncName.L == ast.In {
-		var args []Expression
-		switch reflect.TypeOf(sf.Function) {
-		case reflect.TypeOf(&builtinInIntSig{}):
-			inFunc, _ := sf.Function.(*builtinInIntSig)
+		args := []Expression{}
+		switch inFunc := sf.Function.(type) {
+		case *builtinInIntSig:
 			args = inFunc.nonConstArgs
-		case reflect.TypeOf(&builtinInStringSig{}):
-			inFunc, _ := sf.Function.(*builtinInStringSig)
+		case *builtinInStringSig:
 			args = inFunc.nonConstArgs
-		case reflect.TypeOf(&builtinInTimeSig{}):
-			inFunc, _ := sf.Function.(*builtinInTimeSig)
+		case *builtinInTimeSig:
 			args = inFunc.nonConstArgs
-		case reflect.TypeOf(&builtinInDurationSig{}):
-			inFunc, _ := sf.Function.(*builtinInDurationSig)
+		case *builtinInDurationSig:
 			args = inFunc.nonConstArgs
-		case reflect.TypeOf(&builtinInRealSig{}):
-			inFunc, _ := sf.Function.(*builtinInRealSig)
+		case *builtinInRealSig:
 			args = inFunc.nonConstArgs
-		case reflect.TypeOf(&builtinInDecimalSig{}):
-			inFunc, _ := sf.Function.(*builtinInDecimalSig)
+		case *builtinInDecimalSig:
 			args = inFunc.nonConstArgs
-		default:
-			args = []Expression{}
 		}
 		for _, arg := range args {
 			err := arg.resolveIndices(schema)
