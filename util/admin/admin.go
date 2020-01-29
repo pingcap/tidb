@@ -97,7 +97,7 @@ func IsJobRollbackable(job *model.Job) bool {
 			job.SchemaState == model.StateWriteOnly {
 			return false
 		}
-	case model.ActionDropSchema, model.ActionDropTable:
+	case model.ActionDropSchema, model.ActionDropTable, model.ActionDropSequence:
 		// To simplify the rollback logic, cannot be canceled in the following states.
 		if job.SchemaState == model.StateWriteOnly ||
 			job.SchemaState == model.StateDeleteOnly {
