@@ -422,6 +422,22 @@ func (p *PhysicalWindow) ResolveIndices() (err error) {
 }
 
 // ResolveIndices implements Plan interface.
+func (p *PhysicalShuffle) ResolveIndices() (err error) {
+	err = p.basePhysicalPlan.ResolveIndices()
+	if err != nil {
+		return err
+	}
+	for i := range p.HashByItems {
+		// "Shuffle" get value of items from `DataSource`, other than children[0].
+		p.HashByItems[i], err = p.HashByItems[i].ResolveIndices(p.DataSource.Schema())
+		if err != nil {
+			return err
+		}
+	}
+	return err
+}
+
+// ResolveIndices implements Plan interface.
 func (p *PhysicalTopN) ResolveIndices() (err error) {
 	err = p.basePhysicalPlan.ResolveIndices()
 	if err != nil {

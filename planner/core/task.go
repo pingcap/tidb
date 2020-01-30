@@ -175,26 +175,35 @@ func (p *PhysicalApply) attach2Task(tasks ...task) task {
 	p.schema = BuildPhysicalJoinSchema(p.JoinType, p)
 	return &rootTask{
 		p:   p,
-		cst: p.GetCost(lTask.count(), rTask.count()) + lTask.cost(),
+		cst: p.GetCost(lTask.count(), rTask.count(), lTask.cost(), rTask.cost()),
 	}
 }
 
 // GetCost computes the cost of apply operator.
-func (p *PhysicalApply) GetCost(lCount float64, rCount float64) float64 {
+func (p *PhysicalApply) GetCost(lCount, rCount, lCost, rCost float64) float64 {
 	var cpuCost float64
 	sessVars := p.ctx.GetSessionVars()
 	if len(p.LeftConditions) > 0 {
 		cpuCost += lCount * sessVars.CPUFactor
-		lCount *= selectionFactor
+		lCount *= SelectionFactor
 	}
 	if len(p.RightConditions) > 0 {
 		cpuCost += lCount * rCount * sessVars.CPUFactor
-		rCount *= selectionFactor
+		rCount *= SelectionFactor
 	}
 	if len(p.EqualConditions)+len(p.OtherConditions) > 0 {
-		cpuCost += lCount * rCount * sessVars.CPUFactor
+		if p.JoinType == SemiJoin || p.JoinType == AntiSemiJoin ||
+			p.JoinType == LeftOuterSemiJoin || p.JoinType == AntiLeftOuterSemiJoin {
+			cpuCost += lCount * rCount * sessVars.CPUFactor * 0.5
+		} else {
+			cpuCost += lCount * rCount * sessVars.CPUFactor
+		}
 	}
-	return cpuCost
+	// Apply uses a NestedLoop method for execution.
+	// For every row from the left(outer) side, it executes
+	// the whole right(inner) plan tree. So the cost of apply
+	// should be : apply cost + left cost + left count * right cost
+	return cpuCost + lCost + lCount*rCost
 }
 
 func (p *PhysicalIndexMergeJoin) attach2Task(tasks ...task) task {
@@ -222,7 +231,7 @@ func (p *PhysicalIndexMergeJoin) GetCost(outerTask, innerTask task) float64 {
 	// summed length of left/right conditions.
 	if len(p.LeftConditions)+len(p.RightConditions) > 0 {
 		cpuCost += sessVars.CPUFactor * outerCnt
-		outerCnt *= selectionFactor
+		outerCnt *= SelectionFactor
 	}
 	// Cost of extracting lookup keys.
 	innerCPUCost := sessVars.CPUFactor * outerCnt
@@ -300,7 +309,7 @@ func (p *PhysicalIndexHashJoin) GetCost(outerTask, innerTask task) float64 {
 	// summed length of left/right conditions.
 	if len(p.LeftConditions)+len(p.RightConditions) > 0 {
 		cpuCost += sessVars.CPUFactor * outerCnt
-		outerCnt *= selectionFactor
+		outerCnt *= SelectionFactor
 	}
 	// Cost of extracting lookup keys.
 	innerCPUCost := sessVars.CPUFactor * outerCnt
@@ -376,7 +385,7 @@ func (p *PhysicalIndexJoin) GetCost(outerTask, innerTask task) float64 {
 	// summed length of left/right conditions.
 	if len(p.LeftConditions)+len(p.RightConditions) > 0 {
 		cpuCost += sessVars.CPUFactor * outerCnt
-		outerCnt *= selectionFactor
+		outerCnt *= SelectionFactor
 	}
 	// Cost of extracting lookup keys.
 	innerCPUCost := sessVars.CPUFactor * outerCnt
@@ -480,9 +489,9 @@ func (p *PhysicalHashJoin) GetCost(lCnt, rCnt float64) float64 {
 	probeDiskCost := numPairs * sessVars.DiskFactor * rowSize
 	// Cost of evaluating outer filter.
 	if len(p.LeftConditions)+len(p.RightConditions) > 0 {
-		// Input outer count for the above compution should be adjusted by selectionFactor.
-		probeCost *= selectionFactor
-		probeDiskCost *= selectionFactor
+		// Input outer count for the above compution should be adjusted by SelectionFactor.
+		probeCost *= SelectionFactor
+		probeDiskCost *= SelectionFactor
 		probeCost += probeCnt * sessVars.CPUFactor
 	}
 	diskCost += probeDiskCost
@@ -554,7 +563,7 @@ func (p *PhysicalMergeJoin) GetCost(lCnt, rCnt float64) float64 {
 	// Cost of evaluating outer filters.
 	var cpuCost float64
 	if len(p.LeftConditions)+len(p.RightConditions) > 0 {
-		probeCost *= selectionFactor
+		probeCost *= SelectionFactor
 		cpuCost += outerCnt * sessVars.CPUFactor
 	}
 	cpuCost += probeCost

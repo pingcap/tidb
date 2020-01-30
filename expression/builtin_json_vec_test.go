@@ -75,18 +75,18 @@ var vecBuiltinJSONCases = map[string][]vecExprBenchCase{
 				types.ETString, types.ETJson,
 			},
 			geners: []dataGenerator{
-				&randLenStrGener{10, 20}, nil,
-				&randLenStrGener{10, 20}, nil,
-				&randLenStrGener{10, 20}, nil,
-				&randLenStrGener{10, 20}, nil,
-				&randLenStrGener{10, 20}, nil,
-				&randLenStrGener{10, 20}, nil,
-				&randLenStrGener{10, 20}, nil,
-				&randLenStrGener{10, 20}, nil,
-				&randLenStrGener{10, 20}, nil,
-				&randLenStrGener{10, 20}, nil,
-				&randLenStrGener{10, 20}, nil,
-				&randLenStrGener{10, 20}, nil,
+				newRandLenStrGener(10, 20), nil,
+				newRandLenStrGener(10, 20), nil,
+				newRandLenStrGener(10, 20), nil,
+				newRandLenStrGener(10, 20), nil,
+				newRandLenStrGener(10, 20), nil,
+				newRandLenStrGener(10, 20), nil,
+				newRandLenStrGener(10, 20), nil,
+				newRandLenStrGener(10, 20), nil,
+				newRandLenStrGener(10, 20), nil,
+				newRandLenStrGener(10, 20), nil,
+				newRandLenStrGener(10, 20), nil,
+				newRandLenStrGener(10, 20), nil,
 			},
 		},
 	},
@@ -99,7 +99,7 @@ var vecBuiltinJSONCases = map[string][]vecExprBenchCase{
 	},
 	ast.JSONDepth: {{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETJson}}},
 	ast.JSONUnquote: {
-		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{&jsonStringGener{}}},
+		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{newJSONStringGener()}},
 	},
 	ast.JSONRemove: {
 		{retEvalType: types.ETJson, childrenTypes: []types.EvalType{types.ETJson, types.ETString}, geners: []dataGenerator{nil, &constStrGener{"$.key"}}},
@@ -113,7 +113,7 @@ var vecBuiltinJSONCases = map[string][]vecExprBenchCase{
 	},
 }
 
-func (s *testEvaluatorSuite) TestVectorizedBuiltinJSONFunc(c *C) {
+func (s *testVectorizeSuite2) TestVectorizedBuiltinJSONFunc(c *C) {
 	testVectorizedBuiltinFunc(c, vecBuiltinJSONCases)
 }
 

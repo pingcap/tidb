@@ -96,7 +96,11 @@ func (e *DDLExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 	case *ast.DropDatabaseStmt:
 		err = e.executeDropDatabase(x)
 	case *ast.DropTableStmt:
-		err = e.executeDropTableOrView(x)
+		if x.IsView {
+			err = e.executeDropView(x)
+		} else {
+			err = e.executeDropTable(x)
+		}
 	case *ast.RecoverTableStmt:
 		err = e.executeRecoverTable(x)
 	case *ast.FlashBackTableStmt:
@@ -115,6 +119,8 @@ func (e *DDLExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 		err = e.executeRepairTable(x)
 	case *ast.CreateSequenceStmt:
 		err = e.executeCreateSequence(x)
+	case *ast.DropSequenceStmt:
+		err = e.executeDropSequence(x)
 
 	}
 	if err != nil {
@@ -251,9 +257,30 @@ func isSystemTable(schema, table string) bool {
 	return false
 }
 
-func (e *DDLExec) executeDropTableOrView(s *ast.DropTableStmt) error {
+type objectType int
+
+const (
+	tableObject objectType = iota
+	viewObject
+	sequenceObject
+)
+
+func (e *DDLExec) executeDropTable(s *ast.DropTableStmt) error {
+	return e.dropTableObject(s.Tables, tableObject, s.IfExists)
+}
+
+func (e *DDLExec) executeDropView(s *ast.DropTableStmt) error {
+	return e.dropTableObject(s.Tables, viewObject, s.IfExists)
+}
+
+func (e *DDLExec) executeDropSequence(s *ast.DropSequenceStmt) error {
+	return e.dropTableObject(s.Sequences, sequenceObject, s.IfExists)
+}
+
+// dropTableObject actually applies to `tableObject`, `viewObject` and `sequenceObject`.
+func (e *DDLExec) dropTableObject(objects []*ast.TableName, obt objectType, ifExists bool) error {
 	var notExistTables []string
-	for _, tn := range s.Tables {
+	for _, tn := range objects {
 		fullti := ast.Ident{Schema: tn.Schema, Name: tn.Name}
 		_, ok := e.is.SchemaByName(tn.Schema)
 		if !ok {
@@ -276,7 +303,7 @@ func (e *DDLExec) executeDropTableOrView(s *ast.DropTableStmt) error {
 			return errors.Errorf("Drop tidb system table '%s.%s' is forbidden", tn.Schema.L, tn.Name.L)
 		}
 
-		if config.CheckTableBeforeDrop {
+		if obt == tableObject && config.CheckTableBeforeDrop {
 			logutil.BgLogger().Warn("admin check table before drop",
 				zap.String("database", fullti.Schema.O),
 				zap.String("table", fullti.Name.O),
@@ -287,11 +314,13 @@ func (e *DDLExec) executeDropTableOrView(s *ast.DropTableStmt) error {
 				return err
 			}
 		}
-
-		if s.IsView {
-			err = domain.GetDomain(e.ctx).DDL().DropView(e.ctx, fullti)
-		} else {
+		switch obt {
+		case tableObject:
 			err = domain.GetDomain(e.ctx).DDL().DropTable(e.ctx, fullti)
+		case viewObject:
+			err = domain.GetDomain(e.ctx).DDL().DropView(e.ctx, fullti)
+		case sequenceObject:
+			err = domain.GetDomain(e.ctx).DDL().DropSequence(e.ctx, fullti, ifExists)
 		}
 		if infoschema.ErrDatabaseNotExists.Equal(err) || infoschema.ErrTableNotExists.Equal(err) {
 			notExistTables = append(notExistTables, fullti.String())
@@ -299,7 +328,10 @@ func (e *DDLExec) executeDropTableOrView(s *ast.DropTableStmt) error {
 			return err
 		}
 	}
-	if len(notExistTables) > 0 && !s.IfExists {
+	if len(notExistTables) > 0 && !ifExists {
+		if obt == sequenceObject {
+			return infoschema.ErrSequenceDropExists.GenWithStackByArgs(strings.Join(notExistTables, ","))
+		}
 		return infoschema.ErrTableDropExists.GenWithStackByArgs(strings.Join(notExistTables, ","))
 	}
 	return nil

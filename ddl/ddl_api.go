@@ -1384,25 +1384,30 @@ func buildTableInfoWithCheck(ctx sessionctx.Context, s *ast.CreateTableStmt, dbC
 		return nil, errors.Trace(err)
 	}
 
-	pi, err := buildTablePartitionInfo(ctx, s)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	if pi != nil {
-		switch pi.Type {
-		case model.PartitionTypeRange:
-			err = checkPartitionByRange(ctx, tbInfo, pi, cols, s)
-		case model.PartitionTypeHash:
-			err = checkPartitionByHash(ctx, pi, s, cols, tbInfo)
-		}
+	if s.Partition != nil {
+		err := checkPartitionExprValid(ctx, tbInfo, s.Partition.Expr)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		if err = checkRangePartitioningKeysConstraints(ctx, s, tbInfo, newConstraints); err != nil {
+		pi, err := buildTablePartitionInfo(ctx, s)
+		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		tbInfo.Partition = pi
+		if pi != nil {
+			switch pi.Type {
+			case model.PartitionTypeRange:
+				err = checkPartitionByRange(ctx, tbInfo, pi, cols, s)
+			case model.PartitionTypeHash:
+				err = checkPartitionByHash(ctx, pi, s, cols, tbInfo)
+			}
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			if err = checkRangePartitioningKeysConstraints(ctx, s, tbInfo, newConstraints); err != nil {
+				return nil, errors.Trace(err)
+			}
+			tbInfo.Partition = pi
+		}
 	}
 
 	if err = handleTableOptions(s.Options, tbInfo); err != nil {
@@ -3329,6 +3334,9 @@ func (d *ddl) DropTable(ctx sessionctx.Context, ti ast.Ident) (err error) {
 	if tb.Meta().IsView() {
 		return infoschema.ErrTableNotExists.GenWithStackByArgs(ti.Schema, ti.Name)
 	}
+	if tb.Meta().IsSequence() {
+		return infoschema.ErrTableNotExists.GenWithStackByArgs(ti.Schema, ti.Name)
+	}
 
 	job := &model.Job{
 		SchemaID:   schema.ID,
@@ -4356,6 +4364,34 @@ func (d *ddl) CreateSequence(ctx sessionctx.Context, stmt *ast.CreateSequenceStm
 		ctx.GetSessionVars().StmtCtx.AppendNote(err)
 		return nil
 	}
+	err = d.callHookOnChanged(err)
+	return errors.Trace(err)
+}
+
+func (d *ddl) DropSequence(ctx sessionctx.Context, ti ast.Ident, ifExists bool) (err error) {
+	schema, tbl, err := d.getSchemaAndTableByIdent(ctx, ti)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	if !tbl.Meta().IsSequence() {
+		err = ErrWrongObject.GenWithStackByArgs(ti.Schema, ti.Name, "SEQUENCE")
+		if ifExists {
+			ctx.GetSessionVars().StmtCtx.AppendNote(err)
+			return nil
+		}
+		return err
+	}
+
+	job := &model.Job{
+		SchemaID:   schema.ID,
+		TableID:    tbl.Meta().ID,
+		SchemaName: schema.Name.L,
+		Type:       model.ActionDropSequence,
+		BinlogInfo: &model.HistoryInfo{},
+	}
+
+	err = d.doDDLJob(ctx, job)
 	err = d.callHookOnChanged(err)
 	return errors.Trace(err)
 }

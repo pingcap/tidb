@@ -35,7 +35,10 @@ import (
 )
 
 const (
-	selectionFactor = 0.8
+	// SelectionFactor is the default factor of the selectivity.
+	// For example, If we have no idea how to estimate the selectivity
+	// of a Selection or a JoinCondition, we can use this default value.
+	SelectionFactor = 0.8
 	distinctFactor  = 0.8
 )
 
@@ -171,6 +174,11 @@ func (p *baseLogicalPlan) findBestTask(prop *property.PhysicalProperty) (bestTas
 		// enforce curTask property
 		if prop.Enforced {
 			curTask = enforceProperty(prop, curTask, p.basePlan.ctx)
+		}
+
+		// optimize by shuffle executor to running in parallel manner.
+		if prop.IsEmpty() {
+			curTask = optimizeByShuffle(pp, curTask, p.basePlan.ctx)
 		}
 
 		// get the most efficient one.
@@ -552,7 +560,7 @@ func (ds *DataSource) convertToPartialTableScan(prop *property.PhysicalProperty,
 		selectivity, _, err := ds.tableStats.HistColl.Selectivity(ds.ctx, ts.filterCondition, nil)
 		if err != nil {
 			logutil.BgLogger().Debug("calculate selectivity failed, use selection factor", zap.Error(err))
-			selectivity = selectionFactor
+			selectivity = SelectionFactor
 		}
 		tablePlan = PhysicalSelection{Conditions: ts.filterCondition}.Init(ts.ctx, ts.stats.ScaleByExpectCnt(selectivity*rowCount), ds.blockOffset)
 		tablePlan.SetChildren(ts)
@@ -595,7 +603,7 @@ func (ds *DataSource) buildIndexMergeTableScan(prop *property.PhysicalProperty, 
 		selectivity, _, err := ds.tableStats.HistColl.Selectivity(ds.ctx, tableFilters, nil)
 		if err != nil {
 			logutil.BgLogger().Debug("calculate selectivity failed, use selection factor", zap.Error(err))
-			selectivity = selectionFactor
+			selectivity = SelectionFactor
 		}
 		sel := PhysicalSelection{Conditions: tableFilters}.Init(ts.ctx, ts.stats.ScaleByExpectCnt(selectivity*totalRowCount), ts.blockOffset)
 		sel.SetChildren(ts)
@@ -963,7 +971,7 @@ func (ds *DataSource) crossEstimateRowCount(path *util.AccessPath, expectedCnt f
 	}
 	scanCount := rangeCount + expectedCnt - count
 	if len(remained) > 0 {
-		scanCount = scanCount / selectionFactor
+		scanCount = scanCount / SelectionFactor
 	}
 	scanCount = math.Min(scanCount, path.CountAfterAccess)
 	return scanCount, true, 0
@@ -1048,6 +1056,11 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 
 func (ts *PhysicalTableScan) addPushedDownSelection(copTask *copTask, stats *property.StatsInfo) {
 	ts.filterCondition, copTask.rootTaskConds = splitSelCondsWithVirtualColumn(ts.filterCondition)
+	if ts.StoreType == kv.TiFlash {
+		var newRootConds []expression.Expression
+		ts.filterCondition, newRootConds = expression.CheckExprPushFlash(ts.filterCondition)
+		copTask.rootTaskConds = append(copTask.rootTaskConds, newRootConds...)
+	}
 
 	// Add filter condition to table plan now.
 	sessVars := ts.ctx.GetSessionVars()
