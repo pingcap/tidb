@@ -127,11 +127,6 @@ func (txn *tikvTxn) Get(ctx context.Context, k kv.Key) ([]byte, error) {
 		return nil, errors.Trace(err)
 	}
 
-	err = txn.store.CheckVisibility(txn.startTS)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
 	return ret, nil
 }
 

@@ -302,13 +302,17 @@ func buildTiDBMemCopTasks(ranges *copRanges, req *kv.Request) ([]*copTask, error
 	if err != nil {
 		return nil, err
 	}
+	cmdType := tikvrpc.CmdCop
+	if req.Streaming {
+		cmdType = tikvrpc.CmdCopStream
+	}
 	tasks := make([]*copTask, 0, len(servers))
 	for _, ser := range servers {
 		addr := ser.IP + ":" + strconv.FormatUint(uint64(ser.StatusPort), 10)
 		tasks = append(tasks, &copTask{
 			ranges:    ranges,
 			respChan:  make(chan *copResponse, 2),
-			cmdType:   tikvrpc.CmdCop,
+			cmdType:   cmdType,
 			storeType: req.StoreType,
 			storeAddr: addr,
 		})
@@ -881,7 +885,7 @@ func (worker *copIteratorWorker) logTimeCopTask(costTime time.Duration, task *co
 			}
 		}
 	}
-	logutil.BgLogger().Info(logStr)
+	logutil.Logger(bo.ctx).Info(logStr)
 }
 
 func appendScanDetail(logStr string, columnFamily string, scanInfo *kvrpcpb.ScanInfo) string {

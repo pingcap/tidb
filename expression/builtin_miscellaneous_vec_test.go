@@ -23,7 +23,7 @@ import (
 
 var vecBuiltinMiscellaneousCases = map[string][]vecExprBenchCase{
 	ast.Inet6Aton: {
-		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{&ipv6StrGener{}}},
+		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{&ipv6StrGener{newDefaultRandGen()}}},
 	},
 	ast.IsIPv6: {
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString}},
@@ -32,19 +32,19 @@ var vecBuiltinMiscellaneousCases = map[string][]vecExprBenchCase{
 	ast.UUID:  {},
 	ast.Inet6Ntoa: {
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{
-			&selectStringGener{
-				candidates: []string{
+			newSelectStringGener(
+				[]string{
 					"192.168.0.1",
 					"2001:db8::68", //ipv6
 				},
-			}}},
+			)}},
 	},
 	ast.InetAton: {
-		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{&ipv4StrGener{}}},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{&ipv4StrGener{newDefaultRandGen()}}},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString}},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{
-			&selectStringGener{
-				candidates: []string{
+			newSelectStringGener(
+				[]string{
 					"11.11.11.11.",    // last char is .
 					"266.266.266.266", // int in string exceed 255
 					"127",
@@ -53,19 +53,19 @@ var vecBuiltinMiscellaneousCases = map[string][]vecExprBenchCase{
 					"127.255",
 					"127.2.1",
 				},
-			}}},
+			)}},
 	},
 	ast.IsIPv4Mapped: {
-		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{&ipv4MappedByteGener{}}},
-		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{&ipv6ByteGener{}}},
-		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{&ipv4ByteGener{}}},
-		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{&defaultGener{1.0, types.ETString}}},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{&ipv4MappedByteGener{newDefaultRandGen()}}},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{&ipv6ByteGener{newDefaultRandGen()}}},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{&ipv4ByteGener{newDefaultRandGen()}}},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{newDefaultGener(1.0, types.ETString)}},
 	},
 	ast.IsIPv4Compat: {
-		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{&ipv4CompatByteGener{}}},
-		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{&ipv6ByteGener{}}},
-		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{&ipv4ByteGener{}}},
-		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{&defaultGener{1.0, types.ETString}}},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{&ipv4CompatByteGener{newDefaultRandGen()}}},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{&ipv6ByteGener{newDefaultRandGen()}}},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{&ipv4ByteGener{newDefaultRandGen()}}},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{newDefaultGener(1.0, types.ETString)}},
 	},
 	ast.InetNtoa: {
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETInt}},
