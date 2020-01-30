@@ -99,15 +99,15 @@ type CharsetCollation interface {
     // CompareString returns an integer comparing the two strings. The result will be 0 if a == b, -1 if a < b, and +1 if a > b.
     CompareString(a, b string) (int, error)
     // Key returns the collation key for str, the returned slice will point to an allocation in Buffer.
-    Key(buf *Buffer, str []byte) error
+    Key(buf *Buffer, str []byte) ([]byte, error)
     // KeyFromString returns the collation key for str, the returned slice will point to an allocation in Buffer.
-    KeyFromString(buf *Buffer, str string) error
+    KeyFromString(buf *Buffer, str string) ([]byte, error)
 
     /******* Possible Optimization ********/
     // FromKey returns the original byte slice from collation key.
-    FromKey(buf *Buffer, str []byte) error
+    FromKey(buf *Buffer, str []byte) (byte, error)
     // StringFromKey returns the original string from collation key.
-    StringFromKey(str []byte) string
+    StringFromKey(str []byte) string (string, error)
 }
 ```
 The interface is quite similar to the Go [collate package](https://godoc.org/golang.org/x/text/collate).
