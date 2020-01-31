@@ -63,12 +63,6 @@ type SortExec struct {
 	heapSort *multiWayMerge
 	// spillAction save the Action for spill disk.
 	spillAction *chunk.SpillDiskAction
-
-	// exceeded indicates that records have exceeded memQuota during
-	// adding this chunk and we should spill now.
-	exceeded uint32
-	// spilled indicates that records have spilled out into disk.
-	spilled uint32
 }
 
 // Close implements the Executor Close interface.
@@ -113,8 +107,6 @@ func (e *SortExec) Open(ctx context.Context) error {
 		e.diskTracker = memory.NewTracker(e.id, -1)
 		e.diskTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.DiskTracker)
 	}
-	e.exceeded = 0
-	e.spilled = 0
 	e.partitionList = e.partitionList[:0]
 	return e.children[0].Open(ctx)
 }
@@ -136,8 +128,10 @@ func (e *SortExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		if err != nil {
 			return err
 		}
-		e.initPointers()
-		sort.Slice(e.rowPtrs, e.keyColumnsLess)
+		if !e.rowChunks.AlreadySpilled() {
+			e.initPointers()
+			sort.Slice(e.rowPtrs, e.keyColumnsLess)
+		}
 		e.fetched = true
 	}
 
