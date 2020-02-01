@@ -146,6 +146,7 @@ type baseInSig struct {
 func (b *baseInSig) metadata() proto.Message {
 	return &tipb.CompareInMetadata{
 		HasNull: b.hasNull,
+		Consts:  b.encodedConsts,
 	}
 }
 
