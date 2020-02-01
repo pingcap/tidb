@@ -54,7 +54,7 @@ func (b *builtinInIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) e
 	var compareResult int
 	args := b.args
 	if len(b.hashSet) != 0 {
-		args = b.nonConstArgs
+		args = b.args
 		for i := 0; i < n; i++ {
 			if buf0.IsNull(i) {
 				hasNull[i] = true
@@ -154,7 +154,7 @@ func (b *builtinInStringSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column
 	var compareResult int
 	args := b.args
 	if len(b.hashSet) != 0 {
-		args = b.nonConstArgs
+		args = b.args
 		for i := 0; i < n; i++ {
 			if buf0.IsNull(i) {
 				hasNull[i] = true
@@ -232,7 +232,7 @@ func (b *builtinInDecimalSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colum
 	var compareResult int
 	args := b.args
 	if len(b.hashSet) != 0 {
-		args = b.nonConstArgs
+		args = b.args
 		for i := 0; i < n; i++ {
 			if buf0.IsNull(i) {
 				hasNull[i] = true
@@ -319,7 +319,7 @@ func (b *builtinInRealSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 	var compareResult int
 	args := b.args
 	if len(b.hashSet) != 0 {
-		args = b.nonConstArgs
+		args = b.args
 		for i := 0; i < n; i++ {
 			if buf0.IsNull(i) {
 				hasNull[i] = true
@@ -399,7 +399,7 @@ func (b *builtinInTimeSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 	var compareResult int
 	args := b.args
 	if len(b.hashSet) != 0 {
-		args = b.nonConstArgs
+		args = b.args
 		for i := 0; i < n; i++ {
 			if buf0.IsNull(i) {
 				hasNull[i] = true
@@ -479,7 +479,7 @@ func (b *builtinInDurationSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colu
 	var compareResult int
 	args := b.args
 	if len(b.hashSet) != 0 {
-		args = b.nonConstArgs
+		args = b.args
 		for i := 0; i < n; i++ {
 			if buf0.IsNull(i) {
 				hasNull[i] = true

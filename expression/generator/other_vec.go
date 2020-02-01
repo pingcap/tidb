@@ -142,7 +142,7 @@ func (b *{{.SigName}}) vecEvalInt(input *chunk.Chunk, result *chunk.Column) erro
 	args := b.args
 	{{- if not $InputJSON}}
 	if len(b.hashSet) != 0 {
-		args = b.nonConstArgs
+		args = b.args
 		for i := 0; i < n; i++ {
 			if buf0.IsNull(i) {
 				hasNull[i] = true
