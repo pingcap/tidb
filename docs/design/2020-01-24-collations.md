@@ -72,9 +72,10 @@ Before diving into the details, we should notice that ALL strings in MySQL(and T
 
   - Encoding/Decoding: update codec related functions in `codec`/`tablecodec` package.
   - SQL Runtime:
-      + update like/regex/string comparison related functions in `expression` package.
 	  + implement `WEIGHT_STRING()` expression, which returns the sorting hexadecimal value(or `sortKeys`) for a string. This expression will be helpful for debugging collations.
+      + update like/regex/string comparison related functions in `expression` package.
 	  + update the comparisons logic in Join/Aggregation executors in `executor` package.
+	  + update the codes in `UnionScan`(the internal buffer of transaction).
   - SQL Optimizer: the optimizer may need to be alignd with the encoding changes in `planner` package.
   - DDL/Schema: check if the new collation is supported according to the versions of tables/columns, the related codes are in `ddl` and `infoschema` package.
   - Misc
