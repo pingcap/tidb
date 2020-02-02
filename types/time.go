@@ -1467,11 +1467,6 @@ func canFallbackToDateTime(str string) bool {
 		return false
 	}
 
-	rest, err = parser.AnyPunct(rest)
-	if err != nil {
-		return false
-	}
-
 	return len(rest) > 0 && (rest[0] == ' ' || rest[0] == 'T')
 }
 
