@@ -16,6 +16,7 @@ package executor
 import (
 	"context"
 	"fmt"
+	"math"
 	"net/url"
 	"strings"
 	"time"
@@ -24,7 +25,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/tidb/infoschema/metricschema"
+	"github.com/pingcap/tidb/infoschema"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/tikv"
@@ -40,7 +41,7 @@ const promReadTimeout = time.Second * 10
 type MetricRetriever struct {
 	dummyCloser
 	table     *model.TableInfo
-	tblDef    *metricschema.MetricTableDef
+	tblDef    *infoschema.MetricTableDef
 	extractor *plannercore.MetricTableExtractor
 	retrieved bool
 }
@@ -50,7 +51,7 @@ func (e *MetricRetriever) retrieve(ctx context.Context, sctx sessionctx.Context)
 		return nil, nil
 	}
 	e.retrieved = true
-	tblDef, err := metricschema.GetMetricTableDef(e.table.Name.L)
+	tblDef, err := infoschema.GetMetricTableDef(e.table.Name.L)
 	if err != nil {
 		return nil, err
 	}
@@ -62,11 +63,18 @@ func (e *MetricRetriever) retrieve(ctx context.Context, sctx sessionctx.Context)
 		quantiles = []float64{tblDef.Quantile}
 	}
 	for _, quantile := range quantiles {
-		queryValue, err := e.queryMetric(ctx, sctx, queryRange, quantile)
+		var queryValue pmodel.Value
+		// Add retry to avoid network error.
+		for i := 0; i < 10; i++ {
+			queryValue, err = e.queryMetric(ctx, sctx, queryRange, quantile)
+			if err == nil || strings.Contains(err.Error(), "parse error") {
+				break
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
 		if err != nil {
 			return nil, err
 		}
-
 		partRows := e.genRows(queryValue, queryRange, quantile)
 		totalRows = append(totalRows, partRows...)
 	}
@@ -141,14 +149,18 @@ func (e *MetricRetriever) genRecord(metric pmodel.Metric, pair pmodel.SamplePair
 		mysql.TypeDatetime,
 		types.MaxFsp,
 	)))
-	record = append(record, types.NewFloat64Datum(float64(pair.Value)))
+	if math.IsNaN(float64(pair.Value)) {
+		record = append(record, types.NewDatum(nil))
+	} else {
+		record = append(record, types.NewFloat64Datum(float64(pair.Value)))
+	}
 	for _, label := range e.tblDef.Labels {
 		v := ""
 		if metric != nil {
 			v = string(metric[pmodel.LabelName(label)])
 		}
 		if len(v) == 0 {
-			v = metricschema.GenLabelConditionValues(e.extractor.LabelConditions[strings.ToLower(label)])
+			v = infoschema.GenLabelConditionValues(e.extractor.LabelConditions[strings.ToLower(label)])
 		}
 		record = append(record, types.NewStringDatum(v))
 	}

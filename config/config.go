@@ -39,7 +39,7 @@ import (
 const (
 	MaxLogFileSize = 4096 // MB
 	// DefTxnTotalSizeLimit is the default value of TxnTxnTotalSizeLimit.
-	DefTxnTotalSizeLimit = 1024 * 1024 * 1024
+	DefTxnTotalSizeLimit = 100 * 1024 * 1024
 )
 
 // Valid config maps
@@ -104,6 +104,10 @@ type Config struct {
 	// RepairMode indicates that the TiDB is in the repair mode for table meta.
 	RepairMode      bool     `toml:"repair-mode" json:"repair-mode"`
 	RepairTableList []string `toml:"repair-table-list" json:"repair-table-list"`
+	// IsolationRead indicates that the TiDB reads data from which isolation level(engine and label).
+	IsolationRead IsolationRead `toml:"isolation-read" json:"isolation-read"`
+	// MaxServerConnections is the maximum permitted number of simultaneous client connections.
+	MaxServerConnections uint32 `toml:"max-server-connections" json:"max-server-connections"`
 
 	Experimental Experimental `toml:"experimental" json:"experimental"`
 }
@@ -299,7 +303,6 @@ type Performance struct {
 	TCPKeepAlive        bool    `toml:"tcp-keep-alive" json:"tcp-keep-alive"`
 	CrossJoin           bool    `toml:"cross-join" json:"cross-join"`
 	RunAutoAnalyze      bool    `toml:"run-auto-analyze" json:"run-auto-analyze"`
-	PProfSQLCPU         bool    `toml:"pprof-sql-cpu" json:"pprof-sql-cpu"`
 }
 
 // PlanCache is the PlanCache section of the config.
@@ -447,6 +450,12 @@ type StmtSummary struct {
 	HistorySize int `toml:"history-size" json:"history-size"`
 }
 
+// IsolationRead is the config for isolation read.
+type IsolationRead struct {
+	// Engines filters tidb-server access paths by engine type.
+	Engines []string `toml:"engines" json:"engines"`
+}
+
 // Experimental controls the features that are still experimental: their semantics, interfaces are subject to change.
 // Using these features in the production environment is not recommended.
 type Experimental struct {
@@ -478,6 +487,7 @@ var defaultConf = Config{
 	SplitRegionMaxNum:            1000,
 	RepairMode:                   false,
 	RepairTableList:              []string{},
+	MaxServerConnections:         4096,
 	TxnLocalLatches: TxnLocalLatches{
 		Enabled:  false,
 		Capacity: 2048000,
@@ -554,10 +564,18 @@ var defaultConf = Config{
 		StoreLimit:     0,
 
 		CoprCache: CoprocessorCache{
-			Enabled:               true,
-			CapacityMB:            1000,
-			AdmissionMaxResultMB:  10,
-			AdmissionMinProcessMs: 5,
+			// WARNING: Currently Coprocessor Cache may lead to inconsistent result. Do not open it.
+			// These config items are hidden from user, so that fill them with zero value instead of default value.
+			Enabled:               false,
+			CapacityMB:            0,
+			AdmissionMaxResultMB:  0,
+			AdmissionMinProcessMs: 0,
+
+			// If you still want to use Coprocessor Cache, here are some recommended configurations:
+			// Enabled:               true,
+			// CapacityMB:            1000,
+			// AdmissionMaxResultMB:  10,
+			// AdmissionMinProcessMs: 5,
 		},
 	},
 	Binlog: Binlog{
@@ -569,11 +587,14 @@ var defaultConf = Config{
 		MaxRetryCount: 256,
 	},
 	StmtSummary: StmtSummary{
-		Enable:          false,
+		Enable:          true,
 		MaxStmtCount:    200,
 		MaxSQLLength:    4096,
 		RefreshInterval: 1800,
 		HistorySize:     24,
+	},
+	IsolationRead: IsolationRead{
+		Engines: []string{"tikv", "tiflash", "tidb"},
 	},
 	Experimental: Experimental{
 		AllowAutoRandom: false,
@@ -776,6 +797,14 @@ func (c *Config) Valid() error {
 	}
 	if c.PreparedPlanCache.Capacity < 1 {
 		return fmt.Errorf("capacity in [prepared-plan-cache] should be at least 1")
+	}
+	if len(c.IsolationRead.Engines) < 1 {
+		return fmt.Errorf("the number of [isolation-read]engines for isolation read should be at least 1")
+	}
+	for _, engine := range c.IsolationRead.Engines {
+		if engine != "tidb" && engine != "tikv" && engine != "tiflash" {
+			return fmt.Errorf("type of [isolation-read]engines can't be %v should be one of tidb or tikv or tiflash", engine)
+		}
 	}
 	return nil
 }

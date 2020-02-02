@@ -127,7 +127,8 @@ type Expression interface {
 	// refers no subqueries that refers any tables.
 	// refers no non-deterministic functions.
 	// refers no statement parameters.
-	ConstItem() bool
+	// refers no param markers when prepare plan cache is enabled.
+	ConstItem(sc *stmtctx.StatementContext) bool
 
 	// Decorrelate try to decorrelate the expression by schema.
 	Decorrelate(schema *Schema) Expression
@@ -727,7 +728,7 @@ func wrapWithIsTrue(ctx sessionctx.Context, keepNull bool, arg Expression) (Expr
 		return nil, err
 	}
 	sf := &ScalarFunction{
-		FuncName: model.NewCIStr(fmt.Sprintf("sig_%T", f)),
+		FuncName: model.NewCIStr(ast.IsTruth),
 		Function: f,
 		RetType:  f.getRetTp(),
 	}
