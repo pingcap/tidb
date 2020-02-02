@@ -140,8 +140,8 @@ func (s *testParserSuite) TestCharAndAnyChar(c *C) {
 	}
 
 	errTable := []struct {
-		Char     byte
-		Input    string
+		Char  byte
+		Input string
 	}{
 		{'i', "xint"},
 		{'1', "x1int"},
