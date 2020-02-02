@@ -140,12 +140,10 @@ func (e *SortExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			return err
 		}
 	} else {
+		rowChunks := e.rowChunks.GetList()
 		for !req.IsFull() && e.Idx < len(e.rowPtrs) {
 			rowPtr := e.rowPtrs[e.Idx]
-			row, err := e.rowChunks.GetRow(rowPtr)
-			if err != nil {
-				return err
-			}
+			row := rowChunks.GetRow(rowPtr)
 			req.AppendRow(row)
 			e.Idx++
 		}
@@ -312,14 +310,8 @@ func (e *SortExec) lessRow(rowI, rowJ chunk.Row) bool {
 
 // keyColumnsLess is the less function for key columns.
 func (e *SortExec) keyColumnsLess(i, j int) bool {
-	rowI, err := e.rowChunks.GetRow(e.rowPtrs[i])
-	if err != nil {
-		panic(err)
-	}
-	rowJ, err := e.rowChunks.GetRow(e.rowPtrs[j])
-	if err != nil {
-		panic(err)
-	}
+	rowI := e.rowChunks.GetList().GetRow(e.rowPtrs[i])
+	rowJ := e.rowChunks.GetList().GetRow(e.rowPtrs[j])
 	return e.lessRow(rowI, rowJ)
 }
 
@@ -341,14 +333,8 @@ type topNChunkHeap struct {
 // Less implement heap.Interface, but since we mantains a max heap,
 // this function returns true if row i is greater than row j.
 func (h *topNChunkHeap) Less(i, j int) bool {
-	rowI, err := h.rowChunks.GetRow(h.rowPtrs[i])
-	if err != nil {
-		panic(err)
-	}
-	rowJ, err := h.rowChunks.GetRow(h.rowPtrs[j])
-	if err != nil {
-		panic(err)
-	}
+	rowI := h.rowChunks.GetList().GetRow(h.rowPtrs[i])
+	rowJ := h.rowChunks.GetList().GetRow(h.rowPtrs[j])
 	return h.greaterRow(rowI, rowJ)
 }
 

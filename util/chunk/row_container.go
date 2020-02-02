@@ -160,6 +160,11 @@ func (c *RowContainer) GetChunk(chkIdx int) *Chunk {
 	return c.records.GetChunk(chkIdx)
 }
 
+// GetList returns the list of in memory records.
+func (c *RowContainer) GetList() *List {
+	return c.records
+}
+
 // GetRow returns the row the ptr pointed to.
 func (c *RowContainer) GetRow(ptr RowPtr) (Row, error) {
 	if c.AlreadySpilled() {
