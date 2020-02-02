@@ -143,8 +143,7 @@ func (e *SortExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		rowChunks := e.rowChunks.GetList()
 		for !req.IsFull() && e.Idx < len(e.rowPtrs) {
 			rowPtr := e.rowPtrs[e.Idx]
-			row := rowChunks.GetRow(rowPtr)
-			req.AppendRow(row)
+			req.AppendRow(rowChunks.GetRow(rowPtr))
 			e.Idx++
 		}
 	}
