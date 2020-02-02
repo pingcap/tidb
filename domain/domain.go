@@ -145,6 +145,9 @@ func (do *Domain) loadInfoSchema(handle *infoschema.Handle, usedSchemaVersion in
 		zap.Int64("usedSchemaVersion", usedSchemaVersion),
 		zap.Int64("neededSchemaVersion", neededSchemaVersion),
 		zap.Duration("start time", time.Since(startTime)))
+	logutil.BgLogger().Info("**** SCHEMA ****",
+		zap.Any("schema", schemas))
+
 	newISBuilder.Build()
 	return neededSchemaVersion, nil, fullLoad, nil
 }
