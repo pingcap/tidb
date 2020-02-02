@@ -157,10 +157,6 @@ func (mds *mockDataSource) randDatum(typ *types.FieldType) interface{} {
 		buff := make([]byte, 10)
 		rand.Read(buff)
 		return base64.RawURLEncoding.EncodeToString(buff)
-		//if mds.p.isRawDataSmall {
-		//	return rawDataSmall
-		//}
-		//return rawData
 	default:
 		panic("not implement")
 	}
