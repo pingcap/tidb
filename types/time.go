@@ -1276,12 +1276,12 @@ func isNegativeDuration(str string) (bool, string) {
 }
 
 func matchColon(str string) (string, error) {
-	rest, _ := parser.Space(str, 0)
+	rest := parser.Space0(str)
 	rest, err := parser.Char(rest, ':')
 	if err != nil {
 		return str, err
 	}
-	rest, _ = parser.Space(rest, 0)
+	rest = parser.Space0(rest)
 	return rest, nil
 }
 
@@ -1390,7 +1390,7 @@ func matchDuration(str string, fsp int8) (Duration, error) {
 	}
 
 	negative, rest := isNegativeDuration(str)
-	rest, _ = parser.Space(rest, 0)
+	rest = parser.Space0(rest)
 
 	hhmmss := [3]int{}
 
@@ -1405,7 +1405,7 @@ func matchDuration(str string, fsp int8) (Duration, error) {
 		return ZeroDuration, ErrTruncatedWrongVal.GenWithStackByArgs("time", str)
 	}
 
-	rest, _ = parser.Space(rest, 0)
+	rest = parser.Space0(rest)
 	overflow, frac, rest, err := matchFrac(rest, fsp)
 	if err != nil || len(rest) > 0 {
 		return ZeroDuration, ErrTruncatedWrongVal.GenWithStackByArgs("time", str)
@@ -1452,10 +1452,25 @@ func canFallbackToDateTime(str string) bool {
 		return false
 	}
 
-	_, rest, _ = parser.Digit(rest, 1)
-	rest, _ = parser.AnyPunct(rest)
-	_, rest, _ = parser.Digit(rest, 1)
-	rest, _ = parser.AnyPunct(rest)
+	_, rest, err = parser.Digit(rest, 1)
+	if err != nil {
+		return false
+	}
+
+	rest, err = parser.AnyPunct(rest)
+	if err != nil {
+		return false
+	}
+
+	_, rest, err = parser.Digit(rest, 1)
+	if err != nil {
+		return false
+	}
+
+	rest, err = parser.AnyPunct(rest)
+	if err != nil {
+		return false
+	}
 
 	return len(rest) > 0 && (rest[0] == ' ' || rest[0] == 'T')
 }

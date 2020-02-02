@@ -38,7 +38,7 @@ func AnyPunct(buf string) (string, error) {
 	})
 }
 
-// Anychar matches an arbitrary character
+// AnyChar matches an arbitrary character
 func AnyChar(buf string) (string, error) {
 	return MatchOne(buf, func(byte) bool {
 		return true
@@ -60,6 +60,15 @@ func Space(buf string, times int) (string, error) {
 	return rest, err
 }
 
+// Space0 matches at least 0 space.
+func Space0(buf string) string {
+	rest, err := Space(buf, 0)
+	if err != nil {
+		panic(err)
+	}
+	return rest
+}
+
 // Digit matches at least `times` digits
 func Digit(buf string, times int) (string, string, error) {
 	return Match(buf, func(c byte) bool {
@@ -73,6 +82,6 @@ func Number(str string) (int, string, error) {
 	if err != nil {
 		return 0, str, err
 	}
-	num, _ := strconv.Atoi(digits)
-	return num, rest, nil
+	num, err := strconv.Atoi(digits)
+	return num, rest, err
 }
