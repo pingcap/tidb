@@ -15,6 +15,8 @@ package domain
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"os"
 	"sync"
 	"sync/atomic"
@@ -145,8 +147,30 @@ func (do *Domain) loadInfoSchema(handle *infoschema.Handle, usedSchemaVersion in
 		zap.Int64("usedSchemaVersion", usedSchemaVersion),
 		zap.Int64("neededSchemaVersion", neededSchemaVersion),
 		zap.Duration("start time", time.Since(startTime)))
-	logutil.BgLogger().Fatal("**** SCHEMA ****",
-		zap.Any("schema", schemas))
+
+	fmt.Println("** SCHEMA LIST **")
+	for _, schema := range schemas {
+		fmt.Println("====================")
+		fmt.Printf("DB ID:     %d\n", schema.ID)
+		fmt.Printf("DB Name:   %s\n", schema.Name.O)
+		fmt.Printf("DB Tables: \n")
+		for _, table := range schema.Tables {
+			fmt.Println("  --------------")
+			fmt.Printf("  DB ID:         %d\n", schema.ID)
+			fmt.Printf("  DB Name:       %s\n", schema.Name.O)
+			fmt.Printf("  Table ID:      %d\n", table.ID)
+			fmt.Printf("  Table Name:    %s\n", table.Name.O)
+			fmt.Printf("  Table Columns: \n")
+			for _, col := range table.Columns {
+				js, err := json.Marshal(col.FieldType)
+				if err == nil {
+					fmt.Printf("    ID: %d, Name: %s, FieldType: %s\n", col.ID, col.Name.O, string(js))
+				}
+			}
+		}
+	}
+
+	logutil.BgLogger().Fatal("Stop benchmark")
 
 	newISBuilder.Build()
 	return neededSchemaVersion, nil, fullLoad, nil
