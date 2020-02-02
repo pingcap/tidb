@@ -148,23 +148,23 @@ func (do *Domain) loadInfoSchema(handle *infoschema.Handle, usedSchemaVersion in
 		zap.Int64("neededSchemaVersion", neededSchemaVersion),
 		zap.Duration("start time", time.Since(startTime)))
 
-	fmt.Println("** SCHEMA LIST **")
+	logutil.BgLogger().Info("SCHEMA LIST")
 	for _, schema := range schemas {
-		fmt.Println("====================")
-		fmt.Printf("DB ID:     %d\n", schema.ID)
-		fmt.Printf("DB Name:   %s\n", schema.Name.O)
-		fmt.Printf("DB Tables: \n")
+		logutil.BgLogger().Info("====================")
+		logutil.BgLogger().Info(fmt.Sprintf("DB ID:     %d", schema.ID))
+		logutil.BgLogger().Info(fmt.Sprintf("DB Name:   %s", schema.Name.O))
+		logutil.BgLogger().Info(fmt.Sprintf("DB Tables:"))
 		for _, table := range schema.Tables {
-			fmt.Println("  --------------")
-			fmt.Printf("  DB ID:         %d\n", schema.ID)
-			fmt.Printf("  DB Name:       %s\n", schema.Name.O)
-			fmt.Printf("  Table ID:      %d\n", table.ID)
-			fmt.Printf("  Table Name:    %s\n", table.Name.O)
-			fmt.Printf("  Table Columns: \n")
+			logutil.BgLogger().Info("  --------------")
+			logutil.BgLogger().Info(fmt.Sprintf("  DB ID:         %d", schema.ID))
+			logutil.BgLogger().Info(fmt.Sprintf("  DB Name:       %s", schema.Name.O))
+			logutil.BgLogger().Info(fmt.Sprintf("  Table ID:      %d", table.ID))
+			logutil.BgLogger().Info(fmt.Sprintf("  Table Name:    %s", table.Name.O))
+			logutil.BgLogger().Info(fmt.Sprintf("  Table Columns:"))
 			for _, col := range table.Columns {
 				js, err := json.Marshal(col.FieldType)
 				if err == nil {
-					fmt.Printf("    ID: %d, Name: %s, FieldType: %s\n", col.ID, col.Name.O, string(js))
+					logutil.BgLogger().Info(fmt.Sprintf("    ID: %d, Name: %s, FieldType: %s", col.ID, col.Name.O, string(js)))
 				}
 			}
 		}
