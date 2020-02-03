@@ -15,22 +15,14 @@ IndexReader_6	3323.33	root	index:IndexScan_5
 └─IndexScan_5	3323.33	cop[tikv]	table:access_path_selection, index:a, b, range:[-inf,3), keep order:false, stats:pseudo
 explain select a, b from access_path_selection where b < 3;
 id	count	task	operator info
-<<<<<<< HEAD
-<<<<<<< HEAD
-<<<<<<< HEAD
-IndexLookUp_7	3323.33	root	
-├─IndexScan_5	3323.33	cop	table:access_path_selection, index:b, range:[-inf,3), keep order:false, stats:pseudo
-└─TableScan_6	3323.33	cop	table:access_path_selection, keep order:false, stats:pseudo
-=======
-TableReader_7	3323.33	root	data:Selection_6
-└─Selection_6	3323.33	cop	lt(test.access_path_selection.b, 3)
-  └─TableScan_5	10000.00	cop	table:access_path_selection, range:[-inf,+inf], keep order:false, stats:pseudo
->>>>>>> fe038642e... *: refactor cost model formulas and constants (#10581)
+IndexReader_10	3323.33	root	index:Selection_9
+└─Selection_9	3323.33	cop[tikv]	lt(test.access_path_selection.b, 3)
+  └─IndexScan_8	10000.00	cop[tikv]	table:access_path_selection, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
 explain select a, b from access_path_selection where a < 3 and b < 3;
 id	count	task	operator info
 IndexReader_11	1104.45	root	index:Selection_10
-└─Selection_10	1104.45	cop	lt(test.access_path_selection.b, 3)
-  └─IndexScan_9	3323.33	cop	table:access_path_selection, index:a, b, range:[-inf,3), keep order:false, stats:pseudo
+└─Selection_10	1104.45	cop[tikv]	lt(test.access_path_selection.b, 3)
+  └─IndexScan_9	3323.33	cop[tikv]	table:access_path_selection, index:a, b, range:[-inf,3), keep order:false, stats:pseudo
 CREATE TABLE `outdated_statistics` (
 `a` int,
 `b` int,
@@ -48,59 +40,18 @@ insert into outdated_statistics values (1, 3, 3);
 analyze table outdated_statistics index idx_ab;
 explain select * from outdated_statistics where a=1 and b=1 and c=1;
 id	count	task	operator info
-IndexLookUp_11	0.00	root	
-├─IndexScan_8	1.00	cop	table:outdated_statistics, index:a, b, range:[1 1,1 1], keep order:false
-└─Selection_10	0.00	cop	eq(test.outdated_statistics.c, 1)
-  └─TableScan_9	1.00	cop	table:outdated_statistics, keep order:false
+TableReader_7	0.00	root	data:Selection_6
+└─Selection_6	0.00	cop[tikv]	eq(test.outdated_statistics.a, 1), eq(test.outdated_statistics.b, 1), eq(test.outdated_statistics.c, 1)
+  └─TableScan_5	6.00	cop[tikv]	table:outdated_statistics, range:[-inf,+inf], keep order:false
 explain select a, b from access_path_selection order by _tidb_rowid;
 id	count	task	operator info
 Projection_5	10000.00	root	test.access_path_selection.a, test.access_path_selection.b
 └─TableReader_11	10000.00	root	data:TableScan_10
-  └─TableScan_10	10000.00	cop	table:access_path_selection, range:[-inf,+inf], keep order:true, stats:pseudo
-=======
-IndexReader_13	3323.33	root	index:Selection_12
-└─Selection_12	3323.33	cop[tikv]	lt(Column#2, 3)
-  └─IndexScan_11	10000.00	cop[tikv]	table:access_path_selection, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
-=======
-TableReader_7	3323.33	root	data:Selection_6
-└─Selection_6	3323.33	cop[tikv]	lt(Column#2, 3)
-  └─TableScan_5	10000.00	cop[tikv]	table:access_path_selection, range:[-inf,+inf], keep order:false, stats:pseudo
->>>>>>> 6fd74f3e4... planner: support cost model for tiflash table scan (#12868)
-explain select a, b from access_path_selection where a < 3 and b < 3;
-id	count	task	operator info
-IndexReader_11	1104.45	root	index:Selection_10
-└─Selection_10	1104.45	cop[tikv]	lt(Column#2, 3)
-  └─IndexScan_9	3323.33	cop[tikv]	table:access_path_selection, index:a, b, range:[-inf,3), keep order:false, stats:pseudo
-explain select a, b from access_path_selection where a > 10 order by _tidb_rowid;
-id	count	task	operator info
-Projection_6	3333.33	root	Column#1, Column#2
-└─TableReader_13	3333.33	root	data:Selection_12
-  └─Selection_12	3333.33	cop[tikv]	gt(Column#1, 10)
-    └─TableScan_11	10000.00	cop[tikv]	table:access_path_selection, range:[-inf,+inf], keep order:true, stats:pseudo
->>>>>>> 7ffa4500e... planner: support a hint to read from tiflash in planner (#12479)
+  └─TableScan_10	10000.00	cop[tikv]	table:access_path_selection, range:[-inf,+inf], keep order:true, stats:pseudo
 explain select max(_tidb_rowid) from access_path_selection;
 id	count	task	operator info
 StreamAgg_13	1.00	root	funcs:max(test.access_path_selection._tidb_rowid)
 └─Limit_17	1.00	root	offset:0, count:1
-<<<<<<< HEAD
   └─TableReader_42	1.00	root	data:Limit_41
-    └─Limit_41	1.00	cop	offset:0, count:1
-      └─TableScan_40	1.25	cop	table:access_path_selection, range:[-inf,+inf], keep order:true, desc, stats:pseudo
-=======
-  └─TableReader_27	1.00	root	data:Limit_26
-    └─Limit_26	1.00	cop[tikv]	offset:0, count:1
-      └─TableScan_25	1.25	cop[tikv]	table:access_path_selection, range:[-inf,+inf], keep order:true, desc, stats:pseudo
-explain select count(1) from access_path_selection;
-id	count	task	operator info
-<<<<<<< HEAD
-StreamAgg_28	1.00	root	funcs:count(Column#7)
-└─IndexReader_29	1.00	root	index:StreamAgg_8
-  └─StreamAgg_8	1.00	cop[tikv]	funcs:count(1)
-    └─IndexScan_25	10000.00	cop[tikv]	table:access_path_selection, index:a, range:[NULL,+inf], keep order:false, stats:pseudo
->>>>>>> 7ffa4500e... planner: support a hint to read from tiflash in planner (#12479)
-=======
-StreamAgg_28	1.00	root	funcs:count(Column#19)
-└─TableReader_29	1.00	root	data:StreamAgg_8
-  └─StreamAgg_8	1.00	cop[tikv]	funcs:count(1)
-    └─TableScan_24	10000.00	cop[tikv]	table:access_path_selection, range:[-inf,+inf], keep order:false, stats:pseudo
->>>>>>> 6fd74f3e4... planner: support cost model for tiflash table scan (#12868)
+    └─Limit_41	1.00	cop[tikv]	offset:0, count:1
+      └─TableScan_40	1.25	cop[tikv]	table:access_path_selection, range:[-inf,+inf], keep order:true, desc, stats:pseudo

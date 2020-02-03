@@ -4,17 +4,10 @@ create table t (a int, b int, c timestamp, index idx(a));
 set @@tidb_enable_window_function = 1;
 explain select sum(a) over() from t;
 id	count	task	operator info
-<<<<<<< HEAD
 Projection_7	10000.00	root	sum(a) over()
 └─Window_8	10000.00	root	sum(cast(test.t.a)) over()
   └─IndexReader_10	10000.00	root	index:IndexScan_9
-    └─IndexScan_9	10000.00	cop	table:t, index:a, range:[NULL,+inf], keep order:false, stats:pseudo
-=======
-Projection_7	10000.00	root	Column#7
-└─Window_8	10000.00	root	sum(cast(Column#1)) over()
-  └─IndexReader_12	10000.00	root	index:IndexScan_11
-    └─IndexScan_11	10000.00	cop[tikv]	table:t, index:a, range:[NULL,+inf], keep order:false, stats:pseudo
->>>>>>> 7ffa4500e... planner: support a hint to read from tiflash in planner (#12479)
+    └─IndexScan_9	10000.00	cop[tikv]	table:t, index:a, range:[NULL,+inf], keep order:false, stats:pseudo
 explain select sum(a) over(partition by a) from t;
 id	count	task	operator info
 Projection_7	10000.00	root	sum(a) over(partition by a)

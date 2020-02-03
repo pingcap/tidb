@@ -335,7 +335,7 @@ func (ds *DataSource) skylinePruning(prop *property.PhysicalProperty) []*candida
 		}
 		pruned := false
 		for i := len(candidates) - 1; i >= 0; i-- {
-			if candidates[i].path.storeType == kv.TiFlash {
+			if candidates[i].path.storeType == kv.TiFlash || currentCandidate.path.storeType == kv.TiFlash {
 				continue
 			}
 			result := compareCandidates(candidates[i], currentCandidate)

@@ -4,13 +4,8 @@ create table t (a int);
 explain select * from t where a < 1;
 id	count	task	operator info
 TableReader_7	3323.33	root	data:Selection_6
-<<<<<<< HEAD
-└─Selection_6	3323.33	cop	lt(test.t.a, 1)
-  └─TableScan_5	10000.00	cop	table:t, range:[-inf,+inf], keep order:false, stats:pseudo
-=======
-└─Selection_6	3323.33	cop[tikv]	lt(Column#1, 1)
+└─Selection_6	3323.33	cop[tikv]	lt(test.t.a, 1)
   └─TableScan_5	10000.00	cop[tikv]	table:t, range:[-inf,+inf], keep order:false, stats:pseudo
->>>>>>> 7ffa4500e... planner: support a hint to read from tiflash in planner (#12479)
 insert into mysql.opt_rule_blacklist values('predicate_push_down');
 admin reload opt_rule_blacklist;
 
@@ -25,13 +20,8 @@ admin reload opt_rule_blacklist;
 explain select * from t where a < 1;
 id	count	task	operator info
 TableReader_7	3323.33	root	data:Selection_6
-<<<<<<< HEAD
-└─Selection_6	3323.33	cop	lt(test.t.a, 1)
-  └─TableScan_5	10000.00	cop	table:t, range:[-inf,+inf], keep order:false, stats:pseudo
-=======
-└─Selection_6	3323.33	cop[tikv]	lt(Column#1, 1)
+└─Selection_6	3323.33	cop[tikv]	lt(test.t.a, 1)
   └─TableScan_5	10000.00	cop[tikv]	table:t, range:[-inf,+inf], keep order:false, stats:pseudo
->>>>>>> 7ffa4500e... planner: support a hint to read from tiflash in planner (#12479)
 insert into mysql.expr_pushdown_blacklist values('<');
 admin reload expr_pushdown_blacklist;
 
@@ -46,13 +36,8 @@ admin reload expr_pushdown_blacklist;
 explain select * from t where a < 1;
 id	count	task	operator info
 TableReader_7	3323.33	root	data:Selection_6
-<<<<<<< HEAD
-└─Selection_6	3323.33	cop	lt(test.t.a, 1)
-  └─TableScan_5	10000.00	cop	table:t, range:[-inf,+inf], keep order:false, stats:pseudo
-=======
-└─Selection_6	3323.33	cop[tikv]	lt(Column#1, 1)
+└─Selection_6	3323.33	cop[tikv]	lt(test.t.a, 1)
   └─TableScan_5	10000.00	cop[tikv]	table:t, range:[-inf,+inf], keep order:false, stats:pseudo
->>>>>>> 7ffa4500e... planner: support a hint to read from tiflash in planner (#12479)
 insert into mysql.expr_pushdown_blacklist values('lt');
 admin reload expr_pushdown_blacklist;
 
@@ -67,10 +52,5 @@ admin reload expr_pushdown_blacklist;
 explain select * from t where a < 1;
 id	count	task	operator info
 TableReader_7	3323.33	root	data:Selection_6
-<<<<<<< HEAD
-└─Selection_6	3323.33	cop	lt(test.t.a, 1)
-  └─TableScan_5	10000.00	cop	table:t, range:[-inf,+inf], keep order:false, stats:pseudo
-=======
-└─Selection_6	3323.33	cop[tikv]	lt(Column#1, 1)
+└─Selection_6	3323.33	cop[tikv]	lt(test.t.a, 1)
   └─TableScan_5	10000.00	cop[tikv]	table:t, range:[-inf,+inf], keep order:false, stats:pseudo
->>>>>>> 7ffa4500e... planner: support a hint to read from tiflash in planner (#12479)
