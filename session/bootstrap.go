@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
@@ -46,7 +47,7 @@ const (
 	CreateUserTable = `CREATE TABLE if not exists mysql.user (
 		Host				CHAR(64),
 		User				CHAR(32),
-		Password			CHAR(41),
+		authentication_string	TEXT,
 		Select_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Insert_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Update_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
@@ -66,16 +67,16 @@ const (
 		Show_view_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Create_routine_priv		ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Alter_routine_priv		ENUM('N','Y') NOT NULL DEFAULT 'N',
-		Index_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Index_priv				ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Create_user_priv		ENUM('N','Y') NOT NULL DEFAULT 'N',
-		Event_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Event_priv				ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Trigger_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Create_role_priv		ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Drop_role_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Account_locked			ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Shutdown_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
-		Reload_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
-		FILE_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Reload_priv				ENUM('N','Y') NOT NULL DEFAULT 'N',
+		FILE_priv				ENUM('N','Y') NOT NULL DEFAULT 'N',
 		PRIMARY KEY (Host, User));`
 	// CreateGlobalPrivTable is the SQL statement creates Global scope privilege table in system db.
 	CreateGlobalPrivTable = "CREATE TABLE if not exists mysql.global_priv (" +
@@ -364,6 +365,7 @@ const (
 	version37 = 37
 	version38 = 38
 	version39 = 39
+	version40 = 40
 )
 
 func checkBootstrapped(s Session) (bool, error) {
@@ -580,6 +582,10 @@ func upgrade(s Session) {
 		upgradeToVer39(s)
 	}
 
+	if ver < version40 {
+		upgradeToVer40(s)
+	}
+
 	updateBootstrapVer(s)
 	_, err = s.Execute(context.Background(), "COMMIT")
 
@@ -701,6 +707,10 @@ func upgradeToVer12(s Session) {
 	terror.MustNil(err)
 	sql := "SELECT HIGH_PRIORITY user, host, password FROM mysql.user WHERE password != ''"
 	rs, err := s.Execute(ctx, sql)
+	if terror.ErrorEqual(err, core.ErrUnknownColumn) {
+		sql := "SELECT HIGH_PRIORITY user, host, authentication_string FROM mysql.user WHERE authentication_string != ''"
+		rs, err = s.Execute(ctx, sql)
+	}
 	terror.MustNil(err)
 	r := rs[0]
 	sqls := make([]string, 0, 1)
@@ -926,6 +936,10 @@ func upgradeToVer39(s Session) {
 	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `File_priv` ENUM('N','Y') DEFAULT 'N'", infoschema.ErrColumnExists)
 	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.user SET Reload_priv='Y' where Super_priv='Y'")
 	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.user SET File_priv='Y' where Super_priv='Y'")
+}
+
+func upgradeToVer40(s Session) {
+	doReentrantDDL(s, "ALTER TABLE mysql.user CHANGE COLUMN `Password` `authentication_string` TEXT", infoschema.ErrColumnNotExists)
 }
 
 // updateBootstrapVer updates bootstrap version variable in mysql.TiDB table.
