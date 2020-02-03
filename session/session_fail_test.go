@@ -15,6 +15,7 @@ package session_test
 
 import (
 	"context"
+	"sync/atomic"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
@@ -116,11 +117,14 @@ func (s *testSessionSerialSuite) TestGetTSFailDirtyStateInretry(c *C) {
 }
 
 func (s *testSessionSerialSuite) TestKillFlagInBackoff(c *C) {
+	// This test checks the `killed` flag is passed down to the backoffer through
+	// session.KVVars. It works by setting the `killed = 3` first, then using
+	// failpoint to run backoff() and check the vars.Killed using the Hook() function.
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("create table kill_backoff (id int)")
 	var killValue uint32
 	tk.Se.GetSessionVars().KVVars.Hook = func(name string, vars *kv.Variables) {
-		killValue = *vars.Killed
+		killValue = atomic.LoadUint32(vars.Killed)
 	}
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/tikvStoreSendReqResult", `return("callBackofferHook")`), IsNil)
 	defer failpoint.Disable("github.com/pingcap/tidb/store/tikv/tikvStoreSendReqResult")
