@@ -15,6 +15,9 @@ store = "mocktikv"
 # TiDB storage path.
 path = "/tmp/tidb"
 
+# TiDB temporary storage path.
+temp-path = "/tmp"
+
 # The socket file to use for connection.
 socket = ""
 

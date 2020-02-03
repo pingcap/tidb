@@ -62,6 +62,7 @@ type Config struct {
 	Cors             string          `toml:"cors" json:"cors"`
 	Store            string          `toml:"store" json:"store"`
 	Path             string          `toml:"path" json:"path"`
+	TempPath         string          `toml:"temp-path" json:"temp-path"`
 	Socket           string          `toml:"socket" json:"socket"`
 	Lease            string          `toml:"lease" json:"lease"`
 	RunDDL           bool            `toml:"run-ddl" json:"run-ddl"`
@@ -470,6 +471,7 @@ var defaultConf = Config{
 	Cors:                         "",
 	Store:                        "mocktikv",
 	Path:                         "/tmp/tidb",
+	TempPath:                     os.TempDir(),
 	RunDDL:                       true,
 	SplitTable:                   true,
 	Lease:                        "45s",
