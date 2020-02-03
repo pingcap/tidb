@@ -215,8 +215,8 @@ func (e *MetricSummaryRetriever) retrieve(ctx context.Context, sctx sessionctx.C
 	for _, col := range e.table.Columns {
 		tps = append(tps, &col.FieldType)
 	}
-	startTime := e.extractor.StartTime.Format("2006-01-02 15:04:05.999")
-	endTime := e.extractor.EndTime.Format("2006-01-02 15:04:05.999")
+	startTime := e.extractor.StartTime.Format(plannercore.MetricTableTimeFormat)
+	endTime := e.extractor.EndTime.Format(plannercore.MetricTableTimeFormat)
 	for name, def := range infoschema.MetricTableMap {
 		sqls := e.genMetricQuerySQLS(name, startTime, endTime, def.Quantile)
 		for _, sql := range sqls {
