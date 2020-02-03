@@ -200,7 +200,6 @@ type MetricSummaryRetriever struct {
 	dummyCloser
 	table     *model.TableInfo
 	extractor *plannercore.MetricTableExtractor
-	quantiles []float64
 	retrieved bool
 }
 
@@ -210,7 +209,7 @@ func (e *MetricSummaryRetriever) retrieve(ctx context.Context, sctx sessionctx.C
 	}
 	e.retrieved = true
 	totalRows := make([][]types.Datum, 0, len(infoschema.MetricTableMap))
-	e.quantiles = []float64{1, 0.999, 0.99, 0.90, 0.80}
+	quantiles := []float64{1, 0.999, 0.99, 0.90, 0.80}
 	tps := make([]*types.FieldType, 0, len(e.table.Columns))
 	for _, col := range e.table.Columns {
 		tps = append(tps, &col.FieldType)
@@ -218,7 +217,7 @@ func (e *MetricSummaryRetriever) retrieve(ctx context.Context, sctx sessionctx.C
 	startTime := e.extractor.StartTime.Format(plannercore.MetricTableTimeFormat)
 	endTime := e.extractor.EndTime.Format(plannercore.MetricTableTimeFormat)
 	for name, def := range infoschema.MetricTableMap {
-		sqls := e.genMetricQuerySQLS(name, startTime, endTime, def.Quantile)
+		sqls := e.genMetricQuerySQLS(name, startTime, endTime, def.Quantile, quantiles)
 		for _, sql := range sqls {
 			rows, _, err := sctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
 			if err != nil {
@@ -232,13 +231,13 @@ func (e *MetricSummaryRetriever) retrieve(ctx context.Context, sctx sessionctx.C
 	return totalRows, nil
 }
 
-func (e *MetricSummaryRetriever) genMetricQuerySQLS(name, startTime, endTime string, quantile float64) []string {
+func (e *MetricSummaryRetriever) genMetricQuerySQLS(name, startTime, endTime string, quantile float64, quantiles []float64) []string {
 	if quantile == 0 {
 		sql := fmt.Sprintf(`select "%s",min(time),sum(value),avg(value),min(value),max(value) from metric_schema.%s where time > '%s' and time < '%s'`, name, name, startTime, endTime)
 		return []string{sql}
 	}
 	sqls := []string{}
-	for _, quantile := range e.quantiles {
+	for _, quantile := range quantiles {
 		sql := fmt.Sprintf(`select "%s_%v",min(time),sum(value),avg(value),min(value),max(value) from metric_schema.%s where time > '%s' and time < '%s' and quantile=%v`, name, quantile, name, startTime, endTime, quantile)
 		sqls = append(sqls, sql)
 	}
