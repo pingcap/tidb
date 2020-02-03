@@ -199,6 +199,8 @@ refresh-interval=100
 history-size=100
 [experimental]
 allow-auto-random = true
+[isolation-read]
+engines = ["tiflash"]
 `)
 
 	c.Assert(err, IsNil)
@@ -233,6 +235,7 @@ allow-auto-random = true
 	c.Assert(conf.RepairMode, Equals, true)
 	c.Assert(conf.MaxServerConnections, Equals, uint32(200))
 	c.Assert(conf.Experimental.AllowAutoRandom, IsTrue)
+	c.Assert(conf.IsolationRead.Engines, DeepEquals, []string{"tiflash"})
 	c.Assert(f.Close(), IsNil)
 	c.Assert(os.Remove(configFile), IsNil)
 
