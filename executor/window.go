@@ -293,7 +293,7 @@ func (p *rowFrameWindowProcessor) appendResult2Chunk(ctx sessionctx.Context, row
 	numRows := uint64(len(rows))
 	var (
 		err                      error
-		initializedSlidingWindow = false
+		initializedSlidingWindow bool
 		lastStart                uint64
 		lastEnd                  uint64
 		shiftStart               uint64
