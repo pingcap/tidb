@@ -47,6 +47,52 @@ type testData struct {
 	handle bool
 }
 
+func (s *testSuite) TestEncodeLargeSmallReuseBug(c *C) {
+	// reuse one rowcodec.Encoder.
+	var encoder rowcodec.Encoder
+	colFt := types.NewFieldType(mysql.TypeString)
+
+	largeColID := int64(300)
+	b, err := encoder.Encode(&stmtctx.StatementContext{}, []int64{largeColID}, []types.Datum{types.NewBytesDatum([]byte(""))}, nil)
+	c.Assert(err, IsNil)
+
+	bDecoder := rowcodec.NewDatumMapDecoder([]rowcodec.ColInfo{
+		{
+			ID:         largeColID,
+			Tp:         int32(colFt.Tp),
+			Flag:       int32(colFt.Flag),
+			IsPKHandle: false,
+			Flen:       colFt.Flen,
+			Decimal:    colFt.Decimal,
+			Elems:      colFt.Elems,
+		},
+	}, -1, nil)
+	m, err := bDecoder.DecodeToDatumMap(b, -1, nil)
+	c.Assert(err, IsNil)
+	v := m[largeColID]
+
+	colFt = types.NewFieldType(mysql.TypeLonglong)
+	smallColID := int64(1)
+	b, err = encoder.Encode(&stmtctx.StatementContext{}, []int64{smallColID}, []types.Datum{types.NewIntDatum(2)}, nil)
+	c.Assert(err, IsNil)
+
+	bDecoder = rowcodec.NewDatumMapDecoder([]rowcodec.ColInfo{
+		{
+			ID:         smallColID,
+			Tp:         int32(colFt.Tp),
+			Flag:       int32(colFt.Flag),
+			IsPKHandle: false,
+			Flen:       colFt.Flen,
+			Decimal:    colFt.Decimal,
+			Elems:      colFt.Elems,
+		},
+	}, -1, nil)
+	m, err = bDecoder.DecodeToDatumMap(b, -1, nil)
+	c.Assert(err, IsNil)
+	v = m[smallColID]
+	c.Assert(v.GetInt64(), Equals, int64(2))
+}
+
 func (s *testSuite) TestDecodeRowWithHandle(c *C) {
 	handleID := int64(-1)
 	handleValue := int64(10000)
@@ -154,7 +200,7 @@ func (s *testSuite) TestDecodeRowWithHandle(c *C) {
 		{
 			handleID,
 			withUnsigned(types.NewFieldType(mysql.TypeLonglong)),
-			types.NewIntDatum(handleValue),          // decode as chunk & map, always encode it as int
+			types.NewUintDatum(uint64(handleValue)),
 			types.NewUintDatum(uint64(handleValue)), // decode as bytes will uint if unsigned.
 			nil,
 			true,
@@ -442,14 +488,14 @@ func (s *testSuite) TestNilAndDefault(c *C) {
 				Elems:      t.ft.Elems,
 			})
 		}
-		ddf := func(i int) (types.Datum, error) {
+		ddf := func(i int, chk *chunk.Chunk) error {
 			t := testData[i]
 			if t.def == nil {
-				var d types.Datum
-				d.SetNull()
-				return d, nil
+				chk.AppendNull(i)
+				return nil
 			}
-			return *t.def, nil
+			chk.AppendDatum(i, t.def)
+			return nil
 		}
 		bdf := func(i int) ([]byte, error) {
 			t := testData[i]
@@ -609,7 +655,7 @@ func (s *testSuite) TestCodecUtil(c *C) {
 	}
 	tps[3] = types.NewFieldType(mysql.TypeNull)
 	sc := new(stmtctx.StatementContext)
-	oldRow, err := tablecodec.EncodeRow(sc, types.MakeDatums(1, 2, 3, nil), colIDs, nil, nil)
+	oldRow, err := tablecodec.EncodeOldRow(sc, types.MakeDatums(1, 2, 3, nil), colIDs, nil, nil)
 	c.Check(err, IsNil)
 	var (
 		rb     rowcodec.Encoder
@@ -662,7 +708,7 @@ func (s *testSuite) TestOldRowCodec(c *C) {
 	}
 	tps[3] = types.NewFieldType(mysql.TypeNull)
 	sc := new(stmtctx.StatementContext)
-	oldRow, err := tablecodec.EncodeRow(sc, types.MakeDatums(1, 2, 3, nil), colIDs, nil, nil)
+	oldRow, err := tablecodec.EncodeOldRow(sc, types.MakeDatums(1, 2, 3, nil), colIDs, nil, nil)
 	c.Check(err, IsNil)
 
 	var (

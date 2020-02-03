@@ -14,6 +14,8 @@
 package cascades
 
 import (
+	"math"
+
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	plannercore "github.com/pingcap/tidb/planner/core"
@@ -66,6 +68,9 @@ var defaultTransformationMap = map[memo.Operand][]Transformation{
 		NewRuleTransformLimitToTopN(),
 		NewRulePushLimitDownProjection(),
 		NewRulePushLimitDownUnionAll(),
+		NewRulePushLimitDownOuterJoin(),
+		NewRuleMergeAdjacentLimit(),
+		NewRuleTransformLimitToTableDual(),
 	},
 	memo.OperandProjection: {
 		NewRuleEliminateProjection(),
@@ -73,6 +78,7 @@ var defaultTransformationMap = map[memo.Operand][]Transformation{
 	},
 	memo.OperandTopN: {
 		NewRulePushTopNDownProjection(),
+		NewRulePushTopNDownOuterJoin(),
 		NewRulePushTopNDownUnionAll(),
 		NewRulePushTopNDownTiKVSingleGather(),
 	},
@@ -889,10 +895,6 @@ func (r *PushSelDownJoin) OnTransform(old *memo.ExprIter) (newExprs []*memo.Grou
 	}
 	leftCond = expression.RemoveDupExprs(sctx, leftCond)
 	rightCond = expression.RemoveDupExprs(sctx, rightCond)
-	for _, eqCond := range join.EqualConditions {
-		join.LeftJoinKeys = append(join.LeftJoinKeys, eqCond.GetArgs()[0].(*expression.Column))
-		join.RightJoinKeys = append(join.RightJoinKeys, eqCond.GetArgs()[1].(*expression.Column))
-	}
 	// TODO: Update EqualConditions like what we have done in the method join.updateEQCond() before.
 	leftGroup = buildChildSelectionGroup(sel, leftCond, leftGroup)
 	rightGroup = buildChildSelectionGroup(sel, rightCond, rightGroup)
@@ -1030,6 +1032,89 @@ func (r *MergeAdjacentProjection) OnTransform(old *memo.ExprIter) (newExprs []*m
 	newProjExpr := memo.NewGroupExpr(newProj)
 	newProjExpr.SetChildren(old.Children[0].GetExpr().Children[0])
 	return []*memo.GroupExpr{newProjExpr}, true, false, nil
+}
+
+// PushTopNDownOuterJoin pushes topN to outer join.
+type PushTopNDownOuterJoin struct {
+	baseRule
+}
+
+// NewRulePushTopNDownOuterJoin creates a new Transformation PushTopNDownOuterJoin.
+// The pattern of this rule is: `TopN -> Join`.
+func NewRulePushTopNDownOuterJoin() Transformation {
+	rule := &PushTopNDownOuterJoin{}
+	rule.pattern = memo.BuildPattern(
+		memo.OperandTopN,
+		memo.EngineTiDBOnly,
+		memo.NewPattern(memo.OperandJoin, memo.EngineTiDBOnly),
+	)
+	return rule
+}
+
+// Match implements Transformation interface.
+// Use appliedRuleSet in GroupExpr to avoid re-apply rules.
+func (r *PushTopNDownOuterJoin) Match(expr *memo.ExprIter) bool {
+	if expr.GetExpr().HasAppliedRule(r) {
+		return false
+	}
+	join := expr.Children[0].GetExpr().ExprNode.(*plannercore.LogicalJoin)
+	switch join.JoinType {
+	case plannercore.LeftOuterJoin, plannercore.LeftOuterSemiJoin, plannercore.AntiLeftOuterSemiJoin, plannercore.RightOuterJoin:
+		return true
+	default:
+		return false
+	}
+}
+
+func pushTopNDownOuterJoinToChild(topN *plannercore.LogicalTopN, outerGroup *memo.Group) *memo.Group {
+	for _, by := range topN.ByItems {
+		cols := expression.ExtractColumns(by.Expr)
+		for _, col := range cols {
+			if !outerGroup.Prop.Schema.Contains(col) {
+				return outerGroup
+			}
+		}
+	}
+
+	newTopN := plannercore.LogicalTopN{
+		Count:   topN.Count + topN.Offset,
+		ByItems: make([]*plannercore.ByItems, len(topN.ByItems)),
+	}.Init(topN.SCtx(), topN.SelectBlockOffset())
+
+	for i := range topN.ByItems {
+		newTopN.ByItems[i] = topN.ByItems[i].Clone()
+	}
+	newTopNGroup := memo.NewGroupExpr(newTopN)
+	newTopNGroup.SetChildren(outerGroup)
+	newChild := memo.NewGroupWithSchema(newTopNGroup, outerGroup.Prop.Schema)
+	return newChild
+}
+
+// OnTransform implements Transformation interface.
+// This rule will transform `TopN->OuterJoin->(OuterChild, InnerChild)` to `TopN->OuterJoin->(TopN->OuterChild, InnerChild)`
+func (r *PushTopNDownOuterJoin) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
+	topN := old.GetExpr().ExprNode.(*plannercore.LogicalTopN)
+	joinExpr := old.Children[0].GetExpr()
+	join := joinExpr.ExprNode.(*plannercore.LogicalJoin)
+	joinSchema := old.Children[0].Group.Prop.Schema
+	leftGroup := joinExpr.Children[0]
+	rightGroup := joinExpr.Children[1]
+
+	switch join.JoinType {
+	case plannercore.LeftOuterJoin, plannercore.LeftOuterSemiJoin, plannercore.AntiLeftOuterSemiJoin:
+		leftGroup = pushTopNDownOuterJoinToChild(topN, leftGroup)
+	case plannercore.RightOuterJoin:
+		rightGroup = pushTopNDownOuterJoinToChild(topN, rightGroup)
+	default:
+		return nil, false, false, nil
+	}
+
+	newJoinExpr := memo.NewGroupExpr(join)
+	newJoinExpr.SetChildren(leftGroup, rightGroup)
+	newTopNExpr := memo.NewGroupExpr(topN)
+	newTopNExpr.SetChildren(memo.NewGroupWithSchema(newJoinExpr, joinSchema))
+	newTopNExpr.AddAppliedRule(r)
+	return []*memo.GroupExpr{newTopNExpr}, true, false, nil
 }
 
 // PushTopNDownProjection pushes TopN to Projection.
@@ -1285,4 +1370,139 @@ func (r *MergeAdjacentSelection) OnTransform(old *memo.ExprIter) (newExprs []*me
 	newSelExpr := memo.NewGroupExpr(newSel)
 	newSelExpr.SetChildren(childGroups...)
 	return []*memo.GroupExpr{newSelExpr}, true, false, nil
+}
+
+// MergeAdjacentLimit merge the adjacent limit.
+type MergeAdjacentLimit struct {
+	baseRule
+}
+
+// NewRuleMergeAdjacentLimit creates a new Transformation MergeAdjacentLimit.
+// The pattern of this rule is `Limit->Limit->X`.
+func NewRuleMergeAdjacentLimit() Transformation {
+	rule := &MergeAdjacentLimit{}
+	rule.pattern = memo.BuildPattern(
+		memo.OperandLimit,
+		memo.EngineAll,
+		memo.NewPattern(memo.OperandLimit, memo.EngineAll),
+	)
+	return rule
+}
+
+// OnTransform implements Transformation interface.
+// This rule tries to merge adjacent limit.
+func (r *MergeAdjacentLimit) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
+	limit := old.GetExpr().ExprNode.(*plannercore.LogicalLimit)
+	child := old.Children[0].GetExpr().ExprNode.(*plannercore.LogicalLimit)
+	childGroups := old.Children[0].GetExpr().Children
+
+	if child.Count <= limit.Offset {
+		tableDual := plannercore.LogicalTableDual{RowCount: 0}.Init(child.SCtx(), child.SelectBlockOffset())
+		tableDual.SetSchema(old.GetExpr().Schema())
+		tableDualExpr := memo.NewGroupExpr(tableDual)
+		return []*memo.GroupExpr{tableDualExpr}, true, true, nil
+	}
+
+	offset := child.Offset + limit.Offset
+	count := uint64(math.Min(float64(child.Count-limit.Offset), float64(limit.Count)))
+	newLimit := plannercore.LogicalLimit{
+		Offset: offset,
+		Count:  count,
+	}.Init(limit.SCtx(), limit.SelectBlockOffset())
+	newLimitExpr := memo.NewGroupExpr(newLimit)
+	newLimitExpr.SetChildren(childGroups...)
+	return []*memo.GroupExpr{newLimitExpr}, true, false, nil
+}
+
+// TransformLimitToTableDual convert limit to TableDual.
+type TransformLimitToTableDual struct {
+	baseRule
+}
+
+// NewRuleTransformLimitToTableDual creates a new Transformation TransformLimitToTableDual.
+// The pattern of this rule is `Limit->X`.
+func NewRuleTransformLimitToTableDual() Transformation {
+	rule := &TransformLimitToTableDual{}
+	rule.pattern = memo.BuildPattern(
+		memo.OperandLimit,
+		memo.EngineAll,
+	)
+	return rule
+}
+
+// Match implements Transformation interface.
+func (r *TransformLimitToTableDual) Match(expr *memo.ExprIter) bool {
+	limit := expr.GetExpr().ExprNode.(*plannercore.LogicalLimit)
+	return 0 == limit.Count
+}
+
+// OnTransform implements Transformation interface.
+// This rule tries to convert limit to tableDual.
+func (r *TransformLimitToTableDual) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
+	limit := old.GetExpr().ExprNode.(*plannercore.LogicalLimit)
+	tableDual := plannercore.LogicalTableDual{RowCount: 0}.Init(limit.SCtx(), limit.SelectBlockOffset())
+	tableDual.SetSchema(old.GetExpr().Schema())
+	tableDualExpr := memo.NewGroupExpr(tableDual)
+	return []*memo.GroupExpr{tableDualExpr}, true, true, nil
+}
+
+// PushLimitDownOuterJoin pushes Limit through Join.
+type PushLimitDownOuterJoin struct {
+	baseRule
+}
+
+// NewRulePushLimitDownOuterJoin creates a new Transformation PushLimitDownOuterJoin.
+// The pattern of this rule is `Limit -> Join`.
+func NewRulePushLimitDownOuterJoin() Transformation {
+	rule := &PushLimitDownOuterJoin{}
+	rule.pattern = memo.BuildPattern(
+		memo.OperandLimit,
+		memo.EngineTiDBOnly,
+		memo.NewPattern(memo.OperandJoin, memo.EngineTiDBOnly),
+	)
+	return rule
+}
+
+// Match implements Transformation interface.
+func (r *PushLimitDownOuterJoin) Match(expr *memo.ExprIter) bool {
+	if expr.GetExpr().HasAppliedRule(r) {
+		return false
+	}
+	join := expr.Children[0].GetExpr().ExprNode.(*plannercore.LogicalJoin)
+	return join.JoinType.IsOuterJoin()
+}
+
+// OnTransform implements Transformation interface.
+// This rule tries to pushes the Limit through outer Join.
+func (r *PushLimitDownOuterJoin) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
+	limit := old.GetExpr().ExprNode.(*plannercore.LogicalLimit)
+	join := old.Children[0].GetExpr().ExprNode.(*plannercore.LogicalJoin)
+	joinSchema := old.Children[0].Group.Prop.Schema
+	leftGroup := old.Children[0].GetExpr().Children[0]
+	rightGroup := old.Children[0].GetExpr().Children[1]
+
+	switch join.JoinType {
+	case plannercore.LeftOuterJoin, plannercore.LeftOuterSemiJoin, plannercore.AntiLeftOuterSemiJoin:
+		leftGroup = pushLimitDownOuterJoinToChild(limit, leftGroup)
+	case plannercore.RightOuterJoin:
+		rightGroup = pushLimitDownOuterJoinToChild(limit, rightGroup)
+	default:
+		return nil, false, false, nil
+	}
+
+	newJoinExpr := memo.NewGroupExpr(join)
+	newJoinExpr.SetChildren(leftGroup, rightGroup)
+	newLimitExpr := memo.NewGroupExpr(limit)
+	newLimitExpr.SetChildren(memo.NewGroupWithSchema(newJoinExpr, joinSchema))
+	newLimitExpr.AddAppliedRule(r)
+	return []*memo.GroupExpr{newLimitExpr}, true, false, nil
+}
+
+func pushLimitDownOuterJoinToChild(limit *plannercore.LogicalLimit, outerGroup *memo.Group) *memo.Group {
+	newLimit := plannercore.LogicalLimit{
+		Count: limit.Count + limit.Offset,
+	}.Init(limit.SCtx(), limit.SelectBlockOffset())
+	newLimitGroup := memo.NewGroupExpr(newLimit)
+	newLimitGroup.SetChildren(outerGroup)
+	return memo.NewGroupWithSchema(newLimitGroup, outerGroup.Prop.Schema)
 }

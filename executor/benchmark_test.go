@@ -41,16 +41,18 @@ import (
 )
 
 var (
-	_ Executor = &mockDataSource{}
+	_ Executor          = &mockDataSource{}
+	_ core.PhysicalPlan = &mockDataPhysicalPlan{}
 )
 
 type mockDataSourceParameters struct {
-	schema      *expression.Schema
-	genDataFunc func(row int, typ *types.FieldType) interface{}
-	ndvs        []int  // number of distinct values on columns[i] and zero represents no limit
-	orders      []bool // columns[i] should be ordered if orders[i] is true
-	rows        int    // number of rows the DataSource should output
-	ctx         sessionctx.Context
+	schema         *expression.Schema
+	genDataFunc    func(row int, typ *types.FieldType) interface{}
+	ndvs           []int  // number of distinct values on columns[i] and zero represents no limit
+	orders         []bool // columns[i] should be ordered if orders[i] is true
+	rows           int    // number of rows the DataSource should output
+	ctx            sessionctx.Context
+	isRawDataSmall bool // false: rawData, true: rawDataSmall
 }
 
 type mockDataSource struct {
@@ -59,6 +61,34 @@ type mockDataSource struct {
 	genData  []*chunk.Chunk
 	chunks   []*chunk.Chunk
 	chunkPtr int
+}
+
+type mockDataPhysicalPlan struct {
+	MockPhysicalPlan
+	schema *expression.Schema
+	exec   Executor
+}
+
+func (mp *mockDataPhysicalPlan) GetExecutor() Executor {
+	return mp.exec
+}
+
+func (mp *mockDataPhysicalPlan) Schema() *expression.Schema {
+	return mp.schema
+}
+
+func (mp *mockDataPhysicalPlan) ExplainID() fmt.Stringer {
+	return stringutil.MemoizeStr(func() string {
+		return "mockData_0"
+	})
+}
+
+func (mp *mockDataPhysicalPlan) Stats() *property.StatsInfo {
+	return nil
+}
+
+func (mp *mockDataPhysicalPlan) SelectBlockOffset() int {
+	return 0
 }
 
 func (mds *mockDataSource) genColDatums(col int) (results []interface{}) {
@@ -124,6 +154,9 @@ func (mds *mockDataSource) randDatum(typ *types.FieldType) interface{} {
 	case mysql.TypeDouble:
 		return rand.Float64()
 	case mysql.TypeVarString:
+		if mds.p.isRawDataSmall {
+			return rawDataSmall
+		}
 		return rawData
 	default:
 		panic("not implement")
@@ -385,43 +418,100 @@ func BenchmarkAggDistinct(b *testing.B) {
 	}
 }
 
-func buildWindowExecutor(ctx sessionctx.Context, windowFunc string, src Executor, schema *expression.Schema, partitionBy []*expression.Column) Executor {
-	plan := new(core.PhysicalWindow)
+func buildWindowExecutor(ctx sessionctx.Context, windowFunc string, funcs int, frame *core.WindowFrame, srcExec Executor, schema *expression.Schema, partitionBy []*expression.Column, concurrency int, dataSourceSorted bool) Executor {
+	src := &mockDataPhysicalPlan{
+		schema: srcExec.Schema(),
+		exec:   srcExec,
+	}
 
-	var args []expression.Expression
-	switch windowFunc {
-	case ast.WindowFuncNtile:
-		args = append(args, &expression.Constant{Value: types.NewUintDatum(2)})
-	case ast.WindowFuncNthValue:
-		args = append(args, partitionBy[0], &expression.Constant{Value: types.NewUintDatum(2)})
-	default:
-		args = append(args, partitionBy[0])
+	win := new(core.PhysicalWindow)
+	win.WindowFuncDescs = make([]*aggregation.WindowFuncDesc, 0)
+	winSchema := schema.Clone()
+	for i := 0; i < funcs; i++ {
+		var args []expression.Expression
+		switch windowFunc {
+		case ast.WindowFuncNtile:
+			args = append(args, &expression.Constant{Value: types.NewUintDatum(2)})
+		case ast.WindowFuncNthValue:
+			args = append(args, partitionBy[0], &expression.Constant{Value: types.NewUintDatum(2)})
+		case ast.AggFuncSum:
+			args = append(args, src.Schema().Columns[0])
+		case ast.AggFuncAvg:
+			args = append(args, src.Schema().Columns[0])
+		case ast.AggFuncBitXor:
+			args = append(args, src.Schema().Columns[0])
+		default:
+			args = append(args, partitionBy[0])
+		}
+		desc, _ := aggregation.NewWindowFuncDesc(ctx, windowFunc, args)
+
+		win.WindowFuncDescs = append(win.WindowFuncDescs, desc)
+		winSchema.Append(&expression.Column{
+			UniqueID: 10 + (int64)(i),
+			RetType:  types.NewFieldType(mysql.TypeLonglong),
+		})
 	}
-	desc, _ := aggregation.NewWindowFuncDesc(ctx, windowFunc, args)
-	plan.WindowFuncDescs = []*aggregation.WindowFuncDesc{desc}
 	for _, col := range partitionBy {
-		plan.PartitionBy = append(plan.PartitionBy, property.Item{Col: col})
+		win.PartitionBy = append(win.PartitionBy, property.Item{Col: col})
 	}
-	plan.OrderBy = nil
-	plan.SetSchema(schema)
-	plan.Init(ctx, nil, 0)
-	plan.SetChildren(nil)
+	win.Frame = frame
+	win.OrderBy = nil
+
+	win.SetSchema(winSchema)
+	win.Init(ctx, nil, 0)
+
+	var tail core.PhysicalPlan = win
+	if !dataSourceSorted {
+		byItems := make([]*core.ByItems, 0, len(partitionBy))
+		for _, col := range partitionBy {
+			byItems = append(byItems, &core.ByItems{Expr: col, Desc: false})
+		}
+		sort := &core.PhysicalSort{ByItems: byItems}
+		sort.SetChildren(src)
+		win.SetChildren(sort)
+		tail = sort
+	} else {
+		win.SetChildren(src)
+	}
+
+	var plan core.PhysicalPlan
+	if concurrency > 1 {
+		byItems := make([]expression.Expression, 0, len(win.PartitionBy))
+		for _, item := range win.PartitionBy {
+			byItems = append(byItems, item.Col)
+		}
+
+		plan = core.PhysicalShuffle{
+			Concurrency:  concurrency,
+			Tail:         tail,
+			DataSource:   src,
+			SplitterType: core.PartitionHashSplitterType,
+			HashByItems:  byItems,
+		}.Init(ctx, nil, 0)
+		plan.SetChildren(win)
+	} else {
+		plan = win
+	}
+
 	b := newExecutorBuilder(ctx, nil)
 	exec := b.build(plan)
-	window := exec.(*WindowExec)
-	window.children[0] = src
 	return exec
 }
 
 type windowTestCase struct {
-	// The test table's schema is fixed (col Double, partitionBy LongLong, rawData VarString(5128), col LongLong).
-	windowFunc string
-	ndv        int // the number of distinct group-by keys
-	rows       int
-	ctx        sessionctx.Context
+	// The test table's schema is fixed (col Double, partitionBy LongLong, rawData VarString(16), col LongLong).
+	windowFunc       string
+	numFunc          int // The number of windowFuncs. Default: 1.
+	frame            *core.WindowFrame
+	ndv              int // the number of distinct group-by keys
+	rows             int
+	concurrency      int
+	dataSourceSorted bool
+	ctx              sessionctx.Context
 }
 
 var rawData = strings.Repeat("x", 5*1024)
+var rawDataSmall = strings.Repeat("x", 16)
 
 func (a windowTestCase) columns() []*expression.Column {
 	rawDataTp := new(types.FieldType)
@@ -435,25 +525,31 @@ func (a windowTestCase) columns() []*expression.Column {
 }
 
 func (a windowTestCase) String() string {
-	return fmt.Sprintf("(func:%v, ndv:%v, rows:%v)",
-		a.windowFunc, a.ndv, a.rows)
+	return fmt.Sprintf("(func:%v, numFunc:%v, ndv:%v, rows:%v, sorted:%v, concurrency:%v)",
+		a.windowFunc, a.numFunc, a.ndv, a.rows, a.dataSourceSorted, a.concurrency)
 }
 
 func defaultWindowTestCase() *windowTestCase {
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().InitChunkSize = variable.DefInitChunkSize
 	ctx.GetSessionVars().MaxChunkSize = variable.DefMaxChunkSize
-	return &windowTestCase{ast.WindowFuncRowNumber, 1000, 10000000, ctx}
+	return &windowTestCase{ast.WindowFuncRowNumber, 1, nil, 1000, 10000000, 1, true, ctx}
 }
 
 func benchmarkWindowExecWithCase(b *testing.B, casTest *windowTestCase) {
+	ctx := casTest.ctx
+	if err := ctx.GetSessionVars().SetSystemVar(variable.TiDBWindowConcurrency, fmt.Sprintf("%v", casTest.concurrency)); err != nil {
+		b.Fatal(err)
+	}
+
 	cols := casTest.columns()
 	dataSource := buildMockDataSource(mockDataSourceParameters{
-		schema: expression.NewSchema(cols...),
-		ndvs:   []int{0, casTest.ndv, 0, 0},
-		orders: []bool{false, true, false, false},
-		rows:   casTest.rows,
-		ctx:    casTest.ctx,
+		schema:         expression.NewSchema(cols...),
+		ndvs:           []int{0, casTest.ndv, 0, 0},
+		orders:         []bool{false, casTest.dataSourceSorted, false, false},
+		rows:           casTest.rows,
+		ctx:            casTest.ctx,
+		isRawDataSmall: true,
 	})
 
 	b.ResetTimer()
@@ -461,7 +557,7 @@ func benchmarkWindowExecWithCase(b *testing.B, casTest *windowTestCase) {
 		b.StopTimer() // prepare a new window-executor
 		childCols := casTest.columns()
 		schema := expression.NewSchema(childCols...)
-		windowExec := buildWindowExecutor(casTest.ctx, casTest.windowFunc, dataSource, schema, childCols[1:2])
+		windowExec := buildWindowExecutor(casTest.ctx, casTest.windowFunc, casTest.numFunc, casTest.frame, dataSource, schema, childCols[1:2], casTest.concurrency, casTest.dataSourceSorted)
 		tmpCtx := context.Background()
 		chk := newFirstChunk(windowExec)
 		dataSource.prepareChunks()
@@ -490,15 +586,20 @@ func BenchmarkWindowRows(b *testing.B) {
 	b.ReportAllocs()
 	rows := []int{1000, 100000}
 	ndvs := []int{10, 1000}
+	concs := []int{1, 2, 4}
 	for _, row := range rows {
 		for _, ndv := range ndvs {
-			cas := defaultWindowTestCase()
-			cas.rows = row
-			cas.ndv = ndv
-			cas.windowFunc = ast.WindowFuncRowNumber // cheapest
-			b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
-				benchmarkWindowExecWithCase(b, cas)
-			})
+			for _, con := range concs {
+				cas := defaultWindowTestCase()
+				cas.rows = row
+				cas.ndv = ndv
+				cas.concurrency = con
+				cas.dataSourceSorted = false
+				cas.windowFunc = ast.WindowFuncRowNumber // cheapest
+				b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
+					benchmarkWindowExecWithCase(b, cas)
+				})
+			}
 		}
 	}
 }
@@ -518,14 +619,54 @@ func BenchmarkWindowFunctions(b *testing.B) {
 		ast.WindowFuncLastValue,
 		ast.WindowFuncNthValue,
 	}
+	concs := []int{1, 4}
 	for _, windowFunc := range windowFuncs {
-		cas := defaultWindowTestCase()
-		cas.rows = 100000
-		cas.ndv = 1000
-		cas.windowFunc = windowFunc
-		b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
-			benchmarkWindowExecWithCase(b, cas)
-		})
+		for _, con := range concs {
+			cas := defaultWindowTestCase()
+			cas.rows = 100000
+			cas.ndv = 1000
+			cas.concurrency = con
+			cas.dataSourceSorted = false
+			cas.windowFunc = windowFunc
+			b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
+				benchmarkWindowExecWithCase(b, cas)
+			})
+		}
+	}
+}
+
+func BenchmarkWindowFunctionsWithFrame(b *testing.B) {
+	b.ReportAllocs()
+	windowFuncs := []string{
+		ast.WindowFuncRowNumber,
+		ast.AggFuncBitXor,
+	}
+	numFuncs := []int{1, 5}
+	frames := []*core.WindowFrame{
+		{Type: ast.Rows, Start: &core.FrameBound{UnBounded: true}, End: &core.FrameBound{Type: ast.CurrentRow}},
+	}
+	sortTypes := []bool{false, true}
+	concs := []int{1, 2, 3, 4, 5, 6}
+	for i, windowFunc := range windowFuncs {
+		for _, sorted := range sortTypes {
+			for _, numFunc := range numFuncs {
+				for _, con := range concs {
+					cas := defaultWindowTestCase()
+					cas.rows = 100000
+					cas.ndv = 1000
+					cas.concurrency = con
+					cas.dataSourceSorted = sorted
+					cas.windowFunc = windowFunc
+					cas.numFunc = numFunc
+					if i < len(frames) {
+						cas.frame = frames[i]
+					}
+					b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
+						benchmarkWindowExecWithCase(b, cas)
+					})
+				}
+			}
+		}
 	}
 }
 
@@ -535,8 +676,8 @@ type hashJoinTestCase struct {
 	concurrency     int
 	ctx             sessionctx.Context
 	keyIdx          []int
-	disk            bool
 	joinType        core.JoinType
+	disk            bool
 	useOuterToBuild bool
 }
 
@@ -1094,4 +1235,212 @@ func BenchmarkIndexJoinExec(b *testing.B) {
 	b.Run(fmt.Sprintf("index outer hash join %v", tc), func(b *testing.B) {
 		benchmarkIndexJoinExecWithCase(b, tc, outerDS, innerDS, indexOuterHashJoin)
 	})
+}
+
+type mergeJoinTestCase struct {
+	indexJoinTestCase
+}
+
+func prepare4MergeJoin(tc *mergeJoinTestCase, leftExec, rightExec *mockDataSource) *MergeJoinExec {
+	outerCols, innerCols := tc.columns(), tc.columns()
+	joinSchema := expression.NewSchema(outerCols...)
+	joinSchema.Append(innerCols...)
+
+	outerJoinKeys := make([]*expression.Column, 0, len(tc.outerJoinKeyIdx))
+	innerJoinKeys := make([]*expression.Column, 0, len(tc.innerJoinKeyIdx))
+	for _, keyIdx := range tc.outerJoinKeyIdx {
+		outerJoinKeys = append(outerJoinKeys, outerCols[keyIdx])
+	}
+	for _, keyIdx := range tc.innerJoinKeyIdx {
+		innerJoinKeys = append(innerJoinKeys, innerCols[keyIdx])
+	}
+	compareFuncs := make([]expression.CompareFunc, 0, len(outerJoinKeys))
+	outerCompareFuncs := make([]expression.CompareFunc, 0, len(outerJoinKeys))
+	for i := range outerJoinKeys {
+		compareFuncs = append(compareFuncs, expression.GetCmpFunction(outerJoinKeys[i], innerJoinKeys[i]))
+		outerCompareFuncs = append(outerCompareFuncs, expression.GetCmpFunction(outerJoinKeys[i], outerJoinKeys[i]))
+	}
+
+	defaultValues := make([]types.Datum, len(innerCols))
+
+	// only benchmark inner join
+	e := &MergeJoinExec{
+		stmtCtx:      tc.ctx.GetSessionVars().StmtCtx,
+		baseExecutor: newBaseExecutor(tc.ctx, joinSchema, stringutil.StringerStr("MergeJoin"), leftExec, rightExec),
+		compareFuncs: compareFuncs,
+		joiner: newJoiner(
+			tc.ctx,
+			0,
+			false,
+			defaultValues,
+			nil,
+			retTypes(leftExec),
+			retTypes(rightExec),
+		),
+		isOuterJoin: false,
+	}
+
+	e.outerIdx = 0
+
+	e.innerTable = &mergeJoinInnerTable{
+		reader:   rightExec,
+		joinKeys: innerJoinKeys,
+	}
+
+	e.outerTable = &mergeJoinOuterTable{
+		reader: leftExec,
+		filter: nil,
+		keys:   outerJoinKeys,
+	}
+
+	return e
+}
+
+func defaultMergeJoinTestCase() *mergeJoinTestCase {
+	return &mergeJoinTestCase{*defaultIndexJoinTestCase()}
+}
+
+func newMergeJoinBenchmark(numOuterRows, numInnerDup, numInnerRedundant int) (tc *mergeJoinTestCase, innerDS, outerDS *mockDataSource) {
+	ctx := mock.NewContext()
+	ctx.GetSessionVars().InitChunkSize = variable.DefInitChunkSize
+	ctx.GetSessionVars().MaxChunkSize = variable.DefMaxChunkSize
+	ctx.GetSessionVars().SnapshotTS = 1
+	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(nil, -1)
+	ctx.GetSessionVars().StmtCtx.DiskTracker = disk.NewTracker(nil, -1)
+
+	numInnerRows := numOuterRows*numInnerDup + numInnerRedundant
+	itc := &indexJoinTestCase{
+		outerRows:       numOuterRows,
+		innerRows:       numInnerRows,
+		concurrency:     4,
+		ctx:             ctx,
+		outerJoinKeyIdx: []int{0, 1},
+		innerJoinKeyIdx: []int{0, 1},
+		innerIdx:        []int{0, 1},
+	}
+	tc = &mergeJoinTestCase{*itc}
+	outerOpt := mockDataSourceParameters{
+		schema: expression.NewSchema(tc.columns()...),
+		rows:   numOuterRows,
+		ctx:    tc.ctx,
+		genDataFunc: func(row int, typ *types.FieldType) interface{} {
+			switch typ.Tp {
+			case mysql.TypeLong, mysql.TypeLonglong:
+				return int64(row)
+			case mysql.TypeDouble:
+				return float64(row)
+			case mysql.TypeVarString:
+				return rawData
+			default:
+				panic("not implement")
+			}
+		},
+	}
+
+	innerOpt := mockDataSourceParameters{
+		schema: expression.NewSchema(tc.columns()...),
+		rows:   numInnerRows,
+		ctx:    tc.ctx,
+		genDataFunc: func(row int, typ *types.FieldType) interface{} {
+			row = row / numInnerDup
+			switch typ.Tp {
+			case mysql.TypeLong, mysql.TypeLonglong:
+				return int64(row)
+			case mysql.TypeDouble:
+				return float64(row)
+			case mysql.TypeVarString:
+				return rawData
+			default:
+				panic("not implement")
+			}
+		},
+	}
+
+	innerDS = buildMockDataSource(innerOpt)
+	outerDS = buildMockDataSource(outerOpt)
+
+	return
+}
+
+type mergeJoinType int8
+
+const (
+	innerMergeJoin mergeJoinType = iota
+)
+
+func benchmarkMergeJoinExecWithCase(b *testing.B, tc *mergeJoinTestCase, innerDS, outerDS *mockDataSource, joinType mergeJoinType) {
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		b.StopTimer()
+		var exec Executor
+		switch joinType {
+		case innerMergeJoin:
+			exec = prepare4MergeJoin(tc, innerDS, outerDS)
+		}
+
+		tmpCtx := context.Background()
+		chk := newFirstChunk(exec)
+		outerDS.prepareChunks()
+		innerDS.prepareChunks()
+
+		b.StartTimer()
+		if err := exec.Open(tmpCtx); err != nil {
+			b.Fatal(err)
+		}
+		for {
+			if err := exec.Next(tmpCtx, chk); err != nil {
+				b.Fatal(err)
+			}
+			if chk.NumRows() == 0 {
+				break
+			}
+		}
+
+		if err := exec.Close(); err != nil {
+			b.Fatal(err)
+		}
+		b.StopTimer()
+	}
+}
+
+func BenchmarkMergeJoinExec(b *testing.B) {
+	lvl := log.GetLevel()
+	log.SetLevel(zapcore.ErrorLevel)
+	defer log.SetLevel(lvl)
+	b.ReportAllocs()
+
+	totalRows := 300000
+
+	{
+		numInnerDup := 1
+		tc, innerDS, outerDS := newMergeJoinBenchmark(totalRows/numInnerDup, numInnerDup, 0)
+		b.Run(fmt.Sprintf("merge join %v", tc), func(b *testing.B) {
+			benchmarkMergeJoinExecWithCase(b, tc, outerDS, innerDS, innerMergeJoin)
+		})
+	}
+
+	{
+		numInnerDup := 100
+		tc, innerDS, outerDS := newMergeJoinBenchmark(totalRows/numInnerDup, numInnerDup, 0)
+		b.Run(fmt.Sprintf("merge join %v", tc), func(b *testing.B) {
+			benchmarkMergeJoinExecWithCase(b, tc, outerDS, innerDS, innerMergeJoin)
+		})
+	}
+
+	{
+		numInnerDup := 10000
+		tc, innerDS, outerDS := newMergeJoinBenchmark(totalRows/numInnerDup, numInnerDup, 0)
+		b.Run(fmt.Sprintf("merge join %v", tc), func(b *testing.B) {
+			benchmarkMergeJoinExecWithCase(b, tc, outerDS, innerDS, innerMergeJoin)
+		})
+	}
+
+	{
+		numInnerDup := 1
+		numInnerRedundant := 30000
+		tc, innerDS, outerDS := newMergeJoinBenchmark(totalRows/numInnerDup, numInnerDup, numInnerRedundant)
+		b.Run(fmt.Sprintf("merge join %v", tc), func(b *testing.B) {
+			benchmarkMergeJoinExecWithCase(b, tc, outerDS, innerDS, innerMergeJoin)
+		})
+	}
 }

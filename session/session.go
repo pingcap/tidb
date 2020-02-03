@@ -82,15 +82,6 @@ var (
 	transactionDurationGeneralCommit     = metrics.TransactionDuration.WithLabelValues(metrics.LblGeneral, metrics.LblCommit)
 	transactionDurationGeneralAbort      = metrics.TransactionDuration.WithLabelValues(metrics.LblGeneral, metrics.LblAbort)
 
-	transactionCounterInternalOK             = metrics.TransactionCounter.WithLabelValues(metrics.LblInternal, metrics.LblOK)
-	transactionCounterInternalErr            = metrics.TransactionCounter.WithLabelValues(metrics.LblInternal, metrics.LblError)
-	transactionCounterGeneralOK              = metrics.TransactionCounter.WithLabelValues(metrics.LblGeneral, metrics.LblOK)
-	transactionCounterGeneralErr             = metrics.TransactionCounter.WithLabelValues(metrics.LblGeneral, metrics.LblError)
-	transactionCounterInternalCommitRollback = metrics.TransactionCounter.WithLabelValues(metrics.LblInternal, metrics.LblComRol)
-	transactionCounterGeneralCommitRollback  = metrics.TransactionCounter.WithLabelValues(metrics.LblGeneral, metrics.LblComRol)
-	transactionRollbackCounterInternal       = metrics.TransactionCounter.WithLabelValues(metrics.LblInternal, metrics.LblRollback)
-	transactionRollbackCounterGeneral        = metrics.TransactionCounter.WithLabelValues(metrics.LblGeneral, metrics.LblRollback)
-
 	sessionExecuteRunDurationInternal = metrics.SessionExecuteRunDuration.WithLabelValues(metrics.LblInternal)
 	sessionExecuteRunDurationGeneral  = metrics.SessionExecuteRunDuration.WithLabelValues(metrics.LblGeneral)
 
@@ -126,7 +117,7 @@ type Session interface {
 	Close()
 	Auth(user *auth.UserIdentity, auth []byte, salt []byte) bool
 	ShowProcess() *util.ProcessInfo
-	// PrePareTxnCtx is exported for test.
+	// PrepareTxnCtx is exported for test.
 	PrepareTxnCtx(context.Context)
 	// FieldList returns fields list of a table.
 	FieldList(tableName string) (fields []*ast.ResultField, err error)
@@ -187,7 +178,7 @@ type session struct {
 	// lockedTables use to record the table locks hold by the session.
 	lockedTables map[int64]model.TableLockTpInfo
 
-	// shared coprocessor client per session
+	// client shared coprocessor client per session
 	client kv.Client
 }
 
@@ -429,14 +420,14 @@ func (s *session) doCommit(ctx context.Context) error {
 		}
 	}
 
-	// Get the related table IDs.
-	relatedTables := s.GetSessionVars().TxnCtx.TableDeltaMap
-	tableIDs := make([]int64, 0, len(relatedTables))
-	for id := range relatedTables {
-		tableIDs = append(tableIDs, id)
+	// Get the related table or partition IDs.
+	relatedPhysicalTables := s.GetSessionVars().TxnCtx.TableDeltaMap
+	physicalTableIDs := make([]int64, 0, len(relatedPhysicalTables))
+	for id := range relatedPhysicalTables {
+		physicalTableIDs = append(physicalTableIDs, id)
 	}
 	// Set this option for 2 phase commit to validate schema lease.
-	s.txn.SetOption(kv.SchemaChecker, domain.NewSchemaChecker(domain.GetDomain(s), s.sessionVars.TxnCtx.SchemaVersion, tableIDs))
+	s.txn.SetOption(kv.SchemaChecker, domain.NewSchemaChecker(domain.GetDomain(s), s.sessionVars.TxnCtx.SchemaVersion, physicalTableIDs))
 
 	return s.txn.Commit(sessionctx.SetCommitCtx(ctx, s))
 }
@@ -529,7 +520,6 @@ func (s *session) CommitTxn(ctx context.Context) error {
 	})
 
 	s.sessionVars.TxnCtx.Cleanup()
-	s.recordTransactionCounter(nil, err)
 	return err
 }
 
@@ -541,13 +531,10 @@ func (s *session) RollbackTxn(ctx context.Context) {
 
 	if s.txn.Valid() {
 		terror.Log(s.txn.Rollback())
-		if s.isInternal() {
-			transactionRollbackCounterInternal.Inc()
-		} else {
-			transactionRollbackCounterGeneral.Inc()
-		}
 	}
-	s.cleanRetryInfo()
+	if ctx.Value(inCloseSession{}) == nil {
+		s.cleanRetryInfo()
+	}
 	s.txn.changeToInvalid()
 	s.sessionVars.TxnCtx.Cleanup()
 	s.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, false)
@@ -680,7 +667,10 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 				s.StmtRollback()
 				break
 			}
-			err = s.StmtCommit()
+			// We do not need to pass memTracker here, because that retry
+			// happened after commit, the memory usage was calculated during the
+			// first execution.
+			err = s.StmtCommit(nil)
 			if err != nil {
 				return err
 			}
@@ -705,7 +695,7 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 				zap.String("label", label),
 				zap.Stringer("session", s),
 				zap.Error(err))
-			metrics.SessionRetryErrorCounter.WithLabelValues(label, metrics.LblUnretryable)
+			metrics.SessionRetryErrorCounter.WithLabelValues(label, metrics.LblUnretryable).Inc()
 			return err
 		}
 		retryCnt++
@@ -713,7 +703,7 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 			logutil.Logger(ctx).Warn("sql",
 				zap.String("label", label),
 				zap.Uint("retry reached max count", retryCnt))
-			metrics.SessionRetryErrorCounter.WithLabelValues(label, metrics.LblReachMax)
+			metrics.SessionRetryErrorCounter.WithLabelValues(label, metrics.LblReachMax).Inc()
 			return err
 		}
 		logutil.Logger(ctx).Warn("sql",
@@ -1044,7 +1034,6 @@ func (s *session) executeStatement(ctx context.Context, connID uint64, stmtNode 
 		}
 		return nil, err
 	}
-	s.recordTransactionCounter(stmtNode, err)
 	if s.isInternal() {
 		sessionExecuteRunDurationInternal.Observe(time.Since(startTime).Seconds())
 	} else {
@@ -1438,6 +1427,8 @@ func (s *session) ClearValue(key fmt.Stringer) {
 	s.mu.Unlock()
 }
 
+type inCloseSession struct{}
+
 // Close function does some clean work when session end.
 // Close should release the table locks which hold by the session.
 func (s *session) Close() {
@@ -1460,7 +1451,7 @@ func (s *session) Close() {
 	if bindValue != nil {
 		bindValue.(*bindinfo.SessionHandle).Close()
 	}
-	ctx := context.TODO()
+	ctx := context.WithValue(context.TODO(), inCloseSession{}, struct{}{})
 	s.RollbackTxn(ctx)
 	if s.sessionVars != nil {
 		s.sessionVars.WithdrawAllPreparedStmt()
@@ -1749,7 +1740,7 @@ func CreateSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 
 const (
 	notBootstrapped         = 0
-	currentBootstrapVersion = version38
+	currentBootstrapVersion = version39
 )
 
 func getStoreBootstrapVersion(store kv.Storage) int64 {
@@ -1818,6 +1809,7 @@ var builtinGlobalVariable = []string{
 	variable.QueryCacheSize,
 	variable.CharacterSetServer,
 	variable.AutoIncrementIncrement,
+	variable.AutoIncrementOffset,
 	variable.CollationServer,
 	variable.NetWriteTimeout,
 	variable.MaxExecutionTime,
@@ -1834,6 +1826,7 @@ var builtinGlobalVariable = []string{
 	variable.TiDBProjectionConcurrency,
 	variable.TiDBHashAggPartialConcurrency,
 	variable.TiDBHashAggFinalConcurrency,
+	variable.TiDBWindowConcurrency,
 	variable.TiDBBackoffLockFast,
 	variable.TiDBBackOffWeight,
 	variable.TiDBConstraintCheckInPlace,
@@ -1865,6 +1858,7 @@ var builtinGlobalVariable = []string{
 	variable.TiDBEnableNoopFuncs,
 	variable.TiDBEnableIndexMerge,
 	variable.TiDBTxnMode,
+	variable.TiDBRowFormatVersion,
 	variable.TiDBEnableStmtSummary,
 	variable.TiDBStmtSummaryRefreshInterval,
 	variable.TiDBStmtSummaryHistorySize,
@@ -2058,6 +2052,7 @@ func logQuery(query string, vars *variable.SessionVars) {
 			zap.Int64("schemaVersion", vars.TxnCtx.SchemaVersion),
 			zap.Uint64("txnStartTS", vars.TxnCtx.StartTS),
 			zap.String("current_db", vars.CurrentDB),
+			zap.String("txn_mode", vars.GetReadableTxnMode()),
 			zap.String("sql", query+vars.PreparedParams.String()))
 	}
 }
@@ -2079,41 +2074,6 @@ func (s *session) recordOnTransactionExecution(err error, counter int, duration 
 			statementPerTransactionGeneralOK.Observe(float64(counter))
 			transactionDurationGeneralCommit.Observe(duration)
 		}
-	}
-}
-
-func (s *session) recordTransactionCounter(stmtNode ast.StmtNode, err error) {
-	if stmtNode == nil {
-		if s.isInternal() {
-			if err != nil {
-				transactionCounterInternalErr.Inc()
-			} else {
-				transactionCounterInternalOK.Inc()
-			}
-		} else {
-			if err != nil {
-				transactionCounterGeneralErr.Inc()
-			} else {
-				transactionCounterGeneralOK.Inc()
-			}
-		}
-		return
-	}
-
-	var isTxn bool
-	switch stmtNode.(type) {
-	case *ast.CommitStmt:
-		isTxn = true
-	case *ast.RollbackStmt:
-		isTxn = true
-	}
-	if !isTxn {
-		return
-	}
-	if s.isInternal() {
-		transactionCounterInternalCommitRollback.Inc()
-	} else {
-		transactionCounterGeneralCommitRollback.Inc()
 	}
 }
 

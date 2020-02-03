@@ -14,6 +14,8 @@
 package core
 
 import (
+	"unsafe"
+
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/expression"
@@ -52,6 +54,8 @@ var (
 	_ PhysicalPlan = &PhysicalMergeJoin{}
 	_ PhysicalPlan = &PhysicalUnionScan{}
 	_ PhysicalPlan = &PhysicalWindow{}
+	_ PhysicalPlan = &PhysicalShuffle{}
+	_ PhysicalPlan = &PhysicalShuffleDataSourceStub{}
 	_ PhysicalPlan = &BatchPointGetPlan{}
 )
 
@@ -153,9 +157,11 @@ type PhysicalIndexMergeReader struct {
 	// PartialPlans flats the partialPlans to construct executor pb.
 	PartialPlans [][]PhysicalPlan
 	// TablePlans flats the tablePlan to construct executor pb.
-	TablePlans   []PhysicalPlan
+	TablePlans []PhysicalPlan
+	// partialPlans are the partial plans that have not been flatted. The type of each element is permitted PhysicalIndexScan or PhysicalTableScan.
 	partialPlans []PhysicalPlan
-	tablePlan    PhysicalPlan
+	// tablePlan is a PhysicalTableScan to get the table tuples. Current, it must be not nil.
+	tablePlan PhysicalPlan
 }
 
 // PhysicalIndexScan represents an index scan plan.
@@ -321,12 +327,13 @@ type PhysicalHashJoin struct {
 
 // NewPhysicalHashJoin creates a new PhysicalHashJoin from LogicalJoin.
 func NewPhysicalHashJoin(p *LogicalJoin, innerIdx int, useOuterToBuild bool, newStats *property.StatsInfo, prop ...*property.PhysicalProperty) *PhysicalHashJoin {
+	leftJoinKeys, rightJoinKeys := p.GetJoinKeys()
 	baseJoin := basePhysicalJoin{
 		LeftConditions:  p.LeftConditions,
 		RightConditions: p.RightConditions,
 		OtherConditions: p.OtherConditions,
-		LeftJoinKeys:    p.LeftJoinKeys,
-		RightJoinKeys:   p.RightJoinKeys,
+		LeftJoinKeys:    leftJoinKeys,
+		RightJoinKeys:   rightJoinKeys,
 		JoinType:        p.JoinType,
 		DefaultValues:   p.DefaultValues,
 		InnerChildIdx:   innerIdx,
@@ -367,13 +374,13 @@ type PhysicalIndexMergeJoin struct {
 
 	// KeyOff2KeyOffOrderByIdx maps the offsets in join keys to the offsets in join keys order by index.
 	KeyOff2KeyOffOrderByIdx []int
-	// NeedOuterSort means whether outer rows should be sorted to build range.
-	NeedOuterSort bool
 	// CompareFuncs store the compare functions for outer join keys and inner join key.
 	CompareFuncs []expression.CompareFunc
 	// OuterCompareFuncs store the compare functions for outer join keys and outer join
 	// keys, it's for outer rows sort's convenience.
 	OuterCompareFuncs []expression.CompareFunc
+	// NeedOuterSort means whether outer rows should be sorted to build range.
+	NeedOuterSort bool
 	// Desc means whether inner child keep desc order.
 	Desc bool
 }
@@ -391,6 +398,8 @@ type PhysicalMergeJoin struct {
 	basePhysicalJoin
 
 	CompareFuncs []expression.CompareFunc
+	// Desc means whether inner child keep desc order.
+	Desc bool
 }
 
 // PhysicalLock is the physical operator of lock, which is used for `select ... for update` clause.
@@ -541,6 +550,42 @@ type PhysicalWindow struct {
 	PartitionBy     []property.Item
 	OrderBy         []property.Item
 	Frame           *WindowFrame
+}
+
+// PhysicalShuffle represents a shuffle plan.
+// `Tail` and `DataSource` are the last plan within and the first plan following the "shuffle", respectively,
+//  to build the child executors chain.
+// Take `Window` operator for example:
+//  Shuffle -> Window -> Sort -> DataSource, will be separated into:
+//    ==> Shuffle: for main thread
+//    ==> Window -> Sort(:Tail) -> shuffleWorker: for workers
+//    ==> DataSource: for `fetchDataAndSplit` thread
+type PhysicalShuffle struct {
+	basePhysicalPlan
+
+	Concurrency int
+	Tail        PhysicalPlan
+	DataSource  PhysicalPlan
+
+	SplitterType PartitionSplitterType
+	HashByItems  []expression.Expression
+}
+
+// PartitionSplitterType is the type of `Shuffle` executor splitter, which splits data source into partitions.
+type PartitionSplitterType int
+
+const (
+	// PartitionHashSplitterType is the splitter splits by hash.
+	PartitionHashSplitterType = iota
+)
+
+// PhysicalShuffleDataSourceStub represents a data source stub of `PhysicalShuffle`,
+// and actually, is executed by `executor.shuffleWorker`.
+type PhysicalShuffleDataSourceStub struct {
+	physicalSchemaProducer
+
+	// Worker points to `executor.shuffleWorker`.
+	Worker unsafe.Pointer
 }
 
 // CollectPlanStatsVersion uses to collect the statistics version of the plan.

@@ -181,10 +181,7 @@ func (s *testEvaluatorSuite) TestFloor(c *C) {
 	}
 
 	genTime := func(y, m, d int) types.Time {
-		return types.Time{
-			Time: types.FromDate(y, m, d, 0, 0, 0, 0),
-			Type: mysql.TypeDatetime,
-			Fsp:  types.DefaultFsp}
+		return types.NewTime(types.FromDate(y, m, d, 0, 0, 0, 0), mysql.TypeDatetime, types.DefaultFsp)
 	}
 
 	for _, test := range []struct {
@@ -429,6 +426,8 @@ func (s *testEvaluatorSuite) TestRound(c *C) {
 		{[]interface{}{newDec("1.58"), 1}, newDec("1.6")},
 		{[]interface{}{newDec("23.298"), -1}, newDec("20")},
 		{[]interface{}{nil, 2}, nil},
+		{[]interface{}{1, -2012}, 0},
+		{[]interface{}{1, -201299999999999}, 0},
 	}
 
 	Dtbl := tblToDtbl(tbl)

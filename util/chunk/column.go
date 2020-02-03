@@ -264,7 +264,7 @@ const (
 	sizeFloat64    = int(unsafe.Sizeof(float64(0)))
 	sizeMyDecimal  = int(unsafe.Sizeof(types.MyDecimal{}))
 	sizeGoDuration = int(unsafe.Sizeof(time.Duration(0)))
-	sizeTime       = int(unsafe.Sizeof(types.Time{}))
+	sizeTime       = int(unsafe.Sizeof(types.ZeroTime))
 )
 
 var (

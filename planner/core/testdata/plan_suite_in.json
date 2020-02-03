@@ -120,7 +120,6 @@
       "select * from ((SELECT 1 a,3 b) UNION (SELECT 2,1) ORDER BY (SELECT 2)) t order by a,b",
       "select * from ((SELECT 1 a,6 b) UNION (SELECT 2,5) UNION (SELECT 2, 4) ORDER BY 1) t order by 1, 2",
       "select * from (select *, NULL as xxx from t) t order by xxx",
-      "select lead(a, 1) over (partition by null) as c from t",
       "select * from t use index(f) where f = 1 and a = 1",
       "select * from t2 use index(b) where b = 1 and a = 1"
     ]
@@ -485,12 +484,25 @@
   {
     "name": "TestIndexJoinUnionScan",
     "cases": [
-      // Test Index Join + UnionScan + TableScan.
-      "select /*+ TIDB_INLJ(t2) */ * from t t1, t t2 where t1.a = t2.a",
-      // Test Index Join + UnionScan + DoubleRead.
-      "select /*+ TIDB_INLJ(t1, t2) */ * from t t1, t t2 where t1.a = t2.c",
-      // Test Index Join + UnionScan + IndexScan.
-      "select /*+ TIDB_INLJ(t1, t2) */ t1.a , t2.c from t t1, t t2 where t1.a = t2.c"
+      [
+        "insert into t values(1, 1)",
+        // Test Index Join + UnionScan + TableScan.
+        "explain select /*+ TIDB_INLJ(t2) */ * from t t1, t t2 where t1.a = t2.a"
+      ],
+      [
+        "insert into t values(1, 1)",
+        // Test Index Join + UnionScan + DoubleRead.
+        "explain select /*+ TIDB_INLJ(t2) */ * from t t1, t t2 where t1.a = t2.b"
+      ],
+      [
+        "insert into t values(1, 1)",
+        // Test Index Join + UnionScan + IndexScan.
+        "explain select /*+ TIDB_INLJ(t2) */ t1.a , t2.b from t t1, t t2 where t1.a = t2.b"
+      ],
+      [
+        "insert into tt values(1)",
+        "explain select /*+ TIDB_INLJ(t2) */ * from tt t1, tt t2 where t1.a = t2.a"
+      ]
     ]
   },
   {
@@ -514,6 +526,19 @@
       "select /*+ AGG_TO_COP(), USE_INDEX(t) */ sum(b) from t group by b",
       "select /*+ AGG_TO_COP(), HASH_AGG(), USE_INDEX(t) */ distinct a from t group by a",
       "select /*+ AGG_TO_COP(), HASH_AGG(), HASH_JOIN(t1), USE_INDEX(t1), USE_INDEX(t2) */ sum(t1.a) from t t1, t t2 where t1.a = t2.b group by t1.a"
+    ]
+  },
+  {
+    "name": "TestDAGPlanBuilderWindow",
+    "cases":[
+      "select lead(a, 1) over (partition by null) as c from t"
+    ]
+  },
+  {
+    "name": "TestDAGPlanBuilderWindowParallel",
+    "cases":[
+      "select lead(a, 1) over (partition by null) as c from t",
+      "select lead(a, 1) over (partition by b) as c from t"
     ]
   }
 ]

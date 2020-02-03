@@ -483,19 +483,19 @@ func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *ti
 	//case tipb.ScalarFuncSig_ValuesTime:
 	//	f = &builtinValuesTimeSig{base}
 	case tipb.ScalarFuncSig_InInt:
-		f = &builtinInIntSig{base}
+		f = &builtinInIntSig{baseInSig: baseInSig{baseBuiltinFunc: base}}
 	case tipb.ScalarFuncSig_InReal:
-		f = &builtinInRealSig{base}
+		f = &builtinInRealSig{baseInSig: baseInSig{baseBuiltinFunc: base}}
 	case tipb.ScalarFuncSig_InDecimal:
-		f = &builtinInDecimalSig{base}
+		f = &builtinInDecimalSig{baseInSig: baseInSig{baseBuiltinFunc: base}}
 	case tipb.ScalarFuncSig_InString:
-		f = &builtinInStringSig{base}
+		f = &builtinInStringSig{baseInSig: baseInSig{baseBuiltinFunc: base}}
 	case tipb.ScalarFuncSig_InTime:
-		f = &builtinInTimeSig{base}
+		f = &builtinInTimeSig{baseInSig: baseInSig{baseBuiltinFunc: base}}
 	case tipb.ScalarFuncSig_InDuration:
-		f = &builtinInDurationSig{base}
+		f = &builtinInDurationSig{baseInSig: baseInSig{baseBuiltinFunc: base}}
 	case tipb.ScalarFuncSig_InJson:
-		f = &builtinInJSONSig{base}
+		f = &builtinInJSONSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_IfNullInt:
 		f = &builtinIfNullIntSig{base}
 	case tipb.ScalarFuncSig_IfNullReal:
@@ -1119,8 +1119,8 @@ func convertTime(data []byte, ftPB *tipb.FieldType, tz *time.Location) (*Constan
 		return nil, err
 	}
 	var t types.Time
-	t.Type = ft.Tp
-	t.Fsp = int8(ft.Decimal)
+	t.SetType(ft.Tp)
+	t.SetFsp(int8(ft.Decimal))
 	err = t.FromPackedUint(v)
 	if err != nil {
 		return nil, err

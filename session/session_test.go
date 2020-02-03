@@ -474,9 +474,17 @@ func (s *testSessionSuite) TestAutocommit(c *C) {
 // TestTxnLazyInitialize tests that when autocommit = 0, not all statement starts
 // a new transaction.
 func (s *testSessionSuite) TestTxnLazyInitialize(c *C) {
+	testTxnLazyInitialize(s, c, false)
+	testTxnLazyInitialize(s, c, true)
+}
+
+func testTxnLazyInitialize(s *testSessionSuite, c *C, isPessimistic bool) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (id int)")
+	if isPessimistic {
+		tk.MustExec("set tidb_txn_mode = 'pessimistic'")
+	}
 
 	tk.MustExec("set @@autocommit = 0")
 	txn, err := tk.Se.Txn(true)
@@ -2898,8 +2906,10 @@ func (s *testSessionSuite2) TestGrantViewRelated(c *C) {
 	err = tkUser.ExecToErr("create view v_version29_c as select * from v_version29;")
 	c.Assert(err, NotNil)
 
-	tkRoot.MustExec(`grant create view on v_version29_c to 'u_version29'@'%'`)
+	tkRoot.MustExec("create view v_version29_c as select * from v_version29;")
+	tkRoot.MustExec(`grant create view on v_version29_c to 'u_version29'@'%'`) // Can't grant privilege on a non-exist table/view.
 	tkRoot.MustQuery("select table_priv from mysql.tables_priv where host='%' and db='test' and user='u_version29' and table_name='v_version29_c'").Check(testkit.Rows("Create View"))
+	tkRoot.MustExec("drop view v_version29_c")
 
 	tkRoot.MustExec(`grant select on v_version29 to 'u_version29'@'%'`)
 	tkUser.MustQuery("select current_user();").Check(testkit.Rows("u_version29@%"))

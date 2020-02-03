@@ -80,7 +80,11 @@ func (decoder *DatumMapDecoder) DecodeToDatumMap(rowData []byte, handle int64, r
 	}
 	for _, col := range decoder.columns {
 		if col.ID == decoder.handleColID {
-			row[col.ID] = types.NewIntDatum(handle)
+			if mysql.HasUnsignedFlag(uint(col.Flag)) {
+				row[col.ID] = types.NewUintDatum(uint64(handle))
+			} else {
+				row[col.ID] = types.NewIntDatum(handle)
+			}
 			continue
 		}
 		idx, isNil, notFound := decoder.row.findColID(col.ID)
@@ -136,8 +140,8 @@ func (decoder *DatumMapDecoder) decodeColDatum(col *ColInfo, colData []byte) (ty
 		d.SetMysqlDecimal(dec)
 	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
 		var t types.Time
-		t.Type = uint8(col.Tp)
-		t.Fsp = int8(col.Decimal)
+		t.SetType(uint8(col.Tp))
+		t.SetFsp(int8(col.Decimal))
 		err := t.FromPackedUint(decodeUint(colData))
 		if err != nil {
 			return d, err
@@ -184,11 +188,11 @@ func (decoder *DatumMapDecoder) decodeColDatum(col *ColInfo, colData []byte) (ty
 // ChunkDecoder decodes the row to chunk.Chunk.
 type ChunkDecoder struct {
 	decoder
-	defDatum func(i int) (types.Datum, error)
+	defDatum func(i int, chk *chunk.Chunk) error
 }
 
 // NewChunkDecoder creates a NewChunkDecoder.
-func NewChunkDecoder(columns []ColInfo, handleColID int64, defDatum func(i int) (types.Datum, error), loc *time.Location) *ChunkDecoder {
+func NewChunkDecoder(columns []ColInfo, handleColID int64, defDatum func(i int, chk *chunk.Chunk) error, loc *time.Location) *ChunkDecoder {
 	return &ChunkDecoder{
 		decoder: decoder{
 			columns:     columns,
@@ -232,12 +236,10 @@ func (decoder *ChunkDecoder) DecodeToChunk(rowData []byte, handle int64, chk *ch
 			continue
 		}
 
-		defDatum, err := decoder.defDatum(colIdx)
+		err := decoder.defDatum(colIdx, chk)
 		if err != nil {
 			return err
 		}
-
-		chk.AppendDatum(colIdx, &defDatum)
 	}
 	return nil
 }
@@ -273,8 +275,8 @@ func (decoder *ChunkDecoder) decodeColToChunk(colIdx int, col *ColInfo, colData 
 		chk.AppendMyDecimal(colIdx, dec)
 	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
 		var t types.Time
-		t.Type = uint8(col.Tp)
-		t.Fsp = int8(col.Decimal)
+		t.SetType(uint8(col.Tp))
+		t.SetFsp(int8(col.Decimal))
 		err := t.FromPackedUint(decodeUint(colData))
 		if err != nil {
 			return err

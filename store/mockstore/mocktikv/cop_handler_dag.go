@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	mockpkg "github.com/pingcap/tidb/util/mock"
+	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pingcap/tipb/go-tipb"
 	"google.golang.org/grpc"
@@ -199,6 +200,28 @@ func (h *rpcHandler) buildTableScan(ctx *dagContext, executor *tipb.Executor) (*
 	if startTS == 0 {
 		startTS = ctx.dagReq.GetStartTsFallback()
 	}
+	colInfos := make([]rowcodec.ColInfo, len(columns))
+	for i := range colInfos {
+		col := columns[i]
+		colInfos[i] = rowcodec.ColInfo{
+			ID:         col.ColumnId,
+			Tp:         col.Tp,
+			Flag:       col.Flag,
+			IsPKHandle: col.GetPkHandle(),
+		}
+	}
+	defVal := func(i int) ([]byte, error) {
+		col := columns[i]
+		if col.DefaultVal == nil {
+			return nil, nil
+		}
+		// col.DefaultVal always be  varint `[flag]+[value]`.
+		if len(col.DefaultVal) < 1 {
+			panic("invalid default value")
+		}
+		return col.DefaultVal, nil
+	}
+	rd := rowcodec.NewByteDecoder(colInfos, -1, defVal, nil)
 	e := &tableScanExec{
 		TableScan:      executor.TblScan,
 		kvRanges:       ranges,
@@ -208,7 +231,9 @@ func (h *rpcHandler) buildTableScan(ctx *dagContext, executor *tipb.Executor) (*
 		resolvedLocks:  h.resolvedLocks,
 		mvccStore:      h.mvccStore,
 		execDetail:     new(execDetail),
+		rd:             rd,
 	}
+
 	if ctx.dagReq.CollectRangeCounts != nil && *ctx.dagReq.CollectRangeCounts {
 		e.counts = make([]int64, len(ranges))
 	}
@@ -437,21 +462,32 @@ func flagsToStatementContext(flags uint64) *stmtctx.StatementContext {
 
 // MockGRPCClientStream is exported for testing purpose.
 func MockGRPCClientStream() grpc.ClientStream {
-	return mockClientStream{}
+	return MockClientStream{}
 }
 
-// mockClientStream implements grpc ClientStream interface, its methods are never called.
-type mockClientStream struct{}
+// MockClientStream implements grpc ClientStream interface, its methods are never called.
+type MockClientStream struct{}
 
-func (mockClientStream) Header() (metadata.MD, error) { return nil, nil }
-func (mockClientStream) Trailer() metadata.MD         { return nil }
-func (mockClientStream) CloseSend() error             { return nil }
-func (mockClientStream) Context() context.Context     { return nil }
-func (mockClientStream) SendMsg(m interface{}) error  { return nil }
-func (mockClientStream) RecvMsg(m interface{}) error  { return nil }
+// Header implements grpc.ClientStream interface
+func (MockClientStream) Header() (metadata.MD, error) { return nil, nil }
+
+// Trailer implements grpc.ClientStream interface
+func (MockClientStream) Trailer() metadata.MD { return nil }
+
+// CloseSend implements grpc.ClientStream interface
+func (MockClientStream) CloseSend() error { return nil }
+
+// Context implements grpc.ClientStream interface
+func (MockClientStream) Context() context.Context { return nil }
+
+// SendMsg implements grpc.ClientStream interface
+func (MockClientStream) SendMsg(m interface{}) error { return nil }
+
+// RecvMsg implements grpc.ClientStream interface
+func (MockClientStream) RecvMsg(m interface{}) error { return nil }
 
 type mockCopStreamClient struct {
-	mockClientStream
+	MockClientStream
 
 	req      *tipb.DAGRequest
 	exec     executor
@@ -461,7 +497,7 @@ type mockCopStreamClient struct {
 }
 
 type mockCopStreamErrClient struct {
-	mockClientStream
+	MockClientStream
 
 	*errorpb.Error
 }
