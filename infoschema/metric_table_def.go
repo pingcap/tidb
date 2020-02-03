@@ -819,7 +819,7 @@ var MetricTableMap = map[string]MetricTableDef{
 		Labels:  []string{"instance", "type"},
 		Comment: "The QPS per command in each TiKV instance",
 	},
-	"tikv_grpc_errps": {
+	"tikv_grpc_errors": {
 		PromQL:  `sum(rate(tikv_grpc_msg_fail_total{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (instance,type)`,
 		Labels:  []string{"instance", "type"},
 		Comment: "The total number of the gRPC message failures",
