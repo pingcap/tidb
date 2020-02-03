@@ -133,8 +133,6 @@ github.com/kr/pretty v0.1.0/go.mod h1:dAy3ld7l9f0ibDNOQOHHMYYIIbhfbHSm3C4ZsoJORN
 github.com/kr/pty v1.1.1/go.mod h1:pFQYn66WHrOpPYNljwOMqo10TkYh1fy3cYio2l3bCsQ=
 github.com/kr/text v0.1.0 h1:45sCR5RtlFHMR4UwH9sdQ5TC8v0qDQCHnXt+kaKSTVE=
 github.com/kr/text v0.1.0/go.mod h1:4Jbv+DJW3UT/LiOwJeYQe1efqtUx/iVham/4vfdArNI=
-github.com/lzmhhh123/parser v0.0.0-20200117111645-b2fe116a4dc9 h1:mMHqv+uEAbVFwcLNCoDv6hUEyyaUdcFFCHWRqZY19Hg=
-github.com/lzmhhh123/parser v0.0.0-20200117111645-b2fe116a4dc9/go.mod h1:jAJeG3IoqLLgSO5YR1JwSt9rI4oTuWjj6hp1Id4d1wQ=
 github.com/mattn/go-colorable v0.0.9/go.mod h1:9vuHe8Xs5qXnSaW/c/ABM9alt+Vo+STaOChaDxuIBZU=
 github.com/mattn/go-isatty v0.0.4/go.mod h1:M+lRXTBqGeGNdLjl/ufCoiOlB5xdOkqRJdNxMWT7Zi4=
 github.com/mattn/go-runewidth v0.0.2/go.mod h1:LwmH8dsx7+W8Uxz3IHJYH5QSwggIsqBzpuz5H//U1FU=
@@ -178,14 +176,10 @@ github.com/pingcap/failpoint v0.0.0-20190512135322-30cc7431d99c/go.mod h1:DNS3Qg
 github.com/pingcap/goleveldb v0.0.0-20171020122428-b9ff6c35079e h1:P73/4dPCL96rGrobssy1nVy2VaVpNCuLpCbr+FEaTA8=
 github.com/pingcap/goleveldb v0.0.0-20171020122428-b9ff6c35079e/go.mod h1:O17XtbryoCJhkKGbT62+L2OlrniwqiGLSqrmdHCMzZw=
 github.com/pingcap/kvproto v0.0.0-20191018025622-fbf07f9804da/go.mod h1:WWLmULLO7l8IOcQG+t+ItJ3fEcrL5FxF0Wu+HrMy26w=
-github.com/pingcap/kvproto v0.0.0-20191113105027-4f292e1801d8 h1:P9jGgwVkLHlbEGtgGKrY0k/yy6N8L8Gdj8dliFswllU=
-github.com/pingcap/kvproto v0.0.0-20191113105027-4f292e1801d8/go.mod h1:WWLmULLO7l8IOcQG+t+ItJ3fEcrL5FxF0Wu+HrMy26w=
 github.com/pingcap/kvproto v0.0.0-20200203032054-192463ee1dbb h1:RPG3TNVZw3Xn0tgXzYxDBoHzpFxgH+fgfLH8qfXxwy8=
 github.com/pingcap/kvproto v0.0.0-20200203032054-192463ee1dbb/go.mod h1:WWLmULLO7l8IOcQG+t+ItJ3fEcrL5FxF0Wu+HrMy26w=
 github.com/pingcap/log v0.0.0-20190715063458-479153f07ebd h1:hWDol43WY5PGhsh3+8794bFHY1bPrmu6bTalpssCrGg=
 github.com/pingcap/log v0.0.0-20190715063458-479153f07ebd/go.mod h1:WpHUKhNZ18v116SvGrmjkA9CBhYmuUTKL+p8JC9ANEw=
-github.com/pingcap/parser v0.0.0-20200107110252-aba886048346 h1:9+R3klIA/8uOMzVKsHgkoQv3Zng2O8Mk7yuSVYxijkg=
-github.com/pingcap/parser v0.0.0-20200107110252-aba886048346/go.mod h1:1FNvfp9+J0wvc4kl8eGNh7Rqrxveg15jJoWo/a0uHwA=
 github.com/pingcap/parser v0.0.0-20200120071915-21406be5517f h1:t9EmvIlBNAqxbS1xvJ2eF3xAxEFgDNUEd2R+K4DZJDQ=
 github.com/pingcap/parser v0.0.0-20200120071915-21406be5517f/go.mod h1:1FNvfp9+J0wvc4kl8eGNh7Rqrxveg15jJoWo/a0uHwA=
 github.com/pingcap/pd v1.1.0-beta.0.20191231051840-d1d917558629 h1:15Rc+aOCosYjquaOI/KoRMNJTz+UEpWFLzrG0XIETRE=
