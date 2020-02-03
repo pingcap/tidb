@@ -405,6 +405,9 @@ func addHint(ctx sessionctx.Context, stmtNode ast.StmtNode) ast.StmtNode {
 func addHintForSelect(hash, normdOrigSQL string, ctx sessionctx.Context, stmt ast.StmtNode) ast.StmtNode {
 	sessionHandle := ctx.Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
 	bindRecord := sessionHandle.GetBindRecord(normdOrigSQL, ctx.GetSessionVars().CurrentDB)
+	if bindRecord == nil {
+		bindRecord = sessionHandle.GetBindRecord(normdOrigSQL, "")
+	}
 	if bindRecord != nil {
 		if bindRecord.Status == bindinfo.Using {
 			metrics.BindUsageCounter.WithLabelValues(metrics.ScopeSession).Inc()
