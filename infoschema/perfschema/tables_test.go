@@ -14,6 +14,7 @@
 package perfschema_test
 
 import (
+	"fmt"
 	"testing"
 
 	. "github.com/pingcap/check"
