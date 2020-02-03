@@ -81,12 +81,14 @@ const (
 
 // ColumnInfo provides meta data describing of a table column.
 type ColumnInfo struct {
-	ID                  int64               `json:"id"`
-	Name                CIStr               `json:"name"`
-	Offset              int                 `json:"offset"`
-	OriginDefaultValue  interface{}         `json:"origin_default"`
-	DefaultValue        interface{}         `json:"default"`
-	DefaultValueBit     []byte              `json:"default_bit"`
+	ID                 int64       `json:"id"`
+	Name               CIStr       `json:"name"`
+	Offset             int         `json:"offset"`
+	OriginDefaultValue interface{} `json:"origin_default"`
+	DefaultValue       interface{} `json:"default"`
+	DefaultValueBit    []byte      `json:"default_bit"`
+	// DefaultIsExpr is indicates the default value string is expr.
+	DefaultIsExpr       bool                `json:"default_is_expr"`
 	GeneratedExprString string              `json:"generated_expr_string"`
 	GeneratedStored     bool                `json:"generated_stored"`
 	Dependences         map[string]struct{} `json:"dependences"`
