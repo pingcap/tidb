@@ -18,7 +18,6 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
@@ -95,12 +94,6 @@ func (p *PhysicalTableScan) ToPB(ctx sessionctx.Context) (*tipb.Executor, error)
 		TableId: p.Table.ID,
 		Columns: model.ColumnsToProto(p.Columns, p.Table.PKIsHandle),
 		Desc:    p.Desc,
-	}
-	if p.StoreType == kv.TiDB && ctx.GetSessionVars().User != nil {
-		tsExec.User = &tipb.UserIdentity{
-			UserName: ctx.GetSessionVars().User.Username,
-			UserHost: ctx.GetSessionVars().User.Hostname,
-		}
 	}
 	err := SetPBColumnsDefaultValue(ctx, tsExec.Columns, p.Columns)
 	return &tipb.Executor{Tp: tipb.ExecType_TypeTableScan, TblScan: tsExec}, err
