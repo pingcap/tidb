@@ -99,17 +99,17 @@ func (s *BufferStore) IterReverse(k Key) (Iterator, error) {
 }
 
 // WalkBuffer iterates all buffered kv pairs.
-func (s *BufferStore) WalkBuffer(f func(k Key, v []byte) error) error {
+func (s *BufferStore) WalkBuffer(f func(k Key, v, extras []byte) error) error {
 	return WalkMemBuffer(s.MemBuffer, f)
 }
 
-// SaveTo saves all buffered kv pairs into a Mutator.
-func (s *BufferStore) SaveTo(m Mutator) error {
-	err := s.WalkBuffer(func(k Key, v []byte) error {
+// SaveTo saves all buffered kv pairs into a MemBuffer.
+func (s *BufferStore) SaveTo(m MemBuffer) error {
+	err := s.WalkBuffer(func(k Key, v, extras []byte) error {
 		if len(v) == 0 {
 			return m.Delete(k)
 		}
-		return m.Set(k, v)
+		return m.SetWithExtras(k, v, extras)
 	})
 	return err
 }

@@ -513,11 +513,16 @@ func (s *session) CommitTxn(ctx context.Context) error {
 		s.sessionVars.StmtCtx.MergeExecDetails(nil, commitDetail)
 	}
 
-	failpoint.Inject("keepHistory", func(val failpoint.Value) {
-		if val.(bool) {
-			failpoint.Return(err)
+	// Rewrite the error message of WriteConflict by adding the statement causing the conflict.
+	if kv.ErrWriteConflict.Equal(err) {
+		idx := s.txn.ConflictStmtIdx()
+		cause := "unknown"
+		if idx > 0 {
+			cause = GetHistory(s).history[idx-1].st.OriginText()
 		}
-	})
+		args := errors.Cause(err).(*terror.Error).Args()
+		args[len(args)-1] = fmt.Sprintf("%v, conflict cause: %s", args[len(args)-1], cause)
+	}
 
 	s.sessionVars.TxnCtx.Cleanup()
 	return err
@@ -670,7 +675,7 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 			// We do not need to pass memTracker here, because that retry
 			// happened after commit, the memory usage was calculated during the
 			// first execution.
-			err = s.StmtCommit(nil)
+			err = s.StmtCommit(nil, 0)
 			if err != nil {
 				return err
 			}

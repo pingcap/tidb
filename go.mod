@@ -77,3 +77,5 @@ require (
 )
 
 go 1.13
+
+replace github.com/pingcap/parser => github.com/sticnarf/parser v0.0.0-20200205025652-dcd44c927f04

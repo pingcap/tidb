@@ -78,7 +78,9 @@ type Context interface {
 	HasDirtyContent(tid int64) bool
 
 	// StmtCommit flush all changes by the statement to the underlying transaction.
-	StmtCommit(tracker *memory.Tracker) error
+	// historyIdx is the index of this statement in the statement history. Due to historical reasons,
+	// historyIdx is counted from 1 so as to be error tolerant and 0 means history is unavailable.
+	StmtCommit(tracker *memory.Tracker, historyIdx int) error
 	// StmtRollback provides statement level rollback.
 	StmtRollback()
 	// StmtGetMutation gets the binlog mutation for current statement.

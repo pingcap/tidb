@@ -17,6 +17,7 @@ package kv
 
 import (
 	"context"
+	"encoding/binary"
 	"fmt"
 	"math/rand"
 	"testing"
@@ -51,10 +52,16 @@ func (s *testKVSuite) ResetMembuffers() {
 	s.bs[0] = NewMemDbBuffer(DefaultTxnMembufCap)
 }
 
-func insertData(c *C, buffer MemBuffer) {
+func insertData(c *C, buffer MemBuffer, withExtras bool) {
 	for i := startIndex; i < testCount; i++ {
-		val := encodeInt(i * indexStep)
-		err := buffer.Set(val, val)
+		intVal := i * indexStep
+		val := encodeInt(intVal)
+		var err error
+		if withExtras {
+			err = buffer.SetWithExtras(val, val, encodeExtras(intVal))
+		} else {
+			err = buffer.Set(val, val)
+		}
 		c.Assert(err, IsNil)
 	}
 }
@@ -67,6 +74,12 @@ func decodeInt(s []byte) int {
 	var n int
 	fmt.Sscanf(string(s), "%010d", &n)
 	return n
+}
+
+func encodeExtras(n int) []byte {
+	bs := make([]byte, 8)
+	binary.LittleEndian.PutUint64(bs, uint64(n))
+	return bs
 }
 
 func valToStr(c *C, iter Iterator) string {
@@ -119,33 +132,49 @@ func checkNewIterator(c *C, buffer MemBuffer) {
 	iter.Close()
 }
 
-func mustGet(c *C, buffer MemBuffer) {
+func mustGet(c *C, buffer MemBuffer, withExtras bool) {
 	for i := startIndex; i < testCount; i++ {
-		s := encodeInt(i * indexStep)
+		intVal := i * indexStep
+		s := encodeInt(intVal)
 		val, err := buffer.Get(context.TODO(), s)
 		c.Assert(err, IsNil)
 		c.Assert(string(val), Equals, string(s))
+		if withExtras {
+			extras, err := buffer.GetExtras(s)
+			c.Assert(err, IsNil)
+			c.Assert(string(encodeExtras(intVal)), Equals, string(extras))
+		}
 	}
 }
 
 func (s *testKVSuite) TestGetSet(c *C) {
 	defer testleak.AfterTest(c)()
+	s.testGetSet(c, false)
+	s.testGetSet(c, true)
+}
+
+func (s *testKVSuite) testGetSet(c *C, withExtras bool) {
 	for _, buffer := range s.bs {
-		insertData(c, buffer)
-		mustGet(c, buffer)
+		insertData(c, buffer, withExtras)
+		mustGet(c, buffer, withExtras)
 	}
 	s.ResetMembuffers()
 }
 
 func (s *testKVSuite) TestNewIterator(c *C) {
 	defer testleak.AfterTest(c)()
+	s.testNewIterator(c, false)
+	s.testNewIterator(c, true)
+}
+
+func (s *testKVSuite) testNewIterator(c *C, withExtras bool) {
 	for _, buffer := range s.bs {
 		// should be invalid
 		iter, err := buffer.Iter(nil, nil)
 		c.Assert(err, IsNil)
 		c.Assert(iter.Valid(), IsFalse)
 
-		insertData(c, buffer)
+		insertData(c, buffer, withExtras)
 		checkNewIterator(c, buffer)
 	}
 	s.ResetMembuffers()
@@ -153,8 +182,13 @@ func (s *testKVSuite) TestNewIterator(c *C) {
 
 func (s *testKVSuite) TestIterNextUntil(c *C) {
 	defer testleak.AfterTest(c)()
+	s.testNewIterator(c, false)
+	s.testNewIterator(c, true)
+}
+
+func (s *testKVSuite) testIterNextUntil(c *C, withExtras bool) {
 	buffer := NewMemDbBuffer(DefaultTxnMembufCap)
-	insertData(c, buffer)
+	insertData(c, buffer, withExtras)
 
 	iter, err := buffer.Iter(nil, nil)
 	c.Assert(err, IsNil)

@@ -535,7 +535,7 @@ func checkCases(tests []testCase, ld *executor.LoadDataInfo,
 		}
 		ld.SetMessage()
 		tk.CheckLastMessage(tt.expectedMsg)
-		err := ctx.StmtCommit(nil)
+		err := ctx.StmtCommit(nil, 0)
 		c.Assert(err, IsNil)
 		txn, err := ctx.Txn(true)
 		c.Assert(err, IsNil)

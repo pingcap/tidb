@@ -155,6 +155,14 @@ type MemBuffer interface {
 	// SetCap sets the MemBuffer capability, to reduce memory allocations.
 	// Please call it before you use the MemBuffer, otherwise it will not works.
 	SetCap(cap int)
+	// SetWithExtras sets the value for key k as v but also stores extra bytes associated with the key.
+	// Note that v cannot be nil or empty, otherwise it returns ErrCannotSetNilValue.
+	SetWithExtras(k Key, v, extras []byte) error
+	// DeleteWithExtras sets the value for k to empty but also stores extra bytes associated with the key.
+	DeleteWithExtras(k Key, extras []byte) error
+	// GetExtras gets the extra bytes associated with the key.
+	// If the corresponding entry does not exist, it returns (nil, ErrNotExist).
+	GetExtras(k Key) ([]byte, error)
 }
 
 // Transaction defines the interface for operations inside a Transaction.
@@ -190,6 +198,9 @@ type Transaction interface {
 	// If a key doesn't exist, there shouldn't be any corresponding entry in the result map.
 	BatchGet(ctx context.Context, keys []Key) (map[string][]byte, error)
 	IsPessimistic() bool
+	// ConflictStmtIdx returns the statement index which causes a write conflict error, counting from 1.
+	// If no write conflict occurs, ConflictStmtIdx returns 0.
+	ConflictStmtIdx() int
 }
 
 // LockCtx contains information for LockKeys method.

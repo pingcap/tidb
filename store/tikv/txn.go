@@ -44,18 +44,19 @@ var (
 
 // tikvTxn implements kv.Transaction.
 type tikvTxn struct {
-	snapshot  *tikvSnapshot
-	us        kv.UnionStore
-	store     *tikvStore // for connection to region.
-	startTS   uint64
-	startTime time.Time // Monotonic timestamp for recording txn time consuming.
-	commitTS  uint64
-	lockKeys  [][]byte
-	lockedMap map[string]struct{}
-	mu        sync.Mutex // For thread-safe LockKeys function.
-	setCnt    int64
-	vars      *kv.Variables
-	committer *twoPhaseCommitter
+	snapshot        *tikvSnapshot
+	us              kv.UnionStore
+	store           *tikvStore // for connection to region.
+	startTS         uint64
+	startTime       time.Time // Monotonic timestamp for recording txn time consuming.
+	commitTS        uint64
+	lockKeys        [][]byte
+	lockedMap       map[string]struct{}
+	mu              sync.Mutex // For thread-safe LockKeys function.
+	setCnt          int64
+	vars            *kv.Variables
+	committer       *twoPhaseCommitter
+	conflictStmtIdx int
 
 	// For data consistency check.
 	// assertions[:confirmed] is the assertion of current transaction.
@@ -130,6 +131,19 @@ func (txn *tikvTxn) Get(ctx context.Context, k kv.Key) ([]byte, error) {
 	return ret, nil
 }
 
+// Get implements transaction interface.
+func (txn *tikvTxn) GetExtras(k kv.Key) ([]byte, error) {
+	ret, err := txn.us.GetExtras(k)
+	if kv.IsErrNotFound(err) {
+		return nil, err
+	}
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	return ret, nil
+}
+
 func (txn *tikvTxn) BatchGet(ctx context.Context, keys []kv.Key) (map[string][]byte, error) {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("tikvTxn.BatchGet", opentracing.ChildOf(span.Context()))
@@ -175,6 +189,13 @@ func (txn *tikvTxn) Set(k kv.Key, v []byte) error {
 	return txn.us.Set(k, v)
 }
 
+func (txn *tikvTxn) SetWithExtras(k kv.Key, v, extras []byte) error {
+	txn.setCnt++
+
+	txn.dirty = true
+	return txn.us.SetWithExtras(k, v, extras)
+}
+
 func (txn *tikvTxn) String() string {
 	return fmt.Sprintf("%d", txn.StartTS())
 }
@@ -191,6 +212,11 @@ func (txn *tikvTxn) IterReverse(k kv.Key) (kv.Iterator, error) {
 func (txn *tikvTxn) Delete(k kv.Key) error {
 	txn.dirty = true
 	return txn.us.Delete(k)
+}
+
+func (txn *tikvTxn) DeleteWithExtras(k kv.Key, extras []byte) error {
+	txn.dirty = true
+	return txn.us.DeleteWithExtras(k, extras)
 }
 
 func (txn *tikvTxn) SetOption(opt kv.Option, val interface{}) {
@@ -485,4 +511,8 @@ func (txn *tikvTxn) Size() int {
 
 func (txn *tikvTxn) GetMemBuffer() kv.MemBuffer {
 	return txn.us.GetMemBuffer()
+}
+
+func (txn *tikvTxn) ConflictStmtIdx() int {
+	return txn.conflictStmtIdx
 }

@@ -24,6 +24,11 @@ import (
 	"github.com/pingcap/tidb/kv/memdb"
 )
 
+// MemBufferExtrasSize is the number of extra bytes associated with the key.
+// Currently the value is 8. The space is used to store the statement index
+// modifying the kv pair.
+const MemBufferExtrasSize int = 8
+
 // memDbBuffer implements the MemBuffer interface.
 type memDbBuffer struct {
 	db              *memdb.DB
@@ -50,6 +55,10 @@ func NewMemDbBuffer(initBlockSize int) MemBuffer {
 
 // Iter creates an Iterator.
 func (m *memDbBuffer) Iter(k Key, upperBound Key) (Iterator, error) {
+	return m.iter(k, upperBound)
+}
+
+func (m *memDbBuffer) iter(k Key, upperBound Key) (*memDbIter, error) {
 	i := &memDbIter{
 		iter:    m.db.NewIterator(),
 		start:   k,
@@ -89,11 +98,30 @@ func (m *memDbBuffer) Get(ctx context.Context, k Key) ([]byte, error) {
 	if v == nil {
 		return nil, ErrNotExist
 	}
-	return v, nil
+	value, _ := splitValueAndExtras(v)
+	return value, nil
+}
+
+func (m *memDbBuffer) GetExtras(k Key) ([]byte, error) {
+	v := m.db.Get(k)
+	if v == nil {
+		return nil, ErrNotExist
+	}
+	_, extras := splitValueAndExtras(v)
+	return extras, nil
 }
 
 // Set associates key with value.
 func (m *memDbBuffer) Set(k Key, v []byte) error {
+	var emptyExtras [MemBufferExtrasSize]byte
+	return m.SetWithExtras(k, v, emptyExtras[:])
+}
+
+// Set associates key with value.
+func (m *memDbBuffer) SetWithExtras(k Key, v, extras []byte) error {
+	if MemBufferExtrasSize != len(extras) {
+		panic("unexpected extras size")
+	}
 	if len(v) == 0 {
 		return errors.Trace(ErrCannotSetNilValue)
 	}
@@ -101,7 +129,7 @@ func (m *memDbBuffer) Set(k Key, v []byte) error {
 		return ErrEntryTooLarge.GenWithStackByArgs(m.entrySizeLimit, len(k)+len(v))
 	}
 
-	m.db.Put(k, v)
+	m.db.Put(k, append(v, extras...))
 	if m.Size() > int(m.bufferSizeLimit) {
 		return ErrTxnTooLarge.GenWithStackByArgs(m.Size())
 	}
@@ -110,13 +138,20 @@ func (m *memDbBuffer) Set(k Key, v []byte) error {
 
 // Delete removes the entry from buffer with provided key.
 func (m *memDbBuffer) Delete(k Key) error {
-	m.db.Put(k, nil)
+	var emptyExtras [MemBufferExtrasSize]byte
+	m.db.Put(k, emptyExtras[:])
+	return nil
+}
+
+// DeleteWithExtras removes the entry from buffer with provided key.
+func (m *memDbBuffer) DeleteWithExtras(k Key, extras []byte) error {
+	m.db.Put(k, extras)
 	return nil
 }
 
 // Size returns sum of keys and values length.
 func (m *memDbBuffer) Size() int {
-	return m.db.Size()
+	return m.db.Size() - m.Len()*MemBufferExtrasSize
 }
 
 // Len returns the number of entries in the DB.
@@ -154,7 +189,9 @@ func (i *memDbIter) Key() Key {
 
 // Value implements the Iterator Value.
 func (i *memDbIter) Value() []byte {
-	return i.iter.Value()
+	v := i.iter.Value()
+	value, _ := splitValueAndExtras(v)
+	return value
 }
 
 // Close Implements the Iterator Close.
@@ -163,15 +200,19 @@ func (i *memDbIter) Close() {
 }
 
 // WalkMemBuffer iterates all buffered kv pairs in memBuf
-func WalkMemBuffer(memBuf MemBuffer, f func(k Key, v []byte) error) error {
+func WalkMemBuffer(memBuf MemBuffer, f func(k Key, v, extras []byte) error) error {
 	iter, err := memBuf.Iter(nil, nil)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
 	defer iter.Close()
+	// we can ignore ok because when iter is not memDbIter, it must be invalid
+	dbIter, _ := iter.(*memDbIter)
 	for iter.Valid() {
-		if err = f(iter.Key(), iter.Value()); err != nil {
+		v := dbIter.iter.Value()
+		value, extras := splitValueAndExtras(v)
+		if err = f(iter.Key(), value, extras); err != nil {
 			return errors.Trace(err)
 		}
 		err = iter.Next()
@@ -181,4 +222,12 @@ func WalkMemBuffer(memBuf MemBuffer, f func(k Key, v []byte) error) error {
 	}
 
 	return nil
+}
+
+func splitValueAndExtras(rawValue []byte) ( /* value */ []byte /* extras */, []byte) {
+	if len(rawValue) == 0 {
+		return rawValue, nil
+	}
+	realLen := len(rawValue) - MemBufferExtrasSize
+	return rawValue[:realLen], rawValue[realLen:]
 }

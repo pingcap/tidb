@@ -66,6 +66,10 @@ func (t *mockTxn) Get(ctx context.Context, k Key) ([]byte, error) {
 	return nil, nil
 }
 
+func (t *mockTxn) GetExtras(k Key) ([]byte, error) {
+	return nil, nil
+}
+
 func (t *mockTxn) BatchGet(ctx context.Context, keys []Key) (map[string][]byte, error) {
 	return nil, nil
 }
@@ -81,7 +85,16 @@ func (t *mockTxn) IterReverse(k Key) (Iterator, error) {
 func (t *mockTxn) Set(k Key, v []byte) error {
 	return nil
 }
+
+func (t *mockTxn) SetWithExtras(k Key, v, extras []byte) error {
+	return nil
+}
+
 func (t *mockTxn) Delete(k Key) error {
+	return nil
+}
+
+func (t *mockTxn) DeleteWithExtras(k Key, extras []byte) error {
 	return nil
 }
 
@@ -131,6 +144,10 @@ func (s *mockStorage) Begin() (Transaction, error) {
 
 func (*mockTxn) IsPessimistic() bool {
 	return false
+}
+
+func (*mockTxn) ConflictStmtIdx() int {
+	return 0
 }
 
 // BeginWithStartTS begins a transaction with startTS.
@@ -198,6 +215,10 @@ type mockSnapshot struct {
 
 func (s *mockSnapshot) Get(ctx context.Context, k Key) ([]byte, error) {
 	return s.store.Get(ctx, k)
+}
+
+func (s *mockSnapshot) GetExtras(k Key) ([]byte, error) {
+	return s.store.GetExtras(k)
 }
 
 func (s *mockSnapshot) SetPriority(priority int) {

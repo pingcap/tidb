@@ -233,7 +233,7 @@ func (s *Scanner) getData(bo *Backoffer) error {
 		// Check if kvPair contains error, it should be a Lock.
 		for _, pair := range kvPairs {
 			if keyErr := pair.GetError(); keyErr != nil {
-				lock, err := extractLockFromKeyErr(keyErr)
+				lock, err := extractLockFromKeyErr(keyErr, nil)
 				if err != nil {
 					return errors.Trace(err)
 				}

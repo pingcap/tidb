@@ -414,7 +414,7 @@ func (s *testLockSuite) mustGetLock(c *C, key []byte) *Lock {
 	c.Assert(resp.Resp, NotNil)
 	keyErr := resp.Resp.(*kvrpcpb.GetResponse).GetError()
 	c.Assert(keyErr, NotNil)
-	lock, err := extractLockFromKeyErr(keyErr)
+	lock, err := extractLockFromKeyErr(keyErr, nil)
 	c.Assert(err, IsNil)
 	return lock
 }

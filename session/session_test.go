@@ -1679,12 +1679,12 @@ func (s *testSessionSuite2) TestUnique(c *C) {
 	c.Assert(err, NotNil)
 	// Check error type and error message
 	c.Assert(terror.ErrorEqual(err, kv.ErrKeyExists), IsTrue, Commentf("err %v", err))
-	c.Assert(err.Error(), Equals, "previous statement: insert into test(id, val) values(1, 1);: [kv:1062]Duplicate entry '1' for key 'PRIMARY'")
+	c.Assert(err.Error(), Equals, "[kv:1062]Duplicate entry '1' for key 'PRIMARY'")
 
 	_, err = tk1.Exec("commit")
 	c.Assert(err, NotNil)
 	c.Assert(terror.ErrorEqual(err, kv.ErrKeyExists), IsTrue, Commentf("err %v", err))
-	c.Assert(err.Error(), Equals, "previous statement: insert into test(id, val) values(2, 2);: [kv:1062]Duplicate entry '2' for key 'val'")
+	c.Assert(err.Error(), Equals, "[kv:1062]Duplicate entry '2' for key 'val'")
 
 	// Test for https://github.com/pingcap/tidb/issues/463
 	tk.MustExec("drop table test;")
@@ -2664,7 +2664,8 @@ func (s *testSchemaSuite) TestDisableTxnAutoRetry(c *C) {
 	tk1.Se.GetSessionVars().InRestrictedSQL = false
 	config.GetGlobalConfig().TxnLocalLatches.Enabled = false
 	tk1.MustExec("begin")
-	tk1.MustExec("update no_retry set id = 9")
+	conflictSQL := "update no_retry set id = 9"
+	tk1.MustExec(conflictSQL)
 
 	tk2.MustExec("update no_retry set id = 8")
 
@@ -2672,6 +2673,7 @@ func (s *testSchemaSuite) TestDisableTxnAutoRetry(c *C) {
 	c.Assert(err, NotNil)
 	c.Assert(kv.ErrWriteConflict.Equal(err), IsTrue, Commentf("error: %s", err))
 	c.Assert(strings.Contains(err.Error(), kv.TxnRetryableMark), IsTrue, Commentf("error: %s", err))
+	c.Assert(strings.Contains(err.Error(), conflictSQL), IsTrue, Commentf("error: %s", err))
 	tk1.MustExec("rollback")
 
 	config.GetGlobalConfig().TxnLocalLatches.Enabled = true
@@ -2688,11 +2690,13 @@ func (s *testSchemaSuite) TestDisableTxnAutoRetry(c *C) {
 	tk1.MustExec("set autocommit = 0")
 	tk1.MustQuery("select * from no_retry").Check(testkit.Rows("8"))
 	tk2.MustExec("update no_retry set id = 11")
-	tk1.MustExec("update no_retry set id = 12")
+	conflictSQL = "update no_retry set id = 12"
+	tk1.MustExec(conflictSQL)
 	_, err = tk1.Se.Execute(context.Background(), "set autocommit = 1")
 	c.Assert(err, NotNil)
 	c.Assert(kv.ErrWriteConflict.Equal(err), IsTrue, Commentf("error: %s", err))
 	c.Assert(strings.Contains(err.Error(), kv.TxnRetryableMark), IsTrue, Commentf("error: %s", err))
+	c.Assert(strings.Contains(err.Error(), conflictSQL), IsTrue, Commentf("error: %s", err))
 	tk1.MustExec("rollback")
 	tk2.MustQuery("select * from no_retry").Check(testkit.Rows("11"))
 

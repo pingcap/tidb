@@ -16,6 +16,7 @@ package tikv
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -239,7 +240,7 @@ func (s *tikvSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, coll
 				collectF(pair.GetKey(), pair.GetValue())
 				continue
 			}
-			lock, err := extractLockFromKeyErr(keyErr)
+			lock, err := extractLockFromKeyErr(keyErr, nil)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -343,7 +344,7 @@ func (s *tikvSnapshot) get(bo *Backoffer, k kv.Key) ([]byte, error) {
 		cmdGetResp := resp.Resp.(*pb.GetResponse)
 		val := cmdGetResp.GetValue()
 		if keyErr := cmdGetResp.GetError(); keyErr != nil {
-			lock, err := extractLockFromKeyErr(keyErr)
+			lock, err := extractLockFromKeyErr(keyErr, nil)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -394,14 +395,14 @@ func (s *tikvSnapshot) DelOption(opt kv.Option) {
 	}
 }
 
-func extractLockFromKeyErr(keyErr *pb.KeyError) (*Lock, error) {
+func extractLockFromKeyErr(keyErr *pb.KeyError, txn *tikvTxn) (*Lock, error) {
 	if locked := keyErr.GetLocked(); locked != nil {
 		return NewLock(locked), nil
 	}
-	return nil, extractKeyErr(keyErr)
+	return nil, extractKeyErr(keyErr, txn)
 }
 
-func extractKeyErr(keyErr *pb.KeyError) error {
+func extractKeyErr(keyErr *pb.KeyError, txn *tikvTxn) error {
 	failpoint.Inject("ErrMockRetryableOnly", func(val failpoint.Value) {
 		if val.(bool) {
 			keyErr.Conflict = nil
@@ -410,6 +411,11 @@ func extractKeyErr(keyErr *pb.KeyError) error {
 	})
 
 	if keyErr.Conflict != nil {
+		if txn != nil {
+			if extras, err := txn.us.GetExtras(keyErr.Conflict.Key); err == nil {
+				txn.conflictStmtIdx = int(binary.LittleEndian.Uint64(extras))
+			}
+		}
 		return newWriteConflictError(keyErr.Conflict)
 	}
 	if keyErr.Retryable != "" {

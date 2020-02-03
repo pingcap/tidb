@@ -456,7 +456,7 @@ func insertRowsFromSelect(ctx context.Context, base insertCommon) error {
 
 func (e *InsertValues) doBatchInsert(ctx context.Context) error {
 	sessVars := e.ctx.GetSessionVars()
-	if err := e.ctx.StmtCommit(e.memTracker); err != nil {
+	if err := e.ctx.StmtCommit(e.memTracker, 0); err != nil {
 		return err
 	}
 	if err := e.ctx.NewTxn(ctx); err != nil {

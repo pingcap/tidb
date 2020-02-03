@@ -95,7 +95,7 @@ func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
 		e.memTracker.Consume(memUsageOfChk)
 		for chunkRow := iter.Begin(); chunkRow != iter.End(); chunkRow = iter.Next() {
 			if batchDelete && rowCount >= batchDMLSize {
-				if err = e.ctx.StmtCommit(e.memTracker); err != nil {
+				if err = e.ctx.StmtCommit(e.memTracker, 0); err != nil {
 					return err
 				}
 				if err = e.ctx.NewTxn(ctx); err != nil {

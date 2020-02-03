@@ -16,7 +16,7 @@ package kv
 import (
 	"bytes"
 	"context"
-	"fmt"
+	"encoding/binary"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/terror"
@@ -42,24 +42,25 @@ func (s testBufferStoreSuite) TestGetSet(c *C) {
 
 func (s testBufferStoreSuite) TestSaveTo(c *C) {
 	bs := NewBufferStore(&mockSnapshot{NewMemDbBuffer(DefaultTxnMembufCap)}, DefaultTxnMembufCap)
-	var buf bytes.Buffer
+	var buf [MemBufferExtrasSize]byte
 	for i := 0; i < 10; i++ {
-		fmt.Fprint(&buf, i)
-		err := bs.Set(buf.Bytes(), buf.Bytes())
+		binary.LittleEndian.PutUint64(buf[:], uint64(i))
+		err := bs.SetWithExtras(buf[:], buf[:], buf[:])
 		c.Check(err, IsNil)
-		buf.Reset()
 	}
-	err := bs.Set(Key("novalue"), []byte("novalue"))
-	c.Check(err, IsNil)
 
 	mutator := NewMemDbBuffer(DefaultTxnMembufCap)
-	err = bs.SaveTo(mutator)
+	err := bs.SaveTo(mutator)
 	c.Check(err, IsNil)
 
 	iter, err := mutator.Iter(nil, nil)
 	c.Check(err, IsNil)
 	for iter.Valid() {
 		cmp := bytes.Compare(iter.Key(), iter.Value())
+		c.Check(cmp, Equals, 0)
+		extras, err := mutator.GetExtras(iter.Key())
+		c.Check(err, IsNil)
+		cmp = bytes.Compare(extras[:], iter.Value())
 		c.Check(cmp, Equals, 0)
 		err = iter.Next()
 		c.Check(err, IsNil)

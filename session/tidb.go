@@ -210,13 +210,7 @@ func finishStmt(ctx context.Context, sctx sessionctx.Context, se *session, sessV
 	}
 
 	if !sessVars.InTxn() {
-		if err := se.CommitTxn(ctx); err != nil {
-			if _, ok := sql.(*executor.ExecStmt).StmtNode.(*ast.CommitStmt); ok {
-				err = errors.Annotatef(err, "previous statement: %s", se.GetSessionVars().PrevStmt)
-			}
-			return err
-		}
-		return nil
+		return se.CommitTxn(ctx)
 	}
 
 	return checkStmtLimit(ctx, sctx, se)
@@ -275,9 +269,13 @@ func runStmt(ctx context.Context, sctx sessionctx.Context, s sqlexec.Statement) 
 	rs, err = s.Exec(ctx)
 	sessVars.TxnCtx.StatementCount++
 	if !s.IsReadOnly(sessVars) {
+		// The index of this statement in history, counting from 1
+		var stmtIdx int
 		// All the history should be added here.
-		if err == nil && sessVars.TxnCtx.CouldRetry {
-			GetHistory(sctx).Add(s, sessVars.StmtCtx)
+		if err == nil && !sessVars.TxnCtx.IsPessimistic {
+			history := GetHistory(sctx)
+			history.Add(s, sessVars.StmtCtx)
+			stmtIdx = history.Count()
 		}
 
 		// Handle the stmt commit/rollback.
@@ -286,7 +284,7 @@ func runStmt(ctx context.Context, sctx sessionctx.Context, s sqlexec.Statement) 
 				if err != nil {
 					sctx.StmtRollback()
 				} else {
-					err = sctx.StmtCommit(sctx.GetSessionVars().StmtCtx.MemTracker)
+					err = sctx.StmtCommit(sctx.GetSessionVars().StmtCtx.MemTracker, stmtIdx)
 				}
 			}
 		} else {

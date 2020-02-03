@@ -24,7 +24,7 @@ type UnionStore interface {
 	// DeleteKeyExistErrInfo deletes the key exist error info for the lazy check.
 	DeleteKeyExistErrInfo(k Key)
 	// WalkBuffer iterates all buffered kv pairs.
-	WalkBuffer(f func(k Key, v []byte) error) error
+	WalkBuffer(f func(k Key, v, extras []byte) error) error
 	// SetOption sets an option with a value, when val is nil, uses the default
 	// value of this option.
 	SetOption(opt Option, val interface{})
@@ -133,6 +133,14 @@ func (lmb *lazyMemBuffer) Get(ctx context.Context, k Key) ([]byte, error) {
 	return lmb.mb.Get(ctx, k)
 }
 
+func (lmb *lazyMemBuffer) GetExtras(k Key) ([]byte, error) {
+	if lmb.mb == nil {
+		return nil, ErrNotExist
+	}
+
+	return lmb.mb.GetExtras(k)
+}
+
 func (lmb *lazyMemBuffer) Set(key Key, value []byte) error {
 	if lmb.mb == nil {
 		lmb.mb = NewMemDbBuffer(lmb.cap)
@@ -141,12 +149,28 @@ func (lmb *lazyMemBuffer) Set(key Key, value []byte) error {
 	return lmb.mb.Set(key, value)
 }
 
+func (lmb *lazyMemBuffer) SetWithExtras(key Key, value, extras []byte) error {
+	if lmb.mb == nil {
+		lmb.mb = NewMemDbBuffer(lmb.cap)
+	}
+
+	return lmb.mb.SetWithExtras(key, value, extras)
+}
+
 func (lmb *lazyMemBuffer) Delete(k Key) error {
 	if lmb.mb == nil {
 		lmb.mb = NewMemDbBuffer(lmb.cap)
 	}
 
 	return lmb.mb.Delete(k)
+}
+
+func (lmb *lazyMemBuffer) DeleteWithExtras(k Key, extras []byte) error {
+	if lmb.mb == nil {
+		lmb.mb = NewMemDbBuffer(lmb.cap)
+	}
+
+	return lmb.mb.DeleteWithExtras(k, extras)
 }
 
 func (lmb *lazyMemBuffer) Iter(k Key, upperBound Key) (Iterator, error) {

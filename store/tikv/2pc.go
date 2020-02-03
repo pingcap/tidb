@@ -217,7 +217,7 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 			isPessimisticLock: true,
 		}
 	}
-	err := txn.us.WalkBuffer(func(k kv.Key, v []byte) error {
+	err := txn.us.WalkBuffer(func(k kv.Key, v, extras []byte) error {
 		if len(v) > 0 {
 			if tablecodec.IsUntouchedIndexKValue(k, v) {
 				return nil
@@ -556,7 +556,7 @@ func (actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoffer, bat
 			}
 
 			// Extract lock from key error
-			lock, err1 := extractLockFromKeyErr(keyErr)
+			lock, err1 := extractLockFromKeyErr(keyErr, c.txn)
 			if err1 != nil {
 				return errors.Trace(err1)
 			}
@@ -742,7 +742,7 @@ func (action actionPessimisticLock) handleSingleBatch(c *twoPhaseCommitter, bo *
 			}
 
 			// Extract lock from key error
-			lock, err1 := extractLockFromKeyErr(keyErr)
+			lock, err1 := extractLockFromKeyErr(keyErr, c.txn)
 			if err1 != nil {
 				return errors.Trace(err1)
 			}
@@ -925,7 +925,7 @@ func (actionCommit) handleSingleBatch(c *twoPhaseCommitter, bo *Backoffer, batch
 
 		c.mu.RLock()
 		defer c.mu.RUnlock()
-		err = extractKeyErr(keyErr)
+		err = extractKeyErr(keyErr, c.txn)
 		if c.mu.committed {
 			// No secondary key could be rolled back after it's primary key is committed.
 			// There must be a serious bug somewhere.

@@ -16,6 +16,7 @@ package session
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"fmt"
 	"strings"
 	"sync/atomic"
@@ -54,7 +55,8 @@ type TxnState struct {
 
 	// If doNotCommit is not nil, Commit() will not commit the transaction.
 	// doNotCommit flag may be set when StmtCommit fail.
-	doNotCommit error
+	doNotCommit     error
+	conflictStmtIdx int
 }
 
 func (st *TxnState) init() {
@@ -145,6 +147,10 @@ func (st *TxnState) changePendingToValid(txnCap int) error {
 }
 
 func (st *TxnState) changeToInvalid() {
+	// Store conflictStmtIdx in TxnState so we can get it after the inner transaction is cleared.
+	if st.Transaction != nil {
+		st.conflictStmtIdx = st.Transaction.ConflictStmtIdx()
+	}
 	st.Transaction = nil
 	st.txnFuture = nil
 }
@@ -231,6 +237,21 @@ func (st *TxnState) Get(ctx context.Context, k kv.Key) ([]byte, error) {
 	return val, nil
 }
 
+// GetExtras overrides the Transaction interface.
+func (st *TxnState) GetExtras(k kv.Key) ([]byte, error) {
+	extras, err := st.buf.GetExtras(k)
+	if kv.IsErrNotFound(err) {
+		extras, err = st.Transaction.GetExtras(k)
+		if kv.IsErrNotFound(err) {
+			return nil, err
+		}
+	}
+	if err != nil {
+		return nil, err
+	}
+	return extras, nil
+}
+
 // BatchGet overrides the Transaction interface.
 func (st *TxnState) BatchGet(ctx context.Context, keys []kv.Key) (map[string][]byte, error) {
 	bufferValues := make([][]byte, len(keys))
@@ -264,6 +285,11 @@ func (st *TxnState) BatchGet(ctx context.Context, keys []kv.Key) (map[string][]b
 // Set overrides the Transaction interface.
 func (st *TxnState) Set(k kv.Key, v []byte) error {
 	return st.buf.Set(k, v)
+}
+
+// SetWithExtras overrides the Transaction interface.
+func (st *TxnState) SetWithExtras(k kv.Key, v, extras []byte) error {
+	return st.buf.SetWithExtras(k, v, extras)
 }
 
 // Delete overrides the Transaction interface.
@@ -327,7 +353,7 @@ func (st *TxnState) cleanup() {
 // KeysNeedToLock returns the keys need to be locked.
 func (st *TxnState) KeysNeedToLock() ([]kv.Key, error) {
 	keys := make([]kv.Key, 0, st.buf.Len())
-	if err := kv.WalkMemBuffer(st.buf, func(k kv.Key, v []byte) error {
+	if err := kv.WalkMemBuffer(st.buf, func(k kv.Key, v, extras []byte) error {
 		if !keyNeedToLock(k, v) {
 			return nil
 		}
@@ -339,6 +365,11 @@ func (st *TxnState) KeysNeedToLock() ([]kv.Key, error) {
 		return nil, err
 	}
 	return keys, nil
+}
+
+// ConflictStmtIdx overrides the Transaction interface.
+func (st *TxnState) ConflictStmtIdx() int {
+	return st.conflictStmtIdx
 }
 
 func keyNeedToLock(k, v []byte) bool {
@@ -447,7 +478,7 @@ func (s *session) HasDirtyContent(tid int64) bool {
 }
 
 // StmtCommit implements the sessionctx.Context interface.
-func (s *session) StmtCommit(memTracker *memory.Tracker) error {
+func (s *session) StmtCommit(memTracker *memory.Tracker, historyIdx int) error {
 	defer func() {
 		// If StmtCommit is called in batch mode, we need to clear the txn size
 		// in memTracker to avoid double-counting. If it's not batch mode, this
@@ -461,7 +492,7 @@ func (s *session) StmtCommit(memTracker *memory.Tracker) error {
 	st := &s.txn
 	txnSize := st.Transaction.Size()
 	var count int
-	err := kv.WalkMemBuffer(st.buf, func(k kv.Key, v []byte) error {
+	err := kv.WalkMemBuffer(st.buf, func(k kv.Key, v, extras []byte) error {
 		failpoint.Inject("mockStmtCommitError", func(val failpoint.Value) {
 			if val.(bool) {
 				count++
@@ -472,10 +503,14 @@ func (s *session) StmtCommit(memTracker *memory.Tracker) error {
 			return errors.New("mock stmt commit error")
 		}
 
+		// When mutations are moved from statement buffer to transaction buffer,
+		// add the statement index in history as extra bytes.
+		var idxBytes [8]byte
+		binary.LittleEndian.PutUint64(idxBytes[:], uint64(historyIdx))
 		if len(v) == 0 {
-			return st.Transaction.Delete(k)
+			return st.Transaction.DeleteWithExtras(k, idxBytes[:])
 		}
-		return st.Transaction.Set(k, v)
+		return st.Transaction.SetWithExtras(k, v, idxBytes[:])
 	})
 	if err != nil {
 		st.doNotCommit = err

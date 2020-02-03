@@ -3345,7 +3345,7 @@ func (s *testDBSuite4) TestAddColumn2(c *C) {
 	c.Assert(err, IsNil)
 	_, err = writeOnlyTable.AddRecord(s.tk.Se, types.MakeDatums(oldRow[0].GetInt64(), 2, oldRow[2].GetInt64()), table.IsUpdate)
 	c.Assert(err, IsNil)
-	err = s.tk.Se.StmtCommit(nil)
+	err = s.tk.Se.StmtCommit(nil, 0)
 	c.Assert(err, IsNil)
 	err = s.tk.Se.CommitTxn(ctx)
 	c.Assert(err, IsNil)
@@ -4016,7 +4016,7 @@ func (s *testDBSuite2) TestLockTables(c *C) {
 	tk2.MustExec("lock tables t1 write")
 	_, err = tk.Exec("commit")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "previous statement: insert into t1 set a=1: [domain:8028]Information schema is changed during the execution of the statement(for example, table definition may be updated by other DDL ran in parallel). If you see this error often, try increasing `tidb_max_delta_schema_count`. [try again later]")
+	c.Assert(err.Error(), Equals, "[domain:8028]Information schema is changed during the execution of the statement(for example, table definition may be updated by other DDL ran in parallel). If you see this error often, try increasing `tidb_max_delta_schema_count`. [try again later]")
 
 	// Test lock table by other session in transaction and commit with retry.
 	tk.MustExec("unlock tables")
