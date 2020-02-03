@@ -220,17 +220,6 @@ var (
 	ErrInvalidJSONPathArrayCell = terror.ClassJSON.New(mysql.ErrInvalidJSONPathArrayCell, mysql.MySQLErrName[mysql.ErrInvalidJSONPathArrayCell])
 )
 
-func init() {
-	terror.ErrClassToMySQLCodes[terror.ClassJSON] = map[terror.ErrCode]uint16{
-		mysql.ErrInvalidJSONText:             mysql.ErrInvalidJSONText,
-		mysql.ErrInvalidJSONPath:             mysql.ErrInvalidJSONPath,
-		mysql.ErrInvalidJSONData:             mysql.ErrInvalidJSONData,
-		mysql.ErrInvalidJSONPathWildcard:     mysql.ErrInvalidJSONPathWildcard,
-		mysql.ErrInvalidJSONContainsPathType: mysql.ErrInvalidJSONContainsPathType,
-		mysql.ErrInvalidJSONPathArrayCell:    mysql.ErrInvalidJSONPathArrayCell,
-	}
-}
-
 // json_contains_path function type choices
 // See: https://dev.mysql.com/doc/refman/5.7/en/json-search-functions.html#function_json-contains-path
 const (
