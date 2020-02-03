@@ -15,9 +15,11 @@ package session_test
 
 import (
 	"context"
+	"sync/atomic"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
@@ -112,4 +114,22 @@ func (s *testSessionSerialSuite) TestGetTSFailDirtyStateInretry(c *C) {
 		`1*return(true)->return(false)`), IsNil)
 	tk.MustExec("insert into t values (2)")
 	tk.MustQuery(`select * from t`).Check(testkit.Rows("2"))
+}
+
+func (s *testSessionSerialSuite) TestKillFlagInBackoff(c *C) {
+	// This test checks the `killed` flag is passed down to the backoffer through
+	// session.KVVars. It works by setting the `killed = 3` first, then using
+	// failpoint to run backoff() and check the vars.Killed using the Hook() function.
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create table kill_backoff (id int)")
+	var killValue uint32
+	tk.Se.GetSessionVars().KVVars.Hook = func(name string, vars *kv.Variables) {
+		killValue = atomic.LoadUint32(vars.Killed)
+	}
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/tikvStoreSendReqResult", `return("callBackofferHook")`), IsNil)
+	defer failpoint.Disable("github.com/pingcap/tidb/store/tikv/tikvStoreSendReqResult")
+	// Set kill flag and check its passed to backoffer.
+	tk.Se.GetSessionVars().Killed = 3
+	tk.MustQuery("select * from kill_backoff")
+	c.Assert(killValue, Equals, uint32(3))
 }
