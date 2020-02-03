@@ -1733,7 +1733,7 @@ var MetricTableMap = map[string]MetricTableDef{
 		Comment: "The hit rate of data block cache",
 	},
 	"tikv_corrrput_keys_flow": {
-		PromQL:  `sum(rate(tikv_engine_compaction_num_corrupt_keys{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (db,cf,instance,)`,
+		PromQL:  `sum(rate(tikv_engine_compaction_num_corrupt_keys{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (db,cf,instance)`,
 		Labels:  []string{"instance", "db", "cf"},
 		Comment: "The flow of corrupt operations on keys",
 	},
