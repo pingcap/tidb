@@ -135,7 +135,7 @@ func typeInferForNull(args []Expression) {
 		cons, ok := expr.(*Constant)
 		return ok && cons.RetType.Tp == mysql.TypeNull && cons.Value.IsNull()
 	}
-	// Inference the actual field type of the NULL datum.
+	// Infer the actual field type of the NULL datum.
 	var retFieldTp *types.FieldType
 	var hasNullArg bool
 	for _, arg := range args {
