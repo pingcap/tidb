@@ -189,6 +189,7 @@ func (s *testSuite5) TestIndexJoinPartitionTable(c *C) {
 
 func (s *testSuite5) TestIndexJoinMultiCondition(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1, t2")
 	tk.MustExec("create table t1(a int not null, b int not null, key idx_a_b(a,b))")
 	tk.MustExec("create table t2(a int not null, b int not null)")
