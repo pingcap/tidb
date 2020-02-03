@@ -92,6 +92,8 @@ func (e *SortExec) Close() error {
 	e.rowPtrs = nil
 	e.memTracker = nil
 	e.diskTracker = nil
+	e.heapSort = nil
+	e.spillAction = nil
 	return e.children[0].Close()
 }
 
