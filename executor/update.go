@@ -52,6 +52,7 @@ type UpdateExec struct {
 	allAssignmentsAreConstant bool
 	fetched                   bool
 	memTracker                *memory.Tracker
+	lastWarningIdx            int
 }
 
 func (e *UpdateExec) exec(ctx context.Context, schema *expression.Schema) ([]types.Datum, error) {
@@ -207,11 +208,17 @@ func (e *UpdateExec) fetchChunkRows(ctx context.Context) error {
 	return nil
 }
 
-func (e *UpdateExec) handleErr(colName model.CIStr, rowIdx int, err error) error {
+func (e *UpdateExec) handleWarningAndErr(colName model.CIStr, rowIdx int, err error) error {
+	e.lastWarningIdx = e.ctx.GetSessionVars().StmtCtx.ConvertWarningFrom(e.lastWarningIdx, func(err error) error {
+		return e.convertErrorWithFullMessage(colName, rowIdx, err)
+	})
 	if err == nil {
 		return nil
 	}
+	return e.convertErrorWithFullMessage(colName, rowIdx, err)
+}
 
+func (e *UpdateExec) convertErrorWithFullMessage(colName model.CIStr, rowIdx int, err error) error {
 	if types.ErrDataTooLong.Equal(err) {
 		return resetErrDataTooLong(colName.O, rowIdx+1, err)
 	}
@@ -233,7 +240,7 @@ func (e *UpdateExec) fastComposeNewRow(rowIdx int, oldRow []types.Datum, cols []
 
 		con := assign.Expr.(*expression.Constant)
 		val, err := con.Eval(emptyRow)
-		if err = e.handleErr(assign.ColName, rowIdx, err); err != nil {
+		if err = e.handleWarningAndErr(assign.ColName, rowIdx, err); err != nil {
 			return nil, err
 		}
 
@@ -241,7 +248,7 @@ func (e *UpdateExec) fastComposeNewRow(rowIdx int, oldRow []types.Datum, cols []
 		// No need to cast `_tidb_rowid` column value.
 		if cols[assign.Col.Index] != nil {
 			val, err = table.CastValue(e.ctx, val, cols[assign.Col.Index].ColumnInfo)
-			if err = e.handleErr(assign.ColName, rowIdx, err); err != nil {
+			if err = e.handleWarningAndErr(assign.ColName, rowIdx, err); err != nil {
 				return nil, err
 			}
 		}
@@ -260,7 +267,7 @@ func (e *UpdateExec) composeNewRow(rowIdx int, oldRow []types.Datum, cols []*tab
 			continue
 		}
 		val, err := assign.Expr.Eval(e.evalBuffer.ToRow())
-		if err = e.handleErr(assign.ColName, rowIdx, err); err != nil {
+		if err = e.handleWarningAndErr(assign.ColName, rowIdx, err); err != nil {
 			return nil, err
 		}
 
@@ -268,7 +275,7 @@ func (e *UpdateExec) composeNewRow(rowIdx int, oldRow []types.Datum, cols []*tab
 		// No need to cast `_tidb_rowid` column value.
 		if cols[assign.Col.Index] != nil {
 			val, err = table.CastValue(e.ctx, val, cols[assign.Col.Index].ColumnInfo)
-			if err = e.handleErr(assign.ColName, rowIdx, err); err != nil {
+			if err = e.handleWarningAndErr(assign.ColName, rowIdx, err); err != nil {
 				return nil, err
 			}
 		}

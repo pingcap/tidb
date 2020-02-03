@@ -900,3 +900,16 @@ func (s *testSuite3) TestAutoIDIncrementAndOffset(c *C) {
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[autoid:8060]Invalid auto_increment settings: auto_increment_increment: 65536, auto_increment_offset: 65536, both of them must be in range [1..65535]")
 }
+
+func (s *testSuite3) TestWarnings(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table t (a tinyint)`)
+	tk.MustExec(`set @@sql_mode = ''`)
+	tk.MustExec(`insert into t values (11111111111)`)
+	tk.MustQuery(`show warnings`).Check(testkit.Rows(`Warning 1264 Out of range value for column 'a' at row 1`))
+	tk.MustExec(`update t set a = 11111111111`)
+	tk.MustQuery(`show warnings`).Check(testkit.Rows(`Warning 1264 Out of range value for column 'a' at row 1`))
+	tk.MustExec(`insert into t values ("11ffff")`)
+	tk.MustQuery(`show warnings`).Check(testkit.Rows(`Warning 1366 Incorrect tinyint value: '11ffff' for column 'a' at row 1`))
+}

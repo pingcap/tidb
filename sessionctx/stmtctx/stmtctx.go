@@ -374,6 +374,17 @@ func (sc *StatementContext) AppendError(warn error) {
 	sc.mu.Unlock()
 }
 
+// ConvertWarningFrom converts the warning from a start point.
+func (sc *StatementContext) ConvertWarningFrom(idx int, convertFunc func(error) error) int {
+	sc.mu.Lock()
+	lastWarn := len(sc.mu.warnings)
+	for i := idx; i < lastWarn; i++ {
+		sc.mu.warnings[i].Err = convertFunc(sc.mu.warnings[i].Err)
+	}
+	sc.mu.Unlock()
+	return lastWarn
+}
+
 // SetHistogramsNotLoad sets histogramsNotLoad.
 func (sc *StatementContext) SetHistogramsNotLoad() {
 	sc.mu.Lock()

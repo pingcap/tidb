@@ -705,6 +705,7 @@ func (b *executorBuilder) buildInsert(v *plannercore.Insert) Executor {
 	}
 	baseExec.initCap = chunk.ZeroCapacity
 
+	_, lastWarningIdx := b.ctx.GetSessionVars().StmtCtx.NumErrorWarnings()
 	ivs := &InsertValues{
 		baseExecutor:              baseExec,
 		Table:                     v.Table,
@@ -715,6 +716,7 @@ func (b *executorBuilder) buildInsert(v *plannercore.Insert) Executor {
 		allAssignmentsAreConstant: v.AllAssignmentsAreConstant,
 		hasRefCols:                v.NeedFillDefaultValue,
 		SelectExec:                selectExec,
+		lastWarningIdx:            lastWarningIdx,
 	}
 	err := ivs.initInsertColumns()
 	if err != nil {
@@ -738,11 +740,13 @@ func (b *executorBuilder) buildLoadData(v *plannercore.LoadData) Executor {
 		b.err = errors.Errorf("Can not get table %d", v.Table.TableInfo.ID)
 		return nil
 	}
+	_, lastWarningIdx := b.ctx.GetSessionVars().StmtCtx.NumErrorWarnings()
 	insertVal := &InsertValues{
-		baseExecutor: newBaseExecutor(b.ctx, nil, v.ExplainID()),
-		Table:        tbl,
-		Columns:      v.Columns,
-		GenExprs:     v.GenCols.Exprs,
+		baseExecutor:   newBaseExecutor(b.ctx, nil, v.ExplainID()),
+		Table:          tbl,
+		Columns:        v.Columns,
+		GenExprs:       v.GenCols.Exprs,
+		lastWarningIdx: lastWarningIdx,
 	}
 	err := insertVal.initInsertColumns()
 	if err != nil {
@@ -1481,12 +1485,14 @@ func (b *executorBuilder) buildUpdate(v *plannercore.Update) Executor {
 	}
 	base := newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), selExec)
 	base.initCap = chunk.ZeroCapacity
+	_, lastWarningIdx := b.ctx.GetSessionVars().StmtCtx.NumErrorWarnings()
 	updateExec := &UpdateExec{
 		baseExecutor:              base,
 		OrderedList:               v.OrderedList,
 		allAssignmentsAreConstant: v.AllAssignmentsAreConstant,
 		tblID2table:               tblID2table,
 		tblColPosInfos:            v.TblColPosInfos,
+		lastWarningIdx:            lastWarningIdx,
 	}
 	return updateExec
 }

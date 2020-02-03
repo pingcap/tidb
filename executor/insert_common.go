@@ -71,6 +71,8 @@ type InsertValues struct {
 	// https://dev.mysql.com/doc/refman/8.0/en/innodb-auto-increment-handling.html
 	lazyFillAutoID bool
 	memTracker     *memory.Tracker
+
+	lastWarningIdx int
 }
 
 type defaultVal struct {
@@ -262,11 +264,23 @@ func insertRows(ctx context.Context, base insertCommon) (err error) {
 	return nil
 }
 
-func (e *InsertValues) handleErr(col *table.Column, val *types.Datum, rowIdx int, err error) error {
+func (e *InsertValues) handleWarningAndErr(col *table.Column, val *types.Datum, rowIdx int, err error) error {
+	e.lastWarningIdx = e.ctx.GetSessionVars().StmtCtx.ConvertWarningFrom(e.lastWarningIdx, func(err error) error {
+		return e.convertErrWithFullMessage(col, val, rowIdx, err)
+	})
 	if err == nil {
 		return nil
 	}
+	err = e.convertErrWithFullMessage(col, val, rowIdx, err)
+	if !e.ctx.GetSessionVars().StmtCtx.DupKeyAsWarning {
+		return err
+	}
+	// TODO: should not filter all types of errors here.
+	e.handleWarning(err)
+	return nil
+}
 
+func (e *InsertValues) convertErrWithFullMessage(col *table.Column, val *types.Datum, rowIdx int, err error) error {
 	// Convert the error with full messages.
 	var (
 		colTp   byte
@@ -288,13 +302,7 @@ func (e *InsertValues) handleErr(col *table.Column, val *types.Datum, rowIdx int
 		}
 		err = table.ErrTruncatedWrongValueForField.GenWithStackByArgs(types.TypeStr(colTp), valStr, colName, rowIdx+1)
 	}
-
-	if !e.ctx.GetSessionVars().StmtCtx.DupKeyAsWarning {
-		return err
-	}
-	// TODO: should not filter all types of errors here.
-	e.handleWarning(err)
-	return nil
+	return err
 }
 
 // evalRow evaluates a to-be-inserted row. The value of the column may base on another column,
@@ -317,11 +325,11 @@ func (e *InsertValues) evalRow(ctx context.Context, list []expression.Expression
 	e.evalBuffer.SetDatums(row...)
 	for i, expr := range list {
 		val, err := expr.Eval(e.evalBuffer.ToRow())
-		if err = e.handleErr(e.insertColumns[i], &val, rowIdx, err); err != nil {
+		if err = e.handleWarningAndErr(e.insertColumns[i], &val, rowIdx, err); err != nil {
 			return nil, err
 		}
 		val1, err := table.CastValue(e.ctx, val, e.insertColumns[i].ToInfo())
-		if err = e.handleErr(e.insertColumns[i], &val, rowIdx, err); err != nil {
+		if err = e.handleWarningAndErr(e.insertColumns[i], &val, rowIdx, err); err != nil {
 			return nil, err
 		}
 
@@ -345,11 +353,11 @@ func (e *InsertValues) fastEvalRow(ctx context.Context, list []expression.Expres
 	for i, expr := range list {
 		con := expr.(*expression.Constant)
 		val, err := con.Eval(emptyRow)
-		if err = e.handleErr(e.insertColumns[i], &val, rowIdx, err); err != nil {
+		if err = e.handleWarningAndErr(e.insertColumns[i], &val, rowIdx, err); err != nil {
 			return nil, err
 		}
 		val1, err := table.CastValue(e.ctx, val, e.insertColumns[i].ToInfo())
-		if err = e.handleErr(e.insertColumns[i], &val, rowIdx, err); err != nil {
+		if err = e.handleWarningAndErr(e.insertColumns[i], &val, rowIdx, err); err != nil {
 			return nil, err
 		}
 		offset := e.insertColumns[i].Offset
@@ -381,7 +389,7 @@ func (e *InsertValues) setValueForRefColumn(row []types.Datum, hasValue []bool) 
 		} else if table.ErrNoDefaultValue.Equal(err) {
 			row[i] = table.GetZeroValue(c.ToInfo())
 			hasValue[c.Offset] = false
-		} else if e.handleErr(c, &d, 0, err) != nil {
+		} else if e.handleWarningAndErr(c, &d, 0, err) != nil {
 			return err
 		}
 	}
@@ -479,7 +487,7 @@ func (e *InsertValues) getRow(ctx context.Context, vals []types.Datum) ([]types.
 	hasValue := make([]bool, len(e.Table.Cols()))
 	for i, v := range vals {
 		casted, err := table.CastValue(e.ctx, v, e.insertColumns[i].ToInfo())
-		if e.handleErr(nil, &v, 0, err) != nil {
+		if e.handleWarningAndErr(e.insertColumns[i], &v, 0, err) != nil {
 			return nil, err
 		}
 
@@ -495,7 +503,7 @@ func (e *InsertValues) getRowInPlace(ctx context.Context, vals []types.Datum, ro
 	hasValue := make([]bool, len(e.Table.Cols()))
 	for i, v := range vals {
 		casted, err := table.CastValue(e.ctx, v, e.insertColumns[i].ToInfo())
-		if e.handleErr(nil, &v, 0, err) != nil {
+		if e.handleWarningAndErr(e.insertColumns[i], &v, 0, err) != nil {
 			return nil, err
 		}
 		offset := e.insertColumns[i].Offset
@@ -551,7 +559,7 @@ func (e *InsertValues) fillColValue(ctx context.Context, datum types.Datum, idx 
 	}
 	if !hasValue {
 		d, err := e.getColDefaultValue(idx, column)
-		if e.handleErr(column, &datum, 0, err) != nil {
+		if e.handleWarningAndErr(column, &datum, 0, err) != nil {
 			return types.Datum{}, err
 		}
 		return d, nil
@@ -587,7 +595,7 @@ func (e *InsertValues) fillRow(ctx context.Context, row []types.Datum, hasValue 
 	for i, gCol := range gCols {
 		colIdx := gCol.ColumnInfo.Offset
 		val, err := e.GenExprs[i].Eval(chunk.MutRowFromDatums(row).ToRow())
-		if e.handleErr(gCol, &val, 0, err) != nil {
+		if e.handleWarningAndErr(gCol, &val, 0, err) != nil {
 			return nil, err
 		}
 		row[colIdx], err = table.CastValue(e.ctx, val, gCol.ToInfo())
@@ -719,7 +727,7 @@ func (e *InsertValues) lazyAdjustAutoIncrementDatum(ctx context.Context, rows []
 			// AllocBatchAutoIncrementValue allocates batch N consecutive autoIDs.
 			// The max value can be derived from adding the increment value to min for cnt-1 times.
 			min, increment, err := table.AllocBatchAutoIncrementValue(ctx, e.Table, e.ctx, cnt)
-			if e.handleErr(col, &autoDatum, cnt, err) != nil {
+			if e.handleWarningAndErr(col, &autoDatum, cnt, err) != nil {
 				return nil, err
 			}
 			// It's compatible with mysql setting the first allocated autoID to lastInsertID.
@@ -796,7 +804,7 @@ func (e *InsertValues) adjustAutoIncrementDatum(ctx context.Context, d types.Dat
 	// Change value 0 to auto id, if NoAutoValueOnZero SQL mode is not set.
 	if d.IsNull() || e.ctx.GetSessionVars().SQLMode&mysql.ModeNoAutoValueOnZero == 0 {
 		recordID, err = table.AllocAutoIncrementValue(ctx, e.Table, e.ctx)
-		if e.handleErr(c, &d, 0, err) != nil {
+		if e.handleWarningAndErr(c, &d, 0, err) != nil {
 			return types.Datum{}, err
 		}
 		// It's compatible with mysql setting the first allocated autoID to lastInsertID.

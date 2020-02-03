@@ -208,7 +208,7 @@ func (s *testSuite) TestInsert(c *C) {
 	tk.MustExec("CREATE TABLE t(a DECIMAL(4,2));")
 	tk.MustExec("INSERT INTO t VALUES (1.000001);")
 	r = tk.MustQuery("SHOW WARNINGS;")
-	r.Check(testkit.Rows("Warning 1292 Truncated incorrect DECIMAL value: '1.000001'"))
+	r.Check(testkit.Rows("Warning 1366 Incorrect decimal value: '1.000001' for column 'a' at row 1"))
 	tk.MustExec("INSERT INTO t VALUES (1.000000);")
 	r = tk.MustQuery("SHOW WARNINGS;")
 	r.Check(testkit.Rows())
@@ -245,15 +245,14 @@ func (s *testSuite) TestInsert(c *C) {
 	c.Assert(types.ErrWarnDataOutOfRange.Equal(err), IsTrue)
 	tk.MustExec("set @@sql_mode = '';")
 	tk.MustExec("insert into t value (-1);")
-	// TODO: the following warning messages are not consistent with MySQL, fix them in the future PRs
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1690 constant -1 overflows bigint"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1264 Out of range value for column 'a' at row 1"))
 	tk.MustExec("insert into t select -1;")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1690 constant -1 overflows bigint"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1264 Out of range value for column 'a' at row 1"))
 	tk.MustExec("insert into t select cast(-1 as unsigned);")
 	tk.MustExec("insert into t value (-1.111);")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1690 constant -1.111 overflows bigint"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1264 Out of range value for column 'a' at row 1"))
 	tk.MustExec("insert into t value ('-1.111');")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1690 BIGINT UNSIGNED value is out of range in '-1'"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1264 Out of range value for column 'a' at row 1"))
 	r = tk.MustQuery("select * from t;")
 	r.Check(testkit.Rows("0", "0", "18446744073709551615", "0", "0"))
 	tk.MustExec("set @@sql_mode = @orig_sql_mode;")
@@ -274,8 +273,8 @@ func (s *testSuite) TestInsert(c *C) {
 	tk.MustExec("create table t(a float unsigned, b double unsigned)")
 	tk.MustExec("insert into t value(-1.1, -1.1), (-2.1, -2.1), (0, 0), (1.1, 1.1)")
 	tk.MustQuery("show warnings").
-		Check(testkit.Rows("Warning 1690 constant -1.1 overflows float", "Warning 1690 constant -1.1 overflows double",
-			"Warning 1690 constant -2.1 overflows float", "Warning 1690 constant -2.1 overflows double"))
+		Check(testkit.Rows("Warning 1264 Out of range value for column 'a' at row 1", "Warning 1264 Out of range value for column 'b' at row 1",
+			"Warning 1264 Out of range value for column 'a' at row 2", "Warning 1264 Out of range value for column 'b' at row 2"))
 	tk.MustQuery("select * from t").Check(testkit.Rows("0 0", "0 0", "0 0", "1.1 1.1"))
 
 	// issue 7061
@@ -495,13 +494,13 @@ func (s *testSuite4) TestInsertIgnore(c *C) {
 	c.Assert(err, IsNil)
 	tk.CheckLastMessage("Records: 1  Duplicates: 0  Warnings: 1")
 	r = tk.MustQuery("SHOW WARNINGS")
-	r.Check(testkit.Rows("Warning 1292 Truncated incorrect FLOAT value: '1a'"))
+	r.Check(testkit.Rows("Warning 1366 Incorrect bigint value: '1a' for column 'a' at row 1"))
 	testSQL = "insert ignore into t values ('1a')"
 	_, err = tk.Exec(testSQL)
 	c.Assert(err, IsNil)
 	tk.CheckLastMessage("")
 	r = tk.MustQuery("SHOW WARNINGS")
-	r.Check(testkit.Rows("Warning 1292 Truncated incorrect FLOAT value: '1a'"))
+	r.Check(testkit.Rows("Warning 1366 Incorrect bigint value: '1a' for column 'a' at row 1"))
 
 	// for duplicates with warning
 	testSQL = `drop table if exists t;
