@@ -131,16 +131,20 @@ func typeInferForNull(args []Expression) {
 	if len(args) < 2 {
 		return
 	}
-	// Inference the actual field type of NULL datum.
+	var isNull = func(expr Expression) bool {
+		cons, ok := expr.(*Constant)
+		return ok && cons.RetType.Tp == mysql.TypeNull && cons.Value.IsNull()
+	}
+	// Inference the actual field type of the NULL datum.
 	var retFieldTp *types.FieldType
 	var hasNullArg bool
 	for _, arg := range args {
-		cons, ok := arg.(*Constant)
-		isNullArg := ok && cons.Value.IsNull()
-		hasNullArg = hasNullArg || isNullArg
+		isNullArg := isNull(arg)
 		if !isNullArg && retFieldTp == nil {
 			retFieldTp = arg.GetType()
 		}
+		hasNullArg = hasNullArg || isNullArg
+		// Break if there are both NULL and non-NULL expression
 		if hasNullArg && retFieldTp != nil {
 			break
 		}
@@ -149,8 +153,8 @@ func typeInferForNull(args []Expression) {
 		return
 	}
 	for _, arg := range args {
-		if cons, ok := arg.(*Constant); ok && cons.RetType.Tp == mysql.TypeNull && cons.Value.IsNull() {
-			*cons.RetType = *retFieldTp
+		if isNull(arg) {
+			*arg.GetType() = *retFieldTp
 		}
 	}
 }
