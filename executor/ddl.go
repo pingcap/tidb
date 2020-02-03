@@ -367,7 +367,7 @@ func (e *DDLExec) executeRecoverTable(s *ast.RecoverTableStmt) error {
 	if s.JobID != 0 {
 		job, tblInfo, err = e.getRecoverTableByJobID(s, t, dom)
 	} else {
-		job, tblInfo, err = e.getRecoverTableByTableName(s.Table, "")
+		job, tblInfo, err = e.getRecoverTableByTableName(s.Table)
 	}
 	if err != nil {
 		return err
@@ -429,7 +429,7 @@ func (e *DDLExec) getRecoverTableByJobID(s *ast.RecoverTableStmt, t *meta.Meta, 
 	return job, table.Meta(), nil
 }
 
-func (e *DDLExec) getRecoverTableByTableName(tableName *ast.TableName, ts string) (*model.Job, *model.TableInfo, error) {
+func (e *DDLExec) getRecoverTableByTableName(tableName *ast.TableName) (*model.Job, *model.TableInfo, error) {
 	txn, err := e.ctx.Txn(true)
 	if err != nil {
 		return nil, nil, err
@@ -464,9 +464,6 @@ func (e *DDLExec) getRecoverTableByTableName(tableName *ast.TableName, ts string
 		if err != nil {
 			return nil, nil, err
 		}
-		if len(ts) != 0 && ts != model.TSConvert2Time(job.StartTS).String() {
-			continue
-		}
 		// Get the snapshot infoSchema before drop table.
 		snapInfo, err := dom.GetSnapshotInfoSchema(job.StartTS)
 		if err != nil {
@@ -500,11 +497,7 @@ func (e *DDLExec) getRecoverTableByTableName(tableName *ast.TableName, ts string
 }
 
 func (e *DDLExec) executeFlashbackTable(s *ast.FlashBackTableStmt) error {
-	ts := s.Timestamp.GetString()
-	if len(ts) == 0 {
-		return errors.Errorf("The timestamp in flashback statement should be consistent with the drop/truncate DDL start time")
-	}
-	job, tblInfo, err := e.getRecoverTableByTableName(s.Table, ts)
+	job, tblInfo, err := e.getRecoverTableByTableName(s.Table)
 	if err != nil {
 		return err
 	}
