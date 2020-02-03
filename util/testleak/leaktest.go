@@ -99,6 +99,7 @@ func checkLeakAfterTest(errorFunc func(cnt int, g string)) func() {
 	return func() {
 		defer func() {
 			beforeTestGoroutines = map[string]bool{}
+			testRoutinesInited = false
 		}()
 
 		var leaked []string
