@@ -738,12 +738,12 @@ func handleSequenceDefaultValue(c *ast.ColumnOption) (expr string, isExpr bool, 
 			sb.Reset()
 			err := c.Expr.Restore(restoreCtx)
 			if err != nil {
-				return "", err, true
+				return "", true, err
 			}
-			return sb.String(), nil, true
+			return sb.String(), true, nil
 		}
 	}
-	return "", nil, false
+	return "", false, nil
 }
 
 // setSetDefaultValue sets the default value for the set type. See https://dev.mysql.com/doc/refman/5.7/en/set.html.
