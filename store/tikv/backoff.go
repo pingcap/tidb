@@ -19,6 +19,7 @@ import (
 	"math"
 	"math/rand"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -333,6 +334,12 @@ func (b *Backoffer) BackoffWithMaxSleep(typ backoffType, maxSleepMs int, err err
 		b.backoffTimes = make(map[backoffType]int)
 	}
 	b.backoffTimes[typ]++
+
+	if b.vars != nil && b.vars.Killed != nil {
+		if atomic.CompareAndSwapUint32(b.vars.Killed, 1, 0) {
+			return ErrQueryInterrupted
+		}
+	}
 
 	var startTs interface{}
 	if ts := b.ctx.Value(txnStartKey); ts != nil {
