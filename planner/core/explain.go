@@ -514,6 +514,13 @@ func (p *PhysicalWindow) ExplainInfo() string {
 	return buffer.String()
 }
 
+// ExplainInfo implements Plan interface.
+func (p *PhysicalShuffle) ExplainInfo() string {
+	buffer := bytes.NewBufferString("")
+	fmt.Fprintf(buffer, "execution info: concurrency:%v, data source:%v", p.Concurrency, p.DataSource.ExplainID())
+	return buffer.String()
+}
+
 func formatWindowFuncDescs(buffer *bytes.Buffer, descs []*aggregation.WindowFuncDesc, schema *expression.Schema) *bytes.Buffer {
 	winFuncStartIdx := len(schema.Columns) - len(descs)
 	for i, desc := range descs {
