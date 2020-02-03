@@ -3857,7 +3857,7 @@ func (s *testIntegrationSuite) TestTimeLiteral(c *C) {
 	_, err = tk.Exec("select ADDDATE('2008-01-34', -1);")
 	c.Assert(err, IsNil)
 	tk.MustQuery("Show warnings;").Check(testutil.RowsWithSep("|",
-		"Warning|1525|Incorrect datetime value: '2008-1-34'"))
+		"Warning|1525|Incorrect datetime value: '2008-01-34'"))
 }
 
 func (s *testIntegrationSuite) TestIssue13822(c *C) {
@@ -4058,13 +4058,13 @@ func (s *testIntegrationSuite) TestFuncJSON(c *C) {
 	r.Check(testkit.Rows("1 0 1 0"))
 
 	r = tk.MustQuery(`select
-
+		json_keys('[]'),
 		json_keys('{}'),
 		json_keys('{"a": 1, "b": 2}'),
 		json_keys('{"a": {"c": 3}, "b": 2}'),
 		json_keys('{"a": {"c": 3}, "b": 2}', "$.a")
 	`)
-	r.Check(testkit.Rows(`[] ["a", "b"] ["a", "b"] ["c"]`))
+	r.Check(testkit.Rows(`<nil> [] ["a", "b"] ["a", "b"] ["c"]`))
 
 	r = tk.MustQuery(`select
 		json_length('1'),
@@ -4119,12 +4119,12 @@ func (s *testIntegrationSuite) TestSetVariables(c *C) {
 	c.Assert(err, IsNil)
 	_, err = tk.Exec("INSERT INTO tab0 select cast('999:44:33' as time);")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[types:1292]Truncated incorrect time value: '999h44m33s'")
+	c.Assert(err.Error(), Equals, "[types:1292]Truncated incorrect time value: '999:44:33'")
 	_, err = tk.Exec("set sql_mode=' ,';")
 	c.Assert(err, NotNil)
 	_, err = tk.Exec("INSERT INTO tab0 select cast('999:44:33' as time);")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[types:1292]Truncated incorrect time value: '999h44m33s'")
+	c.Assert(err.Error(), Equals, "[types:1292]Truncated incorrect time value: '999:44:33'")
 
 	// issue #5478
 	_, err = tk.Exec("set session transaction read write;")
@@ -5211,6 +5211,25 @@ func (s *testIntegrationSuite) TestDecodetoChunkReuse(c *C) {
 	}
 	c.Assert(count, Equals, 200)
 	rs.Close()
+}
+
+func (s *testIntegrationSuite) TestInMeetsPrepareAndExecute(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("prepare pr1 from 'select ? in (1,?,?)'")
+	tk.MustExec("set @a=1, @b=2, @c=3")
+	tk.MustQuery("execute pr1 using @a,@b,@c").Check(testkit.Rows("1"))
+
+	tk.MustExec("prepare pr2 from 'select 3 in (1,?,?)'")
+	tk.MustExec("set @a=2, @b=3")
+	tk.MustQuery("execute pr2 using @a,@b").Check(testkit.Rows("1"))
+
+	tk.MustExec("prepare pr3 from 'select ? in (1,2,3)'")
+	tk.MustExec("set @a=4")
+	tk.MustQuery("execute pr3 using @a").Check(testkit.Rows("0"))
+
+	tk.MustExec("prepare pr4 from 'select ? in (?,?,?)'")
+	tk.MustExec("set @a=1, @b=2, @c=3, @d=4")
+	tk.MustQuery("execute pr4 using @a,@b,@c,@d").Check(testkit.Rows("0"))
 }
 
 func (s *testIntegrationSuite) TestCastStrToInt(c *C) {
