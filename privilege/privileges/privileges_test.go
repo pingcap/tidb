@@ -225,7 +225,6 @@ func (s *testPrivilegeSuite) TestCheckPrivilegeWithRoles(c *C) {
 	mustExec(c, rootSe, `GRANT UPDATE ON test.* TO r_2;`)
 	c.Assert(pc.RequestVerification(activeRoles, "test", "", "", mysql.UpdatePriv), IsTrue)
 
-	mustExec(c, se, `flush privileges`)
 	mustExec(c, se, `SET ROLE NONE;`)
 	c.Assert(len(se.GetSessionVars().ActiveRoles), Equals, 0)
 	mustExec(c, se, `SET ROLE DEFAULT;`)
@@ -362,7 +361,8 @@ func (s *testPrivilegeSuite) TestShowGrants(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(gs, HasLen, 3)
 	mustExec(c, se, `GRANT INSERT, DELETE ON test.test TO 'r2'`)
-	mustExec(c, se, `GRANT UPDATE ON a.b TO 'testrole'@'localhost'`)
+	mustExec(c, se, `create table test.b (id int)`)
+	mustExec(c, se, `GRANT UPDATE ON test.b TO 'testrole'@'localhost'`)
 	gs, err = pc.ShowGrants(se, &auth.UserIdentity{Username: "testrole", Hostname: "localhost"}, roles)
 	c.Assert(err, IsNil)
 	c.Assert(gs, HasLen, 5)

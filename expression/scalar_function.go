@@ -291,6 +291,9 @@ func (sf *ScalarFunction) Eval(row chunk.Row) (d types.Datum, err error) {
 
 // EvalInt implements Expression interface.
 func (sf *ScalarFunction) EvalInt(ctx sessionctx.Context, row chunk.Row) (int64, bool, error) {
+	if f, ok := sf.Function.(builtinFuncNew); ok {
+		return f.evalIntWithCtx(ctx, row)
+	}
 	return sf.Function.evalInt(row)
 }
 
@@ -345,6 +348,29 @@ func (sf *ScalarFunction) ResolveIndices(schema *Schema) (Expression, error) {
 }
 
 func (sf *ScalarFunction) resolveIndices(schema *Schema) error {
+	if sf.FuncName.L == ast.In {
+		args := []Expression{}
+		switch inFunc := sf.Function.(type) {
+		case *builtinInIntSig:
+			args = inFunc.nonConstArgs
+		case *builtinInStringSig:
+			args = inFunc.nonConstArgs
+		case *builtinInTimeSig:
+			args = inFunc.nonConstArgs
+		case *builtinInDurationSig:
+			args = inFunc.nonConstArgs
+		case *builtinInRealSig:
+			args = inFunc.nonConstArgs
+		case *builtinInDecimalSig:
+			args = inFunc.nonConstArgs
+		}
+		for _, arg := range args {
+			err := arg.resolveIndices(schema)
+			if err != nil {
+				return err
+			}
+		}
+	}
 	for _, arg := range sf.GetArgs() {
 		err := arg.resolveIndices(schema)
 		if err != nil {

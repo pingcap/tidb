@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/stmtsummary"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	dto "github.com/prometheus/client_model/go"
@@ -169,7 +170,7 @@ func (s *testSuite) TestGlobalBinding(c *C) {
 	metrics.BindTotalGauge.WithLabelValues(metrics.ScopeGlobal, bindinfo.Using).Write(pb)
 	c.Assert(pb.GetGauge().GetValue(), Equals, float64(1))
 	metrics.BindMemoryUsage.WithLabelValues(metrics.ScopeGlobal, bindinfo.Using).Write(pb)
-	c.Assert(pb.GetGauge().GetValue(), Equals, float64(121))
+	c.Assert(pb.GetGauge().GetValue(), Equals, float64(97))
 
 	sql, hash := parser.NormalizeDigest("select * from t where i          >      30.0")
 
@@ -227,7 +228,7 @@ func (s *testSuite) TestGlobalBinding(c *C) {
 	c.Assert(pb.GetGauge().GetValue(), Equals, float64(0))
 	metrics.BindMemoryUsage.WithLabelValues(metrics.ScopeGlobal, bindinfo.Using).Write(pb)
 	// From newly created global bind handle.
-	c.Assert(pb.GetGauge().GetValue(), Equals, float64(121))
+	c.Assert(pb.GetGauge().GetValue(), Equals, float64(97))
 
 	bindHandle = bindinfo.NewBindHandle(tk.Se)
 	err = bindHandle.Update(true)
@@ -274,7 +275,7 @@ func (s *testSuite) TestSessionBinding(c *C) {
 	metrics.BindTotalGauge.WithLabelValues(metrics.ScopeSession, bindinfo.Using).Write(pb)
 	c.Assert(pb.GetGauge().GetValue(), Equals, float64(1))
 	metrics.BindMemoryUsage.WithLabelValues(metrics.ScopeSession, bindinfo.Using).Write(pb)
-	c.Assert(pb.GetGauge().GetValue(), Equals, float64(121))
+	c.Assert(pb.GetGauge().GetValue(), Equals, float64(97))
 
 	handle := tk.Se.Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
 	bindData := handle.GetBindRecord("select * from t where i > ?", "test")
@@ -411,6 +412,7 @@ func (s *testSuite) TestErrorBind(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	s.cleanBindingEnv(tk)
 	tk.MustExec("use test")
+	tk.MustGetErrMsg("create global binding for select * from t using select * from t", "[schema:1146]Table 'test.t' doesn't exist")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t(i int, s varchar(20))")
@@ -470,10 +472,9 @@ func (s *testSuite) TestPreparedStmt(c *C) {
 func (s *testSuite) TestCapturePlanBaseline(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	s.cleanBindingEnv(tk)
-	tk.MustExec("set @@tidb_enable_stmt_summary = on")
+	stmtsummary.StmtSummaryByDigestMap.Clear()
 	tk.MustExec(" set @@tidb_capture_plan_baselines = on")
 	defer func() {
-		tk.MustExec("set @@tidb_enable_stmt_summary = off")
 		tk.MustExec(" set @@tidb_capture_plan_baselines = off")
 	}()
 	tk.MustExec("use test")
@@ -485,9 +486,16 @@ func (s *testSuite) TestCapturePlanBaseline(c *C) {
 	tk.MustExec("select count(*) from t where a > 10")
 	tk.MustExec("admin capture bindings")
 	rows := tk.MustQuery("show global bindings").Rows()
+	c.Assert(len(rows), Equals, 0)
+
+	c.Assert(tk.Se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil), IsTrue)
+	tk.MustExec("select * from t where a > 10")
+	tk.MustExec("select * from t where a > 10")
+	tk.MustExec("admin capture bindings")
+	rows = tk.MustQuery("show global bindings").Rows()
 	c.Assert(len(rows), Equals, 1)
-	c.Assert(rows[0][0], Equals, "select count ( ? ) from t where a > ?")
-	c.Assert(rows[0][1], Equals, "SELECT /*+ USE_INDEX(@`sel_1` `test`.`t` ), STREAM_AGG(@`sel_1`)*/ COUNT(1) FROM `t` WHERE `a`>10")
+	c.Assert(rows[0][0], Equals, "select * from t where a > ?")
+	c.Assert(rows[0][1], Equals, "SELECT /*+ USE_INDEX(@`sel_1` `test`.`t` )*/ * FROM `t` WHERE `a`>10")
 }
 
 func (s *testSuite) TestUseMultiplyBindings(c *C) {
