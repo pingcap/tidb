@@ -245,7 +245,7 @@ func (ssMap *stmtSummaryByDigestMap) AddStatement(sei *StmtExecInfo) {
 		prevDigest: sei.PrevSQLDigest,
 		planDigest: sei.PlanDigest,
 	}
-	// Calculate hash value in advance.
+	// Calculate hash value in advance, to reduce the time holding the lock.
 	key.Hash()
 
 	// Enclose the block in a function to ensure the lock will always be released.

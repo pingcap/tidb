@@ -894,6 +894,8 @@ func (a *ExecStmt) SummaryStmt() {
 		return plannercore.EncodePlan(a.Plan)
 	}
 	// Generating plan digest is slow, only generate it once if it's 'Point_Get'.
+	// If it's a point get, different SQLs leads to different plans, so SQL digest
+	// is enough to distinguish different plans in this case.
 	var planDigest string
 	var planDigestGen func() string
 	if a.Plan.TP() == plancodec.TypePointGet {
