@@ -31,18 +31,3 @@ var (
 func createPluginError(code terror.ErrCode) *terror.Error {
 	return terror.ClassPlugin.New(code, mysql.MySQLErrName[uint16(code)])
 }
-
-func init() {
-	pluginMySQLErrCodes := map[terror.ErrCode]uint16{
-		mysql.ErrInvalidPluginID:            mysql.ErrInvalidPluginID,
-		mysql.ErrInvalidPluginManifest:      mysql.ErrInvalidPluginManifest,
-		mysql.ErrInvalidPluginName:          mysql.ErrInvalidPluginName,
-		mysql.ErrInvalidPluginVersion:       mysql.ErrInvalidPluginVersion,
-		mysql.ErrDuplicatePlugin:            mysql.ErrDuplicatePlugin,
-		mysql.ErrInvalidPluginSysVarName:    mysql.ErrInvalidPluginSysVarName,
-		mysql.ErrRequireVersionCheckFail:    mysql.ErrRequireVersionCheckFail,
-		mysql.ErrUnsupportedReloadPlugin:    mysql.ErrUnsupportedReloadPlugin,
-		mysql.ErrUnsupportedReloadPluginVar: mysql.ErrUnsupportedReloadPluginVar,
-	}
-	terror.ErrClassToMySQLCodes[terror.ClassPlugin] = pluginMySQLErrCodes
-}

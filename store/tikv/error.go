@@ -54,20 +54,3 @@ type ErrDeadlock struct {
 func (d *ErrDeadlock) Error() string {
 	return d.Deadlock.String()
 }
-
-func init() {
-	tikvMySQLErrCodes := map[terror.ErrCode]uint16{
-		mysql.ErrTiKVServerTimeout:           mysql.ErrTiKVServerTimeout,
-		mysql.ErrResolveLockTimeout:          mysql.ErrResolveLockTimeout,
-		mysql.ErrPDServerTimeout:             mysql.ErrPDServerTimeout,
-		mysql.ErrRegionUnavailable:           mysql.ErrRegionUnavailable,
-		mysql.ErrTiKVServerBusy:              mysql.ErrTiKVServerBusy,
-		mysql.ErrGCTooEarly:                  mysql.ErrGCTooEarly,
-		mysql.ErrTruncatedWrongValue:         mysql.ErrTruncatedWrongValue,
-		mysql.ErrQueryInterrupted:            mysql.ErrQueryInterrupted,
-		mysql.ErrLockAcquireFailAndNoWaitSet: mysql.ErrLockAcquireFailAndNoWaitSet,
-		mysql.ErrDataOutOfRange:              mysql.ErrDataOutOfRange,
-		mysql.ErrLockWaitTimeout:             mysql.ErrLockWaitTimeout,
-	}
-	terror.ErrClassToMySQLCodes[terror.ClassTiKV] = tikvMySQLErrCodes
-}
