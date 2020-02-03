@@ -520,3 +520,24 @@ func (s *testSuite) TestBindingCache(c *C) {
 	res := tk.MustQuery("show global bindings")
 	c.Assert(len(res.Rows()), Equals, 2)
 }
+
+func (s *testSuite) TestDefaultDB(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	s.cleanBindingEnv(tk)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int, index idx(a))")
+	tk.MustExec("create global binding for select * from test.t using select * from test.t use index(idx)")
+	tk.MustExec("use mysql")
+	tk.MustQuery("select * from test.t")
+	// Even in another database, we could still use the bindings.
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.IndexNames[0], Equals, "t:idx")
+	tk.MustExec("drop global binding for select * from test.t")
+	tk.MustQuery("show global bindings").Check(testkit.Rows())
+
+	tk.MustExec("use test")
+	tk.MustExec("create session binding for select * from test.t using select * from test.t use index(idx)")
+	tk.MustExec("use mysql")
+	tk.MustQuery("select * from test.t")
+	// Even in another database, we could still use the bindings.
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.IndexNames[0], Equals, "t:idx")
+}
