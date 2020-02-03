@@ -215,7 +215,7 @@ type rpcClient struct {
 	security config.Security
 
 	dieNotify uint32
-	// Periodically check whether there is any connection that is die and then close and remove these connections.
+	// Periodically check whether there is any connection that was die and then close and remove these connections.
 	// Implement background cleanup.
 	isClosed         bool
 	dieEventListener func(addr []string)
