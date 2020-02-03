@@ -933,7 +933,7 @@ var MetricTableMap = map[string]MetricTableDef{
 	"tikv_store_size": {
 		PromQL:  `sum(tikv_store_size_bytes{$LABEL_CONDITIONS}) by (instance,type)`,
 		Labels:  []string{"instance", "type"},
-		Comment: "The available/capacity size of each TiKV instance",
+		Comment: "The available or capacity size of each TiKV instance",
 	},
 	"tikv_thread_cpu": {
 		PromQL:  `sum(rate(tikv_thread_cpu_seconds_total{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (instance,name)`,
@@ -983,7 +983,7 @@ var MetricTableMap = map[string]MetricTableDef{
 	"tikv_scheduler_is_busy": {
 		PromQL:  `sum(rate(tikv_scheduler_too_busy_total{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (instance,db,type,stage)`,
 		Labels:  []string{"db", "instance", "type", "stage"},
-		Comment: "Indicates occurrences of events that make the TiKV instance unavailable temporarily, such as Scheduler Busy",
+		Comment: "Indicates occurrences of Scheduler Busy events that make the TiKV instance unavailable temporarily",
 	},
 	"tikv_channel_full_total": {
 		PromQL:  `sum(rate(tikv_channel_full_total{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (instance,type,db)`,
@@ -993,17 +993,17 @@ var MetricTableMap = map[string]MetricTableDef{
 	"tikv_coprocessor_is_busy": {
 		PromQL:  `sum(rate(tikv_coprocessor_request_error{type='full'}[$RANGE_DURATION])) by (instance,db,type)`,
 		Labels:  []string{"db", "instance"},
-		Comment: "Indicates occurrences of events that make the TiKV instance unavailable temporarily, such as Coprocessor Full",
+		Comment: "Indicates occurrences of Coprocessor Full events that make the TiKV instance unavailable temporarily",
 	},
 	"tikv_engine_write_stall": {
 		PromQL:  `avg(tikv_engine_write_stall{type="write_stall_percentile99"}) by (instance, db)`,
 		Labels:  []string{"db", "instance"},
-		Comment: "Indicates occurrences of events that make the TiKV instance unavailable temporarily, such as Write Stall",
+		Comment: "Indicates occurrences of Write Stall events that make the TiKV instance unavailable temporarily",
 	},
 	"tikv_server_report_failures": {
 		PromQL:  `sum(rate(tikv_server_report_failure_msg_total{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (type,instance,store_id)`,
 		Labels:  []string{"instance", "store_id", "type"},
-		Comment: "The total number of reporting failure messages",
+		Comment: "The total number of reported failure messages",
 	},
 	"tikv_storage_async_requests": {
 		PromQL:  `sum(rate(tikv_storage_engine_async_request_total{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (instance, status, type)`,
@@ -1593,7 +1593,7 @@ var MetricTableMap = map[string]MetricTableDef{
 	"tikv_engine_get_cpu_cache_operations": {
 		PromQL:  `sum(rate(tikv_engine_get_served{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (db,type,instance)`,
 		Labels:  []string{"instance", "type", "db"},
-		Comment: "The count of get l0/l1/l2 operations",
+		Comment: "The count of get l0,l1,l2 operations",
 	},
 	"tikv_engine_get_block_cache_operations": {
 		PromQL:  `sum(rate(tikv_engine_cache_efficiency{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (db,type,instance)`,
