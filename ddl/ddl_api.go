@@ -673,6 +673,17 @@ func getDefaultValue(ctx sessionctx.Context, col *table.Column, c *ast.ColumnOpt
 
 		return value, nil
 	}
+	// handle default next value of sequence. (keep the expr string)
+	str, isExpr, err := handleSequenceDefaultValue(c)
+	if isExpr {
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		col.DefaultIsExpr = true
+		return str, nil
+	}
+
+	// analyse the expr to a certain value.
 	v, err := expression.EvalAstExpr(ctx, c.Expr)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -714,6 +725,25 @@ func getDefaultValue(ctx sessionctx.Context, col *table.Column, c *ast.ColumnOpt
 	}
 
 	return v.ToString()
+}
+
+func handleSequenceDefaultValue(c *ast.ColumnOption) (expr string, isExpr bool, err error) {
+	var sb strings.Builder
+	restoreFlags := format.RestoreStringSingleQuotes | format.RestoreKeyWordLowercase | format.RestoreNameBackQuotes |
+		format.RestoreSpacesAroundBinaryOperation
+	restoreCtx := format.NewRestoreCtx(restoreFlags, &sb)
+	switch x := c.Expr.(type) {
+	case *ast.FuncCallExpr:
+		if x.FnName.L == ast.NextVal {
+			sb.Reset()
+			err := c.Expr.Restore(restoreCtx)
+			if err != nil {
+				return "", err, true
+			}
+			return sb.String(), nil, true
+		}
+	}
+	return "", nil, false
 }
 
 // setSetDefaultValue sets the default value for the set type. See https://dev.mysql.com/doc/refman/5.7/en/set.html.
