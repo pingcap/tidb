@@ -171,13 +171,10 @@ func (s *testSuite2) TestIndexJoinPartitionTable(c *C) {
 
 func (s *testSuite5) TestIndexJoinMultiCondition(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
+	tk.MustExec("drop table if exists t1, t2")
 	tk.MustExec("create table t1(a int not null, b int not null, key idx_a_b(a,b))")
 	tk.MustExec("create table t2(a int not null, b int not null)")
 	tk.MustExec("insert into t1 values (0,1), (0,2), (0,3)")
 	tk.MustExec("insert into t2 values (0,1), (0,2), (0,3)")
-	tk.MustQuery("select /*+ TIDB_INLJ(t1) */ count(*) from t1, t2 where t1.a = t2.a and t1.b < t2.b").Check(testkit.Rows(
-		"3"))
+	tk.MustQuery("select /*+ TIDB_INLJ(t1) */ count(*) from t1, t2 where t1.a = t2.a and t1.b < t2.b").Check(testkit.Rows("3"))
 }
