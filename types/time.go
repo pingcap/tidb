@@ -1467,7 +1467,7 @@ func canFallbackToDateTime(str string) bool {
 		return false
 	}
 
-	return len(rest) > 0 && (rest[0] == ' ' || rest[0] == 'T')
+	return len(rest) == 0 || rest[0] == ' ' || rest[0] == 'T'
 }
 
 // ParseDuration parses the time form a formatted string with a fractional seconds part,
@@ -1488,7 +1488,12 @@ func ParseDuration(sc *stmtctx.StatementContext, str string, fsp int8) (Duration
 		return ZeroDuration, ErrTruncatedWrongVal.GenWithStackByArgs("time", str)
 	}
 
-	return datetime.ConvertToDuration()
+	d, err = datetime.ConvertToDuration()
+	if err != nil {
+		return ZeroDuration, ErrTruncatedWrongVal.GenWithStackByArgs("time", str)
+	}
+
+	return d.RoundFrac(fsp)
 }
 
 // TruncateOverflowMySQLTime truncates d when it overflows, and returns ErrTruncatedWrongVal.
