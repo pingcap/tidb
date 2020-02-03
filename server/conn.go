@@ -816,10 +816,12 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 	cmd := data[0]
 	data = data[1:]
 	if variable.EnablePProfSQLCPU.Load() {
-		defer pprof.SetGoroutineLabels(ctx)
-		lastSQL := getLastStmtInConn{cc}.String()
-		ctx = pprof.WithLabels(ctx, pprof.Labels("sql", parser.Normalize(lastSQL)))
-		pprof.SetGoroutineLabels(ctx)
+		label := getLastStmtInConn{cc}.PProfLabel()
+		if len(label) > 0 {
+			defer pprof.SetGoroutineLabels(ctx)
+			ctx = pprof.WithLabels(ctx, pprof.Labels("sql", label))
+			pprof.SetGoroutineLabels(ctx)
+		}
 	}
 	token := cc.server.getToken()
 	defer func() {
@@ -1559,5 +1561,30 @@ func (cc getLastStmtInConn) String() string {
 			return cmdStr
 		}
 		return string(hack.String(data))
+	}
+}
+
+// PProfLabel return sql label used to tag pprof.
+func (cc getLastStmtInConn) PProfLabel() string {
+	if len(cc.lastPacket) == 0 {
+		return ""
+	}
+	cmd, data := cc.lastPacket[0], cc.lastPacket[1:]
+	switch cmd {
+	case mysql.ComInitDB:
+		return "UseDB"
+	case mysql.ComFieldList:
+		return "ListFields"
+	case mysql.ComStmtClose:
+		return "CloseStmt"
+	case mysql.ComStmtReset:
+		return "ResetStmt"
+	case mysql.ComQuery, mysql.ComStmtPrepare:
+		return parser.Normalize(queryStrForLog(string(hack.String(data))))
+	case mysql.ComStmtExecute, mysql.ComStmtFetch:
+		stmtID := binary.LittleEndian.Uint32(data[0:4])
+		return queryStrForLog(cc.preparedStmt2StringNoArgs(stmtID))
+	default:
+		return ""
 	}
 }
