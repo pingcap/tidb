@@ -373,6 +373,17 @@ func (m *Meta) DropDatabase(dbID int64) error {
 	return nil
 }
 
+// DropSequence drops sequence in database.
+// Sequence is made of table struct and kv value pair.
+func (m *Meta) DropSequence(dbID int64, tblID int64, delAutoID bool) error {
+	err := m.DropTableOrView(dbID, tblID, delAutoID)
+	if err != nil {
+		return err
+	}
+	err = m.txn.HDel(m.dbKey(dbID), m.sequenceKey(tblID))
+	return errors.Trace(err)
+}
+
 // DropTableOrView drops table in database.
 // If delAutoID is true, it will delete the auto_increment id key-value of the table.
 // For rename table, we do not need to rename auto_increment id key-value.

@@ -195,10 +195,6 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret
 	addSelection(p, lCh, leftRet, 0)
 	addSelection(p, rCh, rightRet, 1)
 	p.updateEQCond()
-	for _, eqCond := range p.EqualConditions {
-		p.LeftJoinKeys = append(p.LeftJoinKeys, eqCond.GetArgs()[0].(*expression.Column))
-		p.RightJoinKeys = append(p.RightJoinKeys, eqCond.GetArgs()[1].(*expression.Column))
-	}
 	p.mergeSchema()
 	buildKeyInfo(p)
 	return ret, p.self
