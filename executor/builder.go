@@ -2570,10 +2570,26 @@ func buildKvRangesForIndexJoin(ctx sessionctx.Context, tableID, indexID int64, l
 		}
 		kvRanges = append(kvRanges, tmpKvRanges...)
 	}
-	// kvRanges don't overlap each other. So compare StartKey is enough.
+	// Sort and merge the overlapped ranges.
 	sort.Slice(kvRanges, func(i, j int) bool {
 		return bytes.Compare(kvRanges[i].StartKey, kvRanges[j].StartKey) < 0
 	})
+	if cwc != nil {
+		// If cwc is not nil, we need to merge the overlapped ranges here.
+		mergedKeyRanges := make([]kv.KeyRange, 0, len(kvRanges))
+		for i := range kvRanges {
+			if len(mergedKeyRanges) == 0 {
+				mergedKeyRanges = append(mergedKeyRanges, kvRanges[i])
+				continue
+			}
+			if bytes.Compare(kvRanges[i].StartKey, mergedKeyRanges[len(mergedKeyRanges)-1].EndKey) <= 0 {
+				mergedKeyRanges[len(mergedKeyRanges)-1].EndKey = kvRanges[i].EndKey
+			} else {
+				mergedKeyRanges = append(mergedKeyRanges, kvRanges[i])
+			}
+		}
+		return mergedKeyRanges, nil
+	}
 	return kvRanges, nil
 }
 
