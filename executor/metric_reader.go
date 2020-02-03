@@ -210,7 +210,7 @@ func (e *MetricSummaryRetriever) retrieve(ctx context.Context, sctx sessionctx.C
 	}
 	e.retrieved = true
 	totalRows := make([][]types.Datum, 0, len(infoschema.MetricTableMap))
-	e.quantiles = []float64{0.999, 0.99, 0.90, 0.80}
+	e.quantiles = []float64{1, 0.999, 0.99, 0.90, 0.80}
 	tps := make([]*types.FieldType, 0, len(e.table.Columns))
 	for _, col := range e.table.Columns {
 		tps = append(tps, &col.FieldType)
