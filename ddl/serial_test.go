@@ -84,6 +84,7 @@ func (s *testSerialSuite) TearDownSuite(c *C) {
 	if s.store != nil {
 		s.store.Close()
 	}
+	s.mvccStore.Close()
 }
 
 func (s *testSerialSuite) TestPrimaryKey(c *C) {
