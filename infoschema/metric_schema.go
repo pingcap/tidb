@@ -926,8 +926,8 @@ var MetricTableMap = map[string]MetricTableDef{
 		Labels: []string{"instance", "type"},
 	},
 	"tikv_engine_size": {
-		PromQL:  `sum(tikv_engine_size_bytes{$LABEL_CONDITIONS}) by (instance, type)`,
-		Labels:  []string{"instance", "type"},
+		PromQL:  `sum(tikv_engine_size_bytes{$LABEL_CONDITIONS}) by (instance, type, db)`,
+		Labels:  []string{"instance", "type", "db"},
 		Comment: "The storage size per TiKV instance",
 	},
 	"tikv_store_size": {
@@ -1733,13 +1733,13 @@ var MetricTableMap = map[string]MetricTableDef{
 		Comment: "The hit rate of data block cache",
 	},
 	"tikv_corrrput_keys_flow": {
-		PromQL:  `sum(rate(tikv_engine_compaction_num_corrupt_keys{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (type,instance)`,
-		Labels:  []string{"instance", "type"},
+		PromQL:  `sum(rate(tikv_engine_compaction_num_corrupt_keys{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (db,cf,instance,)`,
+		Labels:  []string{"instance", "db", "cf"},
 		Comment: "The flow of corrupt operations on keys",
 	},
 	"tikv_total_keys": {
-		PromQL:  `sum(tikv_engine_estimate_num_keys{$LABEL_CONDITIONS}) by (cf,instance)`,
-		Labels:  []string{"cf", "instance"},
+		PromQL:  `sum(tikv_engine_estimate_num_keys{$LABEL_CONDITIONS}) by (db,cf,instance)`,
+		Labels:  []string{"db", "cf", "instance"},
 		Comment: "The count of keys in each column family",
 	},
 	"tikv_per_read_max_bytes": {
@@ -1773,8 +1773,8 @@ var MetricTableMap = map[string]MetricTableDef{
 		Comment: "The pending bytes to be compacted",
 	},
 	"tikv_read_amplication": {
-		PromQL:  `sum(rate(tikv_engine_read_amp_flow_bytes{type="read_amp_total_read_bytes"}[$RANGE_DURATION])) by (instance,type) / sum(rate(tikv_engine_read_amp_flow_bytes{type="read_amp_estimate_useful_bytes"}[$RANGE_DURATION])) by (instance,type)`,
-		Labels:  []string{"instance"},
+		PromQL:  `sum(rate(tikv_engine_read_amp_flow_bytes{type="read_amp_total_read_bytes"}[$RANGE_DURATION])) by (instance,db) / sum(rate(tikv_engine_read_amp_flow_bytes{type="read_amp_estimate_useful_bytes"}[$RANGE_DURATION])) by (instance,db)`,
+		Labels:  []string{"instance", "db"},
 		Comment: "The read amplification per TiKV instance",
 	},
 	"tikv_compression_ratio": {
@@ -1784,7 +1784,7 @@ var MetricTableMap = map[string]MetricTableDef{
 	},
 	"tikv_number_of_snapshots": {
 		PromQL:  `tikv_engine_num_snapshots{$LABEL_CONDITIONS}`,
-		Labels:  []string{"instance"},
+		Labels:  []string{"instance", "db"},
 		Comment: "The number of snapshot of each TiKV instance",
 	},
 	"tikv_oldest_snapshots_duration": {
@@ -1814,12 +1814,12 @@ var MetricTableMap = map[string]MetricTableDef{
 		Comment: "Stall conditions changed of each column family",
 	},
 	"tikv_write_stall_reason": {
-		PromQL: `sum(increase(tikv_engine_write_stall_reason{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (type,instance)`,
-		Labels: []string{"instance", "type"},
+		PromQL: `sum(increase(tikv_engine_write_stall_reason{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (db,type,instance)`,
+		Labels: []string{"instance", "type", "db"},
 	},
 	"tikv_compaction_reason": {
-		PromQL: `sum(rate(tikv_engine_compaction_reason{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (cf,reason,instance)`,
-		Labels: []string{"cf", "instance", "reason"},
+		PromQL: `sum(rate(tikv_engine_compaction_reason{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (db,cf,reason,instance)`,
+		Labels: []string{"cf", "instance", "reason", "db"},
 	},
 	"tikv_engine_blob_key_max_size": {
 		PromQL: `max(tikv_engine_blob_key_size{$LABEL_CONDITIONS}) by (db,instance,type)`,
