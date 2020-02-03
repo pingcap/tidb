@@ -106,7 +106,7 @@ const (
 	tableTiFlashReplica    = "TIFLASH_REPLICA"
 	// TableInspectionResult is the string constant of inspection result table
 	TableInspectionResult = "INSPECTION_RESULT"
-	// TableMetricSummary is a summary table that contain all metrics.
+	// TableMetricSummary is a summary table that contains all metrics.
 	TableMetricSummary = "METRIC_SUMMARY"
 )
 
