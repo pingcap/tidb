@@ -15,13 +15,14 @@ package expression
 
 import (
 	"fmt"
+	"hash/crc32"
+	"math"
+	"strconv"
+
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/mathutil"
-	"hash/crc32"
-	"math"
-	"strconv"
 )
 
 func (b *builtinLog1ArgSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) error {
