@@ -730,8 +730,10 @@ func (b *builtinRandWithSeedFirstGenSig) vecEvalReal(input *chunk.Chunk, result 
 	result.ResizeFloat64(n, false)
 	i64s := buf.Int64s()
 	f64s := result.Float64s()
-	rng := NewWithTime()
 	for i := 0; i < n; i++ {
+		// When the seed is null we need to use 0 as the seed.
+		// The behavior same as MySQL.
+		rng := NewWithSeed(0)
 		if !buf.IsNull(i) {
 			rng = NewWithSeed(i64s[i])
 		}

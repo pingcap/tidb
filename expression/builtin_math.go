@@ -19,19 +19,17 @@ package expression
 
 import (
 	"fmt"
-	"hash/crc32"
-	"math"
-	"strconv"
-	"strings"
-	"sync"
-	"time"
-
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tipb/go-tipb"
+	"hash/crc32"
+	"math"
+	"strconv"
+	"strings"
+	"sync"
 )
 
 var (
@@ -987,7 +985,9 @@ func (c *randFunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 			return nil, err
 		}
 		if isNull {
-			seed = time.Now().UnixNano()
+			// When the seed is null we need to use 0 as the seed.
+			// The behavior same as MySQL.
+			seed = 0
 		}
 		sig = &builtinRandSig{bt, &sync.Mutex{}, NewWithSeed(seed)}
 		sig.setPbCode(tipb.ScalarFuncSig_Rand)
