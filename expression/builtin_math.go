@@ -19,17 +19,18 @@ package expression
 
 import (
 	"fmt"
+	"hash/crc32"
+	"math"
+	"strconv"
+	"strings"
+	"sync"
+
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tipb/go-tipb"
-	"hash/crc32"
-	"math"
-	"strconv"
-	"strings"
-	"sync"
 )
 
 var (
