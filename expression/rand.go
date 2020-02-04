@@ -4,7 +4,8 @@ import "time"
 
 const maxRandValue = 0x3FFFFFFF
 
-// MysqlRng is random number generator same as mysql.
+// MysqlRng is random number generator and this implementation is ported from MySQL.
+// See https://github.com/tikv/tikv/pull/6117#issuecomment-562489078.
 type MysqlRng struct {
 	seed1 uint32
 	seed2 uint32
