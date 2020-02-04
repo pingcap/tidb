@@ -462,21 +462,32 @@ func flagsToStatementContext(flags uint64) *stmtctx.StatementContext {
 
 // MockGRPCClientStream is exported for testing purpose.
 func MockGRPCClientStream() grpc.ClientStream {
-	return mockClientStream{}
+	return MockClientStream{}
 }
 
-// mockClientStream implements grpc ClientStream interface, its methods are never called.
-type mockClientStream struct{}
+// MockClientStream implements grpc ClientStream interface, its methods are never called.
+type MockClientStream struct{}
 
-func (mockClientStream) Header() (metadata.MD, error) { return nil, nil }
-func (mockClientStream) Trailer() metadata.MD         { return nil }
-func (mockClientStream) CloseSend() error             { return nil }
-func (mockClientStream) Context() context.Context     { return nil }
-func (mockClientStream) SendMsg(m interface{}) error  { return nil }
-func (mockClientStream) RecvMsg(m interface{}) error  { return nil }
+// Header implements grpc.ClientStream interface
+func (MockClientStream) Header() (metadata.MD, error) { return nil, nil }
+
+// Trailer implements grpc.ClientStream interface
+func (MockClientStream) Trailer() metadata.MD { return nil }
+
+// CloseSend implements grpc.ClientStream interface
+func (MockClientStream) CloseSend() error { return nil }
+
+// Context implements grpc.ClientStream interface
+func (MockClientStream) Context() context.Context { return nil }
+
+// SendMsg implements grpc.ClientStream interface
+func (MockClientStream) SendMsg(m interface{}) error { return nil }
+
+// RecvMsg implements grpc.ClientStream interface
+func (MockClientStream) RecvMsg(m interface{}) error { return nil }
 
 type mockCopStreamClient struct {
-	mockClientStream
+	MockClientStream
 
 	req      *tipb.DAGRequest
 	exec     executor
@@ -486,7 +497,7 @@ type mockCopStreamClient struct {
 }
 
 type mockCopStreamErrClient struct {
-	mockClientStream
+	MockClientStream
 
 	*errorpb.Error
 }

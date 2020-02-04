@@ -286,6 +286,9 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 	defer func() {
 		r := recover()
 		if r == nil {
+			if a.retryCount > 0 {
+				metrics.StatementPessimisticRetryCount.Observe(float64(a.retryCount))
+			}
 			return
 		}
 		if str, ok := r.(string); !ok || !strings.HasPrefix(str, memory.PanicMemoryExceed) {
