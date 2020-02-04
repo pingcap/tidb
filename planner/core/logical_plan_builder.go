@@ -107,7 +107,6 @@ func (la *LogicalAggregation) collectGroupByColumns() {
 func (b *PlanBuilder) buildAggregation(ctx context.Context, p LogicalPlan, aggFuncList []*ast.AggregateFuncExpr, gbyItems []expression.Expression) (LogicalPlan, map[int]int, error) {
 	b.optFlag |= flagBuildKeyInfo
 	b.optFlag |= flagPushDownAgg
-	b.optFlag |= flagGcSubstitute
 	// We may apply aggregation eliminate optimization.
 	// So we add the flagMaxMinEliminate to try to convert max/min to topn and flagPushDownTopN to handle the newly added topn operator.
 	b.optFlag |= flagMaxMinEliminate
@@ -701,7 +700,6 @@ func (b *PlanBuilder) coalesceCommonColumns(p *LogicalJoin, leftPlan, rightPlan 
 
 func (b *PlanBuilder) buildSelection(ctx context.Context, p LogicalPlan, where ast.ExprNode, AggMapper map[*ast.AggregateFuncExpr]int) (LogicalPlan, error) {
 	b.optFlag |= flagPredicatePushDown
-	b.optFlag |= flagGcSubstitute
 	if b.curClause != havingClause {
 		b.curClause = whereClause
 	}
@@ -1188,7 +1186,6 @@ func (t *itemTransformer) Leave(inNode ast.Node) (ast.Node, bool) {
 }
 
 func (b *PlanBuilder) buildSort(ctx context.Context, p LogicalPlan, byItems []*ast.ByItem, aggMapper map[*ast.AggregateFuncExpr]int, windowMapper map[*ast.WindowFuncExpr]int) (*LogicalSort, error) {
-	b.optFlag |= flagGcSubstitute
 	if _, isUnion := p.(*LogicalUnionAll); isUnion {
 		b.curClause = globalOrderByClause
 	} else {
@@ -2568,6 +2565,17 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	possiblePaths, err = b.filterPathByIsolationRead(possiblePaths, dbName)
 	if err != nil {
 		return nil, err
+	}
+
+	// Try to substitute generate column only if there is an index on generate column
+	for _, path := range possiblePaths {
+		for _, indexCol := range path.Index.Columns {
+			colInfo := tbl.Cols()[indexCol.Offset]
+			if colInfo.IsGenerated() && !colInfo.GeneratedStored {
+				b.optFlag |= flagGcSubstitute
+				break
+			}
+		}
 	}
 
 	var columns []*table.Column
