@@ -3705,6 +3705,10 @@ func (s *testDBSuite1) TestModifyColumnWithDecimal(c *C) {
 	testExecErrorMessage(c, s.tk, "alter table t_decimal modify column b decimal(9,6);",
 		"[ddl:8200]Unsupported modify column: length 9 is less than origin 10")
 
+	// Test modify decimal column that only enlarge decimal size may cause out of range value error.
+	testExecErrorMessage(c, s.tk, "alter table t_decimal modify column b decimal(10,6);",
+		"[ddl:8200]Unsupported modify column: modify original decimal(10,5) to decimal(10,6) may cause out of range value error")
+
 	// Test modify column successful when no index covered.
 	s.tk.MustExec("alter table t_decimal modify column b decimal(11,6);")
 	s.tk.MustExec("insert into t_decimal values (3, 12345.678912, 'c');")

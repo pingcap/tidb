@@ -2566,20 +2566,20 @@ func modifiable(tbInfo *model.TableInfo, originalCol *model.ColumnInfo, to *type
 			}
 		}
 	case mysql.TypeNewDecimal:
-		for _, indexInfo := range tbInfo.Indices {
-			containColumn := false
-			for _, col := range indexInfo.Columns {
-				if col.Name.L == originalCol.Name.L {
-					containColumn = true
-					break
+		if to.Flen != origin.Flen || to.Decimal != origin.Decimal {
+			for _, indexInfo := range tbInfo.Indices {
+				containColumn := false
+				for _, col := range indexInfo.Columns {
+					if col.Name.L == originalCol.Name.L {
+						containColumn = true
+						break
+					}
 				}
-			}
-			if containColumn {
-				// The root cause is modifying decimal precision needs to rewrite binary representation of that decimal.
-				if to.Flen != origin.Flen || to.Decimal != origin.Decimal {
+				if containColumn {
+					// The root cause is modifying decimal precision needs to rewrite binary representation of that decimal.
+					// If has index cover this column, need to re-create the index to avoid data inconsistency.
 					return errUnsupportedModifyColumn.GenWithStackByArgs("can't change decimal column precision with index covered now")
 				}
-				break
 			}
 		}
 	default:
@@ -2594,6 +2594,11 @@ func modifiable(tbInfo *model.TableInfo, originalCol *model.ColumnInfo, to *type
 	}
 	if to.Decimal > 0 && to.Decimal < origin.Decimal {
 		msg := fmt.Sprintf("decimal %d is less than origin %d", to.Decimal, origin.Decimal)
+		return errUnsupportedModifyColumn.GenWithStackByArgs(msg)
+	}
+	if (to.Flen - to.Decimal) < (origin.Flen - origin.Decimal) {
+		msg := fmt.Sprintf("modify original decimal(%d,%d) to decimal(%d,%d) may cause out of range value error",
+			origin.Flen, origin.Decimal, to.Flen, to.Decimal)
 		return errUnsupportedModifyColumn.GenWithStackByArgs(msg)
 	}
 
