@@ -77,6 +77,21 @@ func (ran *Range) IsPoint(sc *stmtctx.StatementContext) bool {
 	return !ran.LowExclude && !ran.HighExclude
 }
 
+//IsFullRange check if the range is full scan range
+func (ran *Range) IsFullRange() bool {
+	if len(ran.LowVal) != len(ran.HighVal) {
+		return false
+	}
+	for i := range ran.LowVal {
+		a := ran.LowVal[i]
+		b := ran.HighVal[i]
+		if "-inf" != formatDatum(a, true) && "+inf" != formatDatum(b, false) {
+			return false
+		}
+	}
+	return true
+}
+
 // String implements the Stringer interface.
 func (ran *Range) String() string {
 	lowStrs := make([]string, 0, len(ran.LowVal))
