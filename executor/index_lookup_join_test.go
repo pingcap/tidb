@@ -169,7 +169,7 @@ func (s *testSuite2) TestIndexJoinPartitionTable(c *C) {
 	tk.MustQuery("SELECT /*+ TIDB_INLJ(t1) */ count(1) FROM t t1 INNER JOIN (SELECT a, max(c) AS c FROM t WHERE b = 27 AND a = 1 GROUP BY a) t2 ON t1.a = t2.a AND t1.c = t2.c WHERE t1.b = 27").Check(testkit.Rows("1"))
 }
 
-func (s *testSuite5) TestIndexJoinMultiCondition(c *C) {
+func (s *testSuite2) TestIndexJoinMultiCondition(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1, t2")
