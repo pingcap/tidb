@@ -9,6 +9,7 @@ set @@session.tidb_opt_agg_push_down = 1;
 set @@session.tidb_opt_insubq_to_join_and_agg=1;
 set @@session.tidb_hashagg_partial_concurrency = 1;
 set @@session.tidb_hashagg_final_concurrency = 1;
+set @@session.tidb_window_concurrency = 1;
 explain select * from t3 where exists (select s.a from t3 s having sum(s.a) = t3.a );
 id	count	task	operator info
 Projection_11	8000.00	root	test.t3.a, test.t3.b, test.t3.c, test.t3.d
@@ -465,9 +466,9 @@ begin;
 insert tb values ('1');
 explain select * from ta where a = 1;
 id	count	task	operator info
-Selection_5	8000.00	root	eq(cast(test.ta.a), 1)
-└─TableReader_7	10000.00	root	data:TableScan_6
-  └─TableScan_6	10000.00	cop[tikv]	table:ta, range:[-inf,+inf], keep order:false, stats:pseudo
+TableReader_7	8000.00	root	data:Selection_6
+└─Selection_6	8000.00	cop[tikv]	eq(cast(test.ta.a), 1)
+  └─TableScan_5	10000.00	cop[tikv]	table:ta, range:[-inf,+inf], keep order:false, stats:pseudo
 rollback;
 drop table if exists t1, t2;
 create table t1(a int, b int, c int, primary key(a, b));

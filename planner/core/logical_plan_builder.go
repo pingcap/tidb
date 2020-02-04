@@ -2536,7 +2536,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	if err != nil {
 		return nil, err
 	}
-	possiblePaths, err = b.filterPathByIsolationRead(possiblePaths)
+	possiblePaths, err = b.filterPathByIsolationRead(possiblePaths, dbName)
 	if err != nil {
 		return nil, err
 	}
@@ -2726,7 +2726,7 @@ func (b *PlanBuilder) buildMemTable(ctx context.Context, dbName model.CIStr, tab
 	// Some memory tables can receive some predicates
 	switch dbName.L {
 	case util2.MetricSchemaName.L:
-		p.Extractor = &MetricTableExtractor{}
+		p.Extractor = newMetricTableExtractor()
 	case util2.InformationSchemaName.L:
 		switch strings.ToUpper(tableInfo.Name.O) {
 		case infoschema.TableClusterConfig, infoschema.TableClusterLoad, infoschema.TableClusterHardware, infoschema.TableClusterSystemInfo:

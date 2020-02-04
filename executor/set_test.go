@@ -247,6 +247,9 @@ func (s *testSuite5) TestSetVar(c *C) {
 	tk.MustExec("set @@tidb_general_log = 1")
 	tk.MustExec("set @@tidb_general_log = 0")
 
+	tk.MustExec("set @@tidb_pprof_sql_cpu = 1")
+	tk.MustExec("set @@tidb_pprof_sql_cpu = 0")
+
 	tk.MustExec(`set tidb_force_priority = "no_priority"`)
 	tk.MustQuery(`select @@tidb_force_priority;`).Check(testkit.Rows("NO_PRIORITY"))
 	tk.MustExec(`set tidb_force_priority = "low_priority"`)
@@ -417,28 +420,104 @@ func (s *testSuite5) TestSetVar(c *C) {
 }
 
 func (s *testSuite5) TestSetCharset(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec(`SET NAMES latin1`)
-
+	tk := testkit.NewTestKitWithInit(c, s.store)
 	ctx := tk.Se.(sessionctx.Context)
 	sessionVars := ctx.GetSessionVars()
-	for _, v := range variable.SetNamesVariables {
-		sVar, err := variable.GetSessionSystemVar(sessionVars, v)
-		c.Assert(err, IsNil)
-		c.Assert(sVar != "utf8", IsTrue)
-	}
-	tk.MustExec(`SET NAMES utf8`)
-	for _, v := range variable.SetNamesVariables {
-		sVar, err := variable.GetSessionSystemVar(sessionVars, v)
-		c.Assert(err, IsNil)
-		c.Assert(sVar, Equals, "utf8")
-	}
-	sVar, err := variable.GetSessionSystemVar(sessionVars, variable.CollationConnection)
-	c.Assert(err, IsNil)
-	c.Assert(sVar, Equals, "utf8_bin")
 
-	// Issue 1523
+	var characterSetVariables = []string{
+		"character_set_client",
+		"character_set_connection",
+		"character_set_results",
+		"character_set_server",
+		"character_set_database",
+		"character_set_system",
+		"character_set_filesystem",
+	}
+
+	check := func(args ...string) {
+		for i, v := range characterSetVariables {
+			sVar, err := variable.GetSessionSystemVar(sessionVars, v)
+			c.Assert(err, IsNil)
+			c.Assert(sVar, Equals, args[i], Commentf("%d: %s", i, characterSetVariables[i]))
+		}
+	}
+
+	check(
+		"utf8mb4",
+		"utf8mb4",
+		"utf8mb4",
+		"utf8mb4",
+		"utf8mb4",
+		"utf8",
+		"binary",
+	)
+
+	tk.MustExec(`SET NAMES latin1`)
+	check(
+		"latin1",
+		"latin1",
+		"latin1",
+		"utf8mb4",
+		"utf8mb4",
+		"utf8",
+		"binary",
+	)
+
+	tk.MustExec(`SET NAMES default`)
+	check(
+		"utf8mb4",
+		"utf8mb4",
+		"utf8mb4",
+		"utf8mb4",
+		"utf8mb4",
+		"utf8",
+		"binary",
+	)
+
+	// Issue #1523
 	tk.MustExec(`SET NAMES binary`)
+	check(
+		"binary",
+		"binary",
+		"binary",
+		"utf8mb4",
+		"utf8mb4",
+		"utf8",
+		"binary",
+	)
+
+	tk.MustExec(`SET NAMES utf8`)
+	check(
+		"utf8",
+		"utf8",
+		"utf8",
+		"utf8mb4",
+		"utf8mb4",
+		"utf8",
+		"binary",
+	)
+
+	tk.MustExec(`SET CHARACTER SET latin1`)
+	check(
+		"latin1",
+		"latin1",
+		"latin1",
+		"utf8mb4",
+		"utf8mb4",
+		"utf8",
+		"binary",
+	)
+
+	tk.MustExec(`SET CHARACTER SET default`)
+	check(
+		"utf8mb4",
+		"utf8mb4",
+		"utf8mb4",
+		"utf8mb4",
+		"utf8mb4",
+		"utf8",
+		"binary",
+	)
 }
 
 func (s *testSuite5) TestValidateSetVar(c *C) {
@@ -476,6 +555,11 @@ func (s *testSuite5) TestValidateSetVar(c *C) {
 
 	tk.MustExec("set @@tidb_general_log=0;")
 	tk.MustQuery("select @@tidb_general_log;").Check(testkit.Rows("0"))
+
+	tk.MustExec("set @@tidb_pprof_sql_cpu=1;")
+	tk.MustQuery("select @@tidb_pprof_sql_cpu;").Check(testkit.Rows("1"))
+	tk.MustExec("set @@tidb_pprof_sql_cpu=0;")
+	tk.MustQuery("select @@tidb_pprof_sql_cpu;").Check(testkit.Rows("0"))
 
 	tk.MustExec("set @@tidb_enable_streaming=1;")
 	tk.MustQuery("select @@tidb_enable_streaming;").Check(testkit.Rows("1"))

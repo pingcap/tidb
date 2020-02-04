@@ -66,6 +66,7 @@ var _ = Suite(&testDBSuite2{&testDBSuite{}})
 var _ = Suite(&testDBSuite3{&testDBSuite{}})
 var _ = Suite(&testDBSuite4{&testDBSuite{}})
 var _ = Suite(&testDBSuite5{&testDBSuite{}})
+var _ = Suite(&testDBSuite6{&testDBSuite{}})
 
 const defaultBatchSize = 1024
 
@@ -132,6 +133,7 @@ type testDBSuite2 struct{ *testDBSuite }
 type testDBSuite3 struct{ *testDBSuite }
 type testDBSuite4 struct{ *testDBSuite }
 type testDBSuite5 struct{ *testDBSuite }
+type testDBSuite6 struct{ *testDBSuite }
 
 func (s *testDBSuite4) TestAddIndexWithPK(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
@@ -227,7 +229,7 @@ func (s *testDBSuite5) TestAddPrimaryKeyRollback1(c *C) {
 	idxName := "PRIMARY"
 	addIdxSQL := "alter table t1 add primary key c3_index (c3);"
 	errMsg := "[kv:1062]Duplicate entry '' for key 'PRIMARY'"
-	testAddIndexRollback(c, s.store, s.lease, idxName, addIdxSQL, errMsg, hasNullValsInKey)
+	testAddIndexRollback(c, s.store, s.lease, idxName, addIdxSQL, errMsg, hasNullValsInKey, false)
 }
 
 // TestAddPrimaryKeyRollback2 is used to test scenarios that will roll back when a null primary key is encountered.
@@ -236,7 +238,7 @@ func (s *testDBSuite1) TestAddPrimaryKeyRollback2(c *C) {
 	idxName := "PRIMARY"
 	addIdxSQL := "alter table t1 add primary key c3_index (c3);"
 	errMsg := "[ddl:1138]Invalid use of NULL value"
-	testAddIndexRollback(c, s.store, s.lease, idxName, addIdxSQL, errMsg, hasNullValsInKey)
+	testAddIndexRollback(c, s.store, s.lease, idxName, addIdxSQL, errMsg, hasNullValsInKey, false)
 }
 
 func (s *testDBSuite2) TestAddUniqueIndexRollback(c *C) {
@@ -244,7 +246,17 @@ func (s *testDBSuite2) TestAddUniqueIndexRollback(c *C) {
 	idxName := "c3_index"
 	addIdxSQL := "create unique index c3_index on t1 (c3)"
 	errMsg := "[kv:1062]Duplicate entry '' for key 'c3_index'"
-	testAddIndexRollback(c, s.store, s.lease, idxName, addIdxSQL, errMsg, hasNullValsInKey)
+	testAddIndexRollback(c, s.store, s.lease, idxName, addIdxSQL, errMsg, hasNullValsInKey, false)
+}
+
+func (s *testDBSuite6) TestAddExpressionIndexRollback(c *C) {
+	// TODO: This test may cause a bug which has been fixed in following PR, uncomment these code
+	// in that PR @wjhuang2016
+	//hasNullValsInKey := false
+	//idxName := "expr_idx"
+	//addIdxSQL := "alter table t1 add index expr_idx ((pow(c1, c2)));"
+	//errMsg := "[ddl:8202]Cannot decode index value, because [types:1690]DOUBLE value is out of range in 'pow(144, 144)'"
+	//testAddIndexRollback(c, s.store, s.lease, idxName, addIdxSQL, errMsg, hasNullValsInKey, true)
 }
 
 func batchInsert(tk *testkit.TestKit, tbl string, start, end int) {
@@ -258,8 +270,7 @@ func batchInsert(tk *testkit.TestKit, tbl string, start, end int) {
 	tk.MustExec(dml)
 }
 
-func testAddIndexRollback(c *C, store kv.Storage, lease time.Duration,
-	idxName, addIdxSQL, errMsg string, hasNullValsInKey bool) {
+func testAddIndexRollback(c *C, store kv.Storage, lease time.Duration, idxName, addIdxSQL, errMsg string, hasNullValsInKey bool, isExpressionIndex bool) {
 	tk := testkit.NewTestKit(c, store)
 	tk.MustExec("use test_db")
 	tk.MustExec("drop table if exists t1")
@@ -320,7 +331,9 @@ LOOP:
 	for i := base - 10; i < base; i++ {
 		tk.MustExec("delete from t1 where c1 = ?", i+10)
 	}
-	sessionExec(c, store, addIdxSQL)
+	if !isExpressionIndex {
+		sessionExec(c, store, addIdxSQL)
+	}
 	tk.MustExec("drop table t1")
 }
 
@@ -520,9 +533,10 @@ func testCancelDropIndex(c *C, store kv.Storage, d ddl.DDL, idxName, addIdxSQL, 
 		cancelSucc     bool
 	}{
 		// model.JobStateNone means the jobs is canceled before the first run.
+		// if we cancel successfully, we need to set needAddIndex to false in the next test case. Otherwise, set needAddIndex to true.
 		{true, model.JobStateNone, model.StateNone, true},
-		{false, model.JobStateRunning, model.StateWriteOnly, true},
-		{false, model.JobStateRunning, model.StateDeleteOnly, false},
+		{false, model.JobStateRunning, model.StateWriteOnly, false},
+		{true, model.JobStateRunning, model.StateDeleteOnly, false},
 		{true, model.JobStateRunning, model.StateDeleteReorganization, false},
 	}
 	var checkErr error
@@ -1402,7 +1416,7 @@ func (s *testDBSuite5) TestAlterPrimaryKey(c *C) {
 	s.tk.MustGetErrCode("alter table test_add_pk add primary key(d);", mysql.ErrUnsupportedOnGeneratedColumn)
 	// The primary key name is the same as the existing index name.
 	s.tk.MustExec("alter table test_add_pk add primary key idx(e)")
-	s.tk.MustExec("alter table test_add_pk drop primary key")
+	s.tk.MustExec("drop index `primary` on test_add_pk")
 
 	// for describing table
 	s.tk.MustExec("create table test_add_pk1(a int, index idx(a))")
@@ -1442,6 +1456,7 @@ func (s *testDBSuite5) TestAlterPrimaryKey(c *C) {
 	s.tk.MustExec("alter table test_add_pk drop primary key")
 	// for not existing primary key
 	s.tk.MustGetErrCode("alter table test_add_pk drop primary key", mysql.ErrCantDropFieldOrKey)
+	s.tk.MustGetErrCode("drop index `primary` on test_add_pk", mysql.ErrCantDropFieldOrKey)
 
 	// for too many key parts specified
 	s.tk.MustGetErrCode("alter table test_add_pk add primary key idx_test(f1,f2,f3,f4,f5,f6,f7,f8,f9,f10,f11,f12,f13,f14,f15,f16,f17);",
@@ -2213,7 +2228,7 @@ func (s *testDBSuite5) TestRepairTable(c *C) {
 }
 
 func turnRepairModeAndInit(on bool) {
-	list := make([]string, 0, 0)
+	list := make([]string, 0)
 	if on {
 		list = append(list, "test.origin")
 	}

@@ -469,6 +469,7 @@ func (s *testSuite2) TestAdminCheckPartitionTableFailed(c *C) {
 		err = indexOpr.Delete(sc, txn, types.MakeDatums(i+8), int64(i+8))
 		c.Assert(err, IsNil)
 		err = txn.Commit(context.Background())
+		c.Assert(err, IsNil)
 		tk.MustExec("admin check table admin_test_p")
 	}
 
@@ -491,6 +492,7 @@ func (s *testSuite2) TestAdminCheckPartitionTableFailed(c *C) {
 		err = indexOpr.Delete(sc, txn, types.MakeDatums(i+8), int64(i))
 		c.Assert(err, IsNil)
 		err = txn.Commit(context.Background())
+		c.Assert(err, IsNil)
 		tk.MustExec("admin check table admin_test_p")
 	}
 }

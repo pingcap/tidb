@@ -1074,7 +1074,7 @@ func (s *testEvaluatorSuite) TestSysDate(c *C) {
 			vecExprBenchCase{
 				retEvalType:   types.ETDatetime,
 				childrenTypes: []types.EvalType{types.ETInt},
-				geners:        []dataGenerator{&rangeInt64Gener{begin: 0, end: 7}},
+				geners:        []dataGenerator{newRangeInt64Gener(0, 7)},
 			})
 		resetStmtContext(s.ctx)
 		loc := ctx.GetSessionVars().Location()
@@ -2404,8 +2404,6 @@ func (s *testEvaluatorSuite) TestTimeFormat(c *C) {
 		Input  []string
 		Expect interface{}
 	}{
-		{[]string{"100:00:00", `%H %k %h %I %l`},
-			"100 100 04 04 4"},
 		{[]string{"23:00:00", `%H %k %h %I %l`},
 			"23 23 11 11 11"},
 		{[]string{"11:00:00", `%H %k %h %I %l`},
