@@ -539,7 +539,7 @@ func (s *extractorSuite) TestMetricTableExtractor(c *C) {
 	c.Assert(err, IsNil)
 
 	parseTime := func(c *C, s string) time.Time {
-		t, err := time.ParseInLocation("2006-01-02 15:04:05.999", s, time.Local)
+		t, err := time.ParseInLocation(plannercore.MetricTableTimeFormat, s, time.Local)
 		c.Assert(err, IsNil)
 		return t
 	}
