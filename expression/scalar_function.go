@@ -125,8 +125,8 @@ func (sf *ScalarFunction) MarshalJSON() ([]byte, error) {
 	return []byte(fmt.Sprintf("\"%s\"", sf)), nil
 }
 
-// typeInferForNull infers the NULL datums field type and set the field type
-// of NULL datum same as other non-null operands.
+// typeInferForNull infers the NULL constants field type and set the field type
+// of NULL constant same as other non-null operands.
 func typeInferForNull(args []Expression) {
 	if len(args) < 2 {
 		return
@@ -135,7 +135,7 @@ func typeInferForNull(args []Expression) {
 		cons, ok := expr.(*Constant)
 		return ok && cons.RetType.Tp == mysql.TypeNull && cons.Value.IsNull()
 	}
-	// Infer the actual field type of the NULL datum.
+	// Infer the actual field type of the NULL constant.
 	var retFieldTp *types.FieldType
 	var hasNullArg bool
 	for _, arg := range args {
