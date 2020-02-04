@@ -633,6 +633,14 @@ func (cc *clientConn) preparedStmt2String(stmtID uint32) string {
 	if sv == nil {
 		return ""
 	}
+	return cc.preparedStmt2StringNoArgs(stmtID) + sv.PreparedParams.String()
+}
+
+func (cc *clientConn) preparedStmt2StringNoArgs(stmtID uint32) string {
+	sv := cc.ctx.GetSessionVars()
+	if sv == nil {
+		return ""
+	}
 	preparedPointer, ok := sv.PreparedStmts[stmtID]
 	if !ok {
 		return "prepared statement not found, ID: " + strconv.FormatUint(uint64(stmtID), 10)
@@ -642,5 +650,5 @@ func (cc *clientConn) preparedStmt2String(stmtID uint32) string {
 		return "invalidate CachedPrepareStmt type, ID: " + strconv.FormatUint(uint64(stmtID), 10)
 	}
 	preparedAst := preparedObj.PreparedAst
-	return preparedAst.Stmt.Text() + sv.PreparedParams.String()
+	return preparedAst.Stmt.Text()
 }
