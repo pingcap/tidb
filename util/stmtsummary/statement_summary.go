@@ -727,9 +727,10 @@ func (ssElement *stmtSummaryByDigestElement) add(sei *StmtExecInfo, intervalSeco
 		if commitDetails.GetCommitTsTime > ssElement.maxGetCommitTsTime {
 			ssElement.maxGetCommitTsTime = commitDetails.GetCommitTsTime
 		}
-		ssElement.sumCommitBackoffTime += commitDetails.CommitBackoffTime
-		if commitDetails.CommitBackoffTime > ssElement.maxCommitBackoffTime {
-			ssElement.maxCommitBackoffTime = commitDetails.CommitBackoffTime
+		commitBackoffTime := atomic.LoadInt64(&commitDetails.CommitBackoffTime)
+		ssElement.sumCommitBackoffTime += commitBackoffTime
+		if commitBackoffTime > ssElement.maxCommitBackoffTime {
+			ssElement.maxCommitBackoffTime = commitBackoffTime
 		}
 		resolveLockTime := atomic.LoadInt64(&commitDetails.ResolveLockTime)
 		ssElement.sumResolveLockTime += resolveLockTime
