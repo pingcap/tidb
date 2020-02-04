@@ -1389,7 +1389,7 @@ func (r *EliminateSingleMaxMin) Match(expr *memo.ExprIter) bool {
 	if agg.AggFuncs[0].Name != ast.AggFuncMax && agg.AggFuncs[0].Name != ast.AggFuncMin {
 		return false
 	}
-	return !expr.GetExpr().HasAppliedRule(r)
+	return true
 }
 
 // OnTransform implements Transformation interface.
