@@ -216,18 +216,24 @@ var (
 	ErrInvalidJSONPathWildcard = terror.ClassJSON.New(mysql.ErrInvalidJSONPathWildcard, mysql.MySQLErrName[mysql.ErrInvalidJSONPathWildcard])
 	// ErrInvalidJSONContainsPathType means invalid JSON contains path type.
 	ErrInvalidJSONContainsPathType = terror.ClassJSON.New(mysql.ErrInvalidJSONContainsPathType, mysql.MySQLErrName[mysql.ErrInvalidJSONContainsPathType])
+	// ErrJSONDocumentNULLKey means that json's key is null
+	ErrJSONDocumentNULLKey = terror.ClassJSON.New(mysql.ErrJSONDocumentNULLKey, mysql.MySQLErrName[mysql.ErrJSONDocumentNULLKey])
 	// ErrInvalidJSONPathArrayCell means invalid JSON path for an array cell.
 	ErrInvalidJSONPathArrayCell = terror.ClassJSON.New(mysql.ErrInvalidJSONPathArrayCell, mysql.MySQLErrName[mysql.ErrInvalidJSONPathArrayCell])
+	// ErrUnsupportedSecondArgumentType means unsupported second argument type in json_objectagg
+	ErrUnsupportedSecondArgumentType = terror.ClassJSON.New(mysql.ErrUnsupportedSecondArgumentType, mysql.MySQLErrName[mysql.ErrUnsupportedSecondArgumentType])
 )
 
 func init() {
 	terror.ErrClassToMySQLCodes[terror.ClassJSON] = map[terror.ErrCode]uint16{
-		mysql.ErrInvalidJSONText:             mysql.ErrInvalidJSONText,
-		mysql.ErrInvalidJSONPath:             mysql.ErrInvalidJSONPath,
-		mysql.ErrInvalidJSONData:             mysql.ErrInvalidJSONData,
-		mysql.ErrInvalidJSONPathWildcard:     mysql.ErrInvalidJSONPathWildcard,
-		mysql.ErrInvalidJSONContainsPathType: mysql.ErrInvalidJSONContainsPathType,
-		mysql.ErrInvalidJSONPathArrayCell:    mysql.ErrInvalidJSONPathArrayCell,
+		mysql.ErrInvalidJSONText:               mysql.ErrInvalidJSONText,
+		mysql.ErrInvalidJSONPath:               mysql.ErrInvalidJSONPath,
+		mysql.ErrInvalidJSONData:               mysql.ErrInvalidJSONData,
+		mysql.ErrInvalidJSONPathWildcard:       mysql.ErrInvalidJSONPathWildcard,
+		mysql.ErrInvalidJSONContainsPathType:   mysql.ErrInvalidJSONContainsPathType,
+		mysql.ErrJSONDocumentNULLKey:           mysql.ErrJSONDocumentNULLKey,
+		mysql.ErrInvalidJSONPathArrayCell:      mysql.ErrInvalidJSONPathArrayCell,
+		mysql.ErrUnsupportedSecondArgumentType: mysql.ErrUnsupportedSecondArgumentType,
 	}
 }
 
