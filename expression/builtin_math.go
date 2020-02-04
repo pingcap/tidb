@@ -1043,7 +1043,7 @@ func (b *builtinRandWithSeedFirstGenSig) evalReal(row chunk.Row) (float64, bool,
 	if !isNull {
 		rng = NewWithSeed(seed)
 	} else {
-		rng = NewWithTime()
+		rng = NewWithSeed(0)
 	}
 	return rng.Gen(), false, nil
 }
