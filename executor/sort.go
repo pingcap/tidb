@@ -68,28 +68,26 @@ type SortExec struct {
 
 // Close implements the Executor Close interface.
 func (e *SortExec) Close() error {
-	if len(e.partitionList) > 0 {
-		for _, chunkInDisk := range e.partitionList {
-			if chunkInDisk != nil {
-				if err := chunkInDisk.Close(); err != nil {
-					return err
-				}
+	for _, chunkInDisk := range e.partitionList {
+		if chunkInDisk != nil {
+			if err := chunkInDisk.Close(); err != nil {
+				return err
 			}
 		}
-		e.partitionList = e.partitionList[:0]
-
-		for _, chunkPtr := range e.partitionRowPtrs {
-			if chunkPtr != nil {
-				e.memTracker.Consume(int64(-8 * cap(chunkPtr)))
-			}
-		}
-		e.partitionRowPtrs = e.partitionRowPtrs[:0]
 	}
+	e.partitionList = e.partitionList[:0]
+
+	for _, chunkPtr := range e.partitionRowPtrs {
+		if chunkPtr != nil {
+			e.memTracker.Consume(int64(-8 * cap(chunkPtr)))
+		}
+	}
+	e.partitionRowPtrs = e.partitionRowPtrs[:0]
+
 	if e.rowChunks != nil {
 		e.memTracker.Consume(-e.rowChunks.GetMemTracker().BytesConsumed())
 		e.rowChunks = nil
 	}
-	e.memTracker.Consume(int64(-8 * cap(e.rowPtrs)))
 	e.rowPtrs = nil
 	e.memTracker = nil
 	e.diskTracker = nil
