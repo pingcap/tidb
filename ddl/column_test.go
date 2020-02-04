@@ -944,7 +944,7 @@ func (s *testColumnSuite) TestModifyColumn(c *C) {
 		Name: model.NewCIStr("idx"),
 		Columns: []*model.IndexColumn{
 			{
-				Name: tblInfo.Columns[0].Name,
+				Name: tblInfo.Columns[0].Name, // column[0] has index covered.
 			},
 		},
 	}
@@ -967,7 +967,7 @@ func (s *testColumnSuite) TestModifyColumn(c *C) {
 		{"decimal(2,1)", "decimal(2,2)", errUnsupportedModifyColumn.GenWithStackByArgs("can't change decimal column precision with index covered now"), tblInfo.Columns[0]},
 		{"decimal(2,1)", "decimal(2,2)", errUnsupportedModifyColumn.GenWithStackByArgs("modify original decimal(2,1) to decimal(2,2) may cause out of range value error"), tblInfo.Columns[1]},
 		{"decimal(2,1)", "decimal(2,1)", nil, tblInfo.Columns[0]},
-		{"decimal(2,1)", "decimal(3,1)", nil, tblInfo.Columns[1]},
+		{"decimal(2,1)", "decimal(3,1)", nil, tblInfo.Columns[1]}, // column[1] doesn't have index covered.
 	}
 	for _, tt := range tests {
 		ftA := s.colDefStrToFieldType(c, tt.origin)
