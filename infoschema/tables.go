@@ -106,6 +106,8 @@ const (
 	tableTiFlashReplica    = "TIFLASH_REPLICA"
 	// TableInspectionResult is the string constant of inspection result table
 	TableInspectionResult = "INSPECTION_RESULT"
+	// TableMetricSummary is a summary table that contains all metrics.
+	TableMetricSummary = "METRIC_SUMMARY"
 )
 
 var tableIDMap = map[string]int64{
@@ -160,6 +162,7 @@ var tableIDMap = map[string]int64{
 	TableClusterHardware:                    autoid.InformationSchemaDBID + 49,
 	TableClusterSystemInfo:                  autoid.InformationSchemaDBID + 50,
 	TableInspectionResult:                   autoid.InformationSchemaDBID + 51,
+	TableMetricSummary:                      autoid.InformationSchemaDBID + 52,
 }
 
 type columnInfo struct {
@@ -1121,6 +1124,15 @@ var tableInspectionResultCols = []columnInfo{
 	{"REFERENCE", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"SEVERITY", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"SUGGESTION", mysql.TypeVarchar, 256, 0, nil, nil},
+}
+
+var tableMetricSummaryCols = []columnInfo{
+	{"METRIC_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"TIME", mysql.TypeDatetime, -1, 0, nil, nil},
+	{"SUM_VALUE", mysql.TypeDouble, 22, 0, nil, nil},
+	{"AVG_VALUE", mysql.TypeDouble, 22, 0, nil, nil},
+	{"MIN_VALUE", mysql.TypeDouble, 22, 0, nil, nil},
+	{"MAX_VALUE", mysql.TypeDouble, 22, 0, nil, nil},
 }
 
 func dataForSchemata(ctx sessionctx.Context, schemas []*model.DBInfo) [][]types.Datum {
@@ -2231,6 +2243,7 @@ var tableNameToColumns = map[string][]columnInfo{
 	TableClusterHardware:                    tableClusterHardwareCols,
 	TableClusterSystemInfo:                  tableClusterSystemInfoCols,
 	TableInspectionResult:                   tableInspectionResultCols,
+	TableMetricSummary:                      tableMetricSummaryCols,
 }
 
 func createInfoSchemaTable(_ autoid.Allocators, meta *model.TableInfo) (table.Table, error) {
