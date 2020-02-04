@@ -29,10 +29,7 @@
       "select b, avg(a) from t group by b having sum(a) > 1 order by b",
       "select max(a+b) from t",
       "select sum(a) from t group by a, a+b order by a",
-      "select max(a) from t",
-      "select max(a), b from t",
-      "select min(a) from t",
-      "select a, min(b) from t"
+      "select max(a) from t"
     ]
   },
   {
