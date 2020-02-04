@@ -1437,7 +1437,8 @@ func dataForTables(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.D
 // GetShardingInfo returns a nil or description string for the sharding information of given TableInfo.
 // The returned description string may be:
 //  - "NOT_SHARDED": for tables that SHARD_ROW_ID_BITS is not specified.
-//  - "NOT_SHARDED(PK_IS_HANDLE)": for tables that is primary key is row id.
+//  - "NOT_SHARDED(PK_IS_HANDLE)": for tables of which primary key is row id.
+//  - "PK_AUTO_RANDOM_BITS={bit_number}": for tables of which primary key is sharded row id.
 //  - "SHARD_BITS={bit_number}": for tables that with SHARD_ROW_ID_BITS.
 // The returned nil indicates that sharding information is not suitable for the table(for example, when the table is a View).
 // This function is exported for unit test.
@@ -1447,11 +1448,13 @@ func GetShardingInfo(dbInfo *model.DBInfo, tableInfo *model.TableInfo) interface
 	}
 	shardingInfo := "NOT_SHARDED"
 	if tableInfo.PKIsHandle {
-		shardingInfo = "NOT_SHARDED(PK_IS_HANDLE)"
-	} else {
-		if tableInfo.ShardRowIDBits > 0 {
-			shardingInfo = "SHARD_BITS=" + strconv.Itoa(int(tableInfo.ShardRowIDBits))
+		if tableInfo.ContainsAutoRandomBits() {
+			shardingInfo = "PK_AUTO_RANDOM_BITS=" + strconv.Itoa(int(tableInfo.AutoRandomBits))
+		} else {
+			shardingInfo = "NOT_SHARDED(PK_IS_HANDLE)"
 		}
+	} else if tableInfo.ShardRowIDBits > 0 {
+		shardingInfo = "SHARD_BITS=" + strconv.Itoa(int(tableInfo.ShardRowIDBits))
 	}
 	return shardingInfo
 }
