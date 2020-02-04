@@ -3614,8 +3614,6 @@ func (s *testIntegrationSuite) TestAggregationBuiltinJSONObjectAgg(c *C) {
 	result.Check(testkit.Rows(`{"1": "ab"}`))
 	result = tk.MustQuery("select json_objectagg(b, c) from t group by b order by b;")
 	result.Check(testkit.Rows(`{"ab": 5.5}`))
-	result = tk.MustQuery("select json_objectagg(c, d) from t group by c order by c;")
-	result.Check(testkit.Rows(`{"5.50": {"id": 1}}`))
 	result = tk.MustQuery("select json_objectagg(e, f) from t group by e order by e;")
 	result.Check(testkit.Rows(`{"2020-01-10": "11:12:13"}`))
 	result = tk.MustQuery("select json_objectagg(f, g) from t group by f order by f;")
