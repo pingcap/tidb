@@ -573,9 +573,9 @@ func (s *testIntegrationSuite2) TestMathBuiltin(c *C) {
 	tk.MustExec("create table t(a int)")
 	tk.MustExec("insert into t values(1),(2),(3)")
 	tk.Se.GetSessionVars().MaxChunkSize = 1
-	tk.MustQuery("select rand(1) from t").Sort().Check(testkit.Rows("0.6046602879796196", "0.6645600532184904", "0.9405090880450124"))
-	tk.MustQuery("select rand(a) from t").Check(testkit.Rows("0.6046602879796196", "0.16729663442585624", "0.7199826688373036"))
-	tk.MustQuery("select rand(1), rand(2), rand(3)").Check(testkit.Rows("0.6046602879796196 0.16729663442585624 0.7199826688373036"))
+	tk.MustQuery("select rand(1) from t").Check(testkit.Rows("0.40540353712197724", "0.8716141803857071", "0.1418603212962489"))
+	tk.MustQuery("select rand(a) from t").Check(testkit.Rows("0.40540353712197724", "0.6555866465490187", "0.9057697559760601"))
+	tk.MustQuery("select rand(1), rand(2), rand(3)").Check(testkit.Rows("0.40540353712197724 0.6555866465490187 0.9057697559760601"))
 }
 
 func (s *testIntegrationSuite2) TestStringBuiltin(c *C) {
