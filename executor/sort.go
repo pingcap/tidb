@@ -59,8 +59,9 @@ type SortExec struct {
 	// partitionRowPtrs store the sorted RowPtrs for each row for partitions.
 	partitionRowPtrs [][]chunk.RowPtr
 
-	// heapSort use heap sort for spill disk.
-	heapSort *multiWayMerge
+	// multiWayMerge uses multi-way merge for spill disk.
+	// The multi-way merge algorithm can refer to https://en.wikipedia.org/wiki/K-way_merge_algorithm
+	multiWayMerge *multiWayMerge
 	// spillAction save the Action for spill disk.
 	spillAction *chunk.SpillDiskAction
 }
@@ -92,7 +93,7 @@ func (e *SortExec) Close() error {
 	e.rowPtrs = nil
 	e.memTracker = nil
 	e.diskTracker = nil
-	e.heapSort = nil
+	e.multiWayMerge = nil
 	e.spillAction = nil
 	return e.children[0].Close()
 }
@@ -129,10 +130,6 @@ func (e *SortExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		err := e.fetchRowChunks(ctx)
 		if err != nil {
 			return err
-		}
-		if !e.rowChunks.AlreadySpilled() {
-			e.initPointers()
-			sort.Slice(e.rowPtrs, e.keyColumnsLess)
 		}
 		e.fetched = true
 	}
@@ -194,32 +191,32 @@ func (h *multiWayMerge) Swap(i, j int) {
 }
 
 func (e *SortExec) externalSorting(req *chunk.Chunk) (err error) {
-	if e.heapSort == nil {
-		e.heapSort = &multiWayMerge{e.lessRow, make([]partitionPointer, 0, len(e.partitionList))}
+	if e.multiWayMerge == nil {
+		e.multiWayMerge = &multiWayMerge{e.lessRow, make([]partitionPointer, 0, len(e.partitionList))}
 		for i := 0; i < len(e.partitionList); i++ {
 			row, err := e.partitionList[i].GetRow(e.partitionRowPtrs[i][0])
 			if err != nil {
 				return err
 			}
-			e.heapSort.elements = append(e.heapSort.elements, partitionPointer{row: row, partitionID: i, consumed: 0})
+			e.multiWayMerge.elements = append(e.multiWayMerge.elements, partitionPointer{row: row, partitionID: i, consumed: 0})
 		}
-		heap.Init(e.heapSort)
+		heap.Init(e.multiWayMerge)
 	}
 
-	for !req.IsFull() && e.heapSort.Len() > 0 {
-		partitionPtr := e.heapSort.elements[0]
+	for !req.IsFull() && e.multiWayMerge.Len() > 0 {
+		partitionPtr := e.multiWayMerge.elements[0]
 		req.AppendRow(partitionPtr.row)
 		partitionPtr.consumed++
 		if partitionPtr.consumed >= len(e.partitionRowPtrs[partitionPtr.partitionID]) {
-			heap.Remove(e.heapSort, 0)
+			heap.Remove(e.multiWayMerge, 0)
 			continue
 		}
 		partitionPtr.row, err = e.partitionList[partitionPtr.partitionID].GetRow(e.partitionRowPtrs[partitionPtr.partitionID][partitionPtr.consumed])
 		if err != nil {
 			return err
 		}
-		e.heapSort.elements[0] = partitionPtr
-		heap.Fix(e.heapSort, 0)
+		e.multiWayMerge.elements[0] = partitionPtr
+		heap.Fix(e.multiWayMerge, 0)
 	}
 	return nil
 }
@@ -260,7 +257,7 @@ func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 			e.spillAction.ResetOnce()
 		}
 	}
-	if e.rowChunks.NumRow() > 0 && len(e.partitionList) > 0 {
+	if e.rowChunks.NumRow() > 0 {
 		e.generatePartition()
 	}
 	return nil

@@ -507,7 +507,6 @@ type windowTestCase struct {
 	concurrency      int
 	dataSourceSorted bool
 	ctx              sessionctx.Context
-	rawDate          string
 	rawDataSmall     string
 }
 
@@ -529,7 +528,7 @@ func defaultWindowTestCase() *windowTestCase {
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().InitChunkSize = variable.DefInitChunkSize
 	ctx.GetSessionVars().MaxChunkSize = variable.DefMaxChunkSize
-	return &windowTestCase{ast.WindowFuncRowNumber, 1, nil, 1000, 10000000, 1, true, ctx, strings.Repeat("x", 5*1024), strings.Repeat("x", 16)}
+	return &windowTestCase{ast.WindowFuncRowNumber, 1, nil, 1000, 10000000, 1, true, ctx, strings.Repeat("x", 16)}
 }
 
 func benchmarkWindowExecWithCase(b *testing.B, casTest *windowTestCase) {
@@ -684,7 +683,7 @@ type hashJoinTestCase struct {
 	joinType        core.JoinType
 	disk            bool
 	useOuterToBuild bool
-	rawDate         string
+	rawData         string
 }
 
 func (tc hashJoinTestCase) columns() []*expression.Column {
@@ -708,7 +707,7 @@ func defaultHashJoinTestCase(cols []*types.FieldType, joinType core.JoinType, us
 	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(nil, -1)
 	ctx.GetSessionVars().StmtCtx.DiskTracker = disk.NewTracker(nil, -1)
 	ctx.GetSessionVars().IndexLookupJoinConcurrency = 4
-	tc := &hashJoinTestCase{rows: 100000, concurrency: 4, ctx: ctx, keyIdx: []int{0, 1}, rawDate: strings.Repeat("x", 5*1024)}
+	tc := &hashJoinTestCase{rows: 100000, concurrency: 4, ctx: ctx, keyIdx: []int{0, 1}, rawData: strings.Repeat("x", 5*1024)}
 	tc.cols = cols
 	tc.useOuterToBuild = useOuterToBuild
 	tc.joinType = joinType
@@ -768,7 +767,7 @@ func benchmarkHashJoinExecWithCase(b *testing.B, casTest *hashJoinTestCase) {
 			case mysql.TypeLong, mysql.TypeLonglong:
 				return int64(row)
 			case mysql.TypeVarString:
-				return casTest.rawDate
+				return casTest.rawData
 			case mysql.TypeDouble:
 				return float64(row)
 			default:
@@ -921,7 +920,7 @@ func benchmarkBuildHashTableForList(b *testing.B, casTest *hashJoinTestCase) {
 			case mysql.TypeLong, mysql.TypeLonglong:
 				return int64(row)
 			case mysql.TypeVarString:
-				return casTest.rawDate
+				return casTest.rawData
 			default:
 				panic("not implement")
 			}
@@ -1534,7 +1533,8 @@ func BenchmarkSortExec(b *testing.B) {
 		benchmarkSortExec(b, cas)
 	})
 
-	for ndv := 1; ndv < 10000; ndv *= 2 {
+	ndvs := []int{1, 10000}
+	for _, ndv := range ndvs {
 		cas.ndvs = []int{ndv, 0}
 		cas.orderByIdx = []int{0, 1}
 		b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
