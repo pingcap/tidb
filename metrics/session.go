@@ -100,6 +100,15 @@ var (
 			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 20), // 1ms ~ 1049s
 		},
 	)
+
+	StatementPessimisticRetryCount = prometheus.NewHistogram(
+		prometheus.HistogramOpts{
+			Namespace: "tidb",
+			Subsystem: "session",
+			Name:      "statement_pessimistic_retry_count",
+			Help:      "Bucketed historgram of statement pessimistic retry count",
+			Buckets:   prometheus.ExponentialBuckets(1, 1.5, 14), // 1 ~ 291
+		})
 )
 
 // Label constants.
