@@ -381,8 +381,8 @@ type LogicalMemTable struct {
 	logicalSchemaProducer
 
 	Extractor MemTablePredicateExtractor
-	dbName    model.CIStr
-	tableInfo *model.TableInfo
+	DBName    model.CIStr
+	TableInfo *model.TableInfo
 }
 
 // LogicalUnionScan is only used in non read-only txn.
