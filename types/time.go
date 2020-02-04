@@ -1382,8 +1382,7 @@ func matchFrac(str string, fsp int8) (bool, int, string, error) {
 func matchDuration(str string, fsp int8) (Duration, error) {
 	fsp, err := CheckFsp(int(fsp))
 	if err != nil {
-		return ZeroDuration, ErrTruncatedWrongVal.GenWithStackByArgs("time", origStr)
-
+		return ZeroDuration, ErrTruncatedWrongVal.GenWithStackByArgs("time", str)
 	}
 
 	if len(str) == 0 {
