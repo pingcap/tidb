@@ -76,12 +76,12 @@ func (hc *hashContext) initHash(rows int) {
 }
 
 type hashStatistic struct {
-	collision        int
+	probeCollision   int
 	buildTableElapse time.Duration
 }
 
 func (s *hashStatistic) String() string {
-	return fmt.Sprintf("collision:%v, build:%v", s.collision, s.buildTableElapse)
+	return fmt.Sprintf("probe collision:%v, build:%v", s.probeCollision, s.buildTableElapse)
 }
 
 // hashRowContainer handles the rows and the hash map of a table.
@@ -142,7 +142,7 @@ func (c *hashRowContainer) GetMatchedRowsAndPtrs(probeKey uint64, probeRow chunk
 			return
 		}
 		if !ok {
-			c.stat.collision++
+			c.stat.probeCollision++
 			continue
 		}
 		matched = append(matched, matchedRow)

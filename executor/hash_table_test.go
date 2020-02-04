@@ -116,11 +116,11 @@ func (s *pkgTestSuite) TestHashRowContainer(c *C) {
 		return fnv.New64()
 	}
 	rowContainer := s.testHashRowContainer(c, hashFunc, false)
-	c.Assert(rowContainer.stat.collision, Equals, 0)
+	c.Assert(rowContainer.stat.probeCollision, Equals, 0)
 	c.Assert(rowContainer.stat.buildTableElapse > 0, IsTrue)
 
 	rowContainer = s.testHashRowContainer(c, hashFunc, true)
-	c.Assert(rowContainer.stat.collision, Equals, 0)
+	c.Assert(rowContainer.stat.probeCollision, Equals, 0)
 	c.Assert(rowContainer.stat.buildTableElapse > 0, IsTrue)
 
 	h := &hashCollision{count: 0}
@@ -129,7 +129,7 @@ func (s *pkgTestSuite) TestHashRowContainer(c *C) {
 	}
 	rowContainer = s.testHashRowContainer(c, hashFuncCollision, false)
 	c.Assert(h.count > 0, IsTrue)
-	c.Assert(rowContainer.stat.collision > 0, IsTrue)
+	c.Assert(rowContainer.stat.probeCollision > 0, IsTrue)
 	c.Assert(rowContainer.stat.buildTableElapse > 0, IsTrue)
 }
 
