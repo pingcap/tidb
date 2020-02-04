@@ -672,13 +672,15 @@ func (e *HashJoinExec) fetchAndBuildHashTable(ctx context.Context) {
 	if err != nil {
 		e.buildFinished <- errors.Trace(err)
 		close(doneCh)
+		doneCh = nil
 	}
 	// Wait fetchBuildSideRows be finished.
 	// 1. if buildHashTableForList fails
 	// 2. if probeSideResult.NumRows() == 0, fetchProbeSideChunks will not wait for the build side.
 	for range buildSideResultCh {
 	}
-	if err = <-fetchBuildSideRowsOk; err != nil {
+	// Check whether doneCh is nil to avoid sending redundant error into buildFinished.
+	if err = <-fetchBuildSideRowsOk; doneCh != nil && err != nil {
 		e.buildFinished <- err
 	}
 }
