@@ -29,7 +29,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/util/logutil"
 	tidbMath "github.com/pingcap/tidb/util/math"
-	parser "github.com/pingcap/tidb/util/parser"
+	"github.com/pingcap/tidb/util/parser"
 )
 
 // Time format without fractional seconds precision.
