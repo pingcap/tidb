@@ -130,6 +130,8 @@ func RegisterMetrics() {
 	prometheus.MustRegister(TiKVLocalLatchWaitTimeHistogram)
 	prometheus.MustRegister(TimeJumpBackCounter)
 	prometheus.MustRegister(TransactionDuration)
+	prometheus.MustRegister(StatementDeadlockDetectDuration)
+	prometheus.MustRegister(StatementPessimisticRetryCount)
 	prometheus.MustRegister(UpdateSelfVersionHistogram)
 	prometheus.MustRegister(UpdateStatsCounter)
 	prometheus.MustRegister(WatchOwnerCounter)

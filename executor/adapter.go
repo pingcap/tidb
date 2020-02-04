@@ -286,6 +286,9 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 	defer func() {
 		r := recover()
 		if r == nil {
+			if a.retryCount > 0 {
+				metrics.StatementPessimisticRetryCount.Observe(float64(a.retryCount))
+			}
 			return
 		}
 		if str, ok := r.(string); !ok || !strings.HasPrefix(str, memory.PanicMemoryExceed) {
@@ -525,6 +528,7 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e Executor) error {
 	}
 	txnCtx := sctx.GetSessionVars().TxnCtx
 	for {
+		startPointGetLocking := time.Now()
 		_, err = a.handleNoDelayExecutor(ctx, e)
 		if !txn.Valid() {
 			return err
@@ -533,6 +537,9 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e Executor) error {
 			// It is possible the DML has point get plan that locks the key.
 			e, err = a.handlePessimisticLockError(ctx, err)
 			if err != nil {
+				if ErrDeadlock.Equal(err) {
+					metrics.StatementDeadlockDetectDuration.Observe(time.Since(startPointGetLocking).Seconds())
+				}
 				return err
 			}
 			continue
@@ -547,12 +554,16 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e Executor) error {
 		}
 		seVars := sctx.GetSessionVars()
 		lockCtx := newLockCtx(seVars, seVars.LockWaitTimeout)
+		startLocking := time.Now()
 		err = txn.LockKeys(ctx, lockCtx, keys...)
 		if err == nil {
 			return nil
 		}
 		e, err = a.handlePessimisticLockError(ctx, err)
 		if err != nil {
+			if ErrDeadlock.Equal(err) {
+				metrics.StatementDeadlockDetectDuration.Observe(time.Since(startLocking).Seconds())
+			}
 			return err
 		}
 	}

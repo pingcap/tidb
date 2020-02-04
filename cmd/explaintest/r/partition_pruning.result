@@ -4352,3 +4352,18 @@ Union_8	30000.00	root
 │ └─TableScan_11	10000.00	cop[tikv]	table:t, partition:p1, range:[-inf,+inf], keep order:false, stats:pseudo
 └─TableReader_14	10000.00	root	data:TableScan_13
   └─TableScan_13	10000.00	cop[tikv]	table:t, partition:p2, range:[-inf,+inf], keep order:false, stats:pseudo
+drop table if exists t;
+CREATE TABLE `t` (
+`a` int(11) DEFAULT NULL,
+`b` int(11) DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY RANGE COLUMNS(a) (
+PARTITION p0 VALUES LESS THAN (1),
+PARTITION p1 VALUES LESS THAN (10),
+PARTITION p2 VALUES LESS THAN (100)
+);
+desc select * from t where a = 11 and b = 1 or a = 12 and b = 1;
+id	count	task	operator info
+TableReader_8	8000.00	root	data:Selection_7
+└─Selection_7	8000.00	cop[tikv]	or(and(eq(test.t.a, 11), eq(test.t.b, 1)), and(eq(test.t.a, 12), eq(test.t.b, 1)))
+  └─TableScan_6	10000.00	cop[tikv]	table:t, partition:p2, range:[-inf,+inf], keep order:false, stats:pseudo
