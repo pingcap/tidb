@@ -371,7 +371,35 @@ func GetColOriginDefaultValue(ctx sessionctx.Context, col *model.ColumnInfo) (ty
 
 // GetColDefaultValue gets default value of the column.
 func GetColDefaultValue(ctx sessionctx.Context, col *model.ColumnInfo) (types.Datum, error) {
-	return getColDefaultValue(ctx, col, col.GetDefaultValue())
+	defaultValue := col.GetDefaultValue()
+	if !col.DefaultIsExpr {
+		return getColDefaultValue(ctx, col, defaultValue)
+	}
+	return getColDefaultExprValue(ctx, col, defaultValue)
+}
+
+func getColDefaultExprValue(ctx sessionctx.Context, col *model.ColumnInfo, defaultValue interface{}) (types.Datum, error) {
+	x, ok := defaultValue.(string)
+	if !ok {
+		// Todo: refine the error.
+		return types.Datum{}, errors.New("can't cast default value as expression string")
+	}
+	var defaultExpr ast.ExprNode
+	expr := fmt.Sprintf("select %s", x)
+	stmts, _, err := parser.New().Parse(expr, "", "")
+	if err == nil {
+		defaultExpr = stmts[0].(*ast.SelectStmt).Fields.Fields[0].Expr
+	}
+	d, err := expression.EvalAstExpr(ctx, defaultExpr)
+	if err != nil {
+		return types.Datum{}, err
+	}
+	// Check the evaluated data type by cast.
+	value, err := CastValue(ctx, types.NewDatum(d), col)
+	if err != nil {
+		return types.Datum{}, err
+	}
+	return value, nil
 }
 
 func getColDefaultValue(ctx sessionctx.Context, col *model.ColumnInfo, defaultVal interface{}) (types.Datum, error) {

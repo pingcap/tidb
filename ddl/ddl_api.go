@@ -674,8 +674,8 @@ func getDefaultValue(ctx sessionctx.Context, col *table.Column, c *ast.ColumnOpt
 		return value, nil
 	}
 	// handle default next value of sequence. (keep the expr string)
-	str, isExpr, err := handleSequenceDefaultValue(c)
-	if isExpr {
+	str, isSeqExpr, err := handleSequenceDefaultValue(c)
+	if isSeqExpr {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
