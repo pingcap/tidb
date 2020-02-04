@@ -45,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
+	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/stmtsummary"
 	"github.com/pingcap/tidb/util/stringutil"
@@ -895,14 +896,26 @@ func (a *ExecStmt) SummaryStmt() {
 	planGenerator := func() string {
 		return plannercore.EncodePlan(a.Plan)
 	}
-	_, planDigest := getPlanDigest(a.Ctx, a.Plan)
+	// Generating plan digest is slow, only generate it once if it's 'Point_Get'.
+	// If it's a point get, different SQLs leads to different plans, so SQL digest
+	// is enough to distinguish different plans in this case.
+	var planDigest string
+	var planDigestGen func() string
+	if a.Plan.TP() == plancodec.TypePointGet {
+		planDigestGen = func() string {
+			_, planDigest := getPlanDigest(a.Ctx, a.Plan)
+			return planDigest
+		}
+	} else {
+		_, planDigest = getPlanDigest(a.Ctx, a.Plan)
+	}
 
 	execDetail := stmtCtx.GetExecDetails()
 	copTaskInfo := stmtCtx.CopTasksDetails()
 	memMax := stmtCtx.MemTracker.MaxConsumed()
 	var userString string
 	if sessVars.User != nil {
-		userString = sessVars.User.String()
+		userString = sessVars.User.Username
 	}
 
 	stmtsummary.StmtSummaryByDigestMap.AddStatement(&stmtsummary.StmtExecInfo{
@@ -914,6 +927,7 @@ func (a *ExecStmt) SummaryStmt() {
 		PrevSQLDigest:  prevSQLDigest,
 		PlanGenerator:  planGenerator,
 		PlanDigest:     planDigest,
+		PlanDigestGen:  planDigestGen,
 		User:           userString,
 		TotalLatency:   costTime,
 		ParseLatency:   sessVars.DurationParse,
