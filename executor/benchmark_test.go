@@ -1280,17 +1280,16 @@ func prepare4MergeJoin(tc *mergeJoinTestCase, leftExec, rightExec *mockDataSourc
 		isOuterJoin: false,
 	}
 
-	e.outerIdx = 0
-
-	e.innerTable = &mergeJoinInnerTable{
-		reader:   rightExec,
-		joinKeys: innerJoinKeys,
+	e.innerTable = &mergeJoinTable{
+		isInner:    true,
+		childIndex: 1,
+		joinKeys:   innerJoinKeys,
 	}
 
-	e.outerTable = &mergeJoinOuterTable{
-		reader: leftExec,
-		filter: nil,
-		keys:   outerJoinKeys,
+	e.outerTable = &mergeJoinTable{
+		childIndex: 0,
+		filters:    nil,
+		joinKeys:   outerJoinKeys,
 	}
 
 	return e
