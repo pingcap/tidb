@@ -48,14 +48,14 @@ func (p *LogicalTableDual) DeriveStats(childStats []*property.StatsInfo, selfSch
 
 // DeriveStats implement LogicalPlan DeriveStats interface.
 func (p *LogicalMemTable) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema) (*property.StatsInfo, error) {
-	statsTable := statistics.PseudoTable(p.tableInfo)
+	statsTable := statistics.PseudoTable(p.TableInfo)
 	stats := &property.StatsInfo{
 		RowCount:     float64(statsTable.Count),
-		Cardinality:  make([]float64, len(p.tableInfo.Columns)),
-		HistColl:     statsTable.GenerateHistCollFromColumnInfo(p.tableInfo.Columns, p.schema.Columns),
+		Cardinality:  make([]float64, len(p.TableInfo.Columns)),
+		HistColl:     statsTable.GenerateHistCollFromColumnInfo(p.TableInfo.Columns, p.schema.Columns),
 		StatsVersion: statistics.PseudoVersion,
 	}
-	for i := range p.tableInfo.Columns {
+	for i := range p.TableInfo.Columns {
 		stats.Cardinality[i] = float64(statsTable.Count)
 	}
 	p.stats = stats
