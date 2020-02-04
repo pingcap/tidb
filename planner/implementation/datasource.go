@@ -14,12 +14,13 @@
 package implementation
 
 import (
+	"math"
+
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/planner/memo"
 	"github.com/pingcap/tidb/statistics"
-	"math"
 )
 
 // TableDualImpl implementation of PhysicalTableDual.
@@ -34,6 +35,21 @@ func NewTableDualImpl(dual *plannercore.PhysicalTableDual) *TableDualImpl {
 
 // CalcCost calculates the cost of the table dual Implementation.
 func (impl *TableDualImpl) CalcCost(outCount float64, children ...memo.Implementation) float64 {
+	return 0
+}
+
+// MemTableScanImpl implementation of PhysicalTableDual.
+type MemTableScanImpl struct {
+	baseImpl
+}
+
+// NewMemTableScanImpl creates a new table dual Implementation.
+func NewMemTableScanImpl(dual *plannercore.PhysicalMemTable) *MemTableScanImpl {
+	return &MemTableScanImpl{baseImpl{plan: dual}}
+}
+
+// CalcCost calculates the cost of the table dual Implementation.
+func (impl *MemTableScanImpl) CalcCost(outCount float64, children ...memo.Implementation) float64 {
 	return 0
 }
 
