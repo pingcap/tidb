@@ -219,7 +219,7 @@ func (s *testSuite7) TestWindowFunctionsDataReference(c *C) {
 	result.Check(testkit.Rows("1 1", "2 1", "3 1"))
 }
 
-func (s *testSuite7) TestSlidingWindowFunctions(c *C) {
+func (s *testSuite7) TestSlidingWindowFunctions1(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists t;")
@@ -250,4 +250,22 @@ func (s *testSuite7) TestSlidingWindowFunctions(c *C) {
 	result = tk.MustQuery("EXECUTE p USING @p1, @p2;")
 	result.Check(testkit.Rows("M 2", "F 2", "F 2", "F 2", "M 2", "<nil> 1", "<nil> 0"))
 	tk.MustExec("DROP PREPARE p;")
+}
+
+func (s *testSuite7) TestSlidingWindowFunctions2(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("CREATE TABLE t (id INTEGER, sex CHAR(1));")
+	tk.MustExec("insert into t values (1,'M')")
+	tk.MustExec("insert into t values (2,'F')")
+	tk.MustExec("insert into t values (3,'F')")
+	tk.MustExec("insert into t values (4,'F')")
+	tk.MustExec("insert into t values (5,'M')")
+	tk.MustExec("insert into t values (10,null)")
+	tk.MustExec("insert into t values (11,null)")
+
+	tk.Se.GetSessionVars().MaxChunkSize = 2
+	result := tk.MustQuery("SELECT sex, COUNT(id) OVER (ORDER BY id ROWS BETWEEN 1 FOLLOWING and 2 FOLLOWING) FROM t;")
+	result.Check(testkit.Rows("M 2", "F 2", "F 2", "F 2", "M 2", "<nil> 1", "<nil> 0"))
 }

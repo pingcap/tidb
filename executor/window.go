@@ -15,7 +15,6 @@ package executor
 
 import (
 	"context"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/executor/aggfuncs"
@@ -312,6 +311,7 @@ func (p *rowFrameWindowProcessor) appendResult2Chunk(ctx sessionctx.Context, row
 		remained--
 		if start >= end {
 			for i, windowFunc := range p.windowFuncs {
+				windowFunc.ResetPartialResult(p.partialResults[i])
 				err = windowFunc.AppendFinalResult2Chunk(ctx, p.partialResults[i], chk)
 				if err != nil {
 					return nil, err
