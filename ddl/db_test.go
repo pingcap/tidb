@@ -136,6 +136,8 @@ type testDBSuite3 struct{ *testDBSuite }
 type testDBSuite4 struct{ *testDBSuite }
 type testDBSuite5 struct{ *testDBSuite }
 type testDBSuite6 struct{ *testDBSuite }
+type testDBSuite7 struct{ *testDBSuite }
+type testDBSuite8 struct{ *testDBSuite }
 
 func (s *testDBSuite4) TestAddIndexWithPK(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
