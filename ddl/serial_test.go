@@ -50,8 +50,6 @@ var _ = SerialSuites(&testSerialSuite{})
 
 type testSerialSuite struct {
 	store     kv.Storage
-	cluster   *mocktikv.Cluster
-	mvccStore mocktikv.MVCCStore
 	dom       *domain.Domain
 }
 
@@ -64,9 +62,6 @@ func (s *testSerialSuite) SetUpSuite(c *C) {
 	// Test for add/drop primary key.
 	newCfg.AlterPrimaryKey = false
 	config.StoreGlobalConfig(&newCfg)
-
-	s.cluster = mocktikv.NewCluster()
-	s.mvccStore = mocktikv.MustNewMVCCStore()
 
 	ddl.WaitTimeWhenErrorOccured = 1 * time.Microsecond
 	var err error
@@ -84,7 +79,6 @@ func (s *testSerialSuite) TearDownSuite(c *C) {
 	if s.store != nil {
 		s.store.Close()
 	}
-	s.mvccStore.Close()
 }
 
 func (s *testSerialSuite) TestPrimaryKey(c *C) {
@@ -137,6 +131,9 @@ func (s *testSerialSuite) TestPrimaryKey(c *C) {
 }
 
 func (s *testSerialSuite) TestMultiRegionGetTableEndHandle(c *C) {
+	cluster := mocktikv.NewCluster()
+	mvccStore := mocktikv.MustNewMVCCStore()
+	defer mvccStore.Close()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("drop database if exists test_get_endhandle")
 	tk.MustExec("create database test_get_endhandle")
@@ -158,7 +155,7 @@ func (s *testSerialSuite) TestMultiRegionGetTableEndHandle(c *C) {
 	testCtx := newTestMaxTableRowIDContext(c, d, tbl)
 
 	// Split the table.
-	s.cluster.SplitTable(s.mvccStore, tblID, 100)
+	cluster.SplitTable(mvccStore, tblID, 100)
 
 	maxID, emptyTable := getMaxTableRowID(testCtx, s.store)
 	c.Assert(emptyTable, IsFalse)

@@ -72,7 +72,7 @@ func interestingGoroutines() (gs []string) {
 }
 
 var beforeTestGoroutines = map[string]bool{}
-var testRoutinesInited bool
+var testGoroutinesInited bool
 
 // BeforeTest gets the current goroutines.
 // It's used for check.Suite.SetUpSuite() function.
@@ -81,15 +81,15 @@ func BeforeTest() {
 	for _, g := range interestingGoroutines() {
 		beforeTestGoroutines[g] = true
 	}
-	testRoutinesInited = true
+	testGoroutinesInited = true
 }
 
 const defaultCheckCnt = 50
 
 func checkLeakAfterTest(errorFunc func(cnt int, g string)) func() {
-	// after `BeforeTest`, `beforeTestGoroutines` may still be empty, in this case,
+	// After `BeforeTest`, `beforeTestGoroutines` may still be empty, in this case,
 	// we shouldn't init it again.
-	if !testRoutinesInited && len(beforeTestGoroutines) == 0 {
+	if !testGoroutinesInited && len(beforeTestGoroutines) == 0 {
 		for _, g := range interestingGoroutines() {
 			beforeTestGoroutines[g] = true
 		}
@@ -99,7 +99,7 @@ func checkLeakAfterTest(errorFunc func(cnt int, g string)) func() {
 	return func() {
 		defer func() {
 			beforeTestGoroutines = map[string]bool{}
-			testRoutinesInited = false
+			testGoroutinesInited = false
 		}()
 
 		var leaked []string
