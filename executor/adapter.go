@@ -290,6 +290,10 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 			if a.retryCount > 0 {
 				metrics.StatementPessimisticRetryCount.Observe(float64(a.retryCount))
 			}
+			lockKeysCnt := a.Ctx.GetSessionVars().StmtCtx.LockKeysCount
+			if lockKeysCnt > 0 {
+				metrics.StatementLockKeysCount.Add(float64(lockKeysCnt))
+			}
 			return
 		}
 		if str, ok := r.(string); !ok || !strings.HasPrefix(str, memory.PanicMemoryExceed) {

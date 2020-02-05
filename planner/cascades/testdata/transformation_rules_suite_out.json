@@ -1173,6 +1173,39 @@
     ]
   },
   {
+    "Name": "TestEliminateMaxMin",
+    "Cases": [
+      {
+        "SQL": "select max(a) from t;",
+        "Result": [
+          "Group#0 Schema:[Column#13]",
+          "    Projection_3 input:[Group#1], Column#13",
+          "Group#1 Schema:[Column#13]",
+          "    Aggregation_2 input:[Group#2], funcs:max(test.t.a)",
+          "    Aggregation_2 input:[Group#3], funcs:max(test.t.a)",
+          "Group#2 Schema:[test.t.a]",
+          "    TableScan_1 table:t",
+          "Group#3 Schema:[test.t.a]",
+          "    TopN_4 input:[Group#2], test.t.a:desc, offset:0, count:1"
+        ]
+      },
+      {
+        "SQL": "select min(a) from t;",
+        "Result": [
+          "Group#0 Schema:[Column#13]",
+          "    Projection_3 input:[Group#1], Column#13",
+          "Group#1 Schema:[Column#13]",
+          "    Aggregation_2 input:[Group#2], funcs:min(test.t.a)",
+          "    Aggregation_2 input:[Group#3], funcs:min(test.t.a)",
+          "Group#2 Schema:[test.t.a]",
+          "    TableScan_1 table:t",
+          "Group#3 Schema:[test.t.a]",
+          "    TopN_4 input:[Group#2], test.t.a:asc, offset:0, count:1"
+        ]
+      }
+    ]
+  },
+  {
     "Name": "TestMergeAggregationProjection",
     "Cases": [
       {
