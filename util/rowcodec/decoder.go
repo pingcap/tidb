@@ -133,11 +133,13 @@ func (decoder *DatumMapDecoder) decodeColDatum(col *ColInfo, colData []byte) (ty
 		mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
 		d.SetBytes(colData)
 	case mysql.TypeNewDecimal:
-		_, dec, _, _, err := codec.DecodeDecimalAndRound(colData, col.Decimal)
+		_, dec, precision, frac, err := codec.DecodeDecimalAndRound(colData, col.Decimal)
 		if err != nil {
 			return d, err
 		}
 		d.SetMysqlDecimal(dec)
+		d.SetLength(precision)
+		d.SetFrac(frac)
 	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
 		var t types.Time
 		t.SetType(uint8(col.Tp))

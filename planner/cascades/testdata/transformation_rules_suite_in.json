@@ -69,6 +69,13 @@
     ]
   },
   {
+    "name": "TestEliminateMaxMin",
+    "cases": [
+      "select max(a) from t;",
+      "select min(a) from t;"
+    ]
+  },
+  {
     "name": "TestMergeAggregationProjection",
     "cases": [
       "select b, max(a) from (select a, c+d as b from t as t1) as t2 group by b",
