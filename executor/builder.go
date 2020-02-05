@@ -985,37 +985,29 @@ func (b *executorBuilder) buildMergeJoin(v *plannercore.PhysicalMergeJoin) Execu
 		desc:        v.Desc,
 	}
 
-	leftKeys := v.LeftJoinKeys
-	rightKeys := v.RightJoinKeys
-
-	e.outerIdx = 0
-	innerFilter := v.RightConditions
-
-	e.innerTable = &mergeJoinInnerTable{
-		reader:   rightExec,
-		joinKeys: rightKeys,
+	leftTable := &mergeJoinTable{
+		childIndex: 0,
+		joinKeys:   v.LeftJoinKeys,
+		filters:    v.LeftConditions,
 	}
-
-	e.outerTable = &mergeJoinOuterTable{
-		reader: leftExec,
-		filter: v.LeftConditions,
-		keys:   leftKeys,
+	rightTable := &mergeJoinTable{
+		childIndex: 1,
+		joinKeys:   v.RightJoinKeys,
+		filters:    v.RightConditions,
 	}
 
 	if v.JoinType == plannercore.RightOuterJoin {
-		e.outerIdx = 1
-		e.outerTable.reader = rightExec
-		e.outerTable.filter = v.RightConditions
-		e.outerTable.keys = rightKeys
-
-		innerFilter = v.LeftConditions
-		e.innerTable.reader = leftExec
-		e.innerTable.joinKeys = leftKeys
+		e.innerTable = leftTable
+		e.outerTable = rightTable
+	} else {
+		e.innerTable = rightTable
+		e.outerTable = leftTable
 	}
+	e.innerTable.isInner = true
 
 	// optimizer should guarantee that filters on inner table are pushed down
 	// to tikv or extracted to a Selection.
-	if len(innerFilter) != 0 {
+	if len(e.innerTable.filters) != 0 {
 		b.err = errors.Annotate(ErrBuildExecutor, "merge join's inner filter should be empty.")
 		return nil
 	}
@@ -1325,6 +1317,14 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
 				retriever: &inspectionRetriever{
 					extractor: v.Extractor.(*plannercore.InspectionResultTableExtractor),
+				},
+			}
+		case strings.ToLower(infoschema.TableMetricSummary):
+			return &ClusterReaderExec{
+				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
+				retriever: &MetricSummaryRetriever{
+					table:     v.Table,
+					extractor: v.Extractor.(*plannercore.MetricTableExtractor),
 				},
 			}
 		}
@@ -2570,10 +2570,26 @@ func buildKvRangesForIndexJoin(ctx sessionctx.Context, tableID, indexID int64, l
 		}
 		kvRanges = append(kvRanges, tmpKvRanges...)
 	}
-	// kvRanges don't overlap each other. So compare StartKey is enough.
+	// Sort and merge the overlapped ranges.
 	sort.Slice(kvRanges, func(i, j int) bool {
 		return bytes.Compare(kvRanges[i].StartKey, kvRanges[j].StartKey) < 0
 	})
+	if cwc != nil {
+		// If cwc is not nil, we need to merge the overlapped ranges here.
+		mergedKeyRanges := make([]kv.KeyRange, 0, len(kvRanges))
+		for i := range kvRanges {
+			if len(mergedKeyRanges) == 0 {
+				mergedKeyRanges = append(mergedKeyRanges, kvRanges[i])
+				continue
+			}
+			if bytes.Compare(kvRanges[i].StartKey, mergedKeyRanges[len(mergedKeyRanges)-1].EndKey) <= 0 {
+				mergedKeyRanges[len(mergedKeyRanges)-1].EndKey = kvRanges[i].EndKey
+			} else {
+				mergedKeyRanges = append(mergedKeyRanges, kvRanges[i])
+			}
+		}
+		return mergedKeyRanges, nil
+	}
 	return kvRanges, nil
 }
 

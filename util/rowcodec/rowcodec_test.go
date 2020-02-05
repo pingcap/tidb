@@ -363,8 +363,8 @@ func (s *testSuite) TestTypesNewRowCodec(c *C) {
 		{
 			8,
 			types.NewFieldType(mysql.TypeNewDecimal),
-			types.NewDecimalDatum(types.NewDecFromStringForTest("1.99")),
-			types.NewDecimalDatum(types.NewDecFromStringForTest("1.99")),
+			withFrac(4)(withLen(6)(types.NewDecimalDatum(types.NewDecFromStringForTest("11.9900")))),
+			withFrac(4)(withLen(6)(types.NewDecimalDatum(types.NewDecFromStringForTest("11.9900")))),
 			nil,
 			false,
 		},
@@ -774,5 +774,17 @@ var (
 	}
 	getDatumPoint = func(d types.Datum) *types.Datum {
 		return &d
+	}
+	withFrac = func(f int) func(d types.Datum) types.Datum {
+		return func(d types.Datum) types.Datum {
+			d.SetFrac(f)
+			return d
+		}
+	}
+	withLen = func(len int) func(d types.Datum) types.Datum {
+		return func(d types.Datum) types.Datum {
+			d.SetLength(len)
+			return d
+		}
 	}
 )
