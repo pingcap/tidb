@@ -108,13 +108,6 @@ func newJoiner(ctx sessionctx.Context, joinType plannercore.JoinType,
 	}
 	base.selected = make([]bool, 0, chunk.InitialCapacity)
 	base.isNull = make([]bool, 0, chunk.InitialCapacity)
-	if joinType == plannercore.LeftOuterJoin || joinType == plannercore.RightOuterJoin {
-		if outerIsRight {
-			base.initDefaultInner(lhsColTypes, defaultInner, projection[0])
-		} else {
-			base.initDefaultInner(rhsColTypes, defaultInner, projection[1])
-		}
-	}
 	if projection != nil {
 		base.lUsed = make([]int, 0, len(projection[0])) // make it non-nil
 		for i, used := range projection[0] {
@@ -127,6 +120,13 @@ func newJoiner(ctx sessionctx.Context, joinType plannercore.JoinType,
 			if used {
 				base.rUsed = append(base.rUsed, i)
 			}
+		}
+	}
+	if joinType == plannercore.LeftOuterJoin || joinType == plannercore.RightOuterJoin {
+		if outerIsRight {
+			base.initDefaultInner(lhsColTypes, defaultInner, base.lUsed)
+		} else {
+			base.initDefaultInner(rhsColTypes, defaultInner, base.rUsed)
 		}
 	}
 	// shallowRowType may be different with outputColTypes because output columns may be
@@ -182,15 +182,13 @@ type baseJoiner struct {
 	lUsed, rUsed []int
 }
 
-func (j *baseJoiner) initDefaultInner(innerTypes []*types.FieldType, defaultInner []types.Datum, projection []bool) {
-	if projection != nil {
-		var newTypes []*types.FieldType
-		var newInner []types.Datum
-		for i, used := range projection {
-			if used {
-				newTypes = append(newTypes, innerTypes[i])
-				newInner = append(newInner, defaultInner[i])
-			}
+func (j *baseJoiner) initDefaultInner(innerTypes []*types.FieldType, defaultInner []types.Datum, used []int) {
+	if used != nil {
+		newTypes := make([]*types.FieldType, 0, len(used))
+		newInner := make([]types.Datum, 0, len(used))
+		for _, i := range used {
+			newTypes = append(newTypes, innerTypes[i])
+			newInner = append(newInner, defaultInner[i])
 		}
 		innerTypes, defaultInner = newTypes, newInner
 	}
