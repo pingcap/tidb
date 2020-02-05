@@ -889,12 +889,12 @@ func (s *testDBSuite5) TestAddMultiColumnsIndex(c *C) {
 	s.tk.MustExec("alter table tidb.test add index idx1 (a, b);")
 	s.tk.MustExec("admin check table test")
 }
-func (s *testDBSuite1) TestAddPrimaryKey1(c *C) {
+func (s *testDBSuite6) TestAddPrimaryKey1(c *C) {
 	testAddIndex(c, s.store, s.lease, false,
 		"create table test_add_index (c1 bigint, c2 bigint, c3 bigint, unique key(c1))", "primary")
 }
 
-func (s *testDBSuite2) TestAddPrimaryKey2(c *C) {
+func (s *testDBSuite6) TestAddPrimaryKey2(c *C) {
 	testAddIndex(c, s.store, s.lease, true,
 		`create table test_add_index (c1 bigint, c2 bigint, c3 bigint, key(c1))
 			      partition by range (c3) (
@@ -905,13 +905,13 @@ func (s *testDBSuite2) TestAddPrimaryKey2(c *C) {
 			      partition p4 values less than maxvalue)`, "primary")
 }
 
-func (s *testDBSuite3) TestAddPrimaryKey3(c *C) {
+func (s *testDBSuite6) TestAddPrimaryKey3(c *C) {
 	testAddIndex(c, s.store, s.lease, true,
 		`create table test_add_index (c1 bigint, c2 bigint, c3 bigint, key(c1))
 			      partition by hash (c3) partitions 4;`, "primary")
 }
 
-func (s *testDBSuite4) TestAddPrimaryKey4(c *C) {
+func (s *testDBSuite6) TestAddPrimaryKey4(c *C) {
 	testAddIndex(c, s.store, s.lease, true,
 		`create table test_add_index (c1 bigint, c2 bigint, c3 bigint, key(c1))
 			      partition by range columns (c3) (
