@@ -1438,6 +1438,10 @@ func matchDuration(str string, fsp int8) (Duration, error) {
 	return Duration{d, fsp}, errors.Trace(err)
 }
 
+// canFallbackToDateTime return true
+// 1. the string is failed to be parsed by `matchDuration`
+// 2. the string is start with a series of digits whose length match the full format of DateTime literal (12, 14)
+//	  or the string start with a date literal.
 func canFallbackToDateTime(str string) bool {
 	digits, rest, err := parser.Digit(str, 1)
 	if err != nil {
