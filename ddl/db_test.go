@@ -1413,7 +1413,7 @@ func checkDelRangeDone(c *C, ctx sessionctx.Context, idx table.Index) {
 	c.Assert(handles, HasLen, 0, Commentf("take time %v", time.Since(startTime)))
 }
 
-func (s *testDBSuite5) TestAlterPrimaryKey(c *C) {
+func (s *testDBSuite4) TestAlterPrimaryKey(c *C) {
 	s.tk = testkit.NewTestKitWithInit(c, s.store)
 	s.tk.MustExec("create table test_add_pk(a int, b int unsigned , c varchar(255) default 'abc', d int as (a+b), e int as (a+1) stored, index idx(b))")
 	defer s.tk.MustExec("drop table test_add_pk")
@@ -1547,7 +1547,7 @@ func (s *testDBSuite5) TestCreateIndexType(c *C) {
 	s.tk.MustExec(sql)
 }
 
-func (s *testDBSuite8) TestColumn(c *C) {
+func (s *testDBSuite4) TestColumn(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use " + s.schemaName)
 	s.tk.MustExec("create table t2 (c1 int, c2 int, c3 int)")
