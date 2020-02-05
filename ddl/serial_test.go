@@ -49,8 +49,8 @@ import (
 var _ = SerialSuites(&testSerialSuite{})
 
 type testSerialSuite struct {
-	store     kv.Storage
-	dom       *domain.Domain
+	store kv.Storage
+	dom   *domain.Domain
 }
 
 func (s *testSerialSuite) SetUpSuite(c *C) {
