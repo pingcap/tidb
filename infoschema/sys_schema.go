@@ -11,13 +11,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package sysschema
+package infoschema
 
 import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
+	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util"
 )
 
@@ -31,5 +33,34 @@ func init() {
 		Collate: mysql.DefaultCollationName,
 		Tables:  sysTables,
 	}
-	infoschema.RegisterVirtualTable(dbInfo, tableFromMeta)
+	RegisterVirtualTable(dbInfo, sysTableFromMeta)
+}
+
+// sysTableFromMeta is also used in test.
+func sysTableFromMeta(alloc autoid.Allocators, meta *model.TableInfo) (table.Table, error) {
+	columns := make([]*table.Column, 0, len(meta.Columns))
+	for _, colInfo := range meta.Columns {
+		col := table.ToColumn(colInfo)
+		columns = append(columns, col)
+	}
+	t := &sysSchemaTable{
+		infoschemaTable: infoschemaTable{
+			meta: meta,
+			cols: columns,
+			tp:   table.VirtualTable,
+		},
+	}
+	return t, nil
+}
+
+type sysSchemaTable struct {
+	infoschemaTable
+}
+
+// IterRecords implements table.Table IterRecords interface.
+func (vt *sysSchemaTable) IterRecords(ctx sessionctx.Context, startKey kv.Key, cols []*table.Column, fn table.RecordIterFunc) error {
+	if len(startKey) != 0 {
+		return table.ErrUnsupportedOp
+	}
+	return nil
 }

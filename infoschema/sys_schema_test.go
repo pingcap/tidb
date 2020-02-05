@@ -11,19 +11,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package sysschema
+package infoschema
 
 import (
+	"fmt"
 	"testing"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/parser"
-	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
-	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/session"
@@ -32,6 +29,11 @@ import (
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 )
+
+const testTableName = "test"
+var testTableCols = []columnInfo{
+	{"ID", mysql.TypeLong, 20, 0, nil, nil},
+}
 
 func TestT(t *testing.T) {
 	CustomVerboseFlag = true
@@ -52,8 +54,8 @@ func (s *testSysTablesSuite) SetUpSuite(c *C) {
 	s.store, err = mockstore.NewMockTikvStore()
 	c.Assert(err, IsNil)
 	session.DisableStats4Test()
-	// Create a table for test.
-	createTable("create table test(id int)", c)
+	// Create a table for test before creating domain.
+	createTestTable()
 	s.dom, err = session.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
 }
@@ -71,20 +73,15 @@ func (s *testSysTablesSuite) TestSysSchemaTables(c *C) {
 	tk.MustExec("use sys")
 
 	// Test querying tables.
-	tk.MustQuery("select * from test").Check(testkit.Rows())
+	sql := fmt.Sprintf("select * from %s", testTableName)
+	tk.MustQuery(sql).Check(testkit.Rows())
 }
 
-func createTable(tableDef string, c *C) {
-	p := parser.New()
-	tbls := make([]*model.TableInfo, 0)
+func createTestTable() {
 	dbID := autoid.SysSchemaDBID
-	stmt, err := p.ParseOneStmt(tableDef, "", "")
-	c.Assert(err, IsNil)
-	meta, err := ddl.BuildTableInfoFromAST(stmt.(*ast.CreateTableStmt))
-	c.Assert(err, IsNil)
-	tbls = append(tbls, meta)
-	meta.ID = dbID + 1
-	for i, c := range meta.Columns {
+	tableInfo := buildTableMeta(testTableName, testTableCols)
+	tableInfo.ID = dbID + 1
+	for i, c := range tableInfo.Columns {
 		c.ID = int64(i) + 1
 	}
 	dbInfo := &model.DBInfo{
@@ -92,7 +89,7 @@ func createTable(tableDef string, c *C) {
 		Name:    util.SysSchemaName,
 		Charset: mysql.DefaultCharset,
 		Collate: mysql.DefaultCollationName,
-		Tables:  tbls,
+		Tables:  []*model.TableInfo{tableInfo},
 	}
-	infoschema.RegisterVirtualTable(dbInfo, tableFromMeta)
+	RegisterVirtualTable(dbInfo, sysTableFromMeta)
 }
