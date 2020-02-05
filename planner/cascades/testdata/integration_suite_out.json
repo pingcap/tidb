@@ -212,10 +212,10 @@
       {
         "SQL": "select max(a+b) from t",
         "Plan": [
-          "HashAgg_12 1.00 root funcs:max(Column#4)->Column#3",
-          "└─TableReader_13 1.00 root data:HashAgg_14",
-          "  └─HashAgg_14 1.00 cop[tikv] funcs:max(plus(test.t.a, test.t.b))->Column#4",
-          "    └─TableScan_10 10000.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false, stats:pseudo"
+          "HashAgg_16 1.00 root funcs:max(Column#4)->Column#3",
+          "└─TableReader_17 1.00 root data:HashAgg_18",
+          "  └─HashAgg_18 1.00 cop[tikv] funcs:max(plus(test.t.a, test.t.b))->Column#4",
+          "    └─TableScan_14 10000.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false, stats:pseudo"
         ],
         "Result": [
           "48"
@@ -235,6 +235,19 @@
           "1",
           "2",
           "3",
+          "4"
+        ]
+      },
+      {
+        "SQL": "select max(a) from t",
+        "Plan": [
+          "HashAgg_16 1.00 root funcs:max(test.t.a)->Column#3",
+          "└─Limit_18 1.00 root offset:0, count:1",
+          "  └─TableReader_23 1.00 root data:Limit_24",
+          "    └─Limit_24 1.00 cop[tikv] offset:0, count:1",
+          "      └─TableScan_22 1.00 cop[tikv] table:t, range:[-inf,+inf], keep order:true, desc, stats:pseudo"
+        ],
+        "Result": [
           "4"
         ]
       }
