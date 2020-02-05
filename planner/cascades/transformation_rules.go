@@ -1303,6 +1303,9 @@ func (r *MergeAdjacentTopN) Match(expr *memo.ExprIter) bool {
 	child := expr.Children[0].GetExpr().ExprNode.(*plannercore.LogicalTopN)
 
 	// We can use this rule when the sort columns of parent TopN is a prefix of child TopN.
+	if len(child.ByItems) < len(topN.ByItems) {
+		return false
+	}
 	for i := 0; i < len(topN.ByItems); i++ {
 		if !topN.ByItems[i].Equal(topN.SCtx(), child.ByItems[i]) {
 			return false
