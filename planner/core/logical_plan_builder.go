@@ -446,7 +446,7 @@ func (ds *DataSource) setPreferredStoreType(hintInfo *tableHintInfo) {
 			}
 		}
 		if ds.preferStoreType == 0 {
-			errMsg := fmt.Sprintf("No available path for table %s with the store type %s of the hint /*+ read_from_storage */, " +
+			errMsg := fmt.Sprintf("No available path for table %s with the store type %s of the hint /*+ read_from_storage */, "+
 				"please check the status of the table replica and variable value of tidb_isolation_read_engines",
 				ds.table.Meta().Name.L, kv.TiKV.Name())
 			warning := ErrInternal.GenWithStack(errMsg)
@@ -469,7 +469,7 @@ func (ds *DataSource) setPreferredStoreType(hintInfo *tableHintInfo) {
 			}
 		}
 		if ds.preferStoreType == 0 {
-			errMsg := fmt.Sprintf("No available path for table %s with the store type %s of the hint /*+ read_from_storage */, " +
+			errMsg := fmt.Sprintf("No available path for table %s with the store type %s of the hint /*+ read_from_storage */, "+
 				"please check the status of the table replica and variable value of tidb_isolation_read_engines",
 				ds.table.Meta().Name.L, kv.TiFlash.Name())
 			warning := ErrInternal.GenWithStack(errMsg)
