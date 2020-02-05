@@ -830,7 +830,7 @@ func (s *testSuite4) TestInsertOnDupUpdateDefault(c *C) {
 	tk.MustExec("drop table t1, t2")
 }
 
-func (s *testSuite6) TestReplace(c *C) {
+func (s *testSuite4) TestReplace(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	testSQL := `drop table if exists replace_test;
