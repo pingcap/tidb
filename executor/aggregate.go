@@ -1035,6 +1035,7 @@ func (e *vecGroupChecker) splitIntoGroups(chk *chunk.Chunk) (isFirstGroupSameAsP
 	e.nextGroupID = 0
 	if len(e.GroupByItems) == 0 {
 		e.groupOffset = append(e.groupOffset, numRows)
+		e.groupCount = 1
 		return true, nil
 	}
 
