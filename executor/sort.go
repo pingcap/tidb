@@ -132,7 +132,10 @@ func (e *SortExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		e.fetched = true
 	}
 
-	if len(e.partitionList) > 0 {
+	if len(e.partitionList) == 0 {
+		return nil
+	}
+	if e.partitionList[0].AlreadySpilled() {
 		if err := e.externalSorting(req); err != nil {
 			return err
 		}
