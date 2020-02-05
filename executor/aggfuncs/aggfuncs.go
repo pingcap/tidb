@@ -83,6 +83,9 @@ var (
 
 	// All the AggFunc implementations for "BIT_AND" are listed here.
 	_ AggFunc = (*bitAndUint64)(nil)
+
+	// All the AggFunc implementations for "JSON_OBJECTAGG" are listed here
+	_ AggFunc = (*jsonObjectAgg)(nil)
 )
 
 // PartialResult represents data structure to store the partial result for the

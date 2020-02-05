@@ -11,5 +11,6 @@ validate = "Validate"
 onInit = "OnInit"
 onShutdown = "OnShutdown"
 export = [
-    {extPoint="OnGeneralEvent", impl="OnGeneralEvent"}
+    {extPoint="OnGeneralEvent", impl="OnGeneralEvent"},
+    {extPoint="OnConnectionEvent", impl="OnConnectionEvent"}
 ]

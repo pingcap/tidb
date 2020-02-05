@@ -481,6 +481,28 @@ var vecBuiltinStringCases = map[string][]vecExprBenchCase{
 			),
 		}},
 	},
+	ast.Format: {
+		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETDecimal, types.ETInt}, geners: []dataGenerator{
+			newRangeDecimalGener(-10000, 10000, 0),
+			newRangeInt64Gener(-10, 40),
+		}},
+		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETReal, types.ETInt}, geners: []dataGenerator{
+			newRangeRealGener(-10000, 10000, 0),
+			newRangeInt64Gener(-10, 40),
+		}},
+		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETDecimal, types.ETInt}, geners: []dataGenerator{
+			newRangeDecimalGener(-10000, 10000, 1),
+			newRangeInt64Gener(-10, 40),
+		}},
+		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETReal, types.ETInt}, geners: []dataGenerator{
+			newRangeRealGener(-10000, 10000, 1),
+			newRangeInt64Gener(-10, 40),
+		}},
+		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString, types.ETString}, geners: []dataGenerator{
+			newRealStringGener(),
+			&numStrGener{*newRangeInt64Gener(-10, 40)},
+		}},
+	},
 }
 
 func (s *testVectorizeSuite1) TestVectorizedBuiltinStringEvalOneVec(c *C) {
