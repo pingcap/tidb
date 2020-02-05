@@ -60,6 +60,7 @@ func DecodeDecimal(b []byte) ([]byte, *types.MyDecimal, int, int, error) {
 	return b, dec, precision, frac, nil
 }
 
+// DecodeDecimalAndRound decodes bytes to decimal and round.
 func DecodeDecimalAndRound(b []byte, decimal int) ([]byte, *types.MyDecimal, int, int, error) {
 	b, dec, precision, frac, err := DecodeDecimal(b)
 	if err != nil {
