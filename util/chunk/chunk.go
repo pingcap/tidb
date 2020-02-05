@@ -355,6 +355,7 @@ func (c *Chunk) AppendPartialRow(colOff int, row Row) {
 }
 
 // AppendRowByColIdxs appends a row by its colIdxs to the chunk.
+// TODO: test it
 func (c *Chunk) AppendRowByColIdxs(row Row, colIdxs []int) (wide int) {
 	wide = c.AppendPartialRowByColIdxs(0, row, colIdxs)
 	c.numVirtualRows++
@@ -362,6 +363,7 @@ func (c *Chunk) AppendRowByColIdxs(row Row, colIdxs []int) (wide int) {
 }
 
 // AppendPartialRowByColIdxs appends a row by its colIdxs to the chunk.
+// TODO: test it
 func (c *Chunk) AppendPartialRowByColIdxs(colOff int, row Row, colIdxs []int) (wide int) {
 	if colIdxs == nil {
 		c.AppendPartialRow(colOff, row)

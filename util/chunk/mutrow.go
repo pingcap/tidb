@@ -355,6 +355,7 @@ func (mr MutRow) ShallowCopyPartialRow(colOff int, row Row) {
 }
 
 // ShallowCopyPartialRowByColIdxs shallow copies the data of `row` by its colIdxs to MutRow.
+// TODO: test it
 func (mr MutRow) ShallowCopyPartialRowByColIdxs(colOff int, row Row, colIdxs []int) (wide int) {
 	if colIdxs == nil {
 		mr.ShallowCopyPartialRow(colOff, row)
