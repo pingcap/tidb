@@ -67,6 +67,8 @@ var _ = Suite(&testDBSuite3{&testDBSuite{}})
 var _ = Suite(&testDBSuite4{&testDBSuite{}})
 var _ = Suite(&testDBSuite5{&testDBSuite{}})
 var _ = Suite(&testDBSuite6{&testDBSuite{}})
+var _ = Suite(&testDBSuite7{&testDBSuite{}})
+var _ = Suite(&testDBSuite8{&testDBSuite{}})
 
 const defaultBatchSize = 1024
 
@@ -224,7 +226,7 @@ func backgroundExec(s kv.Storage, sql string, done chan error) {
 }
 
 // TestAddPrimaryKeyRollback1 is used to test scenarios that will roll back when a duplicate primary key is encountered.
-func (s *testDBSuite5) TestAddPrimaryKeyRollback1(c *C) {
+func (s *testDBSuite7) TestAddPrimaryKeyRollback1(c *C) {
 	hasNullValsInKey := false
 	idxName := "PRIMARY"
 	addIdxSQL := "alter table t1 add primary key c3_index (c3);"
@@ -353,7 +355,7 @@ func (s *testDBSuite5) TestCancelAddPrimaryKey(c *C) {
 	tk.MustExec("drop table t1")
 }
 
-func (s *testDBSuite3) TestCancelAddIndex(c *C) {
+func (s *testDBSuite7) TestCancelAddIndex(c *C) {
 	idxName := "c3_index "
 	addIdxSQL := "create unique index c3_index on t1 (c3)"
 	testCancelAddIndex(c, s.store, s.dom.DDL(), s.lease, idxName, addIdxSQL, "")
@@ -911,7 +913,7 @@ func (s *testDBSuite6) TestAddPrimaryKey3(c *C) {
 			      partition by hash (c3) partitions 4;`, "primary")
 }
 
-func (s *testDBSuite6) TestAddPrimaryKey4(c *C) {
+func (s *testDBSuite7) TestAddPrimaryKey4(c *C) {
 	testAddIndex(c, s.store, s.lease, true,
 		`create table test_add_index (c1 bigint, c2 bigint, c3 bigint, key(c1))
 			      partition by range columns (c3) (
@@ -927,7 +929,7 @@ func (s *testDBSuite1) TestAddIndex1(c *C) {
 		"create table test_add_index (c1 bigint, c2 bigint, c3 bigint, primary key(c1))", "")
 }
 
-func (s *testDBSuite2) TestAddIndex2(c *C) {
+func (s *testDBSuite8) TestAddIndex2(c *C) {
 	testAddIndex(c, s.store, s.lease, true,
 		`create table test_add_index (c1 bigint, c2 bigint, c3 bigint, primary key(c1))
 			      partition by range (c1) (
@@ -944,7 +946,7 @@ func (s *testDBSuite3) TestAddIndex3(c *C) {
 			      partition by hash (c1) partitions 4;`, "")
 }
 
-func (s *testDBSuite4) TestAddIndex4(c *C) {
+func (s *testDBSuite8) TestAddIndex4(c *C) {
 	testAddIndex(c, s.store, s.lease, true,
 		`create table test_add_index (c1 bigint, c2 bigint, c3 bigint, primary key(c1))
 			      partition by range columns (c1) (
@@ -1541,7 +1543,7 @@ func (s *testDBSuite5) TestCreateIndexType(c *C) {
 	s.tk.MustExec(sql)
 }
 
-func (s *testDBSuite1) TestColumn(c *C) {
+func (s *testDBSuite8) TestColumn(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use " + s.schemaName)
 	s.tk.MustExec("create table t2 (c1 int, c2 int, c3 int)")
