@@ -1413,7 +1413,7 @@ func checkDelRangeDone(c *C, ctx sessionctx.Context, idx table.Index) {
 	c.Assert(handles, HasLen, 0, Commentf("take time %v", time.Since(startTime)))
 }
 
-func (s *testDBSuite4) TestAlterPrimaryKey(c *C) {
+func (s *testDBSuite8) TestAlterPrimaryKey(c *C) {
 	s.tk = testkit.NewTestKitWithInit(c, s.store)
 	s.tk.MustExec("create table test_add_pk(a int, b int unsigned , c varchar(255) default 'abc', d int as (a+b), e int as (a+1) stored, index idx(b))")
 	defer s.tk.MustExec("drop table test_add_pk")
@@ -1771,7 +1771,7 @@ LOOP:
 // TestDropColumn is for inserting value with a to-be-dropped column when do drop column.
 // Column info from schema in build-insert-plan should be public only,
 // otherwise they will not be consist with Table.Col(), then the server will panic.
-func (s *testDBSuite2) TestDropColumn(c *C) {
+func (s *testDBSuite7) TestDropColumn(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("create database drop_col_db")
 	s.tk.MustExec("use drop_col_db")
