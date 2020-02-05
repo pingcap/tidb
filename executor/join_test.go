@@ -520,7 +520,7 @@ func (s *testSuiteJoin2) TestJoinCast(c *C) {
 	tk.MustExec("set @@tidb_init_chunk_size=32")
 }
 
-func (s *testSuiteJoin3) TestUsing(c *C) {
+func (s *testSuiteJoin1) TestUsing(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
 	tk.MustExec("use test")
@@ -1337,7 +1337,7 @@ func (s *testSuiteJoin1) TestJoinDifferentDecimals(c *C) {
 	rst.Check(testkit.Rows("1 1.000", "2 2.000", "3 3.000"))
 }
 
-func (s *testSuiteJoin3) TestNullEmptyAwareSemiJoin(c *C) {
+func (s *testSuiteJoin2) TestNullEmptyAwareSemiJoin(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -1844,4 +1844,12 @@ func (s *testSuiteJoin1) TestIssue13177(c *C) {
 		"cbad 3 3",
 		"abcd 1 1",
 	))
+}
+
+func (s *testSuiteJoin1) TestIssue14514(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (pk varchar(14) primary key, a varchar(12));")
+	tk.MustQuery("select * from (select t1.pk or '/' as c from t as t1 left join t as t2 on t1.a = t2.pk) as t where t.c = 1;").Check(testkit.Rows())
 }

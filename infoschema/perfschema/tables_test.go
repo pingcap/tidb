@@ -106,6 +106,19 @@ func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 		where digest_text like 'insert into t%'`,
 	).Check(testkit.Rows("insert test test.t <nil> 4 0 0 0 0 0 2 2 1 1 1 insert into t values(1, 'a') "))
 
+	// Test point get.
+	tk.MustExec("drop table if exists p")
+	tk.MustExec("create table p(a int primary key, b int)")
+	for i := 1; i < 3; i++ {
+		tk.MustQuery("select b from p where a=1")
+		expectedResult := fmt.Sprintf("%d \tPoint_Get_1\troot\t1\ttable:p, handle:1", i)
+		// Also make sure that the plan digest is not empty
+		tk.MustQuery(`select exec_count, plan
+			from performance_schema.events_statements_summary_by_digest
+			where digest_text like 'select b from p%' and plan_digest != ''`,
+		).Check(testkit.Rows(expectedResult))
+	}
+
 	// Test SELECT.
 	const failpointName = "github.com/pingcap/tidb/planner/core/mockPlanRowCount"
 	c.Assert(failpoint.Enable(failpointName, "return(100)"), IsNil)
@@ -268,6 +281,7 @@ func (s *testTableSuite) TestTiKVProfileCPU(c *C) {
 	router := http.NewServeMux()
 	mockServer := httptest.NewServer(router)
 	mockAddr := strings.TrimPrefix(mockServer.URL, "http://")
+	defer mockServer.Close()
 
 	copyHandler := func(filename string) http.HandlerFunc {
 		return func(w http.ResponseWriter, _ *http.Request) {

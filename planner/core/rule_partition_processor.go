@@ -154,7 +154,7 @@ func (s *partitionProcessor) pruneHashPartition(ds *DataSource, pi *model.Partit
 		// Constant false.
 		if con, ok := filterConds[0].(*expression.Constant); ok && con.DeferredExpr == nil && con.ParamMarker == nil {
 			ret, _, err := expression.EvalBool(sctx, expression.CNFExprs{con}, chunk.Row{})
-			if err == nil && ret == false {
+			if err == nil && !ret {
 				alwaysFalse = true
 			}
 		}
@@ -234,7 +234,7 @@ func (s *partitionProcessor) prune(ds *DataSource) (LogicalPlan, error) {
 			// Constant false.
 			if con, ok := filterConds[0].(*expression.Constant); ok && con.DeferredExpr == nil && con.ParamMarker == nil {
 				ret, _, err := expression.EvalBool(sctx, expression.CNFExprs{con}, chunk.Row{})
-				if err == nil && ret == false {
+				if err == nil && !ret {
 					alwaysFalse = true
 				}
 			}
@@ -313,7 +313,7 @@ func (s *partitionProcessor) canBePruned(sctx sessionctx.Context, partCol *expre
 		// Constant false.
 		if con, ok := conds[0].(*expression.Constant); ok && con.DeferredExpr == nil && con.ParamMarker == nil {
 			ret, _, err := expression.EvalBool(sctx, expression.CNFExprs{con}, chunk.Row{})
-			if err == nil && ret == false {
+			if err == nil && !ret {
 				return true, nil
 			}
 		}
@@ -331,12 +331,11 @@ func (s *partitionProcessor) canBePruned(sctx sessionctx.Context, partCol *expre
 	// TODO: Remove prune by calculating range. Current constraint propagate doesn't
 	// handle the null condition, while calculate range can prune something like:
 	// "select * from t where t is null"
-	accessConds := ranger.ExtractAccessConditionsForColumn(conds, partCol.UniqueID)
-	r, err := ranger.BuildColumnRange(accessConds, sctx.GetSessionVars().StmtCtx, partCol.RetType, types.UnspecifiedLength)
+	res, err := ranger.DetachCondAndBuildRangeForIndex(sctx, conds, []*expression.Column{partCol}, []int{types.UnspecifiedLength})
 	if err != nil {
 		return false, err
 	}
-	return len(r) == 0, nil
+	return len(res.Ranges) == 0, nil
 }
 
 // findByName checks whether object name exists in list.
