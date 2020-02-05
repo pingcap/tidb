@@ -720,7 +720,7 @@ func DecodeOneWithTp(b []byte, ft *types.FieldType) (remain []byte, d types.Datu
 	if ft.Tp != mysql.TypeNewDecimal || err != nil {
 		return remain, d, err
 	}
-	if ft.Decimal != types.UnspecifiedLength && d.Frac() != ft.Decimal {
+	if ft.Decimal != types.UnspecifiedLength && d.Frac() != ft.Decimal && d.GetInterface() != nil {
 		dec := d.GetMysqlDecimal()
 		to := new(types.MyDecimal)
 		err = dec.Round(to, ft.Decimal, types.ModeHalfEven)
