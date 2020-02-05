@@ -67,6 +67,9 @@ var _ = Suite(&testDBSuite3{&testDBSuite{}})
 var _ = Suite(&testDBSuite4{&testDBSuite{}})
 var _ = Suite(&testDBSuite5{&testDBSuite{}})
 var _ = Suite(&testDBSuite6{&testDBSuite{}})
+var _ = Suite(&testDBSuite7{&testDBSuite{}})
+var _ = Suite(&testDBSuite8{&testDBSuite{}})
+var _ = Suite(&testDBSuite9{&testDBSuite{}})
 
 const defaultBatchSize = 1024
 
@@ -134,6 +137,9 @@ type testDBSuite3 struct{ *testDBSuite }
 type testDBSuite4 struct{ *testDBSuite }
 type testDBSuite5 struct{ *testDBSuite }
 type testDBSuite6 struct{ *testDBSuite }
+type testDBSuite7 struct{ *testDBSuite }
+type testDBSuite8 struct{ *testDBSuite }
+type testDBSuite9 struct{ *testDBSuite }
 
 func (s *testDBSuite4) TestAddIndexWithPK(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
@@ -224,7 +230,7 @@ func backgroundExec(s kv.Storage, sql string, done chan error) {
 }
 
 // TestAddPrimaryKeyRollback1 is used to test scenarios that will roll back when a duplicate primary key is encountered.
-func (s *testDBSuite5) TestAddPrimaryKeyRollback1(c *C) {
+func (s *testDBSuite7) TestAddPrimaryKeyRollback1(c *C) {
 	hasNullValsInKey := false
 	idxName := "PRIMARY"
 	addIdxSQL := "alter table t1 add primary key c3_index (c3);"
@@ -233,7 +239,7 @@ func (s *testDBSuite5) TestAddPrimaryKeyRollback1(c *C) {
 }
 
 // TestAddPrimaryKeyRollback2 is used to test scenarios that will roll back when a null primary key is encountered.
-func (s *testDBSuite1) TestAddPrimaryKeyRollback2(c *C) {
+func (s *testDBSuite9) TestAddPrimaryKeyRollback2(c *C) {
 	hasNullValsInKey := true
 	idxName := "PRIMARY"
 	addIdxSQL := "alter table t1 add primary key c3_index (c3);"
@@ -353,7 +359,7 @@ func (s *testDBSuite5) TestCancelAddPrimaryKey(c *C) {
 	tk.MustExec("drop table t1")
 }
 
-func (s *testDBSuite3) TestCancelAddIndex(c *C) {
+func (s *testDBSuite9) TestCancelAddIndex(c *C) {
 	idxName := "c3_index "
 	addIdxSQL := "create unique index c3_index on t1 (c3)"
 	testCancelAddIndex(c, s.store, s.dom.DDL(), s.lease, idxName, addIdxSQL, "")
@@ -889,12 +895,12 @@ func (s *testDBSuite5) TestAddMultiColumnsIndex(c *C) {
 	s.tk.MustExec("alter table tidb.test add index idx1 (a, b);")
 	s.tk.MustExec("admin check table test")
 }
-func (s *testDBSuite1) TestAddPrimaryKey1(c *C) {
+func (s *testDBSuite6) TestAddPrimaryKey1(c *C) {
 	testAddIndex(c, s.store, s.lease, false,
 		"create table test_add_index (c1 bigint, c2 bigint, c3 bigint, unique key(c1))", "primary")
 }
 
-func (s *testDBSuite2) TestAddPrimaryKey2(c *C) {
+func (s *testDBSuite6) TestAddPrimaryKey2(c *C) {
 	testAddIndex(c, s.store, s.lease, true,
 		`create table test_add_index (c1 bigint, c2 bigint, c3 bigint, key(c1))
 			      partition by range (c3) (
@@ -905,13 +911,13 @@ func (s *testDBSuite2) TestAddPrimaryKey2(c *C) {
 			      partition p4 values less than maxvalue)`, "primary")
 }
 
-func (s *testDBSuite3) TestAddPrimaryKey3(c *C) {
+func (s *testDBSuite9) TestAddPrimaryKey3(c *C) {
 	testAddIndex(c, s.store, s.lease, true,
 		`create table test_add_index (c1 bigint, c2 bigint, c3 bigint, key(c1))
 			      partition by hash (c3) partitions 4;`, "primary")
 }
 
-func (s *testDBSuite4) TestAddPrimaryKey4(c *C) {
+func (s *testDBSuite7) TestAddPrimaryKey4(c *C) {
 	testAddIndex(c, s.store, s.lease, true,
 		`create table test_add_index (c1 bigint, c2 bigint, c3 bigint, key(c1))
 			      partition by range columns (c3) (
@@ -927,7 +933,7 @@ func (s *testDBSuite1) TestAddIndex1(c *C) {
 		"create table test_add_index (c1 bigint, c2 bigint, c3 bigint, primary key(c1))", "")
 }
 
-func (s *testDBSuite2) TestAddIndex2(c *C) {
+func (s *testDBSuite8) TestAddIndex2(c *C) {
 	testAddIndex(c, s.store, s.lease, true,
 		`create table test_add_index (c1 bigint, c2 bigint, c3 bigint, primary key(c1))
 			      partition by range (c1) (
@@ -944,7 +950,7 @@ func (s *testDBSuite3) TestAddIndex3(c *C) {
 			      partition by hash (c1) partitions 4;`, "")
 }
 
-func (s *testDBSuite4) TestAddIndex4(c *C) {
+func (s *testDBSuite8) TestAddIndex4(c *C) {
 	testAddIndex(c, s.store, s.lease, true,
 		`create table test_add_index (c1 bigint, c2 bigint, c3 bigint, primary key(c1))
 			      partition by range columns (c1) (
@@ -1407,7 +1413,7 @@ func checkDelRangeDone(c *C, ctx sessionctx.Context, idx table.Index) {
 	c.Assert(handles, HasLen, 0, Commentf("take time %v", time.Since(startTime)))
 }
 
-func (s *testDBSuite5) TestAlterPrimaryKey(c *C) {
+func (s *testDBSuite8) TestAlterPrimaryKey(c *C) {
 	s.tk = testkit.NewTestKitWithInit(c, s.store)
 	s.tk.MustExec("create table test_add_pk(a int, b int unsigned , c varchar(255) default 'abc', d int as (a+b), e int as (a+1) stored, index idx(b))")
 	defer s.tk.MustExec("drop table test_add_pk")
@@ -1541,7 +1547,7 @@ func (s *testDBSuite5) TestCreateIndexType(c *C) {
 	s.tk.MustExec(sql)
 }
 
-func (s *testDBSuite1) TestColumn(c *C) {
+func (s *testDBSuite4) TestColumn(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use " + s.schemaName)
 	s.tk.MustExec("create table t2 (c1 int, c2 int, c3 int)")
@@ -1765,7 +1771,7 @@ LOOP:
 // TestDropColumn is for inserting value with a to-be-dropped column when do drop column.
 // Column info from schema in build-insert-plan should be public only,
 // otherwise they will not be consist with Table.Col(), then the server will panic.
-func (s *testDBSuite2) TestDropColumn(c *C) {
+func (s *testDBSuite7) TestDropColumn(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("create database drop_col_db")
 	s.tk.MustExec("use drop_col_db")
