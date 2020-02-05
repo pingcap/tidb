@@ -46,12 +46,12 @@ const (
 	flagEliminateProjection
 	flagMaxMinEliminate
 	flagPredicatePushDown
+	flagPrunColumnsAgain
 	flagEliminateOuterJoin
 	flagPartitionProcessor
 	flagPushDownAgg
 	flagPushDownTopN
 	flagJoinReOrder
-	flagPrunColumnsAgain
 )
 
 var optRuleList = []logicalOptRule{
@@ -62,12 +62,12 @@ var optRuleList = []logicalOptRule{
 	&projectionEliminator{},
 	&maxMinEliminator{},
 	&ppdSolver{},
+	&columnPruner{}, // column pruning again
 	&outerJoinEliminator{},
 	&partitionProcessor{},
 	&aggregationPushDownSolver{},
 	&pushDownTopNOptimizer{},
 	&joinReOrderSolver{},
-	&columnPruner{}, // column pruning again
 }
 
 // logicalOptRule means a logical optimizing rule, which contains decorrelate, ppd, column pruning, etc.

@@ -354,7 +354,7 @@ func (mr MutRow) ShallowCopyPartialRow(colOff int, row Row) {
 	}
 }
 
-// ShallowCopyPartialRowByColIdxs shallow copies the data of `row` by its colIdxs to MutRow.
+/*// ShallowCopyPartialRowByColIdxs shallow copies the data of `row` by its colIdxs to MutRow.
 // TODO: test it
 func (mr MutRow) ShallowCopyPartialRowByColIdxs(colOff int, row Row, colIdxs []int) (wide int) {
 	if colIdxs == nil {
@@ -368,7 +368,7 @@ func (mr MutRow) ShallowCopyPartialRowByColIdxs(colOff int, row Row, colIdxs []i
 		setMutRowCell(dstCol, srcCol, row.idx)
 	}
 	return len(colIdxs)
-}
+}*/
 
 func setMutRowCell(dst *Column, src *Column, rowIdx int) {
 	if !src.IsNull(rowIdx) {

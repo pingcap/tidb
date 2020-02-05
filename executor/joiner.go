@@ -129,18 +129,23 @@ func newJoiner(ctx sessionctx.Context, joinType plannercore.JoinType,
 			}
 		}
 	}
+	// shallowRowType may be different with outputColTypes because output columns may be
+	// inline projected, while shallow row should not be.
+	shallowRowType := make([]*types.FieldType, 0, len(lhsColTypes)+len(rhsColTypes))
+	shallowRowType = append(shallowRowType, lhsColTypes...)
+	shallowRowType = append(shallowRowType, rhsColTypes...)
 	switch joinType {
 	case plannercore.SemiJoin:
-		base.shallowRow = chunk.MutRowFromTypes(outputColTypes)
+		base.shallowRow = chunk.MutRowFromTypes(shallowRowType)
 		return &semiJoiner{base}
 	case plannercore.AntiSemiJoin:
-		base.shallowRow = chunk.MutRowFromTypes(outputColTypes)
+		base.shallowRow = chunk.MutRowFromTypes(shallowRowType)
 		return &antiSemiJoiner{base}
 	case plannercore.LeftOuterSemiJoin:
-		base.shallowRow = chunk.MutRowFromTypes(outputColTypes)
+		base.shallowRow = chunk.MutRowFromTypes(shallowRowType)
 		return &leftOuterSemiJoiner{base}
 	case plannercore.AntiLeftOuterSemiJoin:
-		base.shallowRow = chunk.MutRowFromTypes(outputColTypes)
+		base.shallowRow = chunk.MutRowFromTypes(shallowRowType)
 		return &antiLeftOuterSemiJoiner{base}
 	case plannercore.LeftOuterJoin:
 		base.chk = chunk.NewChunkWithCapacity(outputColTypes, ctx.GetSessionVars().MaxChunkSize)
@@ -202,12 +207,14 @@ func (j *baseJoiner) makeJoinRowToChunk(chk *chunk.Chunk, lhs, rhs chunk.Row) {
 }
 
 // makeShallowJoinRow shallow copies `inner` and `outer` into `shallowRow`.
+// It should not consider `j.lUsed` and `j.rUsed`, because the columns which
+// need to be used in `j.conditions` may not exist in outputs.
 func (j *baseJoiner) makeShallowJoinRow(isRightJoin bool, inner, outer chunk.Row) {
 	if !isRightJoin {
 		inner, outer = outer, inner
 	}
-	lWide := j.shallowRow.ShallowCopyPartialRowByColIdxs(0, inner, j.lUsed)
-	j.shallowRow.ShallowCopyPartialRowByColIdxs(lWide, outer, j.rUsed)
+	j.shallowRow.ShallowCopyPartialRow(0, inner)
+	j.shallowRow.ShallowCopyPartialRow(inner.Len(), outer)
 }
 
 // filter is used to filter the result constructed by tryToMatchInners, the result is
