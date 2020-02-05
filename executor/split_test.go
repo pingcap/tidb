@@ -242,7 +242,7 @@ func (s *testSplitIndex) TestSplitIndex(c *C) {
 	c.Assert(len(valueList), Equals, e.num)
 
 	cases3 := []struct {
-		value        types.MysqlTime
+		value        types.CoreTime
 		lessEqualIdx int
 	}{
 		{types.FromDate(2009, 11, 20, 12, 50, 59, 0), 0},
