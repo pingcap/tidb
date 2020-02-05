@@ -16,7 +16,6 @@ package ddl_test
 import (
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"math"
 	"strings"
 	"sync"
@@ -39,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/pingcap/tidb/util/mock"
