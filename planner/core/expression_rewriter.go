@@ -1498,6 +1498,7 @@ func (er *expressionRewriter) toTable(v *ast.TableName) {
 		Value:   types.NewDatum(v.Name.L),
 		RetType: types.NewFieldType(mysql.TypeString),
 	}
+	er.ctxStackPop(1)
 	er.ctxStackAppend(val, types.EmptyName)
 }
 
