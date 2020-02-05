@@ -259,6 +259,14 @@ func (t *TestData) ConvertRowsToStrings(rows [][]interface{}) (rs []string) {
 	return rs
 }
 
+// ConvertSQLWarnToStrings converts []SQLWarn to []string.
+func (t *TestData) ConvertSQLWarnToStrings(warns []stmtctx.SQLWarn) (rs []string) {
+	for _, warn := range warns {
+		rs = append(rs, fmt.Sprintf(warn.Err.Error()))
+	}
+	return rs
+}
+
 // GenerateOutputIfNeeded generate the output file.
 func (t *TestData) GenerateOutputIfNeeded() error {
 	if !record {
