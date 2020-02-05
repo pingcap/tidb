@@ -984,18 +984,9 @@ func (decoder *Decoder) DecodeOne(b []byte, colIdx int, ft *types.FieldType) (re
 		chk.AppendBytes(colIdx, v)
 	case decimalFlag:
 		var dec *types.MyDecimal
-		var frac int
-		b, dec, _, frac, err = DecodeDecimal(b)
+		b, dec, _, _, err = DecodeDecimal(b)
 		if err != nil {
 			return nil, errors.Trace(err)
-		}
-		if ft.Decimal != types.UnspecifiedLength && frac > ft.Decimal {
-			to := new(types.MyDecimal)
-			err := dec.Round(to, ft.Decimal, types.ModeHalfEven)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			dec = to
 		}
 		chk.AppendMyDecimal(colIdx, dec)
 	case durationFlag:
