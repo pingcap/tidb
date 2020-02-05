@@ -135,16 +135,30 @@ func (e *SortExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	if len(e.partitionList) == 0 {
 		return nil
 	}
-	if e.partitionList[0].AlreadySpilled() {
+	if len(e.partitionList) > 1 {
 		if err := e.externalSorting(req); err != nil {
 			return err
 		}
 	} else {
-		rowChunks := e.rowChunks.GetList()
-		for !req.IsFull() && e.Idx < len(e.rowPtrs) {
-			rowPtr := e.rowPtrs[e.Idx]
-			req.AppendRow(rowChunks.GetRow(rowPtr))
-			e.Idx++
+		// Check whether the one partition is spilled.
+		// If the partition is in memory, use List.GetRow() to get better performance.
+		if !e.partitionList[0].AlreadySpilled() {
+			rowChunks := e.partitionList[0].GetList()
+			for !req.IsFull() && e.Idx < len(e.rowPtrs) {
+				rowPtr := e.partitionRowPtrs[0][e.Idx]
+				req.AppendRow(rowChunks.GetRow(rowPtr))
+				e.Idx++
+			}
+		} else {
+			for !req.IsFull() && e.Idx < len(e.rowPtrs) {
+				rowPtr := e.partitionRowPtrs[0][e.Idx]
+				row, err := e.partitionList[0].GetRow(rowPtr)
+				if err != nil {
+					return err
+				}
+				req.AppendRow(row)
+				e.Idx++
+			}
 		}
 	}
 	return nil
