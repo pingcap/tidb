@@ -3694,8 +3694,8 @@ func (s *testDBSuite1) TestModifyColumnCharset(c *C) {
 func (s *testDBSuite1) TestModifyColumnWithDecimal(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use test_db;")
-	s.tk.MustExec("create table t_decimal (a int,b decimal(10,5),c varchar(10), index idx1(b),index idx2(a,b,c),index idx3(a));")
-	s.tk.MustExec("insert into t_decimal values (1,12345.67891,'a'),(2,123.456,'b'),(4,0.0,'d');")
+	s.tk.MustExec("create table t_decimal (a int,b decimal(10,5),c int key, index idx1(b),index idx2(a,b,c),index idx3(a));")
+	s.tk.MustExec("insert into t_decimal values (1,12345.67891,1),(2,123.456,2),(4,0.0,4);")
 	// Test modify decimal column with index covered.
 	s.tk.MustExec("alter table t_decimal modify column b decimal(10,5);")
 	testExecErrorMessage(c, s.tk, "alter table t_decimal modify column b decimal(10,6);",
@@ -3717,50 +3717,60 @@ func (s *testDBSuite1) TestModifyColumnWithDecimal(c *C) {
 
 	// Test modify column successful when no index covered.
 	s.tk.MustExec("alter table t_decimal modify column b decimal(11,6);")
-	s.tk.MustExec("insert into t_decimal values (3, 12345.678912, 'c');")
-	s.tk.MustQuery("select * from t_decimal order by a").Check(testkit.Rows("1 12345.678910 a", "2 123.456000 b", "3 12345.678912 c", "4 0.000000 d"))
+	s.tk.MustExec("insert into t_decimal values (3, 12345.678912, 3);")
+	s.tk.MustQuery("select * from t_decimal order by a").Check(testkit.Rows("1 12345.678910 1", "2 123.456000 2", "3 12345.678912 3", "4 0.000000 4"))
 	s.tk.MustExec("alter table t_decimal add index idx4(b);")
-	s.tk.MustQuery("select * from t_decimal use    index(idx4) where b=12345.67891").Check(testkit.Rows("1 12345.678910 a"))
-	s.tk.MustQuery("select * from t_decimal use    index(idx4) where b=123.456").Check(testkit.Rows("2 123.456000 b"))
-	s.tk.MustQuery("select * from t_decimal use    index(idx4) where b=12345.678912").Check(testkit.Rows("3 12345.678912 c"))
-	s.tk.MustQuery("select * from t_decimal use    index(idx4) where b=0").Check(testkit.Rows("4 0.000000 d"))
+	// Test for index lookup reader.
+	s.tk.MustQuery("select * from t_decimal use    index(idx4) where b=12345.67891").Check(testkit.Rows("1 12345.678910 1"))
+	s.tk.MustQuery("select * from t_decimal use    index(idx4) where b=123.456").Check(testkit.Rows("2 123.456000 2"))
+	s.tk.MustQuery("select * from t_decimal use    index(idx4) where b=12345.678912").Check(testkit.Rows("3 12345.678912 3"))
+	s.tk.MustQuery("select * from t_decimal use    index(idx4) where b=0").Check(testkit.Rows("4 0.000000 4"))
+	// Test for index reader.
 	s.tk.MustQuery("select b from t_decimal use    index(idx4) where b=12345.67891").Check(testkit.Rows("12345.678910"))
 	s.tk.MustQuery("select b from t_decimal use    index(idx4) where b=123.456").Check(testkit.Rows("123.456000"))
 	s.tk.MustQuery("select b from t_decimal use    index(idx4) where b=12345.678912").Check(testkit.Rows("12345.678912"))
 	s.tk.MustQuery("select b from t_decimal use    index(idx4) where b=0").Check(testkit.Rows("0.000000"))
-	s.tk.MustQuery("select * from t_decimal ignore index(idx4) where b=12345.67891").Check(testkit.Rows("1 12345.678910 a"))
-	s.tk.MustQuery("select * from t_decimal ignore index(idx4) where b=123.456").Check(testkit.Rows("2 123.456000 b"))
-	s.tk.MustQuery("select * from t_decimal ignore index(idx4) where b=12345.678912").Check(testkit.Rows("3 12345.678912 c"))
-	s.tk.MustQuery("select * from t_decimal ignore index(idx4) where b=0").Check(testkit.Rows("4 0.000000 d"))
-	s.tk.MustQuery("select b from t_decimal ignore index(idx4) where b=12345.67891").Check(testkit.Rows("12345.678910"))
-	s.tk.MustQuery("select b from t_decimal ignore index(idx4) where b=123.456").Check(testkit.Rows("123.456000"))
-	s.tk.MustQuery("select b from t_decimal ignore index(idx4) where b=12345.678912").Check(testkit.Rows("12345.678912"))
-	s.tk.MustQuery("select b from t_decimal ignore index(idx4) where b=0").Check(testkit.Rows("0.000000"))
+	// Test for table scan.
+	s.tk.MustQuery("select * from t_decimal ignore index(idx4) where b=12345.67891").Check(testkit.Rows("1 12345.678910 1"))
+	s.tk.MustQuery("select * from t_decimal ignore index(idx4) where b=123.456").Check(testkit.Rows("2 123.456000 2"))
+	s.tk.MustQuery("select * from t_decimal ignore index(idx4) where b=12345.678912").Check(testkit.Rows("3 12345.678912 3"))
+	s.tk.MustQuery("select * from t_decimal ignore index(idx4) where b=0").Check(testkit.Rows("4 0.000000 4"))
 	s.tk.MustExec("alter table t_decimal add index idx5(a,b,c);")
 
 	// Test update with decimal.
 	s.tk.MustExec("update t_decimal set a=a+5 where a=1;")
-	s.tk.MustQuery("select * from t_decimal use    index(idx4) where b=12345.67891").Check(testkit.Rows("6 12345.678910 a"))
+	s.tk.MustQuery("select * from t_decimal use    index(idx4) where b=12345.67891").Check(testkit.Rows("6 12345.678910 1"))
 	s.tk.MustQuery("select b from t_decimal use    index(idx4) where b=12345.67891").Check(testkit.Rows("12345.678910"))
-	s.tk.MustQuery("select * from t_decimal ignore index(idx4) where b=12345.67891").Check(testkit.Rows("6 12345.678910 a"))
-	s.tk.MustQuery("select b from t_decimal use index(idx4) where b=12345.67891").Check(testkit.Rows("12345.678910"))
+	s.tk.MustQuery("select * from t_decimal ignore index(idx4) where b=12345.67891").Check(testkit.Rows("6 12345.678910 1"))
 	s.tk.MustExec("update t_decimal set b=b+1 where a=6;")
-	s.tk.MustQuery("select * from t_decimal use index(idx4) where b=12346.67891").Check(testkit.Rows("6 12346.678910 a"))
+	s.tk.MustQuery("select * from t_decimal use index(idx4) where b=12346.67891").Check(testkit.Rows("6 12346.678910 1"))
 	s.tk.MustQuery("select b from t_decimal use index(idx4) where b=12346.67891").Check(testkit.Rows("12346.678910"))
-	s.tk.MustQuery("select * from t_decimal ignore index(idx4) where b=12346.67891").Check(testkit.Rows("6 12346.678910 a"))
-	s.tk.MustQuery("select b from t_decimal ignore index(idx4) where b=12346.67891").Check(testkit.Rows("12346.678910"))
+	s.tk.MustQuery("select * from t_decimal ignore index(idx4) where b=12346.67891").Check(testkit.Rows("6 12346.678910 1"))
 
 	// Test for add unique index and insert.
-	s.tk.MustExec("insert into t_decimal values (7,123.456,null);")
-	s.tk.MustQuery("select * from t_decimal use    index(idx4) where b=123.456 order by b").Check(testkit.Rows("2 123.456000 b", "7 123.456000 <nil>"))
-	s.tk.MustQuery("select * from t_decimal ignore index(idx4) where b=123.456 order by b").Check(testkit.Rows("2 123.456000 b", "7 123.456000 <nil>"))
+	s.tk.MustExec("insert into t_decimal values (7,123.456,7);")
+	s.tk.MustQuery("select * from t_decimal use    index(idx4) where b=123.456 order by b").Check(testkit.Rows("2 123.456000 2", "7 123.456000 7"))
+	s.tk.MustQuery("select * from t_decimal ignore index(idx4) where b=123.456 order by b").Check(testkit.Rows("2 123.456000 2", "7 123.456000 7"))
 	testExecErrorMessage(c, s.tk, "alter table t_decimal add unique index idx6(b);",
 		"[kv:1062]Duplicate entry '' for key 'idx6'")
 	s.tk.MustExec("delete from t_decimal where b=123.456")
 	s.tk.MustExec("alter table t_decimal add unique index idx6(b);")
-	s.tk.MustExec("insert into t_decimal values (8,123.456,'bbb');")
-	testExecErrorMessage(c, s.tk, "insert into t_decimal values (9,123.456,'bbb');",
+	s.tk.MustExec("insert into t_decimal values (8,123.456,8);")
+	testExecErrorMessage(c, s.tk, "insert into t_decimal values (9,123.456,1000);",
 		"[kv:1062]Duplicate entry '123.456000' for key 'idx6'")
+
+	// Test for point get double read.
+	s.tk.MustQuery("select * from t_decimal where b=12346.67891").Check(testkit.Rows("6 12346.678910 1"))
+	s.tk.MustQuery("select * from t_decimal where b=12345.678912").Check(testkit.Rows("3 12345.678912 3"))
+	s.tk.MustQuery("select * from t_decimal where b=0").Check(testkit.Rows("4 0.000000 4"))
+	s.tk.MustQuery("select * from t_decimal where b=123.456").Check(testkit.Rows("8 123.456000 8"))
+
+	// Test for point get without double read.
+	s.tk.MustQuery("select * from t_decimal where c=1").Check(testkit.Rows("6 12346.678910 1"))
+	s.tk.MustQuery("select * from t_decimal where c=3").Check(testkit.Rows("3 12345.678912 3"))
+	s.tk.MustQuery("select * from t_decimal where c=4").Check(testkit.Rows("4 0.000000 4"))
+	s.tk.MustQuery("select * from t_decimal where c=8").Check(testkit.Rows("8 123.456000 8"))
+
 	s.tk.MustExec("admin check table t_decimal;")
 }
 
