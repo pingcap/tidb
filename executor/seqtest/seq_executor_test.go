@@ -964,3 +964,18 @@ func (s *seqTestSuite) TestBatchDML(c *C) {
 	tk.MustExec("commit")
 	tk.MustQuery("select * from t order by i").Check(testkit.Rows("1 d", "2 e", "3 e"))
 }
+
+func (s *seqTestSuite) TestOOMPanicInHashJoinWhenFetchBuildRows(c *C) {
+	fpName := "github.com/pingcap/tidb/executor/errorFetchBuildSideRowsMockOOMPanic"
+	c.Assert(failpoint.Enable(fpName, `panic("ERROR 1105 (HY000): Out Of Memory Quota![conn_id=1]")`), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable(fpName), IsNil)
+	}()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(c1 int, c2 int)")
+	tk.MustExec("insert into t values(1,1),(2,2)")
+	err := tk.QueryToErr("select * from t as t2  join t as t1 where t1.c1=t2.c1")
+	c.Assert(err.Error(), Equals, "failpoint panic: ERROR 1105 (HY000): Out Of Memory Quota![conn_id=1]")
+}
