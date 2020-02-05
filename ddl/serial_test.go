@@ -49,10 +49,8 @@ import (
 var _ = SerialSuites(&testSerialSuite{})
 
 type testSerialSuite struct {
-	store     kv.Storage
-	cluster   *mocktikv.Cluster
-	mvccStore mocktikv.MVCCStore
-	dom       *domain.Domain
+	store kv.Storage
+	dom   *domain.Domain
 }
 
 func (s *testSerialSuite) SetUpSuite(c *C) {
@@ -64,9 +62,6 @@ func (s *testSerialSuite) SetUpSuite(c *C) {
 	// Test for add/drop primary key.
 	newCfg.AlterPrimaryKey = false
 	config.StoreGlobalConfig(&newCfg)
-
-	s.cluster = mocktikv.NewCluster()
-	s.mvccStore = mocktikv.MustNewMVCCStore()
 
 	ddl.WaitTimeWhenErrorOccured = 1 * time.Microsecond
 	var err error
@@ -157,7 +152,10 @@ func (s *testSerialSuite) TestMultiRegionGetTableEndHandle(c *C) {
 	testCtx := newTestMaxTableRowIDContext(c, d, tbl)
 
 	// Split the table.
-	s.cluster.SplitTable(s.mvccStore, tblID, 100)
+	cluster := mocktikv.NewCluster()
+	mvccStore := mocktikv.MustNewMVCCStore()
+	defer mvccStore.Close()
+	cluster.SplitTable(mvccStore, tblID, 100)
 
 	maxID, emptyTable := getMaxTableRowID(testCtx, s.store)
 	c.Assert(emptyTable, IsFalse)
