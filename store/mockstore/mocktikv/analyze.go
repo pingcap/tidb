@@ -148,6 +148,9 @@ func (h *rpcHandler) handleAnalyzeColumnsReq(req *coprocessor.Request, analyzeRe
 			Tp:         col.Tp,
 			Flag:       col.Flag,
 			IsPKHandle: col.GetPkHandle(),
+			Flen:       int(col.ColumnLen),
+			Decimal:    int(col.Decimal),
+			Elems:      col.Elems,
 		}
 	}
 	defVal := func(i int) ([]byte, error) {

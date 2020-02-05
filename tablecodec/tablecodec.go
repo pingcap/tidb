@@ -335,7 +335,7 @@ func flatten(sc *stmtctx.StatementContext, data types.Datum, ret *types.Datum) e
 
 // DecodeColumnValue decodes data to a Datum according to the column info.
 func DecodeColumnValue(data []byte, ft *types.FieldType, loc *time.Location) (types.Datum, error) {
-	_, d, err := codec.DecodeOne(data)
+	_, d, err := codec.DecodeOneWithTp(data, ft)
 	if err != nil {
 		return types.Datum{}, errors.Trace(err)
 	}
@@ -413,7 +413,7 @@ func DecodeRowWithMap(b []byte, cols map[int64]*types.FieldType, loc *time.Locat
 		id := cid.GetInt64()
 		ft, ok := cols[id]
 		if ok {
-			_, v, err := codec.DecodeOne(data)
+			_, v, err := codec.DecodeOneWithTp(data, ft)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}

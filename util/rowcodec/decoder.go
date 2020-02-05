@@ -133,7 +133,7 @@ func (decoder *DatumMapDecoder) decodeColDatum(col *ColInfo, colData []byte) (ty
 		mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
 		d.SetBytes(colData)
 	case mysql.TypeNewDecimal:
-		_, dec, _, _, err := codec.DecodeDecimal(colData)
+		_, dec, _, _, err := codec.DecodeDecimalAndRound(colData, col.Decimal)
 		if err != nil {
 			return d, err
 		}
@@ -268,7 +268,7 @@ func (decoder *ChunkDecoder) decodeColToChunk(colIdx int, col *ColInfo, colData 
 		mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
 		chk.AppendBytes(colIdx, colData)
 	case mysql.TypeNewDecimal:
-		_, dec, _, _, err := codec.DecodeDecimal(colData)
+		_, dec, _, _, err := codec.DecodeDecimalAndRound(colData, col.Decimal)
 		if err != nil {
 			return err
 		}

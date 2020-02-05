@@ -590,7 +590,7 @@ func (ts *HTTPHandlerTestSuite) TestDecodeColumnValue(c *C) {
 	row := make([]types.Datum, len(cols))
 	row[0] = types.NewIntDatum(100)
 	row[1] = types.NewBytesDatum([]byte("abc"))
-	row[2] = types.NewDecimalDatum(types.NewDecFromInt(1))
+	row[2] = types.NewDecimalDatum(types.NewDecFromStringForTest("1.123456"))
 	row[3] = types.NewTimeDatum(types.NewTime(types.FromGoTime(time.Now()), mysql.TypeTimestamp, 6))
 
 	// Encode the row.

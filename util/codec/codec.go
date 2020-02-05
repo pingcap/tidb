@@ -714,6 +714,25 @@ func DecodeRange(b []byte, size int) ([]types.Datum, []byte, error) {
 	return values, nil, nil
 }
 
+// DecodeOneWithTp decodes on datum from a byte slice generated with EncodeKey or EncodeValue.
+func DecodeOneWithTp(b []byte, ft *types.FieldType) (remain []byte, d types.Datum, err error) {
+	remain, d, err = DecodeOne(b)
+	if ft.Tp != mysql.TypeNewDecimal || err != nil {
+		return remain, d, err
+	}
+	if ft.Decimal != types.UnspecifiedLength && d.Frac() != ft.Decimal {
+		dec := d.GetMysqlDecimal()
+		to := new(types.MyDecimal)
+		err = dec.Round(to, ft.Decimal, types.ModeHalfEven)
+		if err != nil {
+			return remain, d, err
+		}
+		d.SetMysqlDecimal(to)
+		d.SetFrac(ft.Decimal)
+	}
+	return remain, d, err
+}
+
 // DecodeOne decodes on datum from a byte slice generated with EncodeKey or EncodeValue.
 func DecodeOne(b []byte) (remain []byte, d types.Datum, err error) {
 	if len(b) < 1 {
@@ -984,18 +1003,9 @@ func (decoder *Decoder) DecodeOne(b []byte, colIdx int, ft *types.FieldType) (re
 		chk.AppendBytes(colIdx, v)
 	case decimalFlag:
 		var dec *types.MyDecimal
-		var frac int
-		b, dec, _, frac, err = DecodeDecimal(b)
+		b, dec, _, _, err = DecodeDecimalAndRound(b, ft.Decimal)
 		if err != nil {
 			return nil, errors.Trace(err)
-		}
-		if ft.Decimal != types.UnspecifiedLength && frac != ft.Decimal {
-			to := new(types.MyDecimal)
-			err := dec.Round(to, ft.Decimal, types.ModeHalfEven)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			dec = to
 		}
 		chk.AppendMyDecimal(colIdx, dec)
 	case durationFlag:
