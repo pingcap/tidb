@@ -11,34 +11,22 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package infoschema
+package infoschema_test
 
 import (
 	"fmt"
-	"testing"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 )
 
 const testTableName = "test"
-var testTableCols = []columnInfo{
-	{"ID", mysql.TypeLong, 20, 0, nil, nil},
-}
-
-func TestT(t *testing.T) {
-	CustomVerboseFlag = true
-	TestingT(t)
-}
 
 var _ = Suite(&testSysTablesSuite{})
 
@@ -55,7 +43,7 @@ func (s *testSysTablesSuite) SetUpSuite(c *C) {
 	c.Assert(err, IsNil)
 	session.DisableStats4Test()
 	// Create a table for test before creating domain.
-	createTestTable()
+	infoschema.MockSysTable(testTableName)
 	s.dom, err = session.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
 }
@@ -75,21 +63,4 @@ func (s *testSysTablesSuite) TestSysSchemaTables(c *C) {
 	// Test querying tables.
 	sql := fmt.Sprintf("select * from %s", testTableName)
 	tk.MustQuery(sql).Check(testkit.Rows())
-}
-
-func createTestTable() {
-	dbID := autoid.SysSchemaDBID
-	tableInfo := buildTableMeta(testTableName, testTableCols)
-	tableInfo.ID = dbID + 1
-	for i, c := range tableInfo.Columns {
-		c.ID = int64(i) + 1
-	}
-	dbInfo := &model.DBInfo{
-		ID:      dbID,
-		Name:    util.SysSchemaName,
-		Charset: mysql.DefaultCharset,
-		Collate: mysql.DefaultCollationName,
-		Tables:  []*model.TableInfo{tableInfo},
-	}
-	RegisterVirtualTable(dbInfo, sysTableFromMeta)
 }

@@ -25,7 +25,7 @@ import (
 
 func init() {
 	dbID := autoid.SysSchemaDBID
-	sysTables := make([]*model.TableInfo, 0, 0)
+	sysTables := make([]*model.TableInfo, 0)
 	dbInfo := &model.DBInfo{
 		ID:      dbID,
 		Name:    model.NewCIStr(util.SysSchemaName.O),
@@ -63,4 +63,25 @@ func (vt *sysSchemaTable) IterRecords(ctx sessionctx.Context, startKey kv.Key, c
 		return table.ErrUnsupportedOp
 	}
 	return nil
+}
+
+// MockSysTable is only used for test.
+func MockSysTable(testTableName string) {
+	dbID := autoid.SysSchemaDBID
+	var testTableCols = []columnInfo{
+		{"ID", mysql.TypeLong, 20, 0, nil, nil},
+	}
+	tableInfo := buildTableMeta(testTableName, testTableCols)
+	tableInfo.ID = dbID + 1
+	for i, c := range tableInfo.Columns {
+		c.ID = int64(i) + 1
+	}
+	dbInfo := &model.DBInfo{
+		ID:      dbID,
+		Name:    util.SysSchemaName,
+		Charset: mysql.DefaultCharset,
+		Collate: mysql.DefaultCollationName,
+		Tables:  []*model.TableInfo{tableInfo},
+	}
+	RegisterVirtualTable(dbInfo, sysTableFromMeta)
 }

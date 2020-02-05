@@ -123,7 +123,7 @@ func (*testSuite) TestT(c *C) {
 	is := handle.Get()
 
 	schemaNames := is.AllSchemaNames()
-	c.Assert(schemaNames, HasLen, 5)
+	c.Assert(schemaNames, HasLen, 6)
 	c.Assert(testutil.CompareUnorderedStringSlice(schemaNames, []string{util.InformationSchemaName.O, util.MetricSchemaName.O, util.PerformanceSchemaName.O, "Test", util.InspectionSchemaName.O}), IsTrue)
 
 	schemas := is.AllSchemas()
