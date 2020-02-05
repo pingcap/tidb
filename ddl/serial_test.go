@@ -16,6 +16,7 @@ package ddl_test
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"math"
 	"strings"
 	"sync"
@@ -38,7 +39,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/pingcap/tidb/util/mock"
@@ -131,9 +131,6 @@ func (s *testSerialSuite) TestPrimaryKey(c *C) {
 }
 
 func (s *testSerialSuite) TestMultiRegionGetTableEndHandle(c *C) {
-	cluster := mocktikv.NewCluster()
-	mvccStore := mocktikv.MustNewMVCCStore()
-	defer mvccStore.Close()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("drop database if exists test_get_endhandle")
 	tk.MustExec("create database test_get_endhandle")
@@ -155,6 +152,9 @@ func (s *testSerialSuite) TestMultiRegionGetTableEndHandle(c *C) {
 	testCtx := newTestMaxTableRowIDContext(c, d, tbl)
 
 	// Split the table.
+	cluster := mocktikv.NewCluster()
+	mvccStore := mocktikv.MustNewMVCCStore()
+	defer mvccStore.Close()
 	cluster.SplitTable(mvccStore, tblID, 100)
 
 	maxID, emptyTable := getMaxTableRowID(testCtx, s.store)
