@@ -192,6 +192,9 @@ func (p *LogicalUnionScan) PruneColumns(parentUsedCols []*expression.Column) err
 func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column) error {
 	used := expression.GetUsedList(parentUsedCols, ds.schema)
 
+	exprCols := expression.ExtractColumnsFromExpressions(nil, ds.allConds, nil)
+	exprUsed := expression.GetUsedList(exprCols, ds.schema)
+
 	var (
 		handleCol     *expression.Column
 		handleColInfo *model.ColumnInfo
@@ -203,7 +206,7 @@ func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column) error {
 	originSchemaColumns := ds.schema.Columns
 	originColumns := ds.Columns
 	for i := len(used) - 1; i >= 0; i-- {
-		if !used[i] {
+		if !used[i] && !exprUsed[i] {
 			ds.schema.Columns = append(ds.schema.Columns[:i], ds.schema.Columns[i+1:]...)
 			ds.Columns = append(ds.Columns[:i], ds.Columns[i+1:]...)
 		}
