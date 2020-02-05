@@ -47,3 +47,14 @@ func OnGeneralEvent(ctx context.Context, sctx *variable.SessionVars, event plugi
 	fmt.Printf("new connection by %s\n", ctx.Value("ip"))
 	return nil
 }
+
+// OnConnectionEvent implements TiDB Audit plugin's OnConnectionEvent SPI.
+func OnConnectionEvent(ctx context.Context, event plugin.ConnectionEvent, info *variable.ConnectionInfo) error {
+	var reason string
+	if r := ctx.Value(plugin.RejectReasonCtxValue{}); r != nil {
+		reason = r.(string)
+	}
+	fmt.Println("conn_ip_example onConnect called")
+	fmt.Printf("conenct event: %s, reason: %s\n", event, reason)
+	return nil
+}
