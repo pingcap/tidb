@@ -1405,7 +1405,7 @@ func (s *testIntegrationSuite5) TestPartitionAddPrimaryKey(c *C) {
 	testPartitionAddIndexOrPK(c, tk, "primary key")
 }
 
-func (s *testIntegrationSuite1) TestPartitionAddIndex(c *C) {
+func (s *testIntegrationSuite6) TestPartitionAddIndex(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	testPartitionAddIndexOrPK(c, tk, "index")
 }
