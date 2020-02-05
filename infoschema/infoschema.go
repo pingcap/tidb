@@ -43,6 +43,8 @@ var (
 	ErrTableExists = terror.ClassSchema.New(mysql.ErrTableExists, mysql.MySQLErrName[mysql.ErrTableExists])
 	// ErrTableDropExists returns for dropping a non-existent table.
 	ErrTableDropExists = terror.ClassSchema.New(mysql.ErrBadTable, mysql.MySQLErrName[mysql.ErrBadTable])
+	// ErrSequenceDropExists returns for dropping a non-exist sequence.
+	ErrSequenceDropExists = terror.ClassSchema.New(mysql.ErrUnknownSequence, mysql.MySQLErrName[mysql.ErrUnknownSequence])
 	// ErrColumnNotExists returns for column not exists.
 	ErrColumnNotExists = terror.ClassSchema.New(mysql.ErrBadField, mysql.MySQLErrName[mysql.ErrBadField])
 	// ErrColumnExists returns for column already exists.
@@ -342,6 +344,7 @@ func init() {
 		mysql.ErrBadUser:                mysql.ErrBadUser,
 		mysql.ErrUserAlreadyExists:      mysql.ErrUserAlreadyExists,
 		mysql.ErrTableLocked:            mysql.ErrTableLocked,
+		mysql.ErrUnknownSequence:        mysql.ErrUnknownSequence,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassSchema] = schemaMySQLErrCodes
 

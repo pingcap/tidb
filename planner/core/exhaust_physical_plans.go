@@ -99,12 +99,12 @@ func (p *LogicalJoin) moveEqualToOtherConditions(offsets []int) []expression.Exp
 
 // Only if the input required prop is the prefix fo join keys, we can pass through this property.
 func (p *PhysicalMergeJoin) tryToGetChildReqProp(prop *property.PhysicalProperty) ([]*property.PhysicalProperty, bool) {
-	lProp := property.NewPhysicalProperty(property.RootTaskType, p.LeftJoinKeys, false, math.MaxFloat64, false)
-	rProp := property.NewPhysicalProperty(property.RootTaskType, p.RightJoinKeys, false, math.MaxFloat64, false)
+	all, desc := prop.AllSameOrder()
+	lProp := property.NewPhysicalProperty(property.RootTaskType, p.LeftJoinKeys, desc, math.MaxFloat64, false)
+	rProp := property.NewPhysicalProperty(property.RootTaskType, p.RightJoinKeys, desc, math.MaxFloat64, false)
 	if !prop.IsEmpty() {
 		// sort merge join fits the cases of massive ordered data, so desc scan is always expensive.
-		all, desc := prop.AllSameOrder()
-		if !all || desc {
+		if !all {
 			return nil, false
 		}
 		if !prop.IsPrefix(lProp) && !prop.IsPrefix(rProp) {
@@ -121,17 +121,19 @@ func (p *PhysicalMergeJoin) tryToGetChildReqProp(prop *property.PhysicalProperty
 	return []*property.PhysicalProperty{lProp, rProp}, true
 }
 
-func (p *LogicalJoin) getMergeJoin(prop *property.PhysicalProperty) []PhysicalPlan {
+// GetMergeJoin convert the logical join to physical merge join based on the physical property.
+func (p *LogicalJoin) GetMergeJoin(prop *property.PhysicalProperty, schema *expression.Schema) []PhysicalPlan {
 	joins := make([]PhysicalPlan, 0, len(p.leftProperties)+1)
 	// The leftProperties caches all the possible properties that are provided by its children.
+	leftJoinKeys, rightJoinKeys := p.GetJoinKeys()
 	for _, lhsChildProperty := range p.leftProperties {
-		offsets := getMaxSortPrefix(lhsChildProperty, p.LeftJoinKeys)
+		offsets := getMaxSortPrefix(lhsChildProperty, leftJoinKeys)
 		if len(offsets) == 0 {
 			continue
 		}
 
 		leftKeys := lhsChildProperty[:len(offsets)]
-		rightKeys := expression.NewSchema(p.RightJoinKeys...).ColumnsByIndices(offsets)
+		rightKeys := expression.NewSchema(rightJoinKeys...).ColumnsByIndices(offsets)
 
 		prefixLen := findMaxPrefixLen(p.rightProperties, rightKeys)
 		if prefixLen == 0 {
@@ -150,7 +152,7 @@ func (p *LogicalJoin) getMergeJoin(prop *property.PhysicalProperty) []PhysicalPl
 			RightJoinKeys:   rightKeys,
 		}
 		mergeJoin := PhysicalMergeJoin{basePhysicalJoin: baseJoin}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), p.blockOffset)
-		mergeJoin.SetSchema(p.schema)
+		mergeJoin.SetSchema(schema)
 		mergeJoin.OtherConditions = p.moveEqualToOtherConditions(offsets)
 		mergeJoin.initCompareFuncs()
 		if reqProps, ok := mergeJoin.tryToGetChildReqProp(prop); ok {
@@ -161,6 +163,8 @@ func (p *LogicalJoin) getMergeJoin(prop *property.PhysicalProperty) []PhysicalPl
 				reqProps[1].ExpectedCnt = p.children[1].statsInfo().RowCount * expCntScale
 			}
 			mergeJoin.childrenReqProps = reqProps
+			_, desc := prop.AllSameOrder()
+			mergeJoin.Desc = desc
 			joins = append(joins, mergeJoin)
 		}
 	}
@@ -197,20 +201,21 @@ func getNewJoinKeysByOffsets(oldJoinKeys []*expression.Column, offsets []int) []
 
 func (p *LogicalJoin) getEnforcedMergeJoin(prop *property.PhysicalProperty) []PhysicalPlan {
 	// Check whether SMJ can satisfy the required property
-	offsets := make([]int, 0, len(p.LeftJoinKeys))
+	leftJoinKeys, rightJoinKeys := p.GetJoinKeys()
+	offsets := make([]int, 0, len(leftJoinKeys))
 	all, desc := prop.AllSameOrder()
 	if !all {
 		return nil
 	}
 	for _, item := range prop.Items {
 		isExist := false
-		for joinKeyPos := 0; joinKeyPos < len(p.LeftJoinKeys); joinKeyPos++ {
+		for joinKeyPos := 0; joinKeyPos < len(leftJoinKeys); joinKeyPos++ {
 			var key *expression.Column
-			if item.Col.Equal(p.ctx, p.LeftJoinKeys[joinKeyPos]) {
-				key = p.LeftJoinKeys[joinKeyPos]
+			if item.Col.Equal(p.ctx, leftJoinKeys[joinKeyPos]) {
+				key = leftJoinKeys[joinKeyPos]
 			}
-			if item.Col.Equal(p.ctx, p.RightJoinKeys[joinKeyPos]) {
-				key = p.RightJoinKeys[joinKeyPos]
+			if item.Col.Equal(p.ctx, rightJoinKeys[joinKeyPos]) {
+				key = rightJoinKeys[joinKeyPos]
 			}
 			if key == nil {
 				continue
@@ -232,8 +237,8 @@ func (p *LogicalJoin) getEnforcedMergeJoin(prop *property.PhysicalProperty) []Ph
 		}
 	}
 	// Generate the enforced sort merge join
-	leftKeys := getNewJoinKeysByOffsets(p.LeftJoinKeys, offsets)
-	rightKeys := getNewJoinKeysByOffsets(p.RightJoinKeys, offsets)
+	leftKeys := getNewJoinKeysByOffsets(leftJoinKeys, offsets)
+	rightKeys := getNewJoinKeysByOffsets(rightJoinKeys, offsets)
 	lProp := property.NewPhysicalProperty(property.RootTaskType, leftKeys, desc, math.MaxFloat64, true)
 	rProp := property.NewPhysicalProperty(property.RootTaskType, rightKeys, desc, math.MaxFloat64, true)
 	baseJoin := basePhysicalJoin{
@@ -245,7 +250,7 @@ func (p *LogicalJoin) getEnforcedMergeJoin(prop *property.PhysicalProperty) []Ph
 		RightJoinKeys:   rightKeys,
 		OtherConditions: p.OtherConditions,
 	}
-	enforcedPhysicalMergeJoin := PhysicalMergeJoin{basePhysicalJoin: baseJoin}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), p.blockOffset)
+	enforcedPhysicalMergeJoin := PhysicalMergeJoin{basePhysicalJoin: baseJoin, Desc: desc}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), p.blockOffset)
 	enforcedPhysicalMergeJoin.SetSchema(p.schema)
 	enforcedPhysicalMergeJoin.childrenReqProps = []*property.PhysicalProperty{lProp, rProp}
 	enforcedPhysicalMergeJoin.initCompareFuncs()
@@ -310,11 +315,9 @@ func (p *LogicalJoin) constructIndexJoin(
 		outerJoinKeys []*expression.Column
 	)
 	if outerIdx == 0 {
-		outerJoinKeys = p.LeftJoinKeys
-		innerJoinKeys = p.RightJoinKeys
+		outerJoinKeys, innerJoinKeys = p.GetJoinKeys()
 	} else {
-		innerJoinKeys = p.LeftJoinKeys
-		outerJoinKeys = p.RightJoinKeys
+		innerJoinKeys, outerJoinKeys = p.GetJoinKeys()
 	}
 	chReqProps := make([]*property.PhysicalProperty, 2)
 	chReqProps[outerIdx] = &property.PhysicalProperty{TaskTp: property.RootTaskType, ExpectedCnt: math.MaxFloat64, Items: prop.Items}
@@ -477,11 +480,9 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *property.PhysicalProperty, ou
 		outerJoinKeys []*expression.Column
 	)
 	if outerIdx == 0 {
-		outerJoinKeys = p.LeftJoinKeys
-		innerJoinKeys = p.RightJoinKeys
+		outerJoinKeys, innerJoinKeys = p.GetJoinKeys()
 	} else {
-		innerJoinKeys = p.LeftJoinKeys
-		outerJoinKeys = p.RightJoinKeys
+		innerJoinKeys, outerJoinKeys = p.GetJoinKeys()
 	}
 	ds, isDataSource := innerChild.(*DataSource)
 	us, isUnionScan := innerChild.(*LogicalUnionScan)
@@ -1351,7 +1352,7 @@ func (p *LogicalJoin) tryToGetIndexJoin(prop *property.PhysicalProperty) (indexJ
 // If the hint is not matched, it will get other candidates.
 // If the hint is not figured, we will pick all candidates.
 func (p *LogicalJoin) exhaustPhysicalPlans(prop *property.PhysicalProperty) []PhysicalPlan {
-	mergeJoins := p.getMergeJoin(prop)
+	mergeJoins := p.GetMergeJoin(prop, p.schema)
 	if (p.preferJoinType & preferMergeJoin) > 0 {
 		return mergeJoins
 	}

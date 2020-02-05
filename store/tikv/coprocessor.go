@@ -885,7 +885,7 @@ func (worker *copIteratorWorker) logTimeCopTask(costTime time.Duration, task *co
 			}
 		}
 	}
-	logutil.BgLogger().Info(logStr)
+	logutil.Logger(bo.ctx).Info(logStr)
 }
 
 func appendScanDetail(logStr string, columnFamily string, scanInfo *kvrpcpb.ScanInfo) string {
