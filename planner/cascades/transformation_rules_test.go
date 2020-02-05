@@ -151,6 +151,7 @@ func (s *testTransformationRuleSuite) TestTopNRules(c *C) {
 			NewRuleTransformLimitToTopN(),
 			NewRulePushLimitDownProjection(),
 			NewRulePushLimitDownUnionAll(),
+			NewRulePushLimitDownOuterJoin(),
 			NewRuleMergeAdjacentLimit(),
 		},
 		memo.OperandDataSource: {
