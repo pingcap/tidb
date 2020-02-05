@@ -567,3 +567,18 @@ func (s *testSuite) TestPrivileges(c *C) {
 	rows = tk.MustQuery("show global bindings").Rows()
 	c.Assert(len(rows), Equals, 0)
 }
+
+func (s *testSuite) TestErrorParse(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	s.cleanBindingEnv(tk)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, index idx(a))")
+	_, err := tk.Exec("create global binding for select * from t where a = '1' using select * from t where a = '")
+	c.Assert(err, NotNil)
+	tk.MustExec("create global binding for select * from t where a = '1' using select * from t where a = '1'")
+	tk.MustExec("update mysql.bind_info set bind_sql = 'select'")
+	h := s.domain.BindHandle()
+	// Do not panic.
+	h.Update(true)
+}

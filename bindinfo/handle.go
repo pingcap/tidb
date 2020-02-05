@@ -305,11 +305,12 @@ func (h *BindHandle) GetAllBindRecord() (bindRecords []*BindMeta) {
 
 func (h *BindHandle) newBindMeta(record *BindRecord) (hash string, meta *BindMeta, err error) {
 	hash = parser.DigestNormalized(record.OriginalSQL)
+	meta = &BindMeta{BindRecord: record}
 	stmtNodes, _, err := h.bindInfo.parser.Parse(record.BindSQL, record.Charset, record.Collation)
 	if err != nil {
-		return "", nil, err
+		return hash, meta, err
 	}
-	meta = &BindMeta{BindRecord: record, Hint: CollectHint(stmtNodes[0])}
+	meta.Hint = CollectHint(stmtNodes[0])
 	return hash, meta, nil
 }
 
