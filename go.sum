@@ -155,6 +155,8 @@ github.com/lysu/parser v0.0.0-20200203130542-e2c916ae50e2 h1:tW9gNIvuSGE92HK3r19
 github.com/lysu/parser v0.0.0-20200203130542-e2c916ae50e2/go.mod h1:9v0Edh8IbgjGYW2ArJr19E+bvL8zKahsFp+ixWeId+4=
 github.com/lysu/parser v0.0.0-20200203132844-0debd558ad28 h1:ZoufCxyyPyqp+C7Bqan+N8V79015ady8GUNLEmUSVMA=
 github.com/lysu/parser v0.0.0-20200203132844-0debd558ad28/go.mod h1:9v0Edh8IbgjGYW2ArJr19E+bvL8zKahsFp+ixWeId+4=
+github.com/lysu/parser v0.0.0-20200205025955-39fb76b59d00 h1:7vCoFnLXOr+cNIaPhFY/XUw58J4N2/U5PllvFOAG3oc=
+github.com/lysu/parser v0.0.0-20200205025955-39fb76b59d00/go.mod h1:9v0Edh8IbgjGYW2ArJr19E+bvL8zKahsFp+ixWeId+4=
 github.com/mattn/go-colorable v0.0.9/go.mod h1:9vuHe8Xs5qXnSaW/c/ABM9alt+Vo+STaOChaDxuIBZU=
 github.com/mattn/go-isatty v0.0.4/go.mod h1:M+lRXTBqGeGNdLjl/ufCoiOlB5xdOkqRJdNxMWT7Zi4=
 github.com/mattn/go-runewidth v0.0.2/go.mod h1:LwmH8dsx7+W8Uxz3IHJYH5QSwggIsqBzpuz5H//U1FU=
