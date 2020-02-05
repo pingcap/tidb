@@ -20,6 +20,7 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/expression"
 	plannercore "github.com/pingcap/tidb/planner/core"
@@ -269,6 +270,7 @@ func (e *HashJoinExec) fetchInnerRows(ctx context.Context, chkCh chan<- *chunk.C
 			}
 			chk := e.children[e.innerIdx].newFirstChunk()
 			err = Next(ctx, e.innerExec, chk)
+			failpoint.Inject("errorFetchBuildSideRowsMockOOMPanic", nil)
 			if err != nil {
 				e.innerFinished <- errors.Trace(err)
 				return
@@ -532,7 +534,16 @@ func (e *HashJoinExec) fetchInnerAndBuildHashTable(ctx context.Context) {
 	// innerResultCh transfer inner result chunk from inner fetch to build hash table.
 	innerResultCh := make(chan *chunk.Chunk, e.concurrency)
 	doneCh := make(chan struct{})
-	go util.WithRecovery(func() { e.fetchInnerRows(ctx, innerResultCh, doneCh) }, nil)
+	fetchBuildSideRowsOk := make(chan error, 1)
+	go util.WithRecovery(
+		func() { e.fetchInnerRows(ctx, innerResultCh, doneCh) },
+		func(r interface{}) {
+			if r != nil {
+				fetchBuildSideRowsOk <- errors.Errorf("%v", r)
+			}
+			close(fetchBuildSideRowsOk)
+		},
+	)
 
 	// TODO: Parallel build hash table. Currently not support because `mvmap` is not thread-safe.
 	err := e.buildHashTableForList(innerResultCh)
@@ -542,6 +553,12 @@ func (e *HashJoinExec) fetchInnerAndBuildHashTable(ctx context.Context) {
 	}
 	// wait fetchInnerRows be finished.
 	for range innerResultCh {
+	}
+	// Check whether err is nil to avoid sending redundant error into innerFinished.
+	if err == nil {
+		if err = <-fetchBuildSideRowsOk; err != nil {
+			e.innerFinished <- err
+		}
 	}
 }
 
