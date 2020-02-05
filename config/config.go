@@ -756,6 +756,9 @@ func (c *Config) Valid() error {
 	if c.Store == "mocktikv" && !c.RunDDL {
 		return fmt.Errorf("can't disable DDL on mocktikv")
 	}
+	if c.Store == "tikv" && (c.Lease == "0s" || c.Lease == "0" || c.Lease == "-0s" || c.Lease == "-0") {
+		return fmt.Errorf("invalid ddl lease = 0s on tikv")
+	}
 	if c.Log.File.MaxSize > MaxLogFileSize {
 		return fmt.Errorf("invalid max log file size=%v which is larger than max=%v", c.Log.File.MaxSize, MaxLogFileSize)
 	}
