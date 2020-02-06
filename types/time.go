@@ -1471,7 +1471,7 @@ func canFallbackToDateTime(str string) bool {
 		return false
 	}
 
-	return len(rest) == 0 || rest[0] == ' ' || rest[0] == 'T'
+	return len(rest) > 0 && (rest[0] == ' ' || rest[0] == 'T')
 }
 
 // ParseDuration parses the time form a formatted string with a fractional seconds part,
