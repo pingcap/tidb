@@ -200,7 +200,7 @@ func (r *ImplTiKVDoubleReadGather) Match(expr *memo.GroupExpr, prop *property.Ph
 }
 
 // OnImplement implements ImplementationRule OnImplement interface.
-func (r *ImplTiKVDoubleReadGather) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) (memo.Implementation, error) {
+func (r *ImplTiKVDoubleReadGather) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) ([]memo.Implementation, error) {
 	logicProp := expr.Group.Prop
 	dg := expr.ExprNode.(*plannercore.TiKVDoubleGather)
 	var reader plannercore.PhysicalPlan
@@ -220,7 +220,7 @@ func (r *ImplTiKVDoubleReadGather) OnImplement(expr *memo.GroupExpr, reqProp *pr
 	}
 	indexLookUp := impl.NewIndexLookUpReaderImpl(reader, dg.Source.TblColHists, proj)
 	indexLookUp.KeepOrder = !reqProp.IsEmpty()
-	return indexLookUp, nil
+	return []memo.Implementation{indexLookUp}, nil
 }
 
 // ImplTableScan implements TableScan as PhysicalTableScan.
