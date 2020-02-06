@@ -59,6 +59,8 @@ var (
 	withTiKVGlobalLock sync.RWMutex
 	withTiKV           = flag.Bool("with-tikv", false, "run tests with TiKV cluster started. (not use the mock server)")
 	pdAddrs            = flag.String("pd-addrs", "127.0.0.1:2379", "pd addrs")
+	pdAddrChan         chan string
+	initPdOnce         sync.Once
 )
 
 var _ = Suite(&testSessionSuite{})
@@ -73,6 +75,7 @@ type testSessionSuiteBase struct {
 	mvccStore mocktikv.MVCCStore
 	store     kv.Storage
 	dom       *domain.Domain
+	pdAddr    string
 }
 
 type testSessionSuite struct {
@@ -136,15 +139,29 @@ func clearETCD(ebd tikv.EtcdBackend) error {
 	return nil
 }
 
+func initPdAddrs() {
+	initPdOnce.Do(func() {
+		pdAddrChan := make(chan string)
+		addrs := strings.Split(*pdAddrs, ",")
+		for _, addr := range addrs {
+			addr := strings.TrimSpace(addr)
+			if addr != "" {
+				pdAddrChan <- addr
+			}
+		}
+	})
+}
+
 func (s *testSessionSuiteBase) SetUpSuite(c *C) {
 	testleak.BeforeTest()
 	s.cluster = mocktikv.NewCluster()
 
 	if *withTiKV {
-		withTiKVGlobalLock.Lock()
+		initPdAddrs()
+		s.pdAddr = <-pdAddrChan
 		var d tikv.Driver
 		config.GetGlobalConfig().TxnLocalLatches.Enabled = false
-		store, err := d.Open(fmt.Sprintf("tikv://%s", *pdAddrs))
+		store, err := d.Open(fmt.Sprintf("tikv://%s", s.pdAddr))
 		c.Assert(err, IsNil)
 		err = clearStorage(store)
 		c.Assert(err, IsNil)
@@ -176,7 +193,7 @@ func (s *testSessionSuiteBase) TearDownSuite(c *C) {
 	s.store.Close()
 	testleak.AfterTest(c)()
 	if *withTiKV {
-		withTiKVGlobalLock.Unlock()
+		pdAddrChan <- s.pdAddr
 	}
 }
 
