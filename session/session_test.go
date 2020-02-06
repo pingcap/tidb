@@ -141,12 +141,13 @@ func clearETCD(ebd tikv.EtcdBackend) error {
 
 func initPdAddrs() {
 	initPdOnce.Do(func() {
-		pdAddrChan := make(chan string)
+		pdAddrChan = make(chan string)
 		addrs := strings.Split(*pdAddrs, ",")
 		for _, addr := range addrs {
 			addr := strings.TrimSpace(addr)
 			if addr != "" {
 				pdAddrChan <- addr
+				fmt.Printf("Add pd addr %s to chan", addr)
 			}
 		}
 	})
@@ -159,6 +160,7 @@ func (s *testSessionSuiteBase) SetUpSuite(c *C) {
 	if *withTiKV {
 		initPdAddrs()
 		s.pdAddr = <-pdAddrChan
+		fmt.Printf("Acquire pd addr %s from chan", s.pdAddr)
 		var d tikv.Driver
 		config.GetGlobalConfig().TxnLocalLatches.Enabled = false
 		store, err := d.Open(fmt.Sprintf("tikv://%s", s.pdAddr))
@@ -194,6 +196,7 @@ func (s *testSessionSuiteBase) TearDownSuite(c *C) {
 	testleak.AfterTest(c)()
 	if *withTiKV {
 		pdAddrChan <- s.pdAddr
+		fmt.Printf("Release pd addr %s to chan", s.pdAddr)
 	}
 }
 
