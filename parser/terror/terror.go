@@ -24,12 +24,6 @@ import (
 	"go.uber.org/zap"
 )
 
-// Global error instances.
-var (
-	ErrCritical           = ClassGlobal.New(CodeExecResultIsEmpty, "critical error %v")
-	ErrResultUndetermined = ClassGlobal.New(CodeResultUndetermined, "execution result undetermined")
-)
-
 // ErrCode represents a specific error type in a error class.
 // Same error code can be used in different error classes.
 type ErrCode int
@@ -57,68 +51,52 @@ const (
 type ErrClass int
 
 // Error classes.
-const (
-	ClassAutoid ErrClass = iota + 1
-	ClassDDL
-	ClassDomain
-	ClassEvaluator
-	ClassExecutor
-	ClassExpression
-	ClassAdmin
-	ClassKV
-	ClassMeta
-	ClassOptimizer
-	ClassParser
-	ClassPerfSchema
-	ClassPrivilege
-	ClassSchema
-	ClassServer
-	ClassStructure
-	ClassVariable
-	ClassXEval
-	ClassTable
-	ClassTypes
-	ClassGlobal
-	ClassMockTikv
-	ClassJSON
-	ClassTiKV
-	ClassSession
-	ClassPlugin
-	ClassUtil
+var (
+	ClassAutoid     = RegisterErrorClass(1, "autoid")
+	ClassDDL        = RegisterErrorClass(2, "ddl")
+	ClassDomain     = RegisterErrorClass(3, "domain")
+	ClassEvaluator  = RegisterErrorClass(4, "evaluator")
+	ClassExecutor   = RegisterErrorClass(5, "executor")
+	ClassExpression = RegisterErrorClass(6, "expression")
+	ClassAdmin      = RegisterErrorClass(7, "admin")
+	ClassKV         = RegisterErrorClass(8, "kv")
+	ClassMeta       = RegisterErrorClass(9, "meta")
+	ClassOptimizer  = RegisterErrorClass(10, "planner")
+	ClassParser     = RegisterErrorClass(11, "parser")
+	ClassPerfSchema = RegisterErrorClass(12, "perfschema")
+	ClassPrivilege  = RegisterErrorClass(13, "privilege")
+	ClassSchema     = RegisterErrorClass(14, "schema")
+	ClassServer     = RegisterErrorClass(15, "server")
+	ClassStructure  = RegisterErrorClass(16, "structure")
+	ClassVariable   = RegisterErrorClass(17, "variable")
+	ClassXEval      = RegisterErrorClass(18, "xeval")
+	ClassTable      = RegisterErrorClass(19, "table")
+	ClassTypes      = RegisterErrorClass(20, "types")
+	ClassGlobal     = RegisterErrorClass(21, "global")
+	ClassMockTikv   = RegisterErrorClass(22, "mocktikv")
+	ClassJSON       = RegisterErrorClass(23, "json")
+	ClassTiKV       = RegisterErrorClass(24, "tikv")
+	ClassSession    = RegisterErrorClass(25, "session")
+	ClassPlugin     = RegisterErrorClass(26, "plugin")
+	ClassUtil       = RegisterErrorClass(27, "util")
 	// Add more as needed.
 )
 
-var errClz2Str = map[ErrClass]string{
-	ClassAutoid:     "autoid",
-	ClassDDL:        "ddl",
-	ClassDomain:     "domain",
-	ClassExecutor:   "executor",
-	ClassExpression: "expression",
-	ClassAdmin:      "admin",
-	ClassMeta:       "meta",
-	ClassKV:         "kv",
-	ClassOptimizer:  "planner",
-	ClassParser:     "parser",
-	ClassPerfSchema: "perfschema",
-	ClassPrivilege:  "privilege",
-	ClassSchema:     "schema",
-	ClassServer:     "server",
-	ClassStructure:  "structure",
-	ClassVariable:   "variable",
-	ClassTable:      "table",
-	ClassTypes:      "types",
-	ClassGlobal:     "global",
-	ClassMockTikv:   "mocktikv",
-	ClassJSON:       "json",
-	ClassTiKV:       "tikv",
-	ClassSession:    "session",
-	ClassPlugin:     "plugin",
-	ClassUtil:       "util",
+var errClass2Desc = make(map[ErrClass]string)
+
+// RegisterErrorClass registers new error class for terror.
+func RegisterErrorClass(classCode int, desc string) ErrClass {
+	errClass := ErrClass(classCode)
+	if _, exists := errClass2Desc[errClass]; exists {
+		panic(fmt.Sprintf("duplicate register ClassCode %d - %s", classCode, desc))
+	}
+	errClass2Desc[errClass] = desc
+	return errClass
 }
 
 // String implements fmt.Stringer interface.
 func (ec ErrClass) String() string {
-	if s, exists := errClz2Str[ec]; exists {
+	if s, exists := errClass2Desc[ec]; exists {
 		return s
 	}
 	return strconv.Itoa(int(ec))
@@ -141,9 +119,18 @@ func (ec ErrClass) NotEqualClass(err error) bool {
 	return !ec.EqualClass(err)
 }
 
-// New creates an *Error with an error code and an error message.
+// New defines an *Error with an error code and an error message.
 // Usually used to create base *Error.
+// Attention:
+// this method is not goroutine-safe and
+// usually be used in global variable initializer
 func (ec ErrClass) New(code ErrCode, message string) *Error {
+	clsMap, ok := ErrClassToMySQLCodes[ec]
+	if !ok {
+		clsMap = make(map[ErrCode]struct{})
+		ErrClassToMySQLCodes[ec] = clsMap
+	}
+	clsMap[code] = struct{}{}
 	return &Error{
 		class:   ec,
 		code:    code,
@@ -152,8 +139,23 @@ func (ec ErrClass) New(code ErrCode, message string) *Error {
 }
 
 // NewStd calls New using the standard message for the error code
+// Attention:
+// this method is not goroutine-safe and
+// usually be used in global variable initializer
 func (ec ErrClass) NewStd(code ErrCode) *Error {
 	return ec.New(code, mysql.MySQLErrName[uint16(code)])
+}
+
+// Synthesize synthesizes an *Error in the air
+// it didn't register error into ErrClassToMySQLCodes
+// so it's goroutine-safe
+// and often be used to create Error came from other systems like TiKV.
+func (ec ErrClass) Synthesize(code ErrCode, message string) *Error {
+	return &Error{
+		class:   ec,
+		code:    code,
+		message: message,
+	}
 }
 
 // Error implements error interface and adds integer Class and Code, so
@@ -291,21 +293,22 @@ func (e *Error) getMySQLErrorCode() uint16 {
 		log.Warn("Unknown error class", zap.Int("class", int(e.class)))
 		return defaultMySQLErrorCode
 	}
-	code, ok := codeMap[e.code]
+	_, ok = codeMap[e.code]
 	if !ok {
-		log.Debug("Unknown error code", zap.Int("class", int(e.class)), zap.Uint16("code", code))
+		log.Debug("Unknown error code", zap.Int("class", int(e.class)), zap.Int("code", int(e.code)))
 		return defaultMySQLErrorCode
 	}
-	return code
+	return uint16(e.code)
 }
 
 var (
-	// ErrClassToMySQLCodes is the map of ErrClass to code-map.
-	ErrClassToMySQLCodes map[ErrClass]map[ErrCode]uint16
+	// ErrClassToMySQLCodes is the map of ErrClass to code-set.
+	ErrClassToMySQLCodes  = make(map[ErrClass]map[ErrCode]struct{})
+	ErrCritical           = ClassGlobal.New(CodeExecResultIsEmpty, "critical error %v")
+	ErrResultUndetermined = ClassGlobal.New(CodeResultUndetermined, "execution result undetermined")
 )
 
 func init() {
-	ErrClassToMySQLCodes = make(map[ErrClass]map[ErrCode]uint16)
 	defaultMySQLErrorCode = mysql.ErrUnknown
 }
 

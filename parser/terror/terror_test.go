@@ -45,7 +45,7 @@ func (s *testTErrorSuite) TestTError(c *C) {
 	c.Assert(ClassKV.String(), Not(Equals), "")
 	c.Assert(ClassServer.String(), Not(Equals), "")
 
-	parserErr := ClassParser.New(ErrCode(1), "error 1")
+	parserErr := ClassParser.New(ErrCode(100), "error 100")
 	c.Assert(parserErr.Error(), Not(Equals), "")
 	c.Assert(ClassParser.EqualClass(parserErr), IsTrue)
 	c.Assert(ClassParser.NotEqualClass(parserErr), IsFalse)
@@ -64,10 +64,6 @@ func (s *testTErrorSuite) TestTError(c *C) {
 	kvErr := ClassKV.New(1062, "key already exist")
 	e := kvErr.FastGen("Duplicate entry '%d' for key 'PRIMARY'", 1)
 	c.Assert(e.Error(), Equals, "[kv:1062]Duplicate entry '1' for key 'PRIMARY'")
-	kvMySQLErrCodes := map[ErrCode]uint16{
-		1062: uint16(1062),
-	}
-	ErrClassToMySQLCodes[ClassKV] = kvMySQLErrCodes
 	sqlErr := errors.Cause(e).(*Error).ToSQLError()
 	c.Assert(sqlErr.Message, Equals, "Duplicate entry '1' for key 'PRIMARY'")
 	c.Assert(sqlErr.Code, Equals, uint16(1062))
@@ -156,13 +152,11 @@ func (s *testTErrorSuite) TestErrorEqual(c *C) {
 
 	c.Assert(ErrorEqual(nil, nil), IsTrue)
 	c.Assert(ErrorNotEqual(e1, e6), IsTrue)
-	code1 := ErrCode(1)
-	code2 := ErrCode(2)
-	te1 := ClassParser.New(code1, "abc")
-	te2 := ClassParser.New(code1, "def")
+	code1 := ErrCode(9001)
+	code2 := ErrCode(9002)
+	te1 := ClassParser.Synthesize(code1, "abc")
 	te3 := ClassKV.New(code1, "abc")
 	te4 := ClassKV.New(code2, "abc")
-	c.Assert(ErrorEqual(te1, te2), IsTrue)
 	c.Assert(ErrorEqual(te1, te3), IsFalse)
 	c.Assert(ErrorEqual(te3, te4), IsFalse)
 }
