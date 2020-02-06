@@ -223,19 +223,6 @@ var (
 	ErrUnsupportedSecondArgumentType = terror.ClassJSON.New(mysql.ErrUnsupportedSecondArgumentType, mysql.MySQLErrName[mysql.ErrUnsupportedSecondArgumentType])
 )
 
-func init() {
-	terror.ErrClassToMySQLCodes[terror.ClassJSON] = map[terror.ErrCode]uint16{
-		mysql.ErrInvalidJSONText:               mysql.ErrInvalidJSONText,
-		mysql.ErrInvalidJSONPath:               mysql.ErrInvalidJSONPath,
-		mysql.ErrInvalidJSONData:               mysql.ErrInvalidJSONData,
-		mysql.ErrInvalidJSONPathWildcard:       mysql.ErrInvalidJSONPathWildcard,
-		mysql.ErrInvalidJSONContainsPathType:   mysql.ErrInvalidJSONContainsPathType,
-		mysql.ErrJSONDocumentNULLKey:           mysql.ErrJSONDocumentNULLKey,
-		mysql.ErrInvalidJSONPathArrayCell:      mysql.ErrInvalidJSONPathArrayCell,
-		mysql.ErrUnsupportedSecondArgumentType: mysql.ErrUnsupportedSecondArgumentType,
-	}
-}
-
 // json_contains_path function type choices
 // See: https://dev.mysql.com/doc/refman/5.7/en/json-search-functions.html#function_json-contains-path
 const (

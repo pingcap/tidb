@@ -19,30 +19,11 @@ import (
 )
 
 var (
-	errInvalidPluginID         = createPluginError(mysql.ErrInvalidPluginID)
-	errInvalidPluginManifest   = createPluginError(mysql.ErrInvalidPluginManifest)
-	errInvalidPluginName       = createPluginError(mysql.ErrInvalidPluginName)
-	errInvalidPluginVersion    = createPluginError(mysql.ErrInvalidPluginVersion)
-	errDuplicatePlugin         = createPluginError(mysql.ErrDuplicatePlugin)
-	errInvalidPluginSysVarName = createPluginError(mysql.ErrInvalidPluginSysVarName)
-	errRequireVersionCheckFail = createPluginError(mysql.ErrRequireVersionCheckFail)
+	errInvalidPluginID         = terror.ClassPlugin.NewStd(mysql.ErrInvalidPluginID)
+	errInvalidPluginManifest   = terror.ClassPlugin.NewStd(mysql.ErrInvalidPluginManifest)
+	errInvalidPluginName       = terror.ClassPlugin.NewStd(mysql.ErrInvalidPluginName)
+	errInvalidPluginVersion    = terror.ClassPlugin.NewStd(mysql.ErrInvalidPluginVersion)
+	errDuplicatePlugin         = terror.ClassPlugin.NewStd(mysql.ErrDuplicatePlugin)
+	errInvalidPluginSysVarName = terror.ClassPlugin.NewStd(mysql.ErrInvalidPluginSysVarName)
+	errRequireVersionCheckFail = terror.ClassPlugin.NewStd(mysql.ErrRequireVersionCheckFail)
 )
-
-func createPluginError(code terror.ErrCode) *terror.Error {
-	return terror.ClassPlugin.New(code, mysql.MySQLErrName[uint16(code)])
-}
-
-func init() {
-	pluginMySQLErrCodes := map[terror.ErrCode]uint16{
-		mysql.ErrInvalidPluginID:            mysql.ErrInvalidPluginID,
-		mysql.ErrInvalidPluginManifest:      mysql.ErrInvalidPluginManifest,
-		mysql.ErrInvalidPluginName:          mysql.ErrInvalidPluginName,
-		mysql.ErrInvalidPluginVersion:       mysql.ErrInvalidPluginVersion,
-		mysql.ErrDuplicatePlugin:            mysql.ErrDuplicatePlugin,
-		mysql.ErrInvalidPluginSysVarName:    mysql.ErrInvalidPluginSysVarName,
-		mysql.ErrRequireVersionCheckFail:    mysql.ErrRequireVersionCheckFail,
-		mysql.ErrUnsupportedReloadPlugin:    mysql.ErrUnsupportedReloadPlugin,
-		mysql.ErrUnsupportedReloadPluginVar: mysql.ErrUnsupportedReloadPluginVar,
-	}
-	terror.ErrClassToMySQLCodes[terror.ClassPlugin] = pluginMySQLErrCodes
-}
