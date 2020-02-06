@@ -581,6 +581,22 @@
         "Result": [
           "6 1 11"
         ]
+      },
+      {
+        "SQL": "select a from t1 where exists(select 1 from t2 where t1.a = t2.a)",
+        "Plan": [
+          "Apply_14 10000.00 root CARTESIAN semi join, inner:TableReader_17",
+          "├─TableReader_15 10000.00 root data:TableScan_16",
+          "│ └─TableScan_16 10000.00 cop[tikv] table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
+          "└─TableReader_17 8000.00 root data:Selection_18",
+          "  └─Selection_18 8000.00 cop[tikv] eq(test.t1.a, test.t2.a)",
+          "    └─TableScan_19 10000.00 cop[tikv] table:t2, range:[-inf,+inf], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1",
+          "2",
+          "3"
+        ]
       }
     ]
   },

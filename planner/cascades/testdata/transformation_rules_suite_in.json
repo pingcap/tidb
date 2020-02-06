@@ -102,5 +102,11 @@
       "select * from t as t1 left join (select * from t limit 0 offset 1) as t2 on t1.a = t2.a;",
       "select a, b from ((select a, b from t) union all(select c as a, d as b from t limit 0 offset 5)) as t1 where a > 1"
     ]
+  },
+  {
+    "name": "TestDecorrelate",
+    "cases": [
+      "select a from t t1 where exists (select 1 from t t2 where t1.a = t2.b)"
+    ]
   }
 ]
