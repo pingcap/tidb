@@ -60,23 +60,6 @@ var (
 	specVersionCodeValue   = regexp.MustCompile(`[0-9]{5,6}`)
 )
 
-func init() {
-	parserMySQLErrCodes := map[terror.ErrCode]uint16{
-		mysql.ErrSyntax:                  mysql.ErrSyntax,
-		mysql.ErrParse:                   mysql.ErrParse,
-		mysql.ErrUnknownCharacterSet:     mysql.ErrUnknownCharacterSet,
-		mysql.ErrInvalidYearColumnLength: mysql.ErrInvalidYearColumnLength,
-		mysql.ErrWrongArguments:          mysql.ErrWrongArguments,
-		mysql.ErrWrongFieldTerminators:   mysql.ErrWrongFieldTerminators,
-		mysql.ErrTooBigDisplaywidth:      mysql.ErrTooBigDisplaywidth,
-		mysql.ErrUnknownAlterLock:        mysql.ErrUnknownAlterLock,
-		mysql.ErrUnknownAlterAlgorithm:   mysql.ErrUnknownAlterAlgorithm,
-		mysql.ErrTooBigPrecision:         mysql.ErrTooBigPrecision,
-		mysql.ErrWrongValue:              mysql.ErrWrongValue,
-	}
-	terror.ErrClassToMySQLCodes[terror.ClassParser] = parserMySQLErrCodes
-}
-
 // TrimComment trim comment for special comment code of MySQL.
 func TrimComment(txt string) string {
 	txt = specCodeStart.ReplaceAllString(txt, "")
