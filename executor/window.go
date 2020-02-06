@@ -293,6 +293,8 @@ func (p *rowFrameWindowProcessor) appendResult2Chunk(ctx sessionctx.Context, row
 	var (
 		err                      error
 		initializedSlidingWindow bool
+		start                    uint64
+		end                      uint64
 		lastStart                uint64
 		lastEnd                  uint64
 		shiftStart               uint64
@@ -304,14 +306,14 @@ func (p *rowFrameWindowProcessor) appendResult2Chunk(ctx sessionctx.Context, row
 			slidingWindowAggFuncs[i] = slidingWindowAggFunc
 		}
 	}
-	for remained > 0 {
-		start := p.getStartOffset(numRows)
-		end := p.getEndOffset(numRows)
+	for ; remained > 0; lastStart, lastEnd = start, end {
+		start = p.getStartOffset(numRows)
+		end = p.getEndOffset(numRows)
 		p.curRowIdx++
 		remained--
+		shiftStart = start - lastStart
+		shiftEnd = end - lastEnd
 		if start >= end {
-			shiftStart = start - lastStart
-			shiftEnd = end - lastEnd
 			for i, windowFunc := range p.windowFuncs {
 				slidingWindowAggFunc := slidingWindowAggFuncs[i]
 				if slidingWindowAggFunc != nil && initializedSlidingWindow {
@@ -325,13 +327,9 @@ func (p *rowFrameWindowProcessor) appendResult2Chunk(ctx sessionctx.Context, row
 					return nil, err
 				}
 			}
-			lastStart = start
-			lastEnd = end
 			continue
 		}
 
-		shiftStart = start - lastStart
-		shiftEnd = end - lastEnd
 		for i, windowFunc := range p.windowFuncs {
 			slidingWindowAggFunc := slidingWindowAggFuncs[i]
 			if slidingWindowAggFunc != nil && initializedSlidingWindow {
@@ -353,8 +351,6 @@ func (p *rowFrameWindowProcessor) appendResult2Chunk(ctx sessionctx.Context, row
 		if !initializedSlidingWindow {
 			initializedSlidingWindow = true
 		}
-		lastStart = start
-		lastEnd = end
 	}
 	for i, windowFunc := range p.windowFuncs {
 		windowFunc.ResetPartialResult(p.partialResults[i])
