@@ -66,13 +66,13 @@ func DecodeDecimalAndRound(b []byte, decimal int) ([]byte, *types.MyDecimal, int
 	if err != nil {
 		return b, dec, precision, frac, err
 	}
-	if decimal != types.UnspecifiedLength && frac != decimal {
+	if decimal != types.UnspecifiedLength && decimal > frac {
 		to := new(types.MyDecimal)
 		err = dec.Round(to, decimal, types.ModeHalfEven)
 		if err != nil {
 			return b, dec, precision, frac, err
 		}
-		dec = to
+		return b, to, precision, decimal, nil
 	}
-	return b, dec, precision, frac, err
+	return b, dec, precision, frac, nil
 }
