@@ -248,6 +248,8 @@ type PhysicalTableScan struct {
 	// KeepOrder is true, if sort data by scanning pkcol,
 	KeepOrder bool
 	Desc      bool
+
+	isChildOfIndexLookUp bool
 }
 
 // IsPartition returns true and partition ID if it's actually a partition.
@@ -270,6 +272,11 @@ func (ts *PhysicalTableScan) ExpandVirtualColumn() {
 			}
 		}
 	}
+}
+
+//SetIsChildOfIndexLookUp is to set the bool if is a child of IndexLookUpReader
+func (ts *PhysicalTableScan) SetIsChildOfIndexLookUp(isIsChildOfIndexLookUp bool) {
+	ts.isChildOfIndexLookUp = isIsChildOfIndexLookUp
 }
 
 // PhysicalProjection is the physical operator of projection.

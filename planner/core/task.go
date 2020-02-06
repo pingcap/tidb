@@ -649,6 +649,9 @@ func finishCopTask(ctx sessionctx.Context, task task) task {
 			indexPlan:      t.indexPlan,
 			ExtraHandleCol: t.extraHandleCol,
 		}.Init(ctx, t.tablePlan.SelectBlockOffset())
+		if tp, ok := p.tablePlan.(*PhysicalTableScan); ok {
+			tp.SetIsChildOfIndexLookUp(true)
+		}
 		p.stats = t.tablePlan.statsInfo()
 		// Add cost of building table reader executors. Handles are extracted in batch style,
 		// each handle is a range, the CPU cost of building copTasks should be:
