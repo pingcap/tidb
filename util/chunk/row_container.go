@@ -211,11 +211,14 @@ type SpillDiskAction struct {
 	once           sync.Once
 	c              *RowContainer
 	fallbackAction memory.ActionOnExceed
+	m              sync.Mutex
 }
 
 // Action sends a signal to trigger spillToDisk method of RowContainer
 // and if it is already triggered before, call its fallbackAction.
 func (a *SpillDiskAction) Action(t *memory.Tracker) {
+	a.m.Lock()
+	defer a.m.Unlock()
 	if a.c.AlreadySpilledSafe() {
 		if a.fallbackAction != nil {
 			a.fallbackAction.Action(t)
@@ -237,10 +240,14 @@ func (a *SpillDiskAction) SetLogHook(hook func(uint64)) {}
 
 // ResetOnce resets the spill action so that it can be triggered next time.
 func (a *SpillDiskAction) ResetOnce() {
+	a.m.Lock()
+	defer a.m.Unlock()
 	a.once = sync.Once{}
 }
 
 // SetRowContainer sets the RowContainer for the SpillDiskAction.
 func (a *SpillDiskAction) SetRowContainer(c *RowContainer) {
+	a.m.Lock()
+	defer a.m.Unlock()
 	a.c = c
 }
