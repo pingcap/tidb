@@ -67,7 +67,8 @@ type tikvSnapshot struct {
 	// cached use len(value)=0 to represent a key-value entry doesn't exist (a reliable truth from TiKV).
 	// In the BatchGet API, it use no key-value entry to represent non-exist.
 	// It's OK as long as there are no zero-byte values in the protocol.
-	cached map[string][]byte
+	cached  map[string][]byte
+	cacheMu sync.Mutex
 }
 
 // newTiKVSnapshot creates a snapshot of an TiKV store.
@@ -97,6 +98,7 @@ func (s *tikvSnapshot) setSnapshotTS(ts uint64) {
 func (s *tikvSnapshot) BatchGet(ctx context.Context, keys []kv.Key) (map[string][]byte, error) {
 	// Check the cached value first.
 	m := make(map[string][]byte)
+	s.cacheMu.Lock()
 	if s.cached != nil {
 		tmp := keys[:0]
 		for _, key := range keys {
@@ -110,6 +112,7 @@ func (s *tikvSnapshot) BatchGet(ctx context.Context, keys []kv.Key) (map[string]
 		}
 		keys = tmp
 	}
+	s.cacheMu.Unlock()
 
 	if len(keys) == 0 {
 		return m, nil
@@ -141,13 +144,14 @@ func (s *tikvSnapshot) BatchGet(ctx context.Context, keys []kv.Key) (map[string]
 	}
 
 	// Update the cache.
+	s.cacheMu.Lock()
 	if s.cached == nil {
 		s.cached = make(map[string][]byte, len(m))
 	}
 	for _, key := range keys {
 		s.cached[string(key)] = m[string(key)]
 	}
-
+	s.cacheMu.Unlock()
 	return m, nil
 }
 
@@ -288,12 +292,28 @@ func (s *tikvSnapshot) Get(ctx context.Context, k kv.Key) ([]byte, error) {
 	return val, nil
 }
 
+func (s *tikvSnapshot) getFromCache(k kv.Key) (val []byte, ok bool) {
+	s.cacheMu.Lock()
+	if s.cached != nil {
+		val, ok = s.cached[string(k)]
+	}
+	s.cacheMu.Unlock()
+	return val, ok
+}
+
+func (s *tikvSnapshot) putToCache(k kv.Key, val []byte) {
+	s.cacheMu.Lock()
+	if s.cached == nil {
+		s.cached = map[string][]byte{}
+	}
+	s.cached[string(k)] = val
+	s.cacheMu.Unlock()
+}
+
 func (s *tikvSnapshot) get(bo *Backoffer, k kv.Key) ([]byte, error) {
 	// Check the cached values first.
-	if s.cached != nil {
-		if value, ok := s.cached[string(k)]; ok {
-			return value, nil
-		}
+	if val, ok := s.getFromCache(k); ok {
+		return val, nil
 	}
 
 	failpoint.Inject("snapshot-get-cache-fail", func(_ failpoint.Value) {
@@ -360,10 +380,7 @@ func (s *tikvSnapshot) get(bo *Backoffer, k kv.Key) ([]byte, error) {
 			continue
 		}
 		// Update the cache.
-		if s.cached == nil {
-			s.cached = make(map[string][]byte)
-		}
-		s.cached[string(k)] = val
+		s.putToCache(k, val)
 		return val, nil
 	}
 }
