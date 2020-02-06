@@ -383,7 +383,7 @@ func GetColDefaultValue(ctx sessionctx.Context, col *model.ColumnInfo) (types.Da
 func getColDefaultExprValue(ctx sessionctx.Context, col *model.ColumnInfo, defaultValue interface{}) (types.Datum, error) {
 	x, ok := defaultValue.(string)
 	if !ok {
-		// Todo: refine the error.
+		// TODO: refine the error.
 		return types.Datum{}, errors.New("can't cast default value as expression string")
 	}
 	var defaultExpr ast.ExprNode
