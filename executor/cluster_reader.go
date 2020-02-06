@@ -244,7 +244,6 @@ func (e *clusterServerInfoRetriever) retrieve(ctx context.Context, sctx sessionc
 	}
 	wg := sync.WaitGroup{}
 	ch := make(chan result, len(serversInfo))
-	ipMap := make(map[string]struct{}, len(serversInfo))
 	infoTp := e.serverInfoType
 	finalRows := make([][]types.Datum, 0, len(serversInfo)*10)
 	for i, srv := range serversInfo {
@@ -252,14 +251,6 @@ func (e *clusterServerInfoRetriever) retrieve(ctx context.Context, sctx sessionc
 		if srv.ServerType == "tidb" {
 			address = srv.StatusAddr
 		}
-		ip := address
-		if idx := strings.Index(address, ":"); idx != -1 {
-			ip = address[:idx]
-		}
-		if _, ok := ipMap[ip]; ok {
-			continue
-		}
-		ipMap[ip] = struct{}{}
 		wg.Add(1)
 		go func(index int, address, serverTP string) {
 			util.WithRecovery(func() {
