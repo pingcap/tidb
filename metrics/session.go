@@ -109,6 +109,14 @@ var (
 			Help:      "Bucketed historgram of statement pessimistic retry count",
 			Buckets:   prometheus.ExponentialBuckets(1, 1.5, 14), // 1 ~ 291
 		})
+
+	StatementLockKeysCount = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "session",
+			Name:      "statement_lock_keys_count",
+			Help:      "Keys locking for a single statement",
+		})
 )
 
 // Label constants.

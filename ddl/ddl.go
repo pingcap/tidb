@@ -705,6 +705,7 @@ func init() {
 		mysql.ErrInvalidStoreVersion:                  mysql.ErrInvalidStoreVersion,
 		mysql.ErrInvalidUseOfNull:                     mysql.ErrInvalidUseOfNull,
 		mysql.ErrJSONUsedAsKey:                        mysql.ErrJSONUsedAsKey,
+		mysql.ErrJSONDocumentNULLKey:                  mysql.ErrJSONDocumentNULLKey,
 		mysql.ErrKeyColumnDoesNotExits:                mysql.ErrKeyColumnDoesNotExits,
 		mysql.ErrLockWaitTimeout:                      mysql.ErrLockWaitTimeout,
 		mysql.ErrNoParts:                              mysql.ErrNoParts,
