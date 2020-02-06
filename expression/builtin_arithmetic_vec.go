@@ -92,7 +92,9 @@ func (b *builtinArithmeticDivideDecimalSig) vecEvalDecimal(input *chunk.Chunk, r
 			result.SetNull(i, true)
 			continue
 		} else if err == types.ErrTruncated {
-			err = sc.HandleTruncate(errTruncatedWrongValue.GenWithStackByArgs("DECIMAL", to))
+			if err = sc.HandleTruncate(errTruncatedWrongValue.GenWithStackByArgs("DECIMAL", to)); err != nil {
+				return err
+			}
 		} else if err == nil {
 			_, frac = to.PrecisionAndFrac()
 			if frac < b.baseBuiltinFunc.tp.Decimal {
