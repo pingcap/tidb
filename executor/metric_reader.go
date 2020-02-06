@@ -150,11 +150,6 @@ func (e *MetricRetriever) genRecord(metric pmodel.Metric, pair pmodel.SamplePair
 		mysql.TypeDatetime,
 		types.MaxFsp,
 	)))
-	if math.IsNaN(float64(pair.Value)) {
-		record = append(record, types.NewDatum(nil))
-	} else {
-		record = append(record, types.NewFloat64Datum(float64(pair.Value)))
-	}
 	for _, label := range e.tblDef.Labels {
 		v := ""
 		if metric != nil {
@@ -167,6 +162,11 @@ func (e *MetricRetriever) genRecord(metric pmodel.Metric, pair pmodel.SamplePair
 	}
 	if e.tblDef.Quantile > 0 {
 		record = append(record, types.NewFloat64Datum(quantile))
+	}
+	if math.IsNaN(float64(pair.Value)) {
+		record = append(record, types.NewDatum(nil))
+	} else {
+		record = append(record, types.NewFloat64Datum(float64(pair.Value)))
 	}
 	return record
 }
