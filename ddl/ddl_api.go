@@ -2642,6 +2642,7 @@ func setDefaultValue(ctx sessionctx.Context, col *table.Column, option *ast.Colu
 		if err != nil {
 			return hasDefaultValue, errors.Trace(err)
 		}
+		col.DefaultIsExpr = isSeqExpr
 	}
 
 	if hasDefaultValue, value, err = checkColumnDefaultValue(ctx, col, value); err != nil {
