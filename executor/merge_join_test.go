@@ -493,7 +493,7 @@ func (s *testSuite2) TestMergeJoinDifferentTypes(c *C) {
 }
 
 // TestVectorizedMergeJoin is used to test vectorized merge join with some corner cases.
-func (s *testSuite2) TestVectorizedMergeJoin(c *C) {
+func (s *testSuiteJoin3) TestVectorizedMergeJoin(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
