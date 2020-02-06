@@ -62,13 +62,13 @@ type Config struct {
 	Cors             string          `toml:"cors" json:"cors"`
 	Store            string          `toml:"store" json:"store"`
 	Path             string          `toml:"path" json:"path"`
-	TempPath         string          `toml:"temp-path" json:"temp-path"`
 	Socket           string          `toml:"socket" json:"socket"`
 	Lease            string          `toml:"lease" json:"lease"`
 	RunDDL           bool            `toml:"run-ddl" json:"run-ddl"`
 	SplitTable       bool            `toml:"split-table" json:"split-table"`
 	TokenLimit       uint            `toml:"token-limit" json:"token-limit"`
 	OOMUseTmpStorage bool            `toml:"oom-use-tmp-storage" json:"oom-use-tmp-storage"`
+	TempStoragePath  string          `toml:"tmp-storage-path" json:"tmp-storage-path"`
 	OOMAction        string          `toml:"oom-action" json:"oom-action"`
 	MemQuotaQuery    int64           `toml:"mem-quota-query" json:"mem-quota-query"`
 	EnableStreaming  bool            `toml:"enable-streaming" json:"enable-streaming"`
@@ -471,12 +471,12 @@ var defaultConf = Config{
 	Cors:                         "",
 	Store:                        "mocktikv",
 	Path:                         "/tmp/tidb",
-	TempPath:                     os.TempDir(),
 	RunDDL:                       true,
 	SplitTable:                   true,
 	Lease:                        "45s",
 	TokenLimit:                   1000,
 	OOMUseTmpStorage:             true,
+	TempStoragePath:              "/tmp/tidb/tmp-storage",
 	OOMAction:                    "log",
 	MemQuotaQuery:                32 << 30,
 	EnableStreaming:              false,
