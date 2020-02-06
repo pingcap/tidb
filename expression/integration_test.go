@@ -3601,7 +3601,7 @@ func (s *testIntegrationSuite) TestAggregationBuiltinJSONObjectAgg(c *C) {
 		b varchar(100),
 		c decimal(3,2),
 		d json,
-		e date, 
+		e date,
 		f time,
 		g datetime DEFAULT '2012-01-01',
 		h timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
