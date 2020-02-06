@@ -14,6 +14,9 @@
 package core
 
 import (
+	"context"
+	"strings"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/expression"
@@ -21,8 +24,10 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
+	"go.uber.org/zap"
 )
 
 // ToPB implements PhysicalPlan ToPB interface.
@@ -95,7 +100,14 @@ func (p *PhysicalTableScan) ToPB(ctx sessionctx.Context) (*tipb.Executor, error)
 		Columns: model.ColumnsToProto(columns, p.Table.PKIsHandle),
 		Desc:    p.Desc,
 	}
+
 	err := SetPBColumnsDefaultValue(ctx, tsExec.Columns, p.Columns)
+
+	if strings.Contains(p.Table.Name.L, "tbl_mos_bom_day") {
+		logutil.Logger(context.Background()).Info("** DEBUG ** PhysicalTableScan.ToPB",
+			zap.Any("TableScan", tsExec))
+	}
+
 	return &tipb.Executor{Tp: tipb.ExecType_TypeTableScan, TblScan: tsExec}, err
 }
 
@@ -133,6 +145,14 @@ func (p *PhysicalIndexScan) ToPB(ctx sessionctx.Context) (*tipb.Executor, error)
 	}
 	unique := checkCoverIndex(p.Index, p.Ranges)
 	idxExec.Unique = &unique
+
+	if strings.Contains(p.Table.Name.L, "tbl_mos_bom_day") {
+		logutil.Logger(context.Background()).Info("** DEBUG ** PhysicalIndexScan.ToPB",
+			zap.Any("IndexScan", idxExec),
+			zap.Any("p.schema.Columns", p.schema.Columns),
+			zap.Any("model.ExtraHandleID", model.ExtraHandleID))
+	}
+
 	return &tipb.Executor{Tp: tipb.ExecType_TypeIndexScan, IdxScan: idxExec}, nil
 }
 
