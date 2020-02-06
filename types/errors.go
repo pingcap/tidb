@@ -76,34 +76,3 @@ var (
 	// ErrWrongValue is returned when the input value is in wrong format.
 	ErrWrongValue = terror.ClassTypes.New(mysql.ErrWrongValue, mysql.MySQLErrName[mysql.ErrWrongValue])
 )
-
-func init() {
-	typesMySQLErrCodes := map[terror.ErrCode]uint16{
-		mysql.ErrInvalidDefault:           mysql.ErrInvalidDefault,
-		mysql.ErrDataTooLong:              mysql.ErrDataTooLong,
-		mysql.ErrIllegalValueForType:      mysql.ErrIllegalValueForType,
-		mysql.WarnDataTruncated:           mysql.WarnDataTruncated,
-		mysql.ErrDataOutOfRange:           mysql.ErrDataOutOfRange,
-		mysql.ErrDivisionByZero:           mysql.ErrDivisionByZero,
-		mysql.ErrTooBigDisplaywidth:       mysql.ErrTooBigDisplaywidth,
-		mysql.ErrTooBigFieldlength:        mysql.ErrTooBigFieldlength,
-		mysql.ErrTooBigSet:                mysql.ErrTooBigSet,
-		mysql.ErrTooBigScale:              mysql.ErrTooBigScale,
-		mysql.ErrTooBigPrecision:          mysql.ErrTooBigPrecision,
-		mysql.ErrBadNumber:                mysql.ErrBadNumber,
-		mysql.ErrInvalidFieldSize:         mysql.ErrInvalidFieldSize,
-		mysql.ErrMBiggerThanD:             mysql.ErrMBiggerThanD,
-		mysql.ErrWarnDataOutOfRange:       mysql.ErrWarnDataOutOfRange,
-		mysql.ErrDuplicatedValueInType:    mysql.ErrDuplicatedValueInType,
-		mysql.ErrDatetimeFunctionOverflow: mysql.ErrDatetimeFunctionOverflow,
-		mysql.ErrCastAsSignedOverflow:     mysql.ErrCastAsSignedOverflow,
-		mysql.ErrCastNegIntAsUnsigned:     mysql.ErrCastNegIntAsUnsigned,
-		mysql.ErrInvalidYearFormat:        mysql.ErrInvalidYearFormat,
-		mysql.ErrInvalidYear:              mysql.ErrInvalidYear,
-		mysql.ErrTruncatedWrongValue:      mysql.ErrTruncatedWrongValue,
-		mysql.ErrInvalidTimeFormat:        mysql.ErrInvalidTimeFormat,
-		mysql.ErrInvalidWeekModeFormat:    mysql.ErrInvalidWeekModeFormat,
-		mysql.ErrWrongValue:               mysql.ErrWrongValue,
-	}
-	terror.ErrClassToMySQLCodes[terror.ClassTypes] = typesMySQLErrCodes
-}

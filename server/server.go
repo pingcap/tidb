@@ -672,15 +672,3 @@ const (
 	codeInvalidSequence  = 3
 	codeInvalidType      = 4
 )
-
-func init() {
-	serverMySQLErrCodes := map[terror.ErrCode]uint16{
-		mysql.ErrNotAllowedCommand: mysql.ErrNotAllowedCommand,
-		mysql.ErrAccessDenied:      mysql.ErrAccessDenied,
-		mysql.ErrUnknownFieldType:  mysql.ErrUnknownFieldType,
-		mysql.ErrInvalidSequence:   mysql.ErrInvalidSequence,
-		mysql.ErrInvalidType:       mysql.ErrInvalidType,
-		mysql.ErrConCount:          mysql.ErrConCount,
-	}
-	terror.ErrClassToMySQLCodes[terror.ClassServer] = serverMySQLErrCodes
-}

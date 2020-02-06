@@ -24,8 +24,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/util/logutil"
@@ -199,7 +197,7 @@ func (t backoffType) TError() error {
 	case boServerBusy:
 		return ErrTiKVServerBusy
 	}
-	return terror.ClassTiKV.New(mysql.ErrUnknown, mysql.MySQLErrName[mysql.ErrUnknown])
+	return ErrUnknown
 }
 
 // Maximum total sleep time(in ms) for kv/cop commands.
