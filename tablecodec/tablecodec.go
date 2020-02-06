@@ -767,12 +767,3 @@ func GetTableIndexKeyRange(tableID, indexID int64) (startKey, endKey []byte) {
 	endKey = EncodeIndexSeekKey(tableID, indexID, []byte{255})
 	return
 }
-
-func init() {
-	mySQLErrCodes := map[terror.ErrCode]uint16{
-		mysql.ErrInvalidKey:       mysql.ErrInvalidKey,
-		mysql.ErrInvalidRecordKey: mysql.ErrInvalidRecordKey,
-		mysql.ErrInvalidIndexKey:  mysql.ErrInvalidIndexKey,
-	}
-	terror.ErrClassToMySQLCodes[terror.ClassXEval] = mySQLErrCodes
-}

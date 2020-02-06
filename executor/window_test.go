@@ -119,8 +119,8 @@ func doTestWindowFunctions(tk *testkit.TestKit) {
 	result = tk.MustQuery("select a, first_value(a) over(rows between 1 following and 1 following), last_value(a) over(rows between 1 following and 1 following) from t")
 	result.Check(testkit.Rows("1 1 1", "1 2 2", "2 2 2", "2 <nil> <nil>"))
 	result = tk.MustQuery("select a, first_value(rand(0)) over(), last_value(rand(0)) over() from t")
-	result.Check(testkit.Rows("1 0.9451961492941164 0.05434383959970039", "1 0.9451961492941164 0.05434383959970039",
-		"2 0.9451961492941164 0.05434383959970039", "2 0.9451961492941164 0.05434383959970039"))
+	result.Check(testkit.Rows("1 0.15522042769493574 0.33109208227236947", "1 0.15522042769493574 0.33109208227236947",
+		"2 0.15522042769493574 0.33109208227236947", "2 0.15522042769493574 0.33109208227236947"))
 
 	result = tk.MustQuery("select a, b, cume_dist() over() from t")
 	result.Check(testkit.Rows("1 1 1", "1 2 1", "2 1 1", "2 2 1"))
