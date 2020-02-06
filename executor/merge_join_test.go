@@ -382,16 +382,17 @@ func (s *testSuite1) TestMergeJoin(c *C) {
 	tk.MustExec("create table s (a int)")
 	tk.MustExec("insert into s values (4), (1), (3), (2)")
 	tk.MustQuery("explain select s1.a1 from (select a as a1 from s order by s.a desc) as s1 join (select a as a2 from s order by s.a desc) as s2 on s1.a1 = s2.a2 order by s1.a1 desc").Check(testkit.Rows(
-		"Projection_27 12487.50 root test.s.a",
-		"└─MergeJoin_28 12487.50 root inner join, left key:test.s.a, right key:test.s.a",
-		"  ├─Sort_29 9990.00 root test.s.a:desc",
+		"Projection_27 12487.50 root test.s.a1",
+		"└─MergeJoin_28 12487.50 root inner join, left key:test.s.a1, right key:test.s.a2",
+		"  ├─Sort_29 9990.00 root test.s.a1:desc",
 		"  │ └─TableReader_21 9990.00 root data:Selection_20",
-		"  │   └─Selection_20 9990.00 cop[tikv] not(isnull(test.s.a))",
-		"  │     └─TableScan_19 10000.00 cop[tikv] table:s, range:[-inf,+inf], keep order:false, stats:pseudo",
-		"  └─Sort_31 9990.00 root test.s.a:desc",
+		"  │   └─Selection_20 9990.00 cop not(isnull(test.s.a))",
+		"  │     └─TableScan_19 10000.00 cop table:s, range:[-inf,+inf], keep order:false, stats:pseudo",
+		"  └─Sort_31 9990.00 root test.s.a2:desc",
 		"    └─TableReader_26 9990.00 root data:Selection_25",
-		"      └─Selection_25 9990.00 cop[tikv] not(isnull(test.s.a))",
-		"        └─TableScan_24 10000.00 cop[tikv] table:s, range:[-inf,+inf], keep order:false, stats:pseudo"))
+		"      └─Selection_25 9990.00 cop not(isnull(test.s.a))",
+		"        └─TableScan_24 10000.00 cop table:s, range:[-inf,+inf], keep order:false, stats:pseudo",
+	))
 	tk.MustQuery("select s1.a1 from (select a as a1 from s order by s.a desc) as s1 join (select a as a2 from s order by s.a desc) as s2 on s1.a1 = s2.a2 order by s1.a1 desc").Check(testkit.Rows(
 		"4", "3", "2", "1"))
 }
