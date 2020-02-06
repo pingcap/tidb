@@ -289,7 +289,7 @@ func (j *semiJoiner) tryToMatchInners(outer chunk.Row, inners chunk.Iterator, ch
 	}
 
 	if len(j.conditions) == 0 {
-		chk.AppendPartialRowByColIdxs(0, outer, j.lUsed)
+		chk.AppendRowByColIdxs(outer, j.lUsed) // TODO: need test numVirtualRow
 		inners.ReachEnd()
 		return true, false, nil
 	}
@@ -304,7 +304,7 @@ func (j *semiJoiner) tryToMatchInners(outer chunk.Row, inners chunk.Iterator, ch
 			return false, false, err
 		}
 		if matched {
-			chk.AppendPartialRowByColIdxs(0, outer, j.lUsed)
+			chk.AppendRowByColIdxs(outer, j.lUsed)
 			inners.ReachEnd()
 			return true, false, nil
 		}
@@ -318,7 +318,7 @@ func (j *semiJoiner) tryToMatchOuters(outers chunk.Iterator, inner chunk.Row, ch
 	outer, numToAppend := outers.Current(), chk.RequiredRows()-chk.NumRows()
 	if len(j.conditions) == 0 {
 		for ; outer != outers.End() && numToAppend > 0; outer, numToAppend = outers.Next(), numToAppend-1 {
-			chk.AppendPartialRowByColIdxs(0, outer, j.lUsed)
+			chk.AppendRowByColIdxs(outer, j.lUsed)
 			outerRowStatus = append(outerRowStatus, outerRowMatched)
 		}
 		return outerRowStatus, nil
@@ -333,7 +333,7 @@ func (j *semiJoiner) tryToMatchOuters(outers chunk.Iterator, inner chunk.Row, ch
 		}
 		outerRowStatus = append(outerRowStatus, outerRowMatched)
 		if matched {
-			chk.AppendPartialRowByColIdxs(0, outer, j.lUsed)
+			chk.AppendRowByColIdxs(outer, j.lUsed)
 		}
 	}
 	err = outers.Error()

@@ -341,12 +341,19 @@ func (c *Chunk) GetRow(idx int) Row {
 
 // AppendRow appends a row to the chunk.
 func (c *Chunk) AppendRow(row Row) {
-	c.AppendPartialRow(0, row)
+	c.appendPartialRow(0, row)
 	c.numVirtualRows++
 }
 
 // AppendPartialRow appends a row to the chunk.
 func (c *Chunk) AppendPartialRow(colOff int, row Row) {
+	if colOff == 0 {
+		panic("should use AppendRow to increase numVirtualRows")
+	}
+	c.appendPartialRow(colOff, row)
+}
+
+func (c *Chunk) appendPartialRow(colOff int, row Row) {
 	c.appendSel(colOff)
 	for i, rowCol := range row.c.columns {
 		chkCol := c.columns[colOff+i]
@@ -357,7 +364,7 @@ func (c *Chunk) AppendPartialRow(colOff int, row Row) {
 // AppendRowByColIdxs appends a row by its colIdxs to the chunk.
 // TODO: test it
 func (c *Chunk) AppendRowByColIdxs(row Row, colIdxs []int) (wide int) {
-	wide = c.AppendPartialRowByColIdxs(0, row, colIdxs)
+	wide = c.appendPartialRowByColIdxs(0, row, colIdxs)
 	c.numVirtualRows++
 	return wide
 }
@@ -365,8 +372,15 @@ func (c *Chunk) AppendRowByColIdxs(row Row, colIdxs []int) (wide int) {
 // AppendPartialRowByColIdxs appends a row by its colIdxs to the chunk.
 // TODO: test it
 func (c *Chunk) AppendPartialRowByColIdxs(colOff int, row Row, colIdxs []int) (wide int) {
+	if colOff == 0 {
+		panic("should use AppendRowByColIdxs to increase numVirtualRows")
+	}
+	return c.appendPartialRowByColIdxs(colOff, row, colIdxs)
+}
+
+func (c *Chunk) appendPartialRowByColIdxs(colOff int, row Row, colIdxs []int) (wide int) {
 	if colIdxs == nil {
-		c.AppendPartialRow(colOff, row)
+		c.appendPartialRow(colOff, row)
 		return len(row.c.columns)
 	}
 
