@@ -141,10 +141,10 @@ func clearETCD(ebd tikv.EtcdBackend) error {
 
 func initPdAddrs() {
 	initPdOnce.Do(func() {
-		pdAddrChan = make(chan string)
 		addrs := strings.Split(*pdAddrs, ",")
+		pdAddrChan = make(chan string, len(addrs))
 		for _, addr := range addrs {
-			addr := strings.TrimSpace(addr)
+			addr = strings.TrimSpace(addr)
 			if addr != "" {
 				pdAddrChan <- addr
 				fmt.Printf("Add pd addr %s to chan", addr)
