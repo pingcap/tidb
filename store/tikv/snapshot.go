@@ -359,6 +359,11 @@ func (s *tikvSnapshot) get(bo *Backoffer, k kv.Key) ([]byte, error) {
 			}
 			continue
 		}
+		// Update the cache.
+		if s.cached == nil {
+			s.cached = make(map[string][]byte)
+		}
+		s.cached[string(k)] = val
 		return val, nil
 	}
 }
