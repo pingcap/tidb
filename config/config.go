@@ -729,6 +729,15 @@ func (c *Config) Load(confFile string) error {
 	return err
 }
 
+// MinDDLLease returns the minimum valid value of the DDL lease.
+func (c *Config) MinDDLLease() time.Duration {
+	minDDLLease := time.Duration(0)
+	if c.Store == "tikv" {
+		minDDLLease = 1 * time.Second
+	}
+	return minDDLLease
+}
+
 // Valid checks if this config is valid.
 func (c *Config) Valid() error {
 	if c.Log.EnableErrorStack == c.Log.DisableErrorStack && c.Log.EnableErrorStack != nbUnset {
@@ -755,9 +764,6 @@ func (c *Config) Valid() error {
 	}
 	if c.Store == "mocktikv" && !c.RunDDL {
 		return fmt.Errorf("can't disable DDL on mocktikv")
-	}
-	if c.Store == "tikv" && (c.Lease == "0s" || c.Lease == "0" || c.Lease == "-0s" || c.Lease == "-0") {
-		return fmt.Errorf("invalid ddl lease = 0s on tikv")
 	}
 	if c.Log.File.MaxSize > MaxLogFileSize {
 		return fmt.Errorf("invalid max log file size=%v which is larger than max=%v", c.Log.File.MaxSize, MaxLogFileSize)
