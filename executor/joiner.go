@@ -124,11 +124,11 @@ func newJoiner(ctx sessionctx.Context, joinType plannercore.JoinType,
 		// logutil.BgLogger().Info("InlineProjection", zap.Ints("lUsed", base.lUsed), zap.Ints("rUsed", base.rUsed))
 	}
 	if joinType == plannercore.LeftOuterJoin || joinType == plannercore.RightOuterJoin {
-		if outerIsRight {
-			base.initDefaultInner(lhsColTypes, defaultInner, base.lUsed)
-		} else {
-			base.initDefaultInner(rhsColTypes, defaultInner, base.rUsed)
+		innerColTypes := lhsColTypes
+		if !outerIsRight {
+			innerColTypes = rhsColTypes
 		}
+		base.initDefaultInner(innerColTypes, defaultInner)
 	}
 	// shallowRowType may be different with outputColTypes because output columns may be
 	// inline projected, while shallow row should not be.
@@ -180,19 +180,13 @@ type baseJoiner struct {
 	isNull       []bool
 	maxChunkSize int
 
+	// NOTE:
+	// 1. every columns are used if lUsed/rUsed is nil.
+	// 2. no columns are used if lUsed/rUsed is not nil but the size of lUsed/rUsed is 0.
 	lUsed, rUsed []int
 }
 
-func (j *baseJoiner) initDefaultInner(innerTypes []*types.FieldType, defaultInner []types.Datum, used []int) {
-	if used != nil {
-		newTypes := make([]*types.FieldType, 0, len(used))
-		newInner := make([]types.Datum, 0, len(used))
-		for _, i := range used {
-			newTypes = append(newTypes, innerTypes[i])
-			newInner = append(newInner, defaultInner[i])
-		}
-		innerTypes, defaultInner = newTypes, newInner
-	}
+func (j *baseJoiner) initDefaultInner(innerTypes []*types.FieldType, defaultInner []types.Datum) {
 	mutableRow := chunk.MutRowFromTypes(innerTypes)
 	mutableRow.SetDatums(defaultInner[:len(innerTypes)]...)
 	j.defaultInner = mutableRow.ToRow()
