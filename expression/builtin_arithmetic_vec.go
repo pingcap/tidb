@@ -79,6 +79,7 @@ func (b *builtinArithmeticDivideDecimalSig) vecEvalDecimal(input *chunk.Chunk, r
 	y := buf.Decimals()
 	var to types.MyDecimal
 	var frac int
+	sc := b.ctx.GetSessionVars().StmtCtx
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
@@ -90,6 +91,8 @@ func (b *builtinArithmeticDivideDecimalSig) vecEvalDecimal(input *chunk.Chunk, r
 			}
 			result.SetNull(i, true)
 			continue
+		} else if err == types.ErrTruncated {
+			err = sc.HandleTruncate(errTruncatedWrongValue.GenWithStackByArgs("DECIMAL", to))
 		} else if err == nil {
 			_, frac = to.PrecisionAndFrac()
 			if frac < b.baseBuiltinFunc.tp.Decimal {
