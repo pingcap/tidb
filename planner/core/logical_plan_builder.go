@@ -873,7 +873,6 @@ func (b *PlanBuilder) buildProjectionField(ctx context.Context, p LogicalPlan, f
 // buildProjection returns a Projection plan and non-aux columns length.
 func (b *PlanBuilder) buildProjection(ctx context.Context, p LogicalPlan, fields []*ast.SelectField, mapper map[*ast.AggregateFuncExpr]int, windowMapper map[*ast.WindowFuncExpr]int, considerWindow bool, expandGenerateColumn bool) (LogicalPlan, int, error) {
 	b.optFlag |= flagEliminateProjection
-	b.optFlag |= flagGcSubstitute
 	b.curClause = fieldList
 	proj := LogicalProjection{Exprs: make([]expression.Expression, 0, len(fields))}.Init(b.ctx, b.getSelectOffset())
 	schema := expression.NewSchema(make([]*expression.Column, 0, len(fields))...)
