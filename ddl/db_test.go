@@ -3694,6 +3694,7 @@ func (s *testDBSuite1) TestModifyColumnCharset(c *C) {
 func (s *testDBSuite1) TestModifyColumnWithDecimal(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use test_db;")
+	s.tk.MustExec("drop table if exists t_decimal")
 	s.tk.MustExec("create table t_decimal (a int,b decimal(10,5),c int key, index idx1(b),index idx2(a,b,c),index idx3(a));")
 	s.tk.MustExec("insert into t_decimal values (1,12345.67891,1),(2,123.456,2),(4,0.0,4);")
 	// Test modify decimal column with index covered.
@@ -3770,8 +3771,23 @@ func (s *testDBSuite1) TestModifyColumnWithDecimal(c *C) {
 	s.tk.MustQuery("select * from t_decimal where c=3").Check(testkit.Rows("3 12345.678912 3"))
 	s.tk.MustQuery("select * from t_decimal where c=4").Check(testkit.Rows("4 0.000000 4"))
 	s.tk.MustQuery("select * from t_decimal where c=8").Check(testkit.Rows("8 123.456000 8"))
-
 	s.tk.MustExec("admin check table t_decimal;")
+
+	// Test for update with point get.
+	s.tk.MustExec("drop table if exists t")
+	s.tk.MustExec("create table t (a decimal(24,5),b int key)")
+	s.tk.MustExec("insert into t values (7967475648705613894.87216,1)")
+	s.tk.MustExec("alter table t change a a decimal(64,17);")
+	s.tk.MustExec("update t set b=b+1 where b=1;")
+	s.tk.MustExec("admin check table t;")
+
+	// Test for insert on duplicate key.
+	s.tk.MustExec("drop table if exists t")
+	s.tk.MustExec("create table t (a decimal(24,5),b int key)")
+	s.tk.MustExec("insert into t values (7967475648705613894.87216,1)")
+	s.tk.MustExec("alter table t change a a decimal(64,17);")
+	s.tk.MustExec("insert into t set b=1 on duplicate key update b=b+1;")
+	s.tk.MustExec("admin check table t;")
 }
 
 func testExecErrorMessage(c *C, tk *testkit.TestKit, sql, errMsg string) {

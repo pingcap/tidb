@@ -138,6 +138,9 @@ func (decoder *DatumMapDecoder) decodeColDatum(col *ColInfo, colData []byte) (ty
 			return d, err
 		}
 		d.SetMysqlDecimal(dec)
+		if col.Flen > precision {
+			precision = col.Flen
+		}
 		d.SetLength(precision)
 		d.SetFrac(frac)
 	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:

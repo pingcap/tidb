@@ -730,6 +730,9 @@ func DecodeOneWithTp(b []byte, ft *types.FieldType) (remain []byte, d types.Datu
 		d.SetMysqlDecimal(to)
 		d.SetFrac(ft.Decimal)
 	}
+	if ft.Flen > d.Length() {
+		d.SetLength(ft.Flen)
+	}
 	return remain, d, err
 }
 
