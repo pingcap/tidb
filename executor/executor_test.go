@@ -3447,7 +3447,7 @@ func (s *testSuite) TestCoprocessorStreamingWarning(c *C) {
 
 	result := tk.MustQuery("select * from t where a/0 > 1")
 	result.Check(testkit.Rows())
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1105|Division by 0"))
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1365|Division by 0"))
 }
 
 func (s *testSuite3) TestYearTypeDeleteIndex(c *C) {
