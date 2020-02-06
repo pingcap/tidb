@@ -107,10 +107,3 @@ const (
 	// PanicMemoryExceed represents the panic message when out of memory quota.
 	PanicMemoryExceed string = "Out Of Memory Quota!"
 )
-
-func init() {
-	errCodes := map[terror.ErrCode]uint16{
-		mysql.ErrMemExceedThreshold: mysql.ErrMemExceedThreshold,
-	}
-	terror.ErrClassToMySQLCodes[terror.ClassUtil] = errCodes
-}
