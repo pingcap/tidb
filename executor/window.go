@@ -310,6 +310,8 @@ func (p *rowFrameWindowProcessor) appendResult2Chunk(ctx sessionctx.Context, row
 		p.curRowIdx++
 		remained--
 		if start >= end {
+			shiftStart = start - lastStart
+			shiftEnd = end - lastEnd
 			for i, windowFunc := range p.windowFuncs {
 				slidingWindowAggFunc := slidingWindowAggFuncs[i]
 				if slidingWindowAggFunc != nil && initializedSlidingWindow {
@@ -323,6 +325,8 @@ func (p *rowFrameWindowProcessor) appendResult2Chunk(ctx sessionctx.Context, row
 					return nil, err
 				}
 			}
+			lastStart = start
+			lastEnd = end
 			continue
 		}
 
