@@ -2088,7 +2088,6 @@ func doDivMod(from1, from2, to, mod *MyDecimal, fracIncr int) error {
 		to.digitsInt = int8(wordsIntTo * digitsPerWord)
 		to.digitsFrac = int8(wordsFracTo * digitsPerWord)
 	}
-
 	idxTo := 0
 	stopTo := wordsIntTo + wordsFracTo
 	if mod == nil {
