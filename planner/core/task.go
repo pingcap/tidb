@@ -841,13 +841,42 @@ func (p *PhysicalTopN) allColsFromSchema(schema *expression.Schema) bool {
 	return len(schema.ColumnsIndices(cols)) > 0
 }
 
+func (p *PhysicalSort) avgRowSize(inner PhysicalPlan) (size float64) {
+	if inner.statsInfo().HistColl != nil {
+		size = inner.statsInfo().HistColl.GetAvgRowSizeListInDisk(inner.Schema().Columns)
+	} else {
+		// Estimate using just the type info.
+		cols := inner.Schema().Columns
+		for _, col := range cols {
+			size += float64(chunk.EstimateTypeWidth(col.GetType()))
+		}
+	}
+	return
+}
+
 // GetCost computes the cost of in memory sort.
 func (p *PhysicalSort) GetCost(count float64) float64 {
 	if count < 2.0 {
 		count = 2.0
 	}
 	sessVars := p.ctx.GetSessionVars()
-	return count*math.Log2(count)*sessVars.CPUFactor + count*sessVars.MemoryFactor
+	if len(p.children) == 0 {
+		return count*math.Log2(count)*sessVars.CPUFactor + count*sessVars.MemoryFactor
+	}
+	cpuCost := count * math.Log2(count) * sessVars.CPUFactor
+	memoryCost := count * sessVars.MemoryFactor
+
+	oomUseTmpStorage := config.GetGlobalConfig().OOMUseTmpStorage
+	memQuota := sessVars.StmtCtx.MemTracker.GetBytesLimit() // sessVars.MemQuotaQuery && hint
+	rowSize := p.avgRowSize(p.children[0])
+	spill := oomUseTmpStorage && memQuota > 0 && rowSize*count > float64(memQuota)
+	diskCost := count * sessVars.DiskFactor * rowSize
+	if !spill {
+		diskCost = 0
+	} else {
+		memoryCost *= float64(memQuota) / (rowSize * count)
+	}
+	return cpuCost + memoryCost + diskCost
 }
 
 func (p *PhysicalSort) attach2Task(tasks ...task) task {
