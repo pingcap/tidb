@@ -121,6 +121,7 @@ func newJoiner(ctx sessionctx.Context, joinType plannercore.JoinType,
 				base.rUsed = append(base.rUsed, i)
 			}
 		}
+		// logutil.BgLogger().Info("InlineProjection", zap.Ints("lUsed", base.lUsed), zap.Ints("rUsed", base.rUsed))
 	}
 	if joinType == plannercore.LeftOuterJoin || joinType == plannercore.RightOuterJoin {
 		if outerIsRight {
@@ -481,12 +482,12 @@ func (j *leftOuterSemiJoiner) tryToMatchOuters(outers chunk.Iterator, inner chun
 }
 
 func (j *leftOuterSemiJoiner) onMatch(outer chunk.Row, chk *chunk.Chunk) {
-	lWide := chk.AppendPartialRowByColIdxs(0, outer, j.lUsed)
+	lWide := chk.AppendRowByColIdxs(outer, j.lUsed)
 	chk.AppendInt64(lWide, 1)
 }
 
 func (j *leftOuterSemiJoiner) onMissMatch(hasNull bool, outer chunk.Row, chk *chunk.Chunk) {
-	lWide := chk.AppendPartialRowByColIdxs(0, outer, j.lUsed)
+	lWide := chk.AppendRowByColIdxs(outer, j.lUsed)
 	if hasNull {
 		chk.AppendNull(lWide)
 	} else {
@@ -566,12 +567,12 @@ func (j *antiLeftOuterSemiJoiner) tryToMatchOuters(outers chunk.Iterator, inner 
 }
 
 func (j *antiLeftOuterSemiJoiner) onMatch(outer chunk.Row, chk *chunk.Chunk) {
-	lWide := chk.AppendPartialRowByColIdxs(0, outer, j.lUsed)
+	lWide := chk.AppendRowByColIdxs(outer, j.lUsed)
 	chk.AppendInt64(lWide, 0)
 }
 
 func (j *antiLeftOuterSemiJoiner) onMissMatch(hasNull bool, outer chunk.Row, chk *chunk.Chunk) {
-	lWide := chk.AppendPartialRowByColIdxs(0, outer, j.lUsed)
+	lWide := chk.AppendRowByColIdxs(outer, j.lUsed)
 	if hasNull {
 		chk.AppendNull(lWide)
 	} else {
@@ -646,7 +647,8 @@ func (j *leftOuterJoiner) tryToMatchOuters(outers chunk.Iterator, inner chunk.Ro
 }
 
 func (j *leftOuterJoiner) onMissMatch(_ bool, outer chunk.Row, chk *chunk.Chunk) {
-	lWide := chk.AppendPartialRowByColIdxs(0, outer, j.lUsed)
+	// should call AppendRowByColIdxs firstly to increase numVirtualRows, TODO: add test
+	lWide := chk.AppendRowByColIdxs(outer, j.lUsed)
 	chk.AppendPartialRowByColIdxs(lWide, j.defaultInner, j.rUsed)
 }
 
@@ -714,7 +716,7 @@ func (j *rightOuterJoiner) tryToMatchOuters(outers chunk.Iterator, inner chunk.R
 }
 
 func (j *rightOuterJoiner) onMissMatch(_ bool, outer chunk.Row, chk *chunk.Chunk) {
-	lWide := chk.AppendPartialRowByColIdxs(0, j.defaultInner, j.lUsed)
+	lWide := chk.AppendRowByColIdxs(j.defaultInner, j.lUsed)
 	chk.AppendPartialRowByColIdxs(lWide, outer, j.rUsed)
 }
 
