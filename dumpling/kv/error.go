@@ -50,23 +50,6 @@ var (
 		mysql.MySQLErrName[mysql.ErrWriteConflictInTiDB]+" "+TxnRetryableMark)
 )
 
-func init() {
-	kvMySQLErrCodes := map[terror.ErrCode]uint16{
-		mysql.ErrNotExist:            mysql.ErrNotExist,
-		mysql.ErrDupEntry:            mysql.ErrDupEntry,
-		mysql.ErrTooBigRowsize:       mysql.ErrTooBigRowsize,
-		mysql.ErrTxnTooLarge:         mysql.ErrTxnTooLarge,
-		mysql.ErrTxnRetryable:        mysql.ErrTxnRetryable,
-		mysql.ErrWriteConflict:       mysql.ErrWriteConflict,
-		mysql.ErrWriteConflictInTiDB: mysql.ErrWriteConflictInTiDB,
-		mysql.ErrCannotSetNilValue:   mysql.ErrCannotSetNilValue,
-		mysql.ErrInvalidTxn:          mysql.ErrInvalidTxn,
-		mysql.ErrEntryTooLarge:       mysql.ErrEntryTooLarge,
-		mysql.ErrNotImplemented:      mysql.ErrNotImplemented,
-	}
-	terror.ErrClassToMySQLCodes[terror.ClassKV] = kvMySQLErrCodes
-}
-
 // IsTxnRetryableError checks if the error could safely retry the transaction.
 func IsTxnRetryableError(err error) bool {
 	if err == nil {
