@@ -986,8 +986,9 @@ func (s *testTypeConvertSuite) TestConvertJSONToDecimal(c *C) {
 	for _, tt := range tests {
 		j, err := json.ParseBinaryFromString(tt.In)
 		c.Assert(err, IsNil)
-		casted, _ := ConvertJSONToDecimal(new(stmtctx.StatementContext), j)
-		c.Assert(casted.Compare(tt.Out), Equals, 0)
+		casted, err := ConvertJSONToDecimal(new(stmtctx.StatementContext), j)
+		c.Assert(err, IsNil, Commentf("input: %v", tt.In))
+		c.Assert(casted.Compare(tt.Out), Equals, 0, Commentf("%#v != %#v", casted, tt.Out))
 	}
 }
 
