@@ -4652,6 +4652,10 @@ func (s *testRecoverTable) TestFlashbackTable(c *C) {
 	tk.MustExec("insert into t_flashback values (1),(2),(3)")
 	tk.MustExec("drop table t_flashback")
 
+	// Test flash table with not_exist_table_name name.
+	_, err = tk.Exec("flashback table t_not_exists")
+	c.Assert(err.Error(), Equals, "Can't find dropped table: t_not_exists in ddl history jobs")
+
 	// Test flashback table failed by there is already a new table with the same name.
 	// If there is a new table with the same name, should return failed.
 	tk.MustExec("create table t_flashback (a int);")
