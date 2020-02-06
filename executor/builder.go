@@ -873,7 +873,7 @@ func (b *executorBuilder) buildMergeJoin(v *plannercore.PhysicalMergeJoin) Execu
 			leftExec.retTypes(),
 			rightExec.retTypes(),
 		),
-		desc:        v.Desc,
+		desc: v.Desc,
 	}
 
 	leftKeys := v.LeftKeys

@@ -250,7 +250,7 @@ func (p *LogicalJoin) getEnforcedMergeJoin(prop *property.PhysicalProperty) []Ph
 		LeftKeys:        leftKeys,
 		RightKeys:       rightKeys,
 		OtherConditions: p.OtherConditions,
-		Desc: prop.Desc,
+		Desc:            prop.Desc,
 	}.init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt))
 	enforcedPhysicalMergeJoin.SetSchema(p.schema)
 	enforcedPhysicalMergeJoin.childrenReqProps = []*property.PhysicalProperty{lProp, rProp}
