@@ -235,7 +235,6 @@ func (s *testSuite7) TestSlidingWindowFunctions1(c *C) {
 	tk.MustExec("SET @p1= 1;")
 	tk.MustExec("SET @p2= 2;")
 
-	tk.Se.GetSessionVars().MaxChunkSize = 2
 	result := tk.MustQuery("EXECUTE p USING @p1, @p2;")
 	result.Check(testkit.Rows("M 0", "F 0", "F 0", "F 0", "M 0", "<nil> 0", "<nil> 0"))
 	result = tk.MustQuery("EXECUTE p USING @p2, @p1;")
@@ -265,7 +264,6 @@ func (s *testSuite7) TestSlidingWindowFunctions2(c *C) {
 	tk.MustExec("insert into t values (10,null)")
 	tk.MustExec("insert into t values (11,null)")
 
-	tk.Se.GetSessionVars().MaxChunkSize = 2
 	result := tk.MustQuery("SELECT sex, COUNT(id) OVER (ORDER BY id ROWS BETWEEN 1 FOLLOWING and 2 FOLLOWING) FROM t;")
 	result.Check(testkit.Rows("M 2", "F 2", "F 2", "F 2", "M 2", "<nil> 1", "<nil> 0"))
 }
