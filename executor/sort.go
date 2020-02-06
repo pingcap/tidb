@@ -268,8 +268,7 @@ func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 			e.rowChunks.GetMemTracker().AttachTo(e.memTracker)
 			e.rowChunks.GetMemTracker().SetLabel(rowChunksLabel)
 			e.rowChunks.SetOnExceededCallback(onExceededCallback)
-			e.spillAction.SetRowContainer(e.rowChunks)
-			e.spillAction.ResetOnce()
+			e.spillAction.ResetOnceAndSetRowContainer(e.rowChunks)
 		}
 	}
 	if e.rowChunks.NumRow() > 0 {

@@ -245,9 +245,10 @@ func (a *SpillDiskAction) ResetOnce() {
 	a.once = sync.Once{}
 }
 
-// SetRowContainer sets the RowContainer for the SpillDiskAction.
-func (a *SpillDiskAction) SetRowContainer(c *RowContainer) {
+// ResetOnceAndSetRowContainer resets the spill action and sets the RowContainer for the SpillDiskAction.
+func (a *SpillDiskAction) ResetOnceAndSetRowContainer(c *RowContainer) {
 	a.m.Lock()
 	defer a.m.Unlock()
+	a.once = sync.Once{}
 	a.c = c
 }
