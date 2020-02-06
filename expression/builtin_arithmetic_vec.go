@@ -701,8 +701,7 @@ func (b *builtinArithmeticIntDivideDecimalSig) vecEvalInt(input *chunk.Chunk, re
 		}
 		if err == types.ErrTruncated {
 			err = sc.HandleTruncate(errTruncatedWrongValue.GenWithStackByArgs("DECIMAL", c))
-		}
-		if err == types.ErrOverflow {
+		} else if err == types.ErrOverflow {
 			newErr := errTruncatedWrongValue.GenWithStackByArgs("DECIMAL", c)
 			err = sc.HandleOverflow(newErr, newErr)
 		}
