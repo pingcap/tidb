@@ -108,8 +108,8 @@ const (
 	TableInspectionResult = "INSPECTION_RESULT"
 	// TableMetricSummary is a summary table that contains all metrics.
 	TableMetricSummary = "METRICS_SUMMARY"
-	// TableMetricDetail is a detail table that contains all metrics detail info.
-	TableMetricDetail = "METRICS_DETAIL"
+	// TableMetricDetail is a detail table that contains all metrics detail info. It is the table metric_summary by label.
+	TableMetricDetail = "METRICS_SUMMARY_BY_LABEL"
 )
 
 var tableIDMap = map[string]int64{
