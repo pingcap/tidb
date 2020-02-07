@@ -16,7 +16,6 @@ package types
 import (
 	"bytes"
 	"fmt"
-	"io"
 	"math"
 	"regexp"
 	"strconv"
@@ -30,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/util/logutil"
 	tidbMath "github.com/pingcap/tidb/util/math"
+	"github.com/pingcap/tidb/util/parser"
 )
 
 // Time format without fractional seconds precision.
@@ -1265,139 +1265,239 @@ func (d Duration) MicroSecond() int {
 	return frac
 }
 
-// ParseDuration parses the time form a formatted string with a fractional seconds part,
-// returns the duration type Time value.
-// See http://dev.mysql.com/doc/refman/5.7/en/fractional-seconds.html
-func ParseDuration(sc *stmtctx.StatementContext, str string, fsp int8) (Duration, error) {
-	var (
-		day, hour, minute, second int
-		err                       error
-		sign                      = 0
-		dayExists                 = false
-		origStr                   = str
-	)
+func isNegativeDuration(str string) (bool, string) {
+	rest, err := parser.Char(str, '-')
 
-	fsp, err = CheckFsp(int(fsp))
+	if err != nil {
+		return false, str
+	}
+
+	return true, rest
+}
+
+func matchColon(str string) (string, error) {
+	rest := parser.Space0(str)
+	rest, err := parser.Char(rest, ':')
+	if err != nil {
+		return str, err
+	}
+	rest = parser.Space0(rest)
+	return rest, nil
+}
+
+func matchDayHHMMSS(str string) (int, [3]int, string, error) {
+	day, rest, err := parser.Number(str)
+	if err != nil {
+		return 0, [3]int{}, str, err
+	}
+
+	rest, err = parser.Space(rest, 1)
+	if err != nil {
+		return 0, [3]int{}, str, err
+	}
+
+	hhmmss, rest, err := matchHHMMSSDelimited(rest, false)
+	if err != nil {
+		return 0, [3]int{}, str, err
+	}
+
+	return day, hhmmss, rest, nil
+}
+
+func matchHHMMSSDelimited(str string, requireColon bool) ([3]int, string, error) {
+	hhmmss := [3]int{}
+
+	hour, rest, err := parser.Number(str)
+	if err != nil {
+		return [3]int{}, str, err
+	}
+	hhmmss[0] = hour
+
+	for i := 1; i < 3; i++ {
+		if remain, err := matchColon(rest); err == nil {
+			num, remain, err := parser.Number(remain)
+			if err != nil {
+				return [3]int{}, str, err
+			}
+			hhmmss[i] = num
+			rest = remain
+		} else {
+			if i == 1 && requireColon {
+				return [3]int{}, str, err
+			}
+			break
+		}
+	}
+
+	return hhmmss, rest, nil
+}
+
+func matchHHMMSSCompact(str string) ([3]int, string, error) {
+	num, rest, err := parser.Number(str)
+	if err != nil {
+		return [3]int{}, str, err
+	}
+	hhmmss := [3]int{num / 10000, (num / 100) % 100, num % 100}
+	return hhmmss, rest, nil
+}
+
+func hhmmssAddOverflow(hms []int, overflow bool) {
+	mod := []int{-1, 60, 60}
+	for i := 2; i >= 0 && overflow; i-- {
+		hms[i]++
+		if hms[i] == mod[i] {
+			overflow = true
+			hms[i] = 0
+		} else {
+			overflow = false
+		}
+	}
+}
+
+func checkHHMMSS(hms [3]int) bool {
+	m, s := hms[1], hms[2]
+	return m < 60 && s < 60
+}
+
+// matchFrac returns overflow, fraction, rest, error
+func matchFrac(str string, fsp int8) (bool, int, string, error) {
+	rest, err := parser.Char(str, '.')
+	if err != nil {
+		return false, 0, str, nil
+	}
+
+	digits, rest, err := parser.Digit(rest, 0)
+	if err != nil {
+		return false, 0, str, err
+	}
+
+	frac, overflow, err := ParseFrac(digits, fsp)
+	if err != nil {
+		return false, 0, str, err
+	}
+
+	return overflow, frac, rest, nil
+}
+
+func matchDuration(str string, fsp int8) (Duration, error) {
+	fsp, err := CheckFsp(int(fsp))
 	if err != nil {
 		return ZeroDuration, errors.Trace(err)
 	}
 
 	if len(str) == 0 {
-		return ZeroDuration, nil
-	} else if str[0] == '-' {
-		str = str[1:]
-		sign = -1
+		return ZeroDuration, ErrTruncatedWrongVal.GenWithStackByArgs("time", str)
 	}
 
-	// Time format may has day.
-	if n := strings.IndexByte(str, ' '); n >= 0 {
-		if day, err = strconv.Atoi(str[:n]); err == nil {
-			dayExists = true
-		}
-		str = str[n+1:]
+	negative, rest := isNegativeDuration(str)
+	rest = parser.Space0(rest)
+
+	hhmmss := [3]int{}
+
+	if day, hms, remain, err := matchDayHHMMSS(rest); err == nil {
+		hms[0] += 24 * day
+		rest, hhmmss = remain, hms
+	} else if hms, remain, err := matchHHMMSSDelimited(rest, true); err == nil {
+		rest, hhmmss = remain, hms
+	} else if hms, remain, err := matchHHMMSSCompact(rest); err == nil {
+		rest, hhmmss = remain, hms
+	} else {
+		return ZeroDuration, ErrTruncatedWrongVal.GenWithStackByArgs("time", str)
 	}
 
-	var (
-		integeralPart = str
-		fracPart      int
-		overflow      bool
-	)
-	if n := strings.IndexByte(str, '.'); n >= 0 {
-		// It has fractional precision parts.
-		fracStr := str[n+1:]
-		fracPart, overflow, err = ParseFrac(fracStr, fsp)
-		if err != nil {
-			return ZeroDuration, errors.Trace(err)
-		}
-		integeralPart = str[0:n]
-	}
-
-	// It tries to split integeralPart with delimiter, time delimiter must be :
-	seps := strings.Split(integeralPart, ":")
-
-	switch len(seps) {
-	case 1:
-		if dayExists {
-			hour, err = strconv.Atoi(seps[0])
-		} else {
-			// No delimiter.
-			switch len(integeralPart) {
-			case 7: // HHHMMSS
-				_, err = fmt.Sscanf(integeralPart, "%3d%2d%2d", &hour, &minute, &second)
-			case 6: // HHMMSS
-				_, err = fmt.Sscanf(integeralPart, "%2d%2d%2d", &hour, &minute, &second)
-			case 5: // HMMSS
-				_, err = fmt.Sscanf(integeralPart, "%1d%2d%2d", &hour, &minute, &second)
-			case 4: // MMSS
-				_, err = fmt.Sscanf(integeralPart, "%2d%2d", &minute, &second)
-			case 3: // MSS
-				_, err = fmt.Sscanf(integeralPart, "%1d%2d", &minute, &second)
-			case 2: // SS
-				_, err = fmt.Sscanf(integeralPart, "%2d", &second)
-			case 1: // 0S
-				_, err = fmt.Sscanf(integeralPart, "%1d", &second)
-			default: // Maybe contains date.
-				t, err1 := ParseDatetime(sc, str)
-				if err1 != nil {
-					return ZeroDuration, ErrTruncatedWrongVal.GenWithStackByArgs("time", origStr)
-				}
-				var dur Duration
-				dur, err1 = t.ConvertToDuration()
-				if err1 != nil {
-					return ZeroDuration, errors.Trace(err)
-				}
-				return dur.RoundFrac(fsp)
-			}
-		}
-	case 2:
-		// HH:MM
-		_, err = fmt.Sscanf(integeralPart, "%2d:%2d", &hour, &minute)
-	case 3:
-		// Time format maybe HH:MM:SS or HHH:MM:SS.
-		// See https://dev.mysql.com/doc/refman/5.7/en/time.html
-		if len(seps[0]) == 3 {
-			_, err = fmt.Sscanf(integeralPart, "%3d:%2d:%2d", &hour, &minute, &second)
-		} else {
-			_, err = fmt.Sscanf(integeralPart, "%2d:%2d:%2d", &hour, &minute, &second)
-		}
-	default:
-		return ZeroDuration, ErrTruncatedWrongVal.GenWithStackByArgs("time", origStr)
-	}
-
-	if terror.ErrorEqual(err, io.EOF) {
-		err = ErrTruncatedWrongVal.GenWithStackByArgs("time", origStr)
-	}
-	if err != nil {
-		return ZeroDuration, errors.Trace(err)
+	rest = parser.Space0(rest)
+	overflow, frac, rest, err := matchFrac(rest, fsp)
+	if err != nil || len(rest) > 0 {
+		return ZeroDuration, ErrTruncatedWrongVal.GenWithStackByArgs("time", str)
 	}
 
 	if overflow {
-		second++
-		fracPart = 0
-	}
-	// Invalid TIME values are converted to '00:00:00'.
-	// See https://dev.mysql.com/doc/refman/5.7/en/time.html
-	if minute >= 60 || second > 60 || (!overflow && second == 60) {
-		return ZeroDuration, ErrTruncatedWrongVal.GenWithStackByArgs("time", origStr)
+		hhmmssAddOverflow(hhmmss[:], overflow)
+		frac = 0
 	}
 
-	if day*24+hour > TimeMaxHour {
+	if !checkHHMMSS(hhmmss) {
+		return ZeroDuration, ErrTruncatedWrongVal.GenWithStackByArgs("time", str)
+	}
+
+	if hhmmss[0] > TimeMaxHour {
 		var t gotime.Duration
-		if sign == -1 {
+		if negative {
 			t = MinTime
 		} else {
 			t = MaxTime
 		}
-		return Duration{Duration: t, Fsp: fsp}, ErrTruncatedWrongVal.GenWithStackByArgs("time", origStr)
+		return Duration{t, fsp}, ErrTruncatedWrongVal.GenWithStackByArgs("time", str)
 	}
 
-	d := gotime.Duration(day*24*3600+hour*3600+minute*60+second)*gotime.Second + gotime.Duration(fracPart)*gotime.Microsecond
-	if sign == -1 {
+	d := gotime.Duration(hhmmss[0]*3600+hhmmss[1]*60+hhmmss[2])*gotime.Second + gotime.Duration(frac)*gotime.Microsecond
+	if negative {
 		d = -d
 	}
-
 	d, err = TruncateOverflowMySQLTime(d)
-	return Duration{Duration: d, Fsp: fsp}, errors.Trace(err)
+	return Duration{d, fsp}, errors.Trace(err)
+}
+
+// canFallbackToDateTime return true
+// 1. the string is failed to be parsed by `matchDuration`
+// 2. the string is start with a series of digits whose length match the full format of DateTime literal (12, 14)
+//	  or the string start with a date literal.
+func canFallbackToDateTime(str string) bool {
+	digits, rest, err := parser.Digit(str, 1)
+	if err != nil {
+		return false
+	}
+	if len(digits) == 12 || len(digits) == 14 {
+		return true
+	}
+
+	rest, err = parser.AnyPunct(rest)
+	if err != nil {
+		return false
+	}
+
+	_, rest, err = parser.Digit(rest, 1)
+	if err != nil {
+		return false
+	}
+
+	rest, err = parser.AnyPunct(rest)
+	if err != nil {
+		return false
+	}
+
+	_, rest, err = parser.Digit(rest, 1)
+	if err != nil {
+		return false
+	}
+
+	return len(rest) > 0 && (rest[0] == ' ' || rest[0] == 'T')
+}
+
+// ParseDuration parses the time form a formatted string with a fractional seconds part,
+// returns the duration type Time value.
+// See http://dev.mysql.com/doc/refman/5.7/en/fractional-seconds.html
+func ParseDuration(sc *stmtctx.StatementContext, str string, fsp int8) (Duration, error) {
+	rest := strings.TrimSpace(str)
+	d, err := matchDuration(rest, fsp)
+	if err == nil {
+		return d, nil
+	}
+	if !canFallbackToDateTime(rest) {
+		return d, ErrTruncatedWrongVal.GenWithStackByArgs("time", str)
+	}
+
+	datetime, err := ParseDatetime(sc, rest)
+	if err != nil {
+		return ZeroDuration, ErrTruncatedWrongVal.GenWithStackByArgs("time", str)
+	}
+
+	d, err = datetime.ConvertToDuration()
+	if err != nil {
+		return ZeroDuration, ErrTruncatedWrongVal.GenWithStackByArgs("time", str)
+	}
+
+	return d.RoundFrac(fsp)
 }
 
 // TruncateOverflowMySQLTime truncates d when it overflows, and returns ErrTruncatedWrongVal.
