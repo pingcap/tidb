@@ -2608,8 +2608,8 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"recover table t1 abc", false, ""},
 
 		// for flashback table.
-		{"flashback table t until timestamp '2019-09-24 20:16:31.124 +0800 CST'", true, "FLASHBACK TABLE `t` UNTIL TIMESTAMP '2019-09-24 20:16:31.124 +0800 CST'"},
-		{"flashback table t until timestamp '2019-09-24 20:16:31.124 +0800 CST' TO t1", true, "FLASHBACK TABLE `t` UNTIL TIMESTAMP '2019-09-24 20:16:31.124 +0800 CST' TO `t1`"},
+		{"flashback table t", true, "FLASHBACK TABLE `t`"},
+		{"flashback table t TO t1", true, "FLASHBACK TABLE `t` TO `t1`"},
 
 		// for remove partitioning
 		{"alter table t remove partitioning", true, "ALTER TABLE `t` REMOVE PARTITIONING"},
