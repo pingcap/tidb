@@ -1857,7 +1857,7 @@ var MetricTableMap = map[string]MetricTableDef{
 	"node_uptime": {
 		PromQL:  `node_time_seconds{$LABEL_CONDITIONS} - node_boot_time_seconds{$LABEL_CONDITIONS}`,
 		Labels:  []string{"instance"},
-		Comment: "node uptime",
+		Comment: "node uptime, units are seconds",
 	},
 	"node_load1": {
 		PromQL:  `node_load1{$LABEL_CONDITIONS}`,
@@ -1961,8 +1961,9 @@ var MetricTableMap = map[string]MetricTableDef{
 		Comment: "node disk read latency(ms)",
 	},
 	"node_disk_throughput": {
-		PromQL: `irate(node_disk_read_bytes_total{$LABEL_CONDITIONS}[$RANGE_DURATION]) + irate(node_disk_written_bytes_total{$LABEL_CONDITIONS}[$RANGE_DURATION])`,
-		Labels: []string{"device", "instance"},
+		PromQL:  `irate(node_disk_read_bytes_total{$LABEL_CONDITIONS}[$RANGE_DURATION]) + irate(node_disk_written_bytes_total{$LABEL_CONDITIONS}[$RANGE_DURATION])`,
+		Labels:  []string{"device", "instance"},
+		Comment: "Units is byte",
 	},
 	"node_filesystem_space_used": {
 		PromQL:  `((node_filesystem_size_bytes{$LABEL_CONDITIONS} - node_filesystem_avail_bytes{$LABEL_CONDITIONS}) / node_filesystem_size_bytes{$LABEL_CONDITIONS}) * 100`,
