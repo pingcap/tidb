@@ -338,7 +338,7 @@
           "    └─IndexScan_19 10000.00 cop[tikv] table:t, index:a, range:[NULL,+inf], keep order:false, stats:pseudo"
         ],
         "Warn": [
-          "[planner:1815]No available path for table t with the store type tiflash of the hint /*+ read_from_storage */, please check the status of the table replica and variable value of tidb_isolation_read_engines"
+          "[planner:1815]No available path for table test.t with the store type tiflash of the hint /*+ read_from_storage */, please check the status of the table replica and variable value of tidb_isolation_read_engines(map[0:{}])"
         ]
       }
     ]

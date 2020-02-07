@@ -446,9 +446,9 @@ func (ds *DataSource) setPreferredStoreType(hintInfo *tableHintInfo) {
 			}
 		}
 		if ds.preferStoreType == 0 {
-			errMsg := fmt.Sprintf("No available path for table %s with the store type %s of the hint /*+ read_from_storage */, "+
-				"please check the status of the table replica and variable value of tidb_isolation_read_engines",
-				ds.table.Meta().Name.L, kv.TiKV.Name())
+			errMsg := fmt.Sprintf("No available path for table %s.%s with the store type %s of the hint /*+ read_from_storage */, "+
+				"please check the status of the table replica and variable value of tidb_isolation_read_engines(%v)",
+				ds.DBName.O, ds.table.Meta().Name.O, kv.TiKV.Name(), ds.ctx.GetSessionVars().GetIsolationReadEngines())
 			warning := ErrInternal.GenWithStack(errMsg)
 			ds.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
 		}
@@ -469,9 +469,9 @@ func (ds *DataSource) setPreferredStoreType(hintInfo *tableHintInfo) {
 			}
 		}
 		if ds.preferStoreType == 0 {
-			errMsg := fmt.Sprintf("No available path for table %s with the store type %s of the hint /*+ read_from_storage */, "+
-				"please check the status of the table replica and variable value of tidb_isolation_read_engines",
-				ds.table.Meta().Name.L, kv.TiFlash.Name())
+			errMsg := fmt.Sprintf("No available path for table %s.%s with the store type %s of the hint /*+ read_from_storage */, "+
+				"please check the status of the table replica and variable value of tidb_isolation_read_engines(%v)",
+				ds.DBName.O, ds.table.Meta().Name.O, kv.TiFlash.Name(), ds.ctx.GetSessionVars().GetIsolationReadEngines())
 			warning := ErrInternal.GenWithStack(errMsg)
 			ds.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
 		}
