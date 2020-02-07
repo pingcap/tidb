@@ -95,34 +95,34 @@ func (s *diagnosticsSuite) TestInspectionResult(c *C) {
 		rows []string
 	}{
 		{
-			sql: "select rule, item, type, value, reference, detail from information_schema.inspection_result where rule in ('config', 'version')",
+			sql: "select rule, item, type, value, reference, severity, details from information_schema.inspection_result where rule in ('config', 'version')",
 			rows: []string{
 				"config coprocessor.high tikv inconsistent consistent warning select * from information_schema.cluster_config where type='tikv' and `key`='coprocessor.high'",
 				"config ddl.lease tidb inconsistent consistent warning select * from information_schema.cluster_config where type='tidb' and `key`='ddl.lease'",
-				"version pd inconsistent tidb consistent critical select * from information_schema.cluster_info where type='pd'",
-				"version tidb inconsistent consistent critical select * from information_schema.cluster_info where type='tidb'",
-				"version tikv inconsistent consistent critical select * from information_schema.cluster_info where type='tikv'",
+				"version git_hash tidb inconsistent consistent critical select * from information_schema.cluster_info where type='tidb'",
+				"version git_hash tikv inconsistent consistent critical select * from information_schema.cluster_info where type='tikv'",
+				"version git_hash pd inconsistent consistent critical select * from information_schema.cluster_info where type='pd'",
 			},
 		},
 		{
-			sql: "select * from information_schema.inspection_result where rule in ('config', 'version') and item in ('coprocessor.high', 'tikv')",
+			sql: "select rule, item, type, value, reference, severity, details from information_schema.inspection_result where rule in ('config', 'version') and item in ('coprocessor.high', 'git_hash') and type='tikv'",
 			rows: []string{
-				"config coprocessor.high inconsistent consistent warning select * from information_schema.cluster_config where type='tikv' and `key`='coprocessor.high'",
-				"version tikv inconsistent consistent critical select * from information_schema.cluster_info where type='tikv'",
+				"config coprocessor.high tikv inconsistent consistent warning select * from information_schema.cluster_config where type='tikv' and `key`='coprocessor.high'",
+				"version git_hash tikv inconsistent consistent critical select * from information_schema.cluster_info where type='tikv'",
 			},
 		},
 		{
-			sql: "select * from information_schema.inspection_result where rule='config'",
+			sql: "select rule, item, type, value, reference, severity, details from information_schema.inspection_result where rule='config'",
 			rows: []string{
-				"config coprocessor.high inconsistent consistent warning select * from information_schema.cluster_config where type='tikv' and `key`='coprocessor.high'",
-				"config ddl.lease inconsistent consistent warning select * from information_schema.cluster_config where type='tidb' and `key`='ddl.lease'",
+				"config coprocessor.high tikv inconsistent consistent warning select * from information_schema.cluster_config where type='tikv' and `key`='coprocessor.high'",
+				"config ddl.lease tidb inconsistent consistent warning select * from information_schema.cluster_config where type='tidb' and `key`='ddl.lease'",
 			},
 		},
 		{
-			sql: "select * from information_schema.inspection_result where rule='version' and item in ('pd', 'tidb')",
+			sql: "select rule, item, type, value, reference, severity, details from information_schema.inspection_result where rule='version' and item='git_hash' and type in ('pd', 'tidb')",
 			rows: []string{
-				"version pd inconsistent consistent critical select * from information_schema.cluster_info where type='pd'",
-				"version tidb inconsistent consistent critical select * from information_schema.cluster_info where type='tidb'",
+				"version git_hash tidb inconsistent consistent critical select * from information_schema.cluster_info where type='tidb'",
+				"version git_hash pd inconsistent consistent critical select * from information_schema.cluster_info where type='pd'",
 			},
 		},
 	}
