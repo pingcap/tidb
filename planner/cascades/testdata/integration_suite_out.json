@@ -239,6 +239,42 @@
         ]
       },
       {
+        "SQL": "select b, sum(a) from t group by b having b > 1 order by b",
+        "Plan": [
+          "Projection_19 6400.00 root test.t.b, Column#3",
+          "└─Sort_33 6400.00 root test.t.b:asc",
+          "  └─HashAgg_26 6400.00 root group by:test.t.b, funcs:sum(Column#6)->Column#3, funcs:firstrow(test.t.b)->test.t.b",
+          "    └─TableReader_27 6400.00 root data:HashAgg_28",
+          "      └─HashAgg_28 6400.00 cop[tikv] group by:test.t.b, funcs:sum(test.t.a)->Column#6",
+          "        └─Selection_23 8000.00 cop[tikv] gt(test.t.b, 1)",
+          "          └─TableScan_24 10000.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "11 1",
+          "22 2",
+          "33 3",
+          "44 4"
+        ]
+      },
+      {
+        "SQL": "select c, sum(a) from (select a+b as c, a from t) t1 group by c having c > 1 order by c",
+        "Plan": [
+          "Projection_20 6400.00 root Column#3, Column#4",
+          "└─Sort_32 6400.00 root Column#3:asc",
+          "  └─HashAgg_28 6400.00 root group by:Column#10, funcs:sum(Column#8)->Column#4, funcs:firstrow(Column#10)->Column#3",
+          "    └─TableReader_29 6400.00 root data:HashAgg_30",
+          "      └─HashAgg_30 6400.00 cop[tikv] group by:plus(test.t.a, test.t.b), funcs:sum(test.t.a)->Column#8",
+          "        └─Selection_25 8000.00 cop[tikv] gt(plus(test.t.a, test.t.b), 1)",
+          "          └─TableScan_26 10000.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "12 1",
+          "24 2",
+          "36 3",
+          "48 4"
+        ]
+      },
+      {
         "SQL": "select max(a) from t",
         "Plan": [
           "HashAgg_16 1.00 root funcs:max(test.t.a)->Column#3",
