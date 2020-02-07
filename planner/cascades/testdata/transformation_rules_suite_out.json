@@ -1340,6 +1340,149 @@
     ]
   },
   {
+    "Name": "TestMergeAdjacentTopN",
+    "Cases": [
+      {
+        "SQL": "select b from (select b from t where c > 1 order by b limit 3) as t1 order by b limit 2",
+        "Result": [
+          "Group#0 Schema:[test.t.b]",
+          "    Projection_11 input:[Group#1], test.t.b",
+          "Group#1 Schema:[test.t.b,test.t.c]",
+          "    TopN_14 input:[Group#2], test.t.b:asc, offset:0, count:2",
+          "Group#2 Schema:[test.t.b,test.t.c]",
+          "    Selection_2 input:[Group#3], gt(test.t.c, 1)",
+          "Group#3 Schema:[test.t.b,test.t.c]",
+          "    TableScan_1 table:t"
+        ]
+      },
+      {
+        "SQL": "select a from (select a from t where b > 2 order by a limit 3 offset 1) as t1 order by a limit 2 offset 1",
+        "Result": [
+          "Group#0 Schema:[test.t.a]",
+          "    Projection_11 input:[Group#1], test.t.a",
+          "Group#1 Schema:[test.t.a,test.t.b]",
+          "    TopN_14 input:[Group#2], test.t.a:asc, offset:2, count:2",
+          "Group#2 Schema:[test.t.a,test.t.b]",
+          "    Selection_2 input:[Group#3], gt(test.t.b, 2)",
+          "Group#3 Schema:[test.t.a,test.t.b]",
+          "    TableScan_1 table:t"
+        ]
+      },
+      {
+        "SQL": "select * from (select * from t order by a limit 3) as t1 order by a limit 5",
+        "Result": [
+          "Group#0 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,test.t.e,test.t.c_str,test.t.d_str,test.t.e_str,test.t.f,test.t.g,test.t.h,test.t.i_date]",
+          "    Projection_10 input:[Group#1], test.t.a, test.t.b, test.t.c, test.t.d, test.t.e, test.t.c_str, test.t.d_str, test.t.e_str, test.t.f, test.t.g, test.t.h, test.t.i_date",
+          "Group#1 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,test.t.e,test.t.c_str,test.t.d_str,test.t.e_str,test.t.f,test.t.g,test.t.h,test.t.i_date]",
+          "    TopN_13 input:[Group#2], test.t.a:asc, offset:0, count:3",
+          "Group#2 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,test.t.e,test.t.c_str,test.t.d_str,test.t.e_str,test.t.f,test.t.g,test.t.h,test.t.i_date]",
+          "    TableScan_1 table:t"
+        ]
+      },
+      {
+        "SQL": "select b from (select b from t order by b limit 5) as t1 order by b limit 10",
+        "Result": [
+          "Group#0 Schema:[test.t.b]",
+          "    Projection_10 input:[Group#1], test.t.b",
+          "Group#1 Schema:[test.t.b]",
+          "    TopN_13 input:[Group#2], test.t.b:asc, offset:0, count:5",
+          "Group#2 Schema:[test.t.b]",
+          "    TableScan_1 table:t"
+        ]
+      },
+      {
+        "SQL": "select b from (select b from t order by b limit 20) as t1 order by b limit 10",
+        "Result": [
+          "Group#0 Schema:[test.t.b]",
+          "    Projection_10 input:[Group#1], test.t.b",
+          "Group#1 Schema:[test.t.b]",
+          "    TopN_13 input:[Group#2], test.t.b:asc, offset:0, count:10",
+          "Group#2 Schema:[test.t.b]",
+          "    TableScan_1 table:t"
+        ]
+      },
+      {
+        "SQL": "select b from (select b from t order by b limit 10) as t1 order by b limit 10",
+        "Result": [
+          "Group#0 Schema:[test.t.b]",
+          "    Projection_10 input:[Group#1], test.t.b",
+          "Group#1 Schema:[test.t.b]",
+          "    TopN_13 input:[Group#2], test.t.b:asc, offset:0, count:10",
+          "Group#2 Schema:[test.t.b]",
+          "    TableScan_1 table:t"
+        ]
+      },
+      {
+        "SQL": "select b from (select b from t order by b limit 10 offset 10) as t1 order by b limit 10 offset 5",
+        "Result": [
+          "Group#0 Schema:[test.t.b]",
+          "    Projection_10 input:[Group#1], test.t.b",
+          "Group#1 Schema:[test.t.b]",
+          "    TopN_13 input:[Group#2], test.t.b:asc, offset:15, count:5",
+          "Group#2 Schema:[test.t.b]",
+          "    TableScan_1 table:t"
+        ]
+      },
+      {
+        "SQL": "select b from (select b from t order by b limit 10 offset 2) as t1 order by b limit 3 offset 5",
+        "Result": [
+          "Group#0 Schema:[test.t.b]",
+          "    Projection_10 input:[Group#1], test.t.b",
+          "Group#1 Schema:[test.t.b]",
+          "    TopN_13 input:[Group#2], test.t.b:asc, offset:7, count:3",
+          "Group#2 Schema:[test.t.b]",
+          "    TableScan_1 table:t"
+        ]
+      },
+      {
+        "SQL": "select b from (select b from t order by b limit 10 offset 5) as t1 order by b limit 5 offset 5",
+        "Result": [
+          "Group#0 Schema:[test.t.b]",
+          "    Projection_10 input:[Group#1], test.t.b",
+          "Group#1 Schema:[test.t.b]",
+          "    TopN_13 input:[Group#2], test.t.b:asc, offset:10, count:5",
+          "Group#2 Schema:[test.t.b]",
+          "    TableScan_1 table:t"
+        ]
+      },
+      {
+        "SQL": "select a from (select a from t order by a limit 3 offset 5) as t1 order by a limit 3 offset 5",
+        "Result": [
+          "Group#0 Schema:[test.t.a]",
+          "    Projection_10 input:[Group#1], test.t.a",
+          "Group#1 Schema:[test.t.a]",
+          "    TableDual_13 rowcount:0"
+        ]
+      },
+      {
+        "SQL": "select b from (select b from t where c > 1 order by b, a limit 3) as t1 order by b limit 2",
+        "Result": [
+          "Group#0 Schema:[test.t.b]",
+          "    Projection_13 input:[Group#1], test.t.b",
+          "Group#1 Schema:[test.t.a,test.t.b,test.t.c]",
+          "    TopN_16 input:[Group#2], test.t.b:asc, test.t.a:asc, offset:0, count:2",
+          "Group#2 Schema:[test.t.a,test.t.b,test.t.c]",
+          "    Selection_2 input:[Group#3], gt(test.t.c, 1)",
+          "Group#3 Schema:[test.t.a,test.t.b,test.t.c]",
+          "    TableScan_1 table:t"
+        ]
+      },
+      {
+        "SQL": "select a from (select a from t where b > 2 order by a, b limit 3 offset 1) as t1 order by a limit 2 offset 1",
+        "Result": [
+          "Group#0 Schema:[test.t.a]",
+          "    Projection_13 input:[Group#1], test.t.a",
+          "Group#1 Schema:[test.t.a,test.t.b]",
+          "    TopN_16 input:[Group#2], test.t.a:asc, test.t.b:asc, offset:2, count:2",
+          "Group#2 Schema:[test.t.a,test.t.b]",
+          "    Selection_2 input:[Group#3], gt(test.t.b, 2)",
+          "Group#3 Schema:[test.t.a,test.t.b]",
+          "    TableScan_1 table:t"
+        ]
+      }
+    ]
+  },
+  {
     "Name": "TestTransformLimitToTableDual",
     "Cases": [
       {
