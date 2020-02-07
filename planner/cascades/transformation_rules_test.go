@@ -199,7 +199,7 @@ func (s *testTransformationRuleSuite) TestEliminateMaxMin(c *C) {
 		},
 	})
 	defer func() {
-		s.optimizer.ResetTransformationRules(defaultTransformationMap)
+		s.optimizer.ResetTransformationRules(mainTransformationBatch, postTransformationBatch)
 	}()
 	var input []string
 	var output []struct {
@@ -242,7 +242,7 @@ func (s *testTransformationRuleSuite) TestMergeAdjacentTopN(c *C) {
 		},
 	})
 	defer func() {
-		s.optimizer.ResetTransformationRules(defaultTransformationMap)
+		s.optimizer.ResetTransformationRules(mainTransformationBatch, postTransformationBatch)
 	}()
 	var input []string
 	var output []struct {

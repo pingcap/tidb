@@ -71,6 +71,25 @@ func (e EngineType) String() string {
 	return "UnknownEngineType"
 }
 
+// ExploreMark is uses to mark whether a Group or GroupExpr has
+// been fully explored by a transformation rule batch.
+type ExploreMark int
+
+// SetExplored sets the roundth bit.
+func (m *ExploreMark) SetExplored(round int) {
+	*m |= 1 << round
+}
+
+// SetUnexplored unsets the roundth bit.
+func (m *ExploreMark) SetUnexplored(round int) {
+	*m &= ^(1 << round)
+}
+
+// Explored returns whether the roundth bit has been set.
+func (m *ExploreMark) Explored(round int) bool {
+	return *m&(1<<round) != 0
+}
+
 // Group is short for expression Group, which is used to store all the
 // logically equivalent expressions. It's a set of GroupExpr.
 type Group struct {
@@ -85,7 +104,10 @@ type Group struct {
 	EngineType EngineType
 
 	SelfFingerprint string
-	Explored        bool
+
+	// ExploreMark is uses to mark whether this Group has been explored
+	// by a transformation rule batch in a certain round.
+	ExploreMark
 
 	//hasBuiltKeyInfo indicates whether this group has called `BuildKeyInfo`.
 	// BuildKeyInfo is lazily called when a rule needs information of
@@ -203,18 +225,6 @@ func (g *Group) GetImpl(prop *property.PhysicalProperty) Implementation {
 func (g *Group) InsertImpl(prop *property.PhysicalProperty, impl Implementation) {
 	key := prop.HashCode()
 	g.ImplMap[string(key)] = impl
-}
-
-// ResetExplored recursively resets the `Explored` field of Group and GroupExpr.
-func (g *Group) ResetExplored() {
-	g.Explored = false
-	for iter := g.Equivalents.Front(); iter != nil; iter = iter.Next() {
-		expr := iter.Value.(*GroupExpr)
-		expr.Explored = false
-		for _, childGroup := range expr.Children {
-			childGroup.ResetExplored()
-		}
-	}
 }
 
 // Convert2GroupExpr converts a logical plan to a GroupExpr.

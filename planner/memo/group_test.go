@@ -286,3 +286,16 @@ func (s *testMemoSuite) TestBuildKeyInfo(c *C) {
 	newGroup2.BuildKeyInfo()
 	c.Assert(newGroup2.Prop.MaxOneRow, IsTrue)
 }
+
+func (s *testMemoSuite) TestExploreMark(c *C) {
+	mark := ExploreMark(0)
+	c.Assert(mark.Explored(0), IsFalse)
+	c.Assert(mark.Explored(1), IsFalse)
+	mark.SetExplored(0)
+	mark.SetExplored(1)
+	c.Assert(mark.Explored(0), IsTrue)
+	c.Assert(mark.Explored(1), IsTrue)
+	mark.SetUnexplored(1)
+	c.Assert(mark.Explored(0), IsTrue)
+	c.Assert(mark.Explored(1), IsFalse)
+}

@@ -126,14 +126,9 @@ func (opt *Optimizer) onPhasePreprocessing(sctx sessionctx.Context, plan planner
 }
 
 func (opt *Optimizer) onPhaseExploration(sctx sessionctx.Context, g *memo.Group) error {
-	for i, ruleBatch := range opt.transformationRuleBatches {
-		if i > 0 {
-			// If this is not the first batch, we need to reset
-			// the `Explored` field for the new batch.
-			g.ResetExplored()
-		}
-		for !g.Explored {
-			err := opt.exploreGroup(g, ruleBatch)
+	for round, ruleBatch := range opt.transformationRuleBatches {
+		for !g.Explored(round) {
+			err := opt.exploreGroup(g, round, ruleBatch)
 			if err != nil {
 				return err
 			}
@@ -142,29 +137,29 @@ func (opt *Optimizer) onPhaseExploration(sctx sessionctx.Context, g *memo.Group)
 	return nil
 }
 
-func (opt *Optimizer) exploreGroup(g *memo.Group, ruleBatch TransformationRuleBatch) error {
-	if g.Explored {
+func (opt *Optimizer) exploreGroup(g *memo.Group, round int, ruleBatch TransformationRuleBatch) error {
+	if g.Explored(round) {
 		return nil
 	}
-	g.Explored = true
+	g.SetExplored(round)
 
 	for elem := g.Equivalents.Front(); elem != nil; elem = elem.Next() {
 		curExpr := elem.Value.(*memo.GroupExpr)
-		if curExpr.Explored {
+		if curExpr.Explored(round) {
 			continue
 		}
-		curExpr.Explored = true
+		curExpr.SetExplored(round)
 
 		// Explore child groups firstly.
 		for _, childGroup := range curExpr.Children {
-			for !childGroup.Explored {
-				if err := opt.exploreGroup(childGroup, ruleBatch); err != nil {
+			for !childGroup.Explored(round) {
+				if err := opt.exploreGroup(childGroup, round, ruleBatch); err != nil {
 					return err
 				}
 			}
 		}
 
-		eraseCur, err := opt.findMoreEquiv(g, elem, ruleBatch)
+		eraseCur, err := opt.findMoreEquiv(g, elem, round, ruleBatch)
 		if err != nil {
 			return err
 		}
@@ -176,7 +171,7 @@ func (opt *Optimizer) exploreGroup(g *memo.Group, ruleBatch TransformationRuleBa
 }
 
 // findMoreEquiv finds and applies the matched transformation rules.
-func (opt *Optimizer) findMoreEquiv(g *memo.Group, elem *list.Element, ruleBatch TransformationRuleBatch) (eraseCur bool, err error) {
+func (opt *Optimizer) findMoreEquiv(g *memo.Group, elem *list.Element, round int, ruleBatch TransformationRuleBatch) (eraseCur bool, err error) {
 	expr := elem.Value.(*memo.GroupExpr)
 	operand := memo.GetOperand(expr.ExprNode)
 	for _, rule := range ruleBatch[operand] {
@@ -203,7 +198,7 @@ func (opt *Optimizer) findMoreEquiv(g *memo.Group, elem *list.Element, ruleBatch
 					g.Insert(e)
 				}
 				// If we delete all of the other GroupExprs, we can break the search.
-				g.Explored = true
+				g.SetExplored(round)
 				return false, nil
 			}
 
@@ -215,7 +210,7 @@ func (opt *Optimizer) findMoreEquiv(g *memo.Group, elem *list.Element, ruleBatch
 				// If the new Group expression is successfully inserted into the
 				// current Group, mark the Group as unexplored to enable the exploration
 				// on the new Group expressions.
-				g.Explored = false
+				g.SetUnexplored(round)
 			}
 		}
 	}
