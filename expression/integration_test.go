@@ -3601,7 +3601,7 @@ func (s *testIntegrationSuite) TestAggregationBuiltinJSONObjectAgg(c *C) {
 		b varchar(100),
 		c decimal(3,2),
 		d json,
-		e date, 
+		e date,
 		f time,
 		g datetime DEFAULT '2012-01-01',
 		h timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -4436,6 +4436,13 @@ func (s *testIntegrationSuite) TestDecimalMul(c *C) {
 	tk.MustExec("insert into t select 0.5999991229316*0.918755041726043;")
 	res := tk.MustQuery("select * from t;")
 	res.Check(testkit.Rows("0.55125221922461136"))
+}
+
+func (s *testIntegrationSuite) TestDecimalDiv(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustQuery("select cast(1 as decimal(60,30)) / cast(1 as decimal(60,30)) / cast(1 as decimal(60, 30))").Check(testkit.Rows("1.000000000000000000000000000000"))
+	tk.MustQuery("select cast(1 as decimal(60,30)) / cast(3 as decimal(60,30)) / cast(7 as decimal(60, 30))").Check(testkit.Rows("0.047619047619047619047619047619"))
+	tk.MustQuery("select cast(1 as decimal(60,30)) / cast(3 as decimal(60,30)) / cast(7 as decimal(60, 30)) / cast(13 as decimal(60, 30))").Check(testkit.Rows("0.003663003663003663003663003663"))
 }
 
 func (s *testIntegrationSuite) TestUnknowHintIgnore(c *C) {
