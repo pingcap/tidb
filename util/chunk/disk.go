@@ -20,7 +20,6 @@ import (
 	"io"
 	"io/ioutil"
 	"os"
-	"path/filepath"
 	"sync"
 
 	"github.com/pingcap/log"
@@ -45,7 +44,7 @@ var bufReaderPool = sync.Pool{
 	New: func() interface{} { return bufio.NewReaderSize(nil, readBufSize) },
 }
 
-var tmpDir = filepath.Join(config.GetGlobalConfig().TempStoragePath, "tidb-server-"+filepath.Base(os.Args[0]))
+var tmpDir = config.GetGlobalConfig().TempStoragePath
 
 func init() {
 	err := os.RemoveAll(tmpDir) // clean the uncleared temp file during the last run.
