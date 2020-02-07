@@ -31,6 +31,11 @@ import (
 	"github.com/pingcap/tidb/util/hack"
 )
 
+// error definitions.
+var (
+	ErrNoDB = terror.ClassOptimizer.New(mysql.ErrNoDB, mysql.MySQLErrName[mysql.ErrNoDB])
+)
+
 // ScalarFunction is the function that returns a value.
 type ScalarFunction struct {
 	FuncName model.CIStr
@@ -171,7 +176,7 @@ func newFunctionImpl(ctx sessionctx.Context, fold bool, funcName string, retType
 	if !ok {
 		db := ctx.GetSessionVars().CurrentDB
 		if db == "" {
-			return nil, terror.ClassOptimizer.New(mysql.ErrNoDB, mysql.MySQLErrName[mysql.ErrNoDB])
+			return nil, ErrNoDB
 		}
 
 		return nil, errFunctionNotExists.GenWithStackByArgs("FUNCTION", db+"."+funcName)

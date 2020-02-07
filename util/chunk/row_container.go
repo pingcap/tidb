@@ -14,6 +14,7 @@
 package chunk
 
 import (
+	"errors"
 	"sync"
 	"sync/atomic"
 
@@ -44,9 +45,10 @@ type RowContainer struct {
 	// It's for concurrency usage, so access it with atomic.
 	spilled uint32
 
-	memTracker  *memory.Tracker
-	diskTracker *disk.Tracker
-	actionSpill *spillDiskAction
+	memTracker         *memory.Tracker
+	diskTracker        *disk.Tracker
+	actionSpill        *SpillDiskAction
+	onExceededCallback func(rowContainer *RowContainer)
 }
 
 // NewRowContainer creates a new RowContainer in memory.
@@ -83,7 +85,7 @@ func (c *RowContainer) Reset() error {
 		}
 		atomic.StoreUint32(&c.exceeded, 0)
 		atomic.StoreUint32(&c.spilled, 0)
-		c.actionSpill.reset()
+		c.actionSpill.ResetOnce()
 	} else {
 		c.records.Reset()
 	}
@@ -127,6 +129,9 @@ func (c *RowContainer) Add(chk *Chunk) (err error) {
 	} else {
 		c.records.Add(chk)
 		if atomic.LoadUint32(&c.exceeded) != 0 {
+			if c.onExceededCallback != nil {
+				c.onExceededCallback(c)
+			}
 			err = c.spillToDisk()
 			if err != nil {
 				return err
@@ -137,6 +142,14 @@ func (c *RowContainer) Add(chk *Chunk) (err error) {
 	return
 }
 
+// AppendRow appends a row to the RowContainer, the row is copied to the RowContainer.
+func (c *RowContainer) AppendRow(row Row) (RowPtr, error) {
+	if c.AlreadySpilled() {
+		return RowPtr{}, errors.New("ListInDisk don't support AppendRow")
+	}
+	return c.records.AppendRow(row), nil
+}
+
 // AllocChunk allocates a new chunk from RowContainer.
 func (c *RowContainer) AllocChunk() (chk *Chunk) {
 	return c.records.allocChunk()
@@ -145,6 +158,11 @@ func (c *RowContainer) AllocChunk() (chk *Chunk) {
 // GetChunk returns chkIdx th chunk of in memory records.
 func (c *RowContainer) GetChunk(chkIdx int) *Chunk {
 	return c.records.GetChunk(chkIdx)
+}
+
+// GetList returns the list of in memory records.
+func (c *RowContainer) GetList() *List {
+	return c.records
 }
 
 // GetRow returns the row the ptr pointed to.
@@ -175,24 +193,32 @@ func (c *RowContainer) Close() (err error) {
 	return
 }
 
-// ActionSpill returns a memory.ActionOnExceed for spilling over to disk.
-func (c *RowContainer) ActionSpill() memory.ActionOnExceed {
-	c.actionSpill = &spillDiskAction{c: c}
+// ActionSpill returns a SpillDiskAction for spilling over to disk.
+func (c *RowContainer) ActionSpill() *SpillDiskAction {
+	c.actionSpill = &SpillDiskAction{c: c}
 	return c.actionSpill
 }
 
-// spillDiskAction implements memory.ActionOnExceed for chunk.List. If
-// the memory quota of a query is exceeded, spillDiskAction.Action is
+// SetOnExceededCallback set a callback function for exceeded memory limit.
+func (c *RowContainer) SetOnExceededCallback(f func(rowContainer *RowContainer)) {
+	c.onExceededCallback = f
+}
+
+// SpillDiskAction implements memory.ActionOnExceed for chunk.List. If
+// the memory quota of a query is exceeded, SpillDiskAction.Action is
 // triggered.
-type spillDiskAction struct {
+type SpillDiskAction struct {
 	once           sync.Once
 	c              *RowContainer
 	fallbackAction memory.ActionOnExceed
+	m              sync.Mutex
 }
 
 // Action sends a signal to trigger spillToDisk method of RowContainer
 // and if it is already triggered before, call its fallbackAction.
-func (a *spillDiskAction) Action(t *memory.Tracker) {
+func (a *SpillDiskAction) Action(t *memory.Tracker) {
+	a.m.Lock()
+	defer a.m.Unlock()
 	if a.c.AlreadySpilledSafe() {
 		if a.fallbackAction != nil {
 			a.fallbackAction.Action(t)
@@ -205,14 +231,24 @@ func (a *spillDiskAction) Action(t *memory.Tracker) {
 }
 
 // SetFallback sets the fallback action.
-func (a *spillDiskAction) SetFallback(fallback memory.ActionOnExceed) {
+func (a *SpillDiskAction) SetFallback(fallback memory.ActionOnExceed) {
 	a.fallbackAction = fallback
 }
 
 // SetLogHook sets the hook, it does nothing just to form the memory.ActionOnExceed interface.
-func (a *spillDiskAction) SetLogHook(hook func(uint64)) {}
+func (a *SpillDiskAction) SetLogHook(hook func(uint64)) {}
 
-// reset resets the spill action so that it can be triggered next time.
-func (a *spillDiskAction) reset() {
+// ResetOnce resets the spill action so that it can be triggered next time.
+func (a *SpillDiskAction) ResetOnce() {
+	a.m.Lock()
+	defer a.m.Unlock()
 	a.once = sync.Once{}
+}
+
+// ResetOnceAndSetRowContainer resets the spill action and sets the RowContainer for the SpillDiskAction.
+func (a *SpillDiskAction) ResetOnceAndSetRowContainer(c *RowContainer) {
+	a.m.Lock()
+	defer a.m.Unlock()
+	a.once = sync.Once{}
+	a.c = c
 }
