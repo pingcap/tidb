@@ -588,7 +588,7 @@ func sendBatchRequest(
 		if !ok {
 			return nil, errors.Trace(entry.err)
 		}
-		return tikvrpc.FromBatchCommandsResponse(res), nil
+		return tikvrpc.FromBatchCommandsResponse(res)
 	case <-ctx1.Done():
 		atomic.StoreInt32(&entry.canceled, 1)
 		logutil.BgLogger().Warn("wait response is cancelled",

@@ -85,6 +85,7 @@ var defaultTransformationMap = map[memo.Operand][]Transformation{
 		NewRulePushTopNDownOuterJoin(),
 		NewRulePushTopNDownUnionAll(),
 		NewRulePushTopNDownTiKVSingleGather(),
+		NewRuleMergeAdjacentTopN(),
 	},
 }
 
@@ -1281,6 +1282,66 @@ func (r *PushTopNDownTiKVSingleGather) OnTransform(old *memo.ExprIter) (newExprs
 	finalTopNExpr.SetChildren(gatherGroup)
 	finalTopNExpr.AddAppliedRule(r)
 	return []*memo.GroupExpr{finalTopNExpr}, true, false, nil
+}
+
+// MergeAdjacentTopN merge adjacent TopN.
+type MergeAdjacentTopN struct {
+	baseRule
+}
+
+// NewRuleMergeAdjacentTopN creates a new Transformation MergeAdjacentTopN.
+// The pattern of this rule is `TopN->TopN->X`.
+func NewRuleMergeAdjacentTopN() Transformation {
+	rule := &MergeAdjacentTopN{}
+	rule.pattern = memo.BuildPattern(
+		memo.OperandTopN,
+		memo.EngineAll,
+		memo.NewPattern(memo.OperandTopN, memo.EngineAll),
+	)
+	return rule
+}
+
+// Match implements Transformation interface.
+func (r *MergeAdjacentTopN) Match(expr *memo.ExprIter) bool {
+	topN := expr.GetExpr().ExprNode.(*plannercore.LogicalTopN)
+	child := expr.Children[0].GetExpr().ExprNode.(*plannercore.LogicalTopN)
+
+	// We can use this rule when the sort columns of parent TopN is a prefix of child TopN.
+	if len(child.ByItems) < len(topN.ByItems) {
+		return false
+	}
+	for i := 0; i < len(topN.ByItems); i++ {
+		if !topN.ByItems[i].Equal(topN.SCtx(), child.ByItems[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+// OnTransform implements Transformation interface.
+// This rule tries to merge adjacent TopN.
+func (r *MergeAdjacentTopN) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
+	topN := old.GetExpr().ExprNode.(*plannercore.LogicalTopN)
+	child := old.Children[0].GetExpr().ExprNode.(*plannercore.LogicalTopN)
+	childGroups := old.Children[0].GetExpr().Children
+
+	if child.Count <= topN.Offset {
+		tableDual := plannercore.LogicalTableDual{RowCount: 0}.Init(child.SCtx(), child.SelectBlockOffset())
+		tableDual.SetSchema(old.GetExpr().Schema())
+		tableDualExpr := memo.NewGroupExpr(tableDual)
+		return []*memo.GroupExpr{tableDualExpr}, true, true, nil
+	}
+
+	offset := child.Offset + topN.Offset
+	count := uint64(math.Min(float64(child.Count-topN.Offset), float64(topN.Count)))
+	newTopN := plannercore.LogicalTopN{
+		Count:   count,
+		Offset:  offset,
+		ByItems: child.ByItems,
+	}.Init(child.SCtx(), child.SelectBlockOffset())
+	newTopNExpr := memo.NewGroupExpr(newTopN)
+	newTopNExpr.SetChildren(childGroups...)
+	return []*memo.GroupExpr{newTopNExpr}, true, false, nil
 }
 
 // MergeAggregationProjection merges the Projection below an Aggregation as a new Aggregation.
