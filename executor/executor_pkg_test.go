@@ -34,7 +34,7 @@ import (
 )
 
 var _ = Suite(&testExecSuite{})
-var _ = Suite(&testExecSerialSuite{})
+var _ = SerialSuites(&testExecSerialSuite{})
 
 type testExecSuite struct {
 }
