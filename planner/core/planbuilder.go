@@ -1630,6 +1630,10 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (Plan, 
 	case ast.ShowCreateView:
 		err := ErrSpecificAccessDenied.GenWithStackByArgs("SHOW VIEW")
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.ShowViewPriv, show.Table.Schema.L, show.Table.Name.L, "", err)
+	case ast.ShowTableNextRowId:
+		p := &ShowNextRowID{TableName: show.Table}
+		p.setSchemaAndNames(buildShowNextRowID())
+		return p, nil
 	}
 	schema, names := buildShowSchema(show, isView)
 	p.SetSchema(schema)

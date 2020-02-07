@@ -1,5 +1,7 @@
 module github.com/pingcap/tidb
 
+go 1.13
+
 require (
 	github.com/BurntSushi/toml v0.3.1
 	github.com/blacktear23/go-proxyprotocol v0.0.0-20180807104634-af7a81e8dd0d
@@ -76,4 +78,4 @@ require (
 	sourcegraph.com/sourcegraph/appdash-data v0.0.0-20151005221446-73f23eafcf67
 )
 
-go 1.13
+replace github.com/pingcap/parser => github.com/zhang555/parser v0.0.0-20200208070309-f67011c6e556
