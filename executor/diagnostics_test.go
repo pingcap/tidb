@@ -80,6 +80,24 @@ func (s *diagnosticsSuite) TestInspectionResult(c *C) {
 			types.MakeDatums("pd", "192.168.1.33:1234", "192.168.1.33:1234", "4.0", "m234e"),
 		},
 	}
+	// mock load
+	mockData[infoschema.TableClusterLoad] = variable.TableSnapshot{
+		Rows: [][]types.Datum{
+			types.MakeDatums("tidb", "192.168.1.11:1234", "memory", "virtual", "used-percent", "0.8"),
+			types.MakeDatums("tidb", "192.168.1.12:1234", "memory", "virtual", "used-percent", "0.6"),
+			types.MakeDatums("tidb", "192.168.1.13:1234", "memory", "swap", "used-percent", "0"),
+			types.MakeDatums("tikv", "192.168.1.21:1234", "memory", "swap", "used-percent", "0.6"),
+			types.MakeDatums("pd", "192.168.1.31:1234", "cpu", "cpu", "load1", "1.0"),
+			types.MakeDatums("pd", "192.168.1.32:1234", "cpu", "cpu", "load5", "0.6"),
+			types.MakeDatums("pd", "192.168.1.33:1234", "cpu", "cpu", "load15", "2.0"),
+		},
+	}
+	mockData[infoschema.TableClusterHardware] = variable.TableSnapshot{
+		Rows: [][]types.Datum{
+			types.MakeDatums("tikv", "192.168.1.22:1234", "disk", "sda", "used-percent", "80"),
+			types.MakeDatums("tikv", "192.168.1.23:1234", "disk", "sdb", "used-percent", "50"),
+		},
+	}
 
 	ctx := context.WithValue(context.Background(), "__mockInspectionTables", mockData)
 	fpName := "github.com/pingcap/tidb/executor/mockMergeMockInspectionTables"
@@ -123,6 +141,16 @@ func (s *diagnosticsSuite) TestInspectionResult(c *C) {
 			rows: []string{
 				"version git_hash tidb inconsistent consistent critical select * from information_schema.cluster_info where type='tidb'",
 				"version git_hash pd inconsistent consistent critical select * from information_schema.cluster_info where type='pd'",
+			},
+		},
+		{
+			sql: "select rule, item, type, instance, value, reference, severity, details from information_schema.inspection_result where rule='current-load'",
+			rows: []string{
+				"current-load cpu-load1 pd 192.168.1.31:1234 1.0 <0.7 warning ",
+				"current-load cpu-load15 pd 192.168.1.33:1234 2.0 <0.7 warning ",
+				"current-load disk-usage tikv 192.168.1.22:1234 80 <70 warning select * from information_schema.cluster_hardware where type='tikv' and instance='192.168.1.22:1234' and device_type='disk' and device_name='sda'",
+				"current-load swap-memory-usage tikv 192.168.1.21:1234 0.6 0 warning ",
+				"current-load virtual-memory-usage tidb 192.168.1.11:1234 0.8 <0.7 warning ",
 			},
 		},
 	}
