@@ -548,9 +548,7 @@ func (r *PushSelDownAggregation) OnTransform(old *memo.ExprIter) (newExprs []*me
 				}
 			}
 			if canPush {
-				// TODO: Don't substitute since they should be the same column.
-				newCond := expression.ColumnSubstitute(cond, aggSchema, exprsOriginal)
-				pushedExprs = append(pushedExprs, newCond)
+				pushedExprs = append(pushedExprs, cond)
 			} else {
 				remainedExprs = append(remainedExprs, cond)
 			}
@@ -1401,7 +1399,7 @@ func (r *MergeAggregationProjection) OnTransform(old *memo.ExprIter) (newExprs [
 
 	newAggExpr := memo.NewGroupExpr(newAgg)
 	newAggExpr.SetChildren(old.Children[0].GetExpr().Children...)
-	return []*memo.GroupExpr{newAggExpr}, true, false, nil
+	return []*memo.GroupExpr{newAggExpr}, false, false, nil
 }
 
 // EliminateSingleMaxMin tries to convert a single max/min to Limit+Sort operators.
