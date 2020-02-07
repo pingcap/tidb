@@ -673,7 +673,6 @@ func (s *testEvaluatorSuite) TestClock(c *C) {
 
 	// test error
 	errTbl := []string{
-		"2011-11-11T10:10:10.11",
 		"2011-11-11 10:10:10.11.12",
 	}
 
@@ -1483,7 +1482,7 @@ func (s *testEvaluatorSuite) TestTimeDiff(c *C) {
 		{[]interface{}{"2016-12-00 12:00:00", "2016-12-01 12:00:00"}, "-24:00:00", false, 0, false},
 		{[]interface{}{"10:10:10", "10:9:0"}, "00:01:10", false, 0, false},
 		{[]interface{}{"2016-12-00 12:00:00", "10:9:0"}, "", true, 0, false},
-		{[]interface{}{"2016-12-00 12:00:00", ""}, "", true, 0, false},
+		{[]interface{}{"2016-12-00 12:00:00", ""}, "", true, 0, true},
 	}
 
 	for _, t := range tests {
