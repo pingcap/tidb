@@ -218,3 +218,46 @@ func (s *testSuite7) TestWindowFunctionsDataReference(c *C) {
 	result = tk.MustQuery("select b, first_value(b) over (order by b ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) from t")
 	result.Check(testkit.Rows("1 1", "2 1", "3 1"))
 }
+
+func (s *testSuite7) TestSlidingWindowFunctions(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("CREATE TABLE t (id INTEGER, sex CHAR(1));")
+	tk.MustExec("insert into t values (1,'M')")
+	tk.MustExec("insert into t values (2,'F')")
+	tk.MustExec("insert into t values (3,'F')")
+	tk.MustExec("insert into t values (4,'F')")
+	tk.MustExec("insert into t values (5,'M')")
+	tk.MustExec("insert into t values (10,null)")
+	tk.MustExec("insert into t values (11,null)")
+
+	tk.MustExec("PREPARE p FROM 'SELECT sex, COUNT(id) OVER (ORDER BY id ROWS BETWEEN ? PRECEDING and ? PRECEDING) FROM t';")
+	tk.MustExec("SET @p1= 1;")
+	tk.MustExec("SET @p2= 2;")
+	result := tk.MustQuery("EXECUTE p USING @p1, @p2;")
+	result.Check(testkit.Rows("M 0", "F 0", "F 0", "F 0", "M 0", "<nil> 0", "<nil> 0"))
+	result = tk.MustQuery("EXECUTE p USING @p2, @p1;")
+	result.Check(testkit.Rows("M 0", "F 1", "F 2", "F 2", "M 2", "<nil> 2", "<nil> 2"))
+	tk.MustExec("DROP PREPARE p;")
+	tk.MustExec("PREPARE p FROM 'SELECT sex, COUNT(id) OVER (ORDER BY id ROWS BETWEEN ? FOLLOWING and ? FOLLOWING) FROM t';")
+	tk.MustExec("SET @p1= 1;")
+	tk.MustExec("SET @p2= 2;")
+	result = tk.MustQuery("EXECUTE p USING @p2, @p1;")
+	result.Check(testkit.Rows("M 0", "F 0", "F 0", "F 0", "M 0", "<nil> 0", "<nil> 0"))
+	result = tk.MustQuery("EXECUTE p USING @p1, @p2;")
+	result.Check(testkit.Rows("M 2", "F 2", "F 2", "F 2", "M 2", "<nil> 1", "<nil> 0"))
+	tk.MustExec("DROP PREPARE p;")
+
+	result = tk.MustQuery("SELECT sex, COUNT(id) OVER (ORDER BY id ROWS BETWEEN 1 FOLLOWING and 2 FOLLOWING) FROM t;")
+	result.Check(testkit.Rows("M 2", "F 2", "F 2", "F 2", "M 2", "<nil> 1", "<nil> 0"))
+
+	result = tk.MustQuery("SELECT sex, COUNT(id) OVER (ORDER BY id ROWS BETWEEN 3 FOLLOWING and 1 FOLLOWING) FROM t;")
+	result.Check(testkit.Rows("M 0", "F 0", "F 0", "F 0", "M 0", "<nil> 0", "<nil> 0"))
+
+	result = tk.MustQuery("SELECT sex, COUNT(id) OVER (ORDER BY id ROWS BETWEEN 2 preceding and 1 preceding) FROM t;")
+	result.Check(testkit.Rows("M 0", "F 1", "F 2", "F 2", "M 2", "<nil> 2", "<nil> 2"))
+
+	result = tk.MustQuery("SELECT sex, COUNT(id) OVER (ORDER BY id ROWS BETWEEN 1 preceding and 3 preceding) FROM t;")
+	result.Check(testkit.Rows("M 0", "F 0", "F 0", "F 0", "M 0", "<nil> 0", "<nil> 0"))
+}
