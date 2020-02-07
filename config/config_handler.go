@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/configpb"
 	"github.com/pingcap/pd/client"
-	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
@@ -141,9 +140,7 @@ func newPDConfHandler(localConf *Config, reloadFunc ConfReloadFunc,
 
 func (ch *pdConfHandler) Start() {
 	ch.wg.Add(1)
-	go util.WithRecovery(ch.run, func(r interface{}) {
-		ch.wg.Done()
-	})
+	go ch.run()
 }
 
 func (ch *pdConfHandler) Close() {
@@ -157,6 +154,15 @@ func (ch *pdConfHandler) GetConfig() *Config {
 }
 
 func (ch *pdConfHandler) run() {
+	defer func() {
+		if r := recover(); r != nil {
+			logutil.Logger(context.Background()).Error("panic in the recoverable goroutine",
+				zap.Reflect("r", r),
+				zap.Stack("stack trace"))
+		}
+		ch.wg.Done()
+	}()
+
 	for {
 		select {
 		case <-time.After(ch.interval):
