@@ -116,10 +116,10 @@ func (e *inspectionRetriever) retrieve(ctx context.Context, sctx sessionctx.Cont
 		})
 		for _, result := range results {
 			finalRows = append(finalRows, types.MakeDatums(
-				result.typ,
-				result.instance,
 				name,
 				result.item,
+				result.typ,
+				result.instance,
 				result.actual,
 				result.expected,
 				result.severity,

@@ -1118,10 +1118,10 @@ var tableTableTiFlashReplicaCols = []columnInfo{
 }
 
 var tableInspectionResultCols = []columnInfo{
-	{"TYPE", mysql.TypeVarchar, 64, 0, nil, nil},
-	{"INSTANCE", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"RULE", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"ITEM", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"TYPE", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"INSTANCE", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"VALUE", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"REFERENCE", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"SEVERITY", mysql.TypeVarchar, 64, 0, nil, nil},
