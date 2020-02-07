@@ -209,8 +209,8 @@ github.com/pingcap/log v0.0.0-20191012051959-b742a5d432e9 h1:AJD9pZYm72vMgPcQDww
 github.com/pingcap/log v0.0.0-20191012051959-b742a5d432e9/go.mod h1:4rbK1p9ILyIfb6hU7OG2CiWSqMXnp3JMbiaVJ6mvoY8=
 github.com/pingcap/log v0.0.0-20200117041106-d28c14d3b1cd h1:CV3VsP3Z02MVtdpTMfEgRJ4T9NGgGTxdHpJerent7rM=
 github.com/pingcap/log v0.0.0-20200117041106-d28c14d3b1cd/go.mod h1:4rbK1p9ILyIfb6hU7OG2CiWSqMXnp3JMbiaVJ6mvoY8=
-github.com/pingcap/parser v0.0.0-20200206062121-701f4ad4e3c8 h1:GeqQjgIzW6WjkBu7B6a4LZ207JZNhmUS42/GjtLf9Zw=
-github.com/pingcap/parser v0.0.0-20200206062121-701f4ad4e3c8/go.mod h1:9v0Edh8IbgjGYW2ArJr19E+bvL8zKahsFp+ixWeId+4=
+github.com/pingcap/parser v0.0.0-20200207090844-d65f5147dd9f h1:uUrZ94J2/tsmCXHjF7pItG2tMqwP4P4vMojAbI8NMRY=
+github.com/pingcap/parser v0.0.0-20200207090844-d65f5147dd9f/go.mod h1:9v0Edh8IbgjGYW2ArJr19E+bvL8zKahsFp+ixWeId+4=
 github.com/pingcap/pd v1.1.0-beta.0.20191219054547-4d65bbefbc6d h1:Ui80aiLTyd0EZD56o2tjFRYpHfhazBjtBdKeR8UoTFY=
 github.com/pingcap/pd v1.1.0-beta.0.20191219054547-4d65bbefbc6d/go.mod h1:CML+b1JVjN+VbDijaIcUSmuPgpDjXEY7UiOx5yDP8eE=
 github.com/pingcap/sysutil v0.0.0-20191216090214-5f9620d22b3b h1:EEyo/SCRswLGuSk+7SB86Ak1p8bS6HL1Mi4Dhyuv6zg=
