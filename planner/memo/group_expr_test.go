@@ -27,7 +27,7 @@ func (s *testMemoSuite) TestNewGroupExpr(c *C) {
 	expr := NewGroupExpr(p)
 	c.Assert(expr.ExprNode, Equals, p)
 	c.Assert(expr.Children, IsNil)
-	c.Assert(expr.Explored, IsFalse)
+	c.Assert(expr.Explored(0), IsFalse)
 }
 
 func (s *testMemoSuite) TestGroupExprFingerprint(c *C) {

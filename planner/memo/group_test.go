@@ -62,7 +62,7 @@ func (s *testMemoSuite) TestNewGroup(c *C) {
 	c.Assert(g.Equivalents.Len(), Equals, 1)
 	c.Assert(g.Equivalents.Front().Value.(*GroupExpr), Equals, expr)
 	c.Assert(len(g.Fingerprints), Equals, 1)
-	c.Assert(g.Explored, IsFalse)
+	c.Assert(g.Explored(0), IsFalse)
 }
 
 func (s *testMemoSuite) TestGroupInsert(c *C) {
