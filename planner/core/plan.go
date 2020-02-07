@@ -263,7 +263,7 @@ type PhysicalPlan interface {
 	// IsParallel indicates whether parallel executing or not
 	IsParallel() bool
 
-	// GetConcurreny get parallel executing concurrency
+	// GetConcurrency get parallel executing concurrency
 	GetConcurrency() int
 
 	// GetPartitionDeliveringProperty get partition delivering property
@@ -519,7 +519,7 @@ func (p *basePhysicalPlan) IsParallel() bool {
 	return p.GetConcurrency() > 1
 }
 
-// Concurrency implements PhysicalPlan interface
+// GetConcurrency implements PhysicalPlan interface
 func (p *basePhysicalPlan) GetConcurrency() int {
 	return p.concurrency
 }
@@ -538,7 +538,7 @@ func (p *serialPhysicalPlanProducer) IsParallel() bool {
 	return false
 }
 
-// Concurrency implements PhysicalPlan interface
+// GetConcurrency implements PhysicalPlan interface
 func (p *serialPhysicalPlanProducer) GetConcurrency() int {
 	return 0
 }

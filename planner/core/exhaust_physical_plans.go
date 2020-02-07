@@ -59,7 +59,7 @@ func getMaxSortPrefix(sortCols, allCols []*expression.Column) []int {
 	return sortColOffsets
 }
 
-// isColumnsIncluding: including >= beIncluded
+// isColumnsIncluding checks including >= beIncluded
 func isColumnsIncluding(including, beIncluded []*expression.Column) (yes bool, equal bool) {
 	tmpSchema := expression.NewSchema(including...)
 	for _, col := range beIncluded {
