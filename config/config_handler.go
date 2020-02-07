@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/configpb"
 	"github.com/pingcap/pd/client"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
@@ -50,6 +51,8 @@ func NewConfHandler(localConf *Config, reloadFunc ConfReloadFunc) (ConfHandler, 
 	}
 }
 
+// constantConfHandler is used in local or debug environment.
+// It always returns the constant config initialized at the beginning.
 type constantConfHandler struct {
 	conf *Config
 }
@@ -98,7 +101,7 @@ func newPDConfHandler(localConf *Config, reloadFunc ConfReloadFunc,
 		KeyPath:  security.ClusterSSLKey,
 	})
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	confContent, err := encodeConfig(localConf)
 	if err != nil {
@@ -110,7 +113,7 @@ func newPDConfHandler(localConf *Config, reloadFunc ConfReloadFunc,
 	// suppose port and security config items cannot be change online.
 	status, version, conf, err := pdCli.Create(context.Background(), new(configpb.Version), tidbComponentName, id, confContent)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	if status.Code != configpb.StatusCode_OK {
 		return nil, errors.New(fmt.Sprintf("fail to register config to PD, errmsg=%v", status.Message))
@@ -121,7 +124,7 @@ func newPDConfHandler(localConf *Config, reloadFunc ConfReloadFunc,
 		return nil, err
 	}
 	if err := newConf.Valid(); err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 
 	ch := &pdConfHandler{
@@ -138,7 +141,9 @@ func newPDConfHandler(localConf *Config, reloadFunc ConfReloadFunc,
 
 func (ch *pdConfHandler) Start() {
 	ch.wg.Add(1)
-	go ch.run()
+	go util.WithRecovery(ch.run, func(r interface{}) {
+		ch.wg.Done()
+	})
 }
 
 func (ch *pdConfHandler) Close() {
@@ -152,44 +157,36 @@ func (ch *pdConfHandler) GetConfig() *Config {
 }
 
 func (ch *pdConfHandler) run() {
-	defer func() {
-		if r := recover(); r != nil {
-			logutil.Logger(context.Background()).Error("[PDConfHandler] panic: " + fmt.Sprintf("%v", r))
-		}
-		ch.wg.Done()
-	}()
 	for {
 		select {
 		case <-time.After(ch.interval):
 			// fetch new config from PD
 			status, version, newConfContent, err := ch.pdConfCli.Get(context.Background(), ch.version, tidbComponentName, ch.id)
 			if err != nil {
-				logutil.Logger(context.Background()).Error("[PDConfHandler] fetch new config error", zap.Error(err))
+				logutil.Logger(context.Background()).Error("PDConfHandler fetch new config error", zap.Error(err))
 				continue
 			}
 			if status.Code == configpb.StatusCode_NOT_CHANGE {
 				continue
 			}
 			if status.Code != configpb.StatusCode_OK {
-				logutil.Logger(context.Background()).Error("[PDConfHandler] fetch new config PD error",
+				logutil.Logger(context.Background()).Error("PDConfHandler fetch new config PD error",
 					zap.Int("code", int(status.Code)), zap.String("message", status.Message))
 				continue
 			}
 			newConf, err := decodeConfig(newConfContent)
 			if err != nil {
-				logutil.Logger(context.Background()).Error("[PDConfHandler] decode config error", zap.Error(err))
+				logutil.Logger(context.Background()).Error("PDConfHandler decode config error", zap.Error(err))
 				continue
 			}
 			if err := newConf.Valid(); err != nil {
-				logutil.Logger(context.Background()).Error("[PDConfHandler] invalid config", zap.Error(err))
+				logutil.Logger(context.Background()).Error("PDConfHandler invalid config", zap.Error(err))
 				continue
 			}
 
-			if ch.reloadFunc != nil {
-				ch.reloadFunc(ch.curConf.Load().(*Config), newConf)
-			}
+			ch.reloadFunc(ch.curConf.Load().(*Config), newConf)
 			ch.curConf.Store(newConf)
-			logutil.Logger(context.Background()).Info("[PDConfHandler] update config successfully",
+			logutil.Logger(context.Background()).Info("PDConfHandler update config successfully",
 				zap.String("fromVersion", ch.version.String()), zap.String("toVersion", version.String()))
 			ch.version = version
 		case <-ch.exit:
@@ -210,5 +207,5 @@ func encodeConfig(conf *Config) (string, error) {
 func decodeConfig(content string) (*Config, error) {
 	c := new(Config)
 	_, err := toml.Decode(content, c)
-	return c, errors.Trace(err)
+	return c, err
 }
