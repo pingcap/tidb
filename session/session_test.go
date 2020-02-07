@@ -151,25 +151,24 @@ func initPdAddrs() {
 	})
 }
 
-func (s *testSessionSuiteBase) SetUpSuite(c *C) {
-	testleak.BeforeTest()
+func doSetupSuite(s *testSessionSuiteBase, c *C, initWithTiKV bool) {
 	s.cluster = mocktikv.NewCluster()
 
 	if *withTiKV {
-		// TODO: if we run `-with-tikv -check.p true` this will cause deadlock, due to
-		// https://github.com/pingcap/check/blob/8a5a85928f125d818621be7f0ee69d7207f53622/check.go#L646
-		//initPdAddrs()
-		//s.pdAddr = <-pdAddrChan
-		//var d tikv.Driver
-		//config.GetGlobalConfig().TxnLocalLatches.Enabled = false
-		//store, err := d.Open(fmt.Sprintf("tikv://%s", s.pdAddr))
-		//c.Assert(err, IsNil)
-		//err = clearStorage(store)
-		//c.Assert(err, IsNil)
-		//err = clearETCD(store.(tikv.EtcdBackend))
-		//c.Assert(err, IsNil)
-		//session.ResetStoreForWithTiKVTest(store)
-		//s.store = store
+		if initWithTiKV {
+			initPdAddrs()
+			s.pdAddr = <-pdAddrChan
+			var d tikv.Driver
+			config.GetGlobalConfig().TxnLocalLatches.Enabled = false
+			store, err := d.Open(fmt.Sprintf("tikv://%s", s.pdAddr))
+			c.Assert(err, IsNil)
+			err = clearStorage(store)
+			c.Assert(err, IsNil)
+			err = clearETCD(store.(tikv.EtcdBackend))
+			c.Assert(err, IsNil)
+			session.ResetStoreForWithTiKVTest(store)
+			s.store = store
+		}
 	} else {
 		mocktikv.BootstrapWithSingleStore(s.cluster)
 		s.mvccStore = mocktikv.MustNewMVCCStore()
@@ -189,6 +188,14 @@ func (s *testSessionSuiteBase) SetUpSuite(c *C) {
 	s.dom.GetGlobalVarsCache().Disable()
 }
 
+func (s *testSessionSuiteBase) SetUpSuite(c *C) {
+	testleak.BeforeTest()
+
+	// TODO: if we run `-with-tikv -check.p true` this will cause deadlock, due to
+	// https://github.com/pingcap/check/blob/8a5a85928f125d818621be7f0ee69d7207f53622/check.go#L646
+	doSetupSuite(s, c, false)
+}
+
 func (s *testSessionSuiteBase) TearDownSuite(c *C) {
 	s.dom.Close()
 	s.store.Close()
@@ -200,18 +207,7 @@ func (s *testSessionSuiteBase) TearDownSuite(c *C) {
 
 func (s *testSessionSuiteBase) SetupTest(c *C) {
 	if *withTiKV && s.pdAddr == "" {
-		initPdAddrs()
-		s.pdAddr = <-pdAddrChan
-		var d tikv.Driver
-		config.GetGlobalConfig().TxnLocalLatches.Enabled = false
-		store, err := d.Open(fmt.Sprintf("tikv://%s", s.pdAddr))
-		c.Assert(err, IsNil)
-		err = clearStorage(store)
-		c.Assert(err, IsNil)
-		err = clearETCD(store.(tikv.EtcdBackend))
-		c.Assert(err, IsNil)
-		session.ResetStoreForWithTiKVTest(store)
-		s.store = store
+		doSetupSuite(s, c, true)
 	}
 }
 
