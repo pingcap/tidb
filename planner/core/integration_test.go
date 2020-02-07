@@ -18,6 +18,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/planner/core"
@@ -25,7 +26,7 @@ import (
 	"github.com/pingcap/tidb/util/testutil"
 )
 
-var _ = Suite(&testIntegrationSuite{})
+var _ = SerialSuites(&testIntegrationSuite{})
 
 type testIntegrationSuite struct {
 	testData testutil.TestData
@@ -263,7 +264,14 @@ func (s *testIntegrationSuite) TestNoneAccessPathsFoundByIsolationRead(c *C) {
 
 	_, err = tk.Exec("select * from t")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[planner:1815]Internal : Can not find access path matching 'tidb_isolation_read_engines'(value: 'tiflash'). Available values are 'tikv'.")
+	c.Assert(err.Error(), Equals, "[planner:1815]Internal : Can not find access path matching 'tidb_isolation_read_engines'(value: 'tiflash') and tidb-server config isolation-read(engines: '[tikv tiflash tidb]'). Available values are 'tikv'.")
+
+	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tikv, tiflash'")
+	config.GetGlobalConfig().IsolationRead.Engines = []string{"tiflash"}
+	_, err = tk.Exec("select * from t")
+	config.GetGlobalConfig().IsolationRead.Engines = []string{"tikv", "tiflash", "tidb"}
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[planner:1815]Internal : Can not find access path matching 'tidb_isolation_read_engines'(value: 'tikv,tiflash') and tidb-server config isolation-read(engines: '[tiflash]'). Available values are 'tikv'.")
 }
 
 func (s *testIntegrationSuite) TestSelPushDownTiFlash(c *C) {
@@ -333,6 +341,7 @@ func (s *testIntegrationSuite) TestErrNoDB(c *C) {
 	_, err := tk.Exec("grant select on test1111 to test@'%'")
 	c.Assert(errors.Cause(err), Equals, core.ErrNoDB)
 	tk.MustExec("use test")
+	tk.MustExec("create table test1111 (id int)")
 	tk.MustExec("grant select on test1111 to test@'%'")
 }
 

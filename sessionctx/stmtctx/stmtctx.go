@@ -142,6 +142,7 @@ type StatementContext struct {
 	lockWaitStartTime     *time.Time // LockWaitStartTime stores the pessimistic lock wait start time
 	PessimisticLockWaited int32
 	LockKeysDuration      time.Duration
+	LockKeysCount         int32
 }
 
 // StmtHints are SessionVars related sql hints.
