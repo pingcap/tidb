@@ -96,6 +96,23 @@
     ]
   },
   {
+    "name": "TestMergeAdjacentTopN",
+    "cases": [
+      "select b from (select b from t where c > 1 order by b limit 3) as t1 order by b limit 2",
+      "select a from (select a from t where b > 2 order by a limit 3 offset 1) as t1 order by a limit 2 offset 1",
+      "select * from (select * from t order by a limit 3) as t1 order by a limit 5",
+      "select b from (select b from t order by b limit 5) as t1 order by b limit 10",
+      "select b from (select b from t order by b limit 20) as t1 order by b limit 10",
+      "select b from (select b from t order by b limit 10) as t1 order by b limit 10",
+      "select b from (select b from t order by b limit 10 offset 10) as t1 order by b limit 10 offset 5",
+      "select b from (select b from t order by b limit 10 offset 2) as t1 order by b limit 3 offset 5",
+      "select b from (select b from t order by b limit 10 offset 5) as t1 order by b limit 5 offset 5",
+      "select a from (select a from t order by a limit 3 offset 5) as t1 order by a limit 3 offset 5",
+      "select b from (select b from t where c > 1 order by b, a limit 3) as t1 order by b limit 2",
+      "select a from (select a from t where b > 2 order by a, b limit 3 offset 1) as t1 order by a limit 2 offset 1"
+    ]
+  },
+  {
     "name": "TestTransformLimitToTableDual",
     "cases": [
       "select a from t limit 0 offset 1",
