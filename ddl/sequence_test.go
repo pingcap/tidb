@@ -153,3 +153,65 @@ func (s *testSequenceSuite) TestDropSequence(c *C) {
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[planner:1142]DROP command denied to user 'localhost'@'myuser' for table 'my_seq'")
 }
+
+func (s *testSequenceSuite) TestShowCreateSequence(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use test")
+	s.tk.MustExec("create table t(a int)")
+	s.tk.MustExec("create sequence seq")
+
+	// Test show privilege.
+	s.tk.MustExec("create user myuser@localhost")
+	s.tk.MustExec("flush privileges")
+
+	tk1 := testkit.NewTestKit(c, s.store)
+	se, err := session.CreateSession4Test(s.store)
+	c.Assert(err, IsNil)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "myuser", Hostname: "localhost"}, nil, nil), IsTrue)
+	tk1.Se = se
+
+	// Grant the myuser the access to table t in database test, but sequence seq.
+	s.tk.MustExec("grant select on test.t to 'myuser'@'localhost'")
+	s.tk.MustExec("flush privileges")
+
+	tk1.MustExec("use test")
+	tk1.MustExec("show create table t")
+	_, err = tk1.Exec("show create sequence seq")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[planner:1142]SHOW command denied to user 'myuser'@'localhost' for table 'seq'")
+
+	// Grant the myuser the access to sequence seq in database test.
+	s.tk.MustExec("grant select on test.seq to 'myuser'@'localhost'")
+	s.tk.MustExec("flush privileges")
+
+	tk1.MustQuery("show create sequence seq").Check(testkit.Rows("seq CREATE SEQUENCE `seq` start with 1 minvalue 1 maxvalue 9223372036854775806 increment by 1 cache 1000 nocycle ENGINE=InnoDB"))
+
+	// Test show sequence detail.
+	s.tk.MustExec("drop sequence if exists seq")
+	s.tk.MustExec("create sequence seq")
+	s.tk.MustQuery("show create sequence seq").Check(testkit.Rows("seq CREATE SEQUENCE `seq` start with 1 minvalue 1 maxvalue 9223372036854775806 increment by 1 cache 1000 nocycle ENGINE=InnoDB"))
+
+	s.tk.MustExec("drop sequence if exists seq")
+	s.tk.MustExec("create sequence seq start 10")
+	s.tk.MustQuery("show create sequence seq").Check(testkit.Rows("seq CREATE SEQUENCE `seq` start with 10 minvalue 1 maxvalue 9223372036854775806 increment by 1 cache 1000 nocycle ENGINE=InnoDB"))
+
+	s.tk.MustExec("drop sequence if exists seq")
+	s.tk.MustExec("create sequence seq minvalue 0")
+	s.tk.MustQuery("show create sequence seq").Check(testkit.Rows("seq CREATE SEQUENCE `seq` start with 1 minvalue 0 maxvalue 9223372036854775806 increment by 1 cache 1000 nocycle ENGINE=InnoDB"))
+
+	s.tk.MustExec("drop sequence if exists seq")
+	s.tk.MustExec("create sequence seq maxvalue 100")
+	s.tk.MustQuery("show create sequence seq").Check(testkit.Rows("seq CREATE SEQUENCE `seq` start with 1 minvalue 1 maxvalue 100 increment by 1 cache 1000 nocycle ENGINE=InnoDB"))
+
+	s.tk.MustExec("drop sequence if exists seq")
+	s.tk.MustExec("create sequence seq increment = -2")
+	s.tk.MustQuery("show create sequence seq").Check(testkit.Rows("seq CREATE SEQUENCE `seq` start with -1 minvalue -9223372036854775807 maxvalue -1 increment by -2 cache 1000 nocycle ENGINE=InnoDB"))
+
+	s.tk.MustExec("drop sequence if exists seq")
+	s.tk.MustExec("create sequence seq nocache")
+	s.tk.MustQuery("show create sequence seq").Check(testkit.Rows("seq CREATE SEQUENCE `seq` start with 1 minvalue 1 maxvalue 9223372036854775806 increment by 1 nocache nocycle ENGINE=InnoDB"))
+
+	s.tk.MustExec("drop sequence if exists seq")
+	s.tk.MustExec("create sequence seq cycle")
+	s.tk.MustQuery("show create sequence seq").Check(testkit.Rows("seq CREATE SEQUENCE `seq` start with 1 minvalue 1 maxvalue 9223372036854775806 increment by 1 cache 1000 cycle ENGINE=InnoDB"))
+}

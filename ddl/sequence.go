@@ -125,7 +125,7 @@ func handleSequenceOptions(SeqOptions []*ast.SequenceOption, sequenceInfo *model
 				sequenceInfo.Start = mathutil.MinInt64(sequenceInfo.MaxValue, model.DefaultNegativeSequenceStartValue)
 			}
 			if !minSetFlag {
-				sequenceInfo.MaxValue = model.DefaultNegativeSequenceMinValue
+				sequenceInfo.MinValue = model.DefaultNegativeSequenceMinValue
 			}
 		}
 	}
