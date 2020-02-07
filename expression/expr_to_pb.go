@@ -373,14 +373,16 @@ func (pc PbConverter) canFuncBePushed(sf *ScalarFunction) bool {
 		ast.Log10,
 		ast.Exp,
 		ast.Pow,
-		ast.Sin,
-		ast.Asin,
-		ast.Cos,
-		ast.Acos,
-		ast.Tan,
-		ast.Atan,
-		ast.Atan2,
-		ast.Cot,
+		// Rust use the llvm math functions, which have different precision with Golang/MySQL(cmath)
+		// open the following switchers if we implement them in coprocessor via `cmath`
+		// ast.Sin,
+		// ast.Asin,
+		// ast.Cos,
+		// ast.Acos,
+		// ast.Tan,
+		// ast.Atan,
+		// ast.Atan2,
+		// ast.Cot,
 		ast.Radians,
 		ast.Degrees,
 		ast.Conv,
@@ -397,14 +399,14 @@ func (pc PbConverter) canFuncBePushed(sf *ScalarFunction) bool {
 		ast.BitLength,
 		ast.Concat,
 		ast.ConcatWS,
-		ast.Locate,
+		// ast.Locate,
 		ast.Replace,
 		ast.ASCII,
 		ast.Hex,
 		ast.Reverse,
 		ast.LTrim,
 		ast.RTrim,
-		ast.Left,
+		// ast.Left,
 		ast.Strcmp,
 		ast.Space,
 		ast.Elt,
@@ -420,22 +422,23 @@ func (pc PbConverter) canFuncBePushed(sf *ScalarFunction) bool {
 		ast.JSONMerge,
 		ast.JSONSet,
 		ast.JSONInsert,
-		ast.JSONReplace,
+		// ast.JSONReplace,
 		ast.JSONRemove,
 		ast.JSONLength,
 
 		// date functions.
 		ast.DateFormat,
 		ast.FromDays,
-		ast.ToDays,
+		// ast.ToDays,
 		ast.DayOfYear,
 		ast.DayOfMonth,
 		ast.Year,
 		ast.Month,
-		ast.Hour,
-		ast.Minute,
-		ast.Second,
-		ast.MicroSecond,
+		// FIXME: the coprocessor cannot keep the same behavior with TiDB in current compute framework
+		// ast.Hour,
+		// ast.Minute,
+		// ast.Second,
+		// ast.MicroSecond,
 		ast.PeriodAdd,
 		ast.PeriodDiff,
 		ast.DayName,
@@ -444,6 +447,8 @@ func (pc PbConverter) canFuncBePushed(sf *ScalarFunction) bool {
 		ast.MD5,
 		ast.SHA1,
 		ast.UncompressedLength,
+
+		ast.Cast,
 
 		// misc functions.
 		ast.InetNtoa,
@@ -463,15 +468,6 @@ func (pc PbConverter) canFuncBePushed(sf *ScalarFunction) bool {
 			tipb.ScalarFuncSig_RoundReal,
 			tipb.ScalarFuncSig_RoundInt,
 			tipb.ScalarFuncSig_RoundDec:
-			return isPushdownEnabled(sf.FuncName.L)
-		}
-	case ast.Cast:
-		switch sf.Function.PbCode() {
-		case tipb.ScalarFuncSig_CastStringAsInt,
-			tipb.ScalarFuncSig_CastStringAsTime,
-			tipb.ScalarFuncSig_CastTimeAsInt:
-			return false
-		default:
 			return isPushdownEnabled(sf.FuncName.L)
 		}
 	case ast.Rand:
