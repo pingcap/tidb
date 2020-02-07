@@ -791,7 +791,7 @@ func prepare4HashJoin(testCase *hashJoinTestCase, innerExec, outerExec Executor)
 	e.joiners = make([]joiner, e.concurrency)
 	for i := uint(0); i < e.concurrency; i++ {
 		e.joiners[i] = newJoiner(testCase.ctx, e.joinType, true, defaultValues,
-			nil, lhsTypes, rhsTypes, retTypes(e), childrenUsedSchema)
+			nil, lhsTypes, rhsTypes, childrenUsedSchema)
 	}
 	memLimit := int64(-1)
 	if testCase.disk {
@@ -1160,11 +1160,11 @@ func prepare4IndexInnerHashJoin(tc *indexJoinTestCase, outerDS *mockDataSource, 
 			keyCols:       tc.innerJoinKeyIdx,
 		},
 		workerWg:      new(sync.WaitGroup),
+		joiner:        newJoiner(tc.ctx, 0, false, defaultValues, nil, leftTypes, rightTypes, nil),
 		isOuterJoin:   false,
 		keyOff2IdxOff: keyOff2IdxOff,
 		lastColHelper: nil,
 	}
-	e.joiner = newJoiner(tc.ctx, 0, false, defaultValues, nil, leftTypes, rightTypes, retTypes(e), nil)
 	e.joinResult = newFirstChunk(e)
 	return e
 }
@@ -1233,7 +1233,7 @@ func prepare4IndexMergeJoin(tc *indexJoinTestCase, outerDS *mockDataSource, inne
 	}
 	joiners := make([]joiner, e.ctx.GetSessionVars().IndexLookupJoinConcurrency)
 	for i := 0; i < e.ctx.GetSessionVars().IndexLookupJoinConcurrency; i++ {
-		joiners[i] = newJoiner(tc.ctx, 0, false, defaultValues, nil, leftTypes, rightTypes, retTypes(e), nil)
+		joiners[i] = newJoiner(tc.ctx, 0, false, defaultValues, nil, leftTypes, rightTypes, nil)
 	}
 	e.joiners = joiners
 	return e
@@ -1354,19 +1354,18 @@ func prepare4MergeJoin(tc *mergeJoinTestCase, leftExec, rightExec *mockDataSourc
 		stmtCtx:      tc.ctx.GetSessionVars().StmtCtx,
 		baseExecutor: newBaseExecutor(tc.ctx, joinSchema, stringutil.StringerStr("MergeJoin"), leftExec, rightExec),
 		compareFuncs: compareFuncs,
-		isOuterJoin:  false,
+		joiner: newJoiner(
+			tc.ctx,
+			0,
+			false,
+			defaultValues,
+			nil,
+			retTypes(leftExec),
+			retTypes(rightExec),
+			nil,
+		),
+		isOuterJoin: false,
 	}
-	e.joiner = newJoiner(
-		tc.ctx,
-		0,
-		false,
-		defaultValues,
-		nil,
-		retTypes(leftExec),
-		retTypes(rightExec),
-		retTypes(e),
-		nil,
-	)
 
 	e.innerTable = &mergeJoinTable{
 		isInner:    true,

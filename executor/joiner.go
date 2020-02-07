@@ -107,7 +107,7 @@ type joiner interface {
 
 func newJoiner(ctx sessionctx.Context, joinType plannercore.JoinType,
 	outerIsRight bool, defaultInner []types.Datum, filter []expression.Expression,
-	lhsColTypes, rhsColTypes, outputColTypes []*types.FieldType, projection [][]bool) joiner {
+	lhsColTypes, rhsColTypes []*types.FieldType, projection [][]bool) joiner {
 	base := baseJoiner{
 		ctx:          ctx,
 		conditions:   filter,
@@ -140,9 +140,9 @@ func newJoiner(ctx sessionctx.Context, joinType plannercore.JoinType,
 		}
 		base.initDefaultInner(innerColTypes, defaultInner)
 	}
-	// shallowRowType may be different with outputColTypes because output columns may be
-	// inline projected, while shallow row should not be because each column may need be
-	// used in filter.
+	// shallowRowType may be different with the output columns because output columns may
+	// be inline projected, while shallow row should not be because each column may need
+	// be used in filter.
 	shallowRowType := make([]*types.FieldType, 0, len(lhsColTypes)+len(rhsColTypes))
 	shallowRowType = append(shallowRowType, lhsColTypes...)
 	shallowRowType = append(shallowRowType, rhsColTypes...)
