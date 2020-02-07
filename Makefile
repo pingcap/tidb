@@ -300,7 +300,7 @@ tools/bin/golangci-lint:
 # 	$ make vectorized-bench VB_FILE=Time VB_FUNC=builtinCurrentDateSig
 vectorized-bench:
 	cd ./expression && \
-		go test -v -benchmem \
+		go test -v -timeout=0 -benchmem \
 			-bench=BenchmarkVectorizedBuiltin$(VB_FILE)Func \
 			-run=BenchmarkVectorizedBuiltin$(VB_FILE)Func \
 			-args "$(VB_FUNC)"

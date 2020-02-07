@@ -18,17 +18,9 @@ import (
 	"github.com/pingcap/parser/terror"
 )
 
+// error definitions.
 var (
 	errInvalidPrivilegeType = terror.ClassPrivilege.New(mysql.ErrInvalidPrivilegeType, mysql.MySQLErrName[mysql.ErrInvalidPrivilegeType])
-	errNonexistingGrant     = terror.ClassPrivilege.New(mysql.ErrNonexistingGrant, mysql.MySQLErrName[mysql.ErrNonexistingGrant])
+	ErrNonexistingGrant     = terror.ClassPrivilege.New(mysql.ErrNonexistingGrant, mysql.MySQLErrName[mysql.ErrNonexistingGrant])
 	errLoadPrivilege        = terror.ClassPrivilege.New(mysql.ErrLoadPrivilege, mysql.MySQLErrName[mysql.ErrLoadPrivilege])
 )
-
-func init() {
-	privilegeMySQLErrCodes := map[terror.ErrCode]uint16{
-		mysql.ErrNonexistingGrant:     mysql.ErrNonexistingGrant,
-		mysql.ErrLoadPrivilege:        mysql.ErrLoadPrivilege,
-		mysql.ErrInvalidPrivilegeType: mysql.ErrInvalidPrivilegeType,
-	}
-	terror.ErrClassToMySQLCodes[terror.ClassPrivilege] = privilegeMySQLErrCodes
-}
