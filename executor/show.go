@@ -196,6 +196,38 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 	return nil
 }
 
+// visibleChecker checks if a stmt is visible for a certain user.
+type visibleChecker struct {
+	defaultDB string
+	ctx       sessionctx.Context
+	is        infoschema.InfoSchema
+	manager   privilege.Manager
+	ok        bool
+}
+
+func (v *visibleChecker) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
+	switch x := in.(type) {
+	case *ast.TableName:
+		schema := x.Schema.L
+		if schema == "" {
+			schema = v.defaultDB
+		}
+		if !v.is.TableExists(model.NewCIStr(schema), x.Name) {
+			return in, true
+		}
+		activeRoles := v.ctx.GetSessionVars().ActiveRoles
+		if v.manager != nil && !v.manager.RequestVerification(activeRoles, schema, x.Name.L, "", mysql.SelectPriv) {
+			v.ok = false
+		}
+		return in, true
+	}
+	return in, false
+}
+
+func (v *visibleChecker) Leave(in ast.Node) (out ast.Node, ok bool) {
+	return in, true
+}
+
 func (e *ShowExec) fetchShowBind() error {
 	var bindRecords []*bindinfo.BindRecord
 	if !e.GlobalScope {
@@ -204,8 +236,24 @@ func (e *ShowExec) fetchShowBind() error {
 	} else {
 		bindRecords = domain.GetDomain(e.ctx).BindHandle().GetAllBindRecord()
 	}
+	parser := parser.New()
 	for _, bindData := range bindRecords {
 		for _, hint := range bindData.Bindings {
+			stmt, err := parser.ParseOneStmt(hint.BindSQL, hint.Charset, hint.Collation)
+			if err != nil {
+				return err
+			}
+			checker := visibleChecker{
+				defaultDB: bindData.Db,
+				ctx:       e.ctx,
+				is:        e.is,
+				manager:   privilege.GetPrivilegeManager(e.ctx),
+				ok:        true,
+			}
+			stmt.Accept(&checker)
+			if !checker.ok {
+				continue
+			}
 			e.appendRow([]interface{}{
 				bindData.OriginalSQL,
 				hint.BindSQL,

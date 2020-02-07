@@ -106,6 +106,8 @@ const (
 	tableTiFlashReplica    = "TIFLASH_REPLICA"
 	// TableInspectionResult is the string constant of inspection result table
 	TableInspectionResult = "INSPECTION_RESULT"
+	// TableMetricSummary is a summary table that contains all metrics.
+	TableMetricSummary = "METRIC_SUMMARY"
 )
 
 var tableIDMap = map[string]int64{
@@ -160,6 +162,7 @@ var tableIDMap = map[string]int64{
 	TableClusterHardware:                    autoid.InformationSchemaDBID + 49,
 	TableClusterSystemInfo:                  autoid.InformationSchemaDBID + 50,
 	TableInspectionResult:                   autoid.InformationSchemaDBID + 51,
+	TableMetricSummary:                      autoid.InformationSchemaDBID + 52,
 }
 
 type columnInfo struct {
@@ -1125,6 +1128,15 @@ var tableInspectionResultCols = []columnInfo{
 	{"SUGGESTION", mysql.TypeVarchar, 256, 0, nil, nil},
 }
 
+var tableMetricSummaryCols = []columnInfo{
+	{"METRIC_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"TIME", mysql.TypeDatetime, -1, 0, nil, nil},
+	{"SUM_VALUE", mysql.TypeDouble, 22, 0, nil, nil},
+	{"AVG_VALUE", mysql.TypeDouble, 22, 0, nil, nil},
+	{"MIN_VALUE", mysql.TypeDouble, 22, 0, nil, nil},
+	{"MAX_VALUE", mysql.TypeDouble, 22, 0, nil, nil},
+}
+
 func dataForSchemata(ctx sessionctx.Context, schemas []*model.DBInfo) [][]types.Datum {
 	checker := privilege.GetPrivilegeManager(ctx)
 	rows := make([][]types.Datum, 0, len(schemas))
@@ -1439,7 +1451,8 @@ func dataForTables(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.D
 // GetShardingInfo returns a nil or description string for the sharding information of given TableInfo.
 // The returned description string may be:
 //  - "NOT_SHARDED": for tables that SHARD_ROW_ID_BITS is not specified.
-//  - "NOT_SHARDED(PK_IS_HANDLE)": for tables that is primary key is row id.
+//  - "NOT_SHARDED(PK_IS_HANDLE)": for tables of which primary key is row id.
+//  - "PK_AUTO_RANDOM_BITS={bit_number}": for tables of which primary key is sharded row id.
 //  - "SHARD_BITS={bit_number}": for tables that with SHARD_ROW_ID_BITS.
 // The returned nil indicates that sharding information is not suitable for the table(for example, when the table is a View).
 // This function is exported for unit test.
@@ -1449,11 +1462,13 @@ func GetShardingInfo(dbInfo *model.DBInfo, tableInfo *model.TableInfo) interface
 	}
 	shardingInfo := "NOT_SHARDED"
 	if tableInfo.PKIsHandle {
-		shardingInfo = "NOT_SHARDED(PK_IS_HANDLE)"
-	} else {
-		if tableInfo.ShardRowIDBits > 0 {
-			shardingInfo = "SHARD_BITS=" + strconv.Itoa(int(tableInfo.ShardRowIDBits))
+		if tableInfo.ContainsAutoRandomBits() {
+			shardingInfo = "PK_AUTO_RANDOM_BITS=" + strconv.Itoa(int(tableInfo.AutoRandomBits))
+		} else {
+			shardingInfo = "NOT_SHARDED(PK_IS_HANDLE)"
 		}
+	} else if tableInfo.ShardRowIDBits > 0 {
+		shardingInfo = "SHARD_BITS=" + strconv.Itoa(int(tableInfo.ShardRowIDBits))
 	}
 	return shardingInfo
 }
@@ -1803,6 +1818,107 @@ func dataForPseudoProfiling() [][]types.Datum {
 	)
 	rows = append(rows, row)
 	return rows
+}
+
+func dataForPartitions(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.Datum, error) {
+	tableRowsMap, colLengthMap, err := tableStatsCache.get(ctx)
+	if err != nil {
+		return nil, err
+	}
+	checker := privilege.GetPrivilegeManager(ctx)
+	var rows [][]types.Datum
+	createTimeTp := partitionsCols[18].tp
+	for _, schema := range schemas {
+		for _, table := range schema.Tables {
+			if checker != nil && !checker.RequestVerification(ctx.GetSessionVars().ActiveRoles, schema.Name.L, table.Name.L, "", mysql.SelectPriv) {
+				continue
+			}
+			createTime := types.NewTime(types.FromGoTime(table.GetUpdateTime()), createTimeTp, types.DefaultFsp)
+
+			var rowCount, dataLength, indexLength uint64
+			if table.GetPartitionInfo() == nil {
+				rowCount = tableRowsMap[table.ID]
+				dataLength, indexLength = getDataAndIndexLength(table, table.ID, rowCount, colLengthMap)
+				avgRowLength := uint64(0)
+				if rowCount != 0 {
+					avgRowLength = dataLength / rowCount
+				}
+				record := types.MakeDatums(
+					catalogVal,    // TABLE_CATALOG
+					schema.Name.O, // TABLE_SCHEMA
+					table.Name.O,  // TABLE_NAME
+					nil,           // PARTITION_NAME
+					nil,           // SUBPARTITION_NAME
+					nil,           // PARTITION_ORDINAL_POSITION
+					nil,           // SUBPARTITION_ORDINAL_POSITION
+					nil,           // PARTITION_METHOD
+					nil,           // SUBPARTITION_METHOD
+					nil,           // PARTITION_EXPRESSION
+					nil,           // SUBPARTITION_EXPRESSION
+					nil,           // PARTITION_DESCRIPTION
+					rowCount,      // TABLE_ROWS
+					avgRowLength,  // AVG_ROW_LENGTH
+					dataLength,    // DATA_LENGTH
+					nil,           // MAX_DATA_LENGTH
+					indexLength,   // INDEX_LENGTH
+					nil,           // DATA_FREE
+					createTime,    // CREATE_TIME
+					nil,           // UPDATE_TIME
+					nil,           // CHECK_TIME
+					nil,           // CHECKSUM
+					nil,           // PARTITION_COMMENT
+					nil,           // NODEGROUP
+					nil,           // TABLESPACE_NAME
+				)
+				rows = append(rows, record)
+			} else {
+				for i, pi := range table.GetPartitionInfo().Definitions {
+					rowCount = tableRowsMap[pi.ID]
+					dataLength, indexLength = getDataAndIndexLength(table, pi.ID, tableRowsMap[pi.ID], colLengthMap)
+
+					avgRowLength := uint64(0)
+					if rowCount != 0 {
+						avgRowLength = dataLength / rowCount
+					}
+
+					var partitionDesc string
+					if table.Partition.Type == model.PartitionTypeRange {
+						partitionDesc = pi.LessThan[0]
+					}
+
+					record := types.MakeDatums(
+						catalogVal,                    // TABLE_CATALOG
+						schema.Name.O,                 // TABLE_SCHEMA
+						table.Name.O,                  // TABLE_NAME
+						pi.Name.O,                     // PARTITION_NAME
+						nil,                           // SUBPARTITION_NAME
+						i+1,                           // PARTITION_ORDINAL_POSITION
+						nil,                           // SUBPARTITION_ORDINAL_POSITION
+						table.Partition.Type.String(), // PARTITION_METHOD
+						nil,                           // SUBPARTITION_METHOD
+						table.Partition.Expr,          // PARTITION_EXPRESSION
+						nil,                           // SUBPARTITION_EXPRESSION
+						partitionDesc,                 // PARTITION_DESCRIPTION
+						rowCount,                      // TABLE_ROWS
+						avgRowLength,                  // AVG_ROW_LENGTH
+						dataLength,                    // DATA_LENGTH
+						uint64(0),                     // MAX_DATA_LENGTH
+						indexLength,                   // INDEX_LENGTH
+						uint64(0),                     // DATA_FREE
+						createTime,                    // CREATE_TIME
+						nil,                           // UPDATE_TIME
+						nil,                           // CHECK_TIME
+						nil,                           // CHECKSUM
+						pi.Comment,                    // PARTITION_COMMENT
+						nil,                           // NODEGROUP
+						nil,                           // TABLESPACE_NAME
+					)
+					rows = append(rows, record)
+				}
+			}
+		}
+	}
+	return rows, nil
 }
 
 func dataForKeyColumnUsage(ctx sessionctx.Context, schemas []*model.DBInfo) [][]types.Datum {
@@ -2248,6 +2364,7 @@ var tableNameToColumns = map[string][]columnInfo{
 	TableClusterHardware:                    tableClusterHardwareCols,
 	TableClusterSystemInfo:                  tableClusterSystemInfoCols,
 	TableInspectionResult:                   tableInspectionResultCols,
+	TableMetricSummary:                      tableMetricSummaryCols,
 }
 
 func createInfoSchemaTable(_ autoid.Allocators, meta *model.TableInfo) (table.Table, error) {
@@ -2312,6 +2429,7 @@ func (it *infoschemaTable) getRows(ctx sessionctx.Context, cols []*table.Column)
 			fullRows = dataForPseudoProfiling()
 		}
 	case tablePartitions:
+		fullRows, err = dataForPartitions(ctx, dbs)
 	case tableKeyColumn:
 		fullRows = dataForKeyColumnUsage(ctx, dbs)
 	case tableReferConst:
