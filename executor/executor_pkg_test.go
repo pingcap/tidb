@@ -40,7 +40,6 @@ type testExecSuite struct {
 }
 
 type testExecSerialSuite struct {
-
 }
 
 // mockSessionManager is a mocked session manager which is used for test.
