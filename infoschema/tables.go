@@ -107,9 +107,9 @@ const (
 	// TableInspectionResult is the string constant of inspection result table
 	TableInspectionResult = "INSPECTION_RESULT"
 	// TableMetricSummary is a summary table that contains all metrics.
-	TableMetricSummary = "METRIC_SUMMARY"
+	TableMetricSummary = "METRICS_SUMMARY"
 	// TableMetricDetail is a detail table that contains all metrics detail info.
-	TableMetricDetail = "METRIC_DETAIL"
+	TableMetricDetail = "METRICS_DETAIL"
 )
 
 var tableIDMap = map[string]int64{
