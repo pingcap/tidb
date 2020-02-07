@@ -45,9 +45,9 @@ var bufReaderPool = sync.Pool{
 	New: func() interface{} { return bufio.NewReaderSize(nil, readBufSize) },
 }
 
-func initTempDir() string {
-	tmpDir := filepath.Join(config.GetGlobalConfig().TempPath, "tidb-server-"+filepath.Base(os.Args[0]))
+var tmpDir = filepath.Join(config.GetGlobalConfig().TempStoragePath, "tidb-server-"+filepath.Base(os.Args[0]))
 
+func init() {
 	err := os.RemoveAll(tmpDir) // clean the uncleared temp file during the last run.
 	if err != nil {
 		log.Warn("Remove temporary file error", zap.String("tmpDir", tmpDir), zap.Error(err))
@@ -56,7 +56,6 @@ func initTempDir() string {
 	if err != nil {
 		log.Warn("Mkdir temporary file error", zap.String("tmpDir", tmpDir), zap.Error(err))
 	}
-	return tmpDir
 }
 
 // ListInDisk represents a slice of chunks storing in temporary disk.
@@ -87,7 +86,7 @@ func NewListInDisk(fieldTypes []*types.FieldType) *ListInDisk {
 }
 
 func (l *ListInDisk) initDiskFile() (err error) {
-	l.disk, err = ioutil.TempFile(initTempDir(), l.diskTracker.Label().String())
+	l.disk, err = ioutil.TempFile(tmpDir, l.diskTracker.Label().String())
 	if err != nil {
 		return
 	}
