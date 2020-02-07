@@ -114,11 +114,11 @@ func (r *selectResult) fetchResp(ctx context.Context) error {
 		r.selectRespSize = r.selectResp.Size()
 		r.memConsume(int64(r.selectRespSize))
 		if err := r.selectResp.Error; err != nil {
-			return terror.ClassTiKV.New(terror.ErrCode(err.Code), err.Msg)
+			return terror.ClassTiKV.Synthesize(terror.ErrCode(err.Code), err.Msg)
 		}
 		sc := r.ctx.GetSessionVars().StmtCtx
 		for _, warning := range r.selectResp.Warnings {
-			sc.AppendWarning(terror.ClassTiKV.New(terror.ErrCode(warning.Code), warning.Msg))
+			sc.AppendWarning(terror.ClassTiKV.Synthesize(terror.ErrCode(warning.Code), warning.Msg))
 		}
 		r.updateCopRuntimeStats(resultSubset.GetExecDetails(), resultSubset.RespTime())
 		r.feedback.Update(resultSubset.GetStartKey(), r.selectResp.OutputCounts)

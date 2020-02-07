@@ -33,6 +33,7 @@ func (s *testJSONSuite) TestBinaryJSONMarshalUnmarshal(c *C) {
 		`{"a": [1, "2", {"aa": "bb"}, 4, null], "b": true, "c": null}`,
 		`{"aaaaaaaaaaa": [1, "2", {"aa": "bb"}, 4.1], "bbbbbbbbbb": true, "ccccccccc": "d"}`,
 		`[{"a": 1, "b": true}, 3, 3.5, "hello, world", null, true]`,
+		`{"a": "&<>"}`,
 	}
 	for _, str := range strs {
 		parsedBJ := mustParseBinaryFromString(c, str)
