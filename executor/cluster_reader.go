@@ -118,7 +118,7 @@ func (e *clusterConfigRetriever) retrieve(_ context.Context, sctx sessionctx.Con
 	if err != nil {
 		return nil, err
 	}
-	serversInfo = filterClusterServerInfo(serversInfo, e.extractor.NodeTypes, e.extractor.Addresses)
+	serversInfo = filterClusterServerInfo(serversInfo, e.extractor.NodeTypes, e.extractor.Instances)
 
 	var finalRows [][]types.Datum
 	wg := sync.WaitGroup{}
@@ -235,7 +235,7 @@ func (e *clusterServerInfoRetriever) retrieve(ctx context.Context, sctx sessionc
 	if err != nil {
 		return nil, err
 	}
-	serversInfo = filterClusterServerInfo(serversInfo, e.extractor.NodeTypes, e.extractor.Addresses)
+	serversInfo = filterClusterServerInfo(serversInfo, e.extractor.NodeTypes, e.extractor.Instances)
 
 	type result struct {
 		idx  int
@@ -432,7 +432,7 @@ func (e *clusterLogRetriever) startRetrieving(ctx context.Context, sctx sessionc
 		return nil, err
 	}
 
-	addresses := e.extractor.Addresses
+	addresses := e.extractor.Instances
 	nodeTypes := e.extractor.NodeTypes
 	serversInfo = filterClusterServerInfo(serversInfo, nodeTypes, addresses)
 
