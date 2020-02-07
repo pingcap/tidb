@@ -143,19 +143,8 @@ func (b *builtinUpperSig) vecEvalString(input *chunk.Chunk, result *chunk.Column
 		return nil
 	}
 
-Loop:
 	for i := 0; i < input.NumRows(); i++ {
-		str := result.GetBytes(i)
-		for _, c := range str {
-			if c >= utf8.RuneSelf {
-				continue Loop
-			}
-		}
-		for i := range str {
-			if str[i] >= 'a' && str[i] <= 'z' {
-				str[i] -= 'a' - 'A'
-			}
-		}
+		result.SetRaw(i, []byte(strings.ToUpper(result.GetString(i))))
 	}
 	return nil
 }

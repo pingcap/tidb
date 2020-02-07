@@ -569,6 +569,10 @@ func (s *testEvaluatorSuite) TestUpper(c *C) {
 		{[]interface{}{nil}, true, false, ""},
 		{[]interface{}{"ab"}, false, false, "ab"},
 		{[]interface{}{1}, false, false, "1"},
+		{[]interface{}{"one week’s time TEST"}, false, false, "ONE WEEK’S TIME TEST"},
+		{[]interface{}{"one week's time TEST"}, false, false, "ONE WEEK'S TIME TEST"},
+		{[]interface{}{"abc测试def"}, false, false, "ABC测试DEF"},
+		{[]interface{}{"abcテストdef"}, false, false, "ABCテストDEF"},
 	}
 
 	for _, t := range cases {
