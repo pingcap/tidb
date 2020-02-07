@@ -1215,7 +1215,9 @@ func (s *testIntegrationSuite2) TestTimeBuiltin(c *C) {
 	_, err = tk.Exec(`update t set a = year("aa")`)
 	c.Assert(terror.ErrorEqual(err, types.ErrWrongValue), IsTrue, Commentf("err %v", err))
 	_, err = tk.Exec(`delete from t where a = year("aa")`)
-	c.Assert(terror.ErrorEqual(err, types.ErrWrongValue), IsTrue, Commentf("err %v", err))
+	// Only `code` can be used to compare because the error `class` information
+	// will be lost after expression push-down
+	c.Assert(errors.Cause(err).(*terror.Error).Code(), Equals, types.ErrWrongValue.Code(), Commentf("err %v", err))
 
 	// for month
 	result = tk.MustQuery(`select month("2013-01-09"), month("2013-00-09"), month("000-01-09"), month("1-01-09"), month("20131-01-09"), month(null);`)
@@ -1245,7 +1247,7 @@ func (s *testIntegrationSuite2) TestTimeBuiltin(c *C) {
 	_, err = tk.Exec(`update t set a = month("aa")`)
 	c.Assert(terror.ErrorEqual(err, types.ErrWrongValue), IsTrue)
 	_, err = tk.Exec(`delete from t where a = month("aa")`)
-	c.Assert(terror.ErrorEqual(err, types.ErrWrongValue), IsTrue)
+	c.Assert(errors.Cause(err).(*terror.Error).Code(), Equals, types.ErrWrongValue.Code(), Commentf("err %v", err))
 
 	// for week
 	result = tk.MustQuery(`select week("2012-12-22"), week("2012-12-22", -2), week("2012-12-22", 0), week("2012-12-22", 1), week("2012-12-22", 2), week("2012-12-22", 200);`)
