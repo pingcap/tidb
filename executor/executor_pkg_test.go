@@ -20,12 +20,17 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/ranger"
+	"github.com/pingcap/tidb/util/stringutil"
 )
 
 var _ = Suite(&testExecSuite{})
@@ -233,4 +238,90 @@ func assertEqualStrings(c *C, got []field, expect []string) {
 	for i := 0; i < len(got); i++ {
 		c.Assert(string(got[i].str), Equals, expect[i])
 	}
+}
+
+func (s *testExecSuite) TestSortSpillDisk(c *C) {
+	originCfg := config.GetGlobalConfig()
+	newConf := *originCfg
+	newConf.OOMUseTmpStorage = true
+	newConf.MemQuotaQuery = 1
+	config.StoreGlobalConfig(&newConf)
+	defer config.StoreGlobalConfig(originCfg)
+
+	ctx := mock.NewContext()
+	ctx.GetSessionVars().InitChunkSize = variable.DefMaxChunkSize
+	ctx.GetSessionVars().MaxChunkSize = variable.DefMaxChunkSize
+	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(nil, -1)
+	cas := &sortCase{rows: 2048, orderByIdx: []int{0, 1}, ndvs: []int{0, 0}, ctx: ctx}
+	opt := mockDataSourceParameters{
+		schema: expression.NewSchema(cas.columns()...),
+		rows:   cas.rows,
+		ctx:    cas.ctx,
+		ndvs:   cas.ndvs,
+	}
+	dataSource := buildMockDataSource(opt)
+	exec := &SortExec{
+		baseExecutor: newBaseExecutor(cas.ctx, dataSource.schema, stringutil.StringerStr("sort"), dataSource),
+		ByItems:      make([]*core.ByItems, 0, len(cas.orderByIdx)),
+		schema:       dataSource.schema,
+	}
+	for _, idx := range cas.orderByIdx {
+		exec.ByItems = append(exec.ByItems, &core.ByItems{Expr: cas.columns()[idx]})
+	}
+	tmpCtx := context.Background()
+	chk := newFirstChunk(exec)
+	dataSource.prepareChunks()
+	err := exec.Open(tmpCtx)
+	c.Assert(err, IsNil)
+	for {
+		err = exec.Next(tmpCtx, chk)
+		c.Assert(err, IsNil)
+		if chk.NumRows() == 0 {
+			break
+		}
+	}
+	// Test only 1 partition and all data in memory.
+	c.Assert(len(exec.partitionList), Equals, 1)
+	c.Assert(exec.partitionList[0].AlreadySpilled(), Equals, false)
+	c.Assert(exec.partitionList[0].NumRow(), Equals, 2048)
+	err = exec.Close()
+	c.Assert(err, IsNil)
+
+	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(nil, 1)
+	dataSource.prepareChunks()
+	err = exec.Open(tmpCtx)
+	c.Assert(err, IsNil)
+	for {
+		err = exec.Next(tmpCtx, chk)
+		c.Assert(err, IsNil)
+		if chk.NumRows() == 0 {
+			break
+		}
+	}
+	// Test 2 partitions and all data in disk.
+	c.Assert(len(exec.partitionList), Equals, 2)
+	c.Assert(exec.partitionList[0].AlreadySpilled(), Equals, true)
+	c.Assert(exec.partitionList[1].AlreadySpilled(), Equals, true)
+	c.Assert(exec.partitionList[0].NumRow(), Equals, 1024)
+	c.Assert(exec.partitionList[1].NumRow(), Equals, 1024)
+	err = exec.Close()
+	c.Assert(err, IsNil)
+
+	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(nil, 24000)
+	dataSource.prepareChunks()
+	err = exec.Open(tmpCtx)
+	c.Assert(err, IsNil)
+	for {
+		err = exec.Next(tmpCtx, chk)
+		c.Assert(err, IsNil)
+		if chk.NumRows() == 0 {
+			break
+		}
+	}
+	// Test only 1 partition but spill disk.
+	c.Assert(len(exec.partitionList), Equals, 1)
+	c.Assert(exec.partitionList[0].AlreadySpilled(), Equals, true)
+	c.Assert(exec.partitionList[0].NumRow(), Equals, 2048)
+	err = exec.Close()
+	c.Assert(err, IsNil)
 }

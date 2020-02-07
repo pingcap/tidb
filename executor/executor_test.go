@@ -4446,7 +4446,7 @@ func (s *testSuite) TestOOMPanicAction(c *C) {
 	c.Assert(err.Error(), Matches, "Out Of Memory Quota!.*")
 	tk.MustExec("set @@tidb_mem_quota_query=10000")
 	tk.MustExec("insert into t1 values (1),(2),(3),(4),(5);")
-	tk.MustExec("set @@tidb_mem_quota_query=200;")
+	tk.MustExec("set @@tidb_mem_quota_query=10;")
 	_, err = tk.Exec("insert into t select a from t1 order by a desc;")
 	c.Assert(err.Error(), Matches, "Out Of Memory Quota!.*")
 	_, err = tk.Exec("replace into t select a from t1 order by a desc;")
