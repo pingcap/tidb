@@ -573,9 +573,9 @@ func (s *testIntegrationSuite2) TestMathBuiltin(c *C) {
 	tk.MustExec("create table t(a int)")
 	tk.MustExec("insert into t values(1),(2),(3)")
 	tk.Se.GetSessionVars().MaxChunkSize = 1
-	tk.MustQuery("select rand(1) from t").Sort().Check(testkit.Rows("0.6046602879796196", "0.6645600532184904", "0.9405090880450124"))
-	tk.MustQuery("select rand(a) from t").Check(testkit.Rows("0.6046602879796196", "0.16729663442585624", "0.7199826688373036"))
-	tk.MustQuery("select rand(1), rand(2), rand(3)").Check(testkit.Rows("0.6046602879796196 0.16729663442585624 0.7199826688373036"))
+	tk.MustQuery("select rand(1) from t").Check(testkit.Rows("0.40540353712197724", "0.8716141803857071", "0.1418603212962489"))
+	tk.MustQuery("select rand(a) from t").Check(testkit.Rows("0.40540353712197724", "0.6555866465490187", "0.9057697559760601"))
+	tk.MustQuery("select rand(1), rand(2), rand(3)").Check(testkit.Rows("0.40540353712197724 0.6555866465490187 0.9057697559760601"))
 }
 
 func (s *testIntegrationSuite2) TestStringBuiltin(c *C) {
@@ -3250,7 +3250,7 @@ func (s *testIntegrationSuite) TestArithmeticBuiltin(c *C) {
 	tk.MustExec("insert into t value(1.2)")
 	result = tk.MustQuery("select * from t where a/0 > 1")
 	result.Check(testkit.Rows())
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1105|Division by 0"))
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1365|Division by 0"))
 
 	tk.MustExec("USE test;")
 	tk.MustExec("DROP TABLE IF EXISTS t;")
@@ -3588,6 +3588,44 @@ func (s *testIntegrationSuite) TestAggregationBuiltinGroupConcat(c *C) {
 	tk.MustExec("insert into d select group_concat(a) from t")
 	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning 1260 Some rows were cut by GROUPCONCAT(test.t.a)"))
 	tk.MustQuery("select * from d").Check(testkit.Rows("hello,h"))
+}
+
+func (s *testIntegrationSuite) TestAggregationBuiltinJSONObjectAgg(c *C) {
+	defer s.cleanEnv(c)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec(`CREATE TABLE t (
+		a int(11),
+		b varchar(100),
+		c decimal(3,2),
+		d json,
+		e date, 
+		f time,
+		g datetime DEFAULT '2012-01-01',
+		h timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		i char(36),
+		j text(50));`)
+
+	tk.MustExec(`insert into t values(1, 'ab', 5.5, '{"id": 1}', '2020-01-10', '11:12:13', '2020-01-11', '0000-00-00 00:00:00', 'first', 'json_objectagg_test');`)
+
+	result := tk.MustQuery("select json_objectagg(a, b) from t group by a order by a;")
+	result.Check(testkit.Rows(`{"1": "ab"}`))
+	result = tk.MustQuery("select json_objectagg(b, c) from t group by b order by b;")
+	result.Check(testkit.Rows(`{"ab": 5.5}`))
+	result = tk.MustQuery("select json_objectagg(e, f) from t group by e order by e;")
+	result.Check(testkit.Rows(`{"2020-01-10": "11:12:13"}`))
+	result = tk.MustQuery("select json_objectagg(f, g) from t group by f order by f;")
+	result.Check(testkit.Rows(`{"11:12:13": "2020-01-11 00:00:00"}`))
+	result = tk.MustQuery("select json_objectagg(g, h) from t group by g order by g;")
+	result.Check(testkit.Rows(`{"2020-01-11 00:00:00": "0000-00-00 00:00:00"}`))
+	result = tk.MustQuery("select json_objectagg(h, i) from t group by h order by h;")
+	result.Check(testkit.Rows(`{"0000-00-00 00:00:00": "first"}`))
+	result = tk.MustQuery("select json_objectagg(i, j) from t group by i order by i;")
+	result.Check(testkit.Rows(`{"first": "json_objectagg_test"}`))
+	result = tk.MustQuery("select json_objectagg(a, null) from t group by a order by a;")
+	result.Check(testkit.Rows(`{"1": null}`))
 }
 
 func (s *testIntegrationSuite2) TestOtherBuiltin(c *C) {
