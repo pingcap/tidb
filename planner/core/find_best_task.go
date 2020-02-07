@@ -184,6 +184,19 @@ func (p *baseLogicalPlan) findBestTask(prop *property.PhysicalProperty) (bestTas
 			curTask = enforceProperty(prop, curTask, p.basePlan.ctx)
 		}
 
+		// DEBUGG //
+		logutil.BgLogger().Info("============ curTaskBegin ===========")
+		logutil.BgLogger().Info("curTask", zap.String("plan", ToString(p)), zap.Float64("cost", curTask.cost()))
+		for p := curTask.plan(); p != nil; {
+			logutil.BgLogger().Info("detail", zap.String("plan", ToString(p)), zap.String("info", p.ExplainInfo()))
+			if len(p.Children()) > 0 {
+				p = p.Children()[0]
+			} else {
+				break
+			}
+		}
+		// DEBUGG //
+
 		// get the most efficient one.
 		if curTask.cost() < bestTask.cost() {
 			bestTask = curTask
@@ -414,6 +427,9 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty) (t task, err
 		if err != nil {
 			return
 		}
+
+		t = matchPhysicalProperty(t.plan(), prop, t, ds.basePlan.ctx)
+
 		if prop.Enforced {
 			prop.Items = oldPropCols
 			t = enforceProperty(prop, t, ds.basePlan.ctx)

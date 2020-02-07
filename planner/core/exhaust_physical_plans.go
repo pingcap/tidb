@@ -1523,7 +1523,7 @@ func (p *LogicalWindow) exhaustPhysicalPlans(prop *property.PhysicalProperty) []
 }
 
 func (p *LogicalWindow) exhaustParallelPhysicalPlans(prop *property.PhysicalProperty) []PhysicalPlan {
-	concurrency := mathutil.Min(p.basePlan.ctx.GetSessionVars().WindowConcurrency, p.basePlan.ctx.GetSessionVars().ParallelExecutorConcurrency)
+	concurrency := mathutil.Min(p.basePlan.ctx.GetSessionVars().WindowConcurrency, p.basePlan.ctx.GetSessionVars().ExecutorsConcurrency)
 	if concurrency <= 1 {
 		return nil
 	}

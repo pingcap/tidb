@@ -127,7 +127,7 @@ func (p *LogicalWindow) PreparePossiblePartitionProperties(localProperties [][]*
 	}
 
 	deliveringProperties := make([]*property.PhysicalProperty, 0, len(matchedGroupingCols)+1)
-	p.possibleChildPartitionProperties = make([]*property.PhysicalProperty, len(matchedGroupingCols)+1)
+	p.possibleChildPartitionProperties = make([]*property.PhysicalProperty, 0, len(matchedGroupingCols)+1)
 	for _, cols := range matchedGroupingCols {
 		prop := &property.PhysicalProperty{
 			IsPartitioning:        true,

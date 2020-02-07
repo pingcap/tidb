@@ -40,6 +40,7 @@ type task interface {
 	copy() task
 	plan() PhysicalPlan
 	invalid() bool
+	setConcurrency(concurrency int)
 }
 
 // copTask is a task that runs in a distributed kv store.
@@ -102,6 +103,9 @@ func (t *copTask) plan() PhysicalPlan {
 		return t.tablePlan
 	}
 	return t.indexPlan
+}
+
+func (t *copTask) setConcurrency(concurrency int) {
 }
 
 func attachPlan2Task(p PhysicalPlan, t task) task {
@@ -732,18 +736,24 @@ func setTableScanToTableRowIDScan(p PhysicalPlan) {
 
 // rootTask is the final sink node of a plan graph. It should be a single goroutine on tidb.
 type rootTask struct {
-	p   PhysicalPlan
-	cst float64
+	p           PhysicalPlan
+	cst         float64
+	concurrency float64
 }
 
 func (t *rootTask) copy() task {
 	return &rootTask{
-		p:   t.p,
-		cst: t.cst,
+		p:           t.p,
+		cst:         t.cst,
+		concurrency: t.concurrency,
 	}
 }
 
 func (t *rootTask) count() float64 {
+	if t.concurrency > 1.0 {
+		// TODOO: wrong result for memory cost
+		return t.p.statsInfo().RowCount / t.concurrency
+	}
 	return t.p.statsInfo().RowCount
 }
 
@@ -757,6 +767,10 @@ func (t *rootTask) cost() float64 {
 
 func (t *rootTask) plan() PhysicalPlan {
 	return t.p
+}
+
+func (t *rootTask) setConcurrency(concurrency int) {
+	t.concurrency = (float64)(concurrency)
 }
 
 func (p *PhysicalLimit) attach2Task(tasks ...task) task {
@@ -1298,4 +1312,12 @@ func (p *PhysicalHashAgg) GetCost(inputRows float64, isRoot bool) float64 {
 	// check duplication.
 	memoryCost += inputRows * distinctFactor * sessVars.MemoryFactor * float64(numDistinctFunc)
 	return cpuCost + memoryCost
+}
+
+func (p *PhysicalShuffle) attach2Task(tasks ...task) task {
+	t := tasks[0].copy()
+	t = attachPlan2Task(p, t)
+	t.setConcurrency(p.FanOut)
+	//TODOO t.addCost(p.GetCost(t.count()))
+	return t
 }

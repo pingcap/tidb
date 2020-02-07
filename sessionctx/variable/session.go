@@ -669,6 +669,7 @@ func NewSessionVars() *SessionVars {
 		HashAggPartialConcurrency:  DefTiDBHashAggPartialConcurrency,
 		HashAggFinalConcurrency:    DefTiDBHashAggFinalConcurrency,
 		WindowConcurrency:          DefTiDBWindowConcurrency,
+		ExecutorsConcurrency:       DefTiDBExecutorsConcurrency,
 	}
 	vars.MemQuota = MemQuota{
 		MemQuotaQuery:             config.GetGlobalConfig().MemQuotaQuery,
@@ -1040,6 +1041,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.HashAggFinalConcurrency = tidbOptPositiveInt32(val, DefTiDBHashAggFinalConcurrency)
 	case TiDBWindowConcurrency:
 		s.WindowConcurrency = tidbOptPositiveInt32(val, DefTiDBWindowConcurrency)
+	case TiDBExecutorsConcurrency:
+		s.ExecutorsConcurrency = tidbOptPositiveInt32(val, DefTiDBExecutorsConcurrency)
 	case TiDBDistSQLScanConcurrency:
 		s.DistSQLScanConcurrency = tidbOptPositiveInt32(val, DefDistSQLScanConcurrency)
 	case TiDBIndexSerialScanConcurrency:
@@ -1287,9 +1290,9 @@ type Concurrency struct {
 	// IndexSerialScanConcurrency is the number of concurrent index serial scan worker.
 	IndexSerialScanConcurrency int
 
-	// ParallelExecutorConcurrency is the number of concurrent workers for parallel executors.
+	// ExecutorsConcurrency is the number of concurrent workers for parallel executors.
 	// In the new parallel framework, specific executor variable (e.g. `WindowConcurrency`) is just a parallel switch.
-	ParallelExecutorConcurrency int
+	ExecutorsConcurrency int
 }
 
 // MemQuota defines memory quota values.

@@ -26,6 +26,7 @@ func matchPhysicalProperty(pp PhysicalPlan, requiredProperty *property.PhysicalP
 	if tsk.plan() == nil {
 		return tsk
 	}
+	tsk = finishCopTask(ctx, tsk)
 	deliveringProperty := pp.GetPartitionDeliveringProperty()
 
 	if !requiredProperty.IsPartitioning {
@@ -84,7 +85,7 @@ func setShuffleMergeByRandom(shuffle *PhysicalShuffle, concurrency int) {
 }
 
 func enforceInitialPartition(pp PhysicalPlan, requiredProperty *property.PhysicalProperty, ctx sessionctx.Context) *PhysicalShuffle {
-	concurrency := ctx.GetSessionVars().ParallelExecutorConcurrency
+	concurrency := ctx.GetSessionVars().ExecutorsConcurrency
 	shuffle := newPhysicalShuffle(pp, ctx)
 	if len(requiredProperty.PartitionGroupingCols) > 0 {
 		setShuffleSplitByHash(shuffle, concurrency, requiredProperty.PartitionGroupingCols)
@@ -95,7 +96,7 @@ func enforceInitialPartition(pp PhysicalPlan, requiredProperty *property.Physica
 }
 
 func enforceFullMerge(pp PhysicalPlan, requiredProperty *property.PhysicalProperty, deliveringProperty *property.PhysicalProperty, ctx sessionctx.Context) *PhysicalShuffle {
-	concurrency := ctx.GetSessionVars().ParallelExecutorConcurrency
+	concurrency := ctx.GetSessionVars().ExecutorsConcurrency
 	shuffle := newPhysicalShuffle(pp, ctx)
 	if len(requiredProperty.Items) > 0 {
 		// requiredProperty.IsPrefix(deliveringProperty) is ensured in `exhaustPhysicalPlans`.
@@ -115,7 +116,7 @@ func matchGlobalPhysicalProperty(requiredProperty *property.PhysicalProperty, de
 }
 
 func enforceRepartition(pp PhysicalPlan, requiredProperty *property.PhysicalProperty, deliveringProperty *property.PhysicalProperty, ctx sessionctx.Context) *PhysicalShuffle {
-	concurrency := ctx.GetSessionVars().ParallelExecutorConcurrency
+	concurrency := ctx.GetSessionVars().ExecutorsConcurrency
 	shuffle := newPhysicalShuffle(pp, ctx)
 	setShuffleSplitByHash(shuffle, concurrency, requiredProperty.PartitionGroupingCols)
 	if len(requiredProperty.Items) > 0 {
