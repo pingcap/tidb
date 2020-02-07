@@ -18,7 +18,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
@@ -880,11 +879,42 @@ func (b *builtinCastStringAsIntSig) vecEvalInt(input *chunk.Chunk, result *chunk
 }
 
 func (b *builtinCastStringAsDurationSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinCastStringAsDurationSig) vecEvalDuration(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
+		return err
+	}
+	result.ResizeGoDuration(n, false)
+	result.MergeNulls(buf)
+	ds := result.GoDurations()
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		dur, err := types.ParseDuration(b.ctx.GetSessionVars().StmtCtx, buf.GetString(i), int8(b.tp.Decimal))
+		if err != nil {
+			if types.ErrTruncatedWrongVal.Equal(err) {
+				err = b.ctx.GetSessionVars().StmtCtx.HandleTruncate(err)
+			}
+			if err != nil {
+				return err
+			}
+			if dur == types.ZeroDuration {
+				result.SetNull(i, true)
+				continue
+			}
+		}
+		ds[i] = dur.Duration
+	}
+	return nil
 }
 
 func (b *builtinCastDurationAsDecimalSig) vectorized() bool {
