@@ -14,8 +14,14 @@ package core
 
 import (
 	"context"
-	"errors"
+	"fmt"
+	"math"
+	"sort"
+	"strconv"
+	"strings"
 
+	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/planner/util"
@@ -24,7 +30,7 @@ import (
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/math"
+	abs "github.com/pingcap/tidb/util/math"
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/ranger"
 )
@@ -132,7 +138,7 @@ func (s *partitionProcessor) pruneHashPartition(ds *DataSource, pi *model.Partit
 		return tableDual, nil
 	}
 	if ok {
-		idx := math.Abs(val) % int64(pi.Num)
+		idx := abs.Abs(val) % int64(pi.Num)
 		newDataSource := *ds
 		newDataSource.baseLogicalPlan = newBaseLogicalPlan(ds.SCtx(), plancodec.TypeTableScan, &newDataSource, ds.blockOffset)
 		newDataSource.isPartition = true
@@ -200,13 +206,23 @@ func (s *partitionProcessor) prune(ds *DataSource) (LogicalPlan, error) {
 	if pi == nil {
 		return ds, nil
 	}
-	partitionDefs := ds.table.Meta().Partition.Definitions
-	filterConds := ds.allConds
 
 	// Try to locate partition directly for hash partition.
 	if pi.Type == model.PartitionTypeHash {
 		return s.pruneHashPartition(ds, pi)
 	}
+	if pi.Type == model.PartitionTypeRange {
+		if len(pi.Columns) == 0 {
+			return s.pruneRangePartition(ds, pi)
+		} else {
+			// TODO: Clean up the old code.
+			// return s.pruneRangeColumnPartition(ds, pi)
+		}
+	}
+
+	// TODO: Clean up the old code.
+	partitionDefs := ds.table.Meta().Partition.Definitions
+	filterConds := ds.allConds
 
 	var partitionExprs []expression.Expression
 	var col *expression.Column
@@ -350,4 +366,274 @@ func (s *partitionProcessor) findByName(partitionNames []model.CIStr, partitionN
 
 func (*partitionProcessor) name() string {
 	return "partition_processor"
+}
+
+type lessThanData struct {
+	data     []int64
+	maxvalue bool
+}
+
+func (lt *lessThanData) length() int {
+	return len(lt.data)
+}
+
+func (lt *lessThanData) compare(ith int, v int64) int {
+	if ith == len(lt.data)-1 {
+		if lt.maxvalue {
+			return 1
+		}
+	}
+	switch {
+	case lt.data[ith] > v:
+		return 1
+	case lt.data[ith] == v:
+		return 0
+	}
+	return -1
+}
+
+func (s *partitionProcessor) pruneRangePartition(ds *DataSource, pi *model.PartitionInfo) (LogicalPlan, error) {
+	var maxValue bool
+	lessThan := make([]int64, len(pi.Definitions))
+	for i := 0; i < len(pi.Definitions); i++ {
+		if strings.EqualFold(pi.Definitions[i].LessThan[0], "MAXVALUE") {
+			// Use a bool flag instead of math.MaxInt64 to avoid the corner cases.
+			maxValue = true
+		} else {
+			var err error
+			lessThan[i], err = strconv.ParseInt(pi.Definitions[i].LessThan[0], 10, 64)
+			if err != nil {
+				return nil, errors.WithStack(err)
+			}
+		}
+	}
+
+	schema := expression.NewSchema(ds.TblCols...)
+	tmp, err := expression.ParseSimpleExprsWithNames(ds.ctx, pi.Expr, schema, ds.names)
+	if err != nil {
+		return nil, err
+	}
+	partExpr := tmp[0]
+
+	var col *expression.Column
+	var fn *expression.ScalarFunction
+	switch raw := partExpr.(type) {
+	case *expression.ScalarFunction:
+		if _, ok := monotoneIncFuncs[raw.FuncName.L]; ok {
+			fn = raw
+			col, ok = fn.GetArgs()[0].(*expression.Column)
+		}
+	case *expression.Column:
+		col = raw
+	}
+
+	// partitions[start:end] will be the pruned result.
+	start, end := 0, len(lessThan)
+	if col != nil {
+		for _, cond := range ds.allConds {
+			dataForPrune, ok := extractDataForPrune(ds.ctx, cond, col, fn)
+			if !ok {
+				continue
+			}
+			start, end = pruneUseBinarySearch(lessThanData{lessThan, maxValue}, start, end, dataForPrune)
+		}
+	}
+
+	return s.makeUnionAllChildren(ds, pi, start, end)
+}
+
+// monotoneIncFuncs are those functions that for any x y, if x > y => f(x) > f(y)
+var monotoneIncFuncs = map[string]struct{}{
+	ast.ToDays:        {},
+	ast.UnixTimestamp: {},
+}
+
+// f(x) op const, op is > = <
+type dataForPrune struct {
+	op string
+	c  int64
+}
+
+// extractDataForPrune extracts data from the expression for pruning.
+// The expression should have this form:  'f(x) op const', otherwise it can't be pruned.
+func extractDataForPrune(sctx sessionctx.Context, expr expression.Expression, col *expression.Column, partFn *expression.ScalarFunction) (dataForPrune, bool) {
+	var ret dataForPrune
+	op, ok := expr.(*expression.ScalarFunction)
+	if !ok {
+		return ret, false
+	}
+	switch op.FuncName.L {
+	case ast.EQ, ast.LT, ast.GT, ast.LE, ast.GE:
+		ret.op = op.FuncName.L
+	case ast.IsNull:
+		// Change isnull(col) to 'col = -xxx'
+		if arg0, ok := op.GetArgs()[0].(*expression.Column); ok && arg0.ID == col.ID {
+			ret.op = ast.EQ
+			ret.c = math.MinInt64
+			return ret, true
+		} else {
+			return ret, false
+		}
+	default:
+		return ret, false
+	}
+
+	if arg0, ok := op.GetArgs()[0].(*expression.Column); ok && arg0.ID == col.ID {
+		if arg1, ok := op.GetArgs()[1].(*expression.Constant); ok {
+			// Current expression is 'col op const'
+			var constExpr expression.Expression
+			if partFn != nil {
+				// If the partition expression is fn(col), change constExpr to fn(constExpr).
+				// No copy on write here, this is a dangerous operation.
+				args := partFn.GetArgs()
+				args[0] = arg1
+				constExpr = partFn
+			} else {
+				// If the partition expression is col, use constExpr.
+				constExpr = arg1
+			}
+			fmt.Println("=== eval int ===", constExpr)
+			c, isNull, err := constExpr.EvalInt(sctx, chunk.Row{})
+			if err == nil && !isNull {
+				ret.c = c
+				return ret, true
+			}
+		}
+	} else if arg0, ok := op.GetArgs()[1].(*expression.Column); ok && arg0.ID != col.ID {
+		if arg1, ok := op.GetArgs()[0].(*expression.Constant); ok {
+			var constExpr expression.Expression
+			if partFn != nil {
+				args := partFn.GetArgs()
+				args[0] = constExpr
+				constExpr = partFn
+			} else {
+				constExpr = arg1
+			}
+			c, isNull, err := constExpr.EvalInt(sctx, chunk.Row{})
+			if err == nil && !isNull {
+				ret.c = c
+				ret.op = opposite(ret.op)
+				return ret, true
+			}
+		}
+	}
+
+	return ret, false
+}
+
+// opposite turns 'a > b' to 'b <= a'
+func opposite(op string) string {
+	switch op {
+	case ast.EQ:
+		return op
+	case ast.LT:
+		return ast.GE
+	case ast.GT:
+		return ast.LE
+	case ast.LE:
+		return ast.GT
+	case ast.GE:
+		return ast.LT
+	}
+	panic("invalid input parameter")
+}
+
+func pruneUseBinarySearch(lessThan lessThanData, start, end int, data dataForPrune) (int, int) {
+	switch data.op {
+	case ast.EQ:
+		// col = 66, lessThan = [4 7 11 14 17] => [5, 6)
+		// col = 14, lessThan = [4 7 11 14 17] => [4, 5)
+		// col = 10, lessThan = [4 7 11 14 17] => [2, 3)
+		// col = 3, lessThan = [4 7 11 14 17] => [0, 1)
+		pos := sort.Search(lessThan.length(), func(i int) bool { return lessThan.compare(i, data.c) > 0 })
+		start, end = updateRange(start, end, pos, pos+1)
+	case ast.LT:
+		// col < 66, lessThan = [4 7 11 14 17] => [0, 5)
+		// col < 14, lessThan = [4 7 11 14 17] => [0, 4)
+		// col < 10, lessThan = [4 7 11 14 17] => [0, 3)
+		// col < 3, lessThan = [4 7 11 14 17] => [0, 1)
+		pos := sort.Search(lessThan.length(), func(i int) bool { return lessThan.compare(i, data.c) >= 0 })
+		start, end = updateRange(start, end, 0, pos+1)
+	case ast.GT, ast.GE:
+		// col [> | >=] 66, lessThan = [4 7 11 14 17] => [5, 5)
+		// col [> | >=] 14, lessThan = [4 7 11 14 17] => [4, 5)
+		// col [> | >=] 10, lessThan = [4 7 11 14 17] => [2, 5)
+		// col [> | >=] 3, lessThan = [4 7 11 14 17] => [0, 5)
+		pos := sort.Search(lessThan.length(), func(i int) bool { return lessThan.compare(i, data.c) > 0 })
+		fmt.Println("===", pos)
+		start, end = updateRange(start, end, pos, lessThan.length())
+	case ast.LE:
+		// col <= 66, lessThan = [4 7 11 14 17] => [0, 6)
+		// col <= 14, lessThan = [4 7 11 14 17] => [0, 5)
+		// col <= 10, lessThan = [4 7 11 14 17] => [0, 3)
+		// col <= 3, lessThan = [4 7 11 14 17] => [0, 1)
+		pos := sort.Search(lessThan.length(), func(i int) bool { return lessThan.compare(i, data.c) > 0 })
+		start, end = updateRange(start, end, 0, pos+1)
+	default:
+	}
+
+	if end > lessThan.length() {
+		end = lessThan.length()
+	}
+	fmt.Println(" start, end = ", start, end)
+	return start, end
+}
+
+func updateRange(start, end, newStart, newEnd int) (int, int) {
+	var s, e int
+	if start > newStart {
+		s = start
+	} else {
+		s = newStart
+	}
+
+	if end < newEnd {
+		e = end
+	} else {
+		e = newEnd
+	}
+	return s, e
+}
+
+func (s *partitionProcessor) makeUnionAllChildren(ds *DataSource, pi *model.PartitionInfo, start, end int) (LogicalPlan, error) {
+	children := make([]LogicalPlan, 0, len(pi.Definitions))
+	for i := start; i < end; i++ {
+		// This is for `table partition (p0,p1)` syntax, only union the specified partition if has specified partitions.
+		if len(ds.partitionNames) != 0 {
+			if !s.findByName(ds.partitionNames, pi.Definitions[i].Name.L) {
+				continue
+			}
+		}
+		// Not a deep copy.
+		newDataSource := *ds
+		newDataSource.baseLogicalPlan = newBaseLogicalPlan(ds.SCtx(), plancodec.TypeTableScan, &newDataSource, ds.blockOffset)
+		newDataSource.isPartition = true
+		newDataSource.physicalTableID = pi.Definitions[i].ID
+		newDataSource.possibleAccessPaths = make([]*util.AccessPath, len(ds.possibleAccessPaths))
+		for i := range ds.possibleAccessPaths {
+			newPath := *ds.possibleAccessPaths[i]
+			newDataSource.possibleAccessPaths[i] = &newPath
+		}
+		// There are many expression nodes in the plan tree use the original datasource
+		// id as FromID. So we set the id of the newDataSource with the original one to
+		// avoid traversing the whole plan tree to update the references.
+		newDataSource.id = ds.id
+		newDataSource.statisticTable = getStatsTable(ds.SCtx(), ds.table.Meta(), pi.Definitions[i].ID)
+		children = append(children, &newDataSource)
+	}
+
+	if len(children) == 0 {
+		// No result after table pruning.
+		tableDual := LogicalTableDual{RowCount: 0}.Init(ds.SCtx(), ds.blockOffset)
+		tableDual.schema = ds.Schema()
+		return tableDual, nil
+	}
+	if len(children) == 1 {
+		// No need for the union all.
+		return children[0], nil
+	}
+	unionAll := LogicalUnionAll{}.Init(ds.SCtx(), ds.blockOffset)
+	unionAll.SetChildren(children...)
+	unionAll.SetSchema(ds.schema)
+	return unionAll, nil
 }

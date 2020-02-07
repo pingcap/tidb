@@ -14,7 +14,7 @@
 package expression
 
 import (
-	"fmt"
+	// "fmt"
 	"math"
 	"strings"
 	"time"
@@ -1714,7 +1714,6 @@ func (s *testEvaluatorSuite) TestUnixTimestamp(c *C) {
 	}
 
 	for _, test := range tests {
-		fmt.Printf("Begin Test %v\n", test)
 		expr := s.datumsToConstants([]types.Datum{test.input})
 		expr[0].GetType().Decimal = test.inputDecimal
 		resetStmtContext(s.ctx)
