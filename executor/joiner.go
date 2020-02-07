@@ -19,8 +19,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/logutil"
-	"go.uber.org/zap"
 )
 
 var (
@@ -131,9 +129,9 @@ func newJoiner(ctx sessionctx.Context, joinType plannercore.JoinType,
 				base.rUsed = append(base.rUsed, i)
 			}
 		}
-		logutil.BgLogger().Info("InlineProjection",
-			zap.Ints("lUsed", base.lUsed), zap.Ints("rUsed", base.rUsed),
-			zap.Int("lCount", len(lhsColTypes)), zap.Int("rCount", len(rhsColTypes)))
+		// logutil.BgLogger().Info("InlineProjection",
+		// 	zap.Ints("lUsed", base.lUsed), zap.Ints("rUsed", base.rUsed),
+		// 	zap.Int("lCount", len(lhsColTypes)), zap.Int("rCount", len(rhsColTypes)))
 	}
 	if joinType == plannercore.LeftOuterJoin || joinType == plannercore.RightOuterJoin {
 		innerColTypes := lhsColTypes
