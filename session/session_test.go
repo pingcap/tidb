@@ -151,24 +151,22 @@ func initPdAddrs() {
 	})
 }
 
-func doSetupSuite(s *testSessionSuiteBase, c *C, initWithTiKV bool) {
+func doSetupSuite(s *testSessionSuiteBase, c *C) {
 	s.cluster = mocktikv.NewCluster()
 
 	if *withTiKV {
-		if initWithTiKV {
-			initPdAddrs()
-			s.pdAddr = <-pdAddrChan
-			var d tikv.Driver
-			config.GetGlobalConfig().TxnLocalLatches.Enabled = false
-			store, err := d.Open(fmt.Sprintf("tikv://%s", s.pdAddr))
-			c.Assert(err, IsNil)
-			err = clearStorage(store)
-			c.Assert(err, IsNil)
-			err = clearETCD(store.(tikv.EtcdBackend))
-			c.Assert(err, IsNil)
-			session.ResetStoreForWithTiKVTest(store)
-			s.store = store
-		}
+		initPdAddrs()
+		s.pdAddr = <-pdAddrChan
+		var d tikv.Driver
+		config.GetGlobalConfig().TxnLocalLatches.Enabled = false
+		store, err := d.Open(fmt.Sprintf("tikv://%s", s.pdAddr))
+		c.Assert(err, IsNil)
+		err = clearStorage(store)
+		c.Assert(err, IsNil)
+		err = clearETCD(store.(tikv.EtcdBackend))
+		c.Assert(err, IsNil)
+		session.ResetStoreForWithTiKVTest(store)
+		s.store = store
 	} else {
 		mocktikv.BootstrapWithSingleStore(s.cluster)
 		s.mvccStore = mocktikv.MustNewMVCCStore()
@@ -193,7 +191,9 @@ func (s *testSessionSuiteBase) SetUpSuite(c *C) {
 
 	// TODO: if we run `-with-tikv -check.p true` this will cause deadlock, due to
 	// https://github.com/pingcap/check/blob/8a5a85928f125d818621be7f0ee69d7207f53622/check.go#L646
-	doSetupSuite(s, c, false)
+	if !*withTiKV {
+		doSetupSuite(s, c)
+	}
 }
 
 func (s *testSessionSuiteBase) TearDownSuite(c *C) {
@@ -207,7 +207,7 @@ func (s *testSessionSuiteBase) TearDownSuite(c *C) {
 
 func (s *testSessionSuiteBase) SetupTest(c *C) {
 	if *withTiKV && s.pdAddr == "" {
-		doSetupSuite(s, c, true)
+		doSetupSuite(s, c)
 	}
 }
 

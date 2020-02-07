@@ -41,7 +41,7 @@ type testPessimisticSuite struct {
 func (s *testPessimisticSuite) SetUpSuite(c *C) {
 	s.testSessionSuiteBase.SetUpSuite(c)
 	if *withTiKV {
-		doSetupSuite(&s.testSessionSuiteBase, c, true)
+		doSetupSuite(&s.testSessionSuiteBase, c)
 	}
 	// Set it to 300ms for testing lock resolve.
 	atomic.StoreUint64(&tikv.ManagedLockTTL, 300)
