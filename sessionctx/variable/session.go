@@ -582,7 +582,6 @@ func NewSessionVars() *SessionVars {
 		PreparedStmtNameToID:        make(map[string]uint32),
 		PreparedParams:              make([]types.Datum, 0, 10),
 		TxnCtx:                      &TransactionContext{},
-		KVVars:                      kv.NewVariables(),
 		RetryInfo:                   &RetryInfo{},
 		ActiveRoles:                 make([]*auth.RoleIdentity, 0, 10),
 		StrictSQLMode:               true,
@@ -626,6 +625,7 @@ func NewSessionVars() *SessionVars {
 		MetricSchemaStep:            DefTiDBMetricSchemaStep,
 		MetricSchemaRangeDuration:   DefTiDBMetricSchemaRangeDuration,
 	}
+	vars.KVVars = kv.NewVariables(&vars.Killed)
 	vars.Concurrency = Concurrency{
 		IndexLookupConcurrency:     DefIndexLookupConcurrency,
 		IndexSerialScanConcurrency: DefIndexSerialScanConcurrency,
@@ -635,6 +635,7 @@ func NewSessionVars() *SessionVars {
 		DistSQLScanConcurrency:     DefDistSQLScanConcurrency,
 		HashAggPartialConcurrency:  DefTiDBHashAggPartialConcurrency,
 		HashAggFinalConcurrency:    DefTiDBHashAggFinalConcurrency,
+		WindowConcurrency:          DefTiDBWindowConcurrency,
 	}
 	vars.MemQuota = MemQuota{
 		MemQuotaQuery:             config.GetGlobalConfig().MemQuotaQuery,
@@ -1004,6 +1005,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.HashAggPartialConcurrency = tidbOptPositiveInt32(val, DefTiDBHashAggPartialConcurrency)
 	case TiDBHashAggFinalConcurrency:
 		s.HashAggFinalConcurrency = tidbOptPositiveInt32(val, DefTiDBHashAggFinalConcurrency)
+	case TiDBWindowConcurrency:
+		s.WindowConcurrency = tidbOptPositiveInt32(val, DefTiDBWindowConcurrency)
 	case TiDBDistSQLScanConcurrency:
 		s.DistSQLScanConcurrency = tidbOptPositiveInt32(val, DefDistSQLScanConcurrency)
 	case TiDBIndexSerialScanConcurrency:
@@ -1046,6 +1049,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.MemQuotaNestedLoopApply = tidbOptInt64(val, DefTiDBMemQuotaNestedLoopApply)
 	case TiDBGeneralLog:
 		atomic.StoreUint32(&ProcessGeneralLog, uint32(tidbOptPositiveInt32(val, DefTiDBGeneralLog)))
+	case TiDBPProfSQLCPU:
+		EnablePProfSQLCPU.Store(uint32(tidbOptPositiveInt32(val, DefTiDBPProfSQLCPU)) > 0)
 	case TiDBSlowLogThreshold:
 		atomic.StoreUint64(&config.GetGlobalConfig().Log.SlowThreshold, uint64(tidbOptInt64(val, logutil.DefaultSlowThreshold)))
 	case TiDBRecordPlanInSlowLog:
@@ -1250,6 +1255,9 @@ type Concurrency struct {
 
 	// HashAggFinalConcurrency is the number of concurrent hash aggregation final worker.
 	HashAggFinalConcurrency int
+
+	// WindowConcurrency is the number of concurrent window worker.
+	WindowConcurrency int
 
 	// IndexSerialScanConcurrency is the number of concurrent index serial scan worker.
 	IndexSerialScanConcurrency int

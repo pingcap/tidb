@@ -17,6 +17,7 @@ import (
 	"os"
 
 	"github.com/pingcap/parser/mysql"
+	"github.com/uber-go/atomic"
 )
 
 /*
@@ -105,6 +106,9 @@ const (
 
 	// tidb_general_log is used to log every query in the server in info level.
 	TiDBGeneralLog = "tidb_general_log"
+
+	// tidb_pprof_sql_cpu is used to add label sql label to pprof result.
+	TiDBPProfSQLCPU = "tidb_pprof_sql_cpu"
 
 	// tidb_slow_log_threshold is used to set the slow log threshold in the server.
 	TiDBSlowLogThreshold = "tidb_slow_log_threshold"
@@ -269,6 +273,9 @@ const (
 	// The hash agg executor starts multiple concurrent final workers to do final aggregate works.
 	TiDBHashAggFinalConcurrency = "tidb_hashagg_final_concurrency"
 
+	// tidb_window_concurrency is used for window parallel executor.
+	TiDBWindowConcurrency = "tidb_window_concurrency"
+
 	// tidb_backoff_lock_fast is used for tikv backoff base time in milliseconds.
 	TiDBBackoffLockFast = "tidb_backoff_lock_fast"
 
@@ -422,6 +429,7 @@ const (
 	DefTiDBMemQuotaNestedLoopApply     = 32 << 30 // 32GB.
 	DefTiDBMemQuotaDistSQL             = 32 << 30 // 32GB.
 	DefTiDBGeneralLog                  = 0
+	DefTiDBPProfSQLCPU                 = 0
 	DefTiDBRetryLimit                  = 10
 	DefTiDBDisableTxnAutoRetry         = true
 	DefTiDBConstraintCheckInPlace      = false
@@ -437,6 +445,7 @@ const (
 	DefTiDBMaxDeltaSchemaCount         = 1024
 	DefTiDBHashAggPartialConcurrency   = 4
 	DefTiDBHashAggFinalConcurrency     = 4
+	DefTiDBWindowConcurrency           = 4
 	DefTiDBForcePriority               = mysql.NoPriority
 	DefTiDBUseRadixJoin                = false
 	DefEnableWindowFunction            = true
@@ -460,12 +469,12 @@ const (
 	DefTiDBStoreLimit                  = 0
 	DefTiDBMetricSchemaStep            = 60 // 60s
 	DefTiDBMetricSchemaRangeDuration   = 60 // 60s
-
 )
 
 // Process global variables.
 var (
 	ProcessGeneralLog      uint32
+	EnablePProfSQLCPU            = atomic.NewBool(false)
 	ddlReorgWorkerCounter  int32 = DefTiDBDDLReorgWorkerCount
 	maxDDLReorgWorkerCount int32 = 128
 	ddlReorgBatchSize      int32 = DefTiDBDDLReorgBatchSize

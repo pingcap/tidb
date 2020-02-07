@@ -54,15 +54,19 @@ import (
 	"google.golang.org/grpc"
 )
 
-var _ = Suite(&testTableSuite{})
-var _ = SerialSuites(&testClusterTableSuite{testTableSuite: &testTableSuite{}})
+var _ = Suite(&testTableSuite{&testTableSuiteBase{}})
+var _ = SerialSuites(&testClusterTableSuite{testTableSuiteBase: &testTableSuiteBase{}})
 
 type testTableSuite struct {
+	*testTableSuiteBase
+}
+
+type testTableSuiteBase struct {
 	store kv.Storage
 	dom   *domain.Domain
 }
 
-func (s *testTableSuite) SetUpSuite(c *C) {
+func (s *testTableSuiteBase) SetUpSuite(c *C) {
 	testleak.BeforeTest()
 
 	var err error
@@ -73,14 +77,14 @@ func (s *testTableSuite) SetUpSuite(c *C) {
 	c.Assert(err, IsNil)
 }
 
-func (s *testTableSuite) TearDownSuite(c *C) {
+func (s *testTableSuiteBase) TearDownSuite(c *C) {
 	s.dom.Close()
 	s.store.Close()
 	testleak.AfterTest(c)()
 }
 
 type testClusterTableSuite struct {
-	*testTableSuite
+	*testTableSuiteBase
 	rpcserver  *grpc.Server
 	httpServer *httptest.Server
 	mockAddr   string
@@ -88,7 +92,7 @@ type testClusterTableSuite struct {
 }
 
 func (s *testClusterTableSuite) SetUpSuite(c *C) {
-	s.testTableSuite.SetUpSuite(c)
+	s.testTableSuiteBase.SetUpSuite(c)
 	s.rpcserver, s.listenAddr = s.setUpRPCService(c, ":0")
 	s.httpServer, s.mockAddr = s.setUpMockPDHTTPServer()
 }
@@ -105,11 +109,15 @@ func (s *testClusterTableSuite) setUpRPCService(c *C, addr string) (*grpc.Server
 		Command: mysql.ComQuery,
 	}
 	srv := server.NewRPCServer(config.GetGlobalConfig(), s.dom, sm)
-	addr = fmt.Sprintf("127.0.0.1:%d", lis.Addr().(*net.TCPAddr).Port)
+	port := lis.Addr().(*net.TCPAddr).Port
+	addr = fmt.Sprintf("127.0.0.1:%d", port)
 	go func() {
 		err = srv.Serve(lis)
 		c.Assert(err, IsNil)
 	}()
+	cfg := config.GetGlobalConfig()
+	cfg.Status.StatusPort = uint(port)
+	config.StoreGlobalConfig(cfg)
 	return srv, addr
 }
 
@@ -177,7 +185,7 @@ func (s *testClusterTableSuite) TearDownSuite(c *C) {
 	if s.httpServer != nil {
 		s.httpServer.Close()
 	}
-	s.testTableSuite.TearDownSuite(c)
+	s.testTableSuiteBase.TearDownSuite(c)
 }
 
 func (s *testTableSuite) TestInfoschemaFieldValue(c *C) {
@@ -745,6 +753,15 @@ func (s *testTableSuite) TestTableRowIDShardingInfo(c *C) {
 	testFunc("performance_schema", nil)
 	testFunc("uucc", "NOT_SHARDED")
 
+	testutil.ConfigTestUtils.SetupAutoRandomTestConfig()
+	defer testutil.ConfigTestUtils.RestoreAutoRandomTestConfig()
+
+	tk.MustExec("CREATE TABLE `sharding_info_test_db`.`t4` (a int key auto_random)")
+	assertShardingInfo("t4", "PK_AUTO_RANDOM_BITS=5")
+
+	tk.MustExec("CREATE TABLE `sharding_info_test_db`.`t5` (a int key auto_random(1))")
+	assertShardingInfo("t5", "PK_AUTO_RANDOM_BITS=1")
+
 	tk.MustExec("DROP DATABASE `sharding_info_test_db`")
 }
 
@@ -882,7 +899,7 @@ func (s *testClusterTableSuite) TestTiDBClusterInfo(c *C) {
 	}
 	tk = testkit.NewTestKit(c, store)
 	tk.MustQuery("select * from information_schema.cluster_info").Check(testkit.Rows(
-		"tidb :4000 :10080 5.7.25-TiDB-None None",
+		"tidb :4000 :"+strconv.FormatUint(uint64(config.GetGlobalConfig().Status.StatusPort), 10)+" 5.7.25-TiDB-None None",
 		"pd "+mockAddr+" "+mockAddr+" 4.0.0-alpha mock-pd-githash",
 		"tikv 127.0.0.1:20160 "+mockAddr+" 4.0.0-alpha mock-tikv-githash",
 	))
@@ -1031,29 +1048,32 @@ func (s *testClusterTableSuite) TestSelectClusterTable(c *C) {
 	slowLogFileName := "tidb-slow.log"
 	prepareSlowLogfile(c, slowLogFileName)
 	defer os.Remove(slowLogFileName)
-	tk.MustExec("use information_schema")
-	tk.MustExec("set @@global.tidb_enable_stmt_summary=1")
-	tk.MustQuery("select count(*) from `CLUSTER_SLOW_QUERY`").Check(testkit.Rows("1"))
-	tk.MustQuery("select count(*) from `CLUSTER_PROCESSLIST`").Check(testkit.Rows("1"))
-	tk.MustQuery("select * from `CLUSTER_PROCESSLIST`").Check(testkit.Rows(":10080 1 root 127.0.0.1 <nil> Query 9223372036 0 <nil> 0 "))
-	tk.MustQuery("select query_time, conn_id from `CLUSTER_SLOW_QUERY` order by time limit 1").Check(testkit.Rows("4.895492 6"))
-	tk.MustQuery("select count(*) from `CLUSTER_SLOW_QUERY` group by digest").Check(testkit.Rows("1"))
-	tk.MustQuery("select digest, count(*) from `CLUSTER_SLOW_QUERY` group by digest").Check(testkit.Rows("42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772 1"))
-	tk.MustQuery("select count(*) from `CLUSTER_SLOW_QUERY` where time > now() group by digest").Check(testkit.Rows())
-	tk.MustExec("use performance_schema")
-	re := tk.MustQuery("select * from `CLUSTER_events_statements_summary_by_digest`")
-	c.Assert(re, NotNil)
-	c.Assert(len(re.Rows()) > 0, IsTrue)
-	tk.MustQuery("select * from `CLUSTER_events_statements_summary_by_digest_history`")
-	c.Assert(re, NotNil)
-	c.Assert(len(re.Rows()) > 0, IsTrue)
-	tk.MustExec("set @@global.tidb_enable_stmt_summary=0")
-	re = tk.MustQuery("select * from `CLUSTER_events_statements_summary_by_digest`")
-	c.Assert(re, NotNil)
-	c.Assert(len(re.Rows()) == 0, IsTrue)
-	tk.MustQuery("select * from `CLUSTER_events_statements_summary_by_digest_history`")
-	c.Assert(re, NotNil)
-	c.Assert(len(re.Rows()) == 0, IsTrue)
+	for i := 0; i < 2; i++ {
+		tk.MustExec("use information_schema")
+		tk.MustExec(fmt.Sprintf("set @@tidb_enable_streaming=%d", i))
+		tk.MustExec("set @@global.tidb_enable_stmt_summary=1")
+		tk.MustQuery("select count(*) from `CLUSTER_SLOW_QUERY`").Check(testkit.Rows("1"))
+		tk.MustQuery("select count(*) from `CLUSTER_PROCESSLIST`").Check(testkit.Rows("1"))
+		tk.MustQuery("select * from `CLUSTER_PROCESSLIST`").Check(testkit.Rows(":10080 1 root 127.0.0.1 <nil> Query 9223372036 0 <nil> 0 "))
+		tk.MustQuery("select query_time, conn_id from `CLUSTER_SLOW_QUERY` order by time limit 1").Check(testkit.Rows("4.895492 6"))
+		tk.MustQuery("select count(*) from `CLUSTER_SLOW_QUERY` group by digest").Check(testkit.Rows("1"))
+		tk.MustQuery("select digest, count(*) from `CLUSTER_SLOW_QUERY` group by digest").Check(testkit.Rows("42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772 1"))
+		tk.MustQuery("select count(*) from `CLUSTER_SLOW_QUERY` where time > now() group by digest").Check(testkit.Rows())
+		tk.MustExec("use performance_schema")
+		re := tk.MustQuery("select * from `CLUSTER_events_statements_summary_by_digest`")
+		c.Assert(re, NotNil)
+		c.Assert(len(re.Rows()) > 0, IsTrue)
+		tk.MustQuery("select * from `CLUSTER_events_statements_summary_by_digest_history`")
+		c.Assert(re, NotNil)
+		c.Assert(len(re.Rows()) > 0, IsTrue)
+		tk.MustExec("set @@global.tidb_enable_stmt_summary=0")
+		re = tk.MustQuery("select * from `CLUSTER_events_statements_summary_by_digest`")
+		c.Assert(re, NotNil)
+		c.Assert(len(re.Rows()) == 0, IsTrue)
+		tk.MustQuery("select * from `CLUSTER_events_statements_summary_by_digest_history`")
+		c.Assert(re, NotNil)
+		c.Assert(len(re.Rows()) == 0, IsTrue)
+	}
 }
 
 func (s *testTableSuite) TestSelectHiddenColumn(c *C) {
@@ -1078,4 +1098,56 @@ func (s *testTableSuite) TestSelectHiddenColumn(c *C) {
 	colInfo[1].Hidden = true
 	colInfo[2].Hidden = true
 	tk.MustQuery("select count(*) from INFORMATION_SCHEMA.COLUMNS where table_name = 'hidden'").Check(testkit.Rows("0"))
+}
+
+func (s *testTableSuite) TestPartitionsTable(c *C) {
+	oldExpiryTime := infoschema.TableStatsCacheExpiry
+	infoschema.TableStatsCacheExpiry = 0
+	defer func() { infoschema.TableStatsCacheExpiry = oldExpiryTime }()
+
+	do := s.dom
+	h := do.StatsHandle()
+	h.Clear()
+	is := do.InfoSchema()
+
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("USE test;")
+	tk.MustExec("DROP TABLE IF EXISTS `test_partitions`;")
+	tk.MustExec(`CREATE TABLE test_partitions (a int, b int, c varchar(5), primary key(a), index idx(c)) PARTITION BY RANGE (a) (PARTITION p0 VALUES LESS THAN (6), PARTITION p1 VALUES LESS THAN (11), PARTITION p2 VALUES LESS THAN (16));`)
+	err := h.HandleDDLEvent(<-h.DDLEventCh())
+	c.Assert(err, IsNil)
+	tk.MustExec(`insert into test_partitions(a, b, c) values(1, 2, "c"), (7, 3, "d"), (12, 4, "e");`)
+
+	tk.MustQuery("select PARTITION_NAME, PARTITION_DESCRIPTION from information_schema.PARTITIONS where table_name='test_partitions';").Check(
+		testkit.Rows("" +
+			"p0 6]\n" +
+			"[p1 11]\n" +
+			"[p2 16"))
+
+	tk.MustQuery("select table_rows, avg_row_length, data_length, index_length from information_schema.PARTITIONS where table_name='test_partitions';").Check(
+		testkit.Rows("" +
+			"0 0 0 0]\n" +
+			"[0 0 0 0]\n" +
+			"[0 0 0 0"))
+	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+	c.Assert(h.Update(is), IsNil)
+	tk.MustQuery("select table_rows, avg_row_length, data_length, index_length from information_schema.PARTITIONS where table_name='test_partitions';").Check(
+		testkit.Rows("" +
+			"1 18 18 2]\n" +
+			"[1 18 18 2]\n" +
+			"[1 18 18 2"))
+
+	// Test for table has no partitions.
+	tk.MustExec("DROP TABLE IF EXISTS `test_partitions_1`;")
+	tk.MustExec(`CREATE TABLE test_partitions_1 (a int, b int, c varchar(5), primary key(a), index idx(c));`)
+	err = h.HandleDDLEvent(<-h.DDLEventCh())
+	c.Assert(err, IsNil)
+	tk.MustExec(`insert into test_partitions_1(a, b, c) values(1, 2, "c"), (7, 3, "d"), (12, 4, "e");`)
+	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+	c.Assert(h.Update(is), IsNil)
+	tk.MustQuery("select PARTITION_NAME, TABLE_ROWS, AVG_ROW_LENGTH, DATA_LENGTH, INDEX_LENGTH from information_schema.PARTITIONS where table_name='test_partitions_1';").Check(
+		testkit.Rows("<nil> 3 18 54 6"))
+
+	tk.MustExec("DROP TABLE `test_partitions`;")
 }

@@ -87,6 +87,9 @@ repair-mode = false
 # In repair mode, repairing table which is not in repair list will get wrong database or wrong table error.
 repair-table-list = []
 
+# The maximum permitted number of simultaneous client connections.
+max-server-connections = 4096
+
 [log]
 # Log level: debug, info, warn, error, fatal.
 level = "info"
@@ -212,9 +215,9 @@ bind-info-lease = "3s"
 
 # The limitation of the size in byte for the entries in one transaction.
 # If using TiKV as the storage, the entry represents a key/value pair.
-# WARNING: Do not set the value too large, otherwise it will make a very large impact on the TiKV cluster.
-# Please adjust this configuration carefully.
-txn-total-size-limit = 1073741824
+# NOTE: If binlog is enabled, this value should be less than 104857600(10M) because this is the maximum size that can be handled by Pumper.
+# If binlog is not enabled, this value should be less than 10737418240(10G).
+txn-total-size-limit = 104857600
 
 [proxy-protocol]
 # PROXY protocol acceptable client networks.
@@ -324,6 +327,7 @@ capacity = 2048000
 
 [binlog]
 # enable to write binlog.
+# NOTE: If binlog is enabled, txn-total-size-limit should be less than 104857600(10M).
 enable = false
 
 # WriteTimeout specifies how long it will wait for writing binlog to pump.
@@ -348,7 +352,7 @@ max-retry-count = 256
 
 [stmt-summary]
 # enable statement summary.
-enable = false
+enable = true
 
 # max number of statements kept in memory.
 max-stmt-count = 200
@@ -367,3 +371,8 @@ history-size = 24
 [experimental]
 # enable column attribute `auto_random` to be defined on the primary key column.
 allow-auto-random = false
+
+# server level isolation read by engines and labels
+[isolation-read]
+# engines means allow the tidb server read data from which types of engines. options: "tikv", "tiflash", "tidb".
+engines = ["tikv", "tiflash", "tidb"]

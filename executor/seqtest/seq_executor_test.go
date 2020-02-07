@@ -67,9 +67,9 @@ func TestT(t *testing.T) {
 	TestingT(t)
 }
 
-var _ = Suite(&seqTestSuite{})
-var _ = Suite(&seqTestSuite1{})
-var _ = Suite(&testOOMSuite{})
+var _ = SerialSuites(&seqTestSuite{})
+var _ = SerialSuites(&seqTestSuite1{})
+var _ = SerialSuites(&testOOMSuite{})
 
 type seqTestSuite struct {
 	cluster   *mocktikv.Cluster
@@ -1163,6 +1163,21 @@ func (s *seqTestSuite) TestMaxDeltaSchemaCount(c *C) {
 	tk.MustExec("use test")
 	c.Assert(variable.GetMaxDeltaSchemaCount(), Equals, int64(2048))
 	tk.MustQuery("select @@global.tidb_max_delta_schema_count").Check(testkit.Rows("2048"))
+}
+
+func (s *seqTestSuite) TestOOMPanicInHashJoinWhenFetchBuildRows(c *C) {
+	fpName := "github.com/pingcap/tidb/executor/errorFetchBuildSideRowsMockOOMPanic"
+	c.Assert(failpoint.Enable(fpName, `panic("ERROR 1105 (HY000): Out Of Memory Quota![conn_id=1]")`), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable(fpName), IsNil)
+	}()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(c1 int, c2 int)")
+	tk.MustExec("insert into t values(1,1),(2,2)")
+	err := tk.QueryToErr("select * from t as t2  join t as t1 where t1.c1=t2.c1")
+	c.Assert(err.Error(), Equals, "failpoint panic: ERROR 1105 (HY000): Out Of Memory Quota![conn_id=1]")
 }
 
 type testOOMSuite struct {

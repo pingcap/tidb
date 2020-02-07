@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/privilege"
+	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/mockstore"
@@ -225,7 +226,6 @@ func (s *testPrivilegeSuite) TestCheckPrivilegeWithRoles(c *C) {
 	mustExec(c, rootSe, `GRANT UPDATE ON test.* TO r_2;`)
 	c.Assert(pc.RequestVerification(activeRoles, "test", "", "", mysql.UpdatePriv), IsTrue)
 
-	mustExec(c, se, `flush privileges`)
 	mustExec(c, se, `SET ROLE NONE;`)
 	c.Assert(len(se.GetSessionVars().ActiveRoles), Equals, 0)
 	mustExec(c, se, `SET ROLE DEFAULT;`)
@@ -339,8 +339,7 @@ func (s *testPrivilegeSuite) TestShowGrants(c *C) {
 	_, err = pc.ShowGrants(se, &auth.UserIdentity{Username: "show", Hostname: "localhost"}, nil)
 	c.Assert(err, NotNil)
 	// cant show grants for non-existent
-	errNonexistingGrant := terror.ClassPrivilege.New(mysql.ErrNonexistingGrant, mysql.MySQLErrName[mysql.ErrNonexistingGrant])
-	c.Assert(terror.ErrorEqual(err, errNonexistingGrant), IsTrue)
+	c.Assert(terror.ErrorEqual(err, privileges.ErrNonexistingGrant), IsTrue)
 
 	// Test SHOW GRANTS with USING roles.
 	mustExec(c, se, `CREATE ROLE 'r1', 'r2'`)
@@ -362,7 +361,8 @@ func (s *testPrivilegeSuite) TestShowGrants(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(gs, HasLen, 3)
 	mustExec(c, se, `GRANT INSERT, DELETE ON test.test TO 'r2'`)
-	mustExec(c, se, `GRANT UPDATE ON a.b TO 'testrole'@'localhost'`)
+	mustExec(c, se, `create table test.b (id int)`)
+	mustExec(c, se, `GRANT UPDATE ON test.b TO 'testrole'@'localhost'`)
 	gs, err = pc.ShowGrants(se, &auth.UserIdentity{Username: "testrole", Hostname: "localhost"}, roles)
 	c.Assert(err, IsNil)
 	c.Assert(gs, HasLen, 5)
