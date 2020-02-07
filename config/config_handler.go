@@ -115,7 +115,7 @@ func newPDConfHandler(localConf *Config, reloadFunc ConfReloadFunc,
 	if err != nil {
 		return nil, err
 	}
-	if status.Code != configpb.StatusCode_OK {
+	if status.Code != configpb.StatusCode_OK && status.Code != configpb.StatusCode_WRONG_VERSION {
 		return nil, errors.New(fmt.Sprintf("fail to register config to PD, errmsg=%v", status.Message))
 	}
 
@@ -166,10 +166,11 @@ func (ch *pdConfHandler) run() {
 				logutil.Logger(context.Background()).Error("PDConfHandler fetch new config error", zap.Error(err))
 				continue
 			}
-			if status.Code == configpb.StatusCode_NOT_CHANGE {
+			if status.Code == configpb.StatusCode_OK { // StatusCode_OK represents the request is successful and there is no change.
 				continue
 			}
-			if status.Code != configpb.StatusCode_OK {
+			if status.Code != configpb.StatusCode_WRONG_VERSION {
+				// StatusCode_WRONG_VERSION represents the request is successful and the config has been updated.
 				logutil.Logger(context.Background()).Error("PDConfHandler fetch new config PD error",
 					zap.Int("code", int(status.Code)), zap.String("message", status.Message))
 				continue
