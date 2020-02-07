@@ -161,6 +161,7 @@ func (s *testSequenceSuite) TestShowCreateSequence(c *C) {
 	s.tk.MustExec("create sequence seq")
 
 	// Test show privilege.
+	s.tk.MustExec("drop user if exists myuser@localhost")
 	s.tk.MustExec("create user myuser@localhost")
 	s.tk.MustExec("flush privileges")
 
