@@ -1037,7 +1037,6 @@ import (
 	TimestampUnit                          "Time unit for 'TIMESTAMPADD' and 'TIMESTAMPDIFF'"
 	TimestampBound                         "Timestamp bound for start transaction with timestamp mode"
 	LockType                               "Table locks type"
-	FlashbackUntil                         "Flashback until timestamp"
 	FlashbackToNewName                     "Flashback to new name"
 	TransactionChar                        "Transaction characteristic"
 	TransactionChars                       "Transaction characteristic list"
@@ -2063,19 +2062,12 @@ RecoverTableStmt:
  *
  *******************************************************************/
 FlashbackTableStmt:
-	"FLASHBACK" "TABLE" TableName FlashbackUntil FlashbackToNewName
+	"FLASHBACK" "TABLE" TableName FlashbackToNewName
 	{
 		$$ = &ast.FlashBackTableStmt{
-			Table:     $3.(*ast.TableName),
-			Timestamp: $4.(ast.ValueExpr),
-			NewName:   $5.(string),
+			Table:   $3.(*ast.TableName),
+			NewName: $4.(string),
 		}
-	}
-
-FlashbackUntil:
-	"UNTIL" "TIMESTAMP" StringLiteral
-	{
-		$$ = $3
 	}
 
 FlashbackToNewName:
