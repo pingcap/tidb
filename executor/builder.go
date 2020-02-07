@@ -2732,7 +2732,7 @@ func (b *executorBuilder) buildShuffle(v *plannercore.PhysicalShuffle) *ShuffleE
 	switch v.SplitterType {
 	case plannercore.ShuffleSerialSplitterType:
 		shuffle.splitter = nil
-	case plannercore.ShuffleSimpleSplitterType:
+	case plannercore.ShuffleRandomSplitterType:
 		shuffle.splitter = newShuffleSimpleSplitter(shuffle, v.FanOut)
 	case plannercore.ShuffleHashSplitterType:
 		shuffle.splitter = newShuffleHashSplitter(shuffle, v.FanOut, v.HashByItems)
@@ -2747,7 +2747,7 @@ func (b *executorBuilder) buildShuffle(v *plannercore.PhysicalShuffle) *ShuffleE
 	shuffle.child = shuffle.children[0].(*ShuffleExec)
 
 	switch v.MergerType {
-	case plannercore.ShuffleSimpleMergerType:
+	case plannercore.ShuffleRandomMergerType:
 		shuffle.merger = newShuffleSimpleMerger(shuffle, shuffle.concurrency)
 	default:
 		panic("Not implemented. Should not reach here.")

@@ -15,16 +15,22 @@ package core
 
 import (
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/planner/property"
 )
 
 // preparePossibleProperties traverses the plan tree by a post-order method,
 // recursively calls LogicalPlan PreparePossibleProperties interface.
-func preparePossibleProperties(lp LogicalPlan) [][]*expression.Column {
+func preparePossibleProperties(lp LogicalPlan) (possibleProperties [][]*expression.Column, possiblePartitionProperties []*property.PhysicalProperty) {
 	childrenProperties := make([][][]*expression.Column, 0, len(lp.Children()))
+	childrenPartitionProperties := make([][]*property.PhysicalProperty, 0, len(lp.Children()))
 	for _, child := range lp.Children() {
-		childrenProperties = append(childrenProperties, preparePossibleProperties(child))
+		properties, partitionProperties := preparePossibleProperties(child)
+		childrenProperties = append(childrenProperties, properties)
+		childrenPartitionProperties = append(childrenPartitionProperties, partitionProperties)
 	}
-	return lp.PreparePossibleProperties(lp.Schema(), childrenProperties...)
+	possibleProperties = lp.PreparePossibleProperties(lp.Schema(), childrenProperties...)
+	possiblePartitionProperties = lp.PreparePossiblePartitionProperties(possibleProperties, childrenPartitionProperties...)
+	return
 }
 
 // PreparePossibleProperties implements LogicalPlan PreparePossibleProperties interface.
@@ -96,6 +102,56 @@ func (p *LogicalWindow) PreparePossibleProperties(schema *expression.Schema, chi
 	return [][]*expression.Column{result}
 }
 
+// PreparePossiblePartitionProperties implements LogicalPlan PreparePossiblePartitionProperties interface.
+func (p *LogicalWindow) PreparePossiblePartitionProperties(localProperties [][]*expression.Column, childrenProperties ...[]*property.PhysicalProperty) []*property.PhysicalProperty {
+	if len(p.PartitionBy) == 0 {
+		return nil
+	}
+	partitionByCols := make([]*expression.Column, len(p.PartitionBy))
+	for i := range p.PartitionBy {
+		partitionByCols[i] = p.PartitionBy[i].Col
+	}
+
+	childProps := childrenProperties[0]
+	fullMatched := false
+	matchedGroupingCols := make([][]*expression.Column, 0, len(childProps))
+	for _, possibleChildProperty := range childProps {
+		if len(possibleChildProperty.PartitionGroupingCols) > 0 {
+			if including, equal := isColumnsIncluding(partitionByCols, possibleChildProperty.PartitionGroupingCols); including {
+				matchedGroupingCols = append(matchedGroupingCols, possibleChildProperty.PartitionGroupingCols)
+				if equal {
+					fullMatched = true
+				}
+			}
+		}
+	}
+
+	deliveringProperties := make([]*property.PhysicalProperty, 0, len(matchedGroupingCols)+1)
+	p.possibleChildPartitionProperties = make([]*property.PhysicalProperty, len(matchedGroupingCols)+1)
+	for _, cols := range matchedGroupingCols {
+		prop := &property.PhysicalProperty{
+			IsPartitioning:        true,
+			PartitionGroupingCols: cols,
+			Items:                 property.ItemsFromCols(localProperties[0], false), // ASC/DESC is not concerned.
+		}
+		deliveringProperties = append(deliveringProperties, prop)
+		p.possibleChildPartitionProperties = append(p.possibleChildPartitionProperties, prop)
+	}
+
+	if !fullMatched {
+		prop := &property.PhysicalProperty{
+			IsPartitioning:        true,
+			PartitionGroupingCols: partitionByCols,
+			Items:                 property.ItemsFromCols(localProperties[0], false), // ASC/DESC is not concerned.
+			PartitionEnforced:     true,                                              //TODOO
+		}
+		deliveringProperties = append(deliveringProperties, prop)
+		p.possibleChildPartitionProperties = append(p.possibleChildPartitionProperties, prop)
+	}
+
+	return deliveringProperties
+}
+
 // PreparePossibleProperties implements LogicalPlan PreparePossibleProperties interface.
 func (p *LogicalSort) PreparePossibleProperties(schema *expression.Schema, childrenProperties ...[][]*expression.Column) [][]*expression.Column {
 	propCols := getPossiblePropertyFromByItems(p.ByItems)
@@ -128,6 +184,11 @@ func getPossiblePropertyFromByItems(items []*ByItems) []*expression.Column {
 
 // PreparePossibleProperties implements LogicalPlan PreparePossibleProperties interface.
 func (p *baseLogicalPlan) PreparePossibleProperties(schema *expression.Schema, childrenProperties ...[][]*expression.Column) [][]*expression.Column {
+	return nil
+}
+
+// PreparePossiblePartitionProperties implements LogicalPlan PreparePossiblePartitionProperties interface.
+func (p *baseLogicalPlan) PreparePossiblePartitionProperties(localProperties [][]*expression.Column, childrenProperties ...[]*property.PhysicalProperty) []*property.PhysicalProperty {
 	return nil
 }
 

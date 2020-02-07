@@ -307,6 +307,7 @@ type PhysicalApply struct {
 
 type basePhysicalJoin struct {
 	physicalSchemaProducer
+	serialPhysicalPlanProducer
 
 	JoinType JoinType
 
@@ -575,10 +576,10 @@ type PhysicalShuffle struct {
 	Concurrency int
 
 	// the following fields are for parellel executing.
-	Tail         PhysicalPlan
-	ChildShuffle *PhysicalShuffle
-	MergerType   ShuffleMergerType
-	MergerArgs   interface{}
+	Tail             PhysicalPlan
+	ChildShuffle     *PhysicalShuffle
+	MergerType       ShuffleMergerType
+	MergeSortByItems []property.Item
 
 	// the following fields are for parent "Shuffle" to running in parallel.
 	SplitterType ShuffleSplitterType
@@ -592,9 +593,9 @@ type ShuffleSplitterType int
 const (
 	// ShuffleSerialSplitterType is the splitter for serial executing. Should be 0 as default value.
 	ShuffleSerialSplitterType = 0
-	// ShuffleSimpleSplitterType is the splitter splits data source by the whole chunk, without any process.
-	ShuffleSimpleSplitterType = iota + 10
-	// ShuffleHashSplitterType is the splitter splits by hash.
+	// ShuffleRandomSplitterType is the splitter splitting data source by the whole chunk, resulting random order.
+	ShuffleRandomSplitterType = iota + 10
+	// ShuffleHashSplitterType is the splitter splitting by hash.
 	ShuffleHashSplitterType
 )
 
@@ -602,8 +603,8 @@ func getShuffleSplitterName4Explain(tp ShuffleSplitterType) string {
 	switch tp {
 	case ShuffleSerialSplitterType:
 		return "serial"
-	case ShuffleSimpleSplitterType:
-		return "simple"
+	case ShuffleRandomSplitterType:
+		return "random"
 	case ShuffleHashSplitterType:
 		return "hash"
 	default:
@@ -617,8 +618,8 @@ type ShuffleMergerType int
 const (
 	// ShuffleSerialMergerType is the stub merger for serial executing. Should be 0 as default value.
 	ShuffleSerialMergerType = 0
-	// ShuffleSimpleMergerType is the merger merging results without any other process.
-	ShuffleSimpleMergerType = iota + 10
+	// ShuffleRandomMergerType is the merger merging results by the whole chunk, resulting random order.
+	ShuffleRandomMergerType = iota + 10
 	// ShuffleMergeSortMergerType is the merger merging results by `Merge-Sort`
 	ShuffleMergeSortMergerType
 )
@@ -627,8 +628,8 @@ func getShuffleMergerName4Explain(tp ShuffleMergerType) string {
 	switch tp {
 	case ShuffleSerialMergerType:
 		return "serial"
-	case ShuffleSimpleMergerType:
-		return "simple"
+	case ShuffleRandomMergerType:
+		return "random"
 	case ShuffleMergeSortMergerType:
 		return "merge-sort"
 	default:

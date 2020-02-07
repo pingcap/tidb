@@ -147,6 +147,7 @@ func (p *baseLogicalPlan) findBestTask(prop *property.PhysicalProperty) (bestTas
 		prop.Items = []property.Item{}
 	}
 	physicalPlans := p.self.exhaustPhysicalPlans(prop)
+	physicalPlans = append(physicalPlans, p.self.exhaustParallelPhysicalPlans(prop)...)
 	prop.Items = oldPropCols
 
 	for _, pp := range physicalPlans {
@@ -173,7 +174,10 @@ func (p *baseLogicalPlan) findBestTask(prop *property.PhysicalProperty) (bestTas
 
 		// optimize by shuffle executor to running in parallel manner.
 		// Must before `enforceProperty`, otherwise Shuffle would be between `pp` and `Enforced Sort`.
-		curTask = optimizeByShuffle(pp, prop, curTask, p.basePlan.ctx)
+		//curTask = optimizeByShuffle(pp, prop, curTask, p.basePlan.ctx)
+
+		// matchPhysicalProperty match parent required property and delivering property, and enforce Shuffle if necessary.
+		curTask = matchPhysicalProperty(pp, prop, curTask, p.basePlan.ctx)
 
 		// enforce curTask property
 		if prop.Enforced {

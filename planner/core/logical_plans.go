@@ -910,6 +910,8 @@ type LogicalWindow struct {
 	PartitionBy     []property.Item
 	OrderBy         []property.Item
 	Frame           *WindowFrame
+
+	possibleChildPartitionProperties []*property.PhysicalProperty
 }
 
 // GetWindowResultColumns returns the columns storing the result of the window function.

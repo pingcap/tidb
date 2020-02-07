@@ -492,7 +492,7 @@ func buildWindowExecutor(ctx sessionctx.Context, windowFunc string, funcs int, f
 			Concurrency:  concurrency,
 			Tail:         tail,
 			ChildShuffle: child,
-			MergerType:   core.ShuffleSimpleMergerType,
+			MergerType:   core.ShuffleRandomMergerType,
 		}.Init(ctx, nil, 0)
 		plan.SetChildren(win)
 	} else {

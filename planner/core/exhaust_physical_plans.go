@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/set"
 	"go.uber.org/zap"
@@ -56,6 +57,17 @@ func getMaxSortPrefix(sortCols, allCols []*expression.Column) []int {
 		sortColOffsets = append(sortColOffsets, offset)
 	}
 	return sortColOffsets
+}
+
+// isColumnsIncluding: including >= beIncluded
+func isColumnsIncluding(including, beIncluded []*expression.Column) (yes bool, equal bool) {
+	tmpSchema := expression.NewSchema(including...)
+	for _, col := range beIncluded {
+		if tmpSchema.ColumnIndex(col) == -1 {
+			return false, false
+		}
+	}
+	return true, len(including) == len(beIncluded)
 }
 
 func findMaxPrefixLen(candidates [][]*expression.Column, keys []*expression.Column) int {
@@ -1510,9 +1522,57 @@ func (p *LogicalWindow) exhaustPhysicalPlans(prop *property.PhysicalProperty) []
 	return []PhysicalPlan{window}
 }
 
+func (p *LogicalWindow) exhaustParallelPhysicalPlans(prop *property.PhysicalProperty) []PhysicalPlan {
+	concurrency := mathutil.Min(p.basePlan.ctx.GetSessionVars().WindowConcurrency, p.basePlan.ctx.GetSessionVars().ParallelExecutorConcurrency)
+	if concurrency <= 1 {
+		return nil
+	}
+
+	var byItems []property.Item
+	byItems = append(byItems, p.PartitionBy...)
+	byItems = append(byItems, p.OrderBy...)
+
+	windows := make([]PhysicalPlan, 0, len(p.possibleChildPartitionProperties))
+	for i, childProperty := range p.possibleChildPartitionProperties {
+		childProperty.ExpectedCnt = math.MaxFloat64
+		childProperty.Items = byItems
+		childProperty.Enforced = true
+		if i == 0 && !prop.IsPrefix(childProperty) {
+			return nil
+		}
+
+		NDV := int(getCardinality(childProperty.PartitionGroupingCols, p.Schema(), p.statsInfo()))
+		if NDV <= 1 {
+			continue
+		}
+
+		w := PhysicalWindow{
+			WindowFuncDescs: p.WindowFuncDescs,
+			PartitionBy:     p.PartitionBy,
+			OrderBy:         p.OrderBy,
+			Frame:           p.Frame,
+		}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), p.blockOffset, childProperty)
+		w.SetSchema(p.Schema())
+		w.concurrency = concurrency
+		w.partitionDeliveringProperty = &property.PhysicalProperty{
+			IsPartitioning:        true,
+			PartitionGroupingCols: childProperty.PartitionGroupingCols,
+			Items:                 byItems,
+		}
+
+		windows = append(windows, w)
+	}
+	return windows
+}
+
 // exhaustPhysicalPlans is only for implementing interface. DataSource and Dual generate task in `findBestTask` directly.
 func (p *baseLogicalPlan) exhaustPhysicalPlans(_ *property.PhysicalProperty) []PhysicalPlan {
 	panic("baseLogicalPlan.exhaustPhysicalPlans() should never be called.")
+}
+
+// exhaustParallelPhysicalPlans implements LogicalPlan interface.
+func (p *baseLogicalPlan) exhaustParallelPhysicalPlans(*property.PhysicalProperty) []PhysicalPlan {
+	return nil
 }
 
 func (la *LogicalAggregation) canPushToCop() bool {

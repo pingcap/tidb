@@ -51,6 +51,16 @@ type PhysicalProperty struct {
 
 	// whether need to enforce property.
 	Enforced bool
+
+	// IsPartitioning indicate the property is for partitioning or not.
+	// While true, `PartitionGroupingItems/PartitionOrderedItems` indicate the global (i.e inter-partition) property,
+	//   and `Items` indicate the indicate the local (i.e intra-partition) property.
+	IsPartitioning        bool
+	PartitionGroupingCols []*expression.Column // ASC/DESC is NOT concerned in grouping.
+	//Future: PartitionOrderedItems []Item
+
+	// whether need to enforce partitioning property.
+	PartitionEnforced bool
 }
 
 // NewPhysicalProperty builds property from columns.
@@ -103,26 +113,33 @@ func (p *PhysicalProperty) IsEmpty() bool {
 
 // HashCode calculates hash code for a PhysicalProperty object.
 func (p *PhysicalProperty) HashCode() []byte {
-	if p.hashcode != nil {
-		return p.hashcode
-	}
-	hashcodeSize := 8 + 8 + 8 + (16+8)*len(p.Items) + 8
-	p.hashcode = make([]byte, 0, hashcodeSize)
-	if p.Enforced {
-		p.hashcode = codec.EncodeInt(p.hashcode, 1)
-	} else {
-		p.hashcode = codec.EncodeInt(p.hashcode, 0)
-	}
-	p.hashcode = codec.EncodeInt(p.hashcode, int64(p.TaskTp))
-	p.hashcode = codec.EncodeFloat(p.hashcode, p.ExpectedCnt)
-	for _, item := range p.Items {
-		p.hashcode = append(p.hashcode, item.Col.HashCode(nil)...)
-		if item.Desc {
+	encodeBoolean := func(b bool) {
+		if b {
 			p.hashcode = codec.EncodeInt(p.hashcode, 1)
 		} else {
 			p.hashcode = codec.EncodeInt(p.hashcode, 0)
 		}
 	}
+
+	if p.hashcode != nil {
+		return p.hashcode
+	}
+	hashcodeSize := 8 + 8 + 8 + (16+8)*len(p.Items) + 8 + 8 + 16*len(p.PartitionGroupingCols) + 8
+	p.hashcode = make([]byte, 0, hashcodeSize)
+
+	encodeBoolean(p.Enforced)
+	p.hashcode = codec.EncodeInt(p.hashcode, int64(p.TaskTp))
+	p.hashcode = codec.EncodeFloat(p.hashcode, p.ExpectedCnt)
+	for _, item := range p.Items {
+		p.hashcode = append(p.hashcode, item.Col.HashCode(nil)...)
+		encodeBoolean(item.Desc)
+	}
+
+	encodeBoolean(p.IsPartitioning)
+	for _, col := range p.PartitionGroupingCols {
+		p.hashcode = append(p.hashcode, col.HashCode(nil)...)
+	}
+	encodeBoolean(p.PartitionEnforced)
 	return p.hashcode
 }
 

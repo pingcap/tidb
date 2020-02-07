@@ -42,6 +42,7 @@ import (
 // This plan is much faster to build and to execute because it avoid the optimization and coprocessor cost.
 type PointGetPlan struct {
 	basePlan
+	serialPhysicalPlanProducer
 	dbName           string
 	schema           *expression.Schema
 	TblInfo          *model.TableInfo
@@ -175,6 +176,7 @@ func (p *PointGetPlan) SetOutputNames(names types.NameSlice) {
 // keys reference the same table and use the same `unique key`
 type BatchPointGetPlan struct {
 	baseSchemaProducer
+	serialPhysicalPlanProducer
 
 	TblInfo          *model.TableInfo
 	IndexInfo        *model.IndexInfo

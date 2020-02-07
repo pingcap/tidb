@@ -149,7 +149,7 @@ func optimizeByShuffle4Window(pp *PhysicalWindow, prop *property.PhysicalPropert
 		Concurrency:  concurrency,
 		Tail:         tail,
 		ChildShuffle: childShuffle,
-		MergerType:   ShuffleSimpleMergerType,
+		MergerType:   ShuffleRandomMergerType,
 	}.Init(ctx, pp.statsInfo(), pp.SelectBlockOffset(), reqProp)
 	return shuffle
 }
@@ -214,6 +214,15 @@ type LogicalPlan interface {
 
 	// SetChild sets the ith child for the plan.
 	SetChild(i int, child LogicalPlan)
+
+	// PreparePossiblePartitionProperties get all possible partition property by a pre-walking.
+	// Any nonempty subset of PartitionGroupingProperty is valid, so the number of candidates would be large, while children delivering properties is limited.
+	// This method is for reducing the candidates.
+	PreparePossiblePartitionProperties(localProperties [][]*expression.Column, childrenProperties ...[]*property.PhysicalProperty) []*property.PhysicalProperty
+
+	// exhaustParallelPhysicalPlans generates all possible parallel physical plans (and required/delivering properties) that can match the required local property.
+	// Note that GLOBAL properties is matched in `findBestTask`
+	exhaustParallelPhysicalPlans(*property.PhysicalProperty) []PhysicalPlan
 }
 
 // PhysicalPlan is a tree of the physical operators.
@@ -250,6 +259,15 @@ type PhysicalPlan interface {
 
 	// ExplainNormalizedInfo returns operator normalized information for generating digest.
 	ExplainNormalizedInfo() string
+
+	// IsParallel indicates whether parallel executing or not
+	IsParallel() bool
+
+	// GetConcurreny get parallel executing concurrency
+	GetConcurrency() int
+
+	// GetPartitionDeliveringProperty get partition delivering property
+	GetPartitionDeliveringProperty() *property.PhysicalProperty
 }
 
 type baseLogicalPlan struct {
@@ -276,6 +294,9 @@ type basePhysicalPlan struct {
 	childrenReqProps []*property.PhysicalProperty
 	self             PhysicalPlan
 	children         []PhysicalPlan
+
+	concurrency                 int
+	partitionDeliveringProperty *property.PhysicalProperty
 }
 
 // ExplainInfo implements Plan interface.
@@ -491,4 +512,38 @@ func (p *basePhysicalPlan) SetChild(i int, child PhysicalPlan) {
 // Context implements Plan Context interface.
 func (p *basePlan) SCtx() sessionctx.Context {
 	return p.ctx
+}
+
+// IsParallel implements PhysicalPlan interface
+func (p *basePhysicalPlan) IsParallel() bool {
+	return p.GetConcurrency() > 1
+}
+
+// Concurrency implements PhysicalPlan interface
+func (p *basePhysicalPlan) GetConcurrency() int {
+	return p.concurrency
+}
+
+// GetPartitionDeliveringProperty implements PhysicalPlan interface
+func (p *basePhysicalPlan) GetPartitionDeliveringProperty() *property.PhysicalProperty {
+	return p.partitionDeliveringProperty
+}
+
+// serialPhysicalPlanProducer is used by PhysicalPlan not embeding basePhysicalPlan
+type serialPhysicalPlanProducer struct {
+}
+
+// IsParallel implements PhysicalPlan interface
+func (p *serialPhysicalPlanProducer) IsParallel() bool {
+	return false
+}
+
+// Concurrency implements PhysicalPlan interface
+func (p *serialPhysicalPlanProducer) GetConcurrency() int {
+	return 0
+}
+
+// GetPartitionDeliveringProperty implements PhysicalPlan interface
+func (p *serialPhysicalPlanProducer) GetPartitionDeliveringProperty() *property.PhysicalProperty {
+	return nil
 }

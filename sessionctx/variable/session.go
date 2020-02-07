@@ -1286,6 +1286,10 @@ type Concurrency struct {
 
 	// IndexSerialScanConcurrency is the number of concurrent index serial scan worker.
 	IndexSerialScanConcurrency int
+
+	// ParallelExecutorConcurrency is the number of concurrent workers for parallel executors.
+	// In the new parallel framework, specific executor variable (e.g. `WindowConcurrency`) is just a parallel switch.
+	ParallelExecutorConcurrency int
 }
 
 // MemQuota defines memory quota values.
