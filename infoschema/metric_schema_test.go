@@ -53,5 +53,8 @@ func (s *inspectionSuite) TestMetricSchemaDef(c *C) {
 				c.Assert(strings.Contains(def.PromQL, label), IsTrue, Commentf("metric table %v has labels, but doesn't contain label %v in promQL", name, label))
 			}
 		}
+		if name != strings.ToLower(name) {
+			c.Assert(name, Equals, strings.ToLower(name), Commentf("metric table name %v should be lower case", name))
+		}
 	}
 }
