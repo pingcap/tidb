@@ -3389,9 +3389,8 @@ func (n *RecoverTableStmt) Accept(v Visitor) (Node, bool) {
 type FlashBackTableStmt struct {
 	ddlNode
 
-	Table     *TableName
-	Timestamp ValueExpr
-	NewName   string
+	Table   *TableName
+	NewName string
 }
 
 // Restore implements Node interface.
@@ -3399,10 +3398,6 @@ func (n *FlashBackTableStmt) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("FLASHBACK TABLE ")
 	if err := n.Table.Restore(ctx); err != nil {
 		return errors.Annotate(err, "An error occurred while splicing RecoverTableStmt Table")
-	}
-	ctx.WriteKeyWord(" UNTIL TIMESTAMP ")
-	if err := n.Timestamp.Restore(ctx); err != nil {
-		return errors.Annotate(err, "An error occurred while splicing FlashBackTableStmt Table")
 	}
 	if len(n.NewName) > 0 {
 		ctx.WriteKeyWord(" TO ")
