@@ -41,19 +41,8 @@ func (b *builtinLowerSig) vecEvalString(input *chunk.Chunk, result *chunk.Column
 		return nil
 	}
 
-Loop:
 	for i := 0; i < input.NumRows(); i++ {
-		str := result.GetBytes(i)
-		for _, c := range str {
-			if c >= utf8.RuneSelf {
-				continue Loop
-			}
-		}
-		for i := range str {
-			if str[i] >= 'A' && str[i] <= 'Z' {
-				str[i] += 'a' - 'A'
-			}
-		}
+		result.SetRaw(i, []byte(strings.ToLower(result.GetString(i))))
 	}
 	return nil
 }

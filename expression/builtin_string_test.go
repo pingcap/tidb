@@ -533,6 +533,10 @@ func (s *testEvaluatorSuite) TestLower(c *C) {
 		{[]interface{}{nil}, true, false, ""},
 		{[]interface{}{"ab"}, false, false, "ab"},
 		{[]interface{}{1}, false, false, "1"},
+		{[]interface{}{"one week’s time TEST"}, false, false, "one week’s time test"},
+		{[]interface{}{"one week's time TEST"}, false, false, "one week's time test"},
+		{[]interface{}{"ABC测试DEF"}, false, false, "abc测试def"},
+		{[]interface{}{"ABCテストDEF"}, false, false, "abcテストdef"},
 	}
 
 	for _, t := range cases {
