@@ -105,9 +105,9 @@ func TestCopySelectedJoinRowsDirect(t *testing.T) {
 }
 
 func TestCopySelectedVirtualNum(t *testing.T) {
-	srcChk := newChunkWithInitCap(0)
+	srcChk := newChunk()
 	srcChk.TruncateTo(3)
-	dstChk := newChunkWithInitCap(0)
+	dstChk := newChunk()
 	selected := []bool{true, false, true}
 	ok, err := CopySelectedJoinRowsDirect(srcChk, selected, dstChk)
 	if err != nil || !ok {
@@ -117,7 +117,7 @@ func TestCopySelectedVirtualNum(t *testing.T) {
 		t.Fatal(dstChk.numVirtualRows)
 	}
 
-	dstChk = newChunkWithInitCap(0)
+	dstChk = newChunk()
 	ok, err = CopySelectedJoinRowsWithSameOuterRows(srcChk, 0, 0, selected, dstChk)
 	if err != nil || !ok {
 		t.Fatal(ok, err)
@@ -126,7 +126,7 @@ func TestCopySelectedVirtualNum(t *testing.T) {
 		t.Fatal(dstChk.numVirtualRows)
 	}
 
-	srcChk = newChunkWithInitCap(0, 8)
+	srcChk = newChunk(8)
 	srcChk.TruncateTo(0)
 	srcChk.AppendInt64(0, 0)
 	srcChk.AppendInt64(0, 1)
@@ -143,7 +143,7 @@ func TestCopySelectedVirtualNum(t *testing.T) {
 		t.Fatal(row0, row1)
 	}
 
-	srcChk = newChunkWithInitCap(0, 8)
+	srcChk = newChunk(8)
 	srcChk.TruncateTo(0)
 	srcChk.AppendInt64(0, 3)
 	srcChk.AppendInt64(0, 3)
