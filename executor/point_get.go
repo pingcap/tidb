@@ -63,6 +63,7 @@ type PointGetExecutor struct {
 	idxVals      []types.Datum
 	startTS      uint64
 	snapshot     kv.Snapshot
+	snapshotTS   uint64
 	done         bool
 	lock         bool
 	lockWaitTime int64
@@ -101,17 +102,9 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 		return nil
 	}
 	e.done = true
-	snapshotTS := e.startTS
+	e.snapshotTS = e.startTS
 	if e.lock {
-		snapshotTS = e.ctx.GetSessionVars().TxnCtx.GetForUpdateTS()
-	}
-	var err error
-	e.snapshot, err = e.ctx.GetStore().GetSnapshot(kv.Version{Ver: snapshotTS})
-	if err != nil {
-		return err
-	}
-	if e.ctx.GetSessionVars().GetReplicaRead().IsFollowerRead() {
-		e.snapshot.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
+		e.snapshotTS = e.ctx.GetSessionVars().TxnCtx.GetForUpdateTS()
 	}
 	var tblID int64
 	if e.partInfo != nil {
@@ -183,8 +176,12 @@ func (e *PointGetExecutor) get(ctx context.Context, key kv.Key) (val []byte, err
 	if err != nil {
 		return nil, err
 	}
-	if txn != nil && txn.Valid() && !txn.IsReadOnly() {
-		// We cannot use txn.Get directly here because the snapshot in txn and the snapshot of e.snapshot may be
+	if txn.Valid() && e.snapshotTS == e.startTS {
+		// We can safely use the snapshot in the txn and utilize the cache.
+		return txn.Get(ctx, key)
+	}
+	if txn.Valid() && !txn.IsReadOnly() {
+		// We cannot use txn.Get directly here because the snapshot in txn and the snapshot of e.snapshot is
 		// different for pessimistic transaction.
 		val, err = txn.GetMemBuffer().Get(ctx, key)
 		if err == nil {
@@ -194,6 +191,15 @@ func (e *PointGetExecutor) get(ctx context.Context, key kv.Key) (val []byte, err
 			return nil, err
 		}
 		// fallthrough to snapshot get.
+	}
+	if e.snapshot == nil {
+		e.snapshot, err = e.ctx.GetStore().GetSnapshot(kv.Version{Ver: e.snapshotTS})
+		if err != nil {
+			return nil, err
+		}
+		if e.ctx.GetSessionVars().GetReplicaRead().IsFollowerRead() {
+			e.snapshot.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
+		}
 	}
 	return e.snapshot.Get(ctx, key)
 }

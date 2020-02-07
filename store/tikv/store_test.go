@@ -265,6 +265,8 @@ func (s *testStoreSuite) TestRequestPriority(c *C) {
 	c.Assert(err, IsNil)
 
 	// A counter example.
+	txn, err = s.store.Begin()
+	c.Assert(err, IsNil)
 	client.priority = pb.CommandPri_Low
 	txn.SetOption(kv.Priority, kv.PriorityNormal)
 	_, err = txn.Get(context.TODO(), []byte("key"))
@@ -272,6 +274,8 @@ func (s *testStoreSuite) TestRequestPriority(c *C) {
 	c.Assert(err, NotNil)
 
 	// Cover Seek request.
+	txn, err = s.store.Begin()
+	c.Assert(err, IsNil)
 	client.priority = pb.CommandPri_High
 	txn.SetOption(kv.Priority, kv.PriorityHigh)
 	iter, err := txn.Iter([]byte("key"), nil)
