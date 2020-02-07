@@ -97,7 +97,7 @@ func IsJobRollbackable(job *model.Job) bool {
 			job.SchemaState == model.StateWriteOnly {
 			return false
 		}
-	case model.ActionDropSchema, model.ActionDropTable:
+	case model.ActionDropSchema, model.ActionDropTable, model.ActionDropSequence:
 		// To simplify the rollback logic, cannot be canceled in the following states.
 		if job.SchemaState == model.StateWriteOnly ||
 			job.SchemaState == model.StateDeleteOnly {
@@ -447,14 +447,3 @@ var (
 	// ErrCannotCancelDDLJob returns when cancel a almost finished ddl job, because cancel in now may cause data inconsistency.
 	ErrCannotCancelDDLJob = terror.ClassAdmin.New(mysql.ErrCannotCancelDDLJob, mysql.MySQLErrName[mysql.ErrCannotCancelDDLJob])
 )
-
-func init() {
-	// Register terror to mysql error map.
-	mySQLErrCodes := map[terror.ErrCode]uint16{
-		mysql.ErrDataInConsistent:     mysql.ErrDataInConsistent,
-		mysql.ErrDDLJobNotFound:       mysql.ErrDDLJobNotFound,
-		mysql.ErrCancelFinishedDDLJob: mysql.ErrCancelFinishedDDLJob,
-		mysql.ErrCannotCancelDDLJob:   mysql.ErrCannotCancelDDLJob,
-	}
-	terror.ErrClassToMySQLCodes[terror.ClassAdmin] = mySQLErrCodes
-}
