@@ -207,7 +207,7 @@ type builtinArithmeticPlusIntUnsignedUnsignedSig struct {
 	baseBuiltinFunc
 }
 
-func (s *builtinArithmeticPlusIntUnsignedUnsignedSig) clone() builtinFunc {
+func (s *builtinArithmeticPlusIntUnsignedUnsignedSig) Clone() builtinFunc {
 	newSig := &builtinArithmeticPlusIntUnsignedUnsignedSig{}
 	newSig.cloneFrom(&s.baseBuiltinFunc)
 	return newSig
@@ -235,7 +235,7 @@ type builtinArithmeticPlusIntUnsignedSignedSig struct {
 	baseBuiltinFunc
 }
 
-func (s *builtinArithmeticPlusIntUnsignedSignedSig) clone() builtinFunc {
+func (s *builtinArithmeticPlusIntUnsignedSignedSig) Clone() builtinFunc {
 	newSig := &builtinArithmeticPlusIntUnsignedSignedSig{}
 	newSig.cloneFrom(&s.baseBuiltinFunc)
 	return newSig
@@ -265,7 +265,7 @@ type builtinArithmeticPlusIntSignedUnsignedSig struct {
 	baseBuiltinFunc
 }
 
-func (s *builtinArithmeticPlusIntSignedUnsignedSig) clone() builtinFunc {
+func (s *builtinArithmeticPlusIntSignedUnsignedSig) Clone() builtinFunc {
 	newSig := &builtinArithmeticPlusIntSignedUnsignedSig{}
 	newSig.cloneFrom(&s.baseBuiltinFunc)
 	return newSig
@@ -296,7 +296,7 @@ type builtinArithmeticPlusIntSignedSignedSig struct {
 	baseBuiltinFunc
 }
 
-func (s *builtinArithmeticPlusIntSignedSignedSig) clone() builtinFunc {
+func (s *builtinArithmeticPlusIntSignedSignedSig) Clone() builtinFunc {
 	newSig := &builtinArithmeticPlusIntSignedSignedSig{}
 	newSig.cloneFrom(&s.baseBuiltinFunc)
 	return newSig
