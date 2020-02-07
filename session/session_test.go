@@ -56,11 +56,10 @@ import (
 )
 
 var (
-	withTiKVGlobalLock sync.RWMutex
-	withTiKV           = flag.Bool("with-tikv", false, "run tests with TiKV cluster started. (not use the mock server)")
-	pdAddrs            = flag.String("pd-addrs", "127.0.0.1:2379", "pd addrs")
-	pdAddrChan         chan string
-	initPdOnce         sync.Once
+	withTiKV        = flag.Bool("with-tikv", false, "run tests with TiKV cluster started. (not use the mock server)")
+	pdAddrs         = flag.String("pd-addrs", "127.0.0.1:2379", "pd addrs")
+	pdAddrChan      chan string
+	initPdAddrsOnce sync.Once
 )
 
 var _ = Suite(&testSessionSuite{})
@@ -140,7 +139,7 @@ func clearETCD(ebd tikv.EtcdBackend) error {
 }
 
 func initPdAddrs() {
-	initPdOnce.Do(func() {
+	initPdAddrsOnce.Do(func() {
 		addrs := strings.Split(*pdAddrs, ",")
 		pdAddrChan = make(chan string, len(addrs))
 		for _, addr := range addrs {
@@ -157,18 +156,20 @@ func (s *testSessionSuiteBase) SetUpSuite(c *C) {
 	s.cluster = mocktikv.NewCluster()
 
 	if *withTiKV {
-		initPdAddrs()
-		s.pdAddr = <-pdAddrChan
-		var d tikv.Driver
-		config.GetGlobalConfig().TxnLocalLatches.Enabled = false
-		store, err := d.Open(fmt.Sprintf("tikv://%s", s.pdAddr))
-		c.Assert(err, IsNil)
-		err = clearStorage(store)
-		c.Assert(err, IsNil)
-		err = clearETCD(store.(tikv.EtcdBackend))
-		c.Assert(err, IsNil)
-		session.ResetStoreForWithTiKVTest(store)
-		s.store = store
+		// TODO: if we run `-with-tikv -check.p true` this will cause deadlock, due to
+		// https://github.com/pingcap/check/blob/8a5a85928f125d818621be7f0ee69d7207f53622/check.go#L646
+		//initPdAddrs()
+		//s.pdAddr = <-pdAddrChan
+		//var d tikv.Driver
+		//config.GetGlobalConfig().TxnLocalLatches.Enabled = false
+		//store, err := d.Open(fmt.Sprintf("tikv://%s", s.pdAddr))
+		//c.Assert(err, IsNil)
+		//err = clearStorage(store)
+		//c.Assert(err, IsNil)
+		//err = clearETCD(store.(tikv.EtcdBackend))
+		//c.Assert(err, IsNil)
+		//session.ResetStoreForWithTiKVTest(store)
+		//s.store = store
 	} else {
 		mocktikv.BootstrapWithSingleStore(s.cluster)
 		s.mvccStore = mocktikv.MustNewMVCCStore()
@@ -194,6 +195,23 @@ func (s *testSessionSuiteBase) TearDownSuite(c *C) {
 	testleak.AfterTest(c)()
 	if *withTiKV {
 		pdAddrChan <- s.pdAddr
+	}
+}
+
+func (s *testSessionSuiteBase) SetupTest(c *C) {
+	if *withTiKV && s.pdAddr == "" {
+		initPdAddrs()
+		s.pdAddr = <-pdAddrChan
+		var d tikv.Driver
+		config.GetGlobalConfig().TxnLocalLatches.Enabled = false
+		store, err := d.Open(fmt.Sprintf("tikv://%s", s.pdAddr))
+		c.Assert(err, IsNil)
+		err = clearStorage(store)
+		c.Assert(err, IsNil)
+		err = clearETCD(store.(tikv.EtcdBackend))
+		c.Assert(err, IsNil)
+		session.ResetStoreForWithTiKVTest(store)
+		s.store = store
 	}
 }
 
