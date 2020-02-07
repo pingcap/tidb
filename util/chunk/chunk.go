@@ -409,7 +409,6 @@ func appendCellByCell(dst *Column, src *Column, rowIdx int) {
 		dst.offsets = append(dst.offsets, int64(len(dst.data)))
 	}
 	dst.length++
-
 }
 
 // preAlloc pre-allocates the memory space in a Chunk to store the Row.
