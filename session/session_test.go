@@ -205,7 +205,7 @@ func (s *testSessionSuiteBase) TearDownSuite(c *C) {
 	}
 }
 
-func (s *testSessionSuiteBase) SetupTest(c *C) {
+func (s *testSessionSuiteBase) SetUpTest(c *C) {
 	if *withTiKV && s.pdAddr == "" {
 		doSetupSuite(s, c)
 	}
