@@ -19,6 +19,8 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 )
 
 var (
@@ -46,6 +48,14 @@ var (
 //     }
 //
 // NOTE: This interface is **not** thread-safe.
+// TODO: unit test
+// for all join type
+//     1. no filter, no inline projection
+//     2. no filter, inline projection
+//     3. no filter, inline projection to empty column
+//     4. filter, no inline projection
+//     5. filter, inline projection
+//     6. filter, inline projection to empty column
 type joiner interface {
 	// tryToMatchInners tries to join an outer row with a batch of inner rows. When
 	// 'inners.Len != 0' but all the joined rows are filtered, the outer row is
@@ -121,7 +131,9 @@ func newJoiner(ctx sessionctx.Context, joinType plannercore.JoinType,
 				base.rUsed = append(base.rUsed, i)
 			}
 		}
-		// logutil.BgLogger().Info("InlineProjection", zap.Ints("lUsed", base.lUsed), zap.Ints("rUsed", base.rUsed))
+		logutil.BgLogger().Info("InlineProjection",
+			zap.Ints("lUsed", base.lUsed), zap.Ints("rUsed", base.rUsed),
+			zap.Int("lCount", len(lhsColTypes)), zap.Int("rCount", len(rhsColTypes)))
 	}
 	if joinType == plannercore.LeftOuterJoin || joinType == plannercore.RightOuterJoin {
 		innerColTypes := lhsColTypes
@@ -131,7 +143,8 @@ func newJoiner(ctx sessionctx.Context, joinType plannercore.JoinType,
 		base.initDefaultInner(innerColTypes, defaultInner)
 	}
 	// shallowRowType may be different with outputColTypes because output columns may be
-	// inline projected, while shallow row should not be.
+	// inline projected, while shallow row should not be because each column may need be
+	// used in filter.
 	shallowRowType := make([]*types.FieldType, 0, len(lhsColTypes)+len(rhsColTypes))
 	shallowRowType = append(shallowRowType, lhsColTypes...)
 	shallowRowType = append(shallowRowType, rhsColTypes...)
@@ -148,15 +161,21 @@ func newJoiner(ctx sessionctx.Context, joinType plannercore.JoinType,
 	case plannercore.AntiLeftOuterSemiJoin:
 		base.shallowRow = chunk.MutRowFromTypes(shallowRowType)
 		return &antiLeftOuterSemiJoiner{base}
-	case plannercore.LeftOuterJoin:
-		base.chk = chunk.NewChunkWithCapacity(outputColTypes, ctx.GetSessionVars().MaxChunkSize)
-		return &leftOuterJoiner{base}
-	case plannercore.RightOuterJoin:
-		base.chk = chunk.NewChunkWithCapacity(outputColTypes, ctx.GetSessionVars().MaxChunkSize)
-		return &rightOuterJoiner{base}
-	case plannercore.InnerJoin:
-		base.chk = chunk.NewChunkWithCapacity(outputColTypes, ctx.GetSessionVars().MaxChunkSize)
-		return &innerJoiner{base}
+	case plannercore.LeftOuterJoin, plannercore.RightOuterJoin, plannercore.InnerJoin:
+		base.chk = chunk.NewChunkWithCapacity(shallowRowType, ctx.GetSessionVars().MaxChunkSize)
+		// if conditions is not empty, we should do projection after filtering.
+		if len(base.conditions) > 0 {
+			base.lUsedForFilter, base.rUsedForFilter = base.lUsed, base.rUsed
+			base.lUsed, base.rUsed = nil, nil
+		}
+		switch joinType {
+		case plannercore.LeftOuterJoin:
+			return &leftOuterJoiner{base}
+		case plannercore.RightOuterJoin:
+			return &rightOuterJoiner{base}
+		case plannercore.InnerJoin:
+			return &innerJoiner{base}
+		}
 	}
 	panic("unsupported join type in func newJoiner()")
 }
@@ -183,7 +202,8 @@ type baseJoiner struct {
 	// NOTE:
 	// 1. every columns are used if lUsed/rUsed is nil.
 	// 2. no columns are used if lUsed/rUsed is not nil but the size of lUsed/rUsed is 0.
-	lUsed, rUsed []int
+	lUsed, rUsed                   []int
+	lUsedForFilter, rUsedForFilter []int
 }
 
 func (j *baseJoiner) initDefaultInner(innerTypes []*types.FieldType, defaultInner []types.Datum) {
@@ -224,6 +244,23 @@ func (j *baseJoiner) filter(input, output *chunk.Chunk, outerColsLen int) (bool,
 	if !j.outerIsRight {
 		innerColOffset, outerColOffset = outerColsLen, 0
 	}
+	if j.lUsedForFilter != nil || j.rUsedForFilter != nil {
+		lSize := outerColOffset
+		if !j.outerIsRight {
+			lSize = innerColOffset
+		}
+		used := make([]int, len(j.lUsedForFilter)+len(j.rUsedForFilter))
+		copy(used, j.lUsedForFilter)
+		for i := range j.rUsedForFilter {
+			used[i+len(j.lUsedForFilter)] = j.rUsedForFilter[i] + lSize
+		}
+		input = input.Prune(used)
+
+		innerColOffset, outerColOffset = 0, len(j.lUsedForFilter)
+		if !j.outerIsRight {
+			innerColOffset, outerColOffset = len(j.lUsedForFilter), 0
+		}
+	}
 	return chunk.CopySelectedJoinRowsWithSameOuterRows(input, innerColOffset, outerColOffset, j.selected, output)
 }
 
@@ -231,7 +268,7 @@ func (j *baseJoiner) filter(input, output *chunk.Chunk, outerColsLen int) (bool,
 // tryToMatchOuters, the result is built by multiple outer rows and one inner
 // row. The returned outerRowStatusFlag slice value indicates the status of
 // each outer row (matched/unmatched/hasNull).
-func (j *baseJoiner) filterAndCheckOuterRowStatus(input, output *chunk.Chunk, innerColsLen int, outerRowStatus []outerRowStatusFlag) (_ []outerRowStatusFlag, _ error) {
+func (j *baseJoiner) filterAndCheckOuterRowStatus(input, output *chunk.Chunk, innerColsLen int, outerRowStatus []outerRowStatusFlag) ([]outerRowStatusFlag, error) {
 	var err error
 	j.selected, j.isNull, err = expression.VectorizedFilterConsiderNull(j.ctx, j.conditions, chunk.NewIterator4Chunk(input), j.selected, j.isNull)
 	if err != nil {
@@ -245,6 +282,18 @@ func (j *baseJoiner) filterAndCheckOuterRowStatus(input, output *chunk.Chunk, in
 		}
 	}
 
+	if j.lUsedForFilter != nil || j.rUsedForFilter != nil {
+		lSize := innerColsLen
+		if !j.outerIsRight {
+			lSize = input.NumCols() - innerColsLen
+		}
+		used := make([]int, len(j.lUsedForFilter)+len(j.rUsedForFilter))
+		copy(used, j.lUsedForFilter)
+		for i := range j.rUsedForFilter {
+			used[i+len(j.lUsedForFilter)] = j.rUsedForFilter[i] + lSize
+		}
+		input = input.Prune(used)
+	}
 	// Batch copies selected rows to output chunk.
 	_, err = chunk.CopySelectedJoinRowsDirect(input, j.selected, output)
 	return outerRowStatus, err

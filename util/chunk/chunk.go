@@ -112,6 +112,22 @@ func renewColumns(oldCol []*Column, cap int) []*Column {
 	return columns
 }
 
+// renewWithCapacity creates a new Chunk based on an existing Chunk
+// but keep columns empty.
+func renewEmpty(chk *Chunk) *Chunk {
+	newChk := &Chunk{
+		columns:        nil,
+		numVirtualRows: chk.numVirtualRows,
+		capacity:       chk.capacity,
+		requiredRows:   chk.requiredRows,
+	}
+	if chk.sel != nil {
+		newChk.sel = make([]int, len(chk.sel))
+		copy(newChk.sel, chk.sel)
+	}
+	return newChk
+}
+
 // MemoryUsage returns the total memory usage of a Chunk in B.
 // We ignore the size of Column.length and Column.nullCount
 // since they have little effect of the total memory usage.
@@ -167,12 +183,14 @@ func (c *Chunk) IsFull() bool {
 	return c.NumRows() >= c.requiredRows
 }
 
-// Prune prunes Columns which's index is not in usedColIdxs. usedColIdxs should be ascending.
-func (c *Chunk) Prune(usedColIdxs []int) {
+// Prune return a new Chunk which prunes Columns which's index is not in usedColIdxs.
+func (c *Chunk) Prune(usedColIdxs []int) *Chunk {
+	chk := renewEmpty(c)
+	chk.columns = make([]*Column, len(usedColIdxs))
 	for i, idx := range usedColIdxs {
-		c.columns[i] = c.columns[idx]
+		chk.columns[i] = c.columns[idx]
 	}
-	c.columns = c.columns[:len(usedColIdxs)]
+	return chk
 }
 
 // MakeRef makes Column in "dstColIdx" reference to Column in "srcColIdx".
@@ -264,13 +282,10 @@ func (c *Chunk) Reset() {
 
 // CopyConstruct creates a new chunk and copies this chunk's data into it.
 func (c *Chunk) CopyConstruct() *Chunk {
-	newChk := &Chunk{numVirtualRows: c.numVirtualRows, capacity: c.capacity, columns: make([]*Column, len(c.columns))}
+	newChk := renewEmpty(c)
+	newChk.columns = make([]*Column, len(c.columns))
 	for i := range c.columns {
 		newChk.columns[i] = c.columns[i].CopyConstruct(nil)
-	}
-	if c.sel != nil {
-		newChk.sel = make([]int, len(c.sel))
-		copy(newChk.sel, c.sel)
 	}
 	return newChk
 }
@@ -341,19 +356,12 @@ func (c *Chunk) GetRow(idx int) Row {
 
 // AppendRow appends a row to the chunk.
 func (c *Chunk) AppendRow(row Row) {
-	c.appendPartialRow(0, row)
+	c.AppendPartialRow(0, row)
 	c.numVirtualRows++
 }
 
 // AppendPartialRow appends a row to the chunk.
 func (c *Chunk) AppendPartialRow(colOff int, row Row) {
-	if colOff == 0 {
-		panic("should use AppendRow to increase numVirtualRows")
-	}
-	c.appendPartialRow(colOff, row)
-}
-
-func (c *Chunk) appendPartialRow(colOff int, row Row) {
 	c.appendSel(colOff)
 	for i, rowCol := range row.c.columns {
 		chkCol := c.columns[colOff+i]
@@ -362,26 +370,23 @@ func (c *Chunk) appendPartialRow(colOff int, row Row) {
 }
 
 // AppendRowByColIdxs appends a row by its colIdxs to the chunk.
+// 1. every columns are used if colIdxs is nil.
+// 2. no columns are used if colIdxs is not nil but the size of colIdxs is 0.
 // TODO: test it
 func (c *Chunk) AppendRowByColIdxs(row Row, colIdxs []int) (wide int) {
-	wide = c.appendPartialRowByColIdxs(0, row, colIdxs)
+	wide = c.AppendPartialRowByColIdxs(0, row, colIdxs)
 	c.numVirtualRows++
-	return wide
+	return
 }
 
 // AppendPartialRowByColIdxs appends a row by its colIdxs to the chunk.
+// 1. every columns are used if colIdxs is nil.
+// 2. no columns are used if colIdxs is not nil but the size of colIdxs is 0.
 // TODO: test it
 func (c *Chunk) AppendPartialRowByColIdxs(colOff int, row Row, colIdxs []int) (wide int) {
-	if colOff == 0 {
-		panic("should use AppendRowByColIdxs to increase numVirtualRows")
-	}
-	return c.appendPartialRowByColIdxs(colOff, row, colIdxs)
-}
-
-func (c *Chunk) appendPartialRowByColIdxs(colOff int, row Row, colIdxs []int) (wide int) {
 	if colIdxs == nil {
-		c.appendPartialRow(colOff, row)
-		return len(row.c.columns)
+		c.AppendPartialRow(colOff, row)
+		return row.Len()
 	}
 
 	c.appendSel(colOff)
