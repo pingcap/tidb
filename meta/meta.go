@@ -900,13 +900,3 @@ func (m *Meta) SetSchemaDiff(diff *model.SchemaDiff) error {
 	metrics.MetaHistogram.WithLabelValues(metrics.SetSchemaDiff, metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
 	return errors.Trace(err)
 }
-
-func init() {
-	metaMySQLErrCodes := map[terror.ErrCode]uint16{
-		mysql.ErrDBCreateExists: mysql.ErrDBCreateExists,
-		mysql.ErrBadDB:          mysql.ErrBadDB,
-		mysql.ErrNoSuchTable:    mysql.ErrNoSuchTable,
-		mysql.ErrTableExists:    mysql.ErrTableExists,
-	}
-	terror.ErrClassToMySQLCodes[terror.ClassMeta] = metaMySQLErrCodes
-}
