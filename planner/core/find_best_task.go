@@ -185,12 +185,14 @@ func (p *baseLogicalPlan) findBestTask(prop *property.PhysicalProperty) (bestTas
 		}
 
 		// DEBUGG //
-		logutil.BgLogger().Info("============ curTaskBegin ===========")
-		logutil.BgLogger().Info("curTask", zap.String("plan", ToString(p)), zap.Float64("cost", curTask.cost()))
-		for p := curTask.plan(); p != nil; {
-			logutil.BgLogger().Info("detail", zap.String("plan", ToString(p)), zap.String("info", p.ExplainInfo()))
-			if len(p.Children()) > 0 {
-				p = p.Children()[0]
+		logutil.BgLogger().Info("============ curTask ===========")
+		logutil.BgLogger().Info("curTask", zap.String("plan", ToString(curTask.plan())), zap.Float64("cost", curTask.cost()))
+		for ppp := curTask.plan(); ppp != nil; {
+			if ppp, ok := ppp.(*PhysicalShuffle); ok {
+				logutil.BgLogger().Info("shuffle", zap.String("", ppp.ExplainInfo()))
+			}
+			if len(ppp.Children()) > 0 {
+				ppp = ppp.Children()[0]
 			} else {
 				break
 			}

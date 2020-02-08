@@ -54,17 +54,21 @@ func matchPhysicalProperty(pp PhysicalPlan, requiredProperty *property.PhysicalP
 
 func newPhysicalShuffle(child PhysicalPlan, ctx sessionctx.Context) *PhysicalShuffle {
 	reqProp := &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64}
-	return PhysicalShuffle{}.Init(ctx, child.statsInfo(), child.SelectBlockOffset(), reqProp)
+	return PhysicalShuffle{
+		Concurrency: 1,
+		FanOut:      1,
+	}.Init(ctx, child.statsInfo(), child.SelectBlockOffset(), reqProp)
+}
+
+func setShuffleNoneSplit(shuffle *PhysicalShuffle) {
+	shuffle.FanOut = 1
+	shuffle.SplitterType = ShuffleNoneSplitterType
 }
 
 func setShuffleSplitByHash(shuffle *PhysicalShuffle, concurrency int, groupingCols []*expression.Column) {
-	byItems := make([]expression.Expression, 0, len(groupingCols))
-	for _, col := range groupingCols {
-		byItems = append(byItems, col)
-	}
 	shuffle.FanOut = concurrency
 	shuffle.SplitterType = ShuffleHashSplitterType
-	shuffle.HashByItems = byItems
+	shuffle.SplitByItems = groupingCols
 }
 
 func setShuffleSplitByRandom(shuffle *PhysicalShuffle, concurrency int) *PhysicalShuffle {
@@ -73,10 +77,15 @@ func setShuffleSplitByRandom(shuffle *PhysicalShuffle, concurrency int) *Physica
 	return shuffle
 }
 
+func setShuffleNoneMerge(shuffle *PhysicalShuffle) {
+	shuffle.Concurrency = 1
+	shuffle.MergerType = ShuffleNoneMergerType
+}
+
 func setShuffleMergeByMergeSort(shuffle *PhysicalShuffle, concurrency int, byItems []property.Item) {
 	shuffle.Concurrency = concurrency
 	shuffle.MergerType = ShuffleMergeSortMergerType
-	shuffle.MergeSortByItems = byItems
+	shuffle.MergeByItems = byItems
 }
 
 func setShuffleMergeByRandom(shuffle *PhysicalShuffle, concurrency int) {
@@ -84,26 +93,44 @@ func setShuffleMergeByRandom(shuffle *PhysicalShuffle, concurrency int) {
 	shuffle.MergerType = ShuffleRandomMergerType
 }
 
+func locateChildShuffle(pp PhysicalPlan) (tail PhysicalPlan, child *PhysicalShuffle) {
+	var ok bool
+	child, ok = pp.(*PhysicalShuffle)
+	for !ok {
+		if len(pp.Children()) > 0 {
+			tail = pp
+			pp = pp.Children()[0] // TODOO: multi-children
+			child, ok = pp.(*PhysicalShuffle)
+		} else {
+			return nil, nil
+		}
+	}
+	return tail, child
+}
+
 func enforceInitialPartition(pp PhysicalPlan, requiredProperty *property.PhysicalProperty, ctx sessionctx.Context) *PhysicalShuffle {
 	concurrency := ctx.GetSessionVars().ExecutorsConcurrency
 	shuffle := newPhysicalShuffle(pp, ctx)
 	if len(requiredProperty.PartitionGroupingCols) > 0 {
 		setShuffleSplitByHash(shuffle, concurrency, requiredProperty.PartitionGroupingCols)
-		return shuffle
+	} else {
+		setShuffleSplitByRandom(shuffle, concurrency)
 	}
-	setShuffleSplitByRandom(shuffle, concurrency)
+	setShuffleNoneMerge(shuffle)
 	return shuffle
 }
 
 func enforceFullMerge(pp PhysicalPlan, requiredProperty *property.PhysicalProperty, deliveringProperty *property.PhysicalProperty, ctx sessionctx.Context) *PhysicalShuffle {
 	concurrency := ctx.GetSessionVars().ExecutorsConcurrency
 	shuffle := newPhysicalShuffle(pp, ctx)
+	setShuffleNoneSplit(shuffle)
 	if len(requiredProperty.Items) > 0 {
-		// requiredProperty.IsPrefix(deliveringProperty) is ensured in `exhaustPhysicalPlans`.
+		// local property(i.e. requiredProperty.IsPrefix(deliveringProperty)) is ensured in `exhaustPhysicalPlans`.
 		setShuffleMergeByMergeSort(shuffle, concurrency, deliveringProperty.Items)
-		return shuffle
+	} else {
+		setShuffleMergeByRandom(shuffle, concurrency)
 	}
-	setShuffleMergeByRandom(shuffle, concurrency)
+	shuffle.Tail, shuffle.ChildShuffle = locateChildShuffle(pp)
 	return shuffle
 }
 
@@ -120,10 +147,11 @@ func enforceRepartition(pp PhysicalPlan, requiredProperty *property.PhysicalProp
 	shuffle := newPhysicalShuffle(pp, ctx)
 	setShuffleSplitByHash(shuffle, concurrency, requiredProperty.PartitionGroupingCols)
 	if len(requiredProperty.Items) > 0 {
-		// requiredProperty.IsPrefix(deliveringProperty) is ensured in `exhaustPhysicalPlans`.
+		// local property(i.e. requiredProperty.IsPrefix(deliveringProperty)) is ensured in `exhaustPhysicalPlans`.
 		setShuffleMergeByMergeSort(shuffle, concurrency, deliveringProperty.Items)
-		return shuffle
+	} else {
+		setShuffleMergeByRandom(shuffle, concurrency)
 	}
-	setShuffleMergeByRandom(shuffle, concurrency)
+	shuffle.Tail, shuffle.ChildShuffle = locateChildShuffle(pp)
 	return shuffle
 }

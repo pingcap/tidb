@@ -2715,66 +2715,66 @@ func (b *executorBuilder) buildWindow(v *plannercore.PhysicalWindow) *WindowExec
 }
 
 func (b *executorBuilder) buildShuffle(v *plannercore.PhysicalShuffle) *ShuffleExec {
-	var childExec Executor
-	if v.Concurrency > 1 {
-		childExec = b.build(v.ChildShuffle)
-	} else {
-		childExec = b.build(v.Children()[0])
-	}
-	if b.err != nil {
-		return nil
-	}
-	base := newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), childExec)
-	shuffle := &ShuffleExec{baseExecutor: base,
-		concurrency: v.Concurrency,
+	shuffle := &ShuffleExec{
+		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
+		concurrency:  v.Concurrency,
+		workers:      make([]*shuffleWorker, v.Concurrency),
+		fanOut:       v.FanOut,
+		mergers:      make([]*shuffleMerger, v.FanOut),
 	}
 
-	switch v.SplitterType {
-	case plannercore.ShuffleSerialSplitterType:
-		shuffle.splitter = nil
-	case plannercore.ShuffleRandomSplitterType:
-		shuffle.splitter = newShuffleSimpleSplitter(shuffle, v.FanOut)
-	case plannercore.ShuffleHashSplitterType:
-		shuffle.splitter = newShuffleHashSplitter(shuffle, v.FanOut, v.HashByItems)
-	default:
-		panic("Not implemented. Should not reach here.")
-	}
-
-	if !shuffle.IsParallel() {
-		return shuffle
-	}
-
-	shuffle.child = shuffle.children[0].(*ShuffleExec)
-
-	switch v.MergerType {
-	case plannercore.ShuffleRandomMergerType:
-		shuffle.merger = newShuffleSimpleMerger(shuffle, shuffle.concurrency)
-	default:
-		panic("Not implemented. Should not reach here.")
-	}
-
-	// head & tail of physical plans' chain between "shuffle".
-	var head, tail plannercore.PhysicalPlan = v.Children()[0], v.Tail
-
-	shuffle.workers = make([]*shuffleWorker, shuffle.concurrency)
-	for i := range shuffle.workers {
-		w := &shuffleWorker{
-			workerIdx:    i,
-			baseExecutor: newBaseExecutor(b.ctx, v.ChildShuffle.Schema(), v.ChildShuffle.ExplainID()),
-		}
-
-		stub := plannercore.PhysicalShuffleDataSourceStub{
-			Worker: (unsafe.Pointer)(w),
-		}.Init(b.ctx, v.ChildShuffle.Stats(), v.ChildShuffle.SelectBlockOffset(), nil)
-		stub.SetSchema(v.ChildShuffle.Schema())
-
-		tail.SetChildren(stub)
-		w.childExec = b.build(head)
+	if v.ChildShuffle != nil {
+		shuffle.childShuffle = b.build(v.ChildShuffle)
 		if b.err != nil {
 			return nil
 		}
+	}
+
+	///// workers /////
+	for i := range shuffle.workers {
+		w := &shuffleWorker{
+			workerIdx: i,
+			shuffle:   shuffle,
+		}
+		if v.ChildShuffle != nil {
+			w.childShuffle = shuffle.childShuffle
+
+			stub := plannercore.PhysicalShuffleDataSourceStub{
+				Worker: (unsafe.Pointer)(w),
+			}.Init(b.ctx, v.ChildShuffle.Stats(), v.ChildShuffle.SelectBlockOffset(), nil)
+			stub.SetSchema(v.ChildShuffle.Schema())
+
+			v.Tail.SetChildren(stub)
+		}
+		childExec := b.build(v.Children()[0])
+		if b.err != nil {
+			return nil
+		}
+		w.baseExecutor = newBaseExecutor(b.ctx, v.ChildShuffle.Schema(), v.ChildShuffle.ExplainID(), childExec)
+
+		switch v.SplitterType {
+		case plannercore.ShuffleNoneSplitterType, plannercore.ShuffleRandomSplitterType:
+			// ShuffleNoneSplitterType used for full-merging (i.e. serial parent). Reuse random splitter.
+			w.splitter = newShuffleRandomSplitter(shuffle, v.FanOut)
+		case plannercore.ShuffleHashSplitterType:
+			w.splitter = newShuffleHashSplitter(shuffle, v.FanOut, v.SplitByItems)
+		default:
+			panic("Not implemented. Should not reach here.")
+		}
 
 		shuffle.workers[i] = w
+	}
+
+	///// mergers /////
+	switch v.MergerType {
+	case plannercore.ShuffleNoneMergerType, plannercore.ShuffleRandomMergerType:
+		// ShuffleNoneMergerType used for initial-partitioning (i.e. serial children). Reuse random merger.
+		for i := range shuffle.mergers {
+			shuffle.mergers[i] = newShuffleRandomMerger(shuffle, shuffle.concurrency)
+		}
+	//TODOO: case ShuffleMergeSortMergerType:
+	default:
+		panic("Not implemented. Should not reach here.")
 	}
 
 	return shuffle

@@ -564,7 +564,7 @@ func (p *PhysicalWindow) ExplainInfo() string {
 // ExplainInfo implements Plan interface.
 func (p *PhysicalShuffle) ExplainInfo() string {
 	buffer := bytes.NewBufferString("")
-	fmt.Fprintf(buffer, "execution info: concurrency:%v", p.Concurrency)
+	fmt.Fprintf(buffer, "execution info: concurrency:%v, fan out:%v", p.Concurrency, p.FanOut)
 	if p.ChildShuffle != nil {
 		fmt.Fprintf(buffer, ", child:%v", p.ChildShuffle.ExplainID())
 	}

@@ -427,12 +427,12 @@ func (p *PhysicalShuffle) ResolveIndices() (err error) {
 	if err != nil {
 		return err
 	}
-	for i := range p.HashByItems {
+	/* TODOO for i := range p.HashByItems {
 		p.HashByItems[i], err = p.HashByItems[i].ResolveIndices(p.children[0].Schema())
 		if err != nil {
 			return err
 		}
-	}
+	}*/
 	return err
 }
 

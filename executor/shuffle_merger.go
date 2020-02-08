@@ -139,14 +139,14 @@ func (m *baseShuffleMerger) WorkersAllFinished() {
 	}
 }
 
-// shuffleSimpleMerger merges results without any other process.
-type shuffleSimpleMerger struct {
+// shuffleRandomMerger merges results by the whole chunk, resulting random order.
+type shuffleRandomMerger struct {
 	baseShuffleMerger
 }
 
-// newShuffleSimpleMerger creates shuffleSimpleMerger.
-func newShuffleSimpleMerger(shuffle *ShuffleExec, fanIn int) *shuffleSimpleMerger {
-	return &shuffleSimpleMerger{baseShuffleMerger{
+// newShuffleRandomMerger creates shuffleRandomMerger.
+func newShuffleRandomMerger(shuffle *ShuffleExec, fanIn int) *shuffleRandomMerger {
+	return &shuffleRandomMerger{baseShuffleMerger{
 		shuffle:          shuffle,
 		fanIn:            fanIn,
 		isSingleOutputCh: true,
@@ -155,7 +155,7 @@ func newShuffleSimpleMerger(shuffle *ShuffleExec, fanIn int) *shuffleSimpleMerge
 }
 
 // Next implements shuffleMerger Next interface.
-func (m *shuffleSimpleMerger) Next(ctx context.Context, chk *chunk.Chunk) error {
+func (m *shuffleRandomMerger) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	if m.executed {
 		return nil

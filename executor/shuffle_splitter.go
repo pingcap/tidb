@@ -16,17 +16,14 @@ package executor
 import (
 	"context"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/logutil"
 	"github.com/spaolacci/murmur3"
-	"go.uber.org/zap"
 )
 
 var (
-	_ shuffleSplitter = (*shuffleSimpleSplitter)(nil)
+	_ shuffleSplitter = (*shuffleRandomSplitter)(nil)
 	_ shuffleSplitter = (*shuffleHashSplitter)(nil)
 )
 
@@ -38,30 +35,28 @@ type shuffleSplitter interface {
 	Prepare(ctx context.Context)
 	// Close de-initializes splitter.
 	Close() error
-	// WorkerInput is called by workers to get input from splitter.
-	WorkerGetInput(workerIdx int) (chk *chunk.Chunk, finished bool, err error)
-	// WorkerReturnHolderChunk is called by workers to return holder chunk.
-	WorkerReturnHolderChunk(workerIdx int, chk *chunk.Chunk)
-	// Split input into partitions. Each splitter should implement `Split` or `SplitByRow` for different spliting algorithm.
-	Split(ctx context.Context)
+	// PushResult pushs result to splitter.
+	PushResult(ctx context.Context, chk *chunk.Chunk) (finished bool, err error)
 	// SplitByRow splits input into partitions row by row.
-	SplitByRow(ctx context.Context, input *chunk.Chunk, workerIndices []int) ([]int, error)
+	SplitByRow(ctx context.Context, input *chunk.Chunk, partitionIndices []int) ([]int, error)
 }
 
 type baseShuffleSplitter struct {
-	// shuffle is the parent Shuffle executor.
 	shuffle *ShuffleExec
-	// fanOut is number of shuffle worker input channels. Should be equal to number of workers.
+	// fanOut is number of merger. Can be NOT equal to number of workers.
 	fanOut int
 	// self is the concrete shuffleSplitter itself.
 	self shuffleSplitter
 
 	prepared bool
 
-	sctx          sessionctx.Context
-	finishCh      <-chan struct{}
-	inputCh       []chan *shuffleOutput
-	inputHolderCh []chan *chunk.Chunk
+	sctx     sessionctx.Context
+	finishCh <-chan struct{}
+	holderCh []chan *chunk.Chunk
+
+	// temporary variables
+	results          []*chunk.Chunk
+	partitionIndices []int
 }
 
 func (s *baseShuffleSplitter) Open(ctx context.Context, sctx sessionctx.Context, finishCh <-chan struct{}) error {
@@ -69,12 +64,10 @@ func (s *baseShuffleSplitter) Open(ctx context.Context, sctx sessionctx.Context,
 
 	s.sctx = sctx
 	s.finishCh = finishCh
-	s.inputCh = make([]chan *shuffleOutput, s.fanOut)
-	s.inputHolderCh = make([]chan *chunk.Chunk, s.fanOut)
-	for i := range s.inputCh {
-		s.inputCh[i] = make(chan *shuffleOutput, 1)
-		s.inputHolderCh[i] = make(chan *chunk.Chunk, 1)
-		s.inputHolderCh[i] <- newFirstChunk(s.shuffle)
+	s.holderCh = make([]chan *chunk.Chunk, s.fanOut)
+	for i := range s.holderCh {
+		s.holderCh[i] = make(chan *chunk.Chunk, 1)
+		s.holderCh[i] <- newFirstChunk(s.shuffle)
 	}
 
 	return nil
@@ -82,119 +75,68 @@ func (s *baseShuffleSplitter) Open(ctx context.Context, sctx sessionctx.Context,
 
 func (s *baseShuffleSplitter) Close() error {
 	if !s.prepared {
-		for _, ch := range s.inputCh {
-			close(ch)
-		}
-		for _, ch := range s.inputHolderCh {
+		for _, ch := range s.holderCh {
 			close(ch)
 		}
 	}
-	for _, ch := range s.inputCh {
-		for range ch {
-		}
-	}
-
 	return nil
 }
 
 func (s *baseShuffleSplitter) Prepare(ctx context.Context) {
-	go s.fetchDataAndSplit(ctx)
 	s.prepared = true
 }
 
-func (s *baseShuffleSplitter) WorkerGetInput(workerIdx int) (chk *chunk.Chunk, finished bool, err error) {
-	select {
-	case <-s.finishCh:
-		return nil, true, nil
-	case result, ok := <-s.inputCh[workerIdx]:
-		if !ok {
-			return nil, true, nil
-		}
-		return result.chk, false, result.err
+func (s *baseShuffleSplitter) PushResult(ctx context.Context, chk *chunk.Chunk) (finished bool, err error) {
+	if s.results == nil {
+		s.results = make([]*chunk.Chunk, s.fanOut)
 	}
-}
 
-func (s *baseShuffleSplitter) WorkerReturnHolderChunk(workerIdx int, chk *chunk.Chunk) {
-	s.inputHolderCh[workerIdx] <- chk
-}
-
-func (s *baseShuffleSplitter) sendError(err error) {
-	s.inputCh[0] <- &shuffleOutput{err: err} // workerIdx is not cared for.
-}
-
-func (s *baseShuffleSplitter) fetchDataAndSplit(ctx context.Context) {
-	defer func() {
-		if r := recover(); r != nil {
-			err := errors.Errorf("%v", r)
-			s.sendError(err)
-			logutil.BgLogger().Error("shuffle splitter panicked", zap.Error(err))
-		}
-		for _, ch := range s.inputCh {
-			close(ch)
-		}
-	}()
-
-	s.self.Split(ctx)
-}
-
-func (s *baseShuffleSplitter) Split(ctx context.Context) {
-	var (
-		err           error
-		workerIndices []int
-	)
-	results := make([]*chunk.Chunk, s.fanOut)
-	chk := newFirstChunk(s.shuffle)
-
-	for {
-		err = Next(ctx, s.shuffle, chk)
+	numRows := chk.NumRows()
+	if numRows > 0 {
+		s.partitionIndices, err = s.self.SplitByRow(ctx, chk, s.partitionIndices)
 		if err != nil {
-			s.sendError(err)
-			return
+			return false, err
 		}
-		if chk.NumRows() == 0 { // Should not send an empty chunk to worker.
-			break
-		}
-
-		workerIndices, err = s.self.SplitByRow(ctx, chk, workerIndices)
-		if err != nil {
-			s.sendError(err)
-			return
-		}
-		numRows := chk.NumRows()
 		for i := 0; i < numRows; i++ {
-			workerIdx := workerIndices[i]
+			partitionIdx := s.partitionIndices[i]
 
-			if results[workerIdx] == nil {
+			if results[partitionIdx] == nil {
 				select {
 				case <-s.finishCh:
-					return
-				case results[workerIdx] = <-s.inputHolderCh[workerIdx]:
+					return true, nil
+				case results[partitionIdx] = <-s.holderCh[partitionIdx]:
 					break
 				}
 			}
-			results[workerIdx].AppendRow(chk.GetRow(i))
-			if results[workerIdx].IsFull() {
-				s.inputCh[workerIdx] <- &shuffleOutput{chk: results[workerIdx]}
-				results[workerIdx] = nil
+			results[partitionIdx].AppendRow(chk.GetRow(i))
+			if results[partitionIdx].IsFull() {
+				data := &shuffleData{chk: results[partitionIdx], giveBackCh: s.holderCh[partitionIdx]}
+				s.shuffle.PushToMerger(partitionIdx, data)
+				results[partitionIdx] = nil
 			}
 		}
+		return false, nil
 	}
-	for i, ch := range s.inputCh {
-		if results[i] != nil {
-			ch <- &shuffleOutput{chk: results[i]}
-			results[i] = nil
+
+	for partitionIdx := 0; partitionIdx < s.fanOut; partitionIdx++ {
+		if results[partitionIdx] != nil {
+			data := &shuffleData{chk: results[partitionIdx], giveBackCh: s.holderCh[partitionIdx]}
+			s.shuffle.PushToMerger(partitionIdx, data)
+			results[partitionIdx] = nil
 		}
 	}
+	return true, nil
 }
 
-// shuffleSimpleSplitter splits data source by the whole chunk, without any process.
-type shuffleSimpleSplitter struct {
+// shuffleRandomSplitter splits data source by the whole chunk, resulting random order.
+type shuffleRandomSplitter struct {
 	baseShuffleSplitter
+	partitionIdx int
 }
 
-// newShuffleSimpleSplitter creates shuffleSimpleSplitter
-func newShuffleSimpleSplitter(shuffle *ShuffleExec, fanOut int) *shuffleSimpleSplitter {
-	splitter := &shuffleSimpleSplitter{}
+// newShuffleSimpleSplitter creates shuffleRandomSplitter
+func newShuffleRandomSplitter(shuffle *ShuffleExec, fanOut int) *shuffleRandomSplitter {
+	splitter := &shuffleRandomSplitter{}
 	splitter.baseShuffleSplitter = baseShuffleSplitter{
 		shuffle: shuffle,
 		fanOut:  fanOut,
@@ -203,37 +145,26 @@ func newShuffleSimpleSplitter(shuffle *ShuffleExec, fanOut int) *shuffleSimpleSp
 	return splitter
 }
 
-// Split implements shuffleSplitter Split interface.
-func (s *shuffleSimpleSplitter) Split(ctx context.Context) {
-	var (
-		err       error
-		workerIdx int
-		chk       *chunk.Chunk
-	)
-
-	for {
+// Split implements shuffleSplitter interface.
+func (s *shuffleRandomSplitter) PushResult(ctx context.Context, result *chunk.Chunk) (finished bool, err error) {
+	if chk.NumRows() > 0 {
 		select {
 		case <-s.finishCh:
-			return
-		case chk = <-s.inputHolderCh[workerIdx]:
+			return true, nil
+		case chk = <-s.holderCh[s.partitionIdx]:
 			break
 		}
-		err = Next(ctx, s.shuffle, chk)
-		if err != nil {
-			s.sendError(err)
-			return
-		}
-		if chk.NumRows() == 0 { // Should not send an empty chunk to worker.
-			break
-		}
-		s.inputCh[workerIdx] <- &shuffleOutput{chk: chk}
-
-		workerIdx = (workerIdx + 1) % s.fanOut
+		chk.SwapColumns(result)
+		data := &shuffleData{chk: chk, giveBackCh: s.holderCh[s.partitionIdx]}
+		s.shuffle.PushToMerger(s.partitionIdx, data)
+		s.partitionIdx = (s.partitionIdx + 1) % s.fanOut
+		return false, nil
 	}
+	return true, nil
 }
 
 // SplitByRow is just a placeholder.
-func (s *shuffleSimpleSplitter) SplitByRow(ctx context.Context, input *chunk.Chunk, workerIndices []int) ([]int, error) {
+func (s *shuffleRandomSplitter) SplitByRow(ctx context.Context, input *chunk.Chunk, workerIndices []int) ([]int, error) {
 	panic("Should not reach here")
 }
 
@@ -245,8 +176,12 @@ type shuffleHashSplitter struct {
 }
 
 // newShuffleHashSplitter creates shuffleHashSplitter
-func newShuffleHashSplitter(shuffle *ShuffleExec, fanOut int, byItems []expression.Expression) *shuffleHashSplitter {
-	splitter := &shuffleHashSplitter{byItems: byItems}
+func newShuffleHashSplitter(shuffle *ShuffleExec, fanOut int, byItems []*expression.Column) *shuffleHashSplitter {
+	items := make([]expression.Expression, len(byItems))
+	for i, col := range byItems {
+		items[i] = col
+	}
+	splitter := &shuffleHashSplitter{byItems: items}
 	splitter.baseShuffleSplitter = baseShuffleSplitter{
 		shuffle: shuffle,
 		fanOut:  fanOut,
@@ -256,16 +191,16 @@ func newShuffleHashSplitter(shuffle *ShuffleExec, fanOut int, byItems []expressi
 }
 
 // SplitByRow implements shuffleSplitter SplitByRow interface.
-func (s *shuffleHashSplitter) SplitByRow(ctx context.Context, input *chunk.Chunk, workerIndices []int) ([]int, error) {
+func (s *shuffleHashSplitter) SplitByRow(ctx context.Context, input *chunk.Chunk, partitionIndices []int) ([]int, error) {
 	var err error
 	s.hashKeys, err = getGroupKey(s.sctx, input, s.hashKeys, s.byItems)
 	if err != nil {
-		return workerIndices, err
+		return partitionIndices, err
 	}
-	workerIndices = workerIndices[:0]
+	partitionIndices = partitionIndices[:0]
 	numRows := input.NumRows()
 	for i := 0; i < numRows; i++ {
-		workerIndices = append(workerIndices, int(murmur3.Sum32(s.hashKeys[i]))%s.fanOut)
+		partitionIndices = append(partitionIndices, int(murmur3.Sum32(s.hashKeys[i]))%s.fanOut)
 	}
-	return workerIndices, nil
+	return partitionIndices, nil
 }
