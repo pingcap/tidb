@@ -118,6 +118,7 @@ func newJoiner(ctx sessionctx.Context, joinType plannercore.JoinType,
 		}
 		base.initDefaultInner(innerColTypes, defaultInner)
 	}
+	sctx := ctx.GetSessionVars().StmtCtx
 	switch joinType {
 	case plannercore.SemiJoin:
 		base.shallowRow = chunk.MutRowFromTypes(colTypes)
@@ -133,12 +134,15 @@ func newJoiner(ctx sessionctx.Context, joinType plannercore.JoinType,
 		return &antiLeftOuterSemiJoiner{base}
 	case plannercore.LeftOuterJoin:
 		base.chk = chunk.NewChunkWithCapacity(colTypes, ctx.GetSessionVars().MaxChunkSize)
+		sctx.RegisterChunk(base.chk)
 		return &leftOuterJoiner{base}
 	case plannercore.RightOuterJoin:
 		base.chk = chunk.NewChunkWithCapacity(colTypes, ctx.GetSessionVars().MaxChunkSize)
+		sctx.RegisterChunk(base.chk)
 		return &rightOuterJoiner{base}
 	case plannercore.InnerJoin:
 		base.chk = chunk.NewChunkWithCapacity(colTypes, ctx.GetSessionVars().MaxChunkSize)
+		sctx.RegisterChunk(base.chk)
 		return &innerJoiner{base}
 	}
 	panic("unsupported join type in func newJoiner()")

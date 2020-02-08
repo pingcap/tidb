@@ -667,6 +667,7 @@ func (w *indexWorker) fetchHandles(ctx context.Context, result distsql.SelectRes
 	} else {
 		chk = chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}, w.idxLookup.maxChunkSize)
 	}
+	w.idxLookup.ctx.GetSessionVars().StmtCtx.RegisterChunk(chk)
 	for {
 		handles, retChunk, scannedKeys, err := w.extractTaskHandles(ctx, chk, result, count)
 		if err != nil {
@@ -736,6 +737,7 @@ func (w *indexWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, 
 		if w.checkIndexValue != nil {
 			if retChk == nil {
 				retChk = chunk.NewChunkWithCapacity(w.idxColTps, w.batchSize)
+				w.idxLookup.ctx.GetSessionVars().StmtCtx.RegisterChunk(retChk)
 			}
 			retChk.Append(chk, 0, chk.NumRows())
 		}
@@ -830,6 +832,7 @@ func (w *tableWorker) pickAndExecTask(ctx context.Context) {
 
 func (w *tableWorker) compareData(ctx context.Context, task *lookupTableTask, tableReader Executor) error {
 	chk := newFirstChunk(tableReader)
+	w.idxLookup.ctx.GetSessionVars().StmtCtx.RegisterChunk(chk)
 	tblInfo := w.idxLookup.table.Meta()
 	vals := make([]types.Datum, 0, len(w.idxTblCols))
 	for {
@@ -910,6 +913,7 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) er
 	task.rows = make([]chunk.Row, 0, handleCnt)
 	for {
 		chk := newFirstChunk(tableReader)
+		w.idxLookup.ctx.GetSessionVars().StmtCtx.RegisterChunk(chk)
 		err = Next(ctx, tableReader, chk)
 		if err != nil {
 			logutil.Logger(ctx).Error("table reader fetch next chunk failed", zap.Error(err))
