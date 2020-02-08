@@ -171,13 +171,6 @@ func (p *PhysicalTableScan) explainInfo(normalized bool) string {
 	if p.pkCol != nil {
 		fmt.Fprintf(buffer, ", pk col:%s", p.pkCol.ExplainInfo())
 	}
-	haveCorCol := false
-	for _, cond := range p.AccessCondition {
-		if len(expression.ExtractCorColumns(cond)) > 0 {
-			haveCorCol = true
-			break
-		}
-	}
 	if len(p.rangeDecidedBy) > 0 {
 		fmt.Fprintf(buffer, ", range: decided by %v", p.rangeDecidedBy)
 	} else if p.haveCorCol() {
@@ -223,6 +216,9 @@ func (p *PhysicalTableScan) haveCorCol() bool {
 }
 
 func (p *PhysicalTableScan) isFullScan() bool {
+	if len(p.rangeDecidedBy) > 0 || p.haveCorCol() {
+		return false
+	}
 	for _, ran := range p.Ranges {
 		if !ran.IsFullRange() {
 			return false
