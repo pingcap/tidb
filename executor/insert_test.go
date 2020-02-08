@@ -189,6 +189,13 @@ func (s *testSuite8) TestInsertOnDuplicateKey(c *C) {
 	tk.MustExec(`insert into t1 values(4,14),(5,15),(6,16),(7,17),(8,18) on duplicate key update b=b+10`)
 	c.Assert(tk.Se.AffectedRows(), Equals, uint64(7))
 	tk.CheckLastMessage("Records: 5  Duplicates: 2  Warnings: 0")
+
+	// reproduce insert on duplicate key update bug under new row format.
+	tk.MustExec(`drop table if exists t1`)
+	tk.MustExec(`create table t1(c1 decimal(6,4), primary key(c1))`)
+	tk.MustExec(`insert into t1 set c1 = 0.1`)
+	tk.MustExec(`insert into t1 set c1 = 0.1 on duplicate key update c1 = 1`)
+	tk.MustQuery(`select * from t1 use index(primary)`).Check(testkit.Rows(`1.0000`))
 }
 
 func (s *testSuite3) TestUpdateDuplicateKey(c *C) {

@@ -447,14 +447,3 @@ var (
 	// ErrCannotCancelDDLJob returns when cancel a almost finished ddl job, because cancel in now may cause data inconsistency.
 	ErrCannotCancelDDLJob = terror.ClassAdmin.New(mysql.ErrCannotCancelDDLJob, mysql.MySQLErrName[mysql.ErrCannotCancelDDLJob])
 )
-
-func init() {
-	// Register terror to mysql error map.
-	mySQLErrCodes := map[terror.ErrCode]uint16{
-		mysql.ErrDataInConsistent:     mysql.ErrDataInConsistent,
-		mysql.ErrDDLJobNotFound:       mysql.ErrDDLJobNotFound,
-		mysql.ErrCancelFinishedDDLJob: mysql.ErrCancelFinishedDDLJob,
-		mysql.ErrCannotCancelDDLJob:   mysql.ErrCannotCancelDDLJob,
-	}
-	terror.ErrClassToMySQLCodes[terror.ClassAdmin] = mySQLErrCodes
-}
