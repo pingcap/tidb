@@ -51,7 +51,7 @@ func init() {
 	if err != nil {
 		log.Warn("Remove temporary file error", zap.String("tmpDir", tmpDir), zap.Error(err))
 	}
-	err = os.Mkdir(tmpDir, 0755)
+	err = os.MkdirAll(tmpDir, 0755)
 	if err != nil {
 		log.Warn("Mkdir temporary file error", zap.String("tmpDir", tmpDir), zap.Error(err))
 	}

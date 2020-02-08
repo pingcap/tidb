@@ -74,7 +74,7 @@ const (
 	nmConfigStrict     = "config-strict"
 	nmStore            = "store"
 	nmStorePath        = "path"
-	nmTempStoragePath  = "temp-storage-path"
+	nmTempStoragePath  = "tmp-storage-path"
 	nmHost             = "host"
 	nmAdvertiseAddress = "advertise-address"
 	nmPort             = "P"
