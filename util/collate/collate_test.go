@@ -32,8 +32,8 @@ type testBinCollatorSuite struct {
 func (s *testBinCollatorSuite) TestBinCollator(c *C) {
 	defer testleak.AfterTest(c)()
 	table := []struct {
-		Left  string
-		Right string
+		Left   string
+		Right  string
 		Expect int
 	}{
 		{"a", "b", -1},
