@@ -800,6 +800,11 @@ AAAAAAAAAAAA5gm5Mg==
 		{"show table t1 index idx1 regions where a=2", true, "SHOW TABLE `t1` INDEX `idx1` REGIONS WHERE `a`=2"},
 		{"show table t1 index idx1", false, ""},
 
+		// for show table next_row_id.
+		{"show table t1.t1 next_row_id", true, "SHOW TABLE `t1`.`t1` NEXT_ROW_ID"},
+		{"show table t1 next_row_id", true, "SHOW TABLE `t1` NEXT_ROW_ID"},
+		{"show table next_row_id", false, ""},
+
 		// for transaction mode
 		{"begin pessimistic", true, "BEGIN PESSIMISTIC"},
 		{"begin optimistic", true, "BEGIN OPTIMISTIC"},
