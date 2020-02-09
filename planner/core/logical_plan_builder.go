@@ -1148,6 +1148,11 @@ func (by *ByItems) Clone() *ByItems {
 	return &ByItems{Expr: by.Expr.Clone(), Desc: by.Desc}
 }
 
+// Equal checks whether two ByItems are equal.
+func (by *ByItems) Equal(ctx sessionctx.Context, other *ByItems) bool {
+	return by.Expr.Equal(ctx, other.Expr) && by.Desc == other.Desc
+}
+
 // itemTransformer transforms ParamMarkerExpr to PositionExpr in the context of ByItem
 type itemTransformer struct {
 }
@@ -2717,8 +2722,8 @@ func (b *PlanBuilder) buildMemTable(ctx context.Context, dbName model.CIStr, tab
 
 	// NOTE: Add a `LogicalUnionScan` if we support update memory table in the future
 	p := LogicalMemTable{
-		dbName:    dbName,
-		tableInfo: tableInfo,
+		DBName:    dbName,
+		TableInfo: tableInfo,
 	}.Init(b.ctx, b.getSelectOffset())
 	p.SetSchema(schema)
 	p.names = names
@@ -2735,6 +2740,8 @@ func (b *PlanBuilder) buildMemTable(ctx context.Context, dbName model.CIStr, tab
 			p.Extractor = &ClusterLogTableExtractor{}
 		case infoschema.TableInspectionResult:
 			p.Extractor = &InspectionResultTableExtractor{}
+		case infoschema.TableMetricSummary:
+			p.Extractor = newMetricTableExtractor()
 		}
 	}
 	return p, nil

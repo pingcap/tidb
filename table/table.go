@@ -278,26 +278,3 @@ func (s Slice) Less(i, j int) bool {
 }
 
 func (s Slice) Swap(i, j int) { s[i], s[j] = s[j], s[i] }
-
-func init() {
-	tableMySQLErrCodes := map[terror.ErrCode]uint16{
-		mysql.ErrBadNull:                     mysql.ErrBadNull,
-		mysql.ErrBadField:                    mysql.ErrBadField,
-		mysql.ErrFieldSpecifiedTwice:         mysql.ErrFieldSpecifiedTwice,
-		mysql.ErrNoDefaultForField:           mysql.ErrNoDefaultForField,
-		mysql.ErrTruncatedWrongValueForField: mysql.ErrTruncatedWrongValueForField,
-		mysql.ErrUnknownPartition:            mysql.ErrUnknownPartition,
-		mysql.ErrNoPartitionForGivenValue:    mysql.ErrNoPartitionForGivenValue,
-		mysql.ErrLockOrActiveTransaction:     mysql.ErrLockOrActiveTransaction,
-		mysql.ErrIndexOutBound:               mysql.ErrIndexOutBound,
-		mysql.ErrColumnStateNonPublic:        mysql.ErrColumnStateNonPublic,
-		mysql.ErrFieldGetDefaultFailed:       mysql.ErrFieldGetDefaultFailed,
-		mysql.ErrUnsupportedOp:               mysql.ErrUnsupportedOp,
-		mysql.ErrRowNotFound:                 mysql.ErrRowNotFound,
-		mysql.ErrTableStateCantNone:          mysql.ErrTableStateCantNone,
-		mysql.ErrColumnStateCantNone:         mysql.ErrColumnStateCantNone,
-		mysql.ErrIndexStateCantNone:          mysql.ErrIndexStateCantNone,
-		mysql.ErrInvalidRecordKey:            mysql.ErrInvalidRecordKey,
-	}
-	terror.ErrClassToMySQLCodes[terror.ClassTable] = tableMySQLErrCodes
-}

@@ -200,6 +200,7 @@ type LockCtx struct {
 	WaitStartTime         time.Time
 	PessimisticLockWaited *int32
 	LockKeysDuration      *time.Duration
+	LockKeysCount         *int32
 }
 
 // Client is used to send request to KV layer.

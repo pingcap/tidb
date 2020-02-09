@@ -474,6 +474,12 @@ func (pc PbConverter) canFuncBePushed(sf *ScalarFunction) bool {
 		default:
 			return isPushdownEnabled(sf.FuncName.L)
 		}
+	case ast.Rand:
+		switch sf.Function.PbCode() {
+		case
+			tipb.ScalarFuncSig_RandWithSeedFirstGen:
+			return isPushdownEnabled(sf.FuncName.L)
+		}
 	}
 	return false
 }
