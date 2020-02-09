@@ -102,7 +102,13 @@ func (e *ShuffleExec) Open(ctx context.Context) error {
 	if err := e.baseExecutor.Open(ctx); err != nil {
 		return err
 	}
+	if e.childShuffle != nil {
+		if err := e.childShuffle.Open(ctx); err != nil {
+			return err
+		}
+	}
 
+	// open mergers before workers, to get data channels ready.
 	for _, merger := range e.mergers {
 		if err := merger.Open(ctx); err != nil {
 			return err
@@ -128,7 +134,7 @@ func (e *ShuffleExec) Close() error {
 	}
 
 	var errs []error
-	errs = append(errs, e.baseExecutor.Close())
+
 	// close workers before mergers.
 	for _, worker := range e.workers {
 		errs = append(errs, worker.Close())
@@ -136,6 +142,12 @@ func (e *ShuffleExec) Close() error {
 	for _, merger := range e.mergers {
 		errs = append(errs, merger.Close())
 	}
+
+	if e.childShuffle != nil {
+		errs = append(errs, e.childShuffle.Close())
+	}
+	errs = append(errs, e.baseExecutor.Close())
+
 	for _, err := range errs {
 		if err != nil {
 			return errors.Trace(err)
@@ -217,21 +229,18 @@ func (e *ShuffleExec) WorkerFinished(workerIdx int) {
 
 // shuffleWorker is the multi-thread worker executing child executors within Shuffle.
 type shuffleWorker struct {
-	baseExecutor
-
 	workerIdx    int
 	shuffle      *ShuffleExec
 	childShuffle *ShuffleExec
 	splitter     shuffleSplitter
+	childExec    Executor
 
 	executed bool
 }
 
-var _ Executor = (*shuffleWorker)(nil)
-
-// Open implements the Executor Open interface.
+// Open initializes worker
 func (w *shuffleWorker) Open(ctx context.Context) error {
-	if err := w.baseExecutor.Open(ctx); err != nil {
+	if err := w.childExec.Open(ctx); err != nil {
 		return err
 	}
 	if err := w.splitter.Open(ctx); err != nil {
@@ -247,19 +256,16 @@ func (w *shuffleWorker) Prepare(ctx context.Context, finishCh <-chan struct{}) {
 
 // Close implements the Executor Close interface.
 func (w *shuffleWorker) Close() error {
-	err := w.baseExecutor.Close()
-	err1 := w.splitter.Close()
-	if err != nil {
-		return errors.Trace(err)
+	errs := []error{
+		w.splitter.Close(),
+		w.childExec.Close(),
 	}
-	return errors.Trace(err1)
-}
-
-// Next implements the Executor Next interface.
-// It is called by `Tail` executor within "shuffle", to fetch data from child Shuffle.
-// Initial-partition scheme will not reach here.
-func (w *shuffleWorker) Next(ctx context.Context, req *chunk.Chunk) error {
-	return w.childShuffle.WorkerNext(ctx, w.workerIdx, req)
+	for _, err := range errs {
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+	return nil
 }
 
 func (w *shuffleWorker) reportError(err error) {
@@ -278,12 +284,21 @@ func (w *shuffleWorker) run(ctx context.Context, waitGroup *sync.WaitGroup) {
 		waitGroup.Done()
 	}()
 
-	chk := newFirstChunk(w.children[0])
+	chk := newFirstChunk(w.childExec)
+	executed := false
 	for {
-		if err := Next(ctx, w.children[0], chk); err != nil {
-			w.reportError(err)
-			return
+		if !executed {
+			if err := Next(ctx, w.childExec, chk); err != nil {
+				w.reportError(err)
+				return
+			}
+			if chk.NumRows() == 0 {
+				executed = true
+			}
+		} else {
+			chk.Reset()
 		}
+
 		finished, err := w.splitter.PushResult(ctx, chk)
 		if err != nil {
 			w.reportError(err)
@@ -293,4 +308,29 @@ func (w *shuffleWorker) run(ctx context.Context, waitGroup *sync.WaitGroup) {
 			return
 		}
 	}
+}
+
+var _ Executor = (*shuffleDataSourceStub)(nil)
+
+// shuffleDataSourceStub is the stub for executors within Shuffle to read data source.
+type shuffleDataSourceStub struct {
+	baseExecutor
+	worker *shuffleWorker
+}
+
+// Open implements the Executor Open interface.
+func (s *shuffleDataSourceStub) Open(ctx context.Context) error {
+	return s.baseExecutor.Open(ctx)
+}
+
+// Close implements the Executor Close interface.
+func (s *shuffleDataSourceStub) Close() error {
+	return s.baseExecutor.Close()
+}
+
+// Next implements the Executor Next interface.
+// It is called by `Tail` executor within Shuffle, to fetch data from child Shuffle.
+// Initial-partition scheme will not reach here.
+func (s *shuffleDataSourceStub) Next(ctx context.Context, req *chunk.Chunk) error {
+	return s.worker.childShuffle.WorkerNext(ctx, s.worker.workerIdx, req)
 }

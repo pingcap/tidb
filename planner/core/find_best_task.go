@@ -185,7 +185,7 @@ func (p *baseLogicalPlan) findBestTask(prop *property.PhysicalProperty) (bestTas
 		}
 
 		// DEBUGG //
-		logutil.BgLogger().Info("============ curTask ===========")
+		/*logutil.BgLogger().Info("============ curTask ===========")
 		logutil.BgLogger().Info("curTask", zap.String("plan", ToString(curTask.plan())), zap.Float64("cost", curTask.cost()))
 		for ppp := curTask.plan(); ppp != nil; {
 			if ppp, ok := ppp.(*PhysicalShuffle); ok {
@@ -196,7 +196,7 @@ func (p *baseLogicalPlan) findBestTask(prop *property.PhysicalProperty) (bestTas
 			} else {
 				break
 			}
-		}
+		}*/
 		// DEBUGG //
 
 		// get the most efficient one.

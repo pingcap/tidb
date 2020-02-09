@@ -21,12 +21,14 @@ import (
 func (s *testSuite7) TestWindowFunctions(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("set @@tidb_window_concurrency = 1")
+	tk.MustExec("set @@tidb_executors_concurrency = 1")
 	doTestWindowFunctions(tk)
 }
 
 func (s *testSuite7) TestWindowParallelFunctions(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("set @@tidb_window_concurrency = 4")
+	tk.MustExec("set @@tidb_executors_concurrency = 4")
 	doTestWindowFunctions(tk)
 }
 

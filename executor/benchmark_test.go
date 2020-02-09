@@ -475,15 +475,16 @@ func buildWindowExecutor(ctx sessionctx.Context, windowFunc string, funcs int, f
 
 	var plan core.PhysicalPlan
 	if concurrency > 1 {
-		byItems := make([]expression.Expression, 0, len(win.PartitionBy))
+		byItems := make([]*expression.Column, 0, len(win.PartitionBy))
 		for _, item := range win.PartitionBy {
 			byItems = append(byItems, item.Col)
 		}
 
 		child := core.PhysicalShuffle{
-			SplitterType: core.ShuffleHashSplitterType,
+			Concurrency:  1,
 			FanOut:       concurrency,
-			HashByItems:  byItems,
+			SplitterType: core.ShuffleHashSplitterType,
+			SplitByItems: byItems,
 		}.Init(ctx, nil, 0)
 		tail.SetChildren(child)
 		child.SetChildren(src)
@@ -493,6 +494,7 @@ func buildWindowExecutor(ctx sessionctx.Context, windowFunc string, funcs int, f
 			Tail:         tail,
 			ChildShuffle: child,
 			MergerType:   core.ShuffleRandomMergerType,
+			FanOut:       1,
 		}.Init(ctx, nil, 0)
 		plan.SetChildren(win)
 	} else {
@@ -557,6 +559,8 @@ func benchmarkWindowExecWithCase(b *testing.B, casTest *windowTestCase) {
 				return int64(row)
 			case mysql.TypeVarString:
 				return casTest.rawDataSmall
+			case mysql.TypeDouble:
+				return float64(row)
 			default:
 				panic("not implement")
 			}

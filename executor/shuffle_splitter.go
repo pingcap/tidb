@@ -122,7 +122,7 @@ type shuffleRandomSplitter struct {
 	partitionIdx int
 }
 
-// newShuffleSimpleSplitter creates shuffleRandomSplitter
+// newShuffleRandomSplitter creates shuffleRandomSplitter
 func newShuffleRandomSplitter(workerIdx int, shuffle *ShuffleExec, fanOut int) *shuffleRandomSplitter {
 	splitter := &shuffleRandomSplitter{}
 	splitter.baseShuffleSplitter = baseShuffleSplitter{
@@ -134,7 +134,7 @@ func newShuffleRandomSplitter(workerIdx int, shuffle *ShuffleExec, fanOut int) *
 	return splitter
 }
 
-// Split implements shuffleSplitter interface.
+// PushResult implements shuffleSplitter interface.
 func (s *shuffleRandomSplitter) PushResult(ctx context.Context, result *chunk.Chunk) (finished bool, err error) {
 	if result.NumRows() > 0 {
 		select {

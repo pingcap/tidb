@@ -2739,18 +2739,21 @@ func (b *executorBuilder) buildShuffle(v *plannercore.PhysicalShuffle) *ShuffleE
 		if v.ChildShuffle != nil { // full-merge & repartition scheme.
 			w.childShuffle = shuffle.childShuffle
 
+			// e.g. Project -> Shuffle -> Window -> Sort(v.Tail) -> Shuffle(child) -> DataSource
+			//        ==> Project -> Shuffle -> [Window -> Sort(v.Tail) -> stub(worker)] x N <-ch-> Shuffle(child) -> DataSource
 			stub := plannercore.PhysicalShuffleDataSourceStub{
 				Worker: (unsafe.Pointer)(w),
 			}.Init(b.ctx, v.ChildShuffle.Stats(), v.ChildShuffle.SelectBlockOffset(), nil)
 			stub.SetSchema(v.ChildShuffle.Schema())
-
 			v.Tail.SetChildren(stub)
+		} else { // initial-partition scheme.
+			// e.g. xxx -> Shuffle(parent) -> xxx -> Shuffle -> DataSource
+			//        ==> Project -> Shuffle(parent) -> xxx -> Shuffle(mergers <-ch-> splitters(workers)) -> DataSource
 		}
-		childExec := b.build(v.Children()[0])
+		w.childExec = b.build(v.Children()[0])
 		if b.err != nil {
 			return nil
 		}
-		w.baseExecutor = newBaseExecutor(b.ctx, v.ChildShuffle.Schema(), v.ChildShuffle.ExplainID(), childExec)
 
 		switch v.SplitterType {
 		case plannercore.ShuffleNoneSplitterType, plannercore.ShuffleRandomSplitterType:
@@ -2780,8 +2783,11 @@ func (b *executorBuilder) buildShuffle(v *plannercore.PhysicalShuffle) *ShuffleE
 	return shuffle
 }
 
-func (b *executorBuilder) buildShuffleDataSourceStub(v *plannercore.PhysicalShuffleDataSourceStub) *shuffleWorker {
-	return (*shuffleWorker)(v.Worker)
+func (b *executorBuilder) buildShuffleDataSourceStub(v *plannercore.PhysicalShuffleDataSourceStub) *shuffleDataSourceStub {
+	return &shuffleDataSourceStub{
+		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
+		worker:       (*shuffleWorker)(v.Worker),
+	}
 }
 
 func (b *executorBuilder) buildSQLBindExec(v *plannercore.SQLBindPlan) Executor {

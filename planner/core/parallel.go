@@ -54,10 +54,12 @@ func matchPhysicalProperty(pp PhysicalPlan, requiredProperty *property.PhysicalP
 
 func newPhysicalShuffle(child PhysicalPlan, ctx sessionctx.Context) *PhysicalShuffle {
 	reqProp := &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64}
-	return PhysicalShuffle{
+	shuffle := PhysicalShuffle{
 		Concurrency: 1,
 		FanOut:      1,
 	}.Init(ctx, child.statsInfo(), child.SelectBlockOffset(), reqProp)
+	//shuffle.SetSchema(child.Schema())
+	return shuffle
 }
 
 func setShuffleNoneSplit(shuffle *PhysicalShuffle) {
