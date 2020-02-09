@@ -20,7 +20,7 @@ import (
 )
 
 var (
-	CollatorMap map[string]Collator
+	collatorMap map[string]Collator
 )
 
 // Collator provides functionality for comparing strings for a given
@@ -34,9 +34,9 @@ type Collator interface {
 
 // GetCollator get the collator according to collate, it will return the binary collator if the corresponding collator doesn't exist.
 func GetCollator(collate string) Collator {
-	ctor, ok := CollatorMap[collate]
+	ctor, ok := collatorMap[collate]
 	if !ok {
-		return CollatorMap["binary"]
+		return collatorMap["binary"]
 	}
 	return ctor
 }
@@ -56,7 +56,7 @@ func (bc *binCollator) Key(buf []byte, str []byte) []byte {
 }
 
 func init() {
-	CollatorMap = make(map[string]Collator)
+	collatorMap = make(map[string]Collator)
 
-	CollatorMap["binary"] = &binCollator{}
+	collatorMap["binary"] = &binCollator{}
 }
