@@ -14,8 +14,10 @@
 package executor
 
 import (
+	"container/heap"
 	"context"
 
+	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/util/chunk"
 )
 
@@ -50,8 +52,6 @@ type baseShuffleMerger struct {
 	isSingleDataCh bool
 
 	prepared bool
-	executed bool
-
 	finishCh <-chan struct{}
 	dataCh   []chan *shuffleData
 }
@@ -82,7 +82,6 @@ func (m *baseShuffleMerger) Close() error {
 			for range ch {
 			}
 		}
-		m.executed = false
 	}
 	return nil
 }
@@ -107,6 +106,26 @@ func (m *baseShuffleMerger) WorkersAllFinished() {
 	}
 }
 
+func (m *baseShuffleMerger) fetchData(ctx context.Context, partitionIdx int, chk *chunk.Chunk) error {
+	chk.Reset()
+
+	select {
+	case <-m.finishCh:
+		return nil
+	case result, ok := <-m.dataCh[partitionIdx]:
+		if !ok {
+			return nil
+		}
+		if result.err != nil {
+			return result.err
+		}
+
+		chk.SwapColumns(result.chk) // worker will not send an empty chunk
+		result.giveBackCh <- result.chk
+		return nil
+	}
+}
+
 // shuffleRandomMerger merges results by the whole chunk, resulting random order.
 type shuffleRandomMerger struct {
 	baseShuffleMerger
@@ -122,23 +141,117 @@ func newShuffleRandomMerger(shuffle *ShuffleExec, fanIn int) *shuffleRandomMerge
 	}
 }
 
-// Next implements shuffleMerger Next interface.
+// Next implements shuffleMerger interface.
 func (m *shuffleRandomMerger) Next(ctx context.Context, chk *chunk.Chunk) error {
-	chk.Reset()
-	if m.executed {
-		return nil
+	return m.fetchData(ctx, 0, chk)
+}
+
+// shuffleMergeSortMerger merges results by merge-sort.
+// See also executor/sort.go, `multiWayMerge`.
+// See also https://en.wikipedia.org/wiki/K-way_merge_algorithm.
+type shuffleMergeSortMerger struct {
+	baseShuffleMerger
+
+	byItems     []property.Item
+	keyCmpFuncs []chunk.CompareFunc
+	keyColumns  []int
+
+	multiWayMerge *multiWayMerge
+	partitionList []*chunk.Chunk
+}
+
+// newShuffleMergeSortMerger creates shuffleMergeSortMerger
+func newShuffleMergeSortMerger(shuffle *ShuffleExec, fanIn int, byItems []property.Item) *shuffleMergeSortMerger {
+	return &shuffleMergeSortMerger{
+		baseShuffleMerger: baseShuffleMerger{
+			shuffle:        shuffle,
+			fanIn:          fanIn,
+			isSingleDataCh: false,
+		},
+		byItems: byItems,
+	}
+}
+
+func (m *shuffleMergeSortMerger) initCompareFuncs() {
+	m.keyCmpFuncs = make([]chunk.CompareFunc, len(m.byItems))
+	for i := range m.byItems {
+		keyType := m.byItems[i].Col.GetType()
+		m.keyCmpFuncs[i] = chunk.GetCompareFunc(keyType)
+	}
+}
+
+func (m *shuffleMergeSortMerger) buildKeyColumns() {
+	m.keyColumns = make([]int, 0, len(m.byItems))
+	for _, by := range m.byItems {
+		m.keyColumns = append(m.keyColumns, by.Col.Index)
+	}
+}
+
+func (m *shuffleMergeSortMerger) lessRow(rowI, rowJ chunk.Row) bool {
+	for i, colIdx := range m.keyColumns {
+		cmpFunc := m.keyCmpFuncs[i]
+		cmp := cmpFunc(rowI, colIdx, rowJ, colIdx)
+		if m.byItems[i].Desc {
+			cmp = -cmp
+		}
+		if cmp < 0 {
+			return true
+		} else if cmp > 0 {
+			return false
+		}
+	}
+	return false
+}
+
+func (m *shuffleMergeSortMerger) Prepare(ctx context.Context, finishCh <-chan struct{}) {
+	m.baseShuffleMerger.Prepare(ctx, finishCh)
+
+	m.initCompareFuncs()
+	m.buildKeyColumns()
+}
+
+// Next implements shuffleMerger interface.
+func (m *shuffleMergeSortMerger) Next(ctx context.Context, req *chunk.Chunk) (err error) {
+	if m.multiWayMerge == nil {
+		m.multiWayMerge = &multiWayMerge{m.lessRow, make([]partitionPointer, 0, m.fanIn)}
+		m.partitionList = make([]*chunk.Chunk, m.fanIn)
+		for i := 0; i < m.fanIn; i++ {
+			chk := newFirstChunk(m.shuffle)
+			if err := m.fetchData(ctx, i, chk); err != nil {
+				return err
+			}
+			if chk.NumRows() > 0 {
+				m.partitionList[i] = chk
+				row := m.partitionList[i].GetRow(0)
+				m.multiWayMerge.elements = append(m.multiWayMerge.elements, partitionPointer{row: row, partitionID: i, consumed: 0})
+			}
+		}
+		heap.Init(m.multiWayMerge)
 	}
 
-	result, ok := <-m.dataCh[0]
-	if !ok {
-		m.executed = true
-		return nil
-	}
-	if result.err != nil {
-		return result.err
+	req.Reset()
+
+	for !req.IsFull() && m.multiWayMerge.Len() > 0 {
+		ptr := m.multiWayMerge.elements[0]
+		req.AppendRow(ptr.row)
+		ptr.consumed++
+
+		if ptr.consumed >= m.partitionList[ptr.partitionID].NumRows() {
+			if err = m.fetchData(ctx, ptr.partitionID, m.partitionList[ptr.partitionID]); err != nil {
+				return err
+			}
+			if m.partitionList[ptr.partitionID].NumRows() == 0 {
+				m.partitionList[ptr.partitionID] = nil
+				heap.Remove(m.multiWayMerge, 0)
+				continue
+			}
+			ptr.consumed = 0
+		}
+
+		ptr.row = m.partitionList[ptr.partitionID].GetRow(ptr.consumed)
+		m.multiWayMerge.elements[0] = ptr
+		heap.Fix(m.multiWayMerge, 0)
 	}
 
-	chk.SwapColumns(result.chk) // worker will not send an empty chunk
-	result.giveBackCh <- result.chk
 	return nil
 }

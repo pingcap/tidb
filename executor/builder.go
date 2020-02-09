@@ -2775,7 +2775,10 @@ func (b *executorBuilder) buildShuffle(v *plannercore.PhysicalShuffle) *ShuffleE
 		for i := range shuffle.mergers {
 			shuffle.mergers[i] = newShuffleRandomMerger(shuffle, shuffle.concurrency)
 		}
-	//TODOO: case ShuffleMergeSortMergerType:
+	case plannercore.ShuffleMergeSortMergerType:
+		for i := range shuffle.mergers {
+			shuffle.mergers[i] = newShuffleMergeSortMerger(shuffle, shuffle.concurrency, v.MergeByItems)
+		}
 	default:
 		panic("Not implemented. Should not reach here.")
 	}
