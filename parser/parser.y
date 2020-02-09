@@ -8255,6 +8255,13 @@ ShowStmt:
 		}
 		$$ = stmt
 	}
+|	"SHOW" "TABLE" TableName "NEXT_ROW_ID"
+	{
+		$$ = &ast.ShowStmt{
+			Tp:    ast.ShowTableNextRowId,
+			Table: $3.(*ast.TableName),
+		}
+	}
 |	"SHOW" "TABLE" TableName "INDEX" Identifier "REGIONS" WhereClauseOptional
 	{
 		stmt := &ast.ShowStmt{
