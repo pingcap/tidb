@@ -1,7 +1,7 @@
 # Proposal: Collations in TiDB
 
 - Author(s):     [Wang Cong](http://github.com/bb7133), [Kolbe Kegel](http://github.com/kolbe)
-- Last updated:  2020-01-24
+- Last updated:  2020-02-09
 - Discussion at: https://github.com/pingcap/tidb/issues/14573
 
 ## Abstract
@@ -97,18 +97,8 @@ The interface can be defined as following:
 type CharsetCollation interface {
     // Compare returns an integer comparing the two byte slices. The result will be 0 if a == b, -1 if a < b, and +1 if a > b.
     Compare(a, b []byte) (int, error)
-    // CompareString returns an integer comparing the two strings. The result will be 0 if a == b, -1 if a < b, and +1 if a > b.
-    CompareString(a, b string) (int, error)
     // Key returns the collation key for str, the returned slice will point to an allocation in Buffer.
     Key(buf *Buffer, str []byte) ([]byte, error)
-    // KeyFromString returns the collation key for str, the returned slice will point to an allocation in Buffer.
-    KeyFromString(buf *Buffer, str string) ([]byte, error)
-
-    /******* Possible Optimization ********/
-    // FromKey returns the original byte slice from collation key.
-    FromKey(buf *Buffer, str []byte) (byte, error)
-    // StringFromKey returns the original string from collation key.
-    StringFromKey(str []byte) string (string, error)
 }
 ```
 The interface is quite similar to the Go [collate package](https://godoc.org/golang.org/x/text/collate).
@@ -117,10 +107,29 @@ The interface is quite similar to the Go [collate package](https://godoc.org/gol
 
 The encoding layout of TiDB has been described in our [previous article](https://pingcap.com/blog/2017-07-11-tidbinternal2/#map). The row format should be changed to make it memory comparable, this is important to the index lookup. Basic principle is that all keys encoded for strings should use the `sortKeys` result from `Key()`/`KeyFromString()` function. However, most of the `sortKeys` calculations are not reversible.
 
-#### Option 1
-
   * For table data, encodings stay unchanged. All strings are compared after decoding with the `Compare()` function.
-  * For table indices, we replace current `ColumnValue` with `sortKey`:
+  * For table indices, we replace current `ColumnValue` with `sortKey` and encode the `ColumnValue` to the value,:
+    - For unique indices:
+	```
+      Key: tablePrefix{tableID}_indexPrefixSep{indexID}_sortKey
+      Value: rowID_indexedColumnsValue
+	```
+    - For non-unique indices:
+	```
+      Key: tablePrefix{tableID}_indexPrefixSep{indexID}_sortKeys_rowID
+      Value: indexedColumnsValue
+	```
+
+Pros: Value of the index can be recovered from `ColumnValue` in value. It is able to scan just the index in order to upgrade the on-disk storage to fix bugs in collations, because it has the `sortKey` and the value in the index.
+
+Cons: The size of index value on string column with new collations is doubled(we need to write both `sortKey` and `indexedColumnsValue`, their sizes are equal for most of the collations).
+
+#### Rejected Alternative
+
+A possible alternative option was considered as following:
+
+  * For table data, encodings stay unchanged.
+  * For table indices, we replace current `ColumnValue` with `sortKey` without additional change:
     - For unique indices:
 	```
       Key: tablePrefix{tableID}_indexPrefixSep{indexID}_sortKey
@@ -138,24 +147,7 @@ Pros:
 Cons:
     Since index value can not be recovered from `sortKey`, extra table lookup is needed for current index-only queries, this may lead to performance regressions and the "covering index" can not work. The extra table lookup also requires corresponding changes to the TiDB optimizer.
 
-#### Option 2
-
-  * Table data encodings is the same with Option 1.
-  * For table indices, we encode the `ColumnValue` to the value of the storage, so as to avoid extra table lookup for index queries:
-    - For unique indices:
-	```
-      Key: tablePrefix{tableID}_indexPrefixSep{indexID}_sortKey
-      Value: rowID_indexedColumnsValue
-	```
-    - For non-unique indices:
-	```
-      Key: tablePrefix{tableID}_indexPrefixSep{indexID}_sortKeys_rowID
-      Value: indexedColumnsValue
-	```
-
-Pros: Extra table lookup is avoided and no change is needed to the TIDB optimizer. What's more, it is able to scan just the index in order to upgrade the on-disk storage to fix bugs in collations, because it has the `sortKey` and the value in the index.
-
-Cons: The size of index value on string column with new collations is doubled(we need to write both `sortKey` and `indexedColumnsValue`, their sizes are equal for most of the collations).
+The reason to reject this option is, as a distributed system, the cost of potential table lookup high so that it should be avoided it as much as possible. What's more, adding a covering index is a common SQL optimization method for the DBAs: table lookup can not be avoided through covering index is counter-intuitive.
 
 ## Compatibility
 
@@ -175,8 +167,6 @@ Should TiDB aim to support all collation of MySQL?
 
 ### Compatibility between TiDB versions
 
-#### Requirements
-
 In this proposal, both of the compatibility issues can be solved in the new version of TiDB, and with the help of the version of metadata in TiDB, we can always indicate if a collation is old(the "fake one") or new(the "real one"). However, here we propose several requirements below and careful considerations are needed to meet them as many as possible:
 
   1. For an existing TiDB cluster, its behavior remains unchanged after upgrading to newer version
@@ -189,7 +179,23 @@ In this proposal, both of the compatibility issues can be solved in the new vers
     - When using BR, if backup data from old cluster is applied to the new cluster, the new cluster should know that the data is binary collated without padding, or otherwise 'Duplicate entry' error may be reported for primary key/unique key columns.
     - If we don't allow both old collations and new collations exist in a TiDB cluster(the Option 4, see below), trying to make replications/backup & recovery between old/new clusters will break this prerequisite.
 
-#### Option 1
+Based on the requirements listed above, the following behaviors are proposed:
+
+1. Only TiDB clusters that initially boostrapped with the new TiDB version are allowed to enable the new collations. For old TiDB clusters, everything remains unchanged after the upgrade.
+
+2. We can also provide a configuration entry for the users to choose between old/new collations when deploying the new clusters.
+
+3. Mark old collations with syntax comment. For a upgraded TiDB cluster, add comment like "`/* AS_BINARY_COLLATION */`" for the old collations; all collations with "`/* AS_BINARY_COLLATION */`" comment are treated as the old ones.
+
+Pros: Requirement 1 and 2 are met, requirement 3 can be met if we allow old/new collations exist in the same cluster in the future, since old collations are marked with syntax comment.
+
+Cons: Since existing TiDB cluster can't get new collations enabled, requirement 3 is eliminated; Requirement 4 is not met.
+
+#### Rejected Alternatives
+
+The main reason to reject those options are: new collations that are not exist in MySQL have to be added, which may be confusing to the users and potentially break the compatibility between TiDB and MySQL.
+
+##### Option 1
 
 Add a series of new collatins named with the suffix "`_np_bin`"(meaning "NO PADDING BINARY"), for example, `utf8mb4_np_bin`. Such new collations don't exist in MySQL, but they're the "real ones" used by current TiDB. After upgrading to newer TiDB versions, all old collations are shown as "`_np_bin`", MySQL collations behave the same with MySQL.
 
@@ -197,31 +203,13 @@ Pros: Requirement 1.a, 2, 3 and 4 are met.
 
 Cons: Requirement 1.b, 1.c are not met.
 
-#### Option 2
+##### Option 2
 
 Keep all collations defined in TiDB as what they were, define a series of new collations that are actually compatible with MySQL collations. For example, we can create a new `tidb_utf8_mb4_general_ci` that is the same as `utf8mb4_general_ci` in MySQL. When TiDB users want the "real" collations, they can modify their `CREATE TABLE` statements to use the new ones.
 
-Pros: Requirement 1.a, 1.b, 2 and 3 are met.
+Pros: Requirement 1.a, 1.b and 3 are met.
 
-Cons: Requirement 1.c and 4 are not met, the namings are also confusing: collations that are named from MySQL are different from MySQL, but the ones named different from MySQL behave the same as MySQL.
-
-#### Option 3
-
-Add no new collation, tag old collations with syntax comment. For a upgraded TiDB cluster, add comment like "`/* AS_BINARY_COLLATION */`" for the old collations; all collations with "`/* AS_BINARY_COLLATION */`" comment are treated as the old ones.
-
-Pros: Requirement 1.a, 2, 3 and 4 are met.
-
-Cons: Requirement 1.b and 1.c are not met.
-
-#### Option 4
-
-Only TiDB clusters that initially boostraped with the new TiDB version are allowed to enable the new collations. For old TiDB clusters, everything remains unchanged after the upgrade.
-
-We can also provide a configuration entry for the users to choose between old/new collations when deploying a new clusters.
-
-Pros: Requirement 1 and 2 are met.
-
-Cons: Since existing TiDB cluster can't get new collations enabled, requirement 3 is eliminated; Requirement 4 is not met.
+Cons: Requirement 1.c, 2 and 4 are not met, the namings are also confusing: collations that are named from MySQL are different from MySQL, but the ones named different from MySQL behave the same as MySQL.
 
 #### Bug-fixing
 
@@ -291,5 +279,7 @@ Further, a collation should not need to be a property of a column, it could rath
 - https://github.com/pingcap/tidb/issues/222
 - https://github.com/pingcap/tidb/issues/1161
 - https://github.com/pingcap/tidb/issues/3580
+- https://github.com/pingcap/tidb/issues/4353
 - https://github.com/pingcap/tidb/issues/7519
+- https://github.com/pingcap/tidb/issues/10192
 
