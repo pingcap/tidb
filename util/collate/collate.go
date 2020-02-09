@@ -32,6 +32,7 @@ type Collator interface {
 	Key(buf []byte, str []byte) []byte
 }
 
+// GetCollator get the collator according to collate, it will return the binary collator if the corresponding collator doesn't exist.
 func GetCollator(collate string) Collator {
 	ctor, ok := CollatorMap[collate]
 	if !ok {
@@ -43,12 +44,12 @@ func GetCollator(collate string) Collator {
 type binCollator struct {
 }
 
-// Compare implement Collator interface
+// Compare implement Collator interface.
 func (bc *binCollator) Compare(a, b string) int {
 	return strings.Compare(a, b)
 }
 
-// Key implement Collator interface
+// Key implement Collator interface.
 func (bc *binCollator) Key(buf []byte, str []byte) []byte {
 	// TODO: Put the logic here and let codec.EncodeBytes deal with collation.
 	return codec.EncodeBytes(buf, str)
