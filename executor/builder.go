@@ -2720,11 +2720,11 @@ func (b *executorBuilder) buildShuffle(v *plannercore.PhysicalShuffle) *ShuffleE
 		concurrency:  v.Concurrency,
 		workers:      make([]*shuffleWorker, v.Concurrency),
 		fanOut:       v.FanOut,
-		mergers:      make([]*shuffleMerger, v.FanOut),
+		mergers:      make([]shuffleMerger, v.FanOut),
 	}
 
 	if v.ChildShuffle != nil {
-		shuffle.childShuffle = b.build(v.ChildShuffle)
+		shuffle.childShuffle = b.build(v.ChildShuffle).(*ShuffleExec)
 		if b.err != nil {
 			return nil
 		}
@@ -2736,7 +2736,7 @@ func (b *executorBuilder) buildShuffle(v *plannercore.PhysicalShuffle) *ShuffleE
 			workerIdx: i,
 			shuffle:   shuffle,
 		}
-		if v.ChildShuffle != nil {
+		if v.ChildShuffle != nil { // full-merge & repartition scheme.
 			w.childShuffle = shuffle.childShuffle
 
 			stub := plannercore.PhysicalShuffleDataSourceStub{
@@ -2755,9 +2755,9 @@ func (b *executorBuilder) buildShuffle(v *plannercore.PhysicalShuffle) *ShuffleE
 		switch v.SplitterType {
 		case plannercore.ShuffleNoneSplitterType, plannercore.ShuffleRandomSplitterType:
 			// ShuffleNoneSplitterType used for full-merging (i.e. serial parent). Reuse random splitter.
-			w.splitter = newShuffleRandomSplitter(shuffle, v.FanOut)
+			w.splitter = newShuffleRandomSplitter(w.workerIdx, shuffle, v.FanOut)
 		case plannercore.ShuffleHashSplitterType:
-			w.splitter = newShuffleHashSplitter(shuffle, v.FanOut, v.SplitByItems)
+			w.splitter = newShuffleHashSplitter(w.workerIdx, shuffle, v.FanOut, v.SplitByItems)
 		default:
 			panic("Not implemented. Should not reach here.")
 		}

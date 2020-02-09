@@ -427,12 +427,20 @@ func (p *PhysicalShuffle) ResolveIndices() (err error) {
 	if err != nil {
 		return err
 	}
-	/* TODOO for i := range p.HashByItems {
-		p.HashByItems[i], err = p.HashByItems[i].ResolveIndices(p.children[0].Schema())
+	for i := range p.MergeByItems {
+		newCol, err := p.MergeByItems[i].Col.ResolveIndices(p.children[0].Schema())
 		if err != nil {
 			return err
 		}
-	}*/
+		p.MergeByItems[i].Col = newCol.(*expression.Column)
+	}
+	for i := range p.SplitByItems {
+		newCol, err := p.SplitByItems[i].ResolveIndices(p.children[0].Schema())
+		if err != nil {
+			return err
+		}
+		p.SplitByItems[i] = newCol.(*expression.Column)
+	}
 	return err
 }
 

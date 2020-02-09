@@ -19,7 +19,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
@@ -86,7 +85,7 @@ type ShuffleExec struct {
 	childShuffle *ShuffleExec
 
 	fanOut  int
-	mergers []*shuffleMerger
+	mergers []shuffleMerger
 
 	prepared bool
 	finishCh chan struct{}
@@ -98,31 +97,24 @@ type shuffleData struct {
 	giveBackCh chan *chunk.Chunk
 }
 
-// IsParallel indicates Shuffle running in a parallel manner or not.
-// (Shuffle providing splitter only is running in serialization.)
-/*func (e *ShuffleExec) IsParallel() bool {
-	return e.concurrency > 1
-}*/
-
 // Open implements the Executor Open interface.
 func (e *ShuffleExec) Open(ctx context.Context) error {
 	if err := e.baseExecutor.Open(ctx); err != nil {
 		return err
 	}
 
-	e.finishCh = make(chan struct{}, 1)
-
-	for _, w := range e.workers {
-		if err := w.childExec.Open(ctx); err != nil {
-			return err
-		}
-	}
 	for _, merger := range e.mergers {
-		if err := merger.Open(ctx, e.finishCh); err != nil {
+		if err := merger.Open(ctx); err != nil {
+			return err
+		}
+	}
+	for _, w := range e.workers {
+		if err := w.Open(ctx); err != nil {
 			return err
 		}
 	}
 
+	e.finishCh = make(chan struct{}, 1)
 	e.prepared = false
 	return nil
 }
@@ -137,11 +129,12 @@ func (e *ShuffleExec) Close() error {
 
 	var errs []error
 	errs = append(errs, e.baseExecutor.Close())
-	if e.IsParallel() {
-		errs = append(errs, e.merger.Close())
+	// close workers before mergers.
+	for _, worker := range e.workers {
+		errs = append(errs, worker.Close())
 	}
-	if e.splitter != nil {
-		errs = append(errs, e.splitter.Close())
+	for _, merger := range e.mergers {
+		errs = append(errs, merger.Close())
 	}
 	for _, err := range errs {
 		if err != nil {
@@ -151,39 +144,44 @@ func (e *ShuffleExec) Close() error {
 	return nil
 }
 
-// Prepare4ParallelExec prepares threads for parallel executing.
-func (e *ShuffleExec) Prepare4ParallelExec(ctx context.Context) {
+// Prepare prepares channels & threads for executing.
+func (e *ShuffleExec) Prepare(ctx context.Context) {
 	if e.prepared {
 		return
 	}
 
-	if e.splitter != nil {
-		e.splitter.Prepare(ctx)
+	if e.childShuffle != nil {
+		// full-merge Shuffle prepares in `Next`.
+		e.childShuffle.Prepare(ctx)
 	}
 
-	if e.IsParallel() {
-		e.child.Prepare4ParallelExec(ctx)
-
-		waitGroup := &sync.WaitGroup{}
-		waitGroup.Add(len(e.workers))
-		for _, w := range e.workers {
-			go w.run(ctx, waitGroup)
-		}
-		go e.waitWorker(waitGroup)
-
-		e.merger.Prepare(ctx)
+	// prepare mergers before workers, to get channels ready.
+	for _, merger := range e.mergers {
+		merger.Prepare(ctx, e.finishCh)
 	}
+
+	waitGroup := &sync.WaitGroup{}
+	waitGroup.Add(len(e.workers))
+	for _, worker := range e.workers {
+		worker.Prepare(ctx, e.finishCh)
+		go worker.run(ctx, waitGroup)
+	}
+	go e.waitWorker(waitGroup)
+
 	e.prepared = true
 }
 
 func (e *ShuffleExec) waitWorker(waitGroup *sync.WaitGroup) {
 	waitGroup.Wait()
-	e.workersAllFinished()
+	for _, merger := range e.mergers {
+		merger.WorkersAllFinished()
+	}
 }
 
 // Next implements the Executor Next interface.
+// Only used for full-merge.
 func (e *ShuffleExec) Next(ctx context.Context, req *chunk.Chunk) error {
-	e.Prepare4ParallelExec(ctx)
+	e.Prepare(ctx)
 
 	failpoint.Inject("shuffleError", func(val failpoint.Value) {
 		if val.(bool) {
@@ -191,41 +189,60 @@ func (e *ShuffleExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		}
 	})
 
-	if e.IsParallel() {
-		return e.merger.Next(ctx, req)
-	}
-	return Next(ctx, e.children[0], req)
+	return e.mergers[0].Next(ctx, req)
 }
 
 // WorkerNext is the `Next` for parent Shuffle's workers.
 func (e *ShuffleExec) WorkerNext(ctx context.Context, workerIdx int, req *chunk.Chunk) error {
+	failpoint.Inject("shuffleError", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return(errors.New("ShuffleExec.WorkerNext error"))
+		}
+	})
+
 	return e.mergers[workerIdx].Next(ctx, req)
+}
+
+// PushToMerger is used by worker.splitter for pushing data to merger.
+func (e *ShuffleExec) PushToMerger(partitionIdx int, workerIdx int, data *shuffleData) {
+	e.mergers[partitionIdx].PushToMerger(workerIdx, data)
+}
+
+// WorkerFinished notify all mergers that a worker is finished.
+func (e *ShuffleExec) WorkerFinished(workerIdx int) {
+	for _, merger := range e.mergers {
+		merger.WorkerFinished(workerIdx)
+	}
 }
 
 // shuffleWorker is the multi-thread worker executing child executors within Shuffle.
 type shuffleWorker struct {
-	workerIdx int
 	baseExecutor
+
+	workerIdx    int
 	shuffle      *ShuffleExec
 	childShuffle *ShuffleExec
+	splitter     shuffleSplitter
 
 	executed bool
-
-	splitter shuffleSplitter
 }
 
 var _ Executor = (*shuffleWorker)(nil)
 
 // Open implements the Executor Open interface.
-func (w *shuffleWorker) Open(ctx context.Context, sctx sessionctx.Context, finishCh <-chan struct{}) error {
+func (w *shuffleWorker) Open(ctx context.Context) error {
 	if err := w.baseExecutor.Open(ctx); err != nil {
 		return err
 	}
-	if err := w.splitter.Open(ctx, sctx, w.finishCh); err != nil {
+	if err := w.splitter.Open(ctx); err != nil {
 		return err
 	}
 	w.executed = false
 	return nil
+}
+
+func (w *shuffleWorker) Prepare(ctx context.Context, finishCh <-chan struct{}) {
+	w.splitter.Prepare(ctx, finishCh)
 }
 
 // Close implements the Executor Close interface.
@@ -240,13 +257,14 @@ func (w *shuffleWorker) Close() error {
 
 // Next implements the Executor Next interface.
 // It is called by `Tail` executor within "shuffle", to fetch data from child Shuffle.
+// Initial-partition scheme will not reach here.
 func (w *shuffleWorker) Next(ctx context.Context, req *chunk.Chunk) error {
-	return w.childShuffle.WorkerNext(ctx, req, w.workerIdx)
+	return w.childShuffle.WorkerNext(ctx, w.workerIdx, req)
 }
 
 func (w *shuffleWorker) reportError(err error) {
 	data := &shuffleData{err: err}
-	w.shuffle.PushToMerger(0, data)
+	w.shuffle.PushToMerger(0, 0, data) // any merger will do.
 }
 
 func (w *shuffleWorker) run(ctx context.Context, waitGroup *sync.WaitGroup) {
@@ -262,7 +280,7 @@ func (w *shuffleWorker) run(ctx context.Context, waitGroup *sync.WaitGroup) {
 
 	chk := newFirstChunk(w.children[0])
 	for {
-		if err := Next(ctx, w.children[0], req); err != nil {
+		if err := Next(ctx, w.children[0], chk); err != nil {
 			w.reportError(err)
 			return
 		}
