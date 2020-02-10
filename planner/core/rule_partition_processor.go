@@ -14,7 +14,6 @@ package core
 
 import (
 	"context"
-	"fmt"
 	"sort"
 	"strconv"
 	"strings"
@@ -29,7 +28,7 @@ import (
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	abs "github.com/pingcap/tidb/util/math"
+	"github.com/pingcap/tidb/util/math"
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/ranger"
 )
@@ -137,7 +136,7 @@ func (s *partitionProcessor) pruneHashPartition(ds *DataSource, pi *model.Partit
 		return tableDual, nil
 	}
 	if ok {
-		idx := abs.Abs(val) % int64(pi.Num)
+		idx := math.Abs(val) % int64(pi.Num)
 		newDataSource := *ds
 		newDataSource.baseLogicalPlan = newBaseLogicalPlan(ds.SCtx(), plancodec.TypeTableScan, &newDataSource, ds.blockOffset)
 		newDataSource.isPartition = true
@@ -213,9 +212,6 @@ func (s *partitionProcessor) prune(ds *DataSource) (LogicalPlan, error) {
 	if pi.Type == model.PartitionTypeRange {
 		if len(pi.Columns) == 0 {
 			return s.pruneRangePartition(ds, pi)
-		} else {
-			// TODO: Clean up the old code.
-			// return s.pruneRangeColumnPartition(ds, pi)
 		}
 	}
 
@@ -413,7 +409,7 @@ func (or partitionRangeOR) intersectionRange(start, end int) partitionRangeOR {
 	for _, r1 := range or {
 		newStart, newEnd := intersectionRange(r1.start, r1.end, start, end)
 		// Exclude the empty one.
-		if r1.end > r1.start {
+		if newEnd > newStart {
 			ret = append(ret, partitionRange{newStart, newEnd})
 		}
 	}
@@ -505,6 +501,26 @@ func intersectionRange(start, end, newStart, newEnd int) (int, int) {
 }
 
 func (s *partitionProcessor) pruneRangePartition(ds *DataSource, pi *model.PartitionInfo) (LogicalPlan, error) {
+	lessThan, err := makeLessThanData(pi)
+	if err != nil {
+		return nil, err
+	}
+
+	col, fn, err := makePartitionByFnCol(ds, pi)
+	if err != nil {
+		return nil, err
+	}
+
+	result := fullRange(len(pi.Definitions))
+	if col != nil {
+		result = partitionRangeForCNFExpr(ds.ctx, ds.allConds, lessThan, col, fn, result)
+	}
+
+	return s.makeUnionAllChildren(ds, pi, result)
+}
+
+// makeLessThanData extracts the less than parts from 'partition p0 less than xx ... partitoin p1 less than ...'
+func makeLessThanData(pi *model.PartitionInfo) (lessThanData, error) {
 	var maxValue bool
 	lessThan := make([]int64, len(pi.Definitions))
 	for i := 0; i < len(pi.Definitions); i++ {
@@ -515,18 +531,21 @@ func (s *partitionProcessor) pruneRangePartition(ds *DataSource, pi *model.Parti
 			var err error
 			lessThan[i], err = strconv.ParseInt(pi.Definitions[i].LessThan[0], 10, 64)
 			if err != nil {
-				return nil, errors.WithStack(err)
+				return lessThanData{}, errors.WithStack(err)
 			}
 		}
 	}
+	return lessThanData{lessThan, maxValue}, nil
+}
 
+// makePartitionByFnCol extracts the column and function information in 'partition by ... fn(col)'.
+func makePartitionByFnCol(ds *DataSource, pi *model.PartitionInfo) (*expression.Column, *expression.ScalarFunction, error) {
 	schema := expression.NewSchema(ds.TblCols...)
 	tmp, err := expression.ParseSimpleExprsWithNames(ds.ctx, pi.Expr, schema, ds.names)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	partExpr := tmp[0]
-
 	var col *expression.Column
 	var fn *expression.ScalarFunction
 	switch raw := partExpr.(type) {
@@ -538,13 +557,7 @@ func (s *partitionProcessor) pruneRangePartition(ds *DataSource, pi *model.Parti
 	case *expression.Column:
 		col = raw
 	}
-
-	result := fullRange(len(pi.Definitions))
-	if col != nil {
-		result = partitionRangeForCNFExpr(ds.ctx, ds.allConds, lessThanData{lessThan, maxValue}, col, fn, result)
-	}
-
-	return s.makeUnionAllChildren(ds, pi, result)
+	return col, fn, nil
 }
 
 func partitionRangeForCNFExpr(sctx sessionctx.Context, exprs []expression.Expression, lessThan lessThanData,
@@ -558,16 +571,12 @@ func partitionRangeForCNFExpr(sctx sessionctx.Context, exprs []expression.Expres
 // partitionRangeForExpr calculate the partitions for the expression.
 func partitionRangeForExpr(sctx sessionctx.Context, expr expression.Expression, lessThan lessThanData,
 	col *expression.Column, partFn *expression.ScalarFunction, result partitionRangeOR) partitionRangeOR {
-
-	fmt.Printf("handle expr === %v %T\n", expr, expr)
 	// Handle AND, OR respectively.
 	if op, ok := expr.(*expression.ScalarFunction); ok {
-		fmt.Println("not scalar function", op.FuncName.L)
 		if op.FuncName.L == ast.LogicAnd {
 			return partitionRangeForCNFExpr(sctx, op.GetArgs(), lessThan, col, partFn, result)
 		} else if op.FuncName.L == ast.LogicOr {
 			args := op.GetArgs()
-			fmt.Println("handle or   expr === ", args[0], args[1])
 			newRange := partitionRangeForOrExpr(sctx, args[0], args[1], lessThan, col, partFn)
 			return result.intersection(newRange)
 		}
@@ -619,9 +628,8 @@ func extractDataForPrune(sctx sessionctx.Context, expr expression.Expression, co
 		if arg0, ok := op.GetArgs()[0].(*expression.Column); ok && arg0.ID == col.ID {
 			ret.op = ast.IsNull
 			return ret, true
-		} else {
-			return ret, false
 		}
+		return ret, false
 	default:
 		return ret, false
 	}
@@ -640,7 +648,6 @@ func extractDataForPrune(sctx sessionctx.Context, expr expression.Expression, co
 				// If the partition expression is col, use constExpr.
 				constExpr = arg1
 			}
-			fmt.Println("=== eval int ===", constExpr)
 			c, isNull, err := constExpr.EvalInt(sctx, chunk.Row{})
 			if err == nil && !isNull {
 				ret.c = c
