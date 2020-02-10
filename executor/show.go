@@ -928,6 +928,9 @@ func (e *ShowExec) fetchShowCreateSequence() error {
 		return errors.Trace(err)
 	}
 	tableInfo := tbl.Meta()
+	if !tableInfo.IsSequence() {
+		return ErrWrongObject.GenWithStackByArgs(e.DBName.O, tableInfo.Name.O, "SEQUENCE")
+	}
 	var buf bytes.Buffer
 	ConstructResultOfShowCreateSequence(e.ctx, tableInfo, &buf)
 	e.appendRow([]interface{}{tableInfo.Name.O, buf.String()})

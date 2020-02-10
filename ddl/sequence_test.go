@@ -215,4 +215,19 @@ func (s *testSequenceSuite) TestShowCreateSequence(c *C) {
 	s.tk.MustExec("drop sequence if exists seq")
 	s.tk.MustExec("create sequence seq cycle")
 	s.tk.MustQuery("show create sequence seq").Check(testkit.Rows("seq CREATE SEQUENCE `seq` start with 1 minvalue 1 maxvalue 9223372036854775806 increment by 1 cache 1000 cycle ENGINE=InnoDB"))
+
+	// Test show create sequence with a normal table.
+	s.tk.MustExec("drop sequence if exists seq")
+	s.tk.MustExec("create table seq (a int)")
+	err = s.tk.QueryToErr("show create sequence seq")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[executor:1347]'test.seq' is not SEQUENCE")
+	s.tk.MustExec("drop table if exists seq")
+
+	// Test use the show create sequence result to create sequence.
+	s.tk.MustExec("drop sequence if exists seq")
+	s.tk.MustExec("create sequence seq")
+	showString := s.tk.MustQuery("show create sequence seq").Rows()[0][1].(string)
+	s.tk.MustExec("drop sequence if exists seq")
+	s.tk.MustExec(showString)
 }
