@@ -246,7 +246,7 @@ func (s *testSequenceSuite) TestSequenceAsDefaultValue(c *C) {
 	s.tk.MustExec("create table t1 (a int default next value for seq)")
 	_, err := s.tk.Exec("create table t2 (a char(1) default next value for seq)")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "column type is not suitable for default sequence value")
+	c.Assert(err.Error(), Equals, "[ddl:8228]Unsupported sequence default value for column type 'a'")
 
 	s.tk.MustExec("create table t3 (a int default nextval(seq))")
 
@@ -257,15 +257,15 @@ func (s *testSequenceSuite) TestSequenceAsDefaultValue(c *C) {
 	s.tk.MustExec("create table t5 (a char(1))")
 	_, err = s.tk.Exec("alter table t5 alter column a set default (next value for seq)")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "column type is not suitable for default sequence value")
+	c.Assert(err.Error(), Equals, "[ddl:8228]Unsupported sequence default value for column type 'a'")
 
 	_, err = s.tk.Exec("alter table t5 alter column a set default (nextval(seq))")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "column type is not suitable for default sequence value")
+	c.Assert(err.Error(), Equals, "[ddl:8228]Unsupported sequence default value for column type 'a'")
 
 	_, err = s.tk.Exec("alter table t5 add column b char(1) default next value for seq")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "column type is not suitable for default sequence value")
+	c.Assert(err.Error(), Equals, "[ddl:8228]Unsupported sequence default value for column type 'b'")
 
 	s.tk.MustExec("alter table t5 add column b int default nextval(seq)")
 
