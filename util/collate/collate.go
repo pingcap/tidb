@@ -51,7 +51,7 @@ func (bc *binCollator) Compare(a, b string) int {
 
 // Key implement Collator interface.
 func (bc *binCollator) Key(str string) []byte {
-	return hack.Slice(str)
+	return []byte(str)
 }
 
 func init() {
