@@ -465,7 +465,7 @@ func (s *testClusterReaderSuite) TestTiDBClusterLog(c *C) {
 		logtime(`2019/08/26 06:19:16.011`) + ` [trace] [test log message tidb 4, foo]`,
 		logtime(`2019/08/26 06:19:17.011`) + ` [CRITICAL] [test log message tidb 5, foo]`,
 	})
-	s.writeTmpFile(c, testServers["tidb"].tmpDir, "tidb.log.1", []string{
+	s.writeTmpFile(c, testServers["tidb"].tmpDir, "tidb-1.log", []string{
 		logtime(`2019/08/26 06:25:13.011`) + ` [info] [test log message tidb 10, bar]`,
 		logtime(`2019/08/26 06:25:14.011`) + ` [debug] [test log message tidb 11, bar]`,
 		logtime(`2019/08/26 06:25:15.011`) + ` [ERROR] [test log message tidb 12, bar]`,
@@ -481,7 +481,7 @@ func (s *testClusterReaderSuite) TestTiDBClusterLog(c *C) {
 		logtime(`2019/08/26 06:22:16.011`) + ` [trace] [test log message tikv 4, foo]`,
 		logtime(`2019/08/26 06:23:17.011`) + ` [CRITICAL] [test log message tikv 5, foo]`,
 	})
-	s.writeTmpFile(c, testServers["tikv"].tmpDir, "tikv.log.1", []string{
+	s.writeTmpFile(c, testServers["tikv"].tmpDir, "tikv-1.log", []string{
 		logtime(`2019/08/26 06:24:15.011`) + ` [info] [test log message tikv 10, bar]`,
 		logtime(`2019/08/26 06:25:16.011`) + ` [debug] [test log message tikv 11, bar]`,
 		logtime(`2019/08/26 06:26:17.011`) + ` [ERROR] [test log message tikv 12, bar]`,
@@ -497,7 +497,7 @@ func (s *testClusterReaderSuite) TestTiDBClusterLog(c *C) {
 		logtime(`2019/08/26 06:21:16.011`) + ` [trace] [test log message pd 4, foo]`,
 		logtime(`2019/08/26 06:22:17.011`) + ` [CRITICAL] [test log message pd 5, foo]`,
 	})
-	s.writeTmpFile(c, testServers["pd"].tmpDir, "pd.log.1", []string{
+	s.writeTmpFile(c, testServers["pd"].tmpDir, "pd-1.log", []string{
 		logtime(`2019/08/26 06:23:13.011`) + ` [info] [test log message pd 10, bar]`,
 		logtime(`2019/08/26 06:24:14.011`) + ` [debug] [test log message pd 11, bar]`,
 		logtime(`2019/08/26 06:25:15.011`) + ` [ERROR] [test log message pd 12, bar]`,
