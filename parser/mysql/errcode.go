@@ -1067,6 +1067,7 @@ const (
 	ErrCancelFinishedDDLJob           = 8225
 	ErrCannotCancelDDLJob             = 8226
 	ErrSequenceUnsupportedTableOption = 8227
+	ErrColumnTypeUnsupportedNextValue = 8228
 
 	// TiKV/PD errors.
 	ErrPDServerTimeout    = 9001
