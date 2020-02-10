@@ -216,6 +216,10 @@ func (s *testSequenceSuite) TestShowCreateSequence(c *C) {
 	s.tk.MustExec("create sequence seq cycle")
 	s.tk.MustQuery("show create sequence seq").Check(testkit.Rows("seq CREATE SEQUENCE `seq` start with 1 minvalue 1 maxvalue 9223372036854775806 increment by 1 cache 1000 cycle ENGINE=InnoDB"))
 
+	s.tk.MustExec("drop sequence if exists seq")
+	s.tk.MustExec("create sequence seq comment=\"ccc\"")
+	s.tk.MustQuery("show create sequence seq").Check(testkit.Rows("seq CREATE SEQUENCE `seq` start with 1 minvalue 1 maxvalue 9223372036854775806 increment by 1 cache 1000 nocycle ENGINE=InnoDB COMMENT='ccc'"))
+
 	// Test show create sequence with a normal table.
 	s.tk.MustExec("drop sequence if exists seq")
 	s.tk.MustExec("create table seq (a int)")

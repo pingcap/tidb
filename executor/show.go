@@ -920,6 +920,9 @@ func ConstructResultOfShowCreateSequence(ctx sessionctx.Context, tableInfo *mode
 		buf.WriteString("nocycle ")
 	}
 	buf.WriteString("ENGINE=InnoDB")
+	if len(sequenceInfo.Comment) > 0 {
+		fmt.Fprintf(buf, " COMMENT='%s'", format.OutputFormat(sequenceInfo.Comment))
+	}
 }
 
 func (e *ShowExec) fetchShowCreateSequence() error {
