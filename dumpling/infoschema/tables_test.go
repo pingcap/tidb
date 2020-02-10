@@ -977,41 +977,61 @@ func (s *testTableSuite) TestForTableTiFlashReplica(c *C) {
 func (s *testClusterTableSuite) TestForClusterServerInfo(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	instances := []string{
-		"tidb," + s.listenAddr + "," + s.listenAddr + ",mock-version,mock-githash",
-		"pd," + s.listenAddr + "," + s.listenAddr + ",mock-version,mock-githash",
-		"tikv," + s.listenAddr + "," + s.listenAddr + ",mock-version,mock-githash",
+		strings.Join([]string{"tidb", s.listenAddr, s.listenAddr, "mock-version,mock-githash"}, ","),
+		strings.Join([]string{"pd", s.listenAddr, s.listenAddr, "mock-version,mock-githash"}, ","),
+		strings.Join([]string{"tikv", s.listenAddr, s.listenAddr, "mock-version,mock-githash"}, ","),
 	}
-	fpExpr := `return("` + strings.Join(instances, ";") + `")`
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/infoschema/mockClusterInfo", fpExpr), IsNil)
-	defer func() { c.Assert(failpoint.Disable("github.com/pingcap/tidb/infoschema/mockClusterInfo"), IsNil) }()
 
-	checkInfoRows := func(re *testkit.Result, types, addrs, names set.StringSet) {
-		rows := re.Rows()
+	fpExpr := `return("` + strings.Join(instances, ";") + `")`
+	fpName := "github.com/pingcap/tidb/infoschema/mockClusterInfo"
+	c.Assert(failpoint.Enable(fpName, fpExpr), IsNil)
+	defer func() { c.Assert(failpoint.Disable(fpName), IsNil) }()
+
+	cases := []struct {
+		sql   string
+		types set.StringSet
+		addrs set.StringSet
+		names set.StringSet
+	}{
+		{
+			sql:   "select * from information_schema.CLUSTER_LOAD;",
+			types: set.NewStringSet("tidb", "tikv", "pd"),
+			addrs: set.NewStringSet(s.listenAddr),
+			names: set.NewStringSet("cpu", "memory", "net"),
+		},
+		{
+			sql:   "select * from information_schema.CLUSTER_HARDWARE;",
+			types: set.NewStringSet("tidb", "tikv", "pd"),
+			addrs: set.NewStringSet(s.listenAddr),
+			names: set.NewStringSet("cpu", "memory", "net", "disk"),
+		},
+		{
+			sql:   "select * from information_schema.CLUSTER_SYSTEMINFO;",
+			types: set.NewStringSet("tidb", "tikv", "pd"),
+			addrs: set.NewStringSet(s.listenAddr),
+			names: set.NewStringSet("system"),
+		},
+	}
+
+	for _, cas := range cases {
+		result := tk.MustQuery(cas.sql)
+		rows := result.Rows()
 		c.Assert(len(rows), Greater, 0)
 
-		for _, row := range rows {
-			tp := row[0].(string)
-			addr := row[1].(string)
-			name := row[2].(string)
-			delete(types, tp)
-			delete(addrs, addr)
-			delete(names, name)
-		}
-		c.Assert(len(types), Equals, 0)
-		c.Assert(len(addrs), Equals, 0)
-		c.Assert(len(names), Equals, 0)
-	}
+		gotTypes := set.StringSet{}
+		gotAddrs := set.StringSet{}
+		gotNames := set.StringSet{}
 
-	types := set.NewStringSet("tidb")
-	addrs := set.NewStringSet(s.listenAddr)
-	names := set.NewStringSet("cpu", "mem", "net", "disk")
-	re := tk.MustQuery("select * from information_schema.CLUSTER_LOAD;")
-	checkInfoRows(re, types, addrs, names)
-	re = tk.MustQuery("select * from information_schema.CLUSTER_HARDWARE;")
-	checkInfoRows(re, types, addrs, names)
-	re = tk.MustQuery("select * from information_schema.CLUSTER_SYSTEMINFO;")
-	names = set.NewStringSet("system")
-	checkInfoRows(re, types, addrs, names)
+		for _, row := range rows {
+			gotTypes.Insert(row[0].(string))
+			gotAddrs.Insert(row[1].(string))
+			gotNames.Insert(row[2].(string))
+		}
+
+		c.Assert(gotTypes, DeepEquals, cas.types, Commentf("sql: %s", cas.sql))
+		c.Assert(gotAddrs, DeepEquals, cas.addrs, Commentf("sql: %s", cas.sql))
+		c.Assert(gotNames, DeepEquals, cas.names, Commentf("sql: %s", cas.sql))
+	}
 }
 
 func (s *testTableSuite) TestSystemSchemaID(c *C) {
