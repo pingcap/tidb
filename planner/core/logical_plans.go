@@ -298,6 +298,12 @@ func (la *LogicalAggregation) IsPartialModeAgg() bool {
 	return la.AggFuncs[0].Mode == aggregation.Partial1Mode
 }
 
+// IsCompleteModeAgg returns if all of the AggFuncs are CompleteMode.
+func (la *LogicalAggregation) IsCompleteModeAgg() bool {
+	// Since all of the AggFunc share the same AggMode, we only need to check the first one.
+	return la.AggFuncs[0].Mode == aggregation.CompleteMode
+}
+
 // GetGroupByCols returns the groupByCols. If the groupByCols haven't be collected,
 // this method would collect them at first. If the GroupByItems have been changed,
 // we should explicitly collect GroupByColumns before this method.

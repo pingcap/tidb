@@ -977,41 +977,61 @@ func (s *testTableSuite) TestForTableTiFlashReplica(c *C) {
 func (s *testClusterTableSuite) TestForClusterServerInfo(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	instances := []string{
-		"tidb," + s.listenAddr + "," + s.listenAddr + ",mock-version,mock-githash",
-		"pd," + s.listenAddr + "," + s.listenAddr + ",mock-version,mock-githash",
-		"tikv," + s.listenAddr + "," + s.listenAddr + ",mock-version,mock-githash",
+		strings.Join([]string{"tidb", s.listenAddr, s.listenAddr, "mock-version,mock-githash"}, ","),
+		strings.Join([]string{"pd", s.listenAddr, s.listenAddr, "mock-version,mock-githash"}, ","),
+		strings.Join([]string{"tikv", s.listenAddr, s.listenAddr, "mock-version,mock-githash"}, ","),
 	}
-	fpExpr := `return("` + strings.Join(instances, ";") + `")`
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/infoschema/mockClusterInfo", fpExpr), IsNil)
-	defer func() { c.Assert(failpoint.Disable("github.com/pingcap/tidb/infoschema/mockClusterInfo"), IsNil) }()
 
-	checkInfoRows := func(re *testkit.Result, types, addrs, names set.StringSet) {
-		rows := re.Rows()
+	fpExpr := `return("` + strings.Join(instances, ";") + `")`
+	fpName := "github.com/pingcap/tidb/infoschema/mockClusterInfo"
+	c.Assert(failpoint.Enable(fpName, fpExpr), IsNil)
+	defer func() { c.Assert(failpoint.Disable(fpName), IsNil) }()
+
+	cases := []struct {
+		sql   string
+		types set.StringSet
+		addrs set.StringSet
+		names set.StringSet
+	}{
+		{
+			sql:   "select * from information_schema.CLUSTER_LOAD;",
+			types: set.NewStringSet("tidb", "tikv", "pd"),
+			addrs: set.NewStringSet(s.listenAddr),
+			names: set.NewStringSet("cpu", "memory", "net"),
+		},
+		{
+			sql:   "select * from information_schema.CLUSTER_HARDWARE;",
+			types: set.NewStringSet("tidb", "tikv", "pd"),
+			addrs: set.NewStringSet(s.listenAddr),
+			names: set.NewStringSet("cpu", "memory", "net", "disk"),
+		},
+		{
+			sql:   "select * from information_schema.CLUSTER_SYSTEMINFO;",
+			types: set.NewStringSet("tidb", "tikv", "pd"),
+			addrs: set.NewStringSet(s.listenAddr),
+			names: set.NewStringSet("system"),
+		},
+	}
+
+	for _, cas := range cases {
+		result := tk.MustQuery(cas.sql)
+		rows := result.Rows()
 		c.Assert(len(rows), Greater, 0)
 
-		for _, row := range rows {
-			tp := row[0].(string)
-			addr := row[1].(string)
-			name := row[2].(string)
-			delete(types, tp)
-			delete(addrs, addr)
-			delete(names, name)
-		}
-		c.Assert(len(types), Equals, 0)
-		c.Assert(len(addrs), Equals, 0)
-		c.Assert(len(names), Equals, 0)
-	}
+		gotTypes := set.StringSet{}
+		gotAddrs := set.StringSet{}
+		gotNames := set.StringSet{}
 
-	types := set.NewStringSet("tidb")
-	addrs := set.NewStringSet(s.listenAddr)
-	names := set.NewStringSet("cpu", "mem", "net", "disk")
-	re := tk.MustQuery("select * from information_schema.CLUSTER_LOAD;")
-	checkInfoRows(re, types, addrs, names)
-	re = tk.MustQuery("select * from information_schema.CLUSTER_HARDWARE;")
-	checkInfoRows(re, types, addrs, names)
-	re = tk.MustQuery("select * from information_schema.CLUSTER_SYSTEMINFO;")
-	names = set.NewStringSet("system")
-	checkInfoRows(re, types, addrs, names)
+		for _, row := range rows {
+			gotTypes.Insert(row[0].(string))
+			gotAddrs.Insert(row[1].(string))
+			gotNames.Insert(row[2].(string))
+		}
+
+		c.Assert(gotTypes, DeepEquals, cas.types, Commentf("sql: %s", cas.sql))
+		c.Assert(gotAddrs, DeepEquals, cas.addrs, Commentf("sql: %s", cas.sql))
+		c.Assert(gotNames, DeepEquals, cas.names, Commentf("sql: %s", cas.sql))
+	}
 }
 
 func (s *testTableSuite) TestSystemSchemaID(c *C) {
@@ -1098,4 +1118,56 @@ func (s *testTableSuite) TestSelectHiddenColumn(c *C) {
 	colInfo[1].Hidden = true
 	colInfo[2].Hidden = true
 	tk.MustQuery("select count(*) from INFORMATION_SCHEMA.COLUMNS where table_name = 'hidden'").Check(testkit.Rows("0"))
+}
+
+func (s *testTableSuite) TestPartitionsTable(c *C) {
+	oldExpiryTime := infoschema.TableStatsCacheExpiry
+	infoschema.TableStatsCacheExpiry = 0
+	defer func() { infoschema.TableStatsCacheExpiry = oldExpiryTime }()
+
+	do := s.dom
+	h := do.StatsHandle()
+	h.Clear()
+	is := do.InfoSchema()
+
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("USE test;")
+	tk.MustExec("DROP TABLE IF EXISTS `test_partitions`;")
+	tk.MustExec(`CREATE TABLE test_partitions (a int, b int, c varchar(5), primary key(a), index idx(c)) PARTITION BY RANGE (a) (PARTITION p0 VALUES LESS THAN (6), PARTITION p1 VALUES LESS THAN (11), PARTITION p2 VALUES LESS THAN (16));`)
+	err := h.HandleDDLEvent(<-h.DDLEventCh())
+	c.Assert(err, IsNil)
+	tk.MustExec(`insert into test_partitions(a, b, c) values(1, 2, "c"), (7, 3, "d"), (12, 4, "e");`)
+
+	tk.MustQuery("select PARTITION_NAME, PARTITION_DESCRIPTION from information_schema.PARTITIONS where table_name='test_partitions';").Check(
+		testkit.Rows("" +
+			"p0 6]\n" +
+			"[p1 11]\n" +
+			"[p2 16"))
+
+	tk.MustQuery("select table_rows, avg_row_length, data_length, index_length from information_schema.PARTITIONS where table_name='test_partitions';").Check(
+		testkit.Rows("" +
+			"0 0 0 0]\n" +
+			"[0 0 0 0]\n" +
+			"[0 0 0 0"))
+	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+	c.Assert(h.Update(is), IsNil)
+	tk.MustQuery("select table_rows, avg_row_length, data_length, index_length from information_schema.PARTITIONS where table_name='test_partitions';").Check(
+		testkit.Rows("" +
+			"1 18 18 2]\n" +
+			"[1 18 18 2]\n" +
+			"[1 18 18 2"))
+
+	// Test for table has no partitions.
+	tk.MustExec("DROP TABLE IF EXISTS `test_partitions_1`;")
+	tk.MustExec(`CREATE TABLE test_partitions_1 (a int, b int, c varchar(5), primary key(a), index idx(c));`)
+	err = h.HandleDDLEvent(<-h.DDLEventCh())
+	c.Assert(err, IsNil)
+	tk.MustExec(`insert into test_partitions_1(a, b, c) values(1, 2, "c"), (7, 3, "d"), (12, 4, "e");`)
+	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+	c.Assert(h.Update(is), IsNil)
+	tk.MustQuery("select PARTITION_NAME, TABLE_ROWS, AVG_ROW_LENGTH, DATA_LENGTH, INDEX_LENGTH from information_schema.PARTITIONS where table_name='test_partitions_1';").Check(
+		testkit.Rows("<nil> 3 18 54 6"))
+
+	tk.MustExec("DROP TABLE `test_partitions`;")
 }

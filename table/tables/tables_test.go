@@ -520,15 +520,15 @@ func (ts *testSuite) TestHiddenColumn(c *C) {
 	tk.MustGetErrMsg("update t set a=1 where b=1;", "[planner:1054]Unknown column 'b' in 'where clause'")
 	tk.MustGetErrMsg("update t set a=1 where c=3 order by b;", "[planner:1054]Unknown column 'b' in 'order clause'")
 
-	// FIXME: `DELETE` statement
-	//tk.MustExec("delete from t;")
-	//tk.MustQuery("select count(*) from t;").Check(testkit.Rows("0"))
-	//tk.MustExec("insert into t values (1, 3, 5);")
-	//tk.MustQuery("select * from t;").Check(testkit.Rows("1 3 5"))
-	//tk.MustGetErr("delete from t where b = 1;", "[planner:1054]Unknown column 'b' in 'where clause'")
-	//tk.MustQuery("select * from t;").Check(testkit.Rows("1 3 5"))
-	//tk.MustGetErr("delete from t order by d = 1;", "[planner:1054]Unknown column 'd' in 'order clause'")
-	//tk.MustQuery("select * from t;").Check(testkit.Rows("1 3 5"))
+	// `DELETE` statement
+	tk.MustExec("delete from t;")
+	tk.MustQuery("select count(*) from t;").Check(testkit.Rows("0"))
+	tk.MustExec("insert into t values (1, 3, 5);")
+	tk.MustQuery("select * from t;").Check(testkit.Rows("1 3 5"))
+	tk.MustGetErrMsg("delete from t where b = 1;", "[planner:1054]Unknown column 'b' in 'where clause'")
+	tk.MustQuery("select * from t;").Check(testkit.Rows("1 3 5"))
+	tk.MustGetErrMsg("delete from t order by d = 1;", "[planner:1054]Unknown column 'd' in 'order clause'")
+	tk.MustQuery("select * from t;").Check(testkit.Rows("1 3 5"))
 
 	// `DROP COLUMN` statement
 	tk.MustGetErrMsg("ALTER TABLE t DROP COLUMN b;", "[ddl:1091]column b doesn't exist")
