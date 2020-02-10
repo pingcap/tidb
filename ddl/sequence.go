@@ -160,6 +160,9 @@ func buildSequenceInfo(stmt *ast.CreateSequenceStmt, ident ast.Ident) (*model.Se
 		switch op.Tp {
 		case ast.TableOptionComment:
 			sequenceInfo.Comment = op.StrValue
+		case ast.TableOptionEngine:
+		default:
+			return nil, ErrSequenceUnsupportedTableOption.GenWithStackByArgs(op.StrValue)
 		}
 	}
 	handleSequenceOptions(stmt.SeqOptions, sequenceInfo)
