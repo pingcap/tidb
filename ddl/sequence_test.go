@@ -51,7 +51,7 @@ func (s *testSequenceSuite) TestCreateSequence(c *C) {
 	s.tk.MustGetErrCode("create sequence seq increment 100000 cache 922337203685477", mysql.ErrSequenceInvalidData)
 
 	// test unsupported table option in sequence.
-	s.tk.MustGetErrCode("create sequence seq ENGINE=InnoDB", mysql.ErrSequenceUnsupportedTableOption)
+	s.tk.MustGetErrCode("create sequence seq CHARSET=utf8", mysql.ErrSequenceUnsupportedTableOption)
 
 	_, err := s.tk.Exec("create sequence seq comment=\"test\"")
 	c.Assert(err, IsNil)
