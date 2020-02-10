@@ -29,7 +29,7 @@ import (
 	"sort"
 )
 
-// InfoschemaReaderExec executes infoschema information retrieving from the cluster components
+// InfoschemaReaderExec executes infoschema information retrieving
 type InfoschemaReaderExec struct {
 	baseExecutor
 	t					  table.Table
