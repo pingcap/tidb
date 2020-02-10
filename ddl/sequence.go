@@ -161,7 +161,7 @@ func buildSequenceInfo(stmt *ast.CreateSequenceStmt, ident ast.Ident) (*model.Se
 		case ast.TableOptionComment:
 			sequenceInfo.Comment = op.StrValue
 		case ast.TableOptionEngine:
-			// Be compatible with table engine option.
+			// TableOptionEngine will always be 'InnoDB', thus we do nothing in this branch to avoid error happening.
 		default:
 			return nil, ErrSequenceUnsupportedTableOption.GenWithStackByArgs(op.StrValue)
 		}
