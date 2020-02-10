@@ -997,7 +997,7 @@ func (s *testClusterTableSuite) TestForClusterServerInfo(c *C) {
 			sql:   "select * from information_schema.CLUSTER_LOAD;",
 			types: set.NewStringSet("tidb", "tikv", "pd"),
 			addrs: set.NewStringSet(s.listenAddr),
-			names: set.NewStringSet("cpu", "memory", "net", "disk"),
+			names: set.NewStringSet("cpu", "memory", "net"),
 		},
 		{
 			sql:   "select * from information_schema.CLUSTER_HARDWARE;",
@@ -1028,9 +1028,9 @@ func (s *testClusterTableSuite) TestForClusterServerInfo(c *C) {
 			gotNames.Insert(row[2].(string))
 		}
 
-		c.Assert(gotTypes, DeepEquals, cas.types)
-		c.Assert(gotAddrs, DeepEquals, cas.addrs)
-		c.Assert(gotNames, DeepEquals, cas.names)
+		c.Assert(gotTypes, DeepEquals, cas.types, Commentf("sql: %s", cas.sql))
+		c.Assert(gotAddrs, DeepEquals, cas.addrs, Commentf("sql: %s", cas.sql))
+		c.Assert(gotNames, DeepEquals, cas.names, Commentf("sql: %s", cas.sql))
 	}
 }
 
