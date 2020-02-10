@@ -79,8 +79,9 @@ type ServerInfo struct {
 
 // ServerVersionInfo is the server version and git_hash.
 type ServerVersionInfo struct {
-	Version string `json:"version"`
-	GitHash string `json:"git_hash"`
+	Version        string `json:"version"`
+	GitHash        string `json:"git_hash"`
+	StartTimestamp int64  `json:"start_timestamp"`
 }
 
 // globalInfoSyncer stores the global infoSyncer.
@@ -348,5 +349,6 @@ func getServerInfo(id string) *ServerInfo {
 	}
 	info.Version = mysql.ServerVersion
 	info.GitHash = printer.TiDBGitHash
+	info.StartTimestamp = time.Now().Unix()
 	return info
 }
