@@ -173,6 +173,11 @@ func (vt *perfSchemaTable) WritableCols() []*table.Column {
 	return vt.cols
 }
 
+// DeletableCols implements table DeletableCols interface.
+func (vt *perfSchemaTable) DeletableCols() []*table.Column {
+	return vt.cols
+}
+
 // GetID implements table.Table GetID interface.
 func (vt *perfSchemaTable) GetPhysicalID() int64 {
 	return vt.meta.ID
