@@ -114,7 +114,7 @@ var _ = Suite(&testPointGetSuite{})
 var _ = Suite(&testBatchPointGetSuite{})
 var _ = Suite(&testRecoverTable{})
 var _ = Suite(&testClusterReaderSuite{})
-var _ = Suite(&testFlushSuite{})
+var _ = SerialSuites(&testFlushSuite{})
 var _ = SerialSuites(&testAutoRandomSuite{&baseTestSuite{}})
 
 type testSuite struct{ *baseTestSuite }
