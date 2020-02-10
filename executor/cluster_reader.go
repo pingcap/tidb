@@ -432,9 +432,9 @@ func (e *clusterLogRetriever) startRetrieving(ctx context.Context, sctx sessionc
 		return nil, err
 	}
 
-	addresses := e.extractor.Instances
+	instances := e.extractor.Instances
 	nodeTypes := e.extractor.NodeTypes
-	serversInfo = filterClusterServerInfo(serversInfo, nodeTypes, addresses)
+	serversInfo = filterClusterServerInfo(serversInfo, nodeTypes, instances)
 
 	// gRPC options
 	opt := grpc.WithInsecure()
@@ -465,7 +465,7 @@ func (e *clusterLogRetriever) startRetrieving(ctx context.Context, sctx sessionc
 	if !isFailpointTestModeSkipCheck {
 		// To avoid search log interface overload, the user should specify at least one pattern
 		// in normally SQL. (But in test mode we should relax this limitation)
-		if len(patterns) == 0 && len(levels) == 0 && len(addresses) == 0 && len(nodeTypes) == 0 {
+		if len(patterns) == 0 && len(levels) == 0 && len(instances) == 0 && len(nodeTypes) == 0 {
 			return nil, errors.New("denied to scan full logs (use `SELECT * FROM cluster_log WHERE message LIKE '%'` explicitly if intentionally)")
 		}
 
