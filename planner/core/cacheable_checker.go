@@ -47,7 +47,7 @@ type cacheableChecker struct {
 // Enter implements Visitor interface.
 func (checker *cacheableChecker) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 	switch node := in.(type) {
-	case *ast.VariableExpr, *ast.ExistsSubqueryExpr, *ast.SubqueryExpr:
+	case *ast.VariableExpr, *ast.ExistsSubqueryExpr:
 		checker.cacheable = false
 		return in, true
 	case *ast.FuncCallExpr:
