@@ -29,6 +29,8 @@
       "select b, avg(a) from t group by b having sum(a) > 1 order by b",
       "select max(a+b) from t",
       "select sum(a) from t group by a, a+b order by a",
+      "select b, sum(a) from t group by b having b > 1 order by b",
+      "select c, sum(a) from (select a+b as c, a from t) t1 group by c having c > 1 order by c",
       "select max(a) from t"
     ]
   },

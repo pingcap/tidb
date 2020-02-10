@@ -143,3 +143,14 @@ type baseAggFunc struct {
 func (*baseAggFunc) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) error {
 	return nil
 }
+
+// SlidingWindowAggFunc is the interface to evaluate the aggregate functions using sliding window.
+type SlidingWindowAggFunc interface {
+	// Slide evaluates the aggregate functions using a sliding window. The input
+	// lastStart and lastEnd are the interval of the former sliding window,
+	// shiftStart, shiftEnd mean the sliding window offset. Note that the input
+	// PartialResult stores the intermediate result which will be used in the next
+	// sliding window, ensure call ResetPartialResult after a frame are evaluated
+	// completely.
+	Slide(sctx sessionctx.Context, rows []chunk.Row, lastStart, lastEnd uint64, shiftStart, shiftEnd uint64, pr PartialResult) error
+}
