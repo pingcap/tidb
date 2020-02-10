@@ -118,7 +118,7 @@ func (e *clusterConfigRetriever) retrieve(_ context.Context, sctx sessionctx.Con
 	if err != nil {
 		return nil, err
 	}
-	serversInfo = filterClusterServerInfo(serversInfo, e.extractor.NodeTypes, e.extractor.Addresses)
+	serversInfo = filterClusterServerInfo(serversInfo, e.extractor.NodeTypes, e.extractor.Instances)
 
 	var finalRows [][]types.Datum
 	wg := sync.WaitGroup{}
@@ -235,7 +235,7 @@ func (e *clusterServerInfoRetriever) retrieve(ctx context.Context, sctx sessionc
 	if err != nil {
 		return nil, err
 	}
-	serversInfo = filterClusterServerInfo(serversInfo, e.extractor.NodeTypes, e.extractor.Addresses)
+	serversInfo = filterClusterServerInfo(serversInfo, e.extractor.NodeTypes, e.extractor.Instances)
 
 	type result struct {
 		idx  int
@@ -244,7 +244,6 @@ func (e *clusterServerInfoRetriever) retrieve(ctx context.Context, sctx sessionc
 	}
 	wg := sync.WaitGroup{}
 	ch := make(chan result, len(serversInfo))
-	ipMap := make(map[string]struct{}, len(serversInfo))
 	infoTp := e.serverInfoType
 	finalRows := make([][]types.Datum, 0, len(serversInfo)*10)
 	for i, srv := range serversInfo {
@@ -252,14 +251,6 @@ func (e *clusterServerInfoRetriever) retrieve(ctx context.Context, sctx sessionc
 		if srv.ServerType == "tidb" {
 			address = srv.StatusAddr
 		}
-		ip := address
-		if idx := strings.Index(address, ":"); idx != -1 {
-			ip = address[:idx]
-		}
-		if _, ok := ipMap[ip]; ok {
-			continue
-		}
-		ipMap[ip] = struct{}{}
 		wg.Add(1)
 		go func(index int, address, serverTP string) {
 			util.WithRecovery(func() {
@@ -441,9 +432,9 @@ func (e *clusterLogRetriever) startRetrieving(ctx context.Context, sctx sessionc
 		return nil, err
 	}
 
-	addresses := e.extractor.Addresses
+	instances := e.extractor.Instances
 	nodeTypes := e.extractor.NodeTypes
-	serversInfo = filterClusterServerInfo(serversInfo, nodeTypes, addresses)
+	serversInfo = filterClusterServerInfo(serversInfo, nodeTypes, instances)
 
 	// gRPC options
 	opt := grpc.WithInsecure()
@@ -474,7 +465,7 @@ func (e *clusterLogRetriever) startRetrieving(ctx context.Context, sctx sessionc
 	if !isFailpointTestModeSkipCheck {
 		// To avoid search log interface overload, the user should specify at least one pattern
 		// in normally SQL. (But in test mode we should relax this limitation)
-		if len(patterns) == 0 && len(levels) == 0 && len(addresses) == 0 && len(nodeTypes) == 0 {
+		if len(patterns) == 0 && len(levels) == 0 && len(instances) == 0 && len(nodeTypes) == 0 {
 			return nil, errors.New("denied to scan full logs (use `SELECT * FROM cluster_log WHERE message LIKE '%'` explicitly if intentionally)")
 		}
 
