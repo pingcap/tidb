@@ -38,6 +38,7 @@ import (
 const (
 	btreeDegree               = 32
 	invalidatedLastAccessTime = -1
+	defaultRegionsPerBatch    = 128
 )
 
 // RegionCacheTTLSec is the max idle time for regions in the region cache.
@@ -590,24 +591,26 @@ func (c *RegionCache) ListRegionIDsInKeyRange(bo *Backoffer, startKey, endKey []
 	return regionIDs, nil
 }
 
-// LoadRegionsInKeyRange lists ids of regions in [start_key,end_key].
+// LoadRegionsInKeyRange lists regions in [start_key,end_key].
 func (c *RegionCache) LoadRegionsInKeyRange(bo *Backoffer, startKey, endKey []byte) (regions []*Region, err error) {
+	var batchRegions []*Region
 	for {
-		curRegion, err := c.loadRegion(bo, startKey, false)
+		batchRegions, err = c.BatchLoadRegionsWithKeyRange(bo, startKey, endKey, defaultRegionsPerBatch)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		c.mu.Lock()
-		c.insertRegionToCache(curRegion)
-		c.mu.Unlock()
-
-		regions = append(regions, curRegion)
-		if curRegion.Contains(endKey) {
-			break
+		if len(batchRegions) == 0 {
+			// should never happen
+			return
 		}
-		startKey = curRegion.EndKey()
+		regions = append(regions, batchRegions...)
+		endRegion := batchRegions[len(batchRegions)-1]
+		if endRegion.Contains(endKey) {
+			return
+		}
+		startKey = endRegion.EndKey()
 	}
-	return regions, nil
+	return
 }
 
 // BatchLoadRegionsWithKeyRange loads at most given numbers of regions to the RegionCache,
