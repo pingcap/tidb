@@ -977,9 +977,9 @@ func (s *testTableSuite) TestForTableTiFlashReplica(c *C) {
 func (s *testClusterTableSuite) TestForClusterServerInfo(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	instances := []string{
-		strings.Join([]string{"tidb" ,s.listenAddr,s.listenAddr ,"mock-version,mock-githash"}, ","),
-		strings.Join([]string{"pd" ,s.listenAddr,s.listenAddr ,"mock-version,mock-githash"}, ","),
-		strings.Join([]string{"tikv" ,s.listenAddr,s.listenAddr ,"mock-version,mock-githash"}, ","),
+		strings.Join([]string{"tidb", s.listenAddr, s.listenAddr, "mock-version,mock-githash"}, ","),
+		strings.Join([]string{"pd", s.listenAddr, s.listenAddr, "mock-version,mock-githash"}, ","),
+		strings.Join([]string{"tikv", s.listenAddr, s.listenAddr, "mock-version,mock-githash"}, ","),
 	}
 
 	fpExpr := `return("` + strings.Join(instances, ";") + `")`
@@ -987,29 +987,29 @@ func (s *testClusterTableSuite) TestForClusterServerInfo(c *C) {
 	c.Assert(failpoint.Enable(fpName, fpExpr), IsNil)
 	defer func() { c.Assert(failpoint.Disable(fpName), IsNil) }()
 
-	cases := []struct{
-		sql string
+	cases := []struct {
+		sql   string
 		types set.StringSet
 		addrs set.StringSet
 		names set.StringSet
-	} {
+	}{
 		{
-			sql: "select * from information_schema.CLUSTER_LOAD;",
+			sql:   "select * from information_schema.CLUSTER_LOAD;",
 			types: set.NewStringSet("tidb", "tikv", "pd"),
-			addrs:set.NewStringSet(s.listenAddr),
+			addrs: set.NewStringSet(s.listenAddr),
 			names: set.NewStringSet("cpu", "memory", "net", "disk"),
 		},
 		{
-			sql: "select * from information_schema.CLUSTER_HARDWARE;",
+			sql:   "select * from information_schema.CLUSTER_HARDWARE;",
 			types: set.NewStringSet("tidb", "tikv", "pd"),
-			addrs:set.NewStringSet(s.listenAddr),
+			addrs: set.NewStringSet(s.listenAddr),
 			names: set.NewStringSet("cpu", "memory", "net", "disk"),
 		},
 		{
-			sql: "select * from information_schema.CLUSTER_SYSTEMINFO;",
+			sql:   "select * from information_schema.CLUSTER_SYSTEMINFO;",
 			types: set.NewStringSet("tidb", "tikv", "pd"),
-			addrs:set.NewStringSet(s.listenAddr),
-			names:  set.NewStringSet("system"),
+			addrs: set.NewStringSet(s.listenAddr),
+			names: set.NewStringSet("system"),
 		},
 	}
 
