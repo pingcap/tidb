@@ -196,6 +196,13 @@ func (s *testSuite8) TestInsertOnDuplicateKey(c *C) {
 	tk.MustExec(`insert into t1 set c1 = 0.1`)
 	tk.MustExec(`insert into t1 set c1 = 0.1 on duplicate key update c1 = 1`)
 	tk.MustQuery(`select * from t1 use index(primary)`).Check(testkit.Rows(`1.0000`))
+
+	tk.MustExec(`drop table if exists t1`)
+	tk.MustExec(`create table t1(c1 year null default '1970')`)
+	tk.MustExec(`insert into t1 set c1 = '2004'`)
+	tk.MustExec(`alter table t1 add index idx(c1)`)
+	tk.MustExec(`delete from t1`)
+	tk.MustExec(`admin check table t1`)
 }
 
 func (s *testSuite3) TestUpdateDuplicateKey(c *C) {
