@@ -1263,7 +1263,6 @@ func (b *executorBuilder) getStartTS() (uint64, error) {
 }
 
 func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executor {
-	tb, _ := b.is.TableByID(v.Table.ID)
 	switch v.DBName.L {
 	case util.MetricSchemaName.L:
 		return &ClusterReaderExec{
@@ -1336,6 +1335,7 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 			}
 		}
 	}
+	tb, _ := b.is.TableByID(v.Table.ID)
 	return &TableScanExec{
 		baseExecutor:   newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
 		t:              tb,
