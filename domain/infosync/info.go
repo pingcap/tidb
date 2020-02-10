@@ -197,7 +197,7 @@ func DeleteTiFlashTableSyncProgress(tid int64) error {
 	return util.DeleteKeyFromEtcd(key, is.etcdCli, keyOpDefaultRetryCnt, keyOpDefaultTimeout)
 }
 
-// DeleteTiFlashTableSyncProgress uses to delete the tiflash table replica sync progress.
+// GetTiFlashTableSyncProgress uses to get all the tiflash table replica sync progress.
 func GetTiFlashTableSyncProgress(ctx context.Context) (map[int64]float64, error) {
 	is, err := getGlobalInfoSyncer()
 	if err != nil {
