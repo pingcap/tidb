@@ -77,3 +77,5 @@ require (
 )
 
 go 1.13
+
+replace github.com/pingcap/check => github.com/glorv/check v0.0.0-20200207031337-700c2ac6641b
