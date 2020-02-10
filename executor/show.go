@@ -126,6 +126,8 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 		return e.fetchShowColumns(ctx)
 	case ast.ShowCreateTable:
 		return e.fetchShowCreateTable()
+	case ast.ShowCreateSequence:
+		return e.fetchShowCreateSequence()
 	case ast.ShowCreateUser:
 		return e.fetchShowCreateUser()
 	case ast.ShowCreateView:
@@ -895,6 +897,46 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 	}
 	// add partition info here.
 	appendPartitionInfo(tableInfo.Partition, buf)
+	return nil
+}
+
+// ConstructResultOfShowCreateSequence constructs the result for show create sequence.
+func ConstructResultOfShowCreateSequence(ctx sessionctx.Context, tableInfo *model.TableInfo, buf *bytes.Buffer) {
+	sqlMode := ctx.GetSessionVars().SQLMode
+	fmt.Fprintf(buf, "CREATE SEQUENCE %s ", escape(tableInfo.Name, sqlMode))
+	sequenceInfo := tableInfo.Sequence
+	fmt.Fprintf(buf, "start with %d ", sequenceInfo.Start)
+	fmt.Fprintf(buf, "minvalue %d ", sequenceInfo.MinValue)
+	fmt.Fprintf(buf, "maxvalue %d ", sequenceInfo.MaxValue)
+	fmt.Fprintf(buf, "increment by %d ", sequenceInfo.Increment)
+	if sequenceInfo.Cache {
+		fmt.Fprintf(buf, "cache %d ", sequenceInfo.CacheValue)
+	} else {
+		buf.WriteString("nocache ")
+	}
+	if sequenceInfo.Cycle {
+		buf.WriteString("cycle ")
+	} else {
+		buf.WriteString("nocycle ")
+	}
+	buf.WriteString("ENGINE=InnoDB")
+	if len(sequenceInfo.Comment) > 0 {
+		fmt.Fprintf(buf, " COMMENT='%s'", format.OutputFormat(sequenceInfo.Comment))
+	}
+}
+
+func (e *ShowExec) fetchShowCreateSequence() error {
+	tbl, err := e.getTable()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	tableInfo := tbl.Meta()
+	if !tableInfo.IsSequence() {
+		return ErrWrongObject.GenWithStackByArgs(e.DBName.O, tableInfo.Name.O, "SEQUENCE")
+	}
+	var buf bytes.Buffer
+	ConstructResultOfShowCreateSequence(e.ctx, tableInfo, &buf)
+	e.appendRow([]interface{}{tableInfo.Name.O, buf.String()})
 	return nil
 }
 
