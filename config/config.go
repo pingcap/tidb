@@ -886,7 +886,7 @@ func ParsePath(path string) (etcdAddrs []string, disableGC bool, err error) {
 		return
 	}
 	if strings.ToLower(u.Scheme) != "tikv" {
-		err = errors.Errorf("Uri scheme expected[tikv] but found [%s]", u.Scheme)
+		err = errors.Errorf("Uri scheme expected [tikv] but found [%s]", u.Scheme)
 		logutil.BgLogger().Error("parsePath error", zap.Error(err))
 		return
 	}
