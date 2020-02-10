@@ -18,10 +18,7 @@ import (
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/session"
-	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util/testkit"
-	"github.com/pingcap/tidb/util/testleak"
 )
 
 var _ = Suite(&testInfoschemaTableSuite{})
@@ -32,20 +29,15 @@ type testInfoschemaTableSuite struct {
 }
 
 func (s *testInfoschemaTableSuite) SetUpSuite(c *C) {
-	testleak.BeforeTest()
-
-	var err error
-	s.store, err = mockstore.NewMockTikvStore()
+	store, dom, err := newStoreWithBootstrap()
 	c.Assert(err, IsNil)
-	session.DisableStats4Test()
-	s.dom, err = session.BootstrapSession(s.store)
-	c.Assert(err, IsNil)
+	s.store = store
+	s.dom = dom
 }
 
 func (s *testInfoschemaTableSuite) TearDownSuite(c *C) {
 	s.dom.Close()
 	s.store.Close()
-	testleak.AfterTest(c)()
 }
 func (s *testInfoschemaTableSuite) TestSchemataTables(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
