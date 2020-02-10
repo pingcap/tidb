@@ -47,5 +47,17 @@ func (s *testBinCollatorSuite) TestBinCollator(c *C) {
 		c.Assert(GetCollator("binary").Compare(t.Left, t.Right), Equals, t.Expect, comment)
 	}
 
-	// TODO: test Key function, move the test in TestBytesCodec here.
+	tableKey := []struct {
+		Str    string
+		Expect []byte
+	}{
+		{"a", []byte{0x61}},
+		{"A", []byte{0x41}},
+		{"Foo © bar 𝌆 baz ☃ qux", []byte{0x46, 0x6f, 0x6f, 0x20, 0xc2, 0xa9, 0x20, 0x62, 0x61, 0x72, 0x20, 0xf0, 0x9d, 0x8c, 0x86, 0x20, 0x62, 0x61, 0x7a, 0x20, 0xe2, 0x98, 0x83, 0x20, 0x71, 0x75, 0x78}},
+	}
+	for i, t := range tableKey {
+		comment := Commentf("%s %v", i, t.Str, t.Expect)
+		c.Assert(GetCollator("binary").Key(t.Str), DeepEquals, t.Expect, comment)
+
+	}
 }

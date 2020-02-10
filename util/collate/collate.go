@@ -16,7 +16,7 @@ package collate
 import (
 	"strings"
 
-	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/hack"
 )
 
 var (
@@ -28,8 +28,8 @@ var (
 type Collator interface {
 	// Compare returns an integer comparing the two strings. The result will be 0 if a == b, -1 if a < b, and +1 if a > b.
 	Compare(a, b string) int
-	// Key returns the collate key for str, the returned slice will point to an allocation in buf if it's passed in.
-	Key(buf []byte, str []byte) []byte
+	// Key returns the collate key for str.
+	Key(str string) []byte
 }
 
 // GetCollator get the collator according to collate, it will return the binary collator if the corresponding collator doesn't exist.
@@ -50,9 +50,8 @@ func (bc *binCollator) Compare(a, b string) int {
 }
 
 // Key implement Collator interface.
-func (bc *binCollator) Key(buf []byte, str []byte) []byte {
-	// TODO: Put the logic here and let codec.EncodeBytes deal with collation.
-	return codec.EncodeBytes(buf, str)
+func (bc *binCollator) Key(str string) []byte {
+	return hack.Slice(str)
 }
 
 func init() {
