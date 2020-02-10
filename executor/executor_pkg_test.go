@@ -34,8 +34,12 @@ import (
 )
 
 var _ = Suite(&testExecSuite{})
+var _ = SerialSuites(&testExecSerialSuite{})
 
 type testExecSuite struct {
+}
+
+type testExecSerialSuite struct {
 }
 
 // mockSessionManager is a mocked session manager which is used for test.
@@ -240,7 +244,7 @@ func assertEqualStrings(c *C, got []field, expect []string) {
 	}
 }
 
-func (s *testExecSuite) TestSortSpillDisk(c *C) {
+func (s *testExecSerialSuite) TestSortSpillDisk(c *C) {
 	originCfg := config.GetGlobalConfig()
 	newConf := *originCfg
 	newConf.OOMUseTmpStorage = true
