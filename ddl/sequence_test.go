@@ -157,6 +157,8 @@ func (s *testSequenceSuite) TestDropSequence(c *C) {
 func (s *testSequenceSuite) TestShowCreateSequence(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use test")
+	s.tk.MustExec("drop table if exists t")
+	s.tk.MustExec("drop sequence if exists seq")
 	s.tk.MustExec("create table t(a int)")
 	s.tk.MustExec("create sequence seq")
 
@@ -235,7 +237,6 @@ func (s *testSequenceSuite) TestShowCreateSequence(c *C) {
 	s.tk.MustExec("drop sequence if exists seq")
 	s.tk.MustExec(showString)
 }
-
 
 func (s *testSequenceSuite) TestSequenceAsDefaultValue(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
