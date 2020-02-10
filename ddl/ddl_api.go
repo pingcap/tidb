@@ -744,8 +744,7 @@ func tryToGetSequenceDefaultValue(c *ast.ColumnOption) (expr string, isExpr bool
 		format.RestoreSpacesAroundBinaryOperation
 	restoreCtx := format.NewRestoreCtx(restoreFlags, &sb)
 	if f, ok := c.Expr.(*ast.FuncCallExpr); ok && f.FnName.L == ast.NextVal {
-		err := c.Expr.Restore(restoreCtx)
-		if err != nil {
+		if err := c.Expr.Restore(restoreCtx); err != nil {
 			return "", true, err
 		}
 		return sb.String(), true, nil
@@ -2639,8 +2638,7 @@ func setDefaultValue(ctx sessionctx.Context, col *table.Column, option *ast.Colu
 		return hasDefaultValue, errors.Trace(err)
 	}
 	if isSeqExpr {
-		err := checkSequenceDefaultValue(col)
-		if err != nil {
+		if err := checkSequenceDefaultValue(col); err != nil {
 			return false, errors.Trace(err)
 		}
 		col.DefaultIsExpr = isSeqExpr

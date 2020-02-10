@@ -245,7 +245,7 @@ var (
 	ErrUnknownSequence = terror.ClassDDL.New(mysql.ErrUnknownSequence, mysql.MySQLErrName[mysql.ErrUnknownSequence])
 	// ErrSequenceUnsupportedTableOption returns when unsupported table option exists in sequence.
 	ErrSequenceUnsupportedTableOption = terror.ClassDDL.New(mysql.ErrSequenceUnsupportedTableOption, mysql.MySQLErrName[mysql.ErrSequenceUnsupportedTableOption])
-	// ErrColumnTypeUnsupportedNextValue returns when unsupported sequence next value for the specified column type.
+	// ErrColumnTypeUnsupportedNextValue is returned when sequence next value is assigned to unsupported column type.
 	ErrColumnTypeUnsupportedNextValue = terror.ClassDDL.New(mysql.ErrColumnTypeUnsupportedNextValue, mysql.MySQLErrName[mysql.ErrColumnTypeUnsupportedNextValue])
 )
 
