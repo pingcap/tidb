@@ -60,6 +60,9 @@ type PointGetExecutor struct {
 	handle       int64
 	idxInfo      *model.IndexInfo
 	partInfo     *model.PartitionDefinition
+	idxKey       kv.Key
+	txn          kv.Transaction
+	retryCnt     int
 	idxVals      []types.Datum
 	startTS      uint64
 	snapshot     kv.Snapshot
@@ -117,7 +120,7 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 		if err1 != nil && !kv.ErrNotExist.Equal(err1) {
 			return err1
 		}
-
+		e.idxKey = idxKey
 		handleVal, err1 := e.get(ctx, idxKey)
 		if err1 != nil && !kv.ErrNotExist.Equal(err1) {
 			return err1
@@ -146,6 +149,9 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 
 	key := tablecodec.EncodeRowKeyWithHandle(tblID, e.handle)
+	if e.lock && e.ctx.GetSessionVars().TxnCtx.IsPessimistic {
+		return e.forcePessimisticLock(ctx, key, req)
+	}
 	val, err := e.get(ctx, key)
 	if err != nil && !kv.ErrNotExist.Equal(err) {
 		return err
@@ -177,6 +183,11 @@ func (e *PointGetExecutor) get(ctx context.Context, key kv.Key) (val []byte, err
 		return nil, err
 	}
 	if txn.Valid() && e.snapshotTS == e.startTS {
+		var ok bool
+		val, ok = e.ctx.GetSessionVars().TxnCtx.GetKeyInPessimisticLockCache(key)
+		if ok {
+			return
+		}
 		// We can safely use the snapshot in the txn and utilize the cache.
 		return txn.Get(ctx, key)
 	}
@@ -190,6 +201,11 @@ func (e *PointGetExecutor) get(ctx context.Context, key kv.Key) (val []byte, err
 		if !kv.IsErrNotFound(err) {
 			return nil, err
 		}
+		var ok bool
+		val, ok = e.ctx.GetSessionVars().TxnCtx.GetKeyInPessimisticLockCache(key)
+		if ok {
+			return
+		}
 		// fallthrough to snapshot get.
 	}
 	if e.snapshot == nil {
@@ -202,6 +218,73 @@ func (e *PointGetExecutor) get(ctx context.Context, key kv.Key) (val []byte, err
 		}
 	}
 	return e.snapshot.Get(ctx, key)
+}
+
+// forcePessimisticLock gets the latest value by force pessimistic lock.
+// If the value does not match the index, errIndexColumnChanged is returned.
+func (e *PointGetExecutor) forcePessimisticLock(ctx context.Context, key kv.Key, chk *chunk.Chunk) error {
+	txnCtx := e.ctx.GetSessionVars().TxnCtx
+	txnCtx.ForUpdate = true
+	// Lock keys only once when finished fetching all results.
+	txn, err := e.ctx.Txn(true)
+	if err != nil {
+		return err
+	}
+	e.txn = txn
+	lockCtx := newLockCtx(e.ctx.GetSessionVars(), e.lockWaitTime)
+	// Set Force to true will lock the key even if the value has changed since the for update ts, the latest value
+	// will be returned.
+	lockCtx.Force = true
+	err = txn.LockKeys(ctx, lockCtx, key)
+	if err != nil {
+		return err
+	}
+	if lockCtx.AlreadyLocked {
+		var val []byte
+		val, err = e.get(ctx, key)
+		if err != nil && !kv.ErrNotExist.Equal(err) {
+			return err
+		}
+		if len(val) == 0 {
+			return nil
+		}
+		return decodeRowValToChunk(e.base(), e.tblInfo, e.handle, val, chk, e.rowDecoder)
+	}
+	err = UpdateForUpdateTS(e.ctx, lockCtx.ValueCommitTS)
+	if err != nil {
+		return err
+	}
+	if e.idxKey == nil {
+		txnCtx.SetPessimisticLockCache(key, lockCtx.Value)
+		if len(lockCtx.Value) == 0 {
+			return nil
+		}
+		return decodeRowValToChunk(e.base(), e.tblInfo, e.handle, lockCtx.Value, chk, e.rowDecoder)
+	}
+	if len(lockCtx.Value) == 0 {
+		// The key is deleted after we get the handle from the unique index.
+		return kv.ErrWriteConflict.FastGenByArgs(e.startTS, 0, 0, key)
+	}
+	err = decodeRowValToChunk(e.base(), e.tblInfo, e.handle, lockCtx.Value, chk, e.rowDecoder)
+	if err != nil {
+		return err
+	}
+	err = e.checkUniqueIndexColumn(chk, txn)
+	if err != nil {
+		return err
+	}
+	txnCtx.SetPessimisticLockCache(key, lockCtx.Value)
+	// Also cache the index key since the row is locked it doesn't change.
+	txnCtx.SetPessimisticLockCache(e.idxKey, tables.EncodeHandle(e.handle))
+	return nil
+}
+
+func (e *PointGetExecutor) checkUniqueIndexColumn(chk *chunk.Chunk, txn kv.Transaction) error {
+	// FIXME: unique index forcePessimisticLock need extra check for index row consistency.
+	// The unique index of the row may change after we get the handle,
+	// so we need to decode the row and check if the unique index columns in the row has changed.
+	// If it has changed, we need to rollback the key and return write conflict error.
+	return nil
 }
 
 func encodeIndexKey(e *baseExecutor, tblInfo *model.TableInfo, idxInfo *model.IndexInfo, idxVals []types.Datum, tID int64) (_ []byte, err error) {
@@ -238,6 +321,9 @@ func decodeRowValToChunk(e *baseExecutor, tblInfo *model.TableInfo, handle int64
 }
 
 func decodeOldRowValToChunk(e *baseExecutor, tblInfo *model.TableInfo, handle int64, rowVal []byte, chk *chunk.Chunk) error {
+	if len(rowVal) == 0 {
+		return nil
+	}
 	colID2CutPos := make(map[int64]int, e.schema.Len())
 	for _, col := range e.schema.Columns {
 		if _, ok := colID2CutPos[col.ID]; !ok {

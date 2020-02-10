@@ -201,6 +201,14 @@ type LockCtx struct {
 	PessimisticLockWaited *int32
 	LockKeysDuration      *time.Duration
 	LockKeysCount         *int32
+
+	// Force lock even if there are write conflict error, the latest value will be returned.
+	Force bool
+
+	// Response value for force lock.
+	AlreadyLocked bool
+	Value         []byte
+	ValueCommitTS uint64
 }
 
 // Client is used to send request to KV layer.
