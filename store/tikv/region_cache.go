@@ -601,12 +601,12 @@ func (c *RegionCache) LoadRegionsInKeyRange(bo *Backoffer, startKey, endKey []by
 		}
 		if len(batchRegions) == 0 {
 			// should never happen
-			return
+			break
 		}
 		regions = append(regions, batchRegions...)
 		endRegion := batchRegions[len(batchRegions)-1]
 		if endRegion.Contains(endKey) {
-			return
+			break
 		}
 		startKey = endRegion.EndKey()
 	}
