@@ -347,7 +347,7 @@ func (ts *testDatumSuite) TestComputePlusAndMinus(c *C) {
 		c.Assert(err != nil, Equals, tt.hasErr)
 		v, err := got.CompareDatum(sc, &tt.plus)
 		c.Assert(err, IsNil)
-		c.Assert(v, Equals, 0, Commentf("%dth got:%#v, expect:%#v", ith, got, tt.plus))
+		c.Assert(v, Equals, 0, Commentf("%dth got:%#v, %#v, expect:%#v, %#v", ith, got, got.x, tt.plus, tt.plus.x))
 	}
 }
 
