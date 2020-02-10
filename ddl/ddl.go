@@ -245,6 +245,8 @@ var (
 	ErrUnknownSequence = terror.ClassDDL.New(mysql.ErrUnknownSequence, mysql.MySQLErrName[mysql.ErrUnknownSequence])
 	// ErrSequenceUnsupportedTableOption returns when unsupported table option exists in sequence.
 	ErrSequenceUnsupportedTableOption = terror.ClassDDL.New(mysql.ErrSequenceUnsupportedTableOption, mysql.MySQLErrName[mysql.ErrSequenceUnsupportedTableOption])
+	// ErrColumnTypeUnsupportedNextValue returns when unsupported sequence next value for the specified column type.
+	ErrColumnTypeUnsupportedNextValue = terror.ClassDDL.New(8228, "Unsupported sequence default value for column type %s")
 )
 
 // DDL is responsible for updating schema in data store and maintaining in-memory InfoSchema cache.

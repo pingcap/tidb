@@ -465,8 +465,7 @@ func checkSequenceDefaultValue(col *table.Column) error {
 	if col.Tp == mysql.TypeTiny || col.Tp == mysql.TypeShort || col.Tp == mysql.TypeInt24 || col.Tp == mysql.TypeLong || col.Tp == mysql.TypeLonglong {
 		return nil
 	}
-	// TODO: refine the error.
-	return errors.New("column type is not suitable for default sequence value")
+	return ErrColumnTypeUnsupportedNextValue.GenWithStackByArgs(col.ColumnInfo.Name.O)
 }
 
 func convertTimestampDefaultValToUTC(ctx sessionctx.Context, defaultVal interface{}, col *table.Column) (interface{}, error) {
@@ -646,6 +645,9 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 	return col, constraints, nil
 }
 
+// getDefault value will get the default value for column.
+// 1: get the expr restored string for the column which uses sequence next value as default value.
+// 2: get specific default value for the other column.
 func getDefaultValue(ctx sessionctx.Context, col *table.Column, c *ast.ColumnOption) (interface{}, bool, error) {
 	tp, fsp := col.FieldType.Tp, col.FieldType.Decimal
 	if tp == mysql.TypeTimestamp || tp == mysql.TypeDatetime {
@@ -682,7 +684,7 @@ func getDefaultValue(ctx sessionctx.Context, col *table.Column, c *ast.ColumnOpt
 		return value, false, nil
 	}
 	// handle default next value of sequence. (keep the expr string)
-	str, isSeqExpr, err := handleSequenceDefaultValue(c)
+	str, isSeqExpr, err := tryToGetSequenceDefaultValue(c)
 	if err != nil {
 		return nil, false, errors.Trace(err)
 	}
@@ -690,7 +692,7 @@ func getDefaultValue(ctx sessionctx.Context, col *table.Column, c *ast.ColumnOpt
 		return str, true, nil
 	}
 
-	// analyse the expr to a certain value.
+	// evaluate the non-sequence expr to a certain value.
 	v, err := expression.EvalAstExpr(ctx, c.Expr)
 	if err != nil {
 		return nil, false, errors.Trace(err)
@@ -736,13 +738,12 @@ func getDefaultValue(ctx sessionctx.Context, col *table.Column, c *ast.ColumnOpt
 	return val, false, err
 }
 
-func handleSequenceDefaultValue(c *ast.ColumnOption) (expr string, isExpr bool, err error) {
+func tryToGetSequenceDefaultValue(c *ast.ColumnOption) (expr string, isExpr bool, err error) {
 	var sb strings.Builder
 	restoreFlags := format.RestoreStringSingleQuotes | format.RestoreKeyWordLowercase | format.RestoreNameBackQuotes |
 		format.RestoreSpacesAroundBinaryOperation
 	restoreCtx := format.NewRestoreCtx(restoreFlags, &sb)
 	if f, ok := c.Expr.(*ast.FuncCallExpr); ok && f.FnName.L == ast.NextVal {
-		sb.Reset()
 		err := c.Expr.Restore(restoreCtx)
 		if err != nil {
 			return "", true, err
@@ -2640,7 +2641,7 @@ func setDefaultValue(ctx sessionctx.Context, col *table.Column, option *ast.Colu
 	if isSeqExpr {
 		err := checkSequenceDefaultValue(col)
 		if err != nil {
-			return hasDefaultValue, errors.Trace(err)
+			return false, errors.Trace(err)
 		}
 		col.DefaultIsExpr = isSeqExpr
 	}
