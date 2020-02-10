@@ -90,20 +90,22 @@ func (s *testConfigSuite) TestPDConfHandler(c *C) {
 	newMockPDConfigClientErr = nil
 	mockPDConfigClient0.err = fmt.Errorf("")
 	mockPDConfigClient0.confContent.Store("")
-	_, err = newPDConfHandler(&conf, nil, newMockPDConfigClient)
-	c.Assert(err, NotNil)
+	ch, err := newPDConfHandler(&conf, nil, newMockPDConfigClient)
+	c.Assert(err, IsNil) // the local config will be used
+	ch.Close()
 
 	// wrong response when registering
 	mockPDConfigClient0.err = nil
 	mockPDConfigClient0.status = &configpb.Status{Code: configpb.StatusCode_UNKNOWN}
-	_, err = newPDConfHandler(&conf, nil, newMockPDConfigClient)
-	c.Assert(err, NotNil)
+	ch, err = newPDConfHandler(&conf, nil, newMockPDConfigClient)
+	c.Assert(err, IsNil)
+	ch.Close()
 
 	// create client successfully
-	mockPDConfigClient0.status.Code = configpb.StatusCode_OK
+	mockPDConfigClient0.status.Code = configpb.StatusCode_WRONG_VERSION
 	content, _ := encodeConfig(&conf)
 	mockPDConfigClient0.confContent.Store(content)
-	ch, err := newPDConfHandler(&conf, nil, newMockPDConfigClient)
+	ch, err = newPDConfHandler(&conf, nil, newMockPDConfigClient)
 	c.Assert(err, IsNil)
 	ch.Close()
 
@@ -124,7 +126,6 @@ func (s *testConfigSuite) TestPDConfHandler(c *C) {
 	newConf.Log.Level = "debug"
 	newContent, _ := encodeConfig(&newConf)
 	mockPDConfigClient0.confContent.Store(newContent)
-	time.Sleep(time.Second * 2)
 	wg.Wait()
 	c.Assert(ch.GetConfig().Log.Level, Equals, "debug")
 	ch.Close()
