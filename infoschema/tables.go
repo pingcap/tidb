@@ -50,6 +50,7 @@ import (
 )
 
 const (
+	// TableSchemata is the string constant of infoschema table
 	TableSchemata                           = "SCHEMATA"
 	tableTables                             = "TABLES"
 	tableColumns                            = "COLUMNS"
@@ -2333,7 +2334,7 @@ type infoschemaTable struct {
 	tp   table.Type
 }
 
-// schemasSorter implements the sort.Interface interface, sorts DBInfo by name.
+// SchemasSorter implements the sort.Interface interface, sorts DBInfo by name.
 type SchemasSorter []*model.DBInfo
 
 func (s SchemasSorter) Len() int {
