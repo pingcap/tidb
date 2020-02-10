@@ -133,11 +133,13 @@ func (decoder *DatumMapDecoder) decodeColDatum(col *ColInfo, colData []byte) (ty
 		mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
 		d.SetBytes(colData)
 	case mysql.TypeNewDecimal:
-		_, dec, _, _, err := codec.DecodeDecimal(colData)
+		_, dec, precision, frac, err := codec.DecodeDecimal(colData)
 		if err != nil {
 			return d, err
 		}
 		d.SetMysqlDecimal(dec)
+		d.SetLength(precision)
+		d.SetFrac(frac)
 	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
 		var t types.Time
 		t.SetType(uint8(col.Tp))
@@ -268,9 +270,17 @@ func (decoder *ChunkDecoder) decodeColToChunk(colIdx int, col *ColInfo, colData 
 		mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
 		chk.AppendBytes(colIdx, colData)
 	case mysql.TypeNewDecimal:
-		_, dec, _, _, err := codec.DecodeDecimal(colData)
+		_, dec, _, frac, err := codec.DecodeDecimal(colData)
 		if err != nil {
 			return err
+		}
+		if col.Decimal != types.UnspecifiedLength && frac > col.Decimal {
+			to := new(types.MyDecimal)
+			err := dec.Round(to, col.Decimal, types.ModeHalfEven)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			dec = to
 		}
 		chk.AppendMyDecimal(colIdx, dec)
 	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:

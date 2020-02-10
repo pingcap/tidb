@@ -112,9 +112,10 @@ func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 	for i := 1; i < 3; i++ {
 		tk.MustQuery("select b from p where a=1")
 		expectedResult := fmt.Sprintf("%d \tPoint_Get_1\troot\t1\ttable:p, handle:1", i)
+		// Also make sure that the plan digest is not empty
 		tk.MustQuery(`select exec_count, plan
 			from performance_schema.events_statements_summary_by_digest
-			where digest_text like 'select b from p%'`,
+			where digest_text like 'select b from p%' and plan_digest != ''`,
 		).Check(testkit.Rows(expectedResult))
 	}
 
