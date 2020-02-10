@@ -108,8 +108,8 @@ const (
 	TableInspectionResult = "INSPECTION_RESULT"
 	// TableMetricSummary is a summary table that contains all metrics.
 	TableMetricSummary = "METRICS_SUMMARY"
-	// TableMetricDetail is a detail table that contains all metrics detail info. It is the table metric_summary by label.
-	TableMetricDetail = "METRICS_SUMMARY_BY_LABEL"
+	// TableMetricSummaryByLabel is a metric table that contains all metrics that group by label info.
+	TableMetricSummaryByLabel = "METRICS_SUMMARY_BY_LABEL"
 )
 
 var tableIDMap = map[string]int64{
@@ -165,7 +165,7 @@ var tableIDMap = map[string]int64{
 	TableClusterSystemInfo:                  autoid.InformationSchemaDBID + 50,
 	TableInspectionResult:                   autoid.InformationSchemaDBID + 51,
 	TableMetricSummary:                      autoid.InformationSchemaDBID + 52,
-	TableMetricDetail:                       autoid.InformationSchemaDBID + 53,
+	TableMetricSummaryByLabel:               autoid.InformationSchemaDBID + 53,
 }
 
 type columnInfo struct {
@@ -1137,7 +1137,7 @@ var tableMetricSummaryCols = []columnInfo{
 	{"MIN_VALUE", mysql.TypeDouble, 22, 0, nil, nil},
 	{"MAX_VALUE", mysql.TypeDouble, 22, 0, nil, nil},
 }
-var tableMetricDetailCols = []columnInfo{
+var tableMetricSummaryByLabelCols = []columnInfo{
 	{"METRIC_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"LABEL", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"TIME", mysql.TypeDatetime, -1, 0, nil, nil},
@@ -2357,7 +2357,7 @@ var tableNameToColumns = map[string][]columnInfo{
 	TableClusterSystemInfo:                  tableClusterSystemInfoCols,
 	TableInspectionResult:                   tableInspectionResultCols,
 	TableMetricSummary:                      tableMetricSummaryCols,
-	TableMetricDetail:                       tableMetricDetailCols,
+	TableMetricSummaryByLabel:               tableMetricSummaryByLabelCols,
 }
 
 func createInfoSchemaTable(_ autoid.Allocators, meta *model.TableInfo) (table.Table, error) {

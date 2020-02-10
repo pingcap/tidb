@@ -244,15 +244,15 @@ func (e *MetricSummaryRetriever) genMetricQuerySQLS(name, startTime, endTime str
 	return sqls
 }
 
-// MetricDetailRetriever uses to read metric detail data.
-type MetricDetailRetriever struct {
+// MetricSummaryByLabelRetriever uses to read metric detail data.
+type MetricSummaryByLabelRetriever struct {
 	dummyCloser
 	table     *model.TableInfo
 	extractor *plannercore.MetricTableExtractor
 	retrieved bool
 }
 
-func (e *MetricDetailRetriever) retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
+func (e *MetricSummaryByLabelRetriever) retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
 	if e.retrieved || e.extractor.SkipRequest {
 		return nil, nil
 	}
@@ -280,7 +280,7 @@ func (e *MetricDetailRetriever) retrieve(ctx context.Context, sctx sessionctx.Co
 	return totalRows, nil
 }
 
-func (e *MetricDetailRetriever) genMetricQuerySQLS(name, startTime, endTime string, quantile float64, quantiles []float64, def infoschema.MetricTableDef) []string {
+func (e *MetricSummaryByLabelRetriever) genMetricQuerySQLS(name, startTime, endTime string, quantile float64, quantiles []float64, def infoschema.MetricTableDef) []string {
 	//labels := strings.Join(def.Labels, ",")
 	labels := ""
 	labelsColumn := `""`

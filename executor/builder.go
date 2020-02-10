@@ -1327,10 +1327,10 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 					extractor: v.Extractor.(*plannercore.MetricTableExtractor),
 				},
 			}
-		case strings.ToLower(infoschema.TableMetricDetail):
+		case strings.ToLower(infoschema.TableMetricSummaryByLabel):
 			return &ClusterReaderExec{
 				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
-				retriever: &MetricDetailRetriever{
+				retriever: &MetricSummaryByLabelRetriever{
 					table:     v.Table,
 					extractor: v.Extractor.(*plannercore.MetricTableExtractor),
 				},
