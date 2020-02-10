@@ -1047,6 +1047,7 @@ var MySQLErrName = map[uint16]string{
 	ErrWarnOptimizerHintParseError:      "Optimizer hint syntax error at %v",
 
 	ErrSequenceUnsupportedTableOption:      "Unsupported sequence table-option %s",
+	ErrColumnTypeUnsupportedNextValue:      "Unsupported sequence default value for column type '%s'",
 	ErrUnsupportedType:                     "Unsupported type %T",
 	ErrAnalyzeMissIndex:                    "Index '%s' in field list does not exist in table '%s'",
 	ErrCartesianProductUnsupported:         "Cartesian product is unsupported",
