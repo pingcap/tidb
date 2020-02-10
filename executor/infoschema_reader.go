@@ -198,6 +198,11 @@ func (it *infoschemaDataTable) WritableCols() []*table.Column {
 	return it.cols
 }
 
+// DeletableCols implements table DeletableCols interface.
+func (it *infoschemaDataTable) DeletableCols() []*table.Column {
+	return it.cols
+}
+
 // Indices implements table.Table Indices interface.
 func (it *infoschemaDataTable) Indices() []table.Index {
 	return nil
