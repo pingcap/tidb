@@ -58,6 +58,5 @@ func (s *testBinCollatorSuite) TestBinCollator(c *C) {
 	for i, t := range tableKey {
 		comment := Commentf("%s %v", i, t.Str, t.Expect)
 		c.Assert(GetCollator("binary").Key(t.Str), DeepEquals, t.Expect, comment)
-
 	}
 }
