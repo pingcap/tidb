@@ -432,11 +432,12 @@ func (or partitionRangeOR) Swap(i, j int) {
 	or[i], or[j] = or[j], or[i]
 }
 
-func (or partitionRangeOR) unionRange(start, end int) partitionRangeOR {
-	if end <= start {
-		return or
-	}
-	or = append(or, partitionRange{start, end})
+func (or partitionRangeOR) union(x partitionRangeOR) partitionRangeOR {
+	or = append(or, x...)
+	return or.simplify()
+}
+
+func (or partitionRangeOR) simplify() partitionRangeOR {
 	// Make the ranges order by start.
 	sort.Sort(or)
 	sorted := or
@@ -456,6 +457,34 @@ func (or partitionRangeOR) unionRange(start, end int) partitionRangeOR {
 		}
 	}
 	return res
+}
+
+func (or partitionRangeOR) intersection(x partitionRangeOR) partitionRangeOR {
+	if or.Len() == 1 {
+		return x.intersectionRange(or[0].start, or[0].end)
+	}
+	if x.Len() == 1 {
+		return or.intersectionRange(x[0].start, x[0].end)
+	}
+
+	// Rename to x, y where len(x) > len(y)
+	var y partitionRangeOR
+	if or.Len() > x.Len() {
+		x, y = or, x
+	} else {
+		x, y = x, or
+	}
+
+	// (a U b) M (c U d) => (x M c) U (x M d), x = (a U b)
+	res := make(partitionRangeOR, 0, len(y))
+	for _, r := range y {
+		// As intersectionRange modify the raw data, we have to make a copy.
+		tmp := make(partitionRangeOR, len(x))
+		copy(tmp, x)
+		tmp = tmp.intersectionRange(r.start, r.end)
+		res = append(res, tmp...)
+	}
+	return res.simplify()
 }
 
 // intersectionRange calculate the intersection of [start, end) and [newStart, newEnd)
@@ -529,13 +558,18 @@ func partitionRangeForCNFExpr(sctx sessionctx.Context, exprs []expression.Expres
 // partitionRangeForExpr calculate the partitions for the expression.
 func partitionRangeForExpr(sctx sessionctx.Context, expr expression.Expression, lessThan lessThanData,
 	col *expression.Column, partFn *expression.ScalarFunction, result partitionRangeOR) partitionRangeOR {
+
+	fmt.Printf("handle expr === %v %T\n", expr, expr)
 	// Handle AND, OR respectively.
 	if op, ok := expr.(*expression.ScalarFunction); ok {
-		if op.FuncName.L == ast.And {
+		fmt.Println("not scalar function", op.FuncName.L)
+		if op.FuncName.L == ast.LogicAnd {
 			return partitionRangeForCNFExpr(sctx, op.GetArgs(), lessThan, col, partFn, result)
-		} else if op.FuncName.L == ast.Or {
+		} else if op.FuncName.L == ast.LogicOr {
 			args := op.GetArgs()
-			return partitionRangeForOrExpr(sctx, args[0], args[1], lessThan, col, partFn, result)
+			fmt.Println("handle or   expr === ", args[0], args[1])
+			newRange := partitionRangeForOrExpr(sctx, args[0], args[1], lessThan, col, partFn)
+			return result.intersection(newRange)
 		}
 	}
 
@@ -551,20 +585,10 @@ func partitionRangeForExpr(sctx sessionctx.Context, expr expression.Expression, 
 
 // partitionRangeForOrExpr calculate the partitions for or(expr1, expr2)
 func partitionRangeForOrExpr(sctx sessionctx.Context, expr1, expr2 expression.Expression, lessThan lessThanData,
-	col *expression.Column, partFn *expression.ScalarFunction, result partitionRangeOR) partitionRangeOR {
-	tmp1 := fullRange(lessThan.length())
-	tmp1 = partitionRangeForExpr(sctx, expr1, lessThan, col, partFn, tmp1)
-	for _, tmp := range tmp1 {
-		result = result.unionRange(tmp.start, tmp.end)
-	}
-
-	tmp2 := tmp1[:0]
-	tmp2 = append(tmp2, partitionRange{0, lessThan.length()})
-	tmp2 = partitionRangeForExpr(sctx, expr2, lessThan, col, partFn, tmp2)
-	for _, tmp := range tmp2 {
-		result = result.unionRange(tmp.start, tmp.end)
-	}
-	return result
+	col *expression.Column, partFn *expression.ScalarFunction) partitionRangeOR {
+	tmp1 := partitionRangeForExpr(sctx, expr1, lessThan, col, partFn, fullRange(lessThan.length()))
+	tmp2 := partitionRangeForExpr(sctx, expr2, lessThan, col, partFn, fullRange(lessThan.length()))
+	return tmp1.union(tmp2)
 }
 
 // monotoneIncFuncs are those functions that for any x y, if x > y => f(x) > f(y)

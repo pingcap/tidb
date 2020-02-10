@@ -814,9 +814,8 @@
       "Partition(41)->Projection",
       "Partition(45)->Projection",
       "Dual->Projection",
-        "Partition(41)->Projection"
-        // ,
-      // "UnionAll{Partition(41)->Partition(44)}->Projection"
+      "Partition(41)->Projection",
+      "UnionAll{Partition(41)->Partition(44)}->Projection"
     ]
   },
   {

@@ -456,12 +456,11 @@
         // NULL will be located in the first partition.
         "SQL":   "select * from t where t.ptn is null",
         "IsIdx": 0
+      },
+      {
+        "SQL":   "select * from t where t.ptn is null or t.ptn > 70",
+        "IsIdx": 1
       }
-      //   ,
-      // {
-      //   "SQL":   "select * from t where t.ptn is null or t.ptn > 70",
-      //   "IsIdx": 1
-      // }
     ]
   },
   {
