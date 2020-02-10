@@ -21,6 +21,7 @@ import (
 	"math/rand"
 	"net"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -850,6 +851,12 @@ func newRandDurDecimal() *randDurDecimal {
 func (g *randDurDecimal) gen() interface{} {
 	d := new(types.MyDecimal)
 	return d.FromFloat64(float64(g.randGen.Intn(types.TimeMaxHour)*10000 + g.randGen.Intn(60)*100 + g.randGen.Intn(60)))
+}
+
+type randDurString struct{}
+
+func (g *randDurString) gen() interface{} {
+	return strconv.Itoa(rand.Intn(types.TimeMaxHour)*10000 + rand.Intn(60)*100 + rand.Intn(60))
 }
 
 // locationGener is used to generate location for the built-in function GetFormat.
