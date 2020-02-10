@@ -112,18 +112,23 @@ func newPDConfHandler(localConf *Config, reloadFunc ConfReloadFunc,
 	// suppose port and security config items cannot be change online.
 	status, version, conf, err := pdCli.Create(context.Background(), new(configpb.Version), tidbComponentName, id, confContent)
 	if err != nil {
-		return nil, err
-	}
-	if status.Code != configpb.StatusCode_OK && status.Code != configpb.StatusCode_WRONG_VERSION {
-		return nil, errors.New(fmt.Sprintf("fail to register config to PD, errmsg=%v", status.Message))
+		logutil.Logger(context.Background()).Warn("register the config to PD error, local config will be used", zap.Error(err))
+	} else if status.Code != configpb.StatusCode_OK && status.Code != configpb.StatusCode_WRONG_VERSION {
+		logutil.Logger(context.Background()).Warn("invalid status when registering the config to PD", zap.String("code", status.Code.String()), zap.String("errmsg", status.Message))
+		conf = ""
 	}
 
-	newConf, err := decodeConfig(conf)
-	if err != nil {
-		return nil, err
-	}
-	if err := newConf.Valid(); err != nil {
-		return nil, err
+	tmpConf := *localConf // use the local config if the remote config is invalid
+	newConf := &tmpConf
+	if conf != "" {
+		newConf, err = decodeConfig(conf)
+		if err != nil {
+			logutil.Logger(context.Background()).Warn("decode remote config error", zap.Error(err))
+			newConf = &tmpConf
+		} else if err := newConf.Valid(); err != nil {
+			logutil.Logger(context.Background()).Warn("invalid remote config", zap.Error(err))
+			newConf = &tmpConf
+		}
 	}
 
 	ch := &pdConfHandler{
