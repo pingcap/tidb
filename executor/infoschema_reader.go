@@ -11,7 +11,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-
 package executor
 
 import (
@@ -32,11 +31,11 @@ import (
 // InfoschemaReaderExec executes infoschema information retrieving
 type InfoschemaReaderExec struct {
 	baseExecutor
-	t					  table.Table
-	iter                  kv.Iterator
-	columns               []*model.ColumnInfo
-	ChunkList             *chunk.List
-	ChunkIdx              int
+	t         table.Table
+	iter      kv.Iterator
+	columns   []*model.ColumnInfo
+	ChunkList *chunk.List
+	ChunkIdx  int
 }
 
 // Open implements the Executor Open interface.
@@ -56,7 +55,7 @@ func (e *InfoschemaReaderExec) Next(ctx context.Context, chk *chunk.Chunk) error
 			columns[i] = table.ToColumn(colInfo)
 		}
 		mutableRow := chunk.MutRowFromTypes(retTypes(e))
-		err := e.t.IterRecords(e.ctx,nil, columns, func(h int64, rec []types.Datum, cols []*table.Column) (bool, error) {
+		err := e.t.IterRecords(e.ctx, nil, columns, func(h int64, rec []types.Datum, cols []*table.Column) (bool, error) {
 			mutableRow.SetDatums(rec...)
 			e.ChunkList.AppendRow(mutableRow.ToRow())
 			return true, nil
@@ -96,10 +95,10 @@ func dataForSchemata(ctx sessionctx.Context, schemas []*model.DBInfo) [][]types.
 			continue
 		}
 		record := types.MakeDatums(
-			infoschema.CatalogVal,    // CATALOG_NAME
-			schema.Name.O, // SCHEMA_NAME
-			charset,       // DEFAULT_CHARACTER_SET_NAME
-			collation,     // DEFAULT_COLLATION_NAME
+			infoschema.CatalogVal, // CATALOG_NAME
+			schema.Name.O,         // SCHEMA_NAME
+			charset,               // DEFAULT_CHARACTER_SET_NAME
+			collation,             // DEFAULT_COLLATION_NAME
 			nil,
 		)
 		rows = append(rows, record)

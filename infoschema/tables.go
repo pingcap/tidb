@@ -50,25 +50,25 @@ import (
 )
 
 const (
-	TableSchemata         = "SCHEMATA"
-	tableTables           = "TABLES"
-	tableColumns          = "COLUMNS"
-	tableColumnStatistics = "COLUMN_STATISTICS"
-	tableStatistics       = "STATISTICS"
-	tableCharacterSets    = "CHARACTER_SETS"
-	tableCollations       = "COLLATIONS"
-	tableFiles            = "FILES"
-	CatalogVal            = "def"
-	tableProfiling        = "PROFILING"
-	tablePartitions       = "PARTITIONS"
-	tableKeyColumn        = "KEY_COLUMN_USAGE"
-	tableReferConst       = "REFERENTIAL_CONSTRAINTS"
-	tableSessionVar       = "SESSION_VARIABLES"
-	tablePlugins          = "PLUGINS"
-	tableConstraints      = "TABLE_CONSTRAINTS"
-	tableTriggers         = "TRIGGERS"
-	tableUserPrivileges   = "USER_PRIVILEGES"
-	tableSchemaPrivileges = "SCHEMA_PRIVILEGES"
+	TableSchemata                           = "SCHEMATA"
+	tableTables                             = "TABLES"
+	tableColumns                            = "COLUMNS"
+	tableColumnStatistics                   = "COLUMN_STATISTICS"
+	tableStatistics                         = "STATISTICS"
+	tableCharacterSets                      = "CHARACTER_SETS"
+	tableCollations                         = "COLLATIONS"
+	tableFiles                              = "FILES"
+	CatalogVal                              = "def"
+	tableProfiling                          = "PROFILING"
+	tablePartitions                         = "PARTITIONS"
+	tableKeyColumn                          = "KEY_COLUMN_USAGE"
+	tableReferConst                         = "REFERENTIAL_CONSTRAINTS"
+	tableSessionVar                         = "SESSION_VARIABLES"
+	tablePlugins                            = "PLUGINS"
+	tableConstraints                        = "TABLE_CONSTRAINTS"
+	tableTriggers                           = "TRIGGERS"
+	tableUserPrivileges                     = "USER_PRIVILEGES"
+	tableSchemaPrivileges                   = "SCHEMA_PRIVILEGES"
 	tableTablePrivileges                    = "TABLE_PRIVILEGES"
 	tableColumnPrivileges                   = "COLUMN_PRIVILEGES"
 	tableEngines                            = "ENGINES"
@@ -111,25 +111,25 @@ const (
 )
 
 var tableIDMap = map[string]int64{
-	TableSchemata:         autoid.InformationSchemaDBID + 1,
-	tableTables:           autoid.InformationSchemaDBID + 2,
-	tableColumns:          autoid.InformationSchemaDBID + 3,
-	tableColumnStatistics: autoid.InformationSchemaDBID + 4,
-	tableStatistics:       autoid.InformationSchemaDBID + 5,
-	tableCharacterSets:    autoid.InformationSchemaDBID + 6,
-	tableCollations:       autoid.InformationSchemaDBID + 7,
-	tableFiles:            autoid.InformationSchemaDBID + 8,
-	CatalogVal:            autoid.InformationSchemaDBID + 9,
-	tableProfiling:        autoid.InformationSchemaDBID + 10,
-	tablePartitions:       autoid.InformationSchemaDBID + 11,
-	tableKeyColumn:        autoid.InformationSchemaDBID + 12,
-	tableReferConst:       autoid.InformationSchemaDBID + 13,
-	tableSessionVar:       autoid.InformationSchemaDBID + 14,
-	tablePlugins:          autoid.InformationSchemaDBID + 15,
-	tableConstraints:      autoid.InformationSchemaDBID + 16,
-	tableTriggers:         autoid.InformationSchemaDBID + 17,
-	tableUserPrivileges:   autoid.InformationSchemaDBID + 18,
-	tableSchemaPrivileges: autoid.InformationSchemaDBID + 19,
+	TableSchemata:                           autoid.InformationSchemaDBID + 1,
+	tableTables:                             autoid.InformationSchemaDBID + 2,
+	tableColumns:                            autoid.InformationSchemaDBID + 3,
+	tableColumnStatistics:                   autoid.InformationSchemaDBID + 4,
+	tableStatistics:                         autoid.InformationSchemaDBID + 5,
+	tableCharacterSets:                      autoid.InformationSchemaDBID + 6,
+	tableCollations:                         autoid.InformationSchemaDBID + 7,
+	tableFiles:                              autoid.InformationSchemaDBID + 8,
+	CatalogVal:                              autoid.InformationSchemaDBID + 9,
+	tableProfiling:                          autoid.InformationSchemaDBID + 10,
+	tablePartitions:                         autoid.InformationSchemaDBID + 11,
+	tableKeyColumn:                          autoid.InformationSchemaDBID + 12,
+	tableReferConst:                         autoid.InformationSchemaDBID + 13,
+	tableSessionVar:                         autoid.InformationSchemaDBID + 14,
+	tablePlugins:                            autoid.InformationSchemaDBID + 15,
+	tableConstraints:                        autoid.InformationSchemaDBID + 16,
+	tableTriggers:                           autoid.InformationSchemaDBID + 17,
+	tableUserPrivileges:                     autoid.InformationSchemaDBID + 18,
+	tableSchemaPrivileges:                   autoid.InformationSchemaDBID + 19,
 	tableTablePrivileges:                    autoid.InformationSchemaDBID + 20,
 	tableColumnPrivileges:                   autoid.InformationSchemaDBID + 21,
 	tableEngines:                            autoid.InformationSchemaDBID + 22,
@@ -2264,17 +2264,17 @@ func dataForTableTiFlashReplica(schemas []*model.DBInfo) [][]types.Datum {
 }
 
 var tableNameToColumns = map[string][]columnInfo{
-	TableSchemata:         schemataCols,
-	tableTables:           tablesCols,
-	tableColumns:          columnsCols,
-	tableColumnStatistics: columnStatisticsCols,
-	tableStatistics:       statisticsCols,
-	tableCharacterSets:    charsetCols,
-	tableCollations:       collationsCols,
-	tableFiles:            filesCols,
-	tableProfiling:        profilingCols,
-	tablePartitions:       partitionsCols,
-	tableKeyColumn:        keyColumnUsageCols,
+	TableSchemata:                           schemataCols,
+	tableTables:                             tablesCols,
+	tableColumns:                            columnsCols,
+	tableColumnStatistics:                   columnStatisticsCols,
+	tableStatistics:                         statisticsCols,
+	tableCharacterSets:                      charsetCols,
+	tableCollations:                         collationsCols,
+	tableFiles:                              filesCols,
+	tableProfiling:                          profilingCols,
+	tablePartitions:                         partitionsCols,
+	tableKeyColumn:                          keyColumnUsageCols,
 	tableReferConst:                         referConstCols,
 	tableSessionVar:                         sessionVarCols,
 	tablePlugins:                            pluginsCols,

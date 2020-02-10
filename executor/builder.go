@@ -1331,8 +1331,8 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 		case strings.ToLower(infoschema.TableSchemata):
 			return &InfoschemaReaderExec{
 				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
-				t:              createInfoschemaDataTable(v.Table),
-				columns:        v.Columns,
+				t:            createInfoschemaDataTable(v.Table),
+				columns:      v.Columns,
 			}
 		}
 	}
