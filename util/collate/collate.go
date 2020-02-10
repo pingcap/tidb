@@ -15,8 +15,6 @@ package collate
 
 import (
 	"strings"
-
-	"github.com/pingcap/tidb/util/hack"
 )
 
 var (
