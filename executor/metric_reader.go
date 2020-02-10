@@ -266,7 +266,7 @@ func (e *MetricSummaryByLabelRetriever) retrieve(ctx context.Context, sctx sessi
 	startTime := e.extractor.StartTime.Format(plannercore.MetricTableTimeFormat)
 	endTime := e.extractor.EndTime.Format(plannercore.MetricTableTimeFormat)
 	for name, def := range infoschema.MetricTableMap {
-		sqls := e.genMetricQuerySQLS(name, startTime, endTime, def.Quantile, quantiles, def)
+		sqls := e.genMetricQuerySQLS(name, startTime, endTime, quantiles, def)
 		for _, sql := range sqls {
 			rows, _, err := sctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
 			if err != nil {
@@ -280,31 +280,26 @@ func (e *MetricSummaryByLabelRetriever) retrieve(ctx context.Context, sctx sessi
 	return totalRows, nil
 }
 
-func (e *MetricSummaryByLabelRetriever) genMetricQuerySQLS(name, startTime, endTime string, quantile float64, quantiles []float64, def infoschema.MetricTableDef) []string {
-	//labels := strings.Join(def.Labels, ",")
+func (e *MetricSummaryByLabelRetriever) genMetricQuerySQLS(name, startTime, endTime string, quantiles []float64, def infoschema.MetricTableDef) []string {
 	labels := ""
 	labelsColumn := `""`
-	for i, label := range def.Labels {
-		if i > 0 {
-			labels = labels + ","
-		}
-		labels = labels + "`" + label + "`"
+	if len(def.Labels) > 0 {
+		labels = "`" + strings.Join(def.Labels, "`, `") + "`"
+		labelsColumn = fmt.Sprintf("concat_ws(' = ', '%s', concat_ws(', ', %s))", strings.Join(def.Labels, ", "), labels)
 	}
-	if len(labels) > 0 {
-		labelsColumn = fmt.Sprintf("concat_ws(' = ','%s',concat_ws(', ',%s))", strings.Join(def.Labels, ", "), labels)
-	}
-	if quantile == 0 {
-		sql := fmt.Sprintf(`select "%[1]s", %[2]s as label,min(time),sum(value),avg(value),min(value),max(value) from metric_schema.%[1]s where time > '%[3]s' and time < '%[4]s'`,
-			name, labelsColumn, startTime, endTime)
-		if len(def.Labels) > 0 {
-			sql += " group by " + labels
-		}
-		return []string{sql}
+	if def.Quantile == 0 {
+		quantiles = []float64{0}
 	}
 	sqls := []string{}
 	for _, quantile := range quantiles {
-		sql := fmt.Sprintf(`select "%[1]s_%[5]v", %[2]s as label,min(time),sum(value),avg(value),min(value),max(value) from metric_schema.%[1]s where time > '%[3]s' and time < '%[4]s' and quantile=%[5]v`,
-			name, labelsColumn, startTime, endTime, quantile)
+		var sql string
+		if quantile == 0 {
+			sql = fmt.Sprintf(`select "%[1]s", %[2]s as label,min(time),sum(value),avg(value),min(value),max(value) from metric_schema.%[1]s where time > '%[3]s' and time < '%[4]s'`,
+				name, labelsColumn, startTime, endTime)
+		} else {
+			sql = fmt.Sprintf(`select "%[1]s_%[5]v", %[2]s as label,min(time),sum(value),avg(value),min(value),max(value) from metric_schema.%[1]s where time > '%[3]s' and time < '%[4]s' and quantile=%[5]v`,
+				name, labelsColumn, startTime, endTime, quantile)
+		}
 		if len(def.Labels) > 0 {
 			sql += " group by " + labels
 		}
