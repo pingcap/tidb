@@ -37,7 +37,6 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/planner/property"
-	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
@@ -440,7 +439,19 @@ func (ds *DataSource) setPreferredStoreType(hintInfo *tableHintInfo) {
 		alias = &hintTableInfo{dbName: ds.DBName, tblName: ds.tableInfo.Name, selectOffset: ds.SelectBlockOffset()}
 	}
 	if hintInfo.ifPreferTiKV(alias) {
-		ds.preferStoreType |= preferTiKV
+		for _, path := range ds.possibleAccessPaths {
+			if path.StoreType == kv.TiKV {
+				ds.preferStoreType |= preferTiKV
+				break
+			}
+		}
+		if ds.preferStoreType == 0 {
+			errMsg := fmt.Sprintf("No available path for table %s.%s with the store type %s of the hint /*+ read_from_storage */, "+
+				"please check the status of the table replica and variable value of tidb_isolation_read_engines(%v)",
+				ds.DBName.O, ds.table.Meta().Name.O, kv.TiKV.Name(), ds.ctx.GetSessionVars().GetIsolationReadEngines())
+			warning := ErrInternal.GenWithStack(errMsg)
+			ds.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
+		}
 	}
 	if hintInfo.ifPreferTiFlash(alias) {
 		if ds.preferStoreType != 0 {
@@ -451,18 +462,18 @@ func (ds *DataSource) setPreferredStoreType(hintInfo *tableHintInfo) {
 			ds.preferStoreType = 0
 			return
 		}
-		ds.preferStoreType |= preferTiFlash
-		hasTiFlashPath := false
 		for _, path := range ds.possibleAccessPaths {
 			if path.StoreType == kv.TiFlash {
-				hasTiFlashPath = true
+				ds.preferStoreType |= preferTiFlash
 				break
 			}
 		}
-		// TODO: For now, if there is a TiFlash hint for a table, we enforce a TiFlash path. But hint is just a suggestion
-		//       for the planner. We can keep it since we need it to debug with PD and TiFlash. In future, this should be removed.
-		if !hasTiFlashPath {
-			ds.possibleAccessPaths = append(ds.possibleAccessPaths, &util.AccessPath{IsTablePath: true, StoreType: kv.TiFlash})
+		if ds.preferStoreType == 0 {
+			errMsg := fmt.Sprintf("No available path for table %s.%s with the store type %s of the hint /*+ read_from_storage */, "+
+				"please check the status of the table replica and variable value of tidb_isolation_read_engines(%v)",
+				ds.DBName.O, ds.table.Meta().Name.O, kv.TiFlash.Name(), ds.ctx.GetSessionVars().GetIsolationReadEngines())
+			warning := ErrInternal.GenWithStack(errMsg)
+			ds.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
 		}
 	}
 }
