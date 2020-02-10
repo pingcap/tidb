@@ -319,9 +319,9 @@ func (w *worker) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
 
 func finishRecoverTable(w *worker, t *meta.Meta, job *model.Job) error {
 	tbInfo := &model.TableInfo{}
-	var autoID, dropJobID, recoverTableCheckFlag int64
+	var autoID, autoRandID, dropJobID, recoverTableCheckFlag int64
 	var snapshotTS uint64
-	err := job.DecodeArgs(tbInfo, &autoID, &dropJobID, &snapshotTS, &recoverTableCheckFlag)
+	err := job.DecodeArgs(tbInfo, &autoID, &autoRandID, &dropJobID, &snapshotTS, &recoverTableCheckFlag)
 	if err != nil {
 		return errors.Trace(err)
 	}

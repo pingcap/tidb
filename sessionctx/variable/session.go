@@ -60,39 +60,72 @@ var (
 type RetryInfo struct {
 	Retrying               bool
 	DroppedPreparedStmtIDs []uint32
-	currRetryOff           int
-	autoIncrementIDs       []int64
+	autoIncrementIDs       retryInfoAutoIDs
+	autoRandomIDs          retryInfoAutoIDs
 }
 
 // Clean does some clean work.
 func (r *RetryInfo) Clean() {
-	r.currRetryOff = 0
-	if len(r.autoIncrementIDs) > 0 {
-		r.autoIncrementIDs = r.autoIncrementIDs[:0]
-	}
+	r.autoIncrementIDs.clean()
+	r.autoRandomIDs.clean()
+
 	if len(r.DroppedPreparedStmtIDs) > 0 {
 		r.DroppedPreparedStmtIDs = r.DroppedPreparedStmtIDs[:0]
 	}
 }
 
-// AddAutoIncrementID adds id to AutoIncrementIDs.
-func (r *RetryInfo) AddAutoIncrementID(id int64) {
-	r.autoIncrementIDs = append(r.autoIncrementIDs, id)
-}
-
 // ResetOffset resets the current retry offset.
 func (r *RetryInfo) ResetOffset() {
-	r.currRetryOff = 0
+	r.autoIncrementIDs.resetOffset()
+	r.autoRandomIDs.resetOffset()
 }
 
-// GetCurrAutoIncrementID gets current AutoIncrementID.
+// AddAutoIncrementID adds id to autoIncrementIDs.
+func (r *RetryInfo) AddAutoIncrementID(id int64) {
+	r.autoIncrementIDs.add(id)
+}
+
+// GetCurrAutoIncrementID gets current autoIncrementID.
 func (r *RetryInfo) GetCurrAutoIncrementID() (int64, error) {
-	if r.currRetryOff >= len(r.autoIncrementIDs) {
+	return r.autoIncrementIDs.next()
+}
+
+// AddAutoRandomID adds id to autoRandomIDs.
+func (r *RetryInfo) AddAutoRandomID(id int64) {
+	r.autoRandomIDs.add(id)
+}
+
+// GetCurrAutoRandomID gets current AutoRandomID.
+func (r *RetryInfo) GetCurrAutoRandomID() (int64, error) {
+	return r.autoRandomIDs.next()
+}
+
+type retryInfoAutoIDs struct {
+	currentOffset int
+	autoIDs       []int64
+}
+
+func (r *retryInfoAutoIDs) clean() {
+	r.currentOffset = 0
+	if len(r.autoIDs) > 0 {
+		r.autoIDs = r.autoIDs[:0]
+	}
+}
+
+func (r *retryInfoAutoIDs) add(id int64) {
+	r.autoIDs = append(r.autoIDs, id)
+}
+
+func (r *retryInfoAutoIDs) resetOffset() {
+	r.currentOffset = 0
+}
+
+func (r *retryInfoAutoIDs) next() (int64, error) {
+	if r.currentOffset >= len(r.autoIDs) {
 		return 0, errCantGetValidID
 	}
-	id := r.autoIncrementIDs[r.currRetryOff]
-	r.currRetryOff++
-
+	id := r.autoIDs[r.currentOffset]
+	r.currentOffset++
 	return id, nil
 }
 
