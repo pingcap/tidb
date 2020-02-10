@@ -18,6 +18,7 @@ import (
 
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 )
 
@@ -47,24 +48,32 @@ func (gc *gcSubstituter) optimize(ctx context.Context, lp LogicalPlan) (LogicalP
 // For the sake of simplicity, we don't collect the stored generate column because we can't get their expressions directly.
 // TODO: support stored generate column.
 func collectGenerateColumn(lp LogicalPlan, exprToColumn ExprColumnMap) {
-	if ds, ok := lp.(*DataSource); ok {
-		tblInfo := ds.tableInfo
-		for _, idx := range tblInfo.Indices {
-			for _, idxPart := range idx.Columns {
-				colInfo := tblInfo.Columns[idxPart.Offset]
-				if colInfo.IsGenerated() && !colInfo.GeneratedStored {
-					s := ds.schema.Columns
-					col := expression.ColInfo2Col(s, colInfo)
-					if col != nil {
-						exprToColumn[col.VirtualExpr] = col
-					}
+	for _, child := range lp.Children() {
+		collectGenerateColumn(child, exprToColumn)
+	}
+	ds, ok := lp.(*DataSource)
+	if !ok {
+		return
+	}
+	tblInfo := ds.tableInfo
+	for _, idx := range tblInfo.Indices {
+		for _, idxPart := range idx.Columns {
+			colInfo := tblInfo.Columns[idxPart.Offset]
+			if colInfo.IsGenerated() && !colInfo.GeneratedStored {
+				s := ds.schema.Columns
+				col := expression.ColInfo2Col(s, colInfo)
+				if col != nil {
+					exprToColumn[col.VirtualExpr] = col
 				}
 			}
 		}
-		return
 	}
-	for _, child := range lp.Children() {
-		collectGenerateColumn(child, exprToColumn)
+}
+
+func tryToSubstituteExpr(expr *expression.Expression, sctx sessionctx.Context, candidateExpr expression.Expression, tp types.EvalType, schema *expression.Schema, col *expression.Column) {
+	if (*expr).Equal(sctx, candidateExpr) && candidateExpr.GetType().EvalType() == tp &&
+		schema.ColumnIndex(col) != -1 {
+		*expr = col
 	}
 }
 
@@ -91,10 +100,7 @@ func (gc *gcSubstituter) substitute(ctx context.Context, lp LogicalPlan, exprToC
 					continue
 				}
 				for candidateExpr, column := range exprToColumn {
-					if (*expr).Equal(lp.SCtx(), candidateExpr) && candidateExpr.GetType().EvalType() == tp &&
-						x.Schema().ColumnIndex(column) != -1 {
-						*expr = column
-					}
+					tryToSubstituteExpr(expr, lp.SCtx(), candidateExpr, tp, x.Schema(), column)
 				}
 			case ast.In:
 				expr = &sf.GetArgs()[0]
@@ -110,32 +116,24 @@ func (gc *gcSubstituter) substitute(ctx context.Context, lp LogicalPlan, exprToC
 				}
 				if canSubstitute {
 					for candidateExpr, column := range exprToColumn {
-						if (*expr).Equal(lp.SCtx(), candidateExpr) && candidateExpr.GetType().EvalType() == tp &&
-							x.Schema().ColumnIndex(column) != -1 {
-							*expr = column
-						}
+						tryToSubstituteExpr(expr, lp.SCtx(), candidateExpr, tp, x.Schema(), column)
 					}
 				}
 			}
 		}
 	case *LogicalProjection:
-		for i := 0; i < len(x.Exprs); i++ {
+		for i := range x.Exprs {
+			expr = &x.Exprs[i]
 			tp = x.Exprs[i].GetType().EvalType()
 			for candidateExpr, column := range exprToColumn {
-				if x.Exprs[i].Equal(lp.SCtx(), candidateExpr) && candidateExpr.GetType().EvalType() == tp &&
-					x.children[0].Schema().ColumnIndex(column) != -1 {
-					x.Exprs[i] = column
-				}
+				tryToSubstituteExpr(&x.Exprs[i], lp.SCtx(), candidateExpr, tp, x.children[0].Schema(), column)
 			}
 		}
 	case *LogicalSort:
-		for i := 0; i < len(x.ByItems); i++ {
+		for i := range x.ByItems {
 			tp = x.ByItems[i].Expr.GetType().EvalType()
 			for candidateExpr, column := range exprToColumn {
-				if x.ByItems[i].Expr.Equal(lp.SCtx(), candidateExpr) && candidateExpr.GetType().EvalType() == tp &&
-					x.Schema().ColumnIndex(column) != -1 {
-					x.ByItems[i].Expr = column
-				}
+				tryToSubstituteExpr(&x.ByItems[i].Expr, lp.SCtx(), candidateExpr, tp, x.Schema(), column)
 			}
 		}
 		// TODO: Uncomment these code after we support virtual generate column push down.

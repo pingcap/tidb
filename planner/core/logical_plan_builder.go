@@ -2566,15 +2566,16 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		return nil, err
 	}
 
-	// Try to substitute generate column only if there is an index on generate column
+	// Try to substitute generate column only if there is an index on generate column.
 	for _, index := range tableInfo.Indices {
-		if index.State == model.StatePublic {
-			for _, indexCol := range index.Columns {
-				colInfo := tbl.Cols()[indexCol.Offset]
-				if colInfo.IsGenerated() && !colInfo.GeneratedStored {
-					b.optFlag |= flagGcSubstitute
-					break
-				}
+		if index.State != model.StatePublic {
+			continue
+		}
+		for _, indexCol := range index.Columns {
+			colInfo := tbl.Cols()[indexCol.Offset]
+			if colInfo.IsGenerated() && !colInfo.GeneratedStored {
+				b.optFlag |= flagGcSubstitute
+				break
 			}
 		}
 	}
