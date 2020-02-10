@@ -738,7 +738,7 @@ var tableTiDBServersInfoCols = []columnInfo{
 
 var tableClusterConfigCols = []columnInfo{
 	{"TYPE", mysql.TypeVarchar, 64, 0, nil, nil},
-	{"ADDRESS", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"INSTANCE", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"KEY", mysql.TypeVarchar, 256, 0, nil, nil},
 	{"VALUE", mysql.TypeVarchar, 128, 0, nil, nil},
 }
@@ -746,23 +746,23 @@ var tableClusterConfigCols = []columnInfo{
 var tableClusterLogCols = []columnInfo{
 	{"TIME", mysql.TypeVarchar, 32, 0, nil, nil},
 	{"TYPE", mysql.TypeVarchar, 64, 0, nil, nil},
-	{"ADDRESS", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"INSTANCE", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"LEVEL", mysql.TypeVarchar, 8, 0, nil, nil},
 	{"MESSAGE", mysql.TypeVarString, 1024, 0, nil, nil},
 }
 
 var tableClusterLoadCols = []columnInfo{
 	{"TYPE", mysql.TypeVarchar, 64, 0, nil, nil},
-	{"ADDRESS", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"INSTANCE", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"DEVICE_TYPE", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"DEVICE_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
-	{"LOAD_NAME", mysql.TypeVarchar, 256, 0, nil, nil},
-	{"LOAD_VALUE", mysql.TypeVarchar, 128, 0, nil, nil},
+	{"NAME", mysql.TypeVarchar, 256, 0, nil, nil},
+	{"VALUE", mysql.TypeVarchar, 128, 0, nil, nil},
 }
 
 var tableClusterHardwareCols = []columnInfo{
 	{"TYPE", mysql.TypeVarchar, 64, 0, nil, nil},
-	{"ADDRESS", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"INSTANCE", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"DEVICE_TYPE", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"DEVICE_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"NAME", mysql.TypeVarchar, 256, 0, nil, nil},
@@ -771,7 +771,7 @@ var tableClusterHardwareCols = []columnInfo{
 
 var tableClusterSystemInfoCols = []columnInfo{
 	{"TYPE", mysql.TypeVarchar, 64, 0, nil, nil},
-	{"ADDRESS", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"INSTANCE", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"SYSTEM_TYPE", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"SYSTEM_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"NAME", mysql.TypeVarchar, 256, 0, nil, nil},
@@ -1104,7 +1104,7 @@ var filesCols = []columnInfo{
 
 var tableClusterInfoCols = []columnInfo{
 	{"TYPE", mysql.TypeVarchar, 64, 0, nil, nil},
-	{"ADDRESS", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"INSTANCE", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"STATUS_ADDRESS", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"VERSION", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"GIT_HASH", mysql.TypeVarchar, 64, 0, nil, nil},
@@ -1122,10 +1122,12 @@ var tableTableTiFlashReplicaCols = []columnInfo{
 var tableInspectionResultCols = []columnInfo{
 	{"RULE", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"ITEM", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"TYPE", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"INSTANCE", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"VALUE", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"REFERENCE", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"SEVERITY", mysql.TypeVarchar, 64, 0, nil, nil},
-	{"SUGGESTION", mysql.TypeVarchar, 256, 0, nil, nil},
+	{"DETAILS", mysql.TypeVarchar, 256, 0, nil, nil},
 }
 
 var tableMetricSummaryCols = []columnInfo{
@@ -2495,6 +2497,11 @@ func (it *infoschemaTable) WritableCols() []*table.Column {
 	return it.cols
 }
 
+// DeletableCols implements table DeletableCols interface.
+func (it *infoschemaTable) DeletableCols() []*table.Column {
+	return it.cols
+}
+
 // Indices implements table.Table Indices interface.
 func (it *infoschemaTable) Indices() []table.Index {
 	return nil
@@ -2629,6 +2636,11 @@ func (vt *VirtualTable) HiddenCols() []*table.Column {
 
 // WritableCols implements table.Table WritableCols interface.
 func (vt *VirtualTable) WritableCols() []*table.Column {
+	return nil
+}
+
+// DeletableCols implements table DeletableCols interface.
+func (vt *VirtualTable) DeletableCols() []*table.Column {
 	return nil
 }
 
