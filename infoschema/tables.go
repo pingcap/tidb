@@ -51,14 +51,15 @@ import (
 
 const (
 	// TableSchemata is the string constant of infoschema table
-	TableSchemata                           = "SCHEMATA"
-	tableTables                             = "TABLES"
-	tableColumns                            = "COLUMNS"
-	tableColumnStatistics                   = "COLUMN_STATISTICS"
-	tableStatistics                         = "STATISTICS"
-	tableCharacterSets                      = "CHARACTER_SETS"
-	tableCollations                         = "COLLATIONS"
-	tableFiles                              = "FILES"
+	TableSchemata         = "SCHEMATA"
+	tableTables           = "TABLES"
+	tableColumns          = "COLUMNS"
+	tableColumnStatistics = "COLUMN_STATISTICS"
+	tableStatistics       = "STATISTICS"
+	tableCharacterSets    = "CHARACTER_SETS"
+	tableCollations       = "COLLATIONS"
+	tableFiles            = "FILES"
+	// CatalogVal is the string constant of TABLE_CATALOG
 	CatalogVal                              = "def"
 	tableProfiling                          = "PROFILING"
 	tablePartitions                         = "PARTITIONS"
