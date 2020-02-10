@@ -248,6 +248,7 @@ type PlanBuilder struct {
 
 	windowSpecs  map[string]*ast.WindowSpec
 	inUpdateStmt bool
+	inDeleteStmt bool
 	// inStraightJoin represents whether the current "SELECT" statement has
 	// "STRAIGHT_JOIN" option.
 	inStraightJoin bool
