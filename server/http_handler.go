@@ -779,10 +779,20 @@ func (h flashReplicaHandler) handleStatusReport(w http.ResponseWriter, req *http
 		writeError(w, err)
 		return
 	}
-	err = do.DDL().UpdateTableReplicaInfo(s, status.ID, status.checkTableFlashReplicaAvailable())
+	available := status.checkTableFlashReplicaAvailable()
+	err = do.DDL().UpdateTableReplicaInfo(s, status.ID, available)
 	if err != nil {
 		writeError(w, err)
 	}
+	if available {
+		err = infosync.DeleteTiFlashTableSyncProgress(status.ID)
+	} else {
+		err = infosync.UpdateTiFlashTableSyncProgress(context.Background(), status.ID, float64(status.RegionCount)/float64(status.FlashRegionCount))
+	}
+	if err != nil {
+		writeError(w, err)
+	}
+
 	logutil.BgLogger().Info("handle flash replica report", zap.Int64("table ID", status.ID), zap.Uint64("region count",
 		status.RegionCount),
 		zap.Uint64("flash region count", status.FlashRegionCount),
