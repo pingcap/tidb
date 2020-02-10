@@ -1593,7 +1593,7 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (Plan, 
 		if p.DBName == "" {
 			return nil, ErrNoDB
 		}
-	case ast.ShowCreateTable:
+	case ast.ShowCreateTable, ast.ShowCreateSequence:
 		user := b.ctx.GetSessionVars().User
 		var err error
 		if user != nil {
@@ -2828,7 +2828,7 @@ func buildShowSchema(s *ast.ShowStmt, isView bool) (schema *expression.Schema, o
 		names = []string{"Collation", "Charset", "Id", "Default", "Compiled", "Sortlen"}
 		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLonglong,
 			mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLonglong}
-	case ast.ShowCreateTable:
+	case ast.ShowCreateTable, ast.ShowCreateSequence:
 		if !isView {
 			names = []string{"Table", "Create Table"}
 		} else {
