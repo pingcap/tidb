@@ -187,7 +187,9 @@ func (e *IndexLookUpMergeJoin) startWorkers(ctx context.Context) {
 	for i := 0; i < concurrency; i++ {
 		e.joinChkResourceCh[i] = make(chan *chunk.Chunk, numResChkHold)
 		for j := 0; j < numResChkHold; j++ {
-			e.joinChkResourceCh[i] <- chunk.NewChunkWithCapacity(e.retFieldTypes, e.maxChunkSize)
+			chk := chunk.NewChunkWithCapacity(e.retFieldTypes, e.maxChunkSize)
+			e.ctx.GetSessionVars().StmtCtx.RegisterChunk(chk)
+			e.joinChkResourceCh[i] <- chk
 		}
 	}
 	workerCtx, cancelFunc := context.WithCancel(ctx)

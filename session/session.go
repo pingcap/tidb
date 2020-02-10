@@ -891,6 +891,7 @@ func drainRecordSet(ctx context.Context, se *session, rs sqlexec.RecordSet) ([]c
 		for r := iter.Begin(); r != iter.End(); r = iter.Next() {
 			rows = append(rows, r)
 		}
+		// se.GetSessionVars().StmtCtx.RegisterChunk(req)
 		req = chunk.Renew(req, se.sessionVars.MaxChunkSize)
 	}
 }

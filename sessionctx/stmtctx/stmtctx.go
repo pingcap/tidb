@@ -143,6 +143,36 @@ type StatementContext struct {
 	PessimisticLockWaited int32
 	LockKeysDuration      time.Duration
 	LockKeysCount         int32
+
+	chunksToFree struct {
+		sync.Mutex
+		cs []Chunk
+	}
+}
+
+// Chunk is used to break the cyclic package reference.
+type Chunk interface {
+	Free()
+}
+
+// RegisterChunk register chunk used by statement.
+func (sc *StatementContext) RegisterChunk(c Chunk) {
+	if c == nil {
+		return
+	}
+	sc.chunksToFree.Lock()
+	sc.chunksToFree.cs = append(sc.chunksToFree.cs, c)
+	sc.chunksToFree.Unlock()
+}
+
+// FreeChunks free all chunks used by prev statement.
+func (sc *StatementContext) FreeChunks() {
+	sc.chunksToFree.Lock()
+	for _, c := range sc.chunksToFree.cs {
+		c.Free()
+	}
+	sc.chunksToFree.cs = nil
+	sc.chunksToFree.Unlock()
 }
 
 // StmtHints are SessionVars related sql hints.

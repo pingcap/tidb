@@ -78,6 +78,16 @@ func New(fields []*types.FieldType, cap, maxChunkSize int) *Chunk {
 	return chk
 }
 
+// Free returns all reusable memory to pool.
+func (c *Chunk) Free() {
+	if c == nil {
+		return
+	}
+	for _, col := range c.columns {
+		col.Free()
+	}
+}
+
 // renewWithCapacity creates a new Chunk based on an existing Chunk with capacity. The newly
 // created Chunk has the same data schema with the old Chunk.
 func renewWithCapacity(chk *Chunk, cap, maxChunkSize int) *Chunk {
@@ -85,7 +95,7 @@ func renewWithCapacity(chk *Chunk, cap, maxChunkSize int) *Chunk {
 	if chk.columns == nil {
 		return newChk
 	}
-	newChk.columns = renewColumns(chk.columns, cap)
+	newChk.columns = renewColumns(chk.columns, cap, false)
 	newChk.numVirtualRows = 0
 	newChk.capacity = cap
 	newChk.requiredRows = maxChunkSize
@@ -104,9 +114,12 @@ func Renew(chk *Chunk, maxChunkSize int) *Chunk {
 
 // renewColumns creates the columns of a Chunk. The capacity of the newly
 // created columns is equal to cap.
-func renewColumns(oldCol []*Column, cap int) []*Column {
+func renewColumns(oldCol []*Column, cap int, freeOld bool) []*Column {
 	columns := make([]*Column, 0, len(oldCol))
 	for _, col := range oldCol {
+		if freeOld {
+			col.Free()
+		}
 		columns = append(columns, newColumn(col.typeSize(), cap))
 	}
 	return columns
@@ -127,7 +140,7 @@ func (c *Chunk) MemoryUsage() (sum int64) {
 func newFixedLenColumn(elemLen, cap int) *Column {
 	return &Column{
 		elemBuf:    make([]byte, elemLen),
-		data:       make([]byte, 0, cap*elemLen),
+		data:       allocBufWithCap(cap * elemLen),
 		nullBitmap: make([]byte, 0, (cap+7)>>3),
 	}
 }
@@ -143,7 +156,7 @@ func newVarLenColumn(cap int, old *Column) *Column {
 	}
 	return &Column{
 		offsets:    make([]int64, 1, cap+1),
-		data:       make([]byte, 0, cap*estimatedElemLen),
+		data:       allocBufWithCap(cap * estimatedElemLen),
 		nullBitmap: make([]byte, 0, (cap+7)>>3),
 	}
 }
@@ -281,7 +294,7 @@ func (c *Chunk) GrowAndReset(maxChunkSize int) {
 		return
 	}
 	c.capacity = newCap
-	c.columns = renewColumns(c.columns, newCap)
+	c.columns = renewColumns(c.columns, newCap, true)
 	c.numVirtualRows = 0
 	c.requiredRows = maxChunkSize
 }

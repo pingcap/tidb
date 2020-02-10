@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"math/bits"
 	"reflect"
+	"sync"
 	"time"
 	"unsafe"
 
@@ -69,6 +70,61 @@ type Column struct {
 // NewColumn creates a new column with the specific length and capacity.
 func NewColumn(ft *types.FieldType, cap int) *Column {
 	return newColumn(getFixedLen(ft), cap)
+}
+
+// Free returns the underlaying memory to pool.
+func (c *Column) Free() {
+	freeBuf(c.data)
+	c.data = nil
+}
+
+const (
+	allocStep     = 1 * 1024
+	maxPooledSize = 64 * 1024
+)
+
+// Use a bunch of pool to allocate different size of pages.
+var bufPool [maxPooledSize / allocStep]sync.Pool
+
+func init() {
+	for i := range bufPool {
+		size := allocStep * (i + 1)
+		bufPool[i].New = func() interface{} {
+			// After we add the required Free call to all place uses `Chunk`,
+			// we can simply use mmap to allocate a off-heap page from OS, totally bypass GC.
+			arena := make([]byte, size)
+			// Store the data pointer of slice to simplify later use.
+			return &arena[0]
+		}
+	}
+}
+
+func allocBufWithCap(size int) []byte {
+	if size > maxPooledSize || size < allocStep {
+		return make([]byte, 0, size)
+	}
+	ptr := bufPool[((size+allocStep-1)/allocStep)-1].Get().(*byte)
+	var slice []byte
+	hdr := (*reflect.SliceHeader)((unsafe.Pointer(&slice)))
+	hdr.Cap = size
+	hdr.Len = 0
+	hdr.Data = uintptr(unsafe.Pointer(ptr))
+	return slice
+}
+
+func freeBuf(buf []byte) {
+	if cap(buf) > maxPooledSize || cap(buf) < allocStep {
+		return
+	}
+	hdr := (*reflect.SliceHeader)((unsafe.Pointer(&buf)))
+	ptr := (*byte)(unsafe.Pointer(hdr.Data))
+	// Just find returned slice will grow,
+	// which means if `cap(buf) == 1280` the actual data arena size may not be `2048`.
+	// To pervent memory overflow, always put the buf back to the smaller arena pool.
+	// TODO: we should limit the operations of Chunk never grow the underlaying slice,
+	// because it will result in a larger memory allocation and a expensive memcpy,
+	// and it is also required if we switch to off-heap memory in the future.
+	bufPool[((cap(buf))/allocStep)-1].Put(ptr)
 }
 
 func newColumn(typeSize, cap int) *Column {

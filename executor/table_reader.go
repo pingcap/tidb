@@ -166,6 +166,7 @@ func (e *TableReaderExecutor) Next(ctx context.Context, req *chunk.Chunk) error 
 	}
 
 	virCols := chunk.NewChunkWithCapacity(e.virtualColumnRetFieldTypes, req.Capacity())
+	e.ctx.GetSessionVars().StmtCtx.RegisterChunk(virCols)
 	iter := chunk.NewIterator4Chunk(req)
 
 	for i, idx := range e.virtualColumnIndex {

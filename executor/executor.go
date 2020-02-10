@@ -982,6 +982,7 @@ func init() {
 				row := r.GetDatumRow(retTypes(exec))
 				rows = append(rows, row)
 			}
+			sctx.GetSessionVars().StmtCtx.RegisterChunk(chk)
 			chk = chunk.Renew(chk, sctx.GetSessionVars().MaxChunkSize)
 		}
 	}
@@ -1419,6 +1420,9 @@ func (e *UnionExec) Close() error {
 // Before every execution, we must clear statement context.
 func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	vars := ctx.GetSessionVars()
+	if vars.StmtCtx != nil {
+		vars.StmtCtx.FreeChunks()
+	}
 	sc := &stmtctx.StatementContext{
 		TimeZone:    vars.Location(),
 		MemTracker:  memory.NewTracker(stringutil.MemoizeStr(s.Text), vars.MemQuotaQuery),

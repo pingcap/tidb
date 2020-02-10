@@ -202,6 +202,7 @@ func (e *UpdateExec) fetchChunkRows(ctx context.Context) error {
 		}
 		e.memTracker.Consume(types.EstimatedMemUsage(e.rows[firstRowIdx], globalRowIdx-firstRowIdx))
 		e.memTracker.Consume(types.EstimatedMemUsage(e.newRowsData[firstRowIdx], globalRowIdx-firstRowIdx))
+		e.ctx.GetSessionVars().StmtCtx.RegisterChunk(chk)
 		chk = chunk.Renew(chk, e.maxChunkSize)
 	}
 	return nil

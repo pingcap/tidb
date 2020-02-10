@@ -469,6 +469,7 @@ func (a *ExecStmt) runPessimisticSelectForUpdate(ctx context.Context, e Executor
 	var err error
 	fields := rs.Fields()
 	req := rs.NewChunk()
+	a.Ctx.GetSessionVars().StmtCtx.RegisterChunk(req)
 	for {
 		err = rs.Next(ctx, req)
 		if err != nil {
@@ -482,7 +483,9 @@ func (a *ExecStmt) runPessimisticSelectForUpdate(ctx context.Context, e Executor
 		for r := iter.Begin(); r != iter.End(); r = iter.Next() {
 			rows = append(rows, r)
 		}
+
 		req = chunk.Renew(req, a.Ctx.GetSessionVars().MaxChunkSize)
+		a.Ctx.GetSessionVars().StmtCtx.RegisterChunk(req)
 	}
 	return nil, err
 }
