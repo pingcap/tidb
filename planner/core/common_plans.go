@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
@@ -378,13 +379,11 @@ func (e *Execute) rebuildRange(p Plan) error {
 				return err
 			}
 			if ts.Table.Partition != nil {
-				pi := ts.Table.Partition
-				if pi.Type == model.PartitionTypeHash && len(ts.Ranges) == 1 && ts.Ranges[0].IsPoint(sc) {
-					schema, names := buildSchemaAndNameFromPKCol(pkCol, ts.DBName, ts.Table)
-					pID, err := getPhysicalTableIDForPartition(e.ctx, pi, schema, names, ts.Ranges[0].LowVal)
-					if err != nil {
-						return err
-					}
+				pID, err := rebuildNewTableIDFromTable(e.ctx, ts, sc, pkCol)
+				if err != nil {
+					return err
+				}
+				if pID != -1 {
 					ts.physicalTableID = pID
 				}
 			}
@@ -398,13 +397,11 @@ func (e *Execute) rebuildRange(p Plan) error {
 			return err
 		}
 		if is.Table.Partition != nil {
-			pi := is.Table.Partition
-			if pi.Type == model.PartitionTypeHash && len(is.Ranges) == 1 && is.Ranges[0].IsPoint(sc) {
-				schema, names := buildSchemaAndNameFromIndex(is.IdxCols, is.DBName, is.Table, is.Index)
-				pID, err := getPhysicalTableIDForPartition(e.ctx, pi, schema, names, is.Ranges[0].LowVal)
-				if err != nil {
-					return err
-				}
+			pID, err := rebuildNewTableIDFromIndex(e.ctx, is, sc)
+			if err != nil {
+				return err
+			}
+			if pID != -1 {
 				is.physicalTableID = pID
 			}
 		}
@@ -415,13 +412,11 @@ func (e *Execute) rebuildRange(p Plan) error {
 			return err
 		}
 		if is.Table.Partition != nil {
-			pi := is.Table.Partition
-			if pi.Type == model.PartitionTypeHash && len(is.Ranges) == 1 && is.Ranges[0].IsPoint(sc) {
-				schema, names := buildSchemaAndNameFromIndex(is.IdxCols, is.DBName, is.Table, is.Index)
-				pID, err := getPhysicalTableIDForPartition(e.ctx, pi, schema, names, is.Ranges[0].LowVal)
-				if err != nil {
-					return err
-				}
+			pID, err := rebuildNewTableIDFromIndex(e.ctx, is, sc)
+			if err != nil {
+				return err
+			}
+			if pID != -1 {
 				is.physicalTableID = pID
 				tblScan := x.TablePlans[0].(*PhysicalTableScan)
 				tblScan.physicalTableID = pID
@@ -1068,4 +1063,30 @@ func getPhysicalTableIDForPartition(ctx sessionctx.Context, pi *model.PartitionI
 	}
 	pID := pi.Definitions[pos].ID
 	return pID, nil
+}
+
+func rebuildNewTableIDFromIndex(ctx sessionctx.Context, is *PhysicalIndexScan, sc *stmtctx.StatementContext) (int64, error) {
+	pi := is.Table.Partition
+	if pi.Type == model.PartitionTypeHash && len(is.Ranges) == 1 && is.Ranges[0].IsPoint(sc) {
+		schema, names := buildSchemaAndNameFromIndex(is.IdxCols, is.DBName, is.Table, is.Index)
+		pID, err := getPhysicalTableIDForPartition(ctx, pi, schema, names, is.Ranges[0].LowVal)
+		if err != nil {
+			return -1, err
+		}
+		return pID, nil
+	}
+	return -1, nil
+}
+
+func rebuildNewTableIDFromTable(ctx sessionctx.Context, ts *PhysicalTableScan, sc *stmtctx.StatementContext, pkCol *expression.Column) (int64, error) {
+	pi := ts.Table.Partition
+	if pi.Type == model.PartitionTypeHash && len(ts.Ranges) == 1 && ts.Ranges[0].IsPoint(sc) {
+		schema, names := buildSchemaAndNameFromPKCol(pkCol, ts.DBName, ts.Table)
+		pID, err := getPhysicalTableIDForPartition(ctx, pi, schema, names, ts.Ranges[0].LowVal)
+		if err != nil {
+			return -1, err
+		}
+		return pID, nil
+	}
+	return -1, nil
 }
