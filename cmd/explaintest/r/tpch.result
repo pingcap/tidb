@@ -304,7 +304,7 @@ Sort_10	1.00	root	tpch.orders.o_orderpriority:asc
       └─IndexLookUp_20	4.05	root	
         ├─IndexRangeScan_17	5.06	cop[tikv]	table:lineitem, index:L_ORDERKEY, L_LINENUMBER, range: decided by [eq(tpch.lineitem.l_orderkey, tpch.orders.o_orderkey)], keep order:false
         └─Selection_19	4.05	cop[tikv]	lt(tpch.lineitem.l_commitdate, tpch.lineitem.l_receiptdate)
-          └─TableRangeScan_18	5.06	cop[tikv]	table:lineitem, keep order:false
+          └─TableRowIDScan_18	5.06	cop[tikv]	table:lineitem, keep order:false
 /*
 Q5 Local Supplier Volume Query
 This query lists the revenue volume done through local suppliers.
@@ -674,7 +674,7 @@ Projection_17	20.00	root	tpch.customer.c_custkey, tpch.customer.c_name, Column#3
         └─IndexLookUp_31	4.05	root	
           ├─IndexRangeScan_28	16.44	cop[tikv]	table:lineitem, index:L_ORDERKEY, L_LINENUMBER, range: decided by [eq(tpch.lineitem.l_orderkey, tpch.orders.o_orderkey)], keep order:false
           └─Selection_30	4.05	cop[tikv]	eq(tpch.lineitem.l_returnflag, "R")
-            └─TableRangeScan_29	16.44	cop[tikv]	table:lineitem, keep order:false
+            └─TableRowIDScan_29	16.44	cop[tikv]	table:lineitem, keep order:false
 /*
 Q11 Important Stock Identification Query
 This query finds the most important subset of suppliers' stock in a given nation.
@@ -1242,7 +1242,7 @@ Projection_25	1.00	root	tpch.supplier.s_name, Column#72
       └─IndexLookUp_39	4.05	root	
         ├─IndexRangeScan_36	5.06	cop[tikv]	table:l3, index:L_ORDERKEY, L_LINENUMBER, range: decided by [eq(tpch.lineitem.l_orderkey, tpch.lineitem.l_orderkey)], keep order:false
         └─Selection_38	4.05	cop[tikv]	gt(tpch.lineitem.l_receiptdate, tpch.lineitem.l_commitdate)
-          └─TableRangeScan_37	5.06	cop[tikv]	table:l3, keep order:false
+          └─TableRowIDScan_37	5.06	cop[tikv]	table:l3, keep order:false
 /*
 Q22 Global Sales Opportunity Query
 The Global Sales Opportunity Query identifies geographies where there are customers who may be likely to make a

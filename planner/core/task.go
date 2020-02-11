@@ -649,8 +649,19 @@ func finishCopTask(ctx sessionctx.Context, task task) task {
 			indexPlan:      t.indexPlan,
 			ExtraHandleCol: t.extraHandleCol,
 		}.Init(ctx, t.tablePlan.SelectBlockOffset())
-		if tp, ok := p.tablePlan.(*PhysicalTableScan); ok {
+		switch tp := p.tablePlan.(type) {
+		case *PhysicalTableScan:
 			tp.SetIsChildOfIndexLookUp(true)
+		case *PhysicalSelection:
+			tp.updateTableScanChild()
+		case *PhysicalLimit:
+			{
+				for _, child := range tp.children {
+					if ps, ok := child.(*PhysicalSelection); ok {
+						ps.updateTableScanChild()
+					}
+				}
+			}
 		}
 		p.stats = t.tablePlan.statsInfo()
 		// Add cost of building table reader executors. Handles are extracted in batch style,
@@ -717,6 +728,15 @@ func finishCopTask(ctx sessionctx.Context, task task) task {
 	}
 
 	return newTask
+}
+
+// updateTableScanChild is to update the isChildOfIndexLookUp attribute of PhysicalTableScan child
+func (sel *PhysicalSelection) updateTableScanChild() {
+	for _, child := range sel.children {
+		if ts, ok := child.(*PhysicalTableScan); ok {
+			ts.SetIsChildOfIndexLookUp(true)
+		}
+	}
 }
 
 // rootTask is the final sink node of a plan graph. It should be a single goroutine on tidb.

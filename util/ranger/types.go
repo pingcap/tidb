@@ -83,10 +83,10 @@ func (ran *Range) IsFullRange() bool {
 		return false
 	}
 	for i := range ran.LowVal {
-		a := ran.LowVal[i]
-		b := ran.HighVal[i]
-		if ("-inf" != formatDatum(a, true) && "NULL" != formatDatum(a, true)) ||
-			("+inf" != formatDatum(b, false) && "NULL" != formatDatum(a, true)) {
+		lowValRawString := formatDatum(ran.LowVal[i], true)
+		highValRawString := formatDatum(ran.HighVal[i], false)
+		if ("-inf" != lowValRawString && "NULL" != lowValRawString) ||
+			("+inf" != highValRawString && "NULL" != highValRawString) {
 			return false
 		}
 	}

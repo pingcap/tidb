@@ -21,7 +21,7 @@ Projection_17	10.00	root	test.city.id, test.city.province_id, test.city.city_nam
     │   │ └─IndexLookUp_36	0.97	root	
     │   │   ├─IndexRangeScan_33	1.00	cop[tikv]	table:t1, index:id, range: decided by [eq(test.city.id, test.city.id)], keep order:false
     │   │   └─Selection_35	0.97	cop[tikv]	gt(test.city.province_id, 1), lt(test.city.province_id, 100)
-    │   │     └─TableRangeScan_34	1.00	cop[tikv]	table:t1, keep order:false
+    │   │     └─TableRowIDScan_34	1.00	cop[tikv]	table:t1, keep order:false
     │   └─UnionScan_47	10.33	root	
     │     └─TableReader_49	10.33	root	data:TableFullScan_48
     │       └─TableFullScan_48	10.33	cop[tikv]	table:t2, keep order:false

@@ -83,7 +83,7 @@ id	count	task	operator info
 IndexLookUp_11	11.08	root	
 ├─IndexRangeScan_8	33.33	cop[tikv]	table:t1, index:c2, range:(1 1,1 +inf], keep order:false, stats:pseudo
 └─Selection_10	11.08	cop[tikv]	lt(test.t1.c3, 1)
-  └─TableRangeScan_9	33.33	cop[tikv]	table:t1, keep order:false, stats:pseudo
+  └─TableRowIDScan_9	33.33	cop[tikv]	table:t1, keep order:false, stats:pseudo
 explain select * from t1 where c1 = 1 and c2 > 1;
 id	count	task	operator info
 TableReader_7	0.33	root	data:Selection_6
@@ -145,7 +145,7 @@ Limit_9	1.00	root	offset:0, count:1
   │ └─IndexRangeScan_11	9.00	cop[tikv]	table:t4, index:a, b, range:(1,+inf], keep order:false, stats:pseudo
   └─Limit_15	1.00	cop[tikv]	offset:0, count:1
     └─Selection_14	1.00	cop[tikv]	gt(test.t4.c, 1)
-      └─TableRangeScan_12	3.00	cop[tikv]	table:t4, keep order:false, stats:pseudo
+      └─TableRowIDScan_12	3.00	cop[tikv]	table:t4, keep order:false, stats:pseudo
 explain select * from t4 where a > 1 and c > 1 limit 1;
 id	count	task	operator info
 Limit_8	1.00	root	offset:0, count:1
@@ -339,7 +339,7 @@ Projection_11	10000.00	root	Column#11
       ├─IndexLookUp_35	9.99	root	
       │ ├─IndexRangeScan_32	10.00	cop[tikv]	table:s, index:b, range: decided by [eq(test.t.b, test.t.a)], keep order:false, stats:pseudo
       │ └─Selection_34	9.99	cop[tikv]	not(isnull(test.t.c))
-      │   └─TableRangeScan_33	10.00	cop[tikv]	table:s, keep order:false, stats:pseudo
+      │   └─TableRowIDScan_33	10.00	cop[tikv]	table:s, keep order:false, stats:pseudo
       └─TableReader_44	1.00	root	data:TableRangeScan_43
         └─TableRangeScan_43	1.00	cop[tikv]	table:t1, range: decided by [test.t.c], keep order:true, stats:pseudo
 insert into t values(1, 1, 1), (2, 2 ,2), (3, 3, 3), (4, 3, 4),(5,3,5);

@@ -1803,7 +1803,7 @@ func (s *testSuiteJoin1) TestOuterTableBuildHashTable(c *C) {
 		"  ├─Selection_9 1.25 cop[tikv] not(isnull(test.s.b))",
 		"  │ └─IndexRangeScan_7 1.25 cop[tikv] table:s, index:b, range: decided by [eq(test.s.b, test.t.b)], keep order:false, stats:pseudo",
 		"  └─Selection_10 1.25 cop[tikv] not(isnull(test.s.a))",
-		"    └─TableRangeScan_8 1.25 cop[tikv] table:s, keep order:false, stats:pseudo"))
+		"    └─TableRowIDScan_8 1.25 cop[tikv] table:s, keep order:false, stats:pseudo"))
 }
 
 func (s *testSuiteJoin1) TestIssue13177(c *C) {

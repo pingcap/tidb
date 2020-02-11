@@ -549,7 +549,7 @@ func (s *testAnalyzeSuite) TestInconsistentEstimation(c *C) {
 			"IndexLookUp_8 10.00 root ",
 			"├─IndexRangeScan_5 12.50 cop[tikv] table:t, index:a, b, range:[5,5], keep order:false",
 			"└─Selection_7 10.00 cop[tikv] eq(test.t.c, 5)",
-			"  └─TableRangeScan_6 12.50 cop[tikv] table:t, keep order:false",
+			"  └─TableRowIDScan_6 12.50 cop[tikv] table:t, keep order:false",
 		))
 }
 
