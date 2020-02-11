@@ -209,7 +209,8 @@ func (w *worker) onRecoverTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 	tblInfo := &model.TableInfo{}
 	var autoIncID, autoRandID, dropJobID, recoverTableCheckFlag int64
 	var snapshotTS uint64
-	if err = job.DecodeArgs(tblInfo, &autoIncID, &autoRandID, &dropJobID, &snapshotTS, &recoverTableCheckFlag); err != nil {
+	const argsCheckFlagIndex = 4
+	if err = job.DecodeArgs(tblInfo, &autoIncID, &dropJobID, &snapshotTS, &recoverTableCheckFlag, &autoRandID); err != nil {
 		// Invalid arguments, cancel this job.
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
@@ -251,9 +252,9 @@ func (w *worker) onRecoverTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 		// none -> write only
 		// check GC enable and update flag.
 		if gcEnable {
-			job.Args[len(job.Args)-1] = recoverTableCheckFlagEnableGC
+			job.Args[argsCheckFlagIndex] = recoverTableCheckFlagEnableGC
 		} else {
-			job.Args[len(job.Args)-1] = recoverTableCheckFlagDisableGC
+			job.Args[argsCheckFlagIndex] = recoverTableCheckFlagDisableGC
 		}
 
 		job.SchemaState = model.StateWriteOnly

@@ -76,28 +76,28 @@ func (r *RetryInfo) Clean() {
 
 // ResetOffset resets the current retry offset.
 func (r *RetryInfo) ResetOffset() {
-	r.autoIncrementIDs.resetOffset()
-	r.autoRandomIDs.resetOffset()
+	r.autoIncrementIDs.currentOffset = 0
+	r.autoRandomIDs.currentOffset = 0
 }
 
 // AddAutoIncrementID adds id to autoIncrementIDs.
 func (r *RetryInfo) AddAutoIncrementID(id int64) {
-	r.autoIncrementIDs.add(id)
+	r.autoIncrementIDs.autoIDs = append(r.autoIncrementIDs.autoIDs, id)
 }
 
 // GetCurrAutoIncrementID gets current autoIncrementID.
 func (r *RetryInfo) GetCurrAutoIncrementID() (int64, error) {
-	return r.autoIncrementIDs.next()
+	return r.autoIncrementIDs.getCurrent()
 }
 
 // AddAutoRandomID adds id to autoRandomIDs.
 func (r *RetryInfo) AddAutoRandomID(id int64) {
-	r.autoRandomIDs.add(id)
+	r.autoRandomIDs.autoIDs = append(r.autoRandomIDs.autoIDs, id)
 }
 
 // GetCurrAutoRandomID gets current AutoRandomID.
 func (r *RetryInfo) GetCurrAutoRandomID() (int64, error) {
-	return r.autoRandomIDs.next()
+	return r.autoRandomIDs.getCurrent()
 }
 
 type retryInfoAutoIDs struct {
@@ -112,15 +112,7 @@ func (r *retryInfoAutoIDs) clean() {
 	}
 }
 
-func (r *retryInfoAutoIDs) add(id int64) {
-	r.autoIDs = append(r.autoIDs, id)
-}
-
-func (r *retryInfoAutoIDs) resetOffset() {
-	r.currentOffset = 0
-}
-
-func (r *retryInfoAutoIDs) next() (int64, error) {
+func (r *retryInfoAutoIDs) getCurrent() (int64, error) {
 	if r.currentOffset >= len(r.autoIDs) {
 		return 0, errCantGetValidID
 	}

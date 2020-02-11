@@ -321,7 +321,7 @@ func finishRecoverTable(w *worker, t *meta.Meta, job *model.Job) error {
 	tbInfo := &model.TableInfo{}
 	var autoID, autoRandID, dropJobID, recoverTableCheckFlag int64
 	var snapshotTS uint64
-	err := job.DecodeArgs(tbInfo, &autoID, &autoRandID, &dropJobID, &snapshotTS, &recoverTableCheckFlag)
+	err := job.DecodeArgs(tbInfo, &autoID, &dropJobID, &snapshotTS, &recoverTableCheckFlag, &autoRandID)
 	if err != nil {
 		return errors.Trace(err)
 	}
