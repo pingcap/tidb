@@ -726,12 +726,20 @@ func pruneUseBinarySearch(lessThan lessThanData, data dataForPrune) (start int, 
 		// col < 3, lessThan = [4 7 11 14 17] => [0, 1)
 		pos := sort.Search(length, func(i int) bool { return lessThan.compare(i, data.c) >= 0 })
 		start, end = 0, pos+1
-	case ast.GT, ast.GE:
-		// col [> | >=] 66, lessThan = [4 7 11 14 17] => [5, 5)
-		// col [> | >=] 14, lessThan = [4 7 11 14 17] => [4, 5)
-		// col [> | >=] 10, lessThan = [4 7 11 14 17] => [2, 5)
-		// col [> | >=] 3, lessThan = [4 7 11 14 17] => [0, 5)
+	case ast.GE:
+		// col >= 66, lessThan = [4 7 11 14 17] => [5, 5)
+		// col >= 14, lessThan = [4 7 11 14 17] => [4, 5)
+		// col >= 10, lessThan = [4 7 11 14 17] => [2, 5)
+		// col >= 3, lessThan = [4 7 11 14 17] => [0, 5)
 		pos := sort.Search(length, func(i int) bool { return lessThan.compare(i, data.c) > 0 })
+		start, end = pos, length
+	case ast.GT:
+		// col > 66, lessThan = [4 7 11 14 17] => [5, 5)
+		// col > 14, lessThan = [4 7 11 14 17] => [4, 5)
+		// col > 10, lessThan = [4 7 11 14 17] => [3, 5)
+		// col > 3, lessThan = [4 7 11 14 17] => [1, 5)
+		// col > 2, lessThan = [4 7 11 14 17] => [0, 5)
+		pos := sort.Search(length, func(i int) bool { return lessThan.compare(i, data.c+1) > 0 })
 		start, end = pos, length
 	case ast.LE:
 		// col <= 66, lessThan = [4 7 11 14 17] => [0, 6)
