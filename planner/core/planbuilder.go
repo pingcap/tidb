@@ -1648,11 +1648,10 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (Plan, 
 	}
 	if show.Tp == ast.ShowVariables || show.Tp == ast.ShowStatus {
 		b.curClause = orderByClause
-		sort := LogicalSort{}.Init(b.ctx, b.getSelectOffset())
-		exprs := make([]*ByItems, 0, 1)
-		newCol := np.Schema().Columns[0].Clone().(*expression.Column)
-		exprs = append(exprs, &ByItems{Expr: newCol, Desc: false})
-		sort.ByItems = exprs
+		orderByCol := np.Schema().Columns[0].Clone().(*expression.Column)
+		sort := LogicalSort{
+			ByItems: []*ByItems{{Expr: orderByCol}},
+		}.Init(b.ctx, b.getSelectOffset())
 		sort.SetChildren(np)
 		np = sort
 	}
