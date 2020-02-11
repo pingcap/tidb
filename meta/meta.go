@@ -744,7 +744,14 @@ func (m *Meta) GetAllHistoryDDLJobs() ([]*model.Job, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	return decodeAndSortJob(pairs)
+	jobs, err := decodeJob(pairs)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	// sort job.
+	sorter := &jobsSorter{jobs: jobs}
+	sort.Sort(sorter)
+	return jobs, nil
 }
 
 // GetLastNHistoryDDLJobs gets latest N history ddl jobs.
@@ -753,10 +760,48 @@ func (m *Meta) GetLastNHistoryDDLJobs(num int) ([]*model.Job, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	return decodeAndSortJob(pairs)
+	return decodeJob(pairs)
 }
 
-func decodeAndSortJob(jobPairs []structure.HashPair) ([]*model.Job, error) {
+// LastJobIterator is the iterator for gets latest history.
+type LastJobIterator struct {
+	iter *structure.ReverseHashIterator
+}
+
+// GetLastHistoryDDLJobsIterator gets latest N history ddl jobs iterator.
+func (m *Meta) GetLastHistoryDDLJobsIterator() (*LastJobIterator, error) {
+	iter, err := structure.NewHashReverseIter(m.txn, mDDLJobHistoryKey)
+	if err != nil {
+		return nil, err
+	}
+	return &LastJobIterator{
+		iter: iter,
+	}, nil
+}
+
+// GetLastJobs gets last several jobs.
+func (i *LastJobIterator) GetLastJobs(num int, jobs []*model.Job) ([]*model.Job, error) {
+	if len(jobs) < num {
+		jobs = make([]*model.Job, 0, num)
+	}
+	jobs = jobs[:0]
+	iter := i.iter
+	for iter.Valid() && len(jobs) < num {
+		job := &model.Job{}
+		err := job.Decode(iter.Value())
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		jobs = append(jobs, job)
+		err = iter.Next()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+	return jobs, nil
+}
+
+func decodeJob(jobPairs []structure.HashPair) ([]*model.Job, error) {
 	jobs := make([]*model.Job, 0, len(jobPairs))
 	for _, pair := range jobPairs {
 		job := &model.Job{}
@@ -766,8 +811,6 @@ func decodeAndSortJob(jobPairs []structure.HashPair) ([]*model.Job, error) {
 		}
 		jobs = append(jobs, job)
 	}
-	sorter := &jobsSorter{jobs: jobs}
-	sort.Sort(sorter)
 	return jobs, nil
 }
 
