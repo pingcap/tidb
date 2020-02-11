@@ -2023,7 +2023,7 @@ var MetricTableMap = map[string]MetricTableDef{
 		PromQL: `node_sockstat_TCP_inuse{$LABEL_CONDITIONS}`,
 		Labels: []string{"instance"},
 	},
-	"node_segments_retransmitted": {
+	"node_tcp_segments_retransmitted": {
 		PromQL: `rate(node_netstat_Tcp_RetransSegs{$LABEL_CONDITIONS}[$RANGE_DURATION]) or irate(node_netstat_Tcp_RetransSegs{$LABEL_CONDITIONS}[$RANGE_DURATION])`,
 		Labels: []string{"instance"},
 	},
