@@ -14,7 +14,9 @@
 package distsql
 
 import (
+	"fmt"
 	"math"
+	"strings"
 
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/kv"
@@ -38,6 +40,19 @@ type RequestBuilder struct {
 
 // Build builds a "kv.Request".
 func (builder *RequestBuilder) Build() (*kv.Request, error) {
+	if builder.KeyRanges != nil && len(builder.KeyRanges) > 0 {
+		tableID, indexID, _, err := tablecodec.DecodeKeyHead(builder.KeyRanges[0].StartKey)
+		if err == nil && indexID == 1 {
+			str := variable.FollowerReadTables.Load()
+			tableIDs := strings.Split(str, ",")
+			for _, tableIDString := range tableIDs {
+				if tableIDString == fmt.Sprintf("%d", tableID) {
+					builder.Request.ReplicaRead = kv.ReplicaReadFollower
+					break
+				}
+			}
+		}
+	}
 	return &builder.Request, builder.err
 }
 

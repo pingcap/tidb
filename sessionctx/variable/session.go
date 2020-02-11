@@ -1145,6 +1145,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.MetricSchemaStep = tidbOptInt64(val, DefTiDBMetricSchemaStep)
 	case TiDBMetricSchemaRangeDuration:
 		s.MetricSchemaRangeDuration = tidbOptInt64(val, DefTiDBMetricSchemaRangeDuration)
+	case TiDBFollowerReadTables:
+		FollowerReadTables.Store(val)
 	}
 	s.systems[name] = val
 	return nil

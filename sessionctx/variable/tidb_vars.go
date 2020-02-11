@@ -378,6 +378,9 @@ const (
 
 	// TiDBMetricSchemaRangeDuration indicates the range duration when query metric schema.
 	TiDBMetricSchemaRangeDuration = "tidb_metric_query_range_duration"
+
+	// TiDBFollowerReadTables
+	TiDBFollowerReadTables = "tidb_follower_read_tables"
 )
 
 // Default TiDB system variable values.
@@ -491,4 +494,5 @@ var (
 	ExpensiveQueryTimeThreshold    uint64 = DefTiDBExpensiveQueryTimeThreshold
 	MinExpensiveQueryTimeThreshold uint64 = 10 //10s
 	CapturePlanBaseline                   = serverGlobalVariable{globalVal: "0"}
+	FollowerReadTables             atomic.String
 )

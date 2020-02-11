@@ -82,6 +82,8 @@ func checkEnableServerGlobalVar(rows []chunk.Row) {
 			stmtsummary.StmtSummaryByDigestMap.SetHistorySize(sVal, false)
 		case variable.TiDBCapturePlanBaseline:
 			variable.CapturePlanBaseline.Set(sVal, false)
+		case variable.TiDBFollowerReadTables:
+			variable.FollowerReadTables.Store(sVal)
 		}
 	}
 }

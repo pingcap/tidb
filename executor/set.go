@@ -214,6 +214,8 @@ func (e *SetExecutor) setSysVariable(name string, v *expression.VarAssignment) e
 		stmtsummary.StmtSummaryByDigestMap.SetHistorySize(valStr, !v.IsGlobal)
 	case variable.TiDBCapturePlanBaseline:
 		variable.CapturePlanBaseline.Set(valStr, !v.IsGlobal)
+	case variable.TiDBFollowerReadTables:
+		variable.FollowerReadTables.Store(valStr)
 	}
 
 	return nil
