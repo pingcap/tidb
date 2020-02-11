@@ -700,5 +700,5 @@ func (s *testSuite5) TestShowBuiltin(c *C) {
 	rows := res.Rows()
 	c.Assert(265, Equals, len(rows))
 	c.Assert("abs", Equals, rows[0][0].(string))
-	c.Assert("yearweek", Equals, rows[261][0].(string))
+	c.Assert("yearweek", Equals, rows[264][0].(string))
 }
