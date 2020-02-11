@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
+	"net/url"
 	"os"
 	"reflect"
 	"strings"
@@ -33,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	tracing "github.com/uber/jaeger-client-go/config"
 	"go.uber.org/atomic"
+	"go.uber.org/zap"
 )
 
 // Config number limitations
@@ -155,6 +157,16 @@ func (b *nullableBool) UnmarshalText(text []byte) error {
 		return errors.New("Invalid value for bool type: " + str)
 	}
 	return nil
+}
+
+func (b nullableBool) MarshalText() ([]byte, error) {
+	if !b.IsValid {
+		return []byte(""), nil
+	}
+	if b.IsTrue {
+		return []byte("true"), nil
+	}
+	return []byte("false"), nil
 }
 
 func (b *nullableBool) UnmarshalJSON(data []byte) error {
@@ -864,3 +876,28 @@ const (
 	OOMActionCancel = "cancel"
 	OOMActionLog    = "log"
 )
+
+// ParsePath parses this path.
+func ParsePath(path string) (etcdAddrs []string, disableGC bool, err error) {
+	var u *url.URL
+	u, err = url.Parse(path)
+	if err != nil {
+		err = errors.Trace(err)
+		return
+	}
+	if strings.ToLower(u.Scheme) != "tikv" {
+		err = errors.Errorf("Uri scheme expected [tikv] but found [%s]", u.Scheme)
+		logutil.BgLogger().Error("parsePath error", zap.Error(err))
+		return
+	}
+	switch strings.ToLower(u.Query().Get("disableGC")) {
+	case "true":
+		disableGC = true
+	case "false", "":
+	default:
+		err = errors.New("disableGC flag should be true/false")
+		return
+	}
+	etcdAddrs = strings.Split(u.Host, ",")
+	return
+}
