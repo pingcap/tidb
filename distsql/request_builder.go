@@ -16,6 +16,7 @@ package distsql
 import (
 	"fmt"
 	"math"
+	"math/rand"
 	"strings"
 
 	"github.com/pingcap/parser/mysql"
@@ -40,10 +41,10 @@ type RequestBuilder struct {
 
 // Build builds a "kv.Request".
 func (builder *RequestBuilder) Build() (*kv.Request, error) {
-	if builder.KeyRanges != nil && len(builder.KeyRanges) > 0 {
+	str := variable.FollowerReadTables.Load()
+	if len(builder.KeyRanges) > 0 && len(str) > 0 && rand.Intn(3) < 2 {
 		tableID, indexID, _, err := tablecodec.DecodeKeyHead(builder.KeyRanges[0].StartKey)
 		if err == nil && indexID == 1 {
-			str := variable.FollowerReadTables.Load()
 			tableIDs := strings.Split(str, ",")
 			for _, tableIDString := range tableIDs {
 				if tableIDString == fmt.Sprintf("%d", tableID) {
