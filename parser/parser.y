@@ -554,6 +554,7 @@ import (
 	x509                  "X509"
 	enforced              "ENFORCED"
 	nowait                "NOWAIT"
+	instance              "INSTANCE"
 
 	/* The following tokens belong to NotKeywordToken. Notice: make sure these tokens are contained in NotKeywordToken. */
 	addDate               "ADDDATE"
@@ -608,6 +609,7 @@ import (
 	exprPushdownBlacklist "EXPR_PUSHDOWN_BLACKLIST"
 	optRuleBlacklist      "OPT_RULE_BLACKLIST"
 	jsonObjectAgg         "JSON_OBJECTAGG"
+	tls                   "TLS"
 
 	/* The following tokens belong to TiDBKeyword. Notice: make sure these tokens are contained in TiDBKeyword. */
 	admin              "ADMIN"
@@ -729,6 +731,7 @@ import (
 	AlterDatabaseStmt    "Alter database statement"
 	AlterTableStmt       "Alter table statement"
 	AlterUserStmt        "Alter user statement"
+	AlterInstanceStmt    "Alter instance statement"
 	AnalyzeTableStmt     "Analyze table statement"
 	BeginTransactionStmt "BEGIN TRANSACTION statement"
 	BinlogStmt           "Binlog base64 statement"
@@ -866,6 +869,7 @@ import (
 	FieldList                              "field expression list"
 	FieldTerminator                        "Field terminator"
 	FlushOption                            "Flush option"
+	InstanceOption                         "Instance option"
 	FulltextSearchModifierOpt              "Fulltext modifier"
 	PluginNameList                         "Plugin Name List"
 	TableRefsClause                        "Table references clause"
@@ -4866,6 +4870,7 @@ UnReservedKeyword:
 |	"VISIBLE"
 |	"TYPE"
 |	"NOWAIT"
+|	"INSTANCE"
 |	"REPLICA"
 |	"LOCATION"
 |	"LABELS"
@@ -4975,6 +4980,7 @@ NotKeywordToken:
 |	"STRONG"
 |	"FLASHBACK"
 |	"JSON_OBJECTAGG"
+|	"TLS"
 
 /************************************************************************************
  *
@@ -8832,6 +8838,7 @@ Statement:
 |	AlterDatabaseStmt
 |	AlterTableStmt
 |	AlterUserStmt
+|	AlterInstanceStmt
 |	AnalyzeTableStmt
 |	BeginTransactionStmt
 |	BinlogStmt
@@ -10001,6 +10008,28 @@ AlterUserStmt:
 		$$ = &ast.AlterUserStmt{
 			IfExists:    $3.(bool),
 			CurrentAuth: auth,
+		}
+	}
+
+/* See https://dev.mysql.com/doc/refman/8.0/en/alter-instance.html */
+AlterInstanceStmt:
+	"ALTER" "INSTANCE" InstanceOption
+	{
+		$$ = $3.(*ast.AlterInstanceStmt)
+	}
+
+InstanceOption:
+	"RELOAD" "TLS"
+	{
+		$$ = &ast.AlterInstanceStmt{
+			ReloadTLS: true,
+		}
+	}
+|	"RELOAD" "TLS" "NO" "ROLLBACK" "ON" "ERROR"
+	{
+		$$ = &ast.AlterInstanceStmt{
+			ReloadTLS:         true,
+			NoRollbackOnError: true,
 		}
 	}
 

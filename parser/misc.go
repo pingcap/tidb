@@ -704,6 +704,8 @@ var tokenMap = map[string]int{
 	"OPT_RULE_BLACKLIST":       optRuleBlacklist,
 	"NOWAIT":                   nowait,
 	"JSON_OBJECTAGG":           jsonObjectAgg,
+	"TLS":                      tls,
+	"INSTANCE":                 instance,
 }
 
 // See https://dev.mysql.com/doc/refman/5.7/en/function-resolution.html for details
