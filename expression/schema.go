@@ -179,7 +179,7 @@ func MergeSchema(lSchema, rSchema *Schema) *Schema {
 	return ret
 }
 
-// GetUsedList shows each schema is whether used in usedCols.
+// GetUsedList shows whether each column in schema is contained in usedCols.
 func GetUsedList(usedCols []*Column, schema *Schema) []bool {
 	tmpSchema := NewSchema(usedCols...)
 	used := make([]bool, schema.Len())
