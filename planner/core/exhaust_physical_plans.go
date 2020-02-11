@@ -122,7 +122,7 @@ func (p *PhysicalMergeJoin) tryToGetChildReqProp(prop *property.PhysicalProperty
 }
 
 // GetMergeJoin convert the logical join to physical merge join based on the physical property.
-func (p *LogicalJoin) GetMergeJoin(prop *property.PhysicalProperty, schema *expression.Schema) []PhysicalPlan {
+func (p *LogicalJoin) GetMergeJoin(prop *property.PhysicalProperty, schema *expression.Schema, leftStatsInfo *property.StatsInfo, rightStatsInfo *property.StatsInfo) []PhysicalPlan {
 	joins := make([]PhysicalPlan, 0, len(p.leftProperties)+1)
 	// The leftProperties caches all the possible properties that are provided by its children.
 	leftJoinKeys, rightJoinKeys := p.GetJoinKeys()
@@ -159,8 +159,8 @@ func (p *LogicalJoin) GetMergeJoin(prop *property.PhysicalProperty, schema *expr
 			// Adjust expected count for children nodes.
 			if prop.ExpectedCnt < p.stats.RowCount {
 				expCntScale := prop.ExpectedCnt / p.stats.RowCount
-				reqProps[0].ExpectedCnt = p.children[0].statsInfo().RowCount * expCntScale
-				reqProps[1].ExpectedCnt = p.children[1].statsInfo().RowCount * expCntScale
+				reqProps[0].ExpectedCnt = leftStatsInfo.RowCount * expCntScale
+				reqProps[1].ExpectedCnt = rightStatsInfo.RowCount * expCntScale
 			}
 			mergeJoin.childrenReqProps = reqProps
 			_, desc := prop.AllSameOrder()
@@ -1352,7 +1352,7 @@ func (p *LogicalJoin) tryToGetIndexJoin(prop *property.PhysicalProperty) (indexJ
 // If the hint is not matched, it will get other candidates.
 // If the hint is not figured, we will pick all candidates.
 func (p *LogicalJoin) exhaustPhysicalPlans(prop *property.PhysicalProperty) []PhysicalPlan {
-	mergeJoins := p.GetMergeJoin(prop, p.schema)
+	mergeJoins := p.GetMergeJoin(prop, p.schema, p.children[0].statsInfo(), p.children[1].statsInfo())
 	if (p.preferJoinType & preferMergeJoin) > 0 {
 		return mergeJoins
 	}
