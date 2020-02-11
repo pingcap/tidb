@@ -97,19 +97,19 @@
       {
         "SQL": "desc select avg(a) from t",
         "Plan": [
-          "StreamAgg_24 1.00 root funcs:avg(Column#7, Column#8)->Column#4",
-          "└─TableReader_25 1.00 root data:StreamAgg_8",
-          "  └─StreamAgg_8 1.00 cop[tiflash] funcs:count(test.t.a)->Column#7, funcs:sum(test.t.a)->Column#8",
-          "    └─TableScan_22 10000.00 cop[tiflash] table:t, range:[-inf,+inf], keep order:false, stats:pseudo"
+          "StreamAgg_20 1.00 root funcs:avg(col_0, col_1)",
+          "└─TableReader_21 1.00 root data:StreamAgg_8",
+          "  └─StreamAgg_8 1.00 cop[tiflash] funcs:count(test.t.a), sum(test.t.a)",
+          "    └─TableScan_18 10000.00 cop[tiflash] table:t, range:[-inf,+inf], keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
       {
         "SQL": "desc select /*+ read_from_storage(tiflash[t]) */ avg(a) from t",
         "Plan": [
-          "StreamAgg_16 1.00 root funcs:avg(Column#7, Column#8)->Column#4",
+          "StreamAgg_16 1.00 root funcs:avg(col_0, col_1)",
           "└─TableReader_17 1.00 root data:StreamAgg_8",
-          "  └─StreamAgg_8 1.00 cop[tiflash] funcs:count(test.t.a)->Column#7, funcs:sum(test.t.a)->Column#8",
+          "  └─StreamAgg_8 1.00 cop[tiflash] funcs:count(test.t.a), sum(test.t.a)",
           "    └─TableScan_15 10000.00 cop[tiflash] table:t, range:[-inf,+inf], keep order:false, stats:pseudo"
         ],
         "Warn": null
@@ -117,9 +117,9 @@
       {
         "SQL": "desc select /*+ read_from_storage(tiflash[t]) */ sum(a) from t",
         "Plan": [
-          "StreamAgg_16 1.00 root funcs:sum(Column#6)->Column#4",
+          "StreamAgg_16 1.00 root funcs:sum(col_0)",
           "└─TableReader_17 1.00 root data:StreamAgg_8",
-          "  └─StreamAgg_8 1.00 cop[tiflash] funcs:sum(test.t.a)->Column#6",
+          "  └─StreamAgg_8 1.00 cop[tiflash] funcs:sum(test.t.a)",
           "    └─TableScan_15 10000.00 cop[tiflash] table:t, range:[-inf,+inf], keep order:false, stats:pseudo"
         ],
         "Warn": null
@@ -127,9 +127,9 @@
       {
         "SQL": "desc select /*+ read_from_storage(tiflash[t]) */ sum(a+1) from t",
         "Plan": [
-          "StreamAgg_16 1.00 root funcs:sum(Column#6)->Column#4",
+          "StreamAgg_16 1.00 root funcs:sum(col_0)",
           "└─TableReader_17 1.00 root data:StreamAgg_8",
-          "  └─StreamAgg_8 1.00 cop[tiflash] funcs:sum(plus(test.t.a, 1))->Column#6",
+          "  └─StreamAgg_8 1.00 cop[tiflash] funcs:sum(plus(test.t.a, 1))",
           "    └─TableScan_15 10000.00 cop[tiflash] table:t, range:[-inf,+inf], keep order:false, stats:pseudo"
         ],
         "Warn": null
@@ -137,9 +137,9 @@
       {
         "SQL": "desc select /*+ read_from_storage(tiflash[t]) */ sum(isnull(a)) from t",
         "Plan": [
-          "StreamAgg_16 1.00 root funcs:sum(Column#6)->Column#4",
+          "StreamAgg_16 1.00 root funcs:sum(col_0)",
           "└─TableReader_17 1.00 root data:StreamAgg_8",
-          "  └─StreamAgg_8 1.00 cop[tiflash] funcs:sum(isnull(test.t.a))->Column#6",
+          "  └─StreamAgg_8 1.00 cop[tiflash] funcs:sum(isnull(test.t.a))",
           "    └─TableScan_15 10000.00 cop[tiflash] table:t, range:[-inf,+inf], keep order:false, stats:pseudo"
         ],
         "Warn": null
@@ -195,32 +195,32 @@
       {
         "SQL": "desc select /*+ read_from_storage(tikv[t], tiflash[t]) */ avg(a) from t",
         "Plan": [
-          "StreamAgg_20 1.00 root funcs:avg(Column#7, Column#8)->Column#4",
-          "└─IndexReader_21 1.00 root index:StreamAgg_8",
-          "  └─StreamAgg_8 1.00 cop[tikv] funcs:avg(test.t.a)->Column#7",
-          "    └─IndexScan_19 10000.00 cop[tikv] table:t, index:a, range:[NULL,+inf], keep order:false, stats:pseudo"
+          "StreamAgg_16 1.00 root funcs:avg(col_0, col_1)",
+          "└─IndexReader_17 1.00 root index:StreamAgg_8",
+          "  └─StreamAgg_8 1.00 cop[tikv] funcs:avg(test.t.a)",
+          "    └─IndexScan_15 10000.00 cop[tikv] table:t, index:a, range:[NULL,+inf], keep order:false, stats:pseudo"
         ],
         "Warn": [
-          "[planner:1815]Storage hints are conflict, you can only specify one storage type of table test.t"
+          "[planner:1815]Storage hints are conflict, you can only specify one storage type of table t"
         ]
       },
       {
         "SQL": "desc select /*+ read_from_storage(tikv[t]) */ avg(a) from t",
         "Plan": [
-          "StreamAgg_20 1.00 root funcs:avg(Column#7, Column#8)->Column#4",
-          "└─IndexReader_21 1.00 root index:StreamAgg_8",
-          "  └─StreamAgg_8 1.00 cop[tikv] funcs:avg(test.t.a)->Column#7",
-          "    └─IndexScan_19 10000.00 cop[tikv] table:t, index:a, range:[NULL,+inf], keep order:false, stats:pseudo"
+          "StreamAgg_16 1.00 root funcs:avg(col_0, col_1)",
+          "└─IndexReader_17 1.00 root index:StreamAgg_8",
+          "  └─StreamAgg_8 1.00 cop[tikv] funcs:avg(test.t.a)",
+          "    └─IndexScan_15 10000.00 cop[tikv] table:t, index:a, range:[NULL,+inf], keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
       {
         "SQL": "desc select /*+ read_from_storage(tiflash[t]) */ avg(a) from t",
         "Plan": [
-          "StreamAgg_20 1.00 root funcs:avg(Column#7, Column#8)->Column#4",
-          "└─IndexReader_21 1.00 root index:StreamAgg_8",
-          "  └─StreamAgg_8 1.00 cop[tikv] funcs:avg(test.t.a)->Column#7",
-          "    └─IndexScan_19 10000.00 cop[tikv] table:t, index:a, range:[NULL,+inf], keep order:false, stats:pseudo"
+          "StreamAgg_16 1.00 root funcs:avg(col_0, col_1)",
+          "└─IndexReader_17 1.00 root index:StreamAgg_8",
+          "  └─StreamAgg_8 1.00 cop[tikv] funcs:avg(test.t.a)",
+          "    └─IndexScan_15 10000.00 cop[tikv] table:t, index:a, range:[NULL,+inf], keep order:false, stats:pseudo"
         ],
         "Warn": [
           "[planner:1815]No available path for table test.t with the store type tiflash of the hint /*+ read_from_storage */, please check the status of the table replica and variable value of tidb_isolation_read_engines(map[0:{}])"

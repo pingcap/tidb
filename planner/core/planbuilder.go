@@ -44,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/ranger"
+	"github.com/pingcap/tidb/util/set"
 	"go.uber.org/zap"
 )
 
@@ -601,7 +602,7 @@ func (b *PlanBuilder) filterPathByIsolationRead(paths []*accessPath, dbName mode
 		}
 		if _, ok := isolationReadEngines[paths[i].storeType]; !ok {
 			paths = append(paths[:i], paths[i+1:]...)
-		} else if _, ok := cfgIsolationEngines[paths[i].StoreType.Name()]; !ok {
+		} else if _, ok := cfgIsolationEngines[paths[i].storeType.Name()]; !ok {
 			paths = append(paths[:i], paths[i+1:]...)
 		}
 	}
