@@ -1644,9 +1644,19 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (Plan, 
 		proj.SetSchema(schema)
 		proj.SetChildren(np)
 		proj.SetOutputNames(np.OutputNames())
-		return proj, nil
+		np = proj
 	}
-	return p, nil
+	if show.Tp == ast.ShowVariables || show.Tp == ast.ShowStatus {
+		b.curClause = orderByClause
+		sort := LogicalSort{}.Init(b.ctx, b.getSelectOffset())
+		exprs := make([]*ByItems, 0, 1)
+		newCol := np.Schema().Columns[0].Clone().(*expression.Column)
+		exprs = append(exprs, &ByItems{Expr: newCol, Desc: false})
+		sort.ByItems = exprs
+		sort.SetChildren(np)
+		np = sort
+	}
+	return np, nil
 }
 
 func (b *PlanBuilder) buildSimple(node ast.StmtNode) (Plan, error) {
