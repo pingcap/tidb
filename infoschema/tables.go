@@ -1107,6 +1107,7 @@ var tableClusterInfoCols = []columnInfo{
 	{"VERSION", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"GIT_HASH", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"START_TIME", mysql.TypeVarchar, 32, 0, nil, nil},
+	{"UPTIME", mysql.TypeVarchar, 32, 0, nil, nil},
 }
 
 var tableTableTiFlashReplicaCols = []columnInfo{
@@ -2269,13 +2270,15 @@ func dataForTiDBClusterInfo(ctx sessionctx.Context) ([][]types.Datum, error) {
 	}
 	rows := make([][]types.Datum, 0, len(servers))
 	for _, server := range servers {
+		startTime := time.Unix(server.StartTimestamp, 0)
 		row := types.MakeDatums(
 			server.ServerType,
 			server.Address,
 			server.StatusAddr,
 			server.Version,
 			server.GitHash,
-			time.Unix(server.StartTimestamp, 0).Format(time.RFC3339),
+			startTime.Format(time.RFC3339),
+			time.Since(startTime).String(),
 		)
 		rows = append(rows, row)
 	}
