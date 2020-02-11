@@ -372,6 +372,7 @@ var vecBuiltinStringCases = map[string][]vecExprBenchCase{
 	},
 	ast.Lower: {
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString}},
+		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{newSelectStringGener([]string{"one week’s time TEST", "one week's time TEST", "ABC测试DEF", "ABCテストABC"})}},
 	},
 	ast.IsNull: {
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{newRandLenStrGener(10, 20)}},
@@ -379,6 +380,7 @@ var vecBuiltinStringCases = map[string][]vecExprBenchCase{
 	},
 	ast.Upper: {
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString}},
+		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{newSelectStringGener([]string{"one week’s time TEST", "one week's time TEST", "abc测试DeF", "AbCテストAbC"})}},
 	},
 	ast.Right: {
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString, types.ETInt}},

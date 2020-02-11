@@ -58,6 +58,31 @@ func (e *countOriginal4Int) UpdatePartialResult(sctx sessionctx.Context, rowsInG
 	return nil
 }
 
+func (e *countOriginal4Int) Slide(sctx sessionctx.Context, rows []chunk.Row, lastStart, lastEnd uint64, shiftStart, shiftEnd uint64, pr PartialResult) error {
+	p := (*partialResult4Count)(pr)
+	for i := uint64(0); i < shiftStart; i++ {
+		_, isNull, err := e.args[0].EvalInt(sctx, rows[lastStart+i])
+		if err != nil {
+			return err
+		}
+		if isNull {
+			continue
+		}
+		*p--
+	}
+	for i := uint64(0); i < shiftEnd; i++ {
+		_, isNull, err := e.args[0].EvalInt(sctx, rows[lastEnd+i])
+		if err != nil {
+			return err
+		}
+		if isNull {
+			continue
+		}
+		*p++
+	}
+	return nil
+}
+
 type countOriginal4Real struct {
 	baseCount
 }
@@ -77,6 +102,31 @@ func (e *countOriginal4Real) UpdatePartialResult(sctx sessionctx.Context, rowsIn
 		*p++
 	}
 
+	return nil
+}
+
+func (e *countOriginal4Real) Slide(sctx sessionctx.Context, rows []chunk.Row, lastStart, lastEnd uint64, shiftStart, shiftEnd uint64, pr PartialResult) error {
+	p := (*partialResult4Count)(pr)
+	for i := uint64(0); i < shiftStart; i++ {
+		_, isNull, err := e.args[0].EvalReal(sctx, rows[lastStart+i])
+		if err != nil {
+			return err
+		}
+		if isNull {
+			continue
+		}
+		*p--
+	}
+	for i := uint64(0); i < shiftEnd; i++ {
+		_, isNull, err := e.args[0].EvalReal(sctx, rows[lastEnd+i])
+		if err != nil {
+			return err
+		}
+		if isNull {
+			continue
+		}
+		*p++
+	}
 	return nil
 }
 
@@ -102,6 +152,31 @@ func (e *countOriginal4Decimal) UpdatePartialResult(sctx sessionctx.Context, row
 	return nil
 }
 
+func (e *countOriginal4Decimal) Slide(sctx sessionctx.Context, rows []chunk.Row, lastStart, lastEnd uint64, shiftStart, shiftEnd uint64, pr PartialResult) error {
+	p := (*partialResult4Count)(pr)
+	for i := uint64(0); i < shiftStart; i++ {
+		_, isNull, err := e.args[0].EvalDecimal(sctx, rows[lastStart+i])
+		if err != nil {
+			return err
+		}
+		if isNull {
+			continue
+		}
+		*p--
+	}
+	for i := uint64(0); i < shiftEnd; i++ {
+		_, isNull, err := e.args[0].EvalDecimal(sctx, rows[lastEnd+i])
+		if err != nil {
+			return err
+		}
+		if isNull {
+			continue
+		}
+		*p++
+	}
+	return nil
+}
+
 type countOriginal4Time struct {
 	baseCount
 }
@@ -121,6 +196,31 @@ func (e *countOriginal4Time) UpdatePartialResult(sctx sessionctx.Context, rowsIn
 		*p++
 	}
 
+	return nil
+}
+
+func (e *countOriginal4Time) Slide(sctx sessionctx.Context, rows []chunk.Row, lastStart, lastEnd uint64, shiftStart, shiftEnd uint64, pr PartialResult) error {
+	p := (*partialResult4Count)(pr)
+	for i := uint64(0); i < shiftStart; i++ {
+		_, isNull, err := e.args[0].EvalTime(sctx, rows[lastStart+i])
+		if err != nil {
+			return err
+		}
+		if isNull {
+			continue
+		}
+		*p--
+	}
+	for i := uint64(0); i < shiftEnd; i++ {
+		_, isNull, err := e.args[0].EvalTime(sctx, rows[lastEnd+i])
+		if err != nil {
+			return err
+		}
+		if isNull {
+			continue
+		}
+		*p++
+	}
 	return nil
 }
 
@@ -146,6 +246,31 @@ func (e *countOriginal4Duration) UpdatePartialResult(sctx sessionctx.Context, ro
 	return nil
 }
 
+func (e *countOriginal4Duration) Slide(sctx sessionctx.Context, rows []chunk.Row, lastStart, lastEnd uint64, shiftStart, shiftEnd uint64, pr PartialResult) error {
+	p := (*partialResult4Count)(pr)
+	for i := uint64(0); i < shiftStart; i++ {
+		_, isNull, err := e.args[0].EvalDuration(sctx, rows[lastStart+i])
+		if err != nil {
+			return err
+		}
+		if isNull {
+			continue
+		}
+		*p--
+	}
+	for i := uint64(0); i < shiftEnd; i++ {
+		_, isNull, err := e.args[0].EvalDuration(sctx, rows[lastEnd+i])
+		if err != nil {
+			return err
+		}
+		if isNull {
+			continue
+		}
+		*p++
+	}
+	return nil
+}
+
 type countOriginal4JSON struct {
 	baseCount
 }
@@ -168,6 +293,31 @@ func (e *countOriginal4JSON) UpdatePartialResult(sctx sessionctx.Context, rowsIn
 	return nil
 }
 
+func (e *countOriginal4JSON) Slide(sctx sessionctx.Context, rows []chunk.Row, lastStart, lastEnd uint64, shiftStart, shiftEnd uint64, pr PartialResult) error {
+	p := (*partialResult4Count)(pr)
+	for i := uint64(0); i < shiftStart; i++ {
+		_, isNull, err := e.args[0].EvalJSON(sctx, rows[lastStart+i])
+		if err != nil {
+			return err
+		}
+		if isNull {
+			continue
+		}
+		*p--
+	}
+	for i := uint64(0); i < shiftEnd; i++ {
+		_, isNull, err := e.args[0].EvalJSON(sctx, rows[lastEnd+i])
+		if err != nil {
+			return err
+		}
+		if isNull {
+			continue
+		}
+		*p++
+	}
+	return nil
+}
+
 type countOriginal4String struct {
 	baseCount
 }
@@ -187,6 +337,31 @@ func (e *countOriginal4String) UpdatePartialResult(sctx sessionctx.Context, rows
 		*p++
 	}
 
+	return nil
+}
+
+func (e *countOriginal4String) Slide(sctx sessionctx.Context, rows []chunk.Row, lastStart, lastEnd uint64, shiftStart, shiftEnd uint64, pr PartialResult) error {
+	p := (*partialResult4Count)(pr)
+	for i := uint64(0); i < shiftStart; i++ {
+		_, isNull, err := e.args[0].EvalString(sctx, rows[lastStart+i])
+		if err != nil {
+			return err
+		}
+		if isNull {
+			continue
+		}
+		*p--
+	}
+	for i := uint64(0); i < shiftEnd; i++ {
+		_, isNull, err := e.args[0].EvalString(sctx, rows[lastEnd+i])
+		if err != nil {
+			return err
+		}
+		if isNull {
+			continue
+		}
+		*p++
+	}
 	return nil
 }
 
