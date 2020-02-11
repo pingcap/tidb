@@ -240,18 +240,7 @@ func GetHistoryDDLJobs(txn kv.Transaction, maxNumJobs int) ([]*model.Job, error)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-
-	jobsLen := len(jobs)
-	if jobsLen > maxNumJobs {
-		start := jobsLen - maxNumJobs
-		jobs = jobs[start:]
-	}
-	jobsLen = len(jobs)
-	ret := make([]*model.Job, 0, jobsLen)
-	for i := jobsLen - 1; i >= 0; i-- {
-		ret = append(ret, jobs[i])
-	}
-	return ret, nil
+	return jobs, nil
 }
 
 // RecordData is the record data composed of a handle and values.
