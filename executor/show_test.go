@@ -701,20 +701,3 @@ func (s *testSuite5) TestShowBuiltin(c *C) {
 	c.Assert("abs", Equals, rows[0][0].(string))
 	c.Assert("yearweek", Equals, rows[261][0].(string))
 }
-
-func (s *testSuite5) TestShowOrder(c *C) {
-	sqls := []string{
-		"show global status;",
-		"show session status;",
-		"show global variables",
-		"show session variables"}
-	tk := testkit.NewTestKitWithInit(c, s.store)
-
-	for _, sql := range sqls {
-		res := tk.MustQuery(sql)
-		c.Assert(res, NotNil)
-		sorted := tk.MustQuery(sql).Sort()
-		c.Assert(sorted, NotNil)
-		c.Check(res, DeepEquals, sorted)
-	}
-}
