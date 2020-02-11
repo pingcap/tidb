@@ -277,16 +277,11 @@
       {
         "SQL": "select max(a.a) from t a left join t b on a.a = b.a",
         "Plan": [
-          "HashAgg_27 1.00 root funcs:max(test.t.a)->Column#5",
-          "└─TopN_28 1.00 root test.t.a:desc, offset:0, count:1",
-          "  └─MergeJoin_32 1.25 root left outer join, left key:test.t.a, right key:test.t.a",
-          "    ├─Sort_43 1.00 root test.t.a:asc",
-          "    │ └─Limit_34 1.00 root offset:0, count:1",
-          "    │   └─TableReader_39 1.00 root data:Limit_40",
-          "    │     └─Limit_40 1.00 cop[tikv] offset:0, count:1",
-          "    │       └─TableScan_38 1.00 cop[tikv] table:a, range:[-inf,+inf], keep order:true, desc, stats:pseudo",
-          "    └─TableReader_24 10000.00 root data:TableScan_25",
-          "      └─TableScan_25 10000.00 cop[tikv] table:b, range:[-inf,+inf], keep order:true, stats:pseudo"
+          "HashAgg_53 1.00 root funcs:max(test.t.a)->Column#5",
+          "└─Limit_55 1.00 root offset:0, count:1",
+          "  └─TableReader_59 1.00 root data:Limit_60",
+          "    └─Limit_60 1.00 cop[tikv] offset:0, count:1",
+          "      └─TableScan_31 1.00 cop[tikv] table:a, range:[-inf,+inf], keep order:true, desc, stats:pseudo"
         ],
         "Result": [
           "4"
@@ -295,14 +290,12 @@
       {
         "SQL": "select t1.a, max(t1.b) from t as t1 left join (select * from t) as t2 on t1.a = t2.a and t1.b = 3 group by t1.a order by a",
         "Plan": [
-          "Projection_13 8000.00 root test.t.a, Column#5",
-          "└─Sort_29 8000.00 root test.t.a:asc",
-          "  └─HashAgg_15 8000.00 root group by:test.t.a, funcs:max(test.t.b)->Column#5, funcs:firstrow(test.t.a)->test.t.a",
-          "    └─HashLeftJoin_17 12500.00 root left outer join, inner:TableReader_21, equal:[eq(test.t.a, test.t.a)], left cond:[eq(test.t.b, 3)]",
-          "      ├─TableReader_19 10000.00 root data:TableScan_20",
-          "      │ └─TableScan_20 10000.00 cop[tikv] table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
-          "      └─TableReader_21 10000.00 root data:TableScan_22",
-          "        └─TableScan_22 10000.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false, stats:pseudo"
+          "Projection_15 8000.00 root test.t.a, Column#5",
+          "└─Sort_23 8000.00 root test.t.a:asc",
+          "  └─HashAgg_20 8000.00 root group by:test.t.a, funcs:max(Column#6)->Column#5, funcs:firstrow(test.t.a)->test.t.a",
+          "    └─TableReader_21 8000.00 root data:HashAgg_22",
+          "      └─HashAgg_22 8000.00 cop[tikv] group by:test.t.a, funcs:max(test.t.b)->Column#6",
+          "        └─TableScan_19 10000.00 cop[tikv] table:t1, range:[-inf,+inf], keep order:false, stats:pseudo"
         ],
         "Result": [
           "1 11",
@@ -315,14 +308,11 @@
         "SQL": "select t1.a, sum(distinct t1.b) from t as t1 left join (select * from t) as t2 on t1.b = t2.b group by t1.a order by a",
         "Plan": [
           "Projection_13 8000.00 root test.t.a, Column#5",
-          "└─Sort_23 8000.00 root test.t.a:asc",
+          "└─Sort_19 8000.00 root test.t.a:asc",
           "  └─HashAgg_15 8000.00 root group by:Column#8, funcs:sum(distinct Column#6)->Column#5, funcs:firstrow(Column#7)->test.t.a",
-          "    └─Projection_22 12500.00 root cast(test.t.b)->Column#6, test.t.a, test.t.a",
-          "      └─HashLeftJoin_17 12500.00 root left outer join, inner:TableReader_20, equal:[eq(test.t.b, test.t.b)]",
-          "        ├─TableReader_18 10000.00 root data:TableScan_19",
-          "        │ └─TableScan_19 10000.00 cop[tikv] table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
-          "        └─TableReader_20 10000.00 root data:TableScan_21",
-          "          └─TableScan_21 10000.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false, stats:pseudo"
+          "    └─Projection_18 10000.00 root cast(test.t.b)->Column#6, test.t.a, test.t.a",
+          "      └─TableReader_16 10000.00 root data:TableScan_17",
+          "        └─TableScan_17 10000.00 cop[tikv] table:t1, range:[-inf,+inf], keep order:false, stats:pseudo"
         ],
         "Result": [
           "1 11",
@@ -334,14 +324,12 @@
       {
         "SQL": "select t2.a, max(t2.b) from t as t1 right join (select * from t) as t2 on t1.a = t2.a group by t2.a order by a",
         "Plan": [
-          "Projection_13 8000.00 root test.t.a, Column#5",
-          "└─Sort_29 8000.00 root test.t.a:asc",
-          "  └─HashAgg_15 8000.00 root group by:test.t.a, funcs:max(test.t.b)->Column#5, funcs:firstrow(test.t.a)->test.t.a",
-          "    └─MergeJoin_18 12500.00 root right outer join, left key:test.t.a, right key:test.t.a",
-          "      ├─TableReader_23 10000.00 root data:TableScan_24",
-          "      │ └─TableScan_24 10000.00 cop[tikv] table:t1, range:[-inf,+inf], keep order:true, stats:pseudo",
-          "      └─TableReader_26 10000.00 root data:TableScan_27",
-          "        └─TableScan_27 10000.00 cop[tikv] table:t, range:[-inf,+inf], keep order:true, stats:pseudo"
+          "Projection_15 8000.00 root test.t.a, Column#5",
+          "└─Sort_23 8000.00 root test.t.a:asc",
+          "  └─HashAgg_20 8000.00 root group by:test.t.a, funcs:max(Column#6)->Column#5, funcs:firstrow(test.t.a)->test.t.a",
+          "    └─TableReader_21 8000.00 root data:HashAgg_22",
+          "      └─HashAgg_22 8000.00 cop[tikv] group by:test.t.a, funcs:max(test.t.b)->Column#6",
+          "        └─TableScan_19 10000.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false, stats:pseudo"
         ],
         "Result": [
           "1 11",
