@@ -56,12 +56,14 @@ import (
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/plugin"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/arena"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/hack"
@@ -292,6 +294,30 @@ func (cc *clientConn) getSessionVarsWaitTimeout(ctx context.Context) uint64 {
 		return variable.DefWaitTimeout
 	}
 	return waitTimeout
+}
+
+func (cc *clientConn) setSafeModeSessionVars() error {
+	vars := cc.ctx.GetSessionVars()
+	names := []string{
+		variable.TiDBChecksumTableConcurrency,
+		variable.TiDBBuildStatsConcurrency,
+		variable.TiDBDistSQLScanConcurrency,
+		variable.TiDBIndexLookupConcurrency,
+		variable.TiDBIndexLookupJoinConcurrency,
+		variable.TiDBIndexSerialScanConcurrency,
+		variable.TiDBHashJoinConcurrency,
+		variable.TiDBProjectionConcurrency,
+		variable.TiDBHashAggPartialConcurrency,
+		variable.TiDBHashAggFinalConcurrency,
+		variable.TiDBWindowConcurrency,
+	}
+	for _, v := range names {
+		err := variable.SetSessionSystemVar(vars, v, types.NewUintDatum(1))
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 type handshakeResponse41 struct {
@@ -648,6 +674,12 @@ func (cc *clientConn) Run(ctx context.Context) {
 		// close connection when idle time is more than wait_timeout
 		waitTimeout := cc.getSessionVarsWaitTimeout(ctx)
 		cc.pkt.setReadTimeout(time.Duration(waitTimeout) * time.Second)
+		if config.SafeMode.Load() {
+			if err := cc.setSafeModeSessionVars(); err != nil {
+				logutil.Logger(ctx).Info("set safe mode session variables failed, close this connection",
+					zap.Error(err))
+			}
+		}
 		start := time.Now()
 		data, err := cc.readPacket()
 		if err != nil {

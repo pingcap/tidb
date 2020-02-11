@@ -17,6 +17,7 @@ import (
 	"testing"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/config"
 )
 
 var isCoverageServer = "0"
@@ -29,6 +30,29 @@ func TestRunMain(t *testing.T) {
 	}
 }
 
+var _ = Suite(&testMainSuite{})
+
+type testMainSuite struct{}
+
 func TestT(t *testing.T) {
 	TestingT(t)
+}
+
+func (t *testMainSuite) TestSafeMode(c *C) {
+	cfg = config.GetGlobalConfig()
+	setSafeModeConfig()
+	c.Assert(cfg.TokenLimit == 1, IsTrue)
+	c.Assert(cfg.EnableStreaming, IsFalse)
+	c.Assert(cfg.EnableBatchDML, IsFalse)
+	c.Assert(cfg.AlterPrimaryKey, IsFalse)
+	c.Assert(cfg.EnableTableLock, IsFalse)
+	c.Assert(cfg.TxnLocalLatches.Enabled, IsFalse)
+	c.Assert(cfg.Performance.RunAutoAnalyze, IsFalse)
+	c.Assert(cfg.Performance.CrossJoin, IsFalse)
+	c.Assert(cfg.Performance.FeedbackProbability == 0, IsTrue)
+	c.Assert(cfg.Performance.ForcePriority == "HIGH_PRIORITY", IsTrue)
+	c.Assert(cfg.Performance.TxnTotalSizeLimit == config.DefTxnTotalSizeLimit, IsTrue)
+	c.Assert(cfg.PreparedPlanCache.Enabled, IsFalse)
+	c.Assert(cfg.TiKVClient.GrpcConnectionCount == 1, IsTrue)
+	c.Assert(cfg.TiKVClient.StoreLimit == 1, IsTrue)
 }

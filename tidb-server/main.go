@@ -95,6 +95,7 @@ const (
 	nmPluginLoad       = "plugin-load"
 	nmRepairMode       = "repair-mode"
 	nmRepairList       = "repair-list"
+	nmSafeMode         = "safe-mode"
 
 	nmProxyProtocolNetworks      = "proxy-protocol-networks"
 	nmProxyProtocolHeaderTimeout = "proxy-protocol-header-timeout"
@@ -124,6 +125,7 @@ var (
 	affinityCPU      = flag.String(nmAffinityCPU, "", "affinity cpu (cpu-no. separated by comma, e.g. 1,2,3)")
 	repairMode       = flagBoolean(nmRepairMode, false, "enable admin repair mode")
 	repairList       = flag.String(nmRepairList, "", "admin repair table list")
+	safeMode         = flagBoolean(nmSafeMode, false, "enable safe mode")
 
 	// Log
 	logLevel     = flag.String(nmLogLevel, "info", "log level: info, debug, warn, error, fatal")
@@ -167,6 +169,10 @@ func main() {
 	if *configCheck {
 		fmt.Println("config check successful")
 		os.Exit(0)
+	}
+	if *safeMode {
+		config.SafeMode.Store(true)
+		setSafeModeConfig()
 	}
 	setGlobalVars()
 	setCPUAffinity()
@@ -523,6 +529,26 @@ func overrideConfig() {
 	if actualFlags[nmProxyProtocolHeaderTimeout] {
 		cfg.ProxyProtocol.HeaderTimeout = *proxyProtocolHeaderTimeout
 	}
+}
+
+func setSafeModeConfig() {
+	if cfg.Store != "mocktikv" {
+		cfg.RunDDL = false
+	}
+	cfg.TokenLimit = 1
+	cfg.EnableStreaming = false
+	cfg.EnableBatchDML = false
+	cfg.AlterPrimaryKey = false
+	cfg.EnableTableLock = false
+	cfg.TxnLocalLatches.Enabled = false
+	cfg.Performance.RunAutoAnalyze = false
+	cfg.Performance.CrossJoin = false
+	cfg.Performance.FeedbackProbability = 0
+	cfg.Performance.ForcePriority = "HIGH_PRIORITY"
+	cfg.Performance.TxnTotalSizeLimit = config.DefTxnTotalSizeLimit
+	cfg.PreparedPlanCache.Enabled = false
+	cfg.TiKVClient.GrpcConnectionCount = 1
+	cfg.TiKVClient.StoreLimit = 1
 }
 
 func setGlobalVars() {

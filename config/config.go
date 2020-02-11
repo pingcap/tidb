@@ -54,6 +54,7 @@ var (
 	CheckTableBeforeDrop = false
 	// checkBeforeDropLDFlag is a go build flag.
 	checkBeforeDropLDFlag = "None"
+	SafeMode              = atomic.NewBool(false)
 )
 
 // Config contains configuration options.
@@ -653,6 +654,9 @@ func StoreGlobalConfig(config *Config) {
 
 // ReloadGlobalConfig reloads global configuration for this server.
 func ReloadGlobalConfig() error {
+	if SafeMode.Load() {
+		return errors.New("cannot reload config in safe mode")
+	}
 	confReloadLock.Lock()
 	defer confReloadLock.Unlock()
 

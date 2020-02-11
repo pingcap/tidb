@@ -363,6 +363,34 @@ func (ts *ConnTestSuite) testGetSessionVarsWaitTimeout(c *C) {
 	c.Assert(cc.getSessionVarsWaitTimeout(context.Background()), Equals, 28800)
 }
 
+func (ts *ConnTestSuite) TestSafeMode(c *C) {
+	c.Parallel()
+	se, err := session.CreateSession4Test(ts.store)
+	c.Assert(err, IsNil)
+	tc := &TiDBContext{
+		session: se,
+		stmts:   make(map[int]*TiDBStatement),
+	}
+	cc := &clientConn{
+		connectionID: 1,
+		server: &Server{
+			capability: defaultCapability,
+		},
+		ctx: tc,
+	}
+	c.Assert(cc.setSafeModeSessionVars(), IsNil)
+	conVars := se.GetSessionVars().Concurrency
+	c.Assert(conVars.DistSQLScanConcurrency == 1, IsTrue)
+	c.Assert(conVars.HashAggFinalConcurrency == 1, IsTrue)
+	c.Assert(conVars.HashAggPartialConcurrency == 1, IsTrue)
+	c.Assert(conVars.DistSQLScanConcurrency == 1, IsTrue)
+	c.Assert(conVars.IndexLookupConcurrency == 1, IsTrue)
+	c.Assert(conVars.IndexLookupJoinConcurrency == 1, IsTrue)
+	c.Assert(conVars.IndexSerialScanConcurrency == 1, IsTrue)
+	c.Assert(conVars.ProjectionConcurrency == 1, IsTrue)
+	c.Assert(conVars.WindowConcurrency == 1, IsTrue)
+}
+
 func mapIdentical(m1, m2 map[string]string) bool {
 	return mapBelong(m1, m2) && mapBelong(m2, m1)
 }
