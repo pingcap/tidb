@@ -213,9 +213,7 @@ const rangesPerTask = 25000
 
 func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, req *kv.Request) ([]*copTask, error) {
 	start := time.Now()
-	rangesLen := ranges.len()
-
-	tasksCh := make(chan *copTask, 2048)
+	tasksCh := make(chan *copTask)
 
 	errCh, err := buildCopTasksChan(bo, cache, ranges, req, tasksCh, nil)
 	if err != nil {
@@ -237,7 +235,7 @@ func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, req *kv
 	if elapsed := time.Since(start); elapsed > time.Millisecond*500 {
 		logutil.BgLogger().Warn("buildCopTasks takes too much time",
 			zap.Duration("elapsed", elapsed),
-			zap.Int("range len", rangesLen),
+			zap.Int("range len", ranges.len()),
 			zap.Int("task len", len(tasks)))
 	}
 	tikvTxnRegionsNumHistogramWithCoprocessor.Observe(float64(len(tasks)))
