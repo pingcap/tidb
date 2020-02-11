@@ -520,8 +520,9 @@ type copIteratorWorker struct {
 
 // copIteratorTaskSender sends tasks to taskCh then wait for the workers to exit.
 type copIteratorTaskSender struct {
-	// newTaskCh is a channel with tasks we need to process
-	newTaskCh <-chan *copTask
+	// tasksFromBuilderCh is a channel with tasks we need to process
+	// filled from buildCopTasksChan
+	tasksFromBuilderCh <-chan *copTask
 	// taskCh is a channel with tasks for a worker
 	taskCh   chan<- *copTask
 	wg       *sync.WaitGroup
@@ -644,13 +645,13 @@ func (it *copIterator) open(ctx context.Context) error {
 		return err
 	}
 	taskSender := &copIteratorTaskSender{
-		newTaskCh:      newTaskCh,
-		taskCh:         taskCh,
-		wg:             &it.wg,
-		finishCh:       it.finishCh,
-		sendRate:       it.sendRate,
-		respChan:       it.respChan,
-		orderedTasksCh: it.tasks,
+		tasksFromBuilderCh: newTaskCh,
+		taskCh:             taskCh,
+		wg:                 &it.wg,
+		finishCh:           it.finishCh,
+		sendRate:           it.sendRate,
+		respChan:           it.respChan,
+		orderedTasksCh:     it.tasks,
 	}
 	go taskSender.run()
 	return nil
@@ -658,7 +659,7 @@ func (it *copIterator) open(ctx context.Context) error {
 
 func (sender *copIteratorTaskSender) run() {
 	// Send tasks to feed the worker goroutines.
-	for t := range sender.newTaskCh {
+	for t := range sender.tasksFromBuilderCh {
 		// If keepOrder, we must control the sending rate to prevent all tasks
 		// being done (aka. all of the responses are buffered) by copIteratorWorker.
 		// We keep the number of inflight tasks within the number of concurrency * 2.
