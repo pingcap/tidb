@@ -1150,7 +1150,9 @@ var tableMetricSummaryCols = []columnInfo{
 	{"AVG_VALUE", mysql.TypeDouble, 22, 0, nil, nil},
 	{"MIN_VALUE", mysql.TypeDouble, 22, 0, nil, nil},
 	{"MAX_VALUE", mysql.TypeDouble, 22, 0, nil, nil},
+	{"COMMENT", mysql.TypeVarchar, 256, 0, nil, nil},
 }
+
 var tableMetricSummaryByLabelCols = []columnInfo{
 	{"METRIC_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"LABEL", mysql.TypeVarchar, 64, 0, nil, nil},
@@ -1159,6 +1161,7 @@ var tableMetricSummaryByLabelCols = []columnInfo{
 	{"AVG_VALUE", mysql.TypeDouble, 22, 0, nil, nil},
 	{"MIN_VALUE", mysql.TypeDouble, 22, 0, nil, nil},
 	{"MAX_VALUE", mysql.TypeDouble, 22, 0, nil, nil},
+	{"COMMENT", mysql.TypeVarchar, 256, 0, nil, nil},
 }
 
 func dataForSchemata(ctx sessionctx.Context, schemas []*model.DBInfo) [][]types.Datum {
