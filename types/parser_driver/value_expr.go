@@ -106,8 +106,12 @@ func (n *ValueExpr) Restore(ctx *format.RestoreCtx) error {
 		} else {
 			ctx.WritePlain(n.GetBinaryLiteral().ToBitLiteralString(true))
 		}
-	case types.KindMysqlDuration, types.KindMysqlEnum,
-		types.KindMysqlBit, types.KindMysqlSet, types.KindMysqlTime,
+	case types.KindMysqlDuration:
+		ctx.WritePlainf("'%s'", n.GetMysqlDuration())
+	case types.KindMysqlTime:
+		ctx.WritePlainf("'%s'", n.GetMysqlTime())
+	case types.KindMysqlEnum,
+		types.KindMysqlBit, types.KindMysqlSet,
 		types.KindInterface, types.KindMinNotNull, types.KindMaxValue,
 		types.KindRaw, types.KindMysqlJSON:
 		// TODO implement Restore function

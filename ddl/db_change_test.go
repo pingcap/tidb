@@ -773,6 +773,16 @@ func (s *testStateChangeSuite) TestParallelAlterAddIndex(c *C) {
 	s.testControlParallelExecSQL(c, sql1, sql2, f)
 }
 
+func (s *testStateChangeSuite) TestParallelAlterAddExpressionIndex(c *C) {
+	sql1 := "ALTER TABLE t add index expr_index_b((b+1));"
+	sql2 := "CREATE INDEX expr_index_b ON t ((c+1));"
+	f := func(c *C, err1, err2 error) {
+		c.Assert(err1, IsNil)
+		c.Assert(err2.Error(), Equals, "[ddl:1061]index already exist expr_index_b")
+	}
+	s.testControlParallelExecSQL(c, sql1, sql2, f)
+}
+
 func (s *testStateChangeSuite) TestParallelAddPrimaryKey(c *C) {
 	sql1 := "ALTER TABLE t add primary key index_b(b);"
 	sql2 := "ALTER TABLE t add primary key index_b(c);"
@@ -1183,8 +1193,7 @@ func (s *serialTestStateChangeSuite) TestParallelFlashbackTable(c *C) {
 	tk.MustExec("create table t (a int);")
 	tk.MustExec("drop table if exists t")
 	// Test parallel flashback table.
-	ts := getDDLJobStartTime(tk, "test_db_state", "t")
-	sql1 := fmt.Sprintf("flashback table t until timestamp '%v' to t_flashback", ts)
+	sql1 := "flashback table t to t_flashback"
 	f := func(c *C, err1, err2 error) {
 		c.Assert(err1, IsNil)
 		c.Assert(err2, NotNil)
@@ -1192,15 +1201,4 @@ func (s *serialTestStateChangeSuite) TestParallelFlashbackTable(c *C) {
 
 	}
 	s.testControlParallelExecSQL(c, sql1, sql1, f)
-}
-
-func getDDLJobStartTime(tk *testkit.TestKit, dbName, tblName string) string {
-	re := tk.MustQuery("admin show ddl jobs 100")
-	rows := re.Rows()
-	for _, row := range rows {
-		if row[1] == dbName && row[2] == tblName && (row[3] == "drop table" || row[3] == "truncate table") {
-			return row[8].(string)
-		}
-	}
-	return ""
 }

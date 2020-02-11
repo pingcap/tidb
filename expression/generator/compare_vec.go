@@ -284,9 +284,9 @@ var builtinCoalesceCompareVecTestFunc = template.Must(template.New("").Parse(`
 	retEvalType: types.ET{{ .ETName }},
 	childrenTypes: []types.EvalType{types.ET{{ .ETName }}, types.ET{{ .ETName }}, types.ET{{ .ETName }}},
 	geners: []dataGenerator{
-		gener{defaultGener{eType: types.ET{{ .ETName }}, nullRation: 0.2}},
-		gener{defaultGener{eType: types.ET{{ .ETName }}, nullRation: 0.2}},
-		gener{defaultGener{eType: types.ET{{ .ETName }}, nullRation: 0.2}},
+		gener{*newDefaultGener(0.2, types.ET{{ .ETName }})},
+		gener{*newDefaultGener(0.2, types.ET{{ .ETName }})},
+		gener{*newDefaultGener(0.2, types.ET{{ .ETName }})},
 	},
 },
 

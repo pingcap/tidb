@@ -155,7 +155,7 @@ func (col *CorrelatedColumn) IsCorrelated() bool {
 }
 
 // ConstItem implements Expression interface.
-func (col *CorrelatedColumn) ConstItem() bool {
+func (col *CorrelatedColumn) ConstItem(_ *stmtctx.StatementContext) bool {
 	return false
 }
 
@@ -190,14 +190,15 @@ type Column struct {
 
 	hashcode []byte
 
-	// InOperand indicates whether this column is the inner operand of column equal condition converted
-	// from `[not] in (subq)`.
-	InOperand bool
 	// VirtualExpr is used to save expression for virtual column
 	VirtualExpr Expression
 
 	OrigName string
 	IsHidden bool
+
+	// InOperand indicates whether this column is the inner operand of column equal condition converted
+	// from `[not] in (subq)`.
+	InOperand bool
 }
 
 // Equal implements Expression interface.
@@ -425,7 +426,7 @@ func (col *Column) IsCorrelated() bool {
 }
 
 // ConstItem implements Expression interface.
-func (col *Column) ConstItem() bool {
+func (col *Column) ConstItem(_ *stmtctx.StatementContext) bool {
 	return false
 }
 

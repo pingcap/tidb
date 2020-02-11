@@ -43,7 +43,11 @@ func Round(f float64, dec int) float64 {
 	if math.IsInf(tmp, 0) {
 		return f
 	}
-	return RoundFloat(tmp) / shift
+	result := RoundFloat(tmp) / shift
+	if math.IsNaN(result) {
+		return 0
+	}
+	return result
 }
 
 // Truncate truncates the argument f to dec decimal places.

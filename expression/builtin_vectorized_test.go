@@ -112,7 +112,7 @@ func (s *testEvaluatorSuite) TestMockVecPlusInt(c *C) {
 	}
 }
 
-func (s *testEvaluatorSuite) TestMockVecPlusIntParallel(c *C) {
+func (s *testVectorizeSuite2) TestMockVecPlusIntParallel(c *C) {
 	plus, input, buf := genMockVecPlusIntBuiltinFunc()
 	plus.enableAlloc = true // it's concurrency-safe if enableAlloc is true
 	var wg sync.WaitGroup

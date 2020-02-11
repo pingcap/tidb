@@ -24,13 +24,14 @@ import (
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/planner/cascades"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
-	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/logutil"
 )
 
@@ -47,6 +48,15 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 
 	sctx.PrepareTSFuture(ctx)
 
+	tableHints := extractTableHintsFromStmtNode(node)
+	stmtHints, warns := handleStmtHints(tableHints)
+	defer func() {
+		sctx.GetSessionVars().StmtCtx.StmtHints = stmtHints
+		for _, warn := range warns {
+			sctx.GetSessionVars().StmtCtx.AppendWarning(warn)
+		}
+	}()
+	sctx.GetSessionVars().StmtCtx.StmtHints = stmtHints
 	bestPlan, names, _, err := optimize(ctx, sctx, node, is)
 	if err != nil {
 		return nil, nil, err
@@ -66,6 +76,9 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	binding := bindRecord.FindBinding(bestPlanHint)
 	// If the best bestPlan is in baselines, just use it.
 	if binding != nil && binding.Status == bindinfo.Using {
+		if sctx.GetSessionVars().UsePlanBaselines {
+			stmtHints, warns = handleStmtHints(binding.Hint.GetFirstTableHints())
+		}
 		return bestPlan, names, nil
 	}
 	bestCostAmongHints := math.MaxFloat64
@@ -78,6 +91,8 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 		}
 		metrics.BindUsageCounter.WithLabelValues(scope).Inc()
 		bindinfo.BindHint(stmtNode, binding.Hint)
+		curStmtHints, curWarns := handleStmtHints(binding.Hint.GetFirstTableHints())
+		sctx.GetSessionVars().StmtCtx.StmtHints = curStmtHints
 		plan, _, cost, err := optimize(ctx, sctx, node, is)
 		if err != nil {
 			binding.Status = bindinfo.Invalid
@@ -89,6 +104,9 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 			continue
 		}
 		if cost < bestCostAmongHints {
+			if sctx.GetSessionVars().UsePlanBaselines {
+				stmtHints, warns = curStmtHints, curWarns
+			}
 			bestCostAmongHints = cost
 			bestPlanAmongHints = plan
 		}
@@ -228,22 +246,6 @@ func handleEvolveTasks(ctx context.Context, sctx sessionctx.Context, br *bindinf
 	globalHandle.AddEvolvePlanTask(br.OriginalSQL, br.Db, binding, planHint)
 }
 
-type paramMarkerChecker struct {
-	hasParamMarker bool
-}
-
-func (e *paramMarkerChecker) Enter(in ast.Node) (ast.Node, bool) {
-	if _, ok := in.(*driver.ParamMarkerExpr); ok {
-		e.hasParamMarker = true
-		return in, true
-	}
-	return in, false
-}
-
-func (e *paramMarkerChecker) Leave(in ast.Node) (ast.Node, bool) {
-	return in, true
-}
-
 // isPointGetWithoutDoubleRead returns true when meets following conditions:
 //  1. ctx is auto commit tagged.
 //  2. plan is point get by pk.
@@ -273,6 +275,102 @@ func OptimizeExecStmt(ctx context.Context, sctx sessionctx.Context,
 	}
 	err = errors.Errorf("invalid result plan type, should be Execute")
 	return nil, err
+}
+
+func extractTableHintsFromStmtNode(node ast.Node) []*ast.TableOptimizerHint {
+	switch x := node.(type) {
+	case *ast.SelectStmt:
+		return x.TableHints
+	case *ast.UpdateStmt:
+		return x.TableHints
+	case *ast.DeleteStmt:
+		return x.TableHints
+	// TODO: support hint for InsertStmt
+	case *ast.ExplainStmt:
+		return extractTableHintsFromStmtNode(x.Stmt)
+	default:
+		return nil
+	}
+}
+
+func handleStmtHints(hints []*ast.TableOptimizerHint) (stmtHints stmtctx.StmtHints, warns []error) {
+	if len(hints) == 0 {
+		return
+	}
+	var memoryQuotaHint, useToJAHint, maxExecutionTime *ast.TableOptimizerHint
+	var memoryQuotaHintCnt, useToJAHintCnt, noIndexMergeHintCnt, readReplicaHintCnt, maxExecutionTimeCnt int
+	for _, hint := range hints {
+		switch hint.HintName.L {
+		case "memory_quota":
+			memoryQuotaHint = hint
+			memoryQuotaHintCnt++
+		case "use_toja":
+			useToJAHint = hint
+			useToJAHintCnt++
+		case "no_index_merge":
+			noIndexMergeHintCnt++
+		case "read_consistent_replica":
+			readReplicaHintCnt++
+		case "max_execution_time":
+			maxExecutionTimeCnt++
+			maxExecutionTime = hint
+		}
+	}
+	// Handle MEMORY_QUOTA
+	if memoryQuotaHintCnt != 0 {
+		if memoryQuotaHintCnt > 1 {
+			warn := errors.New("There are multiple MEMORY_QUOTA hints, only the last one will take effect")
+			warns = append(warns, warn)
+		}
+		// Executor use MemoryQuota <= 0 to indicate no memory limit, here use < 0 to handle hint syntax error.
+		if memoryQuotaHint.MemoryQuota < 0 {
+			warn := errors.New("The use of MEMORY_QUOTA hint is invalid, valid usage: MEMORY_QUOTA(10 MB) or MEMORY_QUOTA(10 GB)")
+			warns = append(warns, warn)
+		} else {
+			stmtHints.HasMemQuotaHint = true
+			stmtHints.MemQuotaQuery = memoryQuotaHint.MemoryQuota
+			if memoryQuotaHint.MemoryQuota == 0 {
+				warn := errors.New("Setting the MEMORY_QUOTA to 0 means no memory limit")
+				warns = append(warns, warn)
+			}
+		}
+	}
+	// Handle USE_TOJA
+	if useToJAHintCnt != 0 {
+		if useToJAHintCnt > 1 {
+			warn := errors.New("There are multiple USE_TOJA hints, only the last one will take effect")
+			warns = append(warns, warn)
+		}
+		stmtHints.HasAllowInSubqToJoinAndAggHint = true
+		stmtHints.AllowInSubqToJoinAndAgg = useToJAHint.HintFlag
+	}
+	// Handle NO_INDEX_MERGE
+	if noIndexMergeHintCnt != 0 {
+		if noIndexMergeHintCnt > 1 {
+			warn := errors.New("There are multiple NO_INDEX_MERGE hints, only the last one will take effect")
+			warns = append(warns, warn)
+		}
+		stmtHints.NoIndexMergeHint = true
+	}
+	// Handle READ_CONSISTENT_REPLICA
+	if readReplicaHintCnt != 0 {
+		if readReplicaHintCnt > 1 {
+			warn := errors.New("There are multiple READ_CONSISTENT_REPLICA hints, only the last one will take effect")
+			warns = append(warns, warn)
+		}
+		stmtHints.HasReplicaReadHint = true
+		stmtHints.ReplicaRead = byte(kv.ReplicaReadFollower)
+	}
+	// Handle MAX_EXECUTION_TIME
+	if maxExecutionTimeCnt != 0 {
+		if maxExecutionTimeCnt > 1 {
+			warn := errors.New("There are multiple MAX_EXECUTION_TIME hints, only the last one will take effect")
+			warns = append(warns, warn)
+		}
+		stmtHints.HasMaxExecutionTime = true
+		stmtHints.MaxExecutionTime = maxExecutionTime.MaxExecutionTime
+	}
+	return
 }
 
 func init() {

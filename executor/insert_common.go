@@ -716,23 +716,23 @@ func (e *InsertValues) lazyAdjustAutoIncrementDatum(ctx context.Context, rows []
 				i++
 				cnt++
 			}
-			// Alloc batch N consecutive (min, max] autoIDs.
-			// max value can be derived from adding one for cnt times.
-			min, _, err := table.AllocBatchAutoIncrementValue(ctx, e.Table, e.ctx, cnt)
+			// AllocBatchAutoIncrementValue allocates batch N consecutive autoIDs.
+			// The max value can be derived from adding the increment value to min for cnt-1 times.
+			min, increment, err := table.AllocBatchAutoIncrementValue(ctx, e.Table, e.ctx, cnt)
 			if e.handleErr(col, &autoDatum, cnt, err) != nil {
 				return nil, err
 			}
 			// It's compatible with mysql setting the first allocated autoID to lastInsertID.
 			// Cause autoID may be specified by user, judge only the first row is not suitable.
 			if e.lastInsertID == 0 {
-				e.lastInsertID = uint64(min) + 1
+				e.lastInsertID = uint64(min)
 			}
 			// Assign autoIDs to rows.
 			for j := 0; j < cnt; j++ {
 				offset := j + start
 				d := rows[offset][colIdx]
 
-				id := int64(uint64(min) + uint64(j) + 1)
+				id := int64(uint64(min) + uint64(j)*uint64(increment))
 				d.SetAutoID(id, col.Flag)
 				retryInfo.AddAutoIncrementID(id)
 
@@ -871,7 +871,7 @@ func (e *InsertValues) adjustAutoRandomDatum(ctx context.Context, d types.Datum,
 func (e *InsertValues) allocAutoRandomID(fieldType *types.FieldType) (int64, error) {
 	alloc := e.Table.Allocator(e.ctx, autoid.AutoRandomType)
 	tableInfo := e.Table.Meta()
-	_, autoRandomID, err := alloc.Alloc(tableInfo.ID, 1)
+	_, autoRandomID, err := alloc.Alloc(tableInfo.ID, 1, 1, 1)
 	if err != nil {
 		return 0, err
 	}

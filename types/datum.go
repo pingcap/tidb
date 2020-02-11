@@ -1720,9 +1720,15 @@ func NewTimeDatum(t Time) (d Datum) {
 	return d
 }
 
-// NewDecimalDatum creates a new Datum form a MyDecimal value.
+// NewDecimalDatum creates a new Datum from a MyDecimal value.
 func NewDecimalDatum(dec *MyDecimal) (d Datum) {
 	d.SetMysqlDecimal(dec)
+	return d
+}
+
+// NewJSONDatum creates a new Datum from a BinaryJSON value
+func NewJSONDatum(j json.BinaryJSON) (d Datum) {
+	d.SetMysqlJSON(j)
 	return d
 }
 
@@ -1741,6 +1747,12 @@ func NewMysqlBitDatum(b BinaryLiteral) (d Datum) {
 // NewMysqlEnumDatum creates a new MysqlEnum Datum for a Enum value.
 func NewMysqlEnumDatum(e Enum) (d Datum) {
 	d.SetMysqlEnum(e)
+	return d
+}
+
+// NewMysqlSetDatum creates a new MysqlSet Datum for a Enum value.
+func NewMysqlSetDatum(e Set) (d Datum) {
+	d.SetMysqlSet(e)
 	return d
 }
 

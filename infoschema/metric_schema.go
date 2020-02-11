@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package metricschema
+package infoschema
 
 import (
 	"bytes"
@@ -21,8 +21,12 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/set"
 )
 
@@ -32,35 +36,46 @@ const (
 	promQRangeDurationKey   = "$RANGE_DURATION"
 )
 
+func init() {
+	// Initialize the metric schema database and register the driver to `drivers`.
+	dbID := autoid.MetricSchemaDBID
+	tableID := dbID + 1
+	metricTables := make([]*model.TableInfo, 0, len(MetricTableMap))
+	for name, def := range MetricTableMap {
+		cols := def.genColumnInfos()
+		tableInfo := buildTableMeta(name, cols)
+		tableInfo.ID = tableID
+		tableInfo.Comment = def.Comment
+		tableID++
+		metricTables = append(metricTables, tableInfo)
+	}
+	dbInfo := &model.DBInfo{
+		ID:      dbID,
+		Name:    model.NewCIStr(util.MetricSchemaName.O),
+		Charset: mysql.DefaultCharset,
+		Collate: mysql.DefaultCollationName,
+		Tables:  metricTables,
+	}
+	RegisterVirtualTable(dbInfo, tableFromMeta)
+}
+
 // MetricTableDef is the metric table define.
 type MetricTableDef struct {
 	PromQL   string
 	Labels   []string
 	Quantile float64
-}
-
-// TODO: read from system table.
-var metricTableMap = map[string]MetricTableDef{
-	"query_duration": {
-		PromQL:   `histogram_quantile($QUANTILE, sum(rate(tidb_server_handle_query_duration_seconds_bucket{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (le))`,
-		Labels:   []string{"instance", "sql_type"},
-		Quantile: 0.90,
-	},
-	"up": {
-		PromQL: `up{$LABEL_CONDITIONS}`,
-		Labels: []string{"instance", "job"},
-	},
+	Comment  string
 }
 
 // IsMetricTable uses to checks whether the table is a metric table.
 func IsMetricTable(lowerTableName string) bool {
-	_, ok := metricTableMap[lowerTableName]
+	_, ok := MetricTableMap[lowerTableName]
 	return ok
 }
 
 // GetMetricTableDef gets the metric table define.
 func GetMetricTableDef(lowerTableName string) (*MetricTableDef, error) {
-	def, ok := metricTableMap[lowerTableName]
+	def, ok := MetricTableMap[lowerTableName]
 	if !ok {
 		return nil, errors.Errorf("can not find metric table: %v", lowerTableName)
 	}
@@ -70,7 +85,6 @@ func GetMetricTableDef(lowerTableName string) (*MetricTableDef, error) {
 func (def *MetricTableDef) genColumnInfos() []columnInfo {
 	cols := []columnInfo{
 		{"time", mysql.TypeDatetime, 19, 0, "CURRENT_TIMESTAMP", nil},
-		{"value", mysql.TypeDouble, 22, 0, nil, nil},
 	}
 	for _, label := range def.Labels {
 		cols = append(cols, columnInfo{label, mysql.TypeVarchar, 512, 0, nil, nil})
@@ -79,6 +93,7 @@ func (def *MetricTableDef) genColumnInfos() []columnInfo {
 		defaultValue := strconv.FormatFloat(def.Quantile, 'f', -1, 64)
 		cols = append(cols, columnInfo{"quantile", mysql.TypeDouble, 22, 0, defaultValue, nil})
 	}
+	cols = append(cols, columnInfo{"value", mysql.TypeDouble, 22, 0, nil, nil})
 	return cols
 }
 
@@ -131,11 +146,23 @@ func GenLabelConditionValues(values set.StringSet) string {
 	return strings.Join(vs, "|")
 }
 
-type columnInfo struct {
-	name  string
-	tp    byte
-	size  int
-	flag  uint
-	deflt interface{}
-	elems []string
+// metricSchemaTable stands for the fake table all its data is in the memory.
+type metricSchemaTable struct {
+	infoschemaTable
+}
+
+func tableFromMeta(alloc autoid.Allocators, meta *model.TableInfo) (table.Table, error) {
+	columns := make([]*table.Column, 0, len(meta.Columns))
+	for _, colInfo := range meta.Columns {
+		col := table.ToColumn(colInfo)
+		columns = append(columns, col)
+	}
+	t := &metricSchemaTable{
+		infoschemaTable: infoschemaTable{
+			meta: meta,
+			cols: columns,
+			tp:   table.VirtualTable,
+		},
+	}
+	return t, nil
 }

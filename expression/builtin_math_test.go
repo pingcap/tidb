@@ -15,7 +15,6 @@ package expression
 
 import (
 	"math"
-	"math/rand"
 	"runtime"
 	"time"
 
@@ -357,11 +356,11 @@ func (s *testEvaluatorSuite) TestRand(c *C) {
 	// issue 3211
 	f2, err := fc.getFunction(s.ctx, []Expression{&Constant{Value: types.NewIntDatum(20160101), RetType: types.NewFieldType(mysql.TypeLonglong)}})
 	c.Assert(err, IsNil)
-	randGen := rand.New(rand.NewSource(20160101))
+	randGen := NewWithSeed(20160101)
 	for i := 0; i < 3; i++ {
 		v, err = evalBuiltinFunc(f2, chunk.Row{})
 		c.Assert(err, IsNil)
-		c.Assert(v.GetFloat64(), Equals, randGen.Float64())
+		c.Assert(v.GetFloat64(), Equals, randGen.Gen())
 	}
 }
 
@@ -426,6 +425,8 @@ func (s *testEvaluatorSuite) TestRound(c *C) {
 		{[]interface{}{newDec("1.58"), 1}, newDec("1.6")},
 		{[]interface{}{newDec("23.298"), -1}, newDec("20")},
 		{[]interface{}{nil, 2}, nil},
+		{[]interface{}{1, -2012}, 0},
+		{[]interface{}{1, -201299999999999}, 0},
 	}
 
 	Dtbl := tblToDtbl(tbl)

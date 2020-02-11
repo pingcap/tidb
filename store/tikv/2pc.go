@@ -613,7 +613,7 @@ func (tm *ttlManager) close() {
 
 func (tm *ttlManager) keepAlive(c *twoPhaseCommitter) {
 	// Ticker is set to 1/2 of the ManagedLockTTL.
-	ticker := time.NewTicker(time.Duration(ManagedLockTTL) * time.Millisecond / 2)
+	ticker := time.NewTicker(time.Duration(atomic.LoadUint64(&ManagedLockTTL)) * time.Millisecond / 2)
 	defer ticker.Stop()
 	for {
 		select {
@@ -647,7 +647,7 @@ func (tm *ttlManager) keepAlive(c *twoPhaseCommitter) {
 				return
 			}
 
-			newTTL := uptime + ManagedLockTTL
+			newTTL := uptime + atomic.LoadUint64(&ManagedLockTTL)
 			logutil.BgLogger().Info("send TxnHeartBeat",
 				zap.Uint64("startTS", c.startTS), zap.Uint64("newTTL", newTTL))
 			startTime := time.Now()
@@ -683,7 +683,7 @@ func (action actionPessimisticLock) handleSingleBatch(c *twoPhaseCommitter, bo *
 		PrimaryLock:  c.primary(),
 		StartVersion: c.startTS,
 		ForUpdateTs:  c.forUpdateTS,
-		LockTtl:      elapsed + ManagedLockTTL,
+		LockTtl:      elapsed + atomic.LoadUint64(&ManagedLockTTL),
 		IsFirstLock:  c.isFirstLock,
 		WaitTimeout:  action.LockWaitTime,
 	}, pb.Context{Priority: c.priority, SyncLog: c.syncLog})

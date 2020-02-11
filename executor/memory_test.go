@@ -40,6 +40,11 @@ func (s *testMemoryLeak) SetUpSuite(c *C) {
 	c.Assert(err, IsNil)
 }
 
+func (s *testMemoryLeak) TearDownSuite(c *C) {
+	s.domain.Close()
+	c.Assert(s.store.Close(), IsNil)
+}
+
 func (s *testMemoryLeak) TestPBMemoryLeak(c *C) {
 	c.Skip("too slow")
 

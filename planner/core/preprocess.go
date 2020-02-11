@@ -140,6 +140,12 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		// The RepairTable should consist of the logic for creating tables and renaming tables.
 		p.flag |= inRepairTable
 		p.checkRepairTableGrammar(node)
+	case *ast.CreateSequenceStmt:
+		p.flag |= inCreateOrDropTable
+		p.resolveCreateSequenceStmt(node)
+	case *ast.DropSequenceStmt:
+		p.flag |= inCreateOrDropTable
+		p.checkDropSequenceGrammar(node)
 	default:
 		p.flag &= ^parentIsJoin
 	}
@@ -227,6 +233,8 @@ func (p *preprocessor) Leave(in ast.Node) (out ast.Node, ok bool) {
 		}
 	case *ast.RepairTableStmt:
 		p.flag &= ^inRepairTable
+	case *ast.CreateSequenceStmt:
+		p.flag &= ^inCreateOrDropTable
 	}
 
 	return in, p.err == nil
@@ -398,6 +406,12 @@ func (p *preprocessor) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 		}
 	}
 	for _, constraint := range stmt.Constraints {
+		for _, spec := range constraint.Keys {
+			if spec.Expr != nil {
+				p.err = ErrNotSupportedYet.GenWithStackByArgs("create table with expression index")
+				return
+			}
+		}
 		switch tp := constraint.Tp; tp {
 		case ast.ConstraintKey, ast.ConstraintIndex, ast.ConstraintUniq, ast.ConstraintUniqKey, ast.ConstraintUniqIndex:
 			err := checkIndexInfo(constraint.Name, constraint.Keys)
@@ -442,8 +456,16 @@ func (p *preprocessor) checkCreateViewGrammar(stmt *ast.CreateViewStmt) {
 	}
 }
 
+func (p *preprocessor) checkDropSequenceGrammar(stmt *ast.DropSequenceStmt) {
+	p.checkDropTableNames(stmt.Sequences)
+}
+
 func (p *preprocessor) checkDropTableGrammar(stmt *ast.DropTableStmt) {
-	for _, t := range stmt.Tables {
+	p.checkDropTableNames(stmt.Tables)
+}
+
+func (p *preprocessor) checkDropTableNames(tables []*ast.TableName) {
+	for _, t := range tables {
 		if isIncorrectName(t.Name.String()) {
 			p.err = ddl.ErrWrongTableName.GenWithStackByArgs(t.Name.String())
 			return
@@ -595,11 +617,13 @@ func (p *preprocessor) checkAlterTableGrammar(stmt *ast.AlterTableStmt) {
 func checkDuplicateColumnName(IndexPartSpecifications []*ast.IndexPartSpecification) error {
 	colNames := make(map[string]struct{}, len(IndexPartSpecifications))
 	for _, IndexColNameWithExpr := range IndexPartSpecifications {
-		name := IndexColNameWithExpr.Column.Name
-		if _, ok := colNames[name.L]; ok {
-			return infoschema.ErrColumnExists.GenWithStackByArgs(name)
+		if IndexColNameWithExpr.Column != nil {
+			name := IndexColNameWithExpr.Column.Name
+			if _, ok := colNames[name.L]; ok {
+				return infoschema.ErrColumnExists.GenWithStackByArgs(name)
+			}
+			colNames[name.L] = struct{}{}
 		}
-		colNames[name.L] = struct{}{}
 	}
 	return nil
 }
@@ -853,5 +877,13 @@ func (p *preprocessor) resolveAlterTableStmt(node *ast.AlterTableStmt) {
 			p.flag |= inCreateOrDropTable
 			break
 		}
+	}
+}
+
+func (p *preprocessor) resolveCreateSequenceStmt(stmt *ast.CreateSequenceStmt) {
+	sName := stmt.Name.Name.String()
+	if isIncorrectName(sName) {
+		p.err = ddl.ErrWrongTableName.GenWithStackByArgs(sName)
+		return
 	}
 }

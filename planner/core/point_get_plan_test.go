@@ -14,6 +14,7 @@
 package core_test
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"strings"
@@ -22,7 +23,10 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/planner"
 	"github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	dto "github.com/prometheus/client_model/go"
@@ -268,4 +272,28 @@ func (s *testPointGetSuite) TestWhereIn2BatchPointGet(c *C) {
 		"2 3 4",
 		"4 5 6",
 	))
+}
+
+// Test that the plan id will be reset before optimization every time.
+func (s *testPointGetSuite) TestPointGetId(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (c1 int primary key, c2 int)")
+	defer tk.MustExec("drop table if exists t")
+	pointGetQuery := "select c2 from t where c1 = 1"
+	for i := 0; i < 2; i++ {
+		ctx := tk.Se.(sessionctx.Context)
+		stmts, err := session.Parse(ctx, pointGetQuery)
+		c.Assert(err, IsNil)
+		c.Assert(stmts, HasLen, 1)
+		stmt := stmts[0]
+		is := domain.GetDomain(ctx).InfoSchema()
+		err = core.Preprocess(ctx, stmt, is)
+		c.Assert(err, IsNil)
+		p, _, err := planner.Optimize(context.TODO(), ctx, stmt, is)
+		c.Assert(err, IsNil)
+		// Test explain result is useless, plan id will be reset when running `explain`.
+		c.Assert(p.ID(), Equals, 1)
+	}
 }

@@ -76,7 +76,7 @@ var vecBuiltinOpCases = map[string][]vecExprBenchCase{
 			retEvalType:        types.ETInt,
 			childrenTypes:      []types.EvalType{types.ETInt},
 			childrenFieldTypes: []*types.FieldType{{Tp: mysql.TypeLonglong, Flag: mysql.UnsignedFlag}},
-			geners:             []dataGenerator{&rangeInt64Gener{0, math.MaxInt64}},
+			geners:             []dataGenerator{newRangeInt64Gener(0, math.MaxInt64)},
 		},
 	},
 	ast.IsNull: {
@@ -109,7 +109,7 @@ func (g *givenValsGener) gen() interface{} {
 func makeGivenValsOrDefaultGener(vals []interface{}, eType types.EvalType) *givenValsGener {
 	g := &givenValsGener{}
 	g.given = vals
-	g.fallback = &defaultGener{0.2, eType}
+	g.fallback = newDefaultGener(0.2, eType)
 	return g
 }
 

@@ -544,8 +544,7 @@ func (w *partialIndexWorker) fetchHandles(ctx context.Context, result distsql.Se
 			}
 		}
 	}()
-	var chk *chunk.Chunk
-	chk = chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}, w.maxChunkSize)
+	chk := chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}, w.maxChunkSize)
 	for {
 		handles, retChunk, err := w.extractTaskHandles(ctx, chk, result)
 		if err != nil {

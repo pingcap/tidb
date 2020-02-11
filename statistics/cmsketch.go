@@ -15,7 +15,6 @@ package statistics
 
 import (
 	"bytes"
-	"fmt"
 	"math"
 	"reflect"
 	"sort"
@@ -25,9 +24,9 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/mathutil"
-	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/spaolacci/murmur3"
 )
@@ -399,7 +398,7 @@ func CMSketchToProto(c *CMSketch) *tipb.CMSketch {
 
 // CMSketchFromProto converts CMSketch from its protobuf representation.
 func CMSketchFromProto(protoSketch *tipb.CMSketch) *CMSketch {
-	if protoSketch == nil {
+	if protoSketch == nil || len(protoSketch.Rows) == 0 {
 		return nil
 	}
 	c := NewCMSketch(int32(len(protoSketch.Rows)), int32(len(protoSketch.Rows[0].Counters)))
@@ -434,8 +433,8 @@ func EncodeCMSketchWithoutTopN(c *CMSketch) ([]byte, error) {
 	return protoData, err
 }
 
-// decodeCMSketch decode a CMSketch from the given byte slice.
-func decodeCMSketch(data []byte, topN []*TopNMeta) (*CMSketch, error) {
+// DecodeCMSketch decode a CMSketch from the given byte slice.
+func DecodeCMSketch(data []byte, topNRows []chunk.Row) (*CMSketch, error) {
 	if data == nil {
 		return nil, nil
 	}
@@ -444,29 +443,12 @@ func decodeCMSketch(data []byte, topN []*TopNMeta) (*CMSketch, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	if len(p.Rows) == 0 && len(topN) == 0 {
-		return nil, nil
-	}
-	for _, meta := range topN {
-		p.TopN = append(p.TopN, &tipb.CMSketchTopN{Data: meta.Data, Count: meta.Count})
-	}
-	return CMSketchFromProto(p), nil
-}
-
-// LoadCMSketchWithTopN loads the CM sketch with topN from storage.
-func LoadCMSketchWithTopN(exec sqlexec.RestrictedSQLExecutor, tableID, isIndex, histID int64, cms []byte) (*CMSketch, error) {
-	sql := fmt.Sprintf("select HIGH_PRIORITY value, count from mysql.stats_top_n where table_id = %d and is_index = %d and hist_id = %d", tableID, isIndex, histID)
-	topNRows, _, err := exec.ExecRestrictedSQL(sql)
-	if err != nil {
-		return nil, err
-	}
-	topN := make([]*TopNMeta, 0, len(topNRows))
 	for _, row := range topNRows {
 		data := make([]byte, len(row.GetBytes(0)))
 		copy(data, row.GetBytes(0))
-		topN = append(topN, &TopNMeta{Data: data, Count: row.GetUint64(1)})
+		p.TopN = append(p.TopN, &tipb.CMSketchTopN{Data: data, Count: row.GetUint64(1)})
 	}
-	return decodeCMSketch(cms, topN)
+	return CMSketchFromProto(p), nil
 }
 
 // TotalCount returns the total count in the sketch, it is only used for test.
@@ -521,6 +503,15 @@ func (c *CMSketch) TopN() []*TopNMeta {
 		topN = append(topN, meta...)
 	}
 	return topN
+}
+
+// AppendTopN appends a topn into the cm sketch.
+func (c *CMSketch) AppendTopN(data []byte, count uint64) {
+	if c.topN == nil {
+		c.topN = make(map[uint64][]*TopNMeta)
+	}
+	h1, h2 := murmur3.Sum128(data)
+	c.topN[h1] = append(c.topN[h1], &TopNMeta{h2, data, count})
 }
 
 // GetWidthAndDepth returns the width and depth of CM Sketch.

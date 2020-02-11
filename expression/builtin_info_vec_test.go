@@ -68,10 +68,7 @@ var vecBuiltinInfoCases = map[string][]vecExprBenchCase{
 			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString},
 			geners: []dataGenerator{&tidbKeyGener{
-				inner: &defaultGener{
-					nullRation: 0,
-					eType:      types.ETInt,
-				},
+				inner: newDefaultGener(0, types.ETInt),
 			}},
 		},
 	},

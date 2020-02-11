@@ -533,14 +533,14 @@ type Insert struct {
 	Schema4OnDuplicate *expression.Schema
 	names4OnDuplicate  types.NameSlice
 
+	GenCols InsertGeneratedColumns
+
+	SelectPlan PhysicalPlan
+
 	IsReplace bool
 
 	// NeedFillDefaultValue is true when expr in value list reference other column.
 	NeedFillDefaultValue bool
-
-	GenCols InsertGeneratedColumns
-
-	SelectPlan PhysicalPlan
 
 	AllAssignmentsAreConstant bool
 }

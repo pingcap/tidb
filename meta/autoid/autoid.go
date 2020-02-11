@@ -51,6 +51,8 @@ const (
 	minStep            = 30000
 	maxStep            = 2000000
 	defaultConsumeTime = 10 * time.Second
+	minIncrement       = 1
+	maxIncrement       = 65535
 )
 
 // RowIDBitLength is the bit number of a row id in TiDB.
@@ -80,7 +82,12 @@ type Allocator interface {
 	// Alloc allocs N consecutive autoID for table with tableID, returning (min, max] of the allocated autoID batch.
 	// It gets a batch of autoIDs at a time. So it does not need to access storage for each call.
 	// The consecutive feature is used to insert multiple rows in a statement.
-	Alloc(tableID int64, n uint64) (int64, int64, error)
+	// increment & offset is used to validate the start position (the allocator's base is not always the last allocated id).
+	// The returned range is (min, max]:
+	// case increment=1 & offset=1: you can derive the ids like min+1, min+2... max.
+	// case increment=x & offset=y: you firstly need to seek to firstID by `SeekToFirstAutoIDXXX`, then derive the IDs like firstID, firstID + increment * 2... in the caller.
+	Alloc(tableID int64, n uint64, increment, offset int64) (int64, int64, error)
+
 	// Rebase rebases the autoID base for table with tableID and the new base value.
 	// If allocIDs is true, it will allocate some IDs and save to the cache.
 	// If allocIDs is false, it will not allocate IDs.
@@ -309,23 +316,86 @@ func NewAllocatorsFromTblInfo(store kv.Storage, schemaID int64, tblInfo *model.T
 }
 
 // Alloc implements autoid.Allocator Alloc interface.
-func (alloc *allocator) Alloc(tableID int64, n uint64) (int64, int64, error) {
+// For autoIncrement allocator, the increment and offset should always be positive in [1, 65535].
+// Attention:
+// When increment and offset is not the default value(1), the return range (min, max] need to
+// calculate the correct start position rather than simply the add 1 to min. Then you can derive
+// the successive autoID by adding increment * cnt to firstID for (n-1) times.
+//
+// Example:
+// (6, 13] is returned, increment = 4, offset = 1, n = 2.
+// 6 is the last allocated value for other autoID or handle, maybe with different increment and step,
+// but actually we don't care about it, all we need is to calculate the new autoID corresponding to the
+// increment and offset at this time now. To simplify the rule is like (ID - offset) % increment = 0,
+// so the first autoID should be 9, then add increment to it to get 13.
+func (alloc *allocator) Alloc(tableID int64, n uint64, increment, offset int64) (int64, int64, error) {
 	if tableID == 0 {
 		return 0, 0, errInvalidTableID.GenWithStackByArgs("Invalid tableID")
 	}
 	if n == 0 {
 		return 0, 0, nil
 	}
+	if alloc.allocType == AutoIncrementType || alloc.allocType == RowIDAllocType {
+		if !validIncrementAndOffset(increment, offset) {
+			return 0, 0, errInvalidIncrementAndOffset.GenWithStackByArgs(increment, offset)
+		}
+	}
 	alloc.mu.Lock()
 	defer alloc.mu.Unlock()
 	if alloc.isUnsigned {
-		return alloc.alloc4Unsigned(tableID, n)
+		return alloc.alloc4Unsigned(tableID, n, increment, offset)
 	}
-	return alloc.alloc4Signed(tableID, n)
+	return alloc.alloc4Signed(tableID, n, increment, offset)
 }
 
-func (alloc *allocator) alloc4Signed(tableID int64, n uint64) (int64, int64, error) {
-	n1 := int64(n)
+func validIncrementAndOffset(increment, offset int64) bool {
+	return (increment >= minIncrement && increment <= maxIncrement) && (offset >= minIncrement && offset <= maxIncrement)
+}
+
+// CalcNeededBatchSize is used to calculate batch size for autoID allocation.
+// It firstly seeks to the first valid position based on increment and offset,
+// then plus the length remained, which could be (n-1) * increment.
+func CalcNeededBatchSize(base, n, increment, offset int64, isUnsigned bool) int64 {
+	if increment == 1 {
+		return n
+	}
+	if isUnsigned {
+		// SeekToFirstAutoIDUnSigned seeks to the next unsigned valid position.
+		nr := SeekToFirstAutoIDUnSigned(uint64(base), uint64(increment), uint64(offset))
+		// Calculate the total batch size needed.
+		nr += (uint64(n) - 1) * uint64(increment)
+		return int64(nr - uint64(base))
+	}
+	nr := SeekToFirstAutoIDSigned(base, increment, offset)
+	// Calculate the total batch size needed.
+	nr += (n - 1) * increment
+	return nr - base
+}
+
+// SeekToFirstAutoIDSigned seeks to the next valid signed position.
+func SeekToFirstAutoIDSigned(base, increment, offset int64) int64 {
+	nr := (base + increment - offset) / increment
+	nr = nr*increment + offset
+	return nr
+}
+
+// SeekToFirstAutoIDUnSigned seeks to the next valid unsigned position.
+func SeekToFirstAutoIDUnSigned(base, increment, offset uint64) uint64 {
+	nr := (base + increment - offset) / increment
+	nr = nr*increment + offset
+	return nr
+}
+
+func (alloc *allocator) alloc4Signed(tableID int64, n uint64, increment, offset int64) (int64, int64, error) {
+	// Check offset rebase if necessary.
+	if offset-1 > alloc.base {
+		if err := alloc.rebase4Signed(tableID, offset-1, true); err != nil {
+			return 0, 0, err
+		}
+	}
+	// CalcNeededBatchSize calculates the total batch size needed.
+	n1 := CalcNeededBatchSize(alloc.base, int64(n), increment, offset, alloc.isUnsigned)
+
 	// Condition alloc.base+N1 > alloc.end will overflow when alloc.base + N1 > MaxInt64. So need this.
 	if math.MaxInt64-alloc.base <= n1 {
 		return 0, 0, ErrAutoincReadFailed
@@ -378,14 +448,22 @@ func (alloc *allocator) alloc4Signed(tableID int64, n uint64) (int64, int64, err
 	return min, alloc.base, nil
 }
 
-func (alloc *allocator) alloc4Unsigned(tableID int64, n uint64) (int64, int64, error) {
-	n1 := int64(n)
+func (alloc *allocator) alloc4Unsigned(tableID int64, n uint64, increment, offset int64) (int64, int64, error) {
+	// Check offset rebase if necessary.
+	if uint64(offset-1) > uint64(alloc.base) {
+		if err := alloc.rebase4Unsigned(tableID, uint64(offset-1), true); err != nil {
+			return 0, 0, err
+		}
+	}
+	// CalcNeededBatchSize calculates the total batch size needed.
+	n1 := CalcNeededBatchSize(alloc.base, int64(n), increment, offset, alloc.isUnsigned)
+
 	// Condition alloc.base+n1 > alloc.end will overflow when alloc.base + n1 > MaxInt64. So need this.
-	if math.MaxUint64-uint64(alloc.base) <= n {
+	if math.MaxUint64-uint64(alloc.base) <= uint64(n1) {
 		return 0, 0, ErrAutoincReadFailed
 	}
 	// The local rest is not enough for alloc, skip it.
-	if uint64(alloc.base)+n > uint64(alloc.end) {
+	if uint64(alloc.base)+uint64(n1) > uint64(alloc.end) {
 		var newBase, newEnd int64
 		startTime := time.Now()
 		// Although it may skip a segment here, we still treat it as consumed.
@@ -429,7 +507,7 @@ func (alloc *allocator) alloc4Unsigned(tableID int64, n uint64) (int64, int64, e
 		zap.Int64("database ID", alloc.dbID))
 	min := alloc.base
 	// Use uint64 n directly.
-	alloc.base = int64(uint64(alloc.base) + n)
+	alloc.base = int64(uint64(alloc.base) + uint64(n1))
 	return min, alloc.base, nil
 }
 

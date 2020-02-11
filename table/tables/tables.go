@@ -266,6 +266,11 @@ func (t *TableCommon) WritableCols() []*table.Column {
 	return writableColumns
 }
 
+// DeletableCols implements table DeletableCols interface.
+func (t *TableCommon) DeletableCols() []*table.Column {
+	return t.Columns
+}
+
 // RecordPrefix implements table.Table interface.
 func (t *TableCommon) RecordPrefix() kv.Key {
 	return t.recordPrefix
@@ -986,7 +991,7 @@ func (t *TableCommon) AllocHandle(ctx sessionctx.Context) (int64, error) {
 
 // AllocHandleIDs implements table.Table AllocHandleIDs interface.
 func (t *TableCommon) AllocHandleIDs(ctx sessionctx.Context, n uint64) (int64, int64, error) {
-	base, maxID, err := t.Allocator(ctx, autoid.RowIDAllocType).Alloc(t.tableID, n)
+	base, maxID, err := t.Allocator(ctx, autoid.RowIDAllocType).Alloc(t.tableID, n, 1, 1)
 	if err != nil {
 		return 0, 0, err
 	}

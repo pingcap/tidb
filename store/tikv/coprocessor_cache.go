@@ -152,7 +152,7 @@ func (c *coprCache) Get(key []byte) *coprCacheValue {
 	}
 	typedValue := value.(*coprCacheValue)
 	// ristretto does not handle hash collision, so check the key equality after getting a value.
-	if bytes.Compare(typedValue.Key, key) != 0 {
+	if !bytes.Equal(typedValue.Key, key) {
 		return nil
 	}
 	return typedValue

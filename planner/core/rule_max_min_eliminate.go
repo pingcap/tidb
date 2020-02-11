@@ -192,6 +192,11 @@ func (a *maxMinEliminator) eliminateSingleMaxMin(agg *LogicalAggregation) *Logic
 
 // eliminateMaxMin tries to convert max/min to Limit+Sort operators.
 func (a *maxMinEliminator) eliminateMaxMin(p LogicalPlan) LogicalPlan {
+	newChildren := make([]LogicalPlan, 0, len(p.Children()))
+	for _, child := range p.Children() {
+		newChildren = append(newChildren, a.eliminateMaxMin(child))
+	}
+	p.SetChildren(newChildren...)
 	if agg, ok := p.(*LogicalAggregation); ok {
 		if len(agg.GroupByItems) != 0 {
 			return agg
@@ -218,12 +223,6 @@ func (a *maxMinEliminator) eliminateMaxMin(p LogicalPlan) LogicalPlan {
 		}
 		return a.composeAggsByInnerJoin(aggs)
 	}
-
-	newChildren := make([]LogicalPlan, 0, len(p.Children()))
-	for _, child := range p.Children() {
-		newChildren = append(newChildren, a.eliminateMaxMin(child))
-	}
-	p.SetChildren(newChildren...)
 	return p
 }
 

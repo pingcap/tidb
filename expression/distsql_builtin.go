@@ -363,7 +363,7 @@ func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *ti
 		f = &builtinLog10Sig{base}
 	//case tipb.ScalarFuncSig_Rand:
 	case tipb.ScalarFuncSig_RandWithSeedFirstGen:
-		f = &builtinRandWithSeedSig{base}
+		f = &builtinRandWithSeedFirstGenSig{base}
 	case tipb.ScalarFuncSig_Pow:
 		f = &builtinPowSig{base}
 	case tipb.ScalarFuncSig_Conv:
@@ -483,19 +483,19 @@ func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *ti
 	//case tipb.ScalarFuncSig_ValuesTime:
 	//	f = &builtinValuesTimeSig{base}
 	case tipb.ScalarFuncSig_InInt:
-		f = &builtinInIntSig{base}
+		f = &builtinInIntSig{baseInSig: baseInSig{baseBuiltinFunc: base}}
 	case tipb.ScalarFuncSig_InReal:
-		f = &builtinInRealSig{base}
+		f = &builtinInRealSig{baseInSig: baseInSig{baseBuiltinFunc: base}}
 	case tipb.ScalarFuncSig_InDecimal:
-		f = &builtinInDecimalSig{base}
+		f = &builtinInDecimalSig{baseInSig: baseInSig{baseBuiltinFunc: base}}
 	case tipb.ScalarFuncSig_InString:
-		f = &builtinInStringSig{base}
+		f = &builtinInStringSig{baseInSig: baseInSig{baseBuiltinFunc: base}}
 	case tipb.ScalarFuncSig_InTime:
-		f = &builtinInTimeSig{base}
+		f = &builtinInTimeSig{baseInSig: baseInSig{baseBuiltinFunc: base}}
 	case tipb.ScalarFuncSig_InDuration:
-		f = &builtinInDurationSig{base}
+		f = &builtinInDurationSig{baseInSig: baseInSig{baseBuiltinFunc: base}}
 	case tipb.ScalarFuncSig_InJson:
-		f = &builtinInJSONSig{base}
+		f = &builtinInJSONSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_IfNullInt:
 		f = &builtinIfNullIntSig{base}
 	case tipb.ScalarFuncSig_IfNullReal:

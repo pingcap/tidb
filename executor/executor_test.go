@@ -107,14 +107,14 @@ var _ = Suite(&testSuiteAgg{baseTestSuite: &baseTestSuite{}})
 var _ = Suite(&testSuite6{&baseTestSuite{}})
 var _ = Suite(&testSuite7{&baseTestSuite{}})
 var _ = Suite(&testSuite8{&baseTestSuite{}})
-var _ = SerialSuites(&testShowStatsSuite{&baseTestSuite{}})
+var _ = Suite(&testShowStatsSuite{&baseTestSuite{}})
 var _ = Suite(&testBypassSuite{})
 var _ = Suite(&testUpdateSuite{})
 var _ = Suite(&testPointGetSuite{})
 var _ = Suite(&testBatchPointGetSuite{})
-var _ = SerialSuites(&testRecoverTable{})
+var _ = Suite(&testRecoverTable{})
 var _ = Suite(&testClusterReaderSuite{})
-var _ = Suite(&testFlushSuite{})
+var _ = SerialSuites(&testFlushSuite{})
 var _ = SerialSuites(&testAutoRandomSuite{&baseTestSuite{}})
 
 type testSuite struct{ *baseTestSuite }
@@ -279,7 +279,7 @@ func (s *testSuiteP1) TestShow(c *C) {
 	c.Assert(len(tk.MustQuery("show table status").Rows()), Equals, 1)
 }
 
-func (s *testSuiteP1) TestAdmin(c *C) {
+func (s *testSuite3) TestAdmin(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists admin_test")
@@ -3447,7 +3447,7 @@ func (s *testSuite) TestCoprocessorStreamingWarning(c *C) {
 
 	result := tk.MustQuery("select * from t where a/0 > 1")
 	result.Check(testkit.Rows())
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1105|Division by 0"))
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1365|Division by 0"))
 }
 
 func (s *testSuite3) TestYearTypeDeleteIndex(c *C) {
@@ -3552,7 +3552,7 @@ func (s *testSuite3) TestIndexJoinTableDualPanic(c *C) {
 		Check(testkit.Rows("1 a"))
 }
 
-func (s *testSuite3) TestUnionAutoSignedCast(c *C) {
+func (s *testSuiteP1) TestUnionAutoSignedCast(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1,t2")
@@ -3592,7 +3592,7 @@ func (s *testSuite3) TestUnionAutoSignedCast(c *C) {
 		Check(testkit.Rows("1 1", "2 -1", "3 -1"))
 }
 
-func (s *testSuite3) TestUpdateJoin(c *C) {
+func (s *testSuite6) TestUpdateJoin(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1, t2, t3, t4, t5, t6, t7")
@@ -3685,7 +3685,7 @@ func (s *testSuite3) TestMaxOneRow(c *C) {
 	c.Assert(err, IsNil)
 }
 
-func (s *testSuite3) TestCurrentTimestampValueSelection(c *C) {
+func (s *testSuiteP2) TestCurrentTimestampValueSelection(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t,t1")
@@ -3783,7 +3783,7 @@ func (s *testSuite3) TestSelectHashPartitionTable(c *C) {
 	tk.MustQuery(" select * from th where a=5;").Check(testkit.Rows("5 5"))
 }
 
-func (s *testSuite3) TestSelectPartition(c *C) {
+func (s *testSuiteP1) TestSelectPartition(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test`)
 	tk.MustExec(`drop table if exists th, tr`)
@@ -4446,7 +4446,7 @@ func (s *testSuite) TestOOMPanicAction(c *C) {
 	c.Assert(err.Error(), Matches, "Out Of Memory Quota!.*")
 	tk.MustExec("set @@tidb_mem_quota_query=10000")
 	tk.MustExec("insert into t1 values (1),(2),(3),(4),(5);")
-	tk.MustExec("set @@tidb_mem_quota_query=200;")
+	tk.MustExec("set @@tidb_mem_quota_query=10;")
 	_, err = tk.Exec("insert into t select a from t1 order by a desc;")
 	c.Assert(err.Error(), Matches, "Out Of Memory Quota!.*")
 	_, err = tk.Exec("replace into t select a from t1 order by a desc;")
@@ -4652,22 +4652,21 @@ func (s *testRecoverTable) TestFlashbackTable(c *C) {
 	tk.MustExec("insert into t_flashback values (1),(2),(3)")
 	tk.MustExec("drop table t_flashback")
 
-	// Test flash table with wrong time.
-	_, err = tk.Exec(fmt.Sprintf("flashback table t_flashback until timestamp '%v'", time.Now().String()))
-	c.Assert(err.Error(), Equals, "Can't find dropped table: t_flashback in ddl history jobs")
+	// Test flash table with not_exist_table_name name.
+	_, err = tk.Exec("flashback table t_not_exists")
+	c.Assert(err.Error(), Equals, "Can't find dropped table: t_not_exists in ddl history jobs")
 
 	// Test flashback table failed by there is already a new table with the same name.
-	ts := getDDLJobStartTime(tk, "test_flashback", "t_flashback")
 	// If there is a new table with the same name, should return failed.
 	tk.MustExec("create table t_flashback (a int);")
-	_, err = tk.Exec(fmt.Sprintf("flashback table t_flashback until timestamp '%v'", ts))
+	_, err = tk.Exec("flashback table t_flashback")
 	c.Assert(err.Error(), Equals, infoschema.ErrTableExists.GenWithStackByArgs("t_flashback").Error())
 
 	// Drop the new table with the same name, then flashback table.
-	tk.MustExec("drop table t_flashback")
+	tk.MustExec("rename table t_flashback to t_flashback_tmp")
 
 	// Test for flashback table.
-	tk.MustExec(fmt.Sprintf("flashback table t_flashback until timestamp '%v'", ts))
+	tk.MustExec("flashback table t_flashback")
 	// Check flashback table meta and data record.
 	tk.MustQuery("select * from t_flashback;").Check(testkit.Rows("1", "2", "3"))
 	// Check flashback table autoID.
@@ -4678,9 +4677,8 @@ func (s *testRecoverTable) TestFlashbackTable(c *C) {
 
 	// Test for flashback to new table.
 	tk.MustExec("drop table t_flashback")
-	ts = getDDLJobStartTime(tk, "test_flashback", "t_flashback")
 	tk.MustExec("create table t_flashback (a int);")
-	tk.MustExec(fmt.Sprintf("flashback table t_flashback until timestamp '%v' to t_flashback2", ts))
+	tk.MustExec("flashback table t_flashback to t_flashback2")
 	// Check flashback table meta and data record.
 	tk.MustQuery("select * from t_flashback2;").Check(testkit.Rows("1", "2", "3", "4", "5", "6"))
 	// Check flashback table autoID.
@@ -4690,13 +4688,12 @@ func (s *testRecoverTable) TestFlashbackTable(c *C) {
 	tk.MustQuery("select a,_tidb_rowid from t_flashback2;").Check(testkit.Rows("1 1", "2 2", "3 3", "4 5001", "5 5002", "6 5003", "7 10001", "8 10002", "9 10003"))
 
 	// Test for flashback one table multiple time.
-	_, err = tk.Exec(fmt.Sprintf("flashback table t_flashback until timestamp '%v' to t_flashback4", ts))
+	_, err = tk.Exec(fmt.Sprintf("flashback table t_flashback to t_flashback4"))
 	c.Assert(infoschema.ErrTableExists.Equal(err), IsTrue)
 
 	// Test for flashback truncated table to new table.
 	tk.MustExec("truncate table t_flashback2")
-	ts = getDDLJobStartTime(tk, "test_flashback", "t_flashback2")
-	tk.MustExec(fmt.Sprintf("flashback table t_flashback2 until timestamp '%v' to t_flashback3", ts))
+	tk.MustExec("flashback table t_flashback2 to t_flashback3")
 	// Check flashback table meta and data record.
 	tk.MustQuery("select * from t_flashback3;").Check(testkit.Rows("1", "2", "3", "4", "5", "6", "7", "8", "9"))
 	// Check flashback table autoID.
@@ -4710,8 +4707,7 @@ func (s *testRecoverTable) TestFlashbackTable(c *C) {
 	tk.MustExec("create table t_p_flashback (a int) partition by hash(a) partitions 4;")
 	tk.MustExec("insert into t_p_flashback values (1),(2),(3)")
 	tk.MustExec("drop table t_p_flashback")
-	ts = getDDLJobStartTime(tk, "test_flashback", "t_p_flashback")
-	tk.MustExec(fmt.Sprintf("flashback table t_p_flashback until timestamp '%v'", ts))
+	tk.MustExec("flashback table t_p_flashback")
 	// Check flashback table meta and data record.
 	tk.MustQuery("select * from t_p_flashback order by a;").Check(testkit.Rows("1", "2", "3"))
 	// Check flashback table autoID.
@@ -4720,24 +4716,12 @@ func (s *testRecoverTable) TestFlashbackTable(c *C) {
 
 	// Test for flashback truncate partition table.
 	tk.MustExec("truncate table t_p_flashback")
-	ts = getDDLJobStartTime(tk, "test_flashback", "t_p_flashback")
-	tk.MustExec(fmt.Sprintf("flashback table t_p_flashback until timestamp '%v' to t_p_flashback1", ts))
+	tk.MustExec("flashback table t_p_flashback to t_p_flashback1")
 	// Check flashback table meta and data record.
 	tk.MustQuery("select * from t_p_flashback1 order by a;").Check(testkit.Rows("1", "2", "3", "4", "5"))
 	// Check flashback table autoID.
 	tk.MustExec("insert into t_p_flashback1 values (6)")
 	tk.MustQuery("select a,_tidb_rowid from t_p_flashback1 order by a;").Check(testkit.Rows("1 1", "2 2", "3 3", "4 5001", "5 5002", "6 10001"))
-}
-
-func getDDLJobStartTime(tk *testkit.TestKit, dbName, tblName string) string {
-	re := tk.MustQuery("admin show ddl jobs 100")
-	rows := re.Rows()
-	for _, row := range rows {
-		if row[1] == dbName && row[2] == tblName && (row[3] == "drop table" || row[3] == "truncate table") {
-			return row[8].(string)
-		}
-	}
-	return ""
 }
 
 func (s *testSuiteP2) TestPointGetPreparedPlan(c *C) {

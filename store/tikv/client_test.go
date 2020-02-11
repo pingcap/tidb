@@ -35,8 +35,13 @@ type testClientSuite struct {
 	OneByOneSuite
 }
 
+type testClientSerialSuite struct {
+	OneByOneSuite
+}
+
 var _ = Suite(&testClientSuite{})
-var _ = Suite(&testClientFailSuite{})
+var _ = SerialSuites(&testClientFailSuite{})
+var _ = SerialSuites(&testClientSerialSuite{})
 
 func setMaxBatchSize(size uint) {
 	newConf := config.NewConfig()
@@ -44,7 +49,7 @@ func setMaxBatchSize(size uint) {
 	config.StoreGlobalConfig(newConf)
 }
 
-func (s *testClientSuite) TestConn(c *C) {
+func (s *testClientSerialSuite) TestConn(c *C) {
 	maxBatchSize := config.GetGlobalConfig().TiKVClient.MaxBatchSize
 	setMaxBatchSize(0)
 

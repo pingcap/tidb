@@ -176,7 +176,7 @@ func (h *BindHandle) AddBindRecord(sctx sessionctx.Context, record *BindRecord) 
 	}
 
 	br := h.GetBindRecord(parser.DigestNormalized(record.OriginalSQL), record.OriginalSQL, record.Db)
-	var duplicateBinding string
+	var duplicateBinding *Binding
 	if br != nil {
 		binding := br.FindBinding(record.Bindings[0].id)
 		if binding != nil {
@@ -185,7 +185,7 @@ func (h *BindHandle) AddBindRecord(sctx sessionctx.Context, record *BindRecord) 
 				return nil
 			}
 			// Otherwise, we need to remove it before insert.
-			duplicateBinding = binding.BindSQL
+			duplicateBinding = binding
 		}
 	}
 
@@ -223,16 +223,21 @@ func (h *BindHandle) AddBindRecord(sctx sessionctx.Context, record *BindRecord) 
 		return err1
 	}
 
-	if duplicateBinding != "" {
-		_, err = exec.Execute(context.TODO(), h.deleteBindInfoSQL(record.OriginalSQL, record.Db, duplicateBinding))
+	if duplicateBinding != nil {
+		_, err = exec.Execute(context.TODO(), h.deleteBindInfoSQL(record.OriginalSQL, record.Db, duplicateBinding.BindSQL))
 		if err != nil {
 			return err
 		}
 	}
 
+	now := types.NewTime(types.FromGoTime(oracle.GetTimeFromTS(txn.StartTS())), mysql.TypeTimestamp, 3)
 	for i := range record.Bindings {
-		record.Bindings[i].CreateTime = types.NewTime(types.FromGoTime(oracle.GetTimeFromTS(txn.StartTS())), mysql.TypeTimestamp, 3)
-		record.Bindings[i].UpdateTime = record.Bindings[0].CreateTime
+		if duplicateBinding != nil {
+			record.Bindings[i].CreateTime = duplicateBinding.CreateTime
+		} else {
+			record.Bindings[i].CreateTime = now
+		}
+		record.Bindings[i].UpdateTime = now
 
 		// insert the BindRecord to the storage.
 		_, err = exec.Execute(context.TODO(), h.insertBindInfoSQL(record.OriginalSQL, record.Db, record.Bindings[i]))
@@ -561,7 +566,9 @@ func getHintsForSQL(sctx sessionctx.Context, sql string) (string, error) {
 	sctx.GetSessionVars().UsePlanBaselines = false
 	recordSets, err := sctx.(sqlexec.SQLExecutor).Execute(context.TODO(), fmt.Sprintf("explain format='hint' %s", sql))
 	sctx.GetSessionVars().UsePlanBaselines = oriVals
-	defer terror.Log(recordSets[0].Close())
+	if len(recordSets) > 0 {
+		defer terror.Log(recordSets[0].Close())
+	}
 	if err != nil {
 		return "", err
 	}
@@ -739,7 +746,9 @@ func runSQL(ctx context.Context, sctx sessionctx.Context, sql string, resultChan
 	}()
 	recordSets, err := sctx.(sqlexec.SQLExecutor).Execute(ctx, sql)
 	if err != nil {
-		terror.Call(recordSets[0].Close)
+		if len(recordSets) > 0 {
+			terror.Call(recordSets[0].Close)
+		}
 		resultChan <- err
 		return
 	}

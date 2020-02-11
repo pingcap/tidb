@@ -200,6 +200,7 @@ type LockCtx struct {
 	WaitStartTime         time.Time
 	PessimisticLockWaited *int32
 	LockKeysDuration      *time.Duration
+	LockKeysCount         *int32
 }
 
 // Client is used to send request to KV layer.
@@ -285,6 +286,8 @@ type Request struct {
 	StoreType StoreType
 	// Cacheable is true if the request can be cached. Currently only deterministic DAG requests can be cached.
 	Cacheable bool
+	// SchemaVer is for any schema-ful storage to validate schema correctness if necessary.
+	SchemaVar int64
 }
 
 // ResultSubset represents a result subset from a single storage unit.

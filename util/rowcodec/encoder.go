@@ -54,6 +54,8 @@ func (encoder *Encoder) reset() {
 	encoder.data = encoder.data[:0]
 	encoder.tempColIDs = encoder.tempColIDs[:0]
 	encoder.values = encoder.values[:0]
+	encoder.offsets32 = encoder.offsets32[:0]
+	encoder.offsets = encoder.offsets[:0]
 }
 
 func (encoder *Encoder) appendColVals(colIDs []int64, values []types.Datum) {
