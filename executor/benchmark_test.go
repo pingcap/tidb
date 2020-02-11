@@ -785,7 +785,7 @@ func prepare4HashJoin(testCase *hashJoinTestCase, innerExec, outerExec Executor)
 		useOuterToBuild:   testCase.useOuterToBuild,
 	}
 
-	childrenUsedSchema := e.inlineProjection()
+	childrenUsedSchema := e.markChildrenUsedCols()
 	defaultValues := make([]types.Datum, e.buildSideExec.Schema().Len())
 	lhsTypes, rhsTypes := retTypes(innerExec), retTypes(outerExec)
 	e.joiners = make([]joiner, e.concurrency)
