@@ -36,7 +36,9 @@ type BatchPointGetExec struct {
 	handles    []int64
 	idxVals    [][]types.Datum
 	startTS    uint64
-	snapshot   kv.Snapshot
+	snapshotTS uint64
+	lock       bool
+	waitTime   int64
 	inited     bool
 	values     [][]byte
 	index      int
@@ -77,24 +79,35 @@ func (e *BatchPointGetExec) Next(ctx context.Context, req *chunk.Chunk) error {
 }
 
 func (e *BatchPointGetExec) initialize(ctx context.Context) error {
-	var err error
-	// Select for update is not optimized to BatchPointGetExec, so we can use e.startTS here.
-	e.snapshot, err = e.ctx.GetStore().GetSnapshot(kv.Version{Ver: e.startTS})
-	if err != nil {
-		return err
+	e.snapshotTS = e.startTS
+	if e.lock {
+		e.snapshotTS = e.ctx.GetSessionVars().TxnCtx.GetForUpdateTS()
 	}
-
 	txn, err := e.ctx.Txn(false)
 	if err != nil {
 		return err
 	}
-	var reader kv.Snapshot
-	if !txn.Valid() {
+	var batchGetter kv.BatchGetter
+	if txn.Valid() {
 		// In restricted SQL, !txn.Valid() may happen, we doesn't call PrepareTxnCtx but
 		// call Next() and the code runs here.
-		reader = e.snapshot
+		if e.snapshotTS == e.startTS {
+			batchGetter = txn
+		} else {
+			var snap kv.Snapshot
+			snap, err = e.ctx.GetStore().GetSnapshot(kv.Version{Ver: e.snapshotTS})
+			if err != nil {
+				return err
+			}
+			batchGetter = kv.NewBufferBatchGetter(txn.GetMemBuffer(), snap)
+		}
 	} else {
-		reader = txn
+		// In restricted SQL, !txn.Valid() may happen, we doesn't call PrepareTxnCtx but
+		// call Next() and the code runs here.
+		batchGetter, err = e.ctx.GetStore().GetSnapshot(kv.Version{Ver: e.snapshotTS})
+		if err != nil {
+			return err
+		}
 	}
 
 	if e.idxInfo != nil {
@@ -115,7 +128,7 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 		}
 
 		// Fetch all handles.
-		handleVals, err1 := reader.BatchGet(ctx, keys)
+		handleVals, err1 := batchGetter.BatchGet(ctx, keys)
 		if err1 != nil {
 			return err1
 		}
@@ -155,7 +168,7 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 	}
 
 	// Fetch all values.
-	values, err1 := reader.BatchGet(ctx, keys)
+	values, err1 := batchGetter.BatchGet(ctx, keys)
 	if err1 != nil {
 		return err1
 	}
@@ -174,5 +187,8 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 		handles = append(handles, e.handles[i])
 	}
 	e.handles = handles
+	if e.lock {
+		return doLockKeys(ctx, e.ctx, newLockCtx(e.ctx.GetSessionVars(), e.waitTime), keys...)
+	}
 	return nil
 }
