@@ -56,4 +56,6 @@ func init() {
 	collatorMap = make(map[string]Collator)
 
 	collatorMap["binary"] = &binCollator{}
+	collatorMap["utf8mb4_general_ci"] = &generalCICollator{}
+	collatorMap["utf8_general_ci"] = &generalCICollator{}
 }
