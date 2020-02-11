@@ -109,7 +109,7 @@ type joiner interface {
 
 func newJoiner(ctx sessionctx.Context, joinType plannercore.JoinType,
 	outerIsRight bool, defaultInner []types.Datum, filter []expression.Expression,
-	lhsColTypes, rhsColTypes []*types.FieldType, projection [][]bool) joiner {
+	lhsColTypes, rhsColTypes []*types.FieldType, childrenUsed [][]bool) joiner {
 	base := baseJoiner{
 		ctx:          ctx,
 		conditions:   filter,
@@ -118,15 +118,15 @@ func newJoiner(ctx sessionctx.Context, joinType plannercore.JoinType,
 	}
 	base.selected = make([]bool, 0, chunk.InitialCapacity)
 	base.isNull = make([]bool, 0, chunk.InitialCapacity)
-	if projection != nil {
-		base.lUsed = make([]int, 0, len(projection[0])) // make it non-nil
-		for i, used := range projection[0] {
+	if childrenUsed != nil {
+		base.lUsed = make([]int, 0, len(childrenUsed[0])) // make it non-nil
+		for i, used := range childrenUsed[0] {
 			if used {
 				base.lUsed = append(base.lUsed, i)
 			}
 		}
-		base.rUsed = make([]int, 0, len(projection[1])) // make it non-nil
-		for i, used := range projection[1] {
+		base.rUsed = make([]int, 0, len(childrenUsed[1])) // make it non-nil
+		for i, used := range childrenUsed[1] {
 			if used {
 				base.rUsed = append(base.rUsed, i)
 			}

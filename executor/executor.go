@@ -128,11 +128,12 @@ func (e *baseExecutor) Schema() *expression.Schema {
 	return e.schema
 }
 
-// inlineProjection supports to prune unneeded columns for outputs of a executor.
-func (e *baseExecutor) inlineProjection() (childrenUsedSchema [][]bool) {
+// markChildrenUsedCols compares each child with the output schema, and mark
+// each column of the child is used by output or not.
+func (e *baseExecutor) markChildrenUsedCols() (childrenUsed [][]bool) {
 	for _, child := range e.children {
 		used := expression.GetUsedList(e.schema.Columns, child.Schema())
-		childrenUsedSchema = append(childrenUsedSchema, used)
+		childrenUsed = append(childrenUsed, used)
 	}
 	return
 }
