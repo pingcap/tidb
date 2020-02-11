@@ -1843,7 +1843,7 @@ var MetricTableMap = map[string]MetricTableDef{
 	"node_total_memory": {
 		PromQL:  `node_memory_MemTotal_bytes{$LABEL_CONDITIONS}`,
 		Labels:  []string{"instance"},
-		Comment: "node total mem",
+		Comment: "total memory in node",
 	},
 	"node_memory_available": {
 		PromQL: `node_memory_MemAvailable_bytes{$LABEL_CONDITIONS}`,
