@@ -57,6 +57,24 @@ func (k Key) PrefixNext() Key {
 	return buf
 }
 
+// PrefixNextWithBuffer like PrefixNext but use a buffer.
+func (k Key) PrefixNextWithBuffer(buf []byte) Key {
+	buf = buf[:len(k)]
+	copy(buf, []byte(k))
+	var i int
+	for i = len(k) - 1; i >= 0; i-- {
+		buf[i]++
+		if buf[i] != 0 {
+			break
+		}
+	}
+	if i == -1 {
+		copy(buf, k)
+		buf = append(buf, 0)
+	}
+	return buf
+}
+
 // Cmp returns the comparison result of two key.
 // The result will be 0 if a==b, -1 if a < b, and +1 if a > b.
 func (k Key) Cmp(another Key) int {

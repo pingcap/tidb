@@ -239,6 +239,12 @@ func encodeHandleKey(ran *ranger.Range) ([]byte, []byte) {
 // For continuous handles, we should merge them to a single key range.
 func TableHandlesToKVRanges(tid int64, handles []int64) []kv.KeyRange {
 	krs := make([]kv.KeyRange, 0, len(handles))
+	rkLen := tablecodec.RecordRowKeyLen
+	krSize := 2*rkLen + 1
+	keyArena := make([]byte, len(handles)*krSize)
+	var encodeBuf [8]byte
+	var nextBuf [9]byte
+
 	i := 0
 	for i < len(handles) {
 		j := i + 1
@@ -247,13 +253,17 @@ func TableHandlesToKVRanges(tid int64, handles []int64) []kv.KeyRange {
 				break
 			}
 		}
-		low := codec.EncodeInt(nil, handles[i])
-		high := codec.EncodeInt(nil, handles[j-1])
-		high = []byte(kv.Key(high).PrefixNext())
-		startKey := tablecodec.EncodeRowKey(tid, low)
-		endKey := tablecodec.EncodeRowKey(tid, high)
+		startKey := keyArena[:0:rkLen]
+		startKey = tablecodec.AppendRowKeyWithHandle(startKey, tid, handles[i])
+
+		endKey := keyArena[rkLen:rkLen:krSize]
+		codec.EncodeInt(encodeBuf[:0], handles[j-1])
+		next := []byte(kv.Key(encodeBuf[:]).PrefixNextWithBuffer(nextBuf[:]))
+		endKey = tablecodec.AppendRowKey(endKey, tid, next)
+
 		krs = append(krs, kv.KeyRange{StartKey: startKey, EndKey: endKey})
 		i = j
+		keyArena = keyArena[krSize:]
 	}
 	return krs
 }
