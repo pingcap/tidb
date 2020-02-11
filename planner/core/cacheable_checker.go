@@ -42,6 +42,7 @@ func Cacheable(node ast.Node) bool {
 // NOTE: we can add more rules in the future.
 type cacheableChecker struct {
 	cacheable bool
+	inContext bool
 }
 
 // Enter implements Visitor interface.
@@ -50,6 +51,15 @@ func (checker *cacheableChecker) Enter(in ast.Node) (out ast.Node, skipChildren 
 	case *ast.VariableExpr, *ast.ExistsSubqueryExpr:
 		checker.cacheable = false
 		return in, true
+	case *ast.SubqueryExpr:
+		if checker.inContext {
+			checker.inContext = false
+		} else {
+			checker.cacheable = false
+			return in, true
+		}
+	case *ast.PatternInExpr:
+		checker.inContext = true
 	case *ast.FuncCallExpr:
 		if _, found := expression.UnCacheableFunctions[node.FnName.L]; found {
 			checker.cacheable = false
@@ -93,5 +103,9 @@ func (checker *cacheableChecker) Enter(in ast.Node) (out ast.Node, skipChildren 
 
 // Leave implements Visitor interface.
 func (checker *cacheableChecker) Leave(in ast.Node) (out ast.Node, ok bool) {
+	switch in.(type) {
+	case *ast.PatternInExpr:
+		checker.inContext = false
+	}
 	return in, checker.cacheable
 }
