@@ -535,20 +535,9 @@ func setSafeModeConfig() {
 	if cfg.Store != "mocktikv" {
 		cfg.RunDDL = false
 	}
-	cfg.TokenLimit = 1
-	cfg.EnableStreaming = false
-	cfg.EnableBatchDML = false
-	cfg.AlterPrimaryKey = false
-	cfg.EnableTableLock = false
-	cfg.TxnLocalLatches.Enabled = false
-	cfg.Performance.RunAutoAnalyze = false
-	cfg.Performance.CrossJoin = false
-	cfg.Performance.FeedbackProbability = 0
 	cfg.Performance.ForcePriority = "HIGH_PRIORITY"
 	cfg.Performance.TxnTotalSizeLimit = config.DefTxnTotalSizeLimit
-	cfg.PreparedPlanCache.Enabled = false
 	cfg.TiKVClient.GrpcConnectionCount = 1
-	cfg.TiKVClient.StoreLimit = 1
 }
 
 func setGlobalVars() {

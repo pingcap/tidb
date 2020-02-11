@@ -297,27 +297,7 @@ func (cc *clientConn) getSessionVarsWaitTimeout(ctx context.Context) uint64 {
 }
 
 func (cc *clientConn) setSafeModeSessionVars() error {
-	vars := cc.ctx.GetSessionVars()
-	names := []string{
-		variable.TiDBChecksumTableConcurrency,
-		variable.TiDBBuildStatsConcurrency,
-		variable.TiDBDistSQLScanConcurrency,
-		variable.TiDBIndexLookupConcurrency,
-		variable.TiDBIndexLookupJoinConcurrency,
-		variable.TiDBIndexSerialScanConcurrency,
-		variable.TiDBHashJoinConcurrency,
-		variable.TiDBProjectionConcurrency,
-		variable.TiDBHashAggPartialConcurrency,
-		variable.TiDBHashAggFinalConcurrency,
-		variable.TiDBWindowConcurrency,
-	}
-	for _, v := range names {
-		err := variable.SetSessionSystemVar(vars, v, types.NewUintDatum(1))
-		if err != nil {
-			return err
-		}
-	}
-	return nil
+	return variable.SetSessionSystemVar(cc.ctx.GetSessionVars(), variable.TiDBDistSQLScanConcurrency, types.NewIntDatum(1))
 }
 
 type handshakeResponse41 struct {
