@@ -459,11 +459,12 @@ func (e *HashJoinExec) runJoinWorker(workerID uint, probeKeyColIdx []int) {
 		emptyProbeSideResult.chk = probeSideResult
 		e.probeChkResourceCh <- emptyProbeSideResult
 	}
+	// note joinResult.chk may be nil when getNewJoinResult fails in loops
 	if joinResult == nil {
 		return
 	} else if joinResult.err != nil || (joinResult.chk != nil && joinResult.chk.NumRows() > 0) {
 		e.joinResultCh <- joinResult
-	} else if joinResult.chk.NumRows() == 0 {
+	} else if joinResult.chk != nil && joinResult.chk.NumRows() == 0 {
 		e.joinChkResourceCh[workerID] <- joinResult.chk
 	}
 }
