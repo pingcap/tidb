@@ -77,7 +77,7 @@ func (e *MetricRetriever) retrieve(ctx context.Context, sctx sessionctx.Context)
 		if err != nil {
 			return nil, err
 		}
-		partRows := e.genRows(queryValue, queryRange, quantile)
+		partRows := e.genRows(queryValue, quantile)
 		totalRows = append(totalRows, partRows...)
 	}
 	return totalRows, nil
@@ -128,7 +128,7 @@ func (e *MetricRetriever) getQueryRange(sctx sessionctx.Context) promQLQueryRang
 	return promQLQueryRange{Start: startTime, End: endTime, Step: step}
 }
 
-func (e *MetricRetriever) genRows(value pmodel.Value, r promQLQueryRange, quantile float64) [][]types.Datum {
+func (e *MetricRetriever) genRows(value pmodel.Value, quantile float64) [][]types.Datum {
 	var rows [][]types.Datum
 	switch value.Type() {
 	case pmodel.ValMatrix:

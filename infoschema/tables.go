@@ -1135,10 +1135,9 @@ var tableInspectionResultCols = []columnInfo{
 }
 
 var tableMetricTablesCols = []columnInfo{
-	{"METRIC_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"TABLE_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"PROMQL", mysql.TypeVarchar, 64, 0, nil, nil},
-	{"GENERATE_PROMQL", mysql.TypeVarchar, 64, 0, nil, nil},
-	{"LABEL", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"LABELS", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"QUANTILE", mysql.TypeDouble, 22, 0, nil, nil},
 	{"COMMENT", mysql.TypeVarchar, 256, 0, nil, nil},
 }
@@ -2334,12 +2333,10 @@ func dataForMetricTables(ctx sessionctx.Context) [][]types.Datum {
 	sort.Strings(tables)
 	for _, name := range tables {
 		schema := MetricTableMap[name]
-		genPromQL := schema.GenPromQL(ctx, nil, schema.Quantile)
 		record := types.MakeDatums(
 			name,                             // METRIC_NAME
 			schema.PromQL,                    // PROMQL
-			genPromQL,                        // GENERATE_PROMQL
-			strings.Join(schema.Labels, ","), //LABEL
+			strings.Join(schema.Labels, ","), // LABEL
 			schema.Quantile,                  // QUANTILE
 			schema.Comment,                   // COMMENT
 		)
