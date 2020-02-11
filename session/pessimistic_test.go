@@ -800,6 +800,21 @@ func (s *testPessimisticSuite) TestInnodbLockWaitTimeoutWaitStart(c *C) {
 	tk3.MustExec("commit")
 }
 
+func (s *testPessimisticSuite) TestBatchPointGetWriteConflict(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("use test")
+	tk1 := testkit.NewTestKitWithInit(c, s.store)
+	tk1.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (i int primary key, c int);")
+	tk.MustExec("insert t values (1, 1), (2, 2), (3, 3)")
+	tk1.MustExec("begin pessimistic")
+	tk1.MustQuery("select * from t where i = 1").Check(testkit.Rows("1 1"))
+	tk.MustExec("update t set c = c + 1")
+	tk1.MustQuery("select * from t where i in (1, 3) for update").Check(testkit.Rows("1 2", "3 4"))
+	tk1.MustExec("commit")
+}
+
 func (s *testPessimisticSuite) TestPessimisticReadCommitted(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("use test")
