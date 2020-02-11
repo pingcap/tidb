@@ -1021,7 +1021,7 @@ var MySQLErrName = map[uint16]string{
 	ErrUnknownFieldType:           "unknown field type",
 	ErrInvalidSequence:            "invalid sequence",
 	ErrInvalidType:                "invalid type",
-	ErrCantGetValidID:             "cannot get valid auto-increment id in retry",
+	ErrCantGetValidID:             "Cannot get a valid auto-ID when retrying the statement",
 	ErrCantSetToNull:              "cannot set variable to null",
 	ErrSnapshotTooOld:             "snapshot is older than GC safe point %s",
 	ErrInvalidTableID:             "invalid TableID",
