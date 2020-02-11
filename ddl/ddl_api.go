@@ -462,7 +462,7 @@ func checkColumnDefaultValue(ctx sessionctx.Context, col *table.Column, value in
 }
 
 func checkSequenceDefaultValue(col *table.Column) error {
-	if col.Tp == mysql.TypeTiny || col.Tp == mysql.TypeShort || col.Tp == mysql.TypeInt24 || col.Tp == mysql.TypeLong || col.Tp == mysql.TypeLonglong {
+	if mysql.IsIntegerType(col.Tp) {
 		return nil
 	}
 	return ErrColumnTypeUnsupportedNextValue.GenWithStackByArgs(col.ColumnInfo.Name.O)
@@ -739,11 +739,11 @@ func getDefaultValue(ctx sessionctx.Context, col *table.Column, c *ast.ColumnOpt
 }
 
 func tryToGetSequenceDefaultValue(c *ast.ColumnOption) (expr string, isExpr bool, err error) {
-	var sb strings.Builder
-	restoreFlags := format.RestoreStringSingleQuotes | format.RestoreKeyWordLowercase | format.RestoreNameBackQuotes |
-		format.RestoreSpacesAroundBinaryOperation
-	restoreCtx := format.NewRestoreCtx(restoreFlags, &sb)
 	if f, ok := c.Expr.(*ast.FuncCallExpr); ok && f.FnName.L == ast.NextVal {
+		var sb strings.Builder
+		restoreFlags := format.RestoreStringSingleQuotes | format.RestoreKeyWordLowercase | format.RestoreNameBackQuotes |
+			format.RestoreSpacesAroundBinaryOperation
+		restoreCtx := format.NewRestoreCtx(restoreFlags, &sb)
 		if err := c.Expr.Restore(restoreCtx); err != nil {
 			return "", true, err
 		}
