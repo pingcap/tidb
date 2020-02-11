@@ -107,7 +107,9 @@ const (
 	// TableInspectionResult is the string constant of inspection result table
 	TableInspectionResult = "INSPECTION_RESULT"
 	// TableMetricSummary is a summary table that contains all metrics.
-	TableMetricSummary = "METRIC_SUMMARY"
+	TableMetricSummary = "METRICS_SUMMARY"
+	// TableMetricSummaryByLabel is a metric table that contains all metrics that group by label info.
+	TableMetricSummaryByLabel = "METRICS_SUMMARY_BY_LABEL"
 )
 
 var tableIDMap = map[string]int64{
@@ -163,6 +165,7 @@ var tableIDMap = map[string]int64{
 	TableClusterSystemInfo:                  autoid.InformationSchemaDBID + 50,
 	TableInspectionResult:                   autoid.InformationSchemaDBID + 51,
 	TableMetricSummary:                      autoid.InformationSchemaDBID + 52,
+	TableMetricSummaryByLabel:               autoid.InformationSchemaDBID + 53,
 }
 
 type columnInfo struct {
@@ -1130,6 +1133,15 @@ var tableInspectionResultCols = []columnInfo{
 
 var tableMetricSummaryCols = []columnInfo{
 	{"METRIC_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"TIME", mysql.TypeDatetime, -1, 0, nil, nil},
+	{"SUM_VALUE", mysql.TypeDouble, 22, 0, nil, nil},
+	{"AVG_VALUE", mysql.TypeDouble, 22, 0, nil, nil},
+	{"MIN_VALUE", mysql.TypeDouble, 22, 0, nil, nil},
+	{"MAX_VALUE", mysql.TypeDouble, 22, 0, nil, nil},
+}
+var tableMetricSummaryByLabelCols = []columnInfo{
+	{"METRIC_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"LABEL", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"TIME", mysql.TypeDatetime, -1, 0, nil, nil},
 	{"SUM_VALUE", mysql.TypeDouble, 22, 0, nil, nil},
 	{"AVG_VALUE", mysql.TypeDouble, 22, 0, nil, nil},
@@ -2347,6 +2359,7 @@ var tableNameToColumns = map[string][]columnInfo{
 	TableClusterSystemInfo:                  tableClusterSystemInfoCols,
 	TableInspectionResult:                   tableInspectionResultCols,
 	TableMetricSummary:                      tableMetricSummaryCols,
+	TableMetricSummaryByLabel:               tableMetricSummaryByLabelCols,
 }
 
 func createInfoSchemaTable(_ autoid.Allocators, meta *model.TableInfo) (table.Table, error) {
