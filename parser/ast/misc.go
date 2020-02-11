@@ -1315,6 +1315,37 @@ func (n *AlterUserStmt) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
+// AlterInstanceStmt modifies instance.
+// See https://dev.mysql.com/doc/refman/8.0/en/alter-instance.html
+type AlterInstanceStmt struct {
+	stmtNode
+
+	ReloadTLS         bool
+	NoRollbackOnError bool
+}
+
+// Restore implements Node interface.
+func (n *AlterInstanceStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("ALTER INSTANCE")
+	if n.ReloadTLS {
+		ctx.WriteKeyWord(" RELOAD TLS")
+	}
+	if n.NoRollbackOnError {
+		ctx.WriteKeyWord(" NO ROLLBACK ON ERROR")
+	}
+	return nil
+}
+
+// Accept implements Node Accept interface.
+func (n *AlterInstanceStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*AlterInstanceStmt)
+	return v.Leave(n)
+}
+
 // DropUserStmt creates user account.
 // See http://dev.mysql.com/doc/refman/5.7/en/drop-user.html
 type DropUserStmt struct {
