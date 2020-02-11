@@ -240,18 +240,7 @@ func GetHistoryDDLJobs(txn kv.Transaction, maxNumJobs int) ([]*model.Job, error)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-
-	jobsLen := len(jobs)
-	if jobsLen > maxNumJobs {
-		start := jobsLen - maxNumJobs
-		jobs = jobs[start:]
-	}
-	jobsLen = len(jobs)
-	ret := make([]*model.Job, 0, jobsLen)
-	for i := jobsLen - 1; i >= 0; i-- {
-		ret = append(ret, jobs[i])
-	}
-	return ret, nil
+	return jobs, nil
 }
 
 // RecordData is the record data composed of a handle and values.
@@ -447,14 +436,3 @@ var (
 	// ErrCannotCancelDDLJob returns when cancel a almost finished ddl job, because cancel in now may cause data inconsistency.
 	ErrCannotCancelDDLJob = terror.ClassAdmin.New(mysql.ErrCannotCancelDDLJob, mysql.MySQLErrName[mysql.ErrCannotCancelDDLJob])
 )
-
-func init() {
-	// Register terror to mysql error map.
-	mySQLErrCodes := map[terror.ErrCode]uint16{
-		mysql.ErrDataInConsistent:     mysql.ErrDataInConsistent,
-		mysql.ErrDDLJobNotFound:       mysql.ErrDDLJobNotFound,
-		mysql.ErrCancelFinishedDDLJob: mysql.ErrCancelFinishedDDLJob,
-		mysql.ErrCannotCancelDDLJob:   mysql.ErrCannotCancelDDLJob,
-	}
-	terror.ErrClassToMySQLCodes[terror.ClassAdmin] = mySQLErrCodes
-}

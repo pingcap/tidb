@@ -320,34 +320,6 @@ func (h *Handle) EmptyClone() *Handle {
 }
 
 func init() {
-	schemaMySQLErrCodes := map[terror.ErrCode]uint16{
-		mysql.ErrDBCreateExists:         mysql.ErrDBCreateExists,
-		mysql.ErrDBDropExists:           mysql.ErrDBDropExists,
-		mysql.ErrAccessDenied:           mysql.ErrAccessDenied,
-		mysql.ErrBadDB:                  mysql.ErrBadDB,
-		mysql.ErrTableExists:            mysql.ErrTableExists,
-		mysql.ErrBadTable:               mysql.ErrBadTable,
-		mysql.ErrBadField:               mysql.ErrBadField,
-		mysql.ErrDupFieldName:           mysql.ErrDupFieldName,
-		mysql.ErrDupKeyName:             mysql.ErrDupKeyName,
-		mysql.ErrNonuniqTable:           mysql.ErrNonuniqTable,
-		mysql.ErrMultiplePriKey:         mysql.ErrMultiplePriKey,
-		mysql.ErrTooManyKeyParts:        mysql.ErrTooManyKeyParts,
-		mysql.ErrCantDropFieldOrKey:     mysql.ErrCantDropFieldOrKey,
-		mysql.ErrTableNotLockedForWrite: mysql.ErrTableNotLockedForWrite,
-		mysql.ErrTableNotLocked:         mysql.ErrTableNotLocked,
-		mysql.ErrNoSuchTable:            mysql.ErrNoSuchTable,
-		mysql.ErrKeyDoesNotExist:        mysql.ErrKeyDoesNotExist,
-		mysql.ErrCannotAddForeign:       mysql.ErrCannotAddForeign,
-		mysql.ErrWrongFkDef:             mysql.ErrWrongFkDef,
-		mysql.ErrDupIndex:               mysql.ErrDupIndex,
-		mysql.ErrBadUser:                mysql.ErrBadUser,
-		mysql.ErrUserAlreadyExists:      mysql.ErrUserAlreadyExists,
-		mysql.ErrTableLocked:            mysql.ErrTableLocked,
-		mysql.ErrUnknownSequence:        mysql.ErrUnknownSequence,
-	}
-	terror.ErrClassToMySQLCodes[terror.ClassSchema] = schemaMySQLErrCodes
-
 	// Initialize the information shema database and register the driver to `drivers`
 	dbID := autoid.InformationSchemaDBID
 	infoSchemaTables := make([]*model.TableInfo, 0, len(tableNameToColumns))

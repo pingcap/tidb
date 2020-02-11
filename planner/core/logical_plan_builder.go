@@ -37,7 +37,6 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/planner/property"
-	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
@@ -105,16 +104,16 @@ func (la *LogicalAggregation) collectGroupByColumns() {
 }
 
 func (b *PlanBuilder) buildAggregation(ctx context.Context, p LogicalPlan, aggFuncList []*ast.AggregateFuncExpr, gbyItems []expression.Expression) (LogicalPlan, map[int]int, error) {
-	b.optFlag = b.optFlag | flagBuildKeyInfo
-	b.optFlag = b.optFlag | flagPushDownAgg
+	b.optFlag |= flagBuildKeyInfo
+	b.optFlag |= flagPushDownAgg
 	// We may apply aggregation eliminate optimization.
 	// So we add the flagMaxMinEliminate to try to convert max/min to topn and flagPushDownTopN to handle the newly added topn operator.
-	b.optFlag = b.optFlag | flagMaxMinEliminate
-	b.optFlag = b.optFlag | flagPushDownTopN
+	b.optFlag |= flagMaxMinEliminate
+	b.optFlag |= flagPushDownTopN
 	// when we eliminate the max and min we may add `is not null` filter.
-	b.optFlag = b.optFlag | flagPredicatePushDown
-	b.optFlag = b.optFlag | flagEliminateAgg
-	b.optFlag = b.optFlag | flagEliminateProjection
+	b.optFlag |= flagPredicatePushDown
+	b.optFlag |= flagEliminateAgg
+	b.optFlag |= flagEliminateProjection
 
 	plan4Agg := LogicalAggregation{AggFuncs: make([]*aggregation.AggFuncDesc, 0, len(aggFuncList))}.Init(b.ctx, b.getSelectOffset())
 	if hint := b.TableHints(); hint != nil {
@@ -440,7 +439,19 @@ func (ds *DataSource) setPreferredStoreType(hintInfo *tableHintInfo) {
 		alias = &hintTableInfo{dbName: ds.DBName, tblName: ds.tableInfo.Name, selectOffset: ds.SelectBlockOffset()}
 	}
 	if hintInfo.ifPreferTiKV(alias) {
-		ds.preferStoreType |= preferTiKV
+		for _, path := range ds.possibleAccessPaths {
+			if path.StoreType == kv.TiKV {
+				ds.preferStoreType |= preferTiKV
+				break
+			}
+		}
+		if ds.preferStoreType == 0 {
+			errMsg := fmt.Sprintf("No available path for table %s.%s with the store type %s of the hint /*+ read_from_storage */, "+
+				"please check the status of the table replica and variable value of tidb_isolation_read_engines(%v)",
+				ds.DBName.O, ds.table.Meta().Name.O, kv.TiKV.Name(), ds.ctx.GetSessionVars().GetIsolationReadEngines())
+			warning := ErrInternal.GenWithStack(errMsg)
+			ds.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
+		}
 	}
 	if hintInfo.ifPreferTiFlash(alias) {
 		if ds.preferStoreType != 0 {
@@ -451,18 +462,18 @@ func (ds *DataSource) setPreferredStoreType(hintInfo *tableHintInfo) {
 			ds.preferStoreType = 0
 			return
 		}
-		ds.preferStoreType |= preferTiFlash
-		hasTiFlashPath := false
 		for _, path := range ds.possibleAccessPaths {
 			if path.StoreType == kv.TiFlash {
-				hasTiFlashPath = true
+				ds.preferStoreType |= preferTiFlash
 				break
 			}
 		}
-		// TODO: For now, if there is a TiFlash hint for a table, we enforce a TiFlash path. But hint is just a suggestion
-		//       for the planner. We can keep it since we need it to debug with PD and TiFlash. In future, this should be removed.
-		if !hasTiFlashPath {
-			ds.possibleAccessPaths = append(ds.possibleAccessPaths, &util.AccessPath{IsTablePath: true, StoreType: kv.TiFlash})
+		if ds.preferStoreType == 0 {
+			errMsg := fmt.Sprintf("No available path for table %s.%s with the store type %s of the hint /*+ read_from_storage */, "+
+				"please check the status of the table replica and variable value of tidb_isolation_read_engines(%v)",
+				ds.DBName.O, ds.table.Meta().Name.O, kv.TiFlash.Name(), ds.ctx.GetSessionVars().GetIsolationReadEngines())
+			warning := ErrInternal.GenWithStack(errMsg)
+			ds.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
 		}
 	}
 }
@@ -699,7 +710,7 @@ func (b *PlanBuilder) coalesceCommonColumns(p *LogicalJoin, leftPlan, rightPlan 
 }
 
 func (b *PlanBuilder) buildSelection(ctx context.Context, p LogicalPlan, where ast.ExprNode, AggMapper map[*ast.AggregateFuncExpr]int) (LogicalPlan, error) {
-	b.optFlag = b.optFlag | flagPredicatePushDown
+	b.optFlag |= flagPredicatePushDown
 	if b.curClause != havingClause {
 		b.curClause = whereClause
 	}
@@ -871,7 +882,7 @@ func (b *PlanBuilder) buildProjectionField(ctx context.Context, p LogicalPlan, f
 }
 
 // buildProjection returns a Projection plan and non-aux columns length.
-func (b *PlanBuilder) buildProjection(ctx context.Context, p LogicalPlan, fields []*ast.SelectField, mapper map[*ast.AggregateFuncExpr]int, windowMapper map[*ast.WindowFuncExpr]int, considerWindow bool) (LogicalPlan, int, error) {
+func (b *PlanBuilder) buildProjection(ctx context.Context, p LogicalPlan, fields []*ast.SelectField, mapper map[*ast.AggregateFuncExpr]int, windowMapper map[*ast.WindowFuncExpr]int, considerWindow bool, expandGenerateColumn bool) (LogicalPlan, int, error) {
 	b.optFlag |= flagEliminateProjection
 	b.curClause = fieldList
 	proj := LogicalProjection{Exprs: make([]expression.Expression, 0, len(fields))}.Init(b.ctx, b.getSelectOffset())
@@ -930,8 +941,27 @@ func (b *PlanBuilder) buildProjection(ctx context.Context, p LogicalPlan, fields
 		newNames = append(newNames, name)
 	}
 	proj.SetSchema(schema)
-	proj.SetChildren(p)
 	proj.names = newNames
+	if expandGenerateColumn {
+		// Sometimes we need to add some fields to the projection so that we can use generate column substitute
+		// optimization. For example: select a+1 from t order by a+1, with a virtual generate column c as (a+1) and
+		// an index on c. We need to add c into the projection so that we can replace a+1 with c.
+		exprToColumn := make(ExprColumnMap)
+		collectGenerateColumn(p, exprToColumn)
+		for expr, col := range exprToColumn {
+			idx := p.Schema().ColumnIndex(col)
+			if idx == -1 {
+				continue
+			}
+			if proj.schema.Contains(col) {
+				continue
+			}
+			proj.schema.Columns = append(proj.schema.Columns, col)
+			proj.Exprs = append(proj.Exprs, expr)
+			proj.names = append(proj.names, p.OutputNames()[idx])
+		}
+	}
+	proj.SetChildren(p)
 	return proj, oldLen, nil
 }
 
@@ -1146,6 +1176,11 @@ func (by *ByItems) String() string {
 // Clone makes a copy of ByItems.
 func (by *ByItems) Clone() *ByItems {
 	return &ByItems{Expr: by.Expr.Clone(), Desc: by.Desc}
+}
+
+// Equal checks whether two ByItems are equal.
+func (by *ByItems) Equal(ctx sessionctx.Context, other *ByItems) bool {
+	return by.Expr.Equal(ctx, other.Expr) && by.Desc == other.Desc
 }
 
 // itemTransformer transforms ParamMarkerExpr to PositionExpr in the context of ByItem
@@ -1385,6 +1420,9 @@ func (a *havingWindowAndOrderbyExprResolver) resolveFromPlan(v *ast.ColumnNameEx
 		return -1, nil
 	}
 	col := p.Schema().Columns[idx]
+	if col.IsHidden {
+		return -1, ErrUnknownColumn.GenWithStackByArgs(v.Name, clauseMsg[a.curClause])
+	}
 	name := p.OutputNames()[idx]
 	newColName := &ast.ColumnName{
 		Schema: name.DBName,
@@ -2117,6 +2155,9 @@ func (b *PlanBuilder) unfoldWildStar(p LogicalPlan, selectFields []*ast.SelectFi
 		findTblNameInSchema := false
 		for i, name := range p.OutputNames() {
 			col := p.Schema().Columns[i]
+			if col.IsHidden {
+				continue
+			}
 			if (dbName.L == "" || dbName.L == name.DBName.L) &&
 				(tblName.L == "" || tblName.L == name.TblName.L) &&
 				col.ID != model.ExtraHandleID {
@@ -2362,7 +2403,7 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 	var oldLen int
 	// According to https://dev.mysql.com/doc/refman/8.0/en/window-functions-usage.html,
 	// we can only process window functions after having clause, so `considerWindow` is false now.
-	p, oldLen, err = b.buildProjection(ctx, p, sel.Fields.Fields, totalMap, nil, false)
+	p, oldLen, err = b.buildProjection(ctx, p, sel.Fields.Fields, totalMap, nil, false, sel.OrderBy != nil)
 	if err != nil {
 		return nil, err
 	}
@@ -2397,7 +2438,7 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 			return nil, err
 		}
 		// Now we build the window function fields.
-		p, oldLen, err = b.buildProjection(ctx, p, sel.Fields.Fields, windowAggMap, windowMapper, true)
+		p, oldLen, err = b.buildProjection(ctx, p, sel.Fields.Fields, windowAggMap, windowMapper, true, false)
 		if err != nil {
 			return nil, err
 		}
@@ -2541,6 +2582,20 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		return nil, err
 	}
 
+	// Try to substitute generate column only if there is an index on generate column.
+	for _, index := range tableInfo.Indices {
+		if index.State != model.StatePublic {
+			continue
+		}
+		for _, indexCol := range index.Columns {
+			colInfo := tbl.Cols()[indexCol.Offset]
+			if colInfo.IsGenerated() && !colInfo.GeneratedStored {
+				b.optFlag |= flagGcSubstitute
+				break
+			}
+		}
+	}
+
 	var columns []*table.Column
 	if b.inUpdateStmt {
 		// create table t(a int, b int).
@@ -2551,8 +2606,10 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		// TiDB B: update t set a = 2 where b = 2;
 		// If we use tbl.Cols() here, the update statement, will ignore the col `c`, and the data `3` will lost.
 		columns = tbl.WritableCols()
+	} else if b.inDeleteStmt {
+		columns = tbl.DeletableCols()
 	} else {
-		columns = tbl.VisibleCols()
+		columns = tbl.Cols()
 	}
 	var statisticTable *statistics.Table
 	if _, ok := tbl.(table.PartitionedTable); !ok {
@@ -2593,6 +2650,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 			ColName:     col.Name,
 			OrigTblName: tableInfo.Name,
 			OrigColName: col.Name,
+			Hidden:      col.Hidden,
 		})
 		newCol := &expression.Column{
 			UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
@@ -2717,8 +2775,8 @@ func (b *PlanBuilder) buildMemTable(ctx context.Context, dbName model.CIStr, tab
 
 	// NOTE: Add a `LogicalUnionScan` if we support update memory table in the future
 	p := LogicalMemTable{
-		dbName:    dbName,
-		tableInfo: tableInfo,
+		DBName:    dbName,
+		TableInfo: tableInfo,
 	}.Init(b.ctx, b.getSelectOffset())
 	p.SetSchema(schema)
 	p.names = names
@@ -2735,6 +2793,8 @@ func (b *PlanBuilder) buildMemTable(ctx context.Context, dbName model.CIStr, tab
 			p.Extractor = &ClusterLogTableExtractor{}
 		case infoschema.TableInspectionResult:
 			p.Extractor = &InspectionResultTableExtractor{}
+		case infoschema.TableMetricSummary, infoschema.TableMetricSummaryByLabel:
+			p.Extractor = newMetricTableExtractor()
 		}
 	}
 	return p, nil
@@ -3272,6 +3332,8 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, delete *ast.DeleteStmt) (
 		// table hints are only visible in the current DELETE statement.
 		b.popTableHints()
 	}()
+
+	b.inDeleteStmt = true
 
 	p, err := b.buildResultSetNode(ctx, delete.TableRefs.TableRefs)
 	if err != nil {

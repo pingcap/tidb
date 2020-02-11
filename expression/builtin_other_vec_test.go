@@ -25,6 +25,14 @@ import (
 	"github.com/pingcap/tidb/util/mock"
 )
 
+func dateTimeFromString(s string) types.Time {
+	t, err := types.ParseDate(nil, s)
+	if err != nil {
+		panic(err)
+	}
+	return t
+}
+
 var vecBuiltinOtherCases = map[string][]vecExprBenchCase{
 	ast.SetVar: {
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString, types.ETString}},
@@ -32,6 +40,7 @@ var vecBuiltinOtherCases = map[string][]vecExprBenchCase{
 	ast.GetVar: {
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString}},
 	},
+	ast.In:       {},
 	ast.BitCount: {{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt}}},
 	ast.GetParam: {
 		{
