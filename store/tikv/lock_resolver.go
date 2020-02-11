@@ -423,7 +423,7 @@ func (lr *LockResolver) getTxnStatusFromLock(bo *Backoffer, l *Lock, callerStart
 		}
 		logutil.Logger(bo.ctx).Warn("resolve lock txn not found",
 			zap.Uint64("CallerStartTs", callerStartTS),
-			zap.String("lock str", l.String()))
+			zap.Stringer("lock str", l))
 
 		if lr.store.GetOracle().UntilExpired(l.TxnID, l.TTL) <= 0 {
 			rollbackIfNotExist = true
