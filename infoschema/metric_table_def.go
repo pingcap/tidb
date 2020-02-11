@@ -1872,7 +1872,7 @@ var MetricTableMap = map[string]MetricTableDef{
 	"node_load15": {
 		PromQL:  `node_load15{$LABEL_CONDITIONS}`,
 		Labels:  []string{"instance"},
-		Comment: "node cpu load15",
+		Comment: "15 minutes load averages in node",
 	},
 	"node_kernel_interrupts": {
 		PromQL: `rate(node_intr_total{$LABEL_CONDITIONS}[$RANGE_DURATION]) or irate(node_intr_total{$LABEL_CONDITIONS}[$RANGE_DURATION])`,
