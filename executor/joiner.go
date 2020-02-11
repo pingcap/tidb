@@ -204,8 +204,9 @@ type baseJoiner struct {
 	// 1. every columns are used if lUsed/rUsed is nil.
 	// 2. no columns are used if lUsed/rUsed is not nil but the size of lUsed/rUsed is 0.
 	lUsed, rUsed []int
-	// If conditions is not empty, we should do projection after filtering. Thus, we should
-	// copy lUsed/rUsed to lUsedForFilter/rUsedForFilter and keep lUsed/rUsed
+	// If conditions is not empty, we should do pruning after filtering. Thus, it is
+	// necessary to copy lUsed/rUsed to lUsedForFilter/rUsedForFilter and keep lUsed/rUsed
+	// empty.
 	lUsedForFilter, rUsedForFilter []int
 }
 
