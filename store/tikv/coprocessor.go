@@ -254,7 +254,7 @@ func shouldStop(finishCh <-chan struct{}) bool {
 
 // buildCopTasksChan returns a channel to get tasks
 func buildCopTasksChan(bo *Backoffer, cache *RegionCache, ranges *copRanges, req *kv.Request, tasksCh chan *copTask, finishCh <-chan struct{}) (errCh chan error, err error) {
-	errCh = make(chan error, 2048)
+	errCh = make(chan error)
 	cmdType := tikvrpc.CmdCop
 	if req.Streaming {
 		cmdType = tikvrpc.CmdCopStream
@@ -345,7 +345,6 @@ func buildCopTasksChan(bo *Backoffer, cache *RegionCache, ranges *copRanges, req
 			tasks = append(tasks, task)
 		}
 		reverseTasks(tasks)
-		// tasksCh = make(chan *copTask, 1)
 		go func() {
 			defer close(tasksCh)
 			for _, task := range tasks {
