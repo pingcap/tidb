@@ -112,7 +112,7 @@ func renewColumns(oldCol []*Column, cap int) []*Column {
 	return columns
 }
 
-// renewWithCapacity creates a new Chunk based on an existing Chunk
+// renewEmpty creates a new Chunk based on an existing Chunk
 // but keep columns empty.
 func renewEmpty(chk *Chunk) *Chunk {
 	newChk := &Chunk{
@@ -183,7 +183,8 @@ func (c *Chunk) IsFull() bool {
 	return c.NumRows() >= c.requiredRows
 }
 
-// Prune return a new Chunk which prunes Columns which's index is not in usedColIdxs.
+// Prune creates a new Chunk according to `c` and prunes the columns
+// whose index is not in `usedColIdxs`
 func (c *Chunk) Prune(usedColIdxs []int) *Chunk {
 	chk := renewEmpty(c)
 	chk.columns = make([]*Column, len(usedColIdxs))

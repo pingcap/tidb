@@ -19,6 +19,8 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 )
 
 var (
@@ -129,9 +131,9 @@ func newJoiner(ctx sessionctx.Context, joinType plannercore.JoinType,
 				base.rUsed = append(base.rUsed, i)
 			}
 		}
-		// logutil.BgLogger().Info("InlineProjection",
-		// 	zap.Ints("lUsed", base.lUsed), zap.Ints("rUsed", base.rUsed),
-		// 	zap.Int("lCount", len(lhsColTypes)), zap.Int("rCount", len(rhsColTypes)))
+		logutil.BgLogger().Debug("InlineProjection",
+			zap.Ints("lUsed", base.lUsed), zap.Ints("rUsed", base.rUsed),
+			zap.Int("lCount", len(lhsColTypes)), zap.Int("rCount", len(rhsColTypes)))
 	}
 	if joinType == plannercore.LeftOuterJoin || joinType == plannercore.RightOuterJoin {
 		innerColTypes := lhsColTypes
@@ -141,7 +143,7 @@ func newJoiner(ctx sessionctx.Context, joinType plannercore.JoinType,
 		base.initDefaultInner(innerColTypes, defaultInner)
 	}
 	// shallowRowType may be different with the output columns because output columns may
-	// be inline projected, while shallow row should not be because each column may need
+	// be pruned inline, while shallow row should not be because each column may need
 	// be used in filter.
 	shallowRowType := make([]*types.FieldType, 0, len(lhsColTypes)+len(rhsColTypes))
 	shallowRowType = append(shallowRowType, lhsColTypes...)
@@ -161,7 +163,7 @@ func newJoiner(ctx sessionctx.Context, joinType plannercore.JoinType,
 		return &antiLeftOuterSemiJoiner{base}
 	case plannercore.LeftOuterJoin, plannercore.RightOuterJoin, plannercore.InnerJoin:
 		base.chk = chunk.NewChunkWithCapacity(shallowRowType, ctx.GetSessionVars().MaxChunkSize)
-		// if conditions is not empty, we should do projection after filtering.
+		// if conditions is not empty, we must do pruning after filtering.
 		if len(base.conditions) > 0 {
 			base.lUsedForFilter, base.rUsedForFilter = base.lUsed, base.rUsed
 			base.lUsed, base.rUsed = nil, nil
@@ -197,10 +199,13 @@ type baseJoiner struct {
 	isNull       []bool
 	maxChunkSize int
 
+	// lUsed/rUsed show which columns are used by father for left child and right child.
 	// NOTE:
 	// 1. every columns are used if lUsed/rUsed is nil.
 	// 2. no columns are used if lUsed/rUsed is not nil but the size of lUsed/rUsed is 0.
-	lUsed, rUsed                   []int
+	lUsed, rUsed []int
+	// If conditions is not empty, we should do projection after filtering. Thus, we should
+	// copy lUsed/rUsed to lUsedForFilter/rUsedForFilter and keep lUsed/rUsed
 	lUsedForFilter, rUsedForFilter []int
 }
 
