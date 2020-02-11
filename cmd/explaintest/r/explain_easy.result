@@ -745,7 +745,7 @@ create table t(a int, b int);
 explain select a, b from (select a, b, avg(b) over (partition by a)as avg_b from t) as tt where a > 10 and b < 10 and a > avg_b;
 id	count	task	operator info
 Projection_8	2666.67	root	test.t.a, test.t.b
-└─Selection_9	2666.67	root	gt(cast(test.t.a), Column#5), gt(test.t.a, 10), lt(test.t.b, 10)
+└─Selection_9	2666.67	root	gt(cast(test.t.a), Column#5), lt(test.t.b, 10)
   └─Window_10	3333.33	root	avg(cast(test.t.b))->Column#5 over(partition by test.t.a)
     └─Sort_14	3333.33	root	test.t.a:asc
       └─TableReader_13	3333.33	root	data:Selection_12
