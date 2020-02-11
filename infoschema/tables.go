@@ -2336,7 +2336,7 @@ func dataForMetricTables(ctx sessionctx.Context) [][]types.Datum {
 		record := types.MakeDatums(
 			name,                             // METRIC_NAME
 			schema.PromQL,                    // PROMQL
-			strings.Join(schema.Labels, ","), // LABEL
+			strings.Join(schema.Labels, ","), // LABELS
 			schema.Quantile,                  // QUANTILE
 			schema.Comment,                   // COMMENT
 		)
