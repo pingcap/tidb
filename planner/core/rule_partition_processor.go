@@ -614,7 +614,7 @@ type dataForPrune struct {
 
 // extractDataForPrune extracts data from the expression for pruning.
 // The expression should have this form:  'f(x) op const', otherwise it can't be pruned.
-func extractDataForPrune(sctx sessionctx.Context, expr expression.Expression, col *expression.Column, partFn *expression.ScalarFunction) (dataForPrune, bool) {
+func extractDataForPrune(sctx sessionctx.Context, expr expression.Expression, partCol *expression.Column, partFn *expression.ScalarFunction) (dataForPrune, bool) {
 	var ret dataForPrune
 	op, ok := expr.(*expression.ScalarFunction)
 	if !ok {
@@ -625,7 +625,7 @@ func extractDataForPrune(sctx sessionctx.Context, expr expression.Expression, co
 		ret.op = op.FuncName.L
 	case ast.IsNull:
 		// isnull(col)
-		if arg0, ok := op.GetArgs()[0].(*expression.Column); ok && arg0.ID == col.ID {
+		if arg0, ok := op.GetArgs()[0].(*expression.Column); ok && arg0.ID == partCol.ID {
 			ret.op = ast.IsNull
 			return ret, true
 		}
@@ -634,63 +634,79 @@ func extractDataForPrune(sctx sessionctx.Context, expr expression.Expression, co
 		return ret, false
 	}
 
-	if arg0, ok := op.GetArgs()[0].(*expression.Column); ok && arg0.ID == col.ID {
+	var col *expression.Column
+	var con *expression.Constant
+	if arg0, ok := op.GetArgs()[0].(*expression.Column); ok && arg0.ID == partCol.ID {
 		if arg1, ok := op.GetArgs()[1].(*expression.Constant); ok {
-			// Current expression is 'col op const'
-			var constExpr expression.Expression
-			if partFn != nil {
-				// If the partition expression is fn(col), change constExpr to fn(constExpr).
-				// No copy on write here, this is a dangerous operation.
-				args := partFn.GetArgs()
-				args[0] = arg1
-				constExpr = partFn
-			} else {
-				// If the partition expression is col, use constExpr.
-				constExpr = arg1
-			}
-			c, isNull, err := constExpr.EvalInt(sctx, chunk.Row{})
-			if err == nil && !isNull {
-				ret.c = c
-				return ret, true
-			}
+			col, con = arg0, arg1
 		}
-	} else if arg0, ok := op.GetArgs()[1].(*expression.Column); ok && arg0.ID != col.ID {
+	} else if arg0, ok := op.GetArgs()[1].(*expression.Column); ok && arg0.ID == partCol.ID {
 		if arg1, ok := op.GetArgs()[0].(*expression.Constant); ok {
-			var constExpr expression.Expression
-			if partFn != nil {
-				args := partFn.GetArgs()
-				args[0] = constExpr
-				constExpr = partFn
-			} else {
-				constExpr = arg1
-			}
-			c, isNull, err := constExpr.EvalInt(sctx, chunk.Row{})
-			if err == nil && !isNull {
-				ret.c = c
-				ret.op = opposite(ret.op)
-				return ret, true
-			}
+			ret.op = opposite(ret.op)
+			col, con = arg0, arg1
 		}
 	}
+	if col == nil || con == nil {
+		return ret, false
+	}
 
+	// Current expression is 'col op const'
+	var constExpr expression.Expression
+	if partFn != nil {
+		// If the partition expression is fn(col), change constExpr to fn(constExpr).
+		// No 'copy on write' for the expression here, this is a dangerous operation.
+		args := partFn.GetArgs()
+		args[0] = con
+		constExpr = partFn
+		// Sometimes we need to relax the condition, < to <=, > to >=.
+		// For example, the following case doesn't hold:
+		// col < '2020-02-11 17:34:11' => to_days(col) < to_days(2020-02-11 17:34:11)
+		// The correct transform should be:
+		// col < '2020-02-11 17:34:11' => to_days(col) <= to_days(2020-02-11 17:34:11)
+		ret.op = relaxOP(ret.op)
+	} else {
+		// If the partition expression is col, use constExpr.
+		constExpr = con
+	}
+	c, isNull, err := constExpr.EvalInt(sctx, chunk.Row{})
+	if err == nil && !isNull {
+		ret.c = c
+		return ret, true
+	}
 	return ret, false
 }
 
-// opposite turns 'a > b' to 'b <= a'
+// opposite turns > to <, >= to <= and so on.
 func opposite(op string) string {
 	switch op {
 	case ast.EQ:
-		return op
+		return ast.EQ
 	case ast.LT:
-		return ast.GE
-	case ast.GT:
-		return ast.LE
-	case ast.LE:
 		return ast.GT
-	case ast.GE:
+	case ast.GT:
 		return ast.LT
+	case ast.LE:
+		return ast.GE
+	case ast.GE:
+		return ast.LE
 	}
-	panic("invalid input parameter")
+	panic("invalid input parameter" + op)
+}
+
+// relaxOP relax the op > to >= and < to <=
+// Sometime we need to relax the condition, for example:
+// col < const => f(col) <= const
+// datetime < 2020-02-11 16:18:42 => to_days(datetime) <= to_days(2020-02-11)
+// We can't say:
+// datetime < 2020-02-11 16:18:42 => to_days(datetime) < to_days(2020-02-11)
+func relaxOP(op string) string {
+	switch op {
+	case ast.LT:
+		return ast.LE
+	case ast.GT:
+		return ast.GE
+	}
+	return op
 }
 
 func pruneUseBinarySearch(lessThan lessThanData, data dataForPrune) (start int, end int) {
