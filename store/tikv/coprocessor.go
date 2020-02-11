@@ -528,8 +528,9 @@ type copIteratorTaskSender struct {
 	finishCh <-chan struct{}
 	respChan chan<- *copResponse
 	sendRate *rateLimit
-	// tasks for copIterator.Next (if needed)
-	tasks chan<- *copTask
+	// orderedTasksCh is a channel into which we will send tasks if we need
+	// keep an order. Will be read in copIterator.Next via copIterator.tasks
+	orderedTasksCh chan<- *copTask
 }
 
 type copResponse struct {
@@ -643,13 +644,13 @@ func (it *copIterator) open(ctx context.Context) error {
 		return err
 	}
 	taskSender := &copIteratorTaskSender{
-		newTaskCh: newTaskCh,
-		taskCh:    taskCh,
-		wg:        &it.wg,
-		finishCh:  it.finishCh,
-		sendRate:  it.sendRate,
-		respChan:  it.respChan,
-		tasks:     it.tasks,
+		newTaskCh:      newTaskCh,
+		taskCh:         taskCh,
+		wg:             &it.wg,
+		finishCh:       it.finishCh,
+		sendRate:       it.sendRate,
+		respChan:       it.respChan,
+		orderedTasksCh: it.tasks,
 	}
 	go taskSender.run()
 	return nil
@@ -675,7 +676,7 @@ func (sender *copIteratorTaskSender) run() {
 	}
 	close(sender.taskCh)
 	if sender.sendRate != nil {
-		close(sender.tasks)
+		close(sender.orderedTasksCh)
 	}
 
 	// Wait for worker goroutines to exit.
@@ -714,7 +715,7 @@ func (sender *copIteratorTaskSender) sendToTaskCh(t *copTask) (exit bool) {
 	// send to the iteratoror (if we need to keep an order)
 	if sender.sendRate != nil {
 		select {
-		case sender.tasks <- t:
+		case sender.orderedTasksCh <- t:
 		case <-sender.finishCh:
 			exit = true
 		}
