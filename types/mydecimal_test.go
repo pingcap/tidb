@@ -26,6 +26,7 @@ var _ = SerialSuites(&testMyDecimalSerialSuite{})
 type testMyDecimalSuite struct {
 }
 
+// testMyDecimalSerialSuite hold test cases that must run in serial
 type testMyDecimalSerialSuite struct {
 }
 
@@ -258,6 +259,7 @@ func (s *testMyDecimalSuite) TestRemoveTrailingZeros(c *C) {
 	}
 }
 
+// this test will change global variable `wordBufLen`, so it must run in serial
 func (s *testMyDecimalSerialSuite) TestShift(c *C) {
 	type tcase struct {
 		input  string
@@ -476,6 +478,7 @@ func (s *testMyDecimalSuite) TestRoundWithCeil(c *C) {
 	}
 }
 
+// this test will change global variable `wordBufLen`, so it must run in serial
 func (s *testMyDecimalSerialSuite) TestFromString(c *C) {
 	type tcase struct {
 		input  string
