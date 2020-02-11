@@ -2323,7 +2323,7 @@ func dataForTableTiFlashReplica(schemas []*model.DBInfo) [][]types.Datum {
 	return rows
 }
 
-// dataForTableTiFlashReplica constructs data for table tiflash replica info.
+// dataForTableTiFlashReplica constructs data for all metric table definition.
 func dataForMetricTables(ctx sessionctx.Context) [][]types.Datum {
 	var rows [][]types.Datum
 	tables := make([]string, 0, len(MetricTableMap))
