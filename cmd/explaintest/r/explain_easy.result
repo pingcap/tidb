@@ -425,10 +425,10 @@ IndexReader_6	10.00	root	index:IndexScan_5
 └─IndexScan_5	10.00	cop[tikv]	table:t, index:a, b, range:[1,1], keep order:false, stats:pseudo
 explain select * from t where a = 1 and a = 2;
 id	count	task	operator info
-TableDual_5	0.00	root	rows:0
+TableDual_5	8000.00	root	rows:0
 explain select * from t where b = 1 and b = 2;
 id	count	task	operator info
-TableDual_5	0.00	root	rows:0
+TableDual_5	8000.00	root	rows:0
 explain select * from t t1 join t t2 where t1.b = t2.b and t2.b is null;
 id	count	task	operator info
 Projection_7	0.00	root	test.t.a, test.t.b, test.t.a, test.t.b
@@ -450,7 +450,7 @@ drop table if exists t;
 create table t(a bigint primary key);
 explain select * from t where a = 1 and a = 2;
 id	count	task	operator info
-TableDual_5	0.00	root	rows:0
+TableDual_5	8000.00	root	rows:0
 explain select null or a > 1 from t;
 id	count	task	operator info
 Projection_3	10000.00	root	or(<nil>, gt(test.t.a, 1))->Column#2
@@ -745,7 +745,7 @@ create table t(a int, b int);
 explain select a, b from (select a, b, avg(b) over (partition by a)as avg_b from t) as tt where a > 10 and b < 10 and a > avg_b;
 id	count	task	operator info
 Projection_8	2666.67	root	test.t.a, test.t.b
-└─Selection_9	2666.67	root	gt(cast(test.t.a), Column#5), lt(test.t.b, 10)
+└─Selection_9	2666.67	root	gt(cast(test.t.a), Column#5), gt(test.t.a, 10), lt(test.t.b, 10)
   └─Window_10	3333.33	root	avg(cast(test.t.b))->Column#5 over(partition by test.t.a)
     └─Sort_14	3333.33	root	test.t.a:asc
       └─TableReader_13	3333.33	root	data:Selection_12
