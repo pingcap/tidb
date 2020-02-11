@@ -126,6 +126,8 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 		return e.fetchShowColumns(ctx)
 	case ast.ShowCreateTable:
 		return e.fetchShowCreateTable()
+	case ast.ShowCreateSequence:
+		return e.fetchShowCreateSequence()
 	case ast.ShowCreateUser:
 		return e.fetchShowCreateUser()
 	case ast.ShowCreateView:
@@ -196,6 +198,38 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 	return nil
 }
 
+// visibleChecker checks if a stmt is visible for a certain user.
+type visibleChecker struct {
+	defaultDB string
+	ctx       sessionctx.Context
+	is        infoschema.InfoSchema
+	manager   privilege.Manager
+	ok        bool
+}
+
+func (v *visibleChecker) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
+	switch x := in.(type) {
+	case *ast.TableName:
+		schema := x.Schema.L
+		if schema == "" {
+			schema = v.defaultDB
+		}
+		if !v.is.TableExists(model.NewCIStr(schema), x.Name) {
+			return in, true
+		}
+		activeRoles := v.ctx.GetSessionVars().ActiveRoles
+		if v.manager != nil && !v.manager.RequestVerification(activeRoles, schema, x.Name.L, "", mysql.SelectPriv) {
+			v.ok = false
+		}
+		return in, true
+	}
+	return in, false
+}
+
+func (v *visibleChecker) Leave(in ast.Node) (out ast.Node, ok bool) {
+	return in, true
+}
+
 func (e *ShowExec) fetchShowBind() error {
 	var bindRecords []*bindinfo.BindRecord
 	if !e.GlobalScope {
@@ -204,8 +238,24 @@ func (e *ShowExec) fetchShowBind() error {
 	} else {
 		bindRecords = domain.GetDomain(e.ctx).BindHandle().GetAllBindRecord()
 	}
+	parser := parser.New()
 	for _, bindData := range bindRecords {
 		for _, hint := range bindData.Bindings {
+			stmt, err := parser.ParseOneStmt(hint.BindSQL, hint.Charset, hint.Collation)
+			if err != nil {
+				return err
+			}
+			checker := visibleChecker{
+				defaultDB: bindData.Db,
+				ctx:       e.ctx,
+				is:        e.is,
+				manager:   privilege.GetPrivilegeManager(e.ctx),
+				ok:        true,
+			}
+			stmt.Accept(&checker)
+			if !checker.ok {
+				continue
+			}
 			e.appendRow([]interface{}{
 				bindData.OriginalSQL,
 				hint.BindSQL,
@@ -847,6 +897,46 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 	}
 	// add partition info here.
 	appendPartitionInfo(tableInfo.Partition, buf)
+	return nil
+}
+
+// ConstructResultOfShowCreateSequence constructs the result for show create sequence.
+func ConstructResultOfShowCreateSequence(ctx sessionctx.Context, tableInfo *model.TableInfo, buf *bytes.Buffer) {
+	sqlMode := ctx.GetSessionVars().SQLMode
+	fmt.Fprintf(buf, "CREATE SEQUENCE %s ", escape(tableInfo.Name, sqlMode))
+	sequenceInfo := tableInfo.Sequence
+	fmt.Fprintf(buf, "start with %d ", sequenceInfo.Start)
+	fmt.Fprintf(buf, "minvalue %d ", sequenceInfo.MinValue)
+	fmt.Fprintf(buf, "maxvalue %d ", sequenceInfo.MaxValue)
+	fmt.Fprintf(buf, "increment by %d ", sequenceInfo.Increment)
+	if sequenceInfo.Cache {
+		fmt.Fprintf(buf, "cache %d ", sequenceInfo.CacheValue)
+	} else {
+		buf.WriteString("nocache ")
+	}
+	if sequenceInfo.Cycle {
+		buf.WriteString("cycle ")
+	} else {
+		buf.WriteString("nocycle ")
+	}
+	buf.WriteString("ENGINE=InnoDB")
+	if len(sequenceInfo.Comment) > 0 {
+		fmt.Fprintf(buf, " COMMENT='%s'", format.OutputFormat(sequenceInfo.Comment))
+	}
+}
+
+func (e *ShowExec) fetchShowCreateSequence() error {
+	tbl, err := e.getTable()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	tableInfo := tbl.Meta()
+	if !tableInfo.IsSequence() {
+		return ErrWrongObject.GenWithStackByArgs(e.DBName.O, tableInfo.Name.O, "SEQUENCE")
+	}
+	var buf bytes.Buffer
+	ConstructResultOfShowCreateSequence(e.ctx, tableInfo, &buf)
+	e.appendRow([]interface{}{tableInfo.Name.O, buf.String()})
 	return nil
 }
 

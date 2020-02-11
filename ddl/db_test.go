@@ -229,7 +229,7 @@ func (s *testDBSuite5) TestAddPrimaryKeyRollback1(c *C) {
 	idxName := "PRIMARY"
 	addIdxSQL := "alter table t1 add primary key c3_index (c3);"
 	errMsg := "[kv:1062]Duplicate entry '' for key 'PRIMARY'"
-	testAddIndexRollback(c, s.store, s.lease, idxName, addIdxSQL, errMsg, hasNullValsInKey, false)
+	testAddIndexRollback(c, s.store, s.lease, idxName, addIdxSQL, errMsg, hasNullValsInKey)
 }
 
 // TestAddPrimaryKeyRollback2 is used to test scenarios that will roll back when a null primary key is encountered.
@@ -238,7 +238,7 @@ func (s *testDBSuite1) TestAddPrimaryKeyRollback2(c *C) {
 	idxName := "PRIMARY"
 	addIdxSQL := "alter table t1 add primary key c3_index (c3);"
 	errMsg := "[ddl:1138]Invalid use of NULL value"
-	testAddIndexRollback(c, s.store, s.lease, idxName, addIdxSQL, errMsg, hasNullValsInKey, false)
+	testAddIndexRollback(c, s.store, s.lease, idxName, addIdxSQL, errMsg, hasNullValsInKey)
 }
 
 func (s *testDBSuite2) TestAddUniqueIndexRollback(c *C) {
@@ -246,17 +246,35 @@ func (s *testDBSuite2) TestAddUniqueIndexRollback(c *C) {
 	idxName := "c3_index"
 	addIdxSQL := "create unique index c3_index on t1 (c3)"
 	errMsg := "[kv:1062]Duplicate entry '' for key 'c3_index'"
-	testAddIndexRollback(c, s.store, s.lease, idxName, addIdxSQL, errMsg, hasNullValsInKey, false)
+	testAddIndexRollback(c, s.store, s.lease, idxName, addIdxSQL, errMsg, hasNullValsInKey)
 }
 
 func (s *testDBSuite6) TestAddExpressionIndexRollback(c *C) {
-	// TODO: This test may cause a bug which has been fixed in following PR, uncomment these code
-	// in that PR @wjhuang2016
-	//hasNullValsInKey := false
-	//idxName := "expr_idx"
-	//addIdxSQL := "alter table t1 add index expr_idx ((pow(c1, c2)));"
-	//errMsg := "[ddl:8202]Cannot decode index value, because [types:1690]DOUBLE value is out of range in 'pow(144, 144)'"
-	//testAddIndexRollback(c, s.store, s.lease, idxName, addIdxSQL, errMsg, hasNullValsInKey, true)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test_db")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (c1 int, c2 int, c3 int, unique key(c1))")
+	tk.MustExec("insert into t1 values (20, 20, 20), (40, 40, 40), (80, 80, 80), (160, 160, 160);")
+
+	var checkErr error
+	tk1 := testkit.NewTestKit(c, s.store)
+	_, checkErr = tk1.Exec("use test_db")
+
+	d := s.dom.DDL()
+	hook := &ddl.TestDDLCallback{}
+	hook.OnJobUpdatedExported = func(job *model.Job) {
+		if job.SchemaState == model.StateDeleteOnly {
+			if checkErr != nil {
+				return
+			}
+			_, checkErr = tk1.Exec("delete from t1 where c1 = 40;")
+		}
+	}
+	d.(ddl.DDLForTest).SetHook(hook)
+
+	tk.MustGetErrMsg("alter table t1 add index expr_idx ((pow(c1, c2)));", "[ddl:8202]Cannot decode index value, because [types:1690]DOUBLE value is out of range in 'pow(160, 160)'")
+	c.Assert(checkErr, IsNil)
+	tk.MustQuery("select * from t1;").Check(testkit.Rows("20 20 20", "80 80 80", "160 160 160"))
 }
 
 func batchInsert(tk *testkit.TestKit, tbl string, start, end int) {
@@ -270,7 +288,7 @@ func batchInsert(tk *testkit.TestKit, tbl string, start, end int) {
 	tk.MustExec(dml)
 }
 
-func testAddIndexRollback(c *C, store kv.Storage, lease time.Duration, idxName, addIdxSQL, errMsg string, hasNullValsInKey bool, isExpressionIndex bool) {
+func testAddIndexRollback(c *C, store kv.Storage, lease time.Duration, idxName, addIdxSQL, errMsg string, hasNullValsInKey bool) {
 	tk := testkit.NewTestKit(c, store)
 	tk.MustExec("use test_db")
 	tk.MustExec("drop table if exists t1")
@@ -331,9 +349,7 @@ LOOP:
 	for i := base - 10; i < base; i++ {
 		tk.MustExec("delete from t1 where c1 = ?", i+10)
 	}
-	if !isExpressionIndex {
-		sessionExec(c, store, addIdxSQL)
-	}
+	sessionExec(c, store, addIdxSQL)
 	tk.MustExec("drop table t1")
 }
 
