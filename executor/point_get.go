@@ -182,15 +182,6 @@ func (e *PointGetExecutor) get(ctx context.Context, key kv.Key) (val []byte, err
 	if err != nil {
 		return nil, err
 	}
-	if txn.Valid() && e.snapshotTS == e.startTS {
-		var ok bool
-		val, ok = e.ctx.GetSessionVars().TxnCtx.GetKeyInPessimisticLockCache(key)
-		if ok {
-			return
-		}
-		// We can safely use the snapshot in the txn and utilize the cache.
-		return txn.Get(ctx, key)
-	}
 	if txn.Valid() && !txn.IsReadOnly() {
 		// We cannot use txn.Get directly here because the snapshot in txn and the snapshot of e.snapshot is
 		// different for pessimistic transaction.
