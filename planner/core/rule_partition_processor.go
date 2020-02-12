@@ -468,7 +468,7 @@ func (or partitionRangeOR) intersection(x partitionRangeOR) partitionRangeOR {
 	if or.Len() > x.Len() {
 		x, y = or, x
 	} else {
-		x, y = x, or
+		y = or
 	}
 
 	// (a U b) M (c U d) => (x M c) U (x M d), x = (a U b)
