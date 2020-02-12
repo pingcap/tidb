@@ -755,7 +755,7 @@ type tableFlashReplicaStatus struct {
 	ID int64 `json:"id"`
 	// RegionCount is the number of regions that need sync.
 	RegionCount uint64 `json:"region_count"`
-	// FlashRegionCount is the regions number that already sync completed.
+	// FlashRegionCount is the number of regions that already sync completed.
 	FlashRegionCount uint64 `json:"flash_region_count"`
 }
 
