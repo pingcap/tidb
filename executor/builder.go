@@ -2073,7 +2073,7 @@ func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableRea
 	}
 	e.dagPB.CollectRangeCounts = &collect
 	if v.StoreType == kv.TiDB && b.ctx.GetSessionVars().User != nil {
-		// User info uses to do privilege check. It is only used in TiDB cluster memory table.
+		// User info is used to do privilege check. It is only used in TiDB cluster memory table.
 		e.dagPB.User = &tipb.UserIdentity{
 			UserName: b.ctx.GetSessionVars().User.Username,
 			UserHost: b.ctx.GetSessionVars().User.Hostname,
