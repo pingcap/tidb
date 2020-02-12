@@ -842,19 +842,6 @@ func (p *PhysicalTopN) allColsFromSchema(schema *expression.Schema) bool {
 	return len(schema.ColumnsIndices(cols)) > 0
 }
 
-func (p *PhysicalSort) avgRowSize(schema *expression.Schema) (size float64) {
-	if p.statsInfo().HistColl != nil {
-		size = p.statsInfo().HistColl.GetAvgRowSizeListInDisk(schema.Columns)
-	} else {
-		// Estimate using just the type info.
-		cols := schema.Columns
-		for _, col := range cols {
-			size += float64(chunk.EstimateTypeWidth(col.GetType()))
-		}
-	}
-	return
-}
-
 // GetCost computes the cost of in memory sort.
 func (p *PhysicalSort) GetCost(count float64, schema *expression.Schema) float64 {
 	if count < 2.0 {
