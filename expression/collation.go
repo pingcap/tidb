@@ -51,19 +51,19 @@ type CollationExpr interface {
 type Coercibility int
 
 const (
-	// NULL or an expression that is derived from NULL has a coercibility of 6.
+	// CoercibilityIgnorable: NULL or an expression that is derived from NULL has a coercibility of 6.
 	CoercibilityIgnorable Coercibility = 6
-	// The collation of a numeric or temporal value has a coercibility of 5.
+	// CoercibilityNumeric: The collation of a numeric or temporal value has a coercibility of 5.
 	CoercibilityNumeric Coercibility = 5
-	// The collation of a literal has a coercibility of 4.
+	// CoercibilityCoercible: The collation of a literal has a coercibility of 4.
 	CoercibilityCoercible Coercibility = 4
-	// A “system constant” (the string returned by functions such as USER() or VERSION()) has a coercibility of 3.
+	// CoercibilitySysconst: A “system constant” (the string returned by functions such as USER() or VERSION()) has a coercibility of 3.
 	CoercibilitySysconst Coercibility = 3
-	// The collation of a column or a stored routine parameter or local variable has a coercibility of 2.
+	// CoercibilityImplicit: The collation of a column or a stored routine parameter or local variable has a coercibility of 2.
 	CoercibilityImplicit Coercibility = 2
-	// The concatenation of two strings with different collations has a coercibility of 1.
+	// CoercibilityNone: The concatenation of two strings with different collations has a coercibility of 1.
 	CoercibilityNone Coercibility = 1
-	// An explicit COLLATE clause has a coercibility of 0 (not coercible at all).
+	// CoercibilityExplicit: An explicit COLLATE clause has a coercibility of 0 (not coercible at all).
 	CoercibilityExplicit Coercibility = 0
 )
 
