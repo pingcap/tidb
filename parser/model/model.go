@@ -349,9 +349,20 @@ func (t TableLockType) String() string {
 
 // TiFlashReplicaInfo means the flash replica info.
 type TiFlashReplicaInfo struct {
-	Count          uint64
-	LocationLabels []string
-	Available      bool
+	Count                 uint64
+	LocationLabels        []string
+	Available             bool
+	AvailablePartitionIDs []int64
+}
+
+// IsPartitionAvailable checks whether the partition table replica was available.
+func (tr *TiFlashReplicaInfo) IsPartitionAvailable(pid int64) bool {
+	for _, id := range tr.AvailablePartitionIDs {
+		if id == pid {
+			return true
+		}
+	}
+	return false
 }
 
 // GetPartitionInfo returns the partition information.
