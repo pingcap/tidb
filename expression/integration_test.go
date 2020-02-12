@@ -5405,12 +5405,13 @@ func (s *testIntegrationSuite) TestCoercibility(c *C) {
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t (i int, r real, d datetime, t timestamp, c char(10), vc varchar(10))")
-	tk.MustExec("insert into t values (null, null, null, null, null, null)")
+	tk.MustExec("create table t (i int, r real, d datetime, t timestamp, c char(10), vc varchar(10), b binary(10), vb binary(10))")
+	tk.MustExec("insert into t values (null, null, null, null, null, null, null, null)")
 	testFunc([]testCase{
-		{"i", 5}, {"r", 5}, {"d", 5}, {"t", 5}, {"c", 2},
-		{"vc", 2}, {"i+r", 5}, {"i*r", 5}, {"cos(r)+sin(i)", 5},
-		{"d+2", 5}, {"t*10", 5}, {"concat(c, vc)", 2}, {"replace(c, 'x', 'y')", 2},
+		{"i", 5}, {"r", 5}, {"d", 5}, {"t", 5},
+		{"c", 2}, {"b", 2}, {"vb", 2}, {"vc", 2},
+		{"i+r", 5}, {"i*r", 5}, {"cos(r)+sin(i)", 5}, {"d+2", 5},
+		{"t*10", 5}, {"concat(c, vc)", 2}, {"replace(c, 'x', 'y')", 2},
 	}, "from t")
 }
 
