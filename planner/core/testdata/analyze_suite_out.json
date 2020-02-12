@@ -9,9 +9,9 @@
         ],
         "Plan": [
           "TopN_8 1.00 root test.t.a:asc, offset:0, count:1",
-          "└─IndexReader_16 1.00 root index:TopN_15",
-          "  └─TopN_15 1.00 cop[tikv] test.t.a:asc, offset:0, count:1",
-          "    └─IndexScan_14 10.00 cop[tikv] table:t, index:b, c, range:[2,2], keep order:false, stats:pseudo"
+          "└─IndexReader_17 1.00 root index:TopN_16",
+          "  └─TopN_16 1.00 cop[tikv] test.t.a:asc, offset:0, count:1",
+          "    └─IndexScan_15 10.00 cop[tikv] table:t, index:b, c, range:[2,2], keep order:false, stats:pseudo"
         ]
       },
       {
@@ -22,9 +22,9 @@
         ],
         "Plan": [
           "TopN_8 1.00 root test.t.a:asc, offset:0, count:1",
-          "└─IndexReader_16 1.00 root index:TopN_15",
-          "  └─TopN_15 1.00 cop[tikv] test.t.a:asc, offset:0, count:1",
-          "    └─IndexScan_14 6.00 cop[tikv] table:t, index:b, c, range:[2,2], keep order:false"
+          "└─IndexReader_17 1.00 root index:TopN_16",
+          "  └─TopN_16 1.00 cop[tikv] test.t.a:asc, offset:0, count:1",
+          "    └─IndexScan_15 6.00 cop[tikv] table:t, index:b, c, range:[2,2], keep order:false"
         ]
       },
       {
@@ -65,9 +65,9 @@
         ],
         "Plan": [
           "TopN_8 1.00 root test.t.a:desc, offset:0, count:1",
-          "└─IndexReader_16 1.00 root index:TopN_15",
-          "  └─TopN_15 1.00 cop[tikv] test.t.a:desc, offset:0, count:1",
-          "    └─IndexScan_14 6.00 cop[tikv] table:t, index:b, c, range:[1,1], keep order:false"
+          "└─IndexReader_17 1.00 root index:TopN_16",
+          "  └─TopN_16 1.00 cop[tikv] test.t.a:desc, offset:0, count:1",
+          "    └─IndexScan_15 6.00 cop[tikv] table:t, index:b, c, range:[1,1], keep order:false"
         ]
       },
       {
@@ -79,10 +79,10 @@
         ],
         "Plan": [
           "Limit_11 1.00 root offset:0, count:1",
-          "└─TableReader_22 1.00 root data:Limit_21",
-          "  └─Limit_21 1.00 cop[tikv] offset:0, count:1",
-          "    └─Selection_20 1.00 cop[tikv] eq(test.t.b, 2)",
-          "      └─TableScan_19 4.17 cop[tikv] table:t, range:[-inf,+inf], keep order:true"
+          "└─TableReader_24 1.00 root data:Limit_23",
+          "  └─Limit_23 1.00 cop[tikv] offset:0, count:1",
+          "    └─Selection_22 1.00 cop[tikv] eq(test.t.b, 2)",
+          "      └─TableScan_21 4.17 cop[tikv] table:t, range:[-inf,+inf], keep order:true"
         ]
       },
       {
@@ -92,9 +92,9 @@
         ],
         "Plan": [
           "TopN_8 1.00 root test.t.a:asc, offset:0, count:1",
-          "└─IndexReader_16 1.00 root index:TopN_15",
-          "  └─TopN_15 1.00 cop[tikv] test.t.a:asc, offset:0, count:1",
-          "    └─IndexScan_14 6.00 cop[tikv] table:t, index:b, c, range:[2,2], keep order:false"
+          "└─IndexReader_17 1.00 root index:TopN_16",
+          "  └─TopN_16 1.00 cop[tikv] test.t.a:asc, offset:0, count:1",
+          "    └─IndexScan_15 6.00 cop[tikv] table:t, index:b, c, range:[2,2], keep order:false"
         ]
       },
       {
@@ -107,10 +107,10 @@
         ],
         "Plan": [
           "TopN_8 1.00 root test.t.a:asc, offset:0, count:1",
-          "└─IndexReader_19 1.00 root index:TopN_18",
-          "  └─TopN_18 1.00 cop[tikv] test.t.a:asc, offset:0, count:1",
-          "    └─Selection_17 6.00 cop[tikv] gt(test.t.a, 0)",
-          "      └─IndexScan_16 6.00 cop[tikv] table:t, index:b, c, range:[2,2], keep order:false"
+          "└─IndexReader_20 1.00 root index:TopN_19",
+          "  └─TopN_19 1.00 cop[tikv] test.t.a:asc, offset:0, count:1",
+          "    └─Selection_18 6.00 cop[tikv] gt(test.t.a, 0)",
+          "      └─IndexScan_17 6.00 cop[tikv] table:t, index:b, c, range:[2,2], keep order:false"
         ]
       },
       {
@@ -124,10 +124,10 @@
         "Plan": [
           "Projection_7 1.00 root test.t.a",
           "└─TopN_8 1.00 root test.t.a:asc, offset:0, count:1",
-          "  └─IndexReader_17 1.00 root index:TopN_16",
-          "    └─TopN_16 1.00 cop[tikv] test.t.a:asc, offset:0, count:1",
-          "      └─Selection_15 6.00 cop[tikv] gt(test.t.c, 0)",
-          "        └─IndexScan_14 6.00 cop[tikv] table:t, index:b, d, a, c, range:[2,2], keep order:false"
+          "  └─IndexReader_18 1.00 root index:TopN_17",
+          "    └─TopN_17 1.00 cop[tikv] test.t.a:asc, offset:0, count:1",
+          "      └─Selection_16 6.00 cop[tikv] gt(test.t.c, 0)",
+          "        └─IndexScan_15 6.00 cop[tikv] table:t, index:b, d, a, c, range:[2,2], keep order:false"
         ]
       }
     ]
@@ -181,8 +181,7 @@
         "└─TableScan_4 10000.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false, stats:pseudo"
       ],
       [
-        "TableReader_6 2.00 root data:TableScan_5",
-        "└─TableScan_5 2.00 cop[tikv] table:t, range:[1,1], [2,2], keep order:false, stats:pseudo"
+        "Batch_Point_Get_5 2.00 root table:t, handle:[1 2], keep order:false, desc:false"
       ],
       [
         "TableReader_7 2.00 root data:Selection_6",

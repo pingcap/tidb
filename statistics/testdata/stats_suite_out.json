@@ -3,8 +3,7 @@
     "Name": "TestUniqCompEqualEst",
     "Cases": [
       [
-        "IndexReader_6 1.00 root index:IndexScan_5",
-        "└─IndexScan_5 1.00 cop[tikv] table:t, index:a, b, range:[1 5,1 5], keep order:false"
+        "Point_Get_5 1.00 root table:t, index:a b"
       ]
     ]
   },
@@ -84,8 +83,8 @@
     "Name": "TestSelectCombinedLowBound",
     "Cases": [
       [
-        "IndexReader_6 7.00 root index:IndexScan_5",
-        "└─IndexScan_5 7.00 cop[tikv] table:t, index:kid, pid, range:[1,1], keep order:false"
+        "IndexReader_7 7.00 root index:IndexScan_6",
+        "└─IndexScan_6 7.00 cop[tikv] table:t, index:kid, pid, range:[1,1], keep order:false"
       ]
     ]
   }
