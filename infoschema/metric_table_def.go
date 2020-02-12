@@ -64,7 +64,7 @@ var MetricTableMap = map[string]MetricTableDef{
 		Labels:  []string{"instance", "job"},
 		Comment: "process rss memory usage",
 	},
-	"heap_mem_usage": {
+	"go_heap_mem_usage": {
 		PromQL:  "go_memstats_heap_alloc_bytes{$LABEL_CONDITIONS}",
 		Labels:  []string{"instance", "job"},
 		Comment: "TiDB heap memory size in use",
@@ -73,12 +73,12 @@ var MetricTableMap = map[string]MetricTableDef{
 		PromQL: "rate(process_cpu_seconds_total{$LABEL_CONDITIONS}[$RANGE_DURATION])",
 		Labels: []string{"instance", "job"},
 	},
-	"connection_count": {
+	"tidb_connection_count": {
 		PromQL:  "tidb_server_connections{$LABEL_CONDITIONS}",
 		Labels:  []string{"instance"},
 		Comment: "TiDB current connection counts",
 	},
-	"process_open_fd_count": {
+	"node_process_open_fd_count": {
 		PromQL:  "process_open_fds{$LABEL_CONDITIONS}",
 		Labels:  []string{"instance", "job"},
 		Comment: "Process opened file descriptors count",
@@ -632,7 +632,7 @@ var MetricTableMap = map[string]MetricTableDef{
 		PromQL: `pd_cluster_metadata{$LABEL_CONDITIONS}`,
 		Labels: []string{"instance", "type"},
 	},
-	"region_health": {
+	"pd_region_health": {
 		PromQL:  `sum(pd_regions_status{$LABEL_CONDITIONS}) by (instance, type)`,
 		Labels:  []string{"instance", "type"},
 		Comment: "It records the unusual Regions' count which may include pending peers, down peers, extra peers, offline peers, missing peers or learner peers",
@@ -1834,5 +1834,209 @@ var MetricTableMap = map[string]MetricTableDef{
 	"tikv_backup_errors": {
 		PromQL: `rate(tikv_backup_error_counter{$LABEL_CONDITIONS}[$RANGE_DURATION])`,
 		Labels: []string{"error", "instance"},
+	},
+	"node_virtual_cpus": {
+		PromQL:  `count(node_cpu_seconds_total{mode="user"}) by (instance)`,
+		Labels:  []string{"instance"},
+		Comment: "node virtual cpu count",
+	},
+	"node_total_memory": {
+		PromQL:  `node_memory_MemTotal_bytes{$LABEL_CONDITIONS}`,
+		Labels:  []string{"instance"},
+		Comment: "total memory in node",
+	},
+	"node_memory_available": {
+		PromQL: `node_memory_MemAvailable_bytes{$LABEL_CONDITIONS}`,
+		Labels: []string{"instance"},
+	},
+	"node_total_memory_swap": {
+		PromQL:  `node_memory_SwapTotal_bytes{$LABEL_CONDITIONS}`,
+		Labels:  []string{"instance"},
+		Comment: "node total memory swap",
+	},
+	"node_uptime": {
+		PromQL:  `node_time_seconds{$LABEL_CONDITIONS} - node_boot_time_seconds{$LABEL_CONDITIONS}`,
+		Labels:  []string{"instance"},
+		Comment: "node uptime, units are seconds",
+	},
+	"node_load1": {
+		PromQL:  `node_load1{$LABEL_CONDITIONS}`,
+		Labels:  []string{"instance"},
+		Comment: "1 minute load averages in node",
+	},
+	"node_load5": {
+		PromQL:  `node_load5{$LABEL_CONDITIONS}`,
+		Labels:  []string{"instance"},
+		Comment: "5 minutes load averages in node",
+	},
+	"node_load15": {
+		PromQL:  `node_load15{$LABEL_CONDITIONS}`,
+		Labels:  []string{"instance"},
+		Comment: "15 minutes load averages in node",
+	},
+	"node_kernel_interrupts": {
+		PromQL: `rate(node_intr_total{$LABEL_CONDITIONS}[$RANGE_DURATION]) or irate(node_intr_total{$LABEL_CONDITIONS}[$RANGE_DURATION])`,
+		Labels: []string{"instance"},
+	},
+	"node_kernel_forks": {
+		PromQL: `rate(node_forks_total{$LABEL_CONDITIONS}[$RANGE_DURATION]) or irate(node_forks_total{$LABEL_CONDITIONS}[$RANGE_DURATION])`,
+		Labels: []string{"instance"},
+	},
+	"node_kernel_context_switches": {
+		PromQL: `rate(node_context_switches_total{$LABEL_CONDITIONS}[$RANGE_DURATION]) or irate(node_context_switches_total{$LABEL_CONDITIONS}[$RANGE_DURATION])`,
+		Labels: []string{"instance"},
+	},
+	"node_cpu_usage": {
+		PromQL: `sum(rate(node_cpu_seconds_total{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (mode,instance) * 100 / count(node_cpu_seconds_total{$LABEL_CONDITIONS}) by (mode,instance) or sum(irate(node_cpu_seconds_total{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (mode,instance) * 100 / count(node_cpu_seconds_total{$LABEL_CONDITIONS}) by (mode,instance)`,
+		Labels: []string{"instance", "mode"},
+	},
+	"node_memory_free": {
+		PromQL: `node_memory_MemFree_bytes{$LABEL_CONDITIONS}`,
+		Labels: []string{"instance"},
+	},
+	"node_memory_buffers": {
+		PromQL: `node_memory_Buffers_bytes{$LABEL_CONDITIONS}`,
+		Labels: []string{"instance"},
+	},
+	"node_memory_cached": {
+		PromQL: `node_memory_Cached_bytes{$LABEL_CONDITIONS}`,
+		Labels: []string{"instance"},
+	},
+	"node_memory_active": {
+		PromQL: `node_memory_Active_bytes{$LABEL_CONDITIONS}`,
+		Labels: []string{"instance"},
+	},
+	"node_memory_inactive": {
+		PromQL: `node_memory_Inactive_bytes{$LABEL_CONDITIONS}`,
+		Labels: []string{"instance"},
+	},
+	"node_memory_writeback": {
+		PromQL: `node_memory_Writeback_bytes{$LABEL_CONDITIONS}`,
+		Labels: []string{"instance"},
+	},
+	"node_memory_writeback_tmp": {
+		PromQL: `node_memory_WritebackTmp_bytes{$LABEL_CONDITIONS}`,
+		Labels: []string{"instance"},
+	},
+	"node_memory_dirty": {
+		PromQL: `node_memory_Dirty_bytes{$LABEL_CONDITIONS}`,
+		Labels: []string{"instance"},
+	},
+	"node_memory_shared": {
+		PromQL: `node_memory_Shmem_bytes{$LABEL_CONDITIONS}`,
+		Labels: []string{"instance"},
+	},
+	"node_memory_mapped": {
+		PromQL: `node_memory_Mapped_bytes{$LABEL_CONDITIONS}`,
+		Labels: []string{"instance"},
+	},
+	"node_disk_size": {
+		PromQL: `node_filesystem_size_bytes{$LABEL_CONDITIONS}`,
+		Labels: []string{"instance", "device", "fstype", "mountpoint"},
+	},
+	"node_disk_available_size": {
+		PromQL: `node_filesystem_avail_bytes{$LABEL_CONDITIONS}`,
+		Labels: []string{"instance", "device", "fstype", "mountpoint"},
+	},
+	"node_disk_state": {
+		PromQL: `node_filesystem_readonly{$LABEL_CONDITIONS}`,
+		Labels: []string{"instance", "device", "fstype", "mountpoint"},
+	},
+	"node_disk_io_util": {
+		PromQL: `rate(node_disk_io_time_seconds_total{$LABEL_CONDITIONS}[$RANGE_DURATION]) or irate(node_disk_io_time_seconds_total{$LABEL_CONDITIONS}[$RANGE_DURATION])`,
+		Labels: []string{"device", "instance"},
+	},
+	"node_disk_iops": {
+		PromQL: `sum(rate(node_disk_reads_completed_total{$LABEL_CONDITIONS}[$RANGE_DURATION]) + rate(node_disk_writes_completed_total{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (instance,device)`,
+		Labels: []string{"device", "instance"},
+	},
+	"node_disk_write_latency": {
+		PromQL:  `(rate(node_disk_write_time_seconds_total{$LABEL_CONDITIONS}[$RANGE_DURATION])/ rate(node_disk_writes_completed_total{$LABEL_CONDITIONS}[$RANGE_DURATION]))`,
+		Labels:  []string{"device", "instance"},
+		Comment: "node disk write latency(ms)",
+	},
+	"node_disk_read_latency": {
+		PromQL:  `(rate(node_disk_read_time_seconds_total{$LABEL_CONDITIONS}[$RANGE_DURATION])/ rate(node_disk_reads_completed_total{$LABEL_CONDITIONS}[$RANGE_DURATION]))`,
+		Labels:  []string{"device", "instance"},
+		Comment: "node disk read latency(ms)",
+	},
+	"node_disk_throughput": {
+		PromQL:  `irate(node_disk_read_bytes_total{$LABEL_CONDITIONS}[$RANGE_DURATION]) + irate(node_disk_written_bytes_total{$LABEL_CONDITIONS}[$RANGE_DURATION])`,
+		Labels:  []string{"device", "instance"},
+		Comment: "Units is byte",
+	},
+	"node_filesystem_space_used": {
+		PromQL:  `((node_filesystem_size_bytes{$LABEL_CONDITIONS} - node_filesystem_avail_bytes{$LABEL_CONDITIONS}) / node_filesystem_size_bytes{$LABEL_CONDITIONS}) * 100`,
+		Labels:  []string{"device", "instance"},
+		Comment: "Filesystem used space. If is > 80% then is Critical.",
+	},
+	"node_file_descriptor_allocated": {
+		PromQL: `node_filefd_allocated{$LABEL_CONDITIONS}`,
+		Labels: []string{"instance"},
+	},
+	"node_network_in_drops": {
+		PromQL: `rate(node_network_receive_drop_total{$LABEL_CONDITIONS}[$RANGE_DURATION]) `,
+		Labels: []string{"device", "instance"},
+	},
+	"node_network_out_drops": {
+		PromQL: `rate(node_network_transmit_drop_total{$LABEL_CONDITIONS}[$RANGE_DURATION])`,
+		Labels: []string{"device", "instance"},
+	},
+	"node_network_in_errors": {
+		PromQL: `rate(node_network_receive_errs_total{$LABEL_CONDITIONS}[$RANGE_DURATION])`,
+		Labels: []string{"device", "instance"},
+	},
+	"node_network_out_errors": {
+		PromQL: `rate(node_network_transmit_errs_total{$LABEL_CONDITIONS}[$RANGE_DURATION])`,
+		Labels: []string{"device", "instance"},
+	},
+	"node_network_in_traffic": {
+		PromQL: `rate(node_network_receive_bytes_total{$LABEL_CONDITIONS}[$RANGE_DURATION]) or irate(node_network_receive_bytes_total{$LABEL_CONDITIONS}[$RANGE_DURATION])`,
+		Labels: []string{"device", "instance"},
+	},
+	"node_network_out_traffic": {
+		PromQL: `rate(node_network_transmit_bytes_total{$LABEL_CONDITIONS}[$RANGE_DURATION]) or irate(node_network_transmit_bytes_total{$LABEL_CONDITIONS}[$RANGE_DURATION])`,
+		Labels: []string{"device", "instance"},
+	},
+	"node_network_in_packets": {
+		PromQL: `rate(node_network_receive_packets_total{$LABEL_CONDITIONS}[$RANGE_DURATION]) or irate(node_network_receive_packets_total{$LABEL_CONDITIONS}[$RANGE_DURATION])`,
+		Labels: []string{"device", "instance"},
+	},
+	"node_network_out_packets": {
+		PromQL: `rate(node_network_transmit_packets_total{$LABEL_CONDITIONS}[$RANGE_DURATION]) or irate(node_network_transmit_packets_total{$LABEL_CONDITIONS}[$RANGE_DURATION])`,
+		Labels: []string{"device", "instance"},
+	},
+	"node_network_interface_speed": {
+		PromQL:  `node_network_transmit_queue_length{$LABEL_CONDITIONS}`,
+		Labels:  []string{"device", "instance"},
+		Comment: "node_network_transmit_queue_length = transmit_queue_length value of /sys/class/net/<iface>.",
+	},
+	"node_network_utilization_in_hourly": {
+		PromQL: `sum(increase(node_network_receive_bytes_total{$LABEL_CONDITIONS}[1h]))`,
+		Labels: []string{"device", "instance"},
+	},
+	"node_network_utilization_out_hourly": {
+		PromQL: `sum(increase(node_network_transmit_bytes_total{$LABEL_CONDITIONS}[1h]))`,
+		Labels: []string{"device", "instance"},
+	},
+	"node_tcp_in_use": {
+		PromQL: `node_sockstat_TCP_inuse{$LABEL_CONDITIONS}`,
+		Labels: []string{"instance"},
+	},
+	"node_tcp_segments_retransmitted": {
+		PromQL: `rate(node_netstat_Tcp_RetransSegs{$LABEL_CONDITIONS}[$RANGE_DURATION]) or irate(node_netstat_Tcp_RetransSegs{$LABEL_CONDITIONS}[$RANGE_DURATION])`,
+		Labels: []string{"instance"},
+	},
+	"node_tcp_connections": {
+		PromQL: `node_netstat_Tcp_CurrEstab{$LABEL_CONDITIONS}`,
+		Labels: []string{"instance"},
+	},
+	"node_processes_running": {
+		PromQL: `node_procs_running{$LABEL_CONDITIONS}`,
+		Labels: []string{"instance"},
+	},
+	"node_processes_blocked": {
+		PromQL: `node_procs_blocked{$LABEL_CONDITIONS}`,
+		Labels: []string{"instance"},
 	},
 }
