@@ -1119,6 +1119,7 @@ select * from t3;
 	defer os.Remove(slowLogFileName)
 	tk.MustExec("use information_schema")
 	tk.MustQuery("select count(*) from `CLUSTER_SLOW_QUERY`").Check(testkit.Rows("4"))
+	tk.MustQuery("select count(*) from `SLOW_QUERY`").Check(testkit.Rows("4"))
 	tk.MustQuery("select count(*) from `CLUSTER_PROCESSLIST`").Check(testkit.Rows("1"))
 	tk.MustQuery("select * from `CLUSTER_PROCESSLIST`").Check(testkit.Rows(":10080 1 root 127.0.0.1 <nil> Query 9223372036 0 <nil> 0 "))
 	tk.MustExec("create user user1")
@@ -1130,6 +1131,7 @@ select * from t3;
 		Hostname: "127.0.0.1",
 	}, nil, nil), IsTrue)
 	user1.MustQuery("select count(*) from `CLUSTER_SLOW_QUERY`").Check(testkit.Rows("1"))
+	user1.MustQuery("select count(*) from `SLOW_QUERY`").Check(testkit.Rows("1"))
 	user1.MustQuery("select user,query from `CLUSTER_SLOW_QUERY`").Check(testkit.Rows("user1 select * from t1;"))
 
 	user2 := testkit.NewTestKit(c, s.store)
