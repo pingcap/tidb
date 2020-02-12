@@ -106,8 +106,12 @@ const (
 	tableTiFlashReplica    = "TIFLASH_REPLICA"
 	// TableInspectionResult is the string constant of inspection result table
 	TableInspectionResult = "INSPECTION_RESULT"
+	// TableMetricTables is a table that contains all metrics table definition.
+	TableMetricTables = "METRICS_TABLES"
 	// TableMetricSummary is a summary table that contains all metrics.
-	TableMetricSummary = "METRIC_SUMMARY"
+	TableMetricSummary = "METRICS_SUMMARY"
+	// TableMetricSummaryByLabel is a metric table that contains all metrics that group by label info.
+	TableMetricSummaryByLabel = "METRICS_SUMMARY_BY_LABEL"
 )
 
 var tableIDMap = map[string]int64{
@@ -163,6 +167,8 @@ var tableIDMap = map[string]int64{
 	TableClusterSystemInfo:                  autoid.InformationSchemaDBID + 50,
 	TableInspectionResult:                   autoid.InformationSchemaDBID + 51,
 	TableMetricSummary:                      autoid.InformationSchemaDBID + 52,
+	TableMetricSummaryByLabel:               autoid.InformationSchemaDBID + 53,
+	TableMetricTables:                       autoid.InformationSchemaDBID + 54,
 }
 
 type columnInfo struct {
@@ -736,7 +742,7 @@ var tableTiDBServersInfoCols = []columnInfo{
 
 var tableClusterConfigCols = []columnInfo{
 	{"TYPE", mysql.TypeVarchar, 64, 0, nil, nil},
-	{"ADDRESS", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"INSTANCE", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"KEY", mysql.TypeVarchar, 256, 0, nil, nil},
 	{"VALUE", mysql.TypeVarchar, 128, 0, nil, nil},
 }
@@ -744,23 +750,23 @@ var tableClusterConfigCols = []columnInfo{
 var tableClusterLogCols = []columnInfo{
 	{"TIME", mysql.TypeVarchar, 32, 0, nil, nil},
 	{"TYPE", mysql.TypeVarchar, 64, 0, nil, nil},
-	{"ADDRESS", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"INSTANCE", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"LEVEL", mysql.TypeVarchar, 8, 0, nil, nil},
 	{"MESSAGE", mysql.TypeVarString, 1024, 0, nil, nil},
 }
 
 var tableClusterLoadCols = []columnInfo{
 	{"TYPE", mysql.TypeVarchar, 64, 0, nil, nil},
-	{"ADDRESS", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"INSTANCE", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"DEVICE_TYPE", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"DEVICE_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
-	{"LOAD_NAME", mysql.TypeVarchar, 256, 0, nil, nil},
-	{"LOAD_VALUE", mysql.TypeVarchar, 128, 0, nil, nil},
+	{"NAME", mysql.TypeVarchar, 256, 0, nil, nil},
+	{"VALUE", mysql.TypeVarchar, 128, 0, nil, nil},
 }
 
 var tableClusterHardwareCols = []columnInfo{
 	{"TYPE", mysql.TypeVarchar, 64, 0, nil, nil},
-	{"ADDRESS", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"INSTANCE", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"DEVICE_TYPE", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"DEVICE_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"NAME", mysql.TypeVarchar, 256, 0, nil, nil},
@@ -769,7 +775,7 @@ var tableClusterHardwareCols = []columnInfo{
 
 var tableClusterSystemInfoCols = []columnInfo{
 	{"TYPE", mysql.TypeVarchar, 64, 0, nil, nil},
-	{"ADDRESS", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"INSTANCE", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"SYSTEM_TYPE", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"SYSTEM_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"NAME", mysql.TypeVarchar, 256, 0, nil, nil},
@@ -1102,7 +1108,7 @@ var filesCols = []columnInfo{
 
 var tableClusterInfoCols = []columnInfo{
 	{"TYPE", mysql.TypeVarchar, 64, 0, nil, nil},
-	{"ADDRESS", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"INSTANCE", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"STATUS_ADDRESS", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"VERSION", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"GIT_HASH", mysql.TypeVarchar, 64, 0, nil, nil},
@@ -1120,10 +1126,20 @@ var tableTableTiFlashReplicaCols = []columnInfo{
 var tableInspectionResultCols = []columnInfo{
 	{"RULE", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"ITEM", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"TYPE", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"INSTANCE", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"VALUE", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"REFERENCE", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"SEVERITY", mysql.TypeVarchar, 64, 0, nil, nil},
-	{"SUGGESTION", mysql.TypeVarchar, 256, 0, nil, nil},
+	{"DETAILS", mysql.TypeVarchar, 256, 0, nil, nil},
+}
+
+var tableMetricTablesCols = []columnInfo{
+	{"TABLE_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"PROMQL", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"LABELS", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"QUANTILE", mysql.TypeDouble, 22, 0, nil, nil},
+	{"COMMENT", mysql.TypeVarchar, 256, 0, nil, nil},
 }
 
 var tableMetricSummaryCols = []columnInfo{
@@ -1133,6 +1149,18 @@ var tableMetricSummaryCols = []columnInfo{
 	{"AVG_VALUE", mysql.TypeDouble, 22, 0, nil, nil},
 	{"MIN_VALUE", mysql.TypeDouble, 22, 0, nil, nil},
 	{"MAX_VALUE", mysql.TypeDouble, 22, 0, nil, nil},
+	{"COMMENT", mysql.TypeVarchar, 256, 0, nil, nil},
+}
+
+var tableMetricSummaryByLabelCols = []columnInfo{
+	{"METRIC_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"LABEL", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"TIME", mysql.TypeDatetime, -1, 0, nil, nil},
+	{"SUM_VALUE", mysql.TypeDouble, 22, 0, nil, nil},
+	{"AVG_VALUE", mysql.TypeDouble, 22, 0, nil, nil},
+	{"MIN_VALUE", mysql.TypeDouble, 22, 0, nil, nil},
+	{"MAX_VALUE", mysql.TypeDouble, 22, 0, nil, nil},
+	{"COMMENT", mysql.TypeVarchar, 256, 0, nil, nil},
 }
 
 func dataForSchemata(ctx sessionctx.Context, schemas []*model.DBInfo) [][]types.Datum {
@@ -2295,6 +2323,28 @@ func dataForTableTiFlashReplica(schemas []*model.DBInfo) [][]types.Datum {
 	return rows
 }
 
+// dataForTableTiFlashReplica constructs data for all metric table definition.
+func dataForMetricTables(ctx sessionctx.Context) [][]types.Datum {
+	var rows [][]types.Datum
+	tables := make([]string, 0, len(MetricTableMap))
+	for name := range MetricTableMap {
+		tables = append(tables, name)
+	}
+	sort.Strings(tables)
+	for _, name := range tables {
+		schema := MetricTableMap[name]
+		record := types.MakeDatums(
+			name,                             // METRIC_NAME
+			schema.PromQL,                    // PROMQL
+			strings.Join(schema.Labels, ","), // LABELS
+			schema.Quantile,                  // QUANTILE
+			schema.Comment,                   // COMMENT
+		)
+		rows = append(rows, record)
+	}
+	return rows
+}
+
 var tableNameToColumns = map[string][]columnInfo{
 	tableSchemata:                           schemataCols,
 	tableTables:                             tablesCols,
@@ -2345,6 +2395,8 @@ var tableNameToColumns = map[string][]columnInfo{
 	TableClusterSystemInfo:                  tableClusterSystemInfoCols,
 	TableInspectionResult:                   tableInspectionResultCols,
 	TableMetricSummary:                      tableMetricSummaryCols,
+	TableMetricSummaryByLabel:               tableMetricSummaryByLabelCols,
+	TableMetricTables:                       tableMetricTablesCols,
 }
 
 func createInfoSchemaTable(_ autoid.Allocators, meta *model.TableInfo) (table.Table, error) {
@@ -2454,6 +2506,8 @@ func (it *infoschemaTable) getRows(ctx sessionctx.Context, cols []*table.Column)
 		fullRows, err = dataForTiDBClusterInfo(ctx)
 	case tableTiFlashReplica:
 		fullRows = dataForTableTiFlashReplica(dbs)
+	case TableMetricTables:
+		fullRows = dataForMetricTables(ctx)
 	// Data for cluster memory table.
 	case clusterTableSlowLog, clusterTableProcesslist:
 		fullRows, err = getClusterMemTableRows(ctx, it.meta.Name.O)
@@ -2524,6 +2578,11 @@ func (it *infoschemaTable) HiddenCols() []*table.Column {
 
 // WritableCols implements table.Table WritableCols interface.
 func (it *infoschemaTable) WritableCols() []*table.Column {
+	return it.cols
+}
+
+// DeletableCols implements table DeletableCols interface.
+func (it *infoschemaTable) DeletableCols() []*table.Column {
 	return it.cols
 }
 
@@ -2661,6 +2720,11 @@ func (vt *VirtualTable) HiddenCols() []*table.Column {
 
 // WritableCols implements table.Table WritableCols interface.
 func (vt *VirtualTable) WritableCols() []*table.Column {
+	return nil
+}
+
+// DeletableCols implements table DeletableCols interface.
+func (vt *VirtualTable) DeletableCols() []*table.Column {
 	return nil
 }
 
