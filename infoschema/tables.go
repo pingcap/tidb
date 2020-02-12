@@ -1112,6 +1112,8 @@ var tableClusterInfoCols = []columnInfo{
 	{"STATUS_ADDRESS", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"VERSION", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"GIT_HASH", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"START_TIME", mysql.TypeVarchar, 32, 0, nil, nil},
+	{"UPTIME", mysql.TypeVarchar, 32, 0, nil, nil},
 }
 
 var tableTableTiFlashReplicaCols = []columnInfo{
@@ -2131,11 +2133,12 @@ func dataForServersInfo() ([][]types.Datum, error) {
 
 // ServerInfo represents the basic server information of single cluster component
 type ServerInfo struct {
-	ServerType string
-	Address    string
-	StatusAddr string
-	Version    string
-	GitHash    string
+	ServerType     string
+	Address        string
+	StatusAddr     string
+	Version        string
+	GitHash        string
+	StartTimestamp int64
 }
 
 // GetClusterServerInfo returns all components information of cluster
@@ -2182,11 +2185,12 @@ func GetTiDBServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 	var servers []ServerInfo
 	for _, node := range tidbNodes {
 		servers = append(servers, ServerInfo{
-			ServerType: "tidb",
-			Address:    fmt.Sprintf("%s:%d", node.IP, node.Port),
-			StatusAddr: fmt.Sprintf("%s:%d", node.IP, node.StatusPort),
-			Version:    node.Version,
-			GitHash:    node.GitHash,
+			ServerType:     "tidb",
+			Address:        fmt.Sprintf("%s:%d", node.IP, node.Port),
+			StatusAddr:     fmt.Sprintf("%s:%d", node.IP, node.StatusPort),
+			Version:        node.Version,
+			GitHash:        node.GitHash,
+			StartTimestamp: node.StartTimestamp,
 		})
 	}
 	return servers, nil
@@ -2234,7 +2238,8 @@ func GetPDServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 			return nil, errors.Trace(err)
 		}
 		var content = struct {
-			GitHash string `json:"git_hash"`
+			GitHash        string `json:"git_hash"`
+			StartTimestamp int64  `json:"start_timestamp"`
 		}{}
 		if err := json.NewDecoder(resp.Body).Decode(&content); err != nil {
 			return nil, errors.Trace(err)
@@ -2242,11 +2247,12 @@ func GetPDServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 		terror.Log(resp.Body.Close())
 
 		servers = append(servers, ServerInfo{
-			ServerType: "pd",
-			Address:    addr,
-			StatusAddr: addr,
-			Version:    version,
-			GitHash:    content.GitHash,
+			ServerType:     "pd",
+			Address:        addr,
+			StatusAddr:     addr,
+			Version:        version,
+			GitHash:        content.GitHash,
+			StartTimestamp: content.StartTimestamp,
 		})
 	}
 	return servers, nil
@@ -2272,11 +2278,12 @@ func GetTiKVServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 	var servers []ServerInfo
 	for _, storeStat := range storesStat.Stores {
 		servers = append(servers, ServerInfo{
-			ServerType: "tikv",
-			Address:    storeStat.Store.Address,
-			StatusAddr: storeStat.Store.StatusAddress,
-			Version:    storeStat.Store.Version,
-			GitHash:    storeStat.Store.GitHash,
+			ServerType:     "tikv",
+			Address:        storeStat.Store.Address,
+			StatusAddr:     storeStat.Store.StatusAddress,
+			Version:        storeStat.Store.Version,
+			GitHash:        storeStat.Store.GitHash,
+			StartTimestamp: storeStat.Store.StartTimestamp,
 		})
 	}
 	return servers, nil
@@ -2289,12 +2296,15 @@ func dataForTiDBClusterInfo(ctx sessionctx.Context) ([][]types.Datum, error) {
 	}
 	rows := make([][]types.Datum, 0, len(servers))
 	for _, server := range servers {
+		startTime := time.Unix(server.StartTimestamp, 0)
 		row := types.MakeDatums(
 			server.ServerType,
 			server.Address,
 			server.StatusAddr,
 			server.Version,
 			server.GitHash,
+			startTime.Format(time.RFC3339),
+			time.Since(startTime).String(),
 		)
 		rows = append(rows, row)
 	}

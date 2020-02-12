@@ -89,12 +89,14 @@ type testClusterTableSuite struct {
 	httpServer *httptest.Server
 	mockAddr   string
 	listenAddr string
+	startTime  time.Time
 }
 
 func (s *testClusterTableSuite) SetUpSuite(c *C) {
 	s.testTableSuiteBase.SetUpSuite(c)
 	s.rpcserver, s.listenAddr = s.setUpRPCService(c, ":0")
 	s.httpServer, s.mockAddr = s.setUpMockPDHTTPServer()
+	s.startTime = time.Now()
 }
 
 func (s *testClusterTableSuite) setUpRPCService(c *C, addr string) (*grpc.Server, string) {
@@ -133,13 +135,14 @@ func (s *testClusterTableSuite) setUpMockPDHTTPServer() (*httptest.Server, strin
 			Stores: []helper.StoreStat{
 				{
 					Store: helper.StoreBaseStat{
-						ID:            1,
-						Address:       "127.0.0.1:20160",
-						State:         0,
-						StateName:     "Up",
-						Version:       "4.0.0-alpha",
-						StatusAddress: mockAddr,
-						GitHash:       "mock-tikv-githash",
+						ID:             1,
+						Address:        "127.0.0.1:20160",
+						State:          0,
+						StateName:      "Up",
+						Version:        "4.0.0-alpha",
+						StatusAddress:  mockAddr,
+						GitHash:        "mock-tikv-githash",
+						StartTimestamp: s.startTime.Unix(),
 					},
 				},
 			},
@@ -149,8 +152,12 @@ func (s *testClusterTableSuite) setUpMockPDHTTPServer() (*httptest.Server, strin
 	router.Handle(pdapi.ClusterVersion, fn.Wrap(func() (string, error) { return "4.0.0-alpha", nil }))
 	router.Handle(pdapi.Status, fn.Wrap(func() (interface{}, error) {
 		return struct {
-			GitHash string `json:"git_hash"`
-		}{GitHash: "mock-pd-githash"}, nil
+			GitHash        string `json:"git_hash"`
+			StartTimestamp int64  `json:"start_timestamp"`
+		}{
+			GitHash:        "mock-pd-githash",
+			StartTimestamp: s.startTime.Unix(),
+		}, nil
 	}))
 	var mockConfig = func() (map[string]interface{}, error) {
 		configuration := map[string]interface{}{
@@ -897,13 +904,23 @@ func (s *testClusterTableSuite) TestTiDBClusterInfo(c *C) {
 		s.store.(tikv.Storage),
 		mockAddr,
 	}
+
+	// information_schema.cluster_info
 	tk = testkit.NewTestKit(c, store)
-	tk.MustQuery("select * from information_schema.cluster_info").Check(testkit.Rows(
-		"tidb :4000 :"+strconv.FormatUint(uint64(config.GetGlobalConfig().Status.StatusPort), 10)+" 5.7.25-TiDB-None None",
-		"pd "+mockAddr+" "+mockAddr+" 4.0.0-alpha mock-pd-githash",
-		"tikv 127.0.0.1:20160 "+mockAddr+" 4.0.0-alpha mock-tikv-githash",
+	tidbStatusAddr := fmt.Sprintf(":%d", config.GetGlobalConfig().Status.StatusPort)
+	row := func(cols ...string) string { return strings.Join(cols, " ") }
+	tk.MustQuery("select type, instance, status_address, version, git_hash from information_schema.cluster_info").Check(testkit.Rows(
+		row("tidb", ":4000", tidbStatusAddr, "5.7.25-TiDB-None", "None"),
+		row("pd", mockAddr, mockAddr, "4.0.0-alpha", "mock-pd-githash"),
+		row("tikv", "127.0.0.1:20160", mockAddr, "4.0.0-alpha", "mock-tikv-githash"),
+	))
+	startTime := s.startTime.Format(time.RFC3339)
+	tk.MustQuery("select type, instance, start_time from information_schema.cluster_info where type != 'tidb'").Check(testkit.Rows(
+		row("pd", mockAddr, startTime),
+		row("tikv", "127.0.0.1:20160", startTime),
 	))
 
+	// information_schema.cluster_config
 	instances := []string{
 		"pd,127.0.0.1:11080," + mockAddr + ",mock-version,mock-githash",
 		"tidb,127.0.0.1:11080," + mockAddr + ",mock-version,mock-githash",
