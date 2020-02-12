@@ -18,7 +18,7 @@ import (
 )
 
 var (
-	collatorMap map[string]Collator
+	collatorMap   map[string]Collator
 	collatorIDMap map[int]Collator
 )
 

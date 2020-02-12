@@ -103,7 +103,7 @@ func (s *testBinCollatorSuite) TestGeneralCICollator(c *C) {
 	testKeyTable(keyTable, "utf8mb4_general_ci", c)
 }
 
-func (s *testGetCollatorSuite) TestGetCollator(c *C)  {
+func (s *testGetCollatorSuite) TestGetCollator(c *C) {
 	c.Assert(GetCollator("binary"), FitsTypeOf, &binCollator{})
 	c.Assert(GetCollator("utf8mb4_bin"), FitsTypeOf, &binCollator{})
 	c.Assert(GetCollator("utf8_bin"), FitsTypeOf, &binCollator{})
