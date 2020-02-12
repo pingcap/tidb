@@ -26,11 +26,15 @@ func TestT(t *testing.T) {
 
 var _ = Suite(&testBinCollatorSuite{})
 var _ = Suite(&testGeneralCICollatorSuite{})
+var _ = Suite(&testGetCollatorSuite{})
 
 type testBinCollatorSuite struct {
 }
 
 type testGeneralCICollatorSuite struct {
+}
+
+type testGetCollatorSuite struct {
 }
 
 type compareTable struct {
@@ -97,4 +101,18 @@ func (s *testBinCollatorSuite) TestGeneralCICollator(c *C) {
 	}
 	testCompareTable(compareTable, "utf8mb4_general_ci", c)
 	testKeyTable(keyTable, "utf8mb4_general_ci", c)
+}
+
+func (s *testGetCollatorSuite) TestGetCollator(c *C)  {
+	c.Assert(GetCollator("binary"), FitsTypeOf, &binCollator{})
+	c.Assert(GetCollator("utf8mb4_bin"), FitsTypeOf, &binCollator{})
+	c.Assert(GetCollator("utf8_bin"), FitsTypeOf, &binCollator{})
+	c.Assert(GetCollator("utf8mb4_general_ci"), FitsTypeOf, &generalCICollator{})
+	c.Assert(GetCollator("utf8_general_ci"), FitsTypeOf, &generalCICollator{})
+
+	c.Assert(GetCollatorByID(63), FitsTypeOf, &binCollator{})
+	c.Assert(GetCollatorByID(46), FitsTypeOf, &binCollator{})
+	c.Assert(GetCollatorByID(83), FitsTypeOf, &binCollator{})
+	c.Assert(GetCollatorByID(45), FitsTypeOf, &generalCICollator{})
+	c.Assert(GetCollatorByID(33), FitsTypeOf, &generalCICollator{})
 }

@@ -19,6 +19,7 @@ import (
 
 var (
 	collatorMap map[string]Collator
+	collatorIDMap map[int]Collator
 )
 
 // Collator provides functionality for comparing strings for a given
@@ -33,6 +34,15 @@ type Collator interface {
 // GetCollator get the collator according to collate, it will return the binary collator if the corresponding collator doesn't exist.
 func GetCollator(collate string) Collator {
 	ctor, ok := collatorMap[collate]
+	if !ok {
+		return collatorMap["binary"]
+	}
+	return ctor
+}
+
+// GetCollatorByID get the collator according to id, it will return the binary collator if the corresponding collator doesn't exist.
+func GetCollatorByID(id int) Collator {
+	ctor, ok := collatorIDMap[id]
 	if !ok {
 		return collatorMap["binary"]
 	}
@@ -54,8 +64,14 @@ func (bc *binCollator) Key(str string) []byte {
 
 func init() {
 	collatorMap = make(map[string]Collator)
+	collatorIDMap = make(map[int]Collator)
 
 	collatorMap["binary"] = &binCollator{}
 	collatorMap["utf8mb4_general_ci"] = &generalCICollator{}
 	collatorMap["utf8_general_ci"] = &generalCICollator{}
+
+	// See parser/charset/charset.go for more information about the IDs
+	collatorIDMap[63] = &binCollator{}
+	collatorIDMap[45] = &generalCICollator{}
+	collatorIDMap[33] = &generalCICollator{}
 }
