@@ -208,16 +208,12 @@ func GetTiFlashTableSyncProgress(ctx context.Context) (map[int64]float64, error)
 		return progressMap, nil
 	}
 	for i := 0; i < keyOpDefaultRetryCnt; i++ {
-		resp, err := is.etcdCli.Get(ctx, TiFlashTableSyncProgressPath, clientv3.WithPrefix())
+		resp, err := is.etcdCli.Get(ctx, TiFlashTableSyncProgressPath+"/", clientv3.WithPrefix())
 		if err != nil {
 			logutil.BgLogger().Info("get tiflash table replica sync progress failed, continue checking.", zap.Error(err))
 			continue
 		}
 		for _, kv := range resp.Kvs {
-			if len(kv.Key) <= len(TiFlashTableSyncProgressPath)+1 {
-				logutil.BgLogger().Info("invalid tiflash table replica sync progress key.", zap.String("key", string(kv.Key)))
-				continue
-			}
 			tid, err := strconv.ParseInt(string(kv.Key[len(TiFlashTableSyncProgressPath)+1:]), 10, 64)
 			if err != nil {
 				logutil.BgLogger().Info("invalid tiflash table replica sync progress key.", zap.String("key", string(kv.Key)))
