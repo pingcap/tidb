@@ -35,16 +35,21 @@ type ConfHandler interface {
 	Start()
 	Close()
 	GetConfig() *Config // read only
+	SetConfig(conf *Config) error
 }
 
 // ConfReloadFunc is used to reload the config to make it work.
 type ConfReloadFunc func(oldConf, newConf *Config)
 
+// OverwriteFunc is used to overwrite some config items which are initialized from commend and
+// shouldn't be updated during runtime.
+type OverwriteFunc func(conf *Config)
+
 // NewConfHandler creates a new ConfHandler according to the local config.
-func NewConfHandler(localConf *Config, reloadFunc ConfReloadFunc) (ConfHandler, error) {
+func NewConfHandler(localConf *Config, reloadFunc ConfReloadFunc, overwriteFunc OverwriteFunc) (ConfHandler, error) {
 	switch defaultConf.Store {
 	case "tikv":
-		return newPDConfHandler(localConf, reloadFunc, nil)
+		return newPDConfHandler(localConf, reloadFunc, overwriteFunc, nil)
 	default:
 		return &constantConfHandler{localConf}, nil
 	}
@@ -62,6 +67,11 @@ func (cch *constantConfHandler) Close() {}
 
 func (cch *constantConfHandler) GetConfig() *Config { return cch.conf }
 
+func (cch *constantConfHandler) SetConfig(conf *Config) error {
+	cch.conf = conf
+	return nil
+}
+
 const (
 	pdConfHandlerRefreshInterval = 30 * time.Second
 	tidbComponentName            = "tidb"
@@ -76,9 +86,11 @@ type pdConfHandler struct {
 	exit       chan struct{}
 	pdConfCli  pd.ConfigClient
 	reloadFunc func(oldConf, newConf *Config)
+
+	overwriteFunc OverwriteFunc
 }
 
-func newPDConfHandler(localConf *Config, reloadFunc ConfReloadFunc,
+func newPDConfHandler(localConf *Config, reloadFunc ConfReloadFunc, overwriteFunc OverwriteFunc,
 	newPDCliFunc func([]string, pd.SecurityOption) (pd.ConfigClient, error), // for test
 ) (*pdConfHandler, error) {
 	addresses, _, err := ParsePath(localConf.Path)
@@ -138,6 +150,8 @@ func newPDConfHandler(localConf *Config, reloadFunc ConfReloadFunc,
 		exit:       make(chan struct{}),
 		pdConfCli:  pdCli,
 		reloadFunc: reloadFunc,
+
+		overwriteFunc: overwriteFunc,
 	}
 	ch.curConf.Store(newConf)
 	return ch, nil
@@ -156,6 +170,10 @@ func (ch *pdConfHandler) Close() {
 
 func (ch *pdConfHandler) GetConfig() *Config {
 	return ch.curConf.Load().(*Config)
+}
+
+func (ch *pdConfHandler) SetConfig(conf *Config) error {
+	return errors.New("PDConfHandler only support to update the config from PD whereas forbid to modify it locally")
 }
 
 func (ch *pdConfHandler) run() {

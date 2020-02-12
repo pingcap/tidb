@@ -14,7 +14,6 @@
 package config
 
 import (
-	"bytes"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
@@ -22,18 +21,16 @@ import (
 	"io/ioutil"
 	"net/url"
 	"os"
-	"reflect"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/BurntSushi/toml"
 	"github.com/pingcap/errors"
 	zaplog "github.com/pingcap/log"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/util/logutil"
 	tracing "github.com/uber/jaeger-client-go/config"
-	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
 
@@ -614,12 +611,7 @@ var defaultConf = Config{
 }
 
 var (
-	globalConf              = atomic.Value{}
-	reloadConfPath          = ""
-	confReloader            func(nc, c *Config)
-	confReloadLock          sync.Mutex
-	supportedReloadConfigs  = make(map[string]struct{}, 32)
-	supportedReloadConfList = make([]string, 0, 32)
+	globalConfHandler ConfHandler
 )
 
 // NewConfig creates a new config instance with default value.
@@ -628,94 +620,71 @@ func NewConfig() *Config {
 	return &conf
 }
 
-// SetConfReloader sets reload config path and a reloader.
-// It should be called only once at start time.
-func SetConfReloader(cpath string, reloader func(nc, c *Config), confItems ...string) {
-	reloadConfPath = cpath
-	confReloader = reloader
-	for _, item := range confItems {
-		supportedReloadConfigs[item] = struct{}{}
-		supportedReloadConfList = append(supportedReloadConfList, item)
-	}
-}
-
 // GetGlobalConfig returns the global configuration for this server.
 // It should store configuration from command line and configuration file.
 // Other parts of the system can read the global configuration use this function.
 func GetGlobalConfig() *Config {
-	return globalConf.Load().(*Config)
+	return globalConfHandler.GetConfig()
 }
 
 // StoreGlobalConfig stores a new config to the globalConf. It mostly uses in the test to avoid some data races.
 func StoreGlobalConfig(config *Config) {
-	globalConf.Store(config)
+	if err := globalConfHandler.SetConfig(config); err != nil {
+		logutil.BgLogger().Error("update the global config error", zap.Error(err))
+	}
 }
 
-// ReloadGlobalConfig reloads global configuration for this server.
-func ReloadGlobalConfig() error {
-	confReloadLock.Lock()
-	defer confReloadLock.Unlock()
-
-	nc := NewConfig()
-	if err := nc.Load(reloadConfPath); err != nil {
-		return err
-	}
-	if err := nc.Valid(); err != nil {
-		return err
-	}
-	c := GetGlobalConfig()
-
-	diffs := collectsDiff(*nc, *c, "")
-	if len(diffs) == 0 {
-		return nil
-	}
-	var formattedDiff bytes.Buffer
-	for k, vs := range diffs {
-		formattedDiff.WriteString(fmt.Sprintf(", %v:%v->%v", k, vs[1], vs[0]))
-	}
-	unsupported := make([]string, 0, 2)
-	for k := range diffs {
-		if _, ok := supportedReloadConfigs[k]; !ok {
-			unsupported = append(unsupported, k)
-		}
-	}
-	if len(unsupported) > 0 {
-		return fmt.Errorf("reloading config %v is not supported, only %v are supported now, "+
-			"your changes%s", unsupported, supportedReloadConfList, formattedDiff.String())
-	}
-
-	confReloader(nc, c)
-	globalConf.Store(nc)
-	logutil.BgLogger().Info("reload config changes" + formattedDiff.String())
-	return nil
+var deprecatedConfig = map[string]struct{}{
+	"pessimistic-txn.ttl": {},
+	"log.rotate":          {},
 }
 
-// collectsDiff collects different config items.
-// map[string][]string -> map[field path][]{new value, old value}
-func collectsDiff(i1, i2 interface{}, fieldPath string) map[string][]interface{} {
-	diff := make(map[string][]interface{})
-	t := reflect.TypeOf(i1)
-	if t.Kind() != reflect.Struct {
-		if reflect.DeepEqual(i1, i2) {
-			return diff
+func isDeprecatedConfigItem(items []string) bool {
+	for _, item := range items {
+		if _, ok := deprecatedConfig[item]; !ok {
+			return false
 		}
-		diff[fieldPath] = []interface{}{i1, i2}
-		return diff
 	}
+	return true
+}
 
-	v1 := reflect.ValueOf(i1)
-	v2 := reflect.ValueOf(i2)
-	for i := 0; i < v1.NumField(); i++ {
-		p := t.Field(i).Name
-		if fieldPath != "" {
-			p = fieldPath + "." + p
+// InitializeConfig initialize the global config handler.
+func InitializeConfig(confPath string, configCheck, configStrict bool, reloadFunc ConfReloadFunc, overwriteFunc OverwriteFunc) {
+	cfg := GetGlobalConfig()
+	var err error
+	if confPath != "" {
+		err = cfg.Load(confPath)
+		if err == nil {
+			return
 		}
-		m := collectsDiff(v1.Field(i).Interface(), v2.Field(i).Interface(), p)
-		for k, v := range m {
-			diff[k] = v
+		// Unused config item erro turns to warnings.
+		if tmp, ok := err.(*ErrConfigValidationFailed); ok {
+			if isDeprecatedConfigItem(tmp.UndecodedItems) {
+				fmt.Fprintln(os.Stderr, err.Error())
+				err = nil
+			}
+			// This block is to accommodate an interim situation where strict config checking
+			// is not the default behavior of TiDB. The warning message must be deferred until
+			// logging has been set up. After strict config checking is the default behavior,
+			// This should all be removed.
+			if !configCheck && !configStrict {
+				fmt.Fprintln(os.Stderr, err.Error())
+				err = nil
+			}
+		}
+
+		terror.MustNil(err)
+	} else {
+		// configCheck should have the config file specified.
+		if configCheck {
+			fmt.Fprintln(os.Stderr, "config check failed", errors.New("no config file specified for config-check"))
+			os.Exit(1)
 		}
 	}
-	return diff
+	overwriteFunc(cfg)
+	globalConfHandler, err = NewConfHandler(cfg, reloadFunc, overwriteFunc)
+	terror.MustNil(err)
+	globalConfHandler.Start()
 }
 
 // Load loads config options from a toml file.
@@ -862,7 +831,8 @@ func (t *OpenTracing) ToTracingConfig() *tracing.Configuration {
 }
 
 func init() {
-	globalConf.Store(&defaultConf)
+	conf := defaultConf
+	globalConfHandler = &constantConfHandler{&conf}
 	if checkBeforeDropLDFlag == "1" {
 		CheckTableBeforeDrop = true
 	}
