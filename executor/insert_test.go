@@ -198,6 +198,58 @@ func (s *testSuite8) TestInsertOnDuplicateKey(c *C) {
 	tk.MustQuery(`select * from t1 use index(primary)`).Check(testkit.Rows(`1.0000`))
 }
 
+func (s *testSuite3) TestInsertReorgDelete(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	inputs := []struct {
+		typ string
+		dat string
+	}{
+		{"year", "'2004'"},
+		{"year", "2004"},
+		{"bit", "1"},
+		{"smallint unsigned", "1"},
+		{"int unsigned", "1"},
+		{"smallint", "-1"},
+		{"int", "-1"},
+		{"decimal(6,4)", "'1.1'"},
+		{"decimal", "1.1"},
+		{"numeric", "-1"},
+		{"float", "1.2"},
+		{"double", "1.2"},
+		{"double", "1.3"},
+		{"real", "1.4"},
+		{"date", "'2020-01-01'"},
+		{"time", "'20:00:00'"},
+		{"datetime", "'2020-01-01 22:22:22'"},
+		{"timestamp", "'2020-01-01 22:22:22'"},
+		{"year", "'2020'"},
+		{"char(15)", "'test'"},
+		{"varchar(15)", "'test'"},
+		{"binary(3)", "'a'"},
+		{"varbinary(3)", "'b'"},
+		{"blob", "'test'"},
+		{"text", "'test'"},
+		{"enum('a', 'b')", "'a'"},
+		{"set('a', 'b')", "'a,b'"},
+	}
+
+	for _, i := range inputs {
+		tk.MustExec(`drop table if exists t1`)
+		tk.MustExec(fmt.Sprintf(`create table t1(c1 %s)`, i.typ))
+		tk.MustExec(fmt.Sprintf(`insert into t1 set c1 = %s`, i.dat))
+		switch i.typ {
+		case "blob", "text":
+			tk.MustExec(`alter table t1 add index idx(c1(3))`)
+		default:
+			tk.MustExec(`alter table t1 add index idx(c1)`)
+		}
+		tk.MustExec(`delete from t1`)
+		tk.MustExec(`admin check table t1`)
+	}
+}
+
 func (s *testSuite3) TestUpdateDuplicateKey(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")

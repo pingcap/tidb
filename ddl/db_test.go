@@ -67,6 +67,7 @@ var _ = Suite(&testDBSuite3{&testDBSuite{}})
 var _ = Suite(&testDBSuite4{&testDBSuite{}})
 var _ = Suite(&testDBSuite5{&testDBSuite{}})
 var _ = Suite(&testDBSuite6{&testDBSuite{}})
+var _ = SerialSuites(&testSerialDBSuite{&testDBSuite{}})
 
 const defaultBatchSize = 1024
 
@@ -90,7 +91,7 @@ func setUpSuite(s *testDBSuite, c *C) {
 	session.DisableStats4Test()
 	s.schemaName = "test_db"
 	s.autoIDStep = autoid.GetStep()
-	ddl.WaitTimeWhenErrorOccured = 0
+	ddl.SetWaitTimeWhenErrorOccurred(0)
 
 	s.cluster = mocktikv.NewCluster()
 	mocktikv.BootstrapWithSingleStore(s.cluster)
@@ -134,6 +135,7 @@ type testDBSuite3 struct{ *testDBSuite }
 type testDBSuite4 struct{ *testDBSuite }
 type testDBSuite5 struct{ *testDBSuite }
 type testDBSuite6 struct{ *testDBSuite }
+type testSerialDBSuite struct{ *testDBSuite }
 
 func (s *testDBSuite4) TestAddIndexWithPK(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
@@ -2861,7 +2863,7 @@ func (s *testDBSuite4) TestComment(c *C) {
 	s.tk.MustExec("drop table if exists ct, ct1")
 }
 
-func (s *testDBSuite4) TestRebaseAutoID(c *C) {
+func (s *testSerialDBSuite) TestRebaseAutoID(c *C) {
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange", `return(true)`), IsNil)
 	defer func() {
 		c.Assert(failpoint.Disable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange"), IsNil)
@@ -3723,7 +3725,7 @@ func (s *testDBSuite1) TestSetTableFlashReplica(c *C) {
 	c.Assert(t.Meta().TiFlashReplica, IsNil)
 }
 
-func (s *testDBSuite4) TestAlterShardRowIDBits(c *C) {
+func (s *testSerialDBSuite) TestAlterShardRowIDBits(c *C) {
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange", `return(true)`), IsNil)
 	defer func() {
 		c.Assert(failpoint.Disable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange"), IsNil)
