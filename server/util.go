@@ -219,7 +219,7 @@ func dumpBinaryDateTime(data []byte, t types.Time) []byte {
 	return data
 }
 
-func dumpBinaryRow(buffer []byte, columns []*ColumnInfo, row chunk.Row, loc *time.Location) ([]byte, error) {
+func dumpBinaryRow(buffer []byte, columns []*ColumnInfo, row chunk.Row) ([]byte, error) {
 	buffer = append(buffer, mysql.OKHeader)
 	nullBitmapOff := len(buffer)
 	numBytes4Null := (len(columns) + 7 + 2) / 8
