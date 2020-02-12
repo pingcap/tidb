@@ -1195,17 +1195,17 @@
       },
       {
         "SQL": "select /*+ HASH_AGG() */ t1.a from t t1 where t1.a < any(select t2.b from t t2)",
-        "Best": "LeftHashJoin{IndexReader(Index(t.f)[[NULL,+inf]]->Sel([if(isnull(test.t.a), <nil>, 1)]))->TableReader(Table(t)->HashAgg)->HashAgg->Sel([ne(Column#27, 0)])}->Projection->Projection",
+        "Best": "LeftHashJoin{IndexReader(Index(t.f)[[NULL,+inf]]->Sel([if(isnull(test.t.a), <nil>, 1)]))->TableReader(Table(t)->HashAgg)->HashAgg->Sel([ne(Column#27, 0)])}->Projection",
         "Warning": ""
       },
       {
         "SQL": "select /*+ hash_agg() */ t1.a from t t1 where t1.a != any(select t2.b from t t2)",
-        "Best": "LeftHashJoin{IndexReader(Index(t.f)[[NULL,+inf]]->Sel([if(isnull(test.t.a), <nil>, 1)]))->TableReader(Table(t))->Projection->HashAgg->Sel([ne(Column#28, 0)])}->Projection->Projection",
+        "Best": "LeftHashJoin{IndexReader(Index(t.f)[[NULL,+inf]]->Sel([if(isnull(test.t.a), <nil>, 1)]))->TableReader(Table(t))->Projection->HashAgg->Sel([ne(Column#28, 0)])}->Projection",
         "Warning": ""
       },
       {
         "SQL": "select /*+ hash_agg() */ t1.a from t t1 where t1.a = all(select t2.b from t t2)",
-        "Best": "LeftHashJoin{IndexReader(Index(t.f)[[NULL,+inf]])->TableReader(Table(t))->Projection->HashAgg}->Projection->Projection",
+        "Best": "LeftHashJoin{IndexReader(Index(t.f)[[NULL,+inf]])->TableReader(Table(t))->Projection->HashAgg}->Projection",
         "Warning": ""
       },
       {
