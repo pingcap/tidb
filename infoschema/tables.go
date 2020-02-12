@@ -44,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	binaryJson "github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/pdapi"
 	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -813,16 +814,16 @@ func dataForTiKVRegionStatus(ctx sessionctx.Context) (records [][]types.Datum, e
 func newTiKVRegionStatusCol(region *helper.RegionInfo, table *helper.TableInfo) []types.Datum {
 	row := make([]types.Datum, len(tableTiKVRegionStatusCols))
 	row[0].SetInt64(region.ID)
-	row[1].SetString(region.StartKey)
-	row[2].SetString(region.EndKey)
+	row[1].SetString(region.StartKey, collate.DefaultCollation)
+	row[2].SetString(region.EndKey, collate.DefaultCollation)
 	if table != nil {
 		row[3].SetInt64(table.Table.ID)
-		row[4].SetString(table.DB.Name.O)
-		row[5].SetString(table.Table.Name.O)
+		row[4].SetString(table.DB.Name.O, collate.DefaultCollation)
+		row[5].SetString(table.Table.Name.O, collate.DefaultCollation)
 		if table.IsIndex {
 			row[6].SetInt64(1)
 			row[7].SetInt64(table.Index.ID)
-			row[8].SetString(table.Index.Name.O)
+			row[8].SetString(table.Index.Name.O, collate.DefaultCollation)
 		} else {
 			row[6].SetInt64(0)
 		}
@@ -888,12 +889,12 @@ func newTiKVRegionPeersCols(region *helper.RegionInfo) [][]types.Datum {
 			row[4].SetInt64(0)
 		}
 		if pendingPeerIDSet.Exist(peer.ID) {
-			row[5].SetString(pendingPeer)
+			row[5].SetString(pendingPeer, collate.DefaultCollation)
 		} else if downSec, ok := downPeerMap[peer.ID]; ok {
-			row[5].SetString(downPeer)
+			row[5].SetString(downPeer, collate.DefaultCollation)
 			row[6].SetInt64(downSec)
 		} else {
-			row[5].SetString(normalPeer)
+			row[5].SetString(normalPeer, collate.DefaultCollation)
 		}
 		records = append(records, row)
 	}
@@ -916,9 +917,9 @@ func dataForTiKVStoreStatus(ctx sessionctx.Context) (records [][]types.Datum, er
 	for _, storeStat := range storesStat.Stores {
 		row := make([]types.Datum, len(tableTiKVStoreStatusCols))
 		row[0].SetInt64(storeStat.Store.ID)
-		row[1].SetString(storeStat.Store.Address)
+		row[1].SetString(storeStat.Store.Address, collate.DefaultCollation)
 		row[2].SetInt64(storeStat.Store.State)
-		row[3].SetString(storeStat.Store.StateName)
+		row[3].SetString(storeStat.Store.StateName, collate.DefaultCollation)
 		data, err := json.Marshal(storeStat.Store.Labels)
 		if err != nil {
 			return nil, err
@@ -928,9 +929,9 @@ func dataForTiKVStoreStatus(ctx sessionctx.Context) (records [][]types.Datum, er
 			return nil, err
 		}
 		row[4].SetMysqlJSON(bj)
-		row[5].SetString(storeStat.Store.Version)
-		row[6].SetString(storeStat.Status.Capacity)
-		row[7].SetString(storeStat.Status.Available)
+		row[5].SetString(storeStat.Store.Version, collate.DefaultCollation)
+		row[6].SetString(storeStat.Status.Capacity, collate.DefaultCollation)
+		row[7].SetString(storeStat.Status.Available, collate.DefaultCollation)
 		row[8].SetInt64(storeStat.Status.LeaderCount)
 		row[9].SetFloat64(storeStat.Status.LeaderWeight)
 		row[10].SetFloat64(storeStat.Status.LeaderScore)
@@ -943,7 +944,7 @@ func dataForTiKVStoreStatus(ctx sessionctx.Context) (records [][]types.Datum, er
 		row[16].SetMysqlTime(startTs)
 		lastHeartbeatTs := types.NewTime(types.FromGoTime(storeStat.Status.LastHeartbeatTs), mysql.TypeDatetime, types.DefaultFsp)
 		row[17].SetMysqlTime(lastHeartbeatTs)
-		row[18].SetString(storeStat.Status.Uptime)
+		row[18].SetString(storeStat.Status.Uptime, collate.DefaultCollation)
 		records = append(records, row)
 	}
 	return records, nil
@@ -2057,16 +2058,16 @@ func dataForHotRegionByMetrics(metrics []helper.HotTableIndex, tp string) [][]ty
 		row := make([]types.Datum, len(tableTiDBHotRegionsCols))
 		if tblIndex.IndexName != "" {
 			row[1].SetInt64(tblIndex.IndexID)
-			row[4].SetString(tblIndex.IndexName)
+			row[4].SetString(tblIndex.IndexName, collate.DefaultCollation)
 		} else {
 			row[1].SetNull()
 			row[4].SetNull()
 		}
 		row[0].SetInt64(tblIndex.TableID)
-		row[2].SetString(tblIndex.DbName)
-		row[3].SetString(tblIndex.TableName)
+		row[2].SetString(tblIndex.DbName, collate.DefaultCollation)
+		row[3].SetString(tblIndex.TableName, collate.DefaultCollation)
 		row[5].SetUint64(tblIndex.RegionID)
-		row[6].SetString(tp)
+		row[6].SetString(tp, collate.DefaultCollation)
 		if tblIndex.RegionMetric == nil {
 			row[7].SetNull()
 			row[8].SetNull()

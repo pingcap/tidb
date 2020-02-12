@@ -179,7 +179,7 @@ func (t *testTableSuite) TestGetZeroValue(c *C) {
 		},
 		{
 			types.NewFieldType(mysql.TypeVarchar),
-			types.NewStringDatum(""),
+			types.NewDefaultCollationStringDatum(""),
 		},
 		{
 			types.NewFieldType(mysql.TypeBlob),

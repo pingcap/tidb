@@ -237,12 +237,12 @@ func (sr *simpleRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok boo
 		})
 	case *ast.TimeUnitExpr:
 		sr.push(&Constant{
-			Value:   types.NewStringDatum(v.Unit.String()),
+			Value:   types.NewDefaultCollationStringDatum(v.Unit.String()),
 			RetType: types.NewFieldType(mysql.TypeVarchar),
 		})
 	case *ast.GetFormatSelectorExpr:
 		sr.push(&Constant{
-			Value:   types.NewStringDatum(v.Selector.String()),
+			Value:   types.NewDefaultCollationStringDatum(v.Selector.String()),
 			RetType: types.NewFieldType(mysql.TypeVarchar),
 		})
 	default:

@@ -230,7 +230,7 @@ func (s *testEvaluatorSuite) TestValues(c *C) {
 func (s *testEvaluatorSuite) TestSetVarFromColumn(c *C) {
 	// Construct arguments.
 	argVarName := &Constant{
-		Value:   types.NewStringDatum("a"),
+		Value:   types.NewDefaultCollationStringDatum("a"),
 		RetType: &types.FieldType{Tp: mysql.TypeVarString, Flen: 20},
 	}
 	argCol := &Column{

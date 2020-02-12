@@ -1422,9 +1422,9 @@ func (s *testEvaluatorSuite) TestLpad(c *C) {
 	}
 	fc := funcs[ast.Lpad]
 	for _, test := range tests {
-		str := types.NewStringDatum(test.str)
+		str := types.NewDefaultCollationStringDatum(test.str)
 		length := types.NewIntDatum(test.len)
-		padStr := types.NewStringDatum(test.padStr)
+		padStr := types.NewDefaultCollationStringDatum(test.padStr)
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{str, length, padStr}))
 		c.Assert(err, IsNil)
 		c.Assert(f, NotNil)
@@ -1457,9 +1457,9 @@ func (s *testEvaluatorSuite) TestRpad(c *C) {
 	}
 	fc := funcs[ast.Rpad]
 	for _, test := range tests {
-		str := types.NewStringDatum(test.str)
+		str := types.NewDefaultCollationStringDatum(test.str)
 		length := types.NewIntDatum(test.len)
-		padStr := types.NewStringDatum(test.padStr)
+		padStr := types.NewDefaultCollationStringDatum(test.padStr)
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{str, length, padStr}))
 		c.Assert(err, IsNil)
 		c.Assert(f, NotNil)

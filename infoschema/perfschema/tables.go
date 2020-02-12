@@ -395,7 +395,7 @@ func dataForRemoteProfile(ctx sessionctx.Context, nodeType, uri string, isGorout
 	sort.Slice(results, func(i, j int) bool { return results[i].addr < results[j].addr })
 	var finalRows [][]types.Datum
 	for _, result := range results {
-		addr := types.NewStringDatum(result.addr)
+		addr := types.NewDefaultCollationStringDatum(result.addr)
 		for _, row := range result.rows {
 			// Insert the node address in front of rows
 			finalRows = append(finalRows, append([]types.Datum{addr}, row...))

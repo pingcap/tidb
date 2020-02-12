@@ -89,7 +89,7 @@ func (s *testSuite) testMergePartialResult(c *C, p aggTest) {
 
 	args := []expression.Expression{&expression.Column{RetType: p.dataType, Index: 0}}
 	if p.funcName == ast.AggFuncGroupConcat {
-		args = append(args, &expression.Constant{Value: types.NewStringDatum(" "), RetType: types.NewFieldType(mysql.TypeString)})
+		args = append(args, &expression.Constant{Value: types.NewDefaultCollationStringDatum(" "), RetType: types.NewFieldType(mysql.TypeString)})
 	}
 	desc, err := aggregation.NewAggFuncDesc(s.ctx, p.funcName, args, false)
 	c.Assert(err, IsNil)
@@ -263,7 +263,7 @@ func getDataGenFunc(ft *types.FieldType) func(i int) types.Datum {
 	case mysql.TypeDouble:
 		return func(i int) types.Datum { return types.NewFloat64Datum(float64(i)) }
 	case mysql.TypeString:
-		return func(i int) types.Datum { return types.NewStringDatum(fmt.Sprintf("%d", i)) }
+		return func(i int) types.Datum { return types.NewDefaultCollationStringDatum(fmt.Sprintf("%d", i)) }
 	case mysql.TypeDate:
 		return func(i int) types.Datum { return types.NewTimeDatum(types.TimeFromDays(int64(i + 365))) }
 	case mysql.TypeDuration:
@@ -296,7 +296,7 @@ func (s *testSuite) testAggFunc(c *C, p aggTest) {
 
 	args := []expression.Expression{&expression.Column{RetType: p.dataType, Index: 0}}
 	if p.funcName == ast.AggFuncGroupConcat {
-		args = append(args, &expression.Constant{Value: types.NewStringDatum(" "), RetType: types.NewFieldType(mysql.TypeString)})
+		args = append(args, &expression.Constant{Value: types.NewDefaultCollationStringDatum(" "), RetType: types.NewFieldType(mysql.TypeString)})
 	}
 	desc, err := aggregation.NewAggFuncDesc(s.ctx, p.funcName, args, false)
 	c.Assert(err, IsNil)

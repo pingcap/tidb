@@ -210,8 +210,8 @@ var vecBuiltinOtherGeneratedCases = map[string][]vecExprBenchCase{
 			},
 			constants: []*Constant{
 				nil,
-				{Value: types.NewStringDatum("aaaa"), RetType: types.NewFieldType(mysql.TypeString)},
-				{Value: types.NewStringDatum("bbbb"), RetType: types.NewFieldType(mysql.TypeString)},
+				{Value: types.NewDefaultCollationStringDatum("aaaa"), RetType: types.NewFieldType(mysql.TypeString)},
+				{Value: types.NewDefaultCollationStringDatum("bbbb"), RetType: types.NewFieldType(mysql.TypeString)},
 			},
 		},
 		// builtinInDecimalSig with const arguments

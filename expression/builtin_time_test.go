@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testutil"
 	"github.com/pingcap/tidb/util/timeutil"
@@ -539,7 +540,7 @@ func (s *testEvaluatorSuite) TestDayOfYear(c *C) {
 func (s *testEvaluatorSuite) TestDateFormat(c *C) {
 	// Test case for https://github.com/pingcap/tidb/issues/2908
 	// SELECT DATE_FORMAT(null,'%Y-%M-%D')
-	args := []types.Datum{types.NewDatum(nil), types.NewStringDatum("%Y-%M-%D")}
+	args := []types.Datum{types.NewDatum(nil), types.NewDefaultCollationStringDatum("%Y-%M-%D")}
 	fc := funcs[ast.DateFormat]
 	f, err := fc.getFunction(s.ctx, s.datumsToConstants(args))
 	c.Assert(err, IsNil)
@@ -858,8 +859,8 @@ func (s *testEvaluatorSuite) TestAddTimeSig(c *C) {
 	}
 	fc := funcs[ast.AddTime]
 	for _, t := range tbl {
-		tmpInput := types.NewStringDatum(t.Input)
-		tmpInputDuration := types.NewStringDatum(t.InputDuration)
+		tmpInput := types.NewDefaultCollationStringDatum(t.Input)
+		tmpInputDuration := types.NewDefaultCollationStringDatum(t.InputDuration)
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{tmpInput, tmpInputDuration}))
 		c.Assert(err, IsNil)
 		d, err := evalBuiltinFunc(f, chunk.Row{})
@@ -892,7 +893,7 @@ func (s *testEvaluatorSuite) TestAddTimeSig(c *C) {
 		dur, err := types.ParseDuration(s.ctx.GetSessionVars().StmtCtx, t.Input, types.GetFsp(t.Input))
 		c.Assert(err, IsNil)
 		tmpInput := types.NewDurationDatum(dur)
-		tmpInputDuration := types.NewStringDatum(t.InputDuration)
+		tmpInputDuration := types.NewDefaultCollationStringDatum(t.InputDuration)
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{tmpInput, tmpInputDuration}))
 		c.Assert(err, IsNil)
 		d, err := evalBuiltinFunc(f, chunk.Row{})
@@ -962,8 +963,8 @@ func (s *testEvaluatorSuite) TestSubTimeSig(c *C) {
 	}
 	fc := funcs[ast.SubTime]
 	for _, t := range tbl {
-		tmpInput := types.NewStringDatum(t.Input)
-		tmpInputDuration := types.NewStringDatum(t.InputDuration)
+		tmpInput := types.NewDefaultCollationStringDatum(t.Input)
+		tmpInputDuration := types.NewDefaultCollationStringDatum(t.InputDuration)
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{tmpInput, tmpInputDuration}))
 		c.Assert(err, IsNil)
 		d, err := evalBuiltinFunc(f, chunk.Row{})
@@ -985,7 +986,7 @@ func (s *testEvaluatorSuite) TestSubTimeSig(c *C) {
 		dur, err := types.ParseDuration(s.ctx.GetSessionVars().StmtCtx, t.Input, types.GetFsp(t.Input))
 		c.Assert(err, IsNil)
 		tmpInput := types.NewDurationDatum(dur)
-		tmpInputDuration := types.NewStringDatum(t.InputDuration)
+		tmpInputDuration := types.NewDefaultCollationStringDatum(t.InputDuration)
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{tmpInput, tmpInputDuration}))
 		c.Assert(err, IsNil)
 		d, err := evalBuiltinFunc(f, chunk.Row{})
@@ -1143,7 +1144,7 @@ func builtinDateFormat(ctx sessionctx.Context, args []types.Datum) (d types.Datu
 	if err != nil {
 		return d, err
 	}
-	d.SetString(str)
+	d.SetString(str, collate.DefaultCollation)
 	return
 }
 
@@ -1189,12 +1190,12 @@ func (s *testEvaluatorSuite) TestFromUnixTime(c *C) {
 			ans := v.GetMysqlTime()
 			c.Assert(ans.String(), Equals, unixTime)
 		} else {
-			format := types.NewStringDatum(t.format)
+			format := types.NewDefaultCollationStringDatum(t.format)
 			f, err := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{timestamp, format}))
 			c.Assert(err, IsNil)
 			v, err := evalBuiltinFunc(f, chunk.Row{})
 			c.Assert(err, IsNil)
-			result, err := builtinDateFormat(s.ctx, []types.Datum{types.NewStringDatum(unixTime), format})
+			result, err := builtinDateFormat(s.ctx, []types.Datum{types.NewDefaultCollationStringDatum(unixTime), format})
 			c.Assert(err, IsNil)
 			c.Assert(v.GetString(), Equals, result.GetString())
 		}
@@ -1336,8 +1337,8 @@ func (s *testEvaluatorSuite) TestStrToDate(c *C) {
 
 	fc := funcs[ast.StrToDate]
 	for _, test := range tests {
-		date := types.NewStringDatum(test.Date)
-		format := types.NewStringDatum(test.Format)
+		date := types.NewDefaultCollationStringDatum(test.Date)
+		format := types.NewDefaultCollationStringDatum(test.Format)
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{date, format}))
 		c.Assert(err, IsNil)
 		result, err := evalBuiltinFunc(f, chunk.Row{})
@@ -1403,7 +1404,7 @@ func (s *testEvaluatorSuite) TestFromDays(c *C) {
 	}
 
 	for _, test := range stringTests {
-		t1 := types.NewStringDatum(test.day)
+		t1 := types.NewDefaultCollationStringDatum(test.day)
 
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{t1}))
 		c.Assert(err, IsNil)
@@ -1430,8 +1431,8 @@ func (s *testEvaluatorSuite) TestDateDiff(c *C) {
 
 	fc := funcs[ast.DateDiff]
 	for _, test := range tests {
-		t1 := types.NewStringDatum(test.t1)
-		t2 := types.NewStringDatum(test.t2)
+		t1 := types.NewDefaultCollationStringDatum(test.t1)
+		t2 := types.NewDefaultCollationStringDatum(test.t2)
 
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{t1, t2}))
 		c.Assert(err, IsNil)
@@ -1455,8 +1456,8 @@ func (s *testEvaluatorSuite) TestDateDiff(c *C) {
 
 	fc = funcs[ast.DateDiff]
 	for _, test := range tests2 {
-		t1 := types.NewStringDatum(test.t1)
-		t2 := types.NewStringDatum(test.t2)
+		t1 := types.NewDefaultCollationStringDatum(test.t1)
+		t2 := types.NewDefaultCollationStringDatum(test.t2)
 
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{t1, t2}))
 		c.Assert(err, IsNil)
@@ -1524,7 +1525,7 @@ func (s *testEvaluatorSuite) TestWeek(c *C) {
 	}
 	fc := funcs[ast.Week]
 	for _, test := range tests {
-		arg1 := types.NewStringDatum(test.t)
+		arg1 := types.NewDefaultCollationStringDatum(test.t)
 		arg2 := types.NewIntDatum(test.mode)
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{arg1, arg2}))
 		c.Assert(err, IsNil)
@@ -1548,7 +1549,7 @@ func (s *testEvaluatorSuite) TestWeekWithoutModeSig(c *C) {
 
 	fc := funcs[ast.Week]
 	for i, test := range tests {
-		arg1 := types.NewStringDatum(test.t)
+		arg1 := types.NewDefaultCollationStringDatum(test.t)
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{arg1}))
 		c.Assert(err, IsNil)
 		result, err := evalBuiltinFunc(f, chunk.Row{})
@@ -1575,7 +1576,7 @@ func (s *testEvaluatorSuite) TestYearWeek(c *C) {
 	}
 	fc := funcs[ast.YearWeek]
 	for _, test := range tests {
-		arg1 := types.NewStringDatum(test.t)
+		arg1 := types.NewDefaultCollationStringDatum(test.t)
 		arg2 := types.NewIntDatum(test.mode)
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{arg1, arg2}))
 		c.Assert(err, IsNil)
@@ -1606,9 +1607,9 @@ func (s *testEvaluatorSuite) TestTimestampDiff(c *C) {
 	fc := funcs[ast.TimestampDiff]
 	for _, test := range tests {
 		args := []types.Datum{
-			types.NewStringDatum(test.unit),
-			types.NewStringDatum(test.t1),
-			types.NewStringDatum(test.t2),
+			types.NewDefaultCollationStringDatum(test.unit),
+			types.NewDefaultCollationStringDatum(test.t1),
+			types.NewDefaultCollationStringDatum(test.t2),
 		}
 		resetStmtContext(s.ctx)
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants(args))
@@ -1621,17 +1622,17 @@ func (s *testEvaluatorSuite) TestTimestampDiff(c *C) {
 	sc.IgnoreTruncate = true
 	sc.IgnoreZeroInDate = true
 	resetStmtContext(s.ctx)
-	f, err := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{types.NewStringDatum("DAY"),
-		types.NewStringDatum("2017-01-00"),
-		types.NewStringDatum("2017-01-01")}))
+	f, err := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{types.NewDefaultCollationStringDatum("DAY"),
+		types.NewDefaultCollationStringDatum("2017-01-00"),
+		types.NewDefaultCollationStringDatum("2017-01-01")}))
 	c.Assert(err, IsNil)
 	d, err := evalBuiltinFunc(f, chunk.Row{})
 	c.Assert(err, IsNil)
 	c.Assert(d.Kind(), Equals, types.KindNull)
 
 	resetStmtContext(s.ctx)
-	f, err = fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{types.NewStringDatum("DAY"),
-		{}, types.NewStringDatum("2017-01-01")}))
+	f, err = fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{types.NewDefaultCollationStringDatum("DAY"),
+		{}, types.NewDefaultCollationStringDatum("2017-01-01")}))
 	c.Assert(err, IsNil)
 	d, err = evalBuiltinFunc(f, chunk.Row{})
 	c.Assert(err, IsNil)
@@ -1699,13 +1700,13 @@ func (s *testEvaluatorSuite) TestUnixTimestamp(c *C) {
 		{2, types.NewDecimalDatum(types.NewDecFromStringForTest("151113102019.12")), types.KindMysqlDecimal, "1447410019.12"},          // YYMMDDHHMMSS
 		{7, types.NewDecimalDatum(types.NewDecFromStringForTest("151113102019.1234567")), types.KindMysqlDecimal, "1447410019.123457"}, // YYMMDDHHMMSS
 		{0, types.NewIntDatum(20151113102019), types.KindInt64, "1447410019"},                                                          // YYYYMMDDHHMMSS
-		{0, types.NewStringDatum("2015-11-13 10:20:19"), types.KindInt64, "1447410019"},
-		{0, types.NewStringDatum("2015-11-13 10:20:19.012"), types.KindMysqlDecimal, "1447410019.012"},
-		{0, types.NewStringDatum("1970-01-01 00:00:00"), types.KindInt64, "0"},                               // Min timestamp
-		{0, types.NewStringDatum("2038-01-19 03:14:07.999999"), types.KindMysqlDecimal, "2147483647.999999"}, // Max timestamp
-		{0, types.NewStringDatum("2017-00-02"), types.KindInt64, "0"},                                        // Invalid date
-		{0, types.NewStringDatum("1969-12-31 23:59:59.999999"), types.KindMysqlDecimal, "0"},                 // Invalid timestamp
-		{0, types.NewStringDatum("2038-01-19 03:14:08"), types.KindInt64, "0"},                               // Invalid timestamp
+		{0, types.NewDefaultCollationStringDatum("2015-11-13 10:20:19"), types.KindInt64, "1447410019"},
+		{0, types.NewDefaultCollationStringDatum("2015-11-13 10:20:19.012"), types.KindMysqlDecimal, "1447410019.012"},
+		{0, types.NewDefaultCollationStringDatum("1970-01-01 00:00:00"), types.KindInt64, "0"},                               // Min timestamp
+		{0, types.NewDefaultCollationStringDatum("2038-01-19 03:14:07.999999"), types.KindMysqlDecimal, "2147483647.999999"}, // Max timestamp
+		{0, types.NewDefaultCollationStringDatum("2017-00-02"), types.KindInt64, "0"},                                        // Invalid date
+		{0, types.NewDefaultCollationStringDatum("1969-12-31 23:59:59.999999"), types.KindMysqlDecimal, "0"},                 // Invalid timestamp
+		{0, types.NewDefaultCollationStringDatum("2038-01-19 03:14:08"), types.KindInt64, "0"},                               // Invalid timestamp
 		// Below tests irregular inputs.
 		//{0, types.NewIntDatum(0), types.KindInt64, "0"},
 		//{0, types.NewIntDatum(-1), types.KindInt64, "0"},
@@ -1969,25 +1970,25 @@ func (s *testEvaluatorSuite) TestTimestamp(c *C) {
 		expect string
 	}{
 		// one argument
-		{[]types.Datum{types.NewStringDatum("2017-01-18")}, "2017-01-18 00:00:00"},
-		{[]types.Datum{types.NewStringDatum("20170118")}, "2017-01-18 00:00:00"},
-		{[]types.Datum{types.NewStringDatum("170118")}, "2017-01-18 00:00:00"},
-		{[]types.Datum{types.NewStringDatum("20170118123056")}, "2017-01-18 12:30:56"},
-		{[]types.Datum{types.NewStringDatum("2017-01-18 12:30:56")}, "2017-01-18 12:30:56"},
+		{[]types.Datum{types.NewDefaultCollationStringDatum("2017-01-18")}, "2017-01-18 00:00:00"},
+		{[]types.Datum{types.NewDefaultCollationStringDatum("20170118")}, "2017-01-18 00:00:00"},
+		{[]types.Datum{types.NewDefaultCollationStringDatum("170118")}, "2017-01-18 00:00:00"},
+		{[]types.Datum{types.NewDefaultCollationStringDatum("20170118123056")}, "2017-01-18 12:30:56"},
+		{[]types.Datum{types.NewDefaultCollationStringDatum("2017-01-18 12:30:56")}, "2017-01-18 12:30:56"},
 		{[]types.Datum{types.NewIntDatum(170118)}, "2017-01-18 00:00:00"},
 		{[]types.Datum{types.NewFloat64Datum(20170118)}, "2017-01-18 00:00:00"},
-		{[]types.Datum{types.NewStringDatum("20170118123050.999")}, "2017-01-18 12:30:50.999"},
-		{[]types.Datum{types.NewStringDatum("20170118123050.1234567")}, "2017-01-18 12:30:50.123457"},
+		{[]types.Datum{types.NewDefaultCollationStringDatum("20170118123050.999")}, "2017-01-18 12:30:50.999"},
+		{[]types.Datum{types.NewDefaultCollationStringDatum("20170118123050.1234567")}, "2017-01-18 12:30:50.123457"},
 		// TODO: Parse int should use ParseTimeFromNum, rather than convert int to string for parsing.
 		// {[]types.Datum{types.NewIntDatum(11111111111)}, "2001-11-11 11:11:11"},
-		{[]types.Datum{types.NewStringDatum("11111111111")}, "2011-11-11 11:11:01"},
+		{[]types.Datum{types.NewDefaultCollationStringDatum("11111111111")}, "2011-11-11 11:11:01"},
 		{[]types.Datum{types.NewFloat64Datum(20170118.999)}, "2017-01-18 00:00:00.000"},
 
 		// two arguments
-		{[]types.Datum{types.NewStringDatum("2017-01-18"), types.NewStringDatum("12:30:59")}, "2017-01-18 12:30:59"},
-		{[]types.Datum{types.NewStringDatum("2017-01-18"), types.NewStringDatum("12:30:59")}, "2017-01-18 12:30:59"},
-		{[]types.Datum{types.NewStringDatum("2017-01-18 01:01:01"), types.NewStringDatum("12:30:50")}, "2017-01-18 13:31:51"},
-		{[]types.Datum{types.NewStringDatum("2017-01-18 01:01:01"), types.NewStringDatum("838:59:59")}, "2017-02-22 00:01:00"},
+		{[]types.Datum{types.NewDefaultCollationStringDatum("2017-01-18"), types.NewDefaultCollationStringDatum("12:30:59")}, "2017-01-18 12:30:59"},
+		{[]types.Datum{types.NewDefaultCollationStringDatum("2017-01-18"), types.NewDefaultCollationStringDatum("12:30:59")}, "2017-01-18 12:30:59"},
+		{[]types.Datum{types.NewDefaultCollationStringDatum("2017-01-18 01:01:01"), types.NewDefaultCollationStringDatum("12:30:50")}, "2017-01-18 13:31:51"},
+		{[]types.Datum{types.NewDefaultCollationStringDatum("2017-01-18 01:01:01"), types.NewDefaultCollationStringDatum("838:59:59")}, "2017-02-22 00:01:00"},
 
 		{[]types.Datum{types.NewDecimalDatum(types.NewDecFromStringForTest("20170118123950.123"))}, "2017-01-18 12:39:50.123"},
 		{[]types.Datum{types.NewDecimalDatum(types.NewDecFromStringForTest("20170118123950.999"))}, "2017-01-18 12:39:50.999"},
@@ -2194,7 +2195,7 @@ func (s *testEvaluatorSuite) TestQuarter(c *C) {
 	}
 	fc := funcs["quarter"]
 	for _, test := range tests {
-		arg := types.NewStringDatum(test.t)
+		arg := types.NewDefaultCollationStringDatum(test.t)
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{arg}))
 		c.Assert(err, IsNil)
 		c.Assert(f, NotNil)
@@ -2204,7 +2205,7 @@ func (s *testEvaluatorSuite) TestQuarter(c *C) {
 	}
 
 	// test invalid input
-	argInvalid := types.NewStringDatum("2008-13-01")
+	argInvalid := types.NewDefaultCollationStringDatum("2008-13-01")
 	f, err := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{argInvalid}))
 	c.Assert(err, IsNil)
 	result, err := evalBuiltinFunc(f, chunk.Row{})
@@ -2239,7 +2240,7 @@ func (s *testEvaluatorSuite) TestGetFormat(c *C) {
 
 	fc := funcs[ast.GetFormat]
 	for _, test := range tests {
-		t := []types.Datum{types.NewStringDatum(test.unit), types.NewStringDatum(test.location)}
+		t := []types.Datum{types.NewDefaultCollationStringDatum(test.unit), types.NewDefaultCollationStringDatum(test.location)}
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants(t))
 		c.Assert(err, IsNil)
 		d, err := evalBuiltinFunc(f, chunk.Row{})
@@ -2344,7 +2345,7 @@ func (s *testEvaluatorSuite) TestTimestampAdd(c *C) {
 
 	fc := funcs[ast.TimestampAdd]
 	for _, test := range tests {
-		t := []types.Datum{types.NewStringDatum(test.unit), types.NewIntDatum(test.interval), types.NewDatum(test.date)}
+		t := []types.Datum{types.NewDefaultCollationStringDatum(test.unit), types.NewIntDatum(test.interval), types.NewDatum(test.date)}
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants(t))
 		c.Assert(err, IsNil)
 		d, err := evalBuiltinFunc(f, chunk.Row{})
@@ -2391,7 +2392,7 @@ func (s *testEvaluatorSuite) TestPeriodAdd(c *C) {
 
 func (s *testEvaluatorSuite) TestTimeFormat(c *C) {
 	// SELECT TIME_FORMAT(null,'%H %k %h %I %l')
-	args := []types.Datum{types.NewDatum(nil), types.NewStringDatum(`%H %k %h %I %l`)}
+	args := []types.Datum{types.NewDatum(nil), types.NewDefaultCollationStringDatum(`%H %k %h %I %l`)}
 	fc := funcs[ast.TimeFormat]
 	f, err := fc.getFunction(s.ctx, s.datumsToConstants(args))
 	c.Assert(err, IsNil)
@@ -2442,18 +2443,18 @@ func (s *testEvaluatorSuite) TestTimeToSec(c *C) {
 		input  types.Datum
 		expect int64
 	}{
-		{types.NewStringDatum("22:23:00"), 80580},
-		{types.NewStringDatum("00:39:38"), 2378},
-		{types.NewStringDatum("23:00"), 82800},
-		{types.NewStringDatum("00:00"), 0},
-		{types.NewStringDatum("00:00:00"), 0},
-		{types.NewStringDatum("23:59:59"), 86399},
-		{types.NewStringDatum("1:0"), 3600},
-		{types.NewStringDatum("1:00"), 3600},
-		{types.NewStringDatum("1:0:0"), 3600},
-		{types.NewStringDatum("-02:00"), -7200},
-		{types.NewStringDatum("-02:00:05"), -7205},
-		{types.NewStringDatum("020005"), 7205},
+		{types.NewDefaultCollationStringDatum("22:23:00"), 80580},
+		{types.NewDefaultCollationStringDatum("00:39:38"), 2378},
+		{types.NewDefaultCollationStringDatum("23:00"), 82800},
+		{types.NewDefaultCollationStringDatum("00:00"), 0},
+		{types.NewDefaultCollationStringDatum("00:00:00"), 0},
+		{types.NewDefaultCollationStringDatum("23:59:59"), 86399},
+		{types.NewDefaultCollationStringDatum("1:0"), 3600},
+		{types.NewDefaultCollationStringDatum("1:00"), 3600},
+		{types.NewDefaultCollationStringDatum("1:0:0"), 3600},
+		{types.NewDefaultCollationStringDatum("-02:00"), -7200},
+		{types.NewDefaultCollationStringDatum("-02:00:05"), -7205},
+		{types.NewDefaultCollationStringDatum("020005"), 7205},
 		// {types.NewStringDatum("20171222020005"), 7205},
 		// {types.NewIntDatum(020005), 7205},
 		// {types.NewIntDatum(20171222020005), 7205},
@@ -2499,10 +2500,10 @@ func (s *testEvaluatorSuite) TestSecToTime(c *C) {
 		{1, types.NewFloat64Datum(-86401.4), "-24:00:01.4"},
 		{5, types.NewFloat64Datum(86401.54321), "24:00:01.54321"},
 		{-1, types.NewFloat64Datum(86401.54321), "24:00:01.543210"},
-		{0, types.NewStringDatum("123.4"), "00:02:03.400000"},
-		{0, types.NewStringDatum("123.4567891"), "00:02:03.456789"},
-		{0, types.NewStringDatum("123"), "00:02:03.000000"},
-		{0, types.NewStringDatum("abc"), "00:00:00.000000"},
+		{0, types.NewDefaultCollationStringDatum("123.4"), "00:02:03.400000"},
+		{0, types.NewDefaultCollationStringDatum("123.4567891"), "00:02:03.456789"},
+		{0, types.NewDefaultCollationStringDatum("123"), "00:02:03.000000"},
+		{0, types.NewDefaultCollationStringDatum("abc"), "00:00:00.000000"},
 	}
 	for _, test := range tests {
 		expr := s.datumsToConstants([]types.Datum{test.input})

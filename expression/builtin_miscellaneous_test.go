@@ -75,7 +75,7 @@ func (s *testEvaluatorSuite) TestIsIPv4(c *C) {
 	}
 	fc := funcs[ast.IsIPv4]
 	for _, test := range tests {
-		ip := types.NewStringDatum(test.ip)
+		ip := types.NewDefaultCollationStringDatum(test.ip)
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{ip}))
 		c.Assert(err, IsNil)
 		result, err := evalBuiltinFunc(f, chunk.Row{})
@@ -149,7 +149,7 @@ func (s *testEvaluatorSuite) TestIsIPv6(c *C) {
 	}
 	fc := funcs[ast.IsIPv6]
 	for _, test := range tests {
-		ip := types.NewStringDatum(test.ip)
+		ip := types.NewDefaultCollationStringDatum(test.ip)
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{ip}))
 		c.Assert(err, IsNil)
 		result, err := evalBuiltinFunc(f, chunk.Row{})

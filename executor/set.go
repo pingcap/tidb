@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/stmtsummary"
@@ -139,7 +140,7 @@ func (e *SetExecutor) setSysVariable(name string, v *expression.VarAssignment) e
 			return err
 		}
 		if value.IsNull() {
-			value.SetString("")
+			value.SetString("", collate.DefaultCollation)
 		}
 		valStr, err = value.ToString()
 		if err != nil {
@@ -241,13 +242,13 @@ func (e *SetExecutor) getVarValue(v *expression.VarAssignment, sysVar *variable.
 		// to the compiled-in MySQL default value, use the DEFAULT keyword.
 		// See http://dev.mysql.com/doc/refman/5.7/en/set-statement.html
 		if sysVar != nil {
-			value = types.NewStringDatum(sysVar.Value)
+			value = types.NewDefaultCollationStringDatum(sysVar.Value)
 		} else {
 			s, err1 := variable.GetGlobalSystemVar(e.ctx.GetSessionVars(), v.Name)
 			if err1 != nil {
 				return value, err1
 			}
-			value = types.NewStringDatum(s)
+			value = types.NewDefaultCollationStringDatum(s)
 		}
 		return
 	}
