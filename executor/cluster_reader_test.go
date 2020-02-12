@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/util/pdapi"
 	"github.com/pingcap/tidb/util/testkit"
+	"github.com/pingcap/tidb/util/testutil"
 	pmodel "github.com/prometheus/common/model"
 	"google.golang.org/grpc"
 )
@@ -85,15 +86,15 @@ func (s *testClusterReaderSuite) TestMetricTableData(c *C) {
 	rs, err := tk.Se.Execute(ctx, "select * from tidb_query_duration;")
 	c.Assert(err, IsNil)
 	result := tk.ResultSetToResultWithCtx(ctx, rs[0], Commentf("execute sql fail"))
-	result.Check(testkit.Rows(
-		"2019-12-23 20:11:35.000000 127.0.0.1:10080  0.9 0.1"))
+	result.Check(testutil.RowsWithSep("|",
+		"2019-12-23 20:11:35.000000|127.0.0.1:10080| 0.9|0.1|The quantile of TiDB query durations(second)"))
 
-	rs, err = tk.Se.Execute(ctx, "select * from tidb_query_duration where quantile in (0.85, 0.95);")
+	rs, err = tk.Se.Execute(ctx, "select time,instance,quantile,value from tidb_query_duration where quantile in (0.85, 0.95);")
 	c.Assert(err, IsNil)
 	result = tk.ResultSetToResultWithCtx(ctx, rs[0], Commentf("execute sql fail"))
 	result.Check(testkit.Rows(
-		"2019-12-23 20:11:35.000000 127.0.0.1:10080  0.85 0.1",
-		"2019-12-23 20:11:35.000000 127.0.0.1:10080  0.95 0.1"))
+		"2019-12-23 20:11:35.000000 127.0.0.1:10080 0.85 0.1",
+		"2019-12-23 20:11:35.000000 127.0.0.1:10080 0.95 0.1"))
 }
 
 func (s *testClusterReaderSuite) TestTiDBClusterConfig(c *C) {
