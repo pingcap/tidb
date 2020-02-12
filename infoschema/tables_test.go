@@ -1122,6 +1122,54 @@ func (s *testClusterTableSuite) TestSelectClusterTable(c *C) {
 	}
 }
 
+func (s *testClusterTableSuite) TestSelectClusterTablePrivelege(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	slowLogFileName := "tidb-slow.log"
+	f, err := os.OpenFile(slowLogFileName, os.O_CREATE|os.O_WRONLY, 0644)
+	c.Assert(err, IsNil)
+	_, err = f.Write([]byte(
+		`# Time: 2019-02-12T19:33:57.571953+08:00
+# User: user2@127.0.0.1
+select * from t2;
+# Time: 2019-02-12T19:33:56.571953+08:00
+# User: user1@127.0.0.1
+select * from t1;
+# Time: 2019-02-12T19:33:58.571953+08:00
+# User: user2@127.0.0.1
+select * from t3;
+# Time: 2019-02-12T19:33:59.571953+08:00
+select * from t3;
+`))
+	c.Assert(f.Sync(), IsNil)
+	c.Assert(err, IsNil)
+	defer os.Remove(slowLogFileName)
+	tk.MustExec("use information_schema")
+	tk.MustQuery("select count(*) from `CLUSTER_SLOW_QUERY`").Check(testkit.Rows("4"))
+	tk.MustQuery("select count(*) from `SLOW_QUERY`").Check(testkit.Rows("4"))
+	tk.MustQuery("select count(*) from `CLUSTER_PROCESSLIST`").Check(testkit.Rows("1"))
+	tk.MustQuery("select * from `CLUSTER_PROCESSLIST`").Check(testkit.Rows(":10080 1 root 127.0.0.1 <nil> Query 9223372036 0 <nil> 0 "))
+	tk.MustExec("create user user1")
+	tk.MustExec("create user user2")
+	user1 := testkit.NewTestKit(c, s.store)
+	user1.MustExec("use information_schema")
+	c.Assert(user1.Se.Auth(&auth.UserIdentity{
+		Username: "user1",
+		Hostname: "127.0.0.1",
+	}, nil, nil), IsTrue)
+	user1.MustQuery("select count(*) from `CLUSTER_SLOW_QUERY`").Check(testkit.Rows("1"))
+	user1.MustQuery("select count(*) from `SLOW_QUERY`").Check(testkit.Rows("1"))
+	user1.MustQuery("select user,query from `CLUSTER_SLOW_QUERY`").Check(testkit.Rows("user1 select * from t1;"))
+
+	user2 := testkit.NewTestKit(c, s.store)
+	user2.MustExec("use information_schema")
+	c.Assert(user2.Se.Auth(&auth.UserIdentity{
+		Username: "user2",
+		Hostname: "127.0.0.1",
+	}, nil, nil), IsTrue)
+	user2.MustQuery("select count(*) from `CLUSTER_SLOW_QUERY`").Check(testkit.Rows("2"))
+	user2.MustQuery("select user,query from `CLUSTER_SLOW_QUERY` order by query").Check(testkit.Rows("user2 select * from t2;", "user2 select * from t3;"))
+}
+
 func (s *testTableSuite) TestSelectHiddenColumn(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("DROP DATABASE IF EXISTS `test_hidden`;")
