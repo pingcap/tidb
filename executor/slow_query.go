@@ -16,7 +16,6 @@ package executor
 import (
 	"bufio"
 	"context"
-	"github.com/pingcap/tidb/infoschema"
 	"io"
 	"os"
 	"strconv"
@@ -26,6 +25,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -105,7 +105,6 @@ func (e *SlowQueryRetriever) dataForSlowLog(ctx sessionctx.Context) ([][]types.D
 	if err != nil {
 		if err == io.EOF {
 			e.retrieved = true
-			err = nil
 		} else {
 			return nil, err
 		}

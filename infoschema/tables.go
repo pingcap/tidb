@@ -2567,9 +2567,9 @@ func (it *infoschemaTable) getRows(ctx sessionctx.Context, cols []*table.Column)
 		fullRows = dataForTableTiFlashReplica(dbs)
 	case TableMetricTables:
 		fullRows = dataForMetricTables(ctx)
-	// Data for cluster memory table.
+	// Data for cluster processlist memory table.
 	case clusterTableProcesslist:
-		fullRows, err = getClusterMemTableRows(ctx, it.meta.Name.O)
+		fullRows, err = dataForClusterProcesslist(ctx)
 	}
 	if err != nil {
 		return nil, err

@@ -16,17 +16,17 @@ package executor_test
 import (
 	"bufio"
 	"bytes"
-	"github.com/pingcap/tidb/executor"
-	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/mock"
 	"io"
 	"strings"
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/mock"
 )
 
 func parseSlowLog(ctx sessionctx.Context, reader *bufio.Reader, checkValid func(string) bool) ([][]types.Datum, int, error) {

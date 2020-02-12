@@ -17,7 +17,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/sessionctx"
@@ -73,17 +72,8 @@ func isClusterTableByName(dbName, tableName string) bool {
 	return false
 }
 
-func getClusterMemTableRows(ctx sessionctx.Context, tableName string) (rows [][]types.Datum, err error) {
-	tableName = strings.ToUpper(tableName)
-	switch tableName {
-	case clusterTableProcesslist:
-		rows = dataForProcesslist(ctx)
-	default:
-		err = errors.Errorf("unknown cluster table: %v", tableName)
-	}
-	if err != nil {
-		return nil, err
-	}
+func dataForClusterProcesslist(ctx sessionctx.Context) (rows [][]types.Datum, err error) {
+	rows = dataForProcesslist(ctx)
 	return AppendHostInfoToRows(rows)
 }
 
