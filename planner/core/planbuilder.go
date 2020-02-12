@@ -374,7 +374,7 @@ func NewPlanBuilder(sctx sessionctx.Context, is infoschema.InfoSchema, processor
 
 // Build builds the ast node to a Plan.
 func (b *PlanBuilder) Build(ctx context.Context, node ast.Node) (Plan, error) {
-	b.optFlag = flagPrunColumns // | flagPrunColumnsAgain
+	b.optFlag = flagPrunColumns
 	defer func() {
 		if b.optFlag&flagPredicatePushDown > 0 {
 			b.optFlag |= flagPrunColumnsAgain
