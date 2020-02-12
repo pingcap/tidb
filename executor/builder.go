@@ -2213,7 +2213,51 @@ func buildIndexReq(b *executorBuilder, schemaLen int, plans []plannercore.Physic
 	return indexReq, indexStreaming, err
 }
 
+func buildNoRangeIndexLookUpReaderWithPointGet(b *executorBuilder, v *plannercore.PhysicalIndexLookUpReader) (*IndexLookUpExecutor, error) {
+	tableReq, tableStreaming, tbl, err := buildTableReq(b, v.Schema().Len(), v.TablePlans)
+	if err != nil {
+		return nil, err
+	}
+	pgExec := b.build(v.Children()[0])
+	ts := v.TablePlans[0].(*plannercore.PhysicalTableScan)
+	if isPartition, physicalTableID := ts.IsPartition(); isPartition {
+		pt := tbl.(table.PartitionedTable)
+		tbl = pt.GetPartition(physicalTableID)
+	}
+	startTS, err := b.getStartTS()
+	if err != nil {
+		return nil, err
+	}
+	e := &IndexLookUpExecutor{
+		baseExecutor:      newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), pgExec),
+		tblPlans:          v.TablePlans,
+		idxPlans:          v.IndexPlans,
+		tableStreaming:    tableStreaming,
+		table:             tbl,
+		tableRequest:      tableReq,
+		startTS:           startTS,
+		columns:           ts.Columns,
+		corColInTblSide:   b.corColInDistPlan(v.TablePlans),
+		dataReaderBuilder: &dataReaderBuilder{executorBuilder: b},
+		feedback:          statistics.NewQueryFeedback(0, nil, 0, false),
+	}
+	e.feedback.Invalidate()
+	return e, nil
+}
+
 func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIndexLookUpReader) (*IndexLookUpExecutor, error) {
+	if _, ok := v.IndexPlans[0].(*plannercore.PointGetPlan); ok {
+		return buildNoRangeIndexLookUpReaderWithPointGet(b, v)
+	}
+	if pg, ok := v.IndexPlans[0].(*plannercore.BatchPointGetPlan); ok {
+		exec, err := buildNoRangeIndexLookUpReaderWithPointGet(b, v)
+		if err != nil {
+			return nil, err
+		}
+		exec.keepOrder = pg.KeepOrder
+		exec.desc = pg.Desc
+	}
+
 	is := v.IndexPlans[0].(*plannercore.PhysicalIndexScan)
 	indexReq, indexStreaming, err := buildIndexReq(b, len(is.Index.Columns), v.IndexPlans)
 	if err != nil {
@@ -2796,6 +2840,8 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 		idxInfo:      plan.IndexInfo,
 		rowDecoder:   decoder,
 		startTS:      startTS,
+		keepOrder:    plan.KeepOrder,
+		desc:         plan.Desc,
 	}
 	var capacity int
 	if plan.IndexInfo != nil {

@@ -14,6 +14,7 @@
 package core
 
 import (
+	"github.com/pingcap/errors"
 	"math"
 
 	"github.com/pingcap/parser/ast"
@@ -444,6 +445,21 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty) (t task, err
 			return &rootTask{
 				p: dual,
 			}, nil
+		}
+		if path.Ranges[0].IsPoint(ds.ctx.GetSessionVars().StmtCtx) {
+			var pointGetTask task
+			var err error
+			if len(path.Ranges) == 1 {
+				pointGetTask, err = ds.convertToPointGet(prop, candidate)
+			} else {
+				pointGetTask, err = ds.convertToBatchPointGet(prop, candidate)
+			}
+			if err != nil {
+				return nil, err
+			}
+			if pointGetTask.cost() < t.cost() {
+				t = pointGetTask
+			}
 		}
 		if path.IsTablePath {
 			if ds.preferStoreType&preferTiFlash != 0 && path.StoreType == kv.TiKV {
@@ -1049,6 +1065,199 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 		return invalidTask, nil
 	}
 	return task, nil
+}
+
+func (ds *DataSource) convertToDoubleReadByPointGet(prop *property.PhysicalProperty, candidate *candidatePath, pg PhysicalPlan) (task task, err error) {
+	cop := &copTask{indexPlan: pg}
+	switch x := pg.(type) {
+	case *PointGetPlan:
+		x.schema = expression.NewSchema(append(candidate.path.IdxCols, ds.getHandleCol())...)
+		cop.cst = x.cost
+	case *BatchPointGetPlan:
+		x.schema = expression.NewSchema(append(candidate.path.IdxCols, ds.getHandleCol())...)
+		cop.cst = x.cost
+	default:
+		return nil, errors.Errorf("invalid type of PhysicalPlan")
+	}
+	if len(candidate.path.IndexFilters) > 0 {
+		sessVars := ds.ctx.GetSessionVars()
+		cop.cst += cop.indexPlan.statsInfo().RowCount * sessVars.CPUFactor
+		sel := PhysicalSelection{
+			Conditions: candidate.path.IndexFilters,
+		}.Init(ds.ctx, ds.stats.ScaleByExpectCnt(prop.ExpectedCnt), ds.blockOffset)
+		sel.SetChildren(pg)
+		cop.indexPlan = sel
+	}
+	ts := PhysicalTableScan{
+		Columns:         ds.Columns,
+		Table:           ds.tableInfo,
+		TableAsName:     ds.TableAsName,
+		isPartition:     ds.isPartition,
+		physicalTableID: ds.physicalTableID,
+		filterCondition: candidate.path.TableFilters,
+	}.Init(ds.ctx, ds.blockOffset)
+	ts.SetSchema(ds.schema.Clone())
+	ts.ExpandVirtualColumn()
+	cop.tablePlan = ts
+	if candidate.isMatchProp {
+		col, isNew := cop.tablePlan.(*PhysicalTableScan).appendExtraHandleCol(ds)
+		cop.extraHandleCol = col
+		cop.doubleReadNeedProj = isNew
+		cop.keepOrder = true
+	}
+	ts.addPushedDownSelection(cop, ds.stats.ScaleByExpectCnt(prop.ExpectedCnt))
+	newTask := buildIndexLookUpTask(ds.ctx, cop)
+	// If len(IndexLookUpReader.children) != 0, that means its index side is a PointGet.
+	newTask.plan().SetChildren(newTask.plan().(*PhysicalIndexLookUpReader).indexPlan)
+	if len(cop.rootTaskConds) > 0 {
+		sel := PhysicalSelection{Conditions: cop.rootTaskConds}.Init(ds.ctx, newTask.p.statsInfo(), newTask.p.SelectBlockOffset())
+		sel.SetChildren(newTask.p)
+		newTask.p = sel
+	}
+	return newTask, nil
+}
+
+func (ds *DataSource) convertToPointGet(prop *property.PhysicalProperty, candidate *candidatePath) (task task, err error) {
+	if !prop.IsEmpty() && !candidate.isMatchProp {
+		return invalidTask, nil
+	}
+	if prop.TaskTp == property.CopDoubleReadTaskType && candidate.isSingleScan ||
+		prop.TaskTp == property.CopSingleReadTaskType && !candidate.isSingleScan {
+		return invalidTask, nil
+	}
+	if candidate.path.StoreType == kv.TiFlash {
+		return invalidTask, nil
+	}
+
+	pointGetPlan := PointGetPlan{
+		ctx:          ds.ctx,
+		schema: ds.schema.Clone(),
+		dbName:       ds.DBName.L,
+		TblInfo:      ds.TableInfo(),
+		outputNames:  ds.OutputNames(),
+		LockWaitTime: ds.ctx.GetSessionVars().LockWaitTimeout,
+	}.Init(ds.ctx, ds.stats, ds.blockOffset)
+	var partitionInfo *model.PartitionDefinition
+	if ds.isPartition {
+		if pi := ds.tableInfo.GetPartitionInfo(); pi != nil {
+			for _, def := range pi.Definitions {
+				if def.ID == ds.physicalTableID {
+					partitionInfo = &def
+				}
+			}
+		}
+	}
+	rTsk := &rootTask{ p:   pointGetPlan}
+	var cost float64
+	if candidate.path.IsTablePath {
+		pointGetPlan.Handle = candidate.path.Ranges[0].LowVal[0].GetInt64()
+		pointGetPlan.UnsignedHandle = mysql.HasUnsignedFlag(ds.getHandleCol().RetType.Flag)
+		pointGetPlan.PartitionInfo = partitionInfo
+		cost = pointGetPlan.GetCost(ds.TblCols)
+		// Add filter condition to table plan now.
+		if len(candidate.path.TableFilters) > 0 {
+			sessVars := ds.ctx.GetSessionVars()
+			cost += pointGetPlan.stats.RowCount * sessVars.CPUFactor
+			sel := PhysicalSelection{
+				Conditions: candidate.path.TableFilters,
+			}.Init(ds.ctx, ds.stats.ScaleByExpectCnt(prop.ExpectedCnt), ds.blockOffset)
+			sel.SetChildren(pointGetPlan)
+			rTsk.p = sel
+		}
+	} else {
+		if !candidate.path.Index.Unique ||
+			len(candidate.path.Ranges[0].LowVal) != len(candidate.path.Index.Columns) ||
+			candidate.path.Index.HasPrefixIndex() {
+			return invalidTask, nil
+		}
+		if !candidate.isSingleScan {
+			return ds.convertToDoubleReadByPointGet(prop, candidate, pointGetPlan)
+		}
+		pointGetPlan.IndexInfo = candidate.path.Index
+		pointGetPlan.IndexValues = candidate.path.Ranges[0].LowVal
+		pointGetPlan.PartitionInfo = partitionInfo
+		cost = pointGetPlan.GetCost(candidate.path.IdxCols)
+		// Add index condition to table plan now.
+		if len(candidate.path.IndexFilters) > 0 {
+			sessVars := ds.ctx.GetSessionVars()
+			cost += pointGetPlan.stats.RowCount * sessVars.CPUFactor
+			sel := PhysicalSelection{
+				Conditions: candidate.path.IndexFilters,
+			}.Init(ds.ctx, ds.stats.ScaleByExpectCnt(prop.ExpectedCnt), ds.blockOffset)
+			sel.SetChildren(pointGetPlan)
+			rTsk.p = sel
+		}
+	}
+
+	return rTsk, nil
+}
+
+func (ds *DataSource) convertToBatchPointGet(prop *property.PhysicalProperty, candidate *candidatePath) (task task, err error) {
+	if !prop.IsEmpty() && !candidate.isMatchProp {
+		return invalidTask, nil
+	}
+	if prop.TaskTp == property.CopDoubleReadTaskType && candidate.isSingleScan ||
+		prop.TaskTp == property.CopSingleReadTaskType && !candidate.isSingleScan {
+		return invalidTask, nil
+	}
+	if candidate.path.StoreType == kv.TiFlash {
+		return invalidTask, nil
+	}
+
+	batchPointGetPlan := BatchPointGetPlan{
+		ctx:       ds.ctx,
+		TblInfo:   ds.TableInfo(),
+		KeepOrder: !prop.IsEmpty(),
+	}.Init(ds.ctx, ds.stats, ds.schema.Clone(), ds.names, ds.blockOffset)
+	if batchPointGetPlan.KeepOrder {
+		batchPointGetPlan.Desc = prop.Items[0].Desc
+	}
+	rTsk := &rootTask{
+		p:   batchPointGetPlan,
+	}
+	var cost float64
+	if candidate.path.IsTablePath {
+		for _, ran := range candidate.path.Ranges {
+			batchPointGetPlan.Handles = append(batchPointGetPlan.Handles, ran.LowVal[0].GetInt64())
+		}
+		cost = batchPointGetPlan.GetCost(ds.TblCols)
+		// Add filter condition to table plan now.
+		if len(candidate.path.TableFilters) > 0 {
+			sessVars := ds.ctx.GetSessionVars()
+			cost += batchPointGetPlan.stats.RowCount * sessVars.CPUFactor
+			sel := PhysicalSelection{
+				Conditions: candidate.path.TableFilters,
+			}.Init(ds.ctx, ds.stats.ScaleByExpectCnt(prop.ExpectedCnt), ds.blockOffset)
+			sel.SetChildren(batchPointGetPlan)
+			rTsk.p = sel
+		}
+	} else {
+		if !candidate.path.Index.Unique ||
+			len(candidate.path.Ranges[0].LowVal) != len(candidate.path.Index.Columns) ||
+			candidate.path.Index.HasPrefixIndex() {
+			return invalidTask, nil
+		}
+		if !candidate.isSingleScan {
+			return ds.convertToDoubleReadByPointGet(prop, candidate, batchPointGetPlan)
+		}
+		batchPointGetPlan.IndexInfo = candidate.path.Index
+		for _, ran := range candidate.path.Ranges {
+			batchPointGetPlan.IndexValues = append(batchPointGetPlan.IndexValues, ran.LowVal)
+		}
+		cost = batchPointGetPlan.GetCost(candidate.path.IdxCols)
+		// Add index condition to table plan now.
+		if len(candidate.path.IndexFilters) > 0 {
+			sessVars := ds.ctx.GetSessionVars()
+			cost += batchPointGetPlan.stats.RowCount * sessVars.CPUFactor
+			sel := PhysicalSelection{
+				Conditions: candidate.path.IndexFilters,
+			}.Init(ds.ctx, ds.stats.ScaleByExpectCnt(prop.ExpectedCnt), ds.blockOffset)
+			sel.SetChildren(batchPointGetPlan)
+			rTsk.p = sel
+		}
+	}
+
+	return rTsk, nil
 }
 
 func (ts *PhysicalTableScan) addPushedDownSelection(copTask *copTask, stats *property.StatsInfo) {

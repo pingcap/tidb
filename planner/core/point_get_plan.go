@@ -59,12 +59,19 @@ type PointGetPlan struct {
 	IsForUpdate      bool
 	outputNames      []*types.FieldName
 	LockWaitTime     int64
+	cost float64
 }
 
 type nameValuePair struct {
 	colName string
 	value   types.Datum
 	param   *driver.ParamMarkerExpr
+}
+
+func (p PointGetPlan) Init(ctx sessionctx.Context, stats *property.StatsInfo, offset int, props ...*property.PhysicalProperty) *PointGetPlan {
+	p.basePlan = newBasePlan(ctx, plancodec.TypePointGet, offset)
+	p.stats = stats
+	return &p
 }
 
 // Schema implements the Plan interface.
@@ -171,17 +178,36 @@ func (p *PointGetPlan) SetOutputNames(names types.NameSlice) {
 	p.outputNames = names
 }
 
+// GetCost returns cost of the PointGetPlan.
+func (p *PointGetPlan) GetCost(cols []*expression.Column) float64 {
+	sessVars := p.ctx.GetSessionVars()
+	var rowSize float64
+	p.cost = 0;
+	if p.IndexInfo == nil {
+		rowSize = p.stats.HistColl.GetTableAvgRowSize(p.ctx, cols, kv.TiKV, true)
+	} else {
+		rowSize = p.stats.HistColl.GetIndexAvgRowSize(p.ctx, cols, p.IndexInfo.Unique)
+	}
+	p.cost += rowSize * sessVars.NetworkFactor
+	p.cost += sessVars.SeekFactor
+	return p.cost
+}
+
 // BatchPointGetPlan represents a physical plan which contains a bunch of
 // keys reference the same table and use the same `unique key`
 type BatchPointGetPlan struct {
 	baseSchemaProducer
 
+	ctx              sessionctx.Context
 	TblInfo          *model.TableInfo
 	IndexInfo        *model.IndexInfo
 	Handles          []int64
 	HandleParams     []*driver.ParamMarkerExpr
 	IndexValues      [][]types.Datum
 	IndexValueParams [][]*driver.ParamMarkerExpr
+	KeepOrder        bool
+	Desc             bool
+	cost float64
 }
 
 // attach2Task makes the current physical plan as the father of task's physicalPlan and updates the cost of
@@ -256,6 +282,23 @@ func (p *BatchPointGetPlan) OutputNames() types.NameSlice {
 // SetOutputNames sets the outputting name by the given slice.
 func (p *BatchPointGetPlan) SetOutputNames(names types.NameSlice) {
 	p.names = names
+}
+
+// GetCost returns cost of the PointGetPlan.
+func (p *BatchPointGetPlan) GetCost(cols []*expression.Column) float64 {
+	sessVars := p.ctx.GetSessionVars()
+	var rowSize, rowCount float64
+	p.cost = 0
+	if p.IndexInfo == nil {
+		rowCount = float64(len(p.Handles))
+		rowSize = p.stats.HistColl.GetTableAvgRowSize(p.ctx, cols, kv.TiKV, true)
+	} else {
+		rowCount = float64(len(p.IndexValues))
+		rowSize = p.stats.HistColl.GetIndexAvgRowSize(p.ctx, cols, p.IndexInfo.Unique)
+	}
+	p.cost += rowCount * rowSize * sessVars.NetworkFactor
+	p.cost += rowCount * sessVars.SeekFactor
+	return p.cost
 }
 
 // TryFastPlan tries to use the PointGetPlan for the query.
@@ -350,7 +393,7 @@ func newBatchPointGetPlan(
 			TblInfo:      tbl,
 			Handles:      handles,
 			HandleParams: handleParams,
-		}.Init(ctx, statsInfo, schema, names)
+		}.Init(ctx, statsInfo, schema, names, 0)
 	}
 
 	// The columns in where clause should be covered by unique index
@@ -429,7 +472,7 @@ func newBatchPointGetPlan(
 		IndexInfo:        matchIdxInfo,
 		IndexValues:      indexValues,
 		IndexValueParams: indexValueParams,
-	}.Init(ctx, statsInfo, schema, names)
+	}.Init(ctx, statsInfo, schema, names, 0)
 }
 
 func tryWhereIn2BatchPointGet(ctx sessionctx.Context, selStmt *ast.SelectStmt) Plan {
