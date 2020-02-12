@@ -522,10 +522,10 @@
   {
     "name": "TestAggToCopHint",
     "cases": [
-      "select /*+ AGG_TO_COP(), HASH_AGG(), USE_INDEX(t) */ sum(a) from t group by a",
-      "select /*+ AGG_TO_COP(), USE_INDEX(t) */ sum(b) from t group by b",
-      "select /*+ AGG_TO_COP(), HASH_AGG(), USE_INDEX(t) */ distinct a from t group by a",
-      "select /*+ AGG_TO_COP(), HASH_AGG(), HASH_JOIN(t1), USE_INDEX(t1), USE_INDEX(t2) */ sum(t1.a) from t t1, t t2 where t1.a = t2.b group by t1.a"
+      "select /*+ AGG_TO_COP(), HASH_AGG(), USE_INDEX(t) */ sum(a) from ta group by a",
+      "select /*+ AGG_TO_COP(), USE_INDEX(t) */ sum(b) from ta group by b",
+      "select /*+ AGG_TO_COP(), HASH_AGG(), USE_INDEX(t) */ distinct a from ta group by a",
+      "select /*+ AGG_TO_COP(), HASH_AGG(), HASH_JOIN(t1), USE_INDEX(t1), USE_INDEX(t2) */ sum(t1.a) from ta t1, ta t2 where t1.a = t2.b group by t1.a"
     ]
   },
   {
