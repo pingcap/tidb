@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/execdetails"
+	"github.com/pingcap/tidb/util/localpool"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tipb/go-binlog"
 	"github.com/prometheus/client_golang/prometheus"
@@ -1278,6 +1279,30 @@ func (batchExe *batchExecutor) initUtils() error {
 	return nil
 }
 
+var workerPool *localpool.LocalPool
+
+func startNewWorker() interface{} {
+	fCh := make(chan func(), 1)
+	go func() {
+		for f := range fCh {
+			f()
+			if !workerPool.Put(fCh) {
+				close(fCh)
+			}
+		}
+	}()
+	return fCh
+}
+
+func poolGo(f func()) {
+	fCh := workerPool.Get().(chan func())
+	fCh <- f
+}
+
+func init() {
+	workerPool = localpool.NewLocalPool(100, startNewWorker, nil)
+}
+
 // startWork concurrently do the work for each batch considering rate limit
 func (batchExe *batchExecutor) startWorker(exitCh chan struct{}, ch chan error, batches []batchKeys) {
 	for idx, batch1 := range batches {
@@ -1285,7 +1310,7 @@ func (batchExe *batchExecutor) startWorker(exitCh chan struct{}, ch chan error, 
 		if exit := batchExe.rateLimiter.getToken(exitCh); !exit {
 			batchExe.tokenWaitDuration += time.Since(waitStart)
 			batch := batch1
-			go func() {
+			poolGo(func() {
 				defer batchExe.rateLimiter.putToken()
 				var singleBatchBackoffer *Backoffer
 				if _, ok := batchExe.action.(actionCommit); ok {
@@ -1313,7 +1338,7 @@ func (batchExe *batchExecutor) startWorker(exitCh chan struct{}, ch chan error, 
 						commitDetail.Mu.Unlock()
 					}
 				}
-			}()
+			})
 		} else {
 			logutil.Logger(batchExe.backoffer.ctx).Info("break startWorker",
 				zap.Stringer("action", batchExe.action), zap.Int("batch size", len(batches)),
