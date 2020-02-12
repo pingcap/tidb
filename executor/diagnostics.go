@@ -338,6 +338,7 @@ func (criticalErrorInspection) inspect(ctx context.Context, sctx sessionctx.Cont
 					for i, label := range rest {
 						pairs = append(pairs, fmt.Sprintf("`%s`='%s'", label, row.GetString(i+1)))
 					}
+					// TODO: find a better way to construct the `actual` field
 					actual = fmt.Sprintf("{%s}=%.2f", strings.Join(pairs, ","), row.GetFloat64(1+len(rest)))
 					detail = fmt.Sprintf("select * from `%s`.`%s` where `instance`='%s' and %s",
 						util.MetricSchemaName.L, rule.tbl, row.GetString(0), strings.Join(pairs, " and "))
