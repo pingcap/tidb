@@ -552,7 +552,7 @@ func makePartitionByFnCol(ds *DataSource, pi *model.PartitionInfo) (*expression.
 	case *expression.ScalarFunction:
 		if _, ok := monotoneIncFuncs[raw.FuncName.L]; ok {
 			fn = raw
-			col, ok = fn.GetArgs()[0].(*expression.Column)
+			col = fn.GetArgs()[0].(*expression.Column)
 		}
 	case *expression.Column:
 		col = raw
