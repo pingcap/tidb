@@ -753,7 +753,7 @@ func (h flashReplicaHandler) ServeHTTP(w http.ResponseWriter, req *http.Request)
 type tableFlashReplicaStatus struct {
 	// Modifying the field name needs to negotiate with TiFlash colleague.
 	ID int64 `json:"id"`
-	// RegionCount is the total resion number that need sync.
+	// RegionCount is the number of regions that need sync.
 	RegionCount uint64 `json:"region_count"`
 	// FlashRegionCount is the regions number that already sync completed.
 	FlashRegionCount uint64 `json:"flash_region_count"`
