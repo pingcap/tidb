@@ -426,8 +426,8 @@ func (sf *ScalarFunction) resolveIndices(schema *Schema) error {
 // Coercibility returns the coercibility value which is used to check collations.
 func (sf *ScalarFunction) Coercibility() Coercibility {
 	if sf.hasCoercibility() {
-		return sf.coercibility.coercibility()
+		return sf.coercibility.value()
 	}
 	sf.SetCoercibility(deriveCoercibilityForScarlarFunc(sf))
-	return sf.coercibility.coercibility()
+	return sf.coercibility.value()
 }

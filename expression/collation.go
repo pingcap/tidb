@@ -19,21 +19,21 @@ import (
 )
 
 type coercibility struct {
-	value Coercibility
-	init  bool
+	val  Coercibility
+	init bool
 }
 
 func (c *coercibility) hasCoercibility() bool {
 	return c.init
 }
 
-func (c *coercibility) coercibility() Coercibility {
-	return c.value
+func (c *coercibility) value() Coercibility {
+	return c.val
 }
 
-// SetCoercibility sets a specified coercibility for this expression.
-func (c *coercibility) SetCoercibility(value Coercibility) {
-	c.value = value
+// SetCoercibility implements CollationExpr SetCoercibility interface.
+func (c *coercibility) SetCoercibility(val Coercibility) {
+	c.val = val
 	c.init = true
 }
 
@@ -51,20 +51,20 @@ type CollationExpr interface {
 type Coercibility int
 
 const (
-	// CoercibilityIgnorable is derived from NULL or an expression that is derived from NULL.
-	CoercibilityIgnorable Coercibility = 6
-	// CoercibilityNumeric is derived from a numeric or temporal value.
-	CoercibilityNumeric Coercibility = 5
-	// CoercibilityCoercible is derived from a literal.
-	CoercibilityCoercible Coercibility = 4
-	// CoercibilitySysconst is derived from a “system constant” (the string returned by functions such as USER() or VERSION()).
-	CoercibilitySysconst Coercibility = 3
-	// CoercibilityImplicit is derived from a column or a stored routine parameter or local variable.
-	CoercibilityImplicit Coercibility = 2
-	// CoercibilityNone is derived from the concatenation of two strings with different collations.
-	CoercibilityNone Coercibility = 1
 	// CoercibilityExplicit is derived from an explicit COLLATE clause.
 	CoercibilityExplicit Coercibility = 0
+	// CoercibilityNone is derived from the concatenation of two strings with different collations.
+	CoercibilityNone Coercibility = 1
+	// CoercibilityImplicit is derived from a column or a stored routine parameter or local variable.
+	CoercibilityImplicit Coercibility = 2
+	// CoercibilitySysconst is derived from a “system constant” (the string returned by functions such as USER() or VERSION()).
+	CoercibilitySysconst Coercibility = 3
+	// CoercibilityCoercible is derived from a literal.
+	CoercibilityCoercible Coercibility = 4
+	// CoercibilityNumeric is derived from a numeric or temporal value.
+	CoercibilityNumeric Coercibility = 5
+	// CoercibilityIgnorable is derived from NULL or an expression that is derived from NULL.
+	CoercibilityIgnorable Coercibility = 6
 )
 
 var (
