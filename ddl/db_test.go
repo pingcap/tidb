@@ -3716,7 +3716,7 @@ func (s *testDBSuite1) TestSetTableFlashReplica(c *C) {
 	t = s.testGetTable(c, "t_flash")
 	c.Assert(t.Meta().TiFlashReplica, NotNil)
 	c.Assert(t.Meta().TiFlashReplica.Count, Equals, uint64(2))
-	c.Assert(strings.Join(t.Meta().TiFlashReplica.LocationLabels, ","), Equals, strings.Join([]string{"a", "b"}, ","))
+	c.Assert(strings.Join(t.Meta().TiFlashReplica.LocationLabels, ","), Equals, "a,b")
 
 	s.tk.MustExec("alter table t_flash set tiflash replica 0")
 	t = s.testGetTable(c, "t_flash")
@@ -3729,7 +3729,7 @@ func (s *testDBSuite1) TestSetTableFlashReplica(c *C) {
 	t = s.testGetTable(c, "t_flash")
 	c.Assert(t.Meta().TiFlashReplica, NotNil)
 	c.Assert(t.Meta().TiFlashReplica.Count, Equals, uint64(2))
-	c.Assert(strings.Join(t.Meta().TiFlashReplica.LocationLabels, ","), Equals, strings.Join([]string{"a", "b"}, ","))
+	c.Assert(strings.Join(t.Meta().TiFlashReplica.LocationLabels, ","), Equals, "a,b")
 
 	// Use table ID as physical ID, mock for partition feature was not enabled.
 	err := domain.GetDomain(s.tk.Se).DDL().UpdateTableReplicaInfo(s.tk.Se, t.Meta().ID, true)

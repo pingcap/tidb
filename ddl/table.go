@@ -760,14 +760,13 @@ func onUpdateFlashReplicaStatus(t *meta.Meta, job *model.Job) (ver int64, _ erro
 		} else {
 			// Partition replica become unavailable.
 			for i, id := range tblInfo.TiFlashReplica.AvailablePartitionIDs {
-				if id != physicalID {
-					continue
+				if id == physicalID {
+					newIDs := make([]int64, 0, len(tblInfo.TiFlashReplica.AvailablePartitionIDs)-1)
+					newIDs = append(newIDs, tblInfo.TiFlashReplica.AvailablePartitionIDs[:i]...)
+					newIDs = append(newIDs, tblInfo.TiFlashReplica.AvailablePartitionIDs[i+1:]...)
+					tblInfo.TiFlashReplica.AvailablePartitionIDs = newIDs
+					break
 				}
-				newIDs := make([]int64, 0, len(tblInfo.TiFlashReplica.AvailablePartitionIDs)-1)
-				newIDs = append(newIDs, tblInfo.TiFlashReplica.AvailablePartitionIDs[:i]...)
-				newIDs = append(newIDs, tblInfo.TiFlashReplica.AvailablePartitionIDs[i+1:]...)
-				tblInfo.TiFlashReplica.AvailablePartitionIDs = newIDs
-				break
 			}
 			tblInfo.TiFlashReplica.Available = false
 		}
