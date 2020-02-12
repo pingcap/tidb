@@ -665,7 +665,7 @@ func (sender *copIteratorTaskSender) run() {
 		// being done (aka. all of the responses are buffered) by copIteratorWorker.
 		// We keep the number of inflight tasks within the number of concurrency * 2.
 		// It sends one more task if a task has been finished in copIterator.Next.
-		if sender.sendRate != nil {
+		if sender.keepOrder() {
 			exit := sender.sendRate.getToken(sender.finishCh)
 			if exit {
 				break
@@ -677,7 +677,7 @@ func (sender *copIteratorTaskSender) run() {
 		}
 	}
 	close(sender.taskCh)
-	if sender.sendRate != nil {
+	if sender.keepOrder() {
 		close(sender.orderedTasksCh)
 	}
 
@@ -706,6 +706,10 @@ func (it *copIterator) recvFromRespCh(ctx context.Context, respCh <-chan *copRes
 	return
 }
 
+func (sender *copIteratorTaskSender) keepOrder() bool {
+	return sender.sendRate != nil
+}
+
 func (sender *copIteratorTaskSender) sendToTaskCh(t *copTask) (exit bool) {
 	// send to the worker
 	select {
@@ -715,7 +719,7 @@ func (sender *copIteratorTaskSender) sendToTaskCh(t *copTask) (exit bool) {
 	}
 
 	// send to the iteratoror (if we need to keep an order)
-	if sender.sendRate != nil {
+	if sender.keepOrder() {
 		select {
 		case sender.orderedTasksCh <- t:
 		case <-sender.finishCh:
