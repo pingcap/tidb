@@ -41,7 +41,7 @@ type testColumnChangeSuite struct {
 }
 
 func (s *testColumnChangeSuite) SetUpSuite(c *C) {
-	WaitTimeWhenErrorOccured = 1 * time.Microsecond
+	SetWaitTimeWhenErrorOccurred(1 * time.Microsecond)
 	s.store = testCreateStore(c, "test_column_change")
 	s.dbInfo = &model.DBInfo{
 		Name: model.NewCIStr("test_column_change"),
