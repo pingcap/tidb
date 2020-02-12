@@ -106,6 +106,8 @@ const (
 	tableTiFlashReplica    = "TIFLASH_REPLICA"
 	// TableInspectionResult is the string constant of inspection result table
 	TableInspectionResult = "INSPECTION_RESULT"
+	// TableMetricTables is a table that contains all metrics table definition.
+	TableMetricTables = "METRICS_TABLES"
 	// TableMetricSummary is a summary table that contains all metrics.
 	TableMetricSummary = "METRICS_SUMMARY"
 	// TableMetricSummaryByLabel is a metric table that contains all metrics that group by label info.
@@ -166,6 +168,7 @@ var tableIDMap = map[string]int64{
 	TableInspectionResult:                   autoid.InformationSchemaDBID + 51,
 	TableMetricSummary:                      autoid.InformationSchemaDBID + 52,
 	TableMetricSummaryByLabel:               autoid.InformationSchemaDBID + 53,
+	TableMetricTables:                       autoid.InformationSchemaDBID + 54,
 }
 
 type columnInfo struct {
@@ -1109,6 +1112,8 @@ var tableClusterInfoCols = []columnInfo{
 	{"STATUS_ADDRESS", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"VERSION", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"GIT_HASH", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"START_TIME", mysql.TypeVarchar, 32, 0, nil, nil},
+	{"UPTIME", mysql.TypeVarchar, 32, 0, nil, nil},
 }
 
 var tableTableTiFlashReplicaCols = []columnInfo{
@@ -1131,6 +1136,14 @@ var tableInspectionResultCols = []columnInfo{
 	{"DETAILS", mysql.TypeVarchar, 256, 0, nil, nil},
 }
 
+var tableMetricTablesCols = []columnInfo{
+	{"TABLE_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"PROMQL", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"LABELS", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"QUANTILE", mysql.TypeDouble, 22, 0, nil, nil},
+	{"COMMENT", mysql.TypeVarchar, 256, 0, nil, nil},
+}
+
 var tableMetricSummaryCols = []columnInfo{
 	{"METRIC_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"TIME", mysql.TypeDatetime, -1, 0, nil, nil},
@@ -1138,7 +1151,9 @@ var tableMetricSummaryCols = []columnInfo{
 	{"AVG_VALUE", mysql.TypeDouble, 22, 0, nil, nil},
 	{"MIN_VALUE", mysql.TypeDouble, 22, 0, nil, nil},
 	{"MAX_VALUE", mysql.TypeDouble, 22, 0, nil, nil},
+	{"COMMENT", mysql.TypeVarchar, 256, 0, nil, nil},
 }
+
 var tableMetricSummaryByLabelCols = []columnInfo{
 	{"METRIC_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"LABEL", mysql.TypeVarchar, 64, 0, nil, nil},
@@ -1147,6 +1162,7 @@ var tableMetricSummaryByLabelCols = []columnInfo{
 	{"AVG_VALUE", mysql.TypeDouble, 22, 0, nil, nil},
 	{"MIN_VALUE", mysql.TypeDouble, 22, 0, nil, nil},
 	{"MAX_VALUE", mysql.TypeDouble, 22, 0, nil, nil},
+	{"COMMENT", mysql.TypeVarchar, 256, 0, nil, nil},
 }
 
 func dataForSchemata(ctx sessionctx.Context, schemas []*model.DBInfo) [][]types.Datum {
@@ -2117,11 +2133,12 @@ func dataForServersInfo() ([][]types.Datum, error) {
 
 // ServerInfo represents the basic server information of single cluster component
 type ServerInfo struct {
-	ServerType string
-	Address    string
-	StatusAddr string
-	Version    string
-	GitHash    string
+	ServerType     string
+	Address        string
+	StatusAddr     string
+	Version        string
+	GitHash        string
+	StartTimestamp int64
 }
 
 // GetClusterServerInfo returns all components information of cluster
@@ -2168,11 +2185,12 @@ func GetTiDBServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 	var servers []ServerInfo
 	for _, node := range tidbNodes {
 		servers = append(servers, ServerInfo{
-			ServerType: "tidb",
-			Address:    fmt.Sprintf("%s:%d", node.IP, node.Port),
-			StatusAddr: fmt.Sprintf("%s:%d", node.IP, node.StatusPort),
-			Version:    node.Version,
-			GitHash:    node.GitHash,
+			ServerType:     "tidb",
+			Address:        fmt.Sprintf("%s:%d", node.IP, node.Port),
+			StatusAddr:     fmt.Sprintf("%s:%d", node.IP, node.StatusPort),
+			Version:        node.Version,
+			GitHash:        node.GitHash,
+			StartTimestamp: node.StartTimestamp,
 		})
 	}
 	return servers, nil
@@ -2220,7 +2238,8 @@ func GetPDServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 			return nil, errors.Trace(err)
 		}
 		var content = struct {
-			GitHash string `json:"git_hash"`
+			GitHash        string `json:"git_hash"`
+			StartTimestamp int64  `json:"start_timestamp"`
 		}{}
 		if err := json.NewDecoder(resp.Body).Decode(&content); err != nil {
 			return nil, errors.Trace(err)
@@ -2228,11 +2247,12 @@ func GetPDServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 		terror.Log(resp.Body.Close())
 
 		servers = append(servers, ServerInfo{
-			ServerType: "pd",
-			Address:    addr,
-			StatusAddr: addr,
-			Version:    version,
-			GitHash:    content.GitHash,
+			ServerType:     "pd",
+			Address:        addr,
+			StatusAddr:     addr,
+			Version:        version,
+			GitHash:        content.GitHash,
+			StartTimestamp: content.StartTimestamp,
 		})
 	}
 	return servers, nil
@@ -2258,11 +2278,12 @@ func GetTiKVServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 	var servers []ServerInfo
 	for _, storeStat := range storesStat.Stores {
 		servers = append(servers, ServerInfo{
-			ServerType: "tikv",
-			Address:    storeStat.Store.Address,
-			StatusAddr: storeStat.Store.StatusAddress,
-			Version:    storeStat.Store.Version,
-			GitHash:    storeStat.Store.GitHash,
+			ServerType:     "tikv",
+			Address:        storeStat.Store.Address,
+			StatusAddr:     storeStat.Store.StatusAddress,
+			Version:        storeStat.Store.Version,
+			GitHash:        storeStat.Store.GitHash,
+			StartTimestamp: storeStat.Store.StartTimestamp,
 		})
 	}
 	return servers, nil
@@ -2275,12 +2296,15 @@ func dataForTiDBClusterInfo(ctx sessionctx.Context) ([][]types.Datum, error) {
 	}
 	rows := make([][]types.Datum, 0, len(servers))
 	for _, server := range servers {
+		startTime := time.Unix(server.StartTimestamp, 0)
 		row := types.MakeDatums(
 			server.ServerType,
 			server.Address,
 			server.StatusAddr,
 			server.Version,
 			server.GitHash,
+			startTime.Format(time.RFC3339),
+			time.Since(startTime).String(),
 		)
 		rows = append(rows, row)
 	}
@@ -2305,6 +2329,28 @@ func dataForTableTiFlashReplica(schemas []*model.DBInfo) [][]types.Datum {
 			)
 			rows = append(rows, record)
 		}
+	}
+	return rows
+}
+
+// dataForTableTiFlashReplica constructs data for all metric table definition.
+func dataForMetricTables(ctx sessionctx.Context) [][]types.Datum {
+	var rows [][]types.Datum
+	tables := make([]string, 0, len(MetricTableMap))
+	for name := range MetricTableMap {
+		tables = append(tables, name)
+	}
+	sort.Strings(tables)
+	for _, name := range tables {
+		schema := MetricTableMap[name]
+		record := types.MakeDatums(
+			name,                             // METRIC_NAME
+			schema.PromQL,                    // PROMQL
+			strings.Join(schema.Labels, ","), // LABELS
+			schema.Quantile,                  // QUANTILE
+			schema.Comment,                   // COMMENT
+		)
+		rows = append(rows, record)
 	}
 	return rows
 }
@@ -2360,6 +2406,7 @@ var tableNameToColumns = map[string][]columnInfo{
 	TableInspectionResult:                   tableInspectionResultCols,
 	TableMetricSummary:                      tableMetricSummaryCols,
 	TableMetricSummaryByLabel:               tableMetricSummaryByLabelCols,
+	TableMetricTables:                       tableMetricTablesCols,
 }
 
 func createInfoSchemaTable(_ autoid.Allocators, meta *model.TableInfo) (table.Table, error) {
@@ -2469,6 +2516,8 @@ func (it *infoschemaTable) getRows(ctx sessionctx.Context, cols []*table.Column)
 		fullRows, err = dataForTiDBClusterInfo(ctx)
 	case tableTiFlashReplica:
 		fullRows = dataForTableTiFlashReplica(dbs)
+	case TableMetricTables:
+		fullRows = dataForMetricTables(ctx)
 	// Data for cluster memory table.
 	case clusterTableSlowLog, clusterTableProcesslist:
 		fullRows, err = getClusterMemTableRows(ctx, it.meta.Name.O)
