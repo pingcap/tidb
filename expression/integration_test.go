@@ -4142,6 +4142,13 @@ func (s *testIntegrationSuite) TestDecimalMul(c *C) {
 	res.Check(testkit.Rows("0.55125221922461136"))
 }
 
+func (s *testIntegrationSuite) TestDecimalDiv(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustQuery("select cast(1 as decimal(60,30)) / cast(1 as decimal(60,30)) / cast(1 as decimal(60, 30))").Check(testkit.Rows("1.000000000000000000000000000000"))
+	tk.MustQuery("select cast(1 as decimal(60,30)) / cast(3 as decimal(60,30)) / cast(7 as decimal(60, 30))").Check(testkit.Rows("0.047619047619047619047619047619"))
+	tk.MustQuery("select cast(1 as decimal(60,30)) / cast(3 as decimal(60,30)) / cast(7 as decimal(60, 30)) / cast(13 as decimal(60, 30))").Check(testkit.Rows("0.003663003663003663003663003663"))
+}
+
 func (s *testIntegrationSuite) TestUnknowHintIgnore(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("USE test")
@@ -4486,9 +4493,9 @@ from
     (select * from t1) a
 left join
     (select bussid,date(from_unixtime(ct)) date8 from t2) b
-on 
+on
     a.period_id = b.bussid
-where 
+where
     datediff(b.date8, date(from_unixtime(a.starttime))) >= 0`
 	tk.MustQuery(q)
 }
