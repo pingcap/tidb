@@ -299,7 +299,7 @@ func (b *executorBuilder) buildShowDDL(v *plannercore.ShowDDL) Executor {
 
 func (b *executorBuilder) buildShowDDLJobs(v *plannercore.PhysicalShowDDLJobs) Executor {
 	e := &ShowDDLJobsExec{
-		jobNumber:    v.JobNumber,
+		jobNumber:    int(v.JobNumber),
 		is:           b.is,
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
 	}
@@ -1327,12 +1327,20 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 					extractor: v.Extractor.(*plannercore.MetricTableExtractor),
 				},
 			}
-		case strings.ToLower(infoschema.TableSchemata):
-			return &InfoschemaReaderExec{
+		case strings.ToLower(infoschema.TableMetricSummaryByLabel):
+			return &ClusterReaderExec{
 				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
-				table:        v.Table,
-				columns:      v.Columns,
+				retriever: &MetricSummaryByLabelRetriever{
+					table:     v.Table,
+					extractor: v.Extractor.(*plannercore.MetricTableExtractor),
+				},
 			}
+    case strings.ToLower(infoschema.TableSchemata):
+      return &InfoschemaReaderExec{
+        baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
+        table:        v.Table,
+        columns:      v.Columns,
+      }
 		}
 	}
 	tb, _ := b.is.TableByID(v.Table.ID)
