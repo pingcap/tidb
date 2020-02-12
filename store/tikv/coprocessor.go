@@ -70,7 +70,7 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variable
 		it.concurrency = 1
 	}
 	if it.req.KeepOrder {
-		it.tasks = make(chan *copTask, 2048)
+		it.tasksCh = make(chan *copTask, 2048)
 		it.sendRate = newRateLimit(2 * it.concurrency)
 	} else {
 		it.respChan = make(chan *copResponse, it.concurrency)
@@ -475,7 +475,11 @@ type copIterator struct {
 	finishCh    chan struct{}
 
 	// If keepOrder, results are stored in copTask.respChan, read them out one by one.
-	tasks chan *copTask
+
+	// tasksCh is a channel where new tasks will arrive if need to keep an order
+	tasksCh chan *copTask
+	// currTask is a current task if we need to keep order
+	currTask *copTask
 
 	// sendRate controls the sending rate of copIteratorTaskSender, if keepOrder,
 	// to prevent all tasks being done (aka. all of the responses are buffered)
@@ -648,7 +652,7 @@ func (it *copIterator) open(ctx context.Context) error {
 		finishCh:           it.finishCh,
 		sendRate:           it.sendRate,
 		respChan:           it.respChan,
-		orderedTasksCh:     it.tasks,
+		orderedTasksCh:     it.tasksCh,
 	}
 	go taskSender.run()
 	return nil
@@ -750,18 +754,28 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 			return nil, nil
 		}
 	} else {
-		task, ok := <-it.tasks
-		if !ok {
-			// Resp will be nil if iterator is finishCh.
-			return nil, nil
+		for {
+			if it.currTask == nil {
+				// switch to next task
+				var ok bool
+				it.currTask, ok = <-it.tasksCh
+				if !ok {
+					// Resp will be nil if iterator is finished.
+					return nil, nil
+				}
+				it.sendRate.putToken()
+			}
+
+			resp, ok, closed = it.recvFromRespCh(ctx, it.currTask.respChan)
+			if closed {
+				// Close() is already called, so Next() is invalid.
+				return nil, nil
+			}
+			if ok {
+				break
+			}
+			it.currTask = nil
 		}
-		resp, ok, closed = it.recvFromRespCh(ctx, task.respChan)
-		if !ok || closed {
-			// Close() is already called, so Next() is invalid.
-			return nil, nil
-		}
-		// Switch to next task.
-		it.sendRate.putToken()
 	}
 
 	if resp.err != nil {
