@@ -1545,6 +1545,8 @@ func CreateSession(store kv.Storage) (Session, error) {
 	return CreateSessionWithOpt(store, nil)
 }
 
+// CreateSessionWithOpt creates a new session environment with option.
+// Use default option if opt is nil.
 func CreateSessionWithOpt(store kv.Storage, opt *Opt) (Session, error) {
 	s, err := createSessionWithOpt(store, opt)
 	if err != nil {
