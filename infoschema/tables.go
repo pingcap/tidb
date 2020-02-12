@@ -92,7 +92,7 @@ const (
 	tableTiKVRegionStatus                   = "TIKV_REGION_STATUS"
 	tableTiKVRegionPeers                    = "TIKV_REGION_PEERS"
 	tableTiDBServersInfo                    = "TIDB_SERVERS_INFO"
-	tableDDLJobs                            = "DDL_JOBS"
+	TableDDLJobs                            = "DDL_JOBS"
 	// TableClusterInfo is the string constant of cluster info memory table
 	TableClusterInfo = "CLUSTER_INFO"
 	// TableClusterConfig is the string constant of cluster configuration memory table
@@ -155,17 +155,17 @@ var tableIDMap = map[string]int64{
 	tableTiKVRegionPeers:                    autoid.InformationSchemaDBID + 40,
 	tableTiDBServersInfo:                    autoid.InformationSchemaDBID + 41,
 	TableClusterInfo:                        autoid.InformationSchemaDBID + 42,
-	TableClusterConfig:                      autoid.InformationSchemaDBID + 43,
-	TableClusterLoad:                        autoid.InformationSchemaDBID + 44,
-	tableTiFlashReplica:                     autoid.InformationSchemaDBID + 45,
-	clusterTableSlowLog:                     autoid.InformationSchemaDBID + 46,
-	clusterTableProcesslist:                 autoid.InformationSchemaDBID + 47,
-	TableClusterLog:                         autoid.InformationSchemaDBID + 48,
-	TableClusterHardware:                    autoid.InformationSchemaDBID + 49,
-	TableClusterSystemInfo:                  autoid.InformationSchemaDBID + 50,
-	TableInspectionResult:                   autoid.InformationSchemaDBID + 51,
-	TableMetricSummary:                      autoid.InformationSchemaDBID + 52,
-	tableDDLJobs:                            autoid.InformationSchemaDBID + 53,
+	TableClusterConfig:      autoid.InformationSchemaDBID + 43,
+	TableClusterLoad:        autoid.InformationSchemaDBID + 44,
+	tableTiFlashReplica:     autoid.InformationSchemaDBID + 45,
+	clusterTableSlowLog:     autoid.InformationSchemaDBID + 46,
+	clusterTableProcesslist: autoid.InformationSchemaDBID + 47,
+	TableClusterLog:         autoid.InformationSchemaDBID + 48,
+	TableClusterHardware:    autoid.InformationSchemaDBID + 49,
+	TableClusterSystemInfo:  autoid.InformationSchemaDBID + 50,
+	TableInspectionResult:   autoid.InformationSchemaDBID + 51,
+	TableMetricSummary:      autoid.InformationSchemaDBID + 52,
+	TableDDLJobs:            autoid.InformationSchemaDBID + 53,
 }
 
 type columnInfo struct {
@@ -2400,17 +2400,17 @@ var tableNameToColumns = map[string][]columnInfo{
 	tableAnalyzeStatus:                      tableAnalyzeStatusCols,
 	tableTiKVRegionStatus:                   tableTiKVRegionStatusCols,
 	tableTiKVRegionPeers:                    tableTiKVRegionPeersCols,
-	tableTiDBServersInfo:                    tableTiDBServersInfoCols,
-	TableClusterInfo:                        tableClusterInfoCols,
-	TableClusterConfig:                      tableClusterConfigCols,
-	TableClusterLog:                         tableClusterLogCols,
-	TableClusterLoad:                        tableClusterLoadCols,
-	tableTiFlashReplica:                     tableTableTiFlashReplicaCols,
-	TableClusterHardware:                    tableClusterHardwareCols,
-	TableClusterSystemInfo:                  tableClusterSystemInfoCols,
-	TableInspectionResult:                   tableInspectionResultCols,
-	TableMetricSummary:                      tableMetricSummaryCols,
-	tableDDLJobs:                            tableDDLJobsCols,
+	tableTiDBServersInfo:   tableTiDBServersInfoCols,
+	TableClusterInfo:       tableClusterInfoCols,
+	TableClusterConfig:     tableClusterConfigCols,
+	TableClusterLog:        tableClusterLogCols,
+	TableClusterLoad:       tableClusterLoadCols,
+	tableTiFlashReplica:    tableTableTiFlashReplicaCols,
+	TableClusterHardware:   tableClusterHardwareCols,
+	TableClusterSystemInfo: tableClusterSystemInfoCols,
+	TableInspectionResult:  tableInspectionResultCols,
+	TableMetricSummary:     tableMetricSummaryCols,
+	TableDDLJobs:           tableDDLJobsCols,
 }
 
 func createInfoSchemaTable(_ autoid.Allocators, meta *model.TableInfo) (table.Table, error) {
@@ -2516,7 +2516,7 @@ func (it *infoschemaTable) getRows(ctx sessionctx.Context, cols []*table.Column)
 		fullRows, err = dataForTikVRegionPeers(ctx)
 	case tableTiDBServersInfo:
 		fullRows, err = dataForServersInfo()
-	case tableDDLJobs:
+	case TableDDLJobs:
 		fullRows, err = dataForDDLJobs(ctx)
 	case TableClusterInfo:
 		fullRows, err = dataForTiDBClusterInfo(ctx)

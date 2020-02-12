@@ -1243,6 +1243,7 @@ func (e *TableScanExec) getRow(handle int64) ([]types.Datum, error) {
 
 // Open implements the Executor Open interface.
 func (e *TableScanExec) Open(ctx context.Context) error {
+
 	e.iter = nil
 	e.virtualTableChunkList = nil
 	return nil
