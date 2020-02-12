@@ -3775,6 +3775,16 @@ func (s *testDBSuite1) TestSetTableFlashReplica(c *C) {
 	err = domain.GetDomain(s.tk.Se).DDL().UpdateTableReplicaInfo(s.tk.Se, math.MaxInt64, false)
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[schema:1146]Table which ID = 9223372036854775807 does not exist.")
+
+	// Test for FindTableByPartitionID.
+	is := domain.GetDomain(s.tk.Se).InfoSchema()
+	t, dbInfo := is.FindTableByPartitionID(partition.Definitions[0].ID)
+	c.Assert(t, NotNil)
+	c.Assert(dbInfo, NotNil)
+	c.Assert(t.Meta().Name.L, Equals, "t_flash")
+	t, dbInfo = is.FindTableByPartitionID(t.Meta().ID)
+	c.Assert(t, IsNil)
+	c.Assert(dbInfo, IsNil)
 }
 
 func (s *testSerialDBSuite) TestAlterShardRowIDBits(c *C) {

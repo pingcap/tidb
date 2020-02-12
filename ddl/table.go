@@ -764,10 +764,10 @@ func onUpdateFlashReplicaStatus(t *meta.Meta, job *model.Job) (ver int64, _ erro
 					newIDs := tblInfo.TiFlashReplica.AvailablePartitionIDs[:i]
 					newIDs = append(newIDs, tblInfo.TiFlashReplica.AvailablePartitionIDs[i+1:]...)
 					tblInfo.TiFlashReplica.AvailablePartitionIDs = newIDs
+					tblInfo.TiFlashReplica.Available = false
 					break
 				}
 			}
-			tblInfo.TiFlashReplica.Available = false
 		}
 	} else {
 		job.State = model.JobStateCancelled
