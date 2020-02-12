@@ -1493,9 +1493,15 @@ func (er *expressionRewriter) funcCallToExpression(v *ast.FuncCallExpr) {
 	}
 }
 
+// Now TableName in expression only used by sequence function like nextval(seq).
+// The function arg should be evaluated as a table name rather than normal column name like mysql does.
 func (er *expressionRewriter) toTable(v *ast.TableName) {
+	fullName := v.Name.L
+	if len(v.Schema.L) != 0 {
+		fullName = v.Schema.L + "." + fullName
+	}
 	val := &expression.Constant{
-		Value:   types.NewDatum(v.Name.L),
+		Value:   types.NewDatum(fullName),
 		RetType: types.NewFieldType(mysql.TypeString),
 	}
 	er.ctxStackAppend(val, types.EmptyName)
