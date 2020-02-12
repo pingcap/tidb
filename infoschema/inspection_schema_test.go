@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 )
@@ -86,7 +87,7 @@ func (s *inspectionSuite) TestInspectionTables(c *C) {
 	c.Assert(err, ErrorMatches, "not currently in inspection mode")
 
 	// check whether is obtain data from cache at the next time
-	inspectionTableCache["cluster_info"].Rows[0][0].SetString("modified-pd")
+	inspectionTableCache["cluster_info"].Rows[0][0].SetString("modified-pd", collate.DefaultCollation)
 	tk.MustQuery("select * from inspection_schema.cluster_info").Check(testkit.Rows(
 		"modified-pd 127.0.0.1:11080 127.0.0.1:10080 mock-version mock-githash",
 		"tidb 127.0.0.1:11080 127.0.0.1:10080 mock-version mock-githash",

@@ -245,11 +245,11 @@ func (s testUtilSuite) TestGetStrIntFromConstant(c *check.C) {
 	_, isNull, _ = GetIntFromConstant(mock.NewContext(), con)
 	c.Assert(isNull, check.IsTrue)
 
-	con = &Constant{RetType: newStringFieldType(), Value: types.NewStringDatum("abc")}
+	con = &Constant{RetType: newStringFieldType(), Value: types.NewDefaultCollationStringDatum("abc")}
 	_, isNull, _ = GetIntFromConstant(mock.NewContext(), con)
 	c.Assert(isNull, check.IsTrue)
 
-	con = &Constant{RetType: newStringFieldType(), Value: types.NewStringDatum("123")}
+	con = &Constant{RetType: newStringFieldType(), Value: types.NewDefaultCollationStringDatum("123")}
 	num, _, _ := GetIntFromConstant(mock.NewContext(), con)
 	c.Assert(num, check.Equals, 123)
 }

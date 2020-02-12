@@ -293,7 +293,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -303,7 +303,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -313,7 +313,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -323,7 +323,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -333,7 +333,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -343,7 +343,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("WEEK"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("WEEK"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -353,7 +353,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -363,7 +363,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("QUARTER"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("QUARTER"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -373,7 +373,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("YEAR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("YEAR"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -383,7 +383,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("SECOND_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("SECOND_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -393,7 +393,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MINUTE_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -403,7 +403,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MINUTE_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -413,7 +413,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("HOUR_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -423,7 +423,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("HOUR_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -433,7 +433,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("HOUR_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -443,7 +443,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -453,7 +453,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -463,7 +463,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -473,7 +473,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY_HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -483,7 +483,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("YEAR_MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("YEAR_MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		// builtinAddDateStringIntSig
@@ -494,7 +494,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -504,7 +504,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -514,7 +514,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -524,7 +524,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -534,7 +534,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -544,7 +544,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("WEEK"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("WEEK"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -554,7 +554,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -564,7 +564,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("QUARTER"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("QUARTER"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -574,7 +574,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("YEAR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("YEAR"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -584,7 +584,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("SECOND_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("SECOND_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -594,7 +594,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MINUTE_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -604,7 +604,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MINUTE_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -614,7 +614,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("HOUR_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -624,7 +624,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("HOUR_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -634,7 +634,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("HOUR_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -644,7 +644,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -654,7 +654,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -664,7 +664,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -674,7 +674,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY_HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -684,7 +684,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("YEAR_MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("YEAR_MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		// builtinAddDateStringRealSig
@@ -695,7 +695,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -705,7 +705,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -715,7 +715,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -725,7 +725,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -735,7 +735,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -745,7 +745,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("WEEK"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("WEEK"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -755,7 +755,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -765,7 +765,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("QUARTER"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("QUARTER"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -775,7 +775,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("YEAR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("YEAR"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -785,7 +785,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("SECOND_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("SECOND_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -795,7 +795,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MINUTE_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -805,7 +805,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MINUTE_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -815,7 +815,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("HOUR_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -825,7 +825,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("HOUR_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -835,7 +835,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("HOUR_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -845,7 +845,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -855,7 +855,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -865,7 +865,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -875,7 +875,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY_HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -885,7 +885,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("YEAR_MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("YEAR_MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		// builtinAddDateStringDecimalSig
@@ -896,7 +896,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -906,7 +906,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -916,7 +916,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -926,7 +926,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -936,7 +936,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -946,7 +946,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("WEEK"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("WEEK"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -956,7 +956,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -966,7 +966,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("QUARTER"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("QUARTER"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -976,7 +976,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("YEAR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("YEAR"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -986,7 +986,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("SECOND_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("SECOND_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -996,7 +996,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MINUTE_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -1006,7 +1006,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MINUTE_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -1016,7 +1016,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("HOUR_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -1026,7 +1026,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("HOUR_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -1036,7 +1036,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("HOUR_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -1046,7 +1046,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -1056,7 +1056,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -1066,7 +1066,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -1076,7 +1076,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY_HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -1086,7 +1086,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("YEAR_MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("YEAR_MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		// builtinAddDateIntStringSig
@@ -1097,7 +1097,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -1107,7 +1107,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -1117,7 +1117,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -1127,7 +1127,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -1137,7 +1137,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -1147,7 +1147,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("WEEK"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("WEEK"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -1157,7 +1157,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -1167,7 +1167,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("QUARTER"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("QUARTER"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -1177,7 +1177,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("YEAR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("YEAR"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -1187,7 +1187,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("SECOND_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("SECOND_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -1197,7 +1197,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MINUTE_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -1207,7 +1207,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MINUTE_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -1217,7 +1217,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("HOUR_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -1227,7 +1227,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("HOUR_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -1237,7 +1237,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("HOUR_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -1247,7 +1247,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -1257,7 +1257,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -1267,7 +1267,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -1277,7 +1277,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY_HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -1287,7 +1287,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("YEAR_MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("YEAR_MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		// builtinAddDateIntIntSig
@@ -1298,7 +1298,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -1308,7 +1308,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -1318,7 +1318,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -1328,7 +1328,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -1338,7 +1338,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -1348,7 +1348,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("WEEK"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("WEEK"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -1358,7 +1358,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -1368,7 +1368,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("QUARTER"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("QUARTER"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -1378,7 +1378,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("YEAR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("YEAR"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -1388,7 +1388,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("SECOND_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("SECOND_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -1398,7 +1398,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MINUTE_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -1408,7 +1408,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MINUTE_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -1418,7 +1418,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("HOUR_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -1428,7 +1428,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("HOUR_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -1438,7 +1438,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("HOUR_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -1448,7 +1448,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -1458,7 +1458,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -1468,7 +1468,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -1478,7 +1478,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY_HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -1488,7 +1488,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("YEAR_MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("YEAR_MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		// builtinAddDateIntRealSig
@@ -1499,7 +1499,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -1509,7 +1509,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -1519,7 +1519,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -1529,7 +1529,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -1539,7 +1539,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -1549,7 +1549,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("WEEK"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("WEEK"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -1559,7 +1559,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -1569,7 +1569,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("QUARTER"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("QUARTER"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -1579,7 +1579,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("YEAR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("YEAR"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -1589,7 +1589,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("SECOND_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("SECOND_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -1599,7 +1599,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MINUTE_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -1609,7 +1609,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MINUTE_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -1619,7 +1619,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("HOUR_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -1629,7 +1629,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("HOUR_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -1639,7 +1639,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("HOUR_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -1649,7 +1649,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -1659,7 +1659,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -1669,7 +1669,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -1679,7 +1679,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY_HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -1689,7 +1689,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("YEAR_MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("YEAR_MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		// builtinAddDateIntDecimalSig
@@ -1700,7 +1700,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -1710,7 +1710,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -1720,7 +1720,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -1730,7 +1730,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -1740,7 +1740,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -1750,7 +1750,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("WEEK"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("WEEK"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -1760,7 +1760,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -1770,7 +1770,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("QUARTER"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("QUARTER"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -1780,7 +1780,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("YEAR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("YEAR"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -1790,7 +1790,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("SECOND_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("SECOND_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -1800,7 +1800,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MINUTE_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -1810,7 +1810,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MINUTE_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -1820,7 +1820,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("HOUR_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -1830,7 +1830,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("HOUR_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -1840,7 +1840,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("HOUR_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -1850,7 +1850,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -1860,7 +1860,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -1870,7 +1870,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -1880,7 +1880,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY_HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -1890,7 +1890,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("YEAR_MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("YEAR_MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		// builtinAddDateDatetimeStringSig
@@ -1901,7 +1901,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -1911,7 +1911,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -1921,7 +1921,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -1931,7 +1931,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -1941,7 +1941,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -1951,7 +1951,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("WEEK"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("WEEK"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -1961,7 +1961,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -1971,7 +1971,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("QUARTER"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("QUARTER"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -1981,7 +1981,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("YEAR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("YEAR"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -1991,7 +1991,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("SECOND_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("SECOND_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -2001,7 +2001,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MINUTE_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -2011,7 +2011,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MINUTE_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -2021,7 +2021,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("HOUR_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -2031,7 +2031,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("HOUR_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -2041,7 +2041,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("HOUR_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -2051,7 +2051,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -2061,7 +2061,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -2071,7 +2071,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -2081,7 +2081,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY_HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -2091,7 +2091,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("YEAR_MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("YEAR_MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		// builtinAddDateDatetimeIntSig
@@ -2102,7 +2102,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -2112,7 +2112,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -2122,7 +2122,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -2132,7 +2132,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -2142,7 +2142,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -2152,7 +2152,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("WEEK"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("WEEK"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -2162,7 +2162,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -2172,7 +2172,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("QUARTER"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("QUARTER"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -2182,7 +2182,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("YEAR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("YEAR"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -2192,7 +2192,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("SECOND_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("SECOND_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -2202,7 +2202,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MINUTE_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -2212,7 +2212,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MINUTE_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -2222,7 +2222,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("HOUR_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -2232,7 +2232,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("HOUR_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -2242,7 +2242,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("HOUR_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -2252,7 +2252,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -2262,7 +2262,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -2272,7 +2272,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -2282,7 +2282,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY_HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -2292,7 +2292,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("YEAR_MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("YEAR_MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		// builtinAddDateDatetimeRealSig
@@ -2303,7 +2303,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -2313,7 +2313,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -2323,7 +2323,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -2333,7 +2333,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -2343,7 +2343,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -2353,7 +2353,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("WEEK"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("WEEK"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -2363,7 +2363,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -2373,7 +2373,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("QUARTER"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("QUARTER"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -2383,7 +2383,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("YEAR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("YEAR"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -2393,7 +2393,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("SECOND_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("SECOND_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -2403,7 +2403,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MINUTE_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -2413,7 +2413,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MINUTE_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -2423,7 +2423,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("HOUR_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -2433,7 +2433,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("HOUR_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -2443,7 +2443,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("HOUR_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -2453,7 +2453,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -2463,7 +2463,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -2473,7 +2473,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -2483,7 +2483,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY_HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -2493,7 +2493,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("YEAR_MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("YEAR_MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		// builtinAddDateDatetimeDecimalSig
@@ -2504,7 +2504,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -2514,7 +2514,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -2524,7 +2524,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -2534,7 +2534,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -2544,7 +2544,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -2554,7 +2554,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("WEEK"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("WEEK"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -2564,7 +2564,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -2574,7 +2574,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("QUARTER"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("QUARTER"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -2584,7 +2584,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("YEAR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("YEAR"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -2594,7 +2594,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("SECOND_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("SECOND_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -2604,7 +2604,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MINUTE_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -2614,7 +2614,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MINUTE_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -2624,7 +2624,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("HOUR_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -2634,7 +2634,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("HOUR_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -2644,7 +2644,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("HOUR_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -2654,7 +2654,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -2664,7 +2664,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -2674,7 +2674,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -2684,7 +2684,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY_HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -2694,7 +2694,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("YEAR_MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("YEAR_MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		// builtinAddDateDurationStringSig
@@ -2705,7 +2705,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -2715,7 +2715,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -2725,7 +2725,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -2735,7 +2735,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -2745,7 +2745,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -2755,7 +2755,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("WEEK"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("WEEK"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -2765,7 +2765,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -2775,7 +2775,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("QUARTER"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("QUARTER"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -2785,7 +2785,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("YEAR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("YEAR"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -2795,7 +2795,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("SECOND_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("SECOND_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -2805,7 +2805,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MINUTE_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -2815,7 +2815,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MINUTE_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -2825,7 +2825,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("HOUR_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -2835,7 +2835,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("HOUR_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -2845,7 +2845,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("HOUR_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -2855,7 +2855,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -2865,7 +2865,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -2875,7 +2875,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -2885,7 +2885,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY_HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -2895,7 +2895,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("YEAR_MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("YEAR_MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		// builtinAddDateDurationIntSig
@@ -2906,7 +2906,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -2916,7 +2916,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -2926,7 +2926,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -2936,7 +2936,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -2946,7 +2946,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -2956,7 +2956,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("WEEK"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("WEEK"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -2966,7 +2966,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -2976,7 +2976,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("QUARTER"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("QUARTER"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -2986,7 +2986,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("YEAR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("YEAR"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -2996,7 +2996,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("SECOND_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("SECOND_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -3006,7 +3006,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MINUTE_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -3016,7 +3016,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MINUTE_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -3026,7 +3026,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("HOUR_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -3036,7 +3036,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("HOUR_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -3046,7 +3046,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("HOUR_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -3056,7 +3056,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -3066,7 +3066,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -3076,7 +3076,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -3086,7 +3086,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY_HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -3096,7 +3096,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("YEAR_MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("YEAR_MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		// builtinAddDateDurationRealSig
@@ -3107,7 +3107,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -3117,7 +3117,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -3127,7 +3127,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -3137,7 +3137,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -3147,7 +3147,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -3157,7 +3157,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("WEEK"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("WEEK"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -3167,7 +3167,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -3177,7 +3177,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("QUARTER"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("QUARTER"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -3187,7 +3187,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("YEAR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("YEAR"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -3197,7 +3197,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("SECOND_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("SECOND_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -3207,7 +3207,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MINUTE_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -3217,7 +3217,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MINUTE_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -3227,7 +3227,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("HOUR_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -3237,7 +3237,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("HOUR_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -3247,7 +3247,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("HOUR_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -3257,7 +3257,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -3267,7 +3267,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -3277,7 +3277,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -3287,7 +3287,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY_HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -3297,7 +3297,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("YEAR_MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("YEAR_MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		// builtinAddDateDurationDecimalSig
@@ -3308,7 +3308,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -3318,7 +3318,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -3328,7 +3328,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -3338,7 +3338,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -3348,7 +3348,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -3358,7 +3358,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("WEEK"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("WEEK"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -3368,7 +3368,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -3378,7 +3378,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("QUARTER"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("QUARTER"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -3388,7 +3388,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("YEAR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("YEAR"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -3398,7 +3398,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("SECOND_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("SECOND_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -3408,7 +3408,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MINUTE_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -3418,7 +3418,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MINUTE_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -3428,7 +3428,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("HOUR_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -3438,7 +3438,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("HOUR_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -3448,7 +3448,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("HOUR_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -3458,7 +3458,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -3468,7 +3468,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -3478,7 +3478,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -3488,7 +3488,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY_HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -3498,7 +3498,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("YEAR_MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("YEAR_MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 	},
@@ -3512,7 +3512,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -3522,7 +3522,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -3532,7 +3532,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -3542,7 +3542,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -3552,7 +3552,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -3562,7 +3562,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("WEEK"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("WEEK"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -3572,7 +3572,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -3582,7 +3582,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("QUARTER"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("QUARTER"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -3592,7 +3592,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("YEAR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("YEAR"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -3602,7 +3602,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("SECOND_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("SECOND_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -3612,7 +3612,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MINUTE_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -3622,7 +3622,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MINUTE_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -3632,7 +3632,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("HOUR_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -3642,7 +3642,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("HOUR_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -3652,7 +3652,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("HOUR_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -3662,7 +3662,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -3672,7 +3672,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -3682,7 +3682,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -3692,7 +3692,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY_HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -3702,7 +3702,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("YEAR_MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("YEAR_MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		// builtinSubDateStringIntSig
@@ -3713,7 +3713,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -3723,7 +3723,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -3733,7 +3733,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -3743,7 +3743,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -3753,7 +3753,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -3763,7 +3763,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("WEEK"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("WEEK"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -3773,7 +3773,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -3783,7 +3783,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("QUARTER"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("QUARTER"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -3793,7 +3793,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("YEAR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("YEAR"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -3803,7 +3803,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("SECOND_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("SECOND_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -3813,7 +3813,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MINUTE_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -3823,7 +3823,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MINUTE_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -3833,7 +3833,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("HOUR_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -3843,7 +3843,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("HOUR_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -3853,7 +3853,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("HOUR_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -3863,7 +3863,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -3873,7 +3873,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -3883,7 +3883,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -3893,7 +3893,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY_HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -3903,7 +3903,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("YEAR_MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("YEAR_MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		// builtinSubDateStringRealSig
@@ -3914,7 +3914,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -3924,7 +3924,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -3934,7 +3934,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -3944,7 +3944,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -3954,7 +3954,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -3964,7 +3964,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("WEEK"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("WEEK"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -3974,7 +3974,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -3984,7 +3984,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("QUARTER"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("QUARTER"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -3994,7 +3994,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("YEAR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("YEAR"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -4004,7 +4004,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("SECOND_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("SECOND_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -4014,7 +4014,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MINUTE_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -4024,7 +4024,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MINUTE_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -4034,7 +4034,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("HOUR_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -4044,7 +4044,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("HOUR_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -4054,7 +4054,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("HOUR_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -4064,7 +4064,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -4074,7 +4074,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -4084,7 +4084,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -4094,7 +4094,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY_HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -4104,7 +4104,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("YEAR_MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("YEAR_MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		// builtinSubDateStringDecimalSig
@@ -4115,7 +4115,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -4125,7 +4125,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -4135,7 +4135,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -4145,7 +4145,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -4155,7 +4155,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -4165,7 +4165,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("WEEK"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("WEEK"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -4175,7 +4175,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -4185,7 +4185,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("QUARTER"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("QUARTER"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -4195,7 +4195,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("YEAR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("YEAR"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -4205,7 +4205,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("SECOND_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("SECOND_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -4215,7 +4215,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MINUTE_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -4225,7 +4225,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MINUTE_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -4235,7 +4235,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("HOUR_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -4245,7 +4245,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("HOUR_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -4255,7 +4255,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("HOUR_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -4265,7 +4265,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -4275,7 +4275,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -4285,7 +4285,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -4295,7 +4295,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY_HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -4305,7 +4305,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateStrGener{NullRation: 0.2, randGen: newDefaultRandGen()},
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("YEAR_MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("YEAR_MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		// builtinSubDateIntStringSig
@@ -4316,7 +4316,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -4326,7 +4326,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -4336,7 +4336,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -4346,7 +4346,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -4356,7 +4356,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -4366,7 +4366,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("WEEK"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("WEEK"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -4376,7 +4376,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -4386,7 +4386,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("QUARTER"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("QUARTER"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -4396,7 +4396,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("YEAR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("YEAR"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -4406,7 +4406,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("SECOND_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("SECOND_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -4416,7 +4416,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MINUTE_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -4426,7 +4426,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MINUTE_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -4436,7 +4436,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("HOUR_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -4446,7 +4446,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("HOUR_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -4456,7 +4456,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("HOUR_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -4466,7 +4466,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -4476,7 +4476,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -4486,7 +4486,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -4496,7 +4496,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY_HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -4506,7 +4506,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("YEAR_MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("YEAR_MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		// builtinSubDateIntIntSig
@@ -4517,7 +4517,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -4527,7 +4527,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -4537,7 +4537,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -4547,7 +4547,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -4557,7 +4557,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -4567,7 +4567,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("WEEK"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("WEEK"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -4577,7 +4577,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -4587,7 +4587,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("QUARTER"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("QUARTER"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -4597,7 +4597,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("YEAR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("YEAR"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -4607,7 +4607,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("SECOND_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("SECOND_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -4617,7 +4617,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MINUTE_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -4627,7 +4627,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MINUTE_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -4637,7 +4637,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("HOUR_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -4647,7 +4647,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("HOUR_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -4657,7 +4657,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("HOUR_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -4667,7 +4667,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -4677,7 +4677,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -4687,7 +4687,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -4697,7 +4697,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY_HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -4707,7 +4707,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("YEAR_MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("YEAR_MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		// builtinSubDateIntRealSig
@@ -4718,7 +4718,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -4728,7 +4728,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -4738,7 +4738,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -4748,7 +4748,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -4758,7 +4758,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -4768,7 +4768,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("WEEK"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("WEEK"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -4778,7 +4778,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -4788,7 +4788,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("QUARTER"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("QUARTER"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -4798,7 +4798,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("YEAR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("YEAR"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -4808,7 +4808,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("SECOND_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("SECOND_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -4818,7 +4818,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MINUTE_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -4828,7 +4828,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MINUTE_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -4838,7 +4838,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("HOUR_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -4848,7 +4848,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("HOUR_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -4858,7 +4858,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("HOUR_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -4868,7 +4868,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -4878,7 +4878,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -4888,7 +4888,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -4898,7 +4898,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY_HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -4908,7 +4908,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("YEAR_MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("YEAR_MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		// builtinSubDateIntDecimalSig
@@ -4919,7 +4919,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -4929,7 +4929,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -4939,7 +4939,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -4949,7 +4949,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -4959,7 +4959,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -4969,7 +4969,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("WEEK"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("WEEK"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -4979,7 +4979,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -4989,7 +4989,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("QUARTER"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("QUARTER"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -4999,7 +4999,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("YEAR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("YEAR"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -5009,7 +5009,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("SECOND_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("SECOND_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -5019,7 +5019,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MINUTE_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -5029,7 +5029,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MINUTE_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -5039,7 +5039,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("HOUR_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -5049,7 +5049,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("HOUR_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -5059,7 +5059,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("HOUR_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -5069,7 +5069,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -5079,7 +5079,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -5089,7 +5089,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -5099,7 +5099,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY_HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -5109,7 +5109,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				&dateTimeIntGener{dateTimeGener: dateTimeGener{randGen: newDefaultRandGen()}, nullRation: 0.2},
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("YEAR_MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("YEAR_MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		// builtinSubDateDatetimeStringSig
@@ -5120,7 +5120,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -5130,7 +5130,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -5140,7 +5140,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -5150,7 +5150,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -5160,7 +5160,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -5170,7 +5170,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("WEEK"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("WEEK"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -5180,7 +5180,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -5190,7 +5190,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("QUARTER"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("QUARTER"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -5200,7 +5200,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("YEAR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("YEAR"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -5210,7 +5210,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("SECOND_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("SECOND_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -5220,7 +5220,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MINUTE_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -5230,7 +5230,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MINUTE_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -5240,7 +5240,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("HOUR_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -5250,7 +5250,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("HOUR_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -5260,7 +5260,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("HOUR_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -5270,7 +5270,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -5280,7 +5280,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -5290,7 +5290,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -5300,7 +5300,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY_HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -5310,7 +5310,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("YEAR_MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("YEAR_MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		// builtinSubDateDatetimeIntSig
@@ -5321,7 +5321,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -5331,7 +5331,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -5341,7 +5341,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -5351,7 +5351,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -5361,7 +5361,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -5371,7 +5371,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("WEEK"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("WEEK"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -5381,7 +5381,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -5391,7 +5391,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("QUARTER"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("QUARTER"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -5401,7 +5401,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("YEAR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("YEAR"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -5411,7 +5411,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("SECOND_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("SECOND_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -5421,7 +5421,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MINUTE_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -5431,7 +5431,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MINUTE_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -5441,7 +5441,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("HOUR_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -5451,7 +5451,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("HOUR_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -5461,7 +5461,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("HOUR_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -5471,7 +5471,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -5481,7 +5481,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -5491,7 +5491,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -5501,7 +5501,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY_HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -5511,7 +5511,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("YEAR_MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("YEAR_MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		// builtinSubDateDatetimeRealSig
@@ -5522,7 +5522,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -5532,7 +5532,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -5542,7 +5542,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -5552,7 +5552,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -5562,7 +5562,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -5572,7 +5572,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("WEEK"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("WEEK"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -5582,7 +5582,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -5592,7 +5592,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("QUARTER"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("QUARTER"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -5602,7 +5602,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("YEAR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("YEAR"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -5612,7 +5612,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("SECOND_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("SECOND_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -5622,7 +5622,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MINUTE_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -5632,7 +5632,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MINUTE_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -5642,7 +5642,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("HOUR_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -5652,7 +5652,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("HOUR_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -5662,7 +5662,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("HOUR_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -5672,7 +5672,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -5682,7 +5682,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -5692,7 +5692,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -5702,7 +5702,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY_HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -5712,7 +5712,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("YEAR_MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("YEAR_MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		// builtinSubDateDatetimeDecimalSig
@@ -5723,7 +5723,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -5733,7 +5733,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -5743,7 +5743,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -5753,7 +5753,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -5763,7 +5763,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -5773,7 +5773,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("WEEK"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("WEEK"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -5783,7 +5783,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -5793,7 +5793,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("QUARTER"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("QUARTER"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -5803,7 +5803,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("YEAR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("YEAR"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -5813,7 +5813,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("SECOND_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("SECOND_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -5823,7 +5823,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MINUTE_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -5833,7 +5833,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MINUTE_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -5843,7 +5843,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("HOUR_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -5853,7 +5853,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("HOUR_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -5863,7 +5863,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("HOUR_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -5873,7 +5873,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -5883,7 +5883,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -5893,7 +5893,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -5903,7 +5903,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY_HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -5913,7 +5913,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDatetime),
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("YEAR_MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("YEAR_MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		// builtinSubDateDurationStringSig
@@ -5924,7 +5924,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -5934,7 +5934,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -5944,7 +5944,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -5954,7 +5954,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -5964,7 +5964,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -5974,7 +5974,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("WEEK"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("WEEK"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -5984,7 +5984,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -5994,7 +5994,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("QUARTER"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("QUARTER"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -6004,7 +6004,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("YEAR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("YEAR"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -6014,7 +6014,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("SECOND_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("SECOND_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -6024,7 +6024,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MINUTE_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -6034,7 +6034,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MINUTE_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -6044,7 +6044,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("HOUR_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -6054,7 +6054,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("HOUR_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -6064,7 +6064,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("HOUR_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -6074,7 +6074,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -6084,7 +6084,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -6094,7 +6094,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -6104,7 +6104,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY_HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -6114,7 +6114,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				&numStrGener{rangeInt64Gener{math.MinInt32 + 1, math.MaxInt32, newDefaultRandGen()}},
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("YEAR_MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("YEAR_MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		// builtinSubDateDurationIntSig
@@ -6125,7 +6125,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -6135,7 +6135,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -6145,7 +6145,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -6155,7 +6155,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -6165,7 +6165,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -6175,7 +6175,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("WEEK"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("WEEK"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -6185,7 +6185,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -6195,7 +6195,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("QUARTER"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("QUARTER"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -6205,7 +6205,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("YEAR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("YEAR"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -6215,7 +6215,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("SECOND_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("SECOND_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -6225,7 +6225,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MINUTE_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -6235,7 +6235,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MINUTE_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -6245,7 +6245,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("HOUR_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -6255,7 +6255,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("HOUR_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -6265,7 +6265,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("HOUR_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -6275,7 +6275,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -6285,7 +6285,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -6295,7 +6295,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -6305,7 +6305,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY_HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -6315,7 +6315,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				newDefaultGener(0.2, types.ETInt),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("YEAR_MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("YEAR_MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		// builtinSubDateDurationRealSig
@@ -6326,7 +6326,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -6336,7 +6336,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -6346,7 +6346,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -6356,7 +6356,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -6366,7 +6366,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -6376,7 +6376,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("WEEK"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("WEEK"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -6386,7 +6386,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -6396,7 +6396,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("QUARTER"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("QUARTER"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -6406,7 +6406,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("YEAR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("YEAR"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -6416,7 +6416,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("SECOND_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("SECOND_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -6426,7 +6426,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MINUTE_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -6436,7 +6436,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MINUTE_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -6446,7 +6446,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("HOUR_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -6456,7 +6456,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("HOUR_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -6466,7 +6466,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("HOUR_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -6476,7 +6476,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -6486,7 +6486,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -6496,7 +6496,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -6506,7 +6506,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY_HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -6516,7 +6516,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				newDefaultGener(0.2, types.ETReal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("YEAR_MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("YEAR_MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		// builtinSubDateDurationDecimalSig
@@ -6527,7 +6527,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -6537,7 +6537,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -6547,7 +6547,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -6557,7 +6557,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -6567,7 +6567,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -6577,7 +6577,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("WEEK"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("WEEK"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -6587,7 +6587,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -6597,7 +6597,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("QUARTER"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("QUARTER"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -6607,7 +6607,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("YEAR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("YEAR"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -6617,7 +6617,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("SECOND_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("SECOND_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -6627,7 +6627,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MINUTE_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -6637,7 +6637,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("MINUTE_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("MINUTE_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -6647,7 +6647,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("HOUR_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -6657,7 +6657,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("HOUR_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -6667,7 +6667,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("HOUR_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("HOUR_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -6677,7 +6677,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY_MICROSECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -6687,7 +6687,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY_SECOND"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -6697,7 +6697,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -6707,7 +6707,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("DAY_HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("DAY_HOUR"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 		{
@@ -6717,7 +6717,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 				newDefaultGener(0.2, types.ETDuration),
 				newDefaultGener(0.2, types.ETDecimal),
 			},
-			constants: []*Constant{nil, nil, {Value: types.NewStringDatum("YEAR_MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, nil, {Value: types.NewDefaultCollationStringDatum("YEAR_MONTH"), RetType: types.NewFieldType(mysql.TypeString)}},
 			chunkSize: 128,
 		},
 	},

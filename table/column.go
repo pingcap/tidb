@@ -131,7 +131,7 @@ func truncateTrailingSpaces(v *types.Datum) {
 	}
 	b = b[:length]
 	str := string(hack.String(b))
-	v.SetString(str)
+	v.SetString(str, v.Collation())
 }
 
 // CastValues casts values based on columns type.
@@ -158,7 +158,7 @@ func handleWrongUtf8Value(ctx sessionctx.Context, col *model.ColumnInfo, casted 
 	err := ErrTruncatedWrongValueForField.FastGen("incorrect utf8 value %x(%s) for column %s", casted.GetBytes(), str, col.Name)
 	logutil.BgLogger().Error("incorrect UTF-8 value", zap.Uint64("conn", ctx.GetSessionVars().ConnectionID), zap.Error(err))
 	// Truncate to valid utf8 string.
-	truncateVal := types.NewStringDatum(str[:i])
+	truncateVal := types.NewDefaultCollationStringDatum(str[:i])
 	err = sc.HandleTruncate(err)
 	return truncateVal, err
 }
@@ -182,6 +182,7 @@ func CastValue(ctx sessionctx.Context, val types.Datum, col *model.ColumnInfo) (
 		return casted, err
 	}
 
+	// TODO: we may need to handle non-binary collation.
 	if col.Tp == mysql.TypeString && !types.IsBinaryStr(&col.FieldType) {
 		truncateTrailingSpaces(&casted)
 	}
@@ -469,10 +470,10 @@ func GetZeroValue(col *model.ColumnInfo) types.Datum {
 		if col.Flen > 0 && col.Charset == charset.CharsetBin {
 			d.SetBytes(make([]byte, col.Flen))
 		} else {
-			d.SetString("")
+			d.SetString("", col.Collate)
 		}
 	case mysql.TypeVarString, mysql.TypeVarchar:
-		d.SetString("")
+		d.SetString("", col.Collate)
 	case mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
 		d.SetBytes([]byte{})
 	case mysql.TypeDuration:

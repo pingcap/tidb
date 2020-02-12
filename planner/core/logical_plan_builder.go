@@ -3697,7 +3697,7 @@ func (b *PlanBuilder) buildWindowFunctionFrameBound(ctx context.Context, spec *a
 		// TODO: Perhaps we don't need to transcode this back to generic string
 		unitVal := boundClause.Unit.String()
 		unit := expression.Constant{
-			Value:   types.NewStringDatum(unitVal),
+			Value:   types.NewDefaultCollationStringDatum(unitVal),
 			RetType: types.NewFieldType(mysql.TypeVarchar),
 		}
 

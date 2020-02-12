@@ -130,8 +130,8 @@ func (s *testEvalSuite) TestEval(c *C) {
 			types.NewBytesDatum([]byte("abc")),
 		},
 		{
-			datumExpr(c, types.NewStringDatum("abc")),
-			types.NewStringDatum("abc"),
+			datumExpr(c, types.NewDefaultCollationStringDatum("abc")),
+			types.NewDefaultCollationStringDatum("abc"),
 		},
 		{
 			datumExpr(c, types.Datum{}),
@@ -188,7 +188,7 @@ func (s *testEvalSuite) TestEval(c *C) {
 		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_CastStringAsInt,
-				toPBFieldType(newIntFieldType()), datumExpr(c, types.NewStringDatum("2333"))),
+				toPBFieldType(newIntFieldType()), datumExpr(c, types.NewDefaultCollationStringDatum("2333"))),
 			types.NewIntDatum(2333),
 		},
 		{
@@ -208,7 +208,7 @@ func (s *testEvalSuite) TestEval(c *C) {
 		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_CastStringAsReal,
-				toPBFieldType(newRealFieldType()), datumExpr(c, types.NewStringDatum("2333"))),
+				toPBFieldType(newRealFieldType()), datumExpr(c, types.NewDefaultCollationStringDatum("2333"))),
 			types.NewFloat64Datum(2333),
 		},
 		{
@@ -218,23 +218,23 @@ func (s *testEvalSuite) TestEval(c *C) {
 		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_CastStringAsString,
-				toPBFieldType(newStringFieldType()), datumExpr(c, types.NewStringDatum("2333"))),
-			types.NewStringDatum("2333"),
+				toPBFieldType(newStringFieldType()), datumExpr(c, types.NewDefaultCollationStringDatum("2333"))),
+			types.NewDefaultCollationStringDatum("2333"),
 		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_CastIntAsString,
 				toPBFieldType(newStringFieldType()), datumExpr(c, types.NewIntDatum(2333))),
-			types.NewStringDatum("2333"),
+			types.NewDefaultCollationStringDatum("2333"),
 		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_CastRealAsString,
 				toPBFieldType(newStringFieldType()), datumExpr(c, types.NewFloat64Datum(2333))),
-			types.NewStringDatum("2333"),
+			types.NewDefaultCollationStringDatum("2333"),
 		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_CastDecimalAsString,
 				toPBFieldType(newStringFieldType()), datumExpr(c, types.NewDecimalDatum(newMyDecimal(c, "2333")))),
-			types.NewStringDatum("2333"),
+			types.NewDefaultCollationStringDatum("2333"),
 		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_CastDecimalAsDecimal,
@@ -253,7 +253,7 @@ func (s *testEvalSuite) TestEval(c *C) {
 		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_CastStringAsDecimal,
-				toPBFieldType(newDecimalFieldType()), datumExpr(c, types.NewStringDatum("2333"))),
+				toPBFieldType(newDecimalFieldType()), datumExpr(c, types.NewDefaultCollationStringDatum("2333"))),
 			types.NewDecimalDatum(newMyDecimal(c, "2333")),
 		},
 		{
@@ -368,17 +368,17 @@ func (s *testEvalSuite) TestEval(c *C) {
 		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_GEString,
-				toPBFieldType(newIntFieldType()), datumExpr(c, types.NewStringDatum("1")), datumExpr(c, types.NewStringDatum("1"))),
+				toPBFieldType(newIntFieldType()), datumExpr(c, types.NewDefaultCollationStringDatum("1")), datumExpr(c, types.NewDefaultCollationStringDatum("1"))),
 			types.NewIntDatum(1),
 		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_LEString,
-				toPBFieldType(newIntFieldType()), datumExpr(c, types.NewStringDatum("1")), datumExpr(c, types.NewStringDatum("1"))),
+				toPBFieldType(newIntFieldType()), datumExpr(c, types.NewDefaultCollationStringDatum("1")), datumExpr(c, types.NewDefaultCollationStringDatum("1"))),
 			types.NewIntDatum(1),
 		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_NEString,
-				toPBFieldType(newIntFieldType()), datumExpr(c, types.NewStringDatum("2")), datumExpr(c, types.NewStringDatum("1"))),
+				toPBFieldType(newIntFieldType()), datumExpr(c, types.NewDefaultCollationStringDatum("2")), datumExpr(c, types.NewDefaultCollationStringDatum("1"))),
 			types.NewIntDatum(1),
 		},
 		{
@@ -508,7 +508,7 @@ func (s *testEvalSuite) TestEval(c *C) {
 		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_InString,
-				toPBFieldType(newIntFieldType()), datumExpr(c, types.NewStringDatum("1")), datumExpr(c, types.NewStringDatum("1"))),
+				toPBFieldType(newIntFieldType()), datumExpr(c, types.NewDefaultCollationStringDatum("1")), datumExpr(c, types.NewDefaultCollationStringDatum("1"))),
 			types.NewIntDatum(1),
 		},
 		//{
@@ -553,13 +553,13 @@ func (s *testEvalSuite) TestEval(c *C) {
 		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_IfNullString,
-				toPBFieldType(newStringFieldType()), datumExpr(c, types.NewDatum(nil)), datumExpr(c, types.NewStringDatum("1"))),
-			types.NewStringDatum("1"),
+				toPBFieldType(newStringFieldType()), datumExpr(c, types.NewDatum(nil)), datumExpr(c, types.NewDefaultCollationStringDatum("1"))),
+			types.NewDefaultCollationStringDatum("1"),
 		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_IfString,
-				toPBFieldType(newStringFieldType()), datumExpr(c, types.NewIntDatum(1)), datumExpr(c, types.NewStringDatum("2"))),
-			types.NewStringDatum("2"),
+				toPBFieldType(newStringFieldType()), datumExpr(c, types.NewIntDatum(1)), datumExpr(c, types.NewDefaultCollationStringDatum("2"))),
+			types.NewDefaultCollationStringDatum("2"),
 		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_IfNullDuration,
@@ -594,7 +594,7 @@ func (s *testEvalSuite) TestEval(c *C) {
 		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_CastStringAsDuration,
-				toPBFieldType(newDurFieldType()), datumExpr(c, types.NewStringDatum("1"))),
+				toPBFieldType(newDurFieldType()), datumExpr(c, types.NewDefaultCollationStringDatum("1"))),
 			types.NewDurationDatum(newDuration(time.Second * 1)),
 		},
 		{
@@ -619,7 +619,7 @@ func (s *testEvalSuite) TestEval(c *C) {
 		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_CastStringAsTime,
-				toPBFieldType(newDateFieldType()), datumExpr(c, types.NewStringDatum("20000101"))),
+				toPBFieldType(newDateFieldType()), datumExpr(c, types.NewDefaultCollationStringDatum("20000101"))),
 			types.NewTimeDatum(newDateTime(c, "2000-01-01")),
 		},
 		{
@@ -724,8 +724,8 @@ func (s *testEvalSuite) TestEval(c *C) {
 		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_CoalesceString,
-				toPBFieldType(newStringFieldType()), datumExpr(c, types.NewStringDatum("1"))),
-			types.NewStringDatum("1"),
+				toPBFieldType(newStringFieldType()), datumExpr(c, types.NewDefaultCollationStringDatum("1"))),
+			types.NewDefaultCollationStringDatum("1"),
 		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_CoalesceDuration,

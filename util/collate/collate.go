@@ -21,6 +21,10 @@ var (
 	collatorMap map[string]Collator
 )
 
+// DefaultCollation is default collation of TiDB. If a string column/constant is defined without collation,
+// we use this as its collation.
+const DefaultCollation = "binary"
+
 // Collator provides functionality for comparing strings for a given
 // collation order.
 type Collator interface {

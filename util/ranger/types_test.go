@@ -88,8 +88,8 @@ func (s *testRangeSuite) TestRange(c *C) {
 		},
 		{
 			ran: ranger.Range{
-				LowVal:  []types.Datum{types.NewStringDatum("abc")},
-				HighVal: []types.Datum{types.NewStringDatum("abc")},
+				LowVal:  []types.Datum{types.NewDefaultCollationStringDatum("abc")},
+				HighVal: []types.Datum{types.NewDefaultCollationStringDatum("abc")},
 			},
 			isPoint: true,
 		},
