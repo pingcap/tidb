@@ -14,7 +14,6 @@
 package core
 
 import (
-	"github.com/pingcap/tidb/planner/property"
 	"math"
 
 	"github.com/pingcap/parser/ast"
@@ -24,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
