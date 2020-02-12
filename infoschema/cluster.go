@@ -29,13 +29,14 @@ import (
 // 1. the table name should be upper case.
 // 2. clusterTableName should equal to "CLUSTER_" + memTableTableName.
 const (
-	clusterTableSlowLog     = "CLUSTER_SLOW_QUERY"
+	// ClusterTableSlowLog is the string constant of cluster slow query memory table.
+	ClusterTableSlowLog     = "CLUSTER_SLOW_QUERY"
 	clusterTableProcesslist = "CLUSTER_PROCESSLIST"
 )
 
 // memTableToClusterTables means add memory table to cluster table.
 var memTableToClusterTables = map[string]string{
-	tableSlowLog:     clusterTableSlowLog,
+	TableSlowQuery:   ClusterTableSlowLog,
 	tableProcesslist: clusterTableProcesslist,
 }
 
@@ -75,8 +76,6 @@ func isClusterTableByName(dbName, tableName string) bool {
 func getClusterMemTableRows(ctx sessionctx.Context, tableName string) (rows [][]types.Datum, err error) {
 	tableName = strings.ToUpper(tableName)
 	switch tableName {
-	case clusterTableSlowLog:
-		rows, err = dataForSlowLog(ctx)
 	case clusterTableProcesslist:
 		rows = dataForProcesslist(ctx)
 	default:

@@ -1335,6 +1335,14 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 					extractor: v.Extractor.(*plannercore.MetricTableExtractor),
 				},
 			}
+		case strings.ToLower(infoschema.TableSlowQuery), strings.ToLower(infoschema.ClusterTableSlowLog):
+			return &ClusterReaderExec{
+				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
+				retriever: &SlowQueryRetriever{
+					table:      v.Table,
+					outputCols: v.Columns,
+				},
+			}
 		}
 	}
 	tb, _ := b.is.TableByID(v.Table.ID)

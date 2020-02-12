@@ -77,6 +77,10 @@ func (b *PBPlanBuilder) pbToTableScan(e *tipb.Executor) (PhysicalPlan, error) {
 	if !ok {
 		return nil, infoschema.ErrTableNotExists.GenWithStack("Table which ID = %d does not exist.", tblScan.TableId)
 	}
+	dbInfo, ok := b.is.SchemaByTable(tbl.Meta())
+	if !ok {
+		return nil, infoschema.ErrDatabaseNotExists.GenWithStack("Database of table ID = %d does not exist.", tblScan.TableId)
+	}
 	// Currently only support cluster table.
 	if !tbl.Type().IsClusterTable() {
 		return nil, errors.Errorf("table %s is not a cluster table", tbl.Meta().Name.L)
@@ -87,6 +91,7 @@ func (b *PBPlanBuilder) pbToTableScan(e *tipb.Executor) (PhysicalPlan, error) {
 	}
 	schema := b.buildTableScanSchema(tbl.Meta(), columns)
 	p := PhysicalMemTable{
+		DBName:  dbInfo.Name,
 		Table:   tbl.Meta(),
 		Columns: columns,
 	}.Init(b.sctx, nil, 0)
