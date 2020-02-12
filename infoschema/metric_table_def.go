@@ -1384,6 +1384,10 @@ var MetricTableMap = map[string]MetricTableDef{
 		PromQL: `sum(rate(tikv_coprocessor_request_duration_seconds_count{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (req,instance)`,
 		Labels: []string{"instance", "req"},
 	},
+	"tikv_cop_total_request_errors": {
+		PromQL: `sum(rate(tikv_coprocessor_request_error{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (reason,instance)`,
+		Labels: []string{"instance", "reason"},
+	},
 	"tikv_cop_total_kv_cursor_operations": {
 		PromQL: `sum(rate(tikv_coprocessor_scan_keys_sum{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (req,instance)`,
 		Labels: []string{"instance", "req"},
