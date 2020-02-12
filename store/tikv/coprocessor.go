@@ -277,9 +277,13 @@ func buildCopTasksChan(bo *Backoffer, cache *RegionCache, ranges *copRanges, req
 		go func() {
 			defer close(tasksCh)
 			defer close(errCh)
-			if err := buildTiDBMemCopTasksChan(ranges, req, tasksCh); err != nil {
+			tasks, err := buildTiDBMemCopTasks(ranges, req)
+			if err != nil {
 				errCh <- err
 				return
+			}
+			for _, task := range tasks {
+				tasksCh <- task
 			}
 		}()
 		return
@@ -355,41 +359,25 @@ func buildCopTasksChan(bo *Backoffer, cache *RegionCache, ranges *copRanges, req
 	return
 }
 
-func buildTiDBMemCopTasksChan(ranges *copRanges, req *kv.Request, tasksCh chan<- *copTask) error {
+func buildTiDBMemCopTasks(ranges *copRanges, req *kv.Request) ([]*copTask, error) {
 	servers, err := infosync.GetAllServerInfo(context.Background())
 	if err != nil {
-		return err
+		return nil, err
 	}
 	cmdType := tikvrpc.CmdCop
 	if req.Streaming {
 		cmdType = tikvrpc.CmdCopStream
 	}
+	tasks := make([]*copTask, 0, len(servers))
 	for _, ser := range servers {
 		addr := ser.IP + ":" + strconv.FormatUint(uint64(ser.StatusPort), 10)
-		tasksCh <- &copTask{
+		tasks = append(tasks, &copTask{
 			ranges:    ranges,
 			respChan:  make(chan *copResponse, 2),
 			cmdType:   cmdType,
 			storeType: req.StoreType,
 			storeAddr: addr,
-		}
-	}
-	return nil
-}
-
-func buildTiDBMemCopTasks(ranges *copRanges, req *kv.Request) ([]*copTask, error) {
-	tasksCh := make(chan *copTask, 1024)
-	go func() {
-		defer close(tasksCh)
-		if err := buildTiDBMemCopTasksChan(ranges, req, tasksCh); err != nil {
-			logutil.BgLogger().Error(err.Error())
-		}
-	}()
-
-	// there should be (in avarage) at least 3 tidb servers
-	tasks := make([]*copTask, 0, 3)
-	for t := range tasksCh {
-		tasks = append(tasks, t)
+		})
 	}
 	return tasks, nil
 }
