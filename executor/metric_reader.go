@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"math"
 	"net/url"
+	"sort"
 	"strings"
 	"time"
 
@@ -76,7 +77,7 @@ func (e *MetricRetriever) retrieve(ctx context.Context, sctx sessionctx.Context)
 		if err != nil {
 			return nil, err
 		}
-		partRows := e.genRows(queryValue, queryRange, quantile)
+		partRows := e.genRows(queryValue, quantile)
 		totalRows = append(totalRows, partRows...)
 	}
 	return totalRows, nil
@@ -127,14 +128,14 @@ func (e *MetricRetriever) getQueryRange(sctx sessionctx.Context) promQLQueryRang
 	return promQLQueryRange{Start: startTime, End: endTime, Step: step}
 }
 
-func (e *MetricRetriever) genRows(value pmodel.Value, r promQLQueryRange, quantile float64) [][]types.Datum {
+func (e *MetricRetriever) genRows(value pmodel.Value, quantile float64) [][]types.Datum {
 	var rows [][]types.Datum
 	switch value.Type() {
 	case pmodel.ValMatrix:
 		matrix := value.(pmodel.Matrix)
 		for _, m := range matrix {
 			for _, v := range m.Values {
-				record := e.genRecord(m.Metric, v, r, quantile)
+				record := e.genRecord(m.Metric, v, quantile)
 				rows = append(rows, record)
 			}
 		}
@@ -142,7 +143,7 @@ func (e *MetricRetriever) genRows(value pmodel.Value, r promQLQueryRange, quanti
 	return rows
 }
 
-func (e *MetricRetriever) genRecord(metric pmodel.Metric, pair pmodel.SamplePair, r promQLQueryRange, quantile float64) []types.Datum {
+func (e *MetricRetriever) genRecord(metric pmodel.Metric, pair pmodel.SamplePair, quantile float64) []types.Datum {
 	record := make([]types.Datum, 0, 2+len(e.tblDef.Labels)+1)
 	// Record order should keep same with genColumnInfos.
 	record = append(record, types.NewTimeDatum(types.NewTime(
@@ -168,6 +169,7 @@ func (e *MetricRetriever) genRecord(metric pmodel.Metric, pair pmodel.SamplePair
 	} else {
 		record = append(record, types.NewFloat64Datum(float64(pair.Value)))
 	}
+	record = append(record, types.NewStringDatum(e.tblDef.Comment))
 	return record
 }
 
@@ -216,7 +218,13 @@ func (e *MetricSummaryRetriever) retrieve(ctx context.Context, sctx sessionctx.C
 	}
 	startTime := e.extractor.StartTime.Format(plannercore.MetricTableTimeFormat)
 	endTime := e.extractor.EndTime.Format(plannercore.MetricTableTimeFormat)
-	for name, def := range infoschema.MetricTableMap {
+	tables := make([]string, 0, len(infoschema.MetricTableMap))
+	for name := range infoschema.MetricTableMap {
+		tables = append(tables, name)
+	}
+	sort.Strings(tables)
+	for _, name := range tables {
+		def := infoschema.MetricTableMap[name]
 		sqls := e.genMetricQuerySQLS(name, startTime, endTime, def.Quantile, quantiles)
 		for _, sql := range sqls {
 			rows, _, err := sctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
@@ -233,12 +241,12 @@ func (e *MetricSummaryRetriever) retrieve(ctx context.Context, sctx sessionctx.C
 
 func (e *MetricSummaryRetriever) genMetricQuerySQLS(name, startTime, endTime string, quantile float64, quantiles []float64) []string {
 	if quantile == 0 {
-		sql := fmt.Sprintf(`select "%s",min(time),sum(value),avg(value),min(value),max(value) from metric_schema.%s where time > '%s' and time < '%s'`, name, name, startTime, endTime)
+		sql := fmt.Sprintf(`select "%s",min(time),sum(value),avg(value),min(value),max(value),comment from metric_schema.%s where time > '%s' and time < '%s'`, name, name, startTime, endTime)
 		return []string{sql}
 	}
 	sqls := []string{}
 	for _, quantile := range quantiles {
-		sql := fmt.Sprintf(`select "%s_%v",min(time),sum(value),avg(value),min(value),max(value) from metric_schema.%s where time > '%s' and time < '%s' and quantile=%v`, name, quantile, name, startTime, endTime, quantile)
+		sql := fmt.Sprintf(`select "%s_%v",min(time),sum(value),avg(value),min(value),max(value),comment from metric_schema.%s where time > '%s' and time < '%s' and quantile=%v`, name, quantile, name, startTime, endTime, quantile)
 		sqls = append(sqls, sql)
 	}
 	return sqls
@@ -265,7 +273,13 @@ func (e *MetricSummaryByLabelRetriever) retrieve(ctx context.Context, sctx sessi
 	}
 	startTime := e.extractor.StartTime.Format(plannercore.MetricTableTimeFormat)
 	endTime := e.extractor.EndTime.Format(plannercore.MetricTableTimeFormat)
-	for name, def := range infoschema.MetricTableMap {
+	tables := make([]string, 0, len(infoschema.MetricTableMap))
+	for name := range infoschema.MetricTableMap {
+		tables = append(tables, name)
+	}
+	sort.Strings(tables)
+	for _, name := range tables {
+		def := infoschema.MetricTableMap[name]
 		sqls := e.genMetricQuerySQLS(name, startTime, endTime, quantiles, def)
 		for _, sql := range sqls {
 			rows, _, err := sctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
@@ -294,10 +308,10 @@ func (e *MetricSummaryByLabelRetriever) genMetricQuerySQLS(name, startTime, endT
 	for _, quantile := range quantiles {
 		var sql string
 		if quantile == 0 {
-			sql = fmt.Sprintf(`select "%[1]s", %[2]s as label,min(time),sum(value),avg(value),min(value),max(value) from metric_schema.%[1]s where time > '%[3]s' and time < '%[4]s'`,
+			sql = fmt.Sprintf(`select "%[1]s", %[2]s as label,min(time),sum(value),avg(value),min(value),max(value),comment from metric_schema.%[1]s where time > '%[3]s' and time < '%[4]s'`,
 				name, labelsColumn, startTime, endTime)
 		} else {
-			sql = fmt.Sprintf(`select "%[1]s_%[5]v", %[2]s as label,min(time),sum(value),avg(value),min(value),max(value) from metric_schema.%[1]s where time > '%[3]s' and time < '%[4]s' and quantile=%[5]v`,
+			sql = fmt.Sprintf(`select "%[1]s_%[5]v", %[2]s as label,min(time),sum(value),avg(value),min(value),max(value),comment from metric_schema.%[1]s where time > '%[3]s' and time < '%[4]s' and quantile=%[5]v`,
 				name, labelsColumn, startTime, endTime, quantile)
 		}
 		if len(def.Labels) > 0 {
