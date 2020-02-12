@@ -94,9 +94,10 @@ type Config struct {
 	AlterPrimaryKey bool `toml:"alter-primary-key" json:"alter-primary-key"`
 	// TreatOldVersionUTF8AsUTF8MB4 is use to treat old version table/column UTF8 charset as UTF8MB4. This is for compatibility.
 	// Currently not support dynamic modify, because this need to reload all old version schema.
-	TreatOldVersionUTF8AsUTF8MB4 bool        `toml:"treat-old-version-utf8-as-utf8mb4" json:"treat-old-version-utf8-as-utf8mb4"`
-	SplitRegionMaxNum            uint64      `toml:"split-region-max-num" json:"split-region-max-num"`
-	StmtSummary                  StmtSummary `toml:"stmt-summary" json:"stmt-summary"`
+	TreatOldVersionUTF8AsUTF8MB4 bool         `toml:"treat-old-version-utf8-as-utf8mb4" json:"treat-old-version-utf8-as-utf8mb4"`
+	SplitRegionMaxNum            uint64       `toml:"split-region-max-num" json:"split-region-max-num"`
+	StmtSummary                  StmtSummary  `toml:"stmt-summary" json:"stmt-summary"`
+	Experimental                 Experimental `toml:"experimental" json:"experimental"`
 }
 
 // Log is the log section of config.
@@ -335,6 +336,13 @@ type StmtSummary struct {
 	HistorySize int `toml:"history-size" json:"history-size"`
 }
 
+// Experimental controls the features that are still experimental: their semantics, interfaces are subject to change.
+// Using these features in the production environment is not recommended.
+type Experimental struct {
+	// Whether enable the syntax like `auto_random(3)` on the primary key column.
+	AllowAutoRandom bool `toml:"allow-auto-random" json:"allow-auto-random"`
+}
+
 var defaultConf = Config{
 	Host:                         "0.0.0.0",
 	AdvertiseAddress:             "",
@@ -439,6 +447,9 @@ var defaultConf = Config{
 		MaxSQLLength:    4096,
 		RefreshInterval: 1800,
 		HistorySize:     24,
+	},
+	Experimental: Experimental{
+		AllowAutoRandom: false,
 	},
 }
 
@@ -618,6 +629,10 @@ func (c *Config) Valid() error {
 	}
 	if c.StmtSummary.RefreshInterval <= 0 {
 		return fmt.Errorf("refresh-interval in [stmt-summary] should be greater than 0")
+	}
+
+	if c.AlterPrimaryKey && c.Experimental.AllowAutoRandom {
+		return fmt.Errorf("allow-auto-random is unavailable when alter-primary-key is enabled")
 	}
 	return nil
 }

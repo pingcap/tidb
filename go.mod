@@ -8,7 +8,7 @@ require (
 	github.com/coreos/go-systemd v0.0.0-20181031085051-9002847aa142 // indirect
 	github.com/coreos/pkg v0.0.0-20180928190104-399ea9e2e55f // indirect
 	github.com/cznic/mathutil v0.0.0-20181122101859-297441e03548
-	github.com/cznic/sortutil v0.0.0-20150617083342-4c7342852e65
+	github.com/cznic/sortutil v0.0.0-20181122101858-f5f958428db8
 	github.com/dgryski/go-farm v0.0.0-20190104051053-3adb47b1fb0f
 	github.com/dustin/go-humanize v1.0.0 // indirect
 	github.com/go-ole/go-ole v1.2.1 // indirect
@@ -36,7 +36,7 @@ require (
 	github.com/pingcap/goleveldb v0.0.0-20171020122428-b9ff6c35079e
 	github.com/pingcap/kvproto v0.0.0-20191113105027-4f292e1801d8
 	github.com/pingcap/log v0.0.0-20190715063458-479153f07ebd
-	github.com/pingcap/parser v0.0.0-20200107110252-aba886048346
+	github.com/pingcap/parser v0.0.0-20200120071915-21406be5517f
 	github.com/pingcap/pd v1.1.0-beta.0.20191231051840-d1d917558629
 	github.com/pingcap/tidb-tools v3.0.6-0.20191119150227-ff0a3c6e5763+incompatible
 	github.com/pingcap/tipb v0.0.0-20191126033718-169898888b24
