@@ -1,4 +1,4 @@
-// Copyright 2019 PingCAP, Inc.
+// Copyright 2020 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -18,7 +18,6 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
@@ -29,25 +28,23 @@ import (
 // InfoschemaReaderExec executes infoschema information retrieving
 type InfoschemaReaderExec struct {
 	baseExecutor
-	iter      kv.Iterator
 	table     *model.TableInfo
 	columns   []*model.ColumnInfo
-	ChunkList *chunk.List
-	ChunkIdx  int
+	chunkList *chunk.List
+	chunkIdx  int
 }
 
 // Open implements the Executor Open interface.
 func (e *InfoschemaReaderExec) Open(ctx context.Context) error {
-	e.iter = nil
-	e.ChunkList = nil
+	e.chunkList = nil
 	return nil
 }
 
 // Next implements the Executor Next interface.
 func (e *InfoschemaReaderExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.GrowAndReset(e.maxChunkSize)
-	if e.ChunkList == nil {
-		e.ChunkList = chunk.NewList(retTypes(e), e.initCap, e.maxChunkSize)
+	if e.chunkList == nil {
+		e.chunkList = chunk.NewList(retTypes(e), e.initCap, e.maxChunkSize)
 		mutableRow := chunk.MutRowFromTypes(retTypes(e))
 		rows, err := e.getRows(e.ctx, e.columns)
 		if err != nil {
@@ -55,15 +52,15 @@ func (e *InfoschemaReaderExec) Next(ctx context.Context, chk *chunk.Chunk) error
 		}
 		for _, row := range rows {
 			mutableRow.SetDatums(row...)
-			e.ChunkList.AppendRow(mutableRow.ToRow())
+			e.chunkList.AppendRow(mutableRow.ToRow())
 		}
 	}
 	// no more data.
-	if e.ChunkIdx >= e.ChunkList.NumChunks() {
+	if e.chunkIdx >= e.chunkList.NumChunks() {
 		return nil
 	}
-	virtualTableChunk := e.ChunkList.GetChunk(e.ChunkIdx)
-	e.ChunkIdx++
+	virtualTableChunk := e.chunkList.GetChunk(e.chunkIdx)
+	e.chunkIdx++
 	chk.SwapColumns(virtualTableChunk)
 	return nil
 }
