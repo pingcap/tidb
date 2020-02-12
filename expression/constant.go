@@ -419,4 +419,3 @@ func (c *Constant) Coercibility() Coercibility {
 	c.coercibility.SetCoercibility(deriveCoercibilityForConstant(c))
 	return c.coercibility.coercibility()
 }
-
