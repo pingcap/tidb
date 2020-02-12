@@ -752,8 +752,10 @@ func (h flashReplicaHandler) ServeHTTP(w http.ResponseWriter, req *http.Request)
 
 type tableFlashReplicaStatus struct {
 	// Modifying the field name needs to negotiate with TiFlash colleague.
-	ID               int64  `json:"id"`
-	RegionCount      uint64 `json:"region_count"`
+	ID int64 `json:"id"`
+	// RegionCount is the total resion number that need sync.
+	RegionCount uint64 `json:"region_count"`
+	// FlashRegionCount is the regions number that already sync completed.
 	FlashRegionCount uint64 `json:"flash_region_count"`
 }
 
@@ -787,7 +789,7 @@ func (h flashReplicaHandler) handleStatusReport(w http.ResponseWriter, req *http
 	if available {
 		err = infosync.DeleteTiFlashTableSyncProgress(status.ID)
 	} else {
-		err = infosync.UpdateTiFlashTableSyncProgress(context.Background(), status.ID, float64(status.RegionCount)/float64(status.FlashRegionCount))
+		err = infosync.UpdateTiFlashTableSyncProgress(context.Background(), status.ID, float64(status.FlashRegionCount)/float64(status.RegionCount))
 	}
 	if err != nil {
 		writeError(w, err)

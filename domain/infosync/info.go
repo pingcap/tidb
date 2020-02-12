@@ -171,7 +171,7 @@ func GetAllServerInfo(ctx context.Context) (map[string]*ServerInfo, error) {
 	return is.getAllServerInfo(ctx)
 }
 
-// UpdateTiFlashTableSyncProgress uses to update the tiflash table replica sync progress.
+// UpdateTiFlashTableSyncProgress is used to update the tiflash table replica sync progress.
 func UpdateTiFlashTableSyncProgress(ctx context.Context, tid int64, progress float64) error {
 	is, err := getGlobalInfoSyncer()
 	if err != nil {
@@ -184,7 +184,7 @@ func UpdateTiFlashTableSyncProgress(ctx context.Context, tid int64, progress flo
 	return util.PutKVToEtcd(ctx, is.etcdCli, keyOpDefaultRetryCnt, key, strconv.FormatFloat(progress, 'f', 2, 64))
 }
 
-// DeleteTiFlashTableSyncProgress uses to delete the tiflash table replica sync progress.
+// DeleteTiFlashTableSyncProgress is used to delete the tiflash table replica sync progress.
 func DeleteTiFlashTableSyncProgress(tid int64) error {
 	is, err := getGlobalInfoSyncer()
 	if err != nil {
