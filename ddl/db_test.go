@@ -3769,7 +3769,7 @@ func (s *testDBSuite1) TestSetTableFlashReplica(c *C) {
 	c.Assert(t.Meta().TiFlashReplica.Available, Equals, false)
 	c.Assert(t.Meta().TiFlashReplica.AvailablePartitionIDs, DeepEquals, []int64{partition.Definitions[0].ID, partition.Definitions[2].ID})
 
-	// Test for update table replica with unknow table ID.
+	// Test for update table replica with unknown table ID.
 	err = domain.GetDomain(s.tk.Se).DDL().UpdateTableReplicaInfo(s.tk.Se, math.MaxInt64, false)
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[schema:1146]Table which ID = 9223372036854775807 does not exist.")
