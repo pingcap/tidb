@@ -974,6 +974,15 @@ func (s *testTableSuite) TestForTableTiFlashReplica(c *C) {
 	tk.MustQuery("select TABLE_SCHEMA,TABLE_NAME,REPLICA_COUNT,LOCATION_LABELS,AVAILABLE from information_schema.tiflash_replica").Check(testkit.Rows("test t 2 a,b 1"))
 }
 
+func (s *testClusterTableSuite) TestForMetricTables(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	statistics.ClearHistoryJobs()
+	tk.MustExec("use information_schema")
+	tk.MustQuery("select count(*) > 0 from `METRICS_TABLES`").Check(testkit.Rows("1"))
+	tk.MustQuery("select * from `METRICS_TABLES` where table_name='tidb_qps'").
+		Check(testutil.RowsWithSep("|", "tidb_qps|sum(rate(tidb_server_query_total{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (result,type,instance)|instance,type,result|0|TiDB query processing numbers per second"))
+}
+
 func (s *testClusterTableSuite) TestForClusterServerInfo(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	instances := []string{
