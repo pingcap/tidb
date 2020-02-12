@@ -26,7 +26,7 @@ import (
 )
 
 func (s *testSuite) TestParseSlowLogFile(c *C) {
-	slowLog := bytes.NewBufferString(
+	slowLogStr :=
 		`# Time: 2019-04-28T15:24:04.309074+08:00
 # Txn_start_ts: 405888132465033227
 # Query_time: 0.216905
@@ -40,11 +40,15 @@ func (s *testSuite) TestParseSlowLogFile(c *C) {
 # Succ: false
 # Plan_digest: 60e9378c746d9a2be1c791047e008967cf252eb6de9167ad3aa6098fa2d523f4
 # Prev_stmt: update t set i = 1;
-select * from t;`)
-	reader := bufio.NewReader(slowLog)
+select * from t;`
+	reader := bufio.NewReader(bytes.NewBufferString(slowLogStr))
 	loc, err := time.LoadLocation("Asia/Shanghai")
 	c.Assert(err, IsNil)
-	rows, err := infoschema.ParseSlowLog(loc, reader)
+	rows, err := infoschema.ParseSlowLog(loc, reader, func(_ string) bool { return false })
+	c.Assert(err, IsNil)
+	c.Assert(len(rows), Equals, 0)
+	reader = bufio.NewReader(bytes.NewBufferString(slowLogStr))
+	rows, err = infoschema.ParseSlowLog(loc, reader, nil)
 	c.Assert(err, IsNil)
 	c.Assert(len(rows), Equals, 1)
 	recordString := ""
@@ -60,7 +64,7 @@ select * from t;`)
 	c.Assert(expectRecordString, Equals, recordString)
 
 	// fix sql contain '# ' bug
-	slowLog = bytes.NewBufferString(
+	slowLog := bytes.NewBufferString(
 		`# Time: 2019-04-28T15:24:04.309074+08:00
 select a# from t;
 # Time: 2019-01-24T22:32:29.313255+08:00
@@ -74,7 +78,7 @@ select a# from t;
 select * from t;
 `)
 	reader = bufio.NewReader(slowLog)
-	_, err = infoschema.ParseSlowLog(loc, reader)
+	_, err = infoschema.ParseSlowLog(loc, reader, nil)
 	c.Assert(err, IsNil)
 
 	// test for time format compatibility.
@@ -85,7 +89,7 @@ select * from t;
 select * from t;
 `)
 	reader = bufio.NewReader(slowLog)
-	rows, err = infoschema.ParseSlowLog(loc, reader)
+	rows, err = infoschema.ParseSlowLog(loc, reader, nil)
 	c.Assert(err, IsNil)
 	c.Assert(len(rows) == 2, IsTrue)
 	t0Str, err := rows[0][0].ToString()
@@ -106,13 +110,13 @@ select * from t;
 	sql := strings.Repeat("x", int(variable.MaxOfMaxAllowedPacket+1))
 	slowLog.WriteString(sql)
 	reader = bufio.NewReader(slowLog)
-	_, err = infoschema.ParseSlowLog(loc, reader)
+	_, err = infoschema.ParseSlowLog(loc, reader, nil)
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "single line length exceeds limit: 65536")
 
 	variable.MaxOfMaxAllowedPacket = originValue
 	reader = bufio.NewReader(slowLog)
-	_, err = infoschema.ParseSlowLog(loc, reader)
+	_, err = infoschema.ParseSlowLog(loc, reader, nil)
 	c.Assert(err, IsNil)
 
 	// Add parse error check.
@@ -122,7 +126,7 @@ select * from t;
 select * from t;
 `)
 	reader = bufio.NewReader(slowLog)
-	_, err = infoschema.ParseSlowLog(loc, reader)
+	_, err = infoschema.ParseSlowLog(loc, reader, nil)
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "Parse slow log at line 2 failed. Field: `Succ`, error: strconv.ParseBool: parsing \"abc\": invalid syntax")
 }
@@ -172,7 +176,7 @@ select * from t;`)
 	scanner := bufio.NewReader(slowLog)
 	loc, err := time.LoadLocation("Asia/Shanghai")
 	c.Assert(err, IsNil)
-	_, err = infoschema.ParseSlowLog(loc, scanner)
+	_, err = infoschema.ParseSlowLog(loc, scanner, nil)
 	c.Assert(err, IsNil)
 
 	// Test parser error.
@@ -182,7 +186,7 @@ select * from t;`)
 `)
 
 	scanner = bufio.NewReader(slowLog)
-	_, err = infoschema.ParseSlowLog(loc, scanner)
+	_, err = infoschema.ParseSlowLog(loc, scanner, nil)
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "Parse slow log at line 2 failed. Field: `Txn_start_ts`, error: strconv.ParseUint: parsing \"405888132465033227#\": invalid syntax")
 

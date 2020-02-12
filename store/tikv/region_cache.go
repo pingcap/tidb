@@ -38,6 +38,7 @@ import (
 const (
 	btreeDegree               = 32
 	invalidatedLastAccessTime = -1
+	defaultRegionsPerBatch    = 128
 )
 
 // RegionCacheTTLSec is the max idle time for regions in the region cache.
@@ -590,36 +591,38 @@ func (c *RegionCache) ListRegionIDsInKeyRange(bo *Backoffer, startKey, endKey []
 	return regionIDs, nil
 }
 
-// LoadRegionsInKeyRange lists ids of regions in [start_key,end_key].
+// LoadRegionsInKeyRange lists regions in [start_key,end_key].
 func (c *RegionCache) LoadRegionsInKeyRange(bo *Backoffer, startKey, endKey []byte) (regions []*Region, err error) {
+	var batchRegions []*Region
 	for {
-		curRegion, err := c.loadRegion(bo, startKey, false)
+		batchRegions, err = c.BatchLoadRegionsWithKeyRange(bo, startKey, endKey, defaultRegionsPerBatch)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		c.mu.Lock()
-		c.insertRegionToCache(curRegion)
-		c.mu.Unlock()
-
-		regions = append(regions, curRegion)
-		if curRegion.Contains(endKey) {
+		if len(batchRegions) == 0 {
+			// should never happen
 			break
 		}
-		startKey = curRegion.EndKey()
+		regions = append(regions, batchRegions...)
+		endRegion := batchRegions[len(batchRegions)-1]
+		if endRegion.Contains(endKey) {
+			break
+		}
+		startKey = endRegion.EndKey()
 	}
-	return regions, nil
+	return
 }
 
-// BatchLoadRegionsFromKey loads at most given numbers of regions to the RegionCache, from the given startKey. Returns
-// the endKey of the last loaded region. If some of the regions has no leader, their entries in RegionCache will not be
-// updated.
-func (c *RegionCache) BatchLoadRegionsFromKey(bo *Backoffer, startKey []byte, count int) ([]byte, error) {
-	regions, err := c.scanRegions(bo, startKey, count)
+// BatchLoadRegionsWithKeyRange loads at most given numbers of regions to the RegionCache,
+// within the given key range from the startKey to endKey. Returns the loaded regions.
+func (c *RegionCache) BatchLoadRegionsWithKeyRange(bo *Backoffer, startKey []byte, endKey []byte, count int) (regions []*Region, err error) {
+	regions, err = c.scanRegions(bo, startKey, endKey, count)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return
 	}
 	if len(regions) == 0 {
-		return nil, errors.New("PD returned no region")
+		err = errors.New("PD returned no region")
+		return
 	}
 
 	c.mu.Lock()
@@ -629,6 +632,17 @@ func (c *RegionCache) BatchLoadRegionsFromKey(bo *Backoffer, startKey []byte, co
 		c.insertRegionToCache(region)
 	}
 
+	return
+}
+
+// BatchLoadRegionsFromKey loads at most given numbers of regions to the RegionCache, from the given startKey. Returns
+// the endKey of the last loaded region. If some of the regions has no leader, their entries in RegionCache will not be
+// updated.
+func (c *RegionCache) BatchLoadRegionsFromKey(bo *Backoffer, startKey []byte, count int) ([]byte, error) {
+	regions, err := c.BatchLoadRegionsWithKeyRange(bo, startKey, nil, count)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	return regions[len(regions)-1].EndKey(), nil
 }
 
@@ -813,7 +827,7 @@ func (c *RegionCache) loadRegionByID(bo *Backoffer, regionID uint64) (*Region, e
 
 // scanRegions scans at most `limit` regions from PD, starts from the region containing `startKey` and in key order.
 // Regions with no leader will not be returned.
-func (c *RegionCache) scanRegions(bo *Backoffer, startKey []byte, limit int) ([]*Region, error) {
+func (c *RegionCache) scanRegions(bo *Backoffer, startKey, endKey []byte, limit int) ([]*Region, error) {
 	if limit == 0 {
 		return nil, nil
 	}
@@ -826,7 +840,7 @@ func (c *RegionCache) scanRegions(bo *Backoffer, startKey []byte, limit int) ([]
 				return nil, errors.Trace(err)
 			}
 		}
-		metas, leaders, err := c.pdClient.ScanRegions(bo.ctx, startKey, nil, limit)
+		metas, leaders, err := c.pdClient.ScanRegions(bo.ctx, startKey, endKey, limit)
 		if err != nil {
 			tikvRegionCacheCounterWithScanRegionsError.Inc()
 			backoffErr = errors.Errorf(
