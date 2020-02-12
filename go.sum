@@ -32,12 +32,6 @@ github.com/coreos/go-systemd v0.0.0-20181031085051-9002847aa142/go.mod h1:F5haX7
 github.com/coreos/pkg v0.0.0-20160727233714-3ac0863d7acf/go.mod h1:E3G3o1h8I7cfcXa63jLwjI0eiQQMgzzUDFVpN/nH/eA=
 github.com/coreos/pkg v0.0.0-20180928190104-399ea9e2e55f h1:lBNOc5arjvs8E5mO2tbpBpLoyyu8B6e44T7hJy6potg=
 github.com/coreos/pkg v0.0.0-20180928190104-399ea9e2e55f/go.mod h1:E3G3o1h8I7cfcXa63jLwjI0eiQQMgzzUDFVpN/nH/eA=
-github.com/crazycs520/tipb v0.0.0-20200114130449-4ea37911468d h1:eTyHM7/LPx26uBK4Sw4HB6HjeAxhteoHJp8nkFKe+Y0=
-github.com/crazycs520/tipb v0.0.0-20200114130449-4ea37911468d/go.mod h1:J5W0Gvay/AsnE5I7p3JH1RG3HemVvEmp/gSSBCn1NiA=
-github.com/crazycs520/tipb v0.0.0-20200114131211-564e062b68d7 h1:+ZQow7cOpjMrbiBJLMtnSLxxXOrCmRpcbIdY2yUv1jY=
-github.com/crazycs520/tipb v0.0.0-20200114131211-564e062b68d7/go.mod h1:J5W0Gvay/AsnE5I7p3JH1RG3HemVvEmp/gSSBCn1NiA=
-github.com/crazycs520/tipb v0.0.0-20200203123956-7dae12cf6788 h1:GQx+lc3vGId+qGHvnas38CpJ011aKS8drvjOhdEn8fg=
-github.com/crazycs520/tipb v0.0.0-20200203123956-7dae12cf6788/go.mod h1:J5W0Gvay/AsnE5I7p3JH1RG3HemVvEmp/gSSBCn1NiA=
 github.com/creack/pty v1.1.7/go.mod h1:lj5s0c3V2DBrqTV7llrYr5NG6My20zk30Fl46Y7DoTY=
 github.com/cznic/golex v0.0.0-20181122101858-9c343928389c/go.mod h1:+bmmJDNmKlhWNG+gwWCkaBoTy39Fs+bzRxVBzoTQbIc=
 github.com/cznic/mathutil v0.0.0-20181122101859-297441e03548 h1:iwZdTE0PVqJCos1vaoKsclOGD3ADKpshg3SRtYBbwso=
@@ -224,8 +218,8 @@ github.com/pingcap/sysutil v0.0.0-20200206130906-2bfa6dc40bcd/go.mod h1:EB/852NM
 github.com/pingcap/tidb-tools v3.0.6-0.20191106033616-90632dda3863+incompatible h1:H1jg0aDWz2SLRh3hNBo2HFtnuHtudIUvBumU7syRkic=
 github.com/pingcap/tidb-tools v3.0.6-0.20191106033616-90632dda3863+incompatible/go.mod h1:XGdcy9+yqlDSEMTpOXnwf3hiTeqrV6MN/u1se9N8yIM=
 github.com/pingcap/tipb v0.0.0-20190428032612-535e1abaa330/go.mod h1:RtkHW8WbcNxj8lsbzjaILci01CtYnYbIkQhjyZWrWVI=
-github.com/pingcap/tipb v0.0.0-20200201101609-1a2e9c441455 h1:Jh9k3RIOTJ/YvODLg2zcCmGaQg1wEt2iFh1vYSEZW5Q=
-github.com/pingcap/tipb v0.0.0-20200201101609-1a2e9c441455/go.mod h1:RtkHW8WbcNxj8lsbzjaILci01CtYnYbIkQhjyZWrWVI=
+github.com/pingcap/tipb v0.0.0-20200212061130-c4d518eb1d60 h1:aJPXrT1u4VfUSGFA2oQVwl4pOXzqe+YI6wed01cjDH4=
+github.com/pingcap/tipb v0.0.0-20200212061130-c4d518eb1d60/go.mod h1:RtkHW8WbcNxj8lsbzjaILci01CtYnYbIkQhjyZWrWVI=
 github.com/pkg/errors v0.8.0/go.mod h1:bwawxfHBFNV+L2hUp1rHADufV3IMtnDRdf1r5NINEl0=
 github.com/pkg/errors v0.8.1 h1:iURUrRGxPUNPdy5/HRSm+Yj6okJ6UtLINN0Q9M4+h3I=
 github.com/pkg/errors v0.8.1/go.mod h1:bwawxfHBFNV+L2hUp1rHADufV3IMtnDRdf1r5NINEl0=
