@@ -14,6 +14,7 @@
 package core
 
 import (
+	"github.com/pingcap/tidb/planner/property"
 	"math"
 
 	"github.com/pingcap/parser/ast"
@@ -425,12 +426,12 @@ func (p *PhysicalIndexJoin) GetCost(outerTask, innerTask task) float64 {
 	return outerTask.cost() + innerPlanCost + cpuCost + memoryCost
 }
 
-func (p *PhysicalHashJoin) avgRowSize(inner PhysicalPlan) (size float64) {
-	if inner.statsInfo().HistColl != nil {
-		size = inner.statsInfo().HistColl.GetAvgRowSizeListInDisk(inner.Schema().Columns)
+func getAvgRowSize(stats *property.StatsInfo, schema *expression.Schema) (size float64) {
+	if stats.HistColl != nil {
+		size = stats.HistColl.GetAvgRowSizeListInDisk(schema.Columns)
 	} else {
 		// Estimate using just the type info.
-		cols := inner.Schema().Columns
+		cols := schema.Columns
 		for _, col := range cols {
 			size += float64(chunk.EstimateTypeWidth(col.GetType()))
 		}
@@ -450,7 +451,7 @@ func (p *PhysicalHashJoin) GetCost(lCnt, rCnt float64) float64 {
 	sessVars := p.ctx.GetSessionVars()
 	oomUseTmpStorage := config.GetGlobalConfig().OOMUseTmpStorage
 	memQuota := sessVars.StmtCtx.MemTracker.GetBytesLimit() // sessVars.MemQuotaQuery && hint
-	rowSize := p.avgRowSize(build)
+	rowSize := getAvgRowSize(build.statsInfo(), build.Schema())
 	spill := oomUseTmpStorage && memQuota > 0 && rowSize*buildCnt > float64(memQuota)
 	// Cost of building hash table.
 	cpuCost := buildCnt * sessVars.CPUFactor
@@ -865,7 +866,7 @@ func (p *PhysicalSort) GetCost(count float64, schema *expression.Schema) float64
 
 	oomUseTmpStorage := config.GetGlobalConfig().OOMUseTmpStorage
 	memQuota := sessVars.StmtCtx.MemTracker.GetBytesLimit() // sessVars.MemQuotaQuery && hint
-	rowSize := p.avgRowSize(schema)
+	rowSize := getAvgRowSize(p.statsInfo(), schema)
 	spill := oomUseTmpStorage && memQuota > 0 && rowSize*count > float64(memQuota)
 	diskCost := count * sessVars.DiskFactor * rowSize
 	if !spill {
