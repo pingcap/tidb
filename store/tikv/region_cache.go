@@ -130,9 +130,8 @@ func (r *RegionStore) peer(seed uint32) int32 {
 
 	if len(candidates) == 0 {
 		return r.workTiKVIdx
-	} else {
-		return candidates[int32(seed)%int32(len(candidates))]
 	}
+	return candidates[int32(seed)%int32(len(candidates))]
 }
 
 // init initializes region after constructed.
