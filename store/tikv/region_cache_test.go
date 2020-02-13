@@ -821,7 +821,7 @@ func (s *testRegionCacheSuite) TestScanRegions(c *C) {
 		s.cluster.Split(regions[i], regions[i+1], []byte{'a' + byte(i)}, peers[i+1], peers[i+1][0])
 	}
 
-	scannedRegions, err := s.cache.scanRegions(s.bo, []byte(""), 100)
+	scannedRegions, err := s.cache.scanRegions(s.bo, []byte(""), nil, 100)
 	c.Assert(err, IsNil)
 	c.Assert(len(scannedRegions), Equals, 5)
 	for i := 0; i < 5; i++ {
@@ -832,7 +832,7 @@ func (s *testRegionCacheSuite) TestScanRegions(c *C) {
 		c.Assert(p.Id, Equals, peers[i][0])
 	}
 
-	scannedRegions, err = s.cache.scanRegions(s.bo, []byte("a"), 3)
+	scannedRegions, err = s.cache.scanRegions(s.bo, []byte("a"), nil, 3)
 	c.Assert(err, IsNil)
 	c.Assert(len(scannedRegions), Equals, 3)
 	for i := 1; i < 4; i++ {
@@ -843,7 +843,7 @@ func (s *testRegionCacheSuite) TestScanRegions(c *C) {
 		c.Assert(p.Id, Equals, peers[i][0])
 	}
 
-	scannedRegions, err = s.cache.scanRegions(s.bo, []byte("a1"), 1)
+	scannedRegions, err = s.cache.scanRegions(s.bo, []byte("a1"), nil, 1)
 	c.Assert(err, IsNil)
 	c.Assert(len(scannedRegions), Equals, 1)
 
@@ -855,7 +855,7 @@ func (s *testRegionCacheSuite) TestScanRegions(c *C) {
 	// Test region with no leader
 	s.cluster.GiveUpLeader(regions[1])
 	s.cluster.GiveUpLeader(regions[3])
-	scannedRegions, err = s.cache.scanRegions(s.bo, []byte(""), 5)
+	scannedRegions, err = s.cache.scanRegions(s.bo, []byte(""), nil, 5)
 	c.Assert(err, IsNil)
 	for i := 0; i < 3; i++ {
 		r := scannedRegions[i]
@@ -880,25 +880,35 @@ func (s *testRegionCacheSuite) TestBatchLoadRegions(c *C) {
 		s.cluster.Split(regions[i], regions[i+1], []byte{'a' + byte(i)}, peers[i+1], peers[i+1][0])
 	}
 
-	key, err := s.cache.BatchLoadRegionsFromKey(s.bo, []byte(""), 1)
-	c.Assert(err, IsNil)
-	c.Assert(key, DeepEquals, []byte("a"))
+	testCases := []struct {
+		startKey      []byte
+		endKey        []byte
+		limit         int
+		expectKey     []byte
+		expectRegions []uint64
+	}{
+		{[]byte(""), []byte("a"), 1, []byte("a"), []uint64{regions[0]}},
+		{[]byte("a"), []byte("b1"), 2, []byte("c"), []uint64{regions[1], regions[2]}},
+		{[]byte("a1"), []byte("d"), 2, []byte("c"), []uint64{regions[1], regions[2]}},
+		{[]byte("c"), []byte("c1"), 2, nil, []uint64{regions[3]}},
+		{[]byte("d"), nil, 2, nil, []uint64{regions[4]}},
+	}
 
-	key, err = s.cache.BatchLoadRegionsFromKey(s.bo, []byte("a"), 2)
-	c.Assert(err, IsNil)
-	c.Assert(key, DeepEquals, []byte("c"))
-
-	key, err = s.cache.BatchLoadRegionsFromKey(s.bo, []byte("a1"), 2)
-	c.Assert(err, IsNil)
-	c.Assert(key, DeepEquals, []byte("c"))
-
-	key, err = s.cache.BatchLoadRegionsFromKey(s.bo, []byte("c"), 2)
-	c.Assert(err, IsNil)
-	c.Assert(len(key), Equals, 0)
-
-	key, err = s.cache.BatchLoadRegionsFromKey(s.bo, []byte("d"), 2)
-	c.Assert(err, IsNil)
-	c.Assert(len(key), Equals, 0)
+	for _, tc := range testCases {
+		key, err := s.cache.BatchLoadRegionsFromKey(s.bo, tc.startKey, tc.limit)
+		c.Assert(err, IsNil)
+		if tc.expectKey != nil {
+			c.Assert(key, DeepEquals, tc.expectKey)
+		} else {
+			c.Assert(key, HasLen, 0)
+		}
+		loadRegions, err := s.cache.BatchLoadRegionsWithKeyRange(s.bo, tc.startKey, tc.endKey, tc.limit)
+		c.Assert(err, IsNil)
+		c.Assert(loadRegions, HasLen, len(tc.expectRegions))
+		for i := range loadRegions {
+			c.Assert(loadRegions[i].GetID(), Equals, tc.expectRegions[i])
+		}
+	}
 
 	s.checkCache(c, len(regions))
 }
