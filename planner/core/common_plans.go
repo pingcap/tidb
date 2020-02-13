@@ -392,6 +392,7 @@ type SQLBindPlan struct {
 	BindSQL      string
 	IsGlobal     bool
 	BindStmt     ast.StmtNode
+	Db           string
 	Charset      string
 	Collation    string
 }

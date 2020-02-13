@@ -47,8 +47,6 @@ const (
 	DirtyTableAddRow = iota
 	// DirtyTableDeleteRow is the constant for dirty table operation type.
 	DirtyTableDeleteRow
-	// DirtyTableTruncate is the constant for dirty table operation type.
-	DirtyTableTruncate
 )
 
 var (
@@ -176,20 +174,25 @@ func AllocAutoIncrementValue(ctx context.Context, t Table, sctx sessionctx.Conte
 		span1 := span.Tracer().StartSpan("table.AllocAutoIncrementValue", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
 	}
-	_, max, err := t.Allocator(sctx, autoid.RowIDAllocType).Alloc(t.Meta().ID, uint64(1))
+	increment := sctx.GetSessionVars().AutoIncrementIncrement
+	offset := sctx.GetSessionVars().AutoIncrementOffset
+	_, max, err := t.Allocator(sctx, autoid.RowIDAllocType).Alloc(t.Meta().ID, uint64(1), int64(increment), int64(offset))
 	if err != nil {
 		return 0, err
 	}
 	return max, err
 }
 
-// AllocBatchAutoIncrementValue allocates batch auto_increment value (min and max] for rows.
-func AllocBatchAutoIncrementValue(ctx context.Context, t Table, sctx sessionctx.Context, N int) (int64, int64, error) {
+// AllocBatchAutoIncrementValue allocates batch auto_increment value for rows, returning firstID, increment and err.
+// The caller can derive the autoID by adding increment to firstID for N-1 times.
+func AllocBatchAutoIncrementValue(ctx context.Context, t Table, sctx sessionctx.Context, N int) (firstID int64, increment int64, err error) {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("table.AllocBatchAutoIncrementValue", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
 	}
-	return t.Allocator(sctx, autoid.RowIDAllocType).Alloc(t.Meta().ID, uint64(N))
+	increment = int64(sctx.GetSessionVars().AutoIncrementIncrement)
+	offset := int64(sctx.GetSessionVars().AutoIncrementOffset)
+	return t.Allocator(sctx, autoid.RowIDAllocType).Alloc(t.Meta().ID, uint64(N), increment, offset)
 }
 
 // PhysicalTable is an abstraction for two kinds of table representation: partition or non-partitioned table.

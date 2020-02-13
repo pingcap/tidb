@@ -248,7 +248,7 @@ func (ts *testSuite) TestUniqueIndexMultipleNullEntries(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(handle, Greater, int64(0))
 
-	autoid, err := table.AllocAutoIncrementValue(context.Background(), tb, nil)
+	autoid, err := table.AllocAutoIncrementValue(context.Background(), tb, ts.se)
 	c.Assert(err, IsNil)
 	c.Assert(autoid, Greater, int64(0))
 

@@ -246,6 +246,9 @@ func (s *testSuite2) TestSetVar(c *C) {
 	tk.MustExec("set @@tidb_general_log = 1")
 	tk.MustExec("set @@tidb_general_log = 0")
 
+	tk.MustExec("set @@tidb_pprof_sql_cpu = 1")
+	tk.MustExec("set @@tidb_pprof_sql_cpu = 0")
+
 	tk.MustExec(`set tidb_force_priority = "no_priority"`)
 	tk.MustQuery(`select @@tidb_force_priority;`).Check(testkit.Rows("NO_PRIORITY"))
 	tk.MustExec(`set tidb_force_priority = "low_priority"`)
@@ -447,6 +450,11 @@ func (s *testSuite2) TestValidateSetVar(c *C) {
 	tk.MustExec("set @@tidb_batch_delete='oFf';")
 	tk.MustExec("set @@tidb_batch_delete=1;")
 	tk.MustExec("set @@tidb_batch_delete=0;")
+
+	tk.MustExec("set @@tidb_pprof_sql_cpu=1;")
+	tk.MustQuery("select @@tidb_pprof_sql_cpu;").Check(testkit.Rows("1"))
+	tk.MustExec("set @@tidb_pprof_sql_cpu=0;")
+	tk.MustQuery("select @@tidb_pprof_sql_cpu;").Check(testkit.Rows("0"))
 
 	_, err = tk.Exec("set @@tidb_batch_delete=3;")
 	c.Assert(terror.ErrorEqual(err, variable.ErrWrongValueForVar), IsTrue, Commentf("err %v", err))

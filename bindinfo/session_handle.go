@@ -50,7 +50,7 @@ func (h *SessionHandle) newBindMeta(record *BindRecord) (hash string, meta *Bind
 	if err != nil {
 		return "", nil, err
 	}
-	meta = &BindMeta{BindRecord: record, Ast: stmtNodes[0]}
+	meta = &BindMeta{BindRecord: record, Hint: CollectHint(stmtNodes[0])}
 	return hash, meta, nil
 }
 

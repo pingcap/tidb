@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
-	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tipb/go-binlog"
 	"go.uber.org/zap"
@@ -150,7 +149,6 @@ type dirtyTableOperation struct {
 	kind   int
 	tid    int64
 	handle int64
-	row    []types.Datum
 }
 
 var hasMockAutoIDRetry = int64(0)
@@ -335,7 +333,10 @@ func keyNeedToLock(k, v []byte) bool {
 		// only need to delete row key.
 		return k[10] == 'r'
 	}
-	isNonUniqueIndex := len(v) == 1 && v[0] == '0'
+	if tablecodec.IsUntouchedIndexKValue(k, v) {
+		return false
+	}
+	isNonUniqueIndex := tablecodec.IsIndexKey(k) && len(v) == 1
 	// Put row key and unique index need to lock.
 	return !isNonUniqueIndex
 }
@@ -365,11 +366,9 @@ func mergeToDirtyDB(dirtyDB *executor.DirtyDB, op dirtyTableOperation) {
 	dt := dirtyDB.GetDirtyTable(op.tid)
 	switch op.kind {
 	case table.DirtyTableAddRow:
-		dt.AddRow(op.handle, op.row)
+		dt.AddRow(op.handle)
 	case table.DirtyTableDeleteRow:
 		dt.DeleteRow(op.handle)
-	case table.DirtyTableTruncate:
-		dt.TruncateTable()
 	}
 }
 
@@ -413,6 +412,16 @@ func (s *session) getTxnFuture(ctx context.Context) *txnFuture {
 		ret.mockFail = true
 	}
 	return ret
+}
+
+// HasDirtyContent checks whether there's dirty update on the given table.
+// Put this function here is to avoid cycle import.
+func (s *session) HasDirtyContent(tid int64) bool {
+	x := s.GetSessionVars().TxnCtx.DirtyDB
+	if x == nil {
+		return false
+	}
+	return !x.(*executor.DirtyDB).GetDirtyTable(tid).IsEmpty()
 }
 
 // StmtCommit implements the sessionctx.Context interface.
@@ -471,6 +480,6 @@ func (s *session) StmtGetMutation(tableID int64) *binlog.TableMutation {
 	return st.mutations[tableID]
 }
 
-func (s *session) StmtAddDirtyTableOP(op int, tid int64, handle int64, row []types.Datum) {
-	s.txn.dirtyTableOP = append(s.txn.dirtyTableOP, dirtyTableOperation{op, tid, handle, row})
+func (s *session) StmtAddDirtyTableOP(op int, tid int64, handle int64) {
+	s.txn.dirtyTableOP = append(s.txn.dirtyTableOP, dirtyTableOperation{op, tid, handle})
 }

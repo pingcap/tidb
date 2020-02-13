@@ -1947,7 +1947,7 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 		case ast.AlterTableDropIndex:
 			err = d.DropIndex(ctx, ident, model.NewCIStr(spec.Name))
 		case ast.AlterTableDropPrimaryKey:
-			err = d.dropIndex(ctx, ident, true, model.NewCIStr(mysql.PrimaryKeyName))
+			err = d.DropIndex(ctx, ident, model.NewCIStr(mysql.PrimaryKeyName))
 		case ast.AlterTableRenameIndex:
 			err = d.RenameIndex(ctx, ident, spec)
 		case ast.AlterTableDropPartition:
@@ -3198,6 +3198,10 @@ func getAnonymousIndex(t table.Table, colName model.CIStr) model.CIStr {
 	id := 2
 	l := len(t.Indices())
 	indexName := colName
+	if strings.EqualFold(indexName.L, mysql.PrimaryKeyName) {
+		indexName = model.NewCIStr(fmt.Sprintf("%s_%d", colName.O, id))
+		id = 3
+	}
 	for i := 0; i < l; i++ {
 		if t.Indices()[i].Meta().Name.L == indexName.L {
 			indexName = model.NewCIStr(fmt.Sprintf("%s_%d", colName.O, id))
@@ -3405,10 +3409,6 @@ func (d *ddl) DropForeignKey(ctx sessionctx.Context, ti ast.Ident, fkName model.
 }
 
 func (d *ddl) DropIndex(ctx sessionctx.Context, ti ast.Ident, indexName model.CIStr) error {
-	return d.dropIndex(ctx, ti, false, indexName)
-}
-
-func (d *ddl) dropIndex(ctx sessionctx.Context, ti ast.Ident, isPK bool, indexName model.CIStr) error {
 	is := d.infoHandle.Get()
 	schema, ok := is.SchemaByName(ti.Schema)
 	if !ok {
@@ -3420,6 +3420,12 @@ func (d *ddl) dropIndex(ctx sessionctx.Context, ti ast.Ident, isPK bool, indexNa
 	}
 
 	indexInfo := t.Meta().FindIndexByName(indexName.L)
+	var isPK bool
+	if indexName.L == strings.ToLower(mysql.PrimaryKeyName) &&
+		// Before we fixed #14243, there might be a general index named `primary` but not a primary key.
+		(indexInfo == nil || indexInfo.Primary) {
+		isPK = true
+	}
 	if isPK {
 		if !config.GetGlobalConfig().AlterPrimaryKey {
 			return ErrUnsupportedModifyPrimaryKey.GenWithStack("Unsupported drop primary key when alter-primary-key is false")

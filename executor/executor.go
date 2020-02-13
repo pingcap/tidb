@@ -798,6 +798,7 @@ func newLockCtx(seVars *variable.SessionVars, lockWaitTime int64) *kv.LockCtx {
 		WaitStartTime:         seVars.StmtCtx.GetLockWaitStartTime(),
 		PessimisticLockWaited: &seVars.StmtCtx.PessimisticLockWaited,
 		LockKeysDuration:      &seVars.StmtCtx.LockKeysDuration,
+		LockKeysCount:         &seVars.StmtCtx.LockKeysCount,
 	}
 }
 
@@ -1407,7 +1408,9 @@ func (e *UnionExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 // Close implements the Executor Close interface.
 func (e *UnionExec) Close() error {
-	close(e.finished)
+	if e.finished != nil {
+		close(e.finished)
+	}
 	e.childrenResults = nil
 	if e.resultPool != nil {
 		for range e.resultPool {

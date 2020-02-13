@@ -813,9 +813,18 @@ func (s *testDBSuite3) TestAddAnonymousIndex(c *C) {
 	s.mustExec(c, "alter table t_anonymous_index add index c3 (C3)")
 	s.mustExec(c, "alter table t_anonymous_index drop index C3")
 	// for anonymous index with column name `primary`
-	s.mustExec(c, "create table t_primary (`primary` int, key (`primary`))")
+	s.mustExec(c, "create table t_primary (`primary` int, b int, key (`primary`))")
 	t = s.testGetTable(c, "t_primary")
 	c.Assert(t.Indices()[0].Meta().Name.String(), Equals, "primary_2")
+	s.mustExec(c, "alter table t_primary add index (`primary`);")
+	t = s.testGetTable(c, "t_primary")
+	c.Assert(t.Indices()[0].Meta().Name.String(), Equals, "primary_2")
+	c.Assert(t.Indices()[1].Meta().Name.String(), Equals, "primary_3")
+	s.mustExec(c, "alter table t_primary add primary key(b);")
+	t = s.testGetTable(c, "t_primary")
+	c.Assert(t.Indices()[0].Meta().Name.String(), Equals, "primary_2")
+	c.Assert(t.Indices()[1].Meta().Name.String(), Equals, "primary_3")
+	c.Assert(t.Indices()[2].Meta().Name.L, Equals, "primary")
 	s.mustExec(c, "create table t_primary_2 (`primary` int, key primary_2 (`primary`), key (`primary`))")
 	t = s.testGetTable(c, "t_primary_2")
 	c.Assert(t.Indices()[0].Meta().Name.String(), Equals, "primary_2")
@@ -1387,7 +1396,7 @@ func (s *testDBSuite5) TestAlterPrimaryKey(c *C) {
 	s.tk.MustGetErrCode("alter table test_add_pk add primary key(d);", tmysql.ErrUnsupportedOnGeneratedColumn)
 	// The primary key name is the same as the existing index name.
 	s.tk.MustExec("alter table test_add_pk add primary key idx(e)")
-	s.tk.MustExec("alter table test_add_pk drop primary key")
+	s.tk.MustExec("drop index `primary` on test_add_pk")
 
 	// for describing table
 	s.tk.MustExec("create table test_add_pk1(a int, index idx(a))")
@@ -1427,6 +1436,7 @@ func (s *testDBSuite5) TestAlterPrimaryKey(c *C) {
 	s.tk.MustExec("alter table test_add_pk drop primary key")
 	// for not existing primary key
 	s.tk.MustGetErrCode("alter table test_add_pk drop primary key", tmysql.ErrCantDropFieldOrKey)
+	s.tk.MustGetErrCode("drop index `primary` on test_add_pk", tmysql.ErrCantDropFieldOrKey)
 
 	// for too many key parts specified
 	s.tk.MustGetErrCode("alter table test_add_pk add primary key idx_test(f1,f2,f3,f4,f5,f6,f7,f8,f9,f10,f11,f12,f13,f14,f15,f16,f17);",

@@ -40,6 +40,10 @@ func emptyPlanGenerator() string {
 	return ""
 }
 
+func fakePlanDigestGenerator() string {
+	return "point_get"
+}
+
 func (s *testStmtSummarySuite) SetUpSuite(c *C) {
 	s.ssMap = newStmtSummaryByDigestMap()
 	s.ssMap.SetEnabled("1", false)
@@ -997,4 +1001,29 @@ func (s *testStmtSummarySuite) TestEndTime(c *C) {
 	c.Assert(ssElement.beginTime, GreaterEqual, now-60)
 	c.Assert(ssElement.beginTime, LessEqual, now2)
 	c.Assert(ssElement.endTime-ssElement.beginTime, Equals, int64(60))
+}
+
+func (s *testStmtSummarySuite) TestPointGet(c *C) {
+	s.ssMap.Clear()
+	now := time.Now().Unix()
+	s.ssMap.beginTimeForCurInterval = now - 100
+
+	stmtExecInfo1 := generateAnyExecInfo()
+	stmtExecInfo1.PlanDigest = ""
+	stmtExecInfo1.PlanDigestGen = fakePlanDigestGenerator
+	s.ssMap.AddStatement(stmtExecInfo1)
+	key := &stmtSummaryByDigestKey{
+		schemaName: stmtExecInfo1.SchemaName,
+		digest:     stmtExecInfo1.Digest,
+		planDigest: "",
+	}
+	c.Assert(s.ssMap.summaryMap.Size(), Equals, 1)
+	value, ok := s.ssMap.summaryMap.Get(key)
+	c.Assert(ok, IsTrue)
+	ssbd := value.(*stmtSummaryByDigest)
+	ssElement := ssbd.history.Back().Value.(*stmtSummaryByDigestElement)
+	c.Assert(ssElement.execCount, Equals, int64(1))
+
+	s.ssMap.AddStatement(stmtExecInfo1)
+	c.Assert(ssElement.execCount, Equals, int64(2))
 }

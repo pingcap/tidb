@@ -190,32 +190,28 @@ func (tk *TestKit) MustUseIndex(sql string, index string, args ...interface{}) b
 	return false
 }
 
-// MustIndexLookup checks whether the plan for the sql is Point_Get.
-func (tk *TestKit) MustIndexLookup(sql string, args ...interface{}) *Result {
+// MustContains checks whether the plan for the sql contains specific operator.
+func (tk *TestKit) MustContains(sql string, op string, args ...interface{}) *Result {
 	rs := tk.MustQuery("explain "+sql, args...)
-	hasIndexLookup := false
+	has := false
 	for i := range rs.rows {
-		if strings.Contains(rs.rows[i][0], "IndexLookUp") {
-			hasIndexLookup = true
+		if strings.Contains(rs.rows[i][0], op) {
+			has = true
 			break
 		}
 	}
-	tk.c.Assert(hasIndexLookup, check.IsTrue)
+	tk.c.Assert(has, check.IsTrue)
 	return tk.MustQuery(sql, args...)
+}
+
+// MustIndexLookup checks whether the plan for the sql is Point_Get.
+func (tk *TestKit) MustIndexLookup(sql string, args ...interface{}) *Result {
+	return tk.MustContains(sql, "IndexLookUp", args...)
 }
 
 // MustTableDual checks whether the plan for the sql is TableDual.
 func (tk *TestKit) MustTableDual(sql string, args ...interface{}) *Result {
-	rs := tk.MustQuery("explain "+sql, args...)
-	hasTableDual := false
-	for i := range rs.rows {
-		if strings.Contains(rs.rows[i][0], "TableDual") {
-			hasTableDual = true
-			break
-		}
-	}
-	tk.c.Assert(hasTableDual, check.IsTrue)
-	return tk.MustQuery(sql, args...)
+	return tk.MustContains(sql, "TableDual", args...)
 }
 
 // MustPointGet checks whether the plan for the sql is Point_Get.

@@ -15,6 +15,7 @@ package executor
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
@@ -23,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/domain"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/sqlexec"
 )
 
 // SQLBindExec represents a bind executor.
@@ -34,6 +36,7 @@ type SQLBindExec struct {
 	bindSQL      string
 	charset      string
 	collation    string
+	db           string
 	isGlobal     bool
 	bindAst      ast.StmtNode
 }
@@ -48,7 +51,7 @@ func (e *SQLBindExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.Reset()
 	switch e.sqlBindOp {
 	case plannercore.OpSQLBindCreate:
-		return e.createSQLBind()
+		return e.createSQLBind(ctx)
 	case plannercore.OpSQLBindDrop:
 		return e.dropSQLBind()
 	default:
@@ -59,7 +62,7 @@ func (e *SQLBindExec) Next(ctx context.Context, req *chunk.Chunk) error {
 func (e *SQLBindExec) dropSQLBind() error {
 	record := &bindinfo.BindRecord{
 		OriginalSQL: e.normdOrigSQL,
-		Db:          e.ctx.GetSessionVars().CurrentDB,
+		Db:          e.db,
 	}
 	if !e.isGlobal {
 		handle := e.ctx.Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
@@ -69,11 +72,23 @@ func (e *SQLBindExec) dropSQLBind() error {
 	return domain.GetDomain(e.ctx).BindHandle().DropBindRecord(record)
 }
 
-func (e *SQLBindExec) createSQLBind() error {
+func (e *SQLBindExec) createSQLBind(ctx context.Context) error {
+	sqlExec := e.ctx.(sqlexec.SQLExecutor)
+	// Use explain to check the validity of bind sql.
+	recordSets, err := sqlExec.Execute(ctx, fmt.Sprintf("explain %s", e.bindSQL))
+	if len(recordSets) > 0 {
+		if err1 := recordSets[0].Close(); err1 != nil {
+			return err1
+		}
+	}
+	if err != nil {
+		return err
+	}
+
 	record := &bindinfo.BindRecord{
 		OriginalSQL: e.normdOrigSQL,
 		BindSQL:     e.bindSQL,
-		Db:          e.ctx.GetSessionVars().CurrentDB,
+		Db:          e.db,
 		Charset:     e.charset,
 		Collation:   e.collation,
 		Status:      bindinfo.Using,
