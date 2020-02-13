@@ -1123,6 +1123,7 @@ var tableTableTiFlashReplicaCols = []columnInfo{
 	{"REPLICA_COUNT", mysql.TypeLonglong, 64, 0, nil, nil},
 	{"LOCATION_LABELS", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"AVAILABLE", mysql.TypeTiny, 1, 0, nil, nil},
+	{"PROGRESS", mysql.TypeDouble, 22, 0, nil, nil},
 }
 
 var tableInspectionResultCols = []columnInfo{
@@ -2312,12 +2313,29 @@ func dataForTiDBClusterInfo(ctx sessionctx.Context) ([][]types.Datum, error) {
 }
 
 // dataForTableTiFlashReplica constructs data for table tiflash replica info.
-func dataForTableTiFlashReplica(schemas []*model.DBInfo) [][]types.Datum {
+func dataForTableTiFlashReplica(ctx sessionctx.Context, schemas []*model.DBInfo) [][]types.Datum {
 	var rows [][]types.Datum
+	progressMap, err := infosync.GetTiFlashTableSyncProgress(context.Background())
+	if err != nil {
+		ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+	}
 	for _, schema := range schemas {
 		for _, tbl := range schema.Tables {
 			if tbl.TiFlashReplica == nil {
 				continue
+			}
+			progress := 1.0
+			if !tbl.TiFlashReplica.Available {
+				if pi := tbl.GetPartitionInfo(); pi != nil && len(pi.Definitions) > 0 {
+					progress = 0
+					for _, p := range pi.Definitions {
+						// TODO: need check partition replica available.
+						progress += progressMap[p.ID]
+					}
+					progress = progress / float64(len(pi.Definitions))
+				} else {
+					progress = progressMap[tbl.ID]
+				}
 			}
 			record := types.MakeDatums(
 				schema.Name.O,                   // TABLE_SCHEMA
@@ -2326,6 +2344,7 @@ func dataForTableTiFlashReplica(schemas []*model.DBInfo) [][]types.Datum {
 				int64(tbl.TiFlashReplica.Count), // REPLICA_COUNT
 				strings.Join(tbl.TiFlashReplica.LocationLabels, ","), // LOCATION_LABELS
 				tbl.TiFlashReplica.Available,                         // AVAILABLE
+				progress,                                             // PROGRESS
 			)
 			rows = append(rows, record)
 		}
@@ -2515,7 +2534,7 @@ func (it *infoschemaTable) getRows(ctx sessionctx.Context, cols []*table.Column)
 	case TableClusterInfo:
 		fullRows, err = dataForTiDBClusterInfo(ctx)
 	case tableTiFlashReplica:
-		fullRows = dataForTableTiFlashReplica(dbs)
+		fullRows = dataForTableTiFlashReplica(ctx, dbs)
 	case TableMetricTables:
 		fullRows = dataForMetricTables(ctx)
 	// Data for cluster memory table.

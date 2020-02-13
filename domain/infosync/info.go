@@ -44,6 +44,8 @@ const (
 	ServerInformationPath = "/tidb/server/info"
 	// ServerMinStartTSPath store the server min start timestamp.
 	ServerMinStartTSPath = "/tidb/server/minstartts"
+	// TiFlashTableSyncProgressPath store the tiflash table replica sync progress.
+	TiFlashTableSyncProgressPath = "/tiflash/table/sync"
 	// keyOpDefaultRetryCnt is the default retry count for etcd store.
 	keyOpDefaultRetryCnt = 5
 	// keyOpDefaultTimeout is the default time out for etcd store.
@@ -168,6 +170,67 @@ func GetAllServerInfo(ctx context.Context) (map[string]*ServerInfo, error) {
 		return nil, err
 	}
 	return is.getAllServerInfo(ctx)
+}
+
+// UpdateTiFlashTableSyncProgress is used to update the tiflash table replica sync progress.
+func UpdateTiFlashTableSyncProgress(ctx context.Context, tid int64, progress float64) error {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return err
+	}
+	if is.etcdCli == nil {
+		return nil
+	}
+	key := fmt.Sprintf("%s/%v", TiFlashTableSyncProgressPath, tid)
+	return util.PutKVToEtcd(ctx, is.etcdCli, keyOpDefaultRetryCnt, key, strconv.FormatFloat(progress, 'f', 2, 64))
+}
+
+// DeleteTiFlashTableSyncProgress is used to delete the tiflash table replica sync progress.
+func DeleteTiFlashTableSyncProgress(tid int64) error {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return err
+	}
+	if is.etcdCli == nil {
+		return nil
+	}
+	key := fmt.Sprintf("%s/%v", TiFlashTableSyncProgressPath, tid)
+	return util.DeleteKeyFromEtcd(key, is.etcdCli, keyOpDefaultRetryCnt, keyOpDefaultTimeout)
+}
+
+// GetTiFlashTableSyncProgress uses to get all the tiflash table replica sync progress.
+func GetTiFlashTableSyncProgress(ctx context.Context) (map[int64]float64, error) {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return nil, err
+	}
+	progressMap := make(map[int64]float64)
+	if is.etcdCli == nil {
+		return progressMap, nil
+	}
+	for i := 0; i < keyOpDefaultRetryCnt; i++ {
+		resp, err := is.etcdCli.Get(ctx, TiFlashTableSyncProgressPath+"/", clientv3.WithPrefix())
+		if err != nil {
+			logutil.BgLogger().Info("get tiflash table replica sync progress failed, continue checking.", zap.Error(err))
+			continue
+		}
+		for _, kv := range resp.Kvs {
+			tid, err := strconv.ParseInt(string(kv.Key[len(TiFlashTableSyncProgressPath)+1:]), 10, 64)
+			if err != nil {
+				logutil.BgLogger().Info("invalid tiflash table replica sync progress key.", zap.String("key", string(kv.Key)))
+				continue
+			}
+			progress, err := strconv.ParseFloat(string(kv.Value), 64)
+			if err != nil {
+				logutil.BgLogger().Info("invalid tiflash table replica sync progress value.",
+					zap.String("key", string(kv.Key)), zap.String("value", string(kv.Value)))
+				continue
+			}
+			progressMap[tid] = progress
+		}
+		break
+	}
+	return progressMap, nil
 }
 
 func (is *InfoSyncer) getAllServerInfo(ctx context.Context) (map[string]*ServerInfo, error) {
