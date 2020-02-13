@@ -14,6 +14,7 @@
 package infoschema
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"sort"
@@ -25,6 +26,7 @@ import (
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/privilege"
@@ -934,6 +936,7 @@ var tableTableTiFlashReplicaCols = []columnInfo{
 	{"REPLICA_COUNT", mysql.TypeLonglong, 64, 0, nil, nil},
 	{"LOCATION_LABELS", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"AVAILABLE", mysql.TypeTiny, 1, 0, nil, nil},
+	{"PROGRESS", mysql.TypeDouble, 22, 0, nil, nil},
 }
 
 func dataForSchemata(schemas []*model.DBInfo) [][]types.Datum {
@@ -1731,12 +1734,29 @@ func DataForAnalyzeStatus() (rows [][]types.Datum) {
 }
 
 // dataForTableTiFlashReplica constructs data for table tiflash replica info.
-func dataForTableTiFlashReplica(schemas []*model.DBInfo) [][]types.Datum {
+func dataForTableTiFlashReplica(ctx sessionctx.Context, schemas []*model.DBInfo) [][]types.Datum {
 	var rows [][]types.Datum
+	progressMap, err := infosync.GetTiFlashTableSyncProgress(context.Background())
+	if err != nil {
+		ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+	}
 	for _, schema := range schemas {
 		for _, tbl := range schema.Tables {
 			if tbl.TiFlashReplica == nil {
 				continue
+			}
+			progress := 1.0
+			if !tbl.TiFlashReplica.Available {
+				if pi := tbl.GetPartitionInfo(); pi != nil && len(pi.Definitions) > 0 {
+					progress = 0
+					for _, p := range pi.Definitions {
+						// TODO: need check partition replica available.
+						progress += progressMap[p.ID]
+					}
+					progress = progress / float64(len(pi.Definitions))
+				} else {
+					progress = progressMap[tbl.ID]
+				}
 			}
 			record := types.MakeDatums(
 				schema.Name.O,                   // TABLE_SCHEMA
@@ -1745,6 +1765,7 @@ func dataForTableTiFlashReplica(schemas []*model.DBInfo) [][]types.Datum {
 				int64(tbl.TiFlashReplica.Count), // REPLICA_COUNT
 				strings.Join(tbl.TiFlashReplica.LocationLabels, ","), // LOCATION_LABELS
 				tbl.TiFlashReplica.Available,                         // AVAILABLE
+				progress,                                             // PROGRESS
 			)
 			rows = append(rows, record)
 		}
@@ -1896,7 +1917,7 @@ func (it *infoschemaTable) getRows(ctx sessionctx.Context, cols []*table.Column)
 	case tableTiKVRegionPeers:
 		fullRows, err = dataForTikVRegionPeers(ctx)
 	case tableTiFlashReplica:
-		fullRows = dataForTableTiFlashReplica(dbs)
+		fullRows = dataForTableTiFlashReplica(ctx, dbs)
 	}
 	if err != nil {
 		return nil, err
