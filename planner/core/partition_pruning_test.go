@@ -89,34 +89,34 @@ func (s *testPartitionPruningSuite) TestCanBePrune(c *C) {
 }
 
 func (s *testPartitionPruningSuite) TestPruneUseBinarySearch(c *C) {
-	lessThan := lessThanData{data: []int64{4, 7, 11, 14, 17}}
+	lessThan := lessThanData{data: []int64{4, 7, 11, 14, 17, 0}, maxvalue: true}
 	cases := []struct {
 		input  dataForPrune
 		result partitionRange
 	}{
-		{dataForPrune{ast.EQ, 66}, partitionRange{5, 5}},
+		{dataForPrune{ast.EQ, 66}, partitionRange{5, 6}},
 		{dataForPrune{ast.EQ, 14}, partitionRange{4, 5}},
 		{dataForPrune{ast.EQ, 10}, partitionRange{2, 3}},
 		{dataForPrune{ast.EQ, 3}, partitionRange{0, 1}},
-		{dataForPrune{ast.LT, 66}, partitionRange{0, 5}},
+		{dataForPrune{ast.LT, 66}, partitionRange{0, 6}},
 		{dataForPrune{ast.LT, 14}, partitionRange{0, 4}},
 		{dataForPrune{ast.LT, 10}, partitionRange{0, 3}},
 		{dataForPrune{ast.LT, 3}, partitionRange{0, 1}},
-		{dataForPrune{ast.GE, 66}, partitionRange{5, 5}},
-		{dataForPrune{ast.GE, 14}, partitionRange{4, 5}},
-		{dataForPrune{ast.GE, 10}, partitionRange{2, 5}},
-		{dataForPrune{ast.GE, 3}, partitionRange{0, 5}},
-		{dataForPrune{ast.GT, 66}, partitionRange{5, 5}},
-		{dataForPrune{ast.GT, 14}, partitionRange{4, 5}},
-		{dataForPrune{ast.GT, 10}, partitionRange{3, 5}},
-		{dataForPrune{ast.GT, 3}, partitionRange{1, 5}},
-		{dataForPrune{ast.GT, 2}, partitionRange{0, 5}},
-		{dataForPrune{ast.LE, 66}, partitionRange{0, 5}},
+		{dataForPrune{ast.GE, 66}, partitionRange{5, 6}},
+		{dataForPrune{ast.GE, 14}, partitionRange{4, 6}},
+		{dataForPrune{ast.GE, 10}, partitionRange{2, 6}},
+		{dataForPrune{ast.GE, 3}, partitionRange{0, 6}},
+		{dataForPrune{ast.GT, 66}, partitionRange{5, 6}},
+		{dataForPrune{ast.GT, 14}, partitionRange{4, 6}},
+		{dataForPrune{ast.GT, 10}, partitionRange{3, 6}},
+		{dataForPrune{ast.GT, 3}, partitionRange{1, 6}},
+		{dataForPrune{ast.GT, 2}, partitionRange{0, 6}},
+		{dataForPrune{ast.LE, 66}, partitionRange{0, 6}},
 		{dataForPrune{ast.LE, 14}, partitionRange{0, 5}},
 		{dataForPrune{ast.LE, 10}, partitionRange{0, 3}},
 		{dataForPrune{ast.LE, 3}, partitionRange{0, 1}},
 		{dataForPrune{ast.IsNull, 0}, partitionRange{0, 1}},
-		{dataForPrune{"illegal", 0}, partitionRange{0, 5}},
+		{dataForPrune{"illegal", 0}, partitionRange{0, 6}},
 	}
 
 	for i, ca := range cases {
