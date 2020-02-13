@@ -741,14 +741,6 @@ func (c *Config) Load(confFile string) error {
 	return err
 }
 
-// MinDDLLease returns the minimum valid value of the DDL lease.
-func (c *Config) MinDDLLease() time.Duration {
-	if c.Store == "tikv" {
-		return time.Second
-	}
-	return time.Duration(0)
-}
-
 // Valid checks if this config is valid.
 func (c *Config) Valid() error {
 	if c.Log.EnableErrorStack == c.Log.DisableErrorStack && c.Log.EnableErrorStack != nbUnset {
