@@ -300,7 +300,7 @@ func (p *preprocessor) checkAutoIncrement(stmt *ast.CreateTableStmt) {
 
 	for _, colDef := range stmt.Cols {
 		var hasAutoIncrement bool
-		for i := range colDef.Options {
+		for i, op := range colDef.Options {
 			ok, err := checkAutoIncrementOp(colDef, i)
 			if err != nil {
 				p.err = err
@@ -308,6 +308,11 @@ func (p *preprocessor) checkAutoIncrement(stmt *ast.CreateTableStmt) {
 			}
 			if ok {
 				hasAutoIncrement = true
+				// only when has auto increment, check the column is key.
+				switch op.Tp {
+				case ast.ColumnOptionPrimaryKey, ast.ColumnOptionUniqKey:
+					isKey = true
+				}
 			}
 		}
 		if hasAutoIncrement {
@@ -319,7 +324,9 @@ func (p *preprocessor) checkAutoIncrement(stmt *ast.CreateTableStmt) {
 	if count < 1 {
 		return
 	}
-	isKey = isConstraintKeyTp(stmt.Constraints, autoIncrementCol)
+	if !isKey {
+		isKey = isConstraintKeyTp(stmt.Constraints, autoIncrementCol)
+	}
 	autoIncrementMustBeKey := true
 	for _, opt := range stmt.Options {
 		if opt.Tp == ast.TableOptionEngine && strings.EqualFold(opt.StrValue, "MyISAM") {
