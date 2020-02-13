@@ -457,7 +457,7 @@ LOOP:
 }
 
 // TestCancelAddIndex1 tests canceling ddl job when the add index worker is not started.
-func (s *testDBSuite4) TestCancelAddIndex1(c *C) {
+func (s *testSerialDBSuite) TestCancelAddIndex1(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.mustExec(c, "use test_db")
 	s.mustExec(c, "drop table if exists t")
@@ -625,7 +625,7 @@ func testCancelDropIndex(c *C, store kv.Storage, d ddl.DDL, idxName, addIdxSQL, 
 }
 
 // TestCancelTruncateTable tests cancel ddl job which type is truncate table.
-func (s *testDBSuite5) TestCancelTruncateTable(c *C) {
+func (s *testSerialDBSuite) TestCancelTruncateTable(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.mustExec(c, "use test_db")
 	s.mustExec(c, "create database if not exists test_truncate_table")
@@ -671,7 +671,7 @@ func (s *testDBSuite5) TestCancelTruncateTable(c *C) {
 }
 
 // TestCancelRenameIndex tests cancel ddl job which type is rename index.
-func (s *testDBSuite1) TestCancelRenameIndex(c *C) {
+func (s *testSerialDBSuite) TestCancelRenameIndex(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.mustExec(c, "use test_db")
 	s.mustExec(c, "create database if not exists test_rename_index")
@@ -729,7 +729,7 @@ func (s *testDBSuite1) TestCancelRenameIndex(c *C) {
 }
 
 // TestCancelDropTable tests cancel ddl job which type is drop table.
-func (s *testDBSuite2) TestCancelDropTableAndSchema(c *C) {
+func (s *testSerialDBSuite) TestCancelDropTableAndSchema(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	testCases := []struct {
 		needAddTableOrDB bool
@@ -1131,7 +1131,7 @@ LOOP:
 }
 
 // TestCancelAddTableAndDropTablePartition tests cancel ddl job which type is add/drop table partition.
-func (s *testDBSuite1) TestCancelAddTableAndDropTablePartition(c *C) {
+func (s *testSerialDBSuite) TestCancelAddTableAndDropTablePartition(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.mustExec(c, "create database if not exists test_partition_table")
 	s.mustExec(c, "use test_partition_table")
@@ -1301,7 +1301,7 @@ LOOP:
 }
 
 // TestCancelDropColumn tests cancel ddl job which type is drop column.
-func (s *testDBSuite3) TestCancelDropColumn(c *C) {
+func (s *testSerialDBSuite) TestCancelDropColumn(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use " + s.schemaName)
 	s.mustExec(c, "drop table if exists test_drop_column")
@@ -1974,7 +1974,7 @@ func match(c *C, row []interface{}, expected ...interface{}) {
 }
 
 // TestCreateTableWithLike2 tests create table with like when refer table have non-public column/index.
-func (s *testDBSuite4) TestCreateTableWithLike2(c *C) {
+func (s *testSerialDBSuite) TestCreateTableWithLike2(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use test_db")
 	s.tk.MustExec("drop table if exists t1,t2;")
@@ -2102,7 +2102,7 @@ func (s *testDBSuite1) TestCreateTable(c *C) {
 	c.Assert(err.Error(), Equals, "[types:1291]Column 'a' has duplicated value 'B' in ENUM")
 }
 
-func (s *testDBSuite5) TestRepairTable(c *C) {
+func (s *testSerialDBSuite) TestRepairTable(c *C) {
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/infoschema/repairFetchCreateTable", `return(true)`), IsNil)
 	defer func() {
 		c.Assert(failpoint.Disable("github.com/pingcap/tidb/infoschema/repairFetchCreateTable"), IsNil)
@@ -3067,7 +3067,7 @@ func (s *testDBSuite5) TestCheckConvertToCharacter(c *C) {
 	c.Assert(t.Cols()[0].Charset, Equals, "binary")
 }
 
-func (s *testDBSuite5) TestModifyColumnRollBack(c *C) {
+func (s *testSerialDBSuite) TestModifyColumnRollBack(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.mustExec(c, "use test_db")
 	s.mustExec(c, "drop table if exists t1")
@@ -3156,7 +3156,7 @@ LOOP:
 	s.mustExec(c, "drop table t1")
 }
 
-func (s *testDBSuite1) TestModifyColumnNullToNotNull(c *C) {
+func (s *testSerialDBSuite) TestModifyColumnNullToNotNull(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	tk2 := testkit.NewTestKit(c, s.store)
 	tk2.MustExec("use test_db")
@@ -3223,7 +3223,7 @@ func (s *testDBSuite1) TestModifyColumnNullToNotNull(c *C) {
 	c.Assert(err.Error(), Equals, "[table:1364]Field 'c2' doesn't have a default value")
 }
 
-func (s *testDBSuite2) TestTransactionOnAddDropColumn(c *C) {
+func (s *testSerialDBSuite) TestTransactionOnAddDropColumn(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.mustExec(c, "use test_db")
 	s.mustExec(c, "drop table if exists t1")
@@ -3278,7 +3278,7 @@ func (s *testDBSuite2) TestTransactionOnAddDropColumn(c *C) {
 	s.tk.MustQuery("select a,b from t1 order by a").Check(testkit.Rows("1 1", "1 1", "1 1", "2 2", "2 2", "2 2"))
 }
 
-func (s *testDBSuite3) TestTransactionWithWriteOnlyColumn(c *C) {
+func (s *testSerialDBSuite) TestTransactionWithWriteOnlyColumn(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.mustExec(c, "use test_db")
 	s.mustExec(c, "drop table if exists t1")
@@ -3325,7 +3325,7 @@ func (s *testDBSuite3) TestTransactionWithWriteOnlyColumn(c *C) {
 	s.tk.MustQuery("select a from t1").Check(testkit.Rows("2"))
 }
 
-func (s *testDBSuite4) TestAddColumn2(c *C) {
+func (s *testSerialDBSuite) TestAddColumn2(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.mustExec(c, "use test_db")
 	s.mustExec(c, "drop table if exists t1")
