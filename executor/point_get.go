@@ -15,12 +15,16 @@ package executor
 
 import (
 	"context"
+	"fmt"
+	"math/rand"
+	"strings"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/kv"
 	plannercore "github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
@@ -112,6 +116,15 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 	if e.ctx.GetSessionVars().GetReplicaRead().IsFollowerRead() {
 		e.snapshot.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
+	} else if rand.Intn(3) < 2 {
+		str := variable.FollowerReadTables.Load()
+		tableIDs := strings.Split(str, ",")
+		tabldID := e.tblInfo.ID
+		for _, tableIDString := range tableIDs {
+			if tableIDString == fmt.Sprintf("%d", tabldID) {
+				e.snapshot.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
+			}
+		}
 	}
 	var tblID int64
 	if e.partInfo != nil {
