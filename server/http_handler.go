@@ -739,6 +739,17 @@ func (h flashReplicaHandler) ServeHTTP(w http.ResponseWriter, req *http.Request)
 			if tblInfo.TiFlashReplica == nil {
 				continue
 			}
+			if pi := tblInfo.GetPartitionInfo(); pi != nil {
+				for _, p := range pi.Definitions {
+					replicaInfos = append(replicaInfos, &tableFlashReplicaInfo{
+						ID:             p.ID,
+						ReplicaCount:   tblInfo.TiFlashReplica.Count,
+						LocationLabels: tblInfo.TiFlashReplica.LocationLabels,
+						Available:      tblInfo.TiFlashReplica.IsPartitionAvailable(p.ID),
+					})
+				}
+				continue
+			}
 			replicaInfos = append(replicaInfos, &tableFlashReplicaInfo{
 				ID:             tblInfo.ID,
 				ReplicaCount:   tblInfo.TiFlashReplica.Count,
@@ -1665,34 +1676,12 @@ func (h dbTableHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	// The physicalID maybe a partition ID of the partition-table.
-	dbTblInfo.TableInfo, dbTblInfo.DBInfo = findTableByPartitionID(schema, int64(physicalID))
-	if dbTblInfo.TableInfo == nil {
+	tbl, dbInfo := schema.FindTableByPartitionID(int64(physicalID))
+	if tbl == nil {
 		writeError(w, infoschema.ErrTableNotExists.GenWithStack("Table which ID = %s does not exist.", tableID))
 		return
 	}
+	dbTblInfo.TableInfo = tbl.Meta()
+	dbTblInfo.DBInfo = dbInfo
 	writeData(w, dbTblInfo)
-}
-
-// findTableByPartitionID finds the partition-table info by the partitionID.
-// This function will traverse all the tables to find the partitionID partition in which partition-table.
-func findTableByPartitionID(schema infoschema.InfoSchema, partitionID int64) (*model.TableInfo, *model.DBInfo) {
-	allDBs := schema.AllSchemas()
-	for _, db := range allDBs {
-		allTables := schema.SchemaTables(db.Name)
-		for _, tbl := range allTables {
-			if tbl.Meta().ID > partitionID || tbl.Meta().GetPartitionInfo() == nil {
-				continue
-			}
-			info := tbl.Meta().GetPartitionInfo()
-			tb := tbl.(table.PartitionedTable)
-			for _, def := range info.Definitions {
-				pid := def.ID
-				partition := tb.GetPartition(pid)
-				if partition.GetPhysicalID() == partitionID {
-					return tbl.Meta(), db
-				}
-			}
-		}
-	}
-	return nil, nil
 }
