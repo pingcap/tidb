@@ -25,7 +25,8 @@ var _ = Suite(&testBatchCommand{})
 
 func (s *testBatchCommand) TestBatchResponse(c *C) {
 	resp := &tikvpb.BatchCommandsResponse_Response{}
-	batchResp, err := FromBatchCommandsResponse(resp)
+	batchResp := &Response{}
+	err := FromBatchCommandsResponse(resp, batchResp)
 	c.Assert(batchResp == nil, IsTrue)
 	c.Assert(err != nil, IsTrue)
 }
