@@ -268,9 +268,9 @@ func setupBinlogClient() {
 	}
 
 	if len(cfg.Binlog.BinlogSocket) == 0 {
-		client, err = pumpcli.NewPumpsClient(cfg.Path, cfg.Binlog.Strategy, parseDuration(cfg.Binlog.WriteTimeout, 0), securityOption)
+		client, err = pumpcli.NewPumpsClient(cfg.Path, cfg.Binlog.Strategy, parseDuration(cfg.Binlog.WriteTimeout), securityOption)
 	} else {
-		client, err = pumpcli.NewLocalPumpsClient(cfg.Path, cfg.Binlog.BinlogSocket, parseDuration(cfg.Binlog.WriteTimeout, 0), securityOption)
+		client, err = pumpcli.NewLocalPumpsClient(cfg.Path, cfg.Binlog.BinlogSocket, parseDuration(cfg.Binlog.WriteTimeout), securityOption)
 	}
 
 	terror.MustNil(err)
@@ -320,16 +320,13 @@ func instanceName() string {
 }
 
 // parseDuration parses lease argument string.
-func parseDuration(lease string, minVal time.Duration) time.Duration {
+func parseDuration(lease string) time.Duration {
 	dur, err := time.ParseDuration(lease)
 	if err != nil {
 		dur, err = time.ParseDuration(lease + "s")
 	}
-	if minVal < 0 {
-		minVal = 0
-	}
-	if err != nil || dur < minVal {
-		log.Fatal("invalid lease duration", zap.Duration("min value", minVal), zap.String("lease", lease))
+	if err != nil || dur < 0 {
+		log.Fatal("invalid lease duration", zap.String("lease", lease))
 	}
 	return dur
 }
@@ -529,12 +526,12 @@ func overrideConfig() {
 }
 
 func setGlobalVars() {
-	ddlLeaseDuration := parseDuration(cfg.Lease, cfg.MinDDLLease())
+	ddlLeaseDuration := parseDuration(cfg.Lease)
 	session.SetSchemaLease(ddlLeaseDuration)
 	runtime.GOMAXPROCS(int(cfg.Performance.MaxProcs))
-	statsLeaseDuration := parseDuration(cfg.Performance.StatsLease, 0)
+	statsLeaseDuration := parseDuration(cfg.Performance.StatsLease)
 	session.SetStatsLease(statsLeaseDuration)
-	bindinfo.Lease = parseDuration(cfg.Performance.BindInfoLease, 0)
+	bindinfo.Lease = parseDuration(cfg.Performance.BindInfoLease)
 	domain.RunAutoAnalyze = cfg.Performance.RunAutoAnalyze
 	statistics.FeedbackProbability.Store(cfg.Performance.FeedbackProbability)
 	handle.MaxQueryFeedbackCount.Store(int64(cfg.Performance.QueryFeedbackLimit))
@@ -576,7 +573,7 @@ func setGlobalVars() {
 		}
 	}
 
-	tikv.CommitMaxBackoff = int(parseDuration(cfg.TiKVClient.CommitTimeout, 0).Seconds() * 1000)
+	tikv.CommitMaxBackoff = int(parseDuration(cfg.TiKVClient.CommitTimeout).Seconds() * 1000)
 	tikv.RegionCacheTTLSec = int64(cfg.TiKVClient.RegionCacheTTL)
 	domainutil.RepairInfo.SetRepairMode(cfg.RepairMode)
 	domainutil.RepairInfo.SetRepairTableList(cfg.RepairTableList)
