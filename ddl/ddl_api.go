@@ -537,11 +537,7 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 				removeOnUpdateNowFlag(col)
 				hasNullFlag = true
 			case ast.ColumnOptionAutoIncrement:
-				if col.Flag&mysql.MultipleKeyFlag > 0 {
-					col.Flag |= mysql.AutoIncrementFlag
-				} else {
-					return nil, nil, ErrWrongAutoKey.GenWithStackByArgs(col.Name)
-				}
+				col.Flag |= mysql.AutoIncrementFlag
 			case ast.ColumnOptionPrimaryKey:
 				// Check PriKeyFlag first to avoid extra duplicate constraints.
 				if col.Flag&mysql.PriKeyFlag == 0 {
