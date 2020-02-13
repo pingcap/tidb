@@ -28,7 +28,7 @@ func sign(i int) int {
 }
 
 // Compare implement Collator interface.
-func (gc *generalCICollator) Compare(a, b string) int {
+func (gc *generalCICollator) Compare(a, b string, padLen int) int {
 	for len(a) > 0 && len(b) > 0 {
 		r1, r1size := utf8.DecodeRuneInString(a)
 		r2, r2size := utf8.DecodeRuneInString(b)
@@ -44,7 +44,7 @@ func (gc *generalCICollator) Compare(a, b string) int {
 }
 
 // Key implement Collator interface.
-func (gc *generalCICollator) Key(str string) []byte {
+func (gc *generalCICollator) Key(str string, padLen int) []byte {
 	buf := make([]byte, 0, len(str))
 	for _, r := range []rune(str) {
 		u16 := convertRune(r)

@@ -26,9 +26,9 @@ var (
 // collation order.
 type Collator interface {
 	// Compare returns an integer comparing the two strings. The result will be 0 if a == b, -1 if a < b, and +1 if a > b.
-	Compare(a, b string) int
+	Compare(a, b string, padLen int) int
 	// Key returns the collate key for str.
-	Key(str string) []byte
+	Key(str string, padLen int) []byte
 }
 
 // GetCollator get the collator according to collate, it will return the binary collator if the corresponding collator doesn't exist.
@@ -53,12 +53,12 @@ type binCollator struct {
 }
 
 // Compare implement Collator interface.
-func (bc *binCollator) Compare(a, b string) int {
+func (bc *binCollator) Compare(a, b string, padLen int) int {
 	return strings.Compare(a, b)
 }
 
 // Key implement Collator interface.
-func (bc *binCollator) Key(str string) []byte {
+func (bc *binCollator) Key(str string, padLen int) []byte {
 	return []byte(str)
 }
 
