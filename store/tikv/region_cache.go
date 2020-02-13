@@ -117,11 +117,6 @@ func (r *RegionStore) follower(seed uint32) int32 {
 
 // return next leader or follower store's index
 func (r *RegionStore) peer(seed uint32) int32 {
-	l := uint32(len(r.stores))
-	if l <= 1 {
-		return r.workTiKVIdx
-	}
-
 	candidates := make([]int32, 0, len(r.stores))
 	for i := 0; i < len(r.stores); i++ {
 		if r.stores[i].storeType != kv.TiKV {
@@ -136,7 +131,7 @@ func (r *RegionStore) peer(seed uint32) int32 {
 	if len(candidates) == 0 {
 		return r.workTiKVIdx
 	} else {
-		return int32(seed) % int32(len(candidates))
+		return candidates[int32(seed)%int32(len(candidates))]
 	}
 }
 
