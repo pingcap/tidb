@@ -1154,7 +1154,7 @@ func (s *testIntegrationSuite) getHistoryDDLJob(id int64) (*model.Job, error) {
 	return job, errors.Trace(err)
 }
 
-func (s *testIntegrationSuite1) TestCreateTableTooLarge(c *C) {
+func (s *testIntegrationSuite6) TestCreateTableTooLarge(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use test")
 
