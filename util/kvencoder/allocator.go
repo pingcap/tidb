@@ -41,6 +41,11 @@ func (alloc *Allocator) Alloc(tableID int64, n uint64) (int64, int64, error) {
 	return min, atomic.AddInt64(&alloc.base, int64(n)), nil
 }
 
+// GetType always returns autoid.RowIDAllocType.
+func (alloc *Allocator) GetType() autoid.AllocatorType {
+	return autoid.RowIDAllocType
+}
+
 // Reset allow newBase smaller than alloc.base, and will set the alloc.base to newBase.
 func (alloc *Allocator) Reset(newBase int64) {
 	atomic.StoreInt64(&alloc.base, newBase)

@@ -362,5 +362,11 @@ history-size = 24
 
 # server level isolation read by engines and labels
 [isolation-read]
-# engines means allow the tidb server read data from which types of engines. options: "tikv", "tiflash", "tidb".
-engines = ["tikv", "tiflash", "tidb"]
+# engines means allow the tidb server read data from which types of engines. options: "tikv", "tiflash".
+engines = ["tikv", "tiflash"]
+
+# experimental section controls the features that are still experimental: their semantics,
+# interfaces are subject to change, using these features in the production environment is not recommended.
+[experimental]
+# enable column attribute `auto_random` to be defined on the primary key column.
+allow-auto-random = false

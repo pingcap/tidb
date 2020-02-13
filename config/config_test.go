@@ -85,6 +85,8 @@ refresh-interval=100
 history-size=100
 [isolation-read]
 engines = ["tiflash"]
+[experimental]
+allow-auto-random = true
 `)
 
 	c.Assert(err, IsNil)
@@ -119,6 +121,7 @@ engines = ["tiflash"]
 	c.Assert(conf.EnableTableLock, IsTrue)
 	c.Assert(conf.DelayCleanTableLock, Equals, uint64(5))
 	c.Assert(conf.IsolationRead.Engines, DeepEquals, []string{"tiflash"})
+	c.Assert(conf.Experimental.AllowAutoRandom, IsTrue)
 	c.Assert(f.Close(), IsNil)
 	c.Assert(os.Remove(configFile), IsNil)
 
@@ -252,4 +255,17 @@ func (s *testConfigSuite) TestOOMActionValid(c *C) {
 		c1.OOMAction = tt.oomAction
 		c.Assert(c1.Valid() == nil, Equals, tt.valid)
 	}
+}
+
+func (s *testConfigSuite) TestAllowAutoRandomValid(c *C) {
+	conf := NewConfig()
+	checkValid := func(allowAlterPK, allowAutoRand, shouldBeValid bool) {
+		conf.AlterPrimaryKey = allowAlterPK
+		conf.Experimental.AllowAutoRandom = allowAutoRand
+		c.Assert(conf.Valid() == nil, Equals, shouldBeValid)
+	}
+	checkValid(true, true, false)
+	checkValid(true, false, true)
+	checkValid(false, true, true)
+	checkValid(false, false, true)
 }

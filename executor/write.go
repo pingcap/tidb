@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
@@ -100,6 +101,10 @@ func updateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datu
 			if col.IsPKHandleColumn(t.Meta()) {
 				handleChanged = true
 				newHandle = newData[i].GetInt64()
+				// Rebase auto random id if the field is changed.
+				if err := rebaseAutoRandomValue(ctx, t, &newData[i], col); err != nil {
+					return false, false, 0, err
+				}
 			}
 		} else {
 			if mysql.HasOnUpdateNowFlag(col.Flag) && modified[i] {
@@ -175,6 +180,20 @@ func updateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datu
 	sc.AddCopiedRows(1)
 
 	return true, handleChanged, newHandle, nil
+}
+
+func rebaseAutoRandomValue(sctx sessionctx.Context, t table.Table, newData *types.Datum, col *table.Column) error {
+	tableInfo := t.Meta()
+	if !tableInfo.ContainsAutoRandomBits() {
+		return nil
+	}
+	recordID, err := getAutoRecordID(*newData, &col.FieldType, false)
+	if err != nil {
+		return err
+	}
+	shardBits := tableInfo.AutoRandomBits + 1 // sign bit is reserved.
+	recordID = recordID << shardBits >> shardBits
+	return t.Allocator(sctx, autoid.AutoRandomType).Rebase(tableInfo.ID, recordID, true)
 }
 
 // resetErrDataTooLong reset ErrDataTooLong error msg.

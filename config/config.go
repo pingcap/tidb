@@ -103,6 +103,7 @@ type Config struct {
 	DelayCleanTableLock uint64 `toml:"delay-clean-table-lock" json:"delay-clean-table-lock"`
 	// IsolationRead indicates that the TiDB reads data from which isolation level(engine and label).
 	IsolationRead IsolationRead `toml:"isolation-read" json:"isolation-read"`
+	Experimental  Experimental  `toml:"experimental" json:"experimental"`
 }
 
 // Log is the log section of config.
@@ -347,6 +348,13 @@ type IsolationRead struct {
 	Engines []string `toml:"engines" json:"engines"`
 }
 
+// Experimental controls the features that are still experimental: their semantics, interfaces are subject to change.
+// Using these features in the production environment is not recommended.
+type Experimental struct {
+	// Whether enable the syntax like `auto_random(3)` on the primary key column.
+	AllowAutoRandom bool `toml:"allow-auto-random" json:"allow-auto-random"`
+}
+
 var defaultConf = Config{
 	Host:                         "0.0.0.0",
 	AdvertiseAddress:             "",
@@ -456,6 +464,9 @@ var defaultConf = Config{
 	},
 	IsolationRead: IsolationRead{
 		Engines: []string{"tikv", "tiflash"},
+	},
+	Experimental: Experimental{
+		AllowAutoRandom: false,
 	},
 }
 
@@ -643,6 +654,10 @@ func (c *Config) Valid() error {
 		if engine != "tikv" && engine != "tiflash" {
 			return fmt.Errorf("type of [isolation-read]engines can't be %v should be one of tidb or tikv or tiflash", engine)
 		}
+	}
+
+	if c.AlterPrimaryKey && c.Experimental.AllowAutoRandom {
+		return fmt.Errorf("allow-auto-random is unavailable when alter-primary-key is enabled")
 	}
 	return nil
 }
