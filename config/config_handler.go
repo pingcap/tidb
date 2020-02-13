@@ -41,15 +41,11 @@ type ConfHandler interface {
 // ConfReloadFunc is used to reload the config to make it work.
 type ConfReloadFunc func(oldConf, newConf *Config)
 
-// OverwriteFunc is used to overwrite some config items which are initialized from commend and
-// shouldn't be updated during runtime.
-type OverwriteFunc func(conf *Config)
-
 // NewConfHandler creates a new ConfHandler according to the local config.
-func NewConfHandler(localConf *Config, reloadFunc ConfReloadFunc, overwriteFunc OverwriteFunc) (ConfHandler, error) {
+func NewConfHandler(localConf *Config, reloadFunc ConfReloadFunc) (ConfHandler, error) {
 	switch defaultConf.Store {
 	case "tikv":
-		return newPDConfHandler(localConf, reloadFunc, overwriteFunc, nil)
+		return newPDConfHandler(localConf, reloadFunc, nil)
 	default:
 		return &constantConfHandler{localConf}, nil
 	}
@@ -86,11 +82,9 @@ type pdConfHandler struct {
 	exit       chan struct{}
 	pdConfCli  pd.ConfigClient
 	reloadFunc func(oldConf, newConf *Config)
-
-	overwriteFunc OverwriteFunc
 }
 
-func newPDConfHandler(localConf *Config, reloadFunc ConfReloadFunc, overwriteFunc OverwriteFunc,
+func newPDConfHandler(localConf *Config, reloadFunc ConfReloadFunc,
 	newPDCliFunc func([]string, pd.SecurityOption) (pd.ConfigClient, error), // for test
 ) (*pdConfHandler, error) {
 	addresses, _, err := ParsePath(localConf.Path)
@@ -150,8 +144,6 @@ func newPDConfHandler(localConf *Config, reloadFunc ConfReloadFunc, overwriteFun
 		exit:       make(chan struct{}),
 		pdConfCli:  pdCli,
 		reloadFunc: reloadFunc,
-
-		overwriteFunc: overwriteFunc,
 	}
 	ch.curConf.Store(newConf)
 	return ch, nil
