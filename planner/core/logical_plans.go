@@ -349,14 +349,6 @@ func (la *LogicalAggregation) GetUsedCols() (usedCols []*expression.Column) {
 	return usedCols
 }
 
-// GetGroupByUsedCols extracts all of the Columns used by agg including GroupByItems.
-func (la *LogicalAggregation) GetGroupByUsedCols() (usedCols []*expression.Column) {
-	for _, groupByItem := range la.GroupByItems {
-		usedCols = append(usedCols, expression.ExtractColumns(groupByItem)...)
-	}
-	return usedCols
-}
-
 // LogicalSelection represents a where or having predicate.
 type LogicalSelection struct {
 	baseLogicalPlan

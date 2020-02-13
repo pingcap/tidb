@@ -1803,7 +1803,7 @@ func NewRuleTransformAggregateCaseToSelection() Transformation {
 // Match implements Transformation interface.
 func (r *TransformAggregateCaseToSelection) Match(expr *memo.ExprIter) bool {
 	agg := expr.GetExpr().ExprNode.(*plannercore.LogicalAggregation)
-	return len(agg.GetGroupByUsedCols()) == 0 && len(agg.AggFuncs) == 1 && len(agg.AggFuncs[0].Args) == 1 && r.isTwoOrThreeArgCase(agg.AggFuncs[0].Args[0])
+	return agg.IsCompleteModeAgg() && len(agg.GroupByItems) == 0 && len(agg.AggFuncs) == 1 && len(agg.AggFuncs[0].Args) == 1 && r.isTwoOrThreeArgCase(agg.AggFuncs[0].Args[0])
 }
 
 // OnTransform implements Transformation interface.

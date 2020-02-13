@@ -38,11 +38,11 @@
       "select t2.a, max(t2.b) from t as t1 right join (select * from t) as t2 on t1.a = t2.a group by t2.a order by a",
       "select max(a) from t",
       "select sum(case when a > 0 and a <= 1000 then b else 0 end) from t",
+      "select sum(case when a > 0 then (case when a <= 1000 then b end) else 0 end) from t",
       "select sum(case when a <= 0 or a > 1000 then 0.0 else b end) from t",
       "select count(case when a > 0 and a <= 1000 then b end) from t",
       "select count(case when a <= 0 or a > 1000 then null else b end) from t",
-      "select count(distinct case when a > 0 and a <= 1000 then b end) from t",
-      "select count(distinct case when a > 0 and a <= 1000 then b end) from t group by concat('a', 'b')"
+      "select count(distinct case when a > 0 and a <= 1000 then b end) from t"
     ]
   },
   {
