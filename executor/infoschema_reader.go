@@ -15,6 +15,8 @@ package executor
 
 import (
 	"context"
+	"sort"
+
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/infoschema"
@@ -22,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	"sort"
 )
 
 // InfoschemaReaderExec executes infoschema information retrieving
