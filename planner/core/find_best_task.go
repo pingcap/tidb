@@ -656,13 +656,15 @@ func isCoveringIndex(columns, indexColumns []*expression.Column, idxColLens []in
 // If there is a table reader which needs to keep order, we should append a pk to table scan.
 func (ts *PhysicalTableScan) appendExtraHandleCol(ds *DataSource) (*expression.Column, bool) {
 	handleCol := ds.handleCol
-	if handleCol != nil {
-		return handleCol, false
+	if handleCol == nil {
+		handleCol = ds.newExtraHandleSchemaCol()
 	}
-	handleCol = ds.newExtraHandleSchemaCol()
-	ts.schema.Append(handleCol)
-	ts.Columns = append(ts.Columns, model.NewExtraHandleColInfo())
-	return handleCol, true
+	if handleCol.ID == model.ExtraHandleID && ts.schema.ColumnIndex(handleCol) == -1 {
+		ts.schema.Append(handleCol)
+		ts.Columns = append(ts.Columns, model.NewExtraHandleColInfo())
+		return handleCol, true
+	}
+	return handleCol, false
 }
 
 // convertToIndexScan converts the DataSource to index scan with idx.
@@ -1068,7 +1070,11 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 }
 
 func (ds *DataSource) convertToDoubleReadByPointGet(prop *property.PhysicalProperty, candidate *candidatePath, pg PhysicalPlan) (task task, err error) {
-	cop := &copTask{indexPlan: pg}
+	cop := &copTask{
+		indexPlan:   pg,
+		tblColHists: ds.TblColHists,
+		tblCols:     ds.TblCols,
+	}
 	switch x := pg.(type) {
 	case *PointGetPlan:
 		x.schema = expression.NewSchema(append(candidate.path.IdxCols, ds.getHandleCol())...)
@@ -1099,6 +1105,10 @@ func (ds *DataSource) convertToDoubleReadByPointGet(prop *property.PhysicalPrope
 	ts.SetSchema(ds.schema.Clone())
 	ts.ExpandVirtualColumn()
 	cop.tablePlan = ts
+	ts.stats = cop.indexPlan.statsInfo()
+	rowSize := cop.tblColHists.GetIndexAvgRowSize(pg.SCtx(), ds.TblCols, candidate.path.Index.Unique)
+	cop.cst += float64(cop.indexPlan.Stats().Count()) * rowSize * ds.ctx.GetSessionVars().ScanFactor
+
 	if candidate.isMatchProp {
 		col, isNew := cop.tablePlan.(*PhysicalTableScan).appendExtraHandleCol(ds)
 		cop.extraHandleCol = col
@@ -1106,9 +1116,13 @@ func (ds *DataSource) convertToDoubleReadByPointGet(prop *property.PhysicalPrope
 		cop.keepOrder = true
 	}
 	ts.addPushedDownSelection(cop, ds.stats.ScaleByExpectCnt(prop.ExpectedCnt))
-	newTask := buildIndexLookUpTask(ds.ctx, cop)
+	newTask := buildIndexLookUpTask(ds.ctx, cop, ds.schema)
 	// If len(IndexLookUpReader.children) != 0, that means its index side is a PointGet.
-	newTask.plan().SetChildren(newTask.plan().(*PhysicalIndexLookUpReader).indexPlan)
+	if proj, isProj := newTask.plan().(*PhysicalProjection); isProj {
+		proj.children[0].SetChildren(proj.children[0].(*PhysicalIndexLookUpReader).indexPlan)
+	} else {
+		newTask.plan().SetChildren(newTask.plan().(*PhysicalIndexLookUpReader).indexPlan)
+	}
 	if len(cop.rootTaskConds) > 0 {
 		sel := PhysicalSelection{Conditions: cop.rootTaskConds}.Init(ds.ctx, newTask.p.statsInfo(), newTask.p.SelectBlockOffset())
 		sel.SetChildren(newTask.p)
@@ -1131,7 +1145,7 @@ func (ds *DataSource) convertToPointGet(prop *property.PhysicalProperty, candida
 
 	pointGetPlan := PointGetPlan{
 		ctx:          ds.ctx,
-		schema: ds.schema.Clone(),
+		schema:       ds.schema.Clone(),
 		dbName:       ds.DBName.L,
 		TblInfo:      ds.TableInfo(),
 		outputNames:  ds.OutputNames(),
@@ -1147,7 +1161,7 @@ func (ds *DataSource) convertToPointGet(prop *property.PhysicalProperty, candida
 			}
 		}
 	}
-	rTsk := &rootTask{ p:   pointGetPlan}
+	rTsk := &rootTask{p: pointGetPlan}
 	var cost float64
 	if candidate.path.IsTablePath {
 		pointGetPlan.Handle = candidate.path.Ranges[0].LowVal[0].GetInt64()
@@ -1212,9 +1226,7 @@ func (ds *DataSource) convertToBatchPointGet(prop *property.PhysicalProperty, ca
 	if batchPointGetPlan.KeepOrder {
 		batchPointGetPlan.Desc = prop.Items[0].Desc
 	}
-	rTsk := &rootTask{
-		p:   batchPointGetPlan,
-	}
+	rTsk := &rootTask{p: batchPointGetPlan}
 	var cost float64
 	if candidate.path.IsTablePath {
 		for _, ran := range candidate.path.Ranges {

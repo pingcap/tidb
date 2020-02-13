@@ -618,8 +618,8 @@ func splitCopAvg2CountAndSum(p PhysicalPlan) {
 	}
 }
 
-func buildIndexLookUpTask(ctx sessionctx.Context, t *copTask) *rootTask {
-	newTask := &rootTask{cst:t.cst}
+func buildIndexLookUpTask(ctx sessionctx.Context, t *copTask, dataSourceSchema *expression.Schema) *rootTask {
+	newTask := &rootTask{cst: t.cst}
 	sessVars := ctx.GetSessionVars()
 	p := PhysicalIndexLookUpReader{
 		tablePlan:      t.tablePlan,
@@ -656,7 +656,10 @@ func buildIndexLookUpTask(ctx sessionctx.Context, t *copTask) *rootTask {
 		newTask.cst += sortCPUCost
 	}
 	if t.doubleReadNeedProj {
-		schema := p.IndexPlans[0].(*PhysicalIndexScan).dataSourceSchema
+		schema := dataSourceSchema
+		if schema == nil {
+			schema = p.IndexPlans[0].(*PhysicalIndexScan).dataSourceSchema
+		}
 		proj := PhysicalProjection{Exprs: expression.Column2Exprs(schema.Columns)}.Init(ctx, p.stats, t.tablePlan.SelectBlockOffset(), nil)
 		proj.SetSchema(schema)
 		proj.SetChildren(p)
@@ -694,7 +697,7 @@ func finishCopTask(ctx sessionctx.Context, task task) task {
 		return newTask
 	}
 	if t.indexPlan != nil && t.tablePlan != nil {
-		newTask = buildIndexLookUpTask(ctx, t)
+		newTask = buildIndexLookUpTask(ctx, t, nil)
 	} else if t.indexPlan != nil {
 		p := PhysicalIndexReader{indexPlan: t.indexPlan}.Init(ctx, t.indexPlan.SelectBlockOffset())
 		p.stats = t.indexPlan.statsInfo()

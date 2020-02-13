@@ -59,7 +59,7 @@ type PointGetPlan struct {
 	IsForUpdate      bool
 	outputNames      []*types.FieldName
 	LockWaitTime     int64
-	cost float64
+	cost             float64
 }
 
 type nameValuePair struct {
@@ -182,7 +182,7 @@ func (p *PointGetPlan) SetOutputNames(names types.NameSlice) {
 func (p *PointGetPlan) GetCost(cols []*expression.Column) float64 {
 	sessVars := p.ctx.GetSessionVars()
 	var rowSize float64
-	p.cost = 0;
+	p.cost = 0
 	if p.IndexInfo == nil {
 		rowSize = p.stats.HistColl.GetTableAvgRowSize(p.ctx, cols, kv.TiKV, true)
 	} else {
@@ -207,7 +207,7 @@ type BatchPointGetPlan struct {
 	IndexValueParams [][]*driver.ParamMarkerExpr
 	KeepOrder        bool
 	Desc             bool
-	cost float64
+	cost             float64
 }
 
 // attach2Task makes the current physical plan as the father of task's physicalPlan and updates the cost of
