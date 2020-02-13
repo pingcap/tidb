@@ -233,7 +233,7 @@ func TypeStringToPhysicalID(tp string) int {
 	case TypeClusterMemTableReader:
 		return typeClusterMemTableReader
 	case TypeDataSource:
-		return typeDataSourceID	
+		return typeDataSourceID
 	}
 	// Should never reach here.
 	return 0
