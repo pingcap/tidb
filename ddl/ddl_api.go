@@ -1312,6 +1312,11 @@ func buildTableInfoWithLike(ident ast.Ident, referTblInfo *model.TableInfo) mode
 	tblInfo.Name = ident.Name
 	tblInfo.AutoIncID = 0
 	tblInfo.ForeignKeys = nil
+	if tblInfo.TiFlashReplica != nil {
+		// Keep the tiflash replica setting, remove the replica available status.
+		tblInfo.TiFlashReplica.AvailablePartitionIDs = nil
+		tblInfo.TiFlashReplica.Available = false
+	}
 	if referTblInfo.Partition != nil {
 		pi := *referTblInfo.Partition
 		pi.Definitions = make([]model.PartitionDefinition, len(referTblInfo.Partition.Definitions))
@@ -3211,7 +3216,7 @@ func (d *ddl) UpdateTableReplicaInfo(ctx sessionctx.Context, physicalID int64, a
 		}
 	}
 	tbInfo := tb.Meta()
-	if tbInfo.TiFlashReplica == nil || (tbInfo.TiFlashReplica.Available == available) ||
+	if tbInfo.TiFlashReplica == nil || (tbInfo.ID == physicalID && tbInfo.TiFlashReplica.Available == available) ||
 		(tbInfo.ID != physicalID && available == tbInfo.TiFlashReplica.IsPartitionAvailable(physicalID)) {
 		return nil
 	}
