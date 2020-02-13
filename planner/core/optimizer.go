@@ -47,6 +47,7 @@ const (
 	flagEliminateProjection
 	flagMaxMinEliminate
 	flagPredicatePushDown
+	flagPrunColumnsAgain
 	flagEliminateOuterJoin
 	flagPartitionProcessor
 	flagPushDownAgg
@@ -63,6 +64,7 @@ var optRuleList = []logicalOptRule{
 	&projectionEliminator{},
 	&maxMinEliminator{},
 	&ppdSolver{},
+	&columnPruner{}, // column pruning again after predicate push down
 	&outerJoinEliminator{},
 	&partitionProcessor{},
 	&aggregationPushDownSolver{},

@@ -111,12 +111,14 @@ func (decoder *DatumMapDecoder) DecodeToDatumMap(rowData []byte, handle int64, r
 func (decoder *DatumMapDecoder) decodeColDatum(col *ColInfo, colData []byte) (types.Datum, error) {
 	var d types.Datum
 	switch byte(col.Tp) {
-	case mysql.TypeLonglong, mysql.TypeLong, mysql.TypeInt24, mysql.TypeShort, mysql.TypeTiny, mysql.TypeYear:
+	case mysql.TypeLonglong, mysql.TypeLong, mysql.TypeInt24, mysql.TypeShort, mysql.TypeTiny:
 		if mysql.HasUnsignedFlag(uint(col.Flag)) {
 			d.SetUint64(decodeUint(colData))
 		} else {
 			d.SetInt64(decodeInt(colData))
 		}
+	case mysql.TypeYear:
+		d.SetInt64(decodeInt(colData))
 	case mysql.TypeFloat:
 		_, fVal, err := codec.DecodeFloat(colData)
 		if err != nil {
@@ -248,12 +250,14 @@ func (decoder *ChunkDecoder) DecodeToChunk(rowData []byte, handle int64, chk *ch
 
 func (decoder *ChunkDecoder) decodeColToChunk(colIdx int, col *ColInfo, colData []byte, chk *chunk.Chunk) error {
 	switch byte(col.Tp) {
-	case mysql.TypeLonglong, mysql.TypeLong, mysql.TypeInt24, mysql.TypeShort, mysql.TypeTiny, mysql.TypeYear:
+	case mysql.TypeLonglong, mysql.TypeLong, mysql.TypeInt24, mysql.TypeShort, mysql.TypeTiny:
 		if mysql.HasUnsignedFlag(uint(col.Flag)) {
 			chk.AppendUint64(colIdx, decodeUint(colData))
 		} else {
 			chk.AppendInt64(colIdx, decodeInt(colData))
 		}
+	case mysql.TypeYear:
+		chk.AppendInt64(colIdx, decodeInt(colData))
 	case mysql.TypeFloat:
 		_, fVal, err := codec.DecodeFloat(colData)
 		if err != nil {
