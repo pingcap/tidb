@@ -419,8 +419,11 @@ func (lr *LockResolver) getTxnStatusFromLock(bo *Backoffer, l *Lock, callerStart
 		// This is likely to happen in the concurrently prewrite when secondary regions
 		// success before the primary region.
 		if err := bo.Backoff(boTxnNotFound, err); err != nil {
-			logutil.BgLogger().Warn("getTxnStatusFromLock backoff fail", zap.Error(err))
+			logutil.Logger(bo.ctx).Warn("getTxnStatusFromLock backoff fail", zap.Error(err))
 		}
+		logutil.Logger(bo.ctx).Warn("resolve lock txn not found",
+			zap.Uint64("CallerStartTs", callerStartTS),
+			zap.Stringer("lock str", l))
 
 		if lr.store.GetOracle().UntilExpired(l.TxnID, l.TTL) <= 0 {
 			rollbackIfNotExist = true

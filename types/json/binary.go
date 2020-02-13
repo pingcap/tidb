@@ -292,7 +292,7 @@ func marshalStringTo(buf, s []byte) []byte {
 	start := 0
 	for i := 0; i < len(s); {
 		if b := s[i]; b < utf8.RuneSelf {
-			if htmlSafeSet[b] {
+			if safeSet[b] {
 				i++
 				continue
 			}

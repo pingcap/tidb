@@ -106,6 +106,12 @@ const (
 	tableTiFlashReplica    = "TIFLASH_REPLICA"
 	// TableInspectionResult is the string constant of inspection result table
 	TableInspectionResult = "INSPECTION_RESULT"
+	// TableMetricTables is a table that contains all metrics table definition.
+	TableMetricTables = "METRICS_TABLES"
+	// TableMetricSummary is a summary table that contains all metrics.
+	TableMetricSummary = "METRICS_SUMMARY"
+	// TableMetricSummaryByLabel is a metric table that contains all metrics that group by label info.
+	TableMetricSummaryByLabel = "METRICS_SUMMARY_BY_LABEL"
 )
 
 var tableIDMap = map[string]int64{
@@ -160,6 +166,9 @@ var tableIDMap = map[string]int64{
 	TableClusterHardware:                    autoid.InformationSchemaDBID + 49,
 	TableClusterSystemInfo:                  autoid.InformationSchemaDBID + 50,
 	TableInspectionResult:                   autoid.InformationSchemaDBID + 51,
+	TableMetricSummary:                      autoid.InformationSchemaDBID + 52,
+	TableMetricSummaryByLabel:               autoid.InformationSchemaDBID + 53,
+	TableMetricTables:                       autoid.InformationSchemaDBID + 54,
 }
 
 type columnInfo struct {
@@ -733,7 +742,7 @@ var tableTiDBServersInfoCols = []columnInfo{
 
 var tableClusterConfigCols = []columnInfo{
 	{"TYPE", mysql.TypeVarchar, 64, 0, nil, nil},
-	{"ADDRESS", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"INSTANCE", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"KEY", mysql.TypeVarchar, 256, 0, nil, nil},
 	{"VALUE", mysql.TypeVarchar, 128, 0, nil, nil},
 }
@@ -741,23 +750,23 @@ var tableClusterConfigCols = []columnInfo{
 var tableClusterLogCols = []columnInfo{
 	{"TIME", mysql.TypeVarchar, 32, 0, nil, nil},
 	{"TYPE", mysql.TypeVarchar, 64, 0, nil, nil},
-	{"ADDRESS", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"INSTANCE", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"LEVEL", mysql.TypeVarchar, 8, 0, nil, nil},
 	{"MESSAGE", mysql.TypeVarString, 1024, 0, nil, nil},
 }
 
 var tableClusterLoadCols = []columnInfo{
 	{"TYPE", mysql.TypeVarchar, 64, 0, nil, nil},
-	{"ADDRESS", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"INSTANCE", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"DEVICE_TYPE", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"DEVICE_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
-	{"LOAD_NAME", mysql.TypeVarchar, 256, 0, nil, nil},
-	{"LOAD_VALUE", mysql.TypeVarchar, 128, 0, nil, nil},
+	{"NAME", mysql.TypeVarchar, 256, 0, nil, nil},
+	{"VALUE", mysql.TypeVarchar, 128, 0, nil, nil},
 }
 
 var tableClusterHardwareCols = []columnInfo{
 	{"TYPE", mysql.TypeVarchar, 64, 0, nil, nil},
-	{"ADDRESS", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"INSTANCE", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"DEVICE_TYPE", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"DEVICE_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"NAME", mysql.TypeVarchar, 256, 0, nil, nil},
@@ -766,7 +775,7 @@ var tableClusterHardwareCols = []columnInfo{
 
 var tableClusterSystemInfoCols = []columnInfo{
 	{"TYPE", mysql.TypeVarchar, 64, 0, nil, nil},
-	{"ADDRESS", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"INSTANCE", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"SYSTEM_TYPE", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"SYSTEM_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"NAME", mysql.TypeVarchar, 256, 0, nil, nil},
@@ -1099,10 +1108,12 @@ var filesCols = []columnInfo{
 
 var tableClusterInfoCols = []columnInfo{
 	{"TYPE", mysql.TypeVarchar, 64, 0, nil, nil},
-	{"ADDRESS", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"INSTANCE", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"STATUS_ADDRESS", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"VERSION", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"GIT_HASH", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"START_TIME", mysql.TypeVarchar, 32, 0, nil, nil},
+	{"UPTIME", mysql.TypeVarchar, 32, 0, nil, nil},
 }
 
 var tableTableTiFlashReplicaCols = []columnInfo{
@@ -1112,15 +1123,47 @@ var tableTableTiFlashReplicaCols = []columnInfo{
 	{"REPLICA_COUNT", mysql.TypeLonglong, 64, 0, nil, nil},
 	{"LOCATION_LABELS", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"AVAILABLE", mysql.TypeTiny, 1, 0, nil, nil},
+	{"PROGRESS", mysql.TypeDouble, 22, 0, nil, nil},
 }
 
 var tableInspectionResultCols = []columnInfo{
 	{"RULE", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"ITEM", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"TYPE", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"INSTANCE", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"VALUE", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"REFERENCE", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"SEVERITY", mysql.TypeVarchar, 64, 0, nil, nil},
-	{"SUGGESTION", mysql.TypeVarchar, 256, 0, nil, nil},
+	{"DETAILS", mysql.TypeVarchar, 256, 0, nil, nil},
+}
+
+var tableMetricTablesCols = []columnInfo{
+	{"TABLE_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"PROMQL", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"LABELS", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"QUANTILE", mysql.TypeDouble, 22, 0, nil, nil},
+	{"COMMENT", mysql.TypeVarchar, 256, 0, nil, nil},
+}
+
+var tableMetricSummaryCols = []columnInfo{
+	{"METRIC_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"TIME", mysql.TypeDatetime, -1, 0, nil, nil},
+	{"SUM_VALUE", mysql.TypeDouble, 22, 0, nil, nil},
+	{"AVG_VALUE", mysql.TypeDouble, 22, 0, nil, nil},
+	{"MIN_VALUE", mysql.TypeDouble, 22, 0, nil, nil},
+	{"MAX_VALUE", mysql.TypeDouble, 22, 0, nil, nil},
+	{"COMMENT", mysql.TypeVarchar, 256, 0, nil, nil},
+}
+
+var tableMetricSummaryByLabelCols = []columnInfo{
+	{"METRIC_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"LABEL", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"TIME", mysql.TypeDatetime, -1, 0, nil, nil},
+	{"SUM_VALUE", mysql.TypeDouble, 22, 0, nil, nil},
+	{"AVG_VALUE", mysql.TypeDouble, 22, 0, nil, nil},
+	{"MIN_VALUE", mysql.TypeDouble, 22, 0, nil, nil},
+	{"MAX_VALUE", mysql.TypeDouble, 22, 0, nil, nil},
+	{"COMMENT", mysql.TypeVarchar, 256, 0, nil, nil},
 }
 
 func dataForSchemata(ctx sessionctx.Context, schemas []*model.DBInfo) [][]types.Datum {
@@ -1437,7 +1480,8 @@ func dataForTables(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.D
 // GetShardingInfo returns a nil or description string for the sharding information of given TableInfo.
 // The returned description string may be:
 //  - "NOT_SHARDED": for tables that SHARD_ROW_ID_BITS is not specified.
-//  - "NOT_SHARDED(PK_IS_HANDLE)": for tables that is primary key is row id.
+//  - "NOT_SHARDED(PK_IS_HANDLE)": for tables of which primary key is row id.
+//  - "PK_AUTO_RANDOM_BITS={bit_number}": for tables of which primary key is sharded row id.
 //  - "SHARD_BITS={bit_number}": for tables that with SHARD_ROW_ID_BITS.
 // The returned nil indicates that sharding information is not suitable for the table(for example, when the table is a View).
 // This function is exported for unit test.
@@ -1447,11 +1491,13 @@ func GetShardingInfo(dbInfo *model.DBInfo, tableInfo *model.TableInfo) interface
 	}
 	shardingInfo := "NOT_SHARDED"
 	if tableInfo.PKIsHandle {
-		shardingInfo = "NOT_SHARDED(PK_IS_HANDLE)"
-	} else {
-		if tableInfo.ShardRowIDBits > 0 {
-			shardingInfo = "SHARD_BITS=" + strconv.Itoa(int(tableInfo.ShardRowIDBits))
+		if tableInfo.ContainsAutoRandomBits() {
+			shardingInfo = "PK_AUTO_RANDOM_BITS=" + strconv.Itoa(int(tableInfo.AutoRandomBits))
+		} else {
+			shardingInfo = "NOT_SHARDED(PK_IS_HANDLE)"
 		}
+	} else if tableInfo.ShardRowIDBits > 0 {
+		shardingInfo = "SHARD_BITS=" + strconv.Itoa(int(tableInfo.ShardRowIDBits))
 	}
 	return shardingInfo
 }
@@ -1785,6 +1831,107 @@ func dataForPseudoProfiling() [][]types.Datum {
 	return rows
 }
 
+func dataForPartitions(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.Datum, error) {
+	tableRowsMap, colLengthMap, err := tableStatsCache.get(ctx)
+	if err != nil {
+		return nil, err
+	}
+	checker := privilege.GetPrivilegeManager(ctx)
+	var rows [][]types.Datum
+	createTimeTp := partitionsCols[18].tp
+	for _, schema := range schemas {
+		for _, table := range schema.Tables {
+			if checker != nil && !checker.RequestVerification(ctx.GetSessionVars().ActiveRoles, schema.Name.L, table.Name.L, "", mysql.SelectPriv) {
+				continue
+			}
+			createTime := types.NewTime(types.FromGoTime(table.GetUpdateTime()), createTimeTp, types.DefaultFsp)
+
+			var rowCount, dataLength, indexLength uint64
+			if table.GetPartitionInfo() == nil {
+				rowCount = tableRowsMap[table.ID]
+				dataLength, indexLength = getDataAndIndexLength(table, table.ID, rowCount, colLengthMap)
+				avgRowLength := uint64(0)
+				if rowCount != 0 {
+					avgRowLength = dataLength / rowCount
+				}
+				record := types.MakeDatums(
+					catalogVal,    // TABLE_CATALOG
+					schema.Name.O, // TABLE_SCHEMA
+					table.Name.O,  // TABLE_NAME
+					nil,           // PARTITION_NAME
+					nil,           // SUBPARTITION_NAME
+					nil,           // PARTITION_ORDINAL_POSITION
+					nil,           // SUBPARTITION_ORDINAL_POSITION
+					nil,           // PARTITION_METHOD
+					nil,           // SUBPARTITION_METHOD
+					nil,           // PARTITION_EXPRESSION
+					nil,           // SUBPARTITION_EXPRESSION
+					nil,           // PARTITION_DESCRIPTION
+					rowCount,      // TABLE_ROWS
+					avgRowLength,  // AVG_ROW_LENGTH
+					dataLength,    // DATA_LENGTH
+					nil,           // MAX_DATA_LENGTH
+					indexLength,   // INDEX_LENGTH
+					nil,           // DATA_FREE
+					createTime,    // CREATE_TIME
+					nil,           // UPDATE_TIME
+					nil,           // CHECK_TIME
+					nil,           // CHECKSUM
+					nil,           // PARTITION_COMMENT
+					nil,           // NODEGROUP
+					nil,           // TABLESPACE_NAME
+				)
+				rows = append(rows, record)
+			} else {
+				for i, pi := range table.GetPartitionInfo().Definitions {
+					rowCount = tableRowsMap[pi.ID]
+					dataLength, indexLength = getDataAndIndexLength(table, pi.ID, tableRowsMap[pi.ID], colLengthMap)
+
+					avgRowLength := uint64(0)
+					if rowCount != 0 {
+						avgRowLength = dataLength / rowCount
+					}
+
+					var partitionDesc string
+					if table.Partition.Type == model.PartitionTypeRange {
+						partitionDesc = pi.LessThan[0]
+					}
+
+					record := types.MakeDatums(
+						catalogVal,                    // TABLE_CATALOG
+						schema.Name.O,                 // TABLE_SCHEMA
+						table.Name.O,                  // TABLE_NAME
+						pi.Name.O,                     // PARTITION_NAME
+						nil,                           // SUBPARTITION_NAME
+						i+1,                           // PARTITION_ORDINAL_POSITION
+						nil,                           // SUBPARTITION_ORDINAL_POSITION
+						table.Partition.Type.String(), // PARTITION_METHOD
+						nil,                           // SUBPARTITION_METHOD
+						table.Partition.Expr,          // PARTITION_EXPRESSION
+						nil,                           // SUBPARTITION_EXPRESSION
+						partitionDesc,                 // PARTITION_DESCRIPTION
+						rowCount,                      // TABLE_ROWS
+						avgRowLength,                  // AVG_ROW_LENGTH
+						dataLength,                    // DATA_LENGTH
+						uint64(0),                     // MAX_DATA_LENGTH
+						indexLength,                   // INDEX_LENGTH
+						uint64(0),                     // DATA_FREE
+						createTime,                    // CREATE_TIME
+						nil,                           // UPDATE_TIME
+						nil,                           // CHECK_TIME
+						nil,                           // CHECKSUM
+						pi.Comment,                    // PARTITION_COMMENT
+						nil,                           // NODEGROUP
+						nil,                           // TABLESPACE_NAME
+					)
+					rows = append(rows, record)
+				}
+			}
+		}
+	}
+	return rows, nil
+}
+
 func dataForKeyColumnUsage(ctx sessionctx.Context, schemas []*model.DBInfo) [][]types.Datum {
 	checker := privilege.GetPrivilegeManager(ctx)
 	rows := make([][]types.Datum, 0, len(schemas)) // The capacity is not accurate, but it is not a big problem.
@@ -1987,11 +2134,12 @@ func dataForServersInfo() ([][]types.Datum, error) {
 
 // ServerInfo represents the basic server information of single cluster component
 type ServerInfo struct {
-	ServerType string
-	Address    string
-	StatusAddr string
-	Version    string
-	GitHash    string
+	ServerType     string
+	Address        string
+	StatusAddr     string
+	Version        string
+	GitHash        string
+	StartTimestamp int64
 }
 
 // GetClusterServerInfo returns all components information of cluster
@@ -2038,11 +2186,12 @@ func GetTiDBServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 	var servers []ServerInfo
 	for _, node := range tidbNodes {
 		servers = append(servers, ServerInfo{
-			ServerType: "tidb",
-			Address:    fmt.Sprintf("%s:%d", node.IP, node.Port),
-			StatusAddr: fmt.Sprintf("%s:%d", node.IP, node.StatusPort),
-			Version:    node.Version,
-			GitHash:    node.GitHash,
+			ServerType:     "tidb",
+			Address:        fmt.Sprintf("%s:%d", node.IP, node.Port),
+			StatusAddr:     fmt.Sprintf("%s:%d", node.IP, node.StatusPort),
+			Version:        node.Version,
+			GitHash:        node.GitHash,
+			StartTimestamp: node.StartTimestamp,
 		})
 	}
 	return servers, nil
@@ -2090,7 +2239,8 @@ func GetPDServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 			return nil, errors.Trace(err)
 		}
 		var content = struct {
-			GitHash string `json:"git_hash"`
+			GitHash        string `json:"git_hash"`
+			StartTimestamp int64  `json:"start_timestamp"`
 		}{}
 		if err := json.NewDecoder(resp.Body).Decode(&content); err != nil {
 			return nil, errors.Trace(err)
@@ -2098,11 +2248,12 @@ func GetPDServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 		terror.Log(resp.Body.Close())
 
 		servers = append(servers, ServerInfo{
-			ServerType: "pd",
-			Address:    addr,
-			StatusAddr: addr,
-			Version:    version,
-			GitHash:    content.GitHash,
+			ServerType:     "pd",
+			Address:        addr,
+			StatusAddr:     addr,
+			Version:        version,
+			GitHash:        content.GitHash,
+			StartTimestamp: content.StartTimestamp,
 		})
 	}
 	return servers, nil
@@ -2128,11 +2279,12 @@ func GetTiKVServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 	var servers []ServerInfo
 	for _, storeStat := range storesStat.Stores {
 		servers = append(servers, ServerInfo{
-			ServerType: "tikv",
-			Address:    storeStat.Store.Address,
-			StatusAddr: storeStat.Store.StatusAddress,
-			Version:    storeStat.Store.Version,
-			GitHash:    storeStat.Store.GitHash,
+			ServerType:     "tikv",
+			Address:        storeStat.Store.Address,
+			StatusAddr:     storeStat.Store.StatusAddress,
+			Version:        storeStat.Store.Version,
+			GitHash:        storeStat.Store.GitHash,
+			StartTimestamp: storeStat.Store.StartTimestamp,
 		})
 	}
 	return servers, nil
@@ -2145,12 +2297,15 @@ func dataForTiDBClusterInfo(ctx sessionctx.Context) ([][]types.Datum, error) {
 	}
 	rows := make([][]types.Datum, 0, len(servers))
 	for _, server := range servers {
+		startTime := time.Unix(server.StartTimestamp, 0)
 		row := types.MakeDatums(
 			server.ServerType,
 			server.Address,
 			server.StatusAddr,
 			server.Version,
 			server.GitHash,
+			startTime.Format(time.RFC3339),
+			time.Since(startTime).String(),
 		)
 		rows = append(rows, row)
 	}
@@ -2158,12 +2313,32 @@ func dataForTiDBClusterInfo(ctx sessionctx.Context) ([][]types.Datum, error) {
 }
 
 // dataForTableTiFlashReplica constructs data for table tiflash replica info.
-func dataForTableTiFlashReplica(schemas []*model.DBInfo) [][]types.Datum {
+func dataForTableTiFlashReplica(ctx sessionctx.Context, schemas []*model.DBInfo) [][]types.Datum {
 	var rows [][]types.Datum
+	progressMap, err := infosync.GetTiFlashTableSyncProgress(context.Background())
+	if err != nil {
+		ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+	}
 	for _, schema := range schemas {
 		for _, tbl := range schema.Tables {
 			if tbl.TiFlashReplica == nil {
 				continue
+			}
+			progress := 1.0
+			if !tbl.TiFlashReplica.Available {
+				if pi := tbl.GetPartitionInfo(); pi != nil && len(pi.Definitions) > 0 {
+					progress = 0
+					for _, p := range pi.Definitions {
+						if tbl.TiFlashReplica.IsPartitionAvailable(p.ID) {
+							progress += 1
+						} else {
+							progress += progressMap[p.ID]
+						}
+					}
+					progress = progress / float64(len(pi.Definitions))
+				} else {
+					progress = progressMap[tbl.ID]
+				}
 			}
 			record := types.MakeDatums(
 				schema.Name.O,                   // TABLE_SCHEMA
@@ -2172,9 +2347,32 @@ func dataForTableTiFlashReplica(schemas []*model.DBInfo) [][]types.Datum {
 				int64(tbl.TiFlashReplica.Count), // REPLICA_COUNT
 				strings.Join(tbl.TiFlashReplica.LocationLabels, ","), // LOCATION_LABELS
 				tbl.TiFlashReplica.Available,                         // AVAILABLE
+				progress,                                             // PROGRESS
 			)
 			rows = append(rows, record)
 		}
+	}
+	return rows
+}
+
+// dataForTableTiFlashReplica constructs data for all metric table definition.
+func dataForMetricTables(ctx sessionctx.Context) [][]types.Datum {
+	var rows [][]types.Datum
+	tables := make([]string, 0, len(MetricTableMap))
+	for name := range MetricTableMap {
+		tables = append(tables, name)
+	}
+	sort.Strings(tables)
+	for _, name := range tables {
+		schema := MetricTableMap[name]
+		record := types.MakeDatums(
+			name,                             // METRIC_NAME
+			schema.PromQL,                    // PROMQL
+			strings.Join(schema.Labels, ","), // LABELS
+			schema.Quantile,                  // QUANTILE
+			schema.Comment,                   // COMMENT
+		)
+		rows = append(rows, record)
 	}
 	return rows
 }
@@ -2228,6 +2426,9 @@ var tableNameToColumns = map[string][]columnInfo{
 	TableClusterHardware:                    tableClusterHardwareCols,
 	TableClusterSystemInfo:                  tableClusterSystemInfoCols,
 	TableInspectionResult:                   tableInspectionResultCols,
+	TableMetricSummary:                      tableMetricSummaryCols,
+	TableMetricSummaryByLabel:               tableMetricSummaryByLabelCols,
+	TableMetricTables:                       tableMetricTablesCols,
 }
 
 func createInfoSchemaTable(_ autoid.Allocators, meta *model.TableInfo) (table.Table, error) {
@@ -2292,6 +2493,7 @@ func (it *infoschemaTable) getRows(ctx sessionctx.Context, cols []*table.Column)
 			fullRows = dataForPseudoProfiling()
 		}
 	case tablePartitions:
+		fullRows, err = dataForPartitions(ctx, dbs)
 	case tableKeyColumn:
 		fullRows = dataForKeyColumnUsage(ctx, dbs)
 	case tableReferConst:
@@ -2335,7 +2537,9 @@ func (it *infoschemaTable) getRows(ctx sessionctx.Context, cols []*table.Column)
 	case TableClusterInfo:
 		fullRows, err = dataForTiDBClusterInfo(ctx)
 	case tableTiFlashReplica:
-		fullRows = dataForTableTiFlashReplica(dbs)
+		fullRows = dataForTableTiFlashReplica(ctx, dbs)
+	case TableMetricTables:
+		fullRows = dataForMetricTables(ctx)
 	// Data for cluster memory table.
 	case clusterTableSlowLog, clusterTableProcesslist:
 		fullRows, err = getClusterMemTableRows(ctx, it.meta.Name.O)
@@ -2406,6 +2610,11 @@ func (it *infoschemaTable) HiddenCols() []*table.Column {
 
 // WritableCols implements table.Table WritableCols interface.
 func (it *infoschemaTable) WritableCols() []*table.Column {
+	return it.cols
+}
+
+// DeletableCols implements table DeletableCols interface.
+func (it *infoschemaTable) DeletableCols() []*table.Column {
 	return it.cols
 }
 
@@ -2543,6 +2752,11 @@ func (vt *VirtualTable) HiddenCols() []*table.Column {
 
 // WritableCols implements table.Table WritableCols interface.
 func (vt *VirtualTable) WritableCols() []*table.Column {
+	return nil
+}
+
+// DeletableCols implements table DeletableCols interface.
+func (vt *VirtualTable) DeletableCols() []*table.Column {
 	return nil
 }
 
