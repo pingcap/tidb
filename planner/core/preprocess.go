@@ -15,6 +15,7 @@ package core
 
 import (
 	"fmt"
+	"log"
 	"math"
 	"strings"
 
@@ -284,6 +285,7 @@ func isConstraintKeyTp(constraints []*ast.Constraint, colDef *ast.ColumnDef) boo
 		switch c.Tp {
 		case ast.ConstraintPrimaryKey, ast.ConstraintKey, ast.ConstraintIndex,
 			ast.ConstraintUniq, ast.ConstraintUniqIndex, ast.ConstraintUniqKey:
+			log.Printf("FUCK...%s FUCK...%s", colDef.Name.Name.L, c.Keys[0].Column.Name.L)
 			return true
 		}
 	}
@@ -292,14 +294,11 @@ func isConstraintKeyTp(constraints []*ast.Constraint, colDef *ast.ColumnDef) boo
 }
 
 func (p *preprocessor) checkAutoIncrement(stmt *ast.CreateTableStmt) {
-	var (
-		isKey            bool
-		count            int
-		autoIncrementCol *ast.ColumnDef
-	)
+	autoIncrementCols := make(map[*ast.ColumnDef]bool)
 
 	for _, colDef := range stmt.Cols {
 		var hasAutoIncrement bool
+		var isKey bool
 		for i, op := range colDef.Options {
 			ok, err := checkAutoIncrementOp(colDef, i)
 			if err != nil {
@@ -309,41 +308,42 @@ func (p *preprocessor) checkAutoIncrement(stmt *ast.CreateTableStmt) {
 			if ok {
 				hasAutoIncrement = true
 			}
-			// Only when the col has auto_increment, check the col is key.
-			if hasAutoIncrement {
-				switch op.Tp {
-				case ast.ColumnOptionPrimaryKey, ast.ColumnOptionUniqKey:
-					isKey = true
-				}
+			switch op.Tp {
+			case ast.ColumnOptionPrimaryKey, ast.ColumnOptionUniqKey:
+				isKey = true
 			}
 		}
 		if hasAutoIncrement {
-			count++
-			autoIncrementCol = colDef
+			autoIncrementCols[colDef] = isKey
 		}
 	}
 
-	if count < 1 {
+	if len(autoIncrementCols) < 1 {
 		return
-	}
-	if !isKey {
-		isKey = isConstraintKeyTp(stmt.Constraints, autoIncrementCol)
-	}
-	autoIncrementMustBeKey := true
-	for _, opt := range stmt.Options {
-		if opt.Tp == ast.TableOptionEngine && strings.EqualFold(opt.StrValue, "MyISAM") {
-			autoIncrementMustBeKey = false
-		}
-	}
-	if (autoIncrementMustBeKey && !isKey) || count > 1 {
+	} else if len(autoIncrementCols) > 1 {
 		p.err = autoid.ErrWrongAutoKey.GenWithStackByArgs()
-	}
-
-	switch autoIncrementCol.Tp.Tp {
-	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeLong,
-		mysql.TypeFloat, mysql.TypeDouble, mysql.TypeLonglong, mysql.TypeInt24:
-	default:
-		p.err = errors.Errorf("Incorrect column specifier for column '%s'", autoIncrementCol.Name.Name.O)
+	} else {
+		// Only have one auto_increment col.
+		for col, isKey := range autoIncrementCols {
+			if !isKey {
+				isKey = isConstraintKeyTp(stmt.Constraints, col)
+			}
+			autoIncrementMustBeKey := true
+			for _, opt := range stmt.Options {
+				if opt.Tp == ast.TableOptionEngine && strings.EqualFold(opt.StrValue, "MyISAM") {
+					autoIncrementMustBeKey = false
+				}
+			}
+			if autoIncrementMustBeKey && !isKey {
+				p.err = autoid.ErrWrongAutoKey.GenWithStackByArgs()
+			}
+			switch col.Tp.Tp {
+			case mysql.TypeTiny, mysql.TypeShort, mysql.TypeLong,
+				mysql.TypeFloat, mysql.TypeDouble, mysql.TypeLonglong, mysql.TypeInt24:
+			default:
+				p.err = errors.Errorf("Incorrect column specifier for column '%s'", col.Name.Name.O)
+			}
+		}
 	}
 }
 
