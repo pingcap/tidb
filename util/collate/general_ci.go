@@ -13,6 +13,8 @@
 
 package collate
 
+import "unicode/utf8"
+
 type generalCICollator struct {
 }
 
@@ -27,19 +29,18 @@ func sign(i int) int {
 
 // Compare implement Collator interface.
 func (gc *generalCICollator) Compare(a, b string) int {
-	aRune := []rune(a)
-	bRune := []rune(b)
-	aLen := len(aRune)
-	bLen := len(bRune)
+	for len(a) > 0 && len(b) > 0 {
+		r1, r1size := utf8.DecodeRuneInString(a)
+		r2, r2size := utf8.DecodeRuneInString(b)
 
-	for i := 0; i < aLen && i < bLen; i++ {
-		cmp := int(convertRune(aRune[i])) - int(convertRune(bRune[i]))
+		cmp := int(convertRune(r1)) - int(convertRune(r2))
 		if cmp != 0 {
 			return sign(cmp)
 		}
+		a = a[r1size:]
+		b = b[r2size:]
 	}
-
-	return sign(aLen - bLen)
+	return sign(len(a) - len(b))
 }
 
 // Key implement Collator interface.

@@ -70,7 +70,7 @@ func init() {
 	collatorMap["utf8mb4_general_ci"] = &generalCICollator{}
 	collatorMap["utf8_general_ci"] = &generalCICollator{}
 
-	// See parser/charset/charset.go for more information about the IDs
+	// See https://github.com/pingcap/parser/blob/master/charset/charset.go for more information about the IDs.
 	collatorIDMap[63] = &binCollator{}
 	collatorIDMap[45] = &generalCICollator{}
 	collatorIDMap[33] = &generalCICollator{}
