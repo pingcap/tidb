@@ -16,6 +16,7 @@ package executor
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/meta"
 	"runtime"
 	"strconv"
 	"sync"
@@ -323,6 +324,53 @@ func (e *ShowDDLExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 	e.done = true
 	return nil
+}
+
+type ddlJobsHelper struct {
+	cursor         int
+	runningJobs    []*model.Job
+	historyJobIter *meta.LastJobIterator
+	cacheJobs      []*model.Job
+	jobNumber      int
+	is             infoschema.InfoSchema
+	done           bool
+}
+
+func (e *ddlJobsHelper) appendJobToChunk(req *chunk.Chunk, job *model.Job) {
+	req.AppendInt64(0, job.ID)
+	schemaName := job.SchemaName
+	tableName := ""
+	finishTS := uint64(0)
+	if job.BinlogInfo != nil {
+		finishTS = job.BinlogInfo.FinishedTS
+		if job.BinlogInfo.TableInfo != nil {
+			tableName = job.BinlogInfo.TableInfo.Name.L
+		}
+		if len(schemaName) == 0 && job.BinlogInfo.DBInfo != nil {
+			schemaName = job.BinlogInfo.DBInfo.Name.L
+		}
+	}
+	// For compatibility, the old version of DDL Job wasn't store the schema name and table name.
+	if len(schemaName) == 0 {
+		schemaName = getSchemaName(e.is, job.SchemaID)
+	}
+	if len(tableName) == 0 {
+		tableName = getTableName(e.is, job.TableID)
+	}
+	req.AppendString(1, schemaName)
+	req.AppendString(2, tableName)
+	req.AppendString(3, job.Type.String())
+	req.AppendString(4, job.SchemaState.String())
+	req.AppendInt64(5, job.SchemaID)
+	req.AppendInt64(6, job.TableID)
+	req.AppendInt64(7, job.RowCount)
+	req.AppendString(8, model.TSConvert2Time(job.StartTS).String())
+	if finishTS > 0 {
+		req.AppendString(9, model.TSConvert2Time(finishTS).String())
+	} else {
+		req.AppendString(9, "")
+	}
+	req.AppendString(10, job.State.String())
 }
 
 // ShowDDLJobsExec represent a show DDL jobs executor.
@@ -1127,6 +1175,7 @@ func (e *SelectionExec) unBatchedNext(ctx context.Context, chk *chunk.Chunk) err
 // TableScanExec is a table scan executor without result fields.
 type TableScanExec struct {
 	baseExecutor
+	ddlJobsHelper
 
 	t                     table.Table
 	seekHandle            int64
@@ -1163,6 +1212,37 @@ func (e *TableScanExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 func (e *TableScanExec) nextChunk4InfoSchema(ctx context.Context, chk *chunk.Chunk) error {
 	chk.GrowAndReset(e.maxChunkSize)
+	if e.t.Meta().Name.O == infoschema.TableDDLJobs {
+		if (e.cursor - len(e.runningJobs)) >= e.jobNumber {
+			return nil
+		}
+		count := 0
+		// Append running ddl jobs.
+		if e.cursor < len(e.runningJobs) {
+			numCurBatch := mathutil.Min(chk.Capacity(), len(e.runningJobs)-e.cursor)
+			for i := e.cursor; i < e.cursor+numCurBatch; i++ {
+				e.ddlJobsHelper.appendJobToChunk(chk, e.runningJobs[i])
+			}
+			e.cursor += numCurBatch
+			count += numCurBatch
+		}
+		var err error
+		// Append history ddl jobs.
+		if count < chk.Capacity() {
+			num := chk.Capacity() - count
+			remainNum := e.jobNumber - (e.cursor - len(e.runningJobs))
+			num = mathutil.Min(num, remainNum)
+			e.cacheJobs, err = e.historyJobIter.GetLastJobs(num, e.cacheJobs)
+			if err != nil {
+				return err
+			}
+			for _, job := range e.cacheJobs {
+				e.ddlJobsHelper.appendJobToChunk(chk, job)
+			}
+			e.cursor += len(e.cacheJobs)
+		}
+		return nil
+	}
 	if e.virtualTableChunkList == nil {
 		e.virtualTableChunkList = chunk.NewList(retTypes(e), e.initCap, e.maxChunkSize)
 		columns := make([]*table.Column, e.schema.Len())
@@ -1215,6 +1295,28 @@ func (e *TableScanExec) getRow(handle int64) ([]types.Datum, error) {
 func (e *TableScanExec) Open(ctx context.Context) error {
 	e.iter = nil
 	e.virtualTableChunkList = nil
+	if err := e.baseExecutor.Open(ctx); err != nil {
+		return err
+	}
+	txn, err := e.ctx.Txn(true)
+	if err != nil {
+		return err
+	}
+	jobs, err := admin.GetDDLJobs(txn)
+	if err != nil {
+		return err
+	}
+	if e.jobNumber == 0 {
+		e.jobNumber = admin.DefNumHistoryJobs
+	}
+
+	m := meta.NewMeta(txn)
+	e.historyJobIter, err = m.GetLastHistoryDDLJobsIterator()
+	if err != nil {
+		return err
+	}
+	e.runningJobs = append(e.runningJobs, jobs...)
+	e.cursor = 0
 	return nil
 }
 
