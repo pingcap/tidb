@@ -24,6 +24,7 @@ import (
 	"time"
 	"unsafe"
 
+	"github.com/cznic/mathutil"
 	"github.com/cznic/sortutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/diagnosticspb"
@@ -47,7 +48,6 @@ import (
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/execdetails"
-	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tidb/util/stringutil"
@@ -299,7 +299,7 @@ func (b *executorBuilder) buildShowDDL(v *plannercore.ShowDDL) Executor {
 
 func (b *executorBuilder) buildShowDDLJobs(v *plannercore.PhysicalShowDDLJobs) Executor {
 	e := &ShowDDLJobsExec{
-		jobNumber:    v.JobNumber,
+		jobNumber:    int(v.JobNumber),
 		is:           b.is,
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
 	}
@@ -980,6 +980,7 @@ func (b *executorBuilder) buildMergeJoin(v *plannercore.PhysicalMergeJoin) Execu
 			v.OtherConditions,
 			retTypes(leftExec),
 			retTypes(rightExec),
+			nil,
 		),
 		isOuterJoin: v.JoinType.IsOuterJoin(),
 		desc:        v.Desc,
@@ -1077,10 +1078,11 @@ func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) Executo
 			defaultValues = make([]types.Datum, e.buildSideExec.Schema().Len())
 		}
 	}
+	childrenUsedSchema := e.baseExecutor.markChildrenUsedCols()
 	e.joiners = make([]joiner, e.concurrency)
 	for i := uint(0); i < e.concurrency; i++ {
 		e.joiners[i] = newJoiner(b.ctx, v.JoinType, v.InnerChildIdx == 0, defaultValues,
-			v.OtherConditions, lhsTypes, rhsTypes)
+			v.OtherConditions, lhsTypes, rhsTypes, childrenUsedSchema)
 	}
 	executorCountHashJoinExec.Inc()
 	return e
@@ -1327,6 +1329,14 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 					extractor: v.Extractor.(*plannercore.MetricTableExtractor),
 				},
 			}
+		case strings.ToLower(infoschema.TableMetricSummaryByLabel):
+			return &ClusterReaderExec{
+				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
+				retriever: &MetricSummaryByLabelRetriever{
+					table:     v.Table,
+					extractor: v.Extractor.(*plannercore.MetricTableExtractor),
+				},
+			}
 		}
 	}
 	tb, _ := b.is.TableByID(v.Table.ID)
@@ -1384,14 +1394,14 @@ func (b *executorBuilder) buildApply(v *plannercore.PhysicalApply) *NestedLoopAp
 	if defaultValues == nil {
 		defaultValues = make([]types.Datum, v.Children()[v.InnerChildIdx].Schema().Len())
 	}
-	tupleJoiner := newJoiner(b.ctx, v.JoinType, v.InnerChildIdx == 0,
-		defaultValues, otherConditions, retTypes(leftChild), retTypes(rightChild))
 	outerExec, innerExec := leftChild, rightChild
 	outerFilter, innerFilter := v.LeftConditions, v.RightConditions
 	if v.InnerChildIdx == 0 {
 		outerExec, innerExec = rightChild, leftChild
 		outerFilter, innerFilter = v.RightConditions, v.LeftConditions
 	}
+	tupleJoiner := newJoiner(b.ctx, v.JoinType, v.InnerChildIdx == 0,
+		defaultValues, otherConditions, retTypes(leftChild), retTypes(rightChild), nil)
 	e := &NestedLoopApplyExec{
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), outerExec, innerExec),
 		innerExec:    innerExec,
@@ -1907,7 +1917,7 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin)
 			hasPrefixCol:  hasPrefixCol,
 		},
 		workerWg:      new(sync.WaitGroup),
-		joiner:        newJoiner(b.ctx, v.JoinType, v.InnerChildIdx == 0, defaultValues, v.OtherConditions, leftTypes, rightTypes),
+		joiner:        newJoiner(b.ctx, v.JoinType, v.InnerChildIdx == 0, defaultValues, v.OtherConditions, leftTypes, rightTypes, nil),
 		isOuterJoin:   v.JoinType.IsOuterJoin(),
 		indexRanges:   v.Ranges,
 		keyOff2IdxOff: v.KeyOff2IdxOff,
@@ -2000,7 +2010,7 @@ func (b *executorBuilder) buildIndexLookUpMergeJoin(v *plannercore.PhysicalIndex
 	}
 	joiners := make([]joiner, e.ctx.GetSessionVars().IndexLookupJoinConcurrency)
 	for i := 0; i < e.ctx.GetSessionVars().IndexLookupJoinConcurrency; i++ {
-		joiners[i] = newJoiner(b.ctx, v.JoinType, v.InnerChildIdx == 0, defaultValues, v.OtherConditions, leftTypes, rightTypes)
+		joiners[i] = newJoiner(b.ctx, v.JoinType, v.InnerChildIdx == 0, defaultValues, v.OtherConditions, leftTypes, rightTypes, nil)
 	}
 	e.joiners = joiners
 	return e
@@ -2072,6 +2082,13 @@ func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableRea
 		e.feedback.Invalidate()
 	}
 	e.dagPB.CollectRangeCounts = &collect
+	if v.StoreType == kv.TiDB && b.ctx.GetSessionVars().User != nil {
+		// User info is used to do privilege check. It is only used in TiDB cluster memory table.
+		e.dagPB.User = &tipb.UserIdentity{
+			UserName: b.ctx.GetSessionVars().User.Username,
+			UserHost: b.ctx.GetSessionVars().User.Hostname,
+		}
+	}
 
 	for i := range v.Schema().Columns {
 		dagReq.OutputOffsets = append(dagReq.OutputOffsets, uint32(i))

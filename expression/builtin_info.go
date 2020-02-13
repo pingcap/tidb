@@ -578,7 +578,27 @@ type coercibilityFunctionClass struct {
 }
 
 func (c *coercibilityFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
-	return nil, errFunctionNotExists.GenWithStackByArgs("FUNCTION", "COERCIBILITY")
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, args[0].GetType().EvalType())
+	sig := &builtinCoercibilitySig{bf}
+	sig.setPbCode(tipb.ScalarFuncSig_Unspecified)
+	return sig, nil
+}
+
+type builtinCoercibilitySig struct {
+	baseBuiltinFunc
+}
+
+func (c *builtinCoercibilitySig) evalInt(_ chunk.Row) (res int64, isNull bool, err error) {
+	return int64(c.args[0].Coercibility()), false, nil
+}
+
+func (c *builtinCoercibilitySig) Clone() builtinFunc {
+	newSig := &builtinCoercibilitySig{}
+	newSig.cloneFrom(&c.baseBuiltinFunc)
+	return newSig
 }
 
 type collationFunctionClass struct {
