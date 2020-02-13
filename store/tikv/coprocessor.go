@@ -550,7 +550,7 @@ func (it *copIterator) open(ctx context.Context) {
 
 			replicaReadSeed: it.replicaReadSeed,
 		}
-		go worker.run(ctx)
+		poolGo(func() { worker.run(ctx) })
 	}
 	taskSender := &copIteratorTaskSender{
 		taskCh:   taskCh,
