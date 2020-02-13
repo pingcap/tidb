@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -1554,7 +1555,7 @@ func (h *mvccTxnHandler) handleMvccGetByTxn(params map[string]string) (interface
 // serverInfo is used to report the servers info when do http request.
 type serverInfo struct {
 	IsOwner bool `json:"is_owner"`
-	*domain.ServerInfo
+	*infosync.ServerInfo
 }
 
 // ServeHTTP handles request of ddl server info.
@@ -1566,18 +1567,23 @@ func (h serverInfoHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	info := serverInfo{}
-	info.ServerInfo = do.InfoSyncer().GetServerInfo()
+	info.ServerInfo, err = infosync.GetServerInfo()
+	if err != nil {
+		writeError(w, err)
+		log.Error(err)
+		return
+	}
 	info.IsOwner = do.DDL().OwnerManager().IsOwner()
 	writeData(w, info)
 }
 
 // clusterServerInfo is used to report cluster servers info when do http request.
 type clusterServerInfo struct {
-	ServersNum                   int                           `json:"servers_num,omitempty"`
-	OwnerID                      string                        `json:"owner_id"`
-	IsAllServerVersionConsistent bool                          `json:"is_all_server_version_consistent,omitempty"`
-	AllServersDiffVersions       []domain.ServerVersionInfo    `json:"all_servers_diff_versions,omitempty"`
-	AllServersInfo               map[string]*domain.ServerInfo `json:"all_servers_info,omitempty"`
+	ServersNum                   int                             `json:"servers_num,omitempty"`
+	OwnerID                      string                          `json:"owner_id"`
+	IsAllServerVersionConsistent bool                            `json:"is_all_server_version_consistent,omitempty"`
+	AllServersDiffVersions       []infosync.ServerVersionInfo    `json:"all_servers_diff_versions,omitempty"`
+	AllServersInfo               map[string]*infosync.ServerInfo `json:"all_servers_info,omitempty"`
 }
 
 // ServeHTTP handles request of all ddl servers info.
@@ -1589,7 +1595,7 @@ func (h allServerInfoHandler) ServeHTTP(w http.ResponseWriter, req *http.Request
 		return
 	}
 	ctx := context.Background()
-	allServersInfo, err := do.InfoSyncer().GetAllServerInfo(ctx)
+	allServersInfo, err := infosync.GetAllServerInfo(ctx)
 	if err != nil {
 		writeError(w, errors.New("ddl server information not found"))
 		log.Error(err)
@@ -1603,8 +1609,8 @@ func (h allServerInfoHandler) ServeHTTP(w http.ResponseWriter, req *http.Request
 		log.Error(err)
 		return
 	}
-	allVersionsMap := map[domain.ServerVersionInfo]struct{}{}
-	allVersions := make([]domain.ServerVersionInfo, 0, len(allServersInfo))
+	allVersionsMap := map[infosync.ServerVersionInfo]struct{}{}
+	allVersions := make([]infosync.ServerVersionInfo, 0, len(allServersInfo))
 	for _, v := range allServersInfo {
 		if _, ok := allVersionsMap[v.ServerVersionInfo]; ok {
 			continue

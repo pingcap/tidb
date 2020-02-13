@@ -11,12 +11,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package domain
+package infosync
 
 import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -71,27 +72,62 @@ type ServerVersionInfo struct {
 	GitHash string `json:"git_hash"`
 }
 
-// NewInfoSyncer return new InfoSyncer. It is exported for testing.
-func NewInfoSyncer(id string, etcdCli *clientv3.Client) *InfoSyncer {
-	return &InfoSyncer{
+// globalInfoSyncer stores the global infoSyncer.
+// Use a global variable for simply the code, use the domain.infoSyncer will have circle import problem in some pkg.
+// Use atomic.Value to avoid data race in the test.
+var globalInfoSyncer atomic.Value
+
+func getGlobalInfoSyncer() (*InfoSyncer, error) {
+	v := globalInfoSyncer.Load()
+	if v == nil {
+		return nil, errors.New("infoSyncer is not initialized")
+	}
+	return v.(*InfoSyncer), nil
+}
+
+func setGlobalInfoSyncer(is *InfoSyncer) {
+	globalInfoSyncer.Store(is)
+}
+
+// GlobalInfoSyncerInit return a new InfoSyncer. It is exported for testing.
+func GlobalInfoSyncerInit(ctx context.Context, id string, etcdCli *clientv3.Client) (*InfoSyncer, error) {
+	is := &InfoSyncer{
 		etcdCli:        etcdCli,
 		info:           getServerInfo(id),
 		serverInfoPath: fmt.Sprintf("%s/%s", ServerInformationPath, id),
 	}
+	err := is.init(ctx)
+	if err != nil {
+		return nil, err
+	}
+	setGlobalInfoSyncer(is)
+	return is, nil
 }
 
-// Init creates a new etcd session and stores server info to etcd.
-func (is *InfoSyncer) Init(ctx context.Context) error {
+// init creates a new etcd session and stores server info to etcd.
+func (is *InfoSyncer) init(ctx context.Context) error {
 	return is.newSessionAndStoreServerInfo(ctx, owner.NewSessionDefaultRetryCnt)
 }
 
 // GetServerInfo gets self server static information.
-func (is *InfoSyncer) GetServerInfo() *ServerInfo {
-	return is.info
+func GetServerInfo() (*ServerInfo, error) {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return nil, err
+	}
+	return is.info, nil
 }
 
-// GetServerInfoByID gets server static information from etcd.
-func (is *InfoSyncer) GetServerInfoByID(ctx context.Context, id string) (*ServerInfo, error) {
+// GetServerInfoByID gets specified server static information from etcd.
+func GetServerInfoByID(ctx context.Context, id string) (*ServerInfo, error) {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return nil, err
+	}
+	return is.getServerInfoByID(ctx, id)
+}
+
+func (is *InfoSyncer) getServerInfoByID(ctx context.Context, id string) (*ServerInfo, error) {
 	if is.etcdCli == nil || id == is.info.ID {
 		return is.info, nil
 	}
@@ -108,7 +144,16 @@ func (is *InfoSyncer) GetServerInfoByID(ctx context.Context, id string) (*Server
 }
 
 // GetAllServerInfo gets all servers static information from etcd.
-func (is *InfoSyncer) GetAllServerInfo(ctx context.Context) (map[string]*ServerInfo, error) {
+func GetAllServerInfo(ctx context.Context) (map[string]*ServerInfo, error) {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return nil, err
+	}
+	return is.getAllServerInfo(ctx)
+}
+
+// GetAllServerInfo gets all servers static information from etcd.
+func (is *InfoSyncer) getAllServerInfo(ctx context.Context) (map[string]*ServerInfo, error) {
 	allInfo := make(map[string]*ServerInfo)
 	if is.etcdCli == nil {
 		allInfo[is.info.ID] = is.info

@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/infoschema/perfschema"
 	"github.com/pingcap/tidb/kv"
@@ -63,7 +64,7 @@ type Domain struct {
 	statsLease           time.Duration
 	statsUpdating        sync2.AtomicInt32
 	ddl                  ddl.DDL
-	info                 *InfoSyncer
+	info                 *infosync.InfoSyncer
 	m                    sync.Mutex
 	SchemaValidator      SchemaValidator
 	sysSessionPool       *sessionPool
@@ -290,7 +291,7 @@ func (do *Domain) DDL() ddl.DDL {
 }
 
 // InfoSyncer gets infoSyncer from domain.
-func (do *Domain) InfoSyncer() *InfoSyncer {
+func (do *Domain) InfoSyncer() *infosync.InfoSyncer {
 	return do.info
 }
 
@@ -634,8 +635,7 @@ func (do *Domain) Init(ddlLease time.Duration, sysFactory func(*Domain) (pools.R
 	if err != nil {
 		return err
 	}
-	do.info = NewInfoSyncer(do.ddl.GetID(), do.etcdClient)
-	err = do.info.Init(ctx)
+	do.info, err = infosync.GlobalInfoSyncerInit(ctx, do.ddl.GetID(), do.etcdClient)
 	if err != nil {
 		return err
 	}
