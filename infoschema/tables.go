@@ -2329,8 +2329,11 @@ func dataForTableTiFlashReplica(ctx sessionctx.Context, schemas []*model.DBInfo)
 				if pi := tbl.GetPartitionInfo(); pi != nil && len(pi.Definitions) > 0 {
 					progress = 0
 					for _, p := range pi.Definitions {
-						// TODO: need check partition replica available.
-						progress += progressMap[p.ID]
+						if tbl.TiFlashReplica.IsPartitionAvailable(p.ID) {
+							progress += 1
+						} else {
+							progress += progressMap[p.ID]
+						}
 					}
 					progress = progress / float64(len(pi.Definitions))
 				} else {
