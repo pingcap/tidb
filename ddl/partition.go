@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/opcode"
+	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/meta"
@@ -580,7 +581,7 @@ func onDropTablePartition(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 }
 
 // onDropTablePartition truncates old partition meta.
-func onTruncateTablePartition(t *meta.Meta, job *model.Job) (int64, error) {
+func onTruncateTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (int64, error) {
 	var ver int64
 	var oldID int64
 	if err := job.DecodeArgs(&oldID); err != nil {
@@ -596,7 +597,7 @@ func onTruncateTablePartition(t *meta.Meta, job *model.Job) (int64, error) {
 		return ver, errors.Trace(ErrPartitionMgmtOnNonpartitioned)
 	}
 
-	var find bool
+	var newPartition *model.PartitionDefinition
 	for i := 0; i < len(pi.Definitions); i++ {
 		def := &pi.Definitions[i]
 		if def.ID == oldID {
@@ -605,11 +606,11 @@ func onTruncateTablePartition(t *meta.Meta, job *model.Job) (int64, error) {
 				return ver, errors.Trace(err1)
 			}
 			def.ID = pid
-			find = true
+			newPartition = def
 			break
 		}
 	}
-	if !find {
+	if newPartition == nil {
 		return ver, table.ErrUnknownPartition.GenWithStackByArgs("drop?", tblInfo.Name.O)
 	}
 
@@ -620,6 +621,7 @@ func onTruncateTablePartition(t *meta.Meta, job *model.Job) (int64, error) {
 
 	// Finish this job.
 	job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
+	asyncNotifyEvent(d, &util.Event{Tp: model.ActionTruncateTablePartition, TableInfo: tblInfo, PartInfo: &model.PartitionInfo{Definitions: []model.PartitionDefinition{*newPartition}}})
 	// A background job will be created to delete old partition data.
 	job.Args = []interface{}{oldID}
 	return ver, nil

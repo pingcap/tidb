@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
+	"net/url"
 	"os"
 	"reflect"
 	"strings"
@@ -33,13 +34,14 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	tracing "github.com/uber/jaeger-client-go/config"
 	"go.uber.org/atomic"
+	"go.uber.org/zap"
 )
 
 // Config number limitations
 const (
 	MaxLogFileSize = 4096 // MB
 	// DefTxnTotalSizeLimit is the default value of TxnTxnTotalSizeLimit.
-	DefTxnTotalSizeLimit = 1024 * 1024 * 1024
+	DefTxnTotalSizeLimit = 100 * 1024 * 1024
 )
 
 // Valid config maps
@@ -104,6 +106,8 @@ type Config struct {
 	// RepairMode indicates that the TiDB is in the repair mode for table meta.
 	RepairMode      bool     `toml:"repair-mode" json:"repair-mode"`
 	RepairTableList []string `toml:"repair-table-list" json:"repair-table-list"`
+	// IsolationRead indicates that the TiDB reads data from which isolation level(engine and label).
+	IsolationRead IsolationRead `toml:"isolation-read" json:"isolation-read"`
 	// MaxServerConnections is the maximum permitted number of simultaneous client connections.
 	MaxServerConnections uint32 `toml:"max-server-connections" json:"max-server-connections"`
 
@@ -153,6 +157,16 @@ func (b *nullableBool) UnmarshalText(text []byte) error {
 		return errors.New("Invalid value for bool type: " + str)
 	}
 	return nil
+}
+
+func (b nullableBool) MarshalText() ([]byte, error) {
+	if !b.IsValid {
+		return []byte(""), nil
+	}
+	if b.IsTrue {
+		return []byte("true"), nil
+	}
+	return []byte("false"), nil
 }
 
 func (b *nullableBool) UnmarshalJSON(data []byte) error {
@@ -448,6 +462,12 @@ type StmtSummary struct {
 	HistorySize int `toml:"history-size" json:"history-size"`
 }
 
+// IsolationRead is the config for isolation read.
+type IsolationRead struct {
+	// Engines filters tidb-server access paths by engine type.
+	Engines []string `toml:"engines" json:"engines"`
+}
+
 // Experimental controls the features that are still experimental: their semantics, interfaces are subject to change.
 // Using these features in the production environment is not recommended.
 type Experimental struct {
@@ -585,6 +605,9 @@ var defaultConf = Config{
 		RefreshInterval: 1800,
 		HistorySize:     24,
 	},
+	IsolationRead: IsolationRead{
+		Engines: []string{"tikv", "tiflash", "tidb"},
+	},
 	Experimental: Experimental{
 		AllowAutoRandom: false,
 	},
@@ -718,6 +741,14 @@ func (c *Config) Load(confFile string) error {
 	return err
 }
 
+// MinDDLLease returns the minimum valid value of the DDL lease.
+func (c *Config) MinDDLLease() time.Duration {
+	if c.Store == "tikv" {
+		return time.Second
+	}
+	return time.Duration(0)
+}
+
 // Valid checks if this config is valid.
 func (c *Config) Valid() error {
 	if c.Log.EnableErrorStack == c.Log.DisableErrorStack && c.Log.EnableErrorStack != nbUnset {
@@ -787,6 +818,14 @@ func (c *Config) Valid() error {
 	if c.PreparedPlanCache.Capacity < 1 {
 		return fmt.Errorf("capacity in [prepared-plan-cache] should be at least 1")
 	}
+	if len(c.IsolationRead.Engines) < 1 {
+		return fmt.Errorf("the number of [isolation-read]engines for isolation read should be at least 1")
+	}
+	for _, engine := range c.IsolationRead.Engines {
+		if engine != "tidb" && engine != "tikv" && engine != "tiflash" {
+			return fmt.Errorf("type of [isolation-read]engines can't be %v should be one of tidb or tikv or tiflash", engine)
+		}
+	}
 	return nil
 }
 
@@ -845,3 +884,28 @@ const (
 	OOMActionCancel = "cancel"
 	OOMActionLog    = "log"
 )
+
+// ParsePath parses this path.
+func ParsePath(path string) (etcdAddrs []string, disableGC bool, err error) {
+	var u *url.URL
+	u, err = url.Parse(path)
+	if err != nil {
+		err = errors.Trace(err)
+		return
+	}
+	if strings.ToLower(u.Scheme) != "tikv" {
+		err = errors.Errorf("Uri scheme expected [tikv] but found [%s]", u.Scheme)
+		logutil.BgLogger().Error("parsePath error", zap.Error(err))
+		return
+	}
+	switch strings.ToLower(u.Query().Get("disableGC")) {
+	case "true":
+		disableGC = true
+	case "false", "":
+	default:
+		err = errors.New("disableGC flag should be true/false")
+		return
+	}
+	etcdAddrs = strings.Split(u.Host, ",")
+	return
+}

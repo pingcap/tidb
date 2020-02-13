@@ -215,171 +215,117 @@ func (c *Constant) Eval(_ chunk.Row) (types.Datum, error) {
 
 // EvalInt returns int representation of Constant.
 func (c *Constant) EvalInt(ctx sessionctx.Context, _ chunk.Row) (int64, bool, error) {
-	if dt, lazy, err := c.getLazyDatum(); lazy {
-		if err != nil {
-			return 0, true, err
-		}
-		if dt.IsNull() {
-			return 0, true, nil
-		}
-		val, err := dt.ToInt64(ctx.GetSessionVars().StmtCtx)
-		if err != nil {
-			return 0, true, err
-		}
-		c.Value.SetInt64(val)
-	} else {
-		if c.GetType().Tp == mysql.TypeNull || c.Value.IsNull() {
-			return 0, true, nil
-		}
+	dt, lazy, err := c.getLazyDatum()
+	if err != nil {
+		return 0, false, err
 	}
-	if c.GetType().Hybrid() || c.Value.Kind() == types.KindBinaryLiteral || c.Value.Kind() == types.KindString {
-		res, err := c.Value.ToInt64(ctx.GetSessionVars().StmtCtx)
-		return res, err != nil, err
+	if !lazy {
+		dt = c.Value
 	}
-	return c.Value.GetInt64(), false, nil
+	if c.GetType().Tp == mysql.TypeNull || dt.IsNull() {
+		return 0, true, nil
+	}
+	if c.GetType().Hybrid() || dt.Kind() == types.KindBinaryLiteral || dt.Kind() == types.KindString {
+		res, err := dt.ToInt64(ctx.GetSessionVars().StmtCtx)
+		return res, false, err
+	}
+	return dt.GetInt64(), false, nil
 }
 
 // EvalReal returns real representation of Constant.
 func (c *Constant) EvalReal(ctx sessionctx.Context, _ chunk.Row) (float64, bool, error) {
-	if dt, lazy, err := c.getLazyDatum(); lazy {
-		if err != nil {
-			return 0, true, err
-		}
-		if dt.IsNull() {
-			return 0, true, nil
-		}
-		val, err := dt.ToFloat64(ctx.GetSessionVars().StmtCtx)
-		if err != nil {
-			return 0, true, err
-		}
-		c.Value.SetFloat64(val)
-	} else {
-		if c.GetType().Tp == mysql.TypeNull || c.Value.IsNull() {
-			return 0, true, nil
-		}
+	dt, lazy, err := c.getLazyDatum()
+	if err != nil {
+		return 0, false, err
 	}
-	if c.GetType().Hybrid() || c.Value.Kind() == types.KindBinaryLiteral || c.Value.Kind() == types.KindString {
-		res, err := c.Value.ToFloat64(ctx.GetSessionVars().StmtCtx)
-		return res, err != nil, err
+	if !lazy {
+		dt = c.Value
 	}
-	return c.Value.GetFloat64(), false, nil
+	if c.GetType().Tp == mysql.TypeNull || dt.IsNull() {
+		return 0, true, nil
+	}
+	if c.GetType().Hybrid() || dt.Kind() == types.KindBinaryLiteral || dt.Kind() == types.KindString {
+		res, err := dt.ToFloat64(ctx.GetSessionVars().StmtCtx)
+		return res, false, err
+	}
+	return dt.GetFloat64(), false, nil
 }
 
 // EvalString returns string representation of Constant.
 func (c *Constant) EvalString(ctx sessionctx.Context, _ chunk.Row) (string, bool, error) {
-	if dt, lazy, err := c.getLazyDatum(); lazy {
-		if err != nil {
-			return "", true, err
-		}
-		if dt.IsNull() {
-			return "", true, nil
-		}
-		val, err := dt.ToString()
-		if err != nil {
-			return "", true, err
-		}
-		c.Value.SetString(val)
-	} else {
-		if c.GetType().Tp == mysql.TypeNull || c.Value.IsNull() {
-			return "", true, nil
-		}
+	dt, lazy, err := c.getLazyDatum()
+	if err != nil {
+		return "", false, err
 	}
-	res, err := c.Value.ToString()
-	return res, err != nil, err
+	if !lazy {
+		dt = c.Value
+	}
+	if c.GetType().Tp == mysql.TypeNull || dt.IsNull() {
+		return "", true, nil
+	}
+	res, err := dt.ToString()
+	return res, false, err
 }
 
 // EvalDecimal returns decimal representation of Constant.
 func (c *Constant) EvalDecimal(ctx sessionctx.Context, _ chunk.Row) (*types.MyDecimal, bool, error) {
-	if dt, lazy, err := c.getLazyDatum(); lazy {
-		if err != nil {
-			return nil, true, err
-		}
-		if dt.IsNull() {
-			return nil, true, nil
-		}
-		c.Value.SetValue(dt.GetValue())
-	} else {
-		if c.GetType().Tp == mysql.TypeNull || c.Value.IsNull() {
-			return nil, true, nil
-		}
+	dt, lazy, err := c.getLazyDatum()
+	if err != nil {
+		return nil, false, err
 	}
-	res, err := c.Value.ToDecimal(ctx.GetSessionVars().StmtCtx)
-	return res, err != nil, err
+	if !lazy {
+		dt = c.Value
+	}
+	if c.GetType().Tp == mysql.TypeNull || dt.IsNull() {
+		return nil, true, nil
+	}
+	res, err := dt.ToDecimal(ctx.GetSessionVars().StmtCtx)
+	return res, false, err
 }
 
 // EvalTime returns DATE/DATETIME/TIMESTAMP representation of Constant.
 func (c *Constant) EvalTime(ctx sessionctx.Context, _ chunk.Row) (val types.Time, isNull bool, err error) {
-	if dt, lazy, err := c.getLazyDatum(); lazy {
-		if err != nil {
-			return types.ZeroTime, true, err
-		}
-		if dt.IsNull() {
-			return types.ZeroTime, true, nil
-		}
-		val, err := dt.ToString()
-		if err != nil {
-			return types.ZeroTime, true, err
-		}
-		tim, err := types.ParseDatetime(ctx.GetSessionVars().StmtCtx, val)
-		if err != nil {
-			return types.ZeroTime, true, err
-		}
-		c.Value.SetMysqlTime(tim)
-	} else {
-		if c.GetType().Tp == mysql.TypeNull || c.Value.IsNull() {
-			return types.ZeroTime, true, nil
-		}
+	dt, lazy, err := c.getLazyDatum()
+	if err != nil {
+		return types.ZeroTime, false, err
 	}
-	return c.Value.GetMysqlTime(), false, nil
+	if !lazy {
+		dt = c.Value
+	}
+	if c.GetType().Tp == mysql.TypeNull || dt.IsNull() {
+		return types.ZeroTime, true, nil
+	}
+	return dt.GetMysqlTime(), false, nil
 }
 
 // EvalDuration returns Duration representation of Constant.
 func (c *Constant) EvalDuration(ctx sessionctx.Context, _ chunk.Row) (val types.Duration, isNull bool, err error) {
-	if dt, lazy, err := c.getLazyDatum(); lazy {
-		if err != nil {
-			return types.Duration{}, true, err
-		}
-		if dt.IsNull() {
-			return types.Duration{}, true, nil
-		}
-		val, err := dt.ToString()
-		if err != nil {
-			return types.Duration{}, true, err
-		}
-		dur, err := types.ParseDuration(ctx.GetSessionVars().StmtCtx, val, types.MaxFsp)
-		if err != nil {
-			return types.Duration{}, true, err
-		}
-		c.Value.SetMysqlDuration(dur)
-	} else {
-		if c.GetType().Tp == mysql.TypeNull || c.Value.IsNull() {
-			return types.Duration{}, true, nil
-		}
+	dt, lazy, err := c.getLazyDatum()
+	if err != nil {
+		return types.Duration{}, false, err
 	}
-	return c.Value.GetMysqlDuration(), false, nil
+	if !lazy {
+		dt = c.Value
+	}
+	if c.GetType().Tp == mysql.TypeNull || dt.IsNull() {
+		return types.Duration{}, true, nil
+	}
+	return dt.GetMysqlDuration(), false, nil
 }
 
 // EvalJSON returns JSON representation of Constant.
 func (c *Constant) EvalJSON(ctx sessionctx.Context, _ chunk.Row) (json.BinaryJSON, bool, error) {
-	if dt, lazy, err := c.getLazyDatum(); lazy {
-		if err != nil {
-			return json.BinaryJSON{}, true, err
-		}
-		if dt.IsNull() {
-			return json.BinaryJSON{}, true, nil
-		}
-		val, err := dt.ConvertTo(ctx.GetSessionVars().StmtCtx, types.NewFieldType(mysql.TypeJSON))
-		if err != nil {
-			return json.BinaryJSON{}, true, err
-		}
-		c.Value.SetMysqlJSON(val.GetMysqlJSON())
-		c.GetType().Tp = mysql.TypeJSON
-	} else {
-		if c.GetType().Tp == mysql.TypeNull || c.Value.IsNull() {
-			return json.BinaryJSON{}, true, nil
-		}
+	dt, lazy, err := c.getLazyDatum()
+	if err != nil {
+		return json.BinaryJSON{}, false, err
 	}
-	return c.Value.GetMysqlJSON(), false, nil
+	if !lazy {
+		dt = c.Value
+	}
+	if c.GetType().Tp == mysql.TypeNull || dt.IsNull() {
+		return json.BinaryJSON{}, true, nil
+	}
+	return dt.GetMysqlJSON(), false, nil
 }
 
 // Equal implements Expression interface.

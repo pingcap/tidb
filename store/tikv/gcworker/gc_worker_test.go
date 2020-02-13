@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"math"
 	"sort"
 	"strconv"
@@ -637,6 +638,7 @@ Loop:
 type testGCWorkerClient struct {
 	tikv.Client
 	unsafeDestroyRangeHandler handler
+	physicalScanLockHandler   handler
 }
 
 type handler = func(addr string, req *tikvrpc.Request) (*tikvrpc.Response, error)
@@ -644,6 +646,9 @@ type handler = func(addr string, req *tikvrpc.Request) (*tikvrpc.Response, error
 func (c *testGCWorkerClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
 	if req.Type == tikvrpc.CmdUnsafeDestroyRange && c.unsafeDestroyRangeHandler != nil {
 		return c.unsafeDestroyRangeHandler(addr, req)
+	}
+	if req.Type == tikvrpc.CmdPhysicalScanLock && c.physicalScanLockHandler != nil {
+		return c.physicalScanLockHandler(addr, req)
 	}
 
 	return c.Client.SendRequest(ctx, addr, req, timeout)
@@ -821,9 +826,36 @@ func (s *testGCWorkerSuite) loadEtcdSafePoint(c *C) uint64 {
 	return res
 }
 
-func makeMergedChannel(c *C, count int) (*mergeLockScanner, []chan<- scanLockResult, <-chan []*tikv.Lock) {
+type mockPhysicalScanLockStream struct {
+	mocktikv.MockClientStream
+	Ch <-chan scanLockResult
+}
+
+func (s *mockPhysicalScanLockStream) Recv() (*kvrpcpb.PhysicalScanLockResponse, error) {
+	res, ok := <-s.Ch
+	if !ok {
+		return nil, io.EOF
+	}
+
+	errStr := ""
+	if res.Err != nil {
+		errStr = res.Err.Error()
+	}
+	lockKey := []byte(nil)
+	if res.Lock != nil {
+		lockKey = res.Lock.Key
+	}
+
+	return &kvrpcpb.PhysicalScanLockResponse{
+		Error: errStr,
+		// We only care about the key in the test.
+		Locks: []*kvrpcpb.LockInfo{{Key: lockKey}},
+	}, res.Err
+}
+
+func makeMergedChannel(c *C, count int) (*mergeLockScanner, []chan scanLockResult, []uint64, <-chan []*tikv.Lock) {
 	scanner := &mergeLockScanner{}
-	channels := make([]chan<- scanLockResult, 0, count)
+	channels := make([]chan scanLockResult, 0, count)
 	receivers := make([]*receiver, 0, count)
 
 	for i := 0; i < count; i++ {
@@ -847,15 +879,68 @@ func makeMergedChannel(c *C, count int) (*mergeLockScanner, []chan<- scanLockRes
 		resultCh <- result
 	}()
 
-	return scanner, channels, resultCh
+	storeIDs := make([]uint64, count)
+	for i := 0; i < count; i++ {
+		storeIDs[i] = uint64(i)
+	}
+
+	return scanner, channels, storeIDs, resultCh
+}
+
+func (s *testGCWorkerSuite) makeMergedMockClient(c *C, count int) (*mergeLockScanner, []chan scanLockResult, []uint64, <-chan []*tikv.Lock) {
+	stores := s.cluster.GetAllStores()
+	c.Assert(count, Equals, len(stores))
+	storeIDs := make([]uint64, count)
+	for i := 0; i < count; i++ {
+		storeIDs[i] = stores[i].Id
+	}
+
+	storesMap, err := s.gcWorker.getUpStoresMap(context.Background())
+	c.Assert(err, IsNil)
+	scanner := newMergeLockScanner(100000, s.client, storesMap)
+	channels := make([]chan scanLockResult, 0, len(stores))
+
+	for range stores {
+		ch := make(chan scanLockResult, 10)
+
+		channels = append(channels, ch)
+	}
+
+	s.client.physicalScanLockHandler = func(addr string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
+		for i, store := range stores {
+			if store.Address == addr {
+				return &tikvrpc.Response{
+					Resp: &mockPhysicalScanLockStream{
+						Ch: channels[i],
+					},
+				}, nil
+			}
+		}
+		return nil, errors.Errorf("No store in the cluster has address %v", addr)
+	}
+
+	resultCh := make(chan []*tikv.Lock)
+	// Initializing and getting result from scanner is blocking operations. Collect the result in a separated thread.
+	go func() {
+		err := scanner.Start(context.Background())
+		c.Assert(err, IsNil)
+		// Get a batch of a enough-large size to get all results.
+		result := scanner.NextBatch(1000)
+		c.Assert(len(result), Less, 1000)
+		resultCh <- result
+	}()
+
+	return scanner, channels, storeIDs, resultCh
 }
 
 func (s *testGCWorkerSuite) TestMergeLockScanner(c *C) {
 	// Shortcuts to make the following test code simpler
-	makeIDSet := func(id ...uint64) map[uint64]interface{} {
+
+	// Get stores by index, and get their store IDs.
+	makeIDSet := func(storeIDs []uint64, indices ...uint64) map[uint64]interface{} {
 		res := make(map[uint64]interface{})
-		for _, id := range id {
-			res[id] = nil
+		for _, i := range indices {
+			res[storeIDs[i]] = nil
 		}
 		return res
 	}
@@ -882,65 +967,72 @@ func (s *testGCWorkerSuite) TestMergeLockScanner(c *C) {
 		ch <- scanLockResult{Err: errors.New("error")}
 	}
 
-	scanner, sendCh, resCh := makeMergedChannel(c, 1)
+	scanner, sendCh, storeIDs, resCh := makeMergedChannel(c, 1)
 	close(sendCh[0])
 	c.Assert(len(<-resCh), Equals, 0)
-	c.Assert(scanner.GetSucceededStores(), DeepEquals, makeIDSet(0))
+	c.Assert(scanner.GetSucceededStores(), DeepEquals, makeIDSet(storeIDs, 0))
 
-	scanner, sendCh, resCh = makeMergedChannel(c, 1)
+	scanner, sendCh, storeIDs, resCh = makeMergedChannel(c, 1)
 	sendLocks(sendCh[0], "a", "b", "c")
 	close(sendCh[0])
 	c.Assert(<-resCh, DeepEquals, makeLockList("a", "b", "c"))
-	c.Assert(scanner.GetSucceededStores(), DeepEquals, makeIDSet(0))
+	c.Assert(scanner.GetSucceededStores(), DeepEquals, makeIDSet(storeIDs, 0))
 
-	scanner, sendCh, resCh = makeMergedChannel(c, 1)
+	scanner, sendCh, storeIDs, resCh = makeMergedChannel(c, 1)
 	sendLocks(sendCh[0], "a", "b", "c")
 	sendErr(sendCh[0])
 	close(sendCh[0])
 	c.Assert(<-resCh, DeepEquals, makeLockList("a", "b", "c"))
-	c.Assert(scanner.GetSucceededStores(), DeepEquals, makeIDSet())
+	c.Assert(scanner.GetSucceededStores(), DeepEquals, makeIDSet(storeIDs))
 
-	scanner, sendCh, resCh = makeMergedChannel(c, 2)
+	scanner, sendCh, storeIDs, resCh = makeMergedChannel(c, 2)
 	sendLocks(sendCh[0], "a", "c", "e")
 	time.Sleep(time.Millisecond * 100)
 	sendLocks(sendCh[1], "b", "d", "f")
 	close(sendCh[0])
 	close(sendCh[1])
 	c.Assert(<-resCh, DeepEquals, makeLockList("a", "b", "c", "d", "e", "f"))
-	c.Assert(scanner.GetSucceededStores(), DeepEquals, makeIDSet(0, 1))
+	c.Assert(scanner.GetSucceededStores(), DeepEquals, makeIDSet(storeIDs, 0, 1))
 
-	scanner, sendCh, resCh = makeMergedChannel(c, 3)
-	sendLocks(sendCh[0], "a", "d", "g", "h")
-	time.Sleep(time.Millisecond * 100)
-	sendLocks(sendCh[1], "a", "d", "f", "h")
-	time.Sleep(time.Millisecond * 100)
-	sendLocks(sendCh[2], "b", "c", "e", "h")
-	close(sendCh[0])
-	close(sendCh[1])
-	close(sendCh[2])
-	c.Assert(<-resCh, DeepEquals, makeLockList("a", "b", "c", "d", "e", "f", "g", "h"))
-	c.Assert(scanner.GetSucceededStores(), DeepEquals, makeIDSet(0, 1, 2))
+	for _, useMock := range []bool{false, true} {
+		channel := makeMergedChannel
+		if useMock == true {
+			channel = s.makeMergedMockClient
+		}
 
-	scanner, sendCh, resCh = makeMergedChannel(c, 3)
-	sendLocks(sendCh[0], "a", "d", "g", "h")
-	time.Sleep(time.Millisecond * 100)
-	sendLocks(sendCh[1], "a", "d", "f", "h")
-	time.Sleep(time.Millisecond * 100)
-	sendLocks(sendCh[2], "b", "c", "e", "h")
-	sendErr(sendCh[0])
-	close(sendCh[0])
-	close(sendCh[1])
-	close(sendCh[2])
-	c.Assert(<-resCh, DeepEquals, makeLockList("a", "b", "c", "d", "e", "f", "g", "h"))
-	c.Assert(scanner.GetSucceededStores(), DeepEquals, makeIDSet(1, 2))
+		scanner, sendCh, storeIDs, resCh = channel(c, 3)
+		sendLocks(sendCh[0], "a", "d", "g", "h")
+		time.Sleep(time.Millisecond * 100)
+		sendLocks(sendCh[1], "a", "d", "f", "h")
+		time.Sleep(time.Millisecond * 100)
+		sendLocks(sendCh[2], "b", "c", "e", "h")
+		close(sendCh[0])
+		close(sendCh[1])
+		close(sendCh[2])
+		c.Assert(<-resCh, DeepEquals, makeLockList("a", "b", "c", "d", "e", "f", "g", "h"))
+		c.Assert(scanner.GetSucceededStores(), DeepEquals, makeIDSet(storeIDs, 0, 1, 2))
 
-	scanner, sendCh, resCh = makeMergedChannel(c, 3)
-	sendLocks(sendCh[0], "a\x00", "a\x00\x00", "b", "b\x00")
-	sendLocks(sendCh[1], "a", "a\x00\x00", "a\x00\x00\x00", "c")
-	sendLocks(sendCh[2], "1", "a\x00", "a\x00\x00", "b")
-	close(sendCh[0])
-	close(sendCh[1])
-	close(sendCh[2])
-	c.Assert(<-resCh, DeepEquals, makeLockList("1", "a", "a\x00", "a\x00\x00", "a\x00\x00\x00", "b", "b\x00", "c"))
-	c.Assert(scanner.GetSucceededStores(), DeepEquals, makeIDSet(0, 1, 2))
+		scanner, sendCh, storeIDs, resCh = channel(c, 3)
+		sendLocks(sendCh[0], "a", "d", "g", "h")
+		time.Sleep(time.Millisecond * 100)
+		sendLocks(sendCh[1], "a", "d", "f", "h")
+		time.Sleep(time.Millisecond * 100)
+		sendLocks(sendCh[2], "b", "c", "e", "h")
+		sendErr(sendCh[0])
+		close(sendCh[0])
+		close(sendCh[1])
+		close(sendCh[2])
+		c.Assert(<-resCh, DeepEquals, makeLockList("a", "b", "c", "d", "e", "f", "g", "h"))
+		c.Assert(scanner.GetSucceededStores(), DeepEquals, makeIDSet(storeIDs, 1, 2))
+
+		scanner, sendCh, storeIDs, resCh = channel(c, 3)
+		sendLocks(sendCh[0], "a\x00", "a\x00\x00", "b", "b\x00")
+		sendLocks(sendCh[1], "a", "a\x00\x00", "a\x00\x00\x00", "c")
+		sendLocks(sendCh[2], "1", "a\x00", "a\x00\x00", "b")
+		close(sendCh[0])
+		close(sendCh[1])
+		close(sendCh[2])
+		c.Assert(<-resCh, DeepEquals, makeLockList("1", "a", "a\x00", "a\x00\x00", "a\x00\x00\x00", "b", "b\x00", "c"))
+		c.Assert(scanner.GetSucceededStores(), DeepEquals, makeIDSet(storeIDs, 0, 1, 2))
+	}
 }

@@ -31,6 +31,11 @@ import (
 	"github.com/pingcap/tidb/util/hack"
 )
 
+// error definitions.
+var (
+	ErrNoDB = terror.ClassOptimizer.New(mysql.ErrNoDB, mysql.MySQLErrName[mysql.ErrNoDB])
+)
+
 // ScalarFunction is the function that returns a value.
 type ScalarFunction struct {
 	FuncName model.CIStr
@@ -125,6 +130,40 @@ func (sf *ScalarFunction) MarshalJSON() ([]byte, error) {
 	return []byte(fmt.Sprintf("\"%s\"", sf)), nil
 }
 
+// typeInferForNull infers the NULL constants field type and set the field type
+// of NULL constant same as other non-null operands.
+func typeInferForNull(args []Expression) {
+	if len(args) < 2 {
+		return
+	}
+	var isNull = func(expr Expression) bool {
+		cons, ok := expr.(*Constant)
+		return ok && cons.RetType.Tp == mysql.TypeNull && cons.Value.IsNull()
+	}
+	// Infer the actual field type of the NULL constant.
+	var retFieldTp *types.FieldType
+	var hasNullArg bool
+	for _, arg := range args {
+		isNullArg := isNull(arg)
+		if !isNullArg && retFieldTp == nil {
+			retFieldTp = arg.GetType()
+		}
+		hasNullArg = hasNullArg || isNullArg
+		// Break if there are both NULL and non-NULL expression
+		if hasNullArg && retFieldTp != nil {
+			break
+		}
+	}
+	if !hasNullArg || retFieldTp == nil {
+		return
+	}
+	for _, arg := range args {
+		if isNull(arg) {
+			*arg.GetType() = *retFieldTp
+		}
+	}
+}
+
 // newFunctionImpl creates a new scalar function or constant.
 func newFunctionImpl(ctx sessionctx.Context, fold bool, funcName string, retType *types.FieldType, args ...Expression) (Expression, error) {
 	if retType == nil {
@@ -137,7 +176,7 @@ func newFunctionImpl(ctx sessionctx.Context, fold bool, funcName string, retType
 	if !ok {
 		db := ctx.GetSessionVars().CurrentDB
 		if db == "" {
-			return nil, terror.ClassOptimizer.New(mysql.ErrNoDB, mysql.MySQLErrName[mysql.ErrNoDB])
+			return nil, ErrNoDB
 		}
 
 		return nil, errFunctionNotExists.GenWithStackByArgs("FUNCTION", db+"."+funcName)
@@ -149,6 +188,7 @@ func newFunctionImpl(ctx sessionctx.Context, fold bool, funcName string, retType
 	}
 	funcArgs := make([]Expression, len(args))
 	copy(funcArgs, args)
+	typeInferForNull(funcArgs)
 	f, err := fc.getFunction(ctx, funcArgs)
 	if err != nil {
 		return nil, err
@@ -348,6 +388,29 @@ func (sf *ScalarFunction) ResolveIndices(schema *Schema) (Expression, error) {
 }
 
 func (sf *ScalarFunction) resolveIndices(schema *Schema) error {
+	if sf.FuncName.L == ast.In {
+		args := []Expression{}
+		switch inFunc := sf.Function.(type) {
+		case *builtinInIntSig:
+			args = inFunc.nonConstArgs
+		case *builtinInStringSig:
+			args = inFunc.nonConstArgs
+		case *builtinInTimeSig:
+			args = inFunc.nonConstArgs
+		case *builtinInDurationSig:
+			args = inFunc.nonConstArgs
+		case *builtinInRealSig:
+			args = inFunc.nonConstArgs
+		case *builtinInDecimalSig:
+			args = inFunc.nonConstArgs
+		}
+		for _, arg := range args {
+			err := arg.resolveIndices(schema)
+			if err != nil {
+				return err
+			}
+		}
+	}
 	for _, arg := range sf.GetArgs() {
 		err := arg.resolveIndices(schema)
 		if err != nil {

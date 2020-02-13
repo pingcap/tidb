@@ -48,14 +48,14 @@ func (p *LogicalTableDual) DeriveStats(childStats []*property.StatsInfo, selfSch
 
 // DeriveStats implement LogicalPlan DeriveStats interface.
 func (p *LogicalMemTable) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema) (*property.StatsInfo, error) {
-	statsTable := statistics.PseudoTable(p.tableInfo)
+	statsTable := statistics.PseudoTable(p.TableInfo)
 	stats := &property.StatsInfo{
 		RowCount:     float64(statsTable.Count),
-		Cardinality:  make([]float64, len(p.tableInfo.Columns)),
-		HistColl:     statsTable.GenerateHistCollFromColumnInfo(p.tableInfo.Columns, p.schema.Columns),
+		Cardinality:  make([]float64, len(p.TableInfo.Columns)),
+		HistColl:     statsTable.GenerateHistCollFromColumnInfo(p.TableInfo.Columns, p.schema.Columns),
 		StatsVersion: statistics.PseudoVersion,
 	}
-	for i := range p.tableInfo.Columns {
+	for i := range p.TableInfo.Columns {
 		stats.Cardinality[i] = float64(statsTable.Count)
 	}
 	p.stats = stats
@@ -552,12 +552,13 @@ func (la *LogicalAggregation) DeriveStats(childStats []*property.StatsInfo, self
 // every matched bucket.
 func (p *LogicalJoin) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema) (*property.StatsInfo, error) {
 	leftProfile, rightProfile := childStats[0], childStats[1]
+	leftJoinKeys, rightJoinKeys := p.GetJoinKeys()
 	helper := &fullJoinRowCountHelper{
 		cartesian:     0 == len(p.EqualConditions),
 		leftProfile:   leftProfile,
 		rightProfile:  rightProfile,
-		leftJoinKeys:  p.LeftJoinKeys,
-		rightJoinKeys: p.RightJoinKeys,
+		leftJoinKeys:  leftJoinKeys,
+		rightJoinKeys: rightJoinKeys,
 		leftSchema:    childSchema[0],
 		rightSchema:   childSchema[1],
 	}

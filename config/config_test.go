@@ -19,6 +19,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"testing"
+	"time"
 
 	"github.com/BurntSushi/toml"
 	. "github.com/pingcap/check"
@@ -199,6 +200,8 @@ refresh-interval=100
 history-size=100
 [experimental]
 allow-auto-random = true
+[isolation-read]
+engines = ["tiflash"]
 `)
 
 	c.Assert(err, IsNil)
@@ -233,6 +236,7 @@ allow-auto-random = true
 	c.Assert(conf.RepairMode, Equals, true)
 	c.Assert(conf.MaxServerConnections, Equals, uint32(200))
 	c.Assert(conf.Experimental.AllowAutoRandom, IsTrue)
+	c.Assert(conf.IsolationRead.Engines, DeepEquals, []string{"tiflash"})
 	c.Assert(f.Close(), IsNil)
 	c.Assert(os.Remove(configFile), IsNil)
 
@@ -323,6 +327,11 @@ xkNuJ2BlEGkwWLiRbKy1lNBBFUXKuhh3L/EIY10WTnr3TQzeL6H1
 	c.Assert(tlsConfig, NotNil)
 	c.Assert(os.Remove(certFile), IsNil)
 	c.Assert(os.Remove(keyFile), IsNil)
+
+	// for MinDDLLease
+	c.Assert(conf.MinDDLLease(), Equals, time.Duration(0))
+	conf.Store = "tikv"
+	c.Assert(conf.MinDDLLease(), Equals, time.Second)
 }
 
 func (s *testConfigSuite) TestConfigDiff(c *C) {
@@ -400,4 +409,17 @@ func (s *testConfigSuite) TestAllowAutoRandomValid(c *C) {
 	checkValid(true, false, true)
 	checkValid(false, true, true)
 	checkValid(false, false, true)
+}
+
+func (s *testConfigSuite) TestParsePath(c *C) {
+	etcdAddrs, disableGC, err := ParsePath("tikv://node1:2379,node2:2379")
+	c.Assert(err, IsNil)
+	c.Assert(etcdAddrs, DeepEquals, []string{"node1:2379", "node2:2379"})
+	c.Assert(disableGC, IsFalse)
+
+	_, _, err = ParsePath("tikv://node1:2379")
+	c.Assert(err, IsNil)
+	_, disableGC, err = ParsePath("tikv://node1:2379?disableGC=true")
+	c.Assert(err, IsNil)
+	c.Assert(disableGC, IsTrue)
 }
