@@ -507,7 +507,7 @@ func (r *ImplMergeJoin) Match(expr *memo.GroupExpr, prop *property.PhysicalPrope
 // OnImplement implements ImplementationRule OnImplement interface.
 func (r *ImplMergeJoin) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) ([]memo.Implementation, error) {
 	join := expr.ExprNode.(*plannercore.LogicalJoin)
-	physicalMergeJoins := join.GetMergeJoin(reqProp, expr.Schema())
+	physicalMergeJoins := join.GetMergeJoin(reqProp, expr.Schema(), expr.Group.Prop.Stats, expr.Children[0].Prop.Stats, expr.Children[1].Prop.Stats)
 	mergeJoinImpls := make([]memo.Implementation, 0, len(physicalMergeJoins))
 	for _, physicalPlan := range physicalMergeJoins {
 		physicalMergeJoin := physicalPlan.(*plannercore.PhysicalMergeJoin)

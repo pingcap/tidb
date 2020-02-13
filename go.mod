@@ -31,18 +31,18 @@ require (
 	github.com/ngaut/sync2 v0.0.0-20141008032647-7a24ed77b2ef
 	github.com/opentracing/basictracer-go v1.0.0
 	github.com/opentracing/opentracing-go v1.0.2
-	github.com/pingcap/check v0.0.0-20191216031241-8a5a85928f12
+	github.com/pingcap/check v0.0.0-20200212061837-5e12011dc712
 	github.com/pingcap/errors v0.11.5-0.20190809092503-95897b64e011
 	github.com/pingcap/failpoint v0.0.0-20200210140405-f8f9fb234798
 	github.com/pingcap/fn v0.0.0-20191016082858-07623b84a47d
 	github.com/pingcap/goleveldb v0.0.0-20191226122134-f82aafb29989
 	github.com/pingcap/kvproto v0.0.0-20200210234432-a965739f8162
 	github.com/pingcap/log v0.0.0-20200117041106-d28c14d3b1cd
-	github.com/pingcap/parser v0.0.0-20200207090844-d65f5147dd9f
+	github.com/pingcap/parser v0.0.0-20200212063918-0829643f461c
 	github.com/pingcap/pd v1.1.0-beta.0.20200106144140-f5a7aa985497
 	github.com/pingcap/sysutil v0.0.0-20200206130906-2bfa6dc40bcd
 	github.com/pingcap/tidb-tools v3.0.6-0.20191106033616-90632dda3863+incompatible
-	github.com/pingcap/tipb v0.0.0-20200201101609-1a2e9c441455
+	github.com/pingcap/tipb v0.0.0-20200212061130-c4d518eb1d60
 	github.com/prometheus/client_golang v1.0.0
 	github.com/prometheus/client_model v0.0.0-20190812154241-14fe0d1b01d4
 	github.com/prometheus/common v0.4.1

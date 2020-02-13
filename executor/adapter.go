@@ -177,9 +177,7 @@ type ExecStmt struct {
 	Ctx sessionctx.Context
 
 	// LowerPriority represents whether to lower the execution priority of a query.
-	LowerPriority bool
-	// Cacheable represents whether the physical plan can be cached.
-	Cacheable         bool
+	LowerPriority     bool
 	isPreparedStmt    bool
 	isSelectForUpdate bool
 	retryCount        uint
