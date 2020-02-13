@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/util/pdapi"
 	"github.com/pingcap/tidb/util/testkit"
+	"github.com/pingcap/tidb/util/testutil"
 	pmodel "github.com/prometheus/common/model"
 	"google.golang.org/grpc"
 )
@@ -82,18 +83,18 @@ func (s *testClusterReaderSuite) TestMetricTableData(c *C) {
 
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use metric_schema")
-	rs, err := tk.Se.Execute(ctx, "select * from query_duration;")
+	rs, err := tk.Se.Execute(ctx, "select * from tidb_query_duration;")
 	c.Assert(err, IsNil)
 	result := tk.ResultSetToResultWithCtx(ctx, rs[0], Commentf("execute sql fail"))
-	result.Check(testkit.Rows(
-		"2019-12-23 20:11:35.000000 0.1 127.0.0.1:10080  0.9"))
+	result.Check(testutil.RowsWithSep("|",
+		"2019-12-23 20:11:35.000000|127.0.0.1:10080| 0.9|0.1|The quantile of TiDB query durations(second)"))
 
-	rs, err = tk.Se.Execute(ctx, "select * from query_duration where quantile in (0.85, 0.95);")
+	rs, err = tk.Se.Execute(ctx, "select time,instance,quantile,value from tidb_query_duration where quantile in (0.85, 0.95);")
 	c.Assert(err, IsNil)
 	result = tk.ResultSetToResultWithCtx(ctx, rs[0], Commentf("execute sql fail"))
 	result.Check(testkit.Rows(
-		"2019-12-23 20:11:35.000000 0.1 127.0.0.1:10080  0.85",
-		"2019-12-23 20:11:35.000000 0.1 127.0.0.1:10080  0.95"))
+		"2019-12-23 20:11:35.000000 127.0.0.1:10080 0.85 0.1",
+		"2019-12-23 20:11:35.000000 127.0.0.1:10080 0.95 0.1"))
 }
 
 func (s *testClusterReaderSuite) TestTiDBClusterConfig(c *C) {
@@ -237,7 +238,7 @@ func (s *testClusterReaderSuite) TestTiDBClusterConfig(c *C) {
 			),
 		},
 		{
-			sql:      "select * from information_schema.cluster_config where type='pd' or address='" + testServers[0].address + "'",
+			sql:      "select * from information_schema.cluster_config where type='pd' or instance='" + testServers[0].address + "'",
 			reqCount: 9,
 			rows: flatten(
 				rows["tidb"][0],
@@ -315,7 +316,7 @@ func (s *testClusterReaderSuite) TestTiDBClusterConfig(c *C) {
 			),
 		},
 		{
-			sql: fmt.Sprintf(`select * from information_schema.cluster_config where address='%s'`,
+			sql: fmt.Sprintf(`select * from information_schema.cluster_config where instance='%s'`,
 				testServers[0].address),
 			reqCount: 3,
 			rows: flatten(
@@ -325,7 +326,7 @@ func (s *testClusterReaderSuite) TestTiDBClusterConfig(c *C) {
 			),
 		},
 		{
-			sql: fmt.Sprintf(`select * from information_schema.cluster_config where type='tidb' and address='%s'`,
+			sql: fmt.Sprintf(`select * from information_schema.cluster_config where type='tidb' and instance='%s'`,
 				testServers[0].address),
 			reqCount: 1,
 			rows: flatten(
@@ -333,7 +334,7 @@ func (s *testClusterReaderSuite) TestTiDBClusterConfig(c *C) {
 			),
 		},
 		{
-			sql: fmt.Sprintf(`select * from information_schema.cluster_config where type in ('tidb', 'tikv') and address='%s'`,
+			sql: fmt.Sprintf(`select * from information_schema.cluster_config where type in ('tidb', 'tikv') and instance='%s'`,
 				testServers[0].address),
 			reqCount: 2,
 			rows: flatten(
@@ -342,7 +343,7 @@ func (s *testClusterReaderSuite) TestTiDBClusterConfig(c *C) {
 			),
 		},
 		{
-			sql: fmt.Sprintf(`select * from information_schema.cluster_config where type in ('tidb', 'tikv') and address in ('%s', '%s')`,
+			sql: fmt.Sprintf(`select * from information_schema.cluster_config where type in ('tidb', 'tikv') and instance in ('%s', '%s')`,
 				testServers[0].address, testServers[0].address),
 			reqCount: 2,
 			rows: flatten(
@@ -351,7 +352,7 @@ func (s *testClusterReaderSuite) TestTiDBClusterConfig(c *C) {
 			),
 		},
 		{
-			sql: fmt.Sprintf(`select * from information_schema.cluster_config where type in ('tidb', 'tikv') and address in ('%s', '%s')`,
+			sql: fmt.Sprintf(`select * from information_schema.cluster_config where type in ('tidb', 'tikv') and instance in ('%s', '%s')`,
 				testServers[0].address, testServers[1].address),
 			reqCount: 4,
 			rows: flatten(
@@ -362,17 +363,17 @@ func (s *testClusterReaderSuite) TestTiDBClusterConfig(c *C) {
 			),
 		},
 		{
-			sql: fmt.Sprintf(`select * from information_schema.cluster_config where type in ('tidb', 'tikv') and type='pd' and address in ('%s', '%s')`,
+			sql: fmt.Sprintf(`select * from information_schema.cluster_config where type in ('tidb', 'tikv') and type='pd' and instance in ('%s', '%s')`,
 				testServers[0].address, testServers[1].address),
 			reqCount: 0,
 		},
 		{
-			sql: fmt.Sprintf(`select * from information_schema.cluster_config where type in ('tidb', 'tikv') and address in ('%s', '%s') and address='%s'`,
+			sql: fmt.Sprintf(`select * from information_schema.cluster_config where type in ('tidb', 'tikv') and instance in ('%s', '%s') and instance='%s'`,
 				testServers[0].address, testServers[1].address, testServers[2].address),
 			reqCount: 0,
 		},
 		{
-			sql: fmt.Sprintf(`select * from information_schema.cluster_config where type in ('tidb', 'tikv') and address in ('%s', '%s') and address='%s'`,
+			sql: fmt.Sprintf(`select * from information_schema.cluster_config where type in ('tidb', 'tikv') and instance in ('%s', '%s') and instance='%s'`,
 				testServers[0].address, testServers[1].address, testServers[0].address),
 			reqCount: 2,
 			rows: flatten(
@@ -465,7 +466,7 @@ func (s *testClusterReaderSuite) TestTiDBClusterLog(c *C) {
 		logtime(`2019/08/26 06:19:16.011`) + ` [trace] [test log message tidb 4, foo]`,
 		logtime(`2019/08/26 06:19:17.011`) + ` [CRITICAL] [test log message tidb 5, foo]`,
 	})
-	s.writeTmpFile(c, testServers["tidb"].tmpDir, "tidb.log.1", []string{
+	s.writeTmpFile(c, testServers["tidb"].tmpDir, "tidb-1.log", []string{
 		logtime(`2019/08/26 06:25:13.011`) + ` [info] [test log message tidb 10, bar]`,
 		logtime(`2019/08/26 06:25:14.011`) + ` [debug] [test log message tidb 11, bar]`,
 		logtime(`2019/08/26 06:25:15.011`) + ` [ERROR] [test log message tidb 12, bar]`,
@@ -481,7 +482,7 @@ func (s *testClusterReaderSuite) TestTiDBClusterLog(c *C) {
 		logtime(`2019/08/26 06:22:16.011`) + ` [trace] [test log message tikv 4, foo]`,
 		logtime(`2019/08/26 06:23:17.011`) + ` [CRITICAL] [test log message tikv 5, foo]`,
 	})
-	s.writeTmpFile(c, testServers["tikv"].tmpDir, "tikv.log.1", []string{
+	s.writeTmpFile(c, testServers["tikv"].tmpDir, "tikv-1.log", []string{
 		logtime(`2019/08/26 06:24:15.011`) + ` [info] [test log message tikv 10, bar]`,
 		logtime(`2019/08/26 06:25:16.011`) + ` [debug] [test log message tikv 11, bar]`,
 		logtime(`2019/08/26 06:26:17.011`) + ` [ERROR] [test log message tikv 12, bar]`,
@@ -497,7 +498,7 @@ func (s *testClusterReaderSuite) TestTiDBClusterLog(c *C) {
 		logtime(`2019/08/26 06:21:16.011`) + ` [trace] [test log message pd 4, foo]`,
 		logtime(`2019/08/26 06:22:17.011`) + ` [CRITICAL] [test log message pd 5, foo]`,
 	})
-	s.writeTmpFile(c, testServers["pd"].tmpDir, "pd.log.1", []string{
+	s.writeTmpFile(c, testServers["pd"].tmpDir, "pd-1.log", []string{
 		logtime(`2019/08/26 06:23:13.011`) + ` [info] [test log message pd 10, bar]`,
 		logtime(`2019/08/26 06:24:14.011`) + ` [debug] [test log message pd 11, bar]`,
 		logtime(`2019/08/26 06:25:15.011`) + ` [ERROR] [test log message pd 12, bar]`,
@@ -650,7 +651,7 @@ func (s *testClusterReaderSuite) TestTiDBClusterLog(c *C) {
 			conditions: []string{
 				"time>='2019/08/26 06:19:13.011'",
 				"time<='2019/08/26 06:21:15.011'",
-				fmt.Sprintf("address='%s'", testServers["pd"].address),
+				fmt.Sprintf("instance='%s'", testServers["pd"].address),
 			},
 			expected: [][]string{
 				{"2019/08/26 06:19:14.011", "pd", "DEBUG", "[test log message pd 2, foo]"},
@@ -661,7 +662,7 @@ func (s *testClusterReaderSuite) TestTiDBClusterLog(c *C) {
 			conditions: []string{
 				"time>='2019/08/26 06:19:13.011'",
 				"time<='2019/08/26 06:21:15.011'",
-				fmt.Sprintf("address='%s'", testServers["tidb"].address),
+				fmt.Sprintf("instance='%s'", testServers["tidb"].address),
 			},
 			expected: [][]string{
 				{"2019/08/26 06:19:13.011", "tidb", "INFO", "[test log message tidb 1, foo]"},
@@ -675,7 +676,7 @@ func (s *testClusterReaderSuite) TestTiDBClusterLog(c *C) {
 			conditions: []string{
 				"time>='2019/08/26 06:19:13.011'",
 				"time<='2019/08/26 06:21:15.011'",
-				fmt.Sprintf("address='%s'", testServers["tikv"].address),
+				fmt.Sprintf("instance='%s'", testServers["tikv"].address),
 			},
 			expected: [][]string{
 				{"2019/08/26 06:19:13.011", "tikv", "INFO", "[test log message tikv 1, foo]"},
@@ -687,7 +688,7 @@ func (s *testClusterReaderSuite) TestTiDBClusterLog(c *C) {
 			conditions: []string{
 				"time>='2019/08/26 06:19:13.011'",
 				"time<='2019/08/26 06:21:15.011'",
-				fmt.Sprintf("address in ('%s', '%s')", testServers["pd"].address, testServers["tidb"].address),
+				fmt.Sprintf("instance in ('%s', '%s')", testServers["pd"].address, testServers["tidb"].address),
 			},
 			expected: [][]string{
 				{"2019/08/26 06:19:13.011", "tidb", "INFO", "[test log message tidb 1, foo]"},
@@ -819,7 +820,7 @@ func (s *testClusterReaderSuite) TestTiDBClusterLog(c *C) {
 			expectedRow := []string{
 				restime(row[0]),             // time column
 				row[1],                      // type column
-				testServers[row[1]].address, // address column
+				testServers[row[1]].address, // instance column
 				strings.ToUpper(sysutil.ParseLogLevel(row[2]).String()), // level column
 				row[3], // message column
 			}

@@ -16,10 +16,13 @@ package cascades
 import (
 	"math"
 
+	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/planner/memo"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/ranger"
 )
 
@@ -63,11 +66,13 @@ var defaultTransformationMap = map[memo.Operand][]Transformation{
 	memo.OperandAggregation: {
 		NewRulePushAggDownGather(),
 		NewRuleMergeAggregationProjection(),
+		NewRuleEliminateSingleMaxMin(),
 	},
 	memo.OperandLimit: {
 		NewRuleTransformLimitToTopN(),
 		NewRulePushLimitDownProjection(),
 		NewRulePushLimitDownUnionAll(),
+		NewRulePushLimitDownOuterJoin(),
 		NewRuleMergeAdjacentLimit(),
 		NewRuleTransformLimitToTableDual(),
 	},
@@ -80,6 +85,7 @@ var defaultTransformationMap = map[memo.Operand][]Transformation{
 		NewRulePushTopNDownOuterJoin(),
 		NewRulePushTopNDownUnionAll(),
 		NewRulePushTopNDownTiKVSingleGather(),
+		NewRuleMergeAdjacentTopN(),
 	},
 }
 
@@ -542,9 +548,7 @@ func (r *PushSelDownAggregation) OnTransform(old *memo.ExprIter) (newExprs []*me
 				}
 			}
 			if canPush {
-				// TODO: Don't substitute since they should be the same column.
-				newCond := expression.ColumnSubstitute(cond, aggSchema, exprsOriginal)
-				pushedExprs = append(pushedExprs, newCond)
+				pushedExprs = append(pushedExprs, cond)
 			} else {
 				remainedExprs = append(remainedExprs, cond)
 			}
@@ -1278,6 +1282,66 @@ func (r *PushTopNDownTiKVSingleGather) OnTransform(old *memo.ExprIter) (newExprs
 	return []*memo.GroupExpr{finalTopNExpr}, true, false, nil
 }
 
+// MergeAdjacentTopN merge adjacent TopN.
+type MergeAdjacentTopN struct {
+	baseRule
+}
+
+// NewRuleMergeAdjacentTopN creates a new Transformation MergeAdjacentTopN.
+// The pattern of this rule is `TopN->TopN->X`.
+func NewRuleMergeAdjacentTopN() Transformation {
+	rule := &MergeAdjacentTopN{}
+	rule.pattern = memo.BuildPattern(
+		memo.OperandTopN,
+		memo.EngineAll,
+		memo.NewPattern(memo.OperandTopN, memo.EngineAll),
+	)
+	return rule
+}
+
+// Match implements Transformation interface.
+func (r *MergeAdjacentTopN) Match(expr *memo.ExprIter) bool {
+	topN := expr.GetExpr().ExprNode.(*plannercore.LogicalTopN)
+	child := expr.Children[0].GetExpr().ExprNode.(*plannercore.LogicalTopN)
+
+	// We can use this rule when the sort columns of parent TopN is a prefix of child TopN.
+	if len(child.ByItems) < len(topN.ByItems) {
+		return false
+	}
+	for i := 0; i < len(topN.ByItems); i++ {
+		if !topN.ByItems[i].Equal(topN.SCtx(), child.ByItems[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+// OnTransform implements Transformation interface.
+// This rule tries to merge adjacent TopN.
+func (r *MergeAdjacentTopN) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
+	topN := old.GetExpr().ExprNode.(*plannercore.LogicalTopN)
+	child := old.Children[0].GetExpr().ExprNode.(*plannercore.LogicalTopN)
+	childGroups := old.Children[0].GetExpr().Children
+
+	if child.Count <= topN.Offset {
+		tableDual := plannercore.LogicalTableDual{RowCount: 0}.Init(child.SCtx(), child.SelectBlockOffset())
+		tableDual.SetSchema(old.GetExpr().Schema())
+		tableDualExpr := memo.NewGroupExpr(tableDual)
+		return []*memo.GroupExpr{tableDualExpr}, true, true, nil
+	}
+
+	offset := child.Offset + topN.Offset
+	count := uint64(math.Min(float64(child.Count-topN.Offset), float64(topN.Count)))
+	newTopN := plannercore.LogicalTopN{
+		Count:   count,
+		Offset:  offset,
+		ByItems: child.ByItems,
+	}.Init(child.SCtx(), child.SelectBlockOffset())
+	newTopNExpr := memo.NewGroupExpr(newTopN)
+	newTopNExpr.SetChildren(childGroups...)
+	return []*memo.GroupExpr{newTopNExpr}, true, false, nil
+}
+
 // MergeAggregationProjection merges the Projection below an Aggregation as a new Aggregation.
 // The Projection may be regenerated in the ImplementationPhase. But this rule allows the
 // Aggregation to match other rules, such as MergeAdjacentAggregation.
@@ -1335,7 +1399,108 @@ func (r *MergeAggregationProjection) OnTransform(old *memo.ExprIter) (newExprs [
 
 	newAggExpr := memo.NewGroupExpr(newAgg)
 	newAggExpr.SetChildren(old.Children[0].GetExpr().Children...)
-	return []*memo.GroupExpr{newAggExpr}, true, false, nil
+	return []*memo.GroupExpr{newAggExpr}, false, false, nil
+}
+
+// EliminateSingleMaxMin tries to convert a single max/min to Limit+Sort operators.
+type EliminateSingleMaxMin struct {
+	baseRule
+}
+
+// NewRuleEliminateSingleMaxMin creates a new Transformation EliminateSingleMaxMin.
+// The pattern of this rule is `max/min->X`.
+func NewRuleEliminateSingleMaxMin() Transformation {
+	rule := &EliminateSingleMaxMin{}
+	rule.pattern = memo.BuildPattern(
+		memo.OperandAggregation,
+		memo.EngineTiDBOnly,
+		memo.NewPattern(memo.OperandAny, memo.EngineTiDBOnly),
+	)
+	return rule
+}
+
+// Match implements Transformation interface.
+func (r *EliminateSingleMaxMin) Match(expr *memo.ExprIter) bool {
+	// Use appliedRuleSet in GroupExpr to avoid re-apply rules.
+	if expr.GetExpr().HasAppliedRule(r) {
+		return false
+	}
+
+	agg := expr.GetExpr().ExprNode.(*plannercore.LogicalAggregation)
+	// EliminateSingleMaxMin only works on the complete mode.
+	if !agg.IsCompleteModeAgg() {
+		return false
+	}
+	if len(agg.GroupByItems) != 0 {
+		return false
+	}
+
+	// If there is only one aggFunc, we don't need to guarantee that the child of it is a data
+	// source, or whether the sort can be eliminated. This transformation won't be worse than previous.
+	// Make sure that the aggFunc are Max or Min.
+	// TODO: If there have only one Max or Min aggFunc and the other aggFuncs are FirstRow() can also use this rule. Waiting for the not null prop is maintained.
+	if len(agg.AggFuncs) != 1 {
+		return false
+	}
+	if agg.AggFuncs[0].Name != ast.AggFuncMax && agg.AggFuncs[0].Name != ast.AggFuncMin {
+		return false
+	}
+	return true
+}
+
+// OnTransform implements Transformation interface.
+// It will transform `max/min->X` to `max/min->top1->sel->X`.
+func (r *EliminateSingleMaxMin) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
+	agg := old.GetExpr().ExprNode.(*plannercore.LogicalAggregation)
+	childGroup := old.GetExpr().Children[0]
+	ctx := agg.SCtx()
+	f := agg.AggFuncs[0]
+
+	// If there's no column in f.GetArgs()[0], we still need limit and read data from real table because the result should be NULL if the input is empty.
+	if len(expression.ExtractColumns(f.Args[0])) > 0 {
+		// If it can be NULL, we need to filter NULL out first.
+		if !mysql.HasNotNullFlag(f.Args[0].GetType().Flag) {
+			sel := plannercore.LogicalSelection{}.Init(ctx, agg.SelectBlockOffset())
+			isNullFunc := expression.NewFunctionInternal(ctx, ast.IsNull, types.NewFieldType(mysql.TypeTiny), f.Args[0])
+			notNullFunc := expression.NewFunctionInternal(ctx, ast.UnaryNot, types.NewFieldType(mysql.TypeTiny), isNullFunc)
+			sel.Conditions = []expression.Expression{notNullFunc}
+			selExpr := memo.NewGroupExpr(sel)
+			selExpr.SetChildren(childGroup)
+			selGroup := memo.NewGroupWithSchema(selExpr, childGroup.Prop.Schema)
+			childGroup = selGroup
+		}
+
+		// Add top(1) operators.
+		// For max function, the sort order should be desc.
+		desc := f.Name == ast.AggFuncMax
+		var byItems []*plannercore.ByItems
+		byItems = append(byItems, &plannercore.ByItems{
+			Expr: f.Args[0],
+			Desc: desc,
+		})
+		top1 := plannercore.LogicalTopN{
+			ByItems: byItems,
+			Count:   1,
+		}.Init(ctx, agg.SelectBlockOffset())
+		top1Expr := memo.NewGroupExpr(top1)
+		top1Expr.SetChildren(childGroup)
+		top1Group := memo.NewGroupWithSchema(top1Expr, childGroup.Prop.Schema)
+		childGroup = top1Group
+	} else {
+		li := plannercore.LogicalLimit{Count: 1}.Init(ctx, agg.SelectBlockOffset())
+		liExpr := memo.NewGroupExpr(li)
+		liExpr.SetChildren(childGroup)
+		liGroup := memo.NewGroupWithSchema(liExpr, childGroup.Prop.Schema)
+		childGroup = liGroup
+	}
+
+	newAgg := agg
+	newAggExpr := memo.NewGroupExpr(newAgg)
+	// If no data in the child, we need to return NULL instead of empty. This cannot be done by sort and limit themselves.
+	// Since now there would be at most one row returned, the remained agg operator is not expensive anymore.
+	newAggExpr.SetChildren(childGroup)
+	newAggExpr.AddAppliedRule(r)
+	return []*memo.GroupExpr{newAggExpr}, false, false, nil
 }
 
 // MergeAdjacentSelection merge adjacent selection.
@@ -1443,4 +1608,65 @@ func (r *TransformLimitToTableDual) OnTransform(old *memo.ExprIter) (newExprs []
 	tableDual.SetSchema(old.GetExpr().Schema())
 	tableDualExpr := memo.NewGroupExpr(tableDual)
 	return []*memo.GroupExpr{tableDualExpr}, true, true, nil
+}
+
+// PushLimitDownOuterJoin pushes Limit through Join.
+type PushLimitDownOuterJoin struct {
+	baseRule
+}
+
+// NewRulePushLimitDownOuterJoin creates a new Transformation PushLimitDownOuterJoin.
+// The pattern of this rule is `Limit -> Join`.
+func NewRulePushLimitDownOuterJoin() Transformation {
+	rule := &PushLimitDownOuterJoin{}
+	rule.pattern = memo.BuildPattern(
+		memo.OperandLimit,
+		memo.EngineTiDBOnly,
+		memo.NewPattern(memo.OperandJoin, memo.EngineTiDBOnly),
+	)
+	return rule
+}
+
+// Match implements Transformation interface.
+func (r *PushLimitDownOuterJoin) Match(expr *memo.ExprIter) bool {
+	if expr.GetExpr().HasAppliedRule(r) {
+		return false
+	}
+	join := expr.Children[0].GetExpr().ExprNode.(*plannercore.LogicalJoin)
+	return join.JoinType.IsOuterJoin()
+}
+
+// OnTransform implements Transformation interface.
+// This rule tries to pushes the Limit through outer Join.
+func (r *PushLimitDownOuterJoin) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
+	limit := old.GetExpr().ExprNode.(*plannercore.LogicalLimit)
+	join := old.Children[0].GetExpr().ExprNode.(*plannercore.LogicalJoin)
+	joinSchema := old.Children[0].Group.Prop.Schema
+	leftGroup := old.Children[0].GetExpr().Children[0]
+	rightGroup := old.Children[0].GetExpr().Children[1]
+
+	switch join.JoinType {
+	case plannercore.LeftOuterJoin, plannercore.LeftOuterSemiJoin, plannercore.AntiLeftOuterSemiJoin:
+		leftGroup = pushLimitDownOuterJoinToChild(limit, leftGroup)
+	case plannercore.RightOuterJoin:
+		rightGroup = pushLimitDownOuterJoinToChild(limit, rightGroup)
+	default:
+		return nil, false, false, nil
+	}
+
+	newJoinExpr := memo.NewGroupExpr(join)
+	newJoinExpr.SetChildren(leftGroup, rightGroup)
+	newLimitExpr := memo.NewGroupExpr(limit)
+	newLimitExpr.SetChildren(memo.NewGroupWithSchema(newJoinExpr, joinSchema))
+	newLimitExpr.AddAppliedRule(r)
+	return []*memo.GroupExpr{newLimitExpr}, true, false, nil
+}
+
+func pushLimitDownOuterJoinToChild(limit *plannercore.LogicalLimit, outerGroup *memo.Group) *memo.Group {
+	newLimit := plannercore.LogicalLimit{
+		Count: limit.Count + limit.Offset,
+	}.Init(limit.SCtx(), limit.SelectBlockOffset())
+	newLimitGroup := memo.NewGroupExpr(newLimit)
+	newLimitGroup.SetChildren(outerGroup)
+	return memo.NewGroupWithSchema(newLimitGroup, outerGroup.Prop.Schema)
 }

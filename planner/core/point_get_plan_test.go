@@ -32,7 +32,7 @@ import (
 	dto "github.com/prometheus/client_model/go"
 )
 
-var _ = Suite(&testPointGetSuite{})
+var _ = SerialSuites(&testPointGetSuite{})
 
 type testPointGetSuite struct {
 	store kv.Storage

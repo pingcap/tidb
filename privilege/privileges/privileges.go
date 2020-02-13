@@ -103,6 +103,31 @@ func (p *UserPrivileges) GetEncodedPassword(user, host string) string {
 	return pwd
 }
 
+// GetAuthWithoutVerification implements the Manager interface.
+func (p *UserPrivileges) GetAuthWithoutVerification(user, host string) (u string, h string, success bool) {
+	if SkipWithGrant {
+		p.user = user
+		p.host = host
+		success = true
+		return
+	}
+
+	mysqlPriv := p.Handle.Get()
+	record := mysqlPriv.connectionVerification(user, host)
+	if record == nil {
+		logutil.BgLogger().Error("get user privilege record fail",
+			zap.String("user", user), zap.String("host", host))
+		return
+	}
+
+	u = record.User
+	h = record.Host
+	p.user = user
+	p.host = h
+	success = true
+	return
+}
+
 // ConnectionVerification implements the Manager interface.
 func (p *UserPrivileges) ConnectionVerification(user, host string, authentication, salt []byte, tlsState *tls.ConnectionState) (u string, h string, success bool) {
 	if SkipWithGrant {
@@ -299,7 +324,7 @@ func (p *UserPrivileges) UserPrivilegesTable() [][]types.Datum {
 // ShowGrants implements privilege.Manager ShowGrants interface.
 func (p *UserPrivileges) ShowGrants(ctx sessionctx.Context, user *auth.UserIdentity, roles []*auth.RoleIdentity) (grants []string, err error) {
 	if SkipWithGrant {
-		return nil, errNonexistingGrant.GenWithStackByArgs("root", "%")
+		return nil, ErrNonexistingGrant.GenWithStackByArgs("root", "%")
 	}
 	mysqlPrivilege := p.Handle.Get()
 	u := user.Username
@@ -310,7 +335,7 @@ func (p *UserPrivileges) ShowGrants(ctx sessionctx.Context, user *auth.UserIdent
 	}
 	grants = mysqlPrivilege.showGrants(u, h, roles)
 	if len(grants) == 0 {
-		err = errNonexistingGrant.GenWithStackByArgs(u, h)
+		err = ErrNonexistingGrant.GenWithStackByArgs(u, h)
 	}
 
 	return
