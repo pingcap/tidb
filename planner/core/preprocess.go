@@ -15,7 +15,6 @@ package core
 
 import (
 	"fmt"
-	"log"
 	"math"
 	"strings"
 
@@ -285,7 +284,6 @@ func isConstraintKeyTp(constraints []*ast.Constraint, colDef *ast.ColumnDef) boo
 		switch c.Tp {
 		case ast.ConstraintPrimaryKey, ast.ConstraintKey, ast.ConstraintIndex,
 			ast.ConstraintUniq, ast.ConstraintUniqIndex, ast.ConstraintUniqKey:
-			log.Printf("FUCK...%s FUCK...%s", colDef.Name.Name.L, c.Keys[0].Column.Name.L)
 			return true
 		}
 	}
