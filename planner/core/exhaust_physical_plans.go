@@ -122,7 +122,7 @@ func (p *PhysicalMergeJoin) tryToGetChildReqProp(prop *property.PhysicalProperty
 }
 
 // GetMergeJoin convert the logical join to physical merge join based on the physical property.
-func (p *LogicalJoin) GetMergeJoin(prop *property.PhysicalProperty, schema *expression.Schema) []PhysicalPlan {
+func (p *LogicalJoin) GetMergeJoin(prop *property.PhysicalProperty, schema *expression.Schema, statsInfo *property.StatsInfo, leftStatsInfo *property.StatsInfo, rightStatsInfo *property.StatsInfo) []PhysicalPlan {
 	joins := make([]PhysicalPlan, 0, len(p.leftProperties)+1)
 	// The leftProperties caches all the possible properties that are provided by its children.
 	leftJoinKeys, rightJoinKeys := p.GetJoinKeys()
@@ -151,16 +151,16 @@ func (p *LogicalJoin) GetMergeJoin(prop *property.PhysicalProperty, schema *expr
 			LeftJoinKeys:    leftKeys,
 			RightJoinKeys:   rightKeys,
 		}
-		mergeJoin := PhysicalMergeJoin{basePhysicalJoin: baseJoin}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), p.blockOffset)
+		mergeJoin := PhysicalMergeJoin{basePhysicalJoin: baseJoin}.Init(p.ctx, statsInfo.ScaleByExpectCnt(prop.ExpectedCnt), p.blockOffset)
 		mergeJoin.SetSchema(schema)
 		mergeJoin.OtherConditions = p.moveEqualToOtherConditions(offsets)
 		mergeJoin.initCompareFuncs()
 		if reqProps, ok := mergeJoin.tryToGetChildReqProp(prop); ok {
 			// Adjust expected count for children nodes.
-			if prop.ExpectedCnt < p.stats.RowCount {
-				expCntScale := prop.ExpectedCnt / p.stats.RowCount
-				reqProps[0].ExpectedCnt = p.children[0].statsInfo().RowCount * expCntScale
-				reqProps[1].ExpectedCnt = p.children[1].statsInfo().RowCount * expCntScale
+			if prop.ExpectedCnt < statsInfo.RowCount {
+				expCntScale := prop.ExpectedCnt / statsInfo.RowCount
+				reqProps[0].ExpectedCnt = leftStatsInfo.RowCount * expCntScale
+				reqProps[1].ExpectedCnt = rightStatsInfo.RowCount * expCntScale
 			}
 			mergeJoin.childrenReqProps = reqProps
 			_, desc := prop.AllSameOrder()
@@ -171,7 +171,7 @@ func (p *LogicalJoin) GetMergeJoin(prop *property.PhysicalProperty, schema *expr
 	// If TiDB_SMJ hint is existed, it should consider enforce merge join,
 	// because we can't trust lhsChildProperty completely.
 	if (p.preferJoinType & preferMergeJoin) > 0 {
-		joins = append(joins, p.getEnforcedMergeJoin(prop)...)
+		joins = append(joins, p.getEnforcedMergeJoin(prop, schema, statsInfo)...)
 	}
 
 	return joins
@@ -199,7 +199,7 @@ func getNewJoinKeysByOffsets(oldJoinKeys []*expression.Column, offsets []int) []
 	return newKeys
 }
 
-func (p *LogicalJoin) getEnforcedMergeJoin(prop *property.PhysicalProperty) []PhysicalPlan {
+func (p *LogicalJoin) getEnforcedMergeJoin(prop *property.PhysicalProperty, schema *expression.Schema, statsInfo *property.StatsInfo) []PhysicalPlan {
 	// Check whether SMJ can satisfy the required property
 	leftJoinKeys, rightJoinKeys := p.GetJoinKeys()
 	offsets := make([]int, 0, len(leftJoinKeys))
@@ -250,8 +250,8 @@ func (p *LogicalJoin) getEnforcedMergeJoin(prop *property.PhysicalProperty) []Ph
 		RightJoinKeys:   rightKeys,
 		OtherConditions: p.OtherConditions,
 	}
-	enforcedPhysicalMergeJoin := PhysicalMergeJoin{basePhysicalJoin: baseJoin, Desc: desc}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), p.blockOffset)
-	enforcedPhysicalMergeJoin.SetSchema(p.schema)
+	enforcedPhysicalMergeJoin := PhysicalMergeJoin{basePhysicalJoin: baseJoin, Desc: desc}.Init(p.ctx, statsInfo.ScaleByExpectCnt(prop.ExpectedCnt), p.blockOffset)
+	enforcedPhysicalMergeJoin.SetSchema(schema)
 	enforcedPhysicalMergeJoin.childrenReqProps = []*property.PhysicalProperty{lProp, rProp}
 	enforcedPhysicalMergeJoin.initCompareFuncs()
 	return []PhysicalPlan{enforcedPhysicalMergeJoin}
@@ -1352,7 +1352,7 @@ func (p *LogicalJoin) tryToGetIndexJoin(prop *property.PhysicalProperty) (indexJ
 // If the hint is not matched, it will get other candidates.
 // If the hint is not figured, we will pick all candidates.
 func (p *LogicalJoin) exhaustPhysicalPlans(prop *property.PhysicalProperty) []PhysicalPlan {
-	mergeJoins := p.GetMergeJoin(prop, p.schema)
+	mergeJoins := p.GetMergeJoin(prop, p.schema, p.Stats(), p.children[0].statsInfo(), p.children[1].statsInfo())
 	if (p.preferJoinType & preferMergeJoin) > 0 {
 		return mergeJoins
 	}
