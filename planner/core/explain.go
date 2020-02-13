@@ -705,6 +705,9 @@ func (p *TiKVSingleGather) ExplainInfo() string {
 	return buffer.String()
 }
 
+// MetricTableTimeFormat is the time format for metric table explain and format.
+const MetricTableTimeFormat = "2006-01-02 15:04:05.999"
+
 // ExplainInfo implements Plan interface.
 func (p *PhysicalMemTable) ExplainInfo() string {
 	if p.DBName.L != util.MetricSchemaName.L || !infoschema.IsMetricTable(p.Table.Name.L) {
@@ -720,8 +723,8 @@ func (p *PhysicalMemTable) ExplainInfo() string {
 	step := time.Second * time.Duration(p.ctx.GetSessionVars().MetricSchemaStep)
 	return fmt.Sprintf("PromQL:%v, start_time:%v, end_time:%v, step:%v",
 		promQL,
-		startTime.In(p.ctx.GetSessionVars().StmtCtx.TimeZone).Format("2006-01-02 15:04:05.999"),
-		endTime.In(p.ctx.GetSessionVars().StmtCtx.TimeZone).Format("2006-01-02 15:04:05.999"),
+		startTime.In(p.ctx.GetSessionVars().StmtCtx.TimeZone).Format(MetricTableTimeFormat),
+		endTime.In(p.ctx.GetSessionVars().StmtCtx.TimeZone).Format(MetricTableTimeFormat),
 		step,
 	)
 }

@@ -81,24 +81,6 @@ func init() {
 		SysVars[v.Name] = v
 	}
 	initSynonymsSysVariables()
-
-	// Register terror to mysql error map.
-	mySQLErrCodes := map[terror.ErrCode]uint16{
-		mysql.ErrCantGetValidID:              mysql.ErrCantGetValidID,
-		mysql.ErrCantSetToNull:               mysql.ErrCantSetToNull,
-		mysql.ErrSnapshotTooOld:              mysql.ErrSnapshotTooOld,
-		mysql.ErrUnsupportedValueForVar:      mysql.ErrUnsupportedValueForVar,
-		mysql.ErrUnknownSystemVariable:       mysql.ErrUnknownSystemVariable,
-		mysql.ErrIncorrectGlobalLocalVar:     mysql.ErrIncorrectGlobalLocalVar,
-		mysql.ErrUnknownTimeZone:             mysql.ErrUnknownTimeZone,
-		mysql.ErrVariableIsReadonly:          mysql.ErrVariableIsReadonly,
-		mysql.ErrWrongValueForVar:            mysql.ErrWrongValueForVar,
-		mysql.ErrWrongTypeForVar:             mysql.ErrWrongTypeForVar,
-		mysql.ErrTruncatedWrongValue:         mysql.ErrTruncatedWrongValue,
-		mysql.ErrMaxPreparedStmtCountReached: mysql.ErrMaxPreparedStmtCountReached,
-		mysql.ErrUnsupportedIsolationLevel:   mysql.ErrUnsupportedIsolationLevel,
-	}
-	terror.ErrClassToMySQLCodes[terror.ClassVariable] = mySQLErrCodes
 }
 
 // BoolToIntStr converts bool to int string, for example "0" or "1".
