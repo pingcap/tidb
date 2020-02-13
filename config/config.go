@@ -639,7 +639,7 @@ var deprecatedConfig = map[string]struct{}{
 	"log.rotate":          {},
 }
 
-func isDeprecatedConfigItem(items []string) bool {
+func isAllDeprecatedConfigItems(items []string) bool {
 	for _, item := range items {
 		if _, ok := deprecatedConfig[item]; !ok {
 			return false
@@ -662,7 +662,7 @@ func InitializeConfig(confPath string, configCheck, configStrict bool, reloadFun
 		}
 		// Unused config item error turns to warnings.
 		if tmp, ok := err.(*ErrConfigValidationFailed); ok {
-			if isDeprecatedConfigItem(tmp.UndecodedItems) {
+			if isAllDeprecatedConfigItems(tmp.UndecodedItems) {
 				fmt.Fprintln(os.Stderr, err.Error())
 				err = nil
 			}

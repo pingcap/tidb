@@ -364,6 +364,7 @@ func reloadConfig(nc, c *config.Config) {
 	}
 }
 
+// overrideConfig considers command arguments and overrides some config items in the Config.
 func overrideConfig(cfg *config.Config) {
 	actualFlags := make(map[string]bool)
 	flag.Visit(func(f *flag.Flag) {

@@ -43,7 +43,7 @@ type ConfReloadFunc func(oldConf, newConf *Config)
 
 // NewConfHandler creates a new ConfHandler according to the local config.
 func NewConfHandler(localConf *Config, reloadFunc ConfReloadFunc) (ConfHandler, error) {
-	switch defaultConf.Store {
+	switch localConf.Store {
 	case "tikv":
 		return newPDConfHandler(localConf, reloadFunc, nil)
 	default:
@@ -52,7 +52,6 @@ func NewConfHandler(localConf *Config, reloadFunc ConfReloadFunc) (ConfHandler, 
 }
 
 // constantConfHandler is used in local or debug environment.
-// It always returns the constant config initialized at the beginning.
 type constantConfHandler struct {
 	conf *Config
 }
