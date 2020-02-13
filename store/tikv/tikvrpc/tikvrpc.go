@@ -355,60 +355,63 @@ func (req *Request) TxnHeartBeat() *kvrpcpb.TxnHeartBeatRequest {
 }
 
 // ToBatchCommandsRequest converts the request to an entry in BatchCommands request.
-func (req *Request) ToBatchCommandsRequest() *tikvpb.BatchCommandsRequest_Request {
+func (req *Request) ToBatchCommandsRequest(batchReq *tikvpb.BatchCommandsRequest_Request) bool {
+	canBatch := true
 	switch req.Type {
 	case CmdGet:
-		return &tikvpb.BatchCommandsRequest_Request{Cmd: &tikvpb.BatchCommandsRequest_Request_Get{Get: req.Get()}}
+		batchReq.Cmd = &tikvpb.BatchCommandsRequest_Request_Get{Get: req.Get()}
 	case CmdScan:
-		return &tikvpb.BatchCommandsRequest_Request{Cmd: &tikvpb.BatchCommandsRequest_Request_Scan{Scan: req.Scan()}}
+		batchReq.Cmd = &tikvpb.BatchCommandsRequest_Request_Scan{Scan: req.Scan()}
 	case CmdPrewrite:
-		return &tikvpb.BatchCommandsRequest_Request{Cmd: &tikvpb.BatchCommandsRequest_Request_Prewrite{Prewrite: req.Prewrite()}}
+		batchReq.Cmd = &tikvpb.BatchCommandsRequest_Request_Prewrite{Prewrite: req.Prewrite()}
 	case CmdCommit:
-		return &tikvpb.BatchCommandsRequest_Request{Cmd: &tikvpb.BatchCommandsRequest_Request_Commit{Commit: req.Commit()}}
+		batchReq.Cmd = &tikvpb.BatchCommandsRequest_Request_Commit{Commit: req.Commit()}
 	case CmdCleanup:
-		return &tikvpb.BatchCommandsRequest_Request{Cmd: &tikvpb.BatchCommandsRequest_Request_Cleanup{Cleanup: req.Cleanup()}}
+		batchReq.Cmd = &tikvpb.BatchCommandsRequest_Request_Cleanup{Cleanup: req.Cleanup()}
 	case CmdBatchGet:
-		return &tikvpb.BatchCommandsRequest_Request{Cmd: &tikvpb.BatchCommandsRequest_Request_BatchGet{BatchGet: req.BatchGet()}}
+		batchReq.Cmd = &tikvpb.BatchCommandsRequest_Request_BatchGet{BatchGet: req.BatchGet()}
 	case CmdBatchRollback:
-		return &tikvpb.BatchCommandsRequest_Request{Cmd: &tikvpb.BatchCommandsRequest_Request_BatchRollback{BatchRollback: req.BatchRollback()}}
+		batchReq.Cmd = &tikvpb.BatchCommandsRequest_Request_BatchRollback{BatchRollback: req.BatchRollback()}
 	case CmdScanLock:
-		return &tikvpb.BatchCommandsRequest_Request{Cmd: &tikvpb.BatchCommandsRequest_Request_ScanLock{ScanLock: req.ScanLock()}}
+		batchReq.Cmd = &tikvpb.BatchCommandsRequest_Request_ScanLock{ScanLock: req.ScanLock()}
 	case CmdResolveLock:
-		return &tikvpb.BatchCommandsRequest_Request{Cmd: &tikvpb.BatchCommandsRequest_Request_ResolveLock{ResolveLock: req.ResolveLock()}}
+		batchReq.Cmd = &tikvpb.BatchCommandsRequest_Request_ResolveLock{ResolveLock: req.ResolveLock()}
 	case CmdGC:
-		return &tikvpb.BatchCommandsRequest_Request{Cmd: &tikvpb.BatchCommandsRequest_Request_GC{GC: req.GC()}}
+		batchReq.Cmd = &tikvpb.BatchCommandsRequest_Request_GC{GC: req.GC()}
 	case CmdDeleteRange:
-		return &tikvpb.BatchCommandsRequest_Request{Cmd: &tikvpb.BatchCommandsRequest_Request_DeleteRange{DeleteRange: req.DeleteRange()}}
+		batchReq.Cmd = &tikvpb.BatchCommandsRequest_Request_DeleteRange{DeleteRange: req.DeleteRange()}
 	case CmdRawGet:
-		return &tikvpb.BatchCommandsRequest_Request{Cmd: &tikvpb.BatchCommandsRequest_Request_RawGet{RawGet: req.RawGet()}}
+		batchReq.Cmd = &tikvpb.BatchCommandsRequest_Request_RawGet{RawGet: req.RawGet()}
 	case CmdRawBatchGet:
-		return &tikvpb.BatchCommandsRequest_Request{Cmd: &tikvpb.BatchCommandsRequest_Request_RawBatchGet{RawBatchGet: req.RawBatchGet()}}
+		batchReq.Cmd = &tikvpb.BatchCommandsRequest_Request_RawBatchGet{RawBatchGet: req.RawBatchGet()}
 	case CmdRawPut:
-		return &tikvpb.BatchCommandsRequest_Request{Cmd: &tikvpb.BatchCommandsRequest_Request_RawPut{RawPut: req.RawPut()}}
+		batchReq.Cmd = &tikvpb.BatchCommandsRequest_Request_RawPut{RawPut: req.RawPut()}
 	case CmdRawBatchPut:
-		return &tikvpb.BatchCommandsRequest_Request{Cmd: &tikvpb.BatchCommandsRequest_Request_RawBatchPut{RawBatchPut: req.RawBatchPut()}}
+		batchReq.Cmd = &tikvpb.BatchCommandsRequest_Request_RawBatchPut{RawBatchPut: req.RawBatchPut()}
 	case CmdRawDelete:
-		return &tikvpb.BatchCommandsRequest_Request{Cmd: &tikvpb.BatchCommandsRequest_Request_RawDelete{RawDelete: req.RawDelete()}}
+		batchReq.Cmd = &tikvpb.BatchCommandsRequest_Request_RawDelete{RawDelete: req.RawDelete()}
 	case CmdRawBatchDelete:
-		return &tikvpb.BatchCommandsRequest_Request{Cmd: &tikvpb.BatchCommandsRequest_Request_RawBatchDelete{RawBatchDelete: req.RawBatchDelete()}}
+		batchReq.Cmd = &tikvpb.BatchCommandsRequest_Request_RawBatchDelete{RawBatchDelete: req.RawBatchDelete()}
 	case CmdRawDeleteRange:
-		return &tikvpb.BatchCommandsRequest_Request{Cmd: &tikvpb.BatchCommandsRequest_Request_RawDeleteRange{RawDeleteRange: req.RawDeleteRange()}}
+		batchReq.Cmd = &tikvpb.BatchCommandsRequest_Request_RawDeleteRange{RawDeleteRange: req.RawDeleteRange()}
 	case CmdRawScan:
-		return &tikvpb.BatchCommandsRequest_Request{Cmd: &tikvpb.BatchCommandsRequest_Request_RawScan{RawScan: req.RawScan()}}
+		batchReq.Cmd = &tikvpb.BatchCommandsRequest_Request_RawScan{RawScan: req.RawScan()}
 	case CmdCop:
-		return &tikvpb.BatchCommandsRequest_Request{Cmd: &tikvpb.BatchCommandsRequest_Request_Coprocessor{Coprocessor: req.Cop()}}
+		batchReq.Cmd = &tikvpb.BatchCommandsRequest_Request_Coprocessor{Coprocessor: req.Cop()}
 	case CmdPessimisticLock:
-		return &tikvpb.BatchCommandsRequest_Request{Cmd: &tikvpb.BatchCommandsRequest_Request_PessimisticLock{PessimisticLock: req.PessimisticLock()}}
+		batchReq.Cmd = &tikvpb.BatchCommandsRequest_Request_PessimisticLock{PessimisticLock: req.PessimisticLock()}
 	case CmdPessimisticRollback:
-		return &tikvpb.BatchCommandsRequest_Request{Cmd: &tikvpb.BatchCommandsRequest_Request_PessimisticRollback{PessimisticRollback: req.PessimisticRollback()}}
+		batchReq.Cmd = &tikvpb.BatchCommandsRequest_Request_PessimisticRollback{PessimisticRollback: req.PessimisticRollback()}
 	case CmdEmpty:
-		return &tikvpb.BatchCommandsRequest_Request{Cmd: &tikvpb.BatchCommandsRequest_Request_Empty{Empty: req.Empty()}}
+		batchReq.Cmd = &tikvpb.BatchCommandsRequest_Request_Empty{Empty: req.Empty()}
 	case CmdCheckTxnStatus:
-		return &tikvpb.BatchCommandsRequest_Request{Cmd: &tikvpb.BatchCommandsRequest_Request_CheckTxnStatus{CheckTxnStatus: req.CheckTxnStatus()}}
+		batchReq.Cmd = &tikvpb.BatchCommandsRequest_Request_CheckTxnStatus{CheckTxnStatus: req.CheckTxnStatus()}
 	case CmdTxnHeartBeat:
-		return &tikvpb.BatchCommandsRequest_Request{Cmd: &tikvpb.BatchCommandsRequest_Request_TxnHeartBeat{TxnHeartBeat: req.TxnHeartBeat()}}
+		batchReq.Cmd = &tikvpb.BatchCommandsRequest_Request_TxnHeartBeat{TxnHeartBeat: req.TxnHeartBeat()}
+	default:
+		canBatch = false
 	}
-	return nil
+	return canBatch
 }
 
 // IsDebugReq check whether the req is debug req.
@@ -426,63 +429,65 @@ type Response struct {
 }
 
 // FromBatchCommandsResponse converts a BatchCommands response to Response.
-func FromBatchCommandsResponse(res *tikvpb.BatchCommandsResponse_Response) (*Response, error) {
-	if res.GetCmd() == nil {
-		return nil, errors.New("Unknown command response")
+func FromBatchCommandsResponse(raw *tikvpb.BatchCommandsResponse_Response, resp *Response) error {
+	if raw.GetCmd() == nil {
+		return errors.New("Unknown command response")
 	}
-	switch res := res.GetCmd().(type) {
+	switch res := raw.GetCmd().(type) {
 	case *tikvpb.BatchCommandsResponse_Response_Get:
-		return &Response{Resp: res.Get}, nil
+		resp.Resp = res.Get
 	case *tikvpb.BatchCommandsResponse_Response_Scan:
-		return &Response{Resp: res.Scan}, nil
+		resp.Resp = res.Scan
 	case *tikvpb.BatchCommandsResponse_Response_Prewrite:
-		return &Response{Resp: res.Prewrite}, nil
+		resp.Resp = res.Prewrite
 	case *tikvpb.BatchCommandsResponse_Response_Commit:
-		return &Response{Resp: res.Commit}, nil
+		resp.Resp = res.Commit
 	case *tikvpb.BatchCommandsResponse_Response_Cleanup:
-		return &Response{Resp: res.Cleanup}, nil
+		resp.Resp = res.Cleanup
 	case *tikvpb.BatchCommandsResponse_Response_BatchGet:
-		return &Response{Resp: res.BatchGet}, nil
+		resp.Resp = res.BatchGet
 	case *tikvpb.BatchCommandsResponse_Response_BatchRollback:
-		return &Response{Resp: res.BatchRollback}, nil
+		resp.Resp = res.BatchRollback
 	case *tikvpb.BatchCommandsResponse_Response_ScanLock:
-		return &Response{Resp: res.ScanLock}, nil
+		resp.Resp = res.ScanLock
 	case *tikvpb.BatchCommandsResponse_Response_ResolveLock:
-		return &Response{Resp: res.ResolveLock}, nil
+		resp.Resp = res.ResolveLock
 	case *tikvpb.BatchCommandsResponse_Response_GC:
-		return &Response{Resp: res.GC}, nil
+		resp.Resp = res.GC
 	case *tikvpb.BatchCommandsResponse_Response_DeleteRange:
-		return &Response{Resp: res.DeleteRange}, nil
+		resp.Resp = res.DeleteRange
 	case *tikvpb.BatchCommandsResponse_Response_RawGet:
-		return &Response{Resp: res.RawGet}, nil
+		resp.Resp = res.RawGet
 	case *tikvpb.BatchCommandsResponse_Response_RawBatchGet:
-		return &Response{Resp: res.RawBatchGet}, nil
+		resp.Resp = res.RawBatchGet
 	case *tikvpb.BatchCommandsResponse_Response_RawPut:
-		return &Response{Resp: res.RawPut}, nil
+		resp.Resp = res.RawPut
 	case *tikvpb.BatchCommandsResponse_Response_RawBatchPut:
-		return &Response{Resp: res.RawBatchPut}, nil
+		resp.Resp = res.RawBatchPut
 	case *tikvpb.BatchCommandsResponse_Response_RawDelete:
-		return &Response{Resp: res.RawDelete}, nil
+		resp.Resp = res.RawDelete
 	case *tikvpb.BatchCommandsResponse_Response_RawBatchDelete:
-		return &Response{Resp: res.RawBatchDelete}, nil
+		resp.Resp = res.RawBatchDelete
 	case *tikvpb.BatchCommandsResponse_Response_RawDeleteRange:
-		return &Response{Resp: res.RawDeleteRange}, nil
+		resp.Resp = res.RawDeleteRange
 	case *tikvpb.BatchCommandsResponse_Response_RawScan:
-		return &Response{Resp: res.RawScan}, nil
+		resp.Resp = res.RawScan
 	case *tikvpb.BatchCommandsResponse_Response_Coprocessor:
-		return &Response{Resp: res.Coprocessor}, nil
+		resp.Resp = res.Coprocessor
 	case *tikvpb.BatchCommandsResponse_Response_PessimisticLock:
-		return &Response{Resp: res.PessimisticLock}, nil
+		resp.Resp = res.PessimisticLock
 	case *tikvpb.BatchCommandsResponse_Response_PessimisticRollback:
-		return &Response{Resp: res.PessimisticRollback}, nil
+		resp.Resp = res.PessimisticRollback
 	case *tikvpb.BatchCommandsResponse_Response_Empty:
-		return &Response{Resp: res.Empty}, nil
+		resp.Resp = res.Empty
 	case *tikvpb.BatchCommandsResponse_Response_TxnHeartBeat:
-		return &Response{Resp: res.TxnHeartBeat}, nil
+		resp.Resp = res.TxnHeartBeat
 	case *tikvpb.BatchCommandsResponse_Response_CheckTxnStatus:
-		return &Response{Resp: res.CheckTxnStatus}, nil
+		resp.Resp = res.CheckTxnStatus
+	default:
+		panic("unreachable")
 	}
-	panic("unreachable")
+	return nil
 }
 
 // CopStreamResponse combinates tikvpb.Tikv_CoprocessorStreamClient and the first Recv() result together.

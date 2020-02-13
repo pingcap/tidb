@@ -21,6 +21,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/tikvpb"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
@@ -71,18 +72,17 @@ func (s *testClientSerialSuite) TestConn(c *C) {
 }
 
 func (s *testClientSuite) TestRemoveCanceledRequests(c *C) {
-	req := new(tikvpb.BatchCommandsRequest_Request)
 	entries := []*batchCommandsEntry{
-		{canceled: 1, req: req},
-		{canceled: 0, req: req},
-		{canceled: 1, req: req},
-		{canceled: 1, req: req},
-		{canceled: 0, req: req},
+		{canceled: 1},
+		{canceled: 0},
+		{canceled: 1},
+		{canceled: 1},
+		{canceled: 0},
 	}
 	entryPtr := &entries[0]
 	requests := make([]*tikvpb.BatchCommandsRequest_Request, len(entries))
 	for i := range entries {
-		requests[i] = entries[i].req
+		requests[i] = &entries[i].req
 	}
 	entries, requests = removeCanceledRequests(entries, requests)
 	c.Assert(len(entries), Equals, 2)
@@ -95,7 +95,7 @@ func (s *testClientSuite) TestRemoveCanceledRequests(c *C) {
 }
 
 func (s *testClientSuite) TestCancelTimeoutRetErr(c *C) {
-	req := new(tikvpb.BatchCommandsRequest_Request)
+	req := tikvrpc.NewRequest(tikvrpc.CmdGet, new(kvrpcpb.GetRequest))
 	a := newBatchConn(1, 1, nil)
 
 	ctx, cancel := context.WithCancel(context.TODO())

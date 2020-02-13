@@ -23,7 +23,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/grpc-ecosystem/go-grpc-middleware/tracing/opentracing"
+	grpc_opentracing "github.com/grpc-ecosystem/go-grpc-middleware/tracing/opentracing"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
@@ -303,8 +303,9 @@ func (c *rpcClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 	// TiDB RPC server not support batch RPC now.
 	// TODO: remove this store type check after TiDB RPC Server support batch.
 	if config.GetGlobalConfig().TiKVClient.MaxBatchSize > 0 && req.StoreTp != kv.TiDB {
-		if batchReq := req.ToBatchCommandsRequest(); batchReq != nil {
-			return sendBatchRequest(ctx, addr, connArray.batchConn, batchReq, timeout)
+		resp, err := sendBatchRequest(ctx, addr, connArray.batchConn, req, timeout)
+		if resp != nil || err != nil {
+			return resp, err
 		}
 	}
 
