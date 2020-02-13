@@ -1777,8 +1777,8 @@ func (s *testSuiteJoin1) TestIssue11390(c *C) {
 }
 
 func (s *testSuiteJoinSerial) TestOuterTableBuildHashTableIsuse13933(c *C) {
-	plannercore.ForceOuterJoin4Test = true
-	defer func() { plannercore.ForceOuterJoin4Test = false }()
+	plannercore.ForceUseOuterBuild4Test = true
+	defer func() { plannercore.ForceUseOuterBuild4Test = false }()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t, s")
@@ -1862,8 +1862,8 @@ func (s *testSuiteJoin1) TestIssue14514(c *C) {
 }
 
 func (s *testSuiteJoinSerial) TestOuterMatchStatusIssue14742(c *C) {
-	plannercore.ForceOuterJoin4Test = true
-	defer func() { plannercore.ForceOuterJoin4Test = false }()
+	plannercore.ForceUseOuterBuild4Test = true
+	defer func() { plannercore.ForceUseOuterBuild4Test = false }()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists testjoin;")
