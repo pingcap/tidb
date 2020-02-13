@@ -296,9 +296,7 @@ func (s *testPointGetSuite) TestPointGetBinaryPK(c *C) {
 	tk.MustExec(`insert into t values("a", "b");`)
 
 	tk.MustExec(`set @@sql_mode="";`)
-	logutil.BgLogger().Warn("yyy-------------------------------------------------------------------------------------------------------------- xxxxxxxxxxxx")
 	tk.MustPointGet(`select * from t where a = "a";`).Check(testkit.Rows())
-	logutil.BgLogger().Warn("yyy-------------------------------------------------------------------------------------------------------------- xxxxxxxxxxxx")
 	tk.MustPointGet(`select * from t where a = "a ";`).Check(testkit.Rows())
 	tk.MustPointGet(`select * from t where a = "a  ";`).Check(testkit.Rows())
 	tk.MustPointGet(`select * from t where a = "a\0";`).Check(testkit.Rows("a\x00 b\x00"))
@@ -367,7 +365,7 @@ func (s *testPointGetSuite) TestIndexLookupBinary(c *C) {
 
 }
 
-func (s *testPointGetSuite) TestOverflowOr(c *C) {
+func (s *testPointGetSuite) TestOverflowOrTruncated(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("create table t6 (id bigint, a bigint, primary key(id), unique key(a));")
 	tk.MustExec("insert into t6 values(9223372036854775807, 9223372036854775807);")

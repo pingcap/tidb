@@ -33,11 +33,9 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/parser_driver"
-	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/math"
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tipb/go-tipb"
-	"go.uber.org/zap"
 )
 
 // PointGetPlan is a fast plan for simple point get.
@@ -588,10 +586,7 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt) *PointGetP
 	}
 
 	pairs := make([]nameValuePair, 0, 4)
-	logutil.BgLogger().Warn("xxx------------------------------------------======================================overflows ----------------------- 0")
 	pairs, isTableDual := getNameValuePairs(ctx.GetSessionVars().StmtCtx, tbl, tblAlias, pairs, selStmt.Where)
-	logutil.BgLogger().Warn("xxx------------------------------------------======================================overflows ----------------------- 1",
-		zap.Bool("ok", isTableDual), zap.Bool("pairs is nil", pairs == nil))
 	if isTableDual {
 		p := newPointGetPlan(ctx, tblName.Schema.O, schema, tbl, names)
 		p.IsTableDual = true
@@ -604,19 +599,12 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt) *PointGetP
 	var partitionInfo *model.PartitionDefinition
 	if pi != nil {
 		partitionInfo = getPartitionInfo(ctx, tbl, pairs)
-		logutil.BgLogger().Warn("xxx------------------------------------------======================================overflows ----------------------- is part",
-			zap.Bool("has part info", partitionInfo != nil))
 		if partitionInfo == nil {
 			return nil
 		}
 	}
 
 	handlePair, fieldType := findPKHandle(tbl, pairs)
-	logutil.BgLogger().Warn("xxx------------------------------------------ 001",
-		zap.Reflect("val", handlePair.value), zap.Reflect("p", handlePair.param),
-		zap.String("where", selStmt.Where.Text()),
-		zap.Bool("nil", handlePair.value.Kind() == types.KindNull),
-		zap.Int("len", len(pairs)))
 	if handlePair.value.Kind() != types.KindNull && len(pairs) == 1 {
 		p := newPointGetPlan(ctx, dbName, schema, tbl, names)
 		p.Handle = handlePair.value.GetInt64()
@@ -642,7 +630,6 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt) *PointGetP
 		p.IndexValues = idxValues
 		p.IndexValueParams = idxValueParams
 		p.PartitionInfo = partitionInfo
-		logutil.BgLogger().Warn("xxx------------------------------------------ 002", zap.Reflect("val", idxValues[0].GetInt64()))
 		return p
 	}
 	return nil
@@ -817,10 +804,6 @@ func getNameValuePairs(stmtCtx *stmtctx.StatementContext, tbl *model.TableInfo, 
 			return append(nvPairs, nameValuePair{colName: colName.Name.Name.L, value: d, param: param}), false
 		}
 		dVal, err := d.ConvertTo(stmtCtx, &col.FieldType)
-		logutil.BgLogger().Warn("yyy--------------------------------",
-			zap.String("col", colName.Name.String()), zap.Reflect("dVal", dVal.GetString()),
-			zap.String("d", d.GetString()), zap.Reflect("kind", d.Kind()),
-			zap.String("field", col.FieldType.String()), zap.Error(err))
 		if err != nil {
 			if terror.ErrorEqual(types.ErrOverflow, err) {
 				return nil, true
@@ -832,8 +815,6 @@ func getNameValuePairs(stmtCtx *stmtctx.StatementContext, tbl *model.TableInfo, 
 		}
 		// The converted result must be same as original datum.
 		cmp, err := d.CompareDatum(stmtCtx, &dVal)
-		logutil.BgLogger().Warn("yyy--------------------------------", zap.Bool("cmp is 0", cmp == 0),
-			zap.String("tp", col.FieldType.String()), zap.Int("tp", int(col.FieldType.Tp)), zap.String("collate", col.Collate))
 		if err != nil {
 			return nil, false
 		} else if cmp != 0 {

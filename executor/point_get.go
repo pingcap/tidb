@@ -27,9 +27,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/rowcodec"
-	"go.uber.org/zap"
 )
 
 func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) Executor {
@@ -122,7 +120,6 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 		tblID = e.tblInfo.ID
 	}
 	if e.idxInfo != nil {
-		logutil.BgLogger().Warn("                      xxx get kv------------------------------------------ 001", zap.Reflect("val", e.idxVals))
 		idxKey, err1 := encodeIndexKey(e.base(), e.tblInfo, e.idxInfo, e.idxVals, tblID)
 		if err1 != nil && !kv.ErrNotExist.Equal(err1) {
 			return err1
@@ -157,7 +154,6 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 
 	key := tablecodec.EncodeRowKeyWithHandle(tblID, e.handle)
 	val, err := e.get(ctx, key)
-	logutil.BgLogger().Warn("                      xxx get kv------------------------------------------ 002", zap.Reflect("val", key))
 	if err != nil && !kv.ErrNotExist.Equal(err) {
 		return err
 	}
