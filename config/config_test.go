@@ -19,6 +19,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"testing"
+	"time"
 
 	"github.com/BurntSushi/toml"
 	. "github.com/pingcap/check"
@@ -326,6 +327,11 @@ xkNuJ2BlEGkwWLiRbKy1lNBBFUXKuhh3L/EIY10WTnr3TQzeL6H1
 	c.Assert(tlsConfig, NotNil)
 	c.Assert(os.Remove(certFile), IsNil)
 	c.Assert(os.Remove(keyFile), IsNil)
+
+	// for MinDDLLease
+	c.Assert(conf.MinDDLLease(), Equals, time.Duration(0))
+	conf.Store = "tikv"
+	c.Assert(conf.MinDDLLease(), Equals, time.Second)
 }
 
 func (s *testConfigSuite) TestConfigDiff(c *C) {
