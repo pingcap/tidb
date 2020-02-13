@@ -482,6 +482,7 @@ func (e *HashJoinExec) joinMatchedProbeSideRow2ChunkForOuterHashJoin(workerID ui
 
 	iter := chunk.NewIterator4Slice(buildSideRows)
 	var outerMatchStatus []outerRowStatusFlag
+	rowIdx := 0
 	for iter.Begin(); iter.Current() != iter.End(); {
 		outerMatchStatus, err = e.joiners[workerID].tryToMatchOuters(iter, probeSideRow, joinResult.chk, outerMatchStatus)
 		if err != nil {
@@ -490,9 +491,10 @@ func (e *HashJoinExec) joinMatchedProbeSideRow2ChunkForOuterHashJoin(workerID ui
 		}
 		for i := range outerMatchStatus {
 			if outerMatchStatus[i] == outerRowMatched {
-				e.outerMatchedStatus[rowsPtrs[i].ChkIdx].Set(int(rowsPtrs[i].RowIdx))
+				e.outerMatchedStatus[rowsPtrs[rowIdx+i].ChkIdx].Set(int(rowsPtrs[rowIdx+i].RowIdx))
 			}
 		}
+		rowIdx += len(outerMatchStatus)
 		if joinResult.chk.IsFull() {
 			e.joinResultCh <- joinResult
 			ok, joinResult := e.getNewJoinResult(workerID)
