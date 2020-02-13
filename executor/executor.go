@@ -485,7 +485,11 @@ func (e *ShowDDLJobsExec) appendJobToChunk(req *chunk.Chunk, job *model.Job) {
 	req.AppendInt64(6, job.TableID)
 	req.AppendInt64(7, job.RowCount)
 	req.AppendString(8, model.TSConvert2Time(job.StartTS).String())
-	req.AppendString(9, model.TSConvert2Time(finishTS).String())
+	if finishTS > 0 {
+		req.AppendString(9, model.TSConvert2Time(finishTS).String())
+	} else {
+		req.AppendString(9, "")
+	}
 	req.AppendString(10, job.State.String())
 }
 
