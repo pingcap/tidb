@@ -240,15 +240,15 @@ func (p *preprocessor) Leave(in ast.Node) (out ast.Node, ok bool) {
 	return in, p.err == nil
 }
 
-func checkAutoIncrementOp(colDef *ast.ColumnDef, num int) (bool, error) {
+func checkAutoIncrementOp(colDef *ast.ColumnDef, index int) (bool, error) {
 	var hasAutoIncrement bool
 
-	if colDef.Options[num].Tp == ast.ColumnOptionAutoIncrement {
+	if colDef.Options[index].Tp == ast.ColumnOptionAutoIncrement {
 		hasAutoIncrement = true
-		if len(colDef.Options) == num+1 {
+		if len(colDef.Options) == index+1 {
 			return hasAutoIncrement, nil
 		}
-		for _, op := range colDef.Options[num+1:] {
+		for _, op := range colDef.Options[index+1:] {
 			if op.Tp == ast.ColumnOptionDefaultValue {
 				if tmp, ok := op.Expr.(*driver.ValueExpr); ok {
 					if !tmp.Datum.IsNull() {
@@ -258,13 +258,13 @@ func checkAutoIncrementOp(colDef *ast.ColumnDef, num int) (bool, error) {
 			}
 		}
 	}
-	if colDef.Options[num].Tp == ast.ColumnOptionDefaultValue && len(colDef.Options) != num+1 {
-		if tmp, ok := colDef.Options[num].Expr.(*driver.ValueExpr); ok {
+	if colDef.Options[index].Tp == ast.ColumnOptionDefaultValue && len(colDef.Options) != index+1 {
+		if tmp, ok := colDef.Options[index].Expr.(*driver.ValueExpr); ok {
 			if tmp.Datum.IsNull() {
 				return hasAutoIncrement, nil
 			}
 		}
-		for _, op := range colDef.Options[num+1:] {
+		for _, op := range colDef.Options[index+1:] {
 			if op.Tp == ast.ColumnOptionAutoIncrement {
 				return hasAutoIncrement, errors.Errorf("Invalid default value for '%s'", colDef.Name.Name.O)
 			}
@@ -308,11 +308,10 @@ func (p *preprocessor) checkAutoIncrement(stmt *ast.CreateTableStmt) {
 			}
 			if ok {
 				hasAutoIncrement = true
-				// only when has auto increment, check the column is key.
-				switch op.Tp {
-				case ast.ColumnOptionPrimaryKey, ast.ColumnOptionUniqKey:
-					isKey = true
-				}
+			}
+			switch op.Tp {
+			case ast.ColumnOptionPrimaryKey, ast.ColumnOptionUniqKey:
+				isKey = true
 			}
 		}
 		if hasAutoIncrement {
