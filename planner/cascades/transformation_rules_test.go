@@ -289,3 +289,21 @@ func (s *testTransformationRuleSuite) TestTransformLimitToTableDual(c *C) {
 	s.testData.GetTestCases(c, &input, &output)
 	testGroupToString(input, output, s, c)
 }
+
+func (s *testTransformationRuleSuite) TestEliminateOuterJoinBelowAggregation(c *C) {
+	s.optimizer.ResetTransformationRules(map[memo.Operand][]Transformation{
+		memo.OperandAggregation: {
+			NewRuleEliminateOuterJoinBelowAggregation(),
+		},
+	})
+	defer func() {
+		s.optimizer.ResetTransformationRules(defaultTransformationMap)
+	}()
+	var input []string
+	var output []struct {
+		SQL    string
+		Result []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	testGroupToString(input, output, s, c)
+}
