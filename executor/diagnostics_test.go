@@ -18,6 +18,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -163,4 +164,165 @@ func (s *diagnosticsSuite) TestInspectionResult(c *C) {
 		c.Assert(len(warnings), Equals, 0, Commentf("expected no warning, got: %+v", warnings))
 		result.Check(testkit.Rows(cs.rows...))
 	}
+}
+
+func (s *diagnosticsSuite) TestCriticalErrorInspection(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+
+	fpName := "github.com/pingcap/tidb/executor/mockMetricsTableData"
+	c.Assert(failpoint.Enable(fpName, "return"), IsNil)
+	defer func() { c.Assert(failpoint.Disable(fpName), IsNil) }()
+
+	datetime := func(s string) types.Time {
+		t, err := types.ParseTime(tk.Se.GetSessionVars().StmtCtx, s, mysql.TypeDatetime, types.MaxFsp)
+		c.Assert(err, IsNil)
+		return t
+	}
+
+	// construct some mock data
+	mockData := map[string][][]types.Datum{
+		// columns: time, instance, type, value
+		"tidb_failed_query_opm": {
+			types.MakeDatums(datetime("2020-02-12 10:35:00"), "tidb-0", "type1", 0.0),
+			types.MakeDatums(datetime("2020-02-12 10:36:00"), "tidb-0", "type2", 1.0),
+			types.MakeDatums(datetime("2020-02-12 10:37:00"), "tidb-1", "type3", 5.0),
+		},
+		// columns: time, instance, type, value
+		"tikv_critical_error": {
+			types.MakeDatums(datetime("2020-02-12 10:35:00"), "tikv-0", "type1", 0.0),
+			types.MakeDatums(datetime("2020-02-12 10:36:00"), "tikv-1", "type1", 1.0),
+			types.MakeDatums(datetime("2020-02-12 10:37:00"), "tikv-2", "type2", 5.0),
+		},
+		// columns: time, instance, value
+		"tidb_panic_count": {
+			types.MakeDatums(datetime("2020-02-12 10:35:00"), "tidb-0", 4.0),
+			types.MakeDatums(datetime("2020-02-12 10:36:00"), "tidb-0", 0.0),
+			types.MakeDatums(datetime("2020-02-12 10:37:00"), "tidb-1", 1.0),
+		},
+		// columns: time, instance, value
+		"tidb_binlog_error_count": {
+			types.MakeDatums(datetime("2020-02-12 10:35:00"), "tidb-1", 4.0),
+			types.MakeDatums(datetime("2020-02-12 10:36:00"), "tidb-2", 0.0),
+			types.MakeDatums(datetime("2020-02-12 10:37:00"), "tidb-3", 1.0),
+		},
+		// columns: time, instance, type, value
+		"pd_cmd_fail_ops": {
+			types.MakeDatums(datetime("2020-02-12 10:35:00"), "tidb-0", "type1", 0.0),
+			types.MakeDatums(datetime("2020-02-12 10:36:00"), "tidb-0", "type1", 1.0),
+			types.MakeDatums(datetime("2020-02-12 10:37:00"), "tidb-1", "type2", 5.0),
+		},
+		// columns: time, instance, type, value
+		"tidb_lock_resolver_ops": {
+			types.MakeDatums(datetime("2020-02-12 10:35:00"), "tidb-0", "type1", 0.0),
+			types.MakeDatums(datetime("2020-02-12 10:36:00"), "tidb-0", "type1", 1.0),
+			types.MakeDatums(datetime("2020-02-12 10:37:00"), "tidb-1", "type2", 5.0),
+		},
+		// columns: time, instance, db, type, stage, value
+		"tikv_scheduler_is_busy": {
+			types.MakeDatums(datetime("2020-02-12 10:35:00"), "tikv-0", "db1", "type1", "stage1", 1.0),
+			types.MakeDatums(datetime("2020-02-12 10:36:00"), "tikv-0", "db2", "type1", "stage2", 2.0),
+			types.MakeDatums(datetime("2020-02-12 10:37:00"), "tikv-1", "db1", "type2", "stage1", 3.0),
+			types.MakeDatums(datetime("2020-02-12 10:38:00"), "tikv-0", "db1", "type1", "stage2", 4.0),
+			types.MakeDatums(datetime("2020-02-12 10:39:00"), "tikv-0", "db2", "type1", "stage1", 5.0),
+			types.MakeDatums(datetime("2020-02-12 10:40:00"), "tikv-1", "db1", "type2", "stage2", 6.0),
+		},
+		// columns: time, instance, db, value
+		"tikv_coprocessor_is_busy": {
+			types.MakeDatums(datetime("2020-02-12 10:35:00"), "tikv-0", "db1", 1.0),
+			types.MakeDatums(datetime("2020-02-12 10:36:00"), "tikv-0", "db2", 2.0),
+			types.MakeDatums(datetime("2020-02-12 10:37:00"), "tikv-1", "db1", 3.0),
+			types.MakeDatums(datetime("2020-02-12 10:38:00"), "tikv-0", "db1", 4.0),
+			types.MakeDatums(datetime("2020-02-12 10:39:00"), "tikv-0", "db2", 5.0),
+			types.MakeDatums(datetime("2020-02-12 10:40:00"), "tikv-1", "db1", 6.0),
+		},
+		// columns: time, instance, db, type, value
+		"tikv_channel_full_total": {
+			types.MakeDatums(datetime("2020-02-12 10:35:00"), "tikv-0", "db1", "type1", 1.0),
+			types.MakeDatums(datetime("2020-02-12 10:36:00"), "tikv-0", "db2", "type1", 2.0),
+			types.MakeDatums(datetime("2020-02-12 10:37:00"), "tikv-1", "db1", "type2", 3.0),
+			types.MakeDatums(datetime("2020-02-12 10:38:00"), "tikv-0", "db1", "type1", 4.0),
+			types.MakeDatums(datetime("2020-02-12 10:39:00"), "tikv-0", "db2", "type1", 5.0),
+			types.MakeDatums(datetime("2020-02-12 10:40:00"), "tikv-1", "db1", "type2", 6.0),
+		},
+		// columns: time, "instance", "reason", value
+		"tikv_coprocessor_request_error": {
+			types.MakeDatums(datetime("2020-02-12 10:35:00"), "tikv-0", "reason1", 1.0),
+			types.MakeDatums(datetime("2020-02-12 10:36:00"), "tikv-0", "reason2", 2.0),
+			types.MakeDatums(datetime("2020-02-12 10:37:00"), "tikv-1", "reason3", 3.0),
+		},
+		// columns: time, instance, value
+		"tidb_schema_lease_error_opm": {
+			types.MakeDatums(datetime("2020-02-12 10:35:00"), "tidb-1", 4.0),
+			types.MakeDatums(datetime("2020-02-12 10:36:00"), "tidb-2", 0.0),
+			types.MakeDatums(datetime("2020-02-12 10:37:00"), "tidb-3", 1.0),
+		},
+		// columns: time, instance, type, sql_type, value
+		"tidb_transaction_retry_error_ops": {
+			types.MakeDatums(datetime("2020-02-12 10:35:00"), "tidb-0", "db1", "sql_type1", 1.0),
+			types.MakeDatums(datetime("2020-02-12 10:36:00"), "tidb-0", "db2", "sql_type1", 2.0),
+			types.MakeDatums(datetime("2020-02-12 10:37:00"), "tidb-1", "db1", "sql_type2", 3.0),
+		},
+		// columns: time, instance, type, value
+		"tikv_grpc_errors": {
+			types.MakeDatums(datetime("2020-02-12 10:35:00"), "tikv-0", "type1", 1.0),
+			types.MakeDatums(datetime("2020-02-12 10:36:00"), "tikv-0", "type2", 2.0),
+			types.MakeDatums(datetime("2020-02-12 10:37:00"), "tikv-1", "type3", 3.0),
+		},
+		// columns: time, instance, type, value
+		"tidb_kv_region_error_ops": {
+			types.MakeDatums(datetime("2020-02-12 10:35:00"), "tikv-0", "type1", 1.0),
+			types.MakeDatums(datetime("2020-02-12 10:36:00"), "tikv-0", "type2", 2.0),
+			types.MakeDatums(datetime("2020-02-12 10:37:00"), "tikv-1", "type3", 3.0),
+		},
+	}
+
+	ctx := context.WithValue(context.Background(), "__mockMetricsTableData", mockData)
+	ctx = failpoint.WithHook(ctx, func(_ context.Context, fpname string) bool {
+		return fpName == fpname
+	})
+
+	rs, err := tk.Se.Execute(ctx, "select item, instance, value, details from information_schema.inspection_result where rule='critical-error'")
+	c.Assert(err, IsNil)
+	result := tk.ResultSetToResultWithCtx(ctx, rs[0], Commentf("execute inspect SQL failed"))
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(0), Commentf("unexpected warnings: %+v", tk.Se.GetSessionVars().StmtCtx.GetWarnings()))
+	result.Check(testkit.Rows(
+		"binlog-error tidb-3 1.00 select * from `metric_schema`.`tidb_binlog_error_count` where `instance`='tidb-3'",
+		"binlog-error tidb-1 4.00 select * from `metric_schema`.`tidb_binlog_error_count` where `instance`='tidb-1'",
+		"channel-is-full tikv-0 {`db`='db1',`type`='type1'}=4.00 select * from `metric_schema`.`tikv_channel_full_total` where `instance`='tikv-0' and `db`='db1' and `type`='type1'",
+		"channel-is-full tikv-1 {`db`='db1',`type`='type2'}=6.00 select * from `metric_schema`.`tikv_channel_full_total` where `instance`='tikv-1' and `db`='db1' and `type`='type2'",
+		"channel-is-full tikv-0 {`db`='db2',`type`='type1'}=5.00 select * from `metric_schema`.`tikv_channel_full_total` where `instance`='tikv-0' and `db`='db2' and `type`='type1'",
+		"coprocessor-error tikv-0 {`reason`='reason1'}=1.00 select * from `metric_schema`.`tikv_coprocessor_request_error` where `instance`='tikv-0' and `reason`='reason1'",
+		"coprocessor-error tikv-0 {`reason`='reason2'}=2.00 select * from `metric_schema`.`tikv_coprocessor_request_error` where `instance`='tikv-0' and `reason`='reason2'",
+		"coprocessor-error tikv-1 {`reason`='reason3'}=3.00 select * from `metric_schema`.`tikv_coprocessor_request_error` where `instance`='tikv-1' and `reason`='reason3'",
+		"coprocessor-is-busy tikv-0 {`db`='db1'}=4.00 select * from `metric_schema`.`tikv_coprocessor_is_busy` where `instance`='tikv-0' and `db`='db1'",
+		"coprocessor-is-busy tikv-1 {`db`='db1'}=6.00 select * from `metric_schema`.`tikv_coprocessor_is_busy` where `instance`='tikv-1' and `db`='db1'",
+		"coprocessor-is-busy tikv-0 {`db`='db2'}=5.00 select * from `metric_schema`.`tikv_coprocessor_is_busy` where `instance`='tikv-0' and `db`='db2'",
+		"critical-error tikv-1 {`type`='type1'}=1.00 select * from `metric_schema`.`tikv_critical_error` where `instance`='tikv-1' and `type`='type1'",
+		"critical-error tikv-2 {`type`='type2'}=5.00 select * from `metric_schema`.`tikv_critical_error` where `instance`='tikv-2' and `type`='type2'",
+		"failed-query-opm tidb-0 {`type`='type2'}=1.00 select * from `metric_schema`.`tidb_failed_query_opm` where `instance`='tidb-0' and `type`='type2'",
+		"failed-query-opm tidb-1 {`type`='type3'}=5.00 select * from `metric_schema`.`tidb_failed_query_opm` where `instance`='tidb-1' and `type`='type3'",
+		"grpc-errors tikv-0 {`type`='type1'}=1.00 select * from `metric_schema`.`tikv_grpc_errors` where `instance`='tikv-0' and `type`='type1'",
+		"grpc-errors tikv-0 {`type`='type2'}=2.00 select * from `metric_schema`.`tikv_grpc_errors` where `instance`='tikv-0' and `type`='type2'",
+		"grpc-errors tikv-1 {`type`='type3'}=3.00 select * from `metric_schema`.`tikv_grpc_errors` where `instance`='tikv-1' and `type`='type3'",
+		"lock-resolve tidb-0 {`type`='type1'}=1.00 select * from `metric_schema`.`tidb_lock_resolver_ops` where `instance`='tidb-0' and `type`='type1'",
+		"lock-resolve tidb-1 {`type`='type2'}=5.00 select * from `metric_schema`.`tidb_lock_resolver_ops` where `instance`='tidb-1' and `type`='type2'",
+		"panic-count tidb-1 1.00 select * from `metric_schema`.`tidb_panic_count` where `instance`='tidb-1'",
+		"panic-count tidb-0 4.00 select * from `metric_schema`.`tidb_panic_count` where `instance`='tidb-0'",
+		"pd-cmd-failed tidb-0 {`type`='type1'}=1.00 select * from `metric_schema`.`pd_cmd_fail_ops` where `instance`='tidb-0' and `type`='type1'",
+		"pd-cmd-failed tidb-1 {`type`='type2'}=5.00 select * from `metric_schema`.`pd_cmd_fail_ops` where `instance`='tidb-1' and `type`='type2'",
+		"scheduler-is-busy tikv-0 {`db`='db1',`type`='type1',`stage`='stage1'}=1.00 select * from `metric_schema`.`tikv_scheduler_is_busy` where `instance`='tikv-0' and `db`='db1' and `type`='type1' and `stage`='stage1'",
+		"scheduler-is-busy tikv-0 {`db`='db1',`type`='type1',`stage`='stage2'}=4.00 select * from `metric_schema`.`tikv_scheduler_is_busy` where `instance`='tikv-0' and `db`='db1' and `type`='type1' and `stage`='stage2'",
+		"scheduler-is-busy tikv-1 {`db`='db1',`type`='type2',`stage`='stage1'}=3.00 select * from `metric_schema`.`tikv_scheduler_is_busy` where `instance`='tikv-1' and `db`='db1' and `type`='type2' and `stage`='stage1'",
+		"scheduler-is-busy tikv-1 {`db`='db1',`type`='type2',`stage`='stage2'}=6.00 select * from `metric_schema`.`tikv_scheduler_is_busy` where `instance`='tikv-1' and `db`='db1' and `type`='type2' and `stage`='stage2'",
+		"scheduler-is-busy tikv-0 {`db`='db2',`type`='type1',`stage`='stage1'}=5.00 select * from `metric_schema`.`tikv_scheduler_is_busy` where `instance`='tikv-0' and `db`='db2' and `type`='type1' and `stage`='stage1'",
+		"scheduler-is-busy tikv-0 {`db`='db2',`type`='type1',`stage`='stage2'}=2.00 select * from `metric_schema`.`tikv_scheduler_is_busy` where `instance`='tikv-0' and `db`='db2' and `type`='type1' and `stage`='stage2'",
+		"schema-lease-error tidb-3 1.00 select * from `metric_schema`.`tidb_schema_lease_error_opm` where `instance`='tidb-3'",
+		"schema-lease-error tidb-1 4.00 select * from `metric_schema`.`tidb_schema_lease_error_opm` where `instance`='tidb-1'",
+		"ticlient-region-error tikv-0 {`type`='type1'}=1.00 select * from `metric_schema`.`tidb_kv_region_error_ops` where `instance`='tikv-0' and `type`='type1'",
+		"ticlient-region-error tikv-0 {`type`='type2'}=2.00 select * from `metric_schema`.`tidb_kv_region_error_ops` where `instance`='tikv-0' and `type`='type2'",
+		"ticlient-region-error tikv-1 {`type`='type3'}=3.00 select * from `metric_schema`.`tidb_kv_region_error_ops` where `instance`='tikv-1' and `type`='type3'",
+		"txn-retry-error tidb-0 {`type`='db1',`sql_type`='sql_type1'}=1.00 select * from `metric_schema`.`tidb_transaction_retry_error_ops` where `instance`='tidb-0' and `type`='db1' and `sql_type`='sql_type1'",
+		"txn-retry-error tidb-1 {`type`='db1',`sql_type`='sql_type2'}=3.00 select * from `metric_schema`.`tidb_transaction_retry_error_ops` where `instance`='tidb-1' and `type`='db1' and `sql_type`='sql_type2'",
+		"txn-retry-error tidb-0 {`type`='db2',`sql_type`='sql_type1'}=2.00 select * from `metric_schema`.`tidb_transaction_retry_error_ops` where `instance`='tidb-0' and `type`='db2' and `sql_type`='sql_type1'",
+	))
 }
