@@ -3201,18 +3201,22 @@ func (d *ddl) AlterTableSetTiFlashReplica(ctx sessionctx.Context, ident ast.Iden
 }
 
 // UpdateTableReplicaInfo updates the table flash replica infos.
-func (d *ddl) UpdateTableReplicaInfo(ctx sessionctx.Context, tid int64, available bool) error {
+func (d *ddl) UpdateTableReplicaInfo(ctx sessionctx.Context, physicalID int64, available bool) error {
 	is := d.infoHandle.Get()
-	tb, ok := is.TableByID(tid)
+	tb, ok := is.TableByID(physicalID)
 	if !ok {
-		return infoschema.ErrTableNotExists.GenWithStack("Table which ID = %d does not exist.", tid)
+		tb, _ = is.FindTableByPartitionID(physicalID)
+		if tb == nil {
+			return infoschema.ErrTableNotExists.GenWithStack("Table which ID = %d does not exist.", physicalID)
+		}
 	}
-
-	if tb.Meta().TiFlashReplica == nil || (tb.Meta().TiFlashReplica.Available == available) {
+	tbInfo := tb.Meta()
+	if tbInfo.TiFlashReplica == nil || (tbInfo.TiFlashReplica.Available == available) ||
+		(tbInfo.ID != physicalID && available == tbInfo.TiFlashReplica.IsPartitionAvailable(physicalID)) {
 		return nil
 	}
 
-	db, ok := is.SchemaByTable(tb.Meta())
+	db, ok := is.SchemaByTable(tbInfo)
 	if !ok {
 		return infoschema.ErrDatabaseNotExists.GenWithStack("Database of table `%s` does not exist.", tb.Meta().Name)
 	}
@@ -3223,7 +3227,7 @@ func (d *ddl) UpdateTableReplicaInfo(ctx sessionctx.Context, tid int64, availabl
 		SchemaName: db.Name.L,
 		Type:       model.ActionUpdateTiFlashReplicaStatus,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{available},
+		Args:       []interface{}{available, physicalID},
 	}
 	err := d.doDDLJob(ctx, job)
 	err = d.callHookOnChanged(err)
