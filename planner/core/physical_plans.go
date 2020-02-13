@@ -482,6 +482,9 @@ type PhysicalSort struct {
 // appear in final physical operator tree.
 type NominalSort struct {
 	basePhysicalPlan
+
+	ByItems    []*ByItems
+	OnlyColumn bool
 }
 
 // PhysicalUnionScan represents a union scan operator.
