@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
 )
@@ -49,6 +50,8 @@ type testPlanSuite struct {
 	ctx sessionctx.Context
 
 	testData testutil.TestData
+
+	optimizeVars map[string]string
 }
 
 func (s *testPlanSuite) SetUpSuite(c *C) {
@@ -1293,10 +1296,32 @@ func (s *testPlanSuite) TestSelectView(c *C) {
 }
 
 func (s *testPlanSuite) TestWindowFunction(c *C) {
-	defer testleak.AfterTest(c)()
+	s.optimizeVars = map[string]string{
+		variable.TiDBWindowConcurrency: "1",
+	}
+	defer func() {
+		s.optimizeVars = nil
+		testleak.AfterTest(c)()
+	}()
 	var input, output []string
 	s.testData.GetTestCases(c, &input, &output)
+	s.doTestWindowFunction(c, input, output)
+}
 
+func (s *testPlanSuite) TestWindowParallelFunction(c *C) {
+	s.optimizeVars = map[string]string{
+		variable.TiDBWindowConcurrency: "4",
+	}
+	defer func() {
+		s.optimizeVars = nil
+		testleak.AfterTest(c)()
+	}()
+	var input, output []string
+	s.testData.GetTestCases(c, &input, &output)
+	s.doTestWindowFunction(c, input, output)
+}
+
+func (s *testPlanSuite) doTestWindowFunction(c *C, input, output []string) {
 	ctx := context.TODO()
 	for i, tt := range input {
 		comment := Commentf("case:%v sql:%s", i, tt)
@@ -1335,7 +1360,14 @@ func (s *testPlanSuite) optimize(ctx context.Context, sql string) (PhysicalPlan,
 	if err != nil {
 		return nil, nil, err
 	}
-	builder := NewPlanBuilder(MockContext(), s.is, &BlockHintProcessor{})
+
+	sctx := MockContext()
+	for k, v := range s.optimizeVars {
+		if err = sctx.GetSessionVars().SetSystemVar(k, v); err != nil {
+			return nil, nil, err
+		}
+	}
+	builder := NewPlanBuilder(sctx, s.is, &BlockHintProcessor{})
 	p, err := builder.Build(ctx, stmt)
 	if err != nil {
 		return nil, nil, err

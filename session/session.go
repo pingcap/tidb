@@ -117,7 +117,7 @@ type Session interface {
 	Close()
 	Auth(user *auth.UserIdentity, auth []byte, salt []byte) bool
 	ShowProcess() *util.ProcessInfo
-	// PrePareTxnCtx is exported for test.
+	// PrepareTxnCtx is exported for test.
 	PrepareTxnCtx(context.Context)
 	// FieldList returns fields list of a table.
 	FieldList(tableName string) (fields []*ast.ResultField, err error)
@@ -178,7 +178,7 @@ type session struct {
 	// lockedTables use to record the table locks hold by the session.
 	lockedTables map[int64]model.TableLockTpInfo
 
-	// shared coprocessor client per session
+	// client shared coprocessor client per session
 	client kv.Client
 }
 
@@ -532,7 +532,9 @@ func (s *session) RollbackTxn(ctx context.Context) {
 	if s.txn.Valid() {
 		terror.Log(s.txn.Rollback())
 	}
-	s.cleanRetryInfo()
+	if ctx.Value(inCloseSession{}) == nil {
+		s.cleanRetryInfo()
+	}
 	s.txn.changeToInvalid()
 	s.sessionVars.TxnCtx.Cleanup()
 	s.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, false)
@@ -693,7 +695,7 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 				zap.String("label", label),
 				zap.Stringer("session", s),
 				zap.Error(err))
-			metrics.SessionRetryErrorCounter.WithLabelValues(label, metrics.LblUnretryable)
+			metrics.SessionRetryErrorCounter.WithLabelValues(label, metrics.LblUnretryable).Inc()
 			return err
 		}
 		retryCnt++
@@ -701,7 +703,7 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 			logutil.Logger(ctx).Warn("sql",
 				zap.String("label", label),
 				zap.Uint("retry reached max count", retryCnt))
-			metrics.SessionRetryErrorCounter.WithLabelValues(label, metrics.LblReachMax)
+			metrics.SessionRetryErrorCounter.WithLabelValues(label, metrics.LblReachMax).Inc()
 			return err
 		}
 		logutil.Logger(ctx).Warn("sql",
@@ -736,8 +738,11 @@ func (s *session) sysSessionPool() sessionPool {
 // Unlike normal Exec, it doesn't reset statement status, doesn't commit or rollback the current transaction
 // and doesn't write binlog.
 func (s *session) ExecRestrictedSQL(sql string) ([]chunk.Row, []*ast.ResultField, error) {
-	ctx := context.TODO()
+	return s.ExecRestrictedSQLWithContext(context.TODO(), sql)
+}
 
+// ExecRestrictedSQLWithContext implements RestrictedSQLExecutor interface.
+func (s *session) ExecRestrictedSQLWithContext(ctx context.Context, sql string) ([]chunk.Row, []*ast.ResultField, error) {
 	// Use special session to execute the sql.
 	tmp, err := s.sysSessionPool().Get()
 	if err != nil {
@@ -848,6 +853,10 @@ func createSessionFunc(store kv.Storage) pools.Factory {
 			return nil, err
 		}
 		err = variable.SetSessionSystemVar(se.sessionVars, variable.MaxExecutionTime, types.NewUintDatum(0))
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		err = variable.SetSessionSystemVar(se.sessionVars, variable.MaxAllowedPacket, types.NewStringDatum("67108864"))
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -1425,6 +1434,8 @@ func (s *session) ClearValue(key fmt.Stringer) {
 	s.mu.Unlock()
 }
 
+type inCloseSession struct{}
+
 // Close function does some clean work when session end.
 // Close should release the table locks which hold by the session.
 func (s *session) Close() {
@@ -1447,7 +1458,7 @@ func (s *session) Close() {
 	if bindValue != nil {
 		bindValue.(*bindinfo.SessionHandle).Close()
 	}
-	ctx := context.TODO()
+	ctx := context.WithValue(context.TODO(), inCloseSession{}, struct{}{})
 	s.RollbackTxn(ctx)
 	if s.sessionVars != nil {
 		s.sessionVars.WithdrawAllPreparedStmt()
@@ -1822,6 +1833,7 @@ var builtinGlobalVariable = []string{
 	variable.TiDBProjectionConcurrency,
 	variable.TiDBHashAggPartialConcurrency,
 	variable.TiDBHashAggFinalConcurrency,
+	variable.TiDBWindowConcurrency,
 	variable.TiDBBackoffLockFast,
 	variable.TiDBBackOffWeight,
 	variable.TiDBConstraintCheckInPlace,

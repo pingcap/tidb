@@ -789,18 +789,15 @@ func (s *testPlanSuite) TestAggToCopHint(c *C) {
 		dom.Close()
 		store.Close()
 	}()
-	se, err := session.CreateSession4Test(store)
-	c.Assert(err, IsNil)
-	_, err = se.Execute(context.Background(), "use test")
-	c.Assert(err, IsNil)
-	_, err = se.Execute(context.Background(), "insert into mysql.opt_rule_blacklist values(\"aggregation_eliminate\")")
-	c.Assert(err, IsNil)
-	_, err = se.Execute(context.Background(), "admin reload opt_rule_blacklist")
-	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists ta")
+	tk.MustExec("create table ta(a int, b int, index(a))")
 
 	var (
 		input  []string
 		output []struct {
+			SQL     string
 			Best    string
 			Warning string
 		}
@@ -808,14 +805,20 @@ func (s *testPlanSuite) TestAggToCopHint(c *C) {
 	s.testData.GetTestCases(c, &input, &output)
 
 	ctx := context.Background()
+	is := domain.GetDomain(tk.Se).InfoSchema()
 	for i, test := range input {
 		comment := Commentf("case:%v sql:%s", i, test)
-		se.GetSessionVars().StmtCtx.SetWarnings(nil)
+		s.testData.OnRecord(func() {
+			output[i].SQL = test
+		})
+		c.Assert(test, Equals, output[i].SQL, comment)
+
+		tk.Se.GetSessionVars().StmtCtx.SetWarnings(nil)
 
 		stmt, err := s.ParseOneStmt(test, "", "")
 		c.Assert(err, IsNil, comment)
 
-		p, _, err := planner.Optimize(ctx, se, stmt, s.is)
+		p, _, err := planner.Optimize(ctx, tk.Se, stmt, is)
 		c.Assert(err, IsNil)
 		planString := core.ToString(p)
 		s.testData.OnRecord(func() {
@@ -823,7 +826,7 @@ func (s *testPlanSuite) TestAggToCopHint(c *C) {
 		})
 		c.Assert(planString, Equals, output[i].Best, comment)
 
-		warnings := se.GetSessionVars().StmtCtx.GetWarnings()
+		warnings := tk.Se.GetSessionVars().StmtCtx.GetWarnings()
 		s.testData.OnRecord(func() {
 			if len(warnings) > 0 {
 				output[i].Warning = warnings[0].Err.Error()
@@ -1128,5 +1131,71 @@ func (s *testPlanSuite) TestIndexJoinHint(c *C) {
 			output[i].Plan = core.ToString(p)
 		})
 		c.Assert(core.ToString(p), Equals, output[i].Plan, comment)
+	}
+}
+
+func (s *testPlanSuite) TestDAGPlanBuilderWindow(c *C) {
+	defer testleak.AfterTest(c)()
+	var input []string
+	var output []struct {
+		SQL  string
+		Best string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	vars := []string{
+		"set @@session.tidb_window_concurrency = 1",
+	}
+	s.doTestDAGPlanBuilderWindow(c, vars, input, output)
+}
+
+func (s *testPlanSuite) TestDAGPlanBuilderWindowParallel(c *C) {
+	defer testleak.AfterTest(c)()
+	var input []string
+	var output []struct {
+		SQL  string
+		Best string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	vars := []string{
+		"set @@session.tidb_window_concurrency = 4",
+	}
+	s.doTestDAGPlanBuilderWindow(c, vars, input, output)
+}
+
+func (s *testPlanSuite) doTestDAGPlanBuilderWindow(c *C, vars, input []string, output []struct {
+	SQL  string
+	Best string
+}) {
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	se, err := session.CreateSession4Test(store)
+	c.Assert(err, IsNil)
+	ctx := context.Background()
+	_, err = se.Execute(ctx, "use test")
+	c.Assert(err, IsNil)
+
+	for _, v := range vars {
+		_, err = se.Execute(ctx, v)
+		c.Assert(err, IsNil)
+	}
+
+	for i, tt := range input {
+		comment := Commentf("case:%v sql:%s", i, tt)
+		stmt, err := s.ParseOneStmt(tt, "", "")
+		c.Assert(err, IsNil, comment)
+
+		err = se.NewTxn(context.Background())
+		c.Assert(err, IsNil)
+		p, _, err := planner.Optimize(context.TODO(), se, stmt, s.is)
+		c.Assert(err, IsNil)
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Best = core.ToString(p)
+		})
+		c.Assert(core.ToString(p), Equals, output[i].Best, comment)
 	}
 }

@@ -49,10 +49,8 @@ import (
 var _ = SerialSuites(&testSerialSuite{})
 
 type testSerialSuite struct {
-	store     kv.Storage
-	cluster   *mocktikv.Cluster
-	mvccStore mocktikv.MVCCStore
-	dom       *domain.Domain
+	store kv.Storage
+	dom   *domain.Domain
 }
 
 func (s *testSerialSuite) SetUpSuite(c *C) {
@@ -65,10 +63,7 @@ func (s *testSerialSuite) SetUpSuite(c *C) {
 	newCfg.AlterPrimaryKey = false
 	config.StoreGlobalConfig(&newCfg)
 
-	s.cluster = mocktikv.NewCluster()
-	s.mvccStore = mocktikv.MustNewMVCCStore()
-
-	ddl.WaitTimeWhenErrorOccured = 1 * time.Microsecond
+	ddl.SetWaitTimeWhenErrorOccurred(1 * time.Microsecond)
 	var err error
 	s.store, err = mockstore.NewMockTikvStore()
 	c.Assert(err, IsNil)
@@ -157,7 +152,10 @@ func (s *testSerialSuite) TestMultiRegionGetTableEndHandle(c *C) {
 	testCtx := newTestMaxTableRowIDContext(c, d, tbl)
 
 	// Split the table.
-	s.cluster.SplitTable(s.mvccStore, tblID, 100)
+	cluster := mocktikv.NewCluster()
+	mvccStore := mocktikv.MustNewMVCCStore()
+	defer mvccStore.Close()
+	cluster.SplitTable(mvccStore, tblID, 100)
 
 	maxID, emptyTable := getMaxTableRowID(testCtx, s.store)
 	c.Assert(emptyTable, IsFalse)
@@ -665,13 +663,13 @@ func (s *testSerialSuite) TestCanceledJobTakeTime(c *C) {
 	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
 	defer s.dom.DDL().(ddl.DDLForTest).SetHook(origHook)
 
-	originalWT := ddl.WaitTimeWhenErrorOccured
-	ddl.WaitTimeWhenErrorOccured = 1 * time.Second
-	defer func() { ddl.WaitTimeWhenErrorOccured = originalWT }()
+	originalWT := ddl.GetWaitTimeWhenErrorOccurred()
+	ddl.SetWaitTimeWhenErrorOccurred(1 * time.Second)
+	defer func() { ddl.SetWaitTimeWhenErrorOccurred(originalWT) }()
 	startTime := time.Now()
 	tk.MustGetErrCode("alter table t_cjtt add column b int", mysql.ErrNoSuchTable)
 	sub := time.Since(startTime)
-	c.Assert(sub, Less, ddl.WaitTimeWhenErrorOccured)
+	c.Assert(sub, Less, ddl.GetWaitTimeWhenErrorOccurred())
 }
 
 func (s *testSerialSuite) TestTableLocksEnable(c *C) {

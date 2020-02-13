@@ -83,6 +83,7 @@ type Expression interface {
 	goJSON.Marshaler
 	VecExpr
 	ReverseExpr
+	CollationExpr
 
 	// Eval evaluates an expression through a row.
 	Eval(row chunk.Row) (types.Datum, error)
@@ -728,7 +729,7 @@ func wrapWithIsTrue(ctx sessionctx.Context, keepNull bool, arg Expression) (Expr
 		return nil, err
 	}
 	sf := &ScalarFunction{
-		FuncName: model.NewCIStr(fmt.Sprintf("sig_%T", f)),
+		FuncName: model.NewCIStr(ast.IsTruth),
 		Function: f,
 		RetType:  f.getRetTp(),
 	}

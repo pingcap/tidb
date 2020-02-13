@@ -56,9 +56,10 @@ import (
 )
 
 var (
-	withTiKVGlobalLock sync.RWMutex
-	withTiKV           = flag.Bool("with-tikv", false, "run tests with TiKV cluster started. (not use the mock server)")
-	pdAddrs            = flag.String("pd-addrs", "127.0.0.1:2379", "pd addrs")
+	withTiKV        = flag.Bool("with-tikv", false, "run tests with TiKV cluster started. (not use the mock server)")
+	pdAddrs         = flag.String("pd-addrs", "127.0.0.1:2379", "pd addrs")
+	pdAddrChan      chan string
+	initPdAddrsOnce sync.Once
 )
 
 var _ = Suite(&testSessionSuite{})
@@ -73,6 +74,7 @@ type testSessionSuiteBase struct {
 	mvccStore mocktikv.MVCCStore
 	store     kv.Storage
 	dom       *domain.Domain
+	pdAddr    string
 }
 
 type testSessionSuite struct {
@@ -136,21 +138,35 @@ func clearETCD(ebd tikv.EtcdBackend) error {
 	return nil
 }
 
+func initPdAddrs() {
+	initPdAddrsOnce.Do(func() {
+		addrs := strings.Split(*pdAddrs, ",")
+		pdAddrChan = make(chan string, len(addrs))
+		for _, addr := range addrs {
+			addr = strings.TrimSpace(addr)
+			if addr != "" {
+				pdAddrChan <- addr
+			}
+		}
+	})
+}
+
 func (s *testSessionSuiteBase) SetUpSuite(c *C) {
 	testleak.BeforeTest()
 	s.cluster = mocktikv.NewCluster()
 
 	if *withTiKV {
-		withTiKVGlobalLock.Lock()
+		initPdAddrs()
+		s.pdAddr = <-pdAddrChan
 		var d tikv.Driver
 		config.GetGlobalConfig().TxnLocalLatches.Enabled = false
-		store, err := d.Open(fmt.Sprintf("tikv://%s", *pdAddrs))
+		store, err := d.Open(fmt.Sprintf("tikv://%s", s.pdAddr))
 		c.Assert(err, IsNil)
 		err = clearStorage(store)
 		c.Assert(err, IsNil)
 		err = clearETCD(store.(tikv.EtcdBackend))
 		c.Assert(err, IsNil)
-		session.ResetForWithTiKVTest()
+		session.ResetStoreForWithTiKVTest(store)
 		s.store = store
 	} else {
 		mocktikv.BootstrapWithSingleStore(s.cluster)
@@ -161,7 +177,6 @@ func (s *testSessionSuiteBase) SetUpSuite(c *C) {
 		)
 		c.Assert(err, IsNil)
 		s.store = store
-		session.SetSchemaLease(0)
 		session.DisableStats4Test()
 	}
 
@@ -176,7 +191,7 @@ func (s *testSessionSuiteBase) TearDownSuite(c *C) {
 	s.store.Close()
 	testleak.AfterTest(c)()
 	if *withTiKV {
-		withTiKVGlobalLock.Unlock()
+		pdAddrChan <- s.pdAddr
 	}
 }
 
@@ -474,9 +489,17 @@ func (s *testSessionSuite) TestAutocommit(c *C) {
 // TestTxnLazyInitialize tests that when autocommit = 0, not all statement starts
 // a new transaction.
 func (s *testSessionSuite) TestTxnLazyInitialize(c *C) {
+	testTxnLazyInitialize(s, c, false)
+	testTxnLazyInitialize(s, c, true)
+}
+
+func testTxnLazyInitialize(s *testSessionSuite, c *C, isPessimistic bool) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (id int)")
+	if isPessimistic {
+		tk.MustExec("set tidb_txn_mode = 'pessimistic'")
+	}
 
 	tk.MustExec("set @@autocommit = 0")
 	txn, err := tk.Se.Txn(true)
@@ -1840,7 +1863,6 @@ type testSchemaSuiteBase struct {
 	cluster   *mocktikv.Cluster
 	mvccStore mocktikv.MVCCStore
 	store     kv.Storage
-	lease     time.Duration
 	dom       *domain.Domain
 }
 
@@ -1872,8 +1894,6 @@ func (s *testSchemaSuiteBase) SetUpSuite(c *C) {
 	)
 	c.Assert(err, IsNil)
 	s.store = store
-	s.lease = 20 * time.Millisecond
-	session.SetSchemaLease(s.lease)
 	session.DisableStats4Test()
 	dom, err := session.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
@@ -2898,8 +2918,10 @@ func (s *testSessionSuite2) TestGrantViewRelated(c *C) {
 	err = tkUser.ExecToErr("create view v_version29_c as select * from v_version29;")
 	c.Assert(err, NotNil)
 
-	tkRoot.MustExec(`grant create view on v_version29_c to 'u_version29'@'%'`)
+	tkRoot.MustExec("create view v_version29_c as select * from v_version29;")
+	tkRoot.MustExec(`grant create view on v_version29_c to 'u_version29'@'%'`) // Can't grant privilege on a non-exist table/view.
 	tkRoot.MustQuery("select table_priv from mysql.tables_priv where host='%' and db='test' and user='u_version29' and table_name='v_version29_c'").Check(testkit.Rows("Create View"))
+	tkRoot.MustExec("drop view v_version29_c")
 
 	tkRoot.MustExec(`grant select on v_version29 to 'u_version29'@'%'`)
 	tkUser.MustQuery("select current_user();").Check(testkit.Rows("u_version29@%"))

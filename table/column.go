@@ -24,6 +24,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
@@ -371,7 +372,30 @@ func GetColOriginDefaultValue(ctx sessionctx.Context, col *model.ColumnInfo) (ty
 
 // GetColDefaultValue gets default value of the column.
 func GetColDefaultValue(ctx sessionctx.Context, col *model.ColumnInfo) (types.Datum, error) {
-	return getColDefaultValue(ctx, col, col.GetDefaultValue())
+	defaultValue := col.GetDefaultValue()
+	if !col.DefaultIsExpr {
+		return getColDefaultValue(ctx, col, defaultValue)
+	}
+	return getColDefaultExprValue(ctx, col, defaultValue.(string))
+}
+
+func getColDefaultExprValue(ctx sessionctx.Context, col *model.ColumnInfo, defaultValue string) (types.Datum, error) {
+	var defaultExpr ast.ExprNode
+	expr := fmt.Sprintf("select %s", defaultValue)
+	stmts, _, err := parser.New().Parse(expr, "", "")
+	if err == nil {
+		defaultExpr = stmts[0].(*ast.SelectStmt).Fields.Fields[0].Expr
+	}
+	d, err := expression.EvalAstExpr(ctx, defaultExpr)
+	if err != nil {
+		return types.Datum{}, err
+	}
+	// Check the evaluated data type by cast.
+	value, err := CastValue(ctx, types.NewDatum(d), col)
+	if err != nil {
+		return types.Datum{}, err
+	}
+	return value, nil
 }
 
 func getColDefaultValue(ctx sessionctx.Context, col *model.ColumnInfo, defaultVal interface{}) (types.Datum, error) {

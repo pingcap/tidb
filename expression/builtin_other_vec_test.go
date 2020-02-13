@@ -25,6 +25,14 @@ import (
 	"github.com/pingcap/tidb/util/mock"
 )
 
+func dateTimeFromString(s string) types.Time {
+	t, err := types.ParseDate(nil, s)
+	if err != nil {
+		panic(err)
+	}
+	return t
+}
+
 var vecBuiltinOtherCases = map[string][]vecExprBenchCase{
 	ast.SetVar: {
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString, types.ETString}},
@@ -32,11 +40,12 @@ var vecBuiltinOtherCases = map[string][]vecExprBenchCase{
 	ast.GetVar: {
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString}},
 	},
+	ast.In:       {},
 	ast.BitCount: {{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt}}},
 	ast.GetParam: {
 		{
 			retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETInt},
-			geners: []dataGenerator{&rangeInt64Gener{0, 10}},
+			geners: []dataGenerator{newRangeInt64Gener(0, 10)},
 		},
 	},
 }
@@ -61,7 +70,7 @@ func (s *testEvaluatorSuite) TestInDecimal(c *C) {
 	for i := 0; i < 1024; i++ {
 		d0 := new(types.MyDecimal)
 		d1 := new(types.MyDecimal)
-		v := fmt.Sprintf("%v", float64(rand.Intn(1000))+rand.Float64())
+		v := fmt.Sprintf("%d.%d", rand.Intn(1000), rand.Int31())
 		c.Assert(d0.FromString([]byte(v)), IsNil)
 		v += "00"
 		c.Assert(d1.FromString([]byte(v)), IsNil)

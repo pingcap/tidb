@@ -23,6 +23,7 @@ import (
 type Event struct {
 	Tp         model.ActionType
 	TableInfo  *model.TableInfo
+	PartInfo   *model.PartitionInfo
 	ColumnInfo *model.ColumnInfo
 	IndexInfo  *model.IndexInfo
 }
@@ -32,6 +33,13 @@ func (e *Event) String() string {
 	ret := fmt.Sprintf("(Event Type: %s", e.Tp)
 	if e.TableInfo != nil {
 		ret += fmt.Sprintf(", Table ID: %d, Table Name %s", e.TableInfo.ID, e.TableInfo.Name)
+	}
+	if e.PartInfo != nil {
+		ids := make([]int64, 0, len(e.PartInfo.Definitions))
+		for _, def := range e.PartInfo.Definitions {
+			ids = append(ids, def.ID)
+		}
+		ret += fmt.Sprintf(", Partition IDs: %v", ids)
 	}
 	if e.ColumnInfo != nil {
 		ret += fmt.Sprintf(", Column ID: %d, Column Name %s", e.ColumnInfo.ID, e.ColumnInfo.Name)

@@ -66,7 +66,7 @@ type testIntegrationSuite struct {
 func setupIntegrationSuite(s *testIntegrationSuite, c *C) {
 	var err error
 	s.lease = 50 * time.Millisecond
-	ddl.WaitTimeWhenErrorOccured = 0
+	ddl.SetWaitTimeWhenErrorOccurred(0)
 
 	s.cluster = mocktikv.NewCluster()
 	mocktikv.BootstrapWithSingleStore(s.cluster)
@@ -1882,8 +1882,8 @@ func (s *testIntegrationSuite3) TestSqlFunctionsInGeneratedColumns(c *C) {
 	tk.MustGetErrCode("create table t (a int, b int as (@x))", mysql.ErrGeneratedColumnFunctionIsNotAllowed)
 	tk.MustGetErrCode("create table t (a int, b int as (@@max_connections))", mysql.ErrGeneratedColumnFunctionIsNotAllowed)
 	tk.MustGetErrCode("create table t (a int, b int as (@y:=1))", mysql.ErrGeneratedColumnFunctionIsNotAllowed)
-	tk.MustGetErrCode(`create table t (a int, b int as (getval("x")))`, mysql.ErrGeneratedColumnFunctionIsNotAllowed)
-	tk.MustGetErrCode(`create table t (a int, b int as (setval("y", 1)))`, mysql.ErrGeneratedColumnFunctionIsNotAllowed)
+	tk.MustGetErrCode(`create table t (a int, b int as (getvalue("x")))`, mysql.ErrGeneratedColumnFunctionIsNotAllowed)
+	tk.MustGetErrCode(`create table t (a int, b int as (setvalue("y", 1)))`, mysql.ErrGeneratedColumnFunctionIsNotAllowed)
 	// 6. Aggregate function
 	tk.MustGetErrCode("create table t1 (a int, b int as (avg(a)));", mysql.ErrInvalidGroupFuncUse)
 
@@ -1954,6 +1954,14 @@ func (s *testIntegrationSuite6) TestAddExpressionIndex(c *C) {
 	c.Assert(len(columns), Equals, 2)
 
 	tk.MustQuery("select * from t;").Check(testkit.Rows("1 2.1"))
+}
+
+func (s *testIntegrationSuite6) TestCreateExpressionIndexError(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a int, b real);")
+	tk.MustGetErrCode("alter table t add primary key ((a+b));", mysql.ErrFunctionalIndexPrimaryKey)
 
 	// Test for error
 	tk.MustExec("drop table if exists t;")

@@ -803,3 +803,20 @@ func ContainVirtualColumn(exprs []Expression) bool {
 	}
 	return false
 }
+
+// ContainLazyConst checks if the expressions contain a lazy constant.
+func ContainLazyConst(exprs []Expression) bool {
+	for _, expr := range exprs {
+		switch v := expr.(type) {
+		case *Constant:
+			if v.ParamMarker != nil || v.DeferredExpr != nil {
+				return true
+			}
+		case *ScalarFunction:
+			if ContainLazyConst(v.GetArgs()) {
+				return true
+			}
+		}
+	}
+	return false
+}

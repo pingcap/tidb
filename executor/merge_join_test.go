@@ -14,7 +14,10 @@
 package executor_test
 
 import (
+	"bytes"
 	"fmt"
+	"github.com/pingcap/tidb/sessionctx/variable"
+	"math/rand"
 	"strings"
 
 	. "github.com/pingcap/check"
@@ -395,6 +398,40 @@ func (s *testSuite2) TestMergeJoin(c *C) {
 		"1",
 		"0",
 	))
+
+	// Test TIDB_SMJ for join with order by desc, see https://github.com/pingcap/tidb/issues/14483
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t (a int, key(a))")
+	tk.MustExec("create table t1 (a int, key(a))")
+	tk.MustExec("insert into t values (1), (2), (3)")
+	tk.MustExec("insert into t1 values (1), (2), (3)")
+	tk.MustQuery("select /*+ TIDB_SMJ(t1, t2) */ t.a from t, t1 where t.a = t1.a order by t1.a desc").Check(testkit.Rows(
+		"3", "2", "1"))
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int, key(a), key(b))")
+	tk.MustExec("insert into t values (1,1),(1,2),(1,3),(2,1),(2,2),(3,1),(3,2),(3,3)")
+	tk.MustQuery("select /*+ TIDB_SMJ(t1, t2) */ t1.a from t t1, t t2 where t1.a = t2.b order by t1.a desc").Check(testkit.Rows(
+		"3", "3", "3", "3", "3", "3",
+		"2", "2", "2", "2", "2", "2",
+		"1", "1", "1", "1", "1", "1", "1", "1", "1"))
+
+	tk.MustExec("drop table if exists s")
+	tk.MustExec("create table s (a int)")
+	tk.MustExec("insert into s values (4), (1), (3), (2)")
+	tk.MustQuery("explain select s1.a1 from (select a as a1 from s order by s.a desc) as s1 join (select a as a2 from s order by s.a desc) as s2 on s1.a1 = s2.a2 order by s1.a1 desc").Check(testkit.Rows(
+		"Projection_27 12487.50 root test.s.a",
+		"└─MergeJoin_28 12487.50 root inner join, left key:test.s.a, right key:test.s.a",
+		"  ├─Sort_29 9990.00 root test.s.a:desc",
+		"  │ └─TableReader_21 9990.00 root data:Selection_20",
+		"  │   └─Selection_20 9990.00 cop[tikv] not(isnull(test.s.a))",
+		"  │     └─TableScan_19 10000.00 cop[tikv] table:s, range:[-inf,+inf], keep order:false, stats:pseudo",
+		"  └─Sort_31 9990.00 root test.s.a:desc",
+		"    └─TableReader_26 9990.00 root data:Selection_25",
+		"      └─Selection_25 9990.00 cop[tikv] not(isnull(test.s.a))",
+		"        └─TableScan_24 10000.00 cop[tikv] table:s, range:[-inf,+inf], keep order:false, stats:pseudo"))
+	tk.MustQuery("select s1.a1 from (select a as a1 from s order by s.a desc) as s1 join (select a as a2 from s order by s.a desc) as s2 on s1.a1 = s2.a2 order by s1.a1 desc").Check(testkit.Rows(
+		"4", "3", "2", "1"))
 }
 
 func (s *testSuite2) Test3WaysMergeJoin(c *C) {
@@ -453,4 +490,101 @@ func (s *testSuite2) TestMergeJoinDifferentTypes(c *C) {
 		`0 0`,
 		`0 0`,
 	))
+}
+
+// TestVectorizedMergeJoin is used to test vectorized merge join with some corner cases.
+func (s *testSuiteJoin3) TestVectorizedMergeJoin(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("drop table if exists t2")
+	tk.MustExec("create table t1 (a int, b int)")
+	tk.MustExec("create table t2 (a int, b int)")
+	runTest := func(t1, t2 []int) {
+		tk.MustExec("truncate table t1")
+		tk.MustExec("truncate table t2")
+		insert := func(tName string, ts []int) {
+			for i, n := range ts {
+				if n == 0 {
+					continue
+				}
+				var buf bytes.Buffer
+				buf.WriteString(fmt.Sprintf("insert into %v values ", tName))
+				for j := 0; j < n; j++ {
+					if j > 0 {
+						buf.WriteString(", ")
+					}
+					buf.WriteString(fmt.Sprintf("(%v, %v)", i, rand.Intn(10)))
+				}
+				tk.MustExec(buf.String())
+			}
+		}
+		insert("t1", t1)
+		insert("t2", t2)
+
+		tk.MustQuery("explain select /*+ TIDB_SMJ(t1, t2) */ * from t1, t2 where t1.a=t2.a and t1.b>5 and t2.b<5").Check(testkit.Rows(
+			`MergeJoin_7 4150.01 root inner join, left key:test.t1.a, right key:test.t2.a`,
+			`├─Sort_11 3330.00 root test.t1.a:asc`,
+			`│ └─TableReader_10 3330.00 root data:Selection_9`,
+			`│   └─Selection_9 3330.00 cop[tikv] gt(test.t1.b, 5), not(isnull(test.t1.a))`,
+			`│     └─TableScan_8 10000.00 cop[tikv] table:t1, range:[-inf,+inf], keep order:false, stats:pseudo`,
+			`└─Sort_15 3320.01 root test.t2.a:asc`,
+			`  └─TableReader_14 3320.01 root data:Selection_13`,
+			`    └─Selection_13 3320.01 cop[tikv] lt(test.t2.b, 5), not(isnull(test.t2.a))`,
+			`      └─TableScan_12 10000.00 cop[tikv] table:t2, range:[-inf,+inf], keep order:false, stats:pseudo`,
+		))
+		tk.MustQuery("explain select /*+ TIDB_HJ(t1, t2) */ * from t1, t2 where t1.a=t2.a and t1.b>5 and t2.b<5").Check(testkit.Rows(
+			`HashLeftJoin_7 4150.01 root inner join, inner:TableReader_14, equal:[eq(test.t1.a, test.t2.a)]`,
+			`├─TableReader_11 3330.00 root data:Selection_10`,
+			`│ └─Selection_10 3330.00 cop[tikv] gt(test.t1.b, 5), not(isnull(test.t1.a))`,
+			`│   └─TableScan_9 10000.00 cop[tikv] table:t1, range:[-inf,+inf], keep order:false, stats:pseudo`,
+			`└─TableReader_14 3320.01 root data:Selection_13`,
+			`  └─Selection_13 3320.01 cop[tikv] lt(test.t2.b, 5), not(isnull(test.t2.a))`,
+			`    └─TableScan_12 10000.00 cop[tikv] table:t2, range:[-inf,+inf], keep order:false, stats:pseudo`,
+		))
+
+		r1 := tk.MustQuery("select /*+ TIDB_SMJ(t1, t2) */ * from t1, t2 where t1.a=t2.a and t1.b>5 and t2.b<5").Sort()
+		r2 := tk.MustQuery("select /*+ TIDB_HJ(t1, t2) */ * from t1, t2 where t1.a=t2.a and t1.b>5 and t2.b<5").Sort()
+		c.Assert(len(r1.Rows()), Equals, len(r2.Rows()))
+
+		i := 0
+		n := len(r1.Rows())
+		for i < n {
+			c.Assert(len(r1.Rows()[i]), Equals, len(r2.Rows()[i]))
+			for j := range r1.Rows()[i] {
+				c.Assert(r1.Rows()[i][j], Equals, r2.Rows()[i][j])
+			}
+			i += rand.Intn((n-i)/5+1) + 1 // just compare parts of results to speed up
+		}
+	}
+
+	tk.Se.GetSessionVars().MaxChunkSize = variable.DefInitChunkSize
+	chunkSize := tk.Se.GetSessionVars().MaxChunkSize
+	cases := []struct {
+		t1 []int
+		t2 []int
+	}{
+		{[]int{0}, []int{chunkSize}},
+		{[]int{0}, []int{chunkSize - 1}},
+		{[]int{0}, []int{chunkSize + 1}},
+		{[]int{1}, []int{chunkSize}},
+		{[]int{1}, []int{chunkSize - 1}},
+		{[]int{1}, []int{chunkSize + 1}},
+		{[]int{chunkSize - 1}, []int{chunkSize}},
+		{[]int{chunkSize - 1}, []int{chunkSize - 1}},
+		{[]int{chunkSize - 1}, []int{chunkSize + 1}},
+		{[]int{chunkSize}, []int{chunkSize}},
+		{[]int{chunkSize}, []int{chunkSize - 1}},
+		{[]int{chunkSize}, []int{chunkSize + 1}},
+		{[]int{chunkSize + 1}, []int{chunkSize}},
+		{[]int{chunkSize + 1}, []int{chunkSize - 1}},
+		{[]int{chunkSize + 1}, []int{chunkSize + 1}},
+		{[]int{1, 1, 1}, []int{chunkSize + 1, chunkSize*5 + 5, chunkSize - 5}},
+		{[]int{0, 0, chunkSize}, []int{chunkSize + 1, chunkSize*5 + 5, chunkSize - 5}},
+		{[]int{chunkSize + 1, 0, chunkSize}, []int{chunkSize + 1, chunkSize*5 + 5, chunkSize - 5}},
+	}
+	for _, ca := range cases {
+		runTest(ca.t1, ca.t2)
+		runTest(ca.t2, ca.t1)
+	}
 }

@@ -573,11 +573,9 @@ func (s *testSuite8) TestShardRowIDBits(c *C) {
 
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int) shard_row_id_bits = 15")
-	var insertingValues = make([]string, 100)
 	for i := 0; i < 100; i++ {
-		insertingValues[i] = fmt.Sprintf("(%d)", i)
+		tk.MustExec("insert into t values (?)", i)
 	}
-	tk.MustExec("insert into t values " + strings.Join(insertingValues, ","))
 
 	dom := domain.GetDomain(tk.Se)
 	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
@@ -651,11 +649,9 @@ func (s *testSuite8) TestShardRowIDBits(c *C) {
 
 	// Test shard_row_id_bits with auto_increment column
 	tk.MustExec("create table auto (a int, b int auto_increment unique) shard_row_id_bits = 15")
-	insertingValues = make([]string, 100)
 	for i := 0; i < 100; i++ {
-		insertingValues[i] = fmt.Sprintf("(%d)", i)
+		tk.MustExec("insert into auto(a) values (?)", i)
 	}
-	tk.MustExec("insert auto(a) values " + strings.Join(insertingValues, ","))
 	tbl, err = dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("auto"))
 	assertCountAndShard(tbl, 100)
 	prevB, err := strconv.Atoi(tk.MustQuery("select b from auto where a=0").Rows()[0][0].(string))
@@ -702,12 +698,9 @@ func (s *testAutoRandomSuite) TestAutoRandomBitsData(c *C) {
 	defer testutil.ConfigTestUtils.RestoreAutoRandomTestConfig()
 
 	tk.MustExec("create table t (a bigint primary key auto_random(15), b int)")
-	insertingValues := make([]string, 100)
 	for i := 0; i < 100; i++ {
-		insertingValues[i] = fmt.Sprintf("(%d)", i)
+		tk.MustExec("insert into t(b) values (?)", i)
 	}
-	tk.MustExec(fmt.Sprintf("insert into t (b) values %s;", strings.Join(insertingValues, ",")))
-
 	dom := domain.GetDomain(tk.Se)
 	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr("test_auto_random_bits"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
@@ -740,12 +733,9 @@ func (s *testAutoRandomSuite) TestAutoRandomBitsData(c *C) {
 
 	// Test explicit insert.
 	tk.MustExec("create table t (a tinyint primary key auto_random(2), b int)")
-	insertingValues = make([]string, 100)
 	for i := 0; i < 100; i++ {
-		insertingValues[i] = fmt.Sprintf("(%d, %d)", i, i)
+		tk.MustExec("insert into t values (?, ?)", i, i)
 	}
-	tk.MustExec(fmt.Sprintf("insert into t values %s;", strings.Join(insertingValues, ",")))
-
 	_, err = tk.Exec("insert into t (b) values (0)")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, autoid.ErrAutoRandReadFailed.GenWithStackByArgs().Error())
