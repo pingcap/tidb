@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/planner/memo"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/ranger"
+	"github.com/pingcap/tidb/util/set"
 )
 
 // Transformation defines the interface for the transformation rules.
@@ -67,6 +68,7 @@ var defaultTransformationMap = map[memo.Operand][]Transformation{
 		NewRulePushAggDownGather(),
 		NewRuleMergeAggregationProjection(),
 		NewRuleEliminateSingleMaxMin(),
+		NewRuleEliminateOuterJoinBelowAggregation(),
 	},
 	memo.OperandLimit: {
 		NewRuleTransformLimitToTopN(),
@@ -1669,4 +1671,113 @@ func pushLimitDownOuterJoinToChild(limit *plannercore.LogicalLimit, outerGroup *
 	newLimitGroup := memo.NewGroupExpr(newLimit)
 	newLimitGroup.SetChildren(outerGroup)
 	return memo.NewGroupWithSchema(newLimitGroup, outerGroup.Prop.Schema)
+}
+
+// EliminateOuterJoinBelowAggregation eliminate the outer join which below aggregation.
+type EliminateOuterJoinBelowAggregation struct {
+	baseRule
+}
+
+// NewRuleEliminateOuterJoinBelowAggregation creates a new Transformation EliminateOuterJoinBelowAggregation.
+// The pattern of this rule is `Aggregation->Join->X`.
+func NewRuleEliminateOuterJoinBelowAggregation() Transformation {
+	rule := &EliminateOuterJoinBelowAggregation{}
+	rule.pattern = memo.BuildPattern(
+		memo.OperandAggregation,
+		memo.EngineTiDBOnly,
+		memo.NewPattern(memo.OperandJoin, memo.EngineTiDBOnly),
+	)
+	return rule
+}
+
+// Match implements Transformation interface.
+func (r *EliminateOuterJoinBelowAggregation) Match(expr *memo.ExprIter) bool {
+	joinType := expr.Children[0].GetExpr().ExprNode.(*plannercore.LogicalJoin).JoinType
+	return joinType == plannercore.LeftOuterJoin || joinType == plannercore.RightOuterJoin
+}
+
+// OnTransform implements Transformation interface.
+// This rule tries to eliminate outer join which below aggregation.
+func (r *EliminateOuterJoinBelowAggregation) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
+	agg := old.GetExpr().ExprNode.(*plannercore.LogicalAggregation)
+	joinExpr := old.Children[0].GetExpr()
+	join := joinExpr.ExprNode.(*plannercore.LogicalJoin)
+
+	var innerChildIdx int
+	switch join.JoinType {
+	case plannercore.LeftOuterJoin:
+		innerChildIdx = 1
+	case plannercore.RightOuterJoin:
+		innerChildIdx = 0
+	default:
+		return nil, false, false, nil
+	}
+	outerGroup := joinExpr.Children[1^innerChildIdx]
+	innerGroup := joinExpr.Children[innerChildIdx]
+
+	outerUniqueIDs := set.NewInt64Set()
+	for _, outerCol := range outerGroup.Prop.Schema.Columns {
+		outerUniqueIDs.Insert(outerCol.UniqueID)
+	}
+	// only when agg only use the columns from outer table can eliminate outer join.
+	if !plannercore.IsColsAllFromOuterTable(agg.GetUsedCols(), outerUniqueIDs) {
+		return nil, false, false, nil
+	}
+	// outer join elimination with duplicate agnostic aggregate functions.
+	_, aggCols := plannercore.GetDupAgnosticAggCols(agg, nil)
+	if len(aggCols) > 0 {
+		newAggExpr := memo.NewGroupExpr(agg)
+		newAggExpr.SetChildren(outerGroup)
+		return []*memo.GroupExpr{newAggExpr}, true, false, nil
+	}
+	// outer join elimination without duplicate agnostic aggregate functions.
+	innerJoinKeys := join.ExtractJoinKeys(innerChildIdx)
+	contain, err := isInnerJoinKeysContainUniqueKey(innerGroup, innerJoinKeys)
+	if err != nil {
+		return nil, false, false, err
+	}
+	if contain {
+		newAggExpr := memo.NewGroupExpr(agg)
+		newAggExpr.SetChildren(outerGroup)
+		return []*memo.GroupExpr{newAggExpr}, true, false, nil
+	}
+
+	return nil, false, false, nil
+}
+
+// Return true only if all the aggregate functions are duplicate agnostic.
+// Only the following functions are considered to be duplicate agnostic:
+//   1. MAX(arg)
+//   2. MIN(arg)
+//   3. FIRST_ROW(arg)
+//   4. Other agg functions with DISTINCT flag, like SUM(DISTINCT arg)
+func (r *EliminateOuterJoinBelowAggregation) isAggFuncAllDupAgnostic(agg *plannercore.LogicalAggregation) bool {
+	for _, aggDesc := range agg.AggFuncs {
+		if !aggDesc.HasDistinct &&
+			aggDesc.Name != ast.AggFuncFirstRow &&
+			aggDesc.Name != ast.AggFuncMax &&
+			aggDesc.Name != ast.AggFuncMin {
+			return false
+		}
+	}
+	return true
+}
+
+// check whether one of unique keys sets is contained by inner join keys.
+func isInnerJoinKeysContainUniqueKey(innerGroup *memo.Group, joinKeys *expression.Schema) (bool, error) {
+	// builds UniqueKey info of innerGroup.
+	innerGroup.BuildKeyInfo()
+	for _, keyInfo := range innerGroup.Prop.Schema.Keys {
+		joinKeysContainKeyInfo := true
+		for _, col := range keyInfo {
+			if !joinKeys.Contains(col) {
+				joinKeysContainKeyInfo = false
+				break
+			}
+		}
+		if joinKeysContainKeyInfo {
+			return true, nil
+		}
+	}
+	return false, nil
 }
