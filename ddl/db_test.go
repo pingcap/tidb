@@ -2188,7 +2188,7 @@ func (s *testDBSuite5) TestRepairTable(c *C) {
 	turnRepairModeAndInit(true)
 	defer turnRepairModeAndInit(false)
 	// Domain reload the tableInfo and add it into repairInfo.
-	s.tk.MustExec("CREATE TABLE origin (a int primary key, b varchar(10), c int auto_increment);")
+	s.tk.MustExec("CREATE TABLE origin (a int primary key, b varchar(10), c int key auto_increment);")
 	// Repaired tableInfo has been filtered by `domain.InfoSchema()`, so get it in repairInfo.
 	originTableInfo, _ := domainutil.RepairInfo.GetRepairedTableInfoByTableName("test", "origin")
 
