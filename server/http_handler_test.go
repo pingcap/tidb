@@ -505,6 +505,7 @@ func (ts *HTTPHandlerTestSuite) TestTiFlashReplica(c *C) {
 	decoder = json.NewDecoder(resp.Body)
 	err = decoder.Decode(&data)
 	c.Assert(err, IsNil)
+	resp.Body.Close()
 	c.Assert(len(data), Equals, 1)
 	c.Assert(data[0].ReplicaCount, Equals, uint64(2))
 	c.Assert(strings.Join(data[0].LocationLabels, ","), Equals, "a,b")
@@ -515,6 +516,7 @@ func (ts *HTTPHandlerTestSuite) TestTiFlashReplica(c *C) {
 	c.Assert(resp, NotNil)
 	body, err := ioutil.ReadAll(resp.Body)
 	c.Assert(err, IsNil)
+	resp.Body.Close()
 	c.Assert(string(body), Equals, "[schema:1146]Table which ID = 84 does not exist.")
 
 	t, err := ts.domain.InfoSchema().TableByName(model.NewCIStr("tidb"), model.NewCIStr("test"))
@@ -525,6 +527,7 @@ func (ts *HTTPHandlerTestSuite) TestTiFlashReplica(c *C) {
 	c.Assert(resp, NotNil)
 	body, err = ioutil.ReadAll(resp.Body)
 	c.Assert(err, IsNil)
+	resp.Body.Close()
 	c.Assert(string(body), Equals, "")
 
 	resp, err = http.Get("http://127.0.0.1:10090/tiflash/replica")
@@ -532,6 +535,7 @@ func (ts *HTTPHandlerTestSuite) TestTiFlashReplica(c *C) {
 	decoder = json.NewDecoder(resp.Body)
 	err = decoder.Decode(&data)
 	c.Assert(err, IsNil)
+	resp.Body.Close()
 	c.Assert(len(data), Equals, 1)
 	c.Assert(data[0].ReplicaCount, Equals, uint64(2))
 	c.Assert(strings.Join(data[0].LocationLabels, ","), Equals, "a,b")
@@ -544,10 +548,65 @@ func (ts *HTTPHandlerTestSuite) TestTiFlashReplica(c *C) {
 	decoder = json.NewDecoder(resp.Body)
 	err = decoder.Decode(&data)
 	c.Assert(err, IsNil)
+	resp.Body.Close()
 	c.Assert(len(data), Equals, 1)
 	c.Assert(data[0].ReplicaCount, Equals, uint64(2))
 	c.Assert(strings.Join(data[0].LocationLabels, ","), Equals, "a,b")
 	c.Assert(data[0].Available, Equals, true) // The status should be true now.
+
+	// Test for partition table.
+	dbt.mustExec("alter table pt set tiflash replica 2 location labels 'a','b';")
+	dbt.mustExec("alter table test set tiflash replica 0;")
+	resp, err = http.Get("http://127.0.0.1:10090/tiflash/replica")
+	c.Assert(err, IsNil)
+	decoder = json.NewDecoder(resp.Body)
+	err = decoder.Decode(&data)
+	c.Assert(err, IsNil)
+	resp.Body.Close()
+	c.Assert(len(data), Equals, 3)
+	c.Assert(data[0].ReplicaCount, Equals, uint64(2))
+	c.Assert(strings.Join(data[0].LocationLabels, ","), Equals, "a,b")
+	c.Assert(data[0].Available, Equals, false)
+
+	pid0 := data[0].ID
+	pid1 := data[1].ID
+	pid2 := data[2].ID
+
+	// Mock for partition 1 replica was available.
+	req = fmt.Sprintf(`{"id":%d,"region_count":3,"flash_region_count":3}`, pid1)
+	resp, err = http.Post("http://127.0.0.1:10090/tiflash/replica", "application/json", bytes.NewBuffer([]byte(req)))
+	c.Assert(err, IsNil)
+	resp.Body.Close()
+	resp, err = http.Get("http://127.0.0.1:10090/tiflash/replica")
+	c.Assert(err, IsNil)
+	decoder = json.NewDecoder(resp.Body)
+	err = decoder.Decode(&data)
+	c.Assert(err, IsNil)
+	resp.Body.Close()
+	c.Assert(len(data), Equals, 3)
+	c.Assert(data[0].Available, Equals, false)
+	c.Assert(data[1].Available, Equals, true)
+	c.Assert(data[2].Available, Equals, false)
+
+	// Mock for partition 0,2 replica was available.
+	req = fmt.Sprintf(`{"id":%d,"region_count":3,"flash_region_count":3}`, pid0)
+	resp, err = http.Post("http://127.0.0.1:10090/tiflash/replica", "application/json", bytes.NewBuffer([]byte(req)))
+	c.Assert(err, IsNil)
+	resp.Body.Close()
+	req = fmt.Sprintf(`{"id":%d,"region_count":3,"flash_region_count":3}`, pid2)
+	resp, err = http.Post("http://127.0.0.1:10090/tiflash/replica", "application/json", bytes.NewBuffer([]byte(req)))
+	c.Assert(err, IsNil)
+	resp.Body.Close()
+	resp, err = http.Get("http://127.0.0.1:10090/tiflash/replica")
+	c.Assert(err, IsNil)
+	decoder = json.NewDecoder(resp.Body)
+	err = decoder.Decode(&data)
+	c.Assert(err, IsNil)
+	resp.Body.Close()
+	c.Assert(len(data), Equals, 3)
+	c.Assert(data[0].Available, Equals, true)
+	c.Assert(data[1].Available, Equals, true)
+	c.Assert(data[2].Available, Equals, true)
 }
 
 func (ts *HTTPHandlerTestSuite) TestDecodeColumnValue(c *C) {
