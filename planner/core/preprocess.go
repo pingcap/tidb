@@ -309,9 +309,12 @@ func (p *preprocessor) checkAutoIncrement(stmt *ast.CreateTableStmt) {
 			if ok {
 				hasAutoIncrement = true
 			}
-			switch op.Tp {
-			case ast.ColumnOptionPrimaryKey, ast.ColumnOptionUniqKey:
-				isKey = true
+			// Only when the col has auto_increment, check the col is key.
+			if hasAutoIncrement {
+				switch op.Tp {
+				case ast.ColumnOptionPrimaryKey, ast.ColumnOptionUniqKey:
+					isKey = true
+				}
 			}
 		}
 		if hasAutoIncrement {
