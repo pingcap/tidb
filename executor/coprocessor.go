@@ -20,9 +20,11 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/tikvpb"
+	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -128,6 +130,22 @@ func (h *CoprocessorDAGHandler) buildDAGExecutor(req *coprocessor.Request) (Exec
 	err := proto.Unmarshal(req.Data, dagReq)
 	if err != nil {
 		return nil, errors.Trace(err)
+	}
+
+	if dagReq.User != nil {
+		pm := privilege.GetPrivilegeManager(h.sctx)
+		if pm != nil {
+			h.sctx.GetSessionVars().User = &auth.UserIdentity{
+				Username: dagReq.User.UserName,
+				Hostname: dagReq.User.UserHost,
+			}
+			authName, authHost, success := pm.GetAuthWithoutVerification(dagReq.User.UserName, dagReq.User.UserHost)
+			if success {
+				h.sctx.GetSessionVars().User.AuthUsername = authName
+				h.sctx.GetSessionVars().User.AuthHostname = authHost
+				h.sctx.GetSessionVars().ActiveRoles = pm.GetDefaultRoles(authName, authHost)
+			}
+		}
 	}
 
 	stmtCtx := h.sctx.GetSessionVars().StmtCtx
