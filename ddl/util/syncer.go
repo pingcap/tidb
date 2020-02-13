@@ -196,7 +196,7 @@ func (s *schemaVersionSyncer) Done() <-chan struct{} {
 	failpoint.Inject("ErrorMockSessionDone", func(val failpoint.Value) {
 		if val.(bool) {
 			err := s.loadSession().Close()
-			logutil.BgLogger().Info("close session failed", zap.Error(err))
+			logutil.BgLogger().Error("close session failed", zap.Error(err))
 		}
 	})
 
