@@ -342,5 +342,16 @@
         ]
       }
     ]
+  },
+  {
+    "Name": "TestConstantPropagation",
+    "Cases": [
+      {
+        "SQL": "desc select * from t where a = 1 and a = 2",
+        "Plan": [
+          "TableDual_6 0.00 root rows:0"
+        ]
+      }
+    ]
   }
 ]

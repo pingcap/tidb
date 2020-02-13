@@ -38,9 +38,9 @@
       // Row count of IndexScan should be 2.
       "explain select /*+ TIDB_INLJ(t2) */ * from t1 join t2 on t1.a = t2.a and t1.c = t2.c",
       // Row count of IndexScan should be 2.
-	  "explain select /*+ TIDB_INLJ(t2) */ * from t1 join t2 on t1.a = t2.a and t1.c <= t2.b",
+      "explain select /*+ TIDB_INLJ(t2) */ * from t1 join t2 on t1.a = t2.a and t1.c <= t2.b",
       // Row count of IndexScan should be 1.
-	  "explain select /*+ TIDB_INLJ(t2) */ * from t1 join t2 on t1.a = t2.a and t2.b = 1"
+      "explain select /*+ TIDB_INLJ(t2) */ * from t1 join t2 on t1.a = t2.a and t2.b = 1"
     ]
   },
   {
@@ -79,6 +79,13 @@
       "desc select /*+ read_from_storage(tikv[t], tiflash[t]) */ avg(a) from t",
       "desc select /*+ read_from_storage(tikv[t]) */ avg(a) from t",
       "desc select /*+ read_from_storage(tiflash[t]) */ avg(a) from t"
+    ]
+  },
+  {
+    "name": "TestConstantPropagation",
+    "cases": [
+      // issue #14481
+      "desc select * from t where a = 1 and a = 2"
     ]
   }
 ]
