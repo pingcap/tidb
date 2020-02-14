@@ -598,6 +598,21 @@ func (s *seqTestSuite) TestShow(c *C) {
 		"c8|datetime|YES||CURRENT_TIMESTAMP|DEFAULT_GENERATED on update CURRENT_TIMESTAMP",
 		"c9|year(4)|YES||2014|",
 	))
+
+	// Test if 'show [status|variables]' is sorted by Variable_name (#14542)
+	sqls := []string{
+		"show global status;",
+		"show session status;",
+		"show global variables",
+		"show session variables"}
+
+	for _, sql := range sqls {
+		res := tk.MustQuery(sql)
+		c.Assert(res, NotNil)
+		sorted := tk.MustQuery(sql).Sort()
+		c.Assert(sorted, NotNil)
+		c.Check(res, DeepEquals, sorted)
+	}
 }
 
 func (s *seqTestSuite) TestShowStatsHealthy(c *C) {
