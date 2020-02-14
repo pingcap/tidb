@@ -171,6 +171,7 @@ func (ch *pdConfHandler) register() {
 
 	ch.registered = true
 	ch.version = version
+	logutil.Logger(context.Background()).Info("register the config to PD successful", zap.String("new_config", conf))
 }
 
 func (ch *pdConfHandler) run() {
