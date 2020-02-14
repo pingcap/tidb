@@ -86,11 +86,11 @@ func GetPropByOrderByItemsContainScalarFunc(items []*ByItems) (*property.Physica
 	propItems := make([]property.Item, 0, len(items))
 	onlyColumn := true
 	for _, item := range items {
-		switch tp := item.Expr.(type) {
+		switch expr := item.Expr.(type) {
 		case *expression.Column:
-			propItems = append(propItems, property.Item{Col: tp, Desc: item.Desc})
+			propItems = append(propItems, property.Item{Col: expr, Desc: item.Desc})
 		case *expression.ScalarFunction:
-			col, desc := tp.GetSingleColumn(item.Desc)
+			col, desc := expr.GetSingleColumn(item.Desc)
 			if col == nil {
 				return nil, false, false
 			}
