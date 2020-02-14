@@ -504,6 +504,7 @@ func (do *Domain) loadSchemaInLoop(lease time.Duration) {
 				logutil.BgLogger().Error("domain is closed, exit loadSchemaInLoop")
 				return
 			}
+			time.Sleep(50 * time.Millisecond)
 			do.SchemaValidator.Restart()
 			logutil.BgLogger().Info("schema syncer restarted")
 		case <-do.exit:

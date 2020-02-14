@@ -147,16 +147,15 @@ func TestInfo(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	time.Sleep(1000 * time.Millisecond)
 	<-dom.ddl.SchemaSyncer().Done()
 	time.Sleep(15 * time.Millisecond)
 	syncerStarted := false
-	for i := 0; i < 200; i++ {
+	for i := 0; i < 10; i++ {
 		if dom.SchemaValidator.IsStarted() {
 			syncerStarted = true
 			break
 		}
-		time.Sleep(5 * time.Millisecond)
+		time.Sleep(100 * time.Millisecond)
 	}
 	if !syncerStarted {
 		t.Fatal("start syncer failed")
