@@ -215,7 +215,9 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 		ctx1, cancel := context.WithCancel(ctx)
 		var err error
 		util.WithRecovery(
-			func() { _, err = worker.fetchHandles(ctx1, result, fetchCh, e.resultCh, e.finished, exitCh) },
+			func() {
+				_, err = worker.fetchHandles(ctx1, result, fetchCh, e.resultCh, e.finished, exitCh)
+			},
 			e.handleHandlesFetcherPanic(ctx, e.resultCh, "partialIndexWorker"),
 		)
 		if err != nil {
@@ -269,7 +271,9 @@ func (e *IndexMergeReaderExecutor) startPartialTableWorker(ctx context.Context, 
 		ctx1, cancel := context.WithCancel(ctx)
 		var err error
 		util.WithRecovery(
-			func() { _, err = worker.fetchHandles(ctx1, fetchCh, e.resultCh, e.finished, exitCh) },
+			func() {
+				_, err = worker.fetchHandles(ctx1, fetchCh, e.resultCh, e.finished, exitCh)
+			},
 			e.handleHandlesFetcherPanic(ctx, e.resultCh, "partialTableWorker"),
 		)
 		if err != nil {
