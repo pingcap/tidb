@@ -18,9 +18,12 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser"
+	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
@@ -125,6 +128,34 @@ type PartitionExpr struct {
 	UpperBounds []expression.Expression
 	// Expr is the hash partition expression.
 	Expr expression.Expression
+
+	// The new range partition pruning
+	*ForRangePruning
+}
+
+type ForRangePruning struct {
+	LessThan []int64
+	MaxValue bool
+	FnCol    ast.ExprNode
+}
+
+// makeLessThanData extracts the less than parts from 'partition p0 less than xx ... partitoin p1 less than ...'
+func makeLessThanData(pi *model.PartitionInfo) ([]int64, bool, error) {
+	var maxValue bool
+	lessThan := make([]int64, len(pi.Definitions))
+	for i := 0; i < len(pi.Definitions); i++ {
+		if strings.EqualFold(pi.Definitions[i].LessThan[0], "MAXVALUE") {
+			// Use a bool flag instead of math.MaxInt64 to avoid the corner cases.
+			maxValue = true
+		} else {
+			var err error
+			lessThan[i], err = strconv.ParseInt(pi.Definitions[i].LessThan[0], 10, 64)
+			if err != nil {
+				return nil, false, errors.WithStack(err)
+			}
+		}
+	}
+	return lessThan, maxValue, nil
 }
 
 // rangePartitionString returns the partition string for a range typed partition.
@@ -197,10 +228,29 @@ func generatePartitionExpr(ctx sessionctx.Context, pi *model.PartitionInfo,
 		partitionPruneExprs = append(partitionPruneExprs, exprs[0])
 		buf.Reset()
 	}
+
+	var rangePruning *ForRangePruning
+	if len(pi.Columns) == 0 {
+		lessThan, maxValue, err := makeLessThanData(pi)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		stmts, _, err := parser.New().Parse("select "+pi.Expr, "", "")
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		rangePruning = &ForRangePruning{
+			LessThan: lessThan,
+			MaxValue: maxValue,
+			FnCol:    stmts[0].(*ast.SelectStmt).Fields.Fields[0].Expr,
+		}
+	}
+
 	return &PartitionExpr{
-		Column:      column,
-		Ranges:      partitionPruneExprs,
-		UpperBounds: locateExprs,
+		Column:          column,
+		Ranges:          partitionPruneExprs,
+		UpperBounds:     locateExprs,
+		ForRangePruning: rangePruning,
 	}, nil
 }
 
@@ -243,6 +293,10 @@ func generateHashPartitionExpr(ctx sessionctx.Context, pi *model.PartitionInfo,
 
 // PartitionExpr returns the partition expression.
 func (t *partitionedTable) PartitionExpr(ctx sessionctx.Context, columns []*expression.Column) (*PartitionExpr, error) {
+	// A simple trick to get the ForRangePruning
+	if columns == nil {
+		return t.partitionExpr, nil
+	}
 	// TODO: a better performance implementation:
 	// traverse the Expression, find all columns and rewrite them.
 	return newPartitionExprBySchema(ctx, t.meta, columns)
