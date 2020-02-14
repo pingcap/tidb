@@ -81,11 +81,11 @@
         "SQL": "SELECT /*+ TIDB_SMJ(t1, t2) */ * from t1, t2 where t1.a = t2.a and t1.c>1;",
         "Plan": [
           " MergeJoin_7       root inner join, left key:test.t1.a, right key:test.t2.a",
-          " ├─TableReader_10  root data:Selection_9",
-          " │ └─Selection_9   cop  gt(test.t1.c, ?)",
-          " │   └─TableScan_8 cop  table:t1, range:[?,?], keep order:true",
-          " └─TableReader_12  root data:TableScan_11",
-          "   └─TableScan_11  cop  table:t2, range:[?,?], keep order:true"
+          " ├─TableReader_11  root data:Selection_10",
+          " │ └─Selection_10  cop  gt(test.t1.c, ?)",
+          " │   └─TableScan_9 cop  table:t1, range:[?,?], keep order:true",
+          " └─TableReader_13  root data:TableScan_12",
+          "   └─TableScan_12  cop  table:t2, range:[?,?], keep order:true"
         ]
       },
       {
