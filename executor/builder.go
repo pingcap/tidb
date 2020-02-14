@@ -2256,6 +2256,7 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIn
 		}
 		exec.keepOrder = pg.KeepOrder
 		exec.desc = pg.Desc
+		return exec, nil
 	}
 
 	is := v.IndexPlans[0].(*plannercore.PhysicalIndexScan)
@@ -2330,14 +2331,19 @@ func (b *executorBuilder) buildIndexLookUpReader(v *plannercore.PhysicalIndexLoo
 		b.err = err
 		return nil
 	}
-
-	is := v.IndexPlans[0].(*plannercore.PhysicalIndexScan)
-	ts := v.TablePlans[0].(*plannercore.PhysicalTableScan)
-
-	ret.ranges = is.Ranges
 	executorCounterIndexLookUpExecutor.Inc()
+
 	sctx := b.ctx.GetSessionVars().StmtCtx
-	sctx.IndexNames = append(sctx.IndexNames, is.Table.Name.O+":"+is.Index.Name.O)
+	switch x := v.IndexPlans[0].(type) {
+	case *plannercore.PhysicalIndexScan:
+		ret.ranges = x.Ranges
+		sctx.IndexNames = append(sctx.IndexNames, x.Table.Name.O+":"+x.Index.Name.O)
+	case *plannercore.PointGetPlan:
+		sctx.IndexNames = append(sctx.IndexNames, x.IndexInfo.Table.O+":"+x.IndexInfo.Name.O)
+	case *plannercore.BatchPointGetPlan:
+		sctx.IndexNames = append(sctx.IndexNames, x.IndexInfo.Table.O+":"+x.IndexInfo.Name.O)
+	}
+	ts := v.TablePlans[0].(*plannercore.PhysicalTableScan)
 	sctx.TableIDs = append(sctx.TableIDs, ts.Table.ID)
 	return ret
 }

@@ -446,7 +446,14 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty) (t task, err
 				p: dual,
 			}, nil
 		}
-		if path.Ranges[0].IsPoint(ds.ctx.GetSessionVars().StmtCtx) {
+		allRangeIsPoint := true
+		for _, ran := range path.Ranges {
+			if !ran.IsPoint(ds.ctx.GetSessionVars().StmtCtx) {
+				allRangeIsPoint = false
+				break
+			}
+		}
+		if len(path.Ranges) > 0 && allRangeIsPoint {
 			var pointGetTask task
 			var err error
 			if len(path.Ranges) == 1 {
@@ -1106,8 +1113,9 @@ func (ds *DataSource) convertToDoubleReadByPointGet(prop *property.PhysicalPrope
 	ts.ExpandVirtualColumn()
 	cop.tablePlan = ts
 	ts.stats = cop.indexPlan.statsInfo()
-	rowSize := cop.tblColHists.GetIndexAvgRowSize(pg.SCtx(), ds.TblCols, candidate.path.Index.Unique)
+	rowSize := cop.tblColHists.GetIndexAvgRowSize(pg.SCtx(), candidate.path.IdxCols, candidate.path.Index.Unique)
 	cop.cst += float64(cop.indexPlan.Stats().Count()) * rowSize * ds.ctx.GetSessionVars().ScanFactor
+	cop.cst /= float64(ds.ctx.GetSessionVars().DistSQLScanConcurrency)
 
 	if candidate.isMatchProp {
 		col, isNew := cop.tablePlan.(*PhysicalTableScan).appendExtraHandleCol(ds)
@@ -1150,7 +1158,7 @@ func (ds *DataSource) convertToPointGet(prop *property.PhysicalProperty, candida
 		TblInfo:      ds.TableInfo(),
 		outputNames:  ds.OutputNames(),
 		LockWaitTime: ds.ctx.GetSessionVars().LockWaitTimeout,
-	}.Init(ds.ctx, ds.stats, ds.blockOffset)
+	}.Init(ds.ctx, ds.stats.ScaleByExpectCnt(float64(len(candidate.path.Ranges))), ds.blockOffset)
 	var partitionInfo *model.PartitionDefinition
 	if ds.isPartition {
 		if pi := ds.tableInfo.GetPartitionInfo(); pi != nil {
@@ -1184,13 +1192,13 @@ func (ds *DataSource) convertToPointGet(prop *property.PhysicalProperty, candida
 			candidate.path.Index.HasPrefixIndex() {
 			return invalidTask, nil
 		}
-		if !candidate.isSingleScan {
-			return ds.convertToDoubleReadByPointGet(prop, candidate, pointGetPlan)
-		}
 		pointGetPlan.IndexInfo = candidate.path.Index
 		pointGetPlan.IndexValues = candidate.path.Ranges[0].LowVal
 		pointGetPlan.PartitionInfo = partitionInfo
 		cost = pointGetPlan.GetCost(candidate.path.IdxCols)
+		if !candidate.isSingleScan {
+			return ds.convertToDoubleReadByPointGet(prop, candidate, pointGetPlan)
+		}
 		// Add index condition to table plan now.
 		if len(candidate.path.IndexFilters) > 0 {
 			sessVars := ds.ctx.GetSessionVars()
@@ -1201,6 +1209,7 @@ func (ds *DataSource) convertToPointGet(prop *property.PhysicalProperty, candida
 			sel.SetChildren(pointGetPlan)
 			rTsk.p = sel
 		}
+		rTsk.cst = cost
 	}
 
 	return rTsk, nil
@@ -1222,7 +1231,7 @@ func (ds *DataSource) convertToBatchPointGet(prop *property.PhysicalProperty, ca
 		ctx:       ds.ctx,
 		TblInfo:   ds.TableInfo(),
 		KeepOrder: !prop.IsEmpty(),
-	}.Init(ds.ctx, ds.stats, ds.schema.Clone(), ds.names, ds.blockOffset)
+	}.Init(ds.ctx, ds.stats.ScaleByExpectCnt(float64(len(candidate.path.Ranges))), ds.schema.Clone(), ds.names, ds.blockOffset)
 	if batchPointGetPlan.KeepOrder {
 		batchPointGetPlan.Desc = prop.Items[0].Desc
 	}
@@ -1249,14 +1258,14 @@ func (ds *DataSource) convertToBatchPointGet(prop *property.PhysicalProperty, ca
 			candidate.path.Index.HasPrefixIndex() {
 			return invalidTask, nil
 		}
-		if !candidate.isSingleScan {
-			return ds.convertToDoubleReadByPointGet(prop, candidate, batchPointGetPlan)
-		}
 		batchPointGetPlan.IndexInfo = candidate.path.Index
 		for _, ran := range candidate.path.Ranges {
 			batchPointGetPlan.IndexValues = append(batchPointGetPlan.IndexValues, ran.LowVal)
 		}
 		cost = batchPointGetPlan.GetCost(candidate.path.IdxCols)
+		if !candidate.isSingleScan {
+			return ds.convertToDoubleReadByPointGet(prop, candidate, batchPointGetPlan)
+		}
 		// Add index condition to table plan now.
 		if len(candidate.path.IndexFilters) > 0 {
 			sessVars := ds.ctx.GetSessionVars()
@@ -1267,6 +1276,7 @@ func (ds *DataSource) convertToBatchPointGet(prop *property.PhysicalProperty, ca
 			sel.SetChildren(batchPointGetPlan)
 			rTsk.p = sel
 		}
+		rTsk.cst = cost
 	}
 
 	return rTsk, nil

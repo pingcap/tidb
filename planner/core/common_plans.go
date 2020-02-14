@@ -740,13 +740,15 @@ func (e *Explain) explainPlanInRowFormat(p Plan, taskType, indent string, isLast
 	childIndent := texttree.Indent4Child(indent, isLastChild)
 
 	if physPlan, ok := p.(PhysicalPlan); ok {
-		for i, child := range physPlan.Children() {
-			if e.explainedPlans[child.ID()] {
-				continue
-			}
-			err = e.explainPlanInRowFormat(child, taskType, childIndent, i == len(physPlan.Children())-1)
-			if err != nil {
-				return
+		if _, isDoubleReader := physPlan.(*PhysicalIndexLookUpReader); !isDoubleReader {
+			for i, child := range physPlan.Children() {
+				if e.explainedPlans[child.ID()] {
+					continue
+				}
+				err = e.explainPlanInRowFormat(child, taskType, childIndent, i == len(physPlan.Children())-1)
+				if err != nil {
+					return
+				}
 			}
 		}
 	}
@@ -765,7 +767,11 @@ func (e *Explain) explainPlanInRowFormat(p Plan, taskType, indent string, isLast
 	case *PhysicalIndexReader:
 		err = e.explainPlanInRowFormat(x.indexPlan, "cop[tikv]", childIndent, true)
 	case *PhysicalIndexLookUpReader:
-		err = e.explainPlanInRowFormat(x.indexPlan, "cop[tikv]", childIndent, false)
+		if len(x.children) > 0 {
+			err = e.explainPlanInRowFormat(x.indexPlan, "root", childIndent, false)
+		} else {
+			err = e.explainPlanInRowFormat(x.indexPlan, "cop[tikv]", childIndent, false)
+		}
 		err = e.explainPlanInRowFormat(x.tablePlan, "cop[tikv]", childIndent, true)
 	case *PhysicalIndexMergeReader:
 		for i := 0; i < len(x.partialPlans); i++ {

@@ -223,6 +223,10 @@ func (p *BatchPointGetPlan) ToPB(ctx sessionctx.Context) (*tipb.Executor, error)
 
 // ExplainInfo returns operator information to be explained.
 func (p *BatchPointGetPlan) ExplainInfo() string {
+	return p.explainInfo(false)
+}
+
+func (p *BatchPointGetPlan) explainInfo(normalized bool) string {
 	buffer := bytes.NewBufferString("")
 	tblName := p.TblInfo.Name.O
 	fmt.Fprintf(buffer, "table:%s", tblName)
@@ -234,13 +238,21 @@ func (p *BatchPointGetPlan) ExplainInfo() string {
 				buffer.WriteString(" ")
 			}
 		}
+	} else {
+		if normalized {
+			fmt.Fprintf(buffer, ", handle:?")
+		} else {
+			fmt.Fprintf(buffer, ", handle:%v", p.Handles)
+		}
 	}
+	fmt.Fprintf(buffer, ", keep order:%v", p.KeepOrder)
+	fmt.Fprintf(buffer, ", desc:%v", p.Desc)
 	return buffer.String()
 }
 
 // ExplainNormalizedInfo returns normalized operator information to be explained.
 func (p *BatchPointGetPlan) ExplainNormalizedInfo() string {
-	return p.ExplainInfo()
+	return p.explainInfo(true)
 }
 
 // GetChildReqProps gets the required property by child index.

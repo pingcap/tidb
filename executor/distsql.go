@@ -371,6 +371,10 @@ type checkIndexValue struct {
 	genExprs   map[model.TableColumnID]expression.Expression
 }
 
+func (e *IndexLookUpExecutor) indexSideIsPointGet() bool {
+	return len(e.children) > 0
+}
+
 // Open implements the Executor Open interface.
 func (e *IndexLookUpExecutor) Open(ctx context.Context) error {
 	var err error
@@ -380,10 +384,12 @@ func (e *IndexLookUpExecutor) Open(ctx context.Context) error {
 			return err
 		}
 	}
-	e.kvRanges, err = distsql.IndexRangesToKVRanges(e.ctx.GetSessionVars().StmtCtx, getPhysicalTableID(e.table), e.index.ID, e.ranges, e.feedback)
-	if err != nil {
-		e.feedback.Invalidate()
-		return err
+	if !e.indexSideIsPointGet() {
+		e.kvRanges, err = distsql.IndexRangesToKVRanges(e.ctx.GetSessionVars().StmtCtx, getPhysicalTableID(e.table), e.index.ID, e.ranges, e.feedback)
+		if err != nil {
+			e.feedback.Invalidate()
+			return err
+		}
 	}
 	err = e.open(ctx)
 	if err != nil {
@@ -439,7 +445,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, kvRanges []k
 		e.dagPB.CollectExecutionSummaries = &collExec
 	}
 	// This means indexWorker is a PointGet or BatchPointGet
-	if len(e.children) > 0 {
+	if e.indexSideIsPointGet() {
 		worker := &indexWorker{
 			idxLookup:       e,
 			workCh:          workCh,
