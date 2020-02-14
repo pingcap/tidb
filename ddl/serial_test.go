@@ -771,13 +771,13 @@ func (s *testSerialSuite) TestTableLocksEnable(c *C) {
 	defer tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1 (a int)")
 	// recover table lock config.
-	originValue := config.GetGlobalConfig().EnableTableLock
+	originValue := config.TableLockEnabled()
 	defer func() {
-		config.GetGlobalConfig().EnableTableLock = originValue
+		config.SetTableLock(originValue)
 	}()
 
 	// Test for enable table lock config.
-	config.GetGlobalConfig().EnableTableLock = false
+	config.SetTableLock(false)
 	tk.MustExec("lock tables t1 write")
 	checkTableLock(c, tk.Se, "test", "t1", model.TableLockNone)
 }

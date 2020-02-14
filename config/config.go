@@ -475,6 +475,7 @@ var (
 	reloadConfPath          = ""
 	confReloader            func(nc, c *Config)
 	confReloadLock          sync.Mutex
+	confTableLockMu         sync.RWMutex
 	supportedReloadConfigs  = make(map[string]struct{}, 32)
 	supportedReloadConfList = make([]string, 0, 32)
 )
@@ -666,8 +667,17 @@ func hasRootPrivilege() bool {
 	return os.Geteuid() == 0
 }
 
+// SetTableLock uses to set the switch of the table lock feature. It's only used for test now.
+func SetTableLock(isEnable bool) {
+	confTableLockMu.Lock()
+	GetGlobalConfig().EnableTableLock = isEnable
+	confTableLockMu.Unlock()
+}
+
 // TableLockEnabled uses to check whether enabled the table lock feature.
 func TableLockEnabled() bool {
+	confTableLockMu.RLock()
+	defer confTableLockMu.RUnlock()
 	return GetGlobalConfig().EnableTableLock
 }
 

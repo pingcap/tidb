@@ -94,7 +94,7 @@ func setUpSuite(s *testDBSuite, c *C) {
 	s.autoIDStep = autoid.GetStep()
 	ddl.WaitTimeWhenErrorOccured = 0
 	// Test for table lock.
-	config.GetGlobalConfig().EnableTableLock = true
+	config.SetTableLock(true)
 
 	s.cluster = mocktikv.NewCluster()
 	mocktikv.BootstrapWithSingleStore(s.cluster)
