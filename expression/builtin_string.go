@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tipb/go-tipb"
@@ -84,6 +85,7 @@ var (
 	_ functionClass = &insertFunctionClass{}
 	_ functionClass = &instrFunctionClass{}
 	_ functionClass = &loadFileFunctionClass{}
+	_ functionClass = &weightStringFunctionClass{}
 )
 
 var (
@@ -151,6 +153,7 @@ var (
 	_ builtinFunc = &builtinFieldRealSig{}
 	_ builtinFunc = &builtinFieldIntSig{}
 	_ builtinFunc = &builtinFieldStringSig{}
+	_ builtinFunc = &builtinWeightStringSig{}
 )
 
 func reverseBytes(origin []byte) []byte {
@@ -3657,4 +3660,155 @@ type loadFileFunctionClass struct {
 
 func (c *loadFileFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
 	return nil, errFunctionNotExists.GenWithStackByArgs("FUNCTION", "load_file")
+}
+
+type weightStringPadding byte
+
+const (
+	// weightStringPaddingNone is used for WEIGHT_STRING(expr) if the expr is non-numeric.
+	weightStringPaddingNone weightStringPadding = 0xFF
+	// weightStringPaddingAsChar is used for WEIGHT_STRING(expr AS CHAR(x)) and the expr is non-numeric.
+	weightStringPaddingAsChar = 0x20
+	// weightStringPaddingAsBinary is used for WEIGHT_STRING(expr as BINARY(x)) and the expr is non-numeric.
+	weightStringPaddingAsBinary = 0x00
+	// weightStringPaddingNull is used for WEIGHT_STRING(expr [AS (CHAR|BINARY)]) if the expr is numeric.
+	weightStringPaddingNull = 0xFE
+)
+
+type weightStringFunctionClass struct {
+	baseFunctionClass
+}
+
+func newWeightStringFunctionClass() *weightStringFunctionClass {
+	return &weightStringFunctionClass{
+		baseFunctionClass{ast.WeightString, 0, 0},
+	}
+}
+
+func (c *weightStringFunctionClass) verifyArgs(args []Expression) (weightStringPadding, int, error) {
+	l := len(args)
+	if l != 1 && l != 3 {
+		return weightStringPaddingNone, 0, ErrIncorrectParameterCount.GenWithStackByArgs(c.funcName)
+	}
+	if types.IsTypeNumeric(args[0].GetType().Tp) {
+		return weightStringPaddingNull, 0, nil
+	}
+	padding := weightStringPaddingNone
+	length := 0
+	if l == 3 {
+		if args[1].GetType().EvalType() != types.ETString {
+			return weightStringPaddingNone, 0, ErrIncorrectType.GenWithStackByArgs(c.funcName, args[1].String())
+		}
+		c1, ok := args[1].(*Constant)
+		if !ok {
+			return weightStringPaddingNone, 0, ErrIncorrectType.GenWithStackByArgs(c.funcName, args[1].String())
+		}
+		switch x := c1.Value.GetString(); x {
+		case "CHAR":
+			padding = weightStringPaddingAsChar
+		case "BINARY":
+			padding = weightStringPaddingAsBinary
+		default:
+			return weightStringPaddingNone, 0, ErrIncorrectType.GenWithStackByArgs(c.funcName, x)
+		}
+		if args[2].GetType().EvalType() != types.ETInt {
+			return weightStringPaddingNone, 0, ErrIncorrectType.GenWithStackByArgs(c.funcName, args[2].String())
+		}
+		c2, ok := args[2].(*Constant)
+		if !ok {
+			return weightStringPaddingNone, 0, ErrIncorrectType.GenWithStackByArgs(c.funcName, args[1].String())
+		}
+		length = int(c2.Value.GetInt64())
+		if length == 0 {
+			return weightStringPaddingNone, 0, ErrIncorrectType.GenWithStackByArgs(c.funcName, args[2].String())
+		}
+	}
+	return padding, length, nil
+}
+
+func (c *weightStringFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+	padding, length, err := c.verifyArgs(args)
+	if err != nil {
+		return nil, err
+	}
+	argTps := make([]types.EvalType, len(args))
+	argTps[0] = types.ETString
+
+	if len(args) == 3 {
+		argTps[1] = types.ETString
+		argTps[2] = types.ETInt
+	}
+
+	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, argTps...)
+	var sig builtinFunc
+	if padding == weightStringPaddingNull {
+		sig = &builtinWeightStringNullSig{bf}
+	} else {
+		sig = &builtinWeightStringSig{bf, padding, length}
+	}
+	return sig, nil
+}
+
+type builtinWeightStringNullSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinWeightStringNullSig) Clone() builtinFunc {
+	newSig := &builtinWeightStringNullSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+// evalString evals a WEIGHT_STRING(expr [AS CHAR|BINARY]) when the expr is numeric types, it always returns null.
+// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_weight-string
+func (b *builtinWeightStringNullSig) evalString(row chunk.Row) (string, bool, error) {
+		return "", true, nil
+}
+
+type builtinWeightStringSig struct {
+	baseBuiltinFunc
+
+	padding weightStringPadding
+	length int
+}
+
+func (b *builtinWeightStringSig) Clone() builtinFunc {
+	newSig := &builtinWeightStringSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.length = b.length
+	return newSig
+}
+
+// evalString evals a WEIGHT_STRING(expr [AS (CHAR|BINARY)]) when the expr is non-numeric types.
+// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_weight-string
+func (b *builtinWeightStringSig) evalString(row chunk.Row) (string, bool, error) {
+	str, isNull, err := b.args[0].EvalString(b.ctx, row)
+	if err != nil {
+		return "", true, err
+	}
+	if isNull {
+		return "", true, nil
+	}
+
+	// TODO: refactor padding codes after padding is supported by collators.
+	switch b.padding {
+	case weightStringPaddingAsChar:
+		runes := []rune(str)
+		lenRunes := len(runes)
+		if b.length < lenRunes {
+			str = string(runes[:b.length])
+		} else if b.length > lenRunes {
+			str += strings.Repeat(" ", b.length - lenRunes)
+		}
+	case weightStringPaddingAsBinary:
+		lenStr := len(str)
+		if b.length < lenStr {
+			str = str[:b.length]
+		} else if b.length > lenStr {
+			str += strings.Repeat("\x00", b.length - lenStr)
+		}
+	}
+
+	ctor := collate.GetCollator(b.args[0].GetType().Collate)
+	return string(ctor.Key(str)), false, nil
 }

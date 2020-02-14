@@ -2306,3 +2306,60 @@ func (s *testEvaluatorSuite) TestStringRight(c *C) {
 		c.Assert(res, Equals, test.expect)
 	}
 }
+
+func (s *testEvaluatorSuite) TestWeightString(c *C) {
+	fc := funcs[ast.WeightString]
+	tests := []struct {
+		expr    interface{}
+		padding string
+		length  int
+		expect  interface{}
+	}{
+		{nil, "NONE", 0, nil},
+		{7, "NONE", 0, nil},
+		{"a", "NONE", 0, "a"},
+		{"a ", "NONE", 0, "a "},
+		{"中", "NONE", 0, "中"},
+		{"中 ", "NONE", 0, "中 "},
+		{nil, "CHAR", 5, nil},
+		{7, "CHAR", 5, nil},
+		{"a", "CHAR", 5, "a    "},
+		{"a ", "CHAR", 5, "a    "},
+		{"中", "CHAR", 5, "中    "},
+		{"中 ", "CHAR", 5, "中    "},
+		{nil, "BINARY", 5, nil},
+		{7, "BINARY", 5, nil},
+		{"a", "BINARY", 1, "a"},
+		{"ab", "BINARY", 1, "a"},
+		{"a", "BINARY", 5, "a\x00\x00\x00\x00"},
+		{"a ", "BINARY", 5, "a \x00\x00\x00"},
+		{"中", "BINARY", 1, "\xe4"},
+		{"中", "BINARY", 2, "\xe4\xb8"},
+		{"中", "BINARY", 3, "中"},
+		{"中", "BINARY", 5, "中\x00\x00"},
+	}
+
+	for _, test := range tests {
+		str := types.NewDatum(test.expr)
+		var f builtinFunc
+		var err error
+		if test.padding == "NONE" {
+			f, err = fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{str}))
+		} else {
+			padding := types.NewDatum(test.padding)
+			length := types.NewDatum(test.length)
+			f, err = fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{str, padding, length}))
+		}
+		c.Assert(err, IsNil)
+
+		result, err := evalBuiltinFunc(f, chunk.Row{})
+		c.Assert(err, IsNil)
+		if result.IsNull() {
+			c.Assert(test.expect, IsNil)
+			continue
+		}
+		res, err := result.ToString()
+		c.Assert(err, IsNil)
+		c.Assert(res, Equals, test.expect)
+	}
+}
