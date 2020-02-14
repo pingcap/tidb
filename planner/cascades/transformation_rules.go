@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/expression/aggregation"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/planner/memo"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/set"
@@ -69,6 +70,7 @@ var defaultTransformationMap = map[memo.Operand][]Transformation{
 		NewRuleMergeAggregationProjection(),
 		NewRuleEliminateSingleMaxMin(),
 		NewRuleEliminateOuterJoinBelowAggregation(),
+		NewRuleTransformAggregateCaseToSelection(),
 	},
 	memo.OperandLimit: {
 		NewRuleTransformLimitToTopN(),
@@ -1780,4 +1782,124 @@ func isInnerJoinKeysContainUniqueKey(innerGroup *memo.Group, joinKeys *expressio
 		}
 	}
 	return false, nil
+}
+
+// TransformAggregateCaseToSelection convert Agg(case when) to Agg->Selection.
+type TransformAggregateCaseToSelection struct {
+	baseRule
+}
+
+// NewRuleTransformAggregateCaseToSelection creates a new Transformation TransformAggregateCaseToSelection.
+// The pattern of this rule is `Agg->X`.
+func NewRuleTransformAggregateCaseToSelection() Transformation {
+	rule := &TransformAggregateCaseToSelection{}
+	rule.pattern = memo.BuildPattern(
+		memo.OperandAggregation,
+		memo.EngineTiDBOnly,
+	)
+	return rule
+}
+
+// Match implements Transformation interface.
+func (r *TransformAggregateCaseToSelection) Match(expr *memo.ExprIter) bool {
+	agg := expr.GetExpr().ExprNode.(*plannercore.LogicalAggregation)
+	return agg.IsCompleteModeAgg() && len(agg.GroupByItems) == 0 && len(agg.AggFuncs) == 1 && len(agg.AggFuncs[0].Args) == 1 && r.isTwoOrThreeArgCase(agg.AggFuncs[0].Args[0])
+}
+
+// OnTransform implements Transformation interface.
+// This rule tries to convert Agg(case when) to Agg->Selection.
+func (r *TransformAggregateCaseToSelection) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
+	agg := old.GetExpr().ExprNode.(*plannercore.LogicalAggregation)
+
+	ok, newConditions, newAggFuncs := r.transform(agg)
+	if !ok {
+		return nil, false, false, nil
+	}
+
+	newSel := plannercore.LogicalSelection{Conditions: newConditions}.Init(agg.SCtx(), agg.SelectBlockOffset())
+	newSelExpr := memo.NewGroupExpr(newSel)
+	newSelExpr.SetChildren(old.GetExpr().Children...)
+	newSelGroup := memo.NewGroupWithSchema(newSelExpr, old.GetExpr().Children[0].Prop.Schema)
+
+	newAgg := plannercore.LogicalAggregation{
+		AggFuncs:     newAggFuncs,
+		GroupByItems: agg.GroupByItems,
+	}.Init(agg.SCtx(), agg.SelectBlockOffset())
+	newAgg.CopyAggHints(agg)
+	newAggExpr := memo.NewGroupExpr(newAgg)
+	newAggExpr.SetChildren(newSelGroup)
+	return []*memo.GroupExpr{newAggExpr}, true, false, nil
+}
+
+func (r *TransformAggregateCaseToSelection) transform(agg *plannercore.LogicalAggregation) (ok bool, newConditions []expression.Expression, newAggFuncs []*aggregation.AggFuncDesc) {
+	aggFuncDesc := agg.AggFuncs[0]
+	aggFuncName := aggFuncDesc.Name
+	ctx := agg.SCtx()
+
+	caseFunc := aggFuncDesc.Args[0].(*expression.ScalarFunction)
+	conditionFromCase := caseFunc.GetArgs()[0]
+	caseArgs := caseFunc.GetArgs()
+	caseArgsNum := len(caseArgs)
+
+	// `case when a>0 then null else a end` should be converted to `case when !(a>0) then a else null end`.
+	var nullFlip = caseArgsNum == 3 && caseArgs[1].Equal(ctx, expression.Null) && !caseArgs[2].Equal(ctx, expression.Null)
+	// `case when a>0 then 0 else a end` should be converted to `case when !(a>0) then a else 0 end`.
+	var zeroFlip = !nullFlip && caseArgsNum == 3 && caseArgs[1].Equal(ctx, expression.Zero)
+
+	var outputIdx int
+	if nullFlip || zeroFlip {
+		outputIdx = 2
+		newConditions = []expression.Expression{expression.NewFunctionInternal(ctx, ast.UnaryNot, types.NewFieldType(mysql.TypeTiny), conditionFromCase)}
+	} else {
+		outputIdx = 1
+		newConditions = expression.SplitCNFItems(conditionFromCase)
+	}
+
+	if aggFuncDesc.HasDistinct {
+		// Just one style supported:
+		//   COUNT(DISTINCT CASE WHEN x = 'foo' THEN y END)
+		// =>
+		//   newAggFuncDesc: COUNT(DISTINCT y), newCondition: x = 'foo'
+
+		if aggFuncName == ast.AggFuncCount && r.isOnlyOneNotNull(ctx, caseArgs, caseArgsNum, outputIdx) {
+			newAggFuncDesc := aggFuncDesc.Clone()
+			newAggFuncDesc.Args = []expression.Expression{caseArgs[outputIdx]}
+			return true, newConditions, []*aggregation.AggFuncDesc{newAggFuncDesc}
+		}
+		return false, nil, nil
+	}
+
+	// Two styles supported:
+	//
+	// A1: AGG(CASE WHEN x = 'foo' THEN cnt END)
+	//   => newAggFuncDesc: AGG(cnt), newCondition: x = 'foo'
+	// A2: SUM(CASE WHEN x = 'foo' THEN cnt ELSE 0 END)
+	//   => newAggFuncDesc: SUM(cnt), newCondition: x = 'foo'
+
+	switch {
+	case r.allowsSelection(aggFuncName) && (caseArgsNum == 2 || caseArgs[3-outputIdx].Equal(ctx, expression.Null)), // Case A1
+		aggFuncName == ast.AggFuncSum && caseArgsNum == 3 && caseArgs[3-outputIdx].Equal(ctx, expression.Zero): // Case A2
+		newAggFuncDesc := aggFuncDesc.Clone()
+		newAggFuncDesc.Args = []expression.Expression{caseArgs[outputIdx]}
+		return true, newConditions, []*aggregation.AggFuncDesc{newAggFuncDesc}
+	default:
+		return false, nil, nil
+	}
+}
+
+func (r *TransformAggregateCaseToSelection) allowsSelection(aggFuncName string) bool {
+	return aggFuncName != ast.AggFuncFirstRow
+}
+
+func (r *TransformAggregateCaseToSelection) isOnlyOneNotNull(ctx sessionctx.Context, args []expression.Expression, argsNum int, outputIdx int) bool {
+	return !args[outputIdx].Equal(ctx, expression.Null) && (argsNum == 2 || args[3-outputIdx].Equal(ctx, expression.Null))
+}
+
+// TransformAggregateCaseToSelection only support `case when cond then var end` and `case when cond then var1 else var2 end`.
+func (r *TransformAggregateCaseToSelection) isTwoOrThreeArgCase(expr expression.Expression) bool {
+	scalarFunc, ok := expr.(*expression.ScalarFunction)
+	if !ok {
+		return false
+	}
+	return scalarFunc.FuncName.L == ast.Case && (len(scalarFunc.GetArgs()) == 2 || len(scalarFunc.GetArgs()) == 3)
 }
