@@ -15,6 +15,7 @@ package executor
 
 import (
 	"context"
+	"github.com/pingcap/tidb/util/chunk"
 	"sort"
 
 	"github.com/pingcap/parser/model"
@@ -23,67 +24,79 @@ import (
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/chunk"
 )
+
+type infoschemaRetriever interface {
+	retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error)
+	close() error
+}
 
 // InfoschemaReaderExec executes infoschema information retrieving
 type InfoschemaReaderExec struct {
 	baseExecutor
-	table     *model.TableInfo
-	columns   []*model.ColumnInfo
-	chunkList *chunk.List
-	chunkIdx  int
+	retriever infoschemaRetriever
+}
+
+// Next implements the Executor Next interface.
+func (e *InfoschemaReaderExec) Next(ctx context.Context, req *chunk.Chunk) error {
+	req.GrowAndReset(e.maxChunkSize)
+	rows, err := e.retriever.retrieve(ctx, e.ctx)
+	if err != nil {
+		return err
+	}
+	if len(rows) == 0 {
+		req.Reset()
+		return nil
+	}
+	req.GrowAndReset(len(rows))
+	mutableRow := chunk.MutRowFromTypes(retTypes(e))
+	for _, row := range rows {
+		mutableRow.SetDatums(row...)
+		req.AppendRow(mutableRow.ToRow())
+	}
+	return nil
 }
 
 // Open implements the Executor Open interface.
 func (e *InfoschemaReaderExec) Open(ctx context.Context) error {
-	e.chunkList = nil
 	return nil
 }
 
-// Next implements the Executor Next interface.
-func (e *InfoschemaReaderExec) Next(ctx context.Context, chk *chunk.Chunk) error {
-	chk.GrowAndReset(e.maxChunkSize)
-	if e.chunkList == nil {
-		e.chunkList = chunk.NewList(retTypes(e), e.initCap, e.maxChunkSize)
-		mutableRow := chunk.MutRowFromTypes(retTypes(e))
-		rows, err := e.getRows(e.ctx, e.columns)
-		if err != nil {
-			return err
-		}
-		for _, row := range rows {
-			mutableRow.SetDatums(row...)
-			e.chunkList.AppendRow(mutableRow.ToRow())
-		}
-	}
-	// no more data.
-	if e.chunkIdx >= e.chunkList.NumChunks() {
-		return nil
-	}
-	virtualTableChunk := e.chunkList.GetChunk(e.chunkIdx)
-	e.chunkIdx++
-	chk.SwapColumns(virtualTableChunk)
-	return nil
+// Close implements the Executor Close interface.
+func (e *InfoschemaReaderExec) Close() error {
+	return e.retriever.close()
 }
 
-func (e *InfoschemaReaderExec) getRows(ctx sessionctx.Context, cols []*model.ColumnInfo) (fullRows [][]types.Datum, err error) {
-	is := infoschema.GetInfoSchema(ctx)
-	dbs := is.AllSchemas()
-	sort.Sort(infoschema.SchemasSorter(dbs))
-	switch e.table.Name.O {
-	case infoschema.TableSchemata:
-		fullRows = dataForSchemata(ctx, dbs)
+type schemataRetriever struct {
+	table     *model.TableInfo
+	columns   []*model.ColumnInfo
+	dbs       []*model.DBInfo
+	dbIdx     int
+	retrieved   bool
+	initialized bool
+}
+
+// retrieve implements the infoschemaRetriever interface
+func (e *schemataRetriever) retrieve( ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
+	if e.retrieved {
+		return nil, nil
 	}
-	if err != nil {
-		return nil, err
+	if !e.initialized {
+		is := infoschema.GetInfoSchema(sctx)
+		dbs := is.AllSchemas()
+		sort.Sort(infoschema.SchemasSorter(dbs))
+		e.dbs = dbs
+		e.initialized = true
 	}
-	if len(cols) == len(e.columns) {
-		return
+	fullRows := e.dataForSchemata(sctx)
+
+	if len(e.columns) == len(e.table.Columns) {
+		return fullRows, nil
 	}
 	rows := make([][]types.Datum, len(fullRows))
-	for i, fullRow := range fullRows {
-		row := make([]types.Datum, len(cols))
-		for j, col := range cols {
+	for i, fullRow := range fullRows  {
+		row := make([]types.Datum, len(e.columns))
+		for j, col := range e.columns {
 			row[j] = fullRow[col.Offset]
 		}
 		rows[i] = row
@@ -91,34 +104,41 @@ func (e *InfoschemaReaderExec) getRows(ctx sessionctx.Context, cols []*model.Col
 	return rows, nil
 }
 
-func dataForSchemata(ctx sessionctx.Context, schemas []*model.DBInfo) [][]types.Datum {
+func (e *schemataRetriever) dataForSchemata(ctx sessionctx.Context) [][]types.Datum {
 	checker := privilege.GetPrivilegeManager(ctx)
-	rows := make([][]types.Datum, 0, len(schemas))
-
-	for _, schema := range schemas {
-
+	rows := make([][]types.Datum, 0, 1024)
+	maxCount := 1024
+	remainCount := maxCount
+	if e.dbIdx+maxCount > len(e.dbs) {
+		remainCount = maxCount - (e.dbIdx+maxCount - len(e.dbs))
+		e.retrieved = true
+	}
+	for i := e.dbIdx; i < e.dbIdx+remainCount; i++ {
 		charset := mysql.DefaultCharset
 		collation := mysql.DefaultCollationName
 
-		if len(schema.Charset) > 0 {
-			charset = schema.Charset // Overwrite default
+		if len(e.dbs[i].Charset) > 0 {
+			charset = e.dbs[i].Charset // Overwrite default
 		}
 
-		if len(schema.Collate) > 0 {
-			collation = schema.Collate // Overwrite default
+		if len(e.dbs[i].Collate) > 0 {
+			collation = e.dbs[i].Collate // Overwrite default
 		}
 
-		if checker != nil && !checker.RequestVerification(ctx.GetSessionVars().ActiveRoles, schema.Name.L, "", "", mysql.AllPrivMask) {
+		if checker != nil && !checker.RequestVerification(ctx.GetSessionVars().ActiveRoles, e.dbs[i].Name.L, "", "", mysql.AllPrivMask) {
 			continue
 		}
 		record := types.MakeDatums(
 			infoschema.CatalogVal, // CATALOG_NAME
-			schema.Name.O,         // SCHEMA_NAME
+			e.dbs[i].Name.O,         // SCHEMA_NAME
 			charset,               // DEFAULT_CHARACTER_SET_NAME
 			collation,             // DEFAULT_COLLATION_NAME
 			nil,
 		)
 		rows = append(rows, record)
 	}
+	e.dbIdx += remainCount
 	return rows
 }
+
+func (schemataRetriever) close() error { return nil }
