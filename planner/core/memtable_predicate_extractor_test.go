@@ -82,9 +82,8 @@ func (s *extractorSuite) getLogicalMemTable(c *C, se session.Session, parser *pa
 			Extractor: nil,
 			TableInfo: nil,
 		}.Init(mock.NewContext(), 0)
-	} else {
-		return leafPlan.(*plannercore.LogicalMemTable)
 	}
+	return leafPlan.(*plannercore.LogicalMemTable)
 }
 
 func (s *extractorSuite) TestClusterConfigTableExtractor(c *C) {
