@@ -407,6 +407,7 @@ func (s *testPessimisticSuite) TestOptimisticConflicts(c *C) {
 	// TODO: ResolveLock block until timeout, takes about 40s, makes CI slow!
 	_, err := tk2.Exec("commit")
 	c.Check(err, NotNil)
+	tk.MustExec("rollback")
 
 	// Update snapshotTS after a conflict, invalidate snapshot cache.
 	tk.MustExec("truncate table conflict")
