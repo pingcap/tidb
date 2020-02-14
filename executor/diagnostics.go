@@ -20,10 +20,12 @@ import (
 	"strings"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/infoschema"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -32,7 +34,7 @@ import (
 type (
 	// inspectionResult represents a abnormal diagnosis result
 	inspectionResult struct {
-		typ      string
+		tp       string
 		instance string
 		// represents the diagnostics item, e.g: `ddl.lease` `raftstore.cpuusage`
 		item string
@@ -43,6 +45,8 @@ type (
 		detail   string
 	}
 
+	inspectionName string
+
 	inspectionFilter struct{ set.StringSet }
 
 	inspectionRule interface {
@@ -51,14 +55,37 @@ type (
 	}
 )
 
+func (n inspectionName) name() string {
+	return string(n)
+}
+
 func (f inspectionFilter) enable(name string) bool {
 	return len(f.StringSet) == 0 || f.Exist(name)
 }
 
+type (
+	// configInspection is used to check whether a same configuration item has a
+	// different value between different instance in the cluster
+	configInspection struct{ inspectionName }
+
+	// versionInspection is used to check whether the same component has different
+	// version in the cluster
+	versionInspection struct{ inspectionName }
+
+	// currentLoadInspection is used to check the current load of memory/disk/cpu
+	// have reached a high-level threshold
+	currentLoadInspection struct{ inspectionName }
+
+	// criticalErrorInspection is used to check are there some critical errors
+	// occurred in the past
+	criticalErrorInspection struct{ inspectionName }
+)
+
 var inspectionRules = []inspectionRule{
-	&configInspection{},
-	&versionInspection{},
-	&currentLoadInspection{},
+	&configInspection{inspectionName: "config"},
+	&versionInspection{inspectionName: "version"},
+	&currentLoadInspection{inspectionName: "current-load"},
+	&criticalErrorInspection{inspectionName: "critical-error"},
 }
 
 type inspectionRetriever struct {
@@ -118,7 +145,7 @@ func (e *inspectionRetriever) retrieve(ctx context.Context, sctx sessionctx.Cont
 			finalRows = append(finalRows, types.MakeDatums(
 				name,
 				result.item,
-				result.typ,
+				result.tp,
 				result.instance,
 				result.actual,
 				result.expected,
@@ -128,12 +155,6 @@ func (e *inspectionRetriever) retrieve(ctx context.Context, sctx sessionctx.Cont
 		}
 	}
 	return finalRows, nil
-}
-
-type configInspection struct{}
-
-func (configInspection) name() string {
-	return "config"
 }
 
 func (configInspection) inspect(_ context.Context, sctx sessionctx.Context, filter inspectionFilter) []inspectionResult {
@@ -148,7 +169,7 @@ func (configInspection) inspect(_ context.Context, sctx sessionctx.Context, filt
 	for _, row := range rows {
 		if filter.enable(row.GetString(1)) {
 			results = append(results, inspectionResult{
-				typ:      row.GetString(0),
+				tp:       row.GetString(0),
 				instance: "",
 				item:     row.GetString(1), // key
 				actual:   "inconsistent",
@@ -160,12 +181,6 @@ func (configInspection) inspect(_ context.Context, sctx sessionctx.Context, filt
 		}
 	}
 	return results
-}
-
-type versionInspection struct{}
-
-func (versionInspection) name() string {
-	return "version"
 }
 
 func (versionInspection) inspect(_ context.Context, sctx sessionctx.Context, filter inspectionFilter) []inspectionResult {
@@ -181,7 +196,7 @@ func (versionInspection) inspect(_ context.Context, sctx sessionctx.Context, fil
 	for _, row := range rows {
 		if filter.enable(name) {
 			results = append(results, inspectionResult{
-				typ:      row.GetString(0),
+				tp:       row.GetString(0),
 				instance: "",
 				item:     name,
 				actual:   "inconsistent",
@@ -194,16 +209,10 @@ func (versionInspection) inspect(_ context.Context, sctx sessionctx.Context, fil
 	return results
 }
 
-type currentLoadInspection struct{}
-
-func (currentLoadInspection) name() string {
-	return "current-load"
-}
-
 func (currentLoadInspection) inspect(_ context.Context, sctx sessionctx.Context, filter inspectionFilter) []inspectionResult {
-	var commonResult = func(item string, expected string, row chunk.Row) inspectionResult {
+	var commonResult = func(item, expected string, row chunk.Row) inspectionResult {
 		return inspectionResult{
-			typ:      row.GetString(0),
+			tp:       row.GetString(0),
 			instance: row.GetString(1),
 			item:     item,
 			actual:   row.GetString(2),
@@ -211,9 +220,9 @@ func (currentLoadInspection) inspect(_ context.Context, sctx sessionctx.Context,
 			severity: "warning",
 		}
 	}
-	var diskResult = func(item string, expected string, row chunk.Row) inspectionResult {
+	var diskResult = func(item, expected string, row chunk.Row) inspectionResult {
 		return inspectionResult{
-			typ:      row.GetString(0),
+			tp:       row.GetString(0),
 			instance: row.GetString(1),
 			item:     item,
 			actual:   row.GetString(3),
@@ -277,6 +286,78 @@ func (currentLoadInspection) inspect(_ context.Context, sctx sessionctx.Context,
 			}
 			for _, row := range rows {
 				results = append(results, rule.result(rule.item, rule.expected, row))
+			}
+		}
+	}
+	return results
+}
+
+func (criticalErrorInspection) inspect(ctx context.Context, sctx sessionctx.Context, filter inspectionFilter) []inspectionResult {
+	// TODO: specify the `begin` and `end` time of metric query
+	var rules = []struct {
+		tp   string
+		item string
+		tbl  string
+	}{
+		{tp: "tidb", item: "failed-query-opm", tbl: "tidb_failed_query_opm"},
+		{tp: "tikv", item: "critical-error", tbl: "tikv_critical_error"},
+		{tp: "tidb", item: "panic-count", tbl: "tidb_panic_count"},
+		{tp: "tidb", item: "binlog-error", tbl: "tidb_binlog_error_count"},
+		{tp: "tidb", item: "pd-cmd-failed", tbl: "pd_cmd_fail_ops"},
+		{tp: "tidb", item: "ticlient-region-error", tbl: "tidb_kv_region_error_ops"},
+		{tp: "tidb", item: "lock-resolve", tbl: "tidb_lock_resolver_ops"},
+		{tp: "tikv", item: "scheduler-is-busy", tbl: "tikv_scheduler_is_busy"},
+		{tp: "tikv", item: "coprocessor-is-busy", tbl: "tikv_coprocessor_is_busy"},
+		{tp: "tikv", item: "channel-is-full", tbl: "tikv_channel_full_total"},
+		{tp: "tikv", item: "coprocessor-error", tbl: "tikv_coprocessor_request_error"},
+		{tp: "tidb", item: "schema-lease-error", tbl: "tidb_schema_lease_error_opm"},
+		{tp: "tidb", item: "txn-retry-error", tbl: "tidb_transaction_retry_error_ops"},
+		{tp: "tikv", item: "grpc-errors", tbl: "tikv_grpc_errors"},
+	}
+
+	var results []inspectionResult
+	for _, rule := range rules {
+		if filter.enable(rule.item) {
+			def, ok := infoschema.MetricTableMap[rule.tbl]
+			if !ok {
+				sctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("metrics table: %s not fouund", rule.tbl))
+				continue
+			}
+			sql := fmt.Sprintf("select `%[1]s`, max(value) as max_value from `%[2]s`.`%[3]s` group by `%[1]s` having max_value > 0.0",
+				strings.Join(def.Labels, "`,`"), util.MetricSchemaName.L, rule.tbl)
+			rows, _, err := sctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQLWithContext(ctx, sql)
+			if err != nil {
+				sctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("execute '%s' failed: %v", sql, err))
+				continue
+			}
+			for _, row := range rows {
+				var actual, detail string
+				if rest := def.Labels[1:]; len(rest) > 0 {
+					pairs := make([]string, 0, len(rest))
+					// `i+1` and `1+len(rest)` means skip the first field `instance`
+					for i, label := range rest {
+						pairs = append(pairs, fmt.Sprintf("`%s`='%s'", label, row.GetString(i+1)))
+					}
+					// TODO: find a better way to construct the `actual` field
+					actual = fmt.Sprintf("{%s}=%.2f", strings.Join(pairs, ","), row.GetFloat64(1+len(rest)))
+					detail = fmt.Sprintf("select * from `%s`.`%s` where `instance`='%s' and %s",
+						util.MetricSchemaName.L, rule.tbl, row.GetString(0), strings.Join(pairs, " and "))
+				} else {
+					actual = fmt.Sprintf("%.2f", row.GetFloat64(1))
+					detail = fmt.Sprintf("select * from `%s`.`%s` where `instance`='%s'",
+						util.MetricSchemaName.L, rule.tbl, row.GetString(0))
+				}
+				result := inspectionResult{
+					tp: rule.tp,
+					// NOTE: all tables which can be inspected here whose first label must be `instance`
+					instance: row.GetString(0),
+					item:     rule.item,
+					actual:   actual,
+					expected: "0",
+					severity: "warning",
+					detail:   detail,
+				}
+				results = append(results, result)
 			}
 		}
 	}
