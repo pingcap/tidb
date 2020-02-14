@@ -39,7 +39,6 @@ type InfoschemaReaderExec struct {
 
 // Next implements the Executor Next interface.
 func (e *InfoschemaReaderExec) Next(ctx context.Context, req *chunk.Chunk) error {
-	req.GrowAndReset(e.maxChunkSize)
 	rows, err := e.retriever.retrieve(ctx, e.ctx)
 	if err != nil {
 		return err
