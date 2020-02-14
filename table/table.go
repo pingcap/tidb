@@ -192,7 +192,15 @@ func AllocBatchAutoIncrementValue(ctx context.Context, t Table, sctx sessionctx.
 	}
 	increment = int64(sctx.GetSessionVars().AutoIncrementIncrement)
 	offset := int64(sctx.GetSessionVars().AutoIncrementOffset)
-	return t.Allocator(sctx, autoid.RowIDAllocType).Alloc(t.Meta().ID, uint64(N), increment, offset)
+
+	min, max, err := t.Allocator(sctx, autoid.RowIDAllocType).Alloc(t.Meta().ID, uint64(N), increment, offset)
+	if err != nil {
+		return min, max, err
+	}
+	// SeekToFirstAutoIDUnSigned seeks to first autoID. Because AutoIncrement always allocate from 1,
+	// signed and unsigned value can be unified as the unsigned handle.
+	nr := int64(autoid.SeekToFirstAutoIDUnSigned(uint64(min), uint64(increment), uint64(offset)))
+	return nr, increment, nil
 }
 
 // PhysicalTable is an abstraction for two kinds of table representation: partition or non-partitioned table.

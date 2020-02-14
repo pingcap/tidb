@@ -582,4 +582,3 @@ func (s *testSuite) TestErrorParse(c *C) {
 	// Do not panic.
 	h.Update(true)
 }
->>>>>>> release-3.0
