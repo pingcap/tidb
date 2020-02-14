@@ -72,14 +72,14 @@ func splitSetGetVarFunc(filters []expression.Expression) ([]expression.Expressio
 
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
 func (p *LogicalSelection) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, LogicalPlan) {
-	newConditions := append(predicates, p.Conditions...)
-	newConditions = expression.PropagateConstant(p.ctx, newConditions)
-	// Return table dual when filter is constant false or null.
-	dual := Conds2TableDual(p, newConditions)
-	if dual != nil {
-		return nil, dual
+	canBePushDown, canNotBePushDown := splitSetGetVarFunc(p.Conditions)
+	canBePushDown = append(canBePushDown, predicates...)
+	if len(canNotBePushDown) == 0 {
+		dual := Conds2TableDual(p, expression.PropagateConstant(p.ctx, canBePushDown))
+		if dual != nil {
+			return nil, dual
+		}
 	}
-	canBePushDown, canNotBePushDown := splitSetGetVarFunc(newConditions)
 	retConditions, child := p.children[0].PredicatePushDown(canBePushDown)
 	retConditions = append(retConditions, canNotBePushDown...)
 	if len(retConditions) > 0 {

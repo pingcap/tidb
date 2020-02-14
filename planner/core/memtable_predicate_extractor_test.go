@@ -21,11 +21,13 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser"
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/set"
 )
 
@@ -73,9 +75,16 @@ func (s *extractorSuite) getLogicalMemTable(c *C, se session.Session, parser *pa
 	for len(leafPlan.Children()) > 0 {
 		leafPlan = leafPlan.Children()[0]
 	}
-
-	logicalMemTable := leafPlan.(*plannercore.LogicalMemTable)
-	return logicalMemTable
+	_, isDual := leafPlan.(*plannercore.LogicalTableDual)
+	if isDual {
+		return plannercore.LogicalMemTable{
+			DBName:    model.NewCIStr("information_schema"),
+			Extractor: nil,
+			TableInfo: nil,
+		}.Init(mock.NewContext(), 0)
+	} else {
+		return leafPlan.(*plannercore.LogicalMemTable)
+	}
 }
 
 func (s *extractorSuite) TestClusterConfigTableExtractor(c *C) {
@@ -235,12 +244,14 @@ func (s *extractorSuite) TestClusterConfigTableExtractor(c *C) {
 	}
 	for _, ca := range cases {
 		logicalMemTable := s.getLogicalMemTable(c, se, parser, ca.sql)
-		c.Assert(logicalMemTable.Extractor, NotNil)
-
-		clusterConfigExtractor := logicalMemTable.Extractor.(*plannercore.ClusterTableExtractor)
-		c.Assert(clusterConfigExtractor.NodeTypes, DeepEquals, ca.nodeTypes, Commentf("SQL: %v", ca.sql))
-		c.Assert(clusterConfigExtractor.Instances, DeepEquals, ca.instances, Commentf("SQL: %v", ca.sql))
-		c.Assert(clusterConfigExtractor.SkipRequest, DeepEquals, ca.skipRequest, Commentf("SQL: %v", ca.sql))
+		if logicalMemTable.Extractor == nil {
+			c.Assert(ca.skipRequest, IsTrue)
+		} else {
+			clusterConfigExtractor := logicalMemTable.Extractor.(*plannercore.ClusterTableExtractor)
+			c.Assert(clusterConfigExtractor.NodeTypes, DeepEquals, ca.nodeTypes, Commentf("SQL: %v", ca.sql))
+			c.Assert(clusterConfigExtractor.Instances, DeepEquals, ca.instances, Commentf("SQL: %v", ca.sql))
+			c.Assert(clusterConfigExtractor.SkipRequest, DeepEquals, ca.skipRequest, Commentf("SQL: %v", ca.sql))
+		}
 	}
 }
 
@@ -515,21 +526,23 @@ func (s *extractorSuite) TestClusterLogTableExtractor(c *C) {
 	}
 	for _, ca := range cases {
 		logicalMemTable := s.getLogicalMemTable(c, se, parser, ca.sql)
-		c.Assert(logicalMemTable.Extractor, NotNil)
-
-		clusterConfigExtractor := logicalMemTable.Extractor.(*plannercore.ClusterLogTableExtractor)
-		c.Assert(clusterConfigExtractor.NodeTypes, DeepEquals, ca.nodeTypes, Commentf("SQL: %v", ca.sql))
-		c.Assert(clusterConfigExtractor.Instances, DeepEquals, ca.instances, Commentf("SQL: %v", ca.sql))
-		c.Assert(clusterConfigExtractor.SkipRequest, DeepEquals, ca.skipRequest, Commentf("SQL: %v", ca.sql))
-		if ca.startTime > 0 {
-			c.Assert(clusterConfigExtractor.StartTime, Equals, ca.startTime, Commentf("SQL: %v", ca.sql))
-		}
-		if ca.endTime > 0 {
-			c.Assert(clusterConfigExtractor.EndTime, Equals, ca.endTime, Commentf("SQL: %v", ca.sql))
-		}
-		c.Assert(clusterConfigExtractor.Patterns, DeepEquals, ca.patterns, Commentf("SQL: %v", ca.sql))
-		if len(ca.level) > 0 {
-			c.Assert(clusterConfigExtractor.LogLevels, DeepEquals, ca.level, Commentf("SQL: %v", ca.sql))
+		if logicalMemTable.Extractor == nil {
+			c.Assert(ca.skipRequest, IsTrue)
+		} else {
+			clusterConfigExtractor := logicalMemTable.Extractor.(*plannercore.ClusterLogTableExtractor)
+			c.Assert(clusterConfigExtractor.NodeTypes, DeepEquals, ca.nodeTypes, Commentf("SQL: %v", ca.sql))
+			c.Assert(clusterConfigExtractor.Instances, DeepEquals, ca.instances, Commentf("SQL: %v", ca.sql))
+			c.Assert(clusterConfigExtractor.SkipRequest, DeepEquals, ca.skipRequest, Commentf("SQL: %v", ca.sql))
+			if ca.startTime > 0 {
+				c.Assert(clusterConfigExtractor.StartTime, Equals, ca.startTime, Commentf("SQL: %v", ca.sql))
+			}
+			if ca.endTime > 0 {
+				c.Assert(clusterConfigExtractor.EndTime, Equals, ca.endTime, Commentf("SQL: %v", ca.sql))
+			}
+			c.Assert(clusterConfigExtractor.Patterns, DeepEquals, ca.patterns, Commentf("SQL: %v", ca.sql))
+			if len(ca.level) > 0 {
+				c.Assert(clusterConfigExtractor.LogLevels, DeepEquals, ca.level, Commentf("SQL: %v", ca.sql))
+			}
 		}
 	}
 }
@@ -785,15 +798,17 @@ func (s *extractorSuite) TestInspectionResultTableExtractor(c *C) {
 	parser := parser.New()
 	for _, ca := range cases {
 		logicalMemTable := s.getLogicalMemTable(c, se, parser, ca.sql)
-		c.Assert(logicalMemTable.Extractor, NotNil)
-
-		clusterConfigExtractor := logicalMemTable.Extractor.(*plannercore.InspectionResultTableExtractor)
-		if len(ca.rules) > 0 {
-			c.Assert(clusterConfigExtractor.Rules, DeepEquals, ca.rules, Commentf("SQL: %v", ca.sql))
+		if logicalMemTable.Extractor == nil {
+			c.Assert(ca.skipInspection, IsTrue)
+		} else {
+			clusterConfigExtractor := logicalMemTable.Extractor.(*plannercore.InspectionResultTableExtractor)
+			if len(ca.rules) > 0 {
+				c.Assert(clusterConfigExtractor.Rules, DeepEquals, ca.rules, Commentf("SQL: %v", ca.sql))
+			}
+			if len(ca.items) > 0 {
+				c.Assert(clusterConfigExtractor.Items, DeepEquals, ca.items, Commentf("SQL: %v", ca.sql))
+			}
+			c.Assert(clusterConfigExtractor.SkipInspection, Equals, ca.skipInspection, Commentf("SQL: %v", ca.sql))
 		}
-		if len(ca.items) > 0 {
-			c.Assert(clusterConfigExtractor.Items, DeepEquals, ca.items, Commentf("SQL: %v", ca.sql))
-		}
-		c.Assert(clusterConfigExtractor.SkipInspection, Equals, ca.skipInspection, Commentf("SQL: %v", ca.sql))
 	}
 }
