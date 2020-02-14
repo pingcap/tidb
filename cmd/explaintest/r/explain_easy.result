@@ -190,29 +190,29 @@ HashAgg_18	24000.00	root	group by:Column#10, funcs:firstrow(Column#11)->Column#1
 explain select count(1) from (select count(1) from (select * from t1 where c3 = 100) k) k2;
 id	count	task	operator info
 StreamAgg_13	1.00	root	funcs:count(1)->Column#5
-└─StreamAgg_28	1.00	root	funcs:firstrow(Column#8)->Column#6
+└─StreamAgg_28	1.00	root	funcs:firstrow(Column#9)->Column#7
   └─TableReader_29	1.00	root	data:StreamAgg_17
-    └─StreamAgg_17	1.00	cop[tikv]	funcs:firstrow(1)->Column#8
+    └─StreamAgg_17	1.00	cop[tikv]	funcs:firstrow(1)->Column#9
       └─Selection_27	10.00	cop[tikv]	eq(test.t1.c3, 100)
         └─TableScan_26	10000.00	cop[tikv]	table:t1, range:[-inf,+inf], keep order:false, stats:pseudo
 explain select 1 from (select count(c2), count(c3) from t1) k;
 id	count	task	operator info
 Projection_5	1.00	root	1->Column#6
-└─StreamAgg_21	1.00	root	funcs:firstrow(Column#13)->Column#7
+└─StreamAgg_21	1.00	root	funcs:firstrow(Column#14)->Column#9
   └─TableReader_22	1.00	root	data:StreamAgg_9
-    └─StreamAgg_9	1.00	cop[tikv]	funcs:firstrow(1)->Column#13
+    └─StreamAgg_9	1.00	cop[tikv]	funcs:firstrow(1)->Column#14
       └─TableScan_19	10000.00	cop[tikv]	table:t1, range:[-inf,+inf], keep order:false, stats:pseudo
 explain select count(1) from (select max(c2), count(c3) as m from t1) k;
 id	count	task	operator info
 StreamAgg_11	1.00	root	funcs:count(1)->Column#6
-└─StreamAgg_27	1.00	root	funcs:firstrow(Column#12)->Column#7
+└─StreamAgg_27	1.00	root	funcs:firstrow(Column#13)->Column#8
   └─TableReader_28	1.00	root	data:StreamAgg_15
-    └─StreamAgg_15	1.00	cop[tikv]	funcs:firstrow(1)->Column#12
+    └─StreamAgg_15	1.00	cop[tikv]	funcs:firstrow(1)->Column#13
       └─TableScan_25	10000.00	cop[tikv]	table:t1, range:[-inf,+inf], keep order:false, stats:pseudo
 explain select count(1) from (select count(c2) from t1 group by c3) k;
 id	count	task	operator info
 StreamAgg_11	1.00	root	funcs:count(1)->Column#5
-└─HashAgg_22	8000.00	root	group by:test.t1.c3, funcs:firstrow(1)->Column#6
+└─HashAgg_22	8000.00	root	group by:test.t1.c3, funcs:firstrow(1)->Column#7
   └─TableReader_19	10000.00	root	data:TableScan_18
     └─TableScan_18	10000.00	cop[tikv]	table:t1, range:[-inf,+inf], keep order:false, stats:pseudo
 set @@session.tidb_opt_insubq_to_join_and_agg=0;
@@ -498,15 +498,15 @@ PRIMARY KEY (`id`)
 EXPLAIN SELECT COUNT(1) FROM (SELECT COALESCE(b.region_name, '不详') region_name, SUM(a.registration_num) registration_num FROM (SELECT stat_date, show_date, region_id, 0 registration_num FROM test01 WHERE period = 1 AND stat_date >= 20191202 AND stat_date <= 20191202 UNION ALL SELECT stat_date, show_date, region_id, registration_num registration_num FROM test01 WHERE period = 1 AND stat_date >= 20191202 AND stat_date <= 20191202) a LEFT JOIN test02 b ON a.region_id = b.id WHERE registration_num > 0 AND a.stat_date >= '20191202' AND a.stat_date <= '20191202' GROUP BY a.stat_date , a.show_date , COALESCE(b.region_name, '不详') ) JLS;
 id	count	task	operator info
 StreamAgg_22	1.00	root	funcs:count(1)->Column#22
-└─HashAgg_25	1.00	root	group by:Column#31, Column#32, Column#33, funcs:firstrow(1)->Column#23
-  └─Projection_48	0.02	root	Column#14, Column#15, coalesce(test.test02.region_name, 不详)->Column#33
+└─HashAgg_25	1.00	root	group by:Column#30, Column#31, Column#32, funcs:firstrow(1)->Column#29
+  └─Projection_48	0.02	root	Column#14, Column#15, coalesce(test.test02.region_name, 不详)->Column#32
     └─IndexMergeJoin_32	0.02	root	left outer join, inner:TableReader_30, outer key:Column#16, inner key:test.test02.id
       ├─Union_37	0.02	root	
-      │ ├─Projection_38	0.01	root	test.test01.stat_date, test.test01.show_date, test.test01.region_id, cast(0)->Column#17
+      │ ├─Projection_38	0.01	root	test.test01.stat_date, test.test01.show_date, test.test01.region_id
       │ │ └─TableReader_41	0.01	root	data:Selection_40
       │ │   └─Selection_40	0.01	cop[tikv]	eq(test.test01.period, 1), ge(test.test01.stat_date, 20191202), ge(test.test01.stat_date, 20191202), gt(cast(0), 0), le(test.test01.stat_date, 20191202), le(test.test01.stat_date, 20191202)
       │ │     └─TableScan_39	10000.00	cop[tikv]	table:test01, range:[-inf,+inf], keep order:false, stats:pseudo
-      │ └─Projection_42	0.01	root	test.test01.stat_date, test.test01.show_date, test.test01.region_id, cast(test.test01.registration_num)->Column#17
+      │ └─Projection_42	0.01	root	test.test01.stat_date, test.test01.show_date, test.test01.region_id
       │   └─TableReader_45	0.01	root	data:Selection_44
       │     └─Selection_44	0.01	cop[tikv]	eq(test.test01.period, 1), ge(test.test01.stat_date, 20191202), ge(test.test01.stat_date, 20191202), gt(cast(test.test01.registration_num), 0), le(test.test01.stat_date, 20191202), le(test.test01.stat_date, 20191202)
       │       └─TableScan_43	10000.00	cop[tikv]	table:test01, range:[-inf,+inf], keep order:false, stats:pseudo
