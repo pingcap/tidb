@@ -15,6 +15,8 @@ package executor
 
 import (
 	"context"
+
+	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/executor/aggfuncs"
@@ -22,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/mathutil"
 )
 
 // WindowExec is the executor for window functions.

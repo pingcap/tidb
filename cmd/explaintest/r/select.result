@@ -408,10 +408,10 @@ explain select a in (select a from s where s.b = t.b) from t;
 id	count	task	operator info
 Projection_9	10000.00	root	Column#7
 └─HashLeftJoin_10	10000.00	root	left outer semi join, inner:Projection_14, equal:[eq(Column#8, Column#9)], other cond:eq(cast(test.t.a), cast(test.s.a))
-  ├─Projection_11	10000.00	root	test.t.a, test.t.b, cast(test.t.b)->Column#8
+  ├─Projection_11	10000.00	root	test.t.a, cast(test.t.b)->Column#8
   │ └─TableReader_13	10000.00	root	data:TableScan_12
   │   └─TableScan_12	10000.00	cop[tikv]	table:t, range:[-inf,+inf], keep order:false, stats:pseudo
-  └─Projection_14	10000.00	root	test.s.a, test.s.b, cast(test.s.b)->Column#9
+  └─Projection_14	10000.00	root	test.s.a, cast(test.s.b)->Column#9
     └─TableReader_16	10000.00	root	data:TableScan_15
       └─TableScan_15	10000.00	cop[tikv]	table:s, range:[-inf,+inf], keep order:false, stats:pseudo
 explain select a in (select a+b from t t2 where t2.b = t1.b) from t t1;
