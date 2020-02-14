@@ -264,6 +264,10 @@ func (p *PhysicalMergeJoin) initCompareFuncs() {
 	}
 }
 
+// ForceUseOuterBuild4Test is a test option to control forcing use outer input as build.
+// TODO: use hint and remove this variable
+var ForceUseOuterBuild4Test = false
+
 func (p *LogicalJoin) getHashJoins(prop *property.PhysicalProperty) []PhysicalPlan {
 	if !prop.IsEmpty() { // hash join doesn't promise any orders
 		return nil
@@ -273,11 +277,19 @@ func (p *LogicalJoin) getHashJoins(prop *property.PhysicalProperty) []PhysicalPl
 	case SemiJoin, AntiSemiJoin, LeftOuterSemiJoin, AntiLeftOuterSemiJoin:
 		joins = append(joins, p.getHashJoin(prop, 1, false))
 	case LeftOuterJoin:
-		joins = append(joins, p.getHashJoin(prop, 1, false))
-		joins = append(joins, p.getHashJoin(prop, 1, true))
+		if ForceUseOuterBuild4Test {
+			joins = append(joins, p.getHashJoin(prop, 1, true))
+		} else {
+			joins = append(joins, p.getHashJoin(prop, 1, false))
+			joins = append(joins, p.getHashJoin(prop, 1, true))
+		}
 	case RightOuterJoin:
-		joins = append(joins, p.getHashJoin(prop, 0, false))
-		joins = append(joins, p.getHashJoin(prop, 0, true))
+		if ForceUseOuterBuild4Test {
+			joins = append(joins, p.getHashJoin(prop, 0, true))
+		} else {
+			joins = append(joins, p.getHashJoin(prop, 0, false))
+			joins = append(joins, p.getHashJoin(prop, 0, true))
+		}
 	case InnerJoin:
 		joins = append(joins, p.getHashJoin(prop, 1, false))
 		joins = append(joins, p.getHashJoin(prop, 0, false))
