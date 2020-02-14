@@ -53,19 +53,19 @@ type dummyCloser struct{}
 
 func (dummyCloser) close() error { return nil }
 
-type clusterRetriever interface {
+type memTableRetriever interface {
 	retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error)
 	close() error
 }
 
 // ClusterReaderExec executes cluster information retrieving from the cluster components
-type ClusterReaderExec struct {
+type MemTableReaderExec struct {
 	baseExecutor
-	retriever clusterRetriever
+	retriever memTableRetriever
 }
 
 // Next implements the Executor Next interface.
-func (e *ClusterReaderExec) Next(ctx context.Context, req *chunk.Chunk) error {
+func (e *MemTableReaderExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	rows, err := e.retriever.retrieve(ctx, e.ctx)
 	if err != nil {
 		return err
@@ -86,7 +86,7 @@ func (e *ClusterReaderExec) Next(ctx context.Context, req *chunk.Chunk) error {
 }
 
 // Close implements the Executor Close interface.
-func (e *ClusterReaderExec) Close() error {
+func (e *MemTableReaderExec) Close() error {
 	return e.retriever.close()
 }
 

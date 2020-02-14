@@ -23,46 +23,10 @@ import (
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/chunk"
 )
 
-type infoschemaRetriever interface {
-	retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error)
-	close() error
-}
-
-// InfoschemaReaderExec executes infoschema information retrieving
-type InfoschemaReaderExec struct {
-	baseExecutor
-	retriever infoschemaRetriever
-}
-
-// Next implements the Executor Next interface.
-func (e *InfoschemaReaderExec) Next(ctx context.Context, req *chunk.Chunk) error {
-	req.GrowAndReset(e.maxChunkSize)
-	rows, err := e.retriever.retrieve(ctx, e.ctx)
-	if err != nil {
-		return err
-	}
-	if len(rows) == 0 {
-		req.Reset()
-		return nil
-	}
-	req.GrowAndReset(len(rows))
-	mutableRow := chunk.MutRowFromTypes(retTypes(e))
-	for _, row := range rows {
-		mutableRow.SetDatums(row...)
-		req.AppendRow(mutableRow.ToRow())
-	}
-	return nil
-}
-
-// Close implements the Executor Close interface.
-func (e *InfoschemaReaderExec) Close() error {
-	return e.retriever.close()
-}
-
 type schemataRetriever struct {
+	dummyCloser
 	table       *model.TableInfo
 	columns     []*model.ColumnInfo
 	dbs         []*model.DBInfo
@@ -135,5 +99,3 @@ func (e *schemataRetriever) dataForSchemata(ctx sessionctx.Context) [][]types.Da
 	e.dbIdx += remainCount
 	return rows
 }
-
-func (schemataRetriever) close() error { return nil }
