@@ -15,7 +15,6 @@ package executor
 
 import (
 	"context"
-	"github.com/pingcap/tidb/util/chunk"
 	"sort"
 
 	"github.com/pingcap/parser/model"
@@ -24,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
 )
 
 type infoschemaRetriever interface {
@@ -68,16 +68,16 @@ func (e *InfoschemaReaderExec) Close() error {
 }
 
 type schemataRetriever struct {
-	table     *model.TableInfo
-	columns   []*model.ColumnInfo
-	dbs       []*model.DBInfo
-	dbIdx     int
+	table       *model.TableInfo
+	columns     []*model.ColumnInfo
+	dbs         []*model.DBInfo
+	dbIdx       int
 	retrieved   bool
 	initialized bool
 }
 
 // retrieve implements the infoschemaRetriever interface
-func (e *schemataRetriever) retrieve( ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
+func (e *schemataRetriever) retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
 	if e.retrieved {
 		return nil, nil
 	}
@@ -94,7 +94,7 @@ func (e *schemataRetriever) retrieve( ctx context.Context, sctx sessionctx.Conte
 		return fullRows, nil
 	}
 	rows := make([][]types.Datum, len(fullRows))
-	for i, fullRow := range fullRows  {
+	for i, fullRow := range fullRows {
 		row := make([]types.Datum, len(e.columns))
 		for j, col := range e.columns {
 			row[j] = fullRow[col.Offset]
@@ -110,7 +110,7 @@ func (e *schemataRetriever) dataForSchemata(ctx sessionctx.Context) [][]types.Da
 	maxCount := 1024
 	remainCount := maxCount
 	if e.dbIdx+maxCount > len(e.dbs) {
-		remainCount = maxCount - (e.dbIdx+maxCount - len(e.dbs))
+		remainCount = maxCount - (e.dbIdx + maxCount - len(e.dbs))
 		e.retrieved = true
 	}
 	for i := e.dbIdx; i < e.dbIdx+remainCount; i++ {
@@ -130,7 +130,7 @@ func (e *schemataRetriever) dataForSchemata(ctx sessionctx.Context) [][]types.Da
 		}
 		record := types.MakeDatums(
 			infoschema.CatalogVal, // CATALOG_NAME
-			e.dbs[i].Name.O,         // SCHEMA_NAME
+			e.dbs[i].Name.O,       // SCHEMA_NAME
 			charset,               // DEFAULT_CHARACTER_SET_NAME
 			collation,             // DEFAULT_COLLATION_NAME
 			nil,
