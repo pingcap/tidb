@@ -1128,6 +1128,7 @@ func (mvcc *MVCCLevelDB) CheckTxnStatus(primaryKey []byte, lockTS, callerStartTS
 	// written before the primary lock.
 
 	if rollbackIfNotExist {
+		// Write rollback record, but not delete the lock
 		batch := &leveldb.Batch{}
 		tomb := mvccValue{
 			valueType: typeRollback,
