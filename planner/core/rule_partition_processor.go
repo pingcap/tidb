@@ -191,7 +191,7 @@ func (s *partitionProcessor) pruneHashPartition(ds *DataSource, pi *model.Partit
 	}
 	unionAll := LogicalUnionAll{}.Init(ds.SCtx(), ds.blockOffset)
 	unionAll.SetChildren(children...)
-	unionAll.SetSchema(ds.schema)
+	unionAll.SetSchema(ds.schema.Clone())
 	return unionAll, nil
 }
 
@@ -294,7 +294,7 @@ func (s *partitionProcessor) prune(ds *DataSource) (LogicalPlan, error) {
 	}
 	unionAll := LogicalUnionAll{}.Init(ds.SCtx(), ds.blockOffset)
 	unionAll.SetChildren(children...)
-	unionAll.SetSchema(ds.schema)
+	unionAll.SetSchema(ds.schema.Clone())
 	return unionAll, nil
 }
 
