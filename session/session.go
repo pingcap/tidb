@@ -738,8 +738,11 @@ func (s *session) sysSessionPool() sessionPool {
 // Unlike normal Exec, it doesn't reset statement status, doesn't commit or rollback the current transaction
 // and doesn't write binlog.
 func (s *session) ExecRestrictedSQL(sql string) ([]chunk.Row, []*ast.ResultField, error) {
-	ctx := context.TODO()
+	return s.ExecRestrictedSQLWithContext(context.TODO(), sql)
+}
 
+// ExecRestrictedSQLWithContext implements RestrictedSQLExecutor interface.
+func (s *session) ExecRestrictedSQLWithContext(ctx context.Context, sql string) ([]chunk.Row, []*ast.ResultField, error) {
 	// Use special session to execute the sql.
 	tmp, err := s.sysSessionPool().Get()
 	if err != nil {

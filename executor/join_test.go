@@ -22,6 +22,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/config"
+	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/testkit"
@@ -36,6 +37,10 @@ type testSuiteJoin2 struct {
 }
 
 type testSuiteJoin3 struct {
+	*baseTestSuite
+}
+
+type testSuiteJoinSerial struct {
 	*baseTestSuite
 }
 
@@ -1771,7 +1776,9 @@ func (s *testSuiteJoin1) TestIssue11390(c *C) {
 	tk.MustQuery("select /*+ INL_MERGE_JOIN(t1, t2) */ * from 11390t t1, 11390t t2 where t1.k2 > 0 and t1.k2 = t2.k2 and t2.k1=1;").Check(testkit.Rows("1 1 1 1"))
 }
 
-func (s *testSuiteJoin1) TestOuterTableBuildHashTable(c *C) {
+func (s *testSuiteJoinSerial) TestOuterTableBuildHashTableIsuse13933(c *C) {
+	plannercore.ForceUseOuterBuild4Test = true
+	defer func() { plannercore.ForceUseOuterBuild4Test = false }()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t, s")
@@ -1782,12 +1789,12 @@ func (s *testSuiteJoin1) TestOuterTableBuildHashTable(c *C) {
 	// TODO : add hint HASH_JOIN() and SWAP_JOIN_INPUTS() to specify the hash join and its build side
 	tk.MustQuery("select * from t left join s on s.a > t.a").Sort().Check(testkit.Rows("1 2 11 11", "1 2 2 1", "11 11 <nil> <nil>"))
 	tk.MustQuery("explain select * from t left join s on s.a > t.a").Check(testkit.Rows(
-		"HashLeftJoin_6 99900000.00 root CARTESIAN left outer join, inner:TableReader_12, other cond:gt(test.s.a, test.t.a)",
-		"├─TableReader_9 10000.00 root data:TableScan_8",
-		"│ └─TableScan_8 10000.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false, stats:pseudo",
-		"└─TableReader_12 9990.00 root data:Selection_11",
-		"  └─Selection_11 9990.00 cop[tikv] not(isnull(test.s.a))",
-		"    └─TableScan_10 10000.00 cop[tikv] table:s, range:[-inf,+inf], keep order:false, stats:pseudo"))
+		"HashLeftJoin_6 99900000.00 root CARTESIAN left outer join, inner:TableReader_8 (REVERSED), other cond:gt(test.s.a, test.t.a)",
+		"├─TableReader_8 10000.00 root data:TableScan_7",
+		"│ └─TableScan_7 10000.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false, stats:pseudo",
+		"└─TableReader_11 9990.00 root data:Selection_10",
+		"  └─Selection_10 9990.00 cop[tikv] not(isnull(test.s.a))",
+		"    └─TableScan_9 10000.00 cop[tikv] table:s, range:[-inf,+inf], keep order:false, stats:pseudo"))
 
 	tk.MustExec("drop table if exists t, s")
 	tk.MustExec("Create table s (a int, b int, key(b))")
@@ -1852,4 +1859,27 @@ func (s *testSuiteJoin1) TestIssue14514(c *C) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (pk varchar(14) primary key, a varchar(12));")
 	tk.MustQuery("select * from (select t1.pk or '/' as c from t as t1 left join t as t2 on t1.a = t2.pk) as t where t.c = 1;").Check(testkit.Rows())
+}
+
+func (s *testSuiteJoinSerial) TestOuterMatchStatusIssue14742(c *C) {
+	plannercore.ForceUseOuterBuild4Test = true
+	defer func() { plannercore.ForceUseOuterBuild4Test = false }()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists testjoin;")
+	tk.MustExec("create table testjoin(a int);")
+	tk.Se.GetSessionVars().MaxChunkSize = 2
+
+	tk.MustExec("insert into testjoin values (NULL);")
+	tk.MustExec("insert into testjoin values (1);")
+	tk.MustExec("insert into testjoin values (2), (2), (2);")
+	tk.MustQuery("SELECT * FROM testjoin t1 RIGHT JOIN testjoin t2 ON t1.a > t2.a order by t1.a, t2.a;").Check(testkit.Rows(
+		"<nil> <nil>",
+		"<nil> 2",
+		"<nil> 2",
+		"<nil> 2",
+		"2 1",
+		"2 1",
+		"2 1",
+	))
 }

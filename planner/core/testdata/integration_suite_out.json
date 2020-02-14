@@ -262,18 +262,16 @@
       {
         "SQL": "desc select * from tt where (tt.a > 1 and tt.a < 20) or (tt.a >= 30 and tt.a < 55)",
         "Plan": [
-          "TableReader_9 44.00 root data:Selection_8",
-          "└─Selection_8 44.00 cop[tiflash] or(and(gt(test.tt.a, 1), lt(test.tt.a, 20)), and(ge(test.tt.a, 30), lt(test.tt.a, 55)))",
-          "  └─TableScan_7 44.00 cop[tiflash] table:tt, range:[-inf,+inf], keep order:false, stats:pseudo"
+          "TableReader_8 44.00 root data:TableScan_7",
+          "└─TableScan_7 44.00 cop[tiflash] table:tt, range:(1,20), [30,55), keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
       {
         "SQL": "desc select /*+ read_from_storage(tiflash[tt]) */ * from tt where (tt.a > 1 and tt.a < 20) or (tt.a >= 30 and tt.a < 55)",
         "Plan": [
-          "TableReader_7 44.00 root data:Selection_6",
-          "└─Selection_6 44.00 cop[tiflash] or(and(gt(test.tt.a, 1), lt(test.tt.a, 20)), and(ge(test.tt.a, 30), lt(test.tt.a, 55)))",
-          "  └─TableScan_5 44.00 cop[tiflash] table:tt, range:[-inf,+inf], keep order:false, stats:pseudo"
+          "TableReader_6 44.00 root data:TableScan_5",
+          "└─TableScan_5 44.00 cop[tiflash] table:tt, range:(1,20), [30,55), keep order:false, stats:pseudo"
         ],
         "Warn": null
       },

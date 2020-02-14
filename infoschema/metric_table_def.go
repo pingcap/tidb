@@ -841,17 +841,17 @@ var MetricTableMap = map[string]MetricTableDef{
 	},
 	"tikv_scheduler_is_busy": {
 		PromQL:  `sum(rate(tikv_scheduler_too_busy_total{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (instance,db,type,stage)`,
-		Labels:  []string{"db", "instance", "type", "stage"},
+		Labels:  []string{"instance", "db", "type", "stage"},
 		Comment: "Indicates occurrences of Scheduler Busy events that make the TiKV instance unavailable temporarily",
 	},
 	"tikv_channel_full_total": {
 		PromQL:  `sum(rate(tikv_channel_full_total{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (instance,type,db)`,
-		Labels:  []string{"db", "instance", "type"},
+		Labels:  []string{"instance", "db", "type"},
 		Comment: "The total number of channel full errors on each TiKV instance, it will make the TiKV instance unavailable temporarily",
 	},
 	"tikv_coprocessor_is_busy": {
 		PromQL:  `sum(rate(tikv_coprocessor_request_error{type='full'}[$RANGE_DURATION])) by (instance,db,type)`,
-		Labels:  []string{"db", "instance"},
+		Labels:  []string{"instance", "db"},
 		Comment: "Indicates occurrences of Coprocessor Full events that make the TiKV instance unavailable temporarily",
 	},
 	"tikv_engine_write_stall": {
@@ -1384,7 +1384,6 @@ var MetricTableMap = map[string]MetricTableDef{
 		PromQL: `sum(rate(tikv_coprocessor_request_duration_seconds_count{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (req,instance)`,
 		Labels: []string{"instance", "req"},
 	},
-
 	"tikv_cop_total_request_errors": {
 		PromQL: `sum(rate(tikv_coprocessor_request_error{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (reason,instance)`,
 		Labels: []string{"instance", "reason"},
