@@ -15,9 +15,14 @@ package executor_test
 
 import (
 	"context"
+	"fmt"
+	"net/http/httptest"
+	"strings"
 
+	"github.com/gorilla/mux"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/fn"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
@@ -164,6 +169,140 @@ func (s *diagnosticsSuite) TestInspectionResult(c *C) {
 		c.Assert(len(warnings), Equals, 0, Commentf("expected no warning, got: %+v", warnings))
 		result.Check(testkit.Rows(cs.rows...))
 	}
+}
+
+func (s *diagnosticsSuite) TestThresholdCheckInspection(c *C) {
+	// mock TiKV http server
+	router := mux.NewRouter()
+	type mockServer struct {
+		address string
+		server  *httptest.Server
+	}
+	server := httptest.NewServer(router)
+	address := strings.TrimPrefix(server.URL, "http://")
+	testServer := &mockServer{
+		address: address,
+		server:  server,
+	}
+	defer func() { testServer.server.Close() }()
+	var mockTiKVConfig = func() (map[string]interface{}, error) {
+		configuration := map[string]interface{}{
+			"raftstore.apply-pool-size":               "2",
+			"raftstore.store-pool-size":               "2",
+			"readpool.coprocessor.normal-concurrency": "4",
+			"readpool.coprocessor.high-concurrency":   "4",
+			"readpool.coprocessor.low-concurrency":    "4",
+			"readpool.storage.high-concurrency":       "4",
+			"readpool.storage.low-concurrency":        "4",
+			"readpool.storage.normal-concurrency":     "4",
+			"server.grpc-concurrency":                 "8",
+			"storage.scheduler-worker-pool-size":      "6",
+		}
+		return configuration, nil
+	}
+	router.Handle("/config", fn.Wrap(mockTiKVConfig))
+
+	fpName := "github.com/pingcap/tidb/executor/mockClusterConfigServerInfo"
+	fpExpr := strings.Join([]string{"tikv", testServer.address, testServer.address}, ",")
+	c.Assert(failpoint.Enable(fpName, fmt.Sprintf(`return("%s")`, fpExpr)), IsNil)
+	defer func() { c.Assert(failpoint.Disable(fpName), IsNil) }()
+
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustQuery("select type, `key`, value from information_schema.cluster_config where type='tikv'").Check(testkit.Rows(
+		"tikv raftstore.apply-pool-size 2",
+		"tikv raftstore.store-pool-size 2",
+		"tikv readpool.coprocessor.high-concurrency 4",
+		"tikv readpool.coprocessor.low-concurrency 4",
+		"tikv readpool.coprocessor.normal-concurrency 4",
+		"tikv readpool.storage.high-concurrency 4",
+		"tikv readpool.storage.low-concurrency 4",
+		"tikv readpool.storage.normal-concurrency 4",
+		"tikv server.grpc-concurrency 8",
+		"tikv storage.scheduler-worker-pool-size 6",
+	))
+
+	// Mock for metric table data.
+	fpName2 := "github.com/pingcap/tidb/executor/mockMetricsTableData"
+	c.Assert(failpoint.Enable(fpName2, "return"), IsNil)
+	defer func() { c.Assert(failpoint.Disable(fpName2), IsNil) }()
+
+	datetime := func(s string) types.Time {
+		t, err := types.ParseTime(tk.Se.GetSessionVars().StmtCtx, s, mysql.TypeDatetime, types.MaxFsp)
+		c.Assert(err, IsNil)
+		return t
+	}
+
+	// construct some mock abnormal data
+	mockData := map[string][][]types.Datum{
+		// columns: time, instance, name, value
+		"tikv_thread_cpu": {
+			types.MakeDatums(datetime("2020-02-14 05:20:00"), "tikv-0", "cop_normal0", 10.0),
+			types.MakeDatums(datetime("2020-02-14 05:20:00"), "tikv-0", "cop_normal1", 10.0),
+			types.MakeDatums(datetime("2020-02-14 05:20:00"), "tikv-0", "cop_high1", 10.0),
+			types.MakeDatums(datetime("2020-02-14 05:20:00"), "tikv-0", "cop_low1", 10.0),
+			types.MakeDatums(datetime("2020-02-14 05:20:00"), "tikv-0", "grpc_1", 10.0),
+			types.MakeDatums(datetime("2020-02-14 05:20:00"), "tikv-0", "raftstore_1", 10.0),
+			types.MakeDatums(datetime("2020-02-14 05:20:00"), "tikv-0", "apply_0", 10.0),
+			types.MakeDatums(datetime("2020-02-14 05:20:00"), "tikv-0", "store_read_norm1", 10.0),
+			types.MakeDatums(datetime("2020-02-14 05:20:00"), "tikv-0", "store_read_high2", 10.0),
+			types.MakeDatums(datetime("2020-02-14 05:20:00"), "tikv-0", "store_read_low0", 10.0),
+			types.MakeDatums(datetime("2020-02-14 05:20:00"), "tikv-0", "sched_2", 10.0),
+			types.MakeDatums(datetime("2020-02-14 05:20:00"), "tikv-0", "split_check", 10.0),
+		},
+	}
+
+	ctx := context.WithValue(context.Background(), "__mockMetricsTableData", mockData)
+	ctx = failpoint.WithHook(ctx, func(_ context.Context, fpName2 string) bool {
+		return fpName2 == fpName2
+	})
+
+	rs, err := tk.Se.Execute(ctx, "select item, type, instance, value, reference, details from information_schema.inspection_result where rule='threshold-check' order by item")
+	c.Assert(err, IsNil)
+	result := tk.ResultSetToResultWithCtx(ctx, rs[0], Commentf("execute inspect SQL failed"))
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(0), Commentf("unexpected warnings: %+v", tk.Se.GetSessionVars().StmtCtx.GetWarnings()))
+	result.Check(testkit.Rows(
+		"apply_cpu tikv tikv-0 10.00 < 1.60, config: raftstore.apply-pool-size=2 select instance, sum(value) as cpu from tikv_thread_cpu where name like 'apply_%' and time=now() group by instance",
+		"coprocessor_high_cpu tikv tikv-0 10.00 < 3.60, config: readpool.coprocessor.high-concurrency=4 select instance, sum(value) as cpu from tikv_thread_cpu where name like 'cop_high%' and time=now() group by instance",
+		"coprocessor_low_cpu tikv tikv-0 10.00 < 3.60, config: readpool.coprocessor.low-concurrency=4 select instance, sum(value) as cpu from tikv_thread_cpu where name like 'cop_low%' and time=now() group by instance",
+		"coprocessor_normal_cpu tikv tikv-0 20.00 < 3.60, config: readpool.coprocessor.normal-concurrency=4 select instance, sum(value) as cpu from tikv_thread_cpu where name like 'cop_normal%' and time=now() group by instance",
+		"grpc_cpu tikv tikv-0 10.00 < 7.20, config: server.grpc-concurrency=8 select instance, sum(value) as cpu from tikv_thread_cpu where name like 'grpc%' and time=now() group by instance",
+		"raftstore_cpu tikv tikv-0 10.00 < 1.60, config: raftstore.store-pool-size=2 select instance, sum(value) as cpu from tikv_thread_cpu where name like 'raftstore_%' and time=now() group by instance",
+		"scheduler_worker_cpu tikv tikv-0 10.00 < 5.10, config: storage.scheduler-worker-pool-size=6 select instance, sum(value) as cpu from tikv_thread_cpu where name like 'sched_%' and time=now() group by instance",
+		"split_check_cpu tikv tikv-0 10.00 < 0.00 select instance, sum(value) as cpu from tikv_thread_cpu where name like 'split_check' and time=now() group by instance",
+		"storage_readpool_high_cpu tikv tikv-0 10.00 < 3.60, config: readpool.storage.high-concurrency=4 select instance, sum(value) as cpu from tikv_thread_cpu where name like 'store_read_high%' and time=now() group by instance",
+		"storage_readpool_low_cpu tikv tikv-0 10.00 < 3.60, config: readpool.storage.low-concurrency=4 select instance, sum(value) as cpu from tikv_thread_cpu where name like 'store_read_low%' and time=now() group by instance",
+		"storage_readpool_normal_cpu tikv tikv-0 10.00 < 3.60, config: readpool.storage.normal-concurrency=4 select instance, sum(value) as cpu from tikv_thread_cpu where name like 'store_read_norm%' and time=now() group by instance",
+	))
+
+	// construct some mock normal data
+	mockData = map[string][][]types.Datum{
+		// columns: time, instance, name, value
+		"tikv_thread_cpu": {
+			types.MakeDatums(datetime("2020-02-14 05:20:00"), "tikv-0", "cop_normal0", 1.0),
+			types.MakeDatums(datetime("2020-02-14 05:20:00"), "tikv-0", "cop_high1", 0.1),
+			types.MakeDatums(datetime("2020-02-14 05:20:00"), "tikv-0", "cop_low1", 1.0),
+			types.MakeDatums(datetime("2020-02-14 05:20:00"), "tikv-0", "grpc_1", 7.0),
+			types.MakeDatums(datetime("2020-02-14 05:20:00"), "tikv-0", "grpc_2", 0.21),
+			types.MakeDatums(datetime("2020-02-14 05:20:00"), "tikv-0", "raftstore_1", 1.0),
+			types.MakeDatums(datetime("2020-02-14 05:20:00"), "tikv-0", "apply_0", 1.0),
+			types.MakeDatums(datetime("2020-02-14 05:20:00"), "tikv-0", "store_read_norm1", 1.0),
+			types.MakeDatums(datetime("2020-02-14 05:20:00"), "tikv-0", "store_read_high2", 1.0),
+			types.MakeDatums(datetime("2020-02-14 05:20:00"), "tikv-0", "store_read_low0", 1.0),
+			types.MakeDatums(datetime("2020-02-14 05:20:00"), "tikv-0", "sched_2", 0.3),
+			types.MakeDatums(datetime("2020-02-14 05:20:00"), "tikv-0", "split_check", 0.5),
+		},
+	}
+
+	ctx = context.WithValue(context.Background(), "__mockMetricsTableData", mockData)
+	ctx = failpoint.WithHook(ctx, func(_ context.Context, fpName2 string) bool {
+		return fpName2 == fpName2
+	})
+	rs, err = tk.Se.Execute(ctx, "select item, type, instance, value, reference, details from information_schema.inspection_result where rule='threshold-check' order by item")
+	c.Assert(err, IsNil)
+	result = tk.ResultSetToResultWithCtx(ctx, rs[0], Commentf("execute inspect SQL failed"))
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(0), Commentf("unexpected warnings: %+v", tk.Se.GetSessionVars().StmtCtx.GetWarnings()))
+	result.Check(testkit.Rows(
+		"grpc_cpu tikv tikv-0 7.21 < 7.20, config: server.grpc-concurrency=8 select instance, sum(value) as cpu from tikv_thread_cpu where name like 'grpc%' and time=now() group by instance"))
 }
 
 func (s *diagnosticsSuite) TestCriticalErrorInspection(c *C) {
