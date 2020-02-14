@@ -382,12 +382,16 @@ func (s *testSuite) TestGlobalAndSessionBindingBothExist(c *C) {
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int, index idx(a))")
-	tk.MustExec("create global binding for select * from t where a > 10 using select * from t ignore index(idx) where a > 10")
+	tk.MustQuery("explain select * from t where a = -1").Check(testkit.Rows(
+		"IndexLookUp_10 10.00 root ",
+		"├─IndexScan_8 10.00 cop[tikv] table:t, index:a, range:[-1,-1], keep order:false, stats:pseudo",
+		"└─TableScan_9 10.00 cop[tikv] table:t, keep order:false, stats:pseudo"))
+	tk.MustExec("create global binding for select * from t where a = 10 using select * from t ignore index(idx) where a = 10")
 	// Should not panic for `-1`.
-	tk.MustContains("select * from t where a > -1", "TableReader")
+	tk.MustContains("select * from t where a = -1", "Selection")
 	// Session bindings should be able to cover the global bindings.
-	tk.MustExec("drop session binding for select * from t where a > 10")
-	tk.MustIndexLookup("select * from t where a > -1")
+	tk.MustExec("drop session binding for select * from t where a = 10")
+	tk.MustContains("select * from t where a = -1", "IndexLookUp")
 }
 
 func (s *testSuite) TestExplain(c *C) {
