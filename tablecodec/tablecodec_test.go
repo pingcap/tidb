@@ -390,7 +390,7 @@ func (s *testTableCodecSuite) TestPrefix(c *C) {
 	prefixKey := GenTableIndexPrefix(tableID)
 	c.Assert(DecodeTableID(prefixKey), Equals, tableID)
 
-	c.Assert(TruncateToRowKeyLen(append(indexPrefix, "xyz"...)), HasLen, recordRowKeyLen)
+	c.Assert(TruncateToRowKeyLen(append(indexPrefix, "xyz"...)), HasLen, RecordRowKeyLen)
 	c.Assert(TruncateToRowKeyLen(key), HasLen, len(key))
 }
 

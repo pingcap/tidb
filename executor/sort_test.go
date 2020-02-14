@@ -29,18 +29,18 @@ func (s *testSuite4) TestSortRand(c *C) {
 		"└─Sort_4 10000.00 root col_1:asc",
 		"  └─Projection_9 10000.00 root test.t.a, rand()",
 		"    └─TableReader_7 10000.00 root data:TableScan_6",
-		"      └─TableScan_6 10000.00 cop table:t, range:[-inf,+inf], keep order:false, stats:pseudo",
+		"      └─TableScan_6 10000.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false, stats:pseudo",
 	))
 
 	tk.MustQuery("explain select a, b from t order by abs(2)").Check(testkit.Rows(
 		"TableReader_8 10000.00 root data:TableScan_7",
-		"└─TableScan_7 10000.00 cop table:t, range:[-inf,+inf], keep order:false, stats:pseudo"))
+		"└─TableScan_7 10000.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false, stats:pseudo"))
 
 	tk.MustQuery("explain select a from t order by abs(rand())+1").Check(testkit.Rows(
 		"Projection_8 10000.00 root test.t.a",
 		"└─Sort_4 10000.00 root col_1:asc",
 		"  └─Projection_9 10000.00 root test.t.a, plus(abs(rand()), 1)",
 		"    └─TableReader_7 10000.00 root data:TableScan_6",
-		"      └─TableScan_6 10000.00 cop table:t, range:[-inf,+inf], keep order:false, stats:pseudo",
+		"      └─TableScan_6 10000.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false, stats:pseudo",
 	))
 }

@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
@@ -197,8 +198,7 @@ func (s *testSuite) TestAdmin(c *C) {
 	// rowOwnerInfos := strings.Split(row.Data[1].GetString(), ",")
 	// ownerInfos := strings.Split(ddlInfo.Owner.String(), ",")
 	// c.Assert(rowOwnerInfos[0], Equals, ownerInfos[0])
-	do := domain.GetDomain(tk.Se.(sessionctx.Context))
-	serverInfo, err := do.InfoSyncer().GetServerInfoByID(ctx, row.GetString(1))
+	serverInfo, err := infosync.GetServerInfoByID(ctx, row.GetString(1))
 	c.Assert(err, IsNil)
 	c.Assert(row.GetString(2), Equals, serverInfo.IP+":"+
 		strconv.FormatUint(uint64(serverInfo.Port), 10))

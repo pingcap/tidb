@@ -21,6 +21,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
 	field_types "github.com/pingcap/parser/types"
@@ -359,12 +360,21 @@ func getTableInfoAndCancelFaultJob(t *meta.Meta, job *model.Job, schemaID int64)
 }
 
 func checkTableExistAndCancelNonExistJob(t *meta.Meta, job *model.Job, schemaID int64) (*model.TableInfo, error) {
-	tableID := job.TableID
+	tblInfo, err := getTableInfo(t, job.TableID, schemaID)
+	if err == nil {
+		return tblInfo, nil
+	}
+	if infoschema.ErrDatabaseNotExists.Equal(err) || infoschema.ErrTableNotExists.Equal(err) {
+		job.State = model.JobStateCancelled
+	}
+	return nil, err
+}
+
+func getTableInfo(t *meta.Meta, tableID, schemaID int64) (*model.TableInfo, error) {
 	// Check this table's database.
 	tblInfo, err := t.GetTable(schemaID, tableID)
 	if err != nil {
 		if meta.ErrDBNotExists.Equal(err) {
-			job.State = model.JobStateCancelled
 			return nil, errors.Trace(infoschema.ErrDatabaseNotExists.GenWithStackByArgs(
 				fmt.Sprintf("(Schema ID %d)", schemaID),
 			))
@@ -374,7 +384,6 @@ func checkTableExistAndCancelNonExistJob(t *meta.Meta, job *model.Job, schemaID 
 
 	// Check the table.
 	if tblInfo == nil {
-		job.State = model.JobStateCancelled
 		return nil, errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(
 			fmt.Sprintf("(Schema ID %d)", schemaID),
 			fmt.Sprintf("(Table ID %d)", tableID),
@@ -658,6 +667,90 @@ func onModifyTableCharsetAndCollate(t *meta.Meta, job *model.Job) (ver int64, _ 
 			col.Charset = charset.CharsetBin
 			col.Collate = charset.CharsetBin
 		}
+	}
+
+	ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
+	return ver, nil
+}
+
+func onSetTableFlashReplica(t *meta.Meta, job *model.Job) (ver int64, _ error) {
+	var replicaInfo ast.TiFlashReplicaSpec
+	if err := job.DecodeArgs(&replicaInfo); err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+
+	tblInfo, err := getTableInfoAndCancelFaultJob(t, job, job.SchemaID)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+
+	if replicaInfo.Count > 0 {
+		tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
+			Count:          replicaInfo.Count,
+			LocationLabels: replicaInfo.Labels,
+		}
+	} else {
+		tblInfo.TiFlashReplica = nil
+	}
+
+	ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
+	return ver, nil
+}
+
+func onUpdateFlashReplicaStatus(t *meta.Meta, job *model.Job) (ver int64, _ error) {
+	var available bool
+	var physicalID int64
+	if err := job.DecodeArgs(&available, &physicalID); err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+
+	tblInfo, err := getTableInfoAndCancelFaultJob(t, job, job.SchemaID)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	if tblInfo.TiFlashReplica == nil || (tblInfo.ID == physicalID && tblInfo.TiFlashReplica.Available == available) ||
+		(tblInfo.ID != physicalID && available == tblInfo.TiFlashReplica.IsPartitionAvailable(physicalID)) {
+		return ver, nil
+	}
+
+	if tblInfo.ID == physicalID {
+		tblInfo.TiFlashReplica.Available = available
+	} else if pi := tblInfo.GetPartitionInfo(); pi != nil {
+		// Partition replica become available.
+		if available {
+			allAvailable := true
+			for _, p := range pi.Definitions {
+				if p.ID == physicalID {
+					tblInfo.TiFlashReplica.AvailablePartitionIDs = append(tblInfo.TiFlashReplica.AvailablePartitionIDs, physicalID)
+				}
+				allAvailable = allAvailable && tblInfo.TiFlashReplica.IsPartitionAvailable(p.ID)
+			}
+			tblInfo.TiFlashReplica.Available = allAvailable
+		} else {
+			// Partition replica become unavailable.
+			for i, id := range tblInfo.TiFlashReplica.AvailablePartitionIDs {
+				if id == physicalID {
+					newIDs := tblInfo.TiFlashReplica.AvailablePartitionIDs[:i]
+					newIDs = append(newIDs, tblInfo.TiFlashReplica.AvailablePartitionIDs[i+1:]...)
+					tblInfo.TiFlashReplica.AvailablePartitionIDs = newIDs
+					tblInfo.TiFlashReplica.Available = false
+					break
+				}
+			}
+		}
+	} else {
+		job.State = model.JobStateCancelled
+		return ver, errors.Errorf("unknown physical ID %v in table %v", physicalID, tblInfo.Name.O)
 	}
 
 	ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)

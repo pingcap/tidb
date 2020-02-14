@@ -663,7 +663,7 @@ func (s *seqTestSuite) TestParallelHashAggClose(c *C) {
 	// HashAgg_8              | 2.40  | root | group by:t.b, funcs:sum(t.a)
 	// └─Projection_9         | 3.00  | root | cast(test.t.a), test.t.b
 	//   └─TableReader_11     | 3.00  | root | data:TableScan_10
-	//     └─TableScan_10     | 3.00  | cop  | table:t, range:[-inf,+inf], keep order:fa$se, stats:pseudo |
+	//     └─TableScan_10     | 3.00  | cop[tikv]  | table:t, range:[-inf,+inf], keep order:fa$se, stats:pseudo |
 
 	// Goroutine should not leak when error happen.
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/parallelHashAggError", `return(true)`), IsNil)

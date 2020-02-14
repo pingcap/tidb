@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
@@ -64,6 +65,16 @@ var (
 	ErrMultiplePriKey = terror.ClassSchema.New(codeMultiplePriKey, "Multiple primary key defined")
 	// ErrTooManyKeyParts returns for too many key parts.
 	ErrTooManyKeyParts = terror.ClassSchema.New(codeTooManyKeyParts, "Too many key parts specified; max %d parts allowed")
+	// ErrTableNotLockedForWrite returns for write tables when only hold the table read lock.
+	ErrTableNotLockedForWrite = terror.ClassSchema.New(codeErrTableNotLockedForWrite, mysql.MySQLErrName[mysql.ErrTableNotLockedForWrite])
+	// ErrTableNotLocked returns when session has explicitly lock tables, then visit unlocked table will return this error.
+	ErrTableNotLocked = terror.ClassSchema.New(codeErrTableNotLocked, mysql.MySQLErrName[mysql.ErrTableNotLocked])
+	// ErrNonuniqTable returns when none unique tables errors.
+	ErrNonuniqTable = terror.ClassSchema.New(codeErrTableNotLocked, mysql.MySQLErrName[mysql.ErrNonuniqTable])
+	// ErrTableLocked returns when the table was locked by other session.
+	ErrTableLocked = terror.ClassSchema.New(codeTableLocked, mysql.MySQLErrName[mysql.ErrTableLocked])
+	// ErrAccessDenied return when the user doesn't have the permission to access the table.
+	ErrAccessDenied = terror.ClassSchema.New(codeErrAccessDenied, mysql.MySQLErrName[mysql.ErrAccessDenied])
 )
 
 // InfoSchema is the interface used to retrieve the schema information.
@@ -86,11 +97,13 @@ type InfoSchema interface {
 	SchemaMetaVersion() int64
 	// TableIsView indicates whether the schema.table is a view.
 	TableIsView(schema, table model.CIStr) bool
+	FindTableByPartitionID(partitionID int64) (table.Table, *model.DBInfo)
 }
 
 // Information Schema Name.
 const (
-	Name = "INFORMATION_SCHEMA"
+	Name      = util.InformationSchemaName
+	LowerName = util.InformationSchemaLowerName
 )
 
 type sortedTables []table.Table
@@ -268,6 +281,25 @@ func (is *infoSchema) SchemaTables(schema model.CIStr) (tables []table.Table) {
 	return
 }
 
+// FindTableByPartitionID finds the partition-table info by the partitionID.
+// FindTableByPartitionID will traverse all the tables to find the partitionID partition in which partition-table.
+func (is *infoSchema) FindTableByPartitionID(partitionID int64) (table.Table, *model.DBInfo) {
+	for _, v := range is.schemaMap {
+		for _, tbl := range v.tables {
+			pi := tbl.Meta().GetPartitionInfo()
+			if pi == nil {
+				continue
+			}
+			for _, p := range pi.Definitions {
+				if p.ID == partitionID {
+					return tbl, v.dbInfo
+				}
+			}
+		}
+	}
+	return nil, nil
+}
+
 func (is *infoSchema) Clone() (result []*model.DBInfo) {
 	for _, v := range is.schemaMap {
 		result = append(result, v.dbInfo.Clone())
@@ -330,27 +362,38 @@ const (
 	codeTooManyKeyParts  = 1070
 	codeKeyNameDuplicate = 1061
 	codeKeyNotExists     = 1176
+
+	codeErrTableNotLockedForWrite = mysql.ErrTableNotLockedForWrite
+	codeErrTableNotLocked         = mysql.ErrTableNotLocked
+	codeErrNonuniqTable           = mysql.ErrNonuniqTable
+	codeErrAccessDenied           = mysql.ErrAccessDenied
+	codeTableLocked               = mysql.ErrTableLocked
 )
 
 func init() {
 	schemaMySQLErrCodes := map[terror.ErrCode]uint16{
-		codeDBDropExists:        mysql.ErrDBDropExists,
-		codeDatabaseNotExists:   mysql.ErrBadDB,
-		codeTableNotExists:      mysql.ErrNoSuchTable,
-		codeColumnNotExists:     mysql.ErrBadField,
-		codeCannotAddForeign:    mysql.ErrCannotAddForeign,
-		codeWrongFkDef:          mysql.ErrWrongFkDef,
-		codeForeignKeyNotExists: mysql.ErrCantDropFieldOrKey,
-		codeDatabaseExists:      mysql.ErrDBCreateExists,
-		codeTableExists:         mysql.ErrTableExists,
-		codeBadTable:            mysql.ErrBadTable,
-		codeBadUser:             mysql.ErrBadUser,
-		codeColumnExists:        mysql.ErrDupFieldName,
-		codeIndexExists:         mysql.ErrDupIndex,
-		codeMultiplePriKey:      mysql.ErrMultiplePriKey,
-		codeTooManyKeyParts:     mysql.ErrTooManyKeyParts,
-		codeKeyNameDuplicate:    mysql.ErrDupKeyName,
-		codeKeyNotExists:        mysql.ErrKeyDoesNotExist,
+		codeDBDropExists:              mysql.ErrDBDropExists,
+		codeDatabaseNotExists:         mysql.ErrBadDB,
+		codeTableNotExists:            mysql.ErrNoSuchTable,
+		codeColumnNotExists:           mysql.ErrBadField,
+		codeCannotAddForeign:          mysql.ErrCannotAddForeign,
+		codeWrongFkDef:                mysql.ErrWrongFkDef,
+		codeForeignKeyNotExists:       mysql.ErrCantDropFieldOrKey,
+		codeDatabaseExists:            mysql.ErrDBCreateExists,
+		codeTableExists:               mysql.ErrTableExists,
+		codeBadTable:                  mysql.ErrBadTable,
+		codeBadUser:                   mysql.ErrBadUser,
+		codeColumnExists:              mysql.ErrDupFieldName,
+		codeIndexExists:               mysql.ErrDupIndex,
+		codeMultiplePriKey:            mysql.ErrMultiplePriKey,
+		codeTooManyKeyParts:           mysql.ErrTooManyKeyParts,
+		codeKeyNameDuplicate:          mysql.ErrDupKeyName,
+		codeKeyNotExists:              mysql.ErrKeyDoesNotExist,
+		codeErrTableNotLockedForWrite: mysql.ErrTableNotLockedForWrite,
+		codeErrTableNotLocked:         mysql.ErrTableNotLocked,
+		codeErrNonuniqTable:           mysql.ErrNonuniqTable,
+		mysql.ErrAccessDenied:         mysql.ErrAccessDenied,
+		codeTableLocked:               mysql.ErrTableLocked,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassSchema] = schemaMySQLErrCodes
 	initInfoSchemaDB()

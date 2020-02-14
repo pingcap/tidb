@@ -45,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mock"
@@ -166,7 +167,22 @@ func (d *ddl) DropSchema(ctx sessionctx.Context, schema model.CIStr) (err error)
 
 	err = d.doDDLJob(ctx, job)
 	err = d.callHookOnChanged(err)
-	return errors.Trace(err)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if !config.TableLockEnabled() {
+		return nil
+	}
+	// Clear table locks hold by the session.
+	tbs := is.SchemaTables(schema)
+	lockTableIDs := make([]int64, 0)
+	for _, tb := range tbs {
+		if ok, _ := ctx.CheckTableLocked(tb.Meta().ID); ok {
+			lockTableIDs = append(lockTableIDs, tb.Meta().ID)
+		}
+	}
+	ctx.ReleaseTableLockByTableIDs(lockTableIDs)
+	return nil
 }
 
 func checkTooLongSchema(schema model.CIStr) error {
@@ -1308,6 +1324,11 @@ func buildTableInfoWithLike(ident ast.Ident, referTblInfo *model.TableInfo) mode
 	tblInfo.Name = ident.Name
 	tblInfo.AutoIncID = 0
 	tblInfo.ForeignKeys = nil
+	if tblInfo.TiFlashReplica != nil {
+		// Keep the tiflash replica setting, remove the replica available status.
+		tblInfo.TiFlashReplica.AvailablePartitionIDs = nil
+		tblInfo.TiFlashReplica.Available = false
+	}
 	if referTblInfo.Partition != nil {
 		pi := *referTblInfo.Partition
 		pi.Definitions = make([]model.PartitionDefinition, len(referTblInfo.Partition.Definitions))
@@ -2017,6 +2038,8 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 					return errors.Trace(err)
 				}
 			}
+		case ast.AlterTableSetTiFlashReplica:
+			err = d.AlterTableSetTiFlashReplica(ctx, ident, spec.TiFlashReplica)
 		default:
 			// Nothing to do now.
 		}
@@ -2983,6 +3006,74 @@ func (d *ddl) AlterTableCharsetAndCollate(ctx sessionctx.Context, ident ast.Iden
 	return errors.Trace(err)
 }
 
+// AlterTableSetTiFlashReplica sets the TiFlash replicas info.
+func (d *ddl) AlterTableSetTiFlashReplica(ctx sessionctx.Context, ident ast.Ident, replicaInfo *ast.TiFlashReplicaSpec) error {
+	schema, tb, err := d.getSchemaAndTableByIdent(ctx, ident)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	tbReplicaInfo := tb.Meta().TiFlashReplica
+	if tbReplicaInfo != nil && tbReplicaInfo.Count == replicaInfo.Count &&
+		len(tbReplicaInfo.LocationLabels) == len(replicaInfo.Labels) {
+		changed := false
+		for i, lable := range tbReplicaInfo.LocationLabels {
+			if replicaInfo.Labels[i] != lable {
+				changed = true
+				break
+			}
+		}
+		if !changed {
+			return nil
+		}
+	}
+
+	job := &model.Job{
+		SchemaID:   schema.ID,
+		TableID:    tb.Meta().ID,
+		Type:       model.ActionSetTiFlashReplica,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{*replicaInfo},
+	}
+	err = d.doDDLJob(ctx, job)
+	err = d.callHookOnChanged(err)
+	return errors.Trace(err)
+}
+
+// UpdateTableReplicaInfo updates the table flash replica infos.
+func (d *ddl) UpdateTableReplicaInfo(ctx sessionctx.Context, physicalID int64, available bool) error {
+	is := d.infoHandle.Get()
+	tb, ok := is.TableByID(physicalID)
+	if !ok {
+		tb, _ = is.FindTableByPartitionID(physicalID)
+		if tb == nil {
+			return infoschema.ErrTableNotExists.GenWithStack("Table which ID = %d does not exist.", physicalID)
+		}
+	}
+
+	tbInfo := tb.Meta()
+	if tbInfo.TiFlashReplica == nil || (tbInfo.ID == physicalID && tbInfo.TiFlashReplica.Available == available) ||
+		(tbInfo.ID != physicalID && available == tbInfo.TiFlashReplica.IsPartitionAvailable(physicalID)) {
+		return nil
+	}
+
+	db, ok := is.SchemaByTable(tbInfo)
+	if !ok {
+		return infoschema.ErrDatabaseNotExists.GenWithStack("Database of table `%s` does not exist.", tb.Meta().Name)
+	}
+
+	job := &model.Job{
+		SchemaID:   db.ID,
+		TableID:    tbInfo.ID,
+		Type:       model.ActionUpdateTiFlashReplicaStatus,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{available, physicalID},
+	}
+	err := d.doDDLJob(ctx, job)
+	err = d.callHookOnChanged(err)
+	return errors.Trace(err)
+}
+
 // checkAlterTableCharset uses to check is it possible to change the charset of table.
 // This function returns 2 variable:
 // doNothing: if doNothing is true, means no need to change any more, because the target charset is same with the charset of table.
@@ -3096,7 +3187,16 @@ func (d *ddl) DropTable(ctx sessionctx.Context, ti ast.Ident) (err error) {
 
 	err = d.doDDLJob(ctx, job)
 	err = d.callHookOnChanged(err)
-	return errors.Trace(err)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if !config.TableLockEnabled() {
+		return nil
+	}
+	if ok, _ := ctx.CheckTableLocked(tb.Meta().ID); ok {
+		ctx.ReleaseTableLockByTableIDs([]int64{tb.Meta().ID})
+	}
+	return nil
 }
 
 // DropView will proceed even if some view in the list does not exists.
@@ -3139,9 +3239,28 @@ func (d *ddl) TruncateTable(ctx sessionctx.Context, ti ast.Ident) error {
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{newTableID},
 	}
+	if ok, _ := ctx.CheckTableLocked(tb.Meta().ID); ok && config.TableLockEnabled() {
+		// AddTableLock here to avoid this ddl job was executed successfully but the session was been kill before return.
+		// The session will release all table locks it holds, if we don't add the new locking table id here,
+		// the session may forget to release the new locked table id when this ddl job was executed successfully
+		// but the session was killed before return.
+		ctx.AddTableLock(([]model.TableLockTpInfo{{SchemaID: schema.ID, TableID: newTableID, Tp: tb.Meta().Lock.Tp}}))
+	}
 	err = d.doDDLJob(ctx, job)
 	err = d.callHookOnChanged(err)
-	return errors.Trace(err)
+	if err != nil {
+		if config.TableLockEnabled() {
+			ctx.ReleaseTableLockByTableIDs([]int64{newTableID})
+		}
+		return errors.Trace(err)
+	}
+	if !config.TableLockEnabled() {
+		return nil
+	}
+	if ok, _ := ctx.CheckTableLocked(tb.Meta().ID); ok {
+		ctx.ReleaseTableLockByTableIDs([]int64{tb.Meta().ID})
+	}
+	return nil
 }
 
 func (d *ddl) RenameTable(ctx sessionctx.Context, oldIdent, newIdent ast.Ident, isAlterTable bool) error {
@@ -3612,4 +3731,162 @@ func extractCollateFromOption(def *ast.ColumnDef) []string {
 		}
 	}
 	return specifiedCollates
+}
+
+// LockTables uses to execute lock tables statement.
+func (d *ddl) LockTables(ctx sessionctx.Context, stmt *ast.LockTablesStmt) error {
+	lockTables := make([]model.TableLockTpInfo, 0, len(stmt.TableLocks))
+	sessionInfo := model.SessionInfo{
+		ServerID:  d.GetID(),
+		SessionID: ctx.GetSessionVars().ConnectionID,
+	}
+	uniqueTableID := make(map[int64]struct{})
+	// Check whether the table was already locked by another.
+	for _, tl := range stmt.TableLocks {
+		tb := tl.Table
+		err := throwErrIfInMemOrSysDB(ctx, tb.Schema.L)
+		if err != nil {
+			return err
+		}
+		schema, t, err := d.getSchemaAndTableByIdent(ctx, ast.Ident{Schema: tb.Schema, Name: tb.Name})
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if t.Meta().IsView() {
+			return table.ErrUnsupportedOp.GenWithStackByArgs()
+		}
+		err = checkTableLocked(t.Meta(), tl.Type, sessionInfo)
+		if err != nil {
+			return err
+		}
+		if _, ok := uniqueTableID[t.Meta().ID]; ok {
+			return infoschema.ErrNonuniqTable.GenWithStackByArgs(t.Meta().Name)
+		}
+		uniqueTableID[t.Meta().ID] = struct{}{}
+		lockTables = append(lockTables, model.TableLockTpInfo{SchemaID: schema.ID, TableID: t.Meta().ID, Tp: tl.Type})
+	}
+
+	unlockTables := ctx.GetAllTableLocks()
+	arg := &lockTablesArg{
+		LockTables:   lockTables,
+		UnlockTables: unlockTables,
+		SessionInfo:  sessionInfo,
+	}
+	job := &model.Job{
+		SchemaID:   lockTables[0].SchemaID,
+		TableID:    lockTables[0].TableID,
+		Type:       model.ActionLockTable,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{arg},
+	}
+	// AddTableLock here is avoiding this job was executed successfully but the session was killed before return.
+	ctx.AddTableLock(lockTables)
+	err := d.doDDLJob(ctx, job)
+	if err == nil {
+		ctx.ReleaseTableLocks(unlockTables)
+		ctx.AddTableLock(lockTables)
+	}
+	err = d.callHookOnChanged(err)
+	return errors.Trace(err)
+}
+
+// UnlockTables uses to execute unlock tables statement.
+func (d *ddl) UnlockTables(ctx sessionctx.Context, unlockTables []model.TableLockTpInfo) error {
+	if len(unlockTables) == 0 {
+		return nil
+	}
+	arg := &lockTablesArg{
+		UnlockTables: unlockTables,
+		SessionInfo: model.SessionInfo{
+			ServerID:  d.GetID(),
+			SessionID: ctx.GetSessionVars().ConnectionID,
+		},
+	}
+	job := &model.Job{
+		SchemaID:   unlockTables[0].SchemaID,
+		TableID:    unlockTables[0].TableID,
+		Type:       model.ActionUnlockTable,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{arg},
+	}
+
+	err := d.doDDLJob(ctx, job)
+	if err == nil {
+		ctx.ReleaseAllTableLocks()
+	}
+	err = d.callHookOnChanged(err)
+	return errors.Trace(err)
+}
+
+func throwErrIfInMemOrSysDB(ctx sessionctx.Context, dbLowerName string) error {
+	if util.IsMemOrSysDB(dbLowerName) {
+		if ctx.GetSessionVars().User != nil {
+			return infoschema.ErrAccessDenied.GenWithStackByArgs(ctx.GetSessionVars().User.Username, ctx.GetSessionVars().User.Hostname)
+		}
+		return infoschema.ErrAccessDenied.GenWithStackByArgs("", "")
+	}
+	return nil
+}
+
+func (d *ddl) CleanupTableLock(ctx sessionctx.Context, tables []*ast.TableName) error {
+	uniqueTableID := make(map[int64]struct{})
+	cleanupTables := make([]model.TableLockTpInfo, 0, len(tables))
+	unlockedTablesNum := 0
+	// Check whether the table was already locked by another.
+	for _, tb := range tables {
+		err := throwErrIfInMemOrSysDB(ctx, tb.Schema.L)
+		if err != nil {
+			return err
+		}
+		schema, t, err := d.getSchemaAndTableByIdent(ctx, ast.Ident{Schema: tb.Schema, Name: tb.Name})
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if t.Meta().IsView() {
+			return table.ErrUnsupportedOp
+		}
+		// Maybe the table t was not locked, but still try to unlock this table.
+		// If we skip unlock the table here, the job maybe not consistent with the job.Query.
+		// eg: unlock tables t1,t2;  If t2 is not locked and skip here, then the job will only unlock table t1,
+		// and this behaviour is not consistent with the sql query.
+		if !t.Meta().IsLocked() {
+			unlockedTablesNum++
+		}
+		if _, ok := uniqueTableID[t.Meta().ID]; ok {
+			return infoschema.ErrNonuniqTable.GenWithStackByArgs(t.Meta().Name)
+		}
+		uniqueTableID[t.Meta().ID] = struct{}{}
+		cleanupTables = append(cleanupTables, model.TableLockTpInfo{SchemaID: schema.ID, TableID: t.Meta().ID})
+	}
+	// If the num of cleanupTables is 0, or all cleanupTables is unlocked, just return here.
+	if len(cleanupTables) == 0 || len(cleanupTables) == unlockedTablesNum {
+		return nil
+	}
+
+	arg := &lockTablesArg{
+		UnlockTables: cleanupTables,
+		IsCleanup:    true,
+	}
+	job := &model.Job{
+		SchemaID:   cleanupTables[0].SchemaID,
+		TableID:    cleanupTables[0].TableID,
+		Type:       model.ActionUnlockTable,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{arg},
+	}
+	err := d.doDDLJob(ctx, job)
+	if err == nil {
+		ctx.ReleaseTableLocks(cleanupTables)
+	}
+	err = d.callHookOnChanged(err)
+	return errors.Trace(err)
+}
+
+type lockTablesArg struct {
+	LockTables    []model.TableLockTpInfo
+	IndexOfLock   int
+	UnlockTables  []model.TableLockTpInfo
+	IndexOfUnlock int
+	SessionInfo   model.SessionInfo
+	IsCleanup     bool
 }

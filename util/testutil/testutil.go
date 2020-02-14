@@ -129,7 +129,7 @@ func init() {
 
 type testCases struct {
 	Name       string
-	Cases      *json.RawMessage // For delayed parse.
+	Cases      *json.RawMessage // For delaed parse.
 	decodedOut interface{}      // For generate output.
 }
 
@@ -255,6 +255,14 @@ func (t *TestData) ConvertRowsToStrings(rows [][]interface{}) (rs []string) {
 		// Trim the leftmost `[` and rightmost `]`.
 		s = s[1 : len(s)-1]
 		rs = append(rs, s)
+	}
+	return rs
+}
+
+// ConvertSQLWarnToStrings converts []SQLWarn to []string.
+func (t *TestData) ConvertSQLWarnToStrings(warns []stmtctx.SQLWarn) (rs []string) {
+	for _, warn := range warns {
+		rs = append(rs, fmt.Sprintf(warn.Err.Error()))
 	}
 	return rs
 }

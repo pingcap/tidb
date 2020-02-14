@@ -11,12 +11,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package domain
+package infosync
 
 import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strconv"
+	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -36,6 +38,8 @@ import (
 const (
 	// ServerInformationPath store server information such as IP, port and so on.
 	ServerInformationPath = "/tidb/server/info"
+	// TiFlashTableSyncProgressPath store the tiflash table replica sync progress.
+	TiFlashTableSyncProgressPath = "/tiflash/table/sync"
 	// keyOpDefaultRetryCnt is the default retry count for etcd store.
 	keyOpDefaultRetryCnt = 2
 	// keyOpDefaultTimeout is the default time out for etcd store.
@@ -71,27 +75,123 @@ type ServerVersionInfo struct {
 	GitHash string `json:"git_hash"`
 }
 
-// NewInfoSyncer return new InfoSyncer. It is exported for testing.
-func NewInfoSyncer(id string, etcdCli *clientv3.Client) *InfoSyncer {
-	return &InfoSyncer{
+// globalInfoSyncer stores the global infoSyncer.
+// Use a global variable for simply the code, use the domain.infoSyncer will have circle import problem in some pkg.
+// Use atomic.Value to avoid data race in the test.
+var globalInfoSyncer atomic.Value
+
+func getGlobalInfoSyncer() (*InfoSyncer, error) {
+	v := globalInfoSyncer.Load()
+	if v == nil {
+		return nil, errors.New("infoSyncer is not initialized")
+	}
+	return v.(*InfoSyncer), nil
+}
+
+func setGlobalInfoSyncer(is *InfoSyncer) {
+	globalInfoSyncer.Store(is)
+}
+
+// GlobalInfoSyncerInit return a new InfoSyncer. It is exported for testing.
+func GlobalInfoSyncerInit(ctx context.Context, id string, etcdCli *clientv3.Client) (*InfoSyncer, error) {
+	is := &InfoSyncer{
 		etcdCli:        etcdCli,
 		info:           getServerInfo(id),
 		serverInfoPath: fmt.Sprintf("%s/%s", ServerInformationPath, id),
 	}
+	err := is.init(ctx)
+	if err != nil {
+		return nil, err
+	}
+	setGlobalInfoSyncer(is)
+	return is, nil
 }
 
-// Init creates a new etcd session and stores server info to etcd.
-func (is *InfoSyncer) Init(ctx context.Context) error {
+// init creates a new etcd session and stores server info to etcd.
+func (is *InfoSyncer) init(ctx context.Context) error {
 	return is.newSessionAndStoreServerInfo(ctx, owner.NewSessionDefaultRetryCnt)
 }
 
 // GetServerInfo gets self server static information.
-func (is *InfoSyncer) GetServerInfo() *ServerInfo {
-	return is.info
+func GetServerInfo() (*ServerInfo, error) {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return nil, err
+	}
+	return is.info, nil
 }
 
-// GetServerInfoByID gets server static information from etcd.
-func (is *InfoSyncer) GetServerInfoByID(ctx context.Context, id string) (*ServerInfo, error) {
+// GetServerInfoByID gets specified server static information from etcd.
+func GetServerInfoByID(ctx context.Context, id string) (*ServerInfo, error) {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return nil, err
+	}
+	return is.getServerInfoByID(ctx, id)
+}
+
+// UpdateTiFlashTableSyncProgress is used to update the tiflash table replica sync progress.
+func UpdateTiFlashTableSyncProgress(ctx context.Context, tid int64, progress float64) error {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return err
+	}
+	if is.etcdCli == nil {
+		return nil
+	}
+	key := fmt.Sprintf("%s/%v", TiFlashTableSyncProgressPath, tid)
+	return util.PutKVToEtcd(ctx, is.etcdCli, keyOpDefaultRetryCnt, key, strconv.FormatFloat(progress, 'f', 2, 64))
+}
+
+// DeleteTiFlashTableSyncProgress is used to delete the tiflash table replica sync progress.
+func DeleteTiFlashTableSyncProgress(tid int64) error {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return err
+	}
+	if is.etcdCli == nil {
+		return nil
+	}
+	key := fmt.Sprintf("%s/%v", TiFlashTableSyncProgressPath, tid)
+	return util.DeleteKeyFromEtcd(key, is.etcdCli, keyOpDefaultRetryCnt, keyOpDefaultTimeout)
+}
+
+// GetTiFlashTableSyncProgress uses to get all the tiflash table replica sync progress.
+func GetTiFlashTableSyncProgress(ctx context.Context) (map[int64]float64, error) {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return nil, err
+	}
+	progressMap := make(map[int64]float64)
+	if is.etcdCli == nil {
+		return progressMap, nil
+	}
+	for i := 0; i < keyOpDefaultRetryCnt; i++ {
+		resp, err := is.etcdCli.Get(ctx, TiFlashTableSyncProgressPath+"/", clientv3.WithPrefix())
+		if err != nil {
+			logutil.Logger(context.Background()).Info("get tiflash table replica sync progress failed, continue checking.", zap.Error(err))
+			continue
+		}
+		for _, kv := range resp.Kvs {
+			tid, err := strconv.ParseInt(string(kv.Key[len(TiFlashTableSyncProgressPath)+1:]), 10, 64)
+			if err != nil {
+				logutil.Logger(context.Background()).Info("invalid tiflash table replica sync progress key.", zap.String("key", string(kv.Key)))
+				continue
+			}
+			progress, err := strconv.ParseFloat(string(kv.Value), 64)
+			if err != nil {
+				logutil.Logger(context.Background()).Info("invalid tiflash table replica sync progress value.",
+					zap.String("key", string(kv.Key)), zap.String("value", string(kv.Value)))
+				continue
+			}
+			progressMap[tid] = progress
+		}
+		break
+	}
+	return progressMap, nil
+}
+
+func (is *InfoSyncer) getServerInfoByID(ctx context.Context, id string) (*ServerInfo, error) {
 	if is.etcdCli == nil || id == is.info.ID {
 		return is.info, nil
 	}
@@ -108,7 +208,16 @@ func (is *InfoSyncer) GetServerInfoByID(ctx context.Context, id string) (*Server
 }
 
 // GetAllServerInfo gets all servers static information from etcd.
-func (is *InfoSyncer) GetAllServerInfo(ctx context.Context) (map[string]*ServerInfo, error) {
+func GetAllServerInfo(ctx context.Context) (map[string]*ServerInfo, error) {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return nil, err
+	}
+	return is.getAllServerInfo(ctx)
+}
+
+// GetAllServerInfo gets all servers static information from etcd.
+func (is *InfoSyncer) getAllServerInfo(ctx context.Context) (map[string]*ServerInfo, error) {
 	allInfo := make(map[string]*ServerInfo)
 	if is.etcdCli == nil {
 		allInfo[is.info.ID] = is.info

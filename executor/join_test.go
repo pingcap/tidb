@@ -16,6 +16,7 @@ package executor_test
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -892,14 +893,14 @@ func (s *testSuite2) TestIndexLookupJoin(c *C) {
 	tk.MustExec("analyze table s;")
 
 	tk.MustQuery("desc select  /*+ TIDB_INLJ(s) */ count(*) from t join s use index(idx) on s.a = t.a and s.b < t.b").Check(testkit.Rows(
-		"StreamAgg_11 1.00 root funcs:count(1)",
-		"└─IndexJoin_24 64.00 root inner join, inner:IndexReader_23, outer key:test.t.a, inner key:test.s.a, other cond:lt(test.s.b, test.t.b)",
+		"HashAgg_9 1.00 root funcs:count(1)",
+		"└─IndexJoin_16 64.00 root inner join, inner:IndexReader_15, outer key:test.t.a, inner key:test.s.a, other cond:lt(test.s.b, test.t.b)",
 		"  ├─TableReader_19 64.00 root data:Selection_18",
-		"  │ └─Selection_18 64.00 cop not(isnull(test.t.b))",
-		"  │   └─TableScan_17 64.00 cop table:t, range:[-inf,+inf], keep order:false",
-		"  └─IndexReader_23 1.00 root index:Selection_22",
-		"    └─Selection_22 1.00 cop not(isnull(test.s.a)), not(isnull(test.s.b))",
-		"      └─IndexScan_21 1.00 cop table:s, index:a, b, range: decided by [eq(test.s.a, test.t.a) lt(test.s.b, test.t.b)], keep order:false"))
+		"  │ └─Selection_18 64.00 cop[tikv] not(isnull(test.t.b))",
+		"  │   └─TableScan_17 64.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false",
+		"  └─IndexReader_15 1.00 root index:Selection_14",
+		"    └─Selection_14 1.00 cop[tikv] not(isnull(test.s.a)), not(isnull(test.s.b))",
+		"      └─IndexScan_13 1.00 cop[tikv] table:s, index:a, b, range: decided by [eq(test.s.a, test.t.a) lt(test.s.b, test.t.b)], keep order:false"))
 	tk.MustQuery("select /*+ TIDB_INLJ(s) */ count(*) from t join s use index(idx) on s.a = t.a and s.b < t.b").Check(testkit.Rows("64"))
 	tk.MustExec("set @@tidb_index_lookup_join_concurrency=1;")
 	tk.MustQuery("select /*+ TIDB_INLJ(s) */ count(*) from t join s use index(idx) on s.a = t.a and s.b < t.b").Check(testkit.Rows("64"))
@@ -917,9 +918,9 @@ func (s *testSuite2) TestMergejoinOrder(c *C) {
 	tk.MustQuery("explain select /*+ TIDB_SMJ(t2) */ * from t1 left outer join t2 on t1.a=t2.a and t1.a!=3 order by t1.a;").Check(testkit.Rows(
 		"MergeJoin_20 10000.00 root left outer join, left key:test.t1.a, right key:test.t2.a, left cond:[ne(test.t1.a, 3)]",
 		"├─TableReader_12 10000.00 root data:TableScan_11",
-		"│ └─TableScan_11 10000.00 cop table:t1, range:[-inf,+inf], keep order:true, stats:pseudo",
+		"│ └─TableScan_11 10000.00 cop[tikv] table:t1, range:[-inf,+inf], keep order:true, stats:pseudo",
 		"└─TableReader_14 6666.67 root data:TableScan_13",
-		"  └─TableScan_13 6666.67 cop table:t2, range:[-inf,3), (3,+inf], keep order:true, stats:pseudo",
+		"  └─TableScan_13 6666.67 cop[tikv] table:t2, range:[-inf,3), (3,+inf], keep order:true, stats:pseudo",
 	))
 
 	tk.MustExec("set @@tidb_init_chunk_size=1")
@@ -974,18 +975,18 @@ func (s *testSuite2) TestHashJoin(c *C) {
 	result := tk.MustQuery("explain analyze select /*+ TIDB_HJ(t1, t2) */ * from t1 where exists (select a from t2 where t1.a = t2.a);")
 	// HashLeftJoin_9 7992.00 root semi join, inner:TableReader_15, equal:[eq(test.t1.a, test.t2.a)] time:219.863µs, loops:1, rows:0
 	// ├─TableReader_12 9990.00 root data:Selection_11 time:9.129µs, loops:1, rows:1
-	// │ └─Selection_11 9990.00 cop not(isnull(test.t1.a))
-	// │   └─TableScan_10 10000.00 cop table:t1, range:[-inf,+inf], keep order:false, stats:pseudo time:0s, loops:0, rows:5
+	// │ └─Selection_11 9990.00 cop[tikv] not(isnull(test.t1.a))
+	// │   └─TableScan_10 10000.00 cop[tikv] table:t1, range:[-inf,+inf], keep order:false, stats:pseudo time:0s, loops:0, rows:5
 	// └─TableReader_15 9990.00 root data:Selection_14 time:12.983µs, loops:1, rows:0
-	//   └─Selection_14 9990.00 cop not(isnull(test.t2.a))
-	//       └─TableScan_13 10000.00 cop table:t2, range:[-inf,+inf], keep order:false, stats:pseudo time:0s, loops:0, rows:0
+	//   └─Selection_14 9990.00 cop[tikv] not(isnull(test.t2.a))
+	//       └─TableScan_13 10000.00 cop[tikv] table:t2, range:[-inf,+inf], keep order:false, stats:pseudo time:0s, loops:0, rows:0
 	row := result.Rows()
 	c.Assert(len(row), Equals, 7)
 	outerExecInfo := row[1][4].(string)
 	// FIXME: revert this result to 1 after TableReaderExecutor can handle initChunkSize.
-	c.Assert(outerExecInfo[len(outerExecInfo)-1:], Equals, "5")
+	c.Assert(outerExecInfo[strings.Index(outerExecInfo, "rows")+5:strings.Index(outerExecInfo, "rows")+6], Equals, "5")
 	innerExecInfo := row[4][4].(string)
-	c.Assert(innerExecInfo[len(innerExecInfo)-1:], Equals, "0")
+	c.Assert(innerExecInfo[strings.Index(innerExecInfo, "rows")+5:strings.Index(innerExecInfo, "rows")+6], Equals, "0")
 }
 
 func (s *testSuite2) TestJoinDifferentDecimals(c *C) {

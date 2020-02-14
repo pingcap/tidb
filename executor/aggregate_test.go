@@ -273,7 +273,7 @@ func (s *testSuite1) TestAggregation(c *C) {
 	tk.MustQuery("select 11 from idx_agg group by a").Check(testkit.Rows("11", "11"))
 
 	tk.MustExec("set @@tidb_init_chunk_size=1;")
-	tk.MustQuery("select group_concat(b) from idx_agg group by b;").Check(testkit.Rows("1", "2,2"))
+	tk.MustQuery("select group_concat(b) from idx_agg group by b;").Sort().Check(testkit.Rows("1", "2,2"))
 	tk.MustExec("set @@tidb_init_chunk_size=2;")
 
 	tk.MustExec("drop table if exists t")
@@ -353,26 +353,6 @@ func (s *testSuite1) TestAggregation(c *C) {
 	c.Assert(errors.Cause(err).Error(), Equals, "unsupported agg function: var_samp")
 }
 
-func (s *testSuite1) TestStreamAggPushDown(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t (a int, b int, c int)")
-	tk.MustExec("alter table t add index idx(a, b, c)")
-	// test for empty table
-	tk.MustQuery("select count(a) from t group by a;").Check(testkit.Rows())
-	tk.MustQuery("select count(a) from t;").Check(testkit.Rows("0"))
-	// test for one row
-	tk.MustExec("insert t values(0,0,0)")
-	tk.MustQuery("select distinct b from t").Check(testkit.Rows("0"))
-	tk.MustQuery("select count(b) from t group by a;").Check(testkit.Rows("1"))
-	// test for rows
-	tk.MustExec("insert t values(1,1,1),(3,3,6),(3,2,5),(2,1,4),(1,1,3),(1,1,2);")
-	tk.MustQuery("select count(a) from t where b>0 group by a, b;").Check(testkit.Rows("3", "1", "1", "1"))
-	tk.MustQuery("select count(a) from t where b>0 group by a, b order by a;").Check(testkit.Rows("3", "1", "1", "1"))
-	tk.MustQuery("select count(a) from t where b>0 group by a, b order by a limit 1;").Check(testkit.Rows("3"))
-}
-
 func (s *testSuite1) TestAggPrune(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -445,6 +425,22 @@ func (s *testSuite) TestSelectDistinct(c *C) {
 func (s *testSuite1) TestAggPushDown(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int, c int)")
+	tk.MustExec("alter table t add index idx(a, b, c)")
+	// test for empty table
+	tk.MustQuery("select count(a) from t group by a;").Check(testkit.Rows())
+	tk.MustQuery("select count(a) from t;").Check(testkit.Rows("0"))
+	// test for one row
+	tk.MustExec("insert t values(0,0,0)")
+	tk.MustQuery("select distinct b from t").Check(testkit.Rows("0"))
+	tk.MustQuery("select count(b) from t group by a;").Check(testkit.Rows("1"))
+	// test for rows
+	tk.MustExec("insert t values(1,1,1),(3,3,6),(3,2,5),(2,1,4),(1,1,3),(1,1,2);")
+	tk.MustQuery("select count(a) from t where b>0 group by a, b;").Sort().Check(testkit.Rows("1", "1", "1", "3"))
+	tk.MustQuery("select count(a) from t where b>0 group by a, b order by a;").Check(testkit.Rows("3", "1", "1", "1"))
+	tk.MustQuery("select count(a) from t where b>0 group by a, b order by a limit 1;").Check(testkit.Rows("3"))
+
 	tk.MustExec("drop table if exists t, tt")
 	tk.MustExec("create table t(a int primary key, b int, c int)")
 	tk.MustExec("create table tt(a int primary key, b int, c int)")
@@ -615,7 +611,7 @@ func (s *testSuite1) TestAggEliminator(c *C) {
 	tk.MustQuery("select min(b) from t").Check(testkit.Rows("-2"))
 	tk.MustQuery("select max(b*b) from t").Check(testkit.Rows("4"))
 	tk.MustQuery("select min(b*b) from t").Check(testkit.Rows("1"))
-	tk.MustQuery("select group_concat(b, b) from t group by a").Check(testkit.Rows("-1-1", "-2-2", "11", "<nil>"))
+	tk.MustQuery("select group_concat(b, b) from t group by a").Sort().Check(testkit.Rows("-1-1", "-2-2", "11", "<nil>"))
 }
 
 func (s *testSuite1) TestMaxMinFloatScalaFunc(c *C) {
@@ -650,7 +646,7 @@ func (s *testSuite1) TestInjectProjBelowTopN(c *C) {
 		"└─Sort_4 10000.00 root col_1:asc",
 		"  └─Projection_9 10000.00 root test.t.i, plus(test.t.i, 1)",
 		"    └─TableReader_7 10000.00 root data:TableScan_6",
-		"      └─TableScan_6 10000.00 cop table:t, range:[-inf,+inf], keep order:false, stats:pseudo"))
+		"      └─TableScan_6 10000.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false, stats:pseudo"))
 	rs := tk.MustQuery("select * from t order by i + 1 ")
 	rs.Check(testkit.Rows(
 		"1", "1", "1", "2", "2", "2", "3", "3", "3"))
@@ -659,8 +655,8 @@ func (s *testSuite1) TestInjectProjBelowTopN(c *C) {
 		"└─TopN_7 2.00 root col_1:asc, offset:0, count:2",
 		"  └─Projection_16 2.00 root test.t.i, plus(test.t.i, 1)",
 		"    └─TableReader_12 2.00 root data:TopN_11",
-		"      └─TopN_11 2.00 cop plus(test.t.i, 1):asc, offset:0, count:2",
-		"        └─TableScan_10 10000.00 cop table:t, range:[-inf,+inf], keep order:false, stats:pseudo"))
+		"      └─TopN_11 2.00 cop[tikv] plus(test.t.i, 1):asc, offset:0, count:2",
+		"        └─TableScan_10 10000.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false, stats:pseudo"))
 	rs = tk.MustQuery("select * from t order by i + 1 limit 2")
 	rs.Check(testkit.Rows("1", "1"))
 	tk.MustQuery("select i, i, i from t order by i + 1").Check(testkit.Rows("1 1 1", "1 1 1", "1 1 1", "2 2 2", "2 2 2", "2 2 2", "3 3 3", "3 3 3", "3 3 3"))

@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
@@ -31,18 +32,8 @@ import (
 )
 
 const (
-	netWorkFactor      = 1.5
-	netWorkStartFactor = 20.0
-	scanFactor         = 2.0
-	descScanFactor     = 2 * scanFactor
-	memoryFactor       = 5.0
-	// 0.5 is the looking up agg context factor.
-	hashAggFactor      = 1.2 + 0.5
-	selectionFactor    = 0.8
-	distinctFactor     = 0.8
-	cpuFactor          = 0.9
-	distinctAggFactor  = 1.6
-	createAggCtxFactor = 6
+	selectionFactor = 0.8
+	distinctFactor  = 0.8
 )
 
 // wholeTaskTypes records all possible kinds of task that a plan can return. For Agg, TopN and Limit, we will try to get
@@ -289,7 +280,12 @@ func compareCandidates(lhs, rhs *candidatePath) int {
 func (ds *DataSource) getTableCandidate(path *accessPath, prop *property.PhysicalProperty) *candidatePath {
 	candidate := &candidatePath{path: path}
 	pkCol := ds.getPKIsHandleCol()
-	candidate.isMatchProp = len(prop.Items) == 1 && pkCol != nil && prop.Items[0].Col.Equal(nil, pkCol)
+	if len(prop.Items) == 1 && pkCol != nil {
+		candidate.isMatchProp = prop.Items[0].Col.Equal(nil, pkCol)
+		if path.storeType == kv.TiFlash {
+			candidate.isMatchProp = candidate.isMatchProp && !prop.Items[0].Desc
+		}
+	}
 	candidate.columnSet = expression.ExtractColumnSet(path.accessConds)
 	candidate.isSingleScan = true
 	return candidate
@@ -339,6 +335,9 @@ func (ds *DataSource) skylinePruning(prop *property.PhysicalProperty) []*candida
 		}
 		pruned := false
 		for i := len(candidates) - 1; i >= 0; i-- {
+			if candidates[i].path.storeType == kv.TiFlash || currentCandidate.path.storeType == kv.TiFlash {
+				continue
+			}
 			result := compareCandidates(candidates[i], currentCandidate)
 			if result == 1 {
 				pruned = true
@@ -421,6 +420,12 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty) (t task, err
 			}, nil
 		}
 		if path.isTablePath {
+			if ds.preferStoreType&preferTiFlash != 0 && path.storeType == kv.TiKV {
+				continue
+			}
+			if ds.preferStoreType&preferTiKV != 0 && path.storeType == kv.TiFlash {
+				continue
+			}
 			tblTask, err := ds.convertToTableScan(prop, candidate)
 			if err != nil {
 				return nil, err
@@ -428,6 +433,10 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty) (t task, err
 			if tblTask.cost() < t.cost() {
 				t = tblTask
 			}
+			continue
+		}
+		// TiFlash storage do not support index scan.
+		if ds.preferStoreType&preferTiFlash != 0 {
 			continue
 		}
 		idxTask, err := ds.convertToIndexScan(prop, candidate)
@@ -513,7 +522,11 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty, candid
 		is.Hist = &statsTbl.Indices[idx.ID].Histogram
 	}
 	rowCount := path.countAfterAccess
-	cop := &copTask{indexPlan: is}
+	cop := &copTask{
+		indexPlan:  is,
+		tableStats: ds.tableStats,
+		tableCols:  ds.TblCols,
+	}
 	if !candidate.isSingleScan {
 		// On this way, it's double read case.
 		ts := PhysicalTableScan{
@@ -534,18 +547,15 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty, candid
 		selectivity := ds.stats.RowCount / path.countAfterAccess
 		rowCount = math.Min(prop.ExpectedCnt/selectivity, rowCount)
 	}
-	is.stats = property.NewSimpleStats(rowCount)
-	is.stats.StatsVersion = ds.statisticTable.Version
-	if ds.statisticTable.Pseudo {
-		is.stats.StatsVersion = statistics.PseudoVersion
-	}
-
-	cop.cst = rowCount * scanFactor
+	is.stats = ds.tableStats.ScaleByExpectCnt(rowCount)
+	rowSize := is.indexScanRowSize(idx, ds, true)
+	sessVars := ds.ctx.GetSessionVars()
+	cop.cst = rowCount * rowSize * sessVars.ScanFactor
 	task = cop
 	if candidate.isMatchProp {
 		if prop.Items[0].Desc {
 			is.Desc = true
-			cop.cst = rowCount * descScanFactor
+			cop.cst = rowCount * rowSize * sessVars.DescScanFactor
 		}
 		if cop.tablePlan != nil {
 			cop.tablePlan.(*PhysicalTableScan).appendExtraHandleCol(ds)
@@ -564,6 +574,24 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty, candid
 		return invalidTask, nil
 	}
 	return task, nil
+}
+
+func (is *PhysicalIndexScan) indexScanRowSize(idx *model.IndexInfo, ds *DataSource, isForScan bool) float64 {
+	scanCols := make([]*expression.Column, 0, len(idx.Columns)+1)
+	// If `initSchema` has already appended the handle column in schema, just use schema columns, otherwise, add extra handle column.
+	if len(idx.Columns) == len(is.schema.Columns) {
+		scanCols = append(scanCols, is.schema.Columns...)
+		handleCols, ok := ds.schema.TblID2Handle[ds.tableInfo.ID]
+		if ok {
+			scanCols = append(scanCols, handleCols[0])
+		}
+	} else {
+		scanCols = is.schema.Columns
+	}
+	if isForScan {
+		return ds.tableStats.HistColl.GetIndexAvgRowSize(scanCols, is.Index.Unique)
+	}
+	return ds.tableStats.HistColl.GetAvgRowSize(scanCols, true)
 }
 
 // TODO: refactor this part, we should not call Clone in fact.
@@ -601,21 +629,22 @@ func (is *PhysicalIndexScan) initSchema(idx *model.IndexInfo, isDoubleRead bool)
 func (is *PhysicalIndexScan) addPushedDownSelection(copTask *copTask, p *DataSource, path *accessPath, finalStats *property.StatsInfo) {
 	// Add filter condition to table plan now.
 	indexConds, tableConds := path.indexFilters, path.tableFilters
+	sessVars := is.ctx.GetSessionVars()
 	if indexConds != nil {
-		copTask.cst += copTask.count() * cpuFactor
+		copTask.cst += copTask.count() * sessVars.CopCPUFactor
 		var selectivity float64
 		if path.countAfterAccess > 0 {
 			selectivity = path.countAfterIndex / path.countAfterAccess
 		}
 		count := is.stats.RowCount * selectivity
-		stats := &property.StatsInfo{RowCount: count}
+		stats := p.tableStats.ScaleByExpectCnt(count)
 		indexSel := PhysicalSelection{Conditions: indexConds}.Init(is.ctx, stats)
 		indexSel.SetChildren(is)
 		copTask.indexPlan = indexSel
 	}
 	if tableConds != nil {
 		copTask.finishIndexPlan()
-		copTask.cst += copTask.count() * cpuFactor
+		copTask.cst += copTask.count() * sessVars.CopCPUFactor
 		tableSel := PhysicalSelection{Conditions: tableConds}.Init(is.ctx, finalStats)
 		tableSel.SetChildren(copTask.tablePlan)
 		copTask.tablePlan = tableSel
@@ -806,6 +835,7 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 	if !prop.IsEmpty() && !candidate.isMatchProp {
 		return invalidTask, nil
 	}
+	path := candidate.path
 	ts := PhysicalTableScan{
 		Table:           ds.tableInfo,
 		Columns:         ds.Columns,
@@ -813,6 +843,10 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 		DBName:          ds.DBName,
 		isPartition:     ds.isPartition,
 		physicalTableID: ds.physicalTableID,
+		Ranges:          path.ranges,
+		AccessCondition: path.accessConds,
+		filterCondition: path.tableFilters,
+		StoreType:       path.storeType,
 	}.Init(ds.ctx)
 	ts.SetSchema(ds.schema)
 	if ts.Table.PKIsHandle {
@@ -822,13 +856,14 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 			}
 		}
 	}
-	path := candidate.path
-	ts.Ranges = path.ranges
-	ts.AccessCondition, ts.filterCondition = path.accessConds, path.tableFilters
 	rowCount := path.countAfterAccess
 	copTask := &copTask{
 		tablePlan:         ts,
 		indexPlanFinished: true,
+		tableStats:        ds.tableStats,
+	}
+	if ts.StoreType == kv.TiFlash {
+		ts.filterCondition, copTask.rootTaskConds = expression.CheckExprPushFlash(ts.filterCondition)
 	}
 	task = copTask
 	// Adjust number of rows we actually need to scan if prop.ExpectedCnt is smaller than the count we calculated.
@@ -849,17 +884,26 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 			rowCount = math.Min(prop.ExpectedCnt/selectivity/correlationFactor, rowCount)
 		}
 	}
-	ts.stats = property.NewSimpleStats(rowCount)
-	ts.stats.StatsVersion = ds.statisticTable.Version
-	if ds.statisticTable.Pseudo {
-		ts.stats.StatsVersion = statistics.PseudoVersion
+	// We need NDV of columns since it may be used in cost estimation of join. Precisely speaking,
+	// we should track NDV of each histogram bucket, and sum up the NDV of buckets we actually need
+	// to scan, but this would only help improve accuracy of NDV for one column, for other columns,
+	// we still need to assume values are uniformly distributed. For simplicity, we use uniform-assumption
+	// for all columns now, as we do in `deriveStatsByFilter`.
+	ts.stats = ds.tableStats.ScaleByExpectCnt(rowCount)
+	var rowSize float64
+	if ts.StoreType == kv.TiKV {
+		rowSize = ds.tableStats.HistColl.GetTableAvgRowSize(ds.TblCols, ts.StoreType, true)
+	} else {
+		// If `ds.handleCol` is nil, then the schema of tableScan doesn't have handle column.
+		// This logic can be ensured in column pruning.
+		rowSize = ds.tableStats.HistColl.GetTableAvgRowSize(ts.Schema().Columns, ts.StoreType, ds.handleCol != nil)
 	}
-
-	copTask.cst = rowCount * scanFactor
+	sessVars := ds.ctx.GetSessionVars()
+	copTask.cst = rowCount * rowSize * sessVars.ScanFactor
 	if candidate.isMatchProp {
 		if prop.Items[0].Desc {
 			ts.Desc = true
-			copTask.cst = rowCount * descScanFactor
+			copTask.cst = rowCount * rowSize * sessVars.DescScanFactor
 		}
 		ts.KeepOrder = true
 		copTask.keepOrder = true
@@ -876,7 +920,7 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 func (ts *PhysicalTableScan) addPushedDownSelection(copTask *copTask, stats *property.StatsInfo) {
 	// Add filter condition to table plan now.
 	if len(ts.filterCondition) > 0 {
-		copTask.cst += copTask.count() * cpuFactor
+		copTask.cst += copTask.count() * ts.ctx.GetSessionVars().CopCPUFactor
 		sel := PhysicalSelection{Conditions: ts.filterCondition}.Init(ts.ctx, stats)
 		sel.SetChildren(ts)
 		copTask.tablePlan = sel

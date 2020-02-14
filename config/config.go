@@ -94,10 +94,16 @@ type Config struct {
 	AlterPrimaryKey bool `toml:"alter-primary-key" json:"alter-primary-key"`
 	// TreatOldVersionUTF8AsUTF8MB4 is use to treat old version table/column UTF8 charset as UTF8MB4. This is for compatibility.
 	// Currently not support dynamic modify, because this need to reload all old version schema.
-	TreatOldVersionUTF8AsUTF8MB4 bool         `toml:"treat-old-version-utf8-as-utf8mb4" json:"treat-old-version-utf8-as-utf8mb4"`
-	SplitRegionMaxNum            uint64       `toml:"split-region-max-num" json:"split-region-max-num"`
-	StmtSummary                  StmtSummary  `toml:"stmt-summary" json:"stmt-summary"`
-	Experimental                 Experimental `toml:"experimental" json:"experimental"`
+	TreatOldVersionUTF8AsUTF8MB4 bool        `toml:"treat-old-version-utf8-as-utf8mb4" json:"treat-old-version-utf8-as-utf8mb4"`
+	SplitRegionMaxNum            uint64      `toml:"split-region-max-num" json:"split-region-max-num"`
+	StmtSummary                  StmtSummary `toml:"stmt-summary" json:"stmt-summary"`
+	// EnableTableLock indicate whether enable table lock.
+	// TODO: remove this after table lock features stable.
+	EnableTableLock     bool   `toml:"enable-table-lock" json:"enable-table-lock"`
+	DelayCleanTableLock uint64 `toml:"delay-clean-table-lock" json:"delay-clean-table-lock"`
+	// IsolationRead indicates that the TiDB reads data from which isolation level(engine and label).
+	IsolationRead IsolationRead `toml:"isolation-read" json:"isolation-read"`
+	Experimental  Experimental  `toml:"experimental" json:"experimental"`
 }
 
 // Log is the log section of config.
@@ -336,6 +342,12 @@ type StmtSummary struct {
 	HistorySize int `toml:"history-size" json:"history-size"`
 }
 
+// IsolationRead is the config for isolation read.
+type IsolationRead struct {
+	// Engines filters tidb-server access paths by engine type.
+	Engines []string `toml:"engines" json:"engines"`
+}
+
 // Experimental controls the features that are still experimental: their semantics, interfaces are subject to change.
 // Using these features in the production environment is not recommended.
 type Experimental struct {
@@ -362,6 +374,8 @@ var defaultConf = Config{
 	AlterPrimaryKey:              false,
 	TreatOldVersionUTF8AsUTF8MB4: true,
 	SplitRegionMaxNum:            1000,
+	EnableTableLock:              false,
+	DelayCleanTableLock:          0,
 	TxnLocalLatches: TxnLocalLatches{
 		Enabled:  false,
 		Capacity: 2048000,
@@ -447,6 +461,9 @@ var defaultConf = Config{
 		MaxSQLLength:    4096,
 		RefreshInterval: 1800,
 		HistorySize:     24,
+	},
+	IsolationRead: IsolationRead{
+		Engines: []string{"tikv", "tiflash"},
 	},
 	Experimental: Experimental{
 		AllowAutoRandom: false,
@@ -630,6 +647,14 @@ func (c *Config) Valid() error {
 	if c.StmtSummary.RefreshInterval <= 0 {
 		return fmt.Errorf("refresh-interval in [stmt-summary] should be greater than 0")
 	}
+	if len(c.IsolationRead.Engines) < 1 {
+		return fmt.Errorf("the number of [isolation-read]engines for isolation read should be at least 1")
+	}
+	for _, engine := range c.IsolationRead.Engines {
+		if engine != "tikv" && engine != "tiflash" {
+			return fmt.Errorf("type of [isolation-read]engines can't be %v should be one of tidb or tikv or tiflash", engine)
+		}
+	}
 
 	if c.AlterPrimaryKey && c.Experimental.AllowAutoRandom {
 		return fmt.Errorf("allow-auto-random is unavailable when alter-primary-key is enabled")
@@ -639,6 +664,16 @@ func (c *Config) Valid() error {
 
 func hasRootPrivilege() bool {
 	return os.Geteuid() == 0
+}
+
+// TableLockEnabled uses to check whether enabled the table lock feature.
+func TableLockEnabled() bool {
+	return GetGlobalConfig().EnableTableLock
+}
+
+// TableLockDelayClean uses to get the time of delay clean table lock.
+var TableLockDelayClean = func() uint64 {
+	return GetGlobalConfig().DelayCleanTableLock
 }
 
 // ToLogConfig converts *Log to *logutil.LogConfig.

@@ -25,7 +25,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser"
-	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/util/logutil"
@@ -138,19 +137,23 @@ func SyntaxWarn(err error) error {
 	return parser.ErrParse.GenWithStackByArgs(syntaxErrorPrefix, err.Error())
 }
 
-var (
+const (
 	// InformationSchemaName is the `INFORMATION_SCHEMA` database name.
-	InformationSchemaName = model.CIStr{O: "INFORMATION_SCHEMA", L: "information_schema"}
+	InformationSchemaName = "INFORMATION_SCHEMA"
+	// InformationSchemaLowerName is the `INFORMATION_SCHEMA` database lower name.
+	InformationSchemaLowerName = "information_schema"
 	// PerformanceSchemaName is the `PERFORMANCE_SCHEMA` database name.
-	PerformanceSchemaName = model.CIStr{O: "PERFORMANCE_SCHEMA", L: "performance_schema"}
+	PerformanceSchemaName = "PERFORMANCE_SCHEMA"
+	// PerformanceSchemaLowerName is the `PERFORMANCE_SCHEMA` database lower name.
+	PerformanceSchemaLowerName = "performance_schema"
 	// MetricSchemaName is the `METRIC_SCHEMA` database name.
-	MetricSchemaName = model.CIStr{O: "METRIC_SCHEMA", L: "metric_schema"}
+	MetricSchemaName = "METRIC_SCHEMA"
 )
 
 // IsMemOrSysDB uses to check whether dbLowerName is memory database or system database.
 func IsMemOrSysDB(dbLowerName string) bool {
 	switch dbLowerName {
-	case InformationSchemaName.L, PerformanceSchemaName.L, mysql.SystemDB, MetricSchemaName.L:
+	case InformationSchemaLowerName, PerformanceSchemaLowerName, mysql.SystemDB, MetricSchemaName:
 		return true
 	}
 	return false

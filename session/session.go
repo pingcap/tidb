@@ -189,6 +189,60 @@ type session struct {
 
 	// shared coprocessor client per session
 	client kv.Client
+
+	// lockedTables use to record the table locks hold by the session.
+	lockedTables map[int64]model.TableLockTpInfo
+}
+
+// AddTableLock adds table lock to the session lock map.
+func (s *session) AddTableLock(locks []model.TableLockTpInfo) {
+	for _, l := range locks {
+		s.lockedTables[l.TableID] = l
+	}
+}
+
+// ReleaseTableLocks releases table lock in the session lock map.
+func (s *session) ReleaseTableLocks(locks []model.TableLockTpInfo) {
+	for _, l := range locks {
+		delete(s.lockedTables, l.TableID)
+	}
+}
+
+// ReleaseTableLockByTableIDs releases table lock in the session lock map by table ID.
+func (s *session) ReleaseTableLockByTableIDs(tableIDs []int64) {
+	for _, tblID := range tableIDs {
+		delete(s.lockedTables, tblID)
+	}
+}
+
+// CheckTableLocked checks the table lock.
+func (s *session) CheckTableLocked(tblID int64) (bool, model.TableLockType) {
+	lt, ok := s.lockedTables[tblID]
+	if !ok {
+		return false, model.TableLockNone
+	}
+	return true, lt.Tp
+}
+
+// GetAllTableLocks gets all table locks table id and db id hold by the session.
+func (s *session) GetAllTableLocks() []model.TableLockTpInfo {
+	lockTpInfo := make([]model.TableLockTpInfo, 0, len(s.lockedTables))
+	for _, tl := range s.lockedTables {
+		lockTpInfo = append(lockTpInfo, tl)
+	}
+	return lockTpInfo
+}
+
+// HasLockedTables uses to check whether this session locked any tables.
+// If so, the session can only visit the table which locked by self.
+func (s *session) HasLockedTables() bool {
+	b := len(s.lockedTables) > 0
+	return b
+}
+
+// ReleaseAllTableLocks releases all table locks hold by the session.
+func (s *session) ReleaseAllTableLocks() {
+	s.lockedTables = make(map[int64]model.TableLockTpInfo)
 }
 
 // DDLOwnerChecker returns s.ddlOwnerChecker.
@@ -1357,7 +1411,20 @@ func (s *session) ClearValue(key fmt.Stringer) {
 type inCloseSession struct{}
 
 // Close function does some clean work when session end.
+// Close should release the table locks which hold by the session.
 func (s *session) Close() {
+	// TODO: do clean table locks when session exited without execute Close.
+	// TODO: do clean table locks when tidb-server was `kill -9`.
+	if s.HasLockedTables() && config.TableLockEnabled() {
+		if ds := config.TableLockDelayClean(); ds > 0 {
+			time.Sleep(time.Duration(ds) * time.Millisecond)
+		}
+		lockedTables := s.GetAllTableLocks()
+		err := domain.GetDomain(s).DDL().UnlockTables(s, lockedTables)
+		if err != nil {
+			logutil.Logger(context.Background()).Error("release table lock failed", zap.Uint64("conn", s.sessionVars.ConnectionID))
+		}
+	}
 	if s.statsCollector != nil {
 		s.statsCollector.Delete()
 	}
@@ -1612,6 +1679,7 @@ func createSession(store kv.Storage) (*session, error) {
 			plannercore.PreparedPlanCacheMemoryGuardRatio, plannercore.PreparedPlanCacheMaxMemory.Load())
 	}
 	s.mu.values = make(map[fmt.Stringer]interface{})
+	s.lockedTables = make(map[int64]model.TableLockTpInfo)
 	domain.BindDomain(s, dom)
 	// session implements variable.GlobalVarAccessor. Bind it to ctx.
 	s.sessionVars.GlobalVarsAccessor = s
@@ -1636,6 +1704,7 @@ func createSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 			plannercore.PreparedPlanCacheMemoryGuardRatio, plannercore.PreparedPlanCacheMaxMemory.Load())
 	}
 	s.mu.values = make(map[fmt.Stringer]interface{})
+	s.lockedTables = make(map[int64]model.TableLockTpInfo)
 	domain.BindDomain(s, dom)
 	// session implements variable.GlobalVarAccessor. Bind it to ctx.
 	s.sessionVars.GlobalVarsAccessor = s
@@ -1730,6 +1799,13 @@ var builtinGlobalVariable = []string{
 	variable.TiDBOptInSubqToJoinAndAgg,
 	variable.TiDBOptCorrelationThreshold,
 	variable.TiDBOptCorrelationExpFactor,
+	variable.TiDBOptCPUFactor,
+	variable.TiDBOptCopCPUFactor,
+	variable.TiDBOptNetworkFactor,
+	variable.TiDBOptScanFactor,
+	variable.TiDBOptDescScanFactor,
+	variable.TiDBOptMemoryFactor,
+	variable.TiDBOptConcurrencyFactor,
 	variable.TiDBDistSQLScanConcurrency,
 	variable.TiDBInitChunkSize,
 	variable.TiDBMaxChunkSize,
@@ -1746,6 +1822,7 @@ var builtinGlobalVariable = []string{
 	variable.TiDBStmtSummaryHistorySize,
 	variable.TiDBMaxDeltaSchemaCount,
 	variable.TiDBStoreLimit,
+	variable.TiDBIsolationReadEngines,
 }
 
 var (

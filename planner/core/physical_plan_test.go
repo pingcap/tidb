@@ -319,6 +319,10 @@ func (s *testPlanSuite) TestDAGPlanBuilderAgg(c *C) {
 	se.Execute(context.Background(), "use test")
 	se.Execute(context.Background(), "set sql_mode='STRICT_TRANS_TABLES'") // disable only full group by
 	c.Assert(err, IsNil)
+	ctx := se.(sessionctx.Context)
+	sessionVars := ctx.GetSessionVars()
+	sessionVars.HashAggFinalConcurrency = 1
+	sessionVars.HashAggPartialConcurrency = 1
 
 	var input []string
 	var output []struct {
@@ -684,11 +688,11 @@ func (s *testPlanSuite) TestAggregationHints(c *C) {
 		// without Aggregation hints
 		{
 			sql:  "select count(*) from t t1, t t2 where t1.a = t2.b",
-			best: "LeftHashJoin{IndexReader(Index(t.c_d_e)[[NULL,+inf]])->TableReader(Table(t))}(test.t1.a,test.t2.b)->StreamAgg",
+			best: "LeftHashJoin{IndexReader(Index(t.f)[[NULL,+inf]])->TableReader(Table(t))}(test.t1.a,test.t2.b)->HashAgg",
 		},
 		{
 			sql:  "select count(t1.a) from t t1, t t2 where t1.a = t2.a*2 group by t1.a",
-			best: "LeftHashJoin{IndexReader(Index(t.c_d_e)[[NULL,+inf]])->IndexReader(Index(t.c_d_e)[[NULL,+inf]])->Projection}(test.t1.a,mul(test.t2.a, 2))->HashAgg",
+			best: "LeftHashJoin{IndexReader(Index(t.f)[[NULL,+inf]])->IndexReader(Index(t.f)[[NULL,+inf]])->Projection}(test.t1.a,mul(test.t2.a, 2))->HashAgg",
 		},
 		// with Aggregation hints
 		{
@@ -702,7 +706,7 @@ func (s *testPlanSuite) TestAggregationHints(c *C) {
 		// test conflict warning
 		{
 			sql:     "select /*+ HASH_AGG(), STREAM_AGG(), USE_INDEX(t1), USE_INDEX(t2) */ count(*) from t t1, t t2 where t1.a = t2.b",
-			best:    "LeftHashJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t1.a,test.t2.b)->StreamAgg",
+			best:    "LeftHashJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t1.a,test.t2.b)->HashAgg",
 			warning: "[planner:1815]Optimizer aggregation hints are conflicted",
 		},
 		// additional test
@@ -877,6 +881,10 @@ func (s *testPlanSuite) TestIndexHint(c *C) {
 	_, err = se.Execute(context.Background(), "use test")
 	c.Assert(err, IsNil)
 
+	sessionVars := se.(sessionctx.Context).GetSessionVars()
+	sessionVars.HashAggFinalConcurrency = 1
+	sessionVars.HashAggPartialConcurrency = 1
+
 	tests := []struct {
 		sql     string
 		best    string
@@ -978,19 +986,19 @@ func (s *testPlanSuite) TestQueryBlockHint(c *C) {
 		},
 		{
 			sql:  "select /*+ INL_JOIN(@sel_1 t1), HASH_JOIN(@sel_2 t2) */ t1.a, t1.b from t t1, (select t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
-			plan: "IndexJoin{TableReader(Table(t))->LeftHashJoin{IndexReader(Index(t.c_d_e)[[NULL,+inf]])->IndexReader(Index(t.c_d_e)[[NULL,+inf]])}(test.t2.a,test.t3.c)}(test.t2.a,test.t1.a)->Projection",
+			plan: "IndexJoin{TableReader(Table(t))->LeftHashJoin{IndexReader(Index(t.f)[[NULL,+inf]])->IndexReader(Index(t.c_d_e)[[NULL,+inf]])}(test.t2.a,test.t3.c)}(test.t2.a,test.t1.a)->Projection",
 		},
 		{
 			sql:  "select /*+ INL_JOIN(@sel_1 t1), HASH_JOIN(@qb t2) */ t1.a, t1.b from t t1, (select /*+ QB_NAME(qb) */ t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
-			plan: "IndexJoin{TableReader(Table(t))->LeftHashJoin{IndexReader(Index(t.c_d_e)[[NULL,+inf]])->IndexReader(Index(t.c_d_e)[[NULL,+inf]])}(test.t2.a,test.t3.c)}(test.t2.a,test.t1.a)->Projection",
+			plan: "IndexJoin{TableReader(Table(t))->LeftHashJoin{IndexReader(Index(t.f)[[NULL,+inf]])->IndexReader(Index(t.c_d_e)[[NULL,+inf]])}(test.t2.a,test.t3.c)}(test.t2.a,test.t1.a)->Projection",
 		},
 		{
 			sql:  "select /*+ HASH_AGG(@sel_1), STREAM_AGG(@sel_2) */ count(*) from t t1 where t1.a < (select count(*) from t t2 where t1.a > t2.a)",
-			plan: "Apply{IndexReader(Index(t.c_d_e)[[NULL,+inf]])->IndexReader(Index(t.c_d_e)[[NULL,+inf]]->Sel([gt(test.t1.a, test.t2.a)])->StreamAgg)->StreamAgg->Sel([not(isnull(5_col_0))])}->HashAgg",
+			plan: "Apply{IndexReader(Index(t.f)[[NULL,+inf]])->IndexReader(Index(t.f)[[NULL,+inf]]->Sel([gt(test.t1.a, test.t2.a)])->StreamAgg)->StreamAgg->Sel([not(isnull(5_col_0))])}->HashAgg",
 		},
 		{
 			sql:  "select /*+ STREAM_AGG(@sel_1), HASH_AGG(@qb) */ count(*) from t t1 where t1.a < (select /*+ QB_NAME(qb) */ count(*) from t t2 where t1.a > t2.a)",
-			plan: "Apply{IndexReader(Index(t.c_d_e)[[NULL,+inf]])->IndexReader(Index(t.c_d_e)[[NULL,+inf]]->Sel([gt(test.t1.a, test.t2.a)])->HashAgg)->HashAgg->Sel([not(isnull(5_col_0))])}->StreamAgg",
+			plan: "Apply{IndexReader(Index(t.f)[[NULL,+inf]])->IndexReader(Index(t.f)[[NULL,+inf]]->Sel([gt(test.t1.a, test.t2.a)])->HashAgg)->HashAgg->Sel([not(isnull(5_col_0))])}->StreamAgg",
 		},
 		{
 			sql:  "select /*+ HASH_AGG(@sel_2) */ a, (select count(*) from t t1 where t1.b > t.a) from t where b > (select b from t t2 where t2.b = t.a limit 1)",
@@ -1007,5 +1015,75 @@ func (s *testPlanSuite) TestQueryBlockHint(c *C) {
 		c.Assert(err, IsNil, comment)
 
 		c.Assert(core.ToString(p), Equals, tt.plan, comment)
+	}
+}
+
+func (s *testPlanSuite) TestDAGPlanBuilderSplitAvg(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	se, err := session.CreateSession4Test(store)
+	c.Assert(err, IsNil)
+	_, err = se.Execute(context.Background(), "use test")
+	c.Assert(err, IsNil)
+	tests := []struct {
+		sql  string
+		plan string
+	}{
+		{
+			sql:  "select avg(a),avg(b),avg(c) from t",
+			plan: "TableReader(Table(t)->StreamAgg)->StreamAgg",
+		},
+		{
+			sql:  "select /*+ HASH_AGG() */ avg(a),avg(b),avg(c) from t",
+			plan: "TableReader(Table(t)->HashAgg)->HashAgg",
+		},
+	}
+
+	for _, tt := range tests {
+		comment := Commentf("for %s", tt.sql)
+		stmt, err := s.ParseOneStmt(tt.sql, "", "")
+		c.Assert(err, IsNil, comment)
+
+		core.Preprocess(se, stmt, s.is)
+		p, err := planner.Optimize(context.TODO(), se, stmt, s.is)
+		c.Assert(err, IsNil, comment)
+
+		c.Assert(core.ToString(p), Equals, tt.plan, comment)
+		root, ok := p.(core.PhysicalPlan)
+		if !ok {
+			continue
+		}
+		testDAGPlanBuilderSplitAvg(c, root)
+	}
+}
+
+func testDAGPlanBuilderSplitAvg(c *C, root core.PhysicalPlan) {
+	if p, ok := root.(*core.PhysicalTableReader); ok {
+		if p.TablePlans != nil {
+			baseAgg := p.TablePlans[len(p.TablePlans)-1]
+			if agg, ok := baseAgg.(*core.PhysicalHashAgg); ok {
+				for i, aggfunc := range agg.AggFuncs {
+					c.Assert(agg.Schema().Columns[i].RetType, Equals, aggfunc.RetTp)
+				}
+			}
+			if agg, ok := baseAgg.(*core.PhysicalStreamAgg); ok {
+				for i, aggfunc := range agg.AggFuncs {
+					c.Assert(agg.Schema().Columns[i].RetType, Equals, aggfunc.RetTp)
+				}
+			}
+		}
+	}
+
+	childs := root.Children()
+	if childs == nil {
+		return
+	}
+	for _, son := range childs {
+		testDAGPlanBuilderSplitAvg(c, son)
 	}
 }

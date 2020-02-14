@@ -322,6 +322,23 @@ type SessionVars struct {
 	// CorrelationExpFactor is used to control the heuristic approach of row count estimation when CorrelationThreshold is not met.
 	CorrelationExpFactor int
 
+	// CPUFactor is the CPU cost of processing one expression for one row.
+	CPUFactor float64
+	// CopCPUFactor is the CPU cost of processing one expression for one row in coprocessor.
+	CopCPUFactor float64
+	// NetworkFactor is the network cost of transferring 1 byte data.
+	NetworkFactor float64
+	// ScanFactor is the IO cost of scanning 1 byte data on TiKV and TiFlash.
+	ScanFactor float64
+	// DescScanFactor is the IO cost of scanning 1 byte data on TiKV and TiFlash in desc order.
+	DescScanFactor float64
+	// SeekFactor is the IO cost of seeking the start value of a range in TiKV or TiFlash.
+	SeekFactor float64
+	// MemoryFactor is the memory cost of storing one tuple.
+	MemoryFactor float64
+	// ConcurrencyFactor is the CPU cost of additional one goroutine.
+	ConcurrencyFactor float64
+
 	// CurrInsertValues is used to record current ValuesExpr's values.
 	// See http://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_values
 	CurrInsertValues chunk.Row
@@ -449,6 +466,9 @@ type SessionVars struct {
 	// LockWaitTimeout is the duration waiting for pessimistic lock in milliseconds
 	// negative value means nowait, 0 means default behavior, others means actual wait time
 	LockWaitTimeout int64
+
+	// isolationReadEngines is used to isolation read, tidb only read from the stores whose engine type is in the engines.
+	isolationReadEngines map[kv.StoreType]struct{}
 }
 
 // PreparedParams contains the parameters of the current prepared statement when executing it.
@@ -505,6 +525,14 @@ func NewSessionVars() *SessionVars {
 		AllowInSubqToJoinAndAgg:     DefOptInSubqToJoinAndAgg,
 		CorrelationThreshold:        DefOptCorrelationThreshold,
 		CorrelationExpFactor:        DefOptCorrelationExpFactor,
+		CPUFactor:                   DefOptCPUFactor,
+		CopCPUFactor:                DefOptCopCPUFactor,
+		NetworkFactor:               DefOptNetworkFactor,
+		ScanFactor:                  DefOptScanFactor,
+		DescScanFactor:              DefOptDescScanFactor,
+		SeekFactor:                  DefOptSeekFactor,
+		MemoryFactor:                DefOptMemoryFactor,
+		ConcurrencyFactor:           DefOptConcurrencyFactor,
 		EnableRadixJoin:             false,
 		L2CacheSize:                 cpuid.CPU.Cache.L2,
 		CommandValue:                uint32(mysql.ComSleep),
@@ -515,6 +543,7 @@ func NewSessionVars() *SessionVars {
 		ReplicaRead:                 kv.ReplicaReadLeader,
 		AllowRemoveAutoInc:          DefTiDBAllowRemoveAutoInc,
 		LockWaitTimeout:             DefInnodbLockWaitTimeout * 1000,
+		isolationReadEngines:        map[kv.StoreType]struct{}{kv.TiKV: {}, kv.TiFlash: {}},
 	}
 	vars.KVVars = kv.NewVariables(&vars.Killed)
 	vars.Concurrency = Concurrency{
@@ -563,6 +592,11 @@ func (s *SessionVars) GetWriteStmtBufs() *WriteStmtBufs {
 // GetSplitRegionTimeout gets split region timeout.
 func (s *SessionVars) GetSplitRegionTimeout() time.Duration {
 	return time.Duration(s.WaitSplitRegionTimeout) * time.Second
+}
+
+// GetIsolationReadEngines gets isolation read engines.
+func (s *SessionVars) GetIsolationReadEngines() map[kv.StoreType]struct{} {
+	return s.isolationReadEngines
 }
 
 // CleanBuffers cleans the temporary bufs
@@ -786,6 +820,22 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.CorrelationThreshold = tidbOptFloat64(val, DefOptCorrelationThreshold)
 	case TiDBOptCorrelationExpFactor:
 		s.CorrelationExpFactor = int(tidbOptInt64(val, DefOptCorrelationExpFactor))
+	case TiDBOptCPUFactor:
+		s.CPUFactor = tidbOptFloat64(val, DefOptCPUFactor)
+	case TiDBOptCopCPUFactor:
+		s.CopCPUFactor = tidbOptFloat64(val, DefOptCopCPUFactor)
+	case TiDBOptNetworkFactor:
+		s.NetworkFactor = tidbOptFloat64(val, DefOptNetworkFactor)
+	case TiDBOptScanFactor:
+		s.ScanFactor = tidbOptFloat64(val, DefOptScanFactor)
+	case TiDBOptDescScanFactor:
+		s.DescScanFactor = tidbOptFloat64(val, DefOptDescScanFactor)
+	case TiDBOptSeekFactor:
+		s.SeekFactor = tidbOptFloat64(val, DefOptSeekFactor)
+	case TiDBOptMemoryFactor:
+		s.MemoryFactor = tidbOptFloat64(val, DefOptMemoryFactor)
+	case TiDBOptConcurrencyFactor:
+		s.ConcurrencyFactor = tidbOptFloat64(val, DefOptConcurrencyFactor)
 	case TiDBIndexLookupConcurrency:
 		s.IndexLookupConcurrency = tidbOptPositiveInt32(val, DefIndexLookupConcurrency)
 	case TiDBIndexLookupJoinConcurrency:
@@ -905,6 +955,18 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		}
 	case TiDBStoreLimit:
 		storeutil.StoreLimit.Store(tidbOptInt64(val, DefTiDBStoreLimit))
+	case TiDBIsolationReadEngines:
+		s.isolationReadEngines = make(map[kv.StoreType]struct{})
+		for _, engine := range strings.Split(val, ",") {
+			switch engine {
+			case kv.TiKV.Name():
+				s.isolationReadEngines[kv.TiKV] = struct{}{}
+			case kv.TiFlash.Name():
+				s.isolationReadEngines[kv.TiFlash] = struct{}{}
+			case kv.TiDB.Name():
+				s.isolationReadEngines[kv.TiDB] = struct{}{}
+			}
+		}
 	}
 	s.systems[name] = val
 	return nil

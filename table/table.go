@@ -80,11 +80,12 @@ var (
 	ErrTruncateWrongValue = terror.ClassTable.New(codeTruncateWrongValue, "incorrect value")
 	// ErrTruncatedWrongValueForField returns for truncate wrong value for field.
 	ErrTruncatedWrongValueForField = terror.ClassTable.New(codeTruncateWrongValue, mysql.MySQLErrName[mysql.ErrTruncatedWrongValueForField])
-
 	// ErrUnknownPartition returns unknown partition error.
 	ErrUnknownPartition = terror.ClassTable.New(codeUnknownPartition, mysql.MySQLErrName[mysql.ErrUnknownPartition])
 	// ErrNoPartitionForGivenValue returns table has no partition for value.
 	ErrNoPartitionForGivenValue = terror.ClassTable.New(codeNoPartitionForGivenValue, mysql.MySQLErrName[mysql.ErrNoPartitionForGivenValue])
+	// ErrLockOrActiveTransaction returns when execute unsupported statement in a lock session or an active transaction.
+	ErrLockOrActiveTransaction = terror.ClassTable.New(codeLockOrActiveTransaction, mysql.MySQLErrName[mysql.ErrLockOrActiveTransaction])
 )
 
 // RecordIterFunc is used for low-level record iteration.
@@ -248,6 +249,7 @@ const (
 
 	codeUnknownPartition         = mysql.ErrUnknownPartition
 	codeNoPartitionForGivenValue = mysql.ErrNoPartitionForGivenValue
+	codeLockOrActiveTransaction  = mysql.ErrLockOrActiveTransaction
 )
 
 // Slice is used for table sorting.
@@ -270,6 +272,7 @@ func init() {
 		codeTruncateWrongValue:       mysql.ErrTruncatedWrongValueForField,
 		codeUnknownPartition:         mysql.ErrUnknownPartition,
 		codeNoPartitionForGivenValue: mysql.ErrNoPartitionForGivenValue,
+		codeLockOrActiveTransaction:  mysql.ErrLockOrActiveTransaction,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassTable] = tableMySQLErrCodes
 }
