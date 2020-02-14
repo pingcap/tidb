@@ -57,11 +57,6 @@ func (e *InfoschemaReaderExec) Next(ctx context.Context, req *chunk.Chunk) error
 	return nil
 }
 
-// Open implements the Executor Open interface.
-func (e *InfoschemaReaderExec) Open(ctx context.Context) error {
-	return nil
-}
-
 // Close implements the Executor Close interface.
 func (e *InfoschemaReaderExec) Close() error {
 	return e.retriever.close()
