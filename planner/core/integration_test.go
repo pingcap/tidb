@@ -254,7 +254,7 @@ func (s *testIntegrationSuite) TestIsolationRead(c *C) {
 
 	_, err = tk.Exec("select * from t")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[planner:1815]Internal : Can not find access path matching 'tidb_isolation_read_engines'(value: 'tiflash') and tidb-server config isolation-read(engines: '[tikv tiflash tidb]'). Available values are 'tikv'.")
+	c.Assert(err.Error(), Equals, "[planner:1815]Internal : Can not find access path matching 'tidb_isolation_read_engines'(value: 'tiflash') and tidb-server config isolation-read(engines: '[tikv tiflash]'). Available values are 'tikv'.")
 
 	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tikv, tiflash'")
 	config.GetGlobalConfig().IsolationRead.Engines = []string{"tiflash"}
