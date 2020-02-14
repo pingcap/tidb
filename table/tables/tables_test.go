@@ -96,7 +96,7 @@ func (ts *testSuite) TestBasic(c *C) {
 	c.Assert(string(tb.RecordPrefix()), Not(Equals), "")
 	c.Assert(tables.FindIndexByColName(tb, "b"), NotNil)
 
-	autoID, err := table.AllocAutoIncrementValue(context.Background(), tb, nil)
+	autoID, err := table.AllocAutoIncrementValue(context.Background(), tb, ts.se)
 	c.Assert(err, IsNil)
 	c.Assert(autoID, Greater, int64(0))
 
