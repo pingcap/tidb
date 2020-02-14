@@ -219,9 +219,10 @@ func (ch *pdConfHandler) run() {
 
 			ch.reloadFunc(ch.curConf.Load().(*Config), newConf)
 			ch.curConf.Store(newConf)
-			logutil.Logger(context.Background()).Info("PDConfHandler update config successfully",
-				zap.String("fromVersion", ch.version.String()), zap.String("toVersion", version.String()))
 			ch.version = version
+			logutil.Logger(context.Background()).Info("PDConfHandler update config successfully",
+				zap.String("fromVersion", ch.version.String()), zap.String("toVersion", version.String()),
+				zap.String("new_config", newConfContent))
 		case <-ch.exit:
 			return
 		}
