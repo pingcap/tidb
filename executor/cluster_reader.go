@@ -58,7 +58,7 @@ type memTableRetriever interface {
 	close() error
 }
 
-// ClusterReaderExec executes cluster information retrieving from the cluster components
+// MemTableReaderExec executes memTable information retrieving from the MemTable components
 type MemTableReaderExec struct {
 	baseExecutor
 	retriever memTableRetriever
@@ -96,7 +96,7 @@ type clusterConfigRetriever struct {
 	extractor *plannercore.ClusterTableExtractor
 }
 
-// retrieve implements the clusterRetriever interface
+// retrieve implements the memTableRetriever interface
 func (e *clusterConfigRetriever) retrieve(_ context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
 	if e.extractor.SkipRequest || e.retrieved {
 		return nil, nil
@@ -224,7 +224,7 @@ type clusterServerInfoRetriever struct {
 	retrieved      bool
 }
 
-// retrieve implements the clusterRetriever interface
+// retrieve implements the memTableRetriever interface
 func (e *clusterServerInfoRetriever) retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
 	if e.extractor.SkipRequest || e.retrieved {
 		return nil, nil
