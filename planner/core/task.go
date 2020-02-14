@@ -650,20 +650,7 @@ func finishCopTask(ctx sessionctx.Context, task task) task {
 			indexPlan:      t.indexPlan,
 			ExtraHandleCol: t.extraHandleCol,
 		}.Init(ctx, t.tablePlan.SelectBlockOffset())
-		switch tp := p.tablePlan.(type) {
-		case *PhysicalTableScan:
-			tp.SetIsChildOfIndexLookUp(true)
-		case *PhysicalSelection:
-			tp.updateTableScanChild()
-		case *PhysicalLimit:
-			{
-				for _, child := range tp.children {
-					if ps, ok := child.(*PhysicalSelection); ok {
-						ps.updateTableScanChild()
-					}
-				}
-			}
-		}
+		setTableScanToTableRowIDScan(p.tablePlan)
 		p.stats = t.tablePlan.statsInfo()
 		// Add cost of building table reader executors. Handles are extracted in batch style,
 		// each handle is a range, the CPU cost of building copTasks should be:
@@ -731,11 +718,13 @@ func finishCopTask(ctx sessionctx.Context, task task) task {
 	return newTask
 }
 
-// updateTableScanChild is to update the isChildOfIndexLookUp attribute of PhysicalTableScan child
-func (sel *PhysicalSelection) updateTableScanChild() {
-	for _, child := range sel.children {
-		if ts, ok := child.(*PhysicalTableScan); ok {
-			ts.SetIsChildOfIndexLookUp(true)
+// setTableScanToTableRowIDScan is to update the isChildOfIndexLookUp attribute of PhysicalTableScan child
+func setTableScanToTableRowIDScan(p PhysicalPlan) {
+	if ts, ok := p.(*PhysicalTableScan); ok {
+		ts.SetIsChildOfIndexLookUp(true)
+	} else {
+		for _, child := range p.Children() {
+			setTableScanToTableRowIDScan(child)
 		}
 	}
 }
