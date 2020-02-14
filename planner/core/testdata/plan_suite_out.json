@@ -1472,10 +1472,10 @@
       {
         "SQL": "explain select /*+ TIDB_SMJ(t1, t2) */ t1.a from t t1, t t2 where t1.a = t2.b order by -t1.a",
         "Plan": [
-          "Projection_28 12487.50 root test.t.a",
-          "└─Projection_27 12487.50 root test.t.a, unaryminus(test.t.a)->Column#7",
+          "Projection_32 12487.50 root test.t.a",
+          "└─Projection_31 12487.50 root test.t.a, unaryminus(test.t.a)->Column#7",
           "  └─Projection_20 12487.50 root test.t.a",
-          "    └─MergeJoin_22 12487.50 root inner join, left key:test.t.a, right key:test.t.b",
+          "    └─MergeJoin_21 12487.50 root inner join, left key:test.t.a, right key:test.t.b",
           "      ├─IndexReader_24 9990.00 root index:IndexScan_23",
           "      │ └─IndexScan_23 9990.00 cop[tikv] table:t1, index:a, range:[-inf,+inf], keep order:true, desc, stats:pseudo",
           "      └─IndexReader_26 9990.00 root index:IndexScan_25",
@@ -1485,10 +1485,10 @@
       {
         "SQL": "explain select /*+ TIDB_SMJ(t1, t2) */ t1.a from t t1, t t2 where t1.a = t2.b order by -t1.a+3",
         "Plan": [
-          "Projection_28 12487.50 root test.t.a",
-          "└─Projection_27 12487.50 root test.t.a, plus(unaryminus(test.t.a), 3)->Column#7",
+          "Projection_32 12487.50 root test.t.a",
+          "└─Projection_31 12487.50 root test.t.a, plus(unaryminus(test.t.a), 3)->Column#7",
           "  └─Projection_20 12487.50 root test.t.a",
-          "    └─MergeJoin_22 12487.50 root inner join, left key:test.t.a, right key:test.t.b",
+          "    └─MergeJoin_21 12487.50 root inner join, left key:test.t.a, right key:test.t.b",
           "      ├─IndexReader_24 9990.00 root index:IndexScan_23",
           "      │ └─IndexScan_23 9990.00 cop[tikv] table:t1, index:a, range:[-inf,+inf], keep order:true, desc, stats:pseudo",
           "      └─IndexReader_26 9990.00 root index:IndexScan_25",
@@ -1511,10 +1511,10 @@
       {
         "SQL": "explain select /*+ TIDB_SMJ(t1, t2) */ t1.a from t t1, t t2 where t1.a = t2.b order by 1-t1.a",
         "Plan": [
-          "Projection_28 12487.50 root test.t.a",
-          "└─Projection_27 12487.50 root test.t.a, minus(1, test.t.a)->Column#7",
+          "Projection_32 12487.50 root test.t.a",
+          "└─Projection_31 12487.50 root test.t.a, minus(1, test.t.a)->Column#7",
           "  └─Projection_20 12487.50 root test.t.a",
-          "    └─MergeJoin_22 12487.50 root inner join, left key:test.t.a, right key:test.t.b",
+          "    └─MergeJoin_21 12487.50 root inner join, left key:test.t.a, right key:test.t.b",
           "      ├─IndexReader_24 9990.00 root index:IndexScan_23",
           "      │ └─IndexScan_23 9990.00 cop[tikv] table:t1, index:a, range:[-inf,+inf], keep order:true, desc, stats:pseudo",
           "      └─IndexReader_26 9990.00 root index:IndexScan_25",
@@ -1524,10 +1524,10 @@
       {
         "SQL": "explain select /*+ TIDB_SMJ(t1, t2) */ t1.a from t t1, t t2 where t1.a = t2.b order by 1-t1.a+3",
         "Plan": [
-          "Projection_28 12487.50 root test.t.a",
-          "└─Projection_27 12487.50 root test.t.a, plus(minus(1, test.t.a), 3)->Column#7",
+          "Projection_32 12487.50 root test.t.a",
+          "└─Projection_31 12487.50 root test.t.a, plus(minus(1, test.t.a), 3)->Column#7",
           "  └─Projection_20 12487.50 root test.t.a",
-          "    └─MergeJoin_22 12487.50 root inner join, left key:test.t.a, right key:test.t.b",
+          "    └─MergeJoin_21 12487.50 root inner join, left key:test.t.a, right key:test.t.b",
           "      ├─IndexReader_24 9990.00 root index:IndexScan_23",
           "      │ └─IndexScan_23 9990.00 cop[tikv] table:t1, index:a, range:[-inf,+inf], keep order:true, desc, stats:pseudo",
           "      └─IndexReader_26 9990.00 root index:IndexScan_25",
