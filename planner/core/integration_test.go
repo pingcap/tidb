@@ -300,14 +300,14 @@ func (s *testIntegrationSuite) TestSelPushDownTiFlash(c *C) {
 	tk.MustQuery(`explain select * from t where t.a > 1 and t.b = "flash" or t.a + 3 * t.a = 5`).Check(testkit.Rows(
 		"TableReader_7 8000.00 root data:Selection_6",
 		"└─Selection_6 8000.00 cop[tiflash] or(and(gt(test.t.a, 1), eq(test.t.b, \"flash\")), eq(plus(test.t.a, mul(3, test.t.a)), 5))",
-		"  └─TableFullScan_5 10000.00 cop[tiflash] table:t, range:[-inf,+inf], keep order:false, stats:pseudo",
+		"  └─TableFullScan_5 10000.00 cop[tiflash] table:t, keep order:false, stats:pseudo",
 	))
 
 	// Part of conditions should push tiflash.
 	tk.MustQuery(`explain select * from t where cast(t.a as float) + 3 = 5.1`).Check(testkit.Rows(
 		"Selection_7 10000.00 root eq(plus(cast(test.t.a), 3), 5.1)",
 		"└─TableReader_6 10000.00 root data:TableFullScan_5",
-		"  └─TableFullScan_5 10000.00 cop[tiflash] table:t, range:[-inf,+inf], keep order:false, stats:pseudo",
+		"  └─TableFullScan_5 10000.00 cop[tiflash] table:t, keep order:false, stats:pseudo",
 	))
 }
 
