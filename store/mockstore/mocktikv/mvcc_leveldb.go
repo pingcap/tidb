@@ -917,7 +917,7 @@ func rollbackKey(db *leveldb.DB, batch *leveldb.Batch, key []byte, startTS uint6
 	return nil
 }
 
-func rollbackLock(batch *leveldb.Batch, key []byte, startTS uint64) error {
+func writeRollback(batch *leveldb.Batch, key []byte, startTS uint64) error {
 	tomb := mvccValue{
 		valueType: typeRollback,
 		startTS:   startTS,
@@ -929,6 +929,14 @@ func rollbackLock(batch *leveldb.Batch, key []byte, startTS uint64) error {
 		return errors.Trace(err)
 	}
 	batch.Put(writeKey, writeValue)
+	return nil
+}
+
+func rollbackLock(batch *leveldb.Batch, key []byte, startTS uint64) error {
+	err := writeRollback(batch, key, startTS)
+	if err != nil {
+		return err
+	}
 	batch.Delete(mvccEncode(key, lockVer))
 	return nil
 }
@@ -1130,18 +1138,10 @@ func (mvcc *MVCCLevelDB) CheckTxnStatus(primaryKey []byte, lockTS, callerStartTS
 	if rollbackIfNotExist {
 		// Write rollback record, but not delete the lock
 		batch := &leveldb.Batch{}
-		tomb := mvccValue{
-			valueType: typeRollback,
-			startTS:   lockTS,
-			commitTS:  lockTS,
-		}
-		writeKey := mvccEncode(primaryKey, lockTS)
-		writeValue, errMarshal := tomb.MarshalBinary()
-		if errMarshal != nil {
-			err = errors.Trace(errMarshal)
+		if err1 := writeRollback(batch, primaryKey, lockTS); err1 != nil {
+			err = errors.Trace(err1)
 			return
 		}
-		batch.Put(writeKey, writeValue)
 		if err1 := mvcc.db.Write(batch, nil); err1 != nil {
 			err = errors.Trace(err1)
 			return
