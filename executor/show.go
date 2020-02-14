@@ -1012,7 +1012,7 @@ func appendPartitionInfo(partitionInfo *model.PartitionInfo, buf *bytes.Buffer) 
 	if partitionInfo.Columns != nil && partitionInfo.Type == model.PartitionTypeRange {
 		buf.WriteString("\nPARTITION BY RANGE COLUMNS(")
 		for i, col := range partitionInfo.Columns {
-			fmt.Fprintf(buf, "`%s`", col.L)
+			buf.WriteString(col.L)
 			if i < len(partitionInfo.Columns)-1 {
 				buf.WriteString(",")
 			}
@@ -1023,7 +1023,7 @@ func appendPartitionInfo(partitionInfo *model.PartitionInfo, buf *bytes.Buffer) 
 	}
 	for i, def := range partitionInfo.Definitions {
 		lessThans := strings.Join(def.LessThan, ",")
-		fmt.Fprintf(buf, "  PARTITION %s VALUES LESS THAN (%s)", def.Name, lessThans)
+		fmt.Fprintf(buf, "  PARTITION `%s` VALUES LESS THAN (%s)", def.Name, lessThans)
 		if i < len(partitionInfo.Definitions)-1 {
 			buf.WriteString(",\n")
 		} else {
