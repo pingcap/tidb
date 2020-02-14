@@ -1090,8 +1090,7 @@ func (s *testAnalyzeSuite) TestTiFlashCostModel(c *C) {
 	))
 	tk.MustExec("set @@session.tidb_isolation_read_engines='tiflash'")
 	tk.MustQuery("desc select * from t where t.a = 1 or t.a = 2").Check(testkit.Rows(
-		"TableReader_7 2.00 root data:Selection_6",
-		"└─Selection_6 2.00 cop[tiflash] or(eq(test.t.a, 1), eq(test.t.a, 2))",
-		"  └─TableScan_5 2.00 cop[tiflash] table:t, range:[-inf,+inf], keep order:false, stats:pseudo",
+		"TableReader_6 2.00 root data:TableScan_5",
+		"└─TableScan_5 2.00 cop[tiflash] table:t, range:[1,1], [2,2], keep order:false, stats:pseudo",
 	))
 }
