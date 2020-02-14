@@ -426,6 +426,8 @@ func (s *testIntegrationSuite5) TestMySQLErrorCode(c *C) {
 	tk.MustGetErrCode(sql, mysql.ErrPrimaryCantHaveNull)
 	sql = "create table t2 (id int auto_increment);"
 	tk.MustGetErrCode(sql, mysql.ErrWrongAutoKey)
+	sql = "create table t2 (id int auto_increment, a int key);"
+	tk.MustGetErrCode(sql, mysql.ErrWrongAutoKey)
 	sql = "create table t2 (a datetime(2) default current_timestamp(3))"
 	tk.MustGetErrCode(sql, mysql.ErrInvalidDefault)
 	sql = "create table t2 (a datetime(2) default current_timestamp(2) on update current_timestamp)"
