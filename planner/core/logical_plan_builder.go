@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/privilege"
@@ -71,6 +72,12 @@ const (
 	HintIgnoreIndex = "ignore_index"
 	// HintAggToCop is hint enforce pushing aggregation to coprocessor.
 	HintAggToCop = "agg_to_cop"
+	// HintReadFromStorage is hint enforce some tables read from specific type of storage.
+	HintReadFromStorage = "read_from_storage"
+	// HintTiFlash is a label represents the tiflash storage type.
+	HintTiFlash = "tiflash"
+	// HintTiKV is a label represents the tikv storage type.
+	HintTiKV = "tikv"
 )
 
 const (
@@ -376,6 +383,56 @@ func (p *LogicalJoin) setPreferredJoinType(hintInfo *tableHintInfo) {
 		errMsg := "Join hints are conflict, you can only specify one type of join"
 		warning := ErrInternal.GenWithStack(errMsg)
 		p.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
+	}
+}
+
+func (ds *DataSource) setPreferredStoreType(hintInfo *tableHintInfo) {
+	if hintInfo == nil {
+		return
+	}
+
+	var alias *model.CIStr
+	if len(ds.TableAsName.L) != 0 {
+		alias = ds.TableAsName
+	} else {
+		alias = &ds.tableInfo.Name
+	}
+	if hintInfo.ifPreferTiKV(alias) {
+		for _, path := range ds.possibleAccessPaths {
+			if path.storeType == kv.TiKV {
+				ds.preferStoreType |= preferTiKV
+				break
+			}
+		}
+		if ds.preferStoreType == 0 {
+			errMsg := fmt.Sprintf("No available path for table %s.%s with the store type %s of the hint /*+ read_from_storage */, "+
+				"please check the status of the table replica and variable value of tidb_isolation_read_engines(%v)",
+				ds.DBName.O, ds.table.Meta().Name.O, kv.TiKV.Name(), ds.ctx.GetSessionVars().GetIsolationReadEngines())
+			warning := ErrInternal.GenWithStack(errMsg)
+			ds.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
+		}
+	}
+	if hintInfo.ifPreferTiFlash(alias) {
+		if ds.preferStoreType != 0 {
+			errMsg := fmt.Sprintf("Storage hints are conflict, you can only specify one storage type of table %s", alias.L)
+			warning := ErrInternal.GenWithStack(errMsg)
+			ds.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
+			ds.preferStoreType = 0
+			return
+		}
+		for _, path := range ds.possibleAccessPaths {
+			if path.storeType == kv.TiFlash {
+				ds.preferStoreType |= preferTiFlash
+				break
+			}
+		}
+		if ds.preferStoreType == 0 {
+			errMsg := fmt.Sprintf("No available path for table %s.%s with the store type %s of the hint /*+ read_from_storage */, "+
+				"please check the status of the table replica and variable value of tidb_isolation_read_engines(%v)",
+				ds.DBName.O, ds.table.Meta().Name.O, kv.TiFlash.Name(), ds.ctx.GetSessionVars().GetIsolationReadEngines())
+			warning := ErrInternal.GenWithStack(errMsg)
+			ds.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
+		}
 	}
 }
 
@@ -1969,6 +2026,7 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, nodeType n
 	var (
 		sortMergeTables, INLJTables, hashJoinTables []hintTableInfo
 		indexHintList                               []indexHintInfo
+		tiflashTables, tikvTables                   []hintTableInfo
 		aggHints                                    aggHintInfo
 	)
 	for _, hint := range hints {
@@ -2007,17 +2065,27 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, nodeType n
 					},
 				})
 			}
+		case HintReadFromStorage:
+			if hint.StoreType.L == HintTiFlash {
+				tiflashTables = tableNames2HintTableInfo(hint.Tables)
+			}
+			if hint.StoreType.L == HintTiKV {
+				tikvTables = tableNames2HintTableInfo(hint.Tables)
+			}
 		default:
 			// ignore hints that not implemented
 		}
 	}
-	if len(sortMergeTables)+len(INLJTables)+len(hashJoinTables)+len(indexHintList) > 0 || aggHints.preferAggType != 0 || aggHints.preferAggToCop {
+	if len(sortMergeTables)+len(INLJTables)+len(hashJoinTables)+len(indexHintList)+len(tiflashTables)+len(tikvTables) > 0 ||
+		aggHints.preferAggType != 0 || aggHints.preferAggToCop {
 		b.tableHintInfo = append(b.tableHintInfo, tableHintInfo{
 			sortMergeJoinTables:       sortMergeTables,
 			indexNestedLoopJoinTables: INLJTables,
 			hashJoinTables:            hashJoinTables,
 			indexHintList:             indexHintList,
 			aggHints:                  aggHints,
+			tiflashTables:             tiflashTables,
+			tikvTables:                tikvTables,
 		})
 		return true
 	}
@@ -2309,7 +2377,11 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	if tblName.L == "" {
 		tblName = tn.Name
 	}
-	possiblePaths, err := b.getPossibleAccessPaths(tn.IndexHints, tableInfo, tblName)
+	possiblePaths, err := b.getPossibleAccessPaths(tn.IndexHints, tableInfo, dbName, tblName)
+	if err != nil {
+		return nil, err
+	}
+	possiblePaths, err = b.filterPathByIsolationRead(possiblePaths, dbName)
 	if err != nil {
 		return nil, err
 	}
@@ -2366,7 +2438,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		schema.Append(newCol)
 		ds.TblCols = append(ds.TblCols, newCol)
 	}
-	ds.SetSchema(schema)
+	ds.setPreferredStoreType(b.TableHints())
 
 	// We append an extra handle column to the schema when "ds" is not a memory
 	// table e.g. table in the "INFORMATION_SCHEMA" database, and the handle
@@ -2381,6 +2453,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	if handleCol != nil {
 		schema.TblID2Handle[tableInfo.ID] = []*expression.Column{handleCol}
 	}
+	ds.SetSchema(schema)
 
 	var result LogicalPlan = ds
 

@@ -67,6 +67,8 @@ token-limit = 0
 alter-primary-key = true
 split-region-max-num=10000
 server-version = "test_version"
+enable-table-lock = true
+delay-clean-table-lock = 5
 [performance]
 txn-entry-count-limit=2000
 txn-total-size-limit=2000
@@ -81,6 +83,8 @@ max-stmt-count=1000
 max-sql-length=1024
 refresh-interval=100
 history-size=100
+[isolation-read]
+engines = ["tiflash"]
 [experimental]
 allow-auto-random = true
 `)
@@ -114,6 +118,9 @@ allow-auto-random = true
 	c.Assert(conf.StmtSummary.MaxSQLLength, Equals, uint(1024))
 	c.Assert(conf.StmtSummary.RefreshInterval, Equals, 100)
 	c.Assert(conf.StmtSummary.HistorySize, Equals, 100)
+	c.Assert(conf.EnableTableLock, IsTrue)
+	c.Assert(conf.DelayCleanTableLock, Equals, uint64(5))
+	c.Assert(conf.IsolationRead.Engines, DeepEquals, []string{"tiflash"})
 	c.Assert(conf.Experimental.AllowAutoRandom, IsTrue)
 	c.Assert(f.Close(), IsNil)
 	c.Assert(os.Remove(configFile), IsNil)

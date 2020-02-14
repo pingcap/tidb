@@ -219,6 +219,28 @@ const (
 	ReqSubTypeAnalyzeCol = 10005
 )
 
+// StoreType represents the type of a store.
+type StoreType uint8
+
+const (
+	// TiKV means the type of a store is TiKV.
+	TiKV StoreType = iota
+	// TiFlash means the type of a store is TiFlash.
+	TiFlash
+	// TiDB means the type of a store is TiDB.
+	TiDB
+)
+
+// Name returns the name of store type.
+func (t StoreType) Name() string {
+	if t == TiFlash {
+		return "tiflash"
+	} else if t == TiDB {
+		return "tidb"
+	}
+	return "tikv"
+}
+
 // Request represents a kv request.
 type Request struct {
 	// Tp is the request type.
@@ -249,6 +271,10 @@ type Request struct {
 	MemTracker *memory.Tracker
 	// ReplicaRead is used for reading data from replicas, only follower is supported at this time.
 	ReplicaRead ReplicaReadType
+	// StoreType represents this request is sent to the which type of store.
+	StoreType StoreType
+	// SchemaVer is for any schema-ful storage to validate schema correctness if necessary.
+	SchemaVar int64
 }
 
 // ResultSubset represents a result subset from a single storage unit.
@@ -262,6 +288,8 @@ type ResultSubset interface {
 	GetExecDetails() *execdetails.ExecDetails
 	// MemSize returns how many bytes of memory this result use for tracing memory usage.
 	MemSize() int64
+	// RespTime returns the response time for the request.
+	RespTime() time.Duration
 }
 
 // Response represents the response returned from KV layer.

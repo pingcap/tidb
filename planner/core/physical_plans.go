@@ -18,6 +18,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
@@ -58,6 +59,9 @@ type PhysicalTableReader struct {
 	// TablePlans flats the tablePlan to construct executor pb.
 	TablePlans []PhysicalPlan
 	tablePlan  PhysicalPlan
+
+	// StoreType indicates table read from which type of store.
+	StoreType kv.StoreType
 }
 
 // PhysicalIndexReader is the index reader in tidb.
@@ -174,6 +178,8 @@ type PhysicalTableScan struct {
 
 	// HandleIdx is the index of handle, which is only used for admin check table.
 	HandleIdx int
+
+	StoreType kv.StoreType
 }
 
 // IsPartition returns true and partition ID if it's actually a partition.
@@ -217,6 +223,10 @@ type PhysicalHashJoin struct {
 	LeftConditions  []expression.Expression
 	RightConditions []expression.Expression
 	OtherConditions []expression.Expression
+
+	LeftJoinKeys  []*expression.Column
+	RightJoinKeys []*expression.Column
+
 	// InnerChildIdx indicates which child is to build the hash table.
 	// For inner join, the smaller one will be chosen.
 	// For outer join or semi join, it's exactly the inner one.
@@ -238,7 +248,7 @@ type PhysicalIndexJoin struct {
 	OtherConditions expression.CNFExprs
 	OuterIndex      int
 	outerSchema     *expression.Schema
-	innerPlan       PhysicalPlan
+	innerTask       task
 
 	DefaultValues []types.Datum
 
@@ -325,13 +335,13 @@ type basePhysicalAgg struct {
 	GroupByItems []expression.Expression
 }
 
-func (p *basePhysicalAgg) hasDistinctFunc() bool {
+func (p *basePhysicalAgg) numDistinctFunc() (num int) {
 	for _, fun := range p.AggFuncs {
 		if fun.HasDistinct {
-			return true
+			num++
 		}
 	}
-	return false
+	return
 }
 
 // PhysicalHashAgg is hash operator of aggregate.

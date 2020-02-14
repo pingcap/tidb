@@ -11,12 +11,12 @@
         "Plan": [
           "HashLeftJoin_8 9990.00 root inner join, inner:Selection_13, equal:[eq(test.t1.a, test.t2.a)]",
           "├─TableReader_12 9990.00 root data:Selection_11",
-          "│ └─Selection_11 9990.00 cop not(isnull(test.t1.a))",
-          "│   └─TableScan_10 10000.00 cop table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
+          "│ └─Selection_11 9990.00 cop[tikv] not(isnull(test.t1.a))",
+          "│   └─TableScan_10 10000.00 cop[tikv] table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
           "└─Selection_13 7992.00 root from_unixtime(cast(test.t2.b))",
           "  └─TableReader_16 9990.00 root data:Selection_15",
-          "    └─Selection_15 9990.00 cop not(isnull(test.t2.a))",
-          "      └─TableScan_14 10000.00 cop table:t2, range:[-inf,+inf], keep order:false, stats:pseudo"
+          "    └─Selection_15 9990.00 cop[tikv] not(isnull(test.t2.a))",
+          "      └─TableScan_14 10000.00 cop[tikv] table:t2, range:[-inf,+inf], keep order:false, stats:pseudo"
         ]
       }
     ]
@@ -30,9 +30,9 @@
           "HashLeftJoin_8 10000.00 root left outer join, inner:TableReader_13, equal:[eq(test.t1.a, test.t2.a)]",
           "├─Selection_9 8000.00 root ge(cast(test.t1.b), 2019-01-01 00:00:00.000000)",
           "│ └─TableReader_11 10000.00 root data:TableScan_10",
-          "│   └─TableScan_10 10000.00 cop table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
+          "│   └─TableScan_10 10000.00 cop[tikv] table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
           "└─TableReader_13 10000.00 root data:TableScan_12",
-          "  └─TableScan_12 10000.00 cop table:t2, range:[-inf,+inf], keep order:false, stats:pseudo"
+          "  └─TableScan_12 10000.00 cop[tikv] table:t2, range:[-inf,+inf], keep order:false, stats:pseudo"
         ]
       }
     ]
@@ -46,11 +46,11 @@
           "Sort_8 10005.00 root test.t.a:asc",
           "└─Union_11 10005.00 root ",
           "  ├─TableReader_13 10000.00 root data:TableScan_12",
-          "  │ └─TableScan_12 10000.00 cop table:t, partition:p0, range:[-inf,+inf], keep order:false, stats:pseudo",
+          "  │ └─TableScan_12 10000.00 cop[tikv] table:t, partition:p0, range:[-inf,+inf], keep order:false, stats:pseudo",
           "  ├─TableReader_15 1.00 root data:TableScan_14",
-          "  │ └─TableScan_14 1.00 cop table:t, partition:p1, range:[-inf,+inf], keep order:false",
+          "  │ └─TableScan_14 1.00 cop[tikv] table:t, partition:p1, range:[-inf,+inf], keep order:false",
           "  └─TableReader_17 4.00 root data:TableScan_16",
-          "    └─TableScan_16 4.00 cop table:t, partition:p2, range:[-inf,+inf], keep order:false"
+          "    └─TableScan_16 4.00 cop[tikv] table:t, partition:p2, range:[-inf,+inf], keep order:false"
         ]
       },
       {
@@ -70,14 +70,15 @@
           "└─Union_20 7.00 root ",
           "  ├─TopN_21 3.00 root test.t.a:asc, offset:0, count:3",
           "  │ └─TableReader_29 3.00 root data:TopN_28",
-          "  │   └─TopN_28 3.00 cop test.t.a:asc, offset:0, count:3",
-          "  │     └─TableScan_27 10000.00 cop table:t, partition:p0, range:[-inf,+inf], keep order:false, stats:pseudo",
+          "  │   └─TopN_28 3.00 cop[tikv] test.t.a:asc, offset:0, count:3",
+          "  │     └─TableScan_27 10000.00 cop[tikv] table:t, partition:p0, range:[-inf,+inf], keep order:false, stats:pseudo",
           "  ├─TopN_34 1.00 root test.t.a:asc, offset:0, count:3",
           "  │ └─TableReader_42 1.00 root data:TableScan_41",
-          "  │   └─TableScan_41 1.00 cop table:t, partition:p1, range:[-inf,+inf], keep order:false",
-          "  └─TopN_45 3.00 root test.t.a:asc, offset:0, count:3",
-          "    └─TableReader_53 4.00 root data:TableScan_52",
-          "      └─TableScan_52 4.00 cop table:t, partition:p2, range:[-inf,+inf], keep order:false"
+          "  │   └─TableScan_41 1.00 cop[tikv] table:t, partition:p1, range:[-inf,+inf], keep order:false",
+          "  └─TopN_43 3.00 root test.t.a:asc, offset:0, count:3",
+          "    └─TableReader_51 3.00 root data:TopN_50",
+          "      └─TopN_50 3.00 cop[tikv] test.t.a:asc, offset:0, count:3",
+          "        └─TableScan_49 4.00 cop[tikv] table:t, partition:p2, range:[-inf,+inf], keep order:false"
         ]
       },
       {
@@ -86,6 +87,141 @@
           "15 5",
           "21 1",
           "22 2"
+        ]
+      }
+    ]
+  },
+  {
+    "Name": "TestReadFromStorageHint",
+    "Cases": [
+      {
+        "SQL": "desc select avg(a) from t",
+        "Plan": [
+          "StreamAgg_20 1.00 root funcs:avg(col_0, col_1)",
+          "└─TableReader_21 1.00 root data:StreamAgg_8",
+          "  └─StreamAgg_8 1.00 cop[tiflash] funcs:count(test.t.a), sum(test.t.a)",
+          "    └─TableScan_18 10000.00 cop[tiflash] table:t, range:[-inf,+inf], keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "desc select /*+ read_from_storage(tiflash[t]) */ avg(a) from t",
+        "Plan": [
+          "StreamAgg_16 1.00 root funcs:avg(col_0, col_1)",
+          "└─TableReader_17 1.00 root data:StreamAgg_8",
+          "  └─StreamAgg_8 1.00 cop[tiflash] funcs:count(test.t.a), sum(test.t.a)",
+          "    └─TableScan_15 10000.00 cop[tiflash] table:t, range:[-inf,+inf], keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "desc select /*+ read_from_storage(tiflash[t]) */ sum(a) from t",
+        "Plan": [
+          "StreamAgg_16 1.00 root funcs:sum(col_0)",
+          "└─TableReader_17 1.00 root data:StreamAgg_8",
+          "  └─StreamAgg_8 1.00 cop[tiflash] funcs:sum(test.t.a)",
+          "    └─TableScan_15 10000.00 cop[tiflash] table:t, range:[-inf,+inf], keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "desc select /*+ read_from_storage(tiflash[t]) */ sum(a+1) from t",
+        "Plan": [
+          "StreamAgg_16 1.00 root funcs:sum(col_0)",
+          "└─TableReader_17 1.00 root data:StreamAgg_8",
+          "  └─StreamAgg_8 1.00 cop[tiflash] funcs:sum(plus(test.t.a, 1))",
+          "    └─TableScan_15 10000.00 cop[tiflash] table:t, range:[-inf,+inf], keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "desc select /*+ read_from_storage(tiflash[t]) */ sum(isnull(a)) from t",
+        "Plan": [
+          "StreamAgg_16 1.00 root funcs:sum(col_0)",
+          "└─TableReader_17 1.00 root data:StreamAgg_8",
+          "  └─StreamAgg_8 1.00 cop[tiflash] funcs:sum(isnull(test.t.a))",
+          "    └─TableScan_15 10000.00 cop[tiflash] table:t, range:[-inf,+inf], keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "desc select * from tt where (tt.a > 1 and tt.a < 20) or (tt.a >= 30 and tt.a < 55)",
+        "Plan": [
+          "TableReader_8 44.00 root data:TableScan_7",
+          "└─TableScan_7 44.00 cop[tiflash] table:tt, range:(1,20), [30,55), keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "desc select /*+ read_from_storage(tiflash[tt]) */ * from tt where (tt.a > 1 and tt.a < 20) or (tt.a >= 30 and tt.a < 55)",
+        "Plan": [
+          "TableReader_6 44.00 root data:TableScan_5",
+          "└─TableScan_5 44.00 cop[tiflash] table:tt, range:(1,20), [30,55), keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "desc select * from ttt order by ttt.a desc",
+        "Plan": [
+          "TableReader_13 10000.00 root data:TableScan_12",
+          "└─TableScan_12 10000.00 cop[tikv] table:ttt, range:[-inf,+inf], keep order:true, desc, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "desc select /*+ read_from_storage(tiflash[ttt]) */ * from ttt order by ttt.a desc",
+        "Plan": [
+          "Sort_4 10000.00 root test.ttt.a:desc",
+          "└─TableReader_8 10000.00 root data:TableScan_7",
+          "  └─TableScan_7 10000.00 cop[tiflash] table:ttt, range:[-inf,+inf], keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "desc select /*+ read_from_storage(tiflash[ttt]) */ * from ttt order by ttt.a",
+        "Plan": [
+          "TableReader_11 10000.00 root data:TableScan_10",
+          "└─TableScan_10 10000.00 cop[tiflash] table:ttt, range:[-inf,+inf], keep order:true, stats:pseudo"
+        ],
+        "Warn": null
+      }
+    ]
+  },
+  {
+    "Name": "TestReadFromStorageHintAndIsolationRead",
+    "Cases": [
+      {
+        "SQL": "desc select /*+ read_from_storage(tikv[t], tiflash[t]) */ avg(a) from t",
+        "Plan": [
+          "StreamAgg_16 1.00 root funcs:avg(col_0, col_1)",
+          "└─IndexReader_17 1.00 root index:StreamAgg_8",
+          "  └─StreamAgg_8 1.00 cop[tikv] funcs:avg(test.t.a)",
+          "    └─IndexScan_15 10000.00 cop[tikv] table:t, index:a, range:[NULL,+inf], keep order:false, stats:pseudo"
+        ],
+        "Warn": [
+          "[planner:1815]Storage hints are conflict, you can only specify one storage type of table t"
+        ]
+      },
+      {
+        "SQL": "desc select /*+ read_from_storage(tikv[t]) */ avg(a) from t",
+        "Plan": [
+          "StreamAgg_16 1.00 root funcs:avg(col_0, col_1)",
+          "└─IndexReader_17 1.00 root index:StreamAgg_8",
+          "  └─StreamAgg_8 1.00 cop[tikv] funcs:avg(test.t.a)",
+          "    └─IndexScan_15 10000.00 cop[tikv] table:t, index:a, range:[NULL,+inf], keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "desc select /*+ read_from_storage(tiflash[t]) */ avg(a) from t",
+        "Plan": [
+          "StreamAgg_16 1.00 root funcs:avg(col_0, col_1)",
+          "└─IndexReader_17 1.00 root index:StreamAgg_8",
+          "  └─StreamAgg_8 1.00 cop[tikv] funcs:avg(test.t.a)",
+          "    └─IndexScan_15 10000.00 cop[tikv] table:t, index:a, range:[NULL,+inf], keep order:false, stats:pseudo"
+        ],
+        "Warn": [
+          "[planner:1815]No available path for table test.t with the store type tiflash of the hint /*+ read_from_storage */, please check the status of the table replica and variable value of tidb_isolation_read_engines(map[0:{}])"
         ]
       }
     ]

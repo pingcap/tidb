@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -346,6 +347,10 @@ type schemaHandler struct {
 }
 
 type dbTableHandler struct {
+	*tikvHandlerTool
+}
+
+type flashReplicaHandler struct {
 	*tikvHandlerTool
 }
 
@@ -691,6 +696,105 @@ func (h binlogRecover) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		}
 	}
 	writeData(w, binloginfo.GetBinlogStatus())
+}
+
+type tableFlashReplicaInfo struct {
+	// Modifying the field name needs to negotiate with TiFlash colleague.
+	ID             int64    `json:"id"`
+	ReplicaCount   uint64   `json:"replica_count"`
+	LocationLabels []string `json:"location_labels"`
+	Available      bool     `json:"available"`
+}
+
+func (h flashReplicaHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	if req.Method == http.MethodPost {
+		h.handleStatusReport(w, req)
+		return
+	}
+	schema, err := h.schema()
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	replicaInfos := make([]*tableFlashReplicaInfo, 0)
+	allDBs := schema.AllSchemas()
+	for _, db := range allDBs {
+		tables := schema.SchemaTables(db.Name)
+		for _, tbl := range tables {
+			tblInfo := tbl.Meta()
+			if tblInfo.TiFlashReplica == nil {
+				continue
+			}
+			if pi := tblInfo.GetPartitionInfo(); pi != nil {
+				for _, p := range pi.Definitions {
+					replicaInfos = append(replicaInfos, &tableFlashReplicaInfo{
+						ID:             p.ID,
+						ReplicaCount:   tblInfo.TiFlashReplica.Count,
+						LocationLabels: tblInfo.TiFlashReplica.LocationLabels,
+						Available:      tblInfo.TiFlashReplica.IsPartitionAvailable(p.ID),
+					})
+				}
+				continue
+			}
+			replicaInfos = append(replicaInfos, &tableFlashReplicaInfo{
+				ID:             tblInfo.ID,
+				ReplicaCount:   tblInfo.TiFlashReplica.Count,
+				LocationLabels: tblInfo.TiFlashReplica.LocationLabels,
+				Available:      tblInfo.TiFlashReplica.Available,
+			})
+		}
+	}
+	writeData(w, replicaInfos)
+}
+
+type tableFlashReplicaStatus struct {
+	// Modifying the field name needs to negotiate with TiFlash colleague.
+	ID int64 `json:"id"`
+	// RegionCount is the number of regions that need sync.
+	RegionCount uint64 `json:"region_count"`
+	// FlashRegionCount is the number of regions that already sync completed.
+	FlashRegionCount uint64 `json:"flash_region_count"`
+}
+
+// checkTableFlashReplicaAvailable uses to check the available status of table flash replica.
+func (tf *tableFlashReplicaStatus) checkTableFlashReplicaAvailable() bool {
+	return tf.FlashRegionCount == tf.RegionCount
+}
+
+func (h flashReplicaHandler) handleStatusReport(w http.ResponseWriter, req *http.Request) {
+	var status tableFlashReplicaStatus
+	err := json.NewDecoder(req.Body).Decode(&status)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	do, err := session.GetDomain(h.Store.(kv.Storage))
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	s, err := session.CreateSession(h.Store.(kv.Storage))
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	available := status.checkTableFlashReplicaAvailable()
+	err = do.DDL().UpdateTableReplicaInfo(s, status.ID, available)
+	if err != nil {
+		writeError(w, err)
+	}
+	if available {
+		err = infosync.DeleteTiFlashTableSyncProgress(status.ID)
+	} else {
+		err = infosync.UpdateTiFlashTableSyncProgress(context.Background(), status.ID, float64(status.FlashRegionCount)/float64(status.RegionCount))
+	}
+	if err != nil {
+		writeError(w, err)
+	}
+	logutil.Logger(context.Background()).Info("handle flash replica report", zap.Int64("table ID", status.ID), zap.Uint64("region count",
+		status.RegionCount),
+		zap.Uint64("flash region count", status.FlashRegionCount),
+		zap.Error(err))
 }
 
 // ServeHTTP handles request of list a database or table's schemas.
@@ -1473,7 +1577,7 @@ func (h *mvccTxnHandler) handleMvccGetByTxn(params map[string]string) (interface
 // serverInfo is used to report the servers info when do http request.
 type serverInfo struct {
 	IsOwner bool `json:"is_owner"`
-	*domain.ServerInfo
+	*infosync.ServerInfo
 }
 
 // ServeHTTP handles request of ddl server info.
@@ -1485,18 +1589,23 @@ func (h serverInfoHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	info := serverInfo{}
-	info.ServerInfo = do.InfoSyncer().GetServerInfo()
+	info.ServerInfo, err = infosync.GetServerInfo()
+	if err != nil {
+		writeError(w, err)
+		log.Error(err)
+		return
+	}
 	info.IsOwner = do.DDL().OwnerManager().IsOwner()
 	writeData(w, info)
 }
 
 // clusterServerInfo is used to report cluster servers info when do http request.
 type clusterServerInfo struct {
-	ServersNum                   int                           `json:"servers_num,omitempty"`
-	OwnerID                      string                        `json:"owner_id"`
-	IsAllServerVersionConsistent bool                          `json:"is_all_server_version_consistent,omitempty"`
-	AllServersDiffVersions       []domain.ServerVersionInfo    `json:"all_servers_diff_versions,omitempty"`
-	AllServersInfo               map[string]*domain.ServerInfo `json:"all_servers_info,omitempty"`
+	ServersNum                   int                             `json:"servers_num,omitempty"`
+	OwnerID                      string                          `json:"owner_id"`
+	IsAllServerVersionConsistent bool                            `json:"is_all_server_version_consistent,omitempty"`
+	AllServersDiffVersions       []infosync.ServerVersionInfo    `json:"all_servers_diff_versions,omitempty"`
+	AllServersInfo               map[string]*infosync.ServerInfo `json:"all_servers_info,omitempty"`
 }
 
 // ServeHTTP handles request of all ddl servers info.
@@ -1508,7 +1617,7 @@ func (h allServerInfoHandler) ServeHTTP(w http.ResponseWriter, req *http.Request
 		return
 	}
 	ctx := context.Background()
-	allServersInfo, err := do.InfoSyncer().GetAllServerInfo(ctx)
+	allServersInfo, err := infosync.GetAllServerInfo(ctx)
 	if err != nil {
 		writeError(w, errors.New("ddl server information not found"))
 		log.Error(err)
@@ -1522,8 +1631,8 @@ func (h allServerInfoHandler) ServeHTTP(w http.ResponseWriter, req *http.Request
 		log.Error(err)
 		return
 	}
-	allVersionsMap := map[domain.ServerVersionInfo]struct{}{}
-	allVersions := make([]domain.ServerVersionInfo, 0, len(allServersInfo))
+	allVersionsMap := map[infosync.ServerVersionInfo]struct{}{}
+	allVersions := make([]infosync.ServerVersionInfo, 0, len(allServersInfo))
 	for _, v := range allServersInfo {
 		if _, ok := allVersionsMap[v.ServerVersionInfo]; ok {
 			continue
@@ -1585,34 +1694,12 @@ func (h dbTableHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	// The physicalID maybe a partition ID of the partition-table.
-	dbTblInfo.TableInfo, dbTblInfo.DBInfo = findTableByPartitionID(schema, int64(physicalID))
-	if dbTblInfo.TableInfo == nil {
+	tbl, dbInfo := schema.FindTableByPartitionID(int64(physicalID))
+	if tbl == nil {
 		writeError(w, infoschema.ErrTableNotExists.GenWithStack("Table which ID = %s does not exist.", tableID))
 		return
 	}
+	dbTblInfo.TableInfo = tbl.Meta()
+	dbTblInfo.DBInfo = dbInfo
 	writeData(w, dbTblInfo)
-}
-
-// findTableByPartitionID finds the partition-table info by the partitionID.
-// This function will traverse all the tables to find the partitionID partition in which partition-table.
-func findTableByPartitionID(schema infoschema.InfoSchema, partitionID int64) (*model.TableInfo, *model.DBInfo) {
-	allDBs := schema.AllSchemas()
-	for _, db := range allDBs {
-		allTables := schema.SchemaTables(db.Name)
-		for _, tbl := range allTables {
-			if tbl.Meta().ID > partitionID || tbl.Meta().GetPartitionInfo() == nil {
-				continue
-			}
-			info := tbl.Meta().GetPartitionInfo()
-			tb := tbl.(table.PartitionedTable)
-			for _, def := range info.Definitions {
-				pid := def.ID
-				partition := tb.GetPartition(pid)
-				if partition.GetPhysicalID() == partitionID {
-					return tbl.Meta(), db
-				}
-			}
-		}
-	}
-	return nil, nil
 }

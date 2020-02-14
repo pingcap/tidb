@@ -16,7 +16,6 @@ package ddl_test
 import (
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/config"
 	"math"
 	"strings"
 	"sync"
@@ -27,6 +26,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
@@ -744,6 +744,24 @@ func (s *testSerialSuite) TestCanceledJobTakeTime(c *C) {
 	tk.MustGetErrCode("alter table t_cjtt add column b int", mysql.ErrNoSuchTable)
 	sub := time.Since(startTime)
 	c.Assert(sub, Less, ddl.WaitTimeWhenErrorOccured)
+}
+
+func (s *testSerialSuite) TestTableLocksEnable(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	defer tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (a int)")
+	// recover table lock config.
+	originValue := config.GetGlobalConfig().EnableTableLock
+	defer func() {
+		config.GetGlobalConfig().EnableTableLock = originValue
+	}()
+
+	// Test for enable table lock config.
+	config.GetGlobalConfig().EnableTableLock = false
+	tk.MustExec("lock tables t1 write")
+	checkTableLock(c, tk.Se, "test", "t1", model.TableLockNone)
 }
 
 func (s *testSerialSuite) TestAutoRandom(c *C) {

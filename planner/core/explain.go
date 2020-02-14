@@ -141,7 +141,7 @@ func (p *PhysicalTableScan) explainInfo(normalized bool) string {
 		}
 	} else if len(p.Ranges) > 0 {
 		if normalized {
-			fmt.Fprint(buffer, ", range:[?,?]")
+			fmt.Fprint(buffer, ", range:[?:?]")
 		} else {
 			fmt.Fprint(buffer, ", range:")
 			for i, idxRange := range p.Ranges {

@@ -8,13 +8,13 @@
           "Projection_11 2.00 root 9_aux_0",
           "└─Apply_13 2.00 root CARTESIAN left outer semi join, inner:StreamAgg_20, other cond:eq(test.t.e, 7_col_0)",
           "  ├─TableReader_15 2.00 root data:TableScan_14",
-          "  │ └─TableScan_14 2.00 cop table:t, range:[-inf,+inf], keep order:false",
+          "  │ └─TableScan_14 2.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false",
           "  └─StreamAgg_20 1.00 root funcs:count(1)",
           "    └─IndexJoin_32 2.00 root inner join, inner:TableReader_31, outer key:test.s.a, inner key:test.t1.a",
           "      ├─IndexReader_27 2.00 root index:IndexScan_26",
-          "      │ └─IndexScan_26 2.00 cop table:s, index:b, c, d, range: decided by [eq(test.s.b, 1) in(test.s.c, 1, 2) eq(test.s.d, test.t.a)], keep order:false",
+          "      │ └─IndexScan_26 2.00 cop[tikv] table:s, index:b, c, d, range: decided by [eq(test.s.b, 1) in(test.s.c, 1, 2) eq(test.s.d, test.t.a)], keep order:false",
           "      └─TableReader_31 1.00 root data:TableScan_30",
-          "        └─TableScan_30 1.00 cop table:t1, range: decided by [test.s.a], keep order:false"
+          "        └─TableScan_30 1.00 cop[tikv] table:t1, range: decided by [test.s.a], keep order:false"
         ]
       },
       {

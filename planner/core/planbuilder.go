@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/kv"
 	"strings"
 
 	"github.com/cznic/mathutil"
@@ -34,6 +35,8 @@ import (
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
@@ -41,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/ranger"
+	"github.com/pingcap/tidb/util/set"
 	"go.uber.org/zap"
 )
 
@@ -57,6 +61,8 @@ type tableHintInfo struct {
 	sortMergeJoinTables       []hintTableInfo
 	hashJoinTables            []hintTableInfo
 	indexHintList             []indexHintInfo
+	tiflashTables             []hintTableInfo
+	tikvTables                []hintTableInfo
 	aggHints                  aggHintInfo
 }
 
@@ -96,6 +102,14 @@ func (info *tableHintInfo) ifPreferHashJoin(tableNames ...*model.CIStr) bool {
 
 func (info *tableHintInfo) ifPreferINLJ(tableNames ...*model.CIStr) bool {
 	return info.matchTableName(tableNames, info.indexNestedLoopJoinTables)
+}
+
+func (info *tableHintInfo) ifPreferTiFlash(tableNames ...*model.CIStr) bool {
+	return info.matchTableName(tableNames, info.tiflashTables)
+}
+
+func (info *tableHintInfo) ifPreferTiKV(tableNames ...*model.CIStr) bool {
+	return info.matchTableName(tableNames, info.tikvTables)
 }
 
 // matchTableName checks whether the hint hit the need.
@@ -485,9 +499,12 @@ func isPrimaryIndex(indexName model.CIStr) bool {
 	return indexName.L == "primary"
 }
 
-func (b *PlanBuilder) getPossibleAccessPaths(indexHints []*ast.IndexHint, tblInfo *model.TableInfo, tblName model.CIStr) ([]*accessPath, error) {
-	publicPaths := make([]*accessPath, 0, len(tblInfo.Indices)+1)
-	publicPaths = append(publicPaths, &accessPath{isTablePath: true})
+func (b *PlanBuilder) getPossibleAccessPaths(indexHints []*ast.IndexHint, tblInfo *model.TableInfo, dbName, tblName model.CIStr) ([]*accessPath, error) {
+	publicPaths := make([]*accessPath, 0, len(tblInfo.Indices)+2)
+	publicPaths = append(publicPaths, &accessPath{isTablePath: true, storeType: kv.TiKV})
+	if tblInfo.TiFlashReplica != nil && tblInfo.TiFlashReplica.Available {
+		publicPaths = append(publicPaths, &accessPath{isTablePath: true, storeType: kv.TiFlash})
+	}
 	for _, index := range tblInfo.Indices {
 		if index.State == model.StatePublic {
 			publicPaths = append(publicPaths, &accessPath{index: index})
@@ -561,6 +578,42 @@ func (b *PlanBuilder) getPossibleAccessPaths(indexHints []*ast.IndexHint, tblInf
 		available = append(available, &accessPath{isTablePath: true})
 	}
 	return available, nil
+}
+
+func (b *PlanBuilder) filterPathByIsolationRead(paths []*accessPath, dbName model.CIStr) ([]*accessPath, error) {
+	// TODO: filter paths with isolation read locations.
+	if dbName.L == mysql.SystemDB {
+		return paths, nil
+	}
+	cfgIsolationEngines := set.StringSet{}
+	for _, engine := range config.GetGlobalConfig().IsolationRead.Engines {
+		cfgIsolationEngines.Insert(engine)
+	}
+	isolationReadEngines := b.ctx.GetSessionVars().GetIsolationReadEngines()
+	availableEngine := map[kv.StoreType]struct{}{}
+	var availableEngineStr string
+	for i := len(paths) - 1; i >= 0; i-- {
+		if _, ok := availableEngine[paths[i].storeType]; !ok {
+			availableEngine[paths[i].storeType] = struct{}{}
+			if availableEngineStr != "" {
+				availableEngineStr += ", "
+			}
+			availableEngineStr += paths[i].storeType.Name()
+		}
+		if _, ok := isolationReadEngines[paths[i].storeType]; !ok {
+			paths = append(paths[:i], paths[i+1:]...)
+		} else if _, ok := cfgIsolationEngines[paths[i].storeType.Name()]; !ok {
+			paths = append(paths[:i], paths[i+1:]...)
+		}
+	}
+	var err error
+	if len(paths) == 0 {
+		engineVals, _ := b.ctx.GetSessionVars().GetSystemVar(variable.TiDBIsolationReadEngines)
+		err = ErrInternal.GenWithStackByArgs(fmt.Sprintf("Can not find access path matching '%v'(value: '%v') "+
+			"and tidb-server config isolation-read(engines: '%v'). Available values are '%v'.",
+			variable.TiDBIsolationReadEngines, engineVals, config.GetGlobalConfig().IsolationRead.Engines, availableEngineStr))
+	}
+	return paths, err
 }
 
 func removeIgnoredPaths(paths, ignoredPaths []*accessPath, tblInfo *model.TableInfo) []*accessPath {
@@ -829,7 +882,8 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReader(ctx context.Context, dbName
 		Ranges:           ranger.FullRange(),
 		GenExprs:         genExprsMap,
 	}.Init(b.ctx)
-	is.stats = property.NewSimpleStats(0)
+	// There is no alternative plan choices, so just use pseudo stats to avoid panic.
+	is.stats = &property.StatsInfo{HistColl: &(statistics.PseudoTable(tblInfo)).HistColl}
 	// It's double read case.
 	ts := PhysicalTableScan{Columns: tblReaderCols, Table: is.Table, TableAsName: &tblInfo.Name}.Init(b.ctx)
 	ts.SetSchema(tblSchema)
@@ -841,8 +895,9 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReader(ctx context.Context, dbName
 		ts.isPartition = true
 	}
 	cop := &copTask{
-		indexPlan: is,
-		tablePlan: ts,
+		indexPlan:  is,
+		tablePlan:  ts,
+		tableStats: is.stats,
 	}
 	ts.HandleIdx = pkOffset
 	is.initSchema(idx, true)
@@ -2284,6 +2339,11 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (Plan, err
 			v.NewTable.Name.L, "", authErr)
 	case *ast.RecoverTableStmt:
 		// Recover table command can only be executed by administrator.
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "", nil)
+	case *ast.LockTablesStmt, *ast.UnlockTablesStmt:
+		// TODO: add Lock Table privilege check.
+	case *ast.CleanupTableLockStmt:
+		// This command can only be executed by administrator.
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "", nil)
 	}
 	p := &DDL{Statement: node}

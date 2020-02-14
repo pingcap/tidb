@@ -71,6 +71,12 @@ alter-primary-key = false
 # if server-version = "", the default value(original TiDB version string) is used.
 server-version = ""
 
+# enable-table-lock is used to control table lock feature. Default is false, indicate the table lock feature is disabled.
+enable-table-lock = false
+
+# delay-clean-table-lock is used to control whether delayed-release the table lock in the abnormal situation. (Milliseconds)
+delay-clean-table-lock = 0
+
 [log]
 # Log level: debug, info, warn, error, fatal.
 level = "info"
@@ -353,6 +359,11 @@ refresh-interval = 1800
 
 # the maximum history size of statement summary.
 history-size = 24
+
+# server level isolation read by engines and labels
+[isolation-read]
+# engines means allow the tidb server read data from which types of engines. options: "tikv", "tiflash".
+engines = ["tikv", "tiflash"]
 
 # experimental section controls the features that are still experimental: their semantics,
 # interfaces are subject to change, using these features in the production environment is not recommended.
