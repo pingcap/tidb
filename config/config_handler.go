@@ -81,6 +81,7 @@ type pdConfHandler struct {
 	exit       chan struct{}
 	pdConfCli  pd.ConfigClient
 	reloadFunc func(oldConf, newConf *Config)
+	registered bool
 }
 
 func newPDConfHandler(localConf *Config, reloadFunc ConfReloadFunc,
@@ -108,44 +109,17 @@ func newPDConfHandler(localConf *Config, reloadFunc ConfReloadFunc,
 	if err != nil {
 		return nil, err
 	}
-	confContent, err := encodeConfig(localConf)
-	if err != nil {
-		return nil, err
-	}
-
-	// register to PD and get the new default config.
-	// see https://github.com/pingcap/tidb/pull/13660 for more details.
-	// suppose port and security config items cannot be change online.
-	status, version, conf, err := pdCli.Create(context.Background(), new(configpb.Version), tidbComponentName, id, confContent)
-	if err != nil {
-		logutil.Logger(context.Background()).Warn("register the config to PD error, local config will be used", zap.Error(err))
-	} else if status.Code != configpb.StatusCode_OK && status.Code != configpb.StatusCode_WRONG_VERSION {
-		logutil.Logger(context.Background()).Warn("invalid status when registering the config to PD", zap.String("code", status.Code.String()), zap.String("errmsg", status.Message))
-		conf = ""
-	}
-
-	tmpConf := *localConf // use the local config if the remote config is invalid
-	newConf := &tmpConf
-	if conf != "" {
-		newConf, err = decodeConfig(conf)
-		if err != nil {
-			logutil.Logger(context.Background()).Warn("decode remote config error", zap.Error(err))
-			newConf = &tmpConf
-		} else if err := newConf.Valid(); err != nil {
-			logutil.Logger(context.Background()).Warn("invalid remote config", zap.Error(err))
-			newConf = &tmpConf
-		}
-	}
-
 	ch := &pdConfHandler{
 		id:         id,
-		version:    version,
+		version:    new(configpb.Version),
 		interval:   pdConfHandlerRefreshInterval,
 		exit:       make(chan struct{}),
 		pdConfCli:  pdCli,
 		reloadFunc: reloadFunc,
+		registered: false,
 	}
-	ch.curConf.Store(newConf)
+	ch.curConf.Store(localConf) // use the local config at first
+	ch.register()
 	return ch, nil
 }
 
@@ -168,6 +142,38 @@ func (ch *pdConfHandler) SetConfig(conf *Config) error {
 	return errors.New("PDConfHandler only support to update the config from PD whereas forbid to modify it locally")
 }
 
+func (ch *pdConfHandler) register() {
+	// register to PD and get the new default config.
+	// see https://github.com/pingcap/tidb/pull/13660 for more details.
+	// suppose port and security config items cannot be change online.
+	confContent, err := encodeConfig(ch.curConf.Load().(*Config))
+	if err != nil {
+		logutil.Logger(context.Background()).Warn("encode config error when registering", zap.Error(err))
+		return
+	}
+
+	status, version, conf, err := ch.pdConfCli.Create(context.Background(), new(configpb.Version), tidbComponentName, ch.id, confContent)
+	if err != nil {
+		logutil.Logger(context.Background()).Warn("RPC to PD error when registering", zap.Error(err))
+		return
+	} else if status.Code != configpb.StatusCode_OK && status.Code != configpb.StatusCode_WRONG_VERSION {
+		logutil.Logger(context.Background()).Warn("invalid status when registering", zap.String("code", status.Code.String()), zap.String("errmsg", status.Message))
+		return
+	}
+
+	newConf, err := decodeConfig(conf)
+	if err != nil {
+		logutil.Logger(context.Background()).Warn("decode config error when registering", zap.Error(err))
+		return
+	} else if err := newConf.Valid(); err != nil {
+		logutil.Logger(context.Background()).Warn("invalid remote config when registering", zap.Error(err))
+		return
+	}
+
+	ch.registered = true
+	ch.version = version
+}
+
 func (ch *pdConfHandler) run() {
 	defer func() {
 		if r := recover(); r != nil {
@@ -181,6 +187,11 @@ func (ch *pdConfHandler) run() {
 	for {
 		select {
 		case <-time.After(ch.interval):
+			if !ch.registered {
+				ch.register()
+				continue
+			}
+
 			// fetch new config from PD
 			status, version, newConfContent, err := ch.pdConfCli.Get(context.Background(), ch.version, tidbComponentName, ch.id)
 			if err != nil {
