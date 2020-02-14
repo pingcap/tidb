@@ -23,6 +23,7 @@ import (
 	"strings"
 	"unicode"
 
+	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
@@ -46,7 +47,6 @@ import (
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	util2 "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/plancodec"
 )
 
