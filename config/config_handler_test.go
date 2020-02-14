@@ -75,13 +75,14 @@ func (s *testConfigSuite) TestPDConfHandler(c *C) {
 	conf := defaultConf
 
 	// wrong path
-	conf.Store = "tikv"
+	conf.Store = "WRONGPATH"
 	conf.Path = "WRONGPATH"
 	_, err := newPDConfHandler(&conf, nil, newMockPDConfigClient)
 	c.Assert(err, NotNil)
 
 	// error when creating PD config client
-	conf.Path = "tikv://node1:2379"
+	conf.Store = "tikv"
+	conf.Path = "node1:2379"
 	newMockPDConfigClientErr = fmt.Errorf("")
 	_, err = newPDConfHandler(&conf, nil, newMockPDConfigClient)
 	c.Assert(err, NotNil)
