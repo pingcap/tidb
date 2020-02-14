@@ -674,6 +674,23 @@ func (s *seqTestSuite) TestIndexDoubleReadClose(c *C) {
 	atomic.StoreInt32(&executor.LookupTableTaskChannelSize, originSize)
 }
 
+// TestIndexMergeReaderClose checks that when a partial index worker failed to start, the goroutine doesn't
+// leak.
+func (s *seqTestSuite) TestIndexMergeReaderClose(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int)")
+	tk.MustExec("create index idx1 on t(a)")
+	tk.MustExec("create index idx2 on t(b)")
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/startPartialIndexWorkerErr", "return"), IsNil)
+	_, err := tk.Exec("select /*+ USE_INDEX_MERGE(t, idx1, idx2) */ * from t where a > 10 or b < 100")
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/startPartialIndexWorkerErr"), IsNil)
+	c.Assert(err, NotNil)
+	c.Check(checkGoroutineExists("fetchHandles"), IsFalse)
+	c.Check(checkGoroutineExists("waitPartialWorkersAndCloseFetchChan"), IsFalse)
+}
+
 func (s *seqTestSuite) TestParallelHashAggClose(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec(`use test;`)
