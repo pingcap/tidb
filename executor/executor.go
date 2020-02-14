@@ -86,7 +86,7 @@ var (
 type baseExecutor struct {
 	ctx           sessionctx.Context
 	id            fmt.Stringer
-	schema        *expression.Schema
+	schema        *expression.Schema // output schema
 	initCap       int
 	maxChunkSize  int
 	children      []Executor
@@ -127,6 +127,16 @@ func (e *baseExecutor) Schema() *expression.Schema {
 		return expression.NewSchema()
 	}
 	return e.schema
+}
+
+// markChildrenUsedCols compares each child with the output schema, and mark
+// each column of the child is used by output or not.
+func (e *baseExecutor) markChildrenUsedCols() (childrenUsed [][]bool) {
+	for _, child := range e.children {
+		used := expression.GetUsedList(e.schema.Columns, child.Schema())
+		childrenUsed = append(childrenUsed, used)
+	}
+	return
 }
 
 // newFirstChunk creates a new chunk to buffer current executor's result.
