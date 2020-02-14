@@ -69,7 +69,7 @@ var optRuleList = []logicalOptRule{
 	&aggregationPushDownSolver{},
 	&pushDownTopNOptimizer{},
 	&joinReOrderSolver{},
-	&columnPruner{}, // column pruning again at last
+	&columnPruner{}, // column pruning again at last, note it will mess up the result of buildKeySolver
 }
 
 // logicalOptRule means a logical optimizing rule, which contains decorrelate, ppd, column pruning, etc.
