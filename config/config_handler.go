@@ -86,7 +86,8 @@ type pdConfHandler struct {
 func newPDConfHandler(localConf *Config, reloadFunc ConfReloadFunc,
 	newPDCliFunc func([]string, pd.SecurityOption) (pd.ConfigClient, error), // for test
 ) (*pdConfHandler, error) {
-	addresses, _, err := ParsePath(localConf.Path)
+	fullPath := fmt.Sprintf("%s://%s", localConf.Store, localConf.Path)
+	addresses, _, err := ParsePath(fullPath)
 	if err != nil {
 		return nil, err
 	}
