@@ -399,7 +399,7 @@ type partitionRangeOR []partitionRange
 func fullRange(end int) partitionRangeOR {
 	var reduceAllocation [3]partitionRange
 	reduceAllocation[0] = partitionRange{0, end}
-	return partitionRangeOR(reduceAllocation[:1])
+	return reduceAllocation[:1]
 }
 
 func (or partitionRangeOR) intersectionRange(start, end int) partitionRangeOR {
