@@ -597,9 +597,8 @@ func openDBWithRetry(driverName, dataSourceName string) (mdb *sql.DB, err error)
 			break
 		}
 		log.Warn("ping DB failed", zap.Int("retry count", i), zap.Error(err))
-		err = mdb.Close()
-		if err != nil {
-			log.Error("close DB failed", zap.Error(err))
+		if err1 := mdb.Close(); err1 != nil {
+			log.Error("close DB failed", zap.Error(err1))
 		}
 		time.Sleep(sleepTime)
 	}
