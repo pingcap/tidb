@@ -1129,10 +1129,18 @@ func (mvcc *MVCCLevelDB) CheckTxnStatus(primaryKey []byte, lockTS, callerStartTS
 
 	if rollbackIfNotExist {
 		batch := &leveldb.Batch{}
-		if err1 := rollbackLock(batch, primaryKey, lockTS); err1 != nil {
-			err = errors.Trace(err1)
+		tomb := mvccValue{
+			valueType: typeRollback,
+			startTS:   lockTS,
+			commitTS:  lockTS,
+		}
+		writeKey := mvccEncode(primaryKey, lockTS)
+		writeValue, errMarshal := tomb.MarshalBinary()
+		if errMarshal != nil {
+			err = errors.Trace(errMarshal)
 			return
 		}
+		batch.Put(writeKey, writeValue)
 		if err1 := mvcc.db.Write(batch, nil); err1 != nil {
 			err = errors.Trace(err1)
 			return
