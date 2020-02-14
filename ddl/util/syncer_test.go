@@ -116,6 +116,7 @@ func TestSyncerSimple(t *testing.T) {
 			}
 			checkRespKV(t, 1, DDLGlobalSchemaVersion, fmt.Sprintf("%v", currentVer), resp.Events[0].Kv)
 		case <-time.After(1 * time.Millisecond):
+			time.Sleep(100 * time.Millisecond)
 			t.Fatalf("get udpate version failed")
 		}
 	}()
