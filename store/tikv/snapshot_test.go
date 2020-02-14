@@ -211,8 +211,8 @@ func (s *testSnapshotSuite) TestLockNotFoundPrint(c *C) {
 }
 
 func (s *testSnapshotSuite) TestSkipLargeTxnLock(c *C) {
-	x := kv.Key("x_this_one_run_parallel_with_others?")
-	y := kv.Key("y_this_one_run_parallel_with_others?")
+	x := kv.Key("x_key_TestSkipLargeTxnLock")
+	y := kv.Key("y_key_TestSkipLargeTxnLock")
 	txn := s.beginTxn(c)
 	c.Assert(txn.Set(x, []byte("x")), IsNil)
 	c.Assert(txn.Set(y, []byte("y")), IsNil)
