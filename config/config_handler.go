@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -43,12 +44,10 @@ type ConfReloadFunc func(oldConf, newConf *Config)
 
 // NewConfHandler creates a new ConfHandler according to the local config.
 func NewConfHandler(localConf *Config, reloadFunc ConfReloadFunc) (ConfHandler, error) {
-	switch localConf.Store {
-	case "tikv":
+	if strings.ToLower(localConf.Store) == "tikv" && localConf.EnableDynamicConfig {
 		return newPDConfHandler(localConf, reloadFunc, nil)
-	default:
-		return &constantConfHandler{localConf}, nil
 	}
+	return &constantConfHandler{localConf}, nil
 }
 
 // constantConfHandler is used in local or debug environment.

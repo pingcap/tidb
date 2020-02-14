@@ -372,6 +372,10 @@ history-size = 24
 # enable column attribute `auto_random` to be defined on the primary key column.
 allow-auto-random = false
 
+# enable the TiDB to fetch configs from PD and update itself during runtime.
+# see https://github.com/pingcap/tidb/pull/13660 for more details.
+enable-dynamic-config = false
+
 # server level isolation read by engines and labels
 [isolation-read]
 # engines means allow the tidb server read data from which types of engines. options: "tikv", "tiflash", "tidb".
