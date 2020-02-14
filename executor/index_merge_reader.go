@@ -15,7 +15,6 @@ package executor
 
 import (
 	"context"
-	"runtime"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -33,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
@@ -160,7 +160,12 @@ func (e *IndexMergeReaderExecutor) startIndexMergeProcessWorker(ctx context.Cont
 	idxMergeProcessWorker := &indexMergeProcessWorker{}
 	e.processWokerWg.Add(1)
 	go func() {
-		idxMergeProcessWorker.fetchLoop(ctx, fetch, workCh, e.resultCh, e.finished)
+		util.WithRecovery(
+			func() {
+				idxMergeProcessWorker.fetchLoop(ctx, fetch, workCh, e.resultCh, e.finished)
+			},
+			idxMergeProcessWorker.handleLoopFetcherPanic(ctx, e.resultCh),
+		)
 		e.processWokerWg.Done()
 	}()
 }
@@ -208,7 +213,13 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 	go func() {
 		defer partialWorkerWg.Done()
 		ctx1, cancel := context.WithCancel(ctx)
-		_, err := worker.fetchHandles(ctx1, result, fetchCh, e.resultCh, e.finished, exitCh)
+		var err error
+		util.WithRecovery(
+			func() {
+				_, err = worker.fetchHandles(ctx1, result, fetchCh, e.resultCh, e.finished, exitCh)
+			},
+			e.handleHandlesFetcherPanic(ctx, e.resultCh, "partialIndexWorker"),
+		)
 		if err != nil {
 			e.feedbacks[workID].Invalidate()
 		}
@@ -258,7 +269,13 @@ func (e *IndexMergeReaderExecutor) startPartialTableWorker(ctx context.Context, 
 	go func() {
 		defer partialWorkerWg.Done()
 		ctx1, cancel := context.WithCancel(ctx)
-		_, err := worker.fetchHandles(ctx1, fetchCh, e.resultCh, e.finished, exitCh)
+		var err error
+		util.WithRecovery(
+			func() {
+				_, err = worker.fetchHandles(ctx1, fetchCh, e.resultCh, e.finished, exitCh)
+			},
+			e.handleHandlesFetcherPanic(ctx, e.resultCh, "partialTableWorker"),
+		)
 		if err != nil {
 			e.feedbacks[workID].Invalidate()
 		}
@@ -281,23 +298,6 @@ type partialTableWorker struct {
 
 func (w *partialTableWorker) fetchHandles(ctx context.Context, fetchCh chan<- *lookupTableTask, resultCh chan<- *lookupTableTask,
 	finished <-chan struct{}, exitCh <-chan struct{}) (count int64, err error) {
-	defer func() {
-		if r := recover(); r != nil {
-			buf := make([]byte, 4096)
-			stackSize := runtime.Stack(buf, false)
-			buf = buf[:stackSize]
-			logutil.Logger(ctx).Error("partialTableWorker in IndexMergeReaderExecutor panicked", zap.String("stack", string(buf)))
-			err4Panic := errors.Errorf("%v", r)
-			doneCh := make(chan error, 1)
-			doneCh <- err4Panic
-			resultCh <- &lookupTableTask{
-				doneCh: doneCh,
-			}
-			if err != nil {
-				err = errors.Trace(err4Panic)
-			}
-		}
-	}()
 	var chk *chunk.Chunk
 	handleOffset := -1
 	if w.tableInfo.PKIsHandle {
@@ -393,7 +393,11 @@ func (e *IndexMergeReaderExecutor) startIndexMergeTableScanWorker(ctx context.Co
 		}
 		ctx1, cancel := context.WithCancel(ctx)
 		go func() {
-			worker.pickAndExecTask(ctx1)
+			var task *lookupTableTask
+			util.WithRecovery(
+				func() { task = worker.pickAndExecTask(ctx1) },
+				worker.handlePickAndExecTaskPanic(ctx1, task),
+			)
 			cancel()
 			e.tblWorkerWg.Done()
 		}()
@@ -459,6 +463,22 @@ func (e *IndexMergeReaderExecutor) getResultTask() (*lookupTableTask, error) {
 	return e.resultCurr, nil
 }
 
+func (e *IndexMergeReaderExecutor) handleHandlesFetcherPanic(ctx context.Context, resultCh chan<- *lookupTableTask, worker string) func(r interface{}) {
+	return func(r interface{}) {
+		if r == nil {
+			return
+		}
+
+		err4Panic := errors.Errorf("panic in IndexMergeReaderExecutor %s: %v", worker, r)
+		logutil.Logger(ctx).Error(err4Panic.Error())
+		doneCh := make(chan error, 1)
+		doneCh <- err4Panic
+		resultCh <- &lookupTableTask{
+			doneCh: doneCh,
+		}
+	}
+}
+
 // Close implements Exec Close interface.
 func (e *IndexMergeReaderExecutor) Close() error {
 	if e.finished == nil {
@@ -480,18 +500,6 @@ func (w *indexMergeProcessWorker) fetchLoop(ctx context.Context, fetchCh <-chan 
 	defer func() {
 		close(workCh)
 		close(resultCh)
-		if r := recover(); r != nil {
-			buf := make([]byte, 4096)
-			stackSize := runtime.Stack(buf, false)
-			buf = buf[:stackSize]
-			logutil.Logger(ctx).Error("indexMergeTableWorker in IndexMergeReaderExecutor panicked", zap.String("stack", string(buf)))
-			err4Panic := errors.Errorf("%v", r)
-			doneCh := make(chan error, 1)
-			doneCh <- err4Panic
-			resultCh <- &lookupTableTask{
-				doneCh: doneCh,
-			}
-		}
 	}()
 
 	distinctHandles := set.NewInt64Set()
@@ -523,6 +531,22 @@ func (w *indexMergeProcessWorker) fetchLoop(ctx context.Context, fetchCh <-chan 
 	}
 }
 
+func (w *indexMergeProcessWorker) handleLoopFetcherPanic(ctx context.Context, resultCh chan<- *lookupTableTask) func(r interface{}) {
+	return func(r interface{}) {
+		if r == nil {
+			return
+		}
+
+		err4Panic := errors.Errorf("panic in IndexMergeReaderExecutor indexMergeTableWorker: %v", r)
+		logutil.Logger(ctx).Error(err4Panic.Error())
+		doneCh := make(chan error, 1)
+		doneCh <- err4Panic
+		resultCh <- &lookupTableTask{
+			doneCh: doneCh,
+		}
+	}
+}
+
 type partialIndexWorker struct {
 	batchSize    int
 	maxBatchSize int
@@ -531,23 +555,6 @@ type partialIndexWorker struct {
 
 func (w *partialIndexWorker) fetchHandles(ctx context.Context, result distsql.SelectResult, fetchCh chan<- *lookupTableTask,
 	resultCh chan<- *lookupTableTask, finished <-chan struct{}, exitCh <-chan struct{}) (count int64, err error) {
-	defer func() {
-		if r := recover(); r != nil {
-			buf := make([]byte, 4096)
-			stackSize := runtime.Stack(buf, false)
-			buf = buf[:stackSize]
-			logutil.Logger(ctx).Error("indexWorker in IndexMergeReaderExecutor panicked", zap.String("stack", string(buf)))
-			err4Panic := errors.Errorf("%v", r)
-			doneCh := make(chan error, 1)
-			doneCh <- err4Panic
-			resultCh <- &lookupTableTask{
-				doneCh: doneCh,
-			}
-			if err != nil {
-				err = errors.Trace(err4Panic)
-			}
-		}
-	}()
 	chk := chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}, w.maxChunkSize)
 	for {
 		handles, retChunk, err := w.extractTaskHandles(ctx, chk, result)
@@ -625,18 +632,8 @@ type indexMergeTableScanWorker struct {
 	memTracker *memory.Tracker
 }
 
-func (w *indexMergeTableScanWorker) pickAndExecTask(ctx context.Context) {
-	var task *lookupTableTask
+func (w *indexMergeTableScanWorker) pickAndExecTask(ctx context.Context) (task *lookupTableTask) {
 	var ok bool
-	defer func() {
-		if r := recover(); r != nil {
-			buf := make([]byte, 4096)
-			stackSize := runtime.Stack(buf, false)
-			buf = buf[:stackSize]
-			logutil.Logger(ctx).Error("indexMergeTableWorker in IndexMergeReaderExecutor panicked", zap.String("stack", string(buf)))
-			task.doneCh <- errors.Errorf("%v", r)
-		}
-	}()
 	for {
 		select {
 		case task, ok = <-w.workCh:
@@ -648,6 +645,18 @@ func (w *indexMergeTableScanWorker) pickAndExecTask(ctx context.Context) {
 		}
 		err := w.executeTask(ctx, task)
 		task.doneCh <- err
+	}
+}
+
+func (w *indexMergeTableScanWorker) handlePickAndExecTaskPanic(ctx context.Context, task *lookupTableTask) func(r interface{}) {
+	return func(r interface{}) {
+		if r == nil {
+			return
+		}
+
+		err4Panic := errors.Errorf("panic in IndexMergeReaderExecutor indexMergeTableWorker: %v", r)
+		logutil.Logger(ctx).Error(err4Panic.Error())
+		task.doneCh <- err4Panic
 	}
 }
 
