@@ -492,7 +492,6 @@ func (do *Domain) loadSchemaInLoop(lease time.Duration) {
 			// then continue to change the TiDB schema to version 3. Unfortunately, this down TiDB schema version will still be version 1.
 			// And version 1 is not consistent to version 3. So we need to stop the schema validator to prohibit the DML executing.
 			do.SchemaValidator.Stop()
-			time.Sleep(500 * time.Millisecond)
 			err := do.mustRestartSyncer()
 			if err != nil {
 				logutil.BgLogger().Error("reload schema in loop, schema syncer restart failed", zap.Error(err))
