@@ -86,150 +86,150 @@ func (s *extractorSuite) TestClusterConfigTableExtractor(c *C) {
 	var cases = []struct {
 		sql         string
 		nodeTypes   set.StringSet
-		addresses   set.StringSet
+		instances   set.StringSet
 		skipRequest bool
 	}{
 		{
 			sql:       "select * from information_schema.cluster_config",
 			nodeTypes: nil,
-			addresses: nil,
+			instances: nil,
 		},
 		{
 			sql:       "select * from information_schema.cluster_config where type='tikv'",
 			nodeTypes: set.NewStringSet("tikv"),
-			addresses: set.NewStringSet(),
+			instances: set.NewStringSet(),
 		},
 		{
 			sql:       "select * from information_schema.cluster_config where 'tikv'=type",
 			nodeTypes: set.NewStringSet("tikv"),
-			addresses: set.NewStringSet(),
+			instances: set.NewStringSet(),
 		},
 		{
 			sql:       "select * from information_schema.cluster_config where 'TiKV'=type",
 			nodeTypes: set.NewStringSet("tikv"),
-			addresses: set.NewStringSet(),
+			instances: set.NewStringSet(),
 		},
 		{
 			sql:       "select * from information_schema.cluster_config where 'tikv'=type",
 			nodeTypes: set.NewStringSet("tikv"),
-			addresses: set.NewStringSet(),
+			instances: set.NewStringSet(),
 		},
 		{
 			sql:       "select * from information_schema.cluster_config where 'TiKV'=type or type='tidb'",
 			nodeTypes: set.NewStringSet("tikv", "tidb"),
-			addresses: set.NewStringSet(),
+			instances: set.NewStringSet(),
 		},
 		{
 			sql:       "select * from information_schema.cluster_config where 'TiKV'=type or type='tidb' or type='pd'",
 			nodeTypes: set.NewStringSet("tikv", "tidb", "pd"),
-			addresses: set.NewStringSet(),
+			instances: set.NewStringSet(),
 		},
 		{
-			sql:       "select * from information_schema.cluster_config where (type='tidb' or type='pd') and (address='123.1.1.2:1234' or address='123.1.1.4:1234')",
+			sql:       "select * from information_schema.cluster_config where (type='tidb' or type='pd') and (instance='123.1.1.2:1234' or instance='123.1.1.4:1234')",
 			nodeTypes: set.NewStringSet("tidb", "pd"),
-			addresses: set.NewStringSet("123.1.1.2:1234", "123.1.1.4:1234"),
+			instances: set.NewStringSet("123.1.1.2:1234", "123.1.1.4:1234"),
 		},
 		{
 			sql:       "select * from information_schema.cluster_config where type in ('tikv', 'pd')",
 			nodeTypes: set.NewStringSet("tikv", "pd"),
-			addresses: set.NewStringSet(),
+			instances: set.NewStringSet(),
 		},
 		{
-			sql:       "select * from information_schema.cluster_config where type in ('tikv', 'pd') and address='123.1.1.2:1234'",
+			sql:       "select * from information_schema.cluster_config where type in ('tikv', 'pd') and instance='123.1.1.2:1234'",
 			nodeTypes: set.NewStringSet("tikv", "pd"),
-			addresses: set.NewStringSet("123.1.1.2:1234"),
+			instances: set.NewStringSet("123.1.1.2:1234"),
 		},
 		{
-			sql:       "select * from information_schema.cluster_config where type in ('tikv', 'pd') and address in ('123.1.1.2:1234', '123.1.1.4:1234')",
+			sql:       "select * from information_schema.cluster_config where type in ('tikv', 'pd') and instance in ('123.1.1.2:1234', '123.1.1.4:1234')",
 			nodeTypes: set.NewStringSet("tikv", "pd"),
-			addresses: set.NewStringSet("123.1.1.2:1234", "123.1.1.4:1234"),
+			instances: set.NewStringSet("123.1.1.2:1234", "123.1.1.4:1234"),
 		},
 		{
-			sql:       "select * from information_schema.cluster_config where type='tikv' and address in ('123.1.1.2:1234', '123.1.1.4:1234')",
+			sql:       "select * from information_schema.cluster_config where type='tikv' and instance in ('123.1.1.2:1234', '123.1.1.4:1234')",
 			nodeTypes: set.NewStringSet("tikv"),
-			addresses: set.NewStringSet("123.1.1.2:1234", "123.1.1.4:1234"),
+			instances: set.NewStringSet("123.1.1.2:1234", "123.1.1.4:1234"),
 		},
 		{
-			sql:       "select * from information_schema.cluster_config where type='tikv' and address='123.1.1.4:1234'",
+			sql:       "select * from information_schema.cluster_config where type='tikv' and instance='123.1.1.4:1234'",
 			nodeTypes: set.NewStringSet("tikv"),
-			addresses: set.NewStringSet("123.1.1.4:1234"),
+			instances: set.NewStringSet("123.1.1.4:1234"),
 		},
 		{
-			sql:       "select * from information_schema.cluster_config where type='tikv' and address='123.1.1.4:1234'",
+			sql:       "select * from information_schema.cluster_config where type='tikv' and instance='123.1.1.4:1234'",
 			nodeTypes: set.NewStringSet("tikv"),
-			addresses: set.NewStringSet("123.1.1.4:1234"),
+			instances: set.NewStringSet("123.1.1.4:1234"),
 		},
 		{
-			sql:       "select * from information_schema.cluster_config where type='tikv' and address='cNs2dm.tikv.pingcap.com:1234'",
+			sql:       "select * from information_schema.cluster_config where type='tikv' and instance='cNs2dm.tikv.pingcap.com:1234'",
 			nodeTypes: set.NewStringSet("tikv"),
-			addresses: set.NewStringSet("cNs2dm.tikv.pingcap.com:1234"),
+			instances: set.NewStringSet("cNs2dm.tikv.pingcap.com:1234"),
 		},
 		{
-			sql:       "select * from information_schema.cluster_config where type='TIKV' and address='cNs2dm.tikv.pingcap.com:1234'",
+			sql:       "select * from information_schema.cluster_config where type='TIKV' and instance='cNs2dm.tikv.pingcap.com:1234'",
 			nodeTypes: set.NewStringSet("tikv"),
-			addresses: set.NewStringSet("cNs2dm.tikv.pingcap.com:1234"),
+			instances: set.NewStringSet("cNs2dm.tikv.pingcap.com:1234"),
 		},
 		{
 			sql:         "select * from information_schema.cluster_config where type='tikv' and type='pd'",
 			nodeTypes:   set.NewStringSet(),
-			addresses:   set.NewStringSet(),
+			instances:   set.NewStringSet(),
 			skipRequest: true,
 		},
 		{
 			sql:       "select * from information_schema.cluster_config where type='tikv' and type in ('pd', 'tikv')",
 			nodeTypes: set.NewStringSet("tikv"),
-			addresses: set.NewStringSet(),
+			instances: set.NewStringSet(),
 		},
 		{
 			sql:         "select * from information_schema.cluster_config where type='tikv' and type in ('pd', 'tidb')",
 			nodeTypes:   set.NewStringSet(),
-			addresses:   set.NewStringSet(),
+			instances:   set.NewStringSet(),
 			skipRequest: true,
 		},
 		{
 			sql:       "select * from information_schema.cluster_config where type in ('tikv', 'tidb') and type in ('pd', 'tidb')",
 			nodeTypes: set.NewStringSet("tidb"),
-			addresses: set.NewStringSet(),
+			instances: set.NewStringSet(),
 		},
 		{
-			sql:         "select * from information_schema.cluster_config where address='123.1.1.4:1234' and address='123.1.1.5:1234'",
+			sql:         "select * from information_schema.cluster_config where instance='123.1.1.4:1234' and instance='123.1.1.5:1234'",
 			nodeTypes:   set.NewStringSet(),
-			addresses:   set.NewStringSet(),
+			instances:   set.NewStringSet(),
 			skipRequest: true,
 		},
 		{
-			sql:       "select * from information_schema.cluster_config where address='123.1.1.4:1234' and address in ('123.1.1.5:1234', '123.1.1.4:1234')",
+			sql:       "select * from information_schema.cluster_config where instance='123.1.1.4:1234' and instance in ('123.1.1.5:1234', '123.1.1.4:1234')",
 			nodeTypes: set.NewStringSet(),
-			addresses: set.NewStringSet("123.1.1.4:1234"),
+			instances: set.NewStringSet("123.1.1.4:1234"),
 		},
 		{
-			sql:         "select * from information_schema.cluster_config where address='123.1.1.4:1234' and address in ('123.1.1.5:1234', '123.1.1.6:1234')",
+			sql:         "select * from information_schema.cluster_config where instance='123.1.1.4:1234' and instance in ('123.1.1.5:1234', '123.1.1.6:1234')",
 			nodeTypes:   set.NewStringSet(),
-			addresses:   set.NewStringSet(),
+			instances:   set.NewStringSet(),
 			skipRequest: true,
 		},
 		{
-			sql:       "select * from information_schema.cluster_config where address in ('123.1.1.5:1234', '123.1.1.4:1234') and address in ('123.1.1.5:1234', '123.1.1.6:1234')",
+			sql:       "select * from information_schema.cluster_config where instance in ('123.1.1.5:1234', '123.1.1.4:1234') and instance in ('123.1.1.5:1234', '123.1.1.6:1234')",
 			nodeTypes: set.NewStringSet(),
-			addresses: set.NewStringSet("123.1.1.5:1234"),
+			instances: set.NewStringSet("123.1.1.5:1234"),
 		},
 		{
 			sql: `select * from information_schema.cluster_config
-				where address in ('123.1.1.5:1234', '123.1.1.4:1234')
-				  and address in ('123.1.1.5:1234', '123.1.1.6:1234')
+				where instance in ('123.1.1.5:1234', '123.1.1.4:1234')
+				  and instance in ('123.1.1.5:1234', '123.1.1.6:1234')
 				  and type in ('tikv', 'tidb')
 				  and type in ('pd', 'tidb')`,
 			nodeTypes: set.NewStringSet("tidb"),
-			addresses: set.NewStringSet("123.1.1.5:1234"),
+			instances: set.NewStringSet("123.1.1.5:1234"),
 		},
 		{
 			sql: `select * from information_schema.cluster_config
-				where address in ('123.1.1.5:1234', '123.1.1.4:1234')
-				  and address in ('123.1.1.5:1234', '123.1.1.6:1234')
-				  and address in ('123.1.1.6:1234', '123.1.1.7:1234')
-				  and address in ('123.1.1.7:1234', '123.1.1.8:1234')`,
+				where instance in ('123.1.1.5:1234', '123.1.1.4:1234')
+				  and instance in ('123.1.1.5:1234', '123.1.1.6:1234')
+				  and instance in ('123.1.1.6:1234', '123.1.1.7:1234')
+				  and instance in ('123.1.1.7:1234', '123.1.1.8:1234')`,
 			nodeTypes:   set.NewStringSet(),
-			addresses:   set.NewStringSet(),
+			instances:   set.NewStringSet(),
 			skipRequest: true,
 		},
 	}
@@ -239,7 +239,7 @@ func (s *extractorSuite) TestClusterConfigTableExtractor(c *C) {
 
 		clusterConfigExtractor := logicalMemTable.Extractor.(*plannercore.ClusterTableExtractor)
 		c.Assert(clusterConfigExtractor.NodeTypes, DeepEquals, ca.nodeTypes, Commentf("SQL: %v", ca.sql))
-		c.Assert(clusterConfigExtractor.Addresses, DeepEquals, ca.addresses, Commentf("SQL: %v", ca.sql))
+		c.Assert(clusterConfigExtractor.Instances, DeepEquals, ca.instances, Commentf("SQL: %v", ca.sql))
 		c.Assert(clusterConfigExtractor.SkipRequest, DeepEquals, ca.skipRequest, Commentf("SQL: %v", ca.sql))
 	}
 }
@@ -258,7 +258,7 @@ func (s *extractorSuite) TestClusterLogTableExtractor(c *C) {
 	var cases = []struct {
 		sql                string
 		nodeTypes          set.StringSet
-		addresses          set.StringSet
+		instances          set.StringSet
 		skipRequest        bool
 		startTime, endTime int64
 		patterns           []string
@@ -267,173 +267,173 @@ func (s *extractorSuite) TestClusterLogTableExtractor(c *C) {
 		{
 			sql:       "select * from information_schema.cluster_log",
 			nodeTypes: nil,
-			addresses: nil,
+			instances: nil,
 		},
 		{
 			sql:       "select * from information_schema.cluster_log where type='tikv'",
 			nodeTypes: set.NewStringSet("tikv"),
-			addresses: set.NewStringSet(),
+			instances: set.NewStringSet(),
 		},
 		{
 			sql:       "select * from information_schema.cluster_log where 'tikv'=type",
 			nodeTypes: set.NewStringSet("tikv"),
-			addresses: set.NewStringSet(),
+			instances: set.NewStringSet(),
 		},
 		{
 			sql:       "select * from information_schema.cluster_log where 'TiKV'=type",
 			nodeTypes: set.NewStringSet("tikv"),
-			addresses: set.NewStringSet(),
+			instances: set.NewStringSet(),
 		},
 		{
 			sql:       "select * from information_schema.cluster_log where 'TiKV'=type or type='tidb'",
 			nodeTypes: set.NewStringSet("tikv", "tidb"),
-			addresses: set.NewStringSet(),
+			instances: set.NewStringSet(),
 		},
 		{
 			sql:       "select * from information_schema.cluster_log where 'TiKV'=type or type='tidb' or type='pd'",
 			nodeTypes: set.NewStringSet("tikv", "tidb", "pd"),
-			addresses: set.NewStringSet(),
+			instances: set.NewStringSet(),
 		},
 		{
-			sql:       "select * from information_schema.cluster_log where (type='tidb' or type='pd') and (address='123.1.1.2:1234' or address='123.1.1.4:1234')",
+			sql:       "select * from information_schema.cluster_log where (type='tidb' or type='pd') and (instance='123.1.1.2:1234' or instance='123.1.1.4:1234')",
 			nodeTypes: set.NewStringSet("tidb", "pd"),
-			addresses: set.NewStringSet("123.1.1.2:1234", "123.1.1.4:1234"),
+			instances: set.NewStringSet("123.1.1.2:1234", "123.1.1.4:1234"),
 		},
 		{
 			sql:       "select * from information_schema.cluster_log where type in ('tikv', 'pd')",
 			nodeTypes: set.NewStringSet("tikv", "pd"),
-			addresses: set.NewStringSet(),
+			instances: set.NewStringSet(),
 		},
 		{
-			sql:       "select * from information_schema.cluster_log where type in ('tikv', 'pd') and address='123.1.1.2:1234'",
+			sql:       "select * from information_schema.cluster_log where type in ('tikv', 'pd') and instance='123.1.1.2:1234'",
 			nodeTypes: set.NewStringSet("tikv", "pd"),
-			addresses: set.NewStringSet("123.1.1.2:1234"),
+			instances: set.NewStringSet("123.1.1.2:1234"),
 		},
 		{
-			sql:       "select * from information_schema.cluster_log where type in ('tikv', 'pd') and address in ('123.1.1.2:1234', '123.1.1.4:1234')",
+			sql:       "select * from information_schema.cluster_log where type in ('tikv', 'pd') and instance in ('123.1.1.2:1234', '123.1.1.4:1234')",
 			nodeTypes: set.NewStringSet("tikv", "pd"),
-			addresses: set.NewStringSet("123.1.1.2:1234", "123.1.1.4:1234"),
+			instances: set.NewStringSet("123.1.1.2:1234", "123.1.1.4:1234"),
 		},
 		{
-			sql:       "select * from information_schema.cluster_log where type='tikv' and address in ('123.1.1.2:1234', '123.1.1.4:1234')",
+			sql:       "select * from information_schema.cluster_log where type='tikv' and instance in ('123.1.1.2:1234', '123.1.1.4:1234')",
 			nodeTypes: set.NewStringSet("tikv"),
-			addresses: set.NewStringSet("123.1.1.2:1234", "123.1.1.4:1234"),
+			instances: set.NewStringSet("123.1.1.2:1234", "123.1.1.4:1234"),
 		},
 		{
-			sql:       "select * from information_schema.cluster_log where type='tikv' and address='123.1.1.4:1234'",
+			sql:       "select * from information_schema.cluster_log where type='tikv' and instance='123.1.1.4:1234'",
 			nodeTypes: set.NewStringSet("tikv"),
-			addresses: set.NewStringSet("123.1.1.4:1234"),
+			instances: set.NewStringSet("123.1.1.4:1234"),
 		},
 		{
-			sql:       "select * from information_schema.cluster_log where type='tikv' and address='123.1.1.4:1234'",
+			sql:       "select * from information_schema.cluster_log where type='tikv' and instance='123.1.1.4:1234'",
 			nodeTypes: set.NewStringSet("tikv"),
-			addresses: set.NewStringSet("123.1.1.4:1234"),
+			instances: set.NewStringSet("123.1.1.4:1234"),
 		},
 		{
-			sql:       "select * from information_schema.cluster_log where type='tikv' and address='cNs2dm.tikv.pingcap.com:1234'",
+			sql:       "select * from information_schema.cluster_log where type='tikv' and instance='cNs2dm.tikv.pingcap.com:1234'",
 			nodeTypes: set.NewStringSet("tikv"),
-			addresses: set.NewStringSet("cNs2dm.tikv.pingcap.com:1234"),
+			instances: set.NewStringSet("cNs2dm.tikv.pingcap.com:1234"),
 		},
 		{
-			sql:       "select * from information_schema.cluster_log where type='TIKV' and address='cNs2dm.tikv.pingcap.com:1234'",
+			sql:       "select * from information_schema.cluster_log where type='TIKV' and instance='cNs2dm.tikv.pingcap.com:1234'",
 			nodeTypes: set.NewStringSet("tikv"),
-			addresses: set.NewStringSet("cNs2dm.tikv.pingcap.com:1234"),
+			instances: set.NewStringSet("cNs2dm.tikv.pingcap.com:1234"),
 		},
 		{
 			sql:         "select * from information_schema.cluster_log where type='tikv' and type='pd'",
 			nodeTypes:   set.NewStringSet(),
-			addresses:   set.NewStringSet(),
+			instances:   set.NewStringSet(),
 			skipRequest: true,
 		},
 		{
 			sql:       "select * from information_schema.cluster_log where type='tikv' and type in ('pd', 'tikv')",
 			nodeTypes: set.NewStringSet("tikv"),
-			addresses: set.NewStringSet(),
+			instances: set.NewStringSet(),
 		},
 		{
 			sql:         "select * from information_schema.cluster_log where type='tikv' and type in ('pd', 'tidb')",
 			nodeTypes:   set.NewStringSet(),
-			addresses:   set.NewStringSet(),
+			instances:   set.NewStringSet(),
 			skipRequest: true,
 		},
 		{
 			sql:       "select * from information_schema.cluster_log where type in ('tikv', 'tidb') and type in ('pd', 'tidb')",
 			nodeTypes: set.NewStringSet("tidb"),
-			addresses: set.NewStringSet(),
+			instances: set.NewStringSet(),
 		},
 		{
-			sql:         "select * from information_schema.cluster_log where address='123.1.1.4:1234' and address='123.1.1.5:1234'",
+			sql:         "select * from information_schema.cluster_log where instance='123.1.1.4:1234' and instance='123.1.1.5:1234'",
 			nodeTypes:   set.NewStringSet(),
-			addresses:   set.NewStringSet(),
+			instances:   set.NewStringSet(),
 			skipRequest: true,
 		},
 		{
-			sql:       "select * from information_schema.cluster_log where address='123.1.1.4:1234' and address in ('123.1.1.5:1234', '123.1.1.4:1234')",
+			sql:       "select * from information_schema.cluster_log where instance='123.1.1.4:1234' and instance in ('123.1.1.5:1234', '123.1.1.4:1234')",
 			nodeTypes: set.NewStringSet(),
-			addresses: set.NewStringSet("123.1.1.4:1234"),
+			instances: set.NewStringSet("123.1.1.4:1234"),
 		},
 		{
-			sql:         "select * from information_schema.cluster_log where address='123.1.1.4:1234' and address in ('123.1.1.5:1234', '123.1.1.6:1234')",
+			sql:         "select * from information_schema.cluster_log where instance='123.1.1.4:1234' and instance in ('123.1.1.5:1234', '123.1.1.6:1234')",
 			nodeTypes:   set.NewStringSet(),
-			addresses:   set.NewStringSet(),
+			instances:   set.NewStringSet(),
 			skipRequest: true,
 		},
 		{
-			sql:       "select * from information_schema.cluster_log where address in ('123.1.1.5:1234', '123.1.1.4:1234') and address in ('123.1.1.5:1234', '123.1.1.6:1234')",
+			sql:       "select * from information_schema.cluster_log where instance in ('123.1.1.5:1234', '123.1.1.4:1234') and instance in ('123.1.1.5:1234', '123.1.1.6:1234')",
 			nodeTypes: set.NewStringSet(),
-			addresses: set.NewStringSet("123.1.1.5:1234"),
+			instances: set.NewStringSet("123.1.1.5:1234"),
 		},
 		{
 			sql: `select * from information_schema.cluster_log
-				where address in ('123.1.1.5:1234', '123.1.1.4:1234')
-				  and address in ('123.1.1.5:1234', '123.1.1.6:1234')
+				where instance in ('123.1.1.5:1234', '123.1.1.4:1234')
+				  and instance in ('123.1.1.5:1234', '123.1.1.6:1234')
 				  and type in ('tikv', 'tidb')
 				  and type in ('pd', 'tidb')`,
 			nodeTypes: set.NewStringSet("tidb"),
-			addresses: set.NewStringSet("123.1.1.5:1234"),
+			instances: set.NewStringSet("123.1.1.5:1234"),
 		},
 		{
 			sql: `select * from information_schema.cluster_log
-				where address in ('123.1.1.5:1234', '123.1.1.4:1234')
-				  and address in ('123.1.1.5:1234', '123.1.1.6:1234')
-				  and address in ('123.1.1.6:1234', '123.1.1.7:1234')
-				  and address in ('123.1.1.7:1234', '123.1.1.8:1234')`,
+				where instance in ('123.1.1.5:1234', '123.1.1.4:1234')
+				  and instance in ('123.1.1.5:1234', '123.1.1.6:1234')
+				  and instance in ('123.1.1.6:1234', '123.1.1.7:1234')
+				  and instance in ('123.1.1.7:1234', '123.1.1.8:1234')`,
 			nodeTypes:   set.NewStringSet(),
-			addresses:   set.NewStringSet(),
+			instances:   set.NewStringSet(),
 			skipRequest: true,
 		},
 		{
 			sql:       "select * from information_schema.cluster_log where time='2019-10-10 10:10:10'",
 			nodeTypes: set.NewStringSet(),
-			addresses: set.NewStringSet(),
+			instances: set.NewStringSet(),
 			startTime: timestamp(c, "2019-10-10 10:10:10"),
 			endTime:   timestamp(c, "2019-10-10 10:10:10"),
 		},
 		{
 			sql:       "select * from information_schema.cluster_log where time>='2019-10-10 10:10:10' and time<='2019-10-11 10:10:10'",
 			nodeTypes: set.NewStringSet(),
-			addresses: set.NewStringSet(),
+			instances: set.NewStringSet(),
 			startTime: timestamp(c, "2019-10-10 10:10:10"),
 			endTime:   timestamp(c, "2019-10-11 10:10:10"),
 		},
 		{
 			sql:       "select * from information_schema.cluster_log where time>'2019-10-10 10:10:10' and time<'2019-10-11 10:10:10'",
 			nodeTypes: set.NewStringSet(),
-			addresses: set.NewStringSet(),
+			instances: set.NewStringSet(),
 			startTime: timestamp(c, "2019-10-10 10:10:10") + 1,
 			endTime:   timestamp(c, "2019-10-11 10:10:10") - 1,
 		},
 		{
 			sql:       "select * from information_schema.cluster_log where time>='2019-10-10 10:10:10' and time<'2019-10-11 10:10:10'",
 			nodeTypes: set.NewStringSet(),
-			addresses: set.NewStringSet(),
+			instances: set.NewStringSet(),
 			startTime: timestamp(c, "2019-10-10 10:10:10"),
 			endTime:   timestamp(c, "2019-10-11 10:10:10") - 1,
 		},
 		{
 			sql:         "select * from information_schema.cluster_log where time>='2019-10-12 10:10:10' and time<'2019-10-11 10:10:10'",
 			nodeTypes:   set.NewStringSet(),
-			addresses:   set.NewStringSet(),
+			instances:   set.NewStringSet(),
 			startTime:   timestamp(c, "2019-10-12 10:10:10"),
 			endTime:     timestamp(c, "2019-10-11 10:10:10") - 1,
 			skipRequest: true,
@@ -441,28 +441,28 @@ func (s *extractorSuite) TestClusterLogTableExtractor(c *C) {
 		{
 			sql:       "select * from information_schema.cluster_log where time>='2019-10-10 10:10:10'",
 			nodeTypes: set.NewStringSet(),
-			addresses: set.NewStringSet(),
+			instances: set.NewStringSet(),
 			startTime: timestamp(c, "2019-10-10 10:10:10"),
 			endTime:   math.MaxInt64,
 		},
 		{
 			sql:       "select * from information_schema.cluster_log where time>='2019-10-10 10:10:10' and  time>='2019-10-11 10:10:10' and  time>='2019-10-12 10:10:10'",
 			nodeTypes: set.NewStringSet(),
-			addresses: set.NewStringSet(),
+			instances: set.NewStringSet(),
 			startTime: timestamp(c, "2019-10-12 10:10:10"),
 			endTime:   math.MaxInt64,
 		},
 		{
 			sql:       "select * from information_schema.cluster_log where time>='2019-10-10 10:10:10' and  time>='2019-10-11 10:10:10' and  time>='2019-10-12 10:10:10' and time='2019-10-13 10:10:10'",
 			nodeTypes: set.NewStringSet(),
-			addresses: set.NewStringSet(),
+			instances: set.NewStringSet(),
 			startTime: timestamp(c, "2019-10-13 10:10:10"),
 			endTime:   timestamp(c, "2019-10-13 10:10:10"),
 		},
 		{
 			sql:         "select * from information_schema.cluster_log where time<='2019-10-10 10:10:10' and time='2019-10-13 10:10:10'",
 			nodeTypes:   set.NewStringSet(),
-			addresses:   set.NewStringSet(),
+			instances:   set.NewStringSet(),
 			startTime:   timestamp(c, "2019-10-13 10:10:10"),
 			endTime:     timestamp(c, "2019-10-10 10:10:10"),
 			skipRequest: true,
@@ -470,14 +470,14 @@ func (s *extractorSuite) TestClusterLogTableExtractor(c *C) {
 		{
 			sql:       "select * from information_schema.cluster_log where time='2019-10-10 10:10:10' and time<='2019-10-13 10:10:10'",
 			nodeTypes: set.NewStringSet(),
-			addresses: set.NewStringSet(),
+			instances: set.NewStringSet(),
 			startTime: timestamp(c, "2019-10-10 10:10:10"),
 			endTime:   timestamp(c, "2019-10-10 10:10:10"),
 		},
 		{
 			sql:       "select * from information_schema.cluster_log where time>='2019-10-10 10:10:10' and message like '%a%'",
 			nodeTypes: set.NewStringSet(),
-			addresses: set.NewStringSet(),
+			instances: set.NewStringSet(),
 			startTime: timestamp(c, "2019-10-10 10:10:10"),
 			endTime:   math.MaxInt64,
 			patterns:  []string{".*a.*"},
@@ -485,30 +485,30 @@ func (s *extractorSuite) TestClusterLogTableExtractor(c *C) {
 		{
 			sql:       "select * from information_schema.cluster_log where message like '%a%' and message regexp '^b'",
 			nodeTypes: set.NewStringSet(),
-			addresses: set.NewStringSet(),
+			instances: set.NewStringSet(),
 			patterns:  []string{".*a.*", "^b"},
 		},
 		{
 			sql:       "select * from information_schema.cluster_log where message='gc'",
 			nodeTypes: set.NewStringSet(),
-			addresses: set.NewStringSet(),
+			instances: set.NewStringSet(),
 			patterns:  []string{"^gc$"},
 		},
 		{
 			sql:       "select * from information_schema.cluster_log where message='.*txn.*'",
 			nodeTypes: set.NewStringSet(),
-			addresses: set.NewStringSet(),
+			instances: set.NewStringSet(),
 			patterns:  []string{"^" + regexp.QuoteMeta(".*txn.*") + "$"},
 		},
 		{
 			sql: `select * from information_schema.cluster_log
-				where address in ('123.1.1.5:1234', '123.1.1.4:1234')
+				where instance in ('123.1.1.5:1234', '123.1.1.4:1234')
 				  and (type='tidb' or type='pd')
 				  and message like '%coprocessor%'
 				  and message regexp '.*txn=123.*'
 				  and level in ('debug', 'info', 'ERROR')`,
 			nodeTypes: set.NewStringSet("tidb", "pd"),
-			addresses: set.NewStringSet("123.1.1.5:1234", "123.1.1.4:1234"),
+			instances: set.NewStringSet("123.1.1.5:1234", "123.1.1.4:1234"),
 			level:     set.NewStringSet("debug", "info", "error"),
 			patterns:  []string{".*coprocessor.*", ".*txn=123.*"},
 		},
@@ -519,7 +519,7 @@ func (s *extractorSuite) TestClusterLogTableExtractor(c *C) {
 
 		clusterConfigExtractor := logicalMemTable.Extractor.(*plannercore.ClusterLogTableExtractor)
 		c.Assert(clusterConfigExtractor.NodeTypes, DeepEquals, ca.nodeTypes, Commentf("SQL: %v", ca.sql))
-		c.Assert(clusterConfigExtractor.Addresses, DeepEquals, ca.addresses, Commentf("SQL: %v", ca.sql))
+		c.Assert(clusterConfigExtractor.Instances, DeepEquals, ca.instances, Commentf("SQL: %v", ca.sql))
 		c.Assert(clusterConfigExtractor.SkipRequest, DeepEquals, ca.skipRequest, Commentf("SQL: %v", ca.sql))
 		if ca.startTime > 0 {
 			c.Assert(clusterConfigExtractor.StartTime, Equals, ca.startTime, Commentf("SQL: %v", ca.sql))
@@ -539,7 +539,7 @@ func (s *extractorSuite) TestMetricTableExtractor(c *C) {
 	c.Assert(err, IsNil)
 
 	parseTime := func(c *C, s string) time.Time {
-		t, err := time.ParseInLocation("2006-01-02 15:04:05.999", s, time.Local)
+		t, err := time.ParseInLocation(plannercore.MetricTableTimeFormat, s, time.Local)
 		c.Assert(err, IsNil)
 		return t
 	}
@@ -554,25 +554,25 @@ func (s *extractorSuite) TestMetricTableExtractor(c *C) {
 		promQL             string
 	}{
 		{
-			sql:    "select * from metric_schema.query_duration",
+			sql:    "select * from metric_schema.tidb_query_duration",
 			promQL: "histogram_quantile(0.9, sum(rate(tidb_server_handle_query_duration_seconds_bucket{}[60s])) by (le,sql_type,instance))",
 		},
 		{
-			sql:    "select * from metric_schema.query_duration where instance='127.0.0.1:10080'",
+			sql:    "select * from metric_schema.tidb_query_duration where instance='127.0.0.1:10080'",
 			promQL: `histogram_quantile(0.9, sum(rate(tidb_server_handle_query_duration_seconds_bucket{instance="127.0.0.1:10080"}[60s])) by (le,sql_type,instance))`,
 			labelConditions: map[string]set.StringSet{
 				"instance": set.NewStringSet("127.0.0.1:10080"),
 			},
 		},
 		{
-			sql:    "select * from metric_schema.query_duration where instance='127.0.0.1:10080' or instance='127.0.0.1:10081'",
+			sql:    "select * from metric_schema.tidb_query_duration where instance='127.0.0.1:10080' or instance='127.0.0.1:10081'",
 			promQL: `histogram_quantile(0.9, sum(rate(tidb_server_handle_query_duration_seconds_bucket{instance=~"127.0.0.1:10080|127.0.0.1:10081"}[60s])) by (le,sql_type,instance))`,
 			labelConditions: map[string]set.StringSet{
 				"instance": set.NewStringSet("127.0.0.1:10080", "127.0.0.1:10081"),
 			},
 		},
 		{
-			sql:    "select * from metric_schema.query_duration where instance='127.0.0.1:10080' and sql_type='general'",
+			sql:    "select * from metric_schema.tidb_query_duration where instance='127.0.0.1:10080' and sql_type='general'",
 			promQL: `histogram_quantile(0.9, sum(rate(tidb_server_handle_query_duration_seconds_bucket{instance="127.0.0.1:10080",sql_type="general"}[60s])) by (le,sql_type,instance))`,
 			labelConditions: map[string]set.StringSet{
 				"instance": set.NewStringSet("127.0.0.1:10080"),
@@ -580,11 +580,11 @@ func (s *extractorSuite) TestMetricTableExtractor(c *C) {
 			},
 		},
 		{
-			sql:    "select * from metric_schema.query_duration where instance='127.0.0.1:10080' or sql_type='general'",
+			sql:    "select * from metric_schema.tidb_query_duration where instance='127.0.0.1:10080' or sql_type='general'",
 			promQL: `histogram_quantile(0.9, sum(rate(tidb_server_handle_query_duration_seconds_bucket{}[60s])) by (le,sql_type,instance))`,
 		},
 		{
-			sql:    "select * from metric_schema.query_duration where instance='127.0.0.1:10080' and sql_type='Update' and time='2019-10-10 10:10:10'",
+			sql:    "select * from metric_schema.tidb_query_duration where instance='127.0.0.1:10080' and sql_type='Update' and time='2019-10-10 10:10:10'",
 			promQL: `histogram_quantile(0.9, sum(rate(tidb_server_handle_query_duration_seconds_bucket{instance="127.0.0.1:10080",sql_type="Update"}[60s])) by (le,sql_type,instance))`,
 			labelConditions: map[string]set.StringSet{
 				"instance": set.NewStringSet("127.0.0.1:10080"),
@@ -594,38 +594,38 @@ func (s *extractorSuite) TestMetricTableExtractor(c *C) {
 			endTime:   parseTime(c, "2019-10-10 10:10:10"),
 		},
 		{
-			sql:       "select * from metric_schema.query_duration where time>'2019-10-10 10:10:10' and time<'2019-10-11 10:10:10'",
+			sql:       "select * from metric_schema.tidb_query_duration where time>'2019-10-10 10:10:10' and time<'2019-10-11 10:10:10'",
 			promQL:    `histogram_quantile(0.9, sum(rate(tidb_server_handle_query_duration_seconds_bucket{}[60s])) by (le,sql_type,instance))`,
 			startTime: parseTime(c, "2019-10-10 10:10:10.001"),
 			endTime:   parseTime(c, "2019-10-11 10:10:09.999"),
 		},
 		{
-			sql:       "select * from metric_schema.query_duration where time>='2019-10-10 10:10:10'",
+			sql:       "select * from metric_schema.tidb_query_duration where time>='2019-10-10 10:10:10'",
 			promQL:    `histogram_quantile(0.9, sum(rate(tidb_server_handle_query_duration_seconds_bucket{}[60s])) by (le,sql_type,instance))`,
 			startTime: parseTime(c, "2019-10-10 10:10:10"),
 			endTime:   parseTime(c, "2019-10-10 10:20:10"),
 		},
 		{
-			sql:         "select * from metric_schema.query_duration where time>='2019-10-10 10:10:10' and time<='2019-10-09 10:10:10'",
+			sql:         "select * from metric_schema.tidb_query_duration where time>='2019-10-10 10:10:10' and time<='2019-10-09 10:10:10'",
 			promQL:      "",
 			startTime:   parseTime(c, "2019-10-10 10:10:10"),
 			endTime:     parseTime(c, "2019-10-09 10:10:10"),
 			skipRequest: true,
 		},
 		{
-			sql:       "select * from metric_schema.query_duration where time<='2019-10-09 10:10:10'",
+			sql:       "select * from metric_schema.tidb_query_duration where time<='2019-10-09 10:10:10'",
 			promQL:    "histogram_quantile(0.9, sum(rate(tidb_server_handle_query_duration_seconds_bucket{}[60s])) by (le,sql_type,instance))",
 			startTime: parseTime(c, "2019-10-09 10:00:10"),
 			endTime:   parseTime(c, "2019-10-09 10:10:10"),
 		},
 		{
-			sql: "select * from metric_schema.query_duration where quantile=0.9 or quantile=0.8",
+			sql: "select * from metric_schema.tidb_query_duration where quantile=0.9 or quantile=0.8",
 			promQL: "histogram_quantile(0.8, sum(rate(tidb_server_handle_query_duration_seconds_bucket{}[60s])) by (le,sql_type,instance))," +
 				"histogram_quantile(0.9, sum(rate(tidb_server_handle_query_duration_seconds_bucket{}[60s])) by (le,sql_type,instance))",
 			quantiles: []float64{0.8, 0.9},
 		},
 		{
-			sql:       "select * from metric_schema.query_duration where quantile=0",
+			sql:       "select * from metric_schema.tidb_query_duration where quantile=0",
 			promQL:    "histogram_quantile(0, sum(rate(tidb_server_handle_query_duration_seconds_bucket{}[60s])) by (le,sql_type,instance))",
 			quantiles: []float64{0},
 		},
@@ -641,7 +641,7 @@ func (s *extractorSuite) TestMetricTableExtractor(c *C) {
 			c.Assert(metricTableExtractor.Quantiles, DeepEquals, ca.quantiles)
 		}
 		if !ca.skipRequest {
-			promQL := plannercore.GetMetricTablePromQL(se, "query_duration", metricTableExtractor.LabelConditions, metricTableExtractor.Quantiles)
+			promQL := plannercore.GetMetricTablePromQL(se, "tidb_query_duration", metricTableExtractor.LabelConditions, metricTableExtractor.Quantiles)
 			c.Assert(promQL, DeepEquals, ca.promQL, Commentf("SQL: %v", ca.sql))
 			start, end := metricTableExtractor.StartTime, metricTableExtractor.EndTime
 			c.Assert(start.UnixNano() <= end.UnixNano(), IsTrue)

@@ -66,7 +66,7 @@ type testIntegrationSuite struct {
 func setupIntegrationSuite(s *testIntegrationSuite, c *C) {
 	var err error
 	s.lease = 50 * time.Millisecond
-	ddl.WaitTimeWhenErrorOccured = 0
+	ddl.SetWaitTimeWhenErrorOccurred(0)
 
 	s.cluster = mocktikv.NewCluster()
 	mocktikv.BootstrapWithSingleStore(s.cluster)
@@ -425,6 +425,8 @@ func (s *testIntegrationSuite5) TestMySQLErrorCode(c *C) {
 	sql = "create table t2 (id int null, age int, primary key(id));"
 	tk.MustGetErrCode(sql, mysql.ErrPrimaryCantHaveNull)
 	sql = "create table t2 (id int auto_increment);"
+	tk.MustGetErrCode(sql, mysql.ErrWrongAutoKey)
+	sql = "create table t2 (id int auto_increment, a int key);"
 	tk.MustGetErrCode(sql, mysql.ErrWrongAutoKey)
 	sql = "create table t2 (a datetime(2) default current_timestamp(3))"
 	tk.MustGetErrCode(sql, mysql.ErrInvalidDefault)
@@ -1954,6 +1956,14 @@ func (s *testIntegrationSuite6) TestAddExpressionIndex(c *C) {
 	c.Assert(len(columns), Equals, 2)
 
 	tk.MustQuery("select * from t;").Check(testkit.Rows("1 2.1"))
+}
+
+func (s *testIntegrationSuite6) TestCreateExpressionIndexError(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a int, b real);")
+	tk.MustGetErrCode("alter table t add primary key ((a+b));", mysql.ErrFunctionalIndexPrimaryKey)
 
 	// Test for error
 	tk.MustExec("drop table if exists t;")

@@ -24,7 +24,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/hack"
@@ -341,12 +340,10 @@ func NumberToDuration(number int64, fsp int8) (Duration, error) {
 				return dur, errors.Trace(err1)
 			}
 		}
-		dur, err1 := MaxMySQLTime(fsp).ConvertToDuration()
-		terror.Log(err1)
+		dur := MaxMySQLDuration(fsp)
 		return dur, ErrOverflow.GenWithStackByArgs("Duration", strconv.Itoa(int(number)))
 	} else if number < -TimeMaxValue {
-		dur, err1 := MaxMySQLTime(fsp).ConvertToDuration()
-		terror.Log(err1)
+		dur := MaxMySQLDuration(fsp)
 		dur.Duration = -dur.Duration
 		return dur, ErrOverflow.GenWithStackByArgs("Duration", strconv.Itoa(int(number)))
 	}
@@ -358,11 +355,7 @@ func NumberToDuration(number int64, fsp int8) (Duration, error) {
 	if number/10000 > TimeMaxHour || number%100 >= 60 || (number/100)%100 >= 60 {
 		return ZeroDuration, errors.Trace(ErrWrongValue.GenWithStackByArgs(TimeStr, strconv.FormatInt(number, 10)))
 	}
-	t := NewTime(FromDate(0, 0, 0, int(number/10000), int((number/100)%100), int(number%100), 0), mysql.TypeDuration, fsp)
-	dur, err := t.ConvertToDuration()
-	if err != nil {
-		return ZeroDuration, errors.Trace(err)
-	}
+	dur := NewDuration(int(number/10000), int((number/100)%100), int(number%100), 0, fsp)
 	if neg {
 		dur.Duration = -dur.Duration
 	}

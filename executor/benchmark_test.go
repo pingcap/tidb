@@ -15,6 +15,7 @@ package executor
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"math/rand"
 	"sort"
@@ -46,13 +47,12 @@ var (
 )
 
 type mockDataSourceParameters struct {
-	schema         *expression.Schema
-	genDataFunc    func(row int, typ *types.FieldType) interface{}
-	ndvs           []int  // number of distinct values on columns[i] and zero represents no limit
-	orders         []bool // columns[i] should be ordered if orders[i] is true
-	rows           int    // number of rows the DataSource should output
-	ctx            sessionctx.Context
-	isRawDataSmall bool // false: rawData, true: rawDataSmall
+	schema      *expression.Schema
+	genDataFunc func(row int, typ *types.FieldType) interface{}
+	ndvs        []int  // number of distinct values on columns[i] and zero represents no limit
+	orders      []bool // columns[i] should be ordered if orders[i] is true
+	rows        int    // number of rows the DataSource should output
+	ctx         sessionctx.Context
 }
 
 type mockDataSource struct {
@@ -154,10 +154,9 @@ func (mds *mockDataSource) randDatum(typ *types.FieldType) interface{} {
 	case mysql.TypeDouble:
 		return rand.Float64()
 	case mysql.TypeVarString:
-		if mds.p.isRawDataSmall {
-			return rawDataSmall
-		}
-		return rawData
+		buff := make([]byte, 10)
+		rand.Read(buff)
+		return base64.RawURLEncoding.EncodeToString(buff)
 	default:
 		panic("not implement")
 	}
@@ -508,18 +507,14 @@ type windowTestCase struct {
 	concurrency      int
 	dataSourceSorted bool
 	ctx              sessionctx.Context
+	rawDataSmall     string
 }
 
-var rawData = strings.Repeat("x", 5*1024)
-var rawDataSmall = strings.Repeat("x", 16)
-
 func (a windowTestCase) columns() []*expression.Column {
-	rawDataTp := new(types.FieldType)
-	types.DefaultTypeForValue(rawData, rawDataTp)
 	return []*expression.Column{
 		{Index: 0, RetType: types.NewFieldType(mysql.TypeDouble)},
 		{Index: 1, RetType: types.NewFieldType(mysql.TypeLonglong)},
-		{Index: 2, RetType: rawDataTp},
+		{Index: 2, RetType: types.NewFieldType(mysql.TypeVarString)},
 		{Index: 3, RetType: types.NewFieldType(mysql.TypeLonglong)},
 	}
 }
@@ -533,7 +528,7 @@ func defaultWindowTestCase() *windowTestCase {
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().InitChunkSize = variable.DefInitChunkSize
 	ctx.GetSessionVars().MaxChunkSize = variable.DefMaxChunkSize
-	return &windowTestCase{ast.WindowFuncRowNumber, 1, nil, 1000, 10000000, 1, true, ctx}
+	return &windowTestCase{ast.WindowFuncRowNumber, 1, nil, 1000, 10000000, 1, true, ctx, strings.Repeat("x", 16)}
 }
 
 func benchmarkWindowExecWithCase(b *testing.B, casTest *windowTestCase) {
@@ -544,12 +539,21 @@ func benchmarkWindowExecWithCase(b *testing.B, casTest *windowTestCase) {
 
 	cols := casTest.columns()
 	dataSource := buildMockDataSource(mockDataSourceParameters{
-		schema:         expression.NewSchema(cols...),
-		ndvs:           []int{0, casTest.ndv, 0, 0},
-		orders:         []bool{false, casTest.dataSourceSorted, false, false},
-		rows:           casTest.rows,
-		ctx:            casTest.ctx,
-		isRawDataSmall: true,
+		schema: expression.NewSchema(cols...),
+		ndvs:   []int{0, casTest.ndv, 0, 0},
+		orders: []bool{false, casTest.dataSourceSorted, false, false},
+		rows:   casTest.rows,
+		ctx:    casTest.ctx,
+		genDataFunc: func(row int, typ *types.FieldType) interface{} {
+			switch typ.Tp {
+			case mysql.TypeLong, mysql.TypeLonglong:
+				return int64(row)
+			case mysql.TypeVarString:
+				return casTest.rawDataSmall
+			default:
+				panic("not implement")
+			}
+		},
 	})
 
 	b.ResetTimer()
@@ -670,21 +674,52 @@ func BenchmarkWindowFunctionsWithFrame(b *testing.B) {
 	}
 }
 
+func BenchmarkWindowFunctionsWithSlidingWindow(b *testing.B) {
+	b.ReportAllocs()
+	windowFuncs := []string{
+		ast.AggFuncCount,
+	}
+	rows := []int{1000, 100000}
+	ndvs := []int{10, 1000}
+	frames := []*core.WindowFrame{
+		{Type: ast.Rows, Start: &core.FrameBound{Type: ast.Preceding, Num: 10}, End: &core.FrameBound{Type: ast.Following, Num: 10}},
+		{Type: ast.Rows, Start: &core.FrameBound{Type: ast.Preceding, Num: 100}, End: &core.FrameBound{Type: ast.Following, Num: 100}},
+	}
+	for _, row := range rows {
+		for _, ndv := range ndvs {
+			for _, frame := range frames {
+				for _, windowFunc := range windowFuncs {
+					cas := defaultWindowTestCase()
+					cas.rows = row
+					cas.ndv = ndv
+					cas.windowFunc = windowFunc
+					cas.frame = frame
+					b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
+						benchmarkWindowExecWithCase(b, cas)
+					})
+				}
+			}
+		}
+	}
+}
+
 type hashJoinTestCase struct {
-	rows            int
-	cols            []*types.FieldType
-	concurrency     int
-	ctx             sessionctx.Context
-	keyIdx          []int
-	joinType        core.JoinType
-	disk            bool
-	useOuterToBuild bool
+	rows               int
+	cols               []*types.FieldType
+	concurrency        int
+	ctx                sessionctx.Context
+	keyIdx             []int
+	joinType           core.JoinType
+	disk               bool
+	useOuterToBuild    bool
+	rawData            string
+	childrenUsedSchema [][]bool
 }
 
 func (tc hashJoinTestCase) columns() []*expression.Column {
 	ret := make([]*expression.Column, 0)
 	for i, t := range tc.cols {
-		column := &expression.Column{Index: i, RetType: t}
+		column := &expression.Column{Index: i, RetType: t, UniqueID: tc.ctx.GetSessionVars().AllocPlanColumnID()}
 		ret = append(ret, column)
 	}
 	return ret
@@ -702,7 +737,7 @@ func defaultHashJoinTestCase(cols []*types.FieldType, joinType core.JoinType, us
 	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(nil, -1)
 	ctx.GetSessionVars().StmtCtx.DiskTracker = disk.NewTracker(nil, -1)
 	ctx.GetSessionVars().IndexLookupJoinConcurrency = 4
-	tc := &hashJoinTestCase{rows: 100000, concurrency: 4, ctx: ctx, keyIdx: []int{0, 1}}
+	tc := &hashJoinTestCase{rows: 100000, concurrency: 4, ctx: ctx, keyIdx: []int{0, 1}, rawData: strings.Repeat("x", 5*1024)}
 	tc.cols = cols
 	tc.useOuterToBuild = useOuterToBuild
 	tc.joinType = joinType
@@ -713,10 +748,26 @@ func prepare4HashJoin(testCase *hashJoinTestCase, innerExec, outerExec Executor)
 	if testCase.useOuterToBuild {
 		innerExec, outerExec = outerExec, innerExec
 	}
-	cols0 := testCase.columns()
-	cols1 := testCase.columns()
-	joinSchema := expression.NewSchema(cols0...)
-	joinSchema.Append(cols1...)
+	cols0 := innerExec.Schema().Columns
+	cols1 := outerExec.Schema().Columns
+
+	joinSchema := expression.NewSchema()
+	if testCase.childrenUsedSchema != nil {
+		for i, used := range testCase.childrenUsedSchema[0] {
+			if used {
+				joinSchema.Append(cols0[i])
+			}
+		}
+		for i, used := range testCase.childrenUsedSchema[1] {
+			if used {
+				joinSchema.Append(cols1[i])
+			}
+		}
+	} else {
+		joinSchema.Append(cols0...)
+		joinSchema.Append(cols1...)
+	}
+
 	joinKeys := make([]*expression.Column, 0, len(testCase.keyIdx))
 	for _, keyIdx := range testCase.keyIdx {
 		joinKeys = append(joinKeys, cols0[keyIdx])
@@ -733,12 +784,14 @@ func prepare4HashJoin(testCase *hashJoinTestCase, innerExec, outerExec Executor)
 		buildSideEstCount: float64(testCase.rows),
 		useOuterToBuild:   testCase.useOuterToBuild,
 	}
+
+	childrenUsedSchema := e.markChildrenUsedCols()
 	defaultValues := make([]types.Datum, e.buildSideExec.Schema().Len())
 	lhsTypes, rhsTypes := retTypes(innerExec), retTypes(outerExec)
 	e.joiners = make([]joiner, e.concurrency)
 	for i := uint(0); i < e.concurrency; i++ {
 		e.joiners[i] = newJoiner(testCase.ctx, e.joinType, true, defaultValues,
-			nil, lhsTypes, rhsTypes)
+			nil, lhsTypes, rhsTypes, childrenUsedSchema)
 	}
 	memLimit := int64(-1)
 	if testCase.disk {
@@ -753,16 +806,15 @@ func prepare4HashJoin(testCase *hashJoinTestCase, innerExec, outerExec Executor)
 }
 
 func benchmarkHashJoinExecWithCase(b *testing.B, casTest *hashJoinTestCase) {
-	opt := mockDataSourceParameters{
-		schema: expression.NewSchema(casTest.columns()...),
-		rows:   casTest.rows,
-		ctx:    casTest.ctx,
+	opt1 := mockDataSourceParameters{
+		rows: casTest.rows,
+		ctx:  casTest.ctx,
 		genDataFunc: func(row int, typ *types.FieldType) interface{} {
 			switch typ.Tp {
 			case mysql.TypeLong, mysql.TypeLonglong:
 				return int64(row)
 			case mysql.TypeVarString:
-				return rawData
+				return casTest.rawData
 			case mysql.TypeDouble:
 				return float64(row)
 			default:
@@ -770,8 +822,11 @@ func benchmarkHashJoinExecWithCase(b *testing.B, casTest *hashJoinTestCase) {
 			}
 		},
 	}
-	dataSource1 := buildMockDataSource(opt)
-	dataSource2 := buildMockDataSource(opt)
+	opt2 := opt1
+	opt1.schema = expression.NewSchema(casTest.columns()...)
+	opt2.schema = expression.NewSchema(casTest.columns()...)
+	dataSource1 := buildMockDataSource(opt1)
+	dataSource2 := buildMockDataSource(opt2)
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -802,6 +857,35 @@ func benchmarkHashJoinExecWithCase(b *testing.B, casTest *hashJoinTestCase) {
 		if exec.rowContainer.alreadySpilled() != casTest.disk {
 			b.Fatal("wrong usage with disk")
 		}
+	}
+}
+
+func BenchmarkHashJoinInlineProjection(b *testing.B) {
+	cols := []*types.FieldType{
+		types.NewFieldType(mysql.TypeLonglong),
+		types.NewFieldType(mysql.TypeVarString),
+	}
+
+	b.ReportAllocs()
+
+	{
+		cas := defaultHashJoinTestCase(cols, 0, false)
+		cas.keyIdx = []int{0}
+		cas.childrenUsedSchema = [][]bool{
+			{false, true},
+			{false, false},
+		}
+		b.Run("InlineProjection:ON", func(b *testing.B) {
+			benchmarkHashJoinExecWithCase(b, cas)
+		})
+	}
+
+	{
+		cas := defaultHashJoinTestCase(cols, 0, false)
+		cas.keyIdx = []int{0}
+		b.Run("InlineProjection:OFF", func(b *testing.B) {
+			benchmarkHashJoinExecWithCase(b, cas)
+		})
 	}
 }
 
@@ -915,7 +999,7 @@ func benchmarkBuildHashTableForList(b *testing.B, casTest *hashJoinTestCase) {
 			case mysql.TypeLong, mysql.TypeLonglong:
 				return int64(row)
 			case mysql.TypeVarString:
-				return rawData
+				return casTest.rawData
 			default:
 				panic("not implement")
 			}
@@ -994,6 +1078,7 @@ type indexJoinTestCase struct {
 	innerJoinKeyIdx []int
 	innerIdx        []int
 	needOuterSort   bool
+	rawData         string
 }
 
 func (tc indexJoinTestCase) columns() []*expression.Column {
@@ -1019,6 +1104,7 @@ func defaultIndexJoinTestCase() *indexJoinTestCase {
 		outerJoinKeyIdx: []int{0, 1},
 		innerJoinKeyIdx: []int{0, 1},
 		innerIdx:        []int{0, 1},
+		rawData:         strings.Repeat("x", 5*1024),
 	}
 	return tc
 }
@@ -1039,7 +1125,7 @@ func (tc indexJoinTestCase) getMockDataSourceOptByRows(rows int) mockDataSourceP
 			case mysql.TypeDouble:
 				return float64(row)
 			case mysql.TypeVarString:
-				return rawData
+				return tc.rawData
 			default:
 				panic("not implement")
 			}
@@ -1074,7 +1160,7 @@ func prepare4IndexInnerHashJoin(tc *indexJoinTestCase, outerDS *mockDataSource, 
 			keyCols:       tc.innerJoinKeyIdx,
 		},
 		workerWg:      new(sync.WaitGroup),
-		joiner:        newJoiner(tc.ctx, 0, false, defaultValues, nil, leftTypes, rightTypes),
+		joiner:        newJoiner(tc.ctx, 0, false, defaultValues, nil, leftTypes, rightTypes, nil),
 		isOuterJoin:   false,
 		keyOff2IdxOff: keyOff2IdxOff,
 		lastColHelper: nil,
@@ -1147,7 +1233,7 @@ func prepare4IndexMergeJoin(tc *indexJoinTestCase, outerDS *mockDataSource, inne
 	}
 	joiners := make([]joiner, e.ctx.GetSessionVars().IndexLookupJoinConcurrency)
 	for i := 0; i < e.ctx.GetSessionVars().IndexLookupJoinConcurrency; i++ {
-		joiners[i] = newJoiner(tc.ctx, 0, false, defaultValues, nil, leftTypes, rightTypes)
+		joiners[i] = newJoiner(tc.ctx, 0, false, defaultValues, nil, leftTypes, rightTypes, nil)
 	}
 	e.joiners = joiners
 	return e
@@ -1276,21 +1362,21 @@ func prepare4MergeJoin(tc *mergeJoinTestCase, leftExec, rightExec *mockDataSourc
 			nil,
 			retTypes(leftExec),
 			retTypes(rightExec),
+			nil,
 		),
 		isOuterJoin: false,
 	}
 
-	e.outerIdx = 0
-
-	e.innerTable = &mergeJoinInnerTable{
-		reader:   rightExec,
-		joinKeys: innerJoinKeys,
+	e.innerTable = &mergeJoinTable{
+		isInner:    true,
+		childIndex: 1,
+		joinKeys:   innerJoinKeys,
 	}
 
-	e.outerTable = &mergeJoinOuterTable{
-		reader: leftExec,
-		filter: nil,
-		keys:   outerJoinKeys,
+	e.outerTable = &mergeJoinTable{
+		childIndex: 0,
+		filters:    nil,
+		joinKeys:   outerJoinKeys,
 	}
 
 	return e
@@ -1317,6 +1403,7 @@ func newMergeJoinBenchmark(numOuterRows, numInnerDup, numInnerRedundant int) (tc
 		outerJoinKeyIdx: []int{0, 1},
 		innerJoinKeyIdx: []int{0, 1},
 		innerIdx:        []int{0, 1},
+		rawData:         strings.Repeat("x", 5*1024),
 	}
 	tc = &mergeJoinTestCase{*itc}
 	outerOpt := mockDataSourceParameters{
@@ -1330,7 +1417,7 @@ func newMergeJoinBenchmark(numOuterRows, numInnerDup, numInnerRedundant int) (tc
 			case mysql.TypeDouble:
 				return float64(row)
 			case mysql.TypeVarString:
-				return rawData
+				return tc.rawData
 			default:
 				panic("not implement")
 			}
@@ -1349,7 +1436,7 @@ func newMergeJoinBenchmark(numOuterRows, numInnerDup, numInnerRedundant int) (tc
 			case mysql.TypeDouble:
 				return float64(row)
 			case mysql.TypeVarString:
-				return rawData
+				return tc.rawData
 			default:
 				panic("not implement")
 			}
@@ -1441,6 +1528,108 @@ func BenchmarkMergeJoinExec(b *testing.B) {
 		tc, innerDS, outerDS := newMergeJoinBenchmark(totalRows/numInnerDup, numInnerDup, numInnerRedundant)
 		b.Run(fmt.Sprintf("merge join %v", tc), func(b *testing.B) {
 			benchmarkMergeJoinExecWithCase(b, tc, outerDS, innerDS, innerMergeJoin)
+		})
+	}
+}
+
+type sortCase struct {
+	rows       int
+	orderByIdx []int
+	ndvs       []int
+	ctx        sessionctx.Context
+}
+
+func (tc sortCase) columns() []*expression.Column {
+	return []*expression.Column{
+		{Index: 0, RetType: types.NewFieldType(mysql.TypeLonglong)},
+		{Index: 1, RetType: types.NewFieldType(mysql.TypeLonglong)},
+	}
+}
+
+func (tc sortCase) String() string {
+	return fmt.Sprintf("(rows:%v, orderBy:%v, ndvs: %v)", tc.rows, tc.orderByIdx, tc.ndvs)
+}
+
+func defaultSortTestCase() *sortCase {
+	ctx := mock.NewContext()
+	ctx.GetSessionVars().InitChunkSize = variable.DefInitChunkSize
+	ctx.GetSessionVars().MaxChunkSize = variable.DefMaxChunkSize
+	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(nil, -1)
+	tc := &sortCase{rows: 300000, orderByIdx: []int{0, 1}, ndvs: []int{0, 0}, ctx: ctx}
+	return tc
+}
+
+func benchmarkSortExec(b *testing.B, cas *sortCase) {
+	opt := mockDataSourceParameters{
+		schema: expression.NewSchema(cas.columns()...),
+		rows:   cas.rows,
+		ctx:    cas.ctx,
+		ndvs:   cas.ndvs,
+	}
+	dataSource := buildMockDataSource(opt)
+	exec := &SortExec{
+		baseExecutor: newBaseExecutor(cas.ctx, dataSource.schema, stringutil.StringerStr("sort"), dataSource),
+		ByItems:      make([]*core.ByItems, 0, len(cas.orderByIdx)),
+		schema:       dataSource.schema,
+	}
+	for _, idx := range cas.orderByIdx {
+		exec.ByItems = append(exec.ByItems, &core.ByItems{Expr: cas.columns()[idx]})
+	}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		b.StopTimer()
+		tmpCtx := context.Background()
+		chk := newFirstChunk(exec)
+		dataSource.prepareChunks()
+
+		b.StartTimer()
+		if err := exec.Open(tmpCtx); err != nil {
+			b.Fatal(err)
+		}
+		for {
+			if err := exec.Next(tmpCtx, chk); err != nil {
+				b.Fatal(err)
+			}
+			if chk.NumRows() == 0 {
+				break
+			}
+		}
+
+		if err := exec.Close(); err != nil {
+			b.Fatal(err)
+		}
+		b.StopTimer()
+	}
+}
+
+func BenchmarkSortExec(b *testing.B) {
+	b.ReportAllocs()
+	cas := defaultSortTestCase()
+	// all random data
+	cas.ndvs = []int{0, 0}
+	cas.orderByIdx = []int{0, 1}
+	b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
+		benchmarkSortExec(b, cas)
+	})
+
+	ndvs := []int{1, 10000}
+	for _, ndv := range ndvs {
+		cas.ndvs = []int{ndv, 0}
+		cas.orderByIdx = []int{0, 1}
+		b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
+			benchmarkSortExec(b, cas)
+		})
+
+		cas.ndvs = []int{ndv, 0}
+		cas.orderByIdx = []int{0}
+		b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
+			benchmarkSortExec(b, cas)
+		})
+
+		cas.ndvs = []int{ndv, 0}
+		cas.orderByIdx = []int{1}
+		b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
+			benchmarkSortExec(b, cas)
 		})
 	}
 }

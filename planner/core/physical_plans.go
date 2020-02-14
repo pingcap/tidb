@@ -398,6 +398,8 @@ type PhysicalMergeJoin struct {
 	basePhysicalJoin
 
 	CompareFuncs []expression.CompareFunc
+	// Desc means whether inner child keep desc order.
+	Desc bool
 }
 
 // PhysicalLock is the physical operator of lock, which is used for `select ... for update` clause.

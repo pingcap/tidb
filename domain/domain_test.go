@@ -148,6 +148,10 @@ func TestInfo(t *testing.T) {
 		t.Fatal(err)
 	}
 	<-dom.ddl.SchemaSyncer().Done()
+	err = failpoint.Disable("github.com/pingcap/tidb/ddl/util/ErrorMockSessionDone")
+	if err != nil {
+		t.Fatal(err)
+	}
 	time.Sleep(15 * time.Millisecond)
 	syncerStarted := false
 	for i := 0; i < 200; i++ {
@@ -159,10 +163,6 @@ func TestInfo(t *testing.T) {
 	}
 	if !syncerStarted {
 		t.Fatal("start syncer failed")
-	}
-	err = failpoint.Disable("github.com/pingcap/tidb/ddl/util/ErrorMockSessionDone")
-	if err != nil {
-		t.Fatal(err)
 	}
 	// Make sure loading schema is normal.
 	cs := &ast.CharsetOpt{
