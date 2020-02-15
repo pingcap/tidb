@@ -29,7 +29,7 @@ func preparePossibleProperties(lp LogicalPlan) (possibleProperties [][]*expressi
 		childrenPartitionProperties = append(childrenPartitionProperties, partitionProperties)
 	}
 	possibleProperties = lp.PreparePossibleProperties(lp.Schema(), childrenProperties...)
-	possiblePartitionProperties = lp.PreparePossiblePartitionProperties(possibleProperties, childrenPartitionProperties...)
+	possiblePartitionProperties = lp.PreparePossiblePartitionProperties(childrenPartitionProperties...)
 	return
 }
 
@@ -102,54 +102,13 @@ func (p *LogicalWindow) PreparePossibleProperties(schema *expression.Schema, chi
 	return [][]*expression.Column{result}
 }
 
-// PreparePossiblePartitionProperties implements LogicalPlan PreparePossiblePartitionProperties interface.
-func (p *LogicalWindow) PreparePossiblePartitionProperties(localProperties [][]*expression.Column, childrenProperties ...[]*property.PhysicalProperty) []*property.PhysicalProperty {
+// PreparePossiblePartitionProperties implements LogicalPlan interface.
+func (p *LogicalWindow) PreparePossiblePartitionProperties(childrenPartitionProperties ...[]*property.PhysicalProperty) []*property.PhysicalProperty {
 	if len(p.PartitionBy) == 0 {
 		return nil
 	}
-	partitionByCols := make([]*expression.Column, len(p.PartitionBy))
-	for i := range p.PartitionBy {
-		partitionByCols[i] = p.PartitionBy[i].Col
-	}
-
-	childProps := childrenProperties[0]
-	fullMatched := false
-	matchedGroupingCols := make([][]*expression.Column, 0, len(childProps))
-	for _, possibleChildProperty := range childProps {
-		if len(possibleChildProperty.PartitionGroupingCols) > 0 {
-			if including, equal := isColumnsIncluding(partitionByCols, possibleChildProperty.PartitionGroupingCols); including {
-				matchedGroupingCols = append(matchedGroupingCols, possibleChildProperty.PartitionGroupingCols)
-				if equal {
-					fullMatched = true
-				}
-			}
-		}
-	}
-
-	deliveringProperties := make([]*property.PhysicalProperty, 0, len(matchedGroupingCols)+1)
-	p.possibleChildPartitionProperties = make([]*property.PhysicalProperty, 0, len(matchedGroupingCols)+1)
-	for _, cols := range matchedGroupingCols {
-		prop := &property.PhysicalProperty{
-			IsPartitioning:        true,
-			PartitionGroupingCols: cols,
-			Items:                 property.ItemsFromCols(localProperties[0], false), // ASC/DESC is not concerned.
-		}
-		deliveringProperties = append(deliveringProperties, prop)
-		p.possibleChildPartitionProperties = append(p.possibleChildPartitionProperties, prop)
-	}
-
-	if !fullMatched {
-		prop := &property.PhysicalProperty{
-			IsPartitioning:        true,
-			PartitionGroupingCols: partitionByCols,
-			Items:                 property.ItemsFromCols(localProperties[0], false), // ASC/DESC is not concerned.
-			PartitionEnforced:     true,                                              //TODOO
-		}
-		deliveringProperties = append(deliveringProperties, prop)
-		p.possibleChildPartitionProperties = append(p.possibleChildPartitionProperties, prop)
-	}
-
-	return deliveringProperties
+	partitionByCols := property.ColsFromItems(p.PartitionBy)
+	return p.parallelHelper.preparePossiblePartitionProperties(p, partitionByCols, childrenPartitionProperties...)
 }
 
 // PreparePossibleProperties implements LogicalPlan PreparePossibleProperties interface.
@@ -159,6 +118,11 @@ func (p *LogicalSort) PreparePossibleProperties(schema *expression.Schema, child
 		return nil
 	}
 	return [][]*expression.Column{propCols}
+}
+
+// PreparePossiblePartitionProperties implements LogicalPlan PreparePossiblePartitionProperties interface.
+func (p *LogicalSort) PreparePossiblePartitionProperties(childrenPartitionProperties ...[]*property.PhysicalProperty) []*property.PhysicalProperty {
+	return p.parallelHelper.preparePossiblePartitionProperties(p, nil, childrenPartitionProperties...)
 }
 
 // PreparePossibleProperties implements LogicalPlan PreparePossibleProperties interface.
@@ -188,7 +152,7 @@ func (p *baseLogicalPlan) PreparePossibleProperties(schema *expression.Schema, c
 }
 
 // PreparePossiblePartitionProperties implements LogicalPlan PreparePossiblePartitionProperties interface.
-func (p *baseLogicalPlan) PreparePossiblePartitionProperties(localProperties [][]*expression.Column, childrenProperties ...[]*property.PhysicalProperty) []*property.PhysicalProperty {
+func (p *baseLogicalPlan) PreparePossiblePartitionProperties(childrenPartitionProperties ...[]*property.PhysicalProperty) []*property.PhysicalProperty {
 	return nil
 }
 

@@ -53,14 +53,16 @@ type PhysicalProperty struct {
 	Enforced bool
 
 	// IsPartitioning indicate the property is for partitioning or not.
-	// While true, `PartitionGroupingItems/PartitionOrderedItems` indicate the global (i.e inter-partition) property,
-	//   and `Items` indicate the indicate the local (i.e intra-partition) property.
-	IsPartitioning        bool
-	PartitionGroupingCols []*expression.Column // ASC/DESC is NOT concerned in grouping.
-	//Future: PartitionOrderedItems []Item
+	// While true, `PartitionGroupingCols` indicates the global (i.e inter-partition) property,
+	//   and `Items` indicates the local (i.e intra-partition) property.
+	IsPartitioning bool
 
-	// whether need to enforce partitioning property.
-	PartitionEnforced bool
+	// PartitionGroupingCols represents the partition grouping columns, which means that same values on these columns must in the same partition.
+	// `len(PartitionGroupingCols) == 0` (checked by `IsNonePartitionGrouping`) means that no grouping required on any column.
+	// ASC/DESC is NOT concerned.
+	PartitionGroupingCols []*expression.Column
+
+	//Future: PartitionOrderedItems []Item
 }
 
 // NewPhysicalProperty builds property from columns.
@@ -80,6 +82,15 @@ func ItemsFromCols(cols []*expression.Column, desc bool) []Item {
 		items = append(items, Item{Col: col, Desc: desc})
 	}
 	return items
+}
+
+// ColsFromItems get columns from items.
+func ColsFromItems(items []Item) []*expression.Column {
+	cols := make([]*expression.Column, 0, len(items))
+	for i := range items {
+		cols = append(cols, items[i].Col)
+	}
+	return cols
 }
 
 // AllColsFromSchema checks whether all the columns needed by this physical
@@ -111,6 +122,11 @@ func (p *PhysicalProperty) IsEmpty() bool {
 	return len(p.Items) == 0
 }
 
+// IsNonePartitionGrouping indicates that property is not grouping on any column.
+func (p *PhysicalProperty) IsNonePartitionGrouping() bool {
+	return len(p.PartitionGroupingCols) == 0
+}
+
 // HashCode calculates hash code for a PhysicalProperty object.
 func (p *PhysicalProperty) HashCode() []byte {
 	encodeBoolean := func(b bool) {
@@ -139,7 +155,6 @@ func (p *PhysicalProperty) HashCode() []byte {
 	for _, col := range p.PartitionGroupingCols {
 		p.hashcode = append(p.hashcode, col.HashCode(nil)...)
 	}
-	encodeBoolean(p.PartitionEnforced)
 	return p.hashcode
 }
 
@@ -154,9 +169,11 @@ func (p *PhysicalProperty) String() string {
 // for children nodes.
 func (p *PhysicalProperty) Clone() *PhysicalProperty {
 	prop := &PhysicalProperty{
-		Items:       p.Items,
-		TaskTp:      p.TaskTp,
-		ExpectedCnt: p.ExpectedCnt,
+		Items:                 p.Items,
+		TaskTp:                p.TaskTp,
+		ExpectedCnt:           p.ExpectedCnt,
+		IsPartitioning:        p.IsPartitioning,
+		PartitionGroupingCols: p.PartitionGroupingCols,
 	}
 	return prop
 }

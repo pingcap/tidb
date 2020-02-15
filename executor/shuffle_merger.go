@@ -23,6 +23,7 @@ import (
 
 var (
 	_ shuffleMerger = (*shuffleRandomMerger)(nil)
+	_ shuffleMerger = (*shuffleMergeSortMerger)(nil)
 )
 
 // shuffleMerger is the results merger of Shuffle executor.

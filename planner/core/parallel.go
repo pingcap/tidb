@@ -21,6 +21,106 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 )
 
+type parallelLogicalPlanHelper struct {
+	possibleChildrenProperties [][]*property.PhysicalProperty
+}
+
+func (p *parallelLogicalPlanHelper) preparePossiblePartitionProperties(
+	lp LogicalPlan, globalGrouping []*expression.Column,
+	childrenPartitionProperties ...[]*property.PhysicalProperty,
+) []*property.PhysicalProperty {
+	p.possibleChildrenProperties = make([][]*property.PhysicalProperty, len(lp.Children()))
+	for i := range lp.Children() {
+		p.possibleChildrenProperties[i] = p.preparePossiblePartitionProperties4OneChild(lp, globalGrouping, childrenPartitionProperties[i])
+	}
+	return p.possibleChildrenProperties[0] // Future: support multiple children.
+}
+
+func (p *parallelLogicalPlanHelper) preparePossiblePartitionProperties4OneChild(
+	lp LogicalPlan, globalGrouping []*expression.Column,
+	childPartitionProperties []*property.PhysicalProperty,
+) []*property.PhysicalProperty {
+	matched := make([]int, 0, len(childPartitionProperties))
+	isEqual := false
+	for i, childProp := range childPartitionProperties {
+		if len(globalGrouping) == 0 {
+			// no required grouping column, so any grouping column of child will do.
+			matched = append(matched, i)
+			if len(childProp.PartitionGroupingCols) == 0 {
+				isEqual = true
+			}
+		} else {
+			// any NONEMPTY SUBSET grouping columns of child will do.
+			if len(childProp.PartitionGroupingCols) > 0 {
+				if including, equal := isColumnsIncluding(globalGrouping, childProp.PartitionGroupingCols); including {
+					matched = append(matched, i)
+					if equal {
+						isEqual = true
+					}
+				}
+			}
+		}
+	}
+
+	possibleProperties := make([]*property.PhysicalProperty, 0, len(matched)+1)
+	for _, i := range matched {
+		childProp := childPartitionProperties[i]
+		prop := &property.PhysicalProperty{
+			IsPartitioning:        true,
+			PartitionGroupingCols: childProp.PartitionGroupingCols,
+		}
+		possibleProperties = append(possibleProperties, prop)
+	}
+	if !isEqual { // enforced parallel property for init-partitioning.
+		prop := &property.PhysicalProperty{
+			IsPartitioning:        true,
+			PartitionGroupingCols: globalGrouping,
+		}
+		possibleProperties = append(possibleProperties, prop)
+	}
+
+	return possibleProperties
+}
+
+func (p *parallelLogicalPlanHelper) exhaustParallelPhysicalPlans4SingleChild(
+	ctx sessionctx.Context, lp LogicalPlan, prop *property.PhysicalProperty,
+	deliveringLocalItems []property.Item,
+) []PhysicalPlan {
+	concurrency := ctx.GetSessionVars().ExecutorsConcurrency
+	if concurrency <= 1 {
+		return nil
+	}
+
+	plans := make([]PhysicalPlan, 0, len(p.possibleChildrenProperties[0]))
+	for _, possibleProp := range p.possibleChildrenProperties[0] {
+		physicals := lp.exhaustPhysicalPlans(prop)
+		if physicals == nil {
+			return nil
+		}
+
+		if len(possibleProp.PartitionGroupingCols) > 0 {
+			NDV := int(getCardinality(possibleProp.PartitionGroupingCols, lp.Schema(), lp.statsInfo()))
+			if NDV <= 1 {
+				continue
+			}
+		}
+
+		for _, physical := range physicals {
+			childProp := physical.GetChildReqProps(0)
+			childProp.IsPartitioning = true
+			childProp.PartitionGroupingCols = possibleProp.PartitionGroupingCols
+			physical.SetConcurrency(concurrency)
+			physical.SetPartitionDeliveringProperty(&property.PhysicalProperty{
+				IsPartitioning:        true,
+				Items:                 deliveringLocalItems,
+				PartitionGroupingCols: possibleProp.PartitionGroupingCols,
+			})
+			plans = append(plans, physical)
+		}
+	}
+	return plans
+}
+
 // matchPhysicalProperty match parent required property and delivering property, and enforce Shuffle if necessary.
 func matchPhysicalProperty(pp PhysicalPlan, requiredProperty *property.PhysicalProperty, tsk task, ctx sessionctx.Context) task {
 	if tsk.plan() == nil {
@@ -124,9 +224,10 @@ func enforceInitialPartition(pp PhysicalPlan, requiredProperty *property.Physica
 
 func enforceFullMerge(pp PhysicalPlan, requiredProperty *property.PhysicalProperty, deliveringProperty *property.PhysicalProperty, ctx sessionctx.Context) *PhysicalShuffle {
 	concurrency := ctx.GetSessionVars().ExecutorsConcurrency
+	_, isPhysicalSort := pp.(*PhysicalSort)
 	shuffle := newPhysicalShuffle(pp, ctx)
 	setShuffleNoneSplit(shuffle)
-	if len(requiredProperty.Items) > 0 {
+	if len(requiredProperty.Items) > 0 || isPhysicalSort {
 		// local property(i.e. requiredProperty.IsPrefix(deliveringProperty)) is ensured in `exhaustPhysicalPlans`.
 		setShuffleMergeByMergeSort(shuffle, concurrency, deliveringProperty.Items)
 	} else {
@@ -137,18 +238,19 @@ func enforceFullMerge(pp PhysicalPlan, requiredProperty *property.PhysicalProper
 }
 
 func matchGlobalPhysicalProperty(requiredProperty *property.PhysicalProperty, deliveringProperty *property.PhysicalProperty) bool {
-	if len(requiredProperty.PartitionGroupingCols) > 0 {
-		including, _ := isColumnsIncluding(requiredProperty.PartitionGroupingCols, deliveringProperty.PartitionGroupingCols)
-		return including
+	if requiredProperty.IsNonePartitionGrouping() {
+		return true
 	}
-	return true
+	including, _ := isColumnsIncluding(requiredProperty.PartitionGroupingCols, deliveringProperty.PartitionGroupingCols)
+	return including
 }
 
 func enforceRepartition(pp PhysicalPlan, requiredProperty *property.PhysicalProperty, deliveringProperty *property.PhysicalProperty, ctx sessionctx.Context) *PhysicalShuffle {
 	concurrency := ctx.GetSessionVars().ExecutorsConcurrency
+	_, isPhysicalSort := pp.(*PhysicalSort)
 	shuffle := newPhysicalShuffle(pp, ctx)
 	setShuffleSplitByHash(shuffle, concurrency, requiredProperty.PartitionGroupingCols)
-	if len(requiredProperty.Items) > 0 {
+	if len(requiredProperty.Items) > 0 || isPhysicalSort {
 		// local property(i.e. requiredProperty.IsPrefix(deliveringProperty)) is ensured in `exhaustPhysicalPlans`.
 		setShuffleMergeByMergeSort(shuffle, concurrency, deliveringProperty.Items)
 	} else {

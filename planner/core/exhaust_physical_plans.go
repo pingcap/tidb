@@ -31,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/set"
 	"go.uber.org/zap"
@@ -1523,7 +1522,7 @@ func (p *LogicalWindow) exhaustPhysicalPlans(prop *property.PhysicalProperty) []
 }
 
 func (p *LogicalWindow) exhaustParallelPhysicalPlans(prop *property.PhysicalProperty) []PhysicalPlan {
-	concurrency := mathutil.Min(p.basePlan.ctx.GetSessionVars().WindowConcurrency, p.basePlan.ctx.GetSessionVars().ExecutorsConcurrency)
+	concurrency := p.basePlan.ctx.GetSessionVars().WindowConcurrency
 	if concurrency <= 1 {
 		return nil
 	}
@@ -1532,37 +1531,7 @@ func (p *LogicalWindow) exhaustParallelPhysicalPlans(prop *property.PhysicalProp
 	byItems = append(byItems, p.PartitionBy...)
 	byItems = append(byItems, p.OrderBy...)
 
-	windows := make([]PhysicalPlan, 0, len(p.possibleChildPartitionProperties))
-	for i, childProperty := range p.possibleChildPartitionProperties {
-		childProperty.ExpectedCnt = math.MaxFloat64
-		childProperty.Items = byItems
-		childProperty.Enforced = true
-		if i == 0 && !prop.IsPrefix(childProperty) {
-			return nil
-		}
-
-		NDV := int(getCardinality(childProperty.PartitionGroupingCols, p.Schema(), p.statsInfo()))
-		if NDV <= 1 {
-			continue
-		}
-
-		w := PhysicalWindow{
-			WindowFuncDescs: p.WindowFuncDescs,
-			PartitionBy:     p.PartitionBy,
-			OrderBy:         p.OrderBy,
-			Frame:           p.Frame,
-		}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), p.blockOffset, childProperty)
-		w.SetSchema(p.Schema())
-		w.concurrency = concurrency
-		w.partitionDeliveringProperty = &property.PhysicalProperty{
-			IsPartitioning:        true,
-			PartitionGroupingCols: childProperty.PartitionGroupingCols,
-			Items:                 byItems,
-		}
-
-		windows = append(windows, w)
-	}
-	return windows
+	return p.parallelHelper.exhaustParallelPhysicalPlans4SingleChild(p.basePlan.ctx, p, prop, byItems)
 }
 
 // exhaustPhysicalPlans is only for implementing interface. DataSource and Dual generate task in `findBestTask` directly.
@@ -1805,6 +1774,14 @@ func (ls *LogicalSort) exhaustPhysicalPlans(prop *property.PhysicalProperty) []P
 		return ret
 	}
 	return nil
+}
+
+func (ls *LogicalSort) exhaustParallelPhysicalPlans(prop *property.PhysicalProperty) []PhysicalPlan {
+	var items []property.Item
+	if prop, ok := GetPropByOrderByItems(ls.ByItems); ok { //TODOO
+		items = prop.Items
+	}
+	return ls.parallelHelper.exhaustParallelPhysicalPlans4SingleChild(ls.basePlan.ctx, ls, prop, items)
 }
 
 func (p *LogicalMaxOneRow) exhaustPhysicalPlans(prop *property.PhysicalProperty) []PhysicalPlan {

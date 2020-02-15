@@ -840,6 +840,7 @@ type LogicalUnionAll struct {
 // LogicalSort stands for the order by plan.
 type LogicalSort struct {
 	baseLogicalPlan
+	parallelHelper parallelLogicalPlanHelper
 
 	ByItems []*ByItems
 }
@@ -905,13 +906,12 @@ type FrameBound struct {
 // LogicalWindow represents a logical window function plan.
 type LogicalWindow struct {
 	logicalSchemaProducer
+	parallelHelper parallelLogicalPlanHelper
 
 	WindowFuncDescs []*aggregation.WindowFuncDesc
 	PartitionBy     []property.Item
 	OrderBy         []property.Item
 	Frame           *WindowFrame
-
-	possibleChildPartitionProperties []*property.PhysicalProperty
 }
 
 // GetWindowResultColumns returns the columns storing the result of the window function.
