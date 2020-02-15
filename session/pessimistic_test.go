@@ -176,7 +176,7 @@ func (s *testPessimisticSuite) TestDeadlock(c *C) {
 	syncCh <- struct{}{}
 }
 
-func (s *testPessimisticSuite) TestSingleStatementRollback(c *C) {
+func (s *testPessimisticSuite) TestSingleStatementRollbackSecondary(c *C) {
 	if *withTiKV {
 		c.Skip("skip with tikv because cluster manipulate is not available")
 	}
@@ -196,9 +196,11 @@ func (s *testPessimisticSuite) TestSingleStatementRollback(c *C) {
 	region2ID := region2.Id
 
 	syncCh := make(chan bool)
+	// key 1 is primary, key 3 is secondary, tk2 will lock primary successfully
 	go func() {
 		tk2.MustExec("begin pessimistic")
 		<-syncCh
+		// tk2 will rollback key 3 locked by tk, tk cannot update successfully
 		s.cluster.ScheduleDelay(tk2.Se.GetSessionVars().TxnCtx.StartTS, region2ID, time.Millisecond*3)
 		tk2.MustExec("update single_statement set v = v + 1")
 		tk2.MustExec("commit")
@@ -206,9 +208,11 @@ func (s *testPessimisticSuite) TestSingleStatementRollback(c *C) {
 	}()
 	tk.MustExec("begin pessimistic")
 	syncCh <- true
-	s.cluster.ScheduleDelay(tk.Se.GetSessionVars().TxnCtx.StartTS, region1ID, time.Millisecond*3)
-	tk.MustExec("update single_statement set v = v + 1")
-	tk.MustExec("commit")
+	// tk goes later, so tk will get deadlock error and retry single statement deadlock
+	s.cluster.ScheduleDelay(tk.Se.GetSessionVars().TxnCtx.StartTS, region1ID, time.Millisecond*30)
+	_, err := tk.Exec("update single_statement set v = v + 1")
+	c.Assert(err, NotNil)
+	tk.MustExec("rollback")
 	syncCh <- true
 }
 

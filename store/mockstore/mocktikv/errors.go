@@ -68,6 +68,16 @@ func (e ErrAlreadyCommitted) Error() string {
 	return "txn already committed"
 }
 
+// ErrAlreadyRollbacked is returned when lock operation meets rollback write record
+type ErrAlreadyRollbacked struct {
+	startTS uint64
+	key     []byte
+}
+
+func (e *ErrAlreadyRollbacked) Error() string {
+	return fmt.Sprintf("txn=%v on key=%v is already rollbacked", e.startTS, e.key)
+}
+
 // ErrConflict is returned when the commitTS of key in the DB is greater than startTS.
 type ErrConflict struct {
 	StartTS          uint64

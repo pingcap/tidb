@@ -525,7 +525,10 @@ func (mvcc *MVCCLevelDB) pessimisticLockMutation(batch *leveldb.Batch, mutation 
 		}
 		return nil
 	}
-	if err = checkConflictValue(iter, mutation, forUpdateTS); err != nil {
+
+	// For pessimisticLockMutation, check the correspond rollback record, there may be rollbackLock
+	// operation between startTS and forUpdateTS
+	if err = checkConflictValue(iter, mutation, forUpdateTS, startTS); err != nil {
 		return err
 	}
 
@@ -645,7 +648,7 @@ func (mvcc *MVCCLevelDB) Prewrite(req *kvrpcpb.PrewriteRequest) []error {
 	return errs
 }
 
-func checkConflictValue(iter *Iterator, m *kvrpcpb.Mutation, startTS uint64) error {
+func checkConflictValue(iter *Iterator, m *kvrpcpb.Mutation, startTS uint64, txnTS uint64) error {
 	dec := valueDecoder{
 		expectKey: m.Key,
 	}
@@ -681,6 +684,37 @@ func checkConflictValue(iter *Iterator, m *kvrpcpb.Mutation, startTS uint64) err
 				}
 				break
 			}
+		}
+	}
+	if txnTS > 0 {
+		if dec.value.commitTS > txnTS {
+			info, ok, err1 := getTxnCommitInfo(iter, m.Key, txnTS)
+			if err1 != nil {
+				err = errors.Trace(err1)
+				return err
+			}
+			if ok {
+				logutil.BgLogger().Warn("conflict value found",
+					zap.Uint64("txnID", txnTS),
+					zap.Int32("info.valueType", int32(info.valueType)),
+					zap.Uint64("info.startTS", info.startTS),
+					zap.Uint64("info.commitTS", info.commitTS))
+				if info.valueType == typeRollback {
+					return &ErrAlreadyRollbacked{
+						startTS: txnTS,
+						key:     m.Key,
+					}
+				}
+				panic("invalid value type not rollback")
+			}
+		} else if dec.value.commitTS == txnTS && dec.value.startTS == txnTS {
+			if dec.value.valueType == typeRollback {
+				return &ErrAlreadyRollbacked{
+					startTS: txnTS,
+					key:     m.Key,
+				}
+			}
+			panic("invalid value type not rollback")
 		}
 	}
 	return nil
@@ -725,7 +759,7 @@ func prewriteMutation(db *leveldb.DB, batch *leveldb.Batch,
 		if isPessimisticLock {
 			return ErrAbort("pessimistic lock not found")
 		}
-		err = checkConflictValue(iter, mutation, startTS)
+		err = checkConflictValue(iter, mutation, startTS, 0)
 		if err != nil {
 			return err
 		}
