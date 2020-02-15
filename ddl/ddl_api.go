@@ -609,6 +609,7 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 
 	// We need the MySQL compatibility flag, see # 13992.
 	isBinaryCollation := func(collation string) bool {
+		// @TODO need define a const for "_bin".
 		return strings.Count(collation, "_bin") == 1
 	}
 	if col.FieldType.EvalType().IsStringKind() && (col.Charset == charset.CharsetBin || isBinaryCollation(col.Collate)) {
