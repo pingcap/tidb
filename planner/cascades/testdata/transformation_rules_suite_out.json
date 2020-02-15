@@ -1707,5 +1707,274 @@
         ]
       }
     ]
+  },
+  {
+    "Name": "TestTransformAggregateCaseToSelection",
+    "Cases": [
+      {
+        "SQL": "select count(case when a > 10 then b end) from t",
+        "Result": [
+          "Group#0 Schema:[Column#13]",
+          "    Projection_3 input:[Group#1], Column#13",
+          "Group#1 Schema:[Column#13]",
+          "    Aggregation_5 input:[Group#2], funcs:count(test.t.b)",
+          "Group#2 Schema:[test.t.a,test.t.b]",
+          "    Selection_4 input:[Group#3], gt(test.t.a, 10)",
+          "Group#3 Schema:[test.t.a,test.t.b]",
+          "    TableScan_1 table:t"
+        ]
+      },
+      {
+        "SQL": "select count(case when a > 10 then b end) from t group by c",
+        "Result": [
+          "Group#0 Schema:[Column#13]",
+          "    Projection_3 input:[Group#1], Column#13",
+          "Group#1 Schema:[Column#13]",
+          "    Aggregation_2 input:[Group#2], group by:test.t.c, funcs:count(case(gt(test.t.a, 10), test.t.b))",
+          "Group#2 Schema:[test.t.a,test.t.b,test.t.c]",
+          "    TableScan_1 table:t"
+        ]
+      },
+      {
+        "SQL": "select count(case when a > 10 then b end) from t group by 'a'",
+        "Result": [
+          "Group#0 Schema:[Column#13]",
+          "    Projection_3 input:[Group#1], Column#13",
+          "Group#1 Schema:[Column#13]",
+          "    Aggregation_2 input:[Group#2], group by:1, funcs:count(case(gt(test.t.a, 10), test.t.b))",
+          "Group#2 Schema:[test.t.a,test.t.b]",
+          "    TableScan_1 table:t"
+        ]
+      },
+      {
+        "SQL": "select count(case when a > 10 then b end) from t group by concat(c, a)",
+        "Result": [
+          "Group#0 Schema:[Column#13]",
+          "    Projection_3 input:[Group#1], Column#13",
+          "Group#1 Schema:[Column#13]",
+          "    Aggregation_2 input:[Group#2], group by:concat(cast(test.t.c), cast(test.t.a)), funcs:count(case(gt(test.t.a, 10), test.t.b))",
+          "Group#2 Schema:[test.t.a,test.t.b,test.t.c]",
+          "    TableScan_1 table:t"
+        ]
+      },
+      {
+        "SQL": "select count(case when a > 10 then b end) from t group by concat(c, 'a')",
+        "Result": [
+          "Group#0 Schema:[Column#13]",
+          "    Projection_3 input:[Group#1], Column#13",
+          "Group#1 Schema:[Column#13]",
+          "    Aggregation_2 input:[Group#2], group by:concat(cast(test.t.c), \"a\"), funcs:count(case(gt(test.t.a, 10), test.t.b))",
+          "Group#2 Schema:[test.t.a,test.t.b,test.t.c]",
+          "    TableScan_1 table:t"
+        ]
+      },
+      {
+        "SQL": "select count(case when a > 10 then b end) from t group by concat('a', 'c')",
+        "Result": [
+          "Group#0 Schema:[Column#13]",
+          "    Projection_3 input:[Group#1], Column#13",
+          "Group#1 Schema:[Column#13]",
+          "    Aggregation_2 input:[Group#2], group by:1, funcs:count(case(gt(test.t.a, 10), test.t.b))",
+          "Group#2 Schema:[test.t.a,test.t.b]",
+          "    TableScan_1 table:t"
+        ]
+      },
+      {
+        "SQL": "select count(case when a > 10 then b else null end) from t",
+        "Result": [
+          "Group#0 Schema:[Column#13]",
+          "    Projection_3 input:[Group#1], Column#13",
+          "Group#1 Schema:[Column#13]",
+          "    Aggregation_5 input:[Group#2], funcs:count(test.t.b)",
+          "Group#2 Schema:[test.t.a,test.t.b]",
+          "    Selection_4 input:[Group#3], gt(test.t.a, 10)",
+          "Group#3 Schema:[test.t.a,test.t.b]",
+          "    TableScan_1 table:t"
+        ]
+      },
+      {
+        "SQL": "select count(case when a > 10 then null else b end) from t",
+        "Result": [
+          "Group#0 Schema:[Column#13]",
+          "    Projection_3 input:[Group#1], Column#13",
+          "Group#1 Schema:[Column#13]",
+          "    Aggregation_5 input:[Group#2], funcs:count(test.t.b)",
+          "Group#2 Schema:[test.t.a,test.t.b]",
+          "    Selection_4 input:[Group#3], not(gt(test.t.a, 10))",
+          "Group#3 Schema:[test.t.a,test.t.b]",
+          "    TableScan_1 table:t"
+        ]
+      },
+      {
+        "SQL": "select count(case when a > 10 then c else b end) from t",
+        "Result": [
+          "Group#0 Schema:[Column#13]",
+          "    Projection_3 input:[Group#1], Column#13",
+          "Group#1 Schema:[Column#13]",
+          "    Aggregation_2 input:[Group#2], funcs:count(case(gt(test.t.a, 10), test.t.c, test.t.b))",
+          "Group#2 Schema:[test.t.a,test.t.b,test.t.c]",
+          "    TableScan_1 table:t"
+        ]
+      },
+      {
+        "SQL": "select count(case when a > 10 then c else 0 end) from t",
+        "Result": [
+          "Group#0 Schema:[Column#13]",
+          "    Projection_3 input:[Group#1], Column#13",
+          "Group#1 Schema:[Column#13]",
+          "    Aggregation_2 input:[Group#2], funcs:count(case(gt(test.t.a, 10), test.t.c, 0))",
+          "Group#2 Schema:[test.t.a,test.t.c]",
+          "    TableScan_1 table:t"
+        ]
+      },
+      {
+        "SQL": "select sum(case when a > 10 then c else 0 end) from t",
+        "Result": [
+          "Group#0 Schema:[Column#13]",
+          "    Projection_3 input:[Group#1], Column#13",
+          "Group#1 Schema:[Column#13]",
+          "    Aggregation_5 input:[Group#2], funcs:sum(test.t.c)",
+          "Group#2 Schema:[test.t.a,test.t.c]",
+          "    Selection_4 input:[Group#3], gt(test.t.a, 10)",
+          "Group#3 Schema:[test.t.a,test.t.c]",
+          "    TableScan_1 table:t"
+        ]
+      },
+      {
+        "SQL": "select sum(case when a > 10 then c else 0.0 end) from t",
+        "Result": [
+          "Group#0 Schema:[Column#13]",
+          "    Projection_3 input:[Group#1], Column#13",
+          "Group#1 Schema:[Column#13]",
+          "    Aggregation_5 input:[Group#2], funcs:sum(cast(test.t.c))",
+          "Group#2 Schema:[test.t.a,test.t.c]",
+          "    Selection_4 input:[Group#3], gt(test.t.a, 10)",
+          "Group#3 Schema:[test.t.a,test.t.c]",
+          "    TableScan_1 table:t"
+        ]
+      },
+      {
+        "SQL": "select sum(case when a > 10 then c else 1-1 end) from t",
+        "Result": [
+          "Group#0 Schema:[Column#13]",
+          "    Projection_3 input:[Group#1], Column#13",
+          "Group#1 Schema:[Column#13]",
+          "    Aggregation_5 input:[Group#2], funcs:sum(test.t.c)",
+          "Group#2 Schema:[test.t.a,test.t.c]",
+          "    Selection_4 input:[Group#3], gt(test.t.a, 10)",
+          "Group#3 Schema:[test.t.a,test.t.c]",
+          "    TableScan_1 table:t"
+        ]
+      },
+      {
+        "SQL": "select sum(case when a > 0 then (case when a <= 1000 then b end) else 0 end) from t",
+        "Result": [
+          "Group#0 Schema:[Column#13]",
+          "    Projection_3 input:[Group#1], Column#13",
+          "Group#1 Schema:[Column#13]",
+          "    Aggregation_7 input:[Group#2], funcs:sum(test.t.b)",
+          "Group#2 Schema:[test.t.a,test.t.b]",
+          "    Selection_6 input:[Group#3], le(test.t.a, 1000)",
+          "Group#3 Schema:[test.t.a,test.t.b]",
+          "    Selection_4 input:[Group#4], gt(test.t.a, 0)",
+          "Group#4 Schema:[test.t.a,test.t.b]",
+          "    TableScan_1 table:t"
+        ]
+      },
+      {
+        "SQL": "select sum(case when a > 10 then 0 else c end) from t",
+        "Result": [
+          "Group#0 Schema:[Column#13]",
+          "    Projection_3 input:[Group#1], Column#13",
+          "Group#1 Schema:[Column#13]",
+          "    Aggregation_5 input:[Group#2], funcs:sum(test.t.c)",
+          "Group#2 Schema:[test.t.a,test.t.c]",
+          "    Selection_4 input:[Group#3], not(gt(test.t.a, 10))",
+          "Group#3 Schema:[test.t.a,test.t.c]",
+          "    TableScan_1 table:t"
+        ]
+      },
+      {
+        "SQL": "select sum(case when a > 10 then 2 else 1 end) from t",
+        "Result": [
+          "Group#0 Schema:[Column#13]",
+          "    Projection_3 input:[Group#1], Column#13",
+          "Group#1 Schema:[Column#13]",
+          "    Aggregation_2 input:[Group#2], funcs:sum(case(gt(test.t.a, 10), 2, 1))",
+          "Group#2 Schema:[test.t.a]",
+          "    TableScan_1 table:t"
+        ]
+      },
+      {
+        "SQL": "select count(DISTINCT case when a > 10 then null else c end) from t",
+        "Result": [
+          "Group#0 Schema:[Column#13]",
+          "    Projection_3 input:[Group#1], Column#13",
+          "Group#1 Schema:[Column#13]",
+          "    Aggregation_5 input:[Group#2], funcs:count(distinct test.t.c)",
+          "Group#2 Schema:[test.t.a,test.t.c]",
+          "    Selection_4 input:[Group#3], not(gt(test.t.a, 10))",
+          "Group#3 Schema:[test.t.a,test.t.c]",
+          "    TableScan_1 table:t"
+        ]
+      },
+      {
+        "SQL": "select sum(DISTINCT case when a > 10 then c else 0 end) from t",
+        "Result": [
+          "Group#0 Schema:[Column#13]",
+          "    Projection_3 input:[Group#1], Column#13",
+          "Group#1 Schema:[Column#13]",
+          "    Aggregation_2 input:[Group#2], funcs:sum(distinct case(gt(test.t.a, 10), test.t.c, 0))",
+          "Group#2 Schema:[test.t.a,test.t.c]",
+          "    TableScan_1 table:t"
+        ]
+      },
+      {
+        "SQL": "select case when c > 10 then c end from t",
+        "Result": [
+          "Group#0 Schema:[Column#13]",
+          "    Projection_2 input:[Group#1], case(gt(test.t.c, 10), test.t.c)->Column#13",
+          "Group#1 Schema:[test.t.c]",
+          "    TableScan_1 table:t"
+        ]
+      },
+      {
+        "SQL": "select count(case when a > 10 then c end), c from t",
+        "Result": [
+          "Group#0 Schema:[Column#13,test.t.c]",
+          "    Projection_3 input:[Group#1], Column#13, test.t.c",
+          "Group#1 Schema:[Column#13,test.t.c]",
+          "    Aggregation_2 input:[Group#2], funcs:count(case(gt(test.t.a, 10), test.t.c)), firstrow(test.t.c)",
+          "Group#2 Schema:[test.t.a,test.t.c]",
+          "    TableScan_1 table:t"
+        ]
+      },
+      {
+        "SQL": "select count(case when a > 10 and d < 5 then b end) from t",
+        "Result": [
+          "Group#0 Schema:[Column#13]",
+          "    Projection_3 input:[Group#1], Column#13",
+          "Group#1 Schema:[Column#13]",
+          "    Aggregation_5 input:[Group#2], funcs:count(test.t.b)",
+          "Group#2 Schema:[test.t.a,test.t.b,test.t.d]",
+          "    Selection_4 input:[Group#3], gt(test.t.a, 10), lt(test.t.d, 5)",
+          "Group#3 Schema:[test.t.a,test.t.b,test.t.d]",
+          "    TableScan_1 table:t"
+        ]
+      },
+      {
+        "SQL": "select count(case when a > 10 and d < 5 then null else b end) from t",
+        "Result": [
+          "Group#0 Schema:[Column#13]",
+          "    Projection_3 input:[Group#1], Column#13",
+          "Group#1 Schema:[Column#13]",
+          "    Aggregation_5 input:[Group#2], funcs:count(test.t.b)",
+          "Group#2 Schema:[test.t.a,test.t.b,test.t.d]",
+          "    Selection_4 input:[Group#3], not(and(gt(test.t.a, 10), lt(test.t.d, 5)))",
+          "Group#3 Schema:[test.t.a,test.t.b,test.t.d]",
+          "    TableScan_1 table:t"
+        ]
+      }
+    ]
   }
 ]

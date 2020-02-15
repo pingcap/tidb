@@ -17,6 +17,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -264,11 +265,23 @@ func (s *Server) startHTTPServer() {
 	})
 
 	logutil.BgLogger().Info("for status and metrics report", zap.String("listening on addr", addr))
-	s.setupStatuServerAndRPCServer(addr, serverMux)
+	s.setupStatusServerAndRPCServer(addr, serverMux)
 }
 
-func (s *Server) setupStatuServerAndRPCServer(addr string, serverMux *http.ServeMux) {
-	l, err := net.Listen("tcp", addr)
+func (s *Server) setupStatusServerAndRPCServer(addr string, serverMux *http.ServeMux) {
+	tlsConfig, err := s.cfg.Security.ToTLSConfig()
+	if err != nil {
+		logutil.BgLogger().Error("invalid TLS config", zap.Error(err))
+		return
+	}
+
+	var l net.Listener
+	if tlsConfig != nil {
+		// we need to manage TLS here for cmux to distinguish between HTTP and gRPC.
+		l, err = tls.Listen("tcp", addr, tlsConfig)
+	} else {
+		l, err = net.Listen("tcp", addr)
+	}
 	if err != nil {
 		logutil.BgLogger().Info("listen failed", zap.Error(err))
 		return
@@ -287,17 +300,11 @@ func (s *Server) setupStatuServerAndRPCServer(addr string, serverMux *http.Serve
 		logutil.BgLogger().Error("grpc server error", zap.Error(err))
 	}, nil)
 
-	if len(s.cfg.Security.ClusterSSLCA) != 0 {
-		go util.WithRecovery(func() {
-			err := s.statusServer.ServeTLS(httpL, s.cfg.Security.ClusterSSLCert, s.cfg.Security.ClusterSSLKey)
-			logutil.BgLogger().Error("http server error", zap.Error(err))
-		}, nil)
-	} else {
-		go util.WithRecovery(func() {
-			err := s.statusServer.Serve(httpL)
-			logutil.BgLogger().Error("http server error", zap.Error(err))
-		}, nil)
-	}
+	go util.WithRecovery(func() {
+		err := s.statusServer.Serve(httpL)
+		logutil.BgLogger().Error("http server error", zap.Error(err))
+	}, nil)
+
 	err = m.Serve()
 	if err != nil {
 		logutil.BgLogger().Error("start status/rpc server error", zap.Error(err))
