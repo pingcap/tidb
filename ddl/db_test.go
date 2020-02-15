@@ -2123,7 +2123,15 @@ func (s *testDBSuite1) TestCreateTable(c *C) {
 	failSQL = "create table t_enum (a set('abc','Abc'));"
 	s.tk.MustGetErrCode(failSQL, mysql.ErrDuplicatedValueInType)
 	_, err = s.tk.Exec("create table t_enum (a enum('B','b'));")
+	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[types:1291]Column 'a' has duplicated value 'B' in ENUM")
+
+	//Test for column binary flag, see #13992.
+	s.tk.MustExec("use test")
+	s.tk.MustExec("create table t (c varchar(120) default null) charset=utf8 collate=utf8_bin;")
+	t := testGetTableByName(c, ctx, "test", "t")
+	col1Flag := t.Cols()[1].Flag
+	c.Assert(mysql.HasBinaryFlag(col1Flag), IsTrue)
 }
 
 func (s *testDBSuite5) TestRepairTable(c *C) {
