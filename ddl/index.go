@@ -157,8 +157,14 @@ func checkIndexColumn(col *model.ColumnInfo, ic *ast.IndexPartSpecification) err
 
 	// Key length must be shorter or equal to the column length.
 	if ic.Length != types.UnspecifiedLength &&
-		types.IsTypeChar(col.FieldType.Tp) && col.Flen < ic.Length {
-		return errors.Trace(errIncorrectPrefixKey)
+		types.IsTypeChar(col.FieldType.Tp) {
+		if col.Flen < ic.Length {
+			return errors.Trace(errIncorrectPrefixKey)
+		}
+		// Length must be non-zero for char.
+		if ic.Length == types.ErrorLength {
+			return errors.Trace(errKeyPart0.GenWithStackByArgs(col.Name.O))
+		}
 	}
 
 	// Specified length must be shorter than the max length for prefix.
