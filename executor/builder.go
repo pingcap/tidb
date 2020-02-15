@@ -420,7 +420,7 @@ func buildRecoverIndexCols(tblInfo *model.TableInfo, indexInfo *model.IndexInfo)
 
 func (b *executorBuilder) buildRecoverIndex(v *plannercore.RecoverIndex) Executor {
 	tblInfo := v.Table.TableInfo
-	t, err := b.is.TableByName(v.Table.Schema, tblInfo.Name)
+	t, err := b.is.TableByName(v.Table.Schema, tblInfo.Name, b.ctx.GetSessionVars().InRestrictedSQL)
 	if err != nil {
 		b.err = err
 		return nil
@@ -465,7 +465,7 @@ func buildCleanupIndexCols(tblInfo *model.TableInfo, indexInfo *model.IndexInfo)
 
 func (b *executorBuilder) buildCleanupIndex(v *plannercore.CleanupIndex) Executor {
 	tblInfo := v.Table.TableInfo
-	t, err := b.is.TableByName(v.Table.Schema, tblInfo.Name)
+	t, err := b.is.TableByName(v.Table.Schema, tblInfo.Name, b.ctx.GetSessionVars().InRestrictedSQL)
 	if err != nil {
 		b.err = err
 		return nil
@@ -497,7 +497,7 @@ func (b *executorBuilder) buildCleanupIndex(v *plannercore.CleanupIndex) Executo
 }
 
 func (b *executorBuilder) buildCheckIndexRange(v *plannercore.CheckIndexRange) Executor {
-	tb, err := b.is.TableByName(v.Table.Schema, v.Table.Name)
+	tb, err := b.is.TableByName(v.Table.Schema, v.Table.Name, b.ctx.GetSessionVars().InRestrictedSQL)
 	if err != nil {
 		b.err = err
 		return nil

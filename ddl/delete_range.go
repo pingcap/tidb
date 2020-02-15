@@ -258,7 +258,9 @@ func insertJobIntoDeleteRangeTable(ctx sessionctx.Context, job *model.Job) error
 				return errors.Trace(err)
 			}
 		}
-	case model.ActionDropTable, model.ActionTruncateTable:
+	case model.ActionDropTable, model.ActionTruncateTable,
+		// We may rolling back a creating table with half-done data in it.
+		model.ActionCreateTable:
 		tableID := job.TableID
 		// The startKey here is for compatibility with previous versions, old version did not endKey so don't have to deal with.
 		var startKey kv.Key

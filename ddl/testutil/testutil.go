@@ -63,7 +63,7 @@ func ExecMultiSQLInGoroutine(c *check.C, s kv.Storage, dbName string, multiSQL [
 // ExtractAllTableHandles extracts all handles of a given table.
 func ExtractAllTableHandles(se session.Session, dbName, tbName string) ([]int64, error) {
 	dom := domain.GetDomain(se)
-	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr(dbName), model.NewCIStr(tbName))
+	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr(dbName), model.NewCIStr(tbName), se.GetSessionVars().InRestrictedSQL)
 	if err != nil {
 		return nil, err
 	}

@@ -827,7 +827,7 @@ func (s *testAnalyzeSuite) TestTiFlashCostModel(c *C) {
 	tk.MustExec("create table t (a int, b int, c int, primary key(a))")
 	tk.MustExec("insert into t values(1,1,1), (2,2,2), (3,3,3)")
 
-	tbl, err := dom.InfoSchema().TableByName(model.CIStr{O: "test", L: "test"}, model.CIStr{O: "t", L: "t"})
+	tbl, err := dom.InfoSchema().TableByName(model.CIStr{O: "test", L: "test"}, model.CIStr{O: "t", L: "t"}, false)
 	c.Assert(err, IsNil)
 	// Set the hacked TiFlash replica for explain tests.
 	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}

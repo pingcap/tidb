@@ -364,7 +364,7 @@ func (s *session) FieldList(tableName string) ([]*ast.ResultField, error) {
 	is := infoschema.GetInfoSchema(s)
 	dbName := model.NewCIStr(s.GetSessionVars().CurrentDB)
 	tName := model.NewCIStr(tableName)
-	table, err := is.TableByName(dbName, tName)
+	table, err := is.TableByName(dbName, tName, s.sessionVars.InRestrictedSQL)
 	if err != nil {
 		return nil, err
 	}

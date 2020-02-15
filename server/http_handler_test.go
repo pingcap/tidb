@@ -541,7 +541,7 @@ func (ts *HTTPHandlerTestSuite) TestTiFlashReplica(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(string(body), Equals, "[schema:1146]Table which ID = 84 does not exist.")
 
-	t, err := ts.domain.InfoSchema().TableByName(model.NewCIStr("tidb"), model.NewCIStr("test"))
+	t, err := ts.domain.InfoSchema().TableByName(model.NewCIStr("tidb"), model.NewCIStr("test"), false)
 	c.Assert(err, IsNil)
 	req := fmt.Sprintf(`{"id":%d,"region_count":3,"flash_region_count":3}`, t.Meta().ID)
 	resp, err = ts.postStatus("/tiflash/replica", "application/json", bytes.NewBuffer([]byte(req)))

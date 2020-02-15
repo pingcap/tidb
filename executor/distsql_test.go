@@ -60,7 +60,7 @@ func (s *testSuite3) TestCopClientSend(c *C) {
 	// Get table ID for split.
 	dom := domain.GetDomain(tk.Se)
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("copclient"))
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("copclient"), false)
 	c.Assert(err, IsNil)
 	tblID := tbl.Meta().ID
 
@@ -194,7 +194,7 @@ func (s *testSuite3) TestInconsistentIndex(c *C) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int, index idx_a(a))")
 	is := s.domain.InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"), false)
 	c.Assert(err, IsNil)
 	idx := tbl.Meta().FindIndexByName("idx_a")
 	idxOp := tables.NewIndex(tbl.Meta().ID, tbl.Meta(), idx)

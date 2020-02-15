@@ -288,7 +288,7 @@ func (s *testSuite5) TestShow2(c *C) {
 	tk.MustQuery("show full tables").Check(testkit.Rows("seq SEQUENCE", "t BASE TABLE", "v VIEW"))
 	ctx := tk.Se.(sessionctx.Context)
 	is := domain.GetDomain(ctx).InfoSchema()
-	tblInfo, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tblInfo, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"), false)
 	c.Assert(err, IsNil)
 	createTime := model.TSConvert2Time(tblInfo.Meta().UpdateTS).Format("2006-01-02 15:04:05")
 
@@ -371,7 +371,7 @@ func (s *testSuite5) TestUnprivilegedShow(c *C) {
 
 	ctx := tk.Se.(sessionctx.Context)
 	is := domain.GetDomain(ctx).InfoSchema()
-	tblInfo, err := is.TableByName(model.NewCIStr("testshow"), model.NewCIStr("t1"))
+	tblInfo, err := is.TableByName(model.NewCIStr("testshow"), model.NewCIStr("t1"), false)
 	c.Assert(err, IsNil)
 	createTime := model.TSConvert2Time(tblInfo.Meta().UpdateTS).Format("2006-01-02 15:04:05")
 

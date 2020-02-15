@@ -64,7 +64,7 @@ PARTITION BY RANGE ( a ) (
 	tk.MustExec("analyze table t")
 
 	is := infoschema.GetInfoSchema(tk.Se.(sessionctx.Context))
-	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"), false)
 	c.Assert(err, IsNil)
 	pi := table.Meta().GetPartitionInfo()
 	c.Assert(pi, NotNil)
@@ -91,7 +91,7 @@ PARTITION BY RANGE ( a ) (
 	}
 	tk.MustExec("alter table t analyze partition p0")
 	is = infoschema.GetInfoSchema(tk.Se.(sessionctx.Context))
-	table, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	table, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"), false)
 	c.Assert(err, IsNil)
 	pi = table.Meta().GetPartitionInfo()
 	c.Assert(pi, NotNil)
@@ -141,7 +141,7 @@ func (s *testSuite1) TestAnalyzeParameters(c *C) {
 	tk.MustExec("set @@tidb_enable_fast_analyze = 1")
 	tk.MustExec("analyze table t with 30 samples")
 	is := infoschema.GetInfoSchema(tk.Se.(sessionctx.Context))
-	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"), false)
 	c.Assert(err, IsNil)
 	tableInfo := table.Meta()
 	tbl := s.dom.StatsHandle().GetTableStats(tableInfo)
@@ -172,7 +172,7 @@ func (s *testSuite1) TestAnalyzeTooLongColumns(c *C) {
 
 	tk.MustExec("analyze table t")
 	is := infoschema.GetInfoSchema(tk.Se.(sessionctx.Context))
-	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"), false)
 	c.Assert(err, IsNil)
 	tableInfo := table.Meta()
 	tbl := s.dom.StatsHandle().GetTableStats(tableInfo)
@@ -200,7 +200,7 @@ func (s *testFastAnalyze) TestAnalyzeFastSample(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int primary key, b int, index index_b(b))")
-	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"), false)
 	c.Assert(err, IsNil)
 	tblInfo := tbl.Meta()
 	tid := tblInfo.ID
@@ -297,7 +297,7 @@ func (s *testFastAnalyze) TestFastAnalyze(c *C) {
 	tk.MustExec("set @@session.tidb_build_stats_concurrency=1")
 	// Should not panic.
 	tk.MustExec("analyze table t")
-	tblInfo, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tblInfo, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"), false)
 	c.Assert(err, IsNil)
 	tid := tblInfo.Meta().ID
 
@@ -311,7 +311,7 @@ func (s *testFastAnalyze) TestFastAnalyze(c *C) {
 	tk.MustExec("analyze table t with 5 buckets, 6 samples")
 
 	is := infoschema.GetInfoSchema(tk.Se.(sessionctx.Context))
-	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"), false)
 	c.Assert(err, IsNil)
 	tableInfo := table.Meta()
 	tbl := dom.StatsHandle().GetTableStats(tableInfo)
@@ -389,7 +389,7 @@ func (s *testSuite1) testAnalyzeIncremental(tk *testkit.TestKit, c *C) {
 	}()
 	statistics.FeedbackProbability.Store(1)
 	is := s.dom.InfoSchema()
-	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"), false)
 	c.Assert(err, IsNil)
 	tblInfo := table.Meta()
 	tk.MustQuery("select * from t use index(idx) where b = 3")
@@ -465,7 +465,7 @@ func (s *testFastAnalyze) TestFastAnalyzeRetryRowCount(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists retry_row_count")
 	tk.MustExec("create table retry_row_count(a int primary key)")
-	tblInfo, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("retry_row_count"))
+	tblInfo, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("retry_row_count"), false)
 	c.Assert(err, IsNil)
 	tid := tblInfo.Meta().ID
 	c.Assert(dom.StatsHandle().Update(dom.InfoSchema()), IsNil)
@@ -508,7 +508,7 @@ func (s *testSuite1) TestExtractTopN(c *C) {
 	}
 	tk.MustExec("analyze table t")
 	is := s.dom.InfoSchema()
-	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"), false)
 	c.Assert(err, IsNil)
 	tblInfo := table.Meta()
 	tblStats := s.dom.StatsHandle().GetTableStats(tblInfo)

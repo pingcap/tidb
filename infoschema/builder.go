@@ -56,8 +56,13 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 	}
 	var oldTableID, newTableID int64
 	switch diff.Type {
-	case model.ActionCreateTable, model.ActionCreateSequence, model.ActionRecoverTable, model.ActionRepairTable:
+	case model.ActionCreateSequence, model.ActionRecoverTable, model.ActionRepairTable:
 		newTableID = diff.TableID
+	case model.ActionCreateTable:
+		newTableID = diff.TableID
+		if _, ok := b.is.TableByID(newTableID); ok {
+			oldTableID = diff.TableID
+		}
 	case model.ActionDropTable, model.ActionDropView, model.ActionDropSequence:
 		oldTableID = diff.TableID
 	case model.ActionTruncateTable, model.ActionCreateView:
@@ -213,7 +218,13 @@ func (b *Builder) applyCreateTable(m *meta.Meta, dbInfo *model.DBInfo, tableID i
 	// Typically used in repair table test to load mock `bad` tableInfo into repairInfo.
 	failpoint.Inject("repairFetchCreateTable", func(val failpoint.Value) {
 		if val.(bool) {
-			if domainutil.RepairInfo.InRepairMode() && tp != model.ActionRepairTable && domainutil.RepairInfo.CheckAndFetchRepairedTable(dbInfo, tblInfo) {
+			if tp == model.ActionCreateTable && tblInfo.State != model.StatePublic {
+				// Do nothiing before the table is actually created.
+				failpoint.Return(nil, nil)
+			}
+			if domainutil.RepairInfo.InRepairMode() &&
+				tp != model.ActionRepairTable &&
+				domainutil.RepairInfo.CheckAndFetchRepairedTable(dbInfo, tblInfo) {
 				failpoint.Return(nil, nil)
 			}
 		}

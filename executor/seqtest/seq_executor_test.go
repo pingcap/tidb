@@ -132,7 +132,7 @@ func (s *seqTestSuite) TestEarlyClose(c *C) {
 	// Get table ID for split.
 	dom := domain.GetDomain(tk.Se)
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("earlyclose"))
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("earlyclose"), false)
 	c.Assert(err, IsNil)
 	tblID := tbl.Meta().ID
 

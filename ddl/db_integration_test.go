@@ -541,7 +541,7 @@ func (s *testIntegrationSuite2) TestUpdateMultipleTable(c *C) {
 	is := dom.InfoSchema()
 	db, ok := is.SchemaByName(model.NewCIStr("umt_db"))
 	c.Assert(ok, IsTrue)
-	t1Tbl, err := is.TableByName(model.NewCIStr("umt_db"), model.NewCIStr("t1"))
+	t1Tbl, err := is.TableByName(model.NewCIStr("umt_db"), model.NewCIStr("t1"), false)
 	c.Assert(err, IsNil)
 	t1Info := t1Tbl.Meta()
 
@@ -956,7 +956,7 @@ func (s *testIntegrationSuite3) TestZeroFillCreateTable(c *C) {
 	s.tk.MustExec("drop table if exists abc;")
 	s.tk.MustExec("create table abc(y year, z tinyint(10) zerofill, primary key(y));")
 	is := s.dom.InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("abc"))
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("abc"), false)
 	c.Assert(err, IsNil)
 	var yearCol, zCol *model.ColumnInfo
 	for _, col := range tbl.Meta().Columns {
@@ -1049,7 +1049,7 @@ func (s *testIntegrationSuite5) TestBackwardCompatibility(c *C) {
 	tableName := model.NewCIStr("t")
 	schema, ok := is.SchemaByName(schemaName)
 	c.Assert(ok, IsTrue)
-	tbl, err := is.TableByName(schemaName, tableName)
+	tbl, err := is.TableByName(schemaName, tableName, false)
 	c.Assert(err, IsNil)
 
 	// Split the table.
@@ -1123,7 +1123,7 @@ func (s *testIntegrationSuite3) TestMultiRegionGetTableEndHandle(c *C) {
 	// Get table ID for split.
 	dom := domain.GetDomain(tk.Se)
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test_get_endhandle"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(model.NewCIStr("test_get_endhandle"), model.NewCIStr("t"), false)
 	c.Assert(err, IsNil)
 	tblID := tbl.Meta().ID
 
@@ -1281,7 +1281,7 @@ func (s *testIntegrationSuite3) TestResolveCharset(c *C) {
 	s.tk.MustExec(`CREATE TABLE resolve_charset (a varchar(255) DEFAULT NULL) DEFAULT CHARSET=latin1`)
 	ctx := s.tk.Se.(sessionctx.Context)
 	is := domain.GetDomain(ctx).InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("resolve_charset"))
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("resolve_charset"), false)
 	c.Assert(err, IsNil)
 	c.Assert(tbl.Cols()[0].Charset, Equals, "latin1")
 	s.tk.MustExec("INSERT INTO resolve_charset VALUES('鰈')")
@@ -1291,14 +1291,14 @@ func (s *testIntegrationSuite3) TestResolveCharset(c *C) {
 	s.tk.MustExec(`CREATE TABLE resolve_charset (a varchar(255) DEFAULT NULL) DEFAULT CHARSET=latin1`)
 
 	is = domain.GetDomain(ctx).InfoSchema()
-	tbl, err = is.TableByName(model.NewCIStr("resolve_charset"), model.NewCIStr("resolve_charset"))
+	tbl, err = is.TableByName(model.NewCIStr("resolve_charset"), model.NewCIStr("resolve_charset"), false)
 	c.Assert(err, IsNil)
 	c.Assert(tbl.Cols()[0].Charset, Equals, "latin1")
 	c.Assert(tbl.Meta().Charset, Equals, "latin1")
 
 	s.tk.MustExec(`CREATE TABLE resolve_charset1 (a varchar(255) DEFAULT NULL)`)
 	is = domain.GetDomain(ctx).InfoSchema()
-	tbl, err = is.TableByName(model.NewCIStr("resolve_charset"), model.NewCIStr("resolve_charset1"))
+	tbl, err = is.TableByName(model.NewCIStr("resolve_charset"), model.NewCIStr("resolve_charset1"), false)
 	c.Assert(err, IsNil)
 	c.Assert(tbl.Cols()[0].Charset, Equals, "binary")
 	c.Assert(tbl.Meta().Charset, Equals, "binary")
@@ -1328,7 +1328,7 @@ func (s *testIntegrationSuite3) TestAlterColumn(c *C) {
 	s.tk.MustQuery("select a from test_alter_column").Check(testkit.Rows("111"))
 	ctx := s.tk.Se.(sessionctx.Context)
 	is := domain.GetDomain(ctx).InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test_db"), model.NewCIStr("test_alter_column"))
+	tbl, err := is.TableByName(model.NewCIStr("test_db"), model.NewCIStr("test_alter_column"), false)
 	c.Assert(err, IsNil)
 	tblInfo := tbl.Meta()
 	colA := tblInfo.Columns[0]
@@ -1338,7 +1338,7 @@ func (s *testIntegrationSuite3) TestAlterColumn(c *C) {
 	s.tk.MustExec("insert into test_alter_column set b = 'b', c = 'bb'")
 	s.tk.MustQuery("select a from test_alter_column").Check(testkit.Rows("111", "222"))
 	is = domain.GetDomain(ctx).InfoSchema()
-	tbl, err = is.TableByName(model.NewCIStr("test_db"), model.NewCIStr("test_alter_column"))
+	tbl, err = is.TableByName(model.NewCIStr("test_db"), model.NewCIStr("test_alter_column"), false)
 	c.Assert(err, IsNil)
 	tblInfo = tbl.Meta()
 	colA = tblInfo.Columns[0]
@@ -1348,7 +1348,7 @@ func (s *testIntegrationSuite3) TestAlterColumn(c *C) {
 	s.tk.MustExec("insert into test_alter_column set c = 'cc'")
 	s.tk.MustQuery("select b from test_alter_column").Check(testkit.Rows("a", "b", "<nil>"))
 	is = domain.GetDomain(ctx).InfoSchema()
-	tbl, err = is.TableByName(model.NewCIStr("test_db"), model.NewCIStr("test_alter_column"))
+	tbl, err = is.TableByName(model.NewCIStr("test_db"), model.NewCIStr("test_alter_column"), false)
 	c.Assert(err, IsNil)
 	tblInfo = tbl.Meta()
 	colC := tblInfo.Columns[2]
@@ -1358,7 +1358,7 @@ func (s *testIntegrationSuite3) TestAlterColumn(c *C) {
 	s.tk.MustExec("insert into test_alter_column set a = 123")
 	s.tk.MustQuery("select c from test_alter_column").Check(testkit.Rows("aa", "bb", "cc", "xx"))
 	is = domain.GetDomain(ctx).InfoSchema()
-	tbl, err = is.TableByName(model.NewCIStr("test_db"), model.NewCIStr("test_alter_column"))
+	tbl, err = is.TableByName(model.NewCIStr("test_db"), model.NewCIStr("test_alter_column"), false)
 	c.Assert(err, IsNil)
 	tblInfo = tbl.Meta()
 	colC = tblInfo.Columns[2]
@@ -1956,7 +1956,7 @@ func (s *testIntegrationSuite7) TestAddExpressionIndex(c *C) {
 	tk.MustExec("insert into t values (1, 2.1);")
 	tk.MustExec("alter table t add index idx((a+b));")
 
-	tblInfo, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tblInfo, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"), false)
 	c.Assert(err, IsNil)
 	columns := tblInfo.Meta().Columns
 	c.Assert(len(columns), Equals, 3)
@@ -1965,7 +1965,7 @@ func (s *testIntegrationSuite7) TestAddExpressionIndex(c *C) {
 	tk.MustQuery("select * from t;").Check(testkit.Rows("1 2.1"))
 
 	tk.MustExec("alter table t add index idx_multi((a+b),(a+1), b);")
-	tblInfo, err = s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tblInfo, err = s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"), false)
 	c.Assert(err, IsNil)
 	columns = tblInfo.Meta().Columns
 	c.Assert(len(columns), Equals, 5)
@@ -1975,7 +1975,7 @@ func (s *testIntegrationSuite7) TestAddExpressionIndex(c *C) {
 	tk.MustQuery("select * from t;").Check(testkit.Rows("1 2.1"))
 
 	tk.MustExec("alter table t drop index idx;")
-	tblInfo, err = s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tblInfo, err = s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"), false)
 	c.Assert(err, IsNil)
 	columns = tblInfo.Meta().Columns
 	c.Assert(len(columns), Equals, 4)
@@ -1983,7 +1983,7 @@ func (s *testIntegrationSuite7) TestAddExpressionIndex(c *C) {
 	tk.MustQuery("select * from t;").Check(testkit.Rows("1 2.1"))
 
 	tk.MustExec("alter table t drop index idx_multi;")
-	tblInfo, err = s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tblInfo, err = s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"), false)
 	c.Assert(err, IsNil)
 	columns = tblInfo.Meta().Columns
 	c.Assert(len(columns), Equals, 2)
@@ -2044,7 +2044,7 @@ func (s *testIntegrationSuite7) TestAddExpressionIndexOnPartition(c *C) {
 	tk.MustExec("insert into t values (1, 'test', 2), (12, 'test', 3), (15, 'test', 10), (20, 'test', 20);")
 	tk.MustExec("alter table t add index idx((a+c));")
 
-	tblInfo, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tblInfo, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"), false)
 	c.Assert(err, IsNil)
 	columns := tblInfo.Meta().Columns
 	c.Assert(len(columns), Equals, 4)

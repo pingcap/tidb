@@ -266,7 +266,7 @@ func (c *statsCache) get(ctx sessionctx.Context) (map[int64]uint64, map[tableHis
 
 func getAutoIncrementID(ctx sessionctx.Context, schema *model.DBInfo, tblInfo *model.TableInfo) (int64, error) {
 	is := ctx.GetSessionVars().TxnCtx.InfoSchema.(infoschema.InfoSchema)
-	tbl, err := is.TableByName(schema.Name, tblInfo.Name)
+	tbl, err := is.TableByName(schema.Name, tblInfo.Name, true)
 	if err != nil {
 		return 0, err
 	}

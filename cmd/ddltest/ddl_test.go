@@ -459,7 +459,7 @@ func (s *TestDDLSuite) runDDL(sql string) chan error {
 }
 
 func (s *TestDDLSuite) getTable(c *C, name string) table.Table {
-	tbl, err := domain.GetDomain(s.ctx).InfoSchema().TableByName(model.NewCIStr("test_ddl"), model.NewCIStr(name))
+	tbl, err := domain.GetDomain(s.ctx).InfoSchema().TableByName(model.NewCIStr("test_ddl"), model.NewCIStr(name), false)
 	c.Assert(err, IsNil)
 	return tbl
 }

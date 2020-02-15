@@ -220,7 +220,7 @@ func (s *testFailDBSuite) TestAddIndexFailed(c *C) {
 	// Get table ID for split.
 	dom := domain.GetDomain(tk.Se)
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test_add_index_failed"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(model.NewCIStr("test_add_index_failed"), model.NewCIStr("t"), false)
 	c.Assert(err, IsNil)
 	tblID := tbl.Meta().ID
 
@@ -353,7 +353,7 @@ func (s *testFailDBSuite) TestAddIndexWorkerNum(c *C) {
 	is := s.dom.InfoSchema()
 	schemaName := model.NewCIStr("test_db")
 	tableName := model.NewCIStr("test_add_index")
-	tbl, err := is.TableByName(schemaName, tableName)
+	tbl, err := is.TableByName(schemaName, tableName, false)
 	c.Assert(err, IsNil)
 
 	splitCount := 100

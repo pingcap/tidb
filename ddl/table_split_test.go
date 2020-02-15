@@ -53,11 +53,11 @@ func (s *testDDLTableSplitSuite) TestTableSplit(c *C) {
 	atomic.StoreUint32(&ddl.EnableSplitTableRegion, 0)
 	infoSchema := dom.InfoSchema()
 	c.Assert(infoSchema, NotNil)
-	t, err := infoSchema.TableByName(model.NewCIStr("mysql"), model.NewCIStr("tidb"))
+	t, err := infoSchema.TableByName(model.NewCIStr("mysql"), model.NewCIStr("tidb"), false)
 	c.Assert(err, IsNil)
 	checkRegionStartWithTableID(c, t.Meta().ID, store.(kvStore))
 
-	t, err = infoSchema.TableByName(model.NewCIStr("test"), model.NewCIStr("t_part"))
+	t, err = infoSchema.TableByName(model.NewCIStr("test"), model.NewCIStr("t_part"), false)
 	c.Assert(err, IsNil)
 	pi := t.Meta().GetPartitionInfo()
 	c.Assert(pi, NotNil)

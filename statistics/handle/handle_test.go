@@ -62,7 +62,7 @@ func (s *testStatsSuite) TestStatsCache(c *C) {
 	testKit.MustExec("insert into t values(1, 2)")
 	do := s.do
 	is := do.InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"), false)
 	c.Assert(err, IsNil)
 	tableInfo := tbl.Meta()
 	statsTbl := do.StatsHandle().GetTableStats(tableInfo)
@@ -135,7 +135,7 @@ func (s *testStatsSuite) TestStatsStoreAndLoad(c *C) {
 	testKit.MustExec("create index idx_t on t(c2)")
 	do := s.do
 	is := do.InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"), false)
 	c.Assert(err, IsNil)
 	tableInfo := tbl.Meta()
 
@@ -158,7 +158,7 @@ func (s *testStatsSuite) TestEmptyTable(c *C) {
 	testKit.MustExec("analyze table t")
 	do := s.do
 	is := do.InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"), false)
 	c.Assert(err, IsNil)
 	tableInfo := tbl.Meta()
 	statsTbl := do.StatsHandle().GetTableStats(tableInfo)
@@ -176,7 +176,7 @@ func (s *testStatsSuite) TestColumnIDs(c *C) {
 	testKit.MustExec("analyze table t")
 	do := s.do
 	is := do.InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"), false)
 	c.Assert(err, IsNil)
 	tableInfo := tbl.Meta()
 	statsTbl := do.StatsHandle().GetTableStats(tableInfo)
@@ -189,7 +189,7 @@ func (s *testStatsSuite) TestColumnIDs(c *C) {
 	is = do.InfoSchema()
 	do.StatsHandle().Clear()
 	do.StatsHandle().Update(is)
-	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"), false)
 	c.Assert(err, IsNil)
 	tableInfo = tbl.Meta()
 	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
@@ -207,7 +207,7 @@ func (s *testStatsSuite) TestAvgColLen(c *C) {
 	testKit.MustExec("analyze table t")
 	do := s.do
 	is := do.InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"), false)
 	c.Assert(err, IsNil)
 	tableInfo := tbl.Meta()
 	statsTbl := do.StatsHandle().GetTableStats(tableInfo)
@@ -262,7 +262,7 @@ func (s *testStatsSuite) TestVersion(c *C) {
 	testKit.MustExec("analyze table t1")
 	do := s.do
 	is := do.InfoSchema()
-	tbl1, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	tbl1, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"), false)
 	c.Assert(err, IsNil)
 	tableInfo1 := tbl1.Meta()
 	h := handle.NewHandle(testKit.Se, time.Millisecond)
@@ -277,7 +277,7 @@ func (s *testStatsSuite) TestVersion(c *C) {
 	testKit.MustExec("create table t2 (c1 int, c2 int)")
 	testKit.MustExec("analyze table t2")
 	is = do.InfoSchema()
-	tbl2, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t2"))
+	tbl2, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t2"), false)
 	c.Assert(err, IsNil)
 	tableInfo2 := tbl2.Meta()
 	// A smaller version write, and we can still read it.
@@ -346,7 +346,7 @@ func (s *testStatsSuite) TestLoadHist(c *C) {
 	}
 	testKit.MustExec("analyze table t")
 	is := do.InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"), false)
 	c.Assert(err, IsNil)
 	tableInfo := tbl.Meta()
 	oldStatsTbl := h.GetTableStats(tableInfo)
@@ -376,7 +376,7 @@ func (s *testStatsSuite) TestLoadHist(c *C) {
 	err = h.HandleDDLEvent(<-h.DDLEventCh())
 	c.Assert(err, IsNil)
 	is = do.InfoSchema()
-	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"), false)
 	c.Assert(err, IsNil)
 	tableInfo = tbl.Meta()
 	c.Assert(h.Update(is), IsNil)
@@ -398,7 +398,7 @@ func (s *testStatsSuite) TestInitStats(c *C) {
 	testKit.MustExec("analyze table t")
 	h := s.do.StatsHandle()
 	is := s.do.InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"), false)
 	c.Assert(err, IsNil)
 	// `Update` will not use load by need strategy when `Lease` is 0, and `InitStats` is only called when
 	// `Lease` is not 0, so here we just change it.
@@ -433,7 +433,7 @@ func (s *testStatsSuite) TestLoadStats(c *C) {
 	testKit.MustExec("analyze table t")
 
 	is := s.do.InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"), false)
 	c.Assert(err, IsNil)
 	tableInfo := tbl.Meta()
 	h := s.do.StatsHandle()

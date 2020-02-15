@@ -286,7 +286,7 @@ func (sh *sqlInfoFetcher) catchCPUProfile(ctx context.Context, sec int, buf *byt
 func (sh *sqlInfoFetcher) getStatsForTable(pair tableNamePair) (*handle.JSONTable, error) {
 	is := sh.do.InfoSchema()
 	h := sh.do.StatsHandle()
-	tbl, err := is.TableByName(model.NewCIStr(pair.DBName), model.NewCIStr(pair.TableName))
+	tbl, err := is.TableByName(model.NewCIStr(pair.DBName), model.NewCIStr(pair.TableName), sh.s.GetSessionVars().InRestrictedSQL)
 	if err != nil {
 		return nil, err
 	}

@@ -68,7 +68,7 @@ func (s *testExecutorSuite) TestResolvedLargeTxnLocks(c *C) {
 	tk.MustExec("create table t (id int primary key, val int)")
 	dom := domain.GetDomain(tk.Se)
 	schema := dom.InfoSchema()
-	tbl, err := schema.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := schema.TableByName(model.NewCIStr("test"), model.NewCIStr("t"), false)
 	c.Assert(err, IsNil)
 
 	tk.MustExec("insert into t values (1, 1)")

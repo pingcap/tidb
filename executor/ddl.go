@@ -289,7 +289,7 @@ func (e *DDLExec) dropTableObject(objects []*ast.TableName, obt objectType, ifEx
 			notExistTables = append(notExistTables, fullti.String())
 			continue
 		}
-		_, err := e.is.TableByName(tn.Schema, tn.Name)
+		_, err := e.is.TableByName(tn.Schema, tn.Name, e.ctx.GetSessionVars().InRestrictedSQL)
 		if err != nil && infoschema.ErrTableNotExists.Equal(err) {
 			notExistTables = append(notExistTables, fullti.String())
 			continue

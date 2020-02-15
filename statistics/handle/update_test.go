@@ -88,7 +88,7 @@ func (s *testStatsSuite) TestSingleSessionInsert(c *C) {
 	}
 
 	is := s.do.InfoSchema()
-	tbl1, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	tbl1, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"), false)
 	c.Assert(err, IsNil)
 	tableInfo1 := tbl1.Meta()
 	h := s.do.StatsHandle()
@@ -101,7 +101,7 @@ func (s *testStatsSuite) TestSingleSessionInsert(c *C) {
 	stats1 := h.GetTableStats(tableInfo1)
 	c.Assert(stats1.Count, Equals, int64(rowCount1))
 
-	tbl2, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t2"))
+	tbl2, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t2"), false)
 	c.Assert(err, IsNil)
 	tableInfo2 := tbl2.Meta()
 	stats2 := h.GetTableStats(tableInfo2)
@@ -202,7 +202,7 @@ func (s *testStatsSuite) TestRollback(c *C) {
 	testKit.MustExec("rollback")
 
 	is := s.do.InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"), false)
 	c.Assert(err, IsNil)
 	tableInfo := tbl.Meta()
 	h := s.do.StatsHandle()
@@ -235,7 +235,7 @@ func (s *testStatsSuite) TestMultiSession(c *C) {
 		testKit2.MustExec("delete from test.t1 limit 1")
 	}
 	is := s.do.InfoSchema()
-	tbl1, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	tbl1, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"), false)
 	c.Assert(err, IsNil)
 	tableInfo1 := tbl1.Meta()
 	h := s.do.StatsHandle()
@@ -279,7 +279,7 @@ func (s *testStatsSuite) TestTxnWithFailure(c *C) {
 	testKit.MustExec("create table t1 (c1 int primary key, c2 int)")
 
 	is := s.do.InfoSchema()
-	tbl1, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	tbl1, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"), false)
 	c.Assert(err, IsNil)
 	tableInfo1 := tbl1.Meta()
 	h := s.do.StatsHandle()
@@ -327,7 +327,7 @@ func (s *testStatsSuite) TestUpdatePartition(c *C) {
 	testKit.MustExec(createTable)
 	do := s.do
 	is := do.InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"), false)
 	c.Assert(err, IsNil)
 	tableInfo := tbl.Meta()
 	h := do.StatsHandle()
@@ -383,7 +383,7 @@ func (s *testStatsSuite) TestAutoUpdate(c *C) {
 
 	do := s.do
 	is := do.InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"), false)
 	c.Assert(err, IsNil)
 	tableInfo := tbl.Meta()
 	h := do.StatsHandle()
@@ -451,7 +451,7 @@ func (s *testStatsSuite) TestAutoUpdate(c *C) {
 	_, err = testKit.Exec("create index idx on t(a)")
 	c.Assert(err, IsNil)
 	is = do.InfoSchema()
-	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"), false)
 	c.Assert(err, IsNil)
 	tableInfo = tbl.Meta()
 	h.HandleAutoAnalyze(is)
@@ -482,7 +482,7 @@ func (s *testStatsSuite) TestAutoUpdatePartition(c *C) {
 
 	do := s.do
 	is := do.InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"), false)
 	c.Assert(err, IsNil)
 	tableInfo := tbl.Meta()
 	pi := tableInfo.GetPartitionInfo()
@@ -509,7 +509,7 @@ func (s *testStatsSuite) TestTableAnalyzed(c *C) {
 	testKit.MustExec("insert into t values (1)")
 
 	is := s.do.InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"), false)
 	c.Assert(err, IsNil)
 	tableInfo := tbl.Meta()
 	h := s.do.StatsHandle()
@@ -566,7 +566,7 @@ func (s *testStatsSuite) TestUpdateErrorRate(c *C) {
 	is = s.do.InfoSchema()
 	c.Assert(h.Update(is), IsNil)
 
-	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"), false)
 	c.Assert(err, IsNil)
 	tblInfo := table.Meta()
 	tbl := h.GetTableStats(tblInfo)
@@ -637,7 +637,7 @@ func (s *testStatsSuite) TestUpdatePartitionErrorRate(c *C) {
 	is = s.do.InfoSchema()
 	c.Assert(h.Update(is), IsNil)
 
-	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"), false)
 	c.Assert(err, IsNil)
 	tblInfo := table.Meta()
 	pid := tblInfo.Partition.Definitions[0].ID
@@ -767,7 +767,7 @@ func (s *testStatsSuite) TestQueryFeedback(c *C) {
 		},
 	}
 	is := s.do.InfoSchema()
-	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"), false)
 	for i, t := range tests {
 		testKit.MustQuery(t.sql)
 		c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
@@ -876,7 +876,7 @@ func (s *testStatsSuite) TestQueryFeedbackForPartition(c *C) {
 		},
 	}
 	is := s.do.InfoSchema()
-	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"), false)
 	c.Assert(err, IsNil)
 	tblInfo := table.Meta()
 	pi := tblInfo.GetPartitionInfo()
@@ -932,7 +932,7 @@ func (s *testStatsSuite) TestOutOfOrderUpdate(c *C) {
 
 	do := s.do
 	is := do.InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"), false)
 	c.Assert(err, IsNil)
 	tableInfo := tbl.Meta()
 	h := do.StatsHandle()
@@ -973,7 +973,7 @@ func (s *testStatsSuite) TestUpdateStatsByLocalFeedback(c *C) {
 	statistics.FeedbackProbability.Store(1)
 
 	is := s.do.InfoSchema()
-	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"), false)
 	c.Assert(err, IsNil)
 
 	tblInfo := table.Meta()
@@ -1026,7 +1026,7 @@ func (s *testStatsSuite) TestUpdatePartitionStatsByLocalFeedback(c *C) {
 	statistics.FeedbackProbability.Store(1)
 
 	is := s.do.InfoSchema()
-	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"), false)
 	c.Assert(err, IsNil)
 
 	testKit.MustQuery("select * from t where a > 1")
@@ -1285,7 +1285,7 @@ func (s *testStatsSuite) TestIndexQueryFeedback(c *C) {
 	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
 	is := s.do.InfoSchema()
 	c.Assert(h.Update(is), IsNil)
-	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"), false)
 	c.Assert(err, IsNil)
 	tblInfo := table.Meta()
 	tests := []struct {
@@ -1418,7 +1418,7 @@ func (s *testStatsSuite) TestIndexQueryFeedback4TopN(c *C) {
 	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
 	is := s.do.InfoSchema()
 	c.Assert(h.Update(is), IsNil)
-	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"), false)
 	c.Assert(err, IsNil)
 	tblInfo := table.Meta()
 
@@ -1452,7 +1452,7 @@ func (s *testStatsSuite) TestAbnormalIndexFeedback(c *C) {
 	testKit.MustExec("delete from t where a = 1")
 	testKit.MustExec("delete from t where b > 10")
 	is := s.do.InfoSchema()
-	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"), false)
 	c.Assert(err, IsNil)
 	tblInfo := table.Meta()
 	h := s.do.StatsHandle()
@@ -1555,7 +1555,7 @@ func (s *testStatsSuite) TestFeedbackRanges(c *C) {
 		},
 	}
 	is := s.do.InfoSchema()
-	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"), false)
 	for i, t := range tests {
 		testKit.MustQuery(t.sql)
 		c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
@@ -1638,7 +1638,7 @@ func (s *testStatsSuite) TestUnsignedFeedbackRanges(c *C) {
 	is := s.do.InfoSchema()
 	c.Assert(h.Update(is), IsNil)
 	for i, t := range tests {
-		table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr(t.tblName))
+		table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr(t.tblName), false)
 		c.Assert(err, IsNil)
 		testKit.MustQuery(t.sql)
 		c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)

@@ -51,6 +51,7 @@ func Init() {
 			if err != nil {
 				panic(err)
 			}
+			meta.State = model.StatePublic
 			tbls = append(tbls, meta)
 			var ok bool
 			meta.ID, ok = tableIDMap[meta.Name.O]

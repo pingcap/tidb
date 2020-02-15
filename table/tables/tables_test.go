@@ -86,7 +86,7 @@ func (ts *testSuite) TestBasic(c *C) {
 	_, err := ts.se.Execute(context.Background(), "CREATE TABLE test.t (a int primary key auto_increment, b varchar(255) unique)")
 	c.Assert(err, IsNil)
 	c.Assert(ts.se.NewTxn(context.Background()), IsNil)
-	tb, err := ts.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tb, err := ts.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"), false)
 	c.Assert(err, IsNil)
 	c.Assert(tb.Meta().ID, Greater, int64(0))
 	c.Assert(tb.Meta().Name.L, Equals, "t")
@@ -182,7 +182,7 @@ func (ts *testSuite) TestTypes(c *C) {
 	ctx := context.Background()
 	_, err := ts.se.Execute(context.Background(), "CREATE TABLE test.t (c1 tinyint, c2 smallint, c3 int, c4 bigint, c5 text, c6 blob, c7 varchar(64), c8 time, c9 timestamp null default CURRENT_TIMESTAMP, c10 decimal(10,1))")
 	c.Assert(err, IsNil)
-	_, err = ts.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	_, err = ts.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"), false)
 	c.Assert(err, IsNil)
 	_, err = ts.se.Execute(ctx, "insert test.t values (1, 2, 3, 4, '5', '6', '7', '10:10:10', null, 1.4)")
 	c.Assert(err, IsNil)
@@ -234,7 +234,7 @@ func (ts *testSuite) TestUniqueIndexMultipleNullEntries(c *C) {
 	c.Assert(err, IsNil)
 	_, err = ts.se.Execute(ctx, "CREATE TABLE test.t (a int primary key auto_increment, b varchar(255) unique)")
 	c.Assert(err, IsNil)
-	tb, err := ts.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tb, err := ts.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"), false)
 	c.Assert(err, IsNil)
 	c.Assert(tb.Meta().ID, Greater, int64(0))
 	c.Assert(tb.Meta().Name.L, Equals, "t")
@@ -311,7 +311,7 @@ func (ts *testSuite) TestUnsignedPK(c *C) {
 	ts.se.Execute(context.Background(), "DROP TABLE IF EXISTS test.tPK")
 	_, err := ts.se.Execute(context.Background(), "CREATE TABLE test.tPK (a bigint unsigned primary key, b varchar(255))")
 	c.Assert(err, IsNil)
-	tb, err := ts.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("tPK"))
+	tb, err := ts.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("tPK"), false)
 	c.Assert(err, IsNil)
 	c.Assert(ts.se.NewTxn(context.Background()), IsNil)
 	rid, err := tb.AddRecord(ts.se, types.MakeDatums(1, "abc"))
@@ -333,7 +333,7 @@ func (ts *testSuite) TestIterRecords(c *C) {
 	_, err = ts.se.Execute(context.Background(), "INSERT test.tIter VALUES (-1, 2), (2, NULL)")
 	c.Assert(err, IsNil)
 	c.Assert(ts.se.NewTxn(context.Background()), IsNil)
-	tb, err := ts.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("tIter"))
+	tb, err := ts.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("tIter"), false)
 	c.Assert(err, IsNil)
 	totalCount := 0
 	err = tb.IterRecords(ts.se, tb.FirstKey(), tb.Cols(), func(h int64, rec []types.Datum, cols []*table.Column) (bool, error) {
@@ -353,7 +353,7 @@ func (ts *testSuite) TestTableFromMeta(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("CREATE TABLE meta (a int primary key auto_increment, b varchar(255) unique)")
 	c.Assert(ts.se.NewTxn(context.Background()), IsNil)
-	tb, err := ts.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("meta"))
+	tb, err := ts.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("meta"), false)
 	c.Assert(err, IsNil)
 	tbInfo := tb.Meta()
 
@@ -373,7 +373,7 @@ func (ts *testSuite) TestTableFromMeta(c *C) {
 	c.Assert(err, NotNil)
 
 	tk.MustExec(`create table t_mock (id int) partition by range (id) (partition p0 values less than maxvalue)`)
-	tb, err = ts.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t_mock"))
+	tb, err = ts.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t_mock"), false)
 	c.Assert(err, IsNil)
 	t := table.MockTableFromMeta(tb.Meta())
 	_, ok := t.(table.PartitionedTable)
@@ -382,7 +382,7 @@ func (ts *testSuite) TestTableFromMeta(c *C) {
 	c.Assert(t.Type(), Equals, table.NormalTable)
 
 	tk.MustExec("create table t_meta (a int) shard_row_id_bits = 15")
-	tb, err = domain.GetDomain(tk.Se).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t_meta"))
+	tb, err = domain.GetDomain(tk.Se).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t_meta"), false)
 	c.Assert(err, IsNil)
 	_, err = tables.AllocHandle(tk.Se, tb)
 	c.Assert(err, IsNil)
@@ -402,7 +402,7 @@ func (ts *testSuite) TestHiddenColumn(c *C) {
 	tk.MustExec("USE test_hidden;")
 	tk.MustExec("CREATE TABLE t (a int primary key, b int as (a+1), c int, d int as (c+1) stored, e int, f tinyint as (a+1));")
 	tk.MustExec("insert into t values (1, default, 3, default, 5, default);")
-	tb, err := ts.dom.InfoSchema().TableByName(model.NewCIStr("test_hidden"), model.NewCIStr("t"))
+	tb, err := ts.dom.InfoSchema().TableByName(model.NewCIStr("test_hidden"), model.NewCIStr("t"), false)
 	c.Assert(err, IsNil)
 	colInfo := tb.Meta().Columns
 	// Set column b, d, f to hidden

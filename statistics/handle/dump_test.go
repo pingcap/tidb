@@ -39,7 +39,7 @@ func (s *testStatsSuite) TestConversion(c *C) {
 	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
 	c.Assert(h.Update(is), IsNil)
 
-	tableInfo, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tableInfo, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"), false)
 	c.Assert(err, IsNil)
 	jsonTbl, err := h.DumpStatsToJSON("test", tableInfo.Meta(), nil)
 	c.Assert(err, IsNil)
@@ -84,7 +84,7 @@ PARTITION BY RANGE ( a ) (
 	h := s.do.StatsHandle()
 	c.Assert(h.Update(is), IsNil)
 
-	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"), false)
 	c.Assert(err, IsNil)
 	tableInfo := table.Meta()
 	jsonTbl, err := h.DumpStatsToJSON("test", tableInfo, nil)
@@ -120,7 +120,7 @@ func (s *testStatsSuite) TestDumpAlteredTable(c *C) {
 	tk.MustExec("create table t(a int, b int)")
 	tk.MustExec("analyze table t")
 	tk.MustExec("alter table t drop column a")
-	table, err := s.do.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	table, err := s.do.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"), false)
 	c.Assert(err, IsNil)
 	_, err = h.DumpStatsToJSON("test", table.Meta(), nil)
 	c.Assert(err, IsNil)
@@ -136,7 +136,7 @@ func (s *testStatsSuite) TestDumpCMSketchWithTopN(c *C) {
 	testKit.MustExec("analyze table t")
 
 	is := s.do.InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"), false)
 	c.Assert(err, IsNil)
 	tableInfo := tbl.Meta()
 	h := s.do.StatsHandle()
@@ -178,7 +178,7 @@ func (s *testStatsSuite) TestDumpPseudoColumns(c *C) {
 	testKit.MustExec("analyze table t index idx")
 
 	is := s.do.InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"), false)
 	c.Assert(err, IsNil)
 	h := s.do.StatsHandle()
 	_, err = h.DumpStatsToJSON("test", tbl.Meta(), nil)

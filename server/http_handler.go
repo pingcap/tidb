@@ -301,7 +301,7 @@ func (t *tikvHandlerTool) getTable(dbName, tableName string) (table.PhysicalTabl
 		return nil, errors.Trace(err)
 	}
 	tableName, partitionName := extractTableAndPartitionName(tableName)
-	tableVal, err := schema.TableByName(model.NewCIStr(dbName), model.NewCIStr(tableName))
+	tableVal, err := schema.TableByName(model.NewCIStr(dbName), model.NewCIStr(tableName), false)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -815,7 +815,7 @@ func (h schemaHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		if tableName, ok := params[pTableName]; ok {
 			// table schema of a specified table name
 			cTableName := model.NewCIStr(tableName)
-			data, err := schema.TableByName(cDBName, cTableName)
+			data, err := schema.TableByName(cDBName, cTableName, false)
 			if err != nil {
 				writeError(w, err)
 				return
@@ -872,7 +872,7 @@ func (h tableHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	// get table's schema.
-	tableVal, err := schema.TableByName(model.NewCIStr(dbName), model.NewCIStr(tableName))
+	tableVal, err := schema.TableByName(model.NewCIStr(dbName), model.NewCIStr(tableName), false)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -1438,7 +1438,6 @@ func (h mvccTxnHandler) handleMvccGetByIdx(params map[string]string, values url.
 	dbName := params[pDBName]
 	tableName := params[pTableName]
 	handleStr := params[pHandle]
-
 	t, err := h.getTable(dbName, tableName)
 	if err != nil {
 		return nil, errors.Trace(err)

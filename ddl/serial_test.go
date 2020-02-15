@@ -170,7 +170,7 @@ func (s *testSerialSuite) TestMultiRegionGetTableEndHandle(c *C) {
 	// Get table ID for split.
 	dom := domain.GetDomain(tk.Se)
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test_get_endhandle"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(model.NewCIStr("test_get_endhandle"), model.NewCIStr("t"), false)
 	c.Assert(err, IsNil)
 	tblID := tbl.Meta().ID
 
@@ -209,7 +209,7 @@ func (s *testSerialSuite) TestGetTableEndHandle(c *C) {
 
 	is := s.dom.InfoSchema()
 	d := s.dom.DDL()
-	tbl, err := is.TableByName(model.NewCIStr("test_get_endhandle"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(model.NewCIStr("test_get_endhandle"), model.NewCIStr("t"), false)
 	c.Assert(err, IsNil)
 
 	testCtx := newTestMaxTableRowIDContext(c, d, tbl)
@@ -240,7 +240,7 @@ func (s *testSerialSuite) TestGetTableEndHandle(c *C) {
 	tk.MustExec(sql[:len(sql)-1])
 
 	is = s.dom.InfoSchema()
-	testCtx.tbl, err = is.TableByName(model.NewCIStr("test_get_endhandle"), model.NewCIStr("t1"))
+	testCtx.tbl, err = is.TableByName(model.NewCIStr("test_get_endhandle"), model.NewCIStr("t1"), false)
 	c.Assert(err, IsNil)
 	checkGetMaxTableRowID(testCtx, s.store, false, int64(999))
 
@@ -248,7 +248,7 @@ func (s *testSerialSuite) TestGetTableEndHandle(c *C) {
 	tk.MustExec("create table t2(a varchar(255))")
 
 	is = s.dom.InfoSchema()
-	testCtx.tbl, err = is.TableByName(model.NewCIStr("test_get_endhandle"), model.NewCIStr("t2"))
+	testCtx.tbl, err = is.TableByName(model.NewCIStr("test_get_endhandle"), model.NewCIStr("t2"), false)
 	c.Assert(err, IsNil)
 	checkGetMaxTableRowID(testCtx, s.store, true, int64(math.MaxInt64))
 
@@ -307,7 +307,7 @@ func (s *testSerialSuite) TestCreateTableWithLike(c *C) {
 	tk.MustQuery("select * from t2").Check(testkit.Rows("1 12"))
 	ctx := tk.Se.(sessionctx.Context)
 	is := domain.GetDomain(ctx).InfoSchema()
-	tbl1, err := is.TableByName(model.NewCIStr("ctwl_db"), model.NewCIStr("t1"))
+	tbl1, err := is.TableByName(model.NewCIStr("ctwl_db"), model.NewCIStr("t1"), false)
 	c.Assert(err, IsNil)
 	tbl1Info := tbl1.Meta()
 	c.Assert(tbl1Info.ForeignKeys, IsNil)
@@ -315,7 +315,7 @@ func (s *testSerialSuite) TestCreateTableWithLike(c *C) {
 	col := tbl1Info.Columns[0]
 	hasNotNull := mysql.HasNotNullFlag(col.Flag)
 	c.Assert(hasNotNull, IsTrue)
-	tbl2, err := is.TableByName(model.NewCIStr("ctwl_db"), model.NewCIStr("t2"))
+	tbl2, err := is.TableByName(model.NewCIStr("ctwl_db"), model.NewCIStr("t2"), false)
 	c.Assert(err, IsNil)
 	tbl2Info := tbl2.Meta()
 	c.Assert(tbl2Info.ForeignKeys, IsNil)
@@ -329,7 +329,7 @@ func (s *testSerialSuite) TestCreateTableWithLike(c *C) {
 	tk.MustExec("insert into t1 set c2=11")
 	tk.MustQuery("select * from t1").Check(testkit.Rows("1 11"))
 	is = domain.GetDomain(ctx).InfoSchema()
-	tbl1, err = is.TableByName(model.NewCIStr("ctwl_db1"), model.NewCIStr("t1"))
+	tbl1, err = is.TableByName(model.NewCIStr("ctwl_db1"), model.NewCIStr("t1"), false)
 	c.Assert(err, IsNil)
 	c.Assert(tbl1.Meta().ForeignKeys, IsNil)
 
@@ -715,7 +715,7 @@ func (s *testSerialSuite) TestCancelJobByErrorCountLimit(c *C) {
 
 	_, err = tk.Exec("create table t (a int)")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[ddl:8214]Cancelled DDL job")
+	c.Assert(err.Error(), Equals, "[ddl:8214]Job ran failed, caused by: [ddl:-1]mock do job error")
 }
 
 func (s *testSerialSuite) TestCanceledJobTakeTime(c *C) {
@@ -971,4 +971,79 @@ func (s *testSerialSuite) TestForbidUnsupportedCollations(c *C) {
 	// TODO(bb7133): fix the following cases by setting charset from collate firstly.
 	// mustGetUnsupportedCollation("create database ucd collate utf8mb4_unicode_ci", errMsgUnsupportedUnicodeCI)
 	// mustGetUnsupportedCollation("alter table t convert to collate utf8mb4_unicode_ci", "utf8mb4_unicode_ci")
+}
+
+func (s *testSerialSuite) TestCreateTableReorg(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	c.Assert(tk.Se.GetSessionVars().InRestrictedSQL, Equals, false)
+	tk1 := testkit.NewTestKit(c, s.store)
+	tk1.MustExec("use test")
+	var checkErr error
+	hook := &ddl.TestDDLCallback{}
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		if job.Type == model.ActionCreateTable && job.State == model.JobStateRunning && job.SchemaState == model.StateWriteReorganization {
+			_, checkErr = tk1.Exec("insert into t values ()")
+		}
+	}
+	origHook := s.dom.DDL().GetHook()
+	defer s.dom.DDL().(ddl.DDLForTest).SetHook(origHook)
+	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
+	_, err := tk.Exec("create table t(a int)")
+	c.Assert(checkErr.Error(), Equals, "[schema:1146]Table 'test.t' doesn't exist")
+	c.Assert(err, IsNil)
+	tk.MustExec("drop table t;")
+
+	tk1.Se.GetSessionVars().InRestrictedSQL = true
+	defer func() {
+		tk1.Se.GetSessionVars().InRestrictedSQL = false
+	}()
+	_, err = tk.Exec("create table t(a int)")
+	c.Assert(checkErr, IsNil)
+	c.Assert(err, IsNil)
+}
+
+func (s *testSerialSuite) TestCreateTableReorgFail(c *C) {
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/mockCreateTableReorgError", `return(true)`), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/ddl/mockCreateTableReorgError"), IsNil)
+	}()
+	var tableID int64
+	var dbID int64
+	hook := &ddl.TestDDLCallback{}
+	hook.OnJobUpdatedExported = func(job *model.Job) {
+		if job.Type == model.ActionCreateTable && job.State == model.JobStateRunning && job.SchemaState == model.StateWriteReorganization {
+			tableID = job.TableID
+			dbID = job.SchemaID
+		}
+	}
+	origHook := s.dom.DDL().GetHook()
+	defer s.dom.DDL().(ddl.DDLForTest).SetHook(origHook)
+	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
+
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	c.Assert(tk.Se.GetSessionVars().InRestrictedSQL, Equals, false)
+	tk.MustExec("drop table if exists t")
+	err := tk.ExecToErr("create table t(a int)")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:-1]injected error occurred when creating table")
+	tk.MustGetErrCode("insert into t values ()", mysql.ErrNoSuchTable)
+
+	tk.Se.GetSessionVars().InRestrictedSQL = true
+	defer func() {
+		tk.Se.GetSessionVars().InRestrictedSQL = false
+	}()
+	tk.MustGetErrCode("insert into t values ()", mysql.ErrNoSuchTable)
+	c.Assert(tableID != 0, IsTrue)
+	c.Assert(dbID != 0, IsTrue)
+	err = tk.Se.NewTxn(context.Background())
+	c.Assert(err, IsNil)
+	txn, err := tk.Se.Txn(true)
+	c.Assert(err, IsNil)
+	m := meta.NewMeta(txn)
+	tbl, err := m.GetTable(dbID, tableID)
+	c.Assert(err, IsNil)
+	c.Assert(tbl, IsNil)
 }

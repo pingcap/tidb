@@ -74,7 +74,7 @@ func (e *GrantExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	if e.Level.Level == ast.GrantLevelTable {
 		dbNameStr := model.NewCIStr(dbName)
 		schema := infoschema.GetInfoSchema(e.ctx)
-		tbl, err := schema.TableByName(dbNameStr, model.NewCIStr(e.Level.TableName))
+		tbl, err := schema.TableByName(dbNameStr, model.NewCIStr(e.Level.TableName), e.ctx.GetSessionVars().InRestrictedSQL)
 		if err != nil {
 			return err
 		}
@@ -741,7 +741,7 @@ func getTargetSchemaAndTable(ctx sessionctx.Context, dbName, tableName string, i
 		}
 	}
 	name := model.NewCIStr(tableName)
-	tbl, err := is.TableByName(model.NewCIStr(dbName), name)
+	tbl, err := is.TableByName(model.NewCIStr(dbName), name, ctx.GetSessionVars().InRestrictedSQL)
 	if err != nil {
 		return "", nil, err
 	}

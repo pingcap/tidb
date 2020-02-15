@@ -636,11 +636,11 @@ func (s *testTableSuite) TestReloadDropDatabase(c *C) {
 	tk.MustExec("create table t2 (a int)")
 	tk.MustExec("create table t3 (a int)")
 	is := domain.GetDomain(tk.Se).InfoSchema()
-	t2, err := is.TableByName(model.NewCIStr("test_dbs"), model.NewCIStr("t2"))
+	t2, err := is.TableByName(model.NewCIStr("test_dbs"), model.NewCIStr("t2"), false)
 	c.Assert(err, IsNil)
 	tk.MustExec("drop database test_dbs")
 	is = domain.GetDomain(tk.Se).InfoSchema()
-	_, err = is.TableByName(model.NewCIStr("test_dbs"), model.NewCIStr("t2"))
+	_, err = is.TableByName(model.NewCIStr("test_dbs"), model.NewCIStr("t2"), false)
 	c.Assert(terror.ErrorEqual(infoschema.ErrTableNotExists, err), IsTrue)
 	_, ok := is.TableByID(t2.Meta().ID)
 	c.Assert(ok, IsFalse)
@@ -836,7 +836,7 @@ func (s *testTableSuite) TestSelectHiddenColumn(c *C) {
 	tk.MustExec("USE test_hidden;")
 	tk.MustExec("CREATE TABLE hidden (a int , b int, c int);")
 	tk.MustQuery("select count(*) from INFORMATION_SCHEMA.COLUMNS where table_name = 'hidden'").Check(testkit.Rows("3"))
-	tb, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test_hidden"), model.NewCIStr("hidden"))
+	tb, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test_hidden"), model.NewCIStr("hidden"), false)
 	c.Assert(err, IsNil)
 	colInfo := tb.Meta().Columns
 	// Set column b to hidden

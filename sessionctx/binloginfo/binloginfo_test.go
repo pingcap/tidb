@@ -587,7 +587,7 @@ func testGetTableByName(c *C, ctx sessionctx.Context, db, table string) table.Ta
 	// Make sure the table schema is the new schema.
 	err := dom.Reload()
 	c.Assert(err, IsNil)
-	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr(db), model.NewCIStr(table))
+	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr(db), model.NewCIStr(table), ctx.GetSessionVars().InRestrictedSQL)
 	c.Assert(err, IsNil)
 	return tbl
 }

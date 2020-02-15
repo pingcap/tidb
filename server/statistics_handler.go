@@ -53,7 +53,7 @@ func (sh StatsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 	is := sh.do.InfoSchema()
 	h := sh.do.StatsHandle()
-	tbl, err := is.TableByName(model.NewCIStr(params[pDBName]), model.NewCIStr(params[pTableName]))
+	tbl, err := is.TableByName(model.NewCIStr(params[pDBName]), model.NewCIStr(params[pTableName]), false)
 	if err != nil {
 		writeError(w, err)
 	} else {
@@ -117,7 +117,7 @@ func (sh StatsHistoryHandler) ServeHTTP(w http.ResponseWriter, req *http.Request
 		return
 	}
 	h := sh.do.StatsHandle()
-	tbl, err := is.TableByName(model.NewCIStr(params[pDBName]), model.NewCIStr(params[pTableName]))
+	tbl, err := is.TableByName(model.NewCIStr(params[pDBName]), model.NewCIStr(params[pTableName]), false)
 	if err != nil {
 		writeError(w, err)
 		return

@@ -284,7 +284,7 @@ func (*testSuite) TestT(c *C) {
 	// for GetSnapshotMeta
 	dbInfo, ok := currSnapIs.SchemaByName(model.NewCIStr("aaa"))
 	c.Assert(ok, IsTrue)
-	tbl, err := currSnapIs.TableByName(model.NewCIStr("aaa"), model.NewCIStr("tbl"))
+	tbl, err := currSnapIs.TableByName(model.NewCIStr("aaa"), model.NewCIStr("tbl"), false)
 	c.Assert(err, IsNil)
 	m, err := dom.GetSnapshotMeta(snapTS)
 	c.Assert(err, IsNil)

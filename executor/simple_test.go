@@ -559,7 +559,7 @@ func (s *testSuite3) TestDropStats(c *C) {
 	testKit.MustExec("create table t (c1 int, c2 int)")
 	do := domain.GetDomain(testKit.Se)
 	is := do.InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"), false)
 	c.Assert(err, IsNil)
 	tableInfo := tbl.Meta()
 	h := do.StatsHandle()

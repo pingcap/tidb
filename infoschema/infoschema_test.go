@@ -175,11 +175,11 @@ func (*testSuite) TestT(c *C) {
 	c.Assert(ok, IsTrue)
 	c.Assert(alloc, NotNil)
 
-	tb, err = is.TableByName(dbName, tbName)
+	tb, err = is.TableByName(dbName, tbName, false)
 	c.Assert(err, IsNil)
 	c.Assert(tb, NotNil)
 
-	_, err = is.TableByName(dbName, noexist)
+	_, err = is.TableByName(dbName, noexist, false)
 	c.Assert(err, NotNil)
 
 	tbs := is.SchemaTables(dbName)
@@ -189,7 +189,7 @@ func (*testSuite) TestT(c *C) {
 	c.Assert(tbs, HasLen, 0)
 
 	// Make sure partitions table exists
-	tb, err = is.TableByName(model.NewCIStr("information_schema"), model.NewCIStr("partitions"))
+	tb, err = is.TableByName(model.NewCIStr("information_schema"), model.NewCIStr("partitions"), false)
 	c.Assert(err, IsNil)
 	c.Assert(tb, NotNil)
 
@@ -321,7 +321,7 @@ func (*testSuite) TestInfoTables(c *C) {
 		"PROCESSLIST",
 	}
 	for _, t := range infoTables {
-		tb, err1 := is.TableByName(util.InformationSchemaName, model.NewCIStr(t))
+		tb, err1 := is.TableByName(util.InformationSchemaName, model.NewCIStr(t), false)
 		c.Assert(err1, IsNil)
 		c.Assert(tb, NotNil)
 	}

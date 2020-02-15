@@ -189,7 +189,7 @@ func testGetTableByName(c *C, ctx sessionctx.Context, db, table string) table.Ta
 	// Make sure the table schema is the new schema.
 	err := dom.Reload()
 	c.Assert(err, IsNil)
-	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr(db), model.NewCIStr(table))
+	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr(db), model.NewCIStr(table), false)
 	c.Assert(err, IsNil)
 	return tbl
 }
@@ -1680,7 +1680,7 @@ LOOP:
 	s.mustExec(c, "create table test_on_update_c (c1 int, c2 timestamp);")
 	s.mustExec(c, "alter table test_on_update_c add column c3 timestamp null default '2017-02-11' on update current_timestamp;")
 	is := domain.GetDomain(ctx).InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test_db"), model.NewCIStr("test_on_update_c"))
+	tbl, err := is.TableByName(model.NewCIStr("test_db"), model.NewCIStr("test_on_update_c"), false)
 	c.Assert(err, IsNil)
 	tblInfo := tbl.Meta()
 	colC := tblInfo.Columns[2]
@@ -1691,7 +1691,7 @@ LOOP:
 	s.mustExec(c, "create table test_on_update_d (c1 int, c2 datetime);")
 	s.mustExec(c, "alter table test_on_update_d add column c3 datetime on update current_timestamp;")
 	is = domain.GetDomain(ctx).InfoSchema()
-	tbl, err = is.TableByName(model.NewCIStr("test_db"), model.NewCIStr("test_on_update_d"))
+	tbl, err = is.TableByName(model.NewCIStr("test_db"), model.NewCIStr("test_on_update_d"), false)
 	c.Assert(err, IsNil)
 	tblInfo = tbl.Meta()
 	colC = tblInfo.Columns[2]
@@ -1821,7 +1821,7 @@ func (s *testDBSuite4) TestChangeColumn(c *C) {
 	s.mustExec(c, "alter table t3 change d dd bigint not null")
 	ctx := s.tk.Se.(sessionctx.Context)
 	is := domain.GetDomain(ctx).InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test_db"), model.NewCIStr("t3"))
+	tbl, err := is.TableByName(model.NewCIStr("test_db"), model.NewCIStr("t3"), false)
 	c.Assert(err, IsNil)
 	tblInfo := tbl.Meta()
 	colD := tblInfo.Columns[2]
@@ -1830,7 +1830,7 @@ func (s *testDBSuite4) TestChangeColumn(c *C) {
 	// for the following definitions: 'not null', 'null', 'default value' and 'comment'
 	s.mustExec(c, "alter table t3 change b b varchar(20) null default 'c' comment 'my comment'")
 	is = domain.GetDomain(ctx).InfoSchema()
-	tbl, err = is.TableByName(model.NewCIStr("test_db"), model.NewCIStr("t3"))
+	tbl, err = is.TableByName(model.NewCIStr("test_db"), model.NewCIStr("t3"), false)
 	c.Assert(err, IsNil)
 	tblInfo = tbl.Meta()
 	colB := tblInfo.Columns[1]
@@ -1843,7 +1843,7 @@ func (s *testDBSuite4) TestChangeColumn(c *C) {
 	s.mustExec(c, "alter table t3 add column c timestamp not null")
 	s.mustExec(c, "alter table t3 change c c timestamp null default '2017-02-11' comment 'col c comment' on update current_timestamp")
 	is = domain.GetDomain(ctx).InfoSchema()
-	tbl, err = is.TableByName(model.NewCIStr("test_db"), model.NewCIStr("t3"))
+	tbl, err = is.TableByName(model.NewCIStr("test_db"), model.NewCIStr("t3"), false)
 	c.Assert(err, IsNil)
 	tblInfo = tbl.Meta()
 	colC := tblInfo.Columns[3]
@@ -2063,7 +2063,7 @@ func (s *testDBSuite1) TestCreateTable(c *C) {
 	s.tk.MustExec("CREATE TABLE IF NOT EXISTS `t` (`a` double DEFAULT 1.0 DEFAULT now() DEFAULT 2.0 );")
 	ctx := s.tk.Se.(sessionctx.Context)
 	is := domain.GetDomain(ctx).InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"), false)
 	c.Assert(err, IsNil)
 	cols := tbl.Cols()
 
@@ -2548,7 +2548,7 @@ func (s *testDBSuite3) TestTruncateTable(c *C) {
 	tk.MustExec("insert truncate_table values (1, 1), (2, 2)")
 	ctx := tk.Se.(sessionctx.Context)
 	is := domain.GetDomain(ctx).InfoSchema()
-	oldTblInfo, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("truncate_table"))
+	oldTblInfo, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("truncate_table"), false)
 	c.Assert(err, IsNil)
 	oldTblID := oldTblInfo.Meta().ID
 
@@ -2558,7 +2558,7 @@ func (s *testDBSuite3) TestTruncateTable(c *C) {
 	tk.MustQuery("select * from truncate_table").Check(testkit.Rows("3 3", "4 4"))
 
 	is = domain.GetDomain(ctx).InfoSchema()
-	newTblInfo, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("truncate_table"))
+	newTblInfo, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("truncate_table"), false)
 	c.Assert(err, IsNil)
 	c.Assert(newTblInfo.Meta().ID, Greater, oldTblID)
 
@@ -2657,14 +2657,14 @@ func (s *testDBSuite) testRenameTable(c *C, sql string, isAlterTable bool) {
 	s.tk.MustExec("insert t values (1, 1), (2, 2)")
 	ctx := s.tk.Se.(sessionctx.Context)
 	is := domain.GetDomain(ctx).InfoSchema()
-	oldTblInfo, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	oldTblInfo, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"), false)
 	c.Assert(err, IsNil)
 	oldTblID := oldTblInfo.Meta().ID
 	s.tk.MustExec("create database test1")
 	s.tk.MustExec("use test1")
 	s.tk.MustExec(fmt.Sprintf(sql, "test.t", "test1.t1"))
 	is = domain.GetDomain(ctx).InfoSchema()
-	newTblInfo, err := is.TableByName(model.NewCIStr("test1"), model.NewCIStr("t1"))
+	newTblInfo, err := is.TableByName(model.NewCIStr("test1"), model.NewCIStr("t1"), false)
 	c.Assert(err, IsNil)
 	c.Assert(newTblInfo.Meta().ID, Equals, oldTblID)
 	s.tk.MustQuery("select * from t1").Check(testkit.Rows("1 1", "2 2"))
@@ -2678,7 +2678,7 @@ func (s *testDBSuite) testRenameTable(c *C, sql string, isAlterTable bool) {
 	s.tk.MustExec("use test1")
 	s.tk.MustExec(fmt.Sprintf(sql, "t1", "t2"))
 	is = domain.GetDomain(ctx).InfoSchema()
-	newTblInfo, err = is.TableByName(model.NewCIStr("test1"), model.NewCIStr("t2"))
+	newTblInfo, err = is.TableByName(model.NewCIStr("test1"), model.NewCIStr("t2"), false)
 	c.Assert(err, IsNil)
 	c.Assert(newTblInfo.Meta().ID, Equals, oldTblID)
 	s.tk.MustQuery("select * from t2").Check(testkit.Rows("1 1", "2 2"))
@@ -2982,7 +2982,7 @@ func (s *testDBSuite5) TestCheckColumnDefaultValue(c *C) {
 	))
 	ctx := s.tk.Se.(sessionctx.Context)
 	is := domain.GetDomain(ctx).InfoSchema()
-	tblInfo, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("text_default_text"))
+	tblInfo, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("text_default_text"), false)
 	c.Assert(err, IsNil)
 	c.Assert(tblInfo.Meta().Columns[0].DefaultValue, Equals, "")
 
@@ -2993,7 +2993,7 @@ func (s *testDBSuite5) TestCheckColumnDefaultValue(c *C) {
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
 	))
 	is = domain.GetDomain(ctx).InfoSchema()
-	tblInfo, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("text_default_blob"))
+	tblInfo, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("text_default_blob"), false)
 	c.Assert(err, IsNil)
 	c.Assert(tblInfo.Meta().Columns[0].DefaultValue, Equals, "")
 
@@ -3004,7 +3004,7 @@ func (s *testDBSuite5) TestCheckColumnDefaultValue(c *C) {
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
 	))
 	is = domain.GetDomain(ctx).InfoSchema()
-	tblInfo, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("text_default_json"))
+	tblInfo, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("text_default_json"), false)
 	c.Assert(err, IsNil)
 	c.Assert(tblInfo.Meta().Columns[0].DefaultValue, Equals, `null`)
 }
@@ -3071,7 +3071,7 @@ func (s *testDBSuite3) TestColumnModifyingDefinition(c *C) {
 	s.tk.MustExec("alter table test2 change c2 a int not null;")
 	ctx := s.tk.Se.(sessionctx.Context)
 	is := domain.GetDomain(ctx).InfoSchema()
-	t, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("test2"))
+	t, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("test2"), false)
 	c.Assert(err, IsNil)
 	var c2 *table.Column
 	for _, col := range t.Cols() {
@@ -3122,7 +3122,7 @@ func (s *testDBSuite5) TestCheckConvertToCharacter(c *C) {
 	s.tk.MustExec("create table t(a varchar(10) charset binary);")
 	ctx := s.tk.Se.(sessionctx.Context)
 	is := domain.GetDomain(ctx).InfoSchema()
-	t, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	t, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"), false)
 	c.Assert(err, IsNil)
 	s.tk.MustGetErrCode("alter table t modify column a varchar(10) charset utf8 collate utf8_bin", errno.ErrUnsupportedDDLOperation)
 	s.tk.MustGetErrCode("alter table t modify column a varchar(10) charset utf8mb4 collate utf8mb4_bin", errno.ErrUnsupportedDDLOperation)
@@ -4490,7 +4490,7 @@ func (s *testSerialDBSuite) TestDDLJobErrorCount(c *C) {
 	tableName := model.NewCIStr("ddl_error_table")
 	schema, ok := is.SchemaByName(schemaName)
 	c.Assert(ok, IsTrue)
-	tbl, err := is.TableByName(schemaName, tableName)
+	tbl, err := is.TableByName(schemaName, tableName, false)
 	c.Assert(err, IsNil)
 
 	newTableName := model.NewCIStr("new_ddl_error_table")

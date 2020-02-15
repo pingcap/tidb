@@ -126,7 +126,7 @@ func (s *testSuite6) TestCreateTable(c *C) {
 	// test multiple collate specified in column when create.
 	tk.MustExec("drop table if exists test_multiple_column_collate;")
 	tk.MustExec("create table test_multiple_column_collate (a char(1) collate utf8_bin collate utf8_general_ci) charset utf8mb4 collate utf8mb4_bin")
-	t, err := domain.GetDomain(tk.Se).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("test_multiple_column_collate"))
+	t, err := domain.GetDomain(tk.Se).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("test_multiple_column_collate"), false)
 	c.Assert(err, IsNil)
 	c.Assert(t.Cols()[0].Charset, Equals, "utf8")
 	c.Assert(t.Cols()[0].Collate, Equals, "utf8_general_ci")
@@ -135,7 +135,7 @@ func (s *testSuite6) TestCreateTable(c *C) {
 
 	tk.MustExec("drop table if exists test_multiple_column_collate;")
 	tk.MustExec("create table test_multiple_column_collate (a char(1) charset utf8 collate utf8_bin collate utf8_general_ci) charset utf8mb4 collate utf8mb4_bin")
-	t, err = domain.GetDomain(tk.Se).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("test_multiple_column_collate"))
+	t, err = domain.GetDomain(tk.Se).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("test_multiple_column_collate"), false)
 	c.Assert(err, IsNil)
 	c.Assert(t.Cols()[0].Charset, Equals, "utf8")
 	c.Assert(t.Cols()[0].Collate, Equals, "utf8_general_ci")
@@ -417,7 +417,7 @@ func (s *testSuite6) TestAddNotNullColumnNoDefault(c *C) {
 	tk.MustExec("insert nn values (1), (2)")
 	tk.MustExec("alter table nn add column c2 int not null")
 
-	tbl, err := domain.GetDomain(tk.Se).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("nn"))
+	tbl, err := domain.GetDomain(tk.Se).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("nn"), false)
 	c.Assert(err, IsNil)
 	col2 := tbl.Meta().Columns[1]
 	c.Assert(col2.DefaultValue, IsNil)
@@ -463,7 +463,7 @@ func (s *testSuite6) TestAlterTableModifyColumn(c *C) {
 	tk.MustExec("create table modify_column_multiple_collate (a char(1) collate utf8_bin collate utf8_general_ci) charset utf8mb4 collate utf8mb4_bin")
 	_, err = tk.Exec("alter table modify_column_multiple_collate modify column a char(1) collate utf8mb4_bin;")
 	c.Assert(err, IsNil)
-	t, err := domain.GetDomain(tk.Se).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("modify_column_multiple_collate"))
+	t, err := domain.GetDomain(tk.Se).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("modify_column_multiple_collate"), false)
 	c.Assert(err, IsNil)
 	c.Assert(t.Cols()[0].Charset, Equals, "utf8mb4")
 	c.Assert(t.Cols()[0].Collate, Equals, "utf8mb4_bin")
@@ -474,7 +474,7 @@ func (s *testSuite6) TestAlterTableModifyColumn(c *C) {
 	tk.MustExec("create table modify_column_multiple_collate (a char(1) collate utf8_bin collate utf8_general_ci) charset utf8mb4 collate utf8mb4_bin")
 	_, err = tk.Exec("alter table modify_column_multiple_collate modify column a char(1) charset utf8mb4 collate utf8mb4_bin;")
 	c.Assert(err, IsNil)
-	t, err = domain.GetDomain(tk.Se).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("modify_column_multiple_collate"))
+	t, err = domain.GetDomain(tk.Se).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("modify_column_multiple_collate"), false)
 	c.Assert(err, IsNil)
 	c.Assert(t.Cols()[0].Charset, Equals, "utf8mb4")
 	c.Assert(t.Cols()[0].Collate, Equals, "utf8mb4_bin")
@@ -587,7 +587,7 @@ func (s *testSuite6) TestColumnCharsetAndCollate(c *C) {
 			is := dm.InfoSchema()
 			c.Assert(is, NotNil)
 
-			tb, err := is.TableByName(model.NewCIStr(dbName), model.NewCIStr(tblName))
+			tb, err := is.TableByName(model.NewCIStr(dbName), model.NewCIStr(tblName), false)
 			c.Assert(err, IsNil)
 			c.Assert(tb.Meta().Columns[0].Charset, Equals, tt.exptCharset, Commentf(sql))
 			c.Assert(tb.Meta().Columns[0].Collate, Equals, tt.exptCollate, Commentf(sql))
@@ -649,7 +649,7 @@ func (s *testSuite8) TestShardRowIDBits(c *C) {
 	}
 
 	dom := domain.GetDomain(tk.Se)
-	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"), false)
 	c.Assert(err, IsNil)
 
 	assertCountAndShard := func(t table.Table, expectCount int) {
@@ -697,7 +697,7 @@ func (s *testSuite8) TestShardRowIDBits(c *C) {
 	// Hack an existing table with shard_row_id_bits and primary key as handle
 	db, ok := dom.InfoSchema().SchemaByName(model.NewCIStr("test"))
 	c.Assert(ok, IsTrue)
-	tbl, err = dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("auto"))
+	tbl, err = dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("auto"), false)
 	tblInfo := tbl.Meta()
 	tblInfo.ShardRowIDBits = 5
 	tblInfo.MaxShardRowIDBits = 5
@@ -723,7 +723,7 @@ func (s *testSuite8) TestShardRowIDBits(c *C) {
 	for i := 0; i < 100; i++ {
 		tk.MustExec("insert into auto(a) values (?)", i)
 	}
-	tbl, err = dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("auto"))
+	tbl, err = dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("auto"), false)
 	assertCountAndShard(tbl, 100)
 	prevB, err := strconv.Atoi(tk.MustQuery("select b from auto where a=0").Rows()[0][0].(string))
 	c.Assert(err, IsNil)
@@ -739,7 +739,7 @@ func (s *testSuite8) TestShardRowIDBits(c *C) {
 	tk.MustExec("create table t1 (a int) shard_row_id_bits = 15")
 	defer tk.MustExec("drop table if exists t1")
 
-	tbl, err = dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	tbl, err = dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t1"), false)
 	c.Assert(err, IsNil)
 	maxID := 1<<(64-15-1) - 1
 	err = tbl.RebaseAutoID(tk.Se, int64(maxID)-1, false)

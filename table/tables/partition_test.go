@@ -72,7 +72,7 @@ PARTITION BY RANGE ( id ) (
 	c.Assert(err, IsNil)
 	_, err = ts.se.Execute(ctx, createTable1)
 	c.Assert(err, IsNil)
-	tb, err := ts.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	tb, err := ts.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t1"), false)
 	c.Assert(err, IsNil)
 	tbInfo := tb.Meta()
 	p0 := tbInfo.Partition.Definitions[0]
@@ -121,7 +121,7 @@ PARTITION BY RANGE ( id ) (
 	_, err = ts.se.Execute(context.Background(), createTable2)
 	c.Assert(err, IsNil)
 	c.Assert(ts.se.NewTxn(ctx), IsNil)
-	tb, err = ts.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t2"))
+	tb, err = ts.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t2"), false)
 	c.Assert(err, IsNil)
 	_, err = tb.AddRecord(ts.se, types.MakeDatums(22))
 	c.Assert(err, IsNil) // Insert into maxvalue partition.
@@ -133,7 +133,7 @@ PARTITION BY RANGE ( id ) (
 	_, err = ts.se.Execute(context.Background(), createTable3)
 	c.Assert(err, IsNil)
 	c.Assert(ts.se.NewTxn(ctx), IsNil)
-	tb, err = ts.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t3"))
+	tb, err = ts.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t3"), false)
 	c.Assert(err, IsNil)
 	_, err = tb.AddRecord(ts.se, types.MakeDatums(11))
 	c.Assert(table.ErrNoPartitionForGivenValue.Equal(err), IsTrue)
@@ -149,7 +149,7 @@ PARTITION BY RANGE ( id ) (
 	_, err = ts.se.Execute(context.Background(), createTable4)
 	c.Assert(err, IsNil)
 	c.Assert(ts.se.NewTxn(ctx), IsNil)
-	tb, err = ts.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t4"))
+	tb, err = ts.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t4"), false)
 	c.Assert(err, IsNil)
 	_, err = tb.AddRecord(ts.se, types.MakeDatums(1, 11))
 	c.Assert(table.ErrNoPartitionForGivenValue.Equal(err), IsTrue)
@@ -164,7 +164,7 @@ func (ts *testSuite) TestHashPartitionAddRecord(c *C) {
 	c.Assert(err, IsNil)
 	_, err = ts.se.Execute(context.Background(), `CREATE TABLE test.t1 (id int(11), index(id)) PARTITION BY HASH (id) partitions 4;`)
 	c.Assert(err, IsNil)
-	tb, err := ts.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	tb, err := ts.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t1"), false)
 	c.Assert(err, IsNil)
 	tbInfo := tb.Meta()
 	p0 := tbInfo.Partition.Definitions[0]
@@ -202,7 +202,7 @@ func (ts *testSuite) TestHashPartitionAddRecord(c *C) {
 	// Test for partition expression is negative number.
 	_, err = ts.se.Execute(context.Background(), `CREATE TABLE test.t2 (id int(11), index(id)) PARTITION BY HASH (id) partitions 11;`)
 	c.Assert(err, IsNil)
-	tb, err = ts.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t2"))
+	tb, err = ts.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t2"), false)
 	c.Assert(err, IsNil)
 	tbInfo = tb.Meta()
 	for i := 0; i < 11; i++ {
@@ -235,7 +235,7 @@ PARTITION BY RANGE ( id ) (
 	c.Assert(err, IsNil)
 	_, err = ts.se.Execute(context.Background(), createTable1)
 	c.Assert(err, IsNil)
-	tb, err := ts.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	tb, err := ts.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t1"), false)
 	c.Assert(err, IsNil)
 	tbInfo := tb.Meta()
 	ps := tbInfo.GetPartitionInfo()
@@ -260,7 +260,7 @@ func (ts *testSuite) TestGeneratePartitionExpr(c *C) {
 							partition p3 values less than maxvalue)`)
 	c.Assert(err, IsNil)
 
-	tbl, err := ts.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	tbl, err := ts.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t1"), false)
 	c.Assert(err, IsNil)
 	type partitionExpr interface {
 		PartitionExpr() (*tables.PartitionExpr, error)

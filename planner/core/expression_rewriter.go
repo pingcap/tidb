@@ -1629,7 +1629,7 @@ func (er *expressionRewriter) evalDefaultExpr(v *ast.DefaultExpr) {
 		return
 	}
 	var tbl table.Table
-	tbl, er.err = er.b.is.TableByName(dbName, name.OrigTblName)
+	tbl, er.err = er.b.is.TableByName(dbName, name.OrigTblName, er.sctx.GetSessionVars().InRestrictedSQL)
 	if er.err != nil {
 		return
 	}

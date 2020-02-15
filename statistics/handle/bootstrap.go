@@ -332,7 +332,7 @@ func (h *Handle) InitStats(is infoschema.InfoSchema) (err error) {
 
 func getFullTableName(is infoschema.InfoSchema, tblInfo *model.TableInfo) string {
 	for _, schema := range is.AllSchemas() {
-		if t, err := is.TableByName(schema.Name, tblInfo.Name); err == nil {
+		if t, err := is.TableByName(schema.Name, tblInfo.Name, true); err == nil {
 			if t.Meta().ID == tblInfo.ID {
 				return schema.Name.O + "." + tblInfo.Name.O
 			}

@@ -830,7 +830,7 @@ func (p *preprocessor) handleTableName(tn *ast.TableName) {
 		return
 	}
 
-	table, err := p.is.TableByName(tn.Schema, tn.Name)
+	table, err := p.is.TableByName(tn.Schema, tn.Name, p.ctx.GetSessionVars().InRestrictedSQL)
 	if err != nil {
 		p.err = err
 		return

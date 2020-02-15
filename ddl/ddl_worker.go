@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/tablecodec"
 	tidbutil "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/logutil"
@@ -340,8 +341,29 @@ func (w *worker) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
 		case model.ActionDropSchema, model.ActionDropTable, model.ActionTruncateTable, model.ActionDropIndex, model.ActionDropPrimaryKey,
 			model.ActionDropTablePartition, model.ActionTruncateTablePartition:
 			err = w.deleteRange(job)
+		case model.ActionCreateTable:
+			if job.State != model.JobStateRollbackDone {
+				break
+			}
+
+			// After rolling back an CreateTable operation, we need to use delete-range to delete the half-done data(if there is any).
+			tbInfo := &model.TableInfo{}
+			if err = job.DecodeArgs(tbInfo); err != nil {
+				return errors.Trace(err)
+			}
+			// Set args for deleteRange job
+			startKey := tablecodec.EncodeTablePrefix(tbInfo.ID)
+			physicalTableIDs := getPartitionIDs(tbInfo)
+			job.Args = []interface{}{startKey, physicalTableIDs}
+			if _, err = job.Encode(true); err == nil {
+				err = w.deleteRange(job)
+			}
 		}
 	}
+	if err != nil {
+		return errors.Trace(err)
+	}
+
 	switch job.Type {
 	case model.ActionRecoverTable:
 		err = finishRecoverTable(w, t, job)

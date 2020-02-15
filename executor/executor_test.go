@@ -391,7 +391,7 @@ func (s *testSuite3) TestAdmin(c *C) {
 	dom := domain.GetDomain(sctx)
 	is := dom.InfoSchema()
 	c.Assert(is, NotNil)
-	tb, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("admin_test"))
+	tb, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("admin_test"), false)
 	c.Assert(err, IsNil)
 	c.Assert(tb.Indices(), HasLen, 1)
 	_, err = tb.Indices()[0].Create(mock.NewContext(), txn, types.MakeDatums(int64(10)), 1)
@@ -2602,7 +2602,7 @@ func (s *testSuite) TestTimestampDefaultValueTimeZone(c *C) {
 	sctx := tk.Se.(sessionctx.Context)
 	is := domain.GetDomain(sctx).InfoSchema()
 	c.Assert(is, NotNil)
-	tb, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tb, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"), false)
 	c.Assert(err, IsNil)
 	tb.Cols()[1].Version = model.ColumnInfoVersion1 + 1
 	tk.MustExec("insert into t set a=3")
@@ -3284,7 +3284,7 @@ func (s *testSuite) TestCheckIndex(c *C) {
 	dbInfo, ok := is.SchemaByName(db)
 	c.Assert(ok, IsTrue)
 	tblName := model.NewCIStr("t")
-	tbl, err := is.TableByName(db, tblName)
+	tbl, err := is.TableByName(db, tblName, false)
 	c.Assert(err, IsNil)
 	tbInfo := tbl.Meta()
 
@@ -4455,7 +4455,7 @@ func testGetTableByName(c *C, ctx sessionctx.Context, db, table string) table.Ta
 	// Make sure the table schema is the new schema.
 	err := dom.Reload()
 	c.Assert(err, IsNil)
-	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr(db), model.NewCIStr(table))
+	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr(db), model.NewCIStr(table), false)
 	c.Assert(err, IsNil)
 	return tbl
 }

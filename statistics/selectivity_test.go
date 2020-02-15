@@ -207,7 +207,7 @@ func (s *testStatsSuite) prepareSelectivity(testKit *testkit.TestKit, c *C) *sta
 	testKit.MustExec("create table t(a int primary key, b int, c int, d int, e int, index idx_cd(c, d), index idx_de(d, e))")
 
 	is := s.do.InfoSchema()
-	tb, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tb, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"), false)
 	c.Assert(err, IsNil)
 	tbl := tb.Meta()
 
@@ -387,7 +387,7 @@ func (s *testStatsSuite) TestEstimationForUnknownValues(c *C) {
 	}
 	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
 	c.Assert(h.Update(s.do.InfoSchema()), IsNil)
-	table, err := s.do.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	table, err := s.do.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"), false)
 	c.Assert(err, IsNil)
 	statsTbl := h.GetTableStats(table.Meta())
 
@@ -417,7 +417,7 @@ func (s *testStatsSuite) TestEstimationForUnknownValues(c *C) {
 	testKit.MustExec("truncate table t")
 	testKit.MustExec("insert into t values (null, null)")
 	testKit.MustExec("analyze table t")
-	table, err = s.do.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	table, err = s.do.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"), false)
 	c.Assert(err, IsNil)
 	statsTbl = h.GetTableStats(table.Meta())
 
@@ -430,7 +430,7 @@ func (s *testStatsSuite) TestEstimationForUnknownValues(c *C) {
 	testKit.MustExec("create table t(a int, b int, index idx(b))")
 	testKit.MustExec("insert into t values (1,1)")
 	testKit.MustExec("analyze table t")
-	table, err = s.do.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	table, err = s.do.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"), false)
 	c.Assert(err, IsNil)
 	statsTbl = h.GetTableStats(table.Meta())
 
@@ -453,7 +453,7 @@ func (s *testStatsSuite) TestEstimationUniqueKeyEqualConds(c *C) {
 	testKit.MustExec("create table t(a int, b int, c int, unique key(b))")
 	testKit.MustExec("insert into t values (1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5),(6,6,6),(7,7,7)")
 	testKit.MustExec("analyze table t with 4 cmsketch width, 1 cmsketch depth;")
-	table, err := s.do.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	table, err := s.do.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"), false)
 	c.Assert(err, IsNil)
 	statsTbl := s.do.StatsHandle().GetTableStats(table.Meta())
 

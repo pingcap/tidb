@@ -55,7 +55,7 @@ func (s *testIntegrationSuite3) TestCreateTableWithPartition(c *C) {
 	);`)
 	ctx := tk.Se.(sessionctx.Context)
 	is := domain.GetDomain(ctx).InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("tp"))
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("tp"), false)
 	c.Assert(err, IsNil)
 	c.Assert(tbl.Meta().Partition, NotNil)
 	part := tbl.Meta().Partition
@@ -438,7 +438,7 @@ func (s *testIntegrationSuite5) TestAlterTableAddPartition(c *C) {
 
 	ctx := tk.Se.(sessionctx.Context)
 	is := domain.GetDomain(ctx).InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("employees"))
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("employees"), false)
 	c.Assert(err, IsNil)
 	c.Assert(tbl.Meta().Partition, NotNil)
 	part := tbl.Meta().Partition
@@ -581,7 +581,7 @@ func (s *testIntegrationSuite5) TestAlterTableDropPartition(c *C) {
 	tk.MustExec("alter table employees drop partition p3;")
 	ctx := tk.Se.(sessionctx.Context)
 	is := domain.GetDomain(ctx).InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("employees"))
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("employees"), false)
 	c.Assert(err, IsNil)
 	c.Assert(tbl.Meta().GetPartitionInfo(), NotNil)
 	part := tbl.Meta().Partition
@@ -633,7 +633,7 @@ func (s *testIntegrationSuite5) TestAlterTableDropPartition(c *C) {
 
 	tk.MustExec("alter table table4 drop partition p2;")
 	is = domain.GetDomain(ctx).InfoSchema()
-	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("table4"))
+	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("table4"), false)
 	c.Assert(err, IsNil)
 	c.Assert(tbl.Meta().GetPartitionInfo(), NotNil)
 	part = tbl.Meta().Partition
@@ -816,7 +816,7 @@ func (s *testIntegrationSuite4) TestTruncatePartitionAndDropTable(c *C) {
 	result.Check(testkit.Rows("10"))
 	ctx := tk.Se.(sessionctx.Context)
 	is := domain.GetDomain(ctx).InfoSchema()
-	oldTblInfo, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t3"))
+	oldTblInfo, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t3"), false)
 	c.Assert(err, IsNil)
 	// Only one partition id test is taken here.
 	oldPID := oldTblInfo.Meta().Partition.Definitions[0].ID
@@ -853,7 +853,7 @@ func (s *testIntegrationSuite4) TestTruncatePartitionAndDropTable(c *C) {
 	result = tk.MustQuery("select count(*) from t4; ")
 	result.Check(testkit.Rows("10"))
 	is = domain.GetDomain(ctx).InfoSchema()
-	oldTblInfo, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t4"))
+	oldTblInfo, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t4"), false)
 	c.Assert(err, IsNil)
 	// Only one partition id test is taken here.
 	oldPID = oldTblInfo.Meta().Partition.Definitions[1].ID
@@ -879,13 +879,13 @@ func (s *testIntegrationSuite4) TestTruncatePartitionAndDropTable(c *C) {
     	partition p5 values less than (2015)
    	);`)
 	is = domain.GetDomain(ctx).InfoSchema()
-	oldTblInfo, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t5"))
+	oldTblInfo, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t5"), false)
 	c.Assert(err, IsNil)
 	oldPID = oldTblInfo.Meta().Partition.Definitions[0].ID
 
 	tk.MustExec("truncate table t5;")
 	is = domain.GetDomain(ctx).InfoSchema()
-	newTblInfo, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t5"))
+	newTblInfo, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t5"), false)
 	c.Assert(err, IsNil)
 	newPID := newTblInfo.Meta().Partition.Definitions[0].ID
 	c.Assert(oldPID != newPID, IsTrue)
@@ -901,14 +901,14 @@ func (s *testIntegrationSuite4) TestTruncatePartitionAndDropTable(c *C) {
 	partition by hash( month(signed) )
 	partitions 12;`)
 	is = domain.GetDomain(ctx).InfoSchema()
-	oldTblInfo, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("clients"))
+	oldTblInfo, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("clients"), false)
 	c.Assert(err, IsNil)
 	oldDefs := oldTblInfo.Meta().Partition.Definitions
 
 	// Test truncate `hash partitioned table` reassigns new partitionIDs.
 	tk.MustExec("truncate table clients;")
 	is = domain.GetDomain(ctx).InfoSchema()
-	newTblInfo, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("clients"))
+	newTblInfo, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("clients"), false)
 	c.Assert(err, IsNil)
 	newDefs := newTblInfo.Meta().Partition.Definitions
 	for i := 0; i < len(oldDefs); i++ {
@@ -1191,7 +1191,7 @@ func testPartitionDropIndex(c *C, store kv.Storage, lease time.Duration, idxName
 
 	ctx := tk.Se.(sessionctx.Context)
 	is := domain.GetDomain(ctx).InfoSchema()
-	t, err := is.TableByName(model.NewCIStr("test_db"), model.NewCIStr("partition_drop_idx"))
+	t, err := is.TableByName(model.NewCIStr("test_db"), model.NewCIStr("partition_drop_idx"), false)
 	c.Assert(err, IsNil)
 
 	var idx1 table.Index
@@ -1227,7 +1227,7 @@ LOOP:
 	}
 
 	is = domain.GetDomain(ctx).InfoSchema()
-	t, err = is.TableByName(model.NewCIStr("test_db"), model.NewCIStr("partition_drop_idx"))
+	t, err = is.TableByName(model.NewCIStr("test_db"), model.NewCIStr("partition_drop_idx"), false)
 	c.Assert(err, IsNil)
 	// Only one partition id test is taken here.
 	pid := t.Meta().Partition.Definitions[0].ID
@@ -1483,7 +1483,7 @@ func testPartitionAddIndex(tk *testkit.TestKit, c *C, key string) {
 	tk.MustExec("alter table partition_add_idx add index idx2 (id, hired)")
 	ctx := tk.Se.(sessionctx.Context)
 	is := domain.GetDomain(ctx).InfoSchema()
-	t, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("partition_add_idx"))
+	t, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("partition_add_idx"), false)
 	c.Assert(err, IsNil)
 	var idx1 table.Index
 	for _, idx := range t.Indices() {

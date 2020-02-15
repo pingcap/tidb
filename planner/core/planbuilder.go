@@ -845,7 +845,7 @@ func (b *PlanBuilder) buildPrepare(x *ast.PrepareStmt) Plan {
 
 func (b *PlanBuilder) buildCheckIndex(ctx context.Context, dbName model.CIStr, as *ast.AdminStmt) (Plan, error) {
 	tblName := as.Tables[0]
-	tbl, err := b.is.TableByName(dbName, tblName.Name)
+	tbl, err := b.is.TableByName(dbName, tblName.Name, b.ctx.GetSessionVars().InRestrictedSQL)
 	if err != nil {
 		return nil, err
 	}
@@ -1646,7 +1646,7 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (Plan, 
 			err = ErrTableaccessDenied.GenWithStackByArgs("SHOW", user.AuthUsername, user.AuthHostname, show.Table.Name.L)
 		}
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.AllPrivMask, show.Table.Schema.L, show.Table.Name.L, "", err)
-		if table, err := b.is.TableByName(show.Table.Schema, show.Table.Name); err == nil {
+		if table, err := b.is.TableByName(show.Table.Schema, show.Table.Name, b.ctx.GetSessionVars().InRestrictedSQL); err == nil {
 			isView = table.Meta().IsView()
 			isSequence = table.Meta().IsSequence()
 		}

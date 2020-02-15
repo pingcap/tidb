@@ -2544,7 +2544,7 @@ func (s *testSuite7) TestReplaceLog(c *C) {
 	is := s.domain.InfoSchema()
 	dbName := model.NewCIStr("test")
 	tblName := model.NewCIStr("testLog")
-	tbl, err := is.TableByName(dbName, tblName)
+	tbl, err := is.TableByName(dbName, tblName, false)
 	c.Assert(err, IsNil)
 	tblInfo := tbl.Meta()
 	idxInfo := tblInfo.FindIndexByName("b")
@@ -2576,7 +2576,7 @@ func (s *testSuite7) TestRebaseIfNeeded(c *C) {
 
 	s.ctx = mock.NewContext()
 	s.ctx.Store = s.store
-	tbl, err := s.domain.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := s.domain.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"), false)
 	c.Assert(err, IsNil)
 	c.Assert(s.ctx.NewTxn(context.Background()), IsNil)
 	// AddRecord directly here will skip to rebase the auto ID in the insert statement,

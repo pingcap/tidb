@@ -259,7 +259,7 @@ func (e *ShowNextRowIDExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		return nil
 	}
 	is := domain.GetDomain(e.ctx).InfoSchema()
-	tbl, err := is.TableByName(e.tblName.Schema, e.tblName.Name)
+	tbl, err := is.TableByName(e.tblName.Schema, e.tblName.Name, e.ctx.GetSessionVars().InRestrictedSQL)
 	if err != nil {
 		return err
 	}

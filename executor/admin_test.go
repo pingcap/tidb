@@ -78,7 +78,7 @@ func (s *testSuite5) TestAdminRecoverIndex(c *C) {
 	is := s.domain.InfoSchema()
 	dbName := model.NewCIStr("test")
 	tblName := model.NewCIStr("admin_test")
-	tbl, err := is.TableByName(dbName, tblName)
+	tbl, err := is.TableByName(dbName, tblName, false)
 	c.Assert(err, IsNil)
 
 	tblInfo := tbl.Meta()
@@ -174,7 +174,7 @@ func (s *testSuite5) TestAdminRecoverIndex1(c *C) {
 	r.Check(testkit.Rows("5"))
 
 	is := s.domain.InfoSchema()
-	tbl, err := is.TableByName(dbName, tblName)
+	tbl, err := is.TableByName(dbName, tblName, false)
 	c.Assert(err, IsNil)
 
 	tblInfo := tbl.Meta()
@@ -231,7 +231,7 @@ func (s *testSuite5) TestAdminCleanupIndex(c *C) {
 	is := s.domain.InfoSchema()
 	dbName := model.NewCIStr("test")
 	tblName := model.NewCIStr("admin_test")
-	tbl, err := is.TableByName(dbName, tblName)
+	tbl, err := is.TableByName(dbName, tblName, false)
 	c.Assert(err, IsNil)
 
 	tblInfo := tbl.Meta()
@@ -304,7 +304,7 @@ func (s *testSuite5) TestAdminCleanupIndexPKNotHandle(c *C) {
 	is := s.domain.InfoSchema()
 	dbName := model.NewCIStr("test")
 	tblName := model.NewCIStr("admin_test")
-	tbl, err := is.TableByName(dbName, tblName)
+	tbl, err := is.TableByName(dbName, tblName, false)
 	c.Assert(err, IsNil)
 
 	tblInfo := tbl.Meta()
@@ -352,7 +352,7 @@ func (s *testSuite5) TestAdminCleanupIndexMore(c *C) {
 	is := s.domain.InfoSchema()
 	dbName := model.NewCIStr("test")
 	tblName := model.NewCIStr("admin_test")
-	tbl, err := is.TableByName(dbName, tblName)
+	tbl, err := is.TableByName(dbName, tblName, false)
 	c.Assert(err, IsNil)
 
 	tblInfo := tbl.Meta()
@@ -413,7 +413,7 @@ func (s *testSuite3) TestAdminCheckPartitionTableFailed(c *C) {
 	is := s.domain.InfoSchema()
 	dbName := model.NewCIStr("test")
 	tblName := model.NewCIStr("admin_test_p")
-	tbl, err := is.TableByName(dbName, tblName)
+	tbl, err := is.TableByName(dbName, tblName, false)
 	c.Assert(err, IsNil)
 	tblInfo := tbl.Meta()
 	idxInfo := tblInfo.Indices[0]
@@ -510,7 +510,7 @@ func (s *testSuite5) TestAdminCheckTableFailed(c *C) {
 	is := s.domain.InfoSchema()
 	dbName := model.NewCIStr("test")
 	tblName := model.NewCIStr("admin_test")
-	tbl, err := is.TableByName(dbName, tblName)
+	tbl, err := is.TableByName(dbName, tblName, false)
 	c.Assert(err, IsNil)
 	tblInfo := tbl.Meta()
 	idxInfo := tblInfo.Indices[1]
@@ -745,7 +745,7 @@ func (s *testSuite5) TestAdminCheckWithSnapshot(c *C) {
 	is := s.domain.InfoSchema()
 	dbName := model.NewCIStr("test")
 	tblName := model.NewCIStr("admin_t_s")
-	tbl, err := is.TableByName(dbName, tblName)
+	tbl, err := is.TableByName(dbName, tblName, false)
 	c.Assert(err, IsNil)
 
 	tblInfo := tbl.Meta()

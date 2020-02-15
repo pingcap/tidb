@@ -2569,7 +2569,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		dbName = model.NewCIStr(b.ctx.GetSessionVars().CurrentDB)
 	}
 
-	tbl, err := b.is.TableByName(dbName, tn.Name)
+	tbl, err := b.is.TableByName(dbName, tn.Name, b.ctx.GetSessionVars().InRestrictedSQL)
 	if err != nil {
 		return nil, err
 	}

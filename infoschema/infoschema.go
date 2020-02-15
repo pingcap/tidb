@@ -36,7 +36,7 @@ import (
 type InfoSchema interface {
 	SchemaByName(schema model.CIStr) (*model.DBInfo, bool)
 	SchemaExists(schema model.CIStr) bool
-	TableByName(schema, table model.CIStr) (table.Table, error)
+	TableByName(schema, table model.CIStr, allWritableTables bool) (table.Table, error)
 	TableExists(schema, table model.CIStr) bool
 	SchemaByID(id int64) (*model.DBInfo, bool)
 	SchemaByTable(tableInfo *model.TableInfo) (*model.DBInfo, bool)
@@ -135,9 +135,13 @@ func (is *infoSchema) SchemaExists(schema model.CIStr) bool {
 	return ok
 }
 
-func (is *infoSchema) TableByName(schema, table model.CIStr) (t table.Table, err error) {
+func (is *infoSchema) TableByName(schema, table model.CIStr, allWritableTables bool) (t table.Table, err error) {
 	if tbNames, ok := is.schemaMap[schema.L]; ok {
 		if t, ok = tbNames.tables[table.L]; ok {
+			// logutil.BgLogger().Info("AAAAAAA TableByName", zap.String("name", table.L), zap.Int("state", int(t.Meta().State)))
+			if !allWritableTables && t.Meta().State != model.StatePublic {
+				return nil, ErrTableNotExists.GenWithStackByArgs(schema, table)
+			}
 			return
 		}
 	}
@@ -256,7 +260,7 @@ func (is *infoSchema) Clone() (result []*model.DBInfo) {
 // SequenceByName implements the interface of SequenceSchema defined in util package.
 // It could be used in expression package without import cycle problem.
 func (is *infoSchema) SequenceByName(schema, sequence model.CIStr) (util.SequenceTable, error) {
-	tbl, err := is.TableByName(schema, sequence)
+	tbl, err := is.TableByName(schema, sequence, false)
 	if err != nil {
 		return nil, err
 	}

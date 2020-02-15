@@ -255,6 +255,7 @@ func MockSignedTable() *model.TableInfo {
 	col5.Flag = mysql.NotNullFlag
 	col6.Flag = mysql.NoDefaultValueFlag
 	table := &model.TableInfo{
+		State:      model.StatePublic,
 		Columns:    []*model.ColumnInfo{pkColumn, col0, col1, col2, col3, colStr1, colStr2, colStr3, col4, col5, col6, col7},
 		Indices:    indices,
 		Name:       model.NewCIStr("t"),
@@ -324,6 +325,7 @@ func MockUnsignedTable() *model.TableInfo {
 	col0.Flag = mysql.NotNullFlag
 	col1.Flag = mysql.UnsignedFlag
 	table := &model.TableInfo{
+		State:      model.StatePublic,
 		Columns:    []*model.ColumnInfo{pkColumn, col0, col1},
 		Indices:    indices,
 		Name:       model.NewCIStr("t2"),
@@ -355,6 +357,7 @@ func MockView() *model.TableInfo {
 	}
 	view := &model.ViewInfo{SelectStmt: selectStmt, Security: model.SecurityDefiner, Definer: &auth.UserIdentity{Username: "root", Hostname: ""}, Cols: []model.CIStr{col0.Name, col1.Name, col2.Name}}
 	table := &model.TableInfo{
+		State:   model.StatePublic,
 		Name:    model.NewCIStr("v"),
 		Columns: []*model.ColumnInfo{col0, col1, col2},
 		View:    view,

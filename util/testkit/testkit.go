@@ -298,7 +298,11 @@ func Rows(args ...string) [][]interface{} {
 func (tk *TestKit) GetTableID(tableName string) int64 {
 	dom := domain.GetDomain(tk.Se)
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr(tableName))
+	allWritableTables := false
+	if tk.Se != nil {
+		allWritableTables = tk.Se.GetSessionVars().InRestrictedSQL
+	}
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr(tableName), allWritableTables)
 	tk.c.Assert(err, check.IsNil)
 	return tbl.Meta().ID
 }

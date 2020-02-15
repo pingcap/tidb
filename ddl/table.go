@@ -34,9 +34,11 @@ import (
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/gcutil"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 )
 
-func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
 	failpoint.Inject("mockExceedErrorLimit", func(val failpoint.Value) {
 		if val.(bool) {
 			failpoint.Return(ver, errors.New("mock do job error"))
@@ -51,36 +53,69 @@ func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 		return ver, errors.Trace(err)
 	}
 
-	tbInfo.State = model.StateNone
-	err := checkTableNotExists(d, t, schemaID, tbInfo.Name.L)
-	if err != nil {
-		if infoschema.ErrDatabaseNotExists.Equal(err) || infoschema.ErrTableExists.Equal(err) {
-			job.State = model.JobStateCancelled
+	if job.IsRollingback() {
+		err := t.DropTableOrView(job.SchemaID, job.TableID, true)
+		if err != nil {
+			if meta.ErrDBNotExists.Equal(err) {
+				logutil.BgLogger().Warn("Cancelling create table job, but database does not exists", zap.Int64("SchemaID", job.SchemaID))
+			} else if meta.ErrTableNotExists.Equal(err) {
+				logutil.BgLogger().Warn("Cancelling create table job, but table does not exists", zap.Int64("SchemaID", job.SchemaID), zap.Int64("TableID", job.TableID))
+			} else {
+				return ver, errors.Trace(err)
+			}
 		}
-		return ver, errors.Trace(err)
+		job.FinishTableJob(model.JobStateRollbackDone, model.StateNone, ver, tbInfo)
+		if job.Error == nil {
+			// for cancel command, use 'cancel DDL job' as err
+			err = errCancelledDDLJob
+		} else {
+			// for other errors that lead to the rolling back, set error message from `job.Error`.
+			err = job.Error
+		}
+		return ver, err
 	}
-
-	ver, err = updateSchemaVersion(t, job)
-	if err != nil {
-		return ver, errors.Trace(err)
-	}
-
+	originalState := job.SchemaState
 	switch tbInfo.State {
 	case model.StateNone:
-		// none -> public
-		tbInfo.State = model.StatePublic
-		tbInfo.UpdateTS = t.StartTS
-		err = createTableOrViewWithCheck(t, job, schemaID, tbInfo)
+		// none -> reorganization
+		// TODO: reorganization state is used for `CREATE TABLE ... SELECT` syntax, which will be implemented soon.
+		err := checkTableNotExists(d, t, schemaID, tbInfo.Name.L)
 		if err != nil {
+			if infoschema.ErrDatabaseNotExists.Equal(err) || infoschema.ErrTableExists.Equal(err) {
+				job.State = model.JobStateCancelled
+			}
 			return ver, errors.Trace(err)
 		}
-		// Finish this job.
-		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tbInfo)
-		asyncNotifyEvent(d, &util.Event{Tp: model.ActionCreateTable, TableInfo: tbInfo})
-		return ver, nil
+
+		tbInfo.State = model.StateWriteReorganization
+		job.SchemaState = model.StateWriteReorganization
+		if err = createTableOrViewWithCheck(t, job, schemaID, tbInfo); err != nil {
+			return ver, errors.Trace(err)
+		}
+	case model.StateWriteReorganization:
+		failpoint.Inject("mockCreateTableReorgError", func(val failpoint.Value) {
+			if val.(bool) {
+				job.State = model.JobStateRollingback
+				failpoint.Return(ver, errors.New("injected error occurred when creating table"))
+			}
+		})
+		// reorganization -> public
+		tbInfo.State = model.StatePublic
+		job.SchemaState = model.StatePublic
 	default:
 		return ver, ErrInvalidDDLState.GenWithStackByArgs("table", tbInfo.State)
 	}
+	tbInfo.UpdateTS = t.StartTS
+	ver, err = updateVersionAndTableInfo(t, job, tbInfo, originalState != tbInfo.State)
+	if err != nil {
+		return ver, err
+	}
+	if tbInfo.State == model.StatePublic {
+		// Finish this job.
+		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tbInfo)
+		asyncNotifyEvent(d, &util.Event{Tp: model.ActionCreateTable, TableInfo: tbInfo})
+	}
+	return ver, nil
 }
 
 func createTableOrViewWithCheck(t *meta.Meta, job *model.Job, schemaID int64, tbInfo *model.TableInfo) error {

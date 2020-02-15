@@ -1515,7 +1515,7 @@ func (s *testSessionSuite2) TestIndexColumnLength(c *C) {
 	tk.MustExec("create index idx_c2 on t(c2(6));")
 
 	is := s.dom.InfoSchema()
-	tab, err2 := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tab, err2 := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"), false)
 	c.Assert(err2, Equals, nil)
 
 	idxC1Cols := tables.FindIndexByColName(tab, "c1").Meta().Columns
@@ -2176,7 +2176,7 @@ func (s *testSchemaSuite) TestTableReaderChunk(c *C) {
 	for i := 0; i < 100; i++ {
 		tk.MustExec(fmt.Sprintf("insert chk values (%d)", i))
 	}
-	tbl, err := domain.GetDomain(tk.Se).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("chk"))
+	tbl, err := domain.GetDomain(tk.Se).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("chk"), false)
 	c.Assert(err, IsNil)
 	s.cluster.SplitTable(s.mvccStore, tbl.Meta().ID, 10)
 
@@ -2361,7 +2361,7 @@ func (s *testSchemaSuite) TestIndexLookUpReaderChunk(c *C) {
 	for i := 0; i < 100; i++ {
 		tk.MustExec(fmt.Sprintf("insert chk values (%d, %d)", i, i))
 	}
-	tbl, err := domain.GetDomain(tk.Se).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("chk"))
+	tbl, err := domain.GetDomain(tk.Se).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("chk"), false)
 	c.Assert(err, IsNil)
 	s.cluster.SplitIndex(s.mvccStore, tbl.Meta().ID, tbl.Indices()[0].Meta().ID, 10)
 
