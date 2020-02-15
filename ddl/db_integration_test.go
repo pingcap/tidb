@@ -438,6 +438,8 @@ func (s *testIntegrationSuite5) TestMySQLErrorCode(c *C) {
 	tk.MustGetErrCode(sql, mysql.ErrInvalidOnUpdate)
 	sql = "create table t(a blob(10), index(a(0)));"
 	tk.MustGetErrCode(sql, mysql.ErrKeyPart0)
+	sql = "create table t(a char(10), index(a(0)));"
+	tk.MustGetErrCode(sql, mysql.ErrKeyPart0)
 
 	sql = "create table t2 (id int primary key , age int);"
 	tk.MustExec(sql)
