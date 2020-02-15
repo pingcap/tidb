@@ -2128,9 +2128,25 @@ func (s *testDBSuite1) TestCreateTable(c *C) {
 
 	//Test for column binary flag, see #13992.
 	s.tk.MustExec("use test")
-	s.tk.MustExec("create table t (c varchar(120) default null) charset=utf8 collate=utf8_bin;")
-	t := testGetTableByName(c, ctx, "test", "t")
+	s.tk.MustExec("create table t1 (c varchar(120) default null) collate=utf8_bin;")
+	t := testGetTableByName(c, ctx, "test", "t1")
 	col1Flag := t.Cols()[1].Flag
+	c.Assert(mysql.HasBinaryFlag(col1Flag), IsTrue)
+	s.tk.MustExec("create table t2 (c varchar(120) default null) collate=utf8mb4_bin;")
+	t = testGetTableByName(c, ctx, "test", "t2")
+	col1Flag = t.Cols()[1].Flag
+	c.Assert(mysql.HasBinaryFlag(col1Flag), IsTrue)
+	s.tk.MustExec("create table t3 (c varchar(120) default null) collate=ascii_bin;")
+	t = testGetTableByName(c, ctx, "test", "t3")
+	col1Flag = t.Cols()[1].Flag
+	c.Assert(mysql.HasBinaryFlag(col1Flag), IsTrue)
+	s.tk.MustExec("create table t4 (c varchar(120) default null) collate=latin1_bin;")
+	t = testGetTableByName(c, ctx, "test", "t4")
+	col1Flag = t.Cols()[1].Flag
+	c.Assert(mysql.HasBinaryFlag(col1Flag), IsTrue)
+	s.tk.MustExec("create table t5 (c varchar(120) DEFAULT NULL) charset=binary;")
+	t = testGetTableByName(c, ctx, "test", "t5")
+	col1Flag = t.Cols()[1].Flag
 	c.Assert(mysql.HasBinaryFlag(col1Flag), IsTrue)
 }
 
