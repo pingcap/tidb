@@ -606,7 +606,16 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 	// Set `NoDefaultValueFlag` if this field doesn't have a default value and
 	// it is `not null` and not an `AUTO_INCREMENT` field or `TIMESTAMP` field.
 	setNoDefaultValueFlag(col, hasDefaultValue)
-	if col.FieldType.EvalType().IsStringKind() && (col.Charset == charset.CharsetBin || col.Charset == charset.CharsetUTF8) {
+
+	// We need the MySQL compatibility flag, see # 13992.
+	isBinaryCollate := func(collation string) bool {
+		switch collation {
+		case charset.CollationUTF8, charset.CollationUTF8MB4, charset.CollationASCII, charset.CollationLatin1:
+			return true
+		}
+		return false
+	}
+	if col.FieldType.EvalType().IsStringKind() && (col.Charset == charset.CharsetBin || isBinaryCollate(col.Collate)) {
 		col.Flag |= mysql.BinaryFlag
 	}
 	if col.Tp == mysql.TypeBit {
