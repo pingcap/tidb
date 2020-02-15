@@ -362,6 +362,77 @@
         "Result": [
           "4"
         ]
+      },
+      {
+        "SQL": "select sum(case when a > 0 and a <= 1000 then b else 0 end) from t",
+        "Plan": [
+          "HashAgg_22 1.00 root funcs:sum(Column#5)->Column#3",
+          "└─TableReader_23 1.00 root data:HashAgg_24",
+          "  └─HashAgg_24 1.00 cop[tikv] funcs:sum(test.t.b)->Column#5",
+          "    └─TableScan_16 250.00 cop[tikv] table:t, range:(0,1000], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "110"
+        ]
+      },
+      {
+        "SQL": "select sum(case when a > 0 then (case when a <= 1000 then b end) else 0 end) from t",
+        "Plan": [
+          "HashAgg_32 1.00 root funcs:sum(Column#6)->Column#3",
+          "└─TableReader_33 1.00 root data:HashAgg_34",
+          "  └─HashAgg_34 1.00 cop[tikv] funcs:sum(test.t.b)->Column#6",
+          "    └─TableScan_22 250.00 cop[tikv] table:t, range:(0,1000], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "110"
+        ]
+      },
+      {
+        "SQL": "select sum(case when a <= 0 or a > 1000 then 0.0 else b end) from t",
+        "Plan": [
+          "HashAgg_22 1.00 root funcs:sum(Column#5)->Column#3",
+          "└─TableReader_23 1.00 root data:HashAgg_24",
+          "  └─HashAgg_24 1.00 cop[tikv] funcs:sum(cast(test.t.b))->Column#5",
+          "    └─TableScan_16 250.00 cop[tikv] table:t, range:(0,1000], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "110.0"
+        ]
+      },
+      {
+        "SQL": "select count(case when a > 0 and a <= 1000 then b end) from t",
+        "Plan": [
+          "HashAgg_21 1.00 root funcs:count(Column#5)->Column#3",
+          "└─TableReader_22 1.00 root data:HashAgg_23",
+          "  └─HashAgg_23 1.00 cop[tikv] funcs:count(test.t.b)->Column#5",
+          "    └─TableScan_16 250.00 cop[tikv] table:t, range:(0,1000], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "4"
+        ]
+      },
+      {
+        "SQL": "select count(case when a <= 0 or a > 1000 then null else b end) from t",
+        "Plan": [
+          "HashAgg_21 1.00 root funcs:count(Column#5)->Column#3",
+          "└─TableReader_22 1.00 root data:HashAgg_23",
+          "  └─HashAgg_23 1.00 cop[tikv] funcs:count(test.t.b)->Column#5",
+          "    └─TableScan_16 250.00 cop[tikv] table:t, range:(0,1000], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "4"
+        ]
+      },
+      {
+        "SQL": "select count(distinct case when a > 0 and a <= 1000 then b end) from t",
+        "Plan": [
+          "HashAgg_10 1.00 root funcs:count(distinct test.t.b)->Column#3",
+          "└─TableReader_11 250.00 root data:TableScan_12",
+          "  └─TableScan_12 250.00 cop[tikv] table:t, range:(0,1000], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "4"
+        ]
       }
     ]
   },
