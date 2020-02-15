@@ -608,14 +608,14 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 	setNoDefaultValueFlag(col, hasDefaultValue)
 
 	// We need the MySQL compatibility flag, see # 13992.
-	isBinaryCollate := func(collation string) bool {
+	isBinaryCollation := func(collation string) bool {
 		switch collation {
 		case charset.CollationUTF8, charset.CollationUTF8MB4, charset.CollationASCII, charset.CollationLatin1:
 			return true
 		}
 		return false
 	}
-	if col.FieldType.EvalType().IsStringKind() && (col.Charset == charset.CharsetBin || isBinaryCollate(col.Collate)) {
+	if col.FieldType.EvalType().IsStringKind() && (col.Charset == charset.CharsetBin || isBinaryCollation(col.Collate)) {
 		col.Flag |= mysql.BinaryFlag
 	}
 	if col.Tp == mysql.TypeBit {
