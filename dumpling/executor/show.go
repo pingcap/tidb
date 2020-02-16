@@ -950,7 +950,7 @@ func (e *ShowExec) fetchShowCreateTable() error {
 	allocator := tb.Allocator(e.ctx, autoid.RowIDAllocType)
 	var buf bytes.Buffer
 	// TODO: let the result more like MySQL.
-	if err = ConstructResultOfShowCreateTable(e.ctx, tb.Meta(), allocator, &buf); err != nil {
+	if err = ConstructResultOfShowCreateTable(e.ctx, tableInfo, allocator, &buf); err != nil {
 		return err
 	}
 	if tableInfo.IsView() {
@@ -958,7 +958,7 @@ func (e *ShowExec) fetchShowCreateTable() error {
 		return nil
 	}
 
-	e.appendRow([]interface{}{tb.Meta().Name.O, buf.String()})
+	e.appendRow([]interface{}{tableInfo.Name.O, buf.String()})
 	return nil
 }
 
@@ -1023,7 +1023,7 @@ func appendPartitionInfo(partitionInfo *model.PartitionInfo, buf *bytes.Buffer) 
 	}
 	for i, def := range partitionInfo.Definitions {
 		lessThans := strings.Join(def.LessThan, ",")
-		fmt.Fprintf(buf, "  PARTITION %s VALUES LESS THAN (%s)", def.Name, lessThans)
+		fmt.Fprintf(buf, "  PARTITION `%s` VALUES LESS THAN (%s)", def.Name, lessThans)
 		if i < len(partitionInfo.Definitions)-1 {
 			buf.WriteString(",\n")
 		} else {
