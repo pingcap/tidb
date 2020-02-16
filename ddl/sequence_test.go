@@ -91,6 +91,7 @@ func (s *testSequenceSuite) TestDropSequence(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use test")
 	s.tk.MustExec("drop sequence if exists seq")
+	s.tk.MustQuery("show warnings;").Check(testkit.Rows("Note 4139 Unknown SEQUENCE: 'test.seq'"))
 
 	// Test sequence is unknown.
 	s.tk.MustGetErrCode("drop sequence seq", mysql.ErrUnknownSequence)
