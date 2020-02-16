@@ -129,7 +129,7 @@ PARTITION BY RANGE ( id ) (
 	_, err = tb.AddRecord(ts.se, types.MakeDatums(22))
 	c.Assert(err, IsNil) // Insert into maxvalue partition.
 
-	createTable3 := `create table test.t3 (id int) partition by range (id) 
+	createTable3 := `create table test.t3 (id int) partition by range (id)
 	(
        partition p0 values less than (10)
 	)`
@@ -328,11 +328,11 @@ func (ts *testSuite) TestTimeZoneChange(c *C) {
 		"  `creation_dt` timestamp DEFAULT CURRENT_TIMESTAMP\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
 		"PARTITION BY RANGE ( unix_timestamp(`creation_dt`) ) (\n" +
-		"  PARTITION p5 VALUES LESS THAN (1578035400),\n" +
-		"  PARTITION p6 VALUES LESS THAN (1578035700),\n" +
-		"  PARTITION p7 VALUES LESS THAN (1578036000),\n" +
-		"  PARTITION p8 VALUES LESS THAN (1578036300),\n" +
-		"  PARTITION p9 VALUES LESS THAN (MAXVALUE)\n)"))
+		"  PARTITION `p5` VALUES LESS THAN (1578035400),\n" +
+		"  PARTITION `p6` VALUES LESS THAN (1578035700),\n" +
+		"  PARTITION `p7` VALUES LESS THAN (1578036000),\n" +
+		"  PARTITION `p8` VALUES LESS THAN (1578036300),\n" +
+		"  PARTITION `p9` VALUES LESS THAN (MAXVALUE)\n)"))
 	tk.MustExec("DROP TABLE timezone_test")
 
 	// Note that the result of "show create table" varies with time_zone.
@@ -343,11 +343,11 @@ func (ts *testSuite) TestTimeZoneChange(c *C) {
 		"  `creation_dt` timestamp DEFAULT CURRENT_TIMESTAMP\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
 		"PARTITION BY RANGE ( unix_timestamp(`creation_dt`) ) (\n" +
-		"  PARTITION p5 VALUES LESS THAN (1578064200),\n" +
-		"  PARTITION p6 VALUES LESS THAN (1578064500),\n" +
-		"  PARTITION p7 VALUES LESS THAN (1578064800),\n" +
-		"  PARTITION p8 VALUES LESS THAN (1578065100),\n" +
-		"  PARTITION p9 VALUES LESS THAN (MAXVALUE)\n)"))
+		"  PARTITION `p5` VALUES LESS THAN (1578064200),\n" +
+		"  PARTITION `p6` VALUES LESS THAN (1578064500),\n" +
+		"  PARTITION `p7` VALUES LESS THAN (1578064800),\n" +
+		"  PARTITION `p8` VALUES LESS THAN (1578065100),\n" +
+		"  PARTITION `p9` VALUES LESS THAN (MAXVALUE)\n)"))
 
 	// Change time zone and insert data, check the data locates in the correct partition.
 	tk.MustExec("SET @@time_zone = 'Asia/Shanghai'")
