@@ -24,57 +24,61 @@ import (
 	"go.uber.org/zap"
 )
 
-// ShuffleExec is the executor to run other executors in a parallel manner.
-// (Takes Window operator as example)
-// 1. Shuffle(child): Fetches chunks from data source.
-// 2. Shuffle(child): Splits tuples from data source into N partitions by `shuffleHashSplitter`.
-// 3. Shuffle(the upper one): Invokes N workers in parallel, assigns each partition as input to each worker and executes child executors.
-// 4. Shuffle(the upper one): Collects outputs from each worker by `shuffleSimpleMerger`, then sends outputs to its parent.
+// ShuffleExec is the executor to redistribute data.
+// It changes the data property from one distribution to another, to meet the requirements of parallel executing.
 //
-//                                              Parent
+//                                +------------------------------+
+//                                |            Parent            |
+//                                +---------------^--------------+
 //                                                |
-//                                 +--------------v--------------+
-//                                 |   Shuffle.Splitter(serial)  |
-//                                 +--------------^--------------+
-//                                                |
-//                                 +--------------v--------------+
-//                         +-------|    Shuffle.Merger(simple)   |
-//                         |       +--------------+--------------+
-//                         |                      ^
-//                         |                      |
-//                         |              +-------+
-//                         v             +++
-//                  outputHolderCh       | | outputCh (1 x Concurrency)
-//                         v             +++
-//                         |              ^
-//                         |              |
-//                         |      +-------+-------+
-//                         v      |               |
-//                  +--------------+             +--------------+
-//           +----- |    worker    |   .......   |    worker    |  workers (N Concurrency)
-//           |      +----------+---+             +--------------+   i.e. WindowExec (+SortExec)
-//           |                 ^                 ^
-//           |                 |                 |
-//           |                +-+  +-+  ......  +-+
-//           |                | |  | |          | |
-//           |                ...  ...          ...  inputCh (Concurrency x 1)
-//           v                | |  | |          | |
-//     inputHolderCh          +++  +++          +++
-//           v                 ^    ^            ^
-//           |                 |    |            |
-//           |          +------o----+            |
-//           |          |      +-----------------+-----+
-//           |          |                              |
-//           |      +---+------------+------------+----+-----------+
-//           +----> |         Shuffle(child).Splitter(hash)        |
-//                  |           Splits Partitions by Hash          |
-//                  +--------------+-+------------+-+--------------+
+//     +------------------------------------------^-------------------------------------------+
+//     |                                       merger#0                                       |
+//     |                                          |                                           |
+//     |                   +----------+-----------+-----+          <Shuffle(Full-Merge)>      |
+//     |                   ^          ^                 ^                (M x 1)              |
+//     |              splitter#1     ...           splitter#M                                 |
+//     +--------------------------------------------------------------------------------------+
+//                         ^          ^                 ^
+//                         |          |                 |
+//                         |          |                 |
+//                         |          |                 |
+//                 +---------------+             +---------------+
+//                 | Executor(s) A |     ....    | Executor(s) A | (M Concurrency)
+//                 +---------------+             +---------------+
+//                         ^          ^                 ^
+//                         |          |                 |
+//                         |          |                 |
+//                         |          |                 |
+//     +-------------------^----------^-----------------^-------------------------------------+
+//     |                merger#1   merger#2     ...  merger#M                                 |
+//     |                   ^          ^                 ^                                     |
+//     |                +--+--------+-+--------- ... ---+---+     <Shuffle(Repartitioning)>   |
+//     |                ^           ^            ...        ^             (N x M)             |
+//     |           splitter#1  splitter#2        ...    splitter#N                            |
+//     +--------------------------------------------------------------------------------------+
+//                      ^           ^             ^         ^
+//                      |           |             |         |
+//                      |           |             |         |
+//                      |           |             |         |
+//              +---------------+                    +---------------+
+//              | Executor(s) B |        .....       | Executor(s) B | (N Concurrency)
+//              +---------------+                    +---------------+
+//                      ^           ^             ^         ^
+//                      |           |             |         |
+//                      |           |             |         |
+//                      |           |             |         |
+//     +----------------^-----------^-------------^---------^---------------------------------+
+//     |            merger#1    merger#2         ...    merger#N                              |
+//     |                ^           ^            ...        ^                                 |
+//     |                |           |            ...        |   <Shuffle(Init-partitioning)>  |
+//     |                +-----------+------v------+---------+             (1 x N)             |
+//     |                               splitter#0                                             |
+//     +--------------------------------------------------------------------------------------+
 //                                         ^
 //                                         |
-//                         +---------------v-----------------+
-//                         |  Shuffle(child).Merger(serial)  |
-//                         |   fetch data from data source   |
-//                         +---------------------------------+
+//                         +---------------v---------------+
+//                         |          Data Source          |
+//                         +-------------------------------+
 //
 ////////////////////////////////////////////////////////////////////////////////////////
 type ShuffleExec struct {
@@ -127,6 +131,7 @@ func (e *ShuffleExec) Open(ctx context.Context) error {
 
 // Close implements the Executor Close interface.
 func (e *ShuffleExec) Close() error {
+	// Notify workers to terminate.
 	close(e.finishCh)
 
 	if e.runtimeStats != nil {
@@ -135,14 +140,14 @@ func (e *ShuffleExec) Close() error {
 
 	var errs []error
 
-	// close workers before mergers.
-	for _, worker := range e.workers {
-		errs = append(errs, worker.Close())
-	}
+	// Closes mergers first.
+	// Mergers wait for dataCh to be closed, which is closed by workers.
 	for _, merger := range e.mergers {
 		errs = append(errs, merger.Close())
 	}
-
+	for _, worker := range e.workers {
+		errs = append(errs, worker.Close())
+	}
 	if e.childShuffle != nil {
 		errs = append(errs, e.childShuffle.Close())
 	}

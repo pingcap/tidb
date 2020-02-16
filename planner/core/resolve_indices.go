@@ -428,11 +428,10 @@ func (p *PhysicalShuffle) ResolveIndices() (err error) {
 		return err
 	}
 	for i := range p.MergeByItems {
-		newCol, err := p.MergeByItems[i].Col.ResolveIndices(p.children[0].Schema())
+		p.MergeByItems[i].Expr, err = p.MergeByItems[i].Expr.ResolveIndices(p.children[0].Schema())
 		if err != nil {
 			return err
 		}
-		p.MergeByItems[i].Col = newCol.(*expression.Column)
 	}
 	for i := range p.SplitByItems {
 		newCol, err := p.SplitByItems[i].ResolveIndices(p.children[0].Schema())

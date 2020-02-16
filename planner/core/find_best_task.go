@@ -146,10 +146,8 @@ func (p *baseLogicalPlan) findBestTask(prop *property.PhysicalProperty) (bestTas
 		// Next, get the bestTask with enforced prop
 		prop.Items = []property.Item{}
 	}
-	//physicalPlans := p.self.exhaustPhysicalPlans(prop)
-	//physicalPlans = append(physicalPlans, p.self.exhaustParallelPhysicalPlans(prop)...)
-	physicalPlans := p.self.exhaustParallelPhysicalPlans(prop)
-	physicalPlans = append(physicalPlans, p.self.exhaustPhysicalPlans(prop)...)
+	physicalPlans := p.self.exhaustPhysicalPlans(prop)
+	physicalPlans = append(physicalPlans, p.self.exhaustParallelPhysicalPlans(prop)...)
 	prop.Items = oldPropCols
 
 	for _, pp := range physicalPlans {
@@ -174,10 +172,6 @@ func (p *baseLogicalPlan) findBestTask(prop *property.PhysicalProperty) (bestTas
 		// combine best child tasks with parent physical plan.
 		curTask := pp.attach2Task(childTasks...)
 
-		// optimize by shuffle executor to running in parallel manner.
-		// Must before `enforceProperty`, otherwise Shuffle would be between `pp` and `Enforced Sort`.
-		//curTask = optimizeByShuffle(pp, prop, curTask, p.basePlan.ctx)
-
 		// matchPhysicalProperty match parent required property and delivering property, and enforce Shuffle if necessary.
 		curTask = matchPhysicalProperty(pp, prop, curTask, p.basePlan.ctx)
 
@@ -185,21 +179,6 @@ func (p *baseLogicalPlan) findBestTask(prop *property.PhysicalProperty) (bestTas
 		if prop.Enforced {
 			curTask = enforceProperty(prop, curTask, p.basePlan.ctx)
 		}
-
-		// DEBUGG //
-		logutil.BgLogger().Info("============ curTask ===========")
-		logutil.BgLogger().Info("curTask", zap.String("plan", ToString(curTask.plan())), zap.Float64("cost", curTask.cost()))
-		for ppp := curTask.plan(); ppp != nil; {
-			if ppp, ok := ppp.(*PhysicalShuffle); ok {
-				logutil.BgLogger().Info("shuffle", zap.String("", ppp.ExplainInfo()))
-			}
-			if len(ppp.Children()) > 0 {
-				ppp = ppp.Children()[0]
-			} else {
-				break
-			}
-		}
-		// DEBUGG //
 
 		// get the most efficient one.
 		if curTask.cost() < bestTask.cost() {

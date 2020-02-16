@@ -69,6 +69,23 @@ func isColumnsIncluding(including, beIncluded []*expression.Column) (yes bool, e
 	return true, len(including) == len(beIncluded)
 }
 
+// GetItemExprsFromByItems converts `ByItems` to `ItemExpression`.
+func GetItemExprsFromByItems(byItems []*ByItems) []property.ItemExpression {
+	itemExprs := make([]property.ItemExpression, len(byItems))
+	for i := range byItems {
+		itemExprs[i].Expr, itemExprs[i].Desc = byItems[i].Expr, byItems[i].Desc
+	}
+	return itemExprs
+}
+
+func getItemExprsFromItems(items []property.Item) []property.ItemExpression {
+	itemExprs := make([]property.ItemExpression, len(items))
+	for i := range items {
+		itemExprs[i].Expr, itemExprs[i].Desc = items[i].Col, items[i].Desc
+	}
+	return itemExprs
+}
+
 func findMaxPrefixLen(candidates [][]*expression.Column, keys []*expression.Column) int {
 	maxLen := 0
 	for _, candidateKeys := range candidates {
@@ -1530,8 +1547,9 @@ func (p *LogicalWindow) exhaustParallelPhysicalPlans(prop *property.PhysicalProp
 	var byItems []property.Item
 	byItems = append(byItems, p.PartitionBy...)
 	byItems = append(byItems, p.OrderBy...)
+	itemExprs := getItemExprsFromItems(byItems)
 
-	return p.parallelHelper.exhaustParallelPhysicalPlans4SingleChild(p.basePlan.ctx, p, prop, byItems)
+	return p.parallelHelper.exhaustParallelPhysicalPlans4SingleChild(p.basePlan.ctx, p, prop, nil, byItems, itemExprs)
 }
 
 // exhaustPhysicalPlans is only for implementing interface. DataSource and Dual generate task in `findBestTask` directly.
@@ -1777,11 +1795,23 @@ func (ls *LogicalSort) exhaustPhysicalPlans(prop *property.PhysicalProperty) []P
 }
 
 func (ls *LogicalSort) exhaustParallelPhysicalPlans(prop *property.PhysicalProperty) []PhysicalPlan {
-	var items []property.Item
-	if prop, ok := GetPropByOrderByItems(ls.ByItems); ok { //TODOO
-		items = prop.Items
+	if MatchItems(prop, ls.ByItems) {
+		// Parallelize `PhysicalSort` ONLY.
+		exhaustor := func(prop *property.PhysicalProperty) []PhysicalPlan {
+			if ps := ls.getPhysicalSort(prop); ps != nil {
+				return []PhysicalPlan{ps}
+			}
+			return nil
+		}
+		prop, canPass := GetPropByOrderByItems(ls.ByItems)
+		if !canPass {
+			//Future: support `ORDER BY` expression.
+			return nil
+		}
+		itemExprs := GetItemExprsFromByItems(ls.ByItems)
+		return ls.parallelHelper.exhaustParallelPhysicalPlans4SingleChild(ls.basePlan.ctx, ls, prop, exhaustor, prop.Items, itemExprs)
 	}
-	return ls.parallelHelper.exhaustParallelPhysicalPlans4SingleChild(ls.basePlan.ctx, ls, prop, items)
+	return nil
 }
 
 func (p *LogicalMaxOneRow) exhaustPhysicalPlans(prop *property.PhysicalProperty) []PhysicalPlan {

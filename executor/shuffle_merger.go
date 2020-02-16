@@ -17,6 +17,7 @@ import (
 	"container/heap"
 	"context"
 
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/util/chunk"
 )
@@ -153,7 +154,7 @@ func (m *shuffleRandomMerger) Next(ctx context.Context, chk *chunk.Chunk) error 
 type shuffleMergeSortMerger struct {
 	baseShuffleMerger
 
-	byItems     []property.Item
+	byItems     []property.ItemExpression
 	keyCmpFuncs []chunk.CompareFunc
 	keyColumns  []int
 
@@ -162,7 +163,7 @@ type shuffleMergeSortMerger struct {
 }
 
 // newShuffleMergeSortMerger creates shuffleMergeSortMerger
-func newShuffleMergeSortMerger(shuffle *ShuffleExec, fanIn int, byItems []property.Item) *shuffleMergeSortMerger {
+func newShuffleMergeSortMerger(shuffle *ShuffleExec, fanIn int, byItems []property.ItemExpression) *shuffleMergeSortMerger {
 	return &shuffleMergeSortMerger{
 		baseShuffleMerger: baseShuffleMerger{
 			shuffle:        shuffle,
@@ -176,7 +177,7 @@ func newShuffleMergeSortMerger(shuffle *ShuffleExec, fanIn int, byItems []proper
 func (m *shuffleMergeSortMerger) initCompareFuncs() {
 	m.keyCmpFuncs = make([]chunk.CompareFunc, len(m.byItems))
 	for i := range m.byItems {
-		keyType := m.byItems[i].Col.GetType()
+		keyType := m.byItems[i].Expr.GetType()
 		m.keyCmpFuncs[i] = chunk.GetCompareFunc(keyType)
 	}
 }
@@ -184,7 +185,8 @@ func (m *shuffleMergeSortMerger) initCompareFuncs() {
 func (m *shuffleMergeSortMerger) buildKeyColumns() {
 	m.keyColumns = make([]int, 0, len(m.byItems))
 	for _, by := range m.byItems {
-		m.keyColumns = append(m.keyColumns, by.Col.Index)
+		col := by.Expr.(*expression.Column)
+		m.keyColumns = append(m.keyColumns, col.Index)
 	}
 }
 

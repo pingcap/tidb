@@ -26,10 +26,19 @@ type Item struct {
 	Desc bool
 }
 
+// ItemExpression represents underlying expression of `property.Item`.
+// ONLY used for partition delivering properties.
+// (The same as planner.core.ByItems, but redefine to avoid circular dependency)
+type ItemExpression struct {
+	Expr expression.Expression
+	Desc bool
+}
+
 // PhysicalProperty stands for the required physical property by parents.
 // It contains the orders and the task types.
 type PhysicalProperty struct {
-	Items []Item
+	Items     []Item
+	ItemExprs []ItemExpression // ONLY used for partition delivering properties.
 
 	// TaskTp means the type of task that an operator requires.
 	//
@@ -140,7 +149,7 @@ func (p *PhysicalProperty) HashCode() []byte {
 	if p.hashcode != nil {
 		return p.hashcode
 	}
-	hashcodeSize := 8 + 8 + 8 + (16+8)*len(p.Items) + 8 + 8 + 16*len(p.PartitionGroupingCols) + 8
+	hashcodeSize := 8 + 8 + 8 + (16+8)*len(p.Items) + (16+8)*len(p.ItemExprs) + 8 + 8 + 16*len(p.PartitionGroupingCols) + 8
 	p.hashcode = make([]byte, 0, hashcodeSize)
 
 	encodeBoolean(p.Enforced)
@@ -149,6 +158,10 @@ func (p *PhysicalProperty) HashCode() []byte {
 	for _, item := range p.Items {
 		p.hashcode = append(p.hashcode, item.Col.HashCode(nil)...)
 		encodeBoolean(item.Desc)
+	}
+	for _, itemExpr := range p.ItemExprs {
+		p.hashcode = append(p.hashcode, itemExpr.Expr.HashCode(nil)...)
+		encodeBoolean(itemExpr.Desc)
 	}
 
 	encodeBoolean(p.IsPartitioning)
@@ -170,6 +183,7 @@ func (p *PhysicalProperty) String() string {
 func (p *PhysicalProperty) Clone() *PhysicalProperty {
 	prop := &PhysicalProperty{
 		Items:                 p.Items,
+		ItemExprs:             p.ItemExprs,
 		TaskTp:                p.TaskTp,
 		ExpectedCnt:           p.ExpectedCnt,
 		IsPartitioning:        p.IsPartitioning,

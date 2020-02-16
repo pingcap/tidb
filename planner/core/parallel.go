@@ -83,17 +83,25 @@ func (p *parallelLogicalPlanHelper) preparePossiblePartitionProperties4OneChild(
 }
 
 func (p *parallelLogicalPlanHelper) exhaustParallelPhysicalPlans4SingleChild(
-	ctx sessionctx.Context, lp LogicalPlan, prop *property.PhysicalProperty,
-	deliveringLocalItems []property.Item,
+	ctx sessionctx.Context, lp LogicalPlan, prop *property.PhysicalProperty, exhaustor func(*property.PhysicalProperty) []PhysicalPlan,
+	deliveringLocalItems []property.Item, deliveringLocalItemExprs []property.ItemExpression,
 ) []PhysicalPlan {
 	concurrency := ctx.GetSessionVars().ExecutorsConcurrency
 	if concurrency <= 1 {
 		return nil
 	}
+	if len(p.possibleChildrenProperties) == 0 {
+		return nil
+	}
 
 	plans := make([]PhysicalPlan, 0, len(p.possibleChildrenProperties[0]))
 	for _, possibleProp := range p.possibleChildrenProperties[0] {
-		physicals := lp.exhaustPhysicalPlans(prop)
+		var physicals []PhysicalPlan
+		if exhaustor != nil {
+			physicals = exhaustor(prop)
+		} else {
+			physicals = lp.exhaustPhysicalPlans(prop)
+		}
 		if physicals == nil {
 			return nil
 		}
@@ -113,6 +121,7 @@ func (p *parallelLogicalPlanHelper) exhaustParallelPhysicalPlans4SingleChild(
 			physical.SetPartitionDeliveringProperty(&property.PhysicalProperty{
 				IsPartitioning:        true,
 				Items:                 deliveringLocalItems,
+				ItemExprs:             deliveringLocalItemExprs,
 				PartitionGroupingCols: possibleProp.PartitionGroupingCols,
 			})
 			plans = append(plans, physical)
@@ -158,7 +167,6 @@ func newPhysicalShuffle(child PhysicalPlan, ctx sessionctx.Context) *PhysicalShu
 		Concurrency: 1,
 		FanOut:      1,
 	}.Init(ctx, child.statsInfo(), child.SelectBlockOffset(), reqProp)
-	//shuffle.SetSchema(child.Schema())
 	return shuffle
 }
 
@@ -184,7 +192,7 @@ func setShuffleNoneMerge(shuffle *PhysicalShuffle) {
 	shuffle.MergerType = ShuffleNoneMergerType
 }
 
-func setShuffleMergeByMergeSort(shuffle *PhysicalShuffle, concurrency int, byItems []property.Item) {
+func setShuffleMergeByMergeSort(shuffle *PhysicalShuffle, concurrency int, byItems []property.ItemExpression) {
 	shuffle.Concurrency = concurrency
 	shuffle.MergerType = ShuffleMergeSortMergerType
 	shuffle.MergeByItems = byItems
@@ -201,7 +209,7 @@ func locateChildShuffle(pp PhysicalPlan) (tail PhysicalPlan, child *PhysicalShuf
 	for !ok {
 		if len(pp.Children()) > 0 {
 			tail = pp
-			pp = pp.Children()[0] // TODOO: multi-children
+			pp = pp.Children()[0] //Future: support multi-children.
 			child, ok = pp.(*PhysicalShuffle)
 		} else {
 			return nil, nil
@@ -229,7 +237,7 @@ func enforceFullMerge(pp PhysicalPlan, requiredProperty *property.PhysicalProper
 	setShuffleNoneSplit(shuffle)
 	if len(requiredProperty.Items) > 0 || isPhysicalSort {
 		// local property(i.e. requiredProperty.IsPrefix(deliveringProperty)) is ensured in `exhaustPhysicalPlans`.
-		setShuffleMergeByMergeSort(shuffle, concurrency, deliveringProperty.Items)
+		setShuffleMergeByMergeSort(shuffle, concurrency, deliveringProperty.ItemExprs)
 	} else {
 		setShuffleMergeByRandom(shuffle, concurrency)
 	}
@@ -252,7 +260,7 @@ func enforceRepartition(pp PhysicalPlan, requiredProperty *property.PhysicalProp
 	setShuffleSplitByHash(shuffle, concurrency, requiredProperty.PartitionGroupingCols)
 	if len(requiredProperty.Items) > 0 || isPhysicalSort {
 		// local property(i.e. requiredProperty.IsPrefix(deliveringProperty)) is ensured in `exhaustPhysicalPlans`.
-		setShuffleMergeByMergeSort(shuffle, concurrency, deliveringProperty.Items)
+		setShuffleMergeByMergeSort(shuffle, concurrency, deliveringProperty.ItemExprs)
 	} else {
 		setShuffleMergeByRandom(shuffle, concurrency)
 	}

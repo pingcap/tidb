@@ -577,7 +577,7 @@ type PhysicalShuffle struct {
 	Tail         PhysicalPlan
 	ChildShuffle *PhysicalShuffle
 	MergerType   ShuffleMergerType
-	MergeByItems []property.Item
+	MergeByItems []property.ItemExpression
 
 	FanOut       int
 	SplitterType ShuffleSplitterType

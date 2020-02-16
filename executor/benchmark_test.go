@@ -1544,10 +1544,11 @@ func BenchmarkMergeJoinExec(b *testing.B) {
 }
 
 type sortCase struct {
-	rows       int
-	orderByIdx []int
-	ndvs       []int
-	ctx        sessionctx.Context
+	rows        int
+	orderByIdx  []int
+	ndvs        []int
+	concurrency int
+	ctx         sessionctx.Context
 }
 
 func (tc sortCase) columns() []*expression.Column {
@@ -1558,7 +1559,7 @@ func (tc sortCase) columns() []*expression.Column {
 }
 
 func (tc sortCase) String() string {
-	return fmt.Sprintf("(rows:%v, orderBy:%v, ndvs: %v)", tc.rows, tc.orderByIdx, tc.ndvs)
+	return fmt.Sprintf("(rows:%v, orderBy:%v, ndvs: %v, concurrency: %v)", tc.rows, tc.orderByIdx, tc.ndvs, tc.concurrency)
 }
 
 func defaultSortTestCase() *sortCase {
@@ -1566,8 +1567,38 @@ func defaultSortTestCase() *sortCase {
 	ctx.GetSessionVars().InitChunkSize = variable.DefInitChunkSize
 	ctx.GetSessionVars().MaxChunkSize = variable.DefMaxChunkSize
 	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(nil, -1)
-	tc := &sortCase{rows: 300000, orderByIdx: []int{0, 1}, ndvs: []int{0, 0}, ctx: ctx}
+	tc := &sortCase{rows: 300000, orderByIdx: []int{0, 1}, ndvs: []int{0, 0}, concurrency: 1, ctx: ctx}
 	return tc
+}
+
+func buildParallelSortExec(ctx sessionctx.Context, dataSource *mockDataSource, byItems []*core.ByItems, concurrency int) Executor {
+	src := &mockDataPhysicalPlan{
+		schema: dataSource.Schema(),
+		exec:   dataSource,
+	}
+
+	shuffleSplitter := core.PhysicalShuffle{
+		Concurrency:  1,
+		FanOut:       concurrency,
+		SplitterType: core.ShuffleRandomSplitterType,
+	}.Init(ctx, nil, 0)
+	shuffleSplitter.SetChildren(src)
+
+	sort := &core.PhysicalSort{ByItems: byItems}
+	sort.SetChildren(shuffleSplitter)
+
+	shuffleMerger := core.PhysicalShuffle{
+		Concurrency:  concurrency,
+		Tail:         sort,
+		ChildShuffle: shuffleSplitter,
+		MergerType:   core.ShuffleMergeSortMergerType,
+		MergeByItems: core.GetItemExprsFromByItems(byItems),
+		FanOut:       1,
+	}.Init(ctx, nil, 0)
+	shuffleMerger.SetChildren(sort)
+
+	builder := newExecutorBuilder(ctx, nil)
+	return builder.build(shuffleMerger)
 }
 
 func benchmarkSortExec(b *testing.B, cas *sortCase) {
@@ -1578,13 +1609,19 @@ func benchmarkSortExec(b *testing.B, cas *sortCase) {
 		ndvs:   cas.ndvs,
 	}
 	dataSource := buildMockDataSource(opt)
-	exec := &SortExec{
-		baseExecutor: newBaseExecutor(cas.ctx, dataSource.schema, stringutil.StringerStr("sort"), dataSource),
-		ByItems:      make([]*core.ByItems, 0, len(cas.orderByIdx)),
-		schema:       dataSource.schema,
-	}
+	byItems := make([]*core.ByItems, 0, len(cas.orderByIdx))
 	for _, idx := range cas.orderByIdx {
-		exec.ByItems = append(exec.ByItems, &core.ByItems{Expr: cas.columns()[idx]})
+		byItems = append(byItems, &core.ByItems{Expr: cas.columns()[idx]})
+	}
+	var exec Executor
+	if cas.concurrency <= 1 {
+		exec = &SortExec{
+			baseExecutor: newBaseExecutor(cas.ctx, dataSource.schema, stringutil.StringerStr("sort"), dataSource),
+			ByItems:      byItems,
+			schema:       dataSource.schema,
+		}
+	} else {
+		exec = buildParallelSortExec(cas.ctx, dataSource, byItems, cas.concurrency)
 	}
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -1624,23 +1661,27 @@ func BenchmarkSortExec(b *testing.B) {
 	})
 
 	ndvs := []int{1, 10000}
+	concs := []int{1, 2, 4}
 	for _, ndv := range ndvs {
-		cas.ndvs = []int{ndv, 0}
-		cas.orderByIdx = []int{0, 1}
-		b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
-			benchmarkSortExec(b, cas)
-		})
+		for _, con := range concs {
+			cas.ndvs = []int{ndv, 0}
+			cas.orderByIdx = []int{0, 1}
+			cas.concurrency = con
+			b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
+				benchmarkSortExec(b, cas)
+			})
 
-		cas.ndvs = []int{ndv, 0}
-		cas.orderByIdx = []int{0}
-		b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
-			benchmarkSortExec(b, cas)
-		})
+			cas.ndvs = []int{ndv, 0}
+			cas.orderByIdx = []int{0}
+			b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
+				benchmarkSortExec(b, cas)
+			})
 
-		cas.ndvs = []int{ndv, 0}
-		cas.orderByIdx = []int{1}
-		b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
-			benchmarkSortExec(b, cas)
-		})
+			cas.ndvs = []int{ndv, 0}
+			cas.orderByIdx = []int{1}
+			b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
+				benchmarkSortExec(b, cas)
+			})
+		}
 	}
 }

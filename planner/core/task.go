@@ -751,7 +751,7 @@ func (t *rootTask) copy() task {
 
 func (t *rootTask) count() float64 {
 	if t.concurrency > 1.0 {
-		// TODOO: wrong result for memory cost
+		//Future: fix wrong result for memory cost.
 		return t.p.statsInfo().RowCount / t.concurrency
 	}
 	return t.p.statsInfo().RowCount
@@ -1318,6 +1318,18 @@ func (p *PhysicalShuffle) attach2Task(tasks ...task) task {
 	t := tasks[0].copy()
 	t = attachPlan2Task(p, t)
 	t.setConcurrency(p.FanOut)
-	//TODOO t.addCost(p.GetCost(t.count()))
+	t.addCost(p.GetCost(t.count()))
 	return t
+}
+
+// GetCost computes the cost of in memory sort.
+func (p *PhysicalShuffle) GetCost(count float64) float64 {
+	if count < 2.0 {
+		count = 2.0
+	}
+	sessVars := p.ctx.GetSessionVars()
+	cpuCost := count * sessVars.CPUFactor //Future: estimates cost for different shuffle type.
+	memoryCost := count * sessVars.MemoryFactor
+	concurrencyCost := (float64)(p.Concurrency) * sessVars.ConcurrencyFactor
+	return cpuCost + memoryCost + concurrencyCost
 }
