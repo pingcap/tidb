@@ -377,7 +377,7 @@ func (b *PlanBuilder) Build(ctx context.Context, node ast.Node) (Plan, error) {
 	b.optFlag = flagPrunColumns
 	defer func() {
 		// if there is something after flagPrunColumns, do flagPrunColumnsAgain
-		if b.optFlag-flagPrunColumns > flagPrunColumns {
+		if b.optFlag&flagPrunColumns > 0 && b.optFlag-flagPrunColumns > flagPrunColumns {
 			b.optFlag |= flagPrunColumnsAgain
 		}
 	}()
