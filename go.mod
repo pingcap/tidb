@@ -33,6 +33,8 @@ require (
 	github.com/pingcap/errors v0.11.5-0.20190809092503-95897b64e011
 	github.com/pingcap/failpoint v0.0.0-20191029060244-12f4ac2fd11d
 	github.com/pingcap/goleveldb v0.0.0-20171020122428-b9ff6c35079e
+	github.com/pingcap/kvproto v0.0.0-20200213074014-83e827908584
+	github.com/pingcap/log v0.0.0-20191012051959-b742a5d432e9
 	github.com/pingcap/parser v0.0.0-20200213042211-e357ed5f237b
 	github.com/pingcap/pd v1.1.0-beta.0.20200213133706-fbbe75e180e6
 	github.com/pingcap/tidb-tools v3.0.6-0.20191119150227-ff0a3c6e5763+incompatible

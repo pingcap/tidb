@@ -233,6 +233,14 @@ github.com/pingcap/failpoint v0.0.0-20191029060244-12f4ac2fd11d h1:F8vp38kTAckN+
 github.com/pingcap/failpoint v0.0.0-20191029060244-12f4ac2fd11d/go.mod h1:DNS3Qg7bEDhU6EXNHF+XSv/PGznQaMJ5FWvctpm6pQI=
 github.com/pingcap/goleveldb v0.0.0-20171020122428-b9ff6c35079e h1:P73/4dPCL96rGrobssy1nVy2VaVpNCuLpCbr+FEaTA8=
 github.com/pingcap/goleveldb v0.0.0-20171020122428-b9ff6c35079e/go.mod h1:O17XtbryoCJhkKGbT62+L2OlrniwqiGLSqrmdHCMzZw=
+github.com/pingcap/kvproto v0.0.0-20200213074014-83e827908584 h1:DhQfXNn9m36b2/4zUfPHDDR6CwS2VONbfPC4s+LMVj0=
+github.com/pingcap/kvproto v0.0.0-20200213074014-83e827908584/go.mod h1:IOdRDPLyda8GX2hE/jO7gqaCV/PNFh8BZQCQZXfIOqI=
+github.com/pingcap/log v0.0.0-20191012051959-b742a5d432e9 h1:AJD9pZYm72vMgPcQDww9rkZ1DnWfl0pXV3BOWlkYIjA=
+github.com/pingcap/log v0.0.0-20191012051959-b742a5d432e9/go.mod h1:4rbK1p9ILyIfb6hU7OG2CiWSqMXnp3JMbiaVJ6mvoY8=
+github.com/pingcap/parser v0.0.0-20200213042211-e357ed5f237b h1:oKql7mOA71N7NxMn3MHtYcxntXrFxNPDMDalF/dW3iM=
+github.com/pingcap/parser v0.0.0-20200213042211-e357ed5f237b/go.mod h1:1FNvfp9+J0wvc4kl8eGNh7Rqrxveg15jJoWo/a0uHwA=
+github.com/pingcap/pd v1.1.0-beta.0.20200213133706-fbbe75e180e6 h1:6Ut7/Gg6nO2tkrufRncFsI4WnYsmrLI0DN8xcGGOFL8=
+github.com/pingcap/pd v1.1.0-beta.0.20200213133706-fbbe75e180e6/go.mod h1:zezAKmc5aqNUREQdxxeP4WuAx22FlPQL/p7xFYKoThU=
 github.com/pingcap/tidb-tools v3.0.6-0.20191119150227-ff0a3c6e5763+incompatible h1:I8HirWsu1MZp6t9G/g8yKCEjJJxtHooKakEgccvdJ4M=
 github.com/pingcap/tidb-tools v3.0.6-0.20191119150227-ff0a3c6e5763+incompatible/go.mod h1:XGdcy9+yqlDSEMTpOXnwf3hiTeqrV6MN/u1se9N8yIM=
 github.com/pingcap/tipb v0.0.0-20191126033718-169898888b24 h1:9cdSUluc+Q4yGzGg8AeG46/e8Rw7pJ5jJz9Y4QRNvKE=
