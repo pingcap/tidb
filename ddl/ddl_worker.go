@@ -43,9 +43,19 @@ var (
 	RunWorker = true
 	// ddlWorkerID is used for generating the next DDL worker ID.
 	ddlWorkerID = int32(0)
-	// WaitTimeWhenErrorOccured is waiting interval when processing DDL jobs encounter errors.
-	WaitTimeWhenErrorOccured = 1 * time.Second
+	// WaitTimeWhenErrorOccurred is waiting interval when processing DDL jobs encounter errors.
+	WaitTimeWhenErrorOccurred = int64(1 * time.Second)
 )
+
+// GetWaitTimeWhenErrorOccurred return waiting interval when processing DDL jobs encounter errors.
+func GetWaitTimeWhenErrorOccurred() time.Duration {
+	return time.Duration(atomic.LoadInt64(&WaitTimeWhenErrorOccurred))
+}
+
+// SetWaitTimeWhenErrorOccurred update waiting interval when processing DDL jobs encounter errors.
+func SetWaitTimeWhenErrorOccurred(dur time.Duration) {
+	atomic.StoreInt64(&WaitTimeWhenErrorOccurred, int64(dur))
+}
 
 type workerType byte
 
@@ -435,8 +445,8 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 			// wait a while to retry again. If we don't wait here, DDL will retry this job immediately,
 			// which may act like a deadlock.
 			logutil.Logger(w.logCtx).Info("[ddl] run DDL job failed, sleeps a while then retries it.",
-				zap.Duration("waitTime", WaitTimeWhenErrorOccured), zap.Error(runJobErr))
-			time.Sleep(WaitTimeWhenErrorOccured)
+				zap.Duration("waitTime", GetWaitTimeWhenErrorOccurred()), zap.Error(runJobErr))
+			time.Sleep(GetWaitTimeWhenErrorOccurred())
 		}
 
 		if err != nil {
@@ -536,7 +546,7 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 	case model.ActionDropTablePartition:
 		ver, err = onDropTablePartition(t, job)
 	case model.ActionTruncateTablePartition:
-		ver, err = onTruncateTablePartition(t, job)
+		ver, err = onTruncateTablePartition(d, t, job)
 	case model.ActionAddColumn:
 		ver, err = onAddColumn(d, t, job)
 	case model.ActionDropColumn:
@@ -568,7 +578,7 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 	case model.ActionModifyTableComment:
 		ver, err = onModifyTableComment(t, job)
 	case model.ActionAddTablePartition:
-		ver, err = onAddTablePartition(t, job)
+		ver, err = onAddTablePartition(d, t, job)
 	case model.ActionModifyTableCharsetAndCollate:
 		ver, err = onModifyTableCharsetAndCollate(t, job)
 	case model.ActionRecoverTable:
@@ -633,7 +643,7 @@ func toTError(err error) *terror.Error {
 	}
 
 	// TODO: Add the error code.
-	return terror.ClassDDL.New(terror.CodeUnknown, err.Error())
+	return terror.ClassDDL.Synthesize(terror.CodeUnknown, err.Error())
 }
 
 // waitSchemaChanged waits for the completion of updating all servers' schema. In order to make sure that happens,

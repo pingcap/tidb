@@ -14,7 +14,6 @@
 package expression
 
 import (
-	"fmt"
 	"math"
 	"strings"
 	"time"
@@ -673,7 +672,6 @@ func (s *testEvaluatorSuite) TestClock(c *C) {
 
 	// test error
 	errTbl := []string{
-		"2011-11-11T10:10:10.11",
 		"2011-11-11 10:10:10.11.12",
 	}
 
@@ -1483,7 +1481,7 @@ func (s *testEvaluatorSuite) TestTimeDiff(c *C) {
 		{[]interface{}{"2016-12-00 12:00:00", "2016-12-01 12:00:00"}, "-24:00:00", false, 0, false},
 		{[]interface{}{"10:10:10", "10:9:0"}, "00:01:10", false, 0, false},
 		{[]interface{}{"2016-12-00 12:00:00", "10:9:0"}, "", true, 0, false},
-		{[]interface{}{"2016-12-00 12:00:00", ""}, "", true, 0, false},
+		{[]interface{}{"2016-12-00 12:00:00", ""}, "", true, 0, true},
 	}
 
 	for _, t := range tests {
@@ -1714,7 +1712,6 @@ func (s *testEvaluatorSuite) TestUnixTimestamp(c *C) {
 	}
 
 	for _, test := range tests {
-		fmt.Printf("Begin Test %v\n", test)
 		expr := s.datumsToConstants([]types.Datum{test.input})
 		expr[0].GetType().Decimal = test.inputDecimal
 		resetStmtContext(s.ctx)
@@ -2404,8 +2401,6 @@ func (s *testEvaluatorSuite) TestTimeFormat(c *C) {
 		Input  []string
 		Expect interface{}
 	}{
-		{[]string{"100:00:00", `%H %k %h %I %l`},
-			"100 100 04 04 4"},
 		{[]string{"23:00:00", `%H %k %h %I %l`},
 			"23 23 11 11 11"},
 		{[]string{"11:00:00", `%H %k %h %I %l`},

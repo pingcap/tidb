@@ -234,6 +234,15 @@ func (p *LogicalJoin) extractCorrelatedCols() []*expression.CorrelatedColumn {
 	return corCols
 }
 
+// ExtractJoinKeys extract join keys as a schema for child with childIdx.
+func (p *LogicalJoin) ExtractJoinKeys(childIdx int) *expression.Schema {
+	joinKeys := make([]*expression.Column, 0, len(p.EqualConditions))
+	for _, eqCond := range p.EqualConditions {
+		joinKeys = append(joinKeys, eqCond.GetArgs()[childIdx].(*expression.Column))
+	}
+	return expression.NewSchema(joinKeys...)
+}
+
 // LogicalProjection represents a select fields plan.
 type LogicalProjection struct {
 	logicalSchemaProducer
@@ -298,6 +307,12 @@ func (la *LogicalAggregation) IsPartialModeAgg() bool {
 	return la.AggFuncs[0].Mode == aggregation.Partial1Mode
 }
 
+// IsCompleteModeAgg returns if all of the AggFuncs are CompleteMode.
+func (la *LogicalAggregation) IsCompleteModeAgg() bool {
+	// Since all of the AggFunc share the same AggMode, we only need to check the first one.
+	return la.AggFuncs[0].Mode == aggregation.CompleteMode
+}
+
 // GetGroupByCols returns the groupByCols. If the groupByCols haven't be collected,
 // this method would collect them at first. If the GroupByItems have been changed,
 // we should explicitly collect GroupByColumns before this method.
@@ -319,6 +334,19 @@ func (la *LogicalAggregation) extractCorrelatedCols() []*expression.CorrelatedCo
 		}
 	}
 	return corCols
+}
+
+// GetUsedCols extracts all of the Columns used by agg including GroupByItems and AggFuncs.
+func (la *LogicalAggregation) GetUsedCols() (usedCols []*expression.Column) {
+	for _, groupByItem := range la.GroupByItems {
+		usedCols = append(usedCols, expression.ExtractColumns(groupByItem)...)
+	}
+	for _, aggDesc := range la.AggFuncs {
+		for _, expr := range aggDesc.Args {
+			usedCols = append(usedCols, expression.ExtractColumns(expr)...)
+		}
+	}
+	return usedCols
 }
 
 // LogicalSelection represents a where or having predicate.
@@ -381,8 +409,8 @@ type LogicalMemTable struct {
 	logicalSchemaProducer
 
 	Extractor MemTablePredicateExtractor
-	dbName    model.CIStr
-	tableInfo *model.TableInfo
+	DBName    model.CIStr
+	TableInfo *model.TableInfo
 }
 
 // LogicalUnionScan is only used in non read-only txn.

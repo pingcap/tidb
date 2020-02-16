@@ -196,9 +196,9 @@ func (p *LogicalMemTable) findBestTask(prop *property.PhysicalProperty) (t task,
 		return invalidTask, nil
 	}
 	memTable := PhysicalMemTable{
-		DBName:    p.dbName,
-		Table:     p.tableInfo,
-		Columns:   p.tableInfo.Columns,
+		DBName:    p.DBName,
+		Table:     p.TableInfo,
+		Columns:   p.TableInfo.Columns,
 		Extractor: p.Extractor,
 	}.Init(p.ctx, p.stats, p.blockOffset)
 	memTable.SetSchema(p.schema)
@@ -1082,12 +1082,6 @@ func (ds *DataSource) getOriginalPhysicalTableScan(prop *property.PhysicalProper
 		filterCondition: path.TableFilters,
 		StoreType:       path.StoreType,
 	}.Init(ds.ctx, ds.blockOffset)
-	if ts.StoreType == kv.TiFlash {
-		// Append the AccessCondition to filterCondition because TiFlash only support full range scan for each
-		// region, do not reset ts.Ranges as it will help prune regions during `buildCopTasks`
-		ts.filterCondition = append(ts.filterCondition, ts.AccessCondition...)
-		ts.AccessCondition = nil
-	}
 	ts.SetSchema(ds.schema.Clone())
 	if ts.Table.PKIsHandle {
 		if pkColInfo := ts.Table.GetPkColInfo(); pkColInfo != nil {

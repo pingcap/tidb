@@ -140,9 +140,14 @@ func checkIndexColumn(col *model.ColumnInfo, ic *ast.IndexPartSpecification) err
 		return errors.Trace(errJSONUsedAsKey.GenWithStackByArgs(col.Name.O))
 	}
 
-	// Length must be specified for BLOB and TEXT column indexes.
-	if types.IsTypeBlob(col.FieldType.Tp) && ic.Length == types.UnspecifiedLength {
-		return errors.Trace(errBlobKeyWithoutLength.GenWithStackByArgs(col.Name.O))
+	// Length must be specified and non-zero for BLOB and TEXT column indexes.
+	if types.IsTypeBlob(col.FieldType.Tp) {
+		if ic.Length == types.UnspecifiedLength {
+			return errors.Trace(errBlobKeyWithoutLength.GenWithStackByArgs(col.Name.O))
+		}
+		if ic.Length == types.ErrorLength {
+			return errors.Trace(errKeyPart0.GenWithStackByArgs(col.Name.O))
+		}
 	}
 
 	// Length can only be specified for specifiable types.
@@ -152,8 +157,14 @@ func checkIndexColumn(col *model.ColumnInfo, ic *ast.IndexPartSpecification) err
 
 	// Key length must be shorter or equal to the column length.
 	if ic.Length != types.UnspecifiedLength &&
-		types.IsTypeChar(col.FieldType.Tp) && col.Flen < ic.Length {
-		return errors.Trace(errIncorrectPrefixKey)
+		types.IsTypeChar(col.FieldType.Tp) {
+		if col.Flen < ic.Length {
+			return errors.Trace(errIncorrectPrefixKey)
+		}
+		// Length must be non-zero for char.
+		if ic.Length == types.ErrorLength {
+			return errors.Trace(errKeyPart0.GenWithStackByArgs(col.Name.O))
+		}
 	}
 
 	// Specified length must be shorter than the max length for prefix.

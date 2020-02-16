@@ -582,7 +582,6 @@ func NewSessionVars() *SessionVars {
 		PreparedStmtNameToID:        make(map[string]uint32),
 		PreparedParams:              make([]types.Datum, 0, 10),
 		TxnCtx:                      &TransactionContext{},
-		KVVars:                      kv.NewVariables(),
 		RetryInfo:                   &RetryInfo{},
 		ActiveRoles:                 make([]*auth.RoleIdentity, 0, 10),
 		StrictSQLMode:               true,
@@ -626,6 +625,7 @@ func NewSessionVars() *SessionVars {
 		MetricSchemaStep:            DefTiDBMetricSchemaStep,
 		MetricSchemaRangeDuration:   DefTiDBMetricSchemaRangeDuration,
 	}
+	vars.KVVars = kv.NewVariables(&vars.Killed)
 	vars.Concurrency = Concurrency{
 		IndexLookupConcurrency:     DefIndexLookupConcurrency,
 		IndexSerialScanConcurrency: DefIndexSerialScanConcurrency,
@@ -1115,6 +1115,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 	case TiDBReplicaRead:
 		if strings.EqualFold(val, "follower") {
 			s.SetReplicaRead(kv.ReplicaReadFollower)
+		} else if strings.EqualFold(val, "leader-and-follower") {
+			s.SetReplicaRead(kv.ReplicaReadMixed)
 		} else if strings.EqualFold(val, "leader") || len(val) == 0 {
 			s.SetReplicaRead(kv.ReplicaReadLeader)
 		}

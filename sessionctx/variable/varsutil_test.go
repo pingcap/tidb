@@ -379,6 +379,11 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(val, Equals, "leader")
 	c.Assert(v.GetReplicaRead(), Equals, kv.ReplicaReadLeader)
+	SetSessionSystemVar(v, TiDBReplicaRead, types.NewStringDatum("leader-and-follower"))
+	val, err = GetSessionSystemVar(v, TiDBReplicaRead)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, "leader-and-follower")
+	c.Assert(v.GetReplicaRead(), Equals, kv.ReplicaReadMixed)
 
 	SetSessionSystemVar(v, TiDBEnableStmtSummary, types.NewStringDatum("on"))
 	val, err = GetSessionSystemVar(v, TiDBEnableStmtSummary)
