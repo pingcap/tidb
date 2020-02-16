@@ -105,6 +105,10 @@ func (s *RegionRequestSender) SendReqCtx(
 					GC:   &kvrpcpb.GCResponse{RegionError: &errorpb.Error{ServerIsBusy: &errorpb.ServerIsBusy{}}},
 				}, nil, nil)
 			}
+		case "callBackofferHook":
+			if bo.vars != nil && bo.vars.Hook != nil {
+				bo.vars.Hook("callBackofferHook", bo.vars)
+			}
 		}
 	})
 

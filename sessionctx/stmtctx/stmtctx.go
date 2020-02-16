@@ -139,6 +139,7 @@ type StatementContext struct {
 	// planNormalized use for cache the normalized plan, avoid duplicate builds.
 	planNormalized string
 	planDigest     string
+	LockKeysCount  int32
 }
 
 // GetNowTsCached getter for nowTs, if not set get now time and cache it

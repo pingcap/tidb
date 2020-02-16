@@ -20,11 +20,12 @@ import (
 
 // Error instances.
 var (
-	ErrAutoincReadFailed    = terror.ClassAutoid.New(mysql.ErrAutoincReadFailed, mysql.MySQLErrName[mysql.ErrAutoincReadFailed])
-	ErrWrongAutoKey         = terror.ClassAutoid.New(mysql.ErrWrongAutoKey, mysql.MySQLErrName[mysql.ErrWrongAutoKey])
-	errInvalidTableID       = terror.ClassAutoid.New(codeInvalidTableID, "invalid TableID")
-	errInvalidAllocatorType = terror.ClassAutoid.New(mysql.ErrUnknownAllocatorType, mysql.MySQLErrName[mysql.ErrUnknownAllocatorType])
-	ErrAutoRandReadFailed   = terror.ClassAutoid.New(mysql.ErrAutoRandReadFailed, mysql.MySQLErrName[mysql.ErrAutoRandReadFailed])
+	ErrAutoincReadFailed         = terror.ClassAutoid.New(mysql.ErrAutoincReadFailed, mysql.MySQLErrName[mysql.ErrAutoincReadFailed])
+	ErrWrongAutoKey              = terror.ClassAutoid.New(mysql.ErrWrongAutoKey, mysql.MySQLErrName[mysql.ErrWrongAutoKey])
+	errInvalidTableID            = terror.ClassAutoid.New(codeInvalidTableID, "invalid TableID")
+	errInvalidAllocatorType      = terror.ClassAutoid.New(mysql.ErrUnknownAllocatorType, mysql.MySQLErrName[mysql.ErrUnknownAllocatorType])
+	ErrAutoRandReadFailed        = terror.ClassAutoid.New(mysql.ErrAutoRandReadFailed, mysql.MySQLErrName[mysql.ErrAutoRandReadFailed])
+	errInvalidIncrementAndOffset = terror.ClassAutoid.New(mysql.ErrInvalidIncrementAndOffset, mysql.MySQLErrName[mysql.ErrInvalidIncrementAndOffset])
 )
 
 // codeInvalidTableID is the code of autoid error.
@@ -33,8 +34,9 @@ const codeInvalidTableID terror.ErrCode = 8056
 func init() {
 	// Map error codes to mysql error codes.
 	tableMySQLErrCodes := map[terror.ErrCode]uint16{
-		mysql.ErrAutoincReadFailed: mysql.ErrAutoincReadFailed,
-		mysql.ErrWrongAutoKey:      mysql.ErrWrongAutoKey,
+		mysql.ErrAutoincReadFailed:         mysql.ErrAutoincReadFailed,
+		mysql.ErrWrongAutoKey:              mysql.ErrWrongAutoKey,
+		mysql.ErrInvalidIncrementAndOffset: mysql.ErrInvalidIncrementAndOffset,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassAutoid] = tableMySQLErrCodes
 }

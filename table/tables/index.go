@@ -198,27 +198,63 @@ func (c *index) GenIndexKey(sc *stmtctx.StatementContext, indexedValues []types.
 // Create will return the existing entry's handle as the first return value, ErrKeyExists as the second return value.
 func (c *index) Create(ctx sessionctx.Context, rm kv.RetrieverMutator, indexedValues []types.Datum, h int64,
 	opts ...*table.CreateIdxOpt) (int64, error) {
+	var opt *table.CreateIdxOpt
+	if len(opts) > 0 {
+		opt = opts[0]
+	}
+	if opt == nil {
+		opt = &table.CreateIdxOpt{}
+	}
 	writeBufs := ctx.GetSessionVars().GetWriteStmtBufs()
 	skipCheck := ctx.GetSessionVars().LightningMode || ctx.GetSessionVars().StmtCtx.BatchCheck
 	key, distinct, err := c.GenIndexKey(ctx.GetSessionVars().StmtCtx, indexedValues, h, writeBufs.IndexKeyBuf)
 	if err != nil {
 		return 0, err
 	}
+
+	if opt.Untouched {
+		txn, err1 := ctx.Txn(true)
+		if err1 != nil {
+			return 0, err1
+		}
+		// If the index kv was untouched(unchanged), and the key/value already exists in mem-buffer,
+		// should not overwrite the key with un-commit flag.
+		// So if the key exists, just do nothing and return.
+		_, err = txn.GetMemBuffer().Get(key)
+		if err == nil {
+			return 0, nil
+		}
+	}
+
 	// save the key buffer to reuse.
 	writeBufs.IndexKeyBuf = key
 	if !distinct {
 		// non-unique index doesn't need store value, write a '0' to reduce space
-		err = rm.Set(key, []byte{'0'})
+		value := []byte{'0'}
+		if opt.Untouched {
+			value[0] = kv.UnCommitIndexKVFlag
+		}
+		err = rm.Set(key, value)
+		return 0, err
+	}
+
+	if skipCheck || opt.Untouched {
+		value := EncodeHandle(h)
+		// If index is untouched and fetch here means the key is exists in TiKV, but not in txn mem-buffer,
+		// then should also write the untouched index key/value to mem-buffer to make sure the data
+		// is consistent with the index in txn mem-buffer.
+		if opt.Untouched {
+			value = append(value, kv.UnCommitIndexKVFlag)
+		}
+		err = rm.Set(key, value)
 		return 0, err
 	}
 
 	var value []byte
-	if !skipCheck {
-		value, err = rm.Get(key)
-	}
-
-	if skipCheck || kv.IsErrNotFound(err) {
-		err = rm.Set(key, EncodeHandle(h))
+	value, err = rm.Get(key)
+	if kv.IsErrNotFound(err) {
+		v := EncodeHandle(h)
+		err = rm.Set(key, v)
 		return 0, err
 	}
 

@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
@@ -192,6 +193,8 @@ func (s *testSuite3) TestColumnScope(c *C) {
 func (s *testSuite3) TestIssue2456(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("CREATE USER 'dduser'@'%' IDENTIFIED by '123456';")
+	tk.MustExec("CREATE DATABASE `dddb_%`;")
+	tk.MustExec("CREATE table `dddb_%`.`te%` (id int);")
 	tk.MustExec("GRANT ALL PRIVILEGES ON `dddb_%`.* TO 'dduser'@'%';")
 	tk.MustExec("GRANT ALL PRIVILEGES ON `dddb_%`.`te%` to 'dduser'@'%';")
 }
@@ -306,4 +309,27 @@ func (s *testSuite3) TestMaintainRequire(c *C) {
 	c.Assert(err, NotNil)
 	_, err = tk.Exec(`CREATE USER 'u9'@'%' require x509 x509`)
 	c.Assert(err, NotNil)
+}
+
+func (s *testSuite3) TestGrantOnNonExistTable(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create user genius")
+	tk.MustExec("use test")
+	_, err := tk.Exec("select * from nonexist")
+	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableNotExists), IsTrue)
+	_, err = tk.Exec("grant Select,Insert on nonexist to 'genius'")
+	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableNotExists), IsTrue)
+
+	tk.MustExec("create table if not exists xx (id int)")
+	// Case sensitive
+	_, err = tk.Exec("grant Select,Insert on XX to 'genius'")
+	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableNotExists), IsTrue)
+	// The database name should also case sensitive match.
+	_, err = tk.Exec("grant Select,Insert on Test.xx to 'genius'")
+	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableNotExists), IsTrue)
+
+	_, err = tk.Exec("grant Select,Insert on xx to 'genius'")
+	c.Assert(err, IsNil)
+	_, err = tk.Exec("grant Select,Update on test.xx to 'genius'")
+	c.Assert(err, IsNil)
 }
