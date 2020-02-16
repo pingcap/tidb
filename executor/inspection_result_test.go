@@ -27,26 +27,26 @@ import (
 	"github.com/pingcap/tidb/util/testkit"
 )
 
-var _ = Suite(&diagnosticsSuite{})
+var _ = Suite(&inspectionResultSuite{})
 
-type diagnosticsSuite struct {
+type inspectionResultSuite struct {
 	store kv.Storage
 	dom   *domain.Domain
 }
 
-func (s *diagnosticsSuite) SetUpSuite(c *C) {
+func (s *inspectionResultSuite) SetUpSuite(c *C) {
 	store, dom, err := newStoreWithBootstrap()
 	c.Assert(err, IsNil)
 	s.store = store
 	s.dom = dom
 }
 
-func (s *diagnosticsSuite) TearDownSuite(c *C) {
+func (s *inspectionResultSuite) TearDownSuite(c *C) {
 	s.dom.Close()
 	s.store.Close()
 }
 
-func (s *diagnosticsSuite) TestInspectionResult(c *C) {
+func (s *inspectionResultSuite) TestInspectionResult(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 
 	mockData := map[string]variable.TableSnapshot{}
@@ -166,7 +166,7 @@ func (s *diagnosticsSuite) TestInspectionResult(c *C) {
 	}
 }
 
-func (s *diagnosticsSuite) TestCriticalErrorInspection(c *C) {
+func (s *inspectionResultSuite) TestCriticalErrorInspection(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 
 	fpName := "github.com/pingcap/tidb/executor/mockMetricsTableData"

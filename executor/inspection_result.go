@@ -88,13 +88,13 @@ var inspectionRules = []inspectionRule{
 	&criticalErrorInspection{inspectionName: "critical-error"},
 }
 
-type inspectionRetriever struct {
+type inspectionResultRetriever struct {
 	dummyCloser
 	retrieved bool
 	extractor *plannercore.InspectionResultTableExtractor
 }
 
-func (e *inspectionRetriever) retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
+func (e *inspectionResultRetriever) retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
 	if e.retrieved || e.extractor.SkipInspection {
 		return nil, nil
 	}
