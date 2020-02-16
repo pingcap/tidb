@@ -456,6 +456,23 @@ func (do *Domain) infoSyncerKeeper() {
 	}
 }
 
+func (do *Domain) topologySyncerKeeper()  {
+	defer do.wg.Done()
+	ticker := time.NewTicker(infosync.TopologyTimeToRefresh)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			err := do.info.RefreshTopology(context.Background())
+			if err != nil {
+				logutil.BgLogger().Error("refresh topology in loop failed", zap.Error(err))
+			}
+		case <-do.exit:
+			return
+		}
+	}
+}
+
 func (do *Domain) loadSchemaInLoop(lease time.Duration) {
 	defer do.wg.Done()
 	// Lease renewal can run at any frequency.
@@ -700,6 +717,10 @@ func (do *Domain) Init(ddlLease time.Duration, sysFactory func(*Domain) (pools.R
 
 	do.wg.Add(1)
 	go do.infoSyncerKeeper()
+
+	do.wg.Add(1)
+	go do.topologySyncerKeeper()
+
 	return nil
 }
 
