@@ -65,13 +65,13 @@ const (
 
 // InfoSyncer stores server info to etcd when the tidb-server starts and delete when tidb-server shuts down.
 type InfoSyncer struct {
-	etcdCli        *clientv3.Client
-	info           *ServerInfo
-	serverInfoPath string
-	minStartTS     uint64
-	minStartTSPath string
-	manager        util2.SessionManager
-	session        *concurrency.Session
+	etcdCli         *clientv3.Client
+	info            *ServerInfo
+	serverInfoPath  string
+	minStartTS      uint64
+	minStartTSPath  string
+	manager         util2.SessionManager
+	session         *concurrency.Session
 	topologySession *concurrency.Session
 }
 
@@ -426,7 +426,6 @@ func (is *InfoSyncer) RefreshTopology(ctx context.Context) error {
 		clientv3.WithLease(is.topologySession.Lease()))
 }
 
-
 // getInfo gets server information from etcd according to the key and opts.
 func getInfo(ctx context.Context, etcdCli *clientv3.Client, key string, retryCnt int, timeout time.Duration, opts ...clientv3.OpOption) (map[string]*ServerInfo, error) {
 	var err error
@@ -475,7 +474,7 @@ func getServerInfo(id string) *ServerInfo {
 		Lease:          cfg.Lease,
 		BinlogStatus:   binloginfo.GetStatus().String(),
 		StartTimestamp: time.Now().Unix(),
-		Host:cfg.Host,
+		Host:           cfg.Host,
 	}
 	info.Version = mysql.ServerVersion
 	info.GitHash = printer.TiDBGitHash
