@@ -1111,4 +1111,7 @@ func (s *testRecoverTable) TestDropTableIfExists(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t;")
 	tk.MustQuery("show warnings;").Check(testkit.Rows("Note 1051 Unknown table 'test.t'"))
+	tk.MustExec("create table if not exists t1(c int)")
+	tk.MustExec("drop table if exists t1,t2,t3")
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Note|1051|Unknown table 'test.t2'", "Note|1051|Unknown table 'test.t3'"))
 }
