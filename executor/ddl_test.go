@@ -1105,3 +1105,10 @@ func (s *testRecoverTable) TestRenameTable(c *C) {
 	tk.MustExec("drop database rename1")
 	tk.MustExec("drop database rename2")
 }
+
+func (s *testRecoverTable) TestDropTableIfExists(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	tk.MustQuery("show warnings;").Check(testkit.Rows("Note 1051 Unknown table 'test.t'"))
+}
