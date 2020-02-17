@@ -779,7 +779,7 @@ func (b *builtinNextValSig) evalInt(row chunk.Row) (int64, bool, error) {
 	if err != nil {
 		return 0, false, err
 	}
-	nextVal, err := sequence.GetSequenceNextVal()
+	nextVal, err := sequence.GetSequenceNextVal(db, seq)
 	if err != nil {
 		return 0, false, err
 	}
@@ -867,15 +867,11 @@ func (b *builtinSetValSig) evalInt(row chunk.Row) (int64, bool, error) {
 	if err != nil {
 		return 0, false, err
 	}
-	setValue, isNull, err := b.args[0].EvalInt(b.ctx, row)
+	setValue, isNull, err := b.args[1].EvalInt(b.ctx, row)
 	if isNull || err != nil {
 		return 0, isNull, err
 	}
-	err = sequence.SetSequenceVal(setValue)
-	if err != nil {
-		return 0, false, err
-	}
-	return setValue, false, nil
+	return sequence.SetSequenceVal(setValue)
 }
 
 func getSchemaAndSequence(sequenceName string) (schema string, sequence string) {
