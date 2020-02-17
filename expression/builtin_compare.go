@@ -210,7 +210,7 @@ func (c *coalesceFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	return sig, nil
 }
 
-// builtinCoalesceIntSig is buitin function coalesce signature which return type int
+// builtinCoalesceIntSig is builtin function coalesce signature which return type int
 // See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_coalesce
 type builtinCoalesceIntSig struct {
 	baseBuiltinFunc
@@ -232,7 +232,7 @@ func (b *builtinCoalesceIntSig) evalInt(row chunk.Row) (res int64, isNull bool, 
 	return res, isNull, err
 }
 
-// builtinCoalesceRealSig is buitin function coalesce signature which return type real
+// builtinCoalesceRealSig is builtin function coalesce signature which return type real
 // See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_coalesce
 type builtinCoalesceRealSig struct {
 	baseBuiltinFunc
@@ -254,7 +254,7 @@ func (b *builtinCoalesceRealSig) evalReal(row chunk.Row) (res float64, isNull bo
 	return res, isNull, err
 }
 
-// builtinCoalesceDecimalSig is buitin function coalesce signature which return type Decimal
+// builtinCoalesceDecimalSig is builtin function coalesce signature which return type Decimal
 // See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_coalesce
 type builtinCoalesceDecimalSig struct {
 	baseBuiltinFunc
@@ -276,7 +276,7 @@ func (b *builtinCoalesceDecimalSig) evalDecimal(row chunk.Row) (res *types.MyDec
 	return res, isNull, err
 }
 
-// builtinCoalesceStringSig is buitin function coalesce signature which return type string
+// builtinCoalesceStringSig is builtin function coalesce signature which return type string
 // See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_coalesce
 type builtinCoalesceStringSig struct {
 	baseBuiltinFunc
@@ -298,7 +298,7 @@ func (b *builtinCoalesceStringSig) evalString(row chunk.Row) (res string, isNull
 	return res, isNull, err
 }
 
-// builtinCoalesceTimeSig is buitin function coalesce signature which return type time
+// builtinCoalesceTimeSig is builtin function coalesce signature which return type time
 // See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_coalesce
 type builtinCoalesceTimeSig struct {
 	baseBuiltinFunc
@@ -320,7 +320,7 @@ func (b *builtinCoalesceTimeSig) evalTime(row chunk.Row) (res types.Time, isNull
 	return res, isNull, err
 }
 
-// builtinCoalesceDurationSig is buitin function coalesce signature which return type duration
+// builtinCoalesceDurationSig is builtin function coalesce signature which return type duration
 // See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_coalesce
 type builtinCoalesceDurationSig struct {
 	baseBuiltinFunc
@@ -342,7 +342,7 @@ func (b *builtinCoalesceDurationSig) evalDuration(row chunk.Row) (res types.Dura
 	return res, isNull, err
 }
 
-// builtinCoalesceJSONSig is buitin function coalesce signature which return type json.
+// builtinCoalesceJSONSig is builtin function coalesce signature which return type json.
 // See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_coalesce
 type builtinCoalesceJSONSig struct {
 	baseBuiltinFunc
