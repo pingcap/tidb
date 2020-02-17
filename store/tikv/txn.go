@@ -408,6 +408,9 @@ func (txn *tikvTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keysInput
 					wg.Wait()
 					// Sleep a little, wait for the other transaction that blocked by this transaction to acquire the lock.
 					time.Sleep(time.Millisecond * 5)
+					failpoint.Inject("SingleStmtDeadLockRetrySleep", func() {
+						time.Sleep(300 * time.Millisecond)
+					})
 				}
 			}
 			if assignedPrimaryKey {
