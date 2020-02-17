@@ -687,6 +687,7 @@ var tokenMap = map[string]int{
 	"WARNINGS":                 warnings,
 	"ERRORS":                   identSQLErrors,
 	"WEEK":                     week,
+	"WEIGHT_STRING":            weightString,
 	"WHEN":                     when,
 	"WHERE":                    where,
 	"WIDTH":                    width,

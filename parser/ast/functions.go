@@ -226,6 +226,7 @@ const (
 	CharLength      = "char_length"
 	CharacterLength = "character_length"
 	FindInSet       = "find_in_set"
+	WeightString    = "weight_string"
 
 	// information functions
 	Benchmark      = "benchmark"
@@ -419,6 +420,19 @@ func (n *FuncCallExpr) Restore(ctx *format.RestoreCtx) error {
 			if err := n.Args[0].Restore(ctx); err != nil {
 				return errors.Annotatef(err, "An error occurred while restore FuncCallExpr.Args[0]")
 			}
+		}
+	case WeightString:
+		if err := n.Args[0].Restore(ctx); err != nil {
+			return errors.Annotatef(err, "An error occurred while restore FuncCallExpr.(WEIGHT_STRING).Args[0]")
+		}
+		if len(n.Args) == 3 {
+			ctx.WriteKeyWord(" AS ")
+			ctx.WriteKeyWord(n.Args[1].(ValueExpr).GetValue().(string))
+			ctx.WritePlain("(")
+			if err := n.Args[2].Restore(ctx); err != nil {
+				return errors.Annotatef(err, "An error occurred while restore FuncCallExpr.(WEIGHT_STRING).Args[2]")
+			}
+			ctx.WritePlain(")")
 		}
 	default:
 		for i, argv := range n.Args {
