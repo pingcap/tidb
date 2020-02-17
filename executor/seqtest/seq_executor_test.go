@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/ddl"
 	ddltestutil "github.com/pingcap/tidb/ddl/testutil"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
@@ -53,6 +54,7 @@ import (
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
@@ -1182,6 +1184,57 @@ func (s *seqTestSuite) TestAutoRandIDRetry(c *C) {
 	tk.MustExec("insert into t values ()")
 	maskedHandles = extractMaskedOrderedHandles()
 	c.Assert(maskedHandles, DeepEquals, []int64{1, 2, 3, 4, 5, 7})
+}
+
+func (s *seqTestSuite) TestAutoRandRecoverTable(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	testutil.ConfigTestUtils.SetupAutoRandomTestConfig()
+	defer testutil.ConfigTestUtils.RestoreAutoRandomTestConfig()
+	tk.MustExec("create database if not exists test_recover")
+	tk.MustExec("use test_recover")
+	tk.MustExec("drop table if exists t_recover_auto_rand")
+	defer func(originGC bool) {
+		if originGC {
+			ddl.EmulatorGCEnable()
+		} else {
+			ddl.EmulatorGCDisable()
+		}
+	}(ddl.IsEmulatorGCEnable())
+
+	// disable emulator GC.
+	// Otherwise emulator GC will delete table record as soon as possible after execute drop table ddl.
+	ddl.EmulatorGCDisable()
+	gcTimeFormat := "20060102-15:04:05 -0700 MST"
+	timeBeforeDrop := time.Now().Add(0 - time.Duration(48*60*60*time.Second)).Format(gcTimeFormat)
+	safePointSQL := `INSERT HIGH_PRIORITY INTO mysql.tidb VALUES ('tikv_gc_safe_point', '%[1]s', '')
+			       ON DUPLICATE KEY
+			       UPDATE variable_value = '%[1]s'`
+
+	// set GC safe point
+	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
+	err := gcutil.EnableGC(tk.Se)
+	c.Assert(err, IsNil)
+
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange", `return(true)`), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange"), IsNil)
+	}()
+	const autoRandIDStep = 5000
+	stp := autoid.GetStep()
+	autoid.SetStep(autoRandIDStep)
+	defer autoid.SetStep(stp)
+
+	// check rebase auto_random id.
+	tk.MustExec("create table t_recover_auto_rand (a int auto_random(5) primary key);")
+	tk.MustExec("insert into t_recover_auto_rand values (),(),()")
+	tk.MustExec("drop table t_recover_auto_rand")
+	tk.MustExec("recover table t_recover_auto_rand")
+	tk.MustExec("insert into t_recover_auto_rand values (),(),()")
+	hs, err := ddltestutil.ExtractAllTableHandles(tk.Se, "test_recover", "t_recover_auto_rand")
+	c.Assert(err, IsNil)
+	ordered := testutil.ConfigTestUtils.MaskSortHandles(hs, 5, mysql.TypeLong)
+
+	c.Assert(ordered, DeepEquals, []int64{1, 2, 3, autoRandIDStep + 1, autoRandIDStep + 2, autoRandIDStep + 3})
 }
 
 func (s *seqTestSuite) TestMaxDeltaSchemaCount(c *C) {
