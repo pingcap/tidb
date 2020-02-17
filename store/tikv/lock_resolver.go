@@ -309,7 +309,6 @@ func (lr *LockResolver) ResolveLocks(bo *Backoffer, callerStartTS uint64, locks 
 			}
 
 			if l.LockType == kvrpcpb.Op_PessimisticLock {
-				//logutil.Logger(bo.ctx).Warn("found expired pessimistic lock", zap.Stringer("lock", l))
 				err = lr.resolvePessimisticLock(bo, l, cleanRegions)
 			} else {
 				err = lr.resolveLock(bo, l, status, cleanRegions)
