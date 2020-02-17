@@ -3669,9 +3669,9 @@ const (
 	weightStringPaddingNone weightStringPadding = 0xFF
 	// weightStringPaddingAsChar is used for WEIGHT_STRING(expr AS CHAR(x)) and the expr is non-numeric.
 	weightStringPaddingAsChar = 0x20
-	// weightStringPaddingAsBinary is used for WEIGHT_STRING(expr as BINARY(x)) and the expr is non-numeric.
+	// weightStringPaddingAsBinary is used for WEIGHT_STRING(expr as BINARY(x)) and the expr is not null.
 	weightStringPaddingAsBinary = 0x00
-	// weightStringPaddingNull is used for WEIGHT_STRING(expr [AS (CHAR|BINARY)]) if the expr is numeric.
+	// weightStringPaddingNull is used for WEIGHT_STRING(expr [AS (CHAR|BINARY)]) for all other cases, it returns null always.
 	weightStringPaddingNull = 0xFE
 )
 
@@ -3686,41 +3686,43 @@ func newWeightStringFunctionClass() *weightStringFunctionClass {
 }
 
 func (c *weightStringFunctionClass) verifyArgs(args []Expression) (weightStringPadding, int, error) {
+	padding := weightStringPaddingNone
 	l := len(args)
 	if l != 1 && l != 3 {
 		return weightStringPaddingNone, 0, ErrIncorrectParameterCount.GenWithStackByArgs(c.funcName)
 	}
 	if types.IsTypeNumeric(args[0].GetType().Tp) {
-		return weightStringPaddingNull, 0, nil
+		padding = weightStringPaddingNull
 	}
-	padding := weightStringPaddingNone
 	length := 0
 	if l == 3 {
 		if args[1].GetType().EvalType() != types.ETString {
-			return weightStringPaddingNone, 0, ErrIncorrectType.GenWithStackByArgs(c.funcName, args[1].String())
+			return weightStringPaddingNone, 0, ErrIncorrectType.GenWithStackByArgs(args[1].String(), c.funcName)
 		}
 		c1, ok := args[1].(*Constant)
 		if !ok {
-			return weightStringPaddingNone, 0, ErrIncorrectType.GenWithStackByArgs(c.funcName, args[1].String())
+			return weightStringPaddingNone, 0, ErrIncorrectType.GenWithStackByArgs(args[1].String(), c.funcName)
 		}
 		switch x := c1.Value.GetString(); x {
 		case "CHAR":
-			padding = weightStringPaddingAsChar
+			if padding == weightStringPaddingNone {
+				padding = weightStringPaddingAsChar
+			}
 		case "BINARY":
 			padding = weightStringPaddingAsBinary
 		default:
-			return weightStringPaddingNone, 0, ErrIncorrectType.GenWithStackByArgs(c.funcName, x)
+			return weightStringPaddingNone, 0, ErrIncorrectType.GenWithStackByArgs(x, c.funcName)
 		}
 		if args[2].GetType().EvalType() != types.ETInt {
-			return weightStringPaddingNone, 0, ErrIncorrectType.GenWithStackByArgs(c.funcName, args[2].String())
+			return weightStringPaddingNone, 0, ErrIncorrectType.GenWithStackByArgs(args[2].String(), c.funcName)
 		}
 		c2, ok := args[2].(*Constant)
 		if !ok {
-			return weightStringPaddingNone, 0, ErrIncorrectType.GenWithStackByArgs(c.funcName, args[1].String())
+			return weightStringPaddingNone, 0, ErrIncorrectType.GenWithStackByArgs(args[1].String(), c.funcName)
 		}
 		length = int(c2.Value.GetInt64())
 		if length == 0 {
-			return weightStringPaddingNone, 0, ErrIncorrectType.GenWithStackByArgs(c.funcName, args[2].String())
+			return weightStringPaddingNone, 0, ErrIncorrectType.GenWithStackByArgs(args[2].String(), c.funcName)
 		}
 	}
 	return padding, length, nil
@@ -3805,14 +3807,17 @@ func (b *builtinWeightStringSig) evalString(row chunk.Row) (string, bool, error)
 	case weightStringPaddingAsBinary:
 		lenStr := len(str)
 		if b.length < lenStr {
+			tpInfo := fmt.Sprintf("BINARY(%d)", b.length)
+			b.ctx.GetSessionVars().StmtCtx.AppendWarning(errTruncatedWrongValue.GenWithStackByArgs(tpInfo, str))
 			str = str[:b.length]
 		} else if b.length > lenStr {
 			str += strings.Repeat("\x00", b.length - lenStr)
 		}
 		ctor = collate.GetCollator(charset.CollationBin)
+	case weightStringPaddingNone:
+		ctor = collate.GetCollator(b.args[0].GetType().Collate)
 	default:
 		return "", false, ErrIncorrectType.GenWithStackByArgs(ast.WeightString, string(b.padding))
 	}
-
 	return string(ctor.Key(str, collate.CollatorOption{PadLen:b.length})), false, nil
 }

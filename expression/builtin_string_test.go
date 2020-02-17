@@ -2328,7 +2328,7 @@ func (s *testEvaluatorSuite) TestWeightString(c *C) {
 		{"中", "CHAR", 5, "中    "},
 		{"中 ", "CHAR", 5, "中    "},
 		{nil, "BINARY", 5, nil},
-		{7, "BINARY", 5, nil},
+		{7, "BINARY", 2, "7\x00"},
 		{"a", "BINARY", 1, "a"},
 		{"ab", "BINARY", 1, "a"},
 		{"a", "BINARY", 5, "a\x00\x00\x00\x00"},
@@ -2351,7 +2351,8 @@ func (s *testEvaluatorSuite) TestWeightString(c *C) {
 			f, err = fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{str, padding, length}))
 		}
 		c.Assert(err, IsNil)
-
+		// Reset warnings.
+		s.ctx.GetSessionVars().StmtCtx.ResetForRetry()
 		result, err := evalBuiltinFunc(f, chunk.Row{})
 		c.Assert(err, IsNil)
 		if result.IsNull() {
@@ -2361,5 +2362,16 @@ func (s *testEvaluatorSuite) TestWeightString(c *C) {
 		res, err := result.ToString()
 		c.Assert(err, IsNil)
 		c.Assert(res, Equals, test.expect)
+		if test.expr == nil {
+			continue
+		}
+		strExpr := fmt.Sprintf("%v", test.expr)
+		if test.padding == "BINARY" && test.length < len(strExpr) {
+			expectWarn := fmt.Sprintf("[expression:1292]Truncated incorrect BINARY(%d) value: '%s'", test.length, strExpr)
+			obtainedWarns := s.ctx.GetSessionVars().StmtCtx.GetWarnings()
+			c.Assert(len(obtainedWarns), Equals, 1)
+			c.Assert(obtainedWarns[0].Level, Equals, "Warning")
+			c.Assert(obtainedWarns[0].Err.Error(), Equals, expectWarn)
+		}
 	}
 }
