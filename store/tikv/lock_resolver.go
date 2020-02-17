@@ -301,6 +301,7 @@ func (lr *LockResolver) ResolveLocks(bo *Backoffer, callerStartTS uint64, locks 
 
 		if status.ttl == 0 {
 			tikvLockResolverCountWithExpired.Inc()
+			// If the lock is committed or rollbacked, resolve lock.
 			cleanRegions, exists := cleanTxns[l.TxnID]
 			if !exists {
 				cleanRegions = make(map[RegionVerID]struct{})
