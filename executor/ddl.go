@@ -392,7 +392,7 @@ func (e *DDLExec) executeRecoverTable(s *ast.RecoverTableStmt) error {
 }
 
 func (e *DDLExec) getTableAutoIDsFromSnapshot(job *model.Job) (autoIncID, autoRandID int64, err error) {
-	// Get table original autoID before table drop.
+	// Get table original autoIDs before table drop.
 	dom := domain.GetDomain(e.ctx)
 	m, err := dom.GetSnapshotMeta(job.StartTS)
 	if err != nil {

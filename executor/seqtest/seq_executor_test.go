@@ -37,8 +37,10 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
+	ddltestutil "github.com/pingcap/tidb/ddl/testutil"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
@@ -1118,7 +1120,7 @@ func (s *seqTestSuite1) TestCoprocessorPriority(c *C) {
 	cli.mu.Unlock()
 }
 
-func (s *seqTestSuite) TestAutoIDInRetry(c *C) {
+func (s *seqTestSuite) TestAutoIncIDInRetry(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t (id int not null auto_increment primary key)")
@@ -1129,12 +1131,57 @@ func (s *seqTestSuite) TestAutoIDInRetry(c *C) {
 	tk.MustExec("insert into t values (),()")
 	tk.MustExec("insert into t values ()")
 
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/session/mockCommitRetryForAutoID", `return(true)`), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/session/mockCommitRetryForAutoIncID", `return(true)`), IsNil)
 	tk.MustExec("commit")
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/session/mockCommitRetryForAutoID"), IsNil)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/session/mockCommitRetryForAutoIncID"), IsNil)
 
 	tk.MustExec("insert into t values ()")
 	tk.MustQuery(`select * from t`).Check(testkit.Rows("1", "2", "3", "4", "5"))
+}
+
+func (s *seqTestSuite) TestAutoRandIDRetry(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+
+	testutil.ConfigTestUtils.SetupAutoRandomTestConfig()
+	defer testutil.ConfigTestUtils.RestoreAutoRandomTestConfig()
+	tk.MustExec("create database if not exists auto_random_retry")
+	tk.MustExec("use auto_random_retry")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (id int auto_random(3) primary key)")
+
+	extractMaskedOrderedHandles := func() []int64 {
+		handles, err := ddltestutil.ExtractAllTableHandles(tk.Se, "auto_random_retry", "t")
+		c.Assert(err, IsNil)
+		return testutil.ConfigTestUtils.MaskSortHandles(handles, 3, mysql.TypeLong)
+	}
+
+	tk.MustExec("set @@tidb_disable_txn_auto_retry = 0")
+	tk.MustExec("set @@tidb_retry_limit = 10")
+	tk.MustExec("begin")
+	tk.MustExec("insert into t values ()")
+	tk.MustExec("insert into t values (),()")
+	tk.MustExec("insert into t values ()")
+
+	session.ResetMockAutoRandIDRetryCount(5)
+	fpName := "github.com/pingcap/tidb/session/mockCommitRetryForAutoRandID"
+	c.Assert(failpoint.Enable(fpName, `return(true)`), IsNil)
+	tk.MustExec("commit")
+	c.Assert(failpoint.Disable(fpName), IsNil)
+	tk.MustExec("insert into t values ()")
+	maskedHandles := extractMaskedOrderedHandles()
+	c.Assert(maskedHandles, DeepEquals, []int64{1, 2, 3, 4, 5})
+
+	session.ResetMockAutoRandIDRetryCount(11)
+	tk.MustExec("begin")
+	tk.MustExec("insert into t values ()")
+	c.Assert(failpoint.Enable(fpName, `return(true)`), IsNil)
+	// insertion failed, 6 is skipped.
+	tk.MustGetErrCode("commit", mysql.ErrTxnRetryable)
+	c.Assert(failpoint.Disable(fpName), IsNil)
+
+	tk.MustExec("insert into t values ()")
+	maskedHandles = extractMaskedOrderedHandles()
+	c.Assert(maskedHandles, DeepEquals, []int64{1, 2, 3, 4, 5, 7})
 }
 
 func (s *seqTestSuite) TestMaxDeltaSchemaCount(c *C) {

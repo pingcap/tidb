@@ -76,8 +76,8 @@ func (r *RetryInfo) Clean() {
 
 // ResetOffset resets the current retry offset.
 func (r *RetryInfo) ResetOffset() {
-	r.autoIncrementIDs.currentOffset = 0
-	r.autoRandomIDs.currentOffset = 0
+	r.autoIncrementIDs.resetOffset()
+	r.autoRandomIDs.resetOffset()
 }
 
 // AddAutoIncrementID adds id to autoIncrementIDs.
@@ -103,6 +103,10 @@ func (r *RetryInfo) GetCurrAutoRandomID() (int64, error) {
 type retryInfoAutoIDs struct {
 	currentOffset int
 	autoIDs       []int64
+}
+
+func (r *retryInfoAutoIDs) resetOffset() {
+	r.currentOffset = 0
 }
 
 func (r *retryInfoAutoIDs) clean() {
