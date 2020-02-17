@@ -512,7 +512,7 @@ func (s *seqTestSuite) TestShow(c *C) {
 	tk.MustQuery("show create table t").Check(testutil.RowsWithSep("|",
 		"t CREATE TABLE `t` (\n"+
 			"  `a` int(11) DEFAULT NULL\n"+
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"+"\nPARTITION BY RANGE ( `a` ) (\n  PARTITION p0 VALUES LESS THAN (10),\n  PARTITION p1 VALUES LESS THAN (20),\n  PARTITION p2 VALUES LESS THAN (MAXVALUE)\n)",
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"+"\nPARTITION BY RANGE ( `a` ) (\n  PARTITION `p0` VALUES LESS THAN (10),\n  PARTITION `p1` VALUES LESS THAN (20),\n  PARTITION `p2` VALUES LESS THAN (MAXVALUE)\n)",
 	))
 
 	tk.MustExec(`drop table if exists t`)
@@ -535,7 +535,7 @@ func (s *seqTestSuite) TestShow(c *C) {
 			"  `b` int(11) DEFAULT NULL,\n"+
 			"  `c` char(1) DEFAULT NULL,\n"+
 			"  `d` int(11) DEFAULT NULL\n"+
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"+"\nPARTITION BY RANGE COLUMNS(a,d,c) (\n  PARTITION p0 VALUES LESS THAN (5,10,\"ggg\"),\n  PARTITION p1 VALUES LESS THAN (10,20,\"mmm\"),\n  PARTITION p2 VALUES LESS THAN (15,30,\"sss\"),\n  PARTITION p3 VALUES LESS THAN (50,MAXVALUE,MAXVALUE)\n)",
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"+"\nPARTITION BY RANGE COLUMNS(a,d,c) (\n  PARTITION `p0` VALUES LESS THAN (5,10,\"ggg\"),\n  PARTITION `p1` VALUES LESS THAN (10,20,\"mmm\"),\n  PARTITION `p2` VALUES LESS THAN (15,30,\"sss\"),\n  PARTITION `p3` VALUES LESS THAN (50,MAXVALUE,MAXVALUE)\n)",
 	))
 
 	// Test hash partition
@@ -602,6 +602,21 @@ func (s *seqTestSuite) TestShow(c *C) {
 		"c8|datetime|YES||CURRENT_TIMESTAMP|DEFAULT_GENERATED on update CURRENT_TIMESTAMP",
 		"c9|year(4)|YES||2014|",
 	))
+
+	// Test if 'show [status|variables]' is sorted by Variable_name (#14542)
+	sqls := []string{
+		"show global status;",
+		"show session status;",
+		"show global variables",
+		"show session variables"}
+
+	for _, sql := range sqls {
+		res := tk.MustQuery(sql)
+		c.Assert(res, NotNil)
+		sorted := tk.MustQuery(sql).Sort()
+		c.Assert(sorted, NotNil)
+		c.Check(res, DeepEquals, sorted)
+	}
 }
 
 func (s *seqTestSuite) TestShowStatsHealthy(c *C) {
@@ -661,6 +676,23 @@ func (s *seqTestSuite) TestIndexDoubleReadClose(c *C) {
 	time.Sleep(time.Millisecond * 10)
 	c.Check(checkGoroutineExists(keyword), IsFalse)
 	atomic.StoreInt32(&executor.LookupTableTaskChannelSize, originSize)
+}
+
+// TestIndexMergeReaderClose checks that when a partial index worker failed to start, the goroutine doesn't
+// leak.
+func (s *seqTestSuite) TestIndexMergeReaderClose(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int)")
+	tk.MustExec("create index idx1 on t(a)")
+	tk.MustExec("create index idx2 on t(b)")
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/startPartialIndexWorkerErr", "return"), IsNil)
+	_, err := tk.Exec("select /*+ USE_INDEX_MERGE(t, idx1, idx2) */ * from t where a > 10 or b < 100")
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/startPartialIndexWorkerErr"), IsNil)
+	c.Assert(err, NotNil)
+	c.Check(checkGoroutineExists("fetchHandles"), IsFalse)
+	c.Check(checkGoroutineExists("waitPartialWorkersAndCloseFetchChan"), IsFalse)
 }
 
 func (s *seqTestSuite) TestParallelHashAggClose(c *C) {

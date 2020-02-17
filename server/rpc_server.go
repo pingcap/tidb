@@ -24,6 +24,8 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/privilege"
+	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/store/tikv"
@@ -33,7 +35,6 @@ import (
 	"github.com/pingcap/tidb/util/stringutil"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials"
 )
 
 // NewRPCServer creates a new rpc server.
@@ -44,16 +45,7 @@ func NewRPCServer(config *config.Config, dom *domain.Domain, sm util.SessionMana
 		}
 	}()
 
-	var s *grpc.Server
-	if len(config.Security.ClusterSSLCA) != 0 {
-		tlsConfig, err := config.Security.ToTLSConfig()
-		if err == nil {
-			s = grpc.NewServer(grpc.Creds(credentials.NewTLS(tlsConfig)))
-		}
-	}
-	if s == nil {
-		s = grpc.NewServer()
-	}
+	s := grpc.NewServer()
 	rpcSrv := &rpcServer{
 		DiagnosticsServer: sysutil.NewDiagnosticsServer(config.Log.File.Filename),
 		dom:               dom,
@@ -138,7 +130,10 @@ func (s *rpcServer) createSession() (session.Session, error) {
 	}
 	do := domain.GetDomain(se)
 	is := do.InfoSchema()
-	// TODO: Need user and host to do privilege check.
+	pm := &privileges.UserPrivileges{
+		Handle: do.PrivilegeHandle(),
+	}
+	privilege.BindPrivilegeManager(se, pm)
 	se.GetSessionVars().TxnCtx.InfoSchema = is
 	// This is for disable parallel hash agg.
 	// TODO: remove this.

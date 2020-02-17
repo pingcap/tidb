@@ -179,6 +179,16 @@ func MergeSchema(lSchema, rSchema *Schema) *Schema {
 	return ret
 }
 
+// GetUsedList shows whether each column in schema is contained in usedCols.
+func GetUsedList(usedCols []*Column, schema *Schema) []bool {
+	tmpSchema := NewSchema(usedCols...)
+	used := make([]bool, schema.Len())
+	for i, col := range schema.Columns {
+		used[i] = tmpSchema.Contains(col)
+	}
+	return used
+}
+
 // NewSchema returns a schema made by its parameter.
 func NewSchema(cols ...*Column) *Schema {
 	return &Schema{Columns: cols}
