@@ -153,7 +153,7 @@ func (s *testSequenceSuite) TestDropSequence(c *C) {
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[planner:1142]DROP command denied to user 'localhost'@'myuser' for table 'my_seq'")
 
-	// test for if exists.
+	// Test for `drop sequence if exists`.
 	s.tk.MustExec("drop sequence if exists seq_if_exists")
 	s.tk.MustQuery("show warnings;").Check(testkit.Rows("Note 4139 Unknown SEQUENCE: 'test.seq_if_exists'"))
 }

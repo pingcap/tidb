@@ -174,7 +174,7 @@ func (s *testSuite6) TestCreateTable(c *C) {
 	r = tk.MustQuery("select * from create_auto_increment_test;")
 	r.Check(testkit.Rows("1000 aa"))
 
-	// test for drop if exists.
+	// Test for `drop table if exists`.
 	tk.MustExec("drop table if exists t_if_exists;")
 	tk.MustQuery("show warnings;").Check(testkit.Rows("Note 1051 Unknown table 'test.t_if_exists'"))
 	tk.MustExec("create table if not exists t1_if_exists(c int)")
@@ -261,7 +261,7 @@ func (s *testSuite6) TestCreateView(c *C) {
 	tk.MustExec("create view v as (select * from t1 union select * from t2)")
 	tk.MustExec("drop view v")
 
-	// test for drop if exists.
+	// Test for `drop view if exists`.
 	tk.MustExec("drop view if exists v_if_exists;")
 	tk.MustQuery("show warnings;").Check(testkit.Rows("Note 1051 Unknown table 'test.v_if_exists'"))
 	tk.MustExec("create view v1_if_exists as (select * from t1)")
