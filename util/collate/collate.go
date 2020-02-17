@@ -22,13 +22,18 @@ var (
 	collatorIDMap map[int]Collator
 )
 
+// CollatorOption is the option of collator.
+type CollatorOption struct {
+	PadLen int
+}
+
 // Collator provides functionality for comparing strings for a given
 // collation order.
 type Collator interface {
 	// Compare returns an integer comparing the two strings. The result will be 0 if a == b, -1 if a < b, and +1 if a > b.
-	Compare(a, b string, padLen int) int
+	Compare(a, b string, opt CollatorOption) int
 	// Key returns the collate key for str.
-	Key(str string, padLen int) []byte
+	Key(str string, opt CollatorOption) []byte
 }
 
 // GetCollator get the collator according to collate, it will return the binary collator if the corresponding collator doesn't exist.
@@ -53,12 +58,12 @@ type binCollator struct {
 }
 
 // Compare implement Collator interface.
-func (bc *binCollator) Compare(a, b string, padLen int) int {
+func (bc *binCollator) Compare(a, b string, opt CollatorOption) int {
 	return strings.Compare(a, b)
 }
 
 // Key implement Collator interface.
-func (bc *binCollator) Key(str string, padLen int) []byte {
+func (bc *binCollator) Key(str string, opt CollatorOption) []byte {
 	return []byte(str)
 }
 
