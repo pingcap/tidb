@@ -375,17 +375,70 @@ func (thresholdCheckInspection) inspect(ctx context.Context, sctx sessionctx.Con
 		configKey string
 		threshold float64
 	}{
-		{item: "coprocessor_normal_cpu", component: "cop_normal%", configKey: "readpool.coprocessor.normal-concurrency", threshold: 0.9},
-		{item: "coprocessor_high_cpu", component: "cop_high%", configKey: "readpool.coprocessor.high-concurrency", threshold: 0.9},
-		{item: "coprocessor_low_cpu", component: "cop_low%", configKey: "readpool.coprocessor.low-concurrency", threshold: 0.9},
-		{item: "grpc_cpu", component: "grpc%", configKey: "server.grpc-concurrency", threshold: 0.9},
-		{item: "raftstore_cpu", component: "raftstore_%", configKey: "raftstore.store-pool-size", threshold: 0.8},
-		{item: "apply_cpu", component: "apply_%", configKey: "raftstore.apply-pool-size", threshold: 0.8},
-		{item: "storage_readpool_normal_cpu", component: "store_read_norm%", configKey: "readpool.storage.normal-concurrency", threshold: 0.9},
-		{item: "storage_readpool_high_cpu", component: "store_read_high%", configKey: "readpool.storage.high-concurrency", threshold: 0.9},
-		{item: "storage_readpool_low_cpu", component: "store_read_low%", configKey: "readpool.storage.low-concurrency", threshold: 0.9},
-		{item: "scheduler_worker_cpu", component: "sched_%", configKey: "storage.scheduler-worker-pool-size", threshold: 0.85},
-		{item: "split_check_cpu", component: "split_check", threshold: 0.9},
+		{
+			item:      "coprocessor_normal_cpu",
+			component: "cop_normal%",
+			configKey: "readpool.coprocessor.normal-concurrency",
+			threshold: 0.9},
+		{
+			item:      "coprocessor_high_cpu",
+			component: "cop_high%",
+			configKey: "readpool.coprocessor.high-concurrency",
+			threshold: 0.9,
+		},
+		{
+			item:      "coprocessor_low_cpu",
+			component: "cop_low%",
+			configKey: "readpool.coprocessor.low-concurrency",
+			threshold: 0.9,
+		},
+		{
+			item:      "grpc_cpu",
+			component: "grpc%",
+			configKey: "server.grpc-concurrency",
+			threshold: 0.9,
+		},
+		{
+			item:      "raftstore_cpu",
+			component: "raftstore_%",
+			configKey: "raftstore.store-pool-size",
+			threshold: 0.8,
+		},
+		{
+			item:      "apply_cpu",
+			component: "apply_%",
+			configKey: "raftstore.apply-pool-size",
+			threshold: 0.8,
+		},
+		{
+			item:      "storage_readpool_normal_cpu",
+			component: "store_read_norm%",
+			configKey: "readpool.storage.normal-concurrency",
+			threshold: 0.9,
+		},
+		{
+			item:      "storage_readpool_high_cpu",
+			component: "store_read_high%",
+			configKey: "readpool.storage.high-concurrency",
+			threshold: 0.9,
+		},
+		{
+			item:      "storage_readpool_low_cpu",
+			component: "store_read_low%",
+			configKey: "readpool.storage.low-concurrency",
+			threshold: 0.9,
+		},
+		{
+			item:      "scheduler_worker_cpu",
+			component: "sched_%",
+			configKey: "storage.scheduler-worker-pool-size",
+			threshold: 0.85,
+		},
+		{
+			item:      "split_check_cpu",
+			component: "split_check",
+			threshold: 0.9,
+		},
 	}
 	var results []inspectionResult
 	for _, rule := range rules {
@@ -393,7 +446,7 @@ func (thresholdCheckInspection) inspect(ctx context.Context, sctx sessionctx.Con
 		if len(rule.configKey) > 0 {
 			sql = fmt.Sprintf("select t1.instance, t1.cpu, t2.threshold, t2.value from "+
 				"(select instance, sum(value) as cpu from metric_schema.tikv_thread_cpu where name like '%[1]s' and time=now() group by instance) as t1,"+
-				"(select value * %[2]f as threshold, value from information_schema.cluster_config where type='tikv' and `key` = '%[3]s' limit 1) as t2 "+
+				"(select value * %[2]f as threshold, value from inspection_schema.cluster_config where type='tikv' and `key` = '%[3]s' limit 1) as t2 "+
 				"where t1.cpu > t2.threshold;", rule.component, rule.threshold, rule.configKey)
 		} else {
 			sql = fmt.Sprintf("select t1.instance, t1.cpu, %[2]f from "+
@@ -407,19 +460,19 @@ func (thresholdCheckInspection) inspect(ctx context.Context, sctx sessionctx.Con
 		}
 		for _, row := range rows {
 			actual := fmt.Sprintf("%.2f", row.GetFloat64(1))
-			expect := ""
+			expected := ""
 			if len(rule.configKey) > 0 {
-				expect = fmt.Sprintf("< %.2f, config: %v=%v", row.GetFloat64(2), rule.configKey, row.GetString(3))
+				expected = fmt.Sprintf("< %.2f, config: %v=%v", row.GetFloat64(2), rule.configKey, row.GetString(3))
 			} else {
-				expect = fmt.Sprintf("< %.2f", row.GetFloat64(2))
+				expected = fmt.Sprintf("< %.2f", row.GetFloat64(2))
 			}
-			detail := fmt.Sprintf("select instance, sum(value) as cpu from tikv_thread_cpu where name like '%[1]s' and time=now() group by instance", rule.component)
+			detail := fmt.Sprintf("select instance, sum(value) as cpu from metric_schema.tikv_thread_cpu where name like '%[1]s' and time=now() group by instance", rule.component)
 			result := inspectionResult{
 				tp:       "tikv",
 				instance: row.GetString(0),
 				item:     rule.item,
 				actual:   actual,
-				expected: expect,
+				expected: expected,
 				severity: "warning",
 				detail:   detail,
 			}
