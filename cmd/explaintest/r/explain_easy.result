@@ -41,8 +41,8 @@ TableReader_6	3333.33	root	data:TableScan_5
 └─TableScan_5	3333.33	cop[tikv]	table:t1, range:(0,+inf], keep order:false, stats:pseudo
 explain select t1.c1, t1.c2 from t1 where t1.c2 = 1;
 id	count	task	operator info
-IndexReader_6	10.00	root	index:IndexScan_5
-└─IndexScan_5	10.00	cop[tikv]	table:t1, index:c2, range:[1,1], keep order:false, stats:pseudo
+IndexReader_7	10.00	root	index:IndexScan_6
+└─IndexScan_6	10.00	cop[tikv]	table:t1, index:c2, range:[1,1], keep order:false, stats:pseudo
 explain select * from t1 left join t2 on t1.c2 = t2.c1 where t1.c1 > 1;
 id	count	task	operator info
 HashLeftJoin_23	4166.67	root	left outer join, inner:TableReader_33 (REVERSED), equal:[eq(test.t1.c2, test.t2.c1)]
@@ -58,9 +58,9 @@ Update_2	N/A	root	N/A
 explain delete from t1 where t1.c2 = 1;
 id	count	task	operator info
 Delete_4	N/A	root	N/A
-└─IndexLookUp_11	10.00	root	
-  ├─IndexScan_9	10.00	cop[tikv]	table:t1, index:c2, range:[1,1], keep order:false, stats:pseudo
-  └─TableScan_10	10.00	cop[tikv]	table:t1, keep order:false, stats:pseudo
+└─IndexLookUp_12	10.00	root	
+  ├─IndexScan_10	10.00	cop[tikv]	table:t1, index:c2, range:[1,1], keep order:false, stats:pseudo
+  └─TableScan_11	10.00	cop[tikv]	table:t1, keep order:false, stats:pseudo
 explain select count(b.c2) from t1 a, t2 b where a.c1 = b.c2 group by a.c1;
 id	count	task	operator info
 Projection_11	9990.00	root	cast(Column#8)->Column#7
@@ -86,9 +86,8 @@ IndexLookUp_11	11.08	root
   └─TableScan_9	33.33	cop[tikv]	table:t1, keep order:false, stats:pseudo
 explain select * from t1 where c1 = 1 and c2 > 1;
 id	count	task	operator info
-TableReader_7	0.33	root	data:Selection_6
-└─Selection_6	0.33	cop[tikv]	gt(test.t1.c2, 1)
-  └─TableScan_5	1.00	cop[tikv]	table:t1, range:[1,1], keep order:false, stats:pseudo
+Selection_6	0.33	root	gt(test.t1.c2, 1)
+└─Point_Get_5	1.00	root	table:t1, handle:1
 explain select sum(t1.c1 in (select c1 from t2)) from t1;
 id	count	task	operator info
 StreamAgg_12	1.00	root	funcs:sum(Column#10)->Column#8
@@ -351,13 +350,13 @@ Projection_11	5.00	root	Column#11
   ├─TableReader_15	5.00	root	data:TableScan_14
   │ └─TableScan_14	5.00	cop[tikv]	table:t, range:[-inf,+inf], keep order:false
   └─StreamAgg_20	1.00	root	funcs:count(1)->Column#10
-    └─MergeJoin_62	2.40	root	inner join, left key:test.t.a, right key:test.t.a
-      ├─IndexReader_49	2.40	root	index:Selection_48
-      │ └─Selection_48	2.40	cop[tikv]	eq(3, test.t.a)
-      │   └─IndexScan_47	3.00	cop[tikv]	table:s, index:b, range:[3,3], keep order:true
-      └─TableReader_52	4.00	root	data:Selection_51
-        └─Selection_51	4.00	cop[tikv]	eq(3, test.t.a)
-          └─TableScan_50	5.00	cop[tikv]	table:t1, range:[-inf,+inf], keep order:true
+    └─MergeJoin_64	2.40	root	inner join, left key:test.t.a, right key:test.t.a
+      ├─IndexReader_50	2.40	root	index:Selection_49
+      │ └─Selection_49	2.40	cop[tikv]	eq(3, test.t.a)
+      │   └─IndexScan_48	3.00	cop[tikv]	table:s, index:b, range:[3,3], keep order:true
+      └─TableReader_53	4.00	root	data:Selection_52
+        └─Selection_52	4.00	cop[tikv]	eq(3, test.t.a)
+          └─TableScan_51	5.00	cop[tikv]	table:t1, range:[-inf,+inf], keep order:true
 explain select t.c in (select count(*) from t s left join t t1 on s.a = t1.a where 3 = t.a and s.b = 3) from t;
 id	count	task	operator info
 Projection_10	5.00	root	Column#11
@@ -365,13 +364,13 @@ Projection_10	5.00	root	Column#11
   ├─TableReader_14	5.00	root	data:TableScan_13
   │ └─TableScan_13	5.00	cop[tikv]	table:t, range:[-inf,+inf], keep order:false
   └─StreamAgg_19	1.00	root	funcs:count(1)->Column#10
-    └─MergeJoin_50	2.40	root	left outer join, left key:test.t.a, right key:test.t.a
-      ├─IndexReader_37	2.40	root	index:Selection_36
-      │ └─Selection_36	2.40	cop[tikv]	eq(3, test.t.a)
-      │   └─IndexScan_35	3.00	cop[tikv]	table:s, index:b, range:[3,3], keep order:true
-      └─TableReader_40	4.00	root	data:Selection_39
-        └─Selection_39	4.00	cop[tikv]	eq(3, test.t.a)
-          └─TableScan_38	5.00	cop[tikv]	table:t1, range:[-inf,+inf], keep order:true
+    └─MergeJoin_52	2.40	root	left outer join, left key:test.t.a, right key:test.t.a
+      ├─IndexReader_38	2.40	root	index:Selection_37
+      │ └─Selection_37	2.40	cop[tikv]	eq(3, test.t.a)
+      │   └─IndexScan_36	3.00	cop[tikv]	table:s, index:b, range:[3,3], keep order:true
+      └─TableReader_41	4.00	root	data:Selection_40
+        └─Selection_40	4.00	cop[tikv]	eq(3, test.t.a)
+          └─TableScan_39	5.00	cop[tikv]	table:t1, range:[-inf,+inf], keep order:true
 explain select t.c in (select count(*) from t s right join t t1 on s.a = t1.a where 3 = t.a and t1.b = 3) from t;
 id	count	task	operator info
 Projection_10	5.00	root	Column#11
@@ -379,13 +378,13 @@ Projection_10	5.00	root	Column#11
   ├─TableReader_14	5.00	root	data:TableScan_13
   │ └─TableScan_13	5.00	cop[tikv]	table:t, range:[-inf,+inf], keep order:false
   └─StreamAgg_19	1.00	root	funcs:count(1)->Column#10
-    └─MergeJoin_49	2.40	root	right outer join, left key:test.t.a, right key:test.t.a
+    └─MergeJoin_51	2.40	root	right outer join, left key:test.t.a, right key:test.t.a
       ├─TableReader_36	4.00	root	data:Selection_35
       │ └─Selection_35	4.00	cop[tikv]	eq(3, test.t.a)
       │   └─TableScan_34	5.00	cop[tikv]	table:s, range:[-inf,+inf], keep order:true
-      └─IndexReader_39	2.40	root	index:Selection_38
-        └─Selection_38	2.40	cop[tikv]	eq(3, test.t.a)
-          └─IndexScan_37	3.00	cop[tikv]	table:t1, index:b, range:[3,3], keep order:true
+      └─IndexReader_40	2.40	root	index:Selection_39
+        └─Selection_39	2.40	cop[tikv]	eq(3, test.t.a)
+          └─IndexScan_38	3.00	cop[tikv]	table:t1, index:b, range:[3,3], keep order:true
 drop table if exists t;
 create table t(a int unsigned);
 explain select t.a = '123455' from t;
@@ -412,8 +411,8 @@ drop table if exists t;
 create table t(a bigint, b bigint, index idx(a, b));
 explain select * from t where a in (1, 2) and a in (1, 3);
 id	count	task	operator info
-IndexReader_6	10.00	root	index:IndexScan_5
-└─IndexScan_5	10.00	cop[tikv]	table:t, index:a, b, range:[1,1], keep order:false, stats:pseudo
+IndexReader_7	10.00	root	index:IndexScan_6
+└─IndexScan_6	10.00	cop[tikv]	table:t, index:a, b, range:[1,1], keep order:false, stats:pseudo
 explain select * from t where b in (1, 2) and b in (1, 3);
 id	count	task	operator info
 TableReader_7	10.00	root	data:Selection_6
@@ -421,8 +420,8 @@ TableReader_7	10.00	root	data:Selection_6
   └─TableScan_5	10000.00	cop[tikv]	table:t, range:[-inf,+inf], keep order:false, stats:pseudo
 explain select * from t where a = 1 and a = 1;
 id	count	task	operator info
-IndexReader_6	10.00	root	index:IndexScan_5
-└─IndexScan_5	10.00	cop[tikv]	table:t, index:a, b, range:[1,1], keep order:false, stats:pseudo
+IndexReader_7	10.00	root	index:IndexScan_6
+└─IndexScan_6	10.00	cop[tikv]	table:t, index:a, b, range:[1,1], keep order:false, stats:pseudo
 explain select * from t where a = 1 and a = 2;
 id	count	task	operator info
 TableDual_5	0.00	root	rows:0
@@ -734,12 +733,12 @@ drop table t;
 create table t(a int, b int, index idx_ab(a, b));
 explain select a, b from t where a in (1) order by b;
 id	count	task	operator info
-IndexReader_12	10.00	root	index:IndexScan_11
-└─IndexScan_11	10.00	cop[tikv]	table:t, index:a, b, range:[1,1], keep order:true, stats:pseudo
+IndexReader_14	10.00	root	index:IndexScan_13
+└─IndexScan_13	10.00	cop[tikv]	table:t, index:a, b, range:[1,1], keep order:true, stats:pseudo
 explain select a, b from t where a = 1 order by b;
 id	count	task	operator info
-IndexReader_12	10.00	root	index:IndexScan_11
-└─IndexScan_11	10.00	cop[tikv]	table:t, index:a, b, range:[1,1], keep order:true, stats:pseudo
+IndexReader_14	10.00	root	index:IndexScan_13
+└─IndexScan_13	10.00	cop[tikv]	table:t, index:a, b, range:[1,1], keep order:true, stats:pseudo
 drop table if exists t;
 create table t(a int, b int);
 explain select a, b from (select a, b, avg(b) over (partition by a)as avg_b from t) as tt where a > 10 and b < 10 and a > avg_b;

@@ -23,8 +23,8 @@ Projection_11	5.00	root	Column#14
   │ └─TableScan_14	5.00	cop[tikv]	table:t, range:[-inf,+inf], keep order:false
   └─StreamAgg_22	1.00	root	funcs:count(1)->Column#13
     └─IndexMergeJoin_29	0.50	root	inner join, inner:TableReader_27, outer key:test.t.a, inner key:test.t.a
-      ├─IndexReader_35	1.00	root	index:IndexScan_34
-      │ └─IndexScan_34	1.00	cop[tikv]	table:s, index:b, c, d, range: decided by [eq(test.t.b, 1) eq(test.t.c, 1) eq(test.t.d, test.t.a)], keep order:false
+      ├─IndexReader_36	1.00	root	index:IndexScan_35
+      │ └─IndexScan_35	1.00	cop[tikv]	table:s, index:b, c, d, range: decided by [eq(test.t.b, 1) eq(test.t.c, 1) eq(test.t.d, test.t.a)], keep order:false
       └─TableReader_27	1.00	root	data:TableScan_26
         └─TableScan_26	1.00	cop[tikv]	table:t1, range: decided by [test.t.a], keep order:true
 drop table if exists t;

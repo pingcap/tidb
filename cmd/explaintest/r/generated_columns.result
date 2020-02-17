@@ -9,9 +9,9 @@ KEY (city)
 EXPLAIN SELECT name, id FROM person WHERE city = 'Beijing';
 id	count	task	operator info
 Projection_4	10.00	root	test.person.name, test.person.id
-└─IndexLookUp_10	10.00	root	
-  ├─IndexScan_8	10.00	cop[tikv]	table:person, index:city, range:["Beijing","Beijing"], keep order:false, stats:pseudo
-  └─TableScan_9	10.00	cop[tikv]	table:person, keep order:false, stats:pseudo
+└─IndexLookUp_11	10.00	root	
+  ├─IndexScan_9	10.00	cop[tikv]	table:person, index:city, range:["Beijing","Beijing"], keep order:false, stats:pseudo
+  └─TableScan_10	10.00	cop[tikv]	table:person, keep order:false, stats:pseudo
 DROP TABLE IF EXISTS `sgc`;
 CREATE TABLE `sgc` (
 `j1` JSON DEFAULT NULL,
@@ -140,24 +140,24 @@ CREATE TABLE t1(a INT, b INT AS (a+1) VIRTUAL, c INT AS (b+1) VIRTUAL, d INT AS 
 INSERT INTO t1 (a) VALUES (0);
 EXPLAIN SELECT b FROM t1 WHERE b=1;
 id	count	task	operator info
-IndexReader_6	10.00	root	index:IndexScan_5
-└─IndexScan_5	10.00	cop[tikv]	table:t1, index:b, range:[1,1], keep order:false, stats:pseudo
+IndexReader_7	10.00	root	index:IndexScan_6
+└─IndexScan_6	10.00	cop[tikv]	table:t1, index:b, range:[1,1], keep order:false, stats:pseudo
 EXPLAIN SELECT b, c, d FROM t1 WHERE b=1;
 id	count	task	operator info
 Projection_4	10.00	root	test.t1.b, test.t1.c, test.t1.d
-└─IndexLookUp_10	10.00	root	
-  ├─IndexScan_8	10.00	cop[tikv]	table:t1, index:b, range:[1,1], keep order:false, stats:pseudo
-  └─TableScan_9	10.00	cop[tikv]	table:t1, keep order:false, stats:pseudo
+└─IndexLookUp_11	10.00	root	
+  ├─IndexScan_9	10.00	cop[tikv]	table:t1, index:b, range:[1,1], keep order:false, stats:pseudo
+  └─TableScan_10	10.00	cop[tikv]	table:t1, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b=1;
 id	count	task	operator info
-IndexLookUp_10	10.00	root	
-├─IndexScan_8	10.00	cop[tikv]	table:t1, index:b, range:[1,1], keep order:false, stats:pseudo
-└─TableScan_9	10.00	cop[tikv]	table:t1, keep order:false, stats:pseudo
+IndexLookUp_11	10.00	root	
+├─IndexScan_9	10.00	cop[tikv]	table:t1, index:b, range:[1,1], keep order:false, stats:pseudo
+└─TableScan_10	10.00	cop[tikv]	table:t1, keep order:false, stats:pseudo
 EXPLAIN SELECT c FROM t1 WHERE c=2 AND d=3;
 id	count	task	operator info
 Projection_4	0.10	root	test.t1.c
-└─IndexReader_6	0.10	root	index:IndexScan_5
-  └─IndexScan_5	0.10	cop[tikv]	table:t1, index:c, d, range:[2 3,2 3], keep order:false, stats:pseudo
+└─IndexReader_7	0.10	root	index:IndexScan_6
+  └─IndexScan_6	0.10	cop[tikv]	table:t1, index:c, d, range:[2 3,2 3], keep order:false, stats:pseudo
 DROP TABLE IF EXISTS person;
 CREATE TABLE person (
 id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
@@ -169,9 +169,9 @@ INSERT INTO person (name, address_info) VALUES ("John", CAST('{"city_no": 1}' AS
 EXPLAIN SELECT name FROM person where city_no=1;
 id	count	task	operator info
 Projection_4	10.00	root	test.person.name
-└─IndexLookUp_10	10.00	root	
-  ├─IndexScan_8	10.00	cop[tikv]	table:person, index:city_no, range:[1,1], keep order:false, stats:pseudo
-  └─TableScan_9	10.00	cop[tikv]	table:person, keep order:false, stats:pseudo
+└─IndexLookUp_11	10.00	root	
+  ├─IndexScan_9	10.00	cop[tikv]	table:person, index:city_no, range:[1,1], keep order:false, stats:pseudo
+  └─TableScan_10	10.00	cop[tikv]	table:person, keep order:false, stats:pseudo
 DROP TABLE IF EXISTS t1;
 CREATE TABLE t1 (a INT,
 b INT GENERATED ALWAYS AS (-a) VIRTUAL,
