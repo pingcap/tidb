@@ -101,6 +101,7 @@ type InfoSchema interface {
 	SchemaMetaVersion() int64
 	// TableIsView indicates whether the schema.table is a view.
 	TableIsView(schema, table model.CIStr) bool
+	FindTableByPartitionID(partitionID int64) (table.Table, *model.DBInfo)
 }
 
 type sortedTables []table.Table
@@ -276,6 +277,25 @@ func (is *infoSchema) SchemaTables(schema model.CIStr) (tables []table.Table) {
 		tables = append(tables, tbl)
 	}
 	return
+}
+
+// FindTableByPartitionID finds the partition-table info by the partitionID.
+// FindTableByPartitionID will traverse all the tables to find the partitionID partition in which partition-table.
+func (is *infoSchema) FindTableByPartitionID(partitionID int64) (table.Table, *model.DBInfo) {
+	for _, v := range is.schemaMap {
+		for _, tbl := range v.tables {
+			pi := tbl.Meta().GetPartitionInfo()
+			if pi == nil {
+				continue
+			}
+			for _, p := range pi.Definitions {
+				if p.ID == partitionID {
+					return tbl, v.dbInfo
+				}
+			}
+		}
+	}
+	return nil, nil
 }
 
 func (is *infoSchema) Clone() (result []*model.DBInfo) {

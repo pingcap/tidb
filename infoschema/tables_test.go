@@ -89,12 +89,14 @@ type testClusterTableSuite struct {
 	httpServer *httptest.Server
 	mockAddr   string
 	listenAddr string
+	startTime  time.Time
 }
 
 func (s *testClusterTableSuite) SetUpSuite(c *C) {
 	s.testTableSuiteBase.SetUpSuite(c)
 	s.rpcserver, s.listenAddr = s.setUpRPCService(c, ":0")
 	s.httpServer, s.mockAddr = s.setUpMockPDHTTPServer()
+	s.startTime = time.Now()
 }
 
 func (s *testClusterTableSuite) setUpRPCService(c *C, addr string) (*grpc.Server, string) {
@@ -133,13 +135,14 @@ func (s *testClusterTableSuite) setUpMockPDHTTPServer() (*httptest.Server, strin
 			Stores: []helper.StoreStat{
 				{
 					Store: helper.StoreBaseStat{
-						ID:            1,
-						Address:       "127.0.0.1:20160",
-						State:         0,
-						StateName:     "Up",
-						Version:       "4.0.0-alpha",
-						StatusAddress: mockAddr,
-						GitHash:       "mock-tikv-githash",
+						ID:             1,
+						Address:        "127.0.0.1:20160",
+						State:          0,
+						StateName:      "Up",
+						Version:        "4.0.0-alpha",
+						StatusAddress:  mockAddr,
+						GitHash:        "mock-tikv-githash",
+						StartTimestamp: s.startTime.Unix(),
 					},
 				},
 			},
@@ -149,8 +152,12 @@ func (s *testClusterTableSuite) setUpMockPDHTTPServer() (*httptest.Server, strin
 	router.Handle(pdapi.ClusterVersion, fn.Wrap(func() (string, error) { return "4.0.0-alpha", nil }))
 	router.Handle(pdapi.Status, fn.Wrap(func() (interface{}, error) {
 		return struct {
-			GitHash string `json:"git_hash"`
-		}{GitHash: "mock-pd-githash"}, nil
+			GitHash        string `json:"git_hash"`
+			StartTimestamp int64  `json:"start_timestamp"`
+		}{
+			GitHash:        "mock-pd-githash",
+			StartTimestamp: s.startTime.Unix(),
+		}, nil
 	}))
 	var mockConfig = func() (map[string]interface{}, error) {
 		configuration := map[string]interface{}{
@@ -897,13 +904,23 @@ func (s *testClusterTableSuite) TestTiDBClusterInfo(c *C) {
 		s.store.(tikv.Storage),
 		mockAddr,
 	}
+
+	// information_schema.cluster_info
 	tk = testkit.NewTestKit(c, store)
-	tk.MustQuery("select * from information_schema.cluster_info").Check(testkit.Rows(
-		"tidb :4000 :"+strconv.FormatUint(uint64(config.GetGlobalConfig().Status.StatusPort), 10)+" 5.7.25-TiDB-None None",
-		"pd "+mockAddr+" "+mockAddr+" 4.0.0-alpha mock-pd-githash",
-		"tikv 127.0.0.1:20160 "+mockAddr+" 4.0.0-alpha mock-tikv-githash",
+	tidbStatusAddr := fmt.Sprintf(":%d", config.GetGlobalConfig().Status.StatusPort)
+	row := func(cols ...string) string { return strings.Join(cols, " ") }
+	tk.MustQuery("select type, instance, status_address, version, git_hash from information_schema.cluster_info").Check(testkit.Rows(
+		row("tidb", ":4000", tidbStatusAddr, "5.7.25-TiDB-None", "None"),
+		row("pd", mockAddr, mockAddr, "4.0.0-alpha", "mock-pd-githash"),
+		row("tikv", "127.0.0.1:20160", mockAddr, "4.0.0-alpha", "mock-tikv-githash"),
+	))
+	startTime := s.startTime.Format(time.RFC3339)
+	tk.MustQuery("select type, instance, start_time from information_schema.cluster_info where type != 'tidb'").Check(testkit.Rows(
+		row("pd", mockAddr, startTime),
+		row("tikv", "127.0.0.1:20160", startTime),
 	))
 
+	// information_schema.cluster_config
 	instances := []string{
 		"pd,127.0.0.1:11080," + mockAddr + ",mock-version,mock-githash",
 		"tidb,127.0.0.1:11080," + mockAddr + ",mock-version,mock-githash",
@@ -967,11 +984,11 @@ func (s *testTableSuite) TestForTableTiFlashReplica(c *C) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int, b int, index idx(a))")
 	tk.MustExec("alter table t set tiflash replica 2 location labels 'a','b';")
-	tk.MustQuery("select TABLE_SCHEMA,TABLE_NAME,REPLICA_COUNT,LOCATION_LABELS,AVAILABLE from information_schema.tiflash_replica").Check(testkit.Rows("test t 2 a,b 0"))
+	tk.MustQuery("select TABLE_SCHEMA,TABLE_NAME,REPLICA_COUNT,LOCATION_LABELS,AVAILABLE, PROGRESS from information_schema.tiflash_replica").Check(testkit.Rows("test t 2 a,b 0 0"))
 	tbl, err := domain.GetDomain(tk.Se).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 	tbl.Meta().TiFlashReplica.Available = true
-	tk.MustQuery("select TABLE_SCHEMA,TABLE_NAME,REPLICA_COUNT,LOCATION_LABELS,AVAILABLE from information_schema.tiflash_replica").Check(testkit.Rows("test t 2 a,b 1"))
+	tk.MustQuery("select TABLE_SCHEMA,TABLE_NAME,REPLICA_COUNT,LOCATION_LABELS,AVAILABLE, PROGRESS from information_schema.tiflash_replica").Check(testkit.Rows("test t 2 a,b 1 1"))
 }
 
 func (s *testClusterTableSuite) TestForMetricTables(c *C) {
@@ -1103,6 +1120,54 @@ func (s *testClusterTableSuite) TestSelectClusterTable(c *C) {
 		c.Assert(re, NotNil)
 		c.Assert(len(re.Rows()) == 0, IsTrue)
 	}
+}
+
+func (s *testClusterTableSuite) TestSelectClusterTablePrivelege(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	slowLogFileName := "tidb-slow.log"
+	f, err := os.OpenFile(slowLogFileName, os.O_CREATE|os.O_WRONLY, 0644)
+	c.Assert(err, IsNil)
+	_, err = f.Write([]byte(
+		`# Time: 2019-02-12T19:33:57.571953+08:00
+# User: user2@127.0.0.1
+select * from t2;
+# Time: 2019-02-12T19:33:56.571953+08:00
+# User: user1@127.0.0.1
+select * from t1;
+# Time: 2019-02-12T19:33:58.571953+08:00
+# User: user2@127.0.0.1
+select * from t3;
+# Time: 2019-02-12T19:33:59.571953+08:00
+select * from t3;
+`))
+	c.Assert(f.Sync(), IsNil)
+	c.Assert(err, IsNil)
+	defer os.Remove(slowLogFileName)
+	tk.MustExec("use information_schema")
+	tk.MustQuery("select count(*) from `CLUSTER_SLOW_QUERY`").Check(testkit.Rows("4"))
+	tk.MustQuery("select count(*) from `SLOW_QUERY`").Check(testkit.Rows("4"))
+	tk.MustQuery("select count(*) from `CLUSTER_PROCESSLIST`").Check(testkit.Rows("1"))
+	tk.MustQuery("select * from `CLUSTER_PROCESSLIST`").Check(testkit.Rows(":10080 1 root 127.0.0.1 <nil> Query 9223372036 0 <nil> 0 "))
+	tk.MustExec("create user user1")
+	tk.MustExec("create user user2")
+	user1 := testkit.NewTestKit(c, s.store)
+	user1.MustExec("use information_schema")
+	c.Assert(user1.Se.Auth(&auth.UserIdentity{
+		Username: "user1",
+		Hostname: "127.0.0.1",
+	}, nil, nil), IsTrue)
+	user1.MustQuery("select count(*) from `CLUSTER_SLOW_QUERY`").Check(testkit.Rows("1"))
+	user1.MustQuery("select count(*) from `SLOW_QUERY`").Check(testkit.Rows("1"))
+	user1.MustQuery("select user,query from `CLUSTER_SLOW_QUERY`").Check(testkit.Rows("user1 select * from t1;"))
+
+	user2 := testkit.NewTestKit(c, s.store)
+	user2.MustExec("use information_schema")
+	c.Assert(user2.Se.Auth(&auth.UserIdentity{
+		Username: "user2",
+		Hostname: "127.0.0.1",
+	}, nil, nil), IsTrue)
+	user2.MustQuery("select count(*) from `CLUSTER_SLOW_QUERY`").Check(testkit.Rows("2"))
+	user2.MustQuery("select user,query from `CLUSTER_SLOW_QUERY` order by query").Check(testkit.Rows("user2 select * from t2;", "user2 select * from t3;"))
 }
 
 func (s *testTableSuite) TestSelectHiddenColumn(c *C) {
