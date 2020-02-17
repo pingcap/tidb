@@ -16,6 +16,7 @@ package config
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -64,7 +65,7 @@ func (mc *mockPDConfigClient) Close() {}
 func (s *testConfigSuite) TestConstantConfHandler(c *C) {
 	conf := defaultConf
 	conf.Store = "mock"
-	ch, err := NewConfHandler(&conf, nil)
+	ch, err := NewConfHandler(&conf, nil, nil)
 	c.Assert(err, IsNil)
 	_, ok := ch.(*constantConfHandler)
 	c.Assert(ok, IsTrue)
@@ -106,7 +107,7 @@ func (s *testConfigSuite) TestPDConfHandler(c *C) {
 	mockPDConfigClient0.status.Code = configpb.StatusCode_WRONG_VERSION
 	content, _ := encodeConfig(&conf)
 	mockPDConfigClient0.confContent.Store(content)
-	ch, err = newPDConfHandler(&conf, func(oldC, newC *Config) {}, newMockPDConfigClient)
+	ch, err = newPDConfHandler(&conf, nil, newMockPDConfigClient)
 	c.Assert(err, IsNil)
 	ch.Close()
 
@@ -114,9 +115,9 @@ func (s *testConfigSuite) TestPDConfHandler(c *C) {
 	wg := sync.WaitGroup{}
 	wg.Add(1)
 	mockReloadFunc := func(oldConf, newConf *Config) {
-			c.Assert(oldConf.Log.Level, Equals, "info")
-			c.Assert(newConf.Log.Level, Equals, "debug")
-			wg.Done()
+		c.Assert(oldConf.Log.Level, Equals, "info")
+		c.Assert(newConf.Log.Level, Equals, "debug")
+		wg.Done()
 	}
 	ch, err = newPDConfHandler(&conf, mockReloadFunc, newMockPDConfigClient)
 	c.Assert(err, IsNil)
@@ -129,4 +130,21 @@ func (s *testConfigSuite) TestPDConfHandler(c *C) {
 	wg.Wait()
 	c.Assert(ch.GetConfig().Log.Level, Equals, "debug")
 	ch.Close()
+}
+
+func (s *testConfigSuite) TestEnableDynamicConfig(c *C) {
+	conf := &defaultConf
+	for _, store := range []string{"tikv", "mocktikv"} {
+		for _, enable := range []bool{true, false} {
+			conf.Store = store
+			conf.EnableDynamicConfig = enable
+			ch, err := NewConfHandler(conf, nil, newMockPDConfigClient)
+			c.Assert(err, IsNil)
+			if store == "tikv" && enable == true {
+				c.Assert(fmt.Sprintf("%v", reflect.TypeOf(ch)), Equals, "*config.pdConfHandler")
+			} else {
+				c.Assert(fmt.Sprintf("%v", reflect.TypeOf(ch)), Equals, "*config.constantConfHandler")
+			}
+		}
+	}
 }

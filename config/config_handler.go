@@ -43,9 +43,11 @@ type ConfHandler interface {
 type ConfReloadFunc func(oldConf, newConf *Config)
 
 // NewConfHandler creates a new ConfHandler according to the local config.
-func NewConfHandler(localConf *Config, reloadFunc ConfReloadFunc) (ConfHandler, error) {
+func NewConfHandler(localConf *Config, reloadFunc ConfReloadFunc,
+	newPDCliFunc func([]string, pd.SecurityOption) (pd.ConfigClient, error), // for test
+) (ConfHandler, error) {
 	if strings.ToLower(localConf.Store) == "tikv" && localConf.EnableDynamicConfig {
-		return newPDConfHandler(localConf, reloadFunc, nil)
+		return newPDConfHandler(localConf, reloadFunc, newPDCliFunc)
 	}
 	return &constantConfHandler{localConf}, nil
 }

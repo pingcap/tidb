@@ -687,7 +687,7 @@ func InitializeConfig(confPath string, configCheck, configStrict bool, reloadFun
 		}
 	}
 	enforceCmdArgs(cfg)
-	globalConfHandler, err = NewConfHandler(cfg, reloadFunc)
+	globalConfHandler, err = NewConfHandler(cfg, reloadFunc, nil)
 	terror.MustNil(err)
 	globalConfHandler.Start()
 }
