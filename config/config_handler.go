@@ -52,7 +52,7 @@ func NewConfHandler(localConf *Config, reloadFunc ConfReloadFunc,
 	return &constantConfHandler{localConf}, nil
 }
 
-// constantConfHandler is used when EnableDynamicConfig is false.a
+// constantConfHandler is used when EnableDynamicConfig is false.
 // The conf in it will always be the configuration that initialized when TiDB is started.
 type constantConfHandler struct {
 	conf *Config
@@ -230,10 +230,10 @@ func (ch *pdConfHandler) run() {
 
 			ch.reloadFunc(ch.curConf.Load().(*Config), newConf)
 			ch.curConf.Store(newConf)
-			ch.version = version
 			logutil.Logger(context.Background()).Info("PDConfHandler update config successfully",
 				zap.String("fromVersion", ch.version.String()), zap.String("toVersion", version.String()),
 				zap.Any("new_config", newConf))
+			ch.version = version
 		case <-ch.exit:
 			return
 		}
