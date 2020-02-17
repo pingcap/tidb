@@ -385,7 +385,7 @@ func (thresholdCheckInspection) inspect(ctx context.Context, sctx sessionctx.Con
 		{item: "storage_readpool_high_cpu", component: "store_read_high%", configKey: "readpool.storage.high-concurrency", threshold: 0.9},
 		{item: "storage_readpool_low_cpu", component: "store_read_low%", configKey: "readpool.storage.low-concurrency", threshold: 0.9},
 		{item: "scheduler_worker_cpu", component: "sched_%", configKey: "storage.scheduler-worker-pool-size", threshold: 0.85},
-		{item: "split_check_cpu", component: "split_check", configKey: "", threshold: 0.9},
+		{item: "split_check_cpu", component: "split_check", threshold: 0.9},
 	}
 	var results []inspectionResult
 	for _, rule := range rules {
