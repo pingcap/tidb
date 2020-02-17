@@ -1170,7 +1170,10 @@ func (mvcc *MVCCLevelDB) CheckTxnStatus(primaryKey []byte, lockTS, callerStartTS
 	// written before the primary lock.
 
 	if rollbackIfNotExist {
-		// Write rollback record, but not delete the lock
+		// Write rollback record, but not delete the lock on the primary key. There may exist lock which has
+		// different lock.startTS with input lockTS, for example the primary key could be already
+		// locked by the caller transaction, deleting this key will mistakenly delete the lock on
+		// primary key, see case TestSingleStatementRollbackSecondary in session_test suite for example
 		batch := &leveldb.Batch{}
 		if err1 := writeRollback(batch, primaryKey, lockTS); err1 != nil {
 			err = errors.Trace(err1)
