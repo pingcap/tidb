@@ -1676,7 +1676,7 @@ func pushLimitDownOuterJoinToChild(limit *plannercore.LogicalLimit, outerGroup *
 	return memo.NewGroupWithSchema(newLimitGroup, outerGroup.Prop.Schema)
 }
 
-// PushLimitDownTiKVSingleGather pushes the top-n down to child of TiKVSingleGather.
+// PushLimitDownTiKVSingleGather pushes the limit down to child of TiKVSingleGather.
 type PushLimitDownTiKVSingleGather struct {
 	baseRule
 }
