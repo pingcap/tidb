@@ -151,7 +151,7 @@ func (ls *LogicalSort) PruneColumns(parentUsedCols []*expression.Column) error {
 	return child.PruneColumns(parentUsedCols)
 }
 
-// PruneColumns implements LogicalTopN interface.
+// PruneColumns implements LogicalPlan interface.
 // If any expression can view as a constant in execution stage, such as correlated column, constant,
 // we do prune them. Note that we can't prune the expressions contain non-deterministic functions, such as rand().
 func (lt *LogicalTopN) PruneColumns(parentUsedCols []*expression.Column) error {
