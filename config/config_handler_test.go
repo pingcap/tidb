@@ -106,7 +106,7 @@ func (s *testConfigSuite) TestPDConfHandler(c *C) {
 	mockPDConfigClient0.status.Code = configpb.StatusCode_WRONG_VERSION
 	content, _ := encodeConfig(&conf)
 	mockPDConfigClient0.confContent.Store(content)
-	ch, err = newPDConfHandler(&conf, nil, newMockPDConfigClient)
+	ch, err = newPDConfHandler(&conf, func(oldC, newC *Config) {}, newMockPDConfigClient)
 	c.Assert(err, IsNil)
 	ch.Close()
 
@@ -114,19 +114,18 @@ func (s *testConfigSuite) TestPDConfHandler(c *C) {
 	wg := sync.WaitGroup{}
 	wg.Add(1)
 	mockReloadFunc := func(oldConf, newConf *Config) {
-		wg.Done()
-		c.Assert(oldConf.Log.Level, Equals, "info")
-		c.Assert(newConf.Log.Level, Equals, "debug")
+			c.Assert(oldConf.Log.Level, Equals, "info")
+			c.Assert(newConf.Log.Level, Equals, "debug")
+			wg.Done()
 	}
 	ch, err = newPDConfHandler(&conf, mockReloadFunc, newMockPDConfigClient)
 	c.Assert(err, IsNil)
 	ch.interval = time.Second
-	ch.Start()
-	c.Assert(ch.GetConfig().Log.Level, Equals, "info")
 	newConf := conf
 	newConf.Log.Level = "debug"
 	newContent, _ := encodeConfig(&newConf)
 	mockPDConfigClient0.confContent.Store(newContent)
+	ch.Start()
 	wg.Wait()
 	c.Assert(ch.GetConfig().Log.Level, Equals, "debug")
 	ch.Close()

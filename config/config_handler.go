@@ -123,7 +123,6 @@ func newPDConfHandler(localConf *Config, reloadFunc ConfReloadFunc,
 		registered: false,
 	}
 	ch.curConf.Store(localConf) // use the local config at first
-	ch.register()
 	return ch, nil
 }
 
@@ -193,6 +192,7 @@ func (ch *pdConfHandler) run() {
 		ch.wg.Done()
 	}()
 
+	ch.register() // the first time to register
 	for {
 		select {
 		case <-time.After(ch.interval):
