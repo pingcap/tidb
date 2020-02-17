@@ -237,7 +237,7 @@ func (s *extractorSuite) TestClusterConfigTableExtractor(c *C) {
 	}
 	for _, ca := range cases {
 		logicalMemTable := s.getLogicalMemTable(c, se, parser, ca.sql)
-		if logicalMemTable.Extractor == nil {
+		if logicalMemTable == nil {
 			c.Assert(ca.skipRequest, IsTrue)
 		} else {
 			clusterConfigExtractor := logicalMemTable.Extractor.(*plannercore.ClusterTableExtractor)
@@ -519,7 +519,7 @@ func (s *extractorSuite) TestClusterLogTableExtractor(c *C) {
 	}
 	for _, ca := range cases {
 		logicalMemTable := s.getLogicalMemTable(c, se, parser, ca.sql)
-		if logicalMemTable.Extractor == nil {
+		if logicalMemTable == nil {
 			c.Assert(ca.skipRequest, IsTrue)
 		} else {
 			clusterConfigExtractor := logicalMemTable.Extractor.(*plannercore.ClusterLogTableExtractor)
