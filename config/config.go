@@ -110,7 +110,9 @@ type Config struct {
 	IsolationRead IsolationRead `toml:"isolation-read" json:"isolation-read"`
 	// MaxServerConnections is the maximum permitted number of simultaneous client connections.
 	MaxServerConnections uint32 `toml:"max-server-connections" json:"max-server-connections"`
-
+	// NewCollationsEnabledOnFirstBootstrap indicates if the new collations are enabled, it effects only when a TiDB cluster bootstrapped on the first time.
+	NewCollationsEnabledOnFirstBootstrap bool `toml:"new_collations_enabled_on_first_bootstrap" json:"new_collations_enabled_on_first_bootstrap"`
+	// Experimental contains parameters for experimental features.
 	Experimental Experimental `toml:"experimental" json:"experimental"`
 }
 
