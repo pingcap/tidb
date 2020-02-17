@@ -428,14 +428,18 @@ func (s *testIntegrationSuite5) TestMySQLErrorCode(c *C) {
 	tk.MustGetErrCode(sql, mysql.ErrWrongAutoKey)
 	sql = "create table t2 (id int auto_increment, a int key);"
 	tk.MustGetErrCode(sql, mysql.ErrWrongAutoKey)
-	sql = "create table t2 (a datetime(2) default current_timestamp(3))"
+	sql = "create table t2 (a datetime(2) default current_timestamp(3));"
 	tk.MustGetErrCode(sql, mysql.ErrInvalidDefault)
-	sql = "create table t2 (a datetime(2) default current_timestamp(2) on update current_timestamp)"
+	sql = "create table t2 (a datetime(2) default current_timestamp(2) on update current_timestamp);"
 	tk.MustGetErrCode(sql, mysql.ErrInvalidOnUpdate)
-	sql = "create table t2 (a datetime default current_timestamp on update current_timestamp(2))"
+	sql = "create table t2 (a datetime default current_timestamp on update current_timestamp(2));"
 	tk.MustGetErrCode(sql, mysql.ErrInvalidOnUpdate)
-	sql = "create table t2 (a datetime(2) default current_timestamp(2) on update current_timestamp(3))"
+	sql = "create table t2 (a datetime(2) default current_timestamp(2) on update current_timestamp(3));"
 	tk.MustGetErrCode(sql, mysql.ErrInvalidOnUpdate)
+	sql = "create table t(a blob(10), index(a(0)));"
+	tk.MustGetErrCode(sql, mysql.ErrKeyPart0)
+	sql = "create table t(a char(10), index(a(0)));"
+	tk.MustGetErrCode(sql, mysql.ErrKeyPart0)
 
 	sql = "create table t2 (id int primary key , age int);"
 	tk.MustExec(sql)
