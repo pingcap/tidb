@@ -2511,7 +2511,6 @@ func (s *testSchemaSuite) TestDisableTxnAutoRetry(c *C) {
 	disableLatchCfg.TxnLocalLatches.Enabled = false
 	config.StoreGlobalConfig(&disableLatchCfg)
 	defer config.StoreGlobalConfig(orgCfg)
-	config.GetGlobalConfig().TxnLocalLatches.Enabled = false
 	tk1.MustExec("begin")
 	tk1.MustExec("update no_retry set id = 9")
 
