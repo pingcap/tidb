@@ -343,11 +343,11 @@
       },
       {
         "SQL": "select * from t use index(f) where f = 1 and a = 1",
-        "Best": "IndexLookUp(Index(t.f)[[1,1]]->Sel([eq(test.t.a, 1)]), Table(t))"
+        "Best": "PointGet(Index(t.f)[KindInt64 1])->Sel([eq(test.t.a, 1)])->IndexLookUp(PointGet(Index(t.f)[KindInt64 1])->Sel([eq(test.t.a, 1)]), Table(t))"
       },
       {
         "SQL": "select * from t2 use index(b) where b = 1 and a = 1",
-        "Best": "IndexLookUp(Index(t2.b)[[1,1]]->Sel([eq(test.t2.a, 1)]), Table(t2))"
+        "Best": "PointGet(Index(t2.b)[KindInt64 1])->Sel([eq(test.t2.a, 1)])->IndexLookUp(PointGet(Index(t2.b)[KindInt64 1])->Sel([eq(test.t2.a, 1)]), Table(t2))"
       }
     ]
   },
@@ -524,7 +524,7 @@
       },
       {
         "SQL": "select /*+ TIDB_INLJ(t2) */ * from t t1 join t t2 where t1.a=t2.a and t2.a in (1, 2)",
-        "Best": "IndexJoin{TableReader(Table(t))->TableReader(Table(t)->Sel([in(test.t.a, 1, 2)]))}(test.t.a,test.t.a)"
+        "Best": "IndexJoin{BatchPointGet(Handle(t.a)[1 2])->TableReader(Table(t)->Sel([in(test.t.a, 1, 2)]))}(test.t.a,test.t.a)"
       },
       {
         "SQL": "select /*+ TIDB_INLJ(t2) */ * from t t1 join t t2 where t1.b=t2.c and t1.b=1 and t2.d > t1.d-10 and t2.d < t1.d+10",

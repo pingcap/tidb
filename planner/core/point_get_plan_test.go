@@ -16,6 +16,7 @@ package core_test
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/util/testutil"
 	"math"
 	"strings"
 
@@ -37,6 +38,7 @@ var _ = SerialSuites(&testPointGetSuite{})
 type testPointGetSuite struct {
 	store kv.Storage
 	dom   *domain.Domain
+	testData testutil.TestData
 }
 
 func (s *testPointGetSuite) SetUpSuite(c *C) {
@@ -45,12 +47,15 @@ func (s *testPointGetSuite) SetUpSuite(c *C) {
 	c.Assert(err, IsNil)
 	s.store = store
 	s.dom = dom
+	s.testData, err = testutil.LoadTestSuiteData("testdata", "point_get_plan")
+	c.Assert(err, IsNil)
 }
 
 func (s *testPointGetSuite) TearDownSuite(c *C) {
 	s.dom.Close()
 	s.store.Close()
 	testleak.AfterTest(c)()
+	c.Assert(s.testData.GenerateOutputIfNeeded(), IsNil)
 }
 
 func (s *testPointGetSuite) TestPointGetPlanCache(c *C) {
@@ -225,19 +230,19 @@ func (s *testPointGetSuite) TestWhereIn2BatchPointGet(c *C) {
 		"Point_Get_1 1.00 root table:t, index:a b c",
 	))
 	tk.MustQuery("explain select * from t where (a, b, c) in ((1, 1, 1), (2, 2, 2))").Check(testkit.Rows(
-		"Batch_Point_Get_1 2.00 root table:t, index:a b c",
+		"Batch_Point_Get_1 2.00 root table:t, index:a b c, keep order:false, desc:false",
 	))
 
 	tk.MustQuery("explain select * from t where a in (1, 2, 3, 4, 5)").Check(testkit.Rows(
-		"Batch_Point_Get_1 5.00 root table:t",
+		"Batch_Point_Get_1 5.00 root table:t, handle:[1 2 3 4 5], keep order:false, desc:false",
 	))
 
 	tk.MustQuery("explain select * from t where a in (1, 2, 3, 1, 2)").Check(testkit.Rows(
-		"Batch_Point_Get_1 5.00 root table:t",
+		"Batch_Point_Get_1 5.00 root table:t, handle:[1 2 3 1 2], keep order:false, desc:false",
 	))
 
 	tk.MustQuery("explain select * from t where (a) in ((1), (2), (3), (1), (2))").Check(testkit.Rows(
-		"Batch_Point_Get_1 5.00 root table:t",
+		"Batch_Point_Get_1 5.00 root table:t, handle:[1 2 3 1 2], keep order:false, desc:false",
 	))
 
 	tk.MustExec("use test")
@@ -251,7 +256,7 @@ func (s *testPointGetSuite) TestWhereIn2BatchPointGet(c *C) {
 		"4 5 6",
 	))
 	tk.MustQuery("explain select * from t where (a, b) in ((1, 2), (2, 3))").Check(testkit.Rows(
-		"Batch_Point_Get_1 2.00 root table:t, index:a b",
+		"Batch_Point_Get_1 2.00 root table:t, index:a b, keep order:false, desc:false",
 	))
 	tk.MustQuery("select * from t where (a, b) in ((1, 2), (2, 3))").Check(testkit.Rows(
 		"1 2 3",
@@ -295,5 +300,32 @@ func (s *testPointGetSuite) TestPointGetId(c *C) {
 		c.Assert(err, IsNil)
 		// Test explain result is useless, plan id will be reset when running `explain`.
 		c.Assert(p.ID(), Equals, 1)
+	}
+}
+
+func (s *testPointGetSuite) TestCBOPointGet(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a varchar(20), b int, c int, d int, primary key(a), unique key(b, c))")
+	tk.MustExec("insert into t values('1',1,1,1), ('2',2,2,2), ('3',3,3,3), ('4',4,4,4)")
+
+	var input []string
+	var output []struct{
+		SQL string
+		Plan []string
+		Res []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, sql := range input {
+		plan := tk.MustQuery("explain " + sql)
+		res := tk.MustQuery(sql)
+		s.testData.OnRecord(func() {
+			output[i].SQL = sql
+			output[i].Plan = s.testData.ConvertRowsToStrings(plan.Rows())
+			output[i].Res = s.testData.ConvertRowsToStrings(res.Rows())
+		})
+		plan.Check(testkit.Rows(output[i].Plan...))
+		res.Check(testkit.Rows(output[i].Res...))
 	}
 }

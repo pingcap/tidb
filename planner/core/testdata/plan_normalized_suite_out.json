@@ -32,23 +32,23 @@
       {
         "SQL": "select * from t1 where a in (1,2,3)",
         "Plan": [
-          " Batch_Point_Get_1 root table:t1"
+          " Batch_Point_Get_1 root table:t1, handle:?, keep order:false, desc:false"
         ]
       },
       {
         "SQL": "select * from t1 where b=1",
         "Plan": [
-          " IndexLookUp_10 root ",
-          " ├─IndexScan_8  cop  table:t1, index:b, range:[?,?], keep order:false",
-          " └─TableScan_9  cop  table:t1, keep order:false"
+          " IndexLookUp_11 root ",
+          " ├─IndexScan_9  cop  table:t1, index:b, range:[?,?], keep order:false",
+          " └─TableScan_10 cop  table:t1, keep order:false"
         ]
       },
       {
         "SQL": "select a+1,b+2 from t1 use index(b) where b=3",
         "Plan": [
           " Projection_4    root plus(test.t1.a, ?), plus(test.t1.b, ?)",
-          " └─IndexReader_6 root index:IndexScan_5",
-          "   └─IndexScan_5 cop  table:t1, index:b, range:[?,?], keep order:false"
+          " └─IndexReader_7 root index:IndexScan_6",
+          "   └─IndexScan_6 cop  table:t1, index:b, range:[?,?], keep order:false"
         ]
       },
       {
