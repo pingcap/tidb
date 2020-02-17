@@ -392,3 +392,12 @@ func LoadTLSCertificates(ca, key, cert string) (tlsConfig *tls.Config, err error
 	}
 	return
 }
+
+// IsTLSExpiredError checks error is caused by TLS expired.
+func IsTLSExpiredError(err error) bool {
+	err = errors.Cause(err)
+	if inval, ok := err.(x509.CertificateInvalidError); !ok || inval.Reason != x509.Expired {
+		return false
+	}
+	return true
+}

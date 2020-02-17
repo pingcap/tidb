@@ -272,7 +272,7 @@ func (ts *tidbTestSuite) TestSocket(c *C) {
 // generateCert generates a private key and a certificate in PEM format based on parameters.
 // If parentCert and parentCertKey is specified, the new certificate will be signed by the parentCert.
 // Otherwise, the new certificate will be self-signed and is a CA.
-func generateCert(sn int, commonName string, parentCert *x509.Certificate, parentCertKey *rsa.PrivateKey, outKeyFile string, outCertFile string) (*x509.Certificate, *rsa.PrivateKey, error) {
+func generateCert(sn int, commonName string, parentCert *x509.Certificate, parentCertKey *rsa.PrivateKey, outKeyFile string, outCertFile string, opts ...func(c *x509.Certificate)) (*x509.Certificate, *rsa.PrivateKey, error) {
 	privateKey, err := rsa.GenerateKey(rand.Reader, 528)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
@@ -288,6 +288,9 @@ func generateCert(sn int, commonName string, parentCert *x509.Certificate, paren
 		KeyUsage:              x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature,
 		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth},
 		BasicConstraintsValid: true,
+	}
+	for _, opt := range opts {
+		opt(&template)
 	}
 
 	var parent *x509.Certificate
@@ -460,6 +463,86 @@ func (ts *tidbTestSuite) TestTLS(c *C) {
 	err = cli.runTestTLSConnection(c, connOverrider)
 	c.Assert(err, IsNil)
 	cli.runTestRegression(c, connOverrider, "TLSRegression")
+	server.Close()
+}
+
+func (ts *tidbTestSuite) TestReloadTLS(c *C) {
+	// Generate valid TLS certificates.
+	caCert, caKey, err := generateCert(0, "TiDB CA", nil, nil, "/tmp/ca-key2.pem", "/tmp/ca-cert2.pem")
+	c.Assert(err, IsNil)
+	_, _, err = generateCert(1, "tidb-server", caCert, caKey, "/tmp/server-key2.pem", "/tmp/server-cert2.pem")
+	c.Assert(err, IsNil)
+	_, _, err = generateCert(2, "SQL Client Certificate", caCert, caKey, "/tmp/client-key2.pem", "/tmp/client-cert2.pem")
+	c.Assert(err, IsNil)
+	err = registerTLSConfig("client-certificate", "/tmp/ca-cert2.pem", "/tmp/client-cert2.pem", "/tmp/client-key2.pem", "tidb-server", true)
+	c.Assert(err, IsNil)
+
+	defer func() {
+		os.Remove("/tmp/ca-key2.pem")
+		os.Remove("/tmp/ca-cert2.pem")
+
+		os.Remove("/tmp/server-key2.pem")
+		os.Remove("/tmp/server-cert2.pem")
+		os.Remove("/tmp/client-key2.pem")
+		os.Remove("/tmp/client-cert2.pem")
+	}()
+
+	// try old cert used in startup configuration.
+	cli := newTestServerClient()
+	cfg := config.NewConfig()
+	cfg.Port = cli.port
+	cfg.Status.ReportStatus = false
+	cfg.Security = config.Security{
+		SSLCA:   "/tmp/ca-cert2.pem",
+		SSLCert: "/tmp/server-cert2.pem",
+		SSLKey:  "/tmp/server-key2.pem",
+	}
+	server, err := NewServer(cfg, ts.tidbdrv)
+	c.Assert(err, IsNil)
+	go server.Run()
+	time.Sleep(time.Millisecond * 100)
+	// The client provides a valid certificate.
+	connOverrider := func(config *mysql.Config) {
+		config.TLSConfig = "client-certificate"
+	}
+	err = cli.runTestTLSConnection(c, connOverrider)
+	c.Assert(err, IsNil)
+
+	// try reload a valid cert.
+	tlsCfg := server.getTLSConfig()
+	cert, err := x509.ParseCertificate(tlsCfg.Certificates[0].Certificate[0])
+	c.Assert(err, IsNil)
+	oldExpireTime := cert.NotAfter
+	_, _, err = generateCert(1, "tidb-server", caCert, caKey, "/tmp/server-key3.pem", "/tmp/server-cert3.pem", func(c *x509.Certificate) {
+		c.NotBefore = time.Now().Add(-24 * time.Hour).UTC()
+		c.NotAfter = time.Now().Add(1 * time.Hour).UTC()
+	})
+	c.Assert(err, IsNil)
+	os.Rename("/tmp/server-key3.pem", "/tmp/server-key2.pem")
+	os.Rename("/tmp/server-cert3.pem", "/tmp/server-cert2.pem")
+	cli.runReloadTLS(c, connOverrider)
+	err = cli.runTestTLSConnection(c, connOverrider)
+	c.Assert(err, IsNil)
+
+	tlsCfg = server.getTLSConfig()
+	cert, err = x509.ParseCertificate(tlsCfg.Certificates[0].Certificate[0])
+	c.Assert(err, IsNil)
+	newExpireTime := cert.NotAfter
+	c.Assert(newExpireTime.After(oldExpireTime), IsTrue)
+
+	// try reload a expired cert.
+	_, _, err = generateCert(1, "tidb-server", caCert, caKey, "/tmp/server-key3.pem", "/tmp/server-cert3.pem", func(c *x509.Certificate) {
+		c.NotBefore = time.Now().Add(-24 * time.Hour).UTC()
+		c.NotAfter = c.NotBefore.Add(1 * time.Hour).UTC()
+	})
+	c.Assert(err, IsNil)
+	os.Rename("/tmp/server-key3.pem", "/tmp/server-key2.pem")
+	os.Rename("/tmp/server-cert3.pem", "/tmp/server-cert2.pem")
+	cli.runReloadTLS(c, connOverrider)
+	err = cli.runTestTLSConnection(c, connOverrider)
+	c.Assert(err, NotNil)
+	c.Assert(util.IsTLSExpiredError(err), IsTrue)
+
 	server.Close()
 }
 

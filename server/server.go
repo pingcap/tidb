@@ -536,6 +536,10 @@ func (s *Server) UpdateTLSConfig(cfg *tls.Config) {
 	atomic.StorePointer(&s.tlsConfig, unsafe.Pointer(cfg))
 }
 
+func (s *Server) getTLSConfig() *tls.Config {
+	return (*tls.Config)(atomic.LoadPointer(&s.tlsConfig))
+}
+
 func killConn(conn *clientConn) {
 	sessVars := conn.ctx.GetSessionVars()
 	atomic.CompareAndSwapUint32(&sessVars.Killed, 0, 1)

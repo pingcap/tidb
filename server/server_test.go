@@ -1162,6 +1162,14 @@ func (cli *testServerClient) runTestTLSConnection(t *C, overrider configOverride
 	return err
 }
 
+func (cli *testServerClient) runReloadTLS(t *C, overrider configOverrider) {
+	db, err := sql.Open("mysql", cli.getDSN(overrider))
+	t.Assert(err, IsNil)
+	defer db.Close()
+	_, err = db.Exec("alter instance reload tls")
+	t.Assert(err, IsNil)
+}
+
 func (cli *testServerClient) runTestSumAvg(c *C) {
 	cli.runTests(c, nil, func(dbt *DBTest) {
 		dbt.mustExec("create table sumavg (a int, b decimal, c double)")
