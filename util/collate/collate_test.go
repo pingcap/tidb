@@ -24,11 +24,17 @@ func TestT(t *testing.T) {
 	TestingT(t)
 }
 
-var _ = Suite(&testBinCollatorSuite{})
-var _ = Suite(&testGeneralCICollatorSuite{})
-var _ = Suite(&testGetCollatorSuite{})
+var (
+	_ = Suite(&testBinCollatorSuite{})
+	_ = Suite(&testCollateSuite{})
+	_ = Suite(&testGeneralCICollatorSuite{})
+	_ = Suite(&testGetCollatorSuite{})
+)
 
 type testBinCollatorSuite struct {
+}
+
+type testCollateSuite struct {
 }
 
 type testGeneralCICollatorSuite struct {
@@ -101,6 +107,14 @@ func (s *testBinCollatorSuite) TestGeneralCICollator(c *C) {
 	}
 	testCompareTable(compareTable, "utf8mb4_general_ci", c)
 	testKeyTable(keyTable, "utf8mb4_general_ci", c)
+}
+
+func (s *testCollateSuite) TestSetNewCollateEnabled(c *C) {
+	SetNewCollationEnabled(false)
+	c.Assert(NewCollationEnabled(), Equals, false)
+	// It can be set only once.
+	SetNewCollationEnabled(true)
+	c.Assert(NewCollationEnabled(), Equals, false)
 }
 
 func (s *testGetCollatorSuite) TestGetCollator(c *C) {
