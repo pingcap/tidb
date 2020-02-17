@@ -58,7 +58,7 @@ const (
 	// TopologyInformationPath means etcd path for storing topology info.
 	TopologyInformationPath = "/topology/tidb/"
 	// TopologyTimeToLive is ttl for topology.
-	TopologyTimeToLive = 60 * time.Second
+	TopologyTimeToLive = 45
 	// TopologyTimeToRefresh means time to reflush etcd.
 	TopologyTimeToRefresh = 30 * time.Second
 )
@@ -86,8 +86,6 @@ type ServerInfo struct {
 	Lease          string `json:"lease"`
 	BinlogStatus   string `json:"binlog_status"`
 	StartTimestamp int64  `json:"start_timestamp"`
-
-	Host string `json:"-"`
 }
 
 // ServerVersionInfo is the server version and git_hash.
@@ -288,6 +286,7 @@ type TopologyInfo struct {
 }
 
 // RemoveServerInfo stores the topology of tidb to etcd.
+// Note: this part no ttl exists.
 func (is *InfoSyncer) storeTopologyInfo(ctx context.Context) error {
 	if is.etcdCli == nil {
 		return nil
@@ -308,7 +307,7 @@ func (is *InfoSyncer) storeTopologyInfo(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 	str := string(hack.String(infoBuf))
-	key := fmt.Sprintf("%s/%s:%v/tidb", TopologyInformationPath, is.info.Host, is.info.Port)
+	key := fmt.Sprintf("%s/%s:%v/tidb", TopologyInformationPath, is.info.IP, is.info.Port)
 	// Note: no lease is required here.
 	err = util.PutKVToEtcd(ctx, is.etcdCli, keyOpDefaultRetryCnt, key, str)
 	return err
@@ -407,7 +406,7 @@ func (is *InfoSyncer) newSessionAndStoreServerInfo(ctx context.Context, retryCnt
 	}
 
 	logPrefix = fmt.Sprintf("[topology-syncer] %s", is.serverInfoPath)
-	session, err = owner.NewSession(ctx, logPrefix, is.etcdCli, retryCnt, InfoSessionTTL)
+	session, err = owner.NewSession(ctx, logPrefix, is.etcdCli, retryCnt, TopologyTimeToLive)
 	if err != nil {
 		return err
 	}
@@ -420,7 +419,7 @@ func (is *InfoSyncer) RefreshTopology(ctx context.Context) error {
 	if is.etcdCli == nil {
 		return nil
 	}
-	key := fmt.Sprintf("%s/%s:%v/ttl", TopologyInformationPath, is.info.Host, is.info.Port)
+	key := fmt.Sprintf("%s/%s:%v/ttl", TopologyInformationPath, is.info.IP, is.info.Port)
 	return util.PutKVToEtcd(ctx, is.etcdCli, keyOpDefaultRetryCnt, key,
 		time.Now().String(),
 		clientv3.WithLease(is.topologySession.Lease()))
@@ -474,7 +473,6 @@ func getServerInfo(id string) *ServerInfo {
 		Lease:          cfg.Lease,
 		BinlogStatus:   binloginfo.GetStatus().String(),
 		StartTimestamp: time.Now().Unix(),
-		Host:           cfg.Host,
 	}
 	info.Version = mysql.ServerVersion
 	info.GitHash = printer.TiDBGitHash
