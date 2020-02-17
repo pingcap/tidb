@@ -874,7 +874,7 @@ func (b *builtinSetValSig) evalInt(row chunk.Row) (int64, bool, error) {
 	return sequence.SetSequenceVal(setValue)
 }
 
-func getSchemaAndSequence(sequenceName string) (schema string, sequence string) {
+func getSchemaAndSequence(sequenceName string) (string, string) {
 	res := strings.Split(sequenceName, ".")
 	if len(res) == 1 {
 		return "", res[0]
