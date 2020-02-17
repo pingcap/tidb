@@ -2674,6 +2674,11 @@ func (s *testSchemaSuite) TestDisableTxnAutoRetry(c *C) {
 
 	// test for disable transaction local latch
 	tk1.Se.GetSessionVars().InRestrictedSQL = false
+	orgCfg := config.GetGlobalConfig()
+	disableLatchCfg := *orgCfg
+	disableLatchCfg.TxnLocalLatches.Enabled = false
+	config.StoreGlobalConfig(&disableLatchCfg)
+	defer config.StoreGlobalConfig(orgCfg)
 	config.GetGlobalConfig().TxnLocalLatches.Enabled = false
 	tk1.MustExec("begin")
 	tk1.MustExec("update no_retry set id = 9")
@@ -2686,7 +2691,9 @@ func (s *testSchemaSuite) TestDisableTxnAutoRetry(c *C) {
 	c.Assert(strings.Contains(err.Error(), kv.TxnRetryableMark), IsTrue, Commentf("error: %s", err))
 	tk1.MustExec("rollback")
 
-	config.GetGlobalConfig().TxnLocalLatches.Enabled = true
+	enableLatchCfg := *orgCfg
+	enableLatchCfg.TxnLocalLatches.Enabled = true
+	config.StoreGlobalConfig(&enableLatchCfg)
 	tk1.MustExec("begin")
 	tk2.MustExec("alter table no_retry add index idx(id)")
 	tk2.MustQuery("select * from no_retry").Check(testkit.Rows("8"))
