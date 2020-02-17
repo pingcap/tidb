@@ -23,8 +23,6 @@ type SequenceState struct {
 	mu sync.Mutex
 	// latestValueMap caches the last value obtained by nextval() for each sequence id.
 	latestValueMap map[int64]int64
-	// latestSequence caches the last sequence id that has just been called by nextval().
-	latestSequenceID int64
 }
 
 // NewSequenceState creates a SequenceState.
@@ -36,7 +34,6 @@ func NewSequenceState() *SequenceState {
 func (ss *SequenceState) UpdateState(sequenceID, value int64) {
 	ss.mu.Lock()
 	defer ss.mu.Unlock()
-	ss.latestSequenceID = sequenceID
 	ss.latestValueMap[sequenceID] = value
 }
 

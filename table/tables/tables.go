@@ -1191,19 +1191,19 @@ func init() {
 }
 
 // GetSequenceNextVal implements util.SequenceTable GetSequenceNextVal interface.
-func (t *TableCommon) GetSequenceNextVal() (int64, error) {
+func (t *TableCommon) GetSequenceNextVal(dbName, seqName string) (int64, error) {
 	t.sequence++
 	// TODO: implements it with sequence allocation logic.
 	return t.sequence, nil
 }
 
 // SetSequenceVal implements util.SequenceTable SetSequenceVal interface.
-func (t *TableCommon) SetSequenceVal(newVal int64) error {
+func (t *TableCommon) SetSequenceVal(newVal int64) (int64, bool, error) {
 	if t.sequence < newVal {
 		t.sequence = newVal
 	}
 	// TODO: implement it with sequence rebase logic.
-	return nil
+	return newVal, false, nil
 }
 
 // GetSequenceID implements util.SequenceTable GetSequenceID interface.
