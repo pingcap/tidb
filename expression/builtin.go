@@ -401,7 +401,7 @@ type vecBuiltinFunc interface {
 }
 
 // reverseBuiltinFunc evaluates the exactly one column value in the function when given a result for expression.
-// For example, the buitinFunc is builtinArithmeticPlusRealSig(2.3, builtinArithmeticMinusRealSig(Column, 3.4))
+// For example, the builtinFunc is builtinArithmeticPlusRealSig(2.3, builtinArithmeticMinusRealSig(Column, 3.4))
 // when given the result like 1.0, then the ReverseEval should evaluate the column value 1.0 - 2.3 + 3.4 = 2.1
 type reverseBuiltinFunc interface {
 	// supportReverseEval checks whether the builtinFunc support reverse evaluation.

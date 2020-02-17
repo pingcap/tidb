@@ -37,7 +37,6 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/util/pdapi"
 	"github.com/pingcap/tidb/util/testkit"
-	"github.com/pingcap/tidb/util/testutil"
 	pmodel "github.com/prometheus/common/model"
 	"google.golang.org/grpc"
 )
@@ -60,11 +59,11 @@ func (s *testClusterReaderSuite) TearDownSuite(c *C) {
 }
 
 func (s *testClusterReaderSuite) TestMetricTableData(c *C) {
-	failPoint := "github.com/pingcap/tidb/executor/mockMetricRetrieverQueryPromQL"
-	c.Assert(failpoint.Enable(failPoint, "return"), IsNil)
-	defer func() {
-		c.Assert(failpoint.Disable(failPoint), IsNil)
-	}()
+	fpName := "github.com/pingcap/tidb/executor/mockMetricsPromData"
+	c.Assert(failpoint.Enable(fpName, "return"), IsNil)
+	defer func() { c.Assert(failpoint.Disable(fpName), IsNil) }()
+
+	// mock prometheus data
 	matrix := pmodel.Matrix{}
 	metric := map[pmodel.LabelName]pmodel.LabelValue{
 		"instance": "127.0.0.1:10080",
@@ -76,25 +75,46 @@ func (s *testClusterReaderSuite) TestMetricTableData(c *C) {
 		Value:     pmodel.SampleValue(0.1),
 	}
 	matrix = append(matrix, &pmodel.SampleStream{Metric: metric, Values: []pmodel.SamplePair{v1}})
-	ctx := context.WithValue(context.Background(), "__mockMetricsData", matrix)
+
+	ctx := context.WithValue(context.Background(), "__mockMetricsPromData", matrix)
 	ctx = failpoint.WithHook(ctx, func(ctx context.Context, fpname string) bool {
-		return fpname == failPoint
+		return fpname == fpName
 	})
 
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use metric_schema")
-	rs, err := tk.Se.Execute(ctx, "select * from tidb_query_duration;")
-	c.Assert(err, IsNil)
-	result := tk.ResultSetToResultWithCtx(ctx, rs[0], Commentf("execute sql fail"))
-	result.Check(testutil.RowsWithSep("|",
-		"2019-12-23 20:11:35.000000|127.0.0.1:10080| 0.9|0.1|The quantile of TiDB query durations(second)"))
 
-	rs, err = tk.Se.Execute(ctx, "select time,instance,quantile,value from tidb_query_duration where quantile in (0.85, 0.95);")
-	c.Assert(err, IsNil)
-	result = tk.ResultSetToResultWithCtx(ctx, rs[0], Commentf("execute sql fail"))
-	result.Check(testkit.Rows(
-		"2019-12-23 20:11:35.000000 127.0.0.1:10080 0.85 0.1",
-		"2019-12-23 20:11:35.000000 127.0.0.1:10080 0.95 0.1"))
+	cases := []struct {
+		sql string
+		exp []string
+	}{
+		{
+			sql: "select time,instance,quantile,value from tidb_query_duration;",
+			exp: []string{
+				"2019-12-23 20:11:35.000000 127.0.0.1:10080 0.9 0.1",
+			},
+		},
+		{
+			sql: "select time,instance,quantile,value from tidb_query_duration where quantile in (0.85, 0.95);",
+			exp: []string{
+				"2019-12-23 20:11:35.000000 127.0.0.1:10080 0.85 0.1",
+				"2019-12-23 20:11:35.000000 127.0.0.1:10080 0.95 0.1",
+			},
+		},
+		{
+			sql: "select time,instance,quantile,value from tidb_query_duration where quantile=0.5",
+			exp: []string{
+				"2019-12-23 20:11:35.000000 127.0.0.1:10080 0.5 0.1",
+			},
+		},
+	}
+
+	for _, cas := range cases {
+		rs, err := tk.Se.Execute(ctx, cas.sql)
+		c.Assert(err, IsNil)
+		result := tk.ResultSetToResultWithCtx(ctx, rs[0], Commentf("sql: %s", cas.sql))
+		result.Check(testkit.Rows(cas.exp...))
+	}
 }
 
 func (s *testClusterReaderSuite) TestTiDBClusterConfig(c *C) {
@@ -406,7 +426,7 @@ func (s *testClusterReaderSuite) TestTiDBClusterLog(c *C) {
 		tmpDir  string
 		logFile string
 	}
-	// typ => testServer
+	// tp => testServer
 	testServers := map[string]*testServer{}
 
 	// create gRPC servers

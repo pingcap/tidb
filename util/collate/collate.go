@@ -18,16 +18,22 @@ import (
 )
 
 var (
-	collatorMap map[string]Collator
+	collatorMap   map[string]Collator
+	collatorIDMap map[int]Collator
 )
+
+// CollatorOption is the option of collator.
+type CollatorOption struct {
+	PadLen int
+}
 
 // Collator provides functionality for comparing strings for a given
 // collation order.
 type Collator interface {
 	// Compare returns an integer comparing the two strings. The result will be 0 if a == b, -1 if a < b, and +1 if a > b.
-	Compare(a, b string) int
+	Compare(a, b string, opt CollatorOption) int
 	// Key returns the collate key for str.
-	Key(str string) []byte
+	Key(str string, opt CollatorOption) []byte
 }
 
 // GetCollator get the collator according to collate, it will return the binary collator if the corresponding collator doesn't exist.
@@ -39,21 +45,38 @@ func GetCollator(collate string) Collator {
 	return ctor
 }
 
+// GetCollatorByID get the collator according to id, it will return the binary collator if the corresponding collator doesn't exist.
+func GetCollatorByID(id int) Collator {
+	ctor, ok := collatorIDMap[id]
+	if !ok {
+		return collatorMap["binary"]
+	}
+	return ctor
+}
+
 type binCollator struct {
 }
 
 // Compare implement Collator interface.
-func (bc *binCollator) Compare(a, b string) int {
+func (bc *binCollator) Compare(a, b string, opt CollatorOption) int {
 	return strings.Compare(a, b)
 }
 
 // Key implement Collator interface.
-func (bc *binCollator) Key(str string) []byte {
+func (bc *binCollator) Key(str string, opt CollatorOption) []byte {
 	return []byte(str)
 }
 
 func init() {
 	collatorMap = make(map[string]Collator)
+	collatorIDMap = make(map[int]Collator)
 
 	collatorMap["binary"] = &binCollator{}
+	collatorMap["utf8mb4_general_ci"] = &generalCICollator{}
+	collatorMap["utf8_general_ci"] = &generalCICollator{}
+
+	// See https://github.com/pingcap/parser/blob/master/charset/charset.go for more information about the IDs.
+	collatorIDMap[63] = &binCollator{}
+	collatorIDMap[45] = &generalCICollator{}
+	collatorIDMap[33] = &generalCICollator{}
 }
