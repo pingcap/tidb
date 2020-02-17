@@ -1653,32 +1653,41 @@ func benchmarkSortExec(b *testing.B, cas *sortCase) {
 func BenchmarkSortExec(b *testing.B) {
 	b.ReportAllocs()
 	cas := defaultSortTestCase()
+	concs := []int{1, 2, 4}
 	// all random data
 	cas.ndvs = []int{0, 0}
 	cas.orderByIdx = []int{0, 1}
-	b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
-		benchmarkSortExec(b, cas)
-	})
+	for _, con := range concs {
+		cas.concurrency = con
+		b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
+			benchmarkSortExec(b, cas)
+		})
+	}
 
 	ndvs := []int{1, 10000}
-	concs := []int{1, 2, 4}
 	for _, ndv := range ndvs {
+		cas.ndvs = []int{ndv, 0}
+		cas.orderByIdx = []int{0, 1}
 		for _, con := range concs {
-			cas.ndvs = []int{ndv, 0}
-			cas.orderByIdx = []int{0, 1}
 			cas.concurrency = con
 			b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
 				benchmarkSortExec(b, cas)
 			})
+		}
 
-			cas.ndvs = []int{ndv, 0}
-			cas.orderByIdx = []int{0}
+		cas.ndvs = []int{ndv, 0}
+		cas.orderByIdx = []int{0}
+		for _, con := range concs {
+			cas.concurrency = con
 			b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
 				benchmarkSortExec(b, cas)
 			})
+		}
 
-			cas.ndvs = []int{ndv, 0}
-			cas.orderByIdx = []int{1}
+		cas.ndvs = []int{ndv, 0}
+		cas.orderByIdx = []int{1}
+		for _, con := range concs {
+			cas.concurrency = con
 			b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
 				benchmarkSortExec(b, cas)
 			})

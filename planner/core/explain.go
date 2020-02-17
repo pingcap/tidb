@@ -569,7 +569,31 @@ func (p *PhysicalShuffle) ExplainInfo() string {
 		fmt.Fprintf(buffer, ", child:%v", p.ChildShuffle.ExplainID())
 	}
 	fmt.Fprintf(buffer, ", splitter:%v", getShuffleSplitterName4Explain(p.SplitterType))
+	if len(p.SplitByItems) > 0 {
+		buffer.WriteString("(")
+		for i, col := range p.SplitByItems {
+			buffer.WriteString(col.ExplainInfo())
+			if i+1 < len(p.SplitByItems) {
+				buffer.WriteString(",")
+			}
+		}
+		buffer.WriteString(")")
+	}
 	fmt.Fprintf(buffer, ", merger:%v", getShuffleMergerName4Explain(p.MergerType))
+	if len(p.MergeByItems) > 0 {
+		buffer.WriteString("(")
+		for i, item := range p.MergeByItems {
+			order := ""
+			if item.Desc {
+				order = " desc"
+			}
+			fmt.Fprintf(buffer, "%s%s", item.Expr.ExplainInfo(), order)
+			if i+1 < len(p.MergeByItems) {
+				buffer.WriteString(",")
+			}
+		}
+		buffer.WriteString(")")
+	}
 	return buffer.String()
 }
 
