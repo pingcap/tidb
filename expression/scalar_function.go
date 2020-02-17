@@ -423,8 +423,8 @@ func (sf *ScalarFunction) resolveIndices(schema *Schema) error {
 	return nil
 }
 
-// GetSingleColumn returns (Col, Desc, nil) when the ScalarFunction is equivalent to (Col, Desc)
-// when used as a sort key, otherwise returns (nil, false, err).
+// GetSingleColumn returns (Col, Desc) when the ScalarFunction is equivalent to (Col, Desc)
+// when used as a sort key, otherwise returns (nil, false).
 //
 // Can only handle:
 // - ast.Plus

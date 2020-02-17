@@ -95,9 +95,7 @@ func GetPropByOrderByItemsContainScalarFunc(items []*ByItems) (*property.Physica
 				return nil, false, false
 			}
 			propItems = append(propItems, property.Item{Col: col, Desc: desc})
-			if onlyColumn {
-				onlyColumn = false
-			}
+			onlyColumn = false
 		default:
 			return nil, false, false
 		}
