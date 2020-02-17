@@ -49,23 +49,25 @@ func NewConfHandler(localConf *Config, reloadFunc ConfReloadFunc,
 	if strings.ToLower(localConf.Store) == "tikv" && localConf.EnableDynamicConfig {
 		return newPDConfHandler(localConf, reloadFunc, newPDCliFunc)
 	}
-	return &constantConfHandler{localConf}, nil
+	cch := new(constantConfHandler)
+	cch.curConf.Store(localConf)
+	return cch, nil
 }
 
 // constantConfHandler is used when EnableDynamicConfig is false.
 // The conf in it will always be the configuration that initialized when TiDB is started.
 type constantConfHandler struct {
-	conf *Config
+	curConf atomic.Value
 }
 
 func (cch *constantConfHandler) Start() {}
 
 func (cch *constantConfHandler) Close() {}
 
-func (cch *constantConfHandler) GetConfig() *Config { return cch.conf }
+func (cch *constantConfHandler) GetConfig() *Config { return cch.curConf.Load().(*Config) }
 
 func (cch *constantConfHandler) SetConfig(conf *Config) error {
-	cch.conf = conf
+	cch.curConf.Store(conf)
 	return nil
 }
 

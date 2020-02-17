@@ -839,7 +839,8 @@ func (t *OpenTracing) ToTracingConfig() *tracing.Configuration {
 
 func init() {
 	conf := defaultConf
-	globalConfHandler = &constantConfHandler{&conf}
+	globalConfHandler = new(constantConfHandler)
+	globalConfHandler.SetConfig(&conf)
 	if checkBeforeDropLDFlag == "1" {
 		CheckTableBeforeDrop = true
 	}
