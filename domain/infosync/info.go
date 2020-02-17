@@ -56,10 +56,10 @@ const (
 	// ReportInterval is interval of infoSyncerKeeper reporting min startTS.
 	ReportInterval = 30 * time.Second
 	// TopologyInformationPath means etcd path for storing topology info.
-	TopologyInformationPath = "/topology/tidb/"
-	// TopologyTimeToLive is ttl for topology.
-	TopologyTimeToLive = 45
-	// TopologyTimeToRefresh means time to reflush etcd.
+	TopologyInformationPath = "/topology/tidb"
+	// TopologySessionTTL is ttl for topology, ant it's the ETCD session's TTL in seconds.
+	TopologySessionTTL = 45
+	// TopologyTimeToRefresh means time to refresh etcd.
 	TopologyTimeToRefresh = 30 * time.Second
 )
 
@@ -406,7 +406,7 @@ func (is *InfoSyncer) newSessionAndStoreServerInfo(ctx context.Context, retryCnt
 	}
 
 	logPrefix = fmt.Sprintf("[topology-syncer] %s", is.serverInfoPath)
-	session, err = owner.NewSession(ctx, logPrefix, is.etcdCli, retryCnt, TopologyTimeToLive)
+	session, err = owner.NewSession(ctx, logPrefix, is.etcdCli, retryCnt, TopologySessionTTL)
 	if err != nil {
 		return err
 	}
