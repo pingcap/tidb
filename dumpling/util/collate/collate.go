@@ -15,11 +15,14 @@ package collate
 
 import (
 	"strings"
+	"sync"
 )
 
 var (
-	collatorMap   map[string]Collator
-	collatorIDMap map[int]Collator
+	collatorMap         map[string]Collator
+	collatorIDMap       map[int]Collator
+	newCollationEnabled bool
+	setCollationOnce    sync.Once
 )
 
 // CollatorOption is the option of collator.
@@ -34,6 +37,18 @@ type Collator interface {
 	Compare(a, b string, opt CollatorOption) int
 	// Key returns the collate key for str.
 	Key(str string, opt CollatorOption) []byte
+}
+
+// SetNewCollationEnabled sets if the new collation are enabled.
+func SetNewCollationEnabled(flag bool) {
+	setCollationOnce.Do(func() {
+		newCollationEnabled = flag
+	})
+}
+
+// NewCollationEnabled returns if the new collations are enabled.
+func NewCollationEnabled() bool {
+	return newCollationEnabled
 }
 
 // GetCollator get the collator according to collate, it will return the binary collator if the corresponding collator doesn't exist.
