@@ -25,35 +25,57 @@ import (
 	"github.com/pingcap/tidb/types"
 )
 
-type schemataRetriever struct {
+type memtableRetriever struct {
 	dummyCloser
 	table       *model.TableInfo
 	columns     []*model.ColumnInfo
-	dbs         []*model.DBInfo
-	dbIdx       int
+	rows        [][]types.Datum
+	rowIdx      int
 	retrieved   bool
 	initialized bool
 }
 
 // retrieve implements the infoschemaRetriever interface
-func (e *schemataRetriever) retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
+func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
 	if e.retrieved {
 		return nil, nil
 	}
+
+	//Cache the ret full rows in schemataRetriever
 	if !e.initialized {
 		is := infoschema.GetInfoSchema(sctx)
 		dbs := is.AllSchemas()
 		sort.Sort(infoschema.SchemasSorter(dbs))
-		e.dbs = dbs
+		var err error
+		switch e.table.Name.O {
+		case infoschema.TableSchemata:
+			e.rows = dataForSchemata(sctx, dbs)
+		case infoschema.TableViews:
+			e.rows, err = dataForViews(sctx, dbs)
+		}
+		if err != nil {
+			return nil, nil
+		}
 		e.initialized = true
 	}
-	fullRows := e.dataForSchemata(sctx)
 
-	if len(e.columns) == len(e.table.Columns) {
-		return fullRows, nil
+	//Adjust the amount of each return
+	maxCount := 1024
+	retCount := maxCount
+	if e.rowIdx+maxCount > len(e.rows) {
+		retCount = maxCount - (e.rowIdx + maxCount - len(e.rows))
+		e.retrieved = true
 	}
-	rows := make([][]types.Datum, len(fullRows))
-	for i, fullRow := range fullRows {
+	var ret [][]types.Datum
+	for i := e.rowIdx; i < e.rowIdx+retCount; i++ {
+		ret = append(ret, e.rows[i])
+	}
+	e.rowIdx += retCount
+	if len(e.columns) == len(e.table.Columns) {
+		return ret, nil
+	}
+	rows := make([][]types.Datum, len(ret))
+	for i, fullRow := range ret {
 		row := make([]types.Datum, len(e.columns))
 		for j, col := range e.columns {
 			row[j] = fullRow[col.Offset]
@@ -63,39 +85,71 @@ func (e *schemataRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 	return rows, nil
 }
 
-func (e *schemataRetriever) dataForSchemata(ctx sessionctx.Context) [][]types.Datum {
+func dataForSchemata(ctx sessionctx.Context, schemas []*model.DBInfo) [][]types.Datum {
 	checker := privilege.GetPrivilegeManager(ctx)
-	rows := make([][]types.Datum, 0, 1024)
-	maxCount := 1024
-	remainCount := maxCount
-	if e.dbIdx+maxCount > len(e.dbs) {
-		remainCount = maxCount - (e.dbIdx + maxCount - len(e.dbs))
-		e.retrieved = true
-	}
-	for i := e.dbIdx; i < e.dbIdx+remainCount; i++ {
+	rows := make([][]types.Datum, 0, len(schemas))
+
+	for _, schema := range schemas {
+
 		charset := mysql.DefaultCharset
 		collation := mysql.DefaultCollationName
 
-		if len(e.dbs[i].Charset) > 0 {
-			charset = e.dbs[i].Charset // Overwrite default
+		if len(schema.Charset) > 0 {
+			charset = schema.Charset // Overwrite default
 		}
 
-		if len(e.dbs[i].Collate) > 0 {
-			collation = e.dbs[i].Collate // Overwrite default
+		if len(schema.Collate) > 0 {
+			collation = schema.Collate // Overwrite default
 		}
 
-		if checker != nil && !checker.RequestVerification(ctx.GetSessionVars().ActiveRoles, e.dbs[i].Name.L, "", "", mysql.AllPrivMask) {
+		if checker != nil && !checker.RequestVerification(ctx.GetSessionVars().ActiveRoles, schema.Name.L, "", "", mysql.AllPrivMask) {
 			continue
 		}
 		record := types.MakeDatums(
 			infoschema.CatalogVal, // CATALOG_NAME
-			e.dbs[i].Name.O,       // SCHEMA_NAME
+			schema.Name.O,         // SCHEMA_NAME
 			charset,               // DEFAULT_CHARACTER_SET_NAME
 			collation,             // DEFAULT_COLLATION_NAME
 			nil,
 		)
 		rows = append(rows, record)
 	}
-	e.dbIdx += remainCount
 	return rows
+}
+
+func dataForViews(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.Datum, error) {
+	checker := privilege.GetPrivilegeManager(ctx)
+	var rows [][]types.Datum
+	for _, schema := range schemas {
+		for _, table := range schema.Tables {
+			if !table.IsView() {
+				continue
+			}
+			collation := table.Collate
+			charset := table.Charset
+			if collation == "" {
+				collation = mysql.DefaultCollationName
+			}
+			if charset == "" {
+				charset = mysql.DefaultCharset
+			}
+			if checker != nil && !checker.RequestVerification(ctx.GetSessionVars().ActiveRoles, schema.Name.L, table.Name.L, "", mysql.AllPrivMask) {
+				continue
+			}
+			record := types.MakeDatums(
+				infoschema.CatalogVal,           // TABLE_CATALOG
+				schema.Name.O,                   // TABLE_SCHEMA
+				table.Name.O,                    // TABLE_NAME
+				table.View.SelectStmt,           // VIEW_DEFINITION
+				table.View.CheckOption.String(), // CHECK_OPTION
+				"NO",                            // IS_UPDATABLE
+				table.View.Definer.String(),     // DEFINER
+				table.View.Security.String(),    // SECURITY_TYPE
+				charset,                         // CHARACTER_SET_CLIENT
+				collation,                       // COLLATION_CONNECTION
+			)
+			rows = append(rows, record)
+		}
+	}
+	return rows, nil
 }

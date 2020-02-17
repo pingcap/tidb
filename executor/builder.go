@@ -1337,10 +1337,10 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 					extractor: v.Extractor.(*plannercore.MetricTableExtractor),
 				},
 			}
-		case strings.ToLower(infoschema.TableSchemata):
+		case strings.ToLower(infoschema.TableSchemata), strings.ToLower(infoschema.TableViews):
 			return &MemTableReaderExec{
 				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
-				retriever: &schemataRetriever{
+				retriever: &memtableRetriever{
 					table:   v.Table,
 					columns: v.Columns,
 				},
