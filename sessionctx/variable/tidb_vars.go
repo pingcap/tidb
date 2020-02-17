@@ -110,18 +110,6 @@ const (
 	// tidb_pprof_sql_cpu is used to add label sql label to pprof result.
 	TiDBPProfSQLCPU = "tidb_pprof_sql_cpu"
 
-	// tidb_slow_log_threshold is used to set the slow log threshold in the server.
-	TiDBSlowLogThreshold = "tidb_slow_log_threshold"
-
-	// tidb_record_plan_in_slow_log is used to log the plan of the slow query.
-	TiDBRecordPlanInSlowLog = "tidb_record_plan_in_slow_log"
-
-	// tidb_enable_slow_log enables TiDB to log slow queries.
-	TiDBEnableSlowLog = "tidb_enable_slow_log"
-
-	// tidb_query_log_max_len is used to set the max length of the query in the log.
-	TiDBQueryLogMaxLen = "tidb_query_log_max_len"
-
 	// tidb_retry_limit is the maximum number of retries when committing a transaction.
 	TiDBRetryLimit = "tidb_retry_limit"
 
@@ -149,9 +137,6 @@ const (
 	// on: always enable table partition.
 	// off: always disable table partition.
 	TiDBEnableTablePartition = "tidb_enable_table_partition"
-
-	// TiDBCheckMb4ValueInUTF8 is used to control whether to enable the check wrong utf8 value.
-	TiDBCheckMb4ValueInUTF8 = "tidb_check_mb4_value_in_utf8"
 
 	// tidb_skip_isolation_level_check is used to control whether to return error when set unsupported transaction
 	// isolation level.
