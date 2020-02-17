@@ -366,7 +366,7 @@ var MetricTableMap = map[string]MetricTableDef{
 		Quantile: 0.999,
 	},
 	"pd_start_tso_wait_duration": {
-		PromQL:   "histogram_quantile($QUANTILE, sum(rate(tidb_pdclient_ts_future_wait_seconds_bucket[$RANGE_DURATION])) by (le,instance))",
+		PromQL:   "histogram_quantile($QUANTILE, sum(rate(tidb_pdclient_ts_future_wait_seconds_bucket{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (le,instance))",
 		Labels:   []string{"instance"},
 		Quantile: 0.999,
 		Comment:  "The quantile duration of the waiting time for getting the start timestamp oracle",
