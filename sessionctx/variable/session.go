@@ -540,6 +540,10 @@ type SessionVars struct {
 
 	// RowEncoder is reused in session for encode row data.
 	RowEncoder rowcodec.Encoder
+
+	// SequenceState cache all sequence's latest value accessed by lastval() builtins. It's a session scoped
+	// variable, and all public methods of SequenceState are currently-safe.
+	SequenceState *SequenceState
 }
 
 // PreparedParams contains the parameters of the current prepared statement when executing it.
@@ -623,6 +627,7 @@ func NewSessionVars() *SessionVars {
 		LockWaitTimeout:             DefInnodbLockWaitTimeout * 1000,
 		MetricSchemaStep:            DefTiDBMetricSchemaStep,
 		MetricSchemaRangeDuration:   DefTiDBMetricSchemaRangeDuration,
+		SequenceState:               NewSequenceState(),
 	}
 	vars.KVVars = kv.NewVariables(&vars.Killed)
 	vars.Concurrency = Concurrency{
