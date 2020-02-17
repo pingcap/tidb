@@ -84,6 +84,16 @@ func (ts *testFunctionsSuite) TestFuncCallExprRestore(c *C) {
 		{"next value for sequence", "NEXTVAL(`sequence`)"},
 		{"NeXt vAluE for seQuEncE2", "NEXTVAL(`seQuEncE2`)"},
 		{"NeXt vAluE for test.seQuEncE2", "NEXTVAL(`test`.`seQuEncE2`)"},
+		{"weight_string(a)", "WEIGHT_STRING(`a`)"},
+		{"Weight_stRing(test.a)", "WEIGHT_STRING(`test`.`a`)"},
+		{"weight_string('a')", "WEIGHT_STRING('a')"},
+		// TODO(bb7133): collate for literal values cannot be restored.
+		//{"weight_string(_utf8 'a' collate utf8_general_ci)", "WEIGHT_STRING(_UTF8'a' COLLATE utf8_general_ci)"},
+		{"weight_string(_utf8 'a')", "WEIGHT_STRING(_UTF8'a')"},
+		{"weight_string(a as char(5))", "WEIGHT_STRING(`a` AS CHAR(5))"},
+		{"weight_string(a as character(5))", "WEIGHT_STRING(`a` AS CHAR(5))"},
+		{"weight_string(a as binary(5))", "WEIGHT_STRING(`a` AS BINARY(5))"},
+		{"hex(weight_string('abc' as binary(5)))", "HEX(WEIGHT_STRING('abc' AS BINARY(5)))"},
 	}
 	extractNodeFunc := func(node Node) Node {
 		return node.(*SelectStmt).Fields.Fields[0].Expr
