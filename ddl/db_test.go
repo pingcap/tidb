@@ -2043,6 +2043,30 @@ func (s *testDBSuite4) TestCreateTableWithLike2(c *C) {
 	s.tk.MustExec("alter table t1 drop index idx2;")
 	checkTbl2()
 
+	// Test for table has tiflash  replica.
+	s.dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
+	s.tk.MustExec("drop table if exists t1,t2;")
+	s.tk.MustExec("create table t1 (a int) partition by hash(a) partitions 2;")
+	s.tk.MustExec("alter table t1 set tiflash replica 3 location labels 'a','b';")
+	t1 := testGetTableByName(c, s.s, "test_db", "t1")
+	// Mock for all partitions replica was available.
+	partition := t1.Meta().Partition
+	c.Assert(len(partition.Definitions), Equals, 2)
+	err := domain.GetDomain(s.tk.Se).DDL().UpdateTableReplicaInfo(s.tk.Se, partition.Definitions[0].ID, true)
+	c.Assert(err, IsNil)
+	err = domain.GetDomain(s.tk.Se).DDL().UpdateTableReplicaInfo(s.tk.Se, partition.Definitions[1].ID, true)
+	c.Assert(err, IsNil)
+	t1 = testGetTableByName(c, s.s, "test_db", "t1")
+	c.Assert(t1.Meta().TiFlashReplica, NotNil)
+	c.Assert(t1.Meta().TiFlashReplica.Available, IsTrue)
+	c.Assert(t1.Meta().TiFlashReplica.AvailablePartitionIDs, DeepEquals, []int64{partition.Definitions[0].ID, partition.Definitions[1].ID})
+
+	s.tk.MustExec("create table t2 like t1")
+	t2 := testGetTableByName(c, s.s, "test_db", "t2")
+	c.Assert(t2.Meta().TiFlashReplica.Count, Equals, t1.Meta().TiFlashReplica.Count)
+	c.Assert(t2.Meta().TiFlashReplica.LocationLabels, DeepEquals, t1.Meta().TiFlashReplica.LocationLabels)
+	c.Assert(t2.Meta().TiFlashReplica.Available, IsFalse)
+	c.Assert(t2.Meta().TiFlashReplica.AvailablePartitionIDs, HasLen, 0)
 }
 
 func (s *testDBSuite1) TestCreateTable(c *C) {
@@ -2188,7 +2212,7 @@ func (s *testDBSuite5) TestRepairTable(c *C) {
 	turnRepairModeAndInit(true)
 	defer turnRepairModeAndInit(false)
 	// Domain reload the tableInfo and add it into repairInfo.
-	s.tk.MustExec("CREATE TABLE origin (a int primary key, b varchar(10), c int auto_increment);")
+	s.tk.MustExec("CREATE TABLE origin (a int primary key auto_increment, b varchar(10), c int);")
 	// Repaired tableInfo has been filtered by `domain.InfoSchema()`, so get it in repairInfo.
 	originTableInfo, _ := domainutil.RepairInfo.GetRepairedTableInfoByTableName("test", "origin")
 
@@ -2219,7 +2243,7 @@ func (s *testDBSuite5) TestRepairTable(c *C) {
 	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
 
 	// Exec the repair statement to override the tableInfo.
-	s.tk.MustExec("admin repair table origin CREATE TABLE origin (a int primary key, b varchar(5), c int auto_increment);")
+	s.tk.MustExec("admin repair table origin CREATE TABLE origin (a int primary key auto_increment, b varchar(5), c int);")
 	c.Assert(repairErr, IsNil)
 
 	// Check the repaired tableInfo is exactly the same with old one in tableID, indexID, colID.
@@ -2241,7 +2265,7 @@ func (s *testDBSuite5) TestRepairTable(c *C) {
 
 	// Exec the show create table statement to make sure new tableInfo has been set.
 	result := s.tk.MustQuery("show create table origin")
-	c.Assert(result.Rows()[0][1], Equals, "CREATE TABLE `origin` (\n  `a` int(11) NOT NULL,\n  `b` varchar(5) DEFAULT NULL,\n  `c` int(11) NOT NULL AUTO_INCREMENT,\n  PRIMARY KEY (`a`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin")
+	c.Assert(result.Rows()[0][1], Equals, "CREATE TABLE `origin` (\n  `a` int(11) NOT NULL AUTO_INCREMENT,\n  `b` varchar(5) DEFAULT NULL,\n  `c` int(11) DEFAULT NULL,\n  PRIMARY KEY (`a`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin")
 
 }
 
@@ -3755,7 +3779,16 @@ func (s *testDBSuite1) TestSetTableFlashReplica(c *C) {
 	c.Assert(t.Meta().TiFlashReplica.Available, Equals, false)
 	c.Assert(t.Meta().TiFlashReplica.AvailablePartitionIDs, DeepEquals, []int64{partition.Definitions[0].ID})
 
-	// Mock for partition 1,2 replica was available.
+	// Mock for partition 0 replica become unavailable.
+	err = domain.GetDomain(s.tk.Se).DDL().UpdateTableReplicaInfo(s.tk.Se, partition.Definitions[0].ID, false)
+	c.Assert(err, IsNil)
+	t = s.testGetTable(c, "t_flash")
+	c.Assert(t.Meta().TiFlashReplica.Available, Equals, false)
+	c.Assert(t.Meta().TiFlashReplica.AvailablePartitionIDs, HasLen, 0)
+
+	// Mock for partition 0, 1,2 replica was available.
+	err = domain.GetDomain(s.tk.Se).DDL().UpdateTableReplicaInfo(s.tk.Se, partition.Definitions[0].ID, true)
+	c.Assert(err, IsNil)
 	err = domain.GetDomain(s.tk.Se).DDL().UpdateTableReplicaInfo(s.tk.Se, partition.Definitions[1].ID, true)
 	c.Assert(err, IsNil)
 	err = domain.GetDomain(s.tk.Se).DDL().UpdateTableReplicaInfo(s.tk.Se, partition.Definitions[2].ID, true)
