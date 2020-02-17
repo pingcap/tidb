@@ -34,6 +34,14 @@ import (
 	"github.com/pingcap/tidb/util/timeutil"
 )
 
+func init() {
+	// Some test depends on the values of timeutil.SystemLocation()
+	// If we don't SetSystemTZ() here, the value would change unpredictable.
+	// Affectd by the order whether a testsuite runs before or after integration test.
+	// Note, SetSystemTZ() is a sync.Once operation.
+	timeutil.SetSystemTZ("system")
+}
+
 func (s *testEvaluatorSuite) TestDate(c *C) {
 	tblDate := []struct {
 		Input  interface{}
