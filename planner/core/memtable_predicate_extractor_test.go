@@ -21,13 +21,11 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser"
-	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/set"
 )
 
@@ -77,11 +75,7 @@ func (s *extractorSuite) getLogicalMemTable(c *C, se session.Session, parser *pa
 	}
 	_, isDual := leafPlan.(*plannercore.LogicalTableDual)
 	if isDual {
-		return plannercore.LogicalMemTable{
-			DBName:    model.NewCIStr("information_schema"),
-			Extractor: nil,
-			TableInfo: nil,
-		}.Init(mock.NewContext(), 0)
+		return nil
 	}
 	return leafPlan.(*plannercore.LogicalMemTable)
 }
@@ -797,7 +791,7 @@ func (s *extractorSuite) TestInspectionResultTableExtractor(c *C) {
 	parser := parser.New()
 	for _, ca := range cases {
 		logicalMemTable := s.getLogicalMemTable(c, se, parser, ca.sql)
-		if logicalMemTable.Extractor == nil {
+		if logicalMemTable == nil {
 			c.Assert(ca.skipInspection, IsTrue)
 		} else {
 			clusterConfigExtractor := logicalMemTable.Extractor.(*plannercore.InspectionResultTableExtractor)
