@@ -50,7 +50,8 @@ func NewConfHandler(localConf *Config, reloadFunc ConfReloadFunc) (ConfHandler, 
 	return &constantConfHandler{localConf}, nil
 }
 
-// constantConfHandler is used in local or debug environment.
+// constantConfHandler is used when EnableDynamicConfig is false.a
+// The conf in it will always be the configuration that initialized when TiDB is started.
 type constantConfHandler struct {
 	conf *Config
 }
@@ -65,6 +66,10 @@ func (cch *constantConfHandler) SetConfig(conf *Config) error {
 	cch.conf = conf
 	return nil
 }
+
+var (
+	unspecifiedVersion = new(configpb.Version)
+)
 
 const (
 	pdConfHandlerRefreshInterval = 30 * time.Second
@@ -110,7 +115,7 @@ func newPDConfHandler(localConf *Config, reloadFunc ConfReloadFunc,
 	}
 	ch := &pdConfHandler{
 		id:         id,
-		version:    new(configpb.Version),
+		version:    unspecifiedVersion,
 		interval:   pdConfHandlerRefreshInterval,
 		exit:       make(chan struct{}),
 		pdConfCli:  pdCli,
@@ -170,8 +175,12 @@ func (ch *pdConfHandler) register() {
 	}
 
 	ch.registered = true
+	ch.reloadFunc(ch.curConf.Load().(*Config), newConf)
+	ch.curConf.Store(newConf)
 	ch.version = version
-	logutil.Logger(context.Background()).Info("register the config to PD successful", zap.String("new_config", conf))
+	logutil.Logger(context.Background()).Info("PDConfHandler register config successfully",
+		zap.String("version", version.String()),
+		zap.Any("new_config", newConf))
 }
 
 func (ch *pdConfHandler) run() {
@@ -222,7 +231,7 @@ func (ch *pdConfHandler) run() {
 			ch.version = version
 			logutil.Logger(context.Background()).Info("PDConfHandler update config successfully",
 				zap.String("fromVersion", ch.version.String()), zap.String("toVersion", version.String()),
-				zap.String("new_config", newConfContent))
+				zap.Any("new_config", newConf))
 		case <-ch.exit:
 			return
 		}

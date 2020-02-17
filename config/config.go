@@ -653,10 +653,10 @@ func isAllDeprecatedConfigItems(items []string) bool {
 }
 
 // InitializeConfig initialize the global config handler.
-// The function mergeCmdArgs is used to merge the config file with command arguments:
+// The function enforceCmdArgs is used to merge the config file with command arguments:
 // For example, if you start TiDB by the command "./tidb-server --port=3000", the port number should be
 // overwritten to 3000 and ignore the port number in the config file.
-func InitializeConfig(confPath string, configCheck, configStrict bool, reloadFunc ConfReloadFunc, mergeCmdArgs func(*Config)) {
+func InitializeConfig(confPath string, configCheck, configStrict bool, reloadFunc ConfReloadFunc, enforceCmdArgs func(*Config)) {
 	cfg := GetGlobalConfig()
 	var err error
 	if confPath != "" {
@@ -686,7 +686,7 @@ func InitializeConfig(confPath string, configCheck, configStrict bool, reloadFun
 			os.Exit(1)
 		}
 	}
-	mergeCmdArgs(cfg)
+	enforceCmdArgs(cfg)
 	globalConfHandler, err = NewConfHandler(cfg, reloadFunc)
 	terror.MustNil(err)
 	globalConfHandler.Start()
