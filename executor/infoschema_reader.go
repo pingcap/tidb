@@ -54,7 +54,7 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			e.rows, err = dataForViews(sctx, dbs)
 		}
 		if err != nil {
-			return nil, nil
+			return nil, err
 		}
 		e.initialized = true
 	}
@@ -63,12 +63,12 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 	maxCount := 1024
 	retCount := maxCount
 	if e.rowIdx+maxCount > len(e.rows) {
-		retCount = maxCount - (e.rowIdx + maxCount - len(e.rows))
+		retCount = len(e.rows) - e.rowIdx
 		e.retrieved = true
 	}
-	var ret [][]types.Datum
+	ret := make([][]types.Datum, retCount)
 	for i := e.rowIdx; i < e.rowIdx+retCount; i++ {
-		ret = append(ret, e.rows[i])
+		ret[i-e.rowIdx] = e.rows[i]
 	}
 	e.rowIdx += retCount
 	if len(e.columns) == len(e.table.Columns) {
