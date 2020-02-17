@@ -79,6 +79,7 @@ var defaultTransformationMap = map[memo.Operand][]Transformation{
 		NewRulePushLimitDownOuterJoin(),
 		NewRuleMergeAdjacentLimit(),
 		NewRuleTransformLimitToTableDual(),
+		NewRulePushLimitDownTiKVSingleGather(),
 	},
 	memo.OperandProjection: {
 		NewRuleEliminateProjection(),
@@ -1673,6 +1674,54 @@ func pushLimitDownOuterJoinToChild(limit *plannercore.LogicalLimit, outerGroup *
 	newLimitGroup := memo.NewGroupExpr(newLimit)
 	newLimitGroup.SetChildren(outerGroup)
 	return memo.NewGroupWithSchema(newLimitGroup, outerGroup.Prop.Schema)
+}
+
+// PushLimitDownTiKVSingleGather pushes the limit down to child of TiKVSingleGather.
+type PushLimitDownTiKVSingleGather struct {
+	baseRule
+}
+
+// NewRulePushLimitDownTiKVSingleGather creates a new Transformation PushLimitDownTiKVSingleGather.
+// The pattern of this rule is `Limit -> TiKVSingleGather`.
+func NewRulePushLimitDownTiKVSingleGather() Transformation {
+	rule := &PushLimitDownTiKVSingleGather{}
+	rule.pattern = memo.BuildPattern(
+		memo.OperandLimit,
+		memo.EngineTiDBOnly,
+		memo.NewPattern(memo.OperandTiKVSingleGather, memo.EngineTiDBOnly),
+	)
+	return rule
+}
+
+// Match implements Transformation interface.
+// Use appliedRuleSet in GroupExpr to avoid re-apply rules.
+func (r *PushLimitDownTiKVSingleGather) Match(expr *memo.ExprIter) bool {
+	return !expr.GetExpr().HasAppliedRule(r)
+}
+
+// OnTransform implements Transformation interface.
+// It transforms `Limit -> TiKVSingleGather` to `Limit(Final) -> TiKVSingleGather -> Limit(Partial)`.
+func (r *PushLimitDownTiKVSingleGather) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
+	limit := old.GetExpr().ExprNode.(*plannercore.LogicalLimit)
+	limitSchema := old.Children[0].Group.Prop.Schema
+	gather := old.Children[0].GetExpr().ExprNode.(*plannercore.TiKVSingleGather)
+	childGroup := old.Children[0].GetExpr().Children[0]
+
+	particalLimit := plannercore.LogicalLimit{
+		Count: limit.Count + limit.Offset,
+	}.Init(limit.SCtx(), limit.SelectBlockOffset())
+	partialLimitExpr := memo.NewGroupExpr(particalLimit)
+	partialLimitExpr.SetChildren(childGroup)
+	partialLimitGroup := memo.NewGroupWithSchema(partialLimitExpr, limitSchema).SetEngineType(childGroup.EngineType)
+
+	gatherExpr := memo.NewGroupExpr(gather)
+	gatherExpr.SetChildren(partialLimitGroup)
+	gatherGroup := memo.NewGroupWithSchema(gatherExpr, limitSchema)
+
+	finalLimitExpr := memo.NewGroupExpr(limit)
+	finalLimitExpr.SetChildren(gatherGroup)
+	finalLimitExpr.AddAppliedRule(r)
+	return []*memo.GroupExpr{finalLimitExpr}, true, false, nil
 }
 
 // EliminateOuterJoinBelowAggregation eliminate the outer join which below aggregation.

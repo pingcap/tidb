@@ -268,20 +268,6 @@ func (s *testSuite5) TestSetVar(c *C) {
 	tk.MustExec("set global tidb_constraint_check_in_place = 0")
 	tk.MustQuery(`select @@global.tidb_constraint_check_in_place;`).Check(testkit.Rows("0"))
 
-	tk.MustExec("set tidb_slow_log_threshold = 0")
-	tk.MustQuery("select @@session.tidb_slow_log_threshold;").Check(testkit.Rows("0"))
-	tk.MustExec("set tidb_slow_log_threshold = 30000")
-	tk.MustQuery("select @@session.tidb_slow_log_threshold;").Check(testkit.Rows("30000"))
-	_, err = tk.Exec("set global tidb_slow_log_threshold = 0")
-	c.Assert(err, NotNil)
-
-	tk.MustExec("set tidb_query_log_max_len = 0")
-	tk.MustQuery("select @@session.tidb_query_log_max_len;").Check(testkit.Rows("0"))
-	tk.MustExec("set tidb_query_log_max_len = 20")
-	tk.MustQuery("select @@session.tidb_query_log_max_len;").Check(testkit.Rows("20"))
-	_, err = tk.Exec("set global tidb_query_log_max_len = 20")
-	c.Assert(err, NotNil)
-
 	tk.MustExec("set tidb_batch_commit = 0")
 	tk.MustQuery("select @@session.tidb_batch_commit;").Check(testkit.Rows("0"))
 	tk.MustExec("set tidb_batch_commit = 1")
@@ -386,11 +372,6 @@ func (s *testSuite5) TestSetVar(c *C) {
 
 	tk.MustExec("set @@tidb_expensive_query_time_threshold=70")
 	tk.MustQuery("select @@tidb_expensive_query_time_threshold;").Check(testkit.Rows("70"))
-
-	tk.MustExec("set @@tidb_record_plan_in_slow_log = 1")
-	tk.MustQuery("select @@tidb_record_plan_in_slow_log;").Check(testkit.Rows("1"))
-	tk.MustExec("set @@tidb_record_plan_in_slow_log = 0")
-	tk.MustQuery("select @@tidb_record_plan_in_slow_log;").Check(testkit.Rows("0"))
 
 	tk.MustQuery("select @@tidb_store_limit;").Check(testkit.Rows("0"))
 	tk.MustExec("set @@tidb_store_limit = 100")
