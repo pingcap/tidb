@@ -63,6 +63,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/logutil"
@@ -1559,12 +1560,34 @@ func CreateSession(store kv.Storage) (Session, error) {
 
 // loadSystemTZ loads systemTZ from mysql.tidb
 func loadSystemTZ(se *session) (string, error) {
-	sql := `select variable_value from mysql.tidb where variable_name = 'system_tz'`
+	return loadParameter(se, "system_tz")
+}
+
+// loadCollationParameter loads collation parameter from mysql.tidb
+func loadCollationParameter(se *session) (bool, error) {
+	para, err := loadParameter(se, tidbNewCollationEnabled)
+	if err != nil {
+		return false, err
+	}
+	if para == "true" {
+		return true, nil
+	} else if para == "false" {
+		return false, nil
+	}
+	logutil.BgLogger().Error(
+		"Unexpected value of 'new_collation_enabled' in 'mysql.tidb', use 'false' instead",
+		zap.String("value", para))
+	return false, nil
+}
+
+// loadParameter loads read-only parameter from mysql.tidb
+func loadParameter(se *session, name string) (string, error) {
+	sql := "select variable_value from mysql.tidb where variable_name = '" + name + "'"
 	rss, errLoad := se.Execute(context.Background(), sql)
 	if errLoad != nil {
 		return "", errLoad
 	}
-	// the record of mysql.tidb under where condition: variable_name = "system_tz" should shall only be one.
+	// the record of mysql.tidb under where condition: variable_name = $name should shall only be one.
 	defer func() {
 		if err := rss[0].Close(); err != nil {
 			logutil.BgLogger().Error("close result set error", zap.Error(err))
@@ -1610,8 +1633,15 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	if err != nil {
 		return nil, err
 	}
-
 	timeutil.SetSystemTZ(tz)
+
+	// get the flag from `mysql`.`tidb` which indicating if new collations are enabled.
+	newCollationEnabled, err := loadCollationParameter(se)
+	if err != nil {
+		return nil, err
+	}
+	collate.SetNewCollationEnabled(newCollationEnabled)
+
 	dom := domain.GetDomain(se)
 	dom.InitExpensiveQueryHandle()
 
@@ -1747,7 +1777,7 @@ func CreateSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 
 const (
 	notBootstrapped         = 0
-	currentBootstrapVersion = version39
+	currentBootstrapVersion = version40
 )
 
 func getStoreBootstrapVersion(store kv.Storage) int64 {
