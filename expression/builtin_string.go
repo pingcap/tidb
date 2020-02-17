@@ -3790,7 +3790,8 @@ func (b *builtinWeightStringSig) evalString(row chunk.Row) (string, bool, error)
 		return "", true, nil
 	}
 
-	// TODO: refactor padding codes after padding is supported by collators.
+	var ctor collate.Collator
+	// TODO: refactor padding codes after padding is implemented by all collators.
 	switch b.padding {
 	case weightStringPaddingAsChar:
 		runes := []rune(str)
@@ -3800,6 +3801,7 @@ func (b *builtinWeightStringSig) evalString(row chunk.Row) (string, bool, error)
 		} else if b.length > lenRunes {
 			str += strings.Repeat(" ", b.length - lenRunes)
 		}
+		ctor = collate.GetCollator(b.args[0].GetType().Collate)
 	case weightStringPaddingAsBinary:
 		lenStr := len(str)
 		if b.length < lenStr {
@@ -3807,8 +3809,10 @@ func (b *builtinWeightStringSig) evalString(row chunk.Row) (string, bool, error)
 		} else if b.length > lenStr {
 			str += strings.Repeat("\x00", b.length - lenStr)
 		}
+		ctor = collate.GetCollator(charset.CollationBin)
+	default:
+		return "", false, ErrIncorrectType.GenWithStackByArgs(ast.WeightString, string(b.padding))
 	}
 
-	ctor := collate.GetCollator(b.args[0].GetType().Collate)
-	return string(ctor.Key(str)), false, nil
+	return string(ctor.Key(str, collate.CollatorOption{PadLen:b.length})), false, nil
 }
