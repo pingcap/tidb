@@ -81,7 +81,6 @@ func (s *Server) startHTTPServer() {
 	router.Handle("/stats/dump/{db}/{table}/{snapshot}", s.newStatsHistoryHandler()).Name("StatsHistoryDump")
 
 	router.Handle("/settings", settingsHandler{}).Name("Settings")
-	router.Handle("/reload-config", configReloadHandler{}).Name("ConfigReload")
 	router.Handle("/binlog/recover", binlogRecover{}).Name("BinlogRecover")
 
 	tikvHandlerTool := s.newTikvHandlerTool()
