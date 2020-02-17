@@ -115,7 +115,7 @@ func TestSyncerSimple(t *testing.T) {
 				t.Fatalf("get chan events count less than 1")
 			}
 			checkRespKV(t, 1, DDLGlobalSchemaVersion, fmt.Sprintf("%v", currentVer), resp.Events[0].Kv)
-		case <-time.After(20 * time.Millisecond):
+		case <-time.After(10 * time.Millisecond):
 			time.Sleep(2000 * time.Millisecond)
 			t.Fatalf("get udpate version failed")
 		}
