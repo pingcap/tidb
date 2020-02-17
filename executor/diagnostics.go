@@ -80,7 +80,7 @@ type (
 	// occurred in the past
 	criticalErrorInspection struct{ inspectionName }
 
-	// thresholdCheckInspection is used to check some threshold value, like cpu usage, leader count change.
+	// thresholdCheckInspection is used to check some threshold value, like CPU usage, leader count change.
 	thresholdCheckInspection struct{ inspectionName }
 )
 
