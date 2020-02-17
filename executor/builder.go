@@ -2241,6 +2241,9 @@ func buildNoRangeIndexLookUpReaderWithPointGet(b *executorBuilder, v *plannercor
 		dataReaderBuilder: &dataReaderBuilder{executorBuilder: b},
 		feedback:          statistics.NewQueryFeedback(0, nil, 0, false),
 	}
+	if v.ExtraHandleCol != nil {
+		e.handleIdx = v.ExtraHandleCol.Index
+	}
 	e.feedback.Invalidate()
 	return e, nil
 }

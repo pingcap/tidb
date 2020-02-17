@@ -378,6 +378,9 @@ func (e *IndexLookUpExecutor) indexSideIsPointGet() bool {
 // Open implements the Executor Open interface.
 func (e *IndexLookUpExecutor) Open(ctx context.Context) error {
 	var err error
+	if err = e.baseExecutor.Open(ctx); err != nil {
+		return err
+	}
 	if e.corColInAccess {
 		e.ranges, err = rebuildIndexRanges(e.ctx, e.idxPlans[0].(*plannercore.PhysicalIndexScan), e.idxCols, e.colLens)
 		if err != nil {
@@ -705,7 +708,9 @@ func (w *indexWorker) fetchHandles(ctx context.Context, result distsql.SelectRes
 		}
 	}()
 	var chk *chunk.Chunk
-	if w.checkIndexValue != nil {
+	if exec != nil {
+		chk = chunk.NewChunkWithCapacity(exec.base().retFieldTypes, w.idxLookup.maxChunkSize)
+	} else if w.checkIndexValue != nil {
 		chk = chunk.NewChunkWithCapacity(w.idxColTps, w.maxChunkSize)
 	} else {
 		chk = chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}, w.idxLookup.maxChunkSize)
