@@ -56,7 +56,7 @@ var MetricTableMap = map[string]MetricTableDef{
 		Comment:  "The quantile of TiDB slow query statistics with slow query total cop wait time(second)",
 	},
 	"tidb_ops_internal": {
-		PromQL:  "sum(rate(tidb_session_restricted_sql_total[$RANGE_DURATION])) by (instance)",
+		PromQL:  "sum(rate(tidb_session_restricted_sql_total{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (instance)",
 		Labels:  []string{"instance"},
 		Comment: "TiDB internal SQL is used by TiDB itself.",
 	},

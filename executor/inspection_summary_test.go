@@ -27,7 +27,7 @@ import (
 	"github.com/pingcap/tidb/util/testkit"
 )
 
-var _ = Suite(&inspectionSummarySuite{})
+var _ = SerialSuites(&inspectionSummarySuite{})
 
 type inspectionSummarySuite struct {
 	store kv.Storage
