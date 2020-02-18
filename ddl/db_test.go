@@ -2722,7 +2722,7 @@ LOOP:
 		select {
 		case err := <-done:
 			c.Assert(err, NotNil)
-			c.Assert(err.Error(), Equals, "[ddl:12]cancelled DDL job")
+			c.Assert(err.Error() == "[ddl:12]cancelled DDL job" || err.Error() == "[ddl:1265]Data truncated for column 'c2' at row 1", IsTrue)
 			break LOOP
 		case <-ticker.C:
 			s.mustExec(c, "insert into t1(c2) values (null);")
