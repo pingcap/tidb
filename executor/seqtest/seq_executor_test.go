@@ -1209,7 +1209,7 @@ func (s *seqTestSuite) TestAutoRandIDRetry(c *C) {
 	tk.MustExec("begin")
 	tk.MustExec("insert into t values ()")
 	c.Assert(failpoint.Enable(fpName, `return(true)`), IsNil)
-	// insertion failed, 6 is skipped.
+	// Insertion failure will skip the 6 in retryInfo.
 	tk.MustGetErrCode("commit", mysql.ErrTxnRetryable)
 	c.Assert(failpoint.Disable(fpName), IsNil)
 
@@ -1233,7 +1233,7 @@ func (s *seqTestSuite) TestAutoRandRecoverTable(c *C) {
 		}
 	}(ddl.IsEmulatorGCEnable())
 
-	// disable emulator GC.
+	// Disable emulator GC.
 	// Otherwise emulator GC will delete table record as soon as possible after execute drop table ddl.
 	ddl.EmulatorGCDisable()
 	gcTimeFormat := "20060102-15:04:05 -0700 MST"
@@ -1242,7 +1242,7 @@ func (s *seqTestSuite) TestAutoRandRecoverTable(c *C) {
 			       ON DUPLICATE KEY
 			       UPDATE variable_value = '%[1]s'`
 
-	// set GC safe point
+	// Set GC safe point.
 	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
 	err := gcutil.EnableGC(tk.Se)
 	c.Assert(err, IsNil)
@@ -1256,7 +1256,7 @@ func (s *seqTestSuite) TestAutoRandRecoverTable(c *C) {
 	autoid.SetStep(autoRandIDStep)
 	defer autoid.SetStep(stp)
 
-	// check rebase auto_random id.
+	// Check rebase auto_random id.
 	tk.MustExec("create table t_recover_auto_rand (a int auto_random(5) primary key);")
 	tk.MustExec("insert into t_recover_auto_rand values (),(),()")
 	tk.MustExec("drop table t_recover_auto_rand")
