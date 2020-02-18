@@ -15,10 +15,8 @@ package infoschema
 
 import (
 	"fmt"
-	"strings"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/kv"
@@ -60,23 +58,6 @@ func (it *inspectionSchemaTable) IterRecords(ctx sessionctx.Context, startKey kv
 	if len(startKey) != 0 {
 		return table.ErrUnsupportedOp
 	}
-
-	failpoint.Inject("mockInspectionSchemaClusterConfigData", func(val failpoint.Value) {
-		s, ok := val.(string)
-		if ok {
-			configs := strings.Split(s, ";")
-			rows := make([][]types.Datum, 0, len(configs))
-			for _, config := range configs {
-				parts := strings.Split(config, ",")
-				row := make([]types.Datum, 0, len(parts))
-				for _, part := range parts {
-					row = append(row, types.NewDatum(part))
-				}
-				rows = append(rows, row)
-			}
-			sessionVars.InspectionTableCache["cluster_config"] = variable.TableSnapshot{Rows: rows}
-		}
-	})
 
 	// Obtain data from cache first.
 	cached, found := sessionVars.InspectionTableCache[it.meta.Name.L]
