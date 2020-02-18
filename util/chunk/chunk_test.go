@@ -116,6 +116,21 @@ func (s *testChunkSuite) TestChunk(c *check.C) {
 	c.Assert(chk.GetRow(0).GetInt64(1), check.Equals, int64(1))
 	c.Assert(chk.NumRows(), check.Equals, 1)
 
+	// AppendRowByColIdxs and AppendPartialRowByColIdxs can do projection from row.
+	chk = newChunk(8, 8)
+	row = MutRowFromValues(0, 1, 2, 3).ToRow()
+	chk.AppendRowByColIdxs(row, []int{3})
+	chk.AppendRowByColIdxs(row, []int{1})
+	chk.AppendRowByColIdxs(row, []int{})
+	c.Assert(chk.Column(0).Int64s(), check.DeepEquals, []int64{3, 1})
+	c.Assert(chk.numVirtualRows, check.Equals, 3)
+	chk.AppendPartialRowByColIdxs(1, row, []int{2})
+	chk.AppendPartialRowByColIdxs(1, row, []int{0})
+	chk.AppendPartialRowByColIdxs(0, row, []int{1, 3})
+	c.Assert(chk.Column(0).Int64s(), check.DeepEquals, []int64{3, 1, 1})
+	c.Assert(chk.Column(1).Int64s(), check.DeepEquals, []int64{2, 0, 3})
+	c.Assert(chk.numVirtualRows, check.Equals, 3)
+
 	// Test Reset.
 	chk = newChunk(0)
 	chk.AppendString(0, "abcd")

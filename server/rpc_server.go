@@ -35,7 +35,6 @@ import (
 	"github.com/pingcap/tidb/util/stringutil"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials"
 )
 
 // NewRPCServer creates a new rpc server.
@@ -46,16 +45,7 @@ func NewRPCServer(config *config.Config, dom *domain.Domain, sm util.SessionMana
 		}
 	}()
 
-	var s *grpc.Server
-	if len(config.Security.ClusterSSLCA) != 0 {
-		tlsConfig, err := config.Security.ToTLSConfig()
-		if err == nil {
-			s = grpc.NewServer(grpc.Creds(credentials.NewTLS(tlsConfig)))
-		}
-	}
-	if s == nil {
-		s = grpc.NewServer()
-	}
+	s := grpc.NewServer()
 	rpcSrv := &rpcServer{
 		DiagnosticsServer: sysutil.NewDiagnosticsServer(config.Log.File.Filename),
 		dom:               dom,
