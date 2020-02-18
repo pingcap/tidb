@@ -143,7 +143,6 @@ var (
 )
 
 var (
-	cfg      *config.Config
 	storage  kv.Storage
 	dom      *domain.Domain
 	svr      *server.Server
@@ -158,9 +157,8 @@ func main() {
 	}
 	registerStores()
 	registerMetrics()
-	configWarning := loadConfig()
-	overrideConfig()
-	if err := cfg.Valid(); err != nil {
+	config.InitializeConfig(*configPath, *configCheck, *configStrict, reloadConfig, overrideConfig)
+	if err := config.GetGlobalConfig().Valid(); err != nil {
 		fmt.Fprintln(os.Stderr, "invalid config", err)
 		os.Exit(1)
 	}
@@ -171,12 +169,6 @@ func main() {
 	setGlobalVars()
 	setCPUAffinity()
 	setupLog()
-	// If configStrict had been specified, and there had been an error, the server would already
-	// have exited by now. If configWarning is not an empty string, write it to the log now that
-	// it's been properly set up.
-	if configWarning != "" {
-		log.Warn(configWarning)
-	}
 	setupTracing() // Should before createServer and after setup config.
 	printInfo()
 	setupBinlogClient()
@@ -238,6 +230,7 @@ func registerMetrics() {
 }
 
 func createStoreAndDomain() {
+	cfg := config.GetGlobalConfig()
 	fullPath := fmt.Sprintf("%s://%s", cfg.Store, cfg.Path)
 	var err error
 	storage, err = kvstore.New(fullPath)
@@ -248,6 +241,7 @@ func createStoreAndDomain() {
 }
 
 func setupBinlogClient() {
+	cfg := config.GetGlobalConfig()
 	if !cfg.Binlog.Enable {
 		return
 	}
@@ -268,9 +262,9 @@ func setupBinlogClient() {
 	}
 
 	if len(cfg.Binlog.BinlogSocket) == 0 {
-		client, err = pumpcli.NewPumpsClient(cfg.Path, cfg.Binlog.Strategy, parseDuration(cfg.Binlog.WriteTimeout, 0), securityOption)
+		client, err = pumpcli.NewPumpsClient(cfg.Path, cfg.Binlog.Strategy, parseDuration(cfg.Binlog.WriteTimeout), securityOption)
 	} else {
-		client, err = pumpcli.NewLocalPumpsClient(cfg.Path, cfg.Binlog.BinlogSocket, parseDuration(cfg.Binlog.WriteTimeout, 0), securityOption)
+		client, err = pumpcli.NewLocalPumpsClient(cfg.Path, cfg.Binlog.BinlogSocket, parseDuration(cfg.Binlog.WriteTimeout), securityOption)
 	}
 
 	terror.MustNil(err)
@@ -312,6 +306,7 @@ func prometheusPushClient(addr string, interval time.Duration) {
 }
 
 func instanceName() string {
+	cfg := config.GetGlobalConfig()
 	hostname, err := os.Hostname()
 	if err != nil {
 		return "unknown"
@@ -320,16 +315,13 @@ func instanceName() string {
 }
 
 // parseDuration parses lease argument string.
-func parseDuration(lease string, minVal time.Duration) time.Duration {
+func parseDuration(lease string) time.Duration {
 	dur, err := time.ParseDuration(lease)
 	if err != nil {
 		dur, err = time.ParseDuration(lease + "s")
 	}
-	if minVal < 0 {
-		minVal = 0
-	}
-	if err != nil || dur < minVal {
-		log.Fatal("invalid lease duration", zap.Duration("min value", minVal), zap.String("lease", lease))
+	if err != nil || dur < 0 {
+		log.Fatal("invalid lease duration", zap.String("lease", lease))
 	}
 	return dur
 }
@@ -342,62 +334,6 @@ func flagBoolean(name string, defaultVal bool, usage string) *bool {
 	}
 	return flag.Bool(name, defaultVal, usage)
 }
-
-var deprecatedConfig = map[string]struct{}{
-	"pessimistic-txn.ttl": {},
-	"log.rotate":          {},
-}
-
-func isDeprecatedConfigItem(items []string) bool {
-	for _, item := range items {
-		if _, ok := deprecatedConfig[item]; !ok {
-			return false
-		}
-	}
-	return true
-}
-
-func loadConfig() string {
-	cfg = config.GetGlobalConfig()
-	if *configPath != "" {
-		// Not all config items are supported now.
-		config.SetConfReloader(*configPath, reloadConfig, hotReloadConfigItems...)
-
-		err := cfg.Load(*configPath)
-		if err == nil {
-			return ""
-		}
-
-		// Unused config item erro turns to warnings.
-		if tmp, ok := err.(*config.ErrConfigValidationFailed); ok {
-			if isDeprecatedConfigItem(tmp.UndecodedItems) {
-				return err.Error()
-			}
-			// This block is to accommodate an interim situation where strict config checking
-			// is not the default behavior of TiDB. The warning message must be deferred until
-			// logging has been set up. After strict config checking is the default behavior,
-			// This should all be removed.
-			if !*configCheck && !*configStrict {
-				return err.Error()
-			}
-		}
-
-		terror.MustNil(err)
-	} else {
-		// configCheck should have the config file specified.
-		if *configCheck {
-			fmt.Fprintln(os.Stderr, "config check failed", errors.New("no config file specified for config-check"))
-			os.Exit(1)
-		}
-	}
-	return ""
-}
-
-// hotReloadConfigItems lists all config items which support hot-reload.
-var hotReloadConfigItems = []string{"Performance.MaxProcs", "Performance.MaxMemory", "Performance.CrossJoin",
-	"Performance.FeedbackProbability", "Performance.QueryFeedbackLimit", "Performance.PseudoEstimateRatio",
-	"OOMUseTmpStorage", "OOMAction", "MemQuotaQuery", "StmtSummary.MaxStmtCount", "StmtSummary.MaxSQLLength", "Log.QueryLogMaxLen",
-	"TiKVClient.EnableChunkRPC", "TiKVClient.StoreLimit"}
 
 func reloadConfig(nc, c *config.Config) {
 	// Just a part of config items need to be reload explicitly.
@@ -425,7 +361,8 @@ func reloadConfig(nc, c *config.Config) {
 	}
 }
 
-func overrideConfig() {
+// overrideConfig considers command arguments and overrides some config items in the Config.
+func overrideConfig(cfg *config.Config) {
 	actualFlags := make(map[string]bool)
 	flag.Visit(func(f *flag.Flag) {
 		actualFlags[f.Name] = true
@@ -529,12 +466,13 @@ func overrideConfig() {
 }
 
 func setGlobalVars() {
-	ddlLeaseDuration := parseDuration(cfg.Lease, cfg.MinDDLLease())
+	cfg := config.GetGlobalConfig()
+	ddlLeaseDuration := parseDuration(cfg.Lease)
 	session.SetSchemaLease(ddlLeaseDuration)
 	runtime.GOMAXPROCS(int(cfg.Performance.MaxProcs))
-	statsLeaseDuration := parseDuration(cfg.Performance.StatsLease, 0)
+	statsLeaseDuration := parseDuration(cfg.Performance.StatsLease)
 	session.SetStatsLease(statsLeaseDuration)
-	bindinfo.Lease = parseDuration(cfg.Performance.BindInfoLease, 0)
+	bindinfo.Lease = parseDuration(cfg.Performance.BindInfoLease)
 	domain.RunAutoAnalyze = cfg.Performance.RunAutoAnalyze
 	statistics.FeedbackProbability.Store(cfg.Performance.FeedbackProbability)
 	handle.MaxQueryFeedbackCount.Store(int64(cfg.Performance.QueryFeedbackLimit))
@@ -576,13 +514,14 @@ func setGlobalVars() {
 		}
 	}
 
-	tikv.CommitMaxBackoff = int(parseDuration(cfg.TiKVClient.CommitTimeout, 0).Seconds() * 1000)
+	tikv.CommitMaxBackoff = int(parseDuration(cfg.TiKVClient.CommitTimeout).Seconds() * 1000)
 	tikv.RegionCacheTTLSec = int64(cfg.TiKVClient.RegionCacheTTL)
 	domainutil.RepairInfo.SetRepairMode(cfg.RepairMode)
 	domainutil.RepairInfo.SetRepairTableList(cfg.RepairTableList)
 }
 
 func setupLog() {
+	cfg := config.GetGlobalConfig()
 	err := logutil.InitZapLogger(cfg.Log.ToLogConfig())
 	terror.MustNil(err)
 
@@ -609,6 +548,7 @@ func printInfo() {
 }
 
 func createServer() {
+	cfg := config.GetGlobalConfig()
 	driver := server.NewTiDBDriver(storage)
 	var err error
 	svr, err = server.NewServer(cfg, driver)
@@ -627,6 +567,7 @@ func serverShutdown(isgraceful bool) {
 }
 
 func setupMetrics() {
+	cfg := config.GetGlobalConfig()
 	// Enable the mutex profile, 1/10 of mutex blocking event sampling.
 	runtime.SetMutexProfileFraction(10)
 	systimeErrHandler := func() {
@@ -647,6 +588,7 @@ func setupMetrics() {
 }
 
 func setupTracing() {
+	cfg := config.GetGlobalConfig()
 	tracingCfg := cfg.OpenTracing.ToTracingConfig()
 	tracingCfg.ServiceName = "TiDB"
 	tracer, _, err := tracingCfg.NewTracer()
