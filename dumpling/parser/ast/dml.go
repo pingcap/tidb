@@ -803,6 +803,8 @@ type SelectStmt struct {
 	IsInBraces bool
 	// QueryBlockOffset indicates the order of this SelectStmt if counted from left to right in the sql text.
 	QueryBlockOffset int
+	// SelectIntoOpt is the select-into option.
+	SelectIntoOpt *SelectIntoOption
 }
 
 // Restore implements Node interface.
@@ -921,6 +923,13 @@ func (n *SelectStmt) Restore(ctx *format.RestoreCtx) error {
 	case SelectLockForUpdate, SelectLockForUpdateNoWait:
 		ctx.WritePlain(" ")
 		ctx.WriteKeyWord(n.LockTp.String())
+	}
+
+	if n.SelectIntoOpt != nil {
+		ctx.WritePlain(" ")
+		if err := n.SelectIntoOpt.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while restore SelectStmt.SelectIntoOpt")
+		}
 	}
 	return nil
 }
@@ -1285,15 +1294,17 @@ const (
 )
 
 type FieldItem struct {
-	Type  int
-	Value string
+	Type        int
+	Value       string
+	OptEnclosed bool
 }
 
 // FieldsClause represents fields references clause in load data statement.
 type FieldsClause struct {
-	Terminated string
-	Enclosed   byte
-	Escaped    byte
+	Terminated  string
+	Enclosed    byte
+	Escaped     byte
+	OptEnclosed bool
 }
 
 // Restore for FieldsClause
@@ -1305,6 +1316,9 @@ func (n *FieldsClause) Restore(ctx *format.RestoreCtx) error {
 			ctx.WriteString(n.Terminated)
 		}
 		if n.Enclosed != 0 {
+			if n.OptEnclosed {
+				ctx.WriteKeyWord(" OPTIONALLY")
+			}
 			ctx.WriteKeyWord(" ENCLOSED BY ")
 			ctx.WriteString(string(n.Enclosed))
 		}
@@ -2301,6 +2315,54 @@ func (n *WindowSpec) Accept(v Visitor) (Node, bool) {
 			return n, false
 		}
 		n.Frame = node.(*FrameClause)
+	}
+	return v.Leave(n)
+}
+
+type SelectIntoType int
+
+const (
+	SelectIntoOutfile SelectIntoType = iota + 1
+	SelectIntoDumpfile
+	SelectIntoVars
+)
+
+type SelectIntoOption struct {
+	node
+
+	Tp         SelectIntoType
+	FileName   string
+	FieldsInfo *FieldsClause
+	LinesInfo  *LinesClause
+}
+
+// Restore implements Node interface.
+func (n *SelectIntoOption) Restore(ctx *format.RestoreCtx) error {
+	if n.Tp != SelectIntoOutfile {
+		// only support SELECT ... INTO OUTFILE now
+		return errors.New("Unsupported SelectionInto type")
+	}
+
+	ctx.WriteKeyWord("INTO OUTFILE ")
+	ctx.WriteString(n.FileName)
+	if n.FieldsInfo != nil {
+		if err := n.FieldsInfo.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while restore SelectInto.FieldsInfo")
+		}
+	}
+	if n.LinesInfo != nil {
+		if err := n.LinesInfo.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while restore SelectInto.LinesInfo")
+		}
+	}
+	return nil
+}
+
+// Accept implements Node Accept interface.
+func (n *SelectIntoOption) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
 	}
 	return v.Leave(n)
 }
