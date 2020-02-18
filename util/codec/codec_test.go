@@ -1119,6 +1119,7 @@ func (s *testCodecSuite) TestHashChunkRow(c *C) {
 	testHashChunkRowEqual(c, "x", []byte("x"), true)
 	testHashChunkRowEqual(c, "x", []byte("y"), false)
 }
+
 func (s *testCodecSuite) TestValueSizeOfSignedInt(c *C) {
 	testCase := []int64{64, 8192, 1048576, 134217728, 17179869184, 2199023255552, 281474976710656, 36028797018963968, 4611686018427387904}
 	var b []byte
