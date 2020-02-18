@@ -779,7 +779,7 @@ func (m *Meta) GetLastHistoryDDLJobsIterator() (*LastJobIterator, error) {
 	}, nil
 }
 
-// GetLastJobs gets next several jobs.
+// GetNextJobs gets next several jobs.
 func (i *LastJobIterator) GetNextJobs(num int, jobs []*model.Job) ([]*model.Job, error) {
 	if len(jobs) < num {
 		jobs = make([]*model.Job, 0, num)
@@ -801,7 +801,7 @@ func (i *LastJobIterator) GetNextJobs(num int, jobs []*model.Job) ([]*model.Job,
 	return jobs, nil
 }
 
-// GetLastJobs gets last several jobs.
+// Valid estimate whether it has next value
 func (i *LastJobIterator) Valid() bool {
 	return i.iter.Valid()
 }

@@ -158,6 +158,7 @@ func dataForViews(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.Da
 	return rows, nil
 }
 
+// DDLJobsReaderExec executes DDLJobs information retrieving
 type DDLJobsReaderExec struct {
 	baseExecutor
 	cursor         int
@@ -167,7 +168,7 @@ type DDLJobsReaderExec struct {
 	is             infoschema.InfoSchema
 }
 
-// retrieve implements the infoschemaRetriever interface
+// Open implements the Executor Next interface.
 func (e *DDLJobsReaderExec) Open(ctx context.Context) error {
 	if err := e.baseExecutor.Open(ctx); err != nil {
 		return err
