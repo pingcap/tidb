@@ -742,9 +742,11 @@ func (e *Explain) explainPlanInRowFormat(p Plan, taskType, driverSide, indent st
 	if physPlan, ok := p.(PhysicalPlan); ok {
 		// indicate driven side and driving side of 'join'.
 		// See issue https://github.com/pingcap/tidb/issues/14602.
+		// TODO: optimize logic of here, instand of list all join type.
 		driverSideInfo := make([]string, len(physPlan.Children()))
 		switch physPlan.(type) {
-		case *PhysicalIndexJoin, *PhysicalHashJoin, *PhysicalMergeJoin:
+		case *basePhysicalJoin, *PhysicalIndexJoin, *PhysicalHashJoin, 
+			*PhysicalMergeJoin, *PhysicalIndexMergeJoin, *PhysicalIndexHashJoin :
 			if len(driverSideInfo) < 2 {
 				break
 			}
