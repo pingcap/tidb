@@ -74,7 +74,7 @@ func AggregateEvalType(fts []*FieldType, flag *uint) EvalType {
 		}
 		et := ft.EvalType()
 		rft := ft
-		if (IsTypeBlob(ft.Tp) || IsTypeVarchar(ft.Tp) || IsTypeChar(ft.Tp)) && mysql.HasBinaryFlag(ft.Flag) {
+		if (IsTypeBlob(ft.Tp) || IsTypeVarchar(ft.Tp) || IsTypeChar(ft.Tp)) && ft.Charset == charset.CharsetBin {
 			gotBinString = true
 		}
 		if !gotFirst {

@@ -19,6 +19,7 @@ package expression
 
 import (
 	"fmt"
+	"github.com/pingcap/parser/charset"
 	"math"
 	"regexp"
 	"strconv"
@@ -5350,7 +5351,7 @@ func (b *builtinAddStringAndStringSig) evalString(row chunk.Row) (result string,
 		return "", isNull, err
 	}
 	arg1Type := b.args[1].GetType()
-	if mysql.HasBinaryFlag(arg1Type.Flag) {
+	if arg1Type.Charset == charset.CharsetBin {
 		return "", true, nil
 	}
 	arg1Str, isNull, err = b.args[1].EvalString(b.ctx, row)
@@ -6220,7 +6221,7 @@ func (b *builtinSubStringAndStringSig) evalString(row chunk.Row) (result string,
 		return "", isNull, err
 	}
 	arg1Type := b.args[1].GetType()
-	if mysql.HasBinaryFlag(arg1Type.Flag) {
+	if arg1Type.Charset == charset.CharsetBin {
 		return "", true, nil
 	}
 	s, isNull, err = b.args[1].EvalString(b.ctx, row)

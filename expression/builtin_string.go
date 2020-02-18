@@ -169,9 +169,13 @@ func reverseRunes(origin []rune) []rune {
 // SetBinFlagOrBinStr sets resTp to binary string if argTp is a binary string,
 // if not, sets the binary flag of resTp to true if argTp has binary flag.
 func SetBinFlagOrBinStr(argTp *types.FieldType, resTp *types.FieldType) {
+	isBinaryCollation := func(collation string) bool {
+		// @TODO need define a const for "_bin".
+		return strings.Count(collation, "_bin") == 1
+	}
 	if types.IsBinaryStr(argTp) {
 		types.SetBinChsClnFlag(resTp)
-	} else if mysql.HasBinaryFlag(argTp.Flag) || !types.IsNonBinaryStr(argTp) {
+	} else if isBinaryCollation(argTp.Collate) || !types.IsNonBinaryStr(argTp) {
 		resTp.Flag |= mysql.BinaryFlag
 	}
 }
