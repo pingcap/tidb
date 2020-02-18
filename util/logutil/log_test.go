@@ -97,6 +97,7 @@ func (s *testLogSuite) TestLogging(c *C) {
 
 func (s *testLogSuite) TestSlowQueryLogger(c *C) {
 	fileName := "slow_query"
+	os.Remove(fileName)
 	conf := NewLogConfig("info", DefaultLogFormat, fileName, NewFileLogConfig(DefaultLogMaxSize), false)
 	c.Assert(conf.File.MaxSize, Equals, DefaultLogMaxSize)
 	err := InitLogger(conf)
@@ -168,6 +169,13 @@ func (s *testLogSuite) TestLoggerKeepOrder(c *C) {
 }
 
 func (s *testLogSuite) TestSlowQueryZapLogger(c *C) {
+	if runtime.GOOS == "windows" {
+		// Skip this test on windows for two reasons:
+		// 1. The pattern match fails somehow. It seems windows treat \n as slash and character n.
+		// 2. Remove file doesn't work as long as the log instance hold the file.
+		c.Skip("skip on windows")
+	}
+
 	fileName := "slow_query"
 	conf := NewLogConfig("info", DefaultLogFormat, fileName, EmptyFileLogConfig, false)
 	err := InitZapLogger(conf)
@@ -197,6 +205,13 @@ func (s *testLogSuite) TestSlowQueryZapLogger(c *C) {
 }
 
 func (s *testLogSuite) TestZapLoggerWithKeys(c *C) {
+	if runtime.GOOS == "windows" {
+		// Skip this test on windows for two reason:
+		// 1. The pattern match fails somehow. It seems windows treat \n as slash and character n.
+		// 2. Remove file doesn't work as long as the log instance hold the file.
+		c.Skip("skip on windows")
+	}
+
 	fileCfg := FileLogConfig{zaplog.FileLogConfig{Filename: "zap_log", MaxSize: 4096}}
 	conf := NewLogConfig("info", DefaultLogFormat, "", fileCfg, false)
 	err := InitZapLogger(conf)
