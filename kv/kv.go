@@ -15,6 +15,7 @@ package kv
 
 import (
 	"context"
+	"sync"
 	"time"
 
 	"github.com/pingcap/tidb/config"
@@ -204,6 +205,11 @@ type LockCtx struct {
 
 	// Force lock even if there are write conflict error, the latest value will be returned.
 	Force bool
+
+	// Return the values if lock succeed.
+	ReturnValues bool
+	Values       map[string][]byte
+	ValuesLock   sync.Mutex
 
 	// Response value for force lock.
 	AlreadyLocked bool

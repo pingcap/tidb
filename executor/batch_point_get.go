@@ -166,11 +166,39 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 		key := tablecodec.EncodeRowKeyWithHandle(e.tblInfo.ID, handle)
 		keys[i] = key
 	}
-
-	// Fetch all values.
-	values, err1 := batchGetter.BatchGet(ctx, keys)
-	if err1 != nil {
-		return err1
+	var values map[string][]byte
+	if e.lock {
+		txnCtx := e.ctx.GetSessionVars().TxnCtx
+		lctx := newLockCtx(e.ctx.GetSessionVars(), e.waitTime)
+		if txnCtx.IsPessimistic {
+			lctx.ReturnValues = true
+			lctx.Values = make(map[string][]byte, len(keys))
+			// pre-fill the values of already locked keys.
+			for _, key := range keys {
+				if val, ok := txnCtx.GetKeyInPessimisticLockCache(key); ok {
+					lctx.Values[string(key)] = val
+				}
+			}
+		}
+		err = doLockKeys(ctx, e.ctx, lctx, keys...)
+		if err != nil {
+			return err
+		}
+		if txnCtx.IsPessimistic {
+			// When doLockKeys returns without error, no other goroutines access the map,
+			// it's safe to read it without mutex.
+			for _, key := range keys {
+				txnCtx.SetPessimisticLockCache(key, lctx.Values[string(key)])
+			}
+			values = lctx.Values
+		}
+	}
+	if values == nil {
+		// Fetch all values.
+		values, err = batchGetter.BatchGet(ctx, keys)
+		if err != nil {
+			return err
+		}
 	}
 	handles := make([]int64, 0, len(values))
 	e.values = make([][]byte, 0, len(values))
@@ -187,8 +215,5 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 		handles = append(handles, e.handles[i])
 	}
 	e.handles = handles
-	if e.lock {
-		return doLockKeys(ctx, e.ctx, newLockCtx(e.ctx.GetSessionVars(), e.waitTime), keys...)
-	}
 	return nil
 }

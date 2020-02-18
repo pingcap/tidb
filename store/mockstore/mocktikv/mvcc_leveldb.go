@@ -474,6 +474,9 @@ type lockCtx struct {
 	// for force pessimistic lock.
 	latestVal      []byte
 	latestCommitTS uint64
+
+	returnValues bool
+	values       [][]byte
 }
 
 // PessimisticLock writes the pessimistic lock.
@@ -483,10 +486,11 @@ func (mvcc *MVCCLevelDB) PessimisticLock(req *kvrpcpb.PessimisticLockRequest) *k
 	defer mvcc.mu.Unlock()
 	mutations := req.Mutations
 	lCtx := &lockCtx{
-		startTS:     req.StartVersion,
-		forUpdateTS: req.ForUpdateTs,
-		primary:     req.PrimaryLock,
-		ttl:         req.LockTtl,
+		startTS:      req.StartVersion,
+		forUpdateTS:  req.ForUpdateTs,
+		primary:      req.PrimaryLock,
+		ttl:          req.LockTtl,
+		returnValues: req.ReturnValues,
 	}
 	lockWaitTime := req.WaitTimeout
 
@@ -521,6 +525,7 @@ func (mvcc *MVCCLevelDB) PessimisticLock(req *kvrpcpb.PessimisticLockRequest) *k
 		resp.Value = lCtx.latestVal
 		resp.CommitTs = lCtx.latestCommitTS
 	}
+	resp.Values = lCtx.values
 	return resp
 }
 
@@ -560,6 +565,9 @@ func (mvcc *MVCCLevelDB) pessimisticLockMutation(batch *leveldb.Batch, mutation 
 	}
 	lctx.latestVal = valDec.value.value
 	lctx.latestCommitTS = valDec.value.commitTS
+	if lctx.returnValues {
+		lctx.values = append(lctx.values, valDec.value.value)
+	}
 
 	lock := mvccLock{
 		startTS:     startTS,

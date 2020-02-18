@@ -175,11 +175,9 @@ func (p *LogicalJoin) pushDownTopN(topN *LogicalTopN) LogicalPlan {
 
 func (p *LogicalLock) pushDownTopN(topN *LogicalTopN) LogicalPlan {
 	if topN != nil {
-		child := p.children[0]
-		topN.setChild(child)
 		p.children[0] = p.children[0].pushDownTopN(topN)
 	}
-	return p.self
+	return p
 }
 
 func (*pushDownTopNOptimizer) name() string {
