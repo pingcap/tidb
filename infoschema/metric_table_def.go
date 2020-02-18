@@ -354,17 +354,20 @@ var MetricTableMap = map[string]MetricTableDef{
 		Quantile: 0.999,
 	},
 	"pd_tso_wait_duration": {
-		PromQL:   "histogram_quantile($QUANTILE, sum(rate(pd_client_cmd_handle_cmds_duration_seconds_bucket{type=\"wait\"}[$RANGE_DURATION])) by (le))",
+		PromQL:   "histogram_quantile($QUANTILE, sum(rate(pd_client_cmd_handle_cmds_duration_seconds_bucket{type=\"wait\"}[$RANGE_DURATION])) by (le,instance))",
+		Labels:   []string{"instance"},
 		Quantile: 0.999,
 		Comment:  "The quantile duration of a client starting to wait for the TS until received the TS result.",
 	},
 	"pd_tso_rpc_duration": {
 		Comment:  "The quantile duration of a client sending TSO request until received the response.",
-		PromQL:   "histogram_quantile($QUANTILE, sum(rate(pd_client_request_handle_requests_duration_seconds_bucket{type=\"tso\"}[$RANGE_DURATION])) by (le))",
+		PromQL:   "histogram_quantile($QUANTILE, sum(rate(pd_client_request_handle_requests_duration_seconds_bucket{type=\"tso\"}[$RANGE_DURATION])) by (le,instance))",
+		Labels:   []string{"instance"},
 		Quantile: 0.999,
 	},
 	"pd_start_tso_wait_duration": {
-		PromQL:   "histogram_quantile($QUANTILE, sum(rate(tidb_pdclient_ts_future_wait_seconds_bucket[$RANGE_DURATION])) by (le))",
+		PromQL:   "histogram_quantile($QUANTILE, sum(rate(tidb_pdclient_ts_future_wait_seconds_bucket{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (le,instance))",
+		Labels:   []string{"instance"},
 		Quantile: 0.999,
 		Comment:  "The quantile duration of the waiting time for getting the start timestamp oracle",
 	},
