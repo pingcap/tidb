@@ -14,6 +14,7 @@
 package mocktikv
 
 import (
+	"encoding/hex"
 	"fmt"
 
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
@@ -75,7 +76,7 @@ type ErrAlreadyRollbacked struct {
 }
 
 func (e *ErrAlreadyRollbacked) Error() string {
-	return fmt.Sprintf("txn=%v on key=%v is already rollbacked", e.startTS, e.key)
+	return fmt.Sprintf("txn=%v on key=%s is already rollbacked", e.startTS, hex.EncodeToString(e.key))
 }
 
 // ErrConflict is returned when the commitTS of key in the DB is greater than startTS.
