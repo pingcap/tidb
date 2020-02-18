@@ -44,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	binaryJson "github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/pdapi"
 	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -87,27 +88,28 @@ const (
 	tableCollationCharacterSetApplicability = "COLLATION_CHARACTER_SET_APPLICABILITY"
 	tableProcesslist                        = "PROCESSLIST"
 	tableTiDBIndexes                        = "TIDB_INDEXES"
-	tableSlowLog                            = "SLOW_QUERY"
 	tableTiDBHotRegions                     = "TIDB_HOT_REGIONS"
 	tableTiKVStoreStatus                    = "TIKV_STORE_STATUS"
 	tableAnalyzeStatus                      = "ANALYZE_STATUS"
 	tableTiKVRegionStatus                   = "TIKV_REGION_STATUS"
 	tableTiKVRegionPeers                    = "TIKV_REGION_PEERS"
 	tableTiDBServersInfo                    = "TIDB_SERVERS_INFO"
-	// TableClusterInfo is the string constant of cluster info memory table
+	// TableSlowQuery is the string constant of slow query memory table.
+	TableSlowQuery = "SLOW_QUERY"
+	// TableClusterInfo is the string constant of cluster info memory table.
 	TableClusterInfo = "CLUSTER_INFO"
-	// TableClusterConfig is the string constant of cluster configuration memory table
+	// TableClusterConfig is the string constant of cluster configuration memory table.
 	TableClusterConfig = "CLUSTER_CONFIG"
-	// TableClusterLog is the string constant of cluster log memory table
+	// TableClusterLog is the string constant of cluster log memory table.
 	TableClusterLog = "CLUSTER_LOG"
-	// TableClusterLoad is the string constant of cluster load memory table
+	// TableClusterLoad is the string constant of cluster load memory table.
 	TableClusterLoad = "CLUSTER_LOAD"
-	// TableClusterHardware is the string constant of cluster hardware table
+	// TableClusterHardware is the string constant of cluster hardware table.
 	TableClusterHardware = "CLUSTER_HARDWARE"
-	// TableClusterSystemInfo is the string constant of cluster system info table
+	// TableClusterSystemInfo is the string constant of cluster system info table.
 	TableClusterSystemInfo = "CLUSTER_SYSTEMINFO"
 	tableTiFlashReplica    = "TIFLASH_REPLICA"
-	// TableInspectionResult is the string constant of inspection result table
+	// TableInspectionResult is the string constant of inspection result table.
 	TableInspectionResult = "INSPECTION_RESULT"
 	// TableMetricTables is a table that contains all metrics table definition.
 	TableMetricTables = "METRICS_TABLES"
@@ -152,7 +154,7 @@ var tableIDMap = map[string]int64{
 	tableCollationCharacterSetApplicability: autoid.InformationSchemaDBID + 32,
 	tableProcesslist:                        autoid.InformationSchemaDBID + 33,
 	tableTiDBIndexes:                        autoid.InformationSchemaDBID + 34,
-	tableSlowLog:                            autoid.InformationSchemaDBID + 35,
+	TableSlowQuery:                          autoid.InformationSchemaDBID + 35,
 	tableTiDBHotRegions:                     autoid.InformationSchemaDBID + 36,
 	tableTiKVStoreStatus:                    autoid.InformationSchemaDBID + 37,
 	tableAnalyzeStatus:                      autoid.InformationSchemaDBID + 38,
@@ -163,7 +165,7 @@ var tableIDMap = map[string]int64{
 	TableClusterConfig:                      autoid.InformationSchemaDBID + 43,
 	TableClusterLoad:                        autoid.InformationSchemaDBID + 44,
 	tableTiFlashReplica:                     autoid.InformationSchemaDBID + 45,
-	clusterTableSlowLog:                     autoid.InformationSchemaDBID + 46,
+	ClusterTableSlowLog:                     autoid.InformationSchemaDBID + 46,
 	clusterTableProcesslist:                 autoid.InformationSchemaDBID + 47,
 	TableClusterLog:                         autoid.InformationSchemaDBID + 48,
 	TableClusterHardware:                    autoid.InformationSchemaDBID + 49,
@@ -657,6 +659,55 @@ var tableTiDBIndexesCols = []columnInfo{
 	{"SUB_PART", mysql.TypeLonglong, 21, 0, nil, nil},
 	{"INDEX_COMMENT", mysql.TypeVarchar, 2048, 0, nil, nil},
 	{"INDEX_ID", mysql.TypeLonglong, 21, 0, nil, nil},
+}
+
+var slowQueryCols = []columnInfo{
+	{variable.SlowLogTimeStr, mysql.TypeTimestamp, 26, 0, nil, nil},
+	{variable.SlowLogTxnStartTSStr, mysql.TypeLonglong, 20, mysql.UnsignedFlag, nil, nil},
+	{variable.SlowLogUserStr, mysql.TypeVarchar, 64, 0, nil, nil},
+	{variable.SlowLogHostStr, mysql.TypeVarchar, 64, 0, nil, nil},
+	{variable.SlowLogConnIDStr, mysql.TypeLonglong, 20, mysql.UnsignedFlag, nil, nil},
+	{variable.SlowLogQueryTimeStr, mysql.TypeDouble, 22, 0, nil, nil},
+	{variable.SlowLogParseTimeStr, mysql.TypeDouble, 22, 0, nil, nil},
+	{variable.SlowLogCompileTimeStr, mysql.TypeDouble, 22, 0, nil, nil},
+	{execdetails.PreWriteTimeStr, mysql.TypeDouble, 22, 0, nil, nil},
+	{execdetails.BinlogPrewriteTimeStr, mysql.TypeDouble, 22, 0, nil, nil},
+	{execdetails.CommitTimeStr, mysql.TypeDouble, 22, 0, nil, nil},
+	{execdetails.GetCommitTSTimeStr, mysql.TypeDouble, 22, 0, nil, nil},
+	{execdetails.CommitBackoffTimeStr, mysql.TypeDouble, 22, 0, nil, nil},
+	{execdetails.BackoffTypesStr, mysql.TypeVarchar, 64, 0, nil, nil},
+	{execdetails.ResolveLockTimeStr, mysql.TypeDouble, 22, 0, nil, nil},
+	{execdetails.LocalLatchWaitTimeStr, mysql.TypeDouble, 22, 0, nil, nil},
+	{execdetails.WriteKeysStr, mysql.TypeLonglong, 22, 0, nil, nil},
+	{execdetails.WriteSizeStr, mysql.TypeLonglong, 22, 0, nil, nil},
+	{execdetails.PrewriteRegionStr, mysql.TypeLonglong, 22, 0, nil, nil},
+	{execdetails.TxnRetryStr, mysql.TypeLonglong, 22, 0, nil, nil},
+	{execdetails.ProcessTimeStr, mysql.TypeDouble, 22, 0, nil, nil},
+	{execdetails.WaitTimeStr, mysql.TypeDouble, 22, 0, nil, nil},
+	{execdetails.BackoffTimeStr, mysql.TypeDouble, 22, 0, nil, nil},
+	{execdetails.LockKeysTimeStr, mysql.TypeDouble, 22, 0, nil, nil},
+	{execdetails.RequestCountStr, mysql.TypeLonglong, 20, mysql.UnsignedFlag, nil, nil},
+	{execdetails.TotalKeysStr, mysql.TypeLonglong, 20, mysql.UnsignedFlag, nil, nil},
+	{execdetails.ProcessKeysStr, mysql.TypeLonglong, 20, mysql.UnsignedFlag, nil, nil},
+	{variable.SlowLogDBStr, mysql.TypeVarchar, 64, 0, nil, nil},
+	{variable.SlowLogIndexNamesStr, mysql.TypeVarchar, 100, 0, nil, nil},
+	{variable.SlowLogIsInternalStr, mysql.TypeTiny, 1, 0, nil, nil},
+	{variable.SlowLogDigestStr, mysql.TypeVarchar, 64, 0, nil, nil},
+	{variable.SlowLogStatsInfoStr, mysql.TypeVarchar, 512, 0, nil, nil},
+	{variable.SlowLogCopProcAvg, mysql.TypeDouble, 22, 0, nil, nil},
+	{variable.SlowLogCopProcP90, mysql.TypeDouble, 22, 0, nil, nil},
+	{variable.SlowLogCopProcMax, mysql.TypeDouble, 22, 0, nil, nil},
+	{variable.SlowLogCopProcAddr, mysql.TypeVarchar, 64, 0, nil, nil},
+	{variable.SlowLogCopWaitAvg, mysql.TypeDouble, 22, 0, nil, nil},
+	{variable.SlowLogCopWaitP90, mysql.TypeDouble, 22, 0, nil, nil},
+	{variable.SlowLogCopWaitMax, mysql.TypeDouble, 22, 0, nil, nil},
+	{variable.SlowLogCopWaitAddr, mysql.TypeVarchar, 64, 0, nil, nil},
+	{variable.SlowLogMemMax, mysql.TypeLonglong, 20, 0, nil, nil},
+	{variable.SlowLogSucc, mysql.TypeTiny, 1, 0, nil, nil},
+	{variable.SlowLogPlan, mysql.TypeLongBlob, types.UnspecifiedLength, 0, nil, nil},
+	{variable.SlowLogPlanDigest, mysql.TypeVarchar, 128, 0, nil, nil},
+	{variable.SlowLogPrevStmt, mysql.TypeLongBlob, types.UnspecifiedLength, 0, nil, nil},
+	{variable.SlowLogQuerySQLStr, mysql.TypeLongBlob, types.UnspecifiedLength, 0, nil, nil},
 }
 
 var tableTiDBHotRegionsCols = []columnInfo{
@@ -2345,7 +2396,7 @@ var tableNameToColumns = map[string][]columnInfo{
 	tableCollationCharacterSetApplicability: tableCollationCharacterSetApplicabilityCols,
 	tableProcesslist:                        tableProcesslistCols,
 	tableTiDBIndexes:                        tableTiDBIndexesCols,
-	tableSlowLog:                            slowQueryCols,
+	TableSlowQuery:                          slowQueryCols,
 	tableTiDBHotRegions:                     tableTiDBHotRegionsCols,
 	tableTiKVStoreStatus:                    tableTiKVStoreStatusCols,
 	tableAnalyzeStatus:                      tableAnalyzeStatusCols,
@@ -2450,8 +2501,6 @@ func (it *infoschemaTable) getRows(ctx sessionctx.Context, cols []*table.Column)
 		fullRows = dataForCollationCharacterSetApplicability()
 	case tableProcesslist:
 		fullRows = dataForProcesslist(ctx)
-	case tableSlowLog:
-		fullRows, err = dataForSlowLog(ctx)
 	case tableTiDBHotRegions:
 		fullRows, err = dataForTiDBHotRegions(ctx)
 	case tableTiKVStoreStatus:
@@ -2470,9 +2519,9 @@ func (it *infoschemaTable) getRows(ctx sessionctx.Context, cols []*table.Column)
 		fullRows = dataForTableTiFlashReplica(ctx, dbs)
 	case TableMetricTables:
 		fullRows = dataForMetricTables(ctx)
-	// Data for cluster memory table.
-	case clusterTableSlowLog, clusterTableProcesslist:
-		fullRows, err = getClusterMemTableRows(ctx, it.meta.Name.O)
+	// Data for cluster processlist memory table.
+	case clusterTableProcesslist:
+		fullRows, err = dataForClusterProcesslist(ctx)
 	}
 	if err != nil {
 		return nil, err
