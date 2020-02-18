@@ -41,12 +41,12 @@ func (s *testHintParserSuite) TestParseHint(c *C) {
 			input: "MEMORY_QUOTA(8 MB) MEMORY_QUOTA(6 GB)",
 			output: []*ast.TableOptimizerHint{
 				{
-					HintName:    model.NewCIStr("MEMORY_QUOTA"),
-					MemoryQuota: int64(8 * 1024 * 1024),
+					HintName: model.NewCIStr("MEMORY_QUOTA"),
+					HintData: int64(8 * 1024 * 1024),
 				},
 				{
-					HintName:    model.NewCIStr("MEMORY_QUOTA"),
-					MemoryQuota: int64(6 * 1024 * 1024 * 1024),
+					HintName: model.NewCIStr("MEMORY_QUOTA"),
+					HintData: int64(6 * 1024 * 1024 * 1024),
 				},
 			},
 		},
@@ -180,20 +180,20 @@ func (s *testHintParserSuite) TestParseHint(c *C) {
 			output: []*ast.TableOptimizerHint{
 				{
 					HintName: model.NewCIStr("USE_TOJA"),
-					HintFlag: true,
+					HintData: true,
 				},
 				{
 					HintName: model.NewCIStr("ENABLE_PLAN_CACHE"),
-					HintFlag: false,
+					HintData: false,
 				},
 				{
-					HintName:  model.NewCIStr("QUERY_TYPE"),
-					QBName:    model.NewCIStr("qb1"),
-					QueryType: model.NewCIStr("OLAP"),
+					HintName: model.NewCIStr("QUERY_TYPE"),
+					QBName:   model.NewCIStr("qb1"),
+					HintData: model.NewCIStr("OLAP"),
 				},
 				{
-					HintName:  model.NewCIStr("QUERY_TYPE"),
-					QueryType: model.NewCIStr("OLTP"),
+					HintName: model.NewCIStr("QUERY_TYPE"),
+					HintData: model.NewCIStr("OLTP"),
 				},
 				{
 					HintName: model.NewCIStr("NO_INDEX_MERGE"),
@@ -204,18 +204,18 @@ func (s *testHintParserSuite) TestParseHint(c *C) {
 			input: "READ_FROM_STORAGE(@foo TIKV[a, b], TIFLASH[c, d]) HASH_AGG() READ_FROM_STORAGE(TIKV[e])",
 			output: []*ast.TableOptimizerHint{
 				{
-					HintName:  model.NewCIStr("READ_FROM_STORAGE"),
-					StoreType: model.NewCIStr("TIKV"),
-					QBName:    model.NewCIStr("foo"),
+					HintName: model.NewCIStr("READ_FROM_STORAGE"),
+					HintData: model.NewCIStr("TIKV"),
+					QBName:   model.NewCIStr("foo"),
 					Tables: []ast.HintTable{
 						{TableName: model.NewCIStr("a")},
 						{TableName: model.NewCIStr("b")},
 					},
 				},
 				{
-					HintName:  model.NewCIStr("READ_FROM_STORAGE"),
-					StoreType: model.NewCIStr("TIFLASH"),
-					QBName:    model.NewCIStr("foo"),
+					HintName: model.NewCIStr("READ_FROM_STORAGE"),
+					HintData: model.NewCIStr("TIFLASH"),
+					QBName:   model.NewCIStr("foo"),
 					Tables: []ast.HintTable{
 						{TableName: model.NewCIStr("c")},
 						{TableName: model.NewCIStr("d")},
@@ -225,8 +225,8 @@ func (s *testHintParserSuite) TestParseHint(c *C) {
 					HintName: model.NewCIStr("HASH_AGG"),
 				},
 				{
-					HintName:  model.NewCIStr("READ_FROM_STORAGE"),
-					StoreType: model.NewCIStr("TIKV"),
+					HintName: model.NewCIStr("READ_FROM_STORAGE"),
+					HintData: model.NewCIStr("TIKV"),
 					Tables: []ast.HintTable{
 						{TableName: model.NewCIStr("e")},
 					},
@@ -253,6 +253,30 @@ func (s *testHintParserSuite) TestParseHint(c *C) {
 			errs: []string{
 				`.*integer value is out of range.*`,
 				`.*Optimizer hint syntax error at line 1 .*`,
+			},
+		},
+		{
+			input: "time_range('2020-02-20 12:12:12',456)",
+			errs: []string{
+				`.*Optimizer hint syntax error at line 1 .*`,
+			},
+		},
+		{
+			input: "time_range(456,'2020-02-20 12:12:12')",
+			errs: []string{
+				`.*Optimizer hint syntax error at line 1 .*`,
+			},
+		},
+		{
+			input: "TIME_RANGE('2020-02-20 12:12:12','2020-02-20 13:12:12')",
+			output: []*ast.TableOptimizerHint{
+				{
+					HintName: model.NewCIStr("TIME_RANGE"),
+					HintData: ast.HintTimeRange{
+						From: "2020-02-20 12:12:12",
+						To:   "2020-02-20 13:12:12",
+					},
+				},
 			},
 		},
 	}
