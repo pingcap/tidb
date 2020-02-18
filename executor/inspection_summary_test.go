@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/set"
@@ -51,6 +52,10 @@ func (s *inspectionSummarySuite) TestValidInspectionSummaryRules(c *C) {
 		tables := set.StringSet{}
 		for _, t := range tbls {
 			c.Assert(tables.Exist(t), IsFalse, Commentf("duplicate table name: %v in rule: %v", t, rule))
+			tables.Insert(t)
+
+			_, found := infoschema.MetricTableMap[t]
+			c.Assert(found, IsTrue, Commentf("metric table %v not define", t))
 		}
 	}
 }

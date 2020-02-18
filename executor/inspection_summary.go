@@ -486,7 +486,7 @@ func (e *inspectionSummaryRetriever) retrieve(ctx context.Context, sctx sessionc
 				for i := range def.Labels[nonInstanceLabelIndex:] {
 					labels = append(labels, row.GetString(skipCols+nonInstanceLabelIndex+i)) // skip min/max/avg/instance
 				}
-				quantile := 0.0
+				var quantile float64
 				if def.Quantile > 0 {
 					quantile = row.GetFloat64(row.Len() - 1) // quantile will be the last column
 				}
@@ -499,7 +499,6 @@ func (e *inspectionSummaryRetriever) retrieve(ctx context.Context, sctx sessionc
 					row.GetFloat64(0), // avg
 					row.GetFloat64(1), // min
 					row.GetFloat64(2), // max
-
 				))
 			}
 		}

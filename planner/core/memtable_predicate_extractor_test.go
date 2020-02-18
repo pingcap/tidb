@@ -740,7 +740,6 @@ func (s *extractorSuite) TestInspectionResultTableExtractor(c *C) {
 			sql:   "select * from information_schema.inspection_result where rule='ddl' and rule in ('slow_query', 'ddl')",
 			rules: set.NewStringSet("ddl"),
 		},
-
 		{
 			sql:   "select * from information_schema.inspection_result where rule in ('ddl', 'config') and rule in ('slow_query', 'config')",
 			rules: set.NewStringSet("config"),
