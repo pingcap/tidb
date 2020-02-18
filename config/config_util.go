@@ -32,6 +32,7 @@ func CloneConf(conf *Config) (*Config, error) {
 }
 
 var (
+	// dynamicConfigItems contains all config items that can be changed during runtime.
 	dynamicConfigItems = []string{
 		"Performance.MaxProcs", "Performance.MaxMemory",
 		"Performance.CrossJoin", "Performance.FeedbackProbability",
