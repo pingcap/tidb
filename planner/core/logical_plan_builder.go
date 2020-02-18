@@ -23,6 +23,7 @@ import (
 	"strings"
 	"unicode"
 
+	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
@@ -46,7 +47,6 @@ import (
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	util2 "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/plancodec"
 )
 
@@ -2240,10 +2240,10 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, nodeType n
 				})
 			}
 		case HintReadFromStorage:
-			if hint.StoreType.L == HintTiFlash {
+			switch hint.HintData.(model.CIStr).L {
+			case HintTiFlash:
 				tiflashTables = tableNames2HintTableInfo(b.ctx, hint.Tables, b.hintProcessor, nodeType, currentLevel)
-			}
-			if hint.StoreType.L == HintTiKV {
+			case HintTiKV:
 				tikvTables = tableNames2HintTableInfo(b.ctx, hint.Tables, b.hintProcessor, nodeType, currentLevel)
 			}
 		case HintIndexMerge:
@@ -2793,7 +2793,9 @@ func (b *PlanBuilder) buildMemTable(ctx context.Context, dbName model.CIStr, tab
 			p.Extractor = &ClusterLogTableExtractor{}
 		case infoschema.TableInspectionResult:
 			p.Extractor = &InspectionResultTableExtractor{}
-		case infoschema.TableMetricSummary:
+		case infoschema.TableInspectionSummary:
+			p.Extractor = &InspectionSummaryTableExtractor{}
+		case infoschema.TableMetricSummary, infoschema.TableMetricSummaryByLabel:
 			p.Extractor = newMetricTableExtractor()
 		}
 	}
