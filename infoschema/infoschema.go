@@ -305,6 +305,19 @@ func (is *infoSchema) Clone() (result []*model.DBInfo) {
 	return
 }
 
+// SequenceByName implements the interface of SequenceSchema defined in util package.
+// It could be used in expression package without import cycle problem.
+func (is *infoSchema) SequenceByName(schema, sequence model.CIStr) (util.SequenceTable, error) {
+	tbl, err := is.TableByName(schema, sequence)
+	if err != nil {
+		return nil, err
+	}
+	if !tbl.Meta().IsSequence() {
+		return nil, err
+	}
+	return tbl.(util.SequenceTable), nil
+}
+
 // Handle handles information schema, including getting and setting.
 type Handle struct {
 	value atomic.Value
