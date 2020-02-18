@@ -16,6 +16,10 @@ package executor_test
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/table/tables"
+	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/codec"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -479,4 +483,27 @@ func (s *testPointGetSuite) TestSelectCheckVisibility(c *C) {
 	checkSelectResultError("select b from t where b > 0 ", tikv.ErrGCTooEarly)
 	// Test table read.
 	checkSelectResultError("select * from t", tikv.ErrGCTooEarly)
+}
+
+func (s *testPointGetSuite) TestReturnValues(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a varchar(64) primary key, b int)")
+	tk.MustExec("insert t values ('a', 1), ('b', 2), ('c', 3)")
+	tk.MustExec("begin pessimistic")
+	tk.MustQuery("select * from t where a = 'b' for update").Check(testkit.Rows("b 2"))
+	tid := tk.GetTableID("t")
+	idxVal, err := codec.EncodeKey(tk.Se.GetSessionVars().StmtCtx, nil, types.NewStringDatum("b"))
+	c.Assert(err, IsNil)
+	pk := tablecodec.EncodeIndexSeekKey(tid, 1, idxVal)
+	txnCtx := tk.Se.GetSessionVars().TxnCtx
+	val, ok := txnCtx.GetKeyInPessimisticLockCache(pk)
+	c.Assert(ok, IsTrue)
+	handle, err := tables.DecodeHandle(val)
+	c.Assert(err, IsNil)
+	rowKey := tablecodec.EncodeRowKeyWithHandle(tid, handle)
+	_, ok = txnCtx.GetKeyInPessimisticLockCache(rowKey)
+	c.Assert(ok, IsTrue)
+	tk.MustExec("rollback")
 }

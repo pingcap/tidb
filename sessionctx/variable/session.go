@@ -149,6 +149,10 @@ type TransactionContext struct {
 	// unchangedRowKeys is used to store the unchanged rows that needs to lock for pessimistic transaction.
 	unchangedRowKeys map[string]struct{}
 
+	// pessimisticLockCache is the cache for pessimistic locked keys,
+	// The value never changes during the transaction.
+	pessimisticLockCache map[string][]byte
+
 	// CreateTime For metrics.
 	CreateTime     time.Time
 	StatementCount int
@@ -192,6 +196,23 @@ func (tc *TransactionContext) UpdateDeltaForTable(physicalTableID int64, delta i
 	tc.TableDeltaMap[physicalTableID] = item
 }
 
+// GetKeyInPessimisticLockCache gets a key in pessimistic lock cache.
+func (tc *TransactionContext) GetKeyInPessimisticLockCache(key kv.Key) (val []byte, ok bool) {
+	if tc.pessimisticLockCache == nil {
+		return nil, false
+	}
+	val, ok = tc.pessimisticLockCache[string(key)]
+	return
+}
+
+// SetPessimisticLockCache sets a key value pair into pessimistic lock cache.
+func (tc *TransactionContext) SetPessimisticLockCache(key kv.Key, val []byte) {
+	if tc.pessimisticLockCache == nil {
+		tc.pessimisticLockCache = map[string][]byte{}
+	}
+	tc.pessimisticLockCache[string(key)] = val
+}
+
 // Cleanup clears up transaction info that no longer use.
 func (tc *TransactionContext) Cleanup() {
 	// tc.InfoSchema = nil; we cannot do it now, because some operation like handleFieldList depend on this.
@@ -199,6 +220,7 @@ func (tc *TransactionContext) Cleanup() {
 	tc.Binlog = nil
 	tc.History = nil
 	tc.TableDeltaMap = nil
+	tc.pessimisticLockCache = nil
 }
 
 // ClearDelta clears the delta map.

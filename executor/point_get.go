@@ -60,6 +60,8 @@ type PointGetExecutor struct {
 	handle       int64
 	idxInfo      *model.IndexInfo
 	partInfo     *model.PartitionDefinition
+	idxKey       kv.Key
+	handleVal    []byte
 	idxVals      []types.Datum
 	startTS      uint64
 	snapshot     kv.Snapshot
@@ -120,21 +122,21 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 		tblID = e.tblInfo.ID
 	}
 	if e.idxInfo != nil {
-		idxKey, err1 := encodeIndexKey(e.base(), e.tblInfo, e.idxInfo, e.idxVals, tblID)
-		if err1 != nil && !kv.ErrNotExist.Equal(err1) {
-			return err1
+		e.idxKey, err = encodeIndexKey(e.base(), e.tblInfo, e.idxInfo, e.idxVals, tblID)
+		if err != nil && !kv.ErrNotExist.Equal(err) {
+			return err
 		}
 
-		handleVal, err1 := e.get(ctx, idxKey)
-		if err1 != nil && !kv.ErrNotExist.Equal(err1) {
-			return err1
+		e.handleVal, err = e.get(ctx, e.idxKey)
+		if err != nil && !kv.ErrNotExist.Equal(err) {
+			return err
 		}
-		if len(handleVal) == 0 {
-			return e.lockKeyIfNeeded(ctx, idxKey)
+		if len(e.handleVal) == 0 {
+			return e.lockKeyIfNeeded(ctx, e.idxKey)
 		}
-		e.handle, err1 = tables.DecodeHandle(handleVal)
-		if err1 != nil {
-			return err1
+		e.handle, err = tables.DecodeHandle(e.handleVal)
+		if err != nil {
+			return err
 		}
 
 		// The injection is used to simulate following scenario:
@@ -153,12 +155,13 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 
 	key := tablecodec.EncodeRowKeyWithHandle(tblID, e.handle)
-	val, err := e.get(ctx, key)
-	if err != nil && !kv.ErrNotExist.Equal(err) {
-		return err
-	}
+	// Lock the key before get, then get will get the value from the cache.
 	err = e.lockKeyIfNeeded(ctx, key)
 	if err != nil {
+		return err
+	}
+	val, err := e.get(ctx, key)
+	if err != nil && !kv.ErrNotExist.Equal(err) {
 		return err
 	}
 	if len(val) == 0 {
@@ -173,7 +176,22 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 
 func (e *PointGetExecutor) lockKeyIfNeeded(ctx context.Context, key []byte) error {
 	if e.lock {
-		return doLockKeys(ctx, e.ctx, newLockCtx(e.ctx.GetSessionVars(), e.lockWaitTime), key)
+		seVars := e.ctx.GetSessionVars()
+		lockCtx := newLockCtx(seVars, e.lockWaitTime)
+		lockCtx.ReturnValues = true
+		lockCtx.Values = map[string][]byte{}
+		err := doLockKeys(ctx, e.ctx, lockCtx, key)
+		if err != nil {
+			return err
+		}
+		lockCtx.ValuesLock.Lock()
+		defer lockCtx.ValuesLock.Unlock()
+		for key, val := range lockCtx.Values {
+			seVars.TxnCtx.SetPessimisticLockCache(kv.Key(key), val)
+		}
+		if len(e.handleVal) > 0 {
+			seVars.TxnCtx.SetPessimisticLockCache(e.idxKey, e.handleVal)
+		}
 	}
 	return nil
 }
@@ -192,6 +210,11 @@ func (e *PointGetExecutor) get(ctx context.Context, key kv.Key) (val []byte, err
 		}
 		if !kv.IsErrNotFound(err) {
 			return nil, err
+		}
+		var ok bool
+		val, ok = e.ctx.GetSessionVars().TxnCtx.GetKeyInPessimisticLockCache(key)
+		if ok {
+			return
 		}
 		// fallthrough to snapshot get.
 	}
