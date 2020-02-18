@@ -168,22 +168,33 @@ func (ch *pdConfHandler) register() {
 		return
 	}
 
-	newConf, err := decodeConfig(conf)
+	ch.updateConfig(conf, version)
+	ch.registered = true
+	logutil.Logger(context.Background()).Info("PDConfHandler register successfully")
+}
+
+func (ch *pdConfHandler) updateConfig(newConfContent string, newVersion *configpb.Version) {
+	newConf, err := decodeConfig(newConfContent)
 	if err != nil {
-		logutil.Logger(context.Background()).Warn("decode config error when registering", zap.Error(err))
+		logutil.Logger(context.Background()).Warn("decode config error", zap.Error(err))
 		return
 	} else if err := newConf.Valid(); err != nil {
-		logutil.Logger(context.Background()).Warn("invalid remote config when registering", zap.Error(err))
+		logutil.Logger(context.Background()).Warn("invalid remote config", zap.Error(err))
 		return
 	}
-
-	ch.registered = true
-	ch.reloadFunc(ch.curConf.Load().(*Config), newConf)
-	ch.curConf.Store(newConf)
-	ch.version = version
-	logutil.Logger(context.Background()).Info("PDConfHandler register config successfully",
-		zap.String("version", version.String()),
-		zap.Any("new_config", newConf))
+	oldConf := ch.curConf.Load().(*Config)
+	mergedConf, err := CloneConf(oldConf)
+	if err != nil {
+		logutil.Logger(context.Background()).Warn("clone config error", zap.Error(err))
+		return
+	}
+	as, rs := MergeConfigItems(mergedConf, newConf)
+	ch.reloadFunc(oldConf, mergedConf)
+	ch.curConf.Store(mergedConf)
+	ch.version = newVersion
+	logutil.Logger(context.Background()).Info("PDConfHandler updates config successfully",
+		zap.String("new_version", newVersion.String()),
+		zap.Any("accepted_conf_items", as), zap.Any("rejected_conf_items", rs))
 }
 
 func (ch *pdConfHandler) run() {
@@ -220,22 +231,8 @@ func (ch *pdConfHandler) run() {
 					zap.Int("code", int(status.Code)), zap.String("message", status.Message))
 				continue
 			}
-			newConf, err := decodeConfig(newConfContent)
-			if err != nil {
-				logutil.Logger(context.Background()).Error("PDConfHandler decode config error", zap.Error(err))
-				continue
-			}
-			if err := newConf.Valid(); err != nil {
-				logutil.Logger(context.Background()).Error("PDConfHandler invalid config", zap.Error(err))
-				continue
-			}
 
-			ch.reloadFunc(ch.curConf.Load().(*Config), newConf)
-			ch.curConf.Store(newConf)
-			logutil.Logger(context.Background()).Info("PDConfHandler update config successfully",
-				zap.String("fromVersion", ch.version.String()), zap.String("toVersion", version.String()),
-				zap.Any("new_config", newConf))
-			ch.version = version
+			ch.updateConfig(newConfContent, version)
 		case <-ch.exit:
 			return
 		}
