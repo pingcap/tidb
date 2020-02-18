@@ -840,8 +840,8 @@ func (e *Explain) prepareOperatorInfo(p Plan, taskType, driverSide, indent strin
 	if si := p.statsInfo(); si != nil {
 		count = strconv.FormatFloat(si.RowCount, 'f', 2, 64)
 	}
-	explainID := p.ExplainID().String() + driverSide
-	row := []string{texttree.PrettyIdentifier(explainID, indent, isLastChild), count, taskType, operatorInfo}
+	explainID := p.ExplainID().String()
+	row := []string{texttree.PrettyIdentifier(explainID+driverSide, indent, isLastChild), count, taskType, operatorInfo}
 	if e.Analyze {
 		runtimeStatsColl := e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl
 		// There maybe some mock information for cop task to let runtimeStatsColl.Exists(p.ExplainID()) is true.
