@@ -772,6 +772,11 @@ var funcs = map[string]functionClass{
 	ast.TiDBIsDDLOwner: &tidbIsDDLOwnerFunctionClass{baseFunctionClass{ast.TiDBIsDDLOwner, 0, 0}},
 	ast.TiDBParseTso:   &tidbParseTsoFunctionClass{baseFunctionClass{ast.TiDBParseTso, 1, 1}},
 	ast.TiDBDecodePlan: &tidbDecodePlanFunctionClass{baseFunctionClass{ast.TiDBDecodePlan, 1, 1}},
+
+	// TiDB Sequence function.
+	ast.NextVal: &nextValFunctionClass{baseFunctionClass{ast.NextVal, 1, 1}},
+	ast.LastVal: &lastValFunctionClass{baseFunctionClass{ast.LastVal, 1, 1}},
+	ast.SetVal:  &setValFunctionClass{baseFunctionClass{ast.SetVal, 2, 2}},
 }
 
 // IsFunctionSupported check if given function name is a builtin sql function.

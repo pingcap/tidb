@@ -30,6 +30,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	dmysql "github.com/go-sql-driver/mysql"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
 	zaplog "github.com/pingcap/log"
@@ -927,7 +928,10 @@ func (ts *HTTPHandlerTestSuite) TestPostSettings(c *C) {
 	c.Assert(atomic.LoadUint32(&variable.DDLSlowOprThreshold), Equals, uint32(200))
 
 	// test check_mb4_value_in_utf8
-	db, err := sql.Open("mysql", ts.getDSN())
+	overriders := []configOverrider{func(config *dmysql.Config) {
+		config.Strict = false
+	}}
+	db, err := sql.Open("mysql", ts.getDSN(overriders...))
 	c.Assert(err, IsNil, Commentf("Error connecting"))
 	defer db.Close()
 	dbt := &DBTest{c, db}
