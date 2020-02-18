@@ -74,7 +74,7 @@ func (s *testPartitionPruningSuite) TestCanBePrune(c *C) {
 	c.Assert(equalPartitionRangeOR(result, partitionRangeOR{{2, 4}}), IsTrue)
 
 	queryExpr = tc.expr("report_updated > unix_timestamp('2008-05-01 00:00:00')")
-	result = partitionRangeForCNFExpr(tc.sctx, queryExpr, lessThan, tc.col, tc.fn, fullRange(len(lessThan.data)))
+	partitionRangeForCNFExpr(tc.sctx, queryExpr, lessThan, tc.col, tc.fn, fullRange(len(lessThan.data)))
 	// TODO: Uncomment the check after fixing issue https://github.com/pingcap/tidb/issues/12028
 	// c.Assert(equalPartitionRangeOR(result, partitionRangeOR{{2, 4}}), IsTrue)
 	// report_updated > unix_timestamp('2008-05-01 00:00:00') is converted to gt(t.t.report_updated, <nil>)
