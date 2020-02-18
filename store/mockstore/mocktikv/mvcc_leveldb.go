@@ -15,6 +15,7 @@ package mocktikv
 
 import (
 	"bytes"
+	"fmt"
 	"math"
 	"sync"
 
@@ -696,16 +697,16 @@ func checkConflictValue(iter *Iterator, m *kvrpcpb.Mutation, forUpdateTS uint64,
 		if ok && info.commitTS == startTS {
 			logutil.BgLogger().Warn("rollback value found",
 				zap.Uint64("txnID", startTS),
-				zap.Int32("info.valueType", int32(info.valueType)),
-				zap.Uint64("info.startTS", info.startTS),
-				zap.Uint64("info.commitTS", info.commitTS))
+				zap.Int32("rollbacked.valueType", int32(info.valueType)),
+				zap.Uint64("rollbacked.startTS", info.startTS),
+				zap.Uint64("rollbacked.commitTS", info.commitTS))
 			if info.valueType == typeRollback {
 				return &ErrAlreadyRollbacked{
 					startTS: startTS,
 					key:     m.Key,
 				}
 			}
-			panic("invalid value type not rollback")
+			panic(fmt.Sprintf("invalid value type %v not rollback", info.valueType))
 		}
 	}
 	return nil
@@ -1164,7 +1165,7 @@ func (mvcc *MVCCLevelDB) CheckTxnStatus(primaryKey []byte, lockTS, callerStartTS
 		// Write rollback record, but not delete the lock on the primary key. There may exist lock which has
 		// different lock.startTS with input lockTS, for example the primary key could be already
 		// locked by the caller transaction, deleting this key will mistakenly delete the lock on
-		// primary key, see case TestSingleStatementRollbackSecondary in session_test suite for example
+		// primary key, see case TestSingleStatementRollback in session_test suite for example
 		batch := &leveldb.Batch{}
 		if err1 := writeRollback(batch, primaryKey, lockTS); err1 != nil {
 			err = errors.Trace(err1)
