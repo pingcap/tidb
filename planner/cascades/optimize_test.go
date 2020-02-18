@@ -94,7 +94,7 @@ func (s *testCascadesSuite) TestFillGroupStats(c *C) {
 	logic, ok := p.(plannercore.LogicalPlan)
 	c.Assert(ok, IsTrue)
 	rootGroup := memo.Convert2Group(logic)
-	err = s.optimizer.fillGroupStats(rootGroup)
+	err = FillGroupStats(rootGroup)
 	c.Assert(err, IsNil)
 	c.Assert(rootGroup.Prop.Stats, NotNil)
 }

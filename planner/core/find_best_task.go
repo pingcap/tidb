@@ -557,7 +557,7 @@ func (ds *DataSource) convertToPartialTableScan(prop *property.PhysicalProperty,
 	rowSize := ds.TblColHists.GetAvgRowSize(ds.ctx, ds.TblCols, false, false)
 	sessVars := ds.ctx.GetSessionVars()
 	if len(ts.filterCondition) > 0 {
-		selectivity, _, err := ds.tableStats.HistColl.Selectivity(ds.ctx, ts.filterCondition, nil)
+		selectivity, _, err := ds.TableStats.HistColl.Selectivity(ds.ctx, ts.filterCondition, nil)
 		if err != nil {
 			logutil.BgLogger().Debug("calculate selectivity failed, use selection factor", zap.Error(err))
 			selectivity = SelectionFactor
@@ -594,13 +594,13 @@ func (ds *DataSource) buildIndexMergeTableScan(prop *property.PhysicalProperty, 
 	}
 	rowSize := ds.TblColHists.GetTableAvgRowSize(ds.ctx, ds.TblCols, ts.StoreType, true)
 	partialCost += totalRowCount * rowSize * sessVars.ScanFactor
-	ts.stats = ds.tableStats.ScaleByExpectCnt(totalRowCount)
+	ts.stats = ds.TableStats.ScaleByExpectCnt(totalRowCount)
 	if ds.statisticTable.Pseudo {
 		ts.stats.StatsVersion = statistics.PseudoVersion
 	}
 	if len(tableFilters) > 0 {
 		partialCost += totalRowCount * sessVars.CopCPUFactor
-		selectivity, _, err := ds.tableStats.HistColl.Selectivity(ds.ctx, tableFilters, nil)
+		selectivity, _, err := ds.TableStats.HistColl.Selectivity(ds.ctx, tableFilters, nil)
 		if err != nil {
 			logutil.BgLogger().Debug("calculate selectivity failed, use selection factor", zap.Error(err))
 			selectivity = SelectionFactor
@@ -774,7 +774,7 @@ func (is *PhysicalIndexScan) addPushedDownSelection(copTask *copTask, p *DataSou
 			selectivity = path.CountAfterIndex / path.CountAfterAccess
 		}
 		count := is.stats.RowCount * selectivity
-		stats := p.tableStats.ScaleByExpectCnt(count)
+		stats := p.TableStats.ScaleByExpectCnt(count)
 		indexSel := PhysicalSelection{Conditions: indexConds}.Init(is.ctx, stats, is.blockOffset)
 		indexSel.SetChildren(is)
 		copTask.indexPlan = indexSel
@@ -1113,7 +1113,7 @@ func (ds *DataSource) getOriginalPhysicalTableScan(prop *property.PhysicalProper
 	// to scan, but this would only help improve accuracy of NDV for one column, for other columns,
 	// we still need to assume values are uniformly distributed. For simplicity, we use uniform-assumption
 	// for all columns now, as we do in `deriveStatsByFilter`.
-	ts.stats = ds.tableStats.ScaleByExpectCnt(rowCount)
+	ts.stats = ds.TableStats.ScaleByExpectCnt(rowCount)
 	var rowSize float64
 	if ts.StoreType == kv.TiKV {
 		rowSize = ds.TblColHists.GetTableAvgRowSize(ds.ctx, ds.TblCols, ts.StoreType, true)
@@ -1169,7 +1169,7 @@ func (ds *DataSource) getOriginalPhysicalIndexScan(prop *property.PhysicalProper
 		selectivity := ds.stats.RowCount / path.CountAfterAccess
 		rowCount = math.Min(prop.ExpectedCnt/selectivity, rowCount)
 	}
-	is.stats = ds.tableStats.ScaleByExpectCnt(rowCount)
+	is.stats = ds.TableStats.ScaleByExpectCnt(rowCount)
 	rowSize := is.indexScanRowSize(idx, ds, true)
 	sessVars := ds.ctx.GetSessionVars()
 	cost := rowCount * rowSize * sessVars.ScanFactor

@@ -137,8 +137,8 @@ func (p *PhysicalTableScan) explainInfo(normalized bool) string {
 			break
 		}
 	}
-	if len(p.rangeDecidedBy) > 0 {
-		fmt.Fprintf(buffer, ", range: decided by %v", p.rangeDecidedBy)
+	if len(p.RangeDecidedBy) > 0 {
+		fmt.Fprintf(buffer, ", range: decided by %v", p.RangeDecidedBy)
 	} else if haveCorCol {
 		if normalized {
 			fmt.Fprintf(buffer, ", range: decided by %s", expression.SortedExplainNormalizedExpressionList(p.AccessCondition))

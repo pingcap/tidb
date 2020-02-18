@@ -39,7 +39,7 @@ type Optimizer struct {
 func NewOptimizer() *Optimizer {
 	return &Optimizer{
 		transformationRuleMap: defaultTransformationMap,
-		implementationRuleMap: defaultImplementationMap,
+		implementationRuleMap: DefaultImplementationMap,
 	}
 }
 
@@ -54,6 +54,8 @@ func (opt *Optimizer) ResetImplementationRules(rules map[memo.Operand][]Implemen
 	opt.implementationRuleMap = rules
 	return opt
 }
+
+// Disable
 
 // GetTransformationRules gets the all the candidate Transformation rules of the optimizer
 // based on the logical plan node.
@@ -217,8 +219,8 @@ func (opt *Optimizer) findMoreEquiv(g *memo.Group, elem *list.Element) (eraseCur
 	return eraseCur, nil
 }
 
-// fillGroupStats computes Stats property for each Group recursively.
-func (opt *Optimizer) fillGroupStats(g *memo.Group) (err error) {
+// FillGroupStats computes Stats property for each Group recursively.
+func FillGroupStats(g *memo.Group) (err error) {
 	if g.Prop.Stats != nil {
 		return nil
 	}
@@ -229,7 +231,7 @@ func (opt *Optimizer) fillGroupStats(g *memo.Group) (err error) {
 	childStats := make([]*property.StatsInfo, len(expr.Children))
 	childSchema := make([]*expression.Schema, len(expr.Children))
 	for i, childGroup := range expr.Children {
-		err = opt.fillGroupStats(childGroup)
+		err = FillGroupStats(childGroup)
 		if err != nil {
 			return err
 		}
@@ -275,7 +277,7 @@ func (opt *Optimizer) implGroup(g *memo.Group, reqPhysProp *property.PhysicalPro
 	}
 	// Handle implementation rules for each equivalent GroupExpr.
 	var childImpls []memo.Implementation
-	err := opt.fillGroupStats(g)
+	err := FillGroupStats(g)
 	if err != nil {
 		return nil, err
 	}
@@ -289,7 +291,13 @@ func (opt *Optimizer) implGroup(g *memo.Group, reqPhysProp *property.PhysicalPro
 		for _, impl := range impls {
 			childImpls = childImpls[:0]
 			for i, childGroup := range curExpr.Children {
-				childImpl, err := opt.implGroup(childGroup, impl.GetPlan().GetChildReqProps(i), impl.GetCostLimit(costLimit, childImpls...))
+				childReqProp := impl.GetPlan().GetChildReqProps(i)
+				if childReqProp == nil {
+					// IndexJoin will construct its inner child inside its ImplementationRule and set its
+					// childReqProp as nil. So we only need to build its outer child here.
+					continue
+				}
+				childImpl, err := opt.implGroup(childGroup, childReqProp, impl.GetCostLimit(costLimit, childImpls...))
 				if err != nil {
 					return nil, err
 				}
