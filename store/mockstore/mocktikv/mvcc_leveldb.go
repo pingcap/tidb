@@ -648,8 +648,7 @@ func (mvcc *MVCCLevelDB) Prewrite(req *kvrpcpb.PrewriteRequest) []error {
 	return errs
 }
 
-// callerTS is startTS for optimistic transactions, and forUpdateTS for pessimistic transactions
-func checkConflictValue(iter *Iterator, m *kvrpcpb.Mutation, callerTS uint64, startTS uint64) error {
+func checkConflictValue(iter *Iterator, m *kvrpcpb.Mutation, forUpdateTS uint64, startTS uint64) error {
 	dec := valueDecoder{
 		expectKey: m.Key,
 	}
@@ -659,9 +658,9 @@ func checkConflictValue(iter *Iterator, m *kvrpcpb.Mutation, callerTS uint64, st
 	}
 
 	// Note that it's a write conflict here, even if the value is a rollback one.
-	if dec.value.commitTS >= callerTS {
+	if dec.value.commitTS >= forUpdateTS {
 		return &ErrConflict{
-			StartTS:          callerTS,
+			StartTS:          forUpdateTS,
 			ConflictTS:       dec.value.startTS,
 			ConflictCommitTS: dec.value.commitTS,
 			Key:              m.Key,
@@ -698,7 +697,7 @@ func checkConflictValue(iter *Iterator, m *kvrpcpb.Mutation, callerTS uint64, st
 			logutil.BgLogger().Warn("rollback value found",
 				zap.Uint64("txnID", startTS),
 				zap.Int32("info.valueType", int32(info.valueType)),
-				zap.Uint64("info.callerTS", info.startTS),
+				zap.Uint64("info.startTS", info.startTS),
 				zap.Uint64("info.commitTS", info.commitTS))
 			if info.valueType == typeRollback {
 				return &ErrAlreadyRollbacked{
