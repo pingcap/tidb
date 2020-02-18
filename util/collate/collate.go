@@ -30,6 +30,11 @@ type CollatorOption struct {
 	PadLen int
 }
 
+// NewCollatorOption creates a new CollatorOption with the specified arguments.
+func NewCollatorOption(padLen int) CollatorOption {
+	return CollatorOption{padLen}
+}
+
 // Collator provides functionality for comparing strings for a given
 // collation order.
 type Collator interface {

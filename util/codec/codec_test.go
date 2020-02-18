@@ -1120,6 +1120,46 @@ func (s *testCodecSuite) TestHashChunkRow(c *C) {
 	testHashChunkRowEqual(c, "x", []byte("y"), false)
 }
 
+func (s *testCodecSuite) TestHashChunkRowCollation(c *C) {
+	sc := &stmtctx.StatementContext{TimeZone: time.Local}
+	tp := types.NewFieldType(mysql.TypeString)
+	tps := []*types.FieldType{tp}
+	chk1 := chunk.New(tps, 3, 3)
+	chk2 := chunk.New(tps, 3, 3)
+	chk1.Reset()
+	chk2.Reset()
+	chk1.Column(0).AppendString("aaa")
+	chk2.Column(0).AppendString("AAA")
+	chk1.Column(0).AppendString("😜")
+	chk2.Column(0).AppendString("😃")
+	chk1.Column(0).AppendString("À")
+	chk2.Column(0).AppendString("A")
+	cols := []int{0}
+	buf := make([]byte, 1)
+
+	tp.Collate = "bin"
+	for i := 0; i < 3; i++ {
+		h1 := crc32.NewIEEE()
+		h2 := crc32.NewIEEE()
+		c.Assert(HashChunkRow(sc, h1, chk1.GetRow(i), tps, cols, buf), IsNil)
+		c.Assert(HashChunkRow(sc, h2, chk2.GetRow(i), tps, cols, buf), IsNil)
+		c.Assert(h1.Sum32(), Not(Equals), h2.Sum32())
+		h1.Reset()
+		h2.Reset()
+	}
+
+	tp.Collate = "utf8_general_ci"
+	for i := 0; i < 3; i++ {
+		h1 := crc32.NewIEEE()
+		h2 := crc32.NewIEEE()
+		c.Assert(HashChunkRow(sc, h1, chk1.GetRow(i), tps, cols, buf), IsNil)
+		c.Assert(HashChunkRow(sc, h2, chk2.GetRow(i), tps, cols, buf), IsNil)
+		c.Assert(h1.Sum32(), Equals, h2.Sum32())
+		h1.Reset()
+		h2.Reset()
+	}
+}
+
 func (s *testCodecSuite) TestValueSizeOfSignedInt(c *C) {
 	testCase := []int64{64, 8192, 1048576, 134217728, 17179869184, 2199023255552, 281474976710656, 36028797018963968, 4611686018427387904}
 	var b []byte
@@ -1214,5 +1254,41 @@ func (s *testCodecSuite) TestHashChunkColumns(c *C) {
 		c.Assert(vecHash[0].Sum64(), Equals, rowHash[0].Sum64())
 		c.Assert(vecHash[1].Sum64(), Equals, rowHash[1].Sum64())
 		c.Assert(vecHash[2].Sum64(), Equals, rowHash[2].Sum64())
+	}
+}
+
+func (s *testCodecSuite) TestHashChunkColumnsCollation(c *C) {
+	sc := &stmtctx.StatementContext{TimeZone: time.Local}
+	tp := types.NewFieldType(mysql.TypeString)
+	tps := []*types.FieldType{tp}
+	chk1 := chunk.New(tps, 3, 3)
+	chk2 := chunk.New(tps, 3, 3)
+	chk1.Reset()
+	chk2.Reset()
+	chk1.Column(0).AppendString("aaa")
+	chk2.Column(0).AppendString("AAA")
+	chk1.Column(0).AppendString("😜")
+	chk2.Column(0).AppendString("😃")
+	chk1.Column(0).AppendString("À")
+	chk2.Column(0).AppendString("A")
+	buf := make([]byte, 1)
+	hasNull := []bool{false, false, false}
+	h1s := []hash.Hash64{fnv.New64(), fnv.New64(), fnv.New64()}
+	h2s := []hash.Hash64{fnv.New64(), fnv.New64(), fnv.New64()}
+
+	tp.Collate = "bin"
+	c.Assert(HashChunkColumns(sc, h1s, chk1, tp, 0, buf, hasNull), IsNil)
+	c.Assert(HashChunkColumns(sc, h2s, chk2, tp, 0, buf, hasNull), IsNil)
+	for i := 0; i < 3; i++ {
+		c.Assert(h1s[i].Sum64(), Not(Equals), h2s[i].Sum64())
+		h1s[i].Reset()
+		h2s[i].Reset()
+	}
+
+	tp.Collate = "utf8_general_ci"
+	c.Assert(HashChunkColumns(sc, h1s, chk1, tp, 0, buf, hasNull), IsNil)
+	c.Assert(HashChunkColumns(sc, h2s, chk2, tp, 0, buf, hasNull), IsNil)
+	for i := 0; i < 3; i++ {
+		c.Assert(h1s[i].Sum64(), Equals, h2s[i].Sum64())
 	}
 }
