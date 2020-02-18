@@ -68,6 +68,7 @@ type nameValuePair struct {
 	param   *driver.ParamMarkerExpr
 }
 
+// Init initializes PointGetPlan.
 func (p PointGetPlan) Init(ctx sessionctx.Context, stats *property.StatsInfo, offset int, props ...*property.PhysicalProperty) *PointGetPlan {
 	p.basePlan = newBasePlan(ctx, plancodec.TypePointGet, offset)
 	p.stats = stats

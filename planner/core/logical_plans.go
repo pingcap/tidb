@@ -812,7 +812,7 @@ func (ds *DataSource) getHandleCol() *expression.Column {
 	}
 
 	for i, col := range ds.Columns {
-		if mysql.HasPriKeyFlag(col.Flag) {
+		if mysql.HasPriKeyFlag(col.Flag) || col.ID == model.ExtraHandleID {
 			ds.handleCol = ds.schema.Columns[i]
 			break
 		}

@@ -1086,13 +1086,17 @@ func (ds *DataSource) convertToDoubleReadByPointGet(prop *property.PhysicalPrope
 	}
 	switch x := pg.(type) {
 	case *PointGetPlan:
-		x.schema = expression.NewSchema(append(candidate.path.IdxCols, ds.getHandleCol())...)
+		x.schema = expression.NewSchema(append(candidate.path.FullIdxCols, ds.getHandleCol())...)
 		cop.cst = x.cost
 	case *BatchPointGetPlan:
-		x.schema = expression.NewSchema(append(candidate.path.IdxCols, ds.getHandleCol())...)
+		x.schema = expression.NewSchema(append(candidate.path.FullIdxCols, ds.getHandleCol())...)
 		cop.cst = x.cost
 	default:
 		return nil, errors.Errorf("invalid type of PhysicalPlan")
+	}
+	if pg.Schema().Columns[len(pg.Schema().Columns)-1] == nil {
+		pg.Schema().Columns = pg.Schema().Columns[:len(pg.Schema().Columns)-1]
+		pg.Schema().Columns = append(pg.Schema().Columns, ds.newExtraHandleSchemaCol())
 	}
 	if len(candidate.path.IndexFilters) > 0 {
 		sessVars := ds.ctx.GetSessionVars()
