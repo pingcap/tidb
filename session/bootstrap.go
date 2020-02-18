@@ -326,6 +326,8 @@ const (
 	// The variable name in mysql.tidb table and it will be used when we want to know
 	// system timezone.
 	tidbSystemTZ = "system_tz"
+	// The variable name in mysql.tidb table and it will indicate if the new collations are enabled in the TiDB cluster.
+	tidbNewCollationEnabled = "new_collation_enabled"
 	// Const for TiDB server version 2.
 	version2  = 2
 	version3  = 3
@@ -354,7 +356,7 @@ const (
 	version26 = 26
 	version27 = 27
 	version28 = 28
-	version29 = 29
+	// version29 is not needed.
 	version30 = 30
 	version31 = 31
 	version32 = 32
@@ -365,7 +367,10 @@ const (
 	version37 = 37
 	version38 = 38
 	version39 = 39
+	// version40 is the version that introduce new collation in TiDB,
+	// see https://github.com/pingcap/tidb/pull/14574 for more details.
 	version40 = 40
+	version41 = 41
 )
 
 func checkBootstrapped(s Session) (bool, error) {
@@ -584,6 +589,10 @@ func upgrade(s Session) {
 
 	if ver < version40 {
 		upgradeToVer40(s)
+	}
+
+	if ver < version41 {
+		upgradeToVer41(s)
 	}
 
 	updateBootstrapVer(s)
@@ -938,7 +947,19 @@ func upgradeToVer39(s Session) {
 	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.user SET File_priv='Y' where Super_priv='Y'")
 }
 
+func writeNewCollationParameter(s Session, flag bool) {
+	comment := "If the new collations are enabled. Do not edit it."
+	sql := fmt.Sprintf(`INSERT HIGH_PRIORITY INTO %s.%s VALUES ("%s", %v, '%s') ON DUPLICATE KEY UPDATE VARIABLE_VALUE=%v`,
+		mysql.SystemDB, mysql.TiDBTable, tidbNewCollationEnabled, flag, comment, flag)
+	mustExecute(s, sql)
+}
+
 func upgradeToVer40(s Session) {
+	// There is no way to enable new collation for an existing TiDB cluster.
+	writeNewCollationParameter(s, false)
+}
+
+func upgradeToVer41(s Session) {
 	doReentrantDDL(s, "ALTER TABLE mysql.user CHANGE COLUMN `Password` `authentication_string` TEXT", infoschema.ErrColumnNotExists)
 }
 
@@ -1046,6 +1067,9 @@ func doDMLWorks(s Session) {
 	mustExecute(s, sql)
 
 	writeSystemTZ(s)
+
+	writeNewCollationParameter(s, config.GetGlobalConfig().NewCollationsEnabledOnFirstBootstrap)
+
 	_, err := s.Execute(context.Background(), "COMMIT")
 	if err != nil {
 		sleepTime := 1 * time.Second
