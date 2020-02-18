@@ -76,7 +76,7 @@ func BenchmarkDecodeDecimal(b *testing.B) {
 
 func BenchmarkDecodeOneToChunk(b *testing.B) {
 	str := new(types.Datum)
-	*str = types.NewDefaultCollationStringDatum("a")
+	*str = types.NewStringDatum("a")
 	var raw []byte
 	raw = append(raw, bytesFlag)
 	raw = EncodeBytes(raw, str.GetBytes())

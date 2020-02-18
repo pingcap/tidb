@@ -252,21 +252,21 @@ func (ts *testDatumSuite) TestToJSON(c *C) {
 	}{
 		{NewIntDatum(1), `1.0`, true},
 		{NewFloat64Datum(2), `2`, true},
-		{NewDefaultCollationStringDatum("\"hello, 世界\""), `"hello, 世界"`, true},
-		{NewDefaultCollationStringDatum("[1, 2, 3]"), `[1, 2, 3]`, true},
-		{NewDefaultCollationStringDatum("{}"), `{}`, true},
+		{NewStringDatum("\"hello, 世界\""), `"hello, 世界"`, true},
+		{NewStringDatum("[1, 2, 3]"), `[1, 2, 3]`, true},
+		{NewStringDatum("{}"), `{}`, true},
 		{mustParseTimeIntoDatum("2011-11-10 11:11:11.111111", mysql.TypeTimestamp, 6), `"2011-11-10 11:11:11.111111"`, true},
-		{NewDefaultCollationStringDatum(`{"a": "9223372036854775809"}`), `{"a": "9223372036854775809"}`, true},
+		{NewStringDatum(`{"a": "9223372036854775809"}`), `{"a": "9223372036854775809"}`, true},
 
 		// can not parse JSON from this string, so error occurs.
-		{NewDefaultCollationStringDatum("hello, 世界"), "", false},
+		{NewStringDatum("hello, 世界"), "", false},
 	}
 	for _, tt := range tests {
 		obtain, err := tt.datum.ConvertTo(sc, ft)
 		if tt.success {
 			c.Assert(err, IsNil)
 
-			sd := NewDefaultCollationStringDatum(tt.expected)
+			sd := NewStringDatum(tt.expected)
 			var expected Datum
 			expected, err = sd.ConvertTo(sc, ft)
 			c.Assert(err, IsNil)
@@ -311,7 +311,7 @@ func (ts *testDatumSuite) TestToBytes(c *C) {
 		{NewIntDatum(1), []byte("1")},
 		{NewDecimalDatum(NewDecFromInt(1)), []byte("1")},
 		{NewFloat64Datum(1.23), []byte("1.23")},
-		{NewDefaultCollationStringDatum("abc"), []byte("abc")},
+		{NewStringDatum("abc"), []byte("abc")},
 	}
 	sc := new(stmtctx.StatementContext)
 	sc.IgnoreTruncate = true
@@ -338,7 +338,7 @@ func (ts *testDatumSuite) TestComputePlusAndMinus(c *C) {
 		{NewFloat64Datum(72.0), NewFloat64Datum(28.0), NewFloat64Datum(100.0), NewFloat64Datum(44.0), false},
 		{NewDecimalDatum(NewDecFromStringForTest("72.5")), NewDecimalDatum(NewDecFromInt(3)), NewDecimalDatum(NewDecFromStringForTest("75.5")), NewDecimalDatum(NewDecFromStringForTest("69.5")), false},
 		{NewIntDatum(72), NewFloat64Datum(42), Datum{}, Datum{}, true},
-		{NewDefaultCollationStringDatum("abcd"), NewIntDatum(42), Datum{}, Datum{}, true},
+		{NewStringDatum("abcd"), NewIntDatum(42), Datum{}, Datum{}, true},
 	}
 
 	for ith, tt := range tests {
@@ -357,7 +357,7 @@ func (ts *testDatumSuite) TestCloneDatum(c *C) {
 	tests := []Datum{
 		NewIntDatum(72),
 		NewUintDatum(72),
-		NewDefaultCollationStringDatum("abcd"),
+		NewStringDatum("abcd"),
 		NewBytesDatum([]byte("abcd")),
 		raw,
 	}
@@ -403,7 +403,7 @@ func (ts *testDatumSuite) TestEstimatedMemUsage(c *C) {
 		NewIntDatum(1),
 		NewFloat64Datum(1.0),
 		NewFloat32Datum(1.0),
-		NewDefaultCollationStringDatum(string(b)),
+		NewStringDatum(string(b)),
 		NewBytesDatum(b),
 		NewDecimalDatum(newMyDecimal("1234.1234", c)),
 		NewMysqlEnumDatum(enum),
@@ -516,14 +516,14 @@ func prepareCompareDatums() ([]Datum, []Datum) {
 	vals := make([]Datum, 0, 5)
 	vals = append(vals, NewIntDatum(1))
 	vals = append(vals, NewFloat64Datum(1.23))
-	vals = append(vals, NewDefaultCollationStringDatum("abcde"))
+	vals = append(vals, NewStringDatum("abcde"))
 	vals = append(vals, NewDecimalDatum(NewDecFromStringForTest("1.2345")))
 	vals = append(vals, NewTimeDatum(NewTime(FromGoTime(time.Date(2018, 3, 8, 16, 1, 0, 315313000, time.UTC)), mysql.TypeTimestamp, 6)))
 
 	vals1 := make([]Datum, 0, 5)
 	vals1 = append(vals1, NewIntDatum(1))
 	vals1 = append(vals1, NewFloat64Datum(1.23))
-	vals1 = append(vals1, NewDefaultCollationStringDatum("abcde"))
+	vals1 = append(vals1, NewStringDatum("abcde"))
 	vals1 = append(vals1, NewDecimalDatum(NewDecFromStringForTest("1.2345")))
 	vals1 = append(vals1, NewTimeDatum(NewTime(FromGoTime(time.Date(2018, 3, 8, 16, 1, 0, 315313000, time.UTC)), mysql.TypeTimestamp, 6)))
 	return vals, vals1

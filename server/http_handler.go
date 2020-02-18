@@ -273,7 +273,7 @@ func (t *tikvHandlerTool) formValue2DatumRow(sc *stmtctx.StatementContext, value
 		case 0:
 			data[i].SetNull()
 		case 1:
-			bDatum := types.NewDefaultCollationStringDatum(vals[0])
+			bDatum := types.NewStringDatum(vals[0])
 			cDatum, err := bDatum.ConvertTo(sc, &col.FieldType)
 			if err != nil {
 				return nil, errors.Trace(err)

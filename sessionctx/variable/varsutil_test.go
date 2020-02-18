@@ -101,7 +101,7 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	v := NewSessionVars()
 	v.GlobalVarsAccessor = NewMockGlobalAccessor()
 
-	err := SetSessionSystemVar(v, "autocommit", types.NewDefaultCollationStringDatum("1"))
+	err := SetSessionSystemVar(v, "autocommit", types.NewStringDatum("1"))
 	c.Assert(err, IsNil)
 	val, err := GetSessionSystemVar(v, "autocommit")
 	c.Assert(err, IsNil)
@@ -109,31 +109,31 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	c.Assert(SetSessionSystemVar(v, "autocommit", types.Datum{}), NotNil)
 
 	// 0 converts to OFF
-	err = SetSessionSystemVar(v, "foreign_key_checks", types.NewDefaultCollationStringDatum("0"))
+	err = SetSessionSystemVar(v, "foreign_key_checks", types.NewStringDatum("0"))
 	c.Assert(err, IsNil)
 	val, err = GetSessionSystemVar(v, "foreign_key_checks")
 	c.Assert(err, IsNil)
 	c.Assert(val, Equals, "OFF")
 
 	// 1/ON is not supported (generates a warning and sets to OFF)
-	err = SetSessionSystemVar(v, "foreign_key_checks", types.NewDefaultCollationStringDatum("1"))
+	err = SetSessionSystemVar(v, "foreign_key_checks", types.NewStringDatum("1"))
 	c.Assert(err, IsNil)
 	val, err = GetSessionSystemVar(v, "foreign_key_checks")
 	c.Assert(err, IsNil)
 	c.Assert(val, Equals, "OFF")
 
-	err = SetSessionSystemVar(v, "sql_mode", types.NewDefaultCollationStringDatum("strict_trans_tables"))
+	err = SetSessionSystemVar(v, "sql_mode", types.NewStringDatum("strict_trans_tables"))
 	c.Assert(err, IsNil)
 	val, err = GetSessionSystemVar(v, "sql_mode")
 	c.Assert(err, IsNil)
 	c.Assert(val, Equals, "STRICT_TRANS_TABLES")
 	c.Assert(v.StrictSQLMode, IsTrue)
-	SetSessionSystemVar(v, "sql_mode", types.NewDefaultCollationStringDatum(""))
+	SetSessionSystemVar(v, "sql_mode", types.NewStringDatum(""))
 	c.Assert(v.StrictSQLMode, IsFalse)
 
-	err = SetSessionSystemVar(v, "character_set_connection", types.NewDefaultCollationStringDatum("utf8"))
+	err = SetSessionSystemVar(v, "character_set_connection", types.NewStringDatum("utf8"))
 	c.Assert(err, IsNil)
-	err = SetSessionSystemVar(v, "collation_connection", types.NewDefaultCollationStringDatum("utf8_general_ci"))
+	err = SetSessionSystemVar(v, "collation_connection", types.NewStringDatum("utf8_general_ci"))
 	c.Assert(err, IsNil)
 	charset, collation := v.GetCharsetInfo()
 	c.Assert(charset, Equals, "utf8")
@@ -161,7 +161,7 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 		{"-13:00", "", false, 13 * time.Hour, ErrUnknownTimeZone.GenWithStackByArgs("-13:00")},
 	}
 	for _, tt := range tests {
-		err = SetSessionSystemVar(v, TimeZone, types.NewDefaultCollationStringDatum(tt.input))
+		err = SetSessionSystemVar(v, TimeZone, types.NewStringDatum(tt.input))
 		if tt.err != nil {
 			c.Assert(err, NotNil)
 			continue
@@ -170,19 +170,19 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 		c.Assert(err, IsNil)
 		c.Assert(v.TimeZone.String(), Equals, tt.expect)
 		if tt.compareValue {
-			SetSessionSystemVar(v, TimeZone, types.NewDefaultCollationStringDatum(tt.input))
+			SetSessionSystemVar(v, TimeZone, types.NewStringDatum(tt.input))
 			t1 := time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC)
 			t2 := time.Date(2000, 1, 1, 0, 0, 0, 0, v.TimeZone)
 			c.Assert(t2.Sub(t1), Equals, tt.diff)
 		}
 	}
-	err = SetSessionSystemVar(v, TimeZone, types.NewDefaultCollationStringDatum("6:00"))
+	err = SetSessionSystemVar(v, TimeZone, types.NewStringDatum("6:00"))
 	c.Assert(err, NotNil)
 	c.Assert(terror.ErrorEqual(err, ErrUnknownTimeZone), IsTrue)
 
 	// Test case for sql mode.
 	for str, mode := range mysql.Str2SQLMode {
-		SetSessionSystemVar(v, "sql_mode", types.NewDefaultCollationStringDatum(str))
+		SetSessionSystemVar(v, "sql_mode", types.NewStringDatum(str))
 		if modeParts, exists := mysql.CombinationSQLMode[str]; exists {
 			for _, part := range modeParts {
 				mode |= mysql.Str2SQLMode[part]
@@ -192,28 +192,28 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	}
 
 	// Combined sql_mode
-	SetSessionSystemVar(v, "sql_mode", types.NewDefaultCollationStringDatum("REAL_AS_FLOAT,ANSI_QUOTES"))
+	SetSessionSystemVar(v, "sql_mode", types.NewStringDatum("REAL_AS_FLOAT,ANSI_QUOTES"))
 	c.Assert(v.SQLMode, Equals, mysql.ModeRealAsFloat|mysql.ModeANSIQuotes)
 
 	// Test case for tidb_index_serial_scan_concurrency.
 	c.Assert(v.IndexSerialScanConcurrency, Equals, 1)
-	SetSessionSystemVar(v, TiDBIndexSerialScanConcurrency, types.NewDefaultCollationStringDatum("4"))
+	SetSessionSystemVar(v, TiDBIndexSerialScanConcurrency, types.NewStringDatum("4"))
 	c.Assert(v.IndexSerialScanConcurrency, Equals, 4)
 
 	// Test case for tidb_batch_insert.
 	c.Assert(v.BatchInsert, IsFalse)
-	SetSessionSystemVar(v, TiDBBatchInsert, types.NewDefaultCollationStringDatum("1"))
+	SetSessionSystemVar(v, TiDBBatchInsert, types.NewStringDatum("1"))
 	c.Assert(v.BatchInsert, IsTrue)
 
 	c.Assert(v.InitChunkSize, Equals, 32)
 	c.Assert(v.MaxChunkSize, Equals, 1024)
-	err = SetSessionSystemVar(v, TiDBMaxChunkSize, types.NewDefaultCollationStringDatum("2"))
+	err = SetSessionSystemVar(v, TiDBMaxChunkSize, types.NewStringDatum("2"))
 	c.Assert(err, NotNil)
-	err = SetSessionSystemVar(v, TiDBInitChunkSize, types.NewDefaultCollationStringDatum("1024"))
+	err = SetSessionSystemVar(v, TiDBInitChunkSize, types.NewStringDatum("1024"))
 	c.Assert(err, NotNil)
 
 	// Test case for TiDBConfig session variable.
-	err = SetSessionSystemVar(v, TiDBConfig, types.NewDefaultCollationStringDatum("abc"))
+	err = SetSessionSystemVar(v, TiDBConfig, types.NewStringDatum("abc"))
 	c.Assert(terror.ErrorEqual(err, ErrReadOnly), IsTrue)
 	val, err = GetSessionSystemVar(v, TiDBConfig)
 	c.Assert(err, IsNil)
@@ -221,12 +221,12 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(val, Equals, string(bVal))
 
-	SetSessionSystemVar(v, TiDBEnableStreaming, types.NewDefaultCollationStringDatum("1"))
+	SetSessionSystemVar(v, TiDBEnableStreaming, types.NewStringDatum("1"))
 	val, err = GetSessionSystemVar(v, TiDBEnableStreaming)
 	c.Assert(err, IsNil)
 	c.Assert(val, Equals, "1")
 	c.Assert(v.EnableStreaming, Equals, true)
-	SetSessionSystemVar(v, TiDBEnableStreaming, types.NewDefaultCollationStringDatum("0"))
+	SetSessionSystemVar(v, TiDBEnableStreaming, types.NewStringDatum("0"))
 	val, err = GetSessionSystemVar(v, TiDBEnableStreaming)
 	c.Assert(err, IsNil)
 	c.Assert(val, Equals, "0")
@@ -242,7 +242,7 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	SetSessionSystemVar(v, TiDBDDLReorgWorkerCount, types.NewIntDatum(int64(maxDDLReorgWorkerCount)+1))
 	c.Assert(terror.ErrorEqual(err, ErrWrongValueForVar), IsTrue)
 
-	err = SetSessionSystemVar(v, TiDBRetryLimit, types.NewDefaultCollationStringDatum("3"))
+	err = SetSessionSystemVar(v, TiDBRetryLimit, types.NewStringDatum("3"))
 	c.Assert(err, IsNil)
 	val, err = GetSessionSystemVar(v, TiDBRetryLimit)
 	c.Assert(err, IsNil)
@@ -250,7 +250,7 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	c.Assert(v.RetryLimit, Equals, int64(3))
 
 	c.Assert(v.EnableTablePartition, Equals, "")
-	err = SetSessionSystemVar(v, TiDBEnableTablePartition, types.NewDefaultCollationStringDatum("on"))
+	err = SetSessionSystemVar(v, TiDBEnableTablePartition, types.NewStringDatum("on"))
 	c.Assert(err, IsNil)
 	val, err = GetSessionSystemVar(v, TiDBEnableTablePartition)
 	c.Assert(err, IsNil)
@@ -265,19 +265,19 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	c.Assert(val, Equals, "5")
 	c.Assert(v.TiDBOptJoinReorderThreshold, Equals, 5)
 
-	SetSessionSystemVar(v, TiDBLowResolutionTSO, types.NewDefaultCollationStringDatum("1"))
+	SetSessionSystemVar(v, TiDBLowResolutionTSO, types.NewStringDatum("1"))
 	val, err = GetSessionSystemVar(v, TiDBLowResolutionTSO)
 	c.Assert(err, IsNil)
 	c.Assert(val, Equals, "1")
 	c.Assert(v.LowResolutionTSO, Equals, true)
-	SetSessionSystemVar(v, TiDBLowResolutionTSO, types.NewDefaultCollationStringDatum("0"))
+	SetSessionSystemVar(v, TiDBLowResolutionTSO, types.NewStringDatum("0"))
 	val, err = GetSessionSystemVar(v, TiDBLowResolutionTSO)
 	c.Assert(err, IsNil)
 	c.Assert(val, Equals, "0")
 	c.Assert(v.LowResolutionTSO, Equals, false)
 
 	c.Assert(v.CorrelationThreshold, Equals, 0.9)
-	err = SetSessionSystemVar(v, TiDBOptCorrelationThreshold, types.NewDefaultCollationStringDatum("0"))
+	err = SetSessionSystemVar(v, TiDBOptCorrelationThreshold, types.NewStringDatum("0"))
 	c.Assert(err, IsNil)
 	val, err = GetSessionSystemVar(v, TiDBOptCorrelationThreshold)
 	c.Assert(err, IsNil)
@@ -285,7 +285,7 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	c.Assert(v.CorrelationThreshold, Equals, float64(0))
 
 	c.Assert(v.CPUFactor, Equals, 3.0)
-	err = SetSessionSystemVar(v, TiDBOptCPUFactor, types.NewDefaultCollationStringDatum("5.0"))
+	err = SetSessionSystemVar(v, TiDBOptCPUFactor, types.NewStringDatum("5.0"))
 	c.Assert(err, IsNil)
 	val, err = GetSessionSystemVar(v, TiDBOptCPUFactor)
 	c.Assert(err, IsNil)
@@ -293,7 +293,7 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	c.Assert(v.CPUFactor, Equals, 5.0)
 
 	c.Assert(v.CopCPUFactor, Equals, 3.0)
-	err = SetSessionSystemVar(v, TiDBOptCopCPUFactor, types.NewDefaultCollationStringDatum("5.0"))
+	err = SetSessionSystemVar(v, TiDBOptCopCPUFactor, types.NewStringDatum("5.0"))
 	c.Assert(err, IsNil)
 	val, err = GetSessionSystemVar(v, TiDBOptCopCPUFactor)
 	c.Assert(err, IsNil)
@@ -301,7 +301,7 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	c.Assert(v.CopCPUFactor, Equals, 5.0)
 
 	c.Assert(v.NetworkFactor, Equals, 1.0)
-	err = SetSessionSystemVar(v, TiDBOptNetworkFactor, types.NewDefaultCollationStringDatum("3.0"))
+	err = SetSessionSystemVar(v, TiDBOptNetworkFactor, types.NewStringDatum("3.0"))
 	c.Assert(err, IsNil)
 	val, err = GetSessionSystemVar(v, TiDBOptNetworkFactor)
 	c.Assert(err, IsNil)
@@ -309,7 +309,7 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	c.Assert(v.NetworkFactor, Equals, 3.0)
 
 	c.Assert(v.ScanFactor, Equals, 1.5)
-	err = SetSessionSystemVar(v, TiDBOptScanFactor, types.NewDefaultCollationStringDatum("3.0"))
+	err = SetSessionSystemVar(v, TiDBOptScanFactor, types.NewStringDatum("3.0"))
 	c.Assert(err, IsNil)
 	val, err = GetSessionSystemVar(v, TiDBOptScanFactor)
 	c.Assert(err, IsNil)
@@ -317,7 +317,7 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	c.Assert(v.ScanFactor, Equals, 3.0)
 
 	c.Assert(v.DescScanFactor, Equals, 3.0)
-	err = SetSessionSystemVar(v, TiDBOptDescScanFactor, types.NewDefaultCollationStringDatum("5.0"))
+	err = SetSessionSystemVar(v, TiDBOptDescScanFactor, types.NewStringDatum("5.0"))
 	c.Assert(err, IsNil)
 	val, err = GetSessionSystemVar(v, TiDBOptDescScanFactor)
 	c.Assert(err, IsNil)
@@ -325,7 +325,7 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	c.Assert(v.DescScanFactor, Equals, 5.0)
 
 	c.Assert(v.SeekFactor, Equals, 20.0)
-	err = SetSessionSystemVar(v, TiDBOptSeekFactor, types.NewDefaultCollationStringDatum("50.0"))
+	err = SetSessionSystemVar(v, TiDBOptSeekFactor, types.NewStringDatum("50.0"))
 	c.Assert(err, IsNil)
 	val, err = GetSessionSystemVar(v, TiDBOptSeekFactor)
 	c.Assert(err, IsNil)
@@ -333,7 +333,7 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	c.Assert(v.SeekFactor, Equals, 50.0)
 
 	c.Assert(v.MemoryFactor, Equals, 0.001)
-	err = SetSessionSystemVar(v, TiDBOptMemoryFactor, types.NewDefaultCollationStringDatum("1.0"))
+	err = SetSessionSystemVar(v, TiDBOptMemoryFactor, types.NewStringDatum("1.0"))
 	c.Assert(err, IsNil)
 	val, err = GetSessionSystemVar(v, TiDBOptMemoryFactor)
 	c.Assert(err, IsNil)
@@ -341,7 +341,7 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	c.Assert(v.MemoryFactor, Equals, 1.0)
 
 	c.Assert(v.DiskFactor, Equals, 1.5)
-	err = SetSessionSystemVar(v, TiDBOptDiskFactor, types.NewDefaultCollationStringDatum("1.1"))
+	err = SetSessionSystemVar(v, TiDBOptDiskFactor, types.NewStringDatum("1.1"))
 	c.Assert(err, IsNil)
 	val, err = GetSessionSystemVar(v, TiDBOptDiskFactor)
 	c.Assert(err, IsNil)
@@ -349,40 +349,40 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	c.Assert(v.DiskFactor, Equals, 1.1)
 
 	c.Assert(v.ConcurrencyFactor, Equals, 3.0)
-	err = SetSessionSystemVar(v, TiDBOptConcurrencyFactor, types.NewDefaultCollationStringDatum("5.0"))
+	err = SetSessionSystemVar(v, TiDBOptConcurrencyFactor, types.NewStringDatum("5.0"))
 	c.Assert(err, IsNil)
 	val, err = GetSessionSystemVar(v, TiDBOptConcurrencyFactor)
 	c.Assert(err, IsNil)
 	c.Assert(val, Equals, "5.0")
 	c.Assert(v.ConcurrencyFactor, Equals, 5.0)
 
-	SetSessionSystemVar(v, TiDBReplicaRead, types.NewDefaultCollationStringDatum("follower"))
+	SetSessionSystemVar(v, TiDBReplicaRead, types.NewStringDatum("follower"))
 	val, err = GetSessionSystemVar(v, TiDBReplicaRead)
 	c.Assert(err, IsNil)
 	c.Assert(val, Equals, "follower")
 	c.Assert(v.GetReplicaRead(), Equals, kv.ReplicaReadFollower)
-	SetSessionSystemVar(v, TiDBReplicaRead, types.NewDefaultCollationStringDatum("leader"))
+	SetSessionSystemVar(v, TiDBReplicaRead, types.NewStringDatum("leader"))
 	val, err = GetSessionSystemVar(v, TiDBReplicaRead)
 	c.Assert(err, IsNil)
 	c.Assert(val, Equals, "leader")
 	c.Assert(v.GetReplicaRead(), Equals, kv.ReplicaReadLeader)
-	SetSessionSystemVar(v, TiDBReplicaRead, types.NewDefaultCollationStringDatum("leader-and-follower"))
+	SetSessionSystemVar(v, TiDBReplicaRead, types.NewStringDatum("leader-and-follower"))
 	val, err = GetSessionSystemVar(v, TiDBReplicaRead)
 	c.Assert(err, IsNil)
 	c.Assert(val, Equals, "leader-and-follower")
 	c.Assert(v.GetReplicaRead(), Equals, kv.ReplicaReadMixed)
 
-	SetSessionSystemVar(v, TiDBEnableStmtSummary, types.NewDefaultCollationStringDatum("on"))
+	SetSessionSystemVar(v, TiDBEnableStmtSummary, types.NewStringDatum("on"))
 	val, err = GetSessionSystemVar(v, TiDBEnableStmtSummary)
 	c.Assert(err, IsNil)
 	c.Assert(val, Equals, "1")
 
-	SetSessionSystemVar(v, TiDBStmtSummaryRefreshInterval, types.NewDefaultCollationStringDatum("10"))
+	SetSessionSystemVar(v, TiDBStmtSummaryRefreshInterval, types.NewStringDatum("10"))
 	val, err = GetSessionSystemVar(v, TiDBStmtSummaryRefreshInterval)
 	c.Assert(err, IsNil)
 	c.Assert(val, Equals, "10")
 
-	SetSessionSystemVar(v, TiDBStmtSummaryHistorySize, types.NewDefaultCollationStringDatum("10"))
+	SetSessionSystemVar(v, TiDBStmtSummaryHistorySize, types.NewStringDatum("10"))
 	val, err = GetSessionSystemVar(v, TiDBStmtSummaryHistorySize)
 	c.Assert(err, IsNil)
 	c.Assert(val, Equals, "10")

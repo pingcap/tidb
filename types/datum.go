@@ -1687,8 +1687,8 @@ func NewBytesDatum(b []byte) (d Datum) {
 	return d
 }
 
-// NewDefaultCollationStringDatum creates a new Datum from a string.
-func NewDefaultCollationStringDatum(s string) (d Datum) {
+// NewStringDatum creates a new Datum from a string.
+func NewStringDatum(s string) (d Datum) {
 	d.SetString(s, collate.DefaultCollation)
 	return d
 }

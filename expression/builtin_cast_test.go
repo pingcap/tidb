@@ -332,7 +332,7 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 		{
 			&Column{RetType: types.NewFieldType(mysql.TypeString), Index: 0},
 			types.NewDecFromInt(1),
-			chunk.MutRowFromDatums([]types.Datum{types.NewDefaultCollationStringDatum("1")}),
+			chunk.MutRowFromDatums([]types.Datum{types.NewStringDatum("1")}),
 		},
 		// cast real as decimal.
 		{
@@ -399,7 +399,7 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 			7,
 			3,
 			types.NewDecFromStringForTest("1234.000"),
-			chunk.MutRowFromDatums([]types.Datum{types.NewDefaultCollationStringDatum("1234")}),
+			chunk.MutRowFromDatums([]types.Datum{types.NewStringDatum("1234")}),
 		},
 		// cast real as decimal.
 		{
@@ -472,7 +472,7 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 		{
 			&Column{RetType: types.NewFieldType(mysql.TypeString), Index: 0},
 			1,
-			chunk.MutRowFromDatums([]types.Datum{types.NewDefaultCollationStringDatum("1")}),
+			chunk.MutRowFromDatums([]types.Datum{types.NewStringDatum("1")}),
 		},
 		// cast decimal as int.
 		{
@@ -538,7 +538,7 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 		{
 			&Column{RetType: types.NewFieldType(mysql.TypeString), Index: 0},
 			1.1,
-			chunk.MutRowFromDatums([]types.Datum{types.NewDefaultCollationStringDatum("1.1")}),
+			chunk.MutRowFromDatums([]types.Datum{types.NewStringDatum("1.1")}),
 		},
 		// cast decimal as real.
 		{
@@ -640,7 +640,7 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 		{
 			&Column{RetType: types.NewFieldType(mysql.TypeString), Index: 0},
 			"1234",
-			chunk.MutRowFromDatums([]types.Datum{types.NewDefaultCollationStringDatum("1234")}),
+			chunk.MutRowFromDatums([]types.Datum{types.NewStringDatum("1234")}),
 		},
 	}
 	for i, t := range castToStringCases {
@@ -718,7 +718,7 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 			&Column{RetType: types.NewFieldType(mysql.TypeString), Index: 0},
 			"你好w",
 			3,
-			chunk.MutRowFromDatums([]types.Datum{types.NewDefaultCollationStringDatum("你好world")}),
+			chunk.MutRowFromDatums([]types.Datum{types.NewStringDatum("你好world")}),
 		},
 	}
 	for i, t := range castToStringCases2 {
@@ -775,7 +775,7 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 		{
 			&Column{RetType: types.NewFieldType(mysql.TypeString), Index: 0},
 			tm,
-			chunk.MutRowFromDatums([]types.Datum{types.NewDefaultCollationStringDatum(curTimeString)}),
+			chunk.MutRowFromDatums([]types.Datum{types.NewStringDatum(curTimeString)}),
 		},
 		// cast Duration as Time.
 		{
@@ -861,7 +861,7 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 			tm,
 			types.MaxFsp,
 			mysql.TypeDatetime,
-			chunk.MutRowFromDatums([]types.Datum{types.NewDefaultCollationStringDatum(curTimeString)}),
+			chunk.MutRowFromDatums([]types.Datum{types.NewStringDatum(curTimeString)}),
 		},
 		// cast Duration as Date.
 		{
@@ -940,7 +940,7 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 		{
 			&Column{RetType: types.NewFieldType(mysql.TypeString), Index: 0},
 			duration,
-			chunk.MutRowFromDatums([]types.Datum{types.NewDefaultCollationStringDatum("12:59:59")}),
+			chunk.MutRowFromDatums([]types.Datum{types.NewStringDatum("12:59:59")}),
 		},
 		// cast Time as Duration.
 		{
@@ -1020,7 +1020,7 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 		{
 			&Column{RetType: types.NewFieldType(mysql.TypeString), Index: 0},
 			duration,
-			chunk.MutRowFromDatums([]types.Datum{types.NewDefaultCollationStringDatum("12:59:59")}),
+			chunk.MutRowFromDatums([]types.Datum{types.NewStringDatum("12:59:59")}),
 			4,
 		},
 		// cast Time as Duration.
@@ -1176,7 +1176,7 @@ func (s *testEvaluatorSuite) TestWrapWithCastAsTypesClasses(c *C) {
 		},
 		{
 			&Column{RetType: types.NewFieldType(mysql.TypeVarString), Index: 0},
-			chunk.MutRowFromDatums([]types.Datum{types.NewDefaultCollationStringDatum("123.123")}),
+			chunk.MutRowFromDatums([]types.Datum{types.NewStringDatum("123.123")}),
 			123, 123.123, types.NewDecFromStringForTest("123.123"), "123.123",
 		},
 		{
@@ -1304,7 +1304,7 @@ func (s *testEvaluatorSuite) TestWrapWithCastAsTime(c *C) {
 			dt,
 		},
 		{
-			&Constant{RetType: types.NewFieldType(mysql.TypeVarString), Value: types.NewDefaultCollationStringDatum(curTimeString)},
+			&Constant{RetType: types.NewFieldType(mysql.TypeVarString), Value: types.NewStringDatum(curTimeString)},
 			types.NewFieldType(mysql.TypeDatetime),
 			tm,
 		},
@@ -1343,7 +1343,7 @@ func (s *testEvaluatorSuite) TestWrapWithCastAsDuration(c *C) {
 			&Constant{RetType: types.NewFieldType(mysql.TypeNewDecimal), Value: types.NewDecimalDatum(types.NewDecFromInt(125959))},
 		},
 		{
-			&Constant{RetType: types.NewFieldType(mysql.TypeVarString), Value: types.NewDefaultCollationStringDatum("125959")},
+			&Constant{RetType: types.NewFieldType(mysql.TypeVarString), Value: types.NewStringDatum("125959")},
 		},
 		{
 			&Constant{RetType: types.NewFieldType(mysql.TypeDatetime), Value: timeDatum},

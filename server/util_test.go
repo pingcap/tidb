@@ -154,7 +154,7 @@ func (s *testUtilSuite) TestDumpTextValue(c *C) {
 	c.Assert(mustDecodeStr(c, bs), Equals, "foo")
 
 	columns[0].Type = mysql.TypeVarchar
-	bs, err = dumpTextRow(nil, columns, chunk.MutRowFromDatums([]types.Datum{types.NewDefaultCollationStringDatum("bar")}).ToRow())
+	bs, err = dumpTextRow(nil, columns, chunk.MutRowFromDatums([]types.Datum{types.NewStringDatum("bar")}).ToRow())
 	c.Assert(err, IsNil)
 	c.Assert(mustDecodeStr(c, bs), Equals, "bar")
 

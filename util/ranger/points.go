@@ -393,8 +393,8 @@ func (r *builder) newBuildFromPatternLike(expr *expression.ScalarFunction) []poi
 		return fullRange
 	}
 	if pattern == "" {
-		startPoint := point{value: types.NewDefaultCollationStringDatum(""), start: true}
-		endPoint := point{value: types.NewDefaultCollationStringDatum("")}
+		startPoint := point{value: types.NewStringDatum(""), start: true}
+		endPoint := point{value: types.NewStringDatum("")}
 		return []point{startPoint, endPoint}
 	}
 	lowValue := make([]byte, 0, len(pattern))
@@ -434,7 +434,7 @@ func (r *builder) newBuildFromPatternLike(expr *expression.ScalarFunction) []poi
 		return []point{{value: types.MinNotNullDatum(), start: true}, {value: types.MaxValueDatum()}}
 	}
 	if isExactMatch {
-		val := types.NewDefaultCollationStringDatum(string(lowValue))
+		val := types.NewStringDatum(string(lowValue))
 		return []point{{value: val, start: true}, {value: val}}
 	}
 	startPoint := point{start: true, excl: exclude}

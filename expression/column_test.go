@@ -70,7 +70,7 @@ func (s *testEvaluatorSuite) TestColumn(c *C) {
 	c.Assert(isNull, IsFalse)
 	c.Assert(err, IsNil)
 
-	stringDatum := types.NewDefaultCollationStringDatum("abc")
+	stringDatum := types.NewStringDatum("abc")
 	stringCorCol := &CorrelatedColumn{Column: Column{RetType: types.NewFieldType(mysql.TypeVarchar)},
 		Data: &stringDatum}
 	strVal, isNull, err := stringCorCol.EvalString(s.ctx, chunk.Row{})

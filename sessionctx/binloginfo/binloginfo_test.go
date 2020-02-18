@@ -152,8 +152,8 @@ func (s *testBinlogSuite) TestBinlog(c *C) {
 	c.Assert(prewriteVal.SchemaVersion, Greater, int64(0))
 	c.Assert(prewriteVal.Mutations[0].TableId, Greater, int64(0))
 	expected := [][]types.Datum{
-		{types.NewIntDatum(1), types.NewDefaultCollationStringDatum("abc")},
-		{types.NewIntDatum(2), types.NewDefaultCollationStringDatum("cde")},
+		{types.NewIntDatum(1), types.NewStringDatum("abc")},
+		{types.NewIntDatum(2), types.NewStringDatum("cde")},
 	}
 	gotRows := mutationRowsToRows(c, prewriteVal.Mutations[0].InsertedRows, 2, 4)
 	c.Assert(gotRows, DeepEquals, expected)
@@ -161,10 +161,10 @@ func (s *testBinlogSuite) TestBinlog(c *C) {
 	tk.MustExec("update local_binlog set name = 'xyz' where id = 2")
 	prewriteVal = getLatestBinlogPrewriteValue(c, pump)
 	oldRow := [][]types.Datum{
-		{types.NewIntDatum(2), types.NewDefaultCollationStringDatum("cde")},
+		{types.NewIntDatum(2), types.NewStringDatum("cde")},
 	}
 	newRow := [][]types.Datum{
-		{types.NewIntDatum(2), types.NewDefaultCollationStringDatum("xyz")},
+		{types.NewIntDatum(2), types.NewStringDatum("xyz")},
 	}
 	gotRows = mutationRowsToRows(c, prewriteVal.Mutations[0].UpdatedRows, 1, 3)
 	c.Assert(gotRows, DeepEquals, oldRow)
@@ -176,7 +176,7 @@ func (s *testBinlogSuite) TestBinlog(c *C) {
 	prewriteVal = getLatestBinlogPrewriteValue(c, pump)
 	gotRows = mutationRowsToRows(c, prewriteVal.Mutations[0].DeletedRows, 1, 3)
 	expected = [][]types.Datum{
-		{types.NewIntDatum(1), types.NewDefaultCollationStringDatum("abc")},
+		{types.NewIntDatum(1), types.NewStringDatum("abc")},
 	}
 	c.Assert(gotRows, DeepEquals, expected)
 
@@ -188,7 +188,7 @@ func (s *testBinlogSuite) TestBinlog(c *C) {
 	c.Assert(prewriteVal.Mutations[0].Sequence[0], Equals, binlog.MutationType_DeleteRow)
 
 	expected = [][]types.Datum{
-		{types.NewDefaultCollationStringDatum("def"), types.NewIntDatum(18), types.NewIntDatum(-1), types.NewIntDatum(2)},
+		{types.NewStringDatum("def"), types.NewIntDatum(18), types.NewIntDatum(-1), types.NewIntDatum(2)},
 	}
 	gotRows = mutationRowsToRows(c, prewriteVal.Mutations[0].DeletedRows, 1, 3, 4, 5)
 	c.Assert(gotRows, DeepEquals, expected)

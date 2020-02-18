@@ -366,7 +366,7 @@ func (s *testTypeConvertSuite) TestConvertToString(c *C) {
 		ft = NewFieldType(mysql.TypeVarchar)
 		ft.Flen = tt.flen
 		ft.Charset = tt.charset
-		inputDatum := NewDefaultCollationStringDatum(tt.input)
+		inputDatum := NewStringDatum(tt.input)
 		sc := new(stmtctx.StatementContext)
 		outputDatum, err := inputDatum.ConvertTo(sc, ft)
 		if tt.input != tt.output {

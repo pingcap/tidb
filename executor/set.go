@@ -242,13 +242,13 @@ func (e *SetExecutor) getVarValue(v *expression.VarAssignment, sysVar *variable.
 		// to the compiled-in MySQL default value, use the DEFAULT keyword.
 		// See http://dev.mysql.com/doc/refman/5.7/en/set-statement.html
 		if sysVar != nil {
-			value = types.NewDefaultCollationStringDatum(sysVar.Value)
+			value = types.NewStringDatum(sysVar.Value)
 		} else {
 			s, err1 := variable.GetGlobalSystemVar(e.ctx.GetSessionVars(), v.Name)
 			if err1 != nil {
 				return value, err1
 			}
-			value = types.NewDefaultCollationStringDatum(s)
+			value = types.NewStringDatum(s)
 		}
 		return
 	}

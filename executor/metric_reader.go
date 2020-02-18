@@ -167,7 +167,7 @@ func (e *MetricRetriever) genRecord(metric pmodel.Metric, pair pmodel.SamplePair
 		if len(v) == 0 {
 			v = infoschema.GenLabelConditionValues(e.extractor.LabelConditions[strings.ToLower(label)])
 		}
-		record = append(record, types.NewDefaultCollationStringDatum(v))
+		record = append(record, types.NewStringDatum(v))
 	}
 	if e.tblDef.Quantile > 0 {
 		record = append(record, types.NewFloat64Datum(quantile))
@@ -177,7 +177,7 @@ func (e *MetricRetriever) genRecord(metric pmodel.Metric, pair pmodel.SamplePair
 	} else {
 		record = append(record, types.NewFloat64Datum(float64(pair.Value)))
 	}
-	record = append(record, types.NewDefaultCollationStringDatum(e.tblDef.Comment))
+	record = append(record, types.NewStringDatum(e.tblDef.Comment))
 	return record
 }
 

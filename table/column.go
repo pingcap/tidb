@@ -159,7 +159,7 @@ func handleWrongUtf8Value(ctx sessionctx.Context, col *model.ColumnInfo, casted 
 	err := ErrTruncatedWrongValueForField.FastGen("incorrect utf8 value %x(%s) for column %s", casted.GetBytes(), str, col.Name)
 	logutil.BgLogger().Error("incorrect UTF-8 value", zap.Uint64("conn", ctx.GetSessionVars().ConnectionID), zap.Error(err))
 	// Truncate to valid utf8 string.
-	truncateVal := types.NewDefaultCollationStringDatum(str[:i])
+	truncateVal := types.NewStringDatum(str[:i])
 	err = sc.HandleTruncate(err)
 	return truncateVal, err
 }

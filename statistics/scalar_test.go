@@ -148,9 +148,9 @@ func (s *testStatisticsSuite) TestCalcFraction(c *C) {
 			tp:       types.NewFieldType(mysql.TypeDate),
 		},
 		{
-			lower:    types.NewDefaultCollationStringDatum("aasad"),
-			upper:    types.NewDefaultCollationStringDatum("addad"),
-			value:    types.NewDefaultCollationStringDatum("abfsd"),
+			lower:    types.NewStringDatum("aasad"),
+			upper:    types.NewStringDatum("addad"),
+			value:    types.NewStringDatum("abfsd"),
 			fraction: 0.32280253984063745,
 			tp:       types.NewFieldType(mysql.TypeString),
 		},

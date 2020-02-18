@@ -974,12 +974,12 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 		}, types.EmptyName)
 	case *ast.TimeUnitExpr:
 		er.ctxStackAppend(&expression.Constant{
-			Value:   types.NewDefaultCollationStringDatum(v.Unit.String()),
+			Value:   types.NewStringDatum(v.Unit.String()),
 			RetType: types.NewFieldType(mysql.TypeVarchar),
 		}, types.EmptyName)
 	case *ast.GetFormatSelectorExpr:
 		er.ctxStackAppend(&expression.Constant{
-			Value:   types.NewDefaultCollationStringDatum(v.Selector.String()),
+			Value:   types.NewStringDatum(v.Selector.String()),
 			RetType: types.NewFieldType(mysql.TypeVarchar),
 		}, types.EmptyName)
 	default:
@@ -1028,7 +1028,7 @@ func (er *expressionRewriter) rewriteVariable(v *ast.VariableExpr) {
 		f, err := er.newFunction(ast.GetVar,
 			// TODO: Here is wrong, the sessionVars should store a name -> Datum map. Will fix it later.
 			types.NewFieldType(mysql.TypeString),
-			expression.DatumToConstant(types.NewDefaultCollationStringDatum(name), mysql.TypeString))
+			expression.DatumToConstant(types.NewStringDatum(name), mysql.TypeString))
 		if err != nil {
 			er.err = err
 			return
@@ -1060,7 +1060,7 @@ func (er *expressionRewriter) rewriteVariable(v *ast.VariableExpr) {
 		er.err = err
 		return
 	}
-	e := expression.DatumToConstant(types.NewDefaultCollationStringDatum(val), mysql.TypeVarString)
+	e := expression.DatumToConstant(types.NewStringDatum(val), mysql.TypeVarString)
 	e.GetType().Charset, _ = er.sctx.GetSessionVars().GetSystemVar(variable.CharacterSetConnection)
 	e.GetType().Collate, _ = er.sctx.GetSessionVars().GetSystemVar(variable.CollationConnection)
 	er.ctxStackAppend(e, types.EmptyName)
@@ -1325,7 +1325,7 @@ func (er *expressionRewriter) patternLikeToExpression(v *ast.PatternLikeExpr) {
 				}
 				types.DefaultTypeForValue(string(patValue), fieldType)
 				function, er.err = er.constructBinaryOpFunction(er.ctxStack[l-2],
-					&expression.Constant{Value: types.NewDefaultCollationStringDatum(string(patValue)), RetType: fieldType},
+					&expression.Constant{Value: types.NewStringDatum(string(patValue)), RetType: fieldType},
 					op)
 				isPatternExactMatch = true
 			}

@@ -363,7 +363,7 @@ func (*testExpressionSuite) TestDeferredParamNotNull(c *C) {
 		types.NewDecimalDatum(types.NewDecFromStringForTest("20170118123950.123")),
 		types.NewTimeDatum(types.NewTime(types.FromGoTime(testTime), mysql.TypeTimestamp, 6)),
 		types.NewDurationDatum(types.ZeroDuration),
-		types.NewDefaultCollationStringDatum("{}"),
+		types.NewStringDatum("{}"),
 		types.NewBinaryLiteralDatum(types.BinaryLiteral([]byte{1})),
 		types.NewBytesDatum([]byte{'b'}),
 		types.NewFloat32Datum(1.1),
@@ -526,13 +526,13 @@ func (*testExpressionSuite) TestVectorizedConstant(c *C) {
 
 	// var-length type with/without Sel
 	for _, cst := range []*Constant{
-		{RetType: newStringFieldType(), Value: types.NewDefaultCollationStringDatum("hello")},
-		{RetType: newStringFieldType(), DeferredExpr: &Constant{RetType: newStringFieldType(), Value: types.NewDefaultCollationStringDatum("hello")}}} {
+		{RetType: newStringFieldType(), Value: types.NewStringDatum("hello")},
+		{RetType: newStringFieldType(), DeferredExpr: &Constant{RetType: newStringFieldType(), Value: types.NewStringDatum("hello")}}} {
 		chk := chunk.New([]*types.FieldType{newIntFieldType()}, 1024, 1024)
 		for i := 0; i < 1024; i++ {
 			chk.AppendInt64(0, int64(i))
 		}
-		cst = &Constant{DeferredExpr: nil, RetType: newStringFieldType(), Value: types.NewDefaultCollationStringDatum("hello")}
+		cst = &Constant{DeferredExpr: nil, RetType: newStringFieldType(), Value: types.NewStringDatum("hello")}
 		chk.SetSel(nil)
 		col := chunk.NewColumn(newStringFieldType(), 1024)
 		ctx := mock.NewContext()

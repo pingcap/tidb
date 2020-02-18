@@ -86,7 +86,7 @@ func AppendHostInfoToRows(rows [][]types.Datum) ([][]types.Datum, error) {
 	addr := serverInfo.IP + ":" + strconv.FormatUint(uint64(serverInfo.StatusPort), 10)
 	for i := range rows {
 		row := make([]types.Datum, 0, len(rows[i])+1)
-		row = append(row, types.NewDefaultCollationStringDatum(addr))
+		row = append(row, types.NewStringDatum(addr))
 		row = append(row, rows[i]...)
 		rows[i] = row
 	}

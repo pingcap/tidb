@@ -48,7 +48,7 @@ func (s *testChunkSuite) TestMutRow(c *check.C) {
 	c.Assert(row.IsNull(0), check.IsFalse)
 	c.Assert(row.GetInt64(1), check.Equals, int64(456))
 	c.Assert(row.IsNull(1), check.IsFalse)
-	mutRow.SetDatums(types.NewDefaultCollationStringDatum("defgh"), types.NewIntDatum(33))
+	mutRow.SetDatums(types.NewStringDatum("defgh"), types.NewIntDatum(33))
 	c.Assert(row.IsNull(0), check.IsFalse)
 	c.Assert(row.GetString(0), check.Equals, "defgh")
 	c.Assert(row.IsNull(1), check.IsFalse)
@@ -157,7 +157,7 @@ func (s *testChunkSuite) TestMutRowShallowCopyPartialRow(c *check.C) {
 	c.Assert(row.GetTime(2), check.DeepEquals, mutRow.ToRow().GetTime(2))
 
 	row.c.Reset()
-	d := types.NewDefaultCollationStringDatum("dfg")
+	d := types.NewStringDatum("dfg")
 	row.c.AppendDatum(0, &d)
 	d = types.NewIntDatum(567)
 	row.c.AppendDatum(1, &d)
