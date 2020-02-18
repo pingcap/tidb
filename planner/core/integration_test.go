@@ -26,7 +26,7 @@ import (
 	"github.com/pingcap/tidb/util/testutil"
 )
 
-var _ = Suite(&testIntegrationSuite{})
+var _ = SerialSuites(&testIntegrationSuite{})
 
 type testIntegrationSuite struct {
 	testData testutil.TestData
@@ -264,16 +264,14 @@ func (s *testIntegrationSuite) TestNoneAccessPathsFoundByIsolationRead(c *C) {
 
 	_, err = tk.Exec("select * from t")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[planner:1815]Internal : Can not find access path matching 'tidb_isolation_read_engines'(value: '[tikv tiflash tidb]') and tidb-server config isolation-read(engines: 'tiflash'). Available values are 'tikv'.")
+	c.Assert(err.Error(), Equals, "[planner:1815]Internal : Can not find access path matching 'tidb_isolation_read_engines'(value: 'tiflash') and tidb-server config isolation-read(engines: '[tikv tiflash tidb]'). Available values are 'tikv'.")
 
 	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tikv, tiflash'")
 	config.GetGlobalConfig().IsolationRead.Engines = []string{"tiflash"}
-	defer func() {
-		config.GetGlobalConfig().IsolationRead.Engines = []string{"tikv", "tiflash", "tidb"}
-	}()
 	_, err = tk.Exec("select * from t")
+	config.GetGlobalConfig().IsolationRead.Engines = []string{"tikv", "tiflash", "tidb"}
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[planner:1815]Internal : Can not find access path matching 'tidb_isolation_read_engines'(value: '[tiflash]') and tidb-server config isolation-read(engines: 'tikv,tiflash'). Available values are 'tikv'.")
+	c.Assert(err.Error(), Equals, "[planner:1815]Internal : Can not find access path matching 'tidb_isolation_read_engines'(value: 'tikv,tiflash') and tidb-server config isolation-read(engines: '[tiflash]'). Available values are 'tikv'.")
 }
 
 func (s *testIntegrationSuite) TestSelPushDownTiFlash(c *C) {
@@ -311,6 +309,86 @@ func (s *testIntegrationSuite) TestSelPushDownTiFlash(c *C) {
 		"└─TableReader_6 10000.00 root data:TableScan_5",
 		"  └─TableScan_5 10000.00 cop[tiflash] table:t, range:[-inf,+inf], keep order:false, stats:pseudo",
 	))
+}
+
+func (s *testIntegrationSuite) TestReadFromStorageHint(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t, tt, ttt")
+	tk.MustExec("create table t(a int, b int, index ia(a))")
+	tk.MustExec("create table tt(a int, b int, primary key(a))")
+	tk.MustExec("create table ttt(a int, primary key (a desc))")
+
+	// Create virtual tiflash replica info.
+	dom := domain.GetDomain(tk.Se)
+	is := dom.InfoSchema()
+	db, exists := is.SchemaByName(model.NewCIStr("test"))
+	c.Assert(exists, IsTrue)
+	for _, tblInfo := range db.Tables {
+		tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
+			Count:     1,
+			Available: true,
+		}
+	}
+
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+		Warn []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+			output[i].Warn = s.testData.ConvertSQLWarnToStrings(tk.Se.GetSessionVars().StmtCtx.GetWarnings())
+		})
+		res := tk.MustQuery(tt)
+		res.Check(testkit.Rows(output[i].Plan...))
+		c.Assert(s.testData.ConvertSQLWarnToStrings(tk.Se.GetSessionVars().StmtCtx.GetWarnings()), DeepEquals, output[i].Warn)
+	}
+}
+
+func (s *testIntegrationSuite) TestReadFromStorageHintAndIsolationRead(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t, tt, ttt")
+	tk.MustExec("create table t(a int, b int, index ia(a))")
+	tk.MustExec("set @@session.tidb_isolation_read_engines=\"tikv\"")
+
+	// Create virtual tiflash replica info.
+	dom := domain.GetDomain(tk.Se)
+	is := dom.InfoSchema()
+	db, exists := is.SchemaByName(model.NewCIStr("test"))
+	c.Assert(exists, IsTrue)
+	for _, tblInfo := range db.Tables {
+		tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
+			Count:     1,
+			Available: true,
+		}
+	}
+
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+		Warn []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		tk.Se.GetSessionVars().StmtCtx.SetWarnings(nil)
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+			output[i].Warn = s.testData.ConvertSQLWarnToStrings(tk.Se.GetSessionVars().StmtCtx.GetWarnings())
+		})
+		res := tk.MustQuery(tt)
+		res.Check(testkit.Rows(output[i].Plan...))
+		c.Assert(s.testData.ConvertSQLWarnToStrings(tk.Se.GetSessionVars().StmtCtx.GetWarnings()), DeepEquals, output[i].Warn)
+	}
 }
 
 func (s *testIntegrationSuite) TestPartitionTableStats(c *C) {

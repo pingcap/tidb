@@ -60,6 +60,8 @@ type Constant struct {
 	// It's only used to reference a user variable provided in the `EXECUTE` statement or `COM_EXECUTE` binary protocol.
 	ParamMarker *ParamMarker
 	hashcode    []byte
+
+	coercibility
 }
 
 // ParamMarker indicates param provided by COM_STMT_EXECUTE.
@@ -406,4 +408,14 @@ func (c *Constant) SupportReverseEval() bool {
 // ReverseEval evaluates the only one column value with given function result.
 func (c *Constant) ReverseEval(sc *stmtctx.StatementContext, res types.Datum, rType types.RoundingType) (val types.Datum, err error) {
 	return c.Value, nil
+}
+
+// Coercibility returns the coercibility value which is used to check collations.
+func (c *Constant) Coercibility() Coercibility {
+	if c.hasCoercibility() {
+		return c.coercibility.value()
+	}
+
+	c.coercibility.SetCoercibility(deriveCoercibilityForConstant(c))
+	return c.coercibility.value()
 }
