@@ -15,6 +15,8 @@ package ddl
 
 import (
 	"fmt"
+	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/types"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -24,7 +26,6 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
-	field_types "github.com/pingcap/parser/types"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -679,9 +680,17 @@ func onModifyTableCharsetAndCollate(t *meta.Meta, job *model.Job) (ver int64, _ 
 
 	tblInfo.Charset = toCharset
 	tblInfo.Collate = toCollate
+	hasCharset := func(ft *types.FieldType) bool {
+		switch ft.Tp {
+		case mysql.TypeVarchar, mysql.TypeString, mysql.TypeVarString, mysql.TypeBlob,
+			mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob, mysql.TypeEnum, mysql.TypeSet:
+			return true
+		}
+		return false
+	}
 	// update column charset.
 	for _, col := range tblInfo.Columns {
-		if field_types.HasCharset(&col.FieldType) {
+		if hasCharset(&col.FieldType) {
 			col.Charset = toCharset
 			col.Collate = toCollate
 		} else {
