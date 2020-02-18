@@ -343,7 +343,7 @@ func (s *testSequenceSuite) TestSequenceFunction(c *C) {
 	s.tk.MustQuery("select nextval(seq)").Check(testkit.Rows("3"))
 	s.tk.MustQuery("select nextval(seq)").Check(testkit.Rows("8"))
 	err := s.tk.QueryToErr("select nextval(seq)")
-	c.Assert(err.Error(), Equals, "[table:1]Sequence test.seq has run out")
+	c.Assert(err.Error(), Equals, "[table:4135]Sequence 'test.seq' has run out")
 
 	s.tk.MustExec("drop sequence if exists seq")
 	s.tk.MustExec("create sequence seq increment = 3 start = 3 maxvalue = 9 nocycle")
@@ -351,7 +351,7 @@ func (s *testSequenceSuite) TestSequenceFunction(c *C) {
 	s.tk.MustQuery("select nextval(seq)").Check(testkit.Rows("6"))
 	s.tk.MustQuery("select nextval(seq)").Check(testkit.Rows("9"))
 	err = s.tk.QueryToErr("select nextval(seq)")
-	c.Assert(err.Error(), Equals, "[table:1]Sequence test.seq has run out")
+	c.Assert(err.Error(), Equals, "[table:4135]Sequence 'test.seq' has run out")
 
 	// test negative-growth sequence
 	s.tk.MustExec("drop sequence if exists seq")
@@ -379,14 +379,14 @@ func (s *testSequenceSuite) TestSequenceFunction(c *C) {
 	s.tk.MustQuery("select nextval(seq)").Check(testkit.Rows("-2"))
 	s.tk.MustQuery("select nextval(seq)").Check(testkit.Rows("-6"))
 	err = s.tk.QueryToErr("select nextval(seq)")
-	c.Assert(err.Error(), Equals, "[table:1]Sequence test.seq has run out")
+	c.Assert(err.Error(), Equals, "[table:4135]Sequence 'test.seq' has run out")
 
 	s.tk.MustExec("drop sequence if exists seq")
 	s.tk.MustExec("create sequence seq increment = -3 start = 2 minvalue -2 maxvalue 10")
 	s.tk.MustQuery("select nextval(seq)").Check(testkit.Rows("2"))
 	s.tk.MustQuery("select nextval(seq)").Check(testkit.Rows("-1"))
 	err = s.tk.QueryToErr("select nextval(seq)")
-	c.Assert(err.Error(), Equals, "[table:1]Sequence test.seq has run out")
+	c.Assert(err.Error(), Equals, "[table:4135]Sequence 'test.seq' has run out")
 
 	// test sequence setval function.
 	s.tk.MustExec("drop sequence if exists seq")
@@ -412,14 +412,14 @@ func (s *testSequenceSuite) TestSequenceFunction(c *C) {
 	s.tk.MustQuery("select setval(seq, 8)").Check(testkit.Rows("8"))
 	s.tk.MustQuery("select nextval(seq)").Check(testkit.Rows("10"))
 	err = s.tk.QueryToErr("select nextval(seq)")
-	c.Assert(err.Error(), Equals, "[table:1]Sequence test.seq has run out")
+	c.Assert(err.Error(), Equals, "[table:4135]Sequence 'test.seq' has run out")
 	s.tk.MustQuery("select setval(seq, 11)").Check(testkit.Rows("11"))
 	err = s.tk.QueryToErr("select nextval(seq)")
-	c.Assert(err.Error(), Equals, "[table:1]Sequence test.seq has run out")
+	c.Assert(err.Error(), Equals, "[table:4135]Sequence 'test.seq' has run out")
 	// set value can be bigger than maxvalue.
 	s.tk.MustQuery("select setval(seq, 100)").Check(testkit.Rows("100"))
 	err = s.tk.QueryToErr("select nextval(seq)")
-	c.Assert(err.Error(), Equals, "[table:1]Sequence test.seq has run out")
+	c.Assert(err.Error(), Equals, "[table:4135]Sequence 'test.seq' has run out")
 
 	// test setval in second cache round.
 	s.tk.MustExec("drop sequence if exists seq")
