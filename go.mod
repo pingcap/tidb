@@ -20,7 +20,7 @@ require (
 	github.com/google/pprof v0.0.0-20190930153522-6ce02741cba3
 	github.com/google/uuid v1.1.1
 	github.com/gorilla/context v1.1.1 // indirect
-	github.com/gorilla/mux v1.6.2
+	github.com/gorilla/mux v1.7.3
 	github.com/gorilla/websocket v1.4.0 // indirect
 	github.com/grpc-ecosystem/go-grpc-middleware v1.0.1-0.20190118093823-f849b5445de4
 	github.com/klauspost/cpuid v0.0.0-20170728055534-ae7887de9fa5
@@ -30,14 +30,14 @@ require (
 	github.com/ngaut/sync2 v0.0.0-20141008032647-7a24ed77b2ef
 	github.com/opentracing/basictracer-go v1.0.0
 	github.com/opentracing/opentracing-go v1.0.2
-	github.com/pingcap/check v0.0.0-20190102082844-67f458068fc8
+	github.com/pingcap/check v0.0.0-20191107115940-caf2b9e6ccf4
 	github.com/pingcap/errors v0.11.4
 	github.com/pingcap/failpoint v0.0.0-20191029060244-12f4ac2fd11d
 	github.com/pingcap/goleveldb v0.0.0-20171020122428-b9ff6c35079e
 	github.com/pingcap/kvproto v0.0.0-20200213074014-83e827908584
-	github.com/pingcap/log v0.0.0-20190715063458-479153f07ebd
+	github.com/pingcap/log v0.0.0-20191012051959-b742a5d432e9
 	github.com/pingcap/parser v0.0.0-20200213042211-e357ed5f237b
-	github.com/pingcap/pd v1.1.0-beta.0.20191231051840-d1d917558629
+	github.com/pingcap/pd v1.1.0-beta.0.20200213133706-fbbe75e180e6
 	github.com/pingcap/tidb-tools v3.0.6-0.20191119150227-ff0a3c6e5763+incompatible
 	github.com/pingcap/tipb v0.0.0-20191126033718-169898888b24
 	github.com/prometheus/client_golang v1.0.0
@@ -56,12 +56,11 @@ require (
 	github.com/unrolled/render v0.0.0-20180914162206-b9786414de4d // indirect
 	go.etcd.io/etcd v0.5.0-alpha.5.0.20191023171146-3cf2f69b5738
 	go.uber.org/atomic v1.5.0
-	go.uber.org/zap v1.10.0
+	go.uber.org/zap v1.12.0
 	golang.org/x/crypto v0.0.0-20191227163750-53104e6ec876 // indirect
-	golang.org/x/net v0.0.0-20191002035440-2ec189313ef0
-	golang.org/x/sys v0.0.0-20200106162015-b016eb3dc98e // indirect
+	golang.org/x/net v0.0.0-20191209160850-c0dbc17a3553
 	golang.org/x/text v0.3.2
-	golang.org/x/tools v0.0.0-20191029041327-9cc4af7d6b2c
+	golang.org/x/tools v0.0.0-20200103221440-774c71fcf114
 	google.golang.org/grpc v1.25.1
 	gopkg.in/natefinch/lumberjack.v2 v2.0.0
 	sourcegraph.com/sourcegraph/appdash v0.0.0-20180531100431-4c381bd170b4
