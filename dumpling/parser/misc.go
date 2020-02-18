@@ -835,6 +835,7 @@ var hintTokenMap = map[string]int{
 	"USE_INDEX":               hintUseIndex,
 	"USE_PLAN_CACHE":          hintUsePlanCache,
 	"USE_TOJA":                hintUseToja,
+	"TIME_RANGE":              hintTimeRange,
 
 	// TiDB hint aliases
 	"TIDB_HJ":   hintHashJoin,
