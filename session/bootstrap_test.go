@@ -260,6 +260,15 @@ func (s *testBootstrapSuite) TestUpgrade(c *C) {
 	ver, err = getBootstrapVersion(se2)
 	c.Assert(err, IsNil)
 	c.Assert(ver, Equals, int64(currentBootstrapVersion))
+
+	// Verify that 'new_collation_enabled' is false.
+	r = mustExecSQL(c, se2, fmt.Sprintf(`SELECT VARIABLE_VALUE from mysql.TiDB where VARIABLE_NAME='%s';`, tidbNewCollationEnabled))
+	req = r.NewChunk()
+	err = r.Next(ctx, req)
+	c.Assert(err, IsNil)
+	c.Assert(req.NumRows(), Equals, 1)
+	c.Assert(req.GetRow(0).GetString(0), Equals, "0")
+	c.Assert(r.Close(), IsNil)
 }
 
 func (s *testBootstrapSuite) TestANSISQLMode(c *C) {
