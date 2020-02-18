@@ -631,7 +631,6 @@ func (*testSuite) TestSequenceAutoid(c *C) {
 	nextVal, ok = autoid.SeekToFirstSequenceValue(base, seq.Increment, offset, base, end)
 	c.Assert(ok, Equals, true)
 	c.Assert(nextVal, Equals, int64(5))
-	base = nextVal
 
 	base, end, round, err = alloc.AllocSeqCache(1)
 	c.Assert(err, IsNil)
