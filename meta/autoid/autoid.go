@@ -743,6 +743,9 @@ func (alloc *allocator) alloc4Sequence(tableID int64) (int64, int64, int64, erro
 
 			// Recompute the sequence next batch size.
 			seqStep, err1 = CalcSequenceBatchSize(newBase, cacheSize, increment, offset, minValue, maxValue)
+			if err1 != nil {
+				return err1
+			}
 		}
 		var delta int64
 		if alloc.sequence.Increment > 0 {
