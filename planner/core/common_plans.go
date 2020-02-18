@@ -665,6 +665,13 @@ type DDL struct {
 	Statement ast.DDLNode
 }
 
+type SelectInto struct {
+	baseSchemaProducer
+
+	TargetPlan Plan
+	IntoOpt    *ast.SelectIntoOption
+}
+
 // Explain represents a explain plan.
 type Explain struct {
 	baseSchemaProducer
