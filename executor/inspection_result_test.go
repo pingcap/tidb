@@ -27,26 +27,26 @@ import (
 	"github.com/pingcap/tidb/util/testkit"
 )
 
-var _ = Suite(&diagnosticsSuite{})
+var _ = SerialSuites(&inspectionResultSuite{})
 
-type diagnosticsSuite struct {
+type inspectionResultSuite struct {
 	store kv.Storage
 	dom   *domain.Domain
 }
 
-func (s *diagnosticsSuite) SetUpSuite(c *C) {
+func (s *inspectionResultSuite) SetUpSuite(c *C) {
 	store, dom, err := newStoreWithBootstrap()
 	c.Assert(err, IsNil)
 	s.store = store
 	s.dom = dom
 }
 
-func (s *diagnosticsSuite) TearDownSuite(c *C) {
+func (s *inspectionResultSuite) TearDownSuite(c *C) {
 	s.dom.Close()
 	s.store.Close()
 }
 
-func (s *diagnosticsSuite) TestInspectionResult(c *C) {
+func (s *inspectionResultSuite) TestInspectionResult(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 
 	mockData := map[string]variable.TableSnapshot{}
@@ -166,13 +166,13 @@ func (s *diagnosticsSuite) TestInspectionResult(c *C) {
 	}
 }
 
-func (s *diagnosticsSuite) parseTime(c *C, se session.Session, str string) types.Time {
+func (s *inspectionResultSuite) parseTime(c *C, se session.Session, str string) types.Time {
 	t, err := types.ParseTime(se.GetSessionVars().StmtCtx, str, mysql.TypeDatetime, types.MaxFsp)
 	c.Assert(err, IsNil)
 	return t
 }
 
-func (s *diagnosticsSuite) TestThresholdCheckInspection(c *C) {
+func (s *inspectionResultSuite) TestThresholdCheckInspection(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	// mock tikv configuration.
 	configurations := map[string]variable.TableSnapshot{}
@@ -277,7 +277,7 @@ func (s *diagnosticsSuite) TestThresholdCheckInspection(c *C) {
 		"grpc_cpu tikv tikv-0 7.21 < 7.20, config: server.grpc-concurrency=8 select instance, sum(value) as cpu from metric_schema.tikv_thread_cpu where name like 'grpc%' and time=now() group by instance"))
 }
 
-func (s *diagnosticsSuite) TestCriticalErrorInspection(c *C) {
+func (s *inspectionResultSuite) TestCriticalErrorInspection(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 
 	fpName := "github.com/pingcap/tidb/executor/mockMetricsTableData"

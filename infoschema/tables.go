@@ -117,6 +117,8 @@ const (
 	TableMetricSummary = "METRICS_SUMMARY"
 	// TableMetricSummaryByLabel is a metric table that contains all metrics that group by label info.
 	TableMetricSummaryByLabel = "METRICS_SUMMARY_BY_LABEL"
+	// TableInspectionSummary is the string constant of inspection summary table
+	TableInspectionSummary = "INSPECTION_SUMMARY"
 )
 
 var tableIDMap = map[string]int64{
@@ -174,6 +176,7 @@ var tableIDMap = map[string]int64{
 	TableMetricSummary:                      autoid.InformationSchemaDBID + 52,
 	TableMetricSummaryByLabel:               autoid.InformationSchemaDBID + 53,
 	TableMetricTables:                       autoid.InformationSchemaDBID + 54,
+	TableInspectionSummary:                  autoid.InformationSchemaDBID + 55,
 }
 
 type columnInfo struct {
@@ -1189,6 +1192,17 @@ var tableInspectionResultCols = []columnInfo{
 	{"REFERENCE", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"SEVERITY", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"DETAILS", mysql.TypeVarchar, 256, 0, nil, nil},
+}
+
+var tableInspectionSummaryCols = []columnInfo{
+	{"RULE", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"INSTANCE", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"METRIC_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"LABEL", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"QUANTILE", mysql.TypeDouble, 22, 0, nil, nil},
+	{"AVG_VALUE", mysql.TypeDouble, 22, 0, nil, nil},
+	{"MIN_VALUE", mysql.TypeDouble, 22, 0, nil, nil},
+	{"MAX_VALUE", mysql.TypeDouble, 22, 0, nil, nil},
 }
 
 var tableMetricTablesCols = []columnInfo{
@@ -2414,6 +2428,7 @@ var tableNameToColumns = map[string][]columnInfo{
 	TableMetricSummary:                      tableMetricSummaryCols,
 	TableMetricSummaryByLabel:               tableMetricSummaryByLabelCols,
 	TableMetricTables:                       tableMetricTablesCols,
+	TableInspectionSummary:                  tableInspectionSummaryCols,
 }
 
 func createInfoSchemaTable(_ autoid.Allocators, meta *model.TableInfo) (table.Table, error) {
