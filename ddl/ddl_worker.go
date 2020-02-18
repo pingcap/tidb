@@ -750,9 +750,6 @@ func updateSchemaVersion(t *meta.Meta, job *model.Job) (int64, error) {
 		if err := job.DecodeArgs(tbInfo, &orReplace, &oldTbInfoID); err != nil {
 			return 0, errors.Trace(err)
 		}
-		if err != nil {
-			return 0, errors.Trace(err)
-		}
 		// When the statement is "create or replace view " and we need to drop the old view,
 		// it has two table IDs and should be handled differently.
 		if oldTbInfoID > 0 && orReplace {
