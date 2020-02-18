@@ -684,9 +684,10 @@ func (s *seqTestSuite) TestIndexMergeReaderClose(c *C) {
 	tk.MustExec("create index idx1 on t(a)")
 	tk.MustExec("create index idx2 on t(b)")
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/startPartialIndexWorkerErr", "return"), IsNil)
-	_, err := tk.Exec("select /*+ USE_INDEX_MERGE(t, idx1, idx2) */ * from t where a > 10 or b < 100")
+	err := tk.QueryToErr("select /*+ USE_INDEX_MERGE(t, idx1, idx2) */ * from t where a > 10 or b < 100")
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/startPartialIndexWorkerErr"), IsNil)
 	c.Assert(err, NotNil)
+	c.Check(checkGoroutineExists("fetchLoop"), IsFalse)
 	c.Check(checkGoroutineExists("fetchHandles"), IsFalse)
 	c.Check(checkGoroutineExists("waitPartialWorkersAndCloseFetchChan"), IsFalse)
 }
