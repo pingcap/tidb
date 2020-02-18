@@ -198,7 +198,7 @@ func toHex(d types.Datum) (h types.Datum) {
 		return
 	}
 	x, _ := d.ToString()
-	h.SetString(strings.ToUpper(hex.EncodeToString(hack.Slice(x))), collate.DefaultCollation)
+	h.SetString(strings.ToUpper(hex.EncodeToString(hack.Slice(x))), collate.DefaultCollation, collate.DefaultLen)
 	return
 }
 

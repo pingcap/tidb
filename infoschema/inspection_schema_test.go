@@ -87,7 +87,7 @@ func (s *inspectionSuite) TestInspectionTables(c *C) {
 	c.Assert(err, ErrorMatches, "not currently in inspection mode")
 
 	// check whether is obtain data from cache at the next time
-	inspectionTableCache["cluster_info"].Rows[0][0].SetString("modified-pd", collate.DefaultCollation)
+	inspectionTableCache["cluster_info"].Rows[0][0].SetString("modified-pd", collate.DefaultCollation, collate.DefaultLen)
 	tk.MustQuery("select type, instance, status_address, version, git_hash from inspection_schema.cluster_info").Check(testkit.Rows(
 		"modified-pd 127.0.0.1:11080 127.0.0.1:10080 mock-version mock-githash",
 		"tidb 127.0.0.1:11080 127.0.0.1:10080 mock-version mock-githash",

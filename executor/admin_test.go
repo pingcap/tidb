@@ -485,7 +485,7 @@ func (s *testSuite2) TestAdminCheckPartitionTableFailed(c *C) {
 		c.Assert(err, IsNil)
 		err = tk.ExecToErr("admin check table admin_test_p")
 		c.Assert(err, NotNil)
-		c.Assert(err.Error(), Equals, fmt.Sprintf("col c2, handle %d, index:types.Datum{k:0x1, collation:0x0, decimal:0x0, length:0x0, i:%d, b:[]uint8(nil), x:interface {}(nil)} != record:types.Datum{k:0x1, collation:0x0, decimal:0x0, length:0x0, i:%d, b:[]uint8(nil), x:interface {}(nil)}", i, i+8, i))
+		c.Assert(err.Error(), Equals, fmt.Sprintf("col c2, handle %d, index:types.Datum{k:0x1, collation:\"\", decimal:0x0, length:0x0, i:%d, b:[]uint8(nil), x:interface {}(nil)} != record:types.Datum{k:0x1, collation:\"\", decimal:0x0, length:0x0, i:%d, b:[]uint8(nil), x:interface {}(nil)}", i, i+8, i))
 		// TODO: fix admin recover for partition table.
 		txn, err = s.store.Begin()
 		c.Assert(err, IsNil)

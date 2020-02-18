@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/testkit"
 	binlog "github.com/pingcap/tipb/go-binlog"
@@ -152,8 +153,8 @@ func (s *testBinlogSuite) TestBinlog(c *C) {
 	c.Assert(prewriteVal.SchemaVersion, Greater, int64(0))
 	c.Assert(prewriteVal.Mutations[0].TableId, Greater, int64(0))
 	expected := [][]types.Datum{
-		{types.NewIntDatum(1), types.NewStringDatum("abc")},
-		{types.NewIntDatum(2), types.NewStringDatum("cde")},
+		{types.NewIntDatum(1), types.NewCollationStringDatum("abc", collate.DefaultCollation, collate.DefaultLen)},
+		{types.NewIntDatum(2), types.NewCollationStringDatum("cde", collate.DefaultCollation, collate.DefaultLen)},
 	}
 	gotRows := mutationRowsToRows(c, prewriteVal.Mutations[0].InsertedRows, 2, 4)
 	c.Assert(gotRows, DeepEquals, expected)
@@ -161,10 +162,10 @@ func (s *testBinlogSuite) TestBinlog(c *C) {
 	tk.MustExec("update local_binlog set name = 'xyz' where id = 2")
 	prewriteVal = getLatestBinlogPrewriteValue(c, pump)
 	oldRow := [][]types.Datum{
-		{types.NewIntDatum(2), types.NewStringDatum("cde")},
+		{types.NewIntDatum(2), types.NewCollationStringDatum("cde", collate.DefaultCollation, collate.DefaultLen)},
 	}
 	newRow := [][]types.Datum{
-		{types.NewIntDatum(2), types.NewStringDatum("xyz")},
+		{types.NewIntDatum(2), types.NewCollationStringDatum("xyz", collate.DefaultCollation, collate.DefaultLen)},
 	}
 	gotRows = mutationRowsToRows(c, prewriteVal.Mutations[0].UpdatedRows, 1, 3)
 	c.Assert(gotRows, DeepEquals, oldRow)
@@ -176,7 +177,7 @@ func (s *testBinlogSuite) TestBinlog(c *C) {
 	prewriteVal = getLatestBinlogPrewriteValue(c, pump)
 	gotRows = mutationRowsToRows(c, prewriteVal.Mutations[0].DeletedRows, 1, 3)
 	expected = [][]types.Datum{
-		{types.NewIntDatum(1), types.NewStringDatum("abc")},
+		{types.NewIntDatum(1), types.NewCollationStringDatum("abc", collate.DefaultCollation, collate.DefaultLen)},
 	}
 	c.Assert(gotRows, DeepEquals, expected)
 
@@ -359,7 +360,7 @@ func mutationRowsToRows(c *C, mutationRows [][]byte, columnValueOffsets ...int) 
 		c.Assert(err, IsNil)
 		for i := range datums {
 			if datums[i].Kind() == types.KindBytes {
-				datums[i].SetBytesAsString(datums[i].GetBytes())
+				datums[i].SetBytesAsString(datums[i].GetBytes(), collate.DefaultCollation, collate.DefaultLen)
 			}
 		}
 		row := make([]types.Datum, 0, len(columnValueOffsets))

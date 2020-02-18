@@ -140,7 +140,7 @@ func (e *SetExecutor) setSysVariable(name string, v *expression.VarAssignment) e
 			return err
 		}
 		if value.IsNull() {
-			value.SetString("", collate.DefaultCollation)
+			value.SetString("", collate.DefaultCollation, collate.DefaultLen)
 		}
 		valStr, err = value.ToString()
 		if err != nil {

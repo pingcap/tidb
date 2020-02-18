@@ -21,13 +21,17 @@ import (
 var (
 	collatorMap         map[string]Collator
 	collatorIDMap       map[int]Collator
+	id2NameMap          map[int32]string
 	newCollationEnabled bool
 	setCollationOnce    sync.Once
 )
 
 // DefaultCollation is default collation of TiDB. If a string column/constant is defined without collation,
 // we use this as its collation.
-const DefaultCollation = "binary"
+const (
+	DefaultCollation = "binary"
+	DefaultLen       = 0
+)
 
 // CollatorOption is the option of collator.
 type CollatorOption struct {
@@ -86,9 +90,20 @@ func (bc *binCollator) Key(str string, opt CollatorOption) []byte {
 	return []byte(str)
 }
 
+// CollationID2Name return the collation name by the given id.
+// If the id is not found in the map, we reutrn the default one directly.
+func CollationID2Name(id int32) string {
+	name, ok := id2NameMap[id]
+	if !ok {
+		return DefaultCollation
+	}
+	return name
+}
+
 func init() {
 	collatorMap = make(map[string]Collator)
 	collatorIDMap = make(map[int]Collator)
+	id2NameMap = make(map[int32]string)
 
 	collatorMap["binary"] = &binCollator{}
 	collatorMap["utf8mb4_general_ci"] = &generalCICollator{}
@@ -98,4 +113,8 @@ func init() {
 	collatorIDMap[63] = &binCollator{}
 	collatorIDMap[45] = &generalCICollator{}
 	collatorIDMap[33] = &generalCICollator{}
+
+	id2NameMap[63] = "binary"
+	id2NameMap[45] = "utf8mb4_general_ci"
+	id2NameMap[33] = "utf8_general_ci"
 }

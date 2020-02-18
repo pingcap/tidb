@@ -868,16 +868,16 @@ func dataForTiKVRegionStatus(ctx sessionctx.Context) (records [][]types.Datum, e
 func newTiKVRegionStatusCol(region *helper.RegionInfo, table *helper.TableInfo) []types.Datum {
 	row := make([]types.Datum, len(tableTiKVRegionStatusCols))
 	row[0].SetInt64(region.ID)
-	row[1].SetString(region.StartKey, collate.DefaultCollation)
-	row[2].SetString(region.EndKey, collate.DefaultCollation)
+	row[1].SetString(region.StartKey, collate.DefaultCollation, collate.DefaultLen)
+	row[2].SetString(region.EndKey, collate.DefaultCollation, collate.DefaultLen)
 	if table != nil {
 		row[3].SetInt64(table.Table.ID)
-		row[4].SetString(table.DB.Name.O, collate.DefaultCollation)
-		row[5].SetString(table.Table.Name.O, collate.DefaultCollation)
+		row[4].SetString(table.DB.Name.O, collate.DefaultCollation, collate.DefaultLen)
+		row[5].SetString(table.Table.Name.O, collate.DefaultCollation, collate.DefaultLen)
 		if table.IsIndex {
 			row[6].SetInt64(1)
 			row[7].SetInt64(table.Index.ID)
-			row[8].SetString(table.Index.Name.O, collate.DefaultCollation)
+			row[8].SetString(table.Index.Name.O, collate.DefaultCollation, collate.DefaultLen)
 		} else {
 			row[6].SetInt64(0)
 		}
@@ -943,12 +943,12 @@ func newTiKVRegionPeersCols(region *helper.RegionInfo) [][]types.Datum {
 			row[4].SetInt64(0)
 		}
 		if pendingPeerIDSet.Exist(peer.ID) {
-			row[5].SetString(pendingPeer, collate.DefaultCollation)
+			row[5].SetString(pendingPeer, collate.DefaultCollation, collate.DefaultLen)
 		} else if downSec, ok := downPeerMap[peer.ID]; ok {
-			row[5].SetString(downPeer, collate.DefaultCollation)
+			row[5].SetString(downPeer, collate.DefaultCollation, collate.DefaultLen)
 			row[6].SetInt64(downSec)
 		} else {
-			row[5].SetString(normalPeer, collate.DefaultCollation)
+			row[5].SetString(normalPeer, collate.DefaultCollation, collate.DefaultLen)
 		}
 		records = append(records, row)
 	}
@@ -971,9 +971,9 @@ func dataForTiKVStoreStatus(ctx sessionctx.Context) (records [][]types.Datum, er
 	for _, storeStat := range storesStat.Stores {
 		row := make([]types.Datum, len(tableTiKVStoreStatusCols))
 		row[0].SetInt64(storeStat.Store.ID)
-		row[1].SetString(storeStat.Store.Address, collate.DefaultCollation)
+		row[1].SetString(storeStat.Store.Address, collate.DefaultCollation, collate.DefaultLen)
 		row[2].SetInt64(storeStat.Store.State)
-		row[3].SetString(storeStat.Store.StateName, collate.DefaultCollation)
+		row[3].SetString(storeStat.Store.StateName, collate.DefaultCollation, collate.DefaultLen)
 		data, err := json.Marshal(storeStat.Store.Labels)
 		if err != nil {
 			return nil, err
@@ -983,9 +983,9 @@ func dataForTiKVStoreStatus(ctx sessionctx.Context) (records [][]types.Datum, er
 			return nil, err
 		}
 		row[4].SetMysqlJSON(bj)
-		row[5].SetString(storeStat.Store.Version, collate.DefaultCollation)
-		row[6].SetString(storeStat.Status.Capacity, collate.DefaultCollation)
-		row[7].SetString(storeStat.Status.Available, collate.DefaultCollation)
+		row[5].SetString(storeStat.Store.Version, collate.DefaultCollation, collate.DefaultLen)
+		row[6].SetString(storeStat.Status.Capacity, collate.DefaultCollation, collate.DefaultLen)
+		row[7].SetString(storeStat.Status.Available, collate.DefaultCollation, collate.DefaultLen)
 		row[8].SetInt64(storeStat.Status.LeaderCount)
 		row[9].SetFloat64(storeStat.Status.LeaderWeight)
 		row[10].SetFloat64(storeStat.Status.LeaderScore)
@@ -998,7 +998,7 @@ func dataForTiKVStoreStatus(ctx sessionctx.Context) (records [][]types.Datum, er
 		row[16].SetMysqlTime(startTs)
 		lastHeartbeatTs := types.NewTime(types.FromGoTime(storeStat.Status.LastHeartbeatTs), mysql.TypeDatetime, types.DefaultFsp)
 		row[17].SetMysqlTime(lastHeartbeatTs)
-		row[18].SetString(storeStat.Status.Uptime, collate.DefaultCollation)
+		row[18].SetString(storeStat.Status.Uptime, collate.DefaultCollation, collate.DefaultLen)
 		records = append(records, row)
 	}
 	return records, nil
@@ -2046,16 +2046,16 @@ func dataForHotRegionByMetrics(metrics []helper.HotTableIndex, tp string) [][]ty
 		row := make([]types.Datum, len(tableTiDBHotRegionsCols))
 		if tblIndex.IndexName != "" {
 			row[1].SetInt64(tblIndex.IndexID)
-			row[4].SetString(tblIndex.IndexName, collate.DefaultCollation)
+			row[4].SetString(tblIndex.IndexName, collate.DefaultCollation, collate.DefaultLen)
 		} else {
 			row[1].SetNull()
 			row[4].SetNull()
 		}
 		row[0].SetInt64(tblIndex.TableID)
-		row[2].SetString(tblIndex.DbName, collate.DefaultCollation)
-		row[3].SetString(tblIndex.TableName, collate.DefaultCollation)
+		row[2].SetString(tblIndex.DbName, collate.DefaultCollation, collate.DefaultLen)
+		row[3].SetString(tblIndex.TableName, collate.DefaultCollation, collate.DefaultLen)
 		row[5].SetUint64(tblIndex.RegionID)
-		row[6].SetString(tp, collate.DefaultCollation)
+		row[6].SetString(tp, collate.DefaultCollation, collate.DefaultLen)
 		if tblIndex.RegionMetric == nil {
 			row[7].SetNull()
 			row[8].SetNull()

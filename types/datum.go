@@ -172,10 +172,11 @@ func (d *Datum) GetString() string {
 }
 
 // SetString sets string value.
-func (d *Datum) SetString(s string, collation string) {
+func (d *Datum) SetString(s string, collation string, length int) {
 	d.k = KindString
 	sink(s)
 	d.b = hack.Slice(s)
+	d.length = uint32(length)
 	d.collation = collation
 }
 
@@ -195,9 +196,11 @@ func (d *Datum) SetBytes(b []byte) {
 }
 
 // SetBytesAsString sets bytes value to datum as string type.
-func (d *Datum) SetBytesAsString(b []byte) {
+func (d *Datum) SetBytesAsString(b []byte, collation string, length uint32) {
 	d.k = KindString
 	d.b = b
+	d.length = length
+	d.collation = collation
 }
 
 // GetInterface gets interface value.
@@ -439,7 +442,7 @@ func (d *Datum) SetValue(val interface{}) {
 	case float64:
 		d.SetFloat64(x)
 	case string:
-		d.SetString(x, collate.DefaultCollation)
+		d.SetString(x, collate.DefaultCollation, collate.DefaultLen)
 	case []byte:
 		d.SetBytes(x)
 	case *MyDecimal:
@@ -858,7 +861,7 @@ func (d *Datum) convertToString(sc *stmtctx.StatementContext, target *FieldType)
 		return invalidConv(d, target.Tp)
 	}
 	s, err := ProduceStrWithSpecifiedTp(s, target, sc, true)
-	ret.SetString(s, target.Collate)
+	ret.SetString(s, target.Collate, target.Flen)
 	if target.Charset == charset.CharsetBin {
 		ret.k = KindBytes
 	}
@@ -1689,7 +1692,13 @@ func NewBytesDatum(b []byte) (d Datum) {
 
 // NewStringDatum creates a new Datum from a string.
 func NewStringDatum(s string) (d Datum) {
-	d.SetString(s, collate.DefaultCollation)
+	d.SetString(s, collate.DefaultCollation, collate.DefaultLen)
+	return d
+}
+
+// NewCollationStringDatum creates a new Datum from a string with collation and length info.
+func NewCollationStringDatum(s string, collation string, length int) (d Datum) {
+	d.SetString(s, collation, length)
 	return d
 }
 

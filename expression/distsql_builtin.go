@@ -18,14 +18,17 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/log"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tipb/go-tipb"
+	"go.uber.org/zap"
 )
 
 // PbTypeToFieldType converts tipb.FieldType to FieldType
@@ -1070,7 +1073,7 @@ func PBToExpr(expr *tipb.Expr, tps []*types.FieldType, sc *stmtctx.StatementCont
 	case tipb.ExprType_Uint64:
 		return convertUint(expr.Val)
 	case tipb.ExprType_String:
-		return convertString(expr.Val)
+		return convertString(expr.Val, expr.FieldType)
 	case tipb.ExprType_Bytes:
 		return &Constant{Value: types.NewBytesDatum(expr.Val), RetType: types.NewFieldType(mysql.TypeString)}, nil
 	case tipb.ExprType_Float32:
@@ -1169,9 +1172,10 @@ func convertUint(val []byte) (*Constant, error) {
 	return &Constant{Value: d, RetType: &types.FieldType{Tp: mysql.TypeLonglong, Flag: mysql.UnsignedFlag}}, nil
 }
 
-func convertString(val []byte) (*Constant, error) {
+func convertString(val []byte, tp *tipb.FieldType) (*Constant, error) {
+	log.Warn("????", zap.String("tp", fmt.Sprintf("%v", tp)))
 	var d types.Datum
-	d.SetBytesAsString(val)
+	d.SetBytesAsString(val, collate.CollationID2Name(tp.Collate), uint32(tp.Flen))
 	return &Constant{Value: d, RetType: types.NewFieldType(mysql.TypeVarString)}, nil
 }
 
