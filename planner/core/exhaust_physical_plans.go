@@ -1803,13 +1803,13 @@ func (ls *LogicalSort) exhaustParallelPhysicalPlans(prop *property.PhysicalPrope
 			}
 			return nil
 		}
-		prop, canPass := GetPropByOrderByItems(ls.ByItems)
+		propByItems, canPass := GetPropByOrderByItems(ls.ByItems)
 		if !canPass {
 			//Future: support `ORDER BY` expression.
 			return nil
 		}
 		itemExprs := GetItemExprsFromByItems(ls.ByItems)
-		return ls.parallelHelper.exhaustParallelPhysicalPlans4SingleChild(ls.basePlan.ctx, ls, prop, exhaustor, prop.Items, itemExprs)
+		return ls.parallelHelper.exhaustParallelPhysicalPlans4SingleChild(ls.basePlan.ctx, ls, prop, exhaustor, propByItems.Items, itemExprs)
 	}
 	return nil
 }

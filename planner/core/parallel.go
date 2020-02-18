@@ -14,8 +14,6 @@
 package core
 
 import (
-	"math"
-
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/sessionctx"
@@ -111,6 +109,12 @@ func (p *parallelLogicalPlanHelper) exhaustParallelPhysicalPlans4SingleChild(
 			if NDV <= 1 {
 				continue
 			}
+		} else {
+			// Should not be parallel when less or equal to ONE chunk.
+			numberOfChunks := (float64)(lp.statsInfo().RowCount) / (float64)(ctx.GetSessionVars().MaxChunkSize)
+			if numberOfChunks <= 1.0 {
+				continue
+			}
 		}
 
 		for _, physical := range physicals {
@@ -161,8 +165,8 @@ func matchPhysicalProperty(pp PhysicalPlan, requiredProperty *property.PhysicalP
 	return shuffle.attach2Task(tsk)
 }
 
-func newPhysicalShuffle(child PhysicalPlan, ctx sessionctx.Context) *PhysicalShuffle {
-	reqProp := &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64}
+func newPhysicalShuffle(child PhysicalPlan, requiredProperty *property.PhysicalProperty, ctx sessionctx.Context) *PhysicalShuffle {
+	reqProp := &property.PhysicalProperty{ExpectedCnt: requiredProperty.ExpectedCnt}
 	shuffle := PhysicalShuffle{
 		Concurrency: 1,
 		FanOut:      1,
@@ -220,7 +224,7 @@ func locateChildShuffle(pp PhysicalPlan) (tail PhysicalPlan, child *PhysicalShuf
 
 func enforceInitialPartition(pp PhysicalPlan, requiredProperty *property.PhysicalProperty, ctx sessionctx.Context) *PhysicalShuffle {
 	concurrency := ctx.GetSessionVars().ExecutorsConcurrency
-	shuffle := newPhysicalShuffle(pp, ctx)
+	shuffle := newPhysicalShuffle(pp, requiredProperty, ctx)
 	if len(requiredProperty.PartitionGroupingCols) > 0 {
 		setShuffleSplitByHash(shuffle, concurrency, requiredProperty.PartitionGroupingCols)
 	} else {
@@ -233,7 +237,7 @@ func enforceInitialPartition(pp PhysicalPlan, requiredProperty *property.Physica
 func enforceFullMerge(pp PhysicalPlan, requiredProperty *property.PhysicalProperty, deliveringProperty *property.PhysicalProperty, ctx sessionctx.Context) *PhysicalShuffle {
 	concurrency := ctx.GetSessionVars().ExecutorsConcurrency
 	_, isPhysicalSort := pp.(*PhysicalSort)
-	shuffle := newPhysicalShuffle(pp, ctx)
+	shuffle := newPhysicalShuffle(pp, requiredProperty, ctx)
 	setShuffleNoneSplit(shuffle)
 	if len(requiredProperty.Items) > 0 || isPhysicalSort {
 		// local property(i.e. requiredProperty.IsPrefix(deliveringProperty)) is ensured in `exhaustPhysicalPlans`.
@@ -256,7 +260,7 @@ func matchGlobalPhysicalProperty(requiredProperty *property.PhysicalProperty, de
 func enforceRepartition(pp PhysicalPlan, requiredProperty *property.PhysicalProperty, deliveringProperty *property.PhysicalProperty, ctx sessionctx.Context) *PhysicalShuffle {
 	concurrency := ctx.GetSessionVars().ExecutorsConcurrency
 	_, isPhysicalSort := pp.(*PhysicalSort)
-	shuffle := newPhysicalShuffle(pp, ctx)
+	shuffle := newPhysicalShuffle(pp, requiredProperty, ctx)
 	setShuffleSplitByHash(shuffle, concurrency, requiredProperty.PartitionGroupingCols)
 	if len(requiredProperty.Items) > 0 || isPhysicalSort {
 		// local property(i.e. requiredProperty.IsPrefix(deliveringProperty)) is ensured in `exhaustPhysicalPlans`.
