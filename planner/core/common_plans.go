@@ -742,16 +742,36 @@ func (e *Explain) explainPlanInRowFormat(p Plan, taskType, driverSide, indent st
 	if physPlan, ok := p.(PhysicalPlan); ok {
 		// indicate driven side and driving side of 'join'.
 		// See issue https://github.com/pingcap/tidb/issues/14602.
-		// TODO: optimize logic of here, instand of list all join type.
 		driverSideInfo := make([]string, len(physPlan.Children()))
-		switch physPlan.(type) {
-		case *basePhysicalJoin, *PhysicalIndexJoin, *PhysicalHashJoin, 
-			*PhysicalMergeJoin, *PhysicalIndexMergeJoin, *PhysicalIndexHashJoin :
-			if len(driverSideInfo) < 2 {
-				break
+		buildSide := -1
+
+		switch physJoinPlan := physPlan.(type) {
+		case *PhysicalHashJoin:
+			if physJoinPlan.UseOuterToBuild {
+				buildSide = physJoinPlan.InnerChildIdx ^ 1
+			} else {
+				buildSide = physJoinPlan.InnerChildIdx
 			}
-			driverSideInfo[0] = "(Build)"
-			driverSideInfo[1] = "(Probe)"
+		case *PhysicalMergeJoin:
+			if physJoinPlan.JoinType == RightOuterJoin {
+				buildSide = 0
+			} else {
+				buildSide = 1
+			}
+		case *PhysicalIndexJoin:
+			buildSide = physJoinPlan.InnerChildIdx ^ 1
+		case *PhysicalIndexMergeJoin:
+			buildSide = physJoinPlan.InnerChildIdx ^ 1
+		case *PhysicalIndexHashJoin:
+			buildSide = physJoinPlan.InnerChildIdx ^ 1
+		}
+
+		if buildSide != -1 {
+			if len(driverSideInfo) < 2 {
+				err = errors.New("Join Plan has less than two children")
+				return
+			}
+			driverSideInfo[buildSide], driverSideInfo[buildSide^1] = "(Build)", "(Probe)"
 		}
 
 		for i, child := range physPlan.Children() {
