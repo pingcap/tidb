@@ -50,29 +50,32 @@ import (
 )
 
 const (
-	tableSchemata                           = "SCHEMATA"
-	tableTables                             = "TABLES"
-	tableColumns                            = "COLUMNS"
-	tableColumnStatistics                   = "COLUMN_STATISTICS"
-	tableStatistics                         = "STATISTICS"
-	tableCharacterSets                      = "CHARACTER_SETS"
-	tableCollations                         = "COLLATIONS"
-	tableFiles                              = "FILES"
-	catalogVal                              = "def"
-	tableProfiling                          = "PROFILING"
-	tablePartitions                         = "PARTITIONS"
-	tableKeyColumn                          = "KEY_COLUMN_USAGE"
-	tableReferConst                         = "REFERENTIAL_CONSTRAINTS"
-	tableSessionVar                         = "SESSION_VARIABLES"
-	tablePlugins                            = "PLUGINS"
-	tableConstraints                        = "TABLE_CONSTRAINTS"
-	tableTriggers                           = "TRIGGERS"
-	tableUserPrivileges                     = "USER_PRIVILEGES"
-	tableSchemaPrivileges                   = "SCHEMA_PRIVILEGES"
-	tableTablePrivileges                    = "TABLE_PRIVILEGES"
-	tableColumnPrivileges                   = "COLUMN_PRIVILEGES"
-	tableEngines                            = "ENGINES"
-	tableViews                              = "VIEWS"
+	// TableSchemata is the string constant of infoschema table
+	TableSchemata         = "SCHEMATA"
+	tableTables           = "TABLES"
+	tableColumns          = "COLUMNS"
+	tableColumnStatistics = "COLUMN_STATISTICS"
+	tableStatistics       = "STATISTICS"
+	tableCharacterSets    = "CHARACTER_SETS"
+	tableCollations       = "COLLATIONS"
+	tableFiles            = "FILES"
+	// CatalogVal is the string constant of TABLE_CATALOG
+	CatalogVal            = "def"
+	tableProfiling        = "PROFILING"
+	tablePartitions       = "PARTITIONS"
+	tableKeyColumn        = "KEY_COLUMN_USAGE"
+	tableReferConst       = "REFERENTIAL_CONSTRAINTS"
+	tableSessionVar       = "SESSION_VARIABLES"
+	tablePlugins          = "PLUGINS"
+	tableConstraints      = "TABLE_CONSTRAINTS"
+	tableTriggers         = "TRIGGERS"
+	tableUserPrivileges   = "USER_PRIVILEGES"
+	tableSchemaPrivileges = "SCHEMA_PRIVILEGES"
+	tableTablePrivileges  = "TABLE_PRIVILEGES"
+	tableColumnPrivileges = "COLUMN_PRIVILEGES"
+	tableEngines          = "ENGINES"
+	// TableViews is the string constant of infoschema table
+	TableViews                              = "VIEWS"
 	tableRoutines                           = "ROUTINES"
 	tableParameters                         = "PARAMETERS"
 	tableEvents                             = "EVENTS"
@@ -115,7 +118,7 @@ const (
 )
 
 var tableIDMap = map[string]int64{
-	tableSchemata:                           autoid.InformationSchemaDBID + 1,
+	TableSchemata:                           autoid.InformationSchemaDBID + 1,
 	tableTables:                             autoid.InformationSchemaDBID + 2,
 	tableColumns:                            autoid.InformationSchemaDBID + 3,
 	tableColumnStatistics:                   autoid.InformationSchemaDBID + 4,
@@ -123,7 +126,7 @@ var tableIDMap = map[string]int64{
 	tableCharacterSets:                      autoid.InformationSchemaDBID + 6,
 	tableCollations:                         autoid.InformationSchemaDBID + 7,
 	tableFiles:                              autoid.InformationSchemaDBID + 8,
-	catalogVal:                              autoid.InformationSchemaDBID + 9,
+	CatalogVal:                              autoid.InformationSchemaDBID + 9,
 	tableProfiling:                          autoid.InformationSchemaDBID + 10,
 	tablePartitions:                         autoid.InformationSchemaDBID + 11,
 	tableKeyColumn:                          autoid.InformationSchemaDBID + 12,
@@ -137,7 +140,7 @@ var tableIDMap = map[string]int64{
 	tableTablePrivileges:                    autoid.InformationSchemaDBID + 20,
 	tableColumnPrivileges:                   autoid.InformationSchemaDBID + 21,
 	tableEngines:                            autoid.InformationSchemaDBID + 22,
-	tableViews:                              autoid.InformationSchemaDBID + 23,
+	TableViews:                              autoid.InformationSchemaDBID + 23,
 	tableRoutines:                           autoid.InformationSchemaDBID + 24,
 	tableParameters:                         autoid.InformationSchemaDBID + 25,
 	tableEvents:                             autoid.InformationSchemaDBID + 26,
@@ -1166,38 +1169,6 @@ var tableMetricSummaryByLabelCols = []columnInfo{
 	{"COMMENT", mysql.TypeVarchar, 256, 0, nil, nil},
 }
 
-func dataForSchemata(ctx sessionctx.Context, schemas []*model.DBInfo) [][]types.Datum {
-	checker := privilege.GetPrivilegeManager(ctx)
-	rows := make([][]types.Datum, 0, len(schemas))
-
-	for _, schema := range schemas {
-
-		charset := mysql.DefaultCharset
-		collation := mysql.DefaultCollationName
-
-		if len(schema.Charset) > 0 {
-			charset = schema.Charset // Overwrite default
-		}
-
-		if len(schema.Collate) > 0 {
-			collation = schema.Collate // Overwrite default
-		}
-
-		if checker != nil && !checker.RequestVerification(ctx.GetSessionVars().ActiveRoles, schema.Name.L, "", "", mysql.AllPrivMask) {
-			continue
-		}
-		record := types.MakeDatums(
-			catalogVal,    // CATALOG_NAME
-			schema.Name.O, // SCHEMA_NAME
-			charset,       // DEFAULT_CHARACTER_SET_NAME
-			collation,     // DEFAULT_COLLATION_NAME
-			nil,
-		)
-		rows = append(rows, record)
-	}
-	return rows
-}
-
 func getRowCountAllTable(ctx sessionctx.Context) (map[int64]uint64, error) {
 	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL("select table_id, count from mysql.stats_meta")
 	if err != nil {
@@ -1326,43 +1297,6 @@ func getAutoIncrementID(ctx sessionctx.Context, schema *model.DBInfo, tblInfo *m
 	return tbl.Allocator(ctx, autoid.RowIDAllocType).Base() + 1, nil
 }
 
-func dataForViews(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.Datum, error) {
-	checker := privilege.GetPrivilegeManager(ctx)
-	var rows [][]types.Datum
-	for _, schema := range schemas {
-		for _, table := range schema.Tables {
-			if !table.IsView() {
-				continue
-			}
-			collation := table.Collate
-			charset := table.Charset
-			if collation == "" {
-				collation = mysql.DefaultCollationName
-			}
-			if charset == "" {
-				charset = mysql.DefaultCharset
-			}
-			if checker != nil && !checker.RequestVerification(ctx.GetSessionVars().ActiveRoles, schema.Name.L, table.Name.L, "", mysql.AllPrivMask) {
-				continue
-			}
-			record := types.MakeDatums(
-				catalogVal,                      // TABLE_CATALOG
-				schema.Name.O,                   // TABLE_SCHEMA
-				table.Name.O,                    // TABLE_NAME
-				table.View.SelectStmt,           // VIEW_DEFINITION
-				table.View.CheckOption.String(), // CHECK_OPTION
-				"NO",                            // IS_UPDATABLE
-				table.View.Definer.String(),     // DEFINER
-				table.View.Security.String(),    // SECURITY_TYPE
-				charset,                         // CHARACTER_SET_CLIENT
-				collation,                       // COLLATION_CONNECTION
-			)
-			rows = append(rows, record)
-		}
-	}
-	return rows, nil
-}
-
 func dataForTables(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.Datum, error) {
 	tableRowsMap, colLengthMap, err := tableStatsCache.get(ctx)
 	if err != nil {
@@ -1419,7 +1353,7 @@ func dataForTables(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.D
 
 				shardingInfo := GetShardingInfo(schema, table)
 				record := types.MakeDatums(
-					catalogVal,    // TABLE_CATALOG
+					CatalogVal,    // TABLE_CATALOG
 					schema.Name.O, // TABLE_SCHEMA
 					table.Name.O,  // TABLE_NAME
 					"BASE TABLE",  // TABLE_TYPE
@@ -1446,7 +1380,7 @@ func dataForTables(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.D
 				rows = append(rows, record)
 			} else {
 				record := types.MakeDatums(
-					catalogVal,    // TABLE_CATALOG
+					CatalogVal,    // TABLE_CATALOG
 					schema.Name.O, // TABLE_SCHEMA
 					table.Name.O,  // TABLE_NAME
 					"VIEW",        // TABLE_TYPE
@@ -1640,7 +1574,7 @@ func dataForColumnsInTable(schema *model.DBInfo, tbl *model.TableInfo) [][]types
 			columnDefault = fmt.Sprintf("%v", columnDesc.DefaultValue)
 		}
 		record := types.MakeDatums(
-			catalogVal,                           // TABLE_CATALOG
+			CatalogVal,                           // TABLE_CATALOG
 			schema.Name.O,                        // TABLE_SCHEMA
 			tbl.Name.O,                           // TABLE_NAME
 			col.Name.O,                           // COLUMN_NAME
@@ -1689,7 +1623,7 @@ func dataForStatisticsInTable(schema *model.DBInfo, table *model.TableInfo) [][]
 		for _, col := range table.Columns {
 			if mysql.HasPriKeyFlag(col.Flag) {
 				record := types.MakeDatums(
-					catalogVal,    // TABLE_CATALOG
+					CatalogVal,    // TABLE_CATALOG
 					schema.Name.O, // TABLE_SCHEMA
 					table.Name.O,  // TABLE_NAME
 					"0",           // NON_UNIQUE
@@ -1726,7 +1660,7 @@ func dataForStatisticsInTable(schema *model.DBInfo, table *model.TableInfo) [][]
 				nullable = ""
 			}
 			record := types.MakeDatums(
-				catalogVal,    // TABLE_CATALOG
+				CatalogVal,    // TABLE_CATALOG
 				schema.Name.O, // TABLE_SCHEMA
 				table.Name.O,  // TABLE_NAME
 				nonUnique,     // NON_UNIQUE
@@ -1767,7 +1701,7 @@ func dataForTableConstraints(ctx sessionctx.Context, schemas []*model.DBInfo) []
 
 			if tbl.PKIsHandle {
 				record := types.MakeDatums(
-					catalogVal,           // CONSTRAINT_CATALOG
+					CatalogVal,           // CONSTRAINT_CATALOG
 					schema.Name.O,        // CONSTRAINT_SCHEMA
 					mysql.PrimaryKeyName, // CONSTRAINT_NAME
 					schema.Name.O,        // TABLE_SCHEMA
@@ -1790,7 +1724,7 @@ func dataForTableConstraints(ctx sessionctx.Context, schemas []*model.DBInfo) []
 					continue
 				}
 				record := types.MakeDatums(
-					catalogVal,    // CONSTRAINT_CATALOG
+					CatalogVal,    // CONSTRAINT_CATALOG
 					schema.Name.O, // CONSTRAINT_SCHEMA
 					cname,         // CONSTRAINT_NAME
 					schema.Name.O, // TABLE_SCHEMA
@@ -1855,7 +1789,7 @@ func dataForPartitions(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]typ
 					avgRowLength = dataLength / rowCount
 				}
 				record := types.MakeDatums(
-					catalogVal,    // TABLE_CATALOG
+					CatalogVal,    // TABLE_CATALOG
 					schema.Name.O, // TABLE_SCHEMA
 					table.Name.O,  // TABLE_NAME
 					nil,           // PARTITION_NAME
@@ -1898,7 +1832,7 @@ func dataForPartitions(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]typ
 					}
 
 					record := types.MakeDatums(
-						catalogVal,                    // TABLE_CATALOG
+						CatalogVal,                    // TABLE_CATALOG
 						schema.Name.O,                 // TABLE_SCHEMA
 						table.Name.O,                  // TABLE_NAME
 						pi.Name.O,                     // PARTITION_NAME
@@ -1953,10 +1887,10 @@ func keyColumnUsageInTable(schema *model.DBInfo, table *model.TableInfo) [][]typ
 		for _, col := range table.Columns {
 			if mysql.HasPriKeyFlag(col.Flag) {
 				record := types.MakeDatums(
-					catalogVal,        // CONSTRAINT_CATALOG
+					CatalogVal,        // CONSTRAINT_CATALOG
 					schema.Name.O,     // CONSTRAINT_SCHEMA
 					primaryConstraint, // CONSTRAINT_NAME
-					catalogVal,        // TABLE_CATALOG
+					CatalogVal,        // TABLE_CATALOG
 					schema.Name.O,     // TABLE_SCHEMA
 					table.Name.O,      // TABLE_NAME
 					col.Name.O,        // COLUMN_NAME
@@ -1988,10 +1922,10 @@ func keyColumnUsageInTable(schema *model.DBInfo, table *model.TableInfo) [][]typ
 		for i, key := range index.Columns {
 			col := nameToCol[key.Name.L]
 			record := types.MakeDatums(
-				catalogVal,    // CONSTRAINT_CATALOG
+				CatalogVal,    // CONSTRAINT_CATALOG
 				schema.Name.O, // CONSTRAINT_SCHEMA
 				idxName,       // CONSTRAINT_NAME
-				catalogVal,    // TABLE_CATALOG
+				CatalogVal,    // TABLE_CATALOG
 				schema.Name.O, // TABLE_SCHEMA
 				table.Name.O,  // TABLE_NAME
 				col.Name.O,    // COLUMN_NAME
@@ -2012,10 +1946,10 @@ func keyColumnUsageInTable(schema *model.DBInfo, table *model.TableInfo) [][]typ
 		for i, key := range fk.Cols {
 			col := nameToCol[key.L]
 			record := types.MakeDatums(
-				catalogVal,    // CONSTRAINT_CATALOG
+				CatalogVal,    // CONSTRAINT_CATALOG
 				schema.Name.O, // CONSTRAINT_SCHEMA
 				fk.Name.O,     // CONSTRAINT_NAME
-				catalogVal,    // TABLE_CATALOG
+				CatalogVal,    // TABLE_CATALOG
 				schema.Name.O, // TABLE_SCHEMA
 				table.Name.O,  // TABLE_NAME
 				col.Name.O,    // COLUMN_NAME
@@ -2378,7 +2312,7 @@ func dataForMetricTables(ctx sessionctx.Context) [][]types.Datum {
 }
 
 var tableNameToColumns = map[string][]columnInfo{
-	tableSchemata:                           schemataCols,
+	TableSchemata:                           schemataCols,
 	tableTables:                             tablesCols,
 	tableColumns:                            columnsCols,
 	tableColumnStatistics:                   columnStatisticsCols,
@@ -2399,7 +2333,7 @@ var tableNameToColumns = map[string][]columnInfo{
 	tableTablePrivileges:                    tableTablePrivilegesCols,
 	tableColumnPrivileges:                   tableColumnPrivilegesCols,
 	tableEngines:                            tableEnginesCols,
-	tableViews:                              tableViewsCols,
+	TableViews:                              tableViewsCols,
 	tableRoutines:                           tableRoutinesCols,
 	tableParameters:                         tableParametersCols,
 	tableEvents:                             tableEventsCols,
@@ -2449,28 +2383,26 @@ type infoschemaTable struct {
 	tp   table.Type
 }
 
-// schemasSorter implements the sort.Interface interface, sorts DBInfo by name.
-type schemasSorter []*model.DBInfo
+// SchemasSorter implements the sort.Interface interface, sorts DBInfo by name.
+type SchemasSorter []*model.DBInfo
 
-func (s schemasSorter) Len() int {
+func (s SchemasSorter) Len() int {
 	return len(s)
 }
 
-func (s schemasSorter) Swap(i, j int) {
+func (s SchemasSorter) Swap(i, j int) {
 	s[i], s[j] = s[j], s[i]
 }
 
-func (s schemasSorter) Less(i, j int) bool {
+func (s SchemasSorter) Less(i, j int) bool {
 	return s[i].Name.L < s[j].Name.L
 }
 
 func (it *infoschemaTable) getRows(ctx sessionctx.Context, cols []*table.Column) (fullRows [][]types.Datum, err error) {
 	is := GetInfoSchema(ctx)
 	dbs := is.AllSchemas()
-	sort.Sort(schemasSorter(dbs))
+	sort.Sort(SchemasSorter(dbs))
 	switch it.meta.Name.O {
-	case tableSchemata:
-		fullRows = dataForSchemata(ctx, dbs)
 	case tableTables:
 		fullRows, err = dataForTables(ctx, dbs)
 	case tableTiDBIndexes:
@@ -2502,8 +2434,6 @@ func (it *infoschemaTable) getRows(ctx sessionctx.Context, cols []*table.Column)
 		fullRows = dataForUserPrivileges(ctx)
 	case tableEngines:
 		fullRows = dataForEngines()
-	case tableViews:
-		fullRows, err = dataForViews(ctx, dbs)
 	case tableRoutines:
 	// TODO: Fill the following tables.
 	case tableSchemaPrivileges:

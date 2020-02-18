@@ -707,11 +707,13 @@ func (s *testAutoRandomSuite) TestAutoRandomBitsData(c *C) {
 
 	// Test auto random id number.
 	c.Assert(len(allHandles), Equals, 100)
-	// Test the first 15 bits of each handle is greater than 0.
+	// Test the handles are not all zero.
+	allZero := true
 	for _, h := range allHandles {
-		c.Assert(h>>(64-15), Greater, int64(0))
+		allZero = allZero && (h>>(64-16)) == 0
 	}
-	// Test auto random id is monotonic increasing and continuous.
+	c.Assert(allZero, IsFalse)
+	// Test non-shard-bits part of auto random id is monotonic increasing and continuous.
 	orderedHandles := testutil.ConfigTestUtils.MaskSortHandles(allHandles, 15, mysql.TypeLonglong)
 	size := int64(len(allHandles))
 	for i := int64(1); i <= size; i++ {
