@@ -3764,14 +3764,14 @@ func (b *builtinWeightStringNullSig) Clone() builtinFunc {
 // evalString evals a WEIGHT_STRING(expr [AS CHAR|BINARY]) when the expr is numeric types, it always returns null.
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_weight-string
 func (b *builtinWeightStringNullSig) evalString(row chunk.Row) (string, bool, error) {
-		return "", true, nil
+	return "", true, nil
 }
 
 type builtinWeightStringSig struct {
 	baseBuiltinFunc
 
 	padding weightStringPadding
-	length int
+	length  int
 }
 
 func (b *builtinWeightStringSig) Clone() builtinFunc {
@@ -3801,7 +3801,7 @@ func (b *builtinWeightStringSig) evalString(row chunk.Row) (string, bool, error)
 		if b.length < lenRunes {
 			str = string(runes[:b.length])
 		} else if b.length > lenRunes {
-			str += strings.Repeat(" ", b.length - lenRunes)
+			str += strings.Repeat(" ", b.length-lenRunes)
 		}
 		ctor = collate.GetCollator(b.args[0].GetType().Collate)
 	case weightStringPaddingAsBinary:
@@ -3811,7 +3811,7 @@ func (b *builtinWeightStringSig) evalString(row chunk.Row) (string, bool, error)
 			b.ctx.GetSessionVars().StmtCtx.AppendWarning(errTruncatedWrongValue.GenWithStackByArgs(tpInfo, str))
 			str = str[:b.length]
 		} else if b.length > lenStr {
-			str += strings.Repeat("\x00", b.length - lenStr)
+			str += strings.Repeat("\x00", b.length-lenStr)
 		}
 		ctor = collate.GetCollator(charset.CollationBin)
 	case weightStringPaddingNone:
@@ -3819,5 +3819,5 @@ func (b *builtinWeightStringSig) evalString(row chunk.Row) (string, bool, error)
 	default:
 		return "", false, ErrIncorrectType.GenWithStackByArgs(ast.WeightString, string(b.padding))
 	}
-	return string(ctor.Key(str, collate.CollatorOption{PadLen:b.length})), false, nil
+	return string(ctor.Key(str, collate.CollatorOption{PadLen: b.length})), false, nil
 }
