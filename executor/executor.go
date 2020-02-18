@@ -439,6 +439,7 @@ func (e *ShowDDLJobsExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		return nil
 	}
 	count := 0
+
 	// Append running ddl jobs.
 	if e.cursor < len(e.runningJobs) {
 		numCurBatch := mathutil.Min(req.Capacity(), len(e.runningJobs)-e.cursor)
@@ -448,13 +449,14 @@ func (e *ShowDDLJobsExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		e.cursor += numCurBatch
 		count += numCurBatch
 	}
-	var err error
+
 	// Append history ddl jobs.
+	var err error
 	if count < req.Capacity() {
 		num := req.Capacity() - count
 		remainNum := e.jobNumber - (e.cursor - len(e.runningJobs))
 		num = mathutil.Min(num, remainNum)
-		e.cacheJobs, err = e.historyJobIter.GetLastJobs(num, e.cacheJobs)
+		e.cacheJobs, err = e.historyJobIter.GetNextJobs(num, e.cacheJobs)
 		if err != nil {
 			return err
 		}

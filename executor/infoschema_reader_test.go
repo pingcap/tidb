@@ -14,11 +14,14 @@
 package executor_test
 
 import (
+	"context"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/util/testkit"
+	"strconv"
 )
 
 var _ = Suite(&testInfoschemaTableSuite{})
@@ -82,4 +85,36 @@ func (s *testInfoschemaTableSuite) TestViews(c *C) {
 	tk.MustExec("CREATE DEFINER='root'@'localhost' VIEW test.v1 AS SELECT 1")
 	tk.MustQuery("SELECT * FROM information_schema.views WHERE table_schema='test' AND table_name='v1'").Check(testkit.Rows("def test v1 SELECT 1 CASCADED NO root@localhost DEFINER utf8mb4 utf8mb4_bin"))
 	tk.MustQuery("SELECT table_catalog, table_schema, table_name, table_type, engine, version, row_format, table_rows, avg_row_length, data_length, max_data_length, index_length, data_free, auto_increment, update_time, check_time, table_collation, checksum, create_options, table_comment FROM information_schema.tables WHERE table_schema='test' AND table_name='v1'").Check(testkit.Rows("def test v1 VIEW <nil> <nil> <nil> <nil> <nil> <nil> <nil> <nil> <nil> <nil> <nil> <nil> <nil> <nil> <nil> VIEW"))
+}
+
+func (s *testInfoschemaTableSuite) TestDDLJobs(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create database if not exists test_ddl_jobs")
+	re := tk.MustQuery("select * from information_schema.DDL_JOBS")
+	row := re.Rows()[0]
+	c.Assert(row[1], Equals, "test_ddl_jobs")
+	c.Assert(row[3], Equals, "create schema")
+	jobID, err := strconv.Atoi(row[0].(string))
+	c.Assert(err, IsNil)
+
+	tk.MustExec("use test_ddl_jobs")
+	tk.MustExec("create table t (a int);")
+	re = tk.MustQuery("select * from information_schema.DDL_JOBS where job_type='create table'")
+	row = re.Rows()[0]
+	c.Assert(row[1], Equals, "test_ddl_jobs")
+	c.Assert(row[2], Equals, "t")
+
+	re = tk.MustQuery("select job_type from information_schema.DDL_JOBS group by job_type")
+	row = re.Rows()[0]
+	c.Assert(row[0], Equals, "create table")
+	row = re.Rows()[1]
+	c.Assert(row[0], Equals, "create schema")
+
+	c.Assert(tk.Se.NewTxn(context.Background()), IsNil)
+	txn, err := tk.Se.Txn(true)
+	c.Assert(err, IsNil)
+	t := meta.NewMeta(txn)
+	job, err := t.GetHistoryDDLJob(int64(jobID))
+	c.Assert(err, IsNil)
+	c.Assert(job, NotNil)
 }

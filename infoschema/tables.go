@@ -115,6 +115,8 @@ const (
 	TableMetricSummary = "METRICS_SUMMARY"
 	// TableMetricSummaryByLabel is a metric table that contains all metrics that group by label info.
 	TableMetricSummaryByLabel = "METRICS_SUMMARY_BY_LABEL"
+	// TableDDLJobs is the string constant of DDL job table.
+	TableDDLJobs = "DDL_JOBS"
 )
 
 var tableIDMap = map[string]int64{
@@ -172,6 +174,7 @@ var tableIDMap = map[string]int64{
 	TableMetricSummary:                      autoid.InformationSchemaDBID + 52,
 	TableMetricSummaryByLabel:               autoid.InformationSchemaDBID + 53,
 	TableMetricTables:                       autoid.InformationSchemaDBID + 54,
+	TableDDLJobs:                            autoid.InformationSchemaDBID + 55,
 }
 
 type columnInfo struct {
@@ -783,6 +786,20 @@ var tableClusterSystemInfoCols = []columnInfo{
 	{"SYSTEM_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"NAME", mysql.TypeVarchar, 256, 0, nil, nil},
 	{"VALUE", mysql.TypeVarchar, 128, 0, nil, nil},
+}
+
+var tableDDLJobsCols = []columnInfo{
+	{"JOB_ID", mysql.TypeLonglong, 4, 0, nil, nil},
+	{"DB_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"TABLE_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"JOB_TYPE", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"SCHEMA_STATE", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"SCHEMA_ID", mysql.TypeLonglong, 4, 0, nil, nil},
+	{"TABLE_ID", mysql.TypeLonglong, 4, 0, nil, nil},
+	{"ROW_COUNT", mysql.TypeLonglong, 4, 0, nil, nil},
+	{"START_TIME", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"END_TIME", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"STATE", mysql.TypeVarchar, 64, 0, nil, nil},
 }
 
 func dataForTiKVRegionStatus(ctx sessionctx.Context) (records [][]types.Datum, err error) {
@@ -2363,6 +2380,7 @@ var tableNameToColumns = map[string][]columnInfo{
 	TableMetricSummary:                      tableMetricSummaryCols,
 	TableMetricSummaryByLabel:               tableMetricSummaryByLabelCols,
 	TableMetricTables:                       tableMetricTablesCols,
+	TableDDLJobs:                            tableDDLJobsCols,
 }
 
 func createInfoSchemaTable(_ autoid.Allocators, meta *model.TableInfo) (table.Table, error) {

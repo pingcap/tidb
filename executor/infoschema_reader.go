@@ -15,6 +15,10 @@ package executor
 
 import (
 	"context"
+	"github.com/cznic/mathutil"
+	"github.com/pingcap/tidb/meta"
+	"github.com/pingcap/tidb/util/admin"
+	"github.com/pingcap/tidb/util/chunk"
 	"sort"
 
 	"github.com/pingcap/parser/model"
@@ -152,4 +156,106 @@ func dataForViews(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.Da
 		}
 	}
 	return rows, nil
+}
+
+type DDLJobsReaderExec struct {
+	baseExecutor
+	cursor         int
+	runningJobs    []*model.Job
+	historyJobIter *meta.LastJobIterator
+	cacheJobs      []*model.Job
+	is             infoschema.InfoSchema
+}
+
+// retrieve implements the infoschemaRetriever interface
+func (e *DDLJobsReaderExec) Open(ctx context.Context) error {
+	if err := e.baseExecutor.Open(ctx); err != nil {
+		return err
+	}
+	txn, err := e.ctx.Txn(true)
+	if err != nil {
+		return err
+	}
+	jobs, err := admin.GetDDLJobs(txn)
+	if err != nil {
+		return err
+	}
+	m := meta.NewMeta(txn)
+	e.historyJobIter, err = m.GetLastHistoryDDLJobsIterator()
+	if err != nil {
+		return err
+	}
+	e.runningJobs = append(e.runningJobs, jobs...)
+	e.cursor = 0
+	return nil
+}
+
+// Next implements the Executor Next interface.
+func (e *DDLJobsReaderExec) Next(ctx context.Context, req *chunk.Chunk) error {
+	req.GrowAndReset(e.maxChunkSize)
+	if !e.historyJobIter.Valid() {
+		return nil
+	}
+	count := 0
+
+	// Append running ddl jobs.
+	if e.cursor < len(e.runningJobs) {
+		num := mathutil.Min(req.Capacity(), len(e.runningJobs)-e.cursor)
+		for i := e.cursor; i < e.cursor+num; i++ {
+			e.appendJobToChunk(req, e.runningJobs[i])
+		}
+		e.cursor += num
+		count += num
+	}
+	var err error
+
+	// Append history ddl jobs.
+	if count < req.Capacity() {
+		e.cacheJobs, err = e.historyJobIter.GetNextJobs(req.Capacity()-count, e.cacheJobs)
+		if err != nil {
+			return err
+		}
+		for _, job := range e.cacheJobs {
+			e.appendJobToChunk(req, job)
+		}
+		e.cursor += len(e.cacheJobs)
+	}
+	return nil
+}
+
+func (e *DDLJobsReaderExec) appendJobToChunk(req *chunk.Chunk, job *model.Job) {
+	req.AppendInt64(0, job.ID)
+	schemaName := job.SchemaName
+	tableName := ""
+	finishTS := uint64(0)
+	if job.BinlogInfo != nil {
+		finishTS = job.BinlogInfo.FinishedTS
+		if job.BinlogInfo.TableInfo != nil {
+			tableName = job.BinlogInfo.TableInfo.Name.L
+		}
+		if len(schemaName) == 0 && job.BinlogInfo.DBInfo != nil {
+			schemaName = job.BinlogInfo.DBInfo.Name.L
+		}
+	}
+	// For compatibility, the old version of DDL Job wasn't store the schema name and table name.
+	if len(schemaName) == 0 {
+		schemaName = getSchemaName(e.is, job.SchemaID)
+	}
+	if len(tableName) == 0 {
+		tableName = getTableName(e.is, job.TableID)
+	}
+	req.AppendString(1, schemaName)
+	req.AppendString(2, tableName)
+	req.AppendString(3, job.Type.String())
+	req.AppendString(4, job.SchemaState.String())
+	req.AppendInt64(5, job.SchemaID)
+	req.AppendInt64(6, job.TableID)
+	req.AppendInt64(7, job.RowCount)
+	req.AppendString(8, model.TSConvert2Time(job.StartTS).String())
+	if finishTS > 0 {
+		req.AppendString(9, model.TSConvert2Time(finishTS).String())
+	} else {
+		req.AppendString(9, "")
+	}
+	req.AppendString(10, job.State.String())
 }

@@ -779,8 +779,8 @@ func (m *Meta) GetLastHistoryDDLJobsIterator() (*LastJobIterator, error) {
 	}, nil
 }
 
-// GetLastJobs gets last several jobs.
-func (i *LastJobIterator) GetLastJobs(num int, jobs []*model.Job) ([]*model.Job, error) {
+// GetLastJobs gets next several jobs.
+func (i *LastJobIterator) GetNextJobs(num int, jobs []*model.Job) ([]*model.Job, error) {
 	if len(jobs) < num {
 		jobs = make([]*model.Job, 0, num)
 	}
@@ -799,6 +799,11 @@ func (i *LastJobIterator) GetLastJobs(num int, jobs []*model.Job) ([]*model.Job,
 		}
 	}
 	return jobs, nil
+}
+
+// GetLastJobs gets last several jobs.
+func (i *LastJobIterator) Valid() bool {
+	return i.iter.Valid()
 }
 
 func decodeJob(jobPairs []structure.HashPair) ([]*model.Job, error) {
