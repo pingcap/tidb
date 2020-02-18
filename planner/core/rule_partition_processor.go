@@ -100,32 +100,23 @@ type partitionTable interface {
 	PartitionExpr(ctx sessionctx.Context, columns []*expression.Column, names types.NameSlice) (*tables.PartitionExpr, error)
 }
 
-func generateHashPartitionExpr(t table.Table, ctx sessionctx.Context, columns []*expression.Column, names types.NameSlice) (*tables.PartitionExpr, error) {
+func generateHashPartitionExpr(t table.Table, ctx sessionctx.Context, columns []*expression.Column, names types.NameSlice) (expression.Expression, error) {
 	tblInfo := t.Meta()
 	pi := tblInfo.Partition
-	var column *expression.Column
 	schema := expression.NewSchema(columns...)
 	exprs, err := expression.ParseSimpleExprsWithNames(ctx, pi.Expr, schema, names)
 	if err != nil {
 		return nil, err
 	}
 	exprs[0].HashCode(ctx.GetSessionVars().StmtCtx)
-	if col, ok := exprs[0].(*expression.Column); ok {
-		column = col
-	}
-	return &tables.PartitionExpr{
-		Column: column,
-		Expr:   exprs[0],
-		Ranges: nil,
-	}, nil
+	return exprs[0], nil
 }
 
 func (s *partitionProcessor) pruneHashPartition(ds *DataSource, pi *model.PartitionInfo) (LogicalPlan, error) {
-	pExpr, err := generateHashPartitionExpr(ds.table, ds.ctx, ds.TblCols, ds.names)
+	pe, err := generateHashPartitionExpr(ds.table, ds.ctx, ds.TblCols, ds.names)
 	if err != nil {
 		return nil, err
 	}
-	pe := pExpr.Expr
 	filterConds := ds.allConds
 	val, ok, hasConflict := expression.FastLocateHashPartition(ds.SCtx(), filterConds, pe)
 	if hasConflict {
