@@ -275,6 +275,7 @@ func sizeInt(comparable bool) int {
 // slice. It guarantees the encoded value is in ascending order for comparison.
 // For Decimal type, datum must set datum's length and frac.
 func EncodeKey(sc *stmtctx.StatementContext, b []byte, v ...types.Datum) ([]byte, error) {
+	// TODO: consider collations
 	return encode(sc, b, v, true)
 }
 
@@ -1166,7 +1167,7 @@ func HashGroupKey(sc *stmtctx.StatementContext, n int, col *chunk.Column, buf []
 			if col.IsNull(i) {
 				buf[i] = append(buf[i], NilFlag)
 			} else {
-				buf[i] = encodeBytes(buf[i], col.GetBytes(i), false)
+				buf[i] = encodeBytes(buf[i], convertByCollation(col.GetBytes(i), ft), false)
 			}
 		}
 	default:
