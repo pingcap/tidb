@@ -507,15 +507,14 @@ func (e *InsertValues) getRowInPlace(ctx context.Context, vals []types.Datum, ro
 
 // getColDefaultValue gets the column default value.
 func (e *InsertValues) getColDefaultValue(idx int, col *table.Column) (d types.Datum, err error) {
-	if e.colDefaultVals != nil && e.colDefaultVals[idx].valid {
+	if !col.DefaultIsExpr && e.colDefaultVals != nil && e.colDefaultVals[idx].valid {
 		return e.colDefaultVals[idx].val, nil
 	}
-
 	defaultVal, err := table.GetColDefaultValue(e.ctx, col.ToInfo())
 	if err != nil {
 		return types.Datum{}, err
 	}
-	if initialized := e.lazilyInitColDefaultValBuf(); initialized {
+	if initialized := e.lazilyInitColDefaultValBuf(); initialized && !col.DefaultIsExpr {
 		e.colDefaultVals[idx].val = defaultVal
 		e.colDefaultVals[idx].valid = true
 	}

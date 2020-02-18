@@ -334,6 +334,16 @@ func (e *DDLExec) dropTableObject(objects []*ast.TableName, obt objectType, ifEx
 		}
 		return infoschema.ErrTableDropExists.GenWithStackByArgs(strings.Join(notExistTables, ","))
 	}
+	// We need add warning when use if exists.
+	if len(notExistTables) > 0 && ifExists {
+		for _, table := range notExistTables {
+			if obt == sequenceObject {
+				e.ctx.GetSessionVars().StmtCtx.AppendNote(infoschema.ErrSequenceDropExists.GenWithStackByArgs(table))
+			} else {
+				e.ctx.GetSessionVars().StmtCtx.AppendNote(infoschema.ErrTableDropExists.GenWithStackByArgs(table))
+			}
+		}
+	}
 	return nil
 }
 

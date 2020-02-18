@@ -11,10 +11,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package infoschema
+package executor
 
 import (
 	"bufio"
+	"context"
 	"io"
 	"os"
 	"strconv"
@@ -22,7 +23,10 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
@@ -33,99 +37,116 @@ import (
 	"go.uber.org/zap"
 )
 
-var slowQueryCols = []columnInfo{
-	{variable.SlowLogTimeStr, mysql.TypeTimestamp, 26, 0, nil, nil},
-	{variable.SlowLogTxnStartTSStr, mysql.TypeLonglong, 20, mysql.UnsignedFlag, nil, nil},
-	{variable.SlowLogUserStr, mysql.TypeVarchar, 64, 0, nil, nil},
-	{variable.SlowLogHostStr, mysql.TypeVarchar, 64, 0, nil, nil},
-	{variable.SlowLogConnIDStr, mysql.TypeLonglong, 20, mysql.UnsignedFlag, nil, nil},
-	{variable.SlowLogQueryTimeStr, mysql.TypeDouble, 22, 0, nil, nil},
-	{variable.SlowLogParseTimeStr, mysql.TypeDouble, 22, 0, nil, nil},
-	{variable.SlowLogCompileTimeStr, mysql.TypeDouble, 22, 0, nil, nil},
-	{execdetails.PreWriteTimeStr, mysql.TypeDouble, 22, 0, nil, nil},
-	{execdetails.BinlogPrewriteTimeStr, mysql.TypeDouble, 22, 0, nil, nil},
-	{execdetails.CommitTimeStr, mysql.TypeDouble, 22, 0, nil, nil},
-	{execdetails.GetCommitTSTimeStr, mysql.TypeDouble, 22, 0, nil, nil},
-	{execdetails.CommitBackoffTimeStr, mysql.TypeDouble, 22, 0, nil, nil},
-	{execdetails.BackoffTypesStr, mysql.TypeVarchar, 64, 0, nil, nil},
-	{execdetails.ResolveLockTimeStr, mysql.TypeDouble, 22, 0, nil, nil},
-	{execdetails.LocalLatchWaitTimeStr, mysql.TypeDouble, 22, 0, nil, nil},
-	{execdetails.WriteKeysStr, mysql.TypeLonglong, 22, 0, nil, nil},
-	{execdetails.WriteSizeStr, mysql.TypeLonglong, 22, 0, nil, nil},
-	{execdetails.PrewriteRegionStr, mysql.TypeLonglong, 22, 0, nil, nil},
-	{execdetails.TxnRetryStr, mysql.TypeLonglong, 22, 0, nil, nil},
-	{execdetails.ProcessTimeStr, mysql.TypeDouble, 22, 0, nil, nil},
-	{execdetails.WaitTimeStr, mysql.TypeDouble, 22, 0, nil, nil},
-	{execdetails.BackoffTimeStr, mysql.TypeDouble, 22, 0, nil, nil},
-	{execdetails.LockKeysTimeStr, mysql.TypeDouble, 22, 0, nil, nil},
-	{execdetails.RequestCountStr, mysql.TypeLonglong, 20, mysql.UnsignedFlag, nil, nil},
-	{execdetails.TotalKeysStr, mysql.TypeLonglong, 20, mysql.UnsignedFlag, nil, nil},
-	{execdetails.ProcessKeysStr, mysql.TypeLonglong, 20, mysql.UnsignedFlag, nil, nil},
-	{variable.SlowLogDBStr, mysql.TypeVarchar, 64, 0, nil, nil},
-	{variable.SlowLogIndexNamesStr, mysql.TypeVarchar, 100, 0, nil, nil},
-	{variable.SlowLogIsInternalStr, mysql.TypeTiny, 1, 0, nil, nil},
-	{variable.SlowLogDigestStr, mysql.TypeVarchar, 64, 0, nil, nil},
-	{variable.SlowLogStatsInfoStr, mysql.TypeVarchar, 512, 0, nil, nil},
-	{variable.SlowLogCopProcAvg, mysql.TypeDouble, 22, 0, nil, nil},
-	{variable.SlowLogCopProcP90, mysql.TypeDouble, 22, 0, nil, nil},
-	{variable.SlowLogCopProcMax, mysql.TypeDouble, 22, 0, nil, nil},
-	{variable.SlowLogCopProcAddr, mysql.TypeVarchar, 64, 0, nil, nil},
-	{variable.SlowLogCopWaitAvg, mysql.TypeDouble, 22, 0, nil, nil},
-	{variable.SlowLogCopWaitP90, mysql.TypeDouble, 22, 0, nil, nil},
-	{variable.SlowLogCopWaitMax, mysql.TypeDouble, 22, 0, nil, nil},
-	{variable.SlowLogCopWaitAddr, mysql.TypeVarchar, 64, 0, nil, nil},
-	{variable.SlowLogMemMax, mysql.TypeLonglong, 20, 0, nil, nil},
-	{variable.SlowLogSucc, mysql.TypeTiny, 1, 0, nil, nil},
-	{variable.SlowLogPlan, mysql.TypeLongBlob, types.UnspecifiedLength, 0, nil, nil},
-	{variable.SlowLogPlanDigest, mysql.TypeVarchar, 128, 0, nil, nil},
-	{variable.SlowLogPrevStmt, mysql.TypeLongBlob, types.UnspecifiedLength, 0, nil, nil},
-	{variable.SlowLogQuerySQLStr, mysql.TypeLongBlob, types.UnspecifiedLength, 0, nil, nil},
+//SlowQueryRetriever is used to read slow log data.
+type SlowQueryRetriever struct {
+	table       *model.TableInfo
+	outputCols  []*model.ColumnInfo
+	retrieved   bool
+	initialized bool
+	file        *os.File
+	fileLine    int
 }
 
-func dataForSlowLog(ctx sessionctx.Context) ([][]types.Datum, error) {
-	return parseSlowLogFile(ctx.GetSessionVars().Location(), ctx.GetSessionVars().SlowQueryFile)
-}
-
-// parseSlowLogFile uses to parse slow log file.
-// TODO: Support parse multiple log-files.
-func parseSlowLogFile(tz *time.Location, filePath string) ([][]types.Datum, error) {
-	file, err := os.Open(filePath)
-	if err != nil {
-		return nil, errors.Trace(err)
+func (e *SlowQueryRetriever) retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
+	if e.retrieved {
+		return nil, nil
 	}
-	defer func() {
-		if err = file.Close(); err != nil {
-			logutil.BgLogger().Error("close slow log file failed.", zap.String("file", filePath), zap.Error(err))
+	if !e.initialized {
+		var err error
+		e.file, err = os.Open(sctx.GetSessionVars().SlowQueryFile)
+		if err != nil {
+			return nil, err
 		}
-	}()
-	return ParseSlowLog(tz, bufio.NewReader(file))
+		e.initialized = true
+	}
+	rows, err := e.dataForSlowLog(sctx)
+	if err != nil {
+		return nil, err
+	}
+	if len(e.outputCols) == len(e.table.Columns) {
+		return rows, nil
+	}
+	retRows := make([][]types.Datum, len(rows))
+	for i, fullRow := range rows {
+		row := make([]types.Datum, len(e.outputCols))
+		for j, col := range e.outputCols {
+			row[j] = fullRow[col.Offset]
+		}
+		retRows[i] = row
+	}
+	return retRows, nil
 }
+
+func (e *SlowQueryRetriever) close() error {
+	if e.file != nil {
+		err := e.file.Close()
+		if err != nil {
+			logutil.BgLogger().Error("close slow log file failed.", zap.Error(err))
+		}
+	}
+	return nil
+}
+
+func (e *SlowQueryRetriever) dataForSlowLog(ctx sessionctx.Context) ([][]types.Datum, error) {
+	var hasProcessPriv bool
+	if pm := privilege.GetPrivilegeManager(ctx); pm != nil {
+		if pm.RequestVerification(ctx.GetSessionVars().ActiveRoles, "", "", "", mysql.ProcessPriv) {
+			hasProcessPriv = true
+		}
+	}
+	user := ctx.GetSessionVars().User
+	checkValid := func(userName string) bool {
+		if !hasProcessPriv && user != nil && userName != user.Username {
+			return false
+		}
+		return true
+	}
+	rows, fileLine, err := ParseSlowLog(ctx, bufio.NewReader(e.file), e.fileLine, 1024, checkValid)
+	if err != nil {
+		if err == io.EOF {
+			e.retrieved = true
+		} else {
+			return nil, err
+		}
+	}
+	e.fileLine = fileLine
+	if e.table.Name.L == strings.ToLower(infoschema.ClusterTableSlowLog) {
+		return infoschema.AppendHostInfoToRows(rows)
+	}
+	return rows, nil
+}
+
+type checkValidFunc func(string) bool
 
 // ParseSlowLog exports for testing.
 // TODO: optimize for parse huge log-file.
-func ParseSlowLog(tz *time.Location, reader *bufio.Reader) ([][]types.Datum, error) {
+func ParseSlowLog(ctx sessionctx.Context, reader *bufio.Reader, fileLine, maxRow int, checkValid checkValidFunc) ([][]types.Datum, int, error) {
 	var rows [][]types.Datum
 	startFlag := false
+	lineNum := fileLine
+	tz := ctx.GetSessionVars().Location()
 	var st *slowQueryTuple
-	lineNum := 0
 	for {
+		if len(rows) >= maxRow {
+			return rows, lineNum, nil
+		}
 		lineNum++
 		lineByte, err := getOneLine(reader)
 		if err != nil {
-			if err == io.EOF {
-				return rows, nil
-			}
-			return rows, err
+			return rows, lineNum, err
 		}
 		line := string(hack.String(lineByte))
 		// Check slow log entry start flag.
 		if !startFlag && strings.HasPrefix(line, variable.SlowLogStartPrefixStr) {
 			st = &slowQueryTuple{}
-			err = st.setFieldValue(tz, variable.SlowLogTimeStr, line[len(variable.SlowLogStartPrefixStr):], lineNum)
+			valid, err := st.setFieldValue(tz, variable.SlowLogTimeStr, line[len(variable.SlowLogStartPrefixStr):], lineNum, checkValid)
 			if err != nil {
-				return rows, err
+				ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+				continue
 			}
-			startFlag = true
+			if valid {
+				startFlag = true
+			}
 			continue
 		}
 
@@ -142,19 +163,26 @@ func ParseSlowLog(tz *time.Location, reader *bufio.Reader) ([][]types.Datum, err
 						if strings.HasSuffix(field, ":") {
 							field = field[:len(field)-1]
 						}
-						err = st.setFieldValue(tz, field, fieldValues[i+1], lineNum)
+						valid, err := st.setFieldValue(tz, field, fieldValues[i+1], lineNum, checkValid)
 						if err != nil {
-							return rows, err
+							ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+							continue
+						}
+						if !valid {
+							startFlag = false
 						}
 					}
 				}
 			} else if strings.HasSuffix(line, variable.SlowLogSQLSuffixStr) {
 				// Get the sql string, and mark the start flag to false.
-				err = st.setFieldValue(tz, variable.SlowLogQuerySQLStr, string(hack.Slice(line)), lineNum)
+				_, err = st.setFieldValue(tz, variable.SlowLogQuerySQLStr, string(hack.Slice(line)), lineNum, checkValid)
 				if err != nil {
-					return rows, err
+					ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+					continue
 				}
-				rows = append(rows, st.convertToDatumRow())
+				if checkValid == nil || checkValid(st.user) {
+					rows = append(rows, st.convertToDatumRow())
+				}
 				startFlag = false
 			} else {
 				startFlag = false
@@ -243,8 +271,8 @@ type slowQueryTuple struct {
 	planDigest         string
 }
 
-func (st *slowQueryTuple) setFieldValue(tz *time.Location, field, value string, lineNum int) error {
-	var err error
+func (st *slowQueryTuple) setFieldValue(tz *time.Location, field, value string, lineNum int, checkValid checkValidFunc) (valid bool, err error) {
+	valid = true
 	switch field {
 	case variable.SlowLogTimeStr:
 		st.time, err = ParseTime(value)
@@ -263,6 +291,9 @@ func (st *slowQueryTuple) setFieldValue(tz *time.Location, field, value string, 
 		}
 		if len(field) > 1 {
 			st.host = fields[1]
+		}
+		if checkValid != nil {
+			valid = checkValid(st.user)
 		}
 	case variable.SlowLogConnIDStr:
 		st.connID, err = strconv.ParseUint(value, 10, 64)
@@ -348,13 +379,13 @@ func (st *slowQueryTuple) setFieldValue(tz *time.Location, field, value string, 
 		st.sql = value
 	}
 	if err != nil {
-		return errors.Wrap(err, "Parse slow log at line "+strconv.FormatInt(int64(lineNum), 10)+" failed. Field: `"+field+"`, error")
+		return valid, errors.Wrap(err, "Parse slow log at line "+strconv.FormatInt(int64(lineNum), 10)+" failed. Field: `"+field+"`, error")
 	}
-	return nil
+	return valid, err
 }
 
 func (st *slowQueryTuple) convertToDatumRow() []types.Datum {
-	record := make([]types.Datum, 0, len(slowQueryCols))
+	record := make([]types.Datum, 0, 64)
 	record = append(record, types.NewTimeDatum(types.NewTime(types.FromGoTime(st.time), mysql.TypeDatetime, types.MaxFsp)))
 	record = append(record, types.NewUintDatum(st.txnStartTs))
 	record = append(record, types.NewDefaultCollationStringDatum(st.user))

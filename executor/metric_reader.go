@@ -53,6 +53,14 @@ func (e *MetricRetriever) retrieve(ctx context.Context, sctx sessionctx.Context)
 		return nil, nil
 	}
 	e.retrieved = true
+
+	failpoint.InjectContext(ctx, "mockMetricsTableData", func() {
+		m, ok := ctx.Value("__mockMetricsTableData").(map[string][][]types.Datum)
+		if ok && m[e.table.Name.L] != nil {
+			failpoint.Return(m[e.table.Name.L], nil)
+		}
+	})
+
 	tblDef, err := infoschema.GetMetricTableDef(e.table.Name.L)
 	if err != nil {
 		return nil, err
@@ -84,8 +92,8 @@ func (e *MetricRetriever) retrieve(ctx context.Context, sctx sessionctx.Context)
 }
 
 func (e *MetricRetriever) queryMetric(ctx context.Context, sctx sessionctx.Context, queryRange promv1.Range, quantile float64) (pmodel.Value, error) {
-	failpoint.InjectContext(ctx, "mockMetricRetrieverQueryPromQL", func() {
-		failpoint.Return(ctx.Value("__mockMetricsData").(pmodel.Matrix), nil)
+	failpoint.InjectContext(ctx, "mockMetricsPromData", func() {
+		failpoint.Return(ctx.Value("__mockMetricsPromData").(pmodel.Matrix), nil)
 	})
 
 	addr, err := e.getMetricAddr(sctx)

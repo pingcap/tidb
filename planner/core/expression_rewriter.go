@@ -903,7 +903,7 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 	}
 	switch v := inNode.(type) {
 	case *ast.AggregateFuncExpr, *ast.ColumnNameExpr, *ast.ParenthesesExpr, *ast.WhenClause,
-		*ast.SubqueryExpr, *ast.ExistsSubqueryExpr, *ast.CompareSubqueryExpr, *ast.ValuesExpr, *ast.WindowFuncExpr:
+		*ast.SubqueryExpr, *ast.ExistsSubqueryExpr, *ast.CompareSubqueryExpr, *ast.ValuesExpr, *ast.WindowFuncExpr, *ast.TableNameExpr:
 	case *driver.ValueExpr:
 		value := &expression.Constant{Value: v.Datum, RetType: &v.Type}
 		er.ctxStackAppend(value, types.EmptyName)
@@ -921,6 +921,8 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 		if _, ok := expression.DisableFoldFunctions[v.FnName.L]; ok {
 			er.disableFoldCounter--
 		}
+	case *ast.TableName:
+		er.toTable(v)
 	case *ast.ColumnName:
 		er.toColumn(v)
 	case *ast.UnaryOperationExpr:
@@ -1489,6 +1491,20 @@ func (er *expressionRewriter) funcCallToExpression(v *ast.FuncCallExpr) {
 		function, er.err = er.newFunction(v.FnName.L, &v.Type, args...)
 		er.ctxStackAppend(function, types.EmptyName)
 	}
+}
+
+// Now TableName in expression only used by sequence function like nextval(seq).
+// The function arg should be evaluated as a table name rather than normal column name like mysql does.
+func (er *expressionRewriter) toTable(v *ast.TableName) {
+	fullName := v.Name.L
+	if len(v.Schema.L) != 0 {
+		fullName = v.Schema.L + "." + fullName
+	}
+	val := &expression.Constant{
+		Value:   types.NewDatum(fullName),
+		RetType: types.NewFieldType(mysql.TypeString),
+	}
+	er.ctxStackAppend(val, types.EmptyName)
 }
 
 func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
