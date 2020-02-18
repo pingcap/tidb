@@ -13,7 +13,7 @@ require (
 	github.com/dustin/go-humanize v1.0.0 // indirect
 	github.com/go-ole/go-ole v1.2.1 // indirect
 	github.com/go-sql-driver/mysql v0.0.0-20170715192408-3955978caca4
-	github.com/gogo/protobuf v1.2.1
+	github.com/gogo/protobuf v1.3.1
 	github.com/golang/protobuf v1.3.2
 	github.com/golang/snappy v0.0.1
 	github.com/google/btree v1.0.0
@@ -58,12 +58,11 @@ require (
 	go.uber.org/atomic v1.3.2
 	go.uber.org/zap v1.10.0
 	golang.org/x/crypto v0.0.0-20191227163750-53104e6ec876 // indirect
-	golang.org/x/net v0.0.0-20190909003024-a7b16738d86b
+	golang.org/x/net v0.0.0-20191002035440-2ec189313ef0
 	golang.org/x/sys v0.0.0-20200106162015-b016eb3dc98e // indirect
 	golang.org/x/text v0.3.2
 	golang.org/x/tools v0.0.0-20190524140312-2c0ae7006135
-	google.golang.org/genproto v0.0.0-20190108161440-ae2f86662275 // indirect
-	google.golang.org/grpc v1.23.1
+	google.golang.org/grpc v1.24.0
 	gopkg.in/natefinch/lumberjack.v2 v2.0.0
 	sourcegraph.com/sourcegraph/appdash v0.0.0-20180531100431-4c381bd170b4
 	sourcegraph.com/sourcegraph/appdash-data v0.0.0-20151005221446-73f23eafcf67
