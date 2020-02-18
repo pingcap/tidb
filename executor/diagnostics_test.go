@@ -15,9 +15,6 @@ package executor_test
 
 import (
 	"context"
-	"fmt"
-	"strings"
-
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/mysql"
@@ -176,44 +173,23 @@ func (s *diagnosticsSuite) parseTime(c *C, se session.Session, str string) types
 }
 
 func (s *diagnosticsSuite) TestThresholdCheckInspection(c *C) {
-	configurations := []string{
-		"tikv,127.0.0.1,raftstore.apply-pool-size,2",
-		"tikv,127.0.0.1,raftstore.store-pool-size,2",
-		"tikv,127.0.0.1,readpool.coprocessor.high-concurrency,4",
-		"tikv,127.0.0.1,readpool.coprocessor.low-concurrency,4",
-		"tikv,127.0.0.1,readpool.coprocessor.normal-concurrency,4",
-		"tikv,127.0.0.1,readpool.storage.high-concurrency,4",
-		"tikv,127.0.0.1,readpool.storage.low-concurrency,4",
-		"tikv,127.0.0.1,readpool.storage.normal-concurrency,4",
-		"tikv,127.0.0.1,server.grpc-concurrency,8",
-		"tikv,127.0.0.1,storage.scheduler-worker-pool-size,6",
-	}
-
-	fpName := "github.com/pingcap/tidb/infoschema/mockInspectionSchemaClusterConfigData"
-	fpExpr := strings.Join(configurations, ";")
-	c.Assert(failpoint.Enable(fpName, fmt.Sprintf(`return("%s")`, fpExpr)), IsNil)
-	defer func() { c.Assert(failpoint.Disable(fpName), IsNil) }()
-
 	tk := testkit.NewTestKitWithInit(c, s.store)
-	tk.Se.GetSessionVars().InspectionTableCache = make(map[string]variable.TableSnapshot)
-	tk.MustQuery("select type, `key`, value from inspection_schema.cluster_config where type='tikv'").Check(testkit.Rows(
-		"tikv raftstore.apply-pool-size 2",
-		"tikv raftstore.store-pool-size 2",
-		"tikv readpool.coprocessor.high-concurrency 4",
-		"tikv readpool.coprocessor.low-concurrency 4",
-		"tikv readpool.coprocessor.normal-concurrency 4",
-		"tikv readpool.storage.high-concurrency 4",
-		"tikv readpool.storage.low-concurrency 4",
-		"tikv readpool.storage.normal-concurrency 4",
-		"tikv server.grpc-concurrency 8",
-		"tikv storage.scheduler-worker-pool-size 6",
-	))
-
-	// Mock for metric table data.
-	fpName2 := "github.com/pingcap/tidb/executor/mockMetricsTableData"
-	c.Assert(failpoint.Enable(fpName2, "return"), IsNil)
-	defer func() { c.Assert(failpoint.Disable(fpName2), IsNil) }()
-
+	// mock tikv configuration.
+	configurations := map[string]variable.TableSnapshot{}
+	configurations[infoschema.TableClusterConfig] = variable.TableSnapshot{
+		Rows: [][]types.Datum{
+			types.MakeDatums("tikv", "tikv-0", "raftstore.apply-pool-size", "2"),
+			types.MakeDatums("tikv", "tikv-0", "raftstore.store-pool-size", "2"),
+			types.MakeDatums("tikv", "tikv-0", "readpool.coprocessor.high-concurrency", "4"),
+			types.MakeDatums("tikv", "tikv-0", "readpool.coprocessor.low-concurrency", "4"),
+			types.MakeDatums("tikv", "tikv-0", "readpool.coprocessor.normal-concurrency", "4"),
+			types.MakeDatums("tikv", "tikv-0", "readpool.storage.high-concurrency", "4"),
+			types.MakeDatums("tikv", "tikv-0", "readpool.storage.low-concurrency", "4"),
+			types.MakeDatums("tikv", "tikv-0", "readpool.storage.normal-concurrency", "4"),
+			types.MakeDatums("tikv", "tikv-0", "server.grpc-concurrency", "8"),
+			types.MakeDatums("tikv", "tikv-0", "storage.scheduler-worker-pool-size", "6"),
+		},
+	}
 	datetime := func(str string) types.Time {
 		return s.parseTime(c, tk.Se, str)
 	}
@@ -236,9 +212,19 @@ func (s *diagnosticsSuite) TestThresholdCheckInspection(c *C) {
 		},
 	}
 
-	ctx := context.WithValue(context.Background(), "__mockMetricsTableData", mockData)
-	ctx = failpoint.WithHook(ctx, func(_ context.Context, fpName2 string) bool {
-		return fpName2 == fpName2
+	fpName := "github.com/pingcap/tidb/executor/mockMergeMockInspectionTables"
+	c.Assert(failpoint.Enable(fpName, "return"), IsNil)
+	defer func() { c.Assert(failpoint.Disable(fpName), IsNil) }()
+
+	// Mock for metric table data.
+	fpName2 := "github.com/pingcap/tidb/executor/mockMetricsTableData"
+	c.Assert(failpoint.Enable(fpName2, "return"), IsNil)
+	defer func() { c.Assert(failpoint.Disable(fpName2), IsNil) }()
+
+	ctx := context.WithValue(context.Background(), "__mockInspectionTables", configurations)
+	ctx = context.WithValue(ctx, "__mockMetricsTableData", mockData)
+	ctx = failpoint.WithHook(ctx, func(_ context.Context, fpname2 string) bool {
+		return fpName2 == fpname2 || fpname2 == fpName
 	})
 
 	rs, err := tk.Se.Execute(ctx, "select item, type, instance, value, reference, details from information_schema.inspection_result where rule='threshold-check' order by item")
@@ -278,9 +264,10 @@ func (s *diagnosticsSuite) TestThresholdCheckInspection(c *C) {
 		},
 	}
 
-	ctx = context.WithValue(context.Background(), "__mockMetricsTableData", mockData)
-	ctx = failpoint.WithHook(ctx, func(_ context.Context, fpName2 string) bool {
-		return fpName2 == fpName2
+	ctx = context.WithValue(context.Background(), "__mockInspectionTables", configurations)
+	ctx = context.WithValue(ctx, "__mockMetricsTableData", mockData)
+	ctx = failpoint.WithHook(ctx, func(_ context.Context, fpname2 string) bool {
+		return fpName2 == fpname2 || fpname2 == fpName
 	})
 	rs, err = tk.Se.Execute(ctx, "select item, type, instance, value, reference, details from information_schema.inspection_result where rule='threshold-check' order by item")
 	c.Assert(err, IsNil)
