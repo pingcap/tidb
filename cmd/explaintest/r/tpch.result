@@ -970,7 +970,7 @@ l_partkey = p_partkey
 id	count	task	operator info
 Projection_16	1.00	root	div(Column#46, 7.0)->Column#47
 └─StreamAgg_21	1.00	root	funcs:sum(tpch.lineitem.l_extendedprice)->Column#46
-  └─Projection_51	293773.83	root	tpch.lineitem.l_partkey, tpch.lineitem.l_quantity, tpch.lineitem.l_extendedprice, tpch.part.p_partkey, tpch.part.p_brand, tpch.part.p_container, mul(0.2, Column#44)->Column#45
+  └─Projection_51	293773.83	root	tpch.lineitem.l_extendedprice
     └─HashRightJoin_53	293773.83	root	inner join, inner:HashRightJoin_37, equal:[eq(tpch.part.p_partkey, tpch.lineitem.l_partkey)], other cond:lt(tpch.lineitem.l_quantity, mul(0.2, Column#44))
       ├─HashRightJoin_37	293773.83	root	inner join, inner:TableReader_42, equal:[eq(tpch.part.p_partkey, tpch.lineitem.l_partkey)]
       │ ├─TableReader_42	9736.49	root	data:Selection_41
@@ -1154,9 +1154,9 @@ Sort_28	20000.00	root	tpch.supplier.s_name:asc
     │ └─TableReader_47	500000.00	root	data:TableScan_46
     │   └─TableScan_46	500000.00	cop[tikv]	table:supplier, range:[-inf,+inf], keep order:false
     └─HashAgg_53	64006.34	root	group by:tpch.partsupp.ps_suppkey, funcs:firstrow(tpch.partsupp.ps_suppkey)->tpch.partsupp.ps_suppkey
-      └─Projection_54	64006.34	root	tpch.partsupp.ps_partkey, tpch.partsupp.ps_suppkey, tpch.partsupp.ps_availqty, tpch.part.p_partkey, mul(0.5, Column#44)->Column#45
+      └─Projection_54	64006.34	root	tpch.partsupp.ps_suppkey
         └─Selection_55	64006.34	root	gt(cast(tpch.partsupp.ps_availqty), mul(0.5, Column#44))
-          └─HashAgg_58	80007.93	root	group by:tpch.partsupp.ps_partkey, tpch.partsupp.ps_suppkey, funcs:firstrow(tpch.partsupp.ps_partkey)->tpch.partsupp.ps_partkey, funcs:firstrow(tpch.partsupp.ps_suppkey)->tpch.partsupp.ps_suppkey, funcs:firstrow(tpch.partsupp.ps_availqty)->tpch.partsupp.ps_availqty, funcs:firstrow(tpch.part.p_partkey)->tpch.part.p_partkey, funcs:sum(tpch.lineitem.l_quantity)->Column#44
+          └─HashAgg_58	80007.93	root	group by:tpch.partsupp.ps_partkey, tpch.partsupp.ps_suppkey, funcs:firstrow(tpch.partsupp.ps_suppkey)->tpch.partsupp.ps_suppkey, funcs:firstrow(tpch.partsupp.ps_availqty)->tpch.partsupp.ps_availqty, funcs:sum(tpch.lineitem.l_quantity)->Column#44
             └─HashLeftJoin_62	9711455.06	root	left outer join, inner:IndexHashJoin_75 (REVERSED), equal:[eq(tpch.partsupp.ps_partkey, tpch.lineitem.l_partkey) eq(tpch.partsupp.ps_suppkey, tpch.lineitem.l_suppkey)]
               ├─IndexHashJoin_75	321865.05	root	inner join, inner:IndexLookUp_66, outer key:tpch.part.p_partkey, inner key:tpch.partsupp.ps_partkey
               │ ├─TableReader_98	80007.93	root	data:Selection_97

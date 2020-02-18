@@ -22,6 +22,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/cznic/mathutil"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
@@ -50,7 +51,6 @@ import (
 	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/stringutil"
 	"go.uber.org/zap"
@@ -86,7 +86,7 @@ var (
 type baseExecutor struct {
 	ctx           sessionctx.Context
 	id            fmt.Stringer
-	schema        *expression.Schema
+	schema        *expression.Schema // output schema
 	initCap       int
 	maxChunkSize  int
 	children      []Executor
@@ -127,6 +127,16 @@ func (e *baseExecutor) Schema() *expression.Schema {
 		return expression.NewSchema()
 	}
 	return e.schema
+}
+
+// markChildrenUsedCols compares each child with the output schema, and mark
+// each column of the child is used by output or not.
+func (e *baseExecutor) markChildrenUsedCols() (childrenUsed [][]bool) {
+	for _, child := range e.children {
+		used := expression.GetUsedList(e.schema.Columns, child.Schema())
+		childrenUsed = append(childrenUsed, used)
+	}
+	return
 }
 
 // newFirstChunk creates a new chunk to buffer current executor's result.
@@ -485,7 +495,11 @@ func (e *ShowDDLJobsExec) appendJobToChunk(req *chunk.Chunk, job *model.Job) {
 	req.AppendInt64(6, job.TableID)
 	req.AppendInt64(7, job.RowCount)
 	req.AppendString(8, model.TSConvert2Time(job.StartTS).String())
-	req.AppendString(9, model.TSConvert2Time(finishTS).String())
+	if finishTS > 0 {
+		req.AppendString(9, model.TSConvert2Time(finishTS).String())
+	} else {
+		req.AppendString(9, "")
+	}
 	req.AppendString(10, job.State.String())
 }
 
