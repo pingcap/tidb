@@ -96,6 +96,7 @@ import (
 	hintUseIndex              "USE_INDEX"
 	hintUsePlanCache          "USE_PLAN_CACHE"
 	hintUseToja               "USE_TOJA"
+	hintTimeRange             "TIME_RANGE"
 
 	/* Other keywords */
 	hintOLAP            "OLAP"
@@ -227,9 +228,9 @@ TableOptimizerHintOpt:
 |	"MAX_EXECUTION_TIME" '(' QueryBlockOpt hintIntLit ')'
 	{
 		$$ = &ast.TableOptimizerHint{
-			HintName:         model.NewCIStr($1),
-			QBName:           model.NewCIStr($3),
-			MaxExecutionTime: $4,
+			HintName: model.NewCIStr($1),
+			QBName:   model.NewCIStr($3),
+			HintData: $4,
 		}
 	}
 |	"SET_VAR" '(' Identifier '=' Value ')'
@@ -254,14 +255,24 @@ TableOptimizerHintOpt:
 		maxValue := uint64(math.MaxInt64) / $5
 		if $4 <= maxValue {
 			$$ = &ast.TableOptimizerHint{
-				HintName:    model.NewCIStr($1),
-				MemoryQuota: int64($4 * $5),
-				QBName:      model.NewCIStr($3),
+				HintName: model.NewCIStr($1),
+				HintData: int64($4 * $5),
+				QBName:   model.NewCIStr($3),
 			}
 		} else {
 			yylex.AppendError(ErrWarnMemoryQuotaOverflow.GenWithStackByArgs(math.MaxInt64))
 			parser.lastErrorAsWarn()
 			$$ = nil
+		}
+	}
+|	"TIME_RANGE" '(' hintStringLit CommaOpt hintStringLit ')'
+	{
+		$$ = &ast.TableOptimizerHint{
+			HintName: model.NewCIStr($1),
+			HintData: ast.HintTimeRange{
+				From: $3,
+				To:   $5,
+			},
 		}
 	}
 |	BooleanHintName '(' QueryBlockOpt HintTrueOrFalse ')'
@@ -281,9 +292,9 @@ TableOptimizerHintOpt:
 |	"QUERY_TYPE" '(' QueryBlockOpt HintQueryType ')'
 	{
 		$$ = &ast.TableOptimizerHint{
-			HintName:  model.NewCIStr($1),
-			QBName:    model.NewCIStr($3),
-			QueryType: model.NewCIStr($4),
+			HintName: model.NewCIStr($1),
+			QBName:   model.NewCIStr($3),
+			HintData: model.NewCIStr($4),
 		}
 	}
 
@@ -314,7 +325,7 @@ HintStorageTypeAndTable:
 	HintStorageType '[' HintTableList ']'
 	{
 		h := $3
-		h.StoreType = model.NewCIStr($1)
+		h.HintData = model.NewCIStr($1)
 		$$ = h
 	}
 
@@ -449,11 +460,11 @@ UnitOfBytes:
 HintTrueOrFalse:
 	"TRUE"
 	{
-		$$ = &ast.TableOptimizerHint{HintFlag: true}
+		$$ = &ast.TableOptimizerHint{HintData: true}
 	}
 |	"FALSE"
 	{
-		$$ = &ast.TableOptimizerHint{HintFlag: false}
+		$$ = &ast.TableOptimizerHint{HintData: false}
 	}
 
 JoinOrderOptimizerHintName:
@@ -574,6 +585,7 @@ Identifier:
 |	"USE_INDEX"
 |	"USE_PLAN_CACHE"
 |	"USE_TOJA"
+|	"TIME_RANGE"
 /* other keywords */
 |	"OLAP"
 |	"OLTP"
