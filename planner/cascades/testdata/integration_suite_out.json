@@ -627,9 +627,9 @@
         "Plan": [
           "Projection_16 4166.67 root test.t1.a, test.t1.b",
           "└─MergeJoin_19 4166.67 root inner join, left key:test.t1.a, right key:test.t2.a",
-          "  ├─TableReader_24 3333.33 root data:TableScan_25",
+          "  ├─TableReader_24(Probe) 3333.33 root data:TableScan_25",
           "  │ └─TableScan_25 3333.33 cop[tikv] table:t1, range:(2,+inf], keep order:true, stats:pseudo",
-          "  └─TableReader_27 3333.33 root data:TableScan_28",
+          "  └─TableReader_27(Build) 3333.33 root data:TableScan_28",
           "    └─TableScan_28 3333.33 cop[tikv] table:t2, range:(2,+inf], keep order:true, stats:pseudo"
         ],
         "Result": [
@@ -641,9 +641,9 @@
         "Plan": [
           "Projection_12 80000000.00 root test.t1.a, test.t1.b",
           "└─HashLeftJoin_14 80000000.00 root CARTESIAN inner join, inner:TableReader_17, other cond:gt(test.t1.a, test.t2.a)",
-          "  ├─TableReader_15 10000.00 root data:TableScan_16",
+          "  ├─TableReader_15(Probe) 10000.00 root data:TableScan_16",
           "  │ └─TableScan_16 10000.00 cop[tikv] table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
-          "  └─TableReader_17 8000.00 root data:Selection_18",
+          "  └─TableReader_17(Build) 8000.00 root data:Selection_18",
           "    └─Selection_18 8000.00 cop[tikv] gt(test.t2.b, 200)",
           "      └─TableScan_19 10000.00 cop[tikv] table:t2, range:[-inf,+inf], keep order:false, stats:pseudo"
         ],
@@ -659,9 +659,9 @@
           "Projection_17 3333.33 root test.t1.a, test.t1.b",
           "└─Selection_18 3333.33 root gt(test.t2.b, 200)",
           "  └─MergeJoin_21 4166.67 root left outer join, left key:test.t1.a, right key:test.t2.a",
-          "    ├─TableReader_26 3333.33 root data:TableScan_27",
+          "    ├─TableReader_26(Probe) 3333.33 root data:TableScan_27",
           "    │ └─TableScan_27 3333.33 cop[tikv] table:t1, range:(2,+inf], keep order:true, stats:pseudo",
-          "    └─TableReader_29 3333.33 root data:TableScan_30",
+          "    └─TableReader_29(Build) 3333.33 root data:TableScan_30",
           "      └─TableScan_30 3333.33 cop[tikv] table:t2, range:(2,+inf], keep order:true, stats:pseudo"
         ],
         "Result": [
@@ -674,9 +674,9 @@
           "Projection_13 8000.00 root test.t2.a, test.t2.b",
           "└─Selection_14 8000.00 root gt(test.t1.a, 2)",
           "  └─MergeJoin_17 10000.00 root right outer join, left key:test.t1.a, right key:test.t2.a",
-          "    ├─TableReader_23 10000.00 root data:TableScan_24",
+          "    ├─TableReader_23(Build) 10000.00 root data:TableScan_24",
           "    │ └─TableScan_24 10000.00 cop[tikv] table:t1, range:[-inf,+inf], keep order:true, stats:pseudo",
-          "    └─TableReader_26 8000.00 root data:Selection_27",
+          "    └─TableReader_26(Probe) 8000.00 root data:Selection_27",
           "      └─Selection_27 8000.00 cop[tikv] gt(test.t2.b, 200)",
           "        └─TableScan_28 10000.00 cop[tikv] table:t2, range:[-inf,+inf], keep order:true, stats:pseudo"
         ],
@@ -689,9 +689,9 @@
         "Plan": [
           "Projection_12 12500.00 root test.t1.a, test.t1.b",
           "└─MergeJoin_13 12500.00 root inner join, left key:test.t1.a, right key:test.t2.a",
-          "  ├─TableReader_14 10000.00 root data:TableScan_15",
+          "  ├─TableReader_14(Probe) 10000.00 root data:TableScan_15",
           "  │ └─TableScan_15 10000.00 cop[tikv] table:t1, range:[-inf,+inf], keep order:true, stats:pseudo",
-          "  └─TableReader_19 10000.00 root data:TableScan_20",
+          "  └─TableReader_19(Build) 10000.00 root data:TableScan_20",
           "    └─TableScan_20 10000.00 cop[tikv] table:t2, range:[-inf,+inf], keep order:true, stats:pseudo"
         ],
         "Result": [
@@ -704,9 +704,9 @@
         "SQL": "select * from t1 join t2 on t1.a = t2.a",
         "Plan": [
           "MergeJoin_11 12500.00 root inner join, left key:test.t1.a, right key:test.t2.a",
-          "├─TableReader_16 10000.00 root data:TableScan_17",
+          "├─TableReader_16(Probe) 10000.00 root data:TableScan_17",
           "│ └─TableScan_17 10000.00 cop[tikv] table:t1, range:[-inf,+inf], keep order:true, stats:pseudo",
-          "└─TableReader_19 10000.00 root data:TableScan_20",
+          "└─TableReader_19(Build) 10000.00 root data:TableScan_20",
           "  └─TableScan_20 10000.00 cop[tikv] table:t2, range:[-inf,+inf], keep order:true, stats:pseudo"
         ],
         "Result": [
