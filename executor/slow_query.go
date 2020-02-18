@@ -37,7 +37,7 @@ import (
 	"go.uber.org/zap"
 )
 
-//SlowQueryRetriever uses to read slow log data.
+//SlowQueryRetriever is used to read slow log data.
 type SlowQueryRetriever struct {
 	table       *model.TableInfo
 	outputCols  []*model.ColumnInfo
