@@ -2240,10 +2240,10 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, nodeType n
 				})
 			}
 		case HintReadFromStorage:
-			if hint.StoreType.L == HintTiFlash {
+			if hint.HintData.(model.CIStr).L == HintTiFlash {
 				tiflashTables = tableNames2HintTableInfo(b.ctx, hint.Tables, b.hintProcessor, nodeType, currentLevel)
 			}
-			if hint.StoreType.L == HintTiKV {
+			if hint.HintData.(model.CIStr).L == HintTiKV {
 				tikvTables = tableNames2HintTableInfo(b.ctx, hint.Tables, b.hintProcessor, nodeType, currentLevel)
 			}
 		case HintIndexMerge:
