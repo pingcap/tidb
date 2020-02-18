@@ -5,8 +5,9 @@
       {
         "SQL": "explain select * from t1 where id = 7 and a = 6",
         "Result": [
-          "Selection_7 0.00 root eq(test_partition.t1.a, 6)",
-          "└─Point_Get_6 1.00 root table:t1, handle:7, partition:p9"
+          "TableReader_8 0.00 root data:Selection_7",
+          "└─Selection_7 0.00 cop[tikv] eq(test_partition.t1.a, 6)",
+          "  └─TableScan_6 1.00 cop[tikv] table:t1, partition:p7, range:[7,7], keep order:false, stats:pseudo"
         ]
       },
       {
@@ -19,14 +20,15 @@
         "SQL": "explain select * from t2 where id = 9 and a = -110",
         "Result": [
           "IndexLookUp_8 1.00 root ",
-          "├─Point_Get_6 1.00 root table:t2, index:id a, partition:p9",
+          "├─IndexScan_6 1.00 cop[tikv] table:t2, partition:p1, index:id, a, range:[9 -110,9 -110], keep order:false, stats:pseudo",
           "└─TableScan_7 1.00 cop[tikv] table:t2, partition:p1, keep order:false, stats:pseudo"
         ]
       },
       {
         "SQL": "explain select * from t1 where id = -17",
         "Result": [
-          "Point_Get_6 1.00 root table:t1, handle:-17, partition:p9"
+          "TableReader_7 1.00 root data:TableScan_6",
+          "└─TableScan_6 1.00 cop[tikv] table:t1, partition:p7, range:[-17,-17], keep order:false, stats:pseudo"
         ]
       },
       {
@@ -40,31 +42,34 @@
       {
         "SQL": "explain select * from t1 join t2 on (t1.id = t2.id) where t1.id = 5 and t2.a = 7",
         "Result": [
-          "HashLeftJoin_10 1.00 root CARTESIAN inner join, inner:IndexLookUp_17",
-          "├─Point_Get_12 1.00 root table:t1, handle:5, partition:p9",
-          "└─IndexLookUp_17 1.00 root ",
-          "  ├─Point_Get_15 1.00 root table:t2, index:id a, partition:p9",
-          "  └─TableScan_16 1.00 cop[tikv] table:t2, partition:p2, keep order:false, stats:pseudo"
+          "HashLeftJoin_10 1.00 root CARTESIAN inner join, inner:IndexLookUp_16",
+          "├─TableReader_13 1.00 root data:TableScan_12",
+          "│ └─TableScan_12 1.00 cop[tikv] table:t1, partition:p5, range:[5,5], keep order:false, stats:pseudo",
+          "└─IndexLookUp_16 1.00 root ",
+          "  ├─IndexScan_14 1.00 cop[tikv] table:t2, partition:p2, index:id, a, range:[5 7,5 7], keep order:false, stats:pseudo",
+          "  └─TableScan_15 1.00 cop[tikv] table:t2, partition:p2, keep order:false, stats:pseudo"
         ]
       },
       {
         "SQL": "explain select * from t1 left join t2 on t1.id = 1 and t2.a = 2 where t2.id = 7",
         "Result": [
-          "HashLeftJoin_9 1.00 root CARTESIAN inner join, inner:IndexLookUp_16",
-          "├─Point_Get_11 1.00 root table:t1, handle:1, partition:p9",
-          "└─IndexLookUp_16 1.00 root ",
-          "  ├─Point_Get_14 1.00 root table:t2, index:id a, partition:p9",
-          "  └─TableScan_15 1.00 cop[tikv] table:t2, partition:p9, keep order:false, stats:pseudo"
+          "HashLeftJoin_9 1.00 root CARTESIAN inner join, inner:IndexLookUp_15",
+          "├─TableReader_12 1.00 root data:TableScan_11",
+          "│ └─TableScan_11 1.00 cop[tikv] table:t1, partition:p1, range:[1,1], keep order:false, stats:pseudo",
+          "└─IndexLookUp_15 1.00 root ",
+          "  ├─IndexScan_13 1.00 cop[tikv] table:t2, partition:p9, index:id, a, range:[7 2,7 2], keep order:false, stats:pseudo",
+          "  └─TableScan_14 1.00 cop[tikv] table:t2, partition:p9, keep order:false, stats:pseudo"
         ]
       },
       {
         "SQL": "explain select * from t2 join t1 on t1.id = t2.id and t2.a = t1.id and t2.id = 12",
         "Result": [
-          "HashLeftJoin_9 1.00 root CARTESIAN inner join, inner:Point_Get_17",
+          "HashLeftJoin_9 1.00 root CARTESIAN inner join, inner:TableReader_15",
           "├─IndexLookUp_13 1.00 root ",
-          "│ ├─Point_Get_11 1.00 root table:t2, index:id a, partition:p9",
+          "│ ├─IndexScan_11 1.00 cop[tikv] table:t2, partition:p4, index:id, a, range:[12 12,12 12], keep order:false, stats:pseudo",
           "│ └─TableScan_12 1.00 cop[tikv] table:t2, partition:p4, keep order:false, stats:pseudo",
-          "└─Point_Get_17 1.00 root table:t1, handle:12, partition:p9"
+          "└─TableReader_15 1.00 root data:TableScan_14",
+          "  └─TableScan_14 1.00 cop[tikv] table:t1, partition:p2, range:[12,12], keep order:false, stats:pseudo"
         ]
       },
       {

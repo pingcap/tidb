@@ -446,26 +446,28 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty) (t task, err
 				p: dual,
 			}, nil
 		}
-		allRangeIsPoint := true
-		for _, ran := range path.Ranges {
-			if !ran.IsPoint(ds.ctx.GetSessionVars().StmtCtx) {
-				allRangeIsPoint = false
-				break
+		if !ds.isPartition && len(path.Ranges) > 0 {
+			allRangeIsPoint := true
+			for _, ran := range path.Ranges {
+				if !ran.IsPoint(ds.ctx.GetSessionVars().StmtCtx) {
+					allRangeIsPoint = false
+					break
+				}
 			}
-		}
-		if len(path.Ranges) > 0 && allRangeIsPoint {
-			var pointGetTask task
-			var err error
-			if len(path.Ranges) == 1 {
-				pointGetTask, err = ds.convertToPointGet(prop, candidate)
-			} else {
-				pointGetTask, err = ds.convertToBatchPointGet(prop, candidate)
-			}
-			if err != nil {
-				return nil, err
-			}
-			if pointGetTask.cost() < t.cost() {
-				t = pointGetTask
+			if allRangeIsPoint {
+				var pointGetTask task
+				var err error
+				if len(path.Ranges) == 1 {
+					pointGetTask, err = ds.convertToPointGet(prop, candidate)
+				} else {
+					pointGetTask, err = ds.convertToBatchPointGet(prop, candidate)
+				}
+				if err != nil {
+					return nil, err
+				}
+				if pointGetTask.cost() < t.cost() {
+					t = pointGetTask
+				}
 			}
 		}
 		if path.IsTablePath {
