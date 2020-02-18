@@ -483,8 +483,13 @@ func (e *inspectionSummaryRetriever) retrieve(ctx context.Context, sctx sessionc
 					instance = row.GetString(skipCols) // skip min/max/avg
 				}
 				var labels []string
-				for i := range def.Labels[nonInstanceLabelIndex:] {
-					labels = append(labels, row.GetString(skipCols+nonInstanceLabelIndex+i)) // skip min/max/avg/instance
+				for i, label := range def.Labels[nonInstanceLabelIndex:] {
+					// skip min/max/avg/instance
+					val := row.GetString(skipCols + nonInstanceLabelIndex + i)
+					if label == "store" || label == "store_id" {
+						val = fmt.Sprintf("store_id:%s", val)
+					}
+					labels = append(labels, val)
 				}
 				var quantile float64
 				if def.Quantile > 0 {
