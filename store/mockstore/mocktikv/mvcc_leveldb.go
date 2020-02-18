@@ -648,7 +648,8 @@ func (mvcc *MVCCLevelDB) Prewrite(req *kvrpcpb.PrewriteRequest) []error {
 	return errs
 }
 
-func checkConflictValue(iter *Iterator, m *kvrpcpb.Mutation, startTS uint64, txnTS uint64) error {
+// callerTS is startTS for optimistic transactions, and forUpdateTS for pessimistic transactions
+func checkConflictValue(iter *Iterator, m *kvrpcpb.Mutation, callerTS uint64, startTS uint64) error {
 	dec := valueDecoder{
 		expectKey: m.Key,
 	}
@@ -658,9 +659,9 @@ func checkConflictValue(iter *Iterator, m *kvrpcpb.Mutation, startTS uint64, txn
 	}
 
 	// Note that it's a write conflict here, even if the value is a rollback one.
-	if dec.value.commitTS >= startTS {
+	if dec.value.commitTS >= callerTS {
 		return &ErrConflict{
-			StartTS:          startTS,
+			StartTS:          callerTS,
 			ConflictTS:       dec.value.startTS,
 			ConflictCommitTS: dec.value.commitTS,
 			Key:              m.Key,
@@ -686,31 +687,22 @@ func checkConflictValue(iter *Iterator, m *kvrpcpb.Mutation, startTS uint64, txn
 			}
 		}
 	}
-	if txnTS > 0 {
-		if dec.value.commitTS > txnTS {
-			info, ok, err1 := getTxnCommitInfo(iter, m.Key, txnTS)
-			if err1 != nil {
-				err = errors.Trace(err1)
-				return err
-			}
-			if ok {
-				logutil.BgLogger().Warn("conflict value found",
-					zap.Uint64("txnID", txnTS),
-					zap.Int32("info.valueType", int32(info.valueType)),
-					zap.Uint64("info.startTS", info.startTS),
-					zap.Uint64("info.commitTS", info.commitTS))
-				if info.valueType == typeRollback {
-					return &ErrAlreadyRollbacked{
-						startTS: txnTS,
-						key:     m.Key,
-					}
-				}
-				panic("invalid value type not rollback")
-			}
-		} else if dec.value.commitTS == txnTS && dec.value.startTS == txnTS {
-			if dec.value.valueType == typeRollback {
+	if startTS > 0 {
+		// Check if rollback write record(startTS, startTS, typeRollback) exists on key
+		info, ok, err1 := getTxnCommitInfo(iter, m.Key, startTS)
+		if err1 != nil {
+			err = errors.Trace(err1)
+			return err
+		}
+		if ok && info.commitTS == startTS {
+			logutil.BgLogger().Warn("rollback value found",
+				zap.Uint64("txnID", startTS),
+				zap.Int32("info.valueType", int32(info.valueType)),
+				zap.Uint64("info.callerTS", info.startTS),
+				zap.Uint64("info.commitTS", info.commitTS))
+			if info.valueType == typeRollback {
 				return &ErrAlreadyRollbacked{
-					startTS: txnTS,
+					startTS: startTS,
 					key:     m.Key,
 				}
 			}
