@@ -46,7 +46,7 @@ func (gc *generalCICollator) Compare(a, b string, opt CollatorOption) int {
 	}
 	for len(a) > 0 {
 		r1, r1size := utf8.DecodeRuneInString(a)
-		cmp := int(convertRune(r1)) - int(convertRune(0x20))
+		cmp := int(convertRune(r1)) - 0x20
 		if cmp != 0 {
 			return sign(cmp)
 		}
@@ -54,7 +54,7 @@ func (gc *generalCICollator) Compare(a, b string, opt CollatorOption) int {
 	}
 	for len(b) > 0 {
 		r2, r2size := utf8.DecodeRuneInString(b)
-		cmp := int(convertRune(0x20)) - int(convertRune(r2))
+		cmp := 0x20 - int(convertRune(r2))
 		if cmp != 0 {
 			return sign(cmp)
 		}

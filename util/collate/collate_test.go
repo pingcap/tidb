@@ -59,7 +59,7 @@ func testKeyTable(table []keyTable, collate string, c *C) {
 
 func (s *testCollateSuite) TestBinCollator(c *C) {
 	defer testleak.AfterTest(c)()
-	SetNewCollationEnabled(false)
+	SetNewCollationEnabledForTest(false)
 	compareTable := []compareTable{
 		{"a", "b", -1},
 		{"a", "A", 1},
@@ -83,7 +83,7 @@ func (s *testCollateSuite) TestBinCollator(c *C) {
 
 func (s *testCollateSuite) TestBinPaddingCollator(c *C) {
 	defer testleak.AfterTest(c)()
-	SetNewCollationEnabled(true)
+	SetNewCollationEnabledForTest(true)
 	compareTable := []compareTable{
 		{"a", "b", -1},
 		{"a", "A", 1},
@@ -107,7 +107,7 @@ func (s *testCollateSuite) TestBinPaddingCollator(c *C) {
 
 func (s *testCollateSuite) TestGeneralCICollator(c *C) {
 	defer testleak.AfterTest(c)()
-	SetNewCollationEnabled(true)
+	SetNewCollationEnabledForTest(true)
 	compareTable := []compareTable{
 		{"a", "b", -1},
 		{"a", "A", 0},
@@ -132,13 +132,17 @@ func (s *testCollateSuite) TestGeneralCICollator(c *C) {
 func (s *testCollateSuite) TestSetNewCollateEnabled(c *C) {
 	SetNewCollationEnabled(false)
 	c.Assert(NewCollationEnabled(), Equals, false)
+	// It can be set only once.
 	SetNewCollationEnabled(true)
+	c.Assert(NewCollationEnabled(), Equals, false)
+
+	SetNewCollationEnabledForTest(true)
 	c.Assert(NewCollationEnabled(), Equals, true)
 }
 
 func (s *testCollateSuite) TestGetCollator(c *C) {
 	defer testleak.AfterTest(c)()
-	SetNewCollationEnabled(true)
+	SetNewCollationEnabledForTest(true)
 	c.Assert(GetCollator("binary"), FitsTypeOf, &binCollator{})
 	c.Assert(GetCollator("utf8mb4_bin"), FitsTypeOf, &binPaddingCollator{})
 	c.Assert(GetCollator("utf8_bin"), FitsTypeOf, &binPaddingCollator{})
@@ -152,7 +156,7 @@ func (s *testCollateSuite) TestGetCollator(c *C) {
 	c.Assert(GetCollatorByID(33), FitsTypeOf, &generalCICollator{})
 	c.Assert(GetCollatorByID(9999), FitsTypeOf, &binPaddingCollator{})
 
-	SetNewCollationEnabled(false)
+	SetNewCollationEnabledForTest(false)
 	c.Assert(GetCollator("binary"), FitsTypeOf, &binCollator{})
 	c.Assert(GetCollator("utf8mb4_bin"), FitsTypeOf, &binCollator{})
 	c.Assert(GetCollator("utf8_bin"), FitsTypeOf, &binCollator{})

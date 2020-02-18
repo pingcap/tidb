@@ -15,12 +15,14 @@ package collate
 
 import (
 	"strings"
+	"sync"
 )
 
 var (
 	collatorMap         map[string]Collator
 	collatorIDMap       map[int]Collator
 	newCollationEnabled bool
+	setCollationOnce    sync.Once
 )
 
 // CollatorOption is the option of collator.
@@ -38,8 +40,15 @@ type Collator interface {
 }
 
 // SetNewCollationEnabled sets if the new collation are enabled.
-// Note: Be careful to use this function, if this functions is used in tests, make sure the tests are serial.
 func SetNewCollationEnabled(flag bool) {
+	setCollationOnce.Do(func() {
+		SetNewCollationEnabledForTest(flag)
+	})
+}
+
+// SetNewCollationEnabledForTest sets if the new collation are enabled in test.
+// Note: Be careful to use this function, if this functions is used in tests, make sure the tests are serial.
+func SetNewCollationEnabledForTest(flag bool) {
 	newCollationEnabled = flag
 	if newCollationEnabled {
 		collatorMap["utf8mb4_bin"] = &binPaddingCollator{}
@@ -106,10 +115,19 @@ type binPaddingCollator struct {
 func (bpc *binPaddingCollator) Compare(a, b string, opt CollatorOption) int {
 	aLen := len(a)
 	bLen := len(b)
+	noPaddingResult := 0
 	if aLen > bLen {
-		return strings.Compare(a, b+strings.Repeat(" ", aLen-bLen))
+		noPaddingResult = strings.Compare(a[:bLen], b)
+		if noPaddingResult != 0 {
+			return noPaddingResult
+		}
+		return strings.Compare(a[bLen:], strings.Repeat(" ", aLen-bLen))
 	} else if aLen < bLen {
-		return strings.Compare(a+strings.Repeat(" ", bLen-aLen), b)
+		noPaddingResult = strings.Compare(a, b[:aLen])
+		if noPaddingResult != 0 {
+			return noPaddingResult
+		}
+		return strings.Compare(strings.Repeat(" ", bLen-aLen), b[aLen:])
 	}
 	return strings.Compare(a, b)
 }
