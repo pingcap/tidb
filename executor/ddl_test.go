@@ -173,6 +173,13 @@ func (s *testSuite6) TestCreateTable(c *C) {
 	tk.MustExec("insert into create_auto_increment_test (name) values ('aa')")
 	r = tk.MustQuery("select * from create_auto_increment_test;")
 	r.Check(testkit.Rows("1000 aa"))
+
+	// Test for `drop table if exists`.
+	tk.MustExec("drop table if exists t_if_exists;")
+	tk.MustQuery("show warnings;").Check(testkit.Rows("Note 1051 Unknown table 'test.t_if_exists'"))
+	tk.MustExec("create table if not exists t1_if_exists(c int)")
+	tk.MustExec("drop table if exists t1_if_exists,t2_if_exists,t3_if_exists")
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Note|1051|Unknown table 'test.t2_if_exists'", "Note|1051|Unknown table 'test.t3_if_exists'"))
 }
 
 func (s *testSuite6) TestCreateView(c *C) {
@@ -253,6 +260,13 @@ func (s *testSuite6) TestCreateView(c *C) {
 	tk.MustExec("drop view v")
 	tk.MustExec("create view v as (select * from t1 union select * from t2)")
 	tk.MustExec("drop view v")
+
+	// Test for `drop view if exists`.
+	tk.MustExec("drop view if exists v_if_exists;")
+	tk.MustQuery("show warnings;").Check(testkit.Rows("Note 1051 Unknown table 'test.v_if_exists'"))
+	tk.MustExec("create view v1_if_exists as (select * from t1)")
+	tk.MustExec("drop view if exists v1_if_exists,v2_if_exists,v3_if_exists")
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Note|1051|Unknown table 'test.v2_if_exists'", "Note|1051|Unknown table 'test.v3_if_exists'"))
 }
 
 func (s *testSuite6) TestCreateDropDatabase(c *C) {
