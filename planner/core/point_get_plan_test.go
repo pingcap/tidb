@@ -36,8 +36,8 @@ import (
 var _ = SerialSuites(&testPointGetSuite{})
 
 type testPointGetSuite struct {
-	store kv.Storage
-	dom   *domain.Domain
+	store    kv.Storage
+	dom      *domain.Domain
 	testData testutil.TestData
 }
 
@@ -311,10 +311,10 @@ func (s *testPointGetSuite) TestCBOPointGet(c *C) {
 	tk.MustExec("insert into t values('1',1,1,1), ('2',2,2,2), ('3',3,3,3), ('4',4,4,4)")
 
 	var input []string
-	var output []struct{
-		SQL string
+	var output []struct {
+		SQL  string
 		Plan []string
-		Res []string
+		Res  []string
 	}
 	s.testData.GetTestCases(c, &input, &output)
 	for i, sql := range input {
