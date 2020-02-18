@@ -91,22 +91,22 @@ const (
 	tableTiKVRegionStatus                   = "TIKV_REGION_STATUS"
 	tableTiKVRegionPeers                    = "TIKV_REGION_PEERS"
 	tableTiDBServersInfo                    = "TIDB_SERVERS_INFO"
-	// TableSlowQuery is the string constant of slow query memory table
+	// TableSlowQuery is the string constant of slow query memory table.
 	TableSlowQuery = "SLOW_QUERY"
-	// TableClusterInfo is the string constant of cluster info memory table
+	// TableClusterInfo is the string constant of cluster info memory table.
 	TableClusterInfo = "CLUSTER_INFO"
-	// TableClusterConfig is the string constant of cluster configuration memory table
+	// TableClusterConfig is the string constant of cluster configuration memory table.
 	TableClusterConfig = "CLUSTER_CONFIG"
-	// TableClusterLog is the string constant of cluster log memory table
+	// TableClusterLog is the string constant of cluster log memory table.
 	TableClusterLog = "CLUSTER_LOG"
-	// TableClusterLoad is the string constant of cluster load memory table
+	// TableClusterLoad is the string constant of cluster load memory table.
 	TableClusterLoad = "CLUSTER_LOAD"
-	// TableClusterHardware is the string constant of cluster hardware table
+	// TableClusterHardware is the string constant of cluster hardware table.
 	TableClusterHardware = "CLUSTER_HARDWARE"
-	// TableClusterSystemInfo is the string constant of cluster system info table
+	// TableClusterSystemInfo is the string constant of cluster system info table.
 	TableClusterSystemInfo = "CLUSTER_SYSTEMINFO"
 	tableTiFlashReplica    = "TIFLASH_REPLICA"
-	// TableInspectionResult is the string constant of inspection result table
+	// TableInspectionResult is the string constant of inspection result table.
 	TableInspectionResult = "INSPECTION_RESULT"
 	// TableMetricTables is a table that contains all metrics table definition.
 	TableMetricTables = "METRICS_TABLES"
