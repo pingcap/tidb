@@ -608,3 +608,65 @@ func (e *InspectionResultTableExtractor) Extract(
 	e.Items = items
 	return remained
 }
+
+// SlowQueryExtractor is used to extract some predicates of `slow_query`
+type SlowQueryExtractor struct {
+	extractHelper
+
+	SkipRequest bool
+	StartTime   time.Time
+	EndTime     time.Time
+	Enable      bool
+}
+
+// Extract implements the MemTablePredicateExtractor Extract interface
+func (e *SlowQueryExtractor) Extract(
+	ctx sessionctx.Context,
+	schema *expression.Schema,
+	names []*types.FieldName,
+	predicates []expression.Expression,
+) []expression.Expression {
+	remained, startTime, endTime := e.extractTimeRange(ctx, schema, names, predicates, "time", ctx.GetSessionVars().StmtCtx.TimeZone)
+	e.setTimeRange(startTime, endTime)
+	e.SkipRequest = e.Enable && e.StartTime.After(e.EndTime)
+	if e.SkipRequest {
+		return nil
+	}
+	return remained
+}
+
+func (e *SlowQueryExtractor) setTimeRange(start, end int64) {
+	const defaultSlowQueryDuration = 24 * time.Hour
+	var startTime, endTime time.Time
+	if start == 0 && end == 0 {
+		return
+	}
+	if start != 0 {
+		startTime = e.convertToTime(start)
+	}
+	if end != 0 {
+		endTime = e.convertToTime(end)
+	}
+	if start == 0 {
+		startTime = endTime.Add(-defaultSlowQueryDuration)
+	}
+	if end == 0 {
+		endTime = startTime.Add(defaultSlowQueryDuration)
+	}
+	e.StartTime, e.EndTime = startTime, endTime
+	e.Enable = true
+}
+
+func (e *SlowQueryExtractor) CheckTimeInvalid(t time.Time) bool {
+	if !e.Enable || t.Before(e.StartTime) || t.After(e.EndTime) {
+		return true
+	}
+	return false
+}
+
+func (e *SlowQueryExtractor) convertToTime(t int64) time.Time {
+	if t == 0 || t == math.MaxInt64 {
+		return time.Now()
+	}
+	return time.Unix(t/1000, (t%1000)*int64(time.Millisecond))
+}

@@ -1351,6 +1351,7 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 				retriever: &SlowQueryRetriever{
 					table:      v.Table,
 					outputCols: v.Columns,
+					extractor:  v.Extractor.(*plannercore.SlowQueryExtractor),
 				},
 			}
 		}

@@ -16,7 +16,10 @@ package executor_test
 import (
 	"bufio"
 	"bytes"
+	"fmt"
+	plannercore "github.com/pingcap/tidb/planner/core"
 	"io"
+	"os"
 	"strings"
 	"time"
 
@@ -29,8 +32,8 @@ import (
 	"github.com/pingcap/tidb/util/mock"
 )
 
-func parseSlowLog(ctx sessionctx.Context, reader *bufio.Reader, checkValid func(string) bool) ([][]types.Datum, int, error) {
-	rows, lineNum, err := executor.ParseSlowLog(ctx, reader, 0, 1024, checkValid)
+func parseSlowLog(ctx sessionctx.Context, reader *bufio.Reader) ([][]types.Datum, int, error) {
+	rows, lineNum, err := executor.ParseSlowLog(ctx, reader, 0, 1024, nil)
 	if err == io.EOF {
 		err = nil
 	}
@@ -58,11 +61,7 @@ select * from t;`
 	c.Assert(err, IsNil)
 	s.ctx = mock.NewContext()
 	s.ctx.GetSessionVars().TimeZone = loc
-	rows, _, err := parseSlowLog(s.ctx, reader, func(_ string) bool { return false })
-	c.Assert(err, IsNil)
-	c.Assert(len(rows), Equals, 0)
-	reader = bufio.NewReader(bytes.NewBufferString(slowLogStr))
-	rows, _, err = parseSlowLog(s.ctx, reader, nil)
+	rows, _, err := parseSlowLog(s.ctx, reader)
 	c.Assert(err, IsNil)
 	c.Assert(len(rows), Equals, 1)
 	recordString := ""
@@ -92,7 +91,7 @@ select a# from t;
 select * from t;
 `)
 	reader = bufio.NewReader(slowLog)
-	_, _, err = parseSlowLog(s.ctx, reader, nil)
+	_, _, err = parseSlowLog(s.ctx, reader)
 	c.Assert(err, IsNil)
 
 	// test for time format compatibility.
@@ -103,7 +102,7 @@ select * from t;
 select * from t;
 `)
 	reader = bufio.NewReader(slowLog)
-	rows, _, err = parseSlowLog(s.ctx, reader, nil)
+	rows, _, err = parseSlowLog(s.ctx, reader)
 	c.Assert(err, IsNil)
 	c.Assert(len(rows) == 2, IsTrue)
 	t0Str, err := rows[0][0].ToString()
@@ -124,13 +123,13 @@ select * from t;
 	sql := strings.Repeat("x", int(variable.MaxOfMaxAllowedPacket+1))
 	slowLog.WriteString(sql)
 	reader = bufio.NewReader(slowLog)
-	_, _, err = parseSlowLog(s.ctx, reader, nil)
+	_, _, err = parseSlowLog(s.ctx, reader)
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "single line length exceeds limit: 65536")
 
 	variable.MaxOfMaxAllowedPacket = originValue
 	reader = bufio.NewReader(slowLog)
-	_, _, err = parseSlowLog(s.ctx, reader, nil)
+	_, _, err = parseSlowLog(s.ctx, reader)
 	c.Assert(err, IsNil)
 
 	// Add parse error check.
@@ -140,7 +139,7 @@ select * from t;
 select * from t;
 `)
 	reader = bufio.NewReader(slowLog)
-	_, _, err = parseSlowLog(s.ctx, reader, nil)
+	_, _, err = parseSlowLog(s.ctx, reader)
 	c.Assert(err, IsNil)
 	warnings := s.ctx.GetSessionVars().StmtCtx.GetWarnings()
 	c.Assert(warnings, HasLen, 1)
@@ -194,7 +193,7 @@ select * from t;`)
 	c.Assert(err, IsNil)
 	s.ctx = mock.NewContext()
 	s.ctx.GetSessionVars().TimeZone = loc
-	_, _, err = parseSlowLog(s.ctx, scanner, nil)
+	_, _, err = parseSlowLog(s.ctx, scanner)
 	c.Assert(err, IsNil)
 
 	// Test parser error.
@@ -204,10 +203,60 @@ select * from t;`)
 `)
 
 	scanner = bufio.NewReader(slowLog)
-	_, _, err = parseSlowLog(s.ctx, scanner, nil)
+	_, _, err = parseSlowLog(s.ctx, scanner)
 	c.Assert(err, IsNil)
 	warnings := s.ctx.GetSessionVars().StmtCtx.GetWarnings()
 	c.Assert(warnings, HasLen, 1)
 	c.Assert(warnings[0].Err.Error(), Equals, "Parse slow log at line 2 failed. Field: `Txn_start_ts`, error: strconv.ParseUint: parsing \"405888132465033227#\": invalid syntax")
 
+}
+
+func (s *testSuite1) TestSlowQueryLocateFiles(c *C) {
+	writeFile := func(file string, data string) {
+		f, err := os.OpenFile(file, os.O_CREATE|os.O_WRONLY, 0644)
+		c.Assert(err, IsNil)
+		_, err = f.Write([]byte(data))
+		c.Assert(f.Close(), IsNil)
+		c.Assert(err, IsNil)
+	}
+
+	logData1 := `# Time: 2020-02-15T18:00:01.000000+08:00
+select * from t;
+# Time: 2020-02-15T18:00:01.000000+08:00
+select * from t;`
+	logData2 := `# Time: 2020-02-16T18:00:01.000000+08:00
+select * from t;
+# Time: 2020-02-16T18:00:01.000000+08:00
+select * from t;`
+	logData3 := `# Time: 2020-02-16T18:00:02.000000+08:00
+select * from t;
+# Time: 2020-02-15T18:00:03.000000+08:00
+select * from t;`
+	writeFile("tidb-slow-2020-02-15T19-04-05.01.log", logData1)
+	writeFile("tidb-slow-2020-02-16T19-04-05.01.log", logData2)
+	writeFile("tidb-slow.log", logData3)
+	defer func() {
+		os.Remove("tidb-slow-2020-02-15T19-04-05.01.log")
+		os.Remove("tidb-slow-2020-02-16T19-04-05.01.log")
+		os.Remove("tidb-slow.log")
+	}()
+
+	startTime, err := executor.ParseTime("2020-01-14T00:15:27.438708708+08:00")
+	c.Assert(err, IsNil)
+	endTime, err := executor.ParseTime("2020-02-20T00:10:28.488427431+08:00")
+	c.Assert(err, IsNil)
+	extractor := &plannercore.SlowQueryExtractor{
+		Enable:    true,
+		StartTime: startTime,
+		EndTime:   endTime,
+	}
+	retriever := executor.NewSlowQueryRetrieverForTest(extractor)
+	files, err := retriever.GetAllFiles("tidb-slow.log")
+	c.Assert(err, IsNil)
+	c.Assert(files, HasLen, 0)
+	for _, f := range files {
+		fmt.Printf("file: %v, start: %v, end: %v\n", f.File().Name(), f.BeginTime().Format(logutil.SlowLogTimeFormat), f.EndTime().Format(logutil.SlowLogTimeFormat))
+		err = f.File().Close()
+		c.Assert(err, IsNil)
+	}
 }
