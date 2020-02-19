@@ -15,18 +15,18 @@ package executor
 
 import (
 	"context"
-	"github.com/cznic/mathutil"
-	"github.com/pingcap/tidb/meta"
-	"github.com/pingcap/tidb/util/admin"
-	"github.com/pingcap/tidb/util/chunk"
 	"sort"
 
+	"github.com/cznic/mathutil"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/admin"
+	"github.com/pingcap/tidb/util/chunk"
 )
 
 type memtableRetriever struct {
@@ -194,9 +194,6 @@ func (e *DDLJobsReaderExec) Open(ctx context.Context) error {
 // Next implements the Executor Next interface.
 func (e *DDLJobsReaderExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.GrowAndReset(e.maxChunkSize)
-	if !e.historyJobIter.Valid() {
-		return nil
-	}
 	count := 0
 
 	// Append running ddl jobs.

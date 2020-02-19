@@ -801,11 +801,6 @@ func (i *LastJobIterator) GetNextJobs(num int, jobs []*model.Job) ([]*model.Job,
 	return jobs, nil
 }
 
-// Valid estimate whether it has next value
-func (i *LastJobIterator) Valid() bool {
-	return i.iter.Valid()
-}
-
 func decodeJob(jobPairs []structure.HashPair) ([]*model.Job, error) {
 	jobs := make([]*model.Job, 0, len(jobPairs))
 	for _, pair := range jobPairs {
