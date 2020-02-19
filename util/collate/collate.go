@@ -35,15 +35,42 @@ type CollatorOption struct {
 type Collator interface {
 	// Compare returns an integer comparing the two strings. The result will be 0 if a == b, -1 if a < b, and +1 if a > b.
 	Compare(a, b string, opt CollatorOption) int
-	// Key returns the collate key for str.
+	// Key returns the collate key for str. If the collation is padding, make sure the PadLen >= len(rune[]str) in opt.
 	Key(str string, opt CollatorOption) []byte
 }
 
 // SetNewCollationEnabled sets if the new collation are enabled.
 func SetNewCollationEnabled(flag bool) {
 	setCollationOnce.Do(func() {
-		newCollationEnabled = flag
+		SetNewCollationEnabledForTest(flag)
 	})
+}
+
+// SetNewCollationEnabledForTest sets if the new collation are enabled in test.
+// Note: Be careful to use this function, if this functions is used in tests, make sure the tests are serial.
+func SetNewCollationEnabledForTest(flag bool) {
+	newCollationEnabled = flag
+	if newCollationEnabled {
+		collatorMap["utf8mb4_bin"] = &binPaddingCollator{}
+		collatorMap["utf8_bin"] = &binPaddingCollator{}
+		collatorMap["utf8mb4_general_ci"] = &generalCICollator{}
+		collatorMap["utf8_general_ci"] = &generalCICollator{}
+
+		collatorIDMap[46] = &binPaddingCollator{}
+		collatorIDMap[83] = &binPaddingCollator{}
+		collatorIDMap[45] = &generalCICollator{}
+		collatorIDMap[33] = &generalCICollator{}
+	} else {
+		collatorMap["utf8mb4_bin"] = &binCollator{}
+		collatorMap["utf8_bin"] = &binCollator{}
+		collatorMap["utf8mb4_general_ci"] = &binCollator{}
+		collatorMap["utf8_general_ci"] = &binCollator{}
+
+		collatorIDMap[46] = &binCollator{}
+		collatorIDMap[83] = &binCollator{}
+		collatorIDMap[45] = &binCollator{}
+		collatorIDMap[33] = &binCollator{}
+	}
 }
 
 // NewCollationEnabled returns if the new collations are enabled.
@@ -55,7 +82,7 @@ func NewCollationEnabled() bool {
 func GetCollator(collate string) Collator {
 	ctor, ok := collatorMap[collate]
 	if !ok {
-		return collatorMap["binary"]
+		return collatorMap["utf8mb4_bin"]
 	}
 	return ctor
 }
@@ -64,7 +91,7 @@ func GetCollator(collate string) Collator {
 func GetCollatorByID(id int) Collator {
 	ctor, ok := collatorIDMap[id]
 	if !ok {
-		return collatorMap["binary"]
+		return collatorMap["utf8mb4_bin"]
 	}
 	return ctor
 }
@@ -82,16 +109,47 @@ func (bc *binCollator) Key(str string, opt CollatorOption) []byte {
 	return []byte(str)
 }
 
+type binPaddingCollator struct {
+}
+
+func (bpc *binPaddingCollator) Compare(a, b string, opt CollatorOption) int {
+	aLen := len(a)
+	bLen := len(b)
+	noPaddingResult := 0
+	if aLen > bLen {
+		noPaddingResult = strings.Compare(a[:bLen], b)
+		if noPaddingResult != 0 {
+			return noPaddingResult
+		}
+		return strings.Compare(a[bLen:], strings.Repeat(" ", aLen-bLen))
+	} else if aLen < bLen {
+		noPaddingResult = strings.Compare(a, b[:aLen])
+		if noPaddingResult != 0 {
+			return noPaddingResult
+		}
+		return strings.Compare(strings.Repeat(" ", bLen-aLen), b[aLen:])
+	}
+	return strings.Compare(a, b)
+}
+
+func (bpc *binPaddingCollator) Key(str string, opt CollatorOption) []byte {
+	return []byte(str + strings.Repeat(" ", opt.PadLen-len(str)))
+}
+
 func init() {
 	collatorMap = make(map[string]Collator)
 	collatorIDMap = make(map[int]Collator)
 
 	collatorMap["binary"] = &binCollator{}
-	collatorMap["utf8mb4_general_ci"] = &generalCICollator{}
-	collatorMap["utf8_general_ci"] = &generalCICollator{}
+	collatorMap["utf8mb4_bin"] = &binCollator{}
+	collatorMap["utf8_bin"] = &binCollator{}
+	collatorMap["utf8mb4_general_ci"] = &binCollator{}
+	collatorMap["utf8_general_ci"] = &binCollator{}
 
 	// See https://github.com/pingcap/parser/blob/master/charset/charset.go for more information about the IDs.
 	collatorIDMap[63] = &binCollator{}
-	collatorIDMap[45] = &generalCICollator{}
-	collatorIDMap[33] = &generalCICollator{}
+	collatorIDMap[46] = &binCollator{}
+	collatorIDMap[83] = &binCollator{}
+	collatorIDMap[45] = &binCollator{}
+	collatorIDMap[33] = &binCollator{}
 }
