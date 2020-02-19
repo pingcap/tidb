@@ -16,6 +16,7 @@
 package expression
 
 import (
+	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/types"
@@ -976,7 +977,7 @@ func (b *builtinSubStringAndStringSig) vecEvalString(input *chunk.Chunk, result 
 	}
 
 	arg1Type := b.args[1].GetType()
-	if arg1Type.Flag.Charset == charset.CharsetBin {
+	if arg1Type.Charset == charset.CharsetBin {
 		result.ReserveString(n)
 		for i := 0; i < n; i++ {
 			result.AppendNull()
