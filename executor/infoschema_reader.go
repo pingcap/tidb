@@ -259,5 +259,5 @@ func (e *DDLJobsReaderExec) appendJobToChunk(req *chunk.Chunk, job *model.Job) {
 		req.AppendString(9, "")
 	}
 	req.AppendString(10, job.State.String())
-	req.AppendString(11,job.Query)
+	req.AppendString(11, job.Query)
 }

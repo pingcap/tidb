@@ -15,13 +15,14 @@ package executor_test
 
 import (
 	"context"
+	"strconv"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/util/testkit"
-	"strconv"
 )
 
 var _ = Suite(&testInfoschemaTableSuite{})
