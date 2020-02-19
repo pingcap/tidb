@@ -390,8 +390,7 @@ func (r *ImplStreamAgg) OnImplement(expr *memo.GroupExpr, reqProp *property.Phys
 
 func (r *ImplStreamAgg) getStreamAggImpls(expr *memo.GroupExpr, reqProp *property.PhysicalProperty, newStreamAggImpl func(*plannercore.PhysicalStreamAgg) memo.Implementation) []memo.Implementation {
 	la := expr.ExprNode.(*plannercore.LogicalAggregation)
-	childStats := expr.Children[0].Prop.Stats
-	physicalStreamAggs := r.getImplForStreamAgg(la, reqProp, expr.Schema(), expr.Group.Prop.Stats, childStats)
+	physicalStreamAggs := r.getImplForStreamAgg(la, reqProp, expr.Schema(), expr.Group.Prop.Stats)
 
 	streamAggImpls := make([]memo.Implementation, 0, len(physicalStreamAggs))
 	for _, physicalPlan := range physicalStreamAggs {
@@ -402,9 +401,9 @@ func (r *ImplStreamAgg) getStreamAggImpls(expr *memo.GroupExpr, reqProp *propert
 	return streamAggImpls
 }
 
-func (r *ImplStreamAgg) getImplForStreamAgg(la *plannercore.LogicalAggregation, prop *property.PhysicalProperty, schema *expression.Schema, statsInfo *property.StatsInfo, childStatsInfo *property.StatsInfo) []plannercore.PhysicalPlan {
+func (r *ImplStreamAgg) getImplForStreamAgg(la *plannercore.LogicalAggregation, prop *property.PhysicalProperty, schema *expression.Schema, statsInfo *property.StatsInfo) []plannercore.PhysicalPlan {
 	childProp := &property.PhysicalProperty{
-		ExpectedCnt: math.Max(prop.ExpectedCnt*childStatsInfo.RowCount/statsInfo.RowCount, prop.ExpectedCnt),
+		ExpectedCnt: math.Max(prop.ExpectedCnt*la.GetInputCount()/statsInfo.RowCount, prop.ExpectedCnt),
 	}
 	_, desc := prop.AllSameOrder()
 

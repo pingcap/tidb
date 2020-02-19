@@ -359,6 +359,11 @@ func (la *LogicalAggregation) GetPossibleProperties() [][]*expression.Column {
 	return la.possibleProperties
 }
 
+// GetInputCount returns the inputCount.
+func (la *LogicalAggregation) GetInputCount() float64 {
+	return la.inputCount
+}
+
 // LogicalSelection represents a where or having predicate.
 type LogicalSelection struct {
 	baseLogicalPlan
