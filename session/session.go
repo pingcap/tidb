@@ -1392,9 +1392,13 @@ func (s *session) NewTxn(ctx context.Context) error {
 			return err
 		}
 		vars := s.GetSessionVars()
-		logutil.Logger(ctx).Info("NewTxn() inside a transaction auto commit",
+		logutil.Logger(ctx).Info("NewTxn() inside a valid transaction, auto commit",
 			zap.Int64("schemaVersion", vars.TxnCtx.SchemaVersion),
 			zap.Uint64("txnStartTS", txnID))
+	} else if s.txn.Pending() {
+		vars := s.GetSessionVars()
+		logutil.Logger(ctx).Warn("NewTxn() inside a pending transaction, discard",
+			zap.Int64("schemaVersion", vars.TxnCtx.SchemaVersion))
 	}
 
 	txn, err := s.store.Begin()
@@ -1406,6 +1410,7 @@ func (s *session) NewTxn(ctx context.Context) error {
 	if s.GetSessionVars().GetReplicaRead().IsFollowerRead() {
 		txn.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
 	}
+	s.txn.ChangeToInvalid()
 	s.txn.ChangeInvalidToValid(txn)
 	is := domain.GetDomain(s).InfoSchema()
 	s.sessionVars.TxnCtx = &variable.TransactionContext{
@@ -2022,7 +2027,15 @@ func (s *session) RefreshTxnCtx(ctx context.Context) error {
 // InitTxnWithStartTS create a transaction with startTS.
 func (s *session) InitTxnWithStartTS(startTS uint64) error {
 	if s.txn.Valid() {
+		vars := s.GetSessionVars()
+		logutil.BgLogger().Info("InitTxnWithStartTS() inside a valid transaction, skip",
+			zap.Int64("schemaVersion", vars.TxnCtx.SchemaVersion),
+			zap.Uint64("txnStartTS", s.txn.StartTS()))
 		return nil
+	} else if s.txn.Pending() {
+		vars := s.GetSessionVars()
+		logutil.BgLogger().Warn("InitTxnWithStartTS() inside a pending transaction, discard",
+			zap.Int64("schemaVersion", vars.TxnCtx.SchemaVersion))
 	}
 
 	// no need to get txn from txnFutureCh since txn should init with startTs
@@ -2030,6 +2043,7 @@ func (s *session) InitTxnWithStartTS(startTS uint64) error {
 	if err != nil {
 		return err
 	}
+	s.txn.ChangeToInvalid()
 	s.txn.ChangeInvalidToValid(txn)
 	s.txn.SetCap(s.getMembufCap())
 	err = s.loadCommonGlobalVariablesIfNeeded()
