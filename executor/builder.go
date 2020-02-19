@@ -1359,7 +1359,7 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 				outputCols: v.Columns,
 			}
 			if v.Extractor != nil {
-				retriever.extractor = v.Extractor.(*plannercore.SlowQueryExtractor)
+				retriever.Extractor = v.Extractor.(*plannercore.SlowQueryExtractor)
 			}
 			return &MemTableReaderExec{
 				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),

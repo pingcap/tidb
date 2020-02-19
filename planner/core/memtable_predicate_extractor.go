@@ -382,6 +382,13 @@ func (helper extractHelper) parseQuantiles(quantileSet set.StringSet) []float64 
 	return quantiles
 }
 
+func (helper extractHelper) convertToTime(t int64) time.Time {
+	if t == 0 || t == math.MaxInt64 {
+		return time.Now()
+	}
+	return time.Unix(t/1000, (t%1000)*int64(time.Millisecond))
+}
+
 // ClusterTableExtractor is used to extract some predicates of cluster table.
 type ClusterTableExtractor struct {
 	extractHelper
@@ -573,13 +580,6 @@ func (e *MetricTableExtractor) getTimeRange(start, end int64) (time.Time, time.T
 	return startTime, endTime
 }
 
-func (e *MetricTableExtractor) convertToTime(t int64) time.Time {
-	if t == 0 || t == math.MaxInt64 {
-		return time.Now()
-	}
-	return time.Unix(t/1000, (t%1000)*int64(time.Millisecond))
-}
-
 // InspectionResultTableExtractor is used to extract some predicates of `inspection_result`
 type InspectionResultTableExtractor struct {
 	extractHelper
@@ -648,7 +648,10 @@ type SlowQueryExtractor struct {
 	SkipRequest bool
 	StartTime   time.Time
 	EndTime     time.Time
-	Enable      bool
+	// Enable is true means the executor should use the time range to locate the slow-log file that need to be parsed.
+	// Enable is false, means the executor should keep the behavior compatible with before, which is only parse the
+	// current slow-log file.
+	Enable bool
 }
 
 // Extract implements the MemTablePredicateExtractor Extract interface
@@ -687,11 +690,4 @@ func (e *SlowQueryExtractor) setTimeRange(start, end int64) {
 	}
 	e.StartTime, e.EndTime = startTime, endTime
 	e.Enable = true
-}
-
-func (e *SlowQueryExtractor) convertToTime(t int64) time.Time {
-	if t == 0 || t == math.MaxInt64 {
-		return time.Now()
-	}
-	return time.Unix(t/1000, (t%1000)*int64(time.Millisecond))
 }

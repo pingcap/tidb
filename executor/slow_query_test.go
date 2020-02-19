@@ -22,6 +22,7 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/executor"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
@@ -32,8 +33,9 @@ import (
 )
 
 func parseSlowLog(ctx sessionctx.Context, reader *bufio.Reader) ([][]types.Datum, error) {
-	extractor := &plannercore.SlowQueryExtractor{Enable: false}
-	retriever := executor.NewSlowQueryRetrieverForTest(extractor, nil)
+	retriever := &executor.SlowQueryRetriever{}
+	// Ignore the error is ok for test.
+	terror.Log(retriever.Initialize(ctx))
 	rows, err := retriever.ParseSlowLog(ctx, reader, 1024)
 	if err == io.EOF {
 		err = nil
@@ -333,6 +335,7 @@ select 6;`
 	c.Assert(err, IsNil)
 	s.ctx = mock.NewContext()
 	s.ctx.GetSessionVars().TimeZone = loc
+	s.ctx.GetSessionVars().SlowQueryFile = fileName3
 	for i, cas := range cases {
 		extractor := &plannercore.SlowQueryExtractor{Enable: (len(cas.startTime) > 0 && len(cas.endTime) > 0)}
 		if extractor.Enable {
@@ -344,16 +347,13 @@ select 6;`
 			extractor.EndTime = endTime
 
 		}
-		retriever := executor.NewSlowQueryRetrieverForTest(extractor, nil)
-		files, err := retriever.GetAllFiles(s.ctx, "tidb-slow.log")
+		retriever := &executor.SlowQueryRetriever{Extractor: extractor}
+		err := retriever.Initialize(s.ctx)
 		c.Assert(err, IsNil)
 		comment := Commentf("case id: %v", i)
-		c.Assert(files, HasLen, len(cas.files), comment)
-		if len(files) > 0 {
-			retriever := executor.NewSlowQueryRetrieverForTest(extractor, files)
-			err = retriever.Initialize(s.ctx)
-			c.Assert(err, IsNil)
-			rows, err := retriever.ParseSlowLog(s.ctx, bufio.NewReader(files[0].File()), 1024)
+		c.Assert(retriever.Files, HasLen, len(cas.files), comment)
+		if len(retriever.Files) > 0 {
+			rows, err := retriever.ParseSlowLog(s.ctx, bufio.NewReader(retriever.Files[0].File()), 1024)
 			c.Assert(err, IsNil)
 			c.Assert(len(rows), Equals, len(cas.querys), comment)
 			for i, row := range rows {
@@ -361,7 +361,7 @@ select 6;`
 			}
 		}
 
-		for i, file := range files {
+		for i, file := range retriever.Files {
 			c.Assert(file.File().Name(), Equals, cas.files[i])
 			c.Assert(file.File().Close(), IsNil)
 		}

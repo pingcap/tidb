@@ -47,12 +47,14 @@ type SlowQueryRetriever struct {
 	table       *model.TableInfo
 	outputCols  []*model.ColumnInfo
 	retrieved   bool
-	extractor   *plannercore.SlowQueryExtractor
 	initialized bool
-	files       []logFile
-	fileIdx     int
-	fileLine    int
-	checker     *slowLogChecker
+	// Extractor is exported for test.
+	Extractor *plannercore.SlowQueryExtractor
+	// Files is exported for test.
+	Files    []logFile
+	fileIdx  int
+	fileLine int
+	checker  *slowLogChecker
 }
 
 func (e *SlowQueryRetriever) retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
@@ -65,7 +67,7 @@ func (e *SlowQueryRetriever) retrieve(ctx context.Context, sctx sessionctx.Conte
 			return nil, err
 		}
 	}
-	if len(e.files) == 0 || e.fileIdx >= len(e.files) {
+	if len(e.Files) == 0 || e.fileIdx >= len(e.Files) {
 		e.retrieved = true
 		return nil, nil
 	}
@@ -91,31 +93,26 @@ func (e *SlowQueryRetriever) retrieve(ctx context.Context, sctx sessionctx.Conte
 // Initialize is exported for test.
 func (e *SlowQueryRetriever) Initialize(sctx sessionctx.Context) error {
 	var err error
-	e.initialized = true
-	e.files, err = e.GetAllFiles(sctx, sctx.GetSessionVars().SlowQueryFile)
-	if err != nil {
-		return err
-	}
 	var hasProcessPriv bool
 	if pm := privilege.GetPrivilegeManager(sctx); pm != nil {
-		if pm.RequestVerification(sctx.GetSessionVars().ActiveRoles, "", "", "", mysql.ProcessPriv) {
-			hasProcessPriv = true
-		}
+		hasProcessPriv = pm.RequestVerification(sctx.GetSessionVars().ActiveRoles, "", "", "", mysql.ProcessPriv)
 	}
 	e.checker = &slowLogChecker{
 		hasProcessPriv: hasProcessPriv,
 		user:           sctx.GetSessionVars().User,
 	}
-	if e.extractor != nil {
-		e.checker.enableTimeCheck = e.extractor.Enable
-		e.checker.startTime = e.extractor.StartTime
-		e.checker.endTime = e.extractor.EndTime
+	if e.Extractor != nil {
+		e.checker.enableTimeCheck = e.Extractor.Enable
+		e.checker.startTime = e.Extractor.StartTime
+		e.checker.endTime = e.Extractor.EndTime
 	}
-	return nil
+	e.initialized = true
+	e.Files, err = e.GetAllFiles(sctx, sctx.GetSessionVars().SlowQueryFile)
+	return err
 }
 
 func (e *SlowQueryRetriever) close() error {
-	for _, f := range e.files {
+	for _, f := range e.Files {
 		err := f.file.Close()
 		if err != nil {
 			logutil.BgLogger().Error("close slow log file failed.", zap.Error(err))
@@ -125,7 +122,7 @@ func (e *SlowQueryRetriever) close() error {
 }
 
 func (e *SlowQueryRetriever) dataForSlowLog(ctx sessionctx.Context) ([][]types.Datum, error) {
-	reader := bufio.NewReader(e.files[e.fileIdx].file)
+	reader := bufio.NewReader(e.Files[e.fileIdx].file)
 	rows, err := e.ParseSlowLog(ctx, reader, 1024)
 	if err != nil {
 		return nil, err
@@ -177,11 +174,11 @@ func (e *SlowQueryRetriever) ParseSlowLog(ctx sessionctx.Context, reader *bufio.
 			if err == io.EOF {
 				e.fileIdx++
 				e.fileLine = 0
-				if e.fileIdx >= len(e.files) {
+				if e.fileIdx >= len(e.Files) {
 					e.retrieved = true
 					return rows, nil
 				}
-				reader = bufio.NewReader(e.files[e.fileIdx].file)
+				reader = bufio.NewReader(e.Files[e.fileIdx].file)
 				continue
 			}
 			return rows, err
@@ -231,7 +228,7 @@ func (e *SlowQueryRetriever) ParseSlowLog(ctx sessionctx.Context, reader *bufio.
 					ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 					continue
 				}
-				if e.checker == nil || e.checker.hasPrivilege(st.user) {
+				if e.checker.hasPrivilege(st.user) {
 					rows = append(rows, st.convertToDatumRow())
 				}
 				startFlag = false
@@ -532,7 +529,7 @@ func (l *logFile) File() *os.File {
 
 // GetAllFiles is used to get all slow-log need to parse, it is export for test.
 func (e *SlowQueryRetriever) GetAllFiles(sctx sessionctx.Context, logFilePath string) ([]logFile, error) {
-	if e.extractor == nil || !e.extractor.Enable {
+	if e.Extractor == nil || !e.Extractor.Enable {
 		file, err := os.Open(logFilePath)
 		if err != nil {
 			return nil, err
@@ -576,7 +573,7 @@ func (e *SlowQueryRetriever) GetAllFiles(sctx sessionctx.Context, logFilePath st
 		if err != nil {
 			return handleErr(err)
 		}
-		if fileBeginTime.After(e.extractor.EndTime) {
+		if fileBeginTime.After(e.Extractor.EndTime) {
 			return nil
 		}
 
@@ -585,7 +582,7 @@ func (e *SlowQueryRetriever) GetAllFiles(sctx sessionctx.Context, logFilePath st
 		if err != nil {
 			return handleErr(err)
 		}
-		if fileEndTime.Before(e.extractor.StartTime) {
+		if fileEndTime.Before(e.Extractor.StartTime) {
 			return nil
 		}
 		_, err = file.Seek(0, io.SeekStart)
@@ -629,7 +626,7 @@ func (e *SlowQueryRetriever) getFileStartTime(file *os.File) (time.Time, error) 
 			break
 		}
 	}
-	return t, errors.Errorf("can't found start time")
+	return t, errors.Errorf("malform slow query file %v", file.Name())
 }
 func (e *SlowQueryRetriever) getFileEndTime(file *os.File) (time.Time, error) {
 	var t time.Time
@@ -640,7 +637,7 @@ func (e *SlowQueryRetriever) getFileEndTime(file *os.File) (time.Time, error) {
 	fileSize := stat.Size()
 	cursor := int64(0)
 	line := make([]byte, 0, 64)
-	maxNum := 128
+	maxLineNum := 128
 	for {
 		cursor -= 1
 		_, err := file.Seek(cursor, io.SeekEnd)
@@ -654,7 +651,7 @@ func (e *SlowQueryRetriever) getFileEndTime(file *os.File) (time.Time, error) {
 			return t, err
 		}
 		// If find a line.
-		if cursor != -1 && (char[0] == 10 || char[0] == 13) {
+		if cursor != -1 && (char[0] == '\n' || char[0] == '\r') {
 			for i, j := 0, len(line)-1; i < j; i, j = i+1, j-1 {
 				line[i], line[j] = line[j], line[i]
 			}
@@ -664,16 +661,11 @@ func (e *SlowQueryRetriever) getFileEndTime(file *os.File) (time.Time, error) {
 				return ParseTime(lineStr[len(variable.SlowLogStartPrefixStr):])
 			}
 			line = line[:0]
-			maxNum -= 1
+			maxLineNum -= 1
 		}
 		line = append(line, char[0])
-		if cursor == -fileSize || maxNum <= 0 {
-			return t, errors.Errorf("can't found end time")
+		if cursor == -fileSize || maxLineNum <= 0 {
+			return t, errors.Errorf("malform slow query file %v", file.Name())
 		}
 	}
-}
-
-// NewSlowQueryRetrieverForTest was only used in test.
-func NewSlowQueryRetrieverForTest(extractor *plannercore.SlowQueryExtractor, files []logFile) *SlowQueryRetriever {
-	return &SlowQueryRetriever{extractor: extractor, files: files}
 }
