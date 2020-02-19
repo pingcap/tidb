@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 )
 
+// SelectIntoExec represents a SelectInto executor.
 type SelectIntoExec struct {
 	baseExecutor
 	intoOpt *ast.SelectIntoOption
@@ -40,7 +41,9 @@ type SelectIntoExec struct {
 	started bool
 }
 
+// Open implements the Executor Open interface.
 func (s *SelectIntoExec) Open(ctx context.Context) error {
+	// only 'select ... into outfile' is supported now
 	if s.intoOpt.Tp != ast.SelectIntoOutfile {
 		return errors.New("unsupported SelectInto type")
 	}
@@ -57,6 +60,7 @@ func (s *SelectIntoExec) Open(ctx context.Context) error {
 	return s.baseExecutor.Open(ctx)
 }
 
+// Next implements the Executor Next interface.
 func (s *SelectIntoExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	for {
 		if err := Next(ctx, s.children[0], s.chk); err != nil {
@@ -173,6 +177,7 @@ func (s *SelectIntoExec) dumpToOutfile() error {
 	return nil
 }
 
+// Close implements the Executor Close interface.
 func (s *SelectIntoExec) Close() error {
 	if !s.started {
 		return nil

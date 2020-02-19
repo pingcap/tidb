@@ -665,6 +665,7 @@ type DDL struct {
 	Statement ast.DDLNode
 }
 
+// SelectInto represents a select-into plan.
 type SelectInto struct {
 	baseSchemaProducer
 
