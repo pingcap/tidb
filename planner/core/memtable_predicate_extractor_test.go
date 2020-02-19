@@ -741,10 +741,6 @@ func (s *extractorSuite) TestInspectionResultTableExtractor(c *C) {
 			rules: set.NewStringSet("ddl"),
 		},
 		{
-			sql:            "select * from information_schema.inspection_result where rule='ddl' and rule in ('slow_query', 'config')",
-			skipInspection: true,
-		},
-		{
 			sql:   "select * from information_schema.inspection_result where rule in ('ddl', 'config') and rule in ('slow_query', 'config')",
 			rules: set.NewStringSet("config"),
 		},
@@ -793,6 +789,105 @@ func (s *extractorSuite) TestInspectionResultTableExtractor(c *C) {
 		}
 		if len(ca.items) > 0 {
 			c.Assert(clusterConfigExtractor.Items, DeepEquals, ca.items, Commentf("SQL: %v", ca.sql))
+		}
+		c.Assert(clusterConfigExtractor.SkipInspection, Equals, ca.skipInspection, Commentf("SQL: %v", ca.sql))
+	}
+}
+
+func (s *extractorSuite) TestInspectionSummaryTableExtractor(c *C) {
+	se, err := session.CreateSession4Test(s.store)
+	c.Assert(err, IsNil)
+
+	var cases = []struct {
+		sql            string
+		rules          set.StringSet
+		names          set.StringSet
+		quantiles      set.Float64Set
+		skipInspection bool
+	}{
+		{
+			sql: "select * from information_schema.inspection_summary",
+		},
+		{
+			sql:   "select * from information_schema.inspection_summary where rule='ddl'",
+			rules: set.NewStringSet("ddl"),
+		},
+		{
+			sql:   "select * from information_schema.inspection_summary where 'ddl'=rule or rule='config'",
+			rules: set.NewStringSet("ddl", "config"),
+		},
+		{
+			sql:   "select * from information_schema.inspection_summary where 'ddl'=rule or rule='config' or rule='slow_query'",
+			rules: set.NewStringSet("ddl", "config", "slow_query"),
+		},
+		{
+			sql:   "select * from information_schema.inspection_summary where (rule='config' or rule='slow_query') and (metric_name='metric_name3' or metric_name='metric_name1')",
+			rules: set.NewStringSet("config", "slow_query"),
+			names: set.NewStringSet("metric_name3", "metric_name1"),
+		},
+		{
+			sql:   "select * from information_schema.inspection_summary where rule in ('ddl', 'slow_query')",
+			rules: set.NewStringSet("ddl", "slow_query"),
+		},
+		{
+			sql:   "select * from information_schema.inspection_summary where rule in ('ddl', 'slow_query') and metric_name='metric_name1'",
+			rules: set.NewStringSet("ddl", "slow_query"),
+			names: set.NewStringSet("metric_name1"),
+		},
+		{
+			sql:   "select * from information_schema.inspection_summary where rule in ('ddl', 'slow_query') and metric_name in ('metric_name1', 'metric_name2')",
+			rules: set.NewStringSet("ddl", "slow_query"),
+			names: set.NewStringSet("metric_name1", "metric_name2"),
+		},
+		{
+			sql:   "select * from information_schema.inspection_summary where rule='ddl' and metric_name in ('metric_name1', 'metric_name2')",
+			rules: set.NewStringSet("ddl"),
+			names: set.NewStringSet("metric_name1", "metric_name2"),
+		},
+		{
+			sql:   "select * from information_schema.inspection_summary where rule='ddl' and metric_name='metric_NAME3'",
+			rules: set.NewStringSet("ddl"),
+			names: set.NewStringSet("metric_name3"),
+		},
+		{
+			sql:   "select * from information_schema.inspection_summary where rule='ddl' and rule in ('slow_query', 'ddl')",
+			rules: set.NewStringSet("ddl"),
+		},
+		{
+			sql:   "select * from information_schema.inspection_summary where rule in ('ddl', 'config') and rule in ('slow_query', 'config')",
+			rules: set.NewStringSet("config"),
+		},
+		{
+			sql: `select * from information_schema.inspection_summary
+				where metric_name in ('metric_name1', 'metric_name4')
+				  and metric_name in ('metric_name5', 'metric_name4')
+				  and rule in ('ddl', 'config')
+				  and rule in ('slow_query', 'config')
+				  and quantile in (0.80, 0.90)`,
+			rules:     set.NewStringSet("config"),
+			names:     set.NewStringSet("metric_name4"),
+			quantiles: set.NewFloat64Set(0.80, 0.90),
+		},
+		{
+			sql: `select * from information_schema.inspection_summary
+				where metric_name in ('metric_name1', 'metric_name4')
+				  and metric_name in ('metric_name5', 'metric_name4')
+				  and metric_name in ('metric_name5', 'metric_name1')
+				  and metric_name in ('metric_name1', 'metric_name3')`,
+			skipInspection: true,
+		},
+	}
+	parser := parser.New()
+	for _, ca := range cases {
+		logicalMemTable := s.getLogicalMemTable(c, se, parser, ca.sql)
+		c.Assert(logicalMemTable.Extractor, NotNil)
+
+		clusterConfigExtractor := logicalMemTable.Extractor.(*plannercore.InspectionSummaryTableExtractor)
+		if len(ca.rules) > 0 {
+			c.Assert(clusterConfigExtractor.Rules, DeepEquals, ca.rules, Commentf("SQL: %v", ca.sql))
+		}
+		if len(ca.names) > 0 {
+			c.Assert(clusterConfigExtractor.MetricNames, DeepEquals, ca.names, Commentf("SQL: %v", ca.sql))
 		}
 		c.Assert(clusterConfigExtractor.SkipInspection, Equals, ca.skipInspection, Commentf("SQL: %v", ca.sql))
 	}
