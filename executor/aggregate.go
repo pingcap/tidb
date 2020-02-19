@@ -1213,9 +1213,9 @@ func (e *vecGroupChecker) evalGroupItemsAndResolveGroups(item expression.Express
 		firstRowDatum.SetMysqlJSON(col.GetJSON(0).Copy())
 		lastRowDatum.SetMysqlJSON(col.GetJSON(numRows - 1).Copy())
 	case types.ETString:
-		previousKey := col.GetString(0)
+		previousKey := codec.ConvertByCollationStr(col.GetString(0), tp)
 		for i := 1; i < numRows; i++ {
-			key := col.GetString(i)
+			key := codec.ConvertByCollationStr(col.GetString(i), tp)
 			isNull := col.IsNull(i)
 			if e.sameGroup[i] {
 				if isNull != previousIsNull || previousKey != key {
