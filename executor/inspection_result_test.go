@@ -15,38 +15,38 @@ package executor_test
 
 import (
 	"context"
-
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
-var _ = Suite(&diagnosticsSuite{})
+var _ = SerialSuites(&inspectionResultSuite{})
 
-type diagnosticsSuite struct {
+type inspectionResultSuite struct {
 	store kv.Storage
 	dom   *domain.Domain
 }
 
-func (s *diagnosticsSuite) SetUpSuite(c *C) {
+func (s *inspectionResultSuite) SetUpSuite(c *C) {
 	store, dom, err := newStoreWithBootstrap()
 	c.Assert(err, IsNil)
 	s.store = store
 	s.dom = dom
 }
 
-func (s *diagnosticsSuite) TearDownSuite(c *C) {
+func (s *inspectionResultSuite) TearDownSuite(c *C) {
 	s.dom.Close()
 	s.store.Close()
 }
 
-func (s *diagnosticsSuite) TestInspectionResult(c *C) {
+func (s *inspectionResultSuite) TestInspectionResult(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 
 	mockData := map[string]variable.TableSnapshot{}
@@ -166,17 +166,126 @@ func (s *diagnosticsSuite) TestInspectionResult(c *C) {
 	}
 }
 
-func (s *diagnosticsSuite) TestCriticalErrorInspection(c *C) {
+func (s *inspectionResultSuite) parseTime(c *C, se session.Session, str string) types.Time {
+	t, err := types.ParseTime(se.GetSessionVars().StmtCtx, str, mysql.TypeDatetime, types.MaxFsp)
+	c.Assert(err, IsNil)
+	return t
+}
+
+func (s *inspectionResultSuite) TestThresholdCheckInspection(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	// mock tikv configuration.
+	configurations := map[string]variable.TableSnapshot{}
+	configurations[infoschema.TableClusterConfig] = variable.TableSnapshot{
+		Rows: [][]types.Datum{
+			types.MakeDatums("tikv", "tikv-0", "raftstore.apply-pool-size", "2"),
+			types.MakeDatums("tikv", "tikv-0", "raftstore.store-pool-size", "2"),
+			types.MakeDatums("tikv", "tikv-0", "readpool.coprocessor.high-concurrency", "4"),
+			types.MakeDatums("tikv", "tikv-0", "readpool.coprocessor.low-concurrency", "4"),
+			types.MakeDatums("tikv", "tikv-0", "readpool.coprocessor.normal-concurrency", "4"),
+			types.MakeDatums("tikv", "tikv-0", "readpool.storage.high-concurrency", "4"),
+			types.MakeDatums("tikv", "tikv-0", "readpool.storage.low-concurrency", "4"),
+			types.MakeDatums("tikv", "tikv-0", "readpool.storage.normal-concurrency", "4"),
+			types.MakeDatums("tikv", "tikv-0", "server.grpc-concurrency", "8"),
+			types.MakeDatums("tikv", "tikv-0", "storage.scheduler-worker-pool-size", "6"),
+		},
+	}
+	datetime := func(str string) types.Time {
+		return s.parseTime(c, tk.Se, str)
+	}
+	// construct some mock abnormal data
+	mockData := map[string][][]types.Datum{
+		// columns: time, instance, name, value
+		"tikv_thread_cpu": {
+			types.MakeDatums(datetime("2020-02-14 05:20:00"), "tikv-0", "cop_normal0", 10.0),
+			types.MakeDatums(datetime("2020-02-14 05:20:00"), "tikv-0", "cop_normal1", 10.0),
+			types.MakeDatums(datetime("2020-02-14 05:20:00"), "tikv-0", "cop_high1", 10.0),
+			types.MakeDatums(datetime("2020-02-14 05:20:00"), "tikv-0", "cop_low1", 10.0),
+			types.MakeDatums(datetime("2020-02-14 05:20:00"), "tikv-0", "grpc_1", 10.0),
+			types.MakeDatums(datetime("2020-02-14 05:20:00"), "tikv-0", "raftstore_1", 10.0),
+			types.MakeDatums(datetime("2020-02-14 05:20:00"), "tikv-0", "apply_0", 10.0),
+			types.MakeDatums(datetime("2020-02-14 05:20:00"), "tikv-0", "store_read_norm1", 10.0),
+			types.MakeDatums(datetime("2020-02-14 05:20:00"), "tikv-0", "store_read_high2", 10.0),
+			types.MakeDatums(datetime("2020-02-14 05:20:00"), "tikv-0", "store_read_low0", 10.0),
+			types.MakeDatums(datetime("2020-02-14 05:20:00"), "tikv-0", "sched_2", 10.0),
+			types.MakeDatums(datetime("2020-02-14 05:20:00"), "tikv-0", "split_check", 10.0),
+		},
+	}
+
+	fpName := "github.com/pingcap/tidb/executor/mockMergeMockInspectionTables"
+	c.Assert(failpoint.Enable(fpName, "return"), IsNil)
+	defer func() { c.Assert(failpoint.Disable(fpName), IsNil) }()
+
+	// Mock for metric table data.
+	fpName2 := "github.com/pingcap/tidb/executor/mockMetricsTableData"
+	c.Assert(failpoint.Enable(fpName2, "return"), IsNil)
+	defer func() { c.Assert(failpoint.Disable(fpName2), IsNil) }()
+
+	ctx := context.WithValue(context.Background(), "__mockInspectionTables", configurations)
+	ctx = context.WithValue(ctx, "__mockMetricsTableData", mockData)
+	ctx = failpoint.WithHook(ctx, func(_ context.Context, fpname2 string) bool {
+		return fpName2 == fpname2 || fpname2 == fpName
+	})
+
+	rs, err := tk.Se.Execute(ctx, "select item, type, instance, value, reference, details from information_schema.inspection_result where rule='threshold-check' order by item")
+	c.Assert(err, IsNil)
+	result := tk.ResultSetToResultWithCtx(ctx, rs[0], Commentf("execute inspect SQL failed"))
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(0), Commentf("unexpected warnings: %+v", tk.Se.GetSessionVars().StmtCtx.GetWarnings()))
+	result.Check(testkit.Rows(
+		"apply_cpu tikv tikv-0 10.00 < 1.60, config: raftstore.apply-pool-size=2 select instance, sum(value) as cpu from metric_schema.tikv_thread_cpu where name like 'apply_%' and time=now() group by instance",
+		"coprocessor_high_cpu tikv tikv-0 10.00 < 3.60, config: readpool.coprocessor.high-concurrency=4 select instance, sum(value) as cpu from metric_schema.tikv_thread_cpu where name like 'cop_high%' and time=now() group by instance",
+		"coprocessor_low_cpu tikv tikv-0 10.00 < 3.60, config: readpool.coprocessor.low-concurrency=4 select instance, sum(value) as cpu from metric_schema.tikv_thread_cpu where name like 'cop_low%' and time=now() group by instance",
+		"coprocessor_normal_cpu tikv tikv-0 20.00 < 3.60, config: readpool.coprocessor.normal-concurrency=4 select instance, sum(value) as cpu from metric_schema.tikv_thread_cpu where name like 'cop_normal%' and time=now() group by instance",
+		"grpc_cpu tikv tikv-0 10.00 < 7.20, config: server.grpc-concurrency=8 select instance, sum(value) as cpu from metric_schema.tikv_thread_cpu where name like 'grpc%' and time=now() group by instance",
+		"raftstore_cpu tikv tikv-0 10.00 < 1.60, config: raftstore.store-pool-size=2 select instance, sum(value) as cpu from metric_schema.tikv_thread_cpu where name like 'raftstore_%' and time=now() group by instance",
+		"scheduler_worker_cpu tikv tikv-0 10.00 < 5.10, config: storage.scheduler-worker-pool-size=6 select instance, sum(value) as cpu from metric_schema.tikv_thread_cpu where name like 'sched_%' and time=now() group by instance",
+		"split_check_cpu tikv tikv-0 10.00 < 0.00 select instance, sum(value) as cpu from metric_schema.tikv_thread_cpu where name like 'split_check' and time=now() group by instance",
+		"storage_readpool_high_cpu tikv tikv-0 10.00 < 3.60, config: readpool.storage.high-concurrency=4 select instance, sum(value) as cpu from metric_schema.tikv_thread_cpu where name like 'store_read_high%' and time=now() group by instance",
+		"storage_readpool_low_cpu tikv tikv-0 10.00 < 3.60, config: readpool.storage.low-concurrency=4 select instance, sum(value) as cpu from metric_schema.tikv_thread_cpu where name like 'store_read_low%' and time=now() group by instance",
+		"storage_readpool_normal_cpu tikv tikv-0 10.00 < 3.60, config: readpool.storage.normal-concurrency=4 select instance, sum(value) as cpu from metric_schema.tikv_thread_cpu where name like 'store_read_norm%' and time=now() group by instance",
+	))
+
+	// construct some mock normal data
+	mockData = map[string][][]types.Datum{
+		// columns: time, instance, name, value
+		"tikv_thread_cpu": {
+			types.MakeDatums(datetime("2020-02-14 05:20:00"), "tikv-0", "cop_normal0", 1.0),
+			types.MakeDatums(datetime("2020-02-14 05:20:00"), "tikv-0", "cop_high1", 0.1),
+			types.MakeDatums(datetime("2020-02-14 05:20:00"), "tikv-0", "cop_low1", 1.0),
+			types.MakeDatums(datetime("2020-02-14 05:20:00"), "tikv-0", "grpc_1", 7.0),
+			types.MakeDatums(datetime("2020-02-14 05:20:00"), "tikv-0", "grpc_2", 0.21),
+			types.MakeDatums(datetime("2020-02-14 05:20:00"), "tikv-0", "raftstore_1", 1.0),
+			types.MakeDatums(datetime("2020-02-14 05:20:00"), "tikv-0", "apply_0", 1.0),
+			types.MakeDatums(datetime("2020-02-14 05:20:00"), "tikv-0", "store_read_norm1", 1.0),
+			types.MakeDatums(datetime("2020-02-14 05:20:00"), "tikv-0", "store_read_high2", 1.0),
+			types.MakeDatums(datetime("2020-02-14 05:20:00"), "tikv-0", "store_read_low0", 1.0),
+			types.MakeDatums(datetime("2020-02-14 05:20:00"), "tikv-0", "sched_2", 0.3),
+			types.MakeDatums(datetime("2020-02-14 05:20:00"), "tikv-0", "split_check", 0.5),
+		},
+	}
+
+	ctx = context.WithValue(context.Background(), "__mockInspectionTables", configurations)
+	ctx = context.WithValue(ctx, "__mockMetricsTableData", mockData)
+	ctx = failpoint.WithHook(ctx, func(_ context.Context, fpname2 string) bool {
+		return fpName2 == fpname2 || fpname2 == fpName
+	})
+	rs, err = tk.Se.Execute(ctx, "select item, type, instance, value, reference, details from information_schema.inspection_result where rule='threshold-check' order by item")
+	c.Assert(err, IsNil)
+	result = tk.ResultSetToResultWithCtx(ctx, rs[0], Commentf("execute inspect SQL failed"))
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(0), Commentf("unexpected warnings: %+v", tk.Se.GetSessionVars().StmtCtx.GetWarnings()))
+	result.Check(testkit.Rows(
+		"grpc_cpu tikv tikv-0 7.21 < 7.20, config: server.grpc-concurrency=8 select instance, sum(value) as cpu from metric_schema.tikv_thread_cpu where name like 'grpc%' and time=now() group by instance"))
+}
+
+func (s *inspectionResultSuite) TestCriticalErrorInspection(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 
 	fpName := "github.com/pingcap/tidb/executor/mockMetricsTableData"
 	c.Assert(failpoint.Enable(fpName, "return"), IsNil)
 	defer func() { c.Assert(failpoint.Disable(fpName), IsNil) }()
 
-	datetime := func(s string) types.Time {
-		t, err := types.ParseTime(tk.Se.GetSessionVars().StmtCtx, s, mysql.TypeDatetime, types.MaxFsp)
-		c.Assert(err, IsNil)
-		return t
+	datetime := func(str string) types.Time {
+		return s.parseTime(c, tk.Se, str)
 	}
 
 	// construct some mock data

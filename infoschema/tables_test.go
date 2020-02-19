@@ -20,6 +20,7 @@ import (
 	"net"
 	"net/http/httptest"
 	"os"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -676,7 +677,7 @@ func prepareSlowLogfile(c *C, slowLogFileName string) {
 # Plan_digest: 60e9378c746d9a2be1c791047e008967cf252eb6de9167ad3aa6098fa2d523f4
 # Prev_stmt: update t set i = 2;
 select * from t_slim;`))
-	c.Assert(f.Sync(), IsNil)
+	c.Assert(f.Close(), IsNil)
 	c.Assert(err, IsNil)
 }
 
@@ -973,10 +974,11 @@ func (s *testClusterTableSuite) TestForClusterServerInfo(c *C) {
 	defer func() { c.Assert(failpoint.Disable(fpName), IsNil) }()
 
 	cases := []struct {
-		sql   string
-		types set.StringSet
-		addrs set.StringSet
-		names set.StringSet
+		sql      string
+		types    set.StringSet
+		addrs    set.StringSet
+		names    set.StringSet
+		skipOnOS string
 	}{
 		{
 			sql:   "select * from information_schema.CLUSTER_LOAD;",
@@ -995,10 +997,19 @@ func (s *testClusterTableSuite) TestForClusterServerInfo(c *C) {
 			types: set.NewStringSet("tidb", "tikv", "pd"),
 			addrs: set.NewStringSet(s.listenAddr),
 			names: set.NewStringSet("system"),
+			// This test get empty result and fails on the windows platform.
+			// Because the underlying implementation use `sysctl` command to get the result
+			// and there is no such command on windows.
+			// https://github.com/pingcap/sysutil/blob/2bfa6dc40bcd4c103bf684fba528ae4279c7ec9f/system_info.go#L50
+			skipOnOS: "windows",
 		},
 	}
 
 	for _, cas := range cases {
+		if cas.skipOnOS == runtime.GOOS {
+			continue
+		}
+
 		result := tk.MustQuery(cas.sql)
 		rows := result.Rows()
 		c.Assert(len(rows), Greater, 0)
@@ -1099,7 +1110,7 @@ select * from t3;
 # Time: 2019-02-12T19:33:59.571953+08:00
 select * from t3;
 `))
-	c.Assert(f.Sync(), IsNil)
+	c.Assert(f.Close(), IsNil)
 	c.Assert(err, IsNil)
 	defer os.Remove(slowLogFileName)
 	tk.MustExec("use information_schema")
