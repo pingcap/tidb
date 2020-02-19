@@ -16,6 +16,7 @@ package config
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -64,7 +65,7 @@ func (mc *mockPDConfigClient) Close() {}
 func (s *testConfigSuite) TestConstantConfHandler(c *C) {
 	conf := defaultConf
 	conf.Store = "mock"
-	ch, err := NewConfHandler(&conf, nil)
+	ch, err := NewConfHandler(&conf, nil, nil)
 	c.Assert(err, IsNil)
 	_, ok := ch.(*constantConfHandler)
 	c.Assert(ok, IsTrue)
@@ -75,13 +76,14 @@ func (s *testConfigSuite) TestPDConfHandler(c *C) {
 	conf := defaultConf
 
 	// wrong path
-	conf.Store = "tikv"
+	conf.Store = "WRONGPATH"
 	conf.Path = "WRONGPATH"
 	_, err := newPDConfHandler(&conf, nil, newMockPDConfigClient)
 	c.Assert(err, NotNil)
 
 	// error when creating PD config client
-	conf.Path = "tikv://node1:2379"
+	conf.Store = "tikv"
+	conf.Path = "node1:2379"
 	newMockPDConfigClientErr = fmt.Errorf("")
 	_, err = newPDConfHandler(&conf, nil, newMockPDConfigClient)
 	c.Assert(err, NotNil)
@@ -113,20 +115,36 @@ func (s *testConfigSuite) TestPDConfHandler(c *C) {
 	wg := sync.WaitGroup{}
 	wg.Add(1)
 	mockReloadFunc := func(oldConf, newConf *Config) {
-		wg.Done()
 		c.Assert(oldConf.Log.Level, Equals, "info")
 		c.Assert(newConf.Log.Level, Equals, "debug")
+		wg.Done()
 	}
 	ch, err = newPDConfHandler(&conf, mockReloadFunc, newMockPDConfigClient)
 	c.Assert(err, IsNil)
 	ch.interval = time.Second
-	ch.Start()
-	c.Assert(ch.GetConfig().Log.Level, Equals, "info")
 	newConf := conf
 	newConf.Log.Level = "debug"
 	newContent, _ := encodeConfig(&newConf)
 	mockPDConfigClient0.confContent.Store(newContent)
+	ch.Start()
 	wg.Wait()
 	c.Assert(ch.GetConfig().Log.Level, Equals, "debug")
 	ch.Close()
+}
+
+func (s *testConfigSuite) TestEnableDynamicConfig(c *C) {
+	conf := &defaultConf
+	for _, store := range []string{"tikv", "mocktikv"} {
+		for _, enable := range []bool{true, false} {
+			conf.Store = store
+			conf.EnableDynamicConfig = enable
+			ch, err := NewConfHandler(conf, nil, newMockPDConfigClient)
+			c.Assert(err, IsNil)
+			if store == "tikv" && enable == true {
+				c.Assert(fmt.Sprintf("%v", reflect.TypeOf(ch)), Equals, "*config.pdConfHandler")
+			} else {
+				c.Assert(fmt.Sprintf("%v", reflect.TypeOf(ch)), Equals, "*config.constantConfHandler")
+			}
+		}
+	}
 }
