@@ -301,6 +301,11 @@ func (la *LogicalAggregation) CopyAggHints(agg *LogicalAggregation) {
 	la.aggHints = agg.aggHints
 }
 
+// IsPreferStream returns if STREAM_AGG hint is existed.
+func (la *LogicalAggregation) IsPreferStream() bool {
+	return (la.aggHints.preferAggType & preferHashAgg) > 0
+}
+
 // IsPartialModeAgg returns if all of the AggFuncs are partialMode.
 func (la *LogicalAggregation) IsPartialModeAgg() bool {
 	// Since all of the AggFunc share the same AggMode, we only need to check the first one.
@@ -347,6 +352,11 @@ func (la *LogicalAggregation) GetUsedCols() (usedCols []*expression.Column) {
 		}
 	}
 	return usedCols
+}
+
+// GetPossibleProperties returns the possibleProperties.
+func (la *LogicalAggregation) GetPossibleProperties() [][]*expression.Column {
+	return la.possibleProperties
 }
 
 // LogicalSelection represents a where or having predicate.
