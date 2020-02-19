@@ -138,6 +138,9 @@ func (bpc *binPaddingCollator) Compare(a, b string, opt CollatorOption) int {
 }
 
 func (bpc *binPaddingCollator) Key(str string, opt CollatorOption) []byte {
+	if opt.PadLen <= len(str) {
+		return []byte(str)
+	}
 	return []byte(str + strings.Repeat(" ", opt.PadLen-len(str)))
 }
 

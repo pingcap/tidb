@@ -14,6 +14,7 @@
 package codec
 
 import (
+	"github.com/pingcap/tidb/util/collate"
 	"hash"
 	"hash/crc32"
 	"hash/fnv"
@@ -53,6 +54,8 @@ func prepareCollationData() (int, *chunk.Chunk, *chunk.Chunk) {
 }
 
 func (s *testCollationSuite) TestHashGroupKeyCollation(c *C) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
 	sc := &stmtctx.StatementContext{TimeZone: time.Local}
 	tp := types.NewFieldType(mysql.TypeString)
 	n, chk1, chk2 := prepareCollationData()
@@ -73,6 +76,8 @@ func (s *testCollationSuite) TestHashGroupKeyCollation(c *C) {
 }
 
 func (s *testCollationSuite) TestHashChunkRowCollation(c *C) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
 	sc := &stmtctx.StatementContext{TimeZone: time.Local}
 	tp := types.NewFieldType(mysql.TypeString)
 	tps := []*types.FieldType{tp}
@@ -104,6 +109,8 @@ func (s *testCollationSuite) TestHashChunkRowCollation(c *C) {
 }
 
 func (s *testCollationSuite) TestHashChunkColumnsCollation(c *C) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
 	sc := &stmtctx.StatementContext{TimeZone: time.Local}
 	tp := types.NewFieldType(mysql.TypeString)
 	n, chk1, chk2 := prepareCollationData()
