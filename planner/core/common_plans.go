@@ -767,10 +767,6 @@ func (e *Explain) explainPlanInRowFormat(p Plan, taskType, driverSide, indent st
 		}
 
 		if buildSide != -1 {
-			if len(driverSideInfo) < 2 {
-				err = errors.New("Join Plan has less than two children")
-				return
-			}
 			driverSideInfo[buildSide], driverSideInfo[buildSide^1] = "(Build)", "(Probe)"
 		}
 
