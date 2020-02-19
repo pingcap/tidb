@@ -415,7 +415,7 @@ func (h *logResponseHeap) Pop() interface{} {
 	return x
 }
 
-func (e *clusterLogRetriever) startRetrieving(ctx context.Context, sctx sessionctx.Context) ([]chan logStreamResult, error) {
+func (e *clusterLogRetriever) initialize(ctx context.Context, sctx sessionctx.Context) ([]chan logStreamResult, error) {
 	isFailpointTestModeSkipCheck := false
 	serversInfo, err := infoschema.GetClusterServerInfo(sctx)
 	failpoint.Inject("mockClusterLogServerInfo", func(val failpoint.Value) {
@@ -435,17 +435,6 @@ func (e *clusterLogRetriever) startRetrieving(ctx context.Context, sctx sessionc
 	instances := e.extractor.Instances
 	nodeTypes := e.extractor.NodeTypes
 	serversInfo = filterClusterServerInfo(serversInfo, nodeTypes, instances)
-
-	// gRPC options
-	opt := grpc.WithInsecure()
-	security := config.GetGlobalConfig().Security
-	if len(security.ClusterSSLCA) != 0 {
-		tlsConfig, err := security.ToTLSConfig()
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		opt = grpc.WithTransportCredentials(credentials.NewTLS(tlsConfig))
-	}
 
 	var levels []diagnosticspb.LogLevel
 	for l := range e.extractor.LogLevels {
@@ -487,13 +476,27 @@ func (e *clusterLogRetriever) startRetrieving(ctx context.Context, sctx sessionc
 		Patterns:  patterns,
 	}
 
-	// The retrieve progress may be abort
-	exit := make(chan struct{})
-	ctx, cancel := context.WithCancel(ctx)
-	e.cancel = func() {
-		close(exit)
-		cancel()
+	return e.startRetrieving(ctx, sctx, serversInfo, req)
+}
+
+func (e *clusterLogRetriever) startRetrieving(
+	ctx context.Context,
+	sctx sessionctx.Context,
+	serversInfo []infoschema.ServerInfo,
+	req *diagnosticspb.SearchLogRequest) ([]chan logStreamResult, error) {
+	// gRPC options
+	opt := grpc.WithInsecure()
+	security := config.GetGlobalConfig().Security
+	if len(security.ClusterSSLCA) != 0 {
+		tlsConfig, err := security.ToTLSConfig()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		opt = grpc.WithTransportCredentials(credentials.NewTLS(tlsConfig))
 	}
+
+	// The retrieve progress may be abort
+	ctx, e.cancel = context.WithCancel(ctx)
 
 	var results []chan logStreamResult
 	for _, srv := range serversInfo {
@@ -538,7 +541,7 @@ func (e *clusterLogRetriever) startRetrieving(ctx context.Context, sctx sessionc
 					if err != nil {
 						select {
 						case ch <- logStreamResult{addr: address, typ: serverType, err: err}:
-						case <-exit:
+						case <-ctx.Done():
 						}
 						return
 					}
@@ -546,7 +549,7 @@ func (e *clusterLogRetriever) startRetrieving(ctx context.Context, sctx sessionc
 					result := logStreamResult{next: ch, addr: address, typ: serverType, messages: res.Messages}
 					select {
 					case ch <- result:
-					case <-exit:
+					case <-ctx.Done():
 						return
 					}
 				}
@@ -564,7 +567,7 @@ func (e *clusterLogRetriever) retrieve(ctx context.Context, sctx sessionctx.Cont
 
 	if !e.retrieving {
 		e.retrieving = true
-		results, err := e.startRetrieving(ctx, sctx)
+		results, err := e.initialize(ctx, sctx)
 		if err != nil {
 			e.isDrained = true
 			return nil, err
