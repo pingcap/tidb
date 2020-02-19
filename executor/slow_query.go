@@ -92,8 +92,7 @@ func (e *SlowQueryRetriever) retrieve(ctx context.Context, sctx sessionctx.Conte
 func (e *SlowQueryRetriever) Initialize(sctx sessionctx.Context) error {
 	var err error
 	e.initialized = true
-	e.fileIdx = 0
-	e.files, err = e.GetAllFiles(sctx.GetSessionVars().SlowQueryFile)
+	e.files, err = e.GetAllFiles(sctx, sctx.GetSessionVars().SlowQueryFile)
 	if err != nil {
 		return err
 	}
@@ -103,7 +102,6 @@ func (e *SlowQueryRetriever) Initialize(sctx sessionctx.Context) error {
 			hasProcessPriv = true
 		}
 	}
-
 	e.checker = &slowLogChecker{
 		hasProcessPriv: hasProcessPriv,
 		user:           sctx.GetSessionVars().User,
@@ -112,7 +110,6 @@ func (e *SlowQueryRetriever) Initialize(sctx sessionctx.Context) error {
 		e.checker.enableTimeCheck = e.extractor.Enable
 		e.checker.startTime = e.extractor.StartTime
 		e.checker.endTime = e.extractor.EndTime
-
 	}
 	return nil
 }
@@ -129,11 +126,10 @@ func (e *SlowQueryRetriever) close() error {
 
 func (e *SlowQueryRetriever) dataForSlowLog(ctx sessionctx.Context) ([][]types.Datum, error) {
 	reader := bufio.NewReader(e.files[e.fileIdx].file)
-	rows, fileLine, err := e.ParseSlowLog(ctx, reader, 1024)
+	rows, err := e.ParseSlowLog(ctx, reader, 1024)
 	if err != nil {
 		return nil, err
 	}
-	e.fileLine = fileLine
 	if e.table.Name.L == strings.ToLower(infoschema.ClusterTableSlowLog) {
 		return infoschema.AppendHostInfoToRows(rows)
 	}
@@ -166,17 +162,16 @@ func (sc *slowLogChecker) isTimeValid(t time.Time) bool {
 
 // ParseSlowLog exports for testing.
 // TODO: optimize for parse huge log-file.
-func (e *SlowQueryRetriever) ParseSlowLog(ctx sessionctx.Context, reader *bufio.Reader, maxRow int) ([][]types.Datum, int, error) {
+func (e *SlowQueryRetriever) ParseSlowLog(ctx sessionctx.Context, reader *bufio.Reader, maxRow int) ([][]types.Datum, error) {
 	var rows [][]types.Datum
-	startFlag := false
-	lineNum := e.fileLine
-	tz := ctx.GetSessionVars().Location()
 	var st *slowQueryTuple
+	startFlag := false
+	tz := ctx.GetSessionVars().Location()
 	for {
 		if len(rows) >= maxRow {
-			return rows, lineNum, nil
+			return rows, nil
 		}
-		lineNum++
+		e.fileLine++
 		lineByte, err := getOneLine(reader)
 		if err != nil {
 			if err == io.EOF {
@@ -184,18 +179,18 @@ func (e *SlowQueryRetriever) ParseSlowLog(ctx sessionctx.Context, reader *bufio.
 				e.fileLine = 0
 				if e.fileIdx >= len(e.files) {
 					e.retrieved = true
-					return rows, lineNum, nil
+					return rows, nil
 				}
 				reader = bufio.NewReader(e.files[e.fileIdx].file)
 				continue
 			}
-			return rows, lineNum, err
+			return rows, err
 		}
 		line := string(hack.String(lineByte))
 		// Check slow log entry start flag.
 		if !startFlag && strings.HasPrefix(line, variable.SlowLogStartPrefixStr) {
 			st = &slowQueryTuple{}
-			valid, err := st.setFieldValue(tz, variable.SlowLogTimeStr, line[len(variable.SlowLogStartPrefixStr):], lineNum, e.checker)
+			valid, err := st.setFieldValue(tz, variable.SlowLogTimeStr, line[len(variable.SlowLogStartPrefixStr):], e.fileLine, e.checker)
 			if err != nil {
 				ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 				continue
@@ -219,7 +214,7 @@ func (e *SlowQueryRetriever) ParseSlowLog(ctx sessionctx.Context, reader *bufio.
 						if strings.HasSuffix(field, ":") {
 							field = field[:len(field)-1]
 						}
-						valid, err := st.setFieldValue(tz, field, fieldValues[i+1], lineNum, e.checker)
+						valid, err := st.setFieldValue(tz, field, fieldValues[i+1], e.fileLine, e.checker)
 						if err != nil {
 							ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 							continue
@@ -231,7 +226,7 @@ func (e *SlowQueryRetriever) ParseSlowLog(ctx sessionctx.Context, reader *bufio.
 				}
 			} else if strings.HasSuffix(line, variable.SlowLogSQLSuffixStr) {
 				// Get the sql string, and mark the start flag to false.
-				_, err = st.setFieldValue(tz, variable.SlowLogQuerySQLStr, string(hack.Slice(line)), lineNum, e.checker)
+				_, err = st.setFieldValue(tz, variable.SlowLogQuerySQLStr, string(hack.Slice(line)), e.fileLine, e.checker)
 				if err != nil {
 					ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 					continue
@@ -530,12 +525,13 @@ type logFile struct {
 	begin, end time.Time // The start/end time of the log file
 }
 
+// File is exported for tests.
 func (l *logFile) File() *os.File {
 	return l.file
 }
 
 // GetAllFiles is used to get all slow-log need to parse, it is export for test.
-func (e *SlowQueryRetriever) GetAllFiles(logFilePath string) ([]logFile, error) {
+func (e *SlowQueryRetriever) GetAllFiles(sctx sessionctx.Context, logFilePath string) ([]logFile, error) {
 	if e.extractor == nil || !e.extractor.Enable {
 		file, err := os.Open(logFilePath)
 		if err != nil {
@@ -571,7 +567,11 @@ func (e *SlowQueryRetriever) GetAllFiles(logFilePath string) ([]logFile, error) 
 		// Get the file start time.
 		fileBeginTime, err := e.getFileStartTime(file)
 		if err != nil {
-			return err
+			if err != io.EOF {
+				err = errors.Errorf("get slow-log file %v start time error: %v", file.Name(), err)
+				sctx.GetSessionVars().StmtCtx.AppendWarning(err)
+			}
+			return nil
 		}
 		if fileBeginTime.After(e.extractor.EndTime) {
 			return nil
@@ -580,7 +580,11 @@ func (e *SlowQueryRetriever) GetAllFiles(logFilePath string) ([]logFile, error) 
 		// Get the file end time.
 		fileEndTime, err := e.getFileEndTime(file)
 		if err != nil {
-			return err
+			if err != io.EOF {
+				err = errors.Errorf("get slow-log file %v end time error: %v", file.Name(), err)
+				sctx.GetSessionVars().StmtCtx.AppendWarning(err)
+			}
+			return nil
 		}
 		if fileEndTime.Before(e.extractor.StartTime) {
 			return nil

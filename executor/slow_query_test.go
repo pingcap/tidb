@@ -31,14 +31,14 @@ import (
 	"github.com/pingcap/tidb/util/mock"
 )
 
-func parseSlowLog(ctx sessionctx.Context, reader *bufio.Reader) ([][]types.Datum, int, error) {
+func parseSlowLog(ctx sessionctx.Context, reader *bufio.Reader) ([][]types.Datum, error) {
 	extractor := &plannercore.SlowQueryExtractor{Enable: false}
 	retriever := executor.NewSlowQueryRetrieverForTest(extractor, nil)
-	rows, lineNum, err := retriever.ParseSlowLog(ctx, reader, 1024)
+	rows, err := retriever.ParseSlowLog(ctx, reader, 1024)
 	if err == io.EOF {
 		err = nil
 	}
-	return rows, lineNum, err
+	return rows, err
 }
 
 func (s *testSuite) TestParseSlowLogFile(c *C) {
@@ -62,7 +62,7 @@ select * from t;`
 	c.Assert(err, IsNil)
 	s.ctx = mock.NewContext()
 	s.ctx.GetSessionVars().TimeZone = loc
-	rows, _, err := parseSlowLog(s.ctx, reader)
+	rows, err := parseSlowLog(s.ctx, reader)
 	c.Assert(err, IsNil)
 	c.Assert(len(rows), Equals, 1)
 	recordString := ""
@@ -92,7 +92,7 @@ select a# from t;
 select * from t;
 `)
 	reader = bufio.NewReader(slowLog)
-	_, _, err = parseSlowLog(s.ctx, reader)
+	_, err = parseSlowLog(s.ctx, reader)
 	c.Assert(err, IsNil)
 
 	// test for time format compatibility.
@@ -103,7 +103,7 @@ select * from t;
 select * from t;
 `)
 	reader = bufio.NewReader(slowLog)
-	rows, _, err = parseSlowLog(s.ctx, reader)
+	rows, err = parseSlowLog(s.ctx, reader)
 	c.Assert(err, IsNil)
 	c.Assert(len(rows) == 2, IsTrue)
 	t0Str, err := rows[0][0].ToString()
@@ -124,13 +124,13 @@ select * from t;
 	sql := strings.Repeat("x", int(variable.MaxOfMaxAllowedPacket+1))
 	slowLog.WriteString(sql)
 	reader = bufio.NewReader(slowLog)
-	_, _, err = parseSlowLog(s.ctx, reader)
+	_, err = parseSlowLog(s.ctx, reader)
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "single line length exceeds limit: 65536")
 
 	variable.MaxOfMaxAllowedPacket = originValue
 	reader = bufio.NewReader(slowLog)
-	_, _, err = parseSlowLog(s.ctx, reader)
+	_, err = parseSlowLog(s.ctx, reader)
 	c.Assert(err, IsNil)
 
 	// Add parse error check.
@@ -140,7 +140,7 @@ select * from t;
 select * from t;
 `)
 	reader = bufio.NewReader(slowLog)
-	_, _, err = parseSlowLog(s.ctx, reader)
+	_, err = parseSlowLog(s.ctx, reader)
 	c.Assert(err, IsNil)
 	warnings := s.ctx.GetSessionVars().StmtCtx.GetWarnings()
 	c.Assert(warnings, HasLen, 1)
@@ -194,7 +194,7 @@ select * from t;`)
 	c.Assert(err, IsNil)
 	s.ctx = mock.NewContext()
 	s.ctx.GetSessionVars().TimeZone = loc
-	_, _, err = parseSlowLog(s.ctx, scanner)
+	_, err = parseSlowLog(s.ctx, scanner)
 	c.Assert(err, IsNil)
 
 	// Test parser error.
@@ -204,7 +204,7 @@ select * from t;`)
 `)
 
 	scanner = bufio.NewReader(slowLog)
-	_, _, err = parseSlowLog(s.ctx, scanner)
+	_, err = parseSlowLog(s.ctx, scanner)
 	c.Assert(err, IsNil)
 	warnings := s.ctx.GetSessionVars().StmtCtx.GetWarnings()
 	c.Assert(warnings, HasLen, 1)
@@ -221,6 +221,7 @@ func (s *testSuite) TestSlowQueryRetriever(c *C) {
 		c.Assert(err, IsNil)
 	}
 
+	logData0 := ""
 	logData1 := `
 # Time: 2020-02-15T18:00:01.000000+08:00
 select 1;
@@ -237,16 +238,19 @@ select 5;
 # Time: 2020-02-17T18:00:05.000000+08:00
 select 6;`
 
+	fileName0 := "tidb-slow-2020-02-14T19-04-05.01.log"
 	fileName1 := "tidb-slow-2020-02-15T19-04-05.01.log"
 	fileName2 := "tidb-slow-2020-02-16T19-04-05.01.log"
 	fileName3 := "tidb-slow.log"
+	writeFile(fileName0, logData0)
 	writeFile(fileName1, logData1)
 	writeFile(fileName2, logData2)
 	writeFile(fileName3, logData3)
 	defer func() {
-		os.Remove("tidb-slow-2020-02-15T19-04-05.01.log")
-		os.Remove("tidb-slow-2020-02-16T19-04-05.01.log")
-		os.Remove("tidb-slow.log")
+		os.Remove(fileName0)
+		os.Remove(fileName1)
+		os.Remove(fileName2)
+		os.Remove(fileName3)
 	}()
 
 	cases := []struct {
@@ -341,7 +345,7 @@ select 6;`
 
 		}
 		retriever := executor.NewSlowQueryRetrieverForTest(extractor, nil)
-		files, err := retriever.GetAllFiles("tidb-slow.log")
+		files, err := retriever.GetAllFiles(s.ctx, "tidb-slow.log")
 		c.Assert(err, IsNil)
 		comment := Commentf("case id: %v", i)
 		c.Assert(files, HasLen, len(cas.files), comment)
@@ -349,7 +353,7 @@ select 6;`
 			retriever := executor.NewSlowQueryRetrieverForTest(extractor, files)
 			err = retriever.Initialize(s.ctx)
 			c.Assert(err, IsNil)
-			rows, _, err := retriever.ParseSlowLog(s.ctx, bufio.NewReader(files[0].File()), 1024)
+			rows, err := retriever.ParseSlowLog(s.ctx, bufio.NewReader(files[0].File()), 1024)
 			c.Assert(err, IsNil)
 			c.Assert(len(rows), Equals, len(cas.querys), comment)
 			for i, row := range rows {
