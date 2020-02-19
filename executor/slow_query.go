@@ -543,9 +543,16 @@ func (e *SlowQueryRetriever) GetAllFiles(sctx sessionctx.Context, logFilePath st
 	logDir := filepath.Dir(logFilePath)
 	ext := filepath.Ext(logFilePath)
 	prefix := logFilePath[:len(logFilePath)-len(ext)]
+	handleErr := func(err error) error {
+		// Ignore the error and append warning for usability.
+		if err != io.EOF {
+			sctx.GetSessionVars().StmtCtx.AppendWarning(err)
+		}
+		return nil
+	}
 	err := filepath.Walk(logDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
-			return err
+			return handleErr(err)
 		}
 		if info.IsDir() {
 			return nil
@@ -556,7 +563,7 @@ func (e *SlowQueryRetriever) GetAllFiles(sctx sessionctx.Context, logFilePath st
 		}
 		file, err := os.OpenFile(path, os.O_RDONLY, os.ModePerm)
 		if err != nil {
-			return err
+			return handleErr(err)
 		}
 		skip := false
 		defer func() {
@@ -567,11 +574,7 @@ func (e *SlowQueryRetriever) GetAllFiles(sctx sessionctx.Context, logFilePath st
 		// Get the file start time.
 		fileBeginTime, err := e.getFileStartTime(file)
 		if err != nil {
-			if err != io.EOF {
-				err = errors.Errorf("get slow-log file %v start time error: %v", file.Name(), err)
-				sctx.GetSessionVars().StmtCtx.AppendWarning(err)
-			}
-			return nil
+			return handleErr(err)
 		}
 		if fileBeginTime.After(e.extractor.EndTime) {
 			return nil
@@ -580,18 +583,14 @@ func (e *SlowQueryRetriever) GetAllFiles(sctx sessionctx.Context, logFilePath st
 		// Get the file end time.
 		fileEndTime, err := e.getFileEndTime(file)
 		if err != nil {
-			if err != io.EOF {
-				err = errors.Errorf("get slow-log file %v end time error: %v", file.Name(), err)
-				sctx.GetSessionVars().StmtCtx.AppendWarning(err)
-			}
-			return nil
+			return handleErr(err)
 		}
 		if fileEndTime.Before(e.extractor.StartTime) {
 			return nil
 		}
 		_, err = file.Seek(0, io.SeekStart)
 		if err != nil {
-			return err
+			return handleErr(err)
 		}
 		logFiles = append(logFiles, logFile{
 			file:  file,
