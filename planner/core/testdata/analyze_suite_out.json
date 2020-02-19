@@ -185,9 +185,8 @@
         "└─TableScan_5 2.00 cop[tikv] table:t, range:[1,1], [2,2], keep order:false, stats:pseudo"
       ],
       [
-        "TableReader_7 2.00 root data:Selection_6",
-        "└─Selection_6 2.00 cop[tiflash] or(eq(test.t.a, 1), eq(test.t.a, 2))",
-        "  └─TableScan_5 2.00 cop[tiflash] table:t, range:[-inf,+inf], keep order:false, stats:pseudo"
+        "TableReader_6 2.00 root data:TableScan_5",
+        "└─TableScan_5 2.00 cop[tiflash] table:t, range:[1,1], [2,2], keep order:false, stats:pseudo"
       ]
     ]
   },

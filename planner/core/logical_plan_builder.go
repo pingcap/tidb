@@ -23,6 +23,7 @@ import (
 	"strings"
 	"unicode"
 
+	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
@@ -37,7 +38,6 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/planner/property"
-	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
@@ -47,7 +47,6 @@ import (
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	util2 "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/plancodec"
 )
 
@@ -440,7 +439,19 @@ func (ds *DataSource) setPreferredStoreType(hintInfo *tableHintInfo) {
 		alias = &hintTableInfo{dbName: ds.DBName, tblName: ds.tableInfo.Name, selectOffset: ds.SelectBlockOffset()}
 	}
 	if hintInfo.ifPreferTiKV(alias) {
-		ds.preferStoreType |= preferTiKV
+		for _, path := range ds.possibleAccessPaths {
+			if path.StoreType == kv.TiKV {
+				ds.preferStoreType |= preferTiKV
+				break
+			}
+		}
+		if ds.preferStoreType == 0 {
+			errMsg := fmt.Sprintf("No available path for table %s.%s with the store type %s of the hint /*+ read_from_storage */, "+
+				"please check the status of the table replica and variable value of tidb_isolation_read_engines(%v)",
+				ds.DBName.O, ds.table.Meta().Name.O, kv.TiKV.Name(), ds.ctx.GetSessionVars().GetIsolationReadEngines())
+			warning := ErrInternal.GenWithStack(errMsg)
+			ds.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
+		}
 	}
 	if hintInfo.ifPreferTiFlash(alias) {
 		if ds.preferStoreType != 0 {
@@ -451,18 +462,18 @@ func (ds *DataSource) setPreferredStoreType(hintInfo *tableHintInfo) {
 			ds.preferStoreType = 0
 			return
 		}
-		ds.preferStoreType |= preferTiFlash
-		hasTiFlashPath := false
 		for _, path := range ds.possibleAccessPaths {
 			if path.StoreType == kv.TiFlash {
-				hasTiFlashPath = true
+				ds.preferStoreType |= preferTiFlash
 				break
 			}
 		}
-		// TODO: For now, if there is a TiFlash hint for a table, we enforce a TiFlash path. But hint is just a suggestion
-		//       for the planner. We can keep it since we need it to debug with PD and TiFlash. In future, this should be removed.
-		if !hasTiFlashPath {
-			ds.possibleAccessPaths = append(ds.possibleAccessPaths, &util.AccessPath{IsTablePath: true, StoreType: kv.TiFlash})
+		if ds.preferStoreType == 0 {
+			errMsg := fmt.Sprintf("No available path for table %s.%s with the store type %s of the hint /*+ read_from_storage */, "+
+				"please check the status of the table replica and variable value of tidb_isolation_read_engines(%v)",
+				ds.DBName.O, ds.table.Meta().Name.O, kv.TiFlash.Name(), ds.ctx.GetSessionVars().GetIsolationReadEngines())
+			warning := ErrInternal.GenWithStack(errMsg)
+			ds.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
 		}
 	}
 }
@@ -2229,10 +2240,10 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, nodeType n
 				})
 			}
 		case HintReadFromStorage:
-			if hint.StoreType.L == HintTiFlash {
+			switch hint.HintData.(model.CIStr).L {
+			case HintTiFlash:
 				tiflashTables = tableNames2HintTableInfo(b.ctx, hint.Tables, b.hintProcessor, nodeType, currentLevel)
-			}
-			if hint.StoreType.L == HintTiKV {
+			case HintTiKV:
 				tikvTables = tableNames2HintTableInfo(b.ctx, hint.Tables, b.hintProcessor, nodeType, currentLevel)
 			}
 		case HintIndexMerge:
@@ -2782,7 +2793,9 @@ func (b *PlanBuilder) buildMemTable(ctx context.Context, dbName model.CIStr, tab
 			p.Extractor = &ClusterLogTableExtractor{}
 		case infoschema.TableInspectionResult:
 			p.Extractor = &InspectionResultTableExtractor{}
-		case infoschema.TableMetricSummary:
+		case infoschema.TableInspectionSummary:
+			p.Extractor = &InspectionSummaryTableExtractor{}
+		case infoschema.TableMetricSummary, infoschema.TableMetricSummaryByLabel:
 			p.Extractor = newMetricTableExtractor()
 		}
 	}
