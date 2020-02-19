@@ -39,7 +39,7 @@ type Optimizer struct {
 func NewOptimizer() *Optimizer {
 	return &Optimizer{
 		transformationRuleMap: defaultTransformationMap,
-		implementationRuleMap: DefaultImplementationMap,
+		implementationRuleMap: defaultImplementationMap,
 	}
 }
 
