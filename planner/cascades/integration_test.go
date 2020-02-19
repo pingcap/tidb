@@ -16,8 +16,6 @@ package cascades_test
 import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/planner/cascades"
-	"github.com/pingcap/tidb/planner/memo"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util/testkit"
@@ -225,38 +223,13 @@ func (s *testIntegrationSuite) TestJoin(c *C) {
 }
 
 func (s *testIntegrationSuite) TestIndexJoin(c *C) {
-	// TODO: This is dangerous which may cause data race. We need another way to test a single implementation rule.
-	cascades.DefaultOptimizer.ResetImplementationRules(map[memo.Operand][]cascades.ImplementationRule{
-		memo.OperandTableScan: {
-			&cascades.ImplTableScan{},
-		},
-		memo.OperandIndexScan: {
-			&cascades.ImplIndexScan{},
-		},
-		memo.OperandTiKVSingleGather: {
-			&cascades.ImplTiKVSingleReadGather{},
-		},
-		memo.OperandProjection: {
-			&cascades.ImplProjection{},
-		},
-		memo.OperandSelection: {
-			&cascades.ImplSelection{},
-		},
-		memo.OperandSort: {
-			&cascades.ImplSort{},
-		},
-		memo.OperandJoin: {
-			&cascades.ImplIndexJoin{},
-		},
-	})
-	defer func() { cascades.DefaultOptimizer.ResetImplementationRules(cascades.DefaultImplementationMap) }()
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("drop table if exists t2")
 	tk.MustExec("create table t1(a int primary key, b int)")
 	tk.MustExec("create table t2(a int primary key, b int)")
-	tk.MustExec("insert into t1 values (0, 0), (1, 0), (2, 0), (3, 0), (4, 0), (5, 0), (6, 0)")
-	tk.MustExec("insert into t2 values (0, 1), (2, 222), (3, 333), (5, 555)")
+	tk.MustExec("insert into t1 values (0, 0), (1, 0), (2, 0), (3, 0)")
+	tk.MustExec("insert into t2 values (0, 111), (2, 222), (3, 333), (5, 555)")
 	tk.MustExec("set session tidb_enable_cascades_planner = 1")
 
 	var input []string

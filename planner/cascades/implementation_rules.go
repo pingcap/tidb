@@ -34,7 +34,7 @@ type ImplementationRule interface {
 	OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) ([]memo.Implementation, error)
 }
 
-var DefaultImplementationMap = map[memo.Operand][]ImplementationRule{
+var defaultImplementationMap = map[memo.Operand][]ImplementationRule{
 	memo.OperandTableDual: {
 		&ImplTableDual{},
 	},
@@ -631,11 +631,13 @@ func (w *ImplWindow) OnImplement(expr *memo.GroupExpr, reqProp *property.Physica
 type ImplIndexJoin struct {
 }
 
+// Match implements ImplementationRule Match interface.
 func (r *ImplIndexJoin) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) (matched bool) {
 	all, _ := prop.AllSameOrder()
 	return all
 }
 
+// OnImplement implements ImplementationRule OnImplement interface.
 func (r *ImplIndexJoin) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) ([]memo.Implementation, error) {
 	join := expr.ExprNode.(*plannercore.LogicalJoin)
 	var supportLeftOuter, supportRightOuter bool

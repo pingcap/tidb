@@ -55,8 +55,6 @@ func (opt *Optimizer) ResetImplementationRules(rules map[memo.Operand][]Implemen
 	return opt
 }
 
-// Disable
-
 // GetTransformationRules gets the all the candidate Transformation rules of the optimizer
 // based on the logical plan node.
 func (opt *Optimizer) GetTransformationRules(node plannercore.LogicalPlan) []Transformation {

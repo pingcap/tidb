@@ -273,8 +273,8 @@ func (ts *PhysicalTableScan) ExpandVirtualColumn() {
 }
 
 // SetStats sets the stats of PhysicalTabelScan.
-func (p *PhysicalTableScan) SetStats(stats *property.StatsInfo) {
-	p.stats = stats
+func (ts *PhysicalTableScan) SetStats(stats *property.StatsInfo) {
+	ts.stats = stats
 }
 
 // PhysicalProjection is the physical operator of projection.
