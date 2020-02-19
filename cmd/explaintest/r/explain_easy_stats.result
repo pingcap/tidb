@@ -107,9 +107,9 @@ explain select c2 = (select c2 from t2 where t1.c1 = t2.c1 order by c1 limit 1) 
 id	count	task	operator info
 Projection_12	1999.00	root	eq(test.t1.c2, test.t2.c2)->Column#8
 └─Apply_14	1999.00	root	CARTESIAN left outer join, inner:Projection_43
-  ├─TableReader_16	1999.00	root	data:TableScan_15
+  ├─TableReader_16(Build)	1999.00	root	data:TableScan_15
   │ └─TableScan_15	1999.00	cop[tikv]	table:t1, range:[-inf,+inf], keep order:false
-  └─Projection_43	1.00	root	test.t2.c1, test.t2.c2
+  └─Projection_43(Probe)	1.00	root	test.t2.c1, test.t2.c2
     └─IndexLookUp_42	1.00	root	limit embedded(offset:0, count:1)
       ├─Limit_41(Build)	1.00	cop[tikv]	offset:0, count:1
       │ └─IndexScan_39	1.25	cop[tikv]	table:t2, index:c1, range: decided by [eq(test.t1.c1, test.t2.c1)], keep order:true

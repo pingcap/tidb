@@ -191,10 +191,10 @@ create table t2(a bigint, b bigint);
 desc select * from t1 where t1.a in (select t2.a as a from t2 where t2.b > t1.b order by t1.b limit 1);
 id	count	task	operator info
 Apply_15	9990.00	root	semi join, inner:Selection_19, equal:[eq(test.t1.a, test.t2.a)]
-├─TableReader_18	9990.00	root	data:Selection_17
+├─TableReader_18(Build)	9990.00	root	data:Selection_17
 │ └─Selection_17	9990.00	cop[tikv]	not(isnull(test.t1.a))
 │   └─TableScan_16	10000.00	cop[tikv]	table:t1, range:[-inf,+inf], keep order:false, stats:pseudo
-└─Selection_19	0.80	root	not(isnull(test.t2.a))
+└─Selection_19(Probe)	0.80	root	not(isnull(test.t2.a))
   └─Limit_20	1.00	root	offset:0, count:1
     └─TableReader_26	1.00	root	data:Limit_25
       └─Limit_25	1.00	cop[tikv]	offset:0, count:1
@@ -203,10 +203,10 @@ Apply_15	9990.00	root	semi join, inner:Selection_19, equal:[eq(test.t1.a, test.t
 desc select * from t1 where t1.a in (select a from (select t2.a as a, t1.b as b from t2 where t2.b > t1.b) x order by b limit 1);
 id	count	task	operator info
 Apply_17	9990.00	root	semi join, inner:Selection_21, equal:[eq(test.t1.a, test.t2.a)]
-├─TableReader_20	9990.00	root	data:Selection_19
+├─TableReader_20(Build)	9990.00	root	data:Selection_19
 │ └─Selection_19	9990.00	cop[tikv]	not(isnull(test.t1.a))
 │   └─TableScan_18	10000.00	cop[tikv]	table:t1, range:[-inf,+inf], keep order:false, stats:pseudo
-└─Selection_21	0.80	root	not(isnull(test.t2.a))
+└─Selection_21(Probe)	0.80	root	not(isnull(test.t2.a))
   └─Projection_22	1.00	root	test.t2.a, test.t1.b
     └─Limit_23	1.00	root	offset:0, count:1
       └─TableReader_29	1.00	root	data:Limit_28

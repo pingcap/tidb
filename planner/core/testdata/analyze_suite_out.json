@@ -267,9 +267,9 @@
       [
         "Projection_11 10.00 root Column#14",
         "└─Apply_13 10.00 root CARTESIAN left outer semi join, inner:StreamAgg_22, other cond:eq(test.t.c, Column#13)",
-        "  ├─TableReader_15 10.00 root data:TableScan_14",
+        "  ├─TableReader_15(Build) 10.00 root data:TableScan_14",
         "  │ └─TableScan_14 10.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false",
-        "  └─StreamAgg_22 1.00 root funcs:count(1)->Column#13",
+        "  └─StreamAgg_22(Probe) 1.00 root funcs:count(1)->Column#13",
         "    └─HashLeftJoin_23 1.00 root inner join, inner:TableReader_33, equal:[eq(test.t.a, test.t.a)]",
         "      ├─TableReader_27(Probe) 1.00 root data:Selection_26",
         "      │ └─Selection_26 1.00 cop[tikv] eq(test.t.a, test.t.a), not(isnull(test.t.a))",
@@ -281,9 +281,9 @@
       [
         "Projection_8 10.00 root Column#9",
         "└─Apply_10 10.00 root CARTESIAN left outer join, inner:MaxOneRow_15",
-        "  ├─TableReader_12 10.00 root data:TableScan_11",
+        "  ├─TableReader_12(Build) 10.00 root data:TableScan_11",
         "  │ └─TableScan_11 10.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false",
-        "  └─MaxOneRow_15 1.00 root ",
+        "  └─MaxOneRow_15(Probe) 1.00 root ",
         "    └─Projection_16 0.10 root concat(cast(test.t.a), ,, cast(test.t.b))->Column#9",
         "      └─IndexReader_19 0.10 root index:Selection_18",
         "        └─Selection_18 0.10 cop[tikv] eq(test.t.a, test.t.a)",
