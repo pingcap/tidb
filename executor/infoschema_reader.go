@@ -175,6 +175,9 @@ func (e *DDLJobsReaderExec) Open(ctx context.Context) error {
 		return err
 	}
 	err = e.DDLJobExecInitializer.initial(txn)
+	if err != nil {
+		return err
+	}
 	return nil
 }
 
