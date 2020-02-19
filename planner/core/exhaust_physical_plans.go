@@ -1525,11 +1525,11 @@ func (la *LogicalAggregation) canPushToCop() bool {
 	return ok
 }
 
-func (la *LogicalAggregation) getEnforcedStreamAggs(prop *property.PhysicalProperty) []PhysicalPlan {
+func (la *LogicalAggregation) getEnforcedStreamAggs(prop *property.PhysicalProperty, schema *expression.Schema, statsInfo *property.StatsInfo) []PhysicalPlan {
 	_, desc := prop.AllSameOrder()
 	enforcedAggs := make([]PhysicalPlan, 0, len(wholeTaskTypes))
 	childProp := &property.PhysicalProperty{
-		ExpectedCnt: math.Max(prop.ExpectedCnt*la.inputCount/la.stats.RowCount, prop.ExpectedCnt),
+		ExpectedCnt: math.Max(prop.ExpectedCnt*la.inputCount/statsInfo.RowCount, prop.ExpectedCnt),
 		Enforced:    true,
 		Items:       property.ItemsFromCols(la.groupByCols, desc),
 	}
@@ -1546,14 +1546,15 @@ func (la *LogicalAggregation) getEnforcedStreamAggs(prop *property.PhysicalPrope
 		agg := basePhysicalAgg{
 			GroupByItems: la.GroupByItems,
 			AggFuncs:     la.AggFuncs,
-		}.initForStream(la.ctx, la.stats.ScaleByExpectCnt(prop.ExpectedCnt), la.blockOffset, copiedChildProperty)
-		agg.SetSchema(la.schema.Clone())
+		}.initForStream(la.ctx, statsInfo.ScaleByExpectCnt(prop.ExpectedCnt), la.blockOffset, copiedChildProperty)
+		agg.SetSchema(schema.Clone())
 		enforcedAggs = append(enforcedAggs, agg)
 	}
 	return enforcedAggs
 }
 
-func (la *LogicalAggregation) getStreamAggs(prop *property.PhysicalProperty) []PhysicalPlan {
+// GetStreamAggs convert the logical agg to physical stream agg based on the physical property.
+func (la *LogicalAggregation) GetStreamAggs(prop *property.PhysicalProperty, schema *expression.Schema, statsInfo *property.StatsInfo) []PhysicalPlan {
 	all, desc := prop.AllSameOrder()
 	if !all {
 		return nil
@@ -1571,7 +1572,7 @@ func (la *LogicalAggregation) getStreamAggs(prop *property.PhysicalProperty) []P
 
 	streamAggs := make([]PhysicalPlan, 0, len(la.possibleProperties)*(len(wholeTaskTypes)-1)+len(wholeTaskTypes))
 	childProp := &property.PhysicalProperty{
-		ExpectedCnt: math.Max(prop.ExpectedCnt*la.inputCount/la.stats.RowCount, prop.ExpectedCnt),
+		ExpectedCnt: math.Max(prop.ExpectedCnt*la.inputCount/statsInfo.RowCount, prop.ExpectedCnt),
 	}
 
 	for _, possibleChildProperty := range la.possibleProperties {
@@ -1593,15 +1594,15 @@ func (la *LogicalAggregation) getStreamAggs(prop *property.PhysicalProperty) []P
 			agg := basePhysicalAgg{
 				GroupByItems: la.GroupByItems,
 				AggFuncs:     la.AggFuncs,
-			}.initForStream(la.ctx, la.stats.ScaleByExpectCnt(prop.ExpectedCnt), la.blockOffset, copiedChildProperty)
-			agg.SetSchema(la.schema.Clone())
+			}.initForStream(la.ctx, statsInfo.ScaleByExpectCnt(prop.ExpectedCnt), la.blockOffset, copiedChildProperty)
+			agg.SetSchema(schema.Clone())
 			streamAggs = append(streamAggs, agg)
 		}
 	}
 	// If STREAM_AGG hint is existed, it should consider enforce stream aggregation,
 	// because we can't trust possibleChildProperty completely.
 	if (la.aggHints.preferAggType & preferStreamAgg) > 0 {
-		streamAggs = append(streamAggs, la.getEnforcedStreamAggs(prop)...)
+		streamAggs = append(streamAggs, la.getEnforcedStreamAggs(prop, schema, statsInfo)...)
 	}
 	return streamAggs
 }
@@ -1655,7 +1656,7 @@ func (la *LogicalAggregation) exhaustPhysicalPlans(prop *property.PhysicalProper
 		return hashAggs
 	}
 
-	streamAggs := la.getStreamAggs(prop)
+	streamAggs := la.GetStreamAggs(prop)
 	if streamAggs != nil && preferStream {
 		return streamAggs
 	}

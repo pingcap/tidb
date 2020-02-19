@@ -343,6 +343,31 @@ func (r *ImplHashAgg) OnImplement(expr *memo.GroupExpr, reqProp *property.Physic
 	}
 }
 
+// ImplStreamAgg is the implementation rule which implements LogicalAggregation
+// to PhysicalStreamAgg.
+type ImplStreamAgg struct {
+}
+
+// Match implements ImplementationRule Match interface.
+func (r *ImplStreamAgg) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) (matched bool) {
+	all, _ := prop.AllSameOrder()
+	return all
+}
+
+// OnImplement implements ImplementationRule OnImplement interface.
+func (r *ImplStreamAgg) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) ([]memo.Implementation, error) {
+	la := expr.ExprNode.(*plannercore.LogicalAggregation)
+	physicalStreamAggs := la.GetStreamAggs(reqProp, expr.Schema(), expr.Group.Prop.Stats)
+
+	streamAggImpls := make([]memo.Implementation, 0, len(physicalStreamAggs))
+	for _, physicalPlan := range physicalStreamAggs {
+		physicalStreamAgg := physicalPlan.(*plannercore.PhysicalStreamAgg)
+		streamAggImpls = append(streamAggImpls, impl.NewStreamAggImpl(physicalStreamAgg))
+	}
+
+	return streamAggImpls, nil
+}
+
 // ImplLimit is the implementation rule which implements LogicalLimit
 // to PhysicalLimit.
 type ImplLimit struct {
