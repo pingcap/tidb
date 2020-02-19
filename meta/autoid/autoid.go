@@ -267,9 +267,9 @@ func (alloc *allocator) rebase4Sequence(tableID, requiredBase int64) error {
 	startTime := time.Now()
 	err := kv.RunInNewTxn(alloc.store, true, func(txn kv.Transaction) error {
 		m := meta.NewMeta(txn)
-		currentEnd, err1 := getAutoIDByAllocType(m, alloc.dbID, tableID, alloc.allocType)
-		if err1 != nil {
-			return err1
+		currentEnd, err := getAutoIDByAllocType(m, alloc.dbID, tableID, alloc.allocType)
+		if err != nil {
+			return err
 		}
 		if alloc.sequence.Increment > 0 {
 			if currentEnd >= requiredBase {
@@ -292,8 +292,8 @@ func (alloc *allocator) rebase4Sequence(tableID, requiredBase int64) error {
 		// will be allocated, so we need to increase the end to exactly the requiredBase.
 		newBase = requiredBase
 		newEnd = requiredBase
-		_, err1 = generateAutoIDByAllocType(m, alloc.dbID, tableID, newEnd-currentEnd, alloc.allocType)
-		return err1
+		_, err = generateAutoIDByAllocType(m, alloc.dbID, tableID, newEnd-currentEnd, alloc.allocType)
+		return err
 	})
 	// TODO: sequence metrics
 	metrics.AutoIDHistogram.WithLabelValues(metrics.TableAutoIDRebase, metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
@@ -806,14 +806,14 @@ func setSequenceBaseValue(m *meta.Meta, dbID, tableID, cycleValue int64) error {
 	return m.SetSequenceValue(dbID, tableID, cycleValue)
 }
 
-// setSequenceCycleRound is used to store whether the sequence is already in cycle.
+// setSequenceCycleRound is used to store the flag `round` which indicates whether the sequence is already in cycle.
 // round > 0 means the sequence is already in cycle, so the offset should be minvalue / maxvalue rather than sequence.start.
 // TiDB is a stateless node, it should know whether the sequence is already in cycle when restart.
 func setSequenceCycleRound(m *meta.Meta, dbID, tableID, round int64) error {
 	return m.SetSequenceCycle(dbID, tableID, round)
 }
 
-// getSequenceCycleRound is used to get whether the sequence is already in cycle.
+// getSequenceCycleRound is used to get the flag `round`, which indicates whether the sequence is already in cycle.
 func getSequenceCycleRound(m *meta.Meta, dbID, tableID int64) (int64, error) {
 	return m.GetSequenceCycle(dbID, tableID)
 }

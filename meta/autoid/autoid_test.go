@@ -590,11 +590,7 @@ func (*testSuite) TestSequenceAutoid(c *C) {
 			Name:     model.NewCIStr("seq"),
 			Sequence: seq,
 		}
-		if seq.Increment >= 0 {
-			sequenceBase = seq.Start - 1
-		} else {
-			sequenceBase = seq.Start + 1
-		}
+		sequenceBase = seq.Start - 1
 		err = m.CreateSequenceAndSetSeqValue(1, seqTable, sequenceBase)
 		c.Assert(err, IsNil)
 		return nil
