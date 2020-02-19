@@ -14,7 +14,6 @@
 package core
 
 import (
-	"github.com/pingcap/errors"
 	"math"
 
 	"github.com/pingcap/parser/ast"
@@ -1078,73 +1077,6 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 	return task, nil
 }
 
-func (ds *DataSource) convertToDoubleReadByPointGet(prop *property.PhysicalProperty, candidate *candidatePath, pg PhysicalPlan) (task task, err error) {
-	cop := &copTask{
-		indexPlan:   pg,
-		tblColHists: ds.TblColHists,
-		tblCols:     ds.TblCols,
-	}
-	switch x := pg.(type) {
-	case *PointGetPlan:
-		x.schema = expression.NewSchema(append(candidate.path.FullIdxCols, ds.getHandleCol())...)
-		cop.cst = x.cost
-	case *BatchPointGetPlan:
-		x.schema = expression.NewSchema(append(candidate.path.FullIdxCols, ds.getHandleCol())...)
-		cop.cst = x.cost
-	default:
-		return nil, errors.Errorf("invalid type of PhysicalPlan")
-	}
-	if pg.Schema().Columns[len(pg.Schema().Columns)-1] == nil {
-		pg.Schema().Columns = pg.Schema().Columns[:len(pg.Schema().Columns)-1]
-		pg.Schema().Columns = append(pg.Schema().Columns, ds.newExtraHandleSchemaCol())
-	}
-	if len(candidate.path.IndexFilters) > 0 {
-		sessVars := ds.ctx.GetSessionVars()
-		cop.cst += cop.indexPlan.statsInfo().RowCount * sessVars.CPUFactor
-		sel := PhysicalSelection{
-			Conditions: candidate.path.IndexFilters,
-		}.Init(ds.ctx, ds.stats.ScaleByExpectCnt(prop.ExpectedCnt), ds.blockOffset)
-		sel.SetChildren(pg)
-		cop.indexPlan = sel
-	}
-	ts := PhysicalTableScan{
-		Columns:         ds.Columns,
-		Table:           ds.tableInfo,
-		TableAsName:     ds.TableAsName,
-		isPartition:     ds.isPartition,
-		physicalTableID: ds.physicalTableID,
-		filterCondition: candidate.path.TableFilters,
-	}.Init(ds.ctx, ds.blockOffset)
-	ts.SetSchema(ds.schema.Clone())
-	ts.ExpandVirtualColumn()
-	cop.tablePlan = ts
-	ts.stats = cop.indexPlan.statsInfo()
-	rowSize := cop.tblColHists.GetIndexAvgRowSize(pg.SCtx(), candidate.path.IdxCols, candidate.path.Index.Unique)
-	cop.cst += float64(cop.indexPlan.Stats().Count()) * rowSize * ds.ctx.GetSessionVars().ScanFactor
-	cop.cst /= float64(ds.ctx.GetSessionVars().DistSQLScanConcurrency)
-
-	if candidate.isMatchProp {
-		col, isNew := cop.tablePlan.(*PhysicalTableScan).appendExtraHandleCol(ds)
-		cop.extraHandleCol = col
-		cop.doubleReadNeedProj = isNew
-		cop.keepOrder = true
-	}
-	ts.addPushedDownSelection(cop, ds.stats.ScaleByExpectCnt(prop.ExpectedCnt))
-	newTask := buildIndexLookUpTask(ds.ctx, cop, ds.schema)
-	// If len(IndexLookUpReader.children) != 0, that means its index side is a PointGet.
-	if proj, isProj := newTask.plan().(*PhysicalProjection); isProj {
-		proj.children[0].SetChildren(proj.children[0].(*PhysicalIndexLookUpReader).indexPlan)
-	} else {
-		newTask.plan().SetChildren(newTask.plan().(*PhysicalIndexLookUpReader).indexPlan)
-	}
-	if len(cop.rootTaskConds) > 0 {
-		sel := PhysicalSelection{Conditions: cop.rootTaskConds}.Init(ds.ctx, newTask.p.statsInfo(), newTask.p.SelectBlockOffset())
-		sel.SetChildren(newTask.p)
-		newTask.p = sel
-	}
-	return newTask, nil
-}
-
 func (ds *DataSource) convertToPointGet(prop *property.PhysicalProperty, candidate *candidatePath) (task task, err error) {
 	if !prop.IsEmpty() && !candidate.isMatchProp {
 		return invalidTask, nil
@@ -1201,23 +1133,24 @@ func (ds *DataSource) convertToPointGet(prop *property.PhysicalProperty, candida
 		pointGetPlan.IndexInfo = candidate.path.Index
 		pointGetPlan.IndexValues = candidate.path.Ranges[0].LowVal
 		pointGetPlan.PartitionInfo = partitionInfo
-		cost = pointGetPlan.GetCost(candidate.path.IdxCols)
-		if !candidate.isSingleScan {
-			return ds.convertToDoubleReadByPointGet(prop, candidate, pointGetPlan)
+		if candidate.isSingleScan {
+			cost = pointGetPlan.GetCost(candidate.path.IdxCols)
+		} else {
+			cost = pointGetPlan.GetCost(ds.TblCols)
 		}
 		// Add index condition to table plan now.
-		if len(candidate.path.IndexFilters) > 0 {
+		if len(candidate.path.IndexFilters) + len(candidate.path.TableFilters) > 0 {
 			sessVars := ds.ctx.GetSessionVars()
 			cost += pointGetPlan.stats.RowCount * sessVars.CPUFactor
 			sel := PhysicalSelection{
-				Conditions: candidate.path.IndexFilters,
+				Conditions: append(candidate.path.IndexFilters, candidate.path.TableFilters...),
 			}.Init(ds.ctx, ds.stats.ScaleByExpectCnt(prop.ExpectedCnt), ds.blockOffset)
 			sel.SetChildren(pointGetPlan)
 			rTsk.p = sel
 		}
-		rTsk.cst = cost
 	}
 
+	rTsk.cst = cost
 	return rTsk, nil
 }
 
@@ -1268,23 +1201,24 @@ func (ds *DataSource) convertToBatchPointGet(prop *property.PhysicalProperty, ca
 		for _, ran := range candidate.path.Ranges {
 			batchPointGetPlan.IndexValues = append(batchPointGetPlan.IndexValues, ran.LowVal)
 		}
-		cost = batchPointGetPlan.GetCost(candidate.path.IdxCols)
-		if !candidate.isSingleScan {
-			return ds.convertToDoubleReadByPointGet(prop, candidate, batchPointGetPlan)
+		if candidate.isSingleScan {
+			cost = batchPointGetPlan.GetCost(candidate.path.IdxCols)
+		} else {
+			cost = batchPointGetPlan.GetCost(ds.TblCols)
 		}
 		// Add index condition to table plan now.
-		if len(candidate.path.IndexFilters) > 0 {
+		if len(candidate.path.IndexFilters) + len(candidate.path.TableFilters) > 0 {
 			sessVars := ds.ctx.GetSessionVars()
 			cost += batchPointGetPlan.stats.RowCount * sessVars.CPUFactor
 			sel := PhysicalSelection{
-				Conditions: candidate.path.IndexFilters,
+				Conditions: append(candidate.path.IndexFilters, candidate.path.TableFilters...),
 			}.Init(ds.ctx, ds.stats.ScaleByExpectCnt(prop.ExpectedCnt), ds.blockOffset)
 			sel.SetChildren(batchPointGetPlan)
 			rTsk.p = sel
 		}
-		rTsk.cst = cost
 	}
 
+	rTsk.cst = cost
 	return rTsk, nil
 }
 

@@ -191,6 +191,7 @@ func (p *PointGetPlan) GetCost(cols []*expression.Column) float64 {
 	}
 	p.cost += rowSize * sessVars.NetworkFactor
 	p.cost += sessVars.SeekFactor
+	p.cost /= float64(sessVars.DistSQLScanConcurrency)
 	return p.cost
 }
 
@@ -311,6 +312,7 @@ func (p *BatchPointGetPlan) GetCost(cols []*expression.Column) float64 {
 	}
 	p.cost += rowCount * rowSize * sessVars.NetworkFactor
 	p.cost += rowCount * sessVars.SeekFactor
+	p.cost /= float64(sessVars.DistSQLScanConcurrency)
 	return p.cost
 }
 
