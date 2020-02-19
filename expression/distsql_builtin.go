@@ -18,7 +18,6 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/log"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
@@ -28,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tipb/go-tipb"
-	"go.uber.org/zap"
 )
 
 // PbTypeToFieldType converts tipb.FieldType to FieldType
@@ -1173,7 +1171,6 @@ func convertUint(val []byte) (*Constant, error) {
 }
 
 func convertString(val []byte, tp *tipb.FieldType) (*Constant, error) {
-	log.Warn("????", zap.String("tp", fmt.Sprintf("%v", tp)))
 	var d types.Datum
 	d.SetBytesAsString(val, collate.CollationID2Name(tp.Collate), uint32(tp.Flen))
 	return &Constant{Value: d, RetType: types.NewFieldType(mysql.TypeVarString)}, nil
