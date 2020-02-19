@@ -371,28 +371,19 @@ type checkIndexValue struct {
 	genExprs   map[model.TableColumnID]expression.Expression
 }
 
-func (e *IndexLookUpExecutor) indexSideIsPointGet() bool {
-	return len(e.children) > 0
-}
-
 // Open implements the Executor Open interface.
 func (e *IndexLookUpExecutor) Open(ctx context.Context) error {
 	var err error
-	if err = e.baseExecutor.Open(ctx); err != nil {
-		return err
-	}
 	if e.corColInAccess {
 		e.ranges, err = rebuildIndexRanges(e.ctx, e.idxPlans[0].(*plannercore.PhysicalIndexScan), e.idxCols, e.colLens)
 		if err != nil {
 			return err
 		}
 	}
-	if !e.indexSideIsPointGet() {
-		e.kvRanges, err = distsql.IndexRangesToKVRanges(e.ctx.GetSessionVars().StmtCtx, getPhysicalTableID(e.table), e.index.ID, e.ranges, e.feedback)
-		if err != nil {
-			e.feedback.Invalidate()
-			return err
-		}
+	e.kvRanges, err = distsql.IndexRangesToKVRanges(e.ctx.GetSessionVars().StmtCtx, getPhysicalTableID(e.table), e.index.ID, e.ranges, e.feedback)
+	if err != nil {
+		e.feedback.Invalidate()
+		return err
 	}
 	err = e.open(ctx)
 	if err != nil {
@@ -447,44 +438,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, kvRanges []k
 		collExec := true
 		e.dagPB.CollectExecutionSummaries = &collExec
 	}
-	// This means indexWorker is a PointGet or BatchPointGet
-	if e.indexSideIsPointGet() {
-		worker := &indexWorker{
-			idxLookup:       e,
-			workCh:          workCh,
-			finished:        e.finished,
-			resultCh:        e.resultCh,
-			keepOrder:       e.keepOrder,
-			batchSize:       initBatchSize,
-			checkIndexValue: e.checkIndexValue,
-			maxBatchSize:    e.ctx.GetSessionVars().IndexLookupSize,
-			maxChunkSize:    e.maxChunkSize,
-			PushedLimit:     e.PushedLimit,
-		}
-		if worker.batchSize > worker.maxBatchSize {
-			worker.batchSize = worker.maxBatchSize
-		}
-		e.idxWorkerWg.Add(1)
-		go func() {
-			ctx1, cancel := context.WithCancel(ctx)
-			count, err := worker.fetchHandles(ctx1, nil, e.children[0])
-			if err != nil {
-				e.feedback.Invalidate()
-			}
-			cancel()
-			if e.runtimeStats != nil {
-				copStats := e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetRootStats(e.idxPlans[len(e.idxPlans)-1].ExplainID().String())
-				copStats.SetRowNum(int64(count))
-				copStats = e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetRootStats(e.tblPlans[0].ExplainID().String())
-				copStats.SetRowNum(int64(count))
-			}
-			e.ctx.StoreQueryFeedback(e.feedback)
-			close(workCh)
-			close(e.resultCh)
-			e.idxWorkerWg.Done()
-		}()
-		return nil
-	}
+
 	tracker := memory.NewTracker(stringutil.StringerStr("IndexWorker"), e.ctx.GetSessionVars().MemQuotaIndexLookupReader)
 	tracker.AttachTo(e.memTracker)
 	var builder distsql.RequestBuilder
@@ -528,7 +482,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, kvRanges []k
 	e.idxWorkerWg.Add(1)
 	go func() {
 		ctx1, cancel := context.WithCancel(ctx)
-		count, err := worker.fetchHandles(ctx1, result, nil)
+		count, err := worker.fetchHandles(ctx1, result)
 		if err != nil {
 			e.feedback.Invalidate()
 		}
@@ -689,7 +643,7 @@ type indexWorker struct {
 // fetchHandles fetches a batch of handles from index data and builds the index lookup tasks.
 // The tasks are sent to workCh to be further processed by tableWorker, and sent to e.resultCh
 // at the same time to keep data ordered.
-func (w *indexWorker) fetchHandles(ctx context.Context, result distsql.SelectResult, exec Executor) (count uint64, err error) {
+func (w *indexWorker) fetchHandles(ctx context.Context, result distsql.SelectResult) (count uint64, err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			buf := make([]byte, 4096)
@@ -708,15 +662,13 @@ func (w *indexWorker) fetchHandles(ctx context.Context, result distsql.SelectRes
 		}
 	}()
 	var chk *chunk.Chunk
-	if exec != nil {
-		chk = chunk.NewChunkWithCapacity(exec.base().retFieldTypes, w.idxLookup.maxChunkSize)
-	} else if w.checkIndexValue != nil {
+	if w.checkIndexValue != nil {
 		chk = chunk.NewChunkWithCapacity(w.idxColTps, w.maxChunkSize)
 	} else {
 		chk = chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}, w.idxLookup.maxChunkSize)
 	}
 	for {
-		handles, retChunk, scannedKeys, err := w.extractTaskHandles(ctx, chk, result, exec, count)
+		handles, retChunk, scannedKeys, err := w.extractTaskHandles(ctx, chk, result, count)
 		if err != nil {
 			doneCh := make(chan error, 1)
 			doneCh <- err
@@ -741,7 +693,7 @@ func (w *indexWorker) fetchHandles(ctx context.Context, result distsql.SelectRes
 	}
 }
 
-func (w *indexWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, idxResult distsql.SelectResult, exec Executor, count uint64) (
+func (w *indexWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, idxResult distsql.SelectResult, count uint64) (
 	handles []int64, retChk *chunk.Chunk, scannedKeys uint64, err error) {
 	handleOffset := chk.NumCols() - 1
 	handles = make([]int64, 0, w.batchSize)
@@ -759,11 +711,7 @@ func (w *indexWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, 
 			}
 		}
 		chk.SetRequiredRows(requiredRows, w.maxChunkSize)
-		if exec != nil {
-			err = errors.Trace(Next(ctx, exec, chk))
-		} else {
-			err = errors.Trace(idxResult.Next(ctx, chk))
-		}
+		err = errors.Trace(idxResult.Next(ctx, chk))
 		if err != nil {
 			return handles, nil, scannedKeys, err
 		}
