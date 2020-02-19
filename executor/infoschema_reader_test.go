@@ -104,12 +104,7 @@ func (s *testInfoschemaTableSuite) TestDDLJobs(c *C) {
 	row = re.Rows()[0]
 	c.Assert(row[1], Equals, "test_ddl_jobs")
 	c.Assert(row[2], Equals, "t")
-
 	re = tk.MustQuery("select job_type from information_schema.DDL_JOBS group by job_type")
-	row = re.Rows()[0]
-	c.Assert(row[0], Equals, "create table")
-	row = re.Rows()[1]
-	c.Assert(row[0], Equals, "create schema")
 
 	c.Assert(tk.Se.NewTxn(context.Background()), IsNil)
 	txn, err := tk.Se.Txn(true)
