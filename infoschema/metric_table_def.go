@@ -56,7 +56,8 @@ var MetricTableMap = map[string]MetricTableDef{
 		Comment:  "The quantile of TiDB slow query statistics with slow query total cop wait time(second)",
 	},
 	"tidb_ops_internal": {
-		PromQL:  "sum(rate(tidb_session_restricted_sql_total[$RANGE_DURATION]))",
+		PromQL:  "sum(rate(tidb_session_restricted_sql_total{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (instance)",
+		Labels:  []string{"instance"},
 		Comment: "TiDB internal SQL is used by TiDB itself.",
 	},
 	"tidb_process_mem_usage": {
@@ -354,17 +355,20 @@ var MetricTableMap = map[string]MetricTableDef{
 		Quantile: 0.999,
 	},
 	"pd_tso_wait_duration": {
-		PromQL:   "histogram_quantile($QUANTILE, sum(rate(pd_client_cmd_handle_cmds_duration_seconds_bucket{type=\"wait\"}[$RANGE_DURATION])) by (le))",
+		PromQL:   "histogram_quantile($QUANTILE, sum(rate(pd_client_cmd_handle_cmds_duration_seconds_bucket{type=\"wait\"}[$RANGE_DURATION])) by (le,instance))",
+		Labels:   []string{"instance"},
 		Quantile: 0.999,
 		Comment:  "The quantile duration of a client starting to wait for the TS until received the TS result.",
 	},
 	"pd_tso_rpc_duration": {
 		Comment:  "The quantile duration of a client sending TSO request until received the response.",
-		PromQL:   "histogram_quantile($QUANTILE, sum(rate(pd_client_request_handle_requests_duration_seconds_bucket{type=\"tso\"}[$RANGE_DURATION])) by (le))",
+		PromQL:   "histogram_quantile($QUANTILE, sum(rate(pd_client_request_handle_requests_duration_seconds_bucket{type=\"tso\"}[$RANGE_DURATION])) by (le,instance))",
+		Labels:   []string{"instance"},
 		Quantile: 0.999,
 	},
 	"pd_start_tso_wait_duration": {
-		PromQL:   "histogram_quantile($QUANTILE, sum(rate(tidb_pdclient_ts_future_wait_seconds_bucket[$RANGE_DURATION])) by (le))",
+		PromQL:   "histogram_quantile($QUANTILE, sum(rate(tidb_pdclient_ts_future_wait_seconds_bucket{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (le,instance))",
+		Labels:   []string{"instance"},
 		Quantile: 0.999,
 		Comment:  "The quantile duration of the waiting time for getting the start timestamp oracle",
 	},
@@ -656,7 +660,7 @@ var MetricTableMap = map[string]MetricTableDef{
 	},
 	"pd_scheduler_store_status": {
 		PromQL: `pd_scheduler_store_status{$LABEL_CONDITIONS}`,
-		Labels: []string{"address", "instance", "store", "type"},
+		Labels: []string{"instance", "address", "store", "type"},
 	},
 	"store_available_ratio": {
 		PromQL:  `sum(pd_scheduler_store_status{type="store_available"}) by (address, store) / sum(pd_scheduler_store_status{type="store_capacity"}) by (address, store)`,
@@ -678,7 +682,7 @@ var MetricTableMap = map[string]MetricTableDef{
 	},
 	"pd_hotspot_status": {
 		PromQL: `pd_hotspot_status{$LABEL_CONDITIONS}`,
-		Labels: []string{"address", "instance", "store", "type"},
+		Labels: []string{"instance", "address", "store", "type"},
 	},
 	"pd_scheduler_status": {
 		PromQL: `pd_scheduler_status{$LABEL_CONDITIONS}`,
@@ -719,12 +723,12 @@ var MetricTableMap = map[string]MetricTableDef{
 
 	"pd_grpc_completed_commands_rate": {
 		PromQL:  `sum(rate(grpc_server_handling_seconds_count{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (grpc_method,instance)`,
-		Labels:  []string{"grpc_method", "instance"},
+		Labels:  []string{"instance", "grpc_method"},
 		Comment: "The rate of completing each kind of gRPC commands",
 	},
 	"pd_grpc_completed_commands_duration": {
 		PromQL:   `histogram_quantile($QUANTILE, sum(rate(grpc_server_handling_seconds_bucket{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (le,grpc_method,instance))`,
-		Labels:   []string{"grpc_method", "instance"},
+		Labels:   []string{"instance", "grpc_method"},
 		Quantile: 0.99,
 		Comment:  "The quantile time consumed of completing each kind of gRPC commands",
 	},
@@ -747,7 +751,7 @@ var MetricTableMap = map[string]MetricTableDef{
 	},
 	"pd_peer_round_trip_time_seconds": {
 		PromQL:   `histogram_quantile($QUANTILE, sum(rate(etcd_network_peer_round_trip_time_seconds_bucket{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (le,instance,To))`,
-		Labels:   []string{"To", "instance"},
+		Labels:   []string{"instance", "To"},
 		Quantile: 0.99,
 		Comment:  "The quantile latency of the network in .99",
 	},
@@ -778,7 +782,7 @@ var MetricTableMap = map[string]MetricTableDef{
 	},
 	"pd_scheduler_region_heartbeat": {
 		PromQL: `sum(rate(pd_scheduler_region_heartbeat{$LABEL_CONDITIONS}[$RANGE_DURATION])*60) by (address,instance, store, status,type)`,
-		Labels: []string{"address", "instance", "status", "store", "type"},
+		Labels: []string{"instance", "address", "status", "store", "type"},
 	},
 	"pd_region_syncer_status": {
 		PromQL: `pd_region_syncer_status{$LABEL_CONDITIONS}`,
@@ -806,7 +810,7 @@ var MetricTableMap = map[string]MetricTableDef{
 	},
 	"tikv_io_utilization": {
 		PromQL:  `rate(node_disk_io_time_seconds_total{$LABEL_CONDITIONS}[$RANGE_DURATION])`,
-		Labels:  []string{"device", "instance"},
+		Labels:  []string{"instance", "device"},
 		Comment: "The I/O utilization per TiKV instance",
 	},
 	"tikv_flow_mbps": {
@@ -856,7 +860,7 @@ var MetricTableMap = map[string]MetricTableDef{
 	},
 	"tikv_engine_write_stall": {
 		PromQL:  `avg(tikv_engine_write_stall{type="write_stall_percentile99"}) by (instance, db)`,
-		Labels:  []string{"db", "instance"},
+		Labels:  []string{"instance", "db"},
 		Comment: "Indicates occurrences of Write Stall events that make the TiKV instance unavailable temporarily",
 	},
 	"tikv_server_report_failures": {
@@ -986,7 +990,7 @@ var MetricTableMap = map[string]MetricTableDef{
 	},
 	"tikv_pd_requests": {
 		PromQL:  `sum(rate(tikv_pd_request_duration_seconds_count{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (type,instance)`,
-		Labels:  []string{"type", "instance"},
+		Labels:  []string{"instance", "type"},
 		Comment: "The count of requests that TiKV sends to PD",
 	},
 	"tikv_pd_request_avg_duration": {
@@ -1552,7 +1556,7 @@ var MetricTableMap = map[string]MetricTableDef{
 	},
 	"tikv_memtable_size": {
 		PromQL:  `avg(tikv_engine_memory_bytes{$LABEL_CONDITIONS}) by (type,instance,db,cf)`,
-		Labels:  []string{"cf", "instance", "type", "db"},
+		Labels:  []string{"instance", "cf", "type", "db"},
 		Comment: "The memtable size of each column family",
 	},
 	"tikv_memtable_hit": {
@@ -1562,7 +1566,7 @@ var MetricTableMap = map[string]MetricTableDef{
 	},
 	"tikv_block_cache_size": {
 		PromQL:  `topk(20, avg(tikv_engine_block_cache_size_bytes{$LABEL_CONDITIONS}) by(cf, instance, db))`,
-		Labels:  []string{"cf", "instance", "db"},
+		Labels:  []string{"instance", "cf", "db"},
 		Comment: "The block cache size. Broken down by column family if shared block cache is disabled.",
 	},
 	"tikv_block_all_cache_hit": {
@@ -1597,7 +1601,7 @@ var MetricTableMap = map[string]MetricTableDef{
 	},
 	"tikv_total_keys": {
 		PromQL:  `sum(tikv_engine_estimate_num_keys{$LABEL_CONDITIONS}) by (db,cf,instance)`,
-		Labels:  []string{"db", "cf", "instance"},
+		Labels:  []string{"instance", "db", "cf"},
 		Comment: "The count of keys in each column family",
 	},
 	"tikv_per_read_max_bytes": {
@@ -1627,7 +1631,7 @@ var MetricTableMap = map[string]MetricTableDef{
 	},
 	"tikv_compaction_pending_bytes": {
 		PromQL:  `sum(rate(tikv_engine_pending_compaction_bytes{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (cf,instance,db)`,
-		Labels:  []string{"cf", "instance", "db"},
+		Labels:  []string{"instance", "cf", "db"},
 		Comment: "The pending bytes to be compacted",
 	},
 	"tikv_read_amplication": {
@@ -1652,23 +1656,23 @@ var MetricTableMap = map[string]MetricTableDef{
 	},
 	"tikv_number_files_at_each_level": {
 		PromQL:  `avg(tikv_engine_num_files_at_level{$LABEL_CONDITIONS}) by (cf, level,db,instance)`,
-		Labels:  []string{"cf", "instance", "level", "db"},
+		Labels:  []string{"instance", "cf", "level", "db"},
 		Comment: "The number of SST files for different column families in each level",
 	},
-	"tikv_ingest_sst_duration_seconds": {
+	"tikv_ingest_sst_duration": {
 		PromQL:   `histogram_quantile($QUANTILE, sum(rate(tikv_snapshot_ingest_sst_duration_seconds_bucket{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (le,instance,db))`,
 		Labels:   []string{"instance", "db"},
 		Quantile: 0.99,
 		Comment:  "The quantile of time consumed when ingesting SST files",
 	},
-	"tikv_ingest_sst_avg_duration_seconds": {
+	"tikv_ingest_sst_avg_duration": {
 		PromQL:  `sum(rate(tikv_snapshot_ingest_sst_duration_seconds_sum{$LABEL_CONDITIONS}[$RANGE_DURATION])) / sum(rate(tikv_snapshot_ingest_sst_duration_seconds_count{$LABEL_CONDITIONS}[$RANGE_DURATION]))`,
 		Labels:  []string{"instance"},
 		Comment: "The average time consumed when ingesting SST files",
 	},
 	"tikv_stall_conditions_changed_of_each_cf": {
 		PromQL:  `tikv_engine_stall_conditions_changed{$LABEL_CONDITIONS}`,
-		Labels:  []string{"cf", "instance", "type", "db"},
+		Labels:  []string{"instance", "cf", "type", "db"},
 		Comment: "Stall conditions changed of each column family",
 	},
 	"tikv_write_stall_reason": {
@@ -1677,7 +1681,7 @@ var MetricTableMap = map[string]MetricTableDef{
 	},
 	"tikv_compaction_reason": {
 		PromQL: `sum(rate(tikv_engine_compaction_reason{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (db,cf,reason,instance)`,
-		Labels: []string{"cf", "instance", "reason", "db"},
+		Labels: []string{"instance", "cf", "reason", "db"},
 	},
 	"tikv_engine_blob_key_max_size": {
 		PromQL: `max(tikv_engine_blob_key_size{$LABEL_CONDITIONS}) by (db,instance,type)`,
@@ -1796,7 +1800,7 @@ var MetricTableMap = map[string]MetricTableDef{
 	},
 	"tikv_backup_range_size": {
 		PromQL:   `histogram_quantile($QUANTILE, sum(rate(tikv_backup_range_size_bytes_bucket{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (le,cf,instance))`,
-		Labels:   []string{"cf", "instance"},
+		Labels:   []string{"instance", "cf"},
 		Quantile: 0.99,
 	},
 	"tikv_backup_duration": {
@@ -1815,11 +1819,11 @@ var MetricTableMap = map[string]MetricTableDef{
 	},
 	"tikv_disk_read_bytes": {
 		PromQL: `sum(irate(node_disk_read_bytes_total{$LABEL_CONDITIONS}[$RANGE_DURATION]))  by (instance,device)`,
-		Labels: []string{"device", "instance"},
+		Labels: []string{"instance", "device"},
 	},
 	"tikv_disk_write_bytes": {
 		PromQL: `sum(irate(node_disk_written_bytes_total{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (instance,device)`,
-		Labels: []string{"device", "instance"},
+		Labels: []string{"instance", "device"},
 	},
 	"tikv_backup_range_duration": {
 		PromQL:   `histogram_quantile($QUANTILE, sum(rate(tikv_backup_range_duration_seconds_bucket{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (le,type,instance))`,
@@ -1832,7 +1836,7 @@ var MetricTableMap = map[string]MetricTableDef{
 	},
 	"tikv_backup_errors": {
 		PromQL: `rate(tikv_backup_error_counter{$LABEL_CONDITIONS}[$RANGE_DURATION])`,
-		Labels: []string{"error", "instance"},
+		Labels: []string{"instance", "error"},
 	},
 	"node_virtual_cpus": {
 		PromQL:  `count(node_cpu_seconds_total{mode="user"}) by (instance)`,
@@ -1943,30 +1947,30 @@ var MetricTableMap = map[string]MetricTableDef{
 	},
 	"node_disk_io_util": {
 		PromQL: `rate(node_disk_io_time_seconds_total{$LABEL_CONDITIONS}[$RANGE_DURATION]) or irate(node_disk_io_time_seconds_total{$LABEL_CONDITIONS}[$RANGE_DURATION])`,
-		Labels: []string{"device", "instance"},
+		Labels: []string{"instance", "device"},
 	},
 	"node_disk_iops": {
 		PromQL: `sum(rate(node_disk_reads_completed_total{$LABEL_CONDITIONS}[$RANGE_DURATION]) + rate(node_disk_writes_completed_total{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (instance,device)`,
-		Labels: []string{"device", "instance"},
+		Labels: []string{"instance", "device"},
 	},
 	"node_disk_write_latency": {
 		PromQL:  `(rate(node_disk_write_time_seconds_total{$LABEL_CONDITIONS}[$RANGE_DURATION])/ rate(node_disk_writes_completed_total{$LABEL_CONDITIONS}[$RANGE_DURATION]))`,
-		Labels:  []string{"device", "instance"},
+		Labels:  []string{"instance", "device"},
 		Comment: "node disk write latency(ms)",
 	},
 	"node_disk_read_latency": {
 		PromQL:  `(rate(node_disk_read_time_seconds_total{$LABEL_CONDITIONS}[$RANGE_DURATION])/ rate(node_disk_reads_completed_total{$LABEL_CONDITIONS}[$RANGE_DURATION]))`,
-		Labels:  []string{"device", "instance"},
+		Labels:  []string{"instance", "device"},
 		Comment: "node disk read latency(ms)",
 	},
 	"node_disk_throughput": {
 		PromQL:  `irate(node_disk_read_bytes_total{$LABEL_CONDITIONS}[$RANGE_DURATION]) + irate(node_disk_written_bytes_total{$LABEL_CONDITIONS}[$RANGE_DURATION])`,
-		Labels:  []string{"device", "instance"},
+		Labels:  []string{"instance", "device"},
 		Comment: "Units is byte",
 	},
 	"node_filesystem_space_used": {
 		PromQL:  `((node_filesystem_size_bytes{$LABEL_CONDITIONS} - node_filesystem_avail_bytes{$LABEL_CONDITIONS}) / node_filesystem_size_bytes{$LABEL_CONDITIONS}) * 100`,
-		Labels:  []string{"device", "instance"},
+		Labels:  []string{"instance", "device"},
 		Comment: "Filesystem used space. If is > 80% then is Critical.",
 	},
 	"node_file_descriptor_allocated": {
@@ -1975,48 +1979,48 @@ var MetricTableMap = map[string]MetricTableDef{
 	},
 	"node_network_in_drops": {
 		PromQL: `rate(node_network_receive_drop_total{$LABEL_CONDITIONS}[$RANGE_DURATION]) `,
-		Labels: []string{"device", "instance"},
+		Labels: []string{"instance", "device"},
 	},
 	"node_network_out_drops": {
 		PromQL: `rate(node_network_transmit_drop_total{$LABEL_CONDITIONS}[$RANGE_DURATION])`,
-		Labels: []string{"device", "instance"},
+		Labels: []string{"instance", "device"},
 	},
 	"node_network_in_errors": {
 		PromQL: `rate(node_network_receive_errs_total{$LABEL_CONDITIONS}[$RANGE_DURATION])`,
-		Labels: []string{"device", "instance"},
+		Labels: []string{"instance", "device"},
 	},
 	"node_network_out_errors": {
 		PromQL: `rate(node_network_transmit_errs_total{$LABEL_CONDITIONS}[$RANGE_DURATION])`,
-		Labels: []string{"device", "instance"},
+		Labels: []string{"instance", "device"},
 	},
 	"node_network_in_traffic": {
 		PromQL: `rate(node_network_receive_bytes_total{$LABEL_CONDITIONS}[$RANGE_DURATION]) or irate(node_network_receive_bytes_total{$LABEL_CONDITIONS}[$RANGE_DURATION])`,
-		Labels: []string{"device", "instance"},
+		Labels: []string{"instance", "device"},
 	},
 	"node_network_out_traffic": {
 		PromQL: `rate(node_network_transmit_bytes_total{$LABEL_CONDITIONS}[$RANGE_DURATION]) or irate(node_network_transmit_bytes_total{$LABEL_CONDITIONS}[$RANGE_DURATION])`,
-		Labels: []string{"device", "instance"},
+		Labels: []string{"instance", "device"},
 	},
 	"node_network_in_packets": {
 		PromQL: `rate(node_network_receive_packets_total{$LABEL_CONDITIONS}[$RANGE_DURATION]) or irate(node_network_receive_packets_total{$LABEL_CONDITIONS}[$RANGE_DURATION])`,
-		Labels: []string{"device", "instance"},
+		Labels: []string{"instance", "device"},
 	},
 	"node_network_out_packets": {
 		PromQL: `rate(node_network_transmit_packets_total{$LABEL_CONDITIONS}[$RANGE_DURATION]) or irate(node_network_transmit_packets_total{$LABEL_CONDITIONS}[$RANGE_DURATION])`,
-		Labels: []string{"device", "instance"},
+		Labels: []string{"instance", "device"},
 	},
 	"node_network_interface_speed": {
 		PromQL:  `node_network_transmit_queue_length{$LABEL_CONDITIONS}`,
-		Labels:  []string{"device", "instance"},
+		Labels:  []string{"instance", "device"},
 		Comment: "node_network_transmit_queue_length = transmit_queue_length value of /sys/class/net/<iface>.",
 	},
 	"node_network_utilization_in_hourly": {
 		PromQL: `sum(increase(node_network_receive_bytes_total{$LABEL_CONDITIONS}[1h]))`,
-		Labels: []string{"device", "instance"},
+		Labels: []string{"instance", "device"},
 	},
 	"node_network_utilization_out_hourly": {
 		PromQL: `sum(increase(node_network_transmit_bytes_total{$LABEL_CONDITIONS}[1h]))`,
-		Labels: []string{"device", "instance"},
+		Labels: []string{"instance", "device"},
 	},
 	"node_tcp_in_use": {
 		PromQL: `node_sockstat_TCP_inuse{$LABEL_CONDITIONS}`,

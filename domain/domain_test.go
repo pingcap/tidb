@@ -17,6 +17,7 @@ import (
 	"context"
 	"crypto/tls"
 	"math"
+	"net"
 	"testing"
 	"time"
 
@@ -73,7 +74,22 @@ func (mebd *mockEtcdBackend) StartGCWorker() error {
 	panic("not implemented")
 }
 
+// ETCD use ip:port as unix socket address, however this addrss is invalid on windows.
+// We have to skip some of the test in such case.
+// https://github.com/etcd-io/etcd/blob/f0faa5501d936cd8c9f561bb9d1baca70eb67ab1/pkg/types/urls.go#L42
+func unixSocketAvailable() bool {
+	c, err := net.Listen("unix", "127.0.0.1:0")
+	if err == nil {
+		c.Close()
+		return true
+	}
+	return false
+}
+
 func TestInfo(t *testing.T) {
+	if !unixSocketAvailable() {
+		return
+	}
 	defer testleak.AfterTestT(t)()
 	ddlLease := 80 * time.Millisecond
 	s, err := mockstore.NewMockTikvStore()
