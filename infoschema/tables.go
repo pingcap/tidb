@@ -854,6 +854,7 @@ var tableDDLJobsCols = []columnInfo{
 	{"START_TIME", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"END_TIME", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"STATE", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"QUERY", mysql.TypeVarchar, 64, 0, nil, nil},
 }
 
 func dataForTiKVRegionStatus(ctx sessionctx.Context) (records [][]types.Datum, err error) {
