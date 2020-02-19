@@ -488,7 +488,12 @@ func (e *clusterLogRetriever) startRetrieving(ctx context.Context, sctx sessionc
 	}
 
 	// The retrieve progress may be abort
-	ctx, e.cancel = context.WithCancel(ctx)
+	exit := make(chan struct{})
+	ctx, cancel := context.WithCancel(ctx)
+	e.cancel = func() {
+		close(exit)
+		cancel()
+	}
 
 	var results []chan logStreamResult
 	for _, srv := range serversInfo {
@@ -506,7 +511,7 @@ func (e *clusterLogRetriever) startRetrieving(ctx context.Context, sctx sessionc
 			util.WithRecovery(func() {
 				defer close(ch)
 
-				// The TiDB provide diagnostics service via status address
+				// The TiDB provides diagnostics service via status address
 				remote := address
 				if serverType == "tidb" {
 					remote = statusAddr
@@ -531,10 +536,19 @@ func (e *clusterLogRetriever) startRetrieving(ctx context.Context, sctx sessionc
 						return
 					}
 					if err != nil {
-						ch <- logStreamResult{addr: address, typ: serverType, err: err}
+						select {
+						case ch <- logStreamResult{addr: address, typ: serverType, err: err}:
+						case <-exit:
+						}
 						return
 					}
-					ch <- logStreamResult{next: ch, addr: address, typ: serverType, messages: res.Messages}
+
+					result := logStreamResult{next: ch, addr: address, typ: serverType, messages: res.Messages}
+					select {
+					case ch <- result:
+					case <-exit:
+						return
+					}
 				}
 			}, nil)
 		}(ch, typ, address, statusAddr)
@@ -600,7 +614,7 @@ func (e *clusterLogRetriever) retrieve(ctx context.Context, sctx sessionctx.Cont
 		}
 	}
 
-	// All stream are draied
+	// All streams are drained
 	e.isDrained = e.heap.Len() == 0
 
 	return finalRows, nil
