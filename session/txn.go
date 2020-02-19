@@ -16,29 +16,14 @@ package session
 import (
 	"context"
 
-	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/session/txnstate"
-	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tipb/go-binlog"
 )
 
 func (s *session) getTxnFuture(ctx context.Context) *txnstate.TxnFuture {
-	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-		span1 := span.Tracer().StartSpan("session.getTxnFuture", opentracing.ChildOf(span.Context()))
-		defer span1.Finish()
-		ctx = opentracing.ContextWithSpan(ctx, span1)
-	}
-
-	oracleStore := s.store.GetOracle()
-	var tsFuture oracle.Future
-	if s.sessionVars.LowResolutionTSO {
-		tsFuture = oracleStore.GetLowResolutionTimestampAsync(ctx)
-	} else {
-		tsFuture = oracleStore.GetTimestampAsync(ctx)
-	}
-	return txnstate.NewTxnFuture(tsFuture, s.store)
+	return txnstate.NewTxnFuture(ctx, s.store, s.sessionVars.LowResolutionTSO)
 }
 
 // HasDirtyContent checks whether there's dirty update on the given table.

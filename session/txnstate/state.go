@@ -21,6 +21,7 @@ import (
 	"strings"
 	"sync/atomic"
 
+	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/executor"
@@ -430,13 +431,23 @@ type TxnFuture struct {
 	store  kv.Storage
 }
 
-// NewTxnFuture constructs a new TxnFuture.
-func NewTxnFuture(future oracle.Future, store kv.Storage) *TxnFuture {
-	ret := &TxnFuture{
-		future: future,
-		store:  store,
+// NewTxnFuture creates a new TxnFuture.
+func NewTxnFuture(ctx context.Context, store kv.Storage, lowResolution bool) *TxnFuture {
+	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
+		span1 := span.Tracer().StartSpan("session.getTxnFuture", opentracing.ChildOf(span.Context()))
+		defer span1.Finish()
+		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
-	failpoint.InjectContext(context.Background(), "mockGetTSFail", func() {
+
+	oracleStore := store.GetOracle()
+	var tsFuture oracle.Future
+	if lowResolution {
+		tsFuture = oracleStore.GetLowResolutionTimestampAsync(ctx)
+	} else {
+		tsFuture = oracleStore.GetTimestampAsync(ctx)
+	}
+	ret := &TxnFuture{future: tsFuture, store: store}
+	failpoint.InjectContext(ctx, "mockGetTSFail", func() {
 		ret.future = txnFailFuture{}
 	})
 	return ret
