@@ -14,7 +14,6 @@
 package codec
 
 import (
-	"github.com/pingcap/tidb/util/collate"
 	"hash"
 	"hash/crc32"
 	"hash/fnv"
@@ -25,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/collate"
 )
 
 //func TestT(t *testing.T) {
