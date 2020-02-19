@@ -16,8 +16,6 @@ package executor_test
 import (
 	"bufio"
 	"bytes"
-	"fmt"
-	plannercore "github.com/pingcap/tidb/planner/core"
 	"io"
 	"os"
 	"strings"
@@ -25,6 +23,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/executor"
+	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
@@ -33,7 +32,9 @@ import (
 )
 
 func parseSlowLog(ctx sessionctx.Context, reader *bufio.Reader) ([][]types.Datum, int, error) {
-	rows, lineNum, err := executor.ParseSlowLog(ctx, reader, 0, 1024, nil)
+	extractor := &plannercore.SlowQueryExtractor{Enable: false}
+	retriever := executor.NewSlowQueryRetrieverForTest(extractor, nil)
+	rows, lineNum, err := retriever.ParseSlowLog(ctx, reader, 1024)
 	if err == io.EOF {
 		err = nil
 	}
@@ -211,7 +212,7 @@ select * from t;`)
 
 }
 
-func (s *testSuite1) TestSlowQueryLocateFiles(c *C) {
+func (s *testSuite) TestSlowQueryRetriever(c *C) {
 	writeFile := func(file string, data string) {
 		f, err := os.OpenFile(file, os.O_CREATE|os.O_WRONLY, 0644)
 		c.Assert(err, IsNil)
@@ -220,43 +221,145 @@ func (s *testSuite1) TestSlowQueryLocateFiles(c *C) {
 		c.Assert(err, IsNil)
 	}
 
-	logData1 := `# Time: 2020-02-15T18:00:01.000000+08:00
-select * from t;
+	logData1 := `
 # Time: 2020-02-15T18:00:01.000000+08:00
-select * from t;`
-	logData2 := `# Time: 2020-02-16T18:00:01.000000+08:00
-select * from t;
+select 1;
+# Time: 2020-02-15T19:00:05.000000+08:00
+select 2;`
+	logData2 := `
 # Time: 2020-02-16T18:00:01.000000+08:00
-select * from t;`
-	logData3 := `# Time: 2020-02-16T18:00:02.000000+08:00
-select * from t;
-# Time: 2020-02-15T18:00:03.000000+08:00
-select * from t;`
-	writeFile("tidb-slow-2020-02-15T19-04-05.01.log", logData1)
-	writeFile("tidb-slow-2020-02-16T19-04-05.01.log", logData2)
-	writeFile("tidb-slow.log", logData3)
+select 3;
+# Time: 2020-02-16T18:00:05.000000+08:00
+select 4;`
+	logData3 := `
+# Time: 2020-02-16T19:00:00.000000+08:00
+select 5;
+# Time: 2020-02-17T18:00:05.000000+08:00
+select 6;`
+
+	fileName1 := "tidb-slow-2020-02-15T19-04-05.01.log"
+	fileName2 := "tidb-slow-2020-02-16T19-04-05.01.log"
+	fileName3 := "tidb-slow.log"
+	writeFile(fileName1, logData1)
+	writeFile(fileName2, logData2)
+	writeFile(fileName3, logData3)
 	defer func() {
 		os.Remove("tidb-slow-2020-02-15T19-04-05.01.log")
 		os.Remove("tidb-slow-2020-02-16T19-04-05.01.log")
 		os.Remove("tidb-slow.log")
 	}()
 
-	startTime, err := executor.ParseTime("2020-01-14T00:15:27.438708708+08:00")
-	c.Assert(err, IsNil)
-	endTime, err := executor.ParseTime("2020-02-20T00:10:28.488427431+08:00")
-	c.Assert(err, IsNil)
-	extractor := &plannercore.SlowQueryExtractor{
-		Enable:    true,
-		StartTime: startTime,
-		EndTime:   endTime,
+	cases := []struct {
+		startTime string
+		endTime   string
+		files     []string
+		querys    []string
+	}{
+		{
+			startTime: "2020-02-15T18:00:00.000000+08:00",
+			endTime:   "2020-02-17T20:00:00.000000+08:00",
+			files:     []string{fileName1, fileName2, fileName3},
+			querys: []string{
+				"select 1;",
+				"select 2;",
+				"select 3;",
+				"select 4;",
+				"select 5;",
+				"select 6;",
+			},
+		},
+		{
+			startTime: "2020-02-15T18:00:02.000000+08:00",
+			endTime:   "2020-02-16T20:00:00.000000+08:00",
+			files:     []string{fileName1, fileName2, fileName3},
+			querys: []string{
+				"select 2;",
+				"select 3;",
+				"select 4;",
+				"select 5;",
+			},
+		},
+		{
+			startTime: "2020-02-16T18:00:03.000000+08:00",
+			endTime:   "2020-02-16T18:59:00.000000+08:00",
+			files:     []string{fileName2},
+			querys: []string{
+				"select 4;",
+			},
+		},
+		{
+			startTime: "2020-02-16T18:00:03.000000+08:00",
+			endTime:   "2020-02-16T20:00:00.000000+08:00",
+			files:     []string{fileName2, fileName3},
+			querys: []string{
+				"select 4;",
+				"select 5;",
+			},
+		},
+		{
+			startTime: "2020-02-16T19:00:00.000000+08:00",
+			endTime:   "2020-02-17T17:00:00.000000+08:00",
+			files:     []string{fileName3},
+			querys: []string{
+				"select 5;",
+			},
+		},
+		{
+			startTime: "2010-01-01T00:00:00.000000+08:00",
+			endTime:   "2010-01-01T01:00:00.000000+08:00",
+			files:     []string{},
+		},
+		{
+			startTime: "2020-03-01T00:00:00.000000+08:00",
+			endTime:   "2010-03-01T01:00:00.000000+08:00",
+			files:     []string{},
+		},
+		{
+			startTime: "",
+			endTime:   "",
+			files:     []string{fileName3},
+			querys: []string{
+				"select 5;",
+				"select 6;",
+			},
+		},
 	}
-	retriever := executor.NewSlowQueryRetrieverForTest(extractor)
-	files, err := retriever.GetAllFiles("tidb-slow.log")
+
+	loc, err := time.LoadLocation("Asia/Shanghai")
 	c.Assert(err, IsNil)
-	c.Assert(files, HasLen, 0)
-	for _, f := range files {
-		fmt.Printf("file: %v, start: %v, end: %v\n", f.File().Name(), f.BeginTime().Format(logutil.SlowLogTimeFormat), f.EndTime().Format(logutil.SlowLogTimeFormat))
-		err = f.File().Close()
+	s.ctx = mock.NewContext()
+	s.ctx.GetSessionVars().TimeZone = loc
+	for i, cas := range cases {
+		extractor := &plannercore.SlowQueryExtractor{Enable: (len(cas.startTime) > 0 && len(cas.endTime) > 0)}
+		if extractor.Enable {
+			startTime, err := executor.ParseTime(cas.startTime)
+			c.Assert(err, IsNil)
+			endTime, err := executor.ParseTime(cas.endTime)
+			c.Assert(err, IsNil)
+			extractor.StartTime = startTime
+			extractor.EndTime = endTime
+
+		}
+		retriever := executor.NewSlowQueryRetrieverForTest(extractor, nil)
+		files, err := retriever.GetAllFiles("tidb-slow.log")
 		c.Assert(err, IsNil)
+		comment := Commentf("case id: %v", i)
+		c.Assert(files, HasLen, len(cas.files), comment)
+		if len(files) > 0 {
+			retriever := executor.NewSlowQueryRetrieverForTest(extractor, files)
+			err = retriever.Initialize(s.ctx)
+			c.Assert(err, IsNil)
+			rows, _, err := retriever.ParseSlowLog(s.ctx, bufio.NewReader(files[0].File()), 1024)
+			c.Assert(err, IsNil)
+			c.Assert(len(rows), Equals, len(cas.querys), comment)
+			for i, row := range rows {
+				c.Assert(row[len(row)-1].GetString(), Equals, cas.querys[i], comment)
+			}
+		}
+
+		for i, file := range files {
+			c.Assert(file.File().Name(), Equals, cas.files[i])
+			c.Assert(file.File().Close(), IsNil)
+		}
 	}
 }

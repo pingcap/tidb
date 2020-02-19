@@ -657,13 +657,6 @@ func (e *SlowQueryExtractor) setTimeRange(start, end int64) {
 	e.Enable = true
 }
 
-func (e *SlowQueryExtractor) CheckTimeInvalid(t time.Time) bool {
-	if !e.Enable || t.Before(e.StartTime) || t.After(e.EndTime) {
-		return true
-	}
-	return false
-}
-
 func (e *SlowQueryExtractor) convertToTime(t int64) time.Time {
 	if t == 0 || t == math.MaxInt64 {
 		return time.Now()
