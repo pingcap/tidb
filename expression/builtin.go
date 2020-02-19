@@ -179,7 +179,7 @@ func newBaseBuiltinFuncWithTp(ctx sessionctx.Context, args []Expression, retType
 			Flag:    mysql.BinaryFlag,
 		}
 	}
-	if mysql.HasBinaryFlag(fieldType.Flag) && fieldType.Tp != mysql.TypeJSON {
+	if fieldType.Charset == charset.CharsetBin && fieldType.Tp != mysql.TypeJSON {
 		fieldType.Charset, fieldType.Collate = charset.CharsetBin, charset.CollationBin
 	} else {
 		fieldType.Charset, fieldType.Collate = charset.GetDefaultCharsetAndCollate()

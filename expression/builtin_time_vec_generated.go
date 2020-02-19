@@ -364,7 +364,7 @@ func (b *builtinAddStringAndStringSig) vecEvalString(input *chunk.Chunk, result 
 	}
 
 	arg1Type := b.args[1].GetType()
-	if mysql.HasBinaryFlag(arg1Type.Flag) {
+	if arg1Type.Charset == charset.CharsetBin {
 		result.ReserveString(n)
 		for i := 0; i < n; i++ {
 			result.AppendNull()
@@ -976,7 +976,7 @@ func (b *builtinSubStringAndStringSig) vecEvalString(input *chunk.Chunk, result 
 	}
 
 	arg1Type := b.args[1].GetType()
-	if mysql.HasBinaryFlag(arg1Type.Flag) {
+	if arg1Type.Flag.Charset == charset.CharsetBin {
 		result.ReserveString(n)
 		for i := 0; i < n; i++ {
 			result.AppendNull()
