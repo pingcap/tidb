@@ -1561,7 +1561,7 @@ func dataForPartitions(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]typ
 			if checker != nil && !checker.RequestVerification(ctx.GetSessionVars().ActiveRoles, schema.Name.L, table.Name.L, "", mysql.SelectPriv) {
 				continue
 			}
-			createTime := types.Time{Time:types.FromGoTime(table.GetUpdateTime()), Type: mysql.TypeDatetime}
+			createTime := types.Time{Time: types.FromGoTime(table.GetUpdateTime()), Type: mysql.TypeDatetime}
 
 			var rowCount, dataLength, indexLength uint64
 			if table.GetPartitionInfo() == nil {
@@ -1648,7 +1648,6 @@ func dataForPartitions(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]typ
 	}
 	return rows, nil
 }
-
 
 func dataForKeyColumnUsage(schemas []*model.DBInfo) [][]types.Datum {
 	rows := make([][]types.Datum, 0, len(schemas)) // The capacity is not accurate, but it is not a big problem.
