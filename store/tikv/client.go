@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/prometheus/client_golang/prometheus"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/backoff"
 	"google.golang.org/grpc/connectivity"
@@ -212,6 +213,8 @@ type rpcClient struct {
 	conns    map[string]*connArray
 	security config.Security
 
+	tiKVSendReqHistCache sync.Map
+
 	idleNotify uint32
 	// Periodically check whether there is any connection that is idle and then close and remove these idle connections.
 	// Implement background cleanup.
@@ -276,6 +279,17 @@ func (c *rpcClient) closeConns() {
 	c.Unlock()
 }
 
+func (c *rpcClient) getTiKVSendReqHist(storeID uint64, reqType tikvrpc.CmdType) prometheus.Observer {
+	key := storeID<<16 | uint64(reqType)
+	if m, ok := c.tiKVSendReqHistCache.Load(key); ok {
+		return m.(prometheus.Observer)
+	}
+
+	m := metrics.TiKVSendReqHistogram.WithLabelValues(reqType.String(), strconv.FormatUint(storeID, 10))
+	c.tiKVSendReqHistCache.Store(key, m)
+	return m
+}
+
 // SendRequest sends a Request to server and receives Response.
 func (c *rpcClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
@@ -285,10 +299,10 @@ func (c *rpcClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 	}
 
 	start := time.Now()
-	reqType := req.Type.String()
-	storeID := strconv.FormatUint(req.Context.GetPeer().GetStoreId(), 10)
+	reqType := req.Type
+	storeID := req.Context.GetPeer().GetStoreId()
 	defer func() {
-		metrics.TiKVSendReqHistogram.WithLabelValues(reqType, storeID).Observe(time.Since(start).Seconds())
+		c.getTiKVSendReqHist(storeID, reqType).Observe(time.Since(start).Seconds())
 	}()
 
 	if atomic.CompareAndSwapUint32(&c.idleNotify, 1, 0) {
@@ -311,6 +325,7 @@ func (c *rpcClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 
 	clientConn := connArray.Get()
 	if state := clientConn.GetState(); state == connectivity.TransientFailure {
+		storeID := strconv.FormatUint(req.Context.GetPeer().GetStoreId(), 10)
 		metrics.GRPCConnTransientFailureCounter.WithLabelValues(addr, storeID).Inc()
 	}
 
