@@ -740,30 +740,32 @@ func (e *Explain) explainPlanInRowFormat(p Plan, taskType, driverSide, indent st
 	childIndent := texttree.Indent4Child(indent, isLastChild)
 
 	if physPlan, ok := p.(PhysicalPlan); ok {
-		// indicate driven side and driving side of 'join'.
+		// indicate driven side and driving side of 'join' and 'apply'
 		// See issue https://github.com/pingcap/tidb/issues/14602.
 		driverSideInfo := make([]string, len(physPlan.Children()))
 		buildSide := -1
 
-		switch physJoinPlan := physPlan.(type) {
+		switch plan := physPlan.(type) {
+		case *PhysicalApply:
+			buildSide = plan.InnerChildIdx ^ 1
 		case *PhysicalHashJoin:
-			if physJoinPlan.UseOuterToBuild {
-				buildSide = physJoinPlan.InnerChildIdx ^ 1
+			if plan.UseOuterToBuild {
+				buildSide = plan.InnerChildIdx ^ 1
 			} else {
-				buildSide = physJoinPlan.InnerChildIdx
+				buildSide = plan.InnerChildIdx
 			}
 		case *PhysicalMergeJoin:
-			if physJoinPlan.JoinType == RightOuterJoin {
+			if plan.JoinType == RightOuterJoin {
 				buildSide = 0
 			} else {
 				buildSide = 1
 			}
 		case *PhysicalIndexJoin:
-			buildSide = physJoinPlan.InnerChildIdx ^ 1
+			buildSide = plan.InnerChildIdx ^ 1
 		case *PhysicalIndexMergeJoin:
-			buildSide = physJoinPlan.InnerChildIdx ^ 1
+			buildSide = plan.InnerChildIdx ^ 1
 		case *PhysicalIndexHashJoin:
-			buildSide = physJoinPlan.InnerChildIdx ^ 1
+			buildSide = plan.InnerChildIdx ^ 1
 		}
 
 		if buildSide != -1 {
