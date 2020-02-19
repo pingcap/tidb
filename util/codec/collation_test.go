@@ -27,11 +27,6 @@ import (
 	"github.com/pingcap/tidb/util/collate"
 )
 
-//func TestT(t *testing.T) {
-//	CustomVerboseFlag = true
-//	TestingT(t)
-//}
-
 var _ = SerialSuites(&testCollationSuite{})
 
 type testCollationSuite struct {
