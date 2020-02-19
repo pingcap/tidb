@@ -442,9 +442,10 @@
       {
         "SQL": "select a from t limit 2",
         "Plan": [
-          "Limit_6 2.00 root offset:0, count:2",
-          "└─TableReader_7 2.00 root data:TableScan_8",
-          "  └─TableScan_8 2.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false, stats:pseudo"
+          "Limit_7 2.00 root offset:0, count:2",
+          "└─TableReader_8 2.00 root data:Limit_9",
+          "  └─Limit_9 2.00 cop[tikv] offset:0, count:2",
+          "    └─TableScan_10 2.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false, stats:pseudo"
         ],
         "Result": [
           "1",
@@ -454,9 +455,10 @@
       {
         "SQL": "select a from t limit 1 offset 2",
         "Plan": [
-          "Limit_6 1.00 root offset:2, count:1",
-          "└─TableReader_7 3.00 root data:TableScan_8",
-          "  └─TableScan_8 3.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false, stats:pseudo"
+          "Limit_7 1.00 root offset:2, count:1",
+          "└─TableReader_8 3.00 root data:Limit_9",
+          "  └─Limit_9 3.00 cop[tikv] offset:0, count:3",
+          "    └─TableScan_10 3.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false, stats:pseudo"
         ],
         "Result": [
           "3"
@@ -743,23 +745,25 @@
       {
         "SQL": "select sum(a), (select t1.a from t1 where t1.a = t2.a limit 1), (select t1.b from t1 where t1.b = t2.b limit 1) from t2",
         "Plan": [
-          "Projection_26 1.00 root Column#3, test.t1.a, test.t1.b",
-          "└─Apply_28 1.00 root CARTESIAN left outer join, inner:MaxOneRow_43",
-          "  ├─Apply_30 1.00 root CARTESIAN left outer join, inner:MaxOneRow_38",
-          "  │ ├─HashAgg_35 1.00 root funcs:sum(Column#8)->Column#3, funcs:firstrow(Column#9)->test.t2.a, funcs:firstrow(Column#10)->test.t2.b",
-          "  │ │ └─TableReader_36 1.00 root data:HashAgg_37",
-          "  │ │   └─HashAgg_37 1.00 cop[tikv] funcs:sum(test.t2.a)->Column#8, funcs:firstrow(test.t2.a)->Column#9, funcs:firstrow(test.t2.b)->Column#10",
-          "  │ │     └─TableScan_33 10000.00 cop[tikv] table:t2, range:[-inf,+inf], keep order:false, stats:pseudo",
-          "  │ └─MaxOneRow_38 1.00 root ",
-          "  │   └─Limit_39 1.00 root offset:0, count:1",
-          "  │     └─TableReader_40 1.00 root data:Selection_41",
-          "  │       └─Selection_41 1.00 cop[tikv] eq(test.t1.a, test.t2.a)",
-          "  │         └─TableScan_42 1.00 cop[tikv] table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
-          "  └─MaxOneRow_43 1.00 root ",
-          "    └─Limit_44 1.00 root offset:0, count:1",
-          "      └─TableReader_45 1.00 root data:Selection_46",
-          "        └─Selection_46 1.00 cop[tikv] eq(test.t1.b, test.t2.b)",
-          "          └─TableScan_47 1.00 cop[tikv] table:t1, range:[-inf,+inf], keep order:false, stats:pseudo"
+          "Projection_28 1.00 root Column#3, test.t1.a, test.t1.b",
+          "└─Apply_30 1.00 root CARTESIAN left outer join, inner:MaxOneRow_46",
+          "  ├─Apply_32 1.00 root CARTESIAN left outer join, inner:MaxOneRow_40",
+          "  │ ├─HashAgg_37 1.00 root funcs:sum(Column#8)->Column#3, funcs:firstrow(Column#9)->test.t2.a, funcs:firstrow(Column#10)->test.t2.b",
+          "  │ │ └─TableReader_38 1.00 root data:HashAgg_39",
+          "  │ │   └─HashAgg_39 1.00 cop[tikv] funcs:sum(test.t2.a)->Column#8, funcs:firstrow(test.t2.a)->Column#9, funcs:firstrow(test.t2.b)->Column#10",
+          "  │ │     └─TableScan_35 10000.00 cop[tikv] table:t2, range:[-inf,+inf], keep order:false, stats:pseudo",
+          "  │ └─MaxOneRow_40 1.00 root ",
+          "  │   └─Limit_41 1.00 root offset:0, count:1",
+          "  │     └─TableReader_42 1.00 root data:Limit_43",
+          "  │       └─Limit_43 1.00 cop[tikv] offset:0, count:1",
+          "  │         └─Selection_44 1.00 cop[tikv] eq(test.t1.a, test.t2.a)",
+          "  │           └─TableScan_45 1.00 cop[tikv] table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
+          "  └─MaxOneRow_46 1.00 root ",
+          "    └─Limit_47 1.00 root offset:0, count:1",
+          "      └─TableReader_48 1.00 root data:Limit_49",
+          "        └─Limit_49 1.00 cop[tikv] offset:0, count:1",
+          "          └─Selection_50 1.00 cop[tikv] eq(test.t1.b, test.t2.b)",
+          "            └─TableScan_51 1.00 cop[tikv] table:t1, range:[-inf,+inf], keep order:false, stats:pseudo"
         ],
         "Result": [
           "6 1 11"
