@@ -14,14 +14,10 @@
 package executor_test
 
 import (
-	"context"
-	"strconv"
-
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
@@ -91,26 +87,14 @@ func (s *testInfoschemaTableSuite) TestViews(c *C) {
 func (s *testInfoschemaTableSuite) TestDDLJobs(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("create database if not exists test_ddl_jobs")
-	re := tk.MustQuery("select * from information_schema.DDL_JOBS")
-	row := re.Rows()[0]
-	c.Assert(row[1], Equals, "test_ddl_jobs")
-	c.Assert(row[3], Equals, "create schema")
-	jobID, err := strconv.Atoi(row[0].(string))
-	c.Assert(err, IsNil)
+	tk.MustQuery("select db_name, job_type from information_schema.DDL_JOBS limit 1").Check(
+		testkit.Rows("test_ddl_jobs create schema"))
 
 	tk.MustExec("use test_ddl_jobs")
 	tk.MustExec("create table t (a int);")
-	re = tk.MustQuery("select * from information_schema.DDL_JOBS where job_type='create table'")
-	row = re.Rows()[0]
-	c.Assert(row[1], Equals, "test_ddl_jobs")
-	c.Assert(row[2], Equals, "t")
-	re = tk.MustQuery("select job_type from information_schema.DDL_JOBS group by job_type")
+	tk.MustQuery("select db_name, table_name, job_type from information_schema.DDL_JOBS where table_name = 't'").Check(
+		testkit.Rows("test_ddl_jobs t create table"))
 
-	c.Assert(tk.Se.NewTxn(context.Background()), IsNil)
-	txn, err := tk.Se.Txn(true)
-	c.Assert(err, IsNil)
-	t := meta.NewMeta(txn)
-	job, err := t.GetHistoryDDLJob(int64(jobID))
-	c.Assert(err, IsNil)
-	c.Assert(job, NotNil)
+	tk.MustQuery("select job_type from information_schema.DDL_JOBS group by job_type having job_type = 'create table'").Check(
+		testkit.Rows("create table"))
 }

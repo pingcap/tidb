@@ -21,11 +21,9 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/chunk"
 )
 
@@ -161,11 +159,10 @@ func dataForViews(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.Da
 // DDLJobsReaderExec executes DDLJobs information retrieving
 type DDLJobsReaderExec struct {
 	baseExecutor
-	cursor         int
-	runningJobs    []*model.Job
-	historyJobIter *meta.LastJobIterator
-	cacheJobs      []*model.Job
-	is             infoschema.InfoSchema
+	DDLJobExecInitializer
+
+	cacheJobs []*model.Job
+	is        infoschema.InfoSchema
 }
 
 // Open implements the Executor Next interface.
@@ -177,17 +174,7 @@ func (e *DDLJobsReaderExec) Open(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	jobs, err := admin.GetDDLJobs(txn)
-	if err != nil {
-		return err
-	}
-	m := meta.NewMeta(txn)
-	e.historyJobIter, err = m.GetLastHistoryDDLJobsIterator()
-	if err != nil {
-		return err
-	}
-	e.runningJobs = append(e.runningJobs, jobs...)
-	e.cursor = 0
+	err = e.DDLJobExecInitializer.initial(txn)
 	return nil
 }
 
