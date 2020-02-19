@@ -516,8 +516,8 @@ func (thresholdCheckInspection) inspectThreshold2(ctx context.Context, sctx sess
 			item:      "get-token-duration",
 			tbl:       "tidb_get_token_duration",
 			condition: "quantile=0.999",
-			threshold: 0.001 * 10e5,
-		}, // the unit is microsecond
+			threshold: 0.001 * 10e5, // the unit is microsecond
+		},
 		{
 			tp:        "tidb",
 			item:      "load-schema-duration",
@@ -557,21 +557,21 @@ func (thresholdCheckInspection) inspectThreshold2(ctx context.Context, sctx sess
 			item:      "rocksdb-write-duration",
 			tbl:       "tikv_engine_write_duration",
 			condition: "type='write_max'",
-			threshold: 0.1 * 10e5,
+			threshold: 0.1 * 10e5, // the unit is microsecond
 		},
 		{
 			tp:        "tikv",
 			item:      "rocksdb-get-duration",
 			tbl:       "tikv_engine_max_get_duration",
 			condition: "type='get_max'",
-			threshold: 0.05 * 10e5,
+			threshold: 0.05 * 10e5, // the unit is microsecond
 		},
 		{
 			tp:        "tikv",
 			item:      "rocksdb-seek-duration",
 			tbl:       "tikv_engine_max_seek_duration",
 			condition: "type='seek_max'",
-			threshold: 0.05 * 10e5,
+			threshold: 0.05 * 10e5, // the unit is microsecond
 		},
 		{
 			tp:        "tikv",
