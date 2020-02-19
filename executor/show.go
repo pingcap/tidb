@@ -23,6 +23,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
@@ -55,7 +56,6 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/format"
 	"github.com/pingcap/tidb/util/hack"
-	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 )
 
@@ -126,6 +126,8 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 		return e.fetchShowColumns(ctx)
 	case ast.ShowCreateTable:
 		return e.fetchShowCreateTable()
+	case ast.ShowCreateSequence:
+		return e.fetchShowCreateSequence()
 	case ast.ShowCreateUser:
 		return e.fetchShowCreateUser()
 	case ast.ShowCreateView:
@@ -898,6 +900,46 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 	return nil
 }
 
+// ConstructResultOfShowCreateSequence constructs the result for show create sequence.
+func ConstructResultOfShowCreateSequence(ctx sessionctx.Context, tableInfo *model.TableInfo, buf *bytes.Buffer) {
+	sqlMode := ctx.GetSessionVars().SQLMode
+	fmt.Fprintf(buf, "CREATE SEQUENCE %s ", escape(tableInfo.Name, sqlMode))
+	sequenceInfo := tableInfo.Sequence
+	fmt.Fprintf(buf, "start with %d ", sequenceInfo.Start)
+	fmt.Fprintf(buf, "minvalue %d ", sequenceInfo.MinValue)
+	fmt.Fprintf(buf, "maxvalue %d ", sequenceInfo.MaxValue)
+	fmt.Fprintf(buf, "increment by %d ", sequenceInfo.Increment)
+	if sequenceInfo.Cache {
+		fmt.Fprintf(buf, "cache %d ", sequenceInfo.CacheValue)
+	} else {
+		buf.WriteString("nocache ")
+	}
+	if sequenceInfo.Cycle {
+		buf.WriteString("cycle ")
+	} else {
+		buf.WriteString("nocycle ")
+	}
+	buf.WriteString("ENGINE=InnoDB")
+	if len(sequenceInfo.Comment) > 0 {
+		fmt.Fprintf(buf, " COMMENT='%s'", format.OutputFormat(sequenceInfo.Comment))
+	}
+}
+
+func (e *ShowExec) fetchShowCreateSequence() error {
+	tbl, err := e.getTable()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	tableInfo := tbl.Meta()
+	if !tableInfo.IsSequence() {
+		return ErrWrongObject.GenWithStackByArgs(e.DBName.O, tableInfo.Name.O, "SEQUENCE")
+	}
+	var buf bytes.Buffer
+	ConstructResultOfShowCreateSequence(e.ctx, tableInfo, &buf)
+	e.appendRow([]interface{}{tableInfo.Name.O, buf.String()})
+	return nil
+}
+
 func (e *ShowExec) fetchShowCreateTable() error {
 	tb, err := e.getTable()
 	if err != nil {
@@ -908,7 +950,7 @@ func (e *ShowExec) fetchShowCreateTable() error {
 	allocator := tb.Allocator(e.ctx, autoid.RowIDAllocType)
 	var buf bytes.Buffer
 	// TODO: let the result more like MySQL.
-	if err = ConstructResultOfShowCreateTable(e.ctx, tb.Meta(), allocator, &buf); err != nil {
+	if err = ConstructResultOfShowCreateTable(e.ctx, tableInfo, allocator, &buf); err != nil {
 		return err
 	}
 	if tableInfo.IsView() {
@@ -916,7 +958,7 @@ func (e *ShowExec) fetchShowCreateTable() error {
 		return nil
 	}
 
-	e.appendRow([]interface{}{tb.Meta().Name.O, buf.String()})
+	e.appendRow([]interface{}{tableInfo.Name.O, buf.String()})
 	return nil
 }
 
@@ -981,7 +1023,7 @@ func appendPartitionInfo(partitionInfo *model.PartitionInfo, buf *bytes.Buffer) 
 	}
 	for i, def := range partitionInfo.Definitions {
 		lessThans := strings.Join(def.LessThan, ",")
-		fmt.Fprintf(buf, "  PARTITION %s VALUES LESS THAN (%s)", def.Name, lessThans)
+		fmt.Fprintf(buf, "  PARTITION `%s` VALUES LESS THAN (%s)", def.Name, lessThans)
 		if i < len(partitionInfo.Definitions)-1 {
 			buf.WriteString(",\n")
 		} else {

@@ -21,12 +21,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cznic/mathutil"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/stringutil"
 )
@@ -35,13 +35,13 @@ import (
 // and push the predicates down to the data retrieving on reading memory table stage.
 //
 // e.g:
-// SELECT * FROM cluster_config WHERE type='tikv' AND address='192.168.1.9:2379'
+// SELECT * FROM cluster_config WHERE type='tikv' AND instance='192.168.1.9:2379'
 // We must request all components in the cluster via HTTP API for retrieving
-// configurations and filter them by `type/address` columns.
+// configurations and filter them by `type/instance` columns.
 //
 // The purpose of defining a `MemTablePredicateExtractor` is to optimize this
 // 1. Define a `ClusterConfigTablePredicateExtractor`
-// 2. Extract the `type/address` columns on the logic optimizing stage and save them via fields.
+// 2. Extract the `type/instance` columns on the logic optimizing stage and save them via fields.
 // 3. Passing the extractor to the `ClusterReaderExecExec` executor
 // 4. Executor sends requests to the target components instead of all of the components
 type MemTablePredicateExtractor interface {
@@ -368,6 +368,20 @@ func (helper extractHelper) extractTimeRange(
 	return
 }
 
+func (helper extractHelper) parseQuantiles(quantileSet set.StringSet) []float64 {
+	quantiles := make([]float64, 0, len(quantileSet))
+	for k := range quantileSet {
+		v, err := strconv.ParseFloat(k, 64)
+		if err != nil {
+			// ignore the parse error won't affect result.
+			continue
+		}
+		quantiles = append(quantiles, v)
+	}
+	sort.Float64s(quantiles)
+	return quantiles
+}
+
 // ClusterTableExtractor is used to extract some predicates of cluster table.
 type ClusterTableExtractor struct {
 	extractHelper
@@ -381,11 +395,11 @@ type ClusterTableExtractor struct {
 	// 2. SELECT * FROM cluster_config WHERE type in ('tikv', 'tidb')
 	NodeTypes set.StringSet
 
-	// Addresses represents all components addresses we should send request to.
+	// Instances represents all components instances we should send request to.
 	// e.g:
-	// 1. SELECT * FROM cluster_config WHERE address='192.168.1.7:2379'
+	// 1. SELECT * FROM cluster_config WHERE instance='192.168.1.7:2379'
 	// 2. SELECT * FROM cluster_config WHERE type in ('192.168.1.7:2379', '192.168.1.9:2379')
-	Addresses set.StringSet
+	Instances set.StringSet
 }
 
 // Extract implements the MemTablePredicateExtractor Extract interface
@@ -395,10 +409,10 @@ func (e *ClusterTableExtractor) Extract(_ sessionctx.Context,
 	predicates []expression.Expression,
 ) []expression.Expression {
 	remained, typeSkipRequest, nodeTypes := e.extractCol(schema, names, predicates, "type", true)
-	remained, addrSkipRequest, addresses := e.extractCol(schema, names, remained, "address", false)
+	remained, addrSkipRequest, instances := e.extractCol(schema, names, remained, "instance", false)
 	e.SkipRequest = typeSkipRequest || addrSkipRequest
 	e.NodeTypes = nodeTypes
-	e.Addresses = addresses
+	e.Instances = instances
 	return remained
 }
 
@@ -415,11 +429,11 @@ type ClusterLogTableExtractor struct {
 	// 2. SELECT * FROM cluster_log WHERE type in ('tikv', 'tidb')
 	NodeTypes set.StringSet
 
-	// Addresses represents all components addresses we should send request to.
+	// Instances represents all components instances we should send request to.
 	// e.g:
-	// 1. SELECT * FROM cluster_log WHERE address='192.168.1.7:2379'
-	// 2. SELECT * FROM cluster_log WHERE address in ('192.168.1.7:2379', '192.168.1.9:2379')
-	Addresses set.StringSet
+	// 1. SELECT * FROM cluster_log WHERE instance='192.168.1.7:2379'
+	// 2. SELECT * FROM cluster_log WHERE instance in ('192.168.1.7:2379', '192.168.1.9:2379')
+	Instances set.StringSet
 
 	// StartTime represents the beginning time of log message
 	// e.g: SELECT * FROM cluster_log WHERE time>'2019-10-10 10:10:10.999'
@@ -442,13 +456,13 @@ func (e *ClusterLogTableExtractor) Extract(
 	names []*types.FieldName,
 	predicates []expression.Expression,
 ) []expression.Expression {
-	// Extract the `type/address` columns
+	// Extract the `type/instance` columns
 	remained, typeSkipRequest, nodeTypes := e.extractCol(schema, names, predicates, "type", true)
-	remained, addrSkipRequest, addresses := e.extractCol(schema, names, remained, "address", false)
+	remained, addrSkipRequest, instances := e.extractCol(schema, names, remained, "instance", false)
 	remained, levlSkipRequest, logLevels := e.extractCol(schema, names, remained, "level", true)
 	e.SkipRequest = typeSkipRequest || addrSkipRequest || levlSkipRequest
 	e.NodeTypes = nodeTypes
-	e.Addresses = addresses
+	e.Instances = instances
 	e.LogLevels = logLevels
 	if e.SkipRequest {
 		return nil
@@ -559,20 +573,6 @@ func (e *MetricTableExtractor) getTimeRange(start, end int64) (time.Time, time.T
 	return startTime, endTime
 }
 
-func (e *MetricTableExtractor) parseQuantiles(quantileSet set.StringSet) []float64 {
-	quantiles := make([]float64, 0, len(quantileSet))
-	for k := range quantileSet {
-		v, err := strconv.ParseFloat(k, 64)
-		if err != nil {
-			// ignore the parse error won't affect result.
-			continue
-		}
-		quantiles = append(quantiles, v)
-	}
-	sort.Float64s(quantiles)
-	return quantiles
-}
-
 func (e *MetricTableExtractor) convertToTime(t int64) time.Time {
 	if t == 0 || t == math.MaxInt64 {
 		return time.Now()
@@ -595,16 +595,48 @@ type InspectionResultTableExtractor struct {
 
 // Extract implements the MemTablePredicateExtractor Extract interface
 func (e *InspectionResultTableExtractor) Extract(
-	ctx sessionctx.Context,
+	_ sessionctx.Context,
 	schema *expression.Schema,
 	names []*types.FieldName,
 	predicates []expression.Expression,
 ) (remained []expression.Expression) {
-	// Extract the `type/address` columns
+	// Extract the `rule/item` columns
 	remained, ruleSkip, rules := e.extractCol(schema, names, predicates, "rule", true)
 	remained, itemSkip, items := e.extractCol(schema, names, remained, "item", true)
 	e.SkipInspection = ruleSkip || itemSkip
 	e.Rules = rules
 	e.Items = items
+	return remained
+}
+
+// InspectionSummaryTableExtractor is used to extract some predicates of `inspection_summary`
+type InspectionSummaryTableExtractor struct {
+	extractHelper
+	// SkipInspection means the where clause always false, we don't need to request any component
+	SkipInspection bool
+	// Rules represents rules applied to, and we should apply all inspection rules if there is no rules specified
+	// e.g: SELECT * FROM inspection_summary WHERE rule in ('ddl', 'config')
+	Rules       set.StringSet
+	MetricNames set.StringSet
+	Quantiles   []float64
+}
+
+// Extract implements the MemTablePredicateExtractor Extract interface
+func (e *InspectionSummaryTableExtractor) Extract(
+	_ sessionctx.Context,
+	schema *expression.Schema,
+	names []*types.FieldName,
+	predicates []expression.Expression,
+) (remained []expression.Expression) {
+	// Extract the `rule` columns
+	remained, ruleSkip, rules := e.extractCol(schema, names, predicates, "rule", true)
+	// Extract the `metric_name` columns
+	remained, metricNameSkip, metricNames := e.extractCol(schema, names, predicates, "metric_name", true)
+	// Extract the `quantile` columns
+	remained, quantileSkip, quantileSet := e.extractCol(schema, names, predicates, "quantile", false)
+	e.SkipInspection = ruleSkip || quantileSkip || metricNameSkip
+	e.Rules = rules
+	e.Quantiles = e.parseQuantiles(quantileSet)
+	e.MetricNames = metricNames
 	return remained
 }

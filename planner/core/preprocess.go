@@ -240,15 +240,15 @@ func (p *preprocessor) Leave(in ast.Node) (out ast.Node, ok bool) {
 	return in, p.err == nil
 }
 
-func checkAutoIncrementOp(colDef *ast.ColumnDef, num int) (bool, error) {
+func checkAutoIncrementOp(colDef *ast.ColumnDef, index int) (bool, error) {
 	var hasAutoIncrement bool
 
-	if colDef.Options[num].Tp == ast.ColumnOptionAutoIncrement {
+	if colDef.Options[index].Tp == ast.ColumnOptionAutoIncrement {
 		hasAutoIncrement = true
-		if len(colDef.Options) == num+1 {
+		if len(colDef.Options) == index+1 {
 			return hasAutoIncrement, nil
 		}
-		for _, op := range colDef.Options[num+1:] {
+		for _, op := range colDef.Options[index+1:] {
 			if op.Tp == ast.ColumnOptionDefaultValue {
 				if tmp, ok := op.Expr.(*driver.ValueExpr); ok {
 					if !tmp.Datum.IsNull() {
@@ -258,13 +258,13 @@ func checkAutoIncrementOp(colDef *ast.ColumnDef, num int) (bool, error) {
 			}
 		}
 	}
-	if colDef.Options[num].Tp == ast.ColumnOptionDefaultValue && len(colDef.Options) != num+1 {
-		if tmp, ok := colDef.Options[num].Expr.(*driver.ValueExpr); ok {
+	if colDef.Options[index].Tp == ast.ColumnOptionDefaultValue && len(colDef.Options) != index+1 {
+		if tmp, ok := colDef.Options[index].Expr.(*driver.ValueExpr); ok {
 			if tmp.Datum.IsNull() {
 				return hasAutoIncrement, nil
 			}
 		}
-		for _, op := range colDef.Options[num+1:] {
+		for _, op := range colDef.Options[index+1:] {
 			if op.Tp == ast.ColumnOptionAutoIncrement {
 				return hasAutoIncrement, errors.Errorf("Invalid default value for '%s'", colDef.Name.Name.O)
 			}
@@ -292,14 +292,11 @@ func isConstraintKeyTp(constraints []*ast.Constraint, colDef *ast.ColumnDef) boo
 }
 
 func (p *preprocessor) checkAutoIncrement(stmt *ast.CreateTableStmt) {
-	var (
-		isKey            bool
-		count            int
-		autoIncrementCol *ast.ColumnDef
-	)
+	autoIncrementCols := make(map[*ast.ColumnDef]bool)
 
 	for _, colDef := range stmt.Cols {
 		var hasAutoIncrement bool
+		var isKey bool
 		for i, op := range colDef.Options {
 			ok, err := checkAutoIncrementOp(colDef, i)
 			if err != nil {
@@ -315,33 +312,39 @@ func (p *preprocessor) checkAutoIncrement(stmt *ast.CreateTableStmt) {
 			}
 		}
 		if hasAutoIncrement {
-			count++
-			autoIncrementCol = colDef
+			autoIncrementCols[colDef] = isKey
 		}
 	}
 
-	if count < 1 {
+	if len(autoIncrementCols) < 1 {
 		return
 	}
-	if !isKey {
-		isKey = isConstraintKeyTp(stmt.Constraints, autoIncrementCol)
+	if len(autoIncrementCols) > 1 {
+		p.err = autoid.ErrWrongAutoKey.GenWithStackByArgs()
+		return
 	}
-	autoIncrementMustBeKey := true
-	for _, opt := range stmt.Options {
-		if opt.Tp == ast.TableOptionEngine && strings.EqualFold(opt.StrValue, "MyISAM") {
-			autoIncrementMustBeKey = false
+	// Only have one auto_increment col.
+	for col, isKey := range autoIncrementCols {
+		if !isKey {
+			isKey = isConstraintKeyTp(stmt.Constraints, col)
+		}
+		autoIncrementMustBeKey := true
+		for _, opt := range stmt.Options {
+			if opt.Tp == ast.TableOptionEngine && strings.EqualFold(opt.StrValue, "MyISAM") {
+				autoIncrementMustBeKey = false
+			}
+		}
+		if autoIncrementMustBeKey && !isKey {
+			p.err = autoid.ErrWrongAutoKey.GenWithStackByArgs()
+		}
+		switch col.Tp.Tp {
+		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeLong,
+			mysql.TypeFloat, mysql.TypeDouble, mysql.TypeLonglong, mysql.TypeInt24:
+		default:
+			p.err = errors.Errorf("Incorrect column specifier for column '%s'", col.Name.Name.O)
 		}
 	}
-	if (autoIncrementMustBeKey && !isKey) || count > 1 {
-		p.err = autoid.ErrWrongAutoKey.GenWithStackByArgs()
-	}
 
-	switch autoIncrementCol.Tp.Tp {
-	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeLong,
-		mysql.TypeFloat, mysql.TypeDouble, mysql.TypeLonglong, mysql.TypeInt24:
-	default:
-		p.err = errors.Errorf("Incorrect column specifier for column '%s'", autoIncrementCol.Name.Name.O)
-	}
 }
 
 // checkUnionSelectList checks union's selectList.

@@ -43,9 +43,19 @@ var (
 	RunWorker = true
 	// ddlWorkerID is used for generating the next DDL worker ID.
 	ddlWorkerID = int32(0)
-	// WaitTimeWhenErrorOccured is waiting interval when processing DDL jobs encounter errors.
-	WaitTimeWhenErrorOccured = 1 * time.Second
+	// WaitTimeWhenErrorOccurred is waiting interval when processing DDL jobs encounter errors.
+	WaitTimeWhenErrorOccurred = int64(1 * time.Second)
 )
+
+// GetWaitTimeWhenErrorOccurred return waiting interval when processing DDL jobs encounter errors.
+func GetWaitTimeWhenErrorOccurred() time.Duration {
+	return time.Duration(atomic.LoadInt64(&WaitTimeWhenErrorOccurred))
+}
+
+// SetWaitTimeWhenErrorOccurred update waiting interval when processing DDL jobs encounter errors.
+func SetWaitTimeWhenErrorOccurred(dur time.Duration) {
+	atomic.StoreInt64(&WaitTimeWhenErrorOccurred, int64(dur))
+}
 
 type workerType byte
 
@@ -319,9 +329,9 @@ func (w *worker) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
 
 func finishRecoverTable(w *worker, t *meta.Meta, job *model.Job) error {
 	tbInfo := &model.TableInfo{}
-	var autoID, dropJobID, recoverTableCheckFlag int64
+	var autoIncID, autoRandID, dropJobID, recoverTableCheckFlag int64
 	var snapshotTS uint64
-	err := job.DecodeArgs(tbInfo, &autoID, &dropJobID, &snapshotTS, &recoverTableCheckFlag)
+	err := job.DecodeArgs(tbInfo, &autoIncID, &dropJobID, &snapshotTS, &recoverTableCheckFlag, &autoRandID)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -435,8 +445,8 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 			// wait a while to retry again. If we don't wait here, DDL will retry this job immediately,
 			// which may act like a deadlock.
 			logutil.Logger(w.logCtx).Info("[ddl] run DDL job failed, sleeps a while then retries it.",
-				zap.Duration("waitTime", WaitTimeWhenErrorOccured), zap.Error(runJobErr))
-			time.Sleep(WaitTimeWhenErrorOccured)
+				zap.Duration("waitTime", GetWaitTimeWhenErrorOccurred()), zap.Error(runJobErr))
+			time.Sleep(GetWaitTimeWhenErrorOccurred())
 		}
 
 		if err != nil {
@@ -633,7 +643,7 @@ func toTError(err error) *terror.Error {
 	}
 
 	// TODO: Add the error code.
-	return terror.ClassDDL.New(terror.CodeUnknown, err.Error())
+	return terror.ClassDDL.Synthesize(terror.CodeUnknown, err.Error())
 }
 
 // waitSchemaChanged waits for the completion of updating all servers' schema. In order to make sure that happens,
