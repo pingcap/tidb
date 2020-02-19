@@ -2530,6 +2530,7 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (Plan, err
 		schema := plan.Schema()
 		names := plan.OutputNames()
 		if v.Cols == nil {
+			adjustOverlongViewColname(plan.(LogicalPlan))
 			v.Cols = make([]model.CIStr, len(schema.Columns))
 			for i, name := range names {
 				v.Cols[i] = name.ColName
@@ -2538,14 +2539,12 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (Plan, err
 		if len(v.Cols) != schema.Len() {
 			return nil, ddl.ErrViewWrongList
 		}
-		if _, ok := plan.(LogicalPlan); ok {
-			if b.ctx.GetSessionVars().User != nil {
-				authErr = ErrTableaccessDenied.GenWithStackByArgs("CREATE VIEW", b.ctx.GetSessionVars().User.Hostname,
-					b.ctx.GetSessionVars().User.Username, v.ViewName.Name.L)
-			}
-			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreateViewPriv, v.ViewName.Schema.L,
-				v.ViewName.Name.L, "", authErr)
+		if b.ctx.GetSessionVars().User != nil {
+			authErr = ErrTableaccessDenied.GenWithStackByArgs("CREATE VIEW", b.ctx.GetSessionVars().User.Hostname,
+				b.ctx.GetSessionVars().User.Username, v.ViewName.Name.L)
 		}
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreateViewPriv, v.ViewName.Schema.L,
+			v.ViewName.Name.L, "", authErr)
 		if v.Definer.CurrentUser && b.ctx.GetSessionVars().User != nil {
 			v.Definer = b.ctx.GetSessionVars().User
 		}
@@ -2947,4 +2946,22 @@ func buildChecksumTableSchema() (*expression.Schema, []*types.FieldName) {
 	schema.Append(buildColumnWithName("", "Total_kvs", mysql.TypeLonglong, 22))
 	schema.Append(buildColumnWithName("", "Total_bytes", mysql.TypeLonglong, 22))
 	return schema.col2Schema(), schema.names
+}
+
+func adjustOverlongViewColname(plan LogicalPlan) {
+	outputNames := plan.OutputNames()
+	switch plan.(type) {
+	case *LogicalProjection, *LogicalAggregation, *LogicalUnionAll:
+		for i := range outputNames {
+			if outputName := outputNames[i].ColName.L; len(outputName) > mysql.MaxColumnNameLength {
+				outputNames[i].ColName = model.NewCIStr(fmt.Sprintf("new_exp_%d", i+1))
+			}
+		}
+	default:
+		if len(plan.Children()) == 1 {
+			adjustOverlongViewColname(plan.Children()[0])
+			return
+		}
+	}
+	return
 }
