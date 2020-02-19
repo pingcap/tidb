@@ -267,7 +267,7 @@ func (s *testBootstrapSuite) TestUpgrade(c *C) {
 	err = r.Next(ctx, req)
 	c.Assert(err, IsNil)
 	c.Assert(req.NumRows(), Equals, 1)
-	c.Assert(req.GetRow(0).GetString(0), Equals, "0")
+	c.Assert(req.GetRow(0).GetString(0), Equals, "False")
 	c.Assert(r.Close(), IsNil)
 }
 

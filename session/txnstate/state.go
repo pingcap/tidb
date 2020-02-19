@@ -221,10 +221,17 @@ func (st *TxnState) Commit(ctx context.Context) error {
 		}
 	})
 
-	// mockCommitRetryForAutoID is used to mock an commit retry for adjustAutoIncrementDatum.
-	failpoint.Inject("mockCommitRetryForAutoID", func(val failpoint.Value) {
-		if val.(bool) && !mockAutoIDRetry() {
-			enableMockAutoIDRetry()
+	// mockCommitRetryForAutoIncID is used to mock an commit retry for adjustAutoIncrementDatum.
+	failpoint.Inject("mockCommitRetryForAutoIncID", func(val failpoint.Value) {
+		if val.(bool) && !mockAutoIncIDRetry() {
+			enableMockAutoIncIDRetry()
+			failpoint.Return(kv.ErrTxnRetryable)
+		}
+	})
+
+	failpoint.Inject("mockCommitRetryForAutoRandID", func(val failpoint.Value) {
+		if val.(bool) && needMockAutoRandIDRetry() {
+			decreaseMockAutoRandIDRetryCount()
 			failpoint.Return(kv.ErrTxnRetryable)
 		}
 	})
@@ -511,15 +518,30 @@ func mergeToDirtyDB(dirtyDB *executor.DirtyDB, op dirtyTableOperation) {
 	}
 }
 
-// hasMockAutoIDRetry is for failpoint injection in TxnState::Commit.
-var hasMockAutoIDRetry = int64(0)
+var hasMockAutoIncIDRetry = int64(0)
 
-func enableMockAutoIDRetry() {
-	atomic.StoreInt64(&hasMockAutoIDRetry, 1)
+func enableMockAutoIncIDRetry() {
+	atomic.StoreInt64(&hasMockAutoIncIDRetry, 1)
 }
 
-func mockAutoIDRetry() bool {
-	return atomic.LoadInt64(&hasMockAutoIDRetry) == 1
+func mockAutoIncIDRetry() bool {
+	return atomic.LoadInt64(&hasMockAutoIncIDRetry) == 1
+}
+
+var mockAutoRandIDRetryCount = int64(0)
+
+func needMockAutoRandIDRetry() bool {
+	return atomic.LoadInt64(&mockAutoRandIDRetryCount) > 0
+}
+
+func decreaseMockAutoRandIDRetryCount() {
+	atomic.AddInt64(&mockAutoRandIDRetryCount, -1)
+}
+
+// ResetMockAutoRandIDRetryCount set the number of occurrences of
+// `kv.ErrTxnRetryable` when calling TxnState.Commit().
+func ResetMockAutoRandIDRetryCount(failTimes int64) {
+	atomic.StoreInt64(&mockAutoRandIDRetryCount, failTimes)
 }
 
 // txnFailFuture is for tests.
