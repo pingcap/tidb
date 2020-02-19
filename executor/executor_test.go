@@ -4526,7 +4526,7 @@ func (s *testRecoverTable) TestRecoverTable(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("create database if not exists test_recover")
 	tk.MustExec("use test_recover")
-	tk.MustExec("drop table if exists t_recover, t_recover2")
+	tk.MustExec("drop table if exists t_recover")
 	tk.MustExec("create table t_recover (a int);")
 	defer func(originGC bool) {
 		if originGC {
