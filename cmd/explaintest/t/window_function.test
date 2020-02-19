@@ -3,6 +3,7 @@ drop table if exists t;
 create table t (a int, b int, c timestamp, index idx(a));
 set @@tidb_enable_window_function = 1;
 set @@session.tidb_window_concurrency = 1;
+set @@session.tidb_executors_concurrency = 1;
 explain select sum(a) over() from t;
 explain select sum(a) over(partition by a) from t;
 explain select sum(a) over(partition by a order by b) from t;
@@ -12,6 +13,7 @@ explain select sum(a) over(partition by a order by b range between 1 preceding a
 explain select sum(a) over(partition by a order by c range between interval '2:30' minute_second preceding and interval '2:30' minute_second following) from t;
 
 set @@session.tidb_window_concurrency = 4;
+set @@session.tidb_executors_concurrency = 4;
 explain select sum(a) over() from t;
 explain select sum(a) over(partition by a) from t;
 explain select sum(a) over(partition by a order by b) from t;
@@ -20,13 +22,15 @@ explain select sum(a) over(partition by a order by b rows between 1 preceding an
 explain select sum(a) over(partition by a order by b range between 1 preceding and 1 following) from t;
 explain select sum(a) over(partition by a order by c range between interval '2:30' minute_second preceding and interval '2:30' minute_second following) from t;
 explain select sum(a) over(partition by a order by b), avg(a) over(partition by a+1 order by b) from t;
+explain select sum(a) over(partition by b order by c) from t;
+explain select sum(a) over(partition by b order by c) from t order by b, c;
 
 drop table if exists t1;
 create table t1(a int primary key, b int);
-insert into t1 values(1, 1), (2, 1);
+insert into t1 values(1, 1), (2, 1), (3, 1), (4, 1);
 analyze table t1;
 explain select sum(a) over(partition by b) from t1;
 
-insert into t1 values(3, 3);
+insert into t1 values(11, 2), (12, 2), (13, 2), (14, 2);
 analyze table t1;
 explain select sum(a) over(partition by b) from t1;

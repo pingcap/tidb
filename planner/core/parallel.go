@@ -19,6 +19,10 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 )
 
+func isExecutorsParallelEnable(ctx sessionctx.Context) bool {
+	return ctx.GetSessionVars().ExecutorsConcurrency > 1
+}
+
 type parallelLogicalPlanHelper struct {
 	possibleChildrenProperties [][]*property.PhysicalProperty
 }
@@ -136,10 +140,12 @@ func (p *parallelLogicalPlanHelper) exhaustParallelPhysicalPlans4SingleChild(
 
 // matchPhysicalProperty match parent required property and delivering property, and enforce Shuffle if necessary.
 func matchPhysicalProperty(pp PhysicalPlan, requiredProperty *property.PhysicalProperty, tsk task, ctx sessionctx.Context) task {
+	if !isExecutorsParallelEnable(ctx) {
+		return tsk
+	}
 	if tsk.plan() == nil {
 		return tsk
 	}
-	tsk = finishCopTask(ctx, tsk)
 	deliveringProperty := pp.GetPartitionDeliveringProperty()
 
 	if !requiredProperty.IsPartitioning {
@@ -149,12 +155,14 @@ func matchPhysicalProperty(pp PhysicalPlan, requiredProperty *property.PhysicalP
 		}
 		///// serial -> parallel /////
 		shuffle := enforceFullMerge(pp, requiredProperty, deliveringProperty, ctx)
+		tsk = finishCopTask(ctx, tsk)
 		return shuffle.attach2Task(tsk)
 	}
 
 	///// parallel -> serial /////
 	if !pp.IsParallel() {
 		shuffle := enforceInitialPartition(pp, requiredProperty, ctx)
+		tsk = finishCopTask(ctx, tsk)
 		return shuffle.attach2Task(tsk)
 	}
 	///// parallel -> parallel /////
@@ -162,6 +170,7 @@ func matchPhysicalProperty(pp PhysicalPlan, requiredProperty *property.PhysicalP
 		return tsk
 	}
 	shuffle := enforceRepartition(pp, requiredProperty, deliveringProperty, ctx)
+	tsk = finishCopTask(ctx, tsk)
 	return shuffle.attach2Task(tsk)
 }
 
