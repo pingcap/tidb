@@ -249,7 +249,7 @@ type DDL interface {
 	CreateView(ctx sessionctx.Context, stmt *ast.CreateViewStmt) error
 	CreateTableWithLike(ctx sessionctx.Context, ident, referIdent ast.Ident, ifNotExists bool) error
 	DropTable(ctx sessionctx.Context, tableIdent ast.Ident) (err error)
-	RecoverTable(ctx sessionctx.Context, tbInfo *model.TableInfo, schemaID, autoID, dropJobID int64, snapshotTS uint64) (err error)
+	RecoverTable(ctx sessionctx.Context, recoverInfo *RecoverInfo) (err error)
 	DropView(ctx sessionctx.Context, tableIdent ast.Ident) (err error)
 	CreateIndex(ctx sessionctx.Context, tableIdent ast.Ident, unique bool, indexName model.CIStr,
 		columnNames []*ast.IndexColName, indexOption *ast.IndexOption) error
@@ -657,6 +657,16 @@ func (d *ddl) GetHook() Callback {
 	defer d.mu.Unlock()
 
 	return d.mu.hook
+}
+
+// RecoverInfo contains information needed by DDL.RecoverTable.
+type RecoverInfo struct {
+	SchemaID      int64
+	TableInfo     *model.TableInfo
+	DropJobID     int64
+	SnapshotTS    uint64
+	CurAutoIncID  int64
+	CurAutoRandID int64
 }
 
 // DDL error codes.

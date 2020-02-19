@@ -717,6 +717,16 @@ func getAutoRecordID(d types.Datum, target *types.FieldType, isInsert bool) (int
 }
 
 func (e *InsertValues) adjustAutoRandomDatum(ctx context.Context, d types.Datum, hasValue bool, c *table.Column) (types.Datum, error) {
+	retryInfo := e.ctx.GetSessionVars().RetryInfo
+	if retryInfo.Retrying {
+		autoRandomID, err := retryInfo.GetCurrAutoRandomID()
+		if err != nil {
+			return types.Datum{}, err
+		}
+		d.SetAutoID(autoRandomID, c.Flag)
+		return d, nil
+	}
+
 	var err error
 	var recordID int64
 	if !hasValue {
@@ -736,6 +746,7 @@ func (e *InsertValues) adjustAutoRandomDatum(ctx context.Context, d types.Datum,
 		}
 		e.ctx.GetSessionVars().StmtCtx.InsertID = uint64(recordID)
 		d.SetAutoID(recordID, c.Flag)
+		retryInfo.AddAutoRandomID(recordID)
 		return d, nil
 	}
 
@@ -758,6 +769,7 @@ func (e *InsertValues) adjustAutoRandomDatum(ctx context.Context, d types.Datum,
 	}
 
 	d.SetAutoID(recordID, c.Flag)
+	retryInfo.AddAutoRandomID(recordID)
 
 	casted, err := table.CastValue(e.ctx, d, c.ToInfo())
 	if err != nil {
