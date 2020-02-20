@@ -168,8 +168,10 @@ func (ch *pdConfHandler) register() {
 		return
 	}
 
-	ch.registered = ch.updateConfig(conf, version)
-	logutil.Logger(context.Background()).Info("PDConfHandler register successfully")
+	if ch.updateConfig(conf, version) {
+		ch.registered = true
+		logutil.Logger(context.Background()).Info("PDConfHandler register successfully")
+	}
 }
 
 func (ch *pdConfHandler) updateConfig(newConfContent string, newVersion *configpb.Version) (ok bool) {

@@ -18,7 +18,7 @@ import (
 	"reflect"
 )
 
-// CloneConf ...
+// CloneConf deeply clones this config.
 func CloneConf(conf *Config) (*Config, error) {
 	content, err := json.Marshal(conf)
 	if err != nil {
@@ -43,10 +43,6 @@ var (
 
 // MergeConfigItems is used to overwrite some config items that can't be changed during runtime.
 func MergeConfigItems(dstConf, newConf *Config) (acceptedItems, rejectedItems []string) {
-	return mergeConfigItemsWithAllowMap(dstConf, newConf, dynamicConfigItems)
-}
-
-func mergeConfigItemsWithAllowMap(dstConf, newConf *Config, dynamicConfigItems []string) (acceptedItems, rejectedItems []string) {
 	dynamicConfigItemsMap := make(map[string]struct{}, len(dynamicConfigItems))
 	for _, c := range dynamicConfigItems {
 		dynamicConfigItemsMap[c] = struct{}{}
@@ -73,11 +69,11 @@ func mergeConfigItems(dstConf, newConf reflect.Value, fieldPath string, dynamicC
 	}
 
 	for i := 0; i < t.NumField(); i++ {
-		p := t.Field(i).Name
+		fieldName := t.Field(i).Name
 		if fieldPath != "" {
-			p = fieldPath + "." + p
+			fieldName = fieldPath + "." + fieldName
 		}
-		as, rs := mergeConfigItems(dstConf.Field(i), newConf.Field(i), p, dynamicConfigItemsMap)
+		as, rs := mergeConfigItems(dstConf.Field(i), newConf.Field(i), fieldName, dynamicConfigItemsMap)
 		acceptedItems = append(acceptedItems, as...)
 		rejectedItems = append(rejectedItems, rs...)
 	}

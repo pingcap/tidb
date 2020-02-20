@@ -41,16 +41,6 @@ func (s *testConfigSuite) TestMergeConfigItems(c *C) {
 	oriConf, _ := CloneConf(&defaultConf)
 	oldConf, _ := CloneConf(oriConf)
 	newConf, _ := CloneConf(oldConf)
-	allowed := []string{
-		"Performance.MaxProcs", "Performance.MaxMemory",
-		"Performance.CrossJoin", "Performance.FeedbackProbability",
-		"Performance.QueryFeedbackLimit", "Performance.PseudoEstimateRatio",
-		"OOMAction", "MemQuotaQuery", "TiKVClient.StoreLimit",
-	}
-	allowedMap := make(map[string]struct{})
-	for _, a := range allowed {
-		allowedMap[a] = struct{}{}
-	}
 
 	// allowed
 	newConf.Performance.MaxProcs = 123
@@ -69,7 +59,12 @@ func (s *testConfigSuite) TestMergeConfigItems(c *C) {
 	newConf.AdvertiseAddress = "1.2.3.4"
 	newConf.Log.SlowThreshold = 2345
 
-	as, rs := mergeConfigItemsWithAllowMap(oldConf, newConf, allowed)
+	allowedMap := make(map[string]struct{}, len(dynamicConfigItems))
+	for _, c := range dynamicConfigItems {
+		allowedMap[c] = struct{}{}
+	}
+
+	as, rs := MergeConfigItems(oldConf, newConf)
 	c.Assert(len(as), Equals, 9)
 	c.Assert(len(rs), Equals, 4)
 	for _, a := range as {
