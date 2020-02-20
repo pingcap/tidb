@@ -66,6 +66,10 @@ func (f inspectionFilter) enable(name string) bool {
 	return len(f.set) == 0 || f.set.Exist(name)
 }
 
+func (f inspectionFilter) exist(name string) bool {
+	return len(f.set) > 0 && f.set.Exist(name)
+}
+
 type (
 	// configInspection is used to check whether a same configuration item has a
 	// different value between different instance in the cluster
@@ -326,7 +330,6 @@ func (criticalErrorInspection) inspect(ctx context.Context, sctx sessionctx.Cont
 	var results []inspectionResult
 	for _, rule := range rules {
 		if filter.enable(rule.item) {
-
 			def, found := infoschema.MetricTableMap[rule.tbl]
 			if !found {
 				sctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("metrics table: %s not found", rule.tbl))
@@ -459,9 +462,7 @@ func (thresholdCheckInspection) inspectThreshold1(ctx context.Context, sctx sess
 		},
 	}
 
-	condition := fmt.Sprintf(" where time>='%s' and time<='%s'",
-		filter.timeRange.From.Format(plannercore.MetricTableTimeFormat),
-		filter.timeRange.To.Format(plannercore.MetricTableTimeFormat))
+	condition := filter.timeRange.Condition()
 	var results []inspectionResult
 	for _, rule := range rules {
 		if !filter.enable(rule.item) {

@@ -594,13 +594,6 @@ func (e *MetricTableExtractor) getTimeRange(start, end int64) (time.Time, time.T
 	return startTime, endTime
 }
 
-func (e *MetricTableExtractor) convertToTime(t int64) time.Time {
-	if t == 0 || t == math.MaxInt64 {
-		return time.Now()
-	}
-	return time.Unix(t/1000, (t%1000)*int64(time.Millisecond))
-}
-
 // MetricSummaryTableExtractor is used to extract some predicates of metrics_schema tables.
 type MetricSummaryTableExtractor struct {
 	extractHelper

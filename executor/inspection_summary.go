@@ -435,7 +435,7 @@ func (e *inspectionSummaryRetriever) retrieve(ctx context.Context, sctx sessionc
 	condition := e.timeRange.Condition()
 	var finalRows [][]types.Datum
 	for rule, tables := range inspectionSummaryRules {
-		if !rules.set.Exist(rule) {
+		if !rules.exist(rule) {
 			continue
 		}
 		for _, name := range tables {

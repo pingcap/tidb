@@ -16,7 +16,6 @@ package executor
 import (
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/util"
 	"math"
 	"net/url"
 	"sort"
@@ -32,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/prometheus/client_golang/api"
 	promv1 "github.com/prometheus/client_golang/api/prometheus/v1"
@@ -244,7 +244,7 @@ func (e *MetricSummaryRetriever) retrieve(_ context.Context, sctx sessionctx.Con
 			for i, q := range e.extractor.Quantiles {
 				qs[i] = fmt.Sprintf("%f", q)
 			}
-			sql = fmt.Sprintf("select sum(value),avg(value),min(value),max(value),quantile from `%[2]s`.`%[1]s` %[3]s and quntile in (%[4]s)group by quantile order by quantile",
+			sql = fmt.Sprintf("select sum(value),avg(value),min(value),max(value),quantile from `%[2]s`.`%[1]s` %[3]s and quntile in (%[4]s) group by quantile order by quantile",
 				name, util.MetricSchemaName.L, condition, strings.Join(qs, ","))
 		} else {
 			sql = fmt.Sprintf("select sum(value),avg(value),min(value),max(value) from `%[2]s`.`%[1]s` %[3]s",
