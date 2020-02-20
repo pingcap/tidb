@@ -15,6 +15,10 @@ package collate
 
 import "unicode/utf8"
 
+var (
+	sortKeySpace = []byte{byte(convertRune(0x20) >> 8), byte(convertRune(0x20) >> 8)}
+)
+
 type generalCICollator struct {
 }
 
@@ -40,15 +44,36 @@ func (gc *generalCICollator) Compare(a, b string, opt CollatorOption) int {
 		a = a[r1size:]
 		b = b[r2size:]
 	}
-	return sign(len(a) - len(b))
+	for len(a) > 0 {
+		r1, r1size := utf8.DecodeRuneInString(a)
+		cmp := int(convertRune(r1)) - 0x20
+		if cmp != 0 {
+			return sign(cmp)
+		}
+		a = a[r1size:]
+	}
+	for len(b) > 0 {
+		r2, r2size := utf8.DecodeRuneInString(b)
+		cmp := 0x20 - int(convertRune(r2))
+		if cmp != 0 {
+			return sign(cmp)
+		}
+		b = b[r2size:]
+	}
+	return 0
 }
 
 // Key implement Collator interface.
 func (gc *generalCICollator) Key(str string, opt CollatorOption) []byte {
 	buf := make([]byte, 0, len(str))
+	i := 0
 	for _, r := range []rune(str) {
 		u16 := convertRune(r)
 		buf = append(buf, byte(u16>>8), byte(u16))
+		i++
+	}
+	for ; i < opt.PadLen; i++ {
+		buf = append(buf, sortKeySpace...)
 	}
 	return buf
 }

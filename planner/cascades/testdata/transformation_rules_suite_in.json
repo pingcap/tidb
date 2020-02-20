@@ -121,6 +121,14 @@
     ]
   },
   {
+    "name": "TestPushLimitDownTiKVSingleGather",
+    "cases": [
+      "select * from t limit 1",
+      "select * from t as t1 left join (select * from t limit 2) as t2 on t1.a = t2.a;",
+      "select a, b from ((select a, b from t) union all(select c as a, d as b from t limit 3)) as t1 where a > 1"
+    ]
+  },
+  {
     "name": "TestEliminateOuterJoinBelowAggregation",
     "cases": [
       "select t1.a, max(t1.b) from t as t1 left join (select * from t) as t2 on t1.a = t2.a and t1.b = 3 group by t1.a;",
