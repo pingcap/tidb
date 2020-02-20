@@ -297,3 +297,41 @@ func (s *testPointGetSuite) TestPointGetId(c *C) {
 		c.Assert(p.ID(), Equals, 1)
 	}
 }
+
+func (s *testPointGetSuite) TestBatchPointGetPlanCache(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	orgEnable := core.PreparedPlanCacheEnabled()
+	orgCapacity := core.PreparedPlanCacheCapacity
+	orgMemGuardRatio := core.PreparedPlanCacheMemoryGuardRatio
+	orgMaxMemory := core.PreparedPlanCacheMaxMemory
+	defer func() {
+		core.SetPreparedPlanCache(orgEnable)
+		core.PreparedPlanCacheCapacity = orgCapacity
+		core.PreparedPlanCacheMemoryGuardRatio = orgMemGuardRatio
+		core.PreparedPlanCacheMaxMemory = orgMaxMemory
+	}()
+	core.SetPreparedPlanCache(true)
+	core.PreparedPlanCacheCapacity = 100
+	core.PreparedPlanCacheMemoryGuardRatio = 0.1
+	// PreparedPlanCacheMaxMemory is set to MAX_UINT64 to make sure the cache
+	// behavior would not be effected by the uncertain memory utilization.
+	core.PreparedPlanCacheMaxMemory.Store(math.MaxUint64)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int primary key, b int)")
+	tk.MustExec("insert into t values(1, 1), (2, 2), (3, 3), (4, 4)")
+	tk.MustQuery("explain select * from t where a in (1, 2)").Check(testkit.Rows(
+		"Batch_Point_Get_1 2.00 root table:t",
+	))
+	tk.MustExec("prepare stmt from 'select * from t where a in (?,?)'")
+	tk.MustExec("set @p1 = 1, @p2 = 2")
+	tk.MustQuery("execute stmt using @p1, @p2;").Check(testkit.Rows(
+		"1 1",
+		"2 2",
+	))
+	tk.MustExec("set @p1 = 3, @p2 = 4")
+	tk.MustQuery("execute stmt using @p1, @p2;").Check(testkit.Rows(
+		"3 3",
+		"4 4",
+	))
+}
