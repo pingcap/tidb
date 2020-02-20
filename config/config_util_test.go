@@ -29,7 +29,7 @@ func (s *testConfigSuite) TestCloneConf(c *C) {
 
 	c1.Store = "abc"
 	c1.Port = 2333
-	c1.Log.EnableSlowLog++
+	c1.Log.EnableSlowLog = !c1.Log.EnableSlowLog
 	c1.RepairTableList = append(c1.RepairTableList, "abc")
 	c.Assert(c1.Store, Not(Equals), c2.Store)
 	c.Assert(c1.Port, Not(Equals), c2.Port)
