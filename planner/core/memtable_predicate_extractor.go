@@ -368,6 +368,27 @@ func (helper extractHelper) extractTimeRange(
 	return
 }
 
+func (helper extractHelper) parseQuantiles(quantileSet set.StringSet) []float64 {
+	quantiles := make([]float64, 0, len(quantileSet))
+	for k := range quantileSet {
+		v, err := strconv.ParseFloat(k, 64)
+		if err != nil {
+			// ignore the parse error won't affect result.
+			continue
+		}
+		quantiles = append(quantiles, v)
+	}
+	sort.Float64s(quantiles)
+	return quantiles
+}
+
+func (helper extractHelper) convertToTime(t int64) time.Time {
+	if t == 0 || t == math.MaxInt64 {
+		return time.Now()
+	}
+	return time.Unix(t/1000, (t%1000)*int64(time.Millisecond))
+}
+
 // ClusterTableExtractor is used to extract some predicates of cluster table.
 type ClusterTableExtractor struct {
 	extractHelper
@@ -559,27 +580,6 @@ func (e *MetricTableExtractor) getTimeRange(start, end int64) (time.Time, time.T
 	return startTime, endTime
 }
 
-func (e *MetricTableExtractor) parseQuantiles(quantileSet set.StringSet) []float64 {
-	quantiles := make([]float64, 0, len(quantileSet))
-	for k := range quantileSet {
-		v, err := strconv.ParseFloat(k, 64)
-		if err != nil {
-			// ignore the parse error won't affect result.
-			continue
-		}
-		quantiles = append(quantiles, v)
-	}
-	sort.Float64s(quantiles)
-	return quantiles
-}
-
-func (e *MetricTableExtractor) convertToTime(t int64) time.Time {
-	if t == 0 || t == math.MaxInt64 {
-		return time.Now()
-	}
-	return time.Unix(t/1000, (t%1000)*int64(time.Millisecond))
-}
-
 // InspectionResultTableExtractor is used to extract some predicates of `inspection_result`
 type InspectionResultTableExtractor struct {
 	extractHelper
@@ -595,16 +595,99 @@ type InspectionResultTableExtractor struct {
 
 // Extract implements the MemTablePredicateExtractor Extract interface
 func (e *InspectionResultTableExtractor) Extract(
-	ctx sessionctx.Context,
+	_ sessionctx.Context,
 	schema *expression.Schema,
 	names []*types.FieldName,
 	predicates []expression.Expression,
 ) (remained []expression.Expression) {
-	// Extract the `type/instance` columns
+	// Extract the `rule/item` columns
 	remained, ruleSkip, rules := e.extractCol(schema, names, predicates, "rule", true)
 	remained, itemSkip, items := e.extractCol(schema, names, remained, "item", true)
 	e.SkipInspection = ruleSkip || itemSkip
 	e.Rules = rules
 	e.Items = items
 	return remained
+}
+
+// InspectionSummaryTableExtractor is used to extract some predicates of `inspection_summary`
+type InspectionSummaryTableExtractor struct {
+	extractHelper
+	// SkipInspection means the where clause always false, we don't need to request any component
+	SkipInspection bool
+	// Rules represents rules applied to, and we should apply all inspection rules if there is no rules specified
+	// e.g: SELECT * FROM inspection_summary WHERE rule in ('ddl', 'config')
+	Rules       set.StringSet
+	MetricNames set.StringSet
+	Quantiles   []float64
+}
+
+// Extract implements the MemTablePredicateExtractor Extract interface
+func (e *InspectionSummaryTableExtractor) Extract(
+	_ sessionctx.Context,
+	schema *expression.Schema,
+	names []*types.FieldName,
+	predicates []expression.Expression,
+) (remained []expression.Expression) {
+	// Extract the `rule` columns
+	remained, ruleSkip, rules := e.extractCol(schema, names, predicates, "rule", true)
+	// Extract the `metric_name` columns
+	remained, metricNameSkip, metricNames := e.extractCol(schema, names, predicates, "metric_name", true)
+	// Extract the `quantile` columns
+	remained, quantileSkip, quantileSet := e.extractCol(schema, names, predicates, "quantile", false)
+	e.SkipInspection = ruleSkip || quantileSkip || metricNameSkip
+	e.Rules = rules
+	e.Quantiles = e.parseQuantiles(quantileSet)
+	e.MetricNames = metricNames
+	return remained
+}
+
+// SlowQueryExtractor is used to extract some predicates of `slow_query`
+type SlowQueryExtractor struct {
+	extractHelper
+
+	SkipRequest bool
+	StartTime   time.Time
+	EndTime     time.Time
+	// Enable is true means the executor should use the time range to locate the slow-log file that need to be parsed.
+	// Enable is false, means the executor should keep the behavior compatible with before, which is only parse the
+	// current slow-log file.
+	Enable bool
+}
+
+// Extract implements the MemTablePredicateExtractor Extract interface
+func (e *SlowQueryExtractor) Extract(
+	ctx sessionctx.Context,
+	schema *expression.Schema,
+	names []*types.FieldName,
+	predicates []expression.Expression,
+) []expression.Expression {
+	remained, startTime, endTime := e.extractTimeRange(ctx, schema, names, predicates, "time", ctx.GetSessionVars().StmtCtx.TimeZone)
+	e.setTimeRange(startTime, endTime)
+	e.SkipRequest = e.Enable && e.StartTime.After(e.EndTime)
+	if e.SkipRequest {
+		return nil
+	}
+	return remained
+}
+
+func (e *SlowQueryExtractor) setTimeRange(start, end int64) {
+	const defaultSlowQueryDuration = 24 * time.Hour
+	var startTime, endTime time.Time
+	if start == 0 && end == 0 {
+		return
+	}
+	if start != 0 {
+		startTime = e.convertToTime(start)
+	}
+	if end != 0 {
+		endTime = e.convertToTime(end)
+	}
+	if start == 0 {
+		startTime = endTime.Add(-defaultSlowQueryDuration)
+	}
+	if end == 0 {
+		endTime = startTime.Add(defaultSlowQueryDuration)
+	}
+	e.StartTime, e.EndTime = startTime, endTime
+	e.Enable = true
 }

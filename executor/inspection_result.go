@@ -79,6 +79,9 @@ type (
 	// criticalErrorInspection is used to check are there some critical errors
 	// occurred in the past
 	criticalErrorInspection struct{ inspectionName }
+
+	// thresholdCheckInspection is used to check some threshold value, like CPU usage, leader count change.
+	thresholdCheckInspection struct{ inspectionName }
 )
 
 var inspectionRules = []inspectionRule{
@@ -86,15 +89,16 @@ var inspectionRules = []inspectionRule{
 	&versionInspection{inspectionName: "version"},
 	&currentLoadInspection{inspectionName: "current-load"},
 	&criticalErrorInspection{inspectionName: "critical-error"},
+	&thresholdCheckInspection{inspectionName: "threshold-check"},
 }
 
-type inspectionRetriever struct {
+type inspectionResultRetriever struct {
 	dummyCloser
 	retrieved bool
 	extractor *plannercore.InspectionResultTableExtractor
 }
 
-func (e *inspectionRetriever) retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
+func (e *inspectionResultRetriever) retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
 	if e.retrieved || e.extractor.SkipInspection {
 		return nil, nil
 	}
@@ -359,6 +363,285 @@ func (criticalErrorInspection) inspect(ctx context.Context, sctx sessionctx.Cont
 				}
 				results = append(results, result)
 			}
+		}
+	}
+	return results
+}
+
+func (c thresholdCheckInspection) inspect(ctx context.Context, sctx sessionctx.Context, filter inspectionFilter) []inspectionResult {
+	inspects := []func(context.Context, sessionctx.Context, inspectionFilter) []inspectionResult{
+		c.inspectThreshold1,
+		c.inspectThreshold2,
+	}
+	var results []inspectionResult
+	for _, inspect := range inspects {
+		re := inspect(ctx, sctx, filter)
+		results = append(results, re...)
+	}
+	return results
+}
+
+func (thresholdCheckInspection) inspectThreshold1(ctx context.Context, sctx sessionctx.Context, filter inspectionFilter) []inspectionResult {
+	var rules = []struct {
+		item      string
+		component string
+		configKey string
+		threshold float64
+	}{
+		{
+			item:      "coprocessor_normal_cpu",
+			component: "cop_normal%",
+			configKey: "readpool.coprocessor.normal-concurrency",
+			threshold: 0.9},
+		{
+			item:      "coprocessor_high_cpu",
+			component: "cop_high%",
+			configKey: "readpool.coprocessor.high-concurrency",
+			threshold: 0.9,
+		},
+		{
+			item:      "coprocessor_low_cpu",
+			component: "cop_low%",
+			configKey: "readpool.coprocessor.low-concurrency",
+			threshold: 0.9,
+		},
+		{
+			item:      "grpc_cpu",
+			component: "grpc%",
+			configKey: "server.grpc-concurrency",
+			threshold: 0.9,
+		},
+		{
+			item:      "raftstore_cpu",
+			component: "raftstore_%",
+			configKey: "raftstore.store-pool-size",
+			threshold: 0.8,
+		},
+		{
+			item:      "apply_cpu",
+			component: "apply_%",
+			configKey: "raftstore.apply-pool-size",
+			threshold: 0.8,
+		},
+		{
+			item:      "storage_readpool_normal_cpu",
+			component: "store_read_norm%",
+			configKey: "readpool.storage.normal-concurrency",
+			threshold: 0.9,
+		},
+		{
+			item:      "storage_readpool_high_cpu",
+			component: "store_read_high%",
+			configKey: "readpool.storage.high-concurrency",
+			threshold: 0.9,
+		},
+		{
+			item:      "storage_readpool_low_cpu",
+			component: "store_read_low%",
+			configKey: "readpool.storage.low-concurrency",
+			threshold: 0.9,
+		},
+		{
+			item:      "scheduler_worker_cpu",
+			component: "sched_%",
+			configKey: "storage.scheduler-worker-pool-size",
+			threshold: 0.85,
+		},
+		{
+			item:      "split_check_cpu",
+			component: "split_check",
+			threshold: 0.9,
+		},
+	}
+	var results []inspectionResult
+	for _, rule := range rules {
+		var sql string
+		if len(rule.configKey) > 0 {
+			sql = fmt.Sprintf("select t1.instance, t1.cpu, t2.threshold, t2.value from "+
+				"(select instance, sum(value) as cpu from metric_schema.tikv_thread_cpu where name like '%[1]s' and time=now() group by instance) as t1,"+
+				"(select value * %[2]f as threshold, value from inspection_schema.cluster_config where type='tikv' and `key` = '%[3]s' limit 1) as t2 "+
+				"where t1.cpu > t2.threshold;", rule.component, rule.threshold, rule.configKey)
+		} else {
+			sql = fmt.Sprintf("select t1.instance, t1.cpu, %[2]f from "+
+				"(select instance, sum(value) as cpu from metric_schema.tikv_thread_cpu where name like '%[1]s' and time=now() group by instance) as t1 "+
+				"where t1.cpu > %[2]f;", rule.component, rule.threshold)
+		}
+		rows, _, err := sctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQLWithContext(ctx, sql)
+		if err != nil {
+			sctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("execute '%s' failed: %v", sql, err))
+			continue
+		}
+		for _, row := range rows {
+			actual := fmt.Sprintf("%.2f", row.GetFloat64(1))
+			expected := ""
+			if len(rule.configKey) > 0 {
+				expected = fmt.Sprintf("< %.2f, config: %v=%v", row.GetFloat64(2), rule.configKey, row.GetString(3))
+			} else {
+				expected = fmt.Sprintf("< %.2f", row.GetFloat64(2))
+			}
+			detail := fmt.Sprintf("select instance, sum(value) as cpu from metric_schema.tikv_thread_cpu where name like '%[1]s' and time=now() group by instance", rule.component)
+			result := inspectionResult{
+				tp:       "tikv",
+				instance: row.GetString(0),
+				item:     rule.item,
+				actual:   actual,
+				expected: expected,
+				severity: "warning",
+				detail:   detail,
+			}
+			results = append(results, result)
+		}
+	}
+	return results
+}
+
+func (thresholdCheckInspection) inspectThreshold2(ctx context.Context, sctx sessionctx.Context, filter inspectionFilter) []inspectionResult {
+	var rules = []struct {
+		tp        string
+		item      string
+		tbl       string
+		condition string
+		threshold float64
+		isMin     bool
+	}{
+		{
+			tp:        "tidb",
+			item:      "tso-duration",
+			tbl:       "pd_tso_wait_duration",
+			condition: "quantile=0.999",
+			threshold: 0.05,
+		},
+		{
+			tp:        "tidb",
+			item:      "get-token-duration",
+			tbl:       "tidb_get_token_duration",
+			condition: "quantile=0.999",
+			threshold: 0.001 * 10e5, // the unit is microsecond
+		},
+		{
+			tp:        "tidb",
+			item:      "load-schema-duration",
+			tbl:       "tidb_load_schema_duration",
+			condition: "quantile=0.99",
+			threshold: 1,
+		},
+		{
+			tp:        "tikv",
+			item:      "scheduler-cmd-duration",
+			tbl:       "tikv_scheduler_command_duration",
+			condition: "quantile=0.99",
+			threshold: 0.1,
+		},
+		{
+			tp:        "tikv",
+			item:      "handle-snapshot-duration",
+			tbl:       "tikv_handle_snapshot_duration",
+			threshold: 30,
+		},
+		{
+			tp:        "tikv",
+			item:      "storage-write-duration",
+			tbl:       "tikv_storage_async_request_duration",
+			condition: "type='write'",
+			threshold: 0.1,
+		},
+		{
+			tp:        "tikv",
+			item:      "storage-snapshot-duration",
+			tbl:       "tikv_storage_async_request_duration",
+			condition: "type='snapshot'",
+			threshold: 0.05,
+		},
+		{
+			tp:        "tikv",
+			item:      "rocksdb-write-duration",
+			tbl:       "tikv_engine_write_duration",
+			condition: "type='write_max'",
+			threshold: 0.1 * 10e5, // the unit is microsecond
+		},
+		{
+			tp:        "tikv",
+			item:      "rocksdb-get-duration",
+			tbl:       "tikv_engine_max_get_duration",
+			condition: "type='get_max'",
+			threshold: 0.05 * 10e5, // the unit is microsecond
+		},
+		{
+			tp:        "tikv",
+			item:      "rocksdb-seek-duration",
+			tbl:       "tikv_engine_max_seek_duration",
+			condition: "type='seek_max'",
+			threshold: 0.05 * 10e5, // the unit is microsecond
+		},
+		{
+			tp:        "tikv",
+			item:      "scheduler-pending-cmd-count",
+			tbl:       "tikv_scheduler_pending_commands",
+			threshold: 1000,
+		},
+		{
+			tp:        "tikv",
+			item:      "index-block-cache-hit",
+			tbl:       "tikv_block_index_cache_hit",
+			condition: "value > 0",
+			threshold: 0.95,
+			isMin:     true,
+		},
+		{
+			tp:        "tikv",
+			item:      "filter-block-cache-hit",
+			tbl:       "tikv_block_filter_cache_hit",
+			condition: "value > 0",
+			threshold: 0.95,
+			isMin:     true,
+		},
+		{
+			tp:        "tikv",
+			item:      "data-block-cache-hit",
+			tbl:       "tikv_block_data_cache_hit",
+			condition: "value > 0",
+			threshold: 0.80,
+			isMin:     true,
+		},
+	}
+	var results []inspectionResult
+	for _, rule := range rules {
+		if !filter.enable(rule.item) {
+			continue
+		}
+		var sql string
+		condition := rule.condition
+		if len(condition) > 0 {
+			condition = "where " + condition
+		}
+		if rule.isMin {
+			sql = fmt.Sprintf("select instance, min(value) as min_value from metric_schema.%s %s group by instance having min_value < %f;", rule.tbl, condition, rule.threshold)
+		} else {
+			sql = fmt.Sprintf("select instance, max(value) as max_value from metric_schema.%s %s group by instance having max_value > %f;", rule.tbl, condition, rule.threshold)
+		}
+		rows, _, err := sctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQLWithContext(ctx, sql)
+		if err != nil {
+			sctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("execute '%s' failed: %v", sql, err))
+			continue
+		}
+		for _, row := range rows {
+			actual := fmt.Sprintf("%.2f", row.GetFloat64(1))
+			expected := ""
+			if rule.isMin {
+				expected = fmt.Sprintf("> %.2f", rule.threshold)
+			} else {
+				expected = fmt.Sprintf("< %.2f", rule.threshold)
+			}
+			result := inspectionResult{
+				tp:       rule.tp,
+				instance: row.GetString(0),
+				item:     rule.item,
+				actual:   actual,
+				expected: expected,
+				severity: "warning",
+				detail:   sql,
+			}
+			results = append(results, result)
 		}
 	}
 	return results

@@ -546,6 +546,7 @@ func (e *ShowExec) fetchShowIndex() error {
 			"BTREE",          // Index_type
 			"",               // Comment
 			"",               // Index_comment
+			"NULL",           // Expression
 		})
 	}
 	for _, idx := range tb.Indices() {
@@ -566,12 +567,19 @@ func (e *ShowExec) fetchShowIndex() error {
 			if idx.Meta().Name.O == mysql.PrimaryKeyName {
 				nullVal = ""
 			}
+			colName := col.Name.O
+			expression := "NULL"
+			tblCol := tb.Meta().Columns[col.Offset]
+			if tblCol.Hidden {
+				colName = "NULL"
+				expression = fmt.Sprintf("(%s)", tblCol.GeneratedExprString)
+			}
 			e.appendRow([]interface{}{
 				tb.Meta().Name.O,       // Table
 				nonUniq,                // Non_unique
 				idx.Meta().Name.O,      // Key_name
 				i + 1,                  // Seq_in_index
-				col.Name.O,             // Column_name
+				colName,                // Column_name
 				"A",                    // Collation
 				0,                      // Cardinality
 				subPart,                // Sub_part
@@ -580,6 +588,7 @@ func (e *ShowExec) fetchShowIndex() error {
 				idx.Meta().Tp.String(), // Index_type
 				"",                     // Comment
 				idx.Meta().Comment,     // Index_comment
+				expression,             // Expression
 			})
 		}
 	}
@@ -950,7 +959,7 @@ func (e *ShowExec) fetchShowCreateTable() error {
 	allocator := tb.Allocator(e.ctx, autoid.RowIDAllocType)
 	var buf bytes.Buffer
 	// TODO: let the result more like MySQL.
-	if err = ConstructResultOfShowCreateTable(e.ctx, tb.Meta(), allocator, &buf); err != nil {
+	if err = ConstructResultOfShowCreateTable(e.ctx, tableInfo, allocator, &buf); err != nil {
 		return err
 	}
 	if tableInfo.IsView() {
@@ -958,7 +967,7 @@ func (e *ShowExec) fetchShowCreateTable() error {
 		return nil
 	}
 
-	e.appendRow([]interface{}{tb.Meta().Name.O, buf.String()})
+	e.appendRow([]interface{}{tableInfo.Name.O, buf.String()})
 	return nil
 }
 
@@ -1023,7 +1032,7 @@ func appendPartitionInfo(partitionInfo *model.PartitionInfo, buf *bytes.Buffer) 
 	}
 	for i, def := range partitionInfo.Definitions {
 		lessThans := strings.Join(def.LessThan, ",")
-		fmt.Fprintf(buf, "  PARTITION %s VALUES LESS THAN (%s)", def.Name, lessThans)
+		fmt.Fprintf(buf, "  PARTITION `%s` VALUES LESS THAN (%s)", def.Name, lessThans)
 		if i < len(partitionInfo.Definitions)-1 {
 			buf.WriteString(",\n")
 		} else {
