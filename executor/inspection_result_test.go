@@ -224,6 +224,8 @@ func (s *inspectionResultSuite) TestThresholdCheckInspection(c *C) {
 		"tikv_block_index_cache_hit":          {},
 		"tikv_block_data_cache_hit":           {},
 		"tikv_block_filter_cache_hit":         {},
+		"pd_scheduler_store_status":           {},
+		"pd_region_health":                    {},
 	}
 
 	fpName := "github.com/pingcap/tidb/executor/mockMergeMockInspectionTables"
@@ -346,7 +348,9 @@ func (s *inspectionResultSuite) TestThresholdCheckInspection2(c *C) {
 		"tikv_block_filter_cache_hit": {
 			types.MakeDatums(datetime("2020-02-14 05:20:00"), "tikv-0", "kv", 0.93),
 		},
-		"tikv_thread_cpu": {},
+		"tikv_thread_cpu":           {},
+		"pd_scheduler_store_status": {},
+		"pd_region_health":          {},
 	}
 
 	ctx := context.WithValue(context.Background(), "__mockMetricsTableData", mockData)
@@ -370,7 +374,7 @@ func (s *inspectionResultSuite) TestThresholdCheckInspection2(c *C) {
 		"rocksdb-write-duration tikv tikv-0 200000.00 < 100000.00 select instance, max(value) as max_value from metric_schema.tikv_engine_write_duration where type='write_max' group by instance having max_value > 100000.000000;",
 		"scheduler-cmd-duration tikv tikv-0 5.00 < 0.10 select instance, max(value) as max_value from metric_schema.tikv_scheduler_command_duration where quantile=0.99 group by instance having max_value > 0.100000;",
 		"scheduler-pending-cmd-count tikv tikv-0 1001.00 < 1000.00 select instance, max(value) as max_value from metric_schema.tikv_scheduler_pending_commands  group by instance having max_value > 1000.000000;",
-		"storage-snapshot-duration tikv tikv-0 0.20 < 0.05 select instance, max(value) as max_value from metric_schema.tikv_storage_async_request_duration where type='snapshot' group by instance having max_value > 0.050000;",
+		"storage-snapshot-duration tikv tikv-0 0.06 < 0.05 select instance, max(value) as max_value from metric_schema.tikv_storage_async_request_duration where type='snapshot' group by instance having max_value > 0.050000;",
 		"storage-write-duration tikv tikv-0 0.20 < 0.10 select instance, max(value) as max_value from metric_schema.tikv_storage_async_request_duration where type='write' group by instance having max_value > 0.100000;",
 		"tso-duration tidb pd-0 0.06 < 0.05 select instance, max(value) as max_value from metric_schema.pd_tso_wait_duration where quantile=0.999 group by instance having max_value > 0.050000;",
 	))
