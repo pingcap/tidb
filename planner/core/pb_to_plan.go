@@ -49,7 +49,7 @@ func (b *PBPlanBuilder) Build(executors []*tipb.Executor) (p PhysicalPlan, err e
 		curr.SetChildren(src)
 		src = curr
 	}
-	_, src = b.PredicatePushDown(src, nil)
+	_, src = b.predicatePushDown(src, nil)
 	return src, nil
 }
 
@@ -230,7 +230,7 @@ func (b *PBPlanBuilder) convertColumnInfo(tblInfo *model.TableInfo, pbColumns []
 	return columns, nil
 }
 
-func (b *PBPlanBuilder) PredicatePushDown(p PhysicalPlan, predicates []expression.Expression) ([]expression.Expression, PhysicalPlan) {
+func (b *PBPlanBuilder) predicatePushDown(p PhysicalPlan, predicates []expression.Expression) ([]expression.Expression, PhysicalPlan) {
 	if p == nil {
 		return predicates, p
 	}
@@ -260,7 +260,7 @@ func (b *PBPlanBuilder) PredicatePushDown(p PhysicalPlan, predicates []expressio
 		return predicates, memTable
 	case *PhysicalSelection:
 		selection := p.(*PhysicalSelection)
-		conditions, child := b.PredicatePushDown(p.Children()[0], selection.Conditions)
+		conditions, child := b.predicatePushDown(p.Children()[0], selection.Conditions)
 		if len(conditions) > 0 {
 			selection.Conditions = conditions
 			selection.SetChildren(child)
@@ -269,7 +269,7 @@ func (b *PBPlanBuilder) PredicatePushDown(p PhysicalPlan, predicates []expressio
 		return predicates, child
 	default:
 		if children := p.Children(); len(children) > 0 {
-			_, child := b.PredicatePushDown(children[0], nil)
+			_, child := b.predicatePushDown(children[0], nil)
 			p.SetChildren(child)
 		}
 		return predicates, p
