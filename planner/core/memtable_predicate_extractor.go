@@ -382,6 +382,13 @@ func (helper extractHelper) parseQuantiles(quantileSet set.StringSet) []float64 
 	return quantiles
 }
 
+func (helper extractHelper) convertToTime(t int64) time.Time {
+	if t == 0 || t == math.MaxInt64 {
+		return time.Now()
+	}
+	return time.Unix(t/1000, (t%1000)*int64(time.Millisecond))
+}
+
 // ClusterTableExtractor is used to extract some predicates of cluster table.
 type ClusterTableExtractor struct {
 	extractHelper
@@ -573,13 +580,6 @@ func (e *MetricTableExtractor) getTimeRange(start, end int64) (time.Time, time.T
 	return startTime, endTime
 }
 
-func (e *MetricTableExtractor) convertToTime(t int64) time.Time {
-	if t == 0 || t == math.MaxInt64 {
-		return time.Now()
-	}
-	return time.Unix(t/1000, (t%1000)*int64(time.Millisecond))
-}
-
 // InspectionResultTableExtractor is used to extract some predicates of `inspection_result`
 type InspectionResultTableExtractor struct {
 	extractHelper
@@ -639,4 +639,55 @@ func (e *InspectionSummaryTableExtractor) Extract(
 	e.Quantiles = e.parseQuantiles(quantileSet)
 	e.MetricNames = metricNames
 	return remained
+}
+
+// SlowQueryExtractor is used to extract some predicates of `slow_query`
+type SlowQueryExtractor struct {
+	extractHelper
+
+	SkipRequest bool
+	StartTime   time.Time
+	EndTime     time.Time
+	// Enable is true means the executor should use the time range to locate the slow-log file that need to be parsed.
+	// Enable is false, means the executor should keep the behavior compatible with before, which is only parse the
+	// current slow-log file.
+	Enable bool
+}
+
+// Extract implements the MemTablePredicateExtractor Extract interface
+func (e *SlowQueryExtractor) Extract(
+	ctx sessionctx.Context,
+	schema *expression.Schema,
+	names []*types.FieldName,
+	predicates []expression.Expression,
+) []expression.Expression {
+	remained, startTime, endTime := e.extractTimeRange(ctx, schema, names, predicates, "time", ctx.GetSessionVars().StmtCtx.TimeZone)
+	e.setTimeRange(startTime, endTime)
+	e.SkipRequest = e.Enable && e.StartTime.After(e.EndTime)
+	if e.SkipRequest {
+		return nil
+	}
+	return remained
+}
+
+func (e *SlowQueryExtractor) setTimeRange(start, end int64) {
+	const defaultSlowQueryDuration = 24 * time.Hour
+	var startTime, endTime time.Time
+	if start == 0 && end == 0 {
+		return
+	}
+	if start != 0 {
+		startTime = e.convertToTime(start)
+	}
+	if end != 0 {
+		endTime = e.convertToTime(end)
+	}
+	if start == 0 {
+		startTime = endTime.Add(-defaultSlowQueryDuration)
+	}
+	if end == 0 {
+		endTime = startTime.Add(defaultSlowQueryDuration)
+	}
+	e.StartTime, e.EndTime = startTime, endTime
+	e.Enable = true
 }
