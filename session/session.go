@@ -1569,13 +1569,13 @@ func loadCollationParameter(se *session) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	if para == "true" {
+	if para == varTrue {
 		return true, nil
-	} else if para == "false" {
+	} else if para == varFalse {
 		return false, nil
 	}
-	logutil.BgLogger().Error(
-		"Unexpected value of 'new_collation_enabled' in 'mysql.tidb', use 'false' instead",
+	logutil.BgLogger().Warn(
+		"Unexpected value of 'new_collation_enabled' in 'mysql.tidb', use 'False' instead",
 		zap.String("value", para))
 	return false, nil
 }

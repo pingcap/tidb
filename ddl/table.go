@@ -207,9 +207,10 @@ const (
 func (w *worker) onRecoverTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
 	schemaID := job.SchemaID
 	tblInfo := &model.TableInfo{}
-	var autoID, dropJobID, recoverTableCheckFlag int64
+	var autoIncID, autoRandID, dropJobID, recoverTableCheckFlag int64
 	var snapshotTS uint64
-	if err = job.DecodeArgs(tblInfo, &autoID, &dropJobID, &snapshotTS, &recoverTableCheckFlag); err != nil {
+	const checkFlagIndexInJobArgs = 4 // The index of `recoverTableCheckFlag` in job arg list.
+	if err = job.DecodeArgs(tblInfo, &autoIncID, &dropJobID, &snapshotTS, &recoverTableCheckFlag, &autoRandID); err != nil {
 		// Invalid arguments, cancel this job.
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
@@ -251,9 +252,9 @@ func (w *worker) onRecoverTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 		// none -> write only
 		// check GC enable and update flag.
 		if gcEnable {
-			job.Args[len(job.Args)-1] = recoverTableCheckFlagEnableGC
+			job.Args[checkFlagIndexInJobArgs] = recoverTableCheckFlagEnableGC
 		} else {
-			job.Args[len(job.Args)-1] = recoverTableCheckFlagDisableGC
+			job.Args[checkFlagIndexInJobArgs] = recoverTableCheckFlagDisableGC
 		}
 
 		job.SchemaState = model.StateWriteOnly
@@ -292,7 +293,7 @@ func (w *worker) onRecoverTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 
 		tblInfo.State = model.StatePublic
 		tblInfo.UpdateTS = t.StartTS
-		err = t.CreateTableAndSetAutoID(schemaID, tblInfo, autoID)
+		err = t.CreateTableAndSetAutoID(schemaID, tblInfo, autoIncID, autoRandID)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
