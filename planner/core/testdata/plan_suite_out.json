@@ -1305,13 +1305,13 @@
         ],
         "Plan": [
           "HashLeftJoin_15 12487.50 root inner join, inner:UnionScan_17, equal:[eq(test.t.a, test.t.b)]",
-          "├─UnionScan_21(Probe) 10000.00 root ",
-          "│ └─TableReader_23 10000.00 root data:TableScan_22",
-          "│   └─TableScan_22 10000.00 cop[tikv] table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
-          "└─UnionScan_17(Build) 9990.00 root not(isnull(test.t.b))",
-          "  └─TableReader_20 9990.00 root data:Selection_19",
-          "    └─Selection_19 9990.00 cop[tikv] not(isnull(test.t.b))",
-          "      └─TableScan_18 10000.00 cop[tikv] table:t2, range:[-inf,+inf], keep order:false, stats:pseudo"
+          "├─UnionScan_17(Build) 9990.00 root not(isnull(test.t.b))",
+          "│ └─TableReader_20 9990.00 root data:Selection_19",
+          "│   └─Selection_19 9990.00 cop[tikv] not(isnull(test.t.b))",
+          "│     └─TableScan_18 10000.00 cop[tikv] table:t2, range:[-inf,+inf], keep order:false, stats:pseudo",
+          "└─UnionScan_21(Probe) 10000.00 root ",
+          "  └─TableReader_23 10000.00 root data:TableScan_22",
+          "    └─TableScan_22 10000.00 cop[tikv] table:t1, range:[-inf,+inf], keep order:false, stats:pseudo"
         ]
       },
       {
@@ -1322,13 +1322,13 @@
         "Plan": [
           "Projection_8 12487.50 root test.t.a, test.t.b",
           "└─HashLeftJoin_15 12487.50 root inner join, inner:UnionScan_17, equal:[eq(test.t.a, test.t.b)]",
-          "  ├─UnionScan_21(Probe) 10000.00 root ",
-          "  │ └─TableReader_23 10000.00 root data:TableScan_22",
-          "  │   └─TableScan_22 10000.00 cop[tikv] table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
-          "  └─UnionScan_17(Build) 9990.00 root not(isnull(test.t.b))",
-          "    └─TableReader_20 9990.00 root data:Selection_19",
-          "      └─Selection_19 9990.00 cop[tikv] not(isnull(test.t.b))",
-          "        └─TableScan_18 10000.00 cop[tikv] table:t2, range:[-inf,+inf], keep order:false, stats:pseudo"
+          "  ├─UnionScan_17(Build) 9990.00 root not(isnull(test.t.b))",
+          "  │ └─TableReader_20 9990.00 root data:Selection_19",
+          "  │   └─Selection_19 9990.00 cop[tikv] not(isnull(test.t.b))",
+          "  │     └─TableScan_18 10000.00 cop[tikv] table:t2, range:[-inf,+inf], keep order:false, stats:pseudo",
+          "  └─UnionScan_21(Probe) 10000.00 root ",
+          "    └─TableReader_23 10000.00 root data:TableScan_22",
+          "      └─TableScan_22 10000.00 cop[tikv] table:t1, range:[-inf,+inf], keep order:false, stats:pseudo"
         ]
       },
       {
@@ -1338,20 +1338,20 @@
         ],
         "Plan": [
           "HashLeftJoin_19 25000.00 root inner join, inner:Union_28, equal:[eq(test.tt.a, test.tt.a)]",
-          "├─Union_21(Probe) 20000.00 root ",
-          "│ ├─UnionScan_22 10000.00 root ",
-          "│ │ └─TableReader_24 10000.00 root data:TableScan_23",
-          "│ │   └─TableScan_23 10000.00 cop[tikv] table:t1, partition:p0, range:[-inf,+inf], keep order:false, stats:pseudo",
-          "│ └─UnionScan_25 10000.00 root ",
-          "│   └─TableReader_27 10000.00 root data:TableScan_26",
-          "│     └─TableScan_26 10000.00 cop[tikv] table:t1, partition:p1, range:[-inf,+inf], keep order:false, stats:pseudo",
-          "└─Union_28(Build) 20000.00 root ",
-          "  ├─UnionScan_29 10000.00 root ",
-          "  │ └─TableReader_31 10000.00 root data:TableScan_30",
-          "  │   └─TableScan_30 10000.00 cop[tikv] table:t2, partition:p0, range:[-inf,+inf], keep order:false, stats:pseudo",
-          "  └─UnionScan_32 10000.00 root ",
-          "    └─TableReader_34 10000.00 root data:TableScan_33",
-          "      └─TableScan_33 10000.00 cop[tikv] table:t2, partition:p1, range:[-inf,+inf], keep order:false, stats:pseudo"
+          "├─Union_28(Build) 20000.00 root ",
+          "│ ├─UnionScan_29 10000.00 root ",
+          "│ │ └─TableReader_31 10000.00 root data:TableScan_30",
+          "│ │   └─TableScan_30 10000.00 cop[tikv] table:t2, partition:p0, range:[-inf,+inf], keep order:false, stats:pseudo",
+          "│ └─UnionScan_32 10000.00 root ",
+          "│   └─TableReader_34 10000.00 root data:TableScan_33",
+          "│     └─TableScan_33 10000.00 cop[tikv] table:t2, partition:p1, range:[-inf,+inf], keep order:false, stats:pseudo",
+          "└─Union_21(Probe) 20000.00 root ",
+          "  ├─UnionScan_22 10000.00 root ",
+          "  │ └─TableReader_24 10000.00 root data:TableScan_23",
+          "  │   └─TableScan_23 10000.00 cop[tikv] table:t1, partition:p0, range:[-inf,+inf], keep order:false, stats:pseudo",
+          "  └─UnionScan_25 10000.00 root ",
+          "    └─TableReader_27 10000.00 root data:TableScan_26",
+          "      └─TableScan_26 10000.00 cop[tikv] table:t1, partition:p1, range:[-inf,+inf], keep order:false, stats:pseudo"
         ]
       }
     ]

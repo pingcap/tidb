@@ -6,11 +6,11 @@
         "SQL": "explain select * from t1 left join t2 on t1.a > t2.a and t1.a = 1",
         "Result": [
           "HashLeftJoin_6 33233333.33 root CARTESIAN left outer join, inner:TableReader_12, left cond:[eq(test.t1.a, 1)]",
-          "├─TableReader_9(Probe) 10000.00 root data:TableScan_8",
-          "│ └─TableScan_8 10000.00 cop[tikv] table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
-          "└─TableReader_12(Build) 3323.33 root data:Selection_11",
-          "  └─Selection_11 3323.33 cop[tikv] gt(1, test.t2.a)",
-          "    └─TableScan_10 10000.00 cop[tikv] table:t2, range:[-inf,+inf], keep order:false, stats:pseudo"
+          "├─TableReader_12(Build) 3323.33 root data:Selection_11",
+          "│ └─Selection_11 3323.33 cop[tikv] gt(1, test.t2.a)",
+          "│   └─TableScan_10 10000.00 cop[tikv] table:t2, range:[-inf,+inf], keep order:false, stats:pseudo",
+          "└─TableReader_9(Probe) 10000.00 root data:TableScan_8",
+          "  └─TableScan_8 10000.00 cop[tikv] table:t1, range:[-inf,+inf], keep order:false, stats:pseudo"
         ]
       },
       {
@@ -29,35 +29,35 @@
         "SQL": "explain select * from t1 left join t2 on t1.a = t2.a and t1.a > 1",
         "Result": [
           "HashLeftJoin_6 10000.00 root left outer join, inner:TableReader_12, equal:[eq(test.t1.a, test.t2.a)], left cond:[gt(test.t1.a, 1)]",
-          "├─TableReader_9(Probe) 10000.00 root data:TableScan_8",
-          "│ └─TableScan_8 10000.00 cop[tikv] table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
-          "└─TableReader_12(Build) 3333.33 root data:Selection_11",
-          "  └─Selection_11 3333.33 cop[tikv] gt(test.t2.a, 1), not(isnull(test.t2.a))",
-          "    └─TableScan_10 10000.00 cop[tikv] table:t2, range:[-inf,+inf], keep order:false, stats:pseudo"
+          "├─TableReader_12(Build) 3333.33 root data:Selection_11",
+          "│ └─Selection_11 3333.33 cop[tikv] gt(test.t2.a, 1), not(isnull(test.t2.a))",
+          "│   └─TableScan_10 10000.00 cop[tikv] table:t2, range:[-inf,+inf], keep order:false, stats:pseudo",
+          "└─TableReader_9(Probe) 10000.00 root data:TableScan_8",
+          "  └─TableScan_8 10000.00 cop[tikv] table:t1, range:[-inf,+inf], keep order:false, stats:pseudo"
         ]
       },
       {
         "SQL": "explain select * from t1 left join t2 on t1.a = t2.a where t1.a > 1",
         "Result": [
           "HashLeftJoin_7 4166.67 root left outer join, inner:TableReader_14, equal:[eq(test.t1.a, test.t2.a)]",
-          "├─TableReader_11(Probe) 3333.33 root data:Selection_10",
-          "│ └─Selection_10 3333.33 cop[tikv] gt(test.t1.a, 1)",
-          "│   └─TableScan_9 10000.00 cop[tikv] table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
-          "└─TableReader_14(Build) 3333.33 root data:Selection_13",
-          "  └─Selection_13 3333.33 cop[tikv] gt(test.t2.a, 1), not(isnull(test.t2.a))",
-          "    └─TableScan_12 10000.00 cop[tikv] table:t2, range:[-inf,+inf], keep order:false, stats:pseudo"
+          "├─TableReader_14(Build) 3333.33 root data:Selection_13",
+          "│ └─Selection_13 3333.33 cop[tikv] gt(test.t2.a, 1), not(isnull(test.t2.a))",
+          "│   └─TableScan_12 10000.00 cop[tikv] table:t2, range:[-inf,+inf], keep order:false, stats:pseudo",
+          "└─TableReader_11(Probe) 3333.33 root data:Selection_10",
+          "  └─Selection_10 3333.33 cop[tikv] gt(test.t1.a, 1)",
+          "    └─TableScan_9 10000.00 cop[tikv] table:t1, range:[-inf,+inf], keep order:false, stats:pseudo"
         ]
       },
       {
         "SQL": "explain select * from t1 right join t2 on t1.a > t2.a where t2.a = 1",
         "Result": [
           "HashRightJoin_8 33333.33 root CARTESIAN right outer join, inner:TableReader_14 (REVERSED)",
-          "├─TableReader_11(Probe) 3333.33 root data:Selection_10",
-          "│ └─Selection_10 3333.33 cop[tikv] gt(test.t1.a, 1)",
-          "│   └─TableScan_9 10000.00 cop[tikv] table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
-          "└─TableReader_14(Build) 10.00 root data:Selection_13",
-          "  └─Selection_13 10.00 cop[tikv] eq(test.t2.a, 1)",
-          "    └─TableScan_12 10000.00 cop[tikv] table:t2, range:[-inf,+inf], keep order:false, stats:pseudo"
+          "├─TableReader_14(Build) 10.00 root data:Selection_13",
+          "│ └─Selection_13 10.00 cop[tikv] eq(test.t2.a, 1)",
+          "│   └─TableScan_12 10000.00 cop[tikv] table:t2, range:[-inf,+inf], keep order:false, stats:pseudo",
+          "└─TableReader_11(Probe) 3333.33 root data:Selection_10",
+          "  └─Selection_10 3333.33 cop[tikv] gt(test.t1.a, 1)",
+          "    └─TableScan_9 10000.00 cop[tikv] table:t1, range:[-inf,+inf], keep order:false, stats:pseudo"
         ]
       },
       {
@@ -98,22 +98,22 @@
         "SQL": "explain select * from t1 left join t2 on t1.a = t2.a and t2.a > 1",
         "Result": [
           "HashLeftJoin_6 10000.00 root left outer join, inner:TableReader_12, equal:[eq(test.t1.a, test.t2.a)]",
-          "├─TableReader_9(Probe) 10000.00 root data:TableScan_8",
-          "│ └─TableScan_8 10000.00 cop[tikv] table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
-          "└─TableReader_12(Build) 3333.33 root data:Selection_11",
-          "  └─Selection_11 3333.33 cop[tikv] gt(test.t2.a, 1), not(isnull(test.t2.a))",
-          "    └─TableScan_10 10000.00 cop[tikv] table:t2, range:[-inf,+inf], keep order:false, stats:pseudo"
+          "├─TableReader_12(Build) 3333.33 root data:Selection_11",
+          "│ └─Selection_11 3333.33 cop[tikv] gt(test.t2.a, 1), not(isnull(test.t2.a))",
+          "│   └─TableScan_10 10000.00 cop[tikv] table:t2, range:[-inf,+inf], keep order:false, stats:pseudo",
+          "└─TableReader_9(Probe) 10000.00 root data:TableScan_8",
+          "  └─TableScan_8 10000.00 cop[tikv] table:t1, range:[-inf,+inf], keep order:false, stats:pseudo"
         ]
       },
       {
         "SQL": "explain select * from t1 left join t2 on t1.a > t2.a and t2.a = 1",
         "Result": [
           "HashLeftJoin_6 100000.00 root CARTESIAN left outer join, inner:TableReader_12, other cond:gt(test.t1.a, test.t2.a)",
-          "├─TableReader_9(Probe) 10000.00 root data:TableScan_8",
-          "│ └─TableScan_8 10000.00 cop[tikv] table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
-          "└─TableReader_12(Build) 10.00 root data:Selection_11",
-          "  └─Selection_11 10.00 cop[tikv] eq(test.t2.a, 1), not(isnull(test.t2.a))",
-          "    └─TableScan_10 10000.00 cop[tikv] table:t2, range:[-inf,+inf], keep order:false, stats:pseudo"
+          "├─TableReader_12(Build) 10.00 root data:Selection_11",
+          "│ └─Selection_11 10.00 cop[tikv] eq(test.t2.a, 1), not(isnull(test.t2.a))",
+          "│   └─TableScan_10 10000.00 cop[tikv] table:t2, range:[-inf,+inf], keep order:false, stats:pseudo",
+          "└─TableReader_9(Probe) 10000.00 root data:TableScan_8",
+          "  └─TableScan_8 10000.00 cop[tikv] table:t1, range:[-inf,+inf], keep order:false, stats:pseudo"
         ]
       },
       {
@@ -142,21 +142,21 @@
         "SQL": "explain select * from t1 left join t2 on t1.a = t1.b and t1.a > 1",
         "Result": [
           "HashLeftJoin_6 100000000.00 root CARTESIAN left outer join, inner:TableReader_11, left cond:[eq(test.t1.a, test.t1.b) gt(test.t1.a, 1)]",
-          "├─TableReader_9(Probe) 10000.00 root data:TableScan_8",
-          "│ └─TableScan_8 10000.00 cop[tikv] table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
-          "└─TableReader_11(Build) 10000.00 root data:TableScan_10",
-          "  └─TableScan_10 10000.00 cop[tikv] table:t2, range:[-inf,+inf], keep order:false, stats:pseudo"
+          "├─TableReader_11(Build) 10000.00 root data:TableScan_10",
+          "│ └─TableScan_10 10000.00 cop[tikv] table:t2, range:[-inf,+inf], keep order:false, stats:pseudo",
+          "└─TableReader_9(Probe) 10000.00 root data:TableScan_8",
+          "  └─TableScan_8 10000.00 cop[tikv] table:t1, range:[-inf,+inf], keep order:false, stats:pseudo"
         ]
       },
       {
         "SQL": "explain select * from t1 left join t2 on t2.a = t2.b and t2.a > 1",
         "Result": [
           "HashLeftJoin_6 26666666.67 root CARTESIAN left outer join, inner:TableReader_12",
-          "├─TableReader_9(Probe) 10000.00 root data:TableScan_8",
-          "│ └─TableScan_8 10000.00 cop[tikv] table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
-          "└─TableReader_12(Build) 2666.67 root data:Selection_11",
-          "  └─Selection_11 2666.67 cop[tikv] eq(test.t2.a, test.t2.b), gt(test.t2.a, 1)",
-          "    └─TableScan_10 10000.00 cop[tikv] table:t2, range:[-inf,+inf], keep order:false, stats:pseudo"
+          "├─TableReader_12(Build) 2666.67 root data:Selection_11",
+          "│ └─Selection_11 2666.67 cop[tikv] eq(test.t2.a, test.t2.b), gt(test.t2.a, 1)",
+          "│   └─TableScan_10 10000.00 cop[tikv] table:t2, range:[-inf,+inf], keep order:false, stats:pseudo",
+          "└─TableReader_9(Probe) 10000.00 root data:TableScan_8",
+          "  └─TableScan_8 10000.00 cop[tikv] table:t1, range:[-inf,+inf], keep order:false, stats:pseudo"
         ]
       },
       {
@@ -198,9 +198,9 @@
         "SQL": "explain select * from t1 left join t2 on false",
         "Result": [
           "HashLeftJoin_6 80000000.00 root CARTESIAN left outer join, inner:TableDual_10",
-          "├─TableReader_9(Probe) 10000.00 root data:TableScan_8",
-          "│ └─TableScan_8 10000.00 cop[tikv] table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
-          "└─TableDual_10(Build) 8000.00 root rows:0"
+          "├─TableDual_10(Build) 8000.00 root rows:0",
+          "└─TableReader_9(Probe) 10000.00 root data:TableScan_8",
+          "  └─TableScan_8 10000.00 cop[tikv] table:t1, range:[-inf,+inf], keep order:false, stats:pseudo"
         ]
       },
       {
@@ -216,9 +216,9 @@
         "SQL": "explain select * from t1 left join t2 on t1.a = 1 and t1.a = 2",
         "Result": [
           "HashLeftJoin_6 80000000.00 root CARTESIAN left outer join, inner:TableDual_10",
-          "├─TableReader_9(Probe) 10000.00 root data:TableScan_8",
-          "│ └─TableScan_8 10000.00 cop[tikv] table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
-          "└─TableDual_10(Build) 8000.00 root rows:0"
+          "├─TableDual_10(Build) 8000.00 root rows:0",
+          "└─TableReader_9(Probe) 10000.00 root data:TableScan_8",
+          "  └─TableScan_8 10000.00 cop[tikv] table:t1, range:[-inf,+inf], keep order:false, stats:pseudo"
         ]
       },
       {
@@ -235,21 +235,21 @@
         "SQL": "explain select * from t1 left join t2 on t2.a = 1 and t2.a = 2",
         "Result": [
           "HashLeftJoin_6 10000.00 root CARTESIAN left outer join, inner:TableReader_12",
-          "├─TableReader_9(Probe) 10000.00 root data:TableScan_8",
-          "│ └─TableScan_8 10000.00 cop[tikv] table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
-          "└─TableReader_12(Build) 0.00 root data:Selection_11",
-          "  └─Selection_11 0.00 cop[tikv] eq(test.t2.a, 1), eq(test.t2.a, 2)",
-          "    └─TableScan_10 10000.00 cop[tikv] table:t2, range:[-inf,+inf], keep order:false, stats:pseudo"
+          "├─TableReader_12(Build) 0.00 root data:Selection_11",
+          "│ └─Selection_11 0.00 cop[tikv] eq(test.t2.a, 1), eq(test.t2.a, 2)",
+          "│   └─TableScan_10 10000.00 cop[tikv] table:t2, range:[-inf,+inf], keep order:false, stats:pseudo",
+          "└─TableReader_9(Probe) 10000.00 root data:TableScan_8",
+          "  └─TableScan_8 10000.00 cop[tikv] table:t1, range:[-inf,+inf], keep order:false, stats:pseudo"
         ]
       },
       {
         "SQL": "explain select * from t1 left join t2 on t1.a = 1 or (t1.a = 2 and t1.a = 3)",
         "Result": [
           "HashLeftJoin_6 100000000.00 root CARTESIAN left outer join, inner:TableReader_11, left cond:[or(eq(test.t1.a, 1), 0)]",
-          "├─TableReader_9(Probe) 10000.00 root data:TableScan_8",
-          "│ └─TableScan_8 10000.00 cop[tikv] table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
-          "└─TableReader_11(Build) 10000.00 root data:TableScan_10",
-          "  └─TableScan_10 10000.00 cop[tikv] table:t2, range:[-inf,+inf], keep order:false, stats:pseudo"
+          "├─TableReader_11(Build) 10000.00 root data:TableScan_10",
+          "│ └─TableScan_10 10000.00 cop[tikv] table:t2, range:[-inf,+inf], keep order:false, stats:pseudo",
+          "└─TableReader_9(Probe) 10000.00 root data:TableScan_8",
+          "  └─TableScan_8 10000.00 cop[tikv] table:t1, range:[-inf,+inf], keep order:false, stats:pseudo"
         ]
       },
       {
@@ -269,10 +269,10 @@
           "Projection_7 8000.00 root test.t1.id, test.t1.a, test.t1.b",
           "└─Selection_8 8000.00 root or(gt(test.t1.b, 1), Column#7)",
           "  └─HashLeftJoin_9 10000.00 root CARTESIAN left outer semi join, inner:TableReader_13, other cond:eq(test.t1.b, test.t2.b)",
-          "    ├─TableReader_11(Probe) 10000.00 root data:TableScan_10",
-          "    │ └─TableScan_10 10000.00 cop[tikv] table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
-          "    └─TableReader_13(Build) 10000.00 root data:TableScan_12",
-          "      └─TableScan_12 10000.00 cop[tikv] table:t2, range:[-inf,+inf], keep order:false, stats:pseudo"
+          "    ├─TableReader_13(Build) 10000.00 root data:TableScan_12",
+          "    │ └─TableScan_12 10000.00 cop[tikv] table:t2, range:[-inf,+inf], keep order:false, stats:pseudo",
+          "    └─TableReader_11(Probe) 10000.00 root data:TableScan_10",
+          "      └─TableScan_10 10000.00 cop[tikv] table:t1, range:[-inf,+inf], keep order:false, stats:pseudo"
         ]
       }
     ]

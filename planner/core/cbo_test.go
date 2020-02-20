@@ -124,12 +124,12 @@ func (s *testAnalyzeSuite) TestCBOWithoutAnalyze(c *C) {
 	c.Assert(h.Update(dom.InfoSchema()), IsNil)
 	testKit.MustQuery("explain select * from t1, t2 where t1.a = t2.a").Check(testkit.Rows(
 		"HashLeftJoin_8 7.49 root inner join, inner:TableReader_15, equal:[eq(test.t1.a, test.t2.a)]",
-		"├─TableReader_12(Probe) 5.99 root data:Selection_11",
-		"│ └─Selection_11 5.99 cop[tikv] not(isnull(test.t1.a))",
-		"│   └─TableScan_10 6.00 cop[tikv] table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
-		"└─TableReader_15(Build) 5.99 root data:Selection_14",
-		"  └─Selection_14 5.99 cop[tikv] not(isnull(test.t2.a))",
-		"    └─TableScan_13 6.00 cop[tikv] table:t2, range:[-inf,+inf], keep order:false, stats:pseudo",
+		"├─TableReader_15(Build) 5.99 root data:Selection_14",
+		"│ └─Selection_14 5.99 cop[tikv] not(isnull(test.t2.a))",
+		"│   └─TableScan_13 6.00 cop[tikv] table:t2, range:[-inf,+inf], keep order:false, stats:pseudo",
+		"└─TableReader_12(Probe) 5.99 root data:Selection_11",
+		"  └─Selection_11 5.99 cop[tikv] not(isnull(test.t1.a))",
+		"    └─TableScan_10 6.00 cop[tikv] table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
 	))
 	testKit.MustQuery("explain format = 'hint' select * from t1, t2 where t1.a = t2.a").Check(testkit.Rows(
 		"USE_INDEX(@`sel_1` `test`.`t1` ), USE_INDEX(@`sel_1` `test`.`t2` ), HASH_JOIN(@`sel_1` `test`.`t1`)"))

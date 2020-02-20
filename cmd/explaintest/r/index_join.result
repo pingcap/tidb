@@ -9,13 +9,13 @@ set session tidb_hashagg_final_concurrency = 1;
 explain select /*+ TIDB_INLJ(t1, t2) */ * from t1 join t2 on t1.a=t2.a;
 id	count	task	operator info
 IndexJoin_25	5.00	root	inner join, inner:IndexLookUp_24, outer key:test.t2.a, inner key:test.t1.a
-├─IndexLookUp_24(Probe)	5.00	root	
-│ ├─Selection_23(Build)	5.00	cop[tikv]	not(isnull(test.t1.a))
-│ │ └─IndexScan_21	5.00	cop[tikv]	table:t1, index:a, range: decided by [eq(test.t1.a, test.t2.a)], keep order:false
-│ └─TableScan_22(Probe)	5.00	cop[tikv]	table:t1, keep order:false
-└─TableReader_43(Build)	1.00	root	data:Selection_42
-  └─Selection_42	1.00	cop[tikv]	not(isnull(test.t2.a))
-    └─TableScan_41	1.00	cop[tikv]	table:t2, range:[-inf,+inf], keep order:false
+├─TableReader_43(Build)	1.00	root	data:Selection_42
+│ └─Selection_42	1.00	cop[tikv]	not(isnull(test.t2.a))
+│   └─TableScan_41	1.00	cop[tikv]	table:t2, range:[-inf,+inf], keep order:false
+└─IndexLookUp_24(Probe)	5.00	root	
+  ├─Selection_23(Build)	5.00	cop[tikv]	not(isnull(test.t1.a))
+  │ └─IndexScan_21	5.00	cop[tikv]	table:t1, index:a, range: decided by [eq(test.t1.a, test.t2.a)], keep order:false
+  └─TableScan_22(Probe)	5.00	cop[tikv]	table:t1, keep order:false
 explain select * from t1 join t2 on t1.a=t2.a;
 id	count	task	operator info
 Projection_6	5.00	root	test.t1.a, test.t1.b, test.t2.a, test.t2.b
@@ -47,9 +47,9 @@ explain select /*+ TIDB_INLJ(t1) */ * from t1 where t1.a in (select t2.a from t2
 id	count	task	operator info
 Projection_8	10000.00	root	test.t1.a, test.t1.b
 └─IndexJoin_13	10000.00	root	inner join, inner:IndexLookUp_12, outer key:test.t2.a, inner key:test.t1.a
-  ├─IndexLookUp_12(Probe)	1.25	root	
-  │ ├─IndexScan_10(Build)	1.25	cop[tikv]	table:t1, index:a, range: decided by [eq(test.t1.a, test.t2.a)], keep order:false, stats:pseudo
-  │ └─TableScan_11(Probe)	1.25	cop[tikv]	table:t1, keep order:false, stats:pseudo
-  └─StreamAgg_26(Build)	8000.00	root	group by:test.t2.a, funcs:firstrow(test.t2.a)->test.t2.a
-    └─IndexReader_39	10000.00	root	index:IndexScan_38
-      └─IndexScan_38	10000.00	cop[tikv]	table:t2, index:a, range:[NULL,+inf], keep order:true, stats:pseudo
+  ├─StreamAgg_26(Build)	8000.00	root	group by:test.t2.a, funcs:firstrow(test.t2.a)->test.t2.a
+  │ └─IndexReader_39	10000.00	root	index:IndexScan_38
+  │   └─IndexScan_38	10000.00	cop[tikv]	table:t2, index:a, range:[NULL,+inf], keep order:true, stats:pseudo
+  └─IndexLookUp_12(Probe)	1.25	root	
+    ├─IndexScan_10(Build)	1.25	cop[tikv]	table:t1, index:a, range: decided by [eq(test.t1.a, test.t2.a)], keep order:false, stats:pseudo
+    └─TableScan_11(Probe)	1.25	cop[tikv]	table:t1, keep order:false, stats:pseudo
