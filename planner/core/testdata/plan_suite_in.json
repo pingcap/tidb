@@ -540,5 +540,11 @@
       "select lead(a, 1) over (partition by null) as c from t",
       "select lead(a, 1) over (partition by b) as c from t"
     ]
+  },
+  {
+    "name": "TestChangeGetvar2Constant",
+    "cases": [
+      "explain select t.id, b.id from t, b where t.id = b.id and t.day = b.day and t.day = @befor_day"
+    ]
   }
 ]

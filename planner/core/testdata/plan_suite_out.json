@@ -1428,5 +1428,25 @@
         "Best": "TableReader(Table(t))->Sort->Window(lead(test.t.a, 1)->Column#14 over(partition by test.t.b))->Partition(execution info: concurrency:4, data source:TableReader_10)->Projection"
       }
     ]
+  },
+  {
+    "Name": "TestChangeGetvar2Constant",
+    "Cases": [
+      {
+        "SQL": "explain select t.id, b.id from t, b where t.id = b.id and t.day = b.day and t.day = @befor_day",
+        "Plan": [
+          "Projection_7 12.49 root test.t.id, test.b.id",
+          "└─HashLeftJoin_8 12.49 root inner join, inner:IndexLookUp_23, equal:[eq(test.t.id, test.b.id)]",
+          "  ├─IndexLookUp_16 9.99 root ",
+          "  │ ├─IndexScan_13 10.00 cop[tikv] table:t, index:day, range:[2020-02-19,2020-02-19], keep order:false, stats:pseudo",
+          "  │ └─Selection_15 9.99 cop[tikv] not(isnull(test.t.id))",
+          "  │   └─TableScan_14 10.00 cop[tikv] table:t, keep order:false, stats:pseudo",
+          "  └─IndexLookUp_23 9.99 root ",
+          "    ├─IndexScan_20 10.00 cop[tikv] table:b, index:day, range:[2020-02-19,2020-02-19], keep order:false, stats:pseudo",
+          "    └─Selection_22 9.99 cop[tikv] not(isnull(test.b.id))",
+          "      └─TableScan_21 10.00 cop[tikv] table:b, keep order:false, stats:pseudo"
+        ]
+      }
+    ]
   }
 ]

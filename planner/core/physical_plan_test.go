@@ -1199,3 +1199,33 @@ func (s *testPlanSuite) doTestDAGPlanBuilderWindow(c *C, vars, input []string, o
 		c.Assert(core.ToString(p), Equals, output[i].Best, comment)
 	}
 }
+
+func (s *testPlanSuite) TestChangeGetvar2Constant(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	tk.MustExec("use test")
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+	}
+	tk.MustExec("create table t (id int, day date)")
+	tk.MustExec("create index idx_day on t(day)")
+	tk.MustExec("create table b (id int, day date, last date)")
+	tk.MustExec("create index idx_day on b(day)")
+	tk.MustExec("set @befor_day = DATE_SUB('2020-02-20', INTERVAL 1 DAY)")
+	s.testData.GetTestCases(c, &input, &output)
+	for i, ts := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = ts
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery(ts).Rows())
+		})
+		tk.MustQuery(ts).Check(testkit.Rows(output[i].Plan...))
+	}
+}

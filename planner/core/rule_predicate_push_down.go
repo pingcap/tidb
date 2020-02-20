@@ -14,12 +14,12 @@ package core
 
 import (
 	"context"
-
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
 )
 
 type ppdSolver struct{}
@@ -57,14 +57,56 @@ func (p *baseLogicalPlan) PredicatePushDown(predicates []expression.Expression) 
 	return nil, p.self
 }
 
+// canSwitch2Constant will return true if expr doesn't contain Column.
+func canSwitch2Constant(expr expression.Expression) bool {
+	scalarFunc, ok := expr.(*expression.ScalarFunction)
+	if !ok {
+		_, res := expr.(*expression.Column)
+		return !res
+	}
+	for _, arg := range scalarFunc.GetArgs() {
+		return canSwitch2Constant(arg)
+	}
+	return true
+}
+
+// switch2Const will switch expr to Constant if it can.
+func switch2Const(expr expression.Expression) expression.Expression {
+	scalarFunc, ok := expr.(*expression.ScalarFunction)
+	if !ok {
+		return expr
+	}
+	if !canSwitch2Constant(expr) {
+		args := scalarFunc.GetArgs()
+		newArgs := make([]expression.Expression, 0, len(args))
+		for _, arg := range args {
+			newArgs = append(newArgs, switch2Const(arg))
+		}
+		newFunc, err := expression.NewFunction(
+			scalarFunc.GetCtx(),
+			scalarFunc.FuncName.String(),
+			scalarFunc.RetType,
+			newArgs...)
+		if err != nil {
+			return expr
+		}
+		return newFunc
+	}
+	val, err := scalarFunc.Eval(chunk.Row{})
+	if err != nil {
+		return expr
+	}
+	return &expression.Constant{Value: val, RetType: scalarFunc.RetType}
+}
+
 func splitSetGetVarFunc(filters []expression.Expression) ([]expression.Expression, []expression.Expression) {
 	canBePushDown := make([]expression.Expression, 0, len(filters))
 	canNotBePushDown := make([]expression.Expression, 0, len(filters))
 	for _, expr := range filters {
-		if expression.HasGetSetVarFunc(expr) {
+		if expression.HasAssignSetVarFunc(expr) {
 			canNotBePushDown = append(canNotBePushDown, expr)
 		} else {
-			canBePushDown = append(canBePushDown, expr)
+			canBePushDown = append(canBePushDown, switch2Const(expr))
 		}
 	}
 	return canBePushDown, canNotBePushDown
