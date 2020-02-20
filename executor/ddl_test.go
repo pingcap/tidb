@@ -17,7 +17,6 @@ import (
 	"context"
 	"fmt"
 	"math"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -28,6 +27,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/ddl"
+	ddltestutil "github.com/pingcap/tidb/ddl/testutil"
 	ddlutil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
@@ -173,6 +173,13 @@ func (s *testSuite6) TestCreateTable(c *C) {
 	tk.MustExec("insert into create_auto_increment_test (name) values ('aa')")
 	r = tk.MustQuery("select * from create_auto_increment_test;")
 	r.Check(testkit.Rows("1000 aa"))
+
+	// Test for `drop table if exists`.
+	tk.MustExec("drop table if exists t_if_exists;")
+	tk.MustQuery("show warnings;").Check(testkit.Rows("Note 1051 Unknown table 'test.t_if_exists'"))
+	tk.MustExec("create table if not exists t1_if_exists(c int)")
+	tk.MustExec("drop table if exists t1_if_exists,t2_if_exists,t3_if_exists")
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Note|1051|Unknown table 'test.t2_if_exists'", "Note|1051|Unknown table 'test.t3_if_exists'"))
 }
 
 func (s *testSuite6) TestCreateView(c *C) {
@@ -253,6 +260,13 @@ func (s *testSuite6) TestCreateView(c *C) {
 	tk.MustExec("drop view v")
 	tk.MustExec("create view v as (select * from t1 union select * from t2)")
 	tk.MustExec("drop view v")
+
+	// Test for `drop view if exists`.
+	tk.MustExec("drop view if exists v_if_exists;")
+	tk.MustQuery("show warnings;").Check(testkit.Rows("Note 1051 Unknown table 'test.v_if_exists'"))
+	tk.MustExec("create view v1_if_exists as (select * from t1)")
+	tk.MustExec("drop view if exists v1_if_exists,v2_if_exists,v3_if_exists")
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Note|1051|Unknown table 'test.v2_if_exists'", "Note|1051|Unknown table 'test.v3_if_exists'"))
 }
 
 func (s *testSuite6) TestCreateDropDatabase(c *C) {
@@ -701,31 +715,20 @@ func (s *testAutoRandomSuite) TestAutoRandomBitsData(c *C) {
 	for i := 0; i < 100; i++ {
 		tk.MustExec("insert into t(b) values (?)", i)
 	}
-	dom := domain.GetDomain(tk.Se)
-	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr("test_auto_random_bits"), model.NewCIStr("t"))
-	c.Assert(err, IsNil)
-	c.Assert(tk.Se.NewTxn(context.Background()), IsNil)
-	var allHandles []int64
-	// Iterate all the record. The order is not guaranteed.
-	err = tbl.IterRecords(tk.Se, tbl.FirstKey(), nil, func(h int64, _ []types.Datum, _ []*table.Column) (more bool, err error) {
-		allHandles = append(allHandles, h)
-		return true, nil
-	})
+	allHandles, err := ddltestutil.ExtractAllTableHandles(tk.Se, "test_auto_random_bits", "t")
 	c.Assert(err, IsNil)
 	tk.MustExec("drop table t")
 
 	// Test auto random id number.
 	c.Assert(len(allHandles), Equals, 100)
-	// Test the first 15 bits of each handle is greater than 0.
+	// Test the handles are not all zero.
+	allZero := true
 	for _, h := range allHandles {
-		c.Assert(h>>(64-15), Greater, int64(0))
+		allZero = allZero && (h>>(64-16)) == 0
 	}
-	// Test auto random id is monotonic increasing and continuous.
-	orderedHandles := make([]int64, len(allHandles))
-	for i, h := range allHandles {
-		orderedHandles[i] = h << 16 >> 16
-	}
-	sort.Slice(orderedHandles, func(i, j int) bool { return orderedHandles[i] < orderedHandles[j] })
+	c.Assert(allZero, IsFalse)
+	// Test non-shard-bits part of auto random id is monotonic increasing and continuous.
+	orderedHandles := testutil.ConfigTestUtils.MaskSortHandles(allHandles, 15, mysql.TypeLonglong)
 	size := int64(len(allHandles))
 	for i := int64(1); i <= size; i++ {
 		c.Assert(i, Equals, orderedHandles[i-1])

@@ -14,11 +14,12 @@
 package ranger_test
 
 import (
+	"math"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/ranger"
-	"math"
 )
 
 var _ = Suite(&testRangeSuite{})

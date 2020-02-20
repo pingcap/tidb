@@ -45,7 +45,8 @@ import (
 
 // TableCommon is shared by both Table and partition.
 type TableCommon struct {
-	tableID int64
+	sequence int64
+	tableID  int64
 	// physicalTableID is a unique int64 to identify a physical table.
 	physicalTableID int64
 	Columns         []*table.Column
@@ -1187,4 +1188,25 @@ func CheckHandleExists(ctx context.Context, sctx sessionctx.Context, t table.Tab
 func init() {
 	table.TableFromMeta = TableFromMeta
 	table.MockTableFromMeta = MockTableFromMeta
+}
+
+// GetSequenceNextVal implements util.SequenceTable GetSequenceNextVal interface.
+func (t *TableCommon) GetSequenceNextVal(dbName, seqName string) (int64, error) {
+	t.sequence++
+	// TODO: implements it with sequence allocation logic.
+	return t.sequence, nil
+}
+
+// SetSequenceVal implements util.SequenceTable SetSequenceVal interface.
+func (t *TableCommon) SetSequenceVal(newVal int64) (int64, bool, error) {
+	if t.sequence < newVal {
+		t.sequence = newVal
+	}
+	// TODO: implement it with sequence rebase logic.
+	return newVal, false, nil
+}
+
+// GetSequenceID implements util.SequenceTable GetSequenceID interface.
+func (t *TableCommon) GetSequenceID() int64 {
+	return t.tableID
 }

@@ -36,7 +36,7 @@ func (p *PhysicalLock) ExplainInfo() string {
 	return p.Lock.String()
 }
 
-//ExplainID override the ExplainID in order to match different range
+// ExplainID overrides the ExplainID in order to match different range.
 func (p *PhysicalIndexScan) ExplainID() fmt.Stringer {
 	return stringutil.MemoizeStr(func() string {
 		if p.isFullScan() {
@@ -131,7 +131,7 @@ func (p *PhysicalIndexScan) ExplainNormalizedInfo() string {
 	return p.explainInfo(true)
 }
 
-//ExplainID override the ExplainID in order to match different range
+// ExplainID overrides the ExplainID in order to match different range.
 func (p *PhysicalTableScan) ExplainID() fmt.Stringer {
 	return stringutil.MemoizeStr(func() string {
 		if p.isChildOfIndexLookUp {
