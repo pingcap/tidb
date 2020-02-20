@@ -2590,10 +2590,10 @@ func buildChecksumTableSchema() *expression.Schema {
 // `new_exp_$off` where `$off` is the offset of the output column, $off starts from 1.
 // There is still some MySQL compatible problems.
 func adjustOverlongViewColname(plan LogicalPlan) {
-	outputNames := plan.OutputNames()
-	for i := range outputNames {
-		if outputName := outputNames[i].ColName.L; len(outputName) > mysql.MaxColumnNameLength {
-			outputNames[i].ColName = model.NewCIStr(fmt.Sprintf("name_exp_%d", i+1))
+	outputCols := plan.Schema().Columns
+	for i := range outputCols {
+		if outputName := outputCols[i].ColName.L; len(outputName) > mysql.MaxColumnNameLength {
+			outputCols[i].ColName = model.NewCIStr(fmt.Sprintf("name_exp_%d", i+1))
 		}
 	}
 }
