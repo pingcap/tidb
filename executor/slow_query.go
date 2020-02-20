@@ -88,7 +88,6 @@ func (e *slowQueryRetriever) retrieve(ctx context.Context, sctx sessionctx.Conte
 	return retRows, nil
 }
 
-// Initialize is exported for test.
 func (e *slowQueryRetriever) initialize(sctx sessionctx.Context) error {
 	var err error
 	var hasProcessPriv bool
@@ -152,7 +151,6 @@ func (sc *slowLogChecker) isTimeValid(t time.Time) bool {
 	return true
 }
 
-// ParseSlowLog exports for testing.
 // TODO: optimize for parse huge log-file.
 func (e *slowQueryRetriever) parseSlowLog(ctx sessionctx.Context, reader *bufio.Reader, maxRow int) ([][]types.Datum, error) {
 	var rows [][]types.Datum
