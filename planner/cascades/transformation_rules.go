@@ -91,6 +91,9 @@ var defaultTransformationMap = map[memo.Operand][]Transformation{
 		NewRulePushTopNDownTiKVSingleGather(),
 		NewRuleMergeAdjacentTopN(),
 	},
+	memo.OperandWindow: {
+		NewRuleMergeAdjacentWindow(),
+	},
 }
 
 type baseRule struct {
@@ -646,6 +649,65 @@ func (r *PushSelDownWindow) OnTransform(old *memo.ExprIter) (newExprs []*memo.Gr
 	newTopSelExpr := memo.NewGroupExpr(newTopSel)
 	newTopSelExpr.SetChildren(newWindowGroup)
 	return []*memo.GroupExpr{newTopSelExpr}, true, false, nil
+}
+
+// MergeAdjacentWindow merge adjacent Window.
+type MergeAdjacentWindow struct {
+	baseRule
+}
+
+// NewRuleMergeAdjacentWindow creates a new Transformation MergeAdjacentWindow.
+// The pattern of this rule is `Window -> Window -> X`.
+func NewRuleMergeAdjacentWindow() Transformation {
+	rule := &MergeAdjacentWindow{}
+	rule.pattern = memo.BuildPattern(
+		memo.OperandWindow,
+		memo.EngineTiDBOnly,
+		memo.NewPattern(memo.OperandWindow, memo.EngineAll),
+	)
+	return rule
+}
+
+// Match implements Transformation interface.
+func (r *MergeAdjacentWindow) Match(expr *memo.ExprIter) bool {
+	window := expr.GetExpr().ExprNode.(*plannercore.LogicalWindow)
+	child := expr.Children[0].GetExpr().ExprNode.(*plannercore.LogicalWindow)
+
+	if len(window.PartitionBy) != len(child.PartitionBy) || len(window.OrderBy) != len(child.OrderBy) {
+		return false
+	}
+	for i := 0; i < len(window.PartitionBy); i++ {
+		if !window.PartitionBy[i].Equal(window.SCtx(), &child.PartitionBy[i]) {
+			return false
+		}
+	}
+	for i := 0; i < len(window.OrderBy); i++ {
+		if !window.OrderBy[i].Equal(window.SCtx(), &child.OrderBy[i]) {
+			return false
+		}
+	}
+	if !window.Frame.Equal(window.SCtx(), child.Frame) {
+		return false
+	}
+	return true
+}
+
+// OnTransform implements Transformation interface.
+// This rule tries to merge adjacent Window.
+func (r *MergeAdjacentWindow) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
+	window := old.GetExpr().ExprNode.(*plannercore.LogicalWindow)
+	child := old.Children[0].GetExpr().ExprNode.(*plannercore.LogicalWindow)
+	childGroups := old.Children[0].GetExpr().Children
+
+	newWindow := plannercore.LogicalWindow{
+		WindowFuncDescs: append(child.WindowFuncDescs, window.WindowFuncDescs...),
+		PartitionBy:     child.PartitionBy,
+		OrderBy:         child.OrderBy,
+		Frame:           child.Frame,
+	}.Init(window.SCtx(), window.SelectBlockOffset())
+	newWindowExpr := memo.NewGroupExpr(newWindow)
+	newWindowExpr.SetChildren(childGroups...)
+	return []*memo.GroupExpr{newWindowExpr}, true, false, nil
 }
 
 // TransformLimitToTopN transforms Limit+Sort to TopN.

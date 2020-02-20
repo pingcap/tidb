@@ -113,6 +113,13 @@
     ]
   },
   {
+    "name": "TestMergeAdjacentWindow",
+    "cases": [
+      "select sum(a) over(partition by b order by c), max(b) over(partition by b order by c) from t",
+      "select min(a) over(partition by b rows between 1 preceding and 1 following), max(a) over(partition by b rows between 1 preceding and 1 following), avg(a) over (partition by b rows between 1 preceding and 1 following) from t"
+    ]
+  },
+  {
     "name": "TestTransformLimitToTableDual",
     "cases": [
       "select a from t limit 0 offset 1",

@@ -17,6 +17,7 @@ import (
 	"fmt"
 
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/codec"
 )
 
@@ -24,6 +25,11 @@ import (
 type Item struct {
 	Col  *expression.Column
 	Desc bool
+}
+
+// Equal checks whether two Items are equal.
+func (item *Item) Equal(ctx sessionctx.Context, other *Item) bool {
+	return item.Desc == other.Desc && item.Col.Equal(ctx, other.Col)
 }
 
 // PhysicalProperty stands for the required physical property by parents.

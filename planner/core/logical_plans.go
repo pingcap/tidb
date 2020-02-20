@@ -15,6 +15,7 @@ package core
 
 import (
 	"math"
+	"reflect"
 
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/auth"
@@ -24,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/planner/util"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
@@ -883,6 +885,11 @@ type WindowFrame struct {
 	End   *FrameBound
 }
 
+// Equal checks whether two WindowFrames are equal.
+func (frame *WindowFrame) Equal(ctx sessionctx.Context, other *WindowFrame) bool {
+	return frame.Type == other.Type && frame.Start.Equal(ctx, other.Start) && frame.End.Equal(ctx, other.End)
+}
+
 // FrameBound is the boundary of a frame.
 type FrameBound struct {
 	Type      ast.BoundType
@@ -894,6 +901,27 @@ type FrameBound struct {
 	CalcFuncs []expression.Expression
 	// CmpFuncs is used to decide whether one row is included in the current frame.
 	CmpFuncs []expression.CompareFunc
+}
+
+// Equal checks whether two FrameBounds are equal.
+func (bound *FrameBound) Equal(ctx sessionctx.Context, other *FrameBound) bool {
+	if len(bound.CalcFuncs) != len(other.CalcFuncs) || len(bound.CmpFuncs) != len(other.CmpFuncs) {
+		return false
+	}
+	for i := range bound.CalcFuncs {
+		if !bound.CalcFuncs[i].Equal(ctx, other.CalcFuncs[i]) {
+			return false
+		}
+	}
+	for i := range bound.CmpFuncs {
+		v1 := reflect.ValueOf(&bound.CmpFuncs[i]).Elem()
+		v2 := reflect.ValueOf(&other.CmpFuncs[i]).Elem()
+		if v1.Pointer() != v2.Pointer() {
+			return false
+		}
+	}
+	return bound.Type == other.Type && bound.UnBounded == other.UnBounded &&
+		bound.Num == other.Num
 }
 
 // LogicalWindow represents a logical window function plan.
