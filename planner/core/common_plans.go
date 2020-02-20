@@ -769,7 +769,11 @@ func (e *Explain) explainPlanInRowFormat(p Plan, taskType, driverSide, indent st
 		}
 
 		if buildSide != -1 {
-			driverSideInfo[buildSide], driverSideInfo[buildSide^1] = "(Build)", "(Probe)"
+			// Always put the Build above the Probe.
+			if buildSide == 1 {
+				physPlan.Children()[0], physPlan.Children()[1] = physPlan.Children()[1], physPlan.Children()[0]
+			}
+			driverSideInfo[0], driverSideInfo[1] = "(Build)", "(Probe)"
 		}
 
 		for i, child := range physPlan.Children() {
