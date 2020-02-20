@@ -71,4 +71,18 @@ func (s *testCollationSuite) TestVecGroupChecker(c *C) {
 	}
 	c.Assert(groupChecker.isExhausted(), IsTrue)
 
+	// test padding
+	tp.Collate = "utf8_bin"
+	tp.Flen = 6
+	chk.Reset()
+	chk.Column(0).AppendString("a")
+	chk.Column(0).AppendString("a  ")
+	chk.Column(0).AppendString("a    ")
+	groupChecker.reset()
+	_, err = groupChecker.splitIntoGroups(chk)
+	c.Assert(err, IsNil)
+	b, e := groupChecker.getNextGroup()
+	c.Assert(b, Equals, 0)
+	c.Assert(e, Equals, 3)
+	c.Assert(groupChecker.isExhausted(), IsTrue)
 }
