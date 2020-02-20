@@ -44,35 +44,39 @@ import (
 	"github.com/pingcap/tidb/types"
 	binaryJson "github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/pdapi"
 	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/sqlexec"
 )
 
 const (
-	tableSchemata                           = "SCHEMATA"
-	tableTables                             = "TABLES"
-	tableColumns                            = "COLUMNS"
-	tableColumnStatistics                   = "COLUMN_STATISTICS"
-	tableStatistics                         = "STATISTICS"
-	tableCharacterSets                      = "CHARACTER_SETS"
-	tableCollations                         = "COLLATIONS"
-	tableFiles                              = "FILES"
-	catalogVal                              = "def"
-	tableProfiling                          = "PROFILING"
-	tablePartitions                         = "PARTITIONS"
-	tableKeyColumn                          = "KEY_COLUMN_USAGE"
-	tableReferConst                         = "REFERENTIAL_CONSTRAINTS"
-	tableSessionVar                         = "SESSION_VARIABLES"
-	tablePlugins                            = "PLUGINS"
-	tableConstraints                        = "TABLE_CONSTRAINTS"
-	tableTriggers                           = "TRIGGERS"
-	tableUserPrivileges                     = "USER_PRIVILEGES"
-	tableSchemaPrivileges                   = "SCHEMA_PRIVILEGES"
-	tableTablePrivileges                    = "TABLE_PRIVILEGES"
-	tableColumnPrivileges                   = "COLUMN_PRIVILEGES"
-	tableEngines                            = "ENGINES"
-	tableViews                              = "VIEWS"
+	// TableSchemata is the string constant of infoschema table
+	TableSchemata         = "SCHEMATA"
+	tableTables           = "TABLES"
+	tableColumns          = "COLUMNS"
+	tableColumnStatistics = "COLUMN_STATISTICS"
+	tableStatistics       = "STATISTICS"
+	tableCharacterSets    = "CHARACTER_SETS"
+	tableCollations       = "COLLATIONS"
+	tableFiles            = "FILES"
+	// CatalogVal is the string constant of TABLE_CATALOG
+	CatalogVal            = "def"
+	tableProfiling        = "PROFILING"
+	tablePartitions       = "PARTITIONS"
+	tableKeyColumn        = "KEY_COLUMN_USAGE"
+	tableReferConst       = "REFERENTIAL_CONSTRAINTS"
+	tableSessionVar       = "SESSION_VARIABLES"
+	tablePlugins          = "PLUGINS"
+	tableConstraints      = "TABLE_CONSTRAINTS"
+	tableTriggers         = "TRIGGERS"
+	tableUserPrivileges   = "USER_PRIVILEGES"
+	tableSchemaPrivileges = "SCHEMA_PRIVILEGES"
+	tableTablePrivileges  = "TABLE_PRIVILEGES"
+	tableColumnPrivileges = "COLUMN_PRIVILEGES"
+	tableEngines          = "ENGINES"
+	// TableViews is the string constant of infoschema table
+	TableViews                              = "VIEWS"
 	tableRoutines                           = "ROUTINES"
 	tableParameters                         = "PARAMETERS"
 	tableEvents                             = "EVENTS"
@@ -84,27 +88,28 @@ const (
 	tableCollationCharacterSetApplicability = "COLLATION_CHARACTER_SET_APPLICABILITY"
 	tableProcesslist                        = "PROCESSLIST"
 	tableTiDBIndexes                        = "TIDB_INDEXES"
-	tableSlowLog                            = "SLOW_QUERY"
 	tableTiDBHotRegions                     = "TIDB_HOT_REGIONS"
 	tableTiKVStoreStatus                    = "TIKV_STORE_STATUS"
 	tableAnalyzeStatus                      = "ANALYZE_STATUS"
 	tableTiKVRegionStatus                   = "TIKV_REGION_STATUS"
 	tableTiKVRegionPeers                    = "TIKV_REGION_PEERS"
 	tableTiDBServersInfo                    = "TIDB_SERVERS_INFO"
-	// TableClusterInfo is the string constant of cluster info memory table
+	// TableSlowQuery is the string constant of slow query memory table.
+	TableSlowQuery = "SLOW_QUERY"
+	// TableClusterInfo is the string constant of cluster info memory table.
 	TableClusterInfo = "CLUSTER_INFO"
-	// TableClusterConfig is the string constant of cluster configuration memory table
+	// TableClusterConfig is the string constant of cluster configuration memory table.
 	TableClusterConfig = "CLUSTER_CONFIG"
-	// TableClusterLog is the string constant of cluster log memory table
+	// TableClusterLog is the string constant of cluster log memory table.
 	TableClusterLog = "CLUSTER_LOG"
-	// TableClusterLoad is the string constant of cluster load memory table
+	// TableClusterLoad is the string constant of cluster load memory table.
 	TableClusterLoad = "CLUSTER_LOAD"
-	// TableClusterHardware is the string constant of cluster hardware table
+	// TableClusterHardware is the string constant of cluster hardware table.
 	TableClusterHardware = "CLUSTER_HARDWARE"
-	// TableClusterSystemInfo is the string constant of cluster system info table
+	// TableClusterSystemInfo is the string constant of cluster system info table.
 	TableClusterSystemInfo = "CLUSTER_SYSTEMINFO"
 	tableTiFlashReplica    = "TIFLASH_REPLICA"
-	// TableInspectionResult is the string constant of inspection result table
+	// TableInspectionResult is the string constant of inspection result table.
 	TableInspectionResult = "INSPECTION_RESULT"
 	// TableMetricTables is a table that contains all metrics table definition.
 	TableMetricTables = "METRICS_TABLES"
@@ -112,10 +117,12 @@ const (
 	TableMetricSummary = "METRICS_SUMMARY"
 	// TableMetricSummaryByLabel is a metric table that contains all metrics that group by label info.
 	TableMetricSummaryByLabel = "METRICS_SUMMARY_BY_LABEL"
+	// TableInspectionSummary is the string constant of inspection summary table
+	TableInspectionSummary = "INSPECTION_SUMMARY"
 )
 
 var tableIDMap = map[string]int64{
-	tableSchemata:                           autoid.InformationSchemaDBID + 1,
+	TableSchemata:                           autoid.InformationSchemaDBID + 1,
 	tableTables:                             autoid.InformationSchemaDBID + 2,
 	tableColumns:                            autoid.InformationSchemaDBID + 3,
 	tableColumnStatistics:                   autoid.InformationSchemaDBID + 4,
@@ -123,7 +130,7 @@ var tableIDMap = map[string]int64{
 	tableCharacterSets:                      autoid.InformationSchemaDBID + 6,
 	tableCollations:                         autoid.InformationSchemaDBID + 7,
 	tableFiles:                              autoid.InformationSchemaDBID + 8,
-	catalogVal:                              autoid.InformationSchemaDBID + 9,
+	CatalogVal:                              autoid.InformationSchemaDBID + 9,
 	tableProfiling:                          autoid.InformationSchemaDBID + 10,
 	tablePartitions:                         autoid.InformationSchemaDBID + 11,
 	tableKeyColumn:                          autoid.InformationSchemaDBID + 12,
@@ -137,7 +144,7 @@ var tableIDMap = map[string]int64{
 	tableTablePrivileges:                    autoid.InformationSchemaDBID + 20,
 	tableColumnPrivileges:                   autoid.InformationSchemaDBID + 21,
 	tableEngines:                            autoid.InformationSchemaDBID + 22,
-	tableViews:                              autoid.InformationSchemaDBID + 23,
+	TableViews:                              autoid.InformationSchemaDBID + 23,
 	tableRoutines:                           autoid.InformationSchemaDBID + 24,
 	tableParameters:                         autoid.InformationSchemaDBID + 25,
 	tableEvents:                             autoid.InformationSchemaDBID + 26,
@@ -149,7 +156,7 @@ var tableIDMap = map[string]int64{
 	tableCollationCharacterSetApplicability: autoid.InformationSchemaDBID + 32,
 	tableProcesslist:                        autoid.InformationSchemaDBID + 33,
 	tableTiDBIndexes:                        autoid.InformationSchemaDBID + 34,
-	tableSlowLog:                            autoid.InformationSchemaDBID + 35,
+	TableSlowQuery:                          autoid.InformationSchemaDBID + 35,
 	tableTiDBHotRegions:                     autoid.InformationSchemaDBID + 36,
 	tableTiKVStoreStatus:                    autoid.InformationSchemaDBID + 37,
 	tableAnalyzeStatus:                      autoid.InformationSchemaDBID + 38,
@@ -160,7 +167,7 @@ var tableIDMap = map[string]int64{
 	TableClusterConfig:                      autoid.InformationSchemaDBID + 43,
 	TableClusterLoad:                        autoid.InformationSchemaDBID + 44,
 	tableTiFlashReplica:                     autoid.InformationSchemaDBID + 45,
-	clusterTableSlowLog:                     autoid.InformationSchemaDBID + 46,
+	ClusterTableSlowLog:                     autoid.InformationSchemaDBID + 46,
 	clusterTableProcesslist:                 autoid.InformationSchemaDBID + 47,
 	TableClusterLog:                         autoid.InformationSchemaDBID + 48,
 	TableClusterHardware:                    autoid.InformationSchemaDBID + 49,
@@ -169,6 +176,7 @@ var tableIDMap = map[string]int64{
 	TableMetricSummary:                      autoid.InformationSchemaDBID + 52,
 	TableMetricSummaryByLabel:               autoid.InformationSchemaDBID + 53,
 	TableMetricTables:                       autoid.InformationSchemaDBID + 54,
+	TableInspectionSummary:                  autoid.InformationSchemaDBID + 55,
 }
 
 type columnInfo struct {
@@ -656,6 +664,55 @@ var tableTiDBIndexesCols = []columnInfo{
 	{"INDEX_ID", mysql.TypeLonglong, 21, 0, nil, nil},
 }
 
+var slowQueryCols = []columnInfo{
+	{variable.SlowLogTimeStr, mysql.TypeTimestamp, 26, 0, nil, nil},
+	{variable.SlowLogTxnStartTSStr, mysql.TypeLonglong, 20, mysql.UnsignedFlag, nil, nil},
+	{variable.SlowLogUserStr, mysql.TypeVarchar, 64, 0, nil, nil},
+	{variable.SlowLogHostStr, mysql.TypeVarchar, 64, 0, nil, nil},
+	{variable.SlowLogConnIDStr, mysql.TypeLonglong, 20, mysql.UnsignedFlag, nil, nil},
+	{variable.SlowLogQueryTimeStr, mysql.TypeDouble, 22, 0, nil, nil},
+	{variable.SlowLogParseTimeStr, mysql.TypeDouble, 22, 0, nil, nil},
+	{variable.SlowLogCompileTimeStr, mysql.TypeDouble, 22, 0, nil, nil},
+	{execdetails.PreWriteTimeStr, mysql.TypeDouble, 22, 0, nil, nil},
+	{execdetails.BinlogPrewriteTimeStr, mysql.TypeDouble, 22, 0, nil, nil},
+	{execdetails.CommitTimeStr, mysql.TypeDouble, 22, 0, nil, nil},
+	{execdetails.GetCommitTSTimeStr, mysql.TypeDouble, 22, 0, nil, nil},
+	{execdetails.CommitBackoffTimeStr, mysql.TypeDouble, 22, 0, nil, nil},
+	{execdetails.BackoffTypesStr, mysql.TypeVarchar, 64, 0, nil, nil},
+	{execdetails.ResolveLockTimeStr, mysql.TypeDouble, 22, 0, nil, nil},
+	{execdetails.LocalLatchWaitTimeStr, mysql.TypeDouble, 22, 0, nil, nil},
+	{execdetails.WriteKeysStr, mysql.TypeLonglong, 22, 0, nil, nil},
+	{execdetails.WriteSizeStr, mysql.TypeLonglong, 22, 0, nil, nil},
+	{execdetails.PrewriteRegionStr, mysql.TypeLonglong, 22, 0, nil, nil},
+	{execdetails.TxnRetryStr, mysql.TypeLonglong, 22, 0, nil, nil},
+	{execdetails.ProcessTimeStr, mysql.TypeDouble, 22, 0, nil, nil},
+	{execdetails.WaitTimeStr, mysql.TypeDouble, 22, 0, nil, nil},
+	{execdetails.BackoffTimeStr, mysql.TypeDouble, 22, 0, nil, nil},
+	{execdetails.LockKeysTimeStr, mysql.TypeDouble, 22, 0, nil, nil},
+	{execdetails.RequestCountStr, mysql.TypeLonglong, 20, mysql.UnsignedFlag, nil, nil},
+	{execdetails.TotalKeysStr, mysql.TypeLonglong, 20, mysql.UnsignedFlag, nil, nil},
+	{execdetails.ProcessKeysStr, mysql.TypeLonglong, 20, mysql.UnsignedFlag, nil, nil},
+	{variable.SlowLogDBStr, mysql.TypeVarchar, 64, 0, nil, nil},
+	{variable.SlowLogIndexNamesStr, mysql.TypeVarchar, 100, 0, nil, nil},
+	{variable.SlowLogIsInternalStr, mysql.TypeTiny, 1, 0, nil, nil},
+	{variable.SlowLogDigestStr, mysql.TypeVarchar, 64, 0, nil, nil},
+	{variable.SlowLogStatsInfoStr, mysql.TypeVarchar, 512, 0, nil, nil},
+	{variable.SlowLogCopProcAvg, mysql.TypeDouble, 22, 0, nil, nil},
+	{variable.SlowLogCopProcP90, mysql.TypeDouble, 22, 0, nil, nil},
+	{variable.SlowLogCopProcMax, mysql.TypeDouble, 22, 0, nil, nil},
+	{variable.SlowLogCopProcAddr, mysql.TypeVarchar, 64, 0, nil, nil},
+	{variable.SlowLogCopWaitAvg, mysql.TypeDouble, 22, 0, nil, nil},
+	{variable.SlowLogCopWaitP90, mysql.TypeDouble, 22, 0, nil, nil},
+	{variable.SlowLogCopWaitMax, mysql.TypeDouble, 22, 0, nil, nil},
+	{variable.SlowLogCopWaitAddr, mysql.TypeVarchar, 64, 0, nil, nil},
+	{variable.SlowLogMemMax, mysql.TypeLonglong, 20, 0, nil, nil},
+	{variable.SlowLogSucc, mysql.TypeTiny, 1, 0, nil, nil},
+	{variable.SlowLogPlan, mysql.TypeLongBlob, types.UnspecifiedLength, 0, nil, nil},
+	{variable.SlowLogPlanDigest, mysql.TypeVarchar, 128, 0, nil, nil},
+	{variable.SlowLogPrevStmt, mysql.TypeLongBlob, types.UnspecifiedLength, 0, nil, nil},
+	{variable.SlowLogQuerySQLStr, mysql.TypeLongBlob, types.UnspecifiedLength, 0, nil, nil},
+}
+
 var tableTiDBHotRegionsCols = []columnInfo{
 	{"TABLE_ID", mysql.TypeLonglong, 21, 0, nil, nil},
 	{"INDEX_ID", mysql.TypeLonglong, 21, 0, nil, nil},
@@ -1112,6 +1169,8 @@ var tableClusterInfoCols = []columnInfo{
 	{"STATUS_ADDRESS", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"VERSION", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"GIT_HASH", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"START_TIME", mysql.TypeVarchar, 32, 0, nil, nil},
+	{"UPTIME", mysql.TypeVarchar, 32, 0, nil, nil},
 }
 
 var tableTableTiFlashReplicaCols = []columnInfo{
@@ -1121,6 +1180,7 @@ var tableTableTiFlashReplicaCols = []columnInfo{
 	{"REPLICA_COUNT", mysql.TypeLonglong, 64, 0, nil, nil},
 	{"LOCATION_LABELS", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"AVAILABLE", mysql.TypeTiny, 1, 0, nil, nil},
+	{"PROGRESS", mysql.TypeDouble, 22, 0, nil, nil},
 }
 
 var tableInspectionResultCols = []columnInfo{
@@ -1132,6 +1192,17 @@ var tableInspectionResultCols = []columnInfo{
 	{"REFERENCE", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"SEVERITY", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"DETAILS", mysql.TypeVarchar, 256, 0, nil, nil},
+}
+
+var tableInspectionSummaryCols = []columnInfo{
+	{"RULE", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"INSTANCE", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"METRIC_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"LABEL", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"QUANTILE", mysql.TypeDouble, 22, 0, nil, nil},
+	{"AVG_VALUE", mysql.TypeDouble, 22, 0, nil, nil},
+	{"MIN_VALUE", mysql.TypeDouble, 22, 0, nil, nil},
+	{"MAX_VALUE", mysql.TypeDouble, 22, 0, nil, nil},
 }
 
 var tableMetricTablesCols = []columnInfo{
@@ -1161,38 +1232,6 @@ var tableMetricSummaryByLabelCols = []columnInfo{
 	{"MIN_VALUE", mysql.TypeDouble, 22, 0, nil, nil},
 	{"MAX_VALUE", mysql.TypeDouble, 22, 0, nil, nil},
 	{"COMMENT", mysql.TypeVarchar, 256, 0, nil, nil},
-}
-
-func dataForSchemata(ctx sessionctx.Context, schemas []*model.DBInfo) [][]types.Datum {
-	checker := privilege.GetPrivilegeManager(ctx)
-	rows := make([][]types.Datum, 0, len(schemas))
-
-	for _, schema := range schemas {
-
-		charset := mysql.DefaultCharset
-		collation := mysql.DefaultCollationName
-
-		if len(schema.Charset) > 0 {
-			charset = schema.Charset // Overwrite default
-		}
-
-		if len(schema.Collate) > 0 {
-			collation = schema.Collate // Overwrite default
-		}
-
-		if checker != nil && !checker.RequestVerification(ctx.GetSessionVars().ActiveRoles, schema.Name.L, "", "", mysql.AllPrivMask) {
-			continue
-		}
-		record := types.MakeDatums(
-			catalogVal,    // CATALOG_NAME
-			schema.Name.O, // SCHEMA_NAME
-			charset,       // DEFAULT_CHARACTER_SET_NAME
-			collation,     // DEFAULT_COLLATION_NAME
-			nil,
-		)
-		rows = append(rows, record)
-	}
-	return rows
 }
 
 func getRowCountAllTable(ctx sessionctx.Context) (map[int64]uint64, error) {
@@ -1323,43 +1362,6 @@ func getAutoIncrementID(ctx sessionctx.Context, schema *model.DBInfo, tblInfo *m
 	return tbl.Allocator(ctx, autoid.RowIDAllocType).Base() + 1, nil
 }
 
-func dataForViews(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.Datum, error) {
-	checker := privilege.GetPrivilegeManager(ctx)
-	var rows [][]types.Datum
-	for _, schema := range schemas {
-		for _, table := range schema.Tables {
-			if !table.IsView() {
-				continue
-			}
-			collation := table.Collate
-			charset := table.Charset
-			if collation == "" {
-				collation = mysql.DefaultCollationName
-			}
-			if charset == "" {
-				charset = mysql.DefaultCharset
-			}
-			if checker != nil && !checker.RequestVerification(ctx.GetSessionVars().ActiveRoles, schema.Name.L, table.Name.L, "", mysql.AllPrivMask) {
-				continue
-			}
-			record := types.MakeDatums(
-				catalogVal,                      // TABLE_CATALOG
-				schema.Name.O,                   // TABLE_SCHEMA
-				table.Name.O,                    // TABLE_NAME
-				table.View.SelectStmt,           // VIEW_DEFINITION
-				table.View.CheckOption.String(), // CHECK_OPTION
-				"NO",                            // IS_UPDATABLE
-				table.View.Definer.String(),     // DEFINER
-				table.View.Security.String(),    // SECURITY_TYPE
-				charset,                         // CHARACTER_SET_CLIENT
-				collation,                       // COLLATION_CONNECTION
-			)
-			rows = append(rows, record)
-		}
-	}
-	return rows, nil
-}
-
 func dataForTables(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.Datum, error) {
 	tableRowsMap, colLengthMap, err := tableStatsCache.get(ctx)
 	if err != nil {
@@ -1416,7 +1418,7 @@ func dataForTables(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.D
 
 				shardingInfo := GetShardingInfo(schema, table)
 				record := types.MakeDatums(
-					catalogVal,    // TABLE_CATALOG
+					CatalogVal,    // TABLE_CATALOG
 					schema.Name.O, // TABLE_SCHEMA
 					table.Name.O,  // TABLE_NAME
 					"BASE TABLE",  // TABLE_TYPE
@@ -1443,7 +1445,7 @@ func dataForTables(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.D
 				rows = append(rows, record)
 			} else {
 				record := types.MakeDatums(
-					catalogVal,    // TABLE_CATALOG
+					CatalogVal,    // TABLE_CATALOG
 					schema.Name.O, // TABLE_SCHEMA
 					table.Name.O,  // TABLE_NAME
 					"VIEW",        // TABLE_TYPE
@@ -1637,7 +1639,7 @@ func dataForColumnsInTable(schema *model.DBInfo, tbl *model.TableInfo) [][]types
 			columnDefault = fmt.Sprintf("%v", columnDesc.DefaultValue)
 		}
 		record := types.MakeDatums(
-			catalogVal,                           // TABLE_CATALOG
+			CatalogVal,                           // TABLE_CATALOG
 			schema.Name.O,                        // TABLE_SCHEMA
 			tbl.Name.O,                           // TABLE_NAME
 			col.Name.O,                           // COLUMN_NAME
@@ -1686,7 +1688,7 @@ func dataForStatisticsInTable(schema *model.DBInfo, table *model.TableInfo) [][]
 		for _, col := range table.Columns {
 			if mysql.HasPriKeyFlag(col.Flag) {
 				record := types.MakeDatums(
-					catalogVal,    // TABLE_CATALOG
+					CatalogVal,    // TABLE_CATALOG
 					schema.Name.O, // TABLE_SCHEMA
 					table.Name.O,  // TABLE_NAME
 					"0",           // NON_UNIQUE
@@ -1723,7 +1725,7 @@ func dataForStatisticsInTable(schema *model.DBInfo, table *model.TableInfo) [][]
 				nullable = ""
 			}
 			record := types.MakeDatums(
-				catalogVal,    // TABLE_CATALOG
+				CatalogVal,    // TABLE_CATALOG
 				schema.Name.O, // TABLE_SCHEMA
 				table.Name.O,  // TABLE_NAME
 				nonUnique,     // NON_UNIQUE
@@ -1764,7 +1766,7 @@ func dataForTableConstraints(ctx sessionctx.Context, schemas []*model.DBInfo) []
 
 			if tbl.PKIsHandle {
 				record := types.MakeDatums(
-					catalogVal,           // CONSTRAINT_CATALOG
+					CatalogVal,           // CONSTRAINT_CATALOG
 					schema.Name.O,        // CONSTRAINT_SCHEMA
 					mysql.PrimaryKeyName, // CONSTRAINT_NAME
 					schema.Name.O,        // TABLE_SCHEMA
@@ -1787,7 +1789,7 @@ func dataForTableConstraints(ctx sessionctx.Context, schemas []*model.DBInfo) []
 					continue
 				}
 				record := types.MakeDatums(
-					catalogVal,    // CONSTRAINT_CATALOG
+					CatalogVal,    // CONSTRAINT_CATALOG
 					schema.Name.O, // CONSTRAINT_SCHEMA
 					cname,         // CONSTRAINT_NAME
 					schema.Name.O, // TABLE_SCHEMA
@@ -1852,7 +1854,7 @@ func dataForPartitions(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]typ
 					avgRowLength = dataLength / rowCount
 				}
 				record := types.MakeDatums(
-					catalogVal,    // TABLE_CATALOG
+					CatalogVal,    // TABLE_CATALOG
 					schema.Name.O, // TABLE_SCHEMA
 					table.Name.O,  // TABLE_NAME
 					nil,           // PARTITION_NAME
@@ -1895,7 +1897,7 @@ func dataForPartitions(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]typ
 					}
 
 					record := types.MakeDatums(
-						catalogVal,                    // TABLE_CATALOG
+						CatalogVal,                    // TABLE_CATALOG
 						schema.Name.O,                 // TABLE_SCHEMA
 						table.Name.O,                  // TABLE_NAME
 						pi.Name.O,                     // PARTITION_NAME
@@ -1950,10 +1952,10 @@ func keyColumnUsageInTable(schema *model.DBInfo, table *model.TableInfo) [][]typ
 		for _, col := range table.Columns {
 			if mysql.HasPriKeyFlag(col.Flag) {
 				record := types.MakeDatums(
-					catalogVal,        // CONSTRAINT_CATALOG
+					CatalogVal,        // CONSTRAINT_CATALOG
 					schema.Name.O,     // CONSTRAINT_SCHEMA
 					primaryConstraint, // CONSTRAINT_NAME
-					catalogVal,        // TABLE_CATALOG
+					CatalogVal,        // TABLE_CATALOG
 					schema.Name.O,     // TABLE_SCHEMA
 					table.Name.O,      // TABLE_NAME
 					col.Name.O,        // COLUMN_NAME
@@ -1985,10 +1987,10 @@ func keyColumnUsageInTable(schema *model.DBInfo, table *model.TableInfo) [][]typ
 		for i, key := range index.Columns {
 			col := nameToCol[key.Name.L]
 			record := types.MakeDatums(
-				catalogVal,    // CONSTRAINT_CATALOG
+				CatalogVal,    // CONSTRAINT_CATALOG
 				schema.Name.O, // CONSTRAINT_SCHEMA
 				idxName,       // CONSTRAINT_NAME
-				catalogVal,    // TABLE_CATALOG
+				CatalogVal,    // TABLE_CATALOG
 				schema.Name.O, // TABLE_SCHEMA
 				table.Name.O,  // TABLE_NAME
 				col.Name.O,    // COLUMN_NAME
@@ -2009,10 +2011,10 @@ func keyColumnUsageInTable(schema *model.DBInfo, table *model.TableInfo) [][]typ
 		for i, key := range fk.Cols {
 			col := nameToCol[key.L]
 			record := types.MakeDatums(
-				catalogVal,    // CONSTRAINT_CATALOG
+				CatalogVal,    // CONSTRAINT_CATALOG
 				schema.Name.O, // CONSTRAINT_SCHEMA
 				fk.Name.O,     // CONSTRAINT_NAME
-				catalogVal,    // TABLE_CATALOG
+				CatalogVal,    // TABLE_CATALOG
 				schema.Name.O, // TABLE_SCHEMA
 				table.Name.O,  // TABLE_NAME
 				col.Name.O,    // COLUMN_NAME
@@ -2131,11 +2133,12 @@ func dataForServersInfo() ([][]types.Datum, error) {
 
 // ServerInfo represents the basic server information of single cluster component
 type ServerInfo struct {
-	ServerType string
-	Address    string
-	StatusAddr string
-	Version    string
-	GitHash    string
+	ServerType     string
+	Address        string
+	StatusAddr     string
+	Version        string
+	GitHash        string
+	StartTimestamp int64
 }
 
 // GetClusterServerInfo returns all components information of cluster
@@ -2182,11 +2185,12 @@ func GetTiDBServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 	var servers []ServerInfo
 	for _, node := range tidbNodes {
 		servers = append(servers, ServerInfo{
-			ServerType: "tidb",
-			Address:    fmt.Sprintf("%s:%d", node.IP, node.Port),
-			StatusAddr: fmt.Sprintf("%s:%d", node.IP, node.StatusPort),
-			Version:    node.Version,
-			GitHash:    node.GitHash,
+			ServerType:     "tidb",
+			Address:        fmt.Sprintf("%s:%d", node.IP, node.Port),
+			StatusAddr:     fmt.Sprintf("%s:%d", node.IP, node.StatusPort),
+			Version:        node.Version,
+			GitHash:        node.GitHash,
+			StartTimestamp: node.StartTimestamp,
 		})
 	}
 	return servers, nil
@@ -2234,7 +2238,8 @@ func GetPDServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 			return nil, errors.Trace(err)
 		}
 		var content = struct {
-			GitHash string `json:"git_hash"`
+			GitHash        string `json:"git_hash"`
+			StartTimestamp int64  `json:"start_timestamp"`
 		}{}
 		if err := json.NewDecoder(resp.Body).Decode(&content); err != nil {
 			return nil, errors.Trace(err)
@@ -2242,11 +2247,12 @@ func GetPDServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 		terror.Log(resp.Body.Close())
 
 		servers = append(servers, ServerInfo{
-			ServerType: "pd",
-			Address:    addr,
-			StatusAddr: addr,
-			Version:    version,
-			GitHash:    content.GitHash,
+			ServerType:     "pd",
+			Address:        addr,
+			StatusAddr:     addr,
+			Version:        version,
+			GitHash:        content.GitHash,
+			StartTimestamp: content.StartTimestamp,
 		})
 	}
 	return servers, nil
@@ -2272,11 +2278,12 @@ func GetTiKVServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 	var servers []ServerInfo
 	for _, storeStat := range storesStat.Stores {
 		servers = append(servers, ServerInfo{
-			ServerType: "tikv",
-			Address:    storeStat.Store.Address,
-			StatusAddr: storeStat.Store.StatusAddress,
-			Version:    storeStat.Store.Version,
-			GitHash:    storeStat.Store.GitHash,
+			ServerType:     "tikv",
+			Address:        storeStat.Store.Address,
+			StatusAddr:     storeStat.Store.StatusAddress,
+			Version:        storeStat.Store.Version,
+			GitHash:        storeStat.Store.GitHash,
+			StartTimestamp: storeStat.Store.StartTimestamp,
 		})
 	}
 	return servers, nil
@@ -2289,12 +2296,15 @@ func dataForTiDBClusterInfo(ctx sessionctx.Context) ([][]types.Datum, error) {
 	}
 	rows := make([][]types.Datum, 0, len(servers))
 	for _, server := range servers {
+		startTime := time.Unix(server.StartTimestamp, 0)
 		row := types.MakeDatums(
 			server.ServerType,
 			server.Address,
 			server.StatusAddr,
 			server.Version,
 			server.GitHash,
+			startTime.Format(time.RFC3339),
+			time.Since(startTime).String(),
 		)
 		rows = append(rows, row)
 	}
@@ -2302,12 +2312,32 @@ func dataForTiDBClusterInfo(ctx sessionctx.Context) ([][]types.Datum, error) {
 }
 
 // dataForTableTiFlashReplica constructs data for table tiflash replica info.
-func dataForTableTiFlashReplica(schemas []*model.DBInfo) [][]types.Datum {
+func dataForTableTiFlashReplica(ctx sessionctx.Context, schemas []*model.DBInfo) [][]types.Datum {
 	var rows [][]types.Datum
+	progressMap, err := infosync.GetTiFlashTableSyncProgress(context.Background())
+	if err != nil {
+		ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+	}
 	for _, schema := range schemas {
 		for _, tbl := range schema.Tables {
 			if tbl.TiFlashReplica == nil {
 				continue
+			}
+			progress := 1.0
+			if !tbl.TiFlashReplica.Available {
+				if pi := tbl.GetPartitionInfo(); pi != nil && len(pi.Definitions) > 0 {
+					progress = 0
+					for _, p := range pi.Definitions {
+						if tbl.TiFlashReplica.IsPartitionAvailable(p.ID) {
+							progress += 1
+						} else {
+							progress += progressMap[p.ID]
+						}
+					}
+					progress = progress / float64(len(pi.Definitions))
+				} else {
+					progress = progressMap[tbl.ID]
+				}
 			}
 			record := types.MakeDatums(
 				schema.Name.O,                   // TABLE_SCHEMA
@@ -2316,6 +2346,7 @@ func dataForTableTiFlashReplica(schemas []*model.DBInfo) [][]types.Datum {
 				int64(tbl.TiFlashReplica.Count), // REPLICA_COUNT
 				strings.Join(tbl.TiFlashReplica.LocationLabels, ","), // LOCATION_LABELS
 				tbl.TiFlashReplica.Available,                         // AVAILABLE
+				progress,                                             // PROGRESS
 			)
 			rows = append(rows, record)
 		}
@@ -2346,7 +2377,7 @@ func dataForMetricTables(ctx sessionctx.Context) [][]types.Datum {
 }
 
 var tableNameToColumns = map[string][]columnInfo{
-	tableSchemata:                           schemataCols,
+	TableSchemata:                           schemataCols,
 	tableTables:                             tablesCols,
 	tableColumns:                            columnsCols,
 	tableColumnStatistics:                   columnStatisticsCols,
@@ -2367,7 +2398,7 @@ var tableNameToColumns = map[string][]columnInfo{
 	tableTablePrivileges:                    tableTablePrivilegesCols,
 	tableColumnPrivileges:                   tableColumnPrivilegesCols,
 	tableEngines:                            tableEnginesCols,
-	tableViews:                              tableViewsCols,
+	TableViews:                              tableViewsCols,
 	tableRoutines:                           tableRoutinesCols,
 	tableParameters:                         tableParametersCols,
 	tableEvents:                             tableEventsCols,
@@ -2379,7 +2410,7 @@ var tableNameToColumns = map[string][]columnInfo{
 	tableCollationCharacterSetApplicability: tableCollationCharacterSetApplicabilityCols,
 	tableProcesslist:                        tableProcesslistCols,
 	tableTiDBIndexes:                        tableTiDBIndexesCols,
-	tableSlowLog:                            slowQueryCols,
+	TableSlowQuery:                          slowQueryCols,
 	tableTiDBHotRegions:                     tableTiDBHotRegionsCols,
 	tableTiKVStoreStatus:                    tableTiKVStoreStatusCols,
 	tableAnalyzeStatus:                      tableAnalyzeStatusCols,
@@ -2397,6 +2428,7 @@ var tableNameToColumns = map[string][]columnInfo{
 	TableMetricSummary:                      tableMetricSummaryCols,
 	TableMetricSummaryByLabel:               tableMetricSummaryByLabelCols,
 	TableMetricTables:                       tableMetricTablesCols,
+	TableInspectionSummary:                  tableInspectionSummaryCols,
 }
 
 func createInfoSchemaTable(_ autoid.Allocators, meta *model.TableInfo) (table.Table, error) {
@@ -2417,28 +2449,26 @@ type infoschemaTable struct {
 	tp   table.Type
 }
 
-// schemasSorter implements the sort.Interface interface, sorts DBInfo by name.
-type schemasSorter []*model.DBInfo
+// SchemasSorter implements the sort.Interface interface, sorts DBInfo by name.
+type SchemasSorter []*model.DBInfo
 
-func (s schemasSorter) Len() int {
+func (s SchemasSorter) Len() int {
 	return len(s)
 }
 
-func (s schemasSorter) Swap(i, j int) {
+func (s SchemasSorter) Swap(i, j int) {
 	s[i], s[j] = s[j], s[i]
 }
 
-func (s schemasSorter) Less(i, j int) bool {
+func (s SchemasSorter) Less(i, j int) bool {
 	return s[i].Name.L < s[j].Name.L
 }
 
 func (it *infoschemaTable) getRows(ctx sessionctx.Context, cols []*table.Column) (fullRows [][]types.Datum, err error) {
 	is := GetInfoSchema(ctx)
 	dbs := is.AllSchemas()
-	sort.Sort(schemasSorter(dbs))
+	sort.Sort(SchemasSorter(dbs))
 	switch it.meta.Name.O {
-	case tableSchemata:
-		fullRows = dataForSchemata(ctx, dbs)
 	case tableTables:
 		fullRows, err = dataForTables(ctx, dbs)
 	case tableTiDBIndexes:
@@ -2470,8 +2500,6 @@ func (it *infoschemaTable) getRows(ctx sessionctx.Context, cols []*table.Column)
 		fullRows = dataForUserPrivileges(ctx)
 	case tableEngines:
 		fullRows = dataForEngines()
-	case tableViews:
-		fullRows, err = dataForViews(ctx, dbs)
 	case tableRoutines:
 	// TODO: Fill the following tables.
 	case tableSchemaPrivileges:
@@ -2488,8 +2516,6 @@ func (it *infoschemaTable) getRows(ctx sessionctx.Context, cols []*table.Column)
 		fullRows = dataForCollationCharacterSetApplicability()
 	case tableProcesslist:
 		fullRows = dataForProcesslist(ctx)
-	case tableSlowLog:
-		fullRows, err = dataForSlowLog(ctx)
 	case tableTiDBHotRegions:
 		fullRows, err = dataForTiDBHotRegions(ctx)
 	case tableTiKVStoreStatus:
@@ -2505,12 +2531,12 @@ func (it *infoschemaTable) getRows(ctx sessionctx.Context, cols []*table.Column)
 	case TableClusterInfo:
 		fullRows, err = dataForTiDBClusterInfo(ctx)
 	case tableTiFlashReplica:
-		fullRows = dataForTableTiFlashReplica(dbs)
+		fullRows = dataForTableTiFlashReplica(ctx, dbs)
 	case TableMetricTables:
 		fullRows = dataForMetricTables(ctx)
-	// Data for cluster memory table.
-	case clusterTableSlowLog, clusterTableProcesslist:
-		fullRows, err = getClusterMemTableRows(ctx, it.meta.Name.O)
+	// Data for cluster processlist memory table.
+	case clusterTableProcesslist:
+		fullRows, err = dataForClusterProcesslist(ctx)
 	}
 	if err != nil {
 		return nil, err

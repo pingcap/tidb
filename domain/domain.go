@@ -528,7 +528,7 @@ func (do *Domain) mustRestartSyncer() error {
 			return err
 		}
 		time.Sleep(time.Second)
-		logutil.BgLogger().Info("restart the schema syncer failed", zap.Error(err))
+		logutil.BgLogger().Error("restart the schema syncer failed", zap.Error(err))
 	}
 }
 
