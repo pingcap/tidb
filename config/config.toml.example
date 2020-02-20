@@ -69,6 +69,10 @@ delay-clean-table-lock = 0
 # Maximum number of the splitting region, which is used by the split region statement.
 split-region-max-num = 1000
 
+# enable the TiDB to fetch configs from PD and update itself during runtime.
+# see https://github.com/pingcap/tidb/pull/13660 for more details.
+enable-dynamic-config = false
+
 # alter-primary-key is used to control alter primary key feature. Default is false, indicate the alter primary key feature is disabled.
 # If it is true, we can add the primary key by "alter table", but we may not be able to drop the primary key.
 # In order to support "drop primary key" operation , this flag must be true and the table does not have the pkIsHandle flag.
@@ -90,6 +94,9 @@ repair-table-list = []
 # The maximum permitted number of simultaneous client connections.
 max-server-connections = 4096
 
+# Whether new collations are enabled, as indicated by its name, this configuration entry take effect ONLY when a TiDB cluster bootstraps for the first time.
+new_collations_enabled_on_first_bootstrap = false
+
 [log]
 # Log level: debug, info, warn, error, fatal.
 level = "info"
@@ -102,6 +109,9 @@ format = "text"
 
 # Enable annotating logs with the full stack error message, if not set, it will be defaulted to false.
 # enable-error-stack = false
+
+# Whether to enable slow query log.
+enable-slow-log = true
 
 # Stores slow query log into separated files.
 slow-query-file = "tidb-slow.log"

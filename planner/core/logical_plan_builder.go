@@ -2240,10 +2240,10 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, nodeType n
 				})
 			}
 		case HintReadFromStorage:
-			if hint.StoreType.L == HintTiFlash {
+			switch hint.HintData.(model.CIStr).L {
+			case HintTiFlash:
 				tiflashTables = tableNames2HintTableInfo(b.ctx, hint.Tables, b.hintProcessor, nodeType, currentLevel)
-			}
-			if hint.StoreType.L == HintTiKV {
+			case HintTiKV:
 				tikvTables = tableNames2HintTableInfo(b.ctx, hint.Tables, b.hintProcessor, nodeType, currentLevel)
 			}
 		case HintIndexMerge:
@@ -2793,6 +2793,8 @@ func (b *PlanBuilder) buildMemTable(ctx context.Context, dbName model.CIStr, tab
 			p.Extractor = &ClusterLogTableExtractor{}
 		case infoschema.TableInspectionResult:
 			p.Extractor = &InspectionResultTableExtractor{}
+		case infoschema.TableInspectionSummary:
+			p.Extractor = &InspectionSummaryTableExtractor{}
 		case infoschema.TableMetricSummary, infoschema.TableMetricSummaryByLabel:
 			p.Extractor = newMetricTableExtractor()
 		}
