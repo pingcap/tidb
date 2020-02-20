@@ -265,6 +265,8 @@ func (s *testSuite6) TestCreateViewWithOverlongColName(c *C) {
 		"'cccccccccc', '" + strings.Repeat("d", 65) + "';")
 	resultCreateStmt := "CREATE ALGORITHM=UNDEFINED DEFINER=``@`` SQL SECURITY DEFINER VIEW `v` (`new_exp_1`, `new_exp_2`, `cccccccccc`, `new_exp_4`) AS SELECT DISTINCT '" + strings.Repeat("a", 65) + "',MAX('" + strings.Repeat("b", 65) + "'),'cccccccccc','" + strings.Repeat("d", 65) + "'"
 	tk.MustQuery("show create view v").Check(testkit.Rows("v " + resultCreateStmt + "  "))
+	tk.MustQuery("select * from v")
+	tk.MustQuery("select name_exp_1 from v")
 	tk.MustExec("drop view v;")
 	tk.MustExec(resultCreateStmt)
 
@@ -275,6 +277,7 @@ func (s *testSuite6) TestCreateViewWithOverlongColName(c *C) {
 		"'c');")
 	resultCreateStmt = "CREATE ALGORITHM=UNDEFINED DEFINER=``@`` SQL SECURITY DEFINER VIEW `v` (`a`, `new_exp_2`) AS SELECT 'a','" + strings.Repeat("b", 65) + "' FROM `test`.`t` UNION SELECT '" + strings.Repeat("c", 65) + "',COUNT(DISTINCT '" + strings.Repeat("b", 65) + "', 'c')"
 	tk.MustQuery("show create view v").Check(testkit.Rows("v " + resultCreateStmt + "  "))
+	tk.MustQuery("select a, name_exp_2 from v")
 	tk.MustExec("drop view v;")
 	tk.MustExec(resultCreateStmt)
 
@@ -282,6 +285,8 @@ func (s *testSuite6) TestCreateViewWithOverlongColName(c *C) {
 	tk.MustExec("create view v as select 'a' as '" + strings.Repeat("b", 65) + "' from t;")
 	resultCreateStmt = "CREATE ALGORITHM=UNDEFINED DEFINER=``@`` SQL SECURITY DEFINER VIEW `v` (`new_exp_1`) AS SELECT 'a' AS `" + strings.Repeat("b", 65) + "` FROM `test`.`t`"
 	tk.MustQuery("show create view v").Check(testkit.Rows("v " + resultCreateStmt + "  "))
+	tk.MustQuery("select * from v")
+	tk.MustQuery("select new_exp_1 from v")
 	tk.MustExec("drop view v;")
 	tk.MustExec(resultCreateStmt)
 

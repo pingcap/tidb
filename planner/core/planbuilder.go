@@ -2948,20 +2948,14 @@ func buildChecksumTableSchema() (*expression.Schema, []*types.FieldName) {
 	return schema.col2Schema(), schema.names
 }
 
+// adjustOverlongViewColname adjusts the overlong outputNames of a view to
+// `new_exp_$off` where `$off` is the offset of the output column, $off starts from 1.
+// There is still some MySQL compatible problems.
 func adjustOverlongViewColname(plan LogicalPlan) {
 	outputNames := plan.OutputNames()
-	switch plan.(type) {
-	case *LogicalProjection, *LogicalAggregation, *LogicalUnionAll:
-		for i := range outputNames {
-			if outputName := outputNames[i].ColName.L; len(outputName) > mysql.MaxColumnNameLength {
-				outputNames[i].ColName = model.NewCIStr(fmt.Sprintf("new_exp_%d", i+1))
-			}
-		}
-	default:
-		if len(plan.Children()) == 1 {
-			adjustOverlongViewColname(plan.Children()[0])
-			return
+	for i := range outputNames {
+		if outputName := outputNames[i].ColName.L; len(outputName) > mysql.MaxColumnNameLength {
+			outputNames[i].ColName = model.NewCIStr(fmt.Sprintf("new_exp_%d", i+1))
 		}
 	}
-	return
 }
