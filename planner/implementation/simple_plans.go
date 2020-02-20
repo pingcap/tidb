@@ -65,7 +65,7 @@ func (sel *TiKVSelectionImpl) CalcCost(outCount float64, children ...memo.Implem
 	return sel.cost
 }
 
-// NewTiKVSelection鼻Impl creates a new TiKVSelectionImpl.
+// NewTiKVSelectionImpl creates a new TiKVSelectionImpl.
 func NewTiKVSelectionImpl(sel *plannercore.PhysicalSelection) *TiKVSelectionImpl {
 	return &TiKVSelectionImpl{baseImpl{plan: sel}}
 }

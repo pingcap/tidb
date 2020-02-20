@@ -63,7 +63,7 @@ func (agg *TiDBStreamAggImpl) CalcCost(outCount float64, children ...memo.Implem
 	return agg.cost
 }
 
-// NewStreamAggImpl creates a new StreamAggImpl.
+// NewTiDBStreamAggImpl creates a new TiDBStreamAggImpl.
 func NewTiDBStreamAggImpl(agg *plannercore.PhysicalStreamAgg) *TiDBStreamAggImpl {
 	return &TiDBStreamAggImpl{baseImpl{plan: agg}}
 }
@@ -90,7 +90,7 @@ func (agg *TiKVStreamAggImpl) CalcCost(outCount float64, children ...memo.Implem
 	return agg.cost
 }
 
-// NewStreamAggImpl creates a new StreamAggImpl.
+// NewTiKVStreamAggImpl creates a new TiKVStreamAggImpl.
 func NewTiKVStreamAggImpl(agg *plannercore.PhysicalStreamAgg) *TiKVStreamAggImpl {
 	return &TiKVStreamAggImpl{baseImpl{plan: agg}}
 }
