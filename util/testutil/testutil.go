@@ -26,10 +26,12 @@ import (
 	"reflect"
 	"regexp"
 	"runtime"
+	"sort"
 	"strings"
 
 	"github.com/pingcap/check"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
@@ -319,18 +321,31 @@ type autoRandom struct {
 
 // SetupAutoRandomTestConfig set alter-primary-key to false, and set allow-auto-random to true and save their origin values.
 // This method should only be used for the tests in SerialSuite.
-func (c *configTestUtils) SetupAutoRandomTestConfig() {
+func (a *autoRandom) SetupAutoRandomTestConfig() {
 	globalCfg := config.GetGlobalConfig()
-	c.originAllowAutoRandom = globalCfg.Experimental.AllowAutoRandom
-	c.originAlterPrimaryKey = globalCfg.AlterPrimaryKey
+	a.originAllowAutoRandom = globalCfg.Experimental.AllowAutoRandom
+	a.originAlterPrimaryKey = globalCfg.AlterPrimaryKey
 	globalCfg.AlterPrimaryKey = false
 	globalCfg.Experimental.AllowAutoRandom = true
 }
 
 // RestoreAutoRandomTestConfig restore the values had been saved in SetupTestConfig.
 // This method should only be used for the tests in SerialSuite.
-func (c *configTestUtils) RestoreAutoRandomTestConfig() {
+func (a *autoRandom) RestoreAutoRandomTestConfig() {
 	globalCfg := config.GetGlobalConfig()
-	globalCfg.Experimental.AllowAutoRandom = c.originAllowAutoRandom
-	globalCfg.AlterPrimaryKey = c.originAlterPrimaryKey
+	globalCfg.Experimental.AllowAutoRandom = a.originAllowAutoRandom
+	globalCfg.AlterPrimaryKey = a.originAlterPrimaryKey
+}
+
+// MaskSortHandles masks highest shard_bits numbers of table handles and sort it.
+func (a *autoRandom) MaskSortHandles(handles []int64, shardBitsCount int, fieldType byte) []int64 {
+	typeBitsLength := mysql.DefaultLengthOfMysqlTypes[fieldType] * 8
+	const signBitCount = 1
+	shiftBitsCount := 64 - typeBitsLength + shardBitsCount + signBitCount
+	ordered := make([]int64, len(handles))
+	for i, h := range handles {
+		ordered[i] = h << shiftBitsCount >> shiftBitsCount
+	}
+	sort.Slice(ordered, func(i, j int) bool { return ordered[i] < ordered[j] })
+	return ordered
 }
