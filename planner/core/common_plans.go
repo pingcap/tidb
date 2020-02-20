@@ -412,7 +412,6 @@ func (e *Execute) rebuildRange(p Plan) error {
 				if err != nil {
 					return err
 				}
-				return nil
 			}
 		}
 		for i, params := range x.IndexValueParams {
