@@ -168,25 +168,24 @@ func (ch *pdConfHandler) register() {
 		return
 	}
 
-	ch.updateConfig(conf, version)
-	ch.registered = true
+	ch.registered = ch.updateConfig(conf, version)
 	logutil.Logger(context.Background()).Info("PDConfHandler register successfully")
 }
 
-func (ch *pdConfHandler) updateConfig(newConfContent string, newVersion *configpb.Version) {
+func (ch *pdConfHandler) updateConfig(newConfContent string, newVersion *configpb.Version) (ok bool) {
 	newConf, err := decodeConfig(newConfContent)
 	if err != nil {
 		logutil.Logger(context.Background()).Warn("decode config error", zap.Error(err))
-		return
+		return false
 	} else if err := newConf.Valid(); err != nil {
 		logutil.Logger(context.Background()).Warn("invalid remote config", zap.Error(err))
-		return
+		return false
 	}
 	oldConf := ch.curConf.Load().(*Config)
 	mergedConf, err := CloneConf(oldConf)
 	if err != nil {
 		logutil.Logger(context.Background()).Warn("clone config error", zap.Error(err))
-		return
+		return false
 	}
 	as, rs := MergeConfigItems(mergedConf, newConf)
 	ch.reloadFunc(oldConf, mergedConf)
@@ -195,6 +194,7 @@ func (ch *pdConfHandler) updateConfig(newConfContent string, newVersion *configp
 	logutil.Logger(context.Background()).Info("PDConfHandler updates config successfully",
 		zap.String("new_version", newVersion.String()),
 		zap.Any("accepted_conf_items", as), zap.Any("rejected_conf_items", rs))
+	return true
 }
 
 func (ch *pdConfHandler) run() {
