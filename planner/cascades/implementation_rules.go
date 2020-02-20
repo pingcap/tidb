@@ -353,12 +353,26 @@ type ImplStreamAgg struct {
 
 // Match implements ImplementationRule Match interface.
 func (r *ImplStreamAgg) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) (matched bool) {
+	la := expr.ExprNode.(*plannercore.LogicalAggregation)
+	if r.doMatch(la, prop) {
+		return true
+	}
+
+	if la.IsPreferStream() {
+		errMsg := "Optimizer Hint STREAM_AGG is inapplicable"
+		warning := plannercore.ErrInternal.GenWithStack(errMsg)
+		la.SCtx().GetSessionVars().StmtCtx.AppendWarning(warning)
+	}
+
+	return false
+}
+
+func (r *ImplStreamAgg) doMatch(la *plannercore.LogicalAggregation, prop *property.PhysicalProperty) (matched bool) {
 	all, _ := prop.AllSameOrder()
 	if !all {
 		return false
 	}
 
-	la := expr.ExprNode.(*plannercore.LogicalAggregation)
 	for _, aggFunc := range la.AggFuncs {
 		if aggFunc.Mode == aggregation.FinalMode {
 			return false
@@ -390,7 +404,7 @@ func (r *ImplStreamAgg) OnImplement(expr *memo.GroupExpr, reqProp *property.Phys
 
 func (r *ImplStreamAgg) getStreamAggImpls(expr *memo.GroupExpr, reqProp *property.PhysicalProperty, newStreamAggImpl func(*plannercore.PhysicalStreamAgg) memo.Implementation) []memo.Implementation {
 	la := expr.ExprNode.(*plannercore.LogicalAggregation)
-	physicalStreamAggs := r.getImplForStreamAgg(la, reqProp, expr.Schema(), expr.Group.Prop.Stats)
+	physicalStreamAggs := r.getImplForStreamAgg(la, reqProp, expr.Schema(), expr.Group.Prop.Stats, expr.Children[0].Prop.Stats)
 
 	streamAggImpls := make([]memo.Implementation, 0, len(physicalStreamAggs))
 	for _, physicalPlan := range physicalStreamAggs {
@@ -401,9 +415,9 @@ func (r *ImplStreamAgg) getStreamAggImpls(expr *memo.GroupExpr, reqProp *propert
 	return streamAggImpls
 }
 
-func (r *ImplStreamAgg) getImplForStreamAgg(la *plannercore.LogicalAggregation, prop *property.PhysicalProperty, schema *expression.Schema, statsInfo *property.StatsInfo) []plannercore.PhysicalPlan {
+func (r *ImplStreamAgg) getImplForStreamAgg(la *plannercore.LogicalAggregation, prop *property.PhysicalProperty, schema *expression.Schema, statsInfo *property.StatsInfo, childStatsInfo *property.StatsInfo) []plannercore.PhysicalPlan {
 	childProp := &property.PhysicalProperty{
-		ExpectedCnt: math.Max(prop.ExpectedCnt*la.GetInputCount()/statsInfo.RowCount, prop.ExpectedCnt),
+		ExpectedCnt: math.Max(prop.ExpectedCnt*childStatsInfo.RowCount/statsInfo.RowCount, prop.ExpectedCnt),
 	}
 	_, desc := prop.AllSameOrder()
 
@@ -426,12 +440,6 @@ func (r *ImplStreamAgg) getImplForStreamAgg(la *plannercore.LogicalAggregation, 
 		childProp.Enforced = true
 		// It's ok to not clone.
 		streamAggs = append(streamAggs, plannercore.NewPhysicalStreamAgg(la, statsInfo, prop, childProp))
-
-		if len(streamAggs) == 0 {
-			errMsg := "Optimizer Hint STREAM_AGG is inapplicable"
-			warning := plannercore.ErrInternal.GenWithStack(errMsg)
-			la.SCtx().GetSessionVars().StmtCtx.AppendWarning(warning)
-		}
 	}
 	return streamAggs
 }
