@@ -110,9 +110,9 @@ func (s *testInfoschemaTableSuite) TestDDLJobs(c *C) {
 		[][]interface{}{})
 
 	//test the privilege of user with privilege of mysql for information_schema.ddl_jobs
-	tk.MustExec("CREATE ROLE r_mysql_priv;")
-	tk.MustExec("GRANT ALL PRIVILEGES ON mysql.* TO r_mysql_priv;")
-	tk.MustExec("GRANT r_mysql_priv TO DDL_JOBS_tester;")
-	DDLJobsTester.MustExec("set role r_mysql_priv")
+	tk.MustExec("CREATE ROLE mysql_priv;")
+	tk.MustExec("GRANT ALL PRIVILEGES ON mysql.* TO mysql_priv;")
+	tk.MustExec("GRANT mysql_priv TO DDL_JOBS_tester;")
+	DDLJobsTester.MustExec("set role mysql_priv")
 	DDLJobsTester.MustQuery("select DISTINCT DB_NAME from information_schema.DDL_JOBS where DB_NAME = 'mysql';").Check(testkit.Rows("mysql"))
 }
