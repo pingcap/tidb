@@ -22,7 +22,7 @@ import (
 // StatsInfo stores the basic information of statistics for the plan's output. It is used for cost estimation.
 type StatsInfo struct {
 	RowCount float64
-	// Cardinality []float64
+
 	// Column.UniqueID -> Cardinality
 	Cardinality map[int64]float64
 
