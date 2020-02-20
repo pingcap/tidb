@@ -368,7 +368,20 @@ func (criticalErrorInspection) inspect(ctx context.Context, sctx sessionctx.Cont
 	return results
 }
 
-func (thresholdCheckInspection) inspect(ctx context.Context, sctx sessionctx.Context, filter inspectionFilter) []inspectionResult {
+func (c thresholdCheckInspection) inspect(ctx context.Context, sctx sessionctx.Context, filter inspectionFilter) []inspectionResult {
+	inspects := []func(context.Context, sessionctx.Context, inspectionFilter) []inspectionResult{
+		c.inspectThreshold1,
+		c.inspectThreshold2,
+	}
+	var results []inspectionResult
+	for _, inspect := range inspects {
+		re := inspect(ctx, sctx, filter)
+		results = append(results, re...)
+	}
+	return results
+}
+
+func (thresholdCheckInspection) inspectThreshold1(ctx context.Context, sctx sessionctx.Context, filter inspectionFilter) []inspectionResult {
 	var rules = []struct {
 		item      string
 		component string
@@ -475,6 +488,158 @@ func (thresholdCheckInspection) inspect(ctx context.Context, sctx sessionctx.Con
 				expected: expected,
 				severity: "warning",
 				detail:   detail,
+			}
+			results = append(results, result)
+		}
+	}
+	return results
+}
+
+func (thresholdCheckInspection) inspectThreshold2(ctx context.Context, sctx sessionctx.Context, filter inspectionFilter) []inspectionResult {
+	var rules = []struct {
+		tp        string
+		item      string
+		tbl       string
+		condition string
+		threshold float64
+		isMin     bool
+	}{
+		{
+			tp:        "tidb",
+			item:      "tso-duration",
+			tbl:       "pd_tso_wait_duration",
+			condition: "quantile=0.999",
+			threshold: 0.05,
+		},
+		{
+			tp:        "tidb",
+			item:      "get-token-duration",
+			tbl:       "tidb_get_token_duration",
+			condition: "quantile=0.999",
+			threshold: 0.001 * 10e5, // the unit is microsecond
+		},
+		{
+			tp:        "tidb",
+			item:      "load-schema-duration",
+			tbl:       "tidb_load_schema_duration",
+			condition: "quantile=0.99",
+			threshold: 1,
+		},
+		{
+			tp:        "tikv",
+			item:      "scheduler-cmd-duration",
+			tbl:       "tikv_scheduler_command_duration",
+			condition: "quantile=0.99",
+			threshold: 0.1,
+		},
+		{
+			tp:        "tikv",
+			item:      "handle-snapshot-duration",
+			tbl:       "tikv_handle_snapshot_duration",
+			threshold: 30,
+		},
+		{
+			tp:        "tikv",
+			item:      "storage-write-duration",
+			tbl:       "tikv_storage_async_request_duration",
+			condition: "type='write'",
+			threshold: 0.1,
+		},
+		{
+			tp:        "tikv",
+			item:      "storage-snapshot-duration",
+			tbl:       "tikv_storage_async_request_duration",
+			condition: "type='snapshot'",
+			threshold: 0.05,
+		},
+		{
+			tp:        "tikv",
+			item:      "rocksdb-write-duration",
+			tbl:       "tikv_engine_write_duration",
+			condition: "type='write_max'",
+			threshold: 0.1 * 10e5, // the unit is microsecond
+		},
+		{
+			tp:        "tikv",
+			item:      "rocksdb-get-duration",
+			tbl:       "tikv_engine_max_get_duration",
+			condition: "type='get_max'",
+			threshold: 0.05 * 10e5, // the unit is microsecond
+		},
+		{
+			tp:        "tikv",
+			item:      "rocksdb-seek-duration",
+			tbl:       "tikv_engine_max_seek_duration",
+			condition: "type='seek_max'",
+			threshold: 0.05 * 10e5, // the unit is microsecond
+		},
+		{
+			tp:        "tikv",
+			item:      "scheduler-pending-cmd-count",
+			tbl:       "tikv_scheduler_pending_commands",
+			threshold: 1000,
+		},
+		{
+			tp:        "tikv",
+			item:      "index-block-cache-hit",
+			tbl:       "tikv_block_index_cache_hit",
+			condition: "value > 0",
+			threshold: 0.95,
+			isMin:     true,
+		},
+		{
+			tp:        "tikv",
+			item:      "filter-block-cache-hit",
+			tbl:       "tikv_block_filter_cache_hit",
+			condition: "value > 0",
+			threshold: 0.95,
+			isMin:     true,
+		},
+		{
+			tp:        "tikv",
+			item:      "data-block-cache-hit",
+			tbl:       "tikv_block_data_cache_hit",
+			condition: "value > 0",
+			threshold: 0.80,
+			isMin:     true,
+		},
+	}
+	var results []inspectionResult
+	for _, rule := range rules {
+		if !filter.enable(rule.item) {
+			continue
+		}
+		var sql string
+		condition := rule.condition
+		if len(condition) > 0 {
+			condition = "where " + condition
+		}
+		if rule.isMin {
+			sql = fmt.Sprintf("select instance, min(value) as min_value from metric_schema.%s %s group by instance having min_value < %f;", rule.tbl, condition, rule.threshold)
+		} else {
+			sql = fmt.Sprintf("select instance, max(value) as max_value from metric_schema.%s %s group by instance having max_value > %f;", rule.tbl, condition, rule.threshold)
+		}
+		rows, _, err := sctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQLWithContext(ctx, sql)
+		if err != nil {
+			sctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("execute '%s' failed: %v", sql, err))
+			continue
+		}
+		for _, row := range rows {
+			actual := fmt.Sprintf("%.2f", row.GetFloat64(1))
+			expected := ""
+			if rule.isMin {
+				expected = fmt.Sprintf("> %.2f", rule.threshold)
+			} else {
+				expected = fmt.Sprintf("< %.2f", rule.threshold)
+			}
+			result := inspectionResult{
+				tp:       rule.tp,
+				instance: row.GetString(0),
+				item:     rule.item,
+				actual:   actual,
+				expected: expected,
+				severity: "warning",
+				detail:   sql,
 			}
 			results = append(results, result)
 		}
