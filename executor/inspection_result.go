@@ -17,6 +17,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/pingcap/failpoint"
@@ -372,6 +373,7 @@ func (c thresholdCheckInspection) inspect(ctx context.Context, sctx sessionctx.C
 	inspects := []func(context.Context, sessionctx.Context, inspectionFilter) []inspectionResult{
 		c.inspectThreshold1,
 		c.inspectThreshold2,
+		c.inspectThreshold3,
 	}
 	var results []inspectionResult
 	for _, inspect := range inspects {
@@ -642,6 +644,120 @@ func (thresholdCheckInspection) inspectThreshold2(ctx context.Context, sctx sess
 				detail:   sql,
 			}
 			results = append(results, result)
+		}
+	}
+	return results
+}
+
+type thresholdCheckRule interface {
+	genSQL() string
+	genResult(chunk.Row) inspectionResult
+}
+
+type compareStoreStatus struct {
+	item      string
+	condition string
+	threshold float64
+}
+
+func (c compareStoreStatus) genSQL() string {
+	return fmt.Sprintf(`select t1.address,t1.value,t2.address,t2.value,
+				(t1.value-t2.value)/greatest(t1.value,t2.value) as ratio
+				from metric_schema.pd_scheduler_store_status t1 join metric_schema.pd_scheduler_store_status t2
+				where t1.type='%s' and t1.time=now() and
+				t1.type=t2.type and t2.time=t1.time and t1.address != t2.address and
+				(t1.value-t2.value)/t1.value>%v;`, c.condition, c.threshold)
+}
+
+func (c compareStoreStatus) genResult(row chunk.Row) inspectionResult {
+	addr1 := row.GetString(0)
+	value1 := row.GetFloat64(1)
+	addr2 := row.GetString(2)
+	value2 := row.GetFloat64(3)
+	ratio := row.GetFloat64(4)
+	expected := fmt.Sprintf("The difference between %v and %v should less than %v%%, actual is %v%%", addr1, addr2, c.threshold*100, ratio*100)
+	detail := fmt.Sprintf("%v value is %v, much more than %v value %v", addr1, value1, addr2, value2)
+	return inspectionResult{
+		tp:       "tikv",
+		instance: addr2,
+		item:     c.item,
+		actual:   strconv.FormatFloat(value2, 'f', -1, 64),
+		expected: expected,
+		severity: "warning",
+		detail:   detail,
+	}
+}
+
+type checkRegionHealth struct{}
+
+func (c checkRegionHealth) genSQL() string {
+	return `select instance, sum(value) as sum_value from metric_schema.pd_region_health where type in ('extra-peer-region-count','learner-peer-region-count','pending-peer-region-count') and time=now() having sum_value>100`
+}
+
+func (c checkRegionHealth) genResult(row chunk.Row) inspectionResult {
+	detail := fmt.Sprintf("the count of extra-perr and learner-peer and pending-peer is %v, it means the scheduling is too frequent or too slow", row.GetFloat64(1))
+	actual := fmt.Sprintf("%.2f", row.GetFloat64(1))
+	return inspectionResult{
+		tp:       "pd",
+		instance: row.GetString(0),
+		item:     "region_health",
+		actual:   actual,
+		expected: "< 100",
+		severity: "warning",
+		detail:   detail,
+	}
+}
+
+type checkStoreRegionTooMuch struct{}
+
+func (c checkStoreRegionTooMuch) genSQL() string {
+	return `select address,value from metric_schema.pd_scheduler_store_status where type='region_count' and time=now() and value > 20000;`
+}
+
+func (c checkStoreRegionTooMuch) genResult(row chunk.Row) inspectionResult {
+	actual := fmt.Sprintf("%.2f", row.GetFloat64(1))
+	return inspectionResult{
+		tp:       "tikv",
+		instance: row.GetString(0),
+		item:     "region_count",
+		actual:   actual,
+		expected: "<= 20000",
+		severity: "warning",
+		detail:   c.genSQL(),
+	}
+}
+
+func (thresholdCheckInspection) inspectThreshold3(ctx context.Context, sctx sessionctx.Context, filter inspectionFilter) []inspectionResult {
+	var rules = []thresholdCheckRule{
+		compareStoreStatus{
+			item:      "leader_score",
+			condition: "leader_score",
+			threshold: 0.05,
+		},
+		compareStoreStatus{
+			item:      "region_score",
+			condition: "region_score",
+			threshold: 0.05,
+		},
+		compareStoreStatus{
+			item:      "store_available",
+			condition: "store_available",
+			threshold: 0.2,
+		},
+		checkRegionHealth{},
+		checkStoreRegionTooMuch{},
+	}
+
+	var results []inspectionResult
+	for _, rule := range rules {
+		sql := rule.genSQL()
+		rows, _, err := sctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQLWithContext(ctx, sql)
+		if err != nil {
+			sctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("execute '%s' failed: %v", sql, err))
+			continue
+		}
+		for _, row := range rows {
+			results = append(results, rule.genResult(row))
 		}
 	}
 	return results

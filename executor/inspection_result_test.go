@@ -15,6 +15,7 @@ package executor_test
 
 import (
 	"context"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/mysql"
@@ -373,6 +374,68 @@ func (s *inspectionResultSuite) TestThresholdCheckInspection2(c *C) {
 		"storage-write-duration tikv tikv-0 0.20 < 0.10 select instance, max(value) as max_value from metric_schema.tikv_storage_async_request_duration where type='write' group by instance having max_value > 0.100000;",
 		"tso-duration tidb pd-0 0.06 < 0.05 select instance, max(value) as max_value from metric_schema.pd_tso_wait_duration where quantile=0.999 group by instance having max_value > 0.050000;",
 	))
+}
+
+func (s *inspectionResultSuite) TestThresholdCheckInspection3(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	// Mock for metric table data.
+	fpName := "github.com/pingcap/tidb/executor/mockMetricsTableData"
+	c.Assert(failpoint.Enable(fpName, "return"), IsNil)
+	defer func() { c.Assert(failpoint.Disable(fpName), IsNil) }()
+
+	datetime := func(s string) types.Time {
+		t, err := types.ParseTime(tk.Se.GetSessionVars().StmtCtx, s, mysql.TypeDatetime, types.MaxFsp)
+		c.Assert(err, IsNil)
+		return t
+	}
+
+	// construct some mock abnormal data
+	mockData := map[string][][]types.Datum{
+		"tikv_thread_cpu":                     {},
+		"pd_tso_wait_duration":                {},
+		"tidb_get_token_duration":             {},
+		"tidb_load_schema_duration":           {},
+		"tikv_scheduler_command_duration":     {},
+		"tikv_handle_snapshot_duration":       {},
+		"tikv_storage_async_request_duration": {},
+		"tikv_engine_write_duration":          {},
+		"tikv_engine_max_get_duration":        {},
+		"tikv_engine_max_seek_duration":       {},
+		"tikv_scheduler_pending_commands":     {},
+		"tikv_block_index_cache_hit":          {},
+		"tikv_block_data_cache_hit":           {},
+		"tikv_block_filter_cache_hit":         {},
+		"pd_scheduler_store_status": {
+			types.MakeDatums(datetime("2020-02-14 05:20:00"), "pd-0", "tikv-0", "0", "leader_score", 100.0),
+			types.MakeDatums(datetime("2020-02-14 05:20:00"), "pd-0", "tikv-1", "1", "leader_score", 50.0),
+			types.MakeDatums(datetime("2020-02-14 05:20:00"), "pd-0", "tikv-0", "0", "region_score", 100.0),
+			types.MakeDatums(datetime("2020-02-14 05:20:00"), "pd-0", "tikv-1", "1", "region_score", 90.0),
+			types.MakeDatums(datetime("2020-02-14 05:20:00"), "pd-0", "tikv-0", "0", "store_available", 100.0),
+			types.MakeDatums(datetime("2020-02-14 05:20:00"), "pd-0", "tikv-1", "1", "store_available", 70.0),
+			types.MakeDatums(datetime("2020-02-14 05:20:00"), "pd-0", "tikv-0", "0", "region_count", 20001.0),
+		},
+		"pd_region_health": {
+			types.MakeDatums(datetime("2020-02-14 05:20:00"), "pd-0", "extra-peer-region-count", 40.0),
+			types.MakeDatums(datetime("2020-02-14 05:20:00"), "pd-0", "learner-peer-region-count", 40.0),
+			types.MakeDatums(datetime("2020-02-14 05:20:00"), "pd-0", "pending-peer-region-count", 30.0),
+		},
+	}
+
+	ctx := context.WithValue(context.Background(), "__mockMetricsTableData", mockData)
+	ctx = failpoint.WithHook(ctx, func(_ context.Context, fpname string) bool {
+		return fpname == fpName
+	})
+
+	rs, err := tk.Se.Execute(ctx, "select item, type, instance, value, reference, details from information_schema.inspection_result where rule='threshold-check' order by item")
+	c.Assert(err, IsNil)
+	result := tk.ResultSetToResultWithCtx(ctx, rs[0], Commentf("execute inspect SQL failed"))
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(0), Commentf("unexpected warnings: %+v", tk.Se.GetSessionVars().StmtCtx.GetWarnings()))
+	result.Check(testkit.Rows(
+		"leader_score tikv tikv-1 50 The difference between tikv-0 and tikv-1 should less than 5%, actual is 50% tikv-0 value is 100, much more than tikv-1 value 50",
+		"region_count tikv tikv-0 20001.00 <= 20000 select address,value from metric_schema.pd_scheduler_store_status where type='region_count' and time=now() and value > 20000;",
+		"region_health pd pd-0 110.00 < 100 the count of extra-perr and learner-peer and pending-peer is 110, it means the scheduling is too frequent or too slow",
+		"region_score tikv tikv-1 90 The difference between tikv-0 and tikv-1 should less than 5%, actual is 10% tikv-0 value is 100, much more than tikv-1 value 90",
+		"store_available tikv tikv-1 70 The difference between tikv-0 and tikv-1 should less than 20%, actual is 30% tikv-0 value is 100, much more than tikv-1 value 70"))
 }
 
 func (s *inspectionResultSuite) TestCriticalErrorInspection(c *C) {
