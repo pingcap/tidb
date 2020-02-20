@@ -188,7 +188,7 @@ func (ts *testTypeConvertSuite) TestToFloat32(c *C) {
 	c.Assert(converted.Kind(), Equals, KindFloat32)
 	c.Assert(converted.GetFloat32(), Equals, float32(281.37))
 
-	datum.SetString("281.37", collate.DefaultCollation, collate.DefaultLen)
+	datum.SetString("281.37", mysql.DefaultCollationName, collate.DefaultLen)
 	converted, err = datum.ConvertTo(sc, ft)
 	c.Assert(err, IsNil)
 	c.Assert(converted.Kind(), Equals, KindFloat32)

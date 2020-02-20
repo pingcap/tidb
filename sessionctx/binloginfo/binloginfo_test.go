@@ -24,6 +24,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	pumpcli "github.com/pingcap/tidb-tools/tidb-binlog/pump_client"
 	"github.com/pingcap/tidb/ddl"
@@ -153,8 +154,8 @@ func (s *testBinlogSuite) TestBinlog(c *C) {
 	c.Assert(prewriteVal.SchemaVersion, Greater, int64(0))
 	c.Assert(prewriteVal.Mutations[0].TableId, Greater, int64(0))
 	expected := [][]types.Datum{
-		{types.NewIntDatum(1), types.NewCollationStringDatum("abc", collate.DefaultCollation, collate.DefaultLen)},
-		{types.NewIntDatum(2), types.NewCollationStringDatum("cde", collate.DefaultCollation, collate.DefaultLen)},
+		{types.NewIntDatum(1), types.NewCollationStringDatum("abc", mysql.DefaultCollationName, collate.DefaultLen)},
+		{types.NewIntDatum(2), types.NewCollationStringDatum("cde", mysql.DefaultCollationName, collate.DefaultLen)},
 	}
 	gotRows := mutationRowsToRows(c, prewriteVal.Mutations[0].InsertedRows, 2, 4)
 	c.Assert(gotRows, DeepEquals, expected)
@@ -162,10 +163,10 @@ func (s *testBinlogSuite) TestBinlog(c *C) {
 	tk.MustExec("update local_binlog set name = 'xyz' where id = 2")
 	prewriteVal = getLatestBinlogPrewriteValue(c, pump)
 	oldRow := [][]types.Datum{
-		{types.NewIntDatum(2), types.NewCollationStringDatum("cde", collate.DefaultCollation, collate.DefaultLen)},
+		{types.NewIntDatum(2), types.NewCollationStringDatum("cde", mysql.DefaultCollationName, collate.DefaultLen)},
 	}
 	newRow := [][]types.Datum{
-		{types.NewIntDatum(2), types.NewCollationStringDatum("xyz", collate.DefaultCollation, collate.DefaultLen)},
+		{types.NewIntDatum(2), types.NewCollationStringDatum("xyz", mysql.DefaultCollationName, collate.DefaultLen)},
 	}
 	gotRows = mutationRowsToRows(c, prewriteVal.Mutations[0].UpdatedRows, 1, 3)
 	c.Assert(gotRows, DeepEquals, oldRow)
@@ -177,7 +178,7 @@ func (s *testBinlogSuite) TestBinlog(c *C) {
 	prewriteVal = getLatestBinlogPrewriteValue(c, pump)
 	gotRows = mutationRowsToRows(c, prewriteVal.Mutations[0].DeletedRows, 1, 3)
 	expected = [][]types.Datum{
-		{types.NewIntDatum(1), types.NewCollationStringDatum("abc", collate.DefaultCollation, collate.DefaultLen)},
+		{types.NewIntDatum(1), types.NewCollationStringDatum("abc", mysql.DefaultCollationName, collate.DefaultLen)},
 	}
 	c.Assert(gotRows, DeepEquals, expected)
 
@@ -360,7 +361,7 @@ func mutationRowsToRows(c *C, mutationRows [][]byte, columnValueOffsets ...int) 
 		c.Assert(err, IsNil)
 		for i := range datums {
 			if datums[i].Kind() == types.KindBytes {
-				datums[i].SetBytesAsString(datums[i].GetBytes(), collate.DefaultCollation, collate.DefaultLen)
+				datums[i].SetBytesAsString(datums[i].GetBytes(), mysql.DefaultCollationName, collate.DefaultLen)
 			}
 		}
 		row := make([]types.Datum, 0, len(columnValueOffsets))

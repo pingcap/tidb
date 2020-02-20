@@ -18,6 +18,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
@@ -87,7 +88,7 @@ func (s *inspectionSuite) TestInspectionTables(c *C) {
 	c.Assert(err, ErrorMatches, "not currently in inspection mode")
 
 	// check whether is obtain data from cache at the next time
-	inspectionTableCache["cluster_info"].Rows[0][0].SetString("modified-pd", collate.DefaultCollation, collate.DefaultLen)
+	inspectionTableCache["cluster_info"].Rows[0][0].SetString("modified-pd", mysql.DefaultCollationName, collate.DefaultLen)
 	tk.MustQuery("select type, instance, status_address, version, git_hash from inspection_schema.cluster_info").Check(testkit.Rows(
 		"modified-pd 127.0.0.1:11080 127.0.0.1:10080 mock-version mock-githash",
 		"tidb 127.0.0.1:11080 127.0.0.1:10080 mock-version mock-githash",

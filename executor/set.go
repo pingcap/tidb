@@ -140,7 +140,7 @@ func (e *SetExecutor) setSysVariable(name string, v *expression.VarAssignment) e
 			return err
 		}
 		if value.IsNull() {
-			value.SetString("", collate.DefaultCollation, collate.DefaultLen)
+			value.SetString("", mysql.DefaultCollationName, collate.DefaultLen)
 		}
 		valStr, err = value.ToString()
 		if err != nil {

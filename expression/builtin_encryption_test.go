@@ -19,6 +19,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
@@ -198,7 +199,7 @@ func toHex(d types.Datum) (h types.Datum) {
 		return
 	}
 	x, _ := d.ToString()
-	h.SetString(strings.ToUpper(hex.EncodeToString(hack.Slice(x))), collate.DefaultCollation, collate.DefaultLen)
+	h.SetString(strings.ToUpper(hex.EncodeToString(hack.Slice(x))), mysql.DefaultCollationName, collate.DefaultLen)
 	return
 }
 

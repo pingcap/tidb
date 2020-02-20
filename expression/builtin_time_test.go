@@ -1151,7 +1151,7 @@ func builtinDateFormat(ctx sessionctx.Context, args []types.Datum) (d types.Datu
 	if err != nil {
 		return d, err
 	}
-	d.SetString(str, collate.DefaultCollation, collate.DefaultLen)
+	d.SetString(str, mysql.DefaultCollationName, collate.DefaultLen)
 	return
 }
 

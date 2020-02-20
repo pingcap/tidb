@@ -442,7 +442,7 @@ func (d *Datum) SetValue(val interface{}) {
 	case float64:
 		d.SetFloat64(x)
 	case string:
-		d.SetString(x, collate.DefaultCollation, collate.DefaultLen)
+		d.SetString(x, mysql.DefaultCollationName, collate.DefaultLen)
 	case []byte:
 		d.SetBytes(x)
 	case *MyDecimal:
@@ -1692,7 +1692,7 @@ func NewBytesDatum(b []byte) (d Datum) {
 
 // NewStringDatum creates a new Datum from a string.
 func NewStringDatum(s string) (d Datum) {
-	d.SetString(s, collate.DefaultCollation, collate.DefaultLen)
+	d.SetString(s, mysql.DefaultCollationName, collate.DefaultLen)
 	return d
 }
 
