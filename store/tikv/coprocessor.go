@@ -912,14 +912,13 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *RPCCon
 			worker.sendToRespCh(resp, ch, true)
 			return nil, nil
 		}
-		var err error
+		errStr := fmt.Sprintf("region_id:%v, region_ver:%v, store_type:%s", task.region.id, task.region.ver, task.storeType.Name())
 		if rpcCtx != nil {
-			err = errors.New(fmt.Sprintf("region_id:%v, region_ver:%v, peer_address:%s, error:%s",
-				rpcCtx.Region.id, rpcCtx.Region.ver, rpcCtx.Addr, regionErr.String()))
-		} else {
-			err = errors.New(fmt.Sprintf("error:%s", regionErr.String()))
+			errStr += fmt.Sprintf(", peer_addr:%s", rpcCtx.Addr)
 		}
-		if err := bo.Backoff(BoRegionMiss, err); err != nil {
+		errStr += fmt.Sprintf("error:%s", regionErr.String())
+
+		if err := bo.Backoff(BoRegionMiss, errors.New(errStr)); err != nil {
 			return nil, errors.Trace(err)
 		}
 		// We may meet RegionError at the first packet, but not during visiting the stream.
