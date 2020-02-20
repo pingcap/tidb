@@ -493,4 +493,25 @@ func (s *testCacheSuite) TestDBIsVisible(c *C) {
 	isVisible = p.DBIsVisible("testvisdb6", "%", "visdb")
 	c.Assert(isVisible, IsTrue)
 	mustExec(c, se, "TRUNCATE TABLE mysql.user")
+
+	mustExec(c, se, `INSERT INTO mysql.user (Host, User, Trigger_priv) VALUES ("%", "testvisdb6", "Y")`)
+	err = p.LoadUserTable(se)
+	c.Assert(err, IsNil)
+	isVisible = p.DBIsVisible("testvisdb6", "%", "visdb")
+	c.Assert(isVisible, IsTrue)
+	mustExec(c, se, "TRUNCATE TABLE mysql.user")
+
+	mustExec(c, se, `INSERT INTO mysql.user (Host, User, References_priv) VALUES ("%", "testvisdb6", "Y")`)
+	err = p.LoadUserTable(se)
+	c.Assert(err, IsNil)
+	isVisible = p.DBIsVisible("testvisdb6", "%", "visdb")
+	c.Assert(isVisible, IsTrue)
+	mustExec(c, se, "TRUNCATE TABLE mysql.user")
+
+	mustExec(c, se, `INSERT INTO mysql.user (Host, User, Execute_priv) VALUES ("%", "testvisdb6", "Y")`)
+	err = p.LoadUserTable(se)
+	c.Assert(err, IsNil)
+	isVisible = p.DBIsVisible("testvisdb6", "%", "visdb")
+	c.Assert(isVisible, IsTrue)
+	mustExec(c, se, "TRUNCATE TABLE mysql.user")
 }
