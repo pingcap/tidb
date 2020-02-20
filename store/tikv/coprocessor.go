@@ -912,10 +912,7 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *RPCCon
 			worker.sendToRespCh(resp, ch, true)
 			return nil, nil
 		}
-		errStr := fmt.Sprintf("region_id:%v, region_ver:%v, store_type:%s", task.region.id, task.region.ver, task.storeType.Name())
-		if rpcCtx != nil {
-			errStr += fmt.Sprintf(", peer_addr:%s", rpcCtx.Addr)
-		}
+		errStr := fmt.Sprintf("region_id:%v, region_ver:%v, store_type:%s, peer_addr:%s", task.region.id, task.region.ver, task.storeType.Name(), task.storeAddr)
 		errStr += fmt.Sprintf("error:%s", regionErr.String())
 
 		if err := bo.Backoff(BoRegionMiss, errors.New(errStr)); err != nil {
