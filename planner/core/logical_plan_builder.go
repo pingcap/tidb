@@ -2797,6 +2797,8 @@ func (b *PlanBuilder) buildMemTable(ctx context.Context, dbName model.CIStr, tab
 			p.Extractor = &InspectionSummaryTableExtractor{}
 		case infoschema.TableMetricSummary, infoschema.TableMetricSummaryByLabel:
 			p.Extractor = newMetricTableExtractor()
+		case infoschema.TableSlowQuery:
+			p.Extractor = &SlowQueryExtractor{}
 		}
 	}
 	return p, nil
