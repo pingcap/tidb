@@ -1979,11 +1979,11 @@ func (r *EliminateTableDualBelowUnionAll) OnTransform(old *memo.ExprIter) (newEx
 		}
 	}
 	if len(newChildren) == len(expr.Children) {
-		// There is TableDual below UnionAll.
+		// There is no TableDual below UnionAll.
 		return nil, false, false, nil
 	}
 	if len(newChildren) == 1 {
-		// We don't need a UnionAll here, just return its non-dual child exprs.
+		// We don't need a UnionAll anymore, just return its non-dual child exprs.
 		child := newChildren[0]
 		newExprs := make([]*memo.GroupExpr, 0, child.Equivalents.Len())
 		for iter := child.Equivalents.Front(); iter != nil; iter = iter.Next() {
