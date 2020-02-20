@@ -2530,6 +2530,7 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (Plan, err
 		schema := plan.Schema()
 		names := plan.OutputNames()
 		if v.Cols == nil {
+			adjustOverlongViewColname(plan.(LogicalPlan))
 			v.Cols = make([]model.CIStr, len(schema.Columns))
 			for i, name := range names {
 				v.Cols[i] = name.ColName
@@ -2538,14 +2539,12 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (Plan, err
 		if len(v.Cols) != schema.Len() {
 			return nil, ddl.ErrViewWrongList
 		}
-		if _, ok := plan.(LogicalPlan); ok {
-			if b.ctx.GetSessionVars().User != nil {
-				authErr = ErrTableaccessDenied.GenWithStackByArgs("CREATE VIEW", b.ctx.GetSessionVars().User.Hostname,
-					b.ctx.GetSessionVars().User.Username, v.ViewName.Name.L)
-			}
-			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreateViewPriv, v.ViewName.Schema.L,
-				v.ViewName.Name.L, "", authErr)
+		if b.ctx.GetSessionVars().User != nil {
+			authErr = ErrTableaccessDenied.GenWithStackByArgs("CREATE VIEW", b.ctx.GetSessionVars().User.Hostname,
+				b.ctx.GetSessionVars().User.Username, v.ViewName.Name.L)
 		}
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreateViewPriv, v.ViewName.Schema.L,
+			v.ViewName.Name.L, "", authErr)
 		if v.Definer.CurrentUser && b.ctx.GetSessionVars().User != nil {
 			v.Definer = b.ctx.GetSessionVars().User
 		}
@@ -2869,10 +2868,10 @@ func buildShowSchema(s *ast.ShowStmt, isView bool) (schema *expression.Schema, o
 	case ast.ShowIndex:
 		names = []string{"Table", "Non_unique", "Key_name", "Seq_in_index",
 			"Column_name", "Collation", "Cardinality", "Sub_part", "Packed",
-			"Null", "Index_type", "Comment", "Index_comment"}
+			"Null", "Index_type", "Comment", "Index_comment", "Expression"}
 		ftypes = []byte{mysql.TypeVarchar, mysql.TypeLonglong, mysql.TypeVarchar, mysql.TypeLonglong,
 			mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLonglong, mysql.TypeLonglong,
-			mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar}
+			mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar}
 	case ast.ShowPlugins:
 		names = []string{"Name", "Status", "Type", "Library", "License", "Version"}
 		ftypes = []byte{
@@ -2947,4 +2946,16 @@ func buildChecksumTableSchema() (*expression.Schema, []*types.FieldName) {
 	schema.Append(buildColumnWithName("", "Total_kvs", mysql.TypeLonglong, 22))
 	schema.Append(buildColumnWithName("", "Total_bytes", mysql.TypeLonglong, 22))
 	return schema.col2Schema(), schema.names
+}
+
+// adjustOverlongViewColname adjusts the overlong outputNames of a view to
+// `new_exp_$off` where `$off` is the offset of the output column, $off starts from 1.
+// There is still some MySQL compatible problems.
+func adjustOverlongViewColname(plan LogicalPlan) {
+	outputNames := plan.OutputNames()
+	for i := range outputNames {
+		if outputName := outputNames[i].ColName.L; len(outputName) > mysql.MaxColumnNameLength {
+			outputNames[i].ColName = model.NewCIStr(fmt.Sprintf("name_exp_%d", i+1))
+		}
+	}
 }
