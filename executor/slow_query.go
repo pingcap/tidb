@@ -542,7 +542,7 @@ func (e *slowQueryRetriever) getAllFiles(sctx sessionctx.Context, logFilePath st
 		if info.IsDir() {
 			return nil
 		}
-		//All rotated log files have the same prefix with the original file
+		// All rotated log files have the same prefix with the original file.
 		if !strings.HasPrefix(path, prefix) {
 			return nil
 		}
