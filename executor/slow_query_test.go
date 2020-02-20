@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package executor_test
+package executor
 
 import (
 	"bufio"
@@ -23,7 +23,6 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/terror"
-	"github.com/pingcap/tidb/executor"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -33,17 +32,17 @@ import (
 )
 
 func parseSlowLog(ctx sessionctx.Context, reader *bufio.Reader) ([][]types.Datum, error) {
-	retriever := &executor.SlowQueryRetriever{}
+	retriever := &slowQueryRetriever{}
 	// Ignore the error is ok for test.
-	terror.Log(retriever.Initialize(ctx))
-	rows, err := retriever.ParseSlowLog(ctx, reader, 1024)
+	terror.Log(retriever.initialize(ctx))
+	rows, err := retriever.parseSlowLog(ctx, reader, 1024)
 	if err == io.EOF {
 		err = nil
 	}
 	return rows, err
 }
 
-func (s *testSuite) TestParseSlowLogFile(c *C) {
+func (s *testExecSuite) TestParseSlowLogFile(c *C) {
 	slowLogStr :=
 		`# Time: 2019-04-28T15:24:04.309074+08:00
 # Txn_start_ts: 405888132465033227
@@ -62,9 +61,9 @@ select * from t;`
 	reader := bufio.NewReader(bytes.NewBufferString(slowLogStr))
 	loc, err := time.LoadLocation("Asia/Shanghai")
 	c.Assert(err, IsNil)
-	s.ctx = mock.NewContext()
-	s.ctx.GetSessionVars().TimeZone = loc
-	rows, err := parseSlowLog(s.ctx, reader)
+	ctx := mock.NewContext()
+	ctx.GetSessionVars().TimeZone = loc
+	rows, err := parseSlowLog(ctx, reader)
 	c.Assert(err, IsNil)
 	c.Assert(len(rows), Equals, 1)
 	recordString := ""
@@ -94,7 +93,7 @@ select a# from t;
 select * from t;
 `)
 	reader = bufio.NewReader(slowLog)
-	_, err = parseSlowLog(s.ctx, reader)
+	_, err = parseSlowLog(ctx, reader)
 	c.Assert(err, IsNil)
 
 	// test for time format compatibility.
@@ -105,7 +104,7 @@ select * from t;
 select * from t;
 `)
 	reader = bufio.NewReader(slowLog)
-	rows, err = parseSlowLog(s.ctx, reader)
+	rows, err = parseSlowLog(ctx, reader)
 	c.Assert(err, IsNil)
 	c.Assert(len(rows) == 2, IsTrue)
 	t0Str, err := rows[0][0].ToString()
@@ -126,13 +125,13 @@ select * from t;
 	sql := strings.Repeat("x", int(variable.MaxOfMaxAllowedPacket+1))
 	slowLog.WriteString(sql)
 	reader = bufio.NewReader(slowLog)
-	_, err = parseSlowLog(s.ctx, reader)
+	_, err = parseSlowLog(ctx, reader)
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "single line length exceeds limit: 65536")
 
 	variable.MaxOfMaxAllowedPacket = originValue
 	reader = bufio.NewReader(slowLog)
-	_, err = parseSlowLog(s.ctx, reader)
+	_, err = parseSlowLog(ctx, reader)
 	c.Assert(err, IsNil)
 
 	// Add parse error check.
@@ -142,17 +141,17 @@ select * from t;
 select * from t;
 `)
 	reader = bufio.NewReader(slowLog)
-	_, err = parseSlowLog(s.ctx, reader)
+	_, err = parseSlowLog(ctx, reader)
 	c.Assert(err, IsNil)
-	warnings := s.ctx.GetSessionVars().StmtCtx.GetWarnings()
+	warnings := ctx.GetSessionVars().StmtCtx.GetWarnings()
 	c.Assert(warnings, HasLen, 1)
 	c.Assert(warnings[0].Err.Error(), Equals, "Parse slow log at line 2 failed. Field: `Succ`, error: strconv.ParseBool: parsing \"abc\": invalid syntax")
 }
 
-func (s *testSuite) TestSlowLogParseTime(c *C) {
+func (s *testExecSuite) TestSlowLogParseTime(c *C) {
 	t1Str := "2019-01-24T22:32:29.313255+08:00"
 	t2Str := "2019-01-24T22:32:29.313255"
-	t1, err := executor.ParseTime(t1Str)
+	t1, err := ParseTime(t1Str)
 	c.Assert(err, IsNil)
 	loc, err := time.LoadLocation("Asia/Shanghai")
 	c.Assert(err, IsNil)
@@ -166,7 +165,7 @@ func (s *testSuite) TestSlowLogParseTime(c *C) {
 // TestFixParseSlowLogFile bugfix
 // sql select * from INFORMATION_SCHEMA.SLOW_QUERY limit 1;
 // ERROR 1105 (HY000): string "2019-05-12-11:23:29.61474688" doesn't has a prefix that matches format "2006-01-02-15:04:05.999999999 -0700", err: parsing time "2019-05-12-11:23:29.61474688" as "2006-01-02-15:04:05.999999999 -0700": cannot parse "" as "-0700"
-func (s *testSuite) TestFixParseSlowLogFile(c *C) {
+func (s *testExecSuite) TestFixParseSlowLogFile(c *C) {
 	slowLog := bytes.NewBufferString(
 		`# Time: 2019-05-12-11:23:29.614327491 +0800
 # Txn_start_ts: 405888132465033227
@@ -194,9 +193,9 @@ select * from t;`)
 	scanner := bufio.NewReader(slowLog)
 	loc, err := time.LoadLocation("Asia/Shanghai")
 	c.Assert(err, IsNil)
-	s.ctx = mock.NewContext()
-	s.ctx.GetSessionVars().TimeZone = loc
-	_, err = parseSlowLog(s.ctx, scanner)
+	ctx := mock.NewContext()
+	ctx.GetSessionVars().TimeZone = loc
+	_, err = parseSlowLog(ctx, scanner)
 	c.Assert(err, IsNil)
 
 	// Test parser error.
@@ -206,15 +205,15 @@ select * from t;`)
 `)
 
 	scanner = bufio.NewReader(slowLog)
-	_, err = parseSlowLog(s.ctx, scanner)
+	_, err = parseSlowLog(ctx, scanner)
 	c.Assert(err, IsNil)
-	warnings := s.ctx.GetSessionVars().StmtCtx.GetWarnings()
+	warnings := ctx.GetSessionVars().StmtCtx.GetWarnings()
 	c.Assert(warnings, HasLen, 1)
 	c.Assert(warnings[0].Err.Error(), Equals, "Parse slow log at line 2 failed. Field: `Txn_start_ts`, error: strconv.ParseUint: parsing \"405888132465033227#\": invalid syntax")
 
 }
 
-func (s *testSuite) TestSlowQueryRetriever(c *C) {
+func (s *testExecSuite) TestSlowQueryRetriever(c *C) {
 	writeFile := func(file string, data string) {
 		f, err := os.OpenFile(file, os.O_CREATE|os.O_WRONLY, 0644)
 		c.Assert(err, IsNil)
@@ -333,27 +332,27 @@ select 6;`
 
 	loc, err := time.LoadLocation("Asia/Shanghai")
 	c.Assert(err, IsNil)
-	s.ctx = mock.NewContext()
-	s.ctx.GetSessionVars().TimeZone = loc
-	s.ctx.GetSessionVars().SlowQueryFile = fileName3
+	ctx := mock.NewContext()
+	ctx.GetSessionVars().TimeZone = loc
+	ctx.GetSessionVars().SlowQueryFile = fileName3
 	for i, cas := range cases {
 		extractor := &plannercore.SlowQueryExtractor{Enable: (len(cas.startTime) > 0 && len(cas.endTime) > 0)}
 		if extractor.Enable {
-			startTime, err := executor.ParseTime(cas.startTime)
+			startTime, err := ParseTime(cas.startTime)
 			c.Assert(err, IsNil)
-			endTime, err := executor.ParseTime(cas.endTime)
+			endTime, err := ParseTime(cas.endTime)
 			c.Assert(err, IsNil)
 			extractor.StartTime = startTime
 			extractor.EndTime = endTime
 
 		}
-		retriever := &executor.SlowQueryRetriever{Extractor: extractor}
-		err := retriever.Initialize(s.ctx)
+		retriever := &slowQueryRetriever{extractor: extractor}
+		err := retriever.initialize(ctx)
 		c.Assert(err, IsNil)
 		comment := Commentf("case id: %v", i)
-		c.Assert(retriever.Files, HasLen, len(cas.files), comment)
-		if len(retriever.Files) > 0 {
-			rows, err := retriever.ParseSlowLog(s.ctx, bufio.NewReader(retriever.Files[0].File()), 1024)
+		c.Assert(retriever.files, HasLen, len(cas.files), comment)
+		if len(retriever.files) > 0 {
+			rows, err := retriever.parseSlowLog(ctx, bufio.NewReader(retriever.files[0].file), 1024)
 			c.Assert(err, IsNil)
 			c.Assert(len(rows), Equals, len(cas.querys), comment)
 			for i, row := range rows {
@@ -361,9 +360,9 @@ select 6;`
 			}
 		}
 
-		for i, file := range retriever.Files {
-			c.Assert(file.File().Name(), Equals, cas.files[i])
-			c.Assert(file.File().Close(), IsNil)
+		for i, file := range retriever.files {
+			c.Assert(file.file.Name(), Equals, cas.files[i])
+			c.Assert(file.file.Close(), IsNil)
 		}
 	}
 }
