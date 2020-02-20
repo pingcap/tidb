@@ -17,7 +17,6 @@ import (
 	"context"
 	"fmt"
 	"math"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -28,6 +27,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/ddl"
+	ddltestutil "github.com/pingcap/tidb/ddl/testutil"
 	ddlutil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
@@ -317,6 +317,13 @@ func (s *testSuite6) TestCreateDropView(c *C) {
 	tk.MustExec("create table t_v(a int)")
 	_, err = tk.Exec("drop view t_v")
 	c.Assert(err.Error(), Equals, "[ddl:1347]'test.t_v' is not VIEW")
+
+	tk.MustExec("create table t_v1(a int, b int);")
+	tk.MustExec("create table t_v2(a int, b int);")
+	tk.MustExec("create view v as select * from t_v1;")
+	tk.MustExec("create or replace view v  as select * from t_v2;")
+	tk.MustQuery("select * from information_schema.views where table_name ='v';").Check(
+		testkit.Rows("def test v SELECT `test`.`t_v2`.`a`,`test`.`t_v2`.`b` FROM `test`.`t_v2` CASCADED NO @ DEFINER utf8mb4 utf8mb4_bin"))
 }
 
 func (s *testSuite6) TestCreateDropIndex(c *C) {
@@ -715,16 +722,7 @@ func (s *testAutoRandomSuite) TestAutoRandomBitsData(c *C) {
 	for i := 0; i < 100; i++ {
 		tk.MustExec("insert into t(b) values (?)", i)
 	}
-	dom := domain.GetDomain(tk.Se)
-	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr("test_auto_random_bits"), model.NewCIStr("t"))
-	c.Assert(err, IsNil)
-	c.Assert(tk.Se.NewTxn(context.Background()), IsNil)
-	var allHandles []int64
-	// Iterate all the record. The order is not guaranteed.
-	err = tbl.IterRecords(tk.Se, tbl.FirstKey(), nil, func(h int64, _ []types.Datum, _ []*table.Column) (more bool, err error) {
-		allHandles = append(allHandles, h)
-		return true, nil
-	})
+	allHandles, err := ddltestutil.ExtractAllTableHandles(tk.Se, "test_auto_random_bits", "t")
 	c.Assert(err, IsNil)
 	tk.MustExec("drop table t")
 
@@ -737,11 +735,7 @@ func (s *testAutoRandomSuite) TestAutoRandomBitsData(c *C) {
 	}
 	c.Assert(allZero, IsFalse)
 	// Test non-shard-bits part of auto random id is monotonic increasing and continuous.
-	orderedHandles := make([]int64, len(allHandles))
-	for i, h := range allHandles {
-		orderedHandles[i] = h << 16 >> 16
-	}
-	sort.Slice(orderedHandles, func(i, j int) bool { return orderedHandles[i] < orderedHandles[j] })
+	orderedHandles := testutil.ConfigTestUtils.MaskSortHandles(allHandles, 15, mysql.TypeLonglong)
 	size := int64(len(allHandles))
 	for i := int64(1); i <= size; i++ {
 		c.Assert(i, Equals, orderedHandles[i-1])
