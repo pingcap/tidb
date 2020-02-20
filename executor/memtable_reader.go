@@ -415,7 +415,7 @@ func (h *logResponseHeap) Pop() interface{} {
 	return x
 }
 
-func (e *clusterLogRetriever) startRetrieving(ctx context.Context, sctx sessionctx.Context) ([]chan logStreamResult, error) {
+func (e *clusterLogRetriever) initialize(ctx context.Context, sctx sessionctx.Context) ([]chan logStreamResult, error) {
 	isFailpointTestModeSkipCheck := false
 	serversInfo, err := infoschema.GetClusterServerInfo(sctx)
 	failpoint.Inject("mockClusterLogServerInfo", func(val failpoint.Value) {
@@ -435,17 +435,6 @@ func (e *clusterLogRetriever) startRetrieving(ctx context.Context, sctx sessionc
 	instances := e.extractor.Instances
 	nodeTypes := e.extractor.NodeTypes
 	serversInfo = filterClusterServerInfo(serversInfo, nodeTypes, instances)
-
-	// gRPC options
-	opt := grpc.WithInsecure()
-	security := config.GetGlobalConfig().Security
-	if len(security.ClusterSSLCA) != 0 {
-		tlsConfig, err := security.ToTLSConfig()
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		opt = grpc.WithTransportCredentials(credentials.NewTLS(tlsConfig))
-	}
 
 	var levels []diagnosticspb.LogLevel
 	for l := range e.extractor.LogLevels {
@@ -487,6 +476,25 @@ func (e *clusterLogRetriever) startRetrieving(ctx context.Context, sctx sessionc
 		Patterns:  patterns,
 	}
 
+	return e.startRetrieving(ctx, sctx, serversInfo, req)
+}
+
+func (e *clusterLogRetriever) startRetrieving(
+	ctx context.Context,
+	sctx sessionctx.Context,
+	serversInfo []infoschema.ServerInfo,
+	req *diagnosticspb.SearchLogRequest) ([]chan logStreamResult, error) {
+	// gRPC options
+	opt := grpc.WithInsecure()
+	security := config.GetGlobalConfig().Security
+	if len(security.ClusterSSLCA) != 0 {
+		tlsConfig, err := security.ToTLSConfig()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		opt = grpc.WithTransportCredentials(credentials.NewTLS(tlsConfig))
+	}
+
 	// The retrieve progress may be abort
 	ctx, e.cancel = context.WithCancel(ctx)
 
@@ -506,7 +514,7 @@ func (e *clusterLogRetriever) startRetrieving(ctx context.Context, sctx sessionc
 			util.WithRecovery(func() {
 				defer close(ch)
 
-				// The TiDB provide diagnostics service via status address
+				// The TiDB provides diagnostics service via status address
 				remote := address
 				if serverType == "tidb" {
 					remote = statusAddr
@@ -531,10 +539,19 @@ func (e *clusterLogRetriever) startRetrieving(ctx context.Context, sctx sessionc
 						return
 					}
 					if err != nil {
-						ch <- logStreamResult{addr: address, typ: serverType, err: err}
+						select {
+						case ch <- logStreamResult{addr: address, typ: serverType, err: err}:
+						case <-ctx.Done():
+						}
 						return
 					}
-					ch <- logStreamResult{next: ch, addr: address, typ: serverType, messages: res.Messages}
+
+					result := logStreamResult{next: ch, addr: address, typ: serverType, messages: res.Messages}
+					select {
+					case ch <- result:
+					case <-ctx.Done():
+						return
+					}
 				}
 			}, nil)
 		}(ch, typ, address, statusAddr)
@@ -550,7 +567,7 @@ func (e *clusterLogRetriever) retrieve(ctx context.Context, sctx sessionctx.Cont
 
 	if !e.retrieving {
 		e.retrieving = true
-		results, err := e.startRetrieving(ctx, sctx)
+		results, err := e.initialize(ctx, sctx)
 		if err != nil {
 			e.isDrained = true
 			return nil, err
@@ -600,7 +617,7 @@ func (e *clusterLogRetriever) retrieve(ctx context.Context, sctx sessionctx.Cont
 		}
 	}
 
-	// All stream are draied
+	// All streams are drained
 	e.isDrained = e.heap.Len() == 0
 
 	return finalRows, nil
