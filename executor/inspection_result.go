@@ -626,18 +626,18 @@ func (thresholdCheckInspection) inspectThreshold2(ctx context.Context, sctx sess
 		}
 		for _, row := range rows {
 			actual := fmt.Sprintf("%.2f", row.GetFloat64(1))
-			expect := ""
+			expected := ""
 			if rule.isMin {
-				expect = fmt.Sprintf("> %.2f", rule.threshold)
+				expected = fmt.Sprintf("> %.2f", rule.threshold)
 			} else {
-				expect = fmt.Sprintf("< %.2f", rule.threshold)
+				expected = fmt.Sprintf("< %.2f", rule.threshold)
 			}
 			result := inspectionResult{
 				tp:       rule.tp,
 				instance: row.GetString(0),
 				item:     rule.item,
 				actual:   actual,
-				expected: expect,
+				expected: expected,
 				severity: "warning",
 				detail:   sql,
 			}
