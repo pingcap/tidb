@@ -1217,7 +1217,7 @@ var tableMetricTablesCols = []columnInfo{
 
 var tableMetricSummaryCols = []columnInfo{
 	{"METRIC_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
-	{"TIME", mysql.TypeDatetime, -1, 0, nil, nil},
+	{"QUANTILE", mysql.TypeDouble, 22, 0, nil, nil},
 	{"SUM_VALUE", mysql.TypeDouble, 22, 0, nil, nil},
 	{"AVG_VALUE", mysql.TypeDouble, 22, 0, nil, nil},
 	{"MIN_VALUE", mysql.TypeDouble, 22, 0, nil, nil},
@@ -1226,9 +1226,10 @@ var tableMetricSummaryCols = []columnInfo{
 }
 
 var tableMetricSummaryByLabelCols = []columnInfo{
+	{"INSTANCE", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"METRIC_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"LABEL", mysql.TypeVarchar, 64, 0, nil, nil},
-	{"TIME", mysql.TypeDatetime, -1, 0, nil, nil},
+	{"QUANTILE", mysql.TypeDouble, 22, 0, nil, nil},
 	{"SUM_VALUE", mysql.TypeDouble, 22, 0, nil, nil},
 	{"AVG_VALUE", mysql.TypeDouble, 22, 0, nil, nil},
 	{"MIN_VALUE", mysql.TypeDouble, 22, 0, nil, nil},

@@ -19,6 +19,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser"
@@ -73,6 +74,7 @@ type tableHintInfo struct {
 	tikvTables          []hintTableInfo
 	aggHints            aggHintInfo
 	indexMergeHintList  []indexHintInfo
+	timeRangeHint       ast.HintTimeRange
 }
 
 type hintTableInfo struct {
@@ -91,6 +93,17 @@ type indexHintInfo struct {
 type aggHintInfo struct {
 	preferAggType  uint
 	preferAggToCop bool
+}
+
+// QueryTimeRange represents a time range specified by TIME_RANGE hint
+type QueryTimeRange struct {
+	From time.Time
+	To   time.Time
+}
+
+// Condition returns a WHERE clause base on it's value
+func (tr *QueryTimeRange) Condition() string {
+	return fmt.Sprintf("where time>='%s' and time<='%s'", tr.From.Format(MetricTableTimeFormat), tr.To.Format(MetricTableTimeFormat))
 }
 
 func tableNames2HintTableInfo(ctx sessionctx.Context, hintTables []ast.HintTable, p *BlockHintProcessor, nodeType nodeType, currentOffset int) []hintTableInfo {

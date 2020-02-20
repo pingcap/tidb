@@ -1319,6 +1319,7 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
 				retriever: &inspectionResultRetriever{
 					extractor: v.Extractor.(*plannercore.InspectionResultTableExtractor),
+					timeRange: v.QueryTimeRange,
 				},
 			}
 		case strings.ToLower(infoschema.TableInspectionSummary):
@@ -1327,6 +1328,7 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 				retriever: &inspectionSummaryRetriever{
 					table:     v.Table,
 					extractor: v.Extractor.(*plannercore.InspectionSummaryTableExtractor),
+					timeRange: v.QueryTimeRange,
 				},
 			}
 		case strings.ToLower(infoschema.TableMetricSummary):
@@ -1334,7 +1336,8 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
 				retriever: &MetricSummaryRetriever{
 					table:     v.Table,
-					extractor: v.Extractor.(*plannercore.MetricTableExtractor),
+					extractor: v.Extractor.(*plannercore.MetricSummaryTableExtractor),
+					timeRange: v.QueryTimeRange,
 				},
 			}
 		case strings.ToLower(infoschema.TableMetricSummaryByLabel):
@@ -1342,7 +1345,8 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
 				retriever: &MetricSummaryByLabelRetriever{
 					table:     v.Table,
-					extractor: v.Extractor.(*plannercore.MetricTableExtractor),
+					extractor: v.Extractor.(*plannercore.MetricSummaryTableExtractor),
+					timeRange: v.QueryTimeRange,
 				},
 			}
 		case strings.ToLower(infoschema.TableSchemata), strings.ToLower(infoschema.TableViews):
